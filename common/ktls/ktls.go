@@ -95,7 +95,19 @@ func (c *Conn) SyscallConnForRead() syscall.RawConn {
 		return nil
 	}
 	if !*c.rawConn.IsClient {
-		c.logger.WarnContext(c.ctx, "ktls: RX splice is unavailable on the server size, since it will cause an unknown failure")
+		// Warn, not Debug, and the REASON is part of the message.
+		//
+		// kTLS RX splice is client-only. On a server this returns nil, the copy engine falls back to
+		// the userspace path, and the kernel_rx the operator paid for does nothing - but the only
+		// thing they were told is the generic "enabling kTLS RX will definitely reduce performance"
+		// warning, which describes the option as merely slow rather than INERT here. An engineer
+		// profiling a server would go looking for the wrong problem.
+		//
+		// The same message used to be logged at Debug, which is off in production, so the actual
+		// reason was invisible precisely when it mattered.
+		c.logger.WarnContext(c.ctx, "ktls: RX splice was requested but is unavailable on the server "+
+			"side, since it causes an unknown failure; falling back to userspace copy. kernel_rx has "+
+			"no effect on a server")
 		return nil
 	}
 	c.logger.DebugContext(c.ctx, "ktls: RX splice requested")
