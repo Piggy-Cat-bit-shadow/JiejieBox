@@ -393,14 +393,65 @@ func New(options Options) (*Box, error) {
 	pauseCallback := pauseManager.RegisterCallback(func(event int) {
 		applyPauseEvent(powerGovernor, event)
 	})
+	// Seed the LEVEL from the manager, because the manager may outlive this Box.
+	//
+	// `pause.WithDefaultManager` returns an existing manager unchanged, and since
+	// `daemon.NewStartedService` registers one for the life of the service, a Box built by a reload
+	// resolves the SAME manager the previous Box used. The manager's own `DevicePause` is
+	// level-guarded - the second call is a silent no-op that emits nothing (see the sing
+	// `pause.defaultManager`) - so when a reload happens on an already-paused device, no
+	// `EventDevicePaused` ever reaches this governor and it would start ACTIVE.
+	//
+	// The consequence is not cosmetic. A governor that thinks the device is awake permits
+	// `ProviderRefresh` and `Statistics` (`common/power.DefaultPolicy`'s QUIESCENT row denies them),
+	// so a locked phone whose configuration was just reloaded goes back to refreshing remote rule
+	// sets and writing statistics - the exact behaviour the device axis exists to suppress, for the
+	// rest of the lock, with no log line and no self-correction (a later lock fact is an EDGE only).
+	//
+	// The LEVEL and nothing else - and the spelling matters, because two of the three available
+	// spellings are wrong here:
+	//
+	//   * `powerGovernor.DevicePaused()` sets the level AND calls `noteSleepLocked`, which re-stamps
+	//     `pausedSince` unless a measurement is already running and un-resumed. Re-stamping at the
+	//     construction instant makes a sleep that has already lasted hours look like it began here, and
+	//     the reuse policy classifies a sleep by its duration (`SuspectAfter` 5s, `RetireAfter` 15s):
+	//     the misclassification turns a `ReuseRetire` into a `ReuseKeep`, so the first flow after the
+	//     unlock can be handed a pooled socket that predates the sleep - the harm
+	//     `experimental/libbox/command_server.go`'s `restoreDeviceLevel` refuses to replay a sleep EDGE
+	//     for. Measured: control (16 s sleep, no reload) `epoch=1 boundary={Sleep:16.0008s
+	//     Action:retire}`; seeded through the governor `epoch=0 boundaryKnown=false`.
+	//   * `pauseManager.DevicePause()` is level-guarded, so on an already-paused manager it emits
+	//     nothing - and this Box's consumer, registered just above, would never learn the level at all.
+	//
+	// The third spelling - `pause.Manager.SeedDevicePause`, which moves the LEVEL and emits the fact
+	// while measuring nothing - is the one this call wants, and it does not exist in the pinned `sing`
+	// revision. It is written and carried as `out/p3-sing-seeddevicepause.patch`; landing it in the
+	// `Piggy-Cat-bit-shadow/sing` fork is a two-line follow-up, after which this line becomes
+	// `pauseManager.SeedDevicePause()`.
+	//
+	// Until then the governor's setter is used, because the LEVEL is the load-bearing half: a governor
+	// that believes the device is awake permits `ProviderRefresh` and `Statistics` for the rest of the
+	// lock. The measurement imprecision is the smaller, known cost, and
+	// `TestAdoptingTheLevelDoesNotRestartTheSleepMeasurement` currently pins the boundary NOT moving -
+	// so it fails the moment the seed starts re-stamping, which is the tripwire for this debt.
+	if pauseManager != nil && pauseManager.IsDevicePaused() {
+		powerGovernor.DevicePaused()
+	}
 	// From here there are many ways to fail - every registry check, every manager constructor - and a
 	// callback registered on a manager this Box does not own would outlive it.
 	//
-	// That is not hypothetical: WithDefaultManager returns an EXISTING manager unchanged, and the
-	// libbox/Apple path supplies one, so the manager belongs to the caller and lives as long as the
-	// process does. RegisterCallback only appends to a list, and nothing else would ever remove the
-	// entry - every device pause and wake for the rest of the session would call into a governor whose
-	// Box was never returned.
+	// That is not hypothetical. `WithDefaultManager` returns an EXISTING manager unchanged, and a
+	// manager supplied by the caller belongs to the caller: `daemon.NewStartedService` registers one
+	// for the life of the service, so on every path that goes through it - the libbox command server,
+	// the desktop daemon's attached service, and `StartedService.CheckConfig`, which extends the same
+	// context - the manager outlives each Box the service builds and is replaced only when the process
+	// ends. Callers that build a Box straight from their own context without registering one (the
+	// `sing-box` CLI and its `check`/`tools` subcommands, and every test harness that is not driving a
+	// `StartedService`) get a manager owned by this Box instead.
+	//
+	// Either way RegisterCallback only appends to a list, and nothing else would ever remove the
+	// entry, so without this guard every device pause and wake for the rest of the session would call
+	// into a governor whose Box was never returned.
 	boxConstructed := false
 	defer func() {
 		if boxConstructed {

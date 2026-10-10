@@ -138,20 +138,23 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	// An unknown path yields no ceiling and the configured value is used unchanged, so a direct dial
 	// keeps exactly its previous behaviour.
 	//
-	// # The measured limit of what this can achieve today
+	// # How the ceiling is meant to reach the wire, and where it stops today
 	//
-	// The ceiling reaches quic-go as `InitialPacketSize`, and the pinned quic-go OVERRIDES that field
-	// with `chromeInitialPacketSize` (1250) whenever `ChromeParrot` is set - which hysteria2's default
-	// is. So this clamp is effective only when ChromeParrot is off, or when the pinned library is
-	// changed to treat the configured value as a hard ceiling. MEASURED, and asserted rather than
-	// assumed: `TestPathCeilingReachesTheWireOnlyWithoutChromeParrot` in this package measures the real
-	// first datagram both ways.
+	// The ceiling reaches quic-go as `InitialPacketSize`. On its own that is not enough: the pinned
+	// quic-go replaces the field with `chromeInitialPacketSize` (1250) whenever `ChromeParrot` is set,
+	// and ChromeParrot is hysteria2's DEFAULT. So the value is paired with `DisablePathMTUDiscovery`,
+	// which is the signal for "this size is a ceiling, not a preference" - see the long note at the
+	// `QUICOptions` literal below for the full reasoning and the cost.
 	//
-	// It is still wired here rather than left for later, because the value has to be computed and
-	// handed down BEFORE a library change can make it effective, and because a configuration that
-	// already sets `disable_chrome_parrot: true` gets the ceiling today. The residual - a hard ceiling
-	// that ChromeParrot still overrides - is reported as a product decision about the pinned fork, not
-	// as a silent gap.
+	// **That pairing is inert until the pinned library is replaced.** The library change is written and
+	// tested but not pushed, so a known 1232 ceiling still emits 1250 today. Stated here rather than left
+	// to be discovered: a reader who measures this tree and finds 1250 is seeing the documented state,
+	// not a bug in this file.
+	//
+	// Note also that `TestPathCeilingReachesTheWireOnlyWithoutChromeParrot` in this package currently
+	// asserts the 1250 for the ChromeParrot arm. That assertion pins the OLD behaviour deliberately and
+	// will go red when the pin moves - it must be split into ceiling-present and ceiling-absent arms at
+	// that point, not weakened.
 	pathCapacity := dialer.DetourPathCapacity(ctx, options.DialerOptions.Detour)
 	quicPayloadCeiling, hasCeiling := pathCapacity.QuicPayloadCeiling()
 	effectiveInitialPacketSize := dialer.ClampToCeiling(options.InitialPacketSize, quicPayloadCeiling, hasCeiling)
@@ -195,7 +198,45 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 			ConnectionReceiveWindow: options.ConnectionReceiveWindow.Value(),
 			MaxConcurrentStreams:    options.MaxConcurrentStreams,
 			InitialPacketSize:       effectiveInitialPacketSize,
-			DisablePathMTUDiscovery: options.DisablePathMTUDiscovery,
+			// `DisablePathMTUDiscovery` carries TWO facts here, and neither reaches the wire until the
+			// pinned quic-go is changed. Read this whole note before touching either.
+			//
+			// # 1. It is a no-op against the library this tree currently pins
+			//
+			// The pinned fork's ChromeParrot branch overwrites the size unconditionally:
+			//
+			//	initialPacketSize = chromeInitialPacketSize   // 1250
+			//
+			// and it never reads this flag inside that branch - the flag is only copied to the result
+			// afterwards, at config.go:145. So setting it here changes NOTHING today: an outbound with a
+			// known 1232 ceiling still emits 1250. This is deliberate and sequenced rather than an
+			// oversight: the value has to be computed and handed down BEFORE the library can honour it,
+			// and the library change is written and tested but not yet pushed. The moment the pin moves,
+			// this line starts mattering - which is why the pairing is written now, with the reasoning,
+			// instead of being added in the same commit as the pin bump and reviewed in a hurry.
+			//
+			// # 2. Once the pin moves it carries the ceiling, and must not carry the user's flag
+			//
+			// The two are the same number on the wire, so the library needs a separate signal to tell a
+			// size CEILING from a size PREFERENCE. With no ceiling, ChromeParrot must keep its 1250-byte
+			// fingerprint even when the user asked for something smaller; that contract predates this
+			// code and is covered by tests.
+			//
+			// So what is forwarded is whether a ceiling is in force - a fact this layer establishes and
+			// the library cannot - and NOT the operator's own `disable_path_mtu_discovery`. Forwarding
+			// theirs would make a direct-path user's preference read as a constraint and cost them the
+			// fingerprint, for no reason. Consequences, stated rather than hidden:
+			//
+			//   * no ceiling  -> false, so PMTUD stays enabled and the fingerprint is untouched.
+			//   * a ceiling   -> true, so PMTUD is off. That is also the correct policy here, and it is
+			//                    load-bearing beyond the first flight: with PMTUD active the connection
+			//                    GROWS its packet size after the handshake (measured: 1232 -> 1438 over a
+			//                    real loopback path), which would exceed a proven 1232 ceiling by more
+			//                    than the first flight ever did. Pinning it is half the fix, not a detail.
+			//   * the operator's own `disable_path_mtu_discovery` no longer reaches quic-go on this path.
+			//     A real behaviour change for a direct-path user who set it, and the price of not
+			//     conflating the two meanings.
+			DisablePathMTUDiscovery: hasCeiling,
 		},
 		UDPDisabled:  !common.Contains(networkList, N.NetworkUDP),
 		BBRProfile:   options.BBRProfile,

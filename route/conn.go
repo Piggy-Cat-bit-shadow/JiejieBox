@@ -689,6 +689,157 @@ func (w *counterPreservingPacketWriter) UnwrapPacketWriter() (N.PacketWriter, []
 	return w.gate, w.counters
 }
 
+// # Why the wrapper forwards the batch and geometry capabilities
+//
+// It exists to keep a destination's write counters visible across a non-replaceable gate, and it is
+// installed by `uploadPacketGate` whenever the destination carries counters. Until it forwarded these,
+// it silently destroyed the UDP fast path while remaining functionally correct - every datagram still
+// arrived, so no functional test noticed. Measured through the production shape:
+//
+//	inner (batch-capable)   headroom=128  mtu=1400  batchCreator=true
+//	bare gate               headroom=256  mtu=1400  batchCreator=true
+//	with this wrapper       headroom=0    mtu=0     batchCreator=false
+//
+// Two separate losses, both here rather than in the gate:
+//
+//  1. `N.CreatePacketBatchWriter` stops at this wrapper, and route enters the copy engine through
+//     `bufio.CopyPacketWithCounters` (conn.go, the packet copy loop) which - unlike `bufio.CopyPacket`
+//     and `bufio.CopyWithIncreateBuffer` - does NOT unwrap the destination first. So a batch-capable
+//     destination was written one datagram per syscall. On the hottest UDP path in the process, for
+//     every dialled session of a direct outbound with a power recorder present.
+//  2. The geometry was hidden, so callers stopped reserving the headroom the destination needs and the
+//     MTU became invisible - which is what makes owned-datagram / zero-copy sends fall back.
+
+// WritePacketBatch applies the counters per buffer, then hands the whole batch to the destination's own
+// batch writer. Counting here rather than wrapping the destination is deliberate: the counters must
+// stay attached to the GATE's output, so a gate that drops or delays a datagram is not counted as
+// having sent it.
+func (w *counterPreservingPacketWriter) WritePacketBatch(buffers []*buf.Buffer, destinations []M.Socksaddr) error {
+	batchWriter, created := bufio.CreatePacketBatchWriter(w.gate)
+	if !created {
+		// The destination cannot batch. Fall back to the per-packet path rather than failing: the
+		// capability is the destination's to offer, and losing it must not lose the data.
+		for index, buffer := range buffers {
+			if err := w.gate.WritePacket(buffer, destinations[index]); err != nil {
+				return err
+			}
+			w.countBuffer(buffer)
+		}
+		return nil
+	}
+	// The lengths must be read BEFORE the write: a batch writer takes ownership of the buffers and may
+	// release them, so reading `Len()` afterwards would count zero and understate the traffic.
+	var scratch packetBatchLengths
+	lengths := scratch.int64s(len(buffers))
+	for index, buffer := range buffers {
+		lengths[index] = int64(buffer.Len())
+	}
+	if err := batchWriter.WritePacketBatch(buffers, destinations); err != nil {
+		return err
+	}
+	for _, length := range lengths {
+		if length > 0 {
+			for _, counter := range w.counters {
+				counter(length)
+			}
+		}
+	}
+	return nil
+}
+
+func (w *counterPreservingPacketWriter) CreatePacketBatchWriter() (N.PacketBatchWriter, bool) {
+	if _, created := bufio.CreatePacketBatchWriter(w.gate); !created {
+		return nil, false
+	}
+	return w, true
+}
+
+func (w *counterPreservingPacketWriter) CreateConnectedPacketBatchWriter() (N.ConnectedPacketBatchWriter, bool) {
+	if _, created := bufio.CreateConnectedPacketBatchWriter(w.gate); !created {
+		return nil, false
+	}
+	return &counterPreservingConnectedBatchWriter{w}, true
+}
+
+func (w *counterPreservingPacketWriter) WriteConnectedPacketBatch(buffers []*buf.Buffer) error {
+	batchWriter, created := bufio.CreateConnectedPacketBatchWriter(w.gate)
+	if !created {
+		return errConnectedBatchUnsupported
+	}
+	var scratch packetBatchLengths
+	lengths := scratch.int64s(len(buffers))
+	for index, buffer := range buffers {
+		lengths[index] = int64(buffer.Len())
+	}
+	if err := batchWriter.WriteConnectedPacketBatch(buffers); err != nil {
+		return err
+	}
+	for _, length := range lengths {
+		if length > 0 {
+			for _, counter := range w.counters {
+				counter(length)
+			}
+		}
+	}
+	return nil
+}
+
+func (w *counterPreservingPacketWriter) countBuffer(buffer *buf.Buffer) {
+	length := int64(buffer.Len())
+	if length == 0 {
+		return
+	}
+	for _, counter := range w.counters {
+		counter(length)
+	}
+}
+
+// FrontHeadroom and WriterMTU defer to the gate, which already defers to the destination. Forwarding
+// them is what keeps the whole-chain geometry intact for callers that size buffers from it.
+func (w *counterPreservingPacketWriter) FrontHeadroom() int {
+	return N.CalculateFrontHeadroom(w.gate)
+}
+
+func (w *counterPreservingPacketWriter) RearHeadroom() int {
+	return N.CalculateRearHeadroom(w.gate)
+}
+
+func (w *counterPreservingPacketWriter) WriterMTU() int {
+	return N.CalculateMTU(context.Background(), w.gate)
+}
+
+// counterPreservingConnectedBatchWriter applies the same counters to the connected-batch form. It is a
+// distinct type because the two batch interfaces are distinct, and a destination may offer one without
+// the other.
+type counterPreservingConnectedBatchWriter struct {
+	owner *counterPreservingPacketWriter
+}
+
+func (w *counterPreservingConnectedBatchWriter) WriteConnectedPacketBatch(buffers []*buf.Buffer) error {
+	return w.owner.WriteConnectedPacketBatch(buffers)
+}
+
+// errConnectedBatchUnsupported is returned by the connected-batch write when the destination offers no
+// connected batch writer. It is unreachable through the supported path - the interface is only handed
+// out by `CreateConnectedPacketBatchWriter`, which checks the same condition first - but returning an
+// error rather than silently succeeding matters: a caller that ignored the capability check must not be
+// told a batch it never sent arrived.
+var errConnectedBatchUnsupported = E.New("route: destination offers no connected packet batch writer")
+
+// packetBatchLengths is per-batch scratch for the lengths a counter needs. A stack array keeps the UDP
+// fast path allocation-free in the common case; an oversized batch falls back to the heap rather than
+// overrunning, which is the same trade the copy engine's own batch scratch makes.
+type packetBatchLengths struct {
+	stack [bufio.DefaultPacketReadBatchSize]int64
+}
+
+func (s *packetBatchLengths) int64s(n int) []int64 {
+	if n <= len(s.stack) {
+		return s.stack[:n]
+	}
+	return make([]int64, n)
+}
+
 func (m *ConnectionManager) connectionCopy(ctx context.Context, source net.Conn, destination net.Conn, direction bool, increaseBufferAfter int64, done *atomic.Bool, onClose N.CloseHandlerFunc, copyWriter io.Writer, flow *trafficsched.Flow) {
 	if flow != nil {
 		// Releasing the flow is what lets a close unblock this goroutine, and what removes it from

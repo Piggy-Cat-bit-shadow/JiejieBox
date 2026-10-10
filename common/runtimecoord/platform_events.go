@@ -64,6 +64,15 @@ type PlatformEvents struct {
 	// AppForeground, never by a timer: a timer here would be the global polling this policy is
 	// explicitly not allowed to introduce.
 	wakePending bool
+	// deviceWakeNudged is the EDGE's own latch: a user-present nudge has been issued and nothing has
+	// paused since, so a repeat of the same fact can be coalesced without consulting the screen level.
+	//
+	// The guard used to be `screenKnown && screenOn && !paused && !wakePending`, which asked the LEVEL
+	// whether an EDGE had already happened. That is why the first genuine user-present after an attach
+	// was swallowed: `attach` seeds the current level with `setScreenOn(true)`, so the very first
+	// unlock arrived at a cell that already read "awake and already nudged" and was counted
+	// `Coalesced++` with no nudge at all. A level must not answer for an edge.
+	deviceWakeNudged bool
 
 	lastTrimLevel TrimLevel
 	lastTrimAt    time.Time
@@ -292,6 +301,11 @@ func (p *PlatformEvents) SetScreenOn(on bool) {
 	}
 	p.screenKnown = true
 	p.screenOn = on
+	if !on {
+		// The screen going off ends the awake period even before the pause is applied, so a
+		// user-present that follows owes a nudge rather than being coalesced away.
+		p.deviceWakeNudged = false
+	}
 	action := p.recomputeDeviceLocked()
 	p.inFlight.Add(1)
 	p.access.Unlock()
@@ -343,18 +357,17 @@ func (p *PlatformEvents) DeviceWake() {
 		p.access.Unlock()
 		return
 	}
-	if p.screenKnown && p.screenOn && !p.paused && !p.wakePending {
-		// Already awake and already nudged. A platform may deliver the same user-present fact more
-		// than once (a receiver re-registration replays it); a second nudge would be a second rebind
-		// opportunity for no new event.
+	if p.deviceWakeNudged {
+		// Already nudged for this awake period, and nothing has paused since. A platform may deliver
+		// the same user-present fact more than once (a receiver re-registration replays it); a second
+		// nudge would be a second rebind opportunity for no new event.
 		p.stats.Coalesced++
 		p.access.Unlock()
 		return
 	}
-	p.screenKnown = true
-	p.screenOn = true
 	p.paused = false
 	p.wakePending = false
+	p.deviceWakeNudged = true
 	p.stats.Wakes++
 	p.inFlight.Add(1)
 	p.access.Unlock()
@@ -386,6 +399,8 @@ func (p *PlatformEvents) recomputeDeviceLocked() deviceAction {
 		}
 		p.paused = true
 		p.wakePending = false
+		// A new sleep starts a new awake period, so the next user-present owes a fresh nudge.
+		p.deviceWakeNudged = false
 		p.stats.Pauses++
 		return deviceActionPause
 	}
@@ -400,6 +415,12 @@ func (p *PlatformEvents) recomputeDeviceLocked() deviceAction {
 		return deviceActionNone
 	}
 	p.wakePending = false
+	// Arm the edge latch here too. The level path has just issued a nudge, so a user-present arriving
+	// afterwards in the SAME awake period owes nothing - that is the whole point of the latch. Without
+	// this the two paths disagree: the level nudges, does not arm, and then a user-present nudges a
+	// second time for one awake period (`Wakes` 1 -> 2, `Coalesced` 0), which is exactly the repeated
+	// rebind opportunity this guard exists to prevent. Measured by an independent agent on this file.
+	p.deviceWakeNudged = true
 	p.stats.Wakes++
 	return deviceActionWake
 }

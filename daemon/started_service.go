@@ -27,6 +27,7 @@ import (
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/observable"
 	"github.com/sagernet/sing/service"
+	"github.com/sagernet/sing/service/pause"
 
 	"github.com/gofrs/uuid/v5"
 	"google.golang.org/grpc"
@@ -45,7 +46,9 @@ const (
 var _ StartedServiceServer = (*StartedService)(nil)
 
 type StartedService struct {
-	ctx context.Context
+	// closeOnce makes Close idempotent and safe to call concurrently; see Close.
+	closeOnce sync.Once
+	ctx       context.Context
 	// fakeIPIssuanceLedger is the object every Box this service builds records its fakeip issuances
 	// into, and consults before dialling a destination it may have invented. It is held here as well as
 	// registered in the context so that the owner is explicit rather than implied by a registry key:
@@ -139,6 +142,31 @@ func NewStartedService(options ServiceOptions) *StartedService {
 	startedCtx := service.ContextWithDefaultRegistry(options.Context)
 	fakeIPIssuanceLedger := adapter.NewFakeIPIssuanceLedger()
 	service.MustRegisterPtr[adapter.FakeIPIssuanceLedger](startedCtx, fakeIPIssuanceLedger)
+	// The DEVICE AXIS belongs to the session, not to a Box.
+	//
+	// `pause.WithDefaultManager` returns an existing manager unchanged and otherwise registers a new
+	// one, so before this line every Box created its own: `newInstance` builds from
+	// `service.ExtendContext(s.ctx)`, which is a shallow registry CLONE, and nothing registered a
+	// manager into `s.ctx`. `box.New`'s own comment assumed the libbox/Apple path supplied one - that
+	// path calls `box.Context`, which registers every registry except this one.
+	//
+	// The consequence was that a profile reload released the device level. `StartOrReloadService`
+	// replaces the Box, and with it the manager: a phone that had locked (DevicePause) came back
+	// unpaused, `route/reference.go` re-mirrored "not paused", URLTest stopped refusing to run,
+	// provider refresh was released and the on-demand tunnels stopped being suspended - silently,
+	// with no log line. The Apple client cannot even notice: its screen-state observer deliberately
+	// outlives a reload, and its `lastObserved` makes the still-locked snapshot a repeat, so nothing
+	// re-publishes the fact (`Library/Network/ScreenStateObserver.swift:243`).
+	//
+	// Registering it HERE makes the lifetime explicit and puts it where the other cross-Box state
+	// already lives - next to the FakeIP issuance ledger, which is registered for the same reason and
+	// by the same mechanism. The sleep/wake facts themselves are per-process by nature: they arrive
+	// through a command server that outlives every Box.
+	//
+	// This ordering is safe for the same reason the ledger's is: `ContextWithDefaultRegistry` returned
+	// the caller's own registry, so registering into `startedCtx` is visible to `newInstance`'s clone
+	// and to every later Box.
+	pause.WithDefaultManager(startedCtx)
 	s := &StartedService{
 		ctx:                  startedCtx,
 		fakeIPIssuanceLedger: fakeIPIssuanceLedger,
@@ -361,15 +389,34 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 	return nil
 }
 
+// Close releases the service's subscribers. It is idempotent and safe to call concurrently.
+//
+// # Why the `closed` flag is not enough on its own
+//
+// `closed` is set under `serviceAccess`, but it fences the SERVICE's lifecycle, not the five
+// `Subscriber.Close()` calls below it: two goroutines can both read `closed == false`, both fall
+// through, and both close the same subscriber. `observable.Subscriber.Close` is a check-then-act on
+// a done channel, so the loser panics with "close of closed channel" - measured, reproducibly, with
+// eight concurrent calls.
+//
+// That is not a theoretical shape. The two callers on the Apple client are `stopTunnel` (via
+// `stopService`) and `unwindFailedStart()`, which run on different tasks with nothing serialising
+// them, and `Box` already carries a `closeOnce` for exactly this reason. This is the same guard, in
+// the place the panic actually is.
+//
+// Concurrency matters beyond the shutdown itself: the panic is in the embedder's process, so what it
+// kills is the tunnel.
 func (s *StartedService) Close() {
-	s.serviceAccess.Lock()
-	s.closed = true
-	s.serviceAccess.Unlock()
-	s.serviceStatusSubscriber.Close()
-	s.logSubscriber.Close()
-	s.urlTestSubscriber.Close()
-	s.clashModeSubscriber.Close()
-	s.notificationSubscriber.Close()
+	s.closeOnce.Do(func() {
+		s.serviceAccess.Lock()
+		s.closed = true
+		s.serviceAccess.Unlock()
+		s.serviceStatusSubscriber.Close()
+		s.logSubscriber.Close()
+		s.urlTestSubscriber.Close()
+		s.clashModeSubscriber.Close()
+		s.notificationSubscriber.Close()
+	})
 }
 
 func (s *StartedService) CloseService() error {
