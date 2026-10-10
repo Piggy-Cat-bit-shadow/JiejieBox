@@ -2,6 +2,7 @@ package http
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"time"
@@ -275,10 +276,30 @@ func (c *normalizingConn) SetWriteDeadline(t time.Time) error {
 
 // WriteBuffer and ReadBuffer carry the buffered copy path, which is what
 // route/conn.go actually uses.
+//
+// The `inner` field is typed net.Conn, so whether the buffered path exists at all is a runtime
+// question, and the copy machinery answers it by type-asserting THIS type against N.ExtendedWriter:
+// `bufio.Copy` sees only this wrapper, cannot see through it (the named field above is deliberate),
+// and therefore takes the buffered branch on the strength of these two methods alone. So the two
+// methods must not exist unless they can honour the request.
+//
+// Both current construction sites pass a v2rayhttp.HTTP2ConnWrapper, which embeds an
+// N.ExtendedConn, so the assertion below succeeds and this is not a live defect - it was checked at
+// both sites (connect_udp.go:134, server_h2.go:261) rather than assumed. It is still written to fail
+// LOUDLY, because the branch it guards is the one shape that must never be silent: the caller has
+// already taken ownership of the buffer's bytes, so returning nil here reports a successful write
+// for a datagram that was never written, and nothing downstream can detect it.
+//
+// An earlier version returned nil and was therefore a silent black hole for any future inner
+// connection that is not an ExtendedConn. Loud beats silent for an unreachable branch: if it ever
+// becomes reachable, the failure is a visible error on the first datagram rather than packet loss
+// with no trace.
 func (c *normalizingConn) WriteBuffer(buffer *buf.Buffer) error {
 	extendedConn, isExtendedConn := c.inner.(N.ExtendedConn)
 	if !isExtendedConn {
-		return nil
+		return E.New("http: buffered write requested for a connection that cannot honour it (",
+			fmt.Sprintf("%T", c.inner), " is not an N.ExtendedConn); refusing rather than ",
+			"reporting a write that did not happen")
 	}
 	return normalizeStreamError(extendedConn.WriteBuffer(buffer))
 }
@@ -286,7 +307,9 @@ func (c *normalizingConn) WriteBuffer(buffer *buf.Buffer) error {
 func (c *normalizingConn) ReadBuffer(buffer *buf.Buffer) error {
 	extendedConn, isExtendedConn := c.inner.(N.ExtendedConn)
 	if !isExtendedConn {
-		return nil
+		return E.New("http: buffered read requested for a connection that cannot honour it (",
+			fmt.Sprintf("%T", c.inner), " is not an N.ExtendedConn); refusing rather than ",
+			"reporting a read that did not happen")
 	}
 	return normalizeStreamError(extendedConn.ReadBuffer(buffer))
 }
