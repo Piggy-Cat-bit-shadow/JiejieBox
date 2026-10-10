@@ -69,7 +69,7 @@ func TestPacketDestinationCacheKeyDistinguishesAddresses(t *testing.T) {
 	}
 }
 
-// The guard must remain the ONLY way a guarded datagram is read.
+// The guard must remain the ONLY way a guarded datagram is read, AND the only way a reply is written.
 //
 // sing/common has several read paths that do not go through ReadPacket:
 // ReadFrom (N.NetPacketReader), ReadCachedPacket (N.CachedPacketReader),
@@ -83,6 +83,24 @@ func TestPacketDestinationCacheKeyDistinguishesAddresses(t *testing.T) {
 // adding ReaderReplaceable/UpstreamReader would let the copy machinery unwrap
 // to the raw connection. That would re-open the very bypass this guard exists
 // to close, and it would do so without any test failing.
+//
+// The WRITE side is symmetric and was, until this test, unpinned - which is the
+// more dangerous omission of the two, because the guard deliberately DOES expose
+// Upstream() (see below) and so already satisfies the WithUpstream assertion that
+// the batch machinery makes. createPacketBatchWriter reaches the unwrap branch
+// with a single `ok && u.WriterReplaceable()` test:
+//
+//	if u, ok := writer.(N.WriterWithUpstream); ok && u.WriterReplaceable() {
+//		if u, ok := writer.(common.WithUpstream); ok {
+//			return CreatePacketBatchWriter(u.Upstream().(N.PacketWriter))
+//		}
+//	}
+//
+// The guard exposes Upstream, so `ok` is already true; the ONLY thing declining
+// the unwrap is the absent WriterReplaceable marker. That makes one method the
+// entire difference between "guarded with a per-datagram check" and "batched
+// straight to the raw socket". Adding it would look like a performance
+// improvement and read like one in review.
 //
 // This test pins the invariant, so a refactor that widens the embedding or
 // adds a replaceable marker fails loudly here instead of quietly disabling the
@@ -109,6 +127,48 @@ func TestPacketDestinationGuardExposesNoBypassReadPath(t *testing.T) {
 	if _, ok := guarded.(N.WithUpstreamReader); ok {
 		t.Fatal("the guard must not expose UpstreamReader: the copy machinery " +
 			"would unwrap past the guard to the raw connection")
+	}
+
+	// The write side. Same unwrap, same consequence, and one method away.
+	//
+	// These are asserted as METHOD SETS rather than as interface satisfaction.
+	// The first draft of this test asked whether the guard satisfied
+	// N.PacketBatchWriter and N.WithUpstreamWriter, and a mutant proved both
+	// assertions decorative: CreatePacketBatchWriter is declared on a separate
+	// creator interface, and the guard could never satisfy either one whatever it
+	// gained. An assertion that cannot fail is worse than none, because it reads
+	// as coverage. The two methods below are the ones that genuinely decide the
+	// unwrap, so they are named directly.
+	if _, ok := guarded.(interface{ WriterReplaceable() bool }); ok {
+		t.Fatal("the guard must not advertise a replaceable writer. It exposes " +
+			"Upstream(), so it already satisfies the WithUpstream assertion that " +
+			"createPacketBatchWriter makes - WriterReplaceable is the only thing " +
+			"declining the unwrap to the raw socket")
+	}
+	if _, ok := guarded.(interface{ UpstreamWriter() N.PacketWriter }); ok {
+		t.Fatal("the guard must not expose UpstreamWriter: the batch and " +
+			"vectorised creators unwrap through it to the raw connection")
+	}
+
+	// And the property the two above rely on: the guard DOES reach its upstream
+	// through the spelling the unwrap uses, which is exactly why the absent
+	// marker above is load-bearing rather than incidental. If this ever stops
+	// being true the checks above become vacuous, and a vacuous guard test is
+	// worse than none because it reads as coverage.
+	//
+	// Upstream() any is the common.WithUpstream spelling, which is the branch
+	// createPacketBatchWriter would take for this type.
+	upstream, ok := guarded.(interface{ Upstream() any })
+	if !ok {
+		t.Fatal("the guard is expected to expose Upstream() - if that changed, " +
+			"re-derive whether the write-side checks above are still meaningful " +
+			"rather than deleting them")
+	}
+	if upstream.Upstream() != nil {
+		// A zero-value guard has a nil embedded PacketConn, so Upstream() must
+		// return nil. A non-nil value here would mean the method does not simply
+		// forward the embedded connection.
+		t.Fatal("a zero-value guard must report a nil upstream")
 	}
 }
 
