@@ -67,6 +67,17 @@ func (c *HTTPConn) Read(b []byte) (n int, err error) {
 			c.responseCache = nil
 		}
 		if n > 0 {
+			// The cache is EXHAUSTED as soon as its length reaches zero, and it must be released
+			// here rather than waiting for a following read to report EOF. Nothing can be served from
+			// an empty cache, so holding it only makes ReaderReplaceable() report false and costs the
+			// copy path an unwrap it is entitled to. Waiting for the EOF read is not equivalent: a
+			// caller that stops exactly at the end of the body - which is the normal case, since the
+			// body length is known - never makes that read, and the connection would stay
+			// unreplaceable for its whole remaining life.
+			if c.responseCache.Len() == 0 {
+				c.responseCache.Release()
+				c.responseCache = nil
+			}
 			return n, nil
 		}
 	}
@@ -113,8 +124,24 @@ func (c *HTTPConn) writeRequest(payload []byte) error {
 	return nil
 }
 
+// ReaderReplaceable reports whether the copy path may unwrap past this connection to the one
+// underneath.
+//
+// It must be false while a response cache is held. `UnwrapReader` follows this flag to `Upstream()`
+// and hands the RAW connection to the copy loop, so anything this type has already consumed from the
+// transport but not yet handed to the caller becomes unreachable: the cached bytes live in
+// responseCache and are only ever served by Read.
+//
+// That window is real rather than theoretical. Reading the response headers through a bufio.Reader
+// necessarily over-reads - `reader.Buffered()` is non-zero whenever the server's first body bytes
+// arrived in the same segment as the headers - so responseCache is populated at exactly the moment
+// responseRead becomes true. Returning true there would silently drop the head of every response body
+// whose first segment carried more than the headers.
+//
+// This is reachable in production: HTTP2ConnWrapper embeds an N.ExtendedConn (an INTERFACE), so this
+// method and Upstream() are promoted through it and UnwrapReader sees them.
 func (c *HTTPConn) ReaderReplaceable() bool {
-	return c.responseRead
+	return c.responseRead && c.responseCache == nil
 }
 
 func (c *HTTPConn) WriterReplaceable() bool {
