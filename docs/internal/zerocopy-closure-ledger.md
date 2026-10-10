@@ -64,7 +64,24 @@ advertisement), and `trackedConn`'s activity tracking (anticipated by `conn_recl
 none; every struct embedding `N.ExtendedConn` (an interface, which promotes dynamic methods) exposing
 `Upstream()` → four, all correct; every narrow-interface wrapper with capabilities but no `Upstream()` → one,
 a deliberate write-only shim. The objective's own exemplar — a scheduler gate observing `Write` — is
-implemented **and** has nine passing tests.
+implemented and covered by **11 passing tests** in `common/trafficsched` (`TestPacketGate*`,
+`TestGatePreservesTheExtendedWriterPath`, `TestGateMTUIsAbsentWhenTheChainHasNone`,
+`TestGateDropsVectorisedTruthfullyWhenTheUpstreamHasNone`, and the handshake-visibility pair).
+
+The batch-loss fix is covered by **3 tests** in `route/udp_batch_capability_test.go`
+(`TestProductionPacketGateForwardsGeometry`, `TestCounterWrapperMustNotEatPacketBatchWriter`,
+`TestCounterWrapperKeepsTheDestinationCounters`), and the red control is real: reintroducing the original
+defect — `CreatePacketBatchWriter` returning `nil, false` — fails
+`TestCounterWrapperMustNotEatPacketBatchWriter` with *"losing it degrades every UDP session of a
+counter-carrying destination from one batched syscall to one syscall per datagram; the data still arrives,
+so no functional test notices."*
+
+> **The counts in this ledger were wrong in an earlier revision and are corrected here.** It claimed "8
+> regression tests" for the batch fix (actual: 3), and the round reports before it claimed "nine passing
+> tests" for the gate (actual: 11). Both were recalled rather than counted — which is the same failure mode
+> as the `scidLen` marker and the "kernel_rx has no effect" sentence: a plausible number asserted from
+> memory. Every count here was re-derived by running `go test -v` and counting `--- PASS` lines, and the
+> test names are listed so the counts can be checked without re-running anything.
 
 ### 4. Shadowsocks steady-state copy — **DONE (measured keep)**
 
