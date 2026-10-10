@@ -510,6 +510,11 @@ echo | openssl s_client -servername example.com -connect example.com:443 2>/dev/
 
     即使使用 `splice(2)`，kTLS RX 也肯定会降低性能，因此不建议启用。
 
+!!! quote ""
+
+    RX splice **仅适用于客户端**。在服务端 splice 路径会被拒绝，连接改为通过用户态读取，
+    并在发起请求时输出一条警告。因此在这里 `splice(2)` 无法为入站带来任何帮助。
+
 启用内核 TLS 接收支持。
 
 #### handshake_timeout

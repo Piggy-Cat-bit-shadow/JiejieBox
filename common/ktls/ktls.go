@@ -106,8 +106,8 @@ func (c *Conn) SyscallConnForRead() syscall.RawConn {
 		// The same message used to be logged at Debug, which is off in production, so the actual
 		// reason was invisible precisely when it mattered.
 		c.logger.WarnContext(c.ctx, "ktls: RX splice was requested but is unavailable on the server "+
-			"side, since it causes an unknown failure; falling back to userspace copy. kernel_rx has "+
-			"no effect on a server")
+			"side, since it causes an unknown failure; falling back to userspace copy. The RX SPLICE is "+
+			"client-only, so this server connection will not read through splice")
 		return nil
 	}
 	c.logger.DebugContext(c.ctx, "ktls: RX splice requested")
