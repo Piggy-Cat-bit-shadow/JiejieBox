@@ -32,7 +32,9 @@ func TestSpliceDiagnostics_RecordsEachReason(t *testing.T) {
 	// Success is reported through successes(), NOT through the reason table. Listing it in
 	// both places would double-count every spliced session and break the
 	// Attempts == Successes + sum(Reasons) invariant the device report relies on.
-	if _, present := d.snapshot()["success"]; present {
+	// The name is taken from the source of truth rather than written out, so renaming the rendered
+	// reason cannot silently turn this guard into a check for a string nothing produces.
+	if _, present := d.snapshot()[spliceReasonSuccess.String()]; present {
 		t.Error("success must not appear in the reason table; it has its own accessor")
 	}
 	if d.successes() != 2 {
@@ -52,7 +54,7 @@ func TestSpliceDiagnostics_ZeroReasonsAreOmitted(t *testing.T) {
 	var d spliceDiagnostics
 	d.recordOutcome(spliceReasonTargetNoUpstream)
 	snap := d.snapshot()
-	if _, present := snap["success"]; present {
+	if _, present := snap[spliceReasonSuccess.String()]; present {
 		t.Error("a reason that never occurred must not appear in the snapshot")
 	}
 	if len(snap) != 1 {
@@ -176,7 +178,7 @@ func TestSpliceDiagnostics_AttemptsInvariantHolds(t *testing.T) {
 		"every session must contribute to exactly one bucket")
 
 	// And success must not appear in the reason table, or it would be counted twice.
-	_, successInReasons := snapshot.Reasons["success"]
+	_, successInReasons := snapshot.Reasons[spliceReasonSuccess.String()]
 	require.False(t, successInReasons, "success must not also be listed as a reason")
 }
 

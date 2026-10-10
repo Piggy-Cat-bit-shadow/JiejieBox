@@ -197,7 +197,7 @@ func TestTCPSpliceDiagnostics_InvariantAndFormat(t *testing.T) {
 
 	// Success is reported separately and never as a reason, or every spliced flow would be
 	// counted twice.
-	require.NotContains(t, snapshot.Reasons, "success")
+	require.NotContains(t, snapshot.Reasons, spliceReasonSuccess.String())
 
 	summary := snapshot.TCPSpliceSummary()
 	require.True(t, strings.HasPrefix(summary, "TCP splice diagnostics: attempts=7 successes=2 ratio=0.286"), summary)

@@ -29,11 +29,18 @@ import (
 //
 // # What these counters can and cannot tell you
 //
-// They answer "of the UDP sessions handled here, how many spliced, and for those
-// that did not, at which point did the decision fail". That is what a real-device
-// A/B run needs, and it is the whole of the claim: this is observation, not
-// optimisation. No production behaviour, eligibility rule or wrapper semantics
-// change, and no path is made spliceable that was not already.
+// They answer "of the UDP sessions handled here, how many handovers sing-tun ACCEPTED, and for those that
+// it did not, at which point did the decision fail". That is what a real-device A/B run needs, and it is
+// the whole of the claim: this is observation, not optimisation. No production behaviour, eligibility rule
+// or wrapper semantics change, and no path is made spliceable that was not already.
+//
+// It is deliberately NOT a kernel-splice counter, and the distinction is not pedantic. A flow counted as
+// accepted is handed to sing-tun's netstack, which moves packets with userspace readv/writev; the only
+// kernel splice in this dependency set lives in the copy-engine path, which a successful handover returns
+// early from. So "accepted" and "spliced in the kernel" are different facts about disjoint paths, and a
+// device report read as the second would be wrong in the direction that flatters the change. The rendered
+// name is `handover_accepted` for that reason. See the level table on spliceReasonSuccess for where the
+// other two levels would have to be recorded, and by whom.
 //
 // The reasons correspond one-to-one with the points the existing code can actually
 // distinguish. There are deliberately no speculative entries, because a reason that
@@ -47,7 +54,31 @@ import (
 type spliceReason uint8
 
 const (
-	// spliceReasonSuccess: the flow was spliced and packets bypass userspace.
+	// spliceReasonSuccess: sing-tun ACCEPTED the handover and queued it. The name is historical and
+	// says more than the fact does - read the rendered string, not the identifier.
+	//
+	// This is level 2 of four, and the only one `Splice()` can report: it returns a bare bool, so
+	// acceptance and engagement are indistinguishable at this layer.
+	//
+	//	1. splice_eligible       - both userspace walks said yes
+	//	2. handover_accepted     - this counter; queued, outcome not yet known
+	//	3. copy_direct_selected  - the copy engine chose the syscall backend
+	//	4. actual_kernel_splice  - unix.Splice actually ran
+	//
+	// Levels 3 and 4 are NOT observable from this package, and the two producer paths are disjoint -
+	// only one of them can ever reach the kernel:
+	//
+	//   * Path T (this counter) hands the descriptors to sing-tun's netstack, which moves packets with
+	//     userspace readv/writev: `sing-tun` contains no `unix.Splice` call at all. A flow counted here
+	//     is therefore NOT kernel-spliced, however healthy it looks.
+	//   * Path C is the copy engine, which holds the only kernel splice in the dependency set
+	//     (sing/common/bufio/splice_linux.go). A successful handover on path T returns early and no
+	//     copy loop starts, so the two are mutually exclusive by construction.
+	//
+	// What this means for reading a device report: this number answers "how many flows left userspace
+	// through the netstack", not "how many were spliced in the kernel". Different questions, and only
+	// the first is measured here. The rendered name says `handover_accepted` so that a report cannot be
+	// read as the second.
 	spliceReasonSuccess spliceReason = iota
 
 	// --- source side, from unwrapSpliceSource -------------------------------
@@ -136,7 +167,7 @@ const (
 func (r spliceReason) String() string {
 	switch r {
 	case spliceReasonSuccess:
-		return "success"
+		return "handover_accepted"
 	case spliceReasonSourceNotNAT:
 		return "source_not_nat"
 	case spliceReasonSourceReaderWriterMismatch:
@@ -214,7 +245,7 @@ func (d *spliceDiagnostics) total() uint64 {
 	return total
 }
 
-// successes is the number of sessions that spliced.
+// successes is the number of sessions whose handover sing-tun ACCEPTED. It is not a count of kernel
 func (d *spliceDiagnostics) successes() uint64 {
 	return d.counters[spliceReasonSuccess].Load()
 }
