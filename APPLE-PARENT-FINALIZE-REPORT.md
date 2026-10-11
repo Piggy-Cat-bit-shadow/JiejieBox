@@ -229,8 +229,8 @@ gate exists for.
 | `apple-client-source.sh assert-shared-source` | **PASS** |
 | `apple-client-source.sh resolve` (one SHA, both platforms) | **PASS** |
 | `apple-client-source.sh verify ios` | **PASS** |
-| `check-apple-source-selection.sh` | **PASS — 42 passed, 0 failed** |
-| `check-libbox-abi.sh` layers 1–2 | **PASS** |
+| `check-apple-source-selection.sh` | **PASS — 42 passed, 0 failed** — including the cases that *must* fail: a macOS-specific Apple SHA in the refs file is refused |
+| `check-libbox-abi.sh` layers 1–2 | **PASS** — all 9 contract methods bound, non-pointer-bearing result |
 | `check-libbox-abi.sh` layer 4 Apple sweep (666 sources) | **PASS** |
 | `check-libbox-abi.sh` layer 5 both clients | **PASS** |
 | `check-libbox-abi.sh` layer 3 (`gobind` absent) | **SKIP_WITH_REASON** |
@@ -265,10 +265,19 @@ forbidden to touch and did not run.
 ## 8. Remote Verification
 
 ```text
-local HEAD:            see below - quoted at verification time
-remote finalize HEAD:  identical
+local HEAD:            == remote finalize HEAD   (compared after a re-fetch, not from push output)
+remote finalize HEAD:  == local HEAD
 remote gitlink:        bb5309b4a6c5b06382e1277a6e7ac0fbeadc9a72
 Apple main:            bb5309b4a6c5b06382e1277a6e7ac0fbeadc9a72
+```
+
+The branch tip is deliberately **not** transcribed as a literal. This report is a commit on the
+branch it describes, so any tip written here would be one commit stale the moment it were
+committed, and updating it would move the tip again. Resolve it instead:
+
+```bash
+git rev-parse origin/jiejiebox/apple-finalize     # the branch tip, always current
+git ls-tree origin/jiejiebox/apple-finalize clients/apple   # the pin it carries
 ```
 
 Verified by re-fetching and comparing, not by trusting the push output:
