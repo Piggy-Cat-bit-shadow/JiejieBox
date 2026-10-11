@@ -100,16 +100,45 @@ func (l lifecycle) slept() {
 	}
 }
 
-// resumed records that this process ran again after a sleep: the EDGE, and nothing else.
+// resumed records that this process ran again after a sleep: it publishes NOTHING.
 //
-// It is deliberately NOT a device wake. See the file comment: the platform resumes the extension for
-// every push and background task, and releasing speculative work for those is the wake storm. What a
-// resume does carry is time, which is all the reuse epoch needs.
-func (l lifecycle) resumed() {
-	if l.governor != nil {
-		l.governor.Resumed()
-	}
-}
+// It is deliberately NOT a device wake - the platform resumes the extension for every push and
+// background task, and releasing speculative work for those is the wake storm - and it is also
+// deliberately not a reuse boundary, which is the half that took a physical device to see.
+//
+// # What used to happen, and why it was wrong
+//
+// This called `governor.Resumed()`. That reads as "time passed, so distrust what predates the
+// sleep", and it is the only place a resume edge reached the governor from a mere resume: `woke()`
+// and `applyPauseEvent` both publish their own, and they publish at the level release. So this call
+// was the one publishing a boundary in the middle of a device-sleep episode.
+//
+// `Resumed()` does two things at once, and the second is the damage: it publishes the boundary, and
+// it sets `resumeNoted`. `noteSleepLocked` decides whether a sleep report starts a NEW measurement
+// with `!pausedSince.IsZero() && !resumeNoted`, so setting that flag is also what re-arms the anchor.
+// One iPhone 17 Pro Max locked for 28m24s, with the extension suspended and resumed 13 times inside
+// that single locked period, therefore produced 13 anchors and 12 boundaries - and the boundary the
+// unlock published, the only one a flow arriving after the unlock ever sees, reported 28.29 seconds
+// for a 28-minute sleep.
+//
+// # Why publishing nothing is right, and why it needs no new state
+//
+// One physical device-sleep episode contains many NE suspend/resume cycles. The boundary that
+// episode owes is owed at its END, and the end of an episode is the device becoming usable, which
+// on this platform is the unlock - `woke()`. A resume in the middle of an episode is not the end of
+// anything: the display lit up for a notification, or a push ran.
+//
+// With this call gone, the governor's existing fields express exactly the required state and need no
+// splitting. During an episode `pausedSince` is set and `resumeNoted` is false, so `noteSleepLocked`
+// returns early and the anchor does not move however many times the extension is cycled. At the
+// unlock `woke()` publishes the one boundary, measured from the anchor to then, which sets
+// `resumeNoted` - and THAT is what re-arms the anchor for the next episode. "The boundary is
+// published" and "the measurement is closed" coincide, because the only publisher left is the
+// episode's end, so the single boolean is not carrying two jobs after all.
+//
+// It is still called rather than deleted so that the decision sits at the call sites, which are the
+// two places that have to keep it: `screenState(on: true)` and `Box.DeviceResumed()`.
+func (l lifecycle) resumed() {}
 
 // woke records that the device became usable: the reuse EDGE first, then the LEVEL wake.
 //

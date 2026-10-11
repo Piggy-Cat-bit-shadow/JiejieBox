@@ -9,44 +9,38 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// These tests pin P1-C: a CURRENT-STATE read of the Apple device axis may reconcile the level and may
-// never start a new reuse measurement.
+// These tests pin P1-C: one physical device-sleep episode produces one sleep anchor and exactly one
+// reuse boundary, however many times the NetworkExtension is suspended and resumed inside it.
 //
-// # The defect they exist for
+// # The defect, and the two attempts at it
 //
-// The Apple client re-reads `com.apple.iokit.hid.displayStatus` and `com.apple.springboard.lockstate`
-// in two places that are not transitions - once at observer start, and once on every
-// NetworkExtension resume - and both reads arrive through the same bridge as a real transition does.
-// The core maps a sleep fact to `lifecycle.slept()`, which publishes an EDGE
-// (`governor.SleepStarted()`) and then the LEVEL, so a re-read was delivered as "a new sleep began".
+// The first attempt routed a current-state read (`.snapshot`) to a level reconcile instead of a sleep
+// edge. That is correct semantics and it is kept - see `TestAReReadReconcilesTheLevelAndNeverAnchors`
+// - but the device showed it is not the path that fires: a real iPhone locked for 28m24s produced 26
+// `ne-sleep`/`ne-wake` callbacks and ZERO publishable re-reads, because a re-read only publishes when
+// the value changed and the value did not change.
 //
-// The resume is what makes that destructive rather than merely redundant, and the ordering is not an
-// accident: `ExtensionProvider.wake()` wakes the core first and re-reads second.
+// The second attempt gated the anchor move on `IsDevicePaused()`. It was reverted, and the reason is
+// worth keeping: `noteSleepLocked` is not only an anchor writer, it is also the only thing that
+// clears `resumeNoted`, which is the per-sleep boundary latch. Removing the anchor move removed the
+// re-arm, and a real iPhone then published **zero** boundaries for a ten-minute sleep - strictly
+// worse than the bug, because nothing was retired at all. See
+// P1C_IPHONE_DEVICE_CLOSURE_REPORT.md.
 //
-//	commandServer.wake()  -> Box.DeviceResumed() -> lifecycle.resumed() -> governor.Resumed()
-//	                          ... which publishes the boundary for the sleep that just ended AND
-//	                          sets `resumeNoted`, the flag `noteSleepLocked` uses to decide whether a
-//	                          sleep report is a NEW sleep.
-//	resync()              -> a re-read -> (before this fix) SleepStarted() -> noteSleepLocked sees
-//	                          `resumeNoted == true`, so the report is honoured as a fresh sleep and
-//	                          `pausedSince` is moved to now.
+// # What the fix actually is
 //
-// The measured five-hour sleep is then re-anchored, and the unlock that ends it publishes the seconds
-// between the resume and the re-read - a `ReuseSuspect` boundary for a phone that was asleep all
-// night, instead of the `ReuseRetire` the real duration earns. The pool that should have been retired
-// before the first flow after the unlock is kept instead, and that flow is handed a socket the sleep
-// killed.
+// `lifecycle.resumed()` no longer calls `governor.Resumed()`. `woke()` and `applyPauseEvent` already
+// publish at the level release, so the bridge was publishing a boundary in the MIDDLE of an episode,
+// and `Resumed()` sets `resumeNoted`, which is also what re-arms the anchor. One premature resume
+// therefore both consumed the boundary and moved the anchor for every sleep report that followed.
 //
-// # Why the assertions are on the boundary and on the level
-//
-// The boundary carries the measured duration and the verdict, which is the user-visible consequence;
-// the level is the object every subsystem reads. Asserting on either alone would miss half of it: a
-// fix that stopped the re-anchor by suppressing the read entirely would keep the boundary right and
-// leave the "the extension restarted while the phone was locked" case unhandled.
+// With it gone the governor needs no new state: during an episode `pausedSince` is set and
+// `resumeNoted` is false, so `noteSleepLocked` returns early and the anchor holds; at the unlock the
+// one boundary is published and sets `resumeNoted`, which re-arms the anchor for the next episode.
 
-// reconcileTestBridge is `newAppleBridge` under the shipping policy, with the deep-idle deadline
-// pushed out of the way so a test about the anchor is not also racing the idle timer.
-func reconcileTestBridge(t *testing.T) (*power.Governor, lifecycle, *testClock, *[]power.ReuseBoundary) {
+// episodeBridge is `newAppleBridge` under the shipping policy, with the deep-idle deadline pushed out
+// of the way so a test about the episode is not also racing the idle timer.
+func episodeBridge(t *testing.T) (*power.Governor, lifecycle, *testClock, *[]power.ReuseBoundary) {
 	t.Helper()
 	clock := newTestClock()
 	governor, bridge, _, _ := newAppleBridge(t, bridgePolicy(), clock)
@@ -57,94 +51,176 @@ func reconcileTestBridge(t *testing.T) (*power.Governor, lifecycle, *testClock, 
 	return governor, bridge, clock, boundaries
 }
 
-// TestP1CAResumeReReadMustNotReanchorTheSleep is the regression test, stated as the sequence the
-// device produces.
+// TestManySuspendResumeCyclesInOneSleepIsOneBoundary is the device trace as a test, and the
+// regression P1-C is closed on.
 //
-// Sleep starts at T0 through the transition path, five hours pass with the extension suspended, the
-// extension resumes (which publishes the boundary for those five hours), the client re-reads both
-// names and finds the phone still locked with the screen still off, and twelve seconds later the user
-// unlocks.
-//
-// What must be true: the five hours are measured once, the verdict is the retire the policy gives
-// that duration, and the unlock does not publish a second boundary for the same sleep. What must NOT
-// happen is the re-read moving the anchor, which is what the twin below demonstrates.
-func TestP1CAResumeReReadMustNotReanchorTheSleep(t *testing.T) {
-	governor, bridge, clock, boundaries := reconcileTestBridge(t)
+// The shape is the real one, measured on an iPhone 17 Pro Max (iOS 26.4.2) locked once for 28m24s:
+// the extension was suspended and resumed 13 times inside that single locked period. The pre-fix
+// core wrote 13 anchors and published 12 boundaries for it, and the boundary the unlock published -
+// the only one a flow arriving after the unlock ever sees - reported 28.29 seconds for a 28-minute
+// sleep.
+func TestManySuspendResumeCyclesInOneSleepIsOneBoundary(t *testing.T) {
+	governor, bridge, clock, boundaries := episodeBridge(t)
 
-	// T0: the device goes to sleep. A transition the platform witnessed, so this is the edge path.
+	// The screen goes off and the device locks: one transition, therefore one episode.
 	bridge.screenState(false)
-	clock.Advance(5 * time.Hour)
+	startedAt := clock.Now()
 
-	// The extension resumes: `commandServer.wake()` -> `DeviceResumed()` -> `resumed()`.
-	bridge.resumed()
-	require.Len(t, *boundaries, 1, "the resume did not publish the boundary for the sleep it ended")
-	require.Equal(t, 5*time.Hour, (*boundaries)[0].Sleep)
+	// Thirteen suspend/resume cycles inside the same episode. `ExtensionProvider.sleep()` maps to
+	// `slept()` and `wake()` wakes the core and then re-reads both names, so this loop is the pair
+	// the device produced, 26 callbacks over.
+	for i := 0; i < 13; i++ {
+		clock.Advance(time.Duration(45+i*20) * time.Second)
+		bridge.slept() // commandServer.pause() -> Box.DeviceSlept()
+		clock.Advance(time.Duration(41+i*11) * time.Second)
+		bridge.resumed() // commandServer.wake() -> Box.DeviceResumed()
+		bridge.reconcileScreenState(false)
+		bridge.reconcileLockState(true)
+	}
+
+	require.Empty(t, *boundaries, "a suspend/resume cycle inside one episode published a boundary")
+
+	// The user finally unlocks, 28 minutes after the screen went off.
+	clock.Advance(20 * time.Second)
+	bridge.lockState(false)
+	elapsed := clock.Now().Sub(startedAt)
+
+	require.Len(t, *boundaries, 1, "one sleep episode published more than one boundary")
+	require.Equal(t, elapsed, (*boundaries)[0].Sleep,
+		"the boundary did not span the episode: an intermediate resume consumed it")
+	require.Greater(t, (*boundaries)[0].Sleep, time.Minute,
+		"the boundary measured the last gap instead of the sleep")
 	require.Equal(t, power.ReuseRetire, (*boundaries)[0].Action)
+	require.Equal(t, uint64(1), governor.ReuseEpoch(),
+		"one sleep episode advanced the reuse epoch more than once")
+}
 
-	// The client re-reads both names two seconds later and finds the phone still asleep: display off,
-	// locked. This is the P1-C path.
+// TestATransientGlanceDoesNotConsumeTheBoundary is the case that made the second attempt fail, kept
+// as a test so it cannot come back.
+//
+// A push lights the lock screen one second into the sleep and it goes dark again two seconds later.
+// That glance is not the end of the episode, so it must not publish - and in particular it must not
+// publish as `ReuseKeep`, which would leave the governor believing the episode's one boundary had
+// already been spent. That is exactly what happened when the anchor was gated instead: the glance
+// consumed the boundary and the ten-minute sleep that followed retired nothing.
+func TestATransientGlanceDoesNotConsumeTheBoundary(t *testing.T) {
+	governor, bridge, clock, boundaries := episodeBridge(t)
+
+	bridge.screenState(false)
+	startedAt := clock.Now()
+
+	clock.Advance(time.Second)
+	bridge.screenState(true) // the notification lights the lock screen
 	clock.Advance(2 * time.Second)
-	bridge.reconcileScreenState(false)
-	bridge.reconcileLockState(true)
+	bridge.screenState(false) // and it goes dark again, nobody having unlocked
 
-	// Ten seconds after that, the user actually unlocks.
-	clock.Advance(10 * time.Second)
+	// Ten more minutes locked, with the extension cycling.
+	for i := 0; i < 6; i++ {
+		clock.Advance(90 * time.Second)
+		bridge.slept()
+		clock.Advance(10 * time.Second)
+		bridge.resumed()
+	}
+
+	require.Empty(t, *boundaries, "the glance consumed the episode's boundary")
+
+	clock.Advance(time.Second)
 	bridge.lockState(false)
 
-	require.Len(t, *boundaries, 1,
-		"a current-state read started a second measurement, so the unlock published a second boundary")
-	require.Equal(t, 5*time.Hour, (*boundaries)[0].Sleep,
-		"the anchor moved: the measured sleep is no longer the five hours the device was asleep")
-	require.Equal(t, power.ReuseRetire, (*boundaries)[0].Action)
-
-	// The verdict is the real duration's, so the pool that predates the sleep is retired rather than
-	// kept. This is the consequence the defect had.
+	require.Len(t, *boundaries, 1, "the episode did not publish exactly one boundary")
+	require.Equal(t, clock.Now().Sub(startedAt), (*boundaries)[0].Sleep)
+	require.Equal(t, power.ReuseRetire, (*boundaries)[0].Action,
+		"the glance turned a ten-minute sleep into a keep")
 	require.Equal(t, uint64(1), governor.ReuseEpoch())
 }
 
-// TestP1CTheEdgeFormIsWhatReanchors is the twin: the SAME sequence, with the re-read delivered
-// through the edge entry point the bridge used to use for it.
-//
-// It is here for two reasons. It is the reverse-break - deleting the fix must make the test above
-// fail, and this is what it fails into - and it is the standing proof that the assertions above are
-// about the delivery and not about the clock. It is deliberately NOT asserting that an edge is always
-// wrong: `screenState(false)` at T0 is exactly right.
-func TestP1CTheEdgeFormIsWhatReanchors(t *testing.T) {
-	governor, bridge, clock, boundaries := reconcileTestBridge(t)
+// TestOneSleepAndOneResumeIsOneBoundary is the simplest shape: a resume proves time passed, and the
+// episode it belongs to owes one boundary when it ends.
+func TestOneSleepAndOneResumeIsOneBoundary(t *testing.T) {
+	governor, bridge, clock, boundaries := episodeBridge(t)
 
-	bridge.screenState(false)
-	clock.Advance(5 * time.Hour)
+	bridge.slept()
+	clock.Advance(30 * time.Second)
 	bridge.resumed()
+	require.Empty(t, *boundaries, "a resume in the middle of an episode published a boundary")
+
+	clock.Advance(90 * time.Second)
+	bridge.lockState(false) // the unlock ends the episode
+
 	require.Len(t, *boundaries, 1)
-	require.Equal(t, 5*time.Hour, (*boundaries)[0].Sleep)
-
-	// The defect: the re-read takes the EDGE path, which is `slept()` -> `SleepStarted()`.
-	clock.Advance(2 * time.Second)
-	bridge.screenState(false)
-	bridge.lockState(true)
-
-	clock.Advance(10 * time.Second)
-	bridge.lockState(false)
-
-	require.Len(t, *boundaries, 2, "the edge form no longer re-anchors; this test is the reverse-break")
-	require.Equal(t, 10*time.Second, (*boundaries)[1].Sleep,
-		"the second boundary no longer measures from the re-anchor")
-	require.Equal(t, power.ReuseSuspect, (*boundaries)[1].Action,
-		"a five-hour sleep was reported as a ten-second suspect pause")
-	require.Equal(t, uint64(2), governor.ReuseEpoch(),
-		"the defect advanced the epoch a second time for one sleep")
+	require.Equal(t, 2*time.Minute, (*boundaries)[0].Sleep,
+		"the boundary did not span from the sleep to the unlock")
+	require.Equal(t, power.ReuseRetire, (*boundaries)[0].Action)
+	require.Equal(t, uint64(1), governor.ReuseEpoch())
 }
 
-// TestAReconcileOnAFreshBridgeStillEstablishesThePause is T5 at the core level: the re-read is not
+// TestASecondSleepGetsItsOwnAnchorAndBoundary is the property a fix must not trade away.
+//
+// The re-arm is `resumeNoted`, which the boundary published at the unlock sets. A second sleep
+// therefore finds the flag set, `noteSleepLocked` does not return early, and the anchor moves - so
+// the second episode is measured from its own start and not from the first one's.
+func TestASecondSleepGetsItsOwnAnchorAndBoundary(t *testing.T) {
+	governor, bridge, clock, boundaries := episodeBridge(t)
+
+	// First episode.
+	bridge.screenState(false)
+	clock.Advance(30 * time.Minute)
+	bridge.lockState(false)
+	require.Len(t, *boundaries, 1)
+	require.Equal(t, 30*time.Minute, (*boundaries)[0].Sleep)
+
+	// The device is used for a minute, then sleeps again.
+	clock.Advance(time.Minute)
+	bridge.screenState(false)
+	clock.Advance(45 * time.Minute)
+	bridge.lockState(false)
+
+	require.Len(t, *boundaries, 2, "the second sleep was swallowed")
+	require.Equal(t, 45*time.Minute, (*boundaries)[1].Sleep,
+		"the second sleep was measured against the first episode's anchor")
+	require.Equal(t, power.ReuseRetire, (*boundaries)[1].Action)
+	require.Equal(t, uint64(2), governor.ReuseEpoch())
+}
+
+// TestAReReadReconcilesTheLevelAndNeverAnchors is the first half of P1-C, which stays.
+//
+// A current-state read is a LEVEL statement, not a transition. It may establish that the device is
+// not in use and it may never move a measurement already running. The device showed this path does
+// not fire in practice - the value a re-read returns is normally unchanged, so rule 3 collapses it -
+// but the semantics are still the correct ones for the case where it does fire.
+func TestAReReadReconcilesTheLevelAndNeverAnchors(t *testing.T) {
+	governor, bridge, clock, boundaries := episodeBridge(t)
+
+	bridge.screenState(false)
+	startedAt := clock.Now()
+
+	// A long episode with re-reads scattered through it, each finding the phone still asleep.
+	for i := 0; i < 20; i++ {
+		clock.Advance(time.Minute)
+		bridge.reconcileScreenState(false)
+		bridge.reconcileLockState(true)
+	}
+
+	require.Empty(t, *boundaries, "a re-read published a boundary of its own")
+
+	clock.Advance(30 * time.Second)
+	bridge.lockState(false)
+
+	require.Len(t, *boundaries, 1)
+	require.Equal(t, clock.Now().Sub(startedAt), (*boundaries)[0].Sleep,
+		"a re-read moved the anchor")
+	require.Equal(t, uint64(1), governor.ReuseEpoch())
+}
+
+// TestAReReadOnAFreshBridgeStillEstablishesThePause is T5 at the core level: the re-read is not
 // merely suppressed.
 //
 // The case it covers is the one the re-read exists for - the extension restarted while the phone was
 // locked, so the process has no pause on record. `DevicePause()` on a level that is not held moves
 // the level and, through `applyPauseEvent`, publishes the edge and the level together, so the pause
-// and its measurement are established exactly as before. What a reconcile removes is the ability to
-// do that again to a sleep that is already being measured.
-func TestAReconcileOnAFreshBridgeStillEstablishesThePause(t *testing.T) {
-	governor, bridge, clock, boundaries := reconcileTestBridge(t)
+// and its measurement are established exactly as before.
+func TestAReReadOnAFreshBridgeStillEstablishesThePause(t *testing.T) {
+	governor, bridge, clock, boundaries := episodeBridge(t)
 
 	// No transition was ever reported: this process has just started and the phone is already locked.
 	bridge.reconcileScreenState(false)
@@ -153,25 +229,22 @@ func TestAReconcileOnAFreshBridgeStillEstablishesThePause(t *testing.T) {
 	require.Equal(t, power.StateQuiescent, governor.State(),
 		"a re-read on a process with no pause on record did not establish the pause")
 
-	// And a sleep is being measured from it, so the resume that ends the sleep is a real boundary
-	// rather than a no-op. That is what makes the re-read worth keeping at all.
 	clock.Advance(30 * time.Minute)
-	bridge.resumed()
+	bridge.lockState(false)
 
 	require.Len(t, *boundaries, 1, "the pause a re-read established was not being measured")
 	require.Equal(t, 30*time.Minute, (*boundaries)[0].Sleep)
 	require.Equal(t, power.ReuseRetire, (*boundaries)[0].Action)
 }
 
-// TestAReconcileNeverReleasesTheLevel pins the other direction.
+// TestAReReadNeverReleasesTheLevel pins the other direction.
 //
 // A current-state read that finds the device in use must not publish anything: "unlocked" and
 // "display on" are claims about a transition nobody witnessed, and `notify_get_state` answers
 // `NOTIFY_STATUS_OK` with `0` for a name whose state was never set - which on the lock source would
-// read as an unlock at every extension start. The client's policy already refuses these; this is the
-// same refusal one layer down, where it protects every client rather than one.
-func TestAReconcileNeverReleasesTheLevel(t *testing.T) {
-	governor, bridge, _, _ := reconcileTestBridge(t)
+// read as an unlock at every extension start.
+func TestAReReadNeverReleasesTheLevel(t *testing.T) {
+	governor, bridge, _, _ := episodeBridge(t)
 
 	bridge.screenState(false)
 	require.Equal(t, power.StateQuiescent, governor.State())
@@ -183,65 +256,31 @@ func TestAReconcileNeverReleasesTheLevel(t *testing.T) {
 		"a current-state read released the device pause")
 }
 
-// TestAReconcileDoesNotSwallowTheNextRealSleep is T3: the guard must not disarm the axis.
+// TestOneHundredEpisodesAreEachMeasuredOnce is the churn test.
 //
-// After the unlock has released the level, the next display-off is a genuinely new sleep and must
-// start a new measurement - otherwise the fix would trade a duplicate anchor for a missing one, and
-// the pool established after the unlock would be trusted forever.
-func TestAReconcileDoesNotSwallowTheNextRealSleep(t *testing.T) {
-	governor, bridge, clock, boundaries := reconcileTestBridge(t)
+// A boundary that fired twice per episode, or an anchor that never re-armed, is invisible in one
+// cycle and obvious in a hundred: the first shows up as an epoch that outruns the episode count, the
+// second as every episode after the first being measured against the first one's anchor.
+func TestOneHundredEpisodesAreEachMeasuredOnce(t *testing.T) {
+	governor, bridge, clock, boundaries := episodeBridge(t)
 
-	// One full cycle, including the re-read that used to re-anchor.
-	bridge.screenState(false)
-	clock.Advance(30 * time.Minute)
-	bridge.resumed()
-	clock.Advance(2 * time.Second)
-	bridge.reconcileScreenState(false)
-	bridge.lockState(false) // the unlock releases the level
-	require.Len(t, *boundaries, 1)
-
-	// A real second sleep, reported as a transition.
-	clock.Advance(time.Minute)
-	bridge.screenState(false)
-	clock.Advance(45 * time.Minute)
-	bridge.resumed()
-
-	require.Len(t, *boundaries, 2, "the second real sleep was swallowed")
-	require.Equal(t, 45*time.Minute, (*boundaries)[1].Sleep,
-		"the second sleep was measured against the wrong anchor")
-	require.Equal(t, power.ReuseRetire, (*boundaries)[1].Action)
-	require.Equal(t, uint64(2), governor.ReuseEpoch())
-}
-
-// TestAReconcileIsIdempotent pins the property the fix rests on: the level is a level.
-//
-// Any number of re-reads may arrive during one sleep - the extension is resumed for every push and
-// background task - and every one of them must be a no-op rather than a new measurement. The sleep
-// measured at the end is the whole five hours, not the gap since the last read.
-func TestAReconcileIsIdempotent(t *testing.T) {
-	governor, bridge, clock, boundaries := reconcileTestBridge(t)
-
-	bridge.screenState(false)
-
-	// A hundred re-reads spread across the sleep, each finding the phone still locked with the screen
-	// still off. Between them the clock moves, so an anchor that moved would be visible in the
-	// measurement even though the sequence of calls looks the same.
 	for i := 0; i < 100; i++ {
-		clock.Advance(time.Minute)
-		bridge.reconcileScreenState(false)
-		bridge.reconcileLockState(true)
+		bridge.slept()
+		// A suspend/resume cycle inside the episode, which must not add anything.
+		clock.Advance(10 * time.Second)
+		bridge.resumed()
+		// The rest of the episode, then the unlock that ends it.
+		clock.Advance(50 * time.Second)
+		bridge.lockState(false)
+		clock.Advance(time.Minute) // the device is used between episodes
 	}
 
-	require.Empty(t, *boundaries, "a re-read published a boundary of its own")
-	require.Equal(t, power.StateQuiescent, governor.State())
-
-	clock.Advance(5 * time.Hour)
-	bridge.resumed()
-
-	require.Len(t, *boundaries, 1, "the sleep was measured in pieces")
-	// 100 one-minute re-reads, then five hours: the anchor is still the transition's instant.
-	require.Equal(t, 6*time.Hour+40*time.Minute, (*boundaries)[0].Sleep,
-		"the anchor moved: the sleep was measured from a re-read instead of from the transition")
-	require.Equal(t, power.ReuseRetire, (*boundaries)[0].Action)
-	require.Equal(t, uint64(1), governor.ReuseEpoch())
+	require.Len(t, *boundaries, 100, "the episode count and the boundary count disagree")
+	for i, boundary := range *boundaries {
+		require.Equal(t, time.Minute, boundary.Sleep,
+			"episode %d was measured against the wrong anchor", i)
+		require.Equal(t, uint64(i+1), boundary.Epoch)
+		require.Equal(t, power.ReuseRetire, boundary.Action)
+	}
+	require.Equal(t, uint64(100), governor.ReuseEpoch())
 }
