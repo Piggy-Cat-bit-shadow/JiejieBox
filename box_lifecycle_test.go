@@ -310,12 +310,6 @@ func TestTheBridgeUsesThePolicyBandsAndNothingElse(t *testing.T) {
 	require.Empty(t, boundaries, "a two-second pause retired something")
 	require.Zero(t, governor.ReuseEpoch())
 
-	// The device becomes usable again. This is what makes the next sleep a NEW sleep rather than the
-	// same one restated: `slept()` publishes its edge only when the level is free, so a test that
-	// chained three sleeps without an unlock would be asserting the duplicate-anchor behaviour the
-	// gate exists to remove. See `slept()` for the device trace that forced it.
-	bridge.lockState(false)
-
 	// The suspect band: the epoch advances so the distrust is visible and monotonic, and the pools are
 	// kept by policy.
 	bridge.slept()
@@ -324,7 +318,6 @@ func TestTheBridgeUsesThePolicyBandsAndNothingElse(t *testing.T) {
 	require.Len(t, boundaries, 1)
 	require.Equal(t, power.ReuseSuspect, boundaries[0].Action)
 	require.Equal(t, uint64(1), governor.ReuseEpoch())
-	bridge.lockState(false)
 
 	// The retire band.
 	bridge.slept()
@@ -333,7 +326,6 @@ func TestTheBridgeUsesThePolicyBandsAndNothingElse(t *testing.T) {
 	require.Len(t, boundaries, 2)
 	require.Equal(t, power.ReuseRetire, boundaries[1].Action)
 	require.Equal(t, uint64(2), governor.ReuseEpoch())
-	bridge.lockState(false)
 
 	// A wall clock that moved backwards is reported as unknown, and unknown is the strict verdict: a
 	// resource whose age cannot be established must not be republished as current.

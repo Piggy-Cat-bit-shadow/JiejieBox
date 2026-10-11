@@ -153,15 +153,6 @@ func (a *probingAxis) DevicePause() {
 	a.inner.DevicePause()
 }
 
-// IsDevicePaused forwards to the real manager, because it is the level and only the manager holds it.
-//
-// It is not a stub returning false: `slept()` consults the level to decide whether this is a new
-// sleep, so a fake that always answered "not paused" would make every repeat look like a transition
-// and would quietly re-arm the behaviour this file's probe exists to check.
-func (a *probingAxis) IsDevicePaused() bool {
-	return a.inner.IsDevicePaused()
-}
-
 func (a *probingAxis) DeviceWake() {
 	a.inner.DeviceWake()
 }

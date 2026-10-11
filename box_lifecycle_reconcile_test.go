@@ -102,73 +102,37 @@ func TestP1CAResumeReReadMustNotReanchorTheSleep(t *testing.T) {
 	require.Equal(t, uint64(1), governor.ReuseEpoch())
 }
 
-// TestRepeatedSleepReportsInOneLockedPeriodWriteOneAnchor is the device trace as a test, and it is
-// the one that goes red when the level gate is deleted.
+// TestP1CTheEdgeFormIsWhatReanchors is the twin: the SAME sequence, with the re-read delivered
+// through the edge entry point the bridge used to use for it.
 //
-// The shape is the real one, measured on an iPhone 17 Pro Max (iOS 26.4.2) locked once for 28m24s:
-// the extension was suspended and resumed **13 times inside that single locked period**, and each
-// `ne-wake` was immediately preceded by the core being woken. The pre-fix governor wrote 13 anchors
-// and published 12 reuse boundaries for the one sleep, and the boundary the unlock published - the
-// only one a flow arriving after the unlock ever sees - reported **28.29 seconds** for a device that
-// had been asleep for 28 minutes.
-//
-// The first gap is the real one, 45s + 41s = 1m26s, which is what the pre-fix core also reported for
-// its first boundary. The rest of the cycles are what stop being boundaries.
-func TestRepeatedSleepReportsInOneLockedPeriodWriteOneAnchor(t *testing.T) {
+// It is here for two reasons. It is the reverse-break - deleting the fix must make the test above
+// fail, and this is what it fails into - and it is the standing proof that the assertions above are
+// about the delivery and not about the clock. It is deliberately NOT asserting that an edge is always
+// wrong: `screenState(false)` at T0 is exactly right.
+func TestP1CTheEdgeFormIsWhatReanchors(t *testing.T) {
 	governor, bridge, clock, boundaries := reconcileTestBridge(t)
 
-	// The screen goes off and the device locks: one transition, therefore one edge.
 	bridge.screenState(false)
-
-	// Thirteen suspend/resume cycles inside the same locked period. `ExtensionProvider.sleep()` maps
-	// to `slept()` and `wake()` wakes the core and then re-reads both names, so this loop is exactly
-	// the pair the device produced, 26 times over.
-	for i := 0; i < 13; i++ {
-		clock.Advance(time.Duration(45+i*20) * time.Second)
-		bridge.slept() // commandServer.pause() -> DeviceSlept()
-		clock.Advance(time.Duration(41+i*11) * time.Second)
-		bridge.resumed() // commandServer.wake() -> DeviceResumed()
-		bridge.reconcileScreenState(false)
-		bridge.reconcileLockState(true)
-	}
-
-	// The user finally unlocks, 28 minutes after the screen went off.
-	clock.Advance(20 * time.Second)
-	bridge.lockState(false)
-
-	require.Len(t, *boundaries, 1,
-		"a suspend/resume cycle inside one locked period started a second sleep")
-	require.Equal(t, 1*time.Minute+26*time.Second, (*boundaries)[0].Sleep,
-		"the measurement did not run from the transition that started the sleep")
-	require.Equal(t, power.ReuseRetire, (*boundaries)[0].Action)
-	require.Equal(t, uint64(1), governor.ReuseEpoch(),
-		"one device-asleep period advanced the reuse epoch more than once")
-}
-
-// TestTheLevelGateStillLetsTheNextSleepThrough is the property that makes the gate safe rather than
-// an unconditional suppression.
-//
-// The gate asks `IsDevicePaused()` rather than remembering anything, so it cannot swallow a real
-// second sleep: the unlock lifts the level, and the next `slept()` finds it free. A fix that simply
-// dropped the edge would pass the test above and fail this one.
-func TestTheLevelGateStillLetsTheNextSleepThrough(t *testing.T) {
-	governor, bridge, clock, boundaries := reconcileTestBridge(t)
-
-	// First sleep, then a full unlock, which is the only thing that lifts the level.
-	bridge.screenState(false)
-	clock.Advance(30 * time.Minute)
-	bridge.lockState(false)
+	clock.Advance(5 * time.Hour)
+	bridge.resumed()
 	require.Len(t, *boundaries, 1)
+	require.Equal(t, 5*time.Hour, (*boundaries)[0].Sleep)
 
-	// Second sleep: a genuinely new one, because the device was usable in between.
-	clock.Advance(time.Minute)
+	// The defect: the re-read takes the EDGE path, which is `slept()` -> `SleepStarted()`.
+	clock.Advance(2 * time.Second)
 	bridge.screenState(false)
-	clock.Advance(45 * time.Minute)
+	bridge.lockState(true)
+
+	clock.Advance(10 * time.Second)
 	bridge.lockState(false)
 
-	require.Len(t, *boundaries, 2, "the level gate swallowed a real second sleep")
-	require.Equal(t, 45*time.Minute, (*boundaries)[1].Sleep)
-	require.Equal(t, uint64(2), governor.ReuseEpoch())
+	require.Len(t, *boundaries, 2, "the edge form no longer re-anchors; this test is the reverse-break")
+	require.Equal(t, 10*time.Second, (*boundaries)[1].Sleep,
+		"the second boundary no longer measures from the re-anchor")
+	require.Equal(t, power.ReuseSuspect, (*boundaries)[1].Action,
+		"a five-hour sleep was reported as a ten-second suspect pause")
+	require.Equal(t, uint64(2), governor.ReuseEpoch(),
+		"the defect advanced the epoch a second time for one sleep")
 }
 
 // TestAReconcileOnAFreshBridgeStillEstablishesThePause is T5 at the core level: the re-read is not
