@@ -57,9 +57,17 @@ holding many concurrent connections reaches the fd ceiling in ordinary operation
 process-wide condition under which a new pipe cannot be allocated. So this is not a theoretical branch — it
 is the branch that fires exactly when the process is busiest.
 
-The same shape exists one step further in: the splice is driven through `RawConn.Read`/`Write` callbacks, and
-if the first read returns zero bytes with a nil error, `writeSize` stays `0`, `writeFunc` is never invoked,
-`unix.Splice` is never called, and the result is again `handed=true, n=0` — silent.
+The same shape exists one step further in, and is recorded here as UNDERSTOOD rather than as a second
+defect: the splice is driven through `RawConn.Read`/`Write` callbacks, so if the first read produced zero
+bytes with a nil error, `writeSize` would stay `0`, `writeFunc` would never be invoked, `unix.Splice` would
+never be called, and the result would again be `handed=true, n=0` — silent. `splice_linux.go:75` sits
+exactly there (`if readN == 0 { return }`, with `handed` already true).
+
+It is NOT listed as reachable, because reaching it needs `unix.Splice` to return `(0, nil)` on a connected
+socket with data pending, which the kernel does not do — a non-blocking splice with nothing to move reports
+`EAGAIN`, and `readFunc` returns `false` for `EAGAIN` so the runtime retries rather than ending the loop.
+Stating it as a defect would have made this document easier to dismiss, and every entry in it needs to be a
+real stall for the `Pipe2` finding above to carry weight.
 
 ## Test coverage
 
