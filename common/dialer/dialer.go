@@ -142,7 +142,21 @@ const (
 // It is a pure read: it constructs nothing and dials nothing. `newDialer` selects between the two
 // callers' meanings of the no-resolver case, exactly as NewDNSQueryOptions documents.
 func ResolveAuthority(ctx context.Context, domainResolver *option.DomainResolveOptions, newDialer bool) (ResolverAuthority, error) {
+	// The transport manager may be ABSENT. `service.FromContext` answers nil for a context that has
+	// fewer services registered than a running box - a test double, an embedder that drives a dialer
+	// directly - and the first version dereferenced it in the named-resolver branch, which PANICKED
+	// where every other branch of this function reports honestly.
+	//
+	// The nil case is reported as "no authority" rather than as an error, matching the network-manager
+	// branch below: with no transport manager there is nothing to resolve with, and that is a fact
+	// about the context rather than a misconfiguration to complain about.
 	dnsTransport := service.FromContext[adapter.DNSTransportManager](ctx)
+	if dnsTransport == nil {
+		if domainResolver != nil && domainResolver.Server != "" && newDialer {
+			return AuthorityNone, E.New("domain resolver not found: ", domainResolver.Server)
+		}
+		return AuthorityNone, nil
+	}
 	if domainResolver != nil && domainResolver.Server != "" {
 		if _, loaded := dnsTransport.Transport(domainResolver.Server); !loaded {
 			return AuthorityNone, E.New("domain resolver not found: ", domainResolver.Server)
@@ -180,6 +194,14 @@ func NewDNSQueryOptions(ctx context.Context, domainResolver *option.DomainResolv
 		return adapter.DNSQueryOptions{}, err
 	}
 	dnsTransport := service.FromContext[adapter.DNSTransportManager](ctx)
+	if dnsTransport == nil {
+		// Unreachable through ResolveAuthority - it only reports Explicit or NetworkDefault when it
+		// found the transport in this same manager - but stated so the invariant is structural rather
+		// than incidental. The empty policy is what AuthorityNone returns, and the router resolves
+		// through its own default path from there, which is the documented behaviour rather than a
+		// degraded one.
+		return adapter.DNSQueryOptions{}, nil
+	}
 	switch authority {
 	case AuthorityExplicit:
 		dnsQueryOptions := domainResolveQueryOptions(domainResolver)
