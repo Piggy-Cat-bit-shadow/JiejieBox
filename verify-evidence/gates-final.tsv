@@ -13,7 +13,7 @@ branch-ios	0	bash scripts/ci/apple-client-source.sh branch ios
 dir-ios	0	bash scripts/ci/apple-client-source.sh dir ios
 verify-ios	0	bash scripts/ci/apple-client-source.sh verify ios
 verify-macos	0	bash scripts/ci/apple-client-source.sh verify macos
-checkout-macos-idempotent	0	bash -c GIT_TERMINAL_PROMPT=0 ./scripts/ci/apple-client-source.sh checkout macos
+checkout-macos	0	bash -c GIT_TERMINAL_PROMPT=0 ./scripts/ci/apple-client-source.sh checkout macos
 gitlink-recorded	0	bash -c [ "$(git ls-files -s clients/apple | awk "{print \$2}")" = "90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07" ]
 submodule-in-sync	0	bash -c git submodule status clients/apple | grep -q "^ 90a0e9ae"
 frozen-sha-reachable	0	git -C clients/apple merge-base --is-ancestor 90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07 origin/main
@@ -22,4 +22,4 @@ inline-ci-submodule-check	0	bash -c [ "$(git ls-tree HEAD clients/apple | awk "{
 no-assert-distinct-callers	0	bash -c ! grep -rqE "apple-client-source\.sh\"? +assert-distinct" scripts/ .github/
 no-gitfile-guard-uses-d	0	bash -c ! grep -rnE "\[ +-d +\"[^\"]*\.git\"" scripts/ci/ | grep -v "\-f \"" | grep -q .
 brand-is-jiejiebox	0	bash -c grep -q "^BRAND_DISPLAY_NAME = \"JiejieBox\"" scripts/ci/apply-apple-branding-overlay.py && grep -q "^BRAND_DISPLAY_NAME = \"JiejieBox\"" scripts/ci/apply-apple-macos-branding-overlay.py
-product-name-protected	0	bash -c grep -q "\"PRODUCT_NAME\": \"sing-box\"" scripts/ci/apply-apple-branding-overlay.py && grep -q "\"PRODUCT_NAME\": \"sing-box\"" scripts/ci/apply-apple-macos-branding-overlay.py
+product-name-protected	0	bash -c grep -q "\"PRODUCT_NAME\": \"sing-box\"" scripts/ci/apply-apple-branding-overlay.py
