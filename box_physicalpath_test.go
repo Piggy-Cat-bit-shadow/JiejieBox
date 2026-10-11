@@ -145,7 +145,10 @@ func TestDestinationDNSOwnershipOnAnIncapableTypeIsRefusedAtStart(t *testing.T) 
 		"declaring destination_dns_ownership on a type that does not implement it must be refused "+
 			"at start, not discovered as a leaked destination name")
 	require.Contains(t, err.Error(), "destination_dns_ownership")
-	require.Contains(t, err.Error(), "does not implement it")
+	// The clause names the CAPABILITY rather than the interface, because the two are no longer the
+	// same test: an object that implements the interface and reports false reaches this refusal too,
+	// and telling it "does not implement it" would be an untrue statement about it.
+	require.Contains(t, err.Error(), "cannot resolve the destination itself")
 	require.Contains(t, err.Error(), "outbound/owned",
 		"the failure must name the offending route")
 }

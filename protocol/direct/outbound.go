@@ -111,6 +111,22 @@ func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	return nil
 }
 
+// DialsDestinationLocally implements adapter.LocalDestinationDialer.
+//
+// This outbound IS the destination connection: it opens an operating-system socket to the
+// destination (`dialer.NewWithOptions` with `DirectOutbound: true` above), so a destination DOMAIN
+// is resolved on this device and the name never leaves it. There is no peer and no request, which is
+// why `destination_dns_ownership` - documented as a promise about what a downstream PROXY receives -
+// has no failure mode here and cannot be violated.
+//
+// It reports true unconditionally because the property is structural rather than configured: there
+// is no option that would make this outbound hand a domain to someone else. `detour` is refused
+// outright ("`detour` is not supported in direct context"), so no other hop can take the request
+// either.
+func (h *Outbound) DialsDestinationLocally() bool {
+	return true
+}
+
 func (h *Outbound) fetchMyAddresses() {
 	interfaceMonitor := h.network.InterfaceMonitor()
 	if interfaceMonitor == nil {

@@ -816,10 +816,25 @@ func validateNode(resolver *Resolver, hop PathNode, endpoints EndpointRegistry, 
 	//    before it writes the request to its peer, and the object must implement the behaviour the
 	//    configuration declared.
 	if declarations.DestinationDNSOwnership[hop.Tag] {
-		if _, capable := hop.Outbound.(adapter.DestinationDNSOwner); !capable {
+		// The declaration is a promise about what a PEER receives, so it is vacuous for an object
+		// that has no peer: a local dialer resolves the destination on this device and never writes
+		// the name anywhere. MEASURED, before this branch existed:
+		// `{"type": "direct", "destination_dns_ownership": true}` was refused with "the destination
+		// domain would be sent to the peer" - an event that cannot happen for `direct`, which has no
+		// peer to send it to. The same refusal hit the endpoints whose dial is local.
+		if local, dialsLocally := hop.Outbound.(adapter.LocalDestinationDialer); dialsLocally && local.DialsDestinationLocally() {
+			return nil
+		}
+		// The capability's VALUE is read, not merely its presence. An object that implements the
+		// interface and reports false is saying "I do not do this" - the same answer as one that does
+		// not implement it - and it used to be refused with "does not implement it", a different and
+		// untrue statement about it.
+		owner, capable := hop.Outbound.(adapter.DestinationDNSOwner)
+		if !capable || !owner.DestinationDNSOwnership() {
 			return failure("the configuration declares destination_dns_ownership for this outbound, " +
-				"but outbound type " + hop.Outbound.Type() + " does not implement it; the destination " +
-				"domain would be sent to the peer while the configuration says it must not be")
+				"but outbound type " + hop.Outbound.Type() + " cannot resolve the destination itself; " +
+				"the destination domain would be sent to the peer while the configuration says it " +
+				"must not be")
 		}
 		if canResolve, reason := resolver.CanResolveDestination(hop.Tag); !canResolve {
 			return failure(reason)

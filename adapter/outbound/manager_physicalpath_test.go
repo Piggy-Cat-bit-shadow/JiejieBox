@@ -229,7 +229,10 @@ func TestStartRefusesDestinationDNSOwnershipOnAnIncapableType(t *testing.T) {
 	err := startWithDryRun(t, []adapter.Outbound{incapable},
 		physicalpath.Declarations{DestinationDNSOwnership: map[string]bool{"hop": true}}, nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "does not implement it")
+	// The clause names the CAPABILITY, not the interface. The two stopped being the same test when
+	// the dry run began reading the capability's VALUE: an object that implements the interface and
+	// reports false reaches this refusal too, and "does not implement it" would be untrue of it.
+	require.Contains(t, err.Error(), "cannot resolve the destination itself")
 
 	// With the declaration absent the same object starts: the check is about the promise, not
 	// about the type.

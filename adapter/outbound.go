@@ -147,6 +147,36 @@ type DestinationDNSOwner interface {
 	DestinationDNSOwnership() bool
 }
 
+// LocalDestinationDialer is an OPTIONAL capability for an outbound that reaches the destination
+// ITSELF rather than handing the request to a peer.
+//
+// # Why this is a separate capability from DestinationDNSOwner
+//
+// `DestinationDNSOwner` answers a question about the WIRE: "does my peer receive an address instead
+// of a domain". That question has no answer for a local dialer, because there is no peer and no
+// request - the domain is resolved by the operating system as part of connecting. Reporting it there
+// would be a claim about a wire that does not exist.
+//
+// The distinction matters because `destination_dns_ownership` is documented as a promise about what
+// a DOWNSTREAM PROXY receives (option.DialerOptions), and its failure mode - the domain travelling
+// to the peer - cannot occur when there is no peer. MEASURED, before this capability existed:
+// `{"type": "direct", "destination_dns_ownership": true}` was REFUSED with "the destination domain
+// would be sent to the peer", which describes an event that cannot happen. The same refusal hit the
+// endpoints whose dial is local (a WireGuard or Tailscale tunnel resolves the destination on this
+// device and encapsulates the packet).
+//
+// # Why it is not inferred from the type name
+//
+// Same reason as its sibling: a type-name list drifts from the implementations it describes.
+// Implementing the interface is a statement by the code that does the work, and the dry run asks
+// for it before it asks for the wire capability.
+type LocalDestinationDialer interface {
+	Outbound
+	// DialsDestinationLocally reports that this outbound establishes the connection to the
+	// destination on this device, so a destination domain never reaches a peer as a name.
+	DialsDestinationLocally() bool
+}
+
 type OutboundRegistry interface {
 	option.OutboundOptionsRegistry
 	CreateOutbound(ctx context.Context, router Router, logger log.ContextLogger, tag string, outboundType string, options any) (Outbound, error)

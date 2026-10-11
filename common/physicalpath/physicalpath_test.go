@@ -834,7 +834,10 @@ func TestDryRunReportsDestinationDNSOwnershipOnAnIncapableType(t *testing.T) {
 		Declarations{DestinationDNSOwnership: map[string]bool{"http-hop": true}})
 	require.NoError(t, err)
 	require.False(t, report.Reachable())
-	require.Contains(t, report.Failures[0].Reason, "does not implement it")
+	// The clause names the CAPABILITY rather than the interface: an object that implements
+	// DestinationDNSOwner and reports false is refused here too, and "does not implement it" would be
+	// an untrue statement about it.
+	require.Contains(t, report.Failures[0].Reason, "cannot resolve the destination itself")
 	require.Contains(t, report.Failures[0].Reason, "would be sent to the peer")
 
 	// The capable type passes, and so does an undeclared one.
