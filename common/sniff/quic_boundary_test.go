@@ -161,7 +161,9 @@ func buildInitialPacket(tb testing.TB, spec quicPacketSpec) []byte {
 	packet[0] ^= mask[0] & 0xf
 	// Only the packet number field itself is masked. The sniffer masks all four bytes before it can
 	// read the length out of the first byte and then puts the surplus back from the datagram it was
-	// handed (quic.go:191), which is why the bytes past the field survive in the packet on the wire.
+	// handed (`copy(newPacket[extHdrLen:hdrLen+4], packet[extHdrLen:])`), which is why the bytes past
+	// the field survive in the packet on the wire. A line number is not quoted here on purpose: the
+	// line moved when the bounded copy landed, and a stale reference is worse than none.
 	for i := range spec.packetNumLen {
 		packet[pnOffset+i] ^= mask[i+1]
 	}

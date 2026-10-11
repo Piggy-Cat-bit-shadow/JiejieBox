@@ -31,7 +31,7 @@ import (
 // behind by it, whatever it does afterwards. This file injects exactly that worker and shows both
 // halves pass while it is demonstrably alive.
 func TestAgentFASelfTerminatingWorkerIsInvisibleToBothHalves(t *testing.T) {
-	before := sniffGoroutines()
+	before := sniffGoroutineBaseline(t)
 
 	// The injected worker: alive for 400 ms after SniffStream would have returned, then gone. It names
 	// this package, which is the only property the census looks at.
@@ -87,7 +87,7 @@ func TestAgentFASelfTerminatingWorkerIsInvisibleToBothHalves(t *testing.T) {
 // held open past the primary's window must fail it, so the blind spot is a bounded lifetime and not a
 // broken instrument.
 func TestAgentFAWorkerThatOutlivesTheWindowIsCaught(t *testing.T) {
-	before := sniffGoroutines()
+	before := sniffGoroutineBaseline(t)
 
 	gate := make(chan struct{})
 	entered := make(chan struct{}, 1)

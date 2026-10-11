@@ -46,6 +46,46 @@ func sniffGoroutines() int {
 	return count
 }
 
+// sniffGoroutineBaseline is the census to use as a `before`, and it is not the same thing as
+// sniffGoroutines().
+//
+// A single census is a snapshot of a process in motion. The preceding test's goroutines are still
+// exiting when the next one reads its baseline, so `before` can be one too high, and those goroutines
+// then leave inside the measurement window - which makes an exact assertion derived from that baseline
+// (`sniffGoroutinesFromCallback() == before+1`) unreachable. MEASURED on the three Agent F attack files
+// before this helper existed: `TestAgentFFrameShapePlainGoroutine` and `TestAgentFFrameShapeNever`
+// failed about once per twenty `-count=20` repetitions, and always with `before` one above the steady
+// value - including with nothing else running in the binary.
+//
+// Waiting for the census to repeat itself is the fix, because the odd reading is the transient:
+// goroutines joining or leaving between two reads are exactly what stops the count from repeating, so a
+// value the process holds twice is a value it has settled at. The wait is bounded so a genuinely
+// growing process fails the assertion that follows rather than timing out here.
+func sniffGoroutineBaseline(t *testing.T) int {
+	t.Helper()
+	return sniffGoroutineBaselineWithin(t, 2*time.Second)
+}
+
+func sniffGoroutineBaselineWithin(t *testing.T, within time.Duration) int {
+	t.Helper()
+	const pollInterval = 5 * time.Millisecond
+	deadline := time.Now().Add(within)
+	previous := sniffGoroutines()
+	for {
+		time.Sleep(pollInterval)
+		current := sniffGoroutines()
+		if current == previous {
+			return current
+		}
+		previous = current
+		if time.Now().After(deadline) {
+			t.Logf("the goroutine census did not settle within %v; using the last reading %d, so the "+
+				"assertion that follows reports the real problem rather than this wait", within, current)
+			return current
+		}
+	}
+}
+
 // sniffGoroutinesFromCallback is sniffGoroutines for a census taken from the goroutine testify runs a
 // condition on, and the subtraction is the difference between an allowance and a measurement.
 //

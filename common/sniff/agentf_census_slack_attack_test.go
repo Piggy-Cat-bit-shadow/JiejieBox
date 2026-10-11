@@ -121,7 +121,7 @@ func TestAgentFSniffCensusFramesDifferByOne(t *testing.T) {
 // rather than only in the single-point control.
 func TestAgentFSniffCensusSlackIsMeasured(t *testing.T) {
 	// Exactly what the production tests do: the baseline is read from the test goroutine.
-	before := sniffGoroutines()
+	before := sniffGoroutineBaseline(t)
 	t.Logf("MEASURED baseline from the test goroutine: %d; the live predicate is "+
 		"`sniffGoroutinesFromCallback() > %d`, evaluated on a callback goroutine whose own frame the "+
 		"helper subtracts", before, before)
@@ -163,7 +163,7 @@ func TestAgentFSniffCensusSlackIsMeasured(t *testing.T) {
 // TestAgentFSniffCensusReturnsToBaseline is the control for the control: the injected workers must be
 // releasable, so "the census caught it" cannot be confused with "the census never comes back down".
 func TestAgentFSniffCensusReturnsToBaseline(t *testing.T) {
-	before := sniffGoroutines()
+	before := sniffGoroutineBaseline(t)
 	leak := make(chan struct{})
 	entered := make(chan struct{}, 3)
 	for range 3 {

@@ -110,7 +110,7 @@ func agentFShapeSettle(t *testing.T, want int) {
 }
 
 func TestAgentFFrameShapeEventually(t *testing.T) {
-	before := sniffGoroutines()
+	before := sniffGoroutineBaseline(t)
 
 	// # Why these two are ATOMIC, and it is not defensive style
 	//
@@ -159,7 +159,7 @@ func TestAgentFFrameShapeEventually(t *testing.T) {
 }
 
 func TestAgentFFrameShapeNever(t *testing.T) {
-	before := sniffGoroutines()
+	before := sniffGoroutineBaseline(t)
 
 	// Atomic for the reason spelled out in TestAgentFFrameShapeEventually: this is the shape where the
 	// overlapping condition goroutines actually occur, so a plain variable here IS a data race.
@@ -203,7 +203,7 @@ func TestAgentFFrameShapeNever(t *testing.T) {
 }
 
 func TestAgentFFrameShapePlainGoroutine(t *testing.T) {
-	before := sniffGoroutines()
+	before := sniffGoroutineBaseline(t)
 
 	done := make(chan int, 1)
 	go func() { done <- sniffGoroutines() }()
@@ -237,7 +237,7 @@ func TestAgentFFrameShapePlainGoroutine(t *testing.T) {
 // whatever the rest of the process is doing is present in both and cancels: the difference is the
 // helper's own extra frame, which is the quantity this test is about.
 func TestAgentFNestedHelperOverCorrects(t *testing.T) {
-	before := sniffGoroutines()
+	before := sniffGoroutineBaseline(t)
 
 	// Atomic, same reason: the inner helper already makes this the busiest shape in the file.
 	var directReading, nestedReading atomic.Int64
