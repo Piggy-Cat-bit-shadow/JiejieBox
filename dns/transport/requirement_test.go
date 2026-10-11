@@ -1,4 +1,4 @@
-package dns
+package transport
 
 import (
 	"testing"
@@ -17,7 +17,7 @@ import (
 //     too large for a datagram.
 //   - `https` needs TCP ONLY. `h3` is a separate type (constant.DNSTypeHTTP3), so there is no
 //     "DoH might use QUIC" branch in this tree to model as optional.
-func TestDNSTransportRequirement(t *testing.T) {
+func TestRequirementFor(t *testing.T) {
 	t.Parallel()
 
 	for name, testCase := range map[string]struct {
@@ -37,7 +37,7 @@ func TestDNSTransportRequirement(t *testing.T) {
 		name, testCase := name, testCase
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			requirement := DNSTransportRequirement(testCase.transportType, nil)
+			requirement := RequirementFor(testCase.transportType, nil)
 			require.ElementsMatch(t, testCase.want, requirement.Required)
 		})
 	}
@@ -51,7 +51,7 @@ func TestDNSTransportRequirement(t *testing.T) {
 		constant.DNSTypeTailscale, constant.DNSTypeOpenConnect, constant.DNSTypeOpenVPN,
 		"something-out-of-tree",
 	} {
-		requirement := DNSTransportRequirement(unmodelled, nil)
+		requirement := RequirementFor(unmodelled, nil)
 		require.Empty(t, requirement.Required,
 			"%s must stay unmodelled rather than guessed", unmodelled)
 		require.Empty(t, requirement.Optional,

@@ -157,7 +157,13 @@ func (t *HTTPSTransport) Start(stage adapter.StartStage, scope *adapter.Scope) e
 		t.Reset()
 		return nil
 	})
-	return dialer.InitializeDetour(t.dialer)
+	if initErr := dialer.InitializeDetour(t.dialer); initErr != nil {
+		return initErr
+	}
+	// The reference EXISTS; now ask whether it can carry this transport's queries. See
+	// dialer.CheckDetourCapability for why the demand is read from the type's implementation rather
+	// than from its name - udp needs TCP as well, because a truncated response is retried.
+	return dialer.CheckDetourCapability("dns/transport/https["+t.Tag()+"]", t.dialer, RequirementFor("https", nil).Required)
 }
 
 func (t *HTTPSTransport) Reset() {

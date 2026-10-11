@@ -49,6 +49,16 @@ func InitializeDetour(dialer N.Dialer) error {
 	return common.Error(detourDialer.Dialer())
 }
 
+// DetourName reports the detour tag this dialer was built with, or "" when it dials the default
+// outbound.
+//
+// It is read-only and resolves nothing, so a caller can tell "a declared object was named" from "the
+// default path was taken" WITHOUT triggering the resolution - which matters for a preflight that
+// must judge only a declared object and must not force a lookup as a side effect of asking.
+func (d *DetourDialer) DetourName() string {
+	return d.detour
+}
+
 func (d *DetourDialer) Dialer() (N.Dialer, error) {
 	d.initOnce.Do(d.init)
 	return d.dialer, d.initErr

@@ -1,4 +1,4 @@
-package dns
+package transport
 
 import (
 	C "github.com/sagernet/sing/common/network"
@@ -22,13 +22,13 @@ type TransportRequirement struct {
 	Optional []string
 }
 
-// DNSTransportRequirement reports what a DNS transport of this type needs.
+// RequirementFor reports what a DNS transport of this type needs.
 //
 // Types that dial nothing (hosts, fakeip), delegate to another transport (group), or use a
 // transport that is not the outbound namespace (local/system, dhcp, mdns link-local) report no
 // requirement: their detour, if any, is not the thing carrying the lookup, so constraining it would
 // be inventing a rule the runtime does not have.
-func DNSTransportRequirement(transportType string, options any) TransportRequirement {
+func RequirementFor(transportType string, options any) TransportRequirement {
 	switch transportType {
 	case "udp":
 		// dns/transport/udp.go: the query goes out over UDP and a TRUNCATED response is retried over
