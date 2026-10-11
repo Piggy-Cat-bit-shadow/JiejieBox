@@ -1,12 +1,17 @@
 # APPLE_PIN_FINAL_VERIFICATION
 
 Task: 0.1.6 closure task C — Apple pin / bash CI / submodule reachability verification,
-plus the remediation round that followed it.
+plus the remediation and cleanup rounds that followed it.
 
-Round 1 (this revision) closed F1–F6 on the parent side and settled the branding-contract
-conflict **without re-freezing the Apple repository**. It also found and fixed a latent
+Round 1 closed F1–F6 on the parent side and settled the branding-contract conflict
+**without re-freezing the Apple repository**. It also found and fixed a latent
 false-negative bug in the provenance gate itself, and corrected a brand-spelling error
 introduced during the remediation.
+
+Round 2 was evidence/documentation cleanup only: the pre-fix transcripts were deleted
+rather than kept, this report's HEAD fields were split so the base and the verified branch
+tip can no longer be confused, and two superseded Apple documents were marked for what
+they are. No production code changed in round 2.
 
 No Apple/UI content was modified. No `main`/`testing` branch was touched. The frozen Apple
 SHA did not change: **`90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07` remains final.**
@@ -16,7 +21,8 @@ SHA did not change: **`90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07` remains final.*
 ## 0. Required result block
 
 ```text
-PARENT_HEAD                    = 96a94f584d30691cadd44dab83b64d56fc7a1fec
+BASE_PARENT_HEAD               = 96a94f584d30691cadd44dab83b64d56fc7a1fec
+VERIFIED_BRANCH_HEAD           = cfc77dc51ab7322e993b8ae0b94b96db59e48f47
 APPLE_GITLINK                  = 90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07
 VERIFIED_APPLE_SHA             = 90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07
 SUBMODULE_HEAD                 = 90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07
@@ -28,6 +34,23 @@ AUTHORITATIVE_STALE_PINS       = 0
 HISTORICAL_OLD_SHA_MATCHES     = 47
 APPLE_PIN_VERIFICATION_COMPLETE = YES
 ```
+
+### The two HEAD fields are different things
+
+| Field | Value | Meaning |
+| --- | --- | --- |
+| `BASE_PARENT_HEAD` | `96a94f584…` | the integration line this branch was cut from — `origin/integration/0.1.6-final-freeze`. It is the **base**, not the verified tree. |
+| `VERIFIED_BRANCH_HEAD` | `cfc77dc51…` | the tree every gate in §3 was actually run against. Every file in `verify-evidence/` records this SHA in its own header. |
+
+An earlier revision of this report printed a single `PARENT_HEAD = 96a94f584…` line, which
+read as though the gates had been run at the freeze commit. They were not: they were run at
+the branch tip, which carries the fixes. `BASE_PARENT_HEAD` and `VERIFIED_BRANCH_HEAD` are
+deliberately not the same commit; that difference *is* the remediation.
+
+The report and the evidence are committed **after** `VERIFIED_BRANCH_HEAD`, as a
+documentation-only commit. That commit changes no script, test, workflow or patch, so it
+cannot invalidate the results recorded against `cfc77dc51…`; to re-verify, check out
+`cfc77dc51…` and re-run `verify-evidence/gates.tsv`.
 
 All four conjunctive conditions hold:
 
@@ -338,8 +361,24 @@ Apple/UI main modified                  NO  (still 90a0e9ae on branch main, 0 di
 Apple feature branch rebuilt            NO
 frozen Apple SHA changed to pass a gate NO  (unchanged)
 historical old SHAs globally replaced    NO
-main / testing modified                 NO  (testing still 9f9eea55d)
+main / testing modified                 NO  (see the two refs below)
 ```
+
+The `testing` ref, stated precisely because it is easy to misquote:
+
+```text
+LOCAL  testing            = 9f9eea55d4d911899c6f4e7bc597920686d4bc1b   (this clone, untouched)
+REMOTE origin/testing     = 6cc45d3f49a3908ff150045d3a113f98920eaaea   (never pushed to)
+```
+
+They differ, and that is the pre-existing state of this clone, not something this work
+caused: the local `testing` was already behind `origin/testing` when the branch was cut, and
+nothing in this task fetched into, reset, or pushed `testing`. An earlier revision printed a
+bare `testing still 9f9eea55d`, which was true of the local ref but read as though it
+described the remote. The parent repository has no `main` branch at all.
+
+Both refs and the integration line are recorded on every run in
+`verify-evidence/pin-identity.log`.
 
 Writes were confined to a dedicated worktree on branch `fix/0.1.6-apple-pin-gates`
 (derived from `origin/integration/0.1.6-final-freeze`): a fetch of remote-tracking refs, the
@@ -349,7 +388,59 @@ exercise: `git -C clients/apple status --porcelain` is empty and its HEAD is `90
 
 ---
 
-## 8. Verdict
+## 8. Cleanup round (round 2)
+
+Documentation and evidence only; no production behaviour changed.
+
+**Evidence replaced, not extended.** The pre-fix transcripts were deleted rather than kept
+beside the new ones. They recorded `FAIL: 8` from the provenance gate,
+`MACOS_APPLE_BRANCH: unbound variable` from the selection gate, and the old
+`Jijiebox`-plus-branded-`PRODUCT_NAME` overlay behaviour — none of which describes anything
+in the tree any more. `verify-evidence/` now holds 15 files, all regenerated at
+`VERIFIED_BRANCH_HEAD`, with a `README.md` stating where each came from and what was
+deliberately not kept. Small per-action transcripts were folded into grouped logs instead of
+being kept as separate files for the appearance of completeness.
+
+**Two superseded Apple documents marked.** `docs/fork/apple-screen-state-initial-facts.patch`
+is a prepared fix for a file the pinned client has since replaced: its base `d3e8035` was the
+29-line `#if os(iOS)` observer, and at `90a0e9ae` that file is a 731-line implementation in
+which the initial-state fact is first-class
+(`ScreenStatePublishing.reconcileScreenState(on:)`, driven by
+`observe(source:provenance:epoch:)` reading through `notify.getState(token:)`). The patch now
+carries a `HISTORICAL / NON-AUTHORITATIVE — DO NOT APPLY` header, and the section of
+`docs/fork/apple-artifact-verification.md` that presented it as a "Prepared fix" now says the
+same. Worth recording: `git apply --check` on it still **succeeds** at a 536-line offset,
+because the old hunk's context recurs further down the rewritten file — a clean `--check` is
+a false positive here, which is exactly why the header exists rather than a silent deletion.
+It was never in the provenance gate's `patch_files`, so it never affected a gate result.
+
+**Three comments corrected** — the last places still describing the removed two-source model
+as current, in `prepare-apple-client.sh` (twice) and `check-apple-links.py`. Each was
+verified against the pin before rewriting: the "differences" are `#if os(...)` branches of
+one file, and the About section holds exactly one fork source and one fork releases after the
+link overlay, measured rather than assumed.
+
+### NON_BLOCKER recorded, not fixed
+
+```text
+NON_BLOCKER — power-report-draft shim is inert
+  file    : scripts/ci/prepare-apple-client.sh (the promote_calls / promote_defs guard)
+  root    : LibboxPromotePowerReportDraft is now absent from the pinned Apple client, from
+            both platform working trees, and from experimental/libbox in the core. The guard
+            is "if the provider calls the symbol, the platform interface must define it", so
+            with zero call sites it passes vacuously.
+  relation: it is one of the comments this round corrected, which is how it was noticed.
+  why not fixed: it degrades correctly and re-arms by itself if a client revision calls the
+            symbol again. Deleting the guard would remove a working safety net; changing it
+            would be new work on a path that does not affect Apple pin or release
+            correctness. Recorded here instead.
+```
+
+No other production bug was found. Nothing here blocks the Apple release or the pin.
+
+---
+
+## 9. Verdict
 
 The two gaps this task existed to close are closed and proven, and the remediation round
 additionally made the surrounding gate suite honest:

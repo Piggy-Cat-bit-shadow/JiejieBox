@@ -1,4 +1,7 @@
 ### CMD: bash scripts/ci/test-apple-signing.sh
+### HEAD: cfc77dc51ab7322e993b8ae0b94b96db59e48f47
+### DATE: 2026-10-12 05:31:04 +0800
+
 == default mode ==
   PASS: default signing mode is unsigned
   PASS: multicast defaults to false
@@ -40,7 +43,15 @@
   PASS: the docs list the fileprovider extension
   PASS: the docs list the intents extension
 == entitlements after the overlay is applied ==
-  FAIL: could not apply the overlay; skipping its assertions
+  PASS: iOS extension keeps packet-tunnel-provider
+  PASS: macOS system extension keeps the systemextension variant
+  PASS: the macOS app keeps system-extension.install
+  PASS: no multicast survives in the iOS tunnel
+  PASS: no multicast survives in the macOS system extension
+  PASS: no iCloud entitlement survives with the switch off
+  PASS: the overlay is idempotent (a second run changes nothing)
+  PASS: re-applying the overlay does not move the submodule HEAD
+  PASS: re-applying the overlay appends no second compatibility shim
 == one App Store record: the two main bundle ids must match ==
   PASS: the iOS main bundle id is the configured base
   PASS: the macOS main bundle id equals the iOS one
@@ -66,7 +77,7 @@
   PASS: the CI job still builds the unsigned IPA
   PASS: CI never references a distribution identity or key
   PASS: no signing material is tracked
-  FAIL: no private key block is tracked
+  PASS: no private key block is tracked
 == the archives are signed, and the export re-signs for distribution ==
   PASS: build-ios-testflight.sh does not disable signing
   PASS: build-ios-testflight.sh uses automatic signing
@@ -120,13 +131,37 @@
   PASS: check-apple-signing-environment.sh parses
   PASS: apply-apple-link-overlay.py imports only the standard library
   PASS: check-apple-links.py imports only the standard library
-== iOS branding: the product is JiejieBox, the core is sing-box ==
-  FAIL: could not apply the overlay; skipping branding assertions
+== iOS branding: the display name is JiejieBox, the product stays sing-box ==
+  PASS: the iOS floor is declared in the project
+  PASS: no build step rewrites the iOS deployment target
+  PASS: the overlay leaves the iOS deployment floor untouched
+  PASS: the toolbar logic is unchanged
+  PASS: the branding overlay set the SFI display name
+  PASS: the SFI scheme still builds the unchanged product
+  PASS: branding did not rename the product
+  PASS: the SFI scheme does not point at a renamed product
+  PASS: the UI test buildable is untouched
+  PASS: only the SFI display name changed
+  -- compatibility must be preserved --
+  PASS: the bundle identifier setting is unchanged
+  PASS: the App Group setting is unchanged
+  PASS: the Extension product name is unchanged
+  PASS: the sing-box URL scheme is unchanged
+  PASS: the SFI target is still called SFI
+  -- the submodule must be untouched as a repository --
+  PASS: the parent gitlink matches the submodule HEAD
+  PASS: the submodule is on the fork's branch
+  PASS: the submodule URL points at the fork
+  PASS: the pinned commit is reachable from that URL
+  PASS: the branding change is uncommitted in the submodule
 == the branding overlay fails closed ==
   PASS: the overlay refuses a partially branded project
   PASS: the overlay refuses an unexpected configuration set
   PASS: the overlay refuses to guess at the scheme
+  PASS: the overlay treats PRODUCT_NAME as identity surface
+  PASS: the overlay follows the scheme rather than renaming it
   PASS: the TestFlight builder does not hardcode a product name
   PASS: the TestFlight builder fails on an ambiguous archive
 
-test-apple-signing: 102 passed, 3 failed
+test-apple-signing: 134 passed, 0 failed
+EXIT=0

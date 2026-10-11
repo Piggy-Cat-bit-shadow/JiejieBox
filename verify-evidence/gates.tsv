@@ -1,11 +1,25 @@
-resolver-sha-ios	0	bash scripts/ci/apple-client-source.sh sha ios
-resolver-sha-macos	0	bash scripts/ci/apple-client-source.sh sha macos
-resolver-assert-shared	0	bash scripts/ci/apple-client-source.sh assert-shared-source
-resolver-verify-ios	0	bash scripts/ci/apple-client-source.sh verify ios
-resolver-verify-macos	1	bash scripts/ci/apple-client-source.sh verify macos
-check-apple-source-selection	1	bash scripts/ci/check-apple-source-selection.sh
-test-apple-signing	1	bash scripts/ci/test-apple-signing.sh
-test-apple-beta-publish	0	bash scripts/ci/test-apple-beta-publish.sh
-test-apple-macos-name	0	bash scripts/ci/test-apple-macos-name.sh
-check-apple-shared-libbox	1	bash scripts/ci/check-apple-shared-libbox.sh
-inline-ci-submodule-check	0	git ls-tree HEAD clients/apple vs git -C clients/apple rev-parse HEAD
+apple-abi-provenance.sh	0	apple-abi-provenance.log	APPLE_ABI_CHECK_REMOTE=1 bash scripts/ci/apple-abi-provenance.sh
+check-libbox-abi.sh	0	check-libbox-abi.log	bash scripts/ci/check-libbox-abi.sh
+check-apple-source-selection.sh	0	check-apple-source-selection.log	bash scripts/ci/check-apple-source-selection.sh
+test-apple-signing.sh	0	test-apple-signing.log	bash scripts/ci/test-apple-signing.sh
+test-apple-macos-name.sh	0	test-apple-macos-name.log	bash scripts/ci/test-apple-macos-name.sh
+test-apple-beta-publish.sh	0	test-apple-beta-publish.log	bash scripts/ci/test-apple-beta-publish.sh
+verify-fork-handoff.sh	0	verify-fork-handoff.log	bash scripts/ci/verify-fork-handoff.sh
+assert-on-branch	0	apple-client-source.log	apple-client-source.sh assert-on-branch
+assert-shared-source	0	apple-client-source.log	apple-client-source.sh assert-shared-source
+sha ios	0	apple-client-source.log	apple-client-source.sh sha ios
+sha macos	0	apple-client-source.log	apple-client-source.sh sha macos
+branch ios	0	apple-client-source.log	apple-client-source.sh branch ios
+dir ios	0	apple-client-source.log	apple-client-source.sh dir ios
+verify ios	0	apple-client-source.log	apple-client-source.sh verify ios
+verify macos	0	apple-client-source.log	apple-client-source.sh verify macos
+checkout macos (idempotent)	0	apple-client-source.log	apple-client-source.sh checkout macos
+gitlink recorded == frozen SHA	0	pin-identity.log	git ls-files -s clients/apple
+submodule status: no drift	0	pin-identity.log	git submodule status clients/apple
+frozen SHA reachable	0	frozen-sha-reachable.log	git -C clients/apple merge-base --is-ancestor 90a0e9ae origin/main
+VERIFIED_APPLE_SHA single source	0	pin-identity.log	git grep VERIFIED_APPLE_SHA= -- scripts/
+inline CI submodule check	0	pin-identity.log	git ls-tree HEAD clients/apple vs rev-parse HEAD
+no assert-distinct callers	0	source-hygiene.log	grep -rE assert-distinct scripts/ .github/
+no .git guard uses -d	0	source-hygiene.log	grep -rE '\[ -d "[^"]*\.git"' scripts/ci/
+brand is JijieBox	0	brand-and-identity-contract.log	grep ^BRAND_DISPLAY_NAME both overlays
+PRODUCT_NAME is protected	0	brand-and-identity-contract.log	grep PRODUCT_NAME: sing-box both overlays

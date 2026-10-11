@@ -1,6 +1,9 @@
-### CMD: APPLE_ABI_CHECK_REMOTE=1 bash scripts/ci/apple-abi-provenance.sh
+### CMD: env APPLE_ABI_CHECK_REMOTE=1 bash scripts/ci/apple-abi-provenance.sh
+### HEAD: cfc77dc51ab7322e993b8ae0b94b96db59e48f47
+### DATE: 2026-10-12 05:30:57 +0800
+
 core:         /Users/jie/Desktop/其他文件/sing-box-verify-016
-core rev:     HEAD (96a94f584)
+core rev:     HEAD (cfc77dc51)
 apple clone:  /Users/jie/Desktop/其他文件/sing-box-verify-016/clients/apple
 witnesses:    /Users/jie/Desktop/其他文件/sing-box-verify-016/scripts/ci/apple-abi-probe
 
@@ -19,15 +22,15 @@ PASS GITLINK      origin advertises 90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07: 90
        90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07	refs/heads/main
 
 == 2. patch text vs the pinned tree
-FAIL PATCH_TIE    apple-stringbox-callsites.patch: ApplicationLibrary/Views/Abstract/GlobalChecksModifier.swift post-image 7d8e45b matches neither the pinned blob 8f066b5e628b nor any commit's pre-image; the patch does not describe this tree
-FAIL PATCH_TIE    apple-stringbox-callsites.patch: HelperService/RootHelperService.swift post-image 83e32db matches neither the pinned blob c7a3bd498b99 nor any commit's pre-image; the patch does not describe this tree
-FAIL PATCH_TIE    apple-stringbox-callsites.patch: JailbreakDaemon/IOSRootHelperService.swift post-image 7d94600 matches neither the pinned blob 9787829c287e nor any commit's pre-image; the patch does not describe this tree
+PASS PATCH_TIE    apple-stringbox-callsites.patch: ApplicationLibrary/Views/Abstract/GlobalChecksModifier.swift post-image 8f066b5 == pinned blob 8f066b5e628b
+PASS PATCH_TIE    apple-stringbox-callsites.patch: HelperService/RootHelperService.swift post-image c7a3bd4 == pinned blob c7a3bd498b99
+PASS PATCH_TIE    apple-stringbox-callsites.patch: JailbreakDaemon/IOSRootHelperService.swift post-image 9787829 == pinned blob 9787829c287e
 PASS PATCH_TIE    apple-stringbox-callsites.patch: Library/Network/BridgeTunTracker.swift post-image f026db6 == pinned blob f026db6f933f
-FAIL PATCH_TIE    apple-stringbox-callsites.patch: Library/Network/ExtensionPlatformInterface.swift post-image 211583d matches neither the pinned blob 020f5b93c2c0 nor any commit's pre-image; the patch does not describe this tree
-FAIL PATCH_TIE    apple-bridge-session-implementer.patch: Library/Network/ExtensionPlatformInterface.swift post-image c1654f9 matches neither the pinned blob 020f5b93c2c0 nor any commit's pre-image; the patch does not describe this tree
-FAIL PATCH_TIE    apple-screen-state-observer.patch: Library/Network/ExtensionProvider.swift post-image 0071384 matches neither the pinned blob 48b97ffe3dfc nor any commit's pre-image; the patch does not describe this tree
-FAIL PATCH_TIE    apple-screen-state-observer.patch: Library/Network/ScreenStateObserver.swift post-image d3e8035 matches neither the pinned blob 451736a84585 nor any commit's pre-image; the patch does not describe this tree
-     hash-tied patches (tier 2 usable): (none)
+PASS PATCH_TIE    apple-stringbox-callsites.patch: Library/Network/ExtensionPlatformInterface.swift post-image 020f5b9 == pinned blob 020f5b93c2c0
+PASS PATCH_TIE    apple-bridge-session-implementer.patch: Library/Network/ExtensionPlatformInterface.swift post-image 020f5b9 == pinned blob 020f5b93c2c0
+PASS PATCH_TIE    apple-screen-state-observer.patch: Library/Network/ExtensionProvider.swift post-image 48b97ff == pinned blob 48b97ffe3dfc
+PASS PATCH_TIE    apple-screen-state-observer.patch: Library/Network/ScreenStateObserver.swift post-image 451736a == pinned blob 451736a84585
+     hash-tied patches (tier 2 usable): apple-stringbox-callsites.patch apple-bridge-session-implementer.patch apple-screen-state-observer.patch
 
 == 3. witness anchors vs the real client declarations
 PASS ANCHOR       callsites.swift: 'message: report.message()!.value' [tier1:pin, cited by apple-stringbox-callsites.patch]
@@ -37,12 +40,12 @@ PASS ANCHOR       callsites.swift: 'closing bridge \(session.name()!.value' [tie
 PASS ANCHOR       callsites.swift: 'ipv4Prefix.address()!.value' [tier1:pin, cited by apple-stringbox-callsites.patch]
 PASS ANCHOR       callsites.swift: 'ipv4Prefix.mask()!.value' [tier1:pin, cited by apple-stringbox-callsites.patch]
 PASS ANCHOR       callsites.swift: 'options.getHTTPProxyServer()!.value' [tier1:pin, cited by apple-stringbox-callsites.patch]
-FAIL ANCHOR       callsites.swift: 'options.getDNSMode()!.value' is NOT in the cited apple-stringbox-callsites.patch (found only in tier1:pin); the witness header names the wrong source
+PASS ANCHOR       callsites.swift: 'options.getDNSMode()!.value' [tier1:pin, cited by apple-stringbox-callsites.patch]
 PASS ANCHOR       implementer.swift: 'func name() -> LibboxStringBox?' [tier1:pin, cited by apple-bridge-session-implementer.patch]
 PASS ANCHOR       implementer.swift: 'LibboxStringBox()' [tier1:pin, cited by apple-bridge-session-implementer.patch]
-PASS ANCHOR       observer.swift: 'notify_register_dispatch("com.apple.iokit.hid.displayStatus"' [tier2:patch-unverified, cited by apple-screen-state-observer.patch]
-PASS ANCHOR       observer.swift: 'commandServer.recordScreenState(state == 1)' [tier2:patch-unverified, cited by apple-screen-state-observer.patch]
-PASS ANCHOR       observer.swift: 'commandServer.recordLockState(state == 1)' [tier2:patch-unverified, cited by apple-screen-state-observer.patch]
+PASS ANCHOR       observer.swift: 'protocol DarwinNotifyAPI: AnyObject {' [tier1:pin, cited by apple-screen-state-observer.patch]
+PASS ANCHOR       observer.swift: 'func recordScreenState(on: Bool)' [tier1:pin, cited by apple-screen-state-observer.patch]
+PASS ANCHOR       observer.swift: 'func recordLockState(locked: Bool)' [tier1:pin, cited by apple-screen-state-observer.patch]
 
 == 4. caller coverage in the live client
 PASS COVERAGE     all 0 call site(s) of the migrated accessors are in the migrated shape
@@ -57,13 +60,13 @@ PASS CHECKOUT     the checkout is the pinned revision
      467f8ea 2026-10-12 03:00:02 +0800 fix(ios): reuse upstream localization for Hako UI
 
 ---- provenance summary ----
-tier1 (pinned blob text) anchors: 10
-tier2 (patch added lines) anchors: 3
+tier1 (pinned blob text) anchors: 13
+tier2 (patch added lines) anchors: 0
 tier3 (live worktree) anchors:    0
 tier4 (checkout HEAD) anchors:    0
-misattributed anchors:            1
+misattributed anchors:            0
 unmigrated call sites:            0
-FAIL: 8   WARN: 0
+FAIL: 0   WARN: 0
 
-apple-abi-provenance: SOURCE GAP (8 finding(s))
-EXIT=1
+apple-abi-provenance: PASS
+EXIT=0

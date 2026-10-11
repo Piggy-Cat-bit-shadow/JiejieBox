@@ -1,0 +1,29 @@
+### CMD: pin identity + drift + single-source + inline CI
+### HEAD: cfc77dc51ab7322e993b8ae0b94b96db59e48f47
+### DATE: 2026-10-12 05:32:00 +0800
+
+-- 17. gitlink recorded
+160000 90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07 0	clients/apple
+EXIT=0
+
+-- 18. submodule status
+ 90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07 clients/apple (archive/apple-consolidated-candidate-2026-10-11-18-g90a0e9a)
+EXIT=0
+
+-- 20. VERIFIED_APPLE_SHA single source
+scripts/ci/check-libbox-abi.sh:103:VERIFIED_APPLE_SHA="90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07"
+EXIT=0
+
+-- 21. inline CI submodule check
+parent: 90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07  checkout: 90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07
+EXIT=0
+
+-- four SHAs + refs
+BASE_PARENT_HEAD     = 96a94f584d30691cadd44dab83b64d56fc7a1fec
+VERIFIED_BRANCH_HEAD = cfc77dc51ab7322e993b8ae0b94b96db59e48f47
+APPLE_GITLINK        = 90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07
+VERIFIED_APPLE_SHA   = 90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07
+SUBMODULE_HEAD       = 90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07
+APPLE_ORIGIN_MAIN    = 90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07
+LOCAL testing        = 9f9eea55d4d911899c6f4e7bc597920686d4bc1b
+REMOTE origin/testing= 6cc45d3f49a3908ff150045d3a113f98920eaaea

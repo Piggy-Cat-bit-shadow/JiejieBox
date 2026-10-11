@@ -1,3 +1,42 @@
+HISTORICAL / NON-AUTHORITATIVE — DO NOT APPLY
+================================================================================
+
+This patch is a record of a fix that has since been made, differently and
+properly, in the Apple client. It is kept because
+docs/fork/apple-artifact-verification.md describes the reasoning behind it and
+that reasoning is still worth reading. It is NOT a prepared fix, NOT part of the
+ABI-provenance patch set, and NOT a description of the pinned tree.
+
+# Why it is obsolete
+
+Its base is `d3e8035` — the 29-line, `#if os(iOS)`-guarded ScreenStateObserver that
+docs/fork/apple-screen-state-observer.patch once created. The pinned client no
+longer has that file. At 90a0e9ae, `Library/Network/ScreenStateObserver.swift` is a
+731-line implementation built on two protocols (DarwinNotifyAPI,
+ScreenStatePublishing), and the initial-state fact this patch adds is now a
+first-class part of it:
+
+    ScreenStatePublishing.reconcileScreenState(on:)   "LEVEL only: a current-state
+    ScreenStatePublishing.reconcileLockState(locked:)  read found ... in this state"
+    observe(source:provenance:epoch:)                 reads via notify.getState(token:)
+
+So the behaviour this patch was written to add already ships. There is nothing left
+to apply.
+
+# Why it still "applies"
+
+`git apply --check` currently SUCCEEDS against the pinned tree, at a 536-line offset,
+because the old hunk's context happens to recur further down the rewritten file. A
+clean `--check` here is a false positive and must not be read as "still valid".
+Applying it would splice a stale pre-rewrite block into code that already handles
+the case, so the explicit warning is the point of this header.
+
+# If the screen-state observer ever needs another fix
+
+Write it against the pinned revision and add it to the ABI-provenance set, or land it
+in the Apple repository. Do not resurrect this file.
+
+================================================================================
 diff --git a/Library/Network/ScreenStateObserver.swift b/Library/Network/ScreenStateObserver.swift
 index d3e8035..e37d734 100644
 --- a/Library/Network/ScreenStateObserver.swift

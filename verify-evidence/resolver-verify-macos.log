@@ -1,2 +1,0 @@
-### CMD: bash scripts/ci/apple-client-source.sh verify macos
-apple-client-source: build/apple-client-macos is not a git checkout.

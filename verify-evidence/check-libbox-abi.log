@@ -1,4 +1,7 @@
 ### CMD: bash scripts/ci/check-libbox-abi.sh
+### HEAD: cfc77dc51ab7322e993b8ae0b94b96db59e48f47
+### DATE: 2026-10-12 05:30:59 +0800
+
 == libbox ABI gate ==
      contract: docs/fork/libbox-abi-contract.tsv (9 migrated methods)
      gomobile pin: v0.1.12

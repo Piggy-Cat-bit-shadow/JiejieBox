@@ -1,0 +1,7 @@
+### CMD: brand display vs product identity
+### HEAD: cfc77dc51ab7322e993b8ae0b94b96db59e48f47
+### DATE: 2026-10-12 05:32:00 +0800
+
+scripts/ci/apply-apple-branding-overlay.py:72:BRAND_DISPLAY_NAME = "JiejieBox"
+scripts/ci/apply-apple-macos-branding-overlay.py:75:BRAND_DISPLAY_NAME = "JiejieBox"
+EXIT=0

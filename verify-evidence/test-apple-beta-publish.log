@@ -1,4 +1,7 @@
 ### CMD: bash scripts/ci/test-apple-beta-publish.sh
+### HEAD: cfc77dc51ab7322e993b8ae0b94b96db59e48f47
+### DATE: 2026-10-12 05:31:12 +0800
+
 == artifact attribution ==
   PASS: an artifact built from this commit validates
   PASS: a different parent SHA is rejected
@@ -116,3 +119,4 @@
   PASS: an unset boolean takes the env file value
 
 test-apple-beta-publish: 97 passed, 0 failed
+EXIT=0
