@@ -115,7 +115,18 @@ func QUICClientHello(ctx context.Context, metadata *adapter.InboundContext, pack
 	}
 
 	hdrLen := int(reader.Size()) - reader.Len()
-	if hdrLen+int(packetLen) > len(packet) {
+	// The datagram may carry several coalesced packets and this one ends where its own Length field
+	// says it does: the Length field covers the packet number, the payload and the authentication
+	// tag, so hdrLen+packetLen is one past the last byte of THIS packet, not of the datagram.
+	currentPacketEnd := hdrLen + int(packetLen)
+	if currentPacketEnd > len(packet) {
+		return os.ErrInvalid
+	}
+	// Header protection rewrites the four bytes of the packet number field in place below, so those
+	// bytes have to exist inside the copy taken from here. A Length that cannot reach them is
+	// malformed; the whole-datagram copy used to place that write in the datagram's tail, which is
+	// only in bounds because the datagram is not the packet.
+	if currentPacketEnd < hdrLen+4 {
 		return os.ErrInvalid
 	}
 
@@ -164,8 +175,13 @@ func QUICClientHello(ctx context.Context, metadata *adapter.InboundContext, pack
 	// written out here would be wrong.
 	mask := make([]byte, aes.BlockSize)
 	block.Encrypt(mask, pnBytes)
-	newPacket := make([]byte, len(packet))
-	copy(newPacket, packet)
+	// Only this packet is copied out of the datagram. Everything the sniffer reads lies inside it -
+	// the destination connection id, the packet-number sample, the additional data and the
+	// ciphertext - and the coalesced packets after it are never read, so copying them only made the
+	// working buffer (and any decrypted ClientHello fragment that ends up aliasing it) as large as
+	// whatever the peer chose to put behind the Initial.
+	newPacket := make([]byte, currentPacketEnd)
+	copy(newPacket, packet[:currentPacketEnd])
 	newPacket[0] ^= mask[0] & 0xf
 	for i := range newPacket[hdrLen : hdrLen+4] {
 		newPacket[hdrLen+i] ^= mask[i+1]
