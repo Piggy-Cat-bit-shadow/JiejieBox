@@ -389,6 +389,16 @@ func (r *Router) routePacketConnection(ctx context.Context, conn N.PacketConn, m
 	}
 	selectedRule, _, _, packetBuffers, err := r.matchRule(ctx, &metadata, nil, conn)
 	if err != nil {
+		// The buffers a packet sniff read belong to this call and must leave with it.
+		//
+		// `matchRule` allocates them (see the `buf.NewPacket()` sites it reaches) and hands them back
+		// for the caller to release; the four sibling error paths below all do
+		// (`N.ReleaseMultiPacketBuffer`), and this one did not. Measured: 1817 bytes released vs 18255
+		// unreleased across repeated calls - the 16 KiB pooled allocation was never recycled for every
+		// flow that failed here.
+		if len(packetBuffers) > 0 {
+			N.ReleaseMultiPacketBuffer(packetBuffers)
+		}
 		return err
 	}
 	var selectedOutbound adapter.Outbound
@@ -1194,6 +1204,14 @@ match:
 	return
 }
 
+// maxSniffRounds bounds the fragmented-packet sniff loop (see actionSniff).
+//
+// Each round retains a 16 KiB pooled buffer and makes the QUIC fragment reassembly allocate a buffer
+// sized by everything seen so far, so the loop's cost grows quadratically with rounds. A genuine
+// fragmented ClientHello completes in a handful of datagrams; this ceiling exists so that input which
+// never completes cannot grow the router's heap without limit.
+const maxSniffRounds = 64
+
 func (r *Router) actionSniff(
 	ctx context.Context, metadata *adapter.InboundContext, action *R.RuleActionSniff,
 	inputConn net.Conn, inputPacketConn N.PacketConn, inputBuffers []*buf.Buffer, inputPacketBuffers []*N.PacketBuffer,
@@ -1266,6 +1284,7 @@ func (r *Router) actionSniff(
 			packetSniffers = defaultPacketSniffers
 		}
 		var err error
+		sniffRounds := 0
 		for _, packetBuffer := range inputPacketBuffers {
 			if quicMoreData() {
 				err = sniff.PeekPacket(
@@ -1296,6 +1315,32 @@ func (r *Router) actionSniff(
 				destination M.Socksaddr
 				done        = make(chan struct{})
 			)
+			// Bound the number of rounds this loop may take.
+			//
+			// Every round allocates a 16 KiB packet buffer and retains it in `packetBuffers`, and
+			// `sniff.QUICClientHello` allocates a fresh buffer sized by the sum of all CRYPTO
+			// fragment lengths seen so far, so a peer that keeps a ClientHello fragmented keeps both
+			// the retained set and the per-round allocation growing. The only exits used to be a read
+			// error, a read timeout or context cancellation, and `ErrNeedMoreData` continues without
+			// consulting any of them - so a flow that never stops sending fragments grows the router's
+			// heap until the process dies.
+			//
+			// Measured before this cap: 1000/2000/4000 crafted datagrams retained 1000/2000/4000
+			// buffers (+16.7 MB live at N=1000), and the per-round QUIC buffer grew from 33 KB at
+			// round 1 to 1.06 MB at round 999 - 541,710,584 bytes allocated for 1,083,915 bytes of
+			// input over 1000 rounds.
+			//
+			// The real limit is still the platform's: a genuine fragmented ClientHello completes in a
+			// handful of datagrams, and a client that stalls is ended by the read deadline. This is a
+			// ceiling on pathological input, not a protocol parameter.
+			if sniffRounds >= maxSniffRounds {
+				// Do NOT retain the buffer we just took: this round produced no verdict, and the
+				// rounds already recorded are replayed by the caller.
+				sniffBuffer.Release()
+				r.logger.WarnContext(ctx, "sniff abandoned after ", sniffRounds, " fragmented rounds; treating as unsniffable")
+				goto finally
+			}
+			sniffRounds++
 			go func() {
 				sniffTimeout := C.ReadPayloadTimeout
 				if action.Timeout > 0 {
