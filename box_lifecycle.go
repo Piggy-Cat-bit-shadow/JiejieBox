@@ -169,6 +169,70 @@ func (l lifecycle) lockState(locked bool) {
 	l.woke()
 }
 
+// reconcileScreenState applies a CURRENT-STATE read of the display: the level, and never an edge.
+//
+// # Why a current-state read is not screenState()
+//
+// `screenState(false)` publishes a sleep EDGE - `governor.SleepStarted()` - and then the level. That
+// is right for a transition the platform witnessed: `NEPacketTunnelProvider.sleep()`, a display-off
+// notification, a lock notification. A new sleep means a new reuse measurement, and the edge is what
+// says so.
+//
+// It is wrong for a re-read of a name's current value. The Apple client takes one at observer start
+// and again on every NetworkExtension resume, and both are LEVEL statements: "the display is off
+// now". The resume is what makes publishing an edge there destructive rather than merely redundant,
+// because the client wakes the core first and re-reads second (`ExtensionProvider.wake()` calls
+// `commandServer.wake()` and then `resync()`). `Wake()` publishes `governor.Resumed()`, which sets
+// `resumeNoted`, and that is exactly the flag `noteSleepLocked` uses to decide whether a sleep report
+// is a new sleep. So an edge from the re-read moves the anchor to now: a five-hour sleep that has
+// already been measured and published as `ReuseRetire` is re-anchored, and the unlock that ends it
+// publishes the few seconds between the resume and the re-read instead - a `ReuseSuspect` boundary
+// for a phone that was asleep all night, which is the P1-C defect.
+//
+// The level is what a re-read can honestly establish, and the level is idempotent by construction:
+// `DevicePause()` does nothing while the pause is already held, and when it does move it emits
+// `EventDevicePaused`, which `applyPauseEvent` maps to the edge AND the level. So a re-read that
+// finds the device already asleep changes nothing at all - the measurement that is already running
+// keeps its anchor - while a re-read that finds it asleep on a process with no pause on record still
+// establishes both, which is the "the extension restarted while the phone was locked" case the
+// re-read exists for.
+func (l lifecycle) reconcileScreenState(on bool) {
+	// A read that found the display ON is not a fact this path may publish. It would be a resume
+	// edge claiming a transition nobody witnessed, and on this platform a display lighting up is a
+	// push notification or raise-to-wake rather than a person using the device. The client's own
+	// policy already refuses to send it; refusing it again here makes "a current-state read can only
+	// ever add a pause" a property of the bridge rather than of one client's policy table.
+	if on {
+		return
+	}
+	l.reconcileSleep()
+}
+
+// reconcileLockState applies a CURRENT-STATE read of the lock: the level, and never an edge.
+//
+// Locked is the same statement as a display going off, and it takes the same level-only path for the
+// same reason - see reconcileScreenState. Unlocked is refused here as the display-on fact is: it is
+// the one fact that releases the level, and a re-read cannot establish that a person unlocked the
+// device. `notify_get_state` answers `NOTIFY_STATUS_OK` with `0` for a name whose state was never
+// set, so a snapshot that published it would invent an unlock at every extension start.
+func (l lifecycle) reconcileLockState(locked bool) {
+	if !locked {
+		return
+	}
+	l.reconcileSleep()
+}
+
+// reconcileSleep applies the level half of a sleep fact and nothing else.
+//
+// It is deliberately not `slept()`: no `SleepStarted()`, so no anchor moves. The governor still
+// measures a sleep - the one `DevicePause()` starts when the level actually moves - it just is not
+// told that a new one began by a fact that only restates the current one.
+func (l lifecycle) reconcileSleep() {
+	if l.device != nil {
+		l.device.DevicePause()
+	}
+}
+
 // lifecycleFor resolves the bridge for this Box. It is a value, so it captures the governor and the
 // manager once and cannot observe a later replacement of either.
 func (s *Box) lifecycle() lifecycle {
