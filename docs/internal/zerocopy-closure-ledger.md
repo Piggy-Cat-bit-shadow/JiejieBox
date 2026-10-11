@@ -84,6 +84,32 @@ cheapest thing that would have caught both is a table test driving the same reco
 paths and asserting the same `(n, err)` — and that is the concrete recommendation for this file, rather
 than a note that the bugs are fixed.
 
+**That recommendation is now grounded rather than aspirational.** The comparison of the two paths is
+finished and they agree on every point that matters; the divergences that remain are contract-level and
+correct:
+
+| | `Conn.Read` | `Conn.WaitReadBuffer` |
+|---|---|---|
+| close-notify | returns `(n, err)` — the reader keeps the bytes it already read | releases the buffer and returns `(nil, err)` — the waiter interface has no byte count, and the bytes stay in `Input` for the next call |
+| empty read | `len(b) == 0` returns `(0, nil)`, because `io.Reader` permits it | no such path; the waiter allocates its own buffer, so the case cannot arise |
+| read error | discards it (`n, _ := Input.Read(b)`) | handles it, releasing the buffer — the right thing when the buffer is the wrapper's own |
+
+**Scope check, so the next round does not have to re-derive it:** of the **16 platform-gated packages with
+no test files at all**, `common/ktls` is the **only one in the data plane**. The others are
+`cmd/sing-box`, `common/certificate`, `common/jni`, `common/kernelports`, `common/listener`, `common/redir`,
+`common/settings`, `common/trafficsched/harness`, `constant`, `experimental/libbox/internal/oomprofile`,
+`include`, `service/ocm`, `service/powerreport`, `service/resolved`, `service/usbip`. So this file is the
+whole of the untested-and-gated data-plane surface, which is consistent with every genuine defect found in
+this work having come from it.
+
+**A test file there IS compile-verifiable on this host even though it cannot be run**: `go vet` under
+`GOOS=linux` type-checks test files for the target platform, so a `_test.go` in this package can be checked
+for correctness of shape and would only fail at run time on a Linux box. The concrete seam is
+`nextTrafficSecret` (`ktls_prf.go:21`) — a pure function that drives the KeyUpdate path one of the fixes
+repaired, and the one piece of this package testable without constructing a `Conn`. It is NOT written here
+because its expected values are HKDF-Expand-Label outputs that cannot be computed or verified without
+running the code, and a test with unverifiable constants is worse than no test.
+
 **Not a defect, examined and dismissed:** `writeKernelRecord` indexes `&data[0]` with no empty check
 (`ktls_linux.go:318`), which would panic on an empty typed record. Both callers pass non-empty data
 (2 bytes from `sendAlertLocked`, handshake bytes from the key-update path), and `crypto/tls`'s own `Write`
