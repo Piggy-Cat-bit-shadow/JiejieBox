@@ -65,6 +65,20 @@ type PlatformEvents struct {
 	// explicitly not allowed to introduce.
 	wakePending bool
 
+	// deviceWakeNudged is the EDGE's own latch: this awake period has actually published a resume
+	// nudge. It exists because the level facts above cannot answer an edge question. "Screen known to
+	// be on, nothing paused, no wake pending" is a state a platform reports at attach - it seeds
+	// setScreenOn(true) - without anybody having touched the device, so a guard that asked the LEVEL
+	// whether the edge had already happened found every one of its terms already true and coalesced
+	// the FIRST real user-present away: no nudge was ever published, for the one event the LX 041
+	// resume path was written for.
+	//
+	// It is written in exactly the two places where a nudge is decided (recomputeDeviceLocked and
+	// DeviceWake) and cleared where the awake period ends (SetScreenOn(false)). Nothing derives it
+	// from stats.Wakes, and nothing derives it from screenOn, so it cannot drift from what the target
+	// was actually told while still being independent of the level that used to answer for it.
+	deviceWakeNudged bool
+
 	lastTrimLevel TrimLevel
 	lastTrimAt    time.Time
 	lastReleaseAt time.Time
@@ -283,6 +297,17 @@ func (p *PlatformEvents) MemoryTrim(level TrimLevel) {
 // Turning the screen on makes the device usable; it does not put this app in front. The wake nudge is
 // deferred to SetAppForeground, which is the fact that says a person is looking at this app - see
 // there for why an immediate nudge on screen-on would be a rebind storm on behalf of nobody.
+//
+// # Why screen-off ends the awake period
+//
+// Screen off ends the awake period, and the resume edge is spent per awake period, not per process: a
+// device that slept and was used again owes a nudge for that use. The latch is therefore cleared
+// here, on the screen-off fact itself, rather than inside the pause branch of
+// recomputeDeviceLocked - the pause is device-axis POLICY (it may coalesce a repeated screen-off, and
+// it exists to decide whether a pause is owed), while the latch is bookkeeping about which period we
+// are in. Tying the clear to the policy would strand the latch if the pause rule ever grew an early
+// return. The screen-on side deliberately arms nothing: see the level-path arm in
+// recomputeDeviceLocked, which arms only when it has actually published a nudge.
 func (p *PlatformEvents) SetScreenOn(on bool) {
 	p.access.Lock()
 	if p.closed {
@@ -292,6 +317,12 @@ func (p *PlatformEvents) SetScreenOn(on bool) {
 	}
 	p.screenKnown = true
 	p.screenOn = on
+	if !on {
+		// Safe to clear on every screen-off statement, including a repeat the pause below will
+		// coalesce: the latch can only ever be set while screenOn is true (both arm sites set
+		// screenOn or require it), so a screen-off statement can never clear a live latch.
+		p.deviceWakeNudged = false
+	}
 	action := p.recomputeDeviceLocked()
 	p.inFlight.Add(1)
 	p.access.Unlock()
@@ -336,6 +367,13 @@ func (p *PlatformEvents) SetAppForeground(foreground bool) {
 // usable, which is exactly the event the WireGuard wake nudge was written for (LX 041 - the device
 // wakes and the handshake is still retrying into a flow the sleep destroyed). It therefore forces the
 // nudge even if the app axis has not caught up yet.
+//
+// # Why it coalesces on the edge latch and never on the screen flag
+//
+// The guard below asks deviceWakeNudged - "has this awake period actually published a nudge?" - and
+// not the level. Asking the level ("screen known on, not paused, nothing pending") reads a state the
+// platform can report at attach with no user involved, so the FIRST real user-present found the
+// condition already satisfied and was coalesced away without a nudge ever having been published.
 func (p *PlatformEvents) DeviceWake() {
 	p.access.Lock()
 	if p.closed {
@@ -343,10 +381,11 @@ func (p *PlatformEvents) DeviceWake() {
 		p.access.Unlock()
 		return
 	}
-	if p.screenKnown && p.screenOn && !p.paused && !p.wakePending {
-		// Already awake and already nudged. A platform may deliver the same user-present fact more
-		// than once (a receiver re-registration replays it); a second nudge would be a second rebind
-		// opportunity for no new event.
+	if p.deviceWakeNudged {
+		// Already nudged in this awake period - through the level path or through an earlier
+		// user-present. A platform may deliver the same user-present fact more than once (a receiver
+		// re-registration replays it); a second nudge would be a second rebind opportunity for no new
+		// event.
 		p.stats.Coalesced++
 		p.access.Unlock()
 		return
@@ -355,6 +394,7 @@ func (p *PlatformEvents) DeviceWake() {
 	p.screenOn = true
 	p.paused = false
 	p.wakePending = false
+	p.deviceWakeNudged = true
 	p.stats.Wakes++
 	p.inFlight.Add(1)
 	p.access.Unlock()
@@ -377,6 +417,7 @@ const (
 //
 //	paused   = screen known to be off
 //	wake     = the device became usable AND a user is in front of this app
+//	           (this is a published nudge, so it also spends the awake period's resume edge)
 //	deferred = the device became usable with nobody in front of this app
 func (p *PlatformEvents) recomputeDeviceLocked() deviceAction {
 	wantPaused := p.screenKnown && !p.screenOn
@@ -400,6 +441,12 @@ func (p *PlatformEvents) recomputeDeviceLocked() deviceAction {
 		return deviceActionNone
 	}
 	p.wakePending = false
+	// Arm the edge latch at the decision itself, on the same statement that counts the wake, and NOT
+	// from a second rule elsewhere: this branch is the level path's only nudge, and the level path is
+	// reached from both SetScreenOn and SetAppForeground (the latter is where a deferred wake is
+	// released). Arming it in either caller would be a mirror that can drift - the level would nudge
+	// without spending the edge, and one awake period would publish two nudges for one wake.
+	p.deviceWakeNudged = true
 	p.stats.Wakes++
 	return deviceActionWake
 }

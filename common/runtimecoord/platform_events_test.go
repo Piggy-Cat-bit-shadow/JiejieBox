@@ -410,6 +410,185 @@ func TestPlatformExplicitDeviceWakeIsAuthoritative(t *testing.T) {
 	require.True(t, known)
 }
 
+// TestPlatformFirstUserPresentIsNotSwallowedByASeededScreenOn is the defect the edge latch exists for.
+//
+// # The sequence that failed
+//
+//	attach -> the platform seeds setScreenOn(true)     (a LEVEL fact: the screen is interactive)
+//	then the FIRST real USER_PRESENT arrives -> reportDeviceWake -> DeviceWake
+//
+// The old guard asked the level whether the resume edge had already been consumed:
+//
+//	if p.screenKnown && p.screenOn && !p.paused && !p.wakePending
+//
+// Every one of those four terms is already true after the seed - the platform stated a level, nothing
+// had been paused and nothing was pending - so the first real user-present was coalesced away and no
+// nudge was ever published. A screen-on may be nothing but a lock-screen notification lighting up; a
+// level fact cannot answer whether an EDGE happened.
+func TestPlatformFirstUserPresentIsNotSwallowedByASeededScreenOn(t *testing.T) {
+	platform := &fakePlatform{}
+	policy := NewPlatformEvents(platform)
+
+	// Attach: the platform seeds the screen level. A level fact owes no resume nudge by itself.
+	policy.SetScreenOn(true)
+	require.Zero(t, platform.snapshot().wakes, "a seeded screen-on is a level: it must not nudge on its own")
+	require.EqualValues(t, 0, policy.Stats().Wakes)
+
+	// The first real USER_PRESENT, with the app axis not caught up yet - the case DeviceWake is
+	// documented as authoritative for.
+	require.False(t, policy.AppForeground())
+	policy.DeviceWake()
+
+	require.EqualValues(t, 1, platform.snapshot().wakes,
+		"the first user-present never reached the target: a seeded screen-on swallowed the resume edge")
+	require.EqualValues(t, 1, policy.Stats().Wakes, "the published nudge is counted once")
+	require.Zero(t, policy.Stats().Coalesced, "nothing was repeated, so nothing may be coalesced away")
+	require.True(t, nudgedForThisAwakePeriod(policy), "the published nudge must be the edge the period spent")
+}
+
+// TestPlatformRepeatedUserPresentCoalesces: the same user-present delivered twice is one logical
+// event, because a receiver re-registration replays USER_PRESENT and a second nudge would be a second
+// rebind opportunity for no new event. The reason the repeat may be dropped is that the FIRST one
+// published a nudge - not that the screen level happens to read "awake".
+func TestPlatformRepeatedUserPresentCoalesces(t *testing.T) {
+	platform := &fakePlatform{}
+	policy := NewPlatformEvents(platform)
+	policy.SetScreenOn(true)
+
+	policy.DeviceWake()
+	policy.DeviceWake()
+
+	require.EqualValues(t, 1, platform.snapshot().wakes, "two user-present facts in one awake period are one nudge")
+	require.EqualValues(t, 1, policy.Stats().Wakes)
+	require.EqualValues(t, 1, policy.Stats().Coalesced, "the repeat is counted as coalesced, not silently dropped")
+}
+
+// TestPlatformScreenOffStartsANewWakePeriod: the edge is spent per awake period, not per process. A
+// screen-off ends the period, so the next use owes its own nudge; a latch that survived the sleep
+// would leave every later wake unnudged, which is the C01 defect seen from the other end.
+func TestPlatformScreenOffStartsANewWakePeriod(t *testing.T) {
+	platform := &fakePlatform{}
+	policy := NewPlatformEvents(platform)
+	policy.SetScreenOn(false)
+
+	// First awake period: one nudge, and the repeat is coalesced.
+	policy.DeviceWake()
+	policy.DeviceWake()
+	require.EqualValues(t, 1, platform.snapshot().wakes, "the first awake period publishes one nudge")
+	require.EqualValues(t, 1, policy.Stats().Coalesced)
+
+	// Screen off: the period ends. The pause is the device axis' own statement of the same fact.
+	policy.SetScreenOn(false)
+	require.EqualValues(t, 2, platform.snapshot().pauses, "the second screen-off is a real transition into sleep, not a repeat")
+	require.EqualValues(t, 2, policy.Stats().Pauses)
+
+	// Second awake period: the device is used again and owes its own nudge.
+	policy.DeviceWake()
+	policy.DeviceWake()
+	require.EqualValues(t, 2, platform.snapshot().wakes, "the second awake period owes its own resume nudge")
+	require.EqualValues(t, 2, policy.Stats().Wakes)
+	require.EqualValues(t, 2, policy.Stats().Coalesced)
+
+	// A third period through the level route, so "per period" is not a property of DeviceWake alone:
+	// the user is in front of the app, the device sleeps, and the screen comes back.
+	policy.SetAppForeground(true)
+	require.EqualValues(t, 2, platform.snapshot().wakes, "a foreground fact with no debt owed publishes nothing")
+	policy.SetScreenOn(false)
+	policy.SetScreenOn(true)
+	require.EqualValues(t, 3, platform.snapshot().wakes, "the level route back from sleep owes a nudge too")
+	require.EqualValues(t, 3, policy.Stats().Wakes)
+}
+
+// TestPlatformLevelNudgeSpendsTheEdgeForTheAwakePeriod: the level path CAN publish a resume nudge -
+// screen off with the user in front of the app, screen back on, and recomputeDeviceLocked decides
+// deviceActionWake - and when it does, it spends the awake period's edge at that decision. A
+// user-present arriving afterwards is the same period and owes nothing; without the arm at the
+// decision the one wake would earn two nudges.
+func TestPlatformLevelNudgeSpendsTheEdgeForTheAwakePeriod(t *testing.T) {
+	platform := &fakePlatform{}
+	policy := NewPlatformEvents(platform)
+	policy.SetScreenOn(true)
+	policy.SetAppForeground(true)
+
+	policy.SetScreenOn(false)
+	// The screen returns with the user already in front of this app: the level path wakes.
+	policy.SetScreenOn(true)
+
+	require.EqualValues(t, 1, platform.snapshot().wakes,
+		"the level path reached no nudge at all, so this test could not tell whether the edge was spent")
+	require.EqualValues(t, 1, policy.Stats().Wakes)
+
+	// The unlock a real user-present delivers afterwards.
+	policy.DeviceWake()
+	require.EqualValues(t, 1, platform.snapshot().wakes,
+		"one awake period earned a second resume nudge: the level path published one without spending the edge")
+	require.EqualValues(t, 1, policy.Stats().Wakes)
+	require.EqualValues(t, 1, policy.Stats().Coalesced)
+	require.True(t, nudgedForThisAwakePeriod(policy), "the level path published a nudge, so it must have spent the edge")
+}
+
+// TestPlatformForegroundIsNotAResumeEdge: the app axis has no resume edge of its own. It can RELEASE
+// a wake the device axis deferred, and that release is a nudge - but a foreground transition that
+// published nothing must not spend the awake period's edge, or the real user-present that follows is
+// coalesced away by a fact nobody asked for.
+func TestPlatformForegroundIsNotAResumeEdge(t *testing.T) {
+	// Half one: foreground with nothing deferred. The platform seeded "screen on" and the user opens
+	// this app; the device axis owes nothing, so this publishes nothing and must spend nothing.
+	platform := &fakePlatform{}
+	policy := NewPlatformEvents(platform)
+	policy.SetScreenOn(true)
+	policy.SetAppForeground(true)
+	require.Zero(t, platform.snapshot().wakes, "foreground released nothing, so it may not nudge")
+	require.Zero(t, platform.snapshot().pauses)
+
+	policy.DeviceWake()
+	require.EqualValues(t, 1, platform.snapshot().wakes,
+		"a foreground transition that published nothing spent the awake period's resume edge")
+
+	// Half two: foreground releasing a deferred wake did publish a nudge, so the edge IS spent for
+	// this period - it is the period's one nudge, not a second one on top of a user-present.
+	deferred := &fakePlatform{}
+	deferredPolicy := NewPlatformEvents(deferred)
+	deferredPolicy.SetScreenOn(false)
+	deferredPolicy.SetScreenOn(true) // screen back on, nobody in front: deferred, not dropped
+	require.Zero(t, deferred.snapshot().wakes, "a deferred wake waits for the user")
+
+	deferredPolicy.SetAppForeground(true)
+	require.EqualValues(t, 1, deferred.snapshot().wakes, "the deferred nudge is released exactly once")
+
+	deferredPolicy.DeviceWake()
+	require.EqualValues(t, 1, deferred.snapshot().wakes,
+		"the released deferred wake is this period's one edge: a user-present in the same period owes nothing")
+	require.EqualValues(t, 1, deferredPolicy.Stats().Coalesced)
+
+	// Half three, the mirror image of the wakePending mirror: an explicit user-present SUPERSEDES a
+	// deferred wake - it publishes the nudge itself and clears the debt - so the foreground that
+	// follows must not publish the deferred one a second time.
+	superseded := &fakePlatform{}
+	supersededPolicy := NewPlatformEvents(superseded)
+	supersededPolicy.SetScreenOn(false)
+	supersededPolicy.SetScreenOn(true) // deferred
+	supersededPolicy.DeviceWake()      // the user is present: this publishes the nudge
+	require.EqualValues(t, 1, superseded.snapshot().wakes)
+
+	supersededPolicy.SetAppForeground(true)
+	require.EqualValues(t, 1, superseded.snapshot().wakes,
+		"the foreground released a deferred wake the explicit user-present had already superseded")
+}
+
+// nudgedForThisAwakePeriod reads the edge latch, under the policy's own lock.
+//
+// Every other assertion in this file is about what the TARGET observed, because a private field only
+// proves what the code that wrote it happened to leave behind. This read is here for the opposite
+// reason: the latch and the published nudge must not drift, and reading the latch directly is the only
+// way to assert that the arm happens at the publish rather than in some second place that agrees by
+// accident today. It is always checked alongside, never instead of, the target's own count.
+func nudgedForThisAwakePeriod(policy *PlatformEvents) bool {
+	policy.access.Lock()
+	defer policy.access.Unlock()
+	return policy.deviceWakeNudged
+}
+
 // TestPlatformCloseIsAFloor proves a fact after Close is a counted no-op rather than a resurrection,
 // and that Close waits for a target call that is already in flight.
 func TestPlatformCloseIsAFloor(t *testing.T) {
