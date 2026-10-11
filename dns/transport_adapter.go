@@ -58,16 +58,6 @@ func NewTransportAdapterWithRemoteOptions(transportType string, transportTag str
 	}
 }
 
-// ResolvesDomainServer reports whether this transport's own server address is a domain.
-//
-// It exists so the cross-kind cycle check can tell "this object reads the network-wide default
-// resolver" from "this object never resolves anything". A transport with a LITERAL server builds no
-// ResolveDialer (`common/dialer/dialer.go` builds one behind `RemoteIsDomain`), so it never consults
-// `route.default_domain_resolver` and an edge from it would report a loop the runtime does not close.
-func (a *TransportAdapter) ResolvesDomainServer() bool {
-	return a.resolvesDomainServer
-}
-
 func (a *TransportAdapter) Type() string {
 	return a.transportType
 }

@@ -183,18 +183,14 @@ func TestTheDefaultDomainResolverIsAGraphEdge(t *testing.T) {
 	t.Cleanup(func() { _ = explicit.Close() })
 	require.Error(t, explicit.Start(), "the explicit-resolver cycle is the known-refused shape")
 
-	// The same cycle, closed only through the NETWORK DEFAULT.
+	// The same cycle, closed only through the NETWORK DEFAULT. It must be refused too.
 	//
-	// STATUS: this does NOT refuse today, and the test records that rather than asserting a refusal
-	// the tree does not produce. The adversarial review measured the gap; this round closed the
-	// OVER-charge (below) and did not close the UNDER-charge.
+	// The object that reads the default must actually RESOLVE A NAME, so its server is a DOMAIN -
+	// that is what `RemoteIsDomain` follows and therefore when a ResolveDialer is built. The adapter
+	// publishes that fact (`ResolvesDomainServer`), captured from the real options at construction,
+	// which is what lets the graph charge the edge to THIS object and no other.
 	//
-	// What is missing, precisely: the edge is added only for a node whose `ResolvesDomainServer()`
-	// reports true, and that accessor was published on `dns.TransportAdapter` - the type the DNS
-	// transport manager holds - while the object the graph walks here is the SOCKS adapter. So the
-	// edge is not added and the loop is missed. The publisher needs to be on the ADAPTER the object
-	// actually is, which is a wiring change across `adapter/outbound` and `adapter/endpoint` rather
-	// than the single method added here.
+	// This case was a RECORDED GAP in the previous round and is closed by the adapter publication.
 	viaDefault, err := newBoxFromConfig(t, `{
   "log": {"disabled": true},
   "dns": {"servers": [{"tag": "remote", "type": "udp", "server": "8.8.8.8", "detour": "proxy"}]},
@@ -204,9 +200,8 @@ func TestTheDefaultDomainResolverIsAGraphEdge(t *testing.T) {
 }`)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = viaDefault.Close() })
-	require.NoError(t, viaDefault.Start(),
-		"RECORDED GAP: the default-resolver edge is not reached for a non-DNS object, so this loop "+
-			"is missed. Asserting a refusal here would be asserting behaviour the tree does not have")
+	require.Error(t, viaDefault.Start(),
+		"where the resolver is NAMED does not change whether the loop closes at run time")
 
 	// And the LITERAL-server twin must START. This is the correction the adversarial review forced,
 	// and the half of the default-resolver work that IS closed.

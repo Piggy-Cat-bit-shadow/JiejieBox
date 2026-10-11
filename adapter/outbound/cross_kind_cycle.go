@@ -153,7 +153,6 @@ func (m *Manager) ValidateCrossKindCycles(transports []adapter.DNSTransport) err
 		outbounds:            outbounds,
 		transports:           transportsByTag,
 		defaultResolver:      m.defaultDomainResolverRef(),
-		endpointResolver:     endpointResolverReference,
 		readsDefaultResolver: m.readsDefaultResolverRef(),
 	}
 	return graph.validate()
@@ -204,29 +203,6 @@ func (m *Manager) readsDefaultResolverRef() func(tag string) bool {
 	}
 }
 
-// endpointResolverReference reads an endpoint's own `domain_resolver`, when it has one.
-//
-// # Why this is a real edge and not a guess
-//
-// `adapter.Endpoint` publishes only `Detour`, so an endpoint's `domain_resolver` is invisible to
-// `DomainResolverReference` - no endpoint type implements it. But the FIELD exists on every tunnel
-// endpoint (they all embed `DialerOptions`) and the dial path really reads it:
-// `protocol/wireguard/endpoint.go:67-74` and `protocol/openvpn/client.go:105-111` build the peer
-// dialer from those options, which is `common/dialer` reading `DomainResolver`.
-//
-// It is CONDITIONAL on the peer address being a domain - MEASURED, a domain peer with a resolver
-// that does not exist fails construction with "domain resolver not found: absent" while a literal
-// peer leaves the same field inert. The graph models the edge whenever the field is SET, which is
-// the conservative direction for a cycle check: a cycle that CAN be closed at run time is reported
-// rather than a cycle that only might be.
-func endpointResolverReference(endpoint adapter.Endpoint) string {
-	provider, isProvider := endpoint.(interface{ DomainResolverReference() string })
-	if !isProvider {
-		return ""
-	}
-	return provider.DomainResolverReference()
-}
-
 type crossKindGraph struct {
 	outbounds  map[string]adapter.Outbound
 	transports map[string]adapter.DNSTransport
@@ -234,9 +210,6 @@ type crossKindGraph struct {
 	// configured. It is the network-wide fallback every object that declares no resolver of its own
 	// resolves through, so it is an edge from that object to that transport.
 	defaultResolver func() string
-	// endpointResolver reads `domain_resolver` off an endpoint, which adapter.Endpoint does not
-	// publish.
-	endpointResolver func(adapter.Endpoint) string
 	// readsDefaultResolver reports whether this tag would actually consult the network-wide default.
 	// An object whose server is a literal builds no ResolveDialer and therefore never reads it.
 	readsDefaultResolver func(tag string) bool
@@ -283,17 +256,22 @@ func (g *crossKindGraph) edges(node crossKindNode) []crossKindNode {
 		for _, dependency := range dependencies {
 			edges = append(edges, crossKindNode{kind: crossKindOutbound, tag: dependency})
 		}
-		// The object's OWN resolver, whichever namespace published it.
+		// The object's OWN resolver, read from the ADAPTER it is.
 		//
-		// `DomainResolverReference` is the outbound half. An ENDPOINT does not implement it - the
-		// adapter keeps only `Detour` - so its `domain_resolver` was invisible here even though the
-		// field exists on every tunnel endpoint and the dial path reads it. Reading it through a
-		// separate accessor is what closes that gap without changing the adapter's published surface.
+		// # Why there is exactly one derivation
+		//
+		// Both `adapter/outbound.Adapter` and `adapter/endpoint.Adapter` publish
+		// `DomainResolverReference`, captured from the real `DialerOptions` at construction. So the
+		// graph reads one interface, on the object the runtime and the graph both walk, and there is
+		// no second way to obtain the fact.
+		//
+		// An earlier version read the endpoint half through a SEPARATE accessor reached only after
+		// this same assertion had already failed - which meant it re-asserted the identical interface
+		// on the identical value and could never return anything but "". That path is gone with the
+		// adapter publication that made it unnecessary.
 		resolverTag := ""
 		if resolver, isResolver := outbound.(interface{ DomainResolverReference() string }); isResolver {
 			resolverTag = resolver.DomainResolverReference()
-		} else if endpoint, isEndpoint := outbound.(adapter.Endpoint); isEndpoint && g.endpointResolver != nil {
-			resolverTag = g.endpointResolver(endpoint)
 		}
 		if resolverTag != "" {
 			edges = append(edges, crossKindNode{kind: crossKindDNS, tag: resolverTag})

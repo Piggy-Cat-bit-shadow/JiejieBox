@@ -21,6 +21,15 @@ type Adapter struct {
 	// an outbound through References(), and the closing edge - that outbound resolving through that
 	// transport - lives only here. See cross_kind_cycle.go.
 	domainResolver string
+	// serverIsDomain records whether this outbound's OWN server address is a domain, which is the
+	// condition under which the runtime builds a ResolveDialer and therefore the condition under
+	// which `route.default_domain_resolver` is read at all.
+	//
+	// It is deliberately NOT `domainResolver != ""`: an object may name a resolver it never uses, and
+	// an object with no resolver of its own may still resolve its server through the default. The
+	// cross-kind graph needs the second fact to decide whether the default is an edge, and conflating
+	// the two either misses a real loop or invents one.
+	serverIsDomain bool
 }
 
 func NewAdapter(outboundType string, outboundTag string, network []string, dependencies []string) Adapter {
@@ -32,7 +41,12 @@ func NewAdapter(outboundType string, outboundTag string, network []string, depen
 	}
 }
 
-func NewAdapterWithDialerOptions(outboundType string, outboundTag string, network []string, dialOptions option.DialerOptions) Adapter {
+// NewAdapterWithDialerOptions captures the resolver facts an outbound's dialer options carry.
+//
+// `serverIsDomain` is variadic so that only a caller that KNOWS the answer supplies it; an outbound
+// that has not established the fact reports false, which is the conservative direction for a check
+// whose job is to REFUSE.
+func NewAdapterWithDialerOptions(outboundType string, outboundTag string, network []string, dialOptions option.DialerOptions, serverIsDomain ...bool) Adapter {
 	var dependencies []string
 	if dialOptions.Detour != "" {
 		dependencies = []string{dialOptions.Detour}
@@ -43,6 +57,7 @@ func NewAdapterWithDialerOptions(outboundType string, outboundTag string, networ
 	}
 	adapter := NewAdapter(outboundType, outboundTag, network, dependencies)
 	adapter.domainResolver = domainResolver
+	adapter.serverIsDomain = len(serverIsDomain) > 0 && serverIsDomain[0]
 	return adapter
 }
 
@@ -54,6 +69,15 @@ func NewAdapterWithDialerOptions(outboundType string, outboundTag string, networ
 // that will actually dial, so the two cannot disagree.
 func (a *Adapter) DomainResolverReference() string {
 	return a.domainResolver
+}
+
+// ResolvesDomainServer reports whether this outbound's own server address is a domain.
+//
+// It answers "would this object build a ResolveDialer", which is what decides whether
+// `route.default_domain_resolver` is ever consulted on its behalf. `DomainResolverReference() != ""`
+// is NOT a substitute for it, and using one for the other either misses a real loop or invents one.
+func (a *Adapter) ResolvesDomainServer() bool {
+	return a.serverIsDomain
 }
 
 func (a *Adapter) Type() string {
