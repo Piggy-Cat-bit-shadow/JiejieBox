@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TCP splice diagnostics.
+// TCP handover diagnostics.
 //
 // # What these tests can and cannot reach, and why that is stated rather than hidden
 //
@@ -28,13 +28,17 @@ import (
 //     source that is not a TUN stream (the normal answer for a proxied flow);
 //   - reachable here through the real classifier: every target-side rejection, because the
 //     classifier takes wrappers and the wrappers are interfaces;
-//   - NOT reachable here: success, splice_rejected, source_reader_writer_mismatch and
+//   - NOT reachable here: acceptance, splice_rejected, source_reader_writer_mismatch and
 //     cached_write_failed, because all four are only decided after a live GoConn exists.
 //
 // The unreachable four are read on a device instead, which is what the diagnostics are for.
 // What is verified here is that they have a name, that they cannot be confused with each
-// other or with a success, and that the one-write-per-flow invariant holds - so a device
+// other or with an acceptance, and that the one-write-per-flow invariant holds - so a device
 // report can be trusted to mean what it says.
+//
+// "Acceptance" here is sing-tun's Splice() returning true, not a kernel splice that moved
+// bytes: see the file header of splice_diagnostics.go. These tests name it that way on
+// purpose, because the report is read by a person deciding whether splicing is happening.
 
 // tcpSpliceTestDialer hands NewConnection the remote side of a pipe.
 type tcpSpliceTestDialer struct {
@@ -77,7 +81,7 @@ func driveConnection(t *testing.T, metadata adapter.InboundContext) (*Connection
 //
 // It also proves the fallback still works with the instrumentation in place: the bytes have to
 // arrive, which they only do if the generic copy path ran. A diagnostic that recorded "not
-// spliced" while breaking the copy would be worse than none.
+// handed over" while breaking the copy would be worse than none.
 func TestTCPSpliceDiagnostics_ProxiedStreamIsSourceNotGoConn(t *testing.T) {
 	manager, inboundPeer, remotePeer := driveConnection(t, adapter.InboundContext{})
 
@@ -97,10 +101,10 @@ func TestTCPSpliceDiagnostics_ProxiedStreamIsSourceNotGoConn(t *testing.T) {
 
 	snapshot := manager.TCPSpliceDiagnostics()
 	require.Equal(t, uint64(1), snapshot.Attempts)
-	require.Equal(t, uint64(0), snapshot.Successes)
+	require.Equal(t, uint64(0), snapshot.Accepted)
 	require.Equal(t, map[string]uint64{"source_not_go_conn": 1}, snapshot.Reasons)
 
-	// The two transports count separately, or a TCP flow would move the UDP ratio.
+	// The two transports count separately, or a TCP flow would move the UDP acceptance ratio.
 	require.Equal(t, uint64(0), manager.SpliceDiagnostics().Attempts)
 }
 
@@ -116,7 +120,7 @@ func TestTCPSpliceDiagnostics_SkippedForTLSRewrite(t *testing.T) {
 
 	snapshot := manager.TCPSpliceDiagnostics()
 	require.Equal(t, uint64(1), snapshot.Attempts)
-	require.Equal(t, uint64(0), snapshot.Successes)
+	require.Equal(t, uint64(0), snapshot.Accepted)
 	require.Equal(t, map[string]uint64{"skipped_for_tls_rewrite": 1}, snapshot.Reasons)
 	require.Equal(t, uint64(0), manager.SpliceDiagnostics().Attempts, "a skip must not move the packet path")
 }
@@ -174,8 +178,8 @@ func TestTCPSpliceTargetReasonsAreRecordable(t *testing.T) {
 // report a device run reads.
 func TestTCPSpliceDiagnostics_InvariantAndFormat(t *testing.T) {
 	manager := newTCPDiagnosticsManager()
-	manager.tcpSpliceDiagnostics.recordOutcome(spliceReasonSuccess)
-	manager.tcpSpliceDiagnostics.recordOutcome(spliceReasonSuccess)
+	manager.tcpSpliceDiagnostics.recordOutcome(spliceReasonHandoverAccepted)
+	manager.tcpSpliceDiagnostics.recordOutcome(spliceReasonHandoverAccepted)
 	manager.tcpSpliceDiagnostics.recordOutcome(spliceReasonSkippedForTLSRewrite)
 	manager.tcpSpliceDiagnostics.recordOutcome(spliceReasonSourceNotGoConn)
 	manager.tcpSpliceDiagnostics.recordOutcome(spliceReasonSourceNotGoConn)
@@ -186,31 +190,34 @@ func TestTCPSpliceDiagnostics_InvariantAndFormat(t *testing.T) {
 
 	snapshot := manager.TCPSpliceDiagnostics()
 	require.Equal(t, uint64(7), snapshot.Attempts)
-	require.Equal(t, uint64(2), snapshot.Successes)
+	require.Equal(t, uint64(2), snapshot.Accepted)
 
-	// Attempts == Successes + sum(Reasons), which is what makes a device report add up.
+	// Attempts == Accepted + sum(Reasons), which is what makes a device report add up.
 	var failureTotal uint64
 	for _, count := range snapshot.Reasons {
 		failureTotal += count
 	}
-	require.Equal(t, snapshot.Attempts, snapshot.Successes+failureTotal)
+	require.Equal(t, snapshot.Attempts, snapshot.Accepted+failureTotal)
 
-	// Success is reported separately and never as a reason, or every spliced flow would be
-	// counted twice.
-	require.NotContains(t, snapshot.Reasons, "success")
+	// Acceptance is reported separately and never as a reason, or every handed-over flow
+	// would be counted twice.
+	require.NotContains(t, snapshot.Reasons, "handover_accepted")
 
 	summary := snapshot.TCPSpliceSummary()
-	require.True(t, strings.HasPrefix(summary, "TCP splice diagnostics: attempts=7 successes=2 ratio=0.286"), summary)
+	require.True(t, strings.HasPrefix(summary,
+		"TCP handover diagnostics: attempts=7 accepted=2 acceptance_ratio=0.286"), summary)
 	require.Contains(t, summary, "skipped_for_tls_rewrite=1")
 	require.Contains(t, summary, "source_not_go_conn=2")
 	require.Contains(t, summary, "splice_rejected=1")
 	require.Contains(t, summary, "target_not_replaceable=1")
-	require.NotContains(t, summary, "success=")
+	// The report is read as a splice success rate if any of these survive.
+	require.NotContains(t, summary, "success")
+	require.NotContains(t, summary, "spliced")
 
 	// The packet path keeps its own prefix and its own counters.
-	manager.spliceDiagnostics.recordOutcome(spliceReasonSuccess)
-	require.True(t, strings.HasPrefix(manager.SpliceDiagnostics().SpliceSummary(), "UDP splice diagnostics: attempts=1"))
-	require.Contains(t, manager.SpliceDiagnostics().SpliceSummary(), "ratio=1.000")
+	manager.spliceDiagnostics.recordOutcome(spliceReasonHandoverAccepted)
+	require.True(t, strings.HasPrefix(manager.SpliceDiagnostics().SpliceSummary(), "UDP handover diagnostics: attempts=1"))
+	require.Contains(t, manager.SpliceDiagnostics().SpliceSummary(), "accepted=1 acceptance_ratio=1.000")
 }
 
 // TestTCPSpliceDiagnostics_ReasonsAreDistinctAndNamed guards the report's vocabulary: two
@@ -234,6 +241,8 @@ func TestTCPSpliceDiagnostics_ReasonsAreDistinctAndNamed(t *testing.T) {
 	require.Equal(t, "skipped_for_tls_rewrite", spliceReasonSkippedForTLSRewrite.String())
 	require.Equal(t, "source_not_go_conn", spliceReasonSourceNotGoConn.String())
 	require.Equal(t, "cached_write_failed", spliceReasonCachedWriteFailed.String())
+	require.Equal(t, "handover_accepted", spliceReasonHandoverAccepted.String(),
+		"the accepted bucket must name the handover, not a kernel splice")
 
 	// The target-side vocabulary is shared with the packet path rather than mirrored, so a
 	// target rejection reads the same in both reports.

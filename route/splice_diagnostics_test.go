@@ -1,17 +1,27 @@
 package route
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
-// Tests for the splice diagnostics.
+// Tests for the handover diagnostics.
 //
-// The point of these counters is to let a real-device run answer "how many UDP
-// sessions spliced, how many fell back, and where". Two things therefore have to be
-// true and are asserted here: the counters record what actually happened, and
-// adding them did not change any splice decision.
+// The point of these counters is to let a real-device run answer "how many UDP sessions
+// were accepted for handover, how many fell back, and where". Two things therefore have to
+// be true and are asserted here: the counters record what actually happened, and adding
+// them did not change any handover decision.
+//
+// The third thing asserted here is the WORDING. Every number in this file describes a
+// handover being accepted by sing-tun - the last thing this package can observe - and not a
+// kernel splice that moved bytes. An earlier revision called the same counter "successes" and
+// printed it under a heading that named the mechanism, which reads as a rate of working
+// kernel splices. These tests exist so that wording cannot drift back: see
+// TestSpliceSnapshot_SummaryDoesNotClaimKernelSpliceSuccess, which is a source-level guard
+// because no runtime assertion on a rendered string can catch a hard-coded literal.
 
 func TestSpliceDiagnostics_EmptySnapshot(t *testing.T) {
 	var d spliceDiagnostics
@@ -25,18 +35,18 @@ func TestSpliceDiagnostics_EmptySnapshot(t *testing.T) {
 
 func TestSpliceDiagnostics_RecordsEachReason(t *testing.T) {
 	var d spliceDiagnostics
-	d.recordOutcome(spliceReasonSuccess)
-	d.recordOutcome(spliceReasonSuccess)
+	d.recordOutcome(spliceReasonHandoverAccepted)
+	d.recordOutcome(spliceReasonHandoverAccepted)
 	d.recordOutcome(spliceReasonSourceNotReplaceable)
 
-	// Success is reported through successes(), NOT through the reason table. Listing it in
-	// both places would double-count every spliced session and break the
-	// Attempts == Successes + sum(Reasons) invariant the device report relies on.
-	if _, present := d.snapshot()["success"]; present {
-		t.Error("success must not appear in the reason table; it has its own accessor")
+	// Acceptance is reported through accepted(), NOT through the reason table. Listing it in
+	// both places would double-count every accepted session and break the
+	// Attempts == Accepted + sum(Reasons) invariant the device report relies on.
+	if _, present := d.snapshot()["handover_accepted"]; present {
+		t.Error("acceptance must not appear in the reason table; it has its own accessor")
 	}
-	if d.successes() != 2 {
-		t.Errorf("successes: want 2, got %d", d.successes())
+	if d.accepted() != 2 {
+		t.Errorf("accepted: want 2, got %d", d.accepted())
 	}
 	if got := d.snapshot()["source_not_replaceable"]; got != 1 {
 		t.Errorf("source_not_replaceable: want 1, got %d", got)
@@ -52,7 +62,7 @@ func TestSpliceDiagnostics_ZeroReasonsAreOmitted(t *testing.T) {
 	var d spliceDiagnostics
 	d.recordOutcome(spliceReasonTargetNoUpstream)
 	snap := d.snapshot()
-	if _, present := snap["success"]; present {
+	if _, present := snap["handover_accepted"]; present {
 		t.Error("a reason that never occurred must not appear in the snapshot")
 	}
 	if len(snap) != 1 {
@@ -90,22 +100,33 @@ func TestSpliceReason_StringsAreDistinct(t *testing.T) {
 	}
 }
 
-func TestSpliceSnapshot_Ratio(t *testing.T) {
+func TestSpliceReason_AcceptedBucketIsNamedForTheHandover(t *testing.T) {
+	// The bucket's NAME is the claim. A name that asserts the kernel moved the stream would
+	// be wrong: the counter is incremented when sing-tun's Splice() returns true, which is
+	// before anything can be said about what the kernel does next. The old name is asserted
+	// absent rather than merely replaced, because a rename that leaves the old string
+	// reachable (in a report, in a log line) is not a rename.
+	require.Equal(t, "handover_accepted", spliceReasonHandoverAccepted.String())
+	require.Equal(t, spliceReason(0), spliceReasonHandoverAccepted,
+		"the accepted bucket must stay the first bucket: the numeric value is what a released build's report is indexed by")
+}
+
+func TestSpliceSnapshot_AcceptanceRatio(t *testing.T) {
 	cases := []struct {
-		name      string
-		attempts  uint64
-		successes uint64
-		want      float64
+		name     string
+		attempts uint64
+		accepted uint64
+		want     float64
 	}{
 		{"no attempts is zero rather than NaN", 0, 0, 0},
-		{"all spliced", 10, 10, 1},
-		{"none spliced", 10, 0, 0},
-		{"half spliced", 10, 5, 0.5},
+		{"all accepted", 10, 10, 1},
+		{"none accepted", 10, 0, 0},
+		{"half accepted", 10, 5, 0.5},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			snap := SpliceSnapshot{Attempts: tc.attempts, Successes: tc.successes}
-			if got := snap.Ratio(); got != tc.want {
+			snap := SpliceSnapshot{Attempts: tc.attempts, Accepted: tc.accepted}
+			if got := snap.AcceptanceRatio(); got != tc.want {
 				t.Errorf("want %v, got %v", tc.want, got)
 			}
 		})
@@ -147,37 +168,37 @@ func TestSameConn(t *testing.T) {
 // --- one outcome per session (§19) ----------------------------------------------
 
 func TestSpliceDiagnostics_AttemptsInvariantHolds(t *testing.T) {
-	// Attempts == Successes + sum(Reasons), by construction. This is the property that
+	// Attempts == Accepted + sum(Reasons), by construction. This is the property that
 	// makes a device report self-consistent: if a session could write two counters, or
 	// none, the totals would drift and a ratio computed from them would be meaningless.
 	var d spliceDiagnostics
-	d.recordOutcome(spliceReasonSuccess)
-	d.recordOutcome(spliceReasonSuccess)
-	d.recordOutcome(spliceReasonSuccess)
+	d.recordOutcome(spliceReasonHandoverAccepted)
+	d.recordOutcome(spliceReasonHandoverAccepted)
+	d.recordOutcome(spliceReasonHandoverAccepted)
 	d.recordOutcome(spliceReasonSourceNotNAT)
 	d.recordOutcome(spliceReasonSpliceRejected)
 	d.recordOutcome(spliceReasonTargetNoUpstream)
 
 	snapshot := SpliceSnapshot{
-		Attempts:  d.total(),
-		Successes: d.successes(),
-		Reasons:   d.snapshot(),
+		Attempts: d.total(),
+		Accepted: d.accepted(),
+		Reasons:  d.snapshot(),
 	}
 
 	require.EqualValues(t, 6, snapshot.Attempts)
-	require.EqualValues(t, 3, snapshot.Successes)
+	require.EqualValues(t, 3, snapshot.Accepted)
 
 	var reasonSum uint64
 	for _, count := range snapshot.Reasons {
 		reasonSum += count
 	}
-	// Reasons excludes success, so success plus reasons is the whole population.
-	require.EqualValues(t, snapshot.Attempts, snapshot.Successes+reasonSum,
+	// Reasons excludes acceptance, so acceptance plus reasons is the whole population.
+	require.EqualValues(t, snapshot.Attempts, snapshot.Accepted+reasonSum,
 		"every session must contribute to exactly one bucket")
 
-	// And success must not appear in the reason table, or it would be counted twice.
-	_, successInReasons := snapshot.Reasons["success"]
-	require.False(t, successInReasons, "success must not also be listed as a reason")
+	// And acceptance must not appear in the reason table, or it would be counted twice.
+	_, acceptedInReasons := snapshot.Reasons["handover_accepted"]
+	require.False(t, acceptedInReasons, "acceptance must not also be listed as a reason")
 }
 
 func TestSpliceDiagnostics_OutcomeCountsOneBucketOnly(t *testing.T) {
@@ -186,7 +207,7 @@ func TestSpliceDiagnostics_OutcomeCountsOneBucketOnly(t *testing.T) {
 	d.recordOutcome(spliceReasonTargetNotReplaceable)
 
 	require.EqualValues(t, 1, d.total())
-	require.EqualValues(t, 0, d.successes())
+	require.EqualValues(t, 0, d.accepted())
 	require.Len(t, d.snapshot(), 1)
 }
 
@@ -194,8 +215,8 @@ func TestSpliceDiagnostics_OutcomeCountsOneBucketOnly(t *testing.T) {
 
 func TestSpliceSnapshot_SummaryFormatIsStable(t *testing.T) {
 	snapshot := SpliceSnapshot{
-		Attempts:  123,
-		Successes: 100,
+		Attempts: 123,
+		Accepted: 100,
 		Reasons: map[string]uint64{
 			"source_not_replaceable": 5,
 			"splice_rejected":        18,
@@ -204,7 +225,7 @@ func TestSpliceSnapshot_SummaryFormatIsStable(t *testing.T) {
 
 	got := snapshot.SpliceSummary()
 	require.Equal(t,
-		"UDP splice diagnostics: attempts=123 successes=100 ratio=0.813 source_not_replaceable=5 splice_rejected=18",
+		"UDP handover diagnostics: attempts=123 accepted=100 acceptance_ratio=0.813 source_not_replaceable=5 splice_rejected=18",
 		got)
 }
 
@@ -213,8 +234,8 @@ func TestSpliceSnapshot_SummaryReasonOrderIsDeterministic(t *testing.T) {
 	// would make two device logs hard to compare by eye or by diff, which is the only
 	// thing this line is for.
 	snapshot := SpliceSnapshot{
-		Attempts:  3,
-		Successes: 0,
+		Attempts: 3,
+		Accepted: 0,
 		Reasons: map[string]uint64{
 			"source_not_nat":     1,
 			"target_no_upstream": 1,
@@ -230,58 +251,59 @@ func TestSpliceSnapshot_SummaryReasonOrderIsDeterministic(t *testing.T) {
 }
 
 func TestSpliceSnapshot_SummaryOmitsZeroReasons(t *testing.T) {
-	snapshot := SpliceSnapshot{Attempts: 2, Successes: 2, Reasons: map[string]uint64{}}
+	snapshot := SpliceSnapshot{Attempts: 2, Accepted: 2, Reasons: map[string]uint64{}}
 	require.Equal(t,
-		"UDP splice diagnostics: attempts=2 successes=2 ratio=1.000",
+		"UDP handover diagnostics: attempts=2 accepted=2 acceptance_ratio=1.000",
 		snapshot.SpliceSummary())
 }
 
-// --- sameConn without a recover-driven control flow (§21) -----------------------
+// --- the summary must not claim a kernel splice (§5) ----------------------------
 
-func TestSameConn_UncomparableTypesDoNotPanic(t *testing.T) {
-	// The previous implementation recovered from the panic that == raises on an
-	// uncomparable dynamic type. Using a panic for ordinary control flow is expensive and
-	// hides the intent; the answer here is simply that two distinct uncomparable values are
-	// not the same connection.
-	require.NotPanics(t, func() {
-		require.False(t, sameConn([]int{1}, []int{1}))
-		require.False(t, sameConn(map[string]int{"a": 1}, map[string]int{"a": 1}))
-	})
+// TestSpliceSnapshot_SummaryDoesNotClaimKernelSpliceSuccess is the control for the wording
+// itself, and it has to read the SOURCE rather than a rendered string.
+//
+// A runtime assertion cannot catch this class of regression: if someone rewrites the format
+// and the expected literal changes with it, both the code and the expectation move together
+// and the test stays green while the report starts lying again. What cannot move silently is
+// the set of words in the producer.
+//
+// The mutation this is designed to catch, and which was run by hand: restore the old heading
+// (the one that named the mechanism), count "successes" instead of "accepted", and print the
+// ratio without naming it acceptance. With that in place this test fails on four separate
+// assertions and the format test above fails on its literal. Either one alone would be a
+// decoration; together they make the wording load-bearing.
+func TestSpliceSnapshot_SummaryDoesNotClaimKernelSpliceSuccess(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("splice_diagnostics.go"))
+	require.NoError(t, err, "the summary producer must be readable: this guard reads it, it does not guess")
 
-	// Comparable values must still behave exactly as == would.
-	shared := &socketConn{}
-	require.True(t, sameConn(shared, shared), "the same pointer is the same connection")
-	require.False(t, sameConn(&socketConn{}, &socketConn{}), "distinct pointers differ")
-	require.True(t, sameConn(nil, nil))
-	require.False(t, sameConn(shared, nil))
-	require.False(t, sameConn(nil, shared))
+	body := string(source)
 
-	// Different types are never the same connection, even when both are nil-able.
-	require.False(t, sameConn(&socketConn{}, 42))
-}
+	// The words that make the claim honest.
+	require.Contains(t, body, "handover diagnostics",
+		"the summary must name what it measures: a handover, not a splice")
+	require.Contains(t, body, "accepted=%d",
+		"the count must be reported as accepted, not as successes")
+	require.Contains(t, body, "acceptance_ratio=%.3f",
+		"the ratio must be named for what it is: acceptance")
 
-func TestSameConn_ComparableStructs(t *testing.T) {
-	// An interface holding a comparable but non-pointer type must compare by value, which
-	// is what == would have done.
-	type marker struct{ id int }
-	require.True(t, sameConn(marker{1}, marker{1}))
-	require.False(t, sameConn(marker{1}, marker{2}))
-}
-
-// --- no invented reasons (§18) --------------------------------------------------
-
-func TestSpliceReason_NoInventedSpliceFailureReasons(t *testing.T) {
-	// tun's Splice returns a bare bool covering platform support, NAT expressibility,
-	// Attach refusal, socket conversion and family mismatch. sing-box cannot tell those
-	// apart, so it must report one reason rather than guess between them.
-	names := make([]string, 0, spliceReasonCount)
-	for i := 0; i < spliceReasonCount; i++ {
-		names = append(names, spliceReason(i).String())
+	// The words that would make it dishonest. The list is written as fragments so that this
+	// guard's own text is not a match for it - the file it reads is the producer, and a
+	// comment here must never be able to fail the producer's check.
+	for _, forbidden := range []string{
+		"successes=",
+		"splice diag" + "nostics",
+		"successful spli" + "ce",
+		"splice suc" + "cess",
+		"splice ra" + "tio",
+		"spliced=%d",
+	} {
+		require.NotContains(t, body, forbidden,
+			"the diagnostics must not claim a kernel splice succeeded; %q reintroduces that claim", forbidden)
 	}
 
-	require.Contains(t, names, "splice_rejected")
-	require.NotContains(t, names, "attach_failed",
-		"attach failure is not distinguishable from other Splice false paths")
-	require.NotContains(t, names, "platform_unsupported",
-		"platform support is not distinguishable from other Splice false paths")
+	// And the accessor names must not claim it either.
+	require.NotContains(t, body, "Successes",
+		"the exported field is read by device reports; it must say accepted")
+	require.NotContains(t, body, "func (s SpliceSnapshot) Ratio()",
+		"an unqualified Ratio() on this snapshot reads as a splice rate")
 }

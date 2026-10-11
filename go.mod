@@ -201,7 +201,14 @@ require (
 
 // Adds WriteOwnedBuffer for cached first-payload ownership handoff and keeps the local
 // byteformats overflow rejection on top of the synced sing base.
-replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261008194531-3af46fe99d3b
+//
+// This pin also carries the bufio splice fix: a Pipe2 setup failure used to return
+// handed=true, which made CopyWithCounters skip the userspace fallback and leave a session
+// that moved zero bytes looking like a stall. The commit is
+// fix(bufio): a Pipe2 setup failure must fall back, not claim the stream, and the branch
+// also carries the Linux runtime proof for unix.Splice() that runs in this fork's
+// linux-splice-proof workflow.
+replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261011105649-bde7ddda55ef
 
 // Adds async read/write buffer pinning (correctness: the native side retains the pointer
 // until its completion callback) and the EarlyCopyBufferGrowth capability the upload copy

@@ -68,14 +68,14 @@ type ConnectionManager struct {
 	// Transition and drain diagnostics. One atomic add per transition and per reclaim pass,
 	// never per byte. See transition_diagnostics.go for what these numbers can and cannot say.
 	transitions transitionDiagnostics
-	// Session-level splice diagnostics. One atomic add per UDP session, never per
+	// Session-level handover diagnostics. One atomic add per UDP session, never per
 	// packet. See splice_diagnostics.go for why, and for what these numbers can and
-	// cannot tell you.
+	// cannot tell you - in particular, that "accepted" is not "the kernel moved the bytes".
 	spliceDiagnostics spliceDiagnostics
-	// Stream-level splice diagnostics, with the same discipline: one atomic add per TCP
+	// Stream-level handover diagnostics, with the same discipline: one atomic add per TCP
 	// connection that reaches the decision, never per read or per byte. A separate array
 	// rather than a shared one so each transport's
-	// Attempts == Successes + sum(Reasons) holds on its own.
+	// Attempts == Accepted + sum(Reasons) holds on its own.
 	tcpSpliceDiagnostics spliceDiagnostics
 	// scheduler arbitrates the upload write path of every managed flow.
 	//

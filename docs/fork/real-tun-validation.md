@@ -56,18 +56,25 @@ the measurement is not measuring anything).
 **The claim to establish:** which direct TCP flows reach `GoConn.Splice`, which do not, and whether the
 fork's own `spliceConnection` is the thing that decided.
 
-**Instrumentation gap, stated plainly.** `ConnectionManager.SpliceDiagnostics()` describes **UDP**
-sessions only; its reasons are all about `UDPNatConn` and packet connections. The TCP path
-(`route/splice.go`'s `spliceConnection` returning a bool) records nothing. So today a running process
-cannot be asked "did this TCP flow splice?", and a harness would have to infer it from performance —
-which is exactly the inference this repository does not accept.
+**Instrumentation, and the limit of what it can say.** This section was written when neither transport
+could be asked anything: `ConnectionManager.SpliceDiagnostics()` covered UDP sessions only and the TCP
+path recorded nothing. Both transports now report, through `SpliceDiagnostics()` and
+`TCPSpliceDiagnostics()`, and `SpliceSnapshot` carries `Attempts`, `Accepted` and per-reason `Reasons`.
 
-Closing that gap is the first task for whoever runs this: mirror the UDP diagnostics — a
-per-flow counter, not per-packet — with these reasons:
-`source-not-GoConn`, `target-not-splice-target`, `reader-writer-mismatch`, `splice-rejected`,
-`skipped-for-tls-rewrite`.
+The limit is in the vocabulary and it is deliberate: **`Accepted` means sing-tun accepted the handover**,
+which is the last thing sing-box can observe. It does not mean the kernel splice moved the bytes, and it
+cannot: `GoConn.Splice`/`UDPNatConn.Splice` return a bare bool, and the splice syscall's own outcome is
+not visible from the route layer at all. The counters were previously rendered as "successes" and a
+"ratio", which read as a rate of working kernel splices - a claim the layer cannot make. The report now
+says `handover diagnostics: attempts=... accepted=... acceptance_ratio=...`, and
+`route/splice_diagnostics_test.go` guards the wording at the source so it cannot drift back.
 
-**The measurement.** With the counters in place, for each of: direct TCP to a literal IP, direct TCP
+So a harness reading these numbers answers "which flows were handed over, and where did the rest stop" -
+which is exactly what the reason buckets are for. The "did it actually splice, and did the splice work"
+half is answered next to the syscall instead, by the fork's `common/bufio` `TestActualLinuxSplice*` on
+real loopback TCP sockets (the `linux-splice-proof` workflow), and on a device by `ss -tin` below.
+
+**The measurement.** For each of: direct TCP to a literal IP, direct TCP
 to a domain, proxied TCP (VLESS or AnyTLS), and direct UDP:
 
 - bytes and connections per outcome bucket from the counters,

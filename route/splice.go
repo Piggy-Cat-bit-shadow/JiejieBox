@@ -52,7 +52,7 @@ func (m *ConnectionManager) spliceClose(ctx context.Context, conn io.Closer, rem
 func (m *ConnectionManager) spliceConnection(ctx context.Context, conn net.Conn, remoteConn net.Conn, onClose N.CloseHandlerFunc) (bool, error) {
 	// Every path out of this function records exactly one outcome, and the caller records
 	// the one case in which this function is not called at all. That is what makes
-	// Attempts == Successes + sum(Reasons) hold for the stream diagnostics without a second
+	// Attempts == Accepted + sum(Reasons) hold for the stream diagnostics without a second
 	// counter, and it is why the recording sits at the returns rather than in the caller.
 	destination, writeCounters := N.UnwrapCountWriter(conn, nil)
 	goConn, isGoConn := N.CastWriter[*tun.GoConn](destination)
@@ -109,9 +109,11 @@ func (m *ConnectionManager) spliceConnection(ctx context.Context, conn net.Conn,
 		WriteCounters: append(target.readCounters, writeCounters...),
 		OnClose:       m.spliceClose(ctx, conn, remoteConn, onClose),
 	}) {
-		m.tcpSpliceDiagnostics.recordOutcome(spliceReasonSuccess)
+		m.tcpSpliceDiagnostics.recordOutcome(spliceReasonHandoverAccepted)
 		// Bytes now move between descriptors in the kernel, so nothing in userspace will observe
-		// this connection again. Recorded at the confirmed handover and nowhere else.
+		// this connection again. Recorded at the confirmed handover and nowhere else - which is
+		// also the exact limit of the claim: the handover was accepted, and what the kernel does
+		// with it afterwards is not observable here.
 		if state := managedConnStateOf(remoteConn); state != nil {
 			state.markKernelOwned()
 		}
@@ -164,9 +166,9 @@ func (m *ConnectionManager) splicePacketConnection(ctx context.Context, conn N.P
 		source = fakeIPConn.NetPacketConn
 	}
 	// The session records exactly one outcome, once, when its decision is final. See
-	// spliceDiagnostics: attempts and successes are derived from this same array, so a
+	// spliceDiagnostics: attempts and acceptances are derived from this same array, so a
 	// second write here would both cost another atomic on the session path and break the
-	// invariant Attempts == Successes + sum(Reasons).
+	// invariant Attempts == Accepted + sum(Reasons).
 	spliceSource, sourceReason, isSpliceSource := unwrapSpliceSourceWithReason(source)
 	if !isSpliceSource {
 		m.spliceDiagnostics.recordOutcome(sourceReason)
@@ -206,8 +208,8 @@ func (m *ConnectionManager) splicePacketConnection(ctx context.Context, conn N.P
 		FrontHeadroom: N.CalculateFrontHeadroom(remote),
 		RearHeadroom:  N.CalculateRearHeadroom(remote),
 	}) {
-		// The socket was found and handed over; packets now bypass userspace.
-		m.spliceDiagnostics.recordOutcome(spliceReasonSuccess)
+		// The socket was found and the handover was accepted; packets now bypass userspace.
+		m.spliceDiagnostics.recordOutcome(spliceReasonHandoverAccepted)
 		// As on the stream path: confirmed handover, so userspace will never see this flow's
 		// activity again and its silence must not be read as idleness.
 		if state := managedConnStateOf(remote); state != nil {

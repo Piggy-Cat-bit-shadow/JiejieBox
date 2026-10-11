@@ -11,35 +11,52 @@ import (
 	N "github.com/sagernet/sing/common/network"
 )
 
-// UDP splice diagnostics.
+// UDP handover diagnostics.
 //
 // # Why session-level and not packet-level
 //
-// When a TUN UDP flow can be spliced, sing-tun hands packets straight between the
-// TUN socket and the outbound socket and they never enter userspace. When it cannot,
-// both directions run bufio.CopyPacket goroutines instead - a copy per packet plus
-// scheduling and wakeups. That difference is the resource cost this fork cares
-// about, and the symptom on a phone is heat.
+// When a TUN UDP flow can be handed over, sing-tun gives the TUN socket and the outbound
+// socket directly to the kernel and packets never enter userspace. When it cannot, both
+// directions run bufio.CopyPacket goroutines instead - a copy per packet plus scheduling and
+// wakeups. That difference is the resource cost this fork cares about, and the symptom on a
+// phone is heat.
 //
-// The decision is made once per session, not once per packet, so the counting here
-// is once per session too. A per-packet counter in this path would itself become a
-// source of the contention being investigated: an atomic add per datagram at video
-// call rates is measurable, and per-packet logging or error strings would be worse.
-// Each session increments one counter a single time and stores nothing else.
+// The decision is made once per session, not once per packet, so the counting here is once
+// per session too. A per-packet counter in this path would itself become a source of the
+// contention being investigated: an atomic add per datagram at video call rates is
+// measurable, and per-packet logging or error strings would be worse. Each session
+// increments one counter a single time and stores nothing else.
 //
 // # What these counters can and cannot tell you
 //
-// They answer "of the UDP sessions handled here, how many spliced, and for those
-// that did not, at which point did the decision fail". That is what a real-device
-// A/B run needs, and it is the whole of the claim: this is observation, not
-// optimisation. No production behaviour, eligibility rule or wrapper semantics
-// change, and no path is made spliceable that was not already.
+// They answer "of the UDP sessions handled here, how many were ACCEPTED for handover, and
+// for those that were not, at which point did the decision fail". That is what a real-device
+// A/B run needs, and it is the whole of the claim: this is observation, not optimisation. No
+// production behaviour, eligibility rule or wrapper semantics change, and no path is made
+// spliceable that was not already.
+//
+// # Accepted is not "the kernel moved the bytes"
+//
+// This is the distinction the whole file is careful about, because the two are easy to
+// conflate and only one of them is observable from here.
+//
+//   - ACCEPTED (spliceReasonHandoverAccepted) means sing-tun's Splice() returned true and
+//     the connection was marked kernel-owned. The socket and the flow were handed over. It
+//     is the last thing this package can observe about the flow.
+//   - Whether unix.Splice() then moved a single byte, and whether it kept working for the
+//     life of the connection, is NOT observable here and is NOT what Accepted counts. A
+//     handover can be accepted and still fail mid-stream; that failure surfaces as a closed
+//     connection, not as a counter in this array.
+//
+// So a device report must read these as handover acceptance, and never as a rate of kernel
+// splices that worked. Proving that the syscall runs at all is a different kind of evidence,
+// and it lives next to the syscall: sing/common/bufio TestActualLinuxSplice* on real Linux.
 //
 // The reasons correspond one-to-one with the points the existing code can actually
 // distinguish. There are deliberately no speculative entries, because a reason that
 // cannot be produced by the code would be a lie in a report.
 
-// spliceReason identifies where a splice decision ended.
+// spliceReason identifies where a handover decision ended.
 //
 // It is a uint8 so that the failure path costs a single byte-wide atomic add. It is
 // not exposed on any public API: the only consumer is the diagnostics snapshot
@@ -47,8 +64,10 @@ import (
 type spliceReason uint8
 
 const (
-	// spliceReasonSuccess: the flow was spliced and packets bypass userspace.
-	spliceReasonSuccess spliceReason = iota
+	// spliceReasonHandoverAccepted: the flow's splice was accepted by sing-tun and the
+	// connection is now kernel-owned. Packets bypass userspace from here, but nothing in
+	// this package observes what the kernel does with them afterwards - see the note above.
+	spliceReasonHandoverAccepted spliceReason = iota
 
 	// --- source side, from unwrapSpliceSource -------------------------------
 	// The source is the TUN-side packet connection. Without a tun.UDPNatConn
@@ -135,8 +154,8 @@ const (
 // switch here cannot affect forwarding.
 func (r spliceReason) String() string {
 	switch r {
-	case spliceReasonSuccess:
-		return "success"
+	case spliceReasonHandoverAccepted:
+		return "handover_accepted"
 	case spliceReasonSourceNotNAT:
 		return "source_not_nat"
 	case spliceReasonSourceReaderWriterMismatch:
@@ -177,17 +196,17 @@ const spliceReasonCount = int(spliceReasonCachedWriteFailed) + 1
 // spliceReasonMax is the largest valid reason, for bounds checks.
 const spliceReasonMax = spliceReasonCachedWriteFailed
 
-// spliceDiagnostics counts how each flow's splice decision ended - one array per transport,
-// so the stream and the session each satisfy the invariant below on their own.
+// spliceDiagnostics counts how each flow's handover decision ended - one array per
+// transport, so the stream and the session each satisfy the invariant below on their own.
 //
 // # One write per session
 //
 // Every session increments exactly ONE counter, once, at the moment its decision is
-// final. There is no separate attempts counter and no separate success counter: a session
+// final. There is no separate attempts counter and no separate accepted counter: a session
 // that wrote two of them would be two atomic operations on the hot path, and it would also
 // make the invariant below impossible to state, let alone check.
 //
-//	Attempts == Successes + sum(Reasons)
+//	Attempts == Accepted + sum(Reasons)
 //
 // That holds by construction here, because every session contributes exactly one to
 // exactly one bucket, and the snapshot is derived from the same array.
@@ -214,21 +233,24 @@ func (d *spliceDiagnostics) total() uint64 {
 	return total
 }
 
-// successes is the number of sessions that spliced.
-func (d *spliceDiagnostics) successes() uint64 {
-	return d.counters[spliceReasonSuccess].Load()
+// accepted is the number of sessions whose handover sing-tun accepted.
+//
+// It is NOT a count of streams the kernel successfully moved: see the file header. The
+// handover is the last thing observable from this package, so it is the last thing counted.
+func (d *spliceDiagnostics) accepted() uint64 {
+	return d.counters[spliceReasonHandoverAccepted].Load()
 }
 
 // snapshot returns the non-zero FAILURE buckets, keyed by reason name.
 //
-// Success is excluded, and that is load-bearing rather than cosmetic: SpliceSnapshot
-// reports Successes separately, so including it here as well would count every spliced
-// session twice and break Attempts == Successes + sum(Reasons) - the invariant that makes
+// Acceptance is excluded, and that is load-bearing rather than cosmetic: SpliceSnapshot
+// reports Accepted separately, so including it here as well would count every accepted
+// session twice and break Attempts == Accepted + sum(Reasons) - the invariant that makes
 // a device report self-consistent.
 func (d *spliceDiagnostics) snapshot() map[string]uint64 {
 	snapshot := make(map[string]uint64, spliceReasonCount)
 	for i := range d.counters {
-		if spliceReason(i) == spliceReasonSuccess {
+		if spliceReason(i) == spliceReasonHandoverAccepted {
 			continue
 		}
 		if count := d.counters[i].Load(); count > 0 {
@@ -238,46 +260,55 @@ func (d *spliceDiagnostics) snapshot() map[string]uint64 {
 	return snapshot
 }
 
-// SpliceSnapshot is an immutable view of the splice diagnostics, for tests and for
+// SpliceSnapshot is an immutable view of the handover diagnostics, for tests and for
 // on-device observation.
 //
-// Attempts, Successes and Reasons are all derived from the same counter array, so they
-// cannot disagree: Attempts is its total and Successes is one of its buckets.
+// Attempts, Accepted and Reasons are all derived from the same counter array, so they
+// cannot disagree: Attempts is its total and Accepted is one of its buckets.
 type SpliceSnapshot struct {
-	// Attempts is the number of UDP sessions that reached the splice decision.
+	// Attempts is the number of UDP sessions that reached the handover decision.
 	Attempts uint64
-	// Successes is the number that spliced.
-	Successes uint64
+	// Accepted is the number whose handover sing-tun accepted - the flow was handed to the
+	// kernel and is no longer observable from here.
+	//
+	// It is not "the number the kernel moved": whether unix.Splice then transferred bytes,
+	// and whether it kept working for the life of the connection, is not knowable at this
+	// layer. A report that reads this number as a rate of working kernel splices is wrong in
+	// exactly the way this field was renamed to prevent.
+	Accepted uint64
 	// Reasons counts sessions by the point at which the decision ended, excluding
-	// success. Entries are present only when non-zero.
+	// acceptance. Entries are present only when non-zero.
 	Reasons map[string]uint64
 }
 
-// Ratio returns successes divided by attempts, or 0 with no attempts.
-func (s SpliceSnapshot) Ratio() float64 {
+// AcceptanceRatio returns Accepted divided by Attempts, or 0 with no attempts.
+//
+// Acceptance ratio, not success rate: it is the share of decisions that ended in a handover
+// being accepted, and it says nothing about what the kernel did with the flow afterwards.
+func (s SpliceSnapshot) AcceptanceRatio() float64 {
 	if s.Attempts == 0 {
 		return 0
 	}
-	return float64(s.Successes) / float64(s.Attempts)
+	return float64(s.Accepted) / float64(s.Attempts)
 }
 
-// SpliceDiagnostics returns the current UDP splice diagnostics.
+// SpliceDiagnostics returns the current UDP handover diagnostics.
 //
 // This is the observation hook for a real-device A/B run: a caller can read it
-// before and after a video call and compare the splice ratio and the fallback
+// before and after a video call and compare the acceptance ratio and the fallback
 // reasons. Reading it allocates a small map and has no effect on forwarding.
 func (m *ConnectionManager) SpliceDiagnostics() SpliceSnapshot {
 	return m.spliceDiagnostics.view()
 }
 
-// TCPSpliceDiagnostics returns the current TCP splice diagnostics.
+// TCPSpliceDiagnostics returns the current TCP handover diagnostics.
 //
 // The stream path answers a different question from the packet path, and a device run needs
 // both: whether a TCP connection was handed to a socket, and if not, at which point the
-// decision ended. "It was not spliced" is not an answer a report can act on, because the
+// decision ended. "It was not handed over" is not an answer a report can act on, because the
 // reason decides whether anything can be done about it - a source that is not a tun.GoConn
 // means the flow is being proxied in userspace by design, while a target that refused
-// replacement means a wrapper is standing in the way of one that could be spliced.
+// replacement means a wrapper is standing in the way of one that could be handed over.
 //
 // Same cost model as the packet path: one atomic add per connection, at the moment its
 // decision is final, and never per read or per byte.
@@ -288,9 +319,9 @@ func (m *ConnectionManager) TCPSpliceDiagnostics() SpliceSnapshot {
 // view derives a snapshot from one counter array.
 func (d *spliceDiagnostics) view() SpliceSnapshot {
 	return SpliceSnapshot{
-		Attempts:  d.total(),
-		Successes: d.successes(),
-		Reasons:   d.snapshot(),
+		Attempts: d.total(),
+		Accepted: d.accepted(),
+		Reasons:  d.snapshot(),
 	}
 }
 
@@ -352,7 +383,7 @@ func unwrapSpliceTargetWithReason(conn any, allowOffload bool) (spliceTarget, sp
 				}
 				target.socket = socket
 				target.offload = offload
-				return target, spliceReasonSuccess, true
+				return target, spliceReasonHandoverAccepted, true
 			}
 		}
 		readerWithUpstream, isReaderWithUpstream := conn.(N.ReaderWithUpstream)
@@ -366,7 +397,7 @@ func unwrapSpliceTargetWithReason(conn any, allowOffload bool) (spliceTarget, sp
 		socket, isSocket := conn.(tun.SpliceSocket)
 		if isSocket {
 			target.socket = socket
-			return target, spliceReasonSuccess, true
+			return target, spliceReasonHandoverAccepted, true
 		}
 		withUpstream, hasUpstream := conn.(common.WithUpstream)
 		if hasUpstream {
@@ -432,7 +463,7 @@ func unwrapSpliceSourceWithReason(conn N.PacketConn) (spliceSource, spliceReason
 				return spliceSource{}, spliceReasonSourceReaderWriterMismatch, false
 			}
 			source.natConn = natReader
-			return source, spliceReasonSuccess, true
+			return source, spliceReasonHandoverAccepted, true
 		}
 		cachedReader, isCached := reader.(N.CachedPacketReader)
 		if isCached {
@@ -459,11 +490,21 @@ func unwrapSpliceSourceWithReason(conn N.PacketConn) (spliceSource, spliceReason
 	}
 }
 
-// SpliceSummary renders the diagnostics as one stable line.
+// SpliceSummary renders the handover diagnostics as one stable line.
 //
-// Real-device A/B is the only way to settle whether splicing is actually happening on a
-// phone, and getting Go-level numbers off a device is awkward. This is the minimum that
+// Real-device A/B is the only way to settle whether flows are actually being handed over on
+// a phone, and getting Go-level numbers off a device is awkward. This is the minimum that
 // makes it possible: start the VPN, run the call, stop the VPN, read one line.
+//
+// The wording is part of the evidence and is chosen to be un-misreadable:
+//
+//	UDP handover diagnostics: attempts=123 accepted=100 acceptance_ratio=0.813 ...
+//
+// "handover diagnostics", "accepted" and "acceptance_ratio" say what was measured. An
+// earlier version rendered the same counters under a heading that named the mechanism and
+// counted "successes", which reads as a rate of kernel splices that worked - a claim this
+// layer cannot make, because the handover being accepted is the last thing it observes. Two
+// device runs compared by eye would have been compared on a number that meant something else.
 //
 // The format is fixed and the reasons are emitted in enum order, never map order, so two
 // runs can be compared by eye and by diff. It is produced once per tunnel lifetime by the
@@ -479,14 +520,14 @@ func (s SpliceSnapshot) TCPSpliceSummary() string {
 
 func (s SpliceSnapshot) summary(transport string) string {
 	var summary strings.Builder
-	fmt.Fprintf(&summary, "%s splice diagnostics: attempts=%d successes=%d ratio=%.3f",
-		transport, s.Attempts, s.Successes, s.Ratio())
+	fmt.Fprintf(&summary, "%s handover diagnostics: attempts=%d accepted=%d acceptance_ratio=%.3f",
+		transport, s.Attempts, s.Accepted, s.AcceptanceRatio())
 
 	// Enum order, so the output is stable between runs. A map would rotate key order and
 	// make two device logs needlessly hard to compare.
 	for i := 0; i < spliceReasonCount; i++ {
 		reason := spliceReason(i)
-		if reason == spliceReasonSuccess {
+		if reason == spliceReasonHandoverAccepted {
 			continue
 		}
 		if count := s.Reasons[reason.String()]; count > 0 {

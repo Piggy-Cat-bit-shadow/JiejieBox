@@ -78,14 +78,15 @@ var (
 	_ io.ReadWriteCloser   = spliceTargetControl{}
 )
 
-// TestSpliceTargetContractControl proves the helper returns success for a conforming conn.
+// TestSpliceTargetContractControl proves the helper reports the handover as accepted for a
+// conforming conn.
 func TestSpliceTargetContractControl(t *testing.T) {
 	target, reason, ok := unwrapSpliceTargetWithReason(spliceTargetControl{}, false)
 	require.True(t, ok,
 		"a conn meeting the documented contract must be accepted, or the target test is "+
 			"vacuously false and proves nothing about real flows")
-	require.Equal(t, spliceReasonSuccess, reason)
-	require.NotNil(t, target.socket, "a successful unwrap must produce the splice socket")
+	require.Equal(t, spliceReasonHandoverAccepted, reason)
+	require.NotNil(t, target.socket, "an accepted unwrap must produce the splice socket")
 }
 
 // TestSpliceTargetRefusesAReplaceableWrapperOverAnOrdinarySocket is the case that decides the

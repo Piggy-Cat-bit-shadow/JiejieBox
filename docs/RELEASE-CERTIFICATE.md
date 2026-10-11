@@ -46,7 +46,8 @@ Everything else below is either verified here or named as outstanding.
 | Area | Why not | Procedure |
 | --- | --- | --- |
 | L0 route exclusion on a real OS | needs root and a routing table you can change | `docs/fork/real-tun-validation.md` §1 |
-| L2 splice attempted/succeeded per flow | needs a real TUN; **and the TCP splice outcome is not instrumented** — `SpliceDiagnostics` covers UDP only | §2 |
+| L2 handover accepted/rejected per flow | needs a real TUN. Both transports ARE instrumented as of the handover-diagnostics rename (`SpliceDiagnostics` for UDP sessions, `TCPSpliceDiagnostics` for TCP streams), but what they count is the handover being accepted by sing-tun, not a kernel splice that moved bytes - so "did this flow's splice actually work" still cannot be read off a device | §2 |
+| Whether `unix.Splice()` runs at all | proved on Linux by the fork's `linux-splice-proof` workflow on real loopback TCP sockets; NOT proved here, because this table is about the device data plane | `sing` fork `common/bufio` `TestActualLinuxSplice*` |
 | L2 versus L3 under latency and a bandwidth cap | needs netem, which needs root | §3 |
 | Tracker correctness under L2 | needs §2 first | §4 |
 | UDP on a real device | needs a real TUN | §5 |
@@ -87,9 +88,11 @@ only exists on Linux with systemd-resolved present, so the fix would ship unveri
 
 1. **A real-TUN run of §1, §2, §4, §6 and §7**, on Linux with root, with the results recorded here.
    Until then the fork's central architectural claims about L0 and L2 are argued from code.
-2. **The TCP splice instrumentation named in §2.** Without it the L2 question cannot be answered by
-   measurement at all, and any performance comparison of splice against the generic copy would be an
-   inference from throughput.
+2. **A real-TUN run that reads the handover diagnostics**, now that both transports report them.
+   The counters answer "was the handover accepted, and if not where did the decision end". They do
+   not answer "did the kernel splice move the bytes", which is why the fork also carries a Linux
+   runtime proof of `unix.Splice()` itself (`linux-splice-proof`). A device report that treats
+   acceptance as a splice that worked would still be reading a number that means something else.
 3. **An Apple manual validation run**, because that is the product environment and no CI can stand in
    for it.
 4. **A green push-triggered `Verify` run** on the commit being released. Its first run failed and the

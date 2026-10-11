@@ -299,13 +299,17 @@ func TestSpliceTargetWithReason_ReportsTheFailingStep(t *testing.T) {
 	}
 }
 
-func TestSpliceTargetWithReason_SuccessIsReported(t *testing.T) {
+// TestSpliceTargetWithReason_AcceptedIsReported names the outcome the classifier returns when
+// the walk succeeds. It is "accepted", not "success": the classifier's job ends at "this
+// connection can be handed over", and whether a kernel splice then moves bytes is decided
+// later, elsewhere, and is not something this vocabulary can claim.
+func TestSpliceTargetWithReason_AcceptedIsReported(t *testing.T) {
 	_, reason, ok := unwrapSpliceTargetWithReason(&socketConn{socket: &fakeSpliceSocket{}}, false)
 	if !ok {
-		t.Fatal("expected success")
+		t.Fatal("expected the target to be accepted")
 	}
-	if reason != spliceReasonSuccess {
-		t.Errorf("reason: want success, got %s", reason)
+	if reason != spliceReasonHandoverAccepted {
+		t.Errorf("reason: want handover_accepted, got %s", reason)
 	}
 }
 
