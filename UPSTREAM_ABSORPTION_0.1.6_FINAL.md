@@ -22,12 +22,48 @@ absorbed by an earlier round; window 2 (`d630fa94c..e4b7e692f`, 38 commits, 2026
 round's subject. The second pass required by the construction prompt found upstream had not moved,
 so no new commits entered during the work.
 
+**Method note, because the first attempt at coverage was wrong.** A `git log --grep` for the
+window-1 subjects reported every one of them MISSING, which would have been a false alarm: the fork
+replays upstream work under its own commit messages and committers. Coverage was therefore
+established by comparing, for every file an upstream commit touches, the fork's blob at `HEAD` with
+that commit's blob — 330 file-slots across the window — and then reading every divergence. That
+comparison found 51 byte-identical slots and 138 divergent ones, and the audit of the divergences is
+what produced `7e13f4617`. **A subject-line search is not an absorption check.**
+
 ## Absorbed
 
 | upstream | area | mode | local commit | tests |
 |---|---|---|---|---|
 | `74182ce8e` "Fix per-destination backpressure to endpoints" | endpoint headroom + OpenVPN server queue | ABSORB_NOW (restore) | `a73164297` | `protocol/openvpn/data_channel_contract_test.go` (6 assertions, 2 mutations verified) + `TestOpenVPNSelfToSelf` 4/4 |
 | `194ebd18b` "tun: Fix inconsistent DNS mode behavior without auto_route" | docs only — the code half lives in sing-tun and is already at the required revision | ABSORB_NOW (docs) | `4e921b6a4` | none needed (no code) |
+| `a691a4402` "Refactor lifecycle to scoped cleanup" — the interface-getter reset, and nothing else | tailscale process-global leak | ABSORB_NOW (one artefact) | `7e13f4617` | `protocol/tailscale/system_binding_cleanup_test.go` (3 assertions, 1 mutation verified) |
+
+### What `7e13f4617` fixed, and how it was found
+
+Window 1 was already synced, so this item was found only by a **blob-level** comparison of every
+file the window's commits touch (330 file-slots) — not by matching commit subjects, which had
+produced a false "missing" verdict for the whole window. One artefact of `a691a4402` was genuinely
+absent: `netmon.RegisterInterfaceGetter(nil)` on the endpoint's close path.
+
+`newSystemBinding` registers a getter with tailscale's netmon when the platform owns the network
+interfaces, and that writes a **package global** (`netmon/state.go`'s `altNetInterfaces`). Nothing in
+this tree ever cleared it, so after a Box closed the global still held a closure over that Box's
+`NetworkManager` — and it survived into a **later** Box whose platform interface does not
+re-register, at which point netmon reads interfaces out of a torn-down manager. Silent,
+cross-instance, and needs two sequential Boxes to observe.
+
+The fork's own refactor moved the registration into `newSystemBinding`, which took upstream's reset
+statement with it and dropped it. The fix returns the cleanup from `newSystemBinding` and ties it to
+the lifetime each caller owns: `scope.Add` for the endpoint and the tailcat inbound, and
+`context.AfterFunc` on `nodeContext` for the tailcat **outbound**, which builds its node lazily on
+first use and therefore has no Start stage to register on. The body was split so that all four return
+points carry the cleanup — one silently dropping it is the same class of omission as the bug.
+
+Test note: `netmon.GetInterfaceList()` returns the registered getter's result when one is set and the
+system's interfaces otherwise, which is what makes the global's state observable from a test. The
+first mutation attempt (never return the cleanup) does not compile, because the eager call sites
+would then leave it unused; making the cleanup a **no-op** is the mutation that turns the test RED.
+
 
 ### What `a73164297` actually fixed — and why it was the most valuable item in the round
 
@@ -67,7 +103,7 @@ produced the per-file evidence; the numbers below are the ones they measured.
 
 | upstream | area | mode | evidence |
 |---|---|---|---|
-| `a691a4402` "Refactor lifecycle to scoped cleanup" | lifecycle | FORK_STRONGER | `adapter/lifecycle.go:70-96` scope state machine + `closeDone`; `:126-138` Add runs late cleanup; `:174-183` Start refuses success after close; `:218-233` Close joins and returns the same error. Upstream has no state, no `closeDone`, no Add guard, no Start recheck, and its second concurrent Close returns `nil` mid-drain. 42/115 blobs identical, 0 at pre-image. |
+| `a691a4402` "Refactor lifecycle to scoped cleanup" | lifecycle | FORK_STRONGER | `adapter/lifecycle.go:70-96` scope state machine + `closeDone`; `:126-138` Add runs late cleanup; `:174-183` Start refuses success after close; `:218-233` Close joins and returns the same error. Upstream has no state, no `closeDone`, no Add guard, no Start recheck, and its second concurrent Close returns `nil` mid-drain. 35/115 blobs byte-identical, ~90 files carry every added line; every other absent line is superseded (the debounce timer it stopped was deleted outright; `netns.SetControlFunc`/`SetListenPacketFunc` are never set because `hooks()` replaced them; `scope.Add(device.Close)` is at `openvpn/client.go:615`, `openvpn/server.go:170`, `openconnect/client.go:433`). The ONE genuinely absent artefact — the netmon interface-getter reset — is absorbed above. |
 | `3ad7a4255` "Ignore closed and canceled errors in scope cleanup" | lifecycle | FORK_STRONGER | `:251-253` expands before judging, `:264-274` uses upstream's predicate **plus** a Debug record upstream discards |
 | `a364ff479` "Remove unimplemented hot reload from managers" | lifecycle | ALREADY_ABSORBED | no `LegacyStart` / `NewLifecycleService` / `Manager.Remove` / `dependByTag` anywhere; duplicate managers already refuse |
 | `02537831e` "Move auto-redirect and bridge index allocation out of constructors" | lifecycle | FORK_STRONGER | bridge half present (`backend.go:114-135`, called from all three platform backends); the tun half's discard path is covered more generally by `adapter/inbound/manager.go:62-85` |
@@ -128,14 +164,15 @@ dependency bump was required, and none was made.**
 ## Tests
 
 - **PASS**: `TestOpenVPNSelfToSelf` 4/4 (was 4/4 FAIL); `go build -tags "<tags>" ./...`;
-  `go vet` on the four touched packages; `./protocol/openvpn/`, `./protocol/openconnect/`,
-  `./transport/device/`, `./transport/openvpn/`, `./transport/openconnect/`.
+  `go vet` on the touched packages; `./protocol/openvpn/`, `./protocol/openconnect/`,
+  `./transport/device/`, `./transport/openvpn/`, `./transport/openconnect/`,
+  `./protocol/tailscale/` (×5), `./adapter/`, `./route/`, root package.
 - **FAIL**: none.
 - **FLAKY / host-dependent**: `TestOpenVPNDockerInterop` and the other Docker-backed OpenVPN
   fixtures were **not run** — no Docker daemon was reachable
   (`open //./pipe/docker_engine: The system cannot find the file specified`).
 - **NOT_RUN**: the rest of `./test/` (only the OpenVPN self-to-self fixture was executed); cross
-  builds for Apple/Android/Windows.
+  builds for Apple/Android/Windows; `-race` (needs cgo, and no C compiler is installed on this host).
 
 ## Dependency audit
 
