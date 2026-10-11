@@ -106,7 +106,10 @@ type Router struct {
 	// this box. It is the "environment fingerprint" the DNS generation is tied to.
 	dnsEnvironmentFingerprint uint64
 	// dnsEnvironmentDescription is the human-readable form of the last observed fingerprint, kept
-	// only for the log line a change emits.
+	// only for the log line a change emits - which reads it as the PREVIOUS environment, so a change
+	// line can name both sides. It is a field rather than a local for exactly that reason: the value
+	// that describes the environment being left behind belongs to the previous observation, not to the
+	// one being computed.
 	dnsEnvironmentDescription string
 	// dnsEnvironmentGeneration advances when - and only when - dnsEnvironmentFingerprint changes.
 	//
@@ -1399,6 +1402,14 @@ func (r *Router) observeDNSEnvironmentLocked() uint64 {
 		return r.dnsEnvironmentGeneration.Load()
 	}
 	// This branch logs, so this is one of the two places the description is worth building.
+	//
+	// The field is read here rather than only written. It is documented as "the human-readable form of
+	// the last observed fingerprint, kept only for the log line a change emits", and until this was
+	// wired up nothing read it at all: both branches computed the description into a local, stored it,
+	// and logged the LOCAL, so every change paid for a string that no one could observe. Reporting the
+	// previous environment alongside the new one is what a change line is for - "the resolver set moved"
+	// is far less useful than "it moved from A to B".
+	previousDescription := r.dnsEnvironmentDescription
 	description := r.dnsEnvironmentDescriptionFor()
 	r.dnsEnvironmentFingerprint = fingerprint
 	r.dnsEnvironmentDescription = description
@@ -1418,7 +1429,8 @@ func (r *Router) observeDNSEnvironmentLocked() uint64 {
 	if r.dnsReverseMapping != nil {
 		r.dnsReverseMapping.Purge()
 	}
-	r.logger.Info("DNS environment changed, advancing DNS generation to ", epoch, ": ", description)
+	r.logger.Info("DNS environment changed, advancing DNS generation to ", epoch,
+		": ", description, " (was: ", previousDescription, ")")
 	return epoch
 }
 
