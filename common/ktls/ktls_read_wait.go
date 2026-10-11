@@ -24,6 +24,34 @@ func (c *Conn) WaitReadBuffer() (buffer *buf.Buffer, err error) {
 		if err != nil {
 			return
 		}
+		// Post-handshake messages are drained here, exactly as the reading path in Read does it:
+		//
+		//	for c.rawConn.Input.Len() == 0 {
+		//		if err := c.readRecord(); err != nil { return 0, err }
+		//		for c.rawConn.Hand.Len() > 0 {
+		//			if err := c.handlePostHandshakeMessage(); err != nil { return 0, err }
+		//		}
+		//	}
+		//
+		// readRecord parses a record and, when it is a handshake record, APPENDS it to Hand rather than
+		// consuming it (ktls_read.go:163). Something has to drain that buffer, and on this path nothing
+		// did: the only other drains are the reading path above, which this function does not go
+		// through, and the one inside NewConn, which runs once during setup and never again.
+		//
+		// What that costs is not limited to a stalled loop. `handlePostHandshakeMessage` is where a TLS
+		// 1.3 KeyUpdate is applied, and applying it means calling `resetupRX`, which reinstalls the RX
+		// key in the KERNEL. A ReadWaitBuffer caller that never drains Hand therefore never updates the
+		// kernel's key, while the peer has already moved to the new one - so the connection stops being
+		// able to decrypt, on the fast path only, which is the path a session using the splice takes.
+		//
+		// The loop is unconditional rather than guarded on Hand.Len() > 0: the condition IS the guard,
+		// the same way it is in Read, so this stays a line-for-line mirror of the reference.
+		for c.rawConn.Hand.Len() > 0 {
+			err = c.handlePostHandshakeMessage()
+			if err != nil {
+				return
+			}
+		}
 	}
 	buffer = c.readWaitOptions.NewBuffer()
 	n, err := c.rawConn.Input.Read(buffer.FreeBytes())
