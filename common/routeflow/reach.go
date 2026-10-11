@@ -123,14 +123,17 @@ func Reach(rules []adapter.Rule, finalOutbound string) Demand {
 			if tag != "" {
 				demand.Possible[tag] = appendNetwork(demand.Possible[tag], network)
 			}
-			if adapter.IsFinalAction(action) {
-				// A route or bypass with an empty outbound still ends the decision, so the
-				// network cannot reach a later rule; it is simply not attributed to a tag.
-				// This is the half the configuration-text scan could not see at all.
-				live[network] = false
-				if tag != "" {
-					demand.Proven[tag] = appendNetwork(demand.Proven[tag], network)
-				}
+			if !terminates(action) {
+				// The router does NOT stop here, so this network still reaches every later
+				// rule. Charging nothing and consuming nothing is the only sound answer.
+				continue
+			}
+			// The decision ends here, so the network cannot reach a later rule; when the
+			// action names no outbound it is simply not attributed to one. This is the half
+			// the configuration-text scan could not see at all.
+			live[network] = false
+			if tag != "" {
+				demand.Proven[tag] = appendNetwork(demand.Proven[tag], network)
 			}
 		}
 	}
@@ -142,18 +145,59 @@ func Reach(rules []adapter.Rule, finalOutbound string) Demand {
 	return demand
 }
 
+// terminates reports whether the runtime router STOPS at this action, which is what decides whether
+// a network can still reach the rules below it.
+//
+// # Why this is not adapter.IsFinalAction
+//
+// `IsFinalAction` answers a different question - "does this action end the flow's handling" - and
+// two of its answers are wrong for THIS one. It is a property of the action alone, while whether the
+// router breaks out of its loop depends on the action AND, for `bypass`, on whether the rule named
+// an outbound.
+//
+// The authority is `Router.matchRule` (route/route.go), which breaks out for exactly:
+//
+//	route, reject, hijack-dns              - unconditionally
+//	bypass                                 - ONLY when the action names an outbound;
+//	                                         `bypass` with no outbound `continue match`es
+//
+// and falls through for `route-options`, `direct`, `sniff`, `resolve` and `evaluate`. `route-options`
+// and `direct` are the two that a naive reading gets wrong, and getting them wrong is a FALSE
+// NEGATIVE rather than a cosmetic difference: MEASURED, with a first rule `{"action": "direct"}`
+// followed by `{network: udp, outbound: tcp-only}`, treating `direct` as terminal recorded udp as
+// consumed and the configuration STARTED, while at run time the udp flow falls through to the
+// tcp-only outbound and fails there. `{"action": "route-options"}` and an outbound-less
+// `{"action": "bypass"}` reproduce the same hole exactly.
+//
+// `reject` and `hijack-dns` terminate WITHOUT naming an outbound, which is why the termination
+// decision cannot be derived from `deliveredTag` either: both must be consulted, and they answer
+// different halves.
+func terminates(action adapter.RuleAction) bool {
+	switch typed := action.(type) {
+	case *R.RuleActionRoute, *R.RuleActionReject, *R.RuleActionHijackDNS:
+		return true
+	case *R.RuleActionBypass:
+		// An outbound-less bypass is NOT terminal: the router continues to the next rule, so
+		// the network must stay available to it. Reading it as terminal would withhold a
+		// protocol from the only rule able to serve it.
+		return typed.Outbound != ""
+	default:
+		// route-options, direct, sniff, resolve, evaluate, and anything this tree does not
+		// ship: an unrecognised action must not consume a protocol.
+		return false
+	}
+}
+
 // deliveredTag reports the outbound tag this action delivers a flow to, or "" when it delivers to
 // no outbound at all.
 //
 // A `route` action with an empty outbound names no tag: the router hands such a flow to the
 // default outbound, whose tag this analysis is not given, and inventing one would either charge
-// the wrong object or require resolving the default here. The network is still consumed - the
-// `IsFinalAction` check does that - so the only thing an empty tag loses is the attribution.
+// the wrong object or require resolving the default here. The network is still consumed - see
+// `terminates` - so the only thing an empty tag loses is the attribution.
 //
-// A `bypass` action is included because it is terminal and names a tag in the same way. An empty
-// `bypass` is NOT terminal at all - the router continues to the next rule - and `IsFinalAction`
-// cannot express that difference, so the tag is returned here and the caller's terminal check
-// stays the single owner of the "does this end the decision" question.
+// A `bypass` action names a tag in the same way. Its EMPTY case is a separate matter and is decided
+// by `terminates`, because whether the router stops is the question that governs consumption.
 func deliveredTag(action adapter.RuleAction) string {
 	switch typed := action.(type) {
 	case *R.RuleActionRoute:

@@ -69,6 +69,15 @@ type HopCheck struct {
 	//   - nothing proved which networks reach this root, and the root advertises none this package
 	//     can decide (see advertisedNetworks).
 	Requirement []string
+	// RequirementProven reports WHERE Requirement came from, because the two sources are not the
+	// same claim and a report that conflates them states a fact it does not have:
+	//
+	//   - true  - the path analysis proved these networks reach this root, so the requirement is a
+	//     fact about the ROUTES and a refusal built on it is a proven defect.
+	//   - false - nothing was proven, so the requirement is what the root's own reachable objects
+	//     advertise between them. A refusal built on it is still a refusal, but it is a statement
+	//     about the objects rather than about the routing, and the message must say so.
+	RequirementProven bool
 	// Unknowns are the problems found at this node. A node with unknowns was NOT verified, and it
 	// is never reported as reachable.
 	Unknowns []Unknown
@@ -208,6 +217,13 @@ func ValidateRoots(resolver *Resolver, roots []adapter.Outbound, endpoints Endpo
 			report.Failures = append(report.Failures, failures...)
 		}
 		requirement := proven
+		// requirementProven is carried to the message as well as to the check, because the two
+		// sources are different claims: a requirement proved by the routes is a statement about the
+		// ROUTING, and one that came from the advertised fallback is a statement about the OBJECTS.
+		// Reporting the second as though it were the first is the dishonesty this flag removes - a
+		// configuration whose only rule is domain-scoped proves nothing, and a message that said
+		// "the routes prove tcp,udp reaches this path" would invent a proof the analysis never made.
+		requirementProven := requirement != nil
 		if requirement == nil {
 			// Nothing was proven about delivery, so the requirement is what the root's own
 			// reachable objects say they can carry. Reading it from the NODES rather than from
@@ -258,17 +274,19 @@ func ValidateRoots(resolver *Resolver, roots []adapter.Outbound, endpoints Endpo
 			}
 		}
 		for _, node := range nodes {
+			nodeRequirement := nodeRequirementFor(resolver, node, requirement)
 			check := HopCheck{
-				Root:        node.Root,
-				Hop:         node.Tag,
-				Route:       node.Route(),
-				Path:        node.Path(),
-				Position:    node.Position,
-				Exit:        node.Exit,
-				Current:     node.IsCurrent,
-				Requirement: nodeRequirementFor(resolver, node, requirement),
+				Root:              node.Root,
+				Hop:               node.Tag,
+				Route:             node.Route(),
+				Path:              node.Path(),
+				Position:          node.Position,
+				Exit:              node.Exit,
+				Current:           node.IsCurrent,
+				Requirement:       nodeRequirement,
+				RequirementProven: requirementProven && nodeRequirement != nil,
 			}
-			for _, failure := range validateNode(resolver, node, endpoints, check.Requirement, declarations) {
+			for _, failure := range validateNode(resolver, node, endpoints, check.Requirement, check.RequirementProven, declarations) {
 				check.Unknowns = append(check.Unknowns, Unknown{
 					Node:     failure.Leaf,
 					Position: failure.Hop,
@@ -635,7 +653,11 @@ func decidedNetworks(networks []string) []string {
 // requirement is the set THIS node must be able to carry, as nodeRequirementFor decided it; an
 // empty set means no network requirement applies here and step 2 is skipped rather than passed
 // with a default.
-func validateNode(resolver *Resolver, hop PathNode, endpoints EndpointRegistry, requirement []string, declarations Declarations) []Failure {
+//
+// requirementProven reports whether that set came from the ROUTES or from the advertised fallback,
+// and it is used for one thing: the message must not claim a route proof that was never made. See
+// reachabilityClause.
+func validateNode(resolver *Resolver, hop PathNode, endpoints EndpointRegistry, requirement []string, requirementProven bool, declarations Declarations) []Failure {
 	failure := func(reason string) []Failure {
 		return []Failure{{
 			Root:   hop.Root,
@@ -664,7 +686,8 @@ func validateNode(resolver *Resolver, hop PathNode, endpoints EndpointRegistry, 
 		networksCarried := networksOf(hop.Outbound)
 		if len(networksCarried) == 0 {
 			return failure("this outbound reports no network it can carry, so it cannot serve the " +
-				strings.Join(requirement, ",") + " flow routed through it")
+				strings.Join(requirement, ",") + " flow routed through it (" +
+				requirementClause(missingNone, requirement, requirementProven) + ")")
 		}
 		// EVERY network in the requirement is checked before a verdict is reached, and the report
 		// names the ones this hop CANNOT carry.
@@ -689,7 +712,7 @@ func validateNode(resolver *Resolver, hop PathNode, endpoints EndpointRegistry, 
 			return failure("this outbound does not carry " + strings.Join(missing, ",") +
 				" (it carries " + strings.Join(networksCarried, ",") + ") and cannot serve the " +
 				strings.Join(missing, ",") + " flow routed through it (" +
-				reachabilityClause(missing, requirement) + ")")
+				requirementClause(missing, requirement, requirementProven) + ")")
 		}
 	}
 	// 3. Endpoint participation and lifecycle ownership are coherent.
@@ -729,34 +752,46 @@ func validateNode(resolver *Resolver, hop PathNode, endpoints EndpointRegistry, 
 	return nil
 }
 
-// reachabilityClause renders the reason a network is a requirement at this node, and it exists
-// because the sentence it replaces stated a fact that was not true.
+// requirementClause renders WHY a network is a requirement at this node, and it exists because the
+// sentence it replaces stated a fact that was not true.
 //
 // # What the old clause said, and why that was a lie rather than a wording choice
 //
 // It read "(the entry point routes " + requirement + " to it)". That sentence is a claim about the
 // ENTRY POINT's capability being delivered to this node, and it is only true when nothing filtered
-// the flow on the way. Once the requirement became what the ROUTES PROVE reaches the node
-// (common/routeflow), the two came apart: a configuration whose first rule sends every udp flow to
-// `reject` and whose second rule routes the rest to a tcp-only outbound has a requirement of
-// `tcp` alone, and a report that then said the entry point routes "tcp,udp" to it would be
-// describing a flow that provably never arrives. An operator reading that looks for a udp path
-// that does not exist.
+// the flow on the way. Once the requirement became what the ROUTES PROVE reaches the node, the two
+// came apart: a configuration whose first rule sends every udp flow to `reject` and whose second
+// rule routes the rest to a tcp-only outbound has a requirement of `tcp` alone, and a report that
+// then said the entry point routes "tcp,udp" to it would be describing a flow that provably never
+// arrives. An operator reading that looks for a udp path that does not exist.
 //
-// # What it says instead
+// # The two sources, and why one clause cannot cover both
 //
-// Two sentences, because there are two cases and they are not the same claim:
+// The requirement has two possible origins and they are NOT the same claim:
 //
-//   - the requirement is a PROOF, so the clause states the reachability and its direction: the
-//     flow types the path analysis found reachable here, and the ones it could not carry. Stating
-//     both is what makes the message actionable - the missing set is the thing to fix, the
-//     reachable set is why it matters.
-//   - only ever one requirement is used, and it is the set this node was checked against, so the
-//     clause cannot disagree with the check that produced it.
-func reachabilityClause(missing []string, requirement []string) string {
-	return "the routes prove " + strings.Join(requirement, ",") + " reaches this path, and " +
-		strings.Join(missing, ",") + " is part of it"
+//   - proven - the path analysis established that these networks reach this root, so the clause may
+//     say "the routes prove X reaches this path". This is a statement about the ROUTING.
+//   - advertised - nothing was proven, and the requirement is what the root's own reachable objects
+//     advertise between them (`advertisedNetworks`). Saying "the routes prove" here would invent a
+//     proof the analysis never made. MEASURED on a configuration whose only rule is domain-scoped -
+//     UNKNOWN for both networks, so nothing is proven by any route - the old wording produced
+//     "the routes prove tcp,udp reaches this path" for a requirement that came entirely from the
+//     objects. This is a statement about the OBJECTS, and the clause now says so.
+//
+// In both cases `missing` is a subset of `requirement` by construction, because it is built by
+// filtering that set, so the clause cannot disagree with the check that produced it.
+func requirementClause(missing []string, requirement []string, proven bool) string {
+	if proven {
+		return "the routes prove " + strings.Join(requirement, ",") + " reaches this path, and " +
+			strings.Join(missing, ",") + " is part of it"
+	}
+	return "the routes prove nothing here, so this is what the path's own objects advertise: " +
+		strings.Join(requirement, ",") + ", and " + strings.Join(missing, ",") + " is part of it"
 }
+
+// missingNone is the empty missing-set, named so the one call site that reports a requirement
+// without a missing network reads as deliberately as the one that has a missing set.
+var missingNone []string
 
 // HopUnknownsAreFatal is a helper for a caller that wants to treat an undetermined node as a
 // failure in its own report. It exists so the rule is stated once rather than re-derived at each

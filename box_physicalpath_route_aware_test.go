@@ -339,12 +339,16 @@ const caseNetworkInvertedRuleIsRead = `{
   }
 }`
 
-// caseNetworkDirectActionConsumesWithoutDelivering pins the non-route terminal action.
+// caseNetworkTerminationWithoutANamedOutbound pins the one thing a terminal action that names no
+// outbound must still do: it consumes the flow.
 //
-// `direct` ends the routing decision without naming an outbound, so udp genuinely never reaches a
-// later rule. The TCP-only leaf the remaining tcp flow reaches is legal for the same reason Case 1
-// is, and this fixture is what proves the analysis reads terminal actions that are not `route`.
-const caseNetworkDirectActionConsumesWithoutDelivering = `{
+// The termination here comes from `direct`, which does NOT stop the router - see cases 14-16 - so the
+// tcp half is terminated by the second rule's own network condition and then falls through to no
+// further rule. The fixture's job is the "consumed but not attributed" path: udp is consumed by the
+// udp route to a target that carries udp, tcp is never charged to anything, and the root falls back
+// to what its objects advertise. It is a control for that path rather than evidence about `direct`,
+// which cases 16 and 14 pin directly.
+const caseNetworkTerminationWithoutANamedOutbound = `{
   "log": {"disabled": true},
   "outbounds": [
     {"type": "socks", "tag": "tcp-only-leaf", "server": "127.0.0.1", "server_port": 1080,
@@ -367,6 +371,110 @@ type routeAwareCase struct {
 	wantStart bool
 	wantErr   []string
 }
+
+// The four actions a naive reading gets wrong about whether the ROUTER stops.
+//
+// `Router.matchRule` (route/route.go) breaks out of its loop for exactly `route`, `reject`,
+// `hijack-dns`, and `bypass` WHEN the bypass names an outbound. It falls through for everything
+// else - including `route-options` and `direct`, which are easy to mistake for terminal because
+// `adapter.IsFinalAction` answers "does this end the flow's handling" rather than "does the router
+// stop here".
+//
+// Getting this wrong is a FALSE NEGATIVE, not a cosmetic difference, and it was MEASURED: each
+// fixture below is a first rule whose action does not terminate, followed by a udp route to a
+// TCP-only leaf. Reading the first rule as terminal records udp as consumed, the requirement empties,
+// and the configuration STARTS - while at run time the udp flow falls through to the leaf and fails
+// there. All later examples are the same shape with the discriminating action changed.
+const (
+	// `action: reject` with NO match items is an unconditional reject: `Match` returns true for an
+	// empty item list, and the empty list means there is no condition to fail. It terminates, so
+	// udp never reaches the leaf and the configuration is legal.
+	caseNetworkUnconditionalRejectIsTerminal = `{
+  "log": {"disabled": true},
+  "outbounds": [
+    {"type": "socks", "tag": "tcp-only-leaf", "server": "127.0.0.1", "server_port": 1080,
+     "version": "5", "network": "tcp"}
+  ],
+  "route": {
+    "rules": [
+      {"action": "reject"},
+      {"network": "udp", "outbound": "tcp-only-leaf"}
+    ]
+  }
+}`
+	// `route-options` only overrides dial options and the router continues to the next rule, so udp
+	// reaches the TCP-only leaf and the configuration is broken.
+	caseNetworkRouteOptionsDoesNotTerminate = `{
+  "log": {"disabled": true},
+  "outbounds": [
+    {"type": "socks", "tag": "tcp-only-leaf", "server": "127.0.0.1", "server_port": 1080,
+     "version": "5", "network": "tcp"}
+  ],
+  "route": {
+    "rules": [
+      {"action": "route-options", "override_port": 8443},
+      {"network": "udp", "outbound": "tcp-only-leaf"}
+    ]
+  }
+}`
+	// A `bypass` with NO outbound is not terminal either: the router's own `break match` is guarded
+	// by `if bypassAction.Outbound == "" { continue match }`.
+	caseNetworkBypassWithoutOutboundDoesNotTerminate = `{
+  "log": {"disabled": true},
+  "outbounds": [
+    {"type": "socks", "tag": "tcp-only-leaf", "server": "127.0.0.1", "server_port": 1080,
+     "version": "5", "network": "tcp"}
+  ],
+  "route": {
+    "rules": [
+      {"action": "bypass"},
+      {"network": "udp", "outbound": "tcp-only-leaf"}
+    ]
+  }
+}`
+	// `direct` dials without consulting an outbound and does NOT stop the loop.
+	caseNetworkDirectDoesNotTerminate = `{
+  "log": {"disabled": true},
+  "outbounds": [
+    {"type": "socks", "tag": "tcp-only-leaf", "server": "127.0.0.1", "server_port": 1080,
+     "version": "5", "network": "tcp"}
+  ],
+  "route": {
+    "rules": [
+      {"action": "direct"},
+      {"network": "udp", "outbound": "tcp-only-leaf"}
+    ]
+  }
+}`
+	// And the action that DOES terminate without naming an outbound, for contrast: `hijack-dns`.
+	caseNetworkHijackDNSTerminates = `{
+  "log": {"disabled": true},
+  "outbounds": [
+    {"type": "socks", "tag": "tcp-only-leaf", "server": "127.0.0.1", "server_port": 1080,
+     "version": "5", "network": "tcp"}
+  ],
+  "route": {
+    "rules": [
+      {"action": "hijack-dns"},
+      {"network": "udp", "outbound": "tcp-only-leaf"}
+    ]
+  }
+}`
+	// A bypass that DOES name an outbound terminates and delivers to it, so a udp flow reaches a
+	// network-blind target - here an incapable one, which must be refused.
+	caseNetworkBypassWithOutboundDelivers = `{
+  "log": {"disabled": true},
+  "outbounds": [
+    {"type": "socks", "tag": "tcp-only-leaf", "server": "127.0.0.1", "server_port": 1080,
+     "version": "5", "network": "tcp"}
+  ],
+  "route": {
+    "rules": [
+      {"network": "udp", "action": "bypass", "outbound": "tcp-only-leaf"}
+    ]
+  }
+}`
+)
 
 // routeAwareMatrix is the ROUTE-AWARE-01 decision table. The row ids name the case numbers the
 // construction prompt asks for, so a reader can check coverage without reading the fixtures.
@@ -467,10 +575,50 @@ var routeAwareMatrix = []routeAwareCase{
 		wantStart: true,
 	},
 	{
-		id:        "case-12c-direct-action-terminates-without-naming-an-outbound",
-		why:       "a terminal action that is not a route still consumes the flow, so a TCP-only leaf below it is legal",
-		config:    caseNetworkDirectActionConsumesWithoutDelivering,
+		id:        "case-12c-a-route-with-no-outbound-consumes-without-attributing",
+		why:       "udp is routed to an unnamed target, so it is consumed without being charged to a tag, and the tcp route below reaches a capable leaf",
+		config:    caseNetworkTerminationWithoutANamedOutbound,
 		wantStart: true,
+	},
+	{
+		id:        "case-13-unconditional-reject-is-terminal",
+		why:       "a reject with no match items matches everything, so udp never reaches the leaf and the configuration is legal",
+		config:    caseNetworkUnconditionalRejectIsTerminal,
+		wantStart: true,
+	},
+	{
+		id:        "case-14-route-options-does-not-stop-the-router",
+		why:       "the router continues past route-options, so udp reaches the TCP-only leaf and the configuration is broken",
+		config:    caseNetworkRouteOptionsDoesNotTerminate,
+		wantStart: false,
+		wantErr:   []string{"cannot serve the udp flow", "tcp-only-leaf"},
+	},
+	{
+		id:        "case-15-bypass-without-an-outbound-does-not-stop-the-router",
+		why:       "the router continues past an outbound-less bypass, so udp reaches the TCP-only leaf and the configuration is broken",
+		config:    caseNetworkBypassWithoutOutboundDoesNotTerminate,
+		wantStart: false,
+		wantErr:   []string{"cannot serve the udp flow", "tcp-only-leaf"},
+	},
+	{
+		id:        "case-16-direct-does-not-stop-the-router",
+		why:       "the router continues past direct, so udp reaches the TCP-only leaf and the configuration is broken",
+		config:    caseNetworkDirectDoesNotTerminate,
+		wantStart: false,
+		wantErr:   []string{"cannot serve the udp flow", "tcp-only-leaf"},
+	},
+	{
+		id:        "case-17-hijack-dns-is-terminal",
+		why:       "the router stops at hijack-dns, so udp never reaches the leaf and the configuration is legal",
+		config:    caseNetworkHijackDNSTerminates,
+		wantStart: true,
+	},
+	{
+		id:        "case-18-bypass-with-an-outbound-terminates-and-delivers",
+		why:       "a bypass that names an outbound stops the router and hands the flow to that outbound, so a udp flow reaching a TCP-only target must be refused",
+		config:    caseNetworkBypassWithOutboundDelivers,
+		wantStart: false,
+		wantErr:   []string{"cannot serve the udp flow", "tcp-only-leaf"},
 	},
 }
 
@@ -561,4 +709,53 @@ func TestRouteAwareTerminationRemovesTheProtocolFromTheDiagnostic(t *testing.T) 
 		"the clause must name tcp alone, because udp was terminated before this path; got: "+err.Error())
 	require.NotContains(t, err.Error(), "the routes prove tcp,udp",
 		"the path analysis must not report udp as reachable here; got: "+err.Error())
+}
+
+// TestRouteAwareDiagnosticDoesNotClaimAProofTheRoutesNeverMade is the other half of the diagnostic
+// honesty requirement, and it is the half a reachability rewrite can silently break.
+//
+// The requirement has two origins. When the path analysis PROVED it, the message may say so. When
+// nothing was proven, the requirement is what the root's own reachable objects advertise between
+// them (`advertisedNetworks`), and saying "the routes prove ..." there invents a proof that was
+// never made.
+//
+// MEASURED: a configuration whose only rule is domain-scoped is UNKNOWN for both networks, so no
+// route proves anything - and the first version of this rewrite still printed "the routes prove
+// tcp,udp reaches this path" for a requirement that came entirely from the objects.
+func TestRouteAwareDiagnosticDoesNotClaimAProofTheRoutesNeverMade(t *testing.T) {
+	t.Parallel()
+
+	// The only rule is domain-scoped, so its scope is UNKNOWN for both networks: it neither
+	// delivers nor excludes anything, and the requirement below comes from the advertised fallback.
+	// The selector holds a TCP-only and a UDP-only member and does not filter by network, so a flow
+	// of either network can be handed to the member that cannot carry it - a real refusal, reported
+	// against the objects rather than against the routing.
+	const fixture = `{
+  "log": {"disabled": true},
+  "outbounds": [
+    {"type": "socks", "tag": "tcp-only", "server": "127.0.0.1", "server_port": 1080,
+     "version": "5", "network": "tcp"},
+    {"type": "socks", "tag": "udp-only", "server": "127.0.0.1", "server_port": 1081,
+     "version": "5", "network": "udp"},
+    {"type": "selector", "tag": "sel", "outbounds": ["tcp-only", "udp-only"], "default": "tcp-only"}
+  ],
+  "route": {
+    "rules": [
+      {"domain_suffix": ["example.com"], "outbound": "sel"}
+    ]
+  }
+}`
+
+	instance, err := newBoxFromConfig(t, fixture)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = instance.Close() })
+
+	err = instance.Start()
+	require.Error(t, err, "a selector that does not filter must not be handed either network")
+	require.Contains(t, err.Error(), "the routes prove nothing here",
+		"the message must state that the requirement came from the objects, not from the routes; got: "+
+			err.Error())
+	require.NotContains(t, err.Error(), "the routes prove tcp",
+		"and it must not claim a route proof for a requirement the routes never established; got: "+
+			err.Error())
 }

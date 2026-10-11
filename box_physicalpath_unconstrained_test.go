@@ -6,16 +6,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Rules that do NOT constrain the network must not become a requirement that every network is
-// delivered (P4).
+// A rule whose predicate the static analysis cannot resolve must not become a requirement that both
+// networks are delivered (P4).
 //
 // # Why this is the dangerous direction
 //
-// `deliveredNetworksFromRoutes` (box.go) proves delivery only from a rule with an EXPLICIT network
-// condition. Every other shape - a plain rule with no `network:`, `route.final`, a logical rule, an
-// inverted rule - proves nothing, and "nothing proven" has to stay "nothing proven". Reading it as
-// "both networks" is the mistake that once made one unrelated TCP+UDP outbound responsible for UDP
-// everywhere else and refused configurations that had always started.
+// The requirement now comes from the COMPILED rules (common/routeflow), and a tag is charged only
+// with what the routes PROVE reaches it. Every shape whose predicate the summary cannot resolve - a
+// rule constraining something other than the network, `route.final`, a rule that pairs a network
+// with such a condition - proves nothing about the network, and "nothing proven" has to stay
+// "nothing proven". Reading it as "both networks" is the mistake that once made one unrelated
+// TCP+UDP outbound responsible for UDP everywhere else and refused configurations that had always
+// started.
+//
+// # What these three fixtures do and do not claim
+//
+// Each one is a configuration that must START, and each is a case where the old text scan and the
+// new analysis agree - so they are CONTROLS for the fallback, not evidence about the routing model.
+// The model's own discriminating cases live in box_physicalpath_route_aware_test.go, whose ids name
+// what each one separates.
+//
+// One of them changed behaviour and no longer belongs here: a rule with NO match items is not
+// "unproven" at all. `Match` special-cases the empty item list and returns true, so a bare
+// `{outbound: x}` rule is a CATCH-ALL and really does deliver both networks. That case moved to the
+// route-aware matrix (case A3 there, "catch-all rule demands both networks"), where it is asserted
+// as the refusal it is.
 //
 // The other half matters equally: where the configuration DOES prove a network reaches an object
 // that cannot carry it, the answer must be a definite refusal naming the object - not an "unknown"
