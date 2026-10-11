@@ -15,15 +15,18 @@ the fork links must be present, and the upstream documentation links must still 
 
 # Why "present", not "present exactly once"
 
-The two Apple sources have different About sections, and both are correct:
+There is ONE Apple source, so this is one file with one About section - there is no
+"the iOS source" and "the macOS source" to compare. At the pinned revision
+`SettingView.swift` carries one upstream source row and one upstream releases row, and the
+link overlay rewrites both to the fork, so the overlaid tree holds exactly one of each.
 
-  * the original macOS client carries one source row and one Releases item;
-  * the custom iOS client is split per platform, so the same fork source URL appears in
-    the `#if os(iOS)` section and again in the `#if os(macOS) || os(tvOS)` section.
-
-Demanding a fixed count would therefore accept one client and reject the other for being
-the shape it is. The invariant that matters is that every sing-box repository link points
-at the fork and that both link kinds exist - and, in the other direction, that no upstream
+The check is still written as "present" rather than "present exactly once" on purpose: the
+About section is a UI surface, and a row may legitimately be added or the section split per
+platform in a future client revision without attribution becoming wrong. Demanding a fixed
+count would fail a correct client for the shape of its settings screen, which is not what
+this file is for. The invariant that actually matters is direction of attribution - every
+sing-box repository link points at the fork and both link kinds exist - and that is what is
+asserted below, in both directions.
 attribution survives.
 
 # What it cannot check

@@ -97,12 +97,18 @@ if [ ! -e "$submodule_path/.git" ] && [ ! -d "$submodule_path/.git" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 0. The checkout must be exactly the revision its platform selects.
+# 0. The checkout must be exactly the revision this platform selects.
 # ---------------------------------------------------------------------------
 #
-# The two platforms build from different Apple commits, so "the right revision" is a
-# per-platform answer and is taken from the one resolver that knows it - not from the
-# iOS gitlink, which by design says nothing about the macOS source.
+# Both platforms build the SAME Apple commit - the parent's clients/apple gitlink - so "the
+# right revision" is not a per-platform answer. It is still asked of the resolver rather
+# than read here, because the resolver is the one place that knows the gitlink is the only
+# authority; a second copy of that rule in this script is a second thing to keep in step.
+#
+# What IS per-platform is the working tree this runs against: IOS_APPLE_DIR is the
+# submodule, MACOS_APPLE_DIR is a separate ephemeral checkout of the same commit, because
+# each gets its own overlay. The two platforms resolve to the same revision and differ only
+# in which tree is being prepared.
 if [ -z "${APPLE_CLIENT_PLATFORM:-}" ]; then
   case "$submodule_path" in
     "$(./scripts/ci/apple-client-source.sh dir ios)")   APPLE_CLIENT_PLATFORM=ios ;;
@@ -178,15 +184,22 @@ fi
 
 # The power-report-draft shim is anchored on its CALL SITE, not on the client revision.
 #
-# The two Apple sources differ here and both differences are correct: the custom iOS
-# client calls LibboxPromotePowerReportDraft() and carries the no-op global for it,
-# while the original macOS source predates the member and calls it nowhere. Stating
-# this as a hard "the call must exist" anchor - as an earlier version did - makes it
-# impossible for the macOS source to be prepared at all, and weakening it to "never
-# check" would let the iOS client lose its shim silently.
+# There is ONE Apple source, so there is no "iOS source differs from macOS source" here.
+# What differs between the two builds is which `#if os(...)` branch of that one source is
+# compiled: an earlier revision of the client called LibboxPromotePowerReportDraft() from a
+# branch only the iOS build compiles, and carried the no-op global for it there.
 #
-# So the invariant is the relationship between the two: if the client calls the
-# symbol, a definition must be present. Nothing may call a symbol that does not exist.
+# Stating this as a hard "the call must exist" anchor - as an earlier version did - would
+# fail the macOS build for a symbol its branch never references, and weakening it to "never
+# check" would let the client lose the shim silently. So the invariant is stated as the
+# RELATIONSHIP between the two files, and it holds for either build:
+#
+#     if the provider calls the symbol, the platform interface must define it.
+#     Nothing may call a symbol that does not exist.
+#
+# At the frozen pin neither build calls it, so the guard is currently inert and passes
+# vacuously. That is the intended degradation, not a failure: it re-arms by itself if a
+# client revision calls the symbol again.
 promote_calls="$(grep -cF "LibboxPromotePowerReportDraft()" "$provider_swift" || true)"
 promote_defs="$(grep -cF "func LibboxPromotePowerReportDraft()" "$platform_swift" || true)"
 if [ "$promote_calls" -gt 0 ] && [ "$promote_defs" -eq 0 ]; then
