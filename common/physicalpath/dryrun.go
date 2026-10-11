@@ -448,36 +448,30 @@ func nodeRequirementFor(resolver *Resolver, hop PathNode, delivered []string) []
 	return delivered
 }
 
-// provenForRoot reports what a root's OWN exits are charged with, which is the same set
-// `nodeRequirementFor` returns for a node OF THAT ROOT.
+// # The narrower reading that was tried and REVERSED
 //
-// # Why the requirement is computed per ROOT rather than shared across roots
+// "Ask each exit for what IT advertises, never for the root's union" was implemented and measured.
+// It removes the group false deny - `selector[tcp-only, dual]` with no route and no consumer - and it
+// also turns TWO true-positive tests green:
 //
-// It used to be one set for the whole walk, so a root that advertised nothing (a group: it never
-// emits a node, see `isGroupNode`) inherited whatever the ROOT LIST had already accumulated. That is
-// a tree property standing in for an edge property, and it refuses configurations whose edges are
-// all fine: MEASURED, `selector[tcp-only, dual]` with no route and no consumer was refused
-// member-by-member because the union {tcp,udp} - contributed by `dual` - was required of `tcp-only`.
+//	TestStartRefusesAMemberThatCannotCarryTheRoutedNetwork
+//	TestPhysicalPathDryRunRefusesAnUnusableUnselectedMember
 //
-// The union is a true statement about the ROOT and never a requirement any single exit can be held
-// to. Computing it here, per root, keeps the two apart: a root whose own exits are all tcp-only is
-// charged with tcp, whatever some other root advertises.
-func provenForRoot(nodes []PathNode) []string {
-	return advertisedNetworks(nodes)
-}
-
-// selfRequirementFor reports what ONE business entry must be able to carry, which is its own answer.
+// Both pin the runtime failure this dry run exists to prevent: a selector whose member is switched by
+// hand, or by a health check, hands the flow to an object that cannot carry it. Under the narrow
+// reading a selector's UNSELECTED member is not held to the group's advertised set at all, so the
+// refusal disappears. The union therefore STAYS, the false deny is recorded, and the contract
+// question below is left open rather than answered by a local edit.
 //
-// This is the requirement the fallback applies when nothing about delivery was proven. A leaf that
-// reports {tcp} is asked for tcp; a leaf that reports nothing is left alone, because "reports
-// nothing" is not a claim that it can carry everything - the same reading `validateNode` step 2
-// gives an empty capability set.
+// # The contract question this file does not answer
 //
-// It is narrower than the root's union BY CONSTRUCTION, and that is the point: the union asks each
-// exit to serve what its SIBLINGS can serve.
-func selfRequirementFor(hop PathNode) []string {
-	return decidedNetworks(networksOf(hop.Outbound))
-}
+// `Selector.Selected(network)` returns `s.selected.Load()` and IGNORES its argument
+// (protocol/group/selector.go:216-218), so a selector can hand a UDP flow to a TCP-only member and the
+// group's own advertisement is the only thing that could have prevented it. `URLTest.Selected` DOES
+// filter (it caches a separate tcp/udp member), and `LoadBalance` filters through
+// `SelectForFlow`/`isCandidate`. What an unfiltering group PROMISES about its members' capabilities is
+// the contract that has to be decided before the requirement can be narrowed, and it is a product
+// decision rather than a validator detail.
 
 // parentGroup recovers the group that handed this node the flow.
 //
