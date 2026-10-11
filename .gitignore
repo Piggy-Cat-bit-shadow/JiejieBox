@@ -22,6 +22,12 @@
 # why `go list ./...` never matches it; cmd/internal/modlayout fails the build if a
 # generated directory is enumerated anyway.
 /_libbox_build/
+# The provenance record cmd/internal/build_libbox writes. It has TWO destinations: the
+# Android client's app/libs (which ignores it there) and next to the module root, so that a
+# build run by hand in this checkout records what it produced. It is generated, so it is
+# ignored where it is generated - otherwise every libbox build leaves an untracked file
+# that a `git add -A` would commit as if it were source.
+/libbox.provenance
 /*.jar
 /*.aar
 /*.xcframework/
