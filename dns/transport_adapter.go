@@ -9,10 +9,6 @@ type TransportAdapter struct {
 	transportTag  string
 	dependencies  []string
 	references    []string
-	// resolvesDomainServer records whether THIS transport's own server address is a domain, which is
-	// the condition under which the dial path builds a ResolveDialer and therefore the condition
-	// under which the network-wide default resolver is read at all.
-	resolvesDomainServer bool
 }
 
 func NewTransportAdapter(transportType string, transportTag string, dependencies []string) TransportAdapter {
@@ -50,11 +46,10 @@ func NewTransportAdapterWithRemoteOptions(transportType string, transportTag str
 		references = []string{remoteOptions.Detour}
 	}
 	return TransportAdapter{
-		transportType:        transportType,
-		transportTag:         transportTag,
-		dependencies:         dependencies,
-		references:           references,
-		resolvesDomainServer: remoteOptions.ServerIsDomain(),
+		transportType: transportType,
+		transportTag:  transportTag,
+		dependencies:  dependencies,
+		references:    references,
 	}
 }
 

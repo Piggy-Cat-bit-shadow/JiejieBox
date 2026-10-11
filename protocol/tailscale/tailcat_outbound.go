@@ -102,7 +102,7 @@ func NewTailcatOutbound(ctx context.Context, router adapter.Router, logger log.C
 		return nil, err
 	}
 	return &TailcatOutbound{
-		Adapter:         outbound.NewAdapterWithDialerOptions(C.TypeTailcat, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.DialerOptions),
+		Adapter:         outbound.NewAdapterWithDialerOptions(C.TypeTailcat, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.DialerOptions, true),
 		ctx:             ctx,
 		logger:          logger,
 		dnsRouter:       service.FromContext[adapter.DNSRouter](ctx),

@@ -108,9 +108,12 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 	loopContext, cancelLoop := context.WithCancel(ctx)
 	openConnectEndpoint := &Endpoint{
 		endpointBase: endpointBase{
-			Adapter: endpoint.NewAdapterWithDialerOptions(C.TypeOpenConnect, tag, []string{N.NetworkTCP, N.NetworkUDP, N.NetworkICMP}, options.DialerOptions),
-			router:  router,
-			logger:  logger,
+			// The Adapter is assigned below, once this constructor has computed whether the server
+			// address is a DOMAIN - the fact the cross-kind graph needs to know whether a
+			// ResolveDialer is built and therefore whether `route.default_domain_resolver` is ever
+			// read on this object's behalf.
+			router: router,
+			logger: logger,
 		},
 		loopContext:   loopContext,
 		cancelLoop:    cancelLoop,
@@ -145,6 +148,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 	}
 	serverAddress, serverAddressErr := netip.ParseAddr(serverURL.Hostname())
 	remoteIsDomain := serverURL.Hostname() != "" && serverAddressErr != nil && !serverAddress.IsValid()
+	openConnectEndpoint.Adapter = endpoint.NewAdapterWithDialerOptions(C.TypeOpenConnect, tag, []string{N.NetworkTCP, N.NetworkUDP, N.NetworkICMP}, options.DialerOptions, remoteIsDomain)
 	outboundDialer, err := dialer.NewWithOptions(dialer.Options{
 		Context:          ctx,
 		Options:          options.DialerOptions,

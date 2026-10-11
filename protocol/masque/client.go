@@ -285,7 +285,7 @@ func NewClientEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 	}
 	clientEndpoint := &ClientEndpoint{
 		endpointBase: endpointBase{
-			Adapter: endpoint.NewAdapterWithDialerOptions(C.TypeMASQUEClient, tag, []string{N.NetworkTCP, N.NetworkUDP, N.NetworkICMP}, options.DialerOptions),
+			Adapter: endpoint.NewAdapterWithDialerOptions(C.TypeMASQUEClient, tag, []string{N.NetworkTCP, N.NetworkUDP, N.NetworkICMP}, options.DialerOptions, options.ServerIsDomain()),
 			router:  router,
 			logger:  logger,
 		},

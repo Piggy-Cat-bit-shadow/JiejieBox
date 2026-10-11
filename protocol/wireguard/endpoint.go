@@ -53,7 +53,11 @@ type Endpoint struct {
 
 func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.WireGuardEndpointOptions) (adapter.Endpoint, error) {
 	ep := &Endpoint{
-		Adapter:        endpoint.NewAdapterWithDialerOptions(C.TypeWireGuard, tag, []string{N.NetworkTCP, N.NetworkUDP, N.NetworkICMP}, options.DialerOptions),
+		Adapter: endpoint.NewAdapterWithDialerOptions(C.TypeWireGuard, tag,
+			[]string{N.NetworkTCP, N.NetworkUDP, N.NetworkICMP}, options.DialerOptions,
+			common.Any(options.Peers, func(it option.WireGuardPeer) bool {
+				return !M.ParseAddr(it.Address).IsValid()
+			})),
 		ctx:            ctx,
 		router:         router,
 		dnsRouter:      service.FromContext[adapter.DNSRouter](ctx),
