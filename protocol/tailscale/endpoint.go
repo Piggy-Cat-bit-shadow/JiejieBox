@@ -292,10 +292,14 @@ func (t *Endpoint) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 }
 
 func (t *Endpoint) start(scope *adapter.Scope) error {
-	binding, err := newSystemBinding(t.ctx, t.logger)
+	binding, resetInterfaceGetter, err := newSystemBinding(t.ctx, t.logger)
 	if err != nil {
 		return err
 	}
+	// The platform interface getter is a process GLOBAL, so it outlives this endpoint unless the
+	// teardown clears it. Registering the reset on the scope is what keeps a later Box from reading
+	// interfaces out of THIS endpoint's NetworkManager after it has been closed.
+	registerSystemBindingCleanup(scope, resetInterfaceGetter)
 	t.server.ControlFunc = binding.control
 	t.server.ListenPacketFunc = binding.listenPacket
 	if t.systemInterface {

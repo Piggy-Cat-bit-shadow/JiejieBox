@@ -135,10 +135,11 @@ func (i *TailcatInbound) Start(stage adapter.StartStage, scope *adapter.Scope) e
 	if err != nil {
 		return err
 	}
-	binding, err := newSystemBinding(i.ctx, i.logger)
+	binding, resetInterfaceGetter, err := newSystemBinding(i.ctx, i.logger)
 	if err != nil {
 		return err
 	}
+	registerSystemBindingCleanup(scope, resetInterfaceGetter)
 	node, err := newTailcatNode(tailcatNodeOptions{
 		Context:      scope.Context(),
 		Logger:       i.logger,
