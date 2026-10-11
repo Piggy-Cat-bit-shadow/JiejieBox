@@ -714,7 +714,37 @@ func (r *NetworkManager) beginTransition() transitionToken {
 	// operations leaves an instant in which the new token is visible while the state still reads
 	// settled, which is the observation the transition exists to prevent.
 	r.transitionAccess.Lock()
-	defer r.transitionAccess.Unlock()
+	// # Why this is ONE defer, and in this order
+	//
+	// It used to be two: `defer r.transitionAccess.Unlock()` registered here, then a deferred
+	// publication registered below it. Go runs defers LIFO, so the publication ran BEFORE the unlock -
+	// the exact opposite of what the comment beneath it claimed, and of what the ABBA reasoning
+	// requires. `runtimeCoordinator.Advance` fans out to registered resources, a resource reacts by
+	// taking its own locks, and with transitionAccess still held a protocol's lock ordering ended up
+	// inside the network manager's.
+	//
+	// Measured two ways: a probe asserting from inside the publication that transitionAccess was held
+	// reported held=true (with a direct-Advance negative control), and a resource whose reaction calls
+	// `NetworkTransitionSnapshot` - which takes transitionAccess - deadlocked `beginTransition`, the
+	// stack showing Advance -> beginTransition.func1 -> beginTransition while the snapshot blocked.
+	//
+	// Today's registrants do not react that way, so this is a violated stated invariant and a live
+	// foot-gun for the next `NetworkTransitionSnapshot` consumer rather than an observed outage. One
+	// defer makes the order explicit instead of resting on the reader noticing the LIFO.
+	//
+	// # Why the claim is read inside the closure rather than captured before it
+	//
+	// The token is not assigned until below, so `claimed` must be read when the defer RUNS. Capturing
+	// it here - which the first version of this fix did - publishes generation 0 instead of the
+	// generation this transition took, and the coordinator's epoch then never reaches the manager's.
+	// `TestTransitionPublishesTheCoordinatorAtTheSameEpoch` is what caught that.
+	defer func() {
+		claimed := uint64(r.transitionOwner)
+		r.transitionAccess.Unlock()
+		if r.runtimeCoordinator != nil {
+			r.runtimeCoordinator.Advance(claimed)
+		}
+	}()
 	// Unstable FIRST, then the token.
 	//
 	// The reverse order left a window that a reader NOT holding transitionAccess could observe: the
@@ -741,17 +771,11 @@ func (r *NetworkManager) beginTransition() transitionToken {
 	if r.transitionClaimed != nil {
 		r.transitionClaimed(r.transitionOwner)
 	}
-	// Published BEFORE the lock is released? No - deliberately after, via the deferred call below.
-	// A registered resource reacts by scheduling or cancelling its own recovery, which takes the
-	// resource's locks; doing that while holding transitionAccess would put a protocol's lock
-	// ordering inside the network manager's, which is the shape of the ABBA deadlock this fork
-	// already paid for once. transitionAccess guards ownership only.
-	claimed := uint64(r.transitionOwner)
-	defer func() {
-		if r.runtimeCoordinator != nil {
-			r.runtimeCoordinator.Advance(claimed)
-		}
-	}()
+	// Published after the lock is released, by the deferred call registered above. A registered
+	// resource reacts by scheduling or cancelling its own recovery, which takes the resource's locks;
+	// doing that while holding transitionAccess would put a protocol's lock ordering inside the
+	// network manager's, which is the shape of the ABBA deadlock this fork already paid for once.
+	// transitionAccess guards ownership only.
 	return r.transitionOwner
 }
 

@@ -21,6 +21,26 @@ type platformDefaultInterfaceMonitor struct {
 	myInterfaces                []string
 	defaultInterfaceInitialized bool
 	lastNetworkPath             string
+
+	// closed fences a delivery that arrives after this monitor's owner is gone.
+	//
+	// `defaultInterface` lives on the EMBEDDED `platformInterfaceWrapper`, which is created once per
+	// `CommandServer` and shared by every per-Box monitor, so it is process-global state with more
+	// than one possible writer across a reload. Nothing in this file said which monitor a delivery
+	// belonged to: `updateDefaultInterface` wrote that field before its own dedup, the `-1` branch
+	// wrote it with no dedup at all, and there was no closed flag, no generation, and no "am I the
+	// installed monitor" test.
+	//
+	// The measured consequence is a closed monitor's late callback overwriting the live monitor's
+	// state, so the shared field names the interface the device has LEFT while the monitor that is
+	// actually installed still names the right one - and the live monitor's dedup then suppresses the
+	// honest repeat that would have repaired it, so the contradiction persists rather than
+	// self-correcting. What that costs: the wrong interface and the wrong expensive/constrained flags
+	// for Apple's `NetworkInterfaces()`, and the wrong interface for every dial on the non-platform
+	// path.
+	//
+	// Guarded by `defaultInterfaceAccess`, which already guards the field this protects.
+	closed bool
 }
 
 func (m *platformDefaultInterfaceMonitor) Start() error {
@@ -28,6 +48,12 @@ func (m *platformDefaultInterfaceMonitor) Start() error {
 }
 
 func (m *platformDefaultInterfaceMonitor) Close() error {
+	// Fence FIRST, and under the same lock the delivery path takes, so a callback already in flight
+	// either lands before this and is then reported by the live monitor, or is refused by it. See the
+	// `closed` field for what the missing fence cost.
+	m.defaultInterfaceAccess.Lock()
+	m.closed = true
+	m.defaultInterfaceAccess.Unlock()
 	return m.iif.CloseDefaultInterfaceMonitor(m)
 }
 
@@ -86,6 +112,15 @@ func (m *platformDefaultInterfaceMonitor) UpdateDefaultInterface(interfaceName s
 }
 
 func (m *platformDefaultInterfaceMonitor) updateDefaultInterface(interfaceName string, interfaceIndex32 int32, isExpensive bool, isConstrained bool) {
+	// The fence, before anything observable happens. This monitor's owner is gone, so `defaultInterface`
+	// - which belongs to the wrapper shared by every Box - now belongs to whoever replaced it, and a
+	// delivery from here would overwrite that monitor's state with an interface the device has left.
+	m.defaultInterfaceAccess.Lock()
+	if m.closed {
+		m.defaultInterfaceAccess.Unlock()
+		return
+	}
+	m.defaultInterfaceAccess.Unlock()
 	var recorder *powerreport.Recorder
 	if m.powerManager != nil {
 		recorder = m.powerManager.Recorder()
