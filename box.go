@@ -524,6 +524,40 @@ func New(options Options) (*Box, error) {
 	// what every embedder that calls EnablePhysicalPathValidation alone keeps - see
 	// EnablePhysicalPathDelivery.
 	dnsTransportManager := dns.NewTransportManager(dnsTransportRegistry, outboundManager, dnsOptions.Final)
+	service.MustRegister[adapter.DNSTransportManager](ctx, dnsTransportManager)
+	// NOW the resolver question has a real owner, so the dry run stops guessing at it.
+	//
+	// The validation seam above was installed before this manager existed, and until it did the dry
+	// run could only consult the static `route.default_domain_resolver is set` bool. That bool cannot
+	// express the case this manager is what creates: no resolver is NAMED anywhere, and the manager
+	// still holds a transport of its own to answer with, so a name resolves. Refusing that was a
+	// confirmed false deny against a configuration the runtime runs.
+	//
+	// The closure below asks common/dialer.ResolveAuthority - the function NewDNSQueryOptions is
+	// itself built on - so the validator and the dial path read one answer from one function rather
+	// than deriving it twice. A failure to resolve the authority is reported as "no authority", which
+	// is the conservative direction for a check whose job is to refuse a promise the object cannot
+	// keep: an object that cannot resolve must not be told it can.
+	outboundManager.SetResolverAuthority(func(tag string) bool {
+		outboundToCheck, loaded := outboundManager.Outbound(tag)
+		if !loaded {
+			return false
+		}
+		// The declared resolver comes from the object's own reference, which Adapter documents as
+		// "the same source common/dialer reads when it builds the ResolveDialer" - so the validator
+		// asks about the object that will dial, not about the configuration text.
+		var domainResolver *option.DomainResolveOptions
+		if provider, isProvider := outboundToCheck.(interface{ DomainResolverReference() string }); isProvider {
+			if server := provider.DomainResolverReference(); server != "" {
+				domainResolver = &option.DomainResolveOptions{Server: server}
+			}
+		}
+		authority, authorityErr := dialer.ResolveAuthority(ctx, domainResolver, false)
+		if authorityErr != nil {
+			return false
+		}
+		return authority != dialer.AuthorityNone
+	})
 	serviceManager := boxService.NewManager(serviceRegistry)
 	certificateProviderManager := boxCertificate.NewManager(certificateProviderRegistry)
 	service.MustRegister[adapter.EndpointManager](ctx, endpointManager)

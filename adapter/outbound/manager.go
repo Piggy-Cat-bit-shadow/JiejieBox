@@ -48,6 +48,12 @@ type physicalPathValidation struct {
 	declarations  physicalpath.Declarations
 	resolverFor   func(tag string) string
 	defaultConfig bool
+	// authorityFor is the LIVE answer to "would a name resolved by this outbound have any DNS
+	// authority", built on common/dialer.ResolveAuthority. It is installed by SetResolverAuthority
+	// AFTER the DNS transport manager exists, because the manager is what the answer depends on and
+	// it is constructed later than this seam. Until then the dry run falls back to the static pair
+	// above, which is what an embedder that never calls the setter keeps.
+	authorityFor func(tag string) bool
 }
 
 // EnablePhysicalPathValidation installs the facts the reachable-leaf dry run needs beyond the
@@ -62,6 +68,30 @@ func (m *Manager) EnablePhysicalPathValidation(declarations physicalpath.Declara
 		declarations:  declarations,
 		resolverFor:   resolverFor,
 		defaultConfig: defaultDomainResolver,
+	}
+	m.access.Unlock()
+}
+
+// SetResolverAuthority installs the LIVE DNS-authority answer, which supersedes the static
+// `defaultDomainResolver` bool passed to EnablePhysicalPathValidation.
+//
+// # Why this is a second call rather than an argument
+//
+// The answer depends on the DNS transport manager's state, and that manager is constructed AFTER
+// this seam is installed (box.go builds the validation seam, then the DNS manager). The static bool
+// could only express "route.default_domain_resolver is set", which is two of the four cases
+// common/dialer.ResolveAuthority distinguishes, and the two it missed included the one where a name
+// resolves fine - so a working configuration was refused.
+//
+// authorityFor is expected to be built on common/dialer.ResolveAuthority, which is the function
+// NewDNSQueryOptions itself is built on. That is the whole point: one function, two callers, so the
+// validator cannot hold an opinion the dial path does not.
+//
+// Passing nil restores the static behaviour.
+func (m *Manager) SetResolverAuthority(authorityFor func(tag string) bool) {
+	m.access.Lock()
+	if m.physicalPath != nil {
+		m.physicalPath.authorityFor = authorityFor
 	}
 	m.access.Unlock()
 }
@@ -186,6 +216,9 @@ func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 func (m *Manager) validatePhysicalPaths(outbounds []adapter.Outbound, validation *physicalPathValidation, delivered map[string][]string) error {
 	resolver := physicalpath.NewResolver(m.Outbound, physicalpath.Snapshot{}).
 		WithDomainResolvers(validation.resolverFor, validation.defaultConfig)
+	if validation.authorityFor != nil {
+		resolver = resolver.WithResolverAuthority(validation.authorityFor)
+	}
 	// The roots are ordered so a GROUP is validated before the objects it names.
 	//
 	// # Why the order is not cosmetic

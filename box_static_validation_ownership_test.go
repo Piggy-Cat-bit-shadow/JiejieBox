@@ -43,26 +43,33 @@ func TestDestinationDNSOwnershipIsVacuousForALocalDialer(t *testing.T) {
 		"`direct` has no peer to send a domain to, so the declaration cannot be violated and must "+
 			"not refuse the configuration")
 
-	// Refused: a real proxy that HONOURS the declaration still needs an authority to resolve with.
-	// This is the true positive the check was written for, and a fix that widened the check into
-	// "accept every declaration" would turn it green.
-	proxyWithoutResolver, err := newBoxFromConfig(t, `{
+	// Refused: the TRUE POSITIVE the check was written for is a type that CANNOT resolve the
+	// destination, so the declaration promises something the object cannot do.
+	//
+	// It used to be asserted with a SOCKS proxy that declared ownership and named no resolver. That
+	// assertion was WRONG, and the resolver-parity fix proved it: a Box installs a `local` (system)
+	// transport as the DNS fallback (box.go:809), so the proxy resolves the destination fine and
+	// refusing it was a false deny against a working configuration. The control is now the case that
+	// is genuinely impossible - a type with no capability - which is what "accept every declaration"
+	// would still have to refuse.
+	incapable, err := newBoxFromConfig(t, `{
   "log": {"disabled": true},
   "outbounds": [
-    {"type": "socks", "tag": "out", "server": "127.0.0.1", "server_port": 1080,
-     "version": "5", "destination_dns_ownership": true}
+    {"type": "trojan", "tag": "out", "server": "127.0.0.1", "server_port": 443,
+     "password": "x", "destination_dns_ownership": true}
   ],
   "route": {"final": "out"}
 }`)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = proxyWithoutResolver.Close() })
-	startErr := proxyWithoutResolver.Start()
+	t.Cleanup(func() { _ = incapable.Close() })
+	startErr := incapable.Start()
 	require.Error(t, startErr,
-		"a proxy asked to resolve the destination itself has nothing to resolve it with")
-	require.Contains(t, startErr.Error(), "domain resolver",
-		"and the refusal must name what is missing; got: "+startErr.Error())
+		"a type that cannot resolve the destination cannot honour a declaration that it will")
+	require.Contains(t, startErr.Error(), "does not implement the capability",
+		"and the refusal must name the missing capability; got: "+startErr.Error())
 
-	// Accepted: the same proxy with an authority configured starts.
+	// Accepted: a proxy that declares ownership AND can resolve starts, with or without a NAMED
+	// resolver - the fallback transport is a resolver.
 	proxyWithResolver, err := newBoxFromConfig(t, `{
   "log": {"disabled": true},
   "dns": {"servers": [{"tag": "dns1", "type": "udp", "server": "8.8.8.8"}]},

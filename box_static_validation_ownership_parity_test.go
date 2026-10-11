@@ -93,19 +93,26 @@ func TestDestinationDNSOwnershipIsVacuousForEveryLocalDialer(t *testing.T) {
 	// check into "accept every declaration" would make this start.
 	t.Run("control: a real proxy without a resolver is still refused", func(t *testing.T) {
 		t.Parallel()
+		// A type that CANNOT resolve the destination. This is the control that stays: the ownership
+		// check must still refuse a promise the object cannot keep, and "accept every declaration"
+		// would turn this green.
+		//
+		// It replaces a SOCKS-without-a-named-resolver control, which the resolver-parity fix proved
+		// was asserting a false deny - a Box installs a `local` (system) transport as the DNS
+		// fallback (box.go:809), so that proxy resolves fine and refusing it was wrong.
 		instance, err := newBoxFromConfig(t, `{
   "log": {"disabled": true},
-  "outbounds": [{"type": "socks", "tag": "out", "server": "127.0.0.1", "server_port": 1080,
-                 "version": "5", "destination_dns_ownership": true}],
+  "outbounds": [{"type": "trojan", "tag": "out", "server": "127.0.0.1", "server_port": 443,
+                 "password": "x", "destination_dns_ownership": true}],
   "route": {"final": "out"}
 }`)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = instance.Close() })
 		startErr := instance.Start()
 		require.Error(t, startErr,
-			"a proxy asked to resolve the destination itself has nothing to resolve it with")
-		require.Contains(t, startErr.Error(), "domain resolver",
-			"and the refusal must name what is missing; got: "+startErr.Error())
+			"a type that cannot resolve the destination cannot honour a declaration that it will")
+		require.Contains(t, startErr.Error(), "does not implement the capability",
+			"and the refusal must name the missing capability; got: "+startErr.Error())
 	})
 }
 
