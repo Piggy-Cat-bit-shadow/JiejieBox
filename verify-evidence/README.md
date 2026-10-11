@@ -35,7 +35,7 @@ action, so the per-action status is visible inside the single file.
 
 | File | What it is |
 | --- | --- |
-| `gates.tsv` | machine-readable tally: `<gate>\t<exit>\t<command>`. 12 rows, all exit 0. |
+| `gates.tsv` | machine-readable tally: `<gate>\t<exit>\t<log>\t<command>`. 25 rows, all exit 0. |
 | `apple-abi-provenance.log` | the provenance gate with `APPLE_ABI_CHECK_REMOTE=1`; ends `FAIL: 0   WARN: 0` |
 | `check-libbox-abi.log` | ABI gate; layer 5 asserts `apple gitlink is the verified revision` |
 | `check-apple-source-selection.log` | one-source selection gate; `65 passed, 0 failed` |

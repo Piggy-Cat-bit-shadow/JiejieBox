@@ -27,7 +27,6 @@ count would fail a correct client for the shape of its settings screen, which is
 this file is for. The invariant that actually matters is direction of attribution - every
 sing-box repository link points at the fork and both link kinds exist - and that is what is
 asserted below, in both directions.
-attribution survives.
 
 # What it cannot check
 
