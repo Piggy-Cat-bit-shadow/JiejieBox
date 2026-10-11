@@ -53,6 +53,15 @@ type scriptedDNSServer struct {
 	queriesRelease chan struct{}
 	releaseOnce    sync.Once
 
+	// queriesArrived receives one token per query that has reached the server and is about to be
+	// held, so a test can wait for the overlap it is about to assert on instead of sleeping and
+	// hoping for it.
+	//
+	// It has to live here rather than being read off `handled` or `observed`: `waitWhileHeld` blocks
+	// BEFORE either of those is touched, so while queries are held there is no counter that says how
+	// many arrived. Buffered generously so a sender never blocks when no test is waiting.
+	queriesArrived chan struct{}
+
 	mu      sync.Mutex
 	handled int
 	// observed records every question the server was asked, so a test can prove that only the
@@ -83,7 +92,26 @@ func (s *scriptedDNSServer) waitWhileHeld() {
 	if !s.holdQueries.Load() {
 		return
 	}
+	// Announce the arrival before parking. This is the only observable fact at this point, and it is
+	// what turns "the queries have probably overlapped by now" into something a test can wait on.
+	s.queriesArrived <- struct{}{}
 	<-s.queriesRelease
+}
+
+// waitForHeldQueries blocks until `expected` queries have arrived and are held.
+//
+// A sleep cannot express this: it makes the overlap an assumption, so a change that serialised the
+// queries would leave the test green while the property it names stopped holding.
+func (s *scriptedDNSServer) waitForHeldQueries(t *testing.T, expected int) {
+	t.Helper()
+	for index := 0; index < expected; index++ {
+		select {
+		case <-s.queriesArrived:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("only %d of %d queries reached the server and were held; the overlap this test "+
+				"asserts on did not happen", index, expected)
+		}
+	}
 }
 
 func newScriptedDNSServer(t *testing.T) *scriptedDNSServer {
@@ -92,7 +120,11 @@ func newScriptedDNSServer(t *testing.T) *scriptedDNSServer {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := &scriptedDNSServer{listener: listener, queriesRelease: make(chan struct{})}
+	server := &scriptedDNSServer{
+		listener:       listener,
+		queriesRelease: make(chan struct{}),
+		queriesArrived: make(chan struct{}, 256),
+	}
 	go server.serve()
 	t.Cleanup(func() { listener.Close() })
 	return server
@@ -764,8 +796,10 @@ func TestSerialBurstLeavesBoundedIdleConnections(t *testing.T) {
 		}()
 	}
 
-	// Let the queries overlap before releasing them.
-	time.Sleep(50 * time.Millisecond)
+	// The burst must genuinely overlap before anything is released: the cap assertions below are only
+	// about the pool if every query was in flight at once. This used to be a 50 ms sleep, which made
+	// the overlap a hope; now the server says so.
+	server.waitForHeldQueries(t, burst)
 	server.releaseQueries()
 	waitGroup.Wait()
 	close(errs)
@@ -908,7 +942,10 @@ func TestSerialPoolConcurrencyContract(t *testing.T) {
 		}()
 	}
 
-	time.Sleep(50 * time.Millisecond)
+	// The assertion below is `connections() >= 2`, so all four queries have to be in flight at once
+	// for it to mean anything. That used to be a 50 ms sleep - the exact claim the test names, left
+	// to the scheduler. Now the server reports the four arrivals.
+	server.waitForHeldQueries(t, concurrency)
 	server.releaseQueries()
 	waitGroup.Wait()
 	close(errs)
