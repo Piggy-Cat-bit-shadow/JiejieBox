@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -39,6 +40,12 @@ type CommandServer struct {
 	oomRecorder       *oomkiller.Recorder
 	grpcServer        *grpc.Server
 	listener          net.Listener
+	// The device level, remembered across a service reload so a fact delivered while there is no Box
+	// is not lost. See rememberDeviceLevel for the window this closes and why only the level, and not
+	// the edges, is kept.
+	axisAccess        sync.Mutex
+	deviceAxisPaused  bool
+	deviceAxisTouched bool
 }
 
 type CommandServerHandler interface {
@@ -220,6 +227,9 @@ func (s *CommandServer) StartOrReloadService(configContent string, options *Over
 	if err != nil {
 		return E.Cause(err, "start or reload service")
 	}
+	// The window is closed again: whatever the platform reported while there was no Box is applied to
+	// the Box that now exists. See rememberDeviceLevel.
+	s.restoreDeviceLevel()
 	return nil
 }
 
@@ -251,6 +261,125 @@ func (s *CommandServer) NeedFindProcess() bool {
 	return instance.Box().Router().NeedFindProcess()
 }
 
+// deviceAxisPaused mirrors the device LEVEL across a service reload.
+//
+// # The window this closes
+//
+// `StartedService.StartOrReloadService` sets `s.instance = nil` and leaves it nil for the whole of
+// `newInstance` - the old Box is closed, a new one is built and started. Every entry point here
+// resolves `Instance()` and returns early when it is nil, so a fact that arrives in that window is
+// **dropped**: not queued, not remembered, not reported to anyone.
+//
+// That used to be masked. Each Box created its own pause manager, so a reload also reset the level to
+// unpaused, and a dropped lock was accidentally consistent with the state the reload left behind.
+// Since `daemon.NewStartedService` now registers one manager for the service's life - so that the
+// level survives a reload at all - the two errors no longer cancel: a phone that was locked stays
+// recorded as locked (correct), and an UNLOCK delivered during the reload window is dropped, so the
+// level latches paused while the device is in use. The client cannot repair that either: its
+// screen-state observer treats the lock source's unchanged `0` as a repeat and publishes nothing
+// (`Library/Network/ScreenStateObserver.swift:243`), so nothing re-asserts the fact.
+//
+// # What is remembered, and why only the level
+//
+// Only the LEVEL boolean, not the sequence of facts. The edges are measurements - the governor
+// classifies a sleep by its duration - and replaying an edge for a sleep that has already been
+// measured would open a second measurement. The level is a plain fact about the device that must
+// outlive the Box, and it is exactly what is lost.
+//
+// `deviceAxisTouched` is separate from `deviceAxisPaused` because "the device is not paused" and
+// "nothing has ever said anything about this device" are different: a fresh process must not
+// manufacture a wake from a zero value.
+//
+// Both fields are read and written under `axisAccess`, and they are only consulted on the
+// iOS/Android device axis - the platforms whose level a reload would otherwise silently reset.
+func (s *CommandServer) rememberDeviceLevel(paused bool) {
+	s.axisAccess.Lock()
+	s.deviceAxisPaused = paused
+	s.deviceAxisTouched = true
+	s.axisAccess.Unlock()
+}
+
+// restoreDeviceLevel re-applies the remembered level to a Box that has just started.
+//
+// Called after every `StartOrReloadService`, so the replacement Box is told the fact the platform
+// already reported instead of starting optimistic.
+//
+// # Why the LEVEL and not `Box.DeviceSlept()`
+//
+// `DeviceSlept` publishes the sleep EDGE as well as the level, and the edge is a MEASUREMENT: the
+// governor's `SleepStarted` stamps `pausedSince`, and the reuse policy classifies the sleep by how
+// long it lasted (`SuspectAfter` 5s, `RetireAfter` 15s). Replaying the edge for a sleep the previous
+// governor had already been measuring would re-stamp the start of that sleep at reload time, so a
+// four-hour sleep would be re-measured as zero seconds and classified as "nothing happened" - losing
+// exactly the pool retirement a long sleep is supposed to earn. The level is a plain fact that must
+// outlive the Box; the edge is a verdict about the past, and the Box it belonged to already published
+// it. Only the level moves here, in both directions.
+//
+// # Why there is a WAKE direction, and why the first version of this was wrong
+//
+// `pause.Manager.DevicePause` and `DeviceWake` are both level-guarded: the second call in the same
+// direction is a silent no-op that emits nothing. That makes this function the only thing that can
+// move the level after a reload, and it means the two directions are not symmetric by accident:
+//
+//   - remembered PAUSED, manager not paused -> enter the level. An unlock delivered during the
+//     reload window moved the level, so re-entering it is correct.
+//   - remembered NOT paused, manager paused -> **release** the level. This is the case the first
+//     version missed. A lock arrives, the reload window opens (`StartedService` sets `s.instance =
+//     nil` for the whole of `newInstance`), the user unlocks, the unlock is `rememberDeviceLevel(false)`
+//     and then dropped by the nil-instance return below. Without this direction the level stays
+//     entered while the phone is in the user's hand: `route/reference.go` mirrors "paused",
+//     `protocol/group/urltest.go` refuses to measure, the on-demand tunnels stay suspended - and
+//     nothing repairs it, because the client's screen-state observer treats the lock source's
+//     unchanged value as a repeat (`Library/Network/ScreenStateObserver.swift`'s repeat rule) and
+//     so re-publishes nothing. Measured before this fix: `axisPaused=false` recorded,
+//     `managerPaused=true` after the reload.
+//
+// The governor of the replacement Box is NOT set here: `box.New` seeds it from the manager's level
+// when it builds, which is where the level is actually known. This function only moves the level.
+//
+// # Why the remembered value is only a cache, and is corrected here
+//
+// The mirror is written where the level moves, but it is not the only writer of the level:
+// `PlatformEvents` (the Android path) reaches `instance.PauseManager()` directly, and `WakeNow` records
+// before it knows whether there is a Box to apply the fact to. So the mirror can disagree with the
+// manager, and acting on it blindly would MEMORY the disagreement forward - a reload could release a
+// pause the device is genuinely in, which is the same latch this function exists to close, pointing the
+// other way.
+//
+// The manager is therefore the source of truth and the mirror is a cache: the level is moved only when
+// the two disagree, and the mirror is then set from the manager rather than from what was remembered.
+// That makes this function self-correcting, which is the property that matters - a stale mirror costs at
+// most one reload's worth of wrongness, not a latch.
+func (s *CommandServer) restoreDeviceLevel() {
+	if !(C.IsAndroid || C.IsIos) || C.IsTvOS {
+		return
+	}
+	s.axisAccess.Lock()
+	paused, touched := s.deviceAxisPaused, s.deviceAxisTouched
+	s.axisAccess.Unlock()
+	if !touched {
+		return
+	}
+	instance := s.StartedService.Instance()
+	if instance == nil {
+		return
+	}
+	manager := instance.PauseManager()
+	if manager == nil {
+		return
+	}
+	if manager.IsDevicePaused() != paused {
+		if paused {
+			manager.DevicePause()
+		} else {
+			manager.DeviceWake()
+		}
+	}
+	// Read back rather than copy: the manager is the authority even when it was another writer that
+	// moved it, and this is the one place the two are reconciled.
+	s.rememberDeviceLevel(manager.IsDevicePaused())
+}
+
 // Pause enters the device pause on the platform whose sleep signal means the device is going to
 // sleep.
 //
@@ -266,6 +395,7 @@ func (s *CommandServer) Pause() {
 	if !(C.IsAndroid || C.IsIos) || C.IsTvOS {
 		return
 	}
+	s.rememberDeviceLevel(true)
 	instance := s.StartedService.Instance()
 	if instance == nil || instance.Box() == nil {
 		return
@@ -305,6 +435,16 @@ func (s *CommandServer) Pause() {
 // state instead". The first half is no longer true - the resume publishes the reuse edge - and the
 // second half was only ever true of a client that had a screen-state observer, which the revision
 // this superproject pinned does not: see docs/fork/apple-screen-state-observer.md.
+//
+// # Why the remembered level is NOT moved here
+//
+// Whether this call moves the LEVEL is platform-dependent - it does on Android, it does not on iOS -
+// and `rememberDeviceLevel` has to record what the manager now holds, not what this method would like
+// it to hold. Recording `false` here would make the remembered level disagree with the manager on
+// iOS, and the next reload would then release a pause the device is still in. So this method leaves
+// the mirror alone and the two places that do move the level on both platforms - `RecordLockState`
+// and `WakeNow` - are the two that write it. `Pause` writes it too, because it moves the level
+// wherever the device axis exists.
 func (s *CommandServer) Wake() {
 	recorder := s.powerManager.Recorder()
 	if recorder != nil {
@@ -334,6 +474,7 @@ func (s *CommandServer) Wake() {
 // window would deliver the event to whichever governor is still registered - the resurrection shape
 // a reload creates.
 func (s *CommandServer) WakeNow() {
+	s.rememberDeviceLevel(false)
 	instance := s.StartedService.Instance()
 	if instance == nil || instance.Box() == nil {
 		return
@@ -368,6 +509,11 @@ func (s *CommandServer) RecordScreenState(on bool) {
 	if !C.IsIos || C.IsTvOS {
 		return
 	}
+	// A display going OFF is a level pause; a display going ON is a resume EDGE and does NOT release
+	// the level (see box_lifecycle.go), so only the off direction is remembered.
+	if !on {
+		s.rememberDeviceLevel(true)
+	}
 	instance := s.StartedService.Instance()
 	if instance == nil || instance.Box() == nil {
 		return
@@ -392,6 +538,9 @@ func (s *CommandServer) RecordLockState(locked bool) {
 	if !C.IsIos || C.IsTvOS {
 		return
 	}
+	// Locked pauses the level, unlocked is the one fact that releases it - and it is the only release
+	// this client has, so it is the one that must not be lost to a reload window.
+	s.rememberDeviceLevel(locked)
 	instance := s.StartedService.Instance()
 	if instance == nil || instance.Box() == nil {
 		return
