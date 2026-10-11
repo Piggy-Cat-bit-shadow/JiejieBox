@@ -226,9 +226,26 @@ func ValidateRoots(resolver *Resolver, roots []adapter.Outbound, endpoints Endpo
 		requirementProven := requirement != nil
 		if requirement == nil {
 			// Nothing was proven about delivery, so the requirement is what the root's own
-			// reachable objects say they can carry. Reading it from the NODES rather than from
-			// root.Network() is what keeps a group's pre-Start answer, which is a blanket, out of
-			// the decision.
+			// reachable objects say they can carry BETWEEN THEM. Reading it from the NODES rather
+			// than from root.Network() is what keeps a group's pre-Start answer, which is a blanket,
+			// out of the decision.
+			//
+			// # Why this union is kept, and what it costs
+			//
+			// The union is a true statement about the ROOT: some flow reaching it can be of either
+			// network. It is then required of every exit, which a GROUP cannot satisfy whenever its
+			// members differ - and that is a MEASURED false deny: `selector[tcp-only, dual]` with no
+			// rule and no consumer advertises {tcp,udp} through `dual` and fails `tcp-only`.
+			//
+			// The narrower reading - ask each exit for what IT advertises - was implemented and
+			// MEASURED to give up a true positive: `TestStartRefusesAMemberThatCannotCarryTheRoutedNetwork`
+			// and `TestPhysicalPathDryRunRefusesAnUnusableUnselectedMember` both stop refusing,
+			// because a selector's UNselected member is no longer held to the group's advertised set
+			// at all. Those two pin the runtime failure this dry run exists to prevent: a selector
+			// whose member is switched by hand, or by a health check, hands the flow to an object
+			// that cannot carry it. Narrowing the requirement is therefore not a local change - it
+			// needs the group-membership contract decided first (see the audit report's
+			// "intentionally unmodelled"), so the union stays and the false deny is recorded.
 			requirement = advertisedNetworks(nodes)
 		}
 		// A group that picks its member BY NETWORK never hands a flow to a member that cannot carry
@@ -274,6 +291,10 @@ func ValidateRoots(resolver *Resolver, roots []adapter.Outbound, endpoints Endpo
 			}
 		}
 		for _, node := range nodes {
+			// The requirement is THIS root's - what the routes proved reaches it, or what its own
+			// reachable objects advertise between them. It is deliberately NOT narrowed per exit
+			// here: see `selfRequirementFor`, which documents the narrower reading and why the
+			// group case cannot adopt it without giving up a true positive.
 			nodeRequirement := nodeRequirementFor(resolver, node, requirement)
 			check := HopCheck{
 				Root:              node.Root,
@@ -425,6 +446,37 @@ func nodeRequirementFor(resolver *Resolver, hop PathNode, delivered []string) []
 		return nil
 	}
 	return delivered
+}
+
+// provenForRoot reports what a root's OWN exits are charged with, which is the same set
+// `nodeRequirementFor` returns for a node OF THAT ROOT.
+//
+// # Why the requirement is computed per ROOT rather than shared across roots
+//
+// It used to be one set for the whole walk, so a root that advertised nothing (a group: it never
+// emits a node, see `isGroupNode`) inherited whatever the ROOT LIST had already accumulated. That is
+// a tree property standing in for an edge property, and it refuses configurations whose edges are
+// all fine: MEASURED, `selector[tcp-only, dual]` with no route and no consumer was refused
+// member-by-member because the union {tcp,udp} - contributed by `dual` - was required of `tcp-only`.
+//
+// The union is a true statement about the ROOT and never a requirement any single exit can be held
+// to. Computing it here, per root, keeps the two apart: a root whose own exits are all tcp-only is
+// charged with tcp, whatever some other root advertises.
+func provenForRoot(nodes []PathNode) []string {
+	return advertisedNetworks(nodes)
+}
+
+// selfRequirementFor reports what ONE business entry must be able to carry, which is its own answer.
+//
+// This is the requirement the fallback applies when nothing about delivery was proven. A leaf that
+// reports {tcp} is asked for tcp; a leaf that reports nothing is left alone, because "reports
+// nothing" is not a claim that it can carry everything - the same reading `validateNode` step 2
+// gives an empty capability set.
+//
+// It is narrower than the root's union BY CONSTRUCTION, and that is the point: the union asks each
+// exit to serve what its SIBLINGS can serve.
+func selfRequirementFor(hop PathNode) []string {
+	return decidedNetworks(networksOf(hop.Outbound))
 }
 
 // parentGroup recovers the group that handed this node the flow.
@@ -594,6 +646,14 @@ func networkFilteringGroup(group adapter.OutboundGroup) bool {
 // what it can serve as a PROXY, not what the flow entering this root can be: a TCP-only middle hop
 // under a UDP-carrying outbound is the ordinary shape of UDP-over-TCP, and unioning its answer in
 // would make the root responsible for a network no flow reaches it with.
+//
+// # Why the union is only ever SOUND for a root with ONE business entry
+//
+// A union answers "what can some flow reaching this root carry", and it is a true statement about the
+// root. It is NOT a requirement any single exit can be held to: MEASURED,
+// `selector[tcp-only, dual]` with no route and no consumer was refused member-by-member, because the
+// union {tcp,udp} - contributed by `dual` - was then required OF `tcp-only`. `validateNode` compares
+// each business entry against its OWN answer for exactly this reason; see `nodeRequirementFor`.
 func advertisedNetworks(nodes []PathNode) []string {
 	var advertised []string
 	for _, node := range nodes {
@@ -603,6 +663,13 @@ func advertisedNetworks(nodes []PathNode) []string {
 			// in would make the root responsible for a network no flow reaches it with.
 			continue
 		}
+		if isGroupNode(node) {
+			// A group is a control node and never terminates a route (leaves.go), so this is
+			// unreachable in this tree. Kept as a guard rather than a decision: a node whose object
+			// is a group would be a root that materialised no member, and its blanket Network() must
+			// not become a requirement for the members below it.
+			continue
+		}
 		for _, network := range decidedNetworks(networksOf(node.Outbound)) {
 			if !slices.Contains(advertised, network) {
 				advertised = append(advertised, network)
@@ -610,6 +677,15 @@ func advertisedNetworks(nodes []PathNode) []string {
 		}
 	}
 	return advertised
+}
+
+// isGroupNode reports whether this node is a control node rather than a physical exit.
+func isGroupNode(node PathNode) bool {
+	if node.Outbound == nil {
+		return false
+	}
+	_, isGroup := node.Outbound.(adapter.OutboundGroup)
+	return isGroup
 }
 
 // anyNodeCarries reports whether any reachable node under a root can carry the network.

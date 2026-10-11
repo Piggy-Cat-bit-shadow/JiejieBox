@@ -71,11 +71,22 @@ import (
 //
 // # finalOutbound
 //
-// `route.final` receives every flow no rule matched, which is every network, so a configuration
-// that sets it proves nothing about WHICH networks arrive - only that something does. It is
-// therefore not attributed to a tag here. Reading it as "both networks reach final" would be a
-// proof this function does not have, and it is the reading the validator's own delivery fallback
-// exists to avoid. It is carried on the result for diagnostics only.
+// `route.final` receives every flow no rule matched, and this function knows exactly which networks
+// those are: they are the residual it carries at the end. The final outbound is therefore charged
+// with that residual, as a PROVEN demand, because the sink is definite - `Router.matchRule` falls
+// through to `outbound.Default()` for a flow that matched no rule, and `final` is what that resolves
+// to when it is set.
+//
+// It used to be left unproven deliberately, so the validator fell back to what the final outbound
+// advertises. That fallback cannot see the rules, and it refuses configurations that are precise:
+// MEASURED, `{network: udp, action: reject}` with a tcp-only `final` has a residual of tcp alone and
+// is legal, while the advertised fallback charged both networks. Charging a network the rules
+// PROVABLY consumed asserts reachability they contradict, so the residual is the only reading
+// consistent with the rest of this analysis.
+//
+// An empty finalOutbound changes nothing: when `final` is unset the router falls through to a
+// `direct` outbound created at start, which carries both networks, so no demand can be proved about
+// it and the caller's fallback remains the right answer.
 //
 // # Cost
 //
@@ -141,6 +152,34 @@ func Reach(rules []adapter.Rule, finalOutbound string) Demand {
 		if live[network] {
 			demand.Unclaimed = append(demand.Unclaimed, network)
 		}
+	}
+	// `route.final` receives every flow no rule matched, and "every flow no rule matched" is not a
+	// mystery: for each network it is exactly the residual this walk has been carrying. So the final
+	// outbound is charged with that residual, and it is charged as PROVEN, because the sink is
+	// definite - `Router.matchRule` falls through to `outbound.Default()` for a flow that matched no
+	// rule, and `final` is what that resolves to when it is set.
+	//
+	// # Why this is not the "both networks" reading the old design refused
+	//
+	// It used to be left unproven on purpose, so the validator fell back to what the final outbound
+	// advertises. That fallback cannot see the rules, and the two answers differ exactly where the
+	// configuration is precise: with `{network: udp, action: reject}` and a tcp-only `final`, the
+	// residual is tcp ALONE and the configuration is legal, while the advertised fallback charged
+	// both networks and refused it. MEASURED - that configuration is the one the false-deny report
+	// carried.
+	//
+	// The narrower reading is also the only one consistent with the rest of this analysis: a network
+	// a rule PROVABLY consumed cannot arrive at `final`, and charging it anyway asserts reachability
+	// the rules contradict. Nothing here is inferred from what the object advertises; the residual is
+	// computed from the rules.
+	//
+	// A tag that does not resolve is left to the existence check rather than invented here.
+	if finalOutbound != "" {
+		for _, network := range demand.Unclaimed {
+			demand.Proven[finalOutbound] = appendNetwork(demand.Proven[finalOutbound], network)
+			demand.Possible[finalOutbound] = appendNetwork(demand.Possible[finalOutbound], network)
+		}
+		demand.Unclaimed = nil
 	}
 	return demand
 }

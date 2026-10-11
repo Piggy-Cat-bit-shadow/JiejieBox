@@ -32,18 +32,38 @@ import (
 // route-aware matrix (case A3 there, "catch-all rule demands both networks"), where it is asserted
 // as the refusal it is.
 //
+// A second one changed behaviour in the same direction: `route.final` is no longer "unproven". It
+// receives the RESIDUAL the rules leave, which is a fact about the routing, so a TCP-only `final`
+// with no rule consuming udp is refused. See TestFinalReceivesTheResidualAndIsChargedWithIt below.
+//
 // The other half matters equally: where the configuration DOES prove a network reaches an object
 // that cannot carry it, the answer must be a definite refusal naming the object - not an "unknown"
 // that reads as "not checked". A verdict that can be neither confirmed nor denied is not a pass.
 
-// TestFinalProvesNothingAboutDelivery covers `route.final`.
+// TestFinalReceivesTheResidualAndIsChargedWithIt covers `route.final`.
 //
-// `final` receives everything no rule matched, which is every network, so it is left unproven rather
-// than read as both. A TCP-only outbound set as `final` must therefore start.
-func TestFinalProvesNothingAboutDelivery(t *testing.T) {
+// # What this test used to claim, and why the claim was wrong
+//
+// It asserted that a TCP-only outbound set as `final` "must therefore start", on the grounds that
+// `final` receives everything no rule matched - which is every network - so nothing is proven about
+// it and the requirement falls back to what the object advertises.
+//
+// The premise is right and the conclusion does not follow. `final` receives everything no rule
+// matched, and with NO RULES that is every network: the residual is `{tcp,udp}`, and a TCP-only
+// outbound cannot serve the udp half. So the configuration is genuinely unusable, and asserting that
+// it starts pinned a FALSE DENY - one the field report's own configuration shape exposed, where a
+// `{network: udp, action: reject}` rule leaves a residual of tcp ALONE and a TCP-only `final` is
+// legal.
+//
+// The residual is now computed from the rules and charged to `final` (common/routeflow's `Reach`),
+// which gets both halves right: no rules means both networks, and a terminating rule narrows it.
+// What the old comment was protecting - "nothing proven must not be read as both networks" - is
+// still honoured, because the residual is not a fallback: it is what the rules leave.
+func TestFinalReceivesTheResidualAndIsChargedWithIt(t *testing.T) {
 	t.Parallel()
 
-	instance, err := newBoxFromConfig(t, `{
+	// No rules: the residual is both networks, so a TCP-only `final` is a real defect.
+	unusable, err := newBoxFromConfig(t, `{
   "log": {"disabled": true},
   "outbounds": [
     {"type": "socks", "tag": "tcp-only", "server": "127.0.0.1", "server_port": 1080,
@@ -52,11 +72,31 @@ func TestFinalProvesNothingAboutDelivery(t *testing.T) {
   "route": {"final": "tcp-only"}
 }`)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = instance.Close() })
+	t.Cleanup(func() { _ = unusable.Close() })
+	startErr := unusable.Start()
+	require.Error(t, startErr,
+		"nothing consumes udp, so udp reaches the TCP-only `final` and the configuration is unusable")
+	require.Contains(t, startErr.Error(), "cannot serve the udp flow",
+		"and the refusal must name the protocol that cannot be carried; got: "+startErr.Error())
 
-	require.NoError(t, instance.Start(),
-		"`route.final` proves nothing about which networks arrive, so it must not make a TCP-only "+
-			"outbound responsible for UDP")
+	// A terminating rule narrows the residual to tcp alone, and the same `final` is then legal.
+	usable, err := newBoxFromConfig(t, `{
+  "log": {"disabled": true},
+  "outbounds": [
+    {"type": "socks", "tag": "tcp-only", "server": "127.0.0.1", "server_port": 1080,
+     "version": "5", "network": "tcp"}
+  ],
+  "route": {
+    "rules": [
+      {"network": "udp", "action": "reject"}
+    ],
+    "final": "tcp-only"
+  }
+}`)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = usable.Close() })
+	require.NoError(t, usable.Start(),
+		"the rules prove udp never reaches `final`, so a TCP-only `final` must start")
 }
 
 // TestALogicalRuleProvesNothingAboutDelivery covers a logical rule.

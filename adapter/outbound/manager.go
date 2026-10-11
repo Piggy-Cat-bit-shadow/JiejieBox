@@ -2,6 +2,7 @@ package outbound
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -328,6 +329,43 @@ func deliveredNetworksFor(delivered map[string][]string, root adapter.Outbound) 
 // -> a` for a declared cycle. Both are reported from the declared DEPENDENCIES, which is the same
 // edge set the dry run reads.
 func (m *Manager) lintOutbounds(outbounds []adapter.Outbound) ([]adapter.Outbound, error) {
+	// A TAG BELONGS TO ONE OBJECT, and the sort below cannot work otherwise.
+	//
+	// The ordering is keyed by tag, which is what the dependency edges name, so two objects sharing a
+	// tag are one key for two nodes and the loop can never mark both as started. MEASURED, before
+	// this check existed: an endpoint tagged `direct` collides with the `direct` outbound this
+	// manager creates as its own fallback, and `Start` PANICS with a nil dereference at the
+	// `currentOutbound.Tag()` call below - a crash on a configuration, not a diagnostic. It is
+	// reachable from a shipped protocol: `{"endpoints":[{"type":"wireguard","tag":"direct",...}]}`
+	// with no declared outbound tagged `direct`.
+	//
+	// The collision is reported rather than resolved, because which object the tag was meant for is
+	// the user's decision. This manager cannot be the one that decides it: the two namespaces are
+	// populated by different managers at different times, and nothing rejects a shared tag at
+	// registration - see tag_collision_test.go, which documents exactly this contract.
+	seenTag := make(map[string]adapter.Outbound, len(outbounds))
+	for _, outboundToCheck := range outbounds {
+		if outboundToCheck == nil {
+			return nil, E.New("the outbound set contains a nil object, so its dependency graph " +
+				"cannot be ordered")
+		}
+		tag := outboundToCheck.Tag()
+		previous, duplicate := seenTag[tag]
+		if !duplicate {
+			seenTag[tag] = outboundToCheck
+			continue
+		}
+		if previous == outboundToCheck {
+			// The SAME object in the list twice is a caller's bookkeeping slip rather than a
+			// configuration error, and reporting it as a name clash would send the user looking for
+			// a second object that does not exist.
+			return nil, E.New("the object ", tag, " appears twice in the outbound set, so its "+
+				"dependency graph cannot be ordered")
+		}
+		return nil, E.New("two objects claim the tag ", tag, ": ", describeOutbound(previous),
+			" and ", describeOutbound(outboundToCheck), "; a tag resolves to one object, so rename "+
+				"one of them - the tag is how every dependency edge and every routing rule names it")
+	}
 	started := make(map[string]bool, len(outbounds))
 	order := make([]adapter.Outbound, 0, len(outbounds))
 	for {
@@ -357,6 +395,13 @@ func (m *Manager) lintOutbounds(outbounds []adapter.Outbound) ([]adapter.Outboun
 		currentOutbound := common.Find(outbounds, func(it adapter.Outbound) bool {
 			return !started[it.Tag()]
 		})
+		// Unreachable while the tags are unique, because then every pending object is a `Find`
+		// candidate. Kept as a diagnostic rather than a nil dereference: the guarantee above is what
+		// makes it unreachable, and a crash is the wrong way to discover that it stopped holding.
+		if currentOutbound == nil {
+			return nil, E.New("the outbound graph cannot be ordered and no unstarted object could " +
+				"be found, which means the tag set is not the one this sort was given")
+		}
 		var lintOutbound func(oTree []string, oCurrent adapter.Outbound) error
 		lintOutbound = func(oTree []string, oCurrent adapter.Outbound) error {
 			problemOutboundTag := common.Find(oCurrent.Dependencies(), func(it string) bool {
@@ -376,6 +421,28 @@ func (m *Manager) lintOutbounds(outbounds []adapter.Outbound) ([]adapter.Outboun
 		return nil, lintOutbound([]string{currentOutbound.Tag()}, currentOutbound)
 	}
 	return order, nil
+}
+
+// describeOutbound names an object the way a user recognises it, and it is guaranteed to
+// DISCRIMINATE two objects that share a tag.
+//
+// The collision it describes is usually across namespaces - an outbound and an endpoint sharing a
+// tag - so the kind is the first thing a reader needs. The type name is not enough on its own:
+// MEASURED, this fork has an object whose `Type()` reports `direct` and which is NOT the `direct`
+// outbound, so `endpoint/direct (direct)` and `endpoint/direct (wireguard)` came out of an earlier
+// version of this message with the wrong kind on the first one. A diagnostic that misnames one of
+// the two objects it is asking the user to choose between is worse than no diagnostic, so the Go
+// type is appended when the type string alone would not tell them apart.
+func describeOutbound(outbound adapter.Outbound) string {
+	kind := "outbound"
+	if _, isEndpoint := outbound.(adapter.Endpoint); isEndpoint {
+		kind = "endpoint"
+	}
+	description := kind + "/" + outbound.Tag() + " (" + outbound.Type()
+	if concrete := fmt.Sprintf("%T", outbound); concrete != "" {
+		description += ", " + concrete
+	}
+	return description + ")"
 }
 
 // startOutbounds starts the outbounds in the order lintOutbounds computed.
