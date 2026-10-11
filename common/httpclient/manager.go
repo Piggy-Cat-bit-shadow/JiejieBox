@@ -105,10 +105,22 @@ func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 			return E.New("http_client[", tag, "] declares detour ", detour,
 				", and no outbound manager is available to resolve it")
 		}
-		if _, loaded := outboundManager.Outbound(detour); !loaded {
+		detourObject, loaded := outboundManager.Outbound(detour)
+		if !loaded {
 			return E.New("http_client[", tag, "] declares detour ", detour,
 				", and no outbound or endpoint with that tag exists; the client would fail on its ",
 				"first request instead")
+		}
+		// The reference EXISTING is not the same as the reference WORKING. A detour that cannot
+		// carry the transports this client's CONFIGURED version needs fails every request, and the
+		// configured version is the only thing that decides which those are - see
+		// HTTPClientTransportRequirement for why `version: 3` needs UDP alone, or UDP AND TCP, purely
+		// because of disable_version_fallback.
+		//
+		// This is a static preflight, so it only refuses what is PROVABLE: an object that reports no
+		// networks at all is left alone by CheckDetourCapability rather than assumed to carry none.
+		if capabilityErr := CheckDetourCapability(tag, detourObject, HTTPClientTransportRequirement(define.Options())); capabilityErr != nil {
+			return capabilityErr
 		}
 	}
 	scope.Add(m.close)
