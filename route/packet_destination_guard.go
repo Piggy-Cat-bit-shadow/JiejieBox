@@ -43,13 +43,13 @@ type packetDestinationGuard struct {
 
 	allowed   map[string]struct{}
 	rejected  map[string]struct{}
-	onReject  func(M.Socksaddr)
+	onReject  func(M.Socksaddr, error)
 	rejectErr error
 }
 
 func newPacketDestinationGuard(
 	ctx context.Context, router *Router, conn N.PacketConn,
-	metadata adapter.InboundContext, onReject func(M.Socksaddr),
+	metadata adapter.InboundContext, onReject func(M.Socksaddr, error),
 ) *packetDestinationGuard {
 	return &packetDestinationGuard{
 		PacketConn:         conn,
@@ -143,9 +143,15 @@ func (g *packetDestinationGuard) ReadPacket(buffer *buf.Buffer) (M.Socksaddr, er
 		}
 		// The datagram is dropped: reset the buffer so the next read starts
 		// clean, report it, and continue with the following datagram.
+		//
+		// The reason is passed to the hook rather than only stored on the guard. It is the difference
+		// between two very different investigations: a destination the rules refused (look at the
+		// rules) and a destination that could not be judged at all because the lookup behind it failed
+		// (look at the DNS path). Reporting both as "rejected by route rule" sends the reader to the
+		// wrong one, and the guard is the only place that still knows which happened.
 		buffer.Reset()
 		if g.onReject != nil {
-			g.onReject(destination)
+			g.onReject(destination, g.rejectErr)
 		}
 	}
 }

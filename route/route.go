@@ -451,8 +451,12 @@ func (r *Router) routePacketConnection(ctx context.Context, conn N.PacketConn, m
 	// a session approved for one address cannot be used to reach another -
 	// which would otherwise expose loopback and internal services.
 	if metadata.UoTDatagramDestinations {
-		conn = newPacketDestinationGuard(ctx, r, conn, metadata, func(destination M.Socksaddr) {
-			r.logger.DebugContext(ctx, "drop datagram to ", destination, ": rejected by route rule")
+		conn = newPacketDestinationGuard(ctx, r, conn, metadata, func(destination M.Socksaddr, reason error) {
+			// The reason distinguishes "the rules refused this" from "this could not be judged",
+			// which are different investigations. Before it was passed through, a resolver failure
+			// on a domain destination was reported as a rule rejection, and the reader would go
+			// looking at rules that had never been consulted.
+			r.logger.DebugContext(ctx, "drop datagram to ", destination, ": ", reason)
 		})
 	}
 	if selectedRule != nil {
