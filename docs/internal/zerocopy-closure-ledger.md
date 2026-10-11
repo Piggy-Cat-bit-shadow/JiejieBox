@@ -184,6 +184,30 @@ config/TLS/buffer cloning. The ownership half is real and is the buffer-release 
 2. **quic-go fork ceiling fix** — `out/quic-go.config.fixed.go`, to be pushed to `jijie-masque-mod9` @
    `9c94b1e9`. Until then `protocol/hysteria2/outbound.go` is inert by design and says so in its own comments.
 
+### Landing this is verified end to end, and there is a second branch to know about
+
+Checked against the real remote rather than against these notes:
+
+* **The branch exists and the pin IS its tip.** `git ls-remote` reports
+  `refs/heads/jiejie-masque-mod9` = `9c94b1e90d940e36c757d5fbea6162c6f8dd8244`, and sing-box's `go.mod`
+  pins `v0.61.1-0.20260929231714-9c94b1e90d94` — the same commit. So the fix lands directly on the revision
+  sing-box builds, and no rebase is needed to make it effective.
+* **The module cache copy is the defective one**, as it must be before the push:
+  `config.go` sha `77D6696D7E9B7D7D`, with `initialPacketSize = chromeInitialPacketSize` at `:121`. The fix
+  file is `15BE887FB0C3ECF7` — a different hash, which is the point.
+* **There are FOUR branches on that fork, and one has moved past mod9:**
+
+  | branch | tip |
+  |---|---|
+  | `jiejie-masque-stable` | `beb42da7` |
+  | `jiejie-masque-mod9` | `9c94b1e9` ← what sing-box pins |
+  | `jiejie-masque-convergence` | `d29e441a` |
+  | `jiejie-zero-copy-datagram` | `393ae9ae` |
+
+  If the project is converging on `jiejie-masque-convergence`, the fix belongs **there as well as** on mod9 —
+  a change pushed only to mod9 stops being effective the moment the pin moves. Worth checking before
+  pushing rather than after.
+
 ## Environment facts, so they are not re-derived
 
 | fact | evidence |
