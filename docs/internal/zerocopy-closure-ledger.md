@@ -44,6 +44,25 @@ Mechanism verified from source: `splice_linux.go:32,39` call `unix.Splice` twice
 `wsl -e /bin/echo` fails, and no WSL distro package is installed. Cross-compilation works and is used for
 build verification; running is not possible.
 
+### 2a. Capability preservation on the splice path — verified
+
+Three facts that decide whether the kernel splice can engage at all, each checked rather than assumed:
+
+* **`copyDirect` is tried BEFORE `copyExtended`.** `CopyWithCounters` calls `copyDirect` first and only
+  falls back when it returns `handed == false`. So a read waiter on either end does not preempt the syscall
+  path — the ordering is the safe one.
+* **`ktls.Conn` is the only implementer of `SyscallReader`/`SyscallWriter` in sing-box**, and the interface
+  couples `SyscallConnForRead()` with `HandleSyscallReadError(err)` in ONE contract. That coupling is what
+  makes the recoverable-error path possible: a type cannot hand out a raw fd without also saying how to
+  handle the non-application-data record that arrives on it. No partial implementation is expressible.
+* **A raw connection without kTLS falls back explicitly.** `splice` reaches
+  `else if !notFirstTime && E.IsMulti(err, unix.EINVAL, unix.ENOSYS) { handed = false; return }`
+  (`splice_linux.go:68-70`), so a `syscall.Conn`-only source that cannot splice yields to the userspace copy
+  on the FIRST attempt. The nil-`sourceReader` case is guarded at `:55` before any method call.
+
+`kTLSClientConfig.ClientHandshake` returns the kTLS conn directly and nothing wraps it afterwards, so the
+capability is not lost between the TLS layer and the copy engine.
+
 ### 3. Wrapper capability preservation — **DONE**
 
 Five defects fixed, each with a red-first control:
