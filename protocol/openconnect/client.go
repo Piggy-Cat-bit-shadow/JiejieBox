@@ -649,6 +649,17 @@ func (e *Endpoint) DialContext(ctx context.Context, network string, destination 
 	return e.device.DialContext(ctx, network, destination)
 }
 
+// DialsDestinationLocally implements adapter.LocalDestinationDialer.
+//
+// PROVEN from the dial path above: a domain destination is resolved by `e.dnsRouter.Lookup` at :640
+// and only the resulting addresses are dialled (`N.DialSerial` at :644, `e.device.DialContext` at
+// :649). The destination travels inside the OpenConnect tunnel this endpoint terminates, so the
+// domain is resolved on this device and never written to a peer as a name. The packet path agrees
+// (:659).
+func (e *Endpoint) DialsDestinationLocally() bool {
+	return true
+}
+
 func (e *Endpoint) ListenPacketWithDestination(ctx context.Context, destination M.Socksaddr) (net.PacketConn, netip.Addr, error) {
 	e.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 	readyErr := e.waitReady(ctx)

@@ -839,16 +839,31 @@ func validateNode(resolver *Resolver, hop PathNode, endpoints EndpointRegistry, 
 		if local, dialsLocally := hop.Outbound.(adapter.LocalDestinationDialer); dialsLocally && local.DialsDestinationLocally() {
 			return nil
 		}
-		// The capability's VALUE is read, not merely its presence. An object that implements the
-		// interface and reports false is saying "I do not do this" - the same answer as one that does
-		// not implement it - and it used to be refused with "does not implement it", a different and
-		// untrue statement about it.
+		// # Why the four refusals below are separate sentences
+		//
+		// They answer four DIFFERENT questions about the same declaration, and an operator fixes a
+		// different thing in each case:
+		//
+		//   absent     the type cannot do it at all          -> pick a type that can, or drop the flag
+		//   false      the type can, and says it will not    -> a contradictory configuration
+		//   resolver   the type does it, but has no authority-> configure domain_resolver
+		//
+		// Collapsing `absent` and `false` into one message was a real defect: it told an object that
+		// implements `DestinationDNSOwner` and reports false that it "does not implement it", which is
+		// an untrue statement about it. The distinction only became observable when the capability's
+		// VALUE started being read rather than only its presence.
 		owner, capable := hop.Outbound.(adapter.DestinationDNSOwner)
-		if !capable || !owner.DestinationDNSOwnership() {
+		if !capable {
 			return failure("the configuration declares destination_dns_ownership for this outbound, " +
-				"but outbound type " + hop.Outbound.Type() + " cannot resolve the destination itself; " +
-				"the destination domain would be sent to the peer while the configuration says it " +
-				"must not be")
+				"but outbound type " + hop.Outbound.Type() + " does not implement the capability; it " +
+				"has no way to resolve the destination before writing the request to its peer, so the " +
+				"destination domain would reach the peer while the configuration says it must not")
+		}
+		if !owner.DestinationDNSOwnership() {
+			return failure("the configuration declares destination_dns_ownership for this outbound, " +
+				"but outbound type " + hop.Outbound.Type() + " reports that it does NOT resolve the " +
+				"destination itself; the declaration and the object contradict each other, so the " +
+				"destination domain would reach the peer while the configuration says it must not")
 		}
 		if canResolve, reason := resolver.CanResolveDestination(hop.Tag); !canResolve {
 			return failure(reason)

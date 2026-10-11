@@ -232,7 +232,7 @@ func TestStartRefusesDestinationDNSOwnershipOnAnIncapableType(t *testing.T) {
 	// The clause names the CAPABILITY, not the interface. The two stopped being the same test when
 	// the dry run began reading the capability's VALUE: an object that implements the interface and
 	// reports false reaches this refusal too, and "does not implement it" would be untrue of it.
-	require.Contains(t, err.Error(), "cannot resolve the destination itself")
+	require.Contains(t, err.Error(), "does not implement the capability")
 
 	// With the declaration absent the same object starts: the check is about the promise, not
 	// about the type.
