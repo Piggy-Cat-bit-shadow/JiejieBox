@@ -138,9 +138,26 @@ const networkRequirementUoTOverTCPOnlyMiddleHop = `{
   }
 }`
 
-// Case A3: the rule that reaches the TCP-only outbound does NOT constrain the network. Nothing is
-// proven about delivery, and "nothing proven" must not be read as "both networks": the route model
-// explains what MAY arrive, it does not invent a requirement the configuration never stated.
+// Case A3: the rule that reaches the TCP-only outbound names NO condition at all, so it is a
+// CATCH-ALL and the flow it delivers really can be either network.
+//
+// # What this fixture used to claim, and why the claim was wrong
+//
+// It was written as "a rule that does not constrain the network proves nothing", and it started.
+// That reading was a consequence of the old text scan, which could only ever prove delivery from an
+// explicit `network:` condition - so a rule with no condition at all proved nothing, and a tag with
+// nothing proven fell back to what its own objects advertise.
+//
+// A rule with no match items is not "proves nothing": `abstractDefaultRule.Match` special-cases the
+// empty item list and returns TRUE, so the rule matches every flow of every network and hands it to
+// `tcp-only`. That is the strongest possible statement about delivery, and a TCP-only outbound
+// below it cannot serve the udp half. Once the requirement is derived from the compiled rule
+// (common/routeflow) the verdict follows, and refusing is the correct answer.
+//
+// The property the old note was actually protecting - a rule that constrains something OTHER than
+// the network must not be read as delivering every network - is unchanged and is pinned by
+// box_physicalpath_route_aware_test.go case-11, whose rule names a domain and therefore proves
+// nothing about the network.
 const networkRequirementUnconstrainedRoute = `{
   "log": {"disabled": true},
   "outbounds": [
@@ -323,10 +340,11 @@ var networkRequirementMatrix = []networkRequirementCase{
 		wantStart: true,
 	},
 	{
-		id:        "START-01-A3-unconstrained-route-is-unproven",
-		why:       "a rule that does not constrain the network proves nothing, and 'nothing proven' must not become 'every network'",
+		id:        "START-01-A3-catch-all-rule-demands-both-networks",
+		why:       "a rule with no match items matches every flow, so the catch-all really does deliver udp to a tcp-only outbound",
 		config:    networkRequirementUnconstrainedRoute,
-		wantStart: true,
+		wantStart: false,
+		wantErr:   []string{"cannot serve the udp flow", "tcp-only"},
 	},
 	{
 		id:        "START-01-D2-uot-reversed-declaration-order",

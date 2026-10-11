@@ -688,8 +688,8 @@ func validateNode(resolver *Resolver, hop PathNode, endpoints EndpointRegistry, 
 		if len(missing) > 0 {
 			return failure("this outbound does not carry " + strings.Join(missing, ",") +
 				" (it carries " + strings.Join(networksCarried, ",") + ") and cannot serve the " +
-				strings.Join(missing, ",") + " flow routed through it (the entry point routes " +
-				strings.Join(requirement, ",") + " to it)")
+				strings.Join(missing, ",") + " flow routed through it (" +
+				reachabilityClause(missing, requirement) + ")")
 		}
 	}
 	// 3. Endpoint participation and lifecycle ownership are coherent.
@@ -727,6 +727,35 @@ func validateNode(resolver *Resolver, hop PathNode, endpoints EndpointRegistry, 
 		}
 	}
 	return nil
+}
+
+// reachabilityClause renders the reason a network is a requirement at this node, and it exists
+// because the sentence it replaces stated a fact that was not true.
+//
+// # What the old clause said, and why that was a lie rather than a wording choice
+//
+// It read "(the entry point routes " + requirement + " to it)". That sentence is a claim about the
+// ENTRY POINT's capability being delivered to this node, and it is only true when nothing filtered
+// the flow on the way. Once the requirement became what the ROUTES PROVE reaches the node
+// (common/routeflow), the two came apart: a configuration whose first rule sends every udp flow to
+// `reject` and whose second rule routes the rest to a tcp-only outbound has a requirement of
+// `tcp` alone, and a report that then said the entry point routes "tcp,udp" to it would be
+// describing a flow that provably never arrives. An operator reading that looks for a udp path
+// that does not exist.
+//
+// # What it says instead
+//
+// Two sentences, because there are two cases and they are not the same claim:
+//
+//   - the requirement is a PROOF, so the clause states the reachability and its direction: the
+//     flow types the path analysis found reachable here, and the ones it could not carry. Stating
+//     both is what makes the message actionable - the missing set is the thing to fix, the
+//     reachable set is why it matters.
+//   - only ever one requirement is used, and it is the set this node was checked against, so the
+//     clause cannot disagree with the check that produced it.
+func reachabilityClause(missing []string, requirement []string) string {
+	return "the routes prove " + strings.Join(requirement, ",") + " reaches this path, and " +
+		strings.Join(missing, ",") + " is part of it"
 }
 
 // HopUnknownsAreFatal is a helper for a caller that wants to treat an undetermined node as a

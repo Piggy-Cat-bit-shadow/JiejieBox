@@ -20,6 +20,7 @@ import (
 	"github.com/sagernet/sing-box/common/netns"
 	"github.com/sagernet/sing-box/common/physicalpath"
 	"github.com/sagernet/sing-box/common/power"
+	"github.com/sagernet/sing-box/common/routeflow"
 	"github.com/sagernet/sing-box/common/runtimecoord"
 	"github.com/sagernet/sing-box/common/taskmonitor"
 	"github.com/sagernet/sing-box/common/tls"
@@ -230,78 +231,38 @@ func declaredDestinationDNSOwnership(options option.Options) physicalpath.Declar
 	return declarations
 }
 
-// deliveredNetworksFromRoutes reports, per outbound tag, the networks a routing rule with an
-// EXPLICIT network condition can deliver to it.
+// physicalPathDelivery reports, per outbound tag, the networks the ROUTES prove can reach it.
 //
-// # Why only an explicit condition counts as a proof
+// # Why the answer is computed from the COMPILED rules
 //
-// A rule that does not name a network can hand ANY network to its outbound, so it proves nothing
-// about delivery. Reading "nothing proven" as "every network" is exactly the mistake the dry run
-// made when it unioned the Network() of every outbound in the configuration: one unrelated
-// TCP+UDP outbound then made every other root responsible for UDP, and configurations that had
-// always started were refused. A tag named by a rule that DOES constrain the network is the
-// opposite case - the configuration states which flows reach it - and that statement is what lets
-// a leaf declaring tcp-only be refused when a rule delivers UDP to it.
+// The question is "which networks can still be, when they arrive at this tag", and the only object
+// that answers it is the routing decision the runtime router will actually make. The compiled rule
+// list is that object, so the analysis reads it - `router.Rules()` - rather than re-parsing the
+// configuration. A summary taken from the configuration text is a second routing engine by
+// construction, and it was the one this replaces: it unioned the networks of every rule that named
+// a tag with an explicit network condition, so it had no rule ORDER, could not see a terminal
+// action that was not a route, read no logical rule and no `invert`.
 //
-// # What is deliberately not summarised
+// # Why this is called after the router is initialized
 //
-//   - `route.final` receives everything no rule matched, which is every network: it is left
-//     unproven rather than read as both.
-//   - A LOGICAL rule's conditions are a tree whose network constraints are an intersection this
-//     helper does not evaluate. Summarising it would be a second routing engine, so its outbound
-//     is left unproven.
-//   - A rule whose action is not `route` does not deliver to an outbound at all.
+// `routeflow.Reach` needs the compiled rules, and the router compiles them in `Initialize`. The
+// result is installed on the outbound manager, which consumes it in its own `Start` - long after
+// this returns - so the ordering here is the only thing that matters, not a lifetime.
 //
-// A tag some rule constrains and another rule does not is left unproven: one unconstrained rule is
-// enough for any network to arrive.
-func deliveredNetworksFromRoutes(rules []option.Rule) map[string][]string {
-	delivered := make(map[string][]string)
-	unproven := make(map[string]bool)
-	for _, rule := range rules {
-		if rule.Type != C.RuleTypeDefault {
-			continue
-		}
-		action := rule.DefaultOptions
-		if action.Action != C.RuleActionTypeRoute {
-			continue
-		}
-		outboundTag := action.RouteOptions.Outbound
-		if outboundTag == "" {
-			continue
-		}
-		networks := decidedRouteNetworks(action.Network)
-		if len(networks) == 0 {
-			unproven[outboundTag] = true
-			continue
-		}
-		for _, network := range networks {
-			if !common.Contains(delivered[outboundTag], network) {
-				delivered[outboundTag] = append(delivered[outboundTag], network)
-			}
-		}
+// # What it deliberately still does not prove
+//
+// Anything the routes do not constrain. `route.final` receives every flow no rule matched, so it
+// proves nothing about WHICH networks arrive; a rule whose predicate the static summary cannot
+// resolve (`UNKNOWN` - a domain, process, port or rule-set condition, and any rule that pairs a
+// network with one of them) may match any flow, so it proves nothing either. A tag in neither case
+// is ABSENT from this map, which the manager reads as "nothing proven" and never as "nothing
+// reaches it" - it is then checked against what its own reachable objects advertise. See
+// EnablePhysicalPathDelivery and common/routeflow's UNKNOWN policy.
+func physicalPathDelivery(router adapter.Router, finalOutbound string) map[string][]string {
+	if router == nil {
+		return nil
 	}
-	for tag := range unproven {
-		delete(delivered, tag)
-	}
-	return delivered
-}
-
-// decidedRouteNetworks keeps the networks a rule's condition names that the dry run can decide
-// about, in the order the configuration wrote them.
-//
-// icmp is dropped for the same reason the dry run ignores it everywhere: it is carried by a flow
-// port rather than dialled, so a rule matching it says nothing about a dialable network.
-func decidedRouteNetworks(networks []string) []string {
-	var decided []string
-	for _, network := range networks {
-		if network != physicalpath.NetworkTCP && network != physicalpath.NetworkUDP {
-			continue
-		}
-		if !common.Contains(decided, network) {
-			decided = append(decided, network)
-		}
-	}
-	return decided
+	return routeflow.Reach(router.Rules(), finalOutbound).Proven
 }
 
 // ensureURLTestServices supplies the URL-test services a Box needs, if the caller has not.
@@ -554,10 +515,14 @@ func New(options Options) (*Box, error) {
 		},
 		common.PtrValueOrDefault(routeOptions.DefaultDomainResolver).Server != "",
 	)
-	// The other half of the dry run's input: what the ROUTES prove can reach a tag. Installing it
-	// separately keeps a Manager that was never given a route model behaving as it did before this
-	// fact existed - see EnablePhysicalPathDelivery.
-	outboundManager.EnablePhysicalPathDelivery(deliveredNetworksFromRoutes(routeOptions.Rules))
+	// The dry run's OTHER input - what the ROUTES prove can reach a tag - cannot be installed here:
+	// it is derived from the compiled rule list, and the router compiles that below. Installing it
+	// is what makes a delivery a PROOF rather than a guess, and the manager consumes it in its own
+	// Start, so it is installed immediately after `router.Initialize` succeeds.
+	//
+	// A Manager that is never given it behaves exactly as one with no route model at all, which is
+	// what every embedder that calls EnablePhysicalPathValidation alone keeps - see
+	// EnablePhysicalPathDelivery.
 	dnsTransportManager := dns.NewTransportManager(dnsTransportRegistry, outboundManager, dnsOptions.Final)
 	serviceManager := boxService.NewManager(serviceRegistry)
 	certificateProviderManager := boxCertificate.NewManager(certificateProviderRegistry)
@@ -595,6 +560,11 @@ func New(options Options) (*Box, error) {
 	if err != nil {
 		return nil, E.Cause(err, "initialize router")
 	}
+	// Now that the rules are COMPILED, the routes can be summarised for the dry run. This is the
+	// only point at which the answer is derivable, and it is deliberately not duplicated anywhere:
+	// the analysis reads the same rule objects the router evaluates, so the start-time verdict and
+	// the run-time decision cannot disagree about which networks reach a tag.
+	outboundManager.EnablePhysicalPathDelivery(physicalPathDelivery(router, routeOptions.Final))
 	// ONE shared traffic manager and ONE shared mode manager, created if any consumer
 	// needs them: the Clash API (traffic + mode endpoints), the Native API
 	// (SubscribeConnections, SetClashMode) or the platform log writer. Creating a

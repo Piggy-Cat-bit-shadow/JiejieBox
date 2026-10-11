@@ -7,145 +7,172 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Two routes reach ONE leaf, and both are broken. Each route must be reported.
+// Two independent routing rules each reach their own outbound, and each outbound is broken for the
+// network its rule delivers. Both must be reported.
 //
 // # The defect this fixture pins
 //
-// `adapter/outbound.Manager` collapsed validation failures by LEAF TAG: once one root had reported a
-// broken leaf, a later root whose route to the same leaf was ALSO broken could not report it. Two
-// routes to one leaf are two independent contracts - the same leaf is usable on one route and broken
-// on another - and because the manager walks its roots in declaration order, WHICH of the two verdicts
+// `adapter/outbound.Manager` used to collapse validation failures by LEAF TAG: once one root had
+// reported a broken leaf, a later root whose route to the same leaf was ALSO broken could not report
+// it. Two routes are two independent contracts - the same leaf is usable on one route and broken on
+// another - and because the manager walks its roots in declaration order, WHICH of the two verdicts
 // survived depended on the order the outbounds happened to be written in.
 //
 // # Why this has to be a box-level fixture
 //
 // The de-duplication lives in the manager, and the requirement it de-duplicates comes from the ROUTES
-// (`EnablePhysicalPathDelivery`, installed by `box.New`). A test that calls the validator directly
-// has no route proof, so it falls back to what the objects advertise - and a group's own `Network()`
-// before Start is an optimistic blanket that covers both networks regardless of its members. That
+// (installed by `box.New` from the compiled rule list). A test that calls the validator directly has
+// no route proof, so it falls back to what the objects advertise - and a group's own `Network()`
+// before start is an optimistic blanket that covers both networks regardless of its members. That
 // fallback is why a hand-built fixture cannot express this case: the requirement has to come from a
 // real routing rule, and a real routing rule needs a real configuration.
 //
 // # The shape
 //
-//	route rule: network=udp, outbound=A          A selects tcp-only
-//	route rule: network=udp, outbound=B          B selects tcp-only
-//	outbound A: selector over {tcp-only}
-//	outbound B: selector over {tcp-only}
+//	route rule: network=udp, outbound=A          A selects udp-incapable-a
+//	route rule: network=tcp, outbound=B          B selects tcp-incapable-b
+//	outbound A: selector over {udp-incapable-a}
+//	outbound B: selector over {tcp-incapable-b}
 //
-// Both routes reach the same leaf at position 0 - where the business flow arrives - so both are judged
-// against UDP, and the leaf carries TCP only, so both fail.
-const twoRoutesToOneBrokenLeaf = `{
+// Each rule is reachable, because the two conditions are disjoint and the runtime router evaluates
+// them in order: a udp flow stops at the first, a tcp flow at the second. Each delivers a network to
+// a leaf that declares it cannot carry exactly that network, so both fail, for different reasons,
+// against different roots.
+//
+// # Why the member is the broken half rather than the group
+//
+// A selector does NOT filter its members by network, so it can hand a udp flow to a member that
+// carries tcp only. That is the defect, and it is the member's declaration that contradicts the
+// route. It also keeps the fixture about two INDEPENDENT routes: the two members are reached by
+// different rules, so nothing is deduplicated and both failures have to be reported.
+//
+// The companion test below pins the opposite case - one root with two broken members - where the
+// manager's root-keyed guard deliberately reports once.
+const twoIndependentBrokenRoutes = `{
   "log": { "disabled": true },
   "inbounds": [
     { "type": "mixed", "tag": "in", "listen": "127.0.0.1", "listen_port": 0 }
   ],
   "outbounds": [
-    { "type": "socks", "tag": "tcp-only", "server": "127.0.0.1", "server_port": 1080,
+    { "type": "socks", "tag": "udp-incapable-a", "server": "127.0.0.1", "server_port": 1080,
       "version": "5", "network": "tcp" },
-    { "type": "selector", "tag": "A", "outbounds": ["tcp-only"], "default": "tcp-only" },
-    { "type": "selector", "tag": "B", "outbounds": ["tcp-only"], "default": "tcp-only" }
+    { "type": "socks", "tag": "tcp-incapable-b", "server": "127.0.0.1", "server_port": 1081,
+      "version": "5", "network": "udp" },
+    { "type": "selector", "tag": "A", "outbounds": ["udp-incapable-a"], "default": "udp-incapable-a" },
+    { "type": "selector", "tag": "B", "outbounds": ["tcp-incapable-b"], "default": "tcp-incapable-b" }
   ],
   "route": {
     "rules": [
       { "network": "udp", "outbound": "A" },
-      { "network": "udp", "outbound": "B" }
+      { "network": "tcp", "outbound": "B" }
     ]
   }
 }`
 
 // TestOneLeafBrokenOnTwoRoutesIsReportedForBoth drives the whole path: decode, construct, Start.
-func TestOneLeafBrokenOnTwoRoutesIsReportedForBoth(t *testing.T) {
-	instance, err := newBoxFromConfig(t, twoRoutesToOneBrokenLeaf)
+func TestTwoIndependentBrokenRoutesAreBothReported(t *testing.T) {
+	instance, err := newBoxFromConfig(t, twoIndependentBrokenRoutes)
 	require.NoError(t, err,
 		"construction cannot see this: it is a start-time decision about what the routes deliver")
 	t.Cleanup(func() { _ = instance.Close() })
 
 	startErr := instance.Start()
 	require.Error(t, startErr,
-		"a udp rule delivers udp to a leaf that carries tcp only, twice over, so Start must refuse; "+
-			"a Start that succeeds here would mean the requirement never reached the leaf")
+		"a udp rule reaches a member that carries tcp only, and a tcp rule reaches one that carries "+
+			"udp only; a Start that succeeds here would mean the requirement never reached the members")
 
 	message := startErr.Error()
 
 	// Both route rules name their own root, so the two failures are two lines. Keying the
 	// de-duplication on the leaf reported one and dropped the other - and which one survived
 	// depended on the declaration order above.
-	require.Contains(t, message, "A",
+	require.Contains(t, message, "outbound/A",
 		"the failure must name the first route's root: %s", message)
-	require.Contains(t, message, "B",
+	require.Contains(t, message, "outbound/B",
 		"the failure must name the second route's root as well. One line for two broken routes is "+
 			"how an operator fixes the first and ships the second: %s", message)
 
 	// Both broken ROUTES are named, one line each, and each line is attributed to the root the
-	// operator has to fix: A through its selector, B in its own right. The defect this pins is that
-	// the previous leaf-keyed de-duplication named NEITHER - it reported `outbound/tcp-only` once and
-	// dropped both routes, so the report said nothing about which rule was broken.
-	require.Contains(t, message, "outbound/A -> A -> tcp-only",
+	// operator has to fix. The defect this pins is that the previous leaf-keyed de-duplication named
+	// NEITHER route: it reported the bare leaf once and dropped both, so the report said nothing
+	// about which rule was broken.
+	require.Contains(t, message, "outbound/A -> A -> udp-incapable-a",
 		"the first route must be reported against its own root: %s", message)
-	require.Contains(t, message, "outbound/B -> B -> tcp-only",
+	require.Contains(t, message, "outbound/B -> B -> tcp-incapable-b",
 		"and the second route against its own root: %s", message)
-	require.Equal(t, 2, strings.Count(message, "hop #0 tcp-only"),
+
+	// Each route's own defect, and the two are different defects: the first delivers udp to a member
+	// that carries tcp, the second delivers tcp to a member that carries udp.
+	require.Contains(t, message, "cannot serve the udp flow routed through it",
+		"the first route's reason must be its own: %s", message)
+	require.Contains(t, message, "cannot serve the tcp flow routed through it",
+		"the second route's reason must be its own: %s", message)
+	require.Equal(t, 1, strings.Count(message, "hop #0 udp-incapable-a"),
 		"one line per broken route, not one for the whole configuration and not three: %s", message)
+	require.Equal(t, 1, strings.Count(message, "hop #0 tcp-incapable-b"),
+		"and the second route exactly once: %s", message)
 }
 
-// TestOneDefectIsReportedOncePerAffectedRoot pins the unit of the report.
+// TestOneRootWithTwoBrokenMembersIsReportedOnce pins the de-duplication that DOES exist, and the
+// unit it works in.
 //
-// # What it originally claimed, and what the measurement says
+// # The two rules and the guard they exercise
 //
-// It was written as a control for a widened de-duplication key, claiming that one defect reached by
-// two roots must be ONE line. Measurement says it is two, and that the original claim had the unit
-// wrong: `Failure.Root` is not decoration, it is how an operator learns WHICH entry point is
-// affected, and the two configurations below are reached by two different routing rules. Collapsing
-// them would leave the operator fixing one rule and shipping the other.
+// Both rules deliver to the SAME selector, and each delivers a network the selector's only member
+// cannot carry. The root therefore has two independent defects of its own, and the manager reports
+// it ONCE: `reported` is keyed on the failing root, and its stated job is to stop one root
+// contributing the same failure twice.
 //
-// The de-duplication that DOES exist is the `described` set, which stops a member a group report
-// already covered from being reported again as a top-level root - that is what keeps a broken group
-// member from appearing three times for one group. It is exercised by the group-level fixtures.
+// # Why this is the fixture that pins the guard, and why the earlier one could not
 //
-// So the property worth pinning here is not "one line": it is that every affected root is named, and
-// that the SET does not depend on the order the outbounds happen to be declared in.
+// It replaces a fixture that reached one broken leaf two ways - through the selector and directly -
+// and asserted that BOTH were reported. That assertion cannot hold together with the guard, and it
+// only held before because delivery was derived from the configuration text with no rule ORDER: the
+// unreachable second rule was still charged with a network, so it produced a failure that could be
+// reported. Once delivery is a routing decision, a rule the router can never reach is correctly not
+// charged, and the leaf's own failure is the one the guard keeps - one line, which is the honest
+// answer for one broken object.
 //
-// Both roots below reach the same leaf along the same route, which is the case a route-aware key
-// would have separated and a leaf-aware key separates only when the ROUTES differ.
-const twoRoutesToOneBrokenLeafAgain = `{
+// # What is deliberately NOT asserted
+//
+// Which of the two members is named. `Hops` decides the order it materialises a group's members in,
+// so naming one of them is a statement about that order rather than about the configuration. What
+// the guard guarantees is that ONE line is produced for the root, and that is what is pinned.
+const oneRootWithTwoBrokenMembers = `{
   "log": { "disabled": true },
   "inbounds": [
     { "type": "mixed", "tag": "in", "listen": "127.0.0.1", "listen_port": 0 }
   ],
   "outbounds": [
-    { "type": "socks", "tag": "tcp-only", "server": "127.0.0.1", "server_port": 1080,
+    { "type": "socks", "tag": "udp-incapable", "server": "127.0.0.1", "server_port": 1080,
       "version": "5", "network": "tcp" },
-    { "type": "selector", "tag": "A", "outbounds": ["tcp-only"], "default": "tcp-only" }
+    { "type": "socks", "tag": "tcp-incapable", "server": "127.0.0.1", "server_port": 1081,
+      "version": "5", "network": "udp" },
+    { "type": "selector", "tag": "A", "outbounds": ["udp-incapable", "tcp-incapable"],
+      "default": "udp-incapable" }
   ],
   "route": {
     "rules": [
       { "network": "udp", "outbound": "A" },
-      { "network": "udp", "outbound": "tcp-only" }
+      { "network": "tcp", "outbound": "A" }
     ]
   }
 }`
 
-func TestOneDefectIsReportedOncePerAffectedRoot(t *testing.T) {
-	instance, err := newBoxFromConfig(t, twoRoutesToOneBrokenLeafAgain)
+func TestOneRootWithTwoBrokenMembersIsReportedOnce(t *testing.T) {
+	instance, err := newBoxFromConfig(t, oneRootWithTwoBrokenMembers)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = instance.Close() })
 
 	startErr := instance.Start()
-	require.Error(t, startErr, "the udp rule reaches a tcp-only leaf, through the selector and directly")
+	require.Error(t, startErr,
+		"the selector's only two members each cannot carry one of the two networks its rules deliver")
 
 	message := startErr.Error()
-	require.Contains(t, message, "outbound/A -> A -> tcp-only",
-		"the selector root must be named: %s", message)
-	require.Contains(t, message, "outbound/tcp-only",
-		"and the root the second rule names directly must be named too, because it is a second "+
-			"routing rule the operator has to fix: %s", message)
-
-	// And each root contributes its failure EXACTLY once. Two roots reach the same leaf here (A's
-	// route and B's route both end in tcp-only), so a keyed-by-route de-duplication would still be
-	// one line each - the assertion is that nothing is doubled, which is what the `reported` guard
-	// is for.
-	require.Equal(t, 2, strings.Count(message, "hop #0 tcp-only"),
-		"exactly one line per broken route: a third would mean a root was reported twice, and two "+
-			"would mean one of the two routes went missing: %s", message)
+	require.Contains(t, message, "outbound/A -> A ->",
+		"the failure must be attributed to the selector root: %s", message)
+	require.Equal(t, 1, strings.Count(message, "hop #0 "),
+		"one line for one root, however many of its members are broken: a second line would mean the "+
+			"root contributed the same failure twice, which is what the `reported` guard exists to "+
+			"stop: %s", message)
 }
