@@ -63,6 +63,33 @@ Three facts that decide whether the kernel splice can engage at all, each checke
 `kTLSClientConfig.ClientHandshake` returns the kTLS conn directly and nothing wraps it afterwards, so the
 capability is not lost between the TLS layer and the copy engine.
 
+### 2b. The kTLS read path had two defects, with one root cause
+
+Found by comparing the FAST path against its SLOW path, in a package that is
+`//go:build linux && go1.25 && badlinkname` and has **no test files** — so neither defect could be caught by
+this host's compiler or CI, and both are consequences of the two paths drifting apart:
+
+| where | defect | consequence |
+|---|---|---|
+| `ktls_read_wait.go:35` | `Input.Len() == 0 && Input.Len() > 0` — unsatisfiable | the close-notify cleanup never ran, so a read returned `(n, nil)` instead of `(n, EOF)`; the race the slow path's comment describes stayed open on the fast path |
+| `ktls_read_wait.go:22-27` | no `Hand` drain after `readRecord` | a TLS 1.3 KeyUpdate was never applied, and applying it is what reinstalls the RX key **in the kernel** — so the kernel kept the old key while the peer moved on |
+
+Both are now fixed by mirroring the slow path, and both fixes are verified as *textually identical* to the
+reference (compared as code lines with comments excluded) rather than by running the path, which is not
+possible here.
+
+**The root cause is the absence of the comparison, not either typo.** `Conn.Read` and `Conn.WaitReadBuffer`
+are two implementations of one contract with no test asserting they agree, in a package with zero tests. The
+cheapest thing that would have caught both is a table test driving the same record sequence through both
+paths and asserting the same `(n, err)` — and that is the concrete recommendation for this file, rather
+than a note that the bugs are fixed.
+
+**Not a defect, examined and dismissed:** `writeKernelRecord` indexes `&data[0]` with no empty check
+(`ktls_linux.go:318`), which would panic on an empty typed record. Both callers pass non-empty data
+(2 bytes from `sendAlertLocked`, handshake bytes from the key-update path), and `crypto/tls`'s own `Write`
+has the same shape with no guard — so this is upstream-inherited structure, not a kTLS regression, and it is
+recorded as understood rather than reported.
+
 ### 3. Wrapper capability preservation — **DONE**
 
 Five defects fixed, each with a red-first control:
