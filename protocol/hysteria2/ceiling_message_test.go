@@ -61,7 +61,7 @@ func TestTheCeilingSupplyAndClampCasesAreDistinguishable(t *testing.T) {
 			// The REAL function, not a retyped copy of its condition. An earlier revision of this test
 			// duplicated the expression, and a mutation that disabled the production branch built and
 			// PASSED - proving the test guarded nothing. Calling it is the whole reason it was extracted.
-			supplied := testCase.hasCeiling && ceilingSuppliesTheSize(
+			supplied := testCase.hasCeiling && dialer.CeilingSuppliesTheSize(
 				testCase.configured, effective, ceiling)
 			// The clamp branch, verbatim from the outbound's condition.
 			clamped := !supplied && testCase.hasCeiling && effective != testCase.configured

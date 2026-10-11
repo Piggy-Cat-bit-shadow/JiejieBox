@@ -177,7 +177,12 @@ func NewClientEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 				"). This path cannot carry a standard QUIC handshake; configure a larger tunnel MTU or ",
 				"reach this server without this detour")
 		}
-		if effectiveInitialPacketSize != options.HTTP3Options.InitialPacketSize {
+		if dialer.CeilingSuppliesTheSize(options.HTTP3Options.InitialPacketSize, effectiveInitialPacketSize, outerPayloadCeiling) {
+			logger.Info("path capacity: inner MTU ", pathCapacity.InnerMTU,
+				" proves ", outerPayloadCeiling,
+				" bytes for this connection's own QUIC packet, which is used because no "+
+					"initial_packet_size was configured")
+		} else if effectiveInitialPacketSize != options.HTTP3Options.InitialPacketSize {
 			logger.Info("path capacity: inner MTU ", pathCapacity.InnerMTU,
 				" caps the outer QUIC packet at ", outerPayloadCeiling,
 				", so initial_packet_size ",

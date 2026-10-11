@@ -168,7 +168,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	// it "caps initial_packet_size 0" describes an override of an operator's choice that was never made.
 	// An operator reading the old line - on a configuration that sets no initial_packet_size at all -
 	// would go looking for what had set it to 0.
-	if hasCeiling && ceilingSuppliesTheSize(options.InitialPacketSize, effectiveInitialPacketSize, quicPayloadCeiling) {
+	if hasCeiling && dialer.CeilingSuppliesTheSize(options.InitialPacketSize, effectiveInitialPacketSize, quicPayloadCeiling) {
 		logger.Info("path capacity: inner MTU ", pathCapacity.InnerMTU,
 			" proves ", quicPayloadCeiling,
 			" bytes of QUIC payload, which is used because no initial_packet_size was configured")
@@ -331,18 +331,4 @@ func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		return h.client.CloseWithError(os.ErrClosed)
 	})
 	return nil
-}
-
-// ceilingSuppliesTheSize reports whether a proven ceiling PROVIDED the effective size rather than capping
-// a configured one.
-//
-// It is a named function rather than an inline expression so the distinction can be tested against the
-// real code path: a test that retypes an inline condition does not fail when the original drifts, which
-// was demonstrated by mutation before this was extracted.
-//
-// The order at the call site matters and is why this is not folded into that `else if`: both cases end at
-// the SAME number, so the clamp test (`effective != configured`) is also true whenever the ceiling
-// supplied the value. Testing it first would classify every supply as a clamp, and nothing would fail.
-func ceilingSuppliesTheSize(configured, effective int, ceiling uint32) bool {
-	return configured <= 0 && effective == int(ceiling)
 }

@@ -254,6 +254,29 @@ func (c PathCapacity) QuicPayloadCeiling() (uint32, bool) {
 	return PacketOverheadCeiling(c.InnerMTU, c.Family, c.EncapsulatedOverhead)
 }
 
+// CeilingSuppliesTheSize reports whether a proven ceiling PROVIDED the effective size rather than capping
+// a configured one, which are the two ways ClampToCeiling can move a value and are NOT the same event.
+//
+// It lives here, beside ClampToCeiling, because every consumer that reports a ceiling has to make the
+// distinction and none of them can retype the condition safely: a test that retypes an inline expression
+// asserts on its own copy and does not fail when the original drifts. That was demonstrated by mutation -
+// a disabled production branch built and passed against a duplicated condition. Callers use this so a test
+// can exercise the real thing.
+//
+// The cases are:
+//
+//	configured <= 0            -> the ceiling is the value. Zero means "no preference", so nothing was
+//	                              overridden, and saying it was "capped" sends the reader looking for a
+//	                              setting that does not exist in their configuration.
+//	configured > 0 and above   -> a real clamp: the operator asked for more than the path carries.
+//
+// Order matters wherever this is used with a clamp test: both cases end at the SAME number, so
+// `effective != configured` is also true for a supply. Testing the clamp first classifies every supply as
+// a clamp and nothing fails.
+func CeilingSuppliesTheSize(configured, effective int, ceiling uint32) bool {
+	return configured <= 0 && effective == int(ceiling)
+}
+
 // ClampToCeiling applies a proven ceiling to a configured value.
 //
 // The semantics, stated once because they are the product decision:
