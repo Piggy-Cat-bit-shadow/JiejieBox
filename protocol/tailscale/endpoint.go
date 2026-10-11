@@ -809,6 +809,19 @@ func (t *Endpoint) DialContext(ctx context.Context, network string, destination 
 	}
 }
 
+// DialsDestinationLocally implements adapter.LocalDestinationDialer.
+//
+// PROVEN from the dial path above: a domain destination is resolved by `t.dnsRouter.Lookup` at :777
+// and only the resulting addresses are dialled (`N.DialSerial` at :781, and the userspace stack or
+// the system dialer below it). The tailnet carries the packet, so the domain never leaves this
+// device as a name and there is no proxy peer for `destination_dns_ownership` to be a promise about.
+//
+// The two inner paths do not change that: `systemDialer` (:784) is a local socket, and the
+// `t.stack` branches (:796, :802) write into the Tailscale userspace stack.
+func (t *Endpoint) DialsDestinationLocally() bool {
+	return true
+}
+
 func (t *Endpoint) listenPacketWithAddress(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	if !t.started.Load() {
 		return nil, E.New("Tailscale is not ready yet")

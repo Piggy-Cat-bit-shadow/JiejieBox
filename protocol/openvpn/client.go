@@ -872,6 +872,17 @@ func (c *ClientEndpoint) DialContext(ctx context.Context, network string, destin
 	return c.device.DialContext(ctx, network, destination)
 }
 
+// DialsDestinationLocally implements adapter.LocalDestinationDialer.
+//
+// PROVEN from the dial paths above: a domain destination is resolved by `c.dnsRouter.Lookup` (:863
+// here, and :502 in the transport path) and only the resulting addresses are dialled
+// (`N.DialSerial` at :867, `c.device.DialContext` at :872). The destination travels inside the
+// OpenVPN tunnel this endpoint terminates, so the domain is resolved on this device and never
+// written to a peer as a name. The packet path agrees (:882).
+func (c *ClientEndpoint) DialsDestinationLocally() bool {
+	return true
+}
+
 func (c *ClientEndpoint) ListenPacketWithDestination(ctx context.Context, destination M.Socksaddr) (net.PacketConn, netip.Addr, error) {
 	c.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 	readyErr := c.waitReady(ctx)

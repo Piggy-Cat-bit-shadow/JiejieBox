@@ -258,6 +258,16 @@ func (o *TailcatOutbound) DialContext(ctx context.Context, network string, desti
 	return (*tailcatDialer)(o).DialContext(ctx, network, destination)
 }
 
+// DialsDestinationLocally implements adapter.LocalDestinationDialer.
+//
+// PROVEN from the dial path above: a domain destination is resolved by `o.dnsRouter.Lookup` at :252
+// and only the resulting addresses are dialled (`N.DialSerial` at :256). This outbound reaches the
+// destination through the tailnet underlay it owns, so the domain is resolved on this device and
+// never written to a peer as a name. The packet path agrees (:264, :268).
+func (o *TailcatOutbound) DialsDestinationLocally() bool {
+	return true
+}
+
 func (o *TailcatOutbound) ListenPacketWithDestination(ctx context.Context, destination M.Socksaddr) (net.PacketConn, netip.Addr, error) {
 	o.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 	if destination.IsDomain() {

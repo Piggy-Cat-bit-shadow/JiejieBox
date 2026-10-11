@@ -497,6 +497,22 @@ func (w *Endpoint) DialContext(ctx context.Context, network string, destination 
 	return w.endpoint.DialContext(ctx, network, destination)
 }
 
+// DialsDestinationLocally implements adapter.LocalDestinationDialer.
+//
+// PROVEN from the dial path above, not inferred from the type name: a domain destination is
+// resolved by `w.dnsRouter.Lookup` at :489 and only the RESULTING ADDRESSES are dialled
+// (`N.DialSerial` at :493, `w.endpoint.DialContext` at :497). The tunnel encapsulates the packet,
+// so the domain never leaves this device as a name and there is no proxy peer for
+// `destination_dns_ownership` to be a promise about.
+//
+// The INNER/outer split above is why the demand is satisfied without a `domain_resolver`: an inner
+// target resolves under the global DNS rules, which is the same plane `destination_dns_ownership`
+// asks to be used. `detour` is supported (`DialerOptions`) and dials the PEER, which is a different
+// question - see ResolvePeer.
+func (w *Endpoint) DialsDestinationLocally() bool {
+	return true
+}
+
 func (w *Endpoint) ListenPacketWithDestination(ctx context.Context, destination M.Socksaddr) (net.PacketConn, netip.Addr, error) {
 	w.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 	if !w.started.Load() {
