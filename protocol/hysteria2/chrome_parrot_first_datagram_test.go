@@ -138,6 +138,18 @@ type measureRequest struct {
 	// passes as QUICOptions.InitialPacketSize (option initial_packet_size).
 	configuredInitialPacketSize int
 
+	// hardCeiling maps to QUICOptions.InitialPacketSizeCeiling, i.e. the
+	// proven path capacity the outbound derived from its detour. Zero means no
+	// ceiling, which is what an unknown path produces.
+	hardCeiling int
+
+	// disablePMTUD maps to QUICOptions.DisablePathMTUDiscovery, i.e. the
+	// operator's own option disable_path_mtu_discovery. It is deliberately a
+	// separate field from hardCeiling: the two are the two meanings this round
+	// separated, and a harness that could not set them independently could not
+	// tell a correct design from the defect.
+	disablePMTUD bool
+
 	// holdFirstWrite makes the first WriteTo block until release() is called,
 	// after it has recorded the length. It makes "the write was observed while
 	// DialEarly was still running" deterministic instead of a race: the write
@@ -291,6 +303,14 @@ func startObservedDial(t *testing.T, req measureRequest) *observedDial {
 		InitialPacketSize:    uint16(req.configuredInitialPacketSize),
 		ChromeParrot:         req.chromeParrot,
 	}
+	// The two fields under test, applied the way sing-quic's ApplyQUICOptions
+	// applies them: a zero ceiling and a false flag both mean "leave it unset".
+	if req.hardCeiling > 0 {
+		conf.InitialPacketSizeCeiling = uint16(req.hardCeiling)
+	}
+	if req.disablePMTUD {
+		conf.DisablePathMTUDiscovery = true
+	}
 
 	go func() {
 		conn, err := quic.DialEarly(ctx, observing, remoteAddr, tlsConf, conf)
@@ -389,8 +409,8 @@ func measureFirstDatagram(t *testing.T, req measureRequest) observation {
 	obs := od.finish()
 	obs.dialReturnedAtFirstWrite = dialReturnedAtFirstWrite
 
-	t.Logf("measurement: chromeParrot=%v configuredInitialPacketSize=%d -> first datagram = %d bytes; DialEarly had already returned when the first write was observed: %v; DialEarly ended with: %v; every datagram written before the dial goroutine exited: %s",
-		req.chromeParrot, req.configuredInitialPacketSize, obs.size, obs.dialReturnedAtFirstWrite, obs.dialErr, formatDatagramSequence(obs.sizes, obs.teardown))
+	t.Logf("measurement: chromeParrot=%v configuredInitialPacketSize=%d hardCeiling=%d disablePMTUD=%v -> first datagram = %d bytes; DialEarly had already returned when the first write was observed: %v; DialEarly ended with: %v; every datagram written before the dial goroutine exited: %s",
+		req.chromeParrot, req.configuredInitialPacketSize, req.hardCeiling, req.disablePMTUD, obs.size, obs.dialReturnedAtFirstWrite, obs.dialErr, formatDatagramSequence(obs.sizes, obs.teardown))
 
 	// The size only means "the configured packet size reached the wire" if the
 	// datagram really is one client Initial packet whose declared length covers

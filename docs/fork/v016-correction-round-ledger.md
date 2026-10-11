@@ -1,5 +1,13 @@
 # v0.1.6 second-round correction and integration — ledger
 
+> **One item in this ledger has since been closed.**
+> The HY2 ChromeParrot MTU ceiling is no longer BLOCKED on the pinned quic-go, and the clamp no
+> longer requires `disable_chrome_parrot: true`. `Config.InitialPacketSizeCeiling` in the pinned
+> quic-go fork is applied after the ChromeParrot override, so a proven 1232 reaches the wire with
+> the fingerprint on; measurements in `protocol/hysteria2/hard_ceiling_wire_test.go`.
+>
+> This file is kept as the record of what was true in that round.
+
 Companion to `docs/fork/v016-five-workstream-final-report.md`, which covers the first round. This
 file records the round that reviewed that work and corrected it. Read this one for the current state.
 

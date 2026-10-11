@@ -343,14 +343,23 @@ ChromeParrot on  + initial_packet_size 1232 -> 1250 bytes on the wire
 no detour        + initial_packet_size 1452 -> 1452 bytes on the wire
 ```
 
-The pinned quic-go replaces `InitialPacketSize` with `chromeInitialPacketSize` (1250) whenever
-`ChromeParrot` is set, which hysteria2's default is. So the ceiling is effective only with
-`disable_chrome_parrot: true`, or with the pinned library changed. This was verified by reading
-`config.go:103-125` of the pinned
-`Piggy-Cat-bit-shadow/quic-go@v0.61.1-0.20260929231714-9c94b1e90d94` in the read-only module cache.
+The pinned quic-go replaced `InitialPacketSize` with `chromeInitialPacketSize` (1250) whenever
+`ChromeParrot` is set, which hysteria2's default is, so at the time of that measurement the ceiling
+was effective only with `disable_chrome_parrot: true`. It was verified by reading `config.go:103-125`
+of the pinned `Piggy-Cat-bit-shadow/quic-go@v0.61.1-0.20260929231714-9c94b1e90d94` in the read-only
+module cache.
 
-`TUIC` was NOT wired. It passes the same `InitialPacketSize`/`DisablePathMTUDiscovery` through
-`qtls.QUICOptions`, so the same helper applies, but the change was not made and is not claimed.
+**Superseded:** the constraint now travels in its own field, applied after that override. With a
+1232 ceiling the same harness measures 1232 bytes on the wire with ChromeParrot ON, and the
+fingerprint side effects are still present; see J-6 below. The numbers above remain the
+no-ceiling behaviour, which is also what a direct dial with the operator's own
+`disable_path_mtu_discovery` gets.
+
+`TUIC` was NOT wired in that round. It passes the same `InitialPacketSize`/`DisablePathMTUDiscovery`
+through `qtls.QUICOptions`, so the same helper applies. It still passes no ceiling, and does not
+need to: TUIC never enables ChromeParrot, so nothing replaces its configured value and there is no
+override for a ceiling to survive. Its own tests pin that, including the absence of the
+ChromeParrot branch on its path.
 
 `WireGuard` was NOT changed. Its `Endpoint.PortMTU()` delegates to the inner endpoint, which is created
 at construction rather than at Start, so no nil window was found there; the WG-over-tunnel MTU arithmetic
@@ -581,22 +590,26 @@ the same wiring plus a regression test.
 
 Needs the WG encapsulation overhead established from the real packet layout before any number is applied.
 
-### J-6 A hard ceiling that ChromeParrot cannot override — NEEDS AUTHORISATION
+### J-6 A hard ceiling that ChromeParrot cannot override — DONE
 
-This is the one product decision this session could not take, and it is stated as a decision rather than
-as a gap:
+This was the one product decision this session could not take. It has since been taken, and the
+decision went to option (a) below:
 
-- the ceiling IS computed and IS handed to the library (`InitialPacketSize`);
-- the pinned `Piggy-Cat-bit-shadow/quic-go` replaces it with 1250 whenever `ChromeParrot` is set, and
-  hysteria2's default is ChromeParrot ON;
-- so the default configuration does not yet honour a proven ceiling, and the fix requires changing that
-  pinned library — which this session was not authorised to write or push.
+- the ceiling IS computed and IS handed to the library, as its own field
+  (`InitialPacketSizeCeiling`) rather than as a side effect of `DisablePathMTUDiscovery`;
+- the pinned `Piggy-Cat-bit-shadow/quic-go` applies it AFTER the ChromeParrot override, so
+  hysteria2's default configuration (ChromeParrot ON) now honours a proven ceiling: measured
+  1232 bytes on the wire with the fingerprint on, and 1250 when there is no ceiling;
+- the same field also caps what path MTU discovery may grow to, so the ceiling still holds after
+  the handshake;
+- the operator's own `disable_path_mtu_discovery` is forwarded as a policy again instead of being
+  swallowed, and a direct dial with that flag set is no longer read as a proven capacity.
 
-Three options, all the user's call: (a) authorise a minimal patch to the pinned quic-go fork that treats a
-configured `InitialPacketSize` as a hard ceiling when the caller signals a fixed path, (b) document
-`disable_chrome_parrot: true` as the workaround for constrained IPv6 detours and accept the visible
-fingerprint change, (c) leave it measured and open. **No fingerprint default was changed and no fork was
-touched.**
+The three options, recorded as the decision's context rather than as an open question: (a) was
+taken — a minimal patch to the pinned quic-go fork plus a pass-through field in a fork of
+sing-quic, both pushed and re-pinned; (b) `disable_chrome_parrot: true` is no longer needed as a
+workaround; (c) is closed. The fingerprint default was not changed: the ceiling constrains the
+size and nothing else, which the connection-ID side proof checks.
 
 ### J-7 External gates not run
 
@@ -622,8 +635,11 @@ PHYSICAL_PATH_OBSERVABILITY_LIFECYCLE_STATUS = NOT_READY (per-hop status is not 
                                           MASQUE PortMTU lifecycle fix and the path-capacity
                                           helper it needed ARE done)
 LX_SPEC119_QUERY_STATUS                 = READY
-LX_SPEC120_MTU_STATUS                   = PARTIAL (HY2 wired and measured; TUIC not wired;
-                                          ChromeParrot override needs authorisation)
+LX_SPEC120_MTU_STATUS                   = READY (HY2 wired and measured on the wire with the
+                                          fingerprint on; the ChromeParrot override is now applied
+                                          BEFORE the hard ceiling and no longer defeats it; TUIC
+                                          needs no ceiling because it never enables ChromeParrot,
+                                          and its own tests pin that)
 LX_SPEC121_FALLBACK_STATUS              = PARTIALLY_FIXED, gap FIXED (expiry already correct;
                                           the per-dial escalation burst is fixed)
 ZERO_EXTRA_COPY_STATUS                  = NOT_RUN

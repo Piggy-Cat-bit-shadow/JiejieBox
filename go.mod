@@ -281,7 +281,22 @@ replace github.com/sagernet/cronet-go/lib/windows_arm64 => github.com/Piggy-Cat-
 // datagramQueue.AddBatch) used by the MASQUE zero-copy outbound path. Rebased onto
 // v0.61.0-sing-box-mod.9, which brings the OOB socket read fix; the additive DATAGRAM
 // commits are unchanged and SendDatagram keeps its copying semantics.
-replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20260929231714-9c94b1e90d94
+//
+// InitialPacketSizeCeiling is the round's addition: a hard packet-size ceiling applied
+// AFTER the ChromeParrot fingerprint override, so a path this fork has proven carries
+// 1232 bytes is no longer asked to carry Chrome's 1250. It also caps what path MTU
+// discovery may grow to, so the ceiling still holds after the handshake.
+replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261011111900-4d740322a18a
+
+// Carries InitialPacketSizeCeiling through qtls.QUICOptions and ApplyQUICOptions.
+//
+// The fork's baseline commit is the EXACT tree sing-box already builds against
+// (hash-identical to github.com/sagernet/sing-quic@v0.7.2-0.20260929152029-258509488380),
+// because that revision is no longer reachable from any upstream branch and upstream's
+// head has since drifted in seven files this round did not measure. Forking rather than
+// reusing the PMTUD boolean is the deliberate choice: the alternative was to keep two
+// meanings in one field, which is the defect being fixed.
+replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261011112547-a3462fc076c9
 
 // The system stack's TCP accept loop used to die permanently on one unexpected listener error:
 // the listener is bound to the stack's own address and its port is what every new SYN is rewritten

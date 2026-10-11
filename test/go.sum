@@ -70,10 +70,12 @@ github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_amd64 v0.0.0-2026092920211
 github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_amd64 v0.0.0-20260929202119-8c68ce89873c/go.mod h1:G1otAaHTYRaXZ6mm8TxjvA/Kpyfz82yG2ATRu1RY2Po=
 github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_arm64 v0.0.0-20260929202119-8c68ce89873c h1:EIgOQRW9IabMbMAp6j+qOuZ9CDplHSHjTjf3jpPG6Is=
 github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_arm64 v0.0.0-20260929202119-8c68ce89873c/go.mod h1:AHSjG1k9wfhEfZhRCQCdUosL+qgyd//Ww9lwiRvBhhg=
-github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20260929231714-9c94b1e90d94 h1:owmy04YW7IX5lTVtbTBgQiOAr5zEY3Sjunj/Min/PoI=
-github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20260929231714-9c94b1e90d94/go.mod h1:hmLC8GJPp+BrpBgrgJnacvI4fZGIhasuy1ROJJ8GR4E=
+github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261011111900-4d740322a18a h1:cgEHmPbOah98HNsjKwp95ZkNtwe/WcanOBaguLFNS80=
+github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261011111900-4d740322a18a/go.mod h1:Y7IbYEm6E0KhhcxlLZjjxyAZy6Fkn0anFyiXYLqhqNg=
 github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261008194531-3af46fe99d3b h1:obuT/HL6w/Iy+jmYXhSPgPyjlK7qbs1+/t6PnpatiBY=
 github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261008194531-3af46fe99d3b/go.mod h1:K3Owt3xPhHugvlnlPPxZJ/exXdaJfEPOTNorGk4AXjo=
+github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261011112547-a3462fc076c9 h1:Br5sBbdLNlb4JTpJ/hIy+XyXydeb4pqGmzVpuVbOiXs=
+github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261011112547-a3462fc076c9/go.mod h1:+KtxC4r3q1f53WPfuY0jQCGWOOv3t+fNu7hJNzJseWs=
 github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261008172655-8dde9c8cbe27 h1:52T3Ad8JW2KONcLDYZdQ2FYggbVxWgF8CuOY9m0TIGU=
 github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261008172655-8dde9c8cbe27/go.mod h1:liMb9HPIWcFWqF6VJ/ttIY8fTSRPdRltBeSeEcXt1Dk=
 github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261009084700-6c3e08ed4c4d h1:csj8IwzxSc2wGgDymvpff40+xIK+c60XvXq5m4EJ5uw=
@@ -345,8 +347,6 @@ github.com/sagernet/sing-openconnect v0.1.1-0.20260929151226-29757281a247 h1:Ui4
 github.com/sagernet/sing-openconnect v0.1.1-0.20260929151226-29757281a247/go.mod h1:4AKZLVcvY3r54UaK2Gbnm7aN8pOwdLz+y4EP0QFZ5Eg=
 github.com/sagernet/sing-openvpn v0.1.1-0.20260929151220-f330676d6d4a h1:Q16Twlwk9fssoCSUTDo5WqPg0EZHG9JSV9SC3zRy9M0=
 github.com/sagernet/sing-openvpn v0.1.1-0.20260929151220-f330676d6d4a/go.mod h1:PWX7WygD8jpwfqfaGNySXpJYTn0SOwjBI1BKHHC2+Bw=
-github.com/sagernet/sing-quic v0.7.2-0.20260929152029-258509488380 h1:nudkQdo+se+UcKPoCSITPYZz/27H65ZLeiLdogpAyQI=
-github.com/sagernet/sing-quic v0.7.2-0.20260929152029-258509488380/go.mod h1:rJFeVxbEej2iuyeCJ3drKW+p5rOgtLIW3XhZ6ty7Fig=
 github.com/sagernet/sing-shadowsocks v0.2.9-0.20260929152116-0a3456819ce7 h1:w5bH0zMJLuHbKpWzJiQm0GVEmeXjCfes1x2tzF8MuAw=
 github.com/sagernet/sing-shadowsocks v0.2.9-0.20260929152116-0a3456819ce7/go.mod h1:lo7TWEMDcN5/h5B8S0ew+r78ZODn6SwVaFhvB6H+PTI=
 github.com/sagernet/sing-shadowsocks2 v0.2.2-0.20260929152114-a69d1086332b h1:VH65QNqSHat2b+N3Rlzo5Qe44gRmQGwzY5atuy3D0A8=
