@@ -150,10 +150,11 @@ func (m *Manager) ValidateCrossKindCycles(transports []adapter.DNSTransport) err
 		return nil
 	}
 	graph := &crossKindGraph{
-		outbounds:        outbounds,
-		transports:       transportsByTag,
-		defaultResolver:  m.defaultDomainResolverRef(),
-		endpointResolver: endpointResolverReference,
+		outbounds:            outbounds,
+		transports:           transportsByTag,
+		defaultResolver:      m.defaultDomainResolverRef(),
+		endpointResolver:     endpointResolverReference,
+		readsDefaultResolver: m.readsDefaultResolverRef(),
 	}
 	return graph.validate()
 }
@@ -172,6 +173,35 @@ func (m *Manager) defaultDomainResolverRef() func() string {
 	m.access.RLock()
 	defer m.access.RUnlock()
 	return m.defaultDomainResolver
+}
+
+// readsDefaultResolverRef reports, per tag, whether that object would consult the network-wide
+// default resolver.
+//
+// # Why this is a question about the OBJECT and not about the configuration
+//
+// The default is read by the ResolveDialer, and `common/dialer.NewWithOptions` builds one only when
+// the object has a name to resolve (`RemoteIsDomain`). The DNS transports publish that fact on the
+// options they were constructed with, so it is asked through the adapter rather than guessed from
+// the tag.
+func (m *Manager) readsDefaultResolverRef() func(tag string) bool {
+	if m == nil {
+		return nil
+	}
+	return func(tag string) bool {
+		resolved, loaded := m.Outbound(tag)
+		if !loaded {
+			return false
+		}
+		provider, isProvider := resolved.(interface{ ResolvesDomainServer() bool })
+		if !isProvider {
+			// An object that does not publish the fact is not charged the edge. That is the
+			// conservative direction for a check whose job is to REFUSE: charging an object that may
+			// never read the default is the false deny this condition exists to prevent.
+			return false
+		}
+		return provider.ResolvesDomainServer()
+	}
 }
 
 // endpointResolverReference reads an endpoint's own `domain_resolver`, when it has one.
@@ -207,6 +237,9 @@ type crossKindGraph struct {
 	// endpointResolver reads `domain_resolver` off an endpoint, which adapter.Endpoint does not
 	// publish.
 	endpointResolver func(adapter.Endpoint) string
+	// readsDefaultResolver reports whether this tag would actually consult the network-wide default.
+	// An object whose server is a literal builds no ResolveDialer and therefore never reads it.
+	readsDefaultResolver func(tag string) bool
 }
 
 // known reports whether the edge target exists. A missing tag is not this check's business: the
@@ -265,16 +298,26 @@ func (g *crossKindGraph) edges(node crossKindNode) []crossKindNode {
 		if resolverTag != "" {
 			edges = append(edges, crossKindNode{kind: crossKindDNS, tag: resolverTag})
 		} else if g.defaultResolver != nil {
-			// # The network-wide fallback, which IS an edge
+			// # The network-wide fallback, and the condition that makes it an edge
 			//
-			// `route.default_domain_resolver` is consulted whenever this object declares none of its
-			// own (common/dialer/dialer.go). MEASURED, it can close a recursive runtime cycle by
-			// itself: a configuration whose only difference from a refused one was WHERE the resolver
-			// was named was ACCEPTED, while the runtime closes the loop through the default.
+			// `route.default_domain_resolver` is consulted by the ResolveDialer, and the
+			// ResolveDialer is built only when the object actually has a name to resolve -
+			// `common/dialer.NewWithOptions` constructs it behind `RemoteIsDomain`
+			// (dialer.go:65, :77, :159-165). An object whose server is a literal never builds one, so
+			// it never reads the default, and an edge here would report a loop the runtime does not
+			// close.
 			//
-			// It is an `else` branch rather than an additional edge because the two are alternatives
-			// in the dial path: an object with its own resolver never consults the default.
-			if fallback := g.defaultResolver(); fallback != "" {
+			// MEASURED: charging it unconditionally REFUSED a configuration in which nothing resolves
+			// a name at all - a DNS server with an IP-literal address whose detour is a SOCKS5
+			// outbound with an IP-literal server. `ServerIsDomain()` is false for both
+			// (protocol/socks/outbound.go:130, dns/transport_dialer.go:23), SOCKS5 v5 forwards the
+			// target NAME rather than resolving it (protocol/socks/outbound.go:160-161, :359), and the
+			// same JSON minus the one `default_domain_resolver` line started. That is a false deny of
+			// exactly the class this line of work exists to remove.
+			//
+			// So the edge is added only for a node that really would read the default, which the
+			// provider reports by name - a function rather than a bool so the answer stays live.
+			if fallback := g.defaultResolver(); fallback != "" && g.readsDefaultResolver != nil && g.readsDefaultResolver(node.tag) {
 				edges = append(edges, crossKindNode{kind: crossKindDNS, tag: fallback})
 			}
 		}

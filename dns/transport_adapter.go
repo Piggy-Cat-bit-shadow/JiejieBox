@@ -9,6 +9,10 @@ type TransportAdapter struct {
 	transportTag  string
 	dependencies  []string
 	references    []string
+	// resolvesDomainServer records whether THIS transport's own server address is a domain, which is
+	// the condition under which the dial path builds a ResolveDialer and therefore the condition
+	// under which the network-wide default resolver is read at all.
+	resolvesDomainServer bool
 }
 
 func NewTransportAdapter(transportType string, transportTag string, dependencies []string) TransportAdapter {
@@ -46,11 +50,22 @@ func NewTransportAdapterWithRemoteOptions(transportType string, transportTag str
 		references = []string{remoteOptions.Detour}
 	}
 	return TransportAdapter{
-		transportType: transportType,
-		transportTag:  transportTag,
-		dependencies:  dependencies,
-		references:    references,
+		transportType:        transportType,
+		transportTag:         transportTag,
+		dependencies:         dependencies,
+		references:           references,
+		resolvesDomainServer: remoteOptions.ServerIsDomain(),
 	}
+}
+
+// ResolvesDomainServer reports whether this transport's own server address is a domain.
+//
+// It exists so the cross-kind cycle check can tell "this object reads the network-wide default
+// resolver" from "this object never resolves anything". A transport with a LITERAL server builds no
+// ResolveDialer (`common/dialer/dialer.go` builds one behind `RemoteIsDomain`), so it never consults
+// `route.default_domain_resolver` and an edge from it would report a loop the runtime does not close.
+func (a *TransportAdapter) ResolvesDomainServer() bool {
+	return a.resolvesDomainServer
 }
 
 func (a *TransportAdapter) Type() string {

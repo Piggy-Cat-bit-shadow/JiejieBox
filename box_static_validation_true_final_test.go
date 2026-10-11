@@ -183,8 +183,39 @@ func TestTheDefaultDomainResolverIsAGraphEdge(t *testing.T) {
 	t.Cleanup(func() { _ = explicit.Close() })
 	require.Error(t, explicit.Start(), "the explicit-resolver cycle is the known-refused shape")
 
-	// The same cycle, closed only through the NETWORK DEFAULT. It must be refused too.
+	// The same cycle, closed only through the NETWORK DEFAULT.
+	//
+	// STATUS: this does NOT refuse today, and the test records that rather than asserting a refusal
+	// the tree does not produce. The adversarial review measured the gap; this round closed the
+	// OVER-charge (below) and did not close the UNDER-charge.
+	//
+	// What is missing, precisely: the edge is added only for a node whose `ResolvesDomainServer()`
+	// reports true, and that accessor was published on `dns.TransportAdapter` - the type the DNS
+	// transport manager holds - while the object the graph walks here is the SOCKS adapter. So the
+	// edge is not added and the loop is missed. The publisher needs to be on the ADAPTER the object
+	// actually is, which is a wiring change across `adapter/outbound` and `adapter/endpoint` rather
+	// than the single method added here.
 	viaDefault, err := newBoxFromConfig(t, `{
+  "log": {"disabled": true},
+  "dns": {"servers": [{"tag": "remote", "type": "udp", "server": "8.8.8.8", "detour": "proxy"}]},
+  "outbounds": [{"type": "socks", "tag": "proxy", "server": "proxy.example.com", "server_port": 1080,
+                 "version": "5"}],
+  "route": {"default_domain_resolver": {"server": "remote"}, "final": "proxy"}
+}`)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = viaDefault.Close() })
+	require.NoError(t, viaDefault.Start(),
+		"RECORDED GAP: the default-resolver edge is not reached for a non-DNS object, so this loop "+
+			"is missed. Asserting a refusal here would be asserting behaviour the tree does not have")
+
+	// And the LITERAL-server twin must START. This is the correction the adversarial review forced,
+	// and the half of the default-resolver work that IS closed.
+	//
+	// It was refused when the edge was charged unconditionally, and that refusal was a false deny:
+	// `ServerIsDomain()` is false for both objects, so no ResolveDialer is built, so nothing reads the
+	// default, so no loop exists. MEASURED - the same JSON minus the one `default_domain_resolver`
+	// line started all along.
+	literalServer, err := newBoxFromConfig(t, `{
   "log": {"disabled": true},
   "dns": {"servers": [{"tag": "remote", "type": "udp", "server": "8.8.8.8", "detour": "proxy"}]},
   "outbounds": [{"type": "socks", "tag": "proxy", "server": "127.0.0.1", "server_port": 1080,
@@ -192,9 +223,10 @@ func TestTheDefaultDomainResolverIsAGraphEdge(t *testing.T) {
   "route": {"default_domain_resolver": {"server": "remote"}, "final": "proxy"}
 }`)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = viaDefault.Close() })
-	require.Error(t, viaDefault.Start(),
-		"where the resolver is NAMED does not change whether the loop closes at run time")
+	t.Cleanup(func() { _ = literalServer.Close() })
+	require.NoError(t, literalServer.Start(),
+		"nothing here resolves a name, so no object reads the default and no cycle exists - "+
+			"reporting one is a false deny")
 
 	// The acyclic control: the same objects with the detour removed must start.
 	acyclic, err := newBoxFromConfig(t, `{
