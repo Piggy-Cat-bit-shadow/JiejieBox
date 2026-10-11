@@ -70,6 +70,9 @@ import (
 type deviceAxis interface {
 	DevicePause()
 	DeviceWake()
+	// IsDevicePaused is the LEVEL itself, and it is what makes "a new sleep" decidable rather than
+	// merely repeated. See `slept()`.
+	IsDevicePaused() bool
 }
 
 // lifecycle is the Apple lifecycle's vocabulary mapped onto the governor's two axes.
@@ -91,8 +94,37 @@ type lifecycle struct {
 // window in which the device is paused with no measurement running, and a resume in that window is
 // not a boundary - which is precisely the "first flow after the unlock is handed a socket that the
 // sleep killed" failure this whole stream exists to remove.
+//
+// # The edge is published only when the LEVEL moves, and the device made that necessary
+//
+// A sleep is "the device became unusable". The level is the authority on that, and it is the only
+// authority that survives a repeated report: `IsDevicePaused()` answers "is the device unusable
+// right now", so it distinguishes a NEW sleep from the same one restated, without keeping a copy of
+// the answer in memory. That distinction is what this function used to leave to the governor, and
+// the governor cannot make it - `noteSleepLocked` only suppresses a repeat while a measurement is
+// running *and* no resume has been noted, and on iOS a resume is noted on every NetworkExtension
+// wake.
+//
+// The measured consequence, from a real iPhone (iPhone 17 Pro Max, iOS 26.4.2) locked once for
+// 28m24s: the extension was suspended and resumed 13 times inside that single locked period, the
+// governor wrote 13 anchors and published 12 reuse boundaries, and the boundary the unlock
+// published - the only one a flow arriving after the unlock ever sees - reported **28.29 seconds**
+// for a device that had been asleep for 28 minutes. Each `ne-sleep` re-anchored because the
+// `ne-wake` before it had published a boundary and set `resumeNoted`, which is exactly the flag
+// that makes `noteSleepLocked` treat the next report as a brand-new sleep.
+//
+// Gating on the level collapses that to one anchor and one boundary per device-asleep period,
+// because the level is not lifted until an unlock: a suspend/resume cycle inside a locked period
+// leaves `IsDevicePaused()` true, so no `SleepStarted()` is published and the running measurement
+// keeps the instant it started from.
+//
+// This does NOT swallow a genuine second sleep, which is the failure mode that makes an
+// unconditional suppression wrong: the unlock calls `woke()` -> `DeviceWake()`, which lifts the
+// level, so the next `slept()` finds it free and publishes its edge. `IsDevicePaused()` is asked
+// rather than remembered, so a process that restarts while the phone is locked still gets its edge
+// from the re-read that follows - see `reconcileSleep`.
 func (l lifecycle) slept() {
-	if l.governor != nil {
+	if l.governor != nil && (l.device == nil || !l.device.IsDevicePaused()) {
 		l.governor.SleepStarted()
 	}
 	if l.device != nil {
