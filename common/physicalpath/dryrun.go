@@ -610,20 +610,34 @@ func businessEntry(hop PathNode) bool {
 //
 // # Why these two capabilities, and what is not detectable
 //
-// The property is per-network SELECTION, and the only observable statements of it in this tree are
-// the two interfaces whose implementations filter before choosing: a flow-aware group answers
-// SelectForFlow(.., network, ..), and a urltest group's Select skips a member whose Network() does
-// not contain the network. Both were checked against their implementations rather than assumed:
-// protocol/group/loadbalance.go filters in candidateCount/isCandidate, and protocol/group/urltest.go
-// filters at URLTestGroup.Select.
+// The property is per-network SELECTION, and the two interfaces below are the fork's two ways of
+// stating it. The exemption is only as strong as the interfaces, so it was checked against the
+// IMPLEMENTATIONS rather than assumed, and the two are not equally strong:
 //
-// A group that implements neither is treated as NOT filtering, which is the conservative direction
-// and the one that matches the contract every group already implements: Selected(network) may
-// return any member, and Selector.Selected does exactly that for every network
-// (protocol/group/selector_edge_test.go pins it). A third-party group that filters per network
-// without either interface is therefore checked as if it did not, which can refuse a member that
-// would in fact never be handed the flow - the same answer this package gave before the distinction
-// existed, so it adds no refusal.
+//   - `FlowAwareOutboundGroup` IS a statement of the property. Its `SelectForFlow(.., network, ..)`
+//     takes the network, and protocol/group/loadbalance.go's `isCandidate` refuses a member whose
+//     `Network()` does not contain it (`loadbalance.go:463`), so the group cannot hand that member
+//     the flow.
+//   - `URLTestGroup` is NOT. It adds `URLTest()` and `PerformUpdateCheck()` - a measurement API -
+//     and inherits `Selected(network)` from `OutboundGroup`; there is no `Select` method anywhere in
+//     this tree. The property holds because THIS tree's implementation filters its live cache by
+//     network (`protocol/group/urltest.go`), which is a fact about `*URLTest` and not about the
+//     interface. An implementation that satisfied `URLTestGroup` and returned its current member for
+//     every network would be exempted wrongly, which is a false ALLOW direction.
+//
+// That gap is recorded rather than closed here: this tree ships exactly three group types
+// (protocol/group: selector, urltest, loadbalance) and no third-party group is registered, so the
+// wrong answer needs an out-of-tree implementation to exist. Closing it properly means naming the
+// filtering in an interface every filtering group already satisfies and no unfiltering one can -
+// which does not exist yet, and inventing one here would add a contract with a single implementor.
+//
+// A group that implements NEITHER is treated as NOT filtering, which is the conservative direction
+// and the one that matches the contract every group already implements: `Selected(network)` may
+// return any member, and `Selector.Selected` does exactly that for every network
+// (protocol/group/selector.go:216-218, pinned by selector_edge_test.go). A third-party group that
+// filters per network without either interface is therefore checked as if it did not, which can
+// refuse a member that would in fact never be handed the flow - the same answer this package gave
+// before the distinction existed, so it adds no refusal.
 func networkFilteringGroup(group adapter.OutboundGroup) bool {
 	if _, flowAware := group.(adapter.FlowAwareOutboundGroup); flowAware {
 		return true
