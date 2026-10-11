@@ -173,10 +173,15 @@ func (o *TailcatOutbound) ensureLocked(ctx context.Context) (*tailcatNode, error
 	if err != nil {
 		return nil, err
 	}
-	binding, err := newSystemBinding(o.ctx, o.logger)
+	binding, resetInterfaceGetter, err := newSystemBinding(o.ctx, o.logger)
 	if err != nil {
 		return nil, err
 	}
+	// This outbound builds its node LAZILY, on first use, so there is no scope here to register on -
+	// only `nodeContext`, which Start captured from the scope. Tying the reset to it keeps the same
+	// guarantee the eager call sites get from `scope.Add`: the process-global interface getter is
+	// cleared when this outbound's lifetime ends, and not before.
+	cleanupSystemBindingOnContext(o.nodeContext, resetInterfaceGetter)
 	node, err := newTailcatNode(tailcatNodeOptions{
 		Context:      o.nodeContext,
 		Logger:       o.logger,
