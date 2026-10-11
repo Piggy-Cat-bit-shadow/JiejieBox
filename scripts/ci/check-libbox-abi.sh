@@ -100,7 +100,7 @@ PROJECT_GOMOBILE_VERSION="$(cd "$repo_root" && go list -m -f '{{.Version}}' gith
 # (this constant and the gitlink agree) and nothing more, and must not report layer 4 as passed
 # on that basis. See docs/fork/apple-artifact-verification.md §9.1.
 VERIFIED_ANDROID_SHA="ec61030d3df74f3e7c39ab848c8996008ecd386a"
-VERIFIED_APPLE_SHA="bb5309b4a6c5b06382e1277a6e7ac0fbeadc9a72"
+VERIFIED_APPLE_SHA="90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07"
 
 client_root=""
 skip_client=0
