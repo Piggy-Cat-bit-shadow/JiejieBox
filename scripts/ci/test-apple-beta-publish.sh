@@ -148,8 +148,9 @@ check "the manifest records the artifact checksum" \
 
 echo "== install =="
 
-# Install now takes the Apple client checkout itself, because the two products are built from
-# two different checkouts of two different branches. The same artifact goes into each.
+# Install now takes the Apple client working tree itself, because the two products get
+# their own tree - each with its own overlay applied - even though both build the SAME
+# source commit, the parent's clients/apple gitlink. The same artifact goes into each.
 make_client_tree() {
   local dir="$1"
   mkdir -p "$dir/sing-box.xcodeproj"

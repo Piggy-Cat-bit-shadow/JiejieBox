@@ -302,10 +302,15 @@ check "CI never references a distribution identity or key" \
   bash -c '! grep -qE "Apple Distribution|Apple Development|\.p12|\.p8" .github/workflows/client-apple.yml'
 check "no signing material is tracked" \
   bash -c '! git ls-files | grep -qiE "\.(p12|pfx|p8|cer|mobileprovision|provisionprofile)$"'
-# Exclude this file: it contains the search pattern as a literal, so a naive grep
-# matches itself and reports a private key that does not exist.
+# A real PEM key block starts its own line with `-----BEGIN ... PRIVATE KEY-----`. The
+# pattern is anchored there on purpose. The unanchored form this replaced matched three
+# files that hold no key material at all - a doc comment and two redaction fixtures whose
+# header text sits inside a Go string literal (`{detail: "-----BEGIN OPENSSH PRIVATE
+# KEY-----\n..."}`), never at column 0. Anchoring keeps the check meaningful (it still
+# matches a key block that was actually pasted into a file) while dropping those false
+# positives, so a red gate here means a key, not a test fixture.
 check "no private key block is tracked" \
-  bash -c '! git grep -lI "BEGIN .*PRIVATE KEY" -- . ":(exclude)scripts/ci/test-apple-signing.sh" 2>/dev/null | grep -q .'
+  bash -c '! git grep -lIE "^-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----" -- . 2>/dev/null | grep -q .'
 
 
 echo "== the archives are signed, and the export re-signs for distribution =="
@@ -423,11 +428,17 @@ for py in scripts/ci/apply-apple-link-overlay.py scripts/ci/check-apple-links.py
 done
 
 
-echo "== iOS branding: the product is JiejieBox, the core is sing-box =="
-# The product brand and the core name are deliberately separate. The app presents as
-# JiejieBox; the SFI target, scheme, bundle id, entitlements, URL scheme and the
-# sing-box core all keep their names, because those are compatibility or technical
-# identifiers rather than branding.
+echo "== iOS branding: the display name is JiejieBox, the product stays sing-box =="
+# Brand display and product identity are deliberately separate, and the overlay may set
+# only the first. The app presents as JiejieBox; PRODUCT_NAME stays "sing-box", so the built
+# product is still sing-box.app and the SFI scheme still builds it. The target, scheme,
+# bundle id, entitlements, URL scheme and the sing-box core all keep their names, because
+# those are compatibility, protocol and signing surface rather than branding - another
+# process, a server, an existing Profile file or a sing-box:// link keys on them.
+#
+# An earlier revision branded PRODUCT_NAME too and rewrote the SFI scheme's BuildableName
+# to JiejieBox.app so that the scheme still resolved. Renaming the shipped product to settle
+# a display preference is the regression the checks below exist to catch.
 branding_applied=0
 if APPLE_SIGNING_MODE=development APPLE_TEAM_ID="$TEST_TEAM" \
    APPLE_BASE_BUNDLE_ID="$TEST_BASE" APPLE_APP_GROUP_ID="group.$TEST_BASE" \
@@ -478,24 +489,31 @@ if [ "$branding_applied" = "1" ]; then
   check "the toolbar logic is unchanged" \
     grep -q "if environments.remoteServer != nil" clients/apple/SFI/MainView.swift
 
-  check "the branding overlay renamed SFI" \
+  check "the branding overlay set the SFI display name" \
     grep -q 'INFOPLIST_KEY_CFBundleDisplayName = "JiejieBox"' "$pbx"
-  check "the SFI scheme points at the renamed product" \
-    grep -q 'BuildableName = "JiejieBox.app"' "$scheme"
+  check "the SFI scheme still builds the unchanged product" \
+    grep -q 'BuildableName = "sing-box.app"' "$scheme"
+  # PRODUCT_NAME is identity surface, and the scheme follows it. The scope checker below
+  # proves this for SFI's own Debug and Release configurations; these two keep the
+  # regression visible here, where a failure would be read first.
+  check "branding did not rename the product" \
+    grep -q 'PRODUCT_NAME = "sing-box";' "$pbx"
+  check "the SFI scheme does not point at a renamed product" \
+    bash -c "! grep -q 'JiejieBox.app' '$scheme'"
   check "the UI test buildable is untouched" \
     grep -q 'BuildableName = "SFIUITests.xctest"' "$scheme"
 
-  # Only SFI may change: SFT and SFM also declare PRODUCT_NAME = "sing-box", and
-  # renaming them would be a branding migration this task explicitly excludes.
-  sfi_configs="$(python3 "$root/scripts/ci/test-branding-scope.py" clients/apple)"
-  # The scope script verifies both directions - SFI branded AND every other target,
-  # the URL scheme, bundle id and App Group untouched - and exits non-zero on any
-  # problem. Its exit status is strictly stronger than counting occurrences, which a
-  # blanket replacement would have satisfied.
+  # Only the SFI display name may change: SFT and SFM also declare
+  # PRODUCT_NAME = "sing-box", and renaming them would be a branding migration this task
+  # explicitly excludes. The scope script asserts the SFI configurations positively in
+  # both directions - display name branded, PRODUCT_NAME and the scheme buildable
+  # unchanged - and compares every other configuration against the pinned client, so its
+  # exit status is strictly stronger than counting occurrences, which a blanket
+  # replacement would have satisfied.
   if python3 "$root/scripts/ci/test-branding-scope.py" clients/apple >/dev/null 2>&1; then
-    check "only the SFI configurations were renamed" true
+    check "only the SFI display name changed" true
   else
-    check "only the SFI configurations were renamed" false
+    check "only the SFI display name changed" false
     python3 "$root/scripts/ci/test-branding-scope.py" clients/apple 2>&1 | sed 's/^/      /' || true
   fi
 
@@ -542,8 +560,17 @@ check "the overlay refuses an unexpected configuration set" \
   grep -q "configuration set is not the expected one" scripts/ci/apply-apple-branding-overlay.py
 check "the overlay refuses to guess at the scheme" \
   grep -q "refusing to guess" scripts/ci/apply-apple-branding-overlay.py
+# Branding is scoped to the display name, and the overlay asserts that boundary BEFORE it
+# writes anything: PRODUCT_NAME and the bundle identifier are checked against their
+# identity values first, so a client repin that renamed the product is reported instead of
+# being half-branded. The scheme is checked the same way and never rewritten.
+check "the overlay treats PRODUCT_NAME as identity surface" \
+  grep -q '"PRODUCT_NAME": "sing-box"' scripts/ci/apply-apple-branding-overlay.py
+check "the overlay follows the scheme rather than renaming it" \
+  grep -q "the scheme follows PRODUCT_NAME, which branding does not change" \
+    scripts/ci/apply-apple-branding-overlay.py
 check "the TestFlight builder does not hardcode a product name" \
-  bash -c "! grep -qE '^app=.*(sing-box|JiejieBox)\.app' scripts/ci/build-ios-testflight.sh"
+  bash -c "! grep -qE '^app=.*(sing-box|JijieBox|JiejieBox)\.app' scripts/ci/build-ios-testflight.sh"
 check "the TestFlight builder fails on an ambiguous archive" \
   grep -q "expected exactly one application" scripts/ci/build-ios-testflight.sh
 

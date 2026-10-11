@@ -7,13 +7,14 @@
 #   APPLE_CLIENT_DIR       the Apple checkout to prepare (default: clients/apple)
 #   APPLE_CLIENT_PLATFORM  ios or macos (default: inferred from APPLE_CLIENT_DIR)
 #
-# # Two platforms, two Apple sources, one preparation
+# # Two platforms, ONE Apple source, one preparation
 #
-# iOS and macOS take their Swift source from two branches of ONE Apple client
-# repository - hako-ui and the pinned dev commit - and link ONE Libbox framework. This
+# iOS and macOS take their Swift source from the SAME commit of ONE Apple client
+# repository - the parent's clients/apple gitlink - and link ONE Libbox framework. This
 # script is what turns either checkout into a buildable client, so it runs twice per
-# release: once against each source. Which source it is looking at decides the expected
-# revision, because the two platforms legitimately sit at different Apple commits.
+# release: once against each WORKING TREE. The two trees differ because each has its own
+# overlay applied; the source commit does not. Which UI a device shows is decided by the
+# Apple source at runtime, from the device idiom.
 #
 # # Three independent overlays
 #
@@ -267,12 +268,20 @@ python3 "$root/scripts/ci/fix-apple-team-id.py" "$submodule_path"
 # ---------------------------------------------------------------------------
 # 1c. [branding] Present the platform's app product under the fork's name.
 # ---------------------------------------------------------------------------
-# The product brand is the fork's; the underlying core remains sing-box. Which target
-# carries the product name depends on the platform, and the two products do NOT share a
-# target:
+# The product brand is the fork's; the underlying core remains sing-box. Both platforms
+# present the SAME user-visible name:
 #
-#   iOS    SFI -> JiejieBox   JiejieBox.app,   CFBundleDisplayName=JiejieBox
-#   macOS  SFM -> Jiejiebox   Jiejiebox.app,   CFBundleDisplayName=Jiejiebox
+#   iOS    SFI -> CFBundleDisplayName=JiejieBox
+#   macOS  SFM -> CFBundleDisplayName=JiejieBox
+#
+# Branding does NOT rename the product. `PRODUCT_NAME` stays "sing-box" on both
+# platforms, so the built bundle remains sing-box.app and the identity surface - the
+# bundle identifier, the sing-box:// URL scheme, Profile types, and every record that
+# keys on the product - is untouched. Brand display and product identity are two
+# different things, and only the first one is this repository's to set. The pinned
+# Apple client draws the same boundary and enforces it in its own
+# scripts/dev/audit_apple_ui_boundary.py: PRODUCT_NAME is in PROTECTED_NAME_SETTINGS
+# and CFBundleDisplayName is the single override the fork may make.
 #
 # Both overlays leave everything technical or compatibility-related alone: the target
 # and scheme names, the bundle identifier, the App Group, entitlements, the sing-box://
@@ -287,7 +296,6 @@ python3 "$root/scripts/ci/fix-apple-team-id.py" "$submodule_path"
 # can break the other platform's build. SFM.System - the unsandboxed Developer ID
 # product - is not branded by either.
 if [ "$APPLE_CLIENT_PLATFORM" = "macos" ]; then
-  # Jiejiebox, lower-case b: the spelling the macOS TestFlight app is published under.
   python3 "$root/scripts/ci/apply-apple-macos-branding-overlay.py" "$submodule_path"
 else
   python3 "$root/scripts/ci/apply-apple-branding-overlay.py" "$submodule_path"

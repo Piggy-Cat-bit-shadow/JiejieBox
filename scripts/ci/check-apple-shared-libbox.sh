@@ -5,11 +5,12 @@
 #
 # # Why this is a check and not an assumption
 #
-# The two Apple products take their Swift source from two branches of one Apple
-# repository, but they must ship ONE core: Libbox is compiled once from this repository
-# at the parent commit and installed into both checkouts. "Installed into both" is the
-# step where that can quietly stop being true - a stale slice left in one tree, an
-# install that silently did nothing, or a second build that ran when it should not have.
+# The two Apple products are built from the SAME Apple source - the parent's
+# clients/apple gitlink - in two separate working trees, but they must ship ONE core:
+# Libbox is compiled once from this repository at the parent commit and installed into
+# both trees. "Installed into both" is the step where that can quietly stop being true -
+# a stale slice left in one tree, an install that silently did nothing, or a second build
+# that ran when it should not have.
 #
 # Comparing the two trees makes the invariant observable. A digest rather than a
 # version string, because two frameworks can both claim the same commit and still differ.

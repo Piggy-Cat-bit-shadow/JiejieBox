@@ -150,9 +150,10 @@ fi
 
 # Discover the application bundle rather than assuming its name.
 #
-# The product name is deliberately not the scheme name, and the branding overlay
-# changes it (the SFI scheme produces JiejieBox.app). Hardcoding either value would
-# make this script wrong the moment branding changes, so it reads the archive.
+# The product name is deliberately not the scheme name. It follows PRODUCT_NAME, which
+# branding does NOT change - the SFI scheme produces sing-box.app, and only its
+# CFBundleDisplayName is branded. Hardcoding either value would make this script wrong
+# the moment branding changes, so it reads the archive.
 # Fail closed on anything other than exactly one application: picking one of several
 # would silently archive the wrong product.
 app_dir="$archive_path/Products/Applications"

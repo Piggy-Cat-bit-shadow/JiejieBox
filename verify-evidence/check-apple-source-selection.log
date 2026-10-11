@@ -1,0 +1,5 @@
+### CMD: bash scripts/ci/check-apple-source-selection.sh
+== the macOS source is pinned, not floating ==
+  PASS: the macOS pin file exists
+scripts/ci/check-apple-source-selection.sh: line 66: MACOS_APPLE_BRANCH: unbound variable
+scripts/ci/check-apple-source-selection.sh: line 68: PIN_REPO: unbound variable

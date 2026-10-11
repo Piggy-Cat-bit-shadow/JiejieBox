@@ -1,0 +1,11 @@
+resolver-sha-ios	0	bash scripts/ci/apple-client-source.sh sha ios
+resolver-sha-macos	0	bash scripts/ci/apple-client-source.sh sha macos
+resolver-assert-shared	0	bash scripts/ci/apple-client-source.sh assert-shared-source
+resolver-verify-ios	0	bash scripts/ci/apple-client-source.sh verify ios
+resolver-verify-macos	1	bash scripts/ci/apple-client-source.sh verify macos
+check-apple-source-selection	1	bash scripts/ci/check-apple-source-selection.sh
+test-apple-signing	1	bash scripts/ci/test-apple-signing.sh
+test-apple-beta-publish	0	bash scripts/ci/test-apple-beta-publish.sh
+test-apple-macos-name	0	bash scripts/ci/test-apple-macos-name.sh
+check-apple-shared-libbox	1	bash scripts/ci/check-apple-shared-libbox.sh
+inline-ci-submodule-check	0	git ls-tree HEAD clients/apple vs git -C clients/apple rev-parse HEAD

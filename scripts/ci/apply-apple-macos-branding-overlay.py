@@ -1,72 +1,90 @@
 #!/usr/bin/env python3
-"""Brands the macOS App Store / TestFlight app product as Jiejiebox.
+"""Sets the macOS app product's USER-VISIBLE name, without touching its identity.
 
-Invoked by scripts/ci/prepare-apple-client.sh, and ONLY for
-APPLE_CLIENT_PLATFORM=macos. See that file for why this is an overlay on the working
-tree rather than a change to the pinned client.
+Invoked by scripts/ci/prepare-apple-client.sh. See that file for why this is an
+overlay on the working tree rather than a change to the pinned submodule.
 
-# Why this exists
+# Brand display and product identity are separate things
 
-The macOS product reached TestFlight still called sing-box. The iOS overlay
-(apply-apple-branding-overlay.py) brands the SFI target only, and the macOS product is
-a DIFFERENT target - SFM - so nothing renamed it and the installed app kept upstream's
-PRODUCT_NAME. That is the bug this script fixes.
+This overlay writes exactly ONE setting:
 
-# Scope
+    INFOPLIST_KEY_CFBundleDisplayName   "sing-box" -> "JiejieBox"
 
-Exactly one target, exactly two configurations, and within them only the two settings
-that exist in the pinned project:
+into the `SFM` target's Debug and Release configurations only.
 
-    SFM Debug    PRODUCT_NAME, INFOPLIST_KEY_CFBundleDisplayName  sing-box -> Jiejiebox
-    SFM Release  PRODUCT_NAME, INFOPLIST_KEY_CFBundleDisplayName  sing-box -> Jiejiebox
+It does NOT touch `PRODUCT_NAME`. An earlier version of this file branded both
+settings and additionally rewrote the `SFM` scheme's `BuildableName` from
+`sing-box.app` to a branded name. That made the parent repository the thing that
+decided the client's product identity:
 
-plus the SFM scheme's application buildable, sing-box.app -> Jiejiebox.app. Together
-those produce Jiejiebox.app with CFBundleDisplayName=Jiejiebox.
+    PRODUCT_NAME              the built .app name, and CFBundleName with it
+    the SFM scheme buildable  what Xcode builds and archives
+    BASE_PACKAGE_IDENTIFIER   the bundle id, the sing-box:// URL scheme, Profile types
 
-The spelling is Jiejiebox, with a lower-case b. It is NOT Jijiebox, JiejieBox or
-JiejieBox. The iOS product spells it JiejieBox; that difference is deliberate and is
-NOT to be reconciled here - this task renames the macOS TestFlight app and nothing else.
+Those are identity, protocol and signing surface: another process, a server, an
+existing Profile file or a `sing-box://` link keys on them. The Apple repository
+states the same boundary itself and enforces it in
+scripts/dev/audit_apple_ui_boundary.py:
 
-# Why SFM and not SFM.System
+    BRAND_DISPLAY_NAME = "Jiejiebox"       # the one override this fork may make
+    PROTECTED_NAME_SETTINGS = ("PRODUCT_NAME", "PRODUCT_BUNDLE_IDENTIFIER",
+                               "BASE_PACKAGE_IDENTIFIER")
 
-SFM (<base>) is the sandboxed Mac App Store/TestFlight app. SFM.System
-(<base>.standalone) is the unsandboxed Developer ID product that installs a System
-Extension and a privileged helper. It is not an App Store product and is deliberately
-NOT touched - this script refuses to edit it even if asked.
+`CFBundleDisplayName` is the smallest lever that satisfies both: it is the name in the
+menu bar, the Dock and About, and it is the only one of the four nothing else reads.
 
-# Deliberately NOT changed, because they are compatibility or technical identifiers
+Note that `SFM.System` - the unsandboxed Developer ID product - is deliberately not
+branded by this overlay, and neither is any extension target. Only the App Store /
+TestFlight app is.
 
-    scheme name            SFM
-    target name            SFM
-    BlueprintIdentifier    every one of them
-    bundle identifier      $(BASE_PACKAGE_IDENTIFIER)
-    App Group              $(APP_GROUP_IDENTIFIER)
-    entitlements           untouched
-    the sing-box:// URL scheme, profile types, config format, core name
-    SFI, SFT and every extension target, including SFM.System
+# The name this overlay writes
 
-Three targets share PRODUCT_NAME = "sing-box" (SFI, SFT, SFM) and two share
-INFOPLIST_KEY_CFBundleDisplayName, so a global string replacement would rename the
-iOS and tvOS products too. Every edit is addressed by build-configuration id.
+`JiejieBox`, with a capital B, matching the iOS product. The two products present the
+same name to the user; the earlier split spelling (macOS `Jiejiebox`, lower-case b) is
+gone. The Apple client commits `Jiejiebox` for both app targets, which is an accepted
+starting state and is normalised here.
+
+Any spelling other than the accepted ones is refused rather than rewritten: a brand name
+is not something to guess at, and a half-remembered variant is exactly the kind of typo
+that ships.
+
+# Accepted starting states
+
+Each SFM configuration may legitimately start from either value upstream or the fork has
+carried:
+
+    "sing-box"     upstream, unbranded
+    "Jijiebox"     the fork's committed display name (lower-case b)
+
+Both are normalised to "JiejieBox". A configuration already reading "JiejieBox" is left
+alone, so a second run changes nothing. Any OTHER value fails closed.
 
 # Fail closed
 
-The anchors are the upstream values themselves. If the pinned client is updated and
-these settings change or move, this script fails rather than silently skipping: a
-branding overlay that quietly stops working ships an app still called sing-box, which
-is the bug it exists to fix.
+If the pinned client is updated and these settings change or move, this script fails
+rather than silently skipping - a branding overlay that quietly stops working would ship
+an app still called sing-box, which is the bug it exists to fix.
 """
 import re
 import sys
 
-# The product name macOS users see. Kept here as the single definition and read back by
-# scripts/ci/test-apple-macos-name.sh and scripts/ci/build-macos-testflight.sh, so the
-# overlay, its regression test and the pre-upload gate cannot disagree.
-NEW_NAME = "Jiejiebox"
+#: The single setting this overlay owns: the user-visible name.
+DISPLAY_KEY = "INFOPLIST_KEY_CFBundleDisplayName"
 
-EXPECTED = {
-    "PRODUCT_NAME": ("sing-box", NEW_NAME),
-    "INFOPLIST_KEY_CFBundleDisplayName": ("sing-box", NEW_NAME),
+#: What the user must see. Unified across both Apple products.
+BRAND_DISPLAY_NAME = "JiejieBox"
+
+#: Values the pinned client may legitimately start from, all normalised to the brand.
+#: The spelling is JiejieBox - J-i-e-j-i-e-B-o-x. The client commits Jiejiebox
+#: (lower-case b); "Jijiebox"/"JijieBox" (one "e" short) are NOT spellings of this brand
+#: and are deliberately absent, so that a typo is refused rather than propagated.
+ACCEPTED_SOURCE_NAMES = ("sing-box", "Jiejiebox", BRAND_DISPLAY_NAME)
+
+#: Identity surface. Never written by this overlay; asserted so that a reintroduced
+#: rename is caught here rather than discovered in a shipped bundle.
+PROTECTED = {
+    "PRODUCT_NAME": "sing-box",
+    "PRODUCT_BUNDLE_IDENTIFIER": "$(BASE_PACKAGE_IDENTIFIER)",
 }
 
 TARGET = "SFM"
@@ -77,13 +95,10 @@ TARGET = "SFM"
 # guessing would ship a build nobody reviewed.
 EXPECTED_CONFIG_NAMES = {"Debug", "Release"}
 
+# The scheme names the app buildable. Because PRODUCT_NAME is untouched, this stays
+# `sing-box.app`; the scheme is validated, never rewritten.
 SCHEME = "sing-box.xcodeproj/xcshareddata/xcschemes/SFM.xcscheme"
-SCHEME_OLD = 'BuildableName = "sing-box.app"'
-SCHEME_NEW = f'BuildableName = "{NEW_NAME}.app"'
-
-# The SFM application's BlueprintIdentifier. Every application buildable the scheme
-# renames must carry it, so the rename cannot land on some other product's reference.
-SFM_BLUEPRINT = "3AEC21082A459B1900A63465"
+SCHEME_BUILDABLE = 'BuildableName = "sing-box.app"'
 
 
 def fail(message: str, details: list[str] | None = None) -> None:
@@ -98,7 +113,8 @@ def config_ids_for_target(src: str, target: str) -> list[str]:
 
     Only the buildConfigurations array is read. The surrounding XCConfigurationList also
     contains defaultConfigurationIsVisible and defaultConfigurationName, and a naive scan
-    for 24-character words picks up fragments of those names as if they were ids.
+    for 24-character words picks up fragments of those names as if they were ids - which
+    then resolved to no block at all.
     """
     m = re.search(
         r'Build configuration list for PBXNativeTarget "' + re.escape(target) + r'" \*/ = \{(.*?)\n\t\t\};',
@@ -106,14 +122,10 @@ def config_ids_for_target(src: str, target: str) -> list[str]:
         re.S,
     )
     if not m:
-        fail(f"no configuration list for target {target}")
-
+        fail(f"no build configuration list for the {target} target")
     array = re.search(r"buildConfigurations = \((.*?)\);", m.group(1), re.S)
     if not array:
-        fail(f"the configuration list for {target} has no buildConfigurations array")
-
-    # Each entry is `<id> /* <name> */`. Requiring the comment form keeps this to real
-    # entries rather than anything else that happens to look like an id.
+        fail(f"the {target} configuration list has no buildConfigurations array")
     ids, seen = [], set()
     for cid in re.findall(r"([0-9A-Fa-f]{24}) /\*", array.group(1)):
         if cid not in seen:
@@ -137,8 +149,6 @@ def block_span(src: str, cid: str) -> tuple[int, int, str, str] | None:
     m = header.search(src)
     if not m:
         return None
-    # The block ends at the first line that is exactly two tabs and a closing brace,
-    # which is the indentation every XCBuildConfiguration in this file uses.
     end_marker = src.find("\n\t\t};", m.end())
     if end_marker < 0:
         return None
@@ -151,111 +161,44 @@ def settable(block: str, key: str) -> str | None:
     return m.group(1) if m else None
 
 
-def brand_block(block: str) -> str:
-    for key, (old, new) in EXPECTED.items():
-        block = re.sub(
-            rf'^(\s*{re.escape(key)} = )"{re.escape(old)}";',
-            rf'\g<1>"{new}";',
-            block,
-            flags=re.M,
-        )
-    return block
-
-
-def is_branded(block: str) -> bool:
-    return all(settable(block, key) == new for key, (_, new) in EXPECTED.items())
-
-
-def is_upstream(block: str) -> bool:
-    return all(settable(block, key) == old for key, (old, _) in EXPECTED.items())
-
-
-def scheme_counts(client: str) -> tuple[int, int]:
-    path = f"{client}/{SCHEME}"
-    try:
-        src = open(path, encoding="utf-8").read()
-    except FileNotFoundError:
-        fail(f"{path} is missing")
-
-    # Only the application buildable is counted, and only where it carries SFM's
-    # BlueprintIdentifier. The scheme also references SFMUITests.xctest, which must keep
-    # its name, and a bare string count could not tell the two apart if a product were
-    # ever named alike.
-    pattern = re.compile(
-        r'BlueprintIdentifier = "' + re.escape(SFM_BLUEPRINT) + r'"\s*\n\s*'
-        r'BuildableName = "([^"]*)"'
+def set_display_name(block: str, value: str) -> str:
+    """Rewrite only the display-name setting, whatever it currently reads."""
+    new, n = re.subn(
+        rf'^(\s*{re.escape(DISPLAY_KEY)} = )"[^"]*";',
+        rf'\g<1>"{value}";',
+        block,
+        flags=re.M,
     )
-    names = pattern.findall(src)
-    if not names:
+    if n != 1:
         fail(
-            "the SFM scheme has no application buildable with the expected blueprint id",
-            [
-                f"looked for BlueprintIdentifier = {SFM_BLUEPRINT!r}",
-                "the scheme was restructured; refusing to guess at the intended rename",
-            ],
+            f"expected exactly one {DISPLAY_KEY} in a configuration block, found {n}",
+            ["refusing to write a partial or ambiguous result"],
         )
-
-    old_count = names.count("sing-box.app")
-    new_count = names.count(f"{NEW_NAME}.app")
-    if old_count + new_count != len(names):
-        fail(
-            "the SFM scheme references an application buildable this overlay does not know",
-            [f"buildables: {names}", f"expected only 'sing-box.app' or '{NEW_NAME}.app'"],
-        )
-    return old_count, new_count
-
-
-def patch_scheme(client: str) -> int:
-    """Rewrite the SFM scheme's application BuildableName. Returns change count."""
-    path = f"{client}/{SCHEME}"
-    try:
-        src = open(path, encoding="utf-8").read()
-    except FileNotFoundError:
-        fail(f"{path} is missing")
-
-    old_count, new_count = scheme_counts(client)
-    if new_count > 0 and old_count == 0:
-        return 0  # already applied
-    if old_count == 0:
-        fail(
-            "the SFM scheme does not reference the expected application buildable",
-            [f"looked for {SCHEME_OLD!r}", "refusing to guess at the intended rename"],
-        )
-
-    # Scoped replacement: SFM's application buildable appears once in each of the Build,
-    # Launch and Profile actions and all of them must move together, so every occurrence
-    # of the exact buildable string is replaced - and the count is checked against what
-    # the blueprint-scoped scan found, so a fourth, unrelated occurrence cannot be swept
-    # up silently.
-    if src.count(SCHEME_OLD) != old_count:
-        fail(
-            "the SFM scheme references the app buildable outside the SFM target",
-            [
-                f"the scheme contains {src.count(SCHEME_OLD)} occurrence(s) of {SCHEME_OLD!r}",
-                f"but only {old_count} belong to BlueprintIdentifier {SFM_BLUEPRINT}",
-                "refusing a replacement that would rename another product",
-            ],
-        )
-
-    open(path, "w", encoding="utf-8").write(src.replace(SCHEME_OLD, SCHEME_NEW))
-    return old_count
+    return new
 
 
 def scheme_state(client: str) -> str:
-    """"old", "new", or fail on anything ambiguous."""
-    old_count, new_count = scheme_counts(client)
-    if old_count > 0 and new_count > 0:
-        fail(
-            "the SFM scheme references BOTH the old and new buildable names",
-            [
-                f"{SCHEME_OLD!r} x{old_count}",
-                f"{SCHEME_NEW!r} x{new_count}",
-                "this is a partially applied state that cannot be resolved safely",
-            ],
-        )
-    if old_count > 0:
-        return "old"
-    return "new"
+    """"pinned" when the scheme names the app buildable; fail on anything else.
+
+    An ambiguous scheme is reported and never rewritten: the buildable name follows
+    PRODUCT_NAME, which this overlay deliberately does not change.
+    """
+    path = f"{client}/{SCHEME}"
+    try:
+        src = open(path, encoding="utf-8").read()
+    except FileNotFoundError:
+        fail(f"{path} is missing")
+
+    if src.count(SCHEME_BUILDABLE) > 0:
+        return "pinned"
+    fail(
+        "the SFM scheme does not reference the app buildable this overlay expects",
+        [
+            f"looked for {SCHEME_BUILDABLE!r}",
+            "the scheme follows PRODUCT_NAME, which branding does not change",
+            "refusing to guess at the intended rename",
+        ],
+    )
 
 
 def main() -> int:
@@ -271,22 +214,18 @@ def main() -> int:
     # --- resolve the SFM configurations by id ---------------------------------
     ids = config_ids_for_target(src, TARGET)
 
-    # Resolve the listed ids to their names first, so an unrecognised configuration is
-    # reported as a scope change rather than as a missing block.
     listed = []
     for cid in ids:
         found = block_span(src, cid)
         if found is None:
             fail(
                 "the SFM configuration list references an id with no matching block",
-                [cid, "the project structure is not the one this overlay was written for"],
+                [f"id {cid}"],
             )
         listed.append((cid,) + found)
 
     names = {name for _, _, _, name, _ in listed}
 
-    # Check the SCOPE before anything else. A new configuration upstream is the case this
-    # overlay must not guess about.
     if names != EXPECTED_CONFIG_NAMES:
         fail(
             "the SFM target's configuration set is not the expected one",
@@ -304,59 +243,61 @@ def main() -> int:
             [f"resolved {len(spans)} ids for {sorted(names)}"],
         )
 
-    # --- partial states -------------------------------------------------------
-    branded = {cid for cid, (_, _, _, b) in spans.items() if is_branded(b)}
-    upstream = {cid for cid, (_, _, _, b) in spans.items() if is_upstream(b)}
-    unknown = set(spans) - branded - upstream
+    # --- identity surface must be intact --------------------------------------
+    for cid, (_, _, name, block) in sorted(spans.items()):
+        for key, want in PROTECTED.items():
+            got = settable(block, key)
+            if got != want:
+                fail(
+                    f"SFM {name} has {key} = {got!r}, expected {want!r}",
+                    [
+                        "PRODUCT_NAME and the bundle identifier are identity surface,",
+                        "not branding; this overlay never changes them",
+                    ],
+                )
 
+    # --- normalise the display name -------------------------------------------
+    unknown = []
+    for cid, (_, _, name, block) in sorted(spans.items()):
+        current = settable(block, DISPLAY_KEY)
+        if current not in ACCEPTED_SOURCE_NAMES:
+            unknown.append((name, current))
     if unknown:
-        details = []
-        for cid in sorted(unknown):
-            _, _, name, block = spans[cid]
-            current = {k: settable(block, k) for k in EXPECTED}
-            details.append(f"SFM {name}: {current}")
         fail(
             "some SFM configurations are in neither the upstream nor the branded state",
-            details + ["refusing to edit a partially branded project"],
-        )
-    if branded and upstream:
-        fail(
-            "SFM configurations disagree: some are branded and some are not",
-            [
-                f"branded: {sorted(spans[c][2] for c in branded)}",
-                f"upstream: {sorted(spans[c][2] for c in upstream)}",
+            [f"SFM {name}: {DISPLAY_KEY} = {value!r}" for name, value in unknown]
+            + [
+                f"accepted: {', '.join(repr(v) for v in ACCEPTED_SOURCE_NAMES)}",
+                "refusing to edit a partially branded project",
             ],
         )
 
-    scheme = scheme_state(client)
-    changed_ids = 0
-
-    if len(branded) == len(spans):
-        # Project fully branded. The scheme is validated above, so a project-new /
-        # scheme-old state is finished rather than reported as done.
-        print("  [branding] macOS project already applied")
+    already = [c for c, (_, _, _, b) in spans.items() if settable(b, DISPLAY_KEY) == BRAND_DISPLAY_NAME]
+    if len(already) == len(spans):
+        print("  [branding] macOS display name already applied")
     else:
-        # Splice by descending offset so earlier spans stay valid.
+        changed_ids = 0
         for cid in sorted(spans, key=lambda c: spans[c][0], reverse=True):
             start, end, name, block = spans[cid]
-            branded_block = brand_block(block)
+            branded_block = set_display_name(block, BRAND_DISPLAY_NAME)
             if branded_block == block:
-                fail("a configuration needed branding but no substitution matched", [f"SFM {name}"])
+                continue
             src = src[:start] + branded_block + src[end:]
             changed_ids += 1
-        if changed_ids != len(spans):
+        if changed_ids == 0:
             fail(
-                f"edited {changed_ids} of {len(spans)} SFM configurations",
-                ["refusing to write a partial result"],
+                "no SFM configuration needed the display name, yet not all read it",
+                ["refusing to report success without having changed anything"],
             )
         open(path, "w", encoding="utf-8").write(src)
-        print(f"  [branding] macOS SFM product renamed to {NEW_NAME} in {changed_ids} configurations")
+        print(
+            f"  [branding] macOS SFM CFBundleDisplayName set to {BRAND_DISPLAY_NAME} "
+            f"in {changed_ids} configuration(s)"
+        )
 
-    if scheme == "old":
-        scheme_changed = patch_scheme(client)
-        print(f"  [branding] macOS SFM scheme BuildableName updated ({scheme_changed} references)")
-    else:
-        print("  [branding] macOS SFM scheme already up to date")
+    # --- the scheme must still name the unchanged product ---------------------
+    scheme_state(client)
+    print("  [branding] macOS SFM scheme BuildableName unchanged (PRODUCT_NAME is identity)")
     return 0
 
 

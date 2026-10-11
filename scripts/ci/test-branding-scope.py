@@ -1,19 +1,36 @@
 #!/usr/bin/env python3
-"""Verifies the branding overlay's scope, positively and negatively.
+"""Verifies the branding overlay's scope: the display name is branded, the identity is not.
 
 Usage: test-branding-scope.py <client-dir>
 
-The question this answers is not "did the rename happen" but "did ONLY the intended
-thing change". Three targets share PRODUCT_NAME = "sing-box" (SFI, SFT, SFM), so a
-global string replacement would rename the tvOS and macOS apps as well and still leave
-the SFI target looking correct. A test that only counted branded SFI configurations
-would pass in that case.
+The overlay writes exactly ONE setting - INFOPLIST_KEY_CFBundleDisplayName - into the SFI
+target's Debug and Release configurations. So the question this answers is not "did the
+branding happen" but "did ONLY that change".
 
-So this asserts both directions:
+That distinction is not academic. An earlier revision of the overlay branded
+PRODUCT_NAME as well, which renamed the built product to JiejieBox.app and forced the SFI
+scheme's BuildableName to be rewritten to match. PRODUCT_NAME is identity surface: it is
+what the scheme builds, and it sits next to the bundle identifier, the sing-box:// URL
+scheme and every existing Profile record that keys on the product. The pinned Apple
+client draws the same boundary in its own scripts/dev/audit_apple_ui_boundary.py, where
+PRODUCT_NAME is in PROTECTED_NAME_SETTINGS and CFBundleDisplayName is the single override
+this fork may make. So the display name is asserted as branded AND the identity as
+unchanged, in both cases positively: a reintroduced rename has to fail here.
 
-    SFI Debug and Release   PRODUCT_NAME and CFBundleDisplayName are JiejieBox
-    SFT, SFM, SFM.System    still sing-box, both settings, unchanged
-    every other extension   still sing-box
+Three targets share PRODUCT_NAME = "sing-box" (SFI, SFT, SFM), so a global string
+replacement would rename the tvOS and macOS apps as well and still leave the SFI target
+looking correct. A test that only counted branded SFI configurations would pass in that
+case, which is why every other configuration is compared against the PINNED project
+rather than against a literal: SFM's committed display name is "Jijiebox" - the macOS
+overlay's own accepted starting state - so "unchanged" has to mean "what the client
+committed", not "sing-box".
+
+    SFI Debug and Release   CFBundleDisplayName is JiejieBox
+    SFI Debug and Release   PRODUCT_NAME is still "sing-box", and the scheme still
+                            builds sing-box.app
+    SFT, SFM, SFM.System    both settings at their pinned values
+    every other target      the same; extensions included, whose display names are
+                            unquoted and belong to no target this overlay owns
     the URL scheme          sing-box, read from the plist rather than grepped
     bundle id and App Group target-scoped, and unchanged in SFI Debug and Release
 
@@ -21,10 +38,25 @@ Exit status is non-zero on any failure, so a CI step cannot mistake a report for
 """
 import plistlib
 import re
+import subprocess
 import sys
 
+#: What the overlay writes: the user-visible name only.
 BRAND = "JiejieBox"
+
+#: The product identity. Never branded, on any target.
 UPSTREAM = "sing-box"
+
+DISPLAY_KEY = "INFOPLIST_KEY_CFBundleDisplayName"
+PRODUCT_KEY = "PRODUCT_NAME"
+
+PROJECT = "sing-box.xcodeproj/project.pbxproj"
+SCHEME = "sing-box.xcodeproj/xcshareddata/xcschemes/SFI.xcscheme"
+
+#: The scheme names the app buildable. Because PRODUCT_NAME is untouched, this stays
+#: `sing-box.app`; a branded buildable here means something renamed the product.
+SCHEME_BUILDABLE = f'BuildableName = "{UPSTREAM}.app"'
+SCHEME_BRANDED_BUILDABLE = f'BuildableName = "{BRAND}.app"'
 
 # Targets that must NOT be branded, with the settings they must still hold.
 #
@@ -34,15 +66,7 @@ UPSTREAM = "sing-box"
 UNTOUCHED_TARGETS = ["SFT", "SFM", "SFM.System"]
 TARGETS_WITHOUT_PRODUCT_NAME = {"SFM.System"}
 
-SETTINGS = ["PRODUCT_NAME", "INFOPLIST_KEY_CFBundleDisplayName"]
-
-# Values that are legitimate upstream and must not be reported as an unexpected rename.
-# Some targets build their product name from the target name rather than a literal.
-ALLOWED_UPSTREAM_PRODUCT_NAMES = {
-    UPSTREAM,
-    "$(TARGET_NAME)",
-    "$(TARGET_NAME:c99extidentifier)",
-}
+SETTINGS = [PRODUCT_KEY, DISPLAY_KEY]
 
 problems: list[str] = []
 
@@ -86,9 +110,47 @@ def config_blocks(src: str, target: str) -> dict[str, tuple[str, str]]:
     return out
 
 
+def all_config_blocks(src: str) -> dict[str, tuple[str, str]]:
+    """{configuration id: (name, block body)} for every XCBuildConfiguration present."""
+    out: dict[str, tuple[str, str]] = {}
+    for m in re.finditer(
+        r'([0-9A-Fa-f]{24}) /\* (\w+) \*/ = \{\s*isa = XCBuildConfiguration;(.*?)\n\t\t\};',
+        src,
+        re.S,
+    ):
+        out.setdefault(m.group(1), (m.group(2), m.group(0)))
+    return out
+
+
 def setting(block: str, key: str) -> str | None:
     m = re.search(rf'^\s*{re.escape(key)} = "([^"]*)";', block, re.M)
     return m.group(1) if m else None
+
+
+def without_display_name(block: str) -> str:
+    """The block with its display-name line removed, for comparison against the pin."""
+    return re.sub(rf'^\s*{re.escape(DISPLAY_KEY)} = "[^"]*";\n', "", block, flags=re.M)
+
+
+def pinned_blocks(client: str) -> dict[str, tuple[str, str]] | None:
+    """The configuration blocks as the pinned client committed them, or None.
+
+    The expectation for every configuration the overlay does not own is the PIN, not a
+    literal, so this reads the committed project out of the client's own git object
+    store. None means "could not tell", which is reported rather than treated as a pass.
+    """
+    try:
+        prefix = subprocess.run(
+            ["git", "-C", client, "rev-parse", "--show-prefix"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        blob = subprocess.run(
+            ["git", "-C", client, "show", f"HEAD:{prefix}{PROJECT}"],
+            capture_output=True, text=True, check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return all_config_blocks(blob)
 
 
 def main() -> int:
@@ -96,9 +158,9 @@ def main() -> int:
         print("usage: test-branding-scope.py <client-dir>", file=sys.stderr)
         return 2
     client = sys.argv[1]
-    src = open(f"{client}/sing-box.xcodeproj/project.pbxproj", encoding="utf-8").read()
+    src = open(f"{client}/{PROJECT}", encoding="utf-8").read()
 
-    # --- SFI: both configurations, BOTH settings, branded ---------------------
+    # --- SFI: the display name is branded, the identity is NOT -----------------
     sfi = config_blocks(src, "SFI")
     check(set(sfi) == {"Debug", "Release"},
           f"SFI configurations: expected Debug and Release, found {sorted(sfi)}")
@@ -106,29 +168,82 @@ def main() -> int:
         if name not in sfi:
             continue
         _, block = sfi[name]
-        for key in SETTINGS:
-            got = setting(block, key)
-            check(got == BRAND, f"SFI {name} {key}: expected {BRAND!r}, got {got!r}")
+        got = setting(block, DISPLAY_KEY)
+        check(got == BRAND, f"SFI {name} {DISPLAY_KEY}: expected {BRAND!r}, got {got!r}")
+        # Identity is asserted positively. "Some other value" is not an acceptable
+        # outcome here: the built product's name is what the scheme builds and what
+        # every existing record, link and Profile keys on.
+        got = setting(block, PRODUCT_KEY)
+        check(got == UPSTREAM,
+              f"SFI {name} {PRODUCT_KEY}: identity, expected {UPSTREAM!r}, got {got!r} "
+              "(branding must not rename the product)")
 
-    # --- every other target: untouched ----------------------------------------
-    # Enumerating the targets we care about is not enough on its own, so the global
-    # swept check below catches anything new.
+    # --- every other target: both settings at their upstream values ------------
+    # Enumerating the targets we care about is not enough on its own, so the pinned
+    # comparison below catches anything new, extensions included.
     for target in UNTOUCHED_TARGETS:
         blocks = config_blocks(src, target)
         check(bool(blocks), f"{target}: no build configurations found; the scope check cannot run")
         for name, (_, block) in blocks.items():
-            for key in SETTINGS:
-                got = setting(block, key)
-                if key == "PRODUCT_NAME" and target in TARGETS_WITHOUT_PRODUCT_NAME:
-                    # Legitimately absent upstream; the only real requirement is that this
-                    # overlay did not add the brand here.
-                    check(got != BRAND,
-                          f"{target} {name} {key}: must not be branded, got {got!r}")
-                    continue
+            got = setting(block, PRODUCT_KEY)
+            if target in TARGETS_WITHOUT_PRODUCT_NAME:
+                # Legitimately absent upstream; the requirement is that this overlay did
+                # not add one, asserted as absence rather than as a specific value.
+                check(got is None,
+                      f"{target} {name} {PRODUCT_KEY}: upstream declares none, got {got!r}")
+            else:
                 check(got == UPSTREAM,
-                      f"{target} {name} {key}: expected {UPSTREAM!r}, got {got!r} (must not be branded)")
+                      f"{target} {name} {PRODUCT_KEY}: expected {UPSTREAM!r}, got {got!r} "
+                      "(identity, never branded)")
+            display = setting(block, DISPLAY_KEY)
+            check(display != BRAND,
+                  f"{target} {name} {DISPLAY_KEY}: {BRAND!r} belongs to SFI only, found it here")
 
     sfi_ids = {cid for cid, _ in sfi.values()}
+
+    # --- nothing outside the SFI display name may differ from the pin ----------
+    #
+    # This is the assertion that makes "only the display name changed" mean the whole
+    # project rather than the two settings we happened to think of. A blanket replacement
+    # of the product name, a rename of SFT or SFM, or an edit to an extension's own
+    # display name all show up here even though none of them carries the brand.
+    pinned = pinned_blocks(client)
+    if pinned is None:
+        problems.append(
+            f"the pinned {PROJECT} could not be read from {client} (is it a git checkout?), "
+            "so 'unchanged everywhere else' cannot be verified; refusing to report a pass "
+            "on an unchecked project"
+        )
+    else:
+        prepared = all_config_blocks(src)
+        for cid in sorted(prepared):
+            name, block = prepared[cid]
+            want = pinned.get(cid)
+            if want is None:
+                problems.append(
+                    f"configuration {name} ({cid}) is not in the pinned project; "
+                    "the overlay added it"
+                )
+                continue
+            if cid in sfi_ids:
+                # The overlay may rewrite the display-name line and NOTHING else.
+                # Comparing the two settings alone would miss a splice that dropped,
+                # duplicated or reordered a line elsewhere in the block.
+                check(without_display_name(block) == without_display_name(want[1]),
+                      f"SFI {name} ({cid}): only {DISPLAY_KEY} may differ from the "
+                      "pinned client")
+                continue
+            for key in SETTINGS:
+                got, expected = setting(block, key), setting(want[1], key)
+                check(got == expected,
+                      f"{name} ({cid}) {key}: the pinned client has {expected!r}, the "
+                      f"prepared project has {got!r}; branding is scoped to the SFI "
+                      "display name")
+        for cid in sorted(set(pinned) - set(prepared)):
+            problems.append(
+                f"configuration {pinned[cid][0]} ({cid}) is in the pinned project and "
+                "missing here"
+            )
 
     # --- global sweep: a blanket replacement must fail this test --------------
     #
@@ -139,11 +254,7 @@ def main() -> int:
     # that breaks for reasons unrelated to branding, so it was replaced with the direct
     # question: is the brand anywhere it should not be?
     branded_ids: set[str] = set()
-    for m in re.finditer(
-        r'([0-9A-Fa-f]{24}) /\* (\w+) \*/ = \{\s*isa = XCBuildConfiguration;(.*?)\n\t\t\};',
-        src, re.S,
-    ):
-        cid, name, block = m.group(1), m.group(2), m.group(3)
+    for cid, (_, block) in all_config_blocks(src).items():
         for key in SETTINGS:
             if setting(block, key) == BRAND:
                 branded_ids.add(cid)
@@ -156,6 +267,23 @@ def main() -> int:
         problems.append(
             f"configuration {m.group(1) if m else cid} ({cid}) carries the brand but is not SFI"
         )
+
+    # --- the SFI scheme still builds the unchanged product --------------------
+    # The buildable follows PRODUCT_NAME. The revision this test exists for renamed the
+    # product and had to rewrite this line to JiejieBox.app to keep the scheme working;
+    # the overlay now validates the scheme and never rewrites it.
+    scheme_path = f"{client}/{SCHEME}"
+    try:
+        scheme = open(scheme_path, encoding="utf-8").read()
+    except FileNotFoundError:
+        problems.append(f"{scheme_path} is missing, so the buildable name cannot be verified")
+    else:
+        check(SCHEME_BUILDABLE in scheme,
+              f"{SCHEME} must still build {SCHEME_BUILDABLE!r}; the buildable follows "
+              "PRODUCT_NAME, which branding does not change")
+        check(SCHEME_BRANDED_BUILDABLE not in scheme,
+              f"{SCHEME} must not point at {SCHEME_BRANDED_BUILDABLE!r}; the product was "
+              "not renamed")
 
     # --- the URL scheme, read from the plist ----------------------------------
     # grep cannot prove CFBundleURLSchemes is intact: the string appears in many
@@ -219,8 +347,9 @@ def main() -> int:
         return 1
 
     print("test-branding-scope: PASS")
-    print("  SFI Debug/Release: PRODUCT_NAME and CFBundleDisplayName are JiejieBox")
-    print(f"  {'/'.join(UNTOUCHED_TARGETS)}: still {UPSTREAM}")
+    print(f"  SFI Debug/Release: {DISPLAY_KEY} is {BRAND}")
+    print(f"  SFI Debug/Release: {PRODUCT_KEY} is {UPSTREAM}, and the scheme still builds {UPSTREAM}.app")
+    print(f"  {'/'.join(UNTOUCHED_TARGETS)} and every other configuration: as pinned")
     print("  URL scheme, bundle id and App Group: intact")
     return 0
 

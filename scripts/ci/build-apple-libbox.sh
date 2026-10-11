@@ -13,11 +13,12 @@
 #
 # # One framework, two clients
 #
-# iOS and macOS take their Swift source from two branches of the same Apple repository,
-# but they link the SAME Libbox: it is compiled once from this repository's commit and
-# the identical framework is installed into each checkout. `install` exists so the
-# release pipeline can build once and place that one build in both places, rather than
-# compiling a second copy that would differ by nothing except the compiler's mood.
+# iOS and macOS are built from the SAME Apple source - the parent's clients/apple
+# gitlink - in two separate working trees, and they link the SAME Libbox: it is compiled
+# once from this repository's commit and the identical framework is installed into each
+# tree. `install` exists so the release pipeline can build once and place that one build
+# in both places, rather than compiling a second copy that would differ by nothing except
+# the compiler's mood.
 #
 # # Why this exists instead of `make lib_apple`
 #

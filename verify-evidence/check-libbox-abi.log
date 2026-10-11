@@ -1,0 +1,50 @@
+### CMD: bash scripts/ci/check-libbox-abi.sh
+== libbox ABI gate ==
+     contract: docs/fork/libbox-abi-contract.tsv (9 migrated methods)
+     gomobile pin: v0.1.12
+
+-- surface inventory --
+     gomobile_surface_test.go:426: gomobile surface: 452 bound declarations, 23 with a pointer-bearing result (23 registered as debt)
+     inventory rows: 453
+
+-- layers 1-2: Go declaration --
+PASS: BridgeSession.Name is bound and its result is not pointer-bearing (bound object (*T -> refnum))
+PASS: BridgeSession.Name returns *StringBox
+PASS: RoutePrefix.Address is bound and its result is not pointer-bearing (bound object (*T -> refnum))
+PASS: RoutePrefix.Address returns *StringBox
+PASS: RoutePrefix.Mask is bound and its result is not pointer-bearing (bound object (*T -> refnum))
+PASS: RoutePrefix.Mask returns *StringBox
+PASS: DeprecatedNote.Message is bound and its result is not pointer-bearing (bound object (*T -> refnum))
+PASS: DeprecatedNote.Message returns *StringBox
+PASS: TunOptions.GetHTTPProxyServer is bound and its result is not pointer-bearing (bound object (*T -> refnum))
+PASS: TunOptions.GetHTTPProxyServer returns *StringBox
+PASS: TunOptions.GetDNSMode is bound and its result is not pointer-bearing (bound object (*T -> refnum))
+PASS: TunOptions.GetDNSMode returns *StringBox
+PASS: FormatConfig is bound and its result is not pointer-bearing (bound object (*T -> refnum) + error)
+PASS: FormatConfig returns *StringBox
+PASS: GenerateConfigSchema is bound and its result is not pointer-bearing (bound object (*T -> refnum) + error)
+PASS: GenerateConfigSchema returns *StringBox
+PASS: RandomHex is bound and its result is not pointer-bearing (bound object (*T -> refnum))
+PASS: RandomHex returns *StringBox
+
+-- layer 3: generated Java binding --
+SKIP: no gobind on PATH, so the generated binding was not inspected directly.
+      Layers 1-2 above still assert the Go result is *StringBox, and cmd/gobind derives the
+      Java result type purely from that. Install gomobile to have it checked end to end.
+
+-- layer 4: client call sites --
+SKIP: no Android client checkout found (looked in: /Users/jie/Desktop/其他文件/sing-box-verify-016/clients/android).
+      An uninitialised submodule is NOT evidence that the call sites are migrated.
+      Run: git submodule update --init clients/android
+     Apple client: /Users/jie/Desktop/其他文件/sing-box-verify-016/clients/apple
+     swift sources scanned: 670 files
+     3 of the contract's methods are declared on a bound Go interface, so the
+     platform implements them as well; those declarations are scanned for the boxed result.
+
+-- layer 5: client gitlink --
+PASS: android gitlink is the verified revision (ec61030d3df7)
+PASS: apple gitlink is the verified revision (90a0e9aef4c0)
+
+PARTIAL: the Go/binding layers passed, but 1 client layer(s) were SKIPPED, so the
+call sites were NOT verified by this run. See the SKIP lines above for what was missing.
+EXIT=0

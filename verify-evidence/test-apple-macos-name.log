@@ -1,0 +1,70 @@
+### CMD: bash scripts/ci/test-apple-macos-name.sh
+macOS product brand under test: Jiejiebox
+== the macOS overlay brands SFM Debug and Release ==
+  PASS: the overlay applies cleanly to the upstream fixture
+  PASS: SFM Debug PRODUCT_NAME is Jiejiebox
+  PASS: SFM Debug CFBundleDisplayName is Jiejiebox
+  PASS: SFM Release PRODUCT_NAME is Jiejiebox
+  PASS: SFM Release CFBundleDisplayName is Jiejiebox
+  PASS: all three SFM scheme application buildables are Jiejiebox.app
+== nothing else moved ==
+  PASS: SFI Debug PRODUCT_NAME is still sing-box
+  PASS: SFI Debug CFBundleDisplayName is still sing-box
+  PASS: SFI Release PRODUCT_NAME is still sing-box
+  PASS: SFI Release CFBundleDisplayName is still sing-box
+  PASS: SFT Debug PRODUCT_NAME is still sing-box
+  PASS: SFT Debug CFBundleDisplayName is still sing-box
+  PASS: SFT Release PRODUCT_NAME is still sing-box
+  PASS: SFT Release CFBundleDisplayName is still sing-box
+  PASS: SFM.System Debug keeps PRODUCT_NAME = SFM
+  PASS: SFM.System Debug keeps CFBundleDisplayName = sing-box
+  PASS: SFM.System Release keeps PRODUCT_NAME = SFM
+  PASS: SFM.System Release keeps CFBundleDisplayName = sing-box
+  PASS: the SFM.System bundle id is unchanged
+  PASS: the app bundle id is unchanged
+  PASS: the extension buildable is untouched
+  PASS: the SFM target is still called SFM
+== a second apply changes nothing ==
+  PASS: the overlay is idempotent
+  PASS: re-applying produced byte-identical files
+== the macOS overlay fails closed ==
+  PASS: the fixture was really put in a half-branded state
+  PASS: the other configuration is still upstream
+  PASS: a partially branded project is refused
+  PASS: the fixture really has an unexpected configuration
+  PASS: an unrecognised configuration set is refused
+  PASS: a scheme referencing both the old and new name is refused
+  PASS: an unknown application buildable is refused
+  PASS: a project directory with no pbxproj is refused
+  PASS: no client directory at all is refused
+== the two overlays keep their own scopes ==
+  PASS: the iOS overlay still targets the SFI target
+  PASS: the macOS overlay targets the SFM target
+  PASS: the two overlays address different schemes
+  PASS: the macOS overlay left SFI untouched
+  PASS: the macOS overlay left SFM.System's product name untouched
+  PASS: the macOS overlay brands exactly Jiejiebox
+  PASS: the iOS overlay does not brand Jijiebox
+== prepare routes each platform to its own branding ==
+  PASS: prepare selects the macOS overlay for APPLE_CLIENT_PLATFORM=macos
+  PASS: prepare still selects the iOS overlay otherwise
+  PASS: prepare guards the macOS overlay on the platform
+== the pre-upload name gate ==
+  PASS: the gate accepts Jiejiebox.app with CFBundleDisplayName=Jiejiebox
+  PASS: the gate resolves the expected name from the overlay when not told
+  PASS: the gate rejects sing-box.app, the bug this fix is for
+  PASS: the gate rejects 'Jijiebox' as the app name
+  PASS: the gate rejects 'JiejieBox' as the app name
+  PASS: the gate rejects 'Jiejiebox2' as the app name
+  PASS: the gate rejects 'jiejiebox' as the app name
+  PASS: the gate rejects a bundle whose CFBundleName disagrees
+  PASS: the gate rejects a Jiejiebox.app whose display name is sing-box
+  PASS: the gate rejects sing-box.app even when its display name is Jiejiebox
+  PASS: the gate rejects a bundle with no CFBundleDisplayName
+  PASS: the gate refuses a path that is not a bundle
+  PASS: the TestFlight builder runs the gate before uploading
+  PASS: the TestFlight builder no longer repeats the name itself
+== the pinned macOS source matches what the overlay expects ==
+  SKIP: no macOS Apple checkout at build/apple-client-macos; run ./scripts/ci/apple-client-source.sh checkout macos
+
+test-apple-macos-name: 57 passed, 0 failed, 1 skipped

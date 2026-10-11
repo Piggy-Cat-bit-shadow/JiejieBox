@@ -1,0 +1,2 @@
+### CMD: bash scripts/ci/check-apple-shared-libbox.sh
+scripts/ci/check-apple-shared-libbox.sh: line 22: 1: usage: check-apple-shared-libbox.sh <client-dir-a> <client-dir-b>

@@ -197,8 +197,13 @@ checkout_macos() {
 
   # The submodule has to exist first: it is the local source the copy is taken from, so
   # this command never needs the network for the commit itself.
+  #
+  # -e, not -d: `clients/apple` is a SUBMODULE, so its `.git` is a gitfile (a regular file
+  # holding `gitdir: ...`), never a directory. Testing -d here made `checkout macos`
+  # impossible on every correct checkout - the same defect this file had in
+  # assert-on-branch. Every guard that reads `<dir>/.git` must use -e.
   local submodule="$ios_dir_default"
-  [ -d "$submodule/.git" ] || fail \
+  [ -e "$submodule/.git" ] || fail \
     "$submodule is not checked out, so there is no Apple source to copy.
   Run 'git submodule update --init --recursive $submodule' first."
 
@@ -208,8 +213,13 @@ checkout_macos() {
 
   # Re-clone when the tree is missing or its origin is not the declared repository: a stale
   # origin would silently build a different repository than the refs file names.
+  #
+  # -e rather than -d: this tree is a `git clone`, whose `.git` is a real directory, so -d
+  # happens to work. But -e works for a clone AND for a submodule gitfile, and this file has
+  # already shipped one -d-on-a-gitfile bug (see the guard above). One rule for every
+  # `<dir>/.git` test in this script removes the chance of a second.
   local origin_url=""
-  if [ -d "$dir/.git" ]; then
+  if [ -e "$dir/.git" ]; then
     origin_url="$(git -C "$dir" remote get-url origin 2>/dev/null || true)"
   fi
   if [ "$origin_url" != "$repo" ]; then
@@ -244,6 +254,20 @@ checkout_macos() {
 verify() {
   local platform="$1" dir; dir="$(platform_dir "$1" "$2")"
   local want; want="$(platform_sha "$platform")" || exit 1
+  # Both products build the same gitlink, so when the caller names no directory and the
+  # platform's ephemeral tree has not been created yet, the shared authoritative checkout
+  # answers the same question about the same commit. Without this, `verify macos` on a
+  # clean checkout failed on a missing build/apple-client-macos and read like a pin
+  # mismatch when nothing was wrong with the pin.
+  #
+  # Only the ABSENCE of an explicit dir falls back: a directory the caller named and that
+  # does not exist is still an error, and a macOS tree that does exist is still preferred,
+  # so the CI sequence `checkout macos && verify macos` is unchanged.
+  if [ -z "${2:-}" ] && [ "$platform" = "macos" ] && \
+     [ ! -e "$dir/.git" ] && [ -e "$ios_dir_default/.git" ]; then
+    echo "note: $dir is not checked out; verifying the shared source $ios_dir_default" >&2
+    dir="$ios_dir_default"
+  fi
   [ -e "$dir/.git" ] || fail "$dir is not a git checkout."
   local actual; actual="$(git -C "$dir" rev-parse HEAD)"
   [ "$actual" = "$want" ] || fail \
@@ -279,7 +303,11 @@ assert_on_branch() {
   local dir; dir="$(platform_dir ios "${1:-}")"
   local sha; sha="$(apple_sha)"
   local branch; branch="$(platform_branch ios)"
-  [ -d "$dir/.git" ] || fail "$dir is not a git checkout."
+  # -e, not -d: `clients/apple` is a SUBMODULE, and a submodule's `.git` is a gitfile
+  # (a regular file holding `gitdir: ...`), not a directory. The other two guards in this
+  # script (checkout, verify) already test -e; this one tested -d, so assert-on-branch
+  # rejected the only path it defaults to - platform_dir ios, i.e. clients/apple itself.
+  [ -e "$dir/.git" ] || fail "$dir is not a git checkout."
   fetch_branch "$dir" "$branch"
   require_commit "$dir" "$sha"
   require_on_branch "$dir" "$sha" "$branch"

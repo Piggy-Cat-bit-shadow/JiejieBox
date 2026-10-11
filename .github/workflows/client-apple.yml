@@ -23,19 +23,23 @@ name: Apple client
 # to be that freshly built framework. If it were missing, the app would fail to link
 # or, worse, link whatever was already there. Nothing downloads an upstream libbox.
 #
-# # Two products, two Apple UI branches, one Libbox
+# # Two products, ONE Apple UI source, one Libbox
 #
-# The iOS and macOS clients do NOT share an Apple UI source. They are built from two
-# branches of the same Apple client repository, pinned independently in
-# release/apple-client-refs.env:
+# The iOS and macOS clients are built from ONE Apple UI source: the commit the parent's
+# clients/apple gitlink records. Which UI a device shows is decided by the Apple source
+# itself, at runtime, from the device idiom - it is not a per-platform pin here.
 #
-#     iOS / SFI     Repo B @ clients/apple gitlink   branch hako-ui   custom Hako UI
-#     macOS / SFM   Repo B @ MACOS_APPLE_SHA         branch dev       original sing-box UI
+#     iOS / SFI     Repo B @ clients/apple gitlink   branch main   Hako UI on iPhone
+#     macOS / SFM   Repo B @ clients/apple gitlink   branch main   upstream UI on macOS
+#
+# `release/apple-client-refs.env` names the repository and the branch but deliberately
+# records NO SHA: a second copy of the commit could disagree with the gitlink, and the
+# gitlink is the only authority for which Apple commit a release builds.
 #
 # Libbox is built ONCE from this repository's commit and that same artifact is installed
-# into both checkouts, so the core is identical while each platform keeps its own UI.
-# The two branches are never merged: there is no Apple commit that carries both UIs, and
-# the parent keeps recording exactly one Apple gitlink - the iOS one.
+# into both working trees, so the core is identical and so is the source; only the
+# overlay applied to each tree differs. Each platform still gets its own working tree
+# (IOS_APPLE_DIR / MACOS_APPLE_DIR) because those overlays are applied separately.
 #
 # # Trigger
 #
@@ -224,14 +228,15 @@ jobs:
           xcrun --sdk iphoneos --show-sdk-path
 
       - name: select the Apple client source
-        # The iOS product takes its Swift source from the parent's clients/apple gitlink, which is
-        # the custom Hako UI branch. The macOS product takes a different branch of the same Apple
-        # repository, selected in the macOS job. Neither job may build the other's source, so each
-        # records which platform it is and which revision that platform resolves to.
+        # Both Apple products take their Swift source from the SAME commit of the same Apple
+        # repository: the parent's clients/apple gitlink. Which UI a device shows is decided by
+        # the Apple source at runtime from the device idiom, not by a per-platform pin here.
+        # `assert-shared-source` asserts that topology; it replaced `assert-distinct`, which
+        # asserted the opposite (two separate sources) and was removed with that model.
         run: |
           set -euo pipefail
           eval "$(./scripts/ci/apple-client-source.sh resolve)"
-          ./scripts/ci/apple-client-source.sh assert-distinct
+          ./scripts/ci/apple-client-source.sh assert-shared-source
           {
             echo "APPLE_CLIENT_PLATFORM=ios"
             echo "APPLE_CLIENT_REPOSITORY=$APPLE_CLIENT_REPOSITORY"
@@ -456,12 +461,17 @@ jobs:
       - name: check out the parent repository
         uses: actions/checkout@v4
         with:
-          # Deliberately NOT `submodules: recursive`. The macOS product does not build from
-          # the clients/apple gitlink - that is the iOS source, and materialising it here
-          # would put the custom iOS UI on disk in a job that must never build it. The
-          # macOS source is a different commit of the same Apple repository, checked out
-          # below into build/apple-client-macos.
-          submodules: false
+          # `recursive`, because the macOS product builds the SAME commit as the iOS
+          # product: the parent's clients/apple gitlink. `apple-client-source.sh checkout
+          # macos` materialises its own working tree at build/apple-client-macos, but it
+          # takes clients/apple as its local clone source ("the submodule has to exist
+          # first"), so the submodule must be present here.
+          #
+          # This used to be `false` on the grounds that clients/apple was the iOS source
+          # and must never be materialised in the macOS job - a two-source claim. With one
+          # shared source that reasoning no longer holds, and `false` made the checkout
+          # step below impossible to satisfy.
+          submodules: recursive
           fetch-depth: 0
 
       - name: set up Go
@@ -486,14 +496,14 @@ jobs:
           brew install create-dmg || echo "create-dmg unavailable; hdiutil will be used"
 
       - name: select the Apple client source
-        # The macOS product takes its Swift source from the dev branch of the same Apple
-        # repository the iOS product uses, at the exact commit pinned in
-        # release/apple-client-refs.env. It must NOT be the iOS gitlink: that branch carries
-        # the custom Hako iOS UI, and the macOS product ships the original sing-box UI.
+        # The macOS product builds the SAME commit as the iOS product: the parent's
+        # clients/apple gitlink. The macOS job still gets its own working tree
+        # (MACOS_APPLE_DIR) because its overlay is applied separately, but the source
+        # revision is not per-platform and `assert-shared-source` enforces that.
         run: |
           set -euo pipefail
           eval "$(./scripts/ci/apple-client-source.sh resolve)"
-          ./scripts/ci/apple-client-source.sh assert-distinct
+          ./scripts/ci/apple-client-source.sh assert-shared-source
           {
             echo "APPLE_CLIENT_PLATFORM=macos"
             echo "APPLE_CLIENT_REPOSITORY=$APPLE_CLIENT_REPOSITORY"
@@ -505,21 +515,25 @@ jobs:
           echo "macOS Apple source: $MACOS_APPLE_BRANCH @ $MACOS_APPLE_SHA in $MACOS_APPLE_DIR"
 
       - name: check out the macOS Apple source
-        # A pinned commit, never a branch tip: `dev` moves and a release built from
-        # whatever it pointed at would not be reproducible. The resolver refuses a pin that
-        # is unreachable or that is not an ancestor of the branch it names.
+        # The commit, never a branch tip: the branch moves and a release built from whatever
+        # it pointed at would not be reproducible. The resolver refuses a commit that is
+        # unreachable or that is not an ancestor of the branch it names.
+        #
+        # The macOS product builds the SAME commit as the iOS product - the parent's
+        # clients/apple gitlink - so the checkout is asserted to EQUAL the iOS source, not to
+        # differ from it. This step used to require the two to differ, which was the
+        # two-source model; under one shared source that assertion failed every correct build.
         run: |
           set -euo pipefail
           ./scripts/ci/apple-client-source.sh checkout macos
           ./scripts/ci/apple-client-source.sh verify macos
           actual="$(git -C "$APPLE_CLIENT_DIR" rev-parse HEAD)"
           ios_sha="$(./scripts/ci/apple-client-source.sh sha ios)"
-          if [ "$actual" = "$ios_sha" ]; then
-            echo "FAIL: the macOS job checked out the iOS source ($ios_sha)." >&2
-            echo "      macOS must build the original sing-box UI, not the custom Hako UI." >&2
+          if [ "$actual" != "$ios_sha" ]; then
+            echo "FAIL: the macOS job checked out $actual but both products build the gitlink $ios_sha." >&2
             exit 1
           fi
-          echo "PASS: macOS source is $actual, distinct from the iOS source $ios_sha"
+          echo "PASS: macOS source is $actual, the same shared source as iOS"
 
       - name: verify the pinned macOS source and the branding overlay
         # Deliberately BEFORE the build overlays and before Libbox is installed.
@@ -581,6 +595,13 @@ jobs:
         # a copy of the pinned source, and this proves the PREPARED tree - the one that will
         # actually be archived - carries the result.
         #
+        # Brand display and product identity are asserted separately and in opposite
+        # directions. The display name MUST be branded; PRODUCT_NAME MUST NOT be. Renaming the
+        # product would move the .app bundle, and with it the sing-box:// URL scheme, Profile
+        # types and every record that keys on the product - identity surface the parent does
+        # not get to change on the client's behalf. The pinned Apple client enforces the same
+        # boundary in its own scripts/dev/audit_apple_ui_boundary.py.
+        #
         # The tree is expected to be dirty here. The overlays rewrite the working copy by
         # design and never commit to it, so this asserts the branded values and the untouched
         # neighbours rather than git cleanliness. The final proof is the archived bundle
@@ -591,18 +612,36 @@ jobs:
           scheme="$APPLE_CLIENT_DIR/sing-box.xcodeproj/xcshareddata/xcschemes/SFM.xcscheme"
 
           echo "prepared macOS app name:"
-          grep -n 'PRODUCT_NAME = "Jiejiebox";\|INFOPLIST_KEY_CFBundleDisplayName = "Jiejiebox";' "$pbx"
-          grep -n 'BuildableName = "Jiejiebox.app"' "$scheme"
+          grep -n 'INFOPLIST_KEY_CFBundleDisplayName = "JiejieBox";' "$pbx"
+          grep -n 'BuildableName = "sing-box.app"' "$scheme"
 
-          # Both SFM configurations, both settings: 4 values.
-          name_values="$(grep -c 'PRODUCT_NAME = "Jiejiebox";\|INFOPLIST_KEY_CFBundleDisplayName = "Jiejiebox";' "$pbx")"
-          if [ "$name_values" != "4" ]; then
-            echo "FAIL: expected SFM Debug and Release to declare Jiejiebox for PRODUCT_NAME and" >&2
-            echo "      CFBundleDisplayName (4 values), found $name_values." >&2
+          # SFM Debug and Release: the display name, and only the display name. 2 values.
+          name_values="$(grep -c 'INFOPLIST_KEY_CFBundleDisplayName = "JiejieBox";' "$pbx")"
+          if [ "$name_values" != "2" ]; then
+            echo "FAIL: expected SFM Debug and Release to declare CFBundleDisplayName = JiejieBox" >&2
+            echo "      (2 values), found $name_values." >&2
             exit 1
           fi
-          if [ "$(grep -c 'BuildableName = "Jiejiebox.app"' "$scheme")" != "3" ]; then
-            echo "FAIL: expected all three SFM scheme application buildables to be Jiejiebox.app." >&2
+
+          # The scheme names the app buildable, which follows PRODUCT_NAME. It must be
+          # untouched: all three references still point at sing-box.app.
+          if [ "$(grep -c 'BuildableName = "sing-box.app"' "$scheme")" != "3" ]; then
+            echo "FAIL: expected all three SFM scheme application buildables to remain sing-box.app." >&2
+            exit 1
+          fi
+
+          # Identity must NOT have been renamed. This is the regression the split contract
+          # exists to prevent, so it is asserted directly rather than inferred.
+          # Every spelling of the brand, including the near-miss ones, plus the
+          # committed source spelling: if PRODUCT_NAME reads any of them the product was
+          # renamed, which is exactly what this contract forbids.
+          if grep -qE 'PRODUCT_NAME = "(Jiejie[Bb]ox|Jijie[Bb]ox)"' "$pbx"; then
+            echo "FAIL: PRODUCT_NAME was branded. It is identity surface; only" >&2
+            echo "      CFBundleDisplayName may be branded." >&2
+            exit 1
+          fi
+          if [ "$(grep -c '^				PRODUCT_NAME = "sing-box";' "$pbx")" -lt 4 ]; then
+            echo "FAIL: the SFM and SFI PRODUCT_NAME settings are no longer sing-box." >&2
             exit 1
           fi
 
@@ -613,11 +652,7 @@ jobs:
               exit 1
             }
           done
-          if grep -q 'PRODUCT_NAME = "Jijiebox"\|PRODUCT_NAME = "JiejieBox"' "$pbx"; then
-            echo "FAIL: the macOS product name was spelled with the wrong casing." >&2
-            exit 1
-          fi
-          echo "PASS: the prepared macOS SFM app is branded Jiejiebox"
+          echo "PASS: the prepared macOS SFM app shows JiejieBox with its product identity intact"
 
       - name: build unsigned DMG
         run: |
@@ -659,7 +694,7 @@ jobs:
             echo "apple_repo:             $APPLE_CLIENT_REPOSITORY"
             echo "apple_branch:           $APPLE_CLIENT_BRANCH"
             echo "apple_sha:              $APPLE_CLIENT_SHA"
-            echo "apple_sha_source:       release/apple-client-refs.env (MACOS_APPLE_SHA)"
+            echo "apple_sha_source:       clients/apple gitlink (the only authority)"
             echo "apple_client_dir:       $APPLE_CLIENT_DIR"
             echo "ui:                     $APPLE_CLIENT_UI"
             echo ""
