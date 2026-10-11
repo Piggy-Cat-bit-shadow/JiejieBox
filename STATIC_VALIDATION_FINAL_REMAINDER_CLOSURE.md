@@ -52,21 +52,24 @@ HTTP_CLIENT_GHOST_DETOUR      = CLOSED
 
 ```text
 CONSUMER_DEMAND_MODEL_PRESENT        = YES
-HTTP_TRANSPORT_VALIDATION_SOUND      = YES   (model + tests; see the caveat below)
-DNS_TRANSPORT_VALIDATION_SOUND       = YES   (model + tests; same caveat)
-NTP_VALIDATION_SOUND                 = YES   (already proven UDP-only; see below)
-URLTEST_PROBE_SEPARATION_SOUND       = YES   (unchanged)
-FALSE_ALLOW_CONSUMER_MISMATCH_REMAINS = YES  (nothing yet READS the model at start)
+HTTP_TRANSPORT_VALIDATION_SOUND      = YES   (model + validation owner + 9 measured cases + M-C1 RED)
+DNS_TRANSPORT_VALIDATION_SOUND       = YES   (model + validation owner + 9 measured cases + M-C2 RED)
+NTP_VALIDATION_SOUND                 = YES   (proven UDP-only; its demand is Required:{UDP})
+URLTEST_PROBE_SEPARATION_SOUND       = YES   (unchanged; probe TCP never becomes a member requirement)
+FALSE_ALLOW_CONSUMER_MISMATCH_REMAINS = NO   (both owners refuse a provable mismatch at start)
 ```
 
 ### What was built
 
 Two demand models, each derived from the code that selects the transport rather than from a label,
-with the option enum expressed as `Required` / `Optional`:
+with the option enum expressed as `Required` / `Optional` — and, after them, the two validation
+owners that READ them:
 
 ```text
-common/httpclient/transport_requirement.go   HTTPClientTransportRequirement  (6 sub-cases tested)
-dns/transport_requirement.go                 DNSTransportRequirement          (6 + 10 unmodelled, tested)
+common/httpclient/transport_requirement.go   HTTPClientTransportRequirement   (6 sub-cases)
+dns/transport/requirement.go                 RequirementFor                   (6 + 10 unmodelled)
+common/httpclient/transport_capability.go    CheckDetourCapability            (HTTP owner)
+common/dialer/capability.go                  CheckDetourCapability            (DNS owner)
 ```
 
 The cases a label-based guess gets wrong, and which the tests pin:
@@ -86,25 +89,31 @@ the implementation refuted it. Modelling "DoH might use H3" would have been inve
 runtime does not have — exactly the failure mode the prompt's "model the configured runtime
 selection, not the protocol label" rule exists to prevent.
 
+### The two owners, and where each check lives
+
+| consumer | owner | why there | check |
+|---|---|---|---|
+| HTTP client | `common/httpclient.Manager.Start` | it already resolved this client's detour reference, so the demand question is asked at the same moment by the same owner | detour tag → object → `Network()` vs `Required` |
+| DNS transport | each transport's `Start`, next to `dialer.InitializeDetour` | the DNS packages form a chain (`dns` → `dns/transport` → `dns/transport/quic`), so the shared helper had to sit below all of them | same |
+
+`common/dialer.CheckDetourCapability` is that shared helper. It reads the object the `DetourDialer`
+**already resolved** (memoised behind a `sync.Once`) rather than looking the tag up again, so the
+check judges exactly the object the traffic goes through. `DetourDialer.DetourName()` was added as a
+read-only accessor because `Dialer()` is what triggers resolution, and a preflight must not perform
+one as a side effect of asking.
+
 **NTP**: strictly UDP — `common/ntp/ntp.go:14` in the replaced `sing` version is
-`dialer.DialContext(ctx, N.NetworkUDP, serverAddress)`. Its demand is therefore a `Required:
-{UDP}`, and it is the only consumer family whose requirement needed no derivation.
+`dialer.DialContext(ctx, N.NetworkUDP, serverAddress)`. Its demand is `Required: {UDP}`, and it is
+the one consumer family whose requirement needed no derivation.
 
-### The caveat, stated plainly
+### What is NOT modelled, deliberately
 
-`FALSE_ALLOW_CONSUMER_MISMATCH_REMAINS = YES` because **no component reads these models at start
-yet**. The demand model is the prerequisite the previous round identified as missing; wiring it to a
-validation owner is the remaining step. The prompt says not to fake mutation tests against
-nonexistent production logic, and by the same standard the model alone does not close the item:
+An object that reports **no** networks is accepted, because "reports nothing" is not a claim and
+treating it as "carries nothing" would refuse objects that simply do not implement `Network()`. A
+**group** passes on its own advertisement and is left to the reachable-leaf dry run for its members —
+duplicating a member walk here would be a second, weaker answer to a question `physicalpath` owns.
+And the nine unmodelled DNS types are not constrained at all.
 
-```text
-INTERNAL_CONSUMER_DEMAND_CLOSED = NO
-```
-
-`M-C1`/`M-C2` (mutate forced-H3 demand to TCP, mutate DoQ demand to TCP) are therefore still
-`NOT_APPLICABLE` as *validator* mutations — but they are now meaningful as **unit** mutations, and
-the tests already fail if the derivation is changed, because they assert the exact required set
-rather than "contains TCP".
 
 ### The chosen owner, and why (the prompt's §3.2 question)
 
@@ -226,18 +235,15 @@ design change there is nothing to mutate. The prompt's own rule applies: no fabr
 ## Mutation evidence
 
 ```text
-consumer mutations   NOT_APPLICABLE for the validator (no validator reads the model yet);
-                     the unit tests DO fail if the derivation changes, since they assert the
-                     exact required set
-resolver mutation    M-R1  seam made inert            -> resolver parity RED (3 cases)  VERIFIED
-                     M-R2  NOT_APPLICABLE (the seam IS the runtime helper)
+consumer mutations   M-C1  forced-H3 demand UDP -> TCP      -> 2 cases RED   VERIFIED
+                     M-C2  DoQ demand UDP -> TCP            -> 2 cases RED   VERIFIED
+resolver mutation    M-R1  seam made inert                  -> resolver parity RED (3 cases)  VERIFIED
+                     M-R2  NOT_APPLICABLE (the seam IS the runtime helper, so there is no second
+                           place to force an answer)
 graph mutations      NONE — no graph change landed
-earlier, preserved   M3a delete wireguard capability -> ownership parity RED            VERIFIED
-                     M3b collapse the two refusals   -> ownership diagnostic RED        VERIFIED
-                     M6  delete the tag-clash guard  -> the P0 panic returns             VERIFIED
-                     M1/M2 mutate consumer demand    -> NOT_APPLICABLE (no derivation existed then;
-                                                        a derivation now exists, so these become
-                                                        runnable once a validator reads it)
+earlier, preserved   M3a delete wireguard capability        -> ownership parity RED   VERIFIED
+                     M3b collapse the two refusals           -> ownership diagnostic RED   VERIFIED
+                     M6  delete the tag-clash guard          -> the P0 panic returns   VERIFIED
 ```
 
 Every mutation was applied by exact-string replacement guarded by a `.Contains` check that aborts
@@ -287,7 +293,7 @@ impossible rather than one that was merely unusual.
 ## Final verdict
 
 ```text
-INTERNAL_CONSUMER_DEMAND_CLOSED   = NO
+INTERNAL_CONSUMER_DEMAND_CLOSED   = YES
 RESOLVER_PARITY_CLOSED            = YES
 CROSS_KIND_GRAPH_CLOSED           = NO
 
@@ -297,7 +303,8 @@ DNS_OWNERSHIP_PARITY_STILL_SOUND  = YES
 
 STATIC_VALIDATION_FALSE_DENY_CLOSED = NO   (resolver false deny FIXED; the group union false deny remains,
                                             deliberately, pending the group-membership contract)
-STATIC_VALIDATION_FALSE_ALLOW_CLOSED = NO  (consumer mismatch is still unread at start)
+STATIC_VALIDATION_FALSE_ALLOW_CLOSED = YES (both consumer owners now refuse a provable mismatch at start,
+                                            each with a mutation proving the refusal is load-bearing)
 
 RELEASE_BLOCKER_REMAINS            = NO
 READY_FOR_STATIC_VALIDATION_FREEZE = NO
@@ -307,14 +314,17 @@ TESTING_UNTOUCHED                  = YES
 WORK_BRANCH_PUSHED                 = YES
 ```
 
-### Why the freeze gate is NO, against the acceptance list
+### Why the freeze gate is still NO
+
+Two of the three semantic items are closed. The gate is held by the cross-kind graph, whose lookup
+table the prompt requires before any change:
 
 ```text
 [x] the two prior closure branches are integrated exactly once
-[ ] internal consumer demand has an actual production validation owner   <- model exists, owner not wired
-[ ] forced H3 mismatch is pinned                                         <- derivation pinned, no refusal path
-[~] DoQ / UDP-DNS mismatch is pinned where runtime proves invalid         <- derivation pinned, no refusal path
-[x] fallback-capable cases are not falsely refused                       <- and the resolver fix removed one
+[x] internal consumer demand has an actual production validation owner
+[x] forced H3 mismatch is pinned
+[x] DoQ / UDP-DNS mismatch is pinned where runtime proves invalid
+[x] fallback-capable cases are not falsely refused
 [x] resolver false deny is actually fixed, not merely documented
 [x] runtime and validator use one resolver semantic source of truth
 [ ] cross-kind graph is derived from real runtime lookup semantics
@@ -322,18 +332,17 @@ WORK_BRANCH_PUSHED                 = YES
 [ ] no graph edge targets a shadowed/unreachable object
 [x] all previous group true-positives remain intact
 [x] bridge is not "fixed" by lying about L3 capability
-[x] mutation tests prove the new logic is load-bearing                   <- M-R1, M3a, M3b, M6 RED
+[x] mutation tests prove the new logic is load-bearing   <- M-C1, M-C2, M-R1, M3a, M3b, M6 RED
 [x] no protected branch was modified
 ```
 
-Three items are unmet and one is partial, so the gate is `NO`. Both unmet semantic items have a
-concrete, bounded next step rather than an open question:
+### The one remaining item, and its next step
 
-1. **Consumer demand**: wire `HTTPClientTransportRequirement` and `DNSTransportRequirement` into the
-   manager that already resolves each consumer's detour, comparing `Required` against the detour
-   object's `Network()`. The models, the tests, and the owner analysis are done; the comparison and
-   its refusal message are not. `M-C1`/`M-C2` become runnable at that point.
-2. **Cross-kind graph**: build the §11 reference lookup table first — one row per reference-bearing
-   field, with its lookup function and precedence — and only then decide whether `(kind, tag)` is
-   the right identity. Outbound-first lookup already suggests it is NOT, which is why landing it
-   without the table would model a graph the runtime does not execute.
+**Cross-kind graph.** Build the §11 reference lookup table first — one row per reference-bearing
+field (`DNS transport.detour`, `outbound.detour`, `endpoint.domain_resolver`,
+`route.default_domain_resolver`, `HTTP client.detour`, group members), each with its lookup
+function, precedence, legal target namespaces and shadowing behaviour — and only then decide whether
+`(kind, tag)` is the right identity. Outbound-first lookup already suggests it is NOT, which is why
+landing it without the table would model a graph the runtime does not execute. The prompt's own
+instruction applies: edges come from actual runtime lookup, not theoretical namespaces.
+
