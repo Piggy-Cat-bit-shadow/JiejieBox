@@ -62,6 +62,11 @@ func TestADNSTransportDetourMustCarryTheQuery(t *testing.T) {
 			detour: svDNSDual,
 			why:    "the query and its truncation retry are both served",
 		},
+		"udp over a UDP-only detour": {
+			detour: svDNSUDPOnly,
+			why: "an ordinary response completes over UDP alone; only the truncation retry is " +
+				"lost, which is a capability gap rather than an unusable resolver",
+		},
 	}
 	for name, testCase := range accepted {
 		name, testCase := name, testCase
@@ -102,12 +107,11 @@ func TestADNSTransportDetourMustCarryTheQuery(t *testing.T) {
 			detour:        svDNSTCPOnly,
 			why:           "the query itself goes out over UDP",
 		},
-		"udp over a UDP detour": {
-			transportType: "udp",
-			detour:        svDNSUDPOnly,
-			why: "the TRUNCATION RETRY needs TCP, so a UDP-only detour breaks on any response " +
-				"too large for a datagram - the case a name-based rule would bless",
-		},
+		// REMOVED as a refusal under the H-PROVABLE contract; it is in the ACCEPTED set above. The
+		// old reason was "the TRUNCATION RETRY needs TCP, so a UDP-only detour breaks on any
+		// response too large for a datagram" - true about the retry and false about the resolver,
+		// which answers every ordinary query. A retry that MAY happen does not make the initial
+		// transport unusable without the retry network.
 	}
 	for name, testCase := range refused {
 		name, testCase := name, testCase

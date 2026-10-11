@@ -599,6 +599,23 @@ func New(options Options) (*Box, error) {
 	// the analysis reads the same rule objects the router evaluates, so the start-time verdict and
 	// the run-time decision cannot disagree about which networks reach a tag.
 	outboundManager.EnablePhysicalPathDelivery(physicalPathDelivery(router, routeOptions.Final))
+	// The cross-kind cycle check needs the NETWORK-WIDE resolver as a graph edge, and it is installed
+	// here rather than at the validation seam because it is a fact about the ROUTE options, which are
+	// in scope at this point and were not when that seam was built.
+	//
+	// # Why it is an edge at all
+	//
+	// `route.default_domain_resolver` is what an object with no resolver of its own actually resolves
+	// through (common/dialer consults it whenever the object declares none). MEASURED before this
+	// was wired: a configuration that closes a recursive cycle ONLY through the default resolver was
+	// ACCEPTED, while the refused twin - identical except for WHERE the resolver was named - was
+	// correctly refused. The graph was describing a different graph from the one the dial path runs.
+	//
+	// The reader is a closure rather than the value so the answer stays live, the same reason
+	// SetResolverAuthority takes one.
+	outboundManager.SetDefaultDomainResolver(func() string {
+		return common.PtrValueOrDefault(routeOptions.DefaultDomainResolver).Server
+	})
 	// ONE shared traffic manager and ONE shared mode manager, created if any consumer
 	// needs them: the Clash API (traffic + mode endpoints), the Native API
 	// (SubscribeConnections, SetClashMode) or the platform log writer. Creating a

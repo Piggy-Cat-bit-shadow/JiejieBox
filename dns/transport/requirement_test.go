@@ -8,43 +8,59 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestDNSTransportRequirement pins each type against the implementation that decides it.
+// TestRequirementFor pins each DNS transport against the implementation that decides it, under the
+// H-PROVABLE contract.
 //
-// The two entries that a name-based guess would get wrong are `udp` and `https`:
-//
-//   - `udp` needs BOTH networks, because a truncated response is retried over TCP. "UDP DNS needs
-//     UDP" is the intuitive rule and it would bless a TCP-less detour that breaks on any response
-//     too large for a datagram.
-//   - `https` needs TCP ONLY. `h3` is a separate type (constant.DNSTypeHTTP3), so there is no
-//     "DoH might use QUIC" branch in this tree to model as optional.
+// The entry a name-based guess gets wrong is `udp`: it needs UDP for ANY query and TCP only for the
+// truncation RETRY, because an ordinary response completes over UDP alone. Listing TCP as
+// hard-required refused a UDP-only detour that answers every normal query.
 func TestRequirementFor(t *testing.T) {
 	t.Parallel()
 
 	for name, testCase := range map[string]struct {
 		transportType string
-		want          []string
+		allOf         []string
+		conditional   []string
 	}{
-		"udp needs UDP and TCP for the truncation retry": {
+		"udp needs UDP for any query, TCP only for the retry": {
 			transportType: constant.DNSTypeUDP,
-			want:          []string{N.NetworkUDP, N.NetworkTCP},
+			allOf:         []string{N.NetworkUDP},
+			conditional:   []string{N.NetworkTCP},
 		},
-		"tcp":        {transportType: constant.DNSTypeTCP, want: []string{N.NetworkTCP}},
-		"tls":        {transportType: constant.DNSTypeTLS, want: []string{N.NetworkTCP}},
-		"https":      {transportType: constant.DNSTypeHTTPS, want: []string{N.NetworkTCP}},
-		"quic (DoQ)": {transportType: constant.DNSTypeQUIC, want: []string{N.NetworkUDP}},
-		"h3 (DoH3)":  {transportType: constant.DNSTypeHTTP3, want: []string{N.NetworkUDP}},
+		"tcp":   {transportType: constant.DNSTypeTCP, allOf: []string{N.NetworkTCP}},
+		"tls":   {transportType: constant.DNSTypeTLS, allOf: []string{N.NetworkTCP}},
+		"https": {transportType: constant.DNSTypeHTTPS, allOf: []string{N.NetworkTCP}},
+		"quic (DoQ)": {
+			transportType: constant.DNSTypeQUIC,
+			allOf:         []string{N.NetworkUDP},
+		},
+		"h3 (DoH3)": {
+			transportType: constant.DNSTypeHTTP3,
+			allOf:         []string{N.NetworkUDP},
+		},
 	} {
 		name, testCase := name, testCase
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			requirement := RequirementFor(testCase.transportType, nil)
-			require.ElementsMatch(t, testCase.want, requirement.Required)
+			require.ElementsMatch(t, testCase.allOf, requirement.AllOf)
+			require.ElementsMatch(t, testCase.conditional, requirement.Conditional)
+			require.Empty(t, requirement.AnyOf, "no DNS transport has a disjunctive requirement")
 		})
 	}
 
-	// The unmodelled types must report NO requirement rather than a guessed one. These either dial
+	// The load-bearing assertion: TCP must NOT be in the hard set for `udp`. Promoting it is the
+	// M-A2 mutation, and it refuses a UDP-only detour that answers every ordinary query.
+	udp := RequirementFor(constant.DNSTypeUDP, nil)
+	require.NotContains(t, udp.AllOf, N.NetworkTCP,
+		"a truncated response is retried over TCP, but an ordinary response never touches it, so "+
+			"TCP is a retry capability rather than a startup requirement")
+	require.Contains(t, udp.Conditional, N.NetworkTCP,
+		"and it is recorded so a diagnostic can explain what is lost")
+
+	// The unmodelled types must report NO requirement rather than a guessed one: they either dial
 	// nothing, delegate to another transport, or reach the network through an endpoint rather than
-	// through the namespace a detour names - so constraining their detour would invent a rule.
+	// through the namespace a detour names.
 	for _, unmodelled := range []string{
 		constant.DNSTypeLocal, constant.DNSTypeHosts, constant.DNSTypeFakeIP,
 		constant.DNSTypeGroup, constant.DNSTypeDHCP, constant.DNSTypeMDNS,
@@ -52,9 +68,8 @@ func TestRequirementFor(t *testing.T) {
 		"something-out-of-tree",
 	} {
 		requirement := RequirementFor(unmodelled, nil)
-		require.Empty(t, requirement.Required,
-			"%s must stay unmodelled rather than guessed", unmodelled)
-		require.Empty(t, requirement.Optional,
-			"%s must not claim an optional network either", unmodelled)
+		require.Empty(t, requirement.AllOf, "%s must stay unmodelled", unmodelled)
+		require.Empty(t, requirement.AnyOf, "%s must stay unmodelled", unmodelled)
+		require.Empty(t, requirement.Conditional, "%s must stay unmodelled", unmodelled)
 	}
 }

@@ -8,58 +8,82 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestHTTPClientTransportRequirement pins the configured transport selection, which is the only
-// thing that may decide a consumer's demand.
+// TestHTTPClientTransportRequirement pins the CONTRACT, not just the implementation.
 //
-// The case that matters most is `version: 3` with and without `disable_version_fallback`, because it
-// is the one place in this tree where an HTTP client does NOT need TCP. A demand model that said
-// "an HTTP client needs TCP" - the obvious rule, and the one the closure prompt forbids hardcoding -
-// would refuse a UDP-only detour that works, and would simultaneously miss that the fallback case
-// needs BOTH.
+// # The contract: H-PROVABLE
+//
+// Startup refuses only when NO successful request path can exist. A network reachable only through a
+// fallback branch does not become a startup requirement.
+//
+// What follows, and why this test changed twice:
+//
+//	version 3 WITHOUT disable_version_fallback
+//	    AnyOf = {UDP, TCP}   at least one, because roundTripHTTP3 can use either
+//
+//	version 3 WITH disable_version_fallback
+//	    AllOf = {UDP}        H3 alone; there is no H2 transport at all
+//
+// `http3FallbackTransport` has three paths (http3_transport.go:138-160): a broken authority or a
+// non-NoCachedConn H3 error goes straight to the H2 fallback (:139, :147); a NON-replayable request
+// takes H3 alone and returns its error (:151-158); everything else races H3 against H2 (:164-261).
+//
+// So over a TCP-only detour a replayed request IS served by the H2 side, and over a UDP-only detour
+// the H3 path serves. Neither transport is individually required; carrying NEITHER is the only
+// provably fatal state. The first version of this model listed TCP as hard-required and refused the
+// TCP-only case, which is the false deny this contract removes.
 func TestHTTPClientTransportRequirement(t *testing.T) {
 	t.Parallel()
 
 	for name, testCase := range map[string]struct {
 		options option.HTTPClientOptions
-		want    []string
+		allOf   []string
+		anyOf   []string
 	}{
-		"version 1": {
+		"version 1 needs TCP": {
 			options: option.HTTPClientOptions{Version: 1},
-			want:    []string{N.NetworkTCP},
+			allOf:   []string{N.NetworkTCP},
 		},
-		"version 2": {
+		"version 2 needs TCP": {
 			options: option.HTTPClientOptions{Version: 2},
-			want:    []string{N.NetworkTCP},
+			allOf:   []string{N.NetworkTCP},
 		},
 		"version 0 takes the version 2 default": {
 			options: option.HTTPClientOptions{},
-			want:    []string{N.NetworkTCP},
+			allOf:   []string{N.NetworkTCP},
 		},
-		"version 3 with the fallback needs UDP and TCP": {
+		"version 3 with the fallback needs at least one of UDP, TCP": {
 			options: option.HTTPClientOptions{Version: 3},
-			want:    []string{N.NetworkUDP, N.NetworkTCP},
+			anyOf:   []string{N.NetworkUDP, N.NetworkTCP},
 		},
-		"version 3 with disable_version_fallback needs UDP only": {
+		"version 3 with disable_version_fallback needs UDP alone": {
 			options: option.HTTPClientOptions{Version: 3, DisableVersionFallback: true},
-			want:    []string{N.NetworkUDP},
+			allOf:   []string{N.NetworkUDP},
 		},
 		"the flag does not change version 2": {
 			options: option.HTTPClientOptions{Version: 2, DisableVersionFallback: true},
-			want:    []string{N.NetworkTCP},
+			allOf:   []string{N.NetworkTCP},
 		},
 	} {
 		name, testCase := name, testCase
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			requirement := HTTPClientTransportRequirement(testCase.options)
-			require.ElementsMatch(t, testCase.want, requirement.Required,
-				"the requirement must come from the configured selection, not the protocol label")
+			require.ElementsMatch(t, testCase.allOf, requirement.AllOf)
+			require.ElementsMatch(t, testCase.anyOf, requirement.AnyOf)
 		})
 	}
 
-	// The UDP-only case must NOT also claim TCP: that is the difference between "H3 alone" and
-	// "H3 with an H2 fallback", and collapsing it would refuse a working UDP-only detour.
-	udpOnly := HTTPClientTransportRequirement(option.HTTPClientOptions{Version: 3, DisableVersionFallback: true})
-	require.NotContains(t, udpOnly.Required, N.NetworkTCP,
-		"with the fallback disabled nothing reaches TCP, so requiring it would be a false deny")
+	// The load-bearing assertions. M-A1 attacks the first, M-A2 the second.
+	h3Only := HTTPClientTransportRequirement(option.HTTPClientOptions{Version: 3, DisableVersionFallback: true})
+	require.Contains(t, h3Only.AllOf, N.NetworkUDP,
+		"H3-only has no other transport, so UDP is required for any success")
+
+	fallbackEnabled := HTTPClientTransportRequirement(option.HTTPClientOptions{Version: 3})
+	require.ElementsMatch(t, []string{N.NetworkUDP, N.NetworkTCP}, fallbackEnabled.AnyOf,
+		"either transport can serve a request, so the requirement is disjunctive")
+	require.Empty(t, fallbackEnabled.AllOf,
+		"and neither is individually required - promoting one refuses a working configuration")
+	require.Contains(t, fallbackEnabled.Conditional, N.NetworkUDP,
+		"a NON-replayable body takes the H3-only path (:151), which is recorded as conditional "+
+			"rather than required")
 }

@@ -111,6 +111,33 @@ func startWithDryRun(t *testing.T, outbounds []adapter.Outbound, declarations ph
 	return manager.Start(adapter.StartStateStart, scope)
 }
 
+// startWithDryRunDelivering is startWithDryRun WITH a route model: it installs what the routes prove
+// reaches each tag, which is the difference between a proven requirement and the advertised
+// fallback. A test that means "the entry point routes this to the member" must use this one.
+func startWithDryRunDelivering(t *testing.T, outbounds []adapter.Outbound, declarations physicalpath.Declarations, resolverFor func(tag string) string, delivered map[string][]string) error {
+	t.Helper()
+	lookup := make(map[string]adapter.Outbound, len(outbounds))
+	for _, outbound := range outbounds {
+		lookup[outbound.Tag()] = outbound
+	}
+	for _, outbound := range outbounds {
+		if group, isGroup := outbound.(*dryRunGroup); isGroup {
+			group.lookup = lookup
+		}
+	}
+	manager := NewManager(&stubRegistry{}, &cycleEndpointManager{endpoints: map[string]adapter.Endpoint{}}, "")
+	for _, outbound := range outbounds {
+		installOutbound(t, manager, outbound)
+	}
+	if resolverFor == nil {
+		resolverFor = func(string) string { return "" }
+	}
+	manager.EnablePhysicalPathValidation(declarations, resolverFor, false)
+	manager.EnablePhysicalPathDelivery(delivered)
+	scope := adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())
+	return manager.Start(adapter.StartStateStart, scope)
+}
+
 // TestStartRefusesAGroupWhoseUnselectedMemberDoesNotExist is the property the prompt names: a
 // selector whose CURRENT member is fine but whose second member does not exist must fail at Start.
 //
@@ -155,7 +182,11 @@ func TestStartRefusesAGroupWhoseUnselectedMemberCannotCarryTheFlow(t *testing.T)
 		selected: "healthy",
 	}
 
-	err := startWithDryRun(t, []adapter.Outbound{healthy, udpOnly, selector}, physicalpath.Declarations{}, nil)
+	// The demand is DELIVERED rather than advertised. With no route at all this shape is now
+	// accepted, because a group's advertised union is capability rather than flow demand; the
+	// refusal this test exists for needs a proof that TCP really reaches the selector.
+	err := startWithDryRunDelivering(t, []adapter.Outbound{healthy, udpOnly, selector},
+		physicalpath.Declarations{}, nil, map[string][]string{"sel": {N.NetworkTCP}})
 	require.Error(t, err,
 		"the unselected member is broken and MUST fail Start: the first switch would otherwise be "+
 			"the first report of it")
@@ -182,8 +213,21 @@ func TestStartAcceptsAGroupWhoseMembersAreAllUsable(t *testing.T) {
 	require.NoError(t, err, "a selector whose every member is usable must start")
 }
 
-// TestStartRefusesAMemberThatCannotCarryTheRoutedNetwork is the second decidable break: the member
-// exists, and it cannot serve what the entry point routes to it.
+// TestStartRefusesAMemberThatCannotCarryTheRoutedNetwork pins the PROVEN case: a route really does
+// deliver TCP to this selector, and a member that cannot carry TCP is refused.
+//
+// # What changed, and why this is not a weakened test
+//
+// The name always said "RoutedNetwork", but the fixture installed no route model at all -
+// `startWithDryRun` calls only `EnablePhysicalPathValidation`, never `EnablePhysicalPathDelivery`, so
+// the dry run had nothing proven and fell back to the group's advertised union. That fallback WAS
+// the false deny: the union is a sum over the members' own advertisements, so it exceeds a member's
+// set only when a SIBLING advertises more - which means it can never fail a single-entry root, and
+// across the measured matrix the only failures it produced were the members of a multi-member group.
+//
+// The test now DELIVERS the demand it was always named for. The refusal and its message are
+// unchanged; what changed is that it rests on a proof rather than on an advertisement.
+// `case-08` and `case-10b` cover the same property end-to-end from a real configuration.
 func TestStartRefusesAMemberThatCannotCarryTheRoutedNetwork(t *testing.T) {
 	good := &dryRunLeaf{tag: "good", networks: []string{N.NetworkTCP, N.NetworkUDP}}
 	udpOnly := &dryRunLeaf{tag: "udp-only", networks: []string{N.NetworkUDP}}
@@ -194,10 +238,36 @@ func TestStartRefusesAMemberThatCannotCarryTheRoutedNetwork(t *testing.T) {
 		selected: "good",
 	}
 
-	err := startWithDryRun(t, []adapter.Outbound{good, udpOnly, selector}, physicalpath.Declarations{}, nil)
-	require.Error(t, err)
+	err := startWithDryRunDelivering(t, []adapter.Outbound{good, udpOnly, selector},
+		physicalpath.Declarations{}, nil, map[string][]string{"sel": {N.NetworkTCP}})
+	require.Error(t, err,
+		"a route that proves TCP reaches this selector makes its TCP-incapable member a defect")
 	require.Contains(t, err.Error(), "udp-only")
 	require.Contains(t, err.Error(), "cannot serve the tcp flow")
+}
+
+// TestAnAdvertisedOnlyMemberIsNotARefusal pins the OTHER half: with nothing proven, a group's
+// advertised union is CAPABILITY, not flow demand, so a differing member is not a startup defect.
+//
+// This is the exact shape that used to be refused, and refusing it was the false deny - the demand
+// came from the sibling's advertisement rather than from anything that routes a flow to the group.
+// A provable-only contract cannot hard-refuse a configuration because one member could not serve a
+// network that no route and no consumer is proven to send there.
+func TestAnAdvertisedOnlyMemberIsNotARefusal(t *testing.T) {
+	good := &dryRunLeaf{tag: "good", networks: []string{N.NetworkTCP, N.NetworkUDP}}
+	udpOnly := &dryRunLeaf{tag: "udp-only", networks: []string{N.NetworkUDP}}
+	selector := &dryRunGroup{
+		tag:      "sel",
+		members:  []string{"good", "udp-only"},
+		networks: []string{N.NetworkTCP, N.NetworkUDP},
+		selected: "good",
+	}
+
+	err := startWithDryRun(t, []adapter.Outbound{good, udpOnly, selector},
+		physicalpath.Declarations{}, nil)
+	require.NoError(t, err,
+		"nothing proves a flow reaches this group, so its advertised union is capability rather "+
+			"than demand and the differing member is not a startup defect")
 }
 
 // TestStartRefusesACycleInAnUnselectedBranch pins that a cycle among the members is refused at

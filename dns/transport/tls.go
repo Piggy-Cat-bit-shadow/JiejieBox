@@ -95,7 +95,11 @@ func (t *TLSTransport) Start(stage adapter.StartStage, scope *adapter.Scope) err
 	// The reference EXISTS; now ask whether it can carry this transport's queries. See
 	// dialer.CheckDetourCapability for why the demand is read from the type's implementation rather
 	// than from its name - udp needs TCP as well, because a truncated response is retried.
-	return dialer.CheckDetourCapability("dns/transport/tls["+t.Tag()+"]", t.dialer, RequirementFor("tls", nil).Required)
+	detourObject, hasDetour := dialer.DetourOf(t.dialer)
+	if hasDetour {
+		return CheckDetourCapability("dns/transport/tls["+t.Tag()+"]", detourObject, RequirementFor("tls", nil))
+	}
+	return nil
 }
 
 func (t *TLSTransport) Reset() {

@@ -30,6 +30,27 @@ type Manager struct {
 	// rules that name it and constrain the network explicitly. A tag absent from the map has
 	// nothing proven about it, which is not the same as "nothing reaches it".
 	deliveredNetworks map[string][]string
+	// defaultDomainResolver reports the tag `route.default_domain_resolver` names, or "". The
+	// cross-kind cycle check reads it: an object that declares no resolver of its own still resolves
+	// through this one, so it is the edge that closes the loop for that object.
+	defaultDomainResolver func() string
+}
+
+// SetDefaultDomainResolver installs a reader for the tag `route.default_domain_resolver` names.
+//
+// # Why the graph needs it
+//
+// The cross-kind cycle check models each object's resolver edge. An object that declares NONE of its
+// own still resolves through the network-wide default, so the default is the edge that closes the
+// loop for it - and MEASURED, a configuration differing from a refused one only in WHERE the
+// resolver was named was ACCEPTED while the runtime closes the cycle.
+//
+// The Box installs it after the route options are known. A manager that never installs it keeps the
+// previous behaviour, so no embedder changes.
+func (m *Manager) SetDefaultDomainResolver(defaultResolver func() string) {
+	m.access.Lock()
+	m.defaultDomainResolver = defaultResolver
+	m.access.Unlock()
 }
 
 // physicalPathValidation is everything the reachable-leaf dry run needs that is not readable from
@@ -376,27 +397,40 @@ func (m *Manager) lintOutbounds(outbounds []adapter.Outbound) ([]adapter.Outboun
 	// the user's decision. This manager cannot be the one that decides it: the two namespaces are
 	// populated by different managers at different times, and nothing rejects a shared tag at
 	// registration - see tag_collision_test.go, which documents exactly this contract.
-	seenTag := make(map[string]adapter.Outbound, len(outbounds))
+	type seenObject struct {
+		outbound adapter.Outbound
+		kind     string
+	}
+	seenTag := make(map[string]seenObject, len(outbounds))
 	for _, outboundToCheck := range outbounds {
 		if outboundToCheck == nil {
 			return nil, E.New("the outbound set contains a nil object, so its dependency graph " +
 				"cannot be ordered")
 		}
 		tag := outboundToCheck.Tag()
+		thisKind := "outbound"
+		if m.endpoint != nil && len(m.endpoint.Endpoints()) > 0 {
+			for _, candidate := range m.endpoint.Endpoints() {
+				if candidate == outboundToCheck {
+					thisKind = "endpoint"
+					break
+				}
+			}
+		}
 		previous, duplicate := seenTag[tag]
 		if !duplicate {
-			seenTag[tag] = outboundToCheck
+			seenTag[tag] = seenObject{outbound: outboundToCheck, kind: thisKind}
 			continue
 		}
-		if previous == outboundToCheck {
+		if previous.outbound == outboundToCheck {
 			// The SAME object in the list twice is a caller's bookkeeping slip rather than a
 			// configuration error, and reporting it as a name clash would send the user looking for
 			// a second object that does not exist.
 			return nil, E.New("the object ", tag, " appears twice in the outbound set, so its "+
 				"dependency graph cannot be ordered")
 		}
-		return nil, E.New("two objects claim the tag ", tag, ": ", describeOutbound(previous),
-			" and ", describeOutbound(outboundToCheck), "; a tag resolves to one object, so rename "+
+		return nil, E.New("two objects claim the tag ", tag, ": ", describeOutbound(previous.outbound, previous.kind),
+			" and ", describeOutbound(outboundToCheck, thisKind), "; a tag resolves to one object, so rename "+
 				"one of them - the tag is how every dependency edge and every routing rule names it")
 	}
 	started := make(map[string]bool, len(outbounds))
@@ -459,18 +493,19 @@ func (m *Manager) lintOutbounds(outbounds []adapter.Outbound) ([]adapter.Outboun
 // describeOutbound names an object the way a user recognises it, and it is guaranteed to
 // DISCRIMINATE two objects that share a tag.
 //
-// The collision it describes is usually across namespaces - an outbound and an endpoint sharing a
-// tag - so the kind is the first thing a reader needs. The type name is not enough on its own:
-// MEASURED, this fork has an object whose `Type()` reports `direct` and which is NOT the `direct`
-// outbound, so `endpoint/direct (direct)` and `endpoint/direct (wireguard)` came out of an earlier
-// version of this message with the wrong kind on the first one. A diagnostic that misnames one of
-// the two objects it is asking the user to choose between is worse than no diagnostic, so the Go
-// type is appended when the type string alone would not tell them apart.
-func describeOutbound(outbound adapter.Outbound) string {
-	kind := "outbound"
-	if _, isEndpoint := outbound.(adapter.Endpoint); isEndpoint {
-		kind = "endpoint"
-	}
+// # Why the KIND is derived from the manager, not from an interface assertion
+//
+// The first version asked `_, isEndpoint := outbound.(adapter.Endpoint)` and labelled the object an
+// endpoint when it was satisfied. MEASURED, `*direct.Outbound` SATISFIES that interface - it has a
+// `Start(stage, scope)` method - so the refusal reported BOTH halves as `endpoint/...`, one of them
+// being the plain `direct` outbound. A diagnostic that mislabels one of the two objects it asks the
+// user to choose between is worse than no diagnostic, and the interface was never a reliable answer:
+// `adapter.Endpoint` is a loose structural shape that many outbounds satisfy by accident.
+//
+// The manager KNOWS which namespace it holds an object in, so the kind is passed in rather than
+// guessed. The concrete Go type is appended as well, because `Type()` is not unique across this
+// fork's registrations either.
+func describeOutbound(outbound adapter.Outbound, kind string) string {
 	description := kind + "/" + outbound.Tag() + " (" + outbound.Type()
 	if concrete := fmt.Sprintf("%T", outbound); concrete != "" {
 		description += ", " + concrete

@@ -96,16 +96,49 @@ func (n crossKindNode) String() string {
 // It is called once at StartStateStart, before any transport is started, with the transports the
 // DNS transport manager is about to start.
 func (m *Manager) ValidateCrossKindCycles(transports []adapter.DNSTransport) error {
-	outbounds := make(map[string]adapter.Outbound)
+	// The node table is built from the SAME lookup the runtime uses, not from a second one.
+	//
+	// # Why this is not a map populated in two passes
+	//
+	// It used to write `outbounds[tag] = outbound` for every outbound and then
+	// `outbounds[endpoint.Tag()] = endpoint` for every endpoint, so a shared tag made the ENDPOINT
+	// win. The runtime does the opposite: `Manager.Outbound(tag)` answers from the outbound namespace
+	// first and falls back to the endpoint namespace. Two different resolution rules for one tag is
+	// how a graph ends up describing a graph the process does not execute.
+	//
+	// The collision itself is now refused before this runs - `option/options.go` at decode,
+	// `box.New`, and `lintOutbounds` all fire earlier, and MEASURED, a config carrying both a
+	// collision and a dangling DNS detour reports only the collision. So this cannot be observed
+	// through `box.New` + `Start`; it is reachable for an embedder driving this manager directly,
+	// and for that caller the ordering rule has to be right rather than merely latent.
+	//
+	// `Outbound` is the canonical two-step lookup, so asking it per tag makes the table
+	// outbound-first by construction instead of by convention.
+	var (
+		outbounds map[string]adapter.Outbound
+		endpoints []adapter.Endpoint
+	)
 	if m != nil {
 		m.access.RLock()
+		tags := make([]string, 0, len(m.outbounds))
 		for _, outbound := range m.outbounds {
-			outbounds[outbound.Tag()] = outbound
+			tags = append(tags, outbound.Tag())
 		}
 		m.access.RUnlock()
+		outbounds = make(map[string]adapter.Outbound, len(tags)+4)
+		for _, tag := range tags {
+			if resolved, loaded := m.Outbound(tag); loaded {
+				outbounds[tag] = resolved
+			}
+		}
 		if m.endpoint != nil {
-			for _, endpoint := range m.endpoint.Endpoints() {
-				outbounds[endpoint.Tag()] = endpoint
+			endpoints = m.endpoint.Endpoints()
+			// An endpoint is reachable under its tag only when the outbound namespace does not
+			// already answer for it - the same rule `Outbound` applies.
+			for _, endpoint := range endpoints {
+				if _, shadowed := outbounds[endpoint.Tag()]; !shadowed {
+					outbounds[endpoint.Tag()] = endpoint
+				}
 			}
 		}
 	}
@@ -116,13 +149,64 @@ func (m *Manager) ValidateCrossKindCycles(transports []adapter.DNSTransport) err
 	if len(transportsByTag) == 0 {
 		return nil
 	}
-	graph := &crossKindGraph{outbounds: outbounds, transports: transportsByTag}
+	graph := &crossKindGraph{
+		outbounds:        outbounds,
+		transports:       transportsByTag,
+		defaultResolver:  m.defaultDomainResolverRef(),
+		endpointResolver: endpointResolverReference,
+	}
 	return graph.validate()
+}
+
+// defaultDomainResolverRef reports the tag `route.default_domain_resolver` names, when the Box
+// installed one.
+//
+// It is a function rather than a bool because the graph needs the TAG: the edge is from an object
+// that declares no resolver of its own to the transport the network default names. Reported by the
+// audit and MEASURED: a configuration that closes a cycle only through the default resolver was
+// ACCEPTED while the runtime closes the loop.
+func (m *Manager) defaultDomainResolverRef() func() string {
+	if m == nil {
+		return nil
+	}
+	m.access.RLock()
+	defer m.access.RUnlock()
+	return m.defaultDomainResolver
+}
+
+// endpointResolverReference reads an endpoint's own `domain_resolver`, when it has one.
+//
+// # Why this is a real edge and not a guess
+//
+// `adapter.Endpoint` publishes only `Detour`, so an endpoint's `domain_resolver` is invisible to
+// `DomainResolverReference` - no endpoint type implements it. But the FIELD exists on every tunnel
+// endpoint (they all embed `DialerOptions`) and the dial path really reads it:
+// `protocol/wireguard/endpoint.go:67-74` and `protocol/openvpn/client.go:105-111` build the peer
+// dialer from those options, which is `common/dialer` reading `DomainResolver`.
+//
+// It is CONDITIONAL on the peer address being a domain - MEASURED, a domain peer with a resolver
+// that does not exist fails construction with "domain resolver not found: absent" while a literal
+// peer leaves the same field inert. The graph models the edge whenever the field is SET, which is
+// the conservative direction for a cycle check: a cycle that CAN be closed at run time is reported
+// rather than a cycle that only might be.
+func endpointResolverReference(endpoint adapter.Endpoint) string {
+	provider, isProvider := endpoint.(interface{ DomainResolverReference() string })
+	if !isProvider {
+		return ""
+	}
+	return provider.DomainResolverReference()
 }
 
 type crossKindGraph struct {
 	outbounds  map[string]adapter.Outbound
 	transports map[string]adapter.DNSTransport
+	// defaultResolver reports the tag `route.default_domain_resolver` names, or "" when none is
+	// configured. It is the network-wide fallback every object that declares no resolver of its own
+	// resolves through, so it is an edge from that object to that transport.
+	defaultResolver func() string
+	// endpointResolver reads `domain_resolver` off an endpoint, which adapter.Endpoint does not
+	// publish.
+	endpointResolver func(adapter.Endpoint) string
 }
 
 // known reports whether the edge target exists. A missing tag is not this check's business: the
@@ -160,15 +244,38 @@ func (g *crossKindGraph) edges(node crossKindNode) []crossKindNode {
 	default:
 		outbound := g.outbounds[node.tag]
 		dependencies := outbound.Dependencies()
-		edges := make([]crossKindNode, 0, len(dependencies)+1)
+		edges := make([]crossKindNode, 0, len(dependencies)+2)
 		// An outbound's dependencies are outbound tags: a detour, or the members of a group. A
 		// nested selector is exactly this edge, which is why a cycle through one is found here.
 		for _, dependency := range dependencies {
 			edges = append(edges, crossKindNode{kind: crossKindOutbound, tag: dependency})
 		}
+		// The object's OWN resolver, whichever namespace published it.
+		//
+		// `DomainResolverReference` is the outbound half. An ENDPOINT does not implement it - the
+		// adapter keeps only `Detour` - so its `domain_resolver` was invisible here even though the
+		// field exists on every tunnel endpoint and the dial path reads it. Reading it through a
+		// separate accessor is what closes that gap without changing the adapter's published surface.
+		resolverTag := ""
 		if resolver, isResolver := outbound.(interface{ DomainResolverReference() string }); isResolver {
-			if server := resolver.DomainResolverReference(); server != "" {
-				edges = append(edges, crossKindNode{kind: crossKindDNS, tag: server})
+			resolverTag = resolver.DomainResolverReference()
+		} else if endpoint, isEndpoint := outbound.(adapter.Endpoint); isEndpoint && g.endpointResolver != nil {
+			resolverTag = g.endpointResolver(endpoint)
+		}
+		if resolverTag != "" {
+			edges = append(edges, crossKindNode{kind: crossKindDNS, tag: resolverTag})
+		} else if g.defaultResolver != nil {
+			// # The network-wide fallback, which IS an edge
+			//
+			// `route.default_domain_resolver` is consulted whenever this object declares none of its
+			// own (common/dialer/dialer.go). MEASURED, it can close a recursive runtime cycle by
+			// itself: a configuration whose only difference from a refused one was WHERE the resolver
+			// was named was ACCEPTED, while the runtime closes the loop through the default.
+			//
+			// It is an `else` branch rather than an additional edge because the two are alternatives
+			// in the dial path: an object with its own resolver never consults the default.
+			if fallback := g.defaultResolver(); fallback != "" {
+				edges = append(edges, crossKindNode{kind: crossKindDNS, tag: fallback})
 			}
 		}
 		return edges

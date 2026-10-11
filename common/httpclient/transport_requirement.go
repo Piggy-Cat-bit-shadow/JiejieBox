@@ -5,45 +5,75 @@ import (
 	N "github.com/sagernet/sing/common/network"
 )
 
-// TransportRequirement is what one consumer needs from the transport it dials through, and how firm
-// that need is.
+// TransportRequirement is what one consumer needs from the transport it dials through.
 //
-// # Why the distinction is the whole point
+// # Why this is not one flat list
 //
-// A consumer's demand is not one fact. `version: 3` WITHOUT `disable_version_fallback` builds an
-// HTTP/3 transport that falls back to HTTP/2 for a non-`https` URL, for a websocket upgrade, and on
-// any H3 failure (see http3_transport.go's RoundTrip), so it needs UDP **and** TCP. The same
-// `version: 3` WITH the flag builds H3 alone and needs UDP only. Reporting either as "the HTTP client
-// needs TCP" would be wrong in both directions:
+// A consumer's demand is not one fact, and flattening it into a single `Required` list is exactly
+// what made this validator refuse configurations the runtime runs. Two distinctions are load-bearing:
 //
-//   - claiming TCP where the flag removed it refuses a UDP-only detour that works;
-//   - claiming both where the flag kept them is right, but only because the fallback is real.
+//   - CONJUNCTIVE vs DISJUNCTIVE. An HTTP/3 client with its fallback enabled can serve a request
+//     over EITHER transport, so requiring both refuses a working configuration - while requiring
+//     neither accepts one that carries nothing. The demand is "at least one of these", which a list
+//     of hard requirements cannot express.
+//   - REQUIRED-FOR-ANY-SUCCESS vs CONDITIONAL. A network reachable only through a fallback or retry
+//     branch is not a startup requirement when the primary path still serves.
 //
-// So the requirement is derived from the CONFIGURED selection, never from the protocol label. This
-// is what the closure prompt calls "model the configured runtime selection, not the protocol label".
+// "A path may be used" is not "every valid execution requires that path".
 type TransportRequirement struct {
-	// Required are the networks the consumer provably must have. A detour that cannot carry one of
-	// these is unusable and the configuration can be refused.
-	Required []string
-	// Optional are networks the consumer MAY use when the transport supports them. A detour missing
-	// one of these is NOT a defect: the consumer takes another path. They exist so a diagnostic can
-	// explain a partial capability without turning it into a refusal.
-	Optional []string
+	// AnyOf is a DISJUNCTIVE group: the detour must carry AT LEAST ONE of these, or no request can
+	// be served at all. This is the set a startup refusal tests. It exists because
+	// `http3FallbackTransport` can serve a request over either HTTP/3 or the HTTP/2 fallback, so
+	// naming either one alone as required is wrong in one direction or the other.
+	AnyOf []string
+	// AllOf is a CONJUNCTIVE group: every element is needed for any request to succeed. Most
+	// transports use this instead of AnyOf; a requirement uses one or the other, never both, and
+	// CheckDetourCapability accepts the union so a future transport can state both if it must.
+	AllOf []string
+	// Conditional is needed by SOME request class rather than all - so it is never a startup
+	// requirement. It is recorded so a diagnostic can explain what is lost.
+	Conditional []string
+}
+
+// http3FallbackRequirement is the requirement for `version: 3` WITHOUT `disable_version_fallback`.
+//
+// # Why it is disjunctive, derived from the three paths in roundTripHTTP3
+//
+// `http3FallbackTransport.roundTripHTTP3` (common/httpclient/http3_transport.go:138-160) branches:
+//
+//	:139  the authority is already known broken  -> straight to the H2 fallback
+//	:147  the H3 error is anything but ErrNoCachedConn -> H2 fallback, replayably
+//	:151  the request is NOT replayable          -> H3 alone; its error is returned (:158)
+//	:160  otherwise                              -> race H3 against H2 (:164-261)
+//
+// So over a detour carrying only TCP: a replayed request is served by the H2 side of the race, and a
+// NON-replayable one cannot be served at all. Over a detour carrying only UDP the H3 path serves
+// normally. Over one carrying neither, every path fails.
+//
+// That is "at least one of UDP, TCP" - not "both", and not "either one specifically".
+func http3FallbackRequirement() TransportRequirement {
+	return TransportRequirement{
+		AnyOf: []string{N.NetworkUDP, N.NetworkTCP},
+		Conditional: []string{
+			// A non-replayable request body needs UDP specifically, because :151 takes the H3-only
+			// path for it. Recorded rather than required: refusing a TCP-only detour would reject a
+			// client that serves every ordinary request.
+			N.NetworkUDP,
+		},
+	}
 }
 
 // HTTPClientTransportRequirement reports what an HTTP client with these options needs.
 //
-// Read from newTransport (client.go:89-128) rather than from the option names:
+// Read from newTransport (client.go:89-128) and from the transports themselves, not from the option
+// names:
 //
-//	version 1        newHTTP1Transport                -> TCP
-//	version 2        newHTTP2Transport (flag)          -> TCP
-//	                 newHTTP2FallbackTransport         -> TCP
-//	version 3        newHTTP3Transport (flag)          -> UDP only: H3, no fallback at all
-//	                 newHTTP3FallbackTransport         -> UDP and TCP: H3 with an H2 fallback
-//	version 0/other  the default is 2 (client.go:91-93)
-//
-// The `disable_version_fallback` flag is what separates the last two, and it is the only case in
-// this tree where an HTTP client's demand is not TCP.
+//	version 1     newHTTP1Transport           -> TCP for any request
+//	version 2     newHTTP2Transport           -> TCP for any request
+//	              newHTTP2FallbackTransport   -> TCP for any request
+//	version 3     newHTTP3Transport           -> UDP for any request: H3 with no fallback at all
+//	              newHTTP3FallbackTransport   -> at least one of UDP, TCP (see above)
+//	version 0     the default is 2 (client.go:91-93)
 func HTTPClientTransportRequirement(options option.HTTPClientOptions) TransportRequirement {
 	version := options.Version
 	if version == 0 {
@@ -52,15 +82,13 @@ func HTTPClientTransportRequirement(options option.HTTPClientOptions) TransportR
 	switch version {
 	case 3:
 		if options.DisableVersionFallback {
-			return TransportRequirement{Required: []string{N.NetworkUDP}}
+			// `newHTTP3Transport` has no H2 path at all, so UDP is genuinely required.
+			return TransportRequirement{AllOf: []string{N.NetworkUDP}}
 		}
-		// H3 first, then the H2 fallback: both transports are reachable at run time, so both are
-		// required. This is NOT "possible means required" - the fallback is taken on a non-https
-		// URL, on a websocket upgrade, and on any H3 failure, so a UDP-only detour breaks every
-		// such request.
-		return TransportRequirement{Required: []string{N.NetworkUDP, N.NetworkTCP}}
+		return http3FallbackRequirement()
 	default:
-		// v1, v2, and the default. Both H1 and H2 ride TCP (helpers.go:28 is the single TLS dial).
-		return TransportRequirement{Required: []string{N.NetworkTCP}}
+		// v1, v2 and the default. Both H1 and H2 ride TCP (helpers.go:28 is the single TLS dial),
+		// and neither has a UDP path.
+		return TransportRequirement{AllOf: []string{N.NetworkTCP}}
 	}
 }

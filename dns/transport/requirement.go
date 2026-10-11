@@ -16,10 +16,16 @@ import (
 //
 // Each entry below cites the implementation that decides it.
 type TransportRequirement struct {
-	// Required are the networks this transport provably must have.
-	Required []string
-	// Optional are networks it may use when available. Missing one is not a defect.
-	Optional []string
+	// AnyOf is a DISJUNCTIVE group: at least one must be carried, or no query can be served. This is
+	// the set a startup refusal tests.
+	AnyOf []string
+	// AllOf is a CONJUNCTIVE group: every element is needed for any query to succeed. A requirement
+	// uses one or the other, never both.
+	AllOf []string
+	// Conditional is needed by SOME query rather than all, so it is never a startup requirement. It
+	// is recorded so a diagnostic can explain what is lost - `udp`'s TCP retry is the case it exists
+	// for.
+	Conditional []string
 }
 
 // RequirementFor reports what a DNS transport of this type needs.
@@ -31,23 +37,34 @@ type TransportRequirement struct {
 func RequirementFor(transportType string, options any) TransportRequirement {
 	switch transportType {
 	case "udp":
-		// dns/transport/udp.go: the query goes out over UDP and a TRUNCATED response is retried over
-		// TCP, so both are reachable and both are required.
-		return TransportRequirement{Required: []string{C.NetworkUDP, C.NetworkTCP}}
+		// # Why TCP is Conditional and NOT a startup requirement
+		//
+		// The query goes out over UDP and the TCP retry happens ONLY when the response arrives with
+		// the truncation bit set (dns/transport/udp.go; see client_truncate.go). An ordinary response
+		// completes over UDP alone, so a UDP-only detour answers every normal query and loses only the
+		// retry for an oversized answer.
+		//
+		// Refusing that configuration at startup would reject a working resolver to demand a
+		// redundancy it never had to declare - "a retry may happen" is not "the initial transport is
+		// unusable without the retry network".
+		return TransportRequirement{
+			AllOf:       []string{C.NetworkUDP},
+			Conditional: []string{C.NetworkTCP},
+		}
 	case "tcp", "tls":
-		return TransportRequirement{Required: []string{C.NetworkTCP}}
+		return TransportRequirement{AllOf: []string{C.NetworkTCP}}
 	case "quic":
 		// DoQ is QUIC: UDP only.
-		return TransportRequirement{Required: []string{C.NetworkUDP}}
+		return TransportRequirement{AllOf: []string{C.NetworkUDP}}
 	case "h3":
 		// DoH3 is HTTP/3: UDP only.
-		return TransportRequirement{Required: []string{C.NetworkUDP}}
+		return TransportRequirement{AllOf: []string{C.NetworkUDP}}
 	case "https":
 		// DoH rides TCP, and ONLY TCP: dns/transport/https_transport.go dials N.NetworkTCP at :37,
 		// :54 and :61 with no QUIC path in that file. `h3` is a SEPARATE transport type
 		// (constant.DNSTypeHTTP3), so "https might use H3" is false for this tree and modelling it
-		// as optional would be inventing a branch the implementation does not have.
-		return TransportRequirement{Required: []string{C.NetworkTCP}}
+		// would be inventing a branch the implementation does not have.
+		return TransportRequirement{AllOf: []string{C.NetworkTCP}}
 	default:
 		// local, hosts, fakeip, group, dhcp, mdns, resolved, tailscale, openconnect, openvpn, and
 		// anything out of tree. Unmodelled rather than guessed: these either dial nothing, delegate

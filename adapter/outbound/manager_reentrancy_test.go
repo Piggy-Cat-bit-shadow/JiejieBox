@@ -51,6 +51,9 @@ func TestRepeatedStartAfterADryRunFailureLeavesNoState(t *testing.T) {
 	}
 	manager.Initialize(func() (adapter.Outbound, error) { return fallback, nil })
 	manager.EnablePhysicalPathValidation(physicalpath.Declarations{}, func(string) string { return "" }, false)
+	// A PROVEN demand, so the refusal this test repeats stays a refusal. With nothing proven the
+	// shape is accepted now, because a group's advertised union is capability rather than demand.
+	manager.EnablePhysicalPathDelivery(map[string][]string{"sel": {N.NetworkTCP}})
 
 	scope := adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())
 	for attempt := 0; attempt < 3; attempt++ {
@@ -89,6 +92,9 @@ func TestRepeatedStartOfALegalGraphIsIdempotent(t *testing.T) {
 		installOutbound(t, manager, outbound)
 	}
 	manager.EnablePhysicalPathValidation(physicalpath.Declarations{}, func(string) string { return "" }, false)
+	// A PROVEN demand, so the refusal this test repeats stays a refusal. With nothing proven the
+	// shape is accepted now, because a group's advertised union is capability rather than demand.
+	manager.EnablePhysicalPathDelivery(map[string][]string{"sel": {N.NetworkTCP}})
 	manager.EnablePhysicalPathDelivery(map[string][]string{"sel": {N.NetworkTCP}})
 
 	scope := adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())

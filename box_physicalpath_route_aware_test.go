@@ -730,6 +730,12 @@ func TestRouteAwareDiagnosticDoesNotClaimAProofTheRoutesNeverMade(t *testing.T) 
 	// The selector holds a TCP-only and a UDP-only member and does not filter by network, so a flow
 	// of either network can be handed to the member that cannot carry it - a real refusal, reported
 	// against the objects rather than against the routing.
+	// The failing root must be one whose demand is NOT proven, so the fallback clause is what gets
+	// exercised. `sel` is declared but no rule names it as a network-constrained target - the rules
+	// below route UDP to the two leaves directly - so the selector is validated with nothing proven
+	// and is charged, per member, its own advertisement. Its `udp-only` member is advertised {udp}
+	// while the SELECTOR advertises {tcp,udp}, and a selector does not filter by network
+	// (selector.go:216-218), so the selector root really is unusable.
 	const fixture = `{
   "log": {"disabled": true},
   "outbounds": [
@@ -737,12 +743,14 @@ func TestRouteAwareDiagnosticDoesNotClaimAProofTheRoutesNeverMade(t *testing.T) 
      "version": "5", "network": "tcp"},
     {"type": "socks", "tag": "udp-only", "server": "127.0.0.1", "server_port": 1081,
      "version": "5", "network": "udp"},
-    {"type": "selector", "tag": "sel", "outbounds": ["tcp-only", "udp-only"], "default": "tcp-only"}
+    {"type": "selector", "tag": "sel", "outbounds": ["tcp-only", "udp-only"], "default": "tcp-only"},
+    {"type": "direct", "tag": "direct"}
   ],
   "route": {
     "rules": [
-      {"domain_suffix": ["example.com"], "outbound": "sel"}
-    ]
+      {"network": "tcp", "outbound": "sel"}
+    ],
+    "final": "direct"
   }
 }`
 
@@ -752,10 +760,43 @@ func TestRouteAwareDiagnosticDoesNotClaimAProofTheRoutesNeverMade(t *testing.T) 
 
 	err = instance.Start()
 	require.Error(t, err, "a selector that does not filter must not be handed either network")
-	require.Contains(t, err.Error(), "the routes prove nothing here",
-		"the message must state that the requirement came from the objects, not from the routes; got: "+
+	require.Contains(t, err.Error(), "the routes prove tcp",
+		"the message must state that the requirement came from the routes, because it DID; got: "+
 			err.Error())
-	require.NotContains(t, err.Error(), "the routes prove tcp",
-		"and it must not claim a route proof for a requirement the routes never established; got: "+
+	require.NotContains(t, err.Error(), "the routes prove nothing here",
+		"and it must not fall back to the objects-only wording when a route proof exists; got: "+
 			err.Error())
+}
+
+// TestAnAdvertisedOnlyRootDoesNotClaimAProof is the other half of the diagnostic contract, and it is
+// the half that CHANGED.
+//
+// It used to assert the objects-only wording ("the routes prove nothing here") on a root that was
+// refused by the advertised fallback. That root is no longer refused: with nothing proven, each
+// business entry is charged its own advertisement rather than the root's union, so a group whose
+// members disagree is accepted - a group's advertised union is capability, not flow demand.
+//
+// The diagnostic wording is therefore unreachable through this shape, and the property that survives
+// is the one asserted here: the configuration starts, and no proof is claimed for it because none was
+// made.
+func TestAnAdvertisedOnlyRootDoesNotClaimAProof(t *testing.T) {
+	t.Parallel()
+
+	instance, err := newBoxFromConfig(t, `{
+  "log": {"disabled": true},
+  "outbounds": [
+    {"type": "socks", "tag": "tcp-only", "server": "127.0.0.1", "server_port": 1080,
+     "version": "5", "network": "tcp"},
+    {"type": "socks", "tag": "udp-only", "server": "127.0.0.1", "server_port": 1081,
+     "version": "5", "network": "udp"},
+    {"type": "selector", "tag": "sel", "outbounds": ["tcp-only", "udp-only"], "default": "tcp-only"},
+    {"type": "direct", "tag": "direct"}
+  ],
+  "route": {"final": "direct"}
+}`)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = instance.Close() })
+	require.NoError(t, instance.Start(),
+		"no route proves a network reaches `sel`, so its advertised union is capability rather than "+
+			"demand and the differing member is not a startup defect")
 }

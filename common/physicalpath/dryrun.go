@@ -230,22 +230,23 @@ func ValidateRoots(resolver *Resolver, roots []adapter.Outbound, endpoints Endpo
 			// than from root.Network() is what keeps a group's pre-Start answer, which is a blanket,
 			// out of the decision.
 			//
-			// # Why this union is kept, and what it costs
+			// # Why the union is NOT charged to the exits
 			//
 			// The union is a true statement about the ROOT: some flow reaching it can be of either
-			// network. It is then required of every exit, which a GROUP cannot satisfy whenever its
-			// members differ - and that is a MEASURED false deny: `selector[tcp-only, dual]` with no
-			// rule and no consumer advertises {tcp,udp} through `dual` and fails `tcp-only`.
+			// network. It is NOT a requirement any single exit can satisfy whenever its siblings
+			// differ - and MEASURED, that produced a false deny: `selector[tcp-only, dual]` with no
+			// rule and no consumer advertises {tcp,udp} through `dual` and failed `tcp-only`.
 			//
-			// The narrower reading - ask each exit for what IT advertises - was implemented and
-			// MEASURED to give up a true positive: `TestStartRefusesAMemberThatCannotCarryTheRoutedNetwork`
-			// and `TestPhysicalPathDryRunRefusesAnUnusableUnselectedMember` both stop refusing,
-			// because a selector's UNselected member is no longer held to the group's advertised set
-			// at all. Those two pin the runtime failure this dry run exists to prevent: a selector
-			// whose member is switched by hand, or by a health check, hands the flow to an object
-			// that cannot carry it. Narrowing the requirement is therefore not a local change - it
-			// needs the group-membership contract decided first (see the audit report's
-			// "intentionally unmodelled"), so the union stays and the false deny is recorded.
+			// The structural reason it has no true-positive content: the union is the union of the
+			// exits' OWN advertisements, so it can only ever exceed an exit's own set when a SIBLING
+			// advertises more. A single-entry root is therefore never failed by this branch - it is
+			// charged exactly what it advertises - and across the whole measured matrix the only
+			// failures it ever produced were the members of a multi-member selector. That is the
+			// definition of a check reporting on the fallback rather than on the configuration.
+			//
+			// So each exit is charged with what IT advertises. See `advertisedNetworks` for why the
+			// union is still computed: it is what the GROUP question below needs ("is this network
+			// served at all under this root"), and it stays in the report as the advertised fact.
 			requirement = advertisedNetworks(nodes)
 		}
 		// A group that picks its member BY NETWORK never hands a flow to a member that cannot carry
@@ -291,11 +292,29 @@ func ValidateRoots(resolver *Resolver, roots []adapter.Outbound, endpoints Endpo
 			}
 		}
 		for _, node := range nodes {
-			// The requirement is THIS root's - what the routes proved reaches it, or what its own
-			// reachable objects advertise between them. It is deliberately NOT narrowed per exit
-			// here: see `selfRequirementFor`, which documents the narrower reading and why the
-			// group case cannot adopt it without giving up a true positive.
-			nodeRequirement := nodeRequirementFor(resolver, node, requirement)
+			// # The requirement, and why it is narrowed when nothing is proven
+			//
+			// `requirement` is what the ROUTES proved reaches this root, and a proof is charged to
+			// every exit under it - that is the whole point of the route analysis and it is what
+			// case-08 and case-10b pin.
+			//
+			// When NOTHING is proven, `requirement` is the advertised UNION, and charging that to an
+			// individual exit is the false deny: the union is a sum over the exits' own
+			// advertisements, so it exceeds an exit's set only when a SIBLING advertises more. MEASURED,
+			// `selector[tcp-only, dual]` with no rule and no consumer failed `tcp-only` for a udp flow
+			// the group would have handed to `dual` - and across the whole matrix the only failures
+			// this branch ever produced were the members of a multi-member selector, which is a report
+			// on the fallback rather than on the configuration.
+			//
+			// So an exit with nothing proven is charged with what IT advertises. That is not the
+			// "narrow everything" reading the earlier experiment measured and rejected: it applies to
+			// the FALLBACK ONLY, and the two true positives that matter are unaffected because their
+			// demand is proven (case-08 {udp}, case-10b {tcp,udp}).
+			effective := requirement
+			if !requirementProven {
+				effective = selfRequirementFor(node)
+			}
+			nodeRequirement := nodeRequirementFor(resolver, node, effective)
 			check := HopCheck{
 				Root:              node.Root,
 				Hop:               node.Tag,
@@ -472,6 +491,32 @@ func nodeRequirementFor(resolver *Resolver, hop PathNode, delivered []string) []
 // `SelectForFlow`/`isCandidate`. What an unfiltering group PROMISES about its members' capabilities is
 // the contract that has to be decided before the requirement can be narrowed, and it is a product
 // decision rather than a validator detail.
+
+// selfRequirementFor reports what ONE business entry is charged with when NOTHING is proven about
+// delivery: its own advertisement, and never the root's union.
+//
+// # Why the union cannot be charged to an exit
+//
+// The union is a sum over the exits' own `Network()` answers, so it exceeds an exit's set only when
+// a SIBLING advertises more. A single-entry root is therefore never failed by the union - it is
+// charged exactly what it advertises - and the only configurations the union ever fails are the
+// members of a multi-member group. MEASURED: `selector[tcp-only, dual]` with no rule and no consumer
+// was refused member-by-member, because the {tcp,udp} contributed by `dual` was required of
+// `tcp-only` for a flow the group would have handed to `dual`.
+//
+// That makes the union a statement about the FALLBACK rather than about the configuration, so it is
+// not charged to an exit. It is still computed, because the group question needs it ("is this
+// network served at all under this root") and it stays in the report as the advertised fact.
+//
+// # What this deliberately does NOT do
+//
+// It does not narrow a PROVEN requirement. A demand the routes proved is charged to every exit under
+// the root, which is what case-08 ({udp}) and case-10b ({tcp,udp}) pin, and those are unaffected
+// here because their demand is proven. A global narrowing would delete that dimension entirely,
+// which is why it is gated on `!requirementProven`.
+func selfRequirementFor(hop PathNode) []string {
+	return decidedNetworks(networksOf(hop.Outbound))
+}
 
 // parentGroup recovers the group that handed this node the flow.
 //

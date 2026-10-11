@@ -33,6 +33,10 @@ import (
 // that simply do not implement `Network()` - the false-deny direction this whole line of work
 // exists to remove. The same reasoning applies when there is no detour at all: the dial goes out
 // through the default path, which is not a declared object to judge.
+func DetourOf(wrapped N.Dialer) (adapter.Outbound, bool) {
+	return resolvedDetour(wrapped)
+}
+
 func CheckDetourCapability(consumerName string, wrapped N.Dialer, required []string) error {
 	if len(required) == 0 {
 		return nil
@@ -60,29 +64,51 @@ func CheckDetourCapability(consumerName string, wrapped N.Dialer, required []str
 	return nil
 }
 
-// resolvedDetour returns the outbound a DetourDialer has resolved, and whether a detour was named at
-// all.
+// resolvedDetour returns the outbound a detour dialer has resolved, and whether a detour was named
+// at all.
+//
+// # Why it WALKS the wrapper chain rather than asserting once
+//
+// `dialer.NewWithOptions` returns the `DetourDialer` itself only when nothing else has to wrap it. A
+// transport whose SERVER address is a domain gets a `ResolveDialer` around it (`RemoteIsDomain:
+// true`), and a bare type assertion then finds no detour at all and silently reports "nothing to
+// check" - MEASURED: the HTTPS DNS transport over a UDP-only detour STARTED, because
+// `dns.NewRemoteDialer` sets `RemoteIsDomain` and the assertion missed the wrapper. A validator that
+// skips a case without saying so is worse than one with no opinion, so the chain is unwrapped
+// through `Upstream()` until a DetourDialer is found or the chain ends.
 func resolvedDetour(wrapped N.Dialer) (adapter.Outbound, bool) {
-	detourDialer, isDetour := wrapped.(*DetourDialer)
-	if !isDetour {
-		return nil, false
+	for current := wrapped; current != nil; {
+		detourDialer, isDetour := current.(*DetourDialer)
+		if !isDetour {
+			upstream, isUpstream := current.(interface{ Upstream() any })
+			if !isUpstream {
+				return nil, false
+			}
+			next, isDialer := upstream.Upstream().(N.Dialer)
+			if !isDialer {
+				return nil, false
+			}
+			current = next
+			continue
+		}
+		// The NAME is read first: `Dialer()` is what triggers the resolution, and a preflight must
+		// not perform one as a side effect of merely asking. A dialer with no name dials the DEFAULT
+		// outbound, which is not a declared object to judge.
+		if detourDialer.DetourName() == "" {
+			return nil, false
+		}
+		resolved, err := detourDialer.Dialer()
+		if err != nil {
+			return nil, false
+		}
+		// The manager hands back an adapter.Outbound, but the accessor is typed as N.Dialer because
+		// that is all a dialer needs. An object that is not an outbound has no Network() to judge, so
+		// it is reported as unresolved rather than as a mismatch.
+		outbound, isOutbound := resolved.(adapter.Outbound)
+		if !isOutbound {
+			return nil, false
+		}
+		return outbound, true
 	}
-	// The NAME is read first: `Dialer()` is what triggers the resolution, and a preflight must not
-	// perform one as a side effect of merely asking. A dialer with no name dials the DEFAULT
-	// outbound, which is not a declared object to judge.
-	if detourDialer.DetourName() == "" {
-		return nil, false
-	}
-	resolved, err := detourDialer.Dialer()
-	if err != nil {
-		return nil, false
-	}
-	// The manager hands back an adapter.Outbound, but the accessor is typed as N.Dialer because that
-	// is all a dialer needs. An object that is not an outbound has no Network() to judge, so it is
-	// reported as unresolved rather than as a mismatch.
-	outbound, isOutbound := resolved.(adapter.Outbound)
-	if !isOutbound {
-		return nil, false
-	}
-	return outbound, true
+	return nil, false
 }

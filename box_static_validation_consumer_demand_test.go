@@ -66,6 +66,16 @@ func TestAnHTTPClientDetourMustCarryTheConfiguredTransports(t *testing.T) {
 			detour: svTCPOnlyDetour,
 			why:    "a client with no detour is the ordinary case and must stay lazy",
 		},
+		// MOVED here from the refused set under the H-PROVABLE contract. It was asserted as a
+		// refusal, and that refusal WAS the false deny: `http3FallbackTransport` races the H3 attempt
+		// against an H2 one and fails only when BOTH fail (http3_transport.go:252-258), so the H2
+		// side serves every request over a TCP-only detour. The client works; it has no HTTP/3.
+		"H3 with its fallback over a TCP-only detour": {
+			client: `{"tag": "hc", "version": 3, "detour": "d"}`,
+			detour: svTCPOnlyDetour,
+			why: "the H2 fallback side of the race serves the request, so only the HTTP/3 part is " +
+				"unavailable - not a reason to refuse a working client",
+		},
 	}
 	for name, testCase := range accepted {
 		name, testCase := name, testCase
@@ -92,13 +102,6 @@ func TestAnHTTPClientDetourMustCarryTheConfiguredTransports(t *testing.T) {
 			client: `{"tag": "hc", "version": 2, "detour": "d"}`,
 			detour: svUDPOnlyDetour,
 			why:    "the TLS dial is TCP and there is no UDP path in an H1/H2 transport",
-		},
-		"H3 with its fallback over a TCP-only detour": {
-			client: `{"tag": "hc", "version": 3, "detour": "d"}`,
-			detour: svTCPOnlyDetour,
-			why: "the fallback is real but H3 is tried FIRST, and its failure path is not a " +
-				"guarantee - the transport also routes non-https URLs and websocket upgrades to H2, " +
-				"so the detour must carry both",
 		},
 		"a detour naming nothing": {
 			client: `{"tag": "hc", "version": 2, "detour": "ghost"}`,

@@ -157,7 +157,11 @@ func (t *HTTP3Transport) Start(stage adapter.StartStage, scope *adapter.Scope) e
 	}
 	// The reference EXISTS; now ask whether it can carry this transport's queries. DoQ and DoH3 are
 	// QUIC, so they need UDP and nothing else.
-	return dialer.CheckDetourCapability("dns/transport/h3["+t.Tag()+"]", t.dialer, transport.RequirementFor("h3", nil).Required)
+	detourObject, hasDetour := dialer.DetourOf(t.dialer)
+	if hasDetour {
+		return transport.CheckDetourCapability("dns/transport/h3["+t.Tag()+"]", detourObject, transport.RequirementFor("h3", nil))
+	}
+	return nil
 }
 
 func (t *HTTP3Transport) Reset() {
