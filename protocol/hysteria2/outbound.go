@@ -158,7 +158,21 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	pathCapacity := dialer.DetourPathCapacity(ctx, options.DialerOptions.Detour)
 	quicPayloadCeiling, hasCeiling := pathCapacity.QuicPayloadCeiling()
 	effectiveInitialPacketSize := dialer.ClampToCeiling(options.InitialPacketSize, quicPayloadCeiling, hasCeiling)
-	if hasCeiling && effectiveInitialPacketSize != options.InitialPacketSize {
+	// The two cases below are the two ways ClampToCeiling can move a value, and they are NOT the same
+	// event, so they must not produce the same sentence.
+	//
+	//	dialer.ClampToCeiling's own semantics: "a configured value of zero, with a ceiling: the ceiling
+	//	is used. Zero means 'no preference', and the ceiling IS the preference."
+	//
+	// So with nothing configured the ceiling SUPPLIES the value rather than capping anything, and saying
+	// it "caps initial_packet_size 0" describes an override of an operator's choice that was never made.
+	// An operator reading the old line - on a configuration that sets no initial_packet_size at all -
+	// would go looking for what had set it to 0.
+	if hasCeiling && ceilingSuppliesTheSize(options.InitialPacketSize, effectiveInitialPacketSize, quicPayloadCeiling) {
+		logger.Info("path capacity: inner MTU ", pathCapacity.InnerMTU,
+			" proves ", quicPayloadCeiling,
+			" bytes of QUIC payload, which is used because no initial_packet_size was configured")
+	} else if hasCeiling && effectiveInitialPacketSize != options.InitialPacketSize {
 		logger.Info("path capacity: inner MTU ", pathCapacity.InnerMTU,
 			" caps the QUIC payload at ", quicPayloadCeiling,
 			", so initial_packet_size ",
@@ -317,4 +331,18 @@ func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		return h.client.CloseWithError(os.ErrClosed)
 	})
 	return nil
+}
+
+// ceilingSuppliesTheSize reports whether a proven ceiling PROVIDED the effective size rather than capping
+// a configured one.
+//
+// It is a named function rather than an inline expression so the distinction can be tested against the
+// real code path: a test that retypes an inline condition does not fail when the original drifts, which
+// was demonstrated by mutation before this was extracted.
+//
+// The order at the call site matters and is why this is not folded into that `else if`: both cases end at
+// the SAME number, so the clamp test (`effective != configured`) is also true whenever the ceiling
+// supplied the value. Testing it first would classify every supply as a clamp, and nothing would fail.
+func ceilingSuppliesTheSize(configured, effective int, ceiling uint32) bool {
+	return configured <= 0 && effective == int(ceiling)
 }
