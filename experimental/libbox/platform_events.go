@@ -67,8 +67,45 @@ type PlatformEvents struct {
 // active user, or setting the pause manager's flags. It is called from the platform's callback
 // thread, so it must not wait on a dial, a reset or a file. ReleaseMemory is the one expensive call
 // and it is reached only by the level the platform documents as process-ending.
+//
+// # Why the device level is mirrored BEFORE the instance is resolved
+//
+// `CommandServer` remembers the device LEVEL across a service reload (`rememberDeviceLevel` and
+// `restoreDeviceLevel`), because `StartedService.StartOrReloadService` sets `s.instance = nil` for the
+// whole of `newInstance`: the old Box is closed, the next one is built, and every entry point that
+// resolves the instance drops the fact in that window. A device pause/wake is exactly the fact that
+// must survive it - it is a level about the DEVICE, and the device does not stop being locked because
+// a profile was reloaded.
+//
+// So `DevicePause`/`DeviceWake` write the mirror FIRST and only then reach the manager, which returns
+// early - as it must - when there is no Box to act on. Without that order the shared policy's decision
+// is delivered into a nil instance and is lost: the mirror keeps the level the device had before the
+// window, and `restoreDeviceLevel` then applies THAT to the replacement Box. Measured before this
+// ordering: a screen-off fact arriving in the window left `touched=false`, `restoreDeviceLevel`
+// returned at its `!touched` guard, and the replacement Box started unpaused on a locked device; a
+// wake arriving in the window left the mirror paused, and the reload re-entered the level on a device
+// that was in the user's hand.
+//
+// This is not a second policy and not a second writer of the device axis: the target never decides
+// whether the device is paused - `runtimecoord.PlatformEvents` decided, and the target is being told
+// the answer. `remember` only records that answer.
 type boxPlatformTarget struct {
 	service *daemon.StartedService
+	// remember records the device level the shared policy published, in the same mirror the Apple
+	// entry points write, so a reload cannot lose it. It is a function rather than a pointer at the
+	// CommandServer so the target's reach is exactly one write: it cannot grow a second opinion about
+	// the level, and a test can count the writes.
+	remember func(bool)
+}
+
+// rememberDeviceLevel records the level the policy published. It is the mirror write and nothing else:
+// it does not decide, it does not call the manager, and it takes a lock that no manager call is ever
+// held across.
+func (t *boxPlatformTarget) rememberDeviceLevel(paused bool) {
+	if t == nil || t.remember == nil {
+		return
+	}
+	t.remember(paused)
 }
 
 // live resolves the running Box instance, or nil when there is none to act on.
@@ -114,6 +151,10 @@ func (t *boxPlatformTarget) ReleaseMemory(level runtimecoord.TrimLevel) {
 }
 
 func (t *boxPlatformTarget) DevicePause() {
+	// BEFORE the instance is resolved: this is the reload window's half of the decision. The mirror is
+	// the only state that outlives `s.instance = nil`, so the action is recorded first and applied
+	// second. See the type's comment.
+	t.rememberDeviceLevel(true)
 	instance := t.live()
 	if instance == nil {
 		return
@@ -128,6 +169,10 @@ func (t *boxPlatformTarget) DevicePause() {
 }
 
 func (t *boxPlatformTarget) DeviceWake() {
+	// Before the instance is resolved, for the same reason and with the same consequence: a wake that
+	// arrived while a reload was building the next Box must not be re-applied as a pause when that Box
+	// starts. See the type's comment.
+	t.rememberDeviceLevel(false)
 	instance := t.live()
 	if instance == nil {
 		return
@@ -150,7 +195,15 @@ func NewPlatformEvents(server *CommandServer) *PlatformEvents {
 	events := &PlatformEvents{policy: runtimecoord.NewPlatformEvents(nil)}
 	if server != nil {
 		events.service = server.StartedService
-		events.policy = runtimecoord.NewPlatformEvents(&boxPlatformTarget{service: events.service})
+		// The mirror is the CommandServer's, and the method value binds that object for as long as the
+		// sink can deliver a fact: the sink holds the policy, the policy holds the target, and the
+		// target holds this closure - so the object a reload mirror belongs to cannot be collected
+		// while a late platform callback can still reach it, and no close/reload ordering can turn this
+		// into a reference to something that is gone.
+		events.policy = runtimecoord.NewPlatformEvents(&boxPlatformTarget{
+			service:  events.service,
+			remember: server.rememberDeviceLevel,
+		})
 	}
 	return events
 }
