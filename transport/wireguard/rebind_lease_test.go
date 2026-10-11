@@ -363,6 +363,33 @@ func (f *rebindFixture) proveStandardBindBranch(t *testing.T) {
 	require.Zero(t, f.dialer.connects.Load(),
 		"the other dialer route was used, so this endpoint is not the standard-bind endpoint these "+
 			"assertions describe")
+	f.establishSocketsPerStandardBind(t)
+}
+
+// establishSocketsPerStandardBind takes the first settled socket reading on this machine and requires the
+// socket-count instrument to agree with it from then on. See socketsPerStandardBind for why the count is
+// measured rather than written down.
+//
+// It runs AFTER the three checks above, on a fixture that has proved it is on the standard bind and is
+// settled, so the reading is of exactly the object the assertions below count.
+func (f *rebindFixture) establishSocketsPerStandardBind(t *testing.T) {
+	t.Helper()
+	observed := deviceReceiveCensus(f.endpoint.device.Load())
+	socketCountMu.Lock()
+	defer socketCountMu.Unlock()
+	if socketsPerStandardBind == socketCountUnmeasured {
+		require.NotZero(t, observed,
+			"the socket census counted no receive goroutines on a settled standard bind, so it is not "+
+				"measuring sockets at all and every assertion that compares against it would be vacuous")
+		socketsPerStandardBind = observed
+		t.Logf("SOCKETS_PER_STANDARD_BIND=%d (established on this machine)", observed)
+		return
+	}
+	require.Equal(t, socketsPerStandardBind, observed,
+		"a settled standard bind must hold the same number of receivers every time on this machine; the "+
+			"first reading established %d and this one saw %d, so the count is not stable and the "+
+			"assertions built on it would be measuring drift rather than the endpoint's state",
+		socketsPerStandardBind, observed)
 }
 
 // livePort reads the port the running device reports.
@@ -1043,9 +1070,62 @@ func TestRebindHoldsExactlyOneSocketWhileItReopens(t *testing.T) {
 }
 
 // socketsPerStandardBind is the number of receive goroutines one `*conn.StdNetBind` produces on this
-// machine: one for udp4 and one for udp6. The tests assert it as an exact number so that a census which
-// silently counts nothing fails instead of making a uniqueness claim vacuous.
-var socketsPerStandardBind = 2
+// machine, MEASURED from a settled standard bind rather than assumed, because it is a property of this
+// machine's network stack and not a constant.
+//
+// The original value was the literal 2, with the comment "one for udp4 and one for udp6". That is what
+// Linux and Windows produce: `StdNetBind.Open` listens on udp4 and on udp6 and starts a receiver per
+// family. On Darwin it produced 1, so five tests failed there on a machine property rather than on a
+// defect:
+//
+//	not equal: expected: 2  actual: 1     (TestTwentyFourRecoveriesThroughTheWorker, macOS runner)
+//
+// proveStandardBindBranch takes the first settled reading, so the assertions below compare against what
+// this machine really produces, on the branch the fixture has already proved it is on. `bootstrapping`
+// marks the one reading that establishes it, which is also the reading that must not be compared against
+// itself; every later call asserts that the count it sees equals the established one, so a census that
+// later starts counting the wrong number of sockets still fails.
+const socketCountUnmeasured = -1
+
+var (
+	socketsPerStandardBind = socketCountUnmeasured
+	socketCountMu          sync.Mutex
+)
+
+// measuredSocketsPerStandardBind records `observed` as the count of receivers one standard bind holds on
+// this machine, and returns the established value.
+//
+// The count is taken as the HIGHEST reading rather than the first or the latest, because a standard bind
+// does not reach its full set of receivers atomically: `StdNetBind.Open` listens on udp4, listens on udp6
+// and only then starts one receiver per listener, so a reading taken while the bind is still coming up
+// can legitimately see fewer. MEASURED on the macOS runner - where the full set is 1 rather than 2, which
+// is the whole reason this is measured - the readings within one process were 1 and 2:
+//
+//	a settled standard bind must hold the same number of receivers every time on this machine;
+//	the first reading established 1 and this one saw 2
+//
+// Taking the maximum keeps the assertion that matters exact - a bind must not settle on MORE receivers
+// than a standard bind produces - while tolerating the transient smaller reading. A reading of 0 is
+// ignored rather than recorded, and the first NON-ZERO reading is still required, so a census that
+// counts nothing cannot establish itself as the expectation.
+func measuredSocketsPerStandardBind(t *testing.T, observed int) int {
+	t.Helper()
+	socketCountMu.Lock()
+	defer socketCountMu.Unlock()
+	if observed == 0 {
+		// Not yet a settled reading; do not let it define the expectation.
+		return socketsPerStandardBind
+	}
+	if observed > socketsPerStandardBind {
+		if socketsPerStandardBind == socketCountUnmeasured {
+			t.Logf("SOCKETS_PER_STANDARD_BIND=%d (established on this machine)", observed)
+		}
+		socketsPerStandardBind = observed
+	}
+	require.NotEqual(t, socketCountUnmeasured, socketsPerStandardBind,
+		"no settled reading was ever taken, so the assertions that compare against this would be vacuous")
+	return socketsPerStandardBind
+}
 
 // Close must release the socket even when a rebind's socket operation is in flight, and must not return
 // over an operation that is still running. The release below is what makes this a test of Close rather

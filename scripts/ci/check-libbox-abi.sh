@@ -78,13 +78,20 @@ PROJECT_GOMOBILE_VERSION="$(cd "$repo_root" && go list -m -f '{{.Version}}' gith
 # Apple:   Piggy-Cat-bit-shadow/sing-box-for-apple. The migration is carried as
 #          docs/fork/apple-stringbox-callsites.patch; see docs/fork/apple-client-fork.md.
 #
-# THE APPLE VALUE IS NO LONGER STALE. It is the revision the superproject gitlink pins
-# (`git ls-tree HEAD clients/apple`), and it is the fork head the v0.1.6 integration reports as
-# carrying the call-site migration, the BridgeServiceSession implementer and the screen-state
-# observer in one commit. This paragraph used to say the value was stale at 5911580a, which
-# carried none of the migration, and described the move that had to happen; that move has
-# happened, so the text is replaced rather than left to tell the next reader the opposite of what
-# the constant says.
+# THE APPLE VALUE IS THE PINNED REVISION. It is the revision the superproject gitlink pins
+# (`git ls-tree HEAD clients/apple`), and it carries the call-site migration, the
+# BridgeServiceSession implementer and the screen-state observer.
+#
+# It is also the revision at which the model changed. The parent used to build iOS from the
+# gitlink and macOS from a separate pinned commit, which made the PARENT decide UI ownership by
+# choosing a branch per platform. One tree now carries both products, and `SFIUIFamily.resolve`
+# chooses the presentation at runtime from the device idiom - so one commit serves both, and a
+# per-platform source is the defect rather than the contract. See the parent commit
+# "build(apple): one pinned source for iOS and macOS".
+#
+# That makes this constant and the gitlink the same fact recorded twice, in two files that one
+# commit has to move together. This layer is what says so when only one of them moves, which is
+# why it is worth keeping them adjacent in a reader's mind rather than merely equal.
 #
 # Naming a revision here is a statement about it, not a verification of it, and the report above
 # is not a substitute for layer 4. Layer 4 is the verification and it needs a client checkout to
@@ -93,7 +100,7 @@ PROJECT_GOMOBILE_VERSION="$(cd "$repo_root" && go list -m -f '{{.Version}}' gith
 # (this constant and the gitlink agree) and nothing more, and must not report layer 4 as passed
 # on that basis. See docs/fork/apple-artifact-verification.md §9.1.
 VERIFIED_ANDROID_SHA="ec61030d3df74f3e7c39ab848c8996008ecd386a"
-VERIFIED_APPLE_SHA="2b23330d489b9f6b45e98f903f458842e8961594"
+VERIFIED_APPLE_SHA="bb5309b4a6c5b06382e1277a6e7ac0fbeadc9a72"
 
 client_root=""
 skip_client=0

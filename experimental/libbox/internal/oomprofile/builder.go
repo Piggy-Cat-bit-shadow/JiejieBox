@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+// pidMapsPath is the process's own mapping table on Linux. Both halves of the Linux mapping
+// reader read it - mapping_linux.go through the private runtime/pprof parser and
+// mapping_linux_public.go through the public one - so the path lives here rather than in either
+// of them, where it would be undefined in the build that does not compile that file.
+const pidMapsPath = "/proc/self/maps"
+
 const (
 	tagProfile_SampleType        = 1
 	tagProfile_Sample            = 2

@@ -53,14 +53,18 @@ client="${APPLE_CLIENT_DIR:-clients/apple}"
 # The SOURCE is a parameter because there are two ways the framework reaches this point, and
 # they do not leave it in the same place:
 #
-#   * a local build writes it to the repository root, and
+#   * a local build leaves it where `build_libbox` writes it, `_libbox_build/Libbox.xcframework`,
+#     which is the default below, and
 #   * an artifact install (the publish path, APPLE_USE_PREBUILT_LIBBOX=1) unpacks it straight
-#     into the iOS client checkout and never touches the root.
+#     into the iOS client checkout, so that caller names the source explicitly.
 #
-# Hardcoding the root made the second case fail with "not built at the repository root" while
-# the framework was sitting in the iOS client, verified and ready to copy.
+# Hardcoding the repository root made the second case fail with "not built at the repository root"
+# while the framework was sitting in the iOS client, verified and ready to copy - and the root is
+# not where a local build lands either, so the default below is the build output path and nothing
+# else. `release-apple.sh` relies on that default when it copies the one built framework into the
+# macOS client.
 install_into() {
-  local dest_client="$1" source="${2:-Libbox.xcframework}"
+  local dest_client="$1" source="${2:-_libbox_build/Libbox.xcframework}"
   [ -d "$dest_client" ] || {
     echo "FAIL: $dest_client is missing; check the Apple client source out first." >&2
     exit 1
@@ -84,7 +88,7 @@ PY
 }
 
 if [ "$which" = "install" ]; then
-  install_into "${2:-$client}" "${3:-Libbox.xcframework}"
+  install_into "${2:-$client}" "${3:-}"
   echo "build-apple-libbox: PASS"
   exit 0
 fi
@@ -104,7 +108,18 @@ fi
 echo "building Libbox.xcframework for: $targets"
 echo "source commit: $(git rev-parse HEAD)"
 
-rm -rf Libbox.xcframework
+# Where `build_libbox` actually leaves the framework. It binds to an absolute path inside its own
+# isolated working directory (`_libbox_build`) precisely so gomobile's default, which is relative
+# to a working directory that is no longer the module root, cannot scatter the artifact. This
+# script used to look for the framework at the repository root, which is a path nothing writes any
+# more: the build succeeded, and then the check below reported "was not produced" and the install
+# step copied whatever stale directory happened to already be sitting there - or nothing at all.
+#
+# Only the local build path moved. The `install` action still takes an explicit source, because
+# the publish path (APPLE_USE_PREBUILT_LIBBOX=1) unpacks an artifact rather than building one.
+framework="_libbox_build/Libbox.xcframework"
+
+rm -rf "$framework"
 # Prefer the local module cache when it already holds everything.
 #
 # gomobile resolves dependencies with GOPROXY=off internally, and the outer `go run`
@@ -122,28 +137,28 @@ else
   go run ./cmd/internal/build_libbox -target apple -platform "$targets"
 fi
 
-if [ ! -d Libbox.xcframework ]; then
-  echo "FAIL: Libbox.xcframework was not produced" >&2
+if [ ! -d "$framework" ]; then
+  echo "FAIL: Libbox.xcframework was not produced at $framework" >&2
   exit 1
 fi
 
 # The slices the clients require must be present. Checked rather than assumed,
 # because a silently missing slice shows up much later as a confusing link error.
 for required in ios-arm64; do
-  if [ ! -d "Libbox.xcframework/$required" ]; then
+  if [ ! -d "$framework/$required" ]; then
     echo "FAIL: the xcframework has no $required slice" >&2
-    ls Libbox.xcframework >&2
+    ls "$framework" >&2
     exit 1
   fi
 done
 
-if [ "$which" != "ios" ] && [ ! -d "Libbox.xcframework/macos-arm64_x86_64" ] && [ ! -d "Libbox.xcframework/macos-arm64" ]; then
+if [ "$which" != "ios" ] && [ ! -d "$framework/macos-arm64_x86_64" ] && [ ! -d "$framework/macos-arm64" ]; then
   echo "FAIL: the xcframework has no macOS slice" >&2
-  ls Libbox.xcframework >&2
+  ls "$framework" >&2
   exit 1
 fi
 
 # Install into the client checkout, replacing whatever was there. This is the step that
 # guarantees the app links OUR libbox rather than a stale or upstream one.
-install_into "$client"
+install_into "$client" "$framework"
 echo "build-apple-libbox: PASS"

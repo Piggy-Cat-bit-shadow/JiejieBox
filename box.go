@@ -1424,6 +1424,27 @@ func (s *Box) LockStateChanged(locked bool) {
 	s.lifecycle().lockState(locked)
 }
 
+// ReconcileScreenState applies a CURRENT-STATE read of the Apple display fact.
+//
+// The sibling of ScreenStateChanged, and the difference between them is the whole of P1-C: that one
+// is an EDGE the platform witnessed and it starts a new reuse measurement, this one is a LEVEL a
+// re-read established and it may not move a measurement that is already running. A client takes a
+// current-state read at observer start and on every NetworkExtension resume, and the resume arrives
+// after the core has already been woken - so publishing an edge there destroys the measurement it
+// was taken to preserve. See box_lifecycle.go.
+func (s *Box) ReconcileScreenState(on bool) {
+	s.lifecycle().reconcileScreenState(on)
+}
+
+// ReconcileLockState applies a CURRENT-STATE read of the Apple lock fact.
+//
+// Locked reconciles the pause without touching the measurement's anchor; unlocked is refused, because
+// a re-read cannot establish that a person unlocked the device and releasing the level on one would
+// be the wake storm this axis exists to prevent. See box_lifecycle.go.
+func (s *Box) ReconcileLockState(locked bool) {
+	s.lifecycle().reconcileLockState(locked)
+}
+
 func (s *Box) LogFactory() log.Factory {
 	return s.logFactory
 }
