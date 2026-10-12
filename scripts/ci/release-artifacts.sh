@@ -903,6 +903,12 @@ $(printf '      %s\n' $actual)"
   # SHA256SUMS describes the bytes that are about to be published, and it names them the
   # way the release page does - bare filenames, no './' prefix, because that is the string
   # a downloader has. Sorted by filename so the file is stable across runs.
+  #
+  # `expected_binaries` is computed here rather than inline at the comparison: `[ ... -eq
+  # "${#arr[@]}" - 1 ]` is not valid - the arithmetic is not evaluated inside a test - and
+  # bash reports it as a syntax error on the `-` rather than as a failed comparison. It was
+  # found by the second runner run.
+  local expected_binaries=$(( ${#expected_assets[@]} - 1 ))
   (
     cd "$out"
     : > SHA256SUMS
@@ -938,8 +944,8 @@ $(printf '      %s\n' $listing)"
   # reach the release.
   local entries
   entries="$(grep -c . "$out/SHA256SUMS" | tr -d ' ')"
-  [ "$entries" -eq "${#expected_assets[@]}" - 1 ] || die \
-    "SHA256SUMS has $entries entries, expected $(( ${#expected_assets[@]} - 1 )) - one per public binary."
+  [ "$entries" -eq "$expected_binaries" ] || die \
+    "SHA256SUMS has $entries entries, expected $expected_binaries - one per public binary."
   check_sha256_file "$out" SHA256SUMS >/dev/null ||
     die "SHA256SUMS does not verify against the files it names"
 
