@@ -78,12 +78,12 @@ jobs:
           # and this suite's output is the only diagnosis there is - the job log is not
           # readable without a token.
           #
-          # stderr goes to the same place. A suite that dies on a syntax error or a bad
-          # substitution writes to stderr and prints no FAIL line at all, which is
-          # indistinguishable from "it failed for an unknown reason" in a summary - so the
-          # first lines of BOTH streams are echoed, and they are what the annotation carries.
+          # Traced with `bash -x`. A suite that dies silently between two cases leaves no
+          # message at all - no FAIL line, no shell error on stdout - and a trace is the only
+          # thing that says which command did it. The trace goes to its own file so the
+          # suite's own output stays readable, and only its tail is annotated.
           set +e
-          ./scripts/ci/test-release-artifacts.sh > verify-logs/release-gate.log 2>&1
+          bash -x ./scripts/ci/test-release-artifacts.sh > verify-logs/release-gate.log 2> verify-logs/release-gate.trace
           rc=$?
           set -e
           cat verify-logs/release-gate.log
@@ -115,10 +115,11 @@ jobs:
           set +o pipefail
           summary="$(grep -A1 -E '^FAIL ' "$log" | head -40 | tr '\n' '~' | cut -c1-3500)"
           if [ -z "$summary" ]; then
-            # A run that died before any case reported: the head shows how far it got and
-            # the tail shows what killed it, and a summary that carried only the head has
-            # already cost one run today.
-            summary="no FAIL line was printed. TAIL: $(tail -40 "$log" | tr '\n' '~' | cut -c1-2500) || HEAD: $(head -20 "$log" | tr '\n' '~' | cut -c1-900)"
+            # A run that died before any case reported. The trace names the command that did
+            # it, which the suite's own output cannot: an exit between two cases prints
+            # nothing at all.
+            trace=verify-logs/release-gate.trace
+            summary="no FAIL line was printed. TRACE TAIL: $(tail -25 "$trace" 2>/dev/null | tr '\n' '~' | cut -c1-3000)"
           fi
           set -o pipefail
           echo "::error title=release gate tests failed (exit $rc)::$summary"
