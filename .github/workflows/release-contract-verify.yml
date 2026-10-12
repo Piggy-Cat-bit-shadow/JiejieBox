@@ -85,6 +85,33 @@ jobs:
           echo "$rc" > verify-logs/release-gate.exit
           exit "$rc"
 
+      # A failing suite must say WHY in a place that can be read without credentials. The
+      # job log cannot (it needs a token), the artifact cannot (same), and the step name is
+      # limited to what the jobs API reports. A `::error::` annotation does not have that
+      # limitation: it is surfaced as a check-run annotation, which the public API exposes in
+      # full. So the failure reason is published deliberately, in one place, formatted to be
+      # read by a person or a script.
+      - name: publish the failure reason as an annotation
+        if: always()
+        run: |
+          set -uo pipefail
+          log=verify-logs/release-gate.log
+          [ -f "$log" ] || { echo "no suite output to summarise"; exit 0; }
+          rc="$(cat verify-logs/release-gate.exit 2>/dev/null || echo '?')"
+          if [ "$rc" = "0" ]; then
+            echo "the suite passed; nothing to annotate"
+            exit 0
+          fi
+          # The suite prints "FAIL  <case>  <detail>" and, for expect_ok, an indented reason
+          # on the following line. Both are carried, because the case name alone has twice
+          # been insufficient to diagnose this suite.
+          summary="$(grep -A1 -E '^FAIL ' "$log" | head -40 | tr '\n' '~' | cut -c1-3500)"
+          echo "::error title=release gate tests failed (exit $rc)::$summary"
+          # And a deterministic marker so a reader can find it without parsing prose.
+          echo "RELEASE_GATE_FAILURE_BEGIN"
+          grep -A1 -E '^FAIL ' "$log" | head -40
+          echo "RELEASE_GATE_FAILURE_END"
+
       - name: desktop overlay version single-source tests
         if: always()
         run: |
