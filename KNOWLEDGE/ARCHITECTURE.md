@@ -1,8 +1,112 @@
 # Architecture boundaries worth preserving
 
-- **ControlPath vs PhysicalPath:** groups/selectors decide a route; physical hops carry traffic. Start-time validation is read-only and consumer-first, and must not preview selection, dial, resolve DNS, or mutate group state.
-- **Network epoch:** routing, DNS and reuse react to one monotonic transition identity. Coordinator publication is not itself a rebuild; stale resources retire lazily when demanded.
-- **Platform boundary:** platform signals are facts delivered to core/libbox; Apple UI source is pinned independently as one source revision shared by iOS and macOS builds.
-- **Release boundary:** product CI produces and proves artifacts; release downloads and re-verifies those exact bytes rather than rebuilding them.
+Eleven boundaries. Each one is a place where a reasonable-looking change would be wrong, and each is
+stated with the module that carries the detail.
 
-See the module files for source anchors, provenance and acceptance limits.
+## 1. Ownership: a Scope owns reverse cleanup, and only `scope.Add` entries are ever torn down
+
+`adapter.Scope` is the only teardown path. `Scope.Close` **walks `scope.Add` entries and never calls a
+component's `Close()`** — so a type with a `Close` that is never handed to the Scope is a type whose
+teardown the product never runs. That was a real defect class (exactly two hits in the tree, both
+fixed). A cleanup registered after close returns runs **synchronously on the registering goroutine**,
+and `Close` does **not** wait for an in-flight `Start`.
+→ `core-lifecycle-runtime.md`
+
+## 2. One network generation, and a rebuild is a lease, not a flag
+
+`common/runtimecoord` publishes one monotonic epoch. "One logical recovery at a time" is a **lease
+identity** (`*RebindLease`), not a boolean, so a superseded lease cannot release a newer one. `Stale()`
+and `Acknowledge()` separate "the epoch moved" from "the resource is current". **Publication is not a
+rebuild**, and stale resources retire lazily when demanded.
+→ `core-lifecycle-runtime.md`
+
+## 3. Selection is a preview until it is committed
+
+The routing rules choose an outbound **root**; groups then select. A group **selects and then
+disappears** — it never wraps a connection, never sees a byte, and is **not a hop**. At run time the
+`commit` flag is this separation: a preview must not consume a rotation slot. Any diagnostic that
+reports a group as a hop, or reports the hop list backwards, describes a path the traffic does not
+take.
+→ `path-selection-validation.md`
+
+## 4. Start-time validation proves or refuses; it never exercises
+
+Validation runs **after** the dependency sort and **before** any component starts. It dials nothing,
+resolves nothing, changes no selection and consumes no rotation — provable from the object graph,
+which holds no dialer, no logger, no context and no clock. Where the leaf is not knowable it reports
+`Unknown` and stops, so a partly-verified path cannot be mistaken for a verified one.
+
+**Two documented side effects exist** (a deprecation log and a memoised tag→object resolution). The
+prohibition is on dialling, resolving, selecting and mutating — not on logging.
+→ `path-selection-validation.md`
+
+## 5. Platform facts are inputs; the core decides policy
+
+A client reports the number its OS gave it (memory level, screen on/off, lock state, device wake).
+The **core** owns the trim ladder, the coalescing windows, the sleep/wake edges and the reuse policy.
+Level, edge and snapshot are three different things: a current-state re-read **reconciles the level**
+and must never fabricate an edge.
+→ `power-mobile-lifecycle.md`
+
+## 6. Sniff metadata informs planning; it does not rewrite the destination
+
+A sniffed domain becomes DNS planning and dial candidates. `Destination` is **not** rewritten — the
+only rewrite is the explicit, deprecated `override_destination` action. And "`metadata.Domain` is set"
+does **not** mean "a sniffer set it": FakeIP reverse mapping sets it too.
+→ `sniff.md`
+
+## 7. Buffer ownership is a correctness contract, not an optimisation surface
+
+Borrowed cursors must not outlive their call; the QUIC working copy is deliberately unpooled; a batch
+send is all-or-nothing; ownership transfers on the owned-datagram path; a context-ID substitution
+**releases the original** and must refuse the batch. Each rule exists because violating it produced a
+real bug — including one where every packet in a refused batch was silently dropped.
+→ `buffer-ownership.md`
+
+## 8. MTU is three quantities, not one
+
+Outer link MTU, outer QUIC packet size and inner tunnel MTU are computed, bounded and proven
+separately. The outer QUIC packet is capped by a **proven detour capacity**, not by a constant.
+→ `mtu-and-geometry.md`
+
+## 9. The upload scheduler is opt-in and inert when unset
+
+`traffic_scheduler` and `traffic_class` are fork-only keys. Absent a rate, the gate observes every
+managed byte, admits all of them, and starts **no queue, no lock and no timer** — which is what keeps
+an unshaped configuration loadable by official sing-box and byte-identical in behaviour. When a rate is
+configured, shaping runs **continuously**, not only under contention.
+→ `data-path-optimization.md`
+
+## 10. Direct Offload is semantic equivalence, and its data-plane effect is Linux-only
+
+A dial option disqualifies a flow only if the userspace path would actually apply it **to that flow**.
+New `DialerOptions` fields must not be able to make a bypass *safe* by default: an unclassified option
+refuses. And the verdict is a real bypass **only** in Linux `auto_redirect` — no TUN stack honours it.
+→ `data-path-optimization.md`
+
+## 11. Release provenance is download-and-re-verify, and it is scoped
+
+Release **downloads** the artifacts a product workflow produced for the exact commit and re-verifies
+per-platform bytes, hashes and recorded commit — it does not rebuild. That is true for the platforms
+the plan step selects, and it depends on 4–5 workflows having been dispatched by hand first. **No
+workflow-run record exists in the repository**, so no claim here is `VERIFIED_CI`.
+→ `ci-release.md`
+
+---
+
+## The module map
+
+`modules/README.md` maps a task to the module to read. Load only what your task touches.
+
+## Two standing conventions
+
+These are **conventions**, not invariants — they are mature practice here, and a future change may
+reasonably depart from them with a stated reason:
+
+1. **Keep source and its test artifact in the same change.** The fork's own history shows what happens
+   without it: a goroutine-census test that could not fail, a TUN test that called `inbound.Close()`
+   directly (which the product never does) and stayed green while the product leaked, and a splice test
+   that asserted the success path only.
+2. **Prefer a behavioural assertion to a source-text guard.** A grep for a string in a dependency fails
+   when the line moves and passes when the meaning changes — the wrong way round.
+   `docs/UPSTREAM-SYNC.md:89-94` states this and names where it was not possible.

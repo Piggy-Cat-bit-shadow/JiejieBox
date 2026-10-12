@@ -1,8 +1,53 @@
 # AI entry point
 
-1. Read `KNOWLEDGE/README.md` first.
-2. Record its Knowledge Baseline SHA. Do **not** assume the knowledge base describes `HEAD`.
-3. Inspect `baseline..HEAD` with `git log` and `git diff --stat`; map changed paths to the listed modules.
-4. Deep-read only changed modules and their cited source/tests. Reuse unchanged knowledge.
-5. Source and Git are facts; this knowledge base preserves costly-to-reconstruct context, not implementation detail.
-6. Normal development must not refresh this knowledge base. Refresh it only as an explicit Knowledge Refresh, then repin the baseline.
+## Read this in order
+
+1. **`KNOWLEDGE/README.md`** — the baseline, the reading order, the status labels.
+2. **`KNOWLEDGE/BASELINE.md`** — the exact SHA this knowledge describes, and how to compute the delta
+   since. **Do not assume the knowledge base describes `HEAD`.**
+3. **`KNOWLEDGE/modules/README.md`** — the task → module map. Then read **only** the one or two modules
+   your task touches.
+
+For a load-bearing change, also read `KNOWLEDGE/INVARIANTS.md` (is this rule an invariant or a
+convention?) and the relevant rows of `KNOWLEDGE/ACCEPTANCE.md` (how do I re-check it?).
+
+## The three things that most often go wrong here
+
+1. **Provenance.** This fork's history contains **pre-rewrite upstream orphans**. Verify any SHA with
+   `git rev-list --count <sha> --not --remotes=upstream` — **≥1 = fork-side, 0 = upstream-side** (read
+   the direction carefully; `--remotes=origin` is the fork and will mislead you). Never use
+   `git describe` for provenance: it reports `v1.14.3-38-ge4b7e692f` for a commit that does not carry
+   that tag. Never count upstream work by SHA — one logical upstream change appears up to **11 times**
+   in the range. See `BASELINE.md` §provenance.
+2. **Evidence.** A CI job declaration is not evidence that the job ran; a unit test is not interop; a
+   static audit is not device behaviour; one platform's PASS is not all-platform PASS; `SKIP` is not
+   `PASS`. **No claim in `KNOWLEDGE/` is `VERIFIED_CI`** — no workflow-run record exists in the tree.
+   And `verify-evidence/**` is stale by its own written rule: do not cite it for the baseline.
+3. **Tags.** `release/DEFAULT_BUILD_TAGS` is the **Darwin** profile despite the name and cannot build
+   on Windows. Use `DEFAULT_BUILD_TAGS_OTHERS` for anything general — including running the root
+   package's tests, which otherwise fail on tag absence and look broken.
+
+## Working rules
+
+1. **Source and Git are facts.** `KNOWLEDGE/` preserves context that is expensive to reconstruct. When
+   they conflict, the source wins, and the conflict is a defect to record — not to reconcile silently.
+2. **Read the module's `AI cautions` before you edit.** Each one is a "reasonable but wrong" change
+   that this codebase has already paid for.
+3. **Read the module's `Provenance` table before you "fix" something.** Several current behaviours are
+   the *second* or *fifth* attempt; the earlier ones are documented precisely so they are not repeated.
+4. **Inspect `production-baseline..HEAD` before assuming a module is current:**
+
+   ```sh
+   git log --oneline v0.1.6..HEAD
+   git diff --name-only v0.1.6..HEAD
+   ```
+
+   If that is empty or documentation-only, the modules still describe the tree. If not, map the changed
+   paths with `modules/README.md` and read only those modules.
+5. **Do not refresh the knowledge base as part of normal development.** A refresh is an explicit
+   maintenance operation: re-audit source, Git, tests and CI, update module provenance, then move the
+   baseline. A development commit needs no documentation edit.
+6. **Do not cite a finding from `KNOWLEDGE/` as if it were a fresh measurement.** Every claim carries
+   its evidence level. If you need a higher level, run the re-check command the module gives you.
+7. **Anything you cannot run is `BLOCKED_BY_ENVIRONMENT`, not `PASS`.** Say which command you could not
+   run and what it would have proved.

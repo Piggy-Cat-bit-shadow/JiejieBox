@@ -1,0 +1,336 @@
+# Build, pruning and release profiles
+
+**Scope:** `include/*` (the registry and the tag-polar pruning pairs), `release/*` (profiles, version,
+pins), `cmd/internal/*` (builders and generators), `Makefile`, `.gitmodules`.
+
+**Load this module when changing** a build tag, the protocol registry, a release profile, a generator,
+or a dependency pin.
+
+---
+
+## 1. The registry is an explicit constructor — not `init()`-based
+
+`include/registry.go` has **no global map and no `init()` registration**. `Context(ctx)` (`:50`)
+installs six registries, each an explicit sequence of `Register*` calls:
+
+| Registry | Built by | Representative entries |
+|---|---|---|
+| Inbound | `InboundRegistry()` `:54` | `:57 tun.RegisterInbound`, `:70 naive.RegisterInbound` |
+| Outbound | `OutboundRegistry()` `:83` | `:91-93 group.Register{Selector,URLTest,LoadBalance}`, `:101 registerNaiveOutbound` |
+| Endpoint | `EndpointRegistry()` `:115` | `:121 masque.RegisterEndpoint` |
+| DNS transport | `DNSTransportRegistry()` `:127` | `:130-139` |
+| Service | `ServiceRegistry()` `:150` | `:153-162` |
+| Certificate provider | `CertificateProviderRegistry()` `:167` | — |
+
+**Consequence for a future AI:** registering a protocol is **not** a one-file change. `docs/BUILD-PROFILES.md:50-52` claims *"no fork-side list to update, and no CI step that has to be told about it"* — **the inheritance is automatic, the coverage is not.** Nine places must be updated:
+
+| # | Where | What |
+|---|---|---|
+| ① | `include/registry.go` | the right positional block, **plus** a tagged file **and** its matching stub if the capability is optional |
+| ② | `constant/` | the type string |
+| ③ | `option/` | the option struct |
+| ④ | `.github/workflows/server-linux-amd64.yml:469-509` | **30 hard-coded required import paths** |
+| ⑤ | `scripts/ci/verify-full-capabilities.sh:105-243` | **~55 capability cases** |
+| ⑥ | `cmd/internal/build_libbox/tag_golden_test.go:43-99` | frozen resolved-tag strings for **8 platforms** |
+| ⑦ | `cmd/internal/modlayout/layout.go:54-74` | `SourceRoots`, for a new top-level directory |
+| ⑧ | `cmd/internal/{mobilebuildtags,applebuildtags}` + the profile files | if it is tag-gated |
+| ⑨ | `include/registry.go:177/183` | a **removal** goes in the tombstone list, not a deletion |
+
+`include/registry.go:75,108,141,157` calls the registry symbols **unconditionally**, which is the
+structural reason both polarities must define them.
+
+### The deliberate tombstones
+
+`include/registry.go:177-190`, called at `:78` and `:110` **last**, so nothing shadows them:
+
+| Tombstone | Message | Origin |
+|---|---|---|
+| ShadowsocksR (inbound + outbound) | *"deprecated and removed in sing-box 1.6.0"* | upstream |
+| `C.TypeWireGuard` + `option.StubOptions` | *"WireGuard outbound is deprecated in sing-box 1.11.0 and removed in sing-box 1.13.0, use WireGuard endpoint instead"* | **fork-added** (absent at `e4b7e692`) |
+
+They are **not dead code**. Removing them regresses a configuration that names `type: shadowsocksr` or
+an outbound `wireguard` from a named, actionable error to the generic `unknown outbound type`.
+
+> **Nothing guards them: there are zero `include/*_test.go` files.**
+
+### Why a failing *stub* and not an absent symbol
+
+For `quic_stub.go` specifically, there are three reasons, and they generalise:
+
+1. **Absent symbols do not prune a capability — they fail to compile the module.** The call sites are
+   unconditional and `include` is imported by every product entry point.
+2. **The stub registers the option *type* with a failing constructor**, so the configuration still
+   **decodes** and fails with an actionable hint instead of `unknown inbound type`:
+   `quic_stub.go:38-41` registers `option.HysteriaInboundOptions` returning `C.ErrQUICNotIncluded`,
+   whose text is *"QUIC is not included in this build, rebuild with -tags with_quic"*
+   (`constant/err.go:7`).
+3. **Two of the prunes are package-level hooks, not registry entries** —
+   `quic_stub.go:27-36` installs a failing `v2ray.RegisterQUICConstructor`, and `:48-50` assigns
+   `naive.ConfigureHTTP3ListenerFunc`, which `protocol/naive/inbound.go:226` calls behind the presence
+   check at `:213`.
+
+---
+
+## 2. The pruning mechanism: tag-polar file pairs with `_stub` twins
+
+`include/` holds 34 files. Each optional capability is a pair (`X.go` under a positive tag,
+`X_stub.go` under its negation) or, for `with_xhttp`, a positive file with no stub.
+
+| Feature tag | On file | Off file |
+|---|---|---|
+| `with_acme` | `acme.go:1` | `acme_stub.go:1` (`!with_acme`) |
+| `with_ccm && (!darwin \|\| cgo)` | `ccm.go:1` | `ccm_stub.go:1` + `ccm_stub_darwin.go:1` (`with_ccm && darwin && !cgo`) |
+| `with_clash_api` | `clashapi.go:1` | `clashapi_stub.go:1` |
+| `with_cloudflared` | `cloudflared.go:1` | `cloudflared_stub.go:1` |
+| `with_dhcp` | `dhcp.go:1` | `dhcp_stub.go:1` |
+| `with_naive_outbound` | `naive_outbound.go:1` | `naive_outbound_stub.go:1` |
+| `with_ocm` | `ocm.go:1` | `ocm_stub.go:1` |
+| `with_openconnect` | `openconnect.go:1` | `openconnect_stub.go:1` |
+| `with_openvpn` | `openvpn.go:1` | `openvpn_stub.go:1` |
+| `with_quic` | `quic.go:1` | `quic_stub.go:1` |
+| `with_tailscale` | `tailscale.go:1` | `tailscale_stub.go:1` |
+| `with_usbip && (linux \|\| (darwin && cgo) \|\| windows)` | `usbip.go:1` | `usbip_stub.go:1` |
+| `with_v2ray_api` | `v2rayapi.go:1` | `v2rayapi_stub.go:1` |
+| `with_wireguard` | `wireguard.go:1` | `wireguard_stub.go:1` |
+| `with_xhttp` | `v2rayxhttp.go:1` | *(no stub — the symbol is simply absent)* |
+
+Three files carry no build tag and are always compiled: `include/oom_killer.go`, `include/registry.go`,
+`include/tz_ios.go`. `include/tz_android.go` is a vendored Go stdlib file with the Go copyright header.
+
+### The polarity rule that matters — `quic_stub.go`
+
+`include/quic_stub.go:48` installs a `naive.ConfigureHTTP3ListenerFunc` that **fails**, rather than
+leaving the field nil. That is exactly what lets `protocol/naive/inbound.go:316 decideHTTP3Availability`
+distinguish **"constructor absent"** from **"constructor present but H3 is broken"**, and therefore
+choose fatal vs non-fatal for a missing optional transport.
+
+> **A stub that leaves a field nil makes two different states indistinguishable.** When you add a
+> tag-polar pair around a capability that has a *runtime* availability question, install a failing
+> stub, not nothing.
+
+### The one entry deliberately missing from the profile tag files
+
+`tfogo_checklinkname0` is absent from `DEFAULT_BUILD_TAGS*` even though both products do pass
+`-checklinkname=0`. The reason is structural: those files are also read by `go build ./...` and
+`go test ./...` under those tags, where `cmd/go` cannot apply `-ldflags` to one package — and with the
+tag set, `experimental/libbox`'s `//go:linkname` pulls of runtime internals stop linking. **The tag
+travels with the flag instead:** `cmd/internal/mobilebuildtags` for the libbox artifacts and
+`cmd/internal/build_boxdd` for the daemon. `TestProfileTagFilesDoNotClaimChecklinkname0` requires the
+profile tag files to **stop** claiming it.
+
+---
+
+## 3. Release profiles
+
+```text
+release/DEFAULT_BUILD_TAGS         the DARWIN profile
+release/DEFAULT_BUILD_TAGS_OTHERS  the same, MINUS with_naive_outbound
+release/DEFAULT_BUILD_TAGS_WINDOWS the same as DEFAULT, PLUS with_purego
+release/LDFLAGS                    -X runtime.godebugDefault=multipathtcp=0,tlssha1=1 -checklinkname=0
+release/JIEJIE_VERSION             0.1.6
+```
+
+Common contents: `with_quic, with_dhcp, with_wireguard, with_utls, with_acme, with_clash_api,
+with_tailscale, with_ccm, with_ocm, with_cloudflared, with_usbip, with_openvpn, with_openconnect,
+with_xhttp, badlinkname`.
+
+> **The two shipped profiles differ in exactly one entry: `with_naive_outbound`.**
+> `docs/BUILD-PROFILES.md:43-44` says the *client* profile "adds `with_utls`" — **that is false**;
+> `with_utls` is in both files.
+
+> **`DEFAULT_BUILD_TAGS` is the Darwin profile despite the name, and it cannot build on Windows** —
+> `with_naive_outbound` pulls `github.com/sagernet/cronet-go/all`, whose files are all excluded by
+> build constraints outside Apple. `verify.yml:214-215` says so in-tree. Use
+> `DEFAULT_BUILD_TAGS_OTHERS` for anything general, including running the root package's tests.
+
+### A stale comment that claims a shipped capability was deleted
+
+`scripts/ci/build-macos-client.sh:19-22` says:
+
+> *"The single deviation from upstream's tag file is the removal of `with_clash_api`, which no longer
+> names any file: the Clash API was deleted from this fork as a control-plane decision."*
+
+**All three clauses are false at the release baseline.** The script reads
+`release/DEFAULT_BUILD_TAGS` verbatim (`:44`, `:49`) and `with_clash_api` **is** in that file;
+`include/clashapi.go:1` and `include/clashapi_stub.go:1` are tag-polar files that name it; and
+`server-linux-amd64.yml:350-449` probes the Clash API live.
+
+The identical claim in `build-server.sh:16-29` was **explicitly retracted in place** with a
+four-bullet refutation; the macOS half of the same change was never corrected. **This is the most
+dangerous stale comment in the subsystem, because it tells a reader that a shipped capability is
+gone.**
+
+The Clash API's real history is a removal followed by a **restore**: `bbfc31582` (−1908 lines) →
+`968395304` (+2254 lines) → `76cd68eaf`, `332e20194`. It is present, and `with_clash_api` is in every
+profile.
+
+Both tag files' contents are **upstream's**, not fork-invented; the fork's additions are the
+`badlinkname` handling, `JIEJIE_VERSION`, and the Apple pin metadata.
+
+### The capability boundary is upstream's
+
+**Both products carry the complete upstream registry** — no fork-specific registry and no capability
+allowlist. The practical difference between the two profiles is upstream's own tag difference:
+
+* the **server** profile omits `with_naive_outbound` because the Cronet outbound is a client
+  capability. **The Naive inbound is present in both** — the production configuration declares one.
+* the **client** profile adds `with_naive_outbound` and `with_utls`. It does **not** add `with_gvisor`:
+  upstream retired that tag when it moved to the in-process Go TUN stack.
+  `scripts/ci/build-macos-client.sh` asserts this **in both directions** — required tags present,
+  retired tags not reappearing.
+
+`with_clash_api` is enabled in both profiles. The Clash API and the Native `api` service are two
+management surfaces over **one** instance: they share the traffic manager and the routing-mode manager,
+so a mode set through the Native API's `SetClashMode` is the mode the Clash API reports.
+
+### The registry is upstream's, so inheritance is automatic
+
+A protocol, endpoint, DNS transport, service or certificate provider that upstream adds is inherited
+without a fork-side list to update and without a CI step to be told about it. `verify-full-capabilities.sh`
+resolves a minimal valid configuration for every major protocol, DNS transport, endpoint and service
+**through the shipped binary's own registry** — replacing an earlier capability audit whose contract was
+the opposite one (proving capabilities were *absent*).
+
+### A trap in the version string
+
+`cmd/internal/build_shared.ReadTag()`'s `currentTagRev[1:]` mis-slices a tag that does not start with
+`v`: `tooling-v0.1.5` becomes `ooling-v0.1.5`, and the version string degrades to `0.0.0-v0.1-<sha>`.
+**`0.0.0-v0.1-<sha>` means "built from that sha", not "a wrong Core is installed".**
+`ReadTag()` reads `SING_BOX_BUILD_VERSION` first.
+
+---
+
+## 4. Generators and builders — `cmd/internal/*`
+
+| Kind | Entries |
+|---|---|
+| **Generators that write into the tree** | `format_docs`, `protogen` (regenerates `*.pb.go`), `update_android_version`, `update_apple_version`, `update_desktop_version`, `update_certificates`, `read_tag`, `schema` (via `schema/generate.go`) |
+| **Build drivers** | `build`, `build_boxdd`, `build_libbox`, `merge_aar`, `merge_apple_xcframework`, `app_store_connect` |
+| **Tag definitions — shared source of truth, NO `main.go`** | `applebuildtags`, `mobilebuildtags`, `modlayout`, `build_shared` |
+
+`appletags` **does** have a `main.go`, and its doc comment states why: the low-memory CI gate and the
+memory benchmark previously read `DEFAULT_BUILD_TAGS_OTHERS`, which *"does not match what libbox
+builds"*, so those checks *"were testing a configuration no Apple binary ships"*. The geometry tag is
+now read from one place: `go run ./cmd/internal/appletags -mobile-only`.
+
+`applebuildtags/tags.go:177` keeps an unused `bindTarget` parameter "for signature stability".
+
+`cmd/internal/build_libbox/main.go:145-146,303` emits a capability manifest so CI can assert
+"capability implies matching tag"; `TestNoShippedVariantShipsGVisor` refuses a gVisor-carrying variant.
+
+**Regeneration commands:** `Makefile:57 proto` (daemon protobuf) and `Makefile:35 schema`
+(`docs/schema.json`). `//go:generate` directives are rare — only five across the tree, of which the
+material one is `constant/goos/goos.go:12` (`go run gengoos.go` → `constant/goos/zgoos_*.go`, 20 files).
+
+`build_libbox` must set `Dir` explicitly: `gomobile` writes relative to the process CWD with **no flag
+and no environment override** (`gomobile@v0.1.12 cmd/gomobile/bind_iosapp.go:106`,
+`bind_androidapp.go:373`).
+
+---
+
+## 5. The pinned dependency tree — a prefix problem, not a list problem
+
+`.gitmodules` declares three submodules:
+
+| Path | Repository |
+|---|---|
+| `clients/apple` | `Piggy-Cat-bit-shadow/sing-box-for-apple` |
+| `clients/android` | `Piggy-Cat-bit-shadow/sing-box-for-android` |
+| `clients/desktop` | **`SagerNet/sing-box-for-desktop`** (upstream's) |
+
+Their gitlinks at `a267e99`: apple `d0524912…`, android `ec61030d…`, desktop `32f915ba…`. Their
+contents are **not** in a clean worktree, which is why `Makefile:94` shells into
+`../sing-box-for-android` and the Android client is not buildable from this worktree.
+
+**`cronet-go` is a tree of modules, not one module.** A `replace` directive rewrites **one module
+path**, so pinning the root leaves every nested module — `/all` and 30 per-platform `lib/<os>_<arch>`
+paths — resolving to upstream: a pairing nothing built or tested, and on linux/amd64 one that does not
+link. `scripts/ci/check-go-module-integrity.sh`'s parity rule is therefore a **PREFIX rule** derived
+from the root `go.mod` rather than from a static list, so a new platform path demands a pin instead of
+being missed. `REQUIRED_FORK_REPLACES` (`:105-115`) demands four: `sing`, `sing-tun`, `quic-go`,
+`sing-quic`.
+
+> **`docs/FORK-DIFF.md:26` lists only three pinned dependencies while the guard demands four.** The
+> guard is authoritative; the document is a summary.
+
+The same script's history is worth knowing: `check-go-module-integrity.sh:60-66` documents that the
+`test` module once silently linked **upstream sing-tun**, and *"the old code could not fail on it, by
+construction"*. **There are three Go modules in this repository** — the root, `test/`, and
+`test/jiejie/reference/` — and `go test ./...` from the root covers only the first.
+
+`sing-anytls`, `tailscale`, `sing-cloudflared` and `sing-tun` resolve to **upstream's own pins**, not
+fork pins. `gVisor` remains in `go.mod` as `// indirect` at the release baseline, and
+`protocol/tun/inbound.go`, `cmd/internal/build_libbox` and `route/dns.go` still reference it under build
+tags.
+
+> **"gVisor retired" means the Go TUN stack is the default and forced-gVisor Android was removed — NOT
+> that gVisor left the module graph.** The old `replace` is a comment **on purpose**
+> (`go.mod:337-356`).
+
+---
+
+## 6. Packaging surfaces
+
+`Dockerfile`, `Dockerfile.binary`, `.fpm_systemd`, `.fpm_openwrt`, `.fpm_pacman`,
+`.github/build_{alpine_apk,openwrt_apk}.sh`, `.github/deb2ipk.sh`, `.github/detect_track.sh`.
+
+Two Windows workflows exist at the release baseline and they are **different products**:
+`windows-core-amd64.yml` ("Windows amd64 core") builds `sing-box.exe` for an external loader, while
+`client-desktop-windows.yml` ("Windows desktop installer") builds and signs the NSIS installer with a
+daemon SCM service lifecycle. The desktop baseline was **restored verbatim** at `61975ca3`
+("restore(windows): recover the retired desktop installer baseline verbatim", 2026-10-10). **Do not
+describe the fork as "core-only, not the desktop installer" without naming which workflow you mean.**
+
+Windows signing is a **hard install gate**: `WinVerifyTrustEx` plus `secureWindowsInstallation` refuses
+service registration on a mismatch. Exactly **two** i386 PE exceptions are allowed
+(`Jijiebox-v*-windows-x64.exe`, `resources/elevate.exe`).
+
+---
+
+## 7. Evidence, provenance, cautions
+
+### Evidence
+
+| Guarantee | Level | Re-check |
+|---|---|---|
+| `go build ./...` untagged | **`VERIFIED_UNIT`** (run here) | `go build ./...` |
+| `go build -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" ./...` | **`VERIFIED_UNIT`** (run here) | as written |
+| `go build -tags "$(cat release/DEFAULT_BUILD_TAGS)" ./...` | **`VERIFIED_UNIT` that it FAILS on Windows** | as written — expect the cronet build-constraint error |
+| Tag composition and the linkname contract | `VERIFIED_UNIT` | `go test -count=1 ./cmd/internal/...` |
+| Nested modules resolve the same pins | **declaration only** — `check-go-module-integrity.sh --require-checked test` needs bash | that script |
+| `verify-full-capabilities.sh` passes for a shipped binary | **declaration only** | needs a built artifact + bash |
+| Reproducibility (build twice, compare sha256) | **declaration only**, and only under `deep_checks` on a Linux runner | `server-linux-amd64.yml` deep path |
+| Anything about a Windows/Android/Apple artifact | **declaration only** — no `.ps1` or artifact output is archived in the tree | the respective dispatch-only workflow |
+
+### Provenance
+
+`badlinkname`, `with_xhttp`, `with_purego`, `tfogo_checklinkname0` handling and the profile files are
+upstream's structure; the fork's additions are `JIEJIE_VERSION`, `apple-client-refs.env`,
+`jiejie-production-topology.json` (a full production config fixture: six inbounds — `masque-h2`,
+`masque-h3`, `anytls`, `naive`, `shadowtls`, `ss2022` — and eight route rules), `cronet-provenance.txt`
+(five `libcronet.a` archives by size and sha256), and the reachability/idempotence work in
+`check-go-module-integrity.sh`.
+
+A **retired branch line** worth knowing: an earlier "pruning architecture" with a fork-specific
+registry and a capability allowlist was retired by `3bab501db`, `dcd8b10cd`, `4c39a835b`, `b175f04dd`
+and `523db47e4`. **No fork-specific registry or capability allowlist remains** — do not resurrect the
+idea from an older document.
+
+### AI cautions
+
+1. **Do not add a protocol by editing a map.** There is no map; edit the registry function.
+2. **Do not remove the registry tombstones.** They carry a specific deprecation message.
+3. **Do not make a stub leave a capability nil where "absent" and "broken" must differ.**
+4. **Do not put `tfogo_checklinkname0` back into the profile tag files.** It broke bare `go build`.
+5. **Do not build or test with `DEFAULT_BUILD_TAGS` outside Apple.**
+6. **Do not assume `DEFAULT_BUILD_TAGS` is the general default** despite its name.
+7. **Do not add `with_gvisor`.** It is retired and the build script asserts its absence.
+8. **Do not pin one `cronet-go` module path and call it pinned.** It is a prefix tree.
+9. **Do not trust a summary list of pinned dependencies over `check-go-module-integrity.sh`'s
+   `REQUIRED_FORK_REPLACES`.**
+10. **Do not forget there are three Go modules.** `go test ./...` from the root covers one.
+11. **Do not write a build script that relies on the process CWD for `gomobile` output.**
+12. **Do not read `0.0.0-v0.1-<sha>` as a wrong version.** It means "built from that sha".
+13. **Do not merge the two Windows products in your description.**
+14. **Do not diagnose the Windows desktop installer as a file drop yet.** The current installer
+    work lives on a separate branch; at the release baseline, verify before using any diff.

@@ -1,13 +1,205 @@
-# Acceptance evidence
+# Acceptance index
 
-| Area | Evidence that is VERIFIED | Not established |
+Every row is a **requirement**, the evidence that exists for it, its **evidence level**, and a
+**command that re-checks it**. A row with no command is not verified; the honest entry is
+`UNVERIFIED`, and several rows below are exactly that.
+
+## How to read this file
+
+* Run everything from the repository root with the environment in `ci-release.md` §4.
+* `$OTHERS` = the contents of `release/DEFAULT_BUILD_TAGS_OTHERS`. **Most commands need it**, and the
+  root package's tests fail without it.
+* `BLOCKED_BY_ENVIRONMENT` means *this repository has no environment in which the check has been run* —
+  it is not a defect and not a pass.
+* **No row is `VERIFIED_CI`.** No workflow-run record, run ID or artifact digest is stored in the tree.
+
+---
+
+## 1. Core lifecycle and runtime coordination
+
+| # | Requirement | Evidence | Level | Re-check | Environment |
+|---|---|---|---|---|---|
+| 1.1 | A cleanup registered on a closing Scope runs synchronously on the registering goroutine and is never dropped | `adapter/lifecycle.go:112-138`; `adapter/lifecycle*_test.go` | VERIFIED_UNIT + VERIFIED_SOURCE | `go test -count=1 ./adapter/...` | Go |
+| 1.2 | `Scope.Close` does not wait for an in-flight `Start`, and does not fold in a late cleanup error | `adapter/lifecycle_close_boundary_test.go` (4 named tests) | VERIFIED_UNIT | `go test -count=1 -run 'TestScopeClose' ./adapter/` | Go |
+| 1.3 | Epoch is monotone; a superseded lease cannot complete or release a newer one | `common/runtimecoord/coordinator.go:80-104`, `:282-310`; `coordinator_test.go`, `lease_test.go` | VERIFIED_UNIT | `go test -count=1 ./common/runtimecoord/...` | Go |
+| 1.4 | The retirement walk reaches all four pools (outbounds, endpoints, DNS transports, HTTP client manager) | `route/reference.go:440-494`; `route/reference_coverage_stress_test.go` | VERIFIED_UNIT | `go test -count=1 ./route/...` | Go |
+| 1.5 | Exactly one `ReuseSuspect` pool exists | `route/reusable_owner_inventory_test.go:49,96,117` | VERIFIED_UNIT | `go test -count=1 -run TestReusableOwnerInventory ./route/` | Go |
+| 1.6 | Start/close ordering (`EstablishInitialNetworkEnvironment` last; governor before scope) | `box.go:1166-1168`, `:1210-1224`; `box_close_test.go` | VERIFIED_SOURCE + VERIFIED_UNIT | `go test -count=1 -tags "$OTHERS" -run TestClose .` | Go + tags |
+| 1.7 | 100 sleep/wake cycles and 100 network transitions leak no goroutines; no resurrection after `Close` | `box_lifecycle_stress_test.go` | VERIFIED_UNIT (no `-race`) | `go test -count=1 -tags "$OTHERS" -v -run 'TestOneHundred\|TestNoResurrectionAfterClose' .` | Go + tags |
+| 1.8 | Race-freedom of this subsystem | CI step `verify.yml:310` exists; **no run record in the tree** | **BLOCKED_BY_ENVIRONMENT** (`-race` needs cgo; no C compiler here) | `go test -race -count=1 ./adapter/... ./route/...` on Linux/macOS | cgo |
+
+## 2. Path selection and start-time validation
+
+| # | Requirement | Evidence | Level | Re-check | Environment |
+|---|---|---|---|---|---|
+| 2.1 | Validation dials nothing, resolves nothing, changes no selection, consumes no rotation | `manager.go:235-237`; `manager_physicalpath_test.go:357-373` asserts committed == 0 **and** previewed == 0; `TestBuildNeverCallsADialingMethod` | VERIFIED_UNIT (+ mutation controls) | `go test -count=1 ./common/physicalpath/... ./adapter/outbound/...` | Go |
+| 2.2 | `Hops` is packet order (device-nearest first) and `ControlPath` is descent order, not reversed | `physicalpath.go:564-600`; `physicalpath_test.go:462-482` | VERIFIED_UNIT | `go test -count=1 -run TestControlPathIsShorterThanThePhysicalPath ./common/physicalpath/` | Go |
+| 2.3 | A control group is never a physical hop, over the **real** groups | `route/physicalpath_route_test.go` | VERIFIED_UNIT | `go test -count=1 -run TestControlGroupIsNotAPhysicalHop ./route/` | Go |
+| 2.4 | The validator does not over-refuse: 11 configurations each accepted with a refused twin | `box_static_validation_false_deny_test.go` (`TestFalseDenyMatrix`) | VERIFIED_UNIT | `go test -count=1 -tags "$OTHERS" -v -run TestFalseDenyMatrix .` | Go + tags |
+| 2.5 | Consumer demand is provable-only; the default resolver is a graph edge | `box_static_validation_true_final_test.go` | VERIFIED_UNIT | `go test -count=1 -tags "$OTHERS" -v -run 'TestConsumerDemandContractIsProvableOnly\|TestTheDefaultDomainResolverIsAGraphEdge' .` | Go + tags |
+| 2.6 | A cross-kind cycle (outbound ↔ DNS transport) is refused at start | `box_cross_kind_cycle_test.go`; `box_static_validation_final_wire_test.go` | VERIFIED_UNIT | `go test -count=1 -tags "$OTHERS" -v -run TestCrossKind .` | Go + tags |
+| 2.7 | `common/routeflow` demand semantics | **no test files in the package**; `common/routeflow/reach.go` only | VERIFIED_SOURCE | `go test -count=1 ./common/routeflow/` → reports `[no test files]` | Go |
+| 2.8 | Cross-kind graph soundness **as a whole** | CK1–CK7 were never run; only the named gaps are closed | **UNKNOWN** | — | — |
+| 2.9 | `PathNode.RequiredNetworks` semantics | **write-only in production**: 2 writers, 0 production readers, 5 test readers | VERIFIED_SOURCE — **FOLLOW-UP, not a contract** | `git grep -n RequiredNetworks` | git |
+
+## 3. Sniff
+
+| # | Requirement | Evidence | Level | Re-check | Environment |
+|---|---|---|---|---|---|
+| 3.1 | QUIC packet/datagram boundaries, coalesced packets, malformed headers, `Length < 4` | real tests + two fuzz targets | VERIFIED_UNIT | `go test -count=1 ./common/sniff/...` | Go |
+| 3.2 | A retained QUIC fragment never aliases the caller's datagram | address-range + datagram-poisoning tests | VERIFIED_UNIT | `go test -count=1 -run TestQUICOwnership ./common/sniff/` | Go |
+| 3.3 | TLS and HTTP gates never reject a prefix the parser would ask more data for | `sniff_gate_internal_test.go`; >500 prefixes | VERIFIED_UNIT | `go test -count=1 -run TestGate ./common/sniff/` | Go |
+| 3.4 | WireGuard is sniffed; the uTP ambiguity is structural and deliberately not narrowed | `TestSniffWireGuardUTPAmbiguityIsStructural` | VERIFIED_UNIT | `go test -count=1 -run TestSniffWireGuard ./common/sniff/` | Go |
+| 3.5 | Fragmented-QUIC rounds are capped at 64 and the buffer is released on abandon | `route/route.go:1211-1217`, `:1340-1347` | **VERIFIED_SOURCE only** — no test, no reproducible measurement | grep `maxSniffRounds` in `route/*_test.go` → nothing | — |
+| 3.6 | The sniff goroutine census | green in one audit run; documented as **load-sensitive with a shifting failing test name** | VERIFIED_UNIT (single run) — **not proof of non-flakiness** | `go test -count=5 ./common/sniff/...` under load | Go |
+| 3.7 | QUIC single-frame `ClientFirefox` false positive | measured and documented; fix out of scope | VERIFIED_UNIT that it exists | `quic_ownership_test.go:271-280` | Go |
+
+## 4. DNS
+
+| # | Requirement | Evidence | Level | Re-check | Environment |
+|---|---|---|---|---|---|
+| 4.1 | A response computed against one environment generation is not delivered or cached into another | `dns/client.go` generation checks | VERIFIED_UNIT | `go test -count=1 ./dns/...` | Go |
+| 4.2 | A FakeIP server cannot answer a destination lookup | `8fad3e9b`; DNS demand tests | VERIFIED_UNIT | `go test -count=1 -run FakeIP ./dns/...` | Go |
+| 4.3 | DNS rule evaluation, cache, reverse mapping and FakeIP generations | `go test ./dns/...` passes | VERIFIED_UNIT | `go test -count=1 ./dns/...` | Go |
+| 4.4 | The `systemd-resolved` goroutine leak is fixed | **it IS fixed**, by `6b495134c` (`signalLoopStop`/`signalLoopDone`/`signalLoopOnce`, a stop-channel `select`, and a **join** in `Close`) — `docs/RELEASE-CERTIFICATE.md:70-85` is **stale** | VERIFIED_SOURCE; `BLOCKED_BY_ENVIRONMENT` to execute | `git log -S'signalLoopStop' e4b7e692..a267e99`; then needs Linux + systemd-resolved | Linux |
+| 4.5 | Multi-platform DNS environment matrix | never run | **UNVERIFIED** | — | multi-platform |
+
+## 5. MASQUE / CONNECT-IP
+
+| # | Requirement | Evidence | Level | Re-check | Environment |
+|---|---|---|---|---|---|
+| 5.1 | Capsule parse/serialise, address and route types, cross-protocol overlap | `transport/masque` capsule tests | VERIFIED_UNIT | `go test -count=1 -timeout 8m -tags "$OTHERS" ./transport/masque/...` | Go + tags |
+| 5.2 | A batch send is all-or-nothing; a context-ID substitution refuses the whole batch | `batch_order_test.go`; the bug recorded at `session.go:539-549` | VERIFIED_UNIT | same | Go + tags |
+| 5.3 | Session/stream teardown and close boundaries | `shutdown_test.go`, `close_boundary*.go`, `scope_ownership_test.go` | VERIFIED_UNIT | same | Go + tags |
+| 5.4 | PTB and the three MTU quantities | five MTU test files | VERIFIED_UNIT | same | Go + tags |
+| 5.5 | CONNECT-IP interoperability against an independent implementation | `test/jiejie/reference/connect_ip_go_interop_test.go` — a **separate module** push CI does not run | **UNVERIFIED (declaration only)** | `bash scripts/ci/run-jiejie-suite.sh` | bash + network |
+| 5.6 | macOS / H3 device behaviour | never run | **UNVERIFIED** | — | device |
+| 5.7 | The package's own suite | **untagged it fails 19 tests** (tag absence). Tagged: `ok 318.4 s` at the release baseline | VERIFIED_UNIT (tagged) | `go test -count=1 -timeout 8m -tags "$OTHERS" ./protocol/masque/...` | Go + tags |
+
+## 6. Native Naive and HTTP transport
+
+| # | Requirement | Evidence | Level | Re-check | Environment |
+|---|---|---|---|---|---|
+| 6.1 | Write contract: no short write is silently truncated; the frame counter advances only after a whole frame | `audit_write_contract_test.go` | VERIFIED_UNIT | `go test -count=1 -tags "$OTHERS" ./protocol/naive/...` | Go + tags |
+| 6.2 | Padding is negotiated, first-8-frames, 0..255 never clamped | `padding_test.go`, `padding_segmentation_test.go`, `padding_zero_frame_test.go`, `fuzz_padding_test.go` | VERIFIED_UNIT | same | Go + tags |
+| 6.3 | The target ACL is enforced, and DNS rebinding cannot bypass it | `TestJiejieTargetACLRebindingCannotBypass` | VERIFIED_UNIT | `cd test; go test -count=1 -run TestJiejieTargetACL ./jiejie/` | Go + network |
+| 6.4 | The per-datagram UoT guard checks **every** destination and permits when no rule matches | five named guard tests | VERIFIED_UNIT | same | Go |
+| 6.5 | The guard does not break server-internal backends | `TestJiejieTargetACLDoesNotBreakMasqueradeBackend` | VERIFIED_UNIT | same | Go |
+| 6.6 | Interop with the official NaiveProxy client and Caddy | interop suites exist in `test/` | **UNVERIFIED here** — push CI deliberately does not run that module, and `run-jiejie-suite.sh` has no referrer | `bash scripts/ci/run-jiejie-suite.sh` (~20 min) | bash + reference binary |
+| 6.7 | Real-network STUN, independent IPv6 UDP origin, Caddy performance comparison | recorded as not done | **UNVERIFIED** | — | network |
+| 6.8 | The `host's own public address` is in the deny set | recorded as **not done** — the address is deliberately not guessed | **UNVERIFIED / FOLLOW-UP** | confirm on the host | the host |
+
+## 7. Data path: offload, traffic class, scheduler
+
+| # | Requirement | Evidence | Level | Re-check | Environment |
+|---|---|---|---|---|---|
+| 7.1 | Every `DialerOptions` field is classified; an unclassified one refuses a bypass | `TestEveryDialerOptionIsClassified` (reflection, both directions) | VERIFIED_UNIT | `go test -count=1 ./common/dialer/...` | Go |
+| 7.2 | `ActionBypass` is honoured by no TUN stack; a tracker on one is never created | `protocol/tun/native_bypass_*_test.go` | VERIFIED_UNIT (behavioural trace) | `go test -count=1 ./protocol/tun/...` | Go |
+| 7.3 | A bypass carrying a `Port` becomes an `ActionFlow` | `TestBypassWithAPortBecomesAFlow` | VERIFIED_UNIT | same | Go |
+| 7.4 | The bypass decision asserts 0 allocs **as a test** | `route/direct_offload_bench_test.go`, `route/bypass_capability_cost_test.go` | VERIFIED_UNIT | `go test -count=1 -run Bypass ./route/` | Go |
+| 7.5 | The scheduler shapes aggregate, admits no over-rate, and releases on transition | `common/trafficsched` gate tests (11) | VERIFIED_UNIT | `go test -count=1 ./common/trafficsched/...` | Go |
+| 7.6 | The research controller cannot reach production | a test fails if it does | VERIFIED_UNIT | same | Go |
+| 7.7 | Race-freedom of `trafficclass`/`trafficsched`/`dialer`/`direct`/`tun`/`route`/`adapter` | CI step `verify.yml:310` exists; no run record | **BLOCKED_BY_ENVIRONMENT** | `go test -race …` on Linux | cgo |
+| 7.8 | Real-link shaped throughput and the AI-lane p95 claims | historical measurement recorded in `doc.go`; the harness is a manual tool | **UNVERIFIED here** | `go run ./common/trafficsched/harness` against a real link | two hosts |
+
+## 8. Buffer ownership and memory
+
+| # | Requirement | Evidence | Level | Re-check | Environment |
+|---|---|---|---|---|---|
+| 8.1 | Geometry buffers are exactly poolable and `Advance`/`Prepend` never reallocate | `geometry_test.go` | VERIFIED_UNIT | `go test -count=1 ./common/bufgeom/...` | Go |
+| 8.2 | The allocation ceiling | asserted in the **`!race`** build only | VERIFIED_UNIT (`!race`); the `race` half needs cgo | same | Go |
+| 8.3 | Batch capability survives a counter wrapper | 3 tests with a real red control | VERIFIED_UNIT | `go test -count=1 -run PacketBatch ./route/` | Go |
+| 8.4 | The kernel splice actually reaches `unix.Splice()` | proved on Linux by the fork's `linux-splice-proof` workflow; **not here** | **BLOCKED_BY_ENVIRONMENT** | that workflow | Linux |
+| 8.5 | The splice silent stall is **fixed** | **it is not** — `handed = true` is set before anything is attempted, so a `Pipe2` failure stops the copy with no error | **KNOWN DEFECT, VERIFIED_SOURCE** | `docs/internal/fork-splice-silent-stall.md` | — |
+| 8.6 | kTLS read-path defects | fixed by mirroring the slow path; compared textually, **not executed** | VERIFIED_SOURCE | needs Linux | Linux |
+| 8.7 | Zero-copy levels 3–5 | **structurally unobservable from sing-box** | **UNKNOWN by construction** | — | — |
+
+## 9. Power and mobile lifecycle
+
+| # | Requirement | Evidence | Level | Re-check | Environment |
+|---|---|---|---|---|---|
+| 9.1 | The reuse verdict is published **before** the level is released | `box_lifecycle_ordering_test.go`, with a vacuity guard | VERIFIED_UNIT | `go test -count=1 -tags "$OTHERS" -v -run TestTheReuseVerdict .` | Go + tags |
+| 9.2 | The sleep edge is recorded **before** the level is paused | same file, `probingAxis` | VERIFIED_UNIT | `-run TestTheSleepEdge` | Go + tags |
+| 9.3 | The reuse bands are the policy's, and an unknown sleep takes the strict verdict | `common/power` + `box` tests | VERIFIED_UNIT | `-run 'TestReuseBandsAreThePolicy\|TestTheBridgeUsesThePolicyBandsAndNothingElse'` | Go + tags |
+| 9.4 | The suspect band drains nothing | `route.TestTheSuspectBandDrainsNothing` | VERIFIED_UNIT | `go test -count=1 -run TestTheSuspectBandDrainsNothing ./route/` | Go |
+| 9.5 | The trim ladder maps every level, and an unknown level is ignored | `common/runtimecoord/platform_events.go:152-220` | VERIFIED_SOURCE + VERIFIED_UNIT | `go test -count=1 ./common/runtimecoord/...` | Go |
+| 9.6 | The Apple device axis on a real device | one **iPhone 17 Pro Max / iOS 26.4.2** run: 13 m 13 s lock → 1 boundary → `13m13.492448s` | **VERIFIED_DEVICE** for that device only | — | that device |
+| 9.7 | iPad, macOS, other OS builds | `NOT_RUN` / `SIGNING_OUT_OF_SCOPE` | **UNVERIFIED** | — | — |
+| 9.8 | Real TUN, real NetworkExtension, network transitions | zero executed evidence; a release blocker | **UNVERIFIED** | `docs/fork/real-tun-validation.md` §1–§7 | root + Linux |
+
+## 10. MTU and geometry
+
+| # | Requirement | Evidence | Level | Re-check | Environment |
+|---|---|---|---|---|---|
+| 10.1 | The three MTU quantities are computed and bounded separately | MASQUE + WireGuard + `common/bufgeom` sources | VERIFIED_SOURCE + VERIFIED_UNIT | `go test -count=1 ./common/bufgeom/...` and the MASQUE suite | Go + tags |
+| 10.2 | The MASQUE outer QUIC packet is capped by a proven detour capacity | `2118ee40`; `outer_quic_mtu_test.go`, `port_mtu_lifecycle_test.go` | VERIFIED_UNIT | MASQUE suite | Go + tags |
+| 10.3 | The hysteria2 hard ceiling reaches the wire with ChromeParrot on | `protocol/hysteria2/hard_ceiling_wire_test.go`; the retraction banner at `docs/fork/v016-final-closure-ledger.md:4-13` | VERIFIED_UNIT | `go test -count=1 -run HardCeiling ./protocol/hysteria2/` | Go |
+| 10.4 | The low-memory (16 KiB) geometry is selected by the same source the products use | `cmd/internal/appletags -mobile-only`; `verify.yml:252-258` fails if empty | VERIFIED_SOURCE | `go run ./cmd/internal/appletags -mobile-only` | Go |
+
+## 11. libbox and platform contract
+
+| # | Requirement | Evidence | Level | Re-check | Environment |
+|---|---|---|---|---|---|
+| 11.1 | The exported libbox surface and `SetupOptions` contract | `experimental/libbox/*`; package tests pass | VERIFIED_UNIT + VERIFIED_SOURCE | `go test -count=1 ./experimental/libbox/...` | Go |
+| 11.2 | The core classifies platform levels; the client only reports them | `common/runtimecoord/platform_events.go:152-220`; `experimental/libbox/platform_events.go` | VERIFIED_SOURCE | read both | — |
+| 11.3 | ABI version is served and consumed | `daemon/started_service.go:39` `APIVersion = 4`; `experimental/libbox/command_client.go:760` | VERIFIED_SOURCE | `git grep -n APIVersion` | git |
+| 11.4 | The Apple client is one source for iOS and macOS | `assert-shared-source` in both jobs; `check-apple-source-selection.sh` **is** wired at `client-apple.yml:134` | VERIFIED_SOURCE (gate declaration) | `bash scripts/ci/check-apple-source-selection.sh` | bash + submodule |
+| 11.5 | The Apple **pin** cannot move without objection | **no wired mechanism exists.** The one candidate verifier is unwired and stale; the selection gate is self-referential to the gitlink by design | **KNOWN GAP, VERIFIED_GIT** | `git ls-tree HEAD clients/apple` and `git grep VERIFIED_APPLE_SHA= -- scripts/` | git |
+| 11.6 | ABI call-site compatibility at the pinned revision | recorded PASSes are two pin generations earlier and do not transfer | **UNVERIFIED** | `bash scripts/ci/check-libbox-abi.sh` (needs a client checkout + `gobind`) | bash + toolchain |
+| 11.7 | Android AAR provenance and architecture | gates exist; dispatch-only | **UNVERIFIED (declaration only)** | `android-core-arm64.yml` | CI |
+
+## 12. Build, CI and release
+
+| # | Requirement | Evidence | Level | Re-check | Environment |
+|---|---|---|---|---|---|
+| 12.1 | `go build ./...` untagged | run in this audit | **VERIFIED_UNIT** | `go build ./...` | Go |
+| 12.2 | The server profile builds | run in this audit | **VERIFIED_UNIT** | `go build -tags "$OTHERS" ./...` | Go |
+| 12.3 | The Darwin profile **cannot** build on Windows | run in this audit | **VERIFIED_UNIT** of the failure | `go build -tags "$(cat release/DEFAULT_BUILD_TAGS)" ./...` | Go |
+| 12.4 | The root design-guarantee suite passes **with the right tags** | run in this audit: `ok 5.459s` | **VERIFIED_UNIT** | `go test -count=1 -tags "$OTHERS" .` | Go + tags |
+| 12.5 | The root suite is **executed** by CI | **it is not** — the untagged step runs zero tests | **KNOWN GAP, VERIFIED_SOURCE** | `grep -n 'go test' .github/workflows/*.yml` | — |
+| 12.6 | Tag composition and the `-checklinkname=0` contract | CI step `:168` | VERIFIED_UNIT | `go test -count=1 ./cmd/internal/...` | Go |
+| 12.7 | Pinned-upstream assumption tripwires | CI step `:179`; the script is wired | **UNVERIFIED (declaration only)** — needs bash | `bash scripts/ci/verify-upstream-assumptions.sh` | bash + network |
+| 12.8 | Nested modules resolve the same fork pins | CI step `:137` | **UNVERIFIED (declaration only)** | `bash scripts/ci/check-go-module-integrity.sh --require-checked test` | bash |
+| 12.9 | Release re-verifies per-platform bytes rather than rebuilding | `release.yml:144-204` | VERIFIED_SOURCE; **no run record** | read the workflow | — |
+| 12.10 | Release acceptance rejects bad evidence | `verify.yml:64`, `:87` run **self-tests against a mock `gh`** | VERIFIED_SOURCE (of the design) | `bash scripts/ci/verify-release-acceptance-test.sh` | bash |
+| 12.11 | `verify-evidence/` describes the release tree | **it does not** — all 14 logs name `cfc77dc5`, 101 commits behind, and 15 covered files changed afterwards | **STALE — not evidence** | `head -3 verify-evidence/*.log` | git |
+| 12.12 | The §7.4 stress results | an **empty `<!--STRESS_RESULTS-->` placeholder** | **EVIDENCE ABSENT** | — | — |
+| 12.13 | Windows installer / service / signing gates | nine `.ps1` gates exist; no output archived | **UNVERIFIED (declaration only)** | `client-desktop-windows.yml` (dispatch) | Windows + Admin |
+| 12.14 | Docker-backed fixtures | not run; `test/docker_test.go` has **no skip guard** | **BLOCKED_BY_ENVIRONMENT** | `docker info && go test ./test/...` | Docker |
+| 12.15 | Xray reference interop | dispatch-only; QUICHE live interop tests were **deleted** | **UNVERIFIED (declaration only)** | dispatch `interop-xray.yml` | Linux + network |
+
+---
+
+## Known-failing and known-flaky set
+
+Re-diagnosing these as regressions is the most likely wasted effort in this repository.
+
+| Item | Why | Not a regression because |
 |---|---|---|
-| Core/lifecycle | scope, coordinator, route retirement, physical-path and static-validation contract tests | all real network/device conditions |
-| Routing/DNS/sniff | route/DNS generation, FakeIP, resolver, QUIC boundary and ownership tests | full multi-platform DNS environment matrix |
-| MASQUE/Naive | unit, lifecycle, ownership and protocol/interop harnesses | complete H3/macOS device matrix |
-| Apple | pinned source, ABI, provenance, branding/identity, signing/build gates | physical-device NetworkExtension/UI acceptance |
-| Android | clean-clone ABI and AAR provenance/architecture/build-tag gates | final APK/device routing |
-| Windows | PE/provenance/feature/ZIP validation | external-loader, installer, service/signing and Windows 7 execution |
-| Release | artifact selection, byte re-verification, hashes and metadata | a replacement for product/device validation |
+| `common/tls` `TestWindowsClient*TLS13` | a real remote handshake; this host's Schannel has no TLS-1.3-over-TCP | `NETWORK_DEPENDENT` |
+| `common/sniff` `TestAgentFFrameShape*`, `TestTheSniffCensusMovesForExactlyOneLeakedGoroutine` | **load-sensitive; the failing test name differs run to run** | 5/5 passes in isolation on both the fix and the base |
+| `protocol/group` `TestRecheckSingleFlightCollapsesABurst` | load-sensitive | 20 consecutive isolated runs clean on both trees |
+| `common/trafficsched` under `-count=10` | ~18 minutes of deliberate sleeps trips a timeout | every individual test passes |
+| `protocol/masque` `TestMasqueRestartCyclesDoNotLeakLoops` | **330 s alone** — slow, not hung | measured |
+| untagged root package | 12 tag-absence failures | use `$OTHERS` |
+| untagged `protocol/masque` | 19 tag-absence failures | use `$OTHERS` |
+| `common/windivert`, `common/tlsspoof` | reports call them "3 pre-existing environmental failures" | **they pass here** (25 PASS / 9 PASS, 0 FAIL) — the claim was host-specific, not tree-specific |
 
-`verify-evidence/`, `.github/workflows/`, named contract tests, and `docs/RELEASE-CERTIFICATE.md` are evidence locations. A CI job declaration is not evidence that the job ran.
+---
+
+## The fork's own standing limits
+
+These are not acceptance gaps to be closed by a test; they are recorded limits.
+
+* **No real data plane has ever been exercised.** No TUN, no root, no Linux, no Apple
+  NetworkExtension. `docs/RELEASE-CERTIFICATE.md` opens with `NOT READY FOR A STABLE MILESTONE`
+  for exactly this reason.
+* **The Apple products are built and signed by a manual workflow that has not run against this tree.**
+* **`cronet-go/lib/linux_amd64` does not link under `-race` on ubuntu-latest.** No product is affected:
+  the Linux product ships `DEFAULT_BUILD_TAGS_OTHERS`, which has no `with_naive_outbound`.
+* **The `systemd-resolved` goroutine leak is FIXED** (`6b495134c`). `docs/RELEASE-CERTIFICATE.md:70-85`
+  still says otherwise; that document is stale. The exclusion of the `test/` module's box-level tests
+  from push CI was justified by this leak and can be revisited — a CI decision, not a knowledge one.
+* **The splice silent stall is unfixed.**
+* **The Apple pin has no wired verifier.**
+* **`RequiredNetworks` is write-only.**
