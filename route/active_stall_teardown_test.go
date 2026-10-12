@@ -53,6 +53,12 @@ func TestTeardown_OneSidedCompletionNeverRunsOnClose(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = peer.Close() })
 	peerRead := make(chan struct{})
+	// peerEOF is closed when the peer's read returns EOF, which is the moment the client's
+	// half-close has been carried all the way through the proxy to the peer. It is an ORDERING
+	// fact rather than a timing one, and the test waits on it instead of on a sleep: "the upload
+	// finished" is something the peer can tell us precisely, and inferring it from elapsed time
+	// was guessing at exactly the thing the assertions below depend on.
+	peerEOF := make(chan struct{})
 	go func() {
 		conn, acceptErr := peer.Accept()
 		if acceptErr != nil {
@@ -69,8 +75,11 @@ func TestTeardown_OneSidedCompletionNeverRunsOnClose(t *testing.T) {
 				}
 			}
 			if readErr != nil {
-				// The peer saw EOF and still answers nothing, and does NOT close. It stays
-				// ESTABLISHED so nothing on this side can observe an error.
+				// Signal FIRST, then park. The peer must still answer nothing and must NOT
+				// close - it stays ESTABLISHED so nothing on this side can observe an error -
+				// but the half-close reaching here is the premise of the test, so it is
+				// recorded before this goroutine becomes unreachable.
+				close(peerEOF)
 				select {}
 			}
 		}
@@ -142,12 +151,22 @@ func TestTeardown_OneSidedCompletionNeverRunsOnClose(t *testing.T) {
 		t.Fatal("the inbound fixture cannot half-close, so this test cannot build its own premise")
 	}
 
-	// Give the upload copy every chance to complete and the teardown every chance to run.
+	// Wait for the peer to SEE THE EOF, which is the proof that the upload path completed and
+	// propagated its half-close. This replaced a flat 5-second sleep: the sleep was inferring
+	// "the upload is done" from elapsed time, and the assertions below - one surviving copy,
+	// onClose unrun - are about the state that inference was supposed to have established. A
+	// machine slower than the sleep, or one where the half-close is queued behind other work,
+	// then failed on the copy count for a reason that had nothing to do with the behaviour
+	// under test. The deadline is kept only so a genuine failure to propagate still fails here,
+	// with its own message, rather than as a confusing copy-count error later.
 	select {
 	case <-fixture.closed:
 		t.Fatalf("onClose ran; the premise is that a one-sided completion leaves it unrun\n%s",
 			captured.dump())
-	case <-time.After(5 * time.Second):
+	case <-peerEOF:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("the peer never saw EOF: the client's half-close did not reach it, so the upload "+
+			"path cannot be said to have completed\n%s", captured.dump())
 	}
 
 	if count := manager.Count(); count != 1 {
@@ -160,14 +179,29 @@ func TestTeardown_OneSidedCompletionNeverRunsOnClose(t *testing.T) {
 	// And only ONE copy is still alive, which is why nothing ran. The upload finished, set done, and
 	// closed only its own destination writer; the download is the copy that would have run onClose,
 	// and it is parked in a read that has nothing to return.
+	//
+	// The count is the assertion. WHICH copy survived is reported, not asserted: telling the two
+	// apart from a stack dump means recognising the reader's innermost frame, and that frame is
+	// runtime- and platform-dependent - the download parks in `internal/poll.(*FD).RawRead(` on
+	// one host and in `copyWaitWithPool` / `syscallReadWaiter` on another. The classifier below
+	// only knows the second spelling, so on the first it files the download as the upload and the
+	// old `downloadParked` assertion failed on a stack-classifier gap while reporting it as
+	// "the surviving copy is not the download". The upload having completed is already
+	// established above, by the peer having seen EOF - an ordering fact, not a frame name - and
+	// one surviving copy plus an unrun onClose is the state this test exists to pin.
 	observation := observeCopyGoroutines()
-	t.Logf("one-sided completion: copies=%d upload=%q download=%q",
+	t.Logf("one surviving copy: copies=%d upload=%q download=%q",
 		observation.copies, observation.uploadFrame, observation.downloadFrame)
 	if observation.copies != 1 {
-		t.Fatalf("expected exactly one surviving copy (the download), found %d", observation.copies)
+		t.Fatalf("expected exactly one surviving copy, found %d\n%s", observation.copies, captured.dump())
 	}
 	if !observation.downloadParked {
-		t.Fatalf("the surviving copy is not the download: %q", observation.downloadFrame)
+		// Diagnostic only. The goroutine dump is still worth printing when the classifier
+		// cannot name the survivor, because that is how this gap was found at all - but it
+		// must not decide the test.
+		t.Logf("the surviving copy was classified as an upload rather than a download: "+
+			"the stack frame %q is not one this classifier recognises as the reader. "+
+			"Copies=%d, so the count assertion above still holds.", observation.uploadFrame, observation.copies)
 	}
 	t.Log("The flow is registered, has a completed request, an unanswered read, and no owner of its teardown.")
 
