@@ -94,8 +94,39 @@ jobs:
         with:
           path: tooling
 
+      # The suite is run out of `tooling/` but FROM the workspace root, and it resolves the
+      # repository it asserts against with `git rev-parse --show-toplevel` - which is the
+      # TAGGED commit, because that is what was checked out at the root. So the workflow
+      # assertions in it are made against the tag's `.github/workflows/`, not the tooling's.
+      # That is the intended reading: a release is validated against what the tag actually
+      # carries. The captured output and the annotation exist because the first real dispatch
+      # failed here and the job log needs a token to read.
       - name: test the release gate
-        run: ./tooling/scripts/ci/test-release-artifacts.sh
+        run: |
+          set -uo pipefail
+          mkdir -p verify-logs
+          set +e
+          ./tooling/scripts/ci/test-release-artifacts.sh > verify-logs/release-gate.log 2>&1
+          rc=$?
+          set -e
+          cat verify-logs/release-gate.log
+          echo "$rc" > verify-logs/release-gate.exit
+          if [ "$rc" != "0" ]; then
+            set +o pipefail
+            summary="$(grep -A1 -E '^FAIL ' verify-logs/release-gate.log | head -20 | tr '\n' '~' | cut -c1-3000)"
+            [ -n "$summary" ] || summary="no FAIL line; TAIL: $(tail -30 verify-logs/release-gate.log | tr '\n' '~' | cut -c1-3000)"
+            echo "::error title=release gate self-test failed (exit $rc)::$summary"
+          fi
+          exit "$rc"
+
+      - name: upload the gate self-test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-gate-self-test
+          path: verify-logs/
+          if-no-files-found: warn
+          retention-days: 14
 
       # The tag is validated before it is used for anything. It arrives as an
       # environment variable and never as an interpolation into a shell body:
