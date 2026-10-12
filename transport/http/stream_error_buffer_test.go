@@ -1,3 +1,12 @@
+//go:build with_quic
+
+// Gated on with_quic because it builds on the package's with_quic-gated test doubles:
+// extendedStubConn embeds stubConn, which stream_error_test.go declares under the same
+// constraint. Without it the untagged test build fails with `undefined: stubConn`, so
+// `go vet ./...` and `go test ./...` are red in the configuration a reader gets by default.
+// Same fix, and the same reason, as client_h3_strict_fallback_test.go. The production
+// behaviour under test - normalizingConn refusing buffered IO it cannot honour - is not
+// QUIC-specific, but the fixture that proves the wrapper is not itself an N.ExtendedConn is.
 package http
 
 import (
