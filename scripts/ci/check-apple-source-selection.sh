@@ -522,10 +522,10 @@ expects_fail "a refs file with no APPLE_CLIENT_BRANCH is refused" \
 
 # Requirement: the removed per-platform SHA must not silently select a source. The resolver
 # refuses a refs file that declares `MACOS_APPLE_SHA` or `MACOS_APPLE_BRANCH` at all, so the
-# file cannot be left half-migrated - and `sha macos` must keep answering the gitlink rather
-# than the value the file names. The planted value is a real commit of the same repository that
-# is NOT the gitlink, so "it answered the gitlink" and "it answered the planted SHA" are
-# distinguishable.
+# file cannot be left half-migrated. Every public resolver action, including `sha macos`, must
+# refuse that invalid configuration rather than returning either the gitlink or the planted value.
+# The planted value is a real commit of the same repository that is NOT the gitlink, ensuring the
+# fixture would expose an implementation that accidentally consulted the removed selector.
 write_pin_macos_sha() {
   cat > "$scratch/release/apple-client-refs.env" <<EOF
 APPLE_CLIENT_REPOSITORY=$apple_origin
@@ -537,8 +537,7 @@ EOF
 write_pin_macos_sha
 expects_fail "a refs file that puts a per-platform SHA back is refused" "$scratch_resolver" assert-shared-source
 expects_fail "resolve refuses the same refs file" "$scratch_resolver" resolve
-check "the planted macOS SHA does not become the macOS source" \
-  bash -c "test \"\$($scratch_resolver sha macos)\" = '$apple_second'"
+expects_fail "sha macos refuses the planted per-platform source" "$scratch_resolver" sha macos
 write_pin
 check "the restored refs file resolves the shared source again" "$scratch_resolver" assert-shared-source
 
