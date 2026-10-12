@@ -77,10 +77,16 @@ jobs:
           # summary line is enough to see that a case failed and never enough to see why,
           # and this suite's output is the only diagnosis there is - the job log is not
           # readable without a token.
+          #
+          # stderr goes to the same place. A suite that dies on a syntax error or a bad
+          # substitution writes to stderr and prints no FAIL line at all, which is
+          # indistinguishable from "it failed for an unknown reason" in a summary - so the
+          # first lines of BOTH streams are echoed, and they are what the annotation carries.
           set +e
-          ./scripts/ci/test-release-artifacts.sh 2>&1 | tee verify-logs/release-gate.log
-          rc="${PIPESTATUS[0]}"
+          ./scripts/ci/test-release-artifacts.sh > verify-logs/release-gate.log 2>&1
+          rc=$?
           set -e
+          cat verify-logs/release-gate.log
           echo "release-gate exit status: $rc"
           echo "$rc" > verify-logs/release-gate.exit
           exit "$rc"
@@ -91,7 +97,7 @@ jobs:
       # limitation: it is surfaced as a check-run annotation, which the public API exposes in
       # full. So the failure reason is published deliberately, in one place, formatted to be
       # read by a person or a script.
-      - name: publish the failure reason as an annotation
+      - name: publish the failure reason as a check-run annotation
         if: always()
         run: |
           set -uo pipefail
@@ -102,15 +108,23 @@ jobs:
             echo "the suite passed; nothing to annotate"
             exit 0
           fi
-          # The suite prints "FAIL  <case>  <detail>" and, for expect_ok, an indented reason
-          # on the following line. Both are carried, because the case name alone has twice
-          # been insufficient to diagnose this suite.
+          # `set +o pipefail` for the extraction only. `grep ... | head -40` gives grep a
+          # SIGPIPE as soon as head has its lines, and under pipefail that non-zero status
+          # becomes the STEP's status - so the step that exists to REPORT a failure was
+          # itself failing, and the annotation never reached the check run.
+          set +o pipefail
           summary="$(grep -A1 -E '^FAIL ' "$log" | head -40 | tr '\n' '~' | cut -c1-3500)"
+          if [ -z "$summary" ]; then
+            summary="no FAIL line was printed; first lines of the log: $(head -30 "$log" | tr '\n' '~' | cut -c1-3500)"
+          fi
+          set -o pipefail
           echo "::error title=release gate tests failed (exit $rc)::$summary"
           # And a deterministic marker so a reader can find it without parsing prose.
           echo "RELEASE_GATE_FAILURE_BEGIN"
+          set +o pipefail
           grep -A1 -E '^FAIL ' "$log" | head -40
           echo "RELEASE_GATE_FAILURE_END"
+          exit 0
 
       - name: desktop overlay version single-source tests
         if: always()
