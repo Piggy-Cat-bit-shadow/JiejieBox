@@ -643,15 +643,24 @@ expect_ok "verify both platforms and the desktop installer -> PASS" \
 expect_ok "flatten -> PASS" flatten --plan "$plan" --dir "$work/assets" --out "$work/upload" \
   --tag v0.1 --desktop "$work/desktop/Jiejiebox-v0.1-windows-x64.exe" --version 0.1
 
-# The published set is the contract: four tarballs, the installer and one manifest.
-# SHA256SUMS covers all five binaries and nothing else.
-if [ "$(find "$work/upload" -maxdepth 1 -type f | wc -l | tr -d ' ')" = "6" ] \
+# The published set is the contract, and its size is the size of THIS suite's product
+# table - the two workflows the fixtures build, not the four a release ships. The counts are
+# computed from that number with the two non-product assets added, rather than written as
+# literals: an earlier version of this case asserted six files and five entries, which is the
+# four-product release, and it read as "wrong asset set" without saying which side was wrong.
+PRODUCTS=2
+want_files=$(( PRODUCTS + 2 ))          # products + installer + SHA256SUMS
+want_entries=$(( PRODUCTS + 1 ))       # products + installer
+if [ "$(find "$work/upload" -maxdepth 1 -type f | wc -l | tr -d ' ')" = "$want_files" ] \
+   && [ -f "$work/upload/jiejie-sing-box-linux-amd64-v0.1.tar.gz" ] \
+   && [ -f "$work/upload/jiejie-sing-box-macos-arm64-v0.1.tar.gz" ] \
    && [ -f "$work/upload/Jiejiebox-v0.1-windows-x64.exe" ] \
    && [ -f "$work/upload/SHA256SUMS" ] \
-   && [ "$(grep -c . "$work/upload/SHA256SUMS")" = "5" ]; then
-  report "flatten emits the five public binaries and a five-line manifest" 0 0
+   && [ "$(grep -c . "$work/upload/SHA256SUMS")" = "$want_entries" ]; then
+  report "flatten emits the public binaries and one manifest" 0 0 "$want_files files, $want_entries entries"
 else
-  report "flatten emits the five public binaries and a five-line manifest" 0 1 "wrong asset set"
+  report "flatten emits the public binaries and one manifest" 0 1 \
+    "want $want_files files / $want_entries entries, got $(find "$work/upload" -maxdepth 1 -type f | wc -l | tr -d ' ') files / $(grep -c . "$work/upload/SHA256SUMS" 2>/dev/null || echo none) entries"
 fi
 
 # The manifest must name the files the way the download page does - bare names, no './' -
