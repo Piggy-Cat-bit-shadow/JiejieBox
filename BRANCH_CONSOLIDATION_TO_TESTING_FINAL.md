@@ -420,6 +420,22 @@ not: on the untouched baseline its `TestMasqueRestartCyclesDoNotLeakLoops`
 alone passes in **330s**, and the full package passes within the 25m budget. It
 was measured rather than guessed at.
 
+### 7.2b Two slow packages, measured rather than called hangs
+
+Both were chased down because a timeout is not evidence:
+
+| package | single run, untouched baseline | single run, this tree | verdict |
+|---|---|---|---|
+| `common/trafficsched` | 106.206s | 106.417s | identical; not a regression |
+| `protocol/masque` | 330s for one test | passes within budget | identical; not a regression |
+
+`common/trafficsched` times its own sleeps (`TestContentionColdStart` 54s,
+`TestContentionSteadyState` 29s, `TestAdmittedRateMatchesTheConfiguredRate`
+4s), so its cost is mostly wall clock. An early stress plan used `-count=10`
+there, which is roughly 18 minutes of sleeping and tripped the timeout; every
+individual test still reported PASS. The plan was resized from measured cost,
+which is what §7.4 records.
+
 ### 7.3 Why untagged runs are not the comparison
 
 This tree's default configuration carries build tags. Running untagged produces
