@@ -485,8 +485,13 @@ if [ "$branding_applied" = "1" ]; then
 
   check "the branding overlay renamed SFI" \
     grep -q 'INFOPLIST_KEY_CFBundleDisplayName = "JiejieBox"' "$pbx"
-  check "the SFI scheme points at the renamed product" \
-    grep -q 'BuildableName = "JiejieBox.app"' "$scheme"
+  # Display branding deliberately leaves PRODUCT_NAME unchanged, so the scheme must
+  # continue to build sing-box.app.  A JiejieBox.app buildable would mean an identity
+  # rename slipped back in alongside the display-name overlay.
+  check "the SFI scheme keeps the upstream product identity" \
+    grep -q 'BuildableName = "sing-box.app"' "$scheme"
+  check "the SFI scheme does not point at a renamed product" \
+    bash -c "! grep -q 'BuildableName = \"JiejieBox.app\"' '$scheme'"
   check "the UI test buildable is untouched" \
     grep -q 'BuildableName = "SFIUITests.xctest"' "$scheme"
 
