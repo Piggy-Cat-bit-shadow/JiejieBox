@@ -613,9 +613,41 @@ PY
 }
 
 # run_gate <args...> — runs the gate against the mock.
+#
+# RELEASE_EXTRA_PLATFORMS is CLEARED, not merely left alone. This suite's general cases run
+# against a two-product fixture on purpose, and the gate defaults to two products only when
+# that variable is unset — but release.yml sets it at JOB level (`RELEASE_EXTRA_PLATFORMS:
+# true`), so it is inherited by every step in that job, including the step that runs this
+# file. The two-product cases then drove a four-product gate, `plan` demanded
+# windows-core-amd64.yml and android-core-arm64.yml from a fixture that models neither, and
+# the self-test failed before `resolve and validate the tag` ever ran. That is why the same
+# suite passed in verify.yml, which does not set the variable.
+#
+# The two-product cases are therefore pinned to the two-product contract here rather than
+# inheriting whatever the caller's job happens to export, so the suite is hermetic and
+# behaves the same wherever it is run. The four-product cases go through run_gate_full,
+# which sets the variable explicitly - so both contracts are still exercised, and neither
+# depends on the ambient environment.
+#
+# `env -u` is preferred; where it is unavailable the variable is set to `false` rather than
+# to the empty string, because the gate's own `case` rejects anything that is neither `true`
+# nor `false` - an empty value would die there rather than take the default. Only POSIX
+# `env` is assumed, because the syntax of this file is checked by a POSIX shell on hosts
+# without bash.
+run_gate_without_extra_platforms() {
+  if env -u RELEASE_EXTRA_PLATFORMS true 2>/dev/null; then
+    env -u RELEASE_EXTRA_PLATFORMS \
+      PATH="$work/bin:$PATH" MOCK_STATE="$work/state" MOCK_FIXTURES="$work/fixtures" \
+      "$gate" "$@"
+  else
+    RELEASE_EXTRA_PLATFORMS=false \
+      PATH="$work/bin:$PATH" MOCK_STATE="$work/state" MOCK_FIXTURES="$work/fixtures" \
+      "$gate" "$@"
+  fi
+}
+
 run_gate() {
-  PATH="$work/bin:$PATH" MOCK_STATE="$work/state" MOCK_FIXTURES="$work/fixtures" \
-    "$gate" "$@"
+  run_gate_without_extra_platforms "$@"
 }
 
 # verify_with_desktop <args...>
