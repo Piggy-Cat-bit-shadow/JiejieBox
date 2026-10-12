@@ -120,9 +120,14 @@ def jq_filter(document, filt):
         if done.returncode != 0:
             fail("jq rejected the filter %r: %s" % (filt, done.stderr.strip()))
         return done.stdout
-    # Fallback for a runner without jq: the two filters the gate uses, translated.
+    # Fallback for a runner without jq: the filters the gate uses, translated.
     if filt == "[.id, .path, .state] | @tsv":
         return "%s\t%s\t%s\n" % (document["id"], document["path"], document["state"])
+    if filt == ".artifacts[] | [.name, (.expired|tostring)] | @tsv":
+        # The desktop run lists its artifacts before downloading one: a run uploads the
+        # installer AND its build records, and only the installer is a deliverable.
+        return "".join("%s\t%s\n" % (a["name"], "true" if a.get("expired") else "false")
+                       for a in document["artifacts"])
     if filt.startswith(".workflow_runs[]"):
         # Mirrors the gate's filter, including the normalisation of a null or empty
         # conclusion to "-": an empty TSV field is consumed by bash `read`.
@@ -185,6 +190,25 @@ def api(args):
 
     parts = path.split("/")
     # repos/<owner>/<repo>/actions/workflows/<key>[/runs?...]
+    # repos/<owner>/<repo>/actions/runs/<id>/artifacts[?...]
+    if len(parts) >= 6 and parts[3] == "actions" and parts[4] == "runs":
+        # The gate lists a run's artifacts before downloading one by name, because a run may
+        # upload more than one and only the installer is a deliverable.
+        if len(parts) >= 7 and parts[6].startswith("artifacts"):
+            rid = parts[5]
+            record("api runs/%s/artifacts" % rid)
+            entry = scenario.get("artifacts", {}).get(rid)
+            if entry is None:
+                fail("api: no artifacts for run %s" % rid, 1)
+            entries = entry if isinstance(entry, list) else [entry]
+            document = {"total_count": len(entries),
+                        "artifacts": [{"name": e["name"],
+                                       "expired": bool(e.get("expired", False))}
+                                      for e in entries]}
+            sys.stdout.write(jq_filter(document, filt) if filt else json.dumps(document))
+            return 0
+        fail("api: unsupported runs path %r" % path)
+
     if len(parts) < 6 or parts[3] != "actions" or parts[4] != "workflows":
         fail("api: unsupported path %r" % path)
     key = parts[5]
@@ -230,10 +254,15 @@ def run_download(args):
     run_id = args[0]
     rid = str(run_id)
     directory = None
+    want_name = None
     i = 1
     while i < len(args):
         if args[i] == "--dir":
             directory = args[i + 1]
+            i += 2
+            continue
+        if args[i] == "--name":
+            want_name = args[i + 1]
             i += 2
             continue
         if args[i] == "--repo":
@@ -242,29 +271,43 @@ def run_download(args):
         fail("run download: unexpected argument %r" % args[i])
     if directory is None:
         fail("run download: --dir is required")
-    record("run download %s" % rid)
+    record("run download %s%s" % (rid, (" --name " + want_name) if want_name else ""))
 
     entry = scenario.get("artifacts", {}).get(rid)
     if entry is None:
         fail("no artifacts found for run %s" % rid)
-    if entry.get("download_fails"):
-        fail("HTTP 500: could not download artifact for run %s" % rid)
+
+    # A run may upload more than one artifact - the desktop workflow uploads the installer
+    # AND its build records - so an entry may be a list. The two per-run flags below are
+    # read from the single-artifact form only, so a list must not reach `.get`.
+    entries = entry if isinstance(entry, list) else [entry]
+    first = entries[0]
 
     dest = pathlib.Path(directory)
-    if entry.get("no_artifacts"):
+    if first.get("no_artifacts"):
         # The run exists but uploaded nothing: the directory is created empty.
         dest.mkdir(parents=True, exist_ok=True)
         return 0
+    if first.get("download_fails"):
+        fail("HTTP 500: could not download artifact for run %s" % rid)
 
-    source = fixtures / entry["dir"]
-    target = dest / entry["name"]
-    if target.exists():
-        shutil.rmtree(target)
-    shutil.copytree(source, target)
-    if entry.get("duplicate_artifact"):
-        # A second artifact directory holding another copy of the binary. The
-        # release must refuse this rather than pick one.
-        shutil.copytree(source, dest / (entry["name"] + "-again"))
+    if want_name is not None:
+        entries = [e for e in entries if e["name"] == want_name]
+        if not entries:
+            fail("no artifact named %r on run %s" % (want_name, rid))
+
+    for e in entries:
+        source = fixtures / e["dir"]
+        if not source.is_dir():
+            fail("fixture directory %r is missing for run %s" % (e["dir"], rid))
+        target = dest / e["name"]
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(source, target)
+        if e.get("duplicate_artifact"):
+            # A second artifact directory holding another copy of the binary. The
+            # release must refuse this rather than pick one.
+            shutil.copytree(source, dest / (e["name"] + "-again"))
     return 0
 
 
@@ -1211,9 +1254,20 @@ make_full_artifacts() {
     [ "$#" -eq 8 ] || { echo "FAIL: malformed FULL_PRODUCTS row ($# fields): $row" >&2; exit 1; }
     make_artifact "$work/fixtures/$1" "$2" "$3" "$4" "$5" "$6" "$SHA"
   done
-  # The desktop artifact is not a product: its directory is where the desktop workflow's run
-  # download lands, and it is also the tree verify_desktop reads the build record from.
-  make_desktop "$work/fixtures/desktop" "$FULL_VERSION" "$SHA"
+  # The desktop workflow uploads TWO artifacts, and the split is the point: the installer
+  # artifact holds ONLY the installer, and the build record - the thing that proves the
+  # installer's core - travels in a separate records artifact. That is why the gate has to
+  # download both, and why the record must never be staged where it could be published.
+  #
+  # `make_desktop` builds the source tree; the installer is copied into the artifact
+  # directory without the record, exactly as the workflow uploads it.
+  make_desktop "$work/fixtures/desktop-src" "$FULL_VERSION" "$SHA"
+  rm -rf "$work/fixtures/desktop" "$work/fixtures/desktop-records"
+  mkdir -p "$work/fixtures/desktop" "$work/fixtures/desktop-records"
+  cp "$work/fixtures/desktop-src/Jiejiebox-v$FULL_VERSION-windows-x64.exe" "$work/fixtures/desktop/"
+  cp "$work/fixtures/desktop-src/BUILD-INFO-WINDOWS-DESKTOP-$FULL_VERSION.txt" "$work/fixtures/desktop-records/"
+  # The records artifact carries more than the build record in reality, so it does here.
+  printf 'runner: ubuntu-latest\n' > "$work/fixtures/desktop-records/runner-environment.txt"
 }
 
 # write_full_scenario - a scenario in which all four products and the desktop have a
@@ -1272,7 +1326,15 @@ for i, (name, key) in enumerate(PRODUCT_WORKFLOWS):
 
 workflows["client-desktop-windows.yml"] = wf(
     8010, "client-desktop-windows.yml", [run(desktop_id, 30, 8010)])
-artifacts[str(desktop_id)] = {"dir": "desktop", "name": "jiejiebox-windows-x64-signed-test"}
+
+# The desktop workflow uploads TWO artifacts, and the shapes matter: the installer's name
+# ends in the signed-test marker the gate selects on, and the records artifact does not.
+# A `--name`-less download would copy both and the staging directory would then hold the
+# build record as well - which is how the first real dry run failed.
+artifacts[str(desktop_id)] = [
+    {"dir": "desktop", "name": "jiejiebox-windows-x64-signed-test"},
+    {"dir": "desktop-records", "name": "jiejiebox-windows-build-records"},
+]
 
 (state / "scenario.json").write_text(json.dumps(
     {"workflows": workflows, "artifacts": artifacts}, indent=1))
@@ -1319,16 +1381,37 @@ full_expect_fail() {
 full_plan="$work/full-plan.tsv"
 full_expect_ok "full contract: plan sees all four products" \
   plan --repo o/r --sha "$SHA" --out "$full_plan" --interval 1 --timeout 10
+# What `desktop` actually stages: the installer inside its artifact directory, and the build
+# record in a tree beside it. Derived from the same names the scenario declares, so a rename
+# in one place cannot silently disagree with the other.
+DESKTOP_STAGE="$work/full/desktop-dl/jiejiebox-windows-x64-signed-test"
+DESKTOP_RECORDS="$work/full/desktop-dl.records"
+DESKTOP_INSTALLER="$DESKTOP_STAGE/Jiejiebox-v$FULL_VERSION-windows-x64.exe"
+
 full_expect_ok "full contract: download all four products" \
   download --repo o/r --plan "$full_plan" --dir "$work/full/assets"
 full_expect_ok "full contract: stage the desktop installer" \
   desktop --repo o/r --sha "$SHA" --out "$work/full/desktop-dl" --interval 1 --timeout 10
+
+# The staging shape is itself an assertion: the installer alone in its artifact directory,
+# and the record - which proves the installer's core - outside it, in a tree that flatten
+# is never pointed at.
+if [ -f "$DESKTOP_INSTALLER" ] \
+   && [ ! -f "$DESKTOP_STAGE/BUILD-INFO-WINDOWS-DESKTOP-$FULL_VERSION.txt" ] \
+   && [ -f "$DESKTOP_RECORDS/BUILD-INFO-WINDOWS-DESKTOP-$FULL_VERSION.txt" ]; then
+  report "full contract: the installer is staged apart from its build record" 0 0
+else
+  report "full contract: the installer is staged apart from its build record" 0 1 \
+    "stage=$(find "$work/full/desktop-dl" -type f 2>/dev/null | tr '\n' ' ')"
+fi
+
 full_expect_ok "full contract: verify four products and the installer" \
   verify --dir "$work/full/assets" --sha "$SHA" \
-    --desktop-dir "$work/fixtures/desktop" --version "$FULL_VERSION"
+    --desktop-dir "$work/full/desktop-dl" --desktop-records "$DESKTOP_RECORDS" \
+    --version "$FULL_VERSION"
 full_expect_ok "full contract: flatten -> PASS" \
   flatten --plan "$full_plan" --dir "$work/full/assets" --out "$work/full/upload" \
-    --tag "$FULL_TAG" --desktop "$work/fixtures/desktop/Jiejiebox-v$FULL_VERSION-windows-x64.exe" \
+    --tag "$FULL_TAG" --desktop "$DESKTOP_INSTALLER" \
     --version "$FULL_VERSION"
 full_expect_ok "full contract: check-upload -> PASS" \
   check-upload --out "$work/full/upload" --tag "$FULL_TAG" --version "$FULL_VERSION"
@@ -1411,14 +1494,15 @@ rm -rf "$work/full/assets-noandroid/libbox.aar"
 full_expect_fail "full contract: a missing Android deliverable -> FAIL" \
   "libbox.aar: found 0 copies" -- \
   verify --dir "$work/full/assets-noandroid" --sha "$SHA" \
-    --desktop-dir "$work/fixtures/desktop" --version "$FULL_VERSION"
+    --desktop-dir "$work/full/desktop-dl" --desktop-records "$DESKTOP_RECORDS" \
+    --version "$FULL_VERSION"
 
 # --- negative: a CI record must not reach the download page ---------------
 #
 # The desktop artifact directory carries BUILD-INFO-WINDOWS-DESKTOP - it is what proves the
 # installer's core, and it stays in Actions artifacts. Dropped into staging it is an
 # "unexpected public asset" and must be refused, which is the whole point of the allowlist.
-cp "$work/fixtures/desktop/BUILD-INFO-WINDOWS-DESKTOP-$FULL_VERSION.txt" \
+cp "$DESKTOP_RECORDS/BUILD-INFO-WINDOWS-DESKTOP-$FULL_VERSION.txt" \
    "$work/full/upload/BUILD-INFO-WINDOWS-DESKTOP-$FULL_VERSION.txt"
 full_expect_fail "full contract: an extra BUILD-INFO in staging -> FAIL" \
   "not public deliverable" -- \

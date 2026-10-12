@@ -540,18 +540,69 @@ cmd_desktop() {
       An unverified installer must not be published." ;;
   esac
 
-  note "downloading desktop run $rid -> $out"
-  if ! gh run download "$rid" --repo "$repo" --dir "$out"; then
-    die "gh run download failed for desktop run $rid. The installer is NOT verified; refusing to continue."
+  # The run uploads TWO artifacts: the installer, and the build records alongside it. They
+  # have to be separated here because only the installer is a deliverable - the record is
+  # read to prove the installer's core and must NOT be published.
+  #
+  # The artifact carrying the installer is selected by SHAPE, not by version. On v0.1.6 the
+  # artifact is named `jiejiebox-windows-x64-0.1.5-signed-test` while the installer inside it
+  # is `Jiejiebox-v0.1.6-windows-x64.exe` and the release is v0.1.6: the artifact name is a
+  # third carrier of the version and it was stale. Matching on the version would therefore
+  # have found nothing at all on the release this code was written for, which is simply how
+  # it was found - by running it against v0.1.6 rather than against a fixture.
+  local listing row aname aexpired
+  listing="$(gh api "repos/$repo/actions/runs/$rid/artifacts?per_page=100" \
+    --jq '.artifacts[] | [.name, (.expired|tostring)] | @tsv')" || die \
+    "cannot list the artifacts of desktop run $rid. An unreadable answer is not a green one."
+
+  local installer_artifact="" records_artifact=""
+  # Read line by line with the tab as the field separator. `for row in $listing` would split
+  # a TSV row into its two words and mispair a name with the next row's expiry.
+  while IFS=$'\t' read -r aname aexpired; do
+    [ -n "$aname" ] || continue
+    case "$aexpired" in
+      true) die "desktop artifact '$aname' on run $rid has expired. Expired artifacts cannot be released." ;;
+    esac
+    case "$aname" in
+      *-signed-test) installer_artifact="$aname" ;;
+      *build-records*) records_artifact="$aname" ;;
+    esac
+  done < <(printf '%s\n' "$listing")
+
+  [ -n "$installer_artifact" ] || die "desktop run $rid has no *-signed-test artifact. Artifacts found:
+$(printf '      %s\n' $listing)"
+  [ -n "$records_artifact" ] || die "desktop run $rid has no *build-records* artifact, so the installer's core cannot be proven. A name is not provenance. Artifacts found:
+$(printf '      %s\n' $listing)"
+
+  # The installer is staged in the layout the release publishes: inside a directory named
+  # after the artifact, so the run's structure survives into the staging area and the
+  # allowlist below has one directory to reason about. The records are kept APART, because
+  # they are read and then discarded - putting them here would make them publishable.
+  #
+  # `$out.records` is a sibling of `$out`, so the two trees stay obviously paired and the
+  # records never sit inside the directory the release is built from.
+  local records_dir="${out}.records"
+  rm -rf "$out" "$records_dir"
+  mkdir -p "$out" "$records_dir"
+  note "downloading desktop artifact '$installer_artifact' from run $rid"
+  if ! gh run download "$rid" --repo "$repo" --name "$installer_artifact" --dir "$out"; then
+    die "gh run download failed for '$installer_artifact' on desktop run $rid. The installer is NOT verified; refusing to continue."
+  fi
+  note "downloading desktop artifact '$records_artifact' from run $rid (read, never published)"
+  if ! gh run download "$rid" --repo "$repo" --name "$records_artifact" --dir "$records_dir"; then
+    die "gh run download failed for '$records_artifact' on desktop run $rid. Without the build record the installer's core cannot be proven; refusing to continue."
   fi
 
   local subdirs files
   subdirs="$(find "$out" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
   [ "$subdirs" -eq 1 ] || die \
-    "desktop run $rid produced $subdirs artifact directories in $out, expected exactly 1. The shipped file set must be deterministic."
+    "desktop artifact '$installer_artifact' produced $subdirs directories in $out, expected exactly 1."
   files="$(find "$out" -type f | wc -l | tr -d ' ')"
-  [ "$files" -gt 0 ] || die "desktop run $rid downloaded no files into $out"
-  note "PASS: desktop run $rid downloaded ($files files)"
+  [ "$files" -gt 0 ] || die "desktop artifact '$installer_artifact' downloaded no files into $out"
+  files="$(find "$records_dir" -maxdepth 1 -type f -name 'BUILD-INFO-WINDOWS-DESKTOP-*.txt' | wc -l | tr -d ' ')"
+  [ "$files" -ge 1 ] || die \
+    "desktop artifact '$records_artifact' carries no BUILD-INFO-WINDOWS-DESKTOP-*.txt in $records_dir, so the installer cannot be attributed to a core. Refusing to continue."
+  note "PASS: desktop run $rid staged ($(find "$out" -type f | wc -l | tr -d ' ') file(s)); records in $records_dir"
 }
 
 # ---------------------------------------------------------------------------
@@ -708,15 +759,27 @@ verify_platform() {
 # The record is the same BUILD-INFO the desktop workflow writes into its artifact, and it
 # is deliberately NOT published - it is read here and left in the staging directory, which
 # the public allowlist then refuses to copy.
+# verify_desktop <installer tree> <sha> <version> [records dir]
+#
+# The installer is verified from the workflow's own build record, not from its file name. A
+# name containing the version proves nothing: the v0.1.6 installer was produced from a tree
+# whose version literals still said 0.1.5, so the two carriers have to be read and compared
+# rather than assumed to agree. Its ARTIFACT is named 0.1.5-signed-test for the same reason.
+#
+# The record and the installer arrive in two different artifacts, so the record's directory
+# is a separate argument. It defaults to the installer tree, which is the shape the unit
+# fixtures build and the shape a single-artifact producer would have.
 verify_desktop() {
-  local staged="$1" sha="$2" version="$3"
+  local staged="$1" sha="$2" version="$3" records="${4:-}"
+  [ -n "$records" ] || records="$staged"
   local record name expected_name declared_sha declared_version declared_bytes declared_sha256
 
   # The record is whichever BUILD-INFO-the-desktop-workflow produced; its exact filename
-  # carries the version, so it is found rather than guessed.
-  record="$(find "$staged" -maxdepth 1 -type f -name 'BUILD-INFO-WINDOWS-DESKTOP-*.txt' -print -quit)"
+  # carries the version, so it is found rather than guessed. Searched recursively, because a
+  # downloaded artifact keeps the directory structure it was uploaded with.
+  record="$(find "$records" -type f -name 'BUILD-INFO-WINDOWS-DESKTOP-*.txt' -print -quit)"
   [ -n "$record" ] || die \
-    "the desktop artifact carries no BUILD-INFO-WINDOWS-DESKTOP-*.txt. Without the build record the installer's core cannot be proven, and a name is not provenance."
+    "no BUILD-INFO-WINDOWS-DESKTOP-*.txt under '$records'. Without the build record the installer's core cannot be proven, and a name is not provenance."
 
   field() { sed -n "s/^$1[[:space:]]\{1,\}//p" "$record" | head -1; }
 
@@ -735,8 +798,11 @@ verify_desktop() {
   [ "$declared_version" = "$version" ] || die \
     "the desktop build record says core version '$declared_version', expected '$version'."
 
-  local installer="$staged/$expected_name"
-  [ -f "$installer" ] || die "the desktop artifact has no $expected_name"
+  # Searched rather than assumed to sit at the top level: `gh run download --name` keeps the
+  # artifact's own directory, so the installer is one level down in a real release.
+  local installer
+  installer="$(find "$staged" -type f -name "$expected_name" -print -quit)"
+  [ -n "$installer" ] || die "the desktop artifact has no $expected_name"
 
   local actual_bytes actual_sha
   actual_bytes="$(wc -c < "$installer" | tr -d ' ')"
@@ -751,12 +817,13 @@ verify_desktop() {
 }
 
 cmd_verify() {
-  local dir="" sha="" desktop_dir="" version=""
+  local dir="" sha="" desktop_dir="" desktop_records="" version=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --dir) dir="${2:-}"; shift 2 ;;
       --sha) sha="${2:-}"; shift 2 ;;
       --desktop-dir) desktop_dir="${2:-}"; shift 2 ;;
+      --desktop-records) desktop_records="${2:-}"; shift 2 ;;
       --version) version="${2:-}"; shift 2 ;;
       *) die "verify: unknown argument '$1'" ;;
     esac
@@ -776,7 +843,10 @@ cmd_verify() {
   if [ -n "$desktop_dir" ]; then
     [ -n "$version" ] || die "verify: --version is required with --desktop-dir"
     [ -d "$desktop_dir" ] || die "verify: '$desktop_dir' does not exist"
-    verify_desktop "$desktop_dir" "$sha" "$version"
+    if [ -n "$desktop_records" ]; then
+      [ -d "$desktop_records" ] || die "verify: '$desktop_records' does not exist"
+    fi
+    verify_desktop "$desktop_dir" "$sha" "$version" "$desktop_records"
   else
     die "verify: --desktop-dir is required. The Windows desktop installer is a public deliverable; a release without it is incomplete."
   fi

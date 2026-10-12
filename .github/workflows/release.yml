@@ -207,10 +207,14 @@ jobs:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
+          # The installer and its build record arrive in two different artifacts, and only
+          # the installer is a deliverable, so they are staged apart. `--desktop-records`
+          # names where the record is; without it the installer's core cannot be proven.
           ./tooling/scripts/ci/release-artifacts.sh verify \
             --dir release-assets \
             --sha "$RELEASE_SHA" \
             --desktop-dir release-desktop \
+            --desktop-records release-desktop.records \
             --version "$RELEASE_VERSION"
 
       - name: flatten the release assets
@@ -222,12 +226,17 @@ jobs:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
+          # `gh run download --name` keeps the artifact's own directory, so the installer is
+          # one level below release-desktop. Globbed rather than spelled out: the directory
+          # is named after the artifact, whose version literal has been stale before.
+          installer=release-desktop/*/"Jiejiebox-v${RELEASE_VERSION}-windows-x64.exe"
+          [ -f $installer ] || { echo "FAIL: the staged desktop installer is not at $installer" >&2; exit 1; }
           ./tooling/scripts/ci/release-artifacts.sh flatten \
             --plan release-plan/runs.tsv \
             --dir release-assets \
             --out upload \
             --tag "$RELEASE_TAG" \
-            --desktop release-desktop \
+            --desktop "$installer" \
             --version "$RELEASE_VERSION"
 
       # The public contract is checked against the WORKSPACE, not against the command that
