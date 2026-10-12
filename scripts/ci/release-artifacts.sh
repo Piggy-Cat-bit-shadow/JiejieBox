@@ -892,12 +892,29 @@ $(printf '      %s\n' $actual)"
     expected_assets+=( "$(target_field "$wf2" tarball)-${tag}.tar.gz" )
   done
   expected_assets+=( "$installer" )
-  # SHA256SUMS covers those five and is written below; it is part of the contract.
   expected_assets+=( SHA256SUMS )
 
-  local listing
+  # ---- one manifest over every public binary --------------------------------
+  #
+  # Written BEFORE the listing check below, because it is itself part of the contract: a
+  # check that runs first and looks for a file the code has not created yet can only ever
+  # fail. That ordering mistake is exactly what the first runner run of this change found.
+  #
+  # SHA256SUMS describes the bytes that are about to be published, and it names them the
+  # way the release page does - bare filenames, no './' prefix, because that is the string
+  # a downloader has. Sorted by filename so the file is stable across runs.
+  (
+    cd "$out"
+    : > SHA256SUMS
+    for name in $(find . -mindepth 1 -maxdepth 1 -type f -exec basename {} \; | sort); do
+      [ "$name" = SHA256SUMS ] && continue
+      printf '%s  %s\n' "$(sha256_of "$name")" "$name" >> SHA256SUMS
+    done
+  )
+
+  # Nothing unexpected, and nothing missing.
+  local listing want_listing
   listing="$(find "$out" -mindepth 1 -maxdepth 1 -exec basename {} \; | sort)"
-  local want_listing
   want_listing="$(printf '%s\n' "${expected_assets[@]}" | sort)"
   [ "$listing" = "$want_listing" ] || die \
     "the staged release does not match the public asset contract.
@@ -906,29 +923,16 @@ $(printf '      %s\n' $want_listing)
     found:
 $(printf '      %s\n' $listing)"
 
+  # Every expected name exactly once, so a duplicate cannot publish two different files
+  # under one name.
+  local asset copies
   for asset in "${expected_assets[@]}"; do
     [ "$asset" = SHA256SUMS ] && continue
-    local copies
     copies="$(count_files "$out" -maxdepth 1 -type f -name "$asset")"
     [ "$copies" -eq 1 ] || die \
       "$asset: found $copies copies in the staged release, expected exactly 1. Every public deliverable must appear once."
   done
 
-  # ---- one manifest over every public binary --------------------------------
-  #
-  # SHA256SUMS describes the bytes that are about to be published, and it names them the
-  # way the release page does - bare filenames, no './' prefix, because that is the string
-  # a downloader has. Sorted by filename so the file is stable across runs, and written
-  # into the staging directory so the listing check above already saw it.
-  (
-    cd "$out"
-    : > SHA256SUMS
-    local name
-    while IFS= read -r name; do
-      [ "$name" = SHA256SUMS ] && continue
-      printf '%s  %s\n' "$(sha256_of "$name")" "$name" >> SHA256SUMS
-    done < <(find . -mindepth 1 -maxdepth 1 -type f -exec basename {} \; | sort)
-  )
   # Prove the manifest before it is published. `sha256sum -c` is the exact command the
   # release notes tell a downloader to run, so a manifest that cannot satisfy it must not
   # reach the release.
