@@ -7,13 +7,14 @@
 #   APPLE_CLIENT_DIR       the Apple checkout to prepare (default: clients/apple)
 #   APPLE_CLIENT_PLATFORM  ios or macos (default: inferred from APPLE_CLIENT_DIR)
 #
-# # Two platforms, two Apple sources, one preparation
+# # Two platforms, ONE Apple source, one preparation
 #
-# iOS and macOS take their Swift source from two branches of ONE Apple client
-# repository - hako-ui and the pinned dev commit - and link ONE Libbox framework. This
+# iOS and macOS take their Swift source from the SAME commit of ONE Apple client
+# repository - the parent's clients/apple gitlink - and link ONE Libbox framework. This
 # script is what turns either checkout into a buildable client, so it runs twice per
-# release: once against each source. Which source it is looking at decides the expected
-# revision, because the two platforms legitimately sit at different Apple commits.
+# release: once against each WORKING TREE. The two trees differ because each has its own
+# overlay applied; the source commit does not. Which UI a device shows is decided by the
+# Apple source at runtime, from the device idiom.
 #
 # # Three independent overlays
 #
@@ -96,12 +97,18 @@ if [ ! -e "$submodule_path/.git" ] && [ ! -d "$submodule_path/.git" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 0. The checkout must be exactly the revision its platform selects.
+# 0. The checkout must be exactly the revision this platform selects.
 # ---------------------------------------------------------------------------
 #
-# The two platforms build from different Apple commits, so "the right revision" is a
-# per-platform answer and is taken from the one resolver that knows it - not from the
-# iOS gitlink, which by design says nothing about the macOS source.
+# Both platforms build the SAME Apple commit - the parent's clients/apple gitlink - so "the
+# right revision" is not a per-platform answer. It is still asked of the resolver rather
+# than read here, because the resolver is the one place that knows the gitlink is the only
+# authority; a second copy of that rule in this script is a second thing to keep in step.
+#
+# What IS per-platform is the working tree this runs against: IOS_APPLE_DIR is the
+# submodule, MACOS_APPLE_DIR is a separate ephemeral checkout of the same commit, because
+# each gets its own overlay. The two platforms resolve to the same revision and differ only
+# in which tree is being prepared.
 if [ -z "${APPLE_CLIENT_PLATFORM:-}" ]; then
   case "$submodule_path" in
     "$(./scripts/ci/apple-client-source.sh dir ios)")   APPLE_CLIENT_PLATFORM=ios ;;
@@ -177,15 +184,22 @@ fi
 
 # The power-report-draft shim is anchored on its CALL SITE, not on the client revision.
 #
-# The two Apple sources differ here and both differences are correct: the custom iOS
-# client calls LibboxPromotePowerReportDraft() and carries the no-op global for it,
-# while the original macOS source predates the member and calls it nowhere. Stating
-# this as a hard "the call must exist" anchor - as an earlier version did - makes it
-# impossible for the macOS source to be prepared at all, and weakening it to "never
-# check" would let the iOS client lose its shim silently.
+# There is ONE Apple source, so there is no "iOS source differs from macOS source" here.
+# What differs between the two builds is which `#if os(...)` branch of that one source is
+# compiled: an earlier revision of the client called LibboxPromotePowerReportDraft() from a
+# branch only the iOS build compiles, and carried the no-op global for it there.
 #
-# So the invariant is the relationship between the two: if the client calls the
-# symbol, a definition must be present. Nothing may call a symbol that does not exist.
+# Stating this as a hard "the call must exist" anchor - as an earlier version did - would
+# fail the macOS build for a symbol its branch never references, and weakening it to "never
+# check" would let the client lose the shim silently. So the invariant is stated as the
+# RELATIONSHIP between the two files, and it holds for either build:
+#
+#     if the provider calls the symbol, the platform interface must define it.
+#     Nothing may call a symbol that does not exist.
+#
+# At the frozen pin neither build calls it, so the guard is currently inert and passes
+# vacuously. That is the intended degradation, not a failure: it re-arms by itself if a
+# client revision calls the symbol again.
 promote_calls="$(grep -cF "LibboxPromotePowerReportDraft()" "$provider_swift" || true)"
 promote_defs="$(grep -cF "func LibboxPromotePowerReportDraft()" "$platform_swift" || true)"
 if [ "$promote_calls" -gt 0 ] && [ "$promote_defs" -eq 0 ]; then
@@ -267,12 +281,20 @@ python3 "$root/scripts/ci/fix-apple-team-id.py" "$submodule_path"
 # ---------------------------------------------------------------------------
 # 1c. [branding] Present the platform's app product under the fork's name.
 # ---------------------------------------------------------------------------
-# The product brand is the fork's; the underlying core remains sing-box. Which target
-# carries the product name depends on the platform, and the two products do NOT share a
-# target:
+# The product brand is the fork's; the underlying core remains sing-box. Both platforms
+# present the SAME user-visible name:
 #
-#   iOS    SFI -> JiejieBox   JiejieBox.app,   CFBundleDisplayName=JiejieBox
-#   macOS  SFM -> Jiejiebox   Jiejiebox.app,   CFBundleDisplayName=Jiejiebox
+#   iOS    SFI -> CFBundleDisplayName=JiejieBox
+#   macOS  SFM -> CFBundleDisplayName=JiejieBox
+#
+# Branding does NOT rename the product. `PRODUCT_NAME` stays "sing-box" on both
+# platforms, so the built bundle remains sing-box.app and the identity surface - the
+# bundle identifier, the sing-box:// URL scheme, Profile types, and every record that
+# keys on the product - is untouched. Brand display and product identity are two
+# different things, and only the first one is this repository's to set. The pinned
+# Apple client draws the same boundary and enforces it in its own
+# scripts/dev/audit_apple_ui_boundary.py: PRODUCT_NAME is in PROTECTED_NAME_SETTINGS
+# and CFBundleDisplayName is the single override the fork may make.
 #
 # Both overlays leave everything technical or compatibility-related alone: the target
 # and scheme names, the bundle identifier, the App Group, entitlements, the sing-box://
@@ -287,7 +309,6 @@ python3 "$root/scripts/ci/fix-apple-team-id.py" "$submodule_path"
 # can break the other platform's build. SFM.System - the unsandboxed Developer ID
 # product - is not branded by either.
 if [ "$APPLE_CLIENT_PLATFORM" = "macos" ]; then
-  # Jiejiebox, lower-case b: the spelling the macOS TestFlight app is published under.
   python3 "$root/scripts/ci/apply-apple-macos-branding-overlay.py" "$submodule_path"
 else
   python3 "$root/scripts/ci/apply-apple-branding-overlay.py" "$submodule_path"

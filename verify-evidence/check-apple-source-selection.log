@@ -1,0 +1,95 @@
+### CMD: bash scripts/ci/check-apple-source-selection.sh
+### HEAD: cfc77dc51ab7322e993b8ae0b94b96db59e48f47
+### DATE: 2026-10-12 05:31:02 +0800
+
+== one repository, one branch, and no SHA copy ==
+  PASS: the refs file exists
+  PASS: the refs file sources cleanly under set -u
+  PASS: the refs file names the Apple client repository
+  PASS: the refs file names the reviewed product branch
+  PASS: the refs file records the Hako design baseline as a tag
+  PASS: the refs file records no SHA (the gitlink owns it)
+  PASS: the refs file declares no per-platform source name
+  PASS: the refs file declares only the three names this model allows
+== the workflow uses one source ==
+  PASS: both Apple jobs assert one shared source
+  PASS: neither job calls the removed assert-distinct action
+  PASS: neither job hardcodes an Apple revision
+  PASS: each job overlays its own working tree of the shared commit
+  PASS: both jobs consume the one shared Libbox artifact
+  PASS: the source selection suite runs in CI
+== the resolver, against local fixtures ==
+warning: adding embedded git repository: clients/apple
+hint: You've added another git repository inside your current repository.
+hint: Clones of the outer repository will not contain the contents of
+hint: the embedded repository and will not know how to obtain it.
+hint: If you meant to add a submodule, use:
+hint:
+hint: 	git submodule add <url> clients/apple
+hint:
+hint: If you added this path by mistake, you can remove it from the
+hint: index with:
+hint:
+hint: 	git rm --cached clients/apple
+hint:
+hint: See "git help submodule" for more information.
+hint: Disable this message with "git config set advice.addEmbeddedRepo false"
+== the fixture resolves to one shared source ==
+  PASS: the iOS source is the parent gitlink
+  PASS: the macOS source is the same gitlink
+  PASS: neither platform answers with the branch tip
+  PASS: both platforms report the same branch
+  PASS: the resolver asserts the shared source
+  PASS: the iOS checkout verifies at the gitlink
+  PASS: resolve keeps the iOS names pointing at the shared SHA
+  PASS: resolve keeps the macOS names pointing at the shared SHA
+  PASS: a leftover IOS_APPLE_BRANCH does not replace the declared branch
+  PASS: the macOS branch still answers the declared branch
+  PASS: the shared source is unchanged by the leftover name
+  PASS: the macOS checkout is a copy of the shared source
+  PASS: the macOS checkout verifies at the shared source
+  PASS: the macOS tree is at the iOS source's commit
+== both platforms resolve to this tree's gitlink ==
+  PASS: this commit records an Apple gitlink
+  PASS: the iOS source is this commit's gitlink
+  PASS: the macOS source is the same gitlink
+  PASS: the resolver asserts the shared source on this tree
+  PASS: both platforms report the same branch on this tree
+  PASS: the branch is the one the refs file names
+  PASS: the iOS checkout is at this commit's gitlink
+== the gitlink is the only authority ==
+  PASS: moving the gitlink moves the iOS source
+  PASS: moving the gitlink moves the macOS source too
+  PASS: both platforms still share one source after the move
+  PASS: a macOS working tree left at the old commit is refused
+  PASS: re-checking out the macOS tree follows the gitlink
+  PASS: the re-checked-out macOS tree verifies
+  PASS: the branch tip moved past the pinned commit
+  PASS: a moved branch tip is not the iOS source
+  PASS: a moved branch tip is not the macOS source
+  PASS: the platforms still share one source after the branch moved
+  PASS: the resolver offers exactly the documented actions
+  PASS: the removed assert-distinct action is refused
+  PASS: an action that does not exist is refused
+== the selection fails closed ==
+  PASS: a missing refs file is refused
+  PASS: a refs file with no APPLE_CLIENT_BRANCH is refused
+  PASS: a refs file that puts a per-platform SHA back is refused
+  PASS: resolve refuses the same refs file
+  PASS: the planted macOS SHA does not become the macOS source
+  PASS: the restored refs file resolves the shared source again
+  PASS: an unknown platform is refused
+  PASS: an iOS checkout that is not the gitlink is refused
+  PASS: the iOS checkout verifies once it matches the gitlink
+  PASS: a parent commit with no gitlink is refused for both platforms
+  PASS: the fixture still resolves one shared source after the negative cases
+== the shared Libbox check is wired in ==
+  PASS: the shared-Libbox checker exists
+  PASS: release-apple verifies both clients link one Libbox
+  PASS: every release-apple platform build names its Apple source
+  PASS: release-apple points the iOS builder at the iOS working tree
+  PASS: release-apple points the macOS builder at the macOS working tree
+  PASS: publish verifies both clients link one Libbox
+
+check-apple-source-selection: 65 passed, 0 failed
+EXIT=0

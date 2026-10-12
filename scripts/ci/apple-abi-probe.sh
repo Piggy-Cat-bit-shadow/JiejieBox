@@ -21,8 +21,14 @@
 #
 #   callsites.swift    the right-hand sides of docs/fork/apple-stringbox-callsites.patch
 #   implementer.swift  docs/fork/apple-bridge-session-implementer.patch's witness
-#   observer.swift     Library/Network/ScreenStateObserver.swift, verbatim from
-#                      docs/fork/apple-screen-state-observer.patch
+#   observer.swift     Library/Network/ScreenStateObserver.swift's PUBLISHING SURFACE,
+#                      mirroring docs/fork/apple-screen-state-observer.patch. It carries the
+#                      pinned file's DarwinNotifyAPI and ScreenStatePublishing protocol
+#                      declarations verbatim, plus an adapter that forwards each method to
+#                      LibboxCommandServer - so the shipped framework is what proves the
+#                      protocol can be satisfied. It is not the whole file: the pinned
+#                      revision is a full implementation, and only its publishing surface
+#                      is a claim about this core.
 #   redcheck.swift     the PRE-migration shapes; must NOT compile
 #   runtime.swift      links and runs against the macOS slice, proving the box round-trips
 #   notify-initial-state-probe.c

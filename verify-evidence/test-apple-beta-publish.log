@@ -1,0 +1,122 @@
+### CMD: bash scripts/ci/test-apple-beta-publish.sh
+### HEAD: cfc77dc51ab7322e993b8ae0b94b96db59e48f47
+### DATE: 2026-10-12 05:31:12 +0800
+
+== artifact attribution ==
+  PASS: an artifact built from this commit validates
+  PASS: a different parent SHA is rejected
+== the artifact does not bind an Apple revision ==
+  PASS: the manifest records no Apple client revision
+  PASS: validate takes no submodule argument
+  PASS: a caller that still passes --submodule-sha is accepted
+== artifact integrity ==
+  PASS: a tampered archive is rejected
+  PASS: a missing archive is rejected
+  PASS: an artifact with no manifest is rejected
+== manifest is authoritative, not the artifact name ==
+  PASS: validation does not depend on the directory name
+== manifest is valid JSON whatever the build environment prints ==
+  PASS: the manifest parses as JSON
+  PASS: the manifest carries no control characters
+  PASS: the packer sanitises the Xcode version string
+  PASS: the packer writes the manifest with a JSON encoder
+== manifest content ==
+  PASS: the manifest records the parent commit
+  PASS: the manifest records the artifact checksum
+== install ==
+  PASS: install places the xcframework in the iOS client
+  PASS: the iOS client framework has its iOS slice
+  PASS: the iOS client framework has its macOS slice
+  PASS: install places the same xcframework in the macOS client
+  PASS: both clients link the identical Libbox
+  PASS: a re-install replaces the framework rather than merging
+  PASS: install into a directory that is not an Apple client is rejected
+  PASS: install without an archive is rejected
+== build-apple-libbox install takes an explicit source ==
+  PASS: install copies the framework from an explicit source
+  PASS: the second client now carries the framework
+  PASS: install with a source that does not exist is refused
+== release-apple prebuilt mode ==
+  PASS: prebuilt mode refuses when no Libbox is installed
+  PASS: release-apple still builds Libbox when the flag is unset
+  PASS: the prebuilt branch does not build Libbox
+== publish entry point ==
+  PASS: publish-apple-beta.sh exists and is executable
+  PASS: publish refuses a dirty working tree
+  PASS: publish has no --allow-dirty escape hatch
+  PASS: publish matches the commit SHA exactly, not the latest run
+  PASS: publish re-verifies a supplied --run-id
+  PASS: publish validates the manifest before installing
+  PASS: publish delegates signing to release-apple.sh
+  PASS: publish does not call xcodebuild directly
+  PASS: publish does not exportArchive directly
+== build number is shared by both platforms ==
+  PASS: release-apple derives APPLE_BUILD_NUMBER once
+  PASS: the iOS builder still accepts an inherited build number
+  PASS: the macOS builder still accepts an inherited build number
+== upload gate does not require a local IPA or PKG ==
+  PASS: build-ios-testflight.sh does not gate upload on a local file
+  PASS: build-macos-testflight.sh does not gate upload on a local file
+== the Apple CI run must have proved all three platform jobs ==
+  PASS: a run with libbox, ios and macos successful is accepted
+  PASS: an iOS-only run is refused (macos job absent)
+  PASS: a macOS-only run is refused (ios job absent)
+  PASS: a run whose macOS job was skipped is refused
+  PASS: a run whose iOS job was skipped is refused
+  PASS: a run with a cancelled platform job is refused
+  PASS: a run with a failed platform job is refused
+  PASS: a run whose libbox job failed is refused
+  PASS: a run whose platform job never completed is refused
+  PASS: a run with no jobs at all is refused
+  PASS: unparseable run data is refused
+  PASS: a suffixed job name still counts as its job
+  PASS: publish applies the job gate
+  PASS: publish applies the job gate after verifying the run SHA
+  PASS: publish reports each platform job in its summary
+== one-command publish stays bound to this commit ==
+  PASS: publish can dispatch the workflow when no run exists
+  PASS: publish refuses to dispatch when the branch is not at this commit
+  PASS: publish waits only for a run of this commit
+  PASS: the dispatch wait reads the run's own status
+  PASS: publish offers a way to refuse dispatching
+  PASS: the parent gitlink must match the checked-out submodule
+== CI workflow ==
+  PASS: the workflow defines a libbox job
+  PASS: the ios job needs libbox
+  PASS: the macos job needs libbox
+  PASS: Libbox is compiled exactly once per CI run
+  PASS: the workflow uploads the Libbox artifact
+  PASS: both GUI jobs download the shared artifact
+  PASS: the workflow packs the artifact through the shared helper
+  PASS: this suite runs in CI
+  PASS: the signing suite runs in CI too
+  PASS: the workflow validates before installing
+== the publish run restores what it changes ==
+  PASS: publish installs an EXIT trap
+  PASS: publish restores only the Apple checkouts, not the whole repository
+  PASS: publish restores with checkout rather than a hard reset
+  PASS: publish restores the iOS source
+  PASS: publish restores the macOS source
+  PASS: publish's restore loops over both client directories
+  PASS: publish still refuses a dirty tree
+  PASS: publish still has no --allow-dirty escape hatch
+  PASS: a success run leaves BOTH Apple checkouts clean
+  PASS: a failure run leaves BOTH Apple checkouts clean
+  PASS: a interrupt run leaves BOTH Apple checkouts clean
+== one build number for the run ==
+  PASS: publish derives the build number in its own shell
+  PASS: publish honours a caller-supplied build number
+  PASS: the summary prints the real build number
+  PASS: the summary has no placeholder fallback
+  PASS: release-apple still derives a build number when unset
+== configuration precedence ==
+  PASS: the env loader discovers the variable set from the file
+  PASS: the env loader has no hardcoded per-variable restore
+  PASS: a caller export beats the env file
+  PASS: a caller export beats the env file for multicast
+  PASS: a caller build number is preserved
+  PASS: an unset variable takes the env file value
+  PASS: an unset boolean takes the env file value
+
+test-apple-beta-publish: 97 passed, 0 failed
+EXIT=0

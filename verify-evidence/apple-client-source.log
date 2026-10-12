@@ -1,0 +1,47 @@
+### HEAD: cfc77dc51ab7322e993b8ae0b94b96db59e48f47
+### DATE: 2026-10-12 05:31:56 +0800
+
+
+$ ./scripts/ci/apple-client-source.sh assert-on-branch
+PASS: pinned Apple source 90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07 is on origin/main
+EXIT=0
+
+$ ./scripts/ci/apple-client-source.sh assert-shared-source
+PASS: iOS and macOS share Apple source 90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07
+EXIT=0
+
+$ ./scripts/ci/apple-client-source.sh sha ios
+90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07
+EXIT=0
+
+$ ./scripts/ci/apple-client-source.sh sha macos
+90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07
+EXIT=0
+
+$ ./scripts/ci/apple-client-source.sh branch ios
+main
+EXIT=0
+
+$ ./scripts/ci/apple-client-source.sh branch macos
+main
+EXIT=0
+
+$ ./scripts/ci/apple-client-source.sh dir ios
+clients/apple
+EXIT=0
+
+$ ./scripts/ci/apple-client-source.sh dir macos
+build/apple-client-macos
+EXIT=0
+
+$ ./scripts/ci/apple-client-source.sh verify ios
+PASS: ios Apple source clients/apple @ 90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07
+EXIT=0
+
+$ ./scripts/ci/apple-client-source.sh verify macos
+PASS: macos Apple source build/apple-client-macos @ 90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07
+EXIT=0
+
+$ GIT_TERMINAL_PROMPT=0 ./scripts/ci/apple-client-source.sh checkout macos
+90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07
+EXIT=0

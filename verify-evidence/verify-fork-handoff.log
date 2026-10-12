@@ -1,0 +1,28 @@
+### CMD: bash scripts/ci/verify-fork-handoff.sh
+### HEAD: cfc77dc51ab7322e993b8ae0b94b96db59e48f47
+### DATE: 2026-10-12 05:31:45 +0800
+
+verify-fork-handoff: /Users/jie/Desktop/其他文件/sing-box-verify-016/docs/fork/upstream-sync-handoff.json
+verify-fork-handoff: remote origin branch testing
+
+ok    no final_*_sha / integration_final_sha field is null while integration_status=complete
+
+-- remote resolvability --
+ok    git fetch origin testing -> 6cc45d3f49a3908ff150045d3a113f98920eaaea (attempt 1)
+ok    integration_final_sha ef83b86819c97cbe58b0397dc74af6aca5f1859d is reachable from 6cc45d3f49a3908ff150045d3a113f98920eaaea (remote-resolvable, not merely a local object)
+ok    phase_a_start_sha 912ed1efad265d8a8f56aaabcabc8f7b171c2baa is reachable from 6cc45d3f49a3908ff150045d3a113f98920eaaea (remote-resolvable, not merely a local object)
+ok    coordinates.final_phase_a_sha ef83b86819c97cbe58b0397dc74af6aca5f1859d is reachable from 6cc45d3f49a3908ff150045d3a113f98920eaaea (remote-resolvable, not merely a local object)
+ok    phase_b_start_sha 7e3d0c2ad30b8e5daaba4c7c38c2c8240e5c813e is reachable from 6cc45d3f49a3908ff150045d3a113f98920eaaea (remote-resolvable, not merely a local object)
+note  current_candidate_core_sha is null - no release candidate is frozen
+
+-- markdown/JSON twin agreement --
+ok    phase-A integrated SHA agrees between the twins (ef83b86819c97cbe58b0397dc74af6aca5f1859d)
+ok    PHASE_A_START agrees between the twins (912ed1efad265d8a8f56aaabcabc8f7b171c2baa)
+ok    the full integrated SHA appears verbatim in the Markdown twin
+ok    PHASE_B_START agrees between the twins (7e3d0c2ad30b8e5daaba4c7c38c2c8240e5c813e)
+
+-- release-verdict gate --
+ok    verdict marker is NOT-READY, so no release gate is being bypassed
+
+PASS  verify-fork-handoff: every recorded coordinate is remotely resolvable and the twins agree
+EXIT=0

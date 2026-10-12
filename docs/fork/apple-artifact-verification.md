@@ -417,8 +417,29 @@ $ go test -count=1 -tags "$TAGS" -v -run 'TestAFactWithoutASleepPublishesNothing
 --- PASS: TestTheBridgeUsesThePolicyBandsAndNothingElse (0.00s)
 ```
 
-Prepared fix: **`docs/fork/apple-screen-state-initial-facts.patch`**,
+~~Prepared fix~~ **HISTORICAL — this patch is obsolete and must not be applied.**
+`docs/fork/apple-screen-state-initial-facts.patch`,
 `sha256 95a221006c2816fc68818b5adc31973dc32dcec77bbe3d8d8f1b8a1e3d4131aa`.
+
+> **Superseded.** The section below records a fix prepared against the 29-line
+> `#if os(iOS)` observer that `docs/fork/apple-screen-state-observer.patch` once created.
+> The pinned Apple client no longer has that file: at `90a0e9ae`,
+> `Library/Network/ScreenStateObserver.swift` is a 731-line implementation built on
+> `DarwinNotifyAPI` and `ScreenStatePublishing`, and the initial-state fact this patch adds
+> is now first-class there — `ScreenStatePublishing.reconcileScreenState(on:)` /
+> `reconcileLockState(locked:)` ("LEVEL only: a current-state read found … in this state")
+> driven by `observe(source:provenance:epoch:)`, which reads through
+> `notify.getState(token:)`.
+>
+> So there is nothing left to apply, and the patch is kept only because the reasoning
+> below is still worth reading. Note that `git apply --check` on it currently **succeeds**
+> at a 536-line offset, because the old hunk's context recurs further down the rewritten
+> file — a clean `--check` is a false positive here, not evidence of validity. The patch
+> file itself now carries a `HISTORICAL / NON-AUTHORITATIVE — DO NOT APPLY` header, and it
+> is not part of the ABI-provenance patch set that
+> `scripts/ci/apple-abi-provenance.sh` ties to the pin.
+
+What it added, and why, at the time:
 
 It adds one `queue.async` block after the two registrations that reads `notify_get_state` for each
 token and publishes the fact, guarding each publish on `NOTIFY_STATUS_OK` so a read that arrives
@@ -430,7 +451,7 @@ submitted to the observer's own serial queue so it cannot interleave with a hand
 re-reads the current state rather than the state at registration, so a transition that arrives
 first is published first and this publish merely repeats it, which the governor coalesces.
 
-Verification of the fix, on this host:
+Verification of the fix, as performed on this host at the time:
 
 ```
 base file (as docs/fork/apple-screen-state-observer.patch writes it)

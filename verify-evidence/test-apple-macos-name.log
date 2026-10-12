@@ -1,0 +1,106 @@
+### CMD: bash scripts/ci/test-apple-macos-name.sh
+### HEAD: cfc77dc51ab7322e993b8ae0b94b96db59e48f47
+### DATE: 2026-10-12 05:31:09 +0800
+
+macOS product under test: display name 'JiejieBox', identity 'sing-box'
+== the macOS overlay brands SFM Debug and Release ==
+  PASS: the overlay applies cleanly to the upstream fixture
+  PASS: SFM Debug CFBundleDisplayName is JiejieBox
+  PASS: SFM Debug PRODUCT_NAME is still sing-box
+  PASS: SFM Release CFBundleDisplayName is JiejieBox
+  PASS: SFM Release PRODUCT_NAME is still sing-box
+  PASS: all three SFM scheme application buildables are still sing-box.app
+  PASS: the scheme was not rewritten to a branded JiejieBox.app
+  PASS: the overlay did not rewrite the scheme at all
+  PASS: the fixture starts from a real source spelling, not the brand or upstream
+  PASS: the overlay accepts and normalises the committed spelling
+  PASS: SFM Debug is branded from the committed spelling
+  PASS: SFM Release is branded from the committed spelling too
+== nothing else moved ==
+  PASS: SFI Debug PRODUCT_NAME is still sing-box
+  PASS: SFI Debug CFBundleDisplayName is still sing-box
+  PASS: SFI Release PRODUCT_NAME is still sing-box
+  PASS: SFI Release CFBundleDisplayName is still sing-box
+  PASS: SFT Debug PRODUCT_NAME is still sing-box
+  PASS: SFT Debug CFBundleDisplayName is still sing-box
+  PASS: SFT Release PRODUCT_NAME is still sing-box
+  PASS: SFT Release CFBundleDisplayName is still sing-box
+  PASS: SFM.System Debug keeps PRODUCT_NAME = SFM
+  PASS: SFM.System Debug keeps CFBundleDisplayName = sing-box
+  PASS: SFM.System Release keeps PRODUCT_NAME = SFM
+  PASS: SFM.System Release keeps CFBundleDisplayName = sing-box
+  PASS: the SFM.System bundle id is unchanged
+  PASS: the app bundle id is unchanged
+  PASS: the extension buildable is untouched
+  PASS: the SFM target is still called SFM
+== a second apply changes nothing ==
+  PASS: the overlay is idempotent
+  PASS: re-applying produced byte-identical files
+== the macOS overlay fails closed ==
+  PASS: the near-miss display name really differs from the brand
+  PASS: the fixture really carries a display name outside the accepted spellings
+  PASS: that fixture's other configuration is still upstream
+  PASS: a display name outside the accepted spellings is refused
+  PASS: the fixture really has an SFM product renamed to the brand
+  PASS: that fixture's display name is untouched, so only the identity moved
+  PASS: an SFM PRODUCT_NAME renamed away from sing-box is refused
+  PASS: the fixture really has an unexpected configuration
+  PASS: an unrecognised configuration set is refused
+  PASS: the fixture really has a scheme renamed to the branded bundle
+  PASS: a scheme already renamed to JiejieBox.app is refused
+  PASS: the fixture really has no sing-box.app buildable left
+  PASS: an unknown application buildable is refused
+  PASS: a project directory with no pbxproj is refused
+  PASS: no client directory at all is refused
+== the two overlays keep their own scopes ==
+  PASS: the iOS overlay still targets the SFI target
+  PASS: the macOS overlay targets the SFM target
+  PASS: the two overlays address different schemes
+  PASS: the macOS overlay left SFI untouched
+  PASS: the macOS overlay left SFM.System's product name untouched
+  PASS: both overlays write the same brand
+  PASS: the iOS overlay writes the brand under test too
+  PASS: the two overlays address different TARGETs
+  PASS: each overlay owns exactly the display setting
+  PASS: neither overlay rewrites PRODUCT_NAME
+== prepare routes each platform to its own branding ==
+  PASS: prepare selects the macOS overlay for APPLE_CLIENT_PLATFORM=macos
+  PASS: prepare still selects the iOS overlay otherwise
+  PASS: prepare guards the macOS overlay on the platform
+== the pre-upload name gate ==
+  PASS: the gate accepts sing-box.app with CFBundleDisplayName=JiejieBox
+  PASS: the gate resolves the expected names from the overlay when not told
+  PASS: the gate rejects an unbranded sing-box.app, the bug this fix is for
+  PASS: the gate rejects 'Jijiebox' as the display name
+  PASS: the gate rejects 'JijieBox' as the display name
+  PASS: the gate rejects 'Jijiebox2' as the display name
+  PASS: the gate rejects 'jiejiebox' as the display name
+  PASS: the gate rejects a bundle named JiejieBox.app, the rename this contract forbids
+  PASS: the gate rejects a bundle whose CFBundleName is the brand rather than sing-box
+  PASS: the gate accepts sing-box.app showing the brand with no CFBundleName key
+  PASS: the gate rejects a bundle with no CFBundleDisplayName
+  PASS: the gate refuses a path that is not a bundle
+  PASS: the TestFlight builder runs the gate before uploading
+  PASS: the TestFlight builder no longer repeats the name itself
+== the pinned macOS source matches what the overlay expects ==
+  PASS: the macOS checkout is at the pinned revision
+  PASS: the pinned SFM target has exactly the Debug and Release configurations
+  PASS: the pinned SFM configurations are in a state the overlay accepts
+  PASS: the pinned SFM scheme has exactly three SFM application buildables
+  PASS: the pinned SFM scheme names all of them sing-box.app
+  PASS: the pinned SFM scheme names no branded JiejieBox.app
+  PASS: the pinned scheme keeps the UI test buildable
+  PASS: the overlay applies to a copy of the pinned macOS source
+  PASS: the pinned SFM Release display name is branded
+  PASS: the pinned SFM Release PRODUCT_NAME is still sing-box
+  PASS: the pinned SFM scheme still names sing-box.app after the apply
+  PASS: the pinned SFM.System display name is not branded
+  PASS: the pinned SFM.System target keeps PRODUCT_NAME = SFM
+  PASS: the macOS overlay left the pinned SFI display name alone
+  PASS: the macOS overlay left the pinned SFI identity alone
+  PASS: the overlay is idempotent on the pinned source
+  PASS: the pinned checkout itself was not modified
+  PASS: applying the overlay moved no repository revision
+
+test-apple-macos-name: 90 passed, 0 failed, 0 skipped
+EXIT=0

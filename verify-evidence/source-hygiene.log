@@ -1,0 +1,11 @@
+### CMD: source hygiene
+### HEAD: cfc77dc51ab7322e993b8ae0b94b96db59e48f47
+### DATE: 2026-10-12 05:32:00 +0800
+
+-- 22. no assert-distinct callers
+none (good)
+EXIT=0
+
+-- 23. no <dir>/.git guard using -d
+none (good)
+EXIT=0

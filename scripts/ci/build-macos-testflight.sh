@@ -161,18 +161,26 @@ echo "  CFBundleDisplayName:       $built_display"
 # the name the overlay writes, the name scripts/ci/check-macos-app-name.sh requires and
 # the name this build asserts are one value. A mismatch between those is exactly how the
 # macOS TestFlight app shipped as sing-box in the first place.
+#
+# This is the DISPLAY name only. The built bundle keeps PRODUCT_NAME = sing-box, so the
+# .app stays sing-box.app; check-macos-app-name.sh asserts the branded display name and
+# the unbranded identity separately.
+#
+# The pattern is anchored at column 0, NOT `^\s*`: the overlay's docstring quotes the
+# Apple repo's own `BRAND_DISPLAY_NAME = "Jiejiebox"` line as background, indented, and a
+# leading-\s* match would find that quote first and require the wrong spelling.
 macos_brand="$(
   python3 - "$root/scripts/ci/apply-apple-macos-branding-overlay.py" <<'PY'
 import re, sys
 src = open(sys.argv[1], encoding="utf-8").read()
-m = re.search(r'^\s*NEW_NAME = "([^"]+)"', src, re.M)
+m = re.search(r'^BRAND_DISPLAY_NAME = "([^"]+)"', src, re.M)
 if not m:
-    sys.exit("the macOS branding overlay declares no NEW_NAME")
+    sys.exit("the macOS branding overlay declares no BRAND_DISPLAY_NAME")
 print(m.group(1))
 PY
 )"
 if [ -z "$macos_brand" ]; then
-  echo "FAIL: could not resolve the expected macOS product name from the branding overlay." >&2
+  echo "FAIL: could not resolve the expected macOS display name from the branding overlay." >&2
   exit 1
 fi
 
@@ -191,10 +199,14 @@ gate "bundle id matches the iOS app id" test "$built_bundle" = "$APPLE_IOS_APP_B
 gate "team id is not upstream" test "$APPLE_TEAM_ID" != "P8XK3KHB48"
 gate "build number is set" test "$built_build" != "?" -a -n "$built_build"
 # The name the user sees, as its own script so the check can be run against a fixture
-# bundle without archiving anything. It is a hard gate: an app uploaded still called
+# bundle without archiving anything. It is a hard gate: an app uploaded still showing
 # sing-box installs under the wrong name and cannot be corrected without another build.
+#
+# The gate asserts the two names in opposite directions - CFBundleDisplayName MUST be
+# $macos_brand, and the bundle name / CFBundleName MUST still be sing-box - so the label
+# names both rather than implying the product was renamed.
 # See scripts/ci/check-macos-app-name.sh for what it asserts and why.
-gate "the archived app is named $macos_brand, not sing-box" \
+gate "the archived app shows $macos_brand with its product identity intact" \
   "$root/scripts/ci/check-macos-app-name.sh" "$app" "$macos_brand"
 # The archive must be signed: entitlements exist only on a signed bundle, and Apple
 # validates them from the archive rather than from the export.

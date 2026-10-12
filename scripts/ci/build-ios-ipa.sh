@@ -45,10 +45,10 @@ eval "$("$root/scripts/ci/apple-signing-config.sh")"
 work="build/apple-ios"
 mkdir -p "$(dirname "$out")"
 
-# The Apple client checkout to build from. iOS and macOS take their Swift source from
-# two branches of one Apple repository (release/apple-client-refs.env), so the directory
-# is an input rather than a constant: the iOS job uses the pinned submodule, and the
-# macOS job an ephemeral checkout of the macOS pin. Same script, different source.
+# The Apple client checkout to build from. Both Apple products build the same source - the
+# parent's clients/apple gitlink - but each gets its own WORKING TREE, so the directory is
+# an input rather than a constant: the iOS job uses the pinned submodule, and the macOS
+# job an ephemeral checkout of the same commit. Same script, same source, different tree.
 client="${APPLE_CLIENT_DIR:-clients/apple}"
 if [ ! -d "$client" ]; then
   echo "FAIL: $client is missing; check the Apple client source out first." >&2
@@ -159,9 +159,10 @@ fi
 xcodebuild build "${build_settings[@]}" 2>&1 | tail -40
 
 # --- 3. Locate the built app. ---------------------------------------------------
-# The bundle name is NOT the scheme name, and it is not fixed either: the branding
-# overlay renames the SFI product (currently JiejieBox.app). Read it from the scheme
-# so neither an upstream rename nor a branding change can silently break this.
+# The bundle name is NOT the scheme name, and it is not fixed either. It follows
+# PRODUCT_NAME, which branding deliberately does NOT change: the .app stays sing-box.app
+# and only CFBundleDisplayName is branded (JiejieBox). Read it from the scheme so neither
+# an upstream rename nor a future change to either value can silently break this.
 product_name="$(grep -oE 'BuildableName = "[^"]*\.app"' "$client/sing-box.xcodeproj/xcshareddata/xcschemes/$scheme.xcscheme" | head -1 | sed -E 's/.*"([^"]*)".*/\1/')"
 if [ -z "$product_name" ]; then
   echo "FAIL: could not determine the product name for scheme $scheme" >&2

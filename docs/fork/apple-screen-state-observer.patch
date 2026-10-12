@@ -1,70 +1,823 @@
 diff --git a/Library/Network/ExtensionProvider.swift b/Library/Network/ExtensionProvider.swift
-index 388c935..0071384 100644
+index c47cdac..48b97ff 100644
 --- a/Library/Network/ExtensionProvider.swift
 +++ b/Library/Network/ExtensionProvider.swift
-@@ -26,6 +26,9 @@ open class ExtensionProvider: NEPacketTunnelProvider {
-     }
+@@ -17,6 +17,34 @@ open class ExtensionProvider: NEPacketTunnelProvider {
+     public var tunnelOptions: [String: NSObject]?
+     private var startOptionsURL: URL?
  
-     public var overridePreferences: OverridePreferences?
-+    #if os(iOS)
-+        private var screenStateObserver: ScreenStateObserver?
-+    #endif
- 
-     private func applyStartOptions(_ options: [String: NSObject]) throws {
-         try ApplicationLocale.apply(options["locale"] as? String)
-@@ -211,6 +214,11 @@ open class ExtensionProvider: NEPacketTunnelProvider {
-             throw error
++    /// Serialises the service lifecycle so a teardown cannot overlap a start.
++    ///
++    /// # Why this is needed, and why it is not an actor
++    ///
++    /// The core reaches `stopService()` **synchronously from a gRPC handler goroutine**, not from a
++    /// NetworkExtension entry point: `ExtensionPlatformInterface.serviceStop()` calls
++    /// `tunnel.stopService()` on whatever thread is running the handler. `stopTunnel` calls it too, on
++    /// the tunnel's task. Nothing serialised those two, and the damage is not the double call itself:
++    ///
++    ///   * `stopService()` ends in `platformInterface.reset()`, which cancels and nils `nwMonitor`.
++    ///     A reload's `startService()` installs a **fresh** monitor in
++    ///     `ExtensionPlatformInterface.startDefaultInterfaceMonitor`, and that method blocks on a
++    ///     semaphore until the monitor's first path update - so the window between "the new monitor is
++    ///     assigned" and "the new monitor has delivered" is not short. A `reset()` landing in it
++    ///     cancels the live monitor, and the next `getInterfaces()` throws "NWMonitor not started" with
++    ///     nothing to repair it.
++    ///   * Two concurrent `stopService()` calls run `reset()` twice over the same four unsynchronised
++    ///     statements.
++    ///
++    /// Reachability does not rest on whether NetworkExtension permits its own callbacks to overlap,
++    /// which is why this is fixed rather than listed as device-only: the gRPC path is an independent
++    /// thread by construction, and a reload can be in flight while it arrives.
++    ///
++    /// A lock rather than an actor or a state machine, because the protected region is a direct call
++    /// into the core plus a handful of assignments - there is nothing to suspend on, so the smallest
++    /// correct mechanism is the one that adds no new lifecycle concept.
++    private let serviceLifecycleLock = NSLock()
++
+     public struct OverridePreferences {
+         public var includeAllNetworks: Bool = false
+         public var systemProxyEnabled: Bool = true
+@@ -377,6 +405,15 @@ open class ExtensionProvider: NEPacketTunnelProvider {
          }
-         writeMessage("(packet-tunnel): Here I stand")
-+        #if os(iOS)
-+            if let commandServer {
-+                screenStateObserver = ScreenStateObserver(commandServer: commandServer)
-+            }
-+        #endif
-         #if os(macOS)
-             if Variant.useSystemExtension {
-                 xpcService.markServiceReady()
-@@ -303,6 +311,8 @@ open class ExtensionProvider: NEPacketTunnelProvider {
-             locationDelegate = nil
-         #endif
-         #if os(iOS)
-+            screenStateObserver?.cancel()
-+            screenStateObserver = nil
-             if #available(iOS 18.0, *) {
-                 ControlCenter.shared.reloadControls(ofKind: ExtensionProfile.controlKind)
-             }
+ 
+         let options = LibboxOverrideOptions()
++        // Held across `startOrReloadService` and the monitor install that follows it inside the core,
++        // and NOT across the `locationManager` block below, which is macOS-only, touches no shared
++        // resource and would only widen the region.
++        //
++        // The `startOrReloadService` call is synchronous and the install it triggers is synchronous
++        // too, so nothing here suspends while the lock is held and there is no deadlock surface
++        // against `stopService()`, which takes the same lock directly.
++        serviceLifecycleLock.lock()
++        defer { serviceLifecycleLock.unlock() }
+         do {
+             try commandServer.startOrReloadService(configContent, options: options)
+         } catch {
+@@ -405,6 +442,12 @@ open class ExtensionProvider: NEPacketTunnelProvider {
+     #endif
+ 
+     func stopService() {
++        // Single-entry, and mutually exclusive with `startService()`. See `serviceLifecycleLock`:
++        // `reset()` cancels a monitor that a concurrent start has just installed and is still waiting
++        // on, and this is reachable from the core's gRPC goroutine without any NetworkExtension
++        // reentrancy assumption.
++        serviceLifecycleLock.lock()
++        defer { serviceLifecycleLock.unlock() }
+         do {
+             try commandServer?.closeService()
+         } catch {
 diff --git a/Library/Network/ScreenStateObserver.swift b/Library/Network/ScreenStateObserver.swift
-new file mode 100644
-index 0000000..d3e8035
---- /dev/null
+index ffbeb70..451736a 100644
+--- a/Library/Network/ScreenStateObserver.swift
 +++ b/Library/Network/ScreenStateObserver.swift
-@@ -0,0 +1,29 @@
-+#if os(iOS)
-+    import Foundation
-+    import Libbox
-+    import notify
+@@ -1,25 +1,731 @@
+-#if os(iOS)
+-    import Foundation
+-    import Libbox
+-    import notify
+-
+-    final class ScreenStateObserver {
+-        private let queue = DispatchQueue(label: "io.nekohasekai.sfamt.screen-state")
+-        private var displayToken: Int32 = -1
+-
+-        init(commandServer: LibboxCommandServer) {
+-            notify_register_dispatch("com.apple.iokit.hid.displayStatus", &displayToken, queue) { token in
+-                var state: UInt64 = 0
+-                notify_get_state(token, &state)
+-                commandServer.recordScreenState(state == 1)
+-                if state == 1 {
+-                    commandServer.wakeNow()
++import Dispatch
++import Foundation
 +
-+    final class ScreenStateObserver {
-+        private let queue = DispatchQueue(label: "io.nekohasekai.sfamt.screen-state")
-+        private var displayToken: Int32 = -1
-+        private var lockToken: Int32 = -1
++/// The outcome of one Darwin `notify` call.
++///
++/// `<notify.h>` declares the status codes as `#define`s, so the Clang importer brings
++/// `NOTIFY_STATUS_OK` in as an `Int32` while every notify entry point returns `uint32_t` - confirmed
++/// against the SDK with `xcrun swiftc -typecheck`:
++///
++///     notify_register_dispatch: (UnsafePointer<CChar>?, UnsafeMutablePointer<Int32>?,
++///                                dispatch_queue_t?, notify_handler_t?) -> UInt32
++///     notify_get_state:         (Int32, UnsafeMutablePointer<UInt64>?) -> UInt32
++///     notify_cancel:            (Int32) -> UInt32
++///     NOTIFY_STATUS_OK:         Int32
++///
++/// The two types are reconciled in exactly one place, `SystemNotifyAPI`, which is also the only
++/// place that calls the C functions. Everything above it works with this enum, so a call that did
++/// not return `NOTIFY_STATUS_OK` cannot be mistaken for one that did: there is no raw status to
++/// compare against `0` by accident.
++enum NotifyOutcome: Equatable {
++    case ok
++    case failed(status: UInt32)
++}
 +
-+        init(commandServer: LibboxCommandServer) {
-+            notify_register_dispatch("com.apple.iokit.hid.displayStatus", &displayToken, queue) { token in
-+                var state: UInt64 = 0
-+                notify_get_state(token, &state)
-+                commandServer.recordScreenState(state == 1)
-+            }
-+            notify_register_dispatch("com.apple.springboard.lockstate", &lockToken, queue) { token in
-+                var state: UInt64 = 0
-+                notify_get_state(token, &state)
-+                commandServer.recordLockState(state == 1)
-+            }
++/// One `notify_register_dispatch` attempt.
++///
++/// The C API writes `out_token` only when it succeeds and leaves it untouched otherwise, so the
++/// token and the status are not two independent facts. `.failed` carries no token, and a
++/// registration that never happened cannot be cancelled as if it had.
++enum NotifyRegistration: Equatable {
++    case registered(token: Int32)
++    case failed(status: UInt32)
++
++    var token: Int32? {
++        guard case let .registered(token) = self else {
++            return nil
 +        }
++        return token
++    }
++}
 +
-+        func cancel() {
-+            notify_cancel(displayToken)
-+            notify_cancel(lockToken)
++/// One `notify_get_state` attempt.
++///
++/// This type is what makes the original defect unrepresentable. The old code declared
++/// `var state: UInt64 = 0`, ignored the return code and then read `state`, so a read that failed and
++/// a read that succeeded with `0` produced the same value - and `0` on `com.apple.springboard.lockstate`
++/// means "unlocked". `.failed` carries no value at all, and the only way to get one out is to write
++/// the failed branch explicitly.
++enum NotifyStateRead: Equatable {
++    case value(UInt64)
++    case failed(status: UInt32)
++}
++
++/// The three Darwin `notify` entry points the observer uses, narrowed to what it needs.
++///
++/// The protocol exists so the failure paths - a registration that fails, a read that fails, a
++/// callback delivered after teardown - are driven deterministically by a fake instead of argued
++/// about. The concrete implementation is `SystemNotifyAPI`.
++protocol DarwinNotifyAPI: AnyObject {
++    func registerDispatch(name: String,
++                          queue: DispatchQueue,
++                          handler: @escaping (Int32) -> Void) -> NotifyRegistration
++    func getState(token: Int32) -> NotifyStateRead
++    func cancel(token: Int32) -> NotifyOutcome
++}
++
++/// What the observer is allowed to tell the core.
++///
++/// A one-to-one mirror of the `LibboxCommandServer` record methods, and deliberately nothing more:
++///
++///   * `recordScreenState(on:)` -> `CommandServer.RecordScreenState` -> `Box.ScreenStateChanged`
++///   * `recordLockState(locked:)` -> `CommandServer.RecordLockState` -> `Box.LockStateChanged`
++///   * `reconcileScreenState(on:)` -> `CommandServer.ReconcileScreenState` -> `Box.ReconcileScreenState`
++///   * `reconcileLockState(locked:)` -> `CommandServer.ReconcileLockState` -> `Box.ReconcileLockState`
++///
++/// The first pair are EDGES and the second pair are LEVELS, and the split is the whole of the P1-C
++/// fix - see `ScreenStateDelivery`. Both still take a `BOOL`, so the bridge remains two-valued per
++/// method and still cannot carry "unknown"; that is why the policy for a read that failed is "publish
++/// nothing at all" rather than "publish a third value" - see `ScreenStatePolicy.decide`.
++///
++/// `WakeNow` is deliberately absent. On the core this client targets, an unlock is the device wake
++/// (`Box.LockStateChanged(false)` -> `lifecycle.woke()`, edge plus LEVEL release), while the display
++/// fact is a resume EDGE that must not lift the level (`Box.ScreenStateChanged(true)` ->
++/// `lifecycle.resumed()` only, because a push notification lights the lock screen). A publisher that
++/// offered `wakeNow()` would be offering a way to turn a lit lock screen into a wake storm.
++protocol ScreenStatePublishing: AnyObject {
++    /// EDGE plus LEVEL: the system witnessed this transition, so a new sleep begins.
++    func recordScreenState(on: Bool)
++    /// EDGE plus LEVEL. `false` is the only fact that releases the level.
++    func recordLockState(locked: Bool)
++    /// LEVEL only: a current-state read found the display in this state. Never moves an anchor.
++    func reconcileScreenState(on: Bool)
++    /// LEVEL only: a current-state read found the device in this lock state. Never moves an anchor,
++    /// and the core refuses the unlock direction outright.
++    func reconcileLockState(locked: Bool)
++}
++
++/// The four facts the observer can establish, named for what the core does with them.
++enum ScreenFact: Equatable {
++    /// `com.apple.iokit.hid.displayStatus == 1`: the display is on.
++    /// `lifecycle.resumed()` - a reuse EDGE, and nothing else.
++    case displayOn
++    /// `com.apple.iokit.hid.displayStatus == 0`: the display is off.
++    /// `lifecycle.slept()` - LEVEL pause.
++    case displayOff
++    /// `com.apple.springboard.lockstate == 1`: the device is locked.
++    /// `lifecycle.slept()` - LEVEL pause.
++    case locked
++    /// `com.apple.springboard.lockstate == 0`: the device is unlocked.
++    /// `lifecycle.woke()` - reuse EDGE plus the LEVEL release. The only fact that lifts the pause.
++    case unlocked
++
++    /// Whether the core reads this fact as "nobody is using this device".
++    var isSleep: Bool {
++        switch self {
++        case .displayOff, .locked:
++            return true
++        case .displayOn, .unlocked:
++            return false
 +        }
 +    }
-+#endif
++
++    /// Whether the core reads this fact as a device wake - the one LEVEL release.
++    var isWake: Bool {
++        self == .unlocked
++    }
++
++    /// Whether the core reads this fact as a resume edge with no level movement.
++    var isResumeEdge: Bool {
++        self == .displayOn
++    }
++}
++
++/// The two notification names the observer follows, and the fact each value maps to.
++///
++/// Neither name is public API. See the availability note in the S02 report.
++enum ScreenStateSource: CaseIterable {
++    case display
++    case lock
++
++    var notificationName: String {
++        switch self {
++        case .display:
++            return "com.apple.iokit.hid.displayStatus"
++        case .lock:
++            return "com.apple.springboard.lockstate"
++        }
++    }
++
++    /// The only mapping there is: total on `0` and `1`, undefined anywhere else.
++    ///
++    /// The old code wrote `state == 1`, which maps every other value to `false` - and `false` on the
++    /// lock source is `unlocked`, the one fact that lifts the device pause. A value that is neither
++    /// `0` nor `1` is reported here as nothing at all, never as an unlock.
++    func fact(for value: UInt64) -> ScreenFact? {
++        switch (self, value) {
++        case (.display, 0):
++            return .displayOff
++        case (.display, 1):
++            return .displayOn
++        case (.lock, 0):
++            return .unlocked
++        case (.lock, 1):
++            return .locked
++        default:
++            return nil
++        }
++    }
++}
++
++/// Where an observation came from.
++enum ScreenStateProvenance {
++    /// A notification callback: a transition the system witnessed and delivered.
++    case event
++    /// A `notify_get_state` read taken outside a callback - at start, or on a NetworkExtension
++    /// resume.
++    case snapshot
++}
++
++/// What `ScreenStateObserver.start()` did.
++///
++/// The names that failed are carried out of `start()` rather than only logged, because whether
++/// `com.apple.springboard.lockstate` and `com.apple.iokit.hid.displayStatus` are posted to a
++/// sandboxed NetworkExtension differs per iOS release and cannot be established from source. A
++/// device log that says which name failed to register is the only evidence that question has.
++enum ScreenStateStartResult: Equatable {
++    /// Both sources are registered.
++    case started
++    /// Both sources were already registered; `start()` did nothing.
++    case alreadyStarted
++    /// Neither source is registered. `sources` lists the registrations that failed.
++    case failed(sources: [ScreenStateSource])
++
++    var isStarted: Bool {
++        switch self {
++        case .started, .alreadyStarted:
++            return true
++        case .failed:
++            return false
++        }
++    }
++
++    /// The notification names that failed, for the log.
++    var failedNotificationNames: [String] {
++        guard case let .failed(sources) = self else {
++            return []
++        }
++        return sources.map(\.notificationName)
++    }
++}
++
++/// How a fact may be delivered to the core, which is the one thing the two-valued bridge cannot say
++/// for itself.
++///
++/// This type exists because P1-C was a fact published through the wrong verb. The core has two
++/// vocabularies for a sleep and they are not interchangeable:
++///
++///   * `recordScreenState(on:)` / `recordLockState(locked:)` reach `lifecycle.slept()`, which
++///     publishes a sleep EDGE (`governor.SleepStarted()`) and then the LEVEL. An edge is what starts
++///     a new reuse measurement and moves its anchor - correct for a transition the system witnessed.
++///   * `reconcileScreenState(on:)` / `reconcileLockState(locked:)` reach the LEVEL only. The level is
++///     idempotent, so a restatement of a state the core already holds changes nothing and cannot move
++///     an anchor.
++///
++/// The provenance was already known here and stopped at this type's doorstep: a `.snapshot` was
++/// allowed to publish a sleep fact, and `publish` had no way to say that the fact was a re-read
++/// rather than a transition, so it took the edge path. That is exactly the defect - the client
++/// re-reads both names on every NetworkExtension resume, *after* waking the core, so the edge from
++/// the re-read arrives with a resume already noted and re-anchors the measurement the resume had just
++/// published. See `ScreenStatePolicy.decide` and `wake()` in `ExtensionProvider`.
++enum ScreenStateDelivery: Equatable {
++    /// A transition the system witnessed and delivered. EDGE plus LEVEL in the core: a new sleep, a
++    /// new measurement.
++    case edge
++    /// A current-state read taken outside a callback. LEVEL only: it may establish that the device is
++    /// not in use and may never move a measurement's anchor.
++    case level
++
++    /// The delivery a given provenance implies. Total, so a new provenance cannot default to the
++    /// destructive one.
++    init(provenance: ScreenStateProvenance) {
++        switch provenance {
++        case .event:
++            self = .edge
++        case .snapshot:
++            self = .level
++        }
++    }
++}
++
++/// The result of one observation: what to remember, what (if anything) to publish, and how that
++/// publication may be delivered.
++struct ScreenStateDecision: Equatable {
++    /// The raw value to remember as this source's last observation, or `nil` when the read
++    /// established nothing and what was known before must be kept.
++    let rememberValue: UInt64?
++    /// The fact to publish, or `nil` when nothing may be published. `nil` is how this code spells
++    /// "unknown": the bridge has no third value to send.
++    let publish: ScreenFact?
++    /// How `publish` may be delivered. Carried on the decision rather than recomputed at the call
++    /// site so the rule is one pure function that the tests can pin without an observer.
++    let delivery: ScreenStateDelivery
++}
++
++/// The whole policy, as a pure function, so every failure path is exercisable without a device.
++enum ScreenStatePolicy {
++    /// Decides what one observation means.
++    ///
++    /// The rules, in order:
++    ///
++    /// 1. A read that did not return `NOTIFY_STATUS_OK` established nothing. Nothing is published,
++    ///    and the previously observed value is kept - so a later successful read of the same value
++    ///    is still a repeat rather than a fresh edge, and a later successful read of a different
++    ///    value is still published. A failed read can therefore never be reported as "unlocked" and
++    ///    can never fabricate a transition.
++    /// 2. A value that is neither `0` nor `1` established nothing either. Nothing is published.
++    /// 3. A value equal to the last value this source successfully observed is a repeat. Nothing is
++    ///    published, so a system that re-posts an unchanged fact cannot produce a second sleep edge,
++    ///    a second wake, or a wake storm.
++    /// 4. A snapshot may only establish that the device is NOT in use (`isSleep`). "Unlocked" and
++    ///    "display on" are claims about a transition that a snapshot did not witness, and
++    ///    `notify_get_state` answers `NOTIFY_STATUS_OK` with `0` for a name whose state was never
++    ///    set - which on the lock source would read as an unlock. The value is still remembered, so
++    ///    the next real transition is measured against it.
++    /// 5. An unlock is a transition, so it is only published when the lock source was actually
++    ///    observed locked (`1`) first. `.unlocked` is the one fact that lifts the device pause
++    ///    (`lifecycle.woke()`), and a `0` from an axis whose prior value is unknown is
++    ///    indistinguishable from the never-set `0` rule 4 refuses on a snapshot - so it is refused
++    ///    on an event too. The value is still remembered, so the next read is measured against it
++    ///    and a genuine lock-then-unlock still publishes.
++    /// 6. Whatever survives the rules above is delivered as the provenance it came from: an `.event`
++    ///    as an EDGE, a `.snapshot` as a LEVEL. Rule 4 already limits a snapshot to sleep facts, and
++    ///    this is the other half of the same idea - such a fact is a restatement of the current
++    ///    state, so the core is told to reconcile the level rather than to begin a new measurement.
++    ///    Delivering a snapshot as an edge is the P1-C defect: the client re-reads on every
++    ///    NetworkExtension resume, after the core has been woken, so the edge lands with a resume
++    ///    already noted and moves the anchor of the measurement that resume had just published.
++    static func decide(read: NotifyStateRead,
++                       source: ScreenStateSource,
++                       provenance: ScreenStateProvenance,
++                       lastObserved: UInt64?) -> ScreenStateDecision {
++        let delivery = ScreenStateDelivery(provenance: provenance)
++        func establishingNothing() -> ScreenStateDecision {
++            ScreenStateDecision(rememberValue: nil, publish: nil, delivery: delivery)
++        }
++        guard case let .value(raw) = read else {
++            return establishingNothing()
++        }
++        guard let fact = source.fact(for: raw) else {
++            return establishingNothing()
++        }
++        if lastObserved == raw {
++            return ScreenStateDecision(rememberValue: raw, publish: nil, delivery: delivery)
++        }
++        if provenance == .snapshot, !fact.isSleep {
++            return ScreenStateDecision(rememberValue: raw, publish: nil, delivery: delivery)
++        }
++        if fact == .unlocked, lastObserved != 1 {
++            return ScreenStateDecision(rememberValue: raw, publish: nil, delivery: delivery)
++        }
++        return ScreenStateDecision(rememberValue: raw, publish: fact, delivery: delivery)
++    }
++}
++
++/// Watches the two Darwin notifications that describe whether a person is using the device, and
++/// hands the resulting facts to the core through `ScreenStatePublishing`.
++///
++/// Everything this class owns is confined to one serial queue, which is also the queue the notify
++/// callbacks are registered against. That single choice is what makes the rest of the design cheap:
++///
++///   * Registration and the snapshot read that follows it cannot interleave with a callback, so the
++///     snapshot is never older than a fact the core already has and can never overwrite a newer
++///     event.
++///   * A teardown cannot run in the middle of an observation.
++///   * The last-observed values need no lock of their own, because nothing off the queue touches
++///     them.
++///
++/// The two lifecycle facts that are not queue-confined - the generation counter and the token table
++/// - sit behind one small lock, because `cancel()` has to fence callbacks synchronously from
++/// whatever thread the NetworkExtension calls it on, and `deinit` has to be able to release tokens
++/// without hopping onto a queue that may already be gone.
++final class ScreenStateObserver {
++    private let notify: DarwinNotifyAPI
++    private let publisher: ScreenStatePublishing
++    private let queue: DispatchQueue
++    /// Identifies `queue`, so an entry point called from a callback runs inline instead of
++    /// deadlocking on itself.
++    private let queueKey = DispatchSpecificKey<UInt8>()
++
++    /// Guards `generation`, `registrations` and `cancelled`.
++    private let access = NSLock()
++    /// Bumped by every `start()` and every `cancel()`. A callback may publish only while the
++    /// generation it was registered under is still current.
++    private var generation: UInt64 = 0
++    /// The tokens that actually registered. A source is absent when its registration failed, so a
++    /// failed registration is never cancelled.
++    private var registrations: [ScreenStateSource: Int32] = [:]
++    /// Set by `cancel()`, and read by a `start()` that is already in flight on another thread.
++    ///
++    /// The generation alone cannot carry this: `cancel()` does not enter the queue, so a cancel that
++    /// lands while `start()` is inside `registerDispatch` finds an empty token table, cancels nothing
++    /// and returns - and `start()` then finishes and legitimately reports success for an observer the
++    /// caller has already stopped. That is a start that succeeded against a stop, which is not a state
++    /// any caller can act on: `ExtensionProvider.stopTunnel` would record a live observer, and
++    /// `startTunnel` would install one the same stop is already tearing down.
++    ///
++    /// With this, the outcome is decided rather than raced: the cancel is remembered, the in-flight
++    /// start releases the tokens it just took and reports failure, and the caller sees one ordering
++    /// instead of two. Cleared at the top of `start()`, which is the only thing that clears it.
++    private var cancelled = false
++
++    /// Queue-confined. The last raw value each source successfully observed, whether or not it was
++    /// published.
++    private var lastObserved: [ScreenStateSource: UInt64] = [:]
++
++    init(notify: DarwinNotifyAPI,
++         publisher: ScreenStatePublishing,
++         queue: DispatchQueue = DispatchQueue(label: "io.nekohasekai.sfamt.screen-state")) {
++        self.notify = notify
++        self.publisher = publisher
++        self.queue = queue
++        queue.setSpecific(key: queueKey, value: 1)
++    }
++
++    deinit {
++        // Last resort. The owner is expected to call `cancel()` before it closes the command
++        // server; a registration that outlived the observer would keep a dead handler alive in
++        // notifyd for the life of the process.
++        for token in takeRegistrations() {
++            _ = notify.cancel(token: token)
++        }
++    }
++
++    // MARK: - Lifecycle
++
++    /// Registers both notifications and publishes the current state.
++    ///
++    /// Both names are attempted even when the first one fails, so the failure is reported for every
++    /// source rather than only for the first, and only the registrations that actually succeeded are
++    /// cancelled on the way out.
++    ///
++    /// All or nothing: if either registration fails, the one that succeeded is cancelled and this
++    /// reports failure. A half-registered observer would drive the device axis from whichever name
++    /// happened to register, which makes the pause behaviour differ per launch for a reason nobody
++    /// can see from the outside; a clean, logged failure is visible instead.
++    ///
++    /// Idempotent: a second `start()` while registered does nothing at all, so no token is
++    /// duplicated and repeated start/stop cycles cannot leak a registration.
++    ///
++    /// # Ordering
++    ///
++    /// Registration happens first, then the snapshot read, both inside one block on the observer's
++    /// serial queue - which is also the queue the registrations deliver on. No callback can run
++    /// between the two, so the snapshot is never older than a fact the core already has: a
++    /// transition that happens during the window is either seen by the snapshot or delivered by the
++    /// callback that follows it, and the repeat rule collapses the case where both happen into one
++    /// publication. The unsafe order - read first, register second - loses a transition that happens
++    /// in between, and is what this replaces.
++    ///
++    /// # `cancel()` on another thread, and why the epoch and the tokens move together
++    ///
++    /// `cancel()` is callable from any thread - `ExtensionProvider.stopTunnel` calls it from whatever
++    /// thread the NetworkExtension uses - and it fences by bumping the generation. It does **not**
++    /// enter this queue, so it can land at any point in the block below.
++    ///
++    /// The epoch this start publishes under and the tokens it stores are therefore taken in ONE
++    /// critical section, `advanceGenerationAndStore`. Split in two - bump the generation, register,
++    /// then store - a `cancel()` that lands inside the registration loop finds an empty token table,
++    /// cancels nothing and returns; this start then stores tokens whose epoch is already dead. The
++    /// observer would report `.started`, none of its callbacks could ever publish again because
++    /// `isCurrent` refuses them, `hasRegistrations` would stay true so no later `start()` could revive
++    /// it, and both registrations would live in notifyd for the life of the process - the exact
++    /// "pause entered and never lifted" failure this file exists to prevent.
++    ///
++    /// Joining the two makes "the tokens in the table are the tokens of the current epoch" an
++    /// invariant of this type rather than a property of how two threads happened to interleave: after
++    /// the store, either the epoch is still current and the observer is live, or the generation has
++    /// moved and this start releases the tokens itself.
++    ///
++    /// The snapshot read is deliberately outside the lock. It is the one call that can take time, and
++    /// holding `access` across it would let a `notify_get_state` block `cancel()`.
++    @discardableResult
++    func start() -> ScreenStateStartResult {
++        syncOnQueue {
++            // A new start is a fresh intent, so a cancel that finished before it began does not
++            // refuse it. A cancel that lands during the registration loop below does.
++            clearCancelled()
++            guard !hasRegistrations else {
++                return .alreadyStarted
++            }
++            var registered: [ScreenStateSource: Int32] = [:]
++            var failed: [ScreenStateSource] = []
++            // The handlers are created before the epoch exists - it is taken at the end, together
++            // with the tokens - so they read it from this box instead of capturing it.
++            let epochBox = EpochBox()
++            for source in ScreenStateSource.allCases {
++                let registration = notify.registerDispatch(name: source.notificationName,
++                                                           queue: queue) { [weak self] _ in
++                    // The token is deliberately unused: the generation is what identifies whether
++                    // this callback still belongs to a live registration.
++                    guard let epoch = epochBox.value else {
++                        return
++                    }
++                    self?.handleEvent(source: source, epoch: epoch)
++                }
++                switch registration {
++                case let .registered(token):
++                    registered[source] = token
++                case .failed:
++                    failed.append(source)
++                }
++            }
++            guard failed.isEmpty else {
++                // Clean up the registrations that did succeed. `registered` only ever holds tokens
++                // the API returned, so nothing that failed is cancelled here.
++                for (_, token) in registered {
++                    _ = notify.cancel(token: token)
++                }
++                return .failed(sources: failed)
++            }
++            let epoch = advanceGenerationAndStore(registered)
++            // Published only now, so a handler can never observe an epoch for a registration that is
++            // not yet live; `registerDispatch` has already returned for every source by this point.
++            epochBox.value = epoch
++            guard isCurrent(epoch), !isCancelled else {
++                // A `cancel()` landed while this start was registering. It could not release these
++                // tokens, because they were not in the table yet, so this start releases them and
++                // reports the failure rather than leaving either a leak or a live-looking observer
++                // whose owner has already stopped it.
++                epochBox.value = nil
++                for token in takeRegistrations() {
++                    _ = notify.cancel(token: token)
+                 }
++                return .failed(sources: ScreenStateSource.allCases)
+             }
++            for source in ScreenStateSource.allCases {
++                observe(source: source, provenance: .snapshot, epoch: epoch)
++            }
++            // Re-checked AFTER the snapshot. `observe` already refuses to publish once the epoch has
++            // moved - it fences on both sides of the `notify_get_state` read - so no fact escapes; what
++            // this guards is the RESULT. Without it, a `cancel()` that lands during the snapshot loop
++            // releases the registrations and this start still returns `.started`, so the caller
++            // (`ExtensionProvider.startScreenStateObserver`) stores an observer that holds no tokens
++            // behind `guard screenStateObserver == nil` and no later start can replace it. The tokens
++            // are already gone at that point, so there is nothing to release here; the retry is simply
++            // reported as failed, which is what it was.
++            guard isCurrent(epoch), !isCancelled else {
++                epochBox.value = nil
++                return .failed(sources: ScreenStateSource.allCases)
++            }
++            return .started
+         }
++    }
+ 
+-        func cancel() {
+-            notify_cancel(displayToken)
++    /// Carries the epoch from `start()` to the callbacks it registered.
++    ///
++    /// The handlers are created inside the registration loop, before the epoch exists, because the
++    /// epoch and the tokens are deliberately taken together at the end of that loop - see `start()`.
++    /// A callback cannot arrive before the value is set: the registration is not live in notifyd until
++    /// `registerDispatch` returns, and the block holding this box is the same serial queue those
++    /// callbacks are delivered on.
++    private final class EpochBox {
++        var value: UInt64?
++    }
++
++    /// Stops watching, and makes every callback that is already queued a no-op.
++    ///
++    /// The generation is advanced synchronously, before this returns and before the tokens are
++    /// cancelled. `notify_cancel` cannot un-queue a callback the notification centre has already
++    /// submitted, and `ExtensionProvider` calls this immediately before it closes the command
++    /// server, so a callback that ran in that window would otherwise publish into a dead server.
++    /// Bumping first makes "after `cancel()` returns, nothing is published" a property of this code
++    /// rather than a property of how the notification centre schedules.
++    ///
++    /// Idempotent, and it cancels only the tokens that actually registered.
++    func cancel() {
++        markCancelled()
++        _ = advanceGeneration()
++        for token in takeRegistrations() {
++            _ = notify.cancel(token: token)
+         }
+     }
+-#endif
++
++    /// Re-reads both sources outside a callback, and republishes only what a snapshot may establish.
++    ///
++    /// Darwin notifications are delivered to a running process and to nobody else: while the
++    /// extension is suspended a lock or an unlock is simply not delivered, and the observer has no
++    /// way to hear about it afterwards. A NetworkExtension resume is the one moment the process
++    /// knows it was away, so it is the one moment a re-read is worth doing. It is not polling -
++    /// nothing schedules this and no timer is involved - and because a snapshot may only publish a
++    /// sleep fact, it can recover a missed "the device locked" and can never invent a wake.
++    func resync() {
++        syncOnQueue {
++            let epoch = currentGeneration()
++            for source in ScreenStateSource.allCases {
++                observe(source: source, provenance: .snapshot, epoch: epoch)
++            }
++        }
++    }
++
++    // MARK: - Observation
++
++    /// A notification callback. Runs on the observer's serial queue, which is the queue the
++    /// registration asked for.
++    private func handleEvent(source: ScreenStateSource, epoch: UInt64) {
++        // A callback queued before `cancel()` and run after it must publish nothing: the command
++        // server it would publish into is closed, and the core it would drive has moved on. This is
++        // the whole of the "no notification may revive the core after stop" rule.
++        guard isCurrent(epoch) else {
++            return
++        }
++        observe(source: source, provenance: .event, epoch: epoch)
++    }
++
++    /// One observation of one source: read the value, decide, publish. Queue-confined.
++    private func observe(source: ScreenStateSource, provenance: ScreenStateProvenance, epoch: UInt64) {
++        guard isCurrent(epoch), let token = registration(for: source) else {
++            return
++        }
++        let read = notify.getState(token: token)
++        // Re-checked after the read. `cancel()` can land while the read is in flight, and a fact
++        // that was read before the fence must not be published after it. The fence is checked on
++        // both sides of the only call that can take time, so the observer cannot be resurrected by
++        // a read that was already under way.
++        guard isCurrent(epoch) else {
++            return
++        }
++        let decision = ScreenStatePolicy.decide(read: read,
++                                                source: source,
++                                                provenance: provenance,
++                                                lastObserved: lastObserved[source])
++        if let value = decision.rememberValue {
++            lastObserved[source] = value
++        }
++        guard let fact = decision.publish else {
++            return
++        }
++        publish(fact, as: decision.delivery)
++    }
++
++    /// The state table, in code:
++    ///
++    ///     EDGE (a transition the system delivered)
++    ///     locked=1    -> recordLockState(true)    -> Box.LockStateChanged(true)    -> slept()     (EDGE + LEVEL)
++    ///     unlocked=0  -> recordLockState(false)   -> Box.LockStateChanged(false)   -> woke()      (EDGE + LEVEL wake)
++    ///     display=on  -> recordScreenState(true)  -> Box.ScreenStateChanged(true)  -> resumed()   (EDGE only)
++    ///     display=off -> recordScreenState(false) -> Box.ScreenStateChanged(false) -> slept()     (EDGE + LEVEL)
++    ///
++    ///     LEVEL (a current-state read; rule 4 limits it to the sleep facts)
++    ///     locked=1    -> reconcileLockState(true)    -> Box.ReconcileLockState(true)    -> DevicePause() (LEVEL only)
++    ///     display=off -> reconcileScreenState(false) -> Box.ReconcileScreenState(false) -> DevicePause() (LEVEL only)
++    ///
++    /// The delivery is a parameter rather than something this method re-derives, so the rule lives in
++    /// one place - `ScreenStatePolicy.decide` - and is asserted there by the tests. The switch below
++    /// is exhaustive over the pair, so a sleep fact can never reach an edge entry point from a
++    /// snapshot again: that combination does not compile its way to `recordScreenState`.
++    ///
++    /// There is no path to `wakeNow()`: an unlock already publishes the wake, and a display going on
++    /// must not.
++    private func publish(_ fact: ScreenFact, as delivery: ScreenStateDelivery) {
++        switch (fact, delivery) {
++        case (.displayOn, .edge):
++            publisher.recordScreenState(on: true)
++        case (.displayOff, .edge):
++            publisher.recordScreenState(on: false)
++        case (.locked, .edge):
++            publisher.recordLockState(locked: true)
++        case (.unlocked, .edge):
++            publisher.recordLockState(locked: false)
++        case (.displayOff, .level):
++            publisher.reconcileScreenState(on: false)
++        case (.locked, .level):
++            publisher.reconcileLockState(locked: true)
++        case (.displayOn, .level), (.unlocked, .level):
++            // Unreachable: rule 4 refuses a wake fact from a snapshot, and rule 5 refuses an unlock
++            // whose prior value was not observed. Spelled out rather than folded into `default` so
++            // that a future case has to be classified instead of silently landing here - and
++            // publishing nothing is the safe half of the mistake if one ever does.
++            break
++        }
++    }
++
++    // MARK: - Queue and generation plumbing
++
++    /// Runs `body` on the observer's queue, inline when already there.
++    ///
++    /// Every entry point goes through this, so `cancel()` and `resync()` can be called from a
++    /// callback without deadlocking and every observation is serialised with every other.
++    private func syncOnQueue<T>(_ body: () -> T) -> T {
++        if DispatchQueue.getSpecific(key: queueKey) != nil {
++            return body()
++        }
++        return queue.sync(execute: body)
++    }
++
++    /// Bumps the generation and returns the new value. Safe from any thread.
++    private func advanceGeneration() -> UInt64 {
++        access.lock()
++        defer { access.unlock() }
++        generation &+= 1
++        return generation
++    }
++
++    /// Bumps the generation AND publishes the token table under the same acquisition.
++    ///
++    /// This is the one place a start's epoch and its registrations are allowed to be established, and
++    /// the atomicity is the point rather than an optimisation. `cancel()` takes the same lock, so a
++    /// cancel either happens entirely before this call - in which case this start's epoch is the newer
++    /// one and its tokens are the live ones - or entirely after it, in which case the cancel sees these
++    /// tokens and releases them. There is no interleaving in which the table holds tokens belonging to
++    /// a generation that has already moved, which is the dead-observer state `start()` guards against
++    /// immediately after this returns. See `start()` for the sequence that used to produce it.
++    private func advanceGenerationAndStore(_ registered: [ScreenStateSource: Int32]) -> UInt64 {
++        access.lock()
++        defer { access.unlock() }
++        generation &+= 1
++        registrations = registered
++        return generation
++    }
++
++    private func currentGeneration() -> UInt64 {
++        access.lock()
++        defer { access.unlock() }
++        return generation
++    }
++
++    /// Whether `epoch` is still the generation the observer is running under.
++    private func isCurrent(_ epoch: UInt64) -> Bool {
++        currentGeneration() == epoch
++    }
++
++    /// Whether a `cancel()` has been seen since the current `start()` began.
++    private var isCancelled: Bool {
++        access.lock()
++        defer { access.unlock() }
++        return cancelled
++    }
++
++    private func markCancelled() {
++        access.lock()
++        defer { access.unlock() }
++        cancelled = true
++    }
++
++    private func clearCancelled() {
++        access.lock()
++        defer { access.unlock() }
++        cancelled = false
++    }
++
++    /// Whether a registration is already in place, so `start()` can be a no-op.
++    private var hasRegistrations: Bool {
++        access.lock()
++        defer { access.unlock() }
++        return !registrations.isEmpty
++    }
++
++    private func takeRegistrations() -> [Int32] {
++        access.lock()
++        defer { access.unlock() }
++        let tokens = Array(registrations.values)
++        registrations.removeAll()
++        return tokens
++    }
++
++    private func registration(for source: ScreenStateSource) -> Int32? {
++        access.lock()
++        defer { access.unlock() }
++        return registrations[source]
++    }
++}

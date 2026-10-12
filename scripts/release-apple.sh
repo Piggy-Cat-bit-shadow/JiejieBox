@@ -159,14 +159,19 @@ echo "  style:    $APPLE_SIGNING_STYLE"
 [ -n "${APPLE_BUILD_NUMBER:-}" ] && echo "  build:    $APPLE_BUILD_NUMBER"
 
 # ---------------------------------------------------------------------------
-# The two Apple UI sources
+# The one Apple UI source
 # ---------------------------------------------------------------------------
 #
-# ONE Apple source, TWO products. Both iOS and macOS are built from the revision the
-# parent's clients/apple gitlink records, and the SAME Libbox build is installed into each.
-# Which UI a device shows is the Apple source's own runtime decision - iPhone the Hako
-# presentation, iPad and macOS upstream's - so the parent selects only the commit, never a
-# per-platform UI branch.
+# ONE Apple repository, ONE source, TWO products. Both the iOS and the macOS product are
+# built from the same commit: the parent's clients/apple gitlink. They are not separate
+# sources and were never meant to be merged - which UI a device shows is decided by the
+# Apple source at runtime, from the device idiom, not by a per-platform pin here.
+# `assert-shared-source` asserts exactly that. It replaced `assert-distinct`, which
+# asserted the opposite and would now fail every correct release.
+#
+# The two platforms still get their own working trees (IOS_APPLE_DIR / MACOS_APPLE_DIR),
+# because each needs its own overlay applied, and the SAME Libbox build is installed into
+# both.
 step "select the Apple source"
 eval "$(./scripts/ci/apple-client-source.sh resolve)"
 ./scripts/ci/apple-client-source.sh assert-shared-source
@@ -175,14 +180,12 @@ ios_client_dir="$IOS_APPLE_DIR"
 macos_client_dir="$MACOS_APPLE_DIR"
 export APPLE_CLIENT_REPOSITORY IOS_APPLE_SHA IOS_APPLE_BRANCH MACOS_APPLE_SHA MACOS_APPLE_BRANCH
 
-echo "  source: $APPLE_CLIENT_SHA on $APPLE_CLIENT_BRANCH (shared by both products)"
-echo "  iOS:    $IOS_APPLE_BRANCH @ $IOS_APPLE_SHA  -> $ios_client_dir"
-echo "  macOS:  $MACOS_APPLE_BRANCH @ $MACOS_APPLE_SHA  -> $macos_client_dir"
+echo "  iOS:   $IOS_APPLE_BRANCH @ $IOS_APPLE_SHA -> $ios_client_dir"
+echo "  macOS: $MACOS_APPLE_BRANCH @ $MACOS_APPLE_SHA -> $macos_client_dir  (same source)"
 
-# The authoritative checkout is the submodule the parent records; this asserts it matches.
+# The iOS source is the submodule the parent records; this asserts the checkout matches.
 ./scripts/ci/apple-client-source.sh checkout ios >/dev/null
-# The macOS tree is a same-commit copy, created on demand so the two overlays cannot
-# contaminate each other. A separate DIRECTORY, never a separate revision.
+# The macOS source is an ephemeral checkout of the pinned commit, created on demand.
 ./scripts/ci/apple-client-source.sh checkout macos >/dev/null
 
 step "signing environment"

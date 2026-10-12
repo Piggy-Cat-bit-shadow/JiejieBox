@@ -319,9 +319,9 @@ callsites.swift	Library/Network/ExtensionPlatformInterface.swift	options.getHTTP
 callsites.swift	Library/Network/ExtensionPlatformInterface.swift	options.getDNSMode()!.value	apple-stringbox-callsites.patch
 implementer.swift	Library/Network/ExtensionPlatformInterface.swift	func name() -> LibboxStringBox?	apple-bridge-session-implementer.patch
 implementer.swift	Library/Network/ExtensionPlatformInterface.swift	LibboxStringBox()	apple-bridge-session-implementer.patch
-observer.swift	Library/Network/ScreenStateObserver.swift	notify_register_dispatch("com.apple.iokit.hid.displayStatus"	apple-screen-state-observer.patch
-observer.swift	Library/Network/ScreenStateObserver.swift	commandServer.recordScreenState(state == 1)	apple-screen-state-observer.patch
-observer.swift	Library/Network/ScreenStateObserver.swift	commandServer.recordLockState(state == 1)	apple-screen-state-observer.patch
+observer.swift	Library/Network/ScreenStateObserver.swift	protocol DarwinNotifyAPI: AnyObject {	apple-screen-state-observer.patch
+observer.swift	Library/Network/ScreenStateObserver.swift	func recordScreenState(on: Bool)	apple-screen-state-observer.patch
+observer.swift	Library/Network/ScreenStateObserver.swift	func recordLockState(locked: Bool)	apple-screen-state-observer.patch
 EOF
 
 tier1_hits=0
@@ -334,9 +334,28 @@ while IFS=$'\t' read -r witness path anchor patch; do
   [ -n "$anchor" ] || continue
   where=""
 
+  # `contains_line` rather than `... | grep -Fq -- "$anchor"`.
+  #
+  # Under `set -o pipefail`, `grep -q` exits the moment it matches, which sends SIGPIPE to
+  # whatever is still writing into the pipe. The pipeline's status then becomes 141 even
+  # though the match WAS found, so every check below read as a false negative. It only
+  # shows up once the haystack is large enough to fill the pipe buffer: the same anchor
+  # passes against a short patch and fails against a long one. A `case` glob has no
+  # pipeline and no such failure mode.
+  contains_line() {
+    case "$1" in
+      *"$2"*) return 0 ;;
+      *) return 1 ;;
+    esac
+  }
+
+  # The patch's added lines for this path, computed once: three separate checks below need
+  # them, and each recomputation re-read the whole patch.
+  added_for_patch() { patch_added_lines "$patches_dir/$patch" "$path"; }
+
   # tier 1: the pinned file text itself, when this clone actually has the blob
   if g cat-file -e "$gitlink:$path" 2>/dev/null; then
-    if g show "$gitlink:$path" 2>/dev/null | grep -Fq -- "$anchor"; then
+    if contains_line "$(g show "$gitlink:$path" 2>/dev/null)" "$anchor"; then
       where="tier1:pin"; tier1_hits=$((tier1_hits + 1))
     fi
   fi
@@ -347,26 +366,28 @@ while IFS=$'\t' read -r witness path anchor patch; do
     *)
       if [ -z "$where" ]; then
         # Fall back to the patch anyway, but say so: the text is attributed, not verified.
-        if patch_added_lines "$patches_dir/$patch" "$path" | grep -Fq -- "$anchor"; then
+        if contains_line "$(added_for_patch)" "$anchor"; then
           where="tier2:patch-unverified"; tier2_hits=$((tier2_hits + 1))
         fi
       fi
       ;;
   esac
   if [ -z "$where" ]; then
-    if patch_added_lines "$patches_dir/$patch" "$path" | grep -Fq -- "$anchor"; then
+    if contains_line "$(added_for_patch)" "$anchor"; then
       where="tier2:patch"; tier2_hits=$((tier2_hits + 1))
     fi
   fi
 
   # tier 3: the live working tree - what a build would actually compile
   if [ -f "$apple/$path" ] && grep -Fq -- "$anchor" "$apple/$path"; then
-    [ -z "$where" ] && { where="tier3:worktree"; tier3_hits=$((tier3_hits + 1)); }
+    if [ -z "$where" ]; then where="tier3:worktree"; tier3_hits=$((tier3_hits + 1)); fi
   fi
 
   # tier 4: the live checkout's committed HEAD
-  if g cat-file -e "HEAD:$path" 2>/dev/null && g show "HEAD:$path" 2>/dev/null | grep -Fq -- "$anchor"; then
-    [ -z "$where" ] && { where="tier4:checkout-head"; tier4_hits=$((tier4_hits + 1)); }
+  if g cat-file -e "HEAD:$path" 2>/dev/null; then
+    if contains_line "$(g show "HEAD:$path" 2>/dev/null)" "$anchor"; then
+      if [ -z "$where" ]; then where="tier4:checkout-head"; tier4_hits=$((tier4_hits + 1)); fi
+    fi
   fi
 
   if [ -z "$where" ]; then
@@ -377,7 +398,7 @@ while IFS=$'\t' read -r witness path anchor patch; do
   # Attribution: the witness header says the text came from the cited patch.
   # An anchor that exists in the real source but not in the patch it names is a
   # provenance claim that is simply wrong, even when the code is fine.
-  if ! patch_added_lines "$patches_dir/$patch" "$path" | grep -Fq -- "$anchor"; then
+  if ! contains_line "$(added_for_patch)" "$anchor"; then
     unattributed=$((unattributed + 1))
     fail ANCHOR "$witness: '$anchor' is NOT in the cited $patch (found only in $where); the witness header names the wrong source"
   else

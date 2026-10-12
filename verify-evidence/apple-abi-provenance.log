@@ -1,0 +1,72 @@
+### CMD: env APPLE_ABI_CHECK_REMOTE=1 bash scripts/ci/apple-abi-provenance.sh
+### HEAD: cfc77dc51ab7322e993b8ae0b94b96db59e48f47
+### DATE: 2026-10-12 05:30:57 +0800
+
+core:         /Users/jie/Desktop/其他文件/sing-box-verify-016
+core rev:     HEAD (cfc77dc51)
+apple clone:  /Users/jie/Desktop/其他文件/sing-box-verify-016/clients/apple
+witnesses:    /Users/jie/Desktop/其他文件/sing-box-verify-016/scripts/ci/apple-abi-probe
+
+== 1. the clients/apple gitlink
+INFO GITLINK      core HEAD pins clients/apple = 90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07
+PASS GITLINK      the pin resolves to a commit object in /Users/jie/Desktop/其他文件/sing-box-verify-016/clients/apple
+          subject:  Merge branch 'jiejiebox/p1c-iphone-device-closure' into main
+          date:     2026-10-12 03:14:24 +0800
+     refs carrying it:
+       refs/heads/main
+       refs/remotes/origin/HEAD
+       refs/remotes/origin/main
+     remote check (APPLE_ABI_CHECK_REMOTE=1):
+PASS GITLINK      origin advertises 90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07: 90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07
+       90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07	HEAD
+       90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07	refs/heads/main
+
+== 2. patch text vs the pinned tree
+PASS PATCH_TIE    apple-stringbox-callsites.patch: ApplicationLibrary/Views/Abstract/GlobalChecksModifier.swift post-image 8f066b5 == pinned blob 8f066b5e628b
+PASS PATCH_TIE    apple-stringbox-callsites.patch: HelperService/RootHelperService.swift post-image c7a3bd4 == pinned blob c7a3bd498b99
+PASS PATCH_TIE    apple-stringbox-callsites.patch: JailbreakDaemon/IOSRootHelperService.swift post-image 9787829 == pinned blob 9787829c287e
+PASS PATCH_TIE    apple-stringbox-callsites.patch: Library/Network/BridgeTunTracker.swift post-image f026db6 == pinned blob f026db6f933f
+PASS PATCH_TIE    apple-stringbox-callsites.patch: Library/Network/ExtensionPlatformInterface.swift post-image 020f5b9 == pinned blob 020f5b93c2c0
+PASS PATCH_TIE    apple-bridge-session-implementer.patch: Library/Network/ExtensionPlatformInterface.swift post-image 020f5b9 == pinned blob 020f5b93c2c0
+PASS PATCH_TIE    apple-screen-state-observer.patch: Library/Network/ExtensionProvider.swift post-image 48b97ff == pinned blob 48b97ffe3dfc
+PASS PATCH_TIE    apple-screen-state-observer.patch: Library/Network/ScreenStateObserver.swift post-image 451736a == pinned blob 451736a84585
+     hash-tied patches (tier 2 usable): apple-stringbox-callsites.patch apple-bridge-session-implementer.patch apple-screen-state-observer.patch
+
+== 3. witness anchors vs the real client declarations
+PASS ANCHOR       callsites.swift: 'message: report.message()!.value' [tier1:pin, cited by apple-stringbox-callsites.patch]
+PASS ANCHOR       callsites.swift: 'session.name()!.value as NSString' [tier1:pin, cited by apple-stringbox-callsites.patch]
+PASS ANCHOR       callsites.swift: 'session.name()!.value' [tier1:pin, cited by apple-stringbox-callsites.patch]
+PASS ANCHOR       callsites.swift: 'closing bridge \(session.name()!.value' [tier1:pin, cited by apple-stringbox-callsites.patch]
+PASS ANCHOR       callsites.swift: 'ipv4Prefix.address()!.value' [tier1:pin, cited by apple-stringbox-callsites.patch]
+PASS ANCHOR       callsites.swift: 'ipv4Prefix.mask()!.value' [tier1:pin, cited by apple-stringbox-callsites.patch]
+PASS ANCHOR       callsites.swift: 'options.getHTTPProxyServer()!.value' [tier1:pin, cited by apple-stringbox-callsites.patch]
+PASS ANCHOR       callsites.swift: 'options.getDNSMode()!.value' [tier1:pin, cited by apple-stringbox-callsites.patch]
+PASS ANCHOR       implementer.swift: 'func name() -> LibboxStringBox?' [tier1:pin, cited by apple-bridge-session-implementer.patch]
+PASS ANCHOR       implementer.swift: 'LibboxStringBox()' [tier1:pin, cited by apple-bridge-session-implementer.patch]
+PASS ANCHOR       observer.swift: 'protocol DarwinNotifyAPI: AnyObject {' [tier1:pin, cited by apple-screen-state-observer.patch]
+PASS ANCHOR       observer.swift: 'func recordScreenState(on: Bool)' [tier1:pin, cited by apple-screen-state-observer.patch]
+PASS ANCHOR       observer.swift: 'func recordLockState(locked: Bool)' [tier1:pin, cited by apple-screen-state-observer.patch]
+
+== 4. caller coverage in the live client
+PASS COVERAGE     all 0 call site(s) of the migrated accessors are in the migrated shape
+
+== 5. is the live checkout the pinned revision?
+PASS CHECKOUT     the checkout is the pinned revision
+     90a0e9a 2026-10-12 03:14:24 +0800 Merge branch 'jiejiebox/p1c-iphone-device-closure' into main
+     3ad9337 2026-10-12 03:07:17 +0800 docs(apple): move the P1-C closure report into docs/
+     6eea708 2026-10-12 03:02:04 +0800 docs(apple): record the P1-C iPhone closure, including the rejected fix
+     8fe9dae 2026-10-12 03:00:24 +0800 docs(apple): report the localization and report-badge fixes
+     48b5030 2026-10-12 03:00:07 +0800 fix(ios): align report count badges as trailing accessories
+     467f8ea 2026-10-12 03:00:02 +0800 fix(ios): reuse upstream localization for Hako UI
+
+---- provenance summary ----
+tier1 (pinned blob text) anchors: 13
+tier2 (patch added lines) anchors: 0
+tier3 (live worktree) anchors:    0
+tier4 (checkout HEAD) anchors:    0
+misattributed anchors:            0
+unmigrated call sites:            0
+FAIL: 0   WARN: 0
+
+apple-abi-provenance: PASS
+EXIT=0

@@ -1,0 +1,167 @@
+### CMD: bash scripts/ci/test-apple-signing.sh
+### HEAD: cfc77dc51ab7322e993b8ae0b94b96db59e48f47
+### DATE: 2026-10-12 05:31:04 +0800
+
+== default mode ==
+  PASS: default signing mode is unsigned
+  PASS: multicast defaults to false
+== fail-closed ==
+  PASS: development without configuration is rejected
+  PASS: an unknown signing mode is rejected
+  PASS: upstream team id is rejected in development
+  PASS: upstream bundle prefix is rejected in development
+  PASS: preflight fails for development without a certificate
+== unsigned mode is untouched ==
+  PASS: preflight skips in unsigned mode
+  PASS: artifact verification skips in unsigned mode
+== the build scripts never disable entitlements while signing ==
+  PASS: scripts/ci/build-ios-ipa.sh keeps entitlements and the team in signed mode
+  PASS: scripts/ci/build-macos-dmg.sh keeps entitlements and the team in signed mode
+== upstream identifiers are not hardcoded as signing values ==
+  PASS: upstream team id is never assigned
+== the App Group is passed explicitly to xcodebuild ==
+  PASS: scripts/ci/build-ios-ipa.sh passes APP_GROUP_IDENTIFIER
+  PASS: scripts/ci/build-macos-dmg.sh passes APP_GROUP_IDENTIFIER
+== testflight mode ==
+  PASS: testflight is a recognised mode
+  PASS: testflight without configuration is rejected
+  PASS: the testflight builder refuses to run in another mode
+  PASS: an unknown signing mode is still rejected
+== capability switches ==
+  PASS: iCloud defaults to off
+  PASS: multicast defaults to off
+  PASS: an invalid iCloud value is rejected
+== the team identifier is not derived from the App Group ==
+  PASS: the overlay carries the real team into the bundle
+  PASS: teamID prefers the injected value
+== the unified entry point ==
+  PASS: release-apple.sh documents its targets
+  PASS: release-apple.sh rejects an unknown target
+== the real iOS target set ==
+  PASS: the docs list the widget extension
+  PASS: the docs list the action extension
+  PASS: the docs list the fileprovider extension
+  PASS: the docs list the intents extension
+== entitlements after the overlay is applied ==
+  PASS: iOS extension keeps packet-tunnel-provider
+  PASS: macOS system extension keeps the systemextension variant
+  PASS: the macOS app keeps system-extension.install
+  PASS: no multicast survives in the iOS tunnel
+  PASS: no multicast survives in the macOS system extension
+  PASS: no iCloud entitlement survives with the switch off
+  PASS: the overlay is idempotent (a second run changes nothing)
+  PASS: re-applying the overlay does not move the submodule HEAD
+  PASS: re-applying the overlay appends no second compatibility shim
+== one App Store record: the two main bundle ids must match ==
+  PASS: the iOS main bundle id is the configured base
+  PASS: the macOS main bundle id equals the iOS one
+  PASS: the Developer ID product keeps its own id
+== the App Store macOS target is the sandboxed one ==
+  PASS: SFM is sandboxed
+  PASS: SFM.System is not sandboxed
+  PASS: SFM carries the in-process packet tunnel provider
+  PASS: SFM.System carries the System Extension variant
+== both platforms have a TestFlight builder ==
+  PASS: the iOS TestFlight builder exists
+  PASS: the macOS TestFlight builder exists
+  PASS: the macOS builder refuses a non-testflight mode
+  PASS: the macOS builder guards the single-record invariant
+  PASS: the macOS builder refuses an unsandboxed archive
+== the unified entry point dispatches correctly ==
+  PASS: testflight-ios is documented
+  PASS: testflight-macos is documented
+  PASS: testflight-ios runs only iOS
+  PASS: testflight-macos runs only macOS
+  PASS: testflight runs both platforms, iOS first
+== CI stays unsigned and carries no signing secrets ==
+  PASS: the CI job still builds the unsigned IPA
+  PASS: CI never references a distribution identity or key
+  PASS: no signing material is tracked
+  PASS: no private key block is tracked
+== the archives are signed, and the export re-signs for distribution ==
+  PASS: build-ios-testflight.sh does not disable signing
+  PASS: build-ios-testflight.sh uses automatic signing
+  PASS: build-ios-testflight.sh allows provisioning updates
+  PASS: build-ios-testflight.sh does not force a signing identity
+  PASS: build-ios-testflight.sh does not use Manual style
+  PASS: build-ios-testflight.sh does not hardcode a profile name
+  PASS: build-ios-testflight.sh lets the export provision automatically
+  PASS: build-ios-testflight.sh asserts the archive is signed
+  PASS: build-ios-testflight.sh checks the entitlements Apple validated
+  PASS: build-ios-testflight.sh verifies what it uploaded
+  PASS: build-macos-testflight.sh does not disable signing
+  PASS: build-macos-testflight.sh uses automatic signing
+  PASS: build-macos-testflight.sh allows provisioning updates
+  PASS: build-macos-testflight.sh does not force a signing identity
+  PASS: build-macos-testflight.sh does not use Manual style
+  PASS: build-macos-testflight.sh does not hardcode a profile name
+  PASS: build-macos-testflight.sh lets the export provision automatically
+  PASS: build-macos-testflight.sh asserts the archive is signed
+  PASS: build-macos-testflight.sh checks the entitlements Apple validated
+  PASS: build-macos-testflight.sh verifies what it uploaded
+== a product that is not signed must never be reported as a success ==
+  PASS: the iOS builder verifies the uploaded build
+  PASS: the uploads are verified, not just produced
+== no signing setting is silently dropped by a stray comment ==
+  PASS: no comment sits inside an argument list
+== local publishing configuration ==
+  PASS: the local config file is git-ignored
+  PASS: the example template is committable
+  PASS: the template is tracked
+  PASS: release-apple.sh loads the local file
+  PASS: the loader captures the file's variables before sourcing
+  PASS: the loader restores what the caller had exported
+  PASS: the loader derives the variable set from the file
+  PASS: the loader refuses a non-ignored file
+  PASS: the local file is not tracked
+== the Apple scripts are syntactically valid ==
+  PASS: release-apple.sh parses
+  PASS: publish-apple-beta.sh parses
+  PASS: apple-signing-config.sh parses
+  PASS: build-ios-testflight.sh parses
+  PASS: build-macos-testflight.sh parses
+  PASS: build-ios-ipa.sh parses
+  PASS: build-macos-dmg.sh parses
+  PASS: build-apple-libbox.sh parses
+  PASS: apple-libbox-artifact.sh parses
+  PASS: apple-client-source.sh parses
+  PASS: check-apple-shared-libbox.sh parses
+  PASS: check-apple-source-selection.sh parses
+  PASS: prepare-apple-client.sh parses
+  PASS: check-apple-signing-environment.sh parses
+  PASS: apply-apple-link-overlay.py imports only the standard library
+  PASS: check-apple-links.py imports only the standard library
+== iOS branding: the display name is JiejieBox, the product stays sing-box ==
+  PASS: the iOS floor is declared in the project
+  PASS: no build step rewrites the iOS deployment target
+  PASS: the overlay leaves the iOS deployment floor untouched
+  PASS: the toolbar logic is unchanged
+  PASS: the branding overlay set the SFI display name
+  PASS: the SFI scheme still builds the unchanged product
+  PASS: branding did not rename the product
+  PASS: the SFI scheme does not point at a renamed product
+  PASS: the UI test buildable is untouched
+  PASS: only the SFI display name changed
+  -- compatibility must be preserved --
+  PASS: the bundle identifier setting is unchanged
+  PASS: the App Group setting is unchanged
+  PASS: the Extension product name is unchanged
+  PASS: the sing-box URL scheme is unchanged
+  PASS: the SFI target is still called SFI
+  -- the submodule must be untouched as a repository --
+  PASS: the parent gitlink matches the submodule HEAD
+  PASS: the submodule is on the fork's branch
+  PASS: the submodule URL points at the fork
+  PASS: the pinned commit is reachable from that URL
+  PASS: the branding change is uncommitted in the submodule
+== the branding overlay fails closed ==
+  PASS: the overlay refuses a partially branded project
+  PASS: the overlay refuses an unexpected configuration set
+  PASS: the overlay refuses to guess at the scheme
+  PASS: the overlay treats PRODUCT_NAME as identity surface
+  PASS: the overlay follows the scheme rather than renaming it
+  PASS: the TestFlight builder does not hardcode a product name
+  PASS: the TestFlight builder fails on an ambiguous archive
+
+test-apple-signing: 134 passed, 0 failed
+EXIT=0

@@ -63,13 +63,14 @@ if [ -n "$(git status --porcelain)" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 1b. select the two Apple sources
+# 1b. select the Apple source
 # ---------------------------------------------------------------------------
 #
-# One Apple repository, ONE source, two products. Both iOS and macOS are built from the
-# commit the parent gitlink records, so both are gated against that single authority. Which
-# UI a device shows is the Apple source's runtime decision, not a parent-side branch choice.
-step "Apple source"
+# ONE Apple repository, ONE source, TWO products. Both products are built from the commit
+# the parent gitlink records, so there is a single shared SHA and `assert-shared-source`
+# gates exactly that. An earlier revision had two per-platform pins and asserted they
+# differed; that model is gone, and `assert-distinct` no longer exists as an action.
+step "Apple sources"
 eval "$(./scripts/ci/apple-client-source.sh resolve)"
 
 ios_client_dir="$IOS_APPLE_DIR"
@@ -83,9 +84,8 @@ gitlink_sha="$(git ls-tree HEAD "$ios_client_dir" | awk '{print $3}')"
   to $IOS_APPLE_SHA. The iOS build must come from the gitlink the release commit records."
 
 ./scripts/ci/apple-client-source.sh assert-shared-source
-echo "  source: $APPLE_CLIENT_SHA on $APPLE_CLIENT_BRANCH (shared by both products)"
-echo "  iOS:    $IOS_APPLE_BRANCH @ $IOS_APPLE_SHA"
-echo "  macOS:  $MACOS_APPLE_BRANCH @ $MACOS_APPLE_SHA"
+echo "  iOS:   $IOS_APPLE_BRANCH @ $IOS_APPLE_SHA  (parent gitlink)"
+echo "  macOS: $MACOS_APPLE_BRANCH @ $MACOS_APPLE_SHA  (same shared source)"
 
 # ---------------------------------------------------------------------------
 # Restore what this run changes
@@ -306,23 +306,27 @@ Source:
   branch:              $branch
   version:             $JJ_VERSION
 
-Apple source (one repository, ONE commit, two products):
+Apple sources (one repository, two UI branches, never merged):
   repository:          $APPLE_CLIENT_REPOSITORY
-  branch:              $APPLE_CLIENT_BRANCH
 
   iOS / SFI:
+    branch:            $IOS_APPLE_BRANCH
     commit:            $IOS_APPLE_SHA
     source of truth:   parent clients/apple gitlink
     gitlink match:     PASS
+    working tree:      $IOS_APPLE_DIR
 
   macOS / SFM:
+    branch:            $MACOS_APPLE_BRANCH
     commit:            $MACOS_APPLE_SHA
-    source of truth:   the same parent clients/apple gitlink
+    source of truth:   parent clients/apple gitlink (the same commit)
     gitlink match:     PASS
+    working tree:      $MACOS_APPLE_DIR
 
-  shared source:       PASS (iOS and macOS build the same Apple commit)
-  UI ownership:        the Apple source routes presentation at runtime
-                       (iPhone Hako / iPad upstream / macOS upstream)
+  shared source:       PASS (both products build the one gitlink, as they must)
+
+  The two working trees differ; the source commit does not. Which UI a device shows is
+  decided by the Apple source at runtime, from the device idiom.
 
 GitHub Apple CI:
   run:                 $run_id
