@@ -498,99 +498,149 @@ pass.
 
 ---
 
-## 9. Publication — PENDING, and why
+## 9. Publication
 
-The integration tree is finished and verified locally, but **it has not been
-published**. `testing` on the remote is still `TESTING_BEFORE`, and no remote
-branch has been deleted. This is not a decision — it is an environment failure:
+Publication was blocked for four goal rounds by an environment failure, and is
+recorded here because it affected how the work was verified:
 
 ```text
 spawn C:\Users\Jie\AppData\Local\Programs\DeepSeek Harness\DeepSeek Harness.exe EACCES
 ```
 
-The harness can no longer execute its own binary, so every `pwsh` call fails
-before the command runs. `git push`, `git merge --ff-only` and
-`git push --delete` are therefore unreachable, and so is the final `go test`
-re-run. The GitHub MCP channel is unaffected (verified with `get_me` and
-`list_branches`), but a file-level API cannot reproduce four commits of merge
-history, so publishing through it would lose exactly the structure this task
-exists to produce.
+The harness could not create **any** child process: `pwsh` failed on spawn and
+so did `glob` (ripgrep), while the in-process `read` tool kept working. It was
+an execution-permission denial, not a missing file — `read` opened that same
+`.exe` successfully. The likely cause was resource exhaustion from the
+concurrent test processes this task itself started; it cleared after the
+operator cleaned up leftover `go` / `*.test` processes and restarted the app.
 
-Remote state, re-verified through the API after the local work was complete:
+The GitHub MCP channel stayed healthy throughout (`get_me`, `list_branches`),
+but a file-level API cannot reproduce merge history, so publishing through it
+was never a valid substitute — it would have lost exactly the structure this
+task exists to produce.
+
+During the outage the remote was re-verified twice as untouched:
 
 ```text
-testing                      = 6cc45d3f49a3908ff150045d3a113f98920eaaea   (== TESTING_BEFORE)
-remote branch count          = 14  (13 feature/closure branches + testing)
-remote tips                  = unchanged, all 13 still at their inventory SHAs
+testing                = 6cc45d3f49a3908ff150045d3a113f98920eaaea   (== TESTING_BEFORE)
+remote branch count    = 14
+remote tips            = unchanged, all 13 at their inventory SHAs
 ```
 
-So the consolidation is reversible at zero cost, and nothing partial has been
-pushed.
+### How it was published, once the shell returned
 
-### The exact remaining steps
+```text
+git fetch --all --prune                     => origin/testing still 6cc45d3f (no drift)
+git rm -r --cached _consolidation           => scratch untracked again
+  + .gitignore entry, committed              => 9aad25a4
+git add transport/http/stream_error_buffer_test.go + report, committed => 7c819f5d
+report update, committed                     => 88ff6cfe
+git switch testing && git reset --hard origin/testing
+git merge --ff-only integration/0.1.6-testing-consolidation   => 6cc45d3f..88ff6cfe, ff
+git push origin testing                      => 6cc45d3f..88ff6cfe  testing -> testing
+```
 
-```bash
-# 0. confirm the remote did not move
-git fetch origin
-git rev-parse origin/testing          # must still be 6cc45d3f49a3908ff150045d3a113f98920eaaea
+No force push was used at any point.
 
-# 1. re-run the stress set (it was interrupted by the harness failure)
-#    see §7.4; the full suite has already passed, see §7.2
+### Branch deletion
 
-# 2. drop the scratch from tracking and commit it
-git rm -r --cached --quiet _consolidation
-printf '_consolidation/\n' >> .gitignore
-git add .gitignore && git commit -m "chore: keep the consolidation scratch directory out of the tree"
+Each of the 13 branches had its ancestry **re-proved against the pushed
+`testing`** immediately before deletion, rather than trusting the §4 table:
 
-# 3. fast-forward testing; never force
-git switch testing
-git reset --hard origin/testing
-git merge --ff-only integration/0.1.6-testing-consolidation
-git push origin testing
-
-# 4. re-verify, then delete the absorbed branches
-git fetch origin
-git rev-parse origin/testing          # must equal the integration tip
-for b in \
-  audit/upstream-absorb-0.1.6-91ca1652d \
-  closure/0.1.6-consumer-dns-parity \
-  closure/0.1.6-group-crosskind \
-  closure/0.1.6-static-validation-final \
-  closure/0.1.6-static-validation-final-wire \
-  closure/0.1.6-static-validation-true-final \
-  debug/static-validation-false-deny-20261012 \
-  fix/route-aware-outbound-capability-validation \
-  fix/0.1.6-apple-pin-gates \
-  integration/0.1.6-final-freeze \
-  jiejiebox/apple-finalize \
-  jiejiebox/p1c-iphone-device-closure \
-  jiejiebox/v0.1.6-hardening \
-  integration/0.1.6-testing-consolidation ; do
-  git merge-base --is-ancestor "origin/$b" origin/testing || { echo "REFUSING: $b is not absorbed"; continue; }
+```text
+for b in <13 branches>; do
+  git merge-base --is-ancestor "origin/$b" origin/testing || { REFUSE; continue; }
   git push origin --delete "$b"
 done
+
+DELETED = 13   (all guards passed)
+REFUSED = 0
 ```
 
-Every one of the thirteen is `SAFE_TO_DELETE = YES` (§4), and the guard above
-re-proves ancestry against the pushed `testing` before each delete rather than
-trusting this table.
-
-Local cleanup already applied: the two comparison worktrees
-(`origin/testing` and the pre-consolidation `final-wire` tip) were removed.
+The temporary `integration/0.1.6-testing-consolidation` needed no deletion
+because **it was never pushed** — it existed only in the working clone. An
+earlier draft of this report said it had been deleted from the remote; that
+was wrong and is corrected here.
 
 ---
 
-## 10. After — to be filled in when §9 has run
+## 10. After
 
 ```text
-TESTING_AFTER               = PENDING  (integration tip is 9ced64e0 locally)
-REMOTE_BRANCH_COUNT_AFTER   = PENDING  (1 expected: testing)
-DELETED_REMOTE_BRANCHES     = PENDING  (13 expected)
+TESTING_BEFORE              = 6cc45d3f49a3908ff150045d3a113f98920eaaea
+TESTING_AFTER               = 88ff6cfe66c22557d1b5f3eb6e66b1cfd24543f0
+
+REMOTE_BRANCH_COUNT_BEFORE  = 14   (13 feature/closure branches + testing)
+REMOTE_BRANCH_COUNT_AFTER   = 1    (testing only)
+
+REAL_MERGES                 = 3    (a85ba40e, a2abd572, de715829)
+CHERRY_PICKS                = 0
+ANCESTOR_SKIPS              = 10
+PATCH_EQUIVALENT_SKIPS      = 0
+SUPERSEDED_SKIPS            = 0
+
+DELETED_REMOTE_BRANCHES     = 13
 KEPT_REMOTE_BRANCHES        = testing
+
+origin/testing == local testing == integration tip   =>  88ff6cfe (verified after push)
 TESTING_FORCE_PUSHED        = NO
 TESTING_WORKTREE_CLEAN      = YES
 ```
 
-`testing` is to be advanced by `git merge --ff-only` only, after re-checking
-that `origin/testing` still equals `TESTING_BEFORE`. No force push has been
-used at any point, and none is planned.
+Final remote inventory:
+
+```text
+origin/HEAD -> origin/testing
+origin/testing
+```
+
+`testing` was advanced by `git merge --ff-only` only, after re-checking that
+`origin/testing` still equalled `TESTING_BEFORE`.
+
+---
+
+## 11. Acceptance gate
+
+```text
+[x] every remote branch inventoried at the outset (13 + testing, tips recorded)
+[x] TESTING_BEFORE recorded (6cc45d3f49a3908ff150045d3a113f98920eaaea)
+[x] work done on a temporary integration branch, not on testing
+[x] no mechanical re-merge of ancestor branches (10 absorbed by ancestry)
+[x] every independent work line absorbed (3 heads merged; all 13 proven ancestors)
+[x] patch-equivalent branches proven (there are none; cherry showed 0 of them)
+[x] superseded branches proven (none dropped on that basis)
+[x] Apple gate/core branches audited separately (fix/0.1.6-apple-pin-gates,
+    jiejiebox/apple-finalize, and the branding-surface conflict, §5)
+[x] hardening branch audited separately (jiejiebox/v0.1.6-hardening, §2)
+[x] all conflicts resolved on semantics, file by file (21 files, §5)
+[x] frozen static-validation invariants regressed (PASS, §7.1)
+[x] full build/test run (go build PASS; 172 packages, 82 ok / 87 no-test / 3 FAIL)
+[x] new failures not disguised as pre-existing (every failure reproduced on a
+    comparator; two genuine defects were found and fixed instead, §6)
+[x] testing updated by fast-forward only
+[x] no force push to testing
+[x] testing SHA re-verified after push
+[x] every deleted branch had SAFE_TO_DELETE = YES, re-proved at delete time
+[x] temporary integration branch removed (never published, so nothing to remove)
+[x] old 0.1.6 branches maximally cleaned (13 deleted, 0 kept)
+[x] final remote branch list recorded (1: testing)
+```
+
+Not satisfied, and not claimed:
+
+```text
+[ ] stress across every package several branches touched — a narrowed fast set
+    was run (10 packages, 111 iterations, 0 failures); the two traffic-shaped
+    packages were measured against the baseline instead of repeated (§7.2b, §7.4)
+[ ] RACE / DOCKER / APPLE_GATES — NOT_RUN_HOST_BLOCKED (§7.5); no Apple gate is
+    recorded as PASS
+```
+
+---
+
+## 12. Closing statement
+
+All 0.1.6 branch work has been absorbed into `testing`; redundant remote
+branches have been removed. `testing` is now the sole authoritative development
+line for this release state.
+
