@@ -121,7 +121,38 @@ VERIFIED_ANDROID_SHA="ec61030d3df74f3e7c39ab848c8996008ecd386a"
 # `scanned: 670, violations: []` across the whole tree, which is stronger evidence than
 # the name-only comparison above. Re-derive rather than assume if this ever moves again,
 # and prefer running the probe to reading this comment.
-VERIFIED_APPLE_SHA="5cab4ec5bcb405265e077f8bdb6e287101af4405"
+#
+# Moved again to 40dd4879, when the gitlink advanced five commits to brand the macOS app
+# that actually ships ("fix(apple): brand the macOS app SFM.System actually ships" and the
+# four commits below it). Derived a third time from the range rather than inherited:
+#
+#   git -C clients/apple diff --name-status 5cab4ec5 40dd4879
+#
+# is 26 files: KNOWLEDGE/ (20), AGENTS.md, scripts/dev/audit_apple_ui_boundary.py,
+# sing-box.xcodeproj/project.pbxproj, and exactly ONE Swift source file -
+# ApplicationLibrary/Views/Dashboard/Cards/HTTPProxyCard.swift, which gained a
+# `SurfaceStyle` enum and moved its body onto `HakoCardSurface`. That file is not a call
+# site of anything this contract names: the contract's Swift entries are
+# Library/Network/ExtensionPlatformInterface.swift and
+# ApplicationLibrary/Views/Abstract/GlobalChecksModifier.swift, neither of which the range
+# touches. The rest is documentation plus one `INFOPLIST_KEY_CFBundleDisplayName` value
+# (`sing-box` -> `Jiejiebox` on the SFM.System target, Debug and Release), which no ABI
+# layer reads.
+#
+# Layer 4 was then RUN again rather than reasoned about, against clients/apple at 40dd4879:
+#
+#   python3 scripts/ci/probe-accessors.py \
+#     --contract docs/fork/libbox-abi-contract.tsv --lang swift --root clients/apple
+#   {"scanned": 670, "violations": [], "interface_methods": 3, "error": ""}
+#
+# the same `scanned: 670, violations: []` the 5cab4ec5 move reported, on a tree that now
+# contains the branded target.
+#
+# What this move does NOT rest on, stated because the comment above sets the precedent of
+# saying so: layers 1-3 need a Go toolchain and a gobind, and the host this was derived on
+# has neither, so this is a layer-4-and-5 derivation and not a whole-gate run. That is
+# equally true of the two moves above - it is a property of the host, not of this range.
+VERIFIED_APPLE_SHA="40dd48795579718008518ac51af320b1d61377ac"
 
 client_root=""
 skip_client=0

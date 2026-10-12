@@ -25,7 +25,8 @@ rather than against a literal: SFM's committed display name is "Jijiebox" - the 
 overlay's own accepted starting state - so "unchanged" has to mean "what the client
 committed", not "sing-box".
 
-    SFI Debug and Release   CFBundleDisplayName is JiejieBox
+    SFI Debug and Release   CFBundleDisplayName carries a brand spelling the overlay
+                            accepts (the client commits "Jiejiebox")
     SFI Debug and Release   PRODUCT_NAME is still "sing-box", and the scheme still
                             builds sing-box.app
     SFT, SFM, SFM.System    both settings at their pinned values
@@ -36,6 +37,8 @@ committed", not "sing-box".
 
 Exit status is non-zero on any failure, so a CI step cannot mistake a report for a pass.
 """
+import importlib.util
+import os
 import plistlib
 import re
 import subprocess
@@ -67,6 +70,34 @@ UNTOUCHED_TARGETS = ["SFT", "SFM", "SFM.System"]
 TARGETS_WITHOUT_PRODUCT_NAME = {"SFM.System"}
 
 SETTINGS = [PRODUCT_KEY, DISPLAY_KEY]
+
+
+def accepted_source_names() -> tuple[str, ...] | None:
+    """The spellings the iOS overlay accepts from the pinned client, or None.
+
+    The pinned client commits the brand in the lower-case-b spelling (`Jiejiebox`) and the
+    overlay normalises it, so the SFI assertion below has to ask "is this a spelling the
+    overlay accepts" rather than "is this exactly what the overlay writes". Restating the
+    list here is what let this test go stale: it demanded `JiejieBox` of a client that
+    commits `Jiejiebox`, and the overlay's own accepted list - the thing that actually has
+    to agree - was never consulted.
+    """
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "apply-apple-branding-overlay.py")
+    try:
+        spec = importlib.util.spec_from_file_location("apple_branding_overlay", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except (OSError, AttributeError, SyntaxError):
+        return None
+    names = getattr(module, "ACCEPTED_SOURCE_NAMES", None)
+    return tuple(names) if names else None
+
+
+#: `importlib.util` is imported for the loader above; `sys` is set to not write bytecode
+#: beside the overlays, which this suite asserts the repository is clean of.
+sys.dont_write_bytecode = True
+SFI_ACCEPTED_SOURCE_NAMES = accepted_source_names()
 
 problems: list[str] = []
 
@@ -150,7 +181,14 @@ def pinned_blocks(client: str) -> dict[str, tuple[str, str]] | None:
         ).stdout
     except (OSError, subprocess.CalledProcessError):
         return None
-    return all_config_blocks(blob)
+    # `git show` hands back the file as the checkout's `core.autocrlf` decides, so on a
+    # Windows host the blob's line endings are CRLF while the working-tree copy the caller
+    # read is LF. The block regexes anchor on `\n\t\t};`, which then matches neither the
+    # terminator nor anything else, `all_config_blocks` returns an empty table, and every
+    # configuration is reported as "not in the pinned project" - a green tree failing for
+    # a line-ending reason. Normalising here keeps one parser and one set of patterns for
+    # both hosts, rather than a second CRLF-aware set that could drift from them.
+    return all_config_blocks(blob.replace("\r\n", "\n").replace("\r", "\n"))
 
 
 def main() -> int:
@@ -169,7 +207,15 @@ def main() -> int:
             continue
         _, block = sfi[name]
         got = setting(block, DISPLAY_KEY)
-        check(got == BRAND, f"SFI {name} {DISPLAY_KEY}: expected {BRAND!r}, got {got!r}")
+        if SFI_ACCEPTED_SOURCE_NAMES is None:
+            problems.append(
+                "apply-apple-branding-overlay.py declares no readable ACCEPTED_SOURCE_NAMES, "
+                "so the SFI display name cannot be checked against what the overlay accepts"
+            )
+        else:
+            check(got in SFI_ACCEPTED_SOURCE_NAMES,
+                  f"SFI {name} {DISPLAY_KEY}: expected one of the spellings the overlay "
+                  f"accepts {SFI_ACCEPTED_SOURCE_NAMES!r}, got {got!r}")
         # Identity is asserted positively. "Some other value" is not an acceptable
         # outcome here: the built product's name is what the scheme builds and what
         # every existing record, link and Profile keys on.
@@ -253,19 +299,35 @@ def main() -> int:
     # $(inherited), sfajb-roothelper, and whatever a future update adds. That is a test
     # that breaks for reasons unrelated to branding, so it was replaced with the direct
     # question: is the brand anywhere it should not be?
-    branded_ids: set[str] = set()
-    for cid, (_, block) in all_config_blocks(src).items():
-        for key in SETTINGS:
-            if setting(block, key) == BRAND:
-                branded_ids.add(cid)
+    #
+    # Two spellings count as "the brand is here": the finished name the overlay writes, and
+    # the pinned spelling the client commits. `sing-box` is deliberately NOT one of them
+    # even though the overlay accepts it as a starting point - it is the unbranded identity,
+    # and SFT and both ShareExtensions legitimately carry it, so treating it as brand
+    # surface flagged most of the project.
+    brand_spellings = {BRAND}
+    if SFI_ACCEPTED_SOURCE_NAMES:
+        brand_spellings |= {name for name in SFI_ACCEPTED_SOURCE_NAMES if name != UPSTREAM}
 
-    check(branded_ids == sfi_ids,
-          "the brand must appear in exactly the SFI configurations and nowhere else; "
-          f"branded {sorted(branded_ids)}, SFI is {sorted(sfi_ids)}")
-    for cid in sorted(branded_ids - sfi_ids):
+    blocks = all_config_blocks(src)
+    branded_ids = {
+        cid for cid, (_, block) in blocks.items()
+        if any(setting(block, key) in brand_spellings for key in SETTINGS)
+    }
+    # SFI is the only target this overlay owns. The pinned client additionally carries a
+    # brand spelling on the targets the macOS overlay owns, which is the pinned state that
+    # overlay expects rather than a second brand; everything else carrying one is the exact
+    # silent second brand this sweep exists to catch.
+    allowed = set(sfi_ids) | {cid for cid, (_, block) in blocks.items()
+                              if setting(block, DISPLAY_KEY) in brand_spellings - {BRAND}}
+    check(branded_ids == allowed,
+          "a brand spelling may appear only in the configurations the overlays own; "
+          f"branded {sorted(branded_ids)}, allowed {sorted(allowed)}")
+    for cid in sorted(branded_ids - allowed):
         m = re.search(re.escape(cid) + r' /\* (\w+) \*/', src)
         problems.append(
-            f"configuration {m.group(1) if m else cid} ({cid}) carries the brand but is not SFI"
+            f"configuration {m.group(1) if m else cid} ({cid}) carries the brand but is "
+            "neither SFI nor a target the macOS overlay owns"
         )
 
     # --- the SFI scheme still builds the unchanged product --------------------

@@ -863,6 +863,13 @@ PY
   # spelling there - the value is already a brand spelling - only as "unchanged by this run".
   sfi_display_before="$(setting "$pinned_pbx" SFI Release INFOPLIST_KEY_CFBundleDisplayName || true)"
   sfi_identity_before="$(setting "$pinned_pbx" SFI Release PRODUCT_NAME || true)"
+  # SFM.System is read before the apply for the same reason SFI is. The pinned client now
+  # commits a brand spelling for the macOS app that actually ships - SFM.System is the
+  # target the DMG and the pkg contain - so "the overlay did not brand it" can no longer be
+  # asserted as the literal "sing-box". That literal only ever held while the client left
+  # SFM.System unbranded. What this overlay owns is still asserted, as "unchanged by this
+  # run", which is the property the check was always about.
+  sfmsystem_display_before="$(setting "$pinned_pbx" SFM.System Release INFOPLIST_KEY_CFBundleDisplayName || true)"
   real_copy="$work/real-copy"
   cp -R "$macos_dir" "$real_copy"
   check "the overlay applies to a copy of the pinned macOS source" python3 "$overlay" "$real_copy"
@@ -872,8 +879,8 @@ PY
     test "$(setting "$real_copy/sing-box.xcodeproj/project.pbxproj" SFM Release PRODUCT_NAME)" = "$identity"
   check "the pinned SFM scheme still names $identity.app after the apply" \
     bash -c "test \"\$(grep -c 'BuildableName = \"$identity.app\"' '$real_copy/sing-box.xcodeproj/xcshareddata/xcschemes/SFM.xcscheme')\" = 3"
-  check "the pinned SFM.System display name is not branded" \
-    test "$(setting "$real_copy/sing-box.xcodeproj/project.pbxproj" SFM.System Release INFOPLIST_KEY_CFBundleDisplayName)" = "sing-box"
+  check "the macOS overlay left the pinned SFM.System display name alone" \
+    test "$(setting "$real_copy/sing-box.xcodeproj/project.pbxproj" SFM.System Release INFOPLIST_KEY_CFBundleDisplayName)" = "$sfmsystem_display_before"
   check "the pinned SFM.System target keeps PRODUCT_NAME = SFM" \
     test "$(setting "$real_copy/sing-box.xcodeproj/project.pbxproj" SFM.System Release PRODUCT_NAME)" = "SFM"
   check "the macOS overlay left the pinned SFI display name alone" \
