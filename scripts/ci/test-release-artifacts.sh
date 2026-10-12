@@ -576,7 +576,16 @@ expect_ok() {
   local name="$1"; shift
   local out rc=0
   out="$(run_gate "$@" 2>&1)" || rc=$?
-  report "$name" 0 "$rc" "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-70)"
+  if [ "$rc" -eq 0 ]; then
+    report "$name" 0 "$rc" "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-70)"
+  else
+    # A failing case must show WHY. The gate's own message is the whole diagnosis, and a
+    # 70-character summary of it is a puzzle rather than a report - which is exactly what
+    # happened the first time this suite ran on a runner after `verify` gained a required
+    # argument. Only the passing path is summarised.
+    report "$name" 0 "$rc" ""
+    printf '      %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-600)"
+  fi
 }
 
 expect_fail() {
@@ -1007,10 +1016,13 @@ fi
 
 write_scenario dryrun "pass"
 rm -f "$work/state/release_created"
+make_desktop "$work/dry-desktop" "0.1" "$SHA"
 gate_setup "plan (setup)" plan --repo o/r --sha "$SHA" --out "$work/dry.tsv" --interval 1 --timeout 10
 gate_setup "download (setup)" download --repo o/r --plan "$work/dry.tsv" --dir "$work/dry-assets"
-gate_setup "verify (setup)" verify --desktop-dir "$DESKTOP_DIR" --version 0.1 --dir "$work/dry-assets" --sha "$SHA"
-gate_setup "flatten (setup)" flatten --plan "$work/dry.tsv" --dir "$work/dry-assets" --out "$work/dry-upload" --tag v0.1
+gate_setup "verify (setup)" verify --desktop-dir "$work/dry-desktop" --version 0.1 --dir "$work/dry-assets" --sha "$SHA"
+gate_setup "flatten (setup)" flatten --plan "$work/dry.tsv" --dir "$work/dry-assets" --out "$work/dry-upload" \
+  --tag v0.1 --desktop "$work/dry-desktop/Jiejiebox-v0.1-windows-x64.exe" --version 0.1
+gate_setup "check-upload (setup)" check-upload --out "$work/dry-upload" --tag v0.1 --version 0.1
 publish="$(run_gate publish-flag --dry-run true)"
 if [ "$publish" = "false" ] && [ ! -f "$work/state/release_created" ]; then
   report "a fully verified dry run does NOT call gh release create" 0 0
