@@ -313,8 +313,31 @@ jobs:
           else
             echo "NOTE: build info not readable from this .so; architecture and size were still checked"
           fi
-          ./scripts/ci/build-info.sh BUILD-INFO-ANDROID.txt android arm64 android "$aar"
+          # The sidecar goes beside the checksum, not inside the gomobile work directory.
+          #
+          # `build-info.sh` cd's to the repository root before it writes, so a relative `$out`
+          # lands there - the same trap that left the Windows core without a record. An
+          # absolute path is passed for that reason.
+          #
+          # The binary itself is then brought up to that directory rather than left at
+          # `_libbox_build/libbox.aar` (where gomobile puts it): the release gate requires the
+          # binary, its `.sha256` and its BUILD-INFO to sit in the SAME directory, because a
+          # record that travels separately from the bytes it describes proves nothing. They
+          # did not, and the release died with
+          #   "libbox.aar, libbox.aar.sha256 and BUILD-INFO-ANDROID.txt are not in the same
+          #    artifact directory."
+          # `cp` rather than `mv`: the zip/tar steps below still read the build directory's
+          # copy, and the name must be exactly `libbox.aar` because that is the name the gate
+          # derives from the workflow and the name the record's `artifact:` line carries.
+          ./scripts/ci/build-info.sh "$(pwd)/BUILD-INFO-ANDROID.txt" android arm64 android "$(pwd)/$(basename "$aar")"
+          cp "$aar" "libbox.aar"
+          test -f BUILD-INFO-ANDROID.txt || { echo "FAIL: build-info.sh wrote no BUILD-INFO-ANDROID.txt into $(pwd)" >&2; exit 1; }
+          grep -q '^artifact_sha256:' BUILD-INFO-ANDROID.txt || { echo "FAIL: BUILD-INFO-ANDROID.txt carries no artifact_sha256" >&2; exit 1; }
           printf '%s  %s\n' "$(sha256sum "$aar" | cut -d' ' -f1)" "$(basename "$aar")" > libbox.aar.sha256
+          # Stated as the gate states it, so a future move of either file fails here rather
+          # than three steps later inside the release.
+          [ "$(dirname "$(find . -type f -name 'libbox.aar' | head -1)")" = "$(dirname "$(find . -type f -name 'BUILD-INFO-ANDROID.txt' | head -1)")" ] || {
+            echo "FAIL: libbox.aar and BUILD-INFO-ANDROID.txt are not in the same directory" >&2; exit 1; }
           sha256sum "$aar" "$so" "$prov" BUILD-INFO-ANDROID.txt libbox.aar.sha256 LICENSE | tee SHA256SUMS.txt
 
       - name: Report
@@ -341,7 +364,7 @@ jobs:
         with:
           name: android-core-arm64-${{ github.sha }}
           path: |
-            _libbox_build/libbox.aar
+            libbox.aar
             libbox.aar.sha256
             BUILD-INFO-ANDROID.txt
             LICENSE
