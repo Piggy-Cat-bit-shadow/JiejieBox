@@ -51,3 +51,8 @@ convention?) and the relevant rows of `KNOWLEDGE/ACCEPTANCE.md` (how do I re-che
    its evidence level. If you need a higher level, run the re-check command the module gives you.
 7. **Anything you cannot run is `BLOCKED_BY_ENVIRONMENT`, not `PASS`.** Say which command you could not
    run and what it would have proved.
+8. **`KNOWLEDGE/REFRESH.md` is the refresh protocol, not a task mode.** Normal development does not
+   update `KNOWLEDGE/` — rule 5 above. When a refresh has been explicitly requested, that document is
+   the procedure: baseline and delta, then provenance, invariants, evidence levels, the cross-file
+   consistency pass, and the refresh report. Its §§36-38 give the large- and small-delta workflows, and
+   a small delta should not be escalated into the full multi-agent one.

@@ -76,6 +76,10 @@ provenance; then move the baseline. **Development commits do not require documen
 in this directory needs to change when product code moves — only `BASELINE.md`'s "post-baseline
 delta" row tells a reader what to look at.
 
+The procedure to follow when a refresh *has* been explicitly requested is `REFRESH.md`. That file is
+the protocol; this section is only the policy, and normal development does not update `KNOWLEDGE/` at
+all.
+
 ## Modules
 
 | Module | Covers |
