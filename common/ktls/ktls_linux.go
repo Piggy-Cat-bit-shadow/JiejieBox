@@ -32,6 +32,20 @@ const (
 	TLS_GET_RECORD_TYPE = 2
 )
 
+// Support records what the running kernel can do. One field is currently dead, and it is worth naming
+// which and why rather than leaving a reader to re-derive it:
+//
+//	TLS_SM4 is set and never consulted. SM4 is deliberately unimplemented on this side -
+//	`kernelCryptoSM4GCM` and `kernelCryptoSM4CCM` are commented out in ktls_cipher_suites_linux.go, so
+//	`kernelCipher` has no SM4 case and can never ask whether the kernel supports it. Every sibling field
+//	here is read by `kernelCipher`, the RX/TX setup or the rekey path.
+//
+// It is recorded rather than removed because the assignment is load-bearing to the SHAPE of the version
+// chain in KernelSupport: those cases fall through in descending order, each adding what that version
+// introduced, so the SM4 line is what gives the 5.16 case a body before it falls through to 5.19.
+// Deleting it would leave a case whose only effect is to fall through, which reads as a mistake and
+// invites someone to "fix" the chain. If SM4 is ever implemented, `kernelCipher` gains the case and this
+// field becomes live with no other change.
 type Support struct {
 	TLS, TLS_RX                     bool
 	TLS_Version13, TLS_Version13_RX bool

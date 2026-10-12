@@ -1,0 +1,277 @@
+﻿package route
+import (
+	"fmt"
+	"reflect"
+	"strings"
+	"sync/atomic"
+	"github.com/sagernet/sing-tun"
+	"github.com/sagernet/sing/common"
+	N "github.com/sagernet/sing/common/network"
+)
+type spliceReason uint8
+const (
+	spliceReasonX spliceReason = iota
+	spliceReasonSourceNotNAT
+	spliceReasonSourceReaderWriterMismatch
+	spliceReasonSourceNotReplaceable
+	spliceReasonSourceNoUpstream
+	spliceReasonTargetCounterMismatch
+	spliceReasonTargetOffloadNotSocket
+	spliceReasonTargetNotReplaceable
+	spliceReasonTargetNoUpstream
+	spliceReasonTargetUpstreamMismatch
+	spliceReasonSpliceRejected
+	spliceReasonSkippedForTLSRewrite
+	spliceReasonSourceNotGoConn
+	spliceReasonCachedWriteFailed
+)
+func (r spliceReason) String() string {
+	switch r {
+	case spliceReasonX:
+		return "handover_accepted"
+	case spliceReasonSourceNotNAT:
+		return "source_not_nat"
+	case spliceReasonSourceReaderWriterMismatch:
+		return "source_reader_writer_mismatch"
+	case spliceReasonSourceNotReplaceable:
+		return "source_not_replaceable"
+	case spliceReasonSourceNoUpstream:
+		return "source_no_upstream"
+	case spliceReasonTargetCounterMismatch:
+		return "target_counter_mismatch"
+	case spliceReasonTargetOffloadNotSocket:
+		return "target_offload_not_socket"
+	case spliceReasonTargetNotReplaceable:
+		return "target_not_replaceable"
+	case spliceReasonTargetNoUpstream:
+		return "target_no_upstream"
+	case spliceReasonTargetUpstreamMismatch:
+		return "target_upstream_mismatch"
+	case spliceReasonSpliceRejected:
+		return "splice_rejected"
+	case spliceReasonSkippedForTLSRewrite:
+		return "skipped_for_tls_rewrite"
+	case spliceReasonSourceNotGoConn:
+		return "source_not_go_conn"
+	case spliceReasonCachedWriteFailed:
+		return "cached_write_failed"
+	default:
+		return "unknown"
+	}
+}
+const spliceReasonCount = int(spliceReasonCachedWriteFailed) + 1
+const spliceReasonMax = spliceReasonCachedWriteFailed
+type spliceDiagnostics struct {
+	counters [spliceReasonCount]atomic.Uint64
+}
+func (d *spliceDiagnostics) recordOutcome(outcome spliceReason) {
+	if int(outcome) < spliceReasonCount {
+		d.counters[outcome].Add(1)
+	}
+}
+func (d *spliceDiagnostics) total() uint64 {
+	var total uint64
+	for i := range d.counters {
+		total += d.counters[i].Load()
+	}
+	return total
+}
+func (d *spliceDiagnostics) successes() uint64 {
+	return d.counters[spliceReasonX].Load()
+}
+func (d *spliceDiagnostics) snapshot() map[string]uint64 {
+	snapshot := make(map[string]uint64, spliceReasonCount)
+	for i := range d.counters {
+		if spliceReason(i) == spliceReasonX {
+			continue
+		}
+		if count := d.counters[i].Load(); count > 0 {
+			snapshot[spliceReason(i).String()] = count
+		}
+	}
+	return snapshot
+}
+type SpliceSnapshot struct {
+	Attempts uint64
+	Successes uint64
+	Reasons map[string]uint64
+}
+func (s SpliceSnapshot) Ratio() float64 {
+	if s.Attempts == 0 {
+		return 0
+	}
+	return float64(s.Successes) / float64(s.Attempts)
+}
+func (m *ConnectionManager) SpliceDiagnostics() SpliceSnapshot {
+	return m.spliceDiagnostics.view()
+}
+func (m *ConnectionManager) TCPSpliceDiagnostics() SpliceSnapshot {
+	return m.tcpSpliceDiagnostics.view()
+}
+func (d *spliceDiagnostics) view() SpliceSnapshot {
+	return SpliceSnapshot{
+		Attempts:  d.total(),
+		Accepted: d.accessorX(),
+		Reasons:   d.snapshot(),
+	}
+}
+func tcpSpliceTargetReason(reason spliceReason) spliceReason {
+	return reason
+}
+func unwrapSpliceTargetWithReason(conn any, allowOffload bool) (spliceTarget, spliceReason, bool) {
+	var target spliceTarget
+	for {
+		readCounter, isReadCounter := conn.(N.ReadCounter)
+		writeCounter, isWriteCounter := conn.(N.WriteCounter)
+		if isReadCounter || isWriteCounter {
+			if !isReadCounter || !isWriteCounter {
+				return spliceTarget{}, spliceReasonTargetCounterMismatch, false
+			}
+			reader, readCounters := readCounter.UnwrapReader()
+			writer, writeCounters := writeCounter.UnwrapWriter()
+			if !sameConn(reader, writer) {
+				return spliceTarget{}, spliceReasonTargetCounterMismatch, false
+			}
+			target.readCounters = append(target.readCounters, readCounters...)
+			target.writeCounters = append(target.writeCounters, writeCounters...)
+			conn = reader
+			continue
+		}
+		packetReadCounter, isPacketReadCounter := conn.(N.PacketReadCounter)
+		packetWriteCounter, isPacketWriteCounter := conn.(N.PacketWriteCounter)
+		if isPacketReadCounter || isPacketWriteCounter {
+			if !isPacketReadCounter || !isPacketWriteCounter {
+				return spliceTarget{}, spliceReasonTargetCounterMismatch, false
+			}
+			reader, readCounters := packetReadCounter.UnwrapPacketReader()
+			writer, writeCounters := packetWriteCounter.UnwrapPacketWriter()
+			if !sameConn(reader, writer) {
+				return spliceTarget{}, spliceReasonTargetCounterMismatch, false
+			}
+			target.readCounters = append(target.readCounters, readCounters...)
+			target.writeCounters = append(target.writeCounters, writeCounters...)
+			conn = reader
+			continue
+		}
+		if allowOffload {
+			upstream, offload := N.UnwrapPacketOffload(conn)
+			if offload != nil {
+				socket, isSocket := upstream.(tun.SpliceSocket)
+				if !isSocket {
+					return spliceTarget{}, spliceReasonTargetOffloadNotSocket, false
+				}
+				target.socket = socket
+				target.offload = offload
+				return target, spliceReasonX, true
+			}
+		}
+		readerWithUpstream, isReaderWithUpstream := conn.(N.ReaderWithUpstream)
+		if !isReaderWithUpstream || !readerWithUpstream.ReaderReplaceable() {
+			return spliceTarget{}, spliceReasonTargetNotReplaceable, false
+		}
+		writerWithUpstream, isWriterWithUpstream := conn.(N.WriterWithUpstream)
+		if !isWriterWithUpstream || !writerWithUpstream.WriterReplaceable() {
+			return spliceTarget{}, spliceReasonTargetNotReplaceable, false
+		}
+		socket, isSocket := conn.(tun.SpliceSocket)
+		if isSocket {
+			target.socket = socket
+			return target, spliceReasonX, true
+		}
+		withUpstream, hasUpstream := conn.(common.WithUpstream)
+		if hasUpstream {
+			conn = withUpstream.Upstream()
+			continue
+		}
+		upstreamReader, hasUpstreamReader := conn.(N.WithUpstreamReader)
+		upstreamWriter, hasUpstreamWriter := conn.(N.WithUpstreamWriter)
+		if !hasUpstreamReader || !hasUpstreamWriter {
+			return spliceTarget{}, spliceReasonTargetNoUpstream, false
+		}
+		reader := upstreamReader.UpstreamReader()
+		if !sameConn(reader, upstreamWriter.UpstreamWriter()) {
+			return spliceTarget{}, spliceReasonTargetUpstreamMismatch, false
+		}
+		conn = reader
+	}
+}
+func sameConn(a any, b any) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	typeA, typeB := reflect.TypeOf(a), reflect.TypeOf(b)
+	if typeA != typeB || !typeA.Comparable() {
+		return false
+	}
+	return a == b
+}
+func unwrapSpliceSourceWithReason(conn N.PacketConn) (spliceSource, spliceReason, bool) {
+	var source spliceSource
+	writer, writeCounters := N.UnwrapCountPacketWriter(conn, nil)
+	natWriter, isNATWriter := N.CastPacketWriter[*tun.UDPNatConn](writer)
+	if !isNATWriter {
+		return spliceSource{}, spliceReasonSourceNotNAT, false
+	}
+	source.writeCounters = writeCounters
+	var reader N.PacketReader = conn
+	for {
+		readCounter, isReadCounter := reader.(N.PacketReadCounter)
+		if isReadCounter {
+			upstreamReader, readCounters := readCounter.UnwrapPacketReader()
+			source.readCounters = append(source.readCounters, readCounters...)
+			reader = upstreamReader
+			continue
+		}
+		natReader, isNATReader := reader.(*tun.UDPNatConn)
+		if isNATReader {
+			if natReader != natWriter {
+				return spliceSource{}, spliceReasonSourceReaderWriterMismatch, false
+			}
+			source.natConn = natReader
+			return source, spliceReasonX, true
+		}
+		cachedReader, isCached := reader.(N.CachedPacketReader)
+		if isCached {
+			source.cachedReaders = append(source.cachedReaders, cachedReader)
+		} else {
+			readerWithUpstream, isReaderWithUpstream := reader.(N.ReaderWithUpstream)
+			if !isReaderWithUpstream || !readerWithUpstream.ReaderReplaceable() {
+				return spliceSource{}, spliceReasonSourceNotReplaceable, false
+			}
+		}
+		withUpstream, hasUpstream := reader.(common.WithUpstream)
+		if hasUpstream {
+			reader, _ = withUpstream.Upstream().(N.PacketReader)
+		} else {
+			upstreamReader, hasUpstreamReader := reader.(N.WithUpstreamReader)
+			if !hasUpstreamReader {
+				return spliceSource{}, spliceReasonSourceNoUpstream, false
+			}
+			reader, _ = upstreamReader.UpstreamReader().(N.PacketReader)
+		}
+		if reader == nil {
+			return spliceSource{}, spliceReasonSourceNoUpstream, false
+		}
+	}
+}
+func (s SpliceSnapshot) SpliceSummary() string {
+	return s.summary("UDP")
+}
+func (s SpliceSnapshot) TCPSpliceSummary() string {
+	return s.summary("TCP")
+}
+func (s SpliceSnapshot) summary(transport string) string {
+	var summary strings.Builder
+	fmt.Fprintf(&summary, "%s splice diagnostics: attempts=%d successes=%d ratio=%.3f",
+		transport, s.Attempts, s.Successes, s.Ratio())
+	for i := 0; i < spliceReasonCount; i++ {
+		reason := spliceReason(i)
+		if reason == spliceReasonX {
+			continue
+		}
+		if count := s.Reasons[reason.String()]; count > 0 {
+			fmt.Fprintf(&summary, " %s=%d", reason.String(), count)
+		}
+	}
+	return summary.String()
+}

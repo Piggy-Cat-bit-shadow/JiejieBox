@@ -28,8 +28,10 @@
 //	inner IP MTU       1280        the tunnel's own MTU, what this file fixes and measures against
 //	inner UDP budget   MTU - 40 - 8 = 1232 for IPv6, MTU - 20 - 8 = 1252 for IPv4
 //	                   the largest UDP payload that fits without fragmenting
-//	outer QUIC packet  1250        what the pinned quic-go forces under ChromeParrot, measured in
-//	                   the hysteria2 test, and NOT an inner IP MTU
+//	outer QUIC packet  1232 or 1250  what the hysteria2 client actually sends: the inner UDP budget
+//	                   when a path ceiling has been proven (measured), and Chrome's 1250 fingerprint
+//	                   size when none has. Either way it is a UDP payload on the OUTER path, and NOT
+//	                   an inner IP MTU.
 //
 // The arithmetic that connects them is asserted at the bottom of this file, on the measured packet
 // sizes rather than on the constants, so a change in the pinned stack shows up as a failure.
@@ -181,7 +183,8 @@ func TestInnerIPv6FragmentationAtTunnelMTU(t *testing.T) {
 		{ipv6MaxPayload - 1, 1, "one byte below the budget"},
 		{ipv6MaxPayload, 1, "exactly the budget: 40 + 8 + 1232 == 1280, so there is nothing to fragment"},
 		{ipv6MaxPayload + 1, 2, "one byte over the budget: the packet no longer fits and must be fragmented"},
-		{1250, 2, "the payload the pinned quic-go forces under ChromeParrot"},
+		{1250, 2, "the payload a Chrome-parroting client sends when no ceiling has been proven; with one " +
+			"set to the budget, the payload is ipv6MaxPayload and this row does not apply"},
 		{1280, 2, "a full-MTU payload, for the shape of a larger split"},
 	}
 

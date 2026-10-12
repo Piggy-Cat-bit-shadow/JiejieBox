@@ -292,10 +292,14 @@ func (t *Endpoint) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 }
 
 func (t *Endpoint) start(scope *adapter.Scope) error {
-	binding, err := newSystemBinding(t.ctx, t.logger)
+	binding, resetInterfaceGetter, err := newSystemBinding(t.ctx, t.logger)
 	if err != nil {
 		return err
 	}
+	// The platform interface getter is a process GLOBAL, so it outlives this endpoint unless the
+	// teardown clears it. Registering the reset on the scope is what keeps a later Box from reading
+	// interfaces out of THIS endpoint's NetworkManager after it has been closed.
+	registerSystemBindingCleanup(scope, resetInterfaceGetter)
 	t.server.ControlFunc = binding.control
 	t.server.ListenPacketFunc = binding.listenPacket
 	if t.systemInterface {
@@ -803,6 +807,19 @@ func (t *Endpoint) DialContext(ctx context.Context, network string, destination 
 	default:
 		return nil, E.Extend(N.ErrUnknownNetwork, network)
 	}
+}
+
+// DialsDestinationLocally implements adapter.LocalDestinationDialer.
+//
+// PROVEN from the dial path above: a domain destination is resolved by `t.dnsRouter.Lookup` at :777
+// and only the resulting addresses are dialled (`N.DialSerial` at :781, and the userspace stack or
+// the system dialer below it). The tailnet carries the packet, so the domain never leaves this
+// device as a name and there is no proxy peer for `destination_dns_ownership` to be a promise about.
+//
+// The two inner paths do not change that: `systemDialer` (:784) is a local socket, and the
+// `t.stack` branches (:796, :802) write into the Tailscale userspace stack.
+func (t *Endpoint) DialsDestinationLocally() bool {
+	return true
 }
 
 func (t *Endpoint) listenPacketWithAddress(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {

@@ -112,7 +112,7 @@ func bridgePolicy() power.Policy {
 // first flow after the unlock is handed a socket the sleep killed. With the level released on a
 // resume, a phone in a pocket runs its speculative work - and on iOS a push notification lights the
 // lock screen, so the resume that arrives is very often a push.
-func TestASleepAndResumePairIsOneBoundaryAndTheLevelIsHeld(t *testing.T) {
+func TestASleepEpisodeIsOneBoundaryAndAResumeIsNotAWake(t *testing.T) {
 	clock := newTestClock()
 	governor, bridge, manager, transitions := newAppleBridge(t, bridgePolicy(), clock)
 	var boundaries []power.ReuseBoundary
@@ -128,20 +128,32 @@ func TestASleepAndResumePairIsOneBoundaryAndTheLevelIsHeld(t *testing.T) {
 	require.True(t, manager.IsDevicePaused(), "a sleep must enter the device level")
 	require.Zero(t, governor.ReuseEpoch(), "a sleep is not a boundary")
 
+	// The extension is resumed while the phone is still locked - a push, or a background task. That
+	// is not the end of the episode, so it publishes nothing and the level stays held.
 	clock.Advance(30 * time.Second)
 	bridge.resumed()
 
-	require.Len(t, boundaries, 1, "a sleep/resume pair must publish exactly one boundary")
-	require.Equal(t, power.ReuseRetire, boundaries[0].Action)
-	require.Equal(t, 30*time.Second, boundaries[0].Sleep, "the sleep must be measured on the wall clock")
-	require.Equal(t, uint64(1), governor.ReuseEpoch())
+	require.Empty(t, boundaries, "a resume in the middle of a sleep published a boundary")
+	require.Zero(t, governor.ReuseEpoch())
 	require.True(t, manager.IsDevicePaused(), "a resume is not a device wake")
 	require.Equal(t, power.StateQuiescent, governor.State())
 	require.False(t, governor.Allow().ProviderRefresh, "a locked background resume released speculation")
 
+	// The unlock ends it, and THAT publishes the one boundary the episode owes - measured over the
+	// whole episode, not over the gap before the resume.
+	clock.Advance(30 * time.Second)
+	bridge.lockState(false)
+
+	require.Len(t, boundaries, 1, "one sleep episode must publish exactly one boundary")
+	require.Equal(t, power.ReuseRetire, boundaries[0].Action)
+	require.Equal(t, 60*time.Second, boundaries[0].Sleep,
+		"the sleep must be measured on the wall clock, over the whole episode")
+	require.Equal(t, uint64(1), governor.ReuseEpoch())
+	require.False(t, manager.IsDevicePaused(), "the unlock must lift the device level")
+
 	pauses, wakes := transitions.counts()
 	require.Equal(t, 1, pauses)
-	require.Zero(t, wakes, "a resume moved the device level")
+	require.Equal(t, 1, wakes, "one unlock produced more than one level wake")
 }
 
 // TestTheDeviceAxisIsReleasedByAnUnlockAndNotByADisplayTurningOn is §3.3's "a real unlock recovers the
@@ -166,7 +178,9 @@ func TestTheDeviceAxisIsReleasedByAnUnlockAndNotByADisplayTurningOn(t *testing.T
 	// A push arrives while the phone is locked and lights the lock screen.
 	clock.Advance(60 * time.Second)
 	bridge.screenState(true)
-	require.Len(t, boundaries, 1, "a display-on must publish the reuse boundary")
+	require.Empty(t, boundaries,
+		"a display-on published a reuse boundary in the middle of a sleep: the episode is not over, "+
+			"and consuming the boundary here is what left a ten-minute sleep with none at all")
 	require.True(t, manager.IsDevicePaused(),
 		"a display turning on released the device pause; a push notification lights the lock screen")
 	require.Equal(t, power.StateQuiescent, governor.State(),
@@ -183,7 +197,9 @@ func TestTheDeviceAxisIsReleasedByAnUnlockAndNotByADisplayTurningOn(t *testing.T
 	bridge.lockState(false)
 	require.False(t, manager.IsDevicePaused(), "an unlock must lift the device pause: the axis was latched")
 	require.Equal(t, power.StateWaking, governor.State(), "a wake must be staggered, not immediate")
-	require.Len(t, boundaries, 1, "the unlock published a second boundary for one sleep")
+	require.Len(t, boundaries, 1, "the unlock must publish the one boundary the sleep episode owes")
+	require.Equal(t, 60*time.Second, boundaries[0].Sleep,
+		"the boundary did not span the episode: the display-on consumed the measurement")
 
 	// The stagger is per category, measured from the wake.
 	require.False(t, governor.Allow().HealthCheck, "a health check ran at the instant of the unlock")
@@ -238,7 +254,11 @@ func TestOneSleepProducesOneLevelTransitionHoweverManyFactsReportIt(t *testing.T
 	bridge.lockState(false)
 
 	require.Len(t, boundaries, 1, "one sleep produced more than one reuse boundary")
-	require.Equal(t, 64*time.Second, boundaries[0].Sleep,
+	// Measured from the first fact of the sleep to the fact that ENDED it, which is the unlock - not
+	// to the first resume. A resume in the middle of an episode does not end it, so the measurement
+	// spans the whole episode and a phone locked overnight is not reported as the last few seconds
+	// before somebody picked it up. See `lifecycle.resumed`.
+	require.Equal(t, 66*time.Second, boundaries[0].Sleep,
 		"the sleep was re-measured by a later fact of the same sleep")
 	pauses, wakes = transitions.counts()
 	require.Equal(t, 1, pauses)
@@ -302,19 +322,19 @@ func TestTheBridgeUsesThePolicyBandsAndNothingElse(t *testing.T) {
 		boundaries = append(boundaries, boundary)
 	})
 
-	// A glance at the lock screen: under SuspectAfter, nothing happens at all. This is the whole
-	// reason the boundary is a policy and not "close on every resume".
+	// A two-second sleep: under SuspectAfter, nothing happens at all. This is the whole reason the
+	// boundary is a policy and not "close on every episode".
 	bridge.slept()
 	clock.Advance(2 * time.Second)
-	bridge.resumed()
-	require.Empty(t, boundaries, "a two-second pause retired something")
+	bridge.lockState(false) // the unlock ends the episode, and is what publishes
+	require.Empty(t, boundaries, "a two-second sleep retired something")
 	require.Zero(t, governor.ReuseEpoch())
 
 	// The suspect band: the epoch advances so the distrust is visible and monotonic, and the pools are
 	// kept by policy.
 	bridge.slept()
 	clock.Advance(7 * time.Second)
-	bridge.resumed()
+	bridge.lockState(false)
 	require.Len(t, boundaries, 1)
 	require.Equal(t, power.ReuseSuspect, boundaries[0].Action)
 	require.Equal(t, uint64(1), governor.ReuseEpoch())
@@ -322,7 +342,7 @@ func TestTheBridgeUsesThePolicyBandsAndNothingElse(t *testing.T) {
 	// The retire band.
 	bridge.slept()
 	clock.Advance(20 * time.Second)
-	bridge.resumed()
+	bridge.lockState(false)
 	require.Len(t, boundaries, 2)
 	require.Equal(t, power.ReuseRetire, boundaries[1].Action)
 	require.Equal(t, uint64(2), governor.ReuseEpoch())
@@ -331,7 +351,7 @@ func TestTheBridgeUsesThePolicyBandsAndNothingElse(t *testing.T) {
 	// resource whose age cannot be established must not be republished as current.
 	bridge.slept()
 	clock.Advance(-time.Hour)
-	bridge.resumed()
+	bridge.lockState(false)
 	require.Len(t, boundaries, 3)
 	require.Equal(t, power.ReuseRetire, boundaries[2].Action)
 	require.False(t, boundaries[2].Known)

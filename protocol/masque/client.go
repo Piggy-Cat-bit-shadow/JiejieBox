@@ -177,7 +177,12 @@ func NewClientEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 				"). This path cannot carry a standard QUIC handshake; configure a larger tunnel MTU or ",
 				"reach this server without this detour")
 		}
-		if effectiveInitialPacketSize != options.HTTP3Options.InitialPacketSize {
+		if dialer.CeilingSuppliesTheSize(options.HTTP3Options.InitialPacketSize, effectiveInitialPacketSize, outerPayloadCeiling) {
+			logger.Info("path capacity: inner MTU ", pathCapacity.InnerMTU,
+				" proves ", outerPayloadCeiling,
+				" bytes for this connection's own QUIC packet, which is used because no "+
+					"initial_packet_size was configured")
+		} else if effectiveInitialPacketSize != options.HTTP3Options.InitialPacketSize {
 			logger.Info("path capacity: inner MTU ", pathCapacity.InnerMTU,
 				" caps the outer QUIC packet at ", outerPayloadCeiling,
 				", so initial_packet_size ",
@@ -280,7 +285,7 @@ func NewClientEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 	}
 	clientEndpoint := &ClientEndpoint{
 		endpointBase: endpointBase{
-			Adapter: endpoint.NewAdapterWithDialerOptions(C.TypeMASQUEClient, tag, []string{N.NetworkTCP, N.NetworkUDP, N.NetworkICMP}, options.DialerOptions),
+			Adapter: endpoint.NewAdapterWithDialerOptions(C.TypeMASQUEClient, tag, []string{N.NetworkTCP, N.NetworkUDP, N.NetworkICMP}, options.DialerOptions, options.ServerIsDomain()),
 			router:  router,
 			logger:  logger,
 		},
@@ -685,6 +690,21 @@ func (c *ClientEndpoint) DialContext(ctx context.Context, network string, destin
 		return nil, E.New("invalid destination: ", destination)
 	}
 	return c.device.DialContext(ctx, network, destination)
+}
+
+// DialsDestinationLocally implements adapter.LocalDestinationDialer.
+//
+// PROVEN from the dial path above: a domain destination is resolved by `c.lookupInner` at :683 -
+// whose precedence is documented at :695-704 - and only the resulting addresses are dialled
+// (`c.dialResolved` at :687, `c.device.DialContext` at :692). The destination is carried through
+// this endpoint's own tunnel, so the domain is resolved on this device and never written to a peer
+// as a name.
+//
+// Note the split the ownership flag cares about: `inner_domain_resolver` and `lookupInner` govern
+// the DESTINATION, while the MASQUE server's own address is a different question answered by the
+// outer dial path. Only the destination half is what `destination_dns_ownership` is about.
+func (c *ClientEndpoint) DialsDestinationLocally() bool {
+	return true
 }
 
 // lookupInner resolves a domain the endpoint is about to carry through the tunnel.

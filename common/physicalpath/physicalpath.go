@@ -109,7 +109,23 @@ type Resolver struct {
 	domainResolverFor func(tag string) string
 	// defaultDomainResolver reports whether the network layer configures a resolver that applies
 	// when the outbound declares none.
+	//
+	// DEPRECATED as a source of truth, and kept only so the existing seam keeps compiling: it is the
+	// STATIC answer to a question whose real answer depends on the DNS transport manager's state at
+	// the moment the walk runs. See authorityFor.
 	defaultDomainResolver bool
+	// authorityFor reports whether a name resolved by this outbound would have any DNS authority.
+	//
+	// This is a LIVE query, and the closure the seam installs is built on
+	// common/dialer.ResolveAuthority - the same classifier NewDNSQueryOptions itself is built on - so
+	// the validator and the dial path cannot disagree: they read one enum from one function. The
+	// static bool below could only ever reproduce two of that function's four cases, which is what
+	// made the validator refuse configurations whose runtime path resolves names successfully.
+	//
+	// It is a plain bool rather than the classifier's enum on purpose: this package deliberately
+	// imports nothing from sing-box except adapter, so a walk cannot dial, log or time anything. The
+	// enum is collapsed by the seam, which is the one place that knows which case it is looking at.
+	authorityFor func(tag string) bool
 }
 
 // NewResolver builds a resolver over a registry lookup.
@@ -154,10 +170,28 @@ func (r *Resolver) WithNetwork(network string) *Resolver {
 // check needs. The receiver is NOT modified.
 //
 // resolverFor may be nil, in which case no outbound is reported as having its own resolver.
+//
+// defaultConfigured is the STATIC answer, and it is only used when authorityFor is not supplied. A
+// caller that can reach the live classifier should call WithResolverAuthority instead: the static
+// bool cannot express the transport-default case, and a validator that mistakes a working resolver
+// for a missing one refuses a configuration the runtime would run.
 func (r *Resolver) WithDomainResolvers(resolverFor func(tag string) string, defaultConfigured bool) *Resolver {
 	return r.configure(func(configured *Resolver) {
 		configured.domainResolverFor = resolverFor
 		configured.defaultDomainResolver = defaultConfigured
+	})
+}
+
+// WithResolverAuthority returns a resolver that asks the SHARED classifier what authority this
+// outbound's name resolutions would have. The receiver is NOT modified.
+//
+// authorityFor is expected to be built on common/dialer.ResolveAuthority - the function
+// NewDNSQueryOptions is itself built on - narrowed to the outbound in question and collapsed to a
+// bool. Passing anything else reintroduces the divergence this method exists to remove, so the seam
+// that installs it is the place to check: see adapter/outbound.Manager.
+func (r *Resolver) WithResolverAuthority(authorityFor func(tag string) bool) *Resolver {
+	return r.configure(func(configured *Resolver) {
+		configured.authorityFor = authorityFor
 	})
 }
 
@@ -179,6 +213,22 @@ func (r *Resolver) Lookup(tag string) (adapter.Outbound, bool) {
 // resolver the network layer supplies by default. Anything else means every named destination
 // would fail closed - which is the contract the ownership flag states, and a start-time fact.
 func (r *Resolver) CanResolveDestination(tag string) (bool, string) {
+	// The LIVE answer, when the seam supplied one. It is the same classifier NewDNSQueryOptions is
+	// built on, so "the validator refused it" and "the dial path cannot do it" are now the same
+	// statement rather than two derivations that happened to agree.
+	if r.authorityFor != nil {
+		if !r.authorityFor(tag) {
+			return false, "the configuration declares destination_dns_ownership for this outbound, " +
+				"which requires it to resolve the destination before writing the request to its peer, " +
+				"but no DNS authority is configured anywhere: neither the outbound nor the network " +
+				"names a resolver, and the DNS transport manager holds none to fall back to, so every " +
+				"named destination would fail closed at run time"
+		}
+		// Explicit, network-default and transport-default all resolve a name. The
+		// transport-default case hands back an EMPTY policy on purpose and lets the router use its
+		// own default path; refusing it was the confirmed false deny.
+		return true, ""
+	}
 	if r.domainResolverFor != nil && r.domainResolverFor(tag) != "" {
 		return true, ""
 	}

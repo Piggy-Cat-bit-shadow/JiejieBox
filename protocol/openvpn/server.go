@@ -103,20 +103,38 @@ func NewServerEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 	if options.UDPTimeout != 0 {
 		udpTimeout = time.Duration(options.UDPTimeout)
 	}
+	// The device reserves the headroom the DATA CHANNEL needs, and the data channel is what this
+	// endpoint owns. Asking the options object rather than using a constant is the point: the
+	// reservation depends on the negotiated transport protocol and ciphers, so it is only knowable
+	// once the options exist - see sing-openvpn's DataPacketHeadroom.
+	//
+	// Without it the shared device reserves nothing, and every outbound packet takes the copy branch
+	// in the peer data path. That path is not merely slower: sing's buf.ExtendHeader PANICS when the
+	// buffer has less room than requested, which is why sing-openvpn guards the call, and the guard
+	// is exactly the branch this reservation removes.
+	packetFrontHeadroom, packetRearHeadroom := serverOptions.DataPacketHeadroom()
 	serverEndpoint.deviceOptions = &device.Options{
-		Context:         ctx,
-		Logger:          logger,
-		System:          options.System,
-		Handler:         serverEndpoint,
-		UDPTimeout:      udpTimeout,
-		ICMPTimeout:     C.ICMPTimeout,
-		UDPMapping:      tun.NATMapping(options.UDPMapping),
-		UDPFiltering:    tun.NATFiltering(options.UDPFiltering),
-		UDPNATMax:       options.UDPNATMax,
-		InterfaceFinder: service.FromContext[adapter.NetworkManager](ctx).InterfaceFinder(),
-		Name:            options.Name,
-		NamePrefix:      "ovpn",
-		MTU:             options.MTU,
+		Context:             ctx,
+		Logger:              logger,
+		System:              options.System,
+		Handler:             serverEndpoint,
+		UDPTimeout:          udpTimeout,
+		ICMPTimeout:         C.ICMPTimeout,
+		UDPMapping:          tun.NATMapping(options.UDPMapping),
+		UDPFiltering:        tun.NATFiltering(options.UDPFiltering),
+		UDPNATMax:           options.UDPNATMax,
+		InterfaceFinder:     service.FromContext[adapter.NetworkManager](ctx).InterfaceFinder(),
+		Name:                options.Name,
+		NamePrefix:          "ovpn",
+		MTU:                 options.MTU,
+		PacketFrontHeadroom: packetFrontHeadroom,
+		PacketRearHeadroom:  packetRearHeadroom,
+		// The per-destination outbound queue lives on the device, and the SERVER is the side that
+		// needs it: a server routes a decapsulated packet to a CLIENT rather than to a dialled
+		// destination, so the return path has to be resolved per packet. `routeOutbound` is that
+		// resolution, and this assignment is what makes it reachable - without it the method below is
+		// dead code and sing-openvpn refuses to build a server at all (ErrMissingOutboundQueue).
+		Route: serverEndpoint.routeOutbound,
 		Configuration: device.Configuration{
 			MTU:     options.MTU,
 			Address: options.Address,
@@ -244,10 +262,7 @@ func (s *ServerEndpoint) Start(stage adapter.StartStage, scope *adapter.Scope) e
 	}
 	serverOptions.Transport.Listener = streamListener
 	serverOptions.Transport.PacketConn = packetConn
-	// The headroom is the device's, so it is supplied as a closure once the device exists.
-	serverOptions.IncomingPacketHeadroom = func() int {
-		return s.device.FrontHeadroom()
-	}
+	s.applyDeviceWires(&serverOptions)
 	server, err := ovpn.NewServer(serverOptions)
 	if err != nil {
 		if packetConn != nil {
@@ -685,6 +700,42 @@ func (s *ServerEndpoint) WritePackets(packets [][]byte) error {
 func (s *ServerEndpoint) routeOutbound(packet []byte) *tun.OutboundQueue {
 	outboundQueue, _ := s.server.RouteOutbound(packet).(*tun.OutboundQueue)
 	return outboundQueue
+}
+
+// applyDeviceWires installs on the server options the two facts that only the DEVICE can answer.
+//
+// # Why this is a named method and not two assignments at the call site
+//
+// Both wires are the kind of code a merge resolution deletes without a trace: an anonymous closure
+// has no name for a symbol-level audit to miss, and the method it makes dead still exists. That is
+// not hypothetical - exactly that happened to `NewOutboundQueue`, and the OpenVPN server endpoint
+// stopped being able to start at all. Naming the step gives the regression test something to call
+// and a reader something to find, and it keeps the two assignments that must happen together in one
+// place.
+//
+// # The two wires
+//
+//   - IncomingPacketHeadroom is the room the data channel needs on the INBOUND side. It is read from
+//     the device because the device is what sized the reservation, and it is a closure because the
+//     device only exists once Start has run.
+//   - NewOutboundQueue is the server's return path, and it is per DESTINATION rather than per dialed
+//     address: a decapsulated packet is addressed to a client the server does not dial, so
+//     sing-openvpn has to ask which queue - which peer - a packet belongs to. It is REQUIRED rather
+//     than an optimization: sing-openvpn refuses to construct a server without it
+//     (`ErrMissingOutboundQueue`), which is a hard start failure.
+func (s *ServerEndpoint) applyDeviceWires(serverOptions *ovpn.ServerOptions) {
+	serverOptions.IncomingPacketHeadroom = func() int {
+		return s.device.FrontHeadroom()
+	}
+	serverOptions.NewOutboundQueue = s.newOutboundQueueFactory
+}
+
+// newOutboundQueueFactory hands sing-openvpn the device's per-destination queue.
+//
+// The queue belongs to the DEVICE and not to this endpoint because the device is what owns the
+// return path and its headroom; the endpoint only decides which destination a packet is for.
+func (s *ServerEndpoint) newOutboundQueueFactory(write func(buffers []*buf.Buffer)) ovpn.OutboundQueue {
+	return s.device.NewOutboundQueue(write)
 }
 
 func (s *ServerEndpoint) writePacketBuffersByDestination(packetBuffers []*buf.Buffer) error {

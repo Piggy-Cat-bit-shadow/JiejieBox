@@ -406,8 +406,14 @@ func TestPlatformExplicitDeviceWakeIsAuthoritative(t *testing.T) {
 	require.EqualValues(t, 1, platform.snapshot().wakes, "the nudge runs for the wake, not for every repeated fact")
 	require.EqualValues(t, 1, policy.Stats().Coalesced)
 	on, known := policy.ScreenOn()
-	require.True(t, on)
-	require.True(t, known)
+	// This assertion used to require `on == true`, which pinned the user-present EDGE writing the
+	// screen LEVEL. That is what made the level lie: `recomputeDeviceLocked` derives
+	// `wantPaused = screenKnown && !screenOn`, so an unlock left the axis believing the screen was on
+	// and the device never re-paused for the rest of the session. `screenKnown`/`screenOn` carry the
+	// screen FACT and `SetScreenOn` is its only reporter, so the edge no longer touches them. The
+	// cost of the old write is pinned by TestAUserPresentFactWhileTheScreenIsOffDoesNotClaimTheScreenIsOn.
+	require.False(t, on, "a user-present is an edge about the user, not a screen fact")
+	require.True(t, known, "known because SetScreenOn reported it, not because of the unlock")
 }
 
 // TestPlatformFirstUserPresentIsNotSwallowedByASeededScreenOn is the defect the edge latch exists for.
@@ -804,4 +810,100 @@ func TestPlatformNoTargetIsInert(t *testing.T) {
 	policy.DeviceWake()
 	policy.Close()
 	require.EqualValues(t, 1, policy.Stats().Releases)
+}
+
+// TestAUserPresentFactDoesNotAssertTheScreenIsOn pins the level/edge separation on the device axis.
+//
+// `DeviceWake` is the user-present EDGE: Android reports it from ACTION_USER_PRESENT, which is a
+// one-shot "somebody just unlocked this device". The screen LEVEL is `SetScreenOn`, reported
+// separately from ACTION_SCREEN_ON/OFF. `DeviceWake` used to write `screenOn = true` as well, which
+// folded the edge into the level and made the level lie in the direction that costs battery:
+//
+//   - `recomputeDeviceLocked` derives `wantPaused = screenKnown && !screenOn` (platform_events.go:382).
+//     So a user-present fact left the policy believing the screen was ON, and the device never
+//     re-entered the paused state for the rest of the session - not when the user put the phone down,
+//     and not when it locked - until the platform happened to send a real screen-off fact.
+//   - and because the level then read as already-ON, the guard at :346 answered the NEXT genuine
+//     user-present with `Coalesced++` and no nudge at all, so the first real edge after an attach
+//     could be swallowed outright.
+//
+// The edge must move only what an edge moves.
+func TestAUserPresentFactDoesNotAssertTheScreenIsOn(t *testing.T) {
+	platform := &fakePlatform{}
+	policy := NewPlatformEvents(platform)
+
+	// The phone is awake and unlocked, and the screen fact agrees.
+	policy.SetScreenOn(true)
+	policy.DeviceWake()
+
+	on, known := policy.ScreenOn()
+	require.True(t, known, "the screen fact was reported, so the level must be known")
+	require.True(t, on, "the screen really is on here")
+
+	// Now the ONLY fact that arrives is another user-present - a receiver replay, or a second
+	// unlock. It is not evidence about the screen, so the level must not move.
+	policy.DeviceWake()
+	onAgain, _ := policy.ScreenOn()
+	require.True(t, onAgain)
+}
+
+// TestAUserPresentFactWhileTheScreenIsOffDoesNotClaimTheScreenIsOn is the same invariant in the case
+// that actually loses battery: the level says OFF and the edge must not override it.
+func TestAUserPresentFactWhileTheScreenIsOffDoesNotClaimTheScreenIsOn(t *testing.T) {
+	platform := &fakePlatform{}
+	policy := NewPlatformEvents(platform)
+
+	policy.SetScreenOn(false)
+
+	// A user-present arriving while the last screen fact says OFF. Whatever the platform means by
+	// that, it is a statement about the USER, not about the screen, so the level must stand.
+	policy.DeviceWake()
+
+	on, known := policy.ScreenOn()
+	require.True(t, known)
+	require.False(t, on,
+		"a user-present fact asserted the screen is on, so the device axis will not re-pause and "+
+			"the screen level no longer describes the screen")
+
+	require.EqualValues(t, 1, policy.Stats().Wakes, "the edge must still have been applied")
+}
+
+// TestOneAwakePeriodOwesExactlyOneNudge pins that the two nudge paths share the edge latch.
+//
+// There are two ways a nudge is issued: a user-present fact (`DeviceWake`) and the level path
+// (`recomputeDeviceLocked`'s "the screen came back and a user is in front" branch). They must agree
+// about whether the current awake period has already been nudged, or the period gets two nudges - the
+// repeated rebind opportunity the latch exists to prevent.
+func TestOneAwakePeriodOwesExactlyOneNudge(t *testing.T) {
+	platform := &fakePlatform{}
+	policy := NewPlatformEvents(platform)
+
+	policy.SetScreenOn(true)
+	policy.SetAppForeground(true)
+	policy.SetScreenOn(false) // the device sleeps
+	policy.SetScreenOn(true)  // and the user is in front, so the LEVEL path nudges
+	first := policy.Stats().Wakes
+	require.EqualValues(t, 1, platform.snapshot().wakes, "the level path owes one nudge")
+
+	// The unlock for that same return arrives as its own fact, a moment later.
+	policy.DeviceWake()
+	require.EqualValues(t, first, policy.Stats().Wakes,
+		"the same awake period was nudged twice, once by the level path and once by the user-present")
+	require.EqualValues(t, 1, platform.snapshot().wakes, "the target saw one nudge for one awake period")
+}
+
+// TestANewSleepOwesAFreshNudge is the control: the latch must not swallow the NEXT period's nudge.
+func TestANewSleepOwesAFreshNudge(t *testing.T) {
+	platform := &fakePlatform{}
+	policy := NewPlatformEvents(platform)
+
+	policy.SetScreenOn(true)
+	policy.SetAppForeground(true)
+	policy.DeviceWake() // period 1
+	policy.SetScreenOn(false)
+	policy.SetScreenOn(true) // period 2
+	policy.DeviceWake()
+
+	require.EqualValues(t, 2, platform.snapshot().wakes,
+		"a nudge was swallowed for a new awake period, so the WireGuard rebind would be skipped")
 }

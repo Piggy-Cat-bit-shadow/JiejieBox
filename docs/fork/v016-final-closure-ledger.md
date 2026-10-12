@@ -1,5 +1,18 @@
 # v0.1.6 final closure ledger
 
+> **One item in this ledger has since been closed.**
+> Every statement here about the HY2 ChromeParrot MTU ceiling — that it is BLOCKED on the pinned
+> quic-go, that the clamp reaches the wire only with `disable_chrome_parrot: true`, that 1250 is
+> emitted regardless of a proven ceiling — was true when this was written and is no longer.
+>
+> `Config.InitialPacketSizeCeiling` in the pinned quic-go fork is applied **after** the ChromeParrot
+> override, so a proven 1232 reaches the wire with the fingerprint on, and the same field caps what
+> path MTU discovery may grow to after the handshake. The operator's own
+> `disable_path_mtu_discovery` is forwarded again instead of being swallowed.
+>
+> Measurements: `protocol/hysteria2/hard_ceiling_wire_test.go`. Pins: `go.mod`. Decision record:
+> `v016-five-workstream-final-report.md` §J-6.
+
 This is the current authoritative record. `v016-correction-round-ledger.md` covers the previous round;
 `v016-five-workstream-final-report.md` covers the round before that. Read this one for the state now.
 

@@ -1,0 +1,13 @@
+﻿audit/upstream-absorb-0.1.6-91ca1652d                ancestor_of_testing=False
+closure/0.1.6-consumer-dns-parity                    ancestor_of_testing=False
+closure/0.1.6-group-crosskind                        ancestor_of_testing=False
+closure/0.1.6-static-validation-final                ancestor_of_testing=False
+closure/0.1.6-static-validation-final-wire           ancestor_of_testing=False
+closure/0.1.6-static-validation-true-final           ancestor_of_testing=False
+debug/static-validation-false-deny-20261012          ancestor_of_testing=False
+fix/route-aware-outbound-capability-validation       ancestor_of_testing=False
+fix/0.1.6-apple-pin-gates                            ancestor_of_testing=False
+integration/0.1.6-final-freeze                       ancestor_of_testing=False
+jiejiebox/apple-finalize                             ancestor_of_testing=False
+jiejiebox/p1c-iphone-device-closure                  ancestor_of_testing=False
+jiejiebox/v0.1.6-hardening                           ancestor_of_testing=False

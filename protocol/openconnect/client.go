@@ -108,9 +108,12 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 	loopContext, cancelLoop := context.WithCancel(ctx)
 	openConnectEndpoint := &Endpoint{
 		endpointBase: endpointBase{
-			Adapter: endpoint.NewAdapterWithDialerOptions(C.TypeOpenConnect, tag, []string{N.NetworkTCP, N.NetworkUDP, N.NetworkICMP}, options.DialerOptions),
-			router:  router,
-			logger:  logger,
+			// The Adapter is assigned below, once this constructor has computed whether the server
+			// address is a DOMAIN - the fact the cross-kind graph needs to know whether a
+			// ResolveDialer is built and therefore whether `route.default_domain_resolver` is ever
+			// read on this object's behalf.
+			router: router,
+			logger: logger,
 		},
 		loopContext:   loopContext,
 		cancelLoop:    cancelLoop,
@@ -145,6 +148,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 	}
 	serverAddress, serverAddressErr := netip.ParseAddr(serverURL.Hostname())
 	remoteIsDomain := serverURL.Hostname() != "" && serverAddressErr != nil && !serverAddress.IsValid()
+	openConnectEndpoint.Adapter = endpoint.NewAdapterWithDialerOptions(C.TypeOpenConnect, tag, []string{N.NetworkTCP, N.NetworkUDP, N.NetworkICMP}, options.DialerOptions, remoteIsDomain)
 	outboundDialer, err := dialer.NewWithOptions(dialer.Options{
 		Context:          ctx,
 		Options:          options.DialerOptions,
@@ -160,20 +164,29 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		udpTimeout = time.Duration(options.UDPTimeout)
 	}
 	networkManager := service.FromContext[adapter.NetworkManager](ctx)
+	// The ESP fixed header and the maximum trailer are constants of the WIRE FORMAT rather than of
+	// this endpoint, which is why they come from the library instead of being derived here: the
+	// packet buffer is built by resizing a pooled buffer to make room for them, and it fails the
+	// reservation when the buffer has less room than it needs.
+	//
+	// Without this the shared device reserves nothing, so every outbound packet takes
+	// sing-openconnect's allocation-and-copy branch instead of the in-place one.
 	openConnectEndpoint.deviceOptions = &device.Options{
-		Context:         ctx,
-		Logger:          logger,
-		System:          options.System,
-		Handler:         openConnectEndpoint,
-		UDPTimeout:      udpTimeout,
-		ICMPTimeout:     C.ICMPTimeout,
-		UDPMapping:      tun.NATMapping(options.UDPMapping),
-		UDPFiltering:    tun.NATFiltering(options.UDPFiltering),
-		UDPNATMax:       options.UDPNATMax,
-		InterfaceFinder: networkManager.InterfaceFinder(),
-		Name:            options.Name,
-		NamePrefix:      "oc",
-		MTU:             openconnecttransport.DefaultMTU,
+		Context:             ctx,
+		Logger:              logger,
+		System:              options.System,
+		Handler:             openConnectEndpoint,
+		UDPTimeout:          udpTimeout,
+		ICMPTimeout:         C.ICMPTimeout,
+		UDPMapping:          tun.NATMapping(options.UDPMapping),
+		UDPFiltering:        tun.NATFiltering(options.UDPFiltering),
+		UDPNATMax:           options.UDPNATMax,
+		InterfaceFinder:     networkManager.InterfaceFinder(),
+		Name:                options.Name,
+		NamePrefix:          "oc",
+		MTU:                 openconnecttransport.DefaultMTU,
+		PacketFrontHeadroom: openconnect.PacketHeadroom,
+		PacketRearHeadroom:  openconnect.PacketRearHeadroom,
 		Configuration: device.Configuration{
 			MTU: openconnecttransport.DefaultMTU,
 		},
@@ -638,6 +651,17 @@ func (e *Endpoint) DialContext(ctx context.Context, network string, destination 
 		return nil, E.New("invalid destination: ", destination)
 	}
 	return e.device.DialContext(ctx, network, destination)
+}
+
+// DialsDestinationLocally implements adapter.LocalDestinationDialer.
+//
+// PROVEN from the dial path above: a domain destination is resolved by `e.dnsRouter.Lookup` at :640
+// and only the resulting addresses are dialled (`N.DialSerial` at :644, `e.device.DialContext` at
+// :649). The destination travels inside the OpenConnect tunnel this endpoint terminates, so the
+// domain is resolved on this device and never written to a peer as a name. The packet path agrees
+// (:659).
+func (e *Endpoint) DialsDestinationLocally() bool {
+	return true
 }
 
 func (e *Endpoint) ListenPacketWithDestination(ctx context.Context, destination M.Socksaddr) (net.PacketConn, netip.Addr, error) {

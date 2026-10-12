@@ -69,6 +69,15 @@ type HopCheck struct {
 	//   - nothing proved which networks reach this root, and the root advertises none this package
 	//     can decide (see advertisedNetworks).
 	Requirement []string
+	// RequirementProven reports WHERE Requirement came from, because the two sources are not the
+	// same claim and a report that conflates them states a fact it does not have:
+	//
+	//   - true  - the path analysis proved these networks reach this root, so the requirement is a
+	//     fact about the ROUTES and a refusal built on it is a proven defect.
+	//   - false - nothing was proven, so the requirement is what the root's own reachable objects
+	//     advertise between them. A refusal built on it is still a refusal, but it is a statement
+	//     about the objects rather than about the routing, and the message must say so.
+	RequirementProven bool
 	// Unknowns are the problems found at this node. A node with unknowns was NOT verified, and it
 	// is never reported as reachable.
 	Unknowns []Unknown
@@ -208,11 +217,36 @@ func ValidateRoots(resolver *Resolver, roots []adapter.Outbound, endpoints Endpo
 			report.Failures = append(report.Failures, failures...)
 		}
 		requirement := proven
+		// requirementProven is carried to the message as well as to the check, because the two
+		// sources are different claims: a requirement proved by the routes is a statement about the
+		// ROUTING, and one that came from the advertised fallback is a statement about the OBJECTS.
+		// Reporting the second as though it were the first is the dishonesty this flag removes - a
+		// configuration whose only rule is domain-scoped proves nothing, and a message that said
+		// "the routes prove tcp,udp reaches this path" would invent a proof the analysis never made.
+		requirementProven := requirement != nil
 		if requirement == nil {
 			// Nothing was proven about delivery, so the requirement is what the root's own
-			// reachable objects say they can carry. Reading it from the NODES rather than from
-			// root.Network() is what keeps a group's pre-Start answer, which is a blanket, out of
-			// the decision.
+			// reachable objects say they can carry BETWEEN THEM. Reading it from the NODES rather
+			// than from root.Network() is what keeps a group's pre-Start answer, which is a blanket,
+			// out of the decision.
+			//
+			// # Why the union is NOT charged to the exits
+			//
+			// The union is a true statement about the ROOT: some flow reaching it can be of either
+			// network. It is NOT a requirement any single exit can satisfy whenever its siblings
+			// differ - and MEASURED, that produced a false deny: `selector[tcp-only, dual]` with no
+			// rule and no consumer advertises {tcp,udp} through `dual` and failed `tcp-only`.
+			//
+			// The structural reason it has no true-positive content: the union is the union of the
+			// exits' OWN advertisements, so it can only ever exceed an exit's own set when a SIBLING
+			// advertises more. A single-entry root is therefore never failed by this branch - it is
+			// charged exactly what it advertises - and across the whole measured matrix the only
+			// failures it ever produced were the members of a multi-member selector. That is the
+			// definition of a check reporting on the fallback rather than on the configuration.
+			//
+			// So each exit is charged with what IT advertises. See `advertisedNetworks` for why the
+			// union is still computed: it is what the GROUP question below needs ("is this network
+			// served at all under this root"), and it stays in the report as the advertised fact.
 			requirement = advertisedNetworks(nodes)
 		}
 		// A group that picks its member BY NETWORK never hands a flow to a member that cannot carry
@@ -258,17 +292,41 @@ func ValidateRoots(resolver *Resolver, roots []adapter.Outbound, endpoints Endpo
 			}
 		}
 		for _, node := range nodes {
-			check := HopCheck{
-				Root:        node.Root,
-				Hop:         node.Tag,
-				Route:       node.Route(),
-				Path:        node.Path(),
-				Position:    node.Position,
-				Exit:        node.Exit,
-				Current:     node.IsCurrent,
-				Requirement: nodeRequirementFor(resolver, node, requirement),
+			// # The requirement, and why it is narrowed when nothing is proven
+			//
+			// `requirement` is what the ROUTES proved reaches this root, and a proof is charged to
+			// every exit under it - that is the whole point of the route analysis and it is what
+			// case-08 and case-10b pin.
+			//
+			// When NOTHING is proven, `requirement` is the advertised UNION, and charging that to an
+			// individual exit is the false deny: the union is a sum over the exits' own
+			// advertisements, so it exceeds an exit's set only when a SIBLING advertises more. MEASURED,
+			// `selector[tcp-only, dual]` with no rule and no consumer failed `tcp-only` for a udp flow
+			// the group would have handed to `dual` - and across the whole matrix the only failures
+			// this branch ever produced were the members of a multi-member selector, which is a report
+			// on the fallback rather than on the configuration.
+			//
+			// So an exit with nothing proven is charged with what IT advertises. That is not the
+			// "narrow everything" reading the earlier experiment measured and rejected: it applies to
+			// the FALLBACK ONLY, and the two true positives that matter are unaffected because their
+			// demand is proven (case-08 {udp}, case-10b {tcp,udp}).
+			effective := requirement
+			if !requirementProven {
+				effective = selfRequirementFor(node)
 			}
-			for _, failure := range validateNode(resolver, node, endpoints, check.Requirement, declarations) {
+			nodeRequirement := nodeRequirementFor(resolver, node, effective)
+			check := HopCheck{
+				Root:              node.Root,
+				Hop:               node.Tag,
+				Route:             node.Route(),
+				Path:              node.Path(),
+				Position:          node.Position,
+				Exit:              node.Exit,
+				Current:           node.IsCurrent,
+				Requirement:       nodeRequirement,
+				RequirementProven: requirementProven && nodeRequirement != nil,
+			}
+			for _, failure := range validateNode(resolver, node, endpoints, check.Requirement, check.RequirementProven, declarations) {
 				check.Unknowns = append(check.Unknowns, Unknown{
 					Node:     failure.Leaf,
 					Position: failure.Hop,
@@ -409,6 +467,57 @@ func nodeRequirementFor(resolver *Resolver, hop PathNode, delivered []string) []
 	return delivered
 }
 
+// # The narrower reading that was tried and REVERSED
+//
+// "Ask each exit for what IT advertises, never for the root's union" was implemented and measured.
+// It removes the group false deny - `selector[tcp-only, dual]` with no route and no consumer - and it
+// also turns TWO true-positive tests green:
+//
+//	TestStartRefusesAMemberThatCannotCarryTheRoutedNetwork
+//	TestPhysicalPathDryRunRefusesAnUnusableUnselectedMember
+//
+// Both pin the runtime failure this dry run exists to prevent: a selector whose member is switched by
+// hand, or by a health check, hands the flow to an object that cannot carry it. Under the narrow
+// reading a selector's UNSELECTED member is not held to the group's advertised set at all, so the
+// refusal disappears. The union therefore STAYS, the false deny is recorded, and the contract
+// question below is left open rather than answered by a local edit.
+//
+// # The contract question this file does not answer
+//
+// `Selector.Selected(network)` returns `s.selected.Load()` and IGNORES its argument
+// (protocol/group/selector.go:216-218), so a selector can hand a UDP flow to a TCP-only member and the
+// group's own advertisement is the only thing that could have prevented it. `URLTest.Selected` DOES
+// filter (it caches a separate tcp/udp member), and `LoadBalance` filters through
+// `SelectForFlow`/`isCandidate`. What an unfiltering group PROMISES about its members' capabilities is
+// the contract that has to be decided before the requirement can be narrowed, and it is a product
+// decision rather than a validator detail.
+
+// selfRequirementFor reports what ONE business entry is charged with when NOTHING is proven about
+// delivery: its own advertisement, and never the root's union.
+//
+// # Why the union cannot be charged to an exit
+//
+// The union is a sum over the exits' own `Network()` answers, so it exceeds an exit's set only when
+// a SIBLING advertises more. A single-entry root is therefore never failed by the union - it is
+// charged exactly what it advertises - and the only configurations the union ever fails are the
+// members of a multi-member group. MEASURED: `selector[tcp-only, dual]` with no rule and no consumer
+// was refused member-by-member, because the {tcp,udp} contributed by `dual` was required of
+// `tcp-only` for a flow the group would have handed to `dual`.
+//
+// That makes the union a statement about the FALLBACK rather than about the configuration, so it is
+// not charged to an exit. It is still computed, because the group question needs it ("is this
+// network served at all under this root") and it stays in the report as the advertised fact.
+//
+// # What this deliberately does NOT do
+//
+// It does not narrow a PROVEN requirement. A demand the routes proved is charged to every exit under
+// the root, which is what case-08 ({udp}) and case-10b ({tcp,udp}) pin, and those are unaffected
+// here because their demand is proven. A global narrowing would delete that dimension entirely,
+// which is why it is gated on `!requirementProven`.
+func selfRequirementFor(hop PathNode) []string {
+	return decidedNetworks(networksOf(hop.Outbound))
+}
+
 // parentGroup recovers the group that handed this node the flow.
 //
 // The control path is recorded from the root DOWN - the root first, then each group entered
@@ -540,20 +649,34 @@ func businessEntry(hop PathNode) bool {
 //
 // # Why these two capabilities, and what is not detectable
 //
-// The property is per-network SELECTION, and the only observable statements of it in this tree are
-// the two interfaces whose implementations filter before choosing: a flow-aware group answers
-// SelectForFlow(.., network, ..), and a urltest group's Select skips a member whose Network() does
-// not contain the network. Both were checked against their implementations rather than assumed:
-// protocol/group/loadbalance.go filters in candidateCount/isCandidate, and protocol/group/urltest.go
-// filters at URLTestGroup.Select.
+// The property is per-network SELECTION, and the two interfaces below are the fork's two ways of
+// stating it. The exemption is only as strong as the interfaces, so it was checked against the
+// IMPLEMENTATIONS rather than assumed, and the two are not equally strong:
 //
-// A group that implements neither is treated as NOT filtering, which is the conservative direction
-// and the one that matches the contract every group already implements: Selected(network) may
-// return any member, and Selector.Selected does exactly that for every network
-// (protocol/group/selector_edge_test.go pins it). A third-party group that filters per network
-// without either interface is therefore checked as if it did not, which can refuse a member that
-// would in fact never be handed the flow - the same answer this package gave before the distinction
-// existed, so it adds no refusal.
+//   - `FlowAwareOutboundGroup` IS a statement of the property. Its `SelectForFlow(.., network, ..)`
+//     takes the network, and protocol/group/loadbalance.go's `isCandidate` refuses a member whose
+//     `Network()` does not contain it (`loadbalance.go:463`), so the group cannot hand that member
+//     the flow.
+//   - `URLTestGroup` is NOT. It adds `URLTest()` and `PerformUpdateCheck()` - a measurement API -
+//     and inherits `Selected(network)` from `OutboundGroup`; there is no `Select` method anywhere in
+//     this tree. The property holds because THIS tree's implementation filters its live cache by
+//     network (`protocol/group/urltest.go`), which is a fact about `*URLTest` and not about the
+//     interface. An implementation that satisfied `URLTestGroup` and returned its current member for
+//     every network would be exempted wrongly, which is a false ALLOW direction.
+//
+// That gap is recorded rather than closed here: this tree ships exactly three group types
+// (protocol/group: selector, urltest, loadbalance) and no third-party group is registered, so the
+// wrong answer needs an out-of-tree implementation to exist. Closing it properly means naming the
+// filtering in an interface every filtering group already satisfies and no unfiltering one can -
+// which does not exist yet, and inventing one here would add a contract with a single implementor.
+//
+// A group that implements NEITHER is treated as NOT filtering, which is the conservative direction
+// and the one that matches the contract every group already implements: `Selected(network)` may
+// return any member, and `Selector.Selected` does exactly that for every network
+// (protocol/group/selector.go:216-218, pinned by selector_edge_test.go). A third-party group that
+// filters per network without either interface is therefore checked as if it did not, which can
+// refuse a member that would in fact never be handed the flow - the same answer this package gave
+// before the distinction existed, so it adds no refusal.
 func networkFilteringGroup(group adapter.OutboundGroup) bool {
 	if _, flowAware := group.(adapter.FlowAwareOutboundGroup); flowAware {
 		return true
@@ -576,6 +699,14 @@ func networkFilteringGroup(group adapter.OutboundGroup) bool {
 // what it can serve as a PROXY, not what the flow entering this root can be: a TCP-only middle hop
 // under a UDP-carrying outbound is the ordinary shape of UDP-over-TCP, and unioning its answer in
 // would make the root responsible for a network no flow reaches it with.
+//
+// # Why the union is only ever SOUND for a root with ONE business entry
+//
+// A union answers "what can some flow reaching this root carry", and it is a true statement about the
+// root. It is NOT a requirement any single exit can be held to: MEASURED,
+// `selector[tcp-only, dual]` with no route and no consumer was refused member-by-member, because the
+// union {tcp,udp} - contributed by `dual` - was then required OF `tcp-only`. `validateNode` compares
+// each business entry against its OWN answer for exactly this reason; see `nodeRequirementFor`.
 func advertisedNetworks(nodes []PathNode) []string {
 	var advertised []string
 	for _, node := range nodes {
@@ -585,6 +716,13 @@ func advertisedNetworks(nodes []PathNode) []string {
 			// in would make the root responsible for a network no flow reaches it with.
 			continue
 		}
+		if isGroupNode(node) {
+			// A group is a control node and never terminates a route (leaves.go), so this is
+			// unreachable in this tree. Kept as a guard rather than a decision: a node whose object
+			// is a group would be a root that materialised no member, and its blanket Network() must
+			// not become a requirement for the members below it.
+			continue
+		}
 		for _, network := range decidedNetworks(networksOf(node.Outbound)) {
 			if !slices.Contains(advertised, network) {
 				advertised = append(advertised, network)
@@ -592,6 +730,15 @@ func advertisedNetworks(nodes []PathNode) []string {
 		}
 	}
 	return advertised
+}
+
+// isGroupNode reports whether this node is a control node rather than a physical exit.
+func isGroupNode(node PathNode) bool {
+	if node.Outbound == nil {
+		return false
+	}
+	_, isGroup := node.Outbound.(adapter.OutboundGroup)
+	return isGroup
 }
 
 // anyNodeCarries reports whether any reachable node under a root can carry the network.
@@ -635,7 +782,11 @@ func decidedNetworks(networks []string) []string {
 // requirement is the set THIS node must be able to carry, as nodeRequirementFor decided it; an
 // empty set means no network requirement applies here and step 2 is skipped rather than passed
 // with a default.
-func validateNode(resolver *Resolver, hop PathNode, endpoints EndpointRegistry, requirement []string, declarations Declarations) []Failure {
+//
+// requirementProven reports whether that set came from the ROUTES or from the advertised fallback,
+// and it is used for one thing: the message must not claim a route proof that was never made. See
+// reachabilityClause.
+func validateNode(resolver *Resolver, hop PathNode, endpoints EndpointRegistry, requirement []string, requirementProven bool, declarations Declarations) []Failure {
 	failure := func(reason string) []Failure {
 		return []Failure{{
 			Root:   hop.Root,
@@ -664,7 +815,8 @@ func validateNode(resolver *Resolver, hop PathNode, endpoints EndpointRegistry, 
 		networksCarried := networksOf(hop.Outbound)
 		if len(networksCarried) == 0 {
 			return failure("this outbound reports no network it can carry, so it cannot serve the " +
-				strings.Join(requirement, ",") + " flow routed through it")
+				strings.Join(requirement, ",") + " flow routed through it (" +
+				requirementClause(missingNone, requirement, requirementProven) + ")")
 		}
 		// EVERY network in the requirement is checked before a verdict is reached, and the report
 		// names the ones this hop CANNOT carry.
@@ -688,8 +840,8 @@ func validateNode(resolver *Resolver, hop PathNode, endpoints EndpointRegistry, 
 		if len(missing) > 0 {
 			return failure("this outbound does not carry " + strings.Join(missing, ",") +
 				" (it carries " + strings.Join(networksCarried, ",") + ") and cannot serve the " +
-				strings.Join(missing, ",") + " flow routed through it (the entry point routes " +
-				strings.Join(requirement, ",") + " to it)")
+				strings.Join(missing, ",") + " flow routed through it (" +
+				requirementClause(missing, requirement, requirementProven) + ")")
 		}
 	}
 	// 3. Endpoint participation and lifecycle ownership are coherent.
@@ -717,10 +869,40 @@ func validateNode(resolver *Resolver, hop PathNode, endpoints EndpointRegistry, 
 	//    before it writes the request to its peer, and the object must implement the behaviour the
 	//    configuration declared.
 	if declarations.DestinationDNSOwnership[hop.Tag] {
-		if _, capable := hop.Outbound.(adapter.DestinationDNSOwner); !capable {
+		// The declaration is a promise about what a PEER receives, so it is vacuous for an object
+		// that has no peer: a local dialer resolves the destination on this device and never writes
+		// the name anywhere. MEASURED, before this branch existed:
+		// `{"type": "direct", "destination_dns_ownership": true}` was refused with "the destination
+		// domain would be sent to the peer" - an event that cannot happen for `direct`, which has no
+		// peer to send it to. The same refusal hit the endpoints whose dial is local.
+		if local, dialsLocally := hop.Outbound.(adapter.LocalDestinationDialer); dialsLocally && local.DialsDestinationLocally() {
+			return nil
+		}
+		// # Why the four refusals below are separate sentences
+		//
+		// They answer four DIFFERENT questions about the same declaration, and an operator fixes a
+		// different thing in each case:
+		//
+		//   absent     the type cannot do it at all          -> pick a type that can, or drop the flag
+		//   false      the type can, and says it will not    -> a contradictory configuration
+		//   resolver   the type does it, but has no authority-> configure domain_resolver
+		//
+		// Collapsing `absent` and `false` into one message was a real defect: it told an object that
+		// implements `DestinationDNSOwner` and reports false that it "does not implement it", which is
+		// an untrue statement about it. The distinction only became observable when the capability's
+		// VALUE started being read rather than only its presence.
+		owner, capable := hop.Outbound.(adapter.DestinationDNSOwner)
+		if !capable {
 			return failure("the configuration declares destination_dns_ownership for this outbound, " +
-				"but outbound type " + hop.Outbound.Type() + " does not implement it; the destination " +
-				"domain would be sent to the peer while the configuration says it must not be")
+				"but outbound type " + hop.Outbound.Type() + " does not implement the capability; it " +
+				"has no way to resolve the destination before writing the request to its peer, so the " +
+				"destination domain would reach the peer while the configuration says it must not")
+		}
+		if !owner.DestinationDNSOwnership() {
+			return failure("the configuration declares destination_dns_ownership for this outbound, " +
+				"but outbound type " + hop.Outbound.Type() + " reports that it does NOT resolve the " +
+				"destination itself; the declaration and the object contradict each other, so the " +
+				"destination domain would reach the peer while the configuration says it must not")
 		}
 		if canResolve, reason := resolver.CanResolveDestination(hop.Tag); !canResolve {
 			return failure(reason)
@@ -728,6 +910,47 @@ func validateNode(resolver *Resolver, hop PathNode, endpoints EndpointRegistry, 
 	}
 	return nil
 }
+
+// requirementClause renders WHY a network is a requirement at this node, and it exists because the
+// sentence it replaces stated a fact that was not true.
+//
+// # What the old clause said, and why that was a lie rather than a wording choice
+//
+// It read "(the entry point routes " + requirement + " to it)". That sentence is a claim about the
+// ENTRY POINT's capability being delivered to this node, and it is only true when nothing filtered
+// the flow on the way. Once the requirement became what the ROUTES PROVE reaches the node, the two
+// came apart: a configuration whose first rule sends every udp flow to `reject` and whose second
+// rule routes the rest to a tcp-only outbound has a requirement of `tcp` alone, and a report that
+// then said the entry point routes "tcp,udp" to it would be describing a flow that provably never
+// arrives. An operator reading that looks for a udp path that does not exist.
+//
+// # The two sources, and why one clause cannot cover both
+//
+// The requirement has two possible origins and they are NOT the same claim:
+//
+//   - proven - the path analysis established that these networks reach this root, so the clause may
+//     say "the routes prove X reaches this path". This is a statement about the ROUTING.
+//   - advertised - nothing was proven, and the requirement is what the root's own reachable objects
+//     advertise between them (`advertisedNetworks`). Saying "the routes prove" here would invent a
+//     proof the analysis never made. MEASURED on a configuration whose only rule is domain-scoped -
+//     UNKNOWN for both networks, so nothing is proven by any route - the old wording produced
+//     "the routes prove tcp,udp reaches this path" for a requirement that came entirely from the
+//     objects. This is a statement about the OBJECTS, and the clause now says so.
+//
+// In both cases `missing` is a subset of `requirement` by construction, because it is built by
+// filtering that set, so the clause cannot disagree with the check that produced it.
+func requirementClause(missing []string, requirement []string, proven bool) string {
+	if proven {
+		return "the routes prove " + strings.Join(requirement, ",") + " reaches this path, and " +
+			strings.Join(missing, ",") + " is part of it"
+	}
+	return "the routes prove nothing here, so this is what the path's own objects advertise: " +
+		strings.Join(requirement, ",") + ", and " + strings.Join(missing, ",") + " is part of it"
+}
+
+// missingNone is the empty missing-set, named so the one call site that reports a requirement
+// without a missing network reads as deliberately as the one that has a missing set.
+var missingNone []string
 
 // HopUnknownsAreFatal is a helper for a caller that wants to treat an undetermined node as a
 // failure in its own report. It exists so the rule is stated once rather than re-derived at each

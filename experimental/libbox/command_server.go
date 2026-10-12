@@ -548,6 +548,54 @@ func (s *CommandServer) RecordLockState(locked bool) {
 	instance.Box().LockStateChanged(locked)
 }
 
+// ReconcileScreenState applies a CURRENT-STATE read of the display to the device axis.
+//
+// The sibling of RecordScreenState, and the difference is the one P1-C is about. RecordScreenState
+// carries a transition the platform witnessed and starts a new reuse measurement; this carries the
+// answer to "what is the display doing right now", which the client takes at observer start and on
+// every NetworkExtension resume. A re-read may only reconcile the LEVEL: it must never move the
+// anchor of a measurement that is already running, because the resume that triggers it has already
+// been published as a boundary, and re-anchoring there is what turns a measured five-hour sleep into
+// the seconds between the resume and the read. See box_lifecycle.go for the full sequence.
+//
+// Recorded for the power report on the same terms as RecordScreenState, so a device trace shows the
+// re-reads next to the transitions rather than hiding the fact that one happened. Apple only, for the
+// same reason RecordScreenState is.
+func (s *CommandServer) ReconcileScreenState(on bool) {
+	recorder := s.powerManager.Recorder()
+	if recorder != nil {
+		recorder.RecordScreenState(on)
+	}
+	if !C.IsIos || C.IsTvOS {
+		return
+	}
+	instance := s.StartedService.Instance()
+	if instance == nil || instance.Box() == nil {
+		return
+	}
+	instance.Box().ReconcileScreenState(on)
+}
+
+// ReconcileLockState applies a CURRENT-STATE read of the lock to the device axis.
+//
+// Locked reconciles the pause and leaves the running measurement's anchor alone; unlocked is refused
+// by the core, because a re-read cannot establish that a person unlocked the device. Apple only, for
+// the same reason RecordScreenState is.
+func (s *CommandServer) ReconcileLockState(locked bool) {
+	recorder := s.powerManager.Recorder()
+	if recorder != nil {
+		recorder.RecordLockState(locked)
+	}
+	if !C.IsIos || C.IsTvOS {
+		return
+	}
+	instance := s.StartedService.Instance()
+	if instance == nil || instance.Box() == nil {
+		return
+	}
+	instance.Box().ReconcileLockState(locked)
+}
+
 func (s *CommandServer) ResetNetwork() {
 	instance := s.StartedService.Instance()
 	if instance == nil || instance.Box() == nil {

@@ -230,7 +230,17 @@ replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-
 // the code being tested. See the root go.mod for the fork's base and branch.
 replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261008172655-8dde9c8cbe27
 
-replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20260929231714-9c94b1e90d94
+// Same fork revision as the root module, for the same reason as every other pin here: a nested
+// module does not inherit the root's replaces, so a test binary built from this module would
+// otherwise exercise a different QUIC stack than the one that ships. The revision adds
+// InitialPacketSizeCeiling, the hard packet-size ceiling applied after the ChromeParrot override.
+replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261011111900-4d740322a18a
+
+// sing-quic carries that ceiling through qtls.QUICOptions. This module does not import it today,
+// so the replace is here to keep the two modules pinned to the same revision: the guard in
+// scripts/ci/check-go-module-integrity.sh fails when a fork the root builds drifts here, which is
+// how the test module was once found resolving a different sing-tun than the product ships.
+replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261011112547-a3462fc076c9
 
 // The cronet-go pin is a tree of modules, not one: see the root module for why every path the
 // repository publishes is pinned. A nested module does not inherit the root's replaces.

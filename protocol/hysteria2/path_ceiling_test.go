@@ -12,22 +12,26 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// A proven lower tunnel capacity, and the exact place the ceiling stops working
+// A proven lower tunnel capacity, and how far it gets
 // ---------------------------------------------------------------------------
 //
 // The outbound computes a QUIC payload ceiling from the tunnel its `detour` names and hands the result
-// to the library as `InitialPacketSize`. Two separate facts have to be established, and they are
-// established separately because they have different causes:
+// to the library twice, as two different statements: `InitialPacketSize` is the size it would PREFER,
+// and `InitialPacketSizeCeiling` is the size the path is KNOWN to carry. Two separate facts have to be
+// established, and they are established separately because they have different causes:
 //
 //  1. the CEILING COMPUTATION AND WIRING: a detour naming a fixed-MTU endpoint produces the right
 //     number, an unknown path produces none, and a ceiling below the QUIC minimum is refused rather
 //     than clamped.
 //
-//  2. the WIRE: whether the number the outbound hands down is what actually goes out. This is where it
-//     stops today, and the measurement below says so in the library's own terms: with ChromeParrot ON
-//     the pinned quic-go replaces the configured value with `chromeInitialPacketSize` (1250), so the
-//     clamp is effective only with ChromeParrot off or with the pinned library changed. That is
-//     measured, not inferred, by `TestPathCeilingReachesTheWireOnlyWithoutChromeParrot`.
+//  2. the WIRE: whether the number the outbound hands down is what actually goes out. This file used to
+//     record that it was NOT - the pinned quic-go replaced the configured value with
+//     `chromeInitialPacketSize` (1250) whenever ChromeParrot was set, and ChromeParrot is hysteria2's
+//     default - and that is now fixed rather than documented: the ceiling is its own field and is
+//     applied after the fingerprint override, measured in hard_ceiling_wire_test.go. What this file
+//     still owns is the no-ceiling case and the arithmetic, and
+//     `TestPathCeilingReachesTheWireOnlyWithoutChromeParrot` keeps BOTH halves of that: with no ceiling
+//     the fingerprint wins, and that is the contract a direct dial keeps.
 
 // fixedMTUEndpoint publishes a fixed inner IP capacity before it is ever started, which is what an
 // upper protocol needs: it sizes itself at construction.
@@ -152,50 +156,51 @@ func TestATunnelTooSmallForAQUICInitialIsRefused(t *testing.T) {
 // The wire: measured, and the boundary stated
 // ---------------------------------------------------------------------------
 
-// TestPathCeilingReachesTheWireOnlyWithoutChromeParrot is the measurement that decides what this fix
-// can claim.
+// TestPathCeilingReachesTheWireOnlyWithoutChromeParrot is now the NO-HARD-CEILING control for the
+// direct path, and it is kept deliberately in its original form.
 //
-// It reuses the existing first-datagram harness - which observes the real `WriteTo` length of the first
-// datagram the pinned QUIC stack hands to a socket - and asks the same question twice for the SAME
-// configured ceiling:
+// It reuses the first-datagram harness and asks the same question twice for the SAME configured
+// value, with no ceiling in play:
 //
-//	ChromeParrot OFF, initial_packet_size = the ceiling   -> the ceiling reaches the wire
-//	ChromeParrot ON,  initial_packet_size = the ceiling   -> it does NOT; 1250 does
+//	ChromeParrot OFF, initial_packet_size = 1232 -> 1232 reaches the wire
+//	ChromeParrot ON,  initial_packet_size = 1232 -> 1250 does, the fingerprint size
 //
-// The second case is not a defect in this outbound. It is the pinned library's documented behaviour, and
-// the reason the residual is reported as a product decision about the fork rather than as a bug here:
-// hysteria2's DEFAULT is ChromeParrot on, so the default configuration is the one the ceiling cannot
-// reach.
+// The second case is the ChromeParrot fingerprint contract, not a defect: an operator's
+// `initial_packet_size` is a PREFERENCE and the fingerprint is allowed to replace it. What may
+// override the fingerprint is a proven path capacity, and that is a different field - see
+// TestHardCeilingWireMatrix, rows C, D and F, which measure the same pair of settings WITH a hard
+// ceiling and get the ceiling on the wire.
 //
-// The test deliberately asserts BOTH outcomes. Asserting only the working one would let a later library
-// change that makes the ceiling effective pass unnoticed, and asserting only the failing one would let a
-// regression in the working path hide.
+// This test used to say the ceiling could not reach the wire at all under ChromeParrot, and cited
+// the library change as unwritten and unpushed. Both are no longer true, and the harness now
+// distinguishes the two situations by the field under test rather than by the pinned revision: with
+// a ceiling, the ceiling wins; without one, the fingerprint does.
 func TestPathCeilingReachesTheWireOnlyWithoutChromeParrot(t *testing.T) {
 	// A 1280-byte inner IPv6 tunnel: 1280 - 40 - 8.
-	const ceiling = 1232
+	const configured = 1232
 
 	withoutParrot := measureFirstDatagram(t, measureRequest{
 		chromeParrot:                false,
-		configuredInitialPacketSize: ceiling,
+		configuredInitialPacketSize: configured,
 	})
-	require.Equal(t, ceiling, withoutParrot.size,
-		"with ChromeParrot off the ceiling must reach the wire: this is the half of the fix that "+
-			"works today, and a regression here would mean the outbound stopped passing the value down")
+	require.Equal(t, configured, withoutParrot.size,
+		"with ChromeParrot off the configured value must reach the wire: this is the half of the fix "+
+			"that never depended on the library, and a regression here would mean the outbound stopped "+
+			"passing the value down")
 
 	withParrot := measureFirstDatagram(t, measureRequest{
 		chromeParrot:                true,
-		configuredInitialPacketSize: ceiling,
+		configuredInitialPacketSize: configured,
 	})
 	require.Equal(t, chromeParrotInitialPacketSize, withParrot.size,
-		"with ChromeParrot ON the pinned quic-go replaces the configured value with "+
-			"chromeInitialPacketSize (%d), so a ceiling of %d does NOT reach the wire. MEASURED here "+
-			"so the residual is a stated fact rather than an assumption: making the ceiling effective "+
-			"under ChromeParrot requires changing the pinned library, which is a separate authorisation",
-		chromeParrotInitialPacketSize, ceiling)
+		"with ChromeParrot ON and NO ceiling, the pinned quic-go replaces the configured value with "+
+			"chromeInitialPacketSize (%d). That is the fingerprint contract, and it is what the hard "+
+			"ceiling exists to override when - and only when - a path capacity has been proven",
+		chromeParrotInitialPacketSize)
 
-	t.Logf("ceiling %d: ChromeParrot off -> %d bytes on the wire; ChromeParrot on -> %d bytes. "+
-		"Hysteria2's default is ChromeParrot ON, so the default configuration does not yet honour a "+
-		"proven path ceiling.", ceiling, withoutParrot.size, withParrot.size)
+	t.Logf("no ceiling: configured %d -> ChromeParrot off %d bytes, ChromeParrot on %d bytes. "+
+		"With a ceiling the same pair of settings yields the ceiling; see the hard-ceiling matrix.",
+		configured, withoutParrot.size, withParrot.size)
 }
 
 // TestTheCeilingDoesNotChangeADirectDial keeps the compatibility promise in the harness's own terms: a

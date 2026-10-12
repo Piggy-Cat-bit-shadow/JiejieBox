@@ -2,6 +2,7 @@ package outbound
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -29,6 +30,27 @@ type Manager struct {
 	// rules that name it and constrain the network explicitly. A tag absent from the map has
 	// nothing proven about it, which is not the same as "nothing reaches it".
 	deliveredNetworks map[string][]string
+	// defaultDomainResolver reports the tag `route.default_domain_resolver` names, or "". The
+	// cross-kind cycle check reads it: an object that declares no resolver of its own still resolves
+	// through this one, so it is the edge that closes the loop for that object.
+	defaultDomainResolver func() string
+}
+
+// SetDefaultDomainResolver installs a reader for the tag `route.default_domain_resolver` names.
+//
+// # Why the graph needs it
+//
+// The cross-kind cycle check models each object's resolver edge. An object that declares NONE of its
+// own still resolves through the network-wide default, so the default is the edge that closes the
+// loop for it - and MEASURED, a configuration differing from a refused one only in WHERE the
+// resolver was named was ACCEPTED while the runtime closes the cycle.
+//
+// The Box installs it after the route options are known. A manager that never installs it keeps the
+// previous behaviour, so no embedder changes.
+func (m *Manager) SetDefaultDomainResolver(defaultResolver func() string) {
+	m.access.Lock()
+	m.defaultDomainResolver = defaultResolver
+	m.access.Unlock()
 }
 
 // physicalPathValidation is everything the reachable-leaf dry run needs that is not readable from
@@ -47,6 +69,12 @@ type physicalPathValidation struct {
 	declarations  physicalpath.Declarations
 	resolverFor   func(tag string) string
 	defaultConfig bool
+	// authorityFor is the LIVE answer to "would a name resolved by this outbound have any DNS
+	// authority", built on common/dialer.ResolveAuthority. It is installed by SetResolverAuthority
+	// AFTER the DNS transport manager exists, because the manager is what the answer depends on and
+	// it is constructed later than this seam. Until then the dry run falls back to the static pair
+	// above, which is what an embedder that never calls the setter keeps.
+	authorityFor func(tag string) bool
 }
 
 // EnablePhysicalPathValidation installs the facts the reachable-leaf dry run needs beyond the
@@ -61,6 +89,30 @@ func (m *Manager) EnablePhysicalPathValidation(declarations physicalpath.Declara
 		declarations:  declarations,
 		resolverFor:   resolverFor,
 		defaultConfig: defaultDomainResolver,
+	}
+	m.access.Unlock()
+}
+
+// SetResolverAuthority installs the LIVE DNS-authority answer, which supersedes the static
+// `defaultDomainResolver` bool passed to EnablePhysicalPathValidation.
+//
+// # Why this is a second call rather than an argument
+//
+// The answer depends on the DNS transport manager's state, and that manager is constructed AFTER
+// this seam is installed (box.go builds the validation seam, then the DNS manager). The static bool
+// could only express "route.default_domain_resolver is set", which is two of the four cases
+// common/dialer.ResolveAuthority distinguishes, and the two it missed included the one where a name
+// resolves fine - so a working configuration was refused.
+//
+// authorityFor is expected to be built on common/dialer.ResolveAuthority, which is the function
+// NewDNSQueryOptions itself is built on. That is the whole point: one function, two callers, so the
+// validator cannot hold an opinion the dial path does not.
+//
+// Passing nil restores the static behaviour.
+func (m *Manager) SetResolverAuthority(authorityFor func(tag string) bool) {
+	m.access.Lock()
+	if m.physicalPath != nil {
+		m.physicalPath.authorityFor = authorityFor
 	}
 	m.access.Unlock()
 }
@@ -185,6 +237,9 @@ func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 func (m *Manager) validatePhysicalPaths(outbounds []adapter.Outbound, validation *physicalPathValidation, delivered map[string][]string) error {
 	resolver := physicalpath.NewResolver(m.Outbound, physicalpath.Snapshot{}).
 		WithDomainResolvers(validation.resolverFor, validation.defaultConfig)
+	if validation.authorityFor != nil {
+		resolver = resolver.WithResolverAuthority(validation.authorityFor)
+	}
 	// The roots are ordered so a GROUP is validated before the objects it names.
 	//
 	// # Why the order is not cosmetic
@@ -328,6 +383,56 @@ func deliveredNetworksFor(delivered map[string][]string, root adapter.Outbound) 
 // -> a` for a declared cycle. Both are reported from the declared DEPENDENCIES, which is the same
 // edge set the dry run reads.
 func (m *Manager) lintOutbounds(outbounds []adapter.Outbound) ([]adapter.Outbound, error) {
+	// A TAG BELONGS TO ONE OBJECT, and the sort below cannot work otherwise.
+	//
+	// The ordering is keyed by tag, which is what the dependency edges name, so two objects sharing a
+	// tag are one key for two nodes and the loop can never mark both as started. MEASURED, before
+	// this check existed: an endpoint tagged `direct` collides with the `direct` outbound this
+	// manager creates as its own fallback, and `Start` PANICS with a nil dereference at the
+	// `currentOutbound.Tag()` call below - a crash on a configuration, not a diagnostic. It is
+	// reachable from a shipped protocol: `{"endpoints":[{"type":"wireguard","tag":"direct",...}]}`
+	// with no declared outbound tagged `direct`.
+	//
+	// The collision is reported rather than resolved, because which object the tag was meant for is
+	// the user's decision. This manager cannot be the one that decides it: the two namespaces are
+	// populated by different managers at different times, and nothing rejects a shared tag at
+	// registration - see tag_collision_test.go, which documents exactly this contract.
+	type seenObject struct {
+		outbound adapter.Outbound
+		kind     string
+	}
+	seenTag := make(map[string]seenObject, len(outbounds))
+	for _, outboundToCheck := range outbounds {
+		if outboundToCheck == nil {
+			return nil, E.New("the outbound set contains a nil object, so its dependency graph " +
+				"cannot be ordered")
+		}
+		tag := outboundToCheck.Tag()
+		thisKind := "outbound"
+		if m.endpoint != nil && len(m.endpoint.Endpoints()) > 0 {
+			for _, candidate := range m.endpoint.Endpoints() {
+				if candidate == outboundToCheck {
+					thisKind = "endpoint"
+					break
+				}
+			}
+		}
+		previous, duplicate := seenTag[tag]
+		if !duplicate {
+			seenTag[tag] = seenObject{outbound: outboundToCheck, kind: thisKind}
+			continue
+		}
+		if previous.outbound == outboundToCheck {
+			// The SAME object in the list twice is a caller's bookkeeping slip rather than a
+			// configuration error, and reporting it as a name clash would send the user looking for
+			// a second object that does not exist.
+			return nil, E.New("the object ", tag, " appears twice in the outbound set, so its "+
+				"dependency graph cannot be ordered")
+		}
+		return nil, E.New("two objects claim the tag ", tag, ": ", describeOutbound(previous.outbound, previous.kind),
+			" and ", describeOutbound(outboundToCheck, thisKind), "; a tag resolves to one object, so rename "+
+				"one of them - the tag is how every dependency edge and every routing rule names it")
+	}
 	started := make(map[string]bool, len(outbounds))
 	order := make([]adapter.Outbound, 0, len(outbounds))
 	for {
@@ -357,6 +462,13 @@ func (m *Manager) lintOutbounds(outbounds []adapter.Outbound) ([]adapter.Outboun
 		currentOutbound := common.Find(outbounds, func(it adapter.Outbound) bool {
 			return !started[it.Tag()]
 		})
+		// Unreachable while the tags are unique, because then every pending object is a `Find`
+		// candidate. Kept as a diagnostic rather than a nil dereference: the guarantee above is what
+		// makes it unreachable, and a crash is the wrong way to discover that it stopped holding.
+		if currentOutbound == nil {
+			return nil, E.New("the outbound graph cannot be ordered and no unstarted object could " +
+				"be found, which means the tag set is not the one this sort was given")
+		}
 		var lintOutbound func(oTree []string, oCurrent adapter.Outbound) error
 		lintOutbound = func(oTree []string, oCurrent adapter.Outbound) error {
 			problemOutboundTag := common.Find(oCurrent.Dependencies(), func(it string) bool {
@@ -376,6 +488,29 @@ func (m *Manager) lintOutbounds(outbounds []adapter.Outbound) ([]adapter.Outboun
 		return nil, lintOutbound([]string{currentOutbound.Tag()}, currentOutbound)
 	}
 	return order, nil
+}
+
+// describeOutbound names an object the way a user recognises it, and it is guaranteed to
+// DISCRIMINATE two objects that share a tag.
+//
+// # Why the KIND is derived from the manager, not from an interface assertion
+//
+// The first version asked `_, isEndpoint := outbound.(adapter.Endpoint)` and labelled the object an
+// endpoint when it was satisfied. MEASURED, `*direct.Outbound` SATISFIES that interface - it has a
+// `Start(stage, scope)` method - so the refusal reported BOTH halves as `endpoint/...`, one of them
+// being the plain `direct` outbound. A diagnostic that mislabels one of the two objects it asks the
+// user to choose between is worse than no diagnostic, and the interface was never a reliable answer:
+// `adapter.Endpoint` is a loose structural shape that many outbounds satisfy by accident.
+//
+// The manager KNOWS which namespace it holds an object in, so the kind is passed in rather than
+// guessed. The concrete Go type is appended as well, because `Type()` is not unique across this
+// fork's registrations either.
+func describeOutbound(outbound adapter.Outbound, kind string) string {
+	description := kind + "/" + outbound.Tag() + " (" + outbound.Type()
+	if concrete := fmt.Sprintf("%T", outbound); concrete != "" {
+		description += ", " + concrete
+	}
+	return description + ")"
 }
 
 // startOutbounds starts the outbounds in the order lintOutbounds computed.

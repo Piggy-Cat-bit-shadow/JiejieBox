@@ -29,6 +29,10 @@ import (
 //
 // `"network": "udp"` on the second SOCKS outbound is what makes it UDP-only: NetworkList.Build
 // returns exactly the listed networks, and the default is both.
+// physicalPathSelectorConfig DELIVERS TCP to the selector, which is what makes the incapable member
+// a defect. The route is not decoration: with no route at all the same objects are accepted, because
+// a group's advertised union is capability rather than flow demand - the false deny this contract
+// removed. A test that means "the entry point routes this to the member" must say so.
 const physicalPathSelectorConfig = `{
   "log": {"disabled": true},
   "outbounds": [
@@ -36,7 +40,13 @@ const physicalPathSelectorConfig = `{
     {"type": "socks", "tag": "udp-only", "server": "127.0.0.1", "server_port": 1081, "version": "5",
      "network": "udp"},
     {"type": "selector", "tag": "sel", "outbounds": ["healthy", "udp-only"], "default": "healthy"}
-  ]
+  ],
+  "route": {
+    "rules": [
+      {"network": "tcp", "outbound": "sel"}
+    ],
+    "final": "healthy"
+  }
 }`
 
 // physicalPathLegalConfig is the negative control: the same shape with every member usable.
@@ -145,7 +155,10 @@ func TestDestinationDNSOwnershipOnAnIncapableTypeIsRefusedAtStart(t *testing.T) 
 		"declaring destination_dns_ownership on a type that does not implement it must be refused "+
 			"at start, not discovered as a leaked destination name")
 	require.Contains(t, err.Error(), "destination_dns_ownership")
-	require.Contains(t, err.Error(), "does not implement it")
+	// The clause names the CAPABILITY rather than the interface, because the two are no longer the
+	// same test: an object that implements the interface and reports false reaches this refusal too,
+	// and telling it "does not implement it" would be an untrue statement about it.
+	require.Contains(t, err.Error(), "does not implement the capability")
 	require.Contains(t, err.Error(), "outbound/owned",
 		"the failure must name the offending route")
 }

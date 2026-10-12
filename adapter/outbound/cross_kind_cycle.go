@@ -96,16 +96,49 @@ func (n crossKindNode) String() string {
 // It is called once at StartStateStart, before any transport is started, with the transports the
 // DNS transport manager is about to start.
 func (m *Manager) ValidateCrossKindCycles(transports []adapter.DNSTransport) error {
-	outbounds := make(map[string]adapter.Outbound)
+	// The node table is built from the SAME lookup the runtime uses, not from a second one.
+	//
+	// # Why this is not a map populated in two passes
+	//
+	// It used to write `outbounds[tag] = outbound` for every outbound and then
+	// `outbounds[endpoint.Tag()] = endpoint` for every endpoint, so a shared tag made the ENDPOINT
+	// win. The runtime does the opposite: `Manager.Outbound(tag)` answers from the outbound namespace
+	// first and falls back to the endpoint namespace. Two different resolution rules for one tag is
+	// how a graph ends up describing a graph the process does not execute.
+	//
+	// The collision itself is now refused before this runs - `option/options.go` at decode,
+	// `box.New`, and `lintOutbounds` all fire earlier, and MEASURED, a config carrying both a
+	// collision and a dangling DNS detour reports only the collision. So this cannot be observed
+	// through `box.New` + `Start`; it is reachable for an embedder driving this manager directly,
+	// and for that caller the ordering rule has to be right rather than merely latent.
+	//
+	// `Outbound` is the canonical two-step lookup, so asking it per tag makes the table
+	// outbound-first by construction instead of by convention.
+	var (
+		outbounds map[string]adapter.Outbound
+		endpoints []adapter.Endpoint
+	)
 	if m != nil {
 		m.access.RLock()
+		tags := make([]string, 0, len(m.outbounds))
 		for _, outbound := range m.outbounds {
-			outbounds[outbound.Tag()] = outbound
+			tags = append(tags, outbound.Tag())
 		}
 		m.access.RUnlock()
+		outbounds = make(map[string]adapter.Outbound, len(tags)+4)
+		for _, tag := range tags {
+			if resolved, loaded := m.Outbound(tag); loaded {
+				outbounds[tag] = resolved
+			}
+		}
 		if m.endpoint != nil {
-			for _, endpoint := range m.endpoint.Endpoints() {
-				outbounds[endpoint.Tag()] = endpoint
+			endpoints = m.endpoint.Endpoints()
+			// An endpoint is reachable under its tag only when the outbound namespace does not
+			// already answer for it - the same rule `Outbound` applies.
+			for _, endpoint := range endpoints {
+				if _, shadowed := outbounds[endpoint.Tag()]; !shadowed {
+					outbounds[endpoint.Tag()] = endpoint
+				}
 			}
 		}
 	}
@@ -116,13 +149,70 @@ func (m *Manager) ValidateCrossKindCycles(transports []adapter.DNSTransport) err
 	if len(transportsByTag) == 0 {
 		return nil
 	}
-	graph := &crossKindGraph{outbounds: outbounds, transports: transportsByTag}
+	graph := &crossKindGraph{
+		outbounds:            outbounds,
+		transports:           transportsByTag,
+		defaultResolver:      m.defaultDomainResolverRef(),
+		readsDefaultResolver: m.readsDefaultResolverRef(),
+	}
 	return graph.validate()
+}
+
+// defaultDomainResolverRef reports the tag `route.default_domain_resolver` names, when the Box
+// installed one.
+//
+// It is a function rather than a bool because the graph needs the TAG: the edge is from an object
+// that declares no resolver of its own to the transport the network default names. Reported by the
+// audit and MEASURED: a configuration that closes a cycle only through the default resolver was
+// ACCEPTED while the runtime closes the loop.
+func (m *Manager) defaultDomainResolverRef() func() string {
+	if m == nil {
+		return nil
+	}
+	m.access.RLock()
+	defer m.access.RUnlock()
+	return m.defaultDomainResolver
+}
+
+// readsDefaultResolverRef reports, per tag, whether that object would consult the network-wide
+// default resolver.
+//
+// # Why this is a question about the OBJECT and not about the configuration
+//
+// The default is read by the ResolveDialer, and `common/dialer.NewWithOptions` builds one only when
+// the object has a name to resolve (`RemoteIsDomain`). The DNS transports publish that fact on the
+// options they were constructed with, so it is asked through the adapter rather than guessed from
+// the tag.
+func (m *Manager) readsDefaultResolverRef() func(tag string) bool {
+	if m == nil {
+		return nil
+	}
+	return func(tag string) bool {
+		resolved, loaded := m.Outbound(tag)
+		if !loaded {
+			return false
+		}
+		provider, isProvider := resolved.(interface{ ResolvesDomainServer() bool })
+		if !isProvider {
+			// An object that does not publish the fact is not charged the edge. That is the
+			// conservative direction for a check whose job is to REFUSE: charging an object that may
+			// never read the default is the false deny this condition exists to prevent.
+			return false
+		}
+		return provider.ResolvesDomainServer()
+	}
 }
 
 type crossKindGraph struct {
 	outbounds  map[string]adapter.Outbound
 	transports map[string]adapter.DNSTransport
+	// defaultResolver reports the tag `route.default_domain_resolver` names, or "" when none is
+	// configured. It is the network-wide fallback every object that declares no resolver of its own
+	// resolves through, so it is an edge from that object to that transport.
+	defaultResolver func() string
+	// readsDefaultResolver reports whether this tag would actually consult the network-wide default.
+	// An object whose server is a literal builds no ResolveDialer and therefore never reads it.
+	readsDefaultResolver func(tag string) bool
 }
 
 // known reports whether the edge target exists. A missing tag is not this check's business: the
@@ -160,15 +250,53 @@ func (g *crossKindGraph) edges(node crossKindNode) []crossKindNode {
 	default:
 		outbound := g.outbounds[node.tag]
 		dependencies := outbound.Dependencies()
-		edges := make([]crossKindNode, 0, len(dependencies)+1)
+		edges := make([]crossKindNode, 0, len(dependencies)+2)
 		// An outbound's dependencies are outbound tags: a detour, or the members of a group. A
 		// nested selector is exactly this edge, which is why a cycle through one is found here.
 		for _, dependency := range dependencies {
 			edges = append(edges, crossKindNode{kind: crossKindOutbound, tag: dependency})
 		}
+		// The object's OWN resolver, read from the ADAPTER it is.
+		//
+		// # Why there is exactly one derivation
+		//
+		// Both `adapter/outbound.Adapter` and `adapter/endpoint.Adapter` publish
+		// `DomainResolverReference`, captured from the real `DialerOptions` at construction. So the
+		// graph reads one interface, on the object the runtime and the graph both walk, and there is
+		// no second way to obtain the fact.
+		//
+		// An earlier version read the endpoint half through a SEPARATE accessor reached only after
+		// this same assertion had already failed - which meant it re-asserted the identical interface
+		// on the identical value and could never return anything but "". That path is gone with the
+		// adapter publication that made it unnecessary.
+		resolverTag := ""
 		if resolver, isResolver := outbound.(interface{ DomainResolverReference() string }); isResolver {
-			if server := resolver.DomainResolverReference(); server != "" {
-				edges = append(edges, crossKindNode{kind: crossKindDNS, tag: server})
+			resolverTag = resolver.DomainResolverReference()
+		}
+		if resolverTag != "" {
+			edges = append(edges, crossKindNode{kind: crossKindDNS, tag: resolverTag})
+		} else if g.defaultResolver != nil {
+			// # The network-wide fallback, and the condition that makes it an edge
+			//
+			// `route.default_domain_resolver` is consulted by the ResolveDialer, and the
+			// ResolveDialer is built only when the object actually has a name to resolve -
+			// `common/dialer.NewWithOptions` constructs it behind `RemoteIsDomain`
+			// (dialer.go:65, :77, :159-165). An object whose server is a literal never builds one, so
+			// it never reads the default, and an edge here would report a loop the runtime does not
+			// close.
+			//
+			// MEASURED: charging it unconditionally REFUSED a configuration in which nothing resolves
+			// a name at all - a DNS server with an IP-literal address whose detour is a SOCKS5
+			// outbound with an IP-literal server. `ServerIsDomain()` is false for both
+			// (protocol/socks/outbound.go:130, dns/transport_dialer.go:23), SOCKS5 v5 forwards the
+			// target NAME rather than resolving it (protocol/socks/outbound.go:160-161, :359), and the
+			// same JSON minus the one `default_domain_resolver` line started. That is a false deny of
+			// exactly the class this line of work exists to remove.
+			//
+			// So the edge is added only for a node that really would read the default, which the
+			// provider reports by name - a function rather than a bool so the answer stays live.
+			if fallback := g.defaultResolver(); fallback != "" && g.readsDefaultResolver != nil && g.readsDefaultResolver(node.tag) {
+				edges = append(edges, crossKindNode{kind: crossKindDNS, tag: fallback})
 			}
 		}
 		return edges

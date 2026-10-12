@@ -102,7 +102,7 @@ func NewTailcatOutbound(ctx context.Context, router adapter.Router, logger log.C
 		return nil, err
 	}
 	return &TailcatOutbound{
-		Adapter:         outbound.NewAdapterWithDialerOptions(C.TypeTailcat, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.DialerOptions),
+		Adapter:         outbound.NewAdapterWithDialerOptions(C.TypeTailcat, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.DialerOptions, true),
 		ctx:             ctx,
 		logger:          logger,
 		dnsRouter:       service.FromContext[adapter.DNSRouter](ctx),
@@ -173,10 +173,15 @@ func (o *TailcatOutbound) ensureLocked(ctx context.Context) (*tailcatNode, error
 	if err != nil {
 		return nil, err
 	}
-	binding, err := newSystemBinding(o.ctx, o.logger)
+	binding, resetInterfaceGetter, err := newSystemBinding(o.ctx, o.logger)
 	if err != nil {
 		return nil, err
 	}
+	// This outbound builds its node LAZILY, on first use, so there is no scope here to register on -
+	// only `nodeContext`, which Start captured from the scope. Tying the reset to it keeps the same
+	// guarantee the eager call sites get from `scope.Add`: the process-global interface getter is
+	// cleared when this outbound's lifetime ends, and not before.
+	cleanupSystemBindingOnContext(o.nodeContext, resetInterfaceGetter)
 	node, err := newTailcatNode(tailcatNodeOptions{
 		Context:      o.nodeContext,
 		Logger:       o.logger,
@@ -251,6 +256,16 @@ func (o *TailcatOutbound) DialContext(ctx context.Context, network string, desti
 		return N.DialSerial(ctx, (*tailcatDialer)(o), network, destination, destinationAddresses)
 	}
 	return (*tailcatDialer)(o).DialContext(ctx, network, destination)
+}
+
+// DialsDestinationLocally implements adapter.LocalDestinationDialer.
+//
+// PROVEN from the dial path above: a domain destination is resolved by `o.dnsRouter.Lookup` at :252
+// and only the resulting addresses are dialled (`N.DialSerial` at :256). This outbound reaches the
+// destination through the tailnet underlay it owns, so the domain is resolved on this device and
+// never written to a peer as a name. The packet path agrees (:264, :268).
+func (o *TailcatOutbound) DialsDestinationLocally() bool {
+	return true
 }
 
 func (o *TailcatOutbound) ListenPacketWithDestination(ctx context.Context, destination M.Socksaddr) (net.PacketConn, netip.Addr, error) {

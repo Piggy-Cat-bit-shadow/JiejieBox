@@ -138,24 +138,41 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	// An unknown path yields no ceiling and the configured value is used unchanged, so a direct dial
 	// keeps exactly its previous behaviour.
 	//
-	// # The measured limit of what this can achieve today
+	// # The two sizes are two different statements, and travel as two fields
 	//
-	// The ceiling reaches quic-go as `InitialPacketSize`, and the pinned quic-go OVERRIDES that field
-	// with `chromeInitialPacketSize` (1250) whenever `ChromeParrot` is set - which hysteria2's default
-	// is. So this clamp is effective only when ChromeParrot is off, or when the pinned library is
-	// changed to treat the configured value as a hard ceiling. MEASURED, and asserted rather than
-	// assumed: `TestPathCeilingReachesTheWireOnlyWithoutChromeParrot` in this package measures the real
-	// first datagram both ways.
+	// `InitialPacketSize` is a PREFERENCE: a size this outbound would like, computed from the operator's
+	// `initial_packet_size` and the ceiling. quic-go may legitimately replace it - the ChromeParrot
+	// branch pins `chromeInitialPacketSize` (1250) whenever the fingerprint is on, and the fingerprint
+	// is hysteria2's default.
 	//
-	// It is still wired here rather than left for later, because the value has to be computed and
-	// handed down BEFORE a library change can make it effective, and because a configuration that
-	// already sets `disable_chrome_parrot: true` gets the ceiling today. The residual - a hard ceiling
-	// that ChromeParrot still overrides - is reported as a product decision about the pinned fork, not
-	// as a silent gap.
+	// `InitialPacketSizeCeiling` is a CONSTRAINT: the largest packet this path can carry. It is applied
+	// by quic-go AFTER the fingerprint override, so it cannot be discarded, and it also caps what path
+	// MTU discovery may grow to.
+	//
+	// An earlier revision tried to carry the constraint through `DisablePathMTUDiscovery`, on the theory
+	// that "a size plus PMTUD off" means "ceiling". It does not: a direct-path operator who sets
+	// `disable_path_mtu_discovery` for their own reasons produces the same pair of values, and their
+	// preference was then read as a proven capacity - and, because this layer forwarded only its own
+	// conclusion, their setting was also swallowed. Both are fixed by giving each meaning its own field.
 	pathCapacity := dialer.DetourPathCapacity(ctx, options.DialerOptions.Detour)
 	quicPayloadCeiling, hasCeiling := pathCapacity.QuicPayloadCeiling()
 	effectiveInitialPacketSize := dialer.ClampToCeiling(options.InitialPacketSize, quicPayloadCeiling, hasCeiling)
-	if hasCeiling && effectiveInitialPacketSize != options.InitialPacketSize {
+	sizing := quicPathSizing(options.DisablePathMTUDiscovery, quicPayloadCeiling, hasCeiling)
+	// The two cases below are the two ways ClampToCeiling can move a value, and they are NOT the same
+	// event, so they must not produce the same sentence.
+	//
+	//	dialer.ClampToCeiling's own semantics: "a configured value of zero, with a ceiling: the ceiling
+	//	is used. Zero means 'no preference', and the ceiling IS the preference."
+	//
+	// So with nothing configured the ceiling SUPPLIES the value rather than capping anything, and saying
+	// it "caps initial_packet_size 0" describes an override of an operator's choice that was never made.
+	// An operator reading the old line - on a configuration that sets no initial_packet_size at all -
+	// would go looking for what had set it to 0.
+	if hasCeiling && dialer.CeilingSuppliesTheSize(options.InitialPacketSize, effectiveInitialPacketSize, quicPayloadCeiling) {
+		logger.Info("path capacity: inner MTU ", pathCapacity.InnerMTU,
+			" proves ", quicPayloadCeiling,
+			" bytes of QUIC payload, which is used because no initial_packet_size was configured")
+	} else if hasCeiling && effectiveInitialPacketSize != options.InitialPacketSize {
 		logger.Info("path capacity: inner MTU ", pathCapacity.InnerMTU,
 			" caps the QUIC payload at ", quicPayloadCeiling,
 			", so initial_packet_size ",
@@ -189,13 +206,14 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		Password:           options.Password,
 		TLSConfig:          tlsConfig,
 		QUICOptions: qtls.QUICOptions{
-			IdleTimeout:             options.IdleTimeout.Build(),
-			KeepAlivePeriod:         options.KeepAlivePeriod.Build(),
-			StreamReceiveWindow:     options.StreamReceiveWindow.Value(),
-			ConnectionReceiveWindow: options.ConnectionReceiveWindow.Value(),
-			MaxConcurrentStreams:    options.MaxConcurrentStreams,
-			InitialPacketSize:       effectiveInitialPacketSize,
-			DisablePathMTUDiscovery: options.DisablePathMTUDiscovery,
+			IdleTimeout:              options.IdleTimeout.Build(),
+			KeepAlivePeriod:          options.KeepAlivePeriod.Build(),
+			StreamReceiveWindow:      options.StreamReceiveWindow.Value(),
+			ConnectionReceiveWindow:  options.ConnectionReceiveWindow.Value(),
+			MaxConcurrentStreams:     options.MaxConcurrentStreams,
+			InitialPacketSize:        effectiveInitialPacketSize,
+			InitialPacketSizeCeiling: sizing.HardCeiling,
+			DisablePathMTUDiscovery:  sizing.DisablePMTUD,
 		},
 		UDPDisabled:  !common.Contains(networkList, N.NetworkUDP),
 		BBRProfile:   options.BBRProfile,
@@ -206,10 +224,52 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		return nil, err
 	}
 	return &Outbound{
-		Adapter: outbound.NewAdapterWithDialerOptions(C.TypeHysteria2, tag, networkList, options.DialerOptions),
+		Adapter: outbound.NewAdapterWithDialerOptions(C.TypeHysteria2, tag, networkList, options.DialerOptions, options.ServerIsDomain()),
 		logger:  logger,
 		client:  client,
 	}, nil
+}
+
+// quicPathSizing is the one place that decides the two sizing facts a connection is given, kept
+// apart from the client construction so both can be asserted rather than inspected.
+//
+// The two fields it fills are independent statements, and this function is where that has to stay
+// true:
+//
+//	HardCeiling    - the largest packet the path is known to carry. Zero (quic-go's "no ceiling")
+//	                 for an unknown path, and never derived from the operator's PMTUD policy: a
+//	                 preference is not a measurement.
+//	DisablePMTUD   - true when the operator asked for it, or when a ceiling makes growth unsafe.
+//	                 Either reason is sufficient; neither is guessed at.
+//
+// # Why a proven ceiling turns PMTUD off
+//
+// Not for the first flight - the ceiling is applied to that by quic-go regardless. It is because
+// path MTU discovery GROWS the packet size after the handshake (measured: 1232 -> 1438 on a real
+// loopback path), and a connection that has been told the path carries 1232 has no business probing
+// for more. quic-go caps that growth at the ceiling as well, so the ceiling holds either way, but
+// leaving PMTUD on would mean probing a path whose capacity is already known.
+//
+// # Why the operator's own setting is forwarded rather than replaced
+//
+// An earlier revision forwarded only its own conclusion - `DisablePathMTUDiscovery: hasCeiling` -
+// which silently swallowed the operator's flag on every path with no ceiling, and made a
+// direct-path operator's `disable_path_mtu_discovery` indistinguishable from a proven capacity.
+// Both directions of that are defects, and this signature is what stops them coming back: there is
+// no way to express the old behaviour without deleting a parameter.
+func quicPathSizing(userDisablePMTUD bool, ceiling uint32, hasCeiling bool) struct {
+	HardCeiling  int
+	DisablePMTUD bool
+} {
+	var sizing struct {
+		HardCeiling  int
+		DisablePMTUD bool
+	}
+	if hasCeiling {
+		sizing.HardCeiling = int(ceiling)
+	}
+	sizing.DisablePMTUD = userDisablePMTUD || hasCeiling
+	return sizing
 }
 
 func outboundTLSOptions(options option.Hysteria2OutboundOptions) (string, option.OutboundTLSOptions, error) {

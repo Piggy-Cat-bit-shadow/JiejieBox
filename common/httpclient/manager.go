@@ -72,6 +72,57 @@ func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		}
 		m.defaultTransport = sharedTransport
 	}
+	// Every declared client's `detour` is checked against the outbound namespace HERE, at start.
+	//
+	// # Why the reference and not the transport
+	//
+	// `dialer.NewDetour` resolves the tag LAZILY: it stores the name and only asks the outbound
+	// manager on the first dial (`common/dialer/detour.go`, `DetourDialer.init`). Every other site
+	// that accepts a detour therefore refuses a dangling one at start - a DNS transport through
+	// `dialer.InitializeDetour`, an outbound through the start-order sort's dependency check, a
+	// rule-set through its `http_client` lookup - while an http client STARTED with one and failed
+	// later, on the first request, with the same message the others give up front:
+	//
+	//	dns transport   REFUSED  "outbound detour not found: ghost"
+	//	outbound        REFUSED  "dependency[ghost] not found for outbound[s]"
+	//	http client     STARTED  (before this check)
+	//
+	// The fix is deliberately NOT "resolve every defined client here". `resolveShared` constructs a
+	// transport, and a client that nothing references would then be built at every start - a new
+	// failure mode for configurations that work today, which is the false-deny class this whole
+	// audit exists to remove. Asking the outbound manager for a tag constructs nothing.
+	// The manager is read from the context because this type does not own it: `adapter.HTTPClientManager`
+	// is registered before the outbound manager in some construction orders, and the same context
+	// lookup is what `dialer.NewWithOptions` uses to build the detour dialer itself - so the check
+	// asks the SAME registry the dial will.
+	outboundManager := service.FromContext[adapter.OutboundManager](m.ctx)
+	for tag, define := range m.defines {
+		detour := define.Detour
+		if detour == "" {
+			continue
+		}
+		if outboundManager == nil {
+			return E.New("http_client[", tag, "] declares detour ", detour,
+				", and no outbound manager is available to resolve it")
+		}
+		detourObject, loaded := outboundManager.Outbound(detour)
+		if !loaded {
+			return E.New("http_client[", tag, "] declares detour ", detour,
+				", and no outbound or endpoint with that tag exists; the client would fail on its ",
+				"first request instead")
+		}
+		// The reference EXISTING is not the same as the reference WORKING. A detour that cannot
+		// carry the transports this client's CONFIGURED version needs fails every request, and the
+		// configured version is the only thing that decides which those are - see
+		// HTTPClientTransportRequirement for why `version: 3` needs UDP alone, or UDP AND TCP, purely
+		// because of disable_version_fallback.
+		//
+		// This is a static preflight, so it only refuses what is PROVABLE: an object that reports no
+		// networks at all is left alone by CheckDetourCapability rather than assumed to carry none.
+		if capabilityErr := CheckDetourCapability(tag, detourObject, HTTPClientTransportRequirement(define.Options())); capabilityErr != nil {
+			return capabilityErr
+		}
+	}
 	scope.Add(m.close)
 	return nil
 }

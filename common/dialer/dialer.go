@@ -101,42 +101,125 @@ func NewWithOptions(options Options) (N.Dialer, error) {
 	return dialer, nil
 }
 
-func NewDNSQueryOptions(ctx context.Context, domainResolver *option.DomainResolveOptions, newDialer bool) (adapter.DNSQueryOptions, error) {
+// ResolverAuthority names WHICH source of DNS authority a name resolved by this outbound would
+// actually use. It is the single semantic source of truth for that question: the dial path
+// (NewDNSQueryOptions, below) and the static validator (common/physicalpath) both ask it, instead of
+// each deriving the answer from the transport manager's state.
+//
+// # Why this exists
+//
+// The validator used to model the precedence independently and knew only two of these four cases, so
+// it refused a configuration whose runtime path resolves names successfully. The two answers were
+// different questions wearing the same name. The precedence is stated once, here, and both callers
+// compare against the same enum.
+//
+// # Why `AuthorityNone` is not the same as "the lookup fails"
+//
+// `AuthorityNone` means no resolver is configured anywhere AND the transport manager holds no usable
+// default. That is the only case where a named destination provably cannot be resolved. When the
+// manager holds any transport at all, resolution is possible, and reporting it as impossible is
+// exactly the false deny this enum removes.
+type ResolverAuthority uint8
+
+const (
+	// AuthorityNone means nothing in this configuration can resolve a name. It is the ONLY case a
+	// validator may refuse a configuration for.
+	AuthorityNone ResolverAuthority = iota
+	// AuthorityExplicit means the outbound declared `domain_resolver` and that transport exists.
+	AuthorityExplicit
+	// AuthorityNetworkDefault means `route.default_domain_resolver` names a transport that exists.
+	AuthorityNetworkDefault
+	// AuthorityTransportDefault means neither was declared, and the DNS transport manager holds a
+	// transport of its own to answer with. `NewDNSQueryOptions` hands back an EMPTY policy here and
+	// lets the router resolve through its own default path, which is deliberate: a target resolution
+	// must not fail construction just because no resolver was named (dialer.go's TargetQueryOptions
+	// doc states this). It is a WORKING path, not a missing one.
+	AuthorityTransportDefault
+)
+
+// ResolveAuthority reports which source of DNS authority this outbound's name resolutions would use.
+//
+// It is a pure read: it constructs nothing and dials nothing. `newDialer` selects between the two
+// callers' meanings of the no-resolver case, exactly as NewDNSQueryOptions documents.
+func ResolveAuthority(ctx context.Context, domainResolver *option.DomainResolveOptions, newDialer bool) (ResolverAuthority, error) {
+	// The transport manager may be ABSENT. `service.FromContext` answers nil for a context that has
+	// fewer services registered than a running box - a test double, an embedder that drives a dialer
+	// directly - and the first version dereferenced it in the named-resolver branch, which PANICKED
+	// where every other branch of this function reports honestly.
+	//
+	// The nil case is reported as "no authority" rather than as an error, matching the network-manager
+	// branch below: with no transport manager there is nothing to resolve with, and that is a fact
+	// about the context rather than a misconfiguration to complain about.
 	dnsTransport := service.FromContext[adapter.DNSTransportManager](ctx)
-	if domainResolver != nil && domainResolver.Server != "" {
-		transport, loaded := dnsTransport.Transport(domainResolver.Server)
-		if !loaded {
-			return adapter.DNSQueryOptions{}, E.New("domain resolver not found: ", domainResolver.Server)
+	if dnsTransport == nil {
+		if domainResolver != nil && domainResolver.Server != "" && newDialer {
+			return AuthorityNone, E.New("domain resolver not found: ", domainResolver.Server)
 		}
-		dnsQueryOptions := domainResolveQueryOptions(domainResolver)
-		dnsQueryOptions.Transport = transport
-		return dnsQueryOptions, nil
+		return AuthorityNone, nil
+	}
+	if domainResolver != nil && domainResolver.Server != "" {
+		if _, loaded := dnsTransport.Transport(domainResolver.Server); !loaded {
+			return AuthorityNone, E.New("domain resolver not found: ", domainResolver.Server)
+		}
+		return AuthorityExplicit, nil
 	}
 	networkManager := service.FromContext[adapter.NetworkManager](ctx)
 	if networkManager == nil {
-		// No network manager means no default resolver is configured anywhere, so there is nothing
-		// to fall back to. Reporting that honestly beats dereferencing a nil service: construction
-		// must not panic on a context that simply has fewer services registered than a running box.
-		return adapter.DNSQueryOptions{}, nil
+		// No network manager means no default resolver is configured anywhere. Reporting that
+		// honestly beats dereferencing a nil service: construction must not panic on a context that
+		// simply has fewer services registered than a running box.
+		return AuthorityNone, nil
 	}
 	defaultOptions := networkManager.DefaultOptions()
 	if defaultOptions.DomainResolver != "" {
-		transport, loaded := dnsTransport.Transport(defaultOptions.DomainResolver)
-		if !loaded {
-			return adapter.DNSQueryOptions{}, E.New("default domain resolver not found: ", defaultOptions.DomainResolver)
+		if _, loaded := dnsTransport.Transport(defaultOptions.DomainResolver); !loaded {
+			return AuthorityNone, E.New("default domain resolver not found: ", defaultOptions.DomainResolver)
 		}
-		dnsQueryOptions := defaultOptions.DomainResolveOptions
-		dnsQueryOptions.Transport = transport
-		return dnsQueryOptions, nil
+		return AuthorityNetworkDefault, nil
 	}
 	if len(dnsTransport.Transports()) < 2 {
-		return adapter.DNSQueryOptions{Transport: dnsTransport.Default()}, nil
+		// The manager holds a transport of its own, so a name CAN be resolved.
+		return AuthorityTransportDefault, nil
 	}
 	if newDialer {
-		return adapter.DNSQueryOptions{}, E.New("missing domain resolver for domain server address")
+		return AuthorityNone, E.New("missing domain resolver for domain server address")
 	}
 	deprecated.Report(ctx, deprecated.OptionMissingDomainResolver)
-	return adapter.DNSQueryOptions{}, nil
+	return AuthorityNone, nil
+}
+
+func NewDNSQueryOptions(ctx context.Context, domainResolver *option.DomainResolveOptions, newDialer bool) (adapter.DNSQueryOptions, error) {
+	authority, err := ResolveAuthority(ctx, domainResolver, newDialer)
+	if err != nil {
+		return adapter.DNSQueryOptions{}, err
+	}
+	dnsTransport := service.FromContext[adapter.DNSTransportManager](ctx)
+	if dnsTransport == nil {
+		// Unreachable through ResolveAuthority - it only reports Explicit or NetworkDefault when it
+		// found the transport in this same manager - but stated so the invariant is structural rather
+		// than incidental. The empty policy is what AuthorityNone returns, and the router resolves
+		// through its own default path from there, which is the documented behaviour rather than a
+		// degraded one.
+		return adapter.DNSQueryOptions{}, nil
+	}
+	switch authority {
+	case AuthorityExplicit:
+		dnsQueryOptions := domainResolveQueryOptions(domainResolver)
+		dnsQueryOptions.Transport, _ = dnsTransport.Transport(domainResolver.Server)
+		return dnsQueryOptions, nil
+	case AuthorityNetworkDefault:
+		networkManager := service.FromContext[adapter.NetworkManager](ctx)
+		defaultOptions := networkManager.DefaultOptions()
+		dnsQueryOptions := defaultOptions.DomainResolveOptions
+		dnsQueryOptions.Transport, _ = dnsTransport.Transport(defaultOptions.DomainResolver)
+		return dnsQueryOptions, nil
+	case AuthorityTransportDefault:
+		return adapter.DNSQueryOptions{Transport: dnsTransport.Default()}, nil
+	default:
+		// AuthorityNone. The policy is empty in both of its sub-cases; the difference is only
+		// whether the caller was told it is fatal, and ResolveAuthority has already decided that.
+		return adapter.DNSQueryOptions{}, nil
+	}
 }
 
 func domainResolveQueryOptions(domainResolver *option.DomainResolveOptions) adapter.DNSQueryOptions {

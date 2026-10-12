@@ -463,28 +463,31 @@ func TestTheCapabilityIsAnswerableBeforeStart(t *testing.T) {
 // ceiling at all. That is worth pinning here rather than discovering later, because the number this
 // helper returns looks identical in both cases.
 //
-// # The consumer that overrides it: hysteria2 with ChromeParrot
+// # The consumer that used to override it: hysteria2 with ChromeParrot
 //
 // hysteria2 enables ChromeParrot by default. The pinned quic-go forces
 // `initialPacketSize = chromeInitialPacketSize` whenever `Config.ChromeParrot` is set
 // (config.go:105-125, `chrome_parrot.go:19 chromeInitialPacketSize = 1250`), so an explicit
-// `initial_packet_size` is discarded. The measurement is protocol/hysteria2's
-// chrome_parrot_first_datagram_test.go: every configured value, 1232 included, produces a 1250-byte
-// first datagram.
+// `initial_packet_size` is discarded. That is measured in protocol/hysteria2's
+// chrome_parrot_first_datagram_test.go: with no ceiling, every configured value, 1232 included,
+// produces a 1250-byte first datagram.
 //
-// The consequence is arithmetic and it is stated in the units of each layer: 1250 is a UDP PAYLOAD, so
-// over IPv6 it is 1250 + 40 + 8 = 1298 bytes on the wire, which does not fit a 1280-byte path - the
-// exact case a proven 1280 ceiling exists for. Over IPv4 it is 1278 bytes, which does.
+// That override is no longer the end of the story, and this block is kept because the arithmetic
+// below is still the reason the round happened. The constraint now travels in its own field,
+// `Config.InitialPacketSizeCeiling`, applied AFTER the fingerprint override; with one set, the
+// same harness measures the ceiling on the wire and the fingerprint side effects (8-byte initial
+// destination connection ID, zero-length source) are still present. The arithmetic is unchanged -
+// it is what a ceiling set to 1232 avoids, and what 1250 costs when no ceiling has been proven:
+// 1250 + 40 + 8 = 1298 bytes over IPv6 does not fit a 1280-byte path, which is the exact case a
+// proven 1280 ceiling exists for. Over IPv4 it is 1278 bytes, which does.
 //
-// # Why this is recorded and not fixed here
+// # What this pins now
 //
-// There is no field of the pinned QUIC configuration that can lower the first flight after
-// ChromeParrot's override: `Conn.maxPacketSize()` returns `config.InitialPacketSize` on the client
-// while MTU discovery is inactive (connection.go:2905-2920) and that value is the overridden one;
-// `MaxPacketBufferSize` is a buffer bound and 1250 is inside it. The only lever in this tree is
-// disabling ChromeParrot, which abandons the fingerprint the hysteria2 outbound deliberately presents.
-// That is a product decision with a wire-visible cost either way, so the measurement and the
-// arithmetic are pinned and the item is reported BLOCKED on the pinned library, not worked around.
+// The distinction the consumer has to make, and the reason a single number is not enough: the
+// value this helper returns is a CEILING, and only a ceiling field makes it one. A consumer that
+// passes it as a preference will see it replaced - correctly, because that is what a preference
+// is for - so the test below asserts the arithmetic of both outcomes rather than assuming the
+// number reaching the library is the number on the wire.
 func TestACeilingIsAConsumerContractNotAWireGuarantee(t *testing.T) {
 	// The number a proven 1280-byte tunnel hands to a stacked QUIC protocol.
 	ceiling, hasCeiling := PacketOverheadCeiling(1280, IPFamilyUnknown, 0)

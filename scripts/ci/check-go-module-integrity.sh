@@ -106,6 +106,12 @@ REQUIRED_FORK_REPLACES=(
     github.com/sagernet/sing
     github.com/sagernet/sing-tun
     github.com/sagernet/quic-go
+    # sing-quic is the pass-through layer between the outbound option surface and quic-go's Config.
+    # It became load-bearing when the hard packet-size ceiling was given its own field: the ceiling
+    # reaches the wire only if this layer forwards it, so a nested module resolving upstream
+    # sing-quic would build a product whose proven ceiling silently disappears - the exact shape of
+    # the failure this list exists to catch, one indirection further out.
+    github.com/sagernet/sing-quic
 )
 # Module path PREFIXES with the same requirement, for forks that publish a TREE of modules.
 #

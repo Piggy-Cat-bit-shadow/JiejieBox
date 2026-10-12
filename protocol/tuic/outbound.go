@@ -114,7 +114,15 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	pathCapacity := dialer.DetourPathCapacity(ctx, options.DialerOptions.Detour)
 	quicPayloadCeiling, hasCeiling := pathCapacity.QuicPayloadCeiling()
 	effectiveInitialPacketSize := dialer.ClampToCeiling(options.InitialPacketSize, quicPayloadCeiling, hasCeiling)
-	if hasCeiling && effectiveInitialPacketSize != options.InitialPacketSize {
+	// The ceiling can move the size two ways and they are not the same event: with nothing configured it
+	// SUPPLIES the value (ClampToCeiling's own doc: "Zero means 'no preference', and the ceiling IS the
+	// preference"), and above the ceiling it CLAMPS one. Reporting a supply as a cap tells a reader to go
+	// looking for whatever set initial_packet_size to 0, which is not in their configuration.
+	if hasCeiling && dialer.CeilingSuppliesTheSize(options.InitialPacketSize, effectiveInitialPacketSize, quicPayloadCeiling) {
+		logger.Info("path capacity: inner MTU ", pathCapacity.InnerMTU,
+			" proves ", quicPayloadCeiling,
+			" bytes of QUIC payload, which is used because no initial_packet_size was configured")
+	} else if hasCeiling && effectiveInitialPacketSize != options.InitialPacketSize {
 		logger.Info("path capacity: inner MTU ", pathCapacity.InnerMTU,
 			" caps the QUIC payload at ", quicPayloadCeiling,
 			", so initial_packet_size ",
@@ -157,7 +165,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		return nil, err
 	}
 	return &Outbound{
-		Adapter:   outbound.NewAdapterWithDialerOptions(C.TypeTUIC, tag, options.Network.Build(), options.DialerOptions),
+		Adapter:   outbound.NewAdapterWithDialerOptions(C.TypeTUIC, tag, options.Network.Build(), options.DialerOptions, options.ServerIsDomain()),
 		logger:    logger,
 		client:    client,
 		udpStream: options.UDPOverStream,

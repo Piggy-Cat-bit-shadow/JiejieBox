@@ -510,6 +510,12 @@ Enable kernel TLS transmit support.
 
     kTLS RX will definitely degrade performance even if `splice(2)` is in use, so enabling it is not recommended.
 
+!!! quote ""
+
+    RX splice is **client-only**. On a server the splice path is refused and the connection reads through
+    userspace instead, with a warning logged when the request is made. So `splice(2)` cannot help an inbound
+    here, whatever else the option does.
+
 Enable kernel TLS receive support.
 
 #### handshake_timeout

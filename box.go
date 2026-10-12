@@ -20,6 +20,7 @@ import (
 	"github.com/sagernet/sing-box/common/netns"
 	"github.com/sagernet/sing-box/common/physicalpath"
 	"github.com/sagernet/sing-box/common/power"
+	"github.com/sagernet/sing-box/common/routeflow"
 	"github.com/sagernet/sing-box/common/runtimecoord"
 	"github.com/sagernet/sing-box/common/taskmonitor"
 	"github.com/sagernet/sing-box/common/tls"
@@ -230,78 +231,38 @@ func declaredDestinationDNSOwnership(options option.Options) physicalpath.Declar
 	return declarations
 }
 
-// deliveredNetworksFromRoutes reports, per outbound tag, the networks a routing rule with an
-// EXPLICIT network condition can deliver to it.
+// physicalPathDelivery reports, per outbound tag, the networks the ROUTES prove can reach it.
 //
-// # Why only an explicit condition counts as a proof
+// # Why the answer is computed from the COMPILED rules
 //
-// A rule that does not name a network can hand ANY network to its outbound, so it proves nothing
-// about delivery. Reading "nothing proven" as "every network" is exactly the mistake the dry run
-// made when it unioned the Network() of every outbound in the configuration: one unrelated
-// TCP+UDP outbound then made every other root responsible for UDP, and configurations that had
-// always started were refused. A tag named by a rule that DOES constrain the network is the
-// opposite case - the configuration states which flows reach it - and that statement is what lets
-// a leaf declaring tcp-only be refused when a rule delivers UDP to it.
+// The question is "which networks can still be, when they arrive at this tag", and the only object
+// that answers it is the routing decision the runtime router will actually make. The compiled rule
+// list is that object, so the analysis reads it - `router.Rules()` - rather than re-parsing the
+// configuration. A summary taken from the configuration text is a second routing engine by
+// construction, and it was the one this replaces: it unioned the networks of every rule that named
+// a tag with an explicit network condition, so it had no rule ORDER, could not see a terminal
+// action that was not a route, read no logical rule and no `invert`.
 //
-// # What is deliberately not summarised
+// # Why this is called after the router is initialized
 //
-//   - `route.final` receives everything no rule matched, which is every network: it is left
-//     unproven rather than read as both.
-//   - A LOGICAL rule's conditions are a tree whose network constraints are an intersection this
-//     helper does not evaluate. Summarising it would be a second routing engine, so its outbound
-//     is left unproven.
-//   - A rule whose action is not `route` does not deliver to an outbound at all.
+// `routeflow.Reach` needs the compiled rules, and the router compiles them in `Initialize`. The
+// result is installed on the outbound manager, which consumes it in its own `Start` - long after
+// this returns - so the ordering here is the only thing that matters, not a lifetime.
 //
-// A tag some rule constrains and another rule does not is left unproven: one unconstrained rule is
-// enough for any network to arrive.
-func deliveredNetworksFromRoutes(rules []option.Rule) map[string][]string {
-	delivered := make(map[string][]string)
-	unproven := make(map[string]bool)
-	for _, rule := range rules {
-		if rule.Type != C.RuleTypeDefault {
-			continue
-		}
-		action := rule.DefaultOptions
-		if action.Action != C.RuleActionTypeRoute {
-			continue
-		}
-		outboundTag := action.RouteOptions.Outbound
-		if outboundTag == "" {
-			continue
-		}
-		networks := decidedRouteNetworks(action.Network)
-		if len(networks) == 0 {
-			unproven[outboundTag] = true
-			continue
-		}
-		for _, network := range networks {
-			if !common.Contains(delivered[outboundTag], network) {
-				delivered[outboundTag] = append(delivered[outboundTag], network)
-			}
-		}
+// # What it deliberately still does not prove
+//
+// Anything the routes do not constrain. `route.final` receives every flow no rule matched, so it
+// proves nothing about WHICH networks arrive; a rule whose predicate the static summary cannot
+// resolve (`UNKNOWN` - a domain, process, port or rule-set condition, and any rule that pairs a
+// network with one of them) may match any flow, so it proves nothing either. A tag in neither case
+// is ABSENT from this map, which the manager reads as "nothing proven" and never as "nothing
+// reaches it" - it is then checked against what its own reachable objects advertise. See
+// EnablePhysicalPathDelivery and common/routeflow's UNKNOWN policy.
+func physicalPathDelivery(router adapter.Router, finalOutbound string) map[string][]string {
+	if router == nil {
+		return nil
 	}
-	for tag := range unproven {
-		delete(delivered, tag)
-	}
-	return delivered
-}
-
-// decidedRouteNetworks keeps the networks a rule's condition names that the dry run can decide
-// about, in the order the configuration wrote them.
-//
-// icmp is dropped for the same reason the dry run ignores it everywhere: it is carried by a flow
-// port rather than dialled, so a rule matching it says nothing about a dialable network.
-func decidedRouteNetworks(networks []string) []string {
-	var decided []string
-	for _, network := range networks {
-		if network != physicalpath.NetworkTCP && network != physicalpath.NetworkUDP {
-			continue
-		}
-		if !common.Contains(decided, network) {
-			decided = append(decided, network)
-		}
-	}
-	return decided
+	return routeflow.Reach(router.Rules(), finalOutbound).Proven
 }
 
 // ensureURLTestServices supplies the URL-test services a Box needs, if the caller has not.
@@ -554,11 +515,49 @@ func New(options Options) (*Box, error) {
 		},
 		common.PtrValueOrDefault(routeOptions.DefaultDomainResolver).Server != "",
 	)
-	// The other half of the dry run's input: what the ROUTES prove can reach a tag. Installing it
-	// separately keeps a Manager that was never given a route model behaving as it did before this
-	// fact existed - see EnablePhysicalPathDelivery.
-	outboundManager.EnablePhysicalPathDelivery(deliveredNetworksFromRoutes(routeOptions.Rules))
+	// The dry run's OTHER input - what the ROUTES prove can reach a tag - cannot be installed here:
+	// it is derived from the compiled rule list, and the router compiles that below. Installing it
+	// is what makes a delivery a PROOF rather than a guess, and the manager consumes it in its own
+	// Start, so it is installed immediately after `router.Initialize` succeeds.
+	//
+	// A Manager that is never given it behaves exactly as one with no route model at all, which is
+	// what every embedder that calls EnablePhysicalPathValidation alone keeps - see
+	// EnablePhysicalPathDelivery.
 	dnsTransportManager := dns.NewTransportManager(dnsTransportRegistry, outboundManager, dnsOptions.Final)
+	service.MustRegister[adapter.DNSTransportManager](ctx, dnsTransportManager)
+	// NOW the resolver question has a real owner, so the dry run stops guessing at it.
+	//
+	// The validation seam above was installed before this manager existed, and until it did the dry
+	// run could only consult the static `route.default_domain_resolver is set` bool. That bool cannot
+	// express the case this manager is what creates: no resolver is NAMED anywhere, and the manager
+	// still holds a transport of its own to answer with, so a name resolves. Refusing that was a
+	// confirmed false deny against a configuration the runtime runs.
+	//
+	// The closure below asks common/dialer.ResolveAuthority - the function NewDNSQueryOptions is
+	// itself built on - so the validator and the dial path read one answer from one function rather
+	// than deriving it twice. A failure to resolve the authority is reported as "no authority", which
+	// is the conservative direction for a check whose job is to refuse a promise the object cannot
+	// keep: an object that cannot resolve must not be told it can.
+	outboundManager.SetResolverAuthority(func(tag string) bool {
+		outboundToCheck, loaded := outboundManager.Outbound(tag)
+		if !loaded {
+			return false
+		}
+		// The declared resolver comes from the object's own reference, which Adapter documents as
+		// "the same source common/dialer reads when it builds the ResolveDialer" - so the validator
+		// asks about the object that will dial, not about the configuration text.
+		var domainResolver *option.DomainResolveOptions
+		if provider, isProvider := outboundToCheck.(interface{ DomainResolverReference() string }); isProvider {
+			if server := provider.DomainResolverReference(); server != "" {
+				domainResolver = &option.DomainResolveOptions{Server: server}
+			}
+		}
+		authority, authorityErr := dialer.ResolveAuthority(ctx, domainResolver, false)
+		if authorityErr != nil {
+			return false
+		}
+		return authority != dialer.AuthorityNone
+	})
 	serviceManager := boxService.NewManager(serviceRegistry)
 	certificateProviderManager := boxCertificate.NewManager(certificateProviderRegistry)
 	service.MustRegister[adapter.EndpointManager](ctx, endpointManager)
@@ -595,6 +594,28 @@ func New(options Options) (*Box, error) {
 	if err != nil {
 		return nil, E.Cause(err, "initialize router")
 	}
+	// Now that the rules are COMPILED, the routes can be summarised for the dry run. This is the
+	// only point at which the answer is derivable, and it is deliberately not duplicated anywhere:
+	// the analysis reads the same rule objects the router evaluates, so the start-time verdict and
+	// the run-time decision cannot disagree about which networks reach a tag.
+	outboundManager.EnablePhysicalPathDelivery(physicalPathDelivery(router, routeOptions.Final))
+	// The cross-kind cycle check needs the NETWORK-WIDE resolver as a graph edge, and it is installed
+	// here rather than at the validation seam because it is a fact about the ROUTE options, which are
+	// in scope at this point and were not when that seam was built.
+	//
+	// # Why it is an edge at all
+	//
+	// `route.default_domain_resolver` is what an object with no resolver of its own actually resolves
+	// through (common/dialer consults it whenever the object declares none). MEASURED before this
+	// was wired: a configuration that closes a recursive cycle ONLY through the default resolver was
+	// ACCEPTED, while the refused twin - identical except for WHERE the resolver was named - was
+	// correctly refused. The graph was describing a different graph from the one the dial path runs.
+	//
+	// The reader is a closure rather than the value so the answer stays live, the same reason
+	// SetResolverAuthority takes one.
+	outboundManager.SetDefaultDomainResolver(func() string {
+		return common.PtrValueOrDefault(routeOptions.DefaultDomainResolver).Server
+	})
 	// ONE shared traffic manager and ONE shared mode manager, created if any consumer
 	// needs them: the Clash API (traffic + mode endpoints), the Native API
 	// (SubscribeConnections, SetClashMode) or the platform log writer. Creating a
@@ -1452,6 +1473,27 @@ func (s *Box) ScreenStateChanged(on bool) {
 // that releases the level.
 func (s *Box) LockStateChanged(locked bool) {
 	s.lifecycle().lockState(locked)
+}
+
+// ReconcileScreenState applies a CURRENT-STATE read of the Apple display fact.
+//
+// The sibling of ScreenStateChanged, and the difference between them is the whole of P1-C: that one
+// is an EDGE the platform witnessed and it starts a new reuse measurement, this one is a LEVEL a
+// re-read established and it may not move a measurement that is already running. A client takes a
+// current-state read at observer start and on every NetworkExtension resume, and the resume arrives
+// after the core has already been woken - so publishing an edge there destroys the measurement it
+// was taken to preserve. See box_lifecycle.go.
+func (s *Box) ReconcileScreenState(on bool) {
+	s.lifecycle().reconcileScreenState(on)
+}
+
+// ReconcileLockState applies a CURRENT-STATE read of the Apple lock fact.
+//
+// Locked reconciles the pause without touching the measurement's anchor; unlocked is refused, because
+// a re-read cannot establish that a person unlocked the device and releasing the level on one would
+// be the wake storm this axis exists to prevent. See box_lifecycle.go.
+func (s *Box) ReconcileLockState(locked bool) {
+	s.lifecycle().reconcileLockState(locked)
 }
 
 func (s *Box) LogFactory() log.Factory {

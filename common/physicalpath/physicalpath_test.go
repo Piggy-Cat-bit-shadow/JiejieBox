@@ -35,6 +35,19 @@ type namingOwner struct {
 
 func (o *namingOwner) DestinationDNSOwnership() bool { return true }
 
+// refusingOwner implements the capability and reports FALSE.
+//
+// It exists because no shipped type does, which left the most interesting branch of the ownership
+// check unexercised: an object that CAN resolve the destination and says it will not. The two
+// refusal sentences it distinguishes - "does not implement the capability" and "reports that it does
+// NOT resolve the destination itself" - were ONE sentence until the capability's value started being
+// read rather than only its presence, and a fixture is the only way to reach the second.
+type refusingOwner struct {
+	testLeaf
+}
+
+func (o *refusingOwner) DestinationDNSOwnership() bool { return false }
+
 func (l *testLeaf) Type() string           { return l.leafType }
 func (l *testLeaf) Tag() string            { return l.tag }
 func (l *testLeaf) Network() []string      { return l.networks }
@@ -834,8 +847,28 @@ func TestDryRunReportsDestinationDNSOwnershipOnAnIncapableType(t *testing.T) {
 		Declarations{DestinationDNSOwnership: map[string]bool{"http-hop": true}})
 	require.NoError(t, err)
 	require.False(t, report.Reachable())
-	require.Contains(t, report.Failures[0].Reason, "does not implement it")
-	require.Contains(t, report.Failures[0].Reason, "would be sent to the peer")
+	// The clause names the CAPABILITY rather than the interface, because the interface is no longer
+	// what is being tested: the value is read now, and an object that reports false is a different
+	// diagnosis from one that cannot report at all.
+	require.Contains(t, report.Failures[0].Reason, "does not implement the capability")
+	require.Contains(t, report.Failures[0].Reason, "would reach the peer")
+
+	// The TWO refusals are distinct sentences, and this is the assertion that keeps them so.
+	//
+	// `refusingOwner` implements DestinationDNSOwner and returns false. Before the value was read it
+	// was refused with the same "does not implement it" text as `testLeaf`, which is an untrue
+	// statement about it - it DOES implement it, and is declining. A change that collapsed the two
+	// branches back into one would still refuse, so only asserting the distinct wording catches it.
+	refusing := &refusingOwner{testLeaf{tag: "refusing-hop", leafType: "socks", networks: []string{N.NetworkTCP}}}
+	report, err = ValidateRoots(newRegistry(refusing).resolver(), []adapter.Outbound{refusing}, nil, []string{N.NetworkTCP},
+		Declarations{DestinationDNSOwnership: map[string]bool{"refusing-hop": true}})
+	require.NoError(t, err)
+	require.False(t, report.Reachable(), "a declaration the object contradicts must not pass")
+	require.Contains(t, report.Failures[0].Reason, "reports that it does NOT resolve the destination itself",
+		"the capability was READ and answered false, which must not be reported as a missing interface; got: "+
+			report.Failures[0].Reason)
+	require.NotContains(t, report.Failures[0].Reason, "does not implement the capability",
+		"this object implements the capability - saying otherwise is the false statement the split removes")
 
 	// The capable type passes, and so does an undeclared one.
 	report, err = ValidateRoots(registry.resolver(), []adapter.Outbound{capable}, nil, []string{N.NetworkTCP},

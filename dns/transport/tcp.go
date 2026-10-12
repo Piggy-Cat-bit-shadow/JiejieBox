@@ -83,7 +83,17 @@ func (t *TCPTransport) Start(stage adapter.StartStage, scope *adapter.Scope) err
 		return nil
 	}
 	scope.Add(t.multiplexer.Close)
-	return dialer.InitializeDetour(t.dialer)
+	if initErr := dialer.InitializeDetour(t.dialer); initErr != nil {
+		return initErr
+	}
+	// The reference EXISTS; now ask whether it can carry this transport's queries. See
+	// dialer.CheckDetourCapability for why the demand is read from the type's implementation rather
+	// than from its name - udp needs TCP as well, because a truncated response is retried.
+	detourObject, hasDetour := dialer.DetourOf(t.dialer)
+	if hasDetour {
+		return CheckDetourCapability("dns/transport/tcp["+t.Tag()+"]", detourObject, RequirementFor("tcp", nil))
+	}
+	return nil
 }
 
 func (t *TCPTransport) Reset() {

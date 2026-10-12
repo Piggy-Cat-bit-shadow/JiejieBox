@@ -79,7 +79,7 @@ func NewClientEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 	loopContext, cancelLoop := context.WithCancel(ctx)
 	clientEndpoint := &ClientEndpoint{
 		endpointBase: endpointBase{
-			Adapter: endpoint.NewAdapterWithDialerOptions(C.TypeOpenVPNClient, tag, []string{N.NetworkTCP, N.NetworkUDP, N.NetworkICMP}, options.DialerOptions),
+			Adapter: endpoint.NewAdapterWithDialerOptions(C.TypeOpenVPNClient, tag, []string{N.NetworkTCP, N.NetworkUDP, N.NetworkICMP}, options.DialerOptions, openVPNClientRemoteIsDomain(options)),
 			router:  router,
 			logger:  logger,
 		},
@@ -123,21 +123,42 @@ func NewClientEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 	if options.UDPTimeout != 0 {
 		udpTimeout = time.Duration(options.UDPTimeout)
 	}
+	// The device MTU and the data-channel headroom are the two facts the shared device needs from
+	// the channel this endpoint owns.
+	//
+	// # Why the MTU is resolved here rather than passed through
+	//
+	// `options.MTU` is legitimately ZERO when the configuration does not set one, and the tunnel MTU
+	// is not the transport MTU. Passing the raw option through configured the device with a 0-byte
+	// MTU. The default is what the option's absence means.
+	deviceMTU := options.MTU
+	if deviceMTU == 0 {
+		deviceMTU = ovpntransport.DefaultMTU
+	}
+	// The headroom the data channel needs, asked of the options object because it depends on the
+	// negotiated transport protocol and ciphers - see sing-openvpn's DataPacketHeadroom. Without
+	// this reservation the device reserves nothing and every outbound packet takes the copy branch
+	// in the peer data path, whose sibling branch is a PANIC on insufficient room in sing's
+	// buf.ExtendHeader.
+	packetFrontHeadroom, packetRearHeadroom := clientOptions.DataPacketHeadroom()
 	clientEndpoint.deviceOptions = &device.Options{
-		Context:         ctx,
-		Logger:          logger,
-		System:          options.System,
-		Handler:         clientEndpoint,
-		UDPTimeout:      udpTimeout,
-		ICMPTimeout:     C.ICMPTimeout,
-		UDPMapping:      tun.NATMapping(options.UDPMapping),
-		UDPFiltering:    tun.NATFiltering(options.UDPFiltering),
-		UDPNATMax:       options.UDPNATMax,
-		InterfaceFinder: service.FromContext[adapter.NetworkManager](ctx).InterfaceFinder(),
-		Name:            options.Name,
-		MTU:             options.MTU,
+		Context:             ctx,
+		Logger:              logger,
+		System:              options.System,
+		Handler:             clientEndpoint,
+		UDPTimeout:          udpTimeout,
+		ICMPTimeout:         C.ICMPTimeout,
+		UDPMapping:          tun.NATMapping(options.UDPMapping),
+		UDPFiltering:        tun.NATFiltering(options.UDPFiltering),
+		UDPNATMax:           options.UDPNATMax,
+		InterfaceFinder:     service.FromContext[adapter.NetworkManager](ctx).InterfaceFinder(),
+		Name:                options.Name,
+		NamePrefix:          "ovpn",
+		MTU:                 deviceMTU,
+		PacketFrontHeadroom: packetFrontHeadroom,
+		PacketRearHeadroom:  packetRearHeadroom,
 		Configuration: device.Configuration{
-			MTU:     options.MTU,
+			MTU:     deviceMTU,
 			Address: clientOptions.Tunnel.LocalAddress,
 		},
 	}
@@ -849,6 +870,17 @@ func (c *ClientEndpoint) DialContext(ctx context.Context, network string, destin
 		return nil, E.New("invalid destination: ", destination)
 	}
 	return c.device.DialContext(ctx, network, destination)
+}
+
+// DialsDestinationLocally implements adapter.LocalDestinationDialer.
+//
+// PROVEN from the dial paths above: a domain destination is resolved by `c.dnsRouter.Lookup` (:863
+// here, and :502 in the transport path) and only the resulting addresses are dialled
+// (`N.DialSerial` at :867, `c.device.DialContext` at :872). The destination travels inside the
+// OpenVPN tunnel this endpoint terminates, so the domain is resolved on this device and never
+// written to a peer as a name. The packet path agrees (:882).
+func (c *ClientEndpoint) DialsDestinationLocally() bool {
+	return true
 }
 
 func (c *ClientEndpoint) ListenPacketWithDestination(ctx context.Context, destination M.Socksaddr) (net.PacketConn, netip.Addr, error) {
