@@ -78,20 +78,15 @@ PROJECT_GOMOBILE_VERSION="$(cd "$repo_root" && go list -m -f '{{.Version}}' gith
 # Apple:   Piggy-Cat-bit-shadow/sing-box-for-apple. The migration is carried as
 #          docs/fork/apple-stringbox-callsites.patch; see docs/fork/apple-client-fork.md.
 #
-# THE APPLE VALUE IS THE PINNED REVISION. It is the revision the superproject gitlink pins
-# (`git ls-tree HEAD clients/apple`), and it carries the call-site migration, the
-# BridgeServiceSession implementer and the screen-state observer.
-#
-# It is also the revision at which the model changed. The parent used to build iOS from the
-# gitlink and macOS from a separate pinned commit, which made the PARENT decide UI ownership by
-# choosing a branch per platform. One tree now carries both products, and `SFIUIFamily.resolve`
-# chooses the presentation at runtime from the device idiom - so one commit serves both, and a
-# per-platform source is the defect rather than the contract. See the parent commit
-# "build(apple): one pinned source for iOS and macOS".
-#
-# That makes this constant and the gitlink the same fact recorded twice, in two files that one
-# commit has to move together. This layer is what says so when only one of them moves, which is
-# why it is worth keeping them adjacent in a reader's mind rather than merely equal.
+# THE APPLE VALUE TRACKS THE SUPERPROJECT GITLINK. It is the revision the gitlink pins
+# (`git ls-tree HEAD clients/apple`) after the Apple repository was consolidated to the single
+# product branch `main`. The Apple repository now carries only `main` and `dev`; every
+# construction branch, including the `jiejiebox/integrated` tip this constant used to name, was
+# retired and its content preserved as `archive/*` tags, so the old value named a branch that no
+# longer exists. The revision named here carries the call-site migration, the
+# BridgeServiceSession implementer and the screen-state observer - and it is the revision whose
+# caller sweep layer 4 performs and whose SFI (iOS) and SFM (macOS) builds were observed to
+# succeed, which is what makes it the verified revision rather than merely a recorded one.
 #
 # Naming a revision here is a statement about it, not a verification of it, and the report above
 # is not a substitute for layer 4. Layer 4 is the verification and it needs a client checkout to
