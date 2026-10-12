@@ -343,27 +343,58 @@ work = pathlib.Path(sys.argv[1])
 (work / "fixtures").mkdir(exist_ok=True)
 PY
 
-# make_binary <path> <kind> — a file with the platform magic the gate checks.
+# make_binary <path> <kind> - a file with the platform magic the gate checks.
+#
+# The two-product cases only ever needed ELF and Mach-O. The four-product contract case
+# needs every kind the gate can verify, so `pe-amd64` and `aar-arm64` are built here in the
+# same shape the gate reads:
+#
+#   pe-amd64   'MZ', the PE header offset at 0x3c, 'PE\0\0' at that offset and machine
+#              0x8664. The gate reads exactly these four things.
+#   aar-arm64  a real ZIP holding jni/arm64-v8a/libbox.so as a little-endian AArch64 ELF,
+#              which is what the gate unzips and inspects.
 make_binary() {
   python3 - "$1" "$2" <<'PY'
-import pathlib, sys
-p = pathlib.Path(sys.argv[1]); kind = sys.argv[2]
-buf = bytearray(4096)
-if kind == "elf-x86-64":
+import pathlib, struct, sys, zipfile, io
+path = pathlib.Path(sys.argv[1]); kind = sys.argv[2]
+
+def elf_arm64():
+    buf = bytearray(4096)
     buf[0:4] = b"\x7fELF"; buf[4] = 2; buf[5] = 1; buf[6] = 1
     buf[16:18] = (2).to_bytes(2, "little")        # ET_EXEC
-    buf[18:20] = (0x3E).to_bytes(2, "little")     # EM_X86_64
-elif kind == "macho-arm64":
-    buf[0:4] = b"\xcf\xfa\xed\xfe"
-    buf[4:8] = (0x0100000C).to_bytes(4, "little")  # CPU_TYPE_ARM64
-    buf[12:16] = (2).to_bytes(4, "little")         # MH_EXECUTE
-elif kind == "elf-arm64":
-    buf[0:4] = b"\x7fELF"; buf[4] = 2; buf[5] = 1; buf[6] = 1
-    buf[16:18] = (2).to_bytes(2, "little")
     buf[18:20] = (0xB7).to_bytes(2, "little")     # EM_AARCH64
+    return bytes(buf)
+
+if kind == "pe-amd64":
+    buf = bytearray(4096)
+    buf[0:2] = b"MZ"
+    # e_lfanew: the gate seeks to this offset and expects the PE signature there.
+    struct.pack_into("<I", buf, 0x3C, 0x80)
+    buf[0x80:0x84] = b"PE\0\0"
+    struct.pack_into("<H", buf, 0x84, 0x8664)     # IMAGE_FILE_MACHINE_AMD64
+    path.write_bytes(bytes(buf))
+elif kind == "aar-arm64":
+    # The gate calls `unzip -p <file> jni/arm64-v8a/libbox.so` and reads the ELF magic from
+    # the result, so the entry name and the AArch64 machine field both have to be real.
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("jni/arm64-v8a/libbox.so", elf_arm64())
 else:
-    raise SystemExit("unknown kind " + kind)
-p.write_bytes(bytes(buf))
+    buf = bytearray(4096)
+    if kind == "elf-x86-64":
+        buf[0:4] = b"\x7fELF"; buf[4] = 2; buf[5] = 1; buf[6] = 1
+        buf[16:18] = (2).to_bytes(2, "little")        # ET_EXEC
+        buf[18:20] = (0x3E).to_bytes(2, "little")     # EM_X86_64
+    elif kind == "macho-arm64":
+        buf[0:4] = b"\xcf\xfa\xed\xfe"
+        buf[4:8] = (0x0100000C).to_bytes(4, "little")  # CPU_TYPE_ARM64
+        buf[12:16] = (2).to_bytes(4, "little")         # MH_EXECUTE
+    elif kind == "elf-arm64":
+        buf[0:4] = b"\x7fELF"; buf[4] = 2; buf[5] = 1; buf[6] = 1
+        buf[16:18] = (2).to_bytes(2, "little")
+        buf[18:20] = (0xB7).to_bytes(2, "little")     # EM_AARCH64
+    else:
+        raise SystemExit("unknown kind " + kind)
+    path.write_bytes(bytes(buf))
 PY
 }
 
