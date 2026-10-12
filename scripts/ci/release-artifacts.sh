@@ -582,9 +582,10 @@ $(printf '      %s\n' $listing)"
   # `$out.records` is a sibling of `$out`, so the two trees stay obviously paired and the
   # records never sit inside the directory the release is built from.
   local records_dir="${out}.records"
+  # Removed, then both trees created: the download writes into them, so a leftover tree from
+  # an earlier run must not be able to satisfy the checks below.
   rm -rf "$out" "$records_dir"
-  mkdir -p "$out" "$records_dir"
-  note "downloading desktop artifact '$installer_artifact' from run $rid"
+  mkdir -p "$out" "$records_dir"  note "downloading desktop artifact '$installer_artifact' from run $rid"
   if ! gh run download "$rid" --repo "$repo" --name "$installer_artifact" --dir "$out"; then
     die "gh run download failed for '$installer_artifact' on desktop run $rid. The installer is NOT verified; refusing to continue."
   fi
@@ -599,9 +600,9 @@ $(printf '      %s\n' $listing)"
     "desktop artifact '$installer_artifact' produced $subdirs directories in $out, expected exactly 1."
   files="$(find "$out" -type f | wc -l | tr -d ' ')"
   [ "$files" -gt 0 ] || die "desktop artifact '$installer_artifact' downloaded no files into $out"
-  files="$(find "$records_dir" -maxdepth 1 -type f -name 'BUILD-INFO-WINDOWS-DESKTOP-*.txt' | wc -l | tr -d ' ')"
+  files="$(find "$records_dir" -type f -name 'BUILD-INFO-WINDOWS-DESKTOP-*.txt' | wc -l | tr -d ' ')"
   [ "$files" -ge 1 ] || die \
-    "desktop artifact '$records_artifact' carries no BUILD-INFO-WINDOWS-DESKTOP-*.txt in $records_dir, so the installer cannot be attributed to a core. Refusing to continue."
+    "desktop artifact '$records_artifact' carries no BUILD-INFO-WINDOWS-DESKTOP-*.txt under $records_dir, so the installer cannot be attributed to a core. Refusing to continue."
   note "PASS: desktop run $rid staged ($(find "$out" -type f | wc -l | tr -d ' ') file(s)); records in $records_dir"
 }
 

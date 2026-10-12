@@ -1395,10 +1395,11 @@ full_expect_ok "full contract: stage the desktop installer" \
 
 # The staging shape is itself an assertion: the installer alone in its artifact directory,
 # and the record - which proves the installer's core - outside it, in a tree that flatten
-# is never pointed at.
+# is never pointed at. Both are searched recursively, because a downloaded artifact keeps
+# its own directory: `gh run download --name` nests everything one level down.
 if [ -f "$DESKTOP_INSTALLER" ] \
-   && [ ! -f "$DESKTOP_STAGE/BUILD-INFO-WINDOWS-DESKTOP-$FULL_VERSION.txt" ] \
-   && [ -f "$DESKTOP_RECORDS/BUILD-INFO-WINDOWS-DESKTOP-$FULL_VERSION.txt" ]; then
+   && [ -z "$(find "$DESKTOP_STAGE" -name 'BUILD-INFO-WINDOWS-DESKTOP-*.txt' -print -quit)" ] \
+   && [ -n "$(find "$DESKTOP_RECORDS" -name 'BUILD-INFO-WINDOWS-DESKTOP-*.txt' -print -quit)" ]; then
   report "full contract: the installer is staged apart from its build record" 0 0
 else
   report "full contract: the installer is staged apart from its build record" 0 1 \
