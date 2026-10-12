@@ -39,6 +39,7 @@
 /venv/
 CLAUDE.md
 AGENTS.md
+!AGENTS.md
 /.claude/
 /.gocache/
 /.gomodcache/
