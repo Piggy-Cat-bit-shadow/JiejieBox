@@ -115,7 +115,10 @@ jobs:
           set +o pipefail
           summary="$(grep -A1 -E '^FAIL ' "$log" | head -40 | tr '\n' '~' | cut -c1-3500)"
           if [ -z "$summary" ]; then
-            summary="no FAIL line was printed; first lines of the log: $(head -30 "$log" | tr '\n' '~' | cut -c1-3500)"
+            # A run that died before any case reported: the head shows how far it got and
+            # the tail shows what killed it, and a summary that carried only the head has
+            # already cost one run today.
+            summary="no FAIL line was printed. TAIL: $(tail -40 "$log" | tr '\n' '~' | cut -c1-2500) || HEAD: $(head -20 "$log" | tr '\n' '~' | cut -c1-900)"
           fi
           set -o pipefail
           echo "::error title=release gate tests failed (exit $rc)::$summary"
