@@ -313,32 +313,50 @@ jobs:
           else
             echo "NOTE: build info not readable from this .so; architecture and size were still checked"
           fi
-          # The sidecar goes beside the checksum, not inside the gomobile work directory.
+          # The AAR, its checksum and its BUILD-INFO are staged together in a directory that
+          # holds nothing else, because the release gate requires all three as SIBLINGS and
+          # the packaging step requires that directory to contain exactly those three plus
+          # LICENSE.
           #
-          # `build-info.sh` cd's to the repository root before it writes, so a relative `$out`
-          # lands there - the same trap that left the Windows core without a record. An
-          # absolute path is passed for that reason.
+          # Two attempted shapes failed before this one, both caught by a gate rather than by
+          # reasoning:
           #
-          # The binary itself is then brought up to that directory rather than left at
-          # `_libbox_build/libbox.aar` (where gomobile puts it): the release gate requires the
-          # binary, its `.sha256` and its BUILD-INFO to sit in the SAME directory, because a
-          # record that travels separately from the bytes it describes proves nothing. They
-          # did not, and the release died with
-          #   "libbox.aar, libbox.aar.sha256 and BUILD-INFO-ANDROID.txt are not in the same
-          #    artifact directory."
-          # `cp` rather than `mv`: the zip/tar steps below still read the build directory's
-          # copy, and the name must be exactly `libbox.aar` because that is the name the gate
-          # derives from the workflow and the name the record's `artifact:` line carries.
-          ./scripts/ci/build-info.sh "$(pwd)/BUILD-INFO-ANDROID.txt" android arm64 android "$(pwd)/$(basename "$aar")"
-          cp "$aar" "libbox.aar"
-          test -f BUILD-INFO-ANDROID.txt || { echo "FAIL: build-info.sh wrote no BUILD-INFO-ANDROID.txt into $(pwd)" >&2; exit 1; }
-          grep -q '^artifact_sha256:' BUILD-INFO-ANDROID.txt || { echo "FAIL: BUILD-INFO-ANDROID.txt carries no artifact_sha256" >&2; exit 1; }
-          printf '%s  %s\n' "$(sha256sum "$aar" | cut -d' ' -f1)" "$(basename "$aar")" > libbox.aar.sha256
-          # Stated as the gate states it, so a future move of either file fails here rather
-          # than three steps later inside the release.
-          [ "$(dirname "$(find . -type f -name 'libbox.aar' | head -1)")" = "$(dirname "$(find . -type f -name 'BUILD-INFO-ANDROID.txt' | head -1)")" ] || {
-            echo "FAIL: libbox.aar and BUILD-INFO-ANDROID.txt are not in the same directory" >&2; exit 1; }
-          sha256sum "$aar" "$so" "$prov" BUILD-INFO-ANDROID.txt libbox.aar.sha256 LICENSE | tee SHA256SUMS.txt
+          #   * the record at the root while the AAR stayed in gomobile's `_libbox_build/` -
+          #     "libbox.aar, libbox.aar.sha256 and BUILD-INFO-ANDROID.txt are not in the same
+          #     artifact directory. They must travel together."
+          #   * the AAR copied UP to the root to join them - which put it beside
+          #     `libbox.provenance` and `SHA256SUMS.txt`, and the packaging step pins that
+          #     directory to exactly `libbox.aar`, `libbox.aar.sha256`,
+          #     `BUILD-INFO-ANDROID.txt` and LICENSE. Two extra files are still extra files.
+          #
+          # So the three move DOWN into a staging directory of their own and the rest stays
+          # where it is. A new directory is used rather than `_libbox_build/` itself: a
+          # gomobile directory that happens to also be read as a release artifact directory is
+          # a coupling nobody asked for.
+          #
+          # `build-info.sh` cd's to the repository root before it writes, so an ABSOLUTE path
+          # is passed - the same trap that left the Windows core with no record at all.
+          android_stage="$(pwd)/release-android"
+          rm -rf "$android_stage"; mkdir -p "$android_stage"
+          cp "$aar" "$android_stage/libbox.aar"
+          cp LICENSE "$android_stage/LICENSE"
+          ./scripts/ci/build-info.sh "$android_stage/BUILD-INFO-ANDROID.txt" android arm64 android "$android_stage/libbox.aar"
+          printf '%s  %s\n' "$(sha256sum "$aar" | cut -d' ' -f1)" "$(basename "$aar")" > "$android_stage/libbox.aar.sha256"
+          # The step asserts its own postconditions, so a future move of any of these files
+          # fails here rather than inside the release three steps later.
+          test -f "$android_stage/BUILD-INFO-ANDROID.txt" || { echo "FAIL: build-info.sh wrote no BUILD-INFO-ANDROID.txt into $android_stage" >&2; exit 1; }
+          grep -q '^artifact_sha256:' "$android_stage/BUILD-INFO-ANDROID.txt" || { echo "FAIL: BUILD-INFO-ANDROID.txt carries no artifact_sha256" >&2; exit 1; }
+          expected_stage="$(printf '%s\n%s\n%s\n%s\n' BUILD-INFO-ANDROID.txt LICENSE libbox.aar libbox.aar.sha256 | sort)"
+          actual_stage="$(find "$android_stage" -maxdepth 1 -type f -exec basename {} \; | sort)"
+          [ "$actual_stage" = "$expected_stage" ] || {
+            echo "FAIL: the Android release directory is not exactly the four files the packaging step pins:" >&2
+            printf '  expected:\n%s\n  actual:\n%s\n' "$expected_stage" "$actual_stage" >&2; exit 1; }
+          # The checksum list names the files as they actually are after the move: the AAR,
+          # the BUILD-INFO and the LICENSE now live in release-android/, and naming them at
+          # the root here would fail the step on a file that is no longer there.
+          sha256sum "$so" "$prov" \
+            "$android_stage/libbox.aar" "$android_stage/libbox.aar.sha256" \
+            "$android_stage/BUILD-INFO-ANDROID.txt" "$android_stage/LICENSE" | tee SHA256SUMS.txt
 
       - name: Report
         if: always()
@@ -364,10 +382,10 @@ jobs:
         with:
           name: android-core-arm64-${{ github.sha }}
           path: |
-            libbox.aar
-            libbox.aar.sha256
-            BUILD-INFO-ANDROID.txt
-            LICENSE
+            release-android/libbox.aar
+            release-android/libbox.aar.sha256
+            release-android/BUILD-INFO-ANDROID.txt
+            release-android/LICENSE
             libbox.provenance
             SHA256SUMS.txt
           if-no-files-found: error
