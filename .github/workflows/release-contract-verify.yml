@@ -72,18 +72,16 @@ jobs:
         run: |
           set -uo pipefail
           mkdir -p verify-logs
-          # `tee` rather than a redirect, and the exit status is carried out by hand: the
-          # point is that a FAILING run still leaves its full output as an artifact. A
-          # summary line is enough to see that a case failed and never enough to see why,
-          # and this suite's output is the only diagnosis there is - the job log is not
-          # readable without a token.
+          # Both streams to one file, and the status carried by hand: the point is that a
+          # FAILING run leaves its output as an artifact, because the job log needs a token.
           #
-          # Traced with `bash -x`. A suite that dies silently between two cases leaves no
-          # message at all - no FAIL line, no shell error on stdout - and a trace is the only
-          # thing that says which command did it. The trace goes to its own file so the
-          # suite's own output stays readable, and only its tail is annotated.
+          # Not traced. `set -x` was needed once, to find a fixture builder that died inside a
+          # command substitution and therefore printed nothing - but it buries the gate's own
+          # error message in shell noise, and the gate's message is what these cases are
+          # about. The trace can be turned back on temporarily if another silent death
+          # appears.
           set +e
-          bash -x ./scripts/ci/test-release-artifacts.sh > verify-logs/release-gate.log 2> verify-logs/release-gate.trace
+          ./scripts/ci/test-release-artifacts.sh > verify-logs/release-gate.log 2>&1
           rc=$?
           set -e
           cat verify-logs/release-gate.log
@@ -113,13 +111,11 @@ jobs:
           # becomes the STEP's status - so the step that exists to REPORT a failure was
           # itself failing, and the annotation never reached the check run.
           set +o pipefail
-          summary="$(grep -A1 -E '^FAIL ' "$log" | head -40 | tr '\n' '~' | cut -c1-3500)"
+          summary="$(grep -A1 -E '^FAIL ' "$log" | head -20 | tr '\n' '~' | cut -c1-3000)"
           if [ -z "$summary" ]; then
-            # A run that died before any case reported. The trace names the command that did
-            # it, which the suite's own output cannot: an exit between two cases prints
-            # nothing at all.
-            trace=verify-logs/release-gate.trace
-            summary="no FAIL line was printed. TRACE TAIL: $(tail -25 "$trace" 2>/dev/null | tr '\n' '~' | cut -c1-3000)"
+            # A run that died before any case reported: the tail names what killed it, which
+            # the suite's own output cannot - an exit between two cases prints nothing.
+            summary="no FAIL line was printed. TAIL: $(tail -40 "$log" | tr '\n' '~' | cut -c1-3000)"
           fi
           set -o pipefail
           echo "::error title=release gate tests failed (exit $rc)::$summary"
