@@ -110,6 +110,25 @@ jobs:
           ./tooling/scripts/ci/release-artifacts.sh check-tag --tag "$INPUT_TAG"
           echo "tag=$INPUT_TAG" >> "$GITHUB_OUTPUT"
 
+      # The release version has ONE authority: release/JIEJIE_VERSION in the commit being
+      # released. It is read here, from the tag's own checkout, and every later step takes
+      # it from this output - the installer name, the overlay and the desktop dispatch all
+      # derive from it rather than carrying their own copy.
+      #
+      # The tag and the file are cross-checked, so a tag whose checkout declares another
+      # version stops the release here instead of naming artifacts for one version and
+      # building another.
+      - name: resolve the release version
+        id: version
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          version="$(./tooling/scripts/ci/release-artifacts.sh release-version --tag "$INPUT_TAG")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "release version: $version (release/JIEJIE_VERSION at $INPUT_TAG)"
+
       # Computed, never inferred inline. Anything that is not exactly `true` or
       # `false` fails here, so a malformed or missing input cannot reach the
       # publish step and be read as "not a dry run".
@@ -160,29 +179,70 @@ jobs:
             --plan release-plan/runs.tsv \
             --dir release-assets
 
+      # The desktop installer is a public deliverable too, and it arrives by a different
+      # route: that workflow is dispatch-only and produces a signed-test NSIS installer
+      # rather than a tarball, so there is no run to select before one exists. This finds
+      # the run for this exact commit, waits for it if it is still going, and stages it -
+      # including the build record, which the verify step reads to prove the installer's
+      # core SHA. The record is not published; check-upload is what keeps it out.
+      - name: stage the Windows desktop installer
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ./tooling/scripts/ci/release-artifacts.sh desktop \
+            --repo "$GITHUB_REPOSITORY" \
+            --sha "$RELEASE_SHA" \
+            --out release-desktop \
+            --interval 30 \
+            --timeout 5400
+
       # Per platform: the binary, its .sha256, its BUILD-INFO, a real
       # `sha256sum -c`, the platform read out of the file's own header, and the
       # commit recorded by the build. A hash for one platform does not cover the
-      # other.
+      # other. The desktop installer is verified from its own build record for the
+      # same reason: a filename containing the version is not provenance.
       - name: verify the downloaded artifacts
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
           ./tooling/scripts/ci/release-artifacts.sh verify \
             --dir release-assets \
-            --sha "$RELEASE_SHA"
+            --sha "$RELEASE_SHA" \
+            --desktop-dir release-desktop \
+            --version "$RELEASE_VERSION"
 
       - name: flatten the release assets
         env:
-          # check-tag already proved this is a validated release tag; it is passed
-          # through the environment rather than interpolated into the script body.
+          # check-tag already proved this is a validated release tag and the previous step
+          # proved the checkout's release/JIEJIE_VERSION matches it; both are passed through
+          # the environment rather than interpolated into the script body.
           RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
           ./tooling/scripts/ci/release-artifacts.sh flatten \
             --plan release-plan/runs.tsv \
             --dir release-assets \
             --out upload \
-            --tag "$RELEASE_TAG"
+            --tag "$RELEASE_TAG" \
+            --desktop release-desktop \
+            --version "$RELEASE_VERSION"
+
+      # The public contract is checked against the WORKSPACE, not against the command that
+      # produced it: this is the last look before publishing, and it answers "is exactly the
+      # promised set of files about to go out" rather than "did flatten behave".
+      - name: confirm the upload set is exactly the public contract
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          ./tooling/scripts/ci/release-artifacts.sh check-upload \
+            --out upload \
+            --tag "$RELEASE_TAG" \
+            --version "$RELEASE_VERSION"
 
       # The ONLY step a dry run skips. Everything before it - validating the tag,
       # waiting for the CI runs for that commit, downloading the artifacts those
@@ -195,19 +255,51 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
           tag="$RELEASE_TAG"
           sha="$RELEASE_SHA"
+          version="$RELEASE_VERSION"
 
           # Deliberately NOT --prerelease and NOT --draft: v0.1 is the first stable
           # release of this fork.
+          #
+          # Every asset is named EXPLICITLY. A glob would publish whatever happened to be
+          # in the directory, which is how CI records once reached a release page: the
+          # allowlist is checked immediately above, and naming the files here means the
+          # upload cannot be wider than the check that passed.
           gh release create "$tag" \
             --title "$tag" \
             --target "$sha" \
             --notes "" \
-            upload/*.tar.gz upload/SHA256SUMS
+            "upload/Jiejiebox-v${version}-windows-x64.exe" \
+            "upload/jiejie-sing-box-linux-amd64-${tag}.tar.gz" \
+            "upload/jiejie-sing-box-macos-arm64-${tag}.tar.gz" \
+            "upload/jiejie-sing-box-windows-amd64-${tag}.tar.gz" \
+            "upload/jiejie-sing-box-android-arm64-${tag}.tar.gz" \
+            upload/SHA256SUMS
 
           echo "PASS: release $tag created"
-          gh release view "$tag" --json url,isDraft,isPrerelease,tagName,assets \
-            --jq '"url: \(.url)\nisDraft: \(.isDraft)\nisPrerelease: \(.isPrerelease)\ntag: \(.tagName)\nassets:\n\(.assets[] | "  \(.name)  \(.size) bytes")"'
+
+          # Read the release back and confirm the published set is the contract. The
+          # local check proved what was uploaded; this proves what the download page
+          # actually carries, which is the thing a user sees.
+          published="$(gh release view "$tag" --json assets \
+            --jq '.assets[].name' | sort)"
+          expected="$(printf '%s\n' \
+            "Jiejiebox-v${version}-windows-x64.exe" \
+            "jiejie-sing-box-linux-amd64-${tag}.tar.gz" \
+            "jiejie-sing-box-macos-arm64-${tag}.tar.gz" \
+            "jiejie-sing-box-windows-amd64-${tag}.tar.gz" \
+            "jiejie-sing-box-android-arm64-${tag}.tar.gz" \
+            SHA256SUMS | sort)"
+          if [ "$published" != "$expected" ]; then
+            echo "FAIL: the published asset set is not the public contract." >&2
+            echo "expected:" >&2
+            printf '  %s\n' $expected >&2
+            echo "found:" >&2
+            printf '  %s\n' $published >&2
+            exit 1
+          fi
+          echo "PASS: the published assets are exactly the public contract"

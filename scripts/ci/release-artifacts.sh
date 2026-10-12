@@ -248,6 +248,56 @@ cmd_check_tag() {
 }
 
 # ---------------------------------------------------------------------------
+# release-version
+# ---------------------------------------------------------------------------
+#
+# Reads release/JIEJIE_VERSION from the checkout and proves it names the same release as
+# the tag. This is the single authority for the fork's version, so it is read here once
+# and passed down; nothing downstream keeps a copy that could go stale.
+#
+# The check is two-sided on purpose. A tag v0.1.6 whose checkout says 0.1.5 would otherwise
+# publish artifacts named for 0.1.6 containing an app that believes it is 0.1.5 - the
+# updater then refuses to upgrade to it, or offers it forever.
+
+cmd_release_version() {
+  local tag=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --tag) tag="${2:-}"; shift 2 ;;
+      *) die "release-version: unknown argument '$1'" ;;
+    esac
+  done
+  [ -n "$tag" ] || die "release-version: --tag is required"
+
+  case "$tag" in
+    v*) ;;
+    *) die "release-version: tag '$tag' is not a release tag" ;;
+  esac
+  if [[ "$tag" = *[!0-9A-Za-z._+-]* ]]; then
+    die "release-version: tag '$tag' contains characters outside [0-9A-Za-z._+-]"
+  fi
+
+  local version_file="release/JIEJIE_VERSION"
+  [ -f "$version_file" ] || die \
+    "no $version_file in this checkout. It is the single authority for the release version, so a release cannot proceed without it."
+  local version
+  version="$(tr -d '[:space:]' < "$version_file")"
+  [ -n "$version" ] || die "$version_file is empty"
+  if [[ "$version" = *[!0-9A-Za-z._+-]* ]]; then
+    die "$version_file contains '$version', which has characters outside [0-9A-Za-z._+-]"
+  fi
+
+  # The tag names the version, so the two must be the same release. `v` plus the file.
+  [ "$tag" = "v$version" ] || die \
+    "tag '$tag' names version '${tag#v}', but $version_file says '$version'.
+      The tag and the version source disagree, so any artifact named from one would
+      misdescribe the other."
+
+  printf '%s\n' "$version"
+  note "$version_file = $version (matches tag $tag)"
+}
+
+# ---------------------------------------------------------------------------
 # plan
 # ---------------------------------------------------------------------------
 #
@@ -408,6 +458,103 @@ cmd_download() {
 }
 
 # ---------------------------------------------------------------------------
+# desktop
+# ---------------------------------------------------------------------------
+#
+# Stages the Windows desktop installer for the release.
+#
+# Unlike the four tarball products, the desktop workflow is dispatch-only and produces a
+# signed-test installer that is NOT a tarball, so it cannot go through the plan/download
+# pair: there is no run to select before one has been dispatched. It is therefore required
+# to already have a successful run on the commit being released, and this step finds it,
+# waits for it if it is still going, downloads it and stages the artifact directory.
+#
+# Two things are deliberately NOT done here:
+#
+#   * the workflow is not dispatched. A release that starts a 90-minute Windows build as a
+#     side effect of being published is a release whose inputs were not reviewed; the run
+#     is required to exist, and the failure message says which command produces one.
+#   * the artifact directory is not filtered. The whole thing is staged, because the build
+#     record has to be read to prove the installer's core, and `check-upload` is what keeps
+#     the record out of the published set.
+
+DESKTOP_WORKFLOW=".github/workflows/client-desktop-windows.yml"
+
+cmd_desktop() {
+  local repo="" sha="" out="" interval=30 timeout=5400 v=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --repo) repo="${2:-}"; shift 2 ;;
+      --sha) sha="${2:-}"; shift 2 ;;
+      --out) out="${2:-}"; shift 2 ;;
+      --interval) interval="${2:-}"; shift 2 ;;
+      --timeout) timeout="${2:-}"; shift 2 ;;
+      *) die "desktop: unknown argument '$1'" ;;
+    esac
+  done
+  [ -n "$repo" ] || die "desktop: --repo is required"
+  [ -n "$sha" ] || die "desktop: --sha is required"
+  [ -n "$out" ] || die "desktop: --out is required"
+
+  local wfid
+  wfid="$(resolve_workflow_id "$repo" "$DESKTOP_WORKFLOW")"
+
+  rm -rf "$out"
+  mkdir -p "$out"
+
+  local started now elapsed row rid rnum status conclusion created url head_sha rwfid
+  started="$(date +%s)"
+  while :; do
+    row="$(newest_run "$repo" "$wfid" "$sha")"
+    if [ -z "$row" ]; then
+      die "no run of $DESKTOP_WORKFLOW exists for $sha, so there is no verified Windows installer to publish.
+      Dispatch it first, then re-run this release:
+        gh workflow run client-desktop-windows.yml --repo $repo \\
+          -f core_sha=$sha -f core_version=<version>
+      A release that silently omitted the installer would still publish, which is why this is fatal."
+    fi
+    [ "$(printf '%s' "$row" | awk -F'\t' '{print NF}')" -eq 8 ] || die \
+      "the API returned a desktop run row with the wrong number of fields:
+      $row"
+    IFS=$'\t' read -r rid rnum status conclusion created url head_sha rwfid <<<"$row"
+
+    if ! is_in_flight "$status"; then
+      break
+    fi
+    now="$(date +%s)"
+    elapsed=$((now - started))
+    if [ "$elapsed" -ge "$timeout" ]; then
+      die "timed out after ${timeout}s waiting for the desktop run on $sha.
+      run $rid is still '$status': $url"
+    fi
+    note "waiting for desktop run $rid (status $status) on $sha; ${elapsed}s elapsed"
+    sleep "$interval"
+  done
+
+  [ "$head_sha" = "$sha" ] || die \
+    "desktop run $rid is for $head_sha, but this release is $sha."
+  case "$conclusion" in
+    success) ;;
+    *) die "the desktop run for $sha concluded '$conclusion', not success.
+      run $rid: $url
+      An unverified installer must not be published." ;;
+  esac
+
+  note "downloading desktop run $rid -> $out"
+  if ! gh run download "$rid" --repo "$repo" --dir "$out"; then
+    die "gh run download failed for desktop run $rid. The installer is NOT verified; refusing to continue."
+  fi
+
+  local subdirs files
+  subdirs="$(find "$out" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
+  [ "$subdirs" -eq 1 ] || die \
+    "desktop run $rid produced $subdirs artifact directories in $out, expected exactly 1. The shipped file set must be deterministic."
+  files="$(find "$out" -type f | wc -l | tr -d ' ')"
+  [ "$files" -gt 0 ] || die "desktop run $rid downloaded no files into $out"
+  note "PASS: desktop run $rid downloaded ($files files)"
+}
+
+# ---------------------------------------------------------------------------
 # verify
 # ---------------------------------------------------------------------------
 
@@ -551,12 +698,66 @@ verify_platform() {
   note "    verified: binary, checksum, build info, platform magic, commit $sha"
 }
 
+# verify_desktop <staged dir> <sha> <version>
+#
+# The desktop installer is verified from the workflow's own build record, not from its
+# file name. A name containing the version proves nothing: the v0.1.6 installer was for a
+# while produced from a tree whose version literals still said 0.1.5, so the two carriers
+# have to be read and compared rather than assumed to agree.
+#
+# The record is the same BUILD-INFO the desktop workflow writes into its artifact, and it
+# is deliberately NOT published - it is read here and left in the staging directory, which
+# the public allowlist then refuses to copy.
+verify_desktop() {
+  local staged="$1" sha="$2" version="$3"
+  local record name expected_name declared_sha declared_version declared_bytes declared_sha256
+
+  # The record is whichever BUILD-INFO-the-desktop-workflow produced; its exact filename
+  # carries the version, so it is found rather than guessed.
+  record="$(find "$staged" -maxdepth 1 -type f -name 'BUILD-INFO-WINDOWS-DESKTOP-*.txt' -print -quit)"
+  [ -n "$record" ] || die \
+    "the desktop artifact carries no BUILD-INFO-WINDOWS-DESKTOP-*.txt. Without the build record the installer's core cannot be proven, and a name is not provenance."
+
+  field() { sed -n "s/^$1[[:space:]]\{1,\}//p" "$record" | head -1; }
+
+  expected_name="Jiejiebox-v${version}-windows-x64.exe"
+  name="$(field 'artifact')"
+  declared_sha="$(field 'core SHA')"
+  declared_version="$(field 'core version')"
+  declared_bytes="$(field 'artifact bytes')"
+  declared_sha256="$(field 'artifact sha256')"
+
+  [ "$name" = "$expected_name" ] || die \
+    "the desktop build record names '$name', but this release publishes '$expected_name'."
+  [ "$declared_sha" = "$sha" ] || die \
+    "the desktop installer was built from core $declared_sha, but this release is $sha.
+      A name containing the version is not provenance; the recorded commit is."
+  [ "$declared_version" = "$version" ] || die \
+    "the desktop build record says core version '$declared_version', expected '$version'."
+
+  local installer="$staged/$expected_name"
+  [ -f "$installer" ] || die "the desktop artifact has no $expected_name"
+
+  local actual_bytes actual_sha
+  actual_bytes="$(wc -c < "$installer" | tr -d ' ')"
+  [ "$actual_bytes" = "$declared_bytes" ] || die \
+    "$expected_name is $actual_bytes bytes but the build record says $declared_bytes."
+  actual_sha="$(sha256_of "$installer")"
+  [ "$actual_sha" = "$declared_sha256" ] || die \
+    "$expected_name hashes to $actual_sha but the build record says $declared_sha256.
+      The record and the binary are not from the same build."
+
+  note "PASS: desktop $expected_name verified against $declared_sha (version $declared_version)"
+}
+
 cmd_verify() {
-  local dir="" sha=""
+  local dir="" sha="" desktop_dir="" version=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --dir) dir="${2:-}"; shift 2 ;;
       --sha) sha="${2:-}"; shift 2 ;;
+      --desktop-dir) desktop_dir="${2:-}"; shift 2 ;;
+      --version) version="${2:-}"; shift 2 ;;
       *) die "verify: unknown argument '$1'" ;;
     esac
   done
@@ -568,6 +769,17 @@ cmd_verify() {
   for wf in "${TARGET_WORKFLOWS[@]}"; do
     verify_platform "$dir" "$sha" "$wf"
   done
+
+  # The desktop installer is part of the public contract, so it is verified too - and
+  # required, because a release that silently shipped without it would still pass every
+  # check below.
+  if [ -n "$desktop_dir" ]; then
+    [ -n "$version" ] || die "verify: --version is required with --desktop-dir"
+    [ -d "$desktop_dir" ] || die "verify: '$desktop_dir' does not exist"
+    verify_desktop "$desktop_dir" "$sha" "$version"
+  else
+    die "verify: --desktop-dir is required. The Windows desktop installer is a public deliverable; a release without it is incomplete."
+  fi
 
   # Nothing outside the contract may reach the release. The allowlist is derived
   # from the same table that produced the checks above, so a third product cannot
@@ -599,13 +811,15 @@ $(printf '      %s\n' $unexpected)
 # ---------------------------------------------------------------------------
 
 cmd_flatten() {
-  local plan="" dir="" out="" tag=""
+  local plan="" dir="" out="" tag="" desktop="" version=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --plan) plan="${2:-}"; shift 2 ;;
       --dir) dir="${2:-}"; shift 2 ;;
       --out) out="${2:-}"; shift 2 ;;
       --tag) tag="${2:-}"; shift 2 ;;
+      --desktop) desktop="${2:-}"; shift 2 ;;
+      --version) version="${2:-}"; shift 2 ;;
       *) die "flatten: unknown argument '$1'" ;;
     esac
   done
@@ -613,6 +827,8 @@ cmd_flatten() {
   [ -n "$dir" ] || die "flatten: --dir is required"
   [ -n "$out" ] || die "flatten: --out is required"
   [ -n "$tag" ] || die "flatten: --tag is required"
+  [ -n "$desktop" ] || die "flatten: --desktop is required"
+  [ -n "$version" ] || die "flatten: --version is required"
   case "$tag" in
     v[0-9]*) ;;
     *) die "flatten: '$tag' is not a release tag" ;;
@@ -621,6 +837,11 @@ cmd_flatten() {
   # the note in cmd_check_tag for why this is a bash glob and not `grep -q`.
   if [[ "$tag" = *[!0-9A-Za-z._+-]* ]]; then
     die "flatten: tag '$tag' contains unsafe characters"
+  fi
+  # The version is interpolated into a filename too, and it is the value the installer
+  # name must carry, so it is checked here as well rather than trusted from the caller.
+  if [[ "$version" = *[!0-9A-Za-z._+-]* ]]; then
+    die "flatten: version '$version' contains unsafe characters"
   fi
 
   rm -rf "$out"
@@ -649,15 +870,74 @@ $(printf '      %s\n' $actual)"
     note "packaged $out/${prefix}-${tag}.tar.gz"
   done
 
-  # One manifest over the tarballs. `./`-prefixed names, matching the format the
-  # previous releases published, so existing verification instructions still work.
+  # The desktop installer is a public deliverable but NOT a tarball: it is copied in
+  # under the exact name the release publishes, so its filename and the name inside
+  # SHA256SUMS are the same string by construction rather than by agreement.
+  [ -f "$desktop" ] || die "flatten: no desktop installer at '$desktop'"
+  local installer="Jiejiebox-v${version}-windows-x64.exe"
+  cp "$desktop" "$out/$installer"
+  note "staged $installer"
+
+  # ---- the public asset contract -------------------------------------------
+  #
+  # This is the allowlist, and it is enforced twice: nothing unexpected may be in the
+  # staging directory, and every expected name must be there exactly once. A build that
+  # added a file - the CI records the desktop workflow also uploads, a stray .sha256, a
+  # log - fails here rather than shipping it to the download page.
+  #
+  # The expected set is derived from TARGET_WORKFLOWS plus the installer, so a product
+  # cannot be added to one and forgotten in the other.
+  local expected_assets=() wf2
+  for wf2 in "${TARGET_WORKFLOWS[@]}"; do
+    expected_assets+=( "$(target_field "$wf2" tarball)-${tag}.tar.gz" )
+  done
+  expected_assets+=( "$installer" )
+  # SHA256SUMS covers those five and is written below; it is part of the contract.
+  expected_assets+=( SHA256SUMS )
+
+  local listing
+  listing="$(find "$out" -mindepth 1 -maxdepth 1 -exec basename {} \; | sort)"
+  local want_listing
+  want_listing="$(printf '%s\n' "${expected_assets[@]}" | sort)"
+  [ "$listing" = "$want_listing" ] || die \
+    "the staged release does not match the public asset contract.
+    expected exactly:
+$(printf '      %s\n' $want_listing)
+    found:
+$(printf '      %s\n' $listing)"
+
+  for asset in "${expected_assets[@]}"; do
+    [ "$asset" = SHA256SUMS ] && continue
+    local copies
+    copies="$(count_files "$out" -maxdepth 1 -type f -name "$asset")"
+    [ "$copies" -eq 1 ] || die \
+      "$asset: found $copies copies in the staged release, expected exactly 1. Every public deliverable must appear once."
+  done
+
+  # ---- one manifest over every public binary --------------------------------
+  #
+  # SHA256SUMS describes the bytes that are about to be published, and it names them the
+  # way the release page does - bare filenames, no './' prefix, because that is the string
+  # a downloader has. Sorted by filename so the file is stable across runs, and written
+  # into the staging directory so the listing check above already saw it.
   (
     cd "$out"
     : > SHA256SUMS
-    for archive in ./*.tar.gz; do
-      printf '%s  %s\n' "$(sha256_of "$archive")" "$archive" >> SHA256SUMS
-    done
+    local name
+    while IFS= read -r name; do
+      [ "$name" = SHA256SUMS ] && continue
+      printf '%s  %s\n' "$(sha256_of "$name")" "$name" >> SHA256SUMS
+    done < <(find . -mindepth 1 -maxdepth 1 -type f -exec basename {} \; | sort)
   )
+  # Prove the manifest before it is published. `sha256sum -c` is the exact command the
+  # release notes tell a downloader to run, so a manifest that cannot satisfy it must not
+  # reach the release.
+  local entries
+  entries="$(grep -c . "$out/SHA256SUMS" | tr -d ' ')"
+  [ "$entries" -eq "${#expected_assets[@]}" - 1 ] || die \
+    "SHA256SUMS has $entries entries, expected $(( ${#expected_assets[@]} - 1 )) - one per public binary."
+  check_sha256_file "$out" SHA256SUMS >/dev/null ||
+    die "SHA256SUMS does not verify against the files it names"
 
   local archives
   archives="$(count_files "$out" -maxdepth 1 -type f -name '*.tar.gz')"
@@ -692,17 +972,116 @@ cmd_publish_flag() {
 }
 
 # ---------------------------------------------------------------------------
+# check-upload
+# ---------------------------------------------------------------------------
+#
+# The public asset contract, checked against the staging DIRECTORY rather than against the
+# command that filled it. It runs as its own step immediately before publishing, so the
+# last thing between this repository and the download page is a statement about what is
+# actually on disk:
+#
+#   exactly these files, no more and no fewer:
+#     Jiejiebox-v<version>-windows-x64.exe
+#     jiejie-sing-box-{linux-amd64,macos-arm64,windows-amd64,android-arm64}-<tag>.tar.gz
+#     SHA256SUMS
+#
+# and SHA256SUMS names every one of them, with no entry for anything else, and verifies.
+
+cmd_check_upload() {
+  local out="" tag="" version=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --out) out="${2:-}"; shift 2 ;;
+      --tag) tag="${2:-}"; shift 2 ;;
+      --version) version="${2:-}"; shift 2 ;;
+      *) die "check-upload: unknown argument '$1'" ;;
+    esac
+  done
+  [ -n "$out" ] || die "check-upload: --out is required"
+  [ -n "$tag" ] || die "check-upload: --tag is required"
+  [ -n "$version" ] || die "check-upload: --version is required"
+  [ -d "$out" ] || die "check-upload: '$out' does not exist"
+  if [[ "$version" = *[!0-9A-Za-z._+-]* ]]; then
+    die "check-upload: version '$version' contains unsafe characters"
+  fi
+
+  local expected=() wf
+  for wf in "${TARGET_WORKFLOWS[@]}"; do
+    expected+=( "$(target_field "$wf" tarball)-${tag}.tar.gz" )
+  done
+  expected+=( "Jiejiebox-v${version}-windows-x64.exe" SHA256SUMS )
+
+  local want found extra missing
+  want="$(printf '%s\n' "${expected[@]}" | sort)"
+  found="$(find "$out" -mindepth 1 -maxdepth 1 -exec basename {} \; | sort)"
+
+  extra="$(comm -13 <(printf '%s\n' "$want") <(printf '%s\n' "$found"))"
+  missing="$(comm -23 <(printf '%s\n' "$want") <(printf '%s\n' "$found"))"
+  [ -z "$extra" ] || die \
+    "the upload directory holds file(s) that are not public deliverables:
+$(printf '      %s\n' $extra)
+      Release assets are the user's download page. CI records - BUILD-INFO-*, *.sha256
+      sidecars, runner environment and build logs - belong in Actions artifacts, which is
+      where the workflows already put them."
+  [ -z "$missing" ] || die \
+    "the upload directory is missing public deliverable(s):
+$(printf '      %s\n' $missing)"
+
+  # Every expected name exactly once. `find -maxdepth 1 -type f` counts name collisions
+  # that a sorted listing would show as one line only when they are truly the same file.
+  local asset copies
+  for asset in "${expected[@]}"; do
+    copies="$(count_files "$out" -maxdepth 1 -type f -name "$asset")"
+    [ "$copies" -eq 1 ] || die \
+      "$asset: found $copies copies, expected exactly 1. A duplicate would publish two different files under one name."
+  done
+
+  # SHA256SUMS must name exactly the public binaries - no entry for a file that is not
+  # published, and no published binary left out.
+  local binaries=() e
+  for e in "${expected[@]}"; do
+    [ "$e" = SHA256SUMS ] && continue
+    binaries+=( "$e" )
+  done
+  local named want_named
+  # `sha256sum` output is "<64 hex>  <name>"; an older manifest used a './' prefix, so the
+  # prefix is stripped rather than assumed absent. Either spelling names the same file.
+  named="$(sed -n 's/^[0-9a-f]\{64\}  \.\{0,2\}\([^ ].*\)$/\1/p' "$out/SHA256SUMS" | sort)"
+  want_named="$(printf '%s\n' "${binaries[@]}" | sort)"
+  [ "$named" = "$want_named" ] || die \
+    "SHA256SUMS does not name exactly the published binaries.
+    expected:
+$(printf '      %s\n' $want_named)
+    found:
+$(printf '      %s\n' $named)"
+
+  local entries
+  entries="$(grep -c . "$out/SHA256SUMS" | tr -d ' ')"
+  [ "$entries" -eq "${#binaries[@]}" ] || die \
+    "SHA256SUMS has $entries entries but there are ${#binaries[@]} public binaries."
+
+  check_sha256_file "$out" SHA256SUMS >/dev/null ||
+    die "sha256sum -c SHA256SUMS does not pass in the upload directory"
+
+  note "PASS: the upload directory is exactly the public asset contract"
+  note "      ${#binaries[@]} binaries + SHA256SUMS, each once, manifest verifies"
+}
+
+# ---------------------------------------------------------------------------
 
 main() {
-  [ "$#" -gt 0 ] || die "usage: release-artifacts.sh <check-tag|plan|download|verify|flatten|publish-flag> [args]"
+  [ "$#" -gt 0 ] || die "usage: release-artifacts.sh <check-tag|release-version|plan|download|desktop|verify|flatten|check-upload|publish-flag> [args]"
   local sub="$1"
   shift
   case "$sub" in
     check-tag) cmd_check_tag "$@" ;;
+    release-version) cmd_release_version "$@" ;;
     plan) cmd_plan "$@" ;;
     download) cmd_download "$@" ;;
+    desktop) cmd_desktop "$@" ;;
     verify) cmd_verify "$@" ;;
     flatten) cmd_flatten "$@" ;;
+    check-upload) cmd_check_upload "$@" ;;
     publish-flag) cmd_publish_flag "$@" ;;
     *) die "unknown subcommand '$sub'" ;;
   esac

@@ -286,9 +286,42 @@ def main():
         (state / "release_created").write_text(" ".join(args[2:]))
         return 0
     if args[0] == "release" and len(args) > 1 and args[1] == "view":
-        # The publish step reads the release back to report what it created.
+        # The publish step reads the release back and asserts the published asset set is
+        # exactly the public contract, so the mock answers that query rather than printing
+        # a canned summary.
         record("release view " + " ".join(args[2:]))
-        print("url: https://example.invalid/releases/tag/v0.1")
+        tag = args[2] if len(args) > 2 else "v0.1"
+        assets = scenario.get("published_assets")
+        if assets is None:
+            # Default: what a correct release published for this tag.
+            version = scenario.get("version", "0.1")
+            assets = [
+                "Jiejiebox-v%s-windows-x64.exe" % version,
+                "jiejie-sing-box-android-arm64-%s.tar.gz" % tag,
+                "jiejie-sing-box-linux-amd64-%s.tar.gz" % tag,
+                "jiejie-sing-box-macos-arm64-%s.tar.gz" % tag,
+                "jiejie-sing-box-windows-amd64-%s.tar.gz" % tag,
+                "SHA256SUMS",
+            ]
+        if "--json" in args:
+            want = args[args.index("--json") + 1]
+            if want == "assets":
+                filt = args[args.index("--jq") + 1] if "--jq" in args else None
+                document = {"assets": [{"name": n, "size": 1} for n in assets]}
+                if filt == ".assets[].name":
+                    sys.stdout.write("".join(n + "\n" for n in assets))
+                elif filt:
+                    sys.stdout.write(jq_filter(document, filt))
+                else:
+                    sys.stdout.write(json.dumps(document))
+                return 0
+            if want == "url,isDraft,isPrerelease,tagName,assets":
+                print("url: https://example.invalid/releases/tag/%s" % tag)
+                print("isDraft: false")
+                print("isPrerelease: false")
+                print("tag: %s" % tag)
+                return 0
+        print("url: https://example.invalid/releases/tag/%s" % tag)
         print("isDraft: false")
         print("isPrerelease: false")
         return 0
@@ -338,6 +371,62 @@ sha_of() { # portable, matching scripts/ci/lib.sh
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
   else shasum -a 256 "$1" | awk '{print $1}'; fi
 }
+
+# The desktop control fixture every verify case is run against. Built here because it needs
+# make_binary and sha_of above.
+DESKTOP_DIR="$work/desktop-control"
+
+# make_desktop <dir> <version> <core sha> [flags...]
+#
+# The Windows desktop artifact as its workflow uploads it: the signed-test installer plus a
+# build record. `flags` injects the defects the release must refuse:
+#
+#   no-record        the build record is absent (nothing proves the installer's core)
+#   record-sha       the record names another core commit
+#   record-version   the record names another version
+#   bytes            the record's byte count does not match the file
+#   hash             the record's sha256 does not match the file
+#   wrong-name       the installer is named for another version
+#   extra-record     a CI record that must not be published
+#
+# The record's shape mirrors the real one: labels padded, values after runs of spaces,
+# read by `sed -n 's/^<label>[[:space:]]\{1,\}//p'`.
+make_desktop() {
+  local dir="$1" version="$2" core_sha="$3"
+  shift 3
+  local flags=" $* "
+  rm -rf "$dir"; mkdir -p "$dir"
+
+  local name="Jiejiebox-v${version}-windows-x64.exe"
+  [[ "$flags" == *" wrong-name "* ]] && name="Jiejiebox-v9.9.9-windows-x64.exe"
+  make_binary "$dir/$name" "elf-x86-64"
+
+  local bytes hash record_sha="$core_sha" record_version="$version"
+  bytes="$(wc -c < "$dir/$name" | tr -d ' ')"
+  hash="$(sha_of "$dir/$name")"
+  [[ "$flags" == *" record-sha "* ]] && record_sha="2222222222222222222222222222222222222222"
+  [[ "$flags" == *" record-version "* ]] && record_version="9.9.9"
+  [[ "$flags" == *" bytes "* ]] && bytes="$((bytes + 1))"
+  [[ "$flags" == *" hash "* ]] && hash="3333333333333333333333333333333333333333333333333333333333333333"
+
+  if [[ "$flags" != *" no-record "* ]]; then
+    {
+      printf 'Jiejiebox Windows installer build record\n\n'
+      printf 'core SHA          %s\n' "$record_sha"
+      printf 'core version      %s\n' "$record_version"
+      printf 'artifact          %s\n' "$name"
+      printf 'artifact bytes    %s\n' "$bytes"
+      printf 'artifact sha256   %s\n' "$hash"
+    } > "$dir/BUILD-INFO-WINDOWS-DESKTOP-${version}.txt"
+  fi
+
+  if [[ "$flags" == *" extra-record "* ]]; then
+    printf 'runner: ubuntu-latest\n' > "$dir/runner-environment.txt"
+  fi
+}
+
+# Built once, before any verify case runs.
+make_desktop "$DESKTOP_DIR" "0.1" "$SHA"
 
 # make_artifact <dir> <binary> <buildinfo> <platform> <arch> <kind> <commit> [flags...]
 #
@@ -455,6 +544,17 @@ run_gate() {
     "$gate" "$@"
 }
 
+# verify_with_desktop <args...>
+#
+# `verify` takes the desktop installer as a required input, because a release without it
+# would still pass every other check. Every verify case here goes through this wrapper so
+# the requirement is satisfied in one place rather than repeated at a dozen call sites,
+# and so a case that fails does so for the reason it is testing rather than for the
+# missing installer. DESKTOP_DIR is created below, once make_desktop exists.
+verify_with_desktop() {
+  run_gate verify --desktop-dir "$DESKTOP_DIR" --version 0.1 "$@"
+}
+
 # gate_setup <label> <gate args...>
 #
 # A prerequisite command for a later assertion. Its failure is RECORDED as a failed
@@ -525,16 +625,44 @@ if [ -f "$plan" ]; then
 fi
 
 expect_ok "download from the planned runs -> PASS" download --repo o/r --plan "$plan" --dir "$work/assets"
-expect_ok "verify both platforms -> PASS" verify --dir "$work/assets" --sha "$SHA"
-expect_ok "flatten -> PASS" flatten --plan "$plan" --dir "$work/assets" --out "$work/upload" --tag v0.1
 
-if [ "$(find "$work/upload" -maxdepth 1 -name '*.tar.gz' | wc -l | tr -d ' ')" = "2" ] \
+# The desktop installer is staged from its own workflow artifact and verified from its
+# build record, so it is a required input to both verify and flatten.
+make_desktop "$work/desktop" "0.1" "$SHA"
+expect_ok "verify both platforms and the desktop installer -> PASS" \
+  verify --desktop-dir "$work/desktop" --version 0.1 --dir "$work/assets" --sha "$SHA"
+expect_ok "flatten -> PASS" flatten --plan "$plan" --dir "$work/assets" --out "$work/upload" \
+  --tag v0.1 --desktop "$work/desktop/Jiejiebox-v0.1-windows-x64.exe" --version 0.1
+
+# The published set is the contract: four tarballs, the installer and one manifest.
+# SHA256SUMS covers all five binaries and nothing else.
+if [ "$(find "$work/upload" -maxdepth 1 -type f | wc -l | tr -d ' ')" = "6" ] \
+   && [ -f "$work/upload/Jiejiebox-v0.1-windows-x64.exe" ] \
    && [ -f "$work/upload/SHA256SUMS" ] \
-   && [ "$(grep -c . "$work/upload/SHA256SUMS")" = "2" ]; then
-  report "flatten emits exactly two tarballs and a two-line manifest" 0 0
+   && [ "$(grep -c . "$work/upload/SHA256SUMS")" = "5" ]; then
+  report "flatten emits the five public binaries and a five-line manifest" 0 0
 else
-  report "flatten emits exactly two tarballs and a two-line manifest" 0 1 "wrong asset set"
+  report "flatten emits the five public binaries and a five-line manifest" 0 1 "wrong asset set"
 fi
+
+# The manifest must name the files the way the download page does - bare names, no './' -
+# or a downloader's `sha256sum -c` would look for a path that does not exist.
+if [ "$(sed -n 's/^[0-9a-f]\{64\}  //p' "$work/upload/SHA256SUMS" | grep -c '^\./')" = "0" ] \
+   && [ "$(sed -n 's/^[0-9a-f]\{64\}  //p' "$work/upload/SHA256SUMS" | grep -c 'Jiejiebox-')" = "1" ]; then
+  report "the manifest names bare filenames and covers the installer" 0 0
+else
+  report "the manifest names bare filenames and covers the installer" 0 1 "manifest shape wrong"
+fi
+
+# And it must actually verify, in the directory it describes.
+if ( cd "$work/upload" && sha256sum -c SHA256SUMS >/dev/null 2>&1 ); then
+  report "sha256sum -c SHA256SUMS passes in the upload directory" 0 0
+else
+  report "sha256sum -c SHA256SUMS passes in the upload directory" 0 1 "manifest does not verify"
+fi
+
+expect_ok "check-upload accepts the staged contract" \
+  check-upload --out "$work/upload" --tag v0.1 --version 0.1
 
 # The tarball contents are pinned, so the shipped file set cannot grow silently.
 # The `./` entry is tar's own directory record, not a file in the artifact.
@@ -678,7 +806,7 @@ gate_setup "plan for the duplicated-binary scenario" plan --repo o/r --sha "$SHA
 gate_setup "download for the duplicated-binary scenario" download --repo o/r --plan "$work/plan-dup2.tsv" --dir "$work/assets-dup2"
 cp -R "$work/assets-dup2/sing-box-linux-amd64/Jiejie-Linux-amd64-0.1-1111111" "$work/assets-dup2/sing-box-linux-amd64/COPY"
 expect_fail "two copies of one binary in the verify tree -> FAIL" "expected exactly 1" -- \
-  verify --dir "$work/assets-dup2" --sha "$SHA"
+  verify --desktop-dir "$DESKTOP_DIR" --version 0.1 --dir "$work/assets-dup2" --sha "$SHA"
 
 # A good baseline for the negative verify cases: one broken platform, one fine.
 # macOS is left valid on purpose - a Linux-only problem must still fail.
@@ -689,7 +817,7 @@ verify_case() { # <name> <expected substring> <make-linux-args...>
   gate_setup "plan (setup)" plan --repo o/r --sha "$SHA" --out "$work/vp.tsv" --interval 1 --timeout 10
   rm -rf "$work/vassets"
   gate_setup "download (setup)" download --repo o/r --plan "$work/vp.tsv" --dir "$work/vassets"
-  expect_fail "$name" "$want" -- verify --dir "$work/vassets" --sha "$SHA"
+  expect_fail "$name" "$want" -- verify --desktop-dir "$DESKTOP_DIR" --version 0.1 --dir "$work/vassets" --sha "$SHA"
 }
 
 verify_case "missing .sha256 for one platform -> FAIL" "sing-box-linux-amd64.sha256: found 0 copies" \
@@ -711,7 +839,7 @@ write_scenario base_r "pass"
 gate_setup "plan (setup)" plan --repo o/r --sha "$SHA" --out "$work/plan-r.tsv" --interval 1 --timeout 10
 rm -rf "$work/assets-r"
 gate_setup "download (setup)" download --repo o/r --plan "$work/plan-r.tsv" --dir "$work/assets-r"
-expect_ok "the restored good pair verifies again (control)" verify --dir "$work/assets-r" --sha "$SHA"
+expect_ok "the restored good pair verifies again (control)" verify --desktop-dir "$DESKTOP_DIR" --version 0.1 --dir "$work/assets-r" --sha "$SHA"
 
 # The macOS slot is enforced independently of the Linux one: a Linux binary
 # renamed to the macOS binary name must not pass on the strength of its name, and
@@ -723,7 +851,7 @@ verify_case_macos() { # <name> <expected substring> <make-macos-args...>
   gate_setup "plan (setup)" plan --repo o/r --sha "$SHA" --out "$work/vpm.tsv" --interval 1 --timeout 10
   rm -rf "$work/vmassets"
   gate_setup "download (setup)" download --repo o/r --plan "$work/vpm.tsv" --dir "$work/vmassets"
-  expect_fail "$name" "$want" -- verify --dir "$work/vmassets" --sha "$SHA"
+  expect_fail "$name" "$want" -- verify --desktop-dir "$DESKTOP_DIR" --version 0.1 --dir "$work/vmassets" --sha "$SHA"
   # Restore the good macOS fixture for the cases that follow.
   make_artifact "$work/fixtures/macos" sing-box-darwin-arm64 BUILD-INFO-MACOS.txt darwin arm64 macho-arm64 "$SHA"
 }
@@ -748,7 +876,7 @@ make_artifact "$work/fixtures/linux" sing-box-linux-amd64 BUILD-INFO-LINUX.txt l
 write_scenario base_r3 "pass"
 gate_setup "re-download after restoring the fixtures" plan --repo o/r --sha "$SHA" --out "$work/plan-r3.tsv" --interval 1 --timeout 10
 gate_setup "re-download after restoring the fixtures" download --repo o/r --plan "$work/plan-r3.tsv" --dir "$work/assets-r3"
-expect_ok "the restored fixtures verify again (control)" verify --dir "$work/assets-r3" --sha "$SHA"
+expect_ok "the restored fixtures verify again (control)" verify --desktop-dir "$DESKTOP_DIR" --version 0.1 --dir "$work/assets-r3" --sha "$SHA"
 
 # ---------------------------------------------------------------------------
 # Case 7: the publish decision fails closed
@@ -881,7 +1009,7 @@ write_scenario dryrun "pass"
 rm -f "$work/state/release_created"
 gate_setup "plan (setup)" plan --repo o/r --sha "$SHA" --out "$work/dry.tsv" --interval 1 --timeout 10
 gate_setup "download (setup)" download --repo o/r --plan "$work/dry.tsv" --dir "$work/dry-assets"
-gate_setup "verify (setup)" verify --dir "$work/dry-assets" --sha "$SHA"
+gate_setup "verify (setup)" verify --desktop-dir "$DESKTOP_DIR" --version 0.1 --dir "$work/dry-assets" --sha "$SHA"
 gate_setup "flatten (setup)" flatten --plan "$work/dry.tsv" --dir "$work/dry-assets" --out "$work/dry-upload" --tag v0.1
 publish="$(run_gate publish-flag --dry-run true)"
 if [ "$publish" = "false" ] && [ ! -f "$work/state/release_created" ]; then

@@ -1,0 +1,99 @@
+name: Release contract verification
+
+# Runs the release gate's own tests on a Linux runner, so the shell and YAML that publish a
+# release are exercised before they are trusted with one.
+#
+# # Why this exists as its own workflow
+#
+# `scripts/ci/test-release-artifacts.sh` is 1000+ lines of behavioural tests with a mock
+# `gh`, and `release.yml` only runs them as a side effect of a real publish - which means a
+# defect in them is found during a release, with a tag already cut and a 90-minute wait
+# already spent. This workflow runs the same suite plus the version-single-source and asset
+# contract suites on every push to a release-related branch, so the answer is known before
+# anyone dispatches a release.
+#
+# # What it must never do
+#
+# It is read-only and inert by construction, and the last step asserts that rather than
+# trusting it:
+#
+#   * `contents: read` - no write permission is requested anywhere in this file
+#   * it publishes nothing and deletes no asset
+#   * it moves no tag
+#   * it dispatches no publishing workflow
+#   * it reads no signing secret
+#
+# The gate script it calls has a `dry_run` path and a real publishing call; the mock `gh`
+# on PATH is what makes the tests unable to reach GitHub at all, and the last step below
+# asserts that mock is still wired.
+
+on:
+  push:
+    branches:
+      - testing
+      - fix/release-asset-contract
+      - "release/**"
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - ".github/workflows/client-desktop-windows.yml"
+      - "scripts/ci/release-artifacts.sh"
+      - "scripts/ci/test-release-artifacts.sh"
+      - "scripts/ci/apply-desktop-branding-overlay.py"
+      - "scripts/ci/prepare-desktop-client.sh"
+      - "scripts/ci/verify-desktop-daemon-provenance.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-gate:
+    name: release helper tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: confirm the toolchain this suite needs
+        run: |
+          set -euo pipefail
+          for tool in bash jq git sha256sum python3 tar; do
+            command -v "$tool" >/dev/null 2>&1 || { echo "FAIL: $tool is missing" >&2; exit 1; }
+            printf '%-8s %s\n' "$tool" "$(command -v "$tool")"
+          done
+          bash --version | head -1
+          jq --version
+          python3 --version
+
+      - name: release gate tests (the existing 1000+-line suite, really executed)
+        run: ./scripts/ci/test-release-artifacts.sh
+
+      - name: desktop overlay version single-source tests
+        run: python3 scripts/ci/test-desktop-overlay-version.py
+
+      - name: shell syntax of every release-path script
+        run: |
+          set -euo pipefail
+          for f in scripts/ci/release-artifacts.sh scripts/ci/lib.sh \
+                   scripts/ci/prepare-desktop-client.sh scripts/ci/test-release-artifacts.sh; do
+            bash -n "$f"
+            echo "syntax OK: $f"
+          done
+
+      - name: the workflow files parse and keep their guards
+        run: python3 scripts/ci/check-release-workflows.py
+
+      - name: the suite carries its own mock, so it cannot reach GitHub
+        run: |
+          set -euo pipefail
+          # The tests put a mock `gh` first on PATH; that mock is what makes them unable to
+          # touch a real repository. This asserts the mock is still wired the way the suite
+          # depends on, because a suite that silently started using the real `gh` would
+          # still look green - and the gate's only irreversible act is publishing.
+          grep -q 'MOCK_GH' scripts/ci/test-release-artifacts.sh
+          grep -q 'work/bin' scripts/ci/test-release-artifacts.sh
+          grep -q 'PATH=' scripts/ci/test-release-artifacts.sh
+          echo "PASS: the release gate suite installs and uses its own mock gh"

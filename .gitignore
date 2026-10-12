@@ -101,3 +101,9 @@ config/apple/*.env
 # output name is ignored rather than committed by accident.
 /harness
 _consolidation/
+
+# scripts/ci/test-desktop-overlay-version.py imports the overlay as a module so its rule
+# table can be read rather than copied, which leaves a __pycache__ beside it. That is a
+# build product of running the tests, not a source artifact.
+__pycache__/
+*.pyc
