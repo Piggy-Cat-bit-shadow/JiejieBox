@@ -1,4 +1,13 @@
-# STATIC VALIDATION â€?TRUE FINAL CLOSURE
+> **SUPERSEDED BY STATIC_VALIDATION_FINAL_WIRING_CLOSURE.md.** This report is the historical record
+> of its own round and its verdicts were correct for the tree it measured. It is preserved rather
+> than rewritten, per this line of work's convention that audit evidence states what was true when it
+> was written. The one item it records as an open gap â€” the endpoint domain_resolver edge and the
+> default-resolver edge for a domain-server object â€” was closed in the following round; see the
+> wiring closure report for the evidence and the mutations.
+>
+> Its verdict READY_FOR_STATIC_VALIDATION_FREEZE = NO was correct when written and is superseded:
+> the final verdict is YES.
+# STATIC VALIDATION â€”TRUE FINAL CLOSURE
 
 ## Baseline
 
@@ -57,7 +66,7 @@ type TransportRequirement struct {
 so requiring both refuses a working configuration while requiring neither accepts one that carries
 nothing. A flat `Required` list cannot express "at least one".
 
-### HTTP/3 fallback â€?measured, and the requirement is DISJUNCTIVE
+### HTTP/3 fallback â€”measured, and the requirement is DISJUNCTIVE
 
 `http3FallbackTransport.roundTripHTTP3` (`http3_transport.go:138-160`) reaches the H2 fallback
 unconditionally for non-`https` and websocket requests (`:132-134`), when the authority verdict is
@@ -73,16 +82,16 @@ fail (`:252-258`).
 | non-replayable POST, fresh authority | FAIL | 200 (H3 origin) |
 
 Neither transport is individually required; carrying **neither** is the only provably fatal state. The
-previous model listed `Required = {UDP, TCP}` and refused the TCP-only case â€?a false deny. It is now
+previous model listed `Required = {UDP, TCP}` and refused the TCP-only case â€”a false deny. It is now
 `AnyOf = {UDP, TCP}`, and `version: 3` WITH `disable_version_fallback` keeps `AllOf = {UDP}` because
 `newHTTP3Transport` has no H2 path at all.
 
 **A correction to my own comment, found by the review:** a non-replayable body is not the only class
-without a fallback â€?a non-`https` or websocket request on a UDP-only detour goes straight to H2 at
+without a fallback â€”a non-`https` or websocket request on a UDP-only detour goes straight to H2 at
 `:132-134` and never arms `h3Broken`, so it is permanently unservable there. `Conditional: {UDP}`
 records the former, and the comment no longer claims exclusivity.
 
-### UDP DNS truncation retry â€?measured
+### UDP DNS truncation retry â€”measured
 
 | query | UDP-only detour |
 |---|---|
@@ -90,12 +99,12 @@ records the former, and the comment no longer claims exclusivity.
 | truncated | error, **exactly 1 TCP dial** |
 
 `exchangeTCP` has two call sites and both are inside the `response.Truncated` branch
-(`udp.go:120, :131`). UDP is `AllOf`, TCP is `Conditional` â€?the previous `{UDP, TCP}` refused a detour
+(`udp.go:120, :131`). UDP is `AllOf`, TCP is `Conditional` â€”the previous `{UDP, TCP}` refused a detour
 that answers every ordinary query.
 
 ### A second defect the work exposed
 
-`resolvedDetour` asserted `*DetourDialer` directly, so a transport whose **server is a domain** â€?wrapped in a `ResolveDialer` by `RemoteIsDomain` â€?silently reported "nothing to check". MEASURED, DoT
+`resolvedDetour` asserted `*DetourDialer` directly, so a transport whose **server is a domain** â€”wrapped in a `ResolveDialer` by `RemoteIsDomain` â€”silently reported "nothing to check". MEASURED, DoT
 and DoH started with a UDP-only detour while every other type was refused for the same mismatch. The
 wrapper chain is now walked through `Upstream()`.
 
@@ -110,7 +119,7 @@ GROUP_UNION_FALSE_DENY_REMAINS = NO
 **The rule: a group's advertised union is CAPABILITY, not flow demand.** When nothing is PROVEN about
 delivery, each business entry is charged with its OWN advertisement. The structural reason this is
 correct rather than merely convenient: the union is a sum over the exits' own answers, so it exceeds
-an exit's set **only when a sibling advertises more** â€?it can never fail a single-entry root, and
+an exit's set **only when a sibling advertises more** â€”it can never fail a single-entry root, and
 every failure it ever produced was a member of a multi-member group.
 
 Proven demand is unchanged: it is still charged to every exit under the root. `case-08` (`{udp}`) and
@@ -127,7 +136,7 @@ Proven demand is unchanged: it is still charged to every exit under the root. `c
 | `case-10b` | ROUTE_PROVEN `{tcp,udp}` | untouched, still refuses |
 
 The two tests the tree treated as its network-dimension true positives contained no route model at
-all. Preserving them would have meant preserving the false deny â€?the second time in this line of work
+all. Preserving them would have meant preserving the false deny â€”the second time in this line of work
 that an old "control" turned out to encode the defect.
 
 `TestRouteAwareDiagnosticDoesNotClaimAProofTheRoutesNeverMade` is re-pointed at a **proven** refusal
@@ -146,7 +155,7 @@ SHADOWING_SEMANTICS_SOUND           = YES
 CROSS_KIND_GRAPH_CLOSED             = NO
 ```
 
-### The lookup table (primary deliverable) â€?complete
+### The lookup table (primary deliverable) â€”complete
 
 | reference | lookup | precedence / namespace |
 |---|---|---|
@@ -155,10 +164,10 @@ CROSS_KIND_GRAPH_CLOSED             = NO
 | outbound `.detour` / `.domain_resolver` | `detour.go:71` / `resolve.go:107` + `adapter.go:55-57` | outboundâˆªendpoint / DNS-only |
 | endpoint `.detour` | `adapter/endpoint/adapter.go:21-27` | outboundâˆªendpoint |
 | endpoint `.domain_resolver` | `protocol/wireguard/endpoint.go:67-74`, `openvpn/client.go:105-111` | field EXISTS; real edge, CONDITIONAL on a domain peer |
-| `route.default_domain_resolver` | `route/network.go:470-472` â†?`dialer.go:159-164` | per-node fallback policy; CAN close a cycle |
+| `route.default_domain_resolver` | `route/network.go:470-472` â€”`dialer.go:159-164` | per-node fallback policy; CAN close a cycle |
 | HTTP client `.detour`; group members; default | `httpclient/manager.go:108`; `selector.go:170`; `detour.go:76-78` | leaf; members can name endpoints |
 
-### Ordering â€?pinned
+### Ordering â€”pinned
 
 Three guards run before the cross-kind check: decode (`option/options.go:151`, `duplicate
 outbound/endpoint tag`), `box.New` (`:737`), and `lintOutbounds` (in the `outbound` component, which is
@@ -181,24 +190,24 @@ lookup anyway because an embedder can drive the manager directly.
 * the default-resolver edge is over-charge-corrected (R1 below)
 ```
 
-### R1 â€?FALSE DENY, introduced and corrected within this round
+### R1 â€”FALSE DENY, introduced and corrected within this round
 
 Charging the default-resolver edge unconditionally REFUSED a configuration in which nothing resolves a
 name at all: a DNS server with an IP-literal address whose detour is a SOCKS5 outbound with an
 IP-literal server. `ServerIsDomain()` is false for both, SOCKS5 v5 forwards the target NAME rather than
 resolving it (`protocol/socks/outbound.go:160-161, :359`), and the DNS server's address is a literal
-(`dns/transport_dialer.go:23`) â€?so no `ResolveDialer` is built, nothing reads the default, and the
+(`dns/transport_dialer.go:23`) â€”so no `ResolveDialer` is built, nothing reads the default, and the
 loop is not real. MEASURED: the same JSON minus the one `default_domain_resolver` line started all
 along. The edge is now conditional, and the literal-server twin is pinned as a START.
 
-### R2 â€?recorded gap, NOT half-fixed
+### R2 â€”recorded gap, NOT half-fixed
 
 The endpoint `domain_resolver` accessor is **dead code**: `cross_kind_cycle.go` reaches it only when
 the `DomainResolverReference` assertion already failed, and it asserts the identical interface on the
 identical value, so it always returns `""`. An endpoint's own `domain_resolver` closing a loop still
 STARTS. The same wiring gap leaves a domain-server object's default-resolver edge unadded.
 
-The fix for both is one piece of work â€?publish the resolver reference on the adapter the object
+The fix for both is one piece of work â€”publish the resolver reference on the adapter the object
 **actually is** (`adapter/endpoint.Adapter`, which keeps only `Detour` today) rather than reading it
 through a second accessor or publishing it on `dns.TransportAdapter`, which is the type the DNS
 *manager* holds. The test asserts only what the tree does, with the measurement recorded in it:
@@ -213,9 +222,9 @@ domain-server + default resolver          STARTS    RECORDED GAP, cause named in
 
 | id | mutation | result |
 |---|---|---|
-| M-A1 | H3-only demand UDP â†?TCP | RED (2 cases) |
+| M-A1 | H3-only demand UDP â€”TCP | RED (2 cases) |
 | M-A2 | promote the fallback network into the hard set | RED |
-| M-A3 | DNS `udp` demand UDP â†?TCP | RED (2 cases) |
+| M-A3 | DNS `udp` demand UDP â€”TCP | RED (2 cases) |
 | M-B1 | restore advertised-union-as-hard-demand | RED (`TestAnAdvertisedOnlyMemberIsNotARefusal`) |
 | M-B2 | drop proven demand | RED (`TestStartRefusesAMemberThatCannotCarryTheRoutedNetwork`) |
 | M-CROSS-1 | remove the resolver edge | RED (cycle test) |

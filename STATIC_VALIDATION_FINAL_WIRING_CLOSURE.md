@@ -1,22 +1,54 @@
-# STATIC VALIDATION â€?FINAL WIRING CLOSURE
+# STATIC VALIDATION â€” FINAL WIRING CLOSURE
 
 ## Baseline
 
 ```text
 BASE_BRANCH   = closure/0.1.6-static-validation-true-final
 BASE_TIP      = d6a8a833d00990b4a266f5944844b87015947662
-CODE_HEAD     = 4eff4958a05f10df4180f82c99b7b1398299937b
-REPORT_COMMIT = self / docs-only successor of CODE_HEAD
-WORK_BRANCH   = closure/0.1.6-static-validation-final-wire
-WORKTREE_NAME = C:\Deepseek\å†…æ ¸\tf
+
+CODE_HEAD     = 7a81c58d75d65d19e08106b01cf59e26c85b047a
+# exact production-code commit validated by the final verification
+
+REPORT_COMMIT = SELF / docs-only successor of CODE_HEAD
+# intentionally not self-hashed inside the report
+
+REMOTE_BRANCH_TIP_AT_VERIFICATION = 9f4e0778e2990e715a20ef154dd192e152204916
+# read from `git rev-parse origin/closure/0.1.6-static-validation-final-wire`
+
+WORK_BRANCH    = closure/0.1.6-static-validation-final-wire
+WORKTREE_NAME  = C:\Deepseek\å†…æ ¸\tf
 WORKTREE_CLEAN = YES
 GO_VERSION / GOOS / GOARCH = go1.26.8 / windows / amd64
 ```
 
-`CODE_HEAD` is the commit whose code was tested, and every number below was produced on it. It is
-NOT the branch tip: the tip is `CODE_HEAD` plus this docs-only commit. That is the provenance
-convention this round adopts â€?a report that records the commit containing it can never converge,
-because writing the SHA changes the SHA.
+### Provenance, read from git rather than restated
+
+```text
+5ad4c032b = initial final-wiring code closure (adapters publish; dead accessor removed)
+b890c77a3 = first docs-only closure report
+7a81c58d7 = late ResolveAuthority panic fix and FINAL PRODUCTION CODE
+```
+
+A correction to the previous version of this report, which named `4eff4958a`: that SHA no longer
+exists in the branch. It was created by an `--amend` while the report was being written, and the
+amend is itself a commit, so the SHA it named was superseded the moment it was written. That is the
+same self-reference the convention above exists to avoid, and the fix is to name the commit that
+SURVIVES rather than the one that was transiently at the tip.
+
+What is verifiable about the transition, rather than asserted:
+
+```text
+git diff 4eff4958a 7a81c58d7 -- common/dialer   -> EMPTY (byte-identical)
+git diff --stat 4eff4958a 7a81c58d7             -> STATIC_VALIDATION_FINAL_WIRING_CLOSURE.md only
+```
+
+So the code in `CODE_HEAD` is exactly the code the focused and stress runs measured â€” and the minimal
+confirmation below was re-run ON `CODE_HEAD` itself, so the claim does not rest on that equivalence
+alone.
+
+`CODE_HEAD` is the production-code commit. It is not the branch tip while this report is the tip,
+which is why `REPORT_COMMIT` is named separately: a report that records the commit containing it can
+never converge, because writing the SHA changes the SHA.
 
 ## The wiring closure
 
@@ -54,7 +86,7 @@ domain-server object naming a resolver that does **not** loop still starts.
 
 ### The fact is populated at every constructor site
 
-`serverIsDomain` is variadic so a caller that has not established the fact reports `false` â€?the
+`serverIsDomain` is variadic so a caller that has not established the fact reports `false` â€”the
 conservative direction for a check whose job is to refuse. It is now supplied where the fact is
 already computed for that object's own dialer, so the adapter and the dialer cannot disagree:
 
@@ -82,10 +114,10 @@ DEFAULT_RESOLVER_LITERAL_SERVER_STARTS  = YES
 
 | shape | verdict | note |
 |---|---|---|
-| endpoint explicit `domain_resolver` closes a cycle | **REFUSED** | was ACCEPTED â€?the dead accessor |
-| â€?the same endpoint with no resolver reference | **STARTS** | the legal twin |
-| default resolver on a **DOMAIN**-server endpoint closes a cycle | **REFUSED** | was ACCEPTED â€?the unpopulated fact |
-| â€?the same endpoint with a **LITERAL** server | **STARTS** | the over-charge guard |
+| endpoint explicit `domain_resolver` closes a cycle | **REFUSED** | was ACCEPTED â€”the dead accessor |
+| â€”the same endpoint with no resolver reference | **STARTS** | the legal twin |
+| default resolver on a **DOMAIN**-server endpoint closes a cycle | **REFUSED** | was ACCEPTED â€”the unpopulated fact |
+| â€”the same endpoint with a **LITERAL** server | **STARTS** | the over-charge guard |
 | the DOMAIN endpoint reached as a **selector member** | **REFUSED** | the fact survives the extra hop |
 | domain server naming a resolver that does NOT loop | **STARTS** | the two facts are independent |
 | outbound domain server + default resolver | **REFUSED** | `dns/remote -> outbound/proxy -> dns/remote` |
@@ -101,7 +133,7 @@ SHADOWED_UNREACHABLE_NODE_NOT_WALKED = YES
 CROSS_KIND_GRAPH_CLOSED          = YES
 ```
 
-The node table is built through `Manager.Outbound(tag)` â€?outbound **first**, endpoint fallback â€?rather than a two-pass map whose overwrite order defined the semantics. `describeOutbound` takes the
+The node table is built through `Manager.Outbound(tag)` â€”outbound **first**, endpoint fallback â€”rather than a two-pass map whose overwrite order defined the semantics. `describeOutbound` takes the
 namespace from the manager rather than from an interface assertion, because MEASURED,
 `*direct.Outbound` satisfies `adapter.Endpoint` and the refusal used to label both halves
 `endpoint/â€¦`. It now reads:
@@ -156,7 +188,7 @@ claim 4  the default edge is charged from the runtime fact     BROKEN -> FIXED (
 claim 5  endpoint explicit resolver forms a real edge          UPHELD
 ```
 
-It found **no false-deny counterexample** â€?the over-charge guard held in every graph it attacked,
+It found **no false-deny counterexample** â€”the over-charge guard held in every graph it attacked,
 including `socks -> direct`. What it found was an **under-charge**: `ResolvesDomainServer()` was
 correct in form and constantly false in value because no constructor supplied it, and it reproduced a
 genuinely recursive graph that was ACCEPTED. It proved the cause with a controlled mutation at the
@@ -170,6 +202,14 @@ shapes asserted structurally because wireguard endpoints fail at device setup on
 ## Regression
 
 ```text
+FINAL_MINIMAL_REGRESSION = PASS, run ON CODE_HEAD (7a81c58d7)
+  git diff --check                                     exit 0
+  go test -count=1 ./common/dialer/                    ok
+  go test -count=1 .                                   ok
+  go build ./...                                       ok
+  go vet ./common/dialer/                              ok
+  go test -count=1 ./...                               81 ok / 4 FAIL, each classified below
+
 FOCUSED_TESTS = PASS
   .  ./adapter/  ./adapter/outbound/  ./adapter/endpoint/  ./common/physicalpath/
   ./common/dialer/  ./common/httpclient/...  ./dns/...  ./route/  ./route/rule/  ./protocol/group/
@@ -185,19 +225,29 @@ GO_VET_ALL   = PRE_EXISTING_ONLY (3 unsafe.Pointer findings)
   daemon/managed_service.go:75 Â· experimental/libbox/debug.go:11 Â·
   experimental/boxdd/authenticode_windows.go:95
   -> reproduced IDENTICALLY on the untouched comparison worktree at 96a94f584
-GO_TEST_ALL  = PRE_EXISTING_ONLY
-  common/tls (real handshake) Â· common/tlsspoof Â· common/windivert Â· common/sniff (load-sensitive)
-  -> each reproduced on the untouched comparison worktree before being classified
 RACE         = NOT_RUN_HOST_BLOCKED (needs cgo; no C compiler on this host)
 DOCKER       = NOT_RUN_HOST_BLOCKED (no daemon)
 ```
+
+### The 4 full-tree failures, each given its own justification
+
+The previous classification is NOT inherited; each was re-justified against the final tree.
+
+| package | evidence |
+|---|---|
+| `common/tls` | `TestWindowsClient*TLS13`: a real handshake, `unexpected EOF`. Reproduced on the untouched base. |
+| `common/tlsspoof` | WinDivert injection: `Access is denied` without Administrator. Reproduced on the base. |
+| `common/windivert` | the same Administrator boundary. Reproduced on the base. |
+| `common/sniff` | the documented **load-sensitive flake**, and the failing test NAME differs run to run across this session (`TestAgentFFrameShapeNever`, `TestAgentFFrameShapePlainGoroutine`, `TestTheSniffCensusMovesForExactlyOneLeakedGoroutine`) â€” which is itself evidence it is scheduling, not logic. **Passes 5/5 in isolation on `CODE_HEAD` AND 5/5 on the untouched base**, and this round's delta does not touch the package: `git diff --name-only d6a8a833d 7a81c58d7 -- common/sniff` is empty. |
+
+Neither `RACE` nor `DOCKER` is reported as PASS.
 
 ## Final verdict
 
 ```text
 BASE_BRANCH = closure/0.1.6-static-validation-true-final
 BASE_TIP    = d6a8a833d00990b4a266f5944844b87015947662
-CODE_HEAD   = 4eff4958a05f10df4180f82c99b7b1398299937b
+CODE_HEAD   = 7a81c58d75d65d19e08106b01cf59e26c85b047a
 REPORT_COMMIT = self / docs-only successor
 
 ENDPOINT_ADAPTER_RESOLVER_PUBLISHED       = YES
@@ -264,9 +314,9 @@ READY_FOR_STATIC_VALIDATION_FREEZE        = YES
 > walks.
 
 No raw-config shadow model. No second lookup policy. No protocol-type guess. No dead accessor. The
-one thing this round had to learn twice â€?first that publishing an accessor is not the same as
+one thing this round had to learn twice â€”first that publishing an accessor is not the same as
 populating it, and then that a fact computed at a construction site has to be handed to the object
-the graph walks â€?is now pinned by `M-FINAL-2b`, which drops the fact at the constructor and turns the
+the graph walks â€”is now pinned by `M-FINAL-2b`, which drops the fact at the constructor and turns the
 test red.
 
 ## Late closures in the same round
