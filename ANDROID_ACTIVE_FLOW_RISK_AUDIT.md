@@ -148,6 +148,39 @@ error to fix on the Kotlin side.
 
 ---
 
+## 6a. Re-confirmation after the server-chain audit
+
+The brief requires this conclusion to be re-checked against the final root cause rather than carried
+over. It has been, and the answer depends on which question is asked — so both are stated separately.
+
+**The core defect is shared, and that does not change.** `route.ConnectionManager` and
+`connectionCopy` carry no build tag, so Android, iOS, Windows and the VPS all execute the same copy
+path with the same absent steady-state liveness mechanism, and a flow in that state is never reclaimed.
+Nothing in the server-chain finding removes the gap from the Android binary.
+
+**But a shared vulnerability is not a shared root cause of the reported incidents.** If
+`FIRST_STALL_LAYER` turns out to be the VPS→residential hop, the reported stalls began downstream of
+every client, and Android — like Windows and iOS — is only where the backpressure surfaced:
+
+```text
+ANDROID_RISK (exposure to the shared core gap)  = SHARED_CORE_BUG      [unchanged]
+ANDROID'S ROLE IN THE REPORTED INCIDENTS        = SYMPTOM LAYER ONLY   [if the first stall is server-side]
+```
+
+These do not conflict, and collapsing them into one label is what the brief warns against. Android
+still carries the defect and would still stall unaided if its own peer went silent; that is a different
+claim from "Android caused the reported stalls".
+
+**One thing changes, and it strengthens the case rather than weakening it.** If the fix turns out to be
+server-side only, Android inherits **nothing** — it stays exposed to the core gap, because a server fix
+does nothing for a client whose own peer goes silent. That makes Android's exposure more consequential,
+not less, and it is an argument for fixing the core rather than only the server.
+
+A downgrade to `PROTECTED_BY_DIFFERENT_PATH` would be wrong in either world: Android has no protection,
+and §2 shows that none of the four facts it forwards can reach `Reclaim`.
+
+---
+
 ## 7. What a device would add
 
 `DEVICE_ONLY_REMAINING` for Android:
