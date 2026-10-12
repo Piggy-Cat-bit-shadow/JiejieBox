@@ -181,11 +181,11 @@ Two fixture mistakes were made and are recorded in the file because both are eas
 code**. They are characterisation tests that pin the current behaviour. See §4a, which is where the
 RED test actually becomes possible.
 
-### 4a. The backpressure-gated discriminator — and the RED test that follows from it
+### 4a. The backpressure-gated discriminator — and why it does NOT justify a fix
 
 My first conclusion was that **no RED test could exist**, on the reasoning that any fix must be a
-timeout and a timeout cannot tell an idle flow from a stalled one. **That was wrong**, and this
-section records the correction along with how it was found.
+timeout and a timeout cannot tell an idle flow from a stalled one. **That was wrong.** This section
+records that correction, and then the correction to the correction.
 
 The reasoning failed because it assumed the only difference available is "how long since the last
 byte". There is a second, structural difference:
@@ -201,53 +201,92 @@ stalled        upload  internal/poll.(*FD).Write(      download  internal/poll.(
 healthy idle   upload  net.(*pipe).Read                download  internal/poll.(*FD).RawRead(
 ```
 
-The download side is identical in both. **Only the stalled flow has a writer that cannot proceed.**
-And it is the *same descriptor* in both directions — one copy writing the outbound socket while the
-other reads it, neither able to advance. That co-occurrence is what separates a stall from a quiet
-connection; it is asserted (`sameSocket`) rather than described.
+The download side is identical in both. Only the stalled flow has a writer that cannot proceed, and
+both copies sit on the same descriptor. Both tests pass deterministically: 7 PASS / 0 FAIL over three
+consecutive runs, one stall observation per run.
 
-**This is not "no timeout".** The strategy the evidence supports is a grace period, and a grace
-period is time. What is *not* time-based is the gate: silence alone never starts the clock. The
-correct labels are:
+#### 4a.1 Then the healthy-backpressure experiment falsified it
+
+`HEALTHY_IDLE` was the wrong control. A receiver that is merely **slow** is healthy too, and
+`route/active_stall_backpressure_test.go` builds exactly that: a peer that greets, echoes one round
+trip, then stops reading for a while, then resumes. Measured:
+
+```text
+paused 0s : upload="internal/poll.(*FD).Write(" download="internal/poll.(*FD).RawRead(" uploadWriting=true sameSocket=true
+paused 2s : upload="internal/poll.(*FD).Write(" download="internal/poll.(*FD).RawRead(" uploadWriting=true sameSocket=true
+paused 5s : upload="internal/poll.(*FD).Write(" download="internal/poll.(*FD).RawRead(" uploadWriting=true sameSocket=true
+paused 10s: upload="internal/poll.(*FD).Write(" download="internal/poll.(*FD).RawRead(" uploadWriting=true sameSocket=true
+HEALTHY RESUMPTION: the slow receiver caught up and the writer proceeded
+```
+
+**A healthy flow is byte-for-byte identical to a stalled one at every sample point.** The signature
+is necessary for a stall but not sufficient: it is simply "the send buffer is full", which is what
+backpressure *is*. Therefore:
+
+```text
+DISCRIMINATOR_SEPARATES_HEALTHY_IDLE         = YES
+DISCRIMINATOR_SEPARATES_HEALTHY_BACKPRESSURE = NO
+DISCRIMINATOR_VALID_FOR_PRODUCTION_FIX       = NO
+```
+
+The only remaining lever is the length of the grace period, and nothing structural chooses it — which
+is exactly the brief's §7.2 condition: a policy that can only be "blocked writer + a fixed N seconds"
+with N guessed is `PRODUCTION_FIX_NOT_READY`.
+
+**This is not "no timeout".** The strategy is a grace period, and a grace period is time. What is not
+time-based is the *gate*: silence alone never starts the clock. Both labels hold, but they no longer
+imply the fix is sound:
 
 ```text
 NOT_IDLE_TIMEOUT_BASED   = YES   silence alone is never a trigger
-BACKPRESSURE_GATED_GRACE = YES   the clock only starts on a proven blocked writer
+BACKPRESSURE_GATED_GRACE = YES   the clock only starts on a blocked writer
 ```
 
-Both tests pass deterministically: 7 PASS / 0 FAIL over three consecutive runs, one stall
-observation per run, the application blocking after 2 785 280 bytes each time.
+Two bounds were then measured so N could at least be argued rather than invented:
 
-Two classifier mistakes were made and are recorded in the file, because both produced a *false
-negative* that looked like the hypothesis failing:
+| Bound | Measured here | How |
+|---|---|---|
+| Lower — how long a healthy writer stays blocked | ≥ 10 s, flow still healthy | the backpressure test holds the receiver silent for 10 s, then it resumes |
+| Upper — how long the kernel takes to give up on an idle-but-established connection | **> 6 minutes, no give-up** | `TestBackpressure_KernelGiveUpWindow`: both stacks alive, no traffic, read still parked |
 
-1. Keying "is this the upload copy" on `net.(*pipe)` appearing in the block. That is true only while
-   a pipe read is the innermost frame; once the upload is parked in a socket **write**, the pipe does
-   not appear at all.
-2. Matching `runtime_pollWait` as the operation frame. It is the innermost frame of reads **and**
-   writes alike; the distinction lives in its second argument (`0x72` read, `0x77` write), not in the
-   frame name. Every parked goroutine therefore looked identical.
+The upper bound is the important one and it cuts both ways. With both stacks alive the kernel
+**never** declares the connection dead, so the stall is **unbounded in time rather than merely slow**
+— there is no kernel deadline to hide behind. But that also means there is no upper bound to anchor N
+against: any N between 10 seconds and infinity is "consistent with the measurements", which is
+another way of saying N is still a guess.
 
-**Consequence for the gate.** A RED test *is* constructible, and it does not require inventing a
-timeout:
+#### 4a.2 Consequence for the gate
 
 ```text
-RED (today)      a flow whose two copies are parked on one socket - one writing, one reading -
-                 with zero progress for a grace period is eventually terminated
-GREEN (after)    the same flow ends; a healthy idle flow and a large-upload backpressure flow
-                 both survive
+RED_TEST_CONSTRUCTIBLE   = YES   (a blocked-writer assertion fails today)
+RED_TEST_JUSTIFIES_A_FIX = NO    (the same assertion fires on a healthy slow receiver)
 ```
 
-It fails today because nothing terminates such a flow. It is *not* a "N seconds without traffic"
-rule: the grace period only ever applies to a flow already proven to have a blocked writer **and** a
-blocked reader on the same descriptor, which no healthy idle flow and no merely-slow peer produces.
+A RED test is constructible. It is not **sound**: any fix that turns it green would also fail a healthy
+slow flow, unless the grace period is long enough that the test takes minutes and the fix is
+indistinguishable from a timeout in practice.
 
-**Why it is still not applied.** The discriminator removes the *design* objection — a correct,
-fix exists that is not an idle timeout. It does not remove the *evidence* objection: the 15 % gap was
-never about whether a fix exists, it was about whether this mechanism is what the reporter saw. Those
-are different questions and only one of them is now closed. Applying the change would need a new
-per-flow watchdog in the connection manager, effective on every platform, verified against the brief's
-whole §21 matrix — on a mechanism whose link to the reported incident is still `INFERRED`.
+Two classifier mistakes were also made and are recorded in the test file, because each produced a
+*false negative* that looked like the hypothesis failing:
+
+1. Keying "is this the upload copy" on `net.(*pipe)` appearing in the block — true only while a pipe
+   read is the innermost frame; once the upload is parked in a socket **write**, the pipe is absent.
+2. Matching `runtime_pollWait` as the operation frame — it is the innermost frame of reads **and**
+   writes alike; the distinction is in its second argument (`0x72` read, `0x77` write).
+
+**Why it is still not applied — two independent reasons now, not one.**
+
+The first is the one this document started with: no capture from a live event, so the link from
+mechanism to incident is `INFERRED`.
+
+The second is new and stronger. §4a.1 shows the signal is not specific to a stall, so a fix built on
+it needs a grace period that nothing in the measurements determines. Applying it would mean adding a
+per-flow watchdog to the connection manager — on the path of every managed flow on every platform —
+with a number chosen by judgement, verified against the brief's whole §21 matrix. That is the change
+the brief warns looks like a fix and kills SSH sessions and long uploads.
+
+And §13 adds a third: if the first stall is at the server's residential hop, no client-side change can
+repair it at all. See `SERVER_CHAIN_STALL_AUDIT.md`.
 
 The four stack frames captured (verbatim shape):
 
@@ -322,7 +361,7 @@ changed what can be said about the third:
 
 | Path | Required | Status |
 |---|---|---|
-| A — deterministic RED | an automated test that **fails** on current code at a clear point | **NOW CONSTRUCTIBLE** — §4a. Not yet written as a failing assertion, but no longer impossible. Backpressure-gated, not idle-timeout-based |
+| A — deterministic RED | an automated test that **fails** on current code at a clear point | **CONSTRUCTIBLE BUT UNSOUND** — §4a.1: the same assertion fires on a healthy slow receiver, so a fix that satisfies it needs an underived grace period |
 | B — log + stack + code closure | a real capture from the live stall | **NOT MET** — no goroutine dump or flow state exists from the event |
 | C — mutation proof | break a semantic, bug disappears; restore, bug returns | **NOT MET** — there is no semantic to break yet |
 
@@ -365,6 +404,46 @@ MUST SURVIVE  healthy idle WebSocket; SSH session; active download; large upload
 Measurements still required before it can ship: the distribution of legitimate writer-block durations
 under a real large upload, and a device capture confirming the mutual-park state during the live
 stall.
+
+### 7a. Symptom layer versus root-cause layer
+
+A blocked writer **is not evidence that this layer is the cause.** It is evidence that the bytes this
+layer already handed over were accepted and are not being consumed downstream. Backpressure propagates
+upward, so the last layer to *observe* the block is the first layer to *report* it, and those are
+opposite ends of the chain:
+
+```text
+residential exit stops reading
+  -> VPS write to residential-socks blocks        (VPS send buffer full)
+  -> VPS stops reading its inbound socket
+  -> client outbound send buffer fills
+  -> client upload copy blocks in Write           ← the layer this investigation measured
+  -> client stops reading mixed-in
+  -> the application's write blocks and it waits
+```
+
+So the client-side signature has two possible readings, and this investigation cannot separate them
+from the client alone:
+
+| Client's own path to the VPS | Client write blocked? | First stall |
+|---|---|---|
+| healthy; the VPS is simply not reading | yes | **downstream of the client** |
+| itself silently dead | yes | **the client** |
+
+Both are byte-for-byte the same locally observed state — which is the healthy-backpressure ambiguity
+of §4a.1 reappearing one layer up, and for the same reason.
+
+```text
+OBSERVED_BACKPRESSURE_LAYER = client ConnectionManager connectionCopy (upload goroutine)
+FIRST_STALL_LAYER           = UNDETERMINED
+ROOT_CAUSE_LAYER            = UNDETERMINED
+CLIENT_AND_SERVER_SHARE_SAME_CORE_BUG = YES
+```
+
+The server runs the same core with the same absent liveness path, and the server's only reclaim
+trigger is a network change — which on a VPS essentially never fires. See
+`SERVER_CHAIN_STALL_AUDIT.md`, which also gives the single cheapest experiment that would settle the
+layer question (one `ss -tinp` on the VPS during a stall).
 
 ---
 
@@ -462,12 +541,17 @@ Recorded so the next round does not re-derive them:
 REPRODUCED                    = YES   (deterministic, test-only, in-tree; 7 tests)
 ROOT_CAUSE_PROVEN             = NO    (mechanism proven; not proven to be the live event)
 ROOT_CAUSE_CONFIDENCE         = 85%   (mechanism: high. incident link: inferred)
-PRODUCTION_FIX_APPLIED        = NO    (path B and C unmet; A now constructible — §4a)
+PRODUCTION_FIX_APPLIED        = NO    (B and C unmet; A constructible but unsound — §4a.1)
 
-RED_TEST_CONSTRUCTIBLE        = YES   (§4a: blocked-writer discriminator)
+RED_TEST_CONSTRUCTIBLE        = YES   (§4a)
+RED_TEST_SOUND                = NO    (§4a.1: fires on healthy backpressure too)
 NOT_IDLE_TIMEOUT_BASED        = YES
 BACKPRESSURE_GATED_GRACE      = YES
-DISCRIMINATOR_VALID           = PARTIAL (healthy idle vs stalled only; healthy BACKPRESSURE untested)
+DISCRIMINATOR_VALID           = NO    (HEALTHY_IDLE vs STALLED = YES; HEALTHY_BACKPRESSURED vs
+                                       STALLED = NO. It is necessary, not sufficient.)
+KERNEL_GIVE_UP_UNBOUNDED      = YES   (measured: no give-up in 6 min with both stacks alive)
+GRACE_PERIOD_LOWER_BOUND      = >= 10s (healthy writer stays blocked and recovers)
+GRACE_PERIOD_UPPER_BOUND      = NONE  (no kernel deadline to anchor against)
 
 WINDOWS_STALL_EXPLAINED       = YES   (mechanism; no capture to confirm)
 IOS_STALL_EXPLAINED_BY_SAME_ROOT = LIKELY
