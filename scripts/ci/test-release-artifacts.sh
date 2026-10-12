@@ -1116,6 +1116,266 @@ expect_fail "an unresolvable workflow id -> FAIL" "cannot resolve workflow" -- \
   plan --repo o/r --sha "$SHA" --out "$work/plan-gone.tsv" --interval 1 --timeout 5
 
 # ---------------------------------------------------------------------------
+# Case 13: the FULL public asset contract - four products and the desktop installer
+# ---------------------------------------------------------------------------
+#
+# Everything above runs the lightweight two-product fixture, which keeps the general cases
+# focused and is deliberately left alone. It cannot prove the SHAPE OF A RELEASE, though:
+# a release publishes four core platforms plus the Windows desktop installer, and the
+# contract check, the manifest and the asset list are all sized by that number.
+#
+# So this case builds the real shape. It is the only one that exercises
+# RELEASE_EXTRA_PLATFORMS=true, which is what release.yml sets, and the only one whose
+# expected counts are the release's own: 6 files, 5 manifest entries.
+#
+# The point is not the counts. It is that the helper is executed against the real
+# deliverable set before a release is, rather than the two-product subset this suite uses
+# everywhere else.
+
+# The four products release.yml enables, with the fields target_field declares for them.
+# Kept as data so a product cannot be added to the gate's table and forgotten here: the
+# manifest assertions below are derived from this list.
+FULL_PRODUCTS="
+linux|.github/workflows/server-linux-amd64.yml|sing-box-linux-amd64|BUILD-INFO-LINUX.txt|linux|amd64|elf-x86-64|jiejie-sing-box-linux-amd64|7001
+macos|.github/workflows/client-macos.yml|sing-box-darwin-arm64|BUILD-INFO-MACOS.txt|darwin|arm64|macho-arm64|jiejie-sing-box-macos-arm64|7002
+windows|.github/workflows/windows-core-amd64.yml|sing-box.exe|BUILD-INFO-WINDOWS.txt|windows|amd64|pe-amd64|jiejie-sing-box-windows-amd64|7003
+android|.github/workflows/android-core-arm64.yml|libbox.aar|BUILD-INFO-ANDROID.txt|android|arm64|aar-arm64|jiejie-sing-box-android-arm64|7004
+"
+FULL_VERSION="0.1.6"
+FULL_TAG="v$FULL_VERSION"
+FULL_DESKTOP_ID=7005
+
+# run_gate_full <args...> - the gate as release.yml runs it: every platform enabled.
+run_gate_full() {
+  PATH="$work/bin:$PATH" MOCK_STATE="$work/state" MOCK_FIXTURES="$work/fixtures" \
+    RELEASE_EXTRA_PLATFORMS=true "$gate" "$@"
+}
+
+# make_full_artifacts - one verified artifact directory per product, plus the installer.
+make_full_artifacts() {
+  rm -rf "$work/full"
+  mkdir -p "$work/full/artifacts"
+  local row
+  # `printf | while read` rather than a here-string: the list is static and this keeps the
+  # block parseable by a POSIX shell, which is how the syntax of this file is checked on a
+  # host without bash. The list is written with a leading newline for readability, so empty
+  # rows are skipped rather than turned into a product with no fields.
+  printf '%s\n' "$FULL_PRODUCTS" | while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    # `set --` rather than a here-string: this file's syntax is checked by a POSIX shell on
+    # hosts without bash, and `<<<` is a bash extension.
+    old_ifs="$IFS"; IFS='|'; set -- $row; IFS="$old_ifs"
+    [ "$#" -eq 9 ] || { echo "FAIL: malformed FULL_PRODUCTS row ($# fields): $row" >&2; exit 1; }
+    make_artifact "$work/full/artifacts/$1" "$3" "$4" "$5" "$6" "$7" "$SHA"
+  done
+  make_desktop "$work/full/desktop" "$FULL_VERSION" "$SHA"
+}
+
+# write_full_scenario - a scenario in which all four products and the desktop have a
+# successful run for this commit.
+write_full_scenario() {
+  MOCK_STATE="$work/state" MOCK_FIXTURES="$work/fixtures" \
+    python3 - "$SHA" "$FULL_PRODUCTS" "$FULL_DESKTOP_ID" <<'PY'
+import json, os, pathlib, sys
+sha, products, desktop_id = sys.argv[1], sys.argv[2], int(sys.argv[3])
+state = pathlib.Path(os.environ["MOCK_STATE"])
+state.mkdir(parents=True, exist_ok=True)
+for stale in state.glob("count-*"):
+    stale.unlink()
+for stale in ("release_created", "calls.log"):
+    p = state / stale
+    if p.exists():
+        p.unlink()
+
+def run(rid, number, workflow_id):
+    return {"id": rid, "run_number": number, "status": "completed", "conclusion": "success",
+            "created_at": "2026-10-08T10:%02d:00Z" % (number % 60),
+            "html_url": "https://example.invalid/runs/%d" % rid,
+            "head_sha": sha, "workflow_id": workflow_id}
+
+def wf(wid, name, runs):
+    return {"id": wid, "path": ".github/workflows/" + name, "state": "active",
+            "name": name, "runs": runs}
+
+workflows = {}
+artifacts = {}
+for i, row in enumerate([r for r in products.strip().splitlines() if r.strip()]):
+    key, path, _bin, _info, _plat, _arch, _magic, _tar, rid = row.split("|")
+    wid = 8000 + i
+    workflows[os.path.basename(path)] = wf(wid, os.path.basename(path), [run(int(rid), 10 + i, wid)])
+    artifacts[rid] = {"dir": key, "name": "Jiejie-%s-%s" % (key, sha[:7])}
+
+workflows["client-desktop-windows.yml"] = wf(
+    8010, "client-desktop-windows.yml", [run(desktop_id, 30, 8010)])
+artifacts[str(desktop_id)] = {"dir": "desktop", "name": "jiejiebox-windows-x64-signed-test"}
+
+(state / "scenario.json").write_text(json.dumps(
+    {"workflows": workflows, "artifacts": artifacts}, indent=1))
+PY
+}
+
+make_full_artifacts
+write_full_scenario
+
+# `run_gate_full` sets RELEASE_EXTRA_PLATFORMS=true - the value release.yml sets. Without
+# it the gate targets two products and a four-product release is not what is being tested.
+
+# full_expect_ok <name> <args...>
+full_expect_ok() {
+  local name="$1"; shift
+  local out rc=0
+  out="$(run_gate_full "$@" 2>&1)" || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    report "$name" 0 "$rc" ""
+  else
+    report "$name" 0 "$rc" ""
+    printf '      %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-600)"
+  fi
+}
+
+# full_expect_fail <name> <substring> -- <args...>
+full_expect_fail() {
+  local name="$1" want="$2"; shift 2
+  [ "${1:-}" = "--" ] && shift
+  local out rc=0
+  out="$(run_gate_full "$@" 2>&1)" || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    fail_case "$name" "it SUCCEEDED; the command must have failed"
+    return
+  fi
+  if printf '%s' "$out" | grep -qF -- "$want"; then
+    report "$name" nonzero "$rc" "refused: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-56)"
+  else
+    fail_case "$name" "refused for the WRONG reason; wanted '$want'"
+    printf '      actual: %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-400)"
+  fi
+}
+
+full_plan="$work/full-plan.tsv"
+full_expect_ok "full contract: plan sees all four products" \
+  plan --repo o/r --sha "$SHA" --out "$full_plan" --interval 1 --timeout 10
+full_expect_ok "full contract: download all four products" \
+  download --repo o/r --plan "$full_plan" --dir "$work/full/assets"
+full_expect_ok "full contract: stage the desktop installer" \
+  desktop --repo o/r --sha "$SHA" --out "$work/full/desktop-dl" --interval 1 --timeout 10
+full_expect_ok "full contract: verify four products and the installer" \
+  verify --dir "$work/full/assets" --sha "$SHA" \
+    --desktop-dir "$work/full/desktop" --version "$FULL_VERSION"
+full_expect_ok "full contract: flatten -> PASS" \
+  flatten --plan "$full_plan" --dir "$work/full/assets" --out "$work/full/upload" \
+    --tag "$FULL_TAG" --desktop "$work/full/desktop/Jiejiebox-v$FULL_VERSION-windows-x64.exe" \
+    --version "$FULL_VERSION"
+full_expect_ok "full contract: check-upload -> PASS" \
+  check-upload --out "$work/full/upload" --tag "$FULL_TAG" --version "$FULL_VERSION"
+
+# The published set is exactly the six public deliverables.
+full_expected="Jiejiebox-v$FULL_VERSION-windows-x64.exe
+jiejie-sing-box-linux-amd64-$FULL_TAG.tar.gz
+jiejie-sing-box-macos-arm64-$FULL_TAG.tar.gz
+jiejie-sing-box-windows-amd64-$FULL_TAG.tar.gz
+jiejie-sing-box-android-arm64-$FULL_TAG.tar.gz
+SHA256SUMS"
+
+full_listing="$(find "$work/full/upload" -mindepth 1 -maxdepth 1 -type f -exec basename {} \; | sort)"
+if [ "$full_listing" = "$(printf '%s\n' "$full_expected" | sort)" ]; then
+  report "full contract: the staging directory is exactly the six public files" 0 0
+else
+  report "full contract: the staging directory is exactly the six public files" 0 1 "got: $full_listing"
+fi
+
+if [ "$(find "$work/full/upload" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" = "6" ]; then
+  report "full contract: public file count is 6" 0 0
+else
+  report "full contract: public file count is 6" 0 1 \
+    "got $(find "$work/full/upload" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')"
+fi
+
+full_entries="$(grep -c . "$work/full/upload/SHA256SUMS")"
+if [ "$full_entries" = "5" ]; then
+  report "full contract: SHA256SUMS has exactly 5 entries" 0 0
+else
+  report "full contract: SHA256SUMS has exactly 5 entries" 0 1 "got $full_entries"
+fi
+
+# The manifest's SHAPE, not just its length. Every line must be a bare filename naming one
+# of the five binaries: no path prefix, no './', and none of the CI records that live in the
+# desktop artifact directory - those are provenance, not downloads.
+full_named="$(sed -n 's/^[0-9a-f]\{64\}  //p' "$work/full/upload/SHA256SUMS" | sort)"
+full_want_named="$(printf '%s\n' \
+  "Jiejiebox-v$FULL_VERSION-windows-x64.exe" \
+  "jiejie-sing-box-linux-amd64-$FULL_TAG.tar.gz" \
+  "jiejie-sing-box-macos-arm64-$FULL_TAG.tar.gz" \
+  "jiejie-sing-box-windows-amd64-$FULL_TAG.tar.gz" \
+  "jiejie-sing-box-android-arm64-$FULL_TAG.tar.gz" | sort)"
+if [ "$full_named" = "$full_want_named" ]; then
+  report "full contract: the manifest names exactly the five public binaries" 0 0
+else
+  report "full contract: the manifest names exactly the five public binaries" 0 1 "got: $full_named"
+fi
+
+full_shape_bad=""
+if [ "$(printf '%s\n' "$full_named" | grep -c '^\./')" != "0" ]; then full_shape_bad="$full_shape_bad ./-prefix"; fi
+if [ "$(printf '%s\n' "$full_named" | grep -c '/')" != "0" ]; then full_shape_bad="$full_shape_bad path-separator"; fi
+for forbidden in BUILD-INFO sha256 SHA256SUMS debug records runner-environment; do
+  if printf '%s\n' "$full_named" | grep -qi -- "$forbidden"; then
+    full_shape_bad="$full_shape_bad $forbidden"
+  fi
+done
+if [ -z "$full_shape_bad" ]; then
+  report "full contract: no CI record, sidecar, self-entry or path in the manifest" 0 0
+else
+  report "full contract: no CI record, sidecar, self-entry or path in the manifest" 0 1 "found:$full_shape_bad"
+fi
+
+# And it must verify in the directory it describes - the command the release notes give a
+# downloader.
+if ( cd "$work/full/upload" && sha256sum -c SHA256SUMS >/dev/null 2>&1 ); then
+  report "full contract: sha256sum -c passes over the five binaries" 0 0
+else
+  report "full contract: sha256sum -c passes over the five binaries" 0 1 "manifest does not verify"
+fi
+
+# --- negative: a missing product must not publish --------------------------
+#
+# The release-tree check is rebuilt with Android's artifact directory removed. A release
+# that silently shipped three cores and a desktop would otherwise pass every check, so
+# `verify` must refuse - and name the deliverable that is missing, not merely fail.
+rm -rf "$work/full/assets-noandroid"
+cp -R "$work/full/assets" "$work/full/assets-noandroid"
+rm -rf "$work/full/assets-noandroid/libbox.aar"
+full_expect_fail "full contract: a missing Android deliverable -> FAIL" \
+  "libbox.aar: found 0 copies" -- \
+  verify --dir "$work/full/assets-noandroid" --sha "$SHA" \
+    --desktop-dir "$work/full/desktop" --version "$FULL_VERSION"
+
+# --- negative: a CI record must not reach the download page ---------------
+#
+# The desktop artifact directory carries BUILD-INFO-WINDOWS-DESKTOP - it is what proves the
+# installer's core, and it stays in Actions artifacts. Dropped into staging it is an
+# "unexpected public asset" and must be refused, which is the whole point of the allowlist.
+cp "$work/full/desktop/BUILD-INFO-WINDOWS-DESKTOP-$FULL_VERSION.txt" \
+   "$work/full/upload/BUILD-INFO-WINDOWS-DESKTOP-$FULL_VERSION.txt"
+full_expect_fail "full contract: an extra BUILD-INFO in staging -> FAIL" \
+  "not public deliverable" -- \
+  check-upload --out "$work/full/upload" --tag "$FULL_TAG" --version "$FULL_VERSION"
+rm -f "$work/full/upload/BUILD-INFO-WINDOWS-DESKTOP-$FULL_VERSION.txt"
+
+# --- negative: a single-file checksum sidecar is not a public asset --------
+if [ "${FULL_CONTRACT_EXTRA_NEGATIVES:-true}" = "true" ]; then
+  printf 'placeholder\n' > "$work/full/upload/Jiejiebox-v$FULL_VERSION-windows-x64.exe.sha256"
+  full_expect_fail "full contract: an extra .sha256 sidecar in staging -> FAIL" \
+    "not public deliverable" -- \
+    check-upload --out "$work/full/upload" --tag "$FULL_TAG" --version "$FULL_VERSION"
+  rm -f "$work/full/upload/Jiejiebox-v$FULL_VERSION-windows-x64.exe.sha256"
+
+  printf 'placeholder\n' > "$work/full/upload/SHA256SUMS-WINDOWS-DESKTOP-$FULL_TAG.txt"
+  full_expect_fail "full contract: an extra SHA256SUMS-WINDOWS-DESKTOP file -> FAIL" \
+    "not public deliverable" -- \
+    check-upload --out "$work/full/upload" --tag "$FULL_TAG" --version "$FULL_VERSION"
+  rm -f "$work/full/upload/SHA256SUMS-WINDOWS-DESKTOP-$FULL_TAG.txt"
+fi
+
+# ---------------------------------------------------------------------------
 
 echo
 if [ "$failures" -eq 0 ]; then
