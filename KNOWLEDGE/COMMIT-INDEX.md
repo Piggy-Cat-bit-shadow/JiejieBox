@@ -285,12 +285,21 @@ pre-fix 28 m 24 s → 12 boundaries → 28.29 s; post-fix 13 m 13 s → 1 bounda
 | `d660c979` | FIX | OWN | compares the release gate against the names the workflows declare |
 | `a267e99e0` | RELEASE | OWN | v0.1.6: include Windows and Android artifacts — **and did not extend the release-tree allowlist** |
 | `27d8bb599`, `12ee55eef` | REPOSITORY-HYGIENE | OWN | ancestry-only merges to clear GitHub's stale "behind upstream" state. **No tree change** (`12ee55eef` records `PRE_SYNC_TREE == post-merge tree`). |
+| `7f31bfd5e` | RELEASE | OWN | advances the `clients/apple` gitlink `d0524912` → `5cab4ec5` and **nothing else** — `1 file changed, 1 insertion(+)`. The pin, not the code: no workflow, refs file or build script moves with it. |
+| `ece0fb9d2` | FIX + CI | OWN | unblocks `release-apple.sh testflight`, twice over. The refs guard tested the caller's **environment** instead of the refs **file**, so `resolve -> export -> assert-shared-source` refused the values `resolve` had just printed; and `VERIFIED_APPLE_SHA` was a pin generation behind the gitlink, failing the ABI gate's layer 5. Cherry-picked from `24d55d64b`, with the constant re-derived to the *current* gitlink rather than the one the original named. |
 
 **Final behaviour:** upstream's registries and profiles, one fork-invented tag, the version stamp and
 the Apple pin metadata; release downloads and re-verifies rather than rebuilding.
 
 **Live defect:** `release-artifacts.sh`'s release-tree allowlist still encodes two products while
 `release.yml:69` enables four → `verify` fails on the Windows and Android trees. See `ci-release.md` §5.
+
+**Superseded:** the environment-based refs guard (`ece0fb9d2` replaces it). It is the shape a future
+change is most likely to repeat, because testing a sourced file's variable names in the *environment*
+looks equivalent to reading the file and is not — `resolve` and `release-apple.sh` legitimately carry
+the same names. Also superseded: two `VERIFIED_APPLE_SHA` values, `90a0e9ae` and `d0524912`. Each was
+correct for its own gitlink and became wrong the moment the pin moved without it — which is the whole
+failure mode that constant has.
 
 ---
 

@@ -188,14 +188,18 @@ gitlink — the refs file is forbidden from recording a SHA and the workflow bod
   two different sources.
 * **Breaks if violated:** a client built against upstream's libbox crashes; two Apple products ship
   from two revisions.
-* **Honest gap:** **no wired mechanism can detect the pinned Apple revision moving to an unintended
+* **Honest gap:** **no *wired* mechanism can detect the pinned Apple revision moving to an unintended
   commit.** The one candidate verifier (`scripts/ci/check-libbox-abi.sh`'s `VERIFIED_APPLE_SHA`) is
-  both unwired and stale, and `check-apple-source-selection.sh` is self-referential to the gitlink by
+  unwired; as of `93d757828` it is no longer *stale* either — `ece0fb9d2` moved the constant onto the
+  gitlink, so its layer 5 is green and it agrees at `5cab4ec5…`. What is missing is execution, not
+  agreement: moving the gitlink alone silently re-creates the divergence, and
+  `check-apple-source-selection.sh` cannot notice it because it is self-referential to the gitlink by
   design. `client-apple.yml` is not in the release-acceptance required set.
 * **Proof:** `docs/fork/libbox-abi-contract.tsv`; `release/apple-client-refs.env`;
-  `check-apple-source-selection.sh:124-136`, `:209-210`;
-  `docs/fork/apple-artifact-verification.md:609-616`.
-* **Re-check:** `git ls-tree HEAD clients/apple`; `git grep VERIFIED_APPLE_SHA= -- scripts/`
+  `check-apple-source-selection.sh:124-136`, `:209-210`; `check-libbox-abi.sh:98-124`;
+  `apple-client-source.sh:88-105`; `docs/fork/apple-artifact-verification.md:609-616`.
+* **Re-check:** `git ls-tree HEAD clients/apple`; `git grep VERIFIED_APPLE_SHA= -- scripts/` and compare
+  the two by hand — that comparison is the whole check, and nothing performs it for you.
 * **Kind:** ABI/client contract. **Owner:** `libbox-platform-contract.md`
 
 ### A12 — Release re-verifies bytes per platform; it never rebuilds

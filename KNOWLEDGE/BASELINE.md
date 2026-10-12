@@ -16,9 +16,9 @@ produced it is given so a reader can re-measure instead of trusting this file.
 | Upstream project | `https://github.com/SagerNet/sing-box.git` (remote `upstream`) | `git remote -v` |
 | **Upstream baseline** | `e4b7e692f4545890bfc9d43960328e1449fa803b` = `refs/remotes/upstream/testing` | `git rev-parse refs/remotes/upstream/testing` |
 | **Fork branch point** | `0d91c4547921a7b72e9c9913e2bc6f3a556801e2` | see below |
-| Knowledge reviewed at | 2026-10-12 (Stage 2) | this file's Git history |
+| Knowledge reviewed at | 2026-10-12 (Stage 2; delta refresh at `93d757828`) | this file's Git history |
 | Knowledge revision | resolve dynamically — `git log -1 --format=%H -- KNOWLEDGE/BASELINE.md` | do not hardcode |
-| **Post-baseline production delta** | **none.** `v0.1.6..testing` contains exactly one commit, `f45f27341` "docs: add fork knowledge baseline [skip ci]", which touches only documentation. | `git log --oneline v0.1.6..HEAD` |
+| **Post-baseline production delta** | **none.** `v0.1.6..HEAD` is 5 commits and **no `.go` source changed**. Three are the knowledge base itself (`f45f27341`, `fccf644a8`, `93d757828`), and two are release plumbing — the `clients/apple` gitlink (`7f31bfd5e`) and the Apple CI gate scripts (`ece0fb9d2`). Zero production implementation commits, so module descriptions still hold; see `modules/ci-release.md` §5 for the two gate changes. | `git log --oneline v0.1.6..HEAD`; `git diff --name-only v0.1.6..HEAD` |
 
 ## The two baselines are different, and both matter
 
@@ -43,9 +43,14 @@ git merge-base a267e99e0 refs/remotes/upstream/testing   # e4b7e692f…  (e4b7e6
 git rev-list --count e4b7e692..a267e99e0             # 1834
 git rev-list --count e4b7e692..a267e99e0 --not --remotes=upstream   # 1834
 git rev-list --count a267e99e0 --not --remotes=upstream             # 1834
-git rev-list --count v0.1.6..HEAD                    # 1   (the docs commit)
+git rev-list --count v0.1.6..HEAD                    # 5   (3 docs commits + 2 release-plumbing commits)
 git diff --shortstat e4b7e692 a267e99e0              # 1474 files, 403956 insertions(+), 6207 deletions(-)
+git diff --name-only v0.1.6..HEAD -- '*.go'          # empty — no production source since the baseline
 ```
+
+> Note on the last line: do **not** write it as `... | grep -c '\.go$'`. `grep -c` prints `0` **and
+> exits 1** on no match, so a re-checker scripting it will read a correct result as a failure. The `--`
+> pathspec form above is the one to use.
 
 `e4b7e692..a267e99` is an **ancestor-to-descendant range**, not a branch range: `e4b7e692` is the
 upstream tip and the fork baseline is a descendant of it. The 1,834 commits in that range are exactly

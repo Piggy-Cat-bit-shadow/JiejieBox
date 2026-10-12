@@ -205,7 +205,7 @@ bash scripts/ci/verify-upstream-assumptions.sh
 bash scripts/ci/check-go-module-integrity.sh --require-checked test
 bash scripts/ci/verify-cronet-provenance.sh apple
 bash scripts/ci/check-apple-source-selection.sh
-bash scripts/ci/check-libbox-abi.sh          # UNWIRED, and its layer 5 would be RED — see §5
+bash scripts/ci/check-libbox-abi.sh          # UNWIRED; layer 5 is now GREEN — see §5
 ```
 
 **Measured in this audit, so a re-checker knows what "expected" looks like:**
@@ -341,24 +341,69 @@ the `clients/apple` gitlink as the sole authority, the refs file is **forbidden*
 It also removed every cross-check against an *intended* revision. The last candidate was the
 `VERIFIED_APPLE_SHA` constant in `scripts/ci/check-libbox-abi.sh`, and:
 
-* the constant no longer matches the gitlink (`90a0e9ae…` vs `d0524912…`), so the script's own layer 5
-  would fail;
+* **CORRECTED at the `93d757828` refresh.** The constant no longer mismatches the gitlink. It read
+  `90a0e9ae…` while the gitlink had advanced to `d0524912…`, so layer 5 failed; `ece0fb9d2`
+  ("fix(apple): unblock the release — refs guard read the environment, and the pin constant was stale")
+  moved the constant to `d0524912`, and the later pin advance moved it again to `5cab4ec5`. At
+  `93d757828` the constant and the gitlink are **the same commit**, so layer 5 is **green**, and layer 4
+  was run against a clean `clients/apple` at that revision (`scanned: 670, violations: []`). The
+  derivation, including why the second move is *not* the same argument as the first, is recorded in the
+  script's own comment block.
+* **The consequence for the claim below is narrower than "it is stale".** Nothing wires the verifier, so
+  the pin still moves without objection **in practice** — an unwired constant only agrees with the
+  gitlink because the two were moved together by hand. What changed is that the cross-check is now
+  *satisfiable* rather than already failed.
+* **CORRECTED — the released revision is no longer unrecorded.** The previous revision claimed "the
+  released revision `d0524912…` is recorded nowhere in a tracked non-`.git` file". That revision *is*
+  now named: `scripts/ci/check-libbox-abi.sh` carries it in the derivation comment, and the current pin
+  `5cab4ec5…` appears in the same constant. What is **still** unrecorded is the revision the **v0.1.6**
+  Apple products were actually built from, `a267e99e0` — verified absent from every tracked non-`.git`
+  file.
 * **nothing runs the script** — no workflow, no other script, no `Makefile` target;
 * `c7014ddc1` is proof by demonstration: it moved the pin and **nothing objected**;
 * `check-apple-source-selection.sh` could not have caught it **by design** — every one of its checks is
   self-referential to the gitlink (they prove iOS and macOS *agree*, and forbid a second copy; they
-  cannot say the revision is the intended one);
-* the released revision `d0524912…` is recorded nowhere in a tracked non-`.git` file.
+  cannot say the revision is the intended one).
 
-> **Correct wording: "the Apple pin has no wired verifier, and the one candidate verifier is both
-> unwired and stale."** Do **not** write "the Apple ABI gate is broken" — that implies a gate that runs.
+> **Correct wording: "the Apple pin has no wired verifier, and the one candidate verifier is unwired."**
+> Do **not** write "the Apple ABI gate is broken" — that implies a gate that runs. **Do not write
+> "unwired and stale" any more either**: at `93d757828` the constant agrees with the gitlink, and
+> repeating the old wording is a stale claim in its own right.
 >
 > **What is therefore NOT verified for v0.1.6:** ABI call-site compatibility (the Swift/Kotlin clients
-> against the libbox surface) **at the pinned revision**. The recorded PASSes are at
-> `bb5309b4a`/`90a0e9ae` — two pin generations earlier — and do not transfer.
+> against the libbox surface) **at the revision v0.1.6 pinned**. The recorded PASSes are at
+> `bb5309b4a`/`90a0e9ae` — two pin generations earlier — and do not transfer. The layer-4 PASS at
+> `5cab4ec5` is a *newer* revision than the release, so it says nothing about what shipped.
 >
 > **What IS wired and gated:** Apple packaging/install validity, signing environment, branding, macOS
 > naming, and source selection — see `libbox-platform-contract.md`.
+
+### The refs guard: it read the caller's environment, not the file
+
+`scripts/ci/apple-client-source.sh` tested `MACOS_APPLE_SHA` / `MACOS_APPLE_BRANCH` **in the
+environment** after sourcing the refs file, to decide whether the file had been edited back to the
+two-source model. It cannot tell the file's assignments from the caller's, and the caller legitimately
+carries both names:
+
+```text
+apple-client-source.sh resolve   emits MACOS_APPLE_SHA / MACOS_APPLE_BRANCH as historical aliases
+                                 (:386-388, so an eval'ing caller survives `set -u`)
+release-apple.sh                 exports them on to the builders                (:181)
+```
+
+So `resolve -> export -> assert-shared-source` refused the values `resolve` had printed moments
+earlier, and blamed a refs file containing no such line. **`release-apple.sh testflight` deadlocked on
+its own output** — a real release blocker, not a documentation defect. `ece0fb9d2` replaced the test
+with `refs_declares_platform_source()`, a text test on the **file** asked *before* sourcing, so the
+original intent ("every subcommand must refuse a two-source refs file") is kept while the answer no
+longer depends on who called. The refs file may still not declare a per-platform source; the `export
+NAME=` spelling is refused too.
+
+Evidence: `VERIFIED_SOURCE` for the guard's text (`:88-105`); `VERIFIED_UNIT` for the behaviour — the
+guard was exercised directly against ten cases (three the pre-fix guard wrongly refused, four refusals
+it must keep, three fail-closed/comment near-misses), alongside three old-guard control cases that
+reproduce the deadlock. All thirteen passed. The shipped script itself needs `bash`, absent on that
+audit host, so running `apple-client-source.sh` end to end is `BLOCKED_BY_ENVIRONMENT`.
 
 ---
 

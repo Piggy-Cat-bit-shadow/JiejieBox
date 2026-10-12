@@ -13,8 +13,8 @@ changed, why, and how to continue without re-reading 1,834 commits*.
 | **Production baseline** | `a267e99e0bf1811dc975b013e2e8d7a15ab40d23` — the implementation every module describes |
 | Release baseline | **`v0.1.6`**, the same SHA |
 | **Upstream baseline** | `e4b7e692f4545890bfc9d43960328e1449fa803b` = `refs/remotes/upstream/testing` |
-| Post-baseline production delta | **none** — `v0.1.6..testing` is one documentation commit |
-| Knowledge reviewed at | 2026-10-12 |
+| Post-baseline production delta | **none** — `v0.1.6..HEAD` is 5 commits (3 knowledge-base, 2 release plumbing) and **no `.go` source changed** |
+| Knowledge reviewed at | 2026-10-12 (Stage 2; delta refresh at `93d757828`) |
 | Knowledge revision | resolve dynamically: `git log -1 --format=%H -- KNOWLEDGE/BASELINE.md` |
 
 **The knowledge base does not describe `HEAD`.** It describes `a267e99e`, and it says so. Full

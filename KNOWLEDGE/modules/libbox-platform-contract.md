@@ -259,6 +259,11 @@ mobile-only tag placed there reaches macOS in a mixed build. `applebuildtags/tag
 * `scripts/ci/apple-client-source.sh sha ios` and `sha macos` both return the gitlink, and
   `assert-shared-source` fails the build if they ever differ (both jobs call it:
   `client-apple.yml:238-239`, `:503-504`);
+* `load_refs` asks whether the **refs file itself** declares a per-platform source — a text test on the
+  file, taken *before* sourcing it (`apple-client-source.sh:88-105`, `ece0fb9d2`). It previously tested
+  the caller's *environment*, which `resolve` (`:386-388`) and `release-apple.sh` (`:181`) legitimately
+  populate, so `release-apple.sh testflight` refused its own resolved values and deadlocked. Do not
+  reintroduce the environment test: `ci-release.md` §5 records the full sequence;
 * the rationale is in the file's own header: the two Apple products come from **one** source tree at
   **one** commit with **one** Libbox framework, and the parent decides **only** which commit that is.
   Presentation routing (iPhone → the fork's Hako presentation, iPad and macOS → upstream's) is a
@@ -276,20 +281,30 @@ and forbid a second copy. They cannot say the revision is the *intended* one.
 The last cross-check against an intended revision was the `VERIFIED_APPLE_SHA` constant in
 `scripts/ci/check-libbox-abi.sh`, and:
 
-* the constant no longer matches the gitlink (`90a0e9ae…` vs `d0524912…`), so the script's own layer 5
-  would fail;
-* **nothing invokes that script** — not a workflow, not another script, not a `Makefile` target;
+* **CORRECTED at the `93d757828` refresh.** The constant no longer mismatches the gitlink. It read
+  `90a0e9ae…` while the gitlink had advanced to `d0524912…`, so layer 5 failed; `ece0fb9d2` moved it to
+  `d0524912`, and the pin advance in `7f31bfd5e` moved it again to `5cab4ec5`. At `93d757828` the
+  constant and the gitlink are **the same commit**, so layer 5 is green, and layer 4 was run against a
+  clean `clients/apple` at that revision (`scanned: 670, violations: []`).
+* **nothing invokes that script** — not a workflow, not another script, not a `Makefile` target. So the
+  pin still moves without objection **in practice**: the constant agrees with the gitlink only because
+  the two were advanced together by hand. That is an obligation on whoever moves the pin, not a wired
+  check — see caution 16.
 * `c7014ddc1` ("fix(apple): align CI branding and iOS target") is proof by demonstration: it moved the
   gitlink 33 minutes before the release commit and touched only `client-apple.yml` + `clients/apple`.
   **Nothing objected.**
-* the released revision `d052491215144f209b4726bbcf374649881defa3` appears in **no** tracked non-`.git`
-  file, so the tree the v0.1.6 Apple products were built from is recorded nowhere;
+* **CORRECTED.** The previous revision said the pinned revision `d052491215144f209b4726bbcf374649881defa3`
+  appears in **no** tracked non-`.git` file. It now does: `scripts/ci/check-libbox-abi.sh` names it in
+  the constant's derivation comment, and names the current pin `5cab4ec5…` in the constant itself. What
+  remains unrecorded is the revision the **v0.1.6** Apple products were built from (`a267e99e0`) —
+  still absent from every tracked non-`.git` file.
 * `client-apple.yml` is **not** in `verify-release-acceptance.sh`'s required set (`verify.yml`,
   `interop-xray.yml`, `server-linux-amd64.yml`), and `verify.yml` does not run the ABI gate — so release
   acceptance is **structurally incapable** of noticing the drift.
 
-> **Correct statement: "the Apple pin has no wired verifier, and the one candidate verifier is both
-> unwired and stale."** Do **not** write "the Apple ABI gate is broken" — that implies a gate that runs.
+> **Correct statement: "the Apple pin has no wired verifier, and the one candidate verifier is
+> unwired."** Do **not** write "the Apple ABI gate is broken" — that implies a gate that runs. Do **not**
+> write "unwired and stale": at `93d757828` the constant agrees with the gitlink.
 >
 > **What is therefore `UNVERIFIED` for v0.1.6:** ABI call-site compatibility of the Swift/Kotlin clients
 > against the libbox surface **at the pinned revision**. The recorded PASSes are at
@@ -396,7 +411,8 @@ External repositories
 | The trim ladder is complete and an unknown level is ignored | VERIFIED_SOURCE + VERIFIED_UNIT | `go test -count=1 ./common/runtimecoord/...` |
 | `APIVersion = 4` is served and consumed | VERIFIED_SOURCE | `git grep -n APIVersion` |
 | The Apple client is one source for iOS and macOS | VERIFIED_SOURCE (gate declaration) | `bash scripts/ci/check-apple-source-selection.sh` |
-| The Apple **pin cannot move without objection** | **VERIFIED_GIT that no wired mechanism exists** | `git ls-tree HEAD clients/apple`; `git grep VERIFIED_APPLE_SHA= -- scripts/` — **KNOWN GAP** |
+| The Apple **pin cannot move without objection** | **VERIFIED_GIT that no wired mechanism exists** — the `VERIFIED_APPLE_SHA` constant agrees with the gitlink at `93d757828` (`5cab4ec5…`), but nothing *runs* the check that compares them | `git ls-tree HEAD clients/apple`; `git grep VERIFIED_APPLE_SHA= -- scripts/`; `git grep -n check-libbox-abi` for referrers — **KNOWN GAP** |
+| The refs file cannot silently reinstate a two-source pin | VERIFIED_SOURCE + VERIFIED_UNIT | `sed -n '88,105p' scripts/ci/apple-client-source.sh`; assert it greps the **file**, not the environment — `ece0fb9d2` |
 | ABI call-site compatibility at the pinned revision | **UNVERIFIED** | `bash scripts/ci/check-libbox-abi.sh` (needs a client checkout + `gobind`) |
 | Android AAR provenance and architecture | **UNVERIFIED (declaration only)** | `android-core-arm64.yml` |
 | Device behaviour on either platform | **UNVERIFIED** — no device, no SDK, no Xcode | — |
@@ -426,3 +442,12 @@ External repositories
 14. **Do not claim client-side behaviour.** The client repositories are not in this worktree.
 15. **Do not forget that `include/*` has zero test files.** The registry and the tombstones are
     unguarded; a change there is caught only by a build.
+16. **If you move the Apple pin, the constant must move with it — by hand.** `clients/apple`'s gitlink is
+    the single authority, but `VERIFIED_APPLE_SHA` in `scripts/ci/check-libbox-abi.sh` is a second copy
+    that layer 5 compares against it, and nothing runs that script to tell you when the two diverge. At
+    `93d757828` they agree (`5cab4ec5…`). Moving the gitlink alone re-creates the stale-constant defect
+    `ece0fb9d2` had to unblock the release for. Two rules when you do it: **re-derive** rather than
+    inherit the previous justification — the script's own comment says so, and the two historical moves
+    had *different* arguments (the first changed no source file; the second changed one Swift file) — and
+    **run layer 4** (`probe-accessors.py`, or `check-libbox-abi.sh` where bash exists) against the new
+    revision, because recording a SHA is a statement about it, not a verification of it.
