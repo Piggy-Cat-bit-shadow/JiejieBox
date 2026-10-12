@@ -473,6 +473,7 @@ BLACKHOLE_TEST               = PASS (as "undetected", which is the finding, not 
 TUN_SPLICE_COMPARISON        = INCONCLUSIVE / BLOCKED_BY_ENVIRONMENT
 RACE                         = BLOCKED_BY_ENVIRONMENT
 LEAK_CHECK                   = PASS (20x repeats of four tests, no growth)
+TEARDOWN_OWNERSHIP_GAP        = CONFIRMED (one-sided completion never runs onClose - §10a)
 MUTATION_TEST                = NOT_APPLICABLE (no semantic changed)
 ```
 
@@ -569,6 +570,63 @@ Recorded so the next round does not re-derive them:
 
 ---
 
+## 10a. §20 lead: the teardown has no owner once one direction finishes
+
+Re-reading `connectionCopy` for the brief's §20 leads - error/cancel propagation, half-close,
+ownership - turns up an asymmetry none of the earlier tests reached, because every one of them stalled
+**both** directions at once:
+
+```text
+first copy to finish    sets done = true, and closes ONLY its own destination writer
+second copy to finish   runs onClose and closes both connections
+```
+
+So a flow whose **upload completes normally** while its **download never returns** never runs `onClose`
+at all. The upload sets `done` and thereby declines; the download is the copy that would have run it,
+and it is the one that is parked. `route/active_stall_teardown_test.go` builds exactly that - the
+application sends a request, half-closes, and the peer reads it, answers nothing and does not close:
+
+```text
+one-sided completion: copies=1 upload="" download="internal/poll.(*FD).RawRead("
+```
+
+One copy, not two. The upload goroutine has **exited**; the download is parked in a read with nothing
+to return; `onClose` has not fired; the manager still counts the flow.
+
+### This recognises the state more cleanly than the blocked-writer signal
+
+No grace period is needed to *identify* it. "One copy has finished, so this connection can no longer
+carry anything in that direction" is a fact rather than a threshold, and the surviving goroutine's
+identity is directly observable. On recognition alone this beats §4a's signal, which §4a.1 showed is
+indistinguishable from healthy backpressure.
+
+### And it still does not license a core-side fix
+
+Recognising the state does not say what to do about it:
+
+```text
+curl -X POST ...     sends a request, half-closes, then waits for the response
+```
+
+That is **this exact state**, and the wait is legitimately unbounded - a slow backend, a long report, a
+streaming endpoint that has not produced its first byte. Bounding the surviving read would kill every
+one of them. Only the application knows whether a response is late or never coming, because only the
+application knows what it asked for.
+
+This is the sharpest form of the argument against a core-side watchdog, and it is stronger than the
+one this document started with. The earlier objection was "a grace period would be a guess". The real
+objection is that **no grace period is correct**, because the state a watchdog would fire on is
+indistinguishable from a legitimate one at every layer the core can see - and unlike §4a's signal,
+this one cannot even be dismissed as a measurement gap. It is a property of the protocol: half-close
+exists precisely so that a peer may wait arbitrarily long for a reply.
+
+So this is recorded as a characterisation of the ownership gap, not as a bug with a fix attached. If a
+fix is wanted, it belongs where the knowledge is - in the application's own timeout and reconnect
+logic - or in the downstream layer that actually stopped forwarding, which §7a and
+`SERVER_CHAIN_STALL_AUDIT.md` leave undetermined.
+
+---
+
 ## 11. Final status
 
 ```text
@@ -583,7 +641,7 @@ ROOT_CAUSE_LAYER              = UNDETERMINED
 FIRST_STALL_LAYER             = UNDETERMINED
 OBSERVED_BACKPRESSURE_LAYER   = client ConnectionManager connectionCopy (upload goroutine)
 
-REPRODUCED                    = YES   (deterministic, test-only, in-tree; 9 tests)
+REPRODUCED                    = YES   (deterministic, test-only, in-tree; 10 tests)
 ROOT_CAUSE_PROVEN             = NO    (mechanism proven; not proven to be the live event)
 ROOT_CAUSE_CONFIDENCE         = 85%   (mechanism: high. incident link: inferred)
 PRODUCTION_FIX_APPLIED        = NO    (B and C unmet; A constructible but unsound — §4a.1)
@@ -607,6 +665,7 @@ HALF_CLOSE_MATRIX             = PARTIAL
 BLACKHOLE_TEST                = PASS (flow proven undetected, in a proven stall)
 RACE                          = BLOCKED
 LEAK_CHECK                    = PASS  (20x repeats of four tests, no growth)
+TEARDOWN_OWNERSHIP_GAP        = CONFIRMED (one-sided completion never runs onClose - §10a)
 MUTATION_TEST                 = NOT_APPLICABLE
 ```
 
