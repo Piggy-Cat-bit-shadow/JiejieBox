@@ -467,14 +467,48 @@ layer question (one `ss -tinp` on the VPS during a stall).
 
 ```text
 HEALTHY_LONG_FLOW_REGRESSION = PASS
+HEALTHY_BACKPRESSURE         = PASS as a flow, FAIL as a discriminator (identical to stalled - §4a.1)
 HALF_CLOSE_MATRIX            = PARTIAL
 BLACKHOLE_TEST               = PASS (as "undetected", which is the finding, not a defect in the test)
+TUN_SPLICE_COMPARISON        = INCONCLUSIVE / BLOCKED_BY_ENVIRONMENT
 RACE                         = BLOCKED_BY_ENVIRONMENT
-LEAK_CHECK                   = PASS
+LEAK_CHECK                   = PASS (20x repeats of four tests, no growth)
 MUTATION_TEST                = NOT_APPLICABLE (no semantic changed)
 ```
 
-### Race and leak
+### The TUN + splice comparison, and why it cannot be run here
+
+The brief's §6 asks whether the TUN+splice path escapes the stall, and it is the right experiment. It
+cannot be run on this host, and the reason is structural rather than environmental convenience:
+
+- `spliceConnection` requires the source to cast to **`*tun.GoConn`** (`route/splice.go:58,100`).
+- `tun.GoConn` has unexported fields and exactly one constructor, `(*GoConn).initialize(engine
+  *goEngine, ...)`, which is unexported and takes an engine that only sing-tun's Go stack can build.
+  Verified against the pinned `sing-tun@v0.0.0-20261008172655-8dde9c8cbe27`; there is no exported
+  `NewGoConn` and no test helper.
+- The existing harness says the same thing in its own header, and lists the four outcomes it cannot
+  reach - `acceptance`, `splice_rejected`, `source_reader_writer_mismatch`, `cached_write_failed`.
+- There is also no `wintun.dll` on this host, so no TUN device can be created.
+
+So **path C (actual kernel splice selected) is unobservable from a unit test**, which is precisely why
+`queue: tcpSpliceDiagnostics` exists in production: the decision is read on a device, not here. The
+brief's Case D warning applies directly - a "TUN does not stall" result obtained without confirming
+`actual splice selected` would be `实验无效`.
+
+What *can* be said without the experiment, from the classifier alone:
+
+```text
+mixed-in            always userspace    spliceReasonSourceNotGoConn is recorded for any non-GoConn
+TUN, fallback       always userspace    same copy path, so same absent liveness mechanism
+TUN, actual splice  no userspace copy   structurally immune: the bytes are not in this process
+```
+
+So the prediction is that only path C escapes, and that it does so by construction rather than by any
+liveness logic. Confirming it needs a device, and `spliceDiagnostics`/`tcpSpliceDiagnostics` are the
+instruments to read there.
+
+### Race
+
 
 `go test -race` **cannot run on this host**: `-race` requires cgo, the only available C compiler is
 the Swift toolchain's `clang`, and its linker rejects the Go link with
@@ -538,7 +572,18 @@ Recorded so the next round does not re-derive them:
 ## 11. Final status
 
 ```text
-REPRODUCED                    = YES   (deterministic, test-only, in-tree; 7 tests)
+EXISTING_TESTS_COMMITTED      = YES   (4 commits, all test-only + docs, no production source)
+TUN_SPLICE_COMPARISON         = INCONCLUSIVE (BLOCKED_BY_ENVIRONMENT)
+HEALTHY_BACKPRESSURE          = PASS as a flow / FAIL as a discriminator
+REAL_WINDOWS_STALL_CAPTURED   = NO
+SERVER_CHAIN_AUDITED          = YES   (SERVER_CHAIN_STALL_AUDIT.md)
+SERVER_CHAIN_CONTRIBUTES      = YES   (architecturally; not measured on a live VPS)
+
+ROOT_CAUSE_LAYER              = UNDETERMINED
+FIRST_STALL_LAYER             = UNDETERMINED
+OBSERVED_BACKPRESSURE_LAYER   = client ConnectionManager connectionCopy (upload goroutine)
+
+REPRODUCED                    = YES   (deterministic, test-only, in-tree; 9 tests)
 ROOT_CAUSE_PROVEN             = NO    (mechanism proven; not proven to be the live event)
 ROOT_CAUSE_CONFIDENCE         = 85%   (mechanism: high. incident link: inferred)
 PRODUCTION_FIX_APPLIED        = NO    (B and C unmet; A constructible but unsound — §4a.1)
@@ -561,19 +606,24 @@ HEALTHY_LONG_FLOW_REGRESSION  = PASS
 HALF_CLOSE_MATRIX             = PARTIAL
 BLACKHOLE_TEST                = PASS (flow proven undetected, in a proven stall)
 RACE                          = BLOCKED
-LEAK_CHECK                    = PASS  (3 consecutive clean runs)
+LEAK_CHECK                    = PASS  (20x repeats of four tests, no growth)
 MUTATION_TEST                 = NOT_APPLICABLE
 ```
 
-**Two corrections this round, both recorded rather than quietly dropped:**
+**Three corrections, all recorded rather than quietly dropped:**
 
-1. §4a — my claim that a RED test was impossible was **wrong**. A discriminator exists and is
-   measured, gated on backpressure rather than on idleness. The design objection to fixing this is
-   narrowed, not closed: see the correction below on what is still untested.
-2. `RED_TEST_CONSTRUCTIBLE` and `ROOT_CAUSE_CONFIDENCE` are deliberately separate numbers. §4a added
-   detail about the *state a stalled flow is in*, not about *whether the reported incident was that
-   state*. Raising confidence on the strength of it would have been the exact substitution the brief
-   warns against.
+1. §4a — my claim that a RED test was impossible was **wrong**. A structural signal does exist.
+2. §4a.1 — and then my follow-up claim that the signal justified a fix was **also wrong**. A healthy
+   slow receiver produces a byte-for-byte identical signature and then recovers. The signal is
+   necessary, not sufficient; `RED_TEST_SOUND = NO`; the grace period has a measured lower bound and no
+   upper bound.
+3. §7a — a blocked writer is the **last** layer to observe a problem, not the first. The client
+   signature has two readings that this host cannot separate, so `FIRST_STALL_LAYER` stays
+   `UNDETERMINED` and the server-chain audit gives the one experiment that would settle it.
+
+`RED_TEST_CONSTRUCTIBLE` and `ROOT_CAUSE_CONFIDENCE` remain deliberately separate numbers. §4a added
+detail about the *state a stalled flow is in*, not about *whether the reported incident was that
+state* — so confidence did not move, and it should not have.
 
 **Evidence levels used:** `VERIFIED_SOURCE` for every claim in §2, §3 and §9 (each is a read of the
 named file); `VERIFIED_REPRO` for §4 and §4a (executed, repeated three times); `VERIFIED_UNIT` for the
