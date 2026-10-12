@@ -1,8 +1,0 @@
-﻿UU common/runtimecoord/platform_events.go
-AA common/sniff/quic_boundary_test.go
-UU go.sum
-UU route/splice_diagnostics.go
-UU route/splice_diagnostics_test.go
-UU route/tcp_splice_diagnostics_test.go
-UU scripts/ci/build-apple-libbox.sh
-UU test/go.sum

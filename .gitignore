@@ -99,3 +99,4 @@ config/apple/*.env
 # traffic-scheduler harness is a manual engineering tool built that way, so its default
 # output name is ignored rather than committed by accident.
 /harness
+_consolidation/
