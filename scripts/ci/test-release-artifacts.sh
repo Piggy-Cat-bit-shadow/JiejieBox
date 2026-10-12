@@ -1166,11 +1166,19 @@ expect_fail "an unresolvable workflow id -> FAIL" "cannot resolve workflow" -- \
 # The four products release.yml enables, with the fields target_field declares for them.
 # Kept as data so a product cannot be added to the gate's table and forgotten here: the
 # manifest assertions below are derived from this list.
+#
+#   dir | binary | buildinfo | platform | arch | magic | tarball | run id
+#
+# `dir` is both the fixture directory name and the `dir` the mock's artifact entry names -
+# they must be the same string. They were not in the first version of this case, and the
+# mock silently resolved to the pre-existing two-product fixture directory instead, so the
+# download copied a whole artifact tree and the failure surfaced much later as a tar
+# allowlist violation.
 FULL_PRODUCTS="
-linux|.github/workflows/server-linux-amd64.yml|sing-box-linux-amd64|BUILD-INFO-LINUX.txt|linux|amd64|elf-x86-64|jiejie-sing-box-linux-amd64|7001
-macos|.github/workflows/client-macos.yml|sing-box-darwin-arm64|BUILD-INFO-MACOS.txt|darwin|arm64|macho-arm64|jiejie-sing-box-macos-arm64|7002
-windows|.github/workflows/windows-core-amd64.yml|sing-box.exe|BUILD-INFO-WINDOWS.txt|windows|amd64|pe-amd64|jiejie-sing-box-windows-amd64|7003
-android|.github/workflows/android-core-arm64.yml|libbox.aar|BUILD-INFO-ANDROID.txt|android|arm64|aar-arm64|jiejie-sing-box-android-arm64|7004
+linux|sing-box-linux-amd64|BUILD-INFO-LINUX.txt|linux|amd64|elf-x86-64|jiejie-sing-box-linux-amd64|7001
+macos|sing-box-darwin-arm64|BUILD-INFO-MACOS.txt|darwin|arm64|macho-arm64|jiejie-sing-box-macos-arm64|7002
+windows|sing-box.exe|BUILD-INFO-WINDOWS.txt|windows|amd64|pe-amd64|jiejie-sing-box-windows-amd64|7003
+android|libbox.aar|BUILD-INFO-ANDROID.txt|android|arm64|aar-arm64|jiejie-sing-box-android-arm64|7004
 "
 FULL_VERSION="0.1.6"
 FULL_TAG="v$FULL_VERSION"
@@ -1184,8 +1192,12 @@ run_gate_full() {
 
 # make_full_artifacts - one verified artifact directory per product, plus the installer.
 make_full_artifacts() {
+  # The four product fixtures live under $work/fixtures/<dir>, which is exactly where the
+  # mock's `gh run download` resolves its artifact `dir` - so the directory it downloads,
+  # and the one this case builds, are the same place by construction rather than by two
+  # names agreeing.
   rm -rf "$work/full"
-  mkdir -p "$work/full/artifacts"
+  mkdir -p "$work/full"
   local row
   # `printf | while read` rather than a here-string: the list is static and this keeps the
   # block parseable by a POSIX shell, which is how the syntax of this file is checked on a
@@ -1196,14 +1208,22 @@ make_full_artifacts() {
     # `set --` rather than a here-string: this file's syntax is checked by a POSIX shell on
     # hosts without bash, and `<<<` is a bash extension.
     old_ifs="$IFS"; IFS='|'; set -- $row; IFS="$old_ifs"
-    [ "$#" -eq 9 ] || { echo "FAIL: malformed FULL_PRODUCTS row ($# fields): $row" >&2; exit 1; }
-    make_artifact "$work/full/artifacts/$1" "$3" "$4" "$5" "$6" "$7" "$SHA"
+    [ "$#" -eq 8 ] || { echo "FAIL: malformed FULL_PRODUCTS row ($# fields): $row" >&2; exit 1; }
+    make_artifact "$work/fixtures/$1" "$2" "$3" "$4" "$5" "$6" "$SHA"
   done
-  make_desktop "$work/full/desktop" "$FULL_VERSION" "$SHA"
+  # The desktop artifact is not a product: its directory is where the desktop workflow's run
+  # download lands, and it is also the tree verify_desktop reads the build record from.
+  make_desktop "$work/fixtures/desktop" "$FULL_VERSION" "$SHA"
 }
 
 # write_full_scenario - a scenario in which all four products and the desktop have a
 # successful run for this commit.
+#
+# The workflow paths are the gate's own TARGET_WORKFLOWS names: the gate resolves each one
+# by file, and `resolve_workflow_id` asserts that the path the API returns is the path it
+# asked for, so a name the gate does not target would simply never be looked up. The
+# artifact `dir` is the first field of each row, which is also the fixture directory name -
+# those two being the same string is what makes the download resolve.
 write_full_scenario() {
   MOCK_STATE="$work/state" MOCK_FIXTURES="$work/fixtures" \
     python3 - "$SHA" "$FULL_PRODUCTS" "$FULL_DESKTOP_ID" <<'PY'
@@ -1228,12 +1248,26 @@ def wf(wid, name, runs):
     return {"id": wid, "path": ".github/workflows/" + name, "state": "active",
             "name": name, "runs": runs}
 
+# The gate's own table, in its own order. Kept here rather than imported so a change to the
+# gate's product set is a visible edit to this list too.
+PRODUCT_WORKFLOWS = [
+    ("server-linux-amd64.yml", "linux"),
+    ("client-macos.yml", "macos"),
+    ("windows-core-amd64.yml", "windows"),
+    ("android-core-arm64.yml", "android"),
+]
+
+rows = {}
+for row in [r for r in products.strip().splitlines() if r.strip()]:
+    fields = row.split("|")
+    rows[fields[0]] = fields
+
 workflows = {}
 artifacts = {}
-for i, row in enumerate([r for r in products.strip().splitlines() if r.strip()]):
-    key, path, _bin, _info, _plat, _arch, _magic, _tar, rid = row.split("|")
+for i, (name, key) in enumerate(PRODUCT_WORKFLOWS):
     wid = 8000 + i
-    workflows[os.path.basename(path)] = wf(wid, os.path.basename(path), [run(int(rid), 10 + i, wid)])
+    rid = rows[key][7]
+    workflows[name] = wf(wid, name, [run(int(rid), 10 + i, wid)])
     artifacts[rid] = {"dir": key, "name": "Jiejie-%s-%s" % (key, sha[:7])}
 
 workflows["client-desktop-windows.yml"] = wf(
@@ -1291,10 +1325,10 @@ full_expect_ok "full contract: stage the desktop installer" \
   desktop --repo o/r --sha "$SHA" --out "$work/full/desktop-dl" --interval 1 --timeout 10
 full_expect_ok "full contract: verify four products and the installer" \
   verify --dir "$work/full/assets" --sha "$SHA" \
-    --desktop-dir "$work/full/desktop" --version "$FULL_VERSION"
+    --desktop-dir "$work/fixtures/desktop" --version "$FULL_VERSION"
 full_expect_ok "full contract: flatten -> PASS" \
   flatten --plan "$full_plan" --dir "$work/full/assets" --out "$work/full/upload" \
-    --tag "$FULL_TAG" --desktop "$work/full/desktop/Jiejiebox-v$FULL_VERSION-windows-x64.exe" \
+    --tag "$FULL_TAG" --desktop "$work/fixtures/desktop/Jiejiebox-v$FULL_VERSION-windows-x64.exe" \
     --version "$FULL_VERSION"
 full_expect_ok "full contract: check-upload -> PASS" \
   check-upload --out "$work/full/upload" --tag "$FULL_TAG" --version "$FULL_VERSION"
@@ -1377,14 +1411,14 @@ rm -rf "$work/full/assets-noandroid/libbox.aar"
 full_expect_fail "full contract: a missing Android deliverable -> FAIL" \
   "libbox.aar: found 0 copies" -- \
   verify --dir "$work/full/assets-noandroid" --sha "$SHA" \
-    --desktop-dir "$work/full/desktop" --version "$FULL_VERSION"
+    --desktop-dir "$work/fixtures/desktop" --version "$FULL_VERSION"
 
 # --- negative: a CI record must not reach the download page ---------------
 #
 # The desktop artifact directory carries BUILD-INFO-WINDOWS-DESKTOP - it is what proves the
 # installer's core, and it stays in Actions artifacts. Dropped into staging it is an
 # "unexpected public asset" and must be refused, which is the whole point of the allowlist.
-cp "$work/full/desktop/BUILD-INFO-WINDOWS-DESKTOP-$FULL_VERSION.txt" \
+cp "$work/fixtures/desktop/BUILD-INFO-WINDOWS-DESKTOP-$FULL_VERSION.txt" \
    "$work/full/upload/BUILD-INFO-WINDOWS-DESKTOP-$FULL_VERSION.txt"
 full_expect_fail "full contract: an extra BUILD-INFO in staging -> FAIL" \
   "not public deliverable" -- \
