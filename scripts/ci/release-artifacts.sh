@@ -585,7 +585,10 @@ $(printf '      %s\n' $listing)"
   # Removed, then both trees created: the download writes into them, so a leftover tree from
   # an earlier run must not be able to satisfy the checks below.
   rm -rf "$out" "$records_dir"
-  mkdir -p "$out" "$records_dir"  note "downloading desktop artifact '$installer_artifact' from run $rid"
+  # The `note` on the next line was a second command on the `mkdir` line, which is why it had
+  # stopped printing; split, so the log says what is about to be downloaded.
+  mkdir -p "$out" "$records_dir"
+  note "downloading desktop artifact '$installer_artifact' from run $rid"
   if ! gh run download "$rid" --repo "$repo" --name "$installer_artifact" --dir "$out"; then
     die "gh run download failed for '$installer_artifact' on desktop run $rid. The installer is NOT verified; refusing to continue."
   fi
@@ -593,6 +596,45 @@ $(printf '      %s\n' $listing)"
   if ! gh run download "$rid" --repo "$repo" --name "$records_artifact" --dir "$records_dir"; then
     die "gh run download failed for '$records_artifact' on desktop run $rid. Without the build record the installer's core cannot be proven; refusing to continue."
   fi
+
+  # Make the staging layout the one the next check and release.yml both declare: the installer
+  # inside a directory named after the artifact it came in.
+  #
+  # Both shapes have to be accepted, and neither is hypothetical. This suite's mock copies the
+  # artifact into a directory of its own name - "`gh run download --name` nests everything one
+  # level down", in the words of the test that asserts it - while the v0.1.7 run left
+  # `release-desktop` holding the installer directly, with no directory under it, which is what
+  # the check below rejected. Written for the runner alone this step is a no-op in the fixture;
+  # written for the fixture alone it is a no-op on the runner and the release dies unstaged.
+  #
+  # So the installer is LOCATED rather than assumed: searched for anywhere under $out, required
+  # to number exactly one, and moved into the artifact-named directory only when it is not
+  # already there. Exactly one copy is required because a second is precisely what the
+  # allowlist below exists to reject, and it is better named here than three steps later.
+  #
+  # `find` is deliberately not piped into `head`: this script runs under `set -o pipefail`, and
+  # a `head` that exits after one line can leave find writing into a closed pipe, which would
+  # fail the assignment for a reason that has nothing to do with the artifact.
+  local nested="$out/$installer_artifact" installer_path found_installers installer_count
+  mkdir -p "$nested"
+  found_installers="$(find "$out" -type f -name 'Jiejiebox-v*-windows-x64.exe')"
+  installer_count="$(printf '%s\n' "$found_installers" | grep -c . || true)"
+  [ "$installer_count" -eq 1 ] || die \
+    "the desktop artifact '$installer_artifact' yielded $installer_count copies of
+      Jiejiebox-v*-windows-x64.exe under $out, expected exactly 1. This step stages one
+      installer, and a second copy is exactly what the public allowlist would reject later."
+  installer_path="$found_installers"
+  if [ "$installer_path" != "$nested/$(basename "$installer_path")" ]; then
+    mv "$installer_path" "$nested/"
+  fi
+  # Whatever else the download left beside the artifact directory would reach the allowlist as
+  # a stray file, so it is reported rather than silently dropped.
+  local leftover
+  leftover="$(find "$out" -mindepth 1 -maxdepth 1 -not -name "$installer_artifact")"
+  [ -z "$leftover" ] || die \
+    "the staging directory holds more than the installer's own artifact directory:
+$(printf '      %s\n' $leftover)
+      Only the installer is a public deliverable, so this is refused rather than pruned."
 
   local subdirs files
   subdirs="$(find "$out" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
