@@ -72,16 +72,36 @@ fail() { echo "apple-client-source: $*" >&2; exit 1; }
 
 # --- configuration -----------------------------------------------------------
 
+# Does the REFS FILE ITSELF declare a per-platform source?
+#
+# Deliberately a text test on the file, NOT `[ -n "${MACOS_APPLE_SHA:-}..." ]` after
+# sourcing it. That form cannot tell the file's own assignments from the caller's
+# environment, and the caller legitimately carries BOTH names: `resolve` emits
+# MACOS_APPLE_SHA / MACOS_APPLE_BRANCH as historical aliases - so a caller that evals its
+# output does not trip `set -u` - and release-apple.sh exports them on to the builders.
+#
+# Testing the environment therefore made every subcommand that calls this fail against the
+# values `resolve` had printed moments earlier, and the message blamed a refs file that
+# contains no such line at all. `release-apple.sh` deadlocked on its own output: resolve ->
+# export -> assert-shared-source, which refused. The question this guard exists to ask is
+# about the FILE, which is what it now asks.
+refs_declares_platform_source() {
+  grep -qE '^[[:space:]]*(export[[:space:]]+)?(MACOS_APPLE_SHA|MACOS_APPLE_BRANCH)=' "$refs_file"
+}
+
 load_refs() {
   [ -f "$refs_file" ] || fail "no $refs_file; the Apple client repository is undeclared."
-  # shellcheck disable=SC1090
-  . "$refs_file"
-  [ -n "${APPLE_CLIENT_REPOSITORY:-}" ] || fail "$refs_file sets no APPLE_CLIENT_REPOSITORY"
-  if [ -n "${MACOS_APPLE_SHA:-}${MACOS_APPLE_BRANCH:-}" ]; then
+  # Asked before sourcing, so a file that reinstates the two-source model is refused rather
+  # than half-applied - which keeps the original intent ("every subcommand must refuse it")
+  # while making the answer depend on the file and not on who called us.
+  if refs_declares_platform_source; then
     fail "$refs_file still declares a macOS-specific Apple source.
   Both platforms build the clients/apple gitlink now; a per-platform source pin is the
   two-source model this topology removed. Delete MACOS_APPLE_SHA and MACOS_APPLE_BRANCH."
   fi
+  # shellcheck disable=SC1090
+  . "$refs_file"
+  [ -n "${APPLE_CLIENT_REPOSITORY:-}" ] || fail "$refs_file sets no APPLE_CLIENT_REPOSITORY"
 }
 
 # apple_sha reads the parent gitlink. `git ls-tree HEAD` rather than a working-tree read:

@@ -95,7 +95,33 @@ PROJECT_GOMOBILE_VERSION="$(cd "$repo_root" && go list -m -f '{{.Version}}' gith
 # (this constant and the gitlink agree) and nothing more, and must not report layer 4 as passed
 # on that basis. See docs/fork/apple-artifact-verification.md §9.1.
 VERIFIED_ANDROID_SHA="ec61030d3df74f3e7c39ab848c8996008ecd386a"
-VERIFIED_APPLE_SHA="90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07"
+# Moved from 90a0e9aef when the Apple gitlink advanced to d05249121, because the two must
+# be the same commit or this gate fails - which is exactly what it did.
+#
+# Moved again to 5cab4ec5, when the gitlink advanced one commit further with
+# "build(apple): update Apple client pin". The second move is NOT the same argument as the
+# first, so it is stated separately and re-derived rather than inherited.
+#
+# 90a0e9ae -> d0524912 (the first move; no source file changed at all):
+#
+#   sing-box.xcodeproj/project.pbxproj   IPHONEOS_DEPLOYMENT_TARGET 15.0 -> 16.0  (x2)
+#
+# d0524912 -> 5cab4ec5 DOES change one Swift file, so "no Swift file changed" would be
+# false here and is deliberately not claimed. What changes is a pure presentation modifier:
+#
+#   ApplicationLibrary/Views/HakoStyle/HakoToolsView.swift  +2 `.buttonStyle(...)` lines
+#
+# on two navigation rows. No method this contract names is called, declared or altered by
+# it, and the remainder of the range is KNOWLEDGE/ plus README/AGENTS documentation:
+#
+#   git -C clients/apple diff --name-status d0524912 5cab4ec5
+#
+# The property this constant asserts was therefore re-established rather than assumed:
+# layer 4 was run against a clean clients/apple checked out at 5cab4ec5 and reported
+# `scanned: 670, violations: []` across the whole tree, which is stronger evidence than
+# the name-only comparison above. Re-derive rather than assume if this ever moves again,
+# and prefer running the probe to reading this comment.
+VERIFIED_APPLE_SHA="5cab4ec5bcb405265e077f8bdb6e287101af4405"
 
 client_root=""
 skip_client=0
