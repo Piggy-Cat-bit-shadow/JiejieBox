@@ -37,14 +37,28 @@ name: Windows desktop installer
 # `service install` and rolls back when it fails. So CI signs with a certificate it
 # generates and deletes: the real code path, no long-lived secret, nothing uploaded.
 #
-# # Why the core is checked out at the v0.1.5 commit rather than at this branch
+# # Why the core is checked out at a caller-supplied commit rather than at this branch
 #
 # scripts/package.ts builds the daemon from the core checkout beside the desktop client,
 # and cmd/internal/build_boxdd stamps the version from `git describe --tags` in that
 # checkout. That commit therefore fixes the daemon's version string, supplies the tags
 # `git describe` needs, and records clients/desktop at the pin this release ships
 # (32f915ba). One checkout, both revisions, and the overlay is applied to that client.
-
+#
+# # Why this no longer pins a core commit in this file
+#
+# It used to carry `CORE_SHA` / `CORE_VERSION` as literals, and they went stale: both still
+# named v0.1.5 while the v0.1.6 installer was built from a267e99e0, so a dispatch of this
+# workflow against the v0.1.6 tag would have failed gate 1. The installer on that release
+# was therefore produced from a working tree that was never committed, which means the
+# release could not be reproduced from the repository at all.
+#
+# So there is no default any more. The core commit and the release version are REQUIRED
+# inputs, supplied by the release pipeline from the tag it is releasing, and this workflow
+# checks that they agree with each other, with `refs/tags/v<version>` and with
+# `release/JIEJIE_VERSION` in the checkout. A caller cannot half-specify a release, and a
+# stale literal cannot exist because there is no literal.
+#
 # # Gating status
 #
 # Release-blocking: the build, the package, static integrity, daemon provenance, the PE
@@ -63,13 +77,26 @@ name: Windows desktop installer
 
 on:
   workflow_dispatch:
+    inputs:
+      core_sha:
+        description: 'Core commit to build the daemon from (40 hex). The release tag commit.'
+        required: true
+      core_version:
+        description: 'Jiejiebox release version (X.Y.Z). Must equal release/JIEJIE_VERSION at core_sha.'
+        required: true
+      release_branch:
+        description: 'Branch of this repository that carries refs/tags/v<core_version>.'
+        required: false
+        default: testing
 
 permissions:
   contents: read
 
 env:
-  CORE_SHA: e70f3d2c8527ca159231f11405be52604008504c
-  CORE_VERSION: "0.1.5"
+  # From the dispatch inputs, not literals. See the header for why there is no default.
+  CORE_SHA: ${{ inputs.core_sha }}
+  CORE_VERSION: ${{ inputs.core_version }}
+  RELEASE_BRANCH: ${{ inputs.release_branch }}
   CLIENT_DIR: core/clients/desktop
   RECORDS_DIR: build/records
   SERVICE_WORK_DIR: C:\ProgramData\sing-box-daemon-ci-smoke
@@ -96,9 +123,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: tooling
+          # The branch that carries refs/tags/v<core_version>. The tooling and the tag check
+          # both read the fork's own history, so neither depends on which ref dispatched this.
+          ref: ${{ env.RELEASE_BRANCH }}
           fetch-depth: 1
 
-      - name: "[gate 1] check out the v0.1.5 core"
+      - name: "[gate 1] check out the release core"
         uses: actions/checkout@v4
         with:
           path: core
@@ -116,6 +146,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # The inputs are the release identity, so they are validated before anything is
+          # built. A malformed SHA or version is refused here rather than threaded into a
+          # filename and a git checkout.
+          case "$CORE_SHA" in
+            *[!0-9a-f]*|"") echo "FAIL: core_sha must be 40 lowercase hex characters, got '$CORE_SHA'" >&2; exit 1 ;;
+          esac
+          [ "${#CORE_SHA}" -eq 40 ] || {
+            echo "FAIL: core_sha must be 40 characters, got ${#CORE_SHA}" >&2; exit 1; }
+          case "$CORE_VERSION" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "FAIL: core_version '$CORE_VERSION' is not a dotted numeric version" >&2; exit 1 ;;
+          esac
+
           head_sha="$(git -C core rev-parse HEAD)"
           echo "core HEAD:      $head_sha"
           echo "core describe:  $(git -C core describe --tags)"
@@ -124,6 +167,33 @@ jobs:
           [ "$(git -C core describe --tags)" = "v$CORE_VERSION" ] || {
             echo "FAIL: the daemon version stamp derives from \`git describe --tags\`," >&2
             echo "      which must be v$CORE_VERSION in this checkout" >&2; exit 1; }
+
+          # The tag must exist AND name this commit. Without this the caller could name a
+          # version whose tag points somewhere else, and every later gate would still pass
+          # because they all compare against the same inputs this step just accepted.
+          tag_ref="refs/tags/v$CORE_VERSION"
+          if ! git -C tooling fetch --depth 1 origin "+$tag_ref:$tag_ref" 2>/dev/null; then
+            echo "FAIL: refs/tags/v$CORE_VERSION does not exist on origin." >&2
+            echo "      The release version names a tag that is not published, so this build" >&2
+            echo "      would be the only record of it." >&2
+            exit 1
+          fi
+          tag_sha="$(git -C tooling rev-parse "$tag_ref^{commit}")"
+          echo "tag v$CORE_VERSION: $tag_sha"
+          [ "$tag_sha" = "$CORE_SHA" ] || {
+            echo "FAIL: refs/tags/v$CORE_VERSION is $tag_sha, but core_sha is $CORE_SHA." >&2
+            echo "      The version and the commit name different releases." >&2; exit 1; }
+
+          # And the checkout's own single version source must agree with the version.
+          core_version_file="core/release/JIEJIE_VERSION"
+          [ -f "$core_version_file" ] || { echo "FAIL: no $core_version_file" >&2; exit 1; }
+          declared="$(tr -d '[:space:]' < "$core_version_file")"
+          echo "JIEJIE_VERSION: $declared"
+          [ "$declared" = "$CORE_VERSION" ] || {
+            echo "FAIL: $core_version_file says '$declared', but core_version is '$CORE_VERSION'." >&2
+            echo "      release/JIEJIE_VERSION is the single authority for the fork's version;" >&2
+            echo "      a caller that disagrees with it is releasing something else." >&2; exit 1; }
+
           echo "desktop client: $(git -C core rev-parse HEAD:clients/desktop)"
           echo "desktop HEAD:   $(git -C "$CLIENT_DIR" rev-parse HEAD)"
 
@@ -228,7 +298,19 @@ jobs:
         env:
           DESKTOP_CLIENT_DIR: ${{ env.CLIENT_DIR }}
           PYTHON: python
-        run: bash tooling/scripts/ci/prepare-desktop-client.sh
+        run: |
+          set -euo pipefail
+          # `--version` is passed explicitly and must equal CORE_VERSION, which gate 1 already
+          # proved equals release/JIEJIE_VERSION in this checkout. The script reads the file
+          # itself too and refuses a disagreement, so this cannot drift in either direction.
+          bash tooling/scripts/ci/prepare-desktop-client.sh --version "$CORE_VERSION"
+          # And the file that will name the installer must carry exactly that value.
+          client_version="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' \
+            "$CLIENT_DIR/version.json")"
+          [ "$client_version" = "$CORE_VERSION" ] || {
+            echo "FAIL: after the overlay version.json says '$client_version'," >&2
+            echo "      but the release version is '$CORE_VERSION'." >&2; exit 1; }
+          echo "version.json: $client_version (== release version)"
 
       - name: "[gate 2] confirm the overlay set the executable name the core authenticates"
         shell: bash
@@ -243,20 +325,22 @@ jobs:
             echo "FAIL: package.ts does not require signing when a certificate is configured" >&2; exit 1; }
           echo "executable name and conditional forceCodeSigning are in place"
 
-      - name: "[gate 2] confirm the overlaid version is the core version"
+      - name: "[gate 2] confirm the overlaid version is the release version"
         shell: bash
         run: |
           set -euo pipefail
           # version.json is the ONE value behind both the app's own version - what the updater
-          # compares a release against - and ${version} in the artifact name. release/JIEJIE_VERSION
-          # is the single version source for this fork.
+          # compares a release against - and ${version} in the artifact name, so it, the
+          # installer's file name and release/JIEJIE_VERSION are three views of one fact.
           #
-          # They are separate files because the overlay runs against the client tree with no root
-          # context, so it cannot read the root file: the version is a literal in
-          # scripts/ci/apply-desktop-branding-overlay.py. This is the check that the literal and the
-          # single source have not drifted - without it, a release could ship
-          # Jiejiebox-v0.1.6-windows-x64.exe whose CONTENTS believe they are 0.1.5, and the updater
-          # would then refuse to upgrade to it (or offer it forever).
+          # The version is NOT a literal in scripts/ci/apply-desktop-branding-overlay.py any
+          # more: it was, and it went stale, which is how a v0.1.6 installer was once built
+          # from a tree whose overlay still said 0.1.5. The caller passes the value down from
+          # release/JIEJIE_VERSION, and this gate re-reads all three carriers so a release
+          # cannot ship Jiejiebox-v<version>-windows-x64.exe whose CONTENTS believe they are
+          # another version - the updater would then refuse to upgrade to it, or offer it
+          # forever. The installer FILE NAME is checked below, from the artifact on disk,
+          # rather than inferred from the value.
           core_version_file="core/release/JIEJIE_VERSION"
           [ -f "$core_version_file" ] || { echo "FAIL: no $core_version_file" >&2; exit 1; }
           core_version="$(tr -d '[:space:]' < "$core_version_file")"
@@ -265,10 +349,11 @@ jobs:
           echo "release/JIEJIE_VERSION : $core_version"
           echo "clients/desktop        : $client_version"
           if [ "$core_version" != "$client_version" ]; then
-            echo "FAIL: the overlaid desktop version ($client_version) is not the core version ($core_version)." >&2
-            echo "      The version rule in scripts/ci/apply-desktop-branding-overlay.py writes the" >&2
-            echo "      literal the client carries; update it to match release/JIEJIE_VERSION, or the" >&2
-            echo "      installer will be named for one version while containing another." >&2
+            echo "FAIL: the overlaid desktop version ($client_version) is not the release version ($core_version)." >&2
+            echo "      $core_version_file is the single authority; the overlay stamps what it is" >&2
+            echo "      given, so a disagreement means the overlay ran with another value - or did" >&2
+            echo "      not run at all. Either way the installer would be named for one version" >&2
+            echo "      while containing another, and the updater would then refuse it or loop." >&2
             exit 1
           fi
           # The installer the updater will look for is named from the same value, so state the name.
@@ -313,7 +398,7 @@ jobs:
             "$CLIENT_DIR/release/win-unpacked" \
             sing-box
 
-      - name: "[gate 3] verify the packaged daemon is the v0.1.5 core daemon"
+      - name: "[gate 3] verify the packaged daemon is the release core daemon"
         shell: bash
         run: |
           python tooling/scripts/ci/verify-desktop-daemon-provenance.py \

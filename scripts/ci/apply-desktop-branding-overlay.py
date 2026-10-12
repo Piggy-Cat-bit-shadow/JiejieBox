@@ -1,8 +1,25 @@
 #!/usr/bin/env python3
 """Applies the Jiejiebox branding and unsigned-build overlay to a desktop client.
 
+Usage:
+    apply-desktop-branding-overlay.py <desktop-client-dir> --version <X.Y.Z>
+
 Invoked by scripts/ci/prepare-desktop-client.sh. See that file for why this is an
 overlay on the working tree rather than a change to the pinned submodule.
+
+# Why the release version is a required argument and not a constant in this file
+
+The Jiejiebox release version has exactly ONE authority: `release/JIEJIE_VERSION` in the
+core checkout being released. This overlay runs against the client tree and has no root
+context, so it cannot read that file - and the version it used to carry was a literal
+that only a human kept in step. That is how the v0.1.6 installer came to be built from a
+working tree whose literal still said 0.1.5: the release was reproducible only from a
+tree nobody had committed.
+
+So the caller reads `release/JIEJIE_VERSION` and passes it here explicitly. There is no
+default: a missing or malformed --version is refused rather than guessed, because a
+guessed version produces an installer named for one version and containing another, and
+the updater then either refuses to upgrade to it or offers it forever.
 
 # Scope
 
@@ -51,6 +68,7 @@ A rule that finds neither its original text nor its target text is a failure, no
 skip: it means the pinned client changed shape underneath the overlay, and continuing
 would ship a client nobody reviewed.
 """
+import argparse
 import os
 import re
 import sys
@@ -158,385 +176,411 @@ def plan(text, rule):
 
 # --- the rules ---------------------------------------------------------------
 #
+# A release version: a dotted numeric core, optionally with a pre-release and build
+# suffix. Anchored, so a path, a branch name or a trailing newline cannot pass as a
+# version - `release/JIEJIE_VERSION` handed to --version by mistake must fail here.
+RELEASE_VERSION_RE = re.compile(
+    r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
+)
+
+# The version the PINNED upstream desktop client carries in its own version.json. It is
+# not this fork's version and must not be "kept in step" with it: the points at which a
+# fork release and an upstream client release happen to share a number are coincidence.
+# The overlay finds exactly this value and replaces it, which is what makes a second run
+# idempotent and a hand-edited tree a hard failure rather than a silent pass.
+UPSTREAM_DESKTOP_VERSION = "1.14.2"
+
 # Ordered by group. Within scripts/package.ts the block rules are listed before the
 # line rules, and the engine runs them in that order, so a line rule can never be
 # applied inside a region a block rule is about to rewrite.
+#
+# Built by a function rather than declared as module-level data because exactly one rule
+# depends on the release being built. Everything else in this overlay is a constant.
 
-RULES = [
-    # --- update channel ------------------------------------------------------
-    #
-    # The update feed is THIS fork's releases, not upstream's.
-    #
-    # The client shipped from here is Jiejiebox, and its installer is named
-    # Jiejiebox-v<version>-windows-<arch>.exe. Upstream's feed carries SFW-... assets
-    # instead, so leaving the URL alone did not merely point at the wrong project: the
-    # asset matcher below could not recognise our own installer either, and the updater
-    # therefore reported "no update" forever. Production and consumption have to name the
-    # same thing, and both halves are corrected together for that reason.
-    #
-    # The repository is spelled out rather than derived because this overlay is added to
-    # the client source before any network or git context is available, and a placeholder
-    # here would be a silent failure if it ever survived into the build.
-    Rule(
-        "src/main/updates.ts",
-        'const RELEASES_URL = "https://api.github.com/repos/SagerNet/sing-box/releases";',
-        'const RELEASES_URL = "https://api.github.com/repos/Piggy-Cat-bit-shadow/sing-box/releases";',
-        1,
-        note="update feed -> this fork's releases (the feed that carries Jiejiebox installers)",
-    ),
-    # The asset matcher has to accept the name the packaging actually produces. It is kept
-    # as a PREFIX test on the product name, so architecture selection still works exactly as
-    # it did - only the product prefix changes, from upstream's `SFW-` to ours.
-    Rule(
-        "src/main/updates.ts",
-        '(asset) => asset.name.startsWith("SFW-") && asset.name.endsWith(".exe"),',
-        '(asset) => asset.name.startsWith("Jiejiebox-v") && asset.name.endsWith(".exe"),',
-        1,
-        note="Windows update asset matcher -> Jiejiebox-v<version>-windows-<arch>.exe",
-    ),
 
-    # --- release identity ----------------------------------------------------
-    #
-    # The desktop GUI for this release is the v0.1.5 client, so its version is the
-    # core's version rather than the upstream desktop client's own 1.14.2. That value
-    # is what electron-builder stamps into the app and substitutes for ${version} in
-    # the installer name below, so setting it here is what makes the artifact called
-    # Jiejiebox-v0.1.5-windows-x64.exe rather than naming it after the wrong product.
-    #
-    # This literal is the one version source the overlay cannot read from the repository,
-    # because it runs against the client tree with no root context. It is therefore checked
-    # against release/JIEJIE_VERSION by the Windows workflow, which fails if the two drift -
-    # see the "the overlaid desktop version is the core version" gate there.
-    Rule(
-        "version.json",
-        '"version": "1.14.2",',
-        '"version": "0.1.5",',
-        1,
-        note='version.json application version -> 0.1.5',
-    ),
-    Rule(
-        "scripts/package.ts",
-        'const artifactName = `SFW-\\${version}-${artifactArchitecture}'
-        '${developmentPackage ? "-dev" : ""}.\\${ext}`;',
-        'const artifactName = `Jiejiebox-v\\${version}-windows-${artifactArchitecture}'
-        '${developmentPackage ? "-dev" : ""}.\\${ext}`;',
-        1,
-        note="Windows installer name -> Jiejiebox-v<version>-windows-<arch>.exe",
-    ),
-    # The installed Windows application executable keeps the name `sing-box.exe`.
-    #
-    # This is NOT a branding decision, and it is the one place where productName and the
-    # executable name must disagree. The core's Windows daemon hardcodes
-    # applicationExecutableName = "sing-box.exe" in two places that both break otherwise:
-    #
-    #   experimental/boxdd/security_windows.go  secureWindowsInstallation() resolves the
-    #       installed application as <install>/sing-box.exe and Authenticode-verifies it
-    #       against the daemon's own signer, refusing to register the service otherwise.
-    #       The NSIS installer runs `service install` and rolls the whole installation
-    #       back if it fails, so with Jiejiebox.exe the installer cannot complete at all.
-    #   experimental/boxdd/peer_windows.go      the runtime peer handshake resolves the
-    #       same path, so the daemon could not even start its server.
-    #
-    # productName stays Jiejiebox, so the window title, Start Menu entry, Add/Remove
-    # Programs name, installer name and installer display name are unaffected. What is
-    # pinned is the file name on disk, which is installation identity - the same rule the
-    # overlay already applies to sing-box-daemon.exe and to the appId.
-    #
-    # electron-builder honours win.executableName for productFilename (AppInfo:
-    # `platformSpecificOptions?.executableName ?? info.config.executableName`), which is
-    # the value used for the executable, for afterSign.cjs's fuse/asar check and for the
-    # NSIS shortcut target.
-    #
-    # The anchored region stops at appId on purpose. The forceCodeSigning rule below
-    # rewrites the next line, and a block whose replacement text contained it would still
-    # apply but could never be read back - the confirmation pass would find its own
-    # replacement text altered and report a rule that had in fact succeeded.
-    Rule(
-        "electron-builder.yml",
-        "win:\n  appId: io.nekohasekai.sfw\n",
-        "win:\n  appId: io.nekohasekai.sfw\n"
-        "  # EXECUTABLE NAME OVERLAY: the installed file name, not the product name.\n"
-        "  # experimental/boxdd resolves <install>/sing-box.exe to authenticate the app\n"
-        "  # against the daemon's signer, both when registering the service and on every\n"
-        "  # peer handshake. productName above still supplies everything a user reads.\n"
-        "  executableName: sing-box\n",
-        1,
-        kind="block",
-        note="Windows executable name -> sing-box.exe (the name the core authenticates)",
-    ),
-    # --- unsigned build ------------------------------------------------------
-    #
-    # Necessary: electron-builder refuses to produce an installer without a
-    # certificate while this is true. package.ts overrides this per build: it is turned
-    # back ON whenever a certificate is configured, so a signed build cannot silently
-    # produce an unsigned artifact.
-    Rule(
-        "electron-builder.yml",
-        "forceCodeSigning: true",
-        "forceCodeSigning: false",
-        1,
-        note="allow an unsigned build (signing still happens when a cert is given)",
-    ),
-    # Sufficient, together with the three edits below: package.ts otherwise requires
-    # signing.local.json even when electron-builder would not have signed anything.
-    Rule(
-        "scripts/package.ts",
-        "function readWindowsSigningConfiguration(): WindowsSigningConfiguration {",
-        "function readWindowsSigningConfiguration(): WindowsSigningConfiguration | undefined {",
-        1,
-        note="the signing configuration becomes optional",
-    ),
-    Rule(
-        "scripts/package.ts",
-        "  let value: unknown;\n  try {\n",
-        "  // UNSIGNED BUILD OVERLAY: an absent configuration file means no certificate is\n"
-        "  // configured, so the build proceeds unsigned. A file that EXISTS but is invalid\n"
-        "  // is still a hard error, so a broken signing setup cannot silently ship an\n"
-        "  // unsigned installer.\n"
-        "  if (!fs.existsSync(signingConfigurationPath)) {\n"
-        "    return undefined;\n"
-        "  }\n"
-        "\n"
-        "  let value: unknown;\n  try {\n",
-        1,
-        kind="block",
-        note="absent signing.local.json means build unsigned",
-    ),
-    Rule(
-        "scripts/package.ts",
-        "  signingConfiguration: WindowsSigningConfiguration,",
-        "  signingConfiguration: WindowsSigningConfiguration | undefined,",
-        1,
-        note="runWindowsElectronBuilder accepts an absent certificate",
-    ),
-    Rule(
-        "scripts/package.ts",
-        "        win: {\n"
-        "          artifactName,\n"
-        "          signtoolOptions: {\n"
-        "            certificateFile: signingConfiguration.certificateFile,\n"
-        "            certificatePassword: signingConfiguration.certificatePassword,\n"
-        "          },\n"
-        "        },\n",
-        "        win: {\n"
-        "          artifactName,\n"
-        "          // UNSIGNED BUILD OVERLAY: signtoolOptions is supplied only when a\n"
-        "          // certificate was configured, and forceCodeSigning is turned back ON in\n"
-        "          // exactly that case. So a certificate means a signed build is REQUIRED -\n"
-        "          // electron-builder fails rather than quietly shipping an unsigned\n"
-        "          // artifact - while no certificate still means a supported unsigned build.\n"
-        "          // Signing itself is electron-builder's; nothing here replaces it.\n"
-        "          forceCodeSigning: signingConfiguration !== undefined,\n"
-        "          ...(signingConfiguration === undefined\n"
-        "            ? {}\n"
-        "            : {\n"
-        "                signtoolOptions: {\n"
-        "                  certificateFile: signingConfiguration.certificateFile,\n"
-        "                  certificatePassword: signingConfiguration.certificatePassword,\n"
-        "                },\n"
-        "              }),\n"
-        "        },\n",
-        1,
-        kind="block",
-        note="signtoolOptions supplied only when a certificate is configured",
-    ),
-    # Upstream signs these two binaries - which electron-builder does NOT cover with the
-    # app's own signature - and hard-fails if that did not happen. With no certificate
-    # configured there is nothing to sign, so the hook returns instead of throwing. The
-    # predicate is the same one package.ts uses: a configured certificate is the presence
-    # of signing.local.json, so "signed build" means one thing in both places.
-    Rule(
-        "scripts/afterPack.cjs",
-        '  if (context.electronPlatformName !== "win32") {\n'
-        "    return;\n"
-        "  }\n"
-        "  for (const relativePath of [\n",
-        '  if (context.electronPlatformName !== "win32") {\n'
-        "    return;\n"
-        "  }\n"
-        "  // UNSIGNED BUILD OVERLAY: the two binaries below are signed separately because\n"
-        "  // electron-builder's app signature does not cover them. With no certificate\n"
-        "  // configured there is nothing to sign, so this is a no-op rather than a failure.\n"
-        "  // electron-builder's own signing support is untouched.\n"
-        '  if (!fs.existsSync(path.join(context.packager.projectDir, "signing.local.json"))) {\n'
-        "    return;\n"
-        "  }\n"
-        "  for (const relativePath of [\n",
-        1,
-        kind="block",
-        note="afterPack no longer requires signing when no certificate is configured",
-    ),
-    # --- visible branding ----------------------------------------------------
-    #
-    # The five audit-confirmed user-visible product names, plus productName - which is the
-    # name the operating system shows in the window title, the Start Menu entry, the
-    # installer's own display name and Add/Remove Programs. Everything else that says
-    # `sing-box` was classified as a core/service/API name, a localStorage key, an
-    # internal identifier or attribution, and is left exactly as it is.
-    Rule(
-        "electron-builder.yml",
-        "productName: sing-box",
-        "productName: Jiejiebox",
-        1,
-        note="productName -> Jiejiebox (window title, Start Menu, installer)",
-    ),
-    Rule(
-        "dashboard/src/App.tsx",
-        "<div className={styles.mobileTopbarBrand}>sing-box</div>",
-        "<div className={styles.mobileTopbarBrand}>Jiejiebox</div>",
-        1,
-        note="dashboard mobile topbar brand",
-    ),
-    Rule(
-        "dashboard/src/App.tsx",
-        "sing-box",
-        "Jiejiebox",
-        2,
-        anchor="<div className={styles.sidebarBrand}>",
-        note="dashboard desktop + mobile sidebar brand",
-    ),
-    Rule(
-        "dashboard/index.html",
-        '<meta name="apple-mobile-web-app-title" content="sing-box" />',
-        '<meta name="apple-mobile-web-app-title" content="Jiejiebox" />',
-        1,
-        note="dashboard apple-mobile-web-app-title",
-    ),
-    Rule(
-        "dashboard/vite.config.ts",
-        'name: "sing-box dashboard",',
-        'name: "Jiejiebox dashboard",',
-        1,
-        note="PWA manifest name",
-    ),
-    Rule(
-        "dashboard/vite.config.ts",
-        'short_name: "sing-box",',
-        'short_name: "Jiejiebox",',
-        1,
-        note="PWA manifest short_name",
-    ),
+def build_rules(release_version, upstream_desktop_version=UPSTREAM_DESKTOP_VERSION):
+    return [
+        # --- update channel ------------------------------------------------------
+        #
+        # The update feed is THIS fork's releases, not upstream's.
+        #
+        # The client shipped from here is Jiejiebox, and its installer is named
+        # Jiejiebox-v<version>-windows-<arch>.exe. Upstream's feed carries SFW-... assets
+        # instead, so leaving the URL alone did not merely point at the wrong project: the
+        # asset matcher below could not recognise our own installer either, and the updater
+        # therefore reported "no update" forever. Production and consumption have to name the
+        # same thing, and both halves are corrected together for that reason.
+        #
+        # The repository is spelled out rather than derived because this overlay is added to
+        # the client source before any network or git context is available, and a placeholder
+        # here would be a silent failure if it ever survived into the build.
+        Rule(
+            "src/main/updates.ts",
+            'const RELEASES_URL = "https://api.github.com/repos/SagerNet/sing-box/releases";',
+            'const RELEASES_URL = "https://api.github.com/repos/Piggy-Cat-bit-shadow/sing-box/releases";',
+            1,
+            note="update feed -> this fork's releases (the feed that carries Jiejiebox installers)",
+        ),
+        # The asset matcher has to accept the name the packaging actually produces. It is kept
+        # as a PREFIX test on the product name, so architecture selection still works exactly as
+        # it did - only the product prefix changes, from upstream's `SFW-` to ours.
+        Rule(
+            "src/main/updates.ts",
+            '(asset) => asset.name.startsWith("SFW-") && asset.name.endsWith(".exe"),',
+            '(asset) => asset.name.startsWith("Jiejiebox-v") && asset.name.endsWith(".exe"),',
+            1,
+            note="Windows update asset matcher -> Jiejiebox-v<version>-windows-<arch>.exe",
+        ),
 
-    # --- installer diagnostics (CI only) --------------------------------------
-    #
-    # The NSIS installer records why a stage failed in $PLUGINSDIR and then deletes it,
-    # and customInstall responds to a failed service registration by running the
-    # uninstaller and aborting. A CI run therefore sees only "installer exited 2" with the
-    # evidence already gone - and dozens of stages can abort: customInit, the installation
-    # preflight, the installation-directory and ancestor validation, the working-directory
-    # reset, the application-data preparation, the service command, and the rollback
-    # itself.
-    #
-    # So the installer gains ONE explicit, opt-in command-line option:
-    #
-    #     /CI-DIAGNOSTIC-PATH=<absolute path>
-    #
-    # With no such option nothing changes at all: $ciDiagnosticPath stays empty and every
-    # diagnostic write below is skipped, so an ordinary user's installation behaves exactly
-    # as it does today. With the option, the diagnostic text each stage already produces is
-    # appended to a file OUTSIDE $PLUGINSDIR and $INSTDIR, which therefore survives the
-    # rollback.
-    #
-    # Nothing secret is ever written: the text is the installer's own DetailPrint/log
-    # content - stage names, exit codes, and the daemon's stdout/stderr. No certificate,
-    # password, PFX or key passes through any of this.
-    Rule(
-        "build/installer.nsh",
-        "  Var reinstallExistingInstallation\n  Var standardInstallationRadio\n",
-        "  Var reinstallExistingInstallation\n  Var standardInstallationRadio\n"
-        "  Var ciDiagnosticPath\n",
-        1,
-        kind="block",
-        note="installer.nsh: diagnostic-channel variable",
-    ),
-    Rule(
-        "build/installer.nsh",
-        "!macro executeDaemonServiceCommand ACTION OPTIONS RESULT DETAILS\n",
-        "!macro ciDiagnostic STAGE DETAIL\n"
-        "  # CI-only, opt-in: no-op unless /CI-DIAGNOSTIC-PATH= was given. Push and Pop\n"
-        "  # $9 so the caller's registers survive.\n"
-        "  ${if} $ciDiagnosticPath != \"\"\n"
-        "    Push $9\n"
-        "    ClearErrors\n"
-        "    FileOpen $9 \"$ciDiagnosticPath\" a\n"
-        "    ${ifNot} ${Errors}\n"
-        "      FileWrite $9 \"[${STAGE}] ${DETAIL}$\\r$\\n\"\n"
-        "      FileClose $9\n"
-        "    ${endif}\n"
-        "    Pop $9\n"
-        "  ${endif}\n"
-        "!macroend\n"
-        "\n"
-        "!macro executeDaemonServiceCommand ACTION OPTIONS RESULT DETAILS\n",
-        1,
-        kind="block",
-        note="installer.nsh: ciDiagnostic macro",
-    ),
-    Rule(
-        "build/installer.nsh",
-        "    DetailPrint \"${DETAILS}\"\n"
-        "  ${endif}\n"
-        "!macroend\n",
-        "    DetailPrint \"${DETAILS}\"\n"
-        "  ${endif}\n"
-        "  !insertmacro ciDiagnostic \"service ${ACTION}\" \"exit=${RESULT} ${DETAILS}\"\n"
-        "!macroend\n",
-        1,
-        kind="block",
-        note="installer.nsh: record the daemon service command result",
-    ),
-    Rule(
-        "build/installer.nsh",
-        "  Delete \"$PLUGINSDIR\\installation-preflight-output.txt\"\n!macroend\n",
-        "  Delete \"$PLUGINSDIR\\installation-preflight-output.txt\"\n"
-        # One line: an NSIS string literal cannot span lines. $0 is the register the
-        # preflight macro just loaded its diagnostic text into; ${0} would be the macro's
-        # own name and ${OPTIONS} is its parameter.
-        "  !insertmacro ciDiagnostic \"preflight\" \"exit=$1 ${OPTIONS} $0\"\n"
-        "!macroend\n",
-        1,
-        kind="block",
-        note="installer.nsh: record the installation preflight result",
-    ),
-    Rule(
-        "build/installer.nsh",
-        "  ${if} $1 != 0\n    StrCpy $5 $1\n    DetailPrint \"$(rollingBackInstallation)\"\n",
-        "  ${if} $1 != 0\n    StrCpy $5 $1\n"
-        "    !insertmacro ciDiagnostic \"customInstall\" \"service install failed with code $1; starting rollback\"\n"
-        "    DetailPrint \"$(rollingBackInstallation)\"\n",
-        1,
-        kind="block",
-        note="installer.nsh: record the service-install failure before rollback",
-    ),
-    Rule(
-        "build/installer.nsh",
-        "    StrCpy $1 $5\n    ${if} $2 == 0\n",
-        "    StrCpy $1 $5\n"
-        "    !insertmacro ciDiagnostic \"customInstall\" \"rollback uninstaller exit=$2; original service install code=$1\"\n"
-        "    ${if} $2 == 0\n",
-        1,
-        kind="block",
-        note="installer.nsh: record the rollback result",
-    ),
-    Rule(
-        "build/installer.nsh",
-        "  StrCpy $reinstallExistingInstallation 0\n  StrCpy $customInstallation 0\n",
-        "  StrCpy $reinstallExistingInstallation 0\n  StrCpy $customInstallation 0\n"
-        "  # CI-only diagnostic channel. Absent the option this is inert: $ciDiagnosticPath\n"
-        "  # stays empty and every ciDiagnostic write is skipped.\n"
-        "  StrCpy $ciDiagnosticPath \"\"\n"
-        "  ClearErrors\n"
-        "  ${GetParameters} $R0\n"
-        "  ${GetOptions} $R0 \"/CI-DIAGNOSTIC-PATH=\" $R1\n"
-        "  ${ifNot} ${Errors}\n"
-        "    StrCpy $ciDiagnosticPath $R1\n"
-        "  ${endif}\n"
-        "  !insertmacro ciDiagnostic \"customInit\" \"diagnostic channel opened; INSTDIR=$INSTDIR\"\n",
-        1,
-        kind="block",
-        note="installer.nsh: parse /CI-DIAGNOSTIC-PATH= and open the channel",
-    ),
-]
+        # --- release identity ----------------------------------------------------
+        #
+        # The desktop GUI keeps upstream's own identity in its repository - the pinned
+        # clients/desktop revision carries `version.json` = `1.14.2`, which is the UPSTREAM
+        # desktop client's version and has nothing to do with this fork's release number. The
+        # two identities are deliberately kept apart: a fork release moving from one number to
+        # the next must NOT move the clients/desktop gitlink, so the gitlink is never chosen to
+        # "match" a fork version.
+        #
+        # The fork's release version is written over it here, in the WORKING TREE only, so the
+        # shipped app and the installer name carry the fork's version while the pinned submodule
+        # is never modified. That value comes from `--version`, whose single authority is
+        # release/JIEJIE_VERSION in the released checkout - see the module docstring for why it
+        # is not a literal here.
+        #
+        # This rule is therefore built from the argument rather than declared as data, and it is
+        # the ONE rule in this file that varies per release. `upstream_version` is the pristine
+        # value in the pinned client; the overlay must find exactly that, which is also what
+        # makes a second run idempotent and a hand-edited tree a hard failure.
+        Rule(
+            "version.json",
+            '"version": "%s",' % upstream_desktop_version,
+            '"version": "%s",' % release_version,
+            1,
+            note="version.json application version -> %s (from release/JIEJIE_VERSION)" % release_version,
+        ),
+        Rule(
+            "scripts/package.ts",
+            'const artifactName = `SFW-\\${version}-${artifactArchitecture}'
+            '${developmentPackage ? "-dev" : ""}.\\${ext}`;',
+            'const artifactName = `Jiejiebox-v\\${version}-windows-${artifactArchitecture}'
+            '${developmentPackage ? "-dev" : ""}.\\${ext}`;',
+            1,
+            note="Windows installer name -> Jiejiebox-v<version>-windows-<arch>.exe",
+        ),
+        # The installed Windows application executable keeps the name `sing-box.exe`.
+        #
+        # This is NOT a branding decision, and it is the one place where productName and the
+        # executable name must disagree. The core's Windows daemon hardcodes
+        # applicationExecutableName = "sing-box.exe" in two places that both break otherwise:
+        #
+        #   experimental/boxdd/security_windows.go  secureWindowsInstallation() resolves the
+        #       installed application as <install>/sing-box.exe and Authenticode-verifies it
+        #       against the daemon's own signer, refusing to register the service otherwise.
+        #       The NSIS installer runs `service install` and rolls the whole installation
+        #       back if it fails, so with Jiejiebox.exe the installer cannot complete at all.
+        #   experimental/boxdd/peer_windows.go      the runtime peer handshake resolves the
+        #       same path, so the daemon could not even start its server.
+        #
+        # productName stays Jiejiebox, so the window title, Start Menu entry, Add/Remove
+        # Programs name, installer name and installer display name are unaffected. What is
+        # pinned is the file name on disk, which is installation identity - the same rule the
+        # overlay already applies to sing-box-daemon.exe and to the appId.
+        #
+        # electron-builder honours win.executableName for productFilename (AppInfo:
+        # `platformSpecificOptions?.executableName ?? info.config.executableName`), which is
+        # the value used for the executable, for afterSign.cjs's fuse/asar check and for the
+        # NSIS shortcut target.
+        #
+        # The anchored region stops at appId on purpose. The forceCodeSigning rule below
+        # rewrites the next line, and a block whose replacement text contained it would still
+        # apply but could never be read back - the confirmation pass would find its own
+        # replacement text altered and report a rule that had in fact succeeded.
+        Rule(
+            "electron-builder.yml",
+            "win:\n  appId: io.nekohasekai.sfw\n",
+            "win:\n  appId: io.nekohasekai.sfw\n"
+            "  # EXECUTABLE NAME OVERLAY: the installed file name, not the product name.\n"
+            "  # experimental/boxdd resolves <install>/sing-box.exe to authenticate the app\n"
+            "  # against the daemon's signer, both when registering the service and on every\n"
+            "  # peer handshake. productName above still supplies everything a user reads.\n"
+            "  executableName: sing-box\n",
+            1,
+            kind="block",
+            note="Windows executable name -> sing-box.exe (the name the core authenticates)",
+        ),
+        # --- unsigned build ------------------------------------------------------
+        #
+        # Necessary: electron-builder refuses to produce an installer without a
+        # certificate while this is true. package.ts overrides this per build: it is turned
+        # back ON whenever a certificate is configured, so a signed build cannot silently
+        # produce an unsigned artifact.
+        Rule(
+            "electron-builder.yml",
+            "forceCodeSigning: true",
+            "forceCodeSigning: false",
+            1,
+            note="allow an unsigned build (signing still happens when a cert is given)",
+        ),
+        # Sufficient, together with the three edits below: package.ts otherwise requires
+        # signing.local.json even when electron-builder would not have signed anything.
+        Rule(
+            "scripts/package.ts",
+            "function readWindowsSigningConfiguration(): WindowsSigningConfiguration {",
+            "function readWindowsSigningConfiguration(): WindowsSigningConfiguration | undefined {",
+            1,
+            note="the signing configuration becomes optional",
+        ),
+        Rule(
+            "scripts/package.ts",
+            "  let value: unknown;\n  try {\n",
+            "  // UNSIGNED BUILD OVERLAY: an absent configuration file means no certificate is\n"
+            "  // configured, so the build proceeds unsigned. A file that EXISTS but is invalid\n"
+            "  // is still a hard error, so a broken signing setup cannot silently ship an\n"
+            "  // unsigned installer.\n"
+            "  if (!fs.existsSync(signingConfigurationPath)) {\n"
+            "    return undefined;\n"
+            "  }\n"
+            "\n"
+            "  let value: unknown;\n  try {\n",
+            1,
+            kind="block",
+            note="absent signing.local.json means build unsigned",
+        ),
+        Rule(
+            "scripts/package.ts",
+            "  signingConfiguration: WindowsSigningConfiguration,",
+            "  signingConfiguration: WindowsSigningConfiguration | undefined,",
+            1,
+            note="runWindowsElectronBuilder accepts an absent certificate",
+        ),
+        Rule(
+            "scripts/package.ts",
+            "        win: {\n"
+            "          artifactName,\n"
+            "          signtoolOptions: {\n"
+            "            certificateFile: signingConfiguration.certificateFile,\n"
+            "            certificatePassword: signingConfiguration.certificatePassword,\n"
+            "          },\n"
+            "        },\n",
+            "        win: {\n"
+            "          artifactName,\n"
+            "          // UNSIGNED BUILD OVERLAY: signtoolOptions is supplied only when a\n"
+            "          // certificate was configured, and forceCodeSigning is turned back ON in\n"
+            "          // exactly that case. So a certificate means a signed build is REQUIRED -\n"
+            "          // electron-builder fails rather than quietly shipping an unsigned\n"
+            "          // artifact - while no certificate still means a supported unsigned build.\n"
+            "          // Signing itself is electron-builder's; nothing here replaces it.\n"
+            "          forceCodeSigning: signingConfiguration !== undefined,\n"
+            "          ...(signingConfiguration === undefined\n"
+            "            ? {}\n"
+            "            : {\n"
+            "                signtoolOptions: {\n"
+            "                  certificateFile: signingConfiguration.certificateFile,\n"
+            "                  certificatePassword: signingConfiguration.certificatePassword,\n"
+            "                },\n"
+            "              }),\n"
+            "        },\n",
+            1,
+            kind="block",
+            note="signtoolOptions supplied only when a certificate is configured",
+        ),
+        # Upstream signs these two binaries - which electron-builder does NOT cover with the
+        # app's own signature - and hard-fails if that did not happen. With no certificate
+        # configured there is nothing to sign, so the hook returns instead of throwing. The
+        # predicate is the same one package.ts uses: a configured certificate is the presence
+        # of signing.local.json, so "signed build" means one thing in both places.
+        Rule(
+            "scripts/afterPack.cjs",
+            '  if (context.electronPlatformName !== "win32") {\n'
+            "    return;\n"
+            "  }\n"
+            "  for (const relativePath of [\n",
+            '  if (context.electronPlatformName !== "win32") {\n'
+            "    return;\n"
+            "  }\n"
+            "  // UNSIGNED BUILD OVERLAY: the two binaries below are signed separately because\n"
+            "  // electron-builder's app signature does not cover them. With no certificate\n"
+            "  // configured there is nothing to sign, so this is a no-op rather than a failure.\n"
+            "  // electron-builder's own signing support is untouched.\n"
+            '  if (!fs.existsSync(path.join(context.packager.projectDir, "signing.local.json"))) {\n'
+            "    return;\n"
+            "  }\n"
+            "  for (const relativePath of [\n",
+            1,
+            kind="block",
+            note="afterPack no longer requires signing when no certificate is configured",
+        ),
+        # --- visible branding ----------------------------------------------------
+        #
+        # The five audit-confirmed user-visible product names, plus productName - which is the
+        # name the operating system shows in the window title, the Start Menu entry, the
+        # installer's own display name and Add/Remove Programs. Everything else that says
+        # `sing-box` was classified as a core/service/API name, a localStorage key, an
+        # internal identifier or attribution, and is left exactly as it is.
+        Rule(
+            "electron-builder.yml",
+            "productName: sing-box",
+            "productName: Jiejiebox",
+            1,
+            note="productName -> Jiejiebox (window title, Start Menu, installer)",
+        ),
+        Rule(
+            "dashboard/src/App.tsx",
+            "<div className={styles.mobileTopbarBrand}>sing-box</div>",
+            "<div className={styles.mobileTopbarBrand}>Jiejiebox</div>",
+            1,
+            note="dashboard mobile topbar brand",
+        ),
+        Rule(
+            "dashboard/src/App.tsx",
+            "sing-box",
+            "Jiejiebox",
+            2,
+            anchor="<div className={styles.sidebarBrand}>",
+            note="dashboard desktop + mobile sidebar brand",
+        ),
+        Rule(
+            "dashboard/index.html",
+            '<meta name="apple-mobile-web-app-title" content="sing-box" />',
+            '<meta name="apple-mobile-web-app-title" content="Jiejiebox" />',
+            1,
+            note="dashboard apple-mobile-web-app-title",
+        ),
+        Rule(
+            "dashboard/vite.config.ts",
+            'name: "sing-box dashboard",',
+            'name: "Jiejiebox dashboard",',
+            1,
+            note="PWA manifest name",
+        ),
+        Rule(
+            "dashboard/vite.config.ts",
+            'short_name: "sing-box",',
+            'short_name: "Jiejiebox",',
+            1,
+            note="PWA manifest short_name",
+        ),
+
+        # --- installer diagnostics (CI only) --------------------------------------
+        #
+        # The NSIS installer records why a stage failed in $PLUGINSDIR and then deletes it,
+        # and customInstall responds to a failed service registration by running the
+        # uninstaller and aborting. A CI run therefore sees only "installer exited 2" with the
+        # evidence already gone - and dozens of stages can abort: customInit, the installation
+        # preflight, the installation-directory and ancestor validation, the working-directory
+        # reset, the application-data preparation, the service command, and the rollback
+        # itself.
+        #
+        # So the installer gains ONE explicit, opt-in command-line option:
+        #
+        #     /CI-DIAGNOSTIC-PATH=<absolute path>
+        #
+        # With no such option nothing changes at all: $ciDiagnosticPath stays empty and every
+        # diagnostic write below is skipped, so an ordinary user's installation behaves exactly
+        # as it does today. With the option, the diagnostic text each stage already produces is
+        # appended to a file OUTSIDE $PLUGINSDIR and $INSTDIR, which therefore survives the
+        # rollback.
+        #
+        # Nothing secret is ever written: the text is the installer's own DetailPrint/log
+        # content - stage names, exit codes, and the daemon's stdout/stderr. No certificate,
+        # password, PFX or key passes through any of this.
+        Rule(
+            "build/installer.nsh",
+            "  Var reinstallExistingInstallation\n  Var standardInstallationRadio\n",
+            "  Var reinstallExistingInstallation\n  Var standardInstallationRadio\n"
+            "  Var ciDiagnosticPath\n",
+            1,
+            kind="block",
+            note="installer.nsh: diagnostic-channel variable",
+        ),
+        Rule(
+            "build/installer.nsh",
+            "!macro executeDaemonServiceCommand ACTION OPTIONS RESULT DETAILS\n",
+            "!macro ciDiagnostic STAGE DETAIL\n"
+            "  # CI-only, opt-in: no-op unless /CI-DIAGNOSTIC-PATH= was given. Push and Pop\n"
+            "  # $9 so the caller's registers survive.\n"
+            "  ${if} $ciDiagnosticPath != \"\"\n"
+            "    Push $9\n"
+            "    ClearErrors\n"
+            "    FileOpen $9 \"$ciDiagnosticPath\" a\n"
+            "    ${ifNot} ${Errors}\n"
+            "      FileWrite $9 \"[${STAGE}] ${DETAIL}$\\r$\\n\"\n"
+            "      FileClose $9\n"
+            "    ${endif}\n"
+            "    Pop $9\n"
+            "  ${endif}\n"
+            "!macroend\n"
+            "\n"
+            "!macro executeDaemonServiceCommand ACTION OPTIONS RESULT DETAILS\n",
+            1,
+            kind="block",
+            note="installer.nsh: ciDiagnostic macro",
+        ),
+        Rule(
+            "build/installer.nsh",
+            "    DetailPrint \"${DETAILS}\"\n"
+            "  ${endif}\n"
+            "!macroend\n",
+            "    DetailPrint \"${DETAILS}\"\n"
+            "  ${endif}\n"
+            "  !insertmacro ciDiagnostic \"service ${ACTION}\" \"exit=${RESULT} ${DETAILS}\"\n"
+            "!macroend\n",
+            1,
+            kind="block",
+            note="installer.nsh: record the daemon service command result",
+        ),
+        Rule(
+            "build/installer.nsh",
+            "  Delete \"$PLUGINSDIR\\installation-preflight-output.txt\"\n!macroend\n",
+            "  Delete \"$PLUGINSDIR\\installation-preflight-output.txt\"\n"
+            # One line: an NSIS string literal cannot span lines. $0 is the register the
+            # preflight macro just loaded its diagnostic text into; ${0} would be the macro's
+            # own name and ${OPTIONS} is its parameter.
+            "  !insertmacro ciDiagnostic \"preflight\" \"exit=$1 ${OPTIONS} $0\"\n"
+            "!macroend\n",
+            1,
+            kind="block",
+            note="installer.nsh: record the installation preflight result",
+        ),
+        Rule(
+            "build/installer.nsh",
+            "  ${if} $1 != 0\n    StrCpy $5 $1\n    DetailPrint \"$(rollingBackInstallation)\"\n",
+            "  ${if} $1 != 0\n    StrCpy $5 $1\n"
+            "    !insertmacro ciDiagnostic \"customInstall\" \"service install failed with code $1; starting rollback\"\n"
+            "    DetailPrint \"$(rollingBackInstallation)\"\n",
+            1,
+            kind="block",
+            note="installer.nsh: record the service-install failure before rollback",
+        ),
+        Rule(
+            "build/installer.nsh",
+            "    StrCpy $1 $5\n    ${if} $2 == 0\n",
+            "    StrCpy $1 $5\n"
+            "    !insertmacro ciDiagnostic \"customInstall\" \"rollback uninstaller exit=$2; original service install code=$1\"\n"
+            "    ${if} $2 == 0\n",
+            1,
+            kind="block",
+            note="installer.nsh: record the rollback result",
+        ),
+        Rule(
+            "build/installer.nsh",
+            "  StrCpy $reinstallExistingInstallation 0\n  StrCpy $customInstallation 0\n",
+            "  StrCpy $reinstallExistingInstallation 0\n  StrCpy $customInstallation 0\n"
+            "  # CI-only diagnostic channel. Absent the option this is inert: $ciDiagnosticPath\n"
+            "  # stays empty and every ciDiagnostic write is skipped.\n"
+            "  StrCpy $ciDiagnosticPath \"\"\n"
+            "  ClearErrors\n"
+            "  ${GetParameters} $R0\n"
+            "  ${GetOptions} $R0 \"/CI-DIAGNOSTIC-PATH=\" $R1\n"
+            "  ${ifNot} ${Errors}\n"
+            "    StrCpy $ciDiagnosticPath $R1\n"
+            "  ${endif}\n"
+            "  !insertmacro ciDiagnostic \"customInit\" \"diagnostic channel opened; INSTDIR=$INSTDIR\"\n",
+            1,
+            kind="block",
+            note="installer.nsh: parse /CI-DIAGNOSTIC-PATH= and open the channel",
+        ),
+    ]
 
 # Strings that must still be present afterwards. These are the other side of the same
 # coin: they are the identifiers a global rename would have destroyed.
@@ -617,14 +661,51 @@ def write_atomically(path, text):
         raise
 
 
+def parse_version(raw):
+    """The release version, validated. No default: an unusable value is refused.
+
+    The authority is release/JIEJIE_VERSION, which carries a plain dotted number such as
+    `0.1.6`. A pre-release or build suffix is accepted so this does not become the reason a
+    future `0.2.0-rc1` cannot be built, but the numeric core is required - `latest`, an
+    empty string or `release/JIEJIE_VERSION` itself (a path passed by mistake) all fail here
+    rather than reaching version.json.
+    """
+    if not isinstance(raw, str) or not raw:
+        fail("--version is required and must not be empty")
+    value = raw.strip()
+    if not RELEASE_VERSION_RE.match(value):
+        fail(
+            f"--version {raw!r} is not a release version.",
+            [
+                "expected a dotted numeric version, optionally suffixed: 0.1.6 / 0.2.0-rc1",
+                "the authority is release/JIEJIE_VERSION in the checkout being released",
+            ],
+        )
+    return value
+
+
 def main():
-    if len(sys.argv) != 2:
-        fail("usage: apply-desktop-branding-overlay.py <desktop-client-dir>")
-    root = os.path.realpath(sys.argv[1])
+    parser = argparse.ArgumentParser(
+        prog="apply-desktop-branding-overlay.py",
+        description="Apply the Jiejiebox branding and release-identity overlay to a desktop client.",
+    )
+    parser.add_argument("desktop_client_dir", help="the desktop client checkout to overlay")
+    parser.add_argument(
+        "--version",
+        required=True,
+        help="the Jiejiebox release version to stamp; read release/JIEJIE_VERSION and pass it",
+    )
+    args = parser.parse_args()
+
+    release_version = parse_version(args.version)
+    rules = build_rules(release_version)
+    root = os.path.realpath(args.desktop_client_dir)
+    if not os.path.isdir(root):
+        fail(f"{args.desktop_client_dir} is not a directory")
 
     # --- read everything, then plan -----------------------------------------
     originals = {}
-    for rule in RULES:
+    for rule in rules:
         path = os.path.join(root, rule.path)
         if rule.path not in originals:
             if not os.path.isfile(path):
@@ -633,7 +714,7 @@ def main():
 
     planned = dict(originals)
     failures = []
-    for rule in RULES:
+    for rule in rules:
         status, payload = plan(planned[rule.path], rule)
         if status == "fail":
             failures.append(f"{rule.path}: {rule.label}: {payload}")
@@ -655,7 +736,7 @@ def main():
 
     # --- confirm what was written, by re-reading it -------------------------
     confirmed = []
-    for rule in RULES:
+    for rule in rules:
         text = read_text(os.path.join(root, rule.path))
         if rule.kind == "block":
             count = text.count(rule.new)
@@ -681,7 +762,8 @@ def main():
     if spelling_failures:
         fail("a misspelled product name is present", spelling_failures)
 
-    print(f"  overlay rules: {len(RULES)} applied/confirmed")
+    print(f"  overlay rules: {len(rules)} applied/confirmed")
+    print(f"  release version: {release_version} (from --version)")
     for line in confirmed:
         print(f"    {line}")
     if changed:
