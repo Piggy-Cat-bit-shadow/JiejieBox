@@ -35,13 +35,18 @@ tags_file=""
 case "$flavor" in
   server)                  tags_file="release/DEFAULT_BUILD_TAGS_OTHERS" ;;
   macos|client-macos)      tags_file="release/DEFAULT_BUILD_TAGS" ;;
+  windows)                 tags_file="release/DEFAULT_BUILD_TAGS_WINDOWS" ;;
+  android)                 tags_file="" ;;
   server-minimal)          tags_file="release/DEFAULT_BUILD_TAGS_OTHERS" ;;
 esac
-if [ -z "$tags_file" ] || [ ! -f "$tags_file" ]; then
+if [ "$flavor" = android ]; then
+  tags="$(go run ./cmd/internal/appletags -mobile-only)"
+elif [ -z "$tags_file" ] || [ ! -f "$tags_file" ]; then
   echo "build-info.sh: unknown flavor '$flavor' (no tag file)" >&2
   exit 2
+else
+  tags="$(cat "$tags_file")"
 fi
-tags="$(cat "$tags_file")"
 
 # Dependency versions are read from the ACTUAL module graph, not hardcoded, so
 # the file cannot claim a version the binary was not built against.

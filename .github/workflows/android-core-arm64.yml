@@ -313,7 +313,9 @@ jobs:
           else
             echo "NOTE: build info not readable from this .so; architecture and size were still checked"
           fi
-          sha256sum "$aar" "$so" "$prov" | tee SHA256SUMS.txt
+          ./scripts/ci/build-info.sh BUILD-INFO-ANDROID.txt android arm64 android "$aar"
+          printf '%s  %s\n' "$(sha256sum "$aar" | cut -d' ' -f1)" "$(basename "$aar")" > libbox.aar.sha256
+          sha256sum "$aar" "$so" "$prov" BUILD-INFO-ANDROID.txt libbox.aar.sha256 LICENSE | tee SHA256SUMS.txt
 
       - name: Report
         if: always()
@@ -340,6 +342,9 @@ jobs:
           name: android-core-arm64-${{ github.sha }}
           path: |
             _libbox_build/libbox.aar
+            libbox.aar.sha256
+            BUILD-INFO-ANDROID.txt
+            LICENSE
             libbox.provenance
             SHA256SUMS.txt
           if-no-files-found: error

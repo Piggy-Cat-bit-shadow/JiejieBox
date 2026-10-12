@@ -65,6 +65,8 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      RELEASE_EXTRA_PLATFORMS: true
     steps:
       # The gate's own tests first. They need no network and take seconds, and they
       # are the only way a defect in the selection logic can be caught before the
@@ -203,7 +205,7 @@ jobs:
           gh release create "$tag" \
             --title "$tag" \
             --target "$sha" \
-            --notes-file .github/RELEASE_NOTES.md \
+            --notes "" \
             upload/*.tar.gz upload/SHA256SUMS
 
           echo "PASS: release $tag created"

@@ -71,6 +71,20 @@ TARGET_WORKFLOWS=(
   ".github/workflows/client-macos.yml"
 )
 
+# The first release contract shipped Linux and macOS only. v0.1.6 also publishes
+# the already-verified Windows core and Android ARM64 libbox, enabled explicitly
+# by release.yml so the existing two-product unit fixtures remain focused.
+case "${RELEASE_EXTRA_PLATFORMS:-false}" in
+  false) ;;
+  true)
+    TARGET_WORKFLOWS+=(
+      ".github/workflows/windows-core-amd64.yml"
+      ".github/workflows/android-core-arm64.yml"
+    )
+    ;;
+  *) die "RELEASE_EXTRA_PLATFORMS must be exactly true or false" ;;
+esac
+
 # target_field <workflow file> <field>
 #
 # One row per product, so a field cannot be added for one platform and forgotten
@@ -92,6 +106,20 @@ target_field() {
     .github/workflows/client-macos.yml:platform)        echo "darwin" ;;
     .github/workflows/client-macos.yml:arch)            echo "arm64" ;;
     .github/workflows/client-macos.yml:tarball)         echo "jiejie-sing-box-macos-arm64" ;;
+
+    .github/workflows/windows-core-amd64.yml:binary)    echo "sing-box.exe" ;;
+    .github/workflows/windows-core-amd64.yml:buildinfo) echo "BUILD-INFO-WINDOWS.txt" ;;
+    .github/workflows/windows-core-amd64.yml:magic)     echo "pe-amd64" ;;
+    .github/workflows/windows-core-amd64.yml:platform)  echo "windows" ;;
+    .github/workflows/windows-core-amd64.yml:arch)      echo "amd64" ;;
+    .github/workflows/windows-core-amd64.yml:tarball)   echo "jiejie-sing-box-windows-amd64" ;;
+
+    .github/workflows/android-core-arm64.yml:binary)    echo "libbox.aar" ;;
+    .github/workflows/android-core-arm64.yml:buildinfo) echo "BUILD-INFO-ANDROID.txt" ;;
+    .github/workflows/android-core-arm64.yml:magic)     echo "aar-arm64" ;;
+    .github/workflows/android-core-arm64.yml:platform)  echo "android" ;;
+    .github/workflows/android-core-arm64.yml:arch)      echo "arm64" ;;
+    .github/workflows/android-core-arm64.yml:tarball)   echo "jiejie-sing-box-android-arm64" ;;
 
     *) die "the release contract has no '$field' for workflow '$wf'" ;;
   esac
@@ -416,6 +444,28 @@ check_magic() {
     macho-arm64)
       [ "${hex:0:8}" = "cffaedfe" ] || { echo "FAIL: $(basename "$file") is not a 64-bit little-endian Mach-O (magic '${hex:0:8}')" >&2; return 1; }
       [ "${hex:8:8}" = "0c000001" ] || { echo "FAIL: $(basename "$file") is Mach-O but not arm64 (cputype '${hex:8:8}', want '0c000001')" >&2; return 1; }
+      ;;
+    pe-amd64)
+      python3 - "$file" <<'PY'
+import struct, sys
+data = open(sys.argv[1], 'rb').read()
+if data[:2] != b'MZ' or len(data) < 0x40:
+    raise SystemExit(1)
+offset = struct.unpack_from('<I', data, 0x3c)[0]
+if data[offset:offset + 4] != b'PE\\0\\0' or struct.unpack_from('<H', data, offset + 4)[0] != 0x8664:
+    raise SystemExit(1)
+PY
+      ;;
+    aar-arm64)
+      local extracted
+      extracted="$(mktemp)"
+      if ! unzip -p "$file" 'jni/arm64-v8a/libbox.so' >"$extracted" 2>/dev/null; then
+        rm -f "$extracted"
+        return 1
+      fi
+      hex="$(od -An -tx1 -N 20 "$extracted" | tr -d ' \n')"
+      rm -f "$extracted"
+      [ "${hex:0:8}" = "7f454c46" ] && [ "${hex:36:4}" = "b700" ] || return 1
       ;;
     *) echo "FAIL: unknown platform magic '$kind'" >&2; return 1 ;;
   esac

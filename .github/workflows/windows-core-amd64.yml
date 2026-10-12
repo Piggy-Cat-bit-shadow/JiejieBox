@@ -318,6 +318,9 @@ jobs:
           JSON
           cat build-info.json
           sha256sum "$ARTIFACT_NAME" build-info.json > SHA256SUMS
+          ../scripts/ci/build-info.sh BUILD-INFO-WINDOWS.txt windows amd64 windows "$ARTIFACT_NAME"
+          printf '%s  %s\n' "$sha256" "$ARTIFACT_NAME" > "$ARTIFACT_NAME.sha256"
+          cp ../LICENSE LICENSE
           cat SHA256SUMS
 
       - name: Package the loader-consumable artifact
@@ -397,6 +400,9 @@ jobs:
           path: |
             dist/${{ env.ZIP_NAME }}
             dist/${{ env.ARTIFACT_NAME }}
+            dist/${{ env.ARTIFACT_NAME }}.sha256
+            dist/BUILD-INFO-WINDOWS.txt
+            dist/LICENSE
             dist/SHA256SUMS
             dist/build-info.json
           if-no-files-found: error
