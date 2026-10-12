@@ -69,14 +69,39 @@ jobs:
           python3 --version
 
       - name: release gate tests (the existing 1000+-line suite, really executed)
-        run: ./scripts/ci/test-release-artifacts.sh
+        run: |
+          set -uo pipefail
+          mkdir -p verify-logs
+          # `tee` rather than a redirect, and the exit status is carried out by hand: the
+          # point is that a FAILING run still leaves its full output as an artifact. A
+          # summary line is enough to see that a case failed and never enough to see why,
+          # and this suite's output is the only diagnosis there is - the job log is not
+          # readable without a token.
+          set +e
+          ./scripts/ci/test-release-artifacts.sh 2>&1 | tee verify-logs/release-gate.log
+          rc="${PIPESTATUS[0]}"
+          set -e
+          echo "release-gate exit status: $rc"
+          echo "$rc" > verify-logs/release-gate.exit
+          exit "$rc"
 
       - name: desktop overlay version single-source tests
-        run: python3 scripts/ci/test-desktop-overlay-version.py
+        if: always()
+        run: |
+          set -uo pipefail
+          mkdir -p verify-logs
+          set +e
+          python3 scripts/ci/test-desktop-overlay-version.py 2>&1 | tee verify-logs/overlay-version.log
+          rc="${PIPESTATUS[0]}"
+          set -e
+          echo "$rc" > verify-logs/overlay-version.exit
+          exit "$rc"
 
       - name: shell syntax of every release-path script
+        if: always()
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          mkdir -p verify-logs
           for f in scripts/ci/release-artifacts.sh scripts/ci/lib.sh \
                    scripts/ci/prepare-desktop-client.sh scripts/ci/test-release-artifacts.sh; do
             bash -n "$f"
@@ -84,11 +109,17 @@ jobs:
           done
 
       - name: the workflow files parse and keep their guards
-        run: python3 scripts/ci/check-release-workflows.py
+        if: always()
+        run: |
+          set -uo pipefail
+          mkdir -p verify-logs
+          python3 scripts/ci/check-release-workflows.py 2>&1 | tee verify-logs/workflow-structure.log
 
       - name: the suite carries its own mock, so it cannot reach GitHub
+        if: always()
         run: |
           set -euo pipefail
+          mkdir -p verify-logs
           # The tests put a mock `gh` first on PATH; that mock is what makes them unable to
           # touch a real repository. This asserts the mock is still wired the way the suite
           # depends on, because a suite that silently started using the real `gh` would
@@ -97,3 +128,12 @@ jobs:
           grep -q 'work/bin' scripts/ci/test-release-artifacts.sh
           grep -q 'PATH=' scripts/ci/test-release-artifacts.sh
           echo "PASS: the release gate suite installs and uses its own mock gh"
+
+      - name: upload the verification output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-contract-verify-logs
+          path: verify-logs/
+          if-no-files-found: warn
+          retention-days: 14
