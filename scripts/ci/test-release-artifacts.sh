@@ -1500,15 +1500,22 @@ full_expect_fail "full contract: a missing Android deliverable -> FAIL" \
 
 # --- negative: a CI record must not reach the download page ---------------
 #
-# The desktop artifact directory carries BUILD-INFO-WINDOWS-DESKTOP - it is what proves the
-# installer's core, and it stays in Actions artifacts. Dropped into staging it is an
-# "unexpected public asset" and must be refused, which is the whole point of the allowlist.
-cp "$DESKTOP_RECORDS/BUILD-INFO-WINDOWS-DESKTOP-$FULL_VERSION.txt" \
-   "$work/full/upload/BUILD-INFO-WINDOWS-DESKTOP-$FULL_VERSION.txt"
-full_expect_fail "full contract: an extra BUILD-INFO in staging -> FAIL" \
-  "not public deliverable" -- \
-  check-upload --out "$work/full/upload" --tag "$FULL_TAG" --version "$FULL_VERSION"
-rm -f "$work/full/upload/BUILD-INFO-WINDOWS-DESKTOP-$FULL_VERSION.txt"
+# The records artifact carries BUILD-INFO-WINDOWS-DESKTOP - it is what proves the installer's
+# core, and it stays in Actions artifacts. Dropped into staging it is "not a public
+# deliverable" and must be refused, which is the whole point of the allowlist.
+#
+# Taken from wherever the record actually is, rather than from a path spelled out here: it
+# sits one level down inside its artifact directory, which is what the download produces.
+DESKTOP_RECORD_FILE="$(find "$DESKTOP_RECORDS" -type f -name 'BUILD-INFO-WINDOWS-DESKTOP-*.txt' -print -quit)"
+if [ -z "$DESKTOP_RECORD_FILE" ]; then
+  fail_case "a build record exists to test the allowlist with" "none found under $DESKTOP_RECORDS"
+else
+  cp "$DESKTOP_RECORD_FILE" "$work/full/upload/BUILD-INFO-WINDOWS-DESKTOP-$FULL_VERSION.txt"
+  full_expect_fail "full contract: an extra BUILD-INFO in staging -> FAIL" \
+    "not public deliverable" -- \
+    check-upload --out "$work/full/upload" --tag "$FULL_TAG" --version "$FULL_VERSION"
+  rm -f "$work/full/upload/BUILD-INFO-WINDOWS-DESKTOP-$FULL_VERSION.txt"
+fi
 
 # --- negative: a single-file checksum sidecar is not a public asset --------
 if [ "${FULL_CONTRACT_EXTRA_NEGATIVES:-true}" = "true" ]; then
