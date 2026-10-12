@@ -600,18 +600,20 @@ jobs:
           scheme="$APPLE_CLIENT_DIR/sing-box.xcodeproj/xcshareddata/xcschemes/SFM.xcscheme"
 
           echo "prepared macOS app name:"
-          grep -n 'PRODUCT_NAME = "Jiejiebox";\|INFOPLIST_KEY_CFBundleDisplayName = "Jiejiebox";' "$pbx"
-          grep -n 'BuildableName = "Jiejiebox.app"' "$scheme"
+          grep -n 'INFOPLIST_KEY_CFBundleDisplayName = "JiejieBox";' "$pbx"
+          grep -n 'PRODUCT_NAME = "sing-box";' "$pbx"
+          grep -n 'BuildableName = "sing-box.app"' "$scheme"
 
-          # Both SFM configurations, both settings: 4 values.
-          name_values="$(grep -c 'PRODUCT_NAME = "Jiejiebox";\|INFOPLIST_KEY_CFBundleDisplayName = "Jiejiebox";' "$pbx")"
-          if [ "$name_values" != "4" ]; then
-            echo "FAIL: expected SFM Debug and Release to declare Jiejiebox for PRODUCT_NAME and" >&2
-            echo "      CFBundleDisplayName (4 values), found $name_values." >&2
+          # The overlay owns the visible name only. PRODUCT_NAME and the scheme remain
+          # sing-box identity surface, while both SFM configurations show JiejieBox.
+          display_values="$(grep -c 'INFOPLIST_KEY_CFBundleDisplayName = "JiejieBox";' "$pbx")"
+          if [ "$display_values" != "2" ]; then
+            echo "FAIL: expected SFM Debug and Release to declare JiejieBox as CFBundleDisplayName," >&2
+            echo "      found $display_values values." >&2
             exit 1
           fi
-          if [ "$(grep -c 'BuildableName = "Jiejiebox.app"' "$scheme")" != "3" ]; then
-            echo "FAIL: expected all three SFM scheme application buildables to be Jiejiebox.app." >&2
+          if [ "$(grep -c 'BuildableName = "sing-box.app"' "$scheme")" != "3" ]; then
+            echo "FAIL: expected all three SFM scheme application buildables to remain sing-box.app." >&2
             exit 1
           fi
 
@@ -622,11 +624,11 @@ jobs:
               exit 1
             }
           done
-          if grep -q 'PRODUCT_NAME = "Jijiebox"\|PRODUCT_NAME = "JiejieBox"' "$pbx"; then
-            echo "FAIL: the macOS product name was spelled with the wrong casing." >&2
+          if grep -q 'PRODUCT_NAME = "Jijiebox"\|PRODUCT_NAME = "JiejieBox"\|PRODUCT_NAME = "Jiejiebox"' "$pbx"; then
+            echo "FAIL: the macOS product identity was renamed instead of using the display name." >&2
             exit 1
           fi
-          echo "PASS: the prepared macOS SFM app is branded Jiejiebox"
+          echo "PASS: the prepared macOS SFM app displays JiejieBox and keeps sing-box identity"
 
       - name: build unsigned DMG
         run: |
