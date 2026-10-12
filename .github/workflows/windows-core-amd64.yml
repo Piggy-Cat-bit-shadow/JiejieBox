@@ -318,7 +318,24 @@ jobs:
           JSON
           cat build-info.json
           sha256sum "$ARTIFACT_NAME" build-info.json > SHA256SUMS
-          ../scripts/ci/build-info.sh BUILD-INFO-WINDOWS.txt windows amd64 windows "$ARTIFACT_NAME"
+          # ABSOLUTE paths for BOTH arguments, because build-info.sh cd's to the repository
+          # root before it does anything: it resolves `$out` against the root, and it appends
+          # the artifact_bytes/artifact_sha256 block only when `[ -f "$binary" ]` holds from
+          # there. Passed relatively - as this line used to - the sidecar landed in the
+          # repository root instead of dist, and the binary was not found at all, so the
+          # record would have been written WITHOUT the artifact_sha256 line the release gate
+          # matches the downloaded binary against.
+          #
+          # `dist/BUILD-INFO-WINDOWS.txt` is listed in the upload below, so the file being
+          # elsewhere did not fail the upload either: `if-no-files-found: error` only fires
+          # when NO listed path matches. The release then died at
+          # "BUILD-INFO-WINDOWS.txt: found 0 copies under release-assets".
+          #
+          # server-linux-amd64.yml and client-macos.yml already pass "$OUT/..." for both
+          # arguments, which is why this only ever affected this workflow.
+          ../scripts/ci/build-info.sh "$(pwd)/BUILD-INFO-WINDOWS.txt" windows amd64 windows "$(pwd)/$ARTIFACT_NAME"
+          test -f BUILD-INFO-WINDOWS.txt || { echo "FAIL: build-info.sh wrote no BUILD-INFO-WINDOWS.txt into $(pwd)" >&2; exit 1; }
+          grep -q '^artifact_sha256:' BUILD-INFO-WINDOWS.txt || { echo "FAIL: BUILD-INFO-WINDOWS.txt carries no artifact_sha256, so the release gate cannot match the binary it publishes" >&2; exit 1; }
           printf '%s  %s\n' "$sha256" "$ARTIFACT_NAME" > "$ARTIFACT_NAME.sha256"
           cp ../LICENSE LICENSE
           cat SHA256SUMS
