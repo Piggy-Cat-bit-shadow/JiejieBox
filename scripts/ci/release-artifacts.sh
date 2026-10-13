@@ -510,7 +510,9 @@ cmd_desktop() {
       die "no run of $DESKTOP_WORKFLOW exists for $sha, so there is no verified Windows installer to publish.
       Dispatch it first, then re-run this release:
         gh workflow run client-desktop-windows.yml --repo $repo \\
-          -f core_sha=$sha -f core_version=<version>
+          -f core_sha=$sha -f core_version=<version> -f tooling_sha=$sha
+      tooling_sha must equal core_sha: the candidate carries the tooling that builds and
+      judges it, and the workflow refuses a dispatch where the two differ.
       A release that silently omitted the installer would still publish, which is why this is fatal."
     fi
     [ "$(printf '%s' "$row" | awk -F'\t' '{print NF}')" -eq 8 ] || die \

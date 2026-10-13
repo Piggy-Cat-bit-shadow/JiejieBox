@@ -56,6 +56,8 @@ on:
       - "scripts/ci/inject-desktop-release-version.py"
       - "scripts/ci/test-desktop-release-version.py"
       - "scripts/ci/prepare-desktop-client.sh"
+      - "scripts/ci/check-desktop-source-identity.sh"
+      - "scripts/ci/test-desktop-source-identity.sh"
       - "scripts/ci/verify-desktop-daemon-provenance.py"
       - "scripts/ci/version.sh"
       - "release/JIEJIE_VERSION"
@@ -157,6 +159,18 @@ jobs:
           echo "$rc" > verify-logs/desktop-version.exit
           exit "$rc"
 
+      - name: desktop source-identity contract tests
+        if: always()
+        run: |
+          set -uo pipefail
+          mkdir -p verify-logs
+          set +e
+          ./scripts/ci/test-desktop-source-identity.sh 2>&1 | tee verify-logs/desktop-identity.log
+          rc="${PIPESTATUS[0]}"
+          set -e
+          echo "$rc" > verify-logs/desktop-identity.exit
+          exit "$rc"
+
       - name: shell syntax of every release-path script
         if: always()
         run: |
@@ -171,6 +185,8 @@ jobs:
           mkdir -p verify-logs
           for f in scripts/ci/release-artifacts.sh scripts/ci/lib.sh \
                    scripts/ci/prepare-desktop-client.sh scripts/ci/test-release-artifacts.sh \
+                   scripts/ci/check-desktop-source-identity.sh \
+                   scripts/ci/test-desktop-source-identity.sh \
                    scripts/ci/require-executed-coverage.sh \
                    scripts/ci/require-executed-coverage.test.sh; do
             if ! bash -n "$f"; then

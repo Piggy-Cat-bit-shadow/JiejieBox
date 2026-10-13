@@ -105,10 +105,9 @@ on:
       core_version:
         description: 'Jiejiebox release version (X.Y.Z). Must equal release/JIEJIE_VERSION at core_sha.'
         required: true
-      release_branch:
-        description: 'Branch of this repository that carries refs/tags/v<core_version>.'
-        required: false
-        default: testing
+      tooling_sha:
+        description: 'Tooling commit (40 hex). Must EQUAL core_sha: a candidate carries the tooling that builds and judges it.'
+        required: true
 
 permissions:
   contents: read
@@ -117,7 +116,7 @@ env:
   # From the dispatch inputs, not literals. See the header for why there is no default.
   CORE_SHA: ${{ inputs.core_sha }}
   CORE_VERSION: ${{ inputs.core_version }}
-  RELEASE_BRANCH: ${{ inputs.release_branch }}
+  TOOLING_SHA: ${{ inputs.tooling_sha }}
   CLIENT_DIR: core/clients/desktop
   RECORDS_DIR: build/records
   SERVICE_WORK_DIR: C:\ProgramData\sing-box-daemon-ci-smoke
@@ -144,9 +143,15 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: tooling
-          # The branch that carries refs/tags/v<core_version>. The tooling and the tag check
-          # both read the fork's own history, so neither depends on which ref dispatched this.
-          ref: ${{ env.RELEASE_BRANCH }}
+          # The EXACT revision, not a branch. The tooling revision IS the core revision - a
+          # release candidate carries the tooling that builds and judges it - and
+          # check-desktop-source-identity.sh below asserts the equality, so building one
+          # commit's product with another commit's scripts cannot happen silently.
+          #
+          # This is a second checkout of the same commit rather than a reuse of `core`,
+          # because the identity check must be able to fetch refs/tags/v<core_version> into
+          # a repository without touching the core's own worktree.
+          ref: ${{ env.TOOLING_SHA }}
           fetch-depth: 1
 
       - name: "[gate 1] check out the release core"
@@ -167,56 +172,34 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # The inputs are the release identity, so they are validated before anything is
-          # built. A malformed SHA or version is refused here rather than threaded into a
-          # filename and a git checkout.
-          case "$CORE_SHA" in
-            *[!0-9a-f]*|"") echo "FAIL: core_sha must be 40 lowercase hex characters, got '$CORE_SHA'" >&2; exit 1 ;;
-          esac
-          [ "${#CORE_SHA}" -eq 40 ] || {
-            echo "FAIL: core_sha must be 40 characters, got ${#CORE_SHA}" >&2; exit 1; }
-          case "$CORE_VERSION" in
-            [0-9]*.[0-9]*.[0-9]*) ;;
-            *) echo "FAIL: core_version '$CORE_VERSION' is not a dotted numeric version" >&2; exit 1 ;;
-          esac
-
-          head_sha="$(git -C core rev-parse HEAD)"
-          echo "core HEAD:      $head_sha"
-          echo "core describe:  $(git -C core describe --tags)"
-          [ "$head_sha" = "$CORE_SHA" ] || {
-            echo "FAIL: core is at $head_sha, expected $CORE_SHA" >&2; exit 1; }
-          [ "$(git -C core describe --tags)" = "v$CORE_VERSION" ] || {
-            echo "FAIL: the daemon version stamp derives from \`git describe --tags\`," >&2
-            echo "      which must be v$CORE_VERSION in this checkout" >&2; exit 1; }
-
-          # The tag must exist AND name this commit. Without this the caller could name a
-          # version whose tag points somewhere else, and every later gate would still pass
-          # because they all compare against the same inputs this step just accepted.
-          tag_ref="refs/tags/v$CORE_VERSION"
-          if ! git -C tooling fetch --depth 1 origin "+$tag_ref:$tag_ref" 2>/dev/null; then
-            echo "FAIL: refs/tags/v$CORE_VERSION does not exist on origin." >&2
-            echo "      The release version names a tag that is not published, so this build" >&2
-            echo "      would be the only record of it." >&2
-            exit 1
-          fi
-          tag_sha="$(git -C tooling rev-parse "$tag_ref^{commit}")"
-          echo "tag v$CORE_VERSION: $tag_sha"
-          [ "$tag_sha" = "$CORE_SHA" ] || {
-            echo "FAIL: refs/tags/v$CORE_VERSION is $tag_sha, but core_sha is $CORE_SHA." >&2
-            echo "      The version and the commit name different releases." >&2; exit 1; }
-
-          # And the checkout's own single version source must agree with the version.
-          core_version_file="core/release/JIEJIE_VERSION"
-          [ -f "$core_version_file" ] || { echo "FAIL: no $core_version_file" >&2; exit 1; }
-          declared="$(tr -d '[:space:]' < "$core_version_file")"
-          echo "JIEJIE_VERSION: $declared"
-          [ "$declared" = "$CORE_VERSION" ] || {
-            echo "FAIL: $core_version_file says '$declared', but core_version is '$CORE_VERSION'." >&2
-            echo "      release/JIEJIE_VERSION is the single authority for the fork's version;" >&2
-            echo "      a caller that disagrees with it is releasing something else." >&2; exit 1; }
+          # The identity proving is a script, not an inline block, so that every negative case
+          # - a floating tooling ref, a tooling revision that is not the core's, a tag that
+          # names another commit, a version file that disagrees - is proved locally in seconds
+          # by scripts/ci/test-desktop-source-identity.sh instead of only by dispatching this
+          # 120-minute Windows build.
+          #
+          # `--shallow` mirrors the depth-1 tooling checkout and keeps the tag fetch to one
+          # commit; the core is checked out with full depth and tags, which is what
+          # `git describe --tags` below needs.
+          #
+          # The checker is read from `core`, not from `tooling`. It is the same commit either
+          # way - the whole point of the equality it asserts - but taking it from the core
+          # means the tooling directory is an INPUT to the proof rather than the source of the
+          # proof, so a wrong tooling checkout cannot supply the checker that judges it.
+          core/scripts/ci/check-desktop-source-identity.sh \
+            --core-dir core \
+            --tooling-dir tooling \
+            --core-sha "$CORE_SHA" \
+            --tooling-sha "$TOOLING_SHA" \
+            --version "$CORE_VERSION" \
+            --remote origin \
+            --shallow
 
           echo "desktop client: $(git -C core rev-parse HEAD:clients/desktop)"
           echo "desktop HEAD:   $(git -C "$CLIENT_DIR" rev-parse HEAD)"
+
+
+
 
       - name: "[gate 1] read the client's declared toolchain"
         id: toolchain

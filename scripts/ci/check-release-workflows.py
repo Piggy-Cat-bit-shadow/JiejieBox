@@ -115,28 +115,61 @@ def check_desktop():
            ins.get("core_sha", {}).get("required") is True)
     report("desktop: core_version is a required input",
            ins.get("core_version", {}).get("required") is True)
-    report("desktop: neither input has a default",
-           "default" not in ins.get("core_sha", {}) and "default" not in ins.get("core_version", {}))
+    # P0-B: the tooling revision is an exact identity, and it is the SAME identity as the
+    # core. A floating `release_branch` used to be accepted here with a `testing` default,
+    # which let a dispatch build one commit's product with another commit's scripts.
+    report("desktop: tooling_sha is a required input",
+           ins.get("tooling_sha", {}).get("required") is True)
+    report("desktop: no floating release_branch input survives",
+           "release_branch" not in ins and "RELEASE_BRANCH" not in text)
+    report("desktop: no required input carries a default",
+           all("default" not in ins[name]
+               for name in ("core_sha", "core_version", "tooling_sha")))
 
     env = doc.get("env") or {}
     report("desktop: CORE_SHA comes from the input",
            "inputs.core_sha" in str(env.get("CORE_SHA", "")))
     report("desktop: CORE_VERSION comes from the input",
            "inputs.core_version" in str(env.get("CORE_VERSION", "")))
+    report("desktop: TOOLING_SHA comes from the input",
+           "inputs.tooling_sha" in str(env.get("TOOLING_SHA", "")))
     report("desktop: permissions stay read-only",
            (doc.get("permissions") or {}).get("contents") == "read")
     report("desktop: no stale 0.1.5 literal remains as data",
            '"0.1.5"' not in text and "'0.1.5'" not in text)
 
+    # The tooling checkout must be pinned to the exact revision, never to a branch. A
+    # `ref: env.RELEASE_BRANCH`-style checkout is the defect this pair of checks exists for.
+    report("desktop: the tooling checkout is pinned to TOOLING_SHA",
+           "ref: ${{ env.TOOLING_SHA }}" in text)
+
     for needle, label in [
-        ('--version "$CORE_VERSION"', "the overlay is invoked with an explicit version"),
-        ("refs/tags/v$CORE_VERSION", "the tag is proved to name core_sha"),
+        ('--version "$CORE_VERSION"', "the version stamp is invoked with an explicit version"),
+        ('--tooling-sha "$TOOLING_SHA"', "the identity checker is given the tooling revision"),
+        ('check-desktop-source-identity.sh', "the identity checker is called, not re-implemented"),
+        ("--remote origin", "the identity checker is allowed to fetch the release tag"),
         ("release/JIEJIE_VERSION", "release/JIEJIE_VERSION is proved to agree"),
-        ("$CLIENT_DIR/version.json", "the overlaid version.json is re-read"),
+        ("$CLIENT_DIR/version.json", "the stamped version.json is re-read"),
         ('--expect-core-sha "$CORE_SHA"', "daemon provenance is checked against the core"),
         ('--expect-version "$CORE_VERSION"', "daemon provenance is checked against the version"),
     ]:
         report("desktop: %s" % label, needle in text)
+
+    # The tag-to-commit proof moved OUT of this file and into the checker, so asserting the
+    # string here would assert that the workflow re-implements it - the opposite of what is
+    # wanted. What is asserted instead is that the helper which owns the proof still contains
+    # it, so the proof cannot be lost by deleting it from both places.
+    identity = os.path.join(HERE, "check-desktop-source-identity.sh")
+    if os.path.isfile(identity):
+        with open(identity, encoding="utf-8") as fh:
+            helper = fh.read()
+        report("desktop: the identity checker proves the tag names core_sha",
+               "refs/tags/v$version" in helper and "tag_sha" in helper
+               and '[ "$tag_sha" = "$core_sha" ]' in helper)
+        report("desktop: the identity checker enforces tooling == core",
+               '[ "$tooling_sha" != "$core_sha" ]' in helper)
+    else:
+        report("desktop: the identity checker exists", False, "missing %s" % identity)
 
 
 def code_only(text):
@@ -175,8 +208,10 @@ def check_verify():
            "secrets." not in body)
     report("verify workflow: runs the release gate suite",
            "test-release-artifacts.sh" in body)
-    report("verify workflow: runs the overlay version suite",
+    report("verify workflow: runs the desktop release-version suite",
            "test-desktop-release-version.py" in body)
+    report("verify workflow: runs the desktop source-identity suite",
+           "test-desktop-source-identity.sh" in body)
     report("verify workflow: bash -n on the release scripts",
            "bash -n" in body)
 
