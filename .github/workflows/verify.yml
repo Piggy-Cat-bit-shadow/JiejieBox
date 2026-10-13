@@ -63,6 +63,17 @@ jobs:
         # that the gate is broken.
         run: ./scripts/ci/test-release-artifacts.sh
 
+      - name: executed-coverage guard self-test
+        # The guard that decides whether a step may claim coverage actually ran. It exists because
+        # `grep -c '^--- (PASS|FAIL|SKIP):'` counts tests that REPORTED, so an all-SKIP run
+        # satisfied it - and the reference suite printed "PASS: reference suite (N differential
+        # tests)" over a population that had all declined to run.
+        #
+        # Its fixtures are the whole point: they prove it fails on an all-SKIP log, on an empty
+        # log, and on a log whose filter matched nothing, and that it succeeds on a mixed log. A
+        # guard nobody can falsify is a guard nobody can trust. It needs no network and no Go.
+        run: ./scripts/ci/require-executed-coverage.test.sh
+
       - name: release ACCEPTANCE gate self-test
         # The other half of the release question, and the half that has no network
         # dependency at all: verify-fork-handoff.sh proves the documents agree with

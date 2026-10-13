@@ -151,7 +151,9 @@ jobs:
           set -euo pipefail
           mkdir -p verify-logs
           for f in scripts/ci/release-artifacts.sh scripts/ci/lib.sh \
-                   scripts/ci/prepare-desktop-client.sh scripts/ci/test-release-artifacts.sh; do
+                   scripts/ci/prepare-desktop-client.sh scripts/ci/test-release-artifacts.sh \
+                   scripts/ci/require-executed-coverage.sh \
+                   scripts/ci/require-executed-coverage.test.sh; do
             if ! bash -n "$f"; then
               echo "FAIL: $f does not parse" >&2
               exit 1

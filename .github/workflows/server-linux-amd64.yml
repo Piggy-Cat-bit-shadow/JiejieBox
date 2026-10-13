@@ -732,11 +732,10 @@ jobs:
                 exit 1
               }
           )
-          ran="$(grep -cE '^--- (PASS|FAIL|SKIP):' /tmp/reference-module.log || true)"
-          if [ "$ran" -eq 0 ]; then
-            echo "::error::the reference module reported no tests; it was not actually run" >&2
-            exit 1
-          fi
+          # The anti-vacuity guard used to be `grep -cE '^--- (PASS|FAIL|SKIP):' != 0`, which
+          # counts REPORTED tests and therefore accepts a run in which every one of them SKIPPED.
+          # require-executed-coverage.sh requires passed > 0 and names the distinction.
+          bash scripts/ci/require-executed-coverage.sh /tmp/reference-module.log "reference module"
           tail -5 /tmp/reference-module.log
 
           # Its own test script runs FIRST, so a broken checker cannot approve the run it
@@ -752,13 +751,13 @@ jobs:
               tail -80 /tmp/reference-differential.log >&2
               exit 1
             }
-          ran="$(grep -cE '^--- (PASS|FAIL|SKIP):' /tmp/reference-differential.log || true)"
           tail -20 /tmp/reference-differential.log
-          if [ "$ran" -eq 0 ]; then
-            echo "::error::reference differential tests matched no tests; the -run filter is stale" >&2
-            exit 1
-          fi
-          echo "PASS: reference suite ($ran differential tests)"
+          # This step claims DIFFERENTIAL coverage, so an all-SKIP run cannot satisfy it. The
+          # Caddy-dependent tests skip without JIEJIE_CADDY_REFERENCE_BINARY and no workflow sets
+          # it, so the honest status here is NOT_EXECUTED with the reason, not a green tick over
+          # a count of tests that declined to run.
+          cd "$GITHUB_WORKSPACE"
+          bash scripts/ci/require-executed-coverage.sh /tmp/reference-differential.log "reference suite"
 
       - name: deep check - MASQUE reference interop
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.deep_checks }}
@@ -778,10 +777,7 @@ jobs:
               tail -80 /tmp/masque-reference.log >&2
               exit 1
             }
-          ran="$(grep -cE '^--- (PASS|FAIL|SKIP):' /tmp/masque-reference.log || true)"
           tail -20 /tmp/masque-reference.log
-          if [ "$ran" -eq 0 ]; then
-            echo "::error::MASQUE reference interop matched no tests; the -run filter is stale" >&2
-            exit 1
-          fi
-          echo "PASS: MASQUE reference interop ($ran tests)"
+          # Same rule as the reference suite above: a count of reported tests is not coverage.
+          cd "$GITHUB_WORKSPACE"
+          bash scripts/ci/require-executed-coverage.sh /tmp/masque-reference.log "MASQUE reference interop"

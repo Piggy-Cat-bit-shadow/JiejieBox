@@ -298,6 +298,38 @@ def check_mobile_contract():
            owners == ["mobile-contract.yml"], str(owners))
 
 
+def check_coverage_semantics():
+    """A gate that claims coverage must require a PASS, not merely a reported result.
+
+    `grep -cE '^--- (PASS|FAIL|SKIP):'` counts tests that REPORTED, so an all-SKIP run satisfies it
+    - which is how the reference suite could print "PASS: reference suite (N differential tests)"
+    where every one of those N was a SKIP. The rule this asserts: no workflow may treat that count
+    as evidence of execution, and the Linux workflow must use the checking script.
+    """
+    with open(LINUX, encoding="utf-8") as fh:
+        linux_code = code_only(fh.read())
+    report("linux workflow no longer counts reported tests as coverage",
+           "'^--- (PASS|FAIL|SKIP):'" not in linux_code)
+    report("linux workflow requires executed coverage",
+           "require-executed-coverage.sh" in linux_code)
+
+    # The same pattern must not reappear anywhere else as an execution claim.
+    offenders = []
+    for name in sorted(os.listdir(WF)):
+        if not name.endswith(".yml"):
+            continue
+        with open(os.path.join(WF, name), encoding="utf-8") as fh:
+            text = code_only(fh.read())
+        if "'^--- (PASS|FAIL|SKIP):'" not in text:
+            continue
+        # interop-xray.yml counts the same way but ALSO requires PASS > 0, which is the correct
+        # shape: the count there is a report, not the gate.
+        if "grep -cE '^--- PASS:'" in text:
+            continue
+        offenders.append(name)
+    report("no workflow treats reported-test count as coverage", not offenders, str(offenders))
+
+
 def main():
     for path in (RELEASE, DESKTOP, VERIFY, AUDIT, LINUX, MOBILE):
         if not os.path.isfile(path):
@@ -310,6 +342,8 @@ def main():
     check_runtime_audit_split()
     print()
     check_mobile_contract()
+    print()
+    check_coverage_semantics()
     print()
     check_verify()
     print()
