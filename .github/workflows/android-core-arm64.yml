@@ -101,26 +101,24 @@ jobs:
 
       # Cheap structural gates first, so a failure lands near its cause instead of at the end of a
       # 15-minute native build. They run before the JDK, the NDK download and the gomobile install
-      # below: gofmt, the module graph and the tag policy answer in seconds, and the NDK is the
-      # single slowest install in this job (~1 GB through sdkmanager) - a tag or format break must
-      # not wait for it.
-      - name: Format gate
-        run: |
-          unformatted="$(gofmt -l $(git ls-files '*.go' | grep -v '^clients/') || true)"
-          if [ -n "$unformatted" ]; then
-            echo "FAIL: these files are not gofmt-clean:" >&2
-            echo "$unformatted" >&2
-            exit 1
-          fi
-          echo "PASS: gofmt clean"
-
+      # below: the module graph and the tag policy answer in seconds, and the NDK is the single
+      # slowest install in this job (~1 GB through sdkmanager) - a tag or module break must not wait
+      # for it.
+      #
+      # gofmt and `go test ./cmd/internal/...` USED TO RUN HERE TOO. Both were removed because
+      # verify.yml runs them on every push to testing, with no paths filter, so this workflow was a
+      # second execution of the same two gates and could only ever agree or be stale. verify.yml is
+      # now their single owner. Nothing was weakened: `verify.yml:168` runs
+      # `go test -count=1 ./cmd/internal/...` and `verify.yml:97-106` runs gofmt over a wider
+      # directory list than this step did, and this workflow's `paths:` filter would previously have
+      # skipped both on a docs-only push while verify.yml still ran them.
+      #
+      # What is asserted here is what only this job can assert: the resolved tag set the AAR is
+      # actually compiled with. That stays.
       - name: Module integrity
         run: |
           go mod tidy -diff
           go mod verify
-
-      - name: Tag policy and builder tests
-        run: go test -count=1 ./cmd/internal/... ./cmd/ci-artifact-probe/...
 
       - name: Emit the resolved tags and assert the product decisions
         run: |
@@ -244,9 +242,17 @@ jobs:
 
       # The real build, through the product's own builder. -platform selects the single ARM64 target:
       # an all-ABI AAR would not prove the ARM64 payload works, it would only prove gomobile can run.
+      #
+      # -android-variant main selects the ONE AAR this workflow ships. The builder's default is
+      # "all", which also builds libbox-legacy.aar (API 21, android-legacy tags) - and this job
+      # neither verifies nor uploads that file, so building it compiled the entire core a second
+      # time, NDK link included, purely to delete the result. `-print-resolved-tags` on this line
+      # would not have caught it either: that mode returns before any build. The selector is the
+      # fix, and "all" stays the default so `make lib_android` and the Android client's dual-AAR
+      # needs are unchanged.
       - name: Build libbox (android/arm64)
         run: |
-          go run ./cmd/internal/build_libbox -target android -platform android/arm64
+          go run ./cmd/internal/build_libbox -target android -platform android/arm64 -android-variant main
 
       - name: Verify provenance and the ARM64 payload
         run: |

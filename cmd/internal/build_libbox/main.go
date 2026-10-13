@@ -23,7 +23,17 @@ var (
 	debugEnabled bool
 	target       string
 	platform     string
+	// androidVariant selects which Android AARs buildAndroid produces; see the flag in init.
+	androidVariant string
 	// withTailscale bool
+)
+
+// The -android-variant values. See the flag's comment in init for why the selector exists and why
+// its default is "all".
+const (
+	androidVariantAll    = "all"
+	androidVariantMain   = "main"
+	androidVariantLegacy = "legacy"
 )
 
 func init() {
@@ -40,6 +50,19 @@ func init() {
 	// gVisor exposure hid, when a check read the profile tag files while the builder composed its
 	// own set.
 	flag.StringVar(&printResolvedTags, "print-resolved-tags", "", "print the resolved build tags for a variant and exit")
+	// -android-variant selects which Android AARs to build: "main", "legacy", or "all".
+	//
+	// It exists because this builder used to build BOTH variants unconditionally, and CI consumes
+	// only one. Two gomobile binds means the entire core - Go code, gobind output, javac and one
+	// NDK link - is compiled TWICE per run, and `libbox-legacy.aar` was then discarded: the
+	// artifact workflow never referenced it, the release contract pins `libbox.aar` only
+	// (scripts/ci/release-artifacts.sh), and nothing under scripts/ reads the name.
+	//
+	// The default stays "all" so `make lib_android`, the client's dual-AAR needs and every local
+	// workflow are unchanged. CI passes "main" because it ships one AAR, and a build system that
+	// compiles a product nobody consumes is not telling the truth about its own cost.
+	flag.StringVar(&androidVariant, "android-variant", androidVariantAll,
+		`which Android AARs to build: "main", "legacy", or "all"`)
 	// flag.BoolVar(&withTailscale, "with-tailscale", false, "build tailscale for iOS and tvOS")
 }
 
@@ -410,24 +433,39 @@ func buildAndroidVariant(config AndroidBuildConfig, bindTarget string) {
 }
 
 func buildAndroid() {
+	// Validate the selection BEFORE provisioning anything. An unrecognised value that fell through
+	// to "build nothing" would produce a green job with no artifact, and one that fell through to
+	// "build everything" would silently restore the double compile this flag exists to remove.
+	// Both are worse than failing here, and failing here costs nothing but a flag parse.
+	switch androidVariant {
+	case androidVariantAll, androidVariantMain, androidVariantLegacy:
+	default:
+		log.Fatal(fmt.Sprintf("unknown -android-variant %q: want %q, %q or %q",
+			androidVariant, androidVariantAll, androidVariantMain, androidVariantLegacy))
+	}
+
 	build_shared.FindSDK()
 	checkJavaVersion()
 
 	bindTarget := getAndroidBindTarget()
 
-	// Build main variant (SDK 24)
-	buildAndroidVariant(AndroidBuildConfig{
-		AndroidAPI: 24,
-		OutputName: "libbox.aar",
-		Tags:       ResolveBuildTags("android-main"),
-	}, bindTarget)
+	if androidVariant == androidVariantAll || androidVariant == androidVariantMain {
+		// Build main variant (SDK 24)
+		buildAndroidVariant(AndroidBuildConfig{
+			AndroidAPI: 24,
+			OutputName: "libbox.aar",
+			Tags:       ResolveBuildTags("android-main"),
+		}, bindTarget)
+	}
 
-	// Build legacy variant (SDK 21, no naive outbound)
-	buildAndroidVariant(AndroidBuildConfig{
-		AndroidAPI: 21,
-		OutputName: "libbox-legacy.aar",
-		Tags:       ResolveBuildTags("android-legacy"),
-	}, bindTarget)
+	if androidVariant == androidVariantAll || androidVariant == androidVariantLegacy {
+		// Build legacy variant (SDK 21, no naive outbound)
+		buildAndroidVariant(AndroidBuildConfig{
+			AndroidAPI: 21,
+			OutputName: "libbox-legacy.aar",
+			Tags:       ResolveBuildTags("android-legacy"),
+		}, bindTarget)
+	}
 }
 
 // appleBindArguments is the gomobile invocation for the Apple frameworks.
