@@ -106,7 +106,9 @@ not divergent.
 Worse than old: `git diff --name-status cfc77dc5 HEAD -- scripts/ci .github/workflows release clients`
 returns **15 modified + 1 added** files, including `check-libbox-abi.sh`,
 `check-apple-source-selection.sh`, `test-apple-signing.sh`, `apple-client-source.sh`,
-`release-artifacts.sh`, `apply-desktop-branding-overlay.py`, `build-apple-libbox.sh`
+`release-artifacts.sh`, `apply-desktop-branding-overlay.py` (retired since this transcript — the
+static branding now lives in the pinned desktop fork, and `inject-desktop-release-version.py`
+replaced it), `build-apple-libbox.sh`
 **and `clients/apple` itself**. The evidence therefore describes both an older tree **and** older
 versions of the gates it covers.
 

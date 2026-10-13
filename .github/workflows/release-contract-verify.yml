@@ -33,15 +33,34 @@ on:
       - testing
       - fix/release-asset-contract
       - "release/**"
-  pull_request:
-    paths:
+    # P1 (trigger narrowing): a push runs this suite only when release TOOLING moved. This
+    # workflow owns the behavioural tests for the release helper, the workflows and the
+    # release path's shell - so product source, docs and reports are not its input, and a
+    # push that touches none of the paths below cannot change its verdict.
+    #
+    # `workflow_dispatch` is deliberately kept: the final frozen SHA still has to be able to
+    # obtain this evidence ON DEMAND, because a `[skip ci]` dependency sync never triggers a
+    # push run. Narrowing `push` must not remove that.
+    #
+    # The list is declared ONCE and aliased below, so the push and pull_request triggers
+    # cannot drift into asserting different things about the same files.
+    paths: &release_tooling_paths
       - ".github/workflows/release.yml"
+      - ".github/workflows/release-contract-verify.yml"
       - ".github/workflows/client-desktop-windows.yml"
+      - ".github/workflows/verify.yml"
       - "scripts/ci/release-artifacts.sh"
       - "scripts/ci/test-release-artifacts.sh"
-      - "scripts/ci/apply-desktop-branding-overlay.py"
+      - "scripts/ci/lib.sh"
+      - "scripts/ci/check-release-workflows.py"
+      - "scripts/ci/inject-desktop-release-version.py"
+      - "scripts/ci/test-desktop-release-version.py"
       - "scripts/ci/prepare-desktop-client.sh"
       - "scripts/ci/verify-desktop-daemon-provenance.py"
+      - "scripts/ci/version.sh"
+      - "release/JIEJIE_VERSION"
+  pull_request:
+    paths: *release_tooling_paths
   workflow_dispatch:
 
 permissions:
@@ -126,16 +145,16 @@ jobs:
           echo "RELEASE_GATE_FAILURE_END"
           exit 0
 
-      - name: desktop overlay version single-source tests
+      - name: desktop release-version contract tests
         if: always()
         run: |
           set -uo pipefail
           mkdir -p verify-logs
           set +e
-          python3 scripts/ci/test-desktop-overlay-version.py 2>&1 | tee verify-logs/overlay-version.log
+          python3 scripts/ci/test-desktop-release-version.py 2>&1 | tee verify-logs/desktop-version.log
           rc="${PIPESTATUS[0]}"
           set -e
-          echo "$rc" > verify-logs/overlay-version.exit
+          echo "$rc" > verify-logs/desktop-version.exit
           exit "$rc"
 
       - name: shell syntax of every release-path script

@@ -53,8 +53,15 @@ name: Windows desktop installer
 # scripts/package.ts builds the daemon from the core checkout beside the desktop client,
 # and cmd/internal/build_boxdd stamps the version from `git describe --tags` in that
 # checkout. That commit therefore fixes the daemon's version string, supplies the tags
-# `git describe` needs, and records clients/desktop at the pin this release ships
-# (32f915ba). One checkout, both revisions, and the overlay is applied to that client.
+# `git describe` needs, and records clients/desktop at the pin this release ships. One
+# checkout, both revisions.
+#
+# The desktop client itself is the maintained fork
+# Piggy-Cat-bit-shadow/sing-box-for-desktop @ jiejiebox/main, pinned by the core at
+# clients/desktop and checked out by `git submodule update`. It already carries the
+# Jiejiebox release feed, the installer matcher, the installer name, the unsigned-build
+# changes and the visible branding, so nothing here rewrites its source: gate 2 stamps the
+# one value the fork cannot know - the release version - and proves nothing else moved.
 #
 # # Why this no longer pins a core commit in this file
 #
@@ -307,7 +314,7 @@ jobs:
         run: |
           ./tooling/scripts/ci/windows/New-TestSigningCertificate.ps1 -ClientDirectory $env:CLIENT_DIR
 
-      - name: "[gate 2] apply the Jiejiebox branding and unsigned-build overlay"
+      - name: "[gate 2] stamp the release version into the pinned desktop client"
         shell: bash
         env:
           DESKTOP_CLIENT_DIR: ${{ env.CLIENT_DIR }}
@@ -317,29 +324,44 @@ jobs:
           # `--version` is passed explicitly and must equal CORE_VERSION, which gate 1 already
           # proved equals release/JIEJIE_VERSION in this checkout. The script reads the file
           # itself too and refuses a disagreement, so this cannot drift in either direction.
+          #
+          # The script ALSO proves the source half of the contract: the checked-out client is
+          # the revision this commit records (and the dashboard is the revision the client
+          # records), the client is otherwise clean, and after the stamp the only file that
+          # differs is version.json. Those are the checks that catch a submodule move which
+          # did not take effect - `git add submodule` succeeds either way.
           bash tooling/scripts/ci/prepare-desktop-client.sh --version "$CORE_VERSION"
           # And the file that will name the installer must carry exactly that value.
           client_version="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' \
             "$CLIENT_DIR/version.json")"
           [ "$client_version" = "$CORE_VERSION" ] || {
-            echo "FAIL: after the overlay version.json says '$client_version'," >&2
+            echo "FAIL: after the stamp version.json says '$client_version'," >&2
             echo "      but the release version is '$CORE_VERSION'." >&2; exit 1; }
           echo "version.json: $client_version (== release version)"
 
-      - name: "[gate 2] confirm the overlay set the executable name the core authenticates"
+      - name: "[gate 2] confirm the client keeps the executable name the core authenticates"
         shell: bash
         run: |
           set -euo pipefail
           # experimental/boxdd resolves <install>/sing-box.exe when it registers the
-          # service and on every peer handshake. If a future branding change renames it,
-          # this fails here instead of at service registration.
+          # service and on every peer handshake. The fork is what keeps that name now, so
+          # this asserts the property directly instead of asserting that an overlay set it.
+          # If a future fork change renames it, this fails here instead of at service
+          # registration.
           grep -q '^  executableName: sing-box$' "$CLIENT_DIR/electron-builder.yml" || {
-            echo "FAIL: win.executableName is not sing-box in the overlaid client" >&2; exit 1; }
+            echo "FAIL: win.executableName is not sing-box in the pinned client" >&2; exit 1; }
           grep -q 'forceCodeSigning: signingConfiguration !== undefined' "$CLIENT_DIR/scripts/package.ts" || {
             echo "FAIL: package.ts does not require signing when a certificate is configured" >&2; exit 1; }
-          echo "executable name and conditional forceCodeSigning are in place"
+          # The updater's two halves are a single production/consumption contract: the feed
+          # the app polls and the name pattern it looks for. Either one alone finds nothing,
+          # so they are asserted together and against the fork's own values.
+          grep -q 'repos/Piggy-Cat-bit-shadow/sing-box/releases' "$CLIENT_DIR/src/main/updates.ts" || {
+            echo "FAIL: the client's updater does not read this fork's release feed" >&2; exit 1; }
+          grep -q 'startsWith("Jiejiebox-v")' "$CLIENT_DIR/src/main/updates.ts" || {
+            echo "FAIL: the client's updater does not match the installer name we publish" >&2; exit 1; }
+          echo "executable name, conditional forceCodeSigning, feed and asset matcher are in place"
 
-      - name: "[gate 2] confirm the overlaid version is the release version"
+      - name: "[gate 2] confirm the stamped version is the release version"
         shell: bash
         run: |
           set -euo pipefail
@@ -347,14 +369,14 @@ jobs:
           # compares a release against - and ${version} in the artifact name, so it, the
           # installer's file name and release/JIEJIE_VERSION are three views of one fact.
           #
-          # The version is NOT a literal in scripts/ci/apply-desktop-branding-overlay.py any
-          # more: it was, and it went stale, which is how a v0.1.6 installer was once built
-          # from a tree whose overlay still said 0.1.5. The caller passes the value down from
-          # release/JIEJIE_VERSION, and this gate re-reads all three carriers so a release
-          # cannot ship Jiejiebox-v<version>-windows-x64.exe whose CONTENTS believe they are
-          # another version - the updater would then refuse to upgrade to it, or offer it
-          # forever. The installer FILE NAME is checked below, from the artifact on disk,
-          # rather than inferred from the value.
+          # The version is NOT a literal in any script any more: it was, and it went stale,
+          # which is how a v0.1.6 installer was once built from a tree whose literal still
+          # said 0.1.5. The caller passes the value down from release/JIEJIE_VERSION, and this
+          # gate re-reads all three carriers so a release cannot ship
+          # Jiejiebox-v<version>-windows-x64.exe whose CONTENTS believe they are another
+          # version - the updater would then refuse to upgrade to it, or offer it forever.
+          # The installer FILE NAME is checked below, from the artifact on disk, rather than
+          # inferred from the value.
           core_version_file="core/release/JIEJIE_VERSION"
           [ -f "$core_version_file" ] || { echo "FAIL: no $core_version_file" >&2; exit 1; }
           core_version="$(tr -d '[:space:]' < "$core_version_file")"
@@ -363,16 +385,16 @@ jobs:
           echo "release/JIEJIE_VERSION : $core_version"
           echo "clients/desktop        : $client_version"
           if [ "$core_version" != "$client_version" ]; then
-            echo "FAIL: the overlaid desktop version ($client_version) is not the release version ($core_version)." >&2
-            echo "      $core_version_file is the single authority; the overlay stamps what it is" >&2
-            echo "      given, so a disagreement means the overlay ran with another value - or did" >&2
+            echo "FAIL: the stamped desktop version ($client_version) is not the release version ($core_version)." >&2
+            echo "      $core_version_file is the single authority; the stamp writes what it is" >&2
+            echo "      given, so a disagreement means it ran with another value - or did" >&2
             echo "      not run at all. Either way the installer would be named for one version" >&2
             echo "      while containing another, and the updater would then refuse it or loop." >&2
             exit 1
           fi
           # The installer the updater will look for is named from the same value, so state the name.
           echo "installer name: Jiejiebox-v$core_version-windows-x64.exe"
-          echo "PASS: the overlaid desktop version is the core version"
+          echo "PASS: the stamped desktop version is the core version"
 
       - name: "[gate 2] install the client's dependencies"
         working-directory: ${{ env.CLIENT_DIR }}

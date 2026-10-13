@@ -119,11 +119,17 @@ recoverable instead of inferred.
 
 ```powershell
 . C:\src\_toolchain\env.ps1
-python C:\src\sing-box\scripts\ci\apply-desktop-branding-overlay.py C:\src\sing-box\clients\desktop
+# The client is the pinned fork; the ONLY source edit is the release version stamp.
+python C:\src\sing-box\scripts\ci\inject-desktop-release-version.py C:\src\sing-box\clients\desktop --version 0.1.7
 cd C:\src\sing-box\clients\desktop
-$env:SING_BOX_BUILD_VERSION = '0.1.5'
+$env:SING_BOX_BUILD_VERSION = '0.1.7'
 node node_modules\tsx\dist\cli.mjs scripts\package.ts win x64
 ```
+
+> This block named `apply-desktop-branding-overlay.py` and version `0.1.5` when it was written.
+> That overlay has since been retired — the 23 static branding rules now live in the pinned
+> desktop fork — so the only edit a build applies to the client is the version stamp, and the
+> version is read from `release/JIEJIE_VERSION` rather than typed here.
 
 Two Windows-specific build prerequisites were found and are documented for CI parity:
 

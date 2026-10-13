@@ -176,7 +176,7 @@ def check_verify():
     report("verify workflow: runs the release gate suite",
            "test-release-artifacts.sh" in body)
     report("verify workflow: runs the overlay version suite",
-           "test-desktop-overlay-version.py" in body)
+           "test-desktop-release-version.py" in body)
     report("verify workflow: bash -n on the release scripts",
            "bash -n" in body)
 
