@@ -18,6 +18,22 @@ name: Windows desktop runtime audit
 # Actions list and in every status summary - rather than being reported as a green run with a
 # warning nobody reads.
 #
+# # The audit tooling is pinned to the audited build's commit
+#
+# AUDITED_ARTIFACT_SHA == AUDIT_TOOLING_SHA, always. The scripts that consume the artifacts are
+# checked out at `audited_sha` - the commit the installer was built from - never at the branch HEAD.
+#
+# This is not a formality. Checking the tooling out at `testing` would allow the artifacts from
+# commit A to be tested by the scripts of commit B, and the failure mode is silent in the direction
+# that matters: a script changed to be MORE tolerant would keep passing artifacts it no longer
+# describes. The earlier revision did exactly that and only printed the mismatch. It is now a hard
+# assertion before any gate runs - see "Pin the audit to the audited build" - and it FAILS, it does
+# not warn.
+#
+# `tooling_ref` exists only as an explicitly-marked NON-RELEASE DIAGNOSTIC override. Leaving it
+# empty - which is what both the automatic and the normal manual path do - means the tooling comes
+# from the audited SHA. A run that sets it is marked non-release in its own log and summary.
+#
 # # Gating status
 #
 # NOT release-blocking, by product definition. `release-artifacts.sh` requires the Windows desktop
@@ -37,28 +53,25 @@ name: Windows desktop runtime audit
 # The second is needed because gate 6 tears its installation down at the end, so "install it and
 # audit the installed copy" is not available, and because gates 5/5b/7 are deliberately about the
 # SIGNED PACKAGE rather than about an installed state.
-#
-# The build run is identified by `core_sha` plus `core_version`, matching the artifact names the
-# build workflow produces, so this can be dispatched independently of the workflow_run that normally
-# triggers it.
 
 on:
-  # Run automatically after the installer is built.
+  # Run automatically after the installer is built. This is the real topology: the audit consumes
+  # the build's artifacts, so it follows it rather than being dispatched beside it.
   workflow_run:
     workflows: ["Windows desktop installer"]
     types: [completed]
   workflow_dispatch:
     inputs:
       core_sha:
-        description: 'Core commit the installer was built from (40 hex). Used to find the build run.'
+        description: 'Core commit the installer was built from (40 hex). Pins BOTH the audited artifacts and the audit tooling.'
         required: true
       core_version:
-        description: 'Jiejiebox release version (X.Y.Z). Used to find the build run and to name the installer.'
+        description: 'Jiejiebox release version (X.Y.Z). Verified against release/JIEJIE_VERSION at core_sha.'
         required: true
-      release_branch:
-        description: 'Branch of this repository that carries the runtime audit scripts.'
+      tooling_ref:
+        description: 'NON-RELEASE DIAGNOSTIC ONLY. Leave EMPTY: the audit tooling is then checked out at core_sha. Set it only to test new scripts against an older artifact, and read the resulting report as a diagnostic, never as an acceptance result.'
         required: false
-        default: testing
+        default: ''
 
 permissions:
   contents: read
@@ -80,60 +93,108 @@ jobs:
     timeout-minutes: 90
 
     steps:
-      # The release version names the installer inside the artifact, so it has to be known before
-      # anything is downloaded. For a workflow_run there are no inputs at all, and a bare
-      # `git show` would run before any checkout exists - so the file is fetched deliberately
-      # first, and that is the ONLY thing this sparse checkout is for.
-      - name: Fetch the release version file
-        if: ${{ !inputs.core_version }}
+      # The audited commit is normalised FIRST, because everything downstream is pinned to it: the
+      # tooling checkout, the version file, and the run that is looked up.
+      - name: Normalise the audited build SHA
+        id: audited
+        shell: pwsh
+        env:
+          # workflow_run carries the commit only as the triggering run's head_sha, and
+          # workflow_dispatch carries it as an input; both are normalised here so the rest of the
+          # job reads one value.
+          EVENT_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_SHA: ${{ inputs.core_sha }}
+          INPUT_TOOLING_REF: ${{ inputs.tooling_ref }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $auditedSha = if ($env:INPUT_SHA) { $env:INPUT_SHA.Trim() } else { $env:EVENT_SHA }
+
+          if ($auditedSha -notmatch '^[0-9a-f]{40}$') {
+            throw "the audited build SHA must be 40 lowercase hex characters, got '$auditedSha'"
+          }
+
+          # Empty means "pinned to the audited SHA", which is the only release-valid setting.
+          # Anything else is the diagnostic override, and it is announced loudly rather than
+          # quietly changing what this run proves.
+          $toolingRef = if ($env:INPUT_TOOLING_REF) { $env:INPUT_TOOLING_REF.Trim() } else { $auditedSha }
+          $nonRelease = $toolingRef -ne $auditedSha
+
+          if ($nonRelease) {
+            Write-Host "::warning::NON-RELEASE DIAGNOSTIC: tooling_ref '$toolingRef' is NOT the audited build SHA '$auditedSha'."
+            Write-Host "::warning::This run tests artifacts from one commit with scripts from another. Its result is NOT an acceptance result and must not be cited as one."
+          }
+
+          Write-Host "audited build SHA : $auditedSha"
+          Write-Host "tooling ref       : $toolingRef$(if ($nonRelease) { '   <-- NON-RELEASE DIAGNOSTIC' } else { '   (pinned to the audited build)' })"
+          "audited_sha=$auditedSha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "tooling_ref=$toolingRef" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "non_release=$($nonRelease.ToString().ToLower())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      # Pinned to the audited commit. `tooling_ref` is that same SHA unless the diagnostic override
+      # was set, so the default path cannot test one commit's artifacts with another's scripts.
+      - name: Check out the runtime audit tooling at the audited build SHA
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_branch || 'testing' }}
-          sparse-checkout: release/JIEJIE_VERSION
-          sparse-checkout-cone-mode: false
-          path: version-src
+          path: tooling
+          ref: ${{ steps.audited.outputs.tooling_ref }}
           fetch-depth: 1
+
+      # The version names the installer INSIDE the artifact, so it has to be known before anything
+      # is downloaded - and it must come from the audited commit, not from a branch HEAD, or the
+      # audit could be told to expect a version the artifact does not carry. Reading the file out of
+      # the pinned checkout means version metadata and artifact provenance have one source.
+      #
+      # An explicitly dispatched `core_version` is still honoured, but it is VERIFIED against that
+      # file rather than trusted: a disagreement means the caller and the commit disagree about what
+      # was built, and that fails closed instead of picking one.
+      - name: Resolve the version from the audited SHA
+        id: version
+        shell: pwsh
+        env:
+          INPUT_VERSION: ${{ inputs.core_version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "tooling commit : $(git -C tooling rev-parse HEAD)"
+          Write-Host "audited build  : ${{ steps.audited.outputs.audited_sha }}"
+
+          $versionFile = Join-Path $PWD "tooling/release/JIEJIE_VERSION"
+          if (-not (Test-Path -LiteralPath $versionFile)) {
+            throw "release/JIEJIE_VERSION is not present at the audited SHA ${{ steps.audited.outputs.audited_sha }}"
+          }
+          $fileVersion = (Get-Content -LiteralPath $versionFile -Raw).Trim()
+          if ($fileVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+            throw "release/JIEJIE_VERSION at the audited SHA is not an X.Y.Z version (got '$fileVersion')"
+          }
+
+          if ($env:INPUT_VERSION) {
+            $inputVersion = $env:INPUT_VERSION.Trim()
+            if ($inputVersion -ne $fileVersion) {
+              throw "core_version '$inputVersion' disagrees with release/JIEJIE_VERSION '$fileVersion' at the audited SHA ${{ steps.audited.outputs.audited_sha }}. One of them does not describe the artifact, so this fails closed rather than choosing."
+            }
+            Write-Host "core_version '$inputVersion' matches release/JIEJIE_VERSION at the audited SHA"
+          }
+
+          $version = $fileVersion
+          Write-Host "audited version: $version"
+          "core_version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Resolve the build run to audit
         id: build
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # workflow_run carries the commit only as the triggering run's head_sha, and
-          # workflow_dispatch carries the inputs; both are normalised here so the rest of the job
-          # reads one pair of values.
-          EVENT_SHA: ${{ github.event.workflow_run.head_sha }}
-          INPUT_SHA: ${{ inputs.core_sha }}
-          INPUT_VERSION: ${{ inputs.core_version }}
-          INPUT_BRANCH: ${{ inputs.release_branch }}
+          AUDITED_SHA: ${{ steps.audited.outputs.audited_sha }}
         run: |
           $ErrorActionPreference = "Stop"
-          $sha = if ($env:INPUT_SHA) { $env:INPUT_SHA } else { $env:EVENT_SHA }
-          $branch = if ($env:INPUT_BRANCH) { $env:INPUT_BRANCH } else { "testing" }
-
-          if ($sha -notmatch '^[0-9a-f]{40}$') {
-            throw "core_sha must be 40 lowercase hex characters, got '$sha'"
-          }
-
-          if ($env:INPUT_VERSION) {
-            $version = $env:INPUT_VERSION.Trim()
-          } else {
-            $versionFile = Join-Path $PWD "version-src/release/JIEJIE_VERSION"
-            if (-not (Test-Path -LiteralPath $versionFile)) {
-              throw "release/JIEJIE_VERSION is not present in the release_branch checkout; pass core_version explicitly"
-            }
-            $version = (Get-Content -LiteralPath $versionFile -Raw).Trim()
-          }
-          if ($version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
-            throw "could not resolve a release version (got '$version'); pass core_version explicitly"
-          }
+          $sha = $env:AUDITED_SHA
 
           # The newest successful run of the INSTALLER workflow for this commit. Selected by
           # workflow path, so a renamed or added workflow cannot be mistaken for it, and requiring
           # `success` because auditing a failed build would report on an artifact that does not
           # exist.
           $runs = gh api "repos/${{ github.repository }}/actions/runs?head_sha=$sha&per_page=100" `
-            --jq '.workflow_runs[] | select(.path == ".github/workflows/client-desktop-windows.yml") | [.id, .run_number, .status, .conclusion] | @tsv'
+            --jq '.workflow_runs[] | select(.path == ".github/workflows/client-desktop-windows.yml") | [.id, .run_number, .status, .conclusion, .head_sha] | @tsv'
           if (-not $runs) {
             throw "no run of client-desktop-windows.yml exists for $sha, so there is nothing to audit"
           }
@@ -147,29 +208,55 @@ jobs:
             throw "no SUCCESSFUL run of client-desktop-windows.yml exists for $sha; refusing to audit a failed build"
           }
 
-          Write-Host "auditing build run #$($chosen[1]) (id $($chosen[0])) for $sha, version $version"
+          # The run was selected BY head_sha, but the API's own view of that field is asserted
+          # rather than assumed: a run that does not carry the audited SHA is not the audited build.
+          if ($chosen[4] -ne $sha) {
+            throw "selected run $($chosen[0]) is for $($chosen[4]), not the audited SHA $sha"
+          }
+
+          Write-Host "auditing build run #$($chosen[1]) (id $($chosen[0])) for $sha"
           "run_id=$($chosen[0])" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "run_number=$($chosen[1])" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "core_sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "core_version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "release_branch=$branch" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-      - name: Check out the runtime audit tooling
-        uses: actions/checkout@v4
-        with:
-          path: tooling
-          ref: ${{ steps.build.outputs.release_branch }}
-          fetch-depth: 1
-
-      # The scripts that consume the artifacts were pinned by the build run they audit. The checkout
-      # above is the branch HEAD, which may be AHEAD of the build; the run id is printed so a
-      # mismatch is at least visible in the log rather than silent.
-      - name: Note which tooling revision is running
-        shell: bash
+      # The pin, asserted before any gate runs. This is the whole point of the workflow: artifacts
+      # from commit A must be tested by scripts from commit A. A mismatch FAILS the run - it is not
+      # a warning and it is not something a later green gate can compensate for.
+      - name: Pin the audit to the audited build
+        shell: pwsh
+        env:
+          AUDITED_SHA: ${{ steps.audited.outputs.audited_sha }}
+          EXPECTED_TOOLING: ${{ steps.audited.outputs.tooling_ref }}
+          NON_RELEASE: ${{ steps.audited.outputs.non_release }}
         run: |
-          set -euo pipefail
-          echo "tooling commit : $(git -C tooling rev-parse HEAD)"
-          echo "audited build  : #${{ steps.build.outputs.run_number }} for ${{ steps.build.outputs.core_sha }}"
+          $ErrorActionPreference = "Stop"
+          $auditedSha = $env:AUDITED_SHA
+          $toolingSha = (git -C tooling rev-parse HEAD).Trim()
+          $installerArtifact = "jiejiebox-windows-signed-test"
+          $unpackedArtifact = "jiejiebox-windows-unpacked-audit-input"
+
+          $lines = @(
+            "AUDITED_BUILD_RUN_ID     = ${{ steps.build.outputs.run_id }}",
+            "AUDITED_BUILD_RUN_NUMBER = ${{ steps.build.outputs.run_number }}",
+            "AUDITED_BUILD_SHA        = $auditedSha",
+            "AUDIT_TOOLING_SHA        = $toolingSha",
+            "AUDITED_VERSION          = ${{ steps.version.outputs.core_version }}",
+            "INSTALLER_ARTIFACT_NAME  = $installerArtifact",
+            "UNPACKED_ARTIFACT_NAME   = $unpackedArtifact",
+            "NON_RELEASE_DIAGNOSTIC   = $env:NON_RELEASE"
+          )
+          foreach ($line in $lines) { Write-Host $line }
+          $lines -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+          # The checkout was requested at this ref, so anything else means the ref did not resolve
+          # to the commit we asked for - a silent failure mode that would otherwise be invisible.
+          if ($toolingSha -ne $env:EXPECTED_TOOLING) {
+            throw "the tooling checkout is at $toolingSha but was requested at $($env:EXPECTED_TOOLING)"
+          }
+
+          if ($auditedSha -ne $toolingSha) {
+            throw "AUDITED_BUILD_SHA ($auditedSha) != AUDIT_TOOLING_SHA ($toolingSha). Refusing to test one commit's artifacts with another commit's scripts."
+          }
+          Write-Host "ASSERTION PASSED: AUDITED_BUILD_SHA == AUDIT_TOOLING_SHA ($auditedSha)"
 
       - name: Download the installer and the unpacked application
         shell: pwsh
@@ -266,7 +353,7 @@ jobs:
         shell: pwsh
         env:
           INSTALLER_PATH: ${{ steps.build.outputs.installer_path }}
-          CORE_VERSION: ${{ steps.build.outputs.core_version }}
+          CORE_VERSION: ${{ steps.version.outputs.core_version }}
         run: |
           $ErrorActionPreference = "Stop"
           # The diagnostic path is under RUNNER_TEMP and deliberately has no spaces: the
@@ -298,9 +385,20 @@ jobs:
           $summary = @(
             "### Windows desktop runtime audit",
             "",
-            "Audited build run: #${{ steps.build.outputs.run_number }} for ${{ steps.build.outputs.core_sha }}",
+            "Audited build run: #${{ steps.build.outputs.run_number }} for ${{ steps.audited.outputs.audited_sha }}",
+            "Audit tooling SHA: ${{ steps.audited.outputs.tooling_ref }}",
+            "Version: ${{ steps.version.outputs.core_version }}",
             "Installer: ``${{ steps.build.outputs.installer_path }}``",
-            "",
+            ""
+          )
+          if ("${{ steps.audited.outputs.non_release }}" -eq "true") {
+            $summary += @(
+              "> **NON-RELEASE DIAGNOSTIC.** The audit tooling was taken from a different commit than",
+              "> the audited artifacts. This result must not be cited as an acceptance result.",
+              ""
+            )
+          }
+          $summary += @(
             "This workflow is NOT release-blocking by product definition. A red result here does not",
             "invalidate a successfully built installer, and a green one is not Windows acceptance.",
             ""

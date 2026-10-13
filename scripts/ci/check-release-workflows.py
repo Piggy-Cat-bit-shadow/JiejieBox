@@ -330,6 +330,64 @@ def check_coverage_semantics():
     report("no workflow treats reported-test count as coverage", not offenders, str(offenders))
 
 
+def check_audit_sha_pin():
+    """The runtime audit's tooling must come from the audited build's own commit.
+
+    AUDITED_ARTIFACT_SHA == AUDIT_TOOLING_SHA. The earlier revision checked the tooling out at a
+    BRANCH and merely printed when that branch was ahead of the build, which allows artifacts from
+    commit A to be tested by scripts from commit B. That is silent in the direction that matters: a
+    script made more tolerant keeps passing artifacts it no longer describes.
+
+    These assertions exist so the pin cannot be relaxed back to a branch by a later edit.
+    """
+    if not os.path.isfile(AUDIT):
+        report("runtime audit workflow exists", False, AUDIT)
+        return
+    with open(AUDIT, encoding="utf-8") as fh:
+        raw = fh.read()
+    audit = code_only(raw)
+
+    # The tooling checkout is pinned to the audited SHA, not to a branch.
+    report("audit tooling is checked out at the audited SHA",
+           "ref: ${{ steps.audited.outputs.tooling_ref }}" in audit)
+    report("audit tooling is NOT checked out at a branch",
+           "steps.build.outputs.release_branch" not in audit)
+
+    # The audited SHA is derived from workflow_run.head_sha / the dispatch input, and both paths
+    # produce one normalised value.
+    report("audit normalises the audited SHA from both triggers",
+           "github.event.workflow_run.head_sha" in audit and "inputs.core_sha" in audit)
+
+    # The assertion is present and it throws rather than warning.
+    report("audit asserts AUDITED_BUILD_SHA == AUDIT_TOOLING_SHA",
+           "AUDITED_BUILD_SHA" in audit and "AUDIT_TOOLING_SHA" in audit)
+    report("the SHA mismatch is a hard failure, not a warning",
+           "AUDITED_BUILD_SHA ($auditedSha) != AUDIT_TOOLING_SHA" in audit)
+
+    # Every value the closure report has to carry is emitted.
+    for value in ("AUDITED_BUILD_RUN_ID", "AUDITED_BUILD_RUN_NUMBER", "AUDITED_BUILD_SHA",
+                  "AUDIT_TOOLING_SHA", "AUDITED_VERSION", "INSTALLER_ARTIFACT_NAME",
+                  "UNPACKED_ARTIFACT_NAME"):
+        report("audit emits %s" % value, value in audit)
+
+    # Version metadata comes from the audited SHA, and a dispatched core_version must AGREE with it
+    # rather than override it.
+    report("version is read from the pinned checkout",
+           "tooling/release/JIEJIE_VERSION" in audit)
+    report("a dispatched core_version is verified against the audited SHA",
+           "disagrees with release/JIEJIE_VERSION" in audit)
+
+    # The diagnostic override is opt-in, empty by default, and announced.
+    report("the tooling override defaults to empty",
+           re.search(r"tooling_ref:.*\n(?:.*\n)*?\s+default: ''", audit) is not None)
+    report("the tooling override is marked NON-RELEASE DIAGNOSTIC",
+           "NON-RELEASE DIAGNOSTIC" in audit)
+
+    # The selected run's own head_sha is asserted, not assumed from the query parameter.
+    report("the selected build run's SHA is re-asserted",
+           "not the audited SHA" in audit)
+
+
 def main():
     for path in (RELEASE, DESKTOP, VERIFY, AUDIT, LINUX, MOBILE):
         if not os.path.isfile(path):
@@ -340,6 +398,8 @@ def main():
     check_desktop()
     print()
     check_runtime_audit_split()
+    print()
+    check_audit_sha_pin()
     print()
     check_mobile_contract()
     print()
