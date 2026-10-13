@@ -88,6 +88,16 @@ permissions:
 env:
   BINARY: dist/sing-box-darwin-arm64
   TAGS_FILE: release/DEFAULT_BUILD_TAGS
+  # The artifact's target, declared once so every Go check names it instead of inheriting the
+  # runner's. `build-macos-client.sh arm64` builds darwin/arm64 with CGO_ENABLED=1 (the Cronet
+  # profile), so a unit test, vet or capability check that omits these asks about whatever platform
+  # the runner happens to be.
+  #
+  # The Windows core workflow demonstrated this failing rather than merely being untidy: its
+  # capability check omitted the target, read the Linux graph, and refused a Windows artifact.
+  GOOS_TARGET: darwin
+  GOARCH_TARGET: arm64
+  CGO_ENABLED_TARGET: '1'
 
 jobs:
   macos-arm64:
@@ -145,7 +155,13 @@ jobs:
         # `go build ./...` / `go build -tags` pair in verify.yml.
         run: |
           set -euo pipefail
-          CGO_ENABLED=1 go test -tags "$(cat "$TAGS_FILE")" -count=1 -timeout 25m \
+          # The TARGET is named explicitly on every Go invocation in this file. `go test`, `go vet`
+          # and `go list` all read GOOS/GOARCH/CGO_ENABLED from their own environment, so omitting
+          # them makes the check describe the RUNNER rather than the artifact this workflow ships.
+          # The values are the ones `build-macos-client.sh arm64` compiles with.
+          export GOOS="$GOOS_TARGET" GOARCH="$GOARCH_TARGET" CGO_ENABLED="$CGO_ENABLED_TARGET"
+          echo "unit test target: $GOOS/$GOARCH CGO_ENABLED=$CGO_ENABLED (runner host: $(go env GOHOSTOS)/$(go env GOHOSTARCH))"
+          go test -tags "$(cat "$TAGS_FILE")" -count=1 -timeout 25m \
             ./option ./transport/... ./protocol/... ./common/httpclient ./common/tls \
             ./common/trafficclass ./common/trafficsched \
             ./include ./route ./adapter/... ./dns/... ./service/... ./experimental/clashmode
@@ -298,7 +314,13 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.deep_checks }}
         run: |
           set -euo pipefail
-          CGO_ENABLED=1 go vet -tags "$(cat "$TAGS_FILE")" \
+          # The TARGET is named explicitly. `go` reads GOOS/GOARCH/CGO_ENABLED from its own
+          # environment, so omitting them makes this check describe the RUNNER rather than the
+          # artifact this workflow ships. These are the values `build-macos-client.sh arm64`
+          # compiles with.
+          export GOOS="$GOOS_TARGET" GOARCH="$GOARCH_TARGET" CGO_ENABLED="$CGO_ENABLED_TARGET"
+          echo "vet target: $GOOS/$GOARCH CGO_ENABLED=$CGO_ENABLED (runner host: $(go env GOHOSTOS)/$(go env GOHOSTARCH))"
+          go vet -tags "$(cat "$TAGS_FILE")" \
             ./option ./transport/... ./protocol/... ./common/httpclient ./common/tls \
             ./include ./route ./adapter/... ./dns/... ./service/...
           echo "PASS: go vet clean under the macOS tags"
@@ -335,7 +357,9 @@ jobs:
           # model, and the bootstrap cache are all read on one goroutine while written
           # on another. The ordinary unit-test step covers the package too, but a race
           # in it would only be reported by this one.
-          CGO_ENABLED=1 go test -race -tags "$(cat "$TAGS_FILE")" -count=1 -timeout 40m \
+          export GOOS="$GOOS_TARGET" GOARCH="$GOARCH_TARGET" CGO_ENABLED="$CGO_ENABLED_TARGET"
+          echo "race test target: $GOOS/$GOARCH CGO_ENABLED=$CGO_ENABLED (runner host: $(go env GOHOSTOS)/$(go env GOHOSTARCH))"
+          go test -race -tags "$(cat "$TAGS_FILE")" -count=1 -timeout 40m \
             ./transport/masque/ ./protocol/masque/ ./transport/http/ ./protocol/naive/ ./route/ ./common/httpclient/ ./common/trafficsched/
           echo "PASS: race tests"
 
@@ -345,10 +369,17 @@ jobs:
         # regression smoke: CI establishes that the corpus still loads, the parser does
         # not immediately crash, and no obvious panic regression is present. The
         # accumulated corpus in testdata is replayed either way.
+        #
+        # Like its Linux twin, this step deliberately does NOT name a GOOS/GOARCH/CGO target, and
+        # it cannot: `go test -fuzz` EXECUTES the target and a fuzzing executable cannot be
+        # cross-built. The runner's platform is therefore the target, which holds because this
+        # job's artifact target (darwin/arm64) is the runner's platform. Recorded so the omission
+        # reads as a decision rather than as the oversight the rest of this file was fixed for.
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.deep_checks }}
         run: |
           set -euo pipefail
           TAGS="$(cat "$TAGS_FILE")"
+          echo "fuzz runs on the host by necessity: $(go env GOHOSTOS)/$(go env GOHOSTARCH)"
           run_fuzz() {
             echo "--- fuzzing $2 in $1 for ${3}s"
             go test -tags "$TAGS" -run '^$' -fuzz "^$2\$" -fuzztime "$3" "$1"

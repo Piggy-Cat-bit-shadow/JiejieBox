@@ -102,6 +102,18 @@ permissions:
 
 env:
   BINARY: dist/sing-box-linux-amd64
+  # The artifact's target, declared once so every check can name it instead of inheriting the
+  # runner's. `build-server.sh` builds with exactly GOOS/GOARCH/CGO_ENABLED=0; a capability or vet
+  # check that omits them asks about the HOST instead, which happens to agree on this runner and
+  # would stop agreeing on a different one.
+  #
+  # This is not hypothetical: the Windows core workflow's capability check omitted them, read the
+  # Linux graph, and reported a false "protocol/masque is not in the release build's package graph"
+  # against a Windows artifact. The same latent drift lived here, correct only by accident of the
+  # runner image.
+  GOOS_TARGET: linux
+  GOARCH_TARGET: amd64
+  CGO_ENABLED_TARGET: '0'
 
 jobs:
   linux-amd64:
@@ -158,6 +170,11 @@ jobs:
         # the protocols this server serves.
         run: |
           set -euo pipefail
+          # The TARGET is named explicitly. `go` reads GOOS/GOARCH/CGO_ENABLED from its own
+          # environment, so omitting them makes this check describe the RUNNER, not the
+          # artifact this workflow ships. Same values the build step compiles with.
+          export GOOS="linux" GOARCH="amd64" CGO_ENABLED="0"
+          echo "server check target: $GOOS/$GOARCH CGO_ENABLED=$CGO_ENABLED (runner host: $(go env GOHOSTOS)/$(go env GOHOSTARCH))"
           TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
           go test -tags "$TAGS" -count=1 -timeout 10m \
             ./option ./transport/http ./protocol/http ./protocol/naive \
@@ -212,6 +229,11 @@ jobs:
         # below.
         run: |
           set -euo pipefail
+          # The TARGET is named explicitly, for the same reason as the steps above: these run the
+          # binary they build, so host and target must be the same platform - saying so keeps that a
+          # stated fact rather than an accident of the runner image.
+          export GOOS="$GOOS_TARGET" GOARCH="$GOARCH_TARGET" CGO_ENABLED="$CGO_ENABLED_TARGET"
+          echo "test target: $GOOS/$GOARCH CGO_ENABLED=$CGO_ENABLED (runner host: $(go env GOHOSTOS)/$(go env GOHOSTARCH))"
           TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
           cd test
           go test -tags "$TAGS" -count=1 -timeout 5m -v ./contract/server/
@@ -463,6 +485,12 @@ jobs:
         run: |
           set -euo pipefail
           TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
+          # The TARGET is named explicitly. `go list` reads GOOS/GOARCH/CGO_ENABLED from its own
+          # environment, so leaving them out answers a question about the runner rather than about
+          # the artifact this workflow builds. They are the same values `build-server.sh` compiles
+          # with, so the checked graph and the built binary cannot drift apart.
+          export GOOS="$GOOS_TARGET" GOARCH="$GOARCH_TARGET" CGO_ENABLED="$CGO_ENABLED_TARGET"
+          echo "capability graph target: $GOOS/$GOARCH CGO_ENABLED=$CGO_ENABLED (runner host: $(go env GOHOSTOS)/$(go env GOHOSTARCH))"
           go list -deps -tags "$TAGS" ./cmd/sing-box > /tmp/deps.txt
           echo "package graph: $(wc -l < /tmp/deps.txt) packages"
           failed=0
@@ -614,6 +642,11 @@ jobs:
         run: |
           set -euo pipefail
           TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
+          # The TARGET is named explicitly. `go` reads GOOS/GOARCH/CGO_ENABLED from its own
+          # environment, so omitting them makes this check describe the RUNNER rather than the
+          # artifact this workflow ships. These are the values `build-server.sh` compiles with.
+          export GOOS="$GOOS_TARGET" GOARCH="$GOARCH_TARGET" CGO_ENABLED="$CGO_ENABLED_TARGET"
+          echo "vet target: $GOOS/$GOARCH CGO_ENABLED=$CGO_ENABLED (runner host: $(go env GOHOSTOS)/$(go env GOHOSTARCH))"
           go vet -tags "$TAGS" \
             ./option ./include ./route ./adapter/... \
             ./protocol/direct ./protocol/dns ./protocol/group ./protocol/anytls \
@@ -648,6 +681,11 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.deep_checks }}
         run: |
           set -euo pipefail
+          # The TARGET is named explicitly. `go` reads GOOS/GOARCH/CGO_ENABLED from its own
+          # environment, so omitting them makes this check describe the RUNNER, not the
+          # artifact this workflow ships. Same values the build step compiles with.
+          export GOOS="linux" GOARCH="amd64" CGO_ENABLED="0"
+          echo "server check target: $GOOS/$GOARCH CGO_ENABLED=$CGO_ENABLED (runner host: $(go env GOHOSTOS)/$(go env GOHOSTARCH))"
           TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
           go test -race -tags "$TAGS" -count=1 -timeout 40m \
             ./transport/masque/ ./transport/http/ ./protocol/naive/ ./route/ ./common/httpclient/
@@ -685,10 +723,18 @@ jobs:
         # replaces, not less, and it is deterministic.
         #
         # Longer fuzzing belongs in a dedicated local or scheduled job, not here.
+        #
+        # This is the ONE step in this file that deliberately does not name a GOOS/GOARCH/CGO
+        # target, and the reason is that it cannot: `go test -fuzz` EXECUTES the target, and a
+        # fuzzing executable cannot be cross-built. Naming a target here would be wrong rather than
+        # merely redundant, so the runner's platform IS the target - which holds because this job's
+        # artifact target (linux/amd64) is the runner's platform. Recorded so the omission reads as
+        # a decision instead of the oversight every other step in this file was just fixed for.
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.deep_checks }}
         run: |
           set -euo pipefail
           TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
+          echo "fuzz runs on the host by necessity: $(go env GOHOSTOS)/$(go env GOHOSTARCH)"
           run_fuzz() {
             echo "--- fuzzing $2 in $1 for $3 iterations"
             go test -tags "$TAGS" -run '^$' -fuzz "^$2\$" -fuzztime "$3" "$1"
@@ -718,6 +764,11 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.deep_checks }}
         run: |
           set -euo pipefail
+          # The TARGET is named explicitly, for the same reason as the steps above: these run the
+          # binary they build, so host and target must be the same platform - saying so keeps that a
+          # stated fact rather than an accident of the runner image.
+          export GOOS="$GOOS_TARGET" GOARCH="$GOARCH_TARGET" CGO_ENABLED="$CGO_ENABLED_TARGET"
+          echo "test target: $GOOS/$GOARCH CGO_ENABLED=$CGO_ENABLED (runner host: $(go env GOHOSTOS)/$(go env GOHOSTARCH))"
           TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
 
           # The reference module needs a binary built from the reference tag set, and it
@@ -763,6 +814,11 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.deep_checks }}
         run: |
           set -euo pipefail
+          # The TARGET is named explicitly. `go` reads GOOS/GOARCH/CGO_ENABLED from its own
+          # environment, so omitting them makes this check describe the RUNNER, not the
+          # artifact this workflow ships. Same values the build step compiles with.
+          export GOOS="linux" GOARCH="amd64" CGO_ENABLED="0"
+          echo "server check target: $GOOS/$GOARCH CGO_ENABLED=$CGO_ENABLED (runner host: $(go env GOHOSTOS)/$(go env GOHOSTARCH))"
           TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
           cd test
           # The names are `TestJiejieMASQUE*` and `TestJiejieMinimalMASQUE*`, in
