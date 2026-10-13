@@ -301,7 +301,22 @@ check "the CI job still builds the unsigned IPA" \
 check "CI never references a distribution identity or key" \
   bash -c '! grep -qE "Apple Distribution|Apple Development|\.p12|\.p8" .github/workflows/client-apple.yml'
 check "no signing material is tracked" \
-  bash -c '! git ls-files | grep -qiE "\.(p12|pfx|p8|cer|mobileprovision|provisionprofile)$"'
+  bash -c '
+    set -o pipefail
+    listing="$(mktemp)"; trap "rm -f \"$listing\"" EXIT
+    # The listing is written to a FILE before anything reads it.
+    #
+    # `git ls-files | grep -qiE ...` looks equivalent and is not: this repository tracks 2918 files,
+    # about 210 KB of listing, which is three times the 64 KiB pipe buffer. `grep -q` exits at its
+    # first match - or, with the negation here, at its first non-match decision - closing the read
+    # end while git is still writing, and git then dies with SIGPIPE. Under `set -o pipefail` that
+    # turns the pipeline into a failure even when grep answered correctly, so this check could
+    # report "signing material was tracked" on a clean tree. Same defect class as the Windows
+    # capability gate; the same fix applies, and the output size is what makes it real rather than
+    # theoretical.
+    git ls-files > "$listing"
+    ! grep -qiE "\.(p12|pfx|p8|cer|mobileprovision|provisionprofile)$" "$listing"
+  '
 # The search is a Python gate, not a grep. See scripts/ci/check-no-tracked-private-keys.py
 # for why: the loose `BEGIN .*PRIVATE KEY` form matched a doc comment and two upstream
 # redaction fixtures whose key body is twelve base64 characters, while `git grep -P` in the

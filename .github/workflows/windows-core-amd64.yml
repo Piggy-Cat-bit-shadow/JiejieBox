@@ -334,11 +334,43 @@ jobs:
           # The graph queried is the TARGET's, inherited from the export above. Asking the host
           # graph here is what produced a false "protocol/masque is not in the release build's
           # package graph" against a Windows artifact.
-          if ! go list -deps -tags "$BUILD_TAGS" ./cmd/sing-box \
-              | grep -qx 'github.com/sagernet/sing-box/protocol/masque'; then
+          #
+          # # Why the graph is written to a file first, and the consumer reads that file
+          #
+          # The obvious spelling is one pipeline:
+          #
+          #     go list -deps ... | grep -qx 'github.com/sagernet/sing-box/protocol/masque'
+          #
+          # and it is a FALSE-NEGATIVE GENERATOR under `set -o pipefail`. `grep -q` exits the moment
+          # it matches, closing the read end of the pipe; `go list` is still writing, takes SIGPIPE,
+          # and dies with 141. pipefail then reports the pipeline as failed even though grep
+          # SUCCEEDED. Measured on this repository: the Windows target graph is 1214 packages and the
+          # masque line is the LAST one, so grep always exits while go list still has output queued -
+          # the race is not hypothetical, it is the typical case.
+          #
+          # That is why windows-core passed at 6737404d1 and #34/#35 and then failed at #36/#39 on
+          # the same code: it depended on whether go list had already flushed everything.
+          #
+          # Writing the graph first removes the consumer from the producer's lifetime entirely. The
+          # three outcomes are now distinguishable, which is the point:
+          #
+          #     go list fails          -> that failure is reported as itself
+          #     graph ok, no masque    -> genuinely absent from the build
+          #     graph ok, masque there -> PASS
+          deps_file="$(mktemp)"
+          trap 'rm -f "$deps_file"' EXIT
+          if ! go list -deps -tags "$BUILD_TAGS" ./cmd/sing-box > "$deps_file"; then
+            echo "FAIL: 'go list -deps' itself failed for $GOOS/$GOARCH with tags:" >&2
+            echo "      $BUILD_TAGS" >&2
+            exit 1
+          fi
+          echo "package graph: $(wc -l < "$deps_file") packages for $GOOS/$GOARCH"
+          if ! grep -Fxq 'github.com/sagernet/sing-box/protocol/masque' "$deps_file"; then
             echo "FAIL: protocol/masque is not in the $GOOS/$GOARCH build's package graph" >&2
             echo "      (queried with GOOS=$GOOS GOARCH=$GOARCH CGO_ENABLED=$CGO_ENABLED; the" >&2
             echo "      runner host is $(go env GOHOSTOS)/$(go env GOHOSTARCH))" >&2
+            echo "      protocol packages actually present:" >&2
+            grep 'github.com/sagernet/sing-box/protocol/' "$deps_file" >&2 || true
             exit 1
           fi
           echo "PASS: Native Naive's gated outbound is compiled in, and MASQUE is in the graph"
