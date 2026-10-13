@@ -210,7 +210,7 @@ jobs:
             --plan release-plan/runs.tsv \
             --dir release-assets
 
-          # Two files travel beside the Android artifact for BUILD-TIME use and are not public
+          # Two files travel with the Android artifact for BUILD-TIME use and are not public
           # deliverables, so they are removed before the allowlist sees them:
           #
           #   libbox.provenance   what the core builder recorded when it produced the AAR
@@ -223,7 +223,20 @@ jobs:
           # question. The allowlist in `release-artifacts.sh verify` is the contract, and it is
           # deliberately NOT widened for them: widening it would also let a future, genuinely
           # unexpected file through, which is the failure that allowlist exists to catch.
-          rm -f release-assets/libbox.provenance release-assets/SHA256SUMS.txt
+          #
+          # SEARCHED FOR, not named by path. `gh run download --dir <dest>` keeps the artifact's own
+          # directory - the same nesting `gh release download --name` produces - so these sit at
+          # `release-assets/<artifact>/...` and a root-relative `rm` silently matched nothing. That
+          # is exactly how the first attempt at this fix appeared to do nothing.
+          found="$(find release-assets -type f \
+            \( -name 'libbox.provenance' -o -name 'SHA256SUMS.txt' \) -print)"
+          if [ -n "$found" ]; then
+            printf '%s\n' "$found" | while IFS= read -r f; do rm -f "$f"; done
+            echo "removed non-public build-time files from the release tree:"
+            printf '  %s\n' $found
+          else
+            echo "note: no build-time extra files were present (the android artifact may not carry them)"
+          fi
 
       # The desktop installer is a public deliverable too, and it arrives by a different
       # route: that workflow is dispatch-only and produces a signed-test NSIS installer
