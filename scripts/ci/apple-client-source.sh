@@ -149,14 +149,30 @@ requested_ref() {
 # `--refs` query hides the peeled `^{}` line, which is the only way to learn the commit a
 # TAG names. Passing a 40-hex SHA through unchanged keeps the override path from needing the
 # network at all.
+#
+# The candidate list is built so that a SHORT name works for all three override kinds - a branch,
+# a tag and a SHA - without the caller having to say which one it is:
+#
+#     v1        -> refs/heads/v1, refs/tags/v1, refs/tags/v1^{}, refs/tags/v1 (peeled preferred)
+#     main      -> refs/heads/main
+#     refs/...  -> passed through as an already-qualified ref
+#     40-hex    -> returned as-is
 ls_remote_sha() {
-  local repo="$1" want="$2" out sha
+  local repo="$1" want="$2" out sha candidates
   case "$want" in
     [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*)
       if [ "${#want}" -eq 40 ]; then printf '%s\n' "$want"; return 0; fi
       ;;
   esac
-  if ! out="$(git ls-remote "$repo" "$want" "refs/heads/$want" "refs/tags/$want^{}" "refs/tags/$want" 2>/dev/null)"; then
+  [ -n "$want" ] || fail "ls_remote_sha needs a revision to resolve"
+
+  case "$want" in
+    refs/*) candidates="$want" ;;
+    *)      candidates="refs/heads/$want refs/tags/$want refs/tags/$want^{} refs/tags/$want" ;;
+  esac
+
+  # shellcheck disable=SC2086
+  if ! out="$(git ls-remote "$repo" $candidates 2>/dev/null)"; then
     fail "could not reach $repo to resolve '$want'."
   fi
   [ -n "$out" ] || fail "$repo has no '$want' (tried as a SHA, a branch and a tag)."
@@ -350,6 +366,12 @@ checkout_ios() {
 # a copy rather than the submodule itself so the macOS overlays cannot touch the iOS tree.
 checkout_macos() {
   local dir; dir="$(platform_dir macos "$1")"
+  # load_refs FIRST. `resolve_sha` runs inside a command substitution, so anything it sourced
+  # happens in a subshell and does not survive into this function - and this function needs
+  # APPLE_CLIENT_REPOSITORY for the no-submodule clone path. Relying on resolve_sha to have loaded
+  # it produced "APPLE_CLIENT_REPOSITORY: parameter not set" under `set -u`, which the executable
+  # check caught on the very path the CI macOS job takes (it checks out with submodules: false).
+  load_refs
   local want; want="$(resolve_sha)"
   local branch; branch="$(platform_branch macos)"
   local repo="$APPLE_CLIENT_REPOSITORY"
@@ -535,9 +557,13 @@ case "$action" in
     show
     ;;
   ls-remote)
-    # Resolve the default revision and print it WITHOUT freezing anything. This is the
-    # diagnostic form: it answers "what would a new build pick up?" without becoming the
-    # answer for this one.
+    # Resolve the requested revision - or the default branch tip - and print it WITHOUT freezing
+    # anything. This is the diagnostic form: it answers "what would a new build pick up?" without
+    # becoming the answer for this one.
+    #
+    # An explicit override is honoured here exactly as `resolve` honours it. It was NOT, and the
+    # executable check caught it: `APPLE_CLIENT_REF=A` still answered the branch tip, so the one
+    # command a reader would use to ask "what does this ref resolve to?" ignored the ref.
     load_refs
     want="$(requested_ref)"
     [ -n "$want" ] || want="refs/heads/$APPLE_CLIENT_BRANCH"
