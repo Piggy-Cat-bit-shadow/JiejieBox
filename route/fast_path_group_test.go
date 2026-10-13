@@ -3,6 +3,7 @@ package route
 import (
 	"context"
 	"io"
+	"sync"
 	"testing"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -32,6 +33,7 @@ import (
 type transparentGroup struct {
 	adapter.Outbound
 	tag      string
+	mu       sync.Mutex
 	selected adapter.Outbound
 }
 
@@ -39,13 +41,39 @@ func (g *transparentGroup) Type() string      { return C.TypeSelector }
 func (g *transparentGroup) Tag() string       { return g.tag }
 func (g *transparentGroup) Network() []string { return []string{N.NetworkTCP, N.NetworkUDP} }
 func (g *transparentGroup) Selected(network string) adapter.Outbound {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	return g.selected
 }
-func (g *transparentGroup) All() []string { return []string{g.selected.Tag()} }
+func (g *transparentGroup) All() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return []string{g.selected.Tag()}
+}
 func (g *transparentGroup) AttachConnection(io.Closer) func() {
 	return func() {}
 }
 func (g *transparentGroup) FastPathTransparent() bool { return true }
+
+// setSelected switches the member this double serves, modelling the one thing a selector does at
+// runtime. The real Selector publishes its choice under its own synchronisation (an
+// atomic.Pointer), so a concurrent reader sees either the old member or the new one and never a torn
+// value; this double takes a mutex for the same reason, so a concurrency test is not racing on the
+// FIXTURE and reporting a finding about the test rather than about the feature.
+func (g *transparentGroup) setSelected(outbound adapter.Outbound) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.selected = outbound
+}
+
+// currentSelected is the locked read the tests use. Reading g.selected directly would race with
+// setSelected in the concurrency test and the race detector would report the fixture rather than the
+// feature.
+func (g *transparentGroup) currentSelected() adapter.Outbound {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.selected
+}
 
 // transparentUrltest is the same claim from the other supported group type, so the marker is
 // exercised through more than one Type().
@@ -359,6 +387,126 @@ func TestFastPathCaseOutermostExplicitDecisionWins(t *testing.T) {
 	})
 }
 
+// --- selector switching (§14.3) --------------------------------------------------------
+
+// TestFastPathSurvivesASelectorSwitch is §14.3. The group's authorisation must not be attached to
+// the member it happens to serve, so switching members must neither lose it nor leave a stale policy
+// behind on the node that was left.
+func TestFastPathSurvivesASelectorSwitch(t *testing.T) {
+	leafA := eligibleLeaf()
+	leafB := eligibleLeaf()
+	require.NotSame(t, leafA, leafB)
+
+	group := &transparentGroup{tag: "🤖 AI", selected: leafA}
+	router := fastPathRouter(t, group, FastPathPolicies{"🤖 AI": {Enabled: true}})
+	destination := M.ParseSocksaddr("93.184.216.34:443")
+
+	// A helper that resolves a fresh flow and reports what the gate decided, so each switch is
+	// measured through the real path rather than by inspecting internal state.
+	flowVerdict := func() (BypassVerdict, string) {
+		metadata := fastBypassMetadata(N.NetworkTCP, destination)
+		chain, err := resolveOutbound(group, &metadata, N.NetworkTCP, true)
+		require.NoError(t, err)
+		leaf := chain[len(chain)-1]
+		return router.canFastBypass(&metadata, destination, chain, leaf,
+			resolveFastPathRequest(chain, router.fastPathPolicies)), leaf.Tag()
+	}
+
+	// A → authorised, serving leafA.
+	verdict, served := flowVerdict()
+	require.Equal(t, BypassAllowed, verdict)
+	require.Equal(t, leafA.Tag(), served)
+
+	// Switch to leafB. The authorisation belongs to the group, so it must still hold.
+	group.setSelected(leafB)
+	verdict, served = flowVerdict()
+	require.Equal(t, BypassAllowed, verdict,
+		"switching members must not lose the group's authorisation")
+	require.Equal(t, leafB.Tag(), served, "and the flow must follow the new member")
+
+	// Switch back, to prove nothing about the first switch was order-dependent and that leafA was not
+	// left marked (or unmarked) by having served an authorised flow.
+	group.setSelected(leafA)
+	verdict, served = flowVerdict()
+	require.Equal(t, BypassAllowed, verdict)
+	require.Equal(t, leafA.Tag(), served)
+
+	// Neither leaf became a policy carrier or was otherwise mutated by having been selected.
+	for _, leaf := range []*plainDirectOutbound{leafA, leafB} {
+		_, isCarrier := adapter.Outbound(leaf).(adapter.FastPathAuthorizedGroup)
+		require.False(t, isCarrier, "a leaf must never become a policy carrier")
+		require.Equal(t, int32(1), leaf.canBypass.Load(),
+			"and its own capability answer must be untouched")
+	}
+}
+
+// TestFastPathSelectorSwitchConcurrentWithFlows resolves flows while the group switches members. The
+// AUTHORISATION must be constant across the switch - it is a property of the group, not of the
+// member - while the served leaf legitimately alternates.
+//
+// This is the interleaving the brief asks about: a selection update must leave no stale policy.
+func TestFastPathSelectorSwitchConcurrentWithFlows(t *testing.T) {
+	leafA := eligibleLeaf()
+	leafB := eligibleLeaf()
+	group := &transparentGroup{tag: "🤖 AI", selected: leafA}
+	router := fastPathRouter(t, group, FastPathPolicies{"🤖 AI": {Enabled: true}})
+	destination := M.ParseSocksaddr("93.184.216.34:443")
+
+	const iterations = 500
+	var wg sync.WaitGroup
+	failures := make(chan string, iterations)
+
+	// Switcher: flips the member repeatedly for the duration.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			if i%2 == 0 {
+				group.setSelected(leafB)
+			} else {
+				group.setSelected(leafA)
+			}
+		}
+	}()
+
+	// Readers: resolve flows and assert the authorisation never depends on which member came back.
+	for reader := 0; reader < 4; reader++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < iterations; i++ {
+				metadata := fastBypassMetadata(N.NetworkTCP, destination)
+				chain, err := resolveOutbound(group, &metadata, N.NetworkTCP, true)
+				if err != nil {
+					failures <- "resolve: " + err.Error()
+					return
+				}
+				leaf := chain[len(chain)-1]
+				if leaf != adapter.Outbound(leafA) && leaf != adapter.Outbound(leafB) {
+					failures <- "resolved a member that was never installed"
+					return
+				}
+				if !resolveFastPathRequest(chain, router.fastPathPolicies) {
+					failures <- "the authorisation was lost across a selection update"
+					return
+				}
+				if verdict := router.canFastBypass(&metadata, destination, chain, leaf, true); verdict != BypassAllowed {
+					failures <- "an authorised flow was refused after a switch: " + verdict.String()
+					return
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(failures)
+	var collected []string
+	for failure := range failures {
+		collected = append(collected, failure)
+	}
+	require.Empty(t, collected)
+}
+
 // --- per-flow separation: the core of §2.1 ---------------------------------------------
 
 // TestFastPathPolicyFollowsTheGroupNotTheLeaf is the single most important test in this feature.
@@ -376,8 +524,8 @@ func TestFastPathPolicyFollowsTheGroupNotTheLeaf(t *testing.T) {
 	destination := M.ParseSocksaddr("93.184.216.34:443")
 
 	// Both flows reach the SAME leaf object. That is the precondition the test is about.
-	require.Same(t, leaf, authorised.selected)
-	require.Same(t, leaf, ordinary.selected)
+	require.Same(t, leaf, authorised.currentSelected())
+	require.Same(t, leaf, ordinary.currentSelected())
 
 	authorisedMetadata := fastBypassMetadata(N.NetworkTCP, destination)
 	ordinaryMetadata := fastBypassMetadata(N.NetworkTCP, destination)
