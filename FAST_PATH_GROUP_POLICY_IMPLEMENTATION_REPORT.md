@@ -237,20 +237,42 @@ sibling-group contamination:             NO   — tested with require.Same on th
 
 **NOT RUN, and therefore not claimed:**
 
-- **`-race`.** Blocked by this host, after three genuine attempts rather than one. The toolchain has
-  no usable C compiler for Go's Windows race build: `gcc`/`cc` are absent, and the only `clang` is
-  Swift's, which hands the link to MSVC's `link.exe` and dies on
+- **`-race` on the new tests.** Blocked locally, after three genuine attempts rather than one. This
+  host has no usable C compiler for Go's Windows race build: `gcc`/`cc` are absent, and the only
+  `clang` is Swift's, which hands the link to MSVC's `link.exe` and dies on
   `LNK1143: invalid or corrupt file: no symbol for COMDAT 0x6`. Redirecting it to the LLVM linker
-  that ships beside it (`-fuse-ld=lld`, `lld-link.exe` present) gets further and then fails on the
+  that ships beside it (`-fuse-ld=lld`; `lld-link.exe` is present) gets further and then fails on the
   linker script Go injects: `lld-link: warning: ignoring unknown argument '-T'` followed by
   `error: ...fix_debug_gdb_scripts.ld: unknown file type`. Go's race build on Windows expects MSVC's
-  linker, so this is an environment limit and not something the change can work around. The
-  concurrency tests therefore ran without the detector, at `-count=50` (and 20× for the whole set).
-  The design has no shared mutable state for a race to exist on — the authorisation is a stack
-  argument — but that is an argument, not a measurement, and `client-macos.yml`'s deep-check race
-  step is where it should be confirmed.
-- **CI.** The push-triggered workflows were dispatched at the end of this session; their result is
-  reported in the session summary, not in this document.
+  linker, so this is an environment limit the change cannot work around. The concurrency tests
+  therefore ran without the detector, at `-count=50` (and 20× for the whole set). CI's race steps do
+  not cover these packages either — see the next section for exactly which lists were raced.
+
+### CI verification (independent of this host)
+
+The feature and test commits were pushed as `f08a61a0f`. All three push-triggered workflows passed on
+that exact SHA (a later commit on top of it is this document only):
+
+```text
+Verify #215                        success
+Release contract verification #42  success
+Android Core ARM64 #60             success
+```
+
+`Verify` also exercised, and passed, `gofmt`, the build-tag policy and linkname gates,
+`pinned-upstream assumptions`, the untagged and tagged builds of every package, cronet provenance,
+and both `-race` steps.
+
+**What that does and does not cover for this change.** The two `-race` steps in `verify.yml` race
+`./common/trafficclass/... ./common/trafficsched/... ./common/dialer/... ./protocol/direct/...
+./protocol/tun/... ./route/... ./adapter/...` and `./option/...` — production code only, and
+`./protocol/group/` is not raced at all. So CI proves the new code COMPILES under `-race` and that
+the fast_path tests pass; it does not put the new `route/` tests under the detector, and it never
+races `option/` or `protocol/group/`. The one place that would is `client-macos.yml`'s
+`deep check - race tests`, whose package list DOES include `./route/` and would therefore run
+`fast_path_group_test.go` including its two concurrency tests — but that step is
+`workflow_dispatch`-only behind `inputs.deep_checks`, so it has not run and I did not dispatch it
+(release frozen; see the session summary for what was and was not triggered).
 
 ## KEY CASES
 
@@ -267,18 +289,25 @@ sibling-group contamination:             NO   — tested with require.Same on th
 
 ## DIFF SIZE
 
+Measured against the base SHA, excluding the two new source files' comment blocks:
+
 ```text
-production:  278 added lines across 10 files (55 of them comment lines in the two new files;
-             net tracked diff +518 / -9)
-tests:       659 added lines across 8 files
-total:       ~940 lines
+production, tracked modifications : 191 added lines / 8 files
+production, new files             : 214 lines (option/fast_path.go 71, route/fast_path.go 143)
+                                    of which 127 are comments; 87 lines are code
+tests                             : 751 lines across 3 new files + 44 added lines of
+                                    argument/comment updates across 6 existing test files
+total (git --shortstat)           : 20 files changed, 1648 insertions(+), 34 deletions(-)
 ```
 
 Above the brief's "200–500 lines total" guidance, and the reason is comment volume rather than logic:
-the two new production files are 214 lines of which 117 are documentation, and the non-comment code
-across all three new source files is roughly 87 lines. The implementation itself adds no new
-subsystem — one flag field, one resolver function, one boolean argument and one narrow branch. No
-Router rewrite, no L0 change, no DNS/FakeIP work, no traffic-class rework, no policy engine.
+the two new production files are 59% comments, and the non-comment code across all three new source
+files is ~87 lines. The implementation adds no new subsystem — one flag field, one resolver function,
+one boolean argument and one narrow branch. No Router rewrite, no L0 change, no DNS/FakeIP work, no
+traffic-class rework, no policy engine. The test volume is larger than the brief's estimate because
+the per-flow separation and the narrowness of the chain branch each need several cases to be
+non-vacuous, and because the marker-interface bug that was fixed (see IMPLEMENTATION) is only
+detectable by tests that assert the negative.
 
 ## RESIDUAL RISKS
 
@@ -289,9 +318,12 @@ Router rewrite, no L0 change, no DNS/FakeIP work, no traffic-class rework, no po
    resolved — which is the pre-existing behaviour, not something this change introduces — but that
    specific interleaving has no dedicated test.
 
-2. **`-race` unverified here.** See TESTS. Three attempts, all blocked by the host's C toolchain. The
-   no-shared-state claim is architectural and backed by a 50× concurrency test, but the detector has
-   not seen it.
+2. **`-race` has not seen the new tests.** Three local attempts were blocked by the host's C
+   toolchain, and the CI race steps do not cover the packages the new tests live in — see "CI
+   verification" above for exactly which lists were and were not raced. The claim that no shared
+   mutable state exists is architectural (the authorisation is a stack argument) and backed by a 50×
+   concurrency test, but the detector has not observed it. The macOS deep-check race step is where to
+   confirm it, and it needs a `workflow_dispatch` with `deep_checks: true`.
 
 3. **The chain gate is now richer.** `fastPathChainReachesLeaf` walks every element in front of the
    leaf on every authorised flow. It is O(chain length) at flow setup, off the packet path, and it
