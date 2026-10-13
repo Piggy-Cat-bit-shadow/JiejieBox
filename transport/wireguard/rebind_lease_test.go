@@ -383,11 +383,14 @@ func (f *rebindFixture) proveStandardBindBranch(t *testing.T) {
 //     the readings within one process were 0 and 1, and this assertion failed on both.
 func (f *rebindFixture) establishSocketsPerStandardBind(t *testing.T) {
 	t.Helper()
-	observed := deviceReceiveCensus(f.endpoint.device.Load())
-	settled := measuredSocketsPerStandardBind(t, observed)
-	if observed != 0 && observed == settled {
-		t.Logf("SOCKETS_PER_STANDARD_BIND=%d (established on this machine)", settled)
-	}
+	// The census is SAMPLED, not read once. A single sample taken while the bind is still coming up
+	// legitimately sees no receivers, and treating that as "no settled reading was ever taken" is
+	// what made this preamble - the first test file alphabetically - carry three CI failures in a
+	// test that was not about the property it appeared to be about.
+	settled := measuredSocketsPerStandardBind(t, func() int {
+		return deviceReceiveCensus(f.endpoint.device.Load())
+	})
+	t.Logf("SOCKETS_PER_STANDARD_BIND=%d (established on this machine)", settled)
 }
 
 // settleSocketsPerStandardBind returns the number of receivers one standard bind holds, having
@@ -412,7 +415,14 @@ func (f *rebindFixture) establishSocketsPerStandardBind(t *testing.T) {
 // transient value for a settled one. A census that never arrives still fails, on the timeout.
 func (f *rebindFixture) settleSocketsPerStandardBind(t *testing.T, what string) int {
 	t.Helper()
-	expected := measuredSocketsPerStandardBind(t, socketCensus(t, f.endpoint))
+	// The expectation is the value somebody already ESTABLISHED, not a fresh census sample.
+	//
+	// Taking `expected` from one sample and then waiting for a later sample to equal it is not a
+	// wait - it is a blind expectation. If the establishing sample reads 0, every later comparison
+	// waits for a census of 0 and fails on the timeout with a message about sockets; and if it reads
+	// a transiently high value, the equality can never be met by a correct endpoint. Reading the
+	// established constant removes both, and fails loudly if no test established it.
+	expected := establishedSocketsPerStandardBind(t)
 	require.Eventually(t, func() bool {
 		return socketCensus(t, f.endpoint) == expected
 	}, 10*time.Second, 2*time.Millisecond,
@@ -1143,20 +1153,71 @@ var (
 // -1: the macOS runner reported that as "expected: 2, actual: 0", because the sentinel had already been
 // overwritten by another test in the same process, so the number in the message was not even the value
 // being compared. Failing here instead makes the mistake say what it is.
-func measuredSocketsPerStandardBind(t *testing.T, observed int) int {
+// establishedSocketsPerStandardBind returns the memo, and fails the calling test if nothing has
+// established it yet.
+//
+// This exists so that a test which legitimately has no business measuring the constant - it just
+// compares a census against it - fails with "nobody established the constant" instead of silently
+// comparing against the sentinel -1. The sentinel leaking into a comparison is what produced the
+// recorded macOS failure "Should not be: -1", and it is a property of the test binary's execution
+// order, not of the endpoint under test.
+func establishedSocketsPerStandardBind(t *testing.T) int {
 	t.Helper()
 	socketCountMu.Lock()
 	defer socketCountMu.Unlock()
-	if observed > 0 && observed > socketsPerStandardBind {
+	require.NotEqual(t, socketCountUnmeasured, socketsPerStandardBind,
+		"no settled reading was ever taken, so there is nothing to compare a census against. "+
+			"Establish it from a started, settled endpoint (establishSocketsPerStandardBind) "+
+			"before asserting anything about a census.")
+	return socketsPerStandardBind
+}
+
+// measuredSocketsPerStandardBind establishes the constant, WAITING for a genuine settled reading.
+//
+// # Why it waits instead of taking one snapshot
+//
+// The reading it was given used to be a SINGLE un-awaited `runtime.Stack` sample, and if that sample
+// happened to be 0 the helper failed immediately. A census of 0 is not "this machine has no
+// receivers": the receive goroutines are started after the listeners open, and a sample taken while
+// the bind is still coming up legitimately sees none. Failing on it turned a transient reading into
+// "no settled reading was ever taken" - the recorded macOS failure - and because this constant is
+// established in the FIRST test file alphabetically, that failure landed in the preamble of an
+// unrelated test, which is why one test carried three of the CI failures.
+//
+// `observe` is sampled repeatedly. A census that never becomes non-zero fails on the timeout rather
+// than on a single early sample.
+func measuredSocketsPerStandardBind(t *testing.T, observe func() int) int {
+	t.Helper()
+
+	var observed int
+	require.Eventually(t, func() bool {
+		observed = observe()
+		return observed > 0
+	}, 30*time.Second, time.Millisecond,
+		"no settled reading was ever taken: a started, settled standard bind must own at least one "+
+			"receive goroutine, and the census kept reporting none")
+
+	socketCountMu.Lock()
+	defer socketCountMu.Unlock()
+	// 3 is not a value a standard bind can hold: `StdNetBind.Open` listens on at most udp4 and udp6
+	// and starts one receiver per listener, so anything above 2 means the census is counting
+	// something other than this bind's receivers. Recording it would raise the expectation
+	// permanently for every later equality assertion in this process, and the failure would then
+	// surface in a test that had done nothing wrong.
+	require.LessOrEqual(t, observed, 2,
+		"the census reported %d receivers for one standard bind, which is more than udp4+udp6 can "+
+			"produce; the census is counting something else", observed)
+	// The HIGHEST settled reading is kept, and that is deliberate rather than incidental: the
+	// documented macOS sequence for one endpoint is 1 and then 2, because a reading taken while the
+	// bind is still opening legitimately sees fewer. Keeping the maximum means a later endpoint that
+	// settles on the full set is satisfied; keeping the minimum would make the assertion wait for a
+	// count the endpoint has already exceeded, which is a hang, not a stricter check.
+	if observed > socketsPerStandardBind {
 		if socketsPerStandardBind == socketCountUnmeasured {
 			t.Logf("SOCKETS_PER_STANDARD_BIND=%d (established on this machine)", observed)
 		}
 		socketsPerStandardBind = observed
 	}
-	require.NotEqual(t, socketCountUnmeasured, socketsPerStandardBind,
-		"no settled reading was ever taken, so nothing can be compared against it. Measure from a "+
-			"started, settled endpoint - pass its census to this function - rather than reading the "+
-			"package variable, which is a sentinel until something does.")
 	return socketsPerStandardBind
 }
 
