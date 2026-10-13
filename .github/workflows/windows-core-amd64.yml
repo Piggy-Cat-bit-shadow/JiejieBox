@@ -331,6 +331,15 @@ jobs:
           # when NO listed path matches. The release then died at
           # "BUILD-INFO-WINDOWS.txt: found 0 copies under release-assets".
           #
+          # `build-info.json` and `SHA256SUMS` are deliberately NOT uploaded. They are the
+          # integrity records for the zip and the exe, they are checked in "Verify the zip is
+          # exactly the bytes that were built", and the release allowlist refuses them:
+          #
+          #     FAIL: unexpected file(s) in the release tree: build-info.json
+          #
+          # The published record is `BUILD-INFO-WINDOWS.txt`, and the published checksum is
+          # `sing-box.exe.sha256` - which is why this workflow writes both.
+          #
           # server-linux-amd64.yml and client-macos.yml already pass "$OUT/..." for both
           # arguments, which is why this only ever affected this workflow.
           ../scripts/ci/build-info.sh "$(pwd)/BUILD-INFO-WINDOWS.txt" windows amd64 windows "$(pwd)/$ARTIFACT_NAME"
@@ -356,8 +365,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # The release publishes this zip as-is, so it is re-expanded and checked here
-          # rather than trusted. Nothing downstream re-compresses the Windows binary.
+          # The zip is a transport wrapper for an external loader, NOT a release deliverable:
+          # the release gate ships the bare `sing-box.exe` under its own name, and refuses any
+          # unlisted `*.zip` in the tree. It is re-expanded and checked here because the loader
+          # consumes it as-is, so it still has to be exactly the bytes that were built.
           cd dist
           rm -rf _verify && mkdir _verify
           unzip -q "$ZIP_NAME" -d _verify
@@ -414,13 +425,36 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.UPLOAD_NAME }}
+          # EXACTLY the four files the release contract names for this platform, and nothing
+          # else. The gate's allowlist is derived from its own product table - for Windows that
+          # is `sing-box.exe`, `sing-box.exe.sha256`, `BUILD-INFO-WINDOWS.txt` and `LICENSE` -
+          # and it refuses the whole tree if anything outside it is present:
+          #
+          #     FAIL: unexpected file(s) in the release tree:
+          #           build-info.json
+          #           SHA256SUMS
+          #
+          # `SHA256SUMS` and `build-info.json` are INTEGRITY RECORDS, not deliverables: they
+          # state that the zip and the exe are the bytes that were built, and they are checked
+          # here, in "Verify the zip is exactly the bytes that were built". The published
+          # artifact does not carry them, and `sing-box.exe.sha256` - written below - is the
+          # per-binary checksum the contract actually asks for.
+          #
+          # The zip is deliberately NOT uploaded either. It is a transport wrapper this
+          # workflow verifies and then discards; the contract ships the bare `sing-box.exe`,
+          # exactly as server-linux-amd64.yml and client-macos.yml ship their bare binaries.
+          # Uploading it alongside the exe put an unlisted `*.zip` in the release tree, which
+          # the same allowlist refuses.
+          #
+          # Of these four, `BUILD-INFO-WINDOWS.txt` is asserted to exist by the step above (and
+          # to carry the `artifact_sha256` line the gate matches the binary against). The other
+          # three are outputs of the build, the checksum write and the LICENSE copy, all of
+          # which run under `set -euo pipefail` earlier in the job, so `if-no-files-found: error`
+          # here is a backstop rather than the check.
           path: |
-            dist/${{ env.ZIP_NAME }}
             dist/${{ env.ARTIFACT_NAME }}
             dist/${{ env.ARTIFACT_NAME }}.sha256
             dist/BUILD-INFO-WINDOWS.txt
             dist/LICENSE
-            dist/SHA256SUMS
-            dist/build-info.json
           if-no-files-found: error
           retention-days: 30
