@@ -87,6 +87,17 @@ def check_release():
     ]:
         report("release.yml: %s" % label, needle in text)
 
+    # P0-C: Formal Release currently re-runs the whole helper suite on the publishing runner.
+    # It should instead verify that the suite was ALREADY PROVED at this exact SHA - candidate
+    # SHA, exact workflow identity, exact head_sha, completed, conclusion == success, fail
+    # closed otherwise - so that releasing stops re-proving the product it is publishing.
+    #
+    # This assertion records the defect rather than endorsing it. It makes the change visible:
+    # a reader can see that the duplication is known, and the day it is removed this check
+    # fails and must be replaced by the exact-SHA evidence check that supersedes it.
+    report("release.yml: KNOWN DEFECT - re-runs the helper suite instead of citing exact-SHA evidence",
+           "test-release-artifacts.sh" in text)
+
     report("release.yml: stages the desktop installer",
            "release-artifacts.sh desktop" in text)
     report("release.yml: verifies the desktop installer's provenance",
@@ -212,6 +223,12 @@ def check_verify():
            "test-desktop-release-version.py" in body)
     report("verify workflow: runs the desktop source-identity suite",
            "test-desktop-source-identity.sh" in body)
+    # P0-C will move these two out of Verify, whose job is a minutes-long source gate. They
+    # are asserted PRESENT here so that removing them is a deliberate, visible edit against a
+    # check that currently passes - not a silent deletion. Both suites keep a primary owner
+    # either way: Release Contract Verification runs them (asserted below).
+    report("verify workflow: currently duplicates the release helper suite",
+           "test-release-artifacts.sh" in body)
     report("verify workflow: bash -n on the release scripts",
            "bash -n" in body)
 
