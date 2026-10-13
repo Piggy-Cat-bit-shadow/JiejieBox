@@ -58,18 +58,22 @@ product was wrong. This is the single most consequential finding of the round.
 
 ```text
 START_HEAD            = ccab3645d60e9cba13b8e3a47b85dd1c1ca60d5e
-END_HEAD              = 89fbb7d78e38d5bb3f086383f60e28a868eeede5
+END_HEAD              = 90e5f255 (resolve with `git log`; a file cannot name the hash of the
+                                   commit that introduces it without being amended afterwards)
 ORIGIN_TESTING        = ccab3645d60e9cba13b8e3a47b85dd1c1ca60d5e
 LOCAL_COMMITS_BEFORE  = 0
-LOCAL_COMMITS_ADDED   = 2
+LOCAL_COMMITS_ADDED   = 5
 WORKTREE_CLEAN        = NO  (3 pre-existing untracked KNOWLEDGE/modules/*.md, not ours)
 ```
 
-The two commits added:
+The five commits added, oldest first:
 
 ```text
 dd67746c  refactor(desktop): retire the branding overlay and pin the maintained fork
 89fbb7d7  refactor(release): make the desktop tooling identity exact
+bef83635  docs(ci): report the post-green optimization round
+1230fdf4  test(ci): record the P0-C duplication as a check instead of a plan
+979d0268  docs(ci): fold the final measurements into the round report
 ```
 
 ```text
@@ -161,7 +165,7 @@ an existing tool directory — **nothing was installed**), `python` is the bundl
 |---|---|---|---|
 | 1 | `python scripts/ci/test-desktop-release-version.py` | 0 | **60 passed, 0 failed** |
 | 2 | `bash scripts/ci/test-desktop-source-identity.sh` | 0 | **30 passed, 0 failed** |
-| 3 | `python scripts/ci/check-release-workflows.py` | 0 | **46 passed, 0 failed** |
+| 3 | `python scripts/ci/check-release-workflows.py` | 0 | **48 passed, 0 failed** |
 | 4 | `bash -n scripts/ci/prepare-desktop-client.sh` | 0 | syntax OK |
 | 5 | `bash -n scripts/ci/check-desktop-source-identity.sh` | 0 | syntax OK |
 | 6 | `bash -n scripts/ci/test-desktop-source-identity.sh` | 0 | syntax OK |
@@ -257,8 +261,8 @@ is asserted **on the values first**, so this buys a second checkout, not a secon
 |---|---|
 | P0-A desktop dynamic version injection + retire the old overlay | **DONE** |
 | P0-B Windows Desktop tooling identity → exact | **DONE** |
-| P0-C release helper test ownership + Formal Release exact-SHA evidence | **BLOCKED** — see §4 |
-| P0-D merge release qualification dual authority | **BLOCKED** — see §4 |
+| P0-C release helper test ownership + Formal Release exact-SHA evidence | **BLOCKED** — see §4. Defects measured and recorded as checks in `check-release-workflows.py` |
+| P0-D merge release qualification dual authority | **BLOCKED** — see §4. Both authorities confirmed present and recorded |
 
 ### P1 (in the brief's order)
 
@@ -292,6 +296,9 @@ narrowing it later.
 | `check-release-workflows.py` labelled a `release-contract-verify.yml` check "verify workflow: …" | `VERIFY` constant vs step content | **NO** — recorded | Cosmetic naming; changing it would touch an unrelated checker. Worth a follow-up |
 | `python3` on a Windows runner is usually only `python`, while `release-contract-verify.yml` calls `python3` | `scripts/ci/prepare-desktop-client.sh` already resolves `python3`/`python` for exactly this reason | **NO** — recorded | It runs on `ubuntu-latest`, where `python3` exists. Not a defect today, but the two conventions in one repository is a latent trap |
 | The 3 untracked `KNOWLEDGE/modules/*.md` files are byproducts of a partially-applied knowledge refresh | untracked; `AGENTS.md` §5 forbids refreshing `KNOWLEDGE/` during development | **NO** — recorded | Deciding whether to commit, delete or finish them is a knowledge-base maintenance operation, not this round's work. Left exactly as found |
+| The 92-case release helper suite runs **three** times per release, measured at `verify.yml:64`, `release-contract-verify.yml:105` and `release.yml:109` | grep of all three workflows | **PARTLY** — recorded as two failing-on-removal checks | Removing the duplication is P0-C, which is blocked. Recording it means the day it is fixed, `check-release-workflows.py` fails on the stale assertions and forces them to be replaced by the exact-SHA evidence check |
+| Formal Release re-proves the product it is publishing instead of citing evidence already obtained at that SHA | `release.yml:109` runs the full suite on the publishing runner | **NO** — recorded | Same blocker |
+| Two independent release-qualification authorities: `verify-release-acceptance.sh` makes its own admissibility judgement (its own exact-SHA test at line 294) while `release-artifacts.sh` selects runs with its own `newest_run` primitive | both files present; primitives named differently | **NO** — recorded | §6 prefers `release-artifacts.sh` grow one `select_exact_sha_run`/`require_exact_sha_success` primitive that all three consumers share. That is a refactor of the very file whose gate cannot be run here |
 
 ---
 
