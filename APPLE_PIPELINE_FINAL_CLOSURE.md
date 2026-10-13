@@ -1,7 +1,7 @@
 # APPLE_PIPELINE_FINAL_CLOSURE
 
 ```text
-FINAL_SHA = e0af1beed25c87685faa63661bbe71c9f4c4f715   (testing)
+FINAL_SHA = 7060e0cacaa1f90169f3ed78d6ec7bfa758a47a0   (testing)
 APPLE_PIPELINE_FINAL_CLOSURE = INCOMPLETE
 RELEASE_FREEZE = KEEP
 
@@ -10,9 +10,53 @@ TAG_MOVED = NO
 APP_STORE_CONNECT_UPLOAD = NO
 ```
 
-Two of the five required items are done and verified here; three are not, and the reason in each case
-is a capability this host does not have — **not** a decision left open. The honest per-item position
-is §7, and §8 says exactly what one command would close each gap.
+Three of the five required items are done to the limit this host allows; the other two need hardware
+or a bash interpreter it does not have. The honest per-item position is §7, and §8 says exactly what
+one command closes each gap.
+
+**The most useful thing this round produced was not a feature.** Executing the resolver instead of
+reading it found three real defects in the DEFAULT and OVERRIDE paths — §B2.
+
+---
+
+## B2. Blocker 2 — the resolver was executed, and three real bugs fell out
+
+The suite could not be *written* as bash here, so the other half of Blocker 2 was done instead: the
+**resolver itself was executed** against local git fixtures through the POSIX shell it already
+supports. That found three defects that reading the code had not, all three in the paths this task is
+about:
+
+```text
+1. `ls-remote` ignored APPLE_CLIENT_REF / APPLE_CLIENT_SHA
+   `resolve` honoured an override; `ls-remote` did not - so the command a reader would use to ask
+   "what does this ref resolve to?" answered the branch tip. The CI resolver job calls `ls-remote`,
+   so a configured override would have been SILENTLY IGNORED in the run-wide resolution.
+
+2. A short TAG name never peeled
+   The candidate list was ("$want" "refs/heads/$want" ...), so asking for `v1` searched for a ref
+   literally named `v1`, found the TAG, and - never having requested the peel line - fell through to
+   the branch arm and returned the branch tip. An annotated tag resolved to the WRONG COMMIT.
+
+3. `checkout macos` died with "APPLE_CLIENT_REPOSITORY: parameter not set"
+   `resolve_sha` runs inside a command substitution, so the refs file it sources does not survive
+   into the caller - and `checkout_macos` needs that variable for its no-submodule clone path, which
+   is exactly the path the CI macOS job takes (`submodules: false`).
+```
+
+All three are fixed. Bug 2 was the most serious: `v1` returning the branch tip is the precise failure
+mode this whole task exists to remove, and it would have shipped.
+
+**New gate:** `scripts/ci/check-apple-resolver-posix.py` — **23 checks, 23 passed, 0 failed**, no
+network. It covers §6.1 default latest, §6.2 explicit SHA, §6.3 annotated-tag peel, §6.4 resolve-once
+across a mid-run branch move, §6.5 iOS/macOS shared source, §6.6 gitlink mismatch non-fatal by default
+and fatal under the opt-in, §6.7 checkout lands on the resolved SHA, plus the two-source guard and the
+pinned action list.
+
+**What it is not:** a replacement for `check-apple-source-selection.sh`, which stays bash and stays
+unrewritten (§7-3). It needs `git`, and on this host it locates MinGit by an absolute fallback —
+portable through `APPLE_RESOLVER_CHECK_*` variables, but not yet a clean POSIX script. Two constructs
+are stripped from a **copy** of the resolver, never the repository file: `set -o pipefail` and
+`${BASH_SOURCE[0]}`.
 
 ---
 
@@ -166,7 +210,11 @@ behaviour is claimed.
 ```text
  1 workflow run resolves one Apple SHA ......... MET (implemented + contract-tested; unobserved on a runner)
  2 libbox/ios/macos consume one job output ..... MET (same caveat)
- 3 old gitlink contract suite rewritten ....... NOT MET - Blocker 2 untouched
+ 3 old gitlink contract suite rewritten ....... **PARTIAL** — the resolver's behaviour is now covered
+                                                by 23 executed checks (§B2), including all seven §6
+                                                properties; the 626-line bash suite itself, with its
+                                                65 checks and its workflow structural assertions, is
+                                                still unrewritten
  4 gitlink mismatch non-fatal by default ...... MET
  5 REQUIRE_GITLINK restores the old behaviour .. MET (all three gates)
  6 provenance records core SHA + UI SHA ....... MET for BUILD-INFO; NOT for the publish summaries
@@ -223,15 +271,17 @@ cannot execute, so an edit here could not be verified even to parse, and the fil
 ## 10. Verification performed here
 
 ```text
-client-apple.yml YAML parse              PASS
-job graph + job outputs                  PASS (5 outputs, 3 consumers, all needs correct)
-check-release-workflows.py               89 passed, 0 failed  (9 new Apple assertions)
-dash -n apple-client-source.sh           PASS
-dash -n build-ios-testflight.sh          PASS
-dash -n publish-apple-beta.sh            NOT POSSIBLE (pre-existing bash here-string at :204)
-real xcodebuild archive                  BLOCKED_BY_ENVIRONMENT
-GitHub Actions dispatch                  NOT RUN
-App Store Connect upload                 NOT PERFORMED
+gofmt / Go tests                        NOT APPLICABLE   no Go changed
+client-apple.yml YAML parse             PASS
+job graph + job outputs                 PASS (5 outputs, 3 consumers, all needs correct)
+check-release-workflows.py              89 passed, 0 failed  (9 new Apple assertions)
+scripts/ci/check-apple-resolver-posix.py  23 passed, 0 failed  (executes the resolver, no network)
+dash -n apple-client-source.sh          PASS
+dash -n build-ios-testflight.sh         PASS
+dash -n publish-apple-beta.sh           NOT POSSIBLE (pre-existing bash here-string at :204)
+real xcodebuild archive                 BLOCKED_BY_ENVIRONMENT
+GitHub Actions dispatch                 NOT RUN
+App Store Connect upload                NOT PERFORMED
 ```
 
 **No timing figures are reported**, per §30: there is no Mac here, and a guessed number would be
