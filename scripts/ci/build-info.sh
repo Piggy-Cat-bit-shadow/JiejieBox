@@ -78,6 +78,19 @@ if [ -z "$tags" ]; then
   exit 2
 fi
 
+# Both names are given an explicit EMPTY default here, before the flavor case below sets them.
+#
+# This is not tidiness. `set -u` makes an unset name a fatal error, so a flavor that legitimately
+# has no mobile overlay - every flavor except android - would abort the whole record with
+# "mobile_tags: unbound variable" rather than simply omitting the field. That is exactly what
+# happened: the android record gained a mobile_tags field, and linux, darwin and windows BUILD-INFO
+# all started failing at this line, which broke three release builds before the tag was published.
+#
+# `build_profile` was already declared for this reason; `mobile_tags` was not.
+build_profile="${build_profile:-}"
+mobile_tags="${mobile_tags:-}"
+
+
 # Dependency versions are read from the ACTUAL module graph, not hardcoded, so
 # the file cannot claim a version the binary was not built against.
 dep() { go list -m -f '{{.Version}}' "$1" 2>/dev/null || echo unknown; }
