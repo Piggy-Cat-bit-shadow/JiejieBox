@@ -513,16 +513,24 @@ jobs:
             echo ""
             echo "parent_repo:            https://github.com/Piggy-Cat-bit-shadow/sing-box"
             echo "parent_sha:             $(git rev-parse HEAD)"
+            # The TWO sources an Apple artifact has, and they are different commits by design.
+            # Libbox is compiled from the CORE commit; the Swift/Xcode client from the APPLE
+            # client commit. Recording one value for both would make the artifact unattributable.
             echo "libbox_source_sha:      $(git rev-parse HEAD)"
+            echo "libbox_parent_sha:      $(git rev-parse HEAD)"
             echo ""
             echo "apple_repo:             $APPLE_CLIENT_REPOSITORY"
             echo "apple_branch:           $APPLE_CLIENT_BRANCH"
             echo "apple_sha:              $APPLE_CLIENT_SHA"
-            echo "apple_sha_source:       parent clients/apple gitlink"
+            # The old label said "parent clients/apple gitlink", which stopped being true when the
+            # Apple repository became the authority. A provenance line that names the wrong source
+            # is worse than no line, because it is believed.
+            echo "apple_sha_source:       resolved $APPLE_CLIENT_SOURCE_MODE (Apple client repository, once per run)"
+            echo "apple_gitlink_sha:      $(git ls-tree HEAD "$APPLE_SUBMODULE" | awk '{print $3}')"
             echo "apple_client_dir:       $APPLE_CLIENT_DIR"
+            echo "apple_ui_convention:    iPhone Hako / iPad upstream (runtime routing in the Apple source)"
             echo "scheme:                 SFI"
             echo "ui_contract:            iPhone Hako / iPad upstream (runtime routing in the Apple source)"
-            echo "libbox_source_sha:      $(git rev-parse HEAD)"
             echo "ui:                     $APPLE_CLIENT_UI"
             echo ""
             echo "build_time_utc:         $(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -860,16 +868,20 @@ jobs:
             echo ""
             echo "parent_repo:            https://github.com/Piggy-Cat-bit-shadow/sing-box"
             echo "parent_sha:             $(git rev-parse HEAD)"
+            # The TWO sources an Apple artifact has, and they are different commits by design.
+            # Libbox is compiled from the CORE commit; the Swift/Xcode client from the APPLE
+            # client commit. Recording one value for both would make the artifact unattributable.
             echo "libbox_source_sha:      $(git rev-parse HEAD)"
+            echo "libbox_parent_sha:      $(git rev-parse HEAD)"
             echo ""
             echo "apple_repo:             $APPLE_CLIENT_REPOSITORY"
             echo "apple_branch:           $APPLE_CLIENT_BRANCH"
             echo "apple_sha:              $APPLE_CLIENT_SHA"
-            echo "apple_sha_source:       parent clients/apple gitlink (the SAME commit the iOS job builds)"
+            echo "apple_sha_source:       resolved $APPLE_CLIENT_SOURCE_MODE (Apple client repository, once per run; the SAME commit the iOS job builds)"
+            echo "apple_gitlink_sha:      $(git ls-tree HEAD "$APPLE_SUBMODULE" | awk '{print $3}')"
             echo "apple_client_dir:       $APPLE_CLIENT_DIR"
             echo "scheme:                 SFM"
             echo "ui_contract:            upstream macOS (runtime routing in the Apple source)"
-            echo "libbox_source_sha:      $(git rev-parse HEAD)"
             echo "ui:                     $APPLE_CLIENT_UI"
             echo ""
             echo "build_time_utc:         $(date -u +%Y-%m-%dT%H:%M:%SZ)"
