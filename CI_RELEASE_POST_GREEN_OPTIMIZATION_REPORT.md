@@ -703,3 +703,634 @@ scope as the starting point.
 Worktree: 3 pre-existing untracked `KNOWLEDGE/modules/*.md` —
 `PRE_EXISTING_UNTRACKED / UNCHANGED`, per §16.
 
+---
+---
+
+# V5 round
+
+Two lines, strictly separated. **PART A is the construction line and it did not run** — the
+environment gate failed, and V5 §2 says to stop rather than fabricate a Unix. **PART B is the
+read-only full-chain audit**, which is where this round's work is.
+
+Nothing in PART B was changed, per §25. Every finding below is recorded with evidence and a
+recommended action, and `WRITE THIS ROUND? = NO` throughout.
+
+---
+
+# PART A — UNIX RELEASE TOOLING CONSTRUCTION
+
+## A1. Environment
+
+**V5 §2 requires a Unix/macOS/Linux environment with `jq`, `chmod` and `sha256sum`. This
+environment is none of those, and cannot become one in scope.** Measured:
+
+| | |
+|---|---|
+| OS | `Microsoft Windows NT 10.0.19044.0` |
+| `IsWindows` / `IsLinux` / `IsOSX` | `True` / `False` / `False` |
+| shell | PowerShell 5.1.19041.7725; POSIX shell only via a borrowed MinGit `sh.exe` (bash 5.2.37) |
+
+The §2 tool list, as actually found:
+
+| TOOL | PATH | VERSION |
+|---|---|---|
+| `bash` | **absent from PATH**; `C:\Deepseek\IOS客户端\_tools\mingit\usr\bin\sh.exe` satisfies it (reports `bash 5.2.37(1)-release`) | 5.2.37 |
+| `git` | **absent from PATH**; MinGit portable `…\mingit\cmd\git.exe` | 2.50.1.windows.1 |
+| `jq` | **ABSENT** | — |
+| `chmod` | **ABSENT** | — |
+| `sha256sum` | **ABSENT**; `shasum` also absent | — |
+| `mktemp` | MinGit `usr\bin\mktemp.exe` | present |
+| `sed` | MinGit `usr\bin\sed.exe` | present |
+| `awk` | MinGit `usr\bin\awk.exe` | present |
+| `grep` | `C:\Program Files (x86)\Embarcadero\Studio\37.0\bin\grep.exe` (Embarcadero's, not GNU) | present |
+| `tar` | `C:\Windows\system32\tar.exe` (bsdtar, not GNU tar) | present |
+
+A Unix environment was searched for rather than assumed:
+
+```text
+wsl.exe                 present, but NO distribution installed:
+                        `wsl --list --quiet` exits 1 printing the --install help
+C:\msys64               absent
+C:\cygwin64 / C:\cygwin absent
+scoop / chocolatey      absent
+docker / podman / nerdctl / vagrant / busybox   absent
+ssh                     present (no local target)
+```
+
+`jq` and `chmod` were also searched for by name across `C:\Deepseek`, `C:\Users\Jie`,
+`C:\Program Files` and `C:\ProgramData` in the previous round and are absent there too.
+
+## A2. Baseline gates
+
+**Not run, because §2 makes the baseline a precondition of write work and the precondition
+failed.** Recorded honestly rather than approximated:
+
+| GATE | RESULT | WHY |
+|---|---|---|
+| `bash scripts/ci/test-release-artifacts.sh` (92-case) | **NOT RUN** | stops at `line 377: chmod: command not found`; its mock `gh` is parsed with real `jq` |
+| `check-release-workflows.py` | **PASS** 114/114 | no `jq`, no `chmod` needed |
+| `test-desktop-source-identity.sh` | **PASS** 30/30 | pure git + bash |
+| `test-desktop-release-version.py` | **PASS** 60/60 | pure Python |
+| `require-executed-coverage.test.sh` | **PASS** 11/11 | no `jq` needed |
+| shell syntax (`bash -n`, 6 scripts) | **PASS** | parse only — explicitly **not** behaviour proof (§28) |
+| YAML parse (12 workflows) | **PASS** | — |
+| `git diff --check` | **PASS** | — |
+
+No `jq` shim, no approximate `chmod`, no suite deletion, no `|| true`, no downgrade of the gate
+to syntax-only. Those are §28's prohibitions and they are the reason this table has a NOT RUN row
+instead of a fabricated PASS row.
+
+## A3–A5. P0-C, P0-D, Android consumer
+
+**Not attempted. `STOP WRITE WORK` as §2 directs.** No file in `release-artifacts.sh`,
+`test-release-artifacts.sh`, `release.yml`, `verify-release-acceptance.sh` or
+`android-core-arm64.yml` was modified this round. The state is exactly as the previous round
+left it, and §4.1 of that round's report still describes it accurately.
+
+## A6. Construction final state
+
+```text
+P0_C             = INCOMPLETE   (blocked: jq + chmod absent)
+P0_D             = INCOMPLETE   (blocked: same)
+ANDROID_CONSUMER = INCOMPLETE   (blocked: same; needs release-artifacts.sh)
+```
+
+One useful thing PART B did produce for this line: **F-3 explains why the Android consumer is
+a contract-lag problem rather than a broken producer**, which narrows the future patch. See B10.
+
+---
+
+# PART B — READ-ONLY END-TO-END ARCHITECTURE AUDIT
+
+## B1. The real DAG
+
+Audited fact-first (§9), not file-first. `12` workflows exist; the DAG they form is:
+
+```text
+                    candidate SHA (a commit on testing)
+                              │
+   ┌──────────────────────────┴───────────────────────────┐
+   │                                                      │
+   ▼ push(br:testing)                                     ▼ workflow_dispatch (manual)
+┌──────────────────────┐                    ┌──────────────────────────────────────────┐
+│ Verify (40 min)      │                    │ server-linux-amd64  (120m)  ─┐           │
+│  source assumptions  │                    │ client-macos        ( 60m)  ─┤ 4 TARGET   │
+│  compileability      │                    │ windows-core-amd64  ( 60m)  ─┤ WORKFLOWS │
+│  race ×2  ◄── only   │                    │ android-core-arm64  ( 60m)  ─┘           │
+│   push-time race     │                    │ client-desktop-windows (120m) ─ DESKTOP  │
+└──────────────────────┘                    │ interop-xray (40m) · client-apple (4 jobs)│
+   │                                        │ mobile-contract (30m, +push)              │
+   │                                        └──────────────────────────────────────────┘
+   │ push(paths:18)                                            │
+   ▼                                                           ▼
+┌──────────────────────────────┐                    ┌──────────────────────┐
+│ Release Contract Verification│                    │ Actions artifacts    │
+│  (20m) 92-case + structure   │                    │  + BUILD-INFO record │
+└──────────────────────────────┘                    └──────────────────────┘
+   │                                                           │
+   │            ┌──────────────────────────────────────────────┘
+   ▼            ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│ release.yml  (workflow_dispatch; contents: write; NO timeout-minutes)  │
+│  check-tag → plan(select run per target) → download → verify → flatten │
+│  → check-upload → [publish if !dry_run] → read back published set       │
+└────────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+                    GitHub Release (public assets)
+```
+
+Per-edge properties, measured:
+
+| EDGE | TRIGGER | INPUT IDENTITY | OUTPUT | EVIDENCE | FAILURE MODE | PRIMARY OWNER | 2nd CHECKER |
+|---|---|---|---|---|---|---|---|
+| source → Verify | push `testing` (`paths-ignore: *.md`) | branch tip | red/green | run conclusion | superseded by a later push (`cancel-in-progress`) | `verify.yml` | `release-artifacts.sh` only for a release SHA |
+| source → RCV | push `paths:18` + PR + dispatch | branch tip | red/green | run conclusion | **not consulted by any release** | `release-contract-verify.yml` | none |
+| source → 4 targets | **manual dispatch** | `github.sha` of the dispatched ref | artifacts | run conclusion + record | never dispatched → release dies fast | each product wf | `release-artifacts.sh plan` |
+| source → desktop | **manual dispatch** | `core_sha` + `tooling_sha` inputs | installer + 3 artifacts | BUILD-INFO + provenance | same | `client-desktop-windows.yml` | `cmd_desktop` |
+| artifacts → plan | — | `--sha` + workflow id | TSV of run ids | `newest_run` query | wrong/stale run selected | `release-artifacts.sh` | 92-case suite |
+| plan → publish | `dry_run` input | selected run ids | release | `gh release view` read-back | partial publish | `release.yml` | `check-upload` |
+
+Two structural facts worth naming, because they are the shape of the whole chain:
+
+1. **The release path's inputs are all manually dispatched.** Nothing in the DAG produces a
+   release artifact automatically. `release-artifacts.sh plan` therefore does not *schedule* —
+   it *audits that someone already did*. That is a good design and it is why the fail-fast on a
+   missing run (`plan` dies immediately, not after the 5400s timeout) is the right call.
+2. **Release Contract Verification is never consulted.** `release-artifacts.sh` resolves run
+   identity for the four target workflows and the desktop workflow and for nothing else. A
+   candidate SHA can be released with RCV never having run on it. See F-1.
+
+## B2. Ownership matrix — one fact → one primary owner
+
+`DUP` = is the same fact fully proven more than once? `COST` = rough runtime of the heaviest owner.
+
+| FACT | PRIMARY OWNER | SECONDARY RECHECK | DUP | COST | RISK |
+|---|---|---|---|---|---|
+| source formatting | `verify.yml` gofmt | — | no | seconds | low |
+| module integrity | `check-go-module-integrity.sh` (Verify) | `mobile-contract.yml`? no | no | ~1m | low |
+| build-tag policy | `go test ./cmd/internal/...` (Verify) | product wf compile | no | ~2m | low |
+| upstream assumptions | `verify-upstream-assumptions.sh` (Verify) | — | no | ~3m | low |
+| compileability | `verify.yml` (3 build steps + matrix) | each product wf | **YES (partial)** | ~8m Verify | low — different tag profiles, intentional |
+| **race** | `verify.yml` ×2 **(push)** | server/macos `deep_checks` **(manual)** | **YES, disjoint sets** | 30m timeout | **high — see F-4** |
+| interop | `interop-xray.yml` (manual) | none | no | 40m | medium — never runs on push |
+| release tooling correctness | `release-contract-verify.yml` | **`verify.yml:64` AND `release.yml:180`** | **YES ×3** | 20m each | medium — F-2 |
+| candidate SHA identity | `release-artifacts.sh check-tag` | `client-desktop-windows.yml` gate 1 | yes, consistent | seconds | low |
+| tag identity | `check-tag` (tag→commit) | desktop gate 1 (`refs/tags/v*`) | yes, consistent | seconds | low |
+| version identity | `release/JIEJIE_VERSION` | `release-artifacts.sh release-version`, desktop gate 1/2, `inject-desktop-release-version.py` | **4 readers, 1 writer** | — | low — one authority, multiple readers is correct |
+| workflow run identity | `newest_run` (release-artifacts.sh) | `verify-release-acceptance.sh` **(2nd authority)** | **YES** | — | **high — F-6** |
+| artifact name identity | producer (`upload-artifact`) | `cmd_desktop` **by shape** | **partial** | — | medium — F-5 |
+| artifact digest | `release-artifacts.sh verify` | `SHA256SUMS` written by flatten | yes, by construction | — | low |
+| binary arch | `audit-windows-pe-architecture.py`, magic check | — | no | seconds | low |
+| BUILD-INFO | `build-info.sh` (producer) | `verify` reads commit/sha256 | no | — | low |
+| provenance | `--expect-core-sha` / `--expect-version` | desktop `verify-desktop-daemon-provenance.py` | yes | — | low |
+| desktop core/tooling identity | `check-desktop-source-identity.sh` | `check-desktop-source-identity` structure check | no | seconds | low |
+| Android payload contract | `android-core-arm64.yml` (asserts exact 4 files) | **none in consumer** | no | — | **med — producer is stricter than consumer; F-3** |
+| public asset allowlist | `cmd_flatten` | `check-upload` | yes, two halves | — | low |
+| published asset read-back | `release.yml` `gh release view` | — | no | — | low |
+
+**Facts with NO real owner at all** (the second half of §11's question):
+
+| FACT | STATUS |
+|---|---|
+| Push-time race coverage of `option`, `trafficclass`, `dialer`, `protocol/direct`, `protocol/tun`, `adapter` | owned by `verify.yml` only, and by nothing at final-candidate time |
+| A candidate SHA having RCV evidence | **no owner** — nothing requires it |
+| Interop on a release candidate | `interop-xray.yml` exists but is never referenced by the release path |
+
+## B3. Identity chain, segment by segment
+
+```text
+tag ──► candidate SHA ──► run head_sha ──► run_id ──► artifact ──► digest ──► BUILD-INFO ──► binary ──► upload
+```
+
+| SEGMENT | MECHANISM | VERDICT |
+|---|---|---|
+| tag → candidate SHA | `check-tag`: shape-check, resolve, **prove the peeled commit == checked-out commit**; plus `refs/tags/v<version>` fetched and compared to `CORE_SHA` in desktop gate 1 | **hard, deterministic** |
+| candidate SHA → run | `newest_run` filters `head_sha=$sha` **server-side**, then re-asserts `head_sha`/`workflow_id` per row, and `cmd_desktop` re-asserts `head_sha` | **hard** — and the `--paginate` + re-assert pair is what makes it hard |
+| run → run_id | plan writes `run_id` to the TSV; every later step takes the id as an argument | **hard** — the id is the handle, never re-queried |
+| run_id → artifact (4 targets) | `gh run download <run_id> --dir <dir>` + **exactly one** artifact subdirectory + `find -name <binary>` | hard on count, **shape-based on name** (F-5) |
+| run_id → artifact (desktop) | lists the run's artifacts via API, selects the installer artifact **by shape** (name contains a version substring), asserts exactly one | **shape-based** (F-5) |
+| artifact → digest | `sha256_of` recomputed at flatten; `SHA256SUMS` names bytes about to be published | **hard** |
+| digest → BUILD-INFO | `verify` reads `artifact_sha256` from BUILD-INFO and compares | **hard** |
+| BUILD-INFO → binary | commit / sha256 assertions per platform | **hard** |
+| binary → upload | files named **explicitly**, no glob; published set read back with `gh release view` and compared | **hard** |
+
+**No floating branch, no `latest`, no display-name match, no unvalidated fallback, and no
+re-query after selecting a `run_id`** — searched for specifically. The one place a *version*
+string rather than a SHA is used to name an artifact is the desktop upload, and the consumer
+resolves the run by SHA and then reads the artifact list live, so the name is not load-bearing.
+This chain is genuinely strong, and it is stronger than the previous round's summary implied.
+
+## B4. Trigger / concurrency / cost map
+
+| WORKFLOW | TRIGGER | FILTER | CONCURRENCY (group / cancel) | TIMEOUT | race | deep_checks |
+|---|---|---|---|---|---|---|
+| `verify.yml` | push + PR + dispatch | `paths-ignore: *.md` | `verify-<ref>-<event>` / cancel unless dispatch | 40m | 2 | 4 |
+| `release-contract-verify.yml` | push + PR + dispatch | `paths: 18` | **NONE** | 20m | 0 | 0 |
+| `server-linux-amd64.yml` | dispatch | — | `linux-amd64-…-<deep\|fast>` / **cancel=true** | 120m | 1 | 17 |
+| `client-macos.yml` | dispatch | — | `macos-arm64-…-<deep\|fast>` / **cancel=true** | 60m | 1 | 12 |
+| `windows-core-amd64.yml` | dispatch | — | **NONE** | 60m | 0 | 0 |
+| `android-core-arm64.yml` | dispatch + push | `paths: 17` | `<wf>-<ref>-<event>` / cancel unless dispatch | 60m | 0 | 0 |
+| `client-desktop-windows.yml` | dispatch | — | **NONE** | 120m | 0 | 0 |
+| `interop-xray.yml` | dispatch | — | **NONE** | 40m | 0 | 0 |
+| `client-apple.yml` | dispatch | — | **NONE** | 10m,120m×3 | 0 | 0 |
+| `mobile-contract.yml` | dispatch + push | `paths: 24` | `<wf>-<ref>` / cancel=true | 30m | 0 | 0 |
+| `release.yml` | dispatch | — | **NONE** | **NONE** | 0 | 0 |
+| `client-desktop-windows-runtime-audit.yml` | `workflow_run` + dispatch | — | **NONE** | 90m | 0 | 0 |
+
+Nine of twelve have no concurrency block. Five of the twelve are `workflow_dispatch`-only and
+therefore never cancel anything — harmless. The four that matter are `release.yml`,
+`release-contract-verify.yml`, `client-desktop-windows.yml` and `client-apple.yml`; see F-2, F-7.
+
+Cost concentration: `verify.yml` is 40 minutes at 2 race steps; `server-linux` and
+`client-desktop-windows` are 120 minutes each and both are dispatch-only.
+
+## B5. Artifact producer / consumer map
+
+| PLATFORM | PRODUCER | STAGED FILES | ARTIFACT NAME | RETENTION | CONSUMER | DOWNLOAD | PUBLIC OUTPUT |
+|---|---|---|---|---|---|---|---|
+| linux | `server-linux-amd64.yml` | dist dir | `$(basename $OUT)` | 14d | `release-artifacts.sh` | `gh run download <rid>` | `jiejie-sing-box-linux-amd64-<tag>.tar.gz` |
+| macos | `client-macos.yml` | dist dir | `$(basename $OUT)` | 14d | same | same | `…-macos-arm64-<tag>.tar.gz` |
+| windows core | `windows-core-amd64.yml` | dist | `windows-core-amd64-v<version>` | 30d | same | same | `…-windows-core-amd64-<tag>.tar.gz` |
+| android | `android-core-arm64.yml` | `release-android/` + root | `android-core-arm64-<sha>` | **90d (default)** | same | same | `…-android-arm64-<tag>.tar.gz` |
+| windows desktop | `client-desktop-windows.yml` | `release/` + records + unpacked | `jiejiebox-windows-x64-<CORE_VERSION>-signed-test` + `-build-records` + `-unpacked-audit-input` | 90d / 90d / **7d** | `cmd_desktop` | `--name <installer_artifact>` | `Jiejiebox-v<version>-windows-x64.exe` |
+| audit | `…runtime-audit.yml` | records | `jiejiebox-windows-runtime-audit-records` | 30d | **nobody** | — | — |
+| apple | `client-apple.yml` | libbox / ipa / dmg | `jiejiebox-libbox-<sha>`, then `<IPA_NAME>`/`<DMG_NAME>` | 30d | **nobody in release** | — | not a GitHub Release asset |
+| interop | `interop-xray.yml` | reports | `interop-artifacts-<version>` | 14d | **nobody** | — | — |
+
+Findings this table produces: retention is **three different values plus two defaults** (7d / 14d / 30d / 90d / 90d) with no stated policy (F-8); three producers have no consumer at all,
+which is fine for audits and interop but means their artifacts are pure storage cost; and the
+Android producer already emits payload and evidence as two filesets in one artifact, which is
+F-3.
+
+## B6. Fail-closed audit
+
+Searched for each pattern §15 names, with the answer:
+
+| PATTERN | FOUND? | WHERE / VERDICT |
+|---|---|---|
+| `rm -f` used as proof | no | 3 sites, all temp-file cleanup **after** the extracted bytes were read and asserted |
+| `rm -rf` in release path | yes, 4 sites | `cmd_download`/`cmd_desktop`/`cmd_flatten` clearing their **own** output dirs before use — safe, and each is followed by a write and a later listing assertion |
+| `\|\| true` | 1 site | `grep -c . "$out" \|\| true` in `cmd_plan` — the count is then compared to `${#TARGET_WORKFLOWS[@]}` and dies on mismatch. **Correct** |
+| `continue-on-error` | deliberately absent | asserted by `check-release-workflows.py`; the audit workflow's header records the rejected earlier design |
+| grep no-match then PASS | guarded | the SIGPIPE class has its own audit (`CI_PIPEFAIL_SIGPIPE_AUDIT.md`) and the `if ! bash -n` fix from the previous round |
+| find no-match then exit 0 | **fixed in consumer, not producer** | `find -name "$binary"` result is used as a directory; a miss would make `tar -C` fail — fail-closed by accident rather than by assertion. F-5 |
+| `git add` submodule without read-back | **was present** | `.github/update_clients.sh` — fixed in the previous round, now asserts staged gitlink == worktree HEAD |
+| `gh run download` wrong artifact still yields files | **shape-based on desktop** | `cmd_desktop` selects the run by SHA and the artifact by name-shape, then requires exactly one; a renamed artifact fails. Acceptable, but it is identity-by-shape (F-5) |
+| latest-run fallback | no | `newest_run` is SHA-filtered server-side; no `latest` anywhere |
+| empty variable continues | guarded | `[ -n "${id:-}" ]`, `[ -n "$row" ]`, 8-field TSV count checks |
+| missing `jq` silently falls back | **no fallback exists** | `jq` absence is a hard failure. That is the correct design and it is also why PART A is blocked |
+
+Net: **the release path is genuinely fail-closed.** The residual risks are not suppressors —
+they are identity-by-shape (F-5) and dual admissibility authority (F-6).
+
+## B7. Structural checker audit
+
+`check-release-workflows.py` is now 114 checks. Audited for §16's five failure modes:
+
+| MODE | FINDING |
+|---|---|
+| label ≠ actual file | **WAS PRESENT, fixed last round.** Four checks labelled "verify workflow" read `release-contract-verify.yml`. Now separated into `check_release_contract_workflow()` and `check_source_verify()`, and `SOURCE_VERIFY` exists for the first time |
+| string grep protects the wrong owner | **WAS PRESENT, fixed last round.** The tag-to-commit proof moved into `check-desktop-source-identity.sh`, so the checker now asserts the *helper that owns it* still contains the proof, instead of asserting the workflow re-implements it |
+| a comment can satisfy the checker | **still possible in principle.** `code_only()` strips whole-line comments but leaves trailing comments, and several checks are `needle in text` on the raw file rather than on `code_only(text)`. See F-9 — the specific reachable case is narrow |
+| checker protects abandoned architecture | no — audited each assertion; the known-defect lines are labelled `KNOWN DEFECT` and are designed to fail when the defect is fixed |
+| checker does not cover the real source workflow | **WAS PRESENT, fixed last round** — `verify.yml` had no checks at all; it now has 9 |
+
+## B8. Final-candidate deep verification — the gap, designed
+
+§18 asks whether a Final Candidate Verification workflow is needed. Audited answer: **yes, and
+the gap is narrower and more specific than "Verify has race".**
+
+What a candidate SHA can currently be released with, measured against the DAG:
+
+| REQUIRED BY POLICY | ACTUALLY REQUIRED BY `release-artifacts.sh` |
+|---|---|
+| Verify success at the SHA | **no** |
+| Release Contract Verification success at the SHA | **no** |
+| interop at the SHA | **no** |
+| race coverage at the SHA | **no** (product race legs are behind manual `deep_checks`; push race is not consulted) |
+| the 4 target workflow runs succeed at the SHA | yes |
+| the desktop run succeeds at the SHA | yes |
+| artifact digest / arch / BUILD-INFO / allowlist | yes |
+
+So the release gate is **complete about artifacts and silent about verification**. That is a
+coherent design only if "the artifact workflows ran" is accepted as sufficient source evidence —
+and for the manual, dispatch-only product workflows it largely is, because each one builds from
+the SHA and asserts its own record. The genuine hole is narrower: **nothing ties the release to
+Verify or RCV, so the two push-time gates are advisory with respect to publishing.**
+
+Design (not built, per §18's "先给设计"):
+
+```text
+name:   Final candidate verification
+trigger: workflow_dispatch only (inputs: candidate_sha, tooling_sha == candidate_sha)
+builds: nothing - it must not produce artifacts
+runs:   the UNION of release-blocking deep checks, once, at the frozen SHA:
+          - race over the union set (verify's 7 packages + option + server's + macos's)
+          - interop-xray's suites
+          - (optionally) RCV at this SHA, if RCV's own evidence is to be required
+evidence: one run id, exact SHA, exact workflow, completed + success
+consumer: release-artifacts.sh gains a required-evidence rule naming this workflow
+why one owner: the union is the point. Today the union is provable by NO single run.
+```
+
+What must NOT go in it: anything a product workflow already proves by building (compileability
+under each platform's tag profile, artifact digests, BUILD-INFO), because copying those would
+create the third parallel proof §8.2 warns about.
+
+## B9. Drift surfaces, scored
+
+| DRIFT SURFACE | COUNT | SITES | SCORE | WHY |
+|---|---|---|---|---|
+| platform/target table | **1** | `target_field` is the single authority; `TARGET_WORKFLOWS` gates it | **low** — this is the model to copy |
+| workflow-file literals | 4 target wfs named in `release-artifacts.sh` + 1 desktop + 12 in `check-release-workflows.py` | `resolve_workflow_id` hard-asserts path == file, so a rename fails loudly | **low** |
+| admissibility authority | **2** | `release-artifacts.sh` `newest_run` vs `verify-release-acceptance.sh` | **high — F-6** |
+| race coverage sets | **3** | verify / server / macos, all different | **high — F-4** |
+| artifact retention values | **5** | 7d, 14d(×4), 30d(×4), 90d(×2+2 defaults) | **medium — F-8** |
+| `version` readers | 4 | `release-version`, desktop gate 1, gate 2, injector | **low** — one writer |
+| concurrency declarations | 3 of 12 | rest absent | **medium — F-2/F-7** |
+| `.md`-derived release inputs | 3 | `verify-fork-handoff.sh` parses 3 `docs/fork/*.md` | **medium — F-10** |
+
+## B10. Newly discovered "奇妙点"
+
+Ordered by priority. Nothing here was written (§25).
+
+---
+
+**F-1 — The release path never consults either push-time gate.**
+`PRIORITY = P0 (policy) · ACTION = FIX`
+
+- **WHY SURPRISING** — `verify.yml` and `release-contract-verify.yml` both exist to prove things
+  about a commit, and both are triggered by a push to `testing`. The release, whose entire job is
+  "promote bytes that CI already proved", consults **neither**. It resolves run identity for the
+  four product workflows and the desktop workflow, and for nothing else.
+- **EVIDENCE** — `release-artifacts.sh:69-86` defines `TARGET_WORKFLOWS` (server, macos, +windows,
+  +android under `RELEASE_EXTRA_PLATFORMS`); `cmd_desktop` handles the fifth. Exhaustive grep of
+  `release-artifacts.sh` for `verify.yml` / `release-contract-verify.yml` / `verify` finds only
+  `cmd_verify` (its own subcommand) and the word "verified" in messages. `cmd_plan`'s die message
+  lists only target workflows.
+- **RISK** — a candidate SHA whose Verify was `cancelled` by a later push, or whose RCV never ran,
+  is publishable with a green release run. The previous round's report already noted that a
+  superseded Verify fails closed *for the release candidate* — but that is true only because
+  `verify-release-acceptance.sh` checks it, and that script is **not in the release path either**.
+- **RECOMMENDED ACTION** — add a required-evidence rule to `release-artifacts.sh` naming
+  `verify.yml` and `release-contract-verify.yml` at the candidate SHA, reusing `newest_run`. This
+  is exactly P0-C's "Formal Release proves tooling was already proved at this exact SHA", and it
+  closes F-1 as a side effect.
+- **WRITE THIS ROUND? = NO**
+
+---
+
+**F-2 — Nothing stops a second release run from cancelling the first.**
+`PRIORITY = P1 · ACTION = FIX`
+
+- **WHY SURPRISING** — `verify.yml` has a carefully reasoned concurrency block: cancel a
+  superseded push, never cancel a dispatch. `server-linux-amd64.yml` and `client-macos.yml`
+  carry `cancel-in-progress: true` **unconditionally**. `release.yml` has **no concurrency block
+  at all, and no `timeout-minutes`**. Two distinct failure modes follow, and the second is the one
+  that actually bites:
+  - two `release.yml` dispatches for the same tag run **concurrently**, both holding
+    `contents: write`, both able to publish;
+  - a later `server-linux-amd64` or `client-macos` dispatch for the same ref **cancels** an
+    in-flight run. If that run was the release candidate's, `plan` then learns
+    `conclusion=cancelled` — correctly, and after having spent its wait window discovering it.
+- **EVIDENCE** — `verify.yml:39-41` vs `server-linux-amd64.yml:97` and `client-macos.yml:82`
+  (`cancel=True`) vs `release.yml` having no `concurrency:` key. `release.yml` also has no
+  `timeout-minutes` while every other job has one (10–120m), so a stuck release run is unbounded
+  and holds `contents: write`.
+- **RISK** — two concurrent `release.yml` runs publishing the same tag; or a release waiting 90
+  minutes on evidence another dispatch is about to cancel.
+- **RECOMMENDED ACTION** — give `release.yml` a concurrency group keyed on the tag with
+  `cancel-in-progress: false` (serialise releases; never cancel one), and a `timeout-minutes`
+  above the helper's maximum bounded wait.
+- **WRITE THIS ROUND? = NO**
+
+---
+
+**F-3 — The Android producer is already stricter than its consumer, so P1-D is contract lag.**
+`PRIORITY = P1 · ACTION = MERGE`
+
+- **WHY SURPRISING** — the previous round reported P1-D as a producer/consumer *split* that the
+  backlog still had to perform. Measured, the split has already happened on the producer side and
+  the *consumer* is the lagging side: `android-core-arm64.yml` stages exactly four payload files
+  in `release-android/` and **asserts that directory is exactly those four**, while uploading
+  `libbox.provenance` and `SHA256SUMS.txt` beside it in the same artifact. So the artifact the
+  release consumes is *broader* than the producer's own declared payload contract.
+- **EVIDENCE** — `android-core-arm64.yml:388-393` (expected_stage == actual_stage, four names) and
+  `:418-431` (upload `path:` lists six, including `libbox.provenance` and `SHA256SUMS.txt`).
+  Consumer side: `release-artifacts.sh:448` requires exactly one artifact subdirectory, `:970`
+  finds the binary by `find -name`.
+- **RISK** — the publishable tarball is built from a directory that contains evidence files, and
+  the only thing keeping them out is the tar file-list assertion. A producer that adds a seventh
+  file ships it unless flatten's assertion catches it.
+- **RECOMMENDED ACTION** — treat the producer's four-name assertion as the payload contract and
+  make the consumer's download exact-name. This is P1-D, and it is smaller than the backlog
+  implied: the producer needs a second upload step, not a restructure.
+- **WRITE THIS ROUND? = NO**
+
+---
+
+**F-4 — Release-blocking race coverage depends on a manual input that no release sets.**
+`PRIORITY = P1 · ACTION = MOVE`
+
+- **WHY SURPRISING** — both product workflows *have* race steps, and their headers say so. Every
+  one is gated `if: github.event_name == 'workflow_dispatch' && inputs.deep_checks`, and
+  `deep_checks` is declared in only those two workflows. So the artifact-workflow race legs run
+  **only when a human ticks a box**, and `release-artifacts.sh` cannot see whether they did —
+  a run with `deep_checks=false` and a run with `deep_checks=true` are both `success`.
+- **EVIDENCE** — `server-linux-amd64.yml:81` (`deep_checks:` input), `:681-682`
+  (`if: … && inputs.deep_checks`), `client-macos.yml:67`, `:351-352`. Grep for `deep_checks`
+  across all 12 workflows returns hits in only those two files.
+- **RISK** — the only race coverage that provably ran at the candidate SHA is `verify.yml`'s,
+  and `verify.yml` is not consulted by the release (F-1). So a released SHA can have **zero**
+  verified race coverage.
+- **RECOMMENDED ACTION** — this is the same destination as B8: one final-candidate owner running
+  the union. Until it exists, the honest options are to make `deep_checks` recorded-and-required
+  evidence, or to accept and document that race is advisory. Do not delete `verify.yml`'s steps
+  (previous round's conclusion stands).
+- **WRITE THIS ROUND? = NO**
+
+---
+
+**F-5 — Two artifacts are selected by name *shape*, not by identity.**
+`PRIORITY = P1 · ACTION = SIMPLIFY`
+
+- **WHY SURPRISING** — the identity chain is otherwise SHA-hard all the way through, and the
+  previous round's summary said so. The exception is the artifact *name* layer: for the four
+  target workflows the consumer finds the binary with `find -name <binary>`, and for the desktop
+  installer `cmd_desktop` selects among the run's artifacts **by shape** (`jiejiebox-windows-x64-
+  <version>-signed-test`), explicitly because the v0.1.6 artifact name carried a *stale* version
+  and matching on version found nothing. Choosing shape over version was right; the residual
+  issue is that nothing asserts the selected artifact is the *only* installer-shaped one, beyond
+  a count check.
+- **EVIDENCE** — `release-artifacts.sh:970` (`src="$(dirname "$(find "$dir" -type f -name "$binary")")"`),
+  `:556-572` (the "selected by SHAPE, not by version" comment and the count assertion).
+  Artifact names: three of the five desktop/target artifacts are constants
+  (`jiejiebox-windows-build-records`, `jiejiebox-windows-unpacked-audit-input`,
+  `jiejiebox-windows-runtime-audit-records`) and one is version-derived.
+- **RISK** — low for correctness today (the run is SHA-selected and the count is asserted), but
+  it means the artifact *name* is not an identity, so a producer-side rename is caught only by a
+  count or a find miss rather than by a contract. F-3 is the concrete instance.
+- **RECOMMENDED ACTION** — extend `target_field` with a `payload_artifact` name and select by
+  exact name, which is what P1-D's contract needs anyway.
+- **WRITE THIS ROUND? = NO**
+
+---
+
+**F-6 — Two authorities still decide "may this SHA be released".**
+`PRIORITY = P0 (drift) · ACTION = MERGE`
+
+- **WHY SURPRISING** — not the duplication itself (the backlog knows it) but the *asymmetry*:
+  `verify-release-acceptance.sh` implements a strict admissibility rule (exact SHA, exact workflow,
+  completed, per-job success, declared artifacts with recorded digests, fail-closed on 18
+  snapshots) and **is never called by `release.yml`**. The release uses `newest_run` instead. So
+  the stricter authority is the one nobody runs, and the two disagree by construction: `newest_run`
+  takes the newest run and dies if it is not success; `verify-release-acceptance.sh` demands a
+  complete successful run *and* every declared artifact.
+- **EVIDENCE** — grep for `verify-release-acceptance.sh` across workflows and scripts: hits in
+  `verify-release-acceptance-test.sh` (its own self-test), `verify-fork-handoff.sh` (a note), and
+  `verify.yml` (**comments only** — the step runs `verify-release-acceptance-test.sh`, the
+  self-test, not the gate). No hit in `release.yml` or `release-artifacts.sh` as a call.
+- **RISK** — the strict rule drifts away from the enforced rule, and the self-test keeps passing
+  for a gate nothing invokes.
+- **RECOMMENDED ACTION** — P0-D, with F-1: make `release-artifacts.sh` the single selector
+  (`select_exact_sha_run` / `require_exact_sha_success`) and have it carry the per-job and
+  per-artifact requirements that `verify-release-acceptance.sh` encodes, then retire that script's
+  independent verdict.
+- **WRITE THIS ROUND? = NO**
+
+---
+
+**F-7 — Four expensive workflows accept unlimited concurrent dispatches.**
+`PRIORITY = P2 · ACTION = FIX`
+
+- **WHY SURPRISING** — `android-core-arm64.yml` and `mobile-contract.yml` (the two that can be
+  push-triggered) both carry well-reasoned concurrency groups, including the
+  "dispatch is never cancelled" refinement. The four *most expensive* ones —
+  `client-desktop-windows.yml` (120m), `server-linux-amd64.yml` (120m), `client-apple.yml`
+  (4 jobs, 3×120m), `interop-xray.yml` — either have no group or cancel unconditionally.
+- **EVIDENCE** — B4 table. `client-desktop-windows.yml`, `client-apple.yml`, `interop-xray.yml`,
+  `windows-core-amd64.yml`, `release.yml`, `release-contract-verify.yml`: no `concurrency:` key.
+- **RISK** — cost and artifact-name collision (two desktop dispatches for one version produce two
+  artifacts with the same version-derived name in different runs — harmless to the consumer,
+  confusing to a human reading the Actions list).
+- **RECOMMENDED ACTION** — adopt `verify.yml`'s pattern (ref + event, cancel only for non-dispatch)
+  in the workflows that build a release artifact.
+- **WRITE THIS ROUND? = NO**
+
+---
+
+**F-8 — Retention is five different values with no stated policy, and one is 7 days.**
+`PRIORITY = P2 · ACTION = SIMPLIFY`
+
+- **WHY SURPRISING** — the desktop workflow uploads `jiejiebox-windows-unpacked-audit-input` with
+  `retention-days: 7` while the audit workflow that *consumes* unpacked input keeps its output for
+  30 days, and the other two desktop artifacts fall to GitHub's 90-day default. Nothing states
+  which number a release depends on.
+- **EVIDENCE** — B5 table: 7d (unpacked audit input), 14d (linux, macos, interop, RCV logs,
+  release self-test), 30d (windows core, apple, runtime-audit), 90d default (android, desktop
+  installer, desktop records).
+- **RISK** — a release attempted from a candidate older than 14 days cannot download its Linux or
+  macOS artifact, and the failure surfaces as `gh run download failed` — attributed to the
+  download rather than to expiry. `.expired` is read for the desktop artifacts
+  (`release-artifacts.sh:567-568`) but **not** for the four target workflows.
+- **RECOMMENDED ACTION** — state one policy ("≥ release cadence"), apply it, and read `.expired`
+  for every target so the failure names expiry.
+- **WRITE THIS ROUND? = NO**
+
+---
+
+**F-9 — The structural checker's "code only" guard does not cover trailing comments.**
+`PRIORITY = P2 · ACTION = SIMPLIFY`
+
+- **WHY SURPRISING** — `code_only()` exists precisely because a comment once satisfied a check
+  (the audit workflow's header explaining the rejected `continue-on-error` design). It strips
+  whole-line comments, and its docstring says leaving trailing comments is deliberate. But several
+  `needle in text` checks run against the **raw** `text`, not `code_only(text)`, so a workflow
+  could satisfy "the workflow calls X" with a comment mentioning X.
+- **EVIDENCE** — `check_release_contract_workflow()` and `check_source_verify()` use both `text`
+  and `body`; the race-present checks use `text`; `check_verify`'s older siblings used `body`.
+- **RISK** — low today (the assertions that matter most use `body`), but it is the same class of
+  defect that already produced one false check in this file.
+- **RECOMMENDED ACTION** — decide per assertion whether a comment should satisfy it, and use
+  `code_only` for every "the workflow does X" claim.
+- **WRITE THIS ROUND? = NO**
+
+---
+
+**F-10 — Three release inputs are Markdown files parsed with `sed`/`grep`.**
+`PRIORITY = P1 · ACTION = OBSERVE`
+
+- **WHY SURPRISING** — the previous round's `paths-ignore: *.md` work established that
+  `docs/fork/*.md` is machine-read, which is unusual enough that it survived a "we could ignore
+  docs/**" simplification. What is worth naming separately is *which* facts live in prose: a
+  `<!-- release-verdict: ... -->` marker in `v016-final-release-verdict.md` is a **release input**
+  extracted by regex, and the candidate manifest is grepped for the literal string
+  `not frozen yet`.
+- **EVIDENCE** — `verify-fork-handoff.sh:42-44` (three `*_MD` defaults), `:278` (`sed -n` marker
+  extraction), `:313-341` (verdict marker + `grep -q 'not frozen yet'`).
+- **RISK** — a documentation edit changes release admissibility, and no test covers the marker's
+  grammar. It is a second, prose-shaped authority beside `release/JIEJIE_VERSION`.
+- **RECOMMENDED ACTION** — OBSERVE. If it ever needs to change, the right move is to move the two
+  machine-read facts into a data file (JSON/env) and leave the prose as commentary. Not now: the
+  gate is strict and fails closed on a missing marker.
+- **WRITE THIS ROUND? = NO**
+
+---
+
+**F-11 — `interop-xray.yml` and the runtime audit are not reachable from the release.**
+`PRIORITY = INFO · ACTION = OBSERVE`
+
+- **WHY SURPRISING** — read-only audit result, recorded because it bounds what a "green release"
+  claims: interop has a workflow, the Windows runtime audit has a workflow with `workflow_run`
+  automation, and neither is named anywhere in the release path. The audit workflow says so about
+  itself in its own header ("NOT release-blocking, by product definition"), which is honest and
+  correct; interop says nothing either way.
+- **EVIDENCE** — B1/B5 tables; `client-desktop-windows-runtime-audit.yml:36-40`.
+- **RISK** — none by itself; the risk is a reader assuming a green release implies interop passed.
+- **RECOMMENDED ACTION** — OBSERVE; if interop is meant to gate, it belongs in B8's candidate
+  workflow.
+- **WRITE THIS ROUND? = NO**
+
+---
+
+## B11. What was refuted
+
+Recorded so the audit is not read as one-sided. Three hypotheses were tested and **failed**:
+
+| HYPOTHESIS | RESULT |
+|---|---|
+| "`newest_run` mis-selects across re-runs / stale green" | **REFUTED.** `stale_green` (latest failed, older green → FAIL) and `reruns` (three runs → newest selected) are both covered cases in the 92-case suite |
+| "The four Windows runtime gates are proven twice, once non-blocking and once gating" | **REFUTED.** The build workflow keeps only gate 4 (signing) and gate 3 (package/arch); gates 5/5b/6/7 live solely in the audit workflow. The split is clean |
+| "Workflow-file literals are a drift surface because three named workflows are not on disk" | **REFUTED.** `build.yml`, `moved-linux.yml`, `unrelated.yml` are historical ledgers and deliberate negative fixtures; `resolve_workflow_id` hard-asserts path == file |
+
+## B12. Final state
+
+```text
+UNIX_RELEASE_TOOLING_SCOPE_COMPLETE = NO
+
+P0_C             = INCOMPLETE      (BLOCKED: jq + chmod absent)
+P0_D             = INCOMPLETE      (BLOCKED: same)
+ANDROID_CONSUMER = INCOMPLETE      (BLOCKED: same; needs release-artifacts.sh)
+
+FULL_92_CASE_RELEASE_SUITE  = NOT RUN   (cannot execute: jq + chmod absent)
+READ_ONLY_FULL_CHAIN_AUDIT  = COMPLETE
+
+GITHUB_ACTIONS_RUN = NO
+PUSHED_THIS_ROUND  = NO
+TAG_MOVED          = NO
+RELEASE_CREATED    = NO
+
+READY_FOR_FINAL_FREEZE_VALIDATION = NO
+```
+
+`READY_FOR_FINAL_FREEZE_VALIDATION` is **NO** for the §32 reason: P0-C, P0-D and the Android
+consumer are incomplete, so the three required suites cannot all be green — indeed the 92-case
+suite cannot be run at all here.
+
+`FULL_92_CASE_RELEASE_SUITE = NOT RUN` rather than `FAIL`: it did not fail, it could not start,
+and recording it as FAIL would be as wrong as recording it as PASS.
+
+Audit artifacts unchanged this round: **11 local commits, none pushed**, worktree clean apart
+from the 3 pre-existing untracked `KNOWLEDGE/modules/*.md` (`PRE_EXISTING_UNTRACKED / UNCHANGED`,
+per §29). No file named in PART B was modified.
