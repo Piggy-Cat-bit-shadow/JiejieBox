@@ -238,12 +238,22 @@ GitHub compare 18ef1ef6...dev                      -> status=diverged ahead=9 be
 
 `18ef1ef6` is reachable from **no fork branch**. `jiejiebox/main` — the branch `.gitmodules`
 names as this submodule's source — is one commit *ahead* of it, and `main`/`dev` diverge from
-it. It is a dangling commit:
+it. Two consequences, stated with the measurement that bounds each:
 
-1. **The pin is one garbage collection away from being unfetchable.** A submodule gitlink no
-   branch reaches cannot be relied on to resolve for a fresh clone, so a release built from it
-   is not reproducible from the fork's own refs. This is a real fragility even though today's
-   builds succeed.
+1. **It is a reachability risk, not a present breakage.** A fresh clone fetches the gitlink by
+   SHA, and measured, that works for both pins:
+
+   ```text
+   git init scratch; git remote add origin <the .gitmodules URL>
+   git fetch --depth 1 origin 917d2a4…   -> exit 0   (the branch tip)
+   git fetch --depth 1 origin 18ef1ef6…  -> exit 0   (the dangling pin)
+   ```
+
+   So the dangling pin resolves **today** and an earlier draft of this section overstated the
+   case by calling it one garbage collection from being unfetchable. What is true is narrower
+   and still worth acting on: GitHub serves a by-SHA fetch for a commit no branch advertises
+   only as long as the object survives, nothing keeps it alive, and a commit that no branch
+   reaches is not what a submodule documented as "the maintained fork" should point at.
 2. **The arrangement is self-inverting.** `917d2a4` is the same fork with the updater contract
    committed, and the overlay is *only* able to supply that contract because `18ef1ef6` lacks
    it. The rule engine requires each rule's **original, pre-branding** text and fails closed
@@ -275,7 +285,7 @@ Resolved the gitlink conflict to **`917d2a4`**, the tip of `jiejiebox/main`, bec
 * committing the updater contract is what lets the overlay be retired, which is P0-A's stated
   goal (a rule set that asserts a shape its own pinned source already satisfies is the
   redundancy the brief exists to remove);
-* and it removes the dangling-commit fragility.
+* and it points at a branch-reachable commit rather than a dangling one.
 
 The two gitlinks are proved, not assumed, exactly as §1.5 requires:
 
@@ -287,12 +297,12 @@ dashboard HEAD 3d32338fdc35b050cd9728afa7f66c18206e4fb9 == client index gitlink 
 **For the owner.** This is the one change in this round that alters what `testing` ships, in
 the opposite direction from the remote's own `b462bbfb0`, and it should be reviewed first
 rather than trusted. The honest summary of the trade: **both pins produce a correct client
-today; they differ in whether the correctness lives in the pinned source or in a parent-side
-rewrite.** `917d2a4` + no overlay puts it in the source and makes it reproducible; `18ef1ef6` +
-overlay keeps it in the rewrite and depends on a commit no branch reaches. If the owner prefers
-the remote's arrangement, the revert is the single gitlink line, and P0-A's overlay retirement
-must then be dropped as well — the two choices cannot be mixed, which is the point of the
-inversion in (2).
+today, and both are fetchable today; they differ in whether the correctness lives in the pinned
+source or in a parent-side rewrite.** `917d2a4` + no overlay puts it in the source; `18ef1ef6` +
+overlay keeps it in the rewrite, points at a commit no branch reaches, and blocks the pin from
+following its own branch. If the owner prefers the remote's arrangement, the revert is the
+single gitlink line, and P0-A's overlay retirement must then be dropped as well — the two
+choices cannot be mixed, which is the point of the inversion in (2).
 
 ---
 
@@ -445,7 +455,7 @@ narrowing it later.
 
 | Finding | Evidence | Fixed? | Why / why not |
 |---|---|---|---|
-| **The desktop pin on the true remote is a dangling commit** (`18ef1ef6`) reachable from no fork branch, one commit behind the `jiejiebox/main` that `.gitmodules` names | `git merge-base` empty; GitHub compare vs `jiejiebox/main` = ahead 1, vs `main` = diverged, vs `dev` = diverged | **YES** — re-pinned to `917d2a4` in P0-A | **The one edit in this round that changes what `testing` ships. Review it first.** Both pins build a correct client today (the overlay supplies the updater contract on the dangling pin); they differ in whether that correctness lives in the pinned source or in a parent-side rewrite, and the dangling pin risks becoming unfetchable |
+| **The desktop pin on the true remote is a dangling commit** (`18ef1ef6`) reachable from no fork branch, one commit behind the `jiejiebox/main` that `.gitmodules` names | `git merge-base` empty; GitHub compare vs `jiejiebox/main` = ahead 1, vs `main` = diverged, vs `dev` = diverged; by-SHA fetch works for **both** pins today | **YES** — re-pinned to `917d2a4` in P0-A | **The one edit in this round that changes what `testing` ships. Review it first.** Both pins build a correct client today and both are fetchable today (the overlay supplies the updater contract on the dangling pin). They differ in whether that correctness lives in the pinned source or in a parent-side rewrite, and the dangling pin cannot follow its own branch without the build failing closed |
 | The remote's `b462bbfb0` already made the `.gitmodules` URL change this round was asked for, so P0-A's `.gitmodules` hunk is a no-op against the true tip | `git show b462bbfb0 --stat` = `.gitmodules` + `clients/desktop` | **YES** — reconciled | The replay kept the remote's version; the only desktop-side change this round makes is the gitlink value |
 | `prepare-desktop-client.sh` and the overlay described the client as "pinned to upstream SagerNet/sing-box-for-desktop" | script headers | **YES** — P0-A | Documentation describing the old model is the drift the brief lists |
 | `client-desktop-windows.yml` gate 2 asserted an *overlay* had set `executableName` and `forceCodeSigning` | gate 2 step names and comments | **YES** — P0-A | It now asserts the properties directly, and additionally asserts the fork's release feed and asset matcher, which nothing checked before |
