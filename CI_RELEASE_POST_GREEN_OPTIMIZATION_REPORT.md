@@ -7,77 +7,115 @@ The round is **incomplete**: P0-A and P0-B are done and locally verified; P0-C, 
 of P1 are **BLOCKED_BY_ENVIRONMENT**, for a reason given in §4 that is a missing tool rather
 than a missing decision.
 
+> ## Correction — this report's first revision was written against a STALE LOCAL REF
+>
+> The first revision of this file reported `origin/testing = ccab3645` and used that as the
+> base for every claim. That was **wrong**: the local remote-tracking ref was stale. The user
+> challenged it, and a reconciliation pass (§2a) established the truth:
+>
+> * `refs/remotes/origin/testing` said `ccab3645` — last moved 2026-10-12, by a **push**
+>   reflog entry, so no fetch had refreshed it since.
+> * `git ls-remote origin refs/heads/testing` says **`9bdcf8e8`**, which is also what the
+>   brief's §2 said and what GitHub's API returns.
+> * the local clone was **not** shallow, and `9bdcf8e8` was already present as an object — only
+>   the ref was behind.
+>
+> So the brief was right and this report was wrong. Everything below is re-derived against
+> `9bdcf8e8`, and the five commits have been replayed onto it. The stale-base branch is kept as
+> `wip/p0ab-stale-base` for comparison. **The lesson is recorded rather than quietly fixed: a
+> `git rev-parse refs/remotes/...` is not evidence about a remote.** It is evidence about the
+> last fetch, and it is exactly the class of mistake this repository's `AGENTS.md` warns about
+> ("Source and Git are facts" — but a stale ref is neither).
+
 ---
 
-## 1. Checkpoint reconciliation — the recorded checkpoint no longer matched the tree
+## 1. Reconciliation against the true remote
 
-The brief's first instruction was to reconcile the checkpoint before building anything, and
-to read real values rather than trust short SHAs. Doing that found three discrepancies that
-the brief's §1.2–§1.4 assert as facts. They are recorded here rather than silently
-reconciled, per `AGENTS.md` ("the conflict is a defect to record").
+Measured with `git ls-remote` (the remote's own answer) and the GitHub API, not with local
+remote-tracking refs:
 
-| Brief says | Measured at start | Verdict |
+| Value | Local ref said (stale) | **Truth** |
 |---|---|---|
-| parent HEAD prefix `abd75e0e2`, 2 commits ahead of `origin/testing` | `ccab3645`, **0** ahead, `git status` clean apart from 3 untracked files | **superseded** |
-| `clients/desktop` gitlink = `917d2a4` | `32f915ba` | **did not match** |
-| `dashboard` gitlink = `3d32338f` | matches (nested inside the desktop tree) | matches |
-| android `ec61030d3`, apple `40dd48795` | match | matches |
-| worktree clean | 3 untracked `KNOWLEDGE/modules/*.md` | differs |
+| `origin/testing` | `ccab3645` | **`9bdcf8e8b17b67a2c0fd306d2cc865535dc6970e`** |
+| `origin/testing` subject | — | `sync(upstream): absorb sing-tun hairpin batching without losing fork fixes [skip ci]` |
+| `refs/tags/v0.1.7` object | `46361ea8` | **`cf419b9601e9d2c9eb738f14f5ee1024df95da84`** |
+| `refs/tags/v0.1.7^{}` (commit) | `ccab3645` | **`6f0d5519c74816f0a4c255f46a08fe0f298b3cd7`** |
+| `clients/desktop` gitlink | `32f915ba` | **`18ef1ef6ccd831de0c64cca48e3cd33522271358`** |
 
-`abd75e0e2` and `e5bb66c5f` are **not present as objects** in the repository and are not in
-any reflog; the reflog shows two `reset: moving to origin/testing` entries followed by a fresh
-run of commits for the v0.1.7 release. So those two local commits were lost in this
-environment, and the tree moved on to a genuine later state: `origin/testing` had advanced to
-`ccab3645`, and `HEAD == origin/testing`, tagged `v0.1.7`.
+Two things follow, and the second is the important one:
 
-**Consequence for the brief's model.** §1.3's "do not reset/rebase/squash the two local
-commits" cannot be honoured and does not need to be: they no longer exist, and their *intent*
-(the gitlink move) had been dropped, which is what P0-A had to restore. `PARENT_PUSHED = NO`
-still holds — `origin/testing` advanced by some other push, not by this round.
+1. **`skip ci` sync landed.** `9bdcf8e8` is exactly the commit the brief's §2 named as the
+   dependency sync, so §2 was accurate and this report's first revision was not.
+2. **The tag moved.** `v0.1.7` on the remote names `6f0d5519`, not `ccab3645`. This round was
+   forbidden to move a tag and did not; a previous round did, and
+   `V0.1.7_FORMAL_RELEASE_REPORT.md` (at the true tip) records it. §1.3's "do not move/re-tag"
+   constraint is therefore about *this* round only — which it honoured — and the tag's existing
+   movement is a fact to be aware of, not something to undo.
 
-### The real defect the checkpoint was hiding
+The brief's §1.2–§1.4 checklist, re-measured at `9bdcf8e8`:
 
-The gitlink was `32f915ba`, which is not a fork commit at all:
+| Brief says | At the true tip | Verdict |
+|---|---|---|
+| desktop gitlink `917d2a4` | `18ef1ef6` | **does not match — and `18ef1ef6` is the wrong commit, see §3** |
+| dashboard gitlink `3d32338f` | `3d32338f` | matches |
+| android `ec61030d3` | matches | matches |
+| apple `40dd48795` | matches | matches |
+| `abd75e0e2` / `e5bb66c5f` local commits preserved | absent from the object database | lost before this round; see the correction note |
 
-```text
-32f915ba  "Bump version 1.14.2"   2026-09-24   (reachable from the fork repo, but upstream content)
-917d2a4   "feat(updates): own the Jiejiebox release feed and installer matcher"  (jiejiebox/main)
-```
-
-`32f915ba`'s `src/main/updates.ts` reads
-`https://api.github.com/repos/SagerNet/sing-box/releases` and matches update assets with
-`startsWith("SFW-")`. A release built from it would ship a client whose updater polls
-**upstream's** feed looking for an installer name **this fork does not publish**. The two
-halves of that contract (§1.2) were both absent, and `32f915ba`'s `version.json` still said
-`1.14.2` — so the retired overlay's anchor would have appeared to be satisfied while the
-product was wrong. This is the single most consequential finding of the round.
+`abd75e0e2` and `e5bb66c5f` are genuinely gone — absent as objects, absent from the reflog.
+They were replaced by the v0.1.7 release run now on the remote. Nothing in this round reset,
+rebased, squashed or dropped anything that existed, beyond replaying this round's own five
+commits onto `9bdcf8e8` (§2a), which is a fast-forward of the round's own work and not a
+rewrite of published history.
 
 ---
 
 ## 2. Header values
 
 ```text
-START_HEAD            = ccab3645d60e9cba13b8e3a47b85dd1c1ca60d5e
-END_HEAD              = 90e5f255 (resolve with `git log`; a file cannot name the hash of the
-                                   commit that introduces it without being amended afterwards)
-ORIGIN_TESTING        = ccab3645d60e9cba13b8e3a47b85dd1c1ca60d5e
+START_HEAD            = ccab3645d60e9cba13b8e3a47b85dd1c1ca60d5e   (the stale local ref, which
+                                                                     is what this round began on)
+TRUE_REMOTE_BASE      = 9bdcf8e8b17b67a2c0fd306d2cc865535dc6970e   (origin/testing, measured)
+ORIGIN_TESTING        = 9bdcf8e8b17b67a2c0fd306d2cc865535dc6970e
+END_HEAD              = resolve with `git log`; a file cannot name the hash of the commit that
+                        introduces it without being amended afterwards
 LOCAL_COMMITS_BEFORE  = 0
-LOCAL_COMMITS_ADDED   = 5
+LOCAL_COMMITS_ADDED   = 5  (replayed onto TRUE_REMOTE_BASE; the pre-replay set is kept on
+                            wip/p0ab-stale-base)
 WORKTREE_CLEAN        = NO  (3 pre-existing untracked KNOWLEDGE/modules/*.md, not ours)
 ```
 
-The five commits added, oldest first:
+### 2a. The replay
+
+`ccab3645` is an **ancestor** of `9bdcf8e8` (`git merge-base --is-ancestor` = 0), so this was
+not a divergent rebase: the round's five commits were replayed onto a tip that simply had more
+history. The replayed set, oldest first:
 
 ```text
-dd67746c  refactor(desktop): retire the branding overlay and pin the maintained fork
-89fbb7d7  refactor(release): make the desktop tooling identity exact
-bef83635  docs(ci): report the post-green optimization round
-1230fdf4  test(ci): record the P0-C duplication as a check instead of a plan
-979d0268  docs(ci): fold the final measurements into the round report
+c50f9d1a7  refactor(desktop): retire the branding overlay and pin the maintained fork
+92efd831a  refactor(release): make the desktop tooling identity exact
+685f4e1d4  docs(ci): report the post-green optimization round
+35f4a6bcc  test(ci): record the P0-C duplication as a check instead of a plan
+788271667  docs(ci): fold the final measurements into the round report
 ```
 
+preceded, on `wip/p0ab-stale-base`, by the same five commits against the stale base:
+`dd67746c`, `89fbb7d7`, `bef83635`, `1230fdf4`, `979d0268`. Both sets are kept so the replay is
+auditable rather than asserted.
+
+Two conflicts, both mechanical and both resolved in favour of the truth:
+
+| File | Conflict | Resolution |
+|---|---|---|
+| `clients/desktop` | both sides moved the gitlink | resolved to `917d2a4` — see §4a |
+| `.github/workflows/release-contract-verify.yml` | both sides extended the `bash -n` file list | kept the remote's fail-capable `if ! bash -n` loop (its fix: a bare `bash -n` reset `$?` and the gate could not fail) and added this round's two new scripts to its list |
+
+Nothing was discarded from the remote side. The remote's improvement to that loop is a better
+version of what this round was also touching, and it was kept.
+
 ```text
-TAG_MOVED                         = NO
+TAG_MOVED                         = NO   (by this round; the tag had already moved on the remote)
+```
 RELEASE_CREATED                   = NO
 GITHUB_ACTIONS_RUN                = NO
 workflow_dispatch                 = NO
@@ -155,6 +193,109 @@ one gate that was **not** runnable is named there too, and it was not claimed as
 
 ---
 
+## 4a. The desktop pin on the true remote is a dangling commit
+
+This is the most consequential finding of the round, and it only became visible after the
+stale ref was corrected. It is also the finding this report first got **wrong in the alarmist
+direction**, so the correction is stated first.
+
+### What is NOT wrong
+
+The true remote tip does pin the fork — commit `b462bbfb0`, "chore(submodule): pin maintained
+desktop fork", which also carries the `.gitmodules` URL change this round was asked to make. It
+pins **`18ef1ef6`**, not `917d2a4`. `18ef1ef6`'s `src/main/updates.ts` is still upstream's
+(`SagerNet/sing-box` feed, `startsWith("SFW-")` asset matcher).
+
+An earlier draft of this section concluded from that alone that `testing` would ship a client
+whose updater polls the wrong feed. **That conclusion was wrong, and the measurement that
+refutes it is in §6:** the parent overlay is still wired into `prepare-desktop-client.sh` at
+the true tip, and run against `18ef1ef6` it *does* rewrite those two lines:
+
+```text
+overlay vs 18ef1ef6 (18ef1ef6)
+  version.json: version.json application version -> 0.1.5 (from release/JIEJIE_VERSION)
+  wrote: src/main/updates.ts
+```
+
+So at that pin the build supplies the updater contract, and the shipped client is correct. The
+remote's arrangement works.
+
+### What IS wrong
+
+```text
+git merge-base 18ef1ef6 917d2a4                     -> (empty: no common ancestor)
+git merge-base --is-ancestor 18ef1ef6 917d2a4       -> exit 1
+git merge-base --is-ancestor 917d2a4 18ef1ef6       -> exit 1
+GitHub compare 18ef1ef6...jiejiebox/main           -> status=ahead ahead_by=1
+GitHub compare 18ef1ef6...main                     -> status=diverged ahead=8 behind=1
+GitHub compare 18ef1ef6...dev                      -> status=diverged ahead=9 behind=1
+```
+
+```text
+18ef1ef6  "feat: preserve Jiejiebox Windows build overlays"           (no branch contains it)
+917d2a4  "feat(updates): own the Jiejiebox release feed and installer matcher"  = jiejiebox/main
+```
+
+`18ef1ef6` is reachable from **no fork branch**. `jiejiebox/main` — the branch `.gitmodules`
+names as this submodule's source — is one commit *ahead* of it, and `main`/`dev` diverge from
+it. It is a dangling commit:
+
+1. **The pin is one garbage collection away from being unfetchable.** A submodule gitlink no
+   branch reaches cannot be relied on to resolve for a fresh clone, so a release built from it
+   is not reproducible from the fork's own refs. This is a real fragility even though today's
+   builds succeed.
+2. **The arrangement is self-inverting.** `917d2a4` is the same fork with the updater contract
+   committed, and the overlay is *only* able to supply that contract because `18ef1ef6` lacks
+   it. The rule engine requires each rule's **original, pre-branding** text and fails closed
+   otherwise. So the day the pin is moved to the branch `.gitmodules` names — the obvious
+   maintenance action, and the one the brief's §1.2 asks for — the overlay's two `updates.ts`
+   rules find no anchor and the build **fails closed**:
+
+   ```text
+   overlay vs 917d2a4 (917d2a4e)
+     version.json: version.json application version -> 0.1.5 (from release/JIEJIE_VERSION)
+     nothing to write: the client already carries this overlay
+   ```
+
+   reaching "nothing to write" only because the branded text is already there. The two are
+   mutually exclusive states of one file, and the pin and the overlay are `git add`-apart from
+   a configuration that cannot build.
+
+3. **The pin is behind the branch the brief names.** §1.2 says the two static rules were
+   migrated into the fork at `917d2a4` and that the gitlink should be `917d2a4`. The remote's
+   `b462bbfb0` did the `.gitmodules` half and pinned a different, earlier commit.
+
+### What this round did, and why it is the one edit worth reviewing
+
+Resolved the gitlink conflict to **`917d2a4`**, the tip of `jiejiebox/main`, because:
+
+* it is the revision `.gitmodules` names as the source, and it is on that branch;
+* it is a **strict superset** of the remote's pin — `git diff 18ef1ef6 917d2a4` is one file,
+  `src/main/updates.ts`, 18 insertions and 2 deletions, and nothing else;
+* committing the updater contract is what lets the overlay be retired, which is P0-A's stated
+  goal (a rule set that asserts a shape its own pinned source already satisfies is the
+  redundancy the brief exists to remove);
+* and it removes the dangling-commit fragility.
+
+The two gitlinks are proved, not assumed, exactly as §1.5 requires:
+
+```text
+desktop   HEAD 917d2a4e9864528e1c10c4c6a39f3949b6f5d878 == parent index gitlink   MATCH
+dashboard HEAD 3d32338fdc35b050cd9728afa7f66c18206e4fb9 == client index gitlink   MATCH
+```
+
+**For the owner.** This is the one change in this round that alters what `testing` ships, in
+the opposite direction from the remote's own `b462bbfb0`, and it should be reviewed first
+rather than trusted. The honest summary of the trade: **both pins produce a correct client
+today; they differ in whether the correctness lives in the pinned source or in a parent-side
+rewrite.** `917d2a4` + no overlay puts it in the source and makes it reproducible; `18ef1ef6` +
+overlay keeps it in the rewrite and depends on a commit no branch reaches. If the owner prefers
+the remote's arrangement, the revert is the single gitlink line, and P0-A's overlay retirement
+must then be dropped as well — the two choices cannot be mixed, which is the point of the
+inversion in (2).
+
+---
+
 ## 5. Local test results
 
 Every command below was executed in this environment. `git` is MinGit 2.50.1 (portable, from
@@ -165,27 +306,29 @@ an existing tool directory — **nothing was installed**), `python` is the bundl
 |---|---|---|---|
 | 1 | `python scripts/ci/test-desktop-release-version.py` | 0 | **60 passed, 0 failed** |
 | 2 | `bash scripts/ci/test-desktop-source-identity.sh` | 0 | **30 passed, 0 failed** |
-| 3 | `python scripts/ci/check-release-workflows.py` | 0 | **48 passed, 0 failed** |
+| 3 | `python scripts/ci/check-release-workflows.py` | 0 | **100 passed, 0 failed** (the remote's version of this checker is far larger than the one this round edited; the merge kept both) |
 | 4 | `bash -n scripts/ci/prepare-desktop-client.sh` | 0 | syntax OK |
 | 5 | `bash -n scripts/ci/check-desktop-source-identity.sh` | 0 | syntax OK |
 | 6 | `bash -n scripts/ci/test-desktop-source-identity.sh` | 0 | syntax OK |
 | 7 | `bash -n scripts/ci/release-artifacts.sh` | 0 | syntax OK |
 | 8 | `bash -n scripts/ci/lib.sh` | 0 | syntax OK |
 | 9 | `bash -n scripts/ci/test-release-artifacts.sh` | 0 | syntax OK |
-| 10 | `python -m py_compile` on all 3 changed Python files | 0 | syntax OK |
-| 11 | `yaml.safe_load` on all 10 workflows | 0 | all parse |
-| 12 | `bash -n` on every `shell: bash` step of `client-desktop-windows.yml` | 0 | 16/16 OK (9 `pwsh` steps skipped — not bash) |
-| 13 | `git diff --check` | 0 | no whitespace errors |
-| 14 | `scripts/ci/prepare-desktop-client.sh` (end to end, real submodules) | 0 | `PASS: desktop client prepared` |
-| 15 | `scripts/ci/test-release-artifacts.sh` | — | **BLOCKED_BY_ENVIRONMENT** (`jq`, `chmod` missing) |
+| 10 | `yaml.safe_load` on all workflows in `.github/workflows/` | 0 | all parse (the true tip has more workflows than the stale base did) |
+| 11 | `bash -n` on every `shell: bash` step of `client-desktop-windows.yml` | 0 | all OK (the `pwsh` steps are not bash and are skipped) |
+| 12 | `git diff --check` | 0 | no whitespace errors |
+| 13 | `scripts/ci/prepare-desktop-client.sh` (end to end, real submodules, after the replay) | 0 | `PASS: desktop client prepared` |
+| 14 | `scripts/ci/test-release-artifacts.sh` | — | **BLOCKED_BY_ENVIRONMENT** (`jq`, `chmod` missing) |
 
-Two results worth keeping, because each is a check catching a real thing rather than a green
+Three results worth keeping, because each is a check catching a real thing rather than a green
 tick:
 
-* **#14 first run FAILED, correctly.** Before the P0-A commit, the script refused with
+* **#13 first run FAILED, correctly.** Before the P0-A commit, the script refused with
   `client HEAD = 917d2a4… / parent records = 32f915ba…` — it caught that the parent commit
   still recorded the old gitlink, which is exactly the silent submodule failure §1.5 makes a
   hard gate. It passed only after the gitlink was committed.
+* **The same check proved its value again during the replay.** `b462bbfb0` on the true remote
+  stages a gitlink move; a parent that records a different revision than the submodule holds is
+  precisely what this check refuses, and it refuses it with the two hashes printed.
 * **Idempotence is asserted, not assumed.** Re-running the stamp with the same version writes
   nothing and still re-proves the file, and re-running with a different version overwrites
   cleanly; both are separate cases.
@@ -202,7 +345,21 @@ a note, as the brief allows.
 ## 6. How the P0-A decision was made (not by re-auditing the 23 rules)
 
 The brief forbids re-auditing the 23 overlay rules. It did not need to be done, because the
-question "are these rules native in the fork?" has a behavioural answer:
+question "are these rules native in the fork?" has a behavioural answer. It was measured twice,
+against **both** candidate pins, because the probe result is what justifies retiring the
+overlay and it must not depend on which revision is pinned:
+
+| Probe | Result |
+|---|---|
+| overlay vs `917d2a4` (`jiejiebox/main`) | `24 applied/confirmed` → **`nothing to write`**, probe tree CLEAN |
+| overlay vs `18ef1ef6` (the true remote's pin) | `24 applied/confirmed` → **`wrote: src/main/updates.ts`**, probe tree DIRTY |
+
+The second row is the load-bearing one, and it is why §4a was rewritten. The overlay does not
+report the same thing on the two pins: on the branch pin it finds the updater contract already
+committed and writes nothing; on the dangling pin it supplies that contract at build time,
+because that pin kept upstream's `updates.ts`. Retirement is therefore justified by the first
+row — the fork branch already carries every rule — and the second row is the evidence that the
+two configurations are alternatives, not complements. The procedure, for `917d2a4`:
 
 1. A detached worktree was created at `917d2a4`, with its nested `dashboard` submodule at the
    recorded `3d32338f`.
@@ -218,7 +375,7 @@ nothing to write: the client already carries this overlay
 
 So all 24 rules resolve as "already" on the pinned fork revision, by the overlay's own
 semantics rather than by substring matching — which is the correction §1.1 records. The probe
-worktree was removed; the real tree was never used for the experiment.
+worktrees were removed; the real tree was never used for the experiment.
 
 This also gives the exact list of what the fork now owns: the updater feed and asset matcher,
 the installer name, `executableName: sing-box`, the three unsigned-build changes in
@@ -288,7 +445,8 @@ narrowing it later.
 
 | Finding | Evidence | Fixed? | Why / why not |
 |---|---|---|---|
-| The pinned desktop gitlink pointed at upstream content (`32f915ba`), so the shipped updater would poll `SagerNet/sing-box` and match `SFW-` | `git show HEAD:src/main/updates.ts`; GitHub API compare `32f915ba...jiejiebox/main` = ahead 2 | **YES** — P0-A | Both halves of the release feed contract were absent, not just one |
+| **The desktop pin on the true remote is a dangling commit** (`18ef1ef6`) reachable from no fork branch, one commit behind the `jiejiebox/main` that `.gitmodules` names | `git merge-base` empty; GitHub compare vs `jiejiebox/main` = ahead 1, vs `main` = diverged, vs `dev` = diverged | **YES** — re-pinned to `917d2a4` in P0-A | **The one edit in this round that changes what `testing` ships. Review it first.** Both pins build a correct client today (the overlay supplies the updater contract on the dangling pin); they differ in whether that correctness lives in the pinned source or in a parent-side rewrite, and the dangling pin risks becoming unfetchable |
+| The remote's `b462bbfb0` already made the `.gitmodules` URL change this round was asked for, so P0-A's `.gitmodules` hunk is a no-op against the true tip | `git show b462bbfb0 --stat` = `.gitmodules` + `clients/desktop` | **YES** — reconciled | The replay kept the remote's version; the only desktop-side change this round makes is the gitlink value |
 | `prepare-desktop-client.sh` and the overlay described the client as "pinned to upstream SagerNet/sing-box-for-desktop" | script headers | **YES** — P0-A | Documentation describing the old model is the drift the brief lists |
 | `client-desktop-windows.yml` gate 2 asserted an *overlay* had set `executableName` and `forceCodeSigning` | gate 2 step names and comments | **YES** — P0-A | It now asserts the properties directly, and additionally asserts the fork's release feed and asset matcher, which nothing checked before |
 | `release-artifacts.sh`'s dispatch hint named `core_sha`/`core_version` only | `release-artifacts.sh:512` | **YES** — P0-B | With `tooling_sha` required, the hint would have produced a dispatch that fails gate 1 |
@@ -296,8 +454,8 @@ narrowing it later.
 | `check-release-workflows.py` labelled a `release-contract-verify.yml` check "verify workflow: …" | `VERIFY` constant vs step content | **NO** — recorded | Cosmetic naming; changing it would touch an unrelated checker. Worth a follow-up |
 | `python3` on a Windows runner is usually only `python`, while `release-contract-verify.yml` calls `python3` | `scripts/ci/prepare-desktop-client.sh` already resolves `python3`/`python` for exactly this reason | **NO** — recorded | It runs on `ubuntu-latest`, where `python3` exists. Not a defect today, but the two conventions in one repository is a latent trap |
 | The 3 untracked `KNOWLEDGE/modules/*.md` files are byproducts of a partially-applied knowledge refresh | untracked; `AGENTS.md` §5 forbids refreshing `KNOWLEDGE/` during development | **NO** — recorded | Deciding whether to commit, delete or finish them is a knowledge-base maintenance operation, not this round's work. Left exactly as found |
-| The 92-case release helper suite runs **three** times per release, measured at `verify.yml:64`, `release-contract-verify.yml:105` and `release.yml:109` | grep of all three workflows | **PARTLY** — recorded as two failing-on-removal checks | Removing the duplication is P0-C, which is blocked. Recording it means the day it is fixed, `check-release-workflows.py` fails on the stale assertions and forces them to be replaced by the exact-SHA evidence check |
-| Formal Release re-proves the product it is publishing instead of citing evidence already obtained at that SHA | `release.yml:109` runs the full suite on the publishing runner | **NO** — recorded | Same blocker |
+| The 92-case release helper suite runs **three** times per release, re-measured at the true tip: `verify.yml:64`, `release-contract-verify.yml:84` and `release.yml:180` | grep of all three workflows, excluding comment lines | **PARTLY** — recorded as failing-on-removal checks | Removing the duplication is P0-C, which is blocked. Recording it means the day it is fixed, `check-release-workflows.py` fails on the stale assertions and forces them to be replaced by the exact-SHA evidence check |
+| Formal Release re-proves the product it is publishing instead of citing evidence already obtained at that SHA | `release.yml:180` runs the full suite on the publishing runner | **NO** — recorded | Same blocker. Note the remote has since reworked `release.yml` heavily (`32ead81bb`, `0549d87ff`) to bind the tooling to the tag — a good change that does **not** remove this re-run |
 | Two independent release-qualification authorities: `verify-release-acceptance.sh` makes its own admissibility judgement (its own exact-SHA test at line 294) while `release-artifacts.sh` selects runs with its own `newest_run` primitive | both files present; primitives named differently | **NO** — recorded | §6 prefers `release-artifacts.sh` grow one `select_exact_sha_run`/`require_exact_sha_success` primitive that all three consumers share. That is a refactor of the very file whose gate cannot be run here |
 
 ---
