@@ -3,12 +3,14 @@
 # this fork ships.
 #
 # Usage:
-#   apple-client-source.sh resolve                 print the resolved selection as shell assignments
-#   apple-client-source.sh sha          <ios|macos>
-#   apple-client-source.sh branch       <ios|macos>
-#   apple-client-source.sh dir          <ios|macos>
-#   apple-client-source.sh checkout     <ios|macos> [dir]
-#   apple-client-source.sh verify       <ios|macos> [dir]
+#   apple-client-source.sh resolve          print the resolved selection as shell assignments
+#                                           (this is what FREEZES the SHA for a build)
+#   apple-client-source.sh sha    <ios|macos>
+#   apple-client-source.sh branch <ios|macos>
+#   apple-client-source.sh dir    <ios|macos>
+#   apple-client-source.sh checkout <ios|macos> [dir]
+#   apple-client-source.sh verify   <ios|macos> [dir]
+#   apple-client-source.sh ls-remote                resolve the default revision now, print it
 #   apple-client-source.sh assert-shared-source
 #   apple-client-source.sh assert-on-branch [dir]
 #
@@ -28,34 +30,60 @@
 # Apple source at runtime, from the device idiom; the parent only decides which commit is
 # built. An earlier revision of this script did the opposite - it resolved macOS to an
 # independent `dev` pin and asserted the two sources were DISTINCT - which made the parent
-# repository, not the Apple source, the thing that decided UI ownership. That is why the
-# invariant here is `assert-shared-source`, and why no subcommand reads a macOS commit out
-# of a file.
+# repository, not the Apple source, the thing that decided UI ownership.
 #
-# # Where the SHA comes from
+# # Where the SHA comes from, and why that changed
 #
-# `clients/apple` is this repository's Apple submodule, and its gitlink is the single
-# authority: it is what the release commit records. Both platforms resolve to it, and
-# duplicating it into a file would create a second value that could disagree with it.
+# The authority used to be the `clients/apple` GITLINK. That made every client commit a
+# two-repository operation: commit the UI repo, come back here, move the gitlink, commit,
+# push, pull. The pin was manual by construction, and the script could only ever mirror a
+# decision someone had already made by hand.
 #
-# # Why two directories exist even though the SHA is one
+# The authority is now the APPLE CLIENT REPOSITORY:
+#
+#   DEFAULT   the tip of $APPLE_CLIENT_BRANCH, resolved to an exact SHA
+#   OVERRIDE  APPLE_CLIENT_REF / APPLE_CLIENT_SHA, an exact SHA / tag / branch
+#
+# Either way the exact commit is materialised, so the build never depends on a branch tip.
+#
+# # Resolve ONCE, then frozen
+#
+# `resolve` is the single resolution point. It reads the frozen SHA if one exists, otherwise
+# it resolves one and writes it to $APPLE_CLIENT_STATE (default build/apple-client-source.env,
+# beside the macOS working tree, and gitignored). Every later subcommand - and every separate
+# process in the same build - reads that file rather than asking the remote again.
+#
+# That is the whole point: without it, iOS could resolve A, someone could push B, and macOS
+# could resolve B, so ONE release would contain two UI commits. Resolving twice is not a
+# performance detail, it is a correctness boundary.
+#
+# Delete the state file (or set a different APPLE_CLIENT_STATE) to start a new resolution.
+#
+# # Two directories exist even though the SHA is one
 #
 # Each platform applies its own overlays (compatibility, branding, entitlements) to its
 # working tree, so they must not share one. They share the SHA and nothing else:
 #
-#     clients/apple                the authoritative checkout (used by iOS by default)
+#     clients/apple                the default checkout (iOS by default)
 #     build/apple-client-macos     an ephemeral checkout of the SAME commit
 #
 # Overlays may leave either tree dirty; HEAD never moves. That is checked, not assumed:
-# `verify` requires `git rev-parse HEAD` to equal the gitlink in whichever tree it is
-# pointed at.
+# `verify` requires the tree's HEAD to equal the resolved SHA.
+#
+# # What the gitlink is now
+#
+# `clients/apple` and its gitlink still exist and still work. They are no longer the build
+# authority, and `assert-shared-source` no longer requires the resolved SHA to equal the
+# gitlink - that requirement is what made the pin manual. The difference is REPORTED rather
+# than ignored, and APPLE_CLIENT_REQUIRE_GITLINK=1 restores the old hard equality for a build
+# that must match the recorded submodule.
 #
 # # Fail closed
 #
-# A missing gitlink, an unreachable commit, an ephemeral tree whose origin is not the
-# declared repository, or a checkout whose HEAD is not the gitlink are all hard failures.
-# Nothing here falls back to a branch tip: publishing a client built from whatever a branch
-# happened to be is the failure this script exists to prevent.
+# An unresolvable revision, a repository that cannot be reached, an ephemeral tree whose
+# object store is not the one this script wired, and a checkout whose HEAD is not the
+# resolved SHA are all hard failures. Nothing here falls back to "whatever is checked out":
+# publishing a client built from an unrecorded revision is the failure this script prevents.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -68,7 +96,12 @@ refs_file="release/apple-client-refs.env"
 ios_dir_default="clients/apple"
 macos_dir_default="build/apple-client-macos"
 
+# Where the resolved SHA is frozen for the rest of the build.
+state_file_default="build/apple-client-source.env"
+
 fail() { echo "apple-client-source: $*" >&2; exit 1; }
+
+state_file() { printf '%s\n' "${APPLE_CLIENT_STATE:-$state_file_default}"; }
 
 # --- configuration -----------------------------------------------------------
 
@@ -96,17 +129,91 @@ load_refs() {
   # while making the answer depend on the file and not on who called us.
   if refs_declares_platform_source; then
     fail "$refs_file still declares a macOS-specific Apple source.
-  Both platforms build the clients/apple gitlink now; a per-platform source pin is the
+  Both platforms build one Apple source now; a per-platform source pin is the
   two-source model this topology removed. Delete MACOS_APPLE_SHA and MACOS_APPLE_BRANCH."
   fi
   # shellcheck disable=SC1090
   . "$refs_file"
   [ -n "${APPLE_CLIENT_REPOSITORY:-}" ] || fail "$refs_file sets no APPLE_CLIENT_REPOSITORY"
+  [ -n "${APPLE_CLIENT_BRANCH:-}" ] || fail "$refs_file sets no APPLE_CLIENT_BRANCH"
 }
 
-# apple_sha reads the parent gitlink. `git ls-tree HEAD` rather than a working-tree read:
-# the value that will be published is the one the commit records.
-apple_sha() {
+# The requested revision, or empty for "the tip of the declared branch".
+requested_ref() {
+  printf '%s\n' "${APPLE_CLIENT_REF:-${APPLE_CLIENT_SHA:-}}"
+}
+
+# ls_remote_sha resolves a revision against the Apple repository WITHOUT a local checkout.
+#
+# The remote is asked once, for one ref, and the fully-qualified result is preferred: a
+# `--refs` query hides the peeled `^{}` line, which is the only way to learn the commit a
+# TAG names. Passing a 40-hex SHA through unchanged keeps the override path from needing the
+# network at all.
+ls_remote_sha() {
+  local repo="$1" want="$2" out sha
+  case "$want" in
+    [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*)
+      if [ "${#want}" -eq 40 ]; then printf '%s\n' "$want"; return 0; fi
+      ;;
+  esac
+  if ! out="$(git ls-remote "$repo" "$want" "refs/heads/$want" "refs/tags/$want^{}" "refs/tags/$want" 2>/dev/null)"; then
+    fail "could not reach $repo to resolve '$want'."
+  fi
+  [ -n "$out" ] || fail "$repo has no '$want' (tried as a SHA, a branch and a tag)."
+  # Prefer a peeled tag, then a branch, then a plain ref: the peeled line is the commit.
+  sha="$(printf '%s\n' "$out" | awk '$2 ~ /\^\{\}$/ {print $1; exit}')"
+  [ -n "$sha" ] || sha="$(printf '%s\n' "$out" | awk '$2 ~ /^refs\/heads\// {print $1; exit}')"
+  [ -n "$sha" ] || sha="$(printf '%s\n' "$out" | awk 'NR==1 {print $1}')"
+  case "$sha" in
+    [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;;
+    *) fail "could not parse a commit out of the ls-remote answer for '$want'" ;;
+  esac
+  printf '%s\n' "$sha"
+}
+
+# resolve_sha is the ONE resolution point, and it is also the freeze.
+#
+# Order, and each step's reason:
+#   1. an explicit APPLE_CLIENT_REF/SHA wins over everything - it is how an older build is
+#      reproduced, so it must not be overridden by a stale state file;
+#   2. otherwise a frozen state file wins - this is the same build answering the same
+#      question a second time, and re-asking the remote is the two-commit hazard;
+#   3. otherwise resolve the declared branch tip and freeze it.
+resolve_sha() {
+  load_refs
+  local want state sha
+  want="$(requested_ref)"
+  state="$(state_file)"
+
+  if [ -z "$want" ] && [ -f "$state" ]; then
+    # shellcheck disable=SC1090
+    sha="$(sed -n 's/^APPLE_CLIENT_SHA=//p' "$state" | tail -n 1)"
+    [ -n "$sha" ] || fail "$state exists but records no APPLE_CLIENT_SHA.
+  Delete it to resolve a fresh Apple source."
+    printf '%s\n' "$sha"
+    return 0
+  fi
+
+  if [ -z "$want" ]; then
+    sha="$(ls_remote_sha "$APPLE_CLIENT_REPOSITORY" "refs/heads/$APPLE_CLIENT_BRANCH")"
+  else
+    sha="$(ls_remote_sha "$APPLE_CLIENT_REPOSITORY" "$want")"
+  fi
+
+  # Freeze it, so separate processes in this build cannot each resolve their own answer.
+  mkdir -p "$(dirname "$state")"
+  {
+    printf '# Written by apple-client-source.sh. Delete to start a new resolution.\n'
+    printf 'APPLE_CLIENT_SHA=%s\n' "$sha"
+    printf 'APPLE_CLIENT_REPOSITORY=%s\n' "$APPLE_CLIENT_REPOSITORY"
+    printf 'APPLE_CLIENT_BRANCH=%s\n' "$APPLE_CLIENT_BRANCH"
+  } > "$state"
+  printf '%s\n' "$sha"
+}
+
+# apple_sha_gitlink reads the parent gitlink. `git ls-tree HEAD` rather than a working-tree
+# read: this is the value the COMMIT records, which is what a comparison against it means.
+apple_sha_gitlink() {
   local sha
   sha="$(git ls-tree HEAD "$ios_dir_default" | awk '{print $3}')"
   [ -n "$sha" ] || fail "this commit records no gitlink at $ios_dir_default"
@@ -125,40 +232,37 @@ platform_dir() {
   esac
 }
 
-# platform_sha answers "which Apple commit does this product build?" - and for both
-# products the answer is the same gitlink. This is the single most important line in the
-# file: if either arm ever reads a different source, the two products stop being one.
+# platform_sha answers "which Apple commit does this product build?" - and for both products
+# the answer is the one resolved SHA. This is the single most important line in the file: if
+# either arm ever read a different source, the two products would stop being one.
 #
-# The refs file is loaded even though the SHA no longer comes from it, so that the same
-# misconfiguration fails here as everywhere else: a refs file that has been edited back to
-# the two-source model must be refused by every subcommand, not only by the ones that
-# happen to read the file.
+# The refs file is loaded through resolve_sha so that the same misconfiguration fails here as
+# everywhere else: a refs file edited back to the two-source model must be refused by every
+# subcommand, not only by the ones that happen to read the file.
 platform_sha() {
   case "$1" in
     ios|macos) ;;
     *) fail "unknown platform '$1' (expected ios or macos)" ;;
   esac
-  load_refs
-  apple_sha
+  resolve_sha
 }
 
-# platform_branch names the branch the pinned commit is reviewed on. It is informational: it
-# feeds the ancestry check and the diagnostics, and it never selects a commit.
+# platform_branch names the branch a new resolution would follow. It never selects a commit:
+# the SHA is already resolved by the time anything reads this, and it is reported for
+# diagnostics and for the ancestor check.
 #
-# Both arms load the refs file and answer with the SAME branch, because there is only one
-# source now. They do not fall back to `IOS_APPLE_BRANCH`: that name records the branch the
-# iOS product tracked before the two UI families were merged into one tree, so returning it
-# would answer "which branch does the pinned commit live on?" with a stale historical value -
-# and, worse, the answer would depend on whether some earlier call had already sourced the
-# file. Loading the file here makes the answer a property of the file, not of the caller's
-# environment.
+# Both arms answer with the SAME branch, because there is only one source. They do not fall
+# back to `IOS_APPLE_BRANCH`: that name records the branch the iOS product tracked before the
+# two UI families were merged into one tree, so returning it would answer "which branch does
+# the pinned commit live on?" with a stale historical value - and the answer would depend on
+# whether an earlier call had already sourced the file. Loading the file here makes the answer
+# a property of the file, not of the caller's environment.
 platform_branch() {
   case "$1" in
     ios|macos) ;;
     *) fail "unknown platform '$1' (expected ios or macos)" ;;
   esac
   load_refs
-  [ -n "${APPLE_CLIENT_BRANCH:-}" ] || fail "$refs_file sets no APPLE_CLIENT_BRANCH"
   printf '%s\n' "$APPLE_CLIENT_BRANCH"
 }
 
@@ -178,11 +282,11 @@ require_commit() {
   local dir="$1" sha="$2"
   git -C "$dir" cat-file -e "$sha^{commit}" 2>/dev/null || fail \
     "$dir does not contain commit $sha.
-  The gitlink names a commit this repository cannot reach."
+  The resolved Apple source names a commit this checkout cannot reach."
 }
 
-# require_on_branch asserts the pinned commit is an ancestor of the declared branch, so a
-# gitlink cannot be edited to a commit that the reviewed branch never contained.
+# require_on_branch asserts the resolved commit is an ancestor of the declared branch, so a
+# pin cannot be edited to a commit that the reviewed branch never contained.
 require_on_branch() {
   local dir="$1" sha="$2" branch="$3"
   git -C "$dir" merge-base --is-ancestor "$sha" "refs/remotes/origin/$branch" 2>/dev/null || fail \
@@ -191,9 +295,26 @@ require_on_branch() {
   build a source that the declared branch never contained."
 }
 
+# fetch_one_commit brings the resolved commit into a checkout that may not have it, using the
+# branch fetch when it can and a direct SHA fetch as the fallback. A bare fetch of an
+# arbitrary SHA is not guaranteed by every server, which is why the branch is tried first -
+# but for a DEFAULT resolution off the branch tip the commit IS the branch tip, and for an
+# override naming an old commit the branch fetch usually carries it too.
+fetch_one_commit() {
+  local dir="$1" want="$2" branch="$3"
+  git -C "$dir" cat-file -e "$want^{commit}" 2>/dev/null && return 0
+  fetch_branch "$dir" "$branch" || true
+  git -C "$dir" cat-file -e "$want^{commit}" 2>/dev/null && return 0
+  git -C "$dir" fetch --no-tags origin "+$want:refs/apple-client/pinned" >/dev/null 2>&1 || true
+  git -C "$dir" cat-file -e "$want^{commit}" 2>/dev/null && return 0
+  fail "$want is not reachable from $APPLE_CLIENT_REPOSITORY.
+  The resolved Apple source must be a commit of origin/$branch, or a commit the server will
+  serve by SHA. Refusing to build a source this checkout cannot verify."
+}
+
 checkout_ios() {
   local dir; dir="$(platform_dir ios "$1")"
-  local want; want="$(apple_sha)"
+  local want; want="$(resolve_sha)"
 
   if [ ! -d "$dir" ]; then
     fail "$dir is missing. The Apple source is this repository's submodule; check it out with:
@@ -202,14 +323,25 @@ checkout_ios() {
   [ -e "$dir/.git" ] || fail "$dir is not a git checkout."
 
   # The nested submodule (Frameworks/Runestone) is what the Xcode project resolves
-  # packages from, so it is part of "the Apple source", not an optional extra.
+  # packages from, so it is part of "the Apple source", not an optional extra. It is
+  # initialised from the RECORDED revision, so a pinned client cannot pull a nested
+  # dependency from wherever that dependency's default branch happens to be.
   git -C "$dir" submodule update --init --recursive >/dev/null 2>&1 || fail \
     "could not initialise the nested submodules of $dir"
 
   local actual; actual="$(git -C "$dir" rev-parse HEAD)"
-  [ "$actual" = "$want" ] || fail \
-    "$dir is at $actual but this commit pins it at $want.
-  A build here would not be the Apple source this commit records."
+  if [ "$actual" != "$want" ]; then
+    # The submodule may simply be behind the resolved SHA - that is the normal case now that
+    # the client repository, not the gitlink, is the authority. Fetch the commit and move.
+    fetch_one_commit "$dir" "$want" "$(platform_branch ios)"
+    git -C "$dir" checkout --detach "$want" >/dev/null 2>&1 || fail \
+      "could not check out $want in $dir"
+    git -C "$dir" submodule update --init --recursive >/dev/null 2>&1 || fail \
+      "could not initialise the nested submodules of $dir"
+    actual="$(git -C "$dir" rev-parse HEAD)"
+    [ "$actual" = "$want" ] || fail "$dir is at $actual after checkout, expected $want"
+  fi
+
   printf '%s\n' "$actual"
 }
 
@@ -218,8 +350,7 @@ checkout_ios() {
 # a copy rather than the submodule itself so the macOS overlays cannot touch the iOS tree.
 checkout_macos() {
   local dir; dir="$(platform_dir macos "$1")"
-  local want; want="$(apple_sha)"
-  load_refs
+  local want; want="$(resolve_sha)"
   local branch; branch="$(platform_branch macos)"
   local repo="$APPLE_CLIENT_REPOSITORY"
 
@@ -228,17 +359,13 @@ checkout_macos() {
   #
   # It is NOT required to exist. The macOS job deliberately checks the parent out with
   # `submodules: false` - it has no use for the iOS tree, and the Libbox it links arrives as
-  # a downloaded artifact - so this function has to work with only the gitlink to go on.
-  # Requiring the submodule made that job fail with
-  # "clients/apple is not checked out, so there is no Apple source to copy" while the source
-  # it needed was one fetch away.
+  # a downloaded artifact - so this function has to work with only the resolved SHA to go on.
   local submodule="$ios_dir_default"
   local have_submodule=0
   [ -d "$submodule/.git" ] && have_submodule=1
 
   if [ "$have_submodule" = "1" ]; then
-    fetch_branch "$submodule" "$branch"
-    require_commit "$submodule" "$want"
+    fetch_one_commit "$submodule" "$want" "$branch"
     require_on_branch "$submodule" "$want" "$branch"
   fi
 
@@ -263,7 +390,7 @@ checkout_macos() {
       alternate="$(head -n 1 "$copy_git_dir/objects/info/alternates")"
     if [ -n "$alternate" ] && [ "$alternate" != "$objects_source" ]; then
       fail "$dir draws its objects from '$alternate' instead of $submodule.
-  Remove $dir and re-run so the copy is taken from the source this commit pins."
+  Remove $dir and re-run so the copy is taken from the source this build resolved."
     fi
   fi
 
@@ -286,7 +413,8 @@ checkout_macos() {
   if [ "$have_submodule" = "1" ]; then
     # Refresh the alias rather than fetch: a `--shared` clone aliases the source's object
     # database at clone time, and the submodule gains objects afterwards - every time the
-    # gitlink moves - so the alias has to be re-pointed before the wanted commit resolves.
+    # resolved SHA moves - so the alias has to be re-pointed before the wanted commit
+    # resolves.
     #
     # Fetching a commit that exists only locally is awkward by design (a bare fetch of an
     # arbitrary SHA is not guaranteed, and a refspec for a commit that is on no branch cannot
@@ -295,17 +423,8 @@ checkout_macos() {
     local copy_git_dir; copy_git_dir="$(git -C "$dir" rev-parse --absolute-git-dir)"
     mkdir -p "$copy_git_dir/objects/info"
     printf '%s\n' "$objects_source" > "$copy_git_dir/objects/info/alternates"
-  elif ! git -C "$dir" cat-file -e "$want^{commit}" 2>/dev/null; then
-    # The clone does not have the commit yet. Fetch the reviewed branch and try again: the
-    # pinned commit is an ancestor of it by construction, so this resolves it in one fetch
-    # without depending on the server allowing a fetch by raw SHA.
-    git -C "$dir" fetch --no-tags --filter=blob:none origin \
-      "+refs/heads/$branch:refs/remotes/origin/$branch" >/dev/null 2>&1 || true
-    git -C "$dir" cat-file -e "$want^{commit}" 2>/dev/null || fail \
-      "$want is not reachable from origin/$branch of $repo.
-  The pinned Apple source must be a commit of the branch this fork reviews.
-  If the gitlink was just moved, push $branch first: the commit has to be on the branch a
-  fresh checkout can fetch."
+  else
+    fetch_one_commit "$dir" "$want" "$branch"
   fi
 
   require_commit "$dir" "$want"
@@ -330,38 +449,51 @@ verify() {
 }
 
 # assert-shared-source is the topology invariant stated as a check: both products must be
-# built from the SAME Apple commit, and that commit must be the parent's gitlink. This
-# replaces the older `assert-distinct`, which asserted the opposite and would now fail every
-# correct build. If the two ever differ, one platform is silently shipping the other's UI
-# ownership - the exact confusion the single-source topology removes.
+# built from the SAME Apple commit.
+#
+# It deliberately does NOT require that commit to equal the parent gitlink. Requiring it is
+# what made every client release a two-repository pin: the build could only ever mirror a
+# gitlink someone had already updated by hand, in a second commit, after the fact. The
+# gitlink is now a CONVENIENCE - the local default checkout - not the authority.
+#
+# The difference is still reported, because "the submodule is 26 commits behind what this
+# build is using" is something a reader needs to know, and silence about it would be its own
+# kind of lie. APPLE_CLIENT_REQUIRE_GITLINK=1 restores the old hard equality for a build that
+# must match the recorded submodule.
 assert_shared_source() {
   load_refs
   local ios macos gitlink
-  ios="$(platform_sha ios)"
+  ios="$(resolve_sha)"
   macos="$(platform_sha macos)"
-  gitlink="$(apple_sha)"
   [ "$ios" = "$macos" ] || fail \
     "the iOS and macOS Apple sources differ ($ios vs $macos).
-  Both products must build the clients/apple gitlink; a per-platform source is the
+  Both products must build one Apple source; a per-platform source is the
   two-source model this topology removed."
-  [ "$ios" = "$gitlink" ] || fail \
-    "the resolved Apple source $ios is not the gitlink $gitlink.
-  The gitlink is the only authority for which Apple commit a release builds."
+
+  if gitlink="$(apple_sha_gitlink 2>/dev/null)"; then
+    if [ "$ios" != "$gitlink" ]; then
+      if [ "${APPLE_CLIENT_REQUIRE_GITLINK:-0}" = "1" ]; then
+        fail "the resolved Apple source $ios is not the gitlink $gitlink.
+  APPLE_CLIENT_REQUIRE_GITLINK=1 requires the build to match the recorded submodule."
+      fi
+      echo "note: the resolved Apple source $ios differs from the clients/apple gitlink $gitlink." >&2
+      echo "      The client repository is the build authority; the gitlink is the local default checkout." >&2
+    fi
+  fi
   echo "PASS: iOS and macOS share Apple source $ios"
 }
 
-# assert-on-branch proves the pinned commit is on the reviewed branch, which `resolve` cannot
-# show on its own because the gitlink carries no branch name. It is a diagnostic, not a
-# source selector: it never changes which commit is built.
+# assert-on-branch proves the resolved commit is on the reviewed branch, which the SHA cannot
+# show on its own. It is a diagnostic, not a source selector: it never changes which commit is
+# built.
 assert_on_branch() {
   local dir; dir="$(platform_dir ios "${1:-}")"
-  local sha; sha="$(apple_sha)"
+  local sha; sha="$(resolve_sha)"
   local branch; branch="$(platform_branch ios)"
   [ -d "$dir/.git" ] || fail "$dir is not a git checkout."
-  fetch_branch "$dir" "$branch"
-  require_commit "$dir" "$sha"
+  fetch_one_commit "$dir" "$sha" "$branch"
   require_on_branch "$dir" "$sha" "$branch"
-  echo "PASS: pinned Apple source $sha is on origin/$branch"
+  echo "PASS: resolved Apple source $sha is on origin/$branch"
 }
 
 # show emits the resolved selection as shell assignments. Every name below keeps its
@@ -371,15 +503,22 @@ assert_on_branch() {
 # `set -u`, which is a silent interface break dressed up as a rename.
 #
 # The macOS names therefore answer "which Apple commit does the macOS product build?" - and
-# the answer is the same gitlink. `MACOS_APPLE_DIR` stays distinct because the two platforms
-# still need separate working trees for their overlays.
+# the answer is the same resolved SHA. `MACOS_APPLE_DIR` stays distinct because the two
+# platforms still need separate working trees for their overlays.
+#
+# resolve_sha is called ONCE here. Every value below is derived from that single answer, so
+# this function cannot disagree with itself even across a concurrent push to the client
+# repository.
 show() {
   local dir="${1:-}"
-  local sha; sha="$(apple_sha)"
+  load_refs
+  local sha; sha="$(resolve_sha)"
   local branch; branch="$(platform_branch ios)"
   echo "APPLE_CLIENT_REPOSITORY=$APPLE_CLIENT_REPOSITORY"
   echo "APPLE_CLIENT_BRANCH=$branch"
   echo "APPLE_CLIENT_SHA=$sha"
+  echo "APPLE_CLIENT_REF=$(requested_ref)"
+  echo "APPLE_CLIENT_STATE=$(state_file)"
   echo "IOS_APPLE_BRANCH=$branch"
   echo "IOS_APPLE_SHA=$sha"
   echo "IOS_APPLE_DIR=$ios_dir_default"
@@ -393,8 +532,16 @@ show() {
 action="${1:-}"
 case "$action" in
   resolve)
-    load_refs
     show
+    ;;
+  ls-remote)
+    # Resolve the default revision and print it WITHOUT freezing anything. This is the
+    # diagnostic form: it answers "what would a new build pick up?" without becoming the
+    # answer for this one.
+    load_refs
+    want="$(requested_ref)"
+    [ -n "$want" ] || want="refs/heads/$APPLE_CLIENT_BRANCH"
+    ls_remote_sha "$APPLE_CLIENT_REPOSITORY" "$want"
     ;;
   sha)     shift; platform_sha "${1:?usage: sha <ios|macos>}" ;;
   branch)  shift; platform_branch "${1:?usage: branch <ios|macos>}" ;;
@@ -419,7 +566,7 @@ case "$action" in
     assert_on_branch "${1:-}"
     ;;
   ""|-h|--help)
-    sed -n '2,54p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,72p' "$0" | sed 's/^# \{0,1\}//'
     ;;
   *)
     fail "unknown action '$action'"

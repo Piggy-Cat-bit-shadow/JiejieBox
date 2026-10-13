@@ -92,41 +92,74 @@ fi
 # development profile, which requires at least one registered device. Development
 # profiles are sufficient here: the export re-signs for distribution, which is where
 # the App Store profile is created.
-# Resolve packages as a separate step.
+# One fresh DerivedData for this run, used by BOTH the resolve and the archive.
+#
+# The directory is unique per run rather than a fixed `dd`, and it is removed if it somehow
+# already exists, so the archive can never be handed a cache written by an earlier run. That
+# is the property the old code was really after when it deleted the directory - see below -
+# and it is obtained here WITHOUT throwing away this run's own package graph.
+#
+# The uniqueness key is the identity of what is being built (build number, core SHA, Apple
+# client SHA) so a re-run of the same build reuses nothing stale and a different build cannot
+# collide. It falls back to the process id when those are unset, which is still unique per run.
+dd_key="${build_number:-0}-${JIEJIE_CORE_SHA:-nocore}-${APPLE_CLIENT_SHA:-noapple}"
+dd_key="$(printf '%s' "$dd_key" | tr -c 'A-Za-z0-9._-' '_')"
+derived_data="$work/dd-$dd_key-$$"
+rm -rf "$derived_data"
+mkdir -p "$derived_data"
+
+# Resolve packages as a separate step, INTO THAT SAME FRESH DIRECTORY.
 #
 # The archive otherwise resolves the package graph inline, and a transient network
 # failure there aborts the whole build with exit 74 ("Could not resolve package
 # dependencies: RPC failed"), which reads like a project problem and is not. Doing
-# it first also means the resolve can be retried without rebuilding anything.
+# it first also means the resolve can be retried without rebuilding anything - and the
+# retries are only worth anything if the graph they produce SURVIVES into the archive,
+# which is why the directory is no longer deleted between the two steps.
 echo "resolving packages"
+resolved=false
 for attempt in 1 2 3; do
   if xcodebuild -resolvePackageDependencies \
       -project "$client/sing-box.xcodeproj" \
       -scheme SFI \
-      -derivedDataPath "$work/dd" >/dev/null 2>&1; then
+      -derivedDataPath "$derived_data" >/dev/null 2>&1; then
+    resolved=true
     break
   fi
   echo "  resolve attempt $attempt failed (network); retrying"
   sleep 5
 done
+# Fail closed. The loop above used to fall through after three attempts and let the archive
+# try anyway, so a resolve that never succeeded was reported as an archive failure much
+# later, with the real cause gone from the log.
+if [ "$resolved" != "true" ]; then
+  echo "FAIL: could not resolve Swift packages after 3 attempts." >&2
+  echo "      This is a network or registry problem, not a project problem; the archive was" >&2
+  echo "      not attempted because it would resolve inline and fail the same way." >&2
+  exit 1
+fi
 
 echo "archiving (Release, iphoneos, arm64; automatic signing, re-signed at export)"
 rm -rf "$archive_path"
-# Clear the derived data too. Xcode caches the resolved package graph and the
-# build settings derived from it, and a cache written while the archive still used
-# the project's development identity keeps that identity in play: the build then
-# asks Apple for an iOS *App Development* profile even though the command line says
-# Apple Distribution, which makes a signing-mode problem look like a device problem.
-# Reproduced by running the identical command line against a fresh directory, where
-# it correctly requests distribution.
-rm -rf "$work/dd"
+# The derived data is deliberately NOT cleared here.
+#
+# It used to be, for a real reason: Xcode caches the resolved package graph and the build
+# settings derived from it, and a cache written while the archive still used the project's
+# development identity kept that identity in play, so the build asked Apple for an iOS *App
+# Development* profile even though the command line said Apple Distribution - a signing-mode
+# problem presenting as a device problem.
+#
+# The cause was a REUSED directory carrying a previous run's identity, not the presence of a
+# cache. The directory above is created fresh for this run and deleted if it already existed,
+# so the stale-identity cache cannot be what the archive reads, and this run's own resolve is
+# kept instead of being thrown away and redone inline.
 xcodebuild archive \
   -project "$client/sing-box.xcodeproj" \
   -scheme SFI \
   -configuration Release \
   -destination 'generic/platform=iOS' \
   -archivePath "$archive_path" \
-  -derivedDataPath "$work/dd" \
+  -derivedDataPath "$derived_data" \
   ARCHS=arm64 \
   ONLY_ACTIVE_ARCH=NO \
   BASE_PACKAGE_IDENTIFIER="$APPLE_BASE_BUNDLE_ID" \

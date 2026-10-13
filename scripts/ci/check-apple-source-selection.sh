@@ -488,6 +488,7 @@ assert-shared-source
 branch
 checkout
 dir
+ls-remote
 resolve
 sha
 verify"
