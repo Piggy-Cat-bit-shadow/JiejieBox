@@ -58,6 +58,8 @@ on:
       - "scripts/ci/prepare-desktop-client.sh"
       - "scripts/ci/check-desktop-source-identity.sh"
       - "scripts/ci/test-desktop-source-identity.sh"
+      - "scripts/ci/require-executed-coverage.sh"
+      - "scripts/ci/require-executed-coverage.test.sh"
       - "scripts/ci/verify-desktop-daemon-provenance.py"
       - "scripts/ci/version.sh"
       - "release/JIEJIE_VERSION"

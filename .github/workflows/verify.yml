@@ -17,7 +17,46 @@ name: Verify
 on:
   push:
     branches: [testing]
+    # A docs-only push must not start an expensive Verify. This is not about concurrency: a
+    # report-only commit used to start a second Verify while a real code Verify was still in
+    # its build or race stage, and the concurrency group then cancelled the run that mattered,
+    # for a commit whose source had not changed. The cost was paid twice - once in cancelled
+    # wall clock, and once in a release candidate whose Verify had to be dispatched again.
+    #
+    # # Why `*.md` and not `docs/**`
+    #
+    # In GitHub's filter patterns `*` does not match `/`, so `*.md` matches the report files at
+    # the REPOSITORY ROOT only - which is where the audit and closure reports land, and where
+    # essentially all of the noise comes from.
+    #
+    # `docs/**` is deliberately NOT ignored, because part of it IS machine-read:
+    # `scripts/ci/verify-fork-handoff.sh` parses `docs/fork/upstream-sync-handoff.md` with `sed`
+    # and `grep`, reads a `<!-- release-verdict: ... -->` marker out of
+    # `docs/fork/v016-final-release-verdict.md`, and checks `docs/fork/v016-release-candidate-manifest.md`
+    # for a "not frozen yet" string. A verdict marker is a release input, so a change to those
+    # files is not documentation-only. `*.md` cannot reach them, and that is the point.
+    #
+    # # What is deliberately NOT ignored, and why each one is source identity
+    #
+    #   .gitmodules, clients/*        a gitlink change changes what the build contains
+    #   .github/workflows/**          a gate change must be verified by the gate it changes
+    #   scripts/ci/**                 where the gates live
+    #   release/**                    JIEJIE_VERSION, build-tag profiles, release inputs
+    #   go.mod, go.sum                the build graph
+    #   **/*.go, Makefile, Dockerfile the product
+    #
+    # None of those is listed here, because `paths-ignore` is a subtractive filter: anything
+    # not named still triggers. The list below is therefore the COMPLETE set of paths allowed
+    # to skip Verify, and it is short on purpose.
+    paths-ignore:
+      - "*.md"
   pull_request:
+    # The same filter, for the same reason and with the same exclusions: a pull request that
+    # only adds a report does not need a 40-minute build matrix, and a pull request that
+    # touches a markdown file the release gate parses still does - and `*.md` cannot reach
+    # those, since they live under `docs/fork/`.
+    paths-ignore:
+      - "*.md"
   workflow_dispatch:
 
 permissions:
@@ -307,20 +346,59 @@ jobs:
         run: ./scripts/ci/verify-cronet-provenance.sh apple
 
       - name: race on the fork's own data paths
-        # Bounded to the packages the fork actually changed. The artifact workflows own the full race
-        # suite; this is the subset where a fork-local regression would land first.
+        # # Why this is still in the push gate, measured rather than assumed
         #
-        # The configuration surface is a separate step because the `option` package's TEST binary
-        # links cronet (through a naive-related test), and no Linux product links cronet: the server
-        # profile is release/DEFAULT_BUILD_TAGS_OTHERS, which has no with_naive_outbound. Running it
-        # under the server profile covers every decode, schema and round-trip test in the package,
-        # and it is what Linux actually ships.
+        # The comment here used to say "the artifact workflows own the full race suite; this is
+        # the subset where a fork-local regression would land first". The second half is right
+        # and the first half is not, so the decision to keep this step is now recorded from
+        # measurement instead of from that claim.
+        #
+        # Every `-race` invocation in the repository, and what it actually covers:
+        #
+        #   verify.yml (here)          TRAFFICCLASS, TRAFFICSCHED, DIALER, DIRECT, TUN,
+        #                              ROUTE, ADAPTER   - push, every push
+        #   server-linux-amd64.yml     masque, http, naive, ROUTE, httpclient
+        #                              - workflow_dispatch WITH deep_checks=true
+        #   client-macos.yml           masque(x2), http, naive, ROUTE, httpclient, TRAFFICSCHED
+        #                              - workflow_dispatch WITH deep_checks=true
+        #
+        # Capitalised entries are the overlap. Three facts follow, and each one blocks the
+        # obvious simplification:
+        #
+        #   1. The artifact workflows' race steps are gated behind a manual `deep_checks` input,
+        #      so they never run on a push. If this step is deleted without another owner, five
+        #      packages - trafficclass, dialer, protocol/direct, protocol/tun, adapter - lose
+        #      race coverage entirely, and trafficclass in particular is a fork-original
+        #      package with no other racer anywhere.
+        #   2. The overlap is real but not substitutable. This step races under
+        #      release/DEFAULT_BUILD_TAGS; the artifact workflows race under
+        #      DEFAULT_BUILD_TAGS_OTHERS. The two lists differ by exactly one tag,
+        #      `with_naive_outbound`, and that tag is what makes the Darwin profile link cronet
+        #      - so "move it to the product workflow" would silently start racing a different
+        #      build configuration and call it the same check.
+        #   3. The only correct destination for (1) and (2) is a final-candidate gate that races
+        #      the union of these sets once, at the frozen SHA. That gate does not exist.
+        #
+        # So this step is KEPT, and the action is recorded rather than taken: what is missing is
+        # ONE final-candidate race owner covering the union, after which the push-time subsets
+        # can be dropped from here and from the artifact workflows' deep legs. Deleting it from
+        # here first would remove coverage without moving it, which is the failure mode this
+        # comment exists to prevent. It is a MOVE, and the destination is not built yet.
         run: |
           set -euo pipefail
           tags="$(cat release/DEFAULT_BUILD_TAGS)"
           go test -race -count=1 -timeout 30m -tags "$tags" ./common/trafficclass/... ./common/trafficsched/... ./common/dialer/... ./protocol/direct/... ./protocol/tun/... ./route/... ./adapter/...
 
       - name: race on the configuration surface
+        # The configuration surface is a separate step because the `option` package's TEST
+        # binary links cronet (through a naive-related test), and no Linux product links cronet:
+        # the server profile is release/DEFAULT_BUILD_TAGS_OTHERS, which has no
+        # with_naive_outbound. Running it under the server profile covers every decode, schema
+        # and round-trip test in the package, and it is what Linux actually ships.
+        #
+        # `./option/...` is raced NOWHERE ELSE in this repository - it is not in either artifact
+        # workflow's race list - so this step is the sole owner and must not be moved to a
+        # product workflow without changing the tags it runs under.
         run: |
           set -euo pipefail
           tags="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"

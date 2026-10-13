@@ -60,20 +60,31 @@ note() { printf '%s\n' "$*"; }
 # The release contract
 # ---------------------------------------------------------------------------
 #
-# Exactly the products this fork ships from an automated build: the Linux amd64
-# Server Edition and the macOS arm64 core. Windows, Android and the Apple IPA/DMG
-# are deliberately NOT here - pulling them into the release is a product decision,
-# not a bug fix, and a third artifact that nobody verified would be worse than a
-# missing one.
+# The products this fork ships from an automated build. There are FIVE deliverables:
+#
+#   from a target workflow   linux-amd64, macos-arm64, windows-core-amd64, android-arm64
+#   staged separately        the Windows desktop installer (see `desktop`)
+#
+# `TARGET_WORKFLOWS` below holds two of the four workflow targets by DEFAULT, which is a
+# fixture-focus decision and not the product contract: the unit fixtures build two products so
+# they stay readable, and `release.yml` sets `RELEASE_EXTRA_PLATFORMS: true` at job level, which
+# is what adds the Windows core and the Android libbox. So the default is two, the release is
+# four, and a consumer must not read the default as "these are the platforms we ship".
+#
+# This comment used to say Windows, Android and the Apple IPA/DMG were "deliberately NOT here"
+# and that adding them "is a product decision, not a bug fix". That stopped being true when
+# `RELEASE_EXTRA_PLATFORMS` was introduced: the case statement directly below adds Windows and
+# Android, and a release that shipped only Linux and macOS would now be the incomplete one. A
+# comment that contradicts the code beneath it is how a reader concludes the wrong contract, so
+# it is corrected rather than left as history.
 
 TARGET_WORKFLOWS=(
   ".github/workflows/server-linux-amd64.yml"
   ".github/workflows/client-macos.yml"
 )
 
-# The first release contract shipped Linux and macOS only. v0.1.6 also publishes
-# the already-verified Windows core and Android ARM64 libbox, enabled explicitly
-# by release.yml so the existing two-product unit fixtures remain focused.
+# Adds the Windows core and the Android ARM64 libbox. Named `_EXTRA_` for the reason above -
+# they are extra to the DEFAULT TARGET SET, not extra to the product.
 case "${RELEASE_EXTRA_PLATFORMS:-false}" in
   false) ;;
   true)
@@ -918,7 +929,16 @@ $(printf '      %s\n' $unexpected)
       The shipped file set must be exactly the verified one."
   fi
 
-  note "PASS: both platforms verified against commit $sha"
+  # Names the products actually verified rather than a count, because the count varies: two by
+  # default, four under `RELEASE_EXTRA_PLATFORMS=true`, which is what a release uses. This line
+  # said "both platforms" and kept saying it after the loop could run four times, which is the
+  # same stale-contract problem as the header comment above - a green message describing a
+  # contract the run did not check.
+  local verified_platforms=() wfv
+  for wfv in "${TARGET_WORKFLOWS[@]}"; do
+    verified_platforms+=( "$(target_field "$wfv" platform)/$(target_field "$wfv" arch)" )
+  done
+  note "PASS: verified ${#verified_platforms[@]} platform(s) against commit $sha: ${verified_platforms[*]}"
 }
 
 # ---------------------------------------------------------------------------
