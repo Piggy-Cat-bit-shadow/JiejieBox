@@ -285,6 +285,25 @@ jobs:
           # The control is what makes this non-vacuous, exactly as the deleted baseline build was:
           # the same file must be SELECTED under the release tags and IGNORED under upstream's. If
           # both profiles agreed, the check would prove nothing, and that is a hard failure.
+          # Every `go list` below names the TARGET explicitly, and that is load-bearing rather
+          # than tidy.
+          #
+          # `go list` reads GOOS/GOARCH/CGO_ENABLED from its own environment. The build step
+          # `export`s them, but a GitHub Actions step is a separate process, so that export does
+          # NOT reach this one. A bare `go list` here therefore describes the RUNNER's platform -
+          # linux/amd64 on a GitHub-hosted runner - and every assertion below would answer a
+          # question about a build this workflow does not ship.
+          #
+          # That is not hypothetical: it is how "protocol/masque is not in the release build's
+          # package graph" was reported for a Windows build, because the host graph resolved the
+          # Linux-only QUIC/nftables path instead of the Windows one. The check was right to
+          # refuse; it was reading the wrong graph.
+          #
+          # These are the same values the build step uses, read from the job environment, so the
+          # checked graph and the built artifact cannot drift apart.
+          export CGO_ENABLED=0 GOOS="$GOOS_TARGET" GOARCH="$GOARCH_TARGET"
+          echo "capability check target: $GOOS/$GOARCH CGO_ENABLED=$CGO_ENABLED (host is $(go env GOHOSTOS)/$(go env GOHOSTARCH))"
+
           gated_file="outbound.go"
           control_tags="$(tr -d '[:space:]' < release/DEFAULT_BUILD_TAGS_OTHERS)"
 
@@ -311,9 +330,15 @@ jobs:
 
           # MASQUE is not tag-gated at all - it arrives with the QUIC stack - which is exactly what
           # the deleted control build showed by containing it too. Stated here as a graph fact.
+          #
+          # The graph queried is the TARGET's, inherited from the export above. Asking the host
+          # graph here is what produced a false "protocol/masque is not in the release build's
+          # package graph" against a Windows artifact.
           if ! go list -deps -tags "$BUILD_TAGS" ./cmd/sing-box \
               | grep -qx 'github.com/sagernet/sing-box/protocol/masque'; then
-            echo "FAIL: protocol/masque is not in the release build's package graph" >&2
+            echo "FAIL: protocol/masque is not in the $GOOS/$GOARCH build's package graph" >&2
+            echo "      (queried with GOOS=$GOOS GOARCH=$GOARCH CGO_ENABLED=$CGO_ENABLED; the" >&2
+            echo "      runner host is $(go env GOHOSTOS)/$(go env GOHOSTARCH))" >&2
             exit 1
           fi
           echo "PASS: Native Naive's gated outbound is compiled in, and MASQUE is in the graph"
