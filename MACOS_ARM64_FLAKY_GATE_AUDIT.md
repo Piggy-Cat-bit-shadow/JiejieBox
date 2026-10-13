@@ -136,6 +136,38 @@ gofmt / go vet                          clean / exit 0
 No product code changed; `scheduler.go` is untouched. The scheduler was measured serving both lanes
 fairly.
 
+### 3.1 A second finding: the test does not exercise the mechanism it names
+
+An independent analysis of the same test (static, no toolchain access) established something the fix
+does **not** address, and it is worth recording rather than leaving implied by the test's name:
+
+**Under `ModeService`, two waiters parked at the same instant is unreachable.** `laneFlowLocked`
+returns nil for both lanes while `inflightService > 0`, so exactly one managed write is in flight; a
+parked NORMAL flow therefore implies the HIGH flow holds the slot, and the holder's `done()` always
+releases and re-grants. Consequence:
+
+```text
+the lane-alternation this test observes comes from ModeService's single slot plus grant-on-release,
+NOT from the `highStreak < HighPerNormal` fairness floor
+```
+
+So the `HighPerNormal` floor branch is **never exercised** by this test, even though the test's
+docstring frames it as the liveness requirement "end to end". The docstring is careful not to claim a
+ratio, which is correct — but "neither lane stalls" is being demonstrated by a path that cannot stall
+by construction.
+
+**Recorded, not acted on.** Making "busy" an observed event rather than an assumption — start the
+NORMAL worker first and wait until its lane actually holds a waiter before starting the HIGH worker —
+would reach the floor branch. That is a new test with a new synchronisation design, not a flake fix,
+and it belongs with whoever decides how much the scheduler's fairness floor needs covering. It is
+explicitly **not** bundled into the determinism fix, because mixing a coverage improvement into a flake
+fix is how a flake fix becomes unattributable.
+
+One further note from the same analysis, adopted as a refinement rather than a change: because the
+predicate is read under the same mutex the workers publish with, the `require.Positive(t, normalGrants)`
+assertion that follows it is now *implied* by the predicate. It is kept as a harmless canary — if it
+ever fires, the predicate and the assertion disagree, which is itself information.
+
 ---
 
 ## 4. UNRESOLVED — the wireguard receive-census family
