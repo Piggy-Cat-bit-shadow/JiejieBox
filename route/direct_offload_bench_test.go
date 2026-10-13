@@ -53,7 +53,9 @@ func BenchmarkBypassDecision(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		if !router.canFastBypass(&metadata, destination, chain, outbound).BypassAllowed() {
+		// false: a single-leaf chain carries no group policy, so this measures the eligibility
+		// predicate itself.
+		if !router.canFastBypass(&metadata, destination, chain, outbound, false).BypassAllowed() {
 			b.Fatal("expected eligible")
 		}
 	}
@@ -70,7 +72,7 @@ func BenchmarkBypassDecisionRefusedEarly(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		if router.canFastBypass(&metadata, destination, chain, outbound).BypassAllowed() {
+		if router.canFastBypass(&metadata, destination, chain, outbound, false).BypassAllowed() {
 			b.Fatal("expected refused")
 		}
 	}
@@ -87,7 +89,7 @@ func BenchmarkBypassDecisionRefusedLate(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		if router.canFastBypass(&metadata, destination, chain, outbound).BypassAllowed() {
+		if router.canFastBypass(&metadata, destination, chain, outbound, false).BypassAllowed() {
 			b.Fatal("expected refused")
 		}
 	}
@@ -119,7 +121,7 @@ func BenchmarkFlowSetupBypassed(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		metadata := fastBypassMetadata(N.NetworkTCP, destination)
-		if !router.canFastBypass(&metadata, destination, chain, outbound).BypassAllowed() {
+		if !router.canFastBypass(&metadata, destination, chain, outbound, false).BypassAllowed() {
 			b.Fatal("expected eligible")
 		}
 	}
@@ -355,7 +357,7 @@ func TestBypassDecisionUsesNoAllocations(t *testing.T) {
 	metadata := fastBypassMetadata(N.NetworkTCP, destination)
 
 	allocations := testing.AllocsPerRun(1000, func() {
-		router.canFastBypass(&metadata, destination, chain, outbound)
+		router.canFastBypass(&metadata, destination, chain, outbound, false)
 	})
 	require.Zero(t, allocations,
 		"the eligibility decision runs for every routed connection, including every proxied one")
@@ -370,7 +372,7 @@ func TestBypassDecisionUsesNoAllocations(t *testing.T) {
 	// separation honest.
 	metadata.FakeIP = true
 	allocations = testing.AllocsPerRun(1000, func() {
-		router.canFastBypass(&metadata, destination, chain, outbound)
+		router.canFastBypass(&metadata, destination, chain, outbound, false)
 	})
 	require.Zero(t, allocations)
 

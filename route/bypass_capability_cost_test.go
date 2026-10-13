@@ -82,10 +82,13 @@ func TestBothConfigurationsReachTheSameVerdictAndTheSameWork(t *testing.T) {
 			eligibleMetadata := fastBypassMetadata(network, destination)
 			ordinaryMetadata := fastBypassMetadata(network, destination)
 
+			// Both chains are a single direct leaf, so no group policy is involved and the
+			// authorisation argument is false - which is also what an unauthorised group flow would
+			// pass. This test is about the outbound's own capability check, not about fast_path.
 			eligibleVerdict := eligible.canFastBypass(&eligibleMetadata, destination,
-				[]adapter.Outbound{eligible.outbound.Default()}, eligible.outbound.Default())
+				[]adapter.Outbound{eligible.outbound.Default()}, eligible.outbound.Default(), false)
 			ordinaryVerdict := ordinary.canFastBypass(&ordinaryMetadata, destination,
-				[]adapter.Outbound{ordinary.outbound.Default()}, ordinary.outbound.Default())
+				[]adapter.Outbound{ordinary.outbound.Default()}, ordinary.outbound.Default(), false)
 
 			require.True(t, eligibleVerdict.BypassAllowed(),
 				"the shipped profile is eligible, which is what makes it the fast path")
@@ -132,7 +135,10 @@ func BenchmarkPreMatchDirectFlow(b *testing.B) {
 
 				b.ReportAllocs()
 				for b.Loop() {
-					router.canFastBypass(&metadata, destination, chain, configuration.outbound)
+					// false: a single-leaf chain carries no group policy. The benchmark therefore
+					// measures the eligibility predicate unchanged, which is what it exists to
+					// bound.
+					router.canFastBypass(&metadata, destination, chain, configuration.outbound, false)
 				}
 			})
 		}

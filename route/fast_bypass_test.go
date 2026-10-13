@@ -386,9 +386,20 @@ func TestFastBypassTLSOptionsAreIneligible(t *testing.T) {
 
 // --- chain length (§24) ---------------------------------------------------------------
 
+// TestFastBypassGroupChainIsIneligible is the UNAUTHORISED half of the chain gate's rule.
+//
+// A group introduces selection, lifecycle and accounting of its own, and bypassing it would skip all
+// of that even though the selected outbound is direct. That invariant still holds for every group
+// the flow did not enter with a fast_path authorisation - which is the overwhelmingly common case,
+// and the default for any configuration that does not use the field.
+//
+// The gate is refined, not removed, for authorised transparent groups: see
+// TestFastBypassAuthorizedGroupChainIsEligible in fast_path_group_test.go for the other half, and
+// TestFastBypassOpaqueGroupRefusesEvenWhenAuthorized for the case that proves authorisation alone
+// is never enough.
 func TestFastBypassGroupChainIsIneligible(t *testing.T) {
-	// A group introduces selection, lifecycle and accounting of its own. Bypassing it would skip
-	// all of that even though the selected outbound is direct.
+	// stubGroup does NOT declare adapter.FastPathAuthorizedGroup, and no policy map is installed on
+	// this router, so this flow is unauthorised on both counts.
 	direct := &plainDirectOutbound{}
 	direct.canBypass.Store(1)
 	group := &stubGroup{selected: direct}
@@ -404,7 +415,7 @@ func TestFastBypassGroupChainIsIneligible(t *testing.T) {
 
 	result := router.preMatchFlow(context.Background(), &metadata, destination, nil, "")
 	require.NotEqual(t, adapter.PreMatchBypass, result.Action,
-		"a connection through a group must not be bypassed, even when it selects direct")
+		"an unauthorised group must not be bypassed, even when it selects direct")
 }
 
 // stubGroup is an outbound group selecting a fixed member.
@@ -453,7 +464,7 @@ func TestFastBypassPredicateDoesNotAllocate(t *testing.T) {
 	// The eligible path must not allocate either: a hit that allocated would still hand the
 	// saving to a manual GC.
 	allocs := testing.AllocsPerRun(1000, func() {
-		_ = router.canFastBypass(&metadata, destination, chain, outbound).BypassAllowed()
+		_ = router.canFastBypass(&metadata, destination, chain, outbound, false).BypassAllowed()
 	})
 	require.Zero(t, allocs,
 		"the fast-path predicate must not allocate; measured %.2f allocs/op", allocs)
@@ -462,7 +473,7 @@ func TestFastBypassPredicateDoesNotAllocate(t *testing.T) {
 	missMetadata := fastBypassMetadata(N.NetworkTCP, destination)
 	missMetadata.Domain = "example.com"
 	missAllocs := testing.AllocsPerRun(1000, func() {
-		_ = router.canFastBypass(&missMetadata, destination, chain, outbound).BypassAllowed()
+		_ = router.canFastBypass(&missMetadata, destination, chain, outbound, false).BypassAllowed()
 	})
 	require.Zero(t, missAllocs,
 		"the ineligible path must not allocate; measured %.2f allocs/op", missAllocs)
@@ -479,7 +490,7 @@ func BenchmarkCanFastBypassEligible(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if !router.canFastBypass(&metadata, destination, chain, outbound).BypassAllowed() {
+		if !router.canFastBypass(&metadata, destination, chain, outbound, false).BypassAllowed() {
 			b.Fatal("expected eligible")
 		}
 	}
@@ -498,7 +509,7 @@ func BenchmarkCanFastBypassIneligibleEarlyExit(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if router.canFastBypass(&metadata, destination, chain, outbound).BypassAllowed() {
+		if router.canFastBypass(&metadata, destination, chain, outbound, false).BypassAllowed() {
 			b.Fatal("expected ineligible")
 		}
 	}
@@ -518,7 +529,7 @@ func BenchmarkCanFastBypassIneligibleLateExit(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if router.canFastBypass(&metadata, destination, chain, outbound).BypassAllowed() {
+		if router.canFastBypass(&metadata, destination, chain, outbound, false).BypassAllowed() {
 			b.Fatal("expected ineligible")
 		}
 	}

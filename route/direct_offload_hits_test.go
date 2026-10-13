@@ -188,7 +188,7 @@ func TestDirectOffloadHitReport(t *testing.T) {
 				metadata.FakeIP = flow.fakeIP
 				metadata.UDPConnect = flow.udpConnect
 
-				verdict := router.canFastBypass(&metadata, flow.destination, chain, outbound)
+				verdict := router.canFastBypass(&metadata, flow.destination, chain, outbound, false)
 				entry := offloadResult{verdict: verdict}
 				if verdict == BypassRefusedOutboundSemantics {
 					entry.detail = bypassBlockerDetail(outbound, flow.network, flow.destination.Addr).String()
@@ -273,7 +273,7 @@ func TestDirectOffloadRefusalIsAttributed(t *testing.T) {
 		outbound: &stubOutboundManager{def: bound},
 	}
 	metadata := fastBypassMetadata(N.NetworkTCP, destination)
-	verdict := router.canFastBypass(&metadata, destination, []adapter.Outbound{bound}, bound)
+	verdict := router.canFastBypass(&metadata, destination, []adapter.Outbound{bound}, bound, false)
 	require.Equal(t, BypassRefusedOutboundSemantics, verdict)
 	require.Contains(t, bypassBlockerDetail(bound, N.NetworkTCP, destination.Addr).String(), "bind_interface")
 
@@ -281,7 +281,7 @@ func TestDirectOffloadRefusalIsAttributed(t *testing.T) {
 	metadata.FakeIP = true
 	require.Equal(t,
 		BypassRefusedFakeIP,
-		router.canFastBypass(&metadata, destination, []adapter.Outbound{bound}, bound),
+		router.canFastBypass(&metadata, destination, []adapter.Outbound{bound}, bound, false),
 		"the earlier condition in the allow-list is the one reported")
 }
 
