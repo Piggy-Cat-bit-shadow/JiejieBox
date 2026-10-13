@@ -139,10 +139,10 @@ jobs:
         # experimental/libbox is still not in this list, for a reason that was always the real
         # one: it is not in the macOS CLI's dependency graph at all (`go list -deps
         # ./cmd/sing-box` does not reach it), and its tests belong to the Apple app job, where
-        # the library is built. They RUN, with the Apple tag set, in the Linux workflow's
-        # low-memory gate (scripts/ci/test-low-memory.sh), which passes the library the
-        # -checklinkname=0 flag it needs. Nothing here is skipped silently: the full ./... run
-        # for this module is the `go build ./...` / `go build -tags` pair in verify.yml.
+        # the library is built. They RUN, with the Apple tag set, in the mobile contract workflow
+        # (scripts/ci/test-low-memory.sh), which passes the library the -checklinkname=0 flag it
+        # needs. Nothing here is skipped silently: the full ./... run for this module is the
+        # `go build ./...` / `go build -tags` pair in verify.yml.
         run: |
           set -euo pipefail
           CGO_ENABLED=1 go test -tags "$(cat "$TAGS_FILE")" -count=1 -timeout 25m \

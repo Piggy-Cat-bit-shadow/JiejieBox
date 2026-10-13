@@ -35,6 +35,8 @@ RELEASE = os.path.join(WF, "release.yml")
 DESKTOP = os.path.join(WF, "client-desktop-windows.yml")
 VERIFY = os.path.join(WF, "release-contract-verify.yml")
 AUDIT = os.path.join(WF, "client-desktop-windows-runtime-audit.yml")
+LINUX = os.path.join(WF, "server-linux-amd64.yml")
+MOBILE = os.path.join(WF, "mobile-contract.yml")
 GATE = os.path.join(REPO, "scripts", "ci", "release-artifacts.sh")
 
 passed = 0
@@ -257,8 +259,47 @@ def check_runtime_audit_split():
                "runtime-audit" not in gate and "runtime_audit" not in gate)
 
 
+def check_mobile_contract():
+    """The mobile/Apple source contract has exactly one owner.
+
+    `scripts/ci/test-low-memory.sh` used to run inside the LINUX artifact workflow, before that
+    workflow had even built its binary, while its subject is the iOS buffer geometry. It now owns a
+    workflow of its own. This asserts the result: one invoker, and it is not the Linux one.
+    """
+    for label, path in (
+        ("server-linux-amd64.yml", LINUX),
+        ("mobile-contract.yml", MOBILE),
+    ):
+        if not os.path.isfile(path):
+            report("%s exists" % label, False, path)
+            return
+    with open(LINUX, encoding="utf-8") as fh:
+        linux = code_only(fh.read())
+    with open(MOBILE, encoding="utf-8") as fh:
+        mobile = fh.read()
+    mobile_code = code_only(mobile)
+
+    report("linux artifact workflow no longer runs the mobile contract",
+           "test-low-memory.sh" not in linux)
+    report("mobile contract workflow runs it", "test-low-memory.sh" in mobile_code)
+    report("mobile contract workflow has no continue-on-error",
+           "continue-on-error" not in mobile_code)
+
+    # Every workflow in the repository that INVOKES the script, so a second owner is caught
+    # wherever it appears rather than only in the two files named above.
+    owners = []
+    for name in sorted(os.listdir(WF)):
+        if not name.endswith(".yml"):
+            continue
+        with open(os.path.join(WF, name), encoding="utf-8") as fh:
+            if "test-low-memory.sh" in code_only(fh.read()):
+                owners.append(name)
+    report("exactly one workflow owns the mobile contract",
+           owners == ["mobile-contract.yml"], str(owners))
+
+
 def main():
-    for path in (RELEASE, DESKTOP, VERIFY, AUDIT):
+    for path in (RELEASE, DESKTOP, VERIFY, AUDIT, LINUX, MOBILE):
         if not os.path.isfile(path):
             print("FAIL: missing %s" % path, file=sys.stderr)
             return 1
@@ -267,6 +308,8 @@ def main():
     check_desktop()
     print()
     check_runtime_audit_split()
+    print()
+    check_mobile_contract()
     print()
     check_verify()
     print()

@@ -1,0 +1,123 @@
+name: Mobile contract verification
+
+# Owns the mobile/Apple SOURCE contract: the tag sets the iOS and Android builds are composed from,
+# and the data-path suites run under the buffer geometry those builds actually use.
+#
+# # Why this is its own workflow
+#
+# `scripts/ci/test-low-memory.sh` used to run inside `server-linux-amd64.yml`, where it was the
+# first thing a LINUX artifact job did - before that job had even built its binary. Its subject is
+# the iOS buffer geometry: it asserts that the common Apple tag set does NOT carry with_low_memory
+# (or macOS would receive mobile geometry in a mixed ios,macos build) while the mobile-only set DOES,
+# and then runs the packages that compute buffer size, headroom and MTU under with_low_memory, where
+# buf.BufferSize is 16 KiB instead of 32 KiB and the in-place framing boundary moves with it. A
+# production crash came out of exactly that gap, so the tag is part of the contract.
+#
+# None of that is about a Linux binary. Moving it here gives the contract one owner, and gives the
+# Linux artifact workflow back its actual job.
+#
+# # WHAT THIS DOES NOT PROVE, AND WHY UBUNTU IS STILL THE RIGHT RUNNER
+#
+# This runs on Ubuntu and therefore does NOT compile or link anything for Apple: it is the Go
+# data-path suites under the mobile TAG SET, not under an Apple toolchain, and it does not exercise
+# Cronet, Xcode, the iOS SDK or any Darwin-only build constraint. That limitation is real and is
+# stated here rather than hidden behind a green tick - the alternative is a macOS runner, which would
+# buy the tag fidelity it already has and only add the Darwin-only constraints that
+# `client-macos.yml` already covers.
+#
+# What it DOES prove, and what nothing else does: that the tag composition the mobile builds depend
+# on is intact, and that the packages which size buffers from buf.BufferSize still pass at the size
+# iOS actually gets. The script FAILS CLOSED if the Apple build stops using with_low_memory, so this
+# gate cannot rot into testing a configuration nothing ships.
+#
+# # Gating status
+#
+# HARD: every check here is a hard failure. There is no `continue-on-error` and no `|| true`.
+#
+# It is NOT part of the release contract - `release-artifacts.sh` does not consult it - so it is a
+# push/dispatch gate rather than a release blocker. It guards the mobile contract continuously
+# instead of only at release time.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [testing]
+    # The paths this contract actually depends on, derived from what the script reads:
+    #
+    #   * the tag sources it asks for the Apple sets (cmd/internal/appletags,
+    #     cmd/internal/mobilebuildtags, cmd/internal/applebuildtags);
+    #   * ./service/oomkiller (the Apple memory policy itself) and ./experimental/libbox (which
+    #     applies it), both of which the script tests;
+    #   * the data-path packages it runs under the tag;
+    #   * the script itself.
+    #
+    # A path filter is safe here because the gate is bounded and its inputs are known - unlike
+    # verify.yml, which deliberately has none because it owns repository-wide invariants.
+    paths:
+      - 'cmd/internal/appletags/**'
+      - 'cmd/internal/mobilebuildtags/**'
+      - 'cmd/internal/applebuildtags/**'
+      - 'cmd/internal/build_libbox/**'
+      - 'experimental/libbox/**'
+      - 'service/oomkiller/**'
+      - 'common/buf/**'
+      - 'common/badtls/**'
+      - 'common/ktls/**'
+      - 'common/listener/**'
+      - 'common/tls/**'
+      - 'protocol/shadowsocks/**'
+      - 'protocol/shadowtls/**'
+      - 'protocol/naive/**'
+      - 'protocol/anytls/**'
+      - 'transport/http/**'
+      - 'transport/masque/**'
+      - 'route/**'
+      - 'dns/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'scripts/ci/test-low-memory.sh'
+      - 'scripts/ci/lib.sh'
+      - '.github/workflows/mobile-contract.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  # One run per ref: this is a source contract, so a superseded push's answer is the previous
+  # commit's answer and cancelling it loses nothing.
+  group: mobile-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mobile-contract:
+    name: Apple tags and the low-memory data paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out the source
+        uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            test/go.sum
+
+      - name: gofmt
+        run: |
+          set -euo pipefail
+          unformatted="$(gofmt -l cmd include option protocol route service transport common dns adapter 2>&1 || true)"
+          if [ -n "$unformatted" ]; then
+            echo "FAIL: these files are not gofmt-clean:" >&2
+            echo "$unformatted" >&2
+            exit 1
+          fi
+          echo "PASS: gofmt clean"
+
+      - name: The mobile tag contract and the low-memory data paths
+        # The whole gate, unchanged. It asserts the tag sets from their source of truth and then
+        # runs the buffer-geometry packages under with_low_memory. It is the only place either
+        # happens, which is the point of this workflow existing.
+        run: ./scripts/ci/test-low-memory.sh

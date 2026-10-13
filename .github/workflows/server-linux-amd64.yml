@@ -165,15 +165,19 @@ jobs:
             ./common/httpclient ./common/tls ./include ./route ./common/trafficsched
           echo "PASS: focused unit tests under $TAGS"
 
-      - name: low-memory data paths
-        # The iOS client is built with with_low_memory, which halves buf.BufferSize
-        # from 32 KiB to 16 KiB and moves the in-place framing boundary with it. That
-        # is not equivalent to the default build: a production crash came out of
-        # exactly this gap, and a test in this repository had been failing unnoticed
-        # under the tag because nothing ran it. The script fails closed if the Apple
-        # build stops using with_low_memory, so this gate cannot rot into testing a
-        # configuration nothing ships.
-        run: ./scripts/ci/test-low-memory.sh
+      # The low-memory data-path gate USED TO RUN HERE and has moved to
+      # `.github/workflows/mobile-contract.yml`.
+      #
+      # It was in the wrong place. Its subject is the iOS/mobile buffer geometry - it asserts that
+      # the Apple tag sets are what the mobile builds use, and then runs the data-path suites under
+      # with_low_memory so the 16 KiB framing boundary is exercised - and it touches no Linux
+      # artifact at all. It also ran BEFORE this workflow built its binary, so a gate about a mobile
+      # contract was the first thing a Linux artifact job did.
+      #
+      # Nothing was dropped: the script is unchanged, it still fails closed if the Apple build stops
+      # using with_low_memory, and it now runs in a workflow whose path filter names the sources it
+      # actually depends on. See that workflow for why an Ubuntu runner is still the right place for
+      # it, and what it therefore does NOT prove.
 
       - name: production contract tests (registry + topology)
         # The nine contract assertions that decide whether the shipped binary can
