@@ -67,9 +67,12 @@ if [ -z "$version" ]; then
   exit 2
 fi
 
-# -s -w drops the symbol table and DWARF. The shipped artifact is therefore
-# smaller, and the workflow keeps a separate unstripped link of the same program
-# for the symbol audit rather than shipping symbols to users.
+# -s -w drops the symbol table and DWARF, so the shipped artifact is smaller.
+#
+# This comment used to add "and the workflow keeps a separate unstripped link of the same program
+# for the symbol audit". That is no longer true anywhere: server-linux-amd64.yml removed its
+# second link in favour of a `go list -deps` capability check, and windows-core-amd64.yml has now
+# done the same. Symbols are not shipped to users and nothing else is linked to read them.
 ldflags="-s -w -X github.com/sagernet/sing-box/constant.Version=${version} $(cat release/LDFLAGS)"
 
 echo "building jiejie-server goos=$goos goarch=$goarch"

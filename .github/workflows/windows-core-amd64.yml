@@ -66,10 +66,16 @@ jobs:
   core:
     name: sing-box.exe (windows/amd64)
     runs-on: ubuntu-latest
-    # Three full windows/amd64 cross-builds (the release artifact, the unstripped build
-    # the symbol check reads, and the upstream-baseline negative control) plus packaging
-    # and the zip re-expansion. This job had NO ceiling, so a hung build or a wedged
-    # module download would have burned the 360-minute default before anyone saw it.
+    # ONE full windows/amd64 cross-build - the release artifact - plus packaging and the zip
+    # re-expansion. This job used to run three: the release artifact, an unstripped build the
+    # symbol check read, and an upstream-baseline negative control. Both extra links are gone;
+    # the facts they established are now read from the build constraints and from the artifact's
+    # own embedded metadata, with no build step.
+    #
+    # The ceiling is kept rather than lowered. It was sized for three cross-builds and a hung
+    # build or a wedged module download would still burn the 360-minute default without it, so
+    # 60 minutes remains a ceiling that only a real hang reaches. Lowering it now would be a
+    # guess made against a job whose runtime nobody has measured since this change.
     timeout-minutes: 60
     steps:
       - name: Check out the source to build
@@ -176,20 +182,17 @@ jobs:
           go build -v -trimpath -o "dist/$ARTIFACT_NAME" -tags "$BUILD_TAGS" \
             -ldflags "$ldflags" ./cmd/sing-box
 
-          # Two symbol-bearing builds, only so the feature check below can inspect what was
-          # linked in. They must NOT carry -s -w: stripping removes the symbol table, and
-          # `go tool nm` then reports zero symbols for everything - which would fail the
-          # feature check on a perfectly good artifact. The version stamp and
-          # release/LDFLAGS are kept so these differ from the artifact only by stripping.
-          inspect_ldflags="-X 'github.com/sagernet/sing-box/constant.Version=$JJ_VERSION' $(cat release/LDFLAGS)"
-
-          go build -trimpath -o dist/sing-box-unstripped.exe -tags "$BUILD_TAGS" \
-            -ldflags "$inspect_ldflags" ./cmd/sing-box
-
-          # Negative control: upstream's Windows tag set, which has no Native Naive.
-          # Without this, a feature check that always reports "present" would prove nothing.
-          go build -trimpath -o dist/control-baseline.exe -tags "$(tr -d '[:space:]' < release/DEFAULT_BUILD_TAGS_OTHERS)" \
-            -ldflags "$inspect_ldflags" ./cmd/sing-box
+          # There USED to be two symbol-bearing builds here (dist/sing-box-unstripped.exe and
+          # dist/control-baseline.exe), purely so `go tool nm` could count linked symbols. They
+          # were two more full windows/amd64 cross-links of the same program, and they are gone.
+          #
+          # The feature-presence question is answered below against the compiler's own view of the
+          # build constraints, which needs no link at all, and the artifact's tag provenance is read
+          # out of the shipped binary with `go version -m`. server-linux-amd64.yml made the same
+          # change for the same reason ("the `.debug` second build for the symbol audit is GONE").
+          #
+          # Removing them loses no verification: every fact the nm counts established is still
+          # established, and one fact is established more strongly (see the tag-provenance step).
 
           ls -la dist
 
@@ -220,61 +223,104 @@ jobs:
           echo "=== go version -m (build metadata embedded in the artifact) ==="
           go version -m "dist/$ARTIFACT_NAME"
 
-      - name: Verify the custom features are actually linked in
+      - name: Assert the artifact really carries the build tags it claims
         shell: bash
         run: |
           set -euo pipefail
-          # Symbol-level, not string-level: a feature that was compiled out leaves no
-          # package symbols at all. The baseline control is what makes this meaningful
-          # - if it also reported the feature present, the check would prove nothing.
-          count() { go tool nm "$1" 2>/dev/null | grep -cE "$2" || true; }
-
-          # Native Naive's OUTBOUND is the tag-gated half: protocol/naive/outbound.go carries
-          # //go:build with_naive_outbound, while the inbound is built unconditionally.
-          # Counting the whole package would be a fake check - measured against the control
-          # below, an upstream-tag build still contains 180 protocol/naive symbols, so only
-          # the gated constructor discriminates. MASQUE is not tag-gated at all (it arrives
-          # with the QUIC stack), which the control confirms by containing it too.
-          NAIVE_RE='sing-box/protocol/naive\.NewOutbound'
-          MASQUE_RE='sing-box/protocol/masque\.'
-
-          naive_release="$(count dist/sing-box-unstripped.exe "$NAIVE_RE")"
-          naive_control="$(count dist/control-baseline.exe "$NAIVE_RE")"
-          masque_release="$(count dist/sing-box-unstripped.exe "$MASQUE_RE")"
-          masque_control="$(count dist/control-baseline.exe "$MASQUE_RE")"
-
-          echo "protocol/naive  symbols: release=$naive_release control=$naive_control"
-          echo "protocol/masque symbols: release=$masque_release control=$masque_control"
-          echo
-
-          if [ "$naive_control" -ne 0 ]; then
-            echo "FAIL: the control build contains the gated Native Naive outbound, so this" >&2
-            echo "      check cannot discriminate and would prove nothing" >&2
+          # The strongest and cheapest form of this check: `go version -m` reads the Go build
+          # metadata EMBEDDED IN THE SHIPPED BINARY and reports the exact `-tags` value it was
+          # linked with. Nothing else proves that the bytes on the release page were compiled with
+          # the profile this workflow intended. A `go list` proves what the source WOULD compile to;
+          # a symbol count proves what one build contained; only this reads the artifact itself.
+          #
+          # It costs nothing. The command already ran two steps up and its output used to be
+          # printed and thrown away.
+          #
+          # The setting survives -s -w because it lives in the build-info blob rather than the
+          # symbol table, which is why this works on the stripped release binary. The same pattern is
+          # already used in this repository by scripts/ci/verify-desktop-daemon-provenance.py and
+          # scripts/ci/verify-upstream-assumptions.sh.
+          reported="$(go version -m "dist/$ARTIFACT_NAME" \
+            | sed -n 's/^[[:space:]]*build[[:space:]]\{1,\}-tags=//p' | head -1)"
+          if [ -z "$reported" ]; then
+            echo "FAIL: dist/$ARTIFACT_NAME carries no -tags build setting, so the artifact cannot" >&2
+            echo "      be shown to be the profile this workflow resolved." >&2
             exit 1
           fi
+
+          # Compared as SETS, order-insensitively: the linker records the tags in the order it
+          # received them, and nothing guarantees that matches the tag file's order.
+          normalise() { printf '%s' "$1" | tr ',' '\n' | sed '/^$/d' | sort | tr '\n' ' '; }
+          want="$(normalise "$BUILD_TAGS")"
+          got="$(normalise "$reported")"
+          echo "expected tags: $want"
+          echo "artifact tags: $got"
+          if [ "$want" != "$got" ]; then
+            echo "FAIL: the artifact was built with different tags than this workflow resolved." >&2
+            exit 1
+          fi
+          # with_naive_outbound is the one tag whose absence would silently ship a core without the
+          # feature this fork exists for, so it is named explicitly rather than left to the set
+          # comparison above.
+          case " $got " in
+            *" with_naive_outbound "*) ;;
+            *) echo "FAIL: the artifact was not built with with_naive_outbound" >&2; exit 1 ;;
+          esac
+          echo "PASS: the shipped binary's embedded metadata names exactly the resolved tag set"
+
+      - name: Verify the custom features are compiled in, from the build constraints
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Capability presence is checked against the compiler's own view of the build constraints,
+          # with NO build step - the method server-linux-amd64.yml already uses, adapted to the one
+          # place it does not transfer verbatim.
+          #
+          # Why `go list -deps` alone is NOT enough here, measured rather than assumed:
+          # include/registry.go imports protocol/naive unconditionally and registers its INBOUND, so
+          # `protocol/naive` is in the dependency graph under BOTH profiles. Only the tag-gated half
+          # discriminates, and that half is a single FILE: protocol/naive/outbound.go carries
+          # `//go:build with_naive_outbound`. So the question is asked at file granularity.
+          #
+          # The control is what makes this non-vacuous, exactly as the deleted baseline build was:
+          # the same file must be SELECTED under the release tags and IGNORED under upstream's. If
+          # both profiles agreed, the check would prove nothing, and that is a hard failure.
+          gated_file="outbound.go"
+          control_tags="$(tr -d '[:space:]' < release/DEFAULT_BUILD_TAGS_OTHERS)"
+
+          selected="$(go list -tags "$BUILD_TAGS" -f '{{range .GoFiles}}{{.}} {{end}}' ./protocol/naive)"
+          ignored="$(go list -tags "$control_tags" -f '{{range .IgnoredGoFiles}}{{.}} {{end}}' ./protocol/naive)"
+
+          echo "release profile: protocol/naive compiles -> $selected"
+          echo "control profile: protocol/naive ignores  -> $ignored"
+
+          case " $selected " in
+            *" $gated_file "*) ;;
+            *) echo "FAIL: the release tag set does not compile protocol/naive/$gated_file." >&2
+               echo "      A Windows core without the Native Naive outbound is not the core this" >&2
+               echo "      fork exists to ship." >&2
+               exit 1 ;;
+          esac
+          case " $ignored " in
+            *" $gated_file "*) ;;
+            *) echo "FAIL: upstream's tag set ALSO compiles protocol/naive/$gated_file, so this" >&2
+               echo "      check cannot discriminate and would prove nothing." >&2
+               exit 1 ;;
+          esac
           echo "control is sound: upstream's tag set really does exclude the Native Naive outbound"
-          echo "(MASQUE present in the control too, as expected: it is not tag-gated)"
 
-          status() { [ "$1" -gt 0 ] && echo COMPILED || echo "NOT COMPILED"; }
-          echo "Native Naive  : $(status "$naive_release")"
-          echo "MASQUE        : $(status "$masque_release")"
-
-          if [ "$naive_release" -le 0 ]; then
-            echo "FAIL: the release build does not contain Native Naive." >&2
-            echo "      A Windows core without it is not the core this fork exists to ship." >&2
+          # MASQUE is not tag-gated at all - it arrives with the QUIC stack - which is exactly what
+          # the deleted control build showed by containing it too. Stated here as a graph fact.
+          if ! go list -deps -tags "$BUILD_TAGS" ./cmd/sing-box \
+              | grep -qx 'github.com/sagernet/sing-box/protocol/masque'; then
+            echo "FAIL: protocol/masque is not in the release build's package graph" >&2
             exit 1
           fi
-          if [ "$masque_release" -le 0 ]; then
-            echo "FAIL: the release build does not contain MASQUE" >&2
-            exit 1
-          fi
-          echo "PASS: Native Naive and MASQUE are linked into the artifact"
+          echo "PASS: Native Naive's gated outbound is compiled in, and MASQUE is in the graph"
 
           {
-            echo "NAIVE_SYMBOLS_RELEASE=$naive_release"
-            echo "NAIVE_SYMBOLS_CONTROL=$naive_control"
-            echo "MASQUE_SYMBOLS_RELEASE=$masque_release"
-            echo "MASQUE_SYMBOLS_CONTROL=$masque_control"
+            echo "NAIVE_OUTBOUND_SELECTED=true"
+            echo "MASQUE_IN_GRAPH=true"
           } >> "$GITHUB_ENV"
 
       - name: Write the checksums and the build record
@@ -307,10 +353,8 @@ jobs:
             "purpose": "external-loader-core",
             "native_naive": true,
             "masque": true,
-            "naive_symbols_release": $NAIVE_SYMBOLS_RELEASE,
-            "naive_symbols_control": $NAIVE_SYMBOLS_CONTROL,
-            "masque_symbols_release": $MASQUE_SYMBOLS_RELEASE,
-            "masque_symbols_control": $MASQUE_SYMBOLS_CONTROL,
+            "naive_outbound_file_selected": $NAIVE_OUTBOUND_SELECTED,
+            "masque_in_package_graph": $MASQUE_IN_GRAPH,
             "artifact": "$ARTIFACT_NAME",
             "size": $size,
             "sha256": "$sha256"
@@ -354,7 +398,8 @@ jobs:
         run: |
           set -euo pipefail
           cd dist
-          rm -f sing-box-unstripped.exe control-baseline.exe
+          # No unstripped/control builds to clean up any more: the symbol-audit links were removed,
+          # so dist holds only the artifact and its records by the time this runs.
           # ARTIFACT_NAME is already sing-box.exe, and `cp x x` fails; only copy if the
           # built name differs from the name the loader expects inside the zip.
           [ "$ARTIFACT_NAME" = "sing-box.exe" ] || cp "$ARTIFACT_NAME" sing-box.exe
@@ -415,8 +460,9 @@ jobs:
             echo "| workflow_commit | \`$WORKFLOW_COMMIT\` |"
             echo "| target | \`$GOOS_TARGET/$GOARCH_TARGET\`, CGO_ENABLED=0 |"
             echo "| go | $(go version | awk '{print $3}') |"
-            echo "| Native Naive | COMPILED ($NAIVE_SYMBOLS_RELEASE symbols, control $NAIVE_SYMBOLS_CONTROL) |"
-            echo "| MASQUE | COMPILED ($MASQUE_SYMBOLS_RELEASE symbols) |"
+            echo "| Native Naive | COMPILED (protocol/naive/outbound.go selected by with_naive_outbound) |"
+            echo "| MASQUE | COMPILED (protocol/masque in the package graph) |"
+            echo "| build tags | verified against the artifact's own embedded metadata |"
             echo "| sing-box.exe | $(stat -c %s dist/sing-box.exe) bytes, \`$(sha256sum dist/sing-box.exe | cut -d' ' -f1)\` |"
             echo "| zip | \`$ZIP_NAME\` $(stat -c %s "dist/$ZIP_NAME") bytes, \`$ZIP_SHA256\` |"
           } >> "$GITHUB_STEP_SUMMARY"
