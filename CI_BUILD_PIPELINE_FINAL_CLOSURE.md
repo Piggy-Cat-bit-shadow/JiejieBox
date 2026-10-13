@@ -1,7 +1,7 @@
 # CI_BUILD_PIPELINE_FINAL_CLOSURE
 
 ```text
-CURRENT_SHA = e7847b3b5  (testing)
+CURRENT_SHA = db8814ced  (testing)
 RELEASE_FREEZE = KEEP
 FORMAL_RELEASE_CREATED = NO
 TAG_MOVED = NO
@@ -269,7 +269,34 @@ FULL_PRODUCT_COMPILES_AFTER  = 4
 This round changed only what the ANDROID RECORD says, not how many times anything is compiled, so it
 moves neither number. No product compile was removed or added here.
 
-### 7.3 Test duplicates
+### 7.4 CI verification
+
+Run IDs on the changed tree, at `385e00fca` and then the mode fix at `db8814ced`:
+
+```text
+Mobile Contract Verification  #1          success   <- the new workflow's FIRST run
+Release contract verification #44         success
+Verify                        #218        FAILURE   <- caught a real defect, see below
+Verify                        #219        success   <- after the fix
+Android Core ARM64            #61         success   <- with the new BUILD-INFO assertion
+```
+
+**CI caught a defect this pass introduced, and it is worth recording as such.** The new
+`require-executed-coverage.test.sh` was committed `100644`, so invoking it as `./…test.sh` died with
+`Permission denied` / exit 126 and reddened `Verify #218`. Fixed by `git update-index --chmod=+x` on
+both new scripts (`100755`, matching the rest of `scripts/ci`); `db8814ced` carries the mode alone,
+no content. `Verify #219` then passed, and its `executed-coverage guard self-test` step reports
+success — so the guard's own fixtures (all-SKIP → fail, empty → fail, stale filter → fail, mixed →
+pass) were executed on a real runner, which this host cannot do.
+
+The Android workflow's success at `#61` also confirms the new BUILD-INFO assertion works end to end:
+it recomputes the expected tag set from the builder and compares it to what the record says, so a
+record that disagreed with the builder would have failed the job.
+
+**Not run, because they cannot be:** `Windows desktop installer` and
+`Windows desktop runtime audit` are Windows workflows and `release.yml` is dispatch-only. Neither can
+be executed from this host; their YAML parses and their contracts are asserted, but their first real
+execution is a maintainer's dispatch.
 
 Counted as executions of the same suite/package set per push to `testing`, verified with `git grep`:
 
@@ -303,8 +330,8 @@ No wall-clock figures are given anywhere in this report, by instruction.
 2. **The release self-test still runs three times.** See §5 — it is enforced by the suite itself, so
    it is a decision to revisit deliberately rather than a cleanup.
 3. **The runtime audit cannot be verified here.** It is a Windows workflow; neither it nor the
-   installer build can run on this host. Its YAML parses and its contracts are asserted, but its
-   first real execution is on a runner.
+   installer build can run on this host. Its YAML parses, its contracts are asserted by the structure
+   checker, and it is a first execution for a maintainer — a green result is not claimed for it.
 4. **`v0.1.6`'s Android record remains wrong.** Fixed from the next build only, by decision.
 5. **Carried over and deliberately untouched** (brief §3): Darwin tag profile in `verify.yml`, Apple
    Cronet archive-byte provenance, the orphan-script sweep, the macOS config-validation gap, fuzz
