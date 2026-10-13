@@ -37,6 +37,7 @@ VERIFY = os.path.join(WF, "release-contract-verify.yml")
 AUDIT = os.path.join(WF, "client-desktop-windows-runtime-audit.yml")
 LINUX = os.path.join(WF, "server-linux-amd64.yml")
 MOBILE = os.path.join(WF, "mobile-contract.yml")
+APPLE = os.path.join(WF, "client-apple.yml")
 GATE = os.path.join(REPO, "scripts", "ci", "release-artifacts.sh")
 
 passed = 0
@@ -430,8 +431,65 @@ def check_step_output_ids():
                    False, "writes GITHUB_OUTPUT with no id")
 
 
+def check_apple_resolve_once():
+    """One workflow run resolves ONE Apple client SHA, and every job consumes it.
+
+    libbox, ios and macos run on SEPARATE runners with separate workspaces, so the frozen state
+    file that keeps one shell consistent cannot keep one WORKFLOW consistent. Without a resolver
+    job whose output the others read, this sequence is possible:
+
+        libbox resolves main -> A
+        someone pushes  main -> B
+        ios resolves    main -> B
+
+    and one release carries two Apple client commits. These assertions exist so the fix cannot be
+    undone back to per-job resolution.
+    """
+    if not os.path.isfile(APPLE):
+        report("apple workflow exists", False, APPLE)
+        return
+    with open(APPLE, encoding="utf-8") as fh:
+        raw = fh.read()
+    apple = code_only(raw)
+
+    report("apple workflow has a resolve-apple-source job", "resolve-apple-source:" in apple)
+    report("the resolver publishes apple_client_sha",
+           "apple_client_sha: ${{ steps.resolve.outputs.apple_client_sha }}" in apple)
+
+    # Consumers depend on it and READ it.
+    for consumer in ("libbox", "ios", "macos"):
+        report("%s needs the resolver" % consumer,
+               re.search(r"^  %s:\n(?:.*\n)*?    needs:.*resolve-apple-source" % consumer,
+                         apple, re.M) is not None)
+    report("libbox reads the resolved SHA",
+           "needs.resolve-apple-source.outputs.apple_client_sha" in apple)
+
+    # And none of them may resolve the branch tip again. `checkout ios|macos` is allowed - it
+    # consumes the seeded state file - but `resolve` re-asks the remote.
+    offenders = []
+    for match in re.finditer(r"^  ([a-z][a-z-]*):\n((?:.*\n)*?)(?=^  [a-z]|\Z)", apple, re.M):
+        name, body = match.group(1), match.group(2)
+        if name == "resolve-apple-source":
+            continue
+        if "apple-client-source.sh resolve" in body:
+            offenders.append(name)
+    report("no job re-resolves the Apple source", not offenders, str(offenders))
+
+    # Only the resolver may ask the remote for a branch tip.
+    ls_remote_jobs = []
+    for match in re.finditer(r"^  ([a-z][a-z-]*):\n((?:.*\n)*?)(?=^  [a-z]|\Z)", apple, re.M):
+        name, body = match.group(1), match.group(2)
+        if "ls-remote" in body and name != "resolve-apple-source":
+            ls_remote_jobs.append(name)
+    report("only the resolver consults the remote", not ls_remote_jobs, str(ls_remote_jobs))
+
+    # The gitlink is reported, not required, unless the operator asks for the old behaviour.
+    report("the gitlink is no longer a hard equality by default",
+           "APPLE_CLIENT_REQUIRE_GITLINK" in apple)
+
+
 def main():
-    for path in (RELEASE, DESKTOP, VERIFY, AUDIT, LINUX, MOBILE):
+    for path in (RELEASE, DESKTOP, VERIFY, AUDIT, LINUX, MOBILE, APPLE):
         if not os.path.isfile(path):
             print("FAIL: missing %s" % path, file=sys.stderr)
             return 1
@@ -444,6 +502,8 @@ def main():
     check_audit_sha_pin()
     print()
     check_step_output_ids()
+    print()
+    check_apple_resolve_once()
     print()
     check_mobile_contract()
     print()

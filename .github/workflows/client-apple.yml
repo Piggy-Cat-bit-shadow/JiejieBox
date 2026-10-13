@@ -66,6 +66,90 @@ env:
   APPLE_SUBMODULE: clients/apple
 
 jobs:
+  # The ONE place this workflow is allowed to resolve the default Apple source.
+  #
+  # Every other job consumes `needs.resolve-apple-source.outputs.apple_client_sha`. That is the
+  # whole point of this job: libbox, ios and macos run on SEPARATE runners with separate
+  # workspaces, so the frozen state file that keeps one shell consistent cannot keep one WORKFLOW
+  # consistent. Without this job the sequence
+  #
+  #     libbox resolves main -> A
+  #     someone pushes  main -> B
+  #     ios resolves    main -> B
+  #
+  # is possible, and one release would carry two Apple client commits.
+  #
+  # Resolution happens here once, is published as a job output, and is the single truth for the
+  # run. A consumer that re-resolved would be able to disagree with it, so no consumer does.
+  resolve-apple-source:
+    name: resolve the Apple client source
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      apple_client_sha: ${{ steps.resolve.outputs.apple_client_sha }}
+      apple_client_repository: ${{ steps.resolve.outputs.apple_client_repository }}
+      apple_client_branch: ${{ steps.resolve.outputs.apple_client_branch }}
+      apple_client_ref: ${{ steps.resolve.outputs.apple_client_ref }}
+      apple_client_source_mode: ${{ steps.resolve.outputs.apple_client_source_mode }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: resolve the Apple client source once
+        id: resolve
+        # `ls-remote` resolves the default revision and prints it WITHOUT freezing anything; here
+        # it is what turns "main latest" into an exact commit that every later job is pinned to.
+        # An explicit APPLE_CLIENT_REF / APPLE_CLIENT_SHA in the repository variables takes
+        # precedence inside the script, so an override needs no change here.
+        env:
+          APPLE_CLIENT_REF: ${{ vars.APPLE_CLIENT_REF }}
+          APPLE_CLIENT_SHA: ${{ vars.APPLE_CLIENT_SHA }}
+        run: |
+          set -euo pipefail
+          # The resolver reads its configuration from the refs file; a repository variable is an
+          # override ON TOP of it, which is how an older build is reproduced.
+          out="$(./scripts/ci/apple-client-source.sh ls-remote)"
+          sha="$(printf '%s\n' "$out" | tail -n 1)"
+          case "$sha" in
+            [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;;
+            *) echo "FAIL: the resolver returned no commit SHA (got '$sha')" >&2; exit 1 ;;
+          esac
+          [ "${#sha}" -eq 40 ] || { echo "FAIL: '$sha' is not a 40-character SHA" >&2; exit 1; }
+
+          # shellcheck disable=SC1091
+          . release/apple-client-refs.env
+          if [ -n "${APPLE_CLIENT_REF:-}" ]; then
+            mode=explicit-ref
+          elif [ -n "${APPLE_CLIENT_SHA:-}" ]; then
+            mode=explicit-sha
+          else
+            mode=latest-main
+          fi
+
+          echo "config:  APPLE_CLIENT_REPOSITORY=$APPLE_CLIENT_REPOSITORY"
+          echo "config:  APPLE_CLIENT_BRANCH=$APPLE_CLIENT_BRANCH"
+          echo "resolved: $sha  ($mode)"
+          {
+            echo "apple_client_sha=$sha"
+            echo "apple_client_repository=$APPLE_CLIENT_REPOSITORY"
+            echo "apple_client_branch=$APPLE_CLIENT_BRANCH"
+            echo "apple_client_ref=${APPLE_CLIENT_REF:-${APPLE_CLIENT_SHA:-}}"
+            echo "apple_client_source_mode=$mode"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### Apple client source resolved once for this run"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| \`APPLE_CLIENT_SHA\` | \`$sha\` |"
+            echo "| repository | \`$APPLE_CLIENT_REPOSITORY\` |"
+            echo "| branch | \`$APPLE_CLIENT_BRANCH\` |"
+            echo "| mode | \`$mode\` |"
+            echo
+            echo "Every other job in this run is pinned to the SHA above and must not re-resolve."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # Libbox is compiled ONCE per commit and shared by both GUI jobs and by the local publish.
   #
   # It is the most expensive step in the Apple pipeline and depends only on the source commit - no
@@ -75,6 +159,7 @@ jobs:
   # Apple client revision: the core does not depend on which UI branch links it, and the two
   # platforms deliberately use two different ones.
   libbox:
+    needs: resolve-apple-source
     if: ${{ inputs.build_ios || inputs.build_macos }}
     runs-on: macos-latest
     timeout-minutes: 120
@@ -139,30 +224,47 @@ jobs:
         # gitlink. Requiring the gitlink made every client release a two-repository operation:
         # the build could only mirror a submodule someone had already bumped by hand.
         #
-        # The guarantee that matters is unchanged and still enforced here: the tree that gets
-        # built is the tree that was selected, and `assert-shared-source` keeps iOS and macOS on
-        # one commit. What is gone is the requirement that the selected commit equal the
-        # submodule pointer - reported in the log instead, and fatal again under
+        # The SHA comes from the resolve job's output, NOT from resolving again here. This job
+        # runs on its own runner with its own workspace, so a local freeze cannot keep it in step
+        # with the other jobs - only the job output can.
+        #
+        # The guarantee that matters is unchanged and still enforced: the tree that gets built is
+        # the tree the run selected. What is gone is the requirement that the selected commit
+        # equal the submodule pointer - reported instead, and fatal again under
         # APPLE_CLIENT_REQUIRE_GITLINK=1.
+        env:
+          APPLE_CLIENT_SHA: ${{ needs.resolve-apple-source.outputs.apple_client_sha }}
+          APPLE_CLIENT_REPO_URL: ${{ needs.resolve-apple-source.outputs.apple_client_repository }}
+          APPLE_CLIENT_BRANCH_NAME: ${{ needs.resolve-apple-source.outputs.apple_client_branch }}
         run: |
           set -euo pipefail
-          eval "$(./scripts/ci/apple-client-source.sh resolve)"
+          # Freeze the run-wide SHA into this runner's workspace, so the scripts this job calls -
+          # `checkout ios`, which needs one - read the SAME commit the resolver published instead
+          # of asking the remote again. This is the bridge between the workflow-level freeze and
+          # the per-workspace state file, and it is seeded, never re-resolved.
+          mkdir -p build
+          {
+            echo "# Seeded by client-apple.yml from the resolve-apple-source job output."
+            echo "APPLE_CLIENT_SHA=$APPLE_CLIENT_SHA"
+            echo "APPLE_CLIENT_REPOSITORY=$APPLE_CLIENT_REPO_URL"
+            echo "APPLE_CLIENT_BRANCH=$APPLE_CLIENT_BRANCH_NAME"
+          } > build/apple-client-source.env
+
           recorded="$(git ls-tree HEAD "$APPLE_SUBMODULE" | awk '{print $3}')"
           actual="$(git -C "$APPLE_SUBMODULE" rev-parse HEAD)"
-          echo "parent records: $recorded"
-          echo "checked out:    $actual"
-          echo "resolved source: $APPLE_CLIENT_SHA"
+          echo "parent records:  $recorded"
+          echo "checked out:     $actual"
+          echo "resolved source: $APPLE_CLIENT_SHA  (from the resolve job)"
 
           # Move the tree to the resolved commit if it is somewhere else. The submodule
           # checkout lands wherever the gitlink points, which after this change is frequently
           # behind - so "not at the resolved commit" is the normal state, not an error.
           if [ "$actual" != "$APPLE_CLIENT_SHA" ]; then
-            # shellcheck disable=SC2086
             ./scripts/ci/apple-client-source.sh checkout ios >/dev/null
             actual="$(git -C "$APPLE_SUBMODULE" rev-parse HEAD)"
           fi
           if [ "$actual" != "$APPLE_CLIENT_SHA" ]; then
-            echo "FAIL: the Apple source is at $actual but the selection resolved to" >&2
+            echo "FAIL: the Apple source is at $actual but the run resolved to" >&2
             echo "      $APPLE_CLIENT_SHA. The build must use the tree that was selected." >&2
             exit 1
           fi
@@ -231,7 +333,10 @@ jobs:
 
   ios:
     if: ${{ inputs.build_ios }}
-    needs: libbox
+    # Two real data dependencies, neither of them a false serialization:
+    #   resolve-apple-source - this job consumes its published SHA
+    #   libbox               - this job downloads the artifact it produced
+    needs: [resolve-apple-source, libbox]
     runs-on: macos-latest
     timeout-minutes: 120
     steps:
@@ -259,24 +364,45 @@ jobs:
           xcrun --sdk iphoneos --show-sdk-path
 
       - name: select the Apple client source
-        # Both Apple products take their Swift source from the parent's clients/apple gitlink, at
-        # the SAME commit. Which UI a device shows is the Apple source's own runtime decision - it
-        # routes from the device idiom (iPhone Hako, iPad upstream, macOS upstream) - so the parent
-        # selects only the revision, never a per-platform UI branch. `assert-shared-source` fails
-        # the build if the two platforms ever resolve to different commits again.
+        # Both Apple products take their Swift source from ONE commit of the Apple client
+        # repository. Which UI a device shows is the Apple source's own runtime decision - it
+        # routes from the device idiom (iPhone Hako, iPad upstream, macOS upstream) - so the
+        # parent selects only the revision, never a per-platform UI branch.
+        #
+        # The revision comes from the resolve job's output. This step does NOT call `resolve`,
+        # because that would let this job reach a different answer than the run did - which is the
+        # hazard the resolve job exists to remove.
+        env:
+          RESOLVED_SHA: ${{ needs.resolve-apple-source.outputs.apple_client_sha }}
+          RESOLVED_REPOSITORY: ${{ needs.resolve-apple-source.outputs.apple_client_repository }}
+          RESOLVED_BRANCH: ${{ needs.resolve-apple-source.outputs.apple_client_branch }}
+          RESOLVED_MODE: ${{ needs.resolve-apple-source.outputs.apple_client_source_mode }}
         run: |
           set -euo pipefail
-          eval "$(./scripts/ci/apple-client-source.sh resolve)"
+          mkdir -p build
+          # Seed this runner's frozen state from the run-wide answer, so the scripts this job calls
+          # read the same commit the resolver published rather than asking the remote again.
+          {
+            echo "# Seeded by client-apple.yml from the resolve-apple-source job output."
+            echo "APPLE_CLIENT_SHA=$RESOLVED_SHA"
+            echo "APPLE_CLIENT_REPOSITORY=$RESOLVED_REPOSITORY"
+            echo "APPLE_CLIENT_BRANCH=$RESOLVED_BRANCH"
+          } > build/apple-client-source.env
+
+          # One Apple commit for the whole run, on both platforms. This is the invariant that
+          # stops a release carrying two UI commits, and it is now checked against the run-wide
+          # value rather than against two independent resolutions that merely agreed by luck.
           ./scripts/ci/apple-client-source.sh assert-shared-source
           {
             echo "APPLE_CLIENT_PLATFORM=ios"
-            echo "APPLE_CLIENT_REPOSITORY=$APPLE_CLIENT_REPOSITORY"
-            echo "APPLE_CLIENT_DIR=$IOS_APPLE_DIR"
-            echo "APPLE_CLIENT_SHA=$APPLE_CLIENT_SHA"
-            echo "APPLE_CLIENT_BRANCH=$APPLE_CLIENT_BRANCH"
+            echo "APPLE_CLIENT_REPOSITORY=$RESOLVED_REPOSITORY"
+            echo "APPLE_CLIENT_DIR=clients/apple"
+            echo "APPLE_CLIENT_SHA=$RESOLVED_SHA"
+            echo "APPLE_CLIENT_BRANCH=$RESOLVED_BRANCH"
+            echo "APPLE_CLIENT_SOURCE_MODE=$RESOLVED_MODE"
             echo "APPLE_CLIENT_UI=iOS: iPhone Hako / iPad upstream (runtime routing)"
           } >> "$GITHUB_ENV"
-          echo "iOS Apple source: $APPLE_CLIENT_BRANCH @ $APPLE_CLIENT_SHA in $IOS_APPLE_DIR"
+          echo "iOS Apple source: $RESOLVED_BRANCH @ $RESOLVED_SHA in clients/apple  ($RESOLVED_MODE)"
 
       - name: verify the Apple submodule revision
         # Same rule as the libbox job's gate above: the RESOLVED source is what the build must
@@ -500,7 +626,9 @@ jobs:
 
   macos:
     if: ${{ inputs.build_macos }}
-    needs: libbox
+    # Same two real dependencies as the iOS job, and the two GUI jobs remain siblings: nothing
+    # in either depends on the other.
+    needs: [resolve-apple-source, libbox]
     runs-on: macos-latest
     timeout-minutes: 120
     steps:
@@ -550,19 +678,34 @@ jobs:
         # different one: the two UI families live in one tree now, and the Apple source - not this
         # workflow - decides which presentation a device gets. A per-platform revision here would
         # put the parent back in charge of UI ownership.
+        #
+        # The revision comes from the resolve job's output, so this job cannot reach a different
+        # answer than the run did even if the client repository moves mid-run.
+        env:
+          RESOLVED_SHA: ${{ needs.resolve-apple-source.outputs.apple_client_sha }}
+          RESOLVED_REPOSITORY: ${{ needs.resolve-apple-source.outputs.apple_client_repository }}
+          RESOLVED_BRANCH: ${{ needs.resolve-apple-source.outputs.apple_client_branch }}
+          RESOLVED_MODE: ${{ needs.resolve-apple-source.outputs.apple_client_source_mode }}
         run: |
           set -euo pipefail
-          eval "$(./scripts/ci/apple-client-source.sh resolve)"
+          mkdir -p build
+          {
+            echo "# Seeded by client-apple.yml from the resolve-apple-source job output."
+            echo "APPLE_CLIENT_SHA=$RESOLVED_SHA"
+            echo "APPLE_CLIENT_REPOSITORY=$RESOLVED_REPOSITORY"
+            echo "APPLE_CLIENT_BRANCH=$RESOLVED_BRANCH"
+          } > build/apple-client-source.env
           ./scripts/ci/apple-client-source.sh assert-shared-source
           {
             echo "APPLE_CLIENT_PLATFORM=macos"
-            echo "APPLE_CLIENT_REPOSITORY=$APPLE_CLIENT_REPOSITORY"
-            echo "APPLE_CLIENT_DIR=$MACOS_APPLE_DIR"
-            echo "APPLE_CLIENT_SHA=$MACOS_APPLE_SHA"
-            echo "APPLE_CLIENT_BRANCH=$MACOS_APPLE_BRANCH"
+            echo "APPLE_CLIENT_REPOSITORY=$RESOLVED_REPOSITORY"
+            echo "APPLE_CLIENT_DIR=build/apple-client-macos"
+            echo "APPLE_CLIENT_SHA=$RESOLVED_SHA"
+            echo "APPLE_CLIENT_BRANCH=$RESOLVED_BRANCH"
+            echo "APPLE_CLIENT_SOURCE_MODE=$RESOLVED_MODE"
             echo "APPLE_CLIENT_UI=macOS: upstream (runtime routing)"
           } >> "$GITHUB_ENV"
-          echo "macOS Apple source: $MACOS_APPLE_BRANCH @ $MACOS_APPLE_SHA in $MACOS_APPLE_DIR"
+          echo "macOS Apple source: $RESOLVED_BRANCH @ $RESOLVED_SHA in build/apple-client-macos  ($RESOLVED_MODE)"
 
       - name: check out the macOS Apple source
         # A copy of the pinned commit, never a branch tip and never a different revision: the
