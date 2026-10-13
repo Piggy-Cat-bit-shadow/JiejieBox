@@ -141,11 +141,21 @@ jobs:
       - name: shell syntax of every release-path script
         if: always()
         run: |
-          set -uo pipefail
+          # `set -e` MATTERS HERE and used to be missing. With only `set -uo pipefail`, a failing
+          # `bash -n` did not stop the loop: the `echo` on the next line ran regardless, reset `$?`
+          # to 0, and the step exited 0 even if EVERY script failed to parse. The gate was declared
+          # and registered by check-release-workflows.py while being unable to fail.
+          #
+          # `if ! bash -n` is used as well as `set -e`, so the failing file's own diagnostics are
+          # printed under a header that names it, rather than appearing as a bare abort.
+          set -euo pipefail
           mkdir -p verify-logs
           for f in scripts/ci/release-artifacts.sh scripts/ci/lib.sh \
                    scripts/ci/prepare-desktop-client.sh scripts/ci/test-release-artifacts.sh; do
-            bash -n "$f"
+            if ! bash -n "$f"; then
+              echo "FAIL: $f does not parse" >&2
+              exit 1
+            fi
             echo "syntax OK: $f"
           done
 
