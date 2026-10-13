@@ -1359,13 +1359,23 @@ for i, (name, key) in enumerate(PRODUCT_WORKFLOWS):
 workflows["client-desktop-windows.yml"] = wf(
     8010, "client-desktop-windows.yml", [run(desktop_id, 30, 8010)])
 
-# The desktop workflow uploads TWO artifacts, and the shapes matter: the installer's name
-# ends in the signed-test marker the gate selects on, and the records artifact does not.
-# A `--name`-less download would copy both and the staging directory would then hold the
+# The desktop workflow uploads THREE artifacts since the runtime audit was split out, and the
+# shapes matter:
+#
+#   * the installer's name ends in the signed-test marker the gate selects on;
+#   * the records artifact does not, and is selected separately;
+#   * the unpacked application tree that the runtime audit needs must match NEITHER pattern, or
+#     the gate would silently download the wrong artifact - or two of them - for the release.
+#
+# The third name is carried here rather than described in a comment, because the selection in
+# release-artifacts.sh is by SHAPE and a shape is only tested by being present.
+#
+# A `--name`-less download would copy all three and the staging directory would then hold the
 # build record as well - which is how the first real dry run failed.
 artifacts[str(desktop_id)] = [
     {"dir": "desktop", "name": "jiejiebox-windows-x64-signed-test"},
     {"dir": "desktop-records", "name": "jiejiebox-windows-build-records"},
+    {"dir": "desktop", "name": "jiejiebox-windows-unpacked-audit-input"},
 ]
 
 (state / "scenario.json").write_text(json.dumps(

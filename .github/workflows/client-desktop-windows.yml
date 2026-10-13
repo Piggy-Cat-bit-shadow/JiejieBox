@@ -1,12 +1,11 @@
 name: Windows desktop installer
 
-# Builds, signs, installs and tears down the Windows x64 desktop client.
+# Builds, signs and packages the Windows x64 desktop client, and proves the INSTALLER.
 #
 # # What this workflow proves, and what it cannot
 #
 # It proves the pipeline: source and toolchain, build, package integrity, architecture,
-# Authenticode signing, daemon service registration, the installer's install/reinstall/
-# uninstall lifecycle, and the signature state of the driver packages.
+# Authenticode signing, and the hash records the release verifies.
 #
 # It cannot prove the product works. TUN, WinDivert traffic interception, DNS, the system
 # proxy, IPC under load, sleep/wake and network switching are properties of a real Windows
@@ -22,11 +21,23 @@ name: Windows desktop installer
 #                           PE architecture, and the payload extracted from the installer
 #   4 signing               every binary Authenticode-signed by THIS run's certificate,
 #                           and all of them by the same one
-#   5 daemon service        install, SCM registration, Running, status, stop, uninstall
-#   6 installer lifecycle   silent install, verify, same-version reinstall, uninstall,
-#                           clean reinstall, final uninstall
-#   7 driver packages       embedded signature or catalog coverage for every .sys
 #   8 records               slim text artifacts only
+#
+# EVERY GATE HERE MEANS "THE ARTIFACT IS WRONG" WHEN IT FAILS, which is why this workflow's
+# conclusion is what the release depends on.
+#
+# # Where the runtime gates went
+#
+# Gates 5 (daemon service), 5b (secure service install), 6 (NSIS install/reinstall/uninstall
+# lifecycle) and 7 (driver package audit) moved to
+# `.github/workflows/client-desktop-windows-runtime-audit.yml`.
+#
+# They answer a different question. This workflow asks "is this installer the artifact we meant
+# to build"; they ask "does it behave on a real Windows machine", where UAC, Program Files ACLs,
+# service behaviour across a reinstall and driver loading are not properties a hosted runner
+# represents. Keeping both behind one exit status meant a runner-shaped failure and an artifact
+# defect were indistinguishable, and separating them is what lets the release depend on the
+# first without pretending the second is proven.
 #
 # # Why a throwaway signing certificate
 #
@@ -61,19 +72,22 @@ name: Windows desktop installer
 #
 # # Gating status
 #
-# Release-blocking: the build, the package, static integrity, daemon provenance, the PE
-# architecture audit and the hash records.
+# EVERY gate in this file is release-blocking. The build, the package, static integrity, daemon
+# provenance, the PE architecture audit and the hash records are the whole list, because the
+# runtime gates are no longer here - they are in the runtime audit workflow, where a failure turns
+# THAT workflow red instead of hiding behind `continue-on-error`.
 #
-# Experimental and NOT release-blocking: the daemon service gates, the NSIS install lifecycle
-# and the driver package audit. They are useful and they are kept, but a green run is not
-# Windows acceptance - UAC, Program Files ACLs, real service behaviour across reinstall,
-# driver loading, TUN, the system proxy, reboot, sleep/wake and long-running stability are
-# properties of a real Windows machine that a hosted runner cannot represent.
+# The practical consequence for a release: `release-artifacts.sh` requires this workflow's run to
+# conclude `success`, and it says nothing about the runtime audit. So an installer whose own
+# integrity is sound still publishes even if the hosted runner could not register a service, and
+# the audit's red status stays visible and un-suppressed. That is the intended division: build
+# failure blocks a release; runtime audit failure is a visible red audit and does not invalidate a
+# successfully built installer.
 #
 # The Windows runtime line is FROZEN pending a real Windows x64 debugging environment. See
-# docs/WINDOWS-STATUS.md. Do not weaken a security check to make a gate pass, and do not
-# delete a gate: fix the harness when the harness is wrong, and investigate on real hardware
-# when the product is.
+# docs/WINDOWS-STATUS.md. Do not weaken a security check to make a gate pass, and do not delete a
+# gate: fix the harness when the harness is wrong, and investigate on real hardware when the
+# product is.
 
 on:
   workflow_dispatch:
@@ -494,79 +508,25 @@ jobs:
               "$env:CLIENT_DIR/release/win-unpacked/resources/native/windows_share.node"
             )
 
-      # --- GATE 5: daemon service ------------------------------------------
+      # --- GATES 5, 5b, 6 AND 7 MOVED OUT ----------------------------------
       #
-      # GATES 5, 5b, 6 AND 7 CARRY `continue-on-error: true`, and that is the whole point of the
-      # header's "Experimental and NOT release-blocking" claim - which until now was FALSE.
+      # The daemon service gates, the secure service install, the NSIS install/reinstall/uninstall
+      # lifecycle and the driver package audit are NOT here any more. They live in
+      # `.github/workflows/client-desktop-windows-runtime-audit.yml`.
       #
-      # These four ran as ordinary steps with `$ErrorActionPreference = "Stop"`, so a failure
-      # reddened the job and the run, and release-artifacts.sh refuses to publish unless the
-      # desktop run's conclusion is exactly `success`. So gates the header called non-blocking
-      # blocked every release, and the sentence above them described an intention rather than the
-      # behaviour.
+      # They were separated because their job is a different job. This workflow produces and proves
+      # the INSTALLER - source, build, package, static integrity, signing, architecture, hashes - and
+      # every gate in it should mean "the artifact is wrong" when it fails. The four above need a
+      # real Windows machine: UAC, Program Files ACLs, service behaviour across a reinstall, driver
+      # loading and reboot are not properties a hosted runner represents, so their failures are
+      # evidence about the RUNNER at least as often as about the product. Two different questions do
+      # not belong behind one exit status.
       #
-      # This does NOT hide a failure and it is not a way to buy a green run. A failing gate still
-      # reports `failure` on its own step and still annotates the run; what changes is only whether
-      # an experimental harness can veto a release whose build and static integrity are sound. The
-      # release-blocking set is unchanged and still hard: gates 1-4 and 8.
-      #
-      # Why these four specifically: they need a real Windows machine. UAC, Program Files ACLs,
-      # service behaviour across reinstall, driver loading and reboot are not properties a hosted
-      # runner can represent, so a red result here is evidence about the RUNNER at least as often
-      # as about the product. The Windows runtime line is FROZEN pending a real Windows x64
-      # debugging environment (docs/WINDOWS-STATUS.md); a frozen line must not be able to stop a
-      # release. If any of these ever becomes release-blocking, remove the flag AND move the claim
-      # in the header, in one change.
-      - name: "[gate 5] daemon service smoke test"
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          ./tooling/scripts/ci/windows/Test-DaemonService.ps1 `
-            -DaemonPath "$env:CLIENT_DIR/release/win-unpacked/resources/daemon/sing-box-daemon.exe" `
-            -WorkingDirectory $env:SERVICE_WORK_DIR `
-            -RecordPath "$env:RECORDS_DIR/daemon-service-smoke-test.txt"
-
-      - name: "[gate 5b] daemon secure service install (the installer's own path)"
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          # The installer runs `service install` with NO relaxed-permission flag under
-          # C:\Program Files, and aborts and rolls back when it fails. Gate 5 uses the CI
-          # escape hatch; this gate does not, so it is the one that proves the path a real
-          # installation takes - and it prints the daemon's stderr, which the installer
-          # swallows.
-          ./tooling/scripts/ci/windows/Test-SecureServiceInstall.ps1 `
-            -PackagedDirectory "$env:CLIENT_DIR/release/win-unpacked" `
-            -ProbeDirectory "C:\Program Files\sing-box-ci-probe" `
-            -WorkingDirectory "C:\ProgramData\sing-box-daemon" `
-            -RecordPath "$env:RECORDS_DIR/secure-service-install.txt"
-
-      # --- GATE 6: installer lifecycle -------------------------------------
-      - name: "[gate 6] NSIS install / reinstall / uninstall lifecycle"
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          # The diagnostic path is under RUNNER_TEMP and deliberately has no spaces: the
-          # installer parses it as a command-line option, and it must be outside $PLUGINSDIR
-          # and $INSTDIR so it survives customInstall's rollback.
-          ./tooling/scripts/ci/windows/Test-InstallerLifecycle.ps1 `
-            -InstallerPath "$env:CLIENT_DIR/release/Jiejiebox-v$env:CORE_VERSION-windows-x64.exe" `
-            -ExpectedVersion $env:CORE_VERSION `
-            -RecordPath "$env:RECORDS_DIR/installer-lifecycle-smoke-test.txt" `
-            -DiagnosticPath "$env:RUNNER_TEMP\jiejiebox-installer-diagnostic.txt"
-
-      # --- GATE 7: driver packages -----------------------------------------
-      - name: "[gate 7] driver package signature audit"
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          ./tooling/scripts/ci/windows/Test-DriverSignatures.ps1 `
-            -DriverDirectory "$env:CLIENT_DIR/release/win-unpacked/resources/daemon" `
-            -RecordPath "$env:RECORDS_DIR/driver-signature-audit.txt"
+      # An earlier attempt kept them here behind `continue-on-error: true`. That was rejected as a
+      # final design and has been removed: it made a failure invisible to the run's conclusion
+      # instead of giving the check its own, honest status. In the runtime audit workflow these gates
+      # are ordinary steps and a failure turns THAT workflow red - visible, not suppressed, and not
+      # blocking a release whose installer is sound.
 
       # --- GATE 8: records --------------------------------------------------
       - name: "[gate 8] record the build"
@@ -595,6 +555,12 @@ jobs:
             cat "$RECORDS_DIR/pe-architecture-audit.txt"
             echo
             cat "$RECORDS_DIR/installer-payload-audit.txt"
+            # The runtime gates' records (daemon-service-smoke-test.txt, secure-service-install.txt,
+            # installer-lifecycle-smoke-test.txt, driver-signature-audit.txt) are deliberately NOT
+            # concatenated here. They are produced by a different workflow now, and this record's job
+            # is to describe the ARTIFACT - so its contents must not depend on whether a runner could
+            # register a service. A third-party reading this file is asking what the installer is,
+            # not how a hosted VM behaved.
           } > "$RECORDS_DIR/BUILD-INFO-WINDOWS-DESKTOP-$CORE_VERSION.txt"
           sha256sum "$installer" > "$RECORDS_DIR/SHA256SUMS-WINDOWS.txt"
           echo "== records to be uploaded =="
@@ -635,6 +601,28 @@ jobs:
           name: jiejiebox-windows-build-records
           path: ${{ env.RECORDS_DIR }}
           if-no-files-found: warn
+
+      - name: "[gate 8] upload the unpacked application for the runtime audit"
+        uses: actions/upload-artifact@v4
+        with:
+          # The runtime audit needs the PACKAGED tree, not the installer: gate 5 runs the signed
+          # daemon directly, gate 5b stages the whole application into a Program Files probe
+          # directory, and gate 7 reads the driver signatures out of the packaged daemon directory.
+          # Gate 6 tears its installation down at the end, so "install it and audit the installed
+          # copy" is not available either.
+          #
+          # ~310 MiB, so this is the one real cost of the split. It is paid only by this workflow,
+          # which already built the tree, and no release asset comes from it.
+          #
+          # The name deliberately contains NEITHER `-signed-test` NOR `build-records`.
+          # release-artifacts.sh selects those two by shape from this run's artifact list, and a
+          # third name matching either pattern would silently change which artifact the release
+          # downloads. `jiejiebox-windows-unpacked-audit-input` matches neither, which is checked by
+          # the release gate's own self-test rather than by reading this comment.
+          name: jiejiebox-windows-unpacked-audit-input
+          path: ${{ env.CLIENT_DIR }}/release/win-unpacked
+          if-no-files-found: error
+          retention-days: 7
 
       # --- cleanup ----------------------------------------------------------
       - name: "cleanup: remove the test signing material"

@@ -1,0 +1,388 @@
+name: Windows desktop runtime audit
+
+# Audits the BUILT installer on a real (hosted) Windows machine: daemon service registration, the
+# secure service install path under Program Files, the NSIS install/reinstall/uninstall lifecycle,
+# and the signature state of the driver packages.
+#
+# # Why this is a separate workflow
+#
+# These four checks answer "does it behave on Windows", not "is this the artifact we meant to
+# build". UAC, Program Files ACLs, service behaviour across a reinstall, driver loading and reboot
+# are not properties a hosted runner represents, so a red result here is evidence about the RUNNER
+# at least as often as about the product. Keeping them in the build workflow behind one exit status
+# made the two indistinguishable.
+#
+# An earlier attempt kept them in the build workflow behind `continue-on-error: true`. That was
+# rejected as a final design and is gone: it suppressed a failure instead of giving it an honest
+# status. Here the gates are ORDINARY STEPS, so a failure turns THIS WORKFLOW red - visible in the
+# Actions list and in every status summary - rather than being reported as a green run with a
+# warning nobody reads.
+#
+# # Gating status
+#
+# NOT release-blocking, by product definition. `release-artifacts.sh` requires the Windows desktop
+# INSTALLER workflow's run to succeed and never consults this one, so a red audit does not
+# invalidate a successfully built installer. It is also not a green light: a green run here is not
+# Windows acceptance. TUN, WinDivert interception, the system proxy, reboot, sleep/wake and
+# long-running stability are properties of real hardware - see docs/WINDOWS-ACCEPTANCE.md and
+# docs/WINDOWS-STATUS.md.
+#
+# # What it needs from the build workflow
+#
+# Two artifacts from the same build run:
+#
+#   * the signed-test INSTALLER      - gate 6 runs it for real, silently
+#   * the UNPACKED application tree  - gates 5, 5b and 7 need the packaged daemon and drivers
+#
+# The second is needed because gate 6 tears its installation down at the end, so "install it and
+# audit the installed copy" is not available, and because gates 5/5b/7 are deliberately about the
+# SIGNED PACKAGE rather than about an installed state.
+#
+# The build run is identified by `core_sha` plus `core_version`, matching the artifact names the
+# build workflow produces, so this can be dispatched independently of the workflow_run that normally
+# triggers it.
+
+on:
+  # Run automatically after the installer is built.
+  workflow_run:
+    workflows: ["Windows desktop installer"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      core_sha:
+        description: 'Core commit the installer was built from (40 hex). Used to find the build run.'
+        required: true
+      core_version:
+        description: 'Jiejiebox release version (X.Y.Z). Used to find the build run and to name the installer.'
+        required: true
+      release_branch:
+        description: 'Branch of this repository that carries the runtime audit scripts.'
+        required: false
+        default: testing
+
+permissions:
+  contents: read
+  # actions:read is required to look the build run up and download its artifacts. This workflow
+  # never writes anything to the repository and never touches a release.
+  actions: read
+
+env:
+  RECORDS_DIR: build/records
+  SERVICE_WORK_DIR: C:\ProgramData\sing-box-daemon-ci-smoke
+  PROBE_DIR: C:\Program Files\sing-box-ci-probe
+
+jobs:
+  runtime-audit:
+    name: service / secure-install / lifecycle / drivers
+    # windows-latest rather than a pinned image label, matching the build workflow: this pipeline
+    # needs the Electron, Node, Rust and signing toolchains that image ships.
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      # The release version names the installer inside the artifact, so it has to be known before
+      # anything is downloaded. For a workflow_run there are no inputs at all, and a bare
+      # `git show` would run before any checkout exists - so the file is fetched deliberately
+      # first, and that is the ONLY thing this sparse checkout is for.
+      - name: Fetch the release version file
+        if: ${{ !inputs.core_version }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_branch || 'testing' }}
+          sparse-checkout: release/JIEJIE_VERSION
+          sparse-checkout-cone-mode: false
+          path: version-src
+          fetch-depth: 1
+
+      - name: Resolve the build run to audit
+        id: build
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # workflow_run carries the commit only as the triggering run's head_sha, and
+          # workflow_dispatch carries the inputs; both are normalised here so the rest of the job
+          # reads one pair of values.
+          EVENT_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_SHA: ${{ inputs.core_sha }}
+          INPUT_VERSION: ${{ inputs.core_version }}
+          INPUT_BRANCH: ${{ inputs.release_branch }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $sha = if ($env:INPUT_SHA) { $env:INPUT_SHA } else { $env:EVENT_SHA }
+          $branch = if ($env:INPUT_BRANCH) { $env:INPUT_BRANCH } else { "testing" }
+
+          if ($sha -notmatch '^[0-9a-f]{40}$') {
+            throw "core_sha must be 40 lowercase hex characters, got '$sha'"
+          }
+
+          if ($env:INPUT_VERSION) {
+            $version = $env:INPUT_VERSION.Trim()
+          } else {
+            $versionFile = Join-Path $PWD "version-src/release/JIEJIE_VERSION"
+            if (-not (Test-Path -LiteralPath $versionFile)) {
+              throw "release/JIEJIE_VERSION is not present in the release_branch checkout; pass core_version explicitly"
+            }
+            $version = (Get-Content -LiteralPath $versionFile -Raw).Trim()
+          }
+          if ($version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+            throw "could not resolve a release version (got '$version'); pass core_version explicitly"
+          }
+
+          # The newest successful run of the INSTALLER workflow for this commit. Selected by
+          # workflow path, so a renamed or added workflow cannot be mistaken for it, and requiring
+          # `success` because auditing a failed build would report on an artifact that does not
+          # exist.
+          $runs = gh api "repos/${{ github.repository }}/actions/runs?head_sha=$sha&per_page=100" `
+            --jq '.workflow_runs[] | select(.path == ".github/workflows/client-desktop-windows.yml") | [.id, .run_number, .status, .conclusion] | @tsv'
+          if (-not $runs) {
+            throw "no run of client-desktop-windows.yml exists for $sha, so there is nothing to audit"
+          }
+          $chosen = $null
+          foreach ($line in ($runs -split "`n")) {
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            $parts = $line -split "`t"
+            if ($parts[3] -eq "success") { $chosen = $parts; break }
+          }
+          if ($null -eq $chosen) {
+            throw "no SUCCESSFUL run of client-desktop-windows.yml exists for $sha; refusing to audit a failed build"
+          }
+
+          Write-Host "auditing build run #$($chosen[1]) (id $($chosen[0])) for $sha, version $version"
+          "run_id=$($chosen[0])" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "run_number=$($chosen[1])" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "core_sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "core_version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "release_branch=$branch" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Check out the runtime audit tooling
+        uses: actions/checkout@v4
+        with:
+          path: tooling
+          ref: ${{ steps.build.outputs.release_branch }}
+          fetch-depth: 1
+
+      # The scripts that consume the artifacts were pinned by the build run they audit. The checkout
+      # above is the branch HEAD, which may be AHEAD of the build; the run id is printed so a
+      # mismatch is at least visible in the log rather than silent.
+      - name: Note which tooling revision is running
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "tooling commit : $(git -C tooling rev-parse HEAD)"
+          echo "audited build  : #${{ steps.build.outputs.run_number }} for ${{ steps.build.outputs.core_sha }}"
+
+      - name: Download the installer and the unpacked application
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $runId = "${{ steps.build.outputs.run_id }}"
+          New-Item -ItemType Directory -Path "audit-input" -Force | Out-Null
+
+          # Selected by SHAPE, exactly as release-artifacts.sh does, because the artifact name
+          # carries a version that has been stale before. The installer is the one ending in
+          # `-signed-test`; the unpacked tree is the one whose name contains `unpacked`.
+          $listing = gh api "repos/${{ github.repository }}/actions/runs/$runId/artifacts?per_page=100" `
+            --jq '.artifacts[] | select(.expired | not) | [.name] | @tsv'
+          if (-not $listing) { throw "run $runId has no unexpired artifacts" }
+
+          $installerArtifact = $null
+          $unpackedArtifact = $null
+          foreach ($name in ($listing -split "`n")) {
+            $name = $name.Trim()
+            if ([string]::IsNullOrWhiteSpace($name)) { continue }
+            if ($name -like "*-signed-test") { $installerArtifact = $name }
+            elseif ($name -like "*unpacked*") { $unpackedArtifact = $name }
+          }
+          if (-not $installerArtifact) { throw "run $runId has no *-signed-test artifact; found: $listing" }
+          if (-not $unpackedArtifact) {
+            throw "run $runId has no *unpacked* artifact, which gates 5, 5b and 7 need. A build predating that upload cannot be audited here."
+          }
+
+          Write-Host "installer artifact: $installerArtifact"
+          Write-Host "unpacked  artifact: $unpackedArtifact"
+
+          gh run download $runId --repo "${{ github.repository }}" --name $installerArtifact --dir "audit-input/installer"
+          if ($LASTEXITCODE -ne 0) { throw "gh run download failed for '$installerArtifact'" }
+          gh run download $runId --repo "${{ github.repository }}" --name $unpackedArtifact --dir "audit-input/unpacked"
+          if ($LASTEXITCODE -ne 0) { throw "gh run download failed for '$unpackedArtifact'" }
+
+          $installer = Get-ChildItem "audit-input/installer" -Recurse -Filter "*.exe" |
+            Where-Object { $_.Name -like "Jiejiebox-v*-windows-x64.exe" } | Select-Object -First 1
+          if ($null -eq $installer) {
+            throw "no Jiejiebox-v*-windows-x64.exe under audit-input/installer; found: $((Get-ChildItem 'audit-input/installer' -Recurse | ForEach-Object { $_.FullName }) -join ', ')"
+          }
+          # The unpacked tree keeps its own directory structure from the upload, so the directory
+          # holding sing-box.exe is found rather than assumed.
+          $unpacked = (Get-ChildItem "audit-input/unpacked" -Recurse -Filter "sing-box.exe" |
+            Where-Object { Test-Path (Join-Path $_.DirectoryName "resources\daemon\sing-box-daemon.exe") } |
+            Select-Object -First 1)
+          if ($null -eq $unpacked) {
+            throw "no unpacked application tree (sing-box.exe beside resources\daemon\sing-box-daemon.exe) under audit-input/unpacked"
+          }
+
+          Write-Host "installer : $($installer.FullName)  $($installer.Length) bytes"
+          Write-Host "unpacked  : $($unpacked.DirectoryName)"
+          "installer_path=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "unpacked_dir=$($unpacked.DirectoryName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+          New-Item -ItemType Directory -Path $env:RECORDS_DIR -Force | Out-Null
+
+      # --- the four gates ---------------------------------------------------
+      #
+      # Ordinary steps. No continue-on-error, no `|| true`, no `if: always()` on the gate itself:
+      # a failure here fails this job and this workflow.
+
+      - name: "[gate 5] daemon service smoke test"
+        shell: pwsh
+        env:
+          UNPACKED_DIR: ${{ steps.build.outputs.unpacked_dir }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          ./tooling/scripts/ci/windows/Test-DaemonService.ps1 `
+            -DaemonPath "$env:UNPACKED_DIR/resources/daemon/sing-box-daemon.exe" `
+            -WorkingDirectory $env:SERVICE_WORK_DIR `
+            -RecordPath "$env:RECORDS_DIR/daemon-service-smoke-test.txt"
+
+      - name: "[gate 5b] daemon secure service install (the installer's own path)"
+        shell: pwsh
+        env:
+          UNPACKED_DIR: ${{ steps.build.outputs.unpacked_dir }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          # The installer runs `service install` with NO relaxed-permission flag under
+          # C:\Program Files, and aborts and rolls back when it fails. Gate 5 uses the CI
+          # escape hatch; this gate does not, so it is the one that proves the path a real
+          # installation takes - and it prints the daemon's stderr, which the installer
+          # swallows.
+          ./tooling/scripts/ci/windows/Test-SecureServiceInstall.ps1 `
+            -PackagedDirectory "$env:UNPACKED_DIR" `
+            -ProbeDirectory "$env:PROBE_DIR" `
+            -WorkingDirectory "C:\ProgramData\sing-box-daemon" `
+            -RecordPath "$env:RECORDS_DIR/secure-service-install.txt"
+
+      - name: "[gate 6] NSIS install / reinstall / uninstall lifecycle"
+        shell: pwsh
+        env:
+          INSTALLER_PATH: ${{ steps.build.outputs.installer_path }}
+          CORE_VERSION: ${{ steps.build.outputs.core_version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          # The diagnostic path is under RUNNER_TEMP and deliberately has no spaces: the
+          # installer parses it as a command-line option, and it must be outside $PLUGINSDIR
+          # and $INSTDIR so it survives customInstall's rollback.
+          ./tooling/scripts/ci/windows/Test-InstallerLifecycle.ps1 `
+            -InstallerPath "$env:INSTALLER_PATH" `
+            -ExpectedVersion "$env:CORE_VERSION" `
+            -RecordPath "$env:RECORDS_DIR/installer-lifecycle-smoke-test.txt" `
+            -DiagnosticPath "$env:RUNNER_TEMP\jiejiebox-installer-diagnostic.txt"
+
+      - name: "[gate 7] driver package signature audit"
+        shell: pwsh
+        env:
+          UNPACKED_DIR: ${{ steps.build.outputs.unpacked_dir }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          ./tooling/scripts/ci/windows/Test-DriverSignatures.ps1 `
+            -DriverDirectory "$env:UNPACKED_DIR/resources/daemon" `
+            -RecordPath "$env:RECORDS_DIR/driver-signature-audit.txt"
+
+      # --- summary and cleanup ---------------------------------------------
+
+      - name: Summarise the audit
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $summary = @(
+            "### Windows desktop runtime audit",
+            "",
+            "Audited build run: #${{ steps.build.outputs.run_number }} for ${{ steps.build.outputs.core_sha }}",
+            "Installer: ``${{ steps.build.outputs.installer_path }}``",
+            "",
+            "This workflow is NOT release-blocking by product definition. A red result here does not",
+            "invalidate a successfully built installer, and a green one is not Windows acceptance.",
+            ""
+          )
+          $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          foreach ($record in @(
+            "daemon-service-smoke-test.txt",
+            "secure-service-install.txt",
+            "installer-lifecycle-smoke-test.txt",
+            "driver-signature-audit.txt"
+          )) {
+            $path = Join-Path $env:RECORDS_DIR $record
+            if (Test-Path -LiteralPath $path) {
+              "#### $record" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              '```' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              Get-Content -LiteralPath $path | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              '```' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            } else {
+              "#### $record" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              "NOT PRODUCED - the gate that writes it did not reach its end." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            }
+          }
+
+      - name: Upload the audit records
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jiejiebox-windows-runtime-audit-records
+          path: ${{ env.RECORDS_DIR }}
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: "cleanup: uninstall anything the gates left behind"
+        if: always()
+        shell: pwsh
+        run: |
+          # A failed gate can leave a service or an installation behind, and a leftover service is
+          # exactly what would make the NEXT run's clean-state precondition fail. Identity comes
+          # from the shared resolver, not from a display name: the installation directory and
+          # executable are "sing-box" while the product name is "Jiejiebox", so matching on the name
+          # would be both wrong and unsafe.
+          $ErrorActionPreference = "Continue"
+          . (Join-Path $PWD "tooling/scripts/ci/windows/GateHelpers.ps1")
+          $service = Get-Service -Name "sing-box-daemon" -ErrorAction SilentlyContinue
+          if ($null -ne $service) {
+            Write-Host "removing a leftover sing-box-daemon service"
+            $deleted = Invoke-NativeCommand { sc.exe delete "sing-box-daemon" }
+            Write-Host "  sc.exe delete exited $($deleted.ExitCode)"
+          }
+          $state = Get-InstallationState
+          if ($null -ne $state) {
+            Write-Host "leftover installation: root=$($state.Root) layoutVersion=$($state.LayoutVersion)"
+            $matches = @($state.UninstallMatches)
+            if ($matches.Count -eq 1) {
+              $uninstaller = Get-CommandExecutablePath ([string]$matches[0].Entry.UninstallString)
+              if (Test-Path -LiteralPath $uninstaller) {
+                Write-Host "running the discovered uninstaller $uninstaller"
+                $process = Start-Process -FilePath $uninstaller -ArgumentList "/S", "/allusers" -PassThru
+                $null = $process | Wait-Process -Timeout 600 -ErrorAction SilentlyContinue
+              } else {
+                Write-Host "::warning::the matched uninstall entry's uninstaller does not exist: $uninstaller"
+              }
+            } elseif ($matches.Count -gt 1) {
+              Write-Host "::warning::$($matches.Count) uninstall entries match $($state.Root); removing none of them"
+              foreach ($line in (Format-UninstallEntries -Entries $matches)) { Write-Host $line }
+            } else {
+              Write-Host "no uninstall entry matched $($state.Root); deleting only the service"
+              $deleted = Invoke-NativeCommand { sc.exe delete "sing-box-daemon" }
+              Write-Host "  sc.exe delete exited $($deleted.ExitCode)"
+            }
+          } else {
+            Write-Host "no leftover installation was identifiable"
+          }
+          foreach ($leftover in @($env:SERVICE_WORK_DIR, $env:PROBE_DIR, "C:\ProgramData\sing-box-daemon")) {
+            if (Test-Path -LiteralPath $leftover) {
+              Write-Host "removing leftover $leftover"
+              Remove-Item -LiteralPath $leftover -Recurse -Force -ErrorAction SilentlyContinue
+            }
+          }
+          Write-Host "leftover cleanup finished"
+          # A safety net for FAILED runs, not a gate: the clean end state is asserted by gate 6, and
+          # the status of a cleanup pass must not become this job's exit code.
+          exit 0

@@ -18,6 +18,7 @@ is proved by test-release-artifacts.sh on a runner. What they prove is that the 
 still DECLARED, which is the class of mistake an editor makes.
 """
 import os
+import re
 import sys
 
 try:
@@ -33,6 +34,8 @@ WF = os.path.join(REPO, ".github", "workflows")
 RELEASE = os.path.join(WF, "release.yml")
 DESKTOP = os.path.join(WF, "client-desktop-windows.yml")
 VERIFY = os.path.join(WF, "release-contract-verify.yml")
+AUDIT = os.path.join(WF, "client-desktop-windows-runtime-audit.yml")
+GATE = os.path.join(REPO, "scripts", "ci", "release-artifacts.sh")
 
 passed = 0
 failed = 0
@@ -175,14 +178,95 @@ def check_verify():
            "bash -n" in body)
 
 
+def code_only(text):
+    """Strip whole-line comments so a structural check tests CODE, not prose.
+
+    Written after this checker's own first version failed on the audit workflow because the
+    workflow's header explains the rejected `continue-on-error` design in a comment. A check that
+    a suppression key is absent must not be satisfied or defeated by the sentence describing why
+    it is absent.
+    """
+    kept = []
+    for line in text.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        # A trailing comment on a code line is left in place deliberately: removing it needs a
+        # YAML-aware pass, and `key: value  # note` still has to be seen as code.
+        kept.append(line)
+    return "\n".join(kept)
+
+
+def check_runtime_audit_split():
+    """The Windows runtime gates live in their own workflow, as ordinary steps.
+
+    This is the contract that stops the split from silently reverting. It was attempted the wrong
+    way once already: the four runtime gates sat in the build workflow behind
+    `continue-on-error: true`, which suppressed a failure instead of giving it an honest status.
+    Both halves are asserted - the build workflow must NOT carry the runtime gates, and the audit
+    workflow must carry them with no suppression.
+    """
+    if not os.path.isfile(AUDIT):
+        report("runtime audit workflow exists", False, AUDIT)
+        return
+    with open(AUDIT, encoding="utf-8") as fh:
+        audit = fh.read()
+    with open(DESKTOP, encoding="utf-8") as fh:
+        desktop = fh.read()
+
+    # The build workflow's conclusion is what a release depends on, so every gate in it must mean
+    # "the artifact is wrong". The runtime gates are about the RUNNER as much as the product.
+    for gate in ("gate 5]", "gate 5b]", "gate 6]", "gate 7]"):
+        report("build workflow: no %s runtime gate" % gate.rstrip("]"), gate not in desktop)
+
+    # The audit workflow owns all four, under the same names.
+    for gate in ("gate 5]", "gate 5b]", "gate 6]", "gate 7]"):
+        report("runtime audit: has %s" % gate.rstrip("]"), gate in audit)
+
+    # It must resolve the build run by workflow PATH, or a renamed or newly added workflow could
+    # be audited instead of the one that actually built the installer.
+    report("runtime audit: selects the build run by workflow path",
+           'select(.path == ".github/workflows/client-desktop-windows.yml")' in audit)
+    report("runtime audit: requires a successful build run", '"success"' in audit)
+
+    # No suppression anywhere: the gates are ordinary steps, so a failure turns the workflow red
+    # rather than being reported as a green run with a warning. Checked against CODE, so the
+    # header's explanation of the rejected design cannot make this fail.
+    audit_code = code_only(audit)
+    report("runtime audit: no continue-on-error",
+           "continue-on-error" not in audit_code)
+    report("runtime audit: no `|| true` escape", "|| true" not in audit_code)
+
+    # The unpacked tree the gates need is uploaded by the build workflow, and its name must match
+    # NEITHER pattern release-artifacts.sh selects on - otherwise the release would download the
+    # wrong artifact, or two of them. Asserted against the NAME, not against a comment about it.
+    upload = re.search(r"name:\s*(jiejiebox-windows-unpacked\S*)", code_only(desktop))
+    if upload is None:
+        report("build workflow: uploads the unpacked tree for the audit", False)
+    else:
+        name = upload.group(1)
+        report("build workflow: uploads the unpacked tree for the audit", True, name)
+        report("unpacked artifact name matches neither release pattern",
+               not name.endswith("-signed-test") and "build-records" not in name, name)
+
+    # And the audit must stay non-release-blocking: the release gate consults the BUILD workflow
+    # only. If this ever fails, a red runtime audit would start silently withholding releases.
+    if os.path.isfile(GATE):
+        with open(GATE, encoding="utf-8") as fh:
+            gate = fh.read()
+        report("release gate does not consult the runtime audit workflow",
+               "runtime-audit" not in gate and "runtime_audit" not in gate)
+
+
 def main():
-    for path in (RELEASE, DESKTOP, VERIFY):
+    for path in (RELEASE, DESKTOP, VERIFY, AUDIT):
         if not os.path.isfile(path):
             print("FAIL: missing %s" % path, file=sys.stderr)
             return 1
     check_release()
     print()
     check_desktop()
+    print()
+    check_runtime_audit_split()
     print()
     check_verify()
     print()
