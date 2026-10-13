@@ -68,7 +68,14 @@ func TestAdvGItem7OccupiedPortIsInvisibleWhileTheReopenIsInFlight(t *testing.T) 
 	require.False(t, udpPortIsFree(t, held), "precondition: the endpoint holds its port before the pause")
 
 	endpoint.onPauseUpdated(pause.EventNetworkPause)
-	require.Zero(t, socketCensus(t, endpoint),
+	// Precondition, and asserted the same way its sibling in rebind_lease_test.go now is: the
+	// socket is released when `Down()` returns, but the receive goroutines leave the runtime
+	// stack during unwinding afterwards, because the pinned dependency signals them from inside
+	// a `defer` (device/receive.go:79). A census reads the STACK, so it needs the same grace.
+	// The port assertion below is the strict one and it stays immediate: the OS answers it.
+	require.Eventually(t, func() bool {
+		return socketCensus(t, endpoint) == 0
+	}, 10*time.Second, 2*time.Millisecond,
 		"precondition: a settled pause really does release the socket, which is why the assertion "+
 			"under attack is sound at that point")
 	require.True(t, udpPortIsFree(t, held), "precondition: and the port really is free then")
