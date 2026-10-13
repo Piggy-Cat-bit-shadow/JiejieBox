@@ -210,6 +210,21 @@ jobs:
             --plan release-plan/runs.tsv \
             --dir release-assets
 
+          # Two files travel beside the Android artifact for BUILD-TIME use and are not public
+          # deliverables, so they are removed before the allowlist sees them:
+          #
+          #   libbox.provenance   what the core builder recorded when it produced the AAR
+          #   SHA256SUMS.txt      that step's own checksum listing
+          #
+          # The android workflow pins its release directory to exactly `libbox.aar`,
+          # `libbox.aar.sha256`, `BUILD-INFO-ANDROID.txt` and `LICENSE`, and its own comment records
+          # that "two extra files are still extra files". They are still uploaded, because they are
+          # useful evidence on the RUN; they are dropped here, because the RELEASE is a different
+          # question. The allowlist in `release-artifacts.sh verify` is the contract, and it is
+          # deliberately NOT widened for them: widening it would also let a future, genuinely
+          # unexpected file through, which is the failure that allowlist exists to catch.
+          rm -f release-assets/libbox.provenance release-assets/SHA256SUMS.txt
+
       # The desktop installer is a public deliverable too, and it arrives by a different
       # route: that workflow is dispatch-only and produces a signed-test NSIS installer
       # rather than a tarball, so there is no run to select before one exists. This finds
