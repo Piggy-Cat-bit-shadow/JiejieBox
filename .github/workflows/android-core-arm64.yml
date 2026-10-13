@@ -352,6 +352,39 @@ jobs:
           # fails here rather than inside the release three steps later.
           test -f "$android_stage/BUILD-INFO-ANDROID.txt" || { echo "FAIL: build-info.sh wrote no BUILD-INFO-ANDROID.txt into $android_stage" >&2; exit 1; }
           grep -q '^artifact_sha256:' "$android_stage/BUILD-INFO-ANDROID.txt" || { echo "FAIL: BUILD-INFO-ANDROID.txt carries no artifact_sha256" >&2; exit 1; }
+
+          # The record must name the REAL compile profile, and this is the check that keeps it
+          # honest. Before this, BUILD-INFO-ANDROID.txt said `build_tags: with_low_memory` - the
+          # Apple mobile-only overlay - for an AAR compiled with the 26-tag android-main profile,
+          # while the file described itself as reproducible because "its hash is determined by the
+          # source commit and tags alone". A consumer asking whether the artifact carried a feature
+          # was reading a set the artifact was not built with.
+          #
+          # Both halves of the comparison come from the BUILDER, here and in build-info.sh, so
+          # there is one source of truth and no shell-side tag list to drift. If the builder's
+          # resolution changes, this fails rather than silently recording the old set.
+          expected_profile="android-main"
+          expected_tags="$(go run ./cmd/internal/build_libbox -print-resolved-tags "$expected_profile")"
+          recorded_profile="$(sed -n 's/^build_profile:[[:space:]]*//p' "$android_stage/BUILD-INFO-ANDROID.txt" | head -1)"
+          recorded_tags="$(sed -n 's/^build_tags:[[:space:]]*//p' "$android_stage/BUILD-INFO-ANDROID.txt" | head -1)"
+          [ "$recorded_profile" = "$expected_profile" ] || {
+            echo "FAIL: BUILD-INFO-ANDROID.txt records profile '$recorded_profile', expected '$expected_profile'" >&2; exit 1; }
+          [ "$recorded_tags" = "$expected_tags" ] || {
+            echo "FAIL: BUILD-INFO-ANDROID.txt does not record the tags the AAR was compiled with." >&2
+            echo "      expected ($(printf '%s' "$expected_tags" | tr ',' '\n' | wc -l | tr -d ' ') tags): $expected_tags" >&2
+            echo "      recorded: $recorded_tags" >&2
+            exit 1; }
+          # And the two product decisions that must remain visible in the recorded set, restated
+          # against the RECORD rather than against the builder, so the file itself is checked.
+          case ",$recorded_tags," in
+            *,with_low_memory,*) ;;
+            *) echo "FAIL: the recorded build_tags omit with_low_memory: $recorded_tags" >&2; exit 1 ;;
+          esac
+          case ",$recorded_tags," in
+            *,with_gvisor,*) echo "FAIL: the recorded build_tags name with_gvisor: $recorded_tags" >&2; exit 1 ;;
+          esac
+          echo "PASS: BUILD-INFO-ANDROID.txt records the resolved $expected_profile tag set ($(printf '%s' "$recorded_tags" | tr ',' '\n' | wc -l | tr -d ' ') tags)"
+
           expected_stage="$(printf '%s\n%s\n%s\n%s\n' BUILD-INFO-ANDROID.txt LICENSE libbox.aar libbox.aar.sha256 | sort)"
           actual_stage="$(find "$android_stage" -maxdepth 1 -type f -exec basename {} \; | sort)"
           [ "$actual_stage" = "$expected_stage" ] || {

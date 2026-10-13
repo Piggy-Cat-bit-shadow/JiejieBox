@@ -32,6 +32,7 @@ eval "$(./scripts/ci/version.sh)"
 # more - it carries the full upstream registry - so the canonical name is `server`,
 # and that is what the workflows emit.
 tags_file=""
+build_profile=""
 case "$flavor" in
   server)                  tags_file="release/DEFAULT_BUILD_TAGS_OTHERS" ;;
   macos|client-macos)      tags_file="release/DEFAULT_BUILD_TAGS" ;;
@@ -40,12 +41,41 @@ case "$flavor" in
   server-minimal)          tags_file="release/DEFAULT_BUILD_TAGS_OTHERS" ;;
 esac
 if [ "$flavor" = android ]; then
-  tags="$(go run ./cmd/internal/appletags -mobile-only)"
+  # The ANDROID tags come from the builder that compiles the AAR, not from a list kept here.
+  #
+  # This line used to be `go run ./cmd/internal/appletags -mobile-only`, which resolves to
+  # mobilebuildtags.LowMemoryTags() - `with_low_memory` and nothing else. That is the Apple
+  # mobile-only overlay, NOT the set the Android AAR is built with, so the shipped
+  # BUILD-INFO-ANDROID.txt claimed:
+  #
+  #     build_tags:            with_low_memory
+  #
+  # for an artifact compiled with the ~25-tag android-main profile - and then described itself as
+  # reproducible because "its hash is determined by the source commit and tags alone". The record
+  # was the one thing that could not be checked against the artifact it described.
+  #
+  # `-print-resolved-tags` is the SAME flag the artifact workflow already uses to assert its
+  # product decisions, and it reaches ResolveBuildTags("android-main") - the function the builder
+  # itself calls before handing the set to gomobile. One source, no second list, and no shell-side
+  # reconstruction. It prints and exits without needing the Android SDK or Java.
+  build_profile="android-main"
+  tags="$(go run ./cmd/internal/build_libbox -print-resolved-tags "$build_profile")"
+  # Recorded ALONGSIDE rather than instead of: it is the mobile overlay that is genuinely applied
+  # on top of the profile, and a consumer asking "does this artifact carry the mobile geometry"
+  # still gets an answer without diffing the full set.
+  mobile_tags="$(go run ./cmd/internal/appletags -mobile-only)"
 elif [ -z "$tags_file" ] || [ ! -f "$tags_file" ]; then
   echo "build-info.sh: unknown flavor '$flavor' (no tag file)" >&2
   exit 2
 else
   tags="$(cat "$tags_file")"
+fi
+
+# A tag set is never legitimately empty. An empty one would make the record claim a build with no
+# features at all, which is a worse lie than the one this function was fixed to stop telling.
+if [ -z "$tags" ]; then
+  echo "build-info.sh: resolved an EMPTY tag set for flavor '$flavor'" >&2
+  exit 2
 fi
 
 # Dependency versions are read from the ACTUAL module graph, not hardcoded, so
@@ -78,7 +108,16 @@ effective_dep() {
   echo "git_branch:            $JJ_BRANCH"
   echo "build_time_utc:        $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "go_version:            $JJ_GO_VERSION"
+  # build_profile names WHICH resolved profile the artifact was compiled from; build_tags is that
+  # profile's complete, resolved set. Both are emitted for the flavors that have a named profile, so
+  # a reader can tell "this is android-main" without diffing 25 tags by hand.
+  if [ -n "$build_profile" ]; then
+    echo "build_profile:         $build_profile"
+  fi
   echo "build_tags:            $tags"
+  if [ -n "$mobile_tags" ]; then
+    echo "mobile_tags:           $mobile_tags"
+  fi
   echo "quic_go:               $(dep github.com/sagernet/quic-go)"
   echo "sing_quic:             $(dep github.com/sagernet/sing-quic)"
   echo "sing:                  $(effective_dep github.com/sagernet/sing)"
