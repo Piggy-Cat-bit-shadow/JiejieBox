@@ -193,99 +193,74 @@ one gate that was **not** runnable is named there too, and it was not claimed as
 
 ---
 
-## 4a. The desktop pin on the true remote is a dangling commit
+## 4a. The desktop pin: `18ef1ef6` → `917d2a4` (corrected twice)
 
-This is the most consequential finding of the round, and it only became visible after the
-stale ref was corrected. It is also the finding this report first got **wrong in the alarmist
-direction**, so the correction is stated first.
+This section was wrong twice before it was right. Both errors and both corrections are kept,
+because the errors are the instructive part.
 
-### What is NOT wrong
+### Error 1 (revision 1): invented alarm
 
-The true remote tip does pin the fork — commit `b462bbfb0`, "chore(submodule): pin maintained
-desktop fork", which also carries the `.gitmodules` URL change this round was asked to make. It
-pins **`18ef1ef6`**, not `917d2a4`. `18ef1ef6`'s `src/main/updates.ts` is still upstream's
-(`SagerNet/sing-box` feed, `startsWith("SFW-")` asset matcher).
+Revision 1 reported `origin/testing = ccab3645` from a stale ref and concluded from a gitlink
+of `32f915ba` that the shipped updater would poll upstream's feed. That was corrected in §1.
 
-An earlier draft of this section concluded from that alone that `testing` would ship a client
-whose updater polls the wrong feed. **That conclusion was wrong, and the measurement that
-refutes it is in §6:** the parent overlay is still wired into `prepare-desktop-client.sh` at
-the true tip, and run against `18ef1ef6` it *does* rewrite those two lines:
+### Error 2 (revision 2): "no common ancestor" — a shallow-clone artifact
 
-```text
-overlay vs 18ef1ef6 (18ef1ef6)
-  version.json: version.json application version -> 0.1.5 (from release/JIEJIE_VERSION)
-  wrote: src/main/updates.ts
-```
-
-So at that pin the build supplies the updater contract, and the shipped client is correct. The
-remote's arrangement works.
-
-### What IS wrong
+Revision 2 reported:
 
 ```text
 git merge-base 18ef1ef6 917d2a4                     -> (empty: no common ancestor)
 git merge-base --is-ancestor 18ef1ef6 917d2a4       -> exit 1
 git merge-base --is-ancestor 917d2a4 18ef1ef6       -> exit 1
-GitHub compare 18ef1ef6...jiejiebox/main           -> status=ahead ahead_by=1
-GitHub compare 18ef1ef6...main                     -> status=diverged ahead=8 behind=1
-GitHub compare 18ef1ef6...dev                      -> status=diverged ahead=9 behind=1
+```
+
+and built an argument on it: "two diverged configurations, the owner must choose". **That is
+false.** Measured now, against real history:
+
+```text
+917d2a4 parents        : 18ef1ef6              <- 18ef1ef6 is its DIRECT PARENT
+18ef1ef6 parents       : 32f915ba
+git merge-base A B     : 18ef1ef6
+A(18ef) ancestor of B  : YES
+diff A..B              : 1 file changed, 18 insertions(+), 2 deletions(-)
+files A..B             : src/main/updates.ts
 ```
 
 ```text
-18ef1ef6  "feat: preserve Jiejiebox Windows build overlays"           (no branch contains it)
-917d2a4  "feat(updates): own the Jiejiebox release feed and installer matcher"  = jiejiebox/main
+18ef1ef6  ──►  917d2a4  ──►  refs/heads/jiejiebox/main
+   └─ 32f915ba
 ```
 
-`18ef1ef6` is reachable from **no fork branch**. `jiejiebox/main` — the branch `.gitmodules`
-names as this submodule's source — is one commit *ahead* of it, and `main`/`dev` diverge from
-it. Two consequences, stated with the measurement that bounds each:
+So V4 §3.2 is correct: `18ef + overlay` is simply the earlier phase, and
+`917d + no static parent overlay` is the final source ownership. This matches the brief exactly
+and the report should never have disputed it.
 
-1. **It is a reachability risk, not a present breakage.** A fresh clone fetches the gitlink by
-   SHA, and measured, that works for both pins:
+**Root cause of error 2, and the rule it earns.** The desktop submodule was a `--depth 1` clone
+from an earlier `submodule update --init --depth 1`. In a shallow repository `git merge-base`
+cannot walk to a common ancestor and returns empty with exit 1 — which is indistinguishable, in
+output alone, from "these commits are unrelated". It was read as a fact about the repository
+when it was a fact about the clone. The check that would have caught it was already in hand and
+was misread: `GitHub compare 18ef1ef6...jiejiebox/main` had returned `behind_by=0`, and
+`behind_by=0` on that comparison means the base is an ancestor of the head, i.e. a
+fast-forward. `behind_by=0` was the answer; `merge-base` was the noise.
 
-   ```text
-   git init scratch; git remote add origin <the .gitmodules URL>
-   git fetch --depth 1 origin 917d2a4…   -> exit 0   (the branch tip)
-   git fetch --depth 1 origin 18ef1ef6…  -> exit 0   (the dangling pin)
-   ```
+> **Do not run ancestry tests in a shallow clone.** Either `git fetch --unshallow` first, or ask
+> the API (`/compare`, or the commit's `parents`). `merge-base` returning empty means "no local
+> path", not "no relationship".
 
-   So the dangling pin resolves **today** and an earlier draft of this section overstated the
-   case by calling it one garbage collection from being unfetchable. What is true is narrower
-   and still worth acting on: GitHub serves a by-SHA fetch for a commit no branch advertises
-   only as long as the object survives, nothing keeps it alive, and a commit that no branch
-   reaches is not what a submodule documented as "the maintained fork" should point at.
-2. **The arrangement is self-inverting.** `917d2a4` is the same fork with the updater contract
-   committed, and the overlay is *only* able to supply that contract because `18ef1ef6` lacks
-   it. The rule engine requires each rule's **original, pre-branding** text and fails closed
-   otherwise. So the day the pin is moved to the branch `.gitmodules` names — the obvious
-   maintenance action, and the one the brief's §1.2 asks for — the overlay's two `updates.ts`
-   rules find no anchor and the build **fails closed**:
+### What survives, and it is the same decision
 
-   ```text
-   overlay vs 917d2a4 (917d2a4e)
-     version.json: version.json application version -> 0.1.5 (from release/JIEJIE_VERSION)
-     nothing to write: the client already carries this overlay
-   ```
+The decision V4 §3.1 fixes — keep `917d2a4`, do not revert to `18ef1ef6` — is unaffected and
+this round keeps it. What changes is the *reason*, which is now the simple one:
 
-   reaching "nothing to write" only because the branded text is already there. The two are
-   mutually exclusive states of one file, and the pin and the overlay are `git add`-apart from
-   a configuration that cannot build.
+* `917d2a4` is the tip of `jiejiebox/main`, the branch `.gitmodules` names as this submodule's
+  source, and it is `18ef1ef6` plus the one commit that moves the updater contract into source;
+* `18ef1ef6` is that same branch minus that commit, so pinning it would leave the updater
+  contract to be re-applied at build time by the parent overlay — the arrangement P0-A retires;
+* `git diff 18ef1ef6 917d2a4` is `src/main/updates.ts` and nothing else, so there is no third
+  behaviour being traded away.
 
-3. **The pin is behind the branch the brief names.** §1.2 says the two static rules were
-   migrated into the fork at `917d2a4` and that the gitlink should be `917d2a4`. The remote's
-   `b462bbfb0` did the `.gitmodules` half and pinned a different, earlier commit.
-
-### What this round did, and why it is the one edit worth reviewing
-
-Resolved the gitlink conflict to **`917d2a4`**, the tip of `jiejiebox/main`, because:
-
-* it is the revision `.gitmodules` names as the source, and it is on that branch;
-* it is a **strict superset** of the remote's pin — `git diff 18ef1ef6 917d2a4` is one file,
-  `src/main/updates.ts`, 18 insertions and 2 deletions, and nothing else;
-* committing the updater contract is what lets the overlay be retired, which is P0-A's stated
-  goal (a rule set that asserts a shape its own pinned source already satisfies is the
-  redundancy the brief exists to remove);
-* and it points at a branch-reachable commit rather than a dangling one.
+The reachability worry from revision 2 also dissolves: `18ef1ef6` is the parent of a
+branch-reachable commit, so it is reachable from `jiejiebox/main`. It was never dangling.
 
 The two gitlinks are proved, not assumed, exactly as §1.5 requires:
 
@@ -294,15 +269,10 @@ desktop   HEAD 917d2a4e9864528e1c10c4c6a39f3949b6f5d878 == parent index gitlink 
 dashboard HEAD 3d32338fdc35b050cd9728afa7f66c18206e4fb9 == client index gitlink   MATCH
 ```
 
-**For the owner.** This is the one change in this round that alters what `testing` ships, in
-the opposite direction from the remote's own `b462bbfb0`, and it should be reviewed first
-rather than trusted. The honest summary of the trade: **both pins produce a correct client
-today, and both are fetchable today; they differ in whether the correctness lives in the pinned
-source or in a parent-side rewrite.** `917d2a4` + no overlay puts it in the source; `18ef1ef6` +
-overlay keeps it in the rewrite, points at a commit no branch reaches, and blocks the pin from
-following its own branch. If the owner prefers the remote's arrangement, the revert is the
-single gitlink line, and P0-A's overlay retirement must then be dropped as well — the two
-choices cannot be mixed, which is the point of the inversion in (2).
+**For the owner.** Nothing here is left for a decision: V4 §3.1 fixes the gitlink at `917d2a4`,
+and this round keeps it. This section is retained as the record of how the pin was misjudged
+twice, because the second misjudgement — trusting `merge-base` in a shallow clone — is a trap
+that will recur on any submodule in this repository.
 
 ---
 
@@ -361,15 +331,19 @@ overlay and it must not depend on which revision is pinned:
 
 | Probe | Result |
 |---|---|
-| overlay vs `917d2a4` (`jiejiebox/main`) | `24 applied/confirmed` → **`nothing to write`**, probe tree CLEAN |
-| overlay vs `18ef1ef6` (the true remote's pin) | `24 applied/confirmed` → **`wrote: src/main/updates.ts`**, probe tree DIRTY |
+| overlay vs `917d2a4` (`jiejiebox/main`, the pin) | `24 applied/confirmed` → **`nothing to write`**, probe tree CLEAN |
+| overlay vs `18ef1ef6` (`917d2a4`'s parent, the earlier phase) | `24 applied/confirmed` → **`wrote: src/main/updates.ts`**, probe tree DIRTY |
 
-The second row is the load-bearing one, and it is why §4a was rewritten. The overlay does not
-report the same thing on the two pins: on the branch pin it finds the updater contract already
-committed and writes nothing; on the dangling pin it supplies that contract at build time,
-because that pin kept upstream's `updates.ts`. Retirement is therefore justified by the first
-row — the fork branch already carries every rule — and the second row is the evidence that the
-two configurations are alternatives, not complements. The procedure, for `917d2a4`:
+Both rows are load-bearing, and together they are the whole argument for P0-A's shape:
+
+* row 1 is why the overlay is redundant **on the pin we keep** — all 24 rules already resolve as
+  "already", so the parent no longer owns any static branding;
+* row 2 is why the overlay was still *necessary* one commit earlier — `18ef1ef6` kept upstream's
+  `updates.ts`, so the parent had to supply the updater contract at build time. That is the
+  "earlier phase" V4 §3.2 describes, and it is a strict subset of row 1's state.
+
+Because `18ef1ef6` is `917d2a4`'s parent, this is a single progression rather than two
+alternatives; §4a's error 2 said otherwise and is corrected there. The procedure, for `917d2a4`:
 
 1. A detached worktree was created at `917d2a4`, with its nested `dashboard` submodule at the
    recorded `3d32338f`.
@@ -455,7 +429,7 @@ narrowing it later.
 
 | Finding | Evidence | Fixed? | Why / why not |
 |---|---|---|---|
-| **The desktop pin on the true remote is a dangling commit** (`18ef1ef6`) reachable from no fork branch, one commit behind the `jiejiebox/main` that `.gitmodules` names | `git merge-base` empty; GitHub compare vs `jiejiebox/main` = ahead 1, vs `main` = diverged, vs `dev` = diverged; by-SHA fetch works for **both** pins today | **YES** — re-pinned to `917d2a4` in P0-A | **The one edit in this round that changes what `testing` ships. Review it first.** Both pins build a correct client today and both are fetchable today (the overlay supplies the updater contract on the dangling pin). They differ in whether that correctness lives in the pinned source or in a parent-side rewrite, and the dangling pin cannot follow its own branch without the build failing closed |
+| The desktop gitlink on `testing` was `18ef1ef6` while `.gitmodules` names `jiejiebox/main`, whose tip is `917d2a4` — and `18ef1ef6` is `917d2a4`'s **direct parent**, one commit behind, differing only in `src/main/updates.ts` | `git rev-list --parents` = `18ef1ef6`; `git diff --shortstat` = 1 file, +18 −2; `git merge-base` = `18ef1ef6` | **YES** — re-pinned to `917d2a4` in P0-A, and **kept frozen per V4 §3.1** | The updater contract (`Piggy-Cat-bit-shadow/sing-box` feed + `Jiejiebox-v*.exe` matcher) belongs in source rather than re-applied per build by the parent overlay. `18ef + overlay` is the earlier phase; `917d + no static overlay` is the final ownership. Not a decision to re-open |
 | The remote's `b462bbfb0` already made the `.gitmodules` URL change this round was asked for, so P0-A's `.gitmodules` hunk is a no-op against the true tip | `git show b462bbfb0 --stat` = `.gitmodules` + `clients/desktop` | **YES** — reconciled | The replay kept the remote's version; the only desktop-side change this round makes is the gitlink value |
 | `prepare-desktop-client.sh` and the overlay described the client as "pinned to upstream SagerNet/sing-box-for-desktop" | script headers | **YES** — P0-A | Documentation describing the old model is the drift the brief lists |
 | `client-desktop-windows.yml` gate 2 asserted an *overlay* had set `executableName` and `forceCodeSigning` | gate 2 step names and comments | **YES** — P0-A | It now asserts the properties directly, and additionally asserts the fork's release feed and asset matcher, which nothing checked before |
