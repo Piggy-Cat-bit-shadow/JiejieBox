@@ -1462,17 +1462,55 @@ func TestPauseWakeCyclesInterleavedWithRebindsKeepOneSocket(t *testing.T) {
 
 		endpoint.onPauseUpdated(pause.EventNetworkPause)
 
-		// THE DEVICE-OWNED WITNESS, asserted immediately and first. `closeBindLocked` closes the bind
-		// and waits for its receive goroutines before `Down()` returns, so this is the synchronous
-		// claim the pause makes, stated in a unit no other process on the machine can move.
-		require.Zero(t, socketCensus(t, endpoint),
-			"cycle %d: a network pause must RELEASE the socket before the handler returns; a receive "+
-				"goroutine outliving it belongs to a socket that was not released", cycle)
-
-		// And the out-of-process corroboration, disambiguated: see
+		// THE SOCKET-RELEASE WITNESS, asserted immediately and first. `closeBindLocked` closes the
+		// bind BEFORE it waits for the receive goroutines, so by the time `Down()` returns the
+		// socket fd is already closed - and that is the synchronous claim the pause makes. It is
+		// stated in a unit no other process on the machine can move, and it is asserted HERE, at the
+		// boundary, with no grace period at all.
+		//
+		// The out-of-process corroboration follows, disambiguated: see
 		// requirePortReleasedByTheEndpoint for why the bare port table cannot carry this alone.
 		requirePortReleasedByTheEndpoint(t, fixture, held,
 			fmt.Sprintf("cycle %d: a network pause must RELEASE the socket", cycle))
+
+		// The RECEIVER-GOROUTINE LIFETIME, asserted eventually rather than at the same instant.
+		//
+		// The two are not the same claim, and asserting the second at the first's boundary was
+		// wrong. The pinned dependency signals its receiver from inside a defer:
+		//
+		//	// github.com/sagernet/wireguard-go device/receive.go:79
+		//	func (device *Device) RoutineReceiveIncoming(maxBatchSize int, recv conn.ReceiveFunc) {
+		//	        defer func() {
+		//	                device.net.stopping.Done()      // <- inside the defer, measured 2026-10
+		//	        }()
+		//
+		//	while `closeBindLocked` (device/device.go:699) closes the bind and THEN waits:
+		//
+		//	        if netc.bind != nil { err = netc.bind.Close() }   // the socket fd goes first
+		//	        netc.stopping.Wait()                              // ...then the wait
+		//
+		// A WaitGroup reaches zero when `Done()` RUNS, which is during unwinding. So `Wait()` - and
+		// therefore `Down()` - can return while the last receiver is still executing its deferred
+		// calls, and `runtime.Stack` still prints it. This census counts GOROUTINES, not sockets:
+		// it scans the stack for the receiver's frame, so a goroutine that has already released
+		// everything but has not yet returned is counted.
+		//
+		// That window is scheduling-dependent. Measured on the Windows host this test was developed
+		// on it is 0 in 10 of 10 cycles; macOS widened it enough for both receivers of a two-family
+		// bind to be observed, which is why the failure read `was 2` - exactly
+		// SOCKETS_PER_STANDARD_BIND, the whole complement rather than a partial one.
+		//
+		// So what this asserts is unchanged in substance - a pause must leave no receive goroutine
+		// behind - and what changed is only WHEN it must be true: eventually and boundedly, rather
+		// than in the same scheduling instant as the socket close. A receiver that never leaves is
+		// still a failure, and the socket-release witness above still fires at the boundary, where
+		// it belongs.
+		require.Eventually(t, func() bool {
+			return socketCensus(t, endpoint) == 0
+		}, 10*time.Second, 2*time.Millisecond,
+			"cycle %d: a network pause must leave no receive goroutine behind - the socket is already "+
+				"released above, and a receiver that outlives it without bound belongs to a socket "+
+				"that was not released", cycle)
 
 		endpoint.onPauseUpdated(pause.EventNetworkWake)
 		require.Eventually(t, func() bool {
