@@ -54,7 +54,7 @@ require (
 	github.com/sagernet/sing-shadowsocks2 v0.2.2-0.20260929152114-a69d1086332b
 	github.com/sagernet/sing-shadowtls v0.2.2-0.20260928201441-a9c0127d5c99
 	github.com/sagernet/sing-snell v0.0.0-20260904135315-bc5a12ac736f
-	github.com/sagernet/sing-tun v0.9.7-0.20261007151655-7539c9855f19
+	github.com/sagernet/sing-tun v0.9.7-0.20261013140216-9ffa5391a2ad
 	github.com/sagernet/sing-usbip v0.0.0-20260817040617-28bd42667eca
 	github.com/sagernet/sing-vmess v0.2.9-0.20260929152519-9b95ab8c9478
 	github.com/sagernet/smux v1.5.50-sing-box-mod.1
@@ -312,27 +312,32 @@ replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-qu
 // Upstream dev still returns bare on that error (checked 2026-10-08), so the fix is carried here.
 //
 // Fork: github.com/Piggy-Cat-bit-shadow/sing-tun (a fork of SagerNet/sing-tun)
-//   base:   7539c9855f19bb51a75f0908ecf6ae1d2d749490  (= the version this replaces)
-//   branch: sync/go-stack-plus-040-and-race @ 8dde9c8cbe27c8fa2be94fe68de10a05396b0379
+//   base:   9ffa5391a2adc292182ffbeac089e795b1a3190d  (= the version this replaces, i.e. the
+//           revision upstream's "Batch loopback hairpin writes in go stack" pins; the hairpin
+//           batching in stack_go_engine.go, the platformIO.flush() lifecycle in
+//           stack_go_io_darwin.go and the arena change are carried intact)
+//   branch: sync/go-stack-plus-040-and-race-9ffa539 @ 6937951ec9b644ea2341e7a6725d209ba0ecf3ad
 //   change: stack_system.go (040: classify the accept error, re-bind on an unexpected failure,
 //           bounded backoff, never resurrect the listener after Close) and stack_go.go (make the Go
 //           stack's Start/Close a published handshake under the existing s.access lock: Close owns
 //           the started state and snapshots the resources under the lock, Start refuses once closed,
 //           a duplicate Start is a no-op), plus their regression tests.
-//   prior:  sync/go-stack-plus-040 @ 46cfb7ff31fea7c2015b02f8126aae12af2baf4c (040 only)
+//   prior:  sync/go-stack-plus-040-and-race @ 8dde9c8cbe27c8fa2be94fe68de10a05396b0379
+//           (based on 7539c985; that base is no longer used, the fixes were re-applied to 9ffa5391)
 //   remove: when upstream makes acceptLoop recover on its own and makes the Go stack's Start/Close a
 //           published handshake. verify-upstream-assumptions.sh checks the pin really is this fork
 //           and probes upstream on every run.
-// The branch is based on the revision the Go TUN stack is written against rather than on the
-// previous pin, because the previous pin (d769a7080ca2) is an upstream revision that upstream has
-// since rewritten out of `dev`; carrying the fix on a dead base would ship a stack revision nobody
-// else has tested. Every upstream branch still ends the accept loop on any error and no upstream
-// branch has fixed the Go stack race (checked 2026-10-08), so the fix is still the only thing
-// standing between an unexpected accept failure and a permanently dead TCP path while UDP/QUIC keep
-// working, and between a stop landing on a starting stack and a reported data race (a nil-engine
-// panic on the unpinned revision).
+// The two fixes are cherry-picked onto the new upstream revision rather than merged, because the old
+// base (7539c985) is an upstream revision upstream has since rewritten out of `dev`; carrying the fix
+// on a dead base would ship a stack revision nobody else has tested. Both fixes still apply cleanly to
+// 9ffa5391 with no conflicts, which is also the evidence that upstream has not adopted either: every
+// upstream branch still ends the accept loop on any error, and no upstream branch has fixed the Go
+// stack race (re-checked against 9ffa5391 on 2026-10-14). The fix remains the only thing standing
+// between an unexpected accept failure and a permanently dead TCP path while UDP/QUIC keep working,
+// and between a stop landing on a starting stack and a reported data race (a nil-engine panic on the
+// unpinned revision).
 // See docs/fork/lx-stability-audit-phase1.md (040) and FORK.md in the fork.
-replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261008172655-8dde9c8cbe27
+replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261013212953-6937951ec9b6
 
 // gVisor is RETIRED, and this is deliberately a comment rather than a replace directive.
 //
