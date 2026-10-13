@@ -477,3 +477,229 @@ Two further things the final freeze will need, unchanged by this round and repea
 they are not lost: the `[skip ci]` dependency sync means the frozen SHA must obtain its **own**
 Action evidence (§17), and `release-contract-verify.yml` keeps `workflow_dispatch` for exactly
 that purpose — which the push-path narrowing deliberately did not remove.
+
+---
+
+# V4 round (main-heading continuation)
+
+Supersedes §7–§10 above where they disagree: the V4 sections are measured against the true
+remote, and §4a records why the earlier ones were not.
+
+## A. Real identity baseline
+
+Measured at the start of this round with `git ls-remote` and the GitHub API. The local
+remote-tracking ref is listed too, to keep the distinction visible.
+
+```text
+LOCAL_HEAD                      = 7aa5a36ddd806c1467026cb3b3f265868d7bcca5
+REAL_REMOTE_TESTING (ls-remote) = 9bdcf8e8b17b67a2c0fd306d2cc865535dc6970e
+LOCAL_REMOTE_TRACKING_TESTING   = 9bdcf8e8b17b67a2c0fd306d2cc865535dc6970e   (in agreement)
+V0.1.7_OBJECT (local)           = 46361ea86bc579709e47bbd302ba2032928ae267
+V0.1.7_PEELED_COMMIT (local)    = ccab3645d60e9cba13b8e3a47b85dd1c1ca60d5e
+── for reference, the REMOTE tag ──
+refs/tags/v0.1.7                 = cf419b9601e9d2c9eb738f14f5ee1024df95da84
+refs/tags/v0.1.7^{}              = 6f0d5519c74816f0a4c255f46a08fe0f298b3cd7
+```
+
+The local `v0.1.7` still names `ccab3645` and the remote names `6f0d5519`. **This round did not
+move it** and must not: the remote tag was moved by an earlier round
+(`V0.1.7_FORMAL_RELEASE_REPORT.md`), and it is recorded here so the disagreement is not mistaken
+for local drift. Any work that resolves release identity must use the remote peel.
+
+The local ref was refreshed at the start of this round, so `LOCAL_REMOTE_TRACKING_TESTING` and
+`REAL_REMOTE_TESTING` now agree. That agreement is a property of *this* moment, not a guarantee:
+the rule from §1 of the brief stands, and `git ls-remote` remains the only answer to "what is the
+remote now".
+
+## B. Frozen design decisions
+
+Kept exactly as V4 §3.1, §4 and §5 fix them. This round re-derived the reason for the first one
+and did not change the decision.
+
+```text
+DESKTOP_GITLINK        = 917d2a4e9864528e1c10c4c6a39f3949b6f5d878   KEEP
+STATIC_OVERLAY         = RETIRED                                    (deleted in c50f9d1a7)
+DYNAMIC_VERSION_OWNER  = release/JIEJIE_VERSION                     (inject-desktop-release-version.py)
+DESKTOP_TOOLING_SHA    = exact, and == core_sha                     (client-desktop-windows.yml)
+```
+
+The re-derivation, recorded because two earlier revisions of this report got it wrong: `917d2a4`
+is `18ef1ef6` **plus one commit**, not a diverged alternative. `git rev-list --parents` gives
+`18ef1ef6` as its direct parent and `git diff` gives one file, `src/main/updates.ts`, +18 −2. So
+`18ef + overlay` is the earlier phase and `917d + no static overlay` is the final ownership, in a
+single progression. The pin is not re-opened and no revert to `18ef1ef6` is proposed.
+
+## C. P1 item status
+
+| Item | Status | Note |
+|---|---|---|
+| P1-A Verify slimming | **PARTIAL** | Owner table built and recorded in `verify.yml`; both race steps **KEPT**. No race step had a usable non-push owner, so the brief's "no owner → do not delete, record it" applies. See D-1. |
+| P1-B Verify docs-only trigger | **DONE** | `paths-ignore: ["*.md"]` on push and pull_request; 18/18 filter cases correct; the three machine-read `docs/fork/*.md` still trigger. |
+| P1-C Release Contract push paths re-audit | **DONE** | Re-audited mechanically; **found and closed a real gap** (two executed files were unlisted). Paths kept at 18, not widened. |
+| P1-D Android payload/evidence separation | **DEFERRED_BY_92_CASE_ENV** | Producer is already clean; completion requires `release-artifacts.sh`, which §6 freezes. Full reason and exact future patch scope in F. |
+| P1-E `RELEASE_EXTRA_PLATFORMS` legacy semantics | **PARTIAL — DONE, not deleted** | Classified **ACTIVE_BEHAVIOUR** and kept. The two genuinely stale artefacts around it are fixed (D-2, D-3). The core deletion is DEFERRED_BY_92_CASE_ENV. |
+| P1-F Formal Release wait strategy | **REPORT_ONLY** | Investigated; the mechanism already shares `is_in_flight` and already fails fast on a missing run. Remaining change is policy. See F. |
+
+Nothing in this round touched `release-artifacts.sh` behaviour. The two `release-artifacts.sh`
+edits are a comment and a `note` string — no exit code, no branch, no file set changed.
+
+## D. Proactive discoveries
+
+Each is from the brief's §0.1 list and §14, found by auditing adjacent areas rather than by
+working the item list.
+
+**D-1 — Race checks have no usable non-push owner.** (class `duplicate owner` / `check in the
+wrong layer`; CHANGED = YES, as recorded comments + a new check)
+Census of every `-race` invocation: verify.yml races trafficclass, trafficsched, dialer,
+direct, tun, route, adapter, and separately `option`. server-linux-amd64.yml and
+client-macos.yml race masque/http/naive/route/httpclient (+trafficsched on macOS). The overlap
+looks like duplication, but three measurements block a MOVE: the artifact workflows' race legs
+sit behind a manual `deep_checks` input and never run on a push; five packages raced here are
+raced nowhere else (`option` too); and the two sides race under different tag profiles
+(`DEFAULT_BUILD_TAGS` vs `_OTHERS`, differing by exactly `with_naive_outbound`). So the correct
+destination is one final-candidate gate that races the union — which does not exist — and
+deleting here would remove coverage rather than relocate it. The table, the three facts and the
+required owner are now in `verify.yml` beside the steps, and asserted by the checker.
+
+**D-2 — A contract comment that contradicted the code beneath it.** (class `stale comment`;
+CHANGED = YES)
+`release-artifacts.sh` said Windows, Android and the IPA/DMG were "deliberately NOT here" and
+that adding them "is a product decision, not a bug fix" — while the case statement 10 lines below
+adds Windows and Android, and `release.yml` sets that switch true. A reader would conclude the
+release ships two platforms. Corrected to state the real contract: five deliverables, four
+workflow targets, a two-target default that exists for fixture focus only.
+
+**D-3 — A green message describing a contract the run did not check.** (class `stale message`;
+CHANGED = YES)
+`note "PASS: both platforms verified against commit $sha"` printed a hardcoded "both" inside a
+loop that runs two, four or five times. It now names the platforms it verified, derived from the
+same `target_field` table that produced the checks. Proved for both set sizes by extracting
+`target_field` from the real script.
+
+**D-4 — Four structural checks named the wrong workflow.** (class `structural test protects the
+wrong fact`; CHANGED = YES)
+`check-release-workflows.py` labelled checks "verify workflow" while reading
+`release-contract-verify.yml`; there was no constant for `verify.yml` at all. A reader asking
+about the push gate got an answer about the release-tooling gate, and the P0-C duplication check
+added last round asserted the wrong subject while reading as coverage. Renamed per subject and a
+real `check_source_verify()` added — which is what now guards D-5 and P1-B.
+
+**D-5 — The push gate's own header claimed it does not run the race suite.** (class `stale
+comment`; CHANGED = YES)
+`verify.yml`'s header said it "deliberately does not run the full unit suite, the race suite or
+any artifact step". Two of three true; the race claim has been false since the race steps were
+added. A header describing a cheaper gate than the workflow is is how a push gate grows without
+anyone deciding to. It now states the gate's purpose and its 40-minute budget, and names the race
+suite as something it runs.
+
+**D-6 — An orphaned script that would have silently unpinned two clients.** (class `command exits
+0 but the intent is not proved`; CHANGED = YES)
+`.github/update_clients.sh` hard-reset each client submodule to `origin main`, then `git add`
+with no read-back. Measured: **two of the three** pinned revisions are not ancestors of their
+fork's `main` — android `ec61030d` and desktop `917d2a4e` — so the reset would have moved them
+off the line this repository pins, desktop off `jiejiebox/main` entirely. And `git add
+<submodule>` exits 0 whether or not the gitlink moved. Rewritten to read the branch from the
+submodule's config, require ancestry (fail closed otherwise), and read the staged gitlink back
+against the worktree HEAD. Exercised for real: it fast-forwarded apple with a proved read-back,
+skipped the unchecked-out android, and failed closed on desktop naming the divergence; the index
+and worktree were then restored and all three gitlinks re-verified.
+
+**D-7 — Recorded, not fixed: the release helper suite still runs three times.** (class `duplicate
+complete test`; CHANGED = NO)
+Re-measured at the true tip: `verify.yml:64`, `release-contract-verify.yml:84`,
+`release.yml:180`. Unchanged from §9; the assertions recording it are still in place, and P0-C is
+still frozen.
+
+## E. Local verification
+
+Every command was run in this environment. `git` is MinGit 2.50.1 (portable, borrowed — nothing
+installed), `python` is the bundled 3.12.14, `bash` is MinGit's `sh.exe` reporting
+`bash 5.2.37(1)-release`.
+
+| COMMAND | EXIT | RESULT | PROVES | DOES NOT PROVE |
+|---|---|---|---|---|
+| `python scripts/ci/test-desktop-release-version.py` | 0 | 60/60 | the version-injection contract, including all fail-closed cases | that a real Windows build stamps correctly |
+| `bash scripts/ci/test-desktop-source-identity.sh` | 0 | 30/30 | gitlink identity against real git fixtures | that a runner's submodule checkout behaves identically |
+| `python scripts/ci/check-release-workflows.py` | 0 | **114/114** | the structural guards, now including the P1-B filter and the source-gate checks | any shell behaviour |
+| `bash scripts/ci/require-executed-coverage.test.sh` | 0 | 11/11 | the coverage guard's own falsifiability | — (needs no `jq`, which is why it runs here) |
+| `bash -n` × 5 release-path scripts + `update_clients.sh` | 0 | syntax OK | the files parse | that they behave |
+| `yaml.safe_load` × all 12 workflows | 0 | parse | YAML validity; the filters were then read back from the parsed documents | GitHub's filter engine (modelled separately, below) |
+| GitHub filter model over 18 paths | 0 | 18/18 correct | `*.md` reaches root reports and **not** `docs/fork/*.md`, `go.mod`, `.gitmodules`, gitlinks, workflows or scripts | GitHub's implementation, only its documented semantics |
+| `bash .github/update_clients.sh` (real run) | 1 | fails closed on desktop, fast-forwards apple with read-back | the ancestry guard and the read-back both work on real submodules | nothing about the other two clients' future pins |
+| gitlink read-back, all three clients | 0 | HEAD == index == worktree | §15's hard gate | — |
+| `git diff --check` | 0 | clean | no whitespace damage | — |
+| `bash scripts/ci/test-release-artifacts.sh` | — | **NOT RUN** | — | anything on the release path |
+
+`bash -n` is explicitly **not** treated as release-behaviour evidence, per §17.
+
+## F. Blockers, precisely
+
+```text
+P0-C, P0-D, P1-D, P1-E-core, P1-F-behaviour
+    BLOCKER = jq + chmod absent from this machine
+```
+
+Measured, not inferred: `test-release-artifacts.sh` stops at
+`line 377: chmod: command not found`, and the suite's mock `gh` output is parsed with real `jq`.
+Both were searched for across `C:\Deepseek`, `C:\Users\Jie`, `C:\Program Files` and
+`C:\ProgramData` and are absent. `sha256sum` is also missing but is **not** a blocker — the suite
+has a fallback at line 445. `tar` resolves to `C:\Windows\system32\tar.exe` (bsdtar), untested
+against the suite.
+
+Not "Windows is unsupported": `bash`, `git`, `python3`, `mktemp`, `sed`, `awk` and `jq`-free
+suites all work here. It is exactly two binaries.
+
+**P1-D needs one more thing named**, so the future patch has a scope rather than a hint. The
+producer is already correct: `android-core-arm64.yml` stages exactly the four payload files in
+`release-android/` and asserts that directory's contents. The separation cannot be completed
+producer-only because:
+
+```text
+scripts/ci/release-artifacts.sh:448   requires EXACTLY ONE artifact subdirectory per target
+                                      ("produced N artifact directories in $dest, expected exactly 1")
+                                      -> a second artifact NAME fails cmd_download immediately
+scripts/ci/release-artifacts.sh:970   locates the payload with  find -name <binary>
+scripts/ci/release-artifacts.sh:436   derives <binary> from target_field per workflow
+scripts/ci/test-release-artifacts.sh  fixtures encode the current single-artifact layout
+```
+
+So the future patch is: download the payload artifact and the evidence artifact by exact name in
+`cmd_download`, keep the one-subdirectory invariant per artifact, update the fixtures, and add
+the negative cases the brief lists (payload missing, wrong artifact name, evidence never staged,
+unexpected payload file). All of it is inside the frozen file.
+
+## G. Final state
+
+```text
+CURRENT_WINDOWS_SAFE_SCOPE_COMPLETE = YES
+
+P0_A = DONE
+P0_B = DONE
+P0_C = BLOCKED_BY_ENVIRONMENT
+P0_D = BLOCKED_BY_ENVIRONMENT
+
+GITHUB_ACTIONS_RUN = NO
+PUSHED_THIS_ROUND  = NO
+PARENT_PUSHED      = NO
+TAG_MOVED          = NO
+RELEASE_CREATED    = NO
+
+READY_FOR_FINAL_FREEZE_VALIDATION = NO
+READY_FOR_NEXT_UNIX_RELEASE_TOOLING_STAGE = YES
+```
+
+`CURRENT_WINDOWS_SAFE_SCOPE_COMPLETE = YES` in the §20 sense: every CI / Verify / workflow
+optimization this environment can reliably verify is done, nothing that needs the 92-case suite
+was touched, and every remaining blocker is located to a named binary or a named file.
+
+`READY_FOR_FINAL_FREEZE_VALIDATION` stays **NO** for the same reason as §10: P0-C and P0-D are
+outstanding, so the release helper does not yet have a single test owner and candidate evidence
+does not yet have one exact-SHA authority.
+
+`READY_FOR_NEXT_UNIX_RELEASE_TOOLING_STAGE = YES`: a machine with `jq` and `chmod` can proceed
+directly to P0-C, P0-D, P1-D and the P1-E core deletion, with D-1's owner table and F's patch
+scope as the starting point.
+
+Worktree: 3 pre-existing untracked `KNOWLEDGE/modules/*.md` —
+`PRE_EXISTING_UNTRACKED / UNCHANGED`, per §16.
+
