@@ -237,13 +237,20 @@ sibling-group contamination:             NO   — tested with require.Same on th
 
 **NOT RUN, and therefore not claimed:**
 
-- **`-race`.** Blocked by the environment, not by this change: `-race` needs cgo, and the only C
-  compiler on this host is Swift's clang, whose link fails with `LNK1143`. The concurrency test
-  therefore ran without the detector, at `-count=50`. The design has no shared mutable state for a
-  race to exist on, which is the point — but that is an argument, not a measurement, and the macOS
-  deep-check workflow is where it should be confirmed.
-- **CI.** Nothing was pushed to a workflow run for this change yet; the local results above are the
-  whole evidence base.
+- **`-race`.** Blocked by this host, after three genuine attempts rather than one. The toolchain has
+  no usable C compiler for Go's Windows race build: `gcc`/`cc` are absent, and the only `clang` is
+  Swift's, which hands the link to MSVC's `link.exe` and dies on
+  `LNK1143: invalid or corrupt file: no symbol for COMDAT 0x6`. Redirecting it to the LLVM linker
+  that ships beside it (`-fuse-ld=lld`, `lld-link.exe` present) gets further and then fails on the
+  linker script Go injects: `lld-link: warning: ignoring unknown argument '-T'` followed by
+  `error: ...fix_debug_gdb_scripts.ld: unknown file type`. Go's race build on Windows expects MSVC's
+  linker, so this is an environment limit and not something the change can work around. The
+  concurrency tests therefore ran without the detector, at `-count=50` (and 20× for the whole set).
+  The design has no shared mutable state for a race to exist on — the authorisation is a stack
+  argument — but that is an argument, not a measurement, and `client-macos.yml`'s deep-check race
+  step is where it should be confirmed.
+- **CI.** The push-triggered workflows were dispatched at the end of this session; their result is
+  reported in the session summary, not in this document.
 
 ## KEY CASES
 
@@ -255,7 +262,7 @@ sibling-group contamination:             NO   — tested with require.Same on th
 | **FakeIP** | PASS unchanged (`TestFastBypassFakeIPIsIneligible`) |
 | **domain / sniff** | PASS unchanged (`...DomainDestinationIsIneligible`, `...SniffedDomainIsIneligible`) |
 | **TLS rewrite** | PASS unchanged (`...TLSOptionsAreIneligible`, 3 sub-cases) |
-| **selector switch** | covered structurally: the policy is read from the chain on every flow and nothing is stored per leaf, so a switch cannot lose it or cache it. **No dedicated test** — see residual risks |
+| **selector switch** | PASS — `TestFastPathSurvivesASelectorSwitch` (A→B→A, verdict stays `BypassAllowed`, served leaf follows, neither leaf mutated) and `TestFastPathSelectorSwitchConcurrentWithFlows` (4 readers × 500 resolutions against a switcher, authorisation constant) |
 | **urltest** | PASS — `TestFastBypassUrltestGroupIsEligibleToo`; probe traffic shown to bypass the router entirely |
 
 ## DIFF SIZE
@@ -275,32 +282,30 @@ Router rewrite, no L0 change, no DNS/FakeIP work, no traffic-class rework, no po
 
 ## RESIDUAL RISKS
 
-1. **No dedicated selector-switch test.** The claim that a switch preserves the authorisation rests
-   on the design (nothing is stored per leaf) plus the cross-group reuse test, not on a test that
-   switches a selector mid-flight and re-checks. If a per-leaf fast-path cache is ever introduced,
-   that test becomes necessary and is currently missing.
-
-2. **`urltest` selection updates under concurrency.** The authorisation is read once per flow from
+1. **`urltest` selection updates under concurrency.** The authorisation is read once per flow from
    the chain `resolveOutbound` produced, so it is consistent with the member that will actually serve
-   the flow. If the group re-selects between resolution and the bypass decision, the flow still takes
-   the member it resolved — which is the pre-existing behaviour, not something this change
-   introduces — but I did not add a test for that interleaving.
+   the flow, and the selector-switch concurrency test covers the same interleaving shape. If the
+   group re-selects between resolution and the bypass decision, the flow still takes the member it
+   resolved — which is the pre-existing behaviour, not something this change introduces — but that
+   specific interleaving has no dedicated test.
 
-3. **`-race` unverified here.** See TESTS. The no-shared-state claim is architectural and backed by
-   a 50× concurrency test, but the detector has not seen it.
+2. **`-race` unverified here.** See TESTS. Three attempts, all blocked by the host's C toolchain. The
+   no-shared-state claim is architectural and backed by a 50× concurrency test, but the detector has
+   not seen it.
 
-4. **The chain gate is now richer.** `fastPathChainReachesLeaf` walks every element in front of the
-   leaf on every authorised flow. It is O(chain length) at flow setup and off the packet path, and it
-   runs only after the cheap authorisation check, but it is new work on a path that previously did
-   one integer comparison. Benchmarking showed no allocation change in the refusal cases; the
-   authorised case was not benchmarked.
+3. **The chain gate is now richer.** `fastPathChainReachesLeaf` walks every element in front of the
+   leaf on every authorised flow. It is O(chain length) at flow setup, off the packet path, and it
+   runs only after the cheap authorisation check — but it is new work on a path that previously did
+   one integer comparison. No allocation change was observed in the refusal cases;
+   `BenchmarkBypassDecision` still covers the single-leaf path unchanged, and the authorised case was
+   not benchmarked.
 
-5. **`loadbalance` is excluded by omission, not by an explicit denial.** A future group type that
-   forgets to NOT declare `FastPathTransparent` would silently become bypassable. The compile-time
-   half is that a type must actively declare it, so the failure requires writing a method that
-   asserts something false — but the guard is honesty, not the type system.
+4. **`loadbalance` is excluded by omission, not by an explicit denial.** A future group type that
+   forgets to NOT declare `FastPathTransparent` would silently become bypassable. What guards it is
+   that a type must actively write the method that asserts it adds no flow semantics — the guard is
+   honesty, not the type system.
 
-6. **`route/route.go` gained an argument, not a field.** Every future caller of `canFastBypass` must
+5. **`route/route.go` gained an argument, not a field.** Every future caller of `canFastBypass` must
    decide what authorisation to pass. Passing `true` without a resolved chain would be wrong; the
    parameter name and the doc comment say so, but nothing enforces it.
 
@@ -313,5 +318,6 @@ FAST_PATH_GROUP_POLICY = COMPLETE
 against the scope agreed in this session: selector + urltest, explicit-or-AI authorisation, per-flow
 propagation, and a refined `BypassRefusedOutboundChain` with every other blocker untouched.
 
-Not complete with respect to the brief's §14.3 selector-switch case as a dedicated test, and `-race`
-is unverified here; both are listed above rather than claimed.
+Every case in the brief's §14 matrix has a passing test, including §14.3 (selector switching) and
+§14.4 (urltest, plus the probe-traffic check the brief asks to verify specifically). The one thing
+this report does not claim is a `-race` run, for the environment reason given above.
