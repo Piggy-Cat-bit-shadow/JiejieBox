@@ -90,6 +90,7 @@ all.
 | `modules/sniff.md` | sniffers, peek/read ownership, fragmented QUIC, the sniff→routing contract |
 | `modules/masque-connectip.md` | MASQUE endpoint and dataplane, capsules, sessions, DNS roles, MTU/PTB |
 | `modules/naive-http-transport.md` | Native Naive, `transport/http`, `http_clients`, the UoT target ACL |
+| `modules/xhttp-client-transport.md` | XHTTP / SplitHTTP client contract: `transport/v2rayxhttp`, modes, XMUX reuse, X-Padding |
 | `modules/data-path-optimization.md` | Direct Offload, traffic class, the upload scheduler, the dial governor |
 | `modules/buffer-ownership.md` | the buffer/zero-copy/splice rules that must not be optimised away |
 | `modules/power-mobile-lifecycle.md` | device axis, sleeps, screen/lock, trims, reuse bands, the timer census |
@@ -103,8 +104,8 @@ Fork-wide: `BASELINE.md`, `PROJECT.md`, `ARCHITECTURE.md`, `INVARIANTS.md`, `ACC
 
 ## What this knowledge base does not cover
 
-`transport/v2rayxhttp` and `protocol/vless/encryption` (new fork packages with no recorded incident or
-acceptance rule), individual upstream protocol wire formats, the Clash/V2Ray API internals, and the
-Apple / Android / desktop **client** source — those are separate repositories, present as empty
-submodules in a clean worktree. `modules/README.md` says so explicitly rather than leaving silence to
-be mistaken for coverage.
+`protocol/vless/encryption` (a new fork package with no recorded incident or acceptance rule),
+individual upstream protocol wire formats, the Clash/V2Ray API internals, and the Apple / Android /
+desktop **client** source — those are separate repositories, present as empty submodules in a clean
+worktree. `modules/README.md` says so explicitly rather than leaving silence to be mistaken for
+coverage.

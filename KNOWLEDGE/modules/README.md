@@ -13,6 +13,7 @@ carries its own source anchors, provenance and evidence level.
 | Any sniffer, peek/read, sniff timeouts, fragmented QUIC, sniff→routing metadata | `sniff.md` |
 | MASQUE/CONNECT-IP, capsules, sessions, DATAGRAM batching, address/route/DNS/PREF64, PTB | `masque-connectip.md` |
 | Native Naive, HTTP CONNECT proxy, `transport/http`, `http_clients`, target ACL, padding/masquerade | `naive-http-transport.md` |
+| XHTTP / SplitHTTP / XMUX / stream-one / packet-up — writing a VLESS XHTTP node, mode choice, connection reuse | `xhttp-client-transport.md` |
 | Direct Offload / native bypass, `traffic_class`, `traffic_scheduler`, dial governor | `data-path-optimization.md` |
 | Any zero-copy, allocation, buffer pool, batch ownership, splice question | `buffer-ownership.md` |
 | Sleep/wake/screen/lock, memory trim, device axis, `ReuseSuspect`, power policy | `power-mobile-lifecycle.md` |
@@ -60,7 +61,7 @@ Established with `git ls-tree` at `e4b7e692` versus `a267e99`, so these are genu
 | `common/badh2` | 77 | `naive-http-transport.md` |
 | `dns/transport/group` | 2,590 | `dns-demand.md` |
 | `internal/memmetrics` | 877 | `power-mobile-lifecycle.md` |
-| `transport/v2rayxhttp` | 7,181 | not covered — see "Not covered" below |
+| `transport/v2rayxhttp` | 7,181 | `xhttp-client-transport.md` |
 | `protocol/vless/encryption` | 1,771 | not covered — see "Not covered" below |
 
 ## Heavily modified packages (present below the fork point, substantially rewritten)
@@ -81,7 +82,6 @@ What the fork added on top is documented per module with provenance.
 
 | Area | Why not covered |
 |---|---|
-| `transport/v2rayxhttp` (11 non-test files, new in the fork) | A V2Ray transport family (XMUX pooling etc.). It is new but has no recorded incident, invariant or acceptance rule that the fork's own closure reports single out. If you are about to change it, read upstream's `transport/v2ray*` documentation and the package's own tests first; treat the module map as silent, not as a guarantee. |
 | `protocol/vless/encryption` (5 non-test files, new in the fork) | Same reasoning. Its tests carry a `//go:build !race` split, so its ABI checks are absent under `-race`. |
 | Individual protocol wire formats (shadowsocks, trojan, tuic, hysteria2, …) | Upstream's. The fork patches specific behaviours; those are called out inside the module that owns the behaviour, not per protocol. |
 | The Apple / Android / desktop **client** source | Separate repositories, checked out as submodules (`clients/apple`, `clients/android`, `clients/desktop`) and empty in a clean worktree. `libbox-platform-contract.md` records only the core side. |
