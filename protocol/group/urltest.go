@@ -35,7 +35,19 @@ var (
 	_ adapter.OutboundGroup           = (*URLTest)(nil)
 	_ adapter.InterfaceUpdateListener = (*URLTest)(nil)
 	_ adapter.Referrer                = (*URLTest)(nil)
+	// Like a selector, a urltest only chooses which member serves a flow - the delay probes it runs
+	// in the background dial the members directly and never pass through the router, so they cannot
+	// inherit a business flow's policy. See adapter.FastPathAuthorizedGroup.
+	_ adapter.FastPathAuthorizedGroup = (*URLTest)(nil)
 )
+
+// FastPathTransparent implements adapter.FastPathAuthorizedGroup.
+//
+// The group's entire effect on a business flow is the choice of member; it holds no per-flow state
+// and owns no dial. Its background delay probes are not business flows at all - they call the member
+// outbound's DialContext directly rather than going through the router - so they neither inherit nor
+// need a fast_path policy.
+func (s *URLTest) FastPathTransparent() bool { return true }
 
 type URLTest struct {
 	outbound.Adapter

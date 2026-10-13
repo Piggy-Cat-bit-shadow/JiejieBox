@@ -29,9 +29,21 @@ func RegisterSelector(registry *outbound.Registry) {
 var (
 	_ adapter.OutboundGroup = (*Selector)(nil)
 	_ adapter.Referrer      = (*Selector)(nil)
-	_ adapter.OutboundGroup = (*Selector)(nil)
-	_ adapter.Referrer      = (*Selector)(nil)
+	// A selector only chooses which member serves a flow: it does not own the dial and adds no
+	// per-flow behaviour of its own, so a chain through it is transparent and it may carry the
+	// fast_path group policy. See adapter.FastPathAuthorizedGroup.
+	_ adapter.FastPathAuthorizedGroup = (*Selector)(nil)
 )
+
+// FastPathTransparent implements adapter.FastPathAuthorizedGroup.
+//
+// A selector's entire effect on a flow is the choice of member. It holds no per-flow state, owns no
+// dial, and performs no retry, so a chain through it reaches its leaf with nothing lost - which is
+// exactly the claim the fast path needs before it may skip the group.
+//
+// Compare LoadBalance, which deliberately does not declare this: it can own the dial of the flow it
+// selected, so bypassing it would discard the retry its configuration asked for.
+func (s *Selector) FastPathTransparent() bool { return true }
 
 type Selector struct {
 	outbound.Adapter

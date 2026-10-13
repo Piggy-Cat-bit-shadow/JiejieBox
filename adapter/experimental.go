@@ -232,6 +232,46 @@ type FlowAwareOutboundGroup interface {
 	SelectForFlow(metadata *InboundContext, network string, commit bool) Outbound
 }
 
+// FastPathAuthorizedGroup is an OPTIONAL capability declared by a logical group that may carry the
+// fast_path policy, and whose members therefore MAY be reached by the Direct Fast Path.
+//
+// # What declaring it asserts
+//
+// Two things, and the router relies on both:
+//
+//  1. The group's ONLY effect on a flow is CHOOSING which member serves it. It does not own the
+//     dial, does not retry, does not rebalance after the fact, and adds nothing about the flow that
+//     would be lost if the flow never reached it. In the vocabulary of route.Router.canFastBypass, a
+//     chain of these groups down to one leaf is semantically TRANSPARENT.
+//  2. Configuration may set "fast_path" on it. The same assertion is what lets the reader REFUSE
+//     that key everywhere else: an outbound that does not declare this is telling the configuration
+//     layer it has no group policy to carry.
+//
+// # Why it has a method rather than being an empty marker
+//
+// An empty interface embedding OutboundGroup was tried first and is WRONG, which is worth recording
+// because the mistake is invisible until a test proves it. OutboundGroup's method set -
+// All/Selected/AttachConnection plus the Outbound surface - is exactly what a test double or any
+// group-shaped type provides, so `anyType.(FastPathAuthorizedGroup)` succeeds for a group that
+// means the opposite of transparency. A test that asserted an opaque group was refused therefore
+// passed for the wrong reason, and the safety property it was meant to protect was not being
+// checked at all.
+//
+// A named method cannot be satisfied by accident. It has to be written down by the type that means
+// it, which is the same reason BypassableOutbound is an interface a leaf implements rather than a
+// list of type names.
+type FastPathAuthorizedGroup interface {
+	OutboundGroup
+
+	// FastPathTransparent reports that this group adds no flow semantics of its own, so a chain
+	// through it may be treated as reaching its leaf directly.
+	//
+	// It is not configuration-dependent. A group either is a pure selection over its members or it
+	// is not, and no option changes that - which is why this is a method with one honest answer
+	// rather than a field read from the configuration.
+	FastPathTransparent() bool
+}
+
 // FailoverOutboundGroup is an OPTIONAL capability of a group that can own the DIAL of a
 // flow it has selected, not only the choice of member.
 //

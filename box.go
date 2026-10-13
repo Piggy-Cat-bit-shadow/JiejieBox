@@ -771,6 +771,30 @@ func New(options Options) (*Box, error) {
 		if err != nil {
 			return nil, E.Cause(err, "initialize outbound[", i, "] ", outboundOptions.Type, "[", tag, "]")
 		}
+		// Refuse fast_path on anything that is not a logical group that can carry it.
+		//
+		// This is the check that keeps the key GROUP-ONLY. Accepting it on a leaf would make
+		// "fast_path": true on a node look like a node capability, which is precisely the model this
+		// feature does not implement - the same node may be selected by an authorised group and by a
+		// plain one, and only the group decides. Ignoring the key instead would leave an operator
+		// believing a node had been authorised when nothing reads it, so it is an error naming the
+		// outbound.
+		//
+		// The single assertion covers both refusals, because adapter.FastPathAuthorizedGroup embeds
+		// adapter.OutboundGroup: a leaf fails it, and so does every group that does not declare the
+		// marker - `loadbalance` among them, since it may own the dial of the flow it selected.
+		if outboundOptions.FastPath != nil {
+			created, loaded := outboundManager.Outbound(tag)
+			if !loaded {
+				return nil, E.New("outbound ", tag, " was created but cannot be looked up for fast_path validation")
+			}
+			_, canCarry := created.(adapter.FastPathAuthorizedGroup)
+			if !canCarry {
+				return nil, E.New("fast_path is not supported on outbound ", tag, " of type ", outboundOptions.Type,
+					": it authorises the flows entering a logical GROUP, not the node that serves them, and "+
+						"only a pure selection group (selector, urltest) may carry it")
+			}
+		}
 	}
 
 	// Collect the explicit traffic classes before any flow is routed.
@@ -796,6 +820,29 @@ func New(options Options) (*Box, error) {
 		trafficClassPolicies[tag] = *outboundOptions.TrafficClass
 	}
 	router.SetTrafficClassPolicies(trafficClassPolicies)
+
+	// Collect the explicit fast_path intents, for the same reason and by the same mechanism.
+	//
+	// Only groups that explicitly state one appear, so a configuration that never uses the field
+	// produces an empty map - and the router then decides purely by the automatic tag rule, which is
+	// the mode a stock configuration runs in. The validation above already refused the key on any
+	// outbound that cannot carry it, so everything collected here is a logical group.
+	//
+	// Nothing is written to the leaf. The map is keyed by the GROUP's tag, and the only reader -
+	// resolveFastPathRequest - walks the flow's own chain at setup time. That is what lets one node
+	// selected by an authorised group and by a plain group produce two different answers.
+	fastPathPolicies := make(route.FastPathPolicies)
+	for i, outboundOptions := range options.Outbounds {
+		if outboundOptions.FastPath == nil {
+			continue
+		}
+		tag := outboundOptions.Tag
+		if tag == "" {
+			tag = F.ToString(i)
+		}
+		fastPathPolicies[tag] = *outboundOptions.FastPath
+	}
+	router.SetFastPathPolicies(fastPathPolicies)
 	for i, certificateProviderOptions := range options.CertificateProviders {
 		var tag string
 		if certificateProviderOptions.Tag != "" {

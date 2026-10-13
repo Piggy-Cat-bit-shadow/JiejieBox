@@ -61,6 +61,12 @@ type Router struct {
 	// It is set once during box setup and only read at flow setup.
 	trafficClassPolicies TrafficClassPolicies
 
+	// fastPathPolicies holds the explicit fast_path intent of each logical group that declared one.
+	// Like trafficClassPolicies it is set once during box setup and only read at flow setup, and it
+	// is keyed by TAG - never by leaf - so a policy cannot follow a node between groups. See
+	// resolveFastPathRequest.
+	fastPathPolicies FastPathPolicies
+
 	// dnsHijackInFlight counts hijacked DNS packets currently being resolved. It bounds the
 	// goroutines that HijackDNSPacket hands to the DNS router, so a dead resolver cannot turn a
 	// query flood into unbounded growth. See dnsHijackConcurrency.
@@ -276,6 +282,16 @@ func (r *Router) AppendTracker(tracker adapter.ConnectionTracker) {
 // still classifies by tag, because automatic detection needs no configuration.
 func (r *Router) SetTrafficClassPolicies(policies TrafficClassPolicies) {
 	r.trafficClassPolicies = policies
+}
+
+// SetFastPathPolicies installs the explicit fast_path intent of the logical groups that declared
+// one.
+//
+// Called once during box setup, before any flow is routed. A router that was never given policies
+// still falls back to automatic tag detection, exactly as traffic classification does - so this
+// setter is an override channel, not the only way a group can become authorised.
+func (r *Router) SetFastPathPolicies(policies FastPathPolicies) {
+	r.fastPathPolicies = policies
 }
 
 func (r *Router) NeedFindProcess() bool {

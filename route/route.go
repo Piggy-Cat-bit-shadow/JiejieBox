@@ -763,7 +763,27 @@ func applyRouteOptionsMetadata(metadata *adapter.InboundContext, routeOptions *R
 // rewrite it. Comparing against metadata.Destination is how an override, a FakeIP rewrite or a
 // sniff override_destination is detected - the fast path may only carry a connection to the
 // address the platform already put on the wire.
-func (r *Router) canFastBypass(metadata *adapter.InboundContext, packetDestination M.Socksaddr, chain []adapter.Outbound, outbound adapter.Outbound) BypassVerdict {
+// # The chain condition, and the one narrow branch it has
+//
+// A group introduces selection, lifecycle and accounting of its own, so a chain that passes through
+// one is refused - which is what keeps a flow from silently skipping a group's semantics. That
+// invariant is old and it still holds for every group whose semantics would be lost.
+//
+// It is refined, not removed, by fastPathAuthorized. The premise of the fast_path feature is that
+// the flows routed INTO a group are authorised to attempt the fast path, and such a flow
+// unavoidably has the group in its chain - so without this branch the whole feature would resolve
+// to a no-op on every group configuration. The branch is therefore narrow on purpose:
+//
+//   - the caller must have resolved an authorisation for this flow (see resolveFastPathRequest);
+//   - every element in front of the leaf must be a transparent pure-selection group
+//     (fastPathChainReachesLeaf), so `loadbalance` and anything else with flow semantics still
+//     refuses here exactly as before;
+//   - the leaf itself is then checked below by the same interface assertion and CanBypass call as
+//     any other flow, so an unauthorised or non-bypassable leaf still refuses.
+//
+// An unauthorised group flow therefore still gets BypassRefusedOutboundChain, unchanged, and no
+// other blocker in this function is touched.
+func (r *Router) canFastBypass(metadata *adapter.InboundContext, packetDestination M.Socksaddr, chain []adapter.Outbound, outbound adapter.Outbound, fastPathAuthorized bool) BypassVerdict {
 	// v1 targets TUN only. ActionBypass is the platform handing the flow back to the OS's own
 	// routing; other inbounds have no equivalent, so they keep their existing path.
 	if metadata.InboundType != C.TypeTun {
@@ -869,11 +889,16 @@ func (r *Router) canFastBypass(metadata *adapter.InboundContext, packetDestinati
 		return BypassRefusedProcessMetadataUnproven
 	}
 
-	// Only a connection that resolves to exactly one outbound, with nothing in front of it. A
-	// group introduces selection, lifecycle and accounting semantics of its own, and bypassing
-	// it would skip all of them even when the selected outbound happens to be direct.
+	// Only a connection that resolves to exactly one outbound, with nothing in front of it - or to
+	// an authorised, fully transparent logical group chain in front of a leaf. A group introduces
+	// selection, lifecycle and accounting semantics of its own, and bypassing it would skip all of
+	// them even when the selected outbound happens to be direct; the second branch is the single
+	// exception, and it applies only to groups that assert they have no such semantics and only when
+	// the configuration authorised this flow. See the doc comment above.
 	if len(chain) != 1 {
-		return BypassRefusedOutboundChain
+		if !(fastPathAuthorized && len(chain) >= 2 && fastPathChainReachesLeaf(chain)) {
+			return BypassRefusedOutboundChain
+		}
 	}
 
 	// Finally, the outbound itself must declare that it would do nothing special for this flow.
@@ -925,7 +950,15 @@ func (r *Router) preMatchFlow(ctx context.Context, metadata *adapter.InboundCont
 	// already have paid the cost this exists to avoid.
 	//
 	// On any doubt canFastBypass returns false and nothing about the previous behaviour changes.
-	if r.canFastBypass(metadata, packetDestination, chain, outbound).BypassAllowed() {
+	//
+	// The authorisation is resolved from THIS flow's chain, immediately before the gate that
+	// consumes it, and is passed as an argument rather than stored anywhere. That is what makes it
+	// per-flow: two concurrent flows whose chains share a leaf but enter through different groups
+	// resolve different values, because the value is derived from the chain and lives only for the
+	// duration of this call. Nothing is written to the outbound, to the group, or to any map keyed
+	// by tag.
+	fastPathAuthorized := resolveFastPathRequest(chain, r.fastPathPolicies)
+	if r.canFastBypass(metadata, packetDestination, chain, outbound, fastPathAuthorized).BypassAllowed() {
 		// The message is built only when it will be emitted.
 		//
 		// The arguments to a debug call are evaluated before the logger decides the level is off, and
