@@ -126,6 +126,14 @@ jobs:
       # It runs BEFORE the gate self-test, so that a mismatch is reported as a mismatch rather than as
       # whatever confusing failure the wrong tooling produces downstream.
       - name: bind the tooling identity to the released commit
+        env:
+          # The tag is DATA, passed in as an environment variable - never interpolated into the shell
+          # source. This is the contract the release gate self-test enforces, and it is not a style
+          # preference: `${{ }}` is substituted into the `run:` body before the shell ever sees it, so
+          # an input carrying `"; rm -rf /"` or a backtick would become shell syntax rather than a
+          # value. This step's first version interpolated it in three places and failed 1 of the 92
+          # gate cases; the pin itself was fine and is unchanged.
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
           product_sha="$(git rev-parse HEAD)"
@@ -133,9 +141,9 @@ jobs:
           {
             echo "PRODUCT_SHA=$product_sha"
             echo "TOOLING_SHA=$tooling_sha"
-            echo "RELEASE_TAG=${{ inputs.tag }}"
+            echo "RELEASE_TAG=$INPUT_TAG"
           } >> "$GITHUB_ENV"
-          echo "product commit : $product_sha  (tag ${{ inputs.tag }})"
+          echo "product commit : $product_sha  (tag $INPUT_TAG)"
           echo "tooling commit : $tooling_sha"
           if [ "$product_sha" != "$tooling_sha" ]; then
             echo "FAIL: the release tooling is not the released commit." >&2
@@ -151,7 +159,7 @@ jobs:
             echo ""
             echo "| | commit |"
             echo "|---|---|"
-            echo "| product (\`${{ inputs.tag }}\`) | \`$product_sha\` |"
+            echo "| product (\`$INPUT_TAG\`) | \`$product_sha\` |"
             echo "| release tooling | \`$tooling_sha\` |"
             echo ""
             echo "The judging tooling is the released commit itself."
