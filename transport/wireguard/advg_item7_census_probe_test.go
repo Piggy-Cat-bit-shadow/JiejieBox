@@ -184,7 +184,27 @@ func TestAdvGItem7TheTwoWitnessesAgreeWheneverNothingIsReopening(t *testing.T) {
 		require.False(t, udpPortIsFree(t, held), "cycle %d: settled, the port is held", cycle)
 
 		endpoint.onPauseUpdated(pause.EventNetworkPause)
-		require.Zero(t, socketCensus(t, endpoint), "cycle %d: settled pause", cycle)
+		// The census is WAITED for, not read once, for the reason the sibling assertion at
+		// `:70-79` states and this one was missing:
+		//
+		//	pause return != receiver goroutine already absent from runtime.Stack
+		//
+		// `onPauseUpdated` -> `Device.Down` -> `closeBindLocked` does release the socket within the
+		// call (the bind is closed under the net lock) and does JOIN the receivers functionally -
+		// `netc.stopping.Add(len(recvFns))` at device.go:804 is matched by `stopping.Done()` as
+		// `RoutineReceiveIncoming` leaves (receive.go:85), and `closeBindLocked` ends in
+		// `netc.stopping.Wait()`. What lags is the WITNESS: a census reads `runtime.Stack`, and a
+		// goroutine that has signalled its WaitGroup from inside a `defer` is still on that stack
+		// while it unwinds. So the honest claim is "no receiver LEAK after the pause", not "no
+		// receiver synchronously vanished".
+		//
+		// The final assertion is NOT weakened: a census that never reaches zero still fails, here on
+		// the deadline. This is what real Darwin reported as `cycle 0: settled pause / Should be
+		// zero, but was 2`.
+		require.Eventually(t, func() bool {
+			return socketCensus(t, endpoint) == 0
+		}, 10*time.Second, 2*time.Millisecond,
+			"cycle %d: a settled pause must leave no receiver goroutines behind", cycle)
 		require.True(t, udpPortIsFree(t, held), "cycle %d: settled pause releases the port", cycle)
 
 		endpoint.onPauseUpdated(pause.EventNetworkWake)
@@ -211,8 +231,18 @@ func TestAdvGReverseWGManyFastPauseWakeCyclesLeaveOneSocket(t *testing.T) {
 	cycles := 0
 	for time.Since(start) < time.Second && cycles < 64 {
 		endpoint.onPauseUpdated(pause.EventNetworkPause)
-		require.Zero(t, socketCensus(t, endpoint),
-			"cycle %d: the pause handler must return with the socket released", cycles)
+		// Waited for, like its sibling above: `pause return != receiver goroutine already absent
+		// from runtime.Stack`. The claim is that the cycles leave no receiver LEAK, which is what a
+		// leak of this shape would actually look like - not that every goroutine has already
+		// unwound the instant the handler returns. A census that never reaches zero still fails here.
+		//
+		// This site is tighter than its sibling by construction: the loop runs up to 64 pause/wake
+		// cycles inside one second, so a receiver that only ever left lazily would show up as a
+		// growing count in the assertion below rather than as a flake here.
+		require.Eventually(t, func() bool {
+			return socketCensus(t, endpoint) == 0
+		}, 10*time.Second, 2*time.Millisecond,
+			"cycle %d: a pause must eventually leave no receiver goroutines", cycles)
 		endpoint.onPauseUpdated(pause.EventNetworkWake)
 		cycle := cycles
 		require.Eventually(t, func() bool {
