@@ -107,14 +107,24 @@ for site in ".github/workflows/client-apple.yml" "Makefile"; do
   fi
 done
 
-# The Apple workflow must name the Apple toolchain explicitly at every install
-# site: a bare `install` would be ambiguous, and defaulting to one of them is how
-# the drift started.
-sites="$(grep -c 'gomobile-toolchain.sh install apple' "$repo_root/.github/workflows/client-apple.yml" || true)"
-if [ "$sites" -eq 2 ]; then
-  report "both Apple install sites name the apple toolchain" 0 0 "count=$sites"
+# Every install site in the Apple workflow must name the Apple toolchain explicitly: a bare
+# `install` would be ambiguous, and defaulting to one of them is how the drift started.
+#
+# This USED TO REQUIRE EXACTLY TWO, because the workflow installed the toolchain in both the
+# libbox job and the macOS packaging job. The macOS job never invokes gomobile or gobind - it
+# downloads the verified Libbox artifact and packages it - so that second install compiled the
+# pinned toolchain twice per run for nothing, and it has been removed.
+#
+# The count is therefore one. What the check is FOR is the `apple` argument: if a bare `install`
+# (or the wrong platform) appears, the count of correctly-named sites drops below the number of
+# install sites and this fails.
+sites="$(grep -c 'gomobile-toolchain\.sh install apple' "$repo_root/.github/workflows/client-apple.yml" || true)"
+installs="$(grep -c 'gomobile-toolchain\.sh install' "$repo_root/.github/workflows/client-apple.yml" || true)"
+if [ "$sites" -eq "$installs" ] && [ "$installs" -ge 1 ]; then
+  report "every Apple install site names the apple toolchain" 0 0 "count=$sites"
 else
-  fail_case "both Apple install sites name the apple toolchain" "count=$sites, expected 2"
+  fail_case "every Apple install site names the apple toolchain" \
+    "$installs install site(s), only $sites name the apple toolchain"
 fi
 
 # ---------------------------------------------------------------------------

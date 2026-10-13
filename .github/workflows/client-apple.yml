@@ -484,13 +484,22 @@ jobs:
           sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)/Contents/Developer" 2>/dev/null || true
           xcodebuild -version
 
-      - name: install gomobile and create-dmg
+      - name: install create-dmg
         run: |
           set -euo pipefail
-          # One declaration, one installer: see the note on the iOS job's step.
-          ./scripts/ci/gomobile-toolchain.sh install apple
-          # create-dmg makes a Finder-friendly image. The script falls back to
-          # hdiutil if this fails, so a brew hiccup cannot break the build.
+          # This step USED TO ALSO install the gomobile toolchain (see the iOS/libbox job's
+          # step for the invocation). That compiled gomobile and gobind from source - two
+          # `go install`s of the pinned internal fork - for a job that never invokes either
+          # tool. See this job's own note below: "This job compiles no Go from this repository:
+          # Libbox is the shared artifact". The iOS/libbox job installs the toolchain because it
+          # builds Libbox; this job downloads the verified artifact instead and only packages it.
+          #
+          # The toolchain is NOT needed to validate that artifact: apple-libbox-artifact.sh
+          # checks the framework against the parent commit and the ABI probe, none of which
+          # shells out to gomobile or gobind.
+          #
+          # create-dmg makes a Finder-friendly image. The script falls back to hdiutil if this
+          # fails, so a brew hiccup cannot break the build.
           brew install create-dmg || echo "create-dmg unavailable; hdiutil will be used"
 
       - name: select the Apple client source

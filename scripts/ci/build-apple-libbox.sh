@@ -3,8 +3,12 @@
 # checkout.
 #
 # Usage:
-#   build-apple-libbox.sh [ios|macos|both]      build, then install into APPLE_CLIENT_DIR
-#   build-apple-libbox.sh install [dir] [src]   install an existing xcframework
+#   build-apple-libbox.sh [ios|macos|both|both-fat]   build, then install into APPLE_CLIENT_DIR
+#   build-apple-libbox.sh install [dir] [src]         install an existing xcframework
+#
+# `both` is arm64-only on each platform, which is what every product stage ships. `both-fat` keeps
+# the upstream fat macOS slice (arm64 + amd64) and exists only for the legacy Intel/Universal
+# targets; see the case block below for why the default is thin.
 #
 # APPLE_CLIENT_DIR selects the checkout to install into (default: clients/apple).
 # For `install`, `dir` defaults to APPLE_CLIENT_DIR and `src` to the repository root's
@@ -95,10 +99,26 @@ if [ "$which" = "install" ]; then
 fi
 
 case "$which" in
-  ios)   targets="ios" ;;
-  macos) targets="macos" ;;
-  both)  targets="ios,macos" ;;
-  *) echo "build-apple-libbox.sh: unknown target '$which' (ios|macos|both|install)" >&2; exit 2 ;;
+  ios)   targets="ios/arm64" ;;
+  macos) targets="macos/arm64" ;;
+  # Pinned per platform rather than left as the bare `ios,macos` tokens, which gomobile expands to
+  # ios/arm64 + macos/arm64 + macos/amd64 (env.go: `case "macos", "maccatalyst": return
+  # []string{"arm64", "amd64"}`).
+  #
+  # The macos/amd64 slice is a full `go build -buildmode=c-archive` of experimental/libbox whose
+  # output nothing consumes: every Apple build stage pins ARCHS=arm64 (build-macos-dmg.sh,
+  # build-macos-testflight.sh, build-ios-ipa.sh, build-ios-testflight.sh), build-macos-dmg.sh FAILS
+  # if an x86_64 slice appears anywhere in the product, and the framework is linked statically
+  # rather than embedded, so ld64 takes the arm64 slice. Pinning to arm64/arm64 emits the same two
+  # slices minus the unused architecture: `ios-arm64` and `macos-arm64` instead of
+  # `macos-arm64_x86_64`.
+  #
+  # The upstream Intel targets that would need the fat slice still exist (clients/apple/Makefile,
+  # the repo Makefile's SFM-Intel/Universal rules) and no workflow calls them. Call this script with
+  # `both-fat` if a fat slice is ever genuinely required again.
+  both)      targets="ios/arm64,macos/arm64" ;;
+  both-fat)  targets="ios,macos" ;;
+  *) echo "build-apple-libbox.sh: unknown target '$which' (ios|macos|both|both-fat|install)" >&2; exit 2 ;;
 esac
 
 if [ ! -d "$client" ]; then
