@@ -803,6 +803,67 @@ def check_target_state_v6():
     return 1 if failed else 0
 
 
+def check_executable_invocations():
+    """A workflow that runs `./script.sh` needs that file to carry the executable bit.
+
+    Found by the first real GitHub Ubuntu run of this branch: the release-contract gate invoked
+    `./scripts/ci/test-desktop-source-identity.sh` and the step died with exit code 126 -
+    "Permission denied" - because the file's git mode was 100644. Nothing on Windows notices:
+    the local runs used `bash <file>`, which does not consult the mode, and git's index mode is
+    invisible in an editor. The suite that existed to catch a broken identity check was itself
+    unrunnable, and it reported as a FAILURE step rather than as a broken invocation.
+
+    Two things are asserted, and the second is the one that generalises:
+      * every `./<path>.sh` invocation in a workflow names a file whose INDEX mode is 100755;
+      * and conversely, a tracked `.sh` under scripts/ that no workflow runs via `./` is
+        reported, because a mode that is merely untidy today becomes the same failure the
+        moment someone changes the invocation.
+
+    The index is read with `git ls-files -s` rather than the filesystem: on Windows the
+    filesystem has no executable bit, and what CI checks out is the index mode.
+    """
+    import subprocess
+    try:
+        listing = subprocess.run(
+            ["git", "-C", REPO, "ls-files", "-s", "scripts/ci"],
+            capture_output=True, text=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError) as error:
+        report("executable bit: git index is readable", False, str(error))
+        return
+
+    modes = {}
+    for line in listing.splitlines():
+        parts = line.split(None, 3)
+        if len(parts) == 4:
+            modes[parts[3]] = parts[0]
+
+    invoked = set()
+    for name in sorted(os.listdir(WF)):
+        if not name.endswith((".yml", ".yaml")):
+            continue
+        with open(os.path.join(WF, name), encoding="utf-8") as fh:
+            for line in fh.read().splitlines():
+                stripped = line.strip()
+                if stripped.startswith("#"):
+                    continue
+                for match in re.finditer(r"\./((?:scripts|\.github)/[A-Za-z0-9._/-]+\.sh)", stripped):
+                    invoked.add(match.group(1))
+
+    bad = sorted(p for p in invoked if modes.get(p) not in (None, "100755"))
+    report("executable bit: every ./<script>.sh invocation is mode 100755",
+           not bad,
+           ("not executable: " + ", ".join("%s (%s)" % (p, modes.get(p)) for p in bad)) if bad
+           else "%d invocation(s) checked" % len(invoked))
+
+    # And the reverse direction, so a non-executable script cannot sit waiting for an invocation
+    # change to break it. Only .sh: a .py is run through `python3`, which never needs the bit.
+    stray = sorted(p for p, m in modes.items()
+                   if p.endswith(".sh") and m != "100755" and p not in invoked)
+    report("executable bit: no tracked scripts/ci/*.sh is left non-executable",
+           not stray,
+           ("non-executable: " + ", ".join(stray)) if stray else "all .sh are 100755")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="check-release-workflows.py",
@@ -846,6 +907,8 @@ def main(argv=None):
     check_release_contract_workflow()
     print()
     check_source_verify()
+    print()
+    check_executable_invocations()
     print()
     print("release workflow structure: %d passed, %d failed" % (passed, failed))
     return 1 if failed else 0
