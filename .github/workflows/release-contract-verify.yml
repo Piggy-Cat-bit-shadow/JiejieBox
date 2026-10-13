@@ -60,6 +60,8 @@ on:
       - "scripts/ci/test-desktop-source-identity.sh"
       - "scripts/ci/require-executed-coverage.sh"
       - "scripts/ci/require-executed-coverage.test.sh"
+      - "scripts/ci/verify-release-acceptance.sh"
+      - "scripts/ci/verify-release-acceptance-test.sh"
       - "scripts/ci/verify-desktop-daemon-provenance.py"
       - "scripts/ci/version.sh"
       - "release/JIEJIE_VERSION"
@@ -171,6 +173,31 @@ jobs:
           rc="${PIPESTATUS[0]}"
           set -e
           echo "$rc" > verify-logs/desktop-identity.exit
+          exit "$rc"
+
+      - name: release acceptance gate self-test
+        # Moved here from verify.yml. It is a release-TOOLING suite - it proves that the strict
+        # acceptance checker still refuses bad evidence across 18 API snapshots (wrong SHA, queued,
+        # in progress, failure, cancelled, a similar-looking workflow name, a skipped or missing
+        # required job, a wrong artifact digest, an artifact with no digest, a declared artifact
+        # that is absent, a jobs snapshot belonging to another run, missing snapshots, no snapshot
+        # directory) - so this workflow is its owner, not the source gate.
+        #
+        # Moving it also removed a claim that was not true: while verify.yml ran this step,
+        # verify.yml was DECLARING the acceptance engine as a gate, although nothing on the release
+        # path called it. A second may-release authority that no release consults is exactly the
+        # drift the single-authority rule exists to prevent, and a self-test in the push gate made
+        # it look live. The engine is unchanged and is still reachable from nothing in the release
+        # path; what changed is which workflow claims to gate on it.
+        if: always()
+        run: |
+          set -uo pipefail
+          mkdir -p verify-logs
+          set +e
+          ./scripts/ci/verify-release-acceptance-test.sh 2>&1 | tee verify-logs/acceptance-self-test.log
+          rc="${PIPESTATUS[0]}"
+          set -e
+          echo "$rc" > verify-logs/acceptance-self-test.exit
           exit "$rc"
 
       - name: shell syntax of every release-path script

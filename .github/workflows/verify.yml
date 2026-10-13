@@ -104,21 +104,26 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # The two gate self-tests run FIRST, before `setup-go`. They need no Go
-      # toolchain, no module download and no network - which is why their notes say
-      # they can run on every push - so they were paying for a toolchain install and a
-      # module-cache restore to discover, in seconds, that the release gate is broken.
-      - name: release gate self-test
-        # The release gate decides what gets published, and its expensive failure
-        # modes are invisible to a happy path: the previous version waited out its
-        # full 90-minute deadline on a commit that had no CI runs at all (run
-        # 37811184607), and could not pass at all for a commit whose workflow had
-        # been re-run. Both are reproduced here in seconds against a mock `gh`.
-        #
-        # It needs no network and no Go, so it runs on every push rather than only
-        # when a release is attempted: the release is the worst moment to discover
-        # that the gate is broken.
-        run: ./scripts/ci/test-release-artifacts.sh
+      # The gate self-tests run FIRST, before `setup-go`. They need no Go toolchain, no module
+      # download and no network - which is why their notes say they can run on every push - so
+      # they were paying for a toolchain install and a module-cache restore to discover, in
+      # seconds, that a guard is broken.
+      #
+      # # The 92-case release-helper suite is NOT run here any more
+      #
+      # It used to be the first step. It ran here, in release-contract-verify.yml, and again on
+      # the publishing runner - three executions of one fact per release - and this was the
+      # least valuable of the three: this workflow is the source gate, and the release helper's
+      # behavioural contract is not a property of the source.
+      #
+      # Its primary owner is Release Contract Verification, which runs it on a push that changes
+      # release tooling, on a pull request that changes it, and on demand. Formal Release no
+      # longer re-runs it either; it requires exact-SHA RCV success instead. So the suite still
+      # runs before anything is published - just once, by the workflow that owns it, on the
+      # commits where it can have changed.
+      #
+      # The `verify.yml` self-tests below stay: each is seconds long, needs no network, and
+      # guards something this workflow actually does.
 
       - name: executed-coverage guard self-test
         # The guard that decides whether a step may claim coverage actually ran. It exists because
@@ -131,28 +136,18 @@ jobs:
         # guard nobody can falsify is a guard nobody can trust. It needs no network and no Go.
         run: ./scripts/ci/require-executed-coverage.test.sh
 
-      - name: release ACCEPTANCE gate self-test
-        # The other half of the release question, and the half that has no network
-        # dependency at all: verify-fork-handoff.sh proves the documents agree with
-        # each other and that their coordinates resolve, which every release
-        # precondition can satisfy by writing strings. verify-release-acceptance.sh
-        # is the strict layer - it requires a completed successful run AT the frozen
-        # candidate SHA, with every required job successful and every declared
-        # artifact present with its recorded digest, and it fails CLOSED.
-        #
-        # The self-test builds 18 API snapshots: one genuinely complete one that must
-        # be ACCEPTED, and fifteen broken ones that must be REJECTED (wrong SHA,
-        # queued, in progress, failure, cancelled, a similar-looking workflow name, a
-        # skipped required job, a missing required job, a wrong artifact digest, an
-        # artifact with no digest recorded, a declared artifact that is absent, a jobs
-        # snapshot belonging to another run, a missing runs snapshot, a missing jobs
-        # snapshot, no snapshot directory) plus two proving the escape hatches are not
-        # a way through.
-        #
-        # It runs on every push for the same reason the step above does, and it needs
-        # no network and no Go: a gate that has stopped refusing bad evidence must be
-        # discovered before a release is attempted, not during one.
-        run: ./scripts/ci/verify-release-acceptance-test.sh
+      # The release ACCEPTANCE gate self-test moved to Release Contract Verification.
+      #
+      # It used to run here, and that made this workflow the one that DECLARED the acceptance
+      # engine as a gate - while the release path never called it. A second may-release authority
+      # that nothing on the release path consults is the drift the single-authority rule exists to
+      # prevent, and a self-test here kept it looking live.
+      #
+      # It is now one of Release Contract Verification's release-tooling suites, beside the 92-case
+      # helper suite, the workflow-structure checks and the desktop contract tests - the workflow
+      # that owns "does the release tooling behave". Its 18 snapshots are unchanged; only its
+      # owner moved. The engine itself is unchanged and is still reachable from nothing in the
+      # release path.
 
       - uses: actions/setup-go@v5
         with:

@@ -207,6 +207,23 @@ def api(args):
                                       for e in entries]}
             sys.stdout.write(jq_filter(document, filt) if filt else json.dumps(document))
             return 0
+        # `evidence` reads a run's JOBS, because a run can conclude `success` while one of its
+        # jobs was skipped - and a skipped job proves nothing about the fact the gate exists for.
+        # The jobs document carries run_id so the consumer can prove it describes THIS run.
+        if len(parts) >= 7 and parts[6].startswith("jobs"):
+            rid = parts[5]
+            record("api runs/%s/jobs" % rid)
+            entry = scenario.get("jobs", {}).get(rid)
+            if entry is None:
+                fail("api: no jobs for run %s" % rid, 1)
+            entries = entry if isinstance(entry, list) else [entry]
+            document = {"total_count": len(entries),
+                        "jobs": [{"name": j["name"],
+                                  "status": j.get("status", "completed"),
+                                  "conclusion": j.get("conclusion", "success"),
+                                  "run_id": int(rid)} for j in entries]}
+            sys.stdout.write(jq_filter(document, filt) if filt else json.dumps(document))
+            return 0
         fail("api: unsupported runs path %r" % path)
 
     if len(parts) < 6 or parts[3] != "actions" or parts[4] != "workflows":
@@ -599,8 +616,20 @@ scenario = {
                      runs=[run(9101, 20, workflow_id=macos_id)] + noise[::-1] + [run(9102, 21, workflow_id=macos_id)]),
         "unrelated.yml": wf(303, ".github/workflows/unrelated.yml",
                             runs=[run(9900, 1, workflow_id=303)]),
+        # The REQUIRED EVIDENCE gates. They produce no release artifact, so they are deliberately
+        # NOT in TARGET_WORKFLOWS - `plan` must not demand them and `evidence` must.
+        "verify.yml": wf(404, ".github/workflows/verify.yml",
+                         runs=[run(9401, 30, workflow_id=404)]),
+        "release-contract-verify.yml": wf(505, ".github/workflows/release-contract-verify.yml",
+                                          runs=[run(9501, 40, workflow_id=505)]),
     },
     "artifacts": {},
+    # Jobs for the evidence runs. Every one of these must be completed+success for `evidence` to
+    # pass; the cases below mutate this to prove the ones that must not.
+    "jobs": {
+        "9401": [{"name": "verify", "conclusion": "success"}],
+        "9501": [{"name": "release-gate", "conclusion": "success"}],
+    },
 }
 scenario["artifacts"]["9002"] = {"dir": "linux", "name": "Jiejie-Linux-amd64-0.1-1111111"}
 scenario["artifacts"]["9102"] = {"dir": "macos", "name": "Jiejie-macOS-arm64-0.1-1111111"}
@@ -825,6 +854,71 @@ if [ "$(cut -f3 "$work/plan-shuf.tsv" | sort | tr '\n' ',')" = "9004,9102," ]; t
 else
   report "selection sorts by run_number instead of taking the last row" 0 1 "$(cut -f3 "$work/plan-shuf.tsv" | tr '\n' ',')"
 fi
+
+# ---------------------------------------------------------------------------
+# Case 2b: `evidence` - the required source/tooling gates at the candidate SHA
+# ---------------------------------------------------------------------------
+#
+# A different release question from `plan`: not "which run built each artifact" but "was the
+# source and the tooling PROVED at this commit". These cases exist because before `evidence`
+# nothing in the release path named Verify or Release Contract Verification at all, so a
+# candidate could be released with its source gate cancelled by a later push and its tooling gate
+# never dispatched.
+
+write_scenario evidence_ok "pass"
+ev="$work/evidence.tsv"
+expect_ok "both evidence gates green -> PASS" evidence --repo o/r --sha "$SHA" --out "$ev" --interval 1 --timeout 10
+if [ -f "$ev" ]; then
+  got="$(cut -f3 "$ev" | sort | tr '\n' ',')"
+  if [ "$got" = "9401,9501," ]; then
+    report "evidence records the run of every required gate" 0 0 "run ids $got"
+  else
+    report "evidence records the run of every required gate" 0 1 "got '$got', want '9401,9501,'"
+  fi
+else
+  report "evidence records the run of every required gate" 0 1 "no evidence file written"
+fi
+
+# The failure that motivated the whole command: a gate that never ran at this commit.
+write_scenario evidence_missing \
+  'scenario["workflows"]["verify.yml"]["runs"] = []'
+expect_fail "an evidence gate with no run at the SHA -> FAIL" "no run of .github/workflows/verify.yml exists" -- \
+  evidence --repo o/r --sha "$SHA" --out "$work/evidence-missing.tsv" --interval 1 --timeout 5
+
+# The newest run wins, exactly as in `plan`: an older green must not satisfy a newer failure.
+write_scenario evidence_stale \
+  'scenario["workflows"]["verify.yml"]["runs"] = [run(9401, 30, workflow_id=404), run(9402, 31, conclusion="failure", workflow_id=404)]'
+expect_fail "a newer failed evidence run beats an older green -> FAIL" "did not succeed" -- \
+  evidence --repo o/r --sha "$SHA" --out "$work/evidence-stale.tsv" --interval 1 --timeout 5
+
+write_scenario evidence_cancelled \
+  'scenario["workflows"]["release-contract-verify.yml"]["runs"] = [run(9502, 41, conclusion="cancelled", workflow_id=505)]'
+expect_fail "a cancelled evidence gate -> FAIL" "did not succeed" -- \
+  evidence --repo o/r --sha "$SHA" --out "$work/evidence-cancel.tsv" --interval 1 --timeout 5
+
+# A run can be `success` while one of its jobs was skipped, and a skipped job proves nothing.
+# This is the rule the retired second authority had and `plan` did not; `evidence` carries it.
+write_scenario evidence_skipped_job \
+  'scenario["jobs"]["9401"] = [{"name": "verify", "conclusion": "success"}, {"name": "race", "conclusion": "skipped"}]'
+expect_fail "a successful run with a skipped job -> FAIL" "not every job in it did" -- \
+  evidence --repo o/r --sha "$SHA" --out "$work/evidence-skipjob.tsv" --interval 1 --timeout 5
+
+write_scenario evidence_failed_job \
+  'scenario["jobs"]["9501"] = [{"name": "release-gate", "conclusion": "failure"}]'
+expect_fail "a successful run with a failed job -> FAIL" "not every job in it did" -- \
+  evidence --repo o/r --sha "$SHA" --out "$work/evidence-failjob.tsv" --interval 1 --timeout 5
+
+# `neutral` is what an optional step reports without continue-on-error, so it is accepted.
+write_scenario evidence_neutral_job \
+  'scenario["jobs"]["9501"] = [{"name": "release-gate", "conclusion": "success"}, {"name": "optional", "conclusion": "neutral"}]'
+expect_ok "a neutral (optional) job does not fail the gate" evidence --repo o/r --sha "$SHA" --out "$work/evidence-neutral.tsv" --interval 1 --timeout 5
+
+# A gate that succeeded at ANOTHER commit is not evidence for this one.
+write_scenario evidence_other_sha \
+  'scenario["workflows"]["verify.yml"]["runs"] = [run(9403, 32, workflow_id=404)]
+scenario["workflows"]["verify.yml"]["runs"][0]["head_sha"] = "2" * 40'
+expect_fail "an evidence gate that only ran at another SHA -> FAIL" "no run of .github/workflows/verify.yml exists" -- \
+  evidence --repo o/r --sha "$SHA" --out "$work/evidence-othersha.tsv" --interval 1 --timeout 5
 
 write_scenario stale_green \
   'scenario["workflows"][macos_wf]["runs"][-1] = run(9103, 22, conclusion="failure", workflow_id=macos_id)'
@@ -1115,11 +1209,47 @@ else
   report "the publish step is gated on the computed publish flag" 0 1
 fi
 
-# The gate test must run before the release acts, and on every push.
-if grep -q 'test-release-artifacts.sh' "$wf" && grep -q 'test-release-artifacts.sh' "$repo_root/.github/workflows/verify.yml"; then
-  report "the gate test runs in release.yml and in verify.yml" 0 0
+# The gate suite's EXECUTION has exactly one workflow owner: Release Contract Verification.
+#
+# This assertion used to require the opposite - that the suite ran in both release.yml and
+# verify.yml - which made the same 92 cases execute three times per release: once on every push
+# (verify.yml), once on the release-tooling push (RCV), and once more on the publishing runner
+# (release.yml). One fact, three full proofs.
+#
+# The replacement is stronger than a deletion, because it asserts both halves of the new
+# contract: RCV still runs it, AND no other workflow does. A change that simply deleted the
+# suite everywhere would fail the first half; a change that kept a duplicate would fail the
+# second. Execution is classified by line shape, so RCV's path filter, its `bash -n` list entry
+# and its mock-`gh` grep guards do not count as running the suite.
+#
+# Formal Release keeps its OWN proof that the tooling was proved at this commit - that is
+# `evidence`, asserted above - but it no longer re-runs the 92 cases to get it.
+if grep -q 'test-release-artifacts.sh' "$repo_root/.github/workflows/release-contract-verify.yml"; then
+  report "the gate suite runs in release-contract-verify.yml" 0 0
 else
-  report "the gate test runs in release.yml and in verify.yml" 0 1
+  report "the gate suite runs in release-contract-verify.yml" 0 1 "the suite lost its owner"
+fi
+
+_extra_suite_owners=""
+for _wf in "$repo_root/.github/workflows"/*.yml; do
+  case "$(basename "$_wf")" in
+    release-contract-verify.yml) continue ;;
+  esac
+  if grep -vE '^[[:space:]]*#' "$_wf" | grep -q 'test-release-artifacts\.sh'; then
+    _extra_suite_owners="$_extra_suite_owners $(basename "$_wf")"
+  fi
+done
+if [ -z "$_extra_suite_owners" ]; then
+  report "no other workflow executes the 92-case suite" 0 0
+else
+  report "no other workflow executes the 92-case suite" 0 1 "also:$_extra_suite_owners"
+fi
+
+# And the release path must REQUIRE the evidence rather than re-derive it.
+if grep -vE '^[[:space:]]*#' "$wf" | grep -q 'release-artifacts\.sh evidence'; then
+  report "Formal Release requires the exact-SHA evidence gates" 0 0
+else
+  report "Formal Release requires the exact-SHA evidence gates" 0 1 "release.yml never calls 'evidence'"
 fi
 
 # ---------------------------------------------------------------------------

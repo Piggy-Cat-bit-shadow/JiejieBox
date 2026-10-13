@@ -62,9 +62,31 @@ permissions:
   contents: write
   actions: read
 
+# One tag is released by one run, and a second dispatch for the same tag waits rather than
+# racing it.
+#
+# Without this, two dispatches for one tag run CONCURRENTLY, both holding `contents: write`,
+# both able to publish - and the second one's `check-upload` would be comparing its staged set
+# against a release the first had just created. `cancel-in-progress` is deliberately false: the
+# whole point is that a release is never cancelled, because a cancelled release can leave a tag
+# with a partial asset set, and the read-back step that would have caught it never runs.
+#
+# Keyed on the TAG rather than the ref, because the tag input is what identifies the release;
+# dispatching twice from two different branches for the same tag is the case this exists for.
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
+    # Bounded, and above the longest wait any step can perform.
+    #
+    # The job previously had NO timeout, while the product plan waits up to 5400s (90 minutes)
+    # and the desktop step waits up to another 5400s. A release that hung would therefore hold a
+    # `contents: write` runner indefinitely. 180 minutes covers 90 + 90 with margin for the
+    # download, verify, flatten and publish steps; it is not a target, it is a ceiling.
+    timeout-minutes: 180
     env:
       RELEASE_EXTRA_PLATFORMS: true
     steps:
@@ -165,36 +187,53 @@ jobs:
             echo "The judging tooling is the released commit itself."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # The suite is run out of `tooling/` but FROM the workspace root, and it resolves the
-      # repository it asserts against with `git rev-parse --show-toplevel` - which is the
-      # TAGGED commit, because that is what was checked out at the root. So the workflow
-      # assertions in it are made against the tag's `.github/workflows/`, not the tooling's.
-      # That is the intended reading: a release is validated against what the tag actually
-      # carries. The captured output and the annotation exist because the first real dispatch
-      # failed here and the job log needs a token to read.
-      - name: test the release gate
+      # Formal Release does not re-prove the release tooling. It proves that the tooling WAS
+      # proved, at exactly this commit, by the workflow that owns that proof.
+      #
+      # This step used to run the 92-case suite here, on the publishing runner. That made the
+      # same suite execute three times per release - once on every push (verify.yml), once on
+      # the release-tooling push (release-contract-verify.yml) and once more here - and it meant
+      # the publishing run was re-deriving a fact that had already been established, on a runner
+      # holding `contents: write`, minutes before it published. A release pipeline is a promotion
+      # pipeline: it consumes evidence, it does not regenerate it.
+      #
+      # `evidence` resolves the REQUIRED EVIDENCE gates (verify.yml and
+      # release-contract-verify.yml) by exact head_sha, requires the NEWEST run at that SHA to be
+      # completed and successful - never falling back to an older green - and then requires every
+      # JOB of those runs to have succeeded, because a run can conclude `success` with a skipped
+      # job and a skipped job proves nothing.
+      #
+      # The timeout is deliberately SHORT, and it is not the 5400s the product plan uses. A
+      # product workflow may legitimately still be building when the release starts. Evidence
+      # gates must already be complete: if Verify or RCV is still running for a commit whose
+      # installer, tarballs and records have all finished, the release is early, not the gate.
+      # Failing in ten minutes with an instruction is better than occupying a publishing runner
+      # for ninety. It stays bounded rather than immediate so a just-finished gate is not missed
+      # to API latency.
+      - name: require exact-SHA source and tooling evidence
         run: |
-          set -uo pipefail
+          set -euo pipefail
           mkdir -p verify-logs
-          set +e
-          ./tooling/scripts/ci/test-release-artifacts.sh > verify-logs/release-gate.log 2>&1
-          rc=$?
-          set -e
-          cat verify-logs/release-gate.log
-          echo "$rc" > verify-logs/release-gate.exit
-          if [ "$rc" != "0" ]; then
-            set +o pipefail
-            summary="$(grep -A1 -E '^FAIL ' verify-logs/release-gate.log | head -20 | tr '\n' '~' | cut -c1-3000)"
-            [ -n "$summary" ] || summary="no FAIL line; TAIL: $(tail -30 verify-logs/release-gate.log | tr '\n' '~' | cut -c1-3000)"
-            echo "::error title=release gate self-test failed (exit $rc)::$summary"
-          fi
-          exit "$rc"
+          sha="$(git -C . rev-parse HEAD)"
+          echo "candidate commit: $sha"
+          ./tooling/scripts/ci/release-artifacts.sh evidence \
+            --repo "$GITHUB_REPOSITORY" \
+            --sha "$sha" \
+            --out verify-logs/evidence.tsv \
+            --interval 20 \
+            --timeout 600
+          echo
+          echo "required evidence, newest exact-SHA run each, every job successful:"
+          while IFS=$'\t' read -r wf wfid rid rnum status conclusion rsha url; do
+            [ -n "$wf" ] || continue
+            printf '  %-46s run %-12s #%-4s %s  %s\n' "$wf" "$rid" "$rnum" "$conclusion" "$url"
+          done < verify-logs/evidence.tsv
 
-      - name: upload the gate self-test output
+      - name: upload the evidence record
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: release-gate-self-test
+          name: release-evidence-record
           path: verify-logs/
           if-no-files-found: warn
           retention-days: 14

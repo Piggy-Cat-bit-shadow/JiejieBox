@@ -5,10 +5,15 @@
 # Usage:
 #   release-artifacts.sh check-tag  --tag TAG
 #   release-artifacts.sh plan       --repo R --sha SHA --out FILE [--interval N] [--timeout N]
+#   release-artifacts.sh evidence   --repo R --sha SHA --out FILE [--interval N] [--timeout N]
 #   release-artifacts.sh download   --repo R --plan FILE --dir DIR
 #   release-artifacts.sh verify     --dir DIR --sha SHA
 #   release-artifacts.sh flatten    --plan FILE --dir DIR --out DIR --tag TAG
 #   release-artifacts.sh publish-flag --dry-run VALUE
+#
+# `plan` and `evidence` answer two different release questions and both must pass before
+# anything is published: `plan` selects the run that produced each product artifact, and
+# `evidence` proves the source and tooling gates succeeded at the same commit. See `cmd_evidence`.
 #
 # # Why this file exists
 #
@@ -95,6 +100,22 @@ case "${RELEASE_EXTRA_PLATFORMS:-false}" in
     ;;
   *) die "RELEASE_EXTRA_PLATFORMS must be exactly true or false" ;;
 esac
+
+# The REQUIRED EVIDENCE gates: workflows that produce no release artifact but prove something the
+# release depends on. They are a separate list from TARGET_WORKFLOWS on purpose - see `evidence`.
+#
+#   verify.yml                    the source gate: pinned-assumption tripwires, compileability,
+#                                 build-tag policy, and the race coverage of the packages this
+#                                 fork changed. Deliberately NOT under RELEASE_EXTRA_PLATFORMS:
+#                                 source evidence is required for every release, and making it
+#                                 part of the "extra platforms" switch would mean a Linux+macOS
+#                                 release could skip it.
+#   release-contract-verify.yml   proves the release tooling itself behaves, which is what makes
+#                                 this script's own decisions trustworthy.
+REQUIRED_EVIDENCE=(
+  ".github/workflows/verify.yml"
+  ".github/workflows/release-contract-verify.yml"
+)
 
 # target_field <workflow file> <field>
 #
@@ -409,6 +430,167 @@ $(for f in "${TARGET_WORKFLOWS[@]}"; do printf '        gh workflow run %s --rep
     "the release plan has $lines row(s), expected ${#TARGET_WORKFLOWS[@]}. Refusing to release a partial product."
 
   note "PASS: every product workflow succeeded for $sha"
+}
+
+# ---------------------------------------------------------------------------
+# evidence
+# ---------------------------------------------------------------------------
+#
+# Resolves the REQUIRED EVIDENCE gates at the candidate SHA and proves each one succeeded.
+#
+# # Why this is a separate command from `plan`
+#
+# `plan` answers "which run produced each product artifact". This answers a different question -
+# "was the source and the release tooling PROVED at this commit" - and the two have different
+# members: evidence gates are workflows that produce no release artifact at all. Folding them into
+# `plan`'s table would make one file answer two questions, and `plan`'s row count is a contract
+# (it must equal TARGET_WORKFLOWS, and the 92-case suite asserts the exact run ids it contains).
+# A separate output keeps both contracts intact.
+#
+# # Why the release needs this
+#
+# Before this, a candidate SHA could be released with Verify cancelled by a later push and
+# Release Contract Verification never dispatched, because nothing in the release path named
+# either of them. The product workflows were required; the gates that prove the source and the
+# tooling were not. This closes that: the plan phase now fails if either gate is missing or not
+# successful at exactly this commit.
+#
+# # Selection semantics
+#
+# Deliberately the same as `newest_run`'s, because two selectors that disagree are how a release
+# ends up judged by rules it was not built under:
+#
+#   newest exact-SHA run wins;  newest not success -> FAIL;  never fall back to an older green.
+#
+# The retired second authority (`verify-release-acceptance.sh`) chose differently - it scanned the
+# admissible runs and took the first that was `success`, so an older green could satisfy it while a
+# newer run at the same commit had failed. That is the opposite of the rule here, and it is one
+# reason it is the wrong script to be the release's authority.
+#
+# # Per-job verification
+#
+# A run can be `success` while one of its jobs was skipped, and a skipped job proves nothing. So
+# every job of every evidence run must be `completed` and `success`. `neutral` is accepted for a
+# job explicitly listed by the workflow as optional, because that is what `continue-on-error`-free
+# optional steps report; everything else - skipped, cancelled, timed_out, failure - is a FAIL.
+
+# job_conclusions <repo> <run id>
+#
+# Prints one TAB-separated "name<TAB>status<TAB>conclusion" row per job. Fails closed: an
+# unreadable job list is not a green one.
+job_conclusions() {
+  local repo="$1" rid="$2" rows
+  if ! rows="$(gh api "repos/$repo/actions/runs/$rid/jobs?per_page=100" \
+      --jq '.jobs[] | [.name, .status, (.conclusion // "-")] | @tsv')"; then
+    die "cannot read the jobs of run $rid. An unreadable answer is not a green one."
+  fi
+  printf '%s\n' "$rows"
+}
+
+cmd_evidence() {
+  local repo="" sha="" out="" interval=30 timeout=5400
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --repo) repo="${2:-}"; shift 2 ;;
+      --sha) sha="${2:-}"; shift 2 ;;
+      --out) out="${2:-}"; shift 2 ;;
+      --interval) interval="${2:-}"; shift 2 ;;
+      --timeout) timeout="${2:-}"; shift 2 ;;
+      *) die "evidence: unknown argument '$1'" ;;
+    esac
+  done
+  [ -n "$repo" ] || die "evidence: --repo is required"
+  [ -n "$sha" ] || die "evidence: --sha is required"
+  [ -n "$out" ] || die "evidence: --out is required"
+  case "$interval" in ''|*[!0-9]*) die "evidence: --interval must be a whole number of seconds" ;; esac
+  case "$timeout" in ''|*[!0-9]*) die "evidence: --timeout must be a whole number of seconds" ;; esac
+  [ "${#REQUIRED_EVIDENCE[@]}" -gt 0 ] || die \
+    "evidence: REQUIRED_EVIDENCE is empty, so this command would prove nothing. That is a defect in the release contract, not a release condition."
+
+  mkdir -p "$(dirname "$out")"
+  : > "$out"
+
+  local deadline=$(( $(date +%s) + timeout ))
+  local wf wfid newest pending
+  while :; do
+    : > "$out"
+    pending=0
+    for wf in "${REQUIRED_EVIDENCE[@]}"; do
+      wfid="$(resolve_workflow_id "$repo" "$wf")"
+      newest="$(newest_run "$repo" "$wfid" "$sha")"
+
+      if [ -z "$newest" ]; then
+        # Fail fast, exactly as `plan` does for a product workflow: a gate that was never run at
+        # this commit is not going to appear while the release waits.
+        die "no run of $wf exists for commit $sha, so the source/tooling evidence for this
+      release is absent. The release publishes bytes CI already proved; it does not prove them.
+      Dispatch the gate for this commit, then dispatch the release again:
+        gh workflow run $(basename "$wf") --repo $repo --ref $sha"
+      fi
+
+      local rid rnum status conclusion url rsha rwfid
+      IFS=$'\t' read -r rid rnum status conclusion _ url rsha rwfid <<<"$newest"
+
+      [[ "$rwfid" =~ ^[0-9]+$ ]] || die "could not read the workflow id of the newest run of $wf (got '$rwfid'); the API row was not in the expected shape:
+      $newest"
+      [[ "$rsha" =~ ^[0-9a-f]{40}$ ]] || die "could not read the commit of the newest run of $wf (got '$rsha'); the API row was not in the expected shape:
+      $newest"
+      [ "$rsha" = "$sha" ] || die "the newest run of $wf reports head_sha $rsha, not $sha"
+      [ "$rwfid" = "$wfid" ] || die "the newest run of $wf reports workflow_id $rwfid, not $wfid"
+
+      if is_in_flight "$status"; then
+        note "  $wf: run $rid is $status - waiting up to ${timeout}s (every ${interval}s)"
+        note "        $url"
+        pending=$((pending + 1))
+        continue
+      fi
+      if [ "$status" != "completed" ]; then
+        die "the newest run of $wf for $sha is in unexpected status '$status' (run $rid). $url"
+      fi
+      case "$conclusion" in
+        success) ;;
+        skipped)
+          die "the newest run of $wf for $sha was SKIPPED (run $rid). A skipped gate did not prove anything, so it cannot gate a release. $url" ;;
+        *)
+          die "the newest run of $wf for $sha did not succeed: conclusion=$conclusion (run $rid). Re-run it and dispatch the release again. $url" ;;
+      esac
+
+      # Every job, not just the run. A run is `success` with a skipped job, and a skipped job
+      # proves nothing about the fact this gate exists for.
+      local job name jstatus jconclusion bad=""
+      while IFS=$'\t' read -r name jstatus jconclusion; do
+        [ -n "$name" ] || continue
+        if [ "$jstatus" != "completed" ]; then
+          bad="${bad}${name} (${jstatus})"$'\n'
+        elif [ "$jconclusion" != "success" ] && [ "$jconclusion" != "neutral" ]; then
+          bad="${bad}${name} (${jconclusion})"$'\n'
+        fi
+      done < <(job_conclusions "$repo" "$rid")
+      if [ -n "$bad" ]; then
+        die "run $rid of $wf succeeded, but not every job in it did:
+$(printf '      %s\n' $bad)      A run whose job was skipped or failed did not prove the fact this gate exists for.
+      $url"
+      fi
+
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$wf" "$wfid" "$rid" "$rnum" "$status" "$conclusion" "$sha" "$url" >> "$out"
+      note "  $wf: evidence run $rid (#$rnum) $conclusion, every job successful  $url"
+    done
+
+    [ "$pending" -eq 0 ] && break
+
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      die "timed out after ${timeout}s waiting for ${pending} of ${#REQUIRED_EVIDENCE[@]} required evidence gate(s) on $sha to finish."
+    fi
+    sleep "$interval"
+  done
+
+  local lines
+  lines="$(grep -c . "$out" || true)"
+  [ "$lines" -eq "${#REQUIRED_EVIDENCE[@]}" ] || die \
+    "the evidence plan has $lines row(s), expected ${#REQUIRED_EVIDENCE[@]}. Refusing to release on partial evidence."
+
+  note "PASS: every required evidence gate succeeded, every job included, for $sha"
 }
 
 # ---------------------------------------------------------------------------
@@ -1215,13 +1397,14 @@ $(printf '      %s\n' $named)"
 # ---------------------------------------------------------------------------
 
 main() {
-  [ "$#" -gt 0 ] || die "usage: release-artifacts.sh <check-tag|release-version|plan|download|desktop|verify|flatten|check-upload|publish-flag> [args]"
+  [ "$#" -gt 0 ] || die "usage: release-artifacts.sh <check-tag|release-version|plan|evidence|download|desktop|verify|flatten|check-upload|publish-flag> [args]"
   local sub="$1"
   shift
   case "$sub" in
     check-tag) cmd_check_tag "$@" ;;
     release-version) cmd_release_version "$@" ;;
     plan) cmd_plan "$@" ;;
+  evidence) cmd_evidence "$@" ;;
     download) cmd_download "$@" ;;
     desktop) cmd_desktop "$@" ;;
     verify) cmd_verify "$@" ;;

@@ -112,22 +112,31 @@ def check_release():
 
     # Every step that must exist. A release gate is only as good as the steps that run.
     for needle, label in [
-        ("test-release-artifacts.sh", "runs the gate's own tests before anything else"),
         ("check-tag", "validates the tag"),
         ("release-version", "reads the version from release/JIEJIE_VERSION"),
+        # Stage B: the release requires exact-SHA source and tooling evidence rather than
+        # re-deriving it. `evidence` is the canonical selector for that question.
+        ("release-artifacts.sh evidence", "requires exact-SHA source and tooling evidence"),
     ]:
         report("release.yml: %s" % label, needle in text)
 
-    # P0-C: Formal Release currently re-runs the whole helper suite on the publishing runner.
-    # It should instead verify that the suite was ALREADY PROVED at this exact SHA - candidate
-    # SHA, exact workflow identity, exact head_sha, completed, conclusion == success, fail
-    # closed otherwise - so that releasing stops re-proving the product it is publishing.
-    #
-    # This assertion records the defect rather than endorsing it. It makes the change visible:
-    # a reader can see that the duplication is known, and the day it is removed this check
-    # fails and must be replaced by the exact-SHA evidence check that supersedes it.
-    report("release.yml: KNOWN DEFECT - re-runs the helper suite instead of citing exact-SHA evidence",
-           "test-release-artifacts.sh" in text)
+    # Stage H: a release is serialised per tag and bounded.
+    conc = doc.get("concurrency") or {}
+    report("release.yml: releases are serialised per tag",
+           "inputs.tag" in str(conc.get("group", "")), str(conc.get("group")))
+    report("release.yml: a release is never cancelled by another run",
+           conc.get("cancel-in-progress") is False, str(conc.get("cancel-in-progress")))
+    rto = (doc.get("jobs", {}).get("release", {}) or {}).get("timeout-minutes")
+    report("release.yml: the release job is bounded by a timeout",
+           isinstance(rto, int) and rto > 0, str(rto))
+
+    # Stage C: Formal Release and Verify must NOT re-run the 92-case suite; RCV owns it. The
+    # equivalence is asserted in the frozen `--target-state v6` mode over every workflow, so
+    # this is the cheap single-file version of the same rule - it fails on the exact edit that
+    # would regress it.
+    report("release.yml: no longer re-runs the 92-case suite on the publishing runner",
+           not executes_release_suite(RELEASE),
+           "executes at " + ", ".join("line %d" % n for n, _ in executes_release_suite(RELEASE)))
 
     report("release.yml: stages the desktop installer",
            "release-artifacts.sh desktop" in text)
@@ -347,6 +356,15 @@ def check_source_verify():
            "final-candidate" in text and "deep_checks" in text)
     report("source verify: the header does not claim it skips the race suite",
            "does not\n# run the full unit suite, the race suite" not in text)
+
+    # Stage C. The source gate stops executing the release-helper suite: it is not a property of
+    # the source, and its primary owner is Release Contract Verification. The counter-assertion
+    # (RCV still runs it) lives in check_release_contract_workflow, so the pair cannot both be
+    # satisfied by deleting the suite everywhere.
+    report("source verify: no longer executes the 92-case release-helper suite",
+           not executes_release_suite(SOURCE_VERIFY),
+           "executes at " + ", ".join("line %d" % n
+                                      for n, _ in executes_release_suite(SOURCE_VERIFY)))
 
 
 def code_only(text):
@@ -741,20 +759,40 @@ def check_target_state_v6():
            "also executes: %s" % ", ".join(others) if others else "sole owner")
 
     # --- 4: Formal Release requires exact-SHA Verify AND RCV evidence ----------
-    # Asserted on CODE, because the requirement will be written as shell invoking the canonical
-    # selector. A comment naming verify.yml is not a requirement, and release.yml already HAS
-    # such comments - that is exactly how this condition reads as satisfied when it is not.
-    rel_text = ""
+    # Asserted across the TWO files that together make the requirement, because naming the
+    # workflow files inside release.yml would be the wrong design: the release path does not know
+    # or care which gates exist, it asks the canonical authority for "the required evidence" and
+    # the authority decides what that means. So the requirement is a pair:
+    #
+    #   release.yml              calls release-artifacts.sh evidence   (it consumes the verdict)
+    #   release-artifacts.sh     REQUIRED_EVIDENCE names each gate     (it defines the question)
+    #
+    # Asserting only the first would pass for an authority whose REQUIRED_EVIDENCE list was
+    # emptied - the release would call `evidence`, be told nothing, and publish. Asserting both
+    # is what makes the requirement real.
+    rel_code = ""
     if os.path.isfile(RELEASE):
         with open(RELEASE, encoding="utf-8") as fh:
-            rel_text = "\n".join(l for l in fh.read().splitlines()
+            rel_code = "\n".join(l for l in fh.read().splitlines()
                                  if not l.strip().startswith("#"))
+    gate_code = ""
+    if os.path.isfile(GATE):
+        with open(GATE, encoding="utf-8") as fh:
+            gate_code = fh.read()
+    report("V6-4 Formal Release consumes the canonical evidence verdict",
+           "release-artifacts.sh evidence" in rel_code,
+           "release.yml calls evidence" if "release-artifacts.sh evidence" in rel_code
+           else "release.yml never calls the evidence subcommand")
+    report("V6-4 the canonical authority is non-empty and names both gates",
+           "REQUIRED_EVIDENCE=(" in gate_code
+           and "verify.yml" in gate_code
+           and "release-contract-verify.yml" in gate_code,
+           "REQUIRED_EVIDENCE declares verify.yml and release-contract-verify.yml")
     for label, name in (("Verify", "verify.yml"),
                         ("Release Contract Verification", "release-contract-verify.yml")):
-        report("V6-4 Formal Release requires exact-SHA %s evidence" % label,
-               name in rel_text,
-               "found in release.yml code" if name in rel_text
-               else "release.yml code never names %s as required evidence" % name)
+        report("V6-4 %s is a required evidence gate" % label,
+               name in gate_code,
+               "named in REQUIRED_EVIDENCE" if name in gate_code else "absent")
 
     # --- 5: exactly one may-release verdict authority --------------------------
     # Read as: can anything OTHER than release-artifacts.sh decide "this SHA may be released"?
@@ -765,33 +803,39 @@ def check_target_state_v6():
            gate_selector,
            "newest_run present" if gate_selector else "no selection primitive found")
 
-    acceptance_used = "verify-release-acceptance.sh" in rel_text
+    acceptance_used = "verify-release-acceptance.sh" in rel_code
     report("V6-5 verify-release-acceptance.sh is not a second release verdict",
            not acceptance_used,
            "release.yml invokes it" if acceptance_used
            else "not reachable from release.yml")
 
     # The acceptance engine's own SELF-TEST is the other half of "is it still an authority".
-    # While a workflow declares that self-test as a step, the engine still has a verdict to give
-    # and the authority has not been retired - even though nothing on the release path calls it.
     #
-    # Checked across EVERY workflow, not just release-contract-verify.yml, because it currently
-    # runs in verify.yml (line 155). A check that read only one file reported this criterion as
-    # satisfied while the engine was being exercised by another workflow on every push, which is
-    # the exact class of mistake this whole section exists to avoid.
+    # The criterion is NOT "no workflow mentions it". The release-tooling owner is allowed - and
+    # expected - to keep running the engine's 18-snapshot self-test, because that is a test of a
+    # release tool and Release Contract Verification is where release-tool tests live. What must
+    # not exist is a workflow that holds the engine up as the gate a RELEASE depends on, which is
+    # what verify.yml was doing while nothing on the release path called the engine at all.
+    #
+    # So the owner is exempt and every other workflow is checked. Before this exemption the check
+    # failed on release-contract-verify.yml after the self-test was correctly moved there, which
+    # is a check refusing the right answer - the same defect class as a check accepting the wrong
+    # one, and worth the comment.
     engine_gates = []
     for name in sorted(os.listdir(WF)):
         if not name.endswith((".yml", ".yaml")):
+            continue
+        if os.path.abspath(os.path.join(WF, name)) == os.path.abspath(VERIFY):
             continue
         with open(os.path.join(WF, name), encoding="utf-8") as fh:
             body = "\n".join(l for l in fh.read().splitlines()
                              if not l.strip().startswith("#"))
         if "verify-release-acceptance-test.sh" in body:
             engine_gates.append(name)
-    report("V6-5 no workflow still declares the acceptance engine as its gate",
+    report("V6-5 no workflow but the release-tooling owner declares the acceptance engine",
            not engine_gates,
            ("still declared in: " + ", ".join(engine_gates)) if engine_gates
-           else "no workflow declares it")
+           else "only release-contract-verify.yml, which owns release-tool tests")
 
     print()
     print("V6 target state (Stage 1-3): %d passed, %d failed" % (passed, failed))
@@ -822,10 +866,22 @@ def check_executable_invocations():
     The index is read with `git ls-files -s` rather than the filesystem: on Windows the
     filesystem has no executable bit, and what CI checks out is the index mode.
     """
+    import shutil
     import subprocess
+    git = shutil.which("git")
+    if git is None:
+        # Not every host that runs this checker has git on PATH - a Windows workstation may use
+        # a portable copy the shell has but the process environment does not. This check is a
+        # convenience on top of the real gate (CI runs it on Ubuntu, where git is always present
+        # and the index mode is what is checked out), so a missing git is reported as SKIP rather
+        # than as a failure. Reporting FAIL here would make the default suite red for an
+        # environment reason, which is exactly what the default suite must never do.
+        print("SKIP  %-64s %s" % ("executable bit: git index is readable",
+                                  "git not on PATH for this process"))
+        return
     try:
         listing = subprocess.run(
-            ["git", "-C", REPO, "ls-files", "-s", "scripts/ci"],
+            [git, "-C", REPO, "ls-files", "-s", "scripts/ci"],
             capture_output=True, text=True, check=True).stdout
     except (OSError, subprocess.CalledProcessError) as error:
         report("executable bit: git index is readable", False, str(error))
