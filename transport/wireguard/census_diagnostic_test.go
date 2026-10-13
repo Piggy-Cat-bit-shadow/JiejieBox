@@ -110,8 +110,8 @@ func TestCensusDiagnostic_WhatTheReceiveCensusSees(t *testing.T) {
 
 	// The report is the point; this only guards that the endpoint was genuinely up.
 	if settled == 0 && immediate == 0 && woken == 0 {
-		t.Logf("CENSUS IS BLIND ON THIS HOST: every reading was 0. The marker or the address "+
-			"comparison does not match this platform's stack format, and socketsPerStandardBind "+
+		t.Logf("CENSUS IS BLIND ON THIS HOST: every reading was 0. The marker or the address " +
+			"comparison does not match this platform's stack format, and socketsPerStandardBind " +
 			"can never be established here. The frames above say which.")
 	}
 	fmt.Fprintf(discardWriter{}, "")
