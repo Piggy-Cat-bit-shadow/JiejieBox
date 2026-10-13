@@ -45,7 +45,21 @@ type _Outbound struct {
 	// this key. Nothing in this fork rewrites or injects it, so a configuration relying only on
 	// automatic tag detection remains loadable by the official client.
 	TrafficClass *TrafficClassPolicy `json:"traffic_class,omitempty"`
-	Options      any                 `json:"-"`
+	// FastPath is a fork extension and is GROUP-ONLY, unlike TrafficClass above.
+	//
+	// It authorises the flows that enter through this logical group to attempt the existing Direct
+	// Fast Path. It is not a node capability, it never reaches a leaf outbound's behaviour, and it
+	// cannot skip the router's eligibility gate: see route.resolveFastPathRequest and
+	// route.Router.canFastBypass.
+	//
+	// It rides the shared envelope for the same structural reason TrafficClass does - it has to
+	// exist for every logical group type that may carry it, and putting it on one options type would
+	// tie a flow policy to a single protocol - but it is deliberately narrower in SCOPE. Only
+	// adapter.FastPathAuthorizedGroup implementors (selector, urltest) may set it, and the reader
+	// REFUSES the configuration when any other outbound names it. That refusal is the difference
+	// between "a group policy" and "a node property", so it is an error rather than a silent ignore.
+	FastPath *FastPathPolicy `json:"fast_path,omitempty"`
+	Options  any             `json:"-"`
 }
 
 type Outbound _Outbound

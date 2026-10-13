@@ -66,6 +66,14 @@ func prependTypeTag(variant *schema.Node, typeName string, withTag bool) error {
 		// same compose step. Documenting it here keeps the generated schema matching what the
 		// decoder actually accepts.
 		newProperties.Put("traffic_class", schema.StringEnum("default", "interactive", "bulk", "realtime"))
+		// FastPath rides the same base, for the same reason: it is declared on the shared envelope.
+		//
+		// The schema is permissive here on purpose. It describes what the DECODER accepts, and the
+		// decoder accepts the key on any outbound; the group-only rule is enforced at load time,
+		// where the outbound's actual type is known and the error can name it. Encoding the rule in
+		// the schema instead would report it as "unknown property" per variant, which says nothing
+		// about why, and would have to be repeated for every future group type.
+		newProperties.Put("fast_path", schema.BooleanNode())
 	}
 	for _, entry := range variant.Properties.Entries() {
 		newProperties.Put(entry.Key, entry.Value)
