@@ -404,12 +404,37 @@ release steps are manual.
 | Apple target mapping exercised | `ios/arm64`, `macos/arm64`, `ios/arm64,macos/arm64`, `both-fat`→`ios,macos`, unknown→error |
 | gomobile install-site counts after the change | 1 install site, 1 naming `apple` → corrected test passes |
 
-**Not run here, and therefore not claimed:** `test-release-artifacts.sh`,
+**Not run here, and therefore not claimed at the time of writing:** `test-release-artifacts.sh`,
 `test-gomobile-toolchain.sh`, `test-apple-beta-publish.sh` and every other `bash`-based suite. This
 host has no `bash` (MinGit ships only `sh`/`dash`, and `release-artifacts.sh` uses bash arrays, so
-`dash -n` cannot parse it). Those suites must run in CI. `-race` remains blocked on this host: it
-needs cgo, and the only C compiler available is Swift's `clang`, whose link fails with
-`LNK1143`. The changed Go code was not race-tested.
+`dash -n` cannot parse it). `-race` remains blocked on this host: it needs cgo, and the only C
+compiler available is Swift's `clang`, whose link fails with `LNK1143`.
+
+### 6.1 CI verification — RESULT
+
+The three push-triggered workflows ran against the refactor tip
+`52000f301b7da692bee2991f4fdb05429ab7ff83` and all passed. These are the suites that could not run
+locally:
+
+```text
+#211  Verify                          success    (gofmt, go test ./cmd/internal/..., the release
+                                                  gate self-test, the gomobile single-source check,
+                                                  the workflow-structure checker, race, capaudit)
+#38   Release contract verification    success    (the 1000+-line release gate suite really
+                                                  executed, the corrected bash -n step, the desktop
+                                                  overlay version suite)
+#58   Android Core ARM64               success    (the -android-variant main build, and the
+                                                  workflow with its two duplicate gates removed)
+```
+
+This is what closes the local gap: `test-release-artifacts.sh` and `test-gomobile-toolchain.sh` —
+including the assertion corrected in §4.4 — ran and passed in `#211`/`#38`.
+
+**Android artifact-size check.** `#58` uploaded exactly one artifact,
+`android-core-arm64-<sha>` at 27.1 MB — byte-identical in size to the pre-change runs `#55`/`#56`
+(27.1 MB). That is the expected result and it is worth stating why: `libbox-legacy.aar` was never
+uploaded, so removing it cannot change the artifact. What it removes is a full second compile and NDK
+link, which is wall-clock, not bytes. **No shipped artifact changed.**
 
 ---
 
