@@ -34,6 +34,12 @@ WF = os.path.join(REPO, ".github", "workflows")
 RELEASE = os.path.join(WF, "release.yml")
 DESKTOP = os.path.join(WF, "client-desktop-windows.yml")
 VERIFY = os.path.join(WF, "release-contract-verify.yml")
+# The SOURCE gate is a different workflow from the release-tooling gate, and conflating the two
+# is what this constant exists to stop: `VERIFY` above has always pointed at
+# release-contract-verify.yml, while several checks were labelled "verify workflow" as if they
+# described verify.yml. They described the release-tooling gate, so a reader asking "does the
+# push gate still refuse a docs-only push" was reading an answer about another file entirely.
+SOURCE_VERIFY = os.path.join(WF, "verify.yml")
 AUDIT = os.path.join(WF, "client-desktop-windows-runtime-audit.yml")
 LINUX = os.path.join(WF, "server-linux-amd64.yml")
 MOBILE = os.path.join(WF, "mobile-contract.yml")
@@ -199,38 +205,123 @@ def code_only(text):
     return "\n".join(keep)
 
 
-def check_verify():
+def check_release_contract_workflow():
+    """The RELEASE TOOLING gate: release-contract-verify.yml.
+
+    Every label says which workflow it is about. These checks were previously labelled "verify
+    workflow", which named the wrong file for four of them - including the duplication check
+    added for P0-C, which therefore asserted release-contract-verify.yml while reading as a
+    statement about the push gate. A check whose label names the wrong subject is worse than a
+    missing check, because it reads as coverage.
+    """
     text, doc, on = load(VERIFY)
     body = code_only(text)
     perms = doc.get("permissions") or {}
-    report("verify workflow: read-only",
+    report("release contract: read-only",
            perms.get("contents") == "read", str(perms))
-    report("verify workflow: no write permission anywhere",
+    report("release contract: no write permission anywhere",
            "contents: write" not in body and "actions: write" not in body)
-    report("verify workflow: dispatches nothing",
+    report("release contract: dispatches nothing",
            "gh workflow run" not in body and "gh api" not in body)
-    report("verify workflow: creates no release",
+    report("release contract: creates no release",
            "gh release create" not in body and "gh release upload" not in body)
-    report("verify workflow: deletes no asset",
+    report("release contract: deletes no asset",
            "delete-asset" not in body and "release delete" not in body)
-    report("verify workflow: moves no tag",
+    report("release contract: moves no tag",
            "push --delete" not in body and "tag -d" not in body)
-    report("verify workflow: reads no secret",
+    report("release contract: reads no secret",
            "secrets." not in body)
-    report("verify workflow: runs the release gate suite",
+
+    # The suites this gate owns as their primary owner.
+    report("release contract: runs the release gate suite",
            "test-release-artifacts.sh" in body)
-    report("verify workflow: runs the desktop release-version suite",
+    report("release contract: runs the desktop release-version suite",
            "test-desktop-release-version.py" in body)
-    report("verify workflow: runs the desktop source-identity suite",
+    report("release contract: runs the desktop source-identity suite",
            "test-desktop-source-identity.sh" in body)
-    # P0-C will move these two out of Verify, whose job is a minutes-long source gate. They
-    # are asserted PRESENT here so that removing them is a deliberate, visible edit against a
-    # check that currently passes - not a silent deletion. Both suites keep a primary owner
-    # either way: Release Contract Verification runs them (asserted below).
-    report("verify workflow: currently duplicates the release helper suite",
-           "test-release-artifacts.sh" in body)
-    report("verify workflow: bash -n on the release scripts",
+    report("release contract: runs the coverage guard self-test",
+           "require-executed-coverage.test.sh" in body)
+    report("release contract: bash -n on the release scripts",
            "bash -n" in body)
+
+    # P1-C: every tooling file this workflow EXECUTES must be in its own trigger filter, or a
+    # change to that file does not run the gate that syntax-checks and exercises it. Two were
+    # missing - the coverage guard and its self-test - which is how this check came to exist.
+    listed = set(((on.get("push") or {}).get("paths")) or [])
+    fails = False
+    if listed:
+        executed = set()
+        for m in re.finditer(r"(?:\./)?((?:scripts|release)/[A-Za-z0-9._/-]+)", text):
+            p = m.group(1)
+            if p.endswith((".sh", ".py")) or p.startswith("release/"):
+                executed.add(p)
+        # Only tooling that exists in the tree: a path named in prose is not a dependency.
+        executed = {p for p in executed if os.path.exists(os.path.join(REPO, p))}
+        unlisted = sorted(executed - listed)
+        report("release contract: every tooling file it runs is in its paths filter",
+               not unlisted, "unlisted=%s" % unlisted)
+        report("release contract: the filter carries no documentation path",
+               not any(p.endswith(".md") or p.startswith("docs/") for p in listed))
+    else:
+        fails = True
+        report("release contract: declares a push paths filter", False, "none declared")
+
+    # The two trigger lists are one authority, aliased (YAML anchor) or identical, so a push and
+    # a pull_request cannot end up asserting different things about the same files.
+    push_paths = ((on.get("push") or {}).get("paths")) or []
+    pr_paths = ((on.get("pull_request") or {}).get("paths")) or []
+    report("release contract: push and pull_request assert the same file set",
+           push_paths == pr_paths and bool(push_paths),
+           "push=%d pr=%d" % (len(push_paths), len(pr_paths)))
+    report("release contract: workflow_dispatch retained for on-demand evidence",
+           "workflow_dispatch" in on)
+    return not fails
+
+
+def check_source_verify():
+    """The SOURCE gate: verify.yml. Nothing above describes this file."""
+    text, doc, on = load(SOURCE_VERIFY)
+    body = code_only(text)
+    perms = doc.get("permissions") or {}
+    report("source verify: read-only",
+           perms.get("contents") == "read", str(perms))
+    report("source verify: triggers on the long-lived branch only",
+           (on.get("push") or {}).get("branches") == ["testing"],
+           str((on.get("push") or {}).get("branches")))
+
+    # P1-B: a report-only push must not start this workflow. The filter is `*.md`, which in
+    # GitHub's pattern language does not cross `/`, so it reaches the repository-root reports
+    # and leaves `docs/fork/**` alone - and `docs/fork/**` must stay triggering, because
+    # verify-fork-handoff.sh parses three files there, one of which carries the release verdict
+    # marker. Both halves are asserted: widening this to `docs/**` would silently stop
+    # verifying a release input, and dropping it entirely would restore the docs-only push that
+    # cancelled a real code Verify.
+    push = on.get("push") or {}
+    pr = on.get("pull_request") or {}
+    ign = push.get("paths-ignore") or []
+    report("source verify: report-only markdown is ignored on push",
+           ign == ["*.md"], str(ign))
+    report("source verify: the same filter applies to pull_request",
+           (pr.get("paths-ignore") or []) == ign, str(pr.get("paths-ignore")))
+    report("source verify: the filter cannot reach the machine-read docs",
+           not any(p.startswith("docs") or p.startswith("KNOWLEDGE") or p == "**" for p in ign),
+           str(ign))
+    report("source verify: the filter cannot reach source identity",
+           not any(p in (".gitmodules", "clients/**", "clients/*", "go.mod", "go.sum",
+                         "release/**", "scripts/**", ".github/**", "*") for p in ign),
+           str(ign))
+
+    # The race steps are kept deliberately and the reason is recorded beside them. Asserted so
+    # that deleting one without building the final-candidate owner it needs fails here rather
+    # than silently shrinking push-time coverage of packages nothing else races.
+    report("source verify: the fork-data-path race step is present",
+           "race on the fork's own data paths" in text)
+    report("source verify: the configuration-surface race step is present",
+           "race on the configuration surface" in text)
+    report("source verify: the race ownership table is recorded",
+           "final-candidate" in text and "deep_checks" in text)
+    report("source verify: the header does not claim it skips the race suite",
+           "does not\n# run the full unit suite, the race suite" not in text)
 
 
 def code_only(text):
@@ -541,7 +632,7 @@ def check_apple_resolve_once():
 
 
 def main():
-    for path in (RELEASE, DESKTOP, VERIFY, AUDIT, LINUX, MOBILE, APPLE):
+    for path in (RELEASE, DESKTOP, VERIFY, SOURCE_VERIFY, AUDIT, LINUX, MOBILE, APPLE):
         if not os.path.isfile(path):
             print("FAIL: missing %s" % path, file=sys.stderr)
             return 1
@@ -561,7 +652,9 @@ def main():
     print()
     check_coverage_semantics()
     print()
-    check_verify()
+    check_release_contract_workflow()
+    print()
+    check_source_verify()
     print()
     print("release workflow structure: %d passed, %d failed" % (passed, failed))
     return 1 if failed else 0

@@ -11,9 +11,27 @@ name: Verify
 # anywhere.
 #
 # So this is the cheap half: the tripwires that fail when an upstream revision changes what something
-# MEANS, plus the build matrix that fails when it changes what something IS. It deliberately does not
-# run the full unit suite, the race suite or any artifact step; those stay in the artifact workflows
-# where they are asked for explicitly.
+# MEANS, plus the build matrix that fails when it changes what something IS.
+#
+# # What it runs, stated accurately
+#
+# The paragraph that used to sit here claimed this workflow "deliberately does not run the full
+# unit suite, the race suite or any artifact step; those stay in the artifact workflows where
+# they are asked for explicitly." Two of those three claims are still true and one is not, and a
+# header that describes a cheaper gate than the workflow is is how the push gate grew without
+# anyone deciding to grow it:
+#
+#   full unit suite   still NOT run here          true
+#   artifact steps    still NOT run here          true
+#   race suite        RUNS HERE - two steps        was false
+#
+# The race steps are kept deliberately and the reason is recorded next to them: the artifact
+# workflows' race legs sit behind a manual `deep_checks` input, and five of the packages raced
+# here are raced nowhere else. What the header can say honestly is the BUDGET: this gate is
+# bounded at 40 minutes and is meant to answer "is the source self-consistent, are the pinned
+# assumptions still true, and do the main targets still compile" - not "is this a finished
+# release candidate". The deep race and interop work belongs to a final-candidate gate, which
+# does not exist yet.
 on:
   push:
     branches: [testing]
