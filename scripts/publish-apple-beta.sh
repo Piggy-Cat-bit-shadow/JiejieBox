@@ -77,14 +77,27 @@ ios_client_dir="$IOS_APPLE_DIR"
 macos_client_dir="$MACOS_APPLE_DIR"
 export APPLE_CLIENT_REPOSITORY IOS_APPLE_SHA IOS_APPLE_BRANCH MACOS_APPLE_SHA MACOS_APPLE_BRANCH
 
+# The gitlink is no longer the authority, so it is no longer an equality gate.
+#
+# It is still READ, because a submodule that has drifted behind the resolved source is something
+# a reader of this log needs to know, and because `gitlink_sha` is part of this script's
+# published interface (the publish contract test greps for it). What changed is the consequence:
+# a difference is reported, not fatal. Making it fatal is precisely what required a second
+# commit here before any client change could be built.
 gitlink_sha="$(git ls-tree HEAD "$ios_client_dir" | awk '{print $3}')"
 [ -n "$gitlink_sha" ] || fail "the parent records no gitlink at $ios_client_dir."
-[ "$gitlink_sha" = "$IOS_APPLE_SHA" ] || fail \
-  "the parent records $ios_client_dir at $gitlink_sha but the iOS source selection resolved
-  to $IOS_APPLE_SHA. The iOS build must come from the gitlink the release commit records."
+if [ "$gitlink_sha" != "$IOS_APPLE_SHA" ]; then
+  if [ "${APPLE_CLIENT_REQUIRE_GITLINK:-0}" = "1" ]; then
+    fail "the parent records $ios_client_dir at $gitlink_sha but the source selection resolved
+  to $IOS_APPLE_SHA. APPLE_CLIENT_REQUIRE_GITLINK=1 requires the build to match the gitlink."
+  fi
+  echo "  note: clients/apple gitlink is $gitlink_sha; this build uses $IOS_APPLE_SHA."
+  echo "        The Apple client repository is the authority; the gitlink is the local default"
+  echo "        checkout. Set APPLE_CLIENT_REQUIRE_GITLINK=1 to require equality."
+fi
 
 ./scripts/ci/apple-client-source.sh assert-shared-source
-echo "  iOS:   $IOS_APPLE_BRANCH @ $IOS_APPLE_SHA  (parent gitlink)"
+echo "  iOS:   $IOS_APPLE_BRANCH @ $IOS_APPLE_SHA  (Apple client repository)"
 echo "  macOS: $MACOS_APPLE_BRANCH @ $MACOS_APPLE_SHA  (same shared source)"
 
 # ---------------------------------------------------------------------------

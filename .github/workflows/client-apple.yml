@@ -134,17 +134,48 @@ jobs:
           ./scripts/ci/check-apple-source-selection.sh
           ./scripts/ci/test-apple-macos-name.sh
       - name: verify the Apple submodule revision
+        # The AUTHORITY is the Apple client repository, not this repository's gitlink, so this
+        # gate compares the checkout against the RESOLVED source rather than against the
+        # gitlink. Requiring the gitlink made every client release a two-repository operation:
+        # the build could only mirror a submodule someone had already bumped by hand.
+        #
+        # The guarantee that matters is unchanged and still enforced here: the tree that gets
+        # built is the tree that was selected, and `assert-shared-source` keeps iOS and macOS on
+        # one commit. What is gone is the requirement that the selected commit equal the
+        # submodule pointer - reported in the log instead, and fatal again under
+        # APPLE_CLIENT_REQUIRE_GITLINK=1.
         run: |
           set -euo pipefail
+          eval "$(./scripts/ci/apple-client-source.sh resolve)"
           recorded="$(git ls-tree HEAD "$APPLE_SUBMODULE" | awk '{print $3}')"
           actual="$(git -C "$APPLE_SUBMODULE" rev-parse HEAD)"
           echo "parent records: $recorded"
           echo "checked out:    $actual"
-          if [ "$actual" != "$recorded" ]; then
-            echo "FAIL: the Apple submodule is not at the revision this repository pins." >&2
+          echo "resolved source: $APPLE_CLIENT_SHA"
+
+          # Move the tree to the resolved commit if it is somewhere else. The submodule
+          # checkout lands wherever the gitlink points, which after this change is frequently
+          # behind - so "not at the resolved commit" is the normal state, not an error.
+          if [ "$actual" != "$APPLE_CLIENT_SHA" ]; then
+            # shellcheck disable=SC2086
+            ./scripts/ci/apple-client-source.sh checkout ios >/dev/null
+            actual="$(git -C "$APPLE_SUBMODULE" rev-parse HEAD)"
+          fi
+          if [ "$actual" != "$APPLE_CLIENT_SHA" ]; then
+            echo "FAIL: the Apple source is at $actual but the selection resolved to" >&2
+            echo "      $APPLE_CLIENT_SHA. The build must use the tree that was selected." >&2
             exit 1
           fi
-          echo "PASS: submodule matches the parent gitlink"
+
+          if [ "$recorded" != "$APPLE_CLIENT_SHA" ]; then
+            if [ "${APPLE_CLIENT_REQUIRE_GITLINK:-0}" = "1" ]; then
+              echo "FAIL: the resolved source $APPLE_CLIENT_SHA is not the gitlink $recorded." >&2
+              exit 1
+            fi
+            echo "note: the gitlink is $recorded and this build uses $APPLE_CLIENT_SHA; the"
+            echo "      Apple client repository is the authority."
+          fi
+          echo "PASS: the Apple source is at the resolved commit $APPLE_CLIENT_SHA"
 
       - name: warm the Go module cache
         # gomobile prepends its own temporary GOPATH, and on a cold runner the whole
@@ -248,24 +279,36 @@ jobs:
           echo "iOS Apple source: $APPLE_CLIENT_BRANCH @ $APPLE_CLIENT_SHA in $IOS_APPLE_DIR"
 
       - name: verify the Apple submodule revision
-        # The gitlink is the authority for the iOS source, so it is checked against the checkout
-        # rather than against a copy of the value anywhere else.
+        # Same rule as the libbox job's gate above: the RESOLVED source is what the build must
+        # use, and the gitlink is a convenience that is reported rather than required. This job
+        # exports APPLE_CLIENT_SHA to GITHUB_ENV when it resolves, so the value is already here.
         run: |
           set -euo pipefail
           recorded="$(git ls-tree HEAD "$APPLE_SUBMODULE" | awk '{print $3}')"
           actual="$(git -C "$APPLE_SUBMODULE" rev-parse HEAD)"
-          echo "parent records: $recorded"
-          echo "checked out:    $actual"
-          if [ "$actual" != "$recorded" ]; then
-            echo "FAIL: the Apple submodule is not at the revision this repository pins." >&2
-            exit 1
+          echo "parent records:  $recorded"
+          echo "checked out:     $actual"
+          echo "resolved source: $APPLE_CLIENT_SHA"
+
+          if [ "$actual" != "$APPLE_CLIENT_SHA" ]; then
+            ./scripts/ci/apple-client-source.sh checkout ios >/dev/null
+            actual="$(git -C "$APPLE_SUBMODULE" rev-parse HEAD)"
           fi
           if [ "$actual" != "$APPLE_CLIENT_SHA" ]; then
-            echo "FAIL: the iOS source selection resolved to $APPLE_CLIENT_SHA but the gitlink is" >&2
-            echo "      $recorded. The iOS build must come from the gitlink." >&2
+            echo "FAIL: the iOS source is at $actual but the selection resolved to" >&2
+            echo "      $APPLE_CLIENT_SHA. The build must use the tree that was selected." >&2
             exit 1
           fi
-          echo "PASS: submodule matches the parent gitlink and the iOS source selection"
+
+          if [ "$recorded" != "$APPLE_CLIENT_SHA" ]; then
+            if [ "${APPLE_CLIENT_REQUIRE_GITLINK:-0}" = "1" ]; then
+              echo "FAIL: the resolved source $APPLE_CLIENT_SHA is not the gitlink $recorded." >&2
+              exit 1
+            fi
+            echo "note: the gitlink is $recorded and this build uses $APPLE_CLIENT_SHA; the"
+            echo "      Apple client repository is the authority."
+          fi
+          echo "PASS: the iOS Apple source is at the resolved commit $APPLE_CLIENT_SHA"
 
       - name: download the verified Libbox artifact
         uses: actions/download-artifact@v4

@@ -149,6 +149,27 @@ Each was checked against §24 (same class, evidenced, no behaviour change, no sa
 creep). "DONE" means implemented on this host; "RECORDED ONLY" means it needs a Mac or a bigger
 change, with the reason.
 
+### F-0. Three NON-TEST gitlink gates would have blocked the first real build — **DONE**
+
+Switching the authority is not enough on its own: three places outside the test suite still
+hard-asserted `gitlink == resolved`, and each would have failed the first build before any gate ran.
+
+```text
+publish-apple-beta.sh:82-84    [ "$gitlink_sha" = "$IOS_APPLE_SHA" ] || fail
+client-apple.yml:136-147       libbox job: actual != recorded  -> exit 1
+client-apple.yml:250-268       iOS job: actual != $APPLE_CLIENT_SHA -> exit 1
+```
+
+All three now compare the checkout against the **resolved** source, which is the guarantee that
+actually matters — the tree that gets built is the tree that was selected — and report the gitlink
+difference instead of failing on it. `APPLE_CLIENT_REQUIRE_GITLINK=1` restores the hard equality in
+all three. `gitlink_sha` is still read in `publish-apple-beta.sh`, because the publish contract test
+greps for it and because a submodule far behind the resolved source is worth printing.
+
+For the libbox job, whose tree is the one `build-apple-libbox.sh` compiles from, the gate also
+**moves** the submodule to the resolved commit via `checkout ios` when it is somewhere else. Without
+that, the job would have verified one commit and built another.
+
 ### F-1. `publish-apple-beta.sh` and `release-apple.sh` repeat each other's source work — RECORDED ONLY
 
 One publish resolves the source and asserts the shared source **twice**, checks out both trees
@@ -257,6 +278,16 @@ extracted, which is a real change to both builders plus `release-apple.sh` — a
 parallel uploads, which §37 says must be verified with a mock uploader rather than a real App Store
 Connect publish. RECORDED ONLY.
 
+### F-9. A THIRD copy of the Apple pin exists, unwired — RECORDED ONLY
+
+`check-libbox-abi.sh:155` carries `VERIFIED_APPLE_SHA="40dd48795579718008518ac51af320b1d61377ac"` and
+`:477` compares it against the gitlink. That is a second, independent copy of the Apple revision —
+exactly the "second value that can disagree with the authority" the refs-file rule exists to prevent
+— and it has **no caller anywhere in the repository**, so it cannot fail a build. It will mislead the
+next reader who greps for the pin, though. RECORDED ONLY: deciding whether to re-point it at the
+resolved SHA or delete the check is a separate judgement, and `check-libbox-abi.sh` is outside this
+task's file list.
+
 ---
 
 ## G. Verification
@@ -266,20 +297,37 @@ gofmt / Go tests                     NOT APPLICABLE   no Go changed
 dash -n apple-client-source.sh        PASS
 dash -n build-ios-testflight.sh       PASS
 dash -n check-apple-source-selection.sh  PASS
+dash -n publish-apple-beta.sh         NOT POSSIBLE (pre-existing bash-ism, see below)
+YAML parse client-apple.yml           PASS (jobs: libbox, ios, macos)
+check-release-workflows.py            80 passed, 0 failed
 resolver action list                  matches the suite's pinned list (updated for ls-remote)
 refs-file "_SHA= is forbidden" rule   still satisfied (the SHA lives in the resolved state file)
 real xcodebuild archive               BLOCKED_BY_ENVIRONMENT - no macOS, no Xcode
 App Store Connect upload              NOT PERFORMED (forbidden this round)
 ```
 
-**`check-apple-source-selection.sh` will FAIL as it stands.** It is a ~626-line suite whose fixtures
-are built on gitlink semantics — it constructs a fake parent, commits an Apple gitlink into it, and
-asserts at more than a dozen points that the resolved source **is** that gitlink (`:362`, `:364`,
-`:371`, `:428-431`, `:442`, `:447-464`, `:549`, `:551`, `:557`). Those assertions now describe the
-model this task removed. I updated the one assertion that is a pure interface pin (the action list)
-and left the rest **unchanged rather than half-rewritten**, because a partially converted suite that
-still passes would hide exactly the behaviour change it exists to catch. Rewriting it is §35 and is
-the next concrete step; §F-1/F-2 must land with it.
+`publish-apple-beta.sh` cannot be shell-checked here and that is **pre-existing**, not a result of
+this change: line 204 uses the bash here-string `read -r a b c <<<"$(...)"`, which `dash -n` rejects
+outright. The repository's own parser gate is `bash -n` inside `test-apple-signing.sh`, which is a
+bash script this host cannot run either. The edited region was reviewed by eye and uses only
+`[`/`if`/`fi`/`echo`, which are POSIX.
+
+**`check-apple-source-selection.sh` will FAIL as it stands.** It is a ~626-line suite, 65 runtime
+checks, whose fixtures are built on gitlink semantics — it creates a bare git repo, commits an Apple
+gitlink into a fake parent, and asserts at roughly 22 points that the resolved source **is** that
+gitlink, with the branch tip deliberately one commit ahead so the tip answer fails by construction
+(`:362-367`, `:371`, `:385-386`, `:415-416`, `:428-431`, `:442`, `:455-459`, `:463`, `:476-480`,
+`:558-566`, plus the fixture premise at `:333-336`). Those assertions now describe the model this
+task removed. I updated the one assertion that is a pure interface pin (the action list) and left the
+rest **unchanged rather than half-rewritten**, because a partially converted suite that still passed
+would hide exactly the behaviour change it exists to catch. Rewriting it is §35 and is the next
+concrete step; §F-1 and §F-2 must land with it.
+
+Reusable parts of that suite, for whoever does the rewrite: its scratch/`mktemp` plumbing, its
+local-git fixtures and its `check`/`expects_fail` helpers need no change; only the fixtures'
+premise and the authority assertions do. Note also that `test-apple-beta-publish.sh` (97 checks)
+**mutates `clients/apple` while it runs** — it appends to `Extension/Info.plist` and restores it — so
+do not run it when the tree must stay untouched.
 
 ---
 
