@@ -156,7 +156,14 @@ func main() {
 // writeProvenance records exactly which source revision and version string the
 // artifacts in this directory were built with. The Android client reads this
 // file, so "which core is in this APK" has one authoritative answer.
-// sortedTagVariants lists the shipped variants in a stable order for the provenance record.
+// sortedTagVariants lists the variants this builder CAN produce, in a stable order, for the
+// provenance record.
+//
+// It is deliberately the full set and not the subset a given invocation built. The record answers
+// "what tags does the android-main variant carry", which the Android client asks of an APK without
+// knowing which invocation produced the AAR inside it; dropping a line because -android-variant
+// skipped that build would remove an answer a consumer depends on rather than make the file more
+// truthful. What IS variant-scoped is the artifact list, which is what the release actually ships.
 func sortedTagVariants() []string {
 	return []string{"android-main", "android-legacy", "apple"}
 }
@@ -164,7 +171,7 @@ func sortedTagVariants() []string {
 func writeProvenance() {
 	content := "commit=" + buildCommit + "\n" +
 		"version=" + buildVersion + "\n"
-	// The tags each shipped variant was compiled with. A consumer can read this to know whether
+	// The tags each producible variant is compiled with. A consumer can read this to know whether
 	// an artifact contains a given capability (for example with_gvisor) without parsing the build
 	// scripts, and a CI check can assert the invariant that capability implies the matching
 	// dependency pin.
