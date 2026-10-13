@@ -258,7 +258,15 @@ jobs:
           }
           Write-Host "ASSERTION PASSED: AUDITED_BUILD_SHA == AUDIT_TOOLING_SHA ($auditedSha)"
 
+      # The `id` is load-bearing. This step writes installer_path and unpacked_dir for the gates, and
+      # without an id those outputs belong to no step context, so `steps.<id>.outputs.unpacked_dir`
+      # resolved to the EMPTY STRING. Gate 5 then built the path
+      # "$env:UNPACKED_DIR/resources/daemon/sing-box-daemon.exe", which collapses to
+      # "/resources/daemon/sing-box-daemon.exe", and failed with "the daemon does not exist" - a
+      # plumbing failure that reads exactly like a product failure in the record. The first flight
+      # found this; the unpacked tree itself had downloaded correctly.
       - name: Download the installer and the unpacked application
+        id: download
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -324,7 +332,7 @@ jobs:
       - name: "[gate 5] daemon service smoke test"
         shell: pwsh
         env:
-          UNPACKED_DIR: ${{ steps.build.outputs.unpacked_dir }}
+          UNPACKED_DIR: ${{ steps.download.outputs.unpacked_dir }}
         run: |
           $ErrorActionPreference = "Stop"
           ./tooling/scripts/ci/windows/Test-DaemonService.ps1 `
@@ -335,7 +343,7 @@ jobs:
       - name: "[gate 5b] daemon secure service install (the installer's own path)"
         shell: pwsh
         env:
-          UNPACKED_DIR: ${{ steps.build.outputs.unpacked_dir }}
+          UNPACKED_DIR: ${{ steps.download.outputs.unpacked_dir }}
         run: |
           $ErrorActionPreference = "Stop"
           # The installer runs `service install` with NO relaxed-permission flag under
@@ -352,7 +360,7 @@ jobs:
       - name: "[gate 6] NSIS install / reinstall / uninstall lifecycle"
         shell: pwsh
         env:
-          INSTALLER_PATH: ${{ steps.build.outputs.installer_path }}
+          INSTALLER_PATH: ${{ steps.download.outputs.installer_path }}
           CORE_VERSION: ${{ steps.version.outputs.core_version }}
         run: |
           $ErrorActionPreference = "Stop"
@@ -368,7 +376,7 @@ jobs:
       - name: "[gate 7] driver package signature audit"
         shell: pwsh
         env:
-          UNPACKED_DIR: ${{ steps.build.outputs.unpacked_dir }}
+          UNPACKED_DIR: ${{ steps.download.outputs.unpacked_dir }}
         run: |
           $ErrorActionPreference = "Stop"
           ./tooling/scripts/ci/windows/Test-DriverSignatures.ps1 `
@@ -388,7 +396,7 @@ jobs:
             "Audited build run: #${{ steps.build.outputs.run_number }} for ${{ steps.audited.outputs.audited_sha }}",
             "Audit tooling SHA: ${{ steps.audited.outputs.tooling_ref }}",
             "Version: ${{ steps.version.outputs.core_version }}",
-            "Installer: ``${{ steps.build.outputs.installer_path }}``",
+            "Installer: ``${{ steps.download.outputs.installer_path }}``",
             ""
           )
           if ("${{ steps.audited.outputs.non_release }}" -eq "true") {

@@ -388,6 +388,48 @@ def check_audit_sha_pin():
            "not the audited SHA" in audit)
 
 
+def check_step_output_ids():
+    """Every `steps.<id>.outputs.*` reference must name a step id that EXISTS in that file.
+
+    The first flight found this the hard way. The download step wrote `installer_path` and
+    `unpacked_dir` but declared no `id`, so `steps.build.outputs.unpacked_dir` resolved to the empty
+    string and gate 5 looked for the daemon at "/resources/daemon/sing-box-daemon.exe". It reported
+    "the daemon does not exist", which reads like a product failure and was purely plumbing.
+
+    GitHub does not validate this at parse time - an unknown step id is simply empty - so it has to
+    be asserted here.
+    """
+    for label, path in (("runtime audit", AUDIT), ("desktop installer", DESKTOP),
+                        ("release", RELEASE), ("verify", VERIFY)):
+        if not os.path.isfile(path):
+            report("%s exists for step-id check" % label, False, path)
+            continue
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+
+        declared = set(re.findall(r"^\s+id:\s*([A-Za-z0-9_-]+)\s*$", text, re.M))
+        referenced = set(re.findall(r"steps\.([A-Za-z0-9_-]+)\.outputs\.", text))
+        unknown = sorted(referenced - declared)
+        report("%s: every steps.<id>.outputs reference names a declared id" % label,
+               not unknown, "unknown=%s declared=%s" % (unknown, sorted(declared)))
+
+        # And the writer side: a step that emits to GITHUB_OUTPUT must be readable by id, or its
+        # values are unreachable.
+        for match in re.finditer(
+                r"^      - name: (.*)\n((?:.*\n)*?)(?=^      - |\Z)", text, re.M):
+            body = match.group(2)
+            if "GITHUB_OUTPUT" not in body:
+                continue
+            if re.search(r"^\s+id:\s*[A-Za-z0-9_-]+\s*$", body, re.M):
+                continue
+            # A step that writes outputs for later steps needs an id. Steps that only write to
+            # GITHUB_STEP_SUMMARY are not in scope.
+            if "GITHUB_STEP_SUMMARY" in body and "GITHUB_OUTPUT" not in body:
+                continue
+            report("%s: output-writing step %r declares an id" % (label, match.group(1).strip()),
+                   False, "writes GITHUB_OUTPUT with no id")
+
+
 def main():
     for path in (RELEASE, DESKTOP, VERIFY, AUDIT, LINUX, MOBILE):
         if not os.path.isfile(path):
@@ -400,6 +442,8 @@ def main():
     check_runtime_audit_split()
     print()
     check_audit_sha_pin()
+    print()
+    check_step_output_ids()
     print()
     check_mobile_contract()
     print()
