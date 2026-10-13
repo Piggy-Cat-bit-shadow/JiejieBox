@@ -15,6 +15,7 @@ carries its own source anchors, provenance and evidence level.
 | Native Naive, HTTP CONNECT proxy, `transport/http`, `http_clients`, target ACL, padding/masquerade | `naive-http-transport.md` |
 | XHTTP / SplitHTTP / XMUX / stream-one / packet-up — writing a VLESS XHTTP node, mode choice, connection reuse | `xhttp-client-transport.md` |
 | Direct Offload / native bypass, `traffic_class`, `traffic_scheduler`, dial governor | `data-path-optimization.md` |
+| `fast_path` on a selector or urltest group — authorising a group's flows to attempt Direct Fast Path, or refusing it | `fast-path-group-policy.md` |
 | Any zero-copy, allocation, buffer pool, batch ownership, splice question | `buffer-ownership.md` |
 | Sleep/wake/screen/lock, memory trim, device axis, `ReuseSuspect`, power policy | `power-mobile-lifecycle.md` |
 | A libbox export, `SetupOptions`, CommandServer API, ABI version, Apple/Android tag set | `libbox-platform-contract.md` |

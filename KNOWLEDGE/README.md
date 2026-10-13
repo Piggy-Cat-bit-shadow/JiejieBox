@@ -91,6 +91,7 @@ all.
 | `modules/masque-connectip.md` | MASQUE endpoint and dataplane, capsules, sessions, DNS roles, MTU/PTB |
 | `modules/naive-http-transport.md` | Native Naive, `transport/http`, `http_clients`, the UoT target ACL |
 | `modules/xhttp-client-transport.md` | XHTTP / SplitHTTP client contract: `transport/v2rayxhttp`, modes, XMUX reuse, X-Padding |
+| `modules/fast-path-group-policy.md` | `fast_path`: the group-level policy field, its three states, and what it does not bypass |
 | `modules/data-path-optimization.md` | Direct Offload, traffic class, the upload scheduler, the dial governor |
 | `modules/buffer-ownership.md` | the buffer/zero-copy/splice rules that must not be optimised away |
 | `modules/power-mobile-lifecycle.md` | device axis, sleeps, screen/lock, trims, reuse bands, the timer census |
