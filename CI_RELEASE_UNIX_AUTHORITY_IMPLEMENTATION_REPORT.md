@@ -6,8 +6,106 @@ Sole report for the V6 round. It does **not** rewrite the V5 audit chapters in
 **Headline: the construction stages were not run.** V6 §2 and §3 make a real Unix/macOS/Linux
 environment and a green 92-case baseline preconditions of write work, and both are absent here.
 What this round delivers instead is a **read-only Apple-pipeline verification** (§31.1's
-emphatic item plus the §6/§7/§9/§10/§11 claims), a precise statement of what is blocked and
-what is ready, and one identity precision that changes a V6 acceptance check.
+emphatic item plus the §6/§7/§9/§10/§11 claims), an **executable Stage 1–3 acceptance framework**
+that runs in this environment, and one identity precision that changes a V6 acceptance check.
+
+---
+
+## 0. Hard inputs for the next round — do not re-investigate
+
+Two facts were settled by measurement this round. They are inputs to Stages 6 and 7, and the
+next round should consume them rather than rediscover them.
+
+### 0.1 `manifest.version` is `JJ_ARTIFACT_VERSION`, not `JJ_VERSION`
+
+```text
+apple-libbox-artifact.sh:83   version="$JJ_ARTIFACT_VERSION"
+scripts/ci/version.sh:18      version="$(cat release/JIEJIE_VERSION | tr -d '[:space:]')"   # JJ_VERSION
+scripts/ci/version.sh:25      artifact_version="${version}+jiejie.${short_sha}"             # JJ_ARTIFACT_VERSION
+```
+
+So the manifest's `version` is `0.1.7+jiejie.<short_sha>` while `release/JIEJIE_VERSION` is
+`0.1.7`. **V6 §15's proposed check `manifest.version == JJ_VERSION` would fail on every
+artifact.** The preferred fix, and the reason it is recorded here rather than worked around:
+add an explicit `jj_version` field to the manifest, so version identity is a field lookup rather
+than a substring question. Adding it is backward compatible and belongs with §11's other
+provenance fields.
+
+### 0.2 Stage 7's `auto` chain must branch on asset PRESENCE, never on validation outcome
+
+V6 §31.1 asks whether a present-but-invalid canonical Release asset could be mistaken for
+"not found" and silently fall back to Actions. **That trap is not reachable today**, and the
+reason is structural: `publish-apple-beta.sh` has exactly one source and every failure in the
+chain is `fail`, not fall-through. It becomes reachable only once Stage 7 adds a second source.
+
+The required semantics, to be implemented in Stage 7:
+
+```text
+canonical Release asset ABSENT   (exact name not in the release's asset list)
+    --libbox-source release -> FAIL
+    --libbox-source auto    -> Actions exact-SHA path (existing behaviour, unchanged)
+
+canonical Release asset PRESENT
+    download -> validate parent_sha, version, digest
+    ANY failure -> FAIL CLOSED. Never continue to Actions.
+```
+
+Presence must be decided by **listing the release's assets by exact name**, never by a
+validation outcome. A validation failure means the canonical source is corrupt; dressing that as
+absence is the one outcome this design exists to prevent.
+
+---
+
+## 0.3 Executable Stage 1–3 acceptance framework
+
+Added this round, because it needs no `jq`, no `chmod` and no Unix, and it turns §24's five
+structural criteria from prose into a command. One checker, two modes — no second checker was
+created:
+
+```bash
+python scripts/ci/check-release-workflows.py                    # current repository: must PASS
+python scripts/ci/check-release-workflows.py --target-state v6  # Stage 1-3 target: expected FAIL today
+```
+
+The default mode is **unchanged** and still reports repository regressions; it passes 114/114.
+The target mode describes a state the repository is deliberately not in yet and never alters the
+default verdict (verified: default `0`, target `1`, default `0` again, with counters reset
+between calls).
+
+Current target-state result — **3 passed, 6 failed**, no fabricated green:
+
+| CRITERION | STATE | OBSERVED |
+|---|---|---|
+| V6-1 Verify stops executing the 92-case suite | FAIL | `verify.yml:121` |
+| V6-2 Formal Release stops executing it | FAIL | `release.yml:180` |
+| V6-3 RCV still executes the full suite | PASS | `release-contract-verify.yml:107` |
+| V6-3 no other workflow executes it | FAIL | also `release.yml`, `verify.yml` |
+| V6-4 Formal Release requires exact-SHA Verify | FAIL | `release.yml` code never names `verify.yml` |
+| V6-4 Formal Release requires exact-SHA RCV | FAIL | `release.yml` code never names `release-contract-verify.yml` |
+| V6-5 `release-artifacts.sh` holds the selection primitive | PASS | `newest_run` present |
+| V6-5 acceptance engine not a second release verdict | PASS | not reachable from `release.yml` |
+| V6-5 no workflow declares it as a gate | FAIL | still declared in `verify.yml:155` |
+
+Three design points worth recording, because each was a real trap:
+
+* **"Executes" is not a substring test.** `release-contract-verify.yml` mentions the suite six
+  times in code — a `paths:` entry, a `bash -n` list entry, and three `grep` guards asserting the
+  suite still wires its own mock `gh`. Only one of the six is an execution. A substring check
+  would have called a single execution "four executions" or, worse, read a `grep` guard as a run.
+* **V6-5 cannot be "the file is deleted."** V6 §4.4 explicitly allows the parser, fixtures and
+  test utility to survive, so the criterion is "no second may-release authority is reachable
+  from the release path". The engine is therefore judged by whether `release.yml` reaches it
+  **and** whether any workflow still declares its self-test as a gate.
+* **V6-5's third half initially looked at one file and passed wrongly.** It read only
+  `release-contract-verify.yml`, found nothing, and reported satisfied — while `verify.yml:155`
+  runs `verify-release-acceptance-test.sh` on every push. It now scans every workflow. That
+  correction is the same defect class the V5 audit named ("a checker that protects the wrong
+  fact"), caught this time by cross-checking a PASS instead of a FAIL.
+
+Deliberately **not** asserted, per instruction: Android exact artifact field names and Apple
+canonical Libbox metadata shape. Those directions are agreed, but their concrete form should be
+fixed by the Stage 4–7 implementation; a checker written first would distort the implementation
+to satisfy itself.
 
 ---
 
@@ -369,9 +467,13 @@ if it does not, classify ENVIRONMENT / PRE_EXISTING REGRESSION / FIXTURE DRIFT /
 **Then Stage 1–3 as one atomic acceptance** (§24): canonical selector in `release-artifacts.sh`;
 `verify.yml` and `release.yml` stop running the 92-case, RCV keeps it; Formal Release requires
 exact-SHA Verify **and** RCV; `verify-release-acceptance.sh` loses its independent verdict but may
-keep its parser and fixtures. The five structural assertions §24 lists are the acceptance
-criteria, and they are checkable in `check-release-workflows.py` — which does not need `jq`, so
-they can be written and proved here in advance if that is wanted.
+keep its parser and fixtures. **The acceptance criteria are already executable** — run
+`python scripts/ci/check-release-workflows.py --target-state v6` and drive it from 6 failures to
+0. It needs no `jq`, so it runs before, during and after the Unix work.
+
+Two further things the next round should consume rather than rediscover: §0.1 (the manifest
+`version` field is `JJ_ARTIFACT_VERSION`) and §0.2 (Stage 7's `auto` chain must branch on asset
+presence, never on validation outcome).
 
 **Nothing in this round's read-only work is invalidated by the delay**, and two of its results
 (E3-1 and G-3) prevent an acceptance check that would have failed and a fallback that would have

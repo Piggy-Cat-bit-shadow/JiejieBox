@@ -1,9 +1,30 @@
 #!/usr/bin/env python3
 """Structural checks on the release workflow files.
 
-Usage: check-release-workflows.py
+Usage:
+    check-release-workflows.py                     check the CURRENT repository
+    check-release-workflows.py --target-state v6   check the V6 Stage 1-3 TARGET state
 
-Exit: 0 = every check passed, 1 = one did not.
+Exit: 0 = every check passed, 1 = one did not, 2 = the invocation was wrong.
+
+# Two modes, one checker, and why
+
+The default run answers "has the repository regressed?" It must pass on every commit, so it
+only asserts things that are TRUE NOW.
+
+`--target-state v6` answers a different question: "has the V6 Stage 1-3 restructure landed?"
+Its assertions describe a state the repository is deliberately NOT in yet, so it is EXPECTED to
+fail until that work is done on a Unix runner. It exists so the acceptance criteria are
+executable rather than prose in a report - the work can be judged the moment it lands, instead
+of being re-derived from a plan.
+
+Neither mode may be folded into the other. Making the default run assert the target state would
+turn every branch red for work nobody has done; making the target mode assert only what is
+already true would make it prove nothing. The mode is explicit on the command line for that
+reason, and `--target-state` never changes the default run's verdict.
+
+Both modes share the reporting counters below, so a caller reading `N passed, M failed` reads
+the same shape either way.
 
 # What this protects
 
@@ -17,6 +38,7 @@ These checks are structural, not behavioural - they cannot prove the shell works
 is proved by test-release-artifacts.sh on a runner. What they prove is that the guards are
 still DECLARED, which is the class of mistake an editor makes.
 """
+import argparse
 import os
 import re
 import sys
@@ -45,6 +67,9 @@ LINUX = os.path.join(WF, "server-linux-amd64.yml")
 MOBILE = os.path.join(WF, "mobile-contract.yml")
 APPLE = os.path.join(WF, "client-apple.yml")
 GATE = os.path.join(REPO, "scripts", "ci", "release-artifacts.sh")
+ACCEPTANCE = os.path.join(REPO, "scripts", "ci", "verify-release-acceptance.sh")
+
+RELEASE_SUITE = "test-release-artifacts.sh"
 
 passed = 0
 failed = 0
@@ -631,11 +656,177 @@ def check_apple_resolve_once():
            "APPLE_CLIENT_REQUIRE_GITLINK" in apple)
 
 
-def main():
-    for path in (RELEASE, DESKTOP, VERIFY, SOURCE_VERIFY, AUDIT, LINUX, MOBILE, APPLE):
+# ---------------------------------------------------------------------------
+# Target state: V6 Stage 1-3
+# ---------------------------------------------------------------------------
+#
+# These assertions describe where the release authority is GOING, not where it is. The default
+# run above must stay green on every commit; this section is expected to fail until the Unix
+# Stage 1-3 work lands, and turning it green is the acceptance criterion for that work.
+#
+# They are deliberately limited to the FIVE facts V6 fixed and that need no further product
+# decision. In particular there is NO assertion about Android artifact field names or Apple
+# canonical Libbox metadata shape: those directions are agreed but their exact form should be
+# settled by the implementation in Stages 4-7, and a checker written first would distort the
+# implementation to satisfy itself. Adding them later is the point, not an omission.
+#
+# Nothing here asserts "this file must be deleted". A retired verdict ENGINE may keep its
+# parser, its fixtures and its self-test - V6 section 4.4 says so explicitly - so what is
+# asserted is that a SECOND may-release authority is no longer reachable from the release path.
+
+
+def executes_release_suite(path):
+    """Code lines of `path` that RUN the release suite (not comment lines, not path filters).
+
+    The distinction matters more than it looks. `release-contract-verify.yml` MENTIONS the suite
+    in its `paths:` filter, in its `bash -n` list and in `grep` guards that assert the suite still
+    wires its own mock `gh`. None of those is "this workflow runs the 92 cases", and a substring
+    test would read all of them as execution - which is how a checker reports the opposite of the
+    truth. So only lines that would actually invoke it are counted.
+    """
+    if not os.path.isfile(path):
+        return []
+    hits = []
+    for number, line in enumerate(open(path, encoding="utf-8").read().splitlines(), 1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if RELEASE_SUITE not in stripped:
+            continue
+        # A path-filter entry, a syntax-check list entry, or a grep that merely names the file.
+        if stripped.startswith("- "):
+            continue
+        if stripped.startswith(("grep ", "for f in ", "scripts/ci/prepare-desktop-client.sh")):
+            continue
+        if stripped.endswith("\\"):  # a continuation inside such a list
+            continue
+        hits.append((number, stripped))
+    return hits
+
+
+def check_target_state_v6():
+    """The V6 Stage 1-3 terminal state. EXPECTED to fail before that work is done."""
+    print("== target state: V6 Stage 1-3 (release authority) ==")
+    print("   These describe a state the repository is not in yet; failures below are the")
+    print("   work list for the Unix round, not regressions.")
+    print()
+
+    # --- 1 & 2: the two gates that must stop running the suite ------------------
+    for label, path in (("Verify", SOURCE_VERIFY), ("Formal Release", RELEASE)):
+        hits = executes_release_suite(path)
+        report("V6-1/2 %s no longer executes the full 92-case suite" % label,
+               not hits,
+               ("still executes at " + ", ".join("line %d" % n for n, _ in hits)) if hits
+               else "no invocation found")
+
+    # --- 3: RCV is the workflow primary owner ----------------------------------
+    # Two halves, and both are needed: RCV must still run it, AND it must be the only workflow
+    # that does. The second half is what stops the change from becoming a deletion.
+    rcv_hits = executes_release_suite(VERIFY)
+    report("V6-3 Release Contract Verification still executes the full suite",
+           bool(rcv_hits),
+           ("executes at " + ", ".join("line %d" % n for n, _ in rcv_hits)) if rcv_hits
+           else "NO invocation found - the suite lost its owner")
+    others = []
+    for name in sorted(os.listdir(WF)):
+        if not name.endswith((".yml", ".yaml")):
+            continue
+        path = os.path.join(WF, name)
+        if os.path.abspath(path) == os.path.abspath(VERIFY):
+            continue
+        if executes_release_suite(path):
+            others.append(name)
+    report("V6-3 no other workflow executes the full suite",
+           not others,
+           "also executes: %s" % ", ".join(others) if others else "sole owner")
+
+    # --- 4: Formal Release requires exact-SHA Verify AND RCV evidence ----------
+    # Asserted on CODE, because the requirement will be written as shell invoking the canonical
+    # selector. A comment naming verify.yml is not a requirement, and release.yml already HAS
+    # such comments - that is exactly how this condition reads as satisfied when it is not.
+    rel_text = ""
+    if os.path.isfile(RELEASE):
+        with open(RELEASE, encoding="utf-8") as fh:
+            rel_text = "\n".join(l for l in fh.read().splitlines()
+                                 if not l.strip().startswith("#"))
+    for label, name in (("Verify", "verify.yml"),
+                        ("Release Contract Verification", "release-contract-verify.yml")):
+        report("V6-4 Formal Release requires exact-SHA %s evidence" % label,
+               name in rel_text,
+               "found in release.yml code" if name in rel_text
+               else "release.yml code never names %s as required evidence" % name)
+
+    # --- 5: exactly one may-release verdict authority --------------------------
+    # Read as: can anything OTHER than release-artifacts.sh decide "this SHA may be released"?
+    # The acceptance engine counts as a second authority while it is reachable from the release
+    # path; a parser or fixture it leaves behind does not.
+    gate_selector = os.path.isfile(GATE) and "newest_run" in open(GATE, encoding="utf-8").read()
+    report("V6-5 release-artifacts.sh holds the run-selection primitive",
+           gate_selector,
+           "newest_run present" if gate_selector else "no selection primitive found")
+
+    acceptance_used = "verify-release-acceptance.sh" in rel_text
+    report("V6-5 verify-release-acceptance.sh is not a second release verdict",
+           not acceptance_used,
+           "release.yml invokes it" if acceptance_used
+           else "not reachable from release.yml")
+
+    # The acceptance engine's own SELF-TEST is the other half of "is it still an authority".
+    # While a workflow declares that self-test as a step, the engine still has a verdict to give
+    # and the authority has not been retired - even though nothing on the release path calls it.
+    #
+    # Checked across EVERY workflow, not just release-contract-verify.yml, because it currently
+    # runs in verify.yml (line 155). A check that read only one file reported this criterion as
+    # satisfied while the engine was being exercised by another workflow on every push, which is
+    # the exact class of mistake this whole section exists to avoid.
+    engine_gates = []
+    for name in sorted(os.listdir(WF)):
+        if not name.endswith((".yml", ".yaml")):
+            continue
+        with open(os.path.join(WF, name), encoding="utf-8") as fh:
+            body = "\n".join(l for l in fh.read().splitlines()
+                             if not l.strip().startswith("#"))
+        if "verify-release-acceptance-test.sh" in body:
+            engine_gates.append(name)
+    report("V6-5 no workflow still declares the acceptance engine as its gate",
+           not engine_gates,
+           ("still declared in: " + ", ".join(engine_gates)) if engine_gates
+           else "no workflow declares it")
+
+    print()
+    print("V6 target state (Stage 1-3): %d passed, %d failed" % (passed, failed))
+    if failed:
+        print()
+        print("NOT YET ACHIEVED - %d Stage 1-3 criterion(s) outstanding." % failed)
+        print("This is the expected result until the Unix Stage 1-3 work lands; the default")
+        print("run above is what reports repository regressions.")
+    return 1 if failed else 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        prog="check-release-workflows.py",
+        description="Structural checks on the release workflow files.")
+    parser.add_argument(
+        "--target-state",
+        choices=["v6"],
+        default=None,
+        metavar="v6",
+        help="check the V6 Stage 1-3 TARGET state instead of the current repository. "
+             "Expected to FAIL until that work lands; it never changes the default verdict.")
+    args = parser.parse_args(argv)
+
+    needed = [RELEASE, DESKTOP, VERIFY, SOURCE_VERIFY, AUDIT, LINUX, MOBILE, APPLE]
+    if args.target_state:
+        needed = needed + [GATE]
+    for path in needed:
         if not os.path.isfile(path):
             print("FAIL: missing %s" % path, file=sys.stderr)
             return 1
+
+    if args.target_state == "v6":
+        return check_target_state_v6()
+
     check_release()
     print()
     check_desktop()
