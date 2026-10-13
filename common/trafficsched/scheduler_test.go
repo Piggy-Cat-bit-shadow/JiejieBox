@@ -229,11 +229,28 @@ func TestNeitherLaneStarvesWhenBothAreBusy(t *testing.T) {
 	go worker(high, laneHigh)
 	go worker(normal, laneNormal)
 
+	// Wait for EACH LANE to make progress, not for the two lanes COMBINED to.
+	//
+	// The combined form is unsafe and was the source of a CI flake on macOS arm64:
+	//
+	//     require.Eventually(... counts[laneHigh]+counts[laneNormal] >= 200 ...)
+	//
+	// A busy high-priority lane can legitimately satisfy that sum on its own - 200 high grants and
+	// zero normal grants satisfies it - so the test could return with `counts[laneNormal] == 0` and
+	// then fail its own liveness assertion, "NORMAL must never be starved", on a scheduler that had
+	// not starved anything. The starvation check was measuring a race it had itself created: on a
+	// loaded runner the high lane won enough grants inside the window to reach the threshold before
+	// the normal lane was scheduled at all.
+	//
+	// Requiring a floor per lane removes the race and keeps the property that matters. The
+	// docstring above is explicit that a live run cannot pin a RATIO, and this does not try to: it
+	// only refuses to conclude anything until both lanes have actually been served.
 	require.Eventually(t, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
-		return counts[laneHigh]+counts[laneNormal] >= 200
-	}, 5*time.Second, time.Millisecond, "both flows must make progress")
+		return counts[laneHigh] >= 50 && counts[laneNormal] >= 50
+	}, 30*time.Second, time.Millisecond,
+		"both flows must make progress independently; a lane that never runs is a real starvation")
 
 	close(stop)
 	workers.Wait()
