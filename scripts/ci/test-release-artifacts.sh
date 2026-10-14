@@ -686,11 +686,11 @@ $2
 PY
 }
 
-# run_gate <args...> 閳?runs the gate against the mock.
+# run_gate <args...> 闁?runs the gate against the mock.
 #
 # RELEASE_EXTRA_PLATFORMS is CLEARED, not merely left alone. This suite's general cases run
 # against a two-product fixture on purpose, and the gate defaults to two products only when
-# that variable is unset 閳?but release.yml sets it at JOB level (`RELEASE_EXTRA_PLATFORMS:
+# that variable is unset 闁?but release.yml sets it at JOB level (`RELEASE_EXTRA_PLATFORMS:
 # true`), so it is inherited by every step in that job, including the step that runs this
 # file. The two-product cases then drove a four-product gate, `plan` demanded
 # windows-core-amd64.yml and android-core-arm64.yml from a fixture that models neither, and
@@ -764,7 +764,7 @@ expect_ok() {
     # happened the first time this suite ran on a runner after `verify` gained a required
     # argument. Only the passing path is summarised.
     report "$name" 0 "$rc" ""
-    printf '      %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-600)"
+    printf '      %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-6000)"
   fi
 }
 
@@ -781,7 +781,7 @@ expect_fail() {
     report "$name" nonzero "$rc" "refused: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-56)"
   else
     fail_case "$name" "refused for the WRONG reason; wanted message containing '$want'"
-    printf '      actual output: %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-400)"
+    printf '      actual output: %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-4000)"
   fi
 }
 
@@ -1701,7 +1701,7 @@ full_expect_ok() {
     report "$name" 0 "$rc" ""
   else
     report "$name" 0 "$rc" ""
-    printf '      %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-600)"
+    printf '      %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-6000)"
   fi
 }
 
@@ -1719,7 +1719,7 @@ full_expect_fail() {
     report "$name" nonzero "$rc" "refused: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-56)"
   else
     fail_case "$name" "refused for the WRONG reason; wanted '$want'"
-    printf '      actual: %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-400)"
+    printf '      actual: %s\n' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-4000)"
   fi
 }
 
