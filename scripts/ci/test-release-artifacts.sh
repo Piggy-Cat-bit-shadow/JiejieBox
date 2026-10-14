@@ -1190,11 +1190,24 @@ else report "release.yml delegates to the tested gate (>=5 call sites)" 0 1 "cou
 
 # The tag and the dry-run flag reach the scripts through the environment, never
 # interpolated into a shell body: `${{ inputs.tag }}` inside `run:` is a
-# script-injection sink. The only legitimate uses are an `env:` entry or a
-# `with: ref:` entry, both of which pass the value as data.
+# script-injection sink.
+#
+# The allowlist is deliberately narrow, and every entry on it is a place the value is passed
+# AS DATA rather than spliced into a command:
+#
+#   <UPPERCASE>: ${{ inputs.x }}   an env entry - the shell sees a variable, not source
+#   ref: ${{ inputs.x }}           a checkout ref - resolved by the Actions engine
+#   group: release-${{ inputs.x }} a concurrency group - also resolved by the Actions engine
+#
+# The concurrency group was added when release.yml gained one keyed on the tag. It is NOT a
+# weakening: `${{ }}` in a `concurrency:` key is evaluated by the runner's workflow engine and
+# concatenated into a group name, so there is no interpreter to inject into. What this check
+# exists to stop is `${{ }}` reaching a `run:` body or a `with:` input that becomes a command,
+# and those are still refused. Narrowing the rule to "no `${{ inputs.* }}` anywhere a shell can
+# see it" would be wrong in the other direction: it would forbid serialising releases per tag.
 bad_tag_lines="$(grep -n 'inputs\.' "$wf" \
   | grep -vE '^[0-9]+: *#' \
-  | grep -vE '^[0-9]+: *([A-Z_]+|ref): \$\{\{ inputs\.[a-z_]+ \}\}$' || true)"
+  | grep -vE '^[0-9]+: *([A-Z_]+|ref|group):.*\$\{\{ inputs\.[a-z_]+ \}\}' || true)"
 if [ -z "$bad_tag_lines" ]; then
   report "inputs.* is passed as data, never interpolated into run:" 0 0
 else
