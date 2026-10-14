@@ -4,6 +4,11 @@
 # Outputs shell-assignable KEY=VALUE lines so a workflow can append them to
 # $GITHUB_ENV. Keeping the logic here rather than in YAML means the same values
 # can be produced locally, and no two workflows can drift.
+#
+# `JJ_ARTIFACT_VERSION` (below) is NOT the release version and the two must not be compared: it is
+# the release version plus a commit suffix, so an equality check against `release/JIEJIE_VERSION`
+# can only ever fail. The Apple Libbox manifest carries both fields for exactly this reason - the
+# artifact's own revision, and the release it was produced for.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
