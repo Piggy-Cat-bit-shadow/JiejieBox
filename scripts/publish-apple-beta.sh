@@ -57,8 +57,44 @@ step() { echo; echo "== $* =="; }
 # 1. repository preflight
 # ---------------------------------------------------------------------------
 step "repository"
+# ---------------------------------------------------------------------------
+# Identity, deliberately FOUR distinct values and never one overloaded `branch`.
+# ---------------------------------------------------------------------------
+#
+# A single `branch` variable used to carry three unrelated meanings at once: the local checkout
+# state, the ref handed to GitHub for dispatch, and the identity a run is checked against. They
+# coincide only while the checkout is on a normal branch, so the conflation was invisible until
+# someone published from a release tag:
+#
+#     git checkout --detach v0.1.10
+#     ./scripts/publish-apple-beta.sh
+#
+# `git rev-parse --abbrev-ref HEAD` answers the literal string `HEAD` when detached - not an error,
+# not empty, just a name no remote has. That string then reached the GitHub API as `--branch HEAD`
+# and `--ref HEAD`, producing `HTTP 422: No ref found for: HEAD`, and the obvious workaround
+# (publishing from a branch) defeated the point of releasing a tag at all.
+#
+# The four values, and why each is separate:
+#
+#   local_sha     the commit being published. THE authority for identity; `git rev-parse HEAD` is
+#                 correct in every checkout state, detached or not.
+#   local_branch  the local checkout's branch name, or empty when detached. Informational only -
+#                 it is never sent to GitHub, because `HEAD` is not a ref.
+#   release_tag   the tag the repository's own version contract implies, e.g. v0.1.10. Derived
+#                 later, from release/JIEJIE_VERSION, so there is one source of truth for it.
+#   dispatch_ref  a ref that PROVABLY resolves to local_sha on the remote. The only value ever
+#                 passed to `--ref` or `--branch`.
 local_sha="$(git rev-parse HEAD)"
-branch="$(git rev-parse --abbrev-ref HEAD)"
+local_branch="$(git rev-parse --abbrev-ref HEAD)"
+if [ "$local_branch" = "HEAD" ]; then
+  # Detached: at a tag, at a raw commit, or mid-rebase. Deliberately not fatal - publishing a
+  # release tag is a supported workflow, and this is the case the old code broke.
+  local_branch=""
+fi
+# Kept as `branch` for the published interface. The contract test greps this script for `branch:`,
+# and the log line is genuinely useful, so the name survives with a corrected meaning: the local
+# checkout state, empty when detached.
+branch="$local_branch"
 
 # A TestFlight build has to correspond to a commit that exists. Publishing a dirty tree produces a
 # binary nobody can rebuild or attribute, and App Store Connect would accept it without complaint,
@@ -150,7 +186,9 @@ trap restore_clients EXIT
 # shellcheck disable=SC1091
 eval "$(./scripts/ci/version.sh)"
 echo "  commit:    $local_sha"
-echo "  branch:    $branch"
+# Name the checkout state honestly. The old line printed the literal `branch: HEAD` when detached,
+# which read as a branch named HEAD and is what led the API calls to be handed an unusable ref.
+echo "  branch:    $(if [ -n "$branch" ]; then echo "$branch"; else echo '(detached HEAD)'; fi)"
 echo "  version:   $JJ_VERSION"
 
 # ---------------------------------------------------------------------------
@@ -206,6 +244,99 @@ fi
 
 # The canonical Libbox asset name inside the release. Exact, never globbed.
 libbox_asset="jiejie-libbox-apple-${jj_version}.tar.gz"
+
+# ---------------------------------------------------------------------------
+# 2b. resolve a dispatch ref that PROVABLY points at local_sha
+# ---------------------------------------------------------------------------
+#
+# Only this step may produce a value for `gh workflow run --ref`. `local_branch` is not enough on
+# its own - a local branch name says nothing about whether the remote has it, or whether the
+# remote's copy is the commit being published - and a detached checkout has no name at all.
+#
+# The order is deliberate, and each candidate is VERIFIED against the remote rather than assumed:
+#
+#   1. the current branch, when the remote has it at exactly local_sha (the common case, and the
+#      only one where the local name is meaningful);
+#   2. the release tag, when the remote has it at exactly local_sha - which is the detached-at-tag
+#      case this change exists for;
+#   3. any remote branch at exactly local_sha, so a checkout that is behind or ahead of its own
+#      branch name can still be published from the ref GitHub does have;
+#   4. otherwise FAIL CLOSED.
+#
+# Nothing here writes to the remote. No push, no temporary branch, no tag creation or movement, and
+# no switching the operator's checkout - a publisher that mutates the repository to make its own
+# dispatch legal would be making the release attributable to a ref the operator never chose.
+dispatch_ref=""
+dispatch_reason=""
+
+remote_branch_sha() {
+  # The remote's commit for a branch, or empty. `--heads` keeps a same-named tag from answering.
+  # An empty result and an empty local_sha must never be treated as a match, so the caller compares
+  # only against a local_sha that is known non-empty.
+  [ -n "${local_sha:-}" ] || return 0
+  git ls-remote --heads origin "refs/heads/$1" 2>/dev/null | awk '{print $1}' | head -1
+}
+
+remote_tag_sha() {
+  # Annotated tags need the peeled value; the plain ref is the tag OBJECT for those, which is not a
+  # commit and must never be compared against local_sha.
+  [ -n "${local_sha:-}" ] || return 0
+  local peeled plain
+  peeled="$(git ls-remote --tags origin "refs/tags/$1^{}" 2>/dev/null | awk '{print $1}' | head -1)"
+  if [ -n "$peeled" ]; then
+    printf '%s' "$peeled"
+    return
+  fi
+  plain="$(git ls-remote --tags origin "refs/tags/$1" 2>/dev/null | awk '{print $1}' | head -1)"
+  printf '%s' "$plain"
+}
+
+# A ref whose remote commit is EMPTY did not match. Writing the comparison as `= "$local_sha"` alone
+# would let an absent remote ref match an absent local_sha; local_sha is always set by the time this
+# runs, but the guard is what makes that a property of the code rather than of the call order.
+ref_matches() {
+  [ -n "$1" ] && [ "$1" = "$local_sha" ]
+}
+
+if [ -n "$local_branch" ] && ref_matches "$(remote_branch_sha "$local_branch")"; then
+  dispatch_ref="$local_branch"
+  dispatch_reason="the local branch, which origin has at exactly this commit"
+elif ref_matches "$(remote_tag_sha "$release_tag")"; then
+  dispatch_ref="$release_tag"
+  dispatch_reason="the release tag $release_tag, which origin has at exactly this commit"
+else
+  # Last resort: any remote branch that is exactly this commit. This covers the detached case when
+  # the tag is absent, and the case where the local branch name is stale or unrelated. Sorted for
+  # determinism so the same repository state always picks the same ref.
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    if ref_matches "$(remote_branch_sha "$candidate")"; then
+      dispatch_ref="$candidate"
+      dispatch_reason="remote branch $candidate, which origin has at exactly this commit"
+      break
+    fi
+  done <<EOF
+$(git ls-remote --heads origin 2>/dev/null | awk '{print $2}' | sed 's#^refs/heads/##' | sort)
+EOF
+fi
+
+if [ -z "$dispatch_ref" ]; then
+  fail "no ref on origin points at $local_sha, so there is nothing to dispatch against.
+  Checked: branch '$local_branch' (when on one), tag '$release_tag', and every remote branch.
+  Push the commit (or the tag) first. This script will not create a branch or move a tag to make
+  its own dispatch legal, because that would attribute the release to a ref you never chose.
+  Pass --no-dispatch to validate without dispatching, or --libbox-source release|actions to skip CI."
+fi
+
+echo "  checkout:               $(if [ -n "$local_branch" ]; then echo "branch $local_branch"; else echo 'detached HEAD (no branch)'; fi)"
+echo "  dispatch ref:           $dispatch_ref  ($dispatch_reason)"
+# --- end of the dispatch-ref resolution block ---------------------------------
+#
+# The pair of section markers around this block is load-bearing beyond readability:
+# `scripts/ci/test-apple-dispatch-ref.sh` slices the block out by them and EXECUTES it against real
+# repositories in each checkout state. A grep assertion can only prove the code is still present; the
+# defect being fixed is a runtime one, so it has to be run. Moving these markers without updating that
+# test makes the slice fail loudly rather than silently test an empty script.
 
 # The three states, decided ONLY by listing the release's assets by exact name.
 #
@@ -308,7 +439,7 @@ step "Apple CI for $local_sha"
 if [ -z "$run_id" ]; then
   # The SHA is matched exactly. Taking the most recent successful run would happily publish the
   # previous commit's Libbox, which is the failure this whole check exists to prevent.
-  run_id="$(gh run list --repo "$repo" --workflow "$workflow" --branch "$branch" \
+  run_id="$(gh run list --repo "$repo" --workflow "$workflow" --branch "$dispatch_ref" \
     --limit 100 --json databaseId,headSha,conclusion \
     -q "[.[] | select(.headSha == \"$local_sha\" and .conclusion == \"success\")][0].databaseId" \
     2>/dev/null || true)"
@@ -318,7 +449,7 @@ if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
   if [ "$no_dispatch" = "1" ]; then
     fail "no $workflow run found for $local_sha, and --no-dispatch was given.
   Dispatch it and wait, then re-run:
-      gh workflow run $workflow --ref $branch
+      gh workflow run $workflow --ref $dispatch_ref
       gh run watch"
   fi
 
@@ -329,16 +460,16 @@ if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
   #
   # The branch tip is compared first anyway, so the common mistake - publishing a commit that was
   # never pushed - is reported as itself instead of as a 40-minute wait for a run that cannot match.
-  remote_sha="$(gh api "repos/$repo/commits/$branch" --jq .sha 2>/dev/null || true)"
+  remote_sha="$(gh api "repos/$repo/commits/$dispatch_ref" --jq .sha 2>/dev/null || true)"
   if [ -z "$remote_sha" ]; then
-    fail "could not read $branch from $repo to check that $local_sha is pushed."
+    fail "could not read $dispatch_ref from $repo to check that $local_sha is pushed."
   fi
   [ "$remote_sha" = "$local_sha" ] || fail \
-    "$branch is at $remote_sha on $repo, but $local_sha is checked out.
+    "$dispatch_ref is at $remote_sha on $repo, but $local_sha is checked out.
   A dispatched run would build the branch tip, not this commit. Push first, then re-run."
 
   step "dispatching $workflow for $local_sha"
-  gh workflow run "$workflow" --ref "$branch" --repo "$repo" \
+  gh workflow run "$workflow" --ref "$dispatch_ref" --repo "$repo" \
     || fail "could not dispatch $workflow."
 
   # Wait for the run that belongs to THIS commit. A run created for another commit never satisfies
@@ -346,7 +477,7 @@ if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
   deadline=$((SECONDS + 5400))
   while [ "$SECONDS" -lt "$deadline" ]; do
     read -r candidate_id candidate_status candidate_conclusion <<<"$(
-      gh run list --repo "$repo" --workflow "$workflow" --branch "$branch" --limit 20 \
+      gh run list --repo "$repo" --workflow "$workflow" --branch "$dispatch_ref" --limit 20 \
         --json databaseId,headSha,status,conclusion \
         -q "[.[] | select(.headSha == \"$local_sha\")][0] | \"\(.databaseId) \(.status) \(.conclusion)\"" \
         2>/dev/null || true
@@ -361,7 +492,7 @@ if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
   done
   [ -n "$run_id" ] || fail \
     "no completed $workflow run for $local_sha appeared within 90 minutes.
-  Check: gh run list --workflow $workflow --branch $branch"
+  Check: gh run list --workflow $workflow --branch $dispatch_ref"
 fi
 
 # Re-verify the run even when the id was supplied: --run-id is an escape hatch for re-publishing a
@@ -385,7 +516,7 @@ jobs_json="$(gh run view "$run_id" --repo "$repo" --json jobs)" \
 if ! job_results="$(printf '%s' "$jobs_json" | python3 scripts/ci/apple-ci-job-gate.py)"; then
   fail "run $run_id may not be published from (see above).
   Re-dispatch with both platforms enabled:
-      gh workflow run $workflow --ref $branch -f build_ios=true -f build_macos=true
+      gh workflow run $workflow --ref $dispatch_ref -f build_ios=true -f build_macos=true
       gh run watch"
 fi
 job_libbox="$(printf '%s\n' "$job_results" | sed -n 's/^libbox=//p')"

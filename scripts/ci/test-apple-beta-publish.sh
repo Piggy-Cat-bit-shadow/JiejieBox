@@ -395,8 +395,30 @@ echo "== one-command publish stays bound to this commit =="
 
 # Dispatching is what makes one command possible; binding the dispatched run to the local commit is
 # what makes it safe. Both halves are asserted, because either one alone is a different bug.
+#
+# The ref assertion now names `dispatch_ref` rather than `branch`, because the two were the same
+# variable and that is exactly what broke a detached checkout. The assertion is not merely renamed -
+# it is joined by the three that pin WHY the variable had to be split.
 check "publish can dispatch the workflow when no run exists" \
-  grep -q 'gh workflow run "\$workflow" --ref "\$branch"' "$publish"
+  grep -q 'gh workflow run "\$workflow" --ref "\$dispatch_ref"' "$publish"
+
+# THE detached-HEAD regression. `git rev-parse --abbrev-ref HEAD` answers the literal string `HEAD`
+# when the checkout is detached, and that string used to be handed straight to `gh` as a ref, which
+# GitHub rejects with `HTTP 422: No ref found for: HEAD`. Publishing from a release tag was therefore
+# impossible. The script must recognise the sentinel rather than pass it on.
+check "publish treats the abbrev-ref HEAD sentinel as detached, not as a branch" \
+  grep -q 'if \[ "\$local_branch" = "HEAD" \]' "$publish"
+
+# And the consequence: nothing that names a ref may consult `local_branch`, because that value is
+# empty when detached. `dispatch_ref` is the ONLY variable allowed to reach --ref/--branch.
+check "no gh call is handed local_branch directly" \
+  bash -c '! grep -nE "gh (workflow run|run list)[^\n]*\\\$local_branch" "$0"' "$publish"
+
+check "the dispatch ref is verified against the remote before use" \
+  grep -q 'remote_tag_sha' "$publish"
+
+check "an unresolvable dispatch ref fails closed instead of guessing a ref" \
+  grep -q 'no ref on origin points at \$local_sha' "$publish"
 
 check "publish refuses to dispatch when the branch is not at this commit" \
   grep -q '\[ "\$remote_sha" = "\$local_sha" \]' "$publish"
