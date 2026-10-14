@@ -1071,19 +1071,22 @@ expect_fail "a run publishing two artifact directories -> FAIL" "expected exactl
 # directory that `verify` reads must be refused rather than one being picked, because "the
 # binary is somewhere in here" is not the same claim as "there is exactly one of it".
 #
-# `verify` reads the product's payload from the EXACT artifact directory the plan names, so the
-# duplicate is planted inside that directory - the shape a duplicated upload within one artifact
-# would produce.
+# The payload directory is DISCOVERED rather than computed. `download` asks for the artifact by
+# exact name and requires exactly one directory to land, so after a successful download there is
+# exactly one candidate - and reading it from the filesystem means this case does not depend on
+# parsing the plan, which is a separate mechanism with its own coverage above.
 write_scenario base_dup2 "pass"
 gate_setup "plan for the duplicated-binary scenario" plan --repo o/r --sha "$SHA" --out "$work/plan-dup2.tsv" --interval 1 --timeout 10
 gate_setup "download for the duplicated-binary scenario" download --repo o/r --plan "$work/plan-dup2.tsv" --dir "$work/assets-dup2"
-_dup_artifact="$(plan_artifact "$work/plan-dup2.tsv" "$LINUX_WF")"
-[ -n "$_dup_artifact" ] || fail_case "plan names the linux payload artifact" \
-  "the plan has no ninth field (exists=$([ -f "$work/plan-dup2.tsv" ] && echo yes || echo no), rows=$(grep -c . "$work/plan-dup2.tsv" 2>/dev/null || echo 0), fields=$(awk -F'\t' 'NR==1{print NF}' "$work/plan-dup2.tsv" 2>/dev/null || echo 0), first=[$(head -1 "$work/plan-dup2.tsv" 2>/dev/null | cut -c1-160)])"
-cp "$work/assets-dup2/sing-box-linux-amd64/$_dup_artifact/sing-box-linux-amd64" \
-   "$work/assets-dup2/sing-box-linux-amd64/$_dup_artifact/sing-box-linux-amd64.copy"
-expect_fail "two copies of one binary in the verify tree -> FAIL" "expected exactly 1" -- \
-  verify --desktop-dir "$DESKTOP_DIR" --version 0.1 --dir "$work/assets-dup2" --sha "$SHA"
+_dup_dirs=("$work"/assets-dup2/sing-box-linux-amd64/*/)
+if [ "${#_dup_dirs[@]}" -eq 1 ] && [ -d "${_dup_dirs[0]}" ]; then
+  cp "${_dup_dirs[0]}sing-box-linux-amd64" "${_dup_dirs[0]}sing-box-linux-amd64.copy"
+  expect_fail "two copies of one binary in the verify tree -> FAIL" "expected exactly 1" -- \
+    verify --desktop-dir "$DESKTOP_DIR" --version 0.1 --dir "$work/assets-dup2" --sha "$SHA"
+else
+  fail_case "two copies of one binary in the verify tree -> FAIL" \
+    "the download did not land exactly one payload directory (found ${#_dup_dirs[@]})"
+fi
 
 # A good baseline for the negative verify cases: one broken platform, one fine.
 # macOS is left valid on purpose - a Linux-only problem must still fail.
