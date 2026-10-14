@@ -351,12 +351,27 @@ Each is a "reasonable but wrong" change this codebase has already paid for.
 
 ### What was verified by CI, and what was not
 
+**The run this table rests on:** `.github/workflows/windows-boxdd-tests.yml`, run id **`38606602012`**,
+`head_sha` `58ece9619`, runner `windows-latest`, conclusion **success**, reporting
+`PASS: 27 daemon security test(s) executed with no skips.`
+
+That record lives in the GitHub API, not in the tree - so per this repository's evidence ceiling it is
+`VERIFIED_CI` **with a named, re-checkable run URL** rather than a stored artifact. To re-verify:
+
+```sh
+gh run view 38606602012 --repo Piggy-Cat-bit-shadow/sing-box   # or open the URL
+gh run list --workflow windows-boxdd-tests.yml --limit 5
+```
+
+A later run of the same workflow on a later SHA is **newer evidence, not the same evidence**. Do not
+carry this row forward to a different `head_sha` without re-reading the run.
+
 | Claim | Evidence | Level |
 |---|---|---|
-| the allowlist is exact, in both directions | Windows runner, 14-row table + 24-code enumeration | `VERIFIED_CI` |
-| a tampered signed PE is rejected | Windows runner, measured `0x80096010 TRUST_E_BAD_DIGEST` | `VERIFIED_CI` |
-| an unsigned file is rejected | Windows runner, measured 0x800B0003 / 0x800B0100 | `VERIFIED_CI` |
-| code-signing EKU is required | Windows runner | `VERIFIED_CI` |
+| the allowlist is exact, in both directions | Windows runner, run `38606602012`, 14-row table + 24-code enumeration | `VERIFIED_CI` |
+| a tampered signed PE is rejected | same run, measured `0x80096010 TRUST_E_BAD_DIGEST` | `VERIFIED_CI` |
+| an unsigned file is rejected | same run, measured 0x800B0003 / 0x800B0100 | `VERIFIED_CI` |
+| code-signing EKU is required | same run | `VERIFIED_CI` |
 | the pin separates two valid certificates | Windows runner | `VERIFIED_CI` |
 | a service starts and serves with an expired certificate | **nothing** | **UNVERIFIED — needs the VM above** |
 
