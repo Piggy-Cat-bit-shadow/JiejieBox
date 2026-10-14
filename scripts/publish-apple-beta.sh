@@ -31,15 +31,24 @@ workflow="client-apple.yml"
 input_dir="build/apple-publish/input"
 run_id=""
 no_dispatch=0
+# Where the Libbox for this release comes from. `auto` is the default and prefers the canonical
+# Release asset, falling back to the exact-SHA Actions artifact ONLY when the asset is absent.
+libbox_source="auto"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --run-id) run_id="${2:?--run-id needs a value}"; shift 2 ;;
     --no-dispatch) no_dispatch=1; shift ;;
+    --libbox-source) libbox_source="${2:?--libbox-source needs a value}"; shift 2 ;;
     -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "publish-apple-beta: unknown argument '$1'" >&2; exit 2 ;;
   esac
 done
+
+case "$libbox_source" in
+  auto|release|actions) ;;
+  *) echo "publish-apple-beta: --libbox-source must be auto, release or actions (got '$libbox_source')" >&2; exit 2 ;;
+esac
 
 fail() { echo; echo "FAIL: $*" >&2; exit 1; }
 step() { echo; echo "== $* =="; }
@@ -157,8 +166,143 @@ repo="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)" \
 echo "  repository: $repo"
 
 # ---------------------------------------------------------------------------
+# 2b. resolve the release tag, and decide the Libbox source
+# ---------------------------------------------------------------------------
+#
+# The tag is derived from release/JIEJIE_VERSION and then RESOLVED against the remote, peeled if it
+# is annotated, and required to point at the commit being published. Three weaker things are
+# deliberately not used:
+#
+#   * the local tag, which can be stale or absent;
+#   * the version string alone, which says what the tag should be named, not where it points;
+#   * `gh release view` without a tag, i.e. "the latest release", which is a different question.
+step "release tag"
+jj_version="$(eval "$(./scripts/ci/version.sh)"; printf '%s' "$JJ_VERSION")"
+[ -n "$jj_version" ] || fail "could not resolve JJ_VERSION from release/JIEJIE_VERSION"
+release_tag="v${jj_version}"
+echo "  release/JIEJIE_VERSION: $jj_version"
+echo "  expected tag:           $release_tag"
+
+# `git ls-remote` rather than the local ref: the remote is the authority on where a tag points.
+tag_line="$(git ls-remote --tags origin "refs/tags/$release_tag^{}" "refs/tags/$release_tag" 2>/dev/null || true)"
+tag_sha="$(printf '%s\n' "$tag_line" | awk '$2 ~ /\^\{\}$/ {print $1}' | head -1)"
+if [ -z "$tag_sha" ]; then
+  # Not annotated, so the plain ref is the commit.
+  tag_sha="$(printf '%s\n' "$tag_line" | awk '{print $1}' | head -1)"
+fi
+if [ -z "$tag_sha" ]; then
+  if [ "$libbox_source" = "actions" ]; then
+    echo "  tag:                    $release_tag not found on origin (--libbox-source actions does not need it)"
+  else
+    fail "tag $release_tag does not exist on origin, so there is no release to take a canonical Libbox from.
+  Push the tag first, or pass --libbox-source actions to use the exact-SHA CI artifact instead."
+  fi
+elif [ "$tag_sha" != "$local_sha" ]; then
+  fail "tag $release_tag points at $tag_sha, but this checkout is $local_sha.
+  Publishing would attach this commit's Libbox to a release for a different commit."
+else
+  echo "  tag:                    $tag_sha (== HEAD)"
+fi
+
+# The canonical Libbox asset name inside the release. Exact, never globbed.
+libbox_asset="jiejie-libbox-apple-${jj_version}.tar.gz"
+
+# The three states, decided ONLY by listing the release's assets by exact name.
+#
+#   ABSENT           the release exists (or does not) but has no asset with this exact name
+#   PRESENT_VALID    the asset exists and passes every identity check
+#   PRESENT_INVALID  the asset exists and fails one - which is FATAL, never a fallback
+#
+# The distinction between ABSENT and PRESENT_INVALID is the whole point: an asset that is present
+# but corrupt, mislabelled or built from another commit means the canonical source is broken, and
+# silently using the Actions artifact instead would publish something the release says it is not.
+# A validation failure must never be reported as absence.
+canonical_state="ABSENT"
+if [ "$libbox_source" != "actions" ] && [ -n "$tag_sha" ]; then
+  step "canonical Libbox asset"
+  if ! asset_names="$(gh release view "$release_tag" --repo "$repo" --json assets -q '.assets[].name' 2>/dev/null)"; then
+    # The release may simply not exist yet. Under `release` that is fatal; under `auto` it is
+    # genuinely ABSENT, because a release with no such asset and no release at all are the same
+    # answer to the only question being asked here - "is there a canonical asset to consume".
+    if [ "$libbox_source" = "release" ]; then
+      fail "could not read release $release_tag in $repo, and --libbox-source release requires it."
+    fi
+    echo "  no readable release $release_tag; treating the canonical asset as ABSENT"
+  else
+    if printf '%s\n' "$asset_names" | grep -qxF "$libbox_asset"; then
+      canonical_state="PRESENT"
+      echo "  asset: $libbox_asset (present, exact name)"
+    else
+      echo "  asset: $libbox_asset not among the release's assets; treating it as ABSENT"
+    fi
+  fi
+fi
+
+use_canonical=0
+case "$libbox_source:$canonical_state" in
+  release:ABSENT)
+    fail "--libbox-source release was requested but $release_tag has no asset named $libbox_asset.
+  Publishing from Actions instead would mean this run's Libbox is not the released one." ;;
+  actions:*)
+    : ;;
+  *:PRESENT)
+    use_canonical=1 ;;
+  *:ABSENT)
+    : ;;
+esac
+
+if [ "$use_canonical" = "1" ]; then
+  # PRESENT is not VALID until it is proved. Every failure below is FATAL and, because
+  # `canonical_state` is already PRESENT, control never reaches the Actions path afterwards.
+  step "download the canonical Libbox"
+  rm -rf "$input_dir"
+  mkdir -p "$input_dir"
+  gh release download "$release_tag" --repo "$repo" --pattern "$libbox_asset" --dir "$input_dir" \
+    || fail "could not download $libbox_asset from release $release_tag. The canonical source is PRESENT but unreadable; refusing to fall back to Actions, because a release asset that cannot be fetched is a broken canonical source and not an absent one."
+
+  bundle="$input_dir/$libbox_asset"
+  [ -f "$bundle" ] || fail "$release_tag supplied no $libbox_asset after download"
+
+  # Unpack the outer bundle and validate the INNER artifact exactly as the Actions path does, with
+  # the same tool and the same expectations. The outer bundle is promotion packaging; the identity
+  # being checked is the producer's.
+  unpack="$input_dir/unpacked"
+  rm -rf "$unpack"; mkdir -p "$unpack"
+  tar -xzf "$bundle" -C "$unpack" || fail "$libbox_asset is not a readable tar.gz"
+  ./scripts/ci/apple-libbox-artifact.sh validate "$unpack" \
+    --parent-sha "$local_sha" \
+    --jj-version "$jj_version" \
+    || fail "the canonical Libbox asset in release $release_tag failed validation. This is PRESENT_INVALID: the release's own Apple core does not match this commit or this release. Nothing was published, and no fallback was attempted."
+
+  echo "  canonical Libbox validated: parent_sha, jj_version, digest and slices all match"
+  libbox_from="release:$release_tag"
+fi
+
+# --- Actions path ------------------------------------------------------------
+#
+# Everything below is the pre-existing exact-SHA path, unchanged and NOT relaxed by the new source:
+# exact SHA run, exact run headSha, conclusion success, required jobs, exact artifact name,
+# manifest parent validation, shared install, APPLE_USE_PREBUILT_LIBBOX=1.
+#
+# It runs in two situations and only two: the canonical asset was ABSENT under `auto` or under
+# `actions`, or the caller asked for `actions` explicitly. When the canonical path ran, it already
+# put a validated artifact in `$input_dir` and the validate step at the end of this section
+# re-checks it with the same tool - which is deliberate: the canonical bytes are held to exactly
+# the same standard as the Actions ones, by the same code.
+
+# ---------------------------------------------------------------------------
 # 3. find the Apple CI run for THIS commit
 # ---------------------------------------------------------------------------
+#
+# Sections 3 and 4 exist to obtain the Libbox from Actions. When the canonical Release asset was
+# used they are SKIPPED entirely - not merely tolerated. The download in section 4 starts with
+# `rm -rf "$input_dir"`, so running it after the canonical path would delete the validated artifact
+# and replace it with a different one, which is precisely the substitution this whole change exists
+# to prevent.
+if [ "$use_canonical" = "1" ]; then
+  step "Apple CI: not consulted"
+  echo "  the canonical Release asset was used; no Actions run was selected or downloaded"
+else
 step "Apple CI for $local_sha"
 
 if [ -z "$run_id" ]; then
@@ -261,19 +405,41 @@ mkdir -p "$input_dir"
 gh run download "$run_id" --repo "$repo" --name "jiejiebox-libbox-$local_sha" --dir "$input_dir" \
   || fail "run $run_id has no Libbox artifact for $local_sha.
   The run may predate the shared-libbox pipeline; re-dispatch the workflow."
+fi
 
 # ---------------------------------------------------------------------------
 # 5. validate and install
 # ---------------------------------------------------------------------------
 step "validate the Libbox artifact"
 # Everything that makes the artifact attributable lives in the manifest, so the manifest is what is
-# checked - not the artifact name. The parent commit is the only binding: the core does not depend on
-# which Apple UI branch links it, and the two platforms deliberately use two different ones.
-./scripts/ci/apple-libbox-artifact.sh validate "$input_dir" \
-  --parent-sha "$local_sha"
+# checked - not the artifact name. TWO independent identities are matched:
+#
+#   parent_sha   ties the bytes to a COMMIT (the core does not depend on which Apple UI branch
+#                links it, and the two platforms deliberately use two different ones)
+#   jj_version   ties the bytes to a RELEASE, read from release/JIEJIE_VERSION rather than from the
+#                manifest, so one side of the comparison is an independent authority
+#
+# `version` is deliberately NOT compared: it is JJ_ARTIFACT_VERSION (`0.1.7+jiejie.<sha>`), so an
+# equality check against the release version could only ever fail.
+local_jj="$(eval "$(./scripts/ci/version.sh)"; printf '%s' "$JJ_VERSION")"
+[ -n "$local_jj" ] || fail "could not resolve JJ_VERSION from release/JIEJIE_VERSION"
+
+# The artifact lives in a different place depending on where it came from: the Actions download
+# puts files straight into $input_dir, while the canonical Release asset is a promoting tarball
+# whose payload was unpacked into $unpack. `$validated` names whichever this run used, so the
+# second validation below re-checks the SAME bytes rather than looking in the wrong directory and
+# passing because nothing was there.
+if [ "$use_canonical" = "1" ]; then
+  validated="$unpack"
+else
+  validated="$input_dir"
+fi
+./scripts/ci/apple-libbox-artifact.sh validate "$validated" \
+  --parent-sha "$local_sha" \
+  --jj-version "$local_jj"
 
 artifact_sha="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["artifact_sha256"])' \
-  "$input_dir/manifest.json")"
+  "$validated/manifest.json")"
 
 # Materialise both Apple sources at their own pinned revisions, then install the ONE verified
 # framework into each. A failure here is fatal: publishing with only one client's source present
@@ -284,9 +450,13 @@ step "check out both Apple sources"
 ./scripts/ci/apple-client-source.sh checkout macos >/dev/null
 ./scripts/ci/apple-client-source.sh verify macos
 
+# `$validated`, not `$input_dir`: both installs must put THE SAME bytes into both clients, and the
+# bytes proved above are the ones in `$validated`. Reading the manifest and installing from
+# different directories would be exactly the divergence check-apple-shared-libbox.sh exists to
+# catch - and it would catch it only after both clients had been built.
 step "install the verified Libbox into both clients"
-./scripts/ci/apple-libbox-artifact.sh install "$input_dir" "$ios_client_dir"
-./scripts/ci/apple-libbox-artifact.sh install "$input_dir" "$macos_client_dir"
+./scripts/ci/apple-libbox-artifact.sh install "$validated" "$ios_client_dir"
+./scripts/ci/apple-libbox-artifact.sh install "$validated" "$macos_client_dir"
 ./scripts/ci/check-apple-shared-libbox.sh "$ios_client_dir" "$macos_client_dir"
 
 # ---------------------------------------------------------------------------
