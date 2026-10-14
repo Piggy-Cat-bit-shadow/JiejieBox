@@ -333,7 +333,7 @@ func TestFastPathCaseExplicitTrueAndAutoDetection(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			group := &transparentGroup{tag: testCase.tag, selected: eligibleLeaf()}
+			group := &transparentGroup{tag: testCase.tag, selected: newBypassableNonDirectOutbound()}
 			router := fastPathRouter(t, group, testCase.policies)
 			require.Equal(t, testCase.authorised,
 				resolveFastPathRequest(chainFor(t, group), router.fastPathPolicies),
@@ -348,7 +348,7 @@ func TestFastPathCaseExplicitTrueAndAutoDetection(t *testing.T) {
 func TestFastPathCaseExplicitFalseBeatsTheAIMatcher(t *testing.T) {
 	require.True(t, trafficclass.MatchTag("🤖 AI"), "precondition: the tag alone WOULD authorise")
 
-	group := &transparentGroup{tag: "🤖 AI", selected: eligibleLeaf()}
+	group := &transparentGroup{tag: "🤖 AI", selected: newBypassableNonDirectOutbound()}
 	router := fastPathRouter(t, group, FastPathPolicies{"🤖 AI": {Enabled: false}})
 
 	chain := chainFor(t, group)
@@ -365,7 +365,7 @@ func TestFastPathCaseExplicitFalseBeatsTheAIMatcher(t *testing.T) {
 // The outermost explicit decision wins, matching traffic_class. A nested chain is one policy
 // decision, not one per level.
 func TestFastPathCaseOutermostExplicitDecisionWins(t *testing.T) {
-	inner := &transparentGroup{tag: "🤖 AI", selected: eligibleLeaf()}
+	inner := &transparentGroup{tag: "🤖 AI", selected: newBypassableNonDirectOutbound()}
 	outer := &transparentGroup{tag: "🌐 普通代理", selected: inner}
 	require.True(t, trafficclass.MatchTag(inner.tag))
 
@@ -515,7 +515,7 @@ func TestFastPathSelectorSwitchConcurrentWithFlows(t *testing.T) {
 // two flows must resolve DIFFERENT authorisations, and neither may mutate the leaf or anything
 // keyed by the leaf's tag.
 func TestFastPathPolicyFollowsTheGroupNotTheLeaf(t *testing.T) {
-	leaf := eligibleLeaf()
+	leaf := newBypassableNonDirectOutbound()
 	authorised := &transparentGroup{tag: "🤖 AI", selected: leaf}
 	ordinary := &transparentGroup{tag: "🌐 普通代理", selected: leaf}
 
@@ -567,7 +567,7 @@ func TestFastPathPolicyFollowsTheGroupNotTheLeaf(t *testing.T) {
 // TestFastPathPolicyIsNotCachedOnTheLeafTag proves there is no tag-keyed memo: running the same
 // leaf through the authorised group first must not make a later ordinary-group flow authorised.
 func TestFastPathPolicyIsNotCachedOnTheLeafTag(t *testing.T) {
-	leaf := eligibleLeaf()
+	leaf := newBypassableNonDirectOutbound()
 	authorised := &transparentGroup{tag: "🤖 AI", selected: leaf}
 	ordinary := &transparentGroup{tag: "generic", selected: leaf}
 	router := fastPathRouter(t, authorised, FastPathPolicies{"🤖 AI": {Enabled: true}})
@@ -594,7 +594,7 @@ func TestFastPathPolicyIsNotCachedOnTheLeafTag(t *testing.T) {
 // per-flow answer never crosses over. Under -race this also covers the shared-state question; the
 // design has no shared mutable state to race on, which is the point.
 func TestFastPathPolicyConcurrentFlowsDoNotShareState(t *testing.T) {
-	leaf := eligibleLeaf()
+	leaf := newBypassableNonDirectOutbound()
 	authorised := &transparentGroup{tag: "🤖 AI", selected: leaf}
 	ordinary := &transparentGroup{tag: "generic", selected: leaf}
 	router := fastPathRouter(t, authorised, FastPathPolicies{"🤖 AI": {Enabled: true}})

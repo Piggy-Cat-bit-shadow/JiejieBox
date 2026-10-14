@@ -35,10 +35,24 @@ import (
 // parameter because the AI matcher reads it and several cases exist precisely to vary it - an
 // earlier version of this helper hardcoded the AI tag, which silently made its "ordinary tag" case
 // test the AI path instead.
-func fastPathMatrixRouter(t *testing.T, tag string, policy *option.FastPathPolicy, bypassCapable bool) (*Router, *plainDirectOutbound, *transparentGroup) {
+//
+// # Why the leaf here is bypassable-but-not-direct
+//
+// This table's subject is POLICY PRECEDENCE - unset/true/false across AI and ordinary tags - and that
+// dimension only decides anything when the chain is not the direct-intrinsic shape. A direct leaf
+// behind transparent groups is now authorised on its own, so a table built on one would report `true`
+// for every row and could no longer detect a precedence regression at all: the assertions would pass
+// while testing nothing.
+//
+// The leaf is therefore `bypassableNonDirectOutbound`: it CAN bypass, it is NOT `direct`, and so the
+// policy scan is still the thing being measured. The capability dimension is unchanged, because this
+// double's CanBypass is what `bypassCapable` toggles.
+func fastPathMatrixRouter(t *testing.T, tag string, policy *option.FastPathPolicy, bypassCapable bool) (*Router, *bypassableNonDirectOutbound, *transparentGroup) {
 	t.Helper()
-	leaf := &plainDirectOutbound{}
-	if bypassCapable {
+	leaf := &bypassableNonDirectOutbound{}
+	if !bypassCapable {
+		leaf.canBypass.Store(0)
+	} else {
 		leaf.canBypass.Store(1)
 	}
 	group := &transparentGroup{tag: tag, selected: leaf}
@@ -287,14 +301,14 @@ func TestFastPathNestedPrecedence(t *testing.T) {
 		// The outer tag WOULD auto-authorise. The inner group says no. Because the resolve walks
 		// outermost to inner looking for the first EXPLICIT value, the inner false is found and the
 		// automatic pass is skipped entirely - an explicit decision anywhere suppresses detection.
-		inner := &transparentGroup{tag: "🌐 inner", selected: eligibleLeaf()}
+		inner := &transparentGroup{tag: "🌐 inner", selected: newBypassableNonDirectOutbound()}
 		router, chain := build(t, "🤖 AI", nil, inner, fastPathPtr(false))
 		require.False(t, resolveFastPathRequest(chain, router.fastPathPolicies),
 			"an inner explicit false must suppress the outer AI tag's automatic authorisation")
 	})
 
 	t.Run("outer AI tag unset, inner AI tag unset, neither explicit", func(t *testing.T) {
-		inner := &transparentGroup{tag: "chatgpt", selected: eligibleLeaf()}
+		inner := &transparentGroup{tag: "chatgpt", selected: newBypassableNonDirectOutbound()}
 		router, chain := build(t, "generic", nil, inner, nil)
 		require.True(t, resolveFastPathRequest(chain, router.fastPathPolicies),
 			"with nothing explicit, the first AI-looking level authorises")
@@ -316,7 +330,7 @@ func TestFastPathNestedPrecedence(t *testing.T) {
 	t.Run("the same inner group reused by two outer groups does not share state", func(t *testing.T) {
 		// §13's isolation question: the inner group is ONE object reached two ways. Its own absent
 		// policy must not be decided by whichever outer group resolved first.
-		inner := &transparentGroup{tag: "🌐 shared", selected: eligibleLeaf()}
+		inner := &transparentGroup{tag: "🌐 shared", selected: newBypassableNonDirectOutbound()}
 		router, authorisedChain := build(t, "🤖 AI", fastPathPtr(true), inner, nil)
 
 		ordinaryOuter := &transparentGroup{tag: "🌐 outer", selected: inner}
@@ -360,7 +374,11 @@ func TestFastPathAIMatcherRejectsFalsePositives(t *testing.T) {
 		{"🇺🇸人工智能住宅", true, "CJK fragment matching, because CJK has no word separators"},
 	} {
 		t.Run(testCase.tag, func(t *testing.T) {
-			group := &transparentGroup{tag: testCase.tag, selected: eligibleLeaf()}
+			// The leaf is bypassable but NOT direct, so the AI matcher is the only thing that can
+			// authorise. With a direct leaf the chain would be the direct-intrinsic shape and every
+			// row would answer true - including the six that exist to prove the matcher does NOT fire
+			// on substrings like "mail" or "Thailand".
+			group := &transparentGroup{tag: testCase.tag, selected: newBypassableNonDirectOutbound()}
 			router := fastPathRouter(t, group, nil) // NO explicit policy: the matcher decides
 
 			metadata := fastBypassMetadata(N.NetworkTCP, destination)

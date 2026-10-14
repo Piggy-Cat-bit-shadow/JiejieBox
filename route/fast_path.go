@@ -3,6 +3,7 @@ package route
 import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/trafficclass"
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
 )
 
@@ -23,6 +24,88 @@ import (
 // consults it, and nothing here is ever memoised onto an outbound.
 type FastPathPolicies map[string]option.FastPathPolicy
 
+// directFastPathLeafIsIntrinsic reports whether this chain ends in a genuine `direct` leaf whose only
+// route to that leaf is a series of transparent pure-selection groups.
+//
+// # The defect this answers
+//
+// Wrapping `direct` in a selector purely for grouping is a configuration a user reaches for: one
+// "国内直连" selector holding a single direct member. Before this, that selector's ABSENCE of
+// `fast_path` was read as "not authorised", the chain gate then refused
+// (BypassRefusedOutboundChain), and the flow silently degraded to a userspace direct connection -
+// losing a Direct Fast Path that the same direct outbound takes when it is named without a group in
+// front of it. The group was being treated as if it had turned the fast path off, when it had said
+// nothing at all.
+//
+// # Why the transparent-chain condition is not decorative
+//
+// The condition is what keeps this from becoming "any chain ending in direct is bypassed". A group
+// that owns the dial, retries, or carries accounting of its own is NOT transparent, and skipping it
+// would discard semantics the configuration asked for - so `loadbalance` in the chain still refuses
+// here, exactly as before. Every element in front of the leaf must pass the same
+// `canCarryFastPathPolicy` test the gate uses, so transparency has ONE definition rather than two
+// that can drift.
+//
+// # What it deliberately does not do
+//
+// It grants no eligibility. `direct.CanBypass` and every other blocker in canFastBypass are reached
+// afterwards and unchanged, so a direct outbound configured with a bind address, a routing mark or a
+// network strategy still refuses - and still refuses for its own stated reason. This function only
+// answers "may this flow be CONSIDERED at all", which is the group authorisation question, not the
+// eligibility question.
+//
+// # Why it stays cheap
+//
+// It reads the already-resolved chain and calls only methods that are already on it. There is no
+// graph re-walk, no map lookup keyed by tag and no allocation, and it runs once per flow at setup,
+// never per packet. The transparent-group probe is the same call the chain gate makes a few lines
+// later, so the added cost is bounded by the chain length.
+func directFastPathLeafIsIntrinsic(chain []adapter.Outbound) bool {
+	// A single element has no group in front of it, and that case already behaves correctly: the
+	// chain gate's `len(chain) != 1` branch does not apply, so the leaf is consulted directly. This
+	// function exists only for the wrapped case.
+	if len(chain) < 2 {
+		return false
+	}
+	// The leaf must be bypassable before anything is asked of it, and the assertion is what makes the
+	// Type() call below safe rather than merely usual: BypassableOutbound embeds Outbound, so a value
+	// that satisfies it is guaranteed to answer Type(). Asking first and asserting later would put an
+	// interface call on a value that has not been established to be one - which is not a theoretical
+	// concern, because a test double that embeds a NIL adapter.Outbound still satisfies every
+	// assertion that does not CALL anything, and would panic here.
+	leaf, isBypassable := chain[len(chain)-1].(adapter.BypassableOutbound)
+	if !isBypassable {
+		return false
+	}
+	// The leaf must be a REAL direct outbound, asked by type rather than by tag. A tag is
+	// user-chosen - `outbound.Tag() == "direct"` would miss a direct outbound named anything else
+	// and, worse, would match a proxy a user happened to name "direct". C.TypeDirect is the
+	// registered identity of protocol/direct and is what the type answers for itself.
+	//
+	// `direct` is currently the ONLY production outbound that implements CanBypass, so this is
+	// narrower than the bypassable-leaf test the other branch uses. That is intentional: this
+	// special case is about `direct` specifically, and it must not be read as "any bypassable
+	// outbound may now ignore its group's policy". The test double that would catch a regression here
+	// is bypassableNonDirectOutbound, which exists precisely to separate "can bypass" from "is direct".
+	if leaf.Type() != C.TypeDirect {
+		return false
+	}
+	// And nothing opaque may be in between: every element in front of the leaf must be a group whose
+	// only effect on the flow is choosing it.
+	//
+	// The transparency test is written out here rather than delegated to fastPathChainReachesLeaf,
+	// because that function now calls THIS one. Factoring it the other way round produced mutual
+	// recursion and a stack overflow, which is the kind of defect a test cannot miss but a reader
+	// easily can. canCarryFastPathPolicy remains the single definition of "transparent", so the two
+	// loops cannot drift even though they are written twice.
+	for _, outbound := range chain[:len(chain)-1] {
+		if !canCarryFastPathPolicy(outbound) {
+			return false
+		}
+	}
+	return true
+}
+
 // resolveFastPathRequest determines whether a flow's chain authorises an ATTEMPT at the Direct Fast
 // Path, from the complete logical outbound chain.
 //
@@ -37,14 +120,26 @@ type FastPathPolicies map[string]option.FastPathPolicy
 //  1. A chain whose LEAF cannot carry the fast path on its own is never authorised. One element
 //     means the flow resolved straight to that outbound with no logical group in front of it, so
 //     there is no group policy to read and the existing behaviour stands untouched.
-//  2. Otherwise the FIRST explicit fast_path, scanning outermost to inner. An explicit false is a
+//  2. A chain that is nothing but transparent selection layers in front of a real `direct` leaf is
+//     authorised WITHOUT consulting policy at all. This is the Direct Fast Path restated as an
+//     intrinsic property of `direct`: a pure selection layer does not get to switch it off. See
+//     directFastPathLeafIsIntrinsic.
+//  3. Otherwise the FIRST explicit fast_path, scanning outermost to inner. An explicit false is a
 //     decision, so it wins over automatic detection just as an explicit "traffic_class": "default"
 //     stops automatic classification.
-//  3. Only if NO element of the chain carries an explicit policy, automatic tag detection - the
+//  4. Only if NO element of the chain carries an explicit policy, automatic tag detection - the
 //     same AI matcher that traffic_class uses, again outermost to inner.
-//  4. Otherwise false.
+//  5. Otherwise false.
 //
-// # Why the outermost element wins
+// # Where rule 2 sits, and where it does not
+//
+// Rule 2 is checked BEFORE the policy scan and applies only to the direct-with-transparent-chain
+// shape. Every other shape - a proxy leaf, a leaf that cannot carry the fast path, any chain
+// containing an opaque group - falls through to rules 3-5 and keeps the previous behaviour exactly,
+// including nested explicit-true/false precedence and the AI matcher. That boundary is the whole
+// safety argument for this rule, so it is stated here rather than left to the call order.
+//
+// # Why the outermost element wins for those other shapes
 //
 // Identical to traffic_class, and for the identical business reason. The intent belongs to the
 // logical group the flow was routed into, not to the node that happens to serve it: one residential
@@ -58,8 +153,8 @@ type FastPathPolicies map[string]option.FastPathPolicy
 // # The leaf is consulted, and only for a negative
 //
 // The leaf participates solely to answer "could this outbound be bypassed at all". It never grants
-// authorisation: a leaf cannot opt a flow into the fast path, because no leaf can carry this
-// policy - see resolveFastPathPolicy.
+// authorisation except through rule 2, where the grant comes from the SHAPE of the chain (transparent
+// groups in front of a direct leaf) rather than from anything the leaf reports about itself.
 func resolveFastPathRequest(chain []adapter.Outbound, policies FastPathPolicies) bool {
 	// A single-element chain has no logical group to carry a policy, so there is nothing to
 	// authorise and the flow keeps exactly the behaviour it had before this feature existed.
@@ -68,6 +163,10 @@ func resolveFastPathRequest(chain []adapter.Outbound, policies FastPathPolicies)
 	}
 	if _, leafCanCarry := chain[len(chain)-1].(adapter.BypassableOutbound); !leafCanCarry {
 		return false
+	}
+	// Rule 2. The one place a group's fast_path configuration is not the deciding input.
+	if directFastPathLeafIsIntrinsic(chain) {
+		return true
 	}
 	if authorised, decided := resolveFastPathPolicy(chain, policies); decided {
 		return authorised
