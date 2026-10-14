@@ -1473,16 +1473,46 @@ cmd_flatten() {
     # is a known, small set that has been verified - not "whatever was in the
     # artifact directory".
     #
-    # A manifest-based target is COPIED, not repacked. Its bundle is already an archive whose
-    # digest the manifest records and `verify` has already checked; unwrapping and rewrapping it
-    # would produce different bytes under the same name, so the file the release page offers would
-    # no longer be the file whose hash was verified - and `SHA256SUMS` would then describe an
-    # artifact nobody validated. The bytes are promoted exactly as proved.
+    # A manifest-based target is promoted as the COMPLETE bundle its consumer validates, under one
+    # canonical name.
+    #
+    # # The contract mismatch this replaces
+    #
+    # The producer's artifact is a FOUR-file set: `Libbox.xcframework.tar.gz`, `manifest.json`,
+    # `SHA256SUMS-LIBBOX.txt`, `BUILD-INFO-LIBBOX.txt`. An earlier revision promoted only the tarball,
+    # under the name `Libbox.xcframework.tar.gz`. That broke the canonical path twice over:
+    #
+    #   1. `publish-apple-beta.sh` looks for `jiejie-libbox-apple-<version>.tar.gz`. Nothing ever
+    #      published that name, so the canonical asset read as ABSENT on every release and the
+    #      publisher silently fell back to the Actions artifact - the exact silent downgrade the
+    #      PRESENT_INVALID rule exists to prevent, arriving through the name instead of the content.
+    #   2. Even with the right name, the promoted tarball held the xcframework and NOT the manifest.
+    #      The consumer unpacks the outer asset and runs `apple-libbox-artifact.sh validate` on the
+    #      result, which requires `manifest.json`. Validation would have failed on a correctly-named
+    #      asset, so fixing only the name would have turned a silent fallback into a hard failure.
+    #
+    # Both halves are fixed together, because fixing either alone leaves the canonical path broken in
+    # a different way. The bundle is a real tar.gz containing the four files at its root, so
+    # `tar -xzf` followed by `validate` is exactly what the consumer already does.
+    #
+    # The inner `Libbox.xcframework.tar.gz` is NOT repacked: its digest is what `manifest.json`
+    # records and what `verify` proved, so it is copied in byte-for-byte. Only the outer container is
+    # new, and the outer container is not the artifact under test.
     if [ "$kind" = "xcframework-manifest" ]; then
-      local apple_bundle="$src/Libbox.xcframework.tar.gz"
-      [ -f "$apple_bundle" ] || die "flatten: no Libbox.xcframework.tar.gz in $src"
-      cp "$apple_bundle" "$out/Libbox.xcframework.tar.gz"
-      note "promoted Libbox.xcframework.tar.gz (byte-identical to the verified artifact)"
+      local apple_name="jiejie-libbox-apple-${version}.tar.gz"
+      local apple_inner="Libbox.xcframework.tar.gz"
+      [ -f "$src/$apple_inner" ] || die "flatten: no $apple_inner in $src"
+      [ -f "$src/manifest.json" ] || die \
+        "flatten: no manifest.json in $src. The canonical asset is the COMPLETE bundle, because the
+    consumer validates the unpacked result against the manifest - promoting the tarball alone would
+    publish an asset its own consumer must reject."
+      # Deterministic member order and no timestamps from the staging directory: byte-identical
+      # inputs must produce a byte-identical public asset, or SHA256SUMS would differ per run.
+      tar -C "$src" -czf "$out/$apple_name" \
+        --owner=0 --group=0 --numeric-owner --mtime='UTC 1970-01-01' \
+        --sort=name \
+        "$apple_inner" manifest.json SHA256SUMS-LIBBOX.txt BUILD-INFO-LIBBOX.txt
+      note "promoted $apple_name (the complete Apple bundle; inner $apple_inner byte-identical to the verified artifact)"
       continue
     fi
 
@@ -1517,14 +1547,16 @@ $(printf '      %s\n' $actual)"
   # The expected set is derived from TARGET_WORKFLOWS plus the installer, so a product
   # cannot be added to one and forgotten in the other.
   #
-  # Apple contributes a fixed file name rather than `<prefix>-<tag>.tar.gz`: it has no `prefix`,
-  # because there is no repacked tarball to name. Deriving the name from the target table keeps the
-  # "one product, one entry" property without pretending Apple has a prefix it does not have.
+  # Apple contributes the canonical bundle name, derived from the same `version` as every other
+  # asset rather than from a prefix. Its name is spelled ONCE here, in `expected_assets`, and once in
+  # the promotion above; `test-release-artifacts.sh` and `test-apple-canonical-source.sh` both assert
+  # the two agree with `publish-apple-beta.sh`, because the failure this shape exists to prevent is
+  # the producer and the consumer each being self-consistently wrong about one filename.
   local expected_assets=() wf2 kind2
   for wf2 in "${TARGET_WORKFLOWS[@]}"; do
     kind2="$(target_field "$wf2" kind)"
     if [ "$kind2" = "xcframework-manifest" ]; then
-      expected_assets+=( Libbox.xcframework.tar.gz )
+      expected_assets+=( "jiejie-libbox-apple-${version}.tar.gz" )
       continue
     fi
     expected_assets+=( "$(target_field "$wf2" tarball)-${tag}.tar.gz" )
@@ -1665,14 +1697,17 @@ cmd_publish_flag() {
 # check and the read-back move together, and a publisher that does not keep up fails its own
 # read-back instead of passing.
 #
-# The `kind` branch is the one thing that is not mechanical: a manifest-based target publishes a
-# bundle whose bytes were already verified under its own fixed name, rather than a repacked tarball
-# named from a prefix and the tag. See `flatten` for why it is promoted and not rebuilt.
+# The `kind` branch is the one thing that is not mechanical, and it is where the Apple name is
+# DECLARED. A manifest-based target publishes the complete Apple bundle - the xcframework plus the
+# manifest its consumer validates against - under a versioned name shared verbatim with
+# `publish-apple-beta.sh`. It is no longer a fixed unversioned name: an unversioned name cannot say
+# which release it belongs to, and the consumer derives its expected name from the version, so the two
+# sides agree only if the version is in the name. See `flatten` for why the bundle is built here.
 public_asset_names() {
   local tag="$1" version="$2" wf
   for wf in "${TARGET_WORKFLOWS[@]}"; do
     if [ "$(target_field "$wf" kind)" = "xcframework-manifest" ]; then
-      printf '%s\n' Libbox.xcframework.tar.gz
+      printf '%s\n' "jiejie-libbox-apple-${version}.tar.gz"
       continue
     fi
     printf '%s\n' "$(target_field "$wf" tarball)-${tag}.tar.gz"
