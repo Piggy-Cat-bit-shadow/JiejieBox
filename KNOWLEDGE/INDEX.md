@@ -28,8 +28,8 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | If you are changing / asking about… | Module | Exact section |
 |---|---|---|
 | `Scope` teardown, `scope.Add` cleanup | `modules/core-lifecycle-runtime.md` | §1 `adapter.Scope` — the ownership primitive |
-| Box start order | `modules/core-lifecycle-runtime.md` | §2 → Start (`box.go:1022-1170`) |
-| Box close order, teardown | `modules/core-lifecycle-runtime.md` | §2 → Close (`box.go:1172-1225`) |
+| Box start order | `modules/core-lifecycle-runtime.md` | §2 → Start (`box.go:1024-1217`; `PreStart` 1024, `Start` 1034, `preStart` 1069, `start` 1139) |
+| Box close order, teardown | `modules/core-lifecycle-runtime.md` | §2 → Close (`box.go:1219-1253`; `Close` 1219, `close` 1233) |
 | network generation, rebuild lease, `runtimecoord` | `modules/core-lifecycle-runtime.md` | §3 one generation, identity-based leases |
 | `TrimMemory` vs `ReleaseMemory` | `modules/core-lifecycle-runtime.md` | §3 `TrimMemory` and `ReleaseMemory` are different |
 | idle retirement inventory, `route/reference.go` | `modules/core-lifecycle-runtime.md` | §4 `route.ReferenceManager` |
@@ -137,6 +137,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | `cmd/internal/*`, `release/*` | `modules/build-pruning-release.md` | §4, §6 |
 | `.github/workflows/*`, `scripts/ci/*` | `modules/ci-release.md` | §1–5 |
 | `protocol/vless/encryption` | **not covered** — see `modules/README.md` §Not covered | — |
+| `experimental/boxdd/**` — the Windows daemon | **not covered** — no module owns it; see `modules/README.md` §Not covered | — |
 | `clients/{apple,android,desktop}` | separate repositories; only the core side is recorded | `modules/libbox-platform-contract.md` §6–7 |
 
 ## Route by invariant / acceptance
@@ -185,5 +186,10 @@ This file is the **fine-grained router** (section anchors, aliases, reverse path
 Do not merge them.
 
 When you add or rename a section in a module, update the anchor here in the same change — a broken
-anchor is a defect, not a missing document. The refresh-time obligations for this file are in
-`REFRESH.md` §43A.
+anchor is a defect, not a missing document (`modules/README.md` §Not covered says the same about a
+link that does not resolve). An index that points at a section which no longer exists is worse than no
+index, because it reads as authoritative.
+
+The refresh-time obligations that keep this file honest are `REFRESH.md` §13 (module structure),
+§31 (cross-file consistency pass) and §33 (updating `BASELINE.md`). The numbering in that document
+stops at 42; there is no section about this file, so do not cite one.

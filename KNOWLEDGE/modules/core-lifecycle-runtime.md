@@ -50,9 +50,29 @@ production cleanup closes the scope it was registered on — that would deadlock
 
 ## 2. `Box` start and close ordering
 
-### Start (`box.go:1022-1170`)
+### Start (`box.go:1024-1217`)
 
-`preStart()`:
+> **The fine-grained `box.go` line anchors in this section are stale by approximately +47 lines.** The
+> `fast_path` feature added ~47 lines to `New()` above these functions, so every `:NNNN` below lands
+> ~47 lines short of its target. They were **not** blanket-shifted, because a uniform offset was never
+> verified anchor by anchor and a guessed line number is worse than a marked stale one: a reader who
+> trusts it lands in the wrong function and may believe they are reading the right code.
+>
+> The section's **ordering and invariants are unaffected** — the orderings, the LIFO/scope rules and
+> the "not up until the network manager has observed its network" rule are structural claims, and those
+> were re-verified against current source. Only the numbers drifted.
+>
+> Anchors re-measured at the `v0.1.9` baseline, and therefore **correct**:
+>
+> ```text
+> PreStart()  box.go:1024        Start()   box.go:1034
+> preStart()  box.go:1069        start()   box.go:1139
+> Close()     box.go:1219        close()   box.go:1233
+> ```
+>
+> Re-derive any other anchor with `git log --oneline v0.1.9..HEAD -- box.go` before trusting it.
+
+`preStart()` (now `box.go:1069`):
 1. `logFactory.Start()` (`:1025`)
 2. `scope.Add(runtimeCoordinator.Close)`, then `scope.Add(logFactory.Close)` (`:1033-1034`) —
    **registered first ⇒ closed last**
@@ -85,7 +105,11 @@ Two orderings that look arbitrary and are not:
   open a rule-set file or start a process reader — happens at **PostStart** (`route/router.go:237-250`).
   Every start-time validation therefore runs before any rule has been started.
 
-### Close (`box.go:1172-1225`)
+### Close (`box.go:1219-1253`)
+
+> Same ~+47 drift as the Start section: `Close()` is at `box.go:1219` and `close()` at `:1233` at this
+> baseline. The `:NNNN` numbers in the summary line below are stale; the **ordering they describe is
+> not** — governor before scope, because `ReferenceManager` reads it.
 
 `closeOnce.Do` → `statusView.Disconnect()` (`:1210`) → unregister pause callback (`:1213-1216`) →
 **close the power governor** (`:1217-1220`) → `scope.Close()` (`:1224`).

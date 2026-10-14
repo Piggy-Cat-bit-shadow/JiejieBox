@@ -175,12 +175,28 @@ It authorises **only** this:
 this logical group authorises this flow to ATTEMPT a Direct Fast Path
 ```
 
-It is **not** a forced directive. After authorisation, the flow still has to pass the existing
-`canFastBypass` / `BypassVerdict` eligibility gate, which is where the real decision is made and which
-is unchanged by this field.
+It is **not** a forced directive. After authorisation the flow still has to pass the `canFastBypass` /
+`BypassVerdict` eligibility gate, which is where the real decision is made.
 
-**None of the existing blocking conditions is bypassed by `fast_path: true`.** They include, and this
-list is the reason the field is safe to expose:
+**The gate is refined by this field, not left unchanged.** `canFastBypass` takes a
+`fastPathAuthorized bool` argument, and exactly **one** blocker is relaxed because of it:
+
+```text
+BypassRefusedOutboundChain
+```
+
+and only when **every** element in front of the leaf is a transparent pure-selection group
+(`fastPathChainReachesLeaf`) **and** the leaf still passes the unchanged `BypassableOutbound` /
+`CanBypass` check. Without that one branch the field would be inert on every group configuration,
+because a flow routed into a group necessarily has `len(chain) >= 2` — so the refinement is what makes
+the feature exist rather than an extra permission it grants.
+
+An **unauthorised** group flow still gets `BypassRefusedOutboundChain`, unchanged. `loadbalance` still
+refuses, because it does not declare the capability (it may own the dial and retry of the flow it
+selected, so it is not transparent).
+
+**These blocking conditions are untouched by `fast_path: true`**, and this list is the reason the field
+is safe to expose:
 
 ```text
 FakeIP destination
@@ -200,7 +216,8 @@ process metadata
 ```
 
 So the complete meaning is: *"if this flow is otherwise eligible, this group does not stand in its
-way."* It cannot make an ineligible flow eligible.
+way — and a chain of transparent groups is no longer treated as a chain."* It cannot make an otherwise
+ineligible flow eligible.
 
 ---
 

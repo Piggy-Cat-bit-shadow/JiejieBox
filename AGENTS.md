@@ -5,8 +5,13 @@
 1. **`KNOWLEDGE/README.md`** — the baseline, the reading order, the status labels.
 2. **`KNOWLEDGE/BASELINE.md`** — the exact SHA this knowledge describes, and how to compute the delta
    since. **Do not assume the knowledge base describes `HEAD`.**
-3. **`KNOWLEDGE/modules/README.md`** — the task → module map. Then read **only** the one or two modules
-   your task touches.
+3. **`KNOWLEDGE/INDEX.md`** — route first. Task, keyword/alias, source path, symbol, and
+   invariant/acceptance question → the exact module **section**. This is how you avoid reading modules
+   you do not need.
+4. **`KNOWLEDGE/modules/README.md`** — the module registry and ownership map. Then read **only** the
+   one or two modules your task touches.
+
+`INDEX.md` (fine router) and `modules/README.md` (coarse registry) are not interchangeable.
 
 For a load-bearing change, also read `KNOWLEDGE/INVARIANTS.md` (is this rule an invariant or a
 convention?) and the relevant rows of `KNOWLEDGE/ACCEPTANCE.md` (how do I re-check it?).
@@ -38,12 +43,18 @@ convention?) and the relevant rows of `KNOWLEDGE/ACCEPTANCE.md` (how do I re-che
 4. **Inspect `production-baseline..HEAD` before assuming a module is current:**
 
    ```sh
-   git log --oneline v0.1.6..HEAD
-   git diff --name-only v0.1.6..HEAD
+   git log --oneline v0.1.9..HEAD
+   git diff --name-only v0.1.9..HEAD
    ```
 
    If that is empty or documentation-only, the modules still describe the tree. If not, map the changed
-   paths with `modules/README.md` and read only those modules.
+   paths with `modules/README.md` (or route with `INDEX.md`) and read only those modules.
+
+   **Take the tag from `BASELINE.md`, never from this file or from memory.** A tag baked into a
+   document goes stale the moment the baseline moves, and then the check silently passes while the
+   modules drift — which is exactly what happened between `v0.1.6` and `v0.1.9`: this rule named
+   `v0.1.6` while 181 commits and 12 production files landed, and the delta row still claimed nothing
+   had changed.
 5. **Do not refresh the knowledge base as part of normal development.** A refresh is an explicit
    maintenance operation: re-audit source, Git, tests and CI, update module provenance, then move the
    baseline. A development commit needs no documentation edit.

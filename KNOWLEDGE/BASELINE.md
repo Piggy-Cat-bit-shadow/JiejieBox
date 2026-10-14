@@ -54,6 +54,29 @@ The refresh moved the baseline to `HEAD` because the changed subsystems were aud
 source, not because time passed. `REFRESH.md` §39 lists the conditions under which the baseline must
 **not** move; none applied.
 
+**What "audited" means here, stated precisely, because the distinction is the whole point.** The
+modules were checked against current source for the behaviour this delta changed, and two were found
+to **contradict** it — both are corrected in the same refresh:
+
+* `modules/fast-path-group-policy.md` §6 claimed the `canFastBypass` eligibility gate was *"unchanged
+  by this field"* and that *"none of the existing blocking conditions is bypassed."* False:
+  `route/route.go` gained a `fastPathAuthorized` parameter and relaxes exactly one blocker
+  (`BypassRefusedOutboundChain`) for an authorised all-transparent chain. Without that branch the
+  feature is inert, since a flow routed into a group always has `len(chain) >= 2`.
+* `modules/data-path-optimization.md` §A.8 listed outbound chains as out of scope. Still true for
+  **opaque** groups, and that is why `loadbalance` still refuses — but no longer true for a group that
+  declares `FastPathTransparent() bool`.
+
+`modules/core-lifecycle-runtime.md` §2 was found to have **line anchors stale by ~+47** with its
+structural claims intact; the anchors are marked rather than blanket-shifted, because a uniform offset
+was never verified anchor by anchor and a guessed line number reads as authoritative.
+
+**This baseline is therefore current for the audited subsystems, and it is not a claim that every
+line of every module was re-derived.** A module whose paths the delta did not touch was not re-read.
+Any module statement that carries a `file:line` should be re-measured with
+`git log --oneline v0.1.9..HEAD -- <path>` before it is relied on, per `modules/README.md`
+§How to decide whether a module is still accurate.
+
 ## Fork release lineage
 
 Measured, so the tags' own objects are not confused with the commits they name. **Every fork tag is

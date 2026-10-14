@@ -194,10 +194,27 @@ than the decision itself, on exactly the flows the feature targets (`e27d58711`)
 Offload applies to a TUN inbound, TCP or UDP, a literal destination, a **single-outbound chain** whose
 leaf implements `adapter.BypassableOutbound`, and a flow that survives every eligibility condition.
 
-Not in this round: tracker accounting on the native path (a tracker refuses); outbound chains (a group
-introduces selection, lifecycle and accounting semantics of its own, and "the selected leaf happens to
-be direct" does not make those equivalent); `UDPConnect` (its own socket and NAT semantics); traffic
-class (a native direct flow is outside the upload scheduler's managed domain by construction).
+Not in this round: tracker accounting on the native path (a tracker refuses); `UDPConnect` (its own
+socket and NAT semantics); traffic class (a native direct flow is outside the upload scheduler's
+managed domain by construction).
+
+> **Corrected at the `v0.1.9` baseline.** This section used to list **outbound chains** as out of
+> scope, on the reasoning that *"a group introduces selection, lifecycle and accounting semantics of
+> its own, and the selected leaf happens to be direct does not make those equivalent."* That reasoning
+> still holds for an **opaque** group — and it is exactly why `loadbalance` still refuses: it may own
+> the dial and retry of the flow it selected, so it is not transparent.
+>
+> What changed is that the `fast_path` feature added one **narrow, explicit** exception:
+> `route/route.go` now relaxes the `BypassRefusedOutboundChain` blocker when **every** element in front
+> of the leaf is a transparent pure-selection group **and** the leaf still passes the unchanged
+> `BypassableOutbound` / `CanBypass` check, and only for a group that declares
+> `FastPathTransparent() bool`. Without that exception the feature would be inert on every group
+> configuration, because a flow routed into a group necessarily has `len(chain) >= 2`.
+>
+> So the rule is now: **a chain of transparent groups is no longer treated as a chain**; any group that
+> is not declared transparent keeps the original refusal. The owner of that decision is
+> `fast-path-group-policy.md` §6, which is where the capability contract and its per-type table live —
+> this module records only that the Direct Offload verdict changed shape.
 
 ### A.9 Attribution
 

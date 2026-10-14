@@ -83,7 +83,9 @@ What the fork added on top is documented per module with provenance.
 
 | Area | Why not covered |
 |---|---|
-| `protocol/vless/encryption` (5 non-test files, new in the fork) | Same reasoning. Its tests carry a `//go:build !race` split, so its ABI checks are absent under `-race`. |
+| **`experimental/boxdd/**` — the Windows daemon** (52 files) | **A real gap, and the largest one.** The package is the daemon/service/worker/peer-authentication surface: Named Pipe peer checks, executable path resolution, the Authenticode trust path, service installation and the updater. It is security-critical and has its own threat model. It is **not** upstream code and **not** covered incidentally by `libbox-platform-contract.md`, which records the client-facing ABI rather than the daemon's authorisation model. `authenticode_windows.go` changed in the `v0.1.6 → v0.1.9` delta — the runtime certificate-validity gate was removed — and no module describes it. **Registered here rather than left silent**, per `REFRESH.md` §29: an unowned subsystem must be named, not implied. |
+| `option/schema.go` → `docs/schema.json` | The generator is documented as a command (`make schema`) but never as a **maintenance obligation**, and the artifact is currently **stale**: `docs/schema.json` contains `traffic_class` 81 times and `fast_path` **0** times, because `option/schema.go` gained the `fast_path` key and nothing regenerated the file. A generated artifact with no stated owner is how it drifts. **The rule this gap implies:** a change to `option/schema.go` (or to any option struct that feeds the schema) must regenerate `docs/schema.json` in the same commit — `make schema`. This is recorded as a gap rather than fixed here because this refresh is documentation-only and regenerating the artifact is a product-output change, not a hygiene change. Evidence: `Makefile:35-36`; `docs/schema.json`; **`VERIFIED_SOURCE`**, not `VERIFIED_BY_REGENERATION` — the settling command is `make schema` followed by a diff. |
+| `protocol/vless/encryption` (5 non-test files, new in the fork) | Its tests carry a `//go:build !race` split, so its ABI checks are absent under `-race`. |
 | Individual protocol wire formats (shadowsocks, trojan, tuic, hysteria2, …) | Upstream's. The fork patches specific behaviours; those are called out inside the module that owns the behaviour, not per protocol. |
 | The Apple / Android / desktop **client** source | Separate repositories, checked out as submodules (`clients/apple`, `clients/android`, `clients/desktop`) and empty in a clean worktree. `libbox-platform-contract.md` records only the core side. |
 | Clash API / V2Ray API internals | Upstream's, with fork-specific co-existence notes in `build-pruning-release.md`. |
@@ -91,8 +93,14 @@ What the fork added on top is documented per module with provenance.
 ## How to decide whether a module is still accurate
 
 ```sh
-git log --oneline v0.1.6..HEAD -- <paths the module cites>
+git log --oneline v0.1.9..HEAD -- <paths the module cites>
 ```
 
 If that is empty, the module's statements about those paths are still the reviewed ones. If it is not,
 read the module's `AI cautions` first, then the diff.
+
+Do **not** copy an older tag into this command from memory or from a report. The tag belongs to the
+current production baseline, which is recorded in `BASELINE.md` and **moves**; a stale tag here turns
+the check into a no-op that silently passes while the module drifts. (That is exactly what happened
+between `v0.1.6` and `v0.1.9`: this command named `v0.1.6` while the baseline row claimed nothing had
+changed, so nobody re-ran it. The row and the command have to move together.)
