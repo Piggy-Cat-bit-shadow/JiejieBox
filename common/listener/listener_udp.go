@@ -55,7 +55,7 @@ func (l *Listener) ListenUDPWithConfig(listenConfig net.ListenConfig) (net.Packe
 		})
 	}
 	udpConn, err := ListenNetworkNamespace[net.PacketConn](l.ctx, l.listenOptions.NetNs, func() (net.PacketConn, error) {
-		return listenConfig.ListenPacket(l.ctx, M.NetworkFromNetAddr(N.NetworkUDP, bindAddr.Addr), bindAddr.String())
+		return listenConfig.ListenPacket(l.ctx, NetworkWithAddressFamily(N.NetworkUDP, bindAddr.Addr), bindAddr.String())
 	})
 	if err != nil {
 		return nil, err

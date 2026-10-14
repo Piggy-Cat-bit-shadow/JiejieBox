@@ -69,9 +69,9 @@ func (l *Listener) ListenTCP() (net.Listener, error) {
 		if l.listenOptions.TCPFastOpen {
 			var tfoConfig tfo.ListenConfig
 			tfoConfig.ListenConfig = listenConfig
-			return tfoConfig.Listen(l.ctx, M.NetworkFromNetAddr(N.NetworkTCP, bindAddr.Addr), bindAddr.String())
+			return tfoConfig.Listen(l.ctx, NetworkWithAddressFamily(N.NetworkTCP, bindAddr.Addr), bindAddr.String())
 		} else {
-			return listenConfig.Listen(l.ctx, M.NetworkFromNetAddr(N.NetworkTCP, bindAddr.Addr), bindAddr.String())
+			return listenConfig.Listen(l.ctx, NetworkWithAddressFamily(N.NetworkTCP, bindAddr.Addr), bindAddr.String())
 		}
 	})
 	if err != nil {

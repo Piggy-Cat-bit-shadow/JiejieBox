@@ -233,7 +233,7 @@ func (s *ServerEndpoint) Start(stage adapter.StartStage, scope *adapter.Scope) e
 				networkManager := service.FromContext[adapter.NetworkManager](s.ctx)
 				egressPool := tun.NewUDPEgressPool(tun.UDPEgressPoolOptions{
 					Logger:           s.logger,
-					Network:          M.NetworkFromNetAddr(N.NetworkUDP, listenAddress),
+					Network:          listener.NetworkWithAddressFamily(N.NetworkUDP, listenAddress),
 					Control:          listenConfig.Control,
 					InterfaceFinder:  networkManager.InterfaceFinder(),
 					InterfaceMonitor: networkManager.InterfaceMonitor(),
