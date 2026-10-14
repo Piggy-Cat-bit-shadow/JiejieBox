@@ -628,14 +628,20 @@ scenario = {
         "unrelated.yml": wf(303, ".github/workflows/unrelated.yml",
                             runs=[run(9900, 1, workflow_id=303)]),
         # The REQUIRED EVIDENCE gates. They produce no release artifact, so they are deliberately
-        # NOT in TARGET_WORKFLOWS - `plan` must not demand them and `evidence` must.
+        # NOT in TARGET_WORKFLOWS - 'plan' must not demand them and 'evidence' must.
+        #
+        # NOTE: this heredoc is UNQUOTED, so bash expands command substitution and variables
+        # inside it. A backtick anywhere below - even in a Python comment - is executed as a
+        # shell command: one spelling the gate's subcommand names in backticks made bash run
+        # 'plan' once per scenario write, and the empty substitution silently wrote a plan with a
+        # blank ninth column. Use single quotes when naming a command in these comments.
         "verify.yml": wf(404, ".github/workflows/verify.yml",
                          runs=[run(9401, 30, workflow_id=404)]),
         "release-contract-verify.yml": wf(505, ".github/workflows/release-contract-verify.yml",
                                           runs=[run(9501, 40, workflow_id=505)]),
     },
     "artifacts": {},
-    # Jobs for the evidence runs. Every one of these must be completed+success for `evidence` to
+    # Jobs for the evidence runs. Every one of these must be completed+success for 'evidence' to
     # pass; the cases below mutate this to prove the ones that must not.
     "jobs": {
         "9401": [{"name": "verify", "conclusion": "success"}],
@@ -1015,7 +1021,9 @@ expect_fail "a failing gh run download -> FAIL" "gh run download failed" -- \
 
 write_scenario no_artifacts 'scenario["artifacts"]["9002"] = {"no_artifacts": True}'
 gate_setup "plan (setup)" plan --repo o/r --sha "$SHA" --out "$work/plan-na.tsv" --interval 1 --timeout 10
-expect_fail "a run that uploaded nothing -> FAIL" "artifact directories" -- \
+# A run that uploaded nothing: the exact-name download either finds no such artifact or lands an
+# empty directory. Both are refusals; the message names which.
+expect_fail "a run that uploaded nothing -> FAIL" "produced 0 directories" -- \
   download --repo o/r --plan "$work/plan-na.tsv" --dir "$work/assets-na"
 
 # ---------------------------------------------------------------------------
@@ -1024,7 +1032,10 @@ expect_fail "a run that uploaded nothing -> FAIL" "artifact directories" -- \
 
 write_scenario dup 'scenario["artifacts"]["9002"]["duplicate_artifact"] = True'
 gate_setup "plan for the two-artifact-directory scenario" plan --repo o/r --sha "$SHA" --out "$work/plan-dup.tsv" --interval 1 --timeout 10
-expect_fail "a run publishing two artifact directories -> FAIL" "artifact directories" -- \
+# An artifact whose directory contains two directories rather than the one the download lands.
+# The exact name is asked for, so this is not "the wrong artifact was picked" - it is "the
+# artifact's own layout is not the one this gate stages".
+expect_fail "a run publishing two artifact directories -> FAIL" "expected exactly 1" -- \
   download --repo o/r --plan "$work/plan-dup.tsv" --dir "$work/assets-dup"
 
 # The download path refuses a second DIRECTORY inside one artifact, so the verify-side
