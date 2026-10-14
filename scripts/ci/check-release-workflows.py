@@ -893,6 +893,57 @@ def check_target_state_v6():
     return 1 if failed else 0
 
 
+def check_shell_line_endings():
+    """Every shell script anything EXECUTES must have LF endings in the index.
+
+    A CRLF shell script is not merely untidy. Its shebang becomes `#!/usr/bin/env bash\r`, and on
+    Linux that resolves to an interpreter named `bash\r`:
+
+        /usr/bin/env: 'bash\r': No such file or directory
+
+    The message names the interpreter, not the file, so it points at /usr/bin/env. On Windows the
+    same file runs perfectly, and `bash -n` says the syntax is fine, because Git Bash tolerates the
+    carriage return. Nothing local can see it.
+
+    This is checked against the INDEX rather than the working tree, because the index is what CI
+    checks out. `git ls-files --eol` reports `i/crlf` for exactly this condition, and
+    `scripts/publish-apple-beta.sh` sat that way until a fixture ran it - which is how this check
+    came to exist: the defect had been committed for rounds and was invisible until something
+    finally executed the file directly instead of sourcing it.
+    """
+    import shutil
+    import subprocess
+
+    git = shutil.which("git")
+    if git is None:
+        print("SKIP  %-64s %s" % ("line endings: index is readable",
+                                  "git not on PATH for this process"))
+        return
+    try:
+        listing = subprocess.run(
+            [git, "-C", REPO, "ls-files", "--eol"],
+            capture_output=True, text=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError) as error:
+        report("line endings: index is readable", False, str(error))
+        return
+
+    bad = []
+    for line in listing.splitlines():
+        if not line.strip() or "i/crlf" not in line:
+            continue
+        path = line.split("\t")[-1].strip()
+        if not path.endswith((".sh", ".bash")):
+            continue
+        bad.append(path)
+
+    report(
+        "line endings: no shell script is CRLF in the index",
+        not bad,
+        ("would fail on Linux as an interpreter named bash plus a carriage return: "
+         + ", ".join(bad)) if bad else "all LF",
+    )
+
+
 def check_executable_invocations():
     """A workflow that runs `./script.sh` needs that file to carry the executable bit.
 
@@ -1015,6 +1066,8 @@ def main(argv=None):
     check_canonical_fixture_is_executed()
     print()
     check_source_verify()
+    print()
+    check_shell_line_endings()
     print()
     check_executable_invocations()
     print()
