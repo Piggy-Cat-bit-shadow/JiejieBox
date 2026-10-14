@@ -258,3 +258,29 @@ READY_FOR_FINAL_FREEZE_VALIDATION = NO  (F1-F5, G1-G6 done and green on Ubuntu a
 The remaining work is F4/F5 (wire `apple-libbox` into `release-artifacts.sh` and the allowlist),
 which is the step that actually makes the canonical asset part of a release; the tests for the
 schema and the three-state model; G7's one line; H2; and then I/J/K.
+
+---
+
+## F. Mutation checks performed on the assertions added this round
+
+A check that cannot fail is not a check, so the two new Apple assertions were mutation-tested
+against copies of `client-apple.yml`, using the checker's own embedded Python extracted and run
+directly (its owning workflow does not run on this branch, see the final note below):
+
+| MUTATION | RESULT |
+|---|---|
+| `--jj-version "$jj"` deleted from both GUI jobs | `the ios/macos job does not validate Libbox against the release version` |
+| `--allow-legacy-manifest` added to both GUI jobs | `the ios/macos job opts out of the schema-2 requirement...` |
+
+Both fire, on both jobs, and name the job. The unmutated workflow produces neither.
+
+## G. A gap this round exposed but did not close
+
+`client-apple.yml` does not run on `release/v6-unix-authority` - no run exists for it at any commit
+on this branch - so `scripts/ci/check-apple-source-selection.sh`, which it owns, has **no CI oracle
+for changes made on this branch**. The two assertions above were therefore validated by running the
+checker's Python directly against the real workflow and against mutated copies, which is
+`VERIFIED_LOCAL_MUTATION`, not `VERIFIED_CI`.
+
+This is recorded rather than worked around. Dispatching the workflow is out of scope for this
+round, and the honest statement is that the assertion logic is proven and its CI wiring is not.
