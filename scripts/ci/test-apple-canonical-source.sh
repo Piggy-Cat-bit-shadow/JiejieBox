@@ -211,7 +211,24 @@ case "${1:-}" in
     ;;
 esac
 STUB
-chmod +x scripts/ci/apple-client-source.sh
+# SHEBANGS AND CRLF.
+#
+# Everything this fixture WRITES is a script that something executes, and on a Windows host a
+# heredoc lands with CRLF endings - which makes the shebang `#!/usr/bin/env bash\r`. Git Bash
+# tolerates that; Ubuntu does not, and refuses with
+#
+#     /usr/bin/env: 'bash\r': No such file or directory
+#
+# which names a file that looks correct in every editor and every local run. Every generated script
+# is therefore stripped here, and the harness asserts it afterwards rather than trusting it.
+strip_cr() {
+  # A no-op where the file is already LF, so this is safe on both hosts.
+  if grep -q $'\r' "$1" 2>/dev/null; then
+    tr -d '\r' < "$1" > "$1.lf" && mv "$1.lf" "$1"
+  fi
+  chmod +x "$1"
+}
+strip_cr scripts/ci/apple-client-source.sh
 # The script keeps its PRODUCTION relative path. `publish-apple-beta.sh` derives its own root
 # as `cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd`, so placing it at the fixture root made
 # that compute the fixture's PARENT - a directory that is not a repository - and every case
@@ -266,6 +283,16 @@ if ! "$LIBBOX" pack "$SLICES/Libbox.xcframework" "$GOLDEN" >/dev/null 2>&1; then
   exit 1
 fi
 [ -f "$GOLDEN/manifest.json" ] || { echo "FATAL: the packer produced no manifest.json" >&2; exit 1; }
+
+# Every executable this fixture generated must be CR-free. Checked here, once, rather than
+# discovered on a runner as "/usr/bin/env: 'bash\r': No such file or directory" - a message that
+# names the interpreter and not the file, and cost a full CI round to place.
+for generated in scripts/ci/apple-client-source.sh; do
+  if grep -q $'\r' "$generated" 2>/dev/null; then
+    echo "FATAL: $generated has CRLF endings and its shebang would not resolve on Linux." >&2
+    exit 1
+  fi
+done
 
 ASSET="jiejie-libbox-apple-0.1.7.tar.gz"
 ( cd "$GOLDEN" && tar -czf "$work/$ASSET" . ) || exit 1
