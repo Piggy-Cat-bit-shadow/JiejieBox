@@ -1126,6 +1126,19 @@ verify_platform() {
 # match what was there would have green'd the run and quietly dropped a published record, which is
 # the failure mode a two-sided assertion exists to make visible.
 #
+# # The unresolved PRESENT_INVALID proof
+#
+# `scripts/ci/test-apple-canonical-source.sh` is the harness for the rule below. It is NOT passing
+# and is NOT wired into any workflow:
+#
+#   canonical asset PRESENT, any validation failure -> HARD FAIL, never fall back to Actions
+#   canonical asset ABSENT                          -> auto MAY fall back to Actions
+#
+# Every case currently stops in publish-apple-beta.sh's own preflight with
+# `fatal: not a git repository`, before reaching the logic it is meant to test. The status, and
+# what was ruled out, is written at the top of that file. Named here so that a reader of the gate
+# - which is where the rule lives - knows the rule is implemented but not yet integration-proven.
+#
 # verify_apple <dir> <sha> <workflow file> <version>
 #
 # The Apple target is verified by the PRODUCER'S OWN validator, invoked as a subprocess, rather than
