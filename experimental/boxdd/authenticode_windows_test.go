@@ -605,19 +605,29 @@ func TestTamperedSignedPEIsRejectedByTheFirstLayer(t *testing.T) {
 // named the step and not the cause - the run had to be dug through to learn anything. A diagnostic that
 // discards its own evidence is worse than no diagnostic, because it looks like one.
 //
-// `Import-Module PKI` is explicit because the `Cert:` drive it provides is NOT reliably auto-loaded
-// under `-NoProfile -NonInteractive`. When it is missing, `-CertStoreLocation 'Cert:\CurrentUser\My'`
-// fails with "Cannot find drive. A drive with the name 'Cert' does not exist" - which reads like a
-// broken certificate store rather than an unloaded module, and cost a CI round-trip to identify.
+// The script is written to a FILE and run with `-File`, not passed with `-Command`. Two separate CI
+// failures came out of the `-Command` form and neither was a certificate problem:
+//
+//  1. "Cannot find drive. A drive with the name 'Cert' does not exist" - the `Cert:` drive comes from
+//     the PKI module, and `Import-Module PKI` must therefore come first. That error reads like a broken
+//     certificate store rather than an unloaded module, so it is stated here explicitly.
+//  2. Even WITH the import, the runner still reported the same error while the identical script
+//     succeeded through `-File`. `exec.Command` passes the script as a separate argv element and
+//     Windows PowerShell's `-Command` argument handling does not preserve a multi-line script that
+//     reliably across hosts.
+//
+// `-File` has neither problem: no argument quoting, no newline handling, no drive-resolution ordering.
 func createStoreCertificate(t *testing.T) (string, error) {
 	t.Helper()
 	script := `$ErrorActionPreference='Stop'
 Import-Module PKI -ErrorAction Stop
-$c = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Jiejiebox Integration Fixture' ` +
-		`-CertStoreLocation 'Cert:\CurrentUser\My' -NotBefore (Get-Date).AddMinutes(-5) ` +
-		`-NotAfter (Get-Date).AddHours(2) -KeyUsage DigitalSignature -KeyExportPolicy Exportable
+$c = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Jiejiebox Integration Fixture' -CertStoreLocation 'Cert:\CurrentUser\My' -NotBefore (Get-Date).AddMinutes(-5) -NotAfter (Get-Date).AddHours(2) -KeyUsage DigitalSignature -KeyExportPolicy Exportable
 Write-Output $c.Thumbprint`
-	out, err := runPowerShell(script)
+	scriptPath := filepath.Join(t.TempDir(), "create-fixture-certificate.ps1")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		return "", err
+	}
+	out, err := runPowerShellFile(scriptPath)
 	if err != nil {
 		return "", fmt.Errorf("New-SelfSignedCertificate failed (%w); powershell said: %s", err, strings.TrimSpace(out))
 	}
@@ -636,7 +646,12 @@ Write-Output $c.Thumbprint`
 	t.Cleanup(func() {
 		// The store path is built with a backslash, so it is concatenated rather than written as a
 		// single quoted literal - a Windows path inside a Go string literal is an escape hazard.
-		_, _ = runPowerShell(`Remove-Item -LiteralPath 'Cert:\CurrentUser\My\` + thumbprint + `' -Force -ErrorAction SilentlyContinue`)
+		cleanup := `Import-Module PKI -ErrorAction SilentlyContinue` + "\n" +
+			`Remove-Item -LiteralPath 'Cert:\CurrentUser\My\` + thumbprint + `' -Force -ErrorAction SilentlyContinue`
+		cleanupPath := filepath.Join(t.TempDir(), "remove-fixture-certificate.ps1")
+		if err := os.WriteFile(cleanupPath, []byte(cleanup), 0o600); err == nil {
+			_, _ = runPowerShellFile(cleanupPath)
+		}
 	})
 	return thumbprint, nil
 }
@@ -668,8 +683,14 @@ func runSignToolOutput(signtool string, args ...string) (string, error) {
 	return string(output), err
 }
 
-func runPowerShell(script string) (string, error) {
-	command := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
+// runPowerShellFile runs a script that already exists on disk.
+//
+// This is the ONLY form used here, deliberately. `-Command` takes the script as an argv element and its
+// multi-line handling is not preserved reliably across hosts, which cost two CI round-trips that both
+// looked like certificate failures and were argument-passing failures. A file removes the question
+// entirely: no argv quoting, no newline handling, no provider-drive resolution ordering.
+func runPowerShellFile(scriptPath string) (string, error) {
+	command := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
 	output, err := command.CombinedOutput()
 	return string(output), err
 }
