@@ -211,6 +211,18 @@ jobs:
       # for ninety. It stays bounded rather than immediate so a just-finished gate is not missed
       # to API latency.
       - name: require exact-SHA source and tooling evidence
+        # `gh` is not authenticated in a workflow unless GH_TOKEN is set, and `evidence` resolves each
+        # required workflow through the API before it can ask for that workflow's runs. Without this
+        # the step dies at the FIRST workflow with
+        #
+        #     gh: To use GitHub CLI in a GitHub Actions workflow, set the GH_TOKEN environment variable.
+        #     FAIL: cannot resolve workflow '.github/workflows/verify.yml' in 'Piggy-Cat-bit-shadow/sing-box'.
+        #
+        # which reads as a missing workflow rather than a missing token - the two failures are one
+        # message apart and the message names the wrong one. The job already declares
+        # `actions: read`, so only the token was absent.
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p verify-logs
