@@ -13,6 +13,45 @@ Every row is a **requirement**, the evidence that exists for it, its **evidence 
   it is not a defect and not a pass.
 * **No row is `VERIFIED_CI`.** No workflow-run record, run ID or artifact digest is stored in the tree.
 
+## The `.` in every command below is load-bearing
+
+Several rows re-check with `go test -count=1 -tags "$OTHERS" -run <TestName> .`. The trailing `.` is
+the **root package**, and these commands filter by **test function name**, not by file. Two consequences
+that a repository-tidy pass must not miss:
+
+1. **Renaming a root `*_test.go` file is invisible to every command here** — it changes no function
+   name. Renames are safe, and no root test filename is referenced anywhere in `.github/`, the
+   `Makefile` or `scripts/`, so nothing breaks.
+2. **Moving one is not.** Relocating a test to a child package silently retargets its `-run` filter at a
+   package that does not contain the test: the command still exits 0 and now proves nothing. A "tidy"
+   move is therefore a silent loss of acceptance coverage, which is worse than an ugly filename.
+
+**The 28 root test files must stay in the root**, and that was measured rather than assumed:
+
+* **9 are `package box` (internal) and cannot move in principle.** They reach root-only identifiers:
+  `&Box{ctx:, scope:, statusView:, statusResolver:}` composite literals over unexported fields, plus
+  `newStatusSurface`, `releasePowerGovernor`, `applyPauseEvent`, `lifecycle{}`, `deviceAxis`,
+  `reconcileScreenState`, `reconcileLockState`, `ensureURLTestServices`. No exported constructor
+  produces those shapes, so these tests have no external form at all — changing the package clause is
+  equally impossible.
+* **19 are `package box_test` and are blocked mechanically, not semantically.** All nineteen call one
+  root-only fixture, `newBoxFromConfig` (`box_cross_kind_cycle_test.go:91`). Its body uses only exported
+  API, so the helper is portable — but every option (duplicate it per destination, extract a shared
+  test-support package, or move all nineteen together) is a change to test **content**, which is out of
+  scope for a hygiene pass. The host file has the largest blast radius and must move last if it ever
+  does.
+
+A clean `go vet -tags "$OTHERS" .` proves the second group touches no root internals: Go compiles `box`
+and `box_test` as two packages in one directory and forbids the external one from naming unexported
+identifiers. Verified, exit 0; and all nineteen contain no `reflect`, `unsafe` or `go:linkname`.
+
+**Also worth knowing when reasoning about coverage:** these tests are **compiled by CI but never
+executed by it.** `verify.yml` runs `go test -run '^$' ./...` (zero tests run) and its race step lists
+explicit package paths that do not include `.`. See `modules/ci-release.md` §2 and its AI caution. So a
+change that breaks compilation fails loudly, while a change that merely relocates silently-running
+tests would remove **no** CI coverage — because there is none to remove. The acceptance commands in this
+file are the only place these tests are actually run.
+
 ---
 
 ## 1. Core lifecycle and runtime coordination
