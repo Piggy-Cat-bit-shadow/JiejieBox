@@ -72,8 +72,16 @@ build_artifact() {
 echo "== artifact attribution =="
 
 build_artifact "$tmp/x1/Libbox.xcframework" "$tmp/a1"
+
+# `validate` requires the release version now, and it is read from the manifest the packer just
+# wrote rather than hardcoded. The fixture must not be able to assert a version the repository does
+# not have: that mistake was made once already in test-apple-canonical-source.sh, where a literal
+# 0.1.6 outlived the repository moving to 0.1.7 and the failure read as a product bug.
+artifact_jj="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["jj_version"])' \
+  "$tmp/a1/manifest.json")"
+[ -n "$artifact_jj" ] || { echo "FAIL: the packed manifest records no jj_version" >&2; exit 1; }
 check "an artifact built from this commit validates" \
-  "$artifact_tool" validate "$tmp/a1" --parent-sha "$parent_sha"
+  "$artifact_tool" validate "$tmp/a1" --parent-sha "$parent_sha" --jj-version "$artifact_jj"
 
 expects_fail "a different parent SHA is rejected" \
   "$artifact_tool" validate "$tmp/a1" --parent-sha "0000000000000000000000000000000000000000"
@@ -89,7 +97,7 @@ check "the manifest records no Apple client revision" \
 check "validate takes no submodule argument" \
   bash -c "! grep -qE '^\\s+\\[ -n \"\\\$expect_submodule\" \\]' scripts/ci/apple-libbox-artifact.sh"
 check "a caller that still passes --submodule-sha is accepted" \
-  "$artifact_tool" validate "$tmp/a1" --parent-sha "$parent_sha" \
+  "$artifact_tool" validate "$tmp/a1" --parent-sha "$parent_sha" --jj-version "$artifact_jj" \
     --submodule-sha "0000000000000000000000000000000000000000"
 
 echo "== artifact integrity =="
@@ -115,7 +123,7 @@ echo "== manifest is authoritative, not the artifact name =="
 cp -R "$tmp/a1" "$tmp/a_renamed"
 mv "$tmp/a_renamed" "$tmp/anything-at-all"
 check "validation does not depend on the directory name" \
-  "$artifact_tool" validate "$tmp/anything-at-all" --parent-sha "$parent_sha"
+  "$artifact_tool" validate "$tmp/anything-at-all" --parent-sha "$parent_sha" --jj-version "$artifact_jj"
 
 echo "== manifest is valid JSON whatever the build environment prints =="
 
