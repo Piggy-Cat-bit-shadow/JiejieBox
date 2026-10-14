@@ -1,0 +1,199 @@
+name: Windows daemon tests
+
+# Runs the Windows-only daemon security tests on a REAL Windows runner.
+#
+# # Why this workflow exists
+#
+# `experimental/boxdd/**` is the Windows daemon trust boundary: the named-pipe peer handshake, the
+# executable and signer identity checks, and the Authenticode verdict. Its tests carry
+# `//go:build windows`, so no Linux runner can execute them, and until this workflow existed **no
+# workflow executed a single `go test` on a Windows runner at all** - `windows-core-amd64.yml` runs on
+# `ubuntu-latest` and only cross-builds, and the two `windows-latest` workflows build, sign and audit an
+# installer without ever compiling a test binary.
+#
+# The consequence was that eleven security tests ran nowhere in CI. `verify.yml` cross-compiles the
+# package, so a change that broke COMPILATION would be caught; a change that broke BEHAVIOUR, including
+# a relaxation of the signer identity check, would not be.
+#
+# # What this gate actually executes, and why each part matters
+#
+#   `TestTamperedSignedPEIsRejectedByTheFirstLayer` builds its own code-signing certificate and signs
+#   its own PE at run time, then flips bytes inside the code section. It asserts the measured
+#   `TRUST_E_BAD_DIGEST` is NOT tolerated. This is the test that proves the certificate-TIME relaxation
+#   did not also relax signature INTEGRITY - the distinction the whole permission rests on.
+#
+#   `TestUnsignedFileIsRejectedByTheFirstLayer` drives the real `WinVerifyTrustEx` for a file with no
+#   signature and asserts rejection. An unsigned file that were tolerated would let both endpoints
+#   present a nil signer, and `bytes.Equal(nil, nil)` is true.
+#
+#   `TestWinTrustErrorClassificationIsAnAllowlist` + `TestAllowedErrorsAreExactlyTheTimeAndChainFamily`
+#   pin the allowlist in BOTH directions, so it can neither silently grow nor lose a code it needs.
+#
+#   `TestCodeSigningEKUIsRequired`, `TestSignerPinDistinguishesTwoValidCertificates` and
+#   `TestNilSignerCannotSatisfyThePin` cover the identity side.
+#
+# # Why `signtool` is a hard requirement here and not a skip
+#
+# The tamper and signed-fixture tests SKIP when `signtool.exe` is absent, which is correct for a
+# developer machine but wrong for CI: a skip would make this gate green while proving nothing, and
+# `SKIP is not PASS` is a rule this repository already states elsewhere. So the workflow locates
+# `signtool` FIRST, fails if it cannot, and exports `SIGNTOOL` so the tests take the path they are
+# meant to take rather than the skip. The SDK ships on the hosted Windows image under
+# `Windows Kits\10\bin\<version>\x64\`.
+#
+# # Why the push trigger is path-filtered
+#
+# This workflow's only input is the daemon package and the files that decide whether it can build.
+# Product source, docs and reports cannot change its verdict, and a push that touches none of the
+# paths below does not need a Windows runner. `workflow_dispatch` is kept on purpose, for the same
+# reason `release-contract-verify.yml` keeps it: a frozen SHA must be able to obtain this evidence on
+# demand, and a `[skip ci]` dependency sync never triggers a push run.
+#
+# # Ownership
+#
+# This workflow owns no release-contract suite and invokes no `scripts/**` shell, deliberately: several
+# of those have exactly one designated owner and `check-release-workflows.py` asserts that no second
+# workflow runs them. It adds a test execution, not a second authority.
+
+on:
+  push:
+    branches:
+      - testing
+      - "release/**"
+    paths:
+      - "experimental/boxdd/**"
+      - "cmd/internal/build_boxdd/**"
+      - "release/DEFAULT_BUILD_TAGS_WINDOWS"
+      - "release/JIEJIE_VERSION"
+      - ".github/workflows/windows-boxdd-tests.yml"
+  pull_request:
+    paths:
+      - "experimental/boxdd/**"
+      - "cmd/internal/build_boxdd/**"
+      - "release/DEFAULT_BUILD_TAGS_WINDOWS"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-daemon-tests:
+    name: boxdd security tests (windows)
+    # `windows-latest`, not `ubuntu-latest` with GOOS=windows. The distinction is the entire point of
+    # this workflow: cross-compilation produces a binary, it does not execute Win32 or WinVerifyTrust.
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: check out the source
+        uses: actions/checkout@v4
+        with:
+          # The tests sign a PE at run time; they need the real tree, not a shallow copy of one file.
+          fetch-depth: 1
+
+      - name: set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: locate signtool and fail if the SDK is missing
+        # A skip here would make the gate green while the tamper test proved nothing.
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Braces are required: `$env:ProgramFiles(x86)` would be parsed as `$env:ProgramFiles`
+          # followed by a literal `(x86)`, which silently looks in the 64-bit path.
+          $kitsRoot = ${env:ProgramFiles(x86)}
+          if (-not $kitsRoot) { $kitsRoot = $env:ProgramFiles }
+          $root = Join-Path $kitsRoot 'Windows Kits\10\bin'
+          $found = Get-ChildItem -Path $root -Filter 'signtool.exe' -Recurse -ErrorAction SilentlyContinue |
+                   Where-Object { $_.FullName -match '\\x64\\' } |
+                   Sort-Object FullName -Descending |
+                   Select-Object -First 1
+          if (-not $found) {
+            throw "signtool.exe was not found under '$root'. The tamper and signed-fixture tests would SKIP, and a SKIP is not a PASS for this gate. Install the Windows SDK on the runner image, or state explicitly that this gate no longer covers signed-PE behaviour."
+          }
+          "SIGNTOOL=$($found.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "signtool: $($found.FullName)"
+
+      - name: confirm the tests are windows-only and actually present
+        # Guards the failure mode where the build tag silently excludes every file, leaving a green
+        # run that executed nothing.
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = @(Get-ChildItem -Path 'experimental/boxdd' -Filter '*_windows_test.go')
+          if ($files.Count -eq 0) {
+            throw "no *_windows_test.go files under experimental/boxdd; this gate would execute nothing."
+          }
+          Write-Host "windows test files:"
+          $files | ForEach-Object { Write-Host "  $($_.Name)" }
+
+      - name: go vet the daemon package
+        # A separate step so a compile problem is distinguishable from a test failure.
+        #
+        # The single pre-existing `possible misuse of unsafe.Pointer` finding in
+        # authenticode_windows.go is expected, so this step fails only on a finding it does not know
+        # about. Two details make that work on a Windows runner:
+        #
+        #   * output goes to a FILE, not through a PowerShell pipeline. `2>&1` into a variable wraps
+        #     native stderr in a localized `NativeCommandError` record, so a naive line filter sees
+        #     PowerShell's own error text as a finding and fails on every run.
+        #   * only lines shaped `file:line:col:` count as findings, which ignores the package header
+        #     and any wrapper text.
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          & go vet ./experimental/boxdd/ > vet.txt 2>&1
+          $code = $LASTEXITCODE
+          $findings = @(Get-Content vet.txt | Where-Object { $_ -match '\.go:\d+:\d+:' })
+          if ($code -eq 0) {
+            Write-Host "go vet: clean"
+            exit 0
+          }
+          $known = 'possible misuse of unsafe.Pointer'
+          $unexpected = @($findings | Where-Object { $_ -notmatch [regex]::Escape($known) })
+          if ($unexpected.Count -gt 0) {
+            $unexpected | ForEach-Object { Write-Host $_ }
+            throw "go vet reported $($unexpected.Count) finding(s) other than the known one."
+          }
+          Write-Host "::notice::go vet: only the known pre-existing finding is present ($($findings.Count))"
+          exit 0
+
+      - name: run the daemon security tests
+        # `-count=1` defeats the test cache, so a green run is a real execution rather than a replay.
+        # Plain `go test` is used deliberately: these tests need no build tags (verified untagged and
+        # under DEFAULT_BUILD_TAGS_WINDOWS), and an unnecessary tag set would be one more thing that can
+        # silently deselect them.
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -count=1 -v ./experimental/boxdd/ 2>&1 | Tee-Object -FilePath boxdd-tests.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: fail on any SKIPPED security test
+        # The tests skip when `signtool` is absent. `signtool` is required above, so a skip here means
+        # something else went wrong and the gate did not actually prove what it claims.
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $skips = Select-String -Path 'boxdd-tests.log' -Pattern '^\s*--- SKIP' -ErrorAction SilentlyContinue
+          if ($skips) {
+            $skips | ForEach-Object { Write-Host $_.Line }
+            throw "a daemon security test SKIPPED. A SKIP is not a PASS for this gate."
+          }
+          $passes = (Select-String -Path 'boxdd-tests.log' -Pattern '^\s*--- PASS' -ErrorAction SilentlyContinue).Count
+          if ($passes -eq 0) {
+            throw "no test reported PASS; this gate executed nothing meaningful."
+          }
+          Write-Host "PASS: $passes daemon security test(s) executed with no skips."
+
+      - name: upload the test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-daemon-tests
+          path: boxdd-tests.log
+          if-no-files-found: ignore
