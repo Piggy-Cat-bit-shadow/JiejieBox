@@ -599,6 +599,11 @@ func TestTamperedSignedPEIsRejectedByTheFirstLayer(t *testing.T) {
 
 // createStoreCertificate creates a self-signed code-signing certificate in the user store and
 // returns its SHA-1 thumbprint, or an error when the platform tooling is unavailable.
+//
+// Every failure path carries the POWERSHELL OUTPUT, not just the exit status. The first CI run of this
+// test skipped with "could not create a signing certificate: exit status 1" and nothing else, which
+// named the step and not the cause - the run had to be dug through to learn anything. A diagnostic that
+// discards its own evidence is worse than no diagnostic, because it looks like one.
 func createStoreCertificate(t *testing.T) (string, error) {
 	t.Helper()
 	script := `$ErrorActionPreference='Stop'
@@ -608,11 +613,19 @@ $c = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Jiejiebox Inte
 Write-Output $c.Thumbprint`
 	out, err := runPowerShell(script)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("New-SelfSignedCertificate failed (%w); powershell said: %s", err, strings.TrimSpace(out))
 	}
-	thumbprint := strings.TrimSpace(out)
+	// PowerShell may emit warnings around the value, so the thumbprint is the LAST non-empty line
+	// rather than the whole output. Requiring the whole output to be 40 characters made a harmless
+	// warning look like a broken certificate.
+	var thumbprint string
+	for _, line := range strings.Split(out, "\n") {
+		if trimmed := strings.TrimSpace(strings.TrimSuffix(line, "\r")); trimmed != "" {
+			thumbprint = trimmed
+		}
+	}
 	if len(thumbprint) != 40 {
-		return "", fmt.Errorf("unexpected thumbprint %q", thumbprint)
+		return "", fmt.Errorf("unexpected thumbprint %q; powershell said: %s", thumbprint, strings.TrimSpace(out))
 	}
 	t.Cleanup(func() {
 		// The store path is built with a backslash, so it is concatenated rather than written as a
