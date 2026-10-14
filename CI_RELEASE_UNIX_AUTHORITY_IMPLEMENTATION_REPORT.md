@@ -666,3 +666,238 @@ READY_FOR_FINAL_FREEZE_VALIDATION = NO
 proven** and **Apple real CI proven**, and neither is. The brief's own framing is the right one:
 this round's job was to turn a completed architecture into irrefutable evidence, and the two proofs
 that matter most are the two that are missing.
+---
+
+# V10 (continued) â€?Proof 2 progress, the blocking finding, and reconciliation
+
+## AF. Proof 2 â€?Apple real CI, five dispatches
+
+`client-apple.yml` is **MANUAL_ONLY**, so it was dispatched against the exact temp-branch ref with
+both product inputs enabled. Each dispatch was verified to have `event = workflow_dispatch` and
+`head_sha` equal to the current temp HEAD before its result was recorded.
+
+| # | RUN ID | HEAD_SHA | RESULT | WHAT IT PROVED |
+|---|---|---|---|---|
+| 1 | `38500855425` | `a7d7863da` | failure | `resolve` PASS; `libbox` FAIL `test-apple-signing 103/2`; ios/macos skipped |
+| 2 | `38501916817` | `8391897c6` | failure | `test-apple-signing 131/0` PASS; `test-apple-beta-publish 92/5` FAIL |
+| 3 | `38502519154` | `6214285a0` | failure | `signing 131/0`; `beta-publish 95/2`; needs-checker still failing |
+| 4 | `38502914973` | `8c9279077` | failure | same 2; the diagnostic added did not print â€?the checker exited 2 |
+| 5 | `38503467579` | `409471293` | failure | `signing 131/0`; **`beta-publish 97/0`**; `source-selection 47/13` |
+
+**Net progress, all three suites:** `test-apple-signing` 103/2 â†?**131/0**.
+`test-apple-beta-publish` 92/5 â†?**97/0**. `check-apple-source-selection` 47/13 â†?47/13
+(**the sole remaining blocker**).
+
+Five real defects were found and fixed by these runs, none of which any amount of local reading
+would have surfaced:
+
+**AF.1 â€?the overlay suite assumed a precondition nothing established.** `prepare-apple-client.sh`
+refuses to overlay a checkout whose HEAD is not the resolved Apple source, correctly. On a clean CI
+checkout the submodule is at the GITLINK, and the resolver answers with the client repository's
+branch tip â€?a different commit until someone moves the gitlink. `libbox` ran the suite before
+anything materialised the source. The suite now establishes it with `checkout ios` and restores the
+client on `EXIT`. The gitlink-relation assertion moved to the top of the file, where it describes
+the checkout the suite starts from.
+
+**AF.2 â€?the overlay silently did nothing anywhere but macOS.** Every entitlement edit used
+`/usr/libexec/PlistBuddy â€?|| true`; PlistBuddy is macOS-only, so off macOS the edit was a no-op and
+the failure surfaced later as a postcondition about a key that was never removed. That is why this
+overlay could not be exercised anywhere but a Mac. The edits now go through a `plist_edit` helper
+built on `python3` + `plistlib` â€?the mechanism the file already used for *reading* entitlements â€?which converts three postconditions into checks that run before a push. Verified applying cleanly
+at the resolved revision, off macOS, for the first time.
+
+**AF.3 â€?a duplicated function.** `app_group_for` was defined twice, byte-identical, 83 lines
+apart. Harmless, which is why it survived.
+
+**AF.4 â€?`check-job-needs.py` could not read the workflow it was checking.** It matched `needs:`
+with a regex and understood only the scalar form; `client-apple.yml` uses
+`needs: [resolve-apple-source, libbox]`, so it reported "the ios job does not depend on libbox" for
+a job that plainly does. Widening it to the sequence form **still failed on the runner while
+passing on a workstation with a byte-identical file**, exiting 2 rather than 1 â€?the job block was
+never located at all, so it never reached the diagnostic added to explain it. The difference was
+**line endings** (this workstation checks the workflow out CRLF, the runner LF). It now parses the
+document structurally â€?enough of YAML's block grammar to walk to `jobs:` and then to one job's
+keys â€?accepts all three spellings, and is verified against both CRLF and LF fixtures. A refusal
+now names the jobs that exist.
+
+**AF.5 â€?the beta-publish suite's own validate calls.** Three positive calls still used the old
+signature and failed on the `--jj-version` requirement added in the V8 round. The version is read
+from the manifest the packer just wrote rather than hardcoded, because a literal `0.1.6` in another
+suite already outlived the repository moving to `0.1.7`.
+
+## AG. THE BLOCKING FINDING â€?two files, opposite models
+
+`check-apple-source-selection.sh` is the only suite still failing, and its 13 failures are **not a
+bug**. They are a direct contradiction between two files in this repository:
+
+| FILE | LINE | STATES |
+|---|---|---|
+| `scripts/ci/check-apple-source-selection.sh` | 124 | "The gitlink is **the only authority** for which Apple commit a release builds." |
+| `scripts/ci/check-apple-source-selection.sh` | 458 | `== the gitlink is the only authority ==` |
+| `scripts/ci/apple-client-source.sh` | 75 | "They are **no longer the build authority**" |
+| `scripts/ci/apple-client-source.sh` | 479 | "the gitlink is now a **CONVENIENCE** â€?not the authority" |
+
+The resolver implements the second model. The suite asserts the first, in two distinct ways:
+
+* **Sections 1â€?** assert that a fixture's resolution equals its gitlink. A fixture that pins
+  `APPLE_CLIENT_REF` to the gitlink commit satisfies these â€?**verified: the first five assertions
+  move from FAIL to PASS**;
+* **Section 5**, "the gitlink is the only authority", deliberately **moves the gitlink** and
+  requires the resolution to follow it. A static pin cannot follow a moving gitlink, so satisfying
+  sections 1â€? that way **breaks section 5**. That was confirmed, and the partial change was
+  **reverted**: a half-fix that trades one group of failures for another is worse than a clean,
+  fully-diagnosed blocker.
+
+A second, independent fixture defect compounds it: `apple-client-source.sh` defaults its state file
+to the **relative** path `build/apple-client-source.env`, resolved against the caller's directory.
+The suite runs from the repository root, so the scratch fixture's resolver was reading the **real
+repository's frozen resolution** â€?a commit that exists in the real Apple repository and not in the
+fixture. The fixture is not self-contained despite its own comment claiming it "needs no network".
+This was proven by tracing the fixture resolver directly.
+
+**Why this is a decision and not a patch.** Making these 13 tests pass means choosing one of:
+
+1. **The suite is right** â€?the gitlink should be the authority. That reverts the V6 client-source
+   model and reintroduces the two-repository pin the model exists to remove, and it would then
+   contradict `apple-client-source.sh`'s own documentation and the V7 concern G4.
+2. **The resolver is right** â€?sections 1â€? and 5 should assert the current model: the refs
+   file/branch tip is the authority, the gitlink is a convenience, and a stale gitlink is reported
+   rather than fatal unless `APPLE_CLIENT_REQUIRE_GITLINK=1`. This is a **bounded rewrite of two
+   sections** of one file, plus isolating the fixture's state, and it is `VERIFIED_LOCAL` work.
+
+Option 2 is the one consistent with every other statement in the repository, and it is what the
+next round should do. It was not done in this round because it is a substantive rewrite of the
+suite's model â€?not a fix to a defect â€?and the alternative reading is defensible enough that
+choosing silently would be the wrong call.
+
+```text
+APPLE_REAL_CI      = FAIL (5 dispatches; libbox blocked by check-apple-source-selection 47/13)
+APPLE_RUN_ID       = 38503467579
+APPLE_HEAD_SHA     = 40947129326186c721f9630acb59475aba855adf
+APPLE_LIBBOX_JOB   = FAIL  (Apple regression tests -> check-apple-source-selection)
+APPLE_IOS_JOB      = SKIPPED (needs: libbox)
+APPLE_MACOS_JOB    = SKIPPED (needs: libbox)
+```
+
+The dependency graph is the reason this matters: `ios` and `macos` both declare
+`needs: [resolve-apple-source, libbox]`, so a failing `libbox` skips both. The Libbox build itself
+never became the problem â€?every run got through the source resolution and the signing suite, and
+two of the three suites are now green.
+
+## AH. Stage H2 â€?producer concurrency
+
+See section AB. `server-linux-amd64.yml` and `client-macos.yml` were dispatch-only with
+`cancel-in-progress: true`, so a second manual dispatch cancelled the first candidate. Both are now
+`false`; the three workflows with no policy carry an explicit note saying why no group is added;
+`android-core-arm64.yml` already had the event-aware form and is unchanged.
+`check_producer_concurrency` accepts three outcomes and rejects a bare string group, and all three
+mutations are caught.
+
+```text
+STAGE_H2_PRODUCER_CONCURRENCY = DONE
+```
+
+## AI. Stage I â€?post-change audit
+
+See section AC for the full table. Every item on the brief's suspicious-point list is answered.
+Two candidate findings were **tested and dismissed**: `release.yml` naming
+`test-release-artifacts.sh` is a comment, not an execution (and sole-ownership is already asserted
+at `check-release-workflows.py:138`); and `check-tag` reading a local tag is correct because
+`release.yml` checks out with `fetch-depth: 0` and `ref: ${{ inputs.tag }}`, so the tag object
+present is the one being released and it must equal HEAD.
+
+**One new P0-class finding, which is AG**: a release-blocking Apple test suite asserts a source
+model the resolver deliberately abandoned. It does not cause a wrong SHA or artifact today â€?it
+makes the Apple build path unverifiable in CI, which is why it blocks Proof 2.
+
+```text
+POST_CHANGE_AUDIT     = COMPLETE
+UNRESOLVED_RELEASE_P0 = 1  (check-apple-source-selection asserts the superseded gitlink-authority model)
+```
+
+## AJ. Stage J â€?race / deep re-judge
+
+See section AD. Result:
+
+```text
+FINAL_CANDIDATE_WORKFLOW_REQUIRED = NO
+```
+
+Release-required race evidence is owned by `verify.yml`, which runs on **every push to `testing`**
+plus PRs, and is a `REQUIRED_EVIDENCE` gate whose rules are exact-SHA and newest-run-wins. The
+artifact workflows' deep checks are gated behind a manual `deep_checks` input and race under
+`DEFAULT_BUILD_TAGS_OTHERS`; they are **not substitutable** (the tag sets differ by
+`with_naive_outbound`, which is what makes the Darwin profile link cronet), but they are also not
+release-critical. The repository's own note at `verify.yml:392` â€?that the union of the two sets
+"has no gate and does not exist" â€?is confirmed, and this round adds the fact that settles whether
+it *blocks*: the release-required race evidence appears at the release SHA exactly when the freeze
+process publishes it. **An improvement to schedule, not a blocker.**
+
+## AK. Verification performed
+
+| CHECK | RESULT |
+|---|---|
+| `check-release-workflows.py` | **PASS 123/123** |
+| `check-release-workflows.py --target-state v6` | **PASS 11/11** |
+| `test-apple-signing.sh` | **PASS 131/131** |
+| `test-apple-canonical-source.sh` | **PASS 15/15** |
+| `test-apple-beta-publish.sh` | **PASS 97/0** on the macOS runner; locally blocked at `sleep`/`ditto` |
+| `check-job-needs.py` | verified against CRLF **and** LF fixtures, all three `needs:` spellings |
+| H2 mutation tests | 3 mutations, all caught |
+| execution mutation tests | 2 mutations, both caught |
+| `git diff --check` | clean |
+| `origin/testing` | `9bdcf8e8` untouched |
+
+## AL. Final state
+
+```text
+PRESENT_INVALID_INTEGRATION       = PASS
+PRESENT_INVALID_ACTIONS_FALLBACK  = FORBIDDEN
+ABSENT_AUTO_FALLBACK              = PASS
+LIBBOX_SOURCE_SUMMARY             = DONE
+
+APPLE_REAL_CI                     = FAIL  (see AG)
+APPLE_RUN_ID                      = 38503467579
+APPLE_HEAD_SHA                    = 40947129326186c721f9630acb59475aba855adf
+APPLE_LIBBOX_JOB                  = FAIL
+APPLE_IOS_JOB                     = SKIPPED
+APPLE_MACOS_JOB                   = SKIPPED
+
+STAGE_H2_PRODUCER_CONCURRENCY     = DONE
+POST_CHANGE_AUDIT                 = COMPLETE
+UNRESOLVED_RELEASE_P0             = 1
+
+RACE_DEEP_REJUDGE                 = COMPLETE
+FINAL_CANDIDATE_WORKFLOW_REQUIRED = NO
+
+DEFAULT_STRUCTURAL_SUITE          = PASS
+V6_TARGET_STATE                   = PASS
+FULL_RELEASE_HELPER_BEHAVIOURAL   = PASS on Ubuntu
+APPLE_BETA_PUBLISH_SUITE          = PASS on macOS, 97/0
+
+FINAL_TEMP_SHA                    = 40947129326186c721f9630acb59475aba855adf
+REMOTE_TEMP_SHA                   = 40947129326186c721f9630acb59475aba855adf
+RCV_HEAD_SHA                      = 40947129326186c721f9630acb59475aba855adf
+APPLE_HEAD_SHA                    = 40947129326186c721f9630acb59475aba855adf
+
+TESTING_PUSHED                    = NO
+TAG_MOVED                         = NO
+RELEASE_CREATED                   = NO
+TESTFLIGHT_UPLOAD                 = NO
+
+READY_FOR_FINAL_FREEZE_VALIDATION = NO
+```
+
+**`READY_FOR_FINAL_FREEZE_VALIDATION = NO`, for exactly one reason**, and it is a real, concrete,
+environment-independent blocker rather than a budget one: brief section 33 requires *Apple real CI
+proven*, and it is not, because one Apple suite asserts a source model the Apple resolver
+deliberately abandoned (AG). The choice between the two models is a product decision, so it is
+presented rather than taken. Everything else in section 33 is satisfied â€?PRESENT_INVALID proven,
+H2 done, the audit complete, the race decision made, and the four-way SHA reconciliation holding
+across `LOCAL_HEAD`, `REMOTE_TEMP_HEAD`, `RCV_HEAD_SHA` and `APPLE_HEAD_SHA`.
+
+Resolving AG is a bounded change: rewrite sections 1â€? and 5 of `check-apple-source-selection.sh`
+against the current model and isolate the fixture's `APPLE_CLIENT_STATE`. That is the first task of
+the next round, and it is local-verifiable â€?it is the only Apple suite that runs identically on
+Windows and macOS, which is how the model mismatch was found at all.
+
