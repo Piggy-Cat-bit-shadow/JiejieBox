@@ -686,11 +686,11 @@ $2
 PY
 }
 
-# run_gate <args...> — runs the gate against the mock.
+# run_gate <args...> 鈥?runs the gate against the mock.
 #
 # RELEASE_EXTRA_PLATFORMS is CLEARED, not merely left alone. This suite's general cases run
 # against a two-product fixture on purpose, and the gate defaults to two products only when
-# that variable is unset — but release.yml sets it at JOB level (`RELEASE_EXTRA_PLATFORMS:
+# that variable is unset 鈥?but release.yml sets it at JOB level (`RELEASE_EXTRA_PLATFORMS:
 # true`), so it is inherited by every step in that job, including the step that runs this
 # file. The two-product cases then drove a four-product gate, `plan` demanded
 # windows-core-amd64.yml and android-core-arm64.yml from a fixture that models neither, and
@@ -1431,7 +1431,7 @@ expect_fail "an unresolvable workflow id -> FAIL" "cannot resolve workflow" -- \
   plan --repo o/r --sha "$SHA" --out "$work/plan-gone.tsv" --interval 1 --timeout 5
 
 # ---------------------------------------------------------------------------
-# Case 13: the FULL public asset contract - four products and the desktop installer
+# Case 13: the FULL public asset contract - five products and the desktop installer
 # ---------------------------------------------------------------------------
 #
 # Everything above runs the lightweight two-product fixture, which keeps the general cases
@@ -1447,7 +1447,7 @@ expect_fail "an unresolvable workflow id -> FAIL" "cannot resolve workflow" -- \
 # deliverable set before a release is, rather than the two-product subset this suite uses
 # everywhere else.
 
-# The four products release.yml enables, with the fields target_field declares for them.
+# The four BINARY products release.yml enables, with the fields target_field declares for them.
 # Kept as data so a product cannot be added to the gate's table and forgotten here: the
 # manifest assertions below are derived from this list.
 #
@@ -1458,6 +1458,14 @@ expect_fail "an unresolvable workflow id -> FAIL" "cannot resolve workflow" -- \
 # mock silently resolved to the pre-existing two-product fixture directory instead, so the
 # download copied a whole artifact tree and the failure surfaced much later as a tar
 # allowlist violation.
+#
+# APPLE IS NOT A ROW HERE, and that is deliberate rather than an omission. It is a release target
+# but not a member of this list, because every field in a row describes a binary-with-sidecar
+# product: `make_artifact` writes a 4 KiB file of the platform's magic plus a `.sha256` beside it,
+# and Apple has neither. Forcing it into the row shape would mean teaching `make_artifact` to fake
+# an xcframework, and then the fixture would prove Apple works by testing a thing that is not
+# Apple. Its fixture is built separately below, by the PRODUCER'S OWN packer, so what the release
+# verifies is a genuine manifest and a genuine bundle.
 FULL_PRODUCTS="
 linux|sing-box-linux-amd64|BUILD-INFO-LINUX.txt|linux|amd64|elf-x86-64|jiejie-sing-box-linux-amd64|7001
 macos|sing-box-darwin-arm64|BUILD-INFO-MACOS.txt|darwin|arm64|macho-arm64|jiejie-sing-box-macos-arm64|7002
@@ -1467,6 +1475,7 @@ android|libbox.aar|BUILD-INFO-ANDROID.txt|android|arm64|aar-arm64|jiejie-sing-bo
 FULL_VERSION="0.1.6"
 FULL_TAG="v$FULL_VERSION"
 FULL_DESKTOP_ID=7005
+FULL_APPLE_ID=7006
 
 # run_gate_full <args...> - the gate as release.yml runs it: every platform enabled.
 run_gate_full() {
@@ -1517,9 +1526,60 @@ make_full_artifacts() {
   mkdir -p "$work/fixtures/android-records"
   printf 'gomobile: v0.1.13\n' > "$work/fixtures/android-records/libbox.provenance"
   printf 'deadbeef  libbox.aar\n' > "$work/fixtures/android-records/SHA256SUMS.txt"
+
+  # ---- Apple: packed by the PRODUCER'S OWN PACKER ------------------------------------------
+  #
+  # The bundle and the manifest come from `apple-libbox-artifact.sh pack`, not from a manifest
+  # written out here. That matters because the release's Apple check DELEGATES to that same
+  # script's `validate`: a hand-written manifest would only prove that two hand-written copies of
+  # a schema agree with each other, which is exactly the duplicated-owner failure this work exists
+  # to remove. What the fixture fakes is the SOURCE - two slice directories - and what it must not
+  # fake is the artifact's shape.
+  #
+  # `parent_sha` is rewritten to the fixture SHA afterwards, and it is the ONE field that is. The
+  # alternative - staging a throwaway Git repository whose HEAD is the fixture SHA - would need a
+  # commit whose hash is chosen in advance, which git does not offer. Rewriting the recorded commit
+  # is honest here for a specific reason: the release check compares that field against the SHA the
+  # plan selected, so what the case proves is that the comparison HAPPENS and that a mismatch is
+  # refused. `artifact_sha256`, `jj_version` and `slices` - the fields whose correctness depends on
+  # the artifact's real contents - are produced by the packer and left untouched, so the digest and
+  # the slice comparison are genuinely exercised.
+  rm -rf "$work/fixtures/apple" "$work/apple-slices"
+  mkdir -p "$work/fixtures/apple" \
+           "$work/apple-slices/Libbox.xcframework/ios-arm64" \
+           "$work/apple-slices/Libbox.xcframework/macos-arm64_x86_64"
+  # A file in each slice: tar round-trips empty directories differently across platforms, and the
+  # slice LISTING would still match while the bundle carried nothing.
+  printf 'ios\n' > "$work/apple-slices/Libbox.xcframework/ios-arm64/Info.plist"
+  printf 'macos\n' > "$work/apple-slices/Libbox.xcframework/macos-arm64_x86_64/Info.plist"
+  ./scripts/ci/apple-libbox-artifact.sh pack \
+    "$work/apple-slices/Libbox.xcframework" "$work/fixtures/apple" >/dev/null
+  python3 - "$work/fixtures/apple/manifest.json" "$SHA" "$work/fixtures/apple/BUILD-INFO-LIBBOX.txt" <<'PY'
+import json, sys
+manifest, sha, buildinfo = sys.argv[1:4]
+with open(manifest, encoding="utf-8") as handle:
+    doc = json.load(handle)
+doc["parent_sha"] = sha
+with open(manifest, "w", encoding="utf-8") as handle:
+    json.dump(doc, handle, indent=2)
+    handle.write("\n")
+# BUILD-INFO-LIBBOX.txt records the same commit in prose. Kept consistent with the manifest so the
+# two records cannot disagree in the fixture - a disagreement the release does not currently check,
+# and should not start checking through a fixture that invented it.
+lines = []
+with open(buildinfo, encoding="utf-8") as handle:
+    for line in handle:
+        lines.append("parent_sha:            %s\n" % sha if line.startswith("parent_sha:") else line)
+with open(buildinfo, "w", encoding="utf-8") as handle:
+    handle.writelines(lines)
+PY
+
+  # The mock resolves an artifact entry by looking for this directory under fixtures/.
+  rm -rf "$work/fixtures/apple-records"
+  mkdir -p "$work/fixtures/apple-records"
 }
 
-# write_full_scenario - a scenario in which all four products and the desktop have a
+# write_full_scenario - a scenario in which all five products and the desktop have a
 # successful run for this commit.
 #
 # The workflow paths are the gate's own TARGET_WORKFLOWS names: the gate resolves each one
@@ -1529,9 +1589,9 @@ make_full_artifacts() {
 # those two being the same string is what makes the download resolve.
 write_full_scenario() {
   MOCK_STATE="$work/state" MOCK_FIXTURES="$work/fixtures" \
-    python3 - "$SHA" "$FULL_PRODUCTS" "$FULL_DESKTOP_ID" <<'PY'
+    python3 - "$SHA" "$FULL_PRODUCTS" "$FULL_DESKTOP_ID" "$FULL_APPLE_ID" <<'PY'
 import json, os, pathlib, sys
-sha, products, desktop_id = sys.argv[1], sys.argv[2], int(sys.argv[3])
+sha, products, desktop_id, apple_id = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
 state = pathlib.Path(os.environ["MOCK_STATE"])
 state.mkdir(parents=True, exist_ok=True)
 for stale in state.glob("count-*"):
@@ -1612,6 +1672,15 @@ artifacts[str(desktop_id)] = [
     {"dir": "desktop", "name": "jiejiebox-windows-unpacked-audit-input"},
 ]
 
+# Apple: a release target that is NOT a member of PRODUCT_WORKFLOWS, so it is added by hand.
+#
+#   * the workflow FILE is client-apple.yml, which the gate must resolve and find a run for;
+#   * the artifact name is exactly what `target_field client-apple.yml payload_artifact` declares,
+#     so a rename on either side breaks this case rather than passing quietly;
+#   * the artifact DIRECTORY (`dir`) is where make_full_artifacts put the real packed bundle.
+workflows["client-apple.yml"] = wf(8011, "client-apple.yml", [run(apple_id, 31, 8011)])
+artifacts[str(apple_id)] = [{"dir": "apple", "name": "jiejiebox-libbox-" + sha}]
+
 (state / "scenario.json").write_text(json.dumps(
     {"workflows": workflows, "artifacts": artifacts}, indent=1))
 PY
@@ -1655,7 +1724,7 @@ full_expect_fail() {
 }
 
 full_plan="$work/full-plan.tsv"
-full_expect_ok "full contract: plan sees all four products" \
+full_expect_ok "full contract: plan sees all five products" \
   plan --repo o/r --sha "$SHA" --out "$full_plan" --interval 1 --timeout 10
 # What `desktop` actually stages: the installer inside its artifact directory, and the build
 # record in a tree beside it. Derived from the same names the scenario declares, so a rename
@@ -1664,7 +1733,7 @@ DESKTOP_STAGE="$work/full/desktop-dl/jiejiebox-windows-x64-signed-test"
 DESKTOP_RECORDS="$work/full/desktop-dl.records"
 DESKTOP_INSTALLER="$DESKTOP_STAGE/Jiejiebox-v$FULL_VERSION-windows-x64.exe"
 
-full_expect_ok "full contract: download all four products" \
+full_expect_ok "full contract: download all five products" \
   download --repo o/r --plan "$full_plan" --dir "$work/full/assets" \
     --evidence-dir "$work/full/records"
 
@@ -1717,7 +1786,7 @@ else
     "stage=$(find "$work/full/desktop-dl" -type f 2>/dev/null | tr '\n' ' ')"
 fi
 
-full_expect_ok "full contract: verify four products and the installer" \
+full_expect_ok "full contract: verify five products and the installer" \
   verify --dir "$work/full/assets" --sha "$SHA" \
     --desktop-dir "$work/full/desktop-dl" --desktop-records "$DESKTOP_RECORDS" \
     --version "$FULL_VERSION"
@@ -1728,8 +1797,10 @@ full_expect_ok "full contract: flatten -> PASS" \
 full_expect_ok "full contract: check-upload -> PASS" \
   check-upload --out "$work/full/upload" --tag "$FULL_TAG" --version "$FULL_VERSION"
 
-# The published set is exactly the six public deliverables.
+# The published set is exactly the seven public deliverables: five tag-derived tarballs, the
+# desktop installer, the Apple bundle under its own fixed name, and the manifest.
 full_expected="Jiejiebox-v$FULL_VERSION-windows-x64.exe
+Libbox.xcframework.tar.gz
 jiejie-sing-box-linux-amd64-$FULL_TAG.tar.gz
 jiejie-sing-box-macos-arm64-$FULL_TAG.tar.gz
 jiejie-sing-box-windows-amd64-$FULL_TAG.tar.gz
@@ -1738,39 +1809,42 @@ SHA256SUMS"
 
 full_listing="$(find "$work/full/upload" -mindepth 1 -maxdepth 1 -type f -exec basename {} \; | sort)"
 if [ "$full_listing" = "$(printf '%s\n' "$full_expected" | sort)" ]; then
-  report "full contract: the staging directory is exactly the six public files" 0 0
+  report "full contract: the staging directory is exactly the seven public files" 0 0
 else
-  report "full contract: the staging directory is exactly the six public files" 0 1 "got: $full_listing"
+  report "full contract: the staging directory is exactly the seven public files" 0 1 "got: $full_listing"
 fi
 
-if [ "$(find "$work/full/upload" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" = "6" ]; then
-  report "full contract: public file count is 6" 0 0
+if [ "$(find "$work/full/upload" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" = "7" ]; then
+  report "full contract: public file count is 7" 0 0
 else
-  report "full contract: public file count is 6" 0 1 \
+  report "full contract: public file count is 7" 0 1 \
     "got $(find "$work/full/upload" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')"
 fi
 
+# Six listed files plus SHA256SUMS itself. The sixth is the Apple bundle, which is published but
+# NOT repacked, so it appears in the manifest under its own name rather than a tag-derived one.
 full_entries="$(grep -c . "$work/full/upload/SHA256SUMS")"
-if [ "$full_entries" = "5" ]; then
-  report "full contract: SHA256SUMS has exactly 5 entries" 0 0
+if [ "$full_entries" = "6" ]; then
+  report "full contract: SHA256SUMS has exactly 6 entries" 0 0
 else
-  report "full contract: SHA256SUMS has exactly 5 entries" 0 1 "got $full_entries"
+  report "full contract: SHA256SUMS has exactly 6 entries" 0 1 "got $full_entries"
 fi
 
 # The manifest's SHAPE, not just its length. Every line must be a bare filename naming one
-# of the five binaries: no path prefix, no './', and none of the CI records that live in the
-# desktop artifact directory - those are provenance, not downloads.
+# of the six published files: no path prefix, no './', and none of the CI records that live in
+# the desktop artifact directory - those are provenance, not downloads.
 full_named="$(sed -n 's/^[0-9a-f]\{64\}  //p' "$work/full/upload/SHA256SUMS" | sort)"
 full_want_named="$(printf '%s\n' \
   "Jiejiebox-v$FULL_VERSION-windows-x64.exe" \
+  "Libbox.xcframework.tar.gz" \
   "jiejie-sing-box-linux-amd64-$FULL_TAG.tar.gz" \
   "jiejie-sing-box-macos-arm64-$FULL_TAG.tar.gz" \
   "jiejie-sing-box-windows-amd64-$FULL_TAG.tar.gz" \
   "jiejie-sing-box-android-arm64-$FULL_TAG.tar.gz" | sort)"
 if [ "$full_named" = "$full_want_named" ]; then
-  report "full contract: the manifest names exactly the five public binaries" 0 0
+  report "full contract: the manifest names exactly the six public files" 0 0
 else
-  report "full contract: the manifest names exactly the five public binaries" 0 1 "got: $full_named"
+  report "full contract: the manifest names exactly the six public files" 0 1 "got: $full_named"
 fi
 
 full_shape_bad=""
@@ -1790,9 +1864,9 @@ fi
 # And it must verify in the directory it describes - the command the release notes give a
 # downloader.
 if ( cd "$work/full/upload" && sha256sum -c SHA256SUMS >/dev/null 2>&1 ); then
-  report "full contract: sha256sum -c passes over the five binaries" 0 0
+  report "full contract: sha256sum -c passes over the six files" 0 0
 else
-  report "full contract: sha256sum -c passes over the five binaries" 0 1 "manifest does not verify"
+  report "full contract: sha256sum -c passes over the six files" 0 1 "manifest does not verify"
 fi
 
 # --- negative: a missing product must not publish --------------------------

@@ -88,14 +88,23 @@ TARGET_WORKFLOWS=(
   ".github/workflows/client-macos.yml"
 )
 
-# Adds the Windows core and the Android ARM64 libbox. Named `_EXTRA_` for the reason above -
-# they are extra to the DEFAULT TARGET SET, not extra to the product.
+# Adds the Windows core, the Android ARM64 libbox, and the Apple Libbox.
+#
+# Named `_EXTRA_` for the reason above - they are extra to the DEFAULT TARGET SET, not extra to
+# the product.
+#
+# Apple is a release target even though it publishes no tarball of its own, because the release is
+# the distribution point for the Apple core: `jiejiebox-libbox-<sha>` is what TestFlight consumes,
+# and the whole reason it is promoted onto the release page is that a published TestFlight build
+# can then be traced to the exact bytes named in `SHA256SUMS`. Leaving it out would have meant the
+# Apple core had two possible sources and no single authoritative one.
 case "${RELEASE_EXTRA_PLATFORMS:-false}" in
   false) ;;
   true)
     TARGET_WORKFLOWS+=(
       ".github/workflows/windows-core-amd64.yml"
       ".github/workflows/android-core-arm64.yml"
+      ".github/workflows/client-apple.yml"
     )
     ;;
   *) die "RELEASE_EXTRA_PLATFORMS must be exactly true or false" ;;
@@ -153,6 +162,26 @@ target_field() {
     .github/workflows/android-core-arm64.yml:arch)      echo "arm64" ;;
     .github/workflows/android-core-arm64.yml:tarball)   echo "jiejie-sing-box-android-arm64" ;;
 
+    # Apple is the one target whose verification is not "a binary plus a sidecar checksum", and the
+    # `kind` field is what says so. It publishes `Libbox.xcframework` - a directory - and its
+    # identity lives in a manifest the producer writes, not in a `.sha256` file beside a binary.
+    # Generic code branches on `kind` rather than on the workflow name, so a second manifest-based
+    # target would need no new special case.
+    .github/workflows/client-apple.yml:kind)            echo "xcframework-manifest" ;;
+    # `binary` names the DIRECTORY this target's payload artifact contains, and stays the key that
+    # `download` names the staging directory after - the same "named for what it must contain" rule
+    # the other four follow. It is not a file, and nothing looks for it as one.
+    .github/workflows/client-apple.yml:binary)          echo "Libbox.xcframework" ;;
+    # The manifest IS the build info: it carries parent_sha, jj_version, artifact_sha256 and slices,
+    # and `verify` reads it through the producer's own validator rather than re-implementing it.
+    .github/workflows/client-apple.yml:buildinfo)       echo "manifest.json" ;;
+    .github/workflows/client-apple.yml:magic)           echo "zip" ;;
+    .github/workflows/client-apple.yml:platform)        echo "apple" ;;
+    .github/workflows/client-apple.yml:arch)            echo "arm64" ;;
+    # NO tarball: the artifact already IS a tarball, repacking it would rebuild bytes the manifest
+    # has already hashed, and the manifest's digest is what a consumer checks. `flatten` copies it.
+    .github/workflows/client-apple.yml:tarball)         echo "" ;;
+
     # The exact name of the Actions artifact that carries this product's PUBLIC PAYLOAD.
     #
     # This is the field that turns artifact selection from a search into an identity. Before it,
@@ -169,6 +198,7 @@ target_field() {
     .github/workflows/client-macos.yml:payload_artifact)          echo "macos-arm64-$3" ;;
     .github/workflows/windows-core-amd64.yml:payload_artifact)    echo "windows-core-amd64-$3" ;;
     .github/workflows/android-core-arm64.yml:payload_artifact)    echo "android-core-arm64-$3" ;;
+    .github/workflows/client-apple.yml:payload_artifact)          echo "jiejiebox-libbox-$3" ;;
 
     # The evidence artifact, where a producer separates it from the payload. Empty when the
     # producer uploads one artifact, which is every target except Android today. `download`
@@ -178,6 +208,7 @@ target_field() {
     .github/workflows/client-macos.yml:evidence_artifact)         echo "" ;;
     .github/workflows/windows-core-amd64.yml:evidence_artifact)   echo "" ;;
     .github/workflows/android-core-arm64.yml:evidence_artifact)   echo "android-core-arm64-records-$3" ;;
+    .github/workflows/client-apple.yml:evidence_artifact)         echo "" ;;
 
     *) die "the release contract has no '$field' for workflow '$wf'" ;;
   esac
@@ -1069,6 +1100,61 @@ verify_platform() {
   note "    verified: binary, checksum, build info, platform magic, commit $sha"
 }
 
+# verify_apple <dir> <sha> <workflow file> <version>
+#
+# The Apple target is verified by the PRODUCER'S OWN validator, invoked as a subprocess, rather than
+# by a second implementation of the same checks living here.
+#
+# That is a deliberate choice about ownership. `apple-libbox-artifact.sh validate` already owns the
+# question "is this Libbox bundle internally consistent and attributable": it owns the manifest
+# schema, the identity fields, the digest, and the slice check. A release-side copy of those rules
+# would be a second owner of one fact, and the two would drift - which is the failure this whole
+# body of work exists to remove. The release contributes the two things only it knows: the commit
+# being released, and the release version from the tag.
+#
+# What this function adds on top is the FILE SET: the artifact directory must hold exactly the
+# bundle, its manifest and its checksum list, and nothing else.
+verify_apple() {
+  local dir="$1" sha="$2" wf="$3" version="$4"
+  local kind
+  kind="$(target_field "$wf" kind)"
+  [ "$kind" = "xcframework-manifest" ] || die "verify_apple called for a '$kind' target; this is a wiring bug"
+  [ -n "$version" ] || die \
+    "verify: the Apple target needs the release version. It is read from the tag, because the
+      artifact's own 'version' field is JJ_ARTIFACT_VERSION and is not the release version."
+
+  note "--- apple/arm64 ($wf)"
+
+  local tarball
+  tarball="$(find "$dir" -maxdepth 1 -type f -name 'Libbox.xcframework.tar.gz' -print -quit)"
+  [ -n "$tarball" ] || die "$dir holds no Libbox.xcframework.tar.gz"
+  [ "$(count_files "$dir" -maxdepth 1 -type f -name 'Libbox.xcframework.tar.gz')" -eq 1 ] || die \
+    "$dir holds more than one Libbox.xcframework.tar.gz. Exactly one bundle may be published."
+
+  # The file set is pinned. `manifest.json` and the checksum list are the bundle's own records and
+  # must travel with it; anything else means the producer uploaded something the release has not
+  # been told about.
+  local expected actual
+  expected="$(printf '%s\n%s\n%s\n' Libbox.xcframework.tar.gz SHA256SUMS-LIBBOX.txt manifest.json | sort)"
+  actual="$(find "$dir" -maxdepth 1 -type f -exec basename {} \; | sort)"
+  [ "$actual" = "$expected" ] || die \
+    "the Apple artifact holds an unexpected file set.
+      expected:
+$(printf '        %s\n' $expected)
+      actual:
+$(printf '        %s\n' $actual)"
+
+  # Delegated, with the release's two facts passed in. Fail-closed: a non-zero exit is a refusal,
+  # and the validator's own message is surfaced unchanged so the cause is not paraphrased.
+  if ! ./scripts/ci/apple-libbox-artifact.sh validate "$dir" \
+        --parent-sha "$sha" --jj-version "$version"; then
+    die "the Apple Libbox artifact failed the producer's own validation (see above).
+      The release is refusing to publish it. Do not weaken this check to make a release pass;
+      re-run the Apple producer for $sha."
+  fi
+  note "    Libbox.xcframework  $(wc -c < "$tarball" | tr -d ' ') bytes  verified by the producer's validator"
+}
+
 # verify_desktop <staged dir> <sha> <version>
 #
 # The desktop installer is verified from the workflow's own build record, not from its
@@ -1156,13 +1242,25 @@ cmd_verify() {
   # from the name `download` staged. Walking all of $dir instead would make the check depend on
   # nothing else having been written there - which is how a payload/evidence split turns into a
   # false "unexpected file" failure the moment a producer's evidence lands one level up.
-  local wf binary artifact
+  #
+  # The BRANCH is on `kind`, not on the workflow name. A target whose identity lives in a manifest
+  # rather than in a sidecar checksum beside a binary is a different shape, and saying so in the
+  # target table means a second such target needs no new code here.
+  local wf binary artifact kind
   for wf in "${TARGET_WORKFLOWS[@]}"; do
     binary="$(target_field "$wf" binary)"
     artifact="$(payload_artifact "$wf" "$sha")"
     [ -d "$dir/$binary/$artifact" ] || die \
       "verify: $wf declares payload artifact '$artifact', but $dir/$binary/$artifact does not exist."
-    verify_platform "$dir/$binary/$artifact" "$sha" "$wf"
+    kind="$(target_field "$wf" kind)"
+    case "$kind" in
+      xcframework-manifest)
+        [ -n "$version" ] || die \
+          "verify: $wf is a manifest-based target and needs --version, which comes from the release tag."
+        verify_apple "$dir/$binary/$artifact" "$sha" "$wf" "$version" ;;
+      *)
+        verify_platform "$dir/$binary/$artifact" "$sha" "$wf" ;;
+    esac
   done
 
   # The desktop installer is part of the public contract, so it is verified too - and
@@ -1186,12 +1284,20 @@ cmd_verify() {
   # Scanned per PRODUCT DIRECTORY rather than over all of $dir. $dir also holds the producer's
   # separated evidence when a target declares one, and evidence is not payload: it is read for
   # provenance and must not be publishable, so requiring it to be on this allowlist would be the
-  # wrong fix - it would license publishing a build record. The payload directories are read from
-  # the same `payload_artifact` field the download and the verification used, so the three cannot
-  # disagree about which files are the product.
+  # wrong fix - it would license publishing a build record.
+  #
+  # A manifest-based target contributes its OWN file names rather than a binary/sidecar/buildinfo
+  # triple, because it has no binary and no sidecar. `verify_apple` has already proved that set is
+  # exactly right; this keeps the derived allowlist honest for the same reason the other four are.
   local allowed=() wf f unexpected=""
+  local binary kind
   allowed+=( LICENSE )
   for wf in "${TARGET_WORKFLOWS[@]}"; do
+    kind="$(target_field "$wf" kind)"
+    if [ "$kind" = "xcframework-manifest" ]; then
+      allowed+=( Libbox.xcframework.tar.gz SHA256SUMS-LIBBOX.txt manifest.json )
+      continue
+    fi
     allowed+=( "$(target_field "$wf" binary)" "$(target_field "$wf" binary).sha256" "$(target_field "$wf" buildinfo)" )
   done
   for wf in "${TARGET_WORKFLOWS[@]}"; do
@@ -1265,11 +1371,12 @@ cmd_flatten() {
   rm -rf "$out"
   mkdir -p "$out"
 
-  local wf binary buildinfo prefix src expected actual artifact
+  local wf binary buildinfo prefix src expected actual artifact kind
   for wf in "${TARGET_WORKFLOWS[@]}"; do
     binary="$(target_field "$wf" binary)"
     buildinfo="$(target_field "$wf" buildinfo)"
     prefix="$(target_field "$wf" tarball)"
+    kind="$(target_field "$wf" kind)"
     # The payload directory is derived from the plan's exact artifact name, not from a search for
     # the binary. `find -name <binary>` would also match a copy of the same file anywhere under
     # $dir - including inside a producer's EVIDENCE artifact, if one were ever written into the
@@ -1285,6 +1392,20 @@ cmd_flatten() {
     # The archive contents are pinned to an allowlist, so what a downloader gets
     # is a known, small set that has been verified - not "whatever was in the
     # artifact directory".
+    #
+    # A manifest-based target is COPIED, not repacked. Its bundle is already an archive whose
+    # digest the manifest records and `verify` has already checked; unwrapping and rewrapping it
+    # would produce different bytes under the same name, so the file the release page offers would
+    # no longer be the file whose hash was verified - and `SHA256SUMS` would then describe an
+    # artifact nobody validated. The bytes are promoted exactly as proved.
+    if [ "$kind" = "xcframework-manifest" ]; then
+      local apple_bundle="$src/Libbox.xcframework.tar.gz"
+      [ -f "$apple_bundle" ] || die "flatten: no Libbox.xcframework.tar.gz in $src"
+      cp "$apple_bundle" "$out/Libbox.xcframework.tar.gz"
+      note "promoted Libbox.xcframework.tar.gz (byte-identical to the verified artifact)"
+      continue
+    fi
+
     expected="$(printf '%s\n%s\n%s\n%s\n' "$binary" "$binary.sha256" "$buildinfo" LICENSE | sort)"
     actual="$(find "$src" -maxdepth 1 -type f -exec basename {} \; | sort)"
     [ "$actual" = "$expected" ] || die \
@@ -1315,8 +1436,17 @@ $(printf '      %s\n' $actual)"
   #
   # The expected set is derived from TARGET_WORKFLOWS plus the installer, so a product
   # cannot be added to one and forgotten in the other.
-  local expected_assets=() wf2
+  #
+  # Apple contributes a fixed file name rather than `<prefix>-<tag>.tar.gz`: it has no `prefix`,
+  # because there is no repacked tarball to name. Deriving the name from the target table keeps the
+  # "one product, one entry" property without pretending Apple has a prefix it does not have.
+  local expected_assets=() wf2 kind2
   for wf2 in "${TARGET_WORKFLOWS[@]}"; do
+    kind2="$(target_field "$wf2" kind)"
+    if [ "$kind2" = "xcframework-manifest" ]; then
+      expected_assets+=( Libbox.xcframework.tar.gz )
+      continue
+    fi
     expected_assets+=( "$(target_field "$wf2" tarball)-${tag}.tar.gz" )
   done
   expected_assets+=( "$installer" )
@@ -1377,10 +1507,16 @@ $(printf '      %s\n' $listing)"
   check_sha256_file "$out" SHA256SUMS >/dev/null ||
     die "SHA256SUMS does not verify against the files it names"
 
+  # One archive per target, where an archive is what a target produces. A manifest-based target
+  # publishes a `.tar.gz` too, so the count is still one per target - but it is stated in terms of
+  # the target table rather than assumed to come from `flatten`'s own `tar` invocation, because
+  # Apple's arrives by `cp` and a fall in this number would otherwise look like a packaging bug
+  # rather than a missing product.
   local archives
   archives="$(count_files "$out" -maxdepth 1 -type f -name '*.tar.gz')"
   [ "$archives" -eq "${#TARGET_WORKFLOWS[@]}" ] || die \
-    "flatten produced $archives tarball(s), expected ${#TARGET_WORKFLOWS[@]}"
+    "flatten produced $archives tarball(s), expected ${#TARGET_WORKFLOWS[@]} - one per release target.
+      Apple's bundle arrives by copy rather than by tar, and still counts."
 
   note "release assets:"
   ( cd "$out" && ls -la . && cat SHA256SUMS )
@@ -1445,6 +1581,13 @@ cmd_check_upload() {
 
   local expected=() wf
   for wf in "${TARGET_WORKFLOWS[@]}"; do
+    # A manifest-based target names its asset directly, because it publishes a bundle whose bytes
+    # are already the ones that were verified. See `flatten` for why it is promoted rather than
+    # repacked.
+    if [ "$(target_field "$wf" kind)" = "xcframework-manifest" ]; then
+      expected+=( Libbox.xcframework.tar.gz )
+      continue
+    fi
     expected+=( "$(target_field "$wf" tarball)-${tag}.tar.gz" )
   done
   expected+=( "Jiejiebox-v${version}-windows-x64.exe" SHA256SUMS )
