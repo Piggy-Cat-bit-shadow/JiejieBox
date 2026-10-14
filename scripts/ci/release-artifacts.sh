@@ -1731,14 +1731,16 @@ cmd_publish_args() {
   [ -n "$tag" ] || die "publish-args: --tag is required"
   [ -n "$version" ] || die "publish-args: --version is required"
 
-  local missing=()
+  # VALIDATE EVERYTHING, THEN PRINT. Nothing is written until the whole set is known to be
+  # present. Printing as it went would emit a partial list before failing, and a caller that forgot
+  # to check the exit status - or a `$(...)` inside a command that continues - would hand gh a short
+  # list, which is the v0.1.8 failure rebuilt inside its own fix. All-or-nothing is the property
+  # that makes this safe to consume.
+  local names=() missing=() name
   while IFS= read -r name; do
     [ -n "$name" ] || continue
-    if [ -f "$dir/$name" ]; then
-      printf '%s\n' "$dir/$name"
-    else
-      missing+=( "$name" )
-    fi
+    names+=( "$name" )
+    [ -f "$dir/$name" ] || missing+=( "$name" )
   done < <(public_asset_names "$tag" "$version")
 
   [ "${#missing[@]}" -eq 0 ] || die \
@@ -1746,6 +1748,11 @@ cmd_publish_args() {
 $(printf '      %s\n' "${missing[@]}")
       Refusing to hand gh a list it cannot upload. A release created from this directory would be
       missing exactly these files, which is how v0.1.8 was published without its Apple bundle."
+
+  local asset
+  for asset in "${names[@]}"; do
+    printf '%s\n' "$dir/$asset"
+  done
 }
 
 # verify-public-release --repo <owner/name> --tag <tag> --version <version>
