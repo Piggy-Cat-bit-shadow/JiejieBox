@@ -63,6 +63,9 @@ on:
       - "scripts/ci/verify-release-acceptance.sh"
       - "scripts/ci/verify-release-acceptance-test.sh"
       - "scripts/ci/verify-desktop-daemon-provenance.py"
+      - "scripts/ci/test-apple-canonical-source.sh"
+      - "scripts/ci/apple-libbox-artifact.sh"
+      - "scripts/publish-apple-beta.sh"
       - "scripts/ci/version.sh"
       - "release/JIEJIE_VERSION"
   pull_request:
@@ -112,6 +115,33 @@ jobs:
           cat verify-logs/release-gate.log
           echo "release-gate exit status: $rc"
           echo "$rc" > verify-logs/release-gate.exit
+          exit "$rc"
+
+      - name: canonical Libbox source selection (PRESENT_INVALID cannot fall back)
+        # The rule this proves is the one the whole Apple supply chain rests on:
+        #
+        #   canonical Release asset PRESENT, any validation failure  ->  HARD FAIL, never fall back
+        #   canonical Release asset ABSENT                           ->  auto MAY fall back
+        #
+        # It is a NEGATIVE proof, so a non-zero exit would prove nothing: that also happens when the
+        # code falls back to Actions and Actions fails for its own reason. The suite installs a mock
+        # `gh` in which every Actions command is a sentinel that records the call, and each
+        # PRESENT+INVALID case asserts the sentinel file does NOT exist - plus an ABSENT control that
+        # requires it to, so the negatives cannot pass vacuously.
+        #
+        # Owned here rather than in client-apple.yml because it tests the RELEASE's consumption of
+        # the canonical asset, and this is the release-tooling owner. client-apple.yml is
+        # manual-only and produces no run on a push, so a suite living there would never execute.
+        run: |
+          set -uo pipefail
+          mkdir -p verify-logs
+          set +e
+          ./scripts/ci/test-apple-canonical-source.sh > verify-logs/canonical-source.log 2>&1
+          rc=$?
+          set -e
+          cat verify-logs/canonical-source.log
+          echo "canonical-source exit status: $rc"
+          echo "$rc" > verify-logs/canonical-source.exit
           exit "$rc"
 
       # A failing suite must say WHY in a place that can be read without credentials. The

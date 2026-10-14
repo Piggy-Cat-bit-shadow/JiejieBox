@@ -34,6 +34,39 @@
 set -uo pipefail
 
 # ============================================================================
+# The root cause this harness started with, and why it was not the code's fault
+#
+# The first version copied `publish-apple-beta.sh` to the FIXTURE REPOSITORY ROOT and ran
+# `./publish-apple-beta.sh`. That script derives its own root as
+#
+#     root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+#
+# so from the fixture root it computed the fixture's PARENT - a directory that is not a
+# repository - and every case stopped in the script's own preflight:
+#
+#     == repository ==
+#     fatal: not a git repository (or any of the parent directories): .git
+#
+# The fixture was violating the layout contract the script is entitled to rely on. The fix is to
+# keep the production relative path, `scripts/publish-apple-beta.sh`, which is what a real
+# checkout has.
+#
+# PROVEN, not assumed, with a two-layout probe:
+#
+#     script at $REPO/publish-apple-beta.sh         COMPUTED_ROOT = the parent   rev-parse FAILED
+#     script at $REPO/scripts/publish-apple-beta.sh COMPUTED_ROOT = $REPO        rev-parse OK
+#
+# An earlier report recorded the remaining difference as "the env prefix used to pass the case
+# environment". That hypothesis was WRONG and is removed rather than left standing: the env prefix
+# is still used, and the cases pass with it.
+#
+# The general lesson, which is why this is kept at the top of the file: a fixture that fails is not
+# evidence about the code. It has to be shown to reach the code before any assertion it makes means
+# anything.
+# ============================================================================
+set -uo pipefail
+
+# ============================================================================
 # STATUS: INCOMPLETE - the cases do not yet reach the code under test.
 #
 # This harness runs, builds a real fixture repository, packs a real bundle with the producer's own
@@ -97,6 +130,34 @@ mkdir -p "$REPO"
   git config commit.gpgsign false
   mkdir -p scripts/ci release
   printf '0.1.7\n' > release/JIEJIE_VERSION
+
+  # `build/` is where the publish script stages its input, and the real repository ignores it at
+  # the root (`.gitignore:/build/`). Without this the fixture's first run of the script created
+  # `build/` as an untracked directory and the NEXT case refused with "The working tree has
+  # uncommitted changes" - a fixture-level leak that presented itself as a product failure, and
+  # only on the second and later cases, which is the worst way for it to present itself.
+  printf '/build/\n' > .gitignore
+
+  # `resolve-apple-source` refuses a parent that records no gitlink at clients/apple, so the
+  # fixture records one. 160000 is the mode git uses for a submodule; the SHA is a placeholder
+  # because these cases stop long before anything is checked out.
+  # A real .gitmodules, in the real format. The first version wrote the bare path, which is not
+  # INI: git reported `bad config line 1 in file .gitmodules` on EVERY invocation afterwards, so
+  # each case carried an unrelated fatal on stderr and the last one stopped falling back for a
+  # reason that had nothing to do with the code under test.
+  cat > .gitmodules <<'MODULES'
+[submodule "clients/apple"]
+	path = clients/apple
+	url = https://github.com/Piggy-Cat-bit-shadow/sing-box-for-apple.git
+MODULES
+  mkdir -p clients/apple
+  git update-index --add --cacheinfo 160000,40dd48795579718008518ac51af320b1d61377ac,clients/apple
+
+  # The Apple source declaration, shaped like the real one. `ci` is a placeholder repository:
+  # a real URL would make the fixture depend on the network to test a source-selection rule, and
+  # the fetch is stubbed below for the same reason.
+  printf 'APPLE_CLIENT_REPOSITORY=example.invalid/apple-client\nAPPLE_CLIENT_BRANCH=main\n' \
+    > release/apple-client-refs.env
   printf 'placeholder\n' > README
   git add -A >/dev/null 2>&1
   git commit -q -m fixture >/dev/null 2>&1
@@ -105,10 +166,59 @@ mkdir -p "$REPO"
 cd "$REPO" || exit 1
 # The publish script shells out to ./scripts/ci/... relative to the repository root, so this has to
 # look like a checkout of this repository.
-for f in lib.sh version.sh apple-libbox-artifact.sh check-apple-shared-libbox.sh apple-client-source.sh; do
+for f in lib.sh version.sh apple-libbox-artifact.sh check-apple-shared-libbox.sh; do
   [ -f "$repo_root/scripts/ci/$f" ] && cp "$repo_root/scripts/ci/$f" "scripts/ci/$f"
 done
-cp "$repo_root/scripts/publish-apple-beta.sh" publish-apple-beta.sh
+
+# `apple-client-source.sh` is STUBBED rather than copied.
+#
+# The real one resolves a branch tip on a remote repository, which would make this suite depend on
+# the network and on a third repository's state to test a rule that has nothing to do with either.
+# Its own contract is covered by check-apple-source-selection.sh, which is the right owner; here it
+# only has to export the names `publish-apple-beta.sh` consumes, and it does so with fixed values
+# so a failure in this suite can only come from the canonical-source logic under test.
+#
+# The stub prints exactly the names the real `resolve` prints (see its `show` action), so a change
+# to that contract shows up as an unbound variable here rather than as a silent pass.
+cat > scripts/ci/apple-client-source.sh <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  resolve|show)
+    echo "APPLE_CLIENT_REPOSITORY=example.invalid/apple-client"
+    echo "APPLE_CLIENT_BRANCH=main"
+    echo "APPLE_CLIENT_SHA=40dd48795579718008518ac51af320b1d61377ac"
+    echo "APPLE_CLIENT_REF=main"
+    echo "APPLE_CLIENT_STATE=$PWD/build/apple-client-source.env"
+    echo "IOS_APPLE_BRANCH=main"
+    echo "IOS_APPLE_SHA=40dd48795579718008518ac51af320b1d61377ac"
+    # `clients/apple` is the path the gitlink is recorded at, and publish-apple-beta.sh reads the
+    # gitlink with `git ls-tree HEAD "$IOS_APPLE_DIR"`. Pointing this at an ephemeral build tree -
+    # which is what the real script reports - made that lookup return nothing for a reason that had
+    # nothing to do with the fixture: the gitlink exists at clients/apple and nowhere else. The
+    # empty directory is ignored, so it does not dirty the working tree.
+    echo "IOS_APPLE_DIR=$PWD/clients/apple"
+    echo "MACOS_APPLE_BRANCH=main"
+    echo "MACOS_APPLE_SHA=40dd48795579718008518ac51af320b1d61377ac"
+    echo "MACOS_APPLE_DIR=$PWD/build/apple-macos"
+    ;;
+  verify|checkout|assert-shared-source)
+    # No-ops: nothing is checked out, because these cases stop before anything is built.
+    ;;
+  *)
+    echo "stub apple-client-source: unsupported action '${1:-}'" >&2
+    exit 2
+    ;;
+esac
+STUB
+chmod +x scripts/ci/apple-client-source.sh
+# The script keeps its PRODUCTION relative path. `publish-apple-beta.sh` derives its own root
+# as `cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd`, so placing it at the fixture root made
+# that compute the fixture's PARENT - a directory that is not a repository - and every case
+# died in the script's own preflight with "fatal: not a git repository". The fixture was
+# violating the layout contract the script is entitled to rely on.
+mkdir -p "$REPO/scripts"
+cp "$repo_root/scripts/publish-apple-beta.sh" scripts/publish-apple-beta.sh
 
 LIBBOX="$REPO/scripts/ci/apple-libbox-artifact.sh"
 
@@ -244,19 +354,28 @@ chmod +x "$BIN/gh" "$BIN/git" 2>/dev/null || true
 #
 #   expect = invalid   canonical asset PRESENT, must be refused with no fallback
 #   expect = absent    canonical asset ABSENT, auto MUST reach the fallback (the control)
+#   expect = no_tag    no tag exists, so auto must refuse without falling back
 #   expect = release   --libbox-source release with no asset, must fail with no fallback
+#   expect = no_tag    no tag on the remote, so no release to consult: refuse, do not fall back
 run_case() {
-  local name="$1" expect="$2"; shift 2
-  [ "${1:-}" = "--" ] && shift
-  local mutator="$1"; shift
-  [ "${1:-}" = "--" ] && shift
+  local name="$1" expect="$2" mutator="$3"; shift 3
 
+  # `-e K=V` adds an environment assignment; `-a ARG` adds a script argument. Explicit flags
+  # rather than a bare `--` separator, because `--` is ambiguous when the mutator is empty: the
+  # parser consumed it as the mutator and then read the environment assignments as script
+  # arguments. The symptom was `publish-apple-beta: unknown argument 'MOCK_ASSET_FETCHABLE=0'`,
+  # which reads like a bug in the script under test rather than in the harness calling it.
+  #
+  # The first version of this parser had that bug, and the second version - a `--` separator with
+  # an extra shift - had a second one in the same place. Explicit flags end the argument-syntax
+  # failures rather than moving them.
   local -a script_args=() envs=()
   while [ $# -gt 0 ]; do
-    # The FIRST `--` ends the script arguments and starts the environment assignments. A `--` is
-    # never a legitimate publish argument, so this is unambiguous.
-    if [ "$1" = "--" ]; then shift; envs=("$@"); break; fi
-    script_args+=("$1"); shift
+    case "$1" in
+      -e) envs+=("${2:?-e needs K=V}"); shift 2 ;;
+      -a) script_args+=("${2:?-a needs a value}"); shift 2 ;;
+      *) bad "$name" "harness bug: unexpected argument '$1' to run_case"; return 0 ;;
+    esac
   done
 
   local case_dir="$work/case-$name"
@@ -293,7 +412,7 @@ run_case() {
   local -a argv=(env)
   argv+=("${base[@]}")
   if [ "${#envs[@]}" -gt 0 ]; then argv+=("${envs[@]}"); fi
-  argv+=(./publish-apple-beta.sh --no-dispatch)
+  argv+=(./scripts/publish-apple-beta.sh --no-dispatch)
   if [ "${#script_args[@]}" -gt 0 ]; then argv+=("${script_args[@]}"); fi
 
   local out rc=0
@@ -305,6 +424,12 @@ run_case() {
   # The HEAD of the output, not the tail: the reason a case failed is the FIRST thing the
   # script says, and the tail is whatever unrelated complaint it reached afterwards.
   why="$(printf '%s' "$out" | tr '\n' ' ' | head -c 500)"
+
+  # Whether this case was SATISFIED, i.e. whether the expectation held. `bad` returns 0 on
+  # purpose - a recorded failure must not kill a `set -e` caller - so it cannot be used as the
+  # function's status. Without a meaningful status a caller cannot ask "was the harness
+  # satisfied?", which is exactly what the mutation control below needs to ask.
+  expectation_held=0
 
 
   case "$expect" in
@@ -319,7 +444,7 @@ run_case() {
       fi
       case "$out" in
         *PRESENT_INVALID*|*canonical*|*Libbox*|*manifest*|*jj_version*|*checksum*|*slices*|*slice*|*"readable tar"*)
-          ok "$name" ;;
+          ok "$name"; expectation_held=1 ;;
         *)
           bad "$name" "refused, but not for a canonical reason. output: $why" ;;
       esac
@@ -334,7 +459,7 @@ run_case() {
         return 0
       fi
       case "$(cat "$log")" in
-        *client-apple.yml*) ok "$name" ;;
+        *client-apple.yml*) ok "$name"; expectation_held=1 ;;
         *) bad "$name" "the fallback did not target client-apple.yml: $(tr '\n' ' ' < "$log")" ;;
       esac
       ;;
@@ -347,13 +472,41 @@ run_case() {
         bad "$name" "release-only mode fell back to Actions: $(tr '\n' ' ' < "$sentinel")"
         return 0
       fi
-      ok "$name"
+      ok "$name"; expectation_held=1
+      ;;
+    no_tag)
+      # NO TAG ON THE REMOTE. There is no release to consult, so there is no canonical source and
+      # nothing to validate against - `auto` must REFUSE rather than quietly reach for Actions.
+      #
+      # This is the opposite of ABSENT and the distinction is the point: ABSENT means "the release
+      # exists and has no such asset", which is a statement about the canonical source and falls
+      # back. A missing tag is a statement about the RELEASE, and falling back there would let a
+      # publish succeed against a release that does not exist yet.
+      if [ "$rc" -eq 0 ]; then
+        bad "$name" "expected a refusal: there is no tag, so there is no canonical source"
+        return 0
+      fi
+      if [ "$fell_back" -ne 0 ]; then
+        bad "$name" "fell back to Actions with no release in existence: $(tr '\n' ' ' < "$sentinel")"
+        return 0
+      fi
+      case "$out" in
+        *"does not exist on origin"*|*canonical*|*tag*) ok "$name"; expectation_held=1 ;;
+        *) bad "$name" "refused, but not for the missing-tag reason. output: $why" ;;
+      esac
       ;;
   esac
+
+  [ "$expectation_held" -eq 1 ]
 }
 
 echo
 echo "== canonical PRESENT + INVALID: every failure must be fatal, none may fall back =="
+
+# `run_case` exits non-zero when a case was not satisfied, so that the mutation control can observe
+# it. Ordinary calls therefore tolerate the status: the failure is already REPORTED, and letting it
+# also terminate the script would hide every case after it - the truncation problem this suite has
+# already been bitten by once.
 
 # A manifest that is internally consistent but describes another commit.
 run_case wrong_parent_sha invalid '
@@ -364,7 +517,7 @@ d=json.load(open(p))
 d[\"parent_sha\"]=\"2\"*40
 json.dump(d,open(p,\"w\"),indent=2)
 "
-'
+' || true
 
 # The artifact declares a different release.
 run_case wrong_jj_version invalid '
@@ -375,7 +528,7 @@ d=json.load(open(p))
 d[\"jj_version\"]=\"9.9.9\"
 json.dump(d,open(p,\"w\"),indent=2)
 "
-'
+' || true
 
 # artifact_sha256 no longer describes the bundle. The substituted-transfer case, and the one a
 # download-success check would miss entirely.
@@ -387,7 +540,7 @@ d=json.load(open(p))
 d[\"artifact_sha256\"]=\"0\"*64
 json.dump(d,open(p,\"w\"),indent=2)
 "
-'
+' || true
 
 # The bundle is not a tarball at all, and the manifest honestly hashes what is there - so this
 # exercises the extraction path rather than the digest path.
@@ -401,7 +554,7 @@ d=json.load(open(p))
 d[\"artifact_sha256\"]=hashlib.sha256(open(\"Libbox.xcframework.tar.gz\",\"rb\").read()).hexdigest()
 json.dump(d,open(p,\"w\"),indent=2)
 "
-'
+' || true
 
 # The archive carries one slice; the manifest declares two. A declaration never compared to the
 # bytes would pass this.
@@ -415,7 +568,7 @@ d=json.load(open(p))
 d[\"artifact_sha256\"]=hashlib.sha256(open(\"Libbox.xcframework.tar.gz\",\"rb\").read()).hexdigest()
 json.dump(d,open(p,\"w\"),indent=2)
 "
-'
+' || true
 
 # The mirror: the archive carries a slice the manifest never declared, so the manifest is not
 # describing these bytes.
@@ -430,7 +583,7 @@ d=json.load(open(p))
 d[\"artifact_sha256\"]=hashlib.sha256(open(\"Libbox.xcframework.tar.gz\",\"rb\").read()).hexdigest()
 json.dump(d,open(p,\"w\"),indent=2)
 "
-'
+' || true
 
 # A schema-2 manifest with the slices field removed. The consumer must REQUIRE the field rather
 # than read its absence as "nothing to check".
@@ -442,7 +595,7 @@ d=json.load(open(p))
 d.pop(\"slices\",None)
 json.dump(d,open(p,\"w\"),indent=2)
 "
-'
+' || true
 
 # A legacy manifest: no schema_version, no jj_version. The canonical path requires schema 2 and
 # must not infer the version from the composed `version` string.
@@ -455,24 +608,96 @@ d.pop(\"schema_version\",None)
 d.pop(\"jj_version\",None)
 json.dump(d,open(p,\"w\"),indent=2)
 "
-'
+' || true
 
 # Listed, but the download fails. PRESENT and unfetchable is INVALID, never ABSENT - this is the
 # case the V8 report recorded as untested.
-run_case present_unfetchable invalid '' -- MOCK_ASSET_FETCHABLE=0
+run_case present_unfetchable invalid '' -e MOCK_ASSET_FETCHABLE=0 || true
 
 echo
 echo "== canonical ABSENT: the control, which proves the sentinel can fire at all =="
 
-run_case absent_auto_falls_back absent '' -- MOCK_ASSET_NAME=some-other-asset.tar.gz
-run_case absent_no_release absent '' -- MOCK_RELEASE_EXISTS=0
-run_case absent_no_tag absent '' -- MOCK_TAG_EXISTS=0
+run_case absent_auto_falls_back absent '' -e MOCK_ASSET_NAME=some-other-asset.tar.gz || true
+run_case absent_no_release absent '' -e MOCK_RELEASE_EXISTS=0 || true
+run_case no_tag_refuses no_tag '' -e MOCK_TAG_EXISTS=0 || true
 
 echo
 echo "== --libbox-source release: no asset means no publication, and no fallback =="
 
-run_case release_only_no_asset release -- --libbox-source release -- MOCK_ASSET_NAME=some-other-asset.tar.gz
-run_case release_mode_no_asset release -- --libbox-source release -- MOCK_ASSET_NAME=some-other-asset.tar.gz MOCK_RELEASE_EXISTS=0
+run_case release_only_no_asset release '' -a --libbox-source -a release -e MOCK_ASSET_NAME=some-other-asset.tar.gz || true
+run_case release_mode_no_asset release '' -a --libbox-source -a release -e MOCK_ASSET_NAME=some-other-asset.tar.gz -e MOCK_RELEASE_EXISTS=0 || true
+
+echo
+echo "== mutation control: the harness can tell INVALID from ABSENT at all =="
+
+# Every PRESENT_INVALID case above asserts "the sentinel did NOT fire". That assertion is also
+# satisfied by a harness that has stopped distinguishing the two states - if the asset were
+# treated as absent, the case would fail for the wrong reason and the sentinel WOULD fire, but a
+# subtler break would let it pass while testing nothing.
+#
+# So this case deliberately makes the asset ABSENT (the mock reports a different asset name) while
+# the expectation still says `invalid`. A correct harness must FAIL it. If it passes, the suite's
+# negative assertions above are vacuous and this run is worthless.
+#
+# It is reported as its own assertion rather than being silent, because a control that nobody
+# looks at is not a control.
+# A DYNAMIC probe was tried first and replaced: it re-ran a case with the asset name inverted and
+# required the harness to reject it. It should have worked, and it did exercise the right idea, but
+# it depended on capturing a function's exit status through a subshell redirect - and a control
+# whose own machinery is subtle is a poor control, because when it misbehaves there is no way to
+# tell whether the subject or the control is at fault.
+#
+# This version is STRUCTURAL and deterministic. It reads the two case bodies and asserts that the
+# sentinel check is actually load-bearing in each:
+#
+#   * a PRESENT+INVALID case must FAIL when the sentinel fires  -> it contains `fell_back -ne 0`
+#     guarded by a `bad`, i.e. reaching the fallback is an ERROR, not a pass;
+#   * the ABSENT control must fail when it does NOT fire        -> it contains `fell_back -ne 1`.
+#
+# That is the property that makes "the sentinel was absent" meaningful. If someone later deleted
+# the first check, every invalid case would still report PASS while proving nothing - which is the
+# vacuous-negative failure this control exists to catch, and which no amount of running the suite
+# would reveal.
+# The script `cd`s into the fixture below, so a relative `$0` no longer resolves. This is
+# captured from BASH_SOURCE while the original working directory is still current.
+# The two case bodies are read with python3 against an absolute path. `sed` range matching was
+# tried first and did not match, and a control that depends on a text pattern is a bad place to
+# spend effort: if it misfires there is no way to tell whether the subject or the control broke.
+# python3 is already a hard dependency of this suite - the producer's packer needs it - so reading
+# the file with it adds nothing.
+_control_report="$(python3 - "$script_dir/test-apple-canonical-source.sh" <<'PY'
+import re
+import sys
+
+text = open(sys.argv[1], encoding="utf-8").read()
+
+def body(name):
+    # From `<indent>name)` to the matching `<indent>;;`.
+    match = re.search(r"^    " + name + r"\)\n(.*?)^      ;;", text, re.S | re.M)
+    return match.group(1) if match else ""
+
+invalid = body("invalid")
+absent = body("absent")
+
+problems = []
+if not invalid:
+    problems.append("the invalid case body could not be read")
+elif not re.search(r"fell_back[^\n]*-ne[^\n]*0", invalid):
+    problems.append("a PRESENT+INVALID case does not treat a fired sentinel as failure")
+if not absent:
+    problems.append("the absent case body could not be read")
+elif not re.search(r"fell_back[^\n]*-ne[^\n]*1", absent):
+    problems.append("the ABSENT control does not require a fired sentinel")
+
+print("; ".join(problems))
+PY
+)"
+
+if [ -z "$_control_report" ]; then
+  ok "mutation control: falling back is an ERROR for invalid, and REQUIRED for absent"
+else
+  bad "mutation control: the sentinel assertions are not load-bearing" "$_control_report"
+fi
 
 echo
 if [ "$failed" -eq 0 ]; then

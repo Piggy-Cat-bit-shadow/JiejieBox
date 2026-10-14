@@ -239,6 +239,52 @@ def code_only(text):
     return "\n".join(keep)
 
 
+def check_canonical_fixture_is_executed():
+    """The PRESENT_INVALID suite must be RUN by its owner, not merely committed.
+
+    A test that exists but is executed by nothing is worse than no test: an audit sees coverage
+    while nothing is proven, and `bash -n` plus a file-existence check cannot tell the difference.
+    This asserts the executing step is in the workflow that owns release tooling, and that no
+    second workflow runs it.
+
+    The unlisted-tooling check above already catches half of this - a suite named in a workflow but
+    missing from that workflow's `paths` filter would not run on a change to itself. This catches
+    the other half: a suite nobody invokes at all.
+    """
+    problems = []
+    owner = "release-contract-verify.yml"
+    owner_path = os.path.join(REPO, ".github", "workflows", owner)
+    with open(owner_path, encoding="utf-8") as handle:
+        text = handle.read()
+    if "./scripts/ci/test-apple-canonical-source.sh" not in text:
+        problems.append(
+            owner + " does not execute the canonical-source suite. A fixture nothing runs is not "
+            "evidence, and the PRESENT_INVALID rule would be unproven."
+        )
+    others = []
+    workflows_dir = os.path.join(REPO, ".github", "workflows")
+    for name in sorted(os.listdir(workflows_dir)):
+        if not name.endswith(".yml") or name == owner:
+            continue
+        with open(os.path.join(workflows_dir, name), encoding="utf-8") as handle:
+            if "test-apple-canonical-source.sh" in handle.read():
+                others.append(name)
+    if others:
+        problems.append(
+            "the canonical-source suite is executed by more than one workflow: " + ", ".join(others)
+        )
+    # `report(name, ok, detail)`. The first version passed a description as `ok`, and a non-empty
+    # string is truthy - so the check printed PASS while listing its own problems beside it, and
+    # the exit status stayed 0. The mutation test caught it: stopping the workflow from running the
+    # suite left the checker green.
+    report(
+        "release contract: the PRESENT_INVALID suite is executed by its owner",
+        not problems,
+        "" if not problems else "; ".join(problems),
+    )
+    return problems
+
+
 def check_release_contract_workflow():
     """The RELEASE TOOLING gate: release-contract-verify.yml.
 
@@ -961,6 +1007,12 @@ def main(argv=None):
     check_coverage_semantics()
     print()
     check_release_contract_workflow()
+    print()
+    # Defined above and, until this line, invoked by nothing - which is precisely the failure it
+    # exists to catch, arriving in the checker that catches it. A helper nothing calls reports
+    # nothing, so `check_release_workflows.py` stayed green while the new suite's execution was
+    # unasserted.
+    check_canonical_fixture_is_executed()
     print()
     check_source_verify()
     print()
