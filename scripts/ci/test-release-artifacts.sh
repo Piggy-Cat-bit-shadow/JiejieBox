@@ -74,8 +74,13 @@ MACOS_ID=202
 # copy of the naming rule here, so a rename on the gate's side cannot leave these fixtures
 # staging an artifact the gate no longer looks for. (Sourcing the gate for its resolver is not an
 # option: it calls `main "$@"` at the top level.)
+#
+# `tr -d '\r'` on the way out: the ninth column is the LAST field of the row, so any carriage
+# return in the file lands inside the value rather than being stripped as a line terminator. This
+# suite is run from a Windows checkout as well as from a Linux runner, and a CR that survives into
+# the name produces a path that does not exist with no hint as to why.
 plan_artifact() {
-  awk -F'\t' -v w="$2" '$1 == w {print $9}' "$1"
+  awk -F'\t' -v w="$2" '$1 == w { print $9 }' "$1" | tr -d '\r'
 }
 
 # ---------------------------------------------------------------------------
@@ -1050,7 +1055,8 @@ write_scenario base_dup2 "pass"
 gate_setup "plan for the duplicated-binary scenario" plan --repo o/r --sha "$SHA" --out "$work/plan-dup2.tsv" --interval 1 --timeout 10
 gate_setup "download for the duplicated-binary scenario" download --repo o/r --plan "$work/plan-dup2.tsv" --dir "$work/assets-dup2"
 _dup_artifact="$(plan_artifact "$work/plan-dup2.tsv" "$LINUX_WF")"
-[ -n "$_dup_artifact" ] || fail_case "plan names the linux payload artifact" "the plan has no ninth field"
+[ -n "$_dup_artifact" ] || fail_case "plan names the linux payload artifact" \
+  "the plan has no ninth field (exists=$([ -f "$work/plan-dup2.tsv" ] && echo yes || echo no), rows=$(grep -c . "$work/plan-dup2.tsv" 2>/dev/null || echo 0), fields=$(awk -F'\t' 'NR==1{print NF}' "$work/plan-dup2.tsv" 2>/dev/null || echo 0), first=[$(head -1 "$work/plan-dup2.tsv" 2>/dev/null | cut -c1-160)])"
 cp "$work/assets-dup2/sing-box-linux-amd64/$_dup_artifact/sing-box-linux-amd64" \
    "$work/assets-dup2/sing-box-linux-amd64/$_dup_artifact/sing-box-linux-amd64.copy"
 expect_fail "two copies of one binary in the verify tree -> FAIL" "expected exactly 1" -- \
