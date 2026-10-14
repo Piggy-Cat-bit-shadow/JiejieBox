@@ -410,8 +410,8 @@ jobs:
           # `gh run download --name` keeps the artifact's own directory, so the installer is
           # one level below release-desktop. Globbed rather than spelled out: the directory
           # is named after the artifact, whose version literal has been stale before.
-          installer=release-desktop/*/"Jiejiebox-v${RELEASE_VERSION}-windows-x64.exe"
-          [ -f $installer ] || { echo "FAIL: the staged desktop installer is not at $installer" >&2; exit 1; }
+          installer="$(find release-desktop -type f -name "Jiejiebox-v${RELEASE_VERSION}-windows-x64.exe" -print -quit)"
+          [ -n "$installer" ] && [ -f "$installer" ] || { echo "FAIL: the staged desktop installer was not found" >&2; exit 1; }
           ./tooling/scripts/ci/release-artifacts.sh flatten \
             --plan release-plan/runs.tsv \
             --dir release-assets \
