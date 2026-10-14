@@ -312,11 +312,16 @@ jobs:
       - name: "[gate 2] stamp the release version into the pinned desktop client"
         shell: bash
         env:
-          DESKTOP_CLIENT_DIR: ${{ env.CLIENT_DIR }}
+          # RELATIVE TO DESKTOP_CORE_ROOT, not to the workspace. `CLIENT_DIR` is `core/clients/desktop`
+          # because every other step in this job reads it from the workspace root, and passing that
+          # value here would have resolved to `core/core/clients/desktop` once the script joined it to
+          # the core root. The script takes an absolute path as given too, so the two variables have
+          # to agree on what a relative path is relative to; this is the one place that decides.
+          DESKTOP_CLIENT_DIR: clients/desktop
           # The tooling and the core are TWO checkouts here - `tooling/` at TOOLING_SHA and `core/`
-          # at CORE_SHA - so the script cannot find release/JIEJIE_VERSION or the client gitlink
-          # from its own location. It resolves both against this root. Without it the client path
-          # was looked for under the tooling tree and this gate died with
+          # at CORE_SHA - so the script cannot find release/JIEJIE_VERSION or the client gitlink from
+          # its own location. It resolves both against this root. Without it the client path was
+          # looked for under the tooling tree and this gate died with
           # "FAIL: core/clients/desktop is missing" one step after the submodule had in fact been
           # checked out, which is exactly what this variable exists to make impossible.
           DESKTOP_CORE_ROOT: ${{ github.workspace }}/core
