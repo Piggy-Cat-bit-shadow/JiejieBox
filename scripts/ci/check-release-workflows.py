@@ -147,16 +147,42 @@ def check_release():
     report("release.yml: only the publish step is conditional on the flag",
            text.count("steps.plan.outputs.publish") >= 1)
 
-    # Assets are named, never globbed. A glob publishes whatever is in the directory,
-    # which is how CI records once reached a release page.
+    # Assets come from the ONE contract, never from a list written here and never from a glob.
+    #
+    # These two assertions used to require a literal filename in the publish step - and that
+    # requirement is what produced the v0.1.8 release defect. The literal list lived in release.yml
+    # while `check-upload` derived its list from the target table, so the two drifted, the checks
+    # agreed with each other, and the release went public with six assets where seven were promised.
+    # Requiring the literal again would rebuild that fault, so what is asserted now is the opposite:
+    # the publish step must TAKE its list from the contract, and the workflow must not contain a
+    # second copy of it.
     create = text.split("gh release create", 1)
     report("release.yml: gh release create is present exactly once",
            len(create) == 2)
     body = create[1].split("echo \"PASS: release", 1)[0] if len(create) == 2 else ""
-    report("release.yml: the upload names files explicitly, no glob",
-           "upload/*" not in body and "Jiejiebox-v${version}-windows-x64.exe" in body)
-    report("release.yml: the published set is read back and compared",
-           "gh release view" in text and "the published assets are exactly" in text)
+
+    # The upload list must come from the contract, and the producer of it sits immediately BEFORE
+    # the `gh release create` call, not inside its argument list - so this looks at the whole
+    # publish STEP rather than at the arguments alone. Slicing from the step header is what makes
+    # the assertion about the step, which is the unit that has to be right.
+    step_head = text.rfind("      - name:", 0, text.index("gh release create"))
+    publish_step = text[step_head:text.index("gh release create") + len(body)]
+
+    report("release.yml: the upload list is derived from the contract, not spelled out",
+           "upload/*" not in body
+           and "release-artifacts.sh publish-args" in publish_step
+           and '"${assets[@]}"' in body)
+    # The literal that used to be here must be gone. If it comes back, the workflow has two
+    # authorities over the asset list again and this is the check that says so - the v0.1.8 fault.
+    report("release.yml: the publish step holds no second copy of the asset list",
+           "Jiejiebox-v${version}-windows-x64.exe" not in publish_step
+           and "jiejie-sing-box-linux-amd64-${tag}.tar.gz" not in publish_step)
+    # Read-back through the contract, by name, from the API - and asserted on the DRAFT before the
+    # release is exposed, which is what makes a missing asset stop at a draft.
+    report("release.yml: the published set is proved by the contract, by name",
+           text.count("release-artifacts.sh verify-public-release") >= 2)
+    report("release.yml: the release is created as a draft and published last",
+           "--draft" in body and "gh release edit" in text and "--draft=false" in text)
 
 
 def check_desktop():
