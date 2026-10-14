@@ -21,6 +21,21 @@
 # jq filters through a real `jq` where one is available.
 set -euo pipefail
 
+# A non-zero exit that printed no FAIL line is the worst possible report: the wrapper around this
+# suite can only annotate a failure it can find, and "no FAIL line was printed" tells a reader
+# nothing about which case died. `set -e` aborts outside the guarded helpers, and an unbound
+# variable under `set -u` does the same, so the exit status alone is not enough.
+#
+# This trap runs BEFORE the cleanup trap that already exists (`trap ... EXIT` handlers run in the
+# order they were installed), so it can still read BASH_LINENO. It reports only when the suite is
+# leaving without a verdict, so a normal PASS/FAIL exit is unaffected.
+_suite_verdict_printed=0
+trap 'rc=$?; if [ "${_suite_verdict_printed:-0}" -ne 1 ] && [ "$rc" -ne 0 ]; then
+        printf "FAIL  the suite aborted with status %s before printing a verdict (near line %s).\\n" \
+          "$rc" "${BASH_LINENO[0]:-?}" >&2
+        printf "      This is an ABORT, not a case failure: set -e or an unbound variable stopped the run.\\n" >&2
+      fi' EXIT
+
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../.." && pwd)"
 gate="$script_dir/release-artifacts.sh"
@@ -1825,8 +1840,10 @@ fi
 
 echo
 if [ "$failures" -eq 0 ]; then
+  _suite_verdict_printed=1
   echo "PASS: all $cases cases behaved as required"
   exit 0
 fi
+_suite_verdict_printed=1
 echo "FAIL: $failures of $cases cases did not behave as required" >&2
 exit 1
