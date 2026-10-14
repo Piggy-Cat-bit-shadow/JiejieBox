@@ -174,6 +174,34 @@ jobs:
           }
           Write-Host "certificate probe OK through powershell.exe"
 
+      - name: mint the signing certificate the tamper test needs, and hand it over as a PFX
+        # The test can create its own certificate, but it does so by spawning `powershell.exe`, and that
+        # subprocess behaves differently from this shell: `Import-Module PKI` reports success there while
+        # `-CertStoreLocation 'Cert:\CurrentUser\My'` still fails with DriveNotFound. The bare-subprocess
+        # diagnostic above proves the drive IS reachable from powershell.exe launched here, so the
+        # difference is specific to a process spawned from the Go test binary.
+        #
+        # Rather than keep chasing that, the certificate is minted ONCE here, in a shell that provably
+        # works, exported as a PFX, and passed to the test through the environment. The test prefers a
+        # supplied PFX and only falls back to creating its own - so this removes the fragile path from
+        # CI entirely without removing the test's ability to run standalone.
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Import-Module PKI -ErrorAction Stop
+          $password = [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N')
+          $c = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Jiejiebox boxdd CI Fixture' `
+                 -CertStoreLocation 'Cert:\CurrentUser\My' -NotBefore (Get-Date).AddMinutes(-5) `
+                 -NotAfter (Get-Date).AddHours(2) -KeyUsage DigitalSignature -KeyExportPolicy Exportable
+          $pfx = Join-Path $env:RUNNER_TEMP 'boxdd-fixture.pfx'
+          $secure = ConvertTo-SecureString -String $password -AsPlainText -Force
+          Export-PfxCertificate -Cert "Cert:\CurrentUser\My\$($c.Thumbprint)" -FilePath $pfx -Password $secure | Out-Null
+          if (-not (Test-Path $pfx)) { throw "the fixture PFX was not written" }
+          Write-Host "fixture certificate: $($c.Thumbprint)"
+          Write-Host "fixture PFX: $pfx ($((Get-Item $pfx).Length) bytes)"
+          "BOXFDD_TEST_PFX=$pfx" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "BOXFDD_TEST_PFX_PASSWORD=$password" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: report whether the PKI provider drive exists in a bare subprocess
         # The Go tests spawn `powershell.exe` directly, with no inherited session and no profile. That
         # is a DIFFERENT environment from this workflow's own shell, and the difference has already

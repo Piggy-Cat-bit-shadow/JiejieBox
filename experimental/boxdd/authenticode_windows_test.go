@@ -490,6 +490,47 @@ func uintptrOfErrno(err error) uintptr {
 	return 0
 }
 
+// fixtureCertificate returns the path to a PFX and its password for signing the test PE.
+//
+// It prefers a certificate supplied through the environment by CI, and only mints one itself when none
+// is given. That is not laziness: creating a certificate requires spawning `powershell.exe`, and a
+// `powershell.exe` spawned from this test binary behaves differently from one spawned by a shell.
+// `Import-Module PKI` there reports success while `-CertStoreLocation 'Cert:\CurrentUser\My'` still
+// fails with `DriveNotFound`, even though a bare subprocess launched from PowerShell can see the drive.
+// CI therefore mints the certificate once in a shell that provably works and passes the PFX in.
+//
+// The self-minting path is kept so the test still runs on a developer machine with no setup.
+func fixtureCertificate(t *testing.T) (pfxPath string, password string, cleanup func()) {
+	t.Helper()
+	if supplied := os.Getenv("BOXFDD_TEST_PFX"); supplied != "" {
+		if _, err := os.Stat(supplied); err != nil {
+			t.Fatalf("BOXFDD_TEST_PFX is set to %q but unreadable: %v", supplied, err)
+		}
+		return supplied, os.Getenv("BOXFDD_TEST_PFX_PASSWORD"), func() {}
+	}
+	thumbprint, err := createStoreCertificate(t)
+	if err != nil {
+		t.Skipf("SKIP (not a pass): could not create a signing certificate: %v", err)
+	}
+	// Export the freshly created certificate so signing can go through the same code path as the
+	// supplied-PFX case.
+	password = "boxdd-fixture"
+	exportDir := t.TempDir()
+	pfxPath = filepath.Join(exportDir, "fixture.pfx")
+	script := `$ErrorActionPreference='Stop'
+Import-Module PKI -ErrorAction Stop
+$secure = ConvertTo-SecureString -String '` + password + `' -AsPlainText -Force
+Export-PfxCertificate -Cert 'Cert:\CurrentUser\My\` + thumbprint + `' -FilePath '` + pfxPath + `' -Password $secure | Out-Null`
+	scriptPath := filepath.Join(exportDir, "export-fixture-pfx.ps1")
+	require.NoError(t, os.WriteFile(scriptPath, []byte(script), 0o600))
+	out, exportErr := runPowerShellFile(scriptPath)
+	if exportErr != nil {
+		t.Skipf("SKIP (not a pass): could not export the signing certificate (%v); powershell said: %s",
+			exportErr, strings.TrimSpace(out))
+	}
+	return pfxPath, password, func() {}
+}
+
 // signFixturePE creates a code-signing certificate, signs a copy of a real Windows PE with it, and
 // returns the signed path. It skips - never passes - when signtool or a suitable base image is
 // unavailable, so the test cannot silently degrade into proving nothing.
@@ -516,10 +557,6 @@ func signFixturePE(t *testing.T) string {
 	}
 
 	directory := t.TempDir()
-	// Build a self-signed code-signing certificate through the crypto packages, then write it as a
-	// PFX is not needed: signtool can sign from the user store by thumbprint only, so instead use
-	// PowerShell-free signing by re-using an already-signed file is not possible. The portable path
-	// is to sign with the system's own tooling via the certificate we create below.
 	signed := filepath.Join(directory, "signed-fixture.exe")
 	data, err := os.ReadFile(source)
 	require.NoError(t, err)
@@ -529,12 +566,10 @@ func signFixturePE(t *testing.T) string {
 	// that would make the "signer is mine" assertion below pass for the wrong reason.
 	_ = runSignTool(signtool, "remove", "/s", signed)
 
-	certificate, err := createStoreCertificate(t)
-	if err != nil {
-		t.Skipf("SKIP (not a pass): could not create a signing certificate: %v", err)
-	}
+	pfxPath, password, cleanup := fixtureCertificate(t)
+	defer cleanup()
 	out, err := runSignToolOutput(signtool,
-		"sign", "/sha1", certificate, "/fd", "SHA256", signed)
+		"sign", "/f", pfxPath, "/p", password, "/fd", "SHA256", signed)
 	if err != nil {
 		t.Skipf("SKIP (not a pass): signtool sign failed (%v): %s", err, out)
 	}
