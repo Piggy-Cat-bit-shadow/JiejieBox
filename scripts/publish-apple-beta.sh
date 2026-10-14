@@ -483,6 +483,23 @@ fi
 APPLE_USE_PREBUILT_LIBBOX=1 ./scripts/release-apple.sh testflight
 
 step "APPLE BETA RELEASE"
+# The summary states the ACTUAL source. It is computed from `use_canonical` - the same variable
+# that selected the path - and never typed into the heredoc, so a run cannot report a source it
+# did not use. An operator reading a published build's log has to be able to tell whether these
+# bytes came off the release page or out of an Actions run, and "Libbox: PASS" answers neither.
+if [ "$use_canonical" = "1" ]; then
+  libbox_source_line="canonical Release asset (release $release_tag, asset $libbox_asset)"
+  libbox_ci_line="not consulted - the canonical asset was used, so no run was selected or downloaded"
+else
+  libbox_source_line="Actions run $run_id (exact head SHA $local_sha)"
+  libbox_ci_line="run:                 $run_id
+  libbox:              ${job_libbox:-PASS}
+  ios GUI:             ${job_ios:-PASS}
+  macOS GUI:           ${job_macos:-PASS}
+  run head SHA:        $local_sha (exact match)
+  Libbox artifact:     PASS"
+fi
+
 cat <<EOF
 Source:
   commit:              $local_sha
@@ -511,16 +528,16 @@ Apple sources (one repository, two UI branches, never merged):
   The two working trees differ; the source commit does not. Which UI a device shows is
   decided by the Apple source at runtime, from the device idiom.
 
-GitHub Apple CI:
-  run:                 $run_id
-  libbox:              ${job_libbox:-PASS}
-  ios GUI:             ${job_ios:-PASS}
-  macOS GUI:           ${job_macos:-PASS}
-  run head SHA:        $local_sha (exact match)
-  Libbox artifact:     PASS
-  Libbox SHA256:       $artifact_sha
-  parent SHA match:    PASS
+Libbox source:
+  $libbox_source_line
+  parent SHA match:    PASS (== $local_sha)
+  release version:     PASS (== $jj_version)
+  artifact SHA256:     $artifact_sha
   shared by both:      PASS (identical framework in both Apple checkouts)
+
+GitHub Apple CI:
+  $libbox_ci_line
+
 
 Local:
   Libbox build:        SKIPPED (reused the verified artifact)
