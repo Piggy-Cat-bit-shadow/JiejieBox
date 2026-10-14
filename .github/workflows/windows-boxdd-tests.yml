@@ -174,6 +174,33 @@ jobs:
           }
           Write-Host "certificate probe OK through powershell.exe"
 
+      - name: report whether the PKI provider drive exists in a bare subprocess
+        # The Go tests spawn `powershell.exe` directly, with no inherited session and no profile. That
+        # is a DIFFERENT environment from this workflow's own shell, and the difference has already
+        # bitten twice: the `Cert:` drive is absent there even when `Import-Module PKI` reports success.
+        # This prints what that subprocess can actually see, so the next failure is diagnosable from
+        # the log rather than by inference.
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $exe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          $diag = Join-Path $env:RUNNER_TEMP 'boxdd-pki-diag.ps1'
+          @(
+            'Write-Output "PSVersion: $($PSVersionTable.PSVersion)"'
+            'Write-Output "PSModulePath: $env:PSModulePath"'
+            'Import-Module PKI -ErrorAction SilentlyContinue'
+            'Write-Output "PKI loaded: $([bool](Get-Module PKI))"'
+            'Write-Output "PKI module path: $((Get-Module PKI).Path)"'
+            'Write-Output "Cert drive present: $([bool](Get-PSDrive -Name Cert -ErrorAction SilentlyContinue))"'
+            'Write-Output "Cert PSProvider: $((Get-PSProvider -PSProvider Certificate -ErrorAction SilentlyContinue).Name)"'
+            'Get-Module -ListAvailable PKI | ForEach-Object { Write-Output "available PKI: $($_.Version) $($_.Path)" }'
+          ) | Set-Content -LiteralPath $diag -Encoding utf8
+          Write-Host "--- bare powershell.exe -File diagnostics ---"
+          & $exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $diag 2>&1 |
+            ForEach-Object { Write-Host "  $_" }
+          Write-Host "--- end diagnostics ---"
+          exit 0
+
       - name: go vet the daemon package
         # A separate step so a compile problem is distinguishable from a test failure.
         #
