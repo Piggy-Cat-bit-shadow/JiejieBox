@@ -73,9 +73,19 @@ func TestAdvGItem7OccupiedPortIsInvisibleWhileTheReopenIsInFlight(t *testing.T) 
 	// stack during unwinding afterwards, because the pinned dependency signals them from inside
 	// a `defer` (device/receive.go:79). A census reads the STACK, so it needs the same grace.
 	// The port assertion below is the strict one and it stays immediate: the OS answers it.
+	//
+	// The polling interval is 25ms rather than 2ms, and that is a correctness fix for the WAIT
+	// rather than a longer deadline. A census is a full `runtime.Stack` dump - this file's own
+	// header measures it at about a millisecond - so polling it every 2ms spends roughly a third of
+	// every second inside the runtime, and the goroutine this wait is waiting for is one that has to
+	// be SCHEDULED to unwind. The instrument was starving its own subject. Observed on a loaded
+	// macOS runner: the 10s window expired with the census still non-zero, while the same binary
+	// passed the same assertion on the next run, which is a wait that cannot make progress rather
+	// than a socket that was not released. The deadline is unchanged, and so is the assertion - only
+	// the pressure the check puts on the thing it measures.
 	require.Eventually(t, func() bool {
 		return socketCensus(t, endpoint) == 0
-	}, 10*time.Second, 2*time.Millisecond,
+	}, 10*time.Second, 25*time.Millisecond,
 		"precondition: a settled pause really does release the socket, which is why the assertion "+
 			"under attack is sound at that point")
 	require.True(t, udpPortIsFree(t, held), "precondition: and the port really is free then")
