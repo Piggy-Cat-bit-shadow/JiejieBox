@@ -1114,6 +1114,18 @@ verify_platform() {
   note "    verified: binary, checksum, build info, platform magic, commit $sha"
 }
 
+# # Why the Apple file set has exactly four names
+#
+# `Libbox.xcframework.tar.gz` is the payload; `manifest.json` is the machine-readable identity;
+# `SHA256SUMS-LIBBOX.txt` is its checksum list; `BUILD-INFO-LIBBOX.txt` is the same facts in prose.
+#
+# The prose record is redundant for a program and is what a person reads when a release is being
+# diagnosed, so it stays. It was ALSO the one name missing from this list on the first runner run,
+# and the assertion reported both sides - four found against three wanted - which is why the
+# message prints the expected and actual sets rather than only refusing. Narrowing the list to
+# match what was there would have green'd the run and quietly dropped a published record, which is
+# the failure mode a two-sided assertion exists to make visible.
+#
 # verify_apple <dir> <sha> <workflow file> <version>
 #
 # The Apple target is verified by the PRODUCER'S OWN validator, invoked as a subprocess, rather than
