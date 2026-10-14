@@ -20,7 +20,7 @@ require (
 	github.com/sagernet/sing-quic v0.7.2-0.20260929152029-258509488380
 	github.com/sagernet/sing-shadowsocks v0.2.9-0.20260929152116-0a3456819ce7
 	github.com/sagernet/sing-shadowsocks2 v0.2.2-0.20260929152114-a69d1086332b
-	github.com/sagernet/sing-tun v0.9.7-0.20261007151655-7539c9855f19
+	github.com/sagernet/sing-tun v0.9.7-0.20261013140216-9ffa5391a2ad
 	github.com/sagernet/tailscale v1.102.1-sing-box-1.14-mod.5.0.20260925112514-35e61219dedd
 	github.com/spyzhov/ajson v0.9.4
 	github.com/stretchr/testify v1.12.0
@@ -228,7 +228,16 @@ replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-
 // revision as the root module: the test module runs integration tests against the TUN stack, so
 // without this replace it linked UPSTREAM sing-tun and the Start/Close race fix under test was not
 // the code being tested. See the root go.mod for the fork's base and branch.
-replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261008172655-8dde9c8cbe27
+//
+// This pin was one commit behind the root again - 8dde9c8cbe27 while the root built 6937951ec9b6 -
+// and the drift was caught by scripts/ci/check-go-module-integrity.sh on the Final Freeze run for
+// v0.1.8, which is exactly the "a nested module pinned to a different revision of the code under
+// test verifies a different object" failure this replace's comment above warns about. The require
+// line moved with it (sing-tun's own base revision 9ffa5391a2ad, the same one the root requires),
+// because a replace changes which revision is built while the require line names the module's
+// declared base; leaving them split is what made `go list -mod=readonly -m all` refuse to resolve
+// the module graph at all.
+replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261013212953-6937951ec9b6
 
 // Same fork revision as the root module, for the same reason as every other pin here: a nested
 // module does not inherit the root's replaces, so a test binary built from this module would
