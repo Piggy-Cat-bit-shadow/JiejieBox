@@ -62,4 +62,22 @@ def declared_needs(text):
     return []
 
 
-sys.exit(0 if "libbox" in declared_needs(block) else 1)
+declared = declared_needs(block)
+
+# A refusal must say what it saw. This check reported "the ios job does not depend on libbox" on a
+# macOS runner while passing on a Windows workstation with a byte-identical file and the identical
+# invocation - and it gave no way to tell the two apart, so each attempt cost a full CI cycle. The
+# diagnostic is emitted ONLY on the refusal path, so a passing run prints nothing extra.
+if "libbox" not in declared:
+    sys.stderr.write(
+        "check-job-needs: %r does not declare libbox.\n"
+        "  needs lines found in the block: %r\n"
+        "  parsed declared needs:          %r\n"
+        "  first 3 block lines:            %r\n"
+        % (job,
+           [l for l in block.splitlines() if "needs:" in l][:4],
+           declared,
+           block.splitlines()[:3])
+    )
+
+sys.exit(0 if "libbox" in declared else 1)
