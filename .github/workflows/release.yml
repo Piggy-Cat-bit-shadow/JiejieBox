@@ -440,7 +440,7 @@ jobs:
       # the part that can be wrong, and a dry run exercises all of it. Publishing is
       # the one irreversible act, so it is the one behind the flag, and the flag
       # defaults to false so the real path is unchanged.
-      - name: create the release
+      - name: create the release (draft) and upload the canonical asset set
         if: ${{ steps.plan.outputs.publish == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -452,44 +452,78 @@ jobs:
           sha="$RELEASE_SHA"
           version="$RELEASE_VERSION"
 
-          # Deliberately NOT --prerelease and NOT --draft: v0.1 is the first stable
-          # release of this fork.
+          # THE ASSET LIST IS NOT WRITTEN HERE, and that is the whole point of this step.
           #
-          # Every asset is named EXPLICITLY. A glob would publish whatever happened to be
-          # in the directory, which is how CI records once reached a release page: the
-          # allowlist is checked immediately above, and naming the files here means the
-          # upload cannot be wider than the check that passed.
+          # It used to be six literal filenames, while `check-upload` above derived SEVEN from the
+          # target table. v0.1.8 was published with six assets for exactly that reason:
+          # `Libbox.xcframework.tar.gz` was staged, the staging check passed, and then the upload
+          # named five tarballs, one installer and SHA256SUMS - and the read-back compared six
+          # against a second hand-written six, so the workflow was self-consistently wrong and went
+          # green on a release that was missing a file.
+          #
+          # `publish-args` derives the list from the same function `check-upload` uses and refuses
+          # if any of them is absent from the staging directory, so the upload cannot be narrower
+          # than the contract. Unquoted on purpose: the output is one path per line and every name
+          # is built from a tag and version that release-artifacts.sh has already rejected if they
+          # contain anything but [0-9A-Za-z._+-].
+          #
+          # DRAFT FIRST. Creating a release and then discovering the asset set is wrong is the
+          # mistake v0.1.8 made in public: by the time the read-back ran, the download page already
+          # existed. A draft is not visible to users, so every check below can fail without anyone
+          # seeing a broken release, and the release only becomes public once all of them pass.
+          mapfile -t assets < <(
+            ./tooling/scripts/ci/release-artifacts.sh publish-args \
+              --dir upload --tag "$tag" --version "$version"
+          )
+          echo "uploading ${#assets[@]} asset(s) from the canonical contract:"
+          printf '  %s\n' "${assets[@]}"
+
           gh release create "$tag" \
+            --draft \
             --title "$tag" \
             --target "$sha" \
             --notes "" \
-            "upload/Jiejiebox-v${version}-windows-x64.exe" \
-            "upload/jiejie-sing-box-linux-amd64-${tag}.tar.gz" \
-            "upload/jiejie-sing-box-macos-arm64-${tag}.tar.gz" \
-            "upload/jiejie-sing-box-windows-amd64-${tag}.tar.gz" \
-            "upload/jiejie-sing-box-android-arm64-${tag}.tar.gz" \
-            upload/SHA256SUMS
+            "${assets[@]}"
 
-          echo "PASS: release $tag created"
+          echo "PASS: draft release $tag created with ${#assets[@]} asset(s)"
 
-          # Read the release back and confirm the published set is the contract. The
-          # local check proved what was uploaded; this proves what the download page
-          # actually carries, which is the thing a user sees.
-          published="$(gh release view "$tag" --json assets \
-            --jq '.assets[].name' | sort)"
-          expected="$(printf '%s\n' \
-            "Jiejiebox-v${version}-windows-x64.exe" \
-            "jiejie-sing-box-linux-amd64-${tag}.tar.gz" \
-            "jiejie-sing-box-macos-arm64-${tag}.tar.gz" \
-            "jiejie-sing-box-windows-amd64-${tag}.tar.gz" \
-            "jiejie-sing-box-android-arm64-${tag}.tar.gz" \
-            SHA256SUMS | sort)"
-          if [ "$published" != "$expected" ]; then
-            echo "FAIL: the published asset set is not the public contract." >&2
-            echo "expected:" >&2
-            printf '  %s\n' $expected >&2
-            echo "found:" >&2
-            printf '  %s\n' $published >&2
-            exit 1
-          fi
-          echo "PASS: the published assets are exactly the public contract"
+      # The published set is proved BY NAME against the contract, from the API, on the draft. Both
+      # halves matter: v0.1.8 had a count that matched a list that was wrong, so a count-only check
+      # cannot distinguish a correct release from that one.
+      - name: verify the draft carries exactly the public contract
+        if: ${{ steps.plan.outputs.publish == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          ./tooling/scripts/ci/release-artifacts.sh verify-public-release \
+            --repo "$GITHUB_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --version "$RELEASE_VERSION"
+
+      # The one irreversible act, and it is now the LAST one. Everything that could be wrong has
+      # been checked against a draft the public cannot see.
+      - name: publish the draft as the stable release
+        if: ${{ steps.plan.outputs.publish == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="$RELEASE_TAG"
+
+          # Deliberately NOT --prerelease: this is a stable release of the fork.
+          gh release edit "$tag" --draft=false --prerelease=false
+
+          # And prove it, from the API, one more time - now against the PUBLIC release. The draft
+          # check proved the upload; this proves what a visitor to the download page sees, and it
+          # runs after the only step that can expose the release to the world.
+          ./tooling/scripts/ci/release-artifacts.sh verify-public-release \
+            --repo "$GITHUB_REPOSITORY" \
+            --tag "$tag" \
+            --version "$RELEASE_VERSION"
+
+          echo "PASS: $tag is published and carries exactly the canonical asset set"

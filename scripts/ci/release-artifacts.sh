@@ -1641,6 +1641,150 @@ cmd_publish_flag() {
 #
 # and SHA256SUMS names every one of them, with no entry for anything else, and verifies.
 
+# public_asset_names <tag> <version>
+#
+# THE canonical public Release asset contract. Prints one asset name per line.
+#
+# # Why this function exists
+#
+# The v0.1.8 release published SIX assets where the contract requires SEVEN:
+# `Libbox.xcframework.tar.gz` was absent from the public release page. The cause was not the Apple
+# artifact and not `check-upload` - it was that the asset list existed in THREE places:
+#
+#   * `check-upload` DERIVED it from TARGET_WORKFLOWS        -> 7, and it passed
+#   * `release.yml`'s `gh release create` spelled it out      -> 6, and it uploaded 6
+#   * `release.yml`'s read-back spelled it out AGAIN          -> 6, so 6 == 6 and the workflow
+#                                                               went green on a bad release
+#
+# A check and the thing it checks agreeing with each other is not evidence that either is right.
+# The read-back was self-consistently wrong, which is why the release could be published with an
+# asset missing and still report success.
+#
+# There is now ONE derivation. `check-upload`, `expected-assets`, `publish-args` and
+# `verify-public-release` all call this, so adding a target makes the upload list, the staging
+# check and the read-back move together, and a publisher that does not keep up fails its own
+# read-back instead of passing.
+#
+# The `kind` branch is the one thing that is not mechanical: a manifest-based target publishes a
+# bundle whose bytes were already verified under its own fixed name, rather than a repacked tarball
+# named from a prefix and the tag. See `flatten` for why it is promoted and not rebuilt.
+public_asset_names() {
+  local tag="$1" version="$2" wf
+  for wf in "${TARGET_WORKFLOWS[@]}"; do
+    if [ "$(target_field "$wf" kind)" = "xcframework-manifest" ]; then
+      printf '%s\n' Libbox.xcframework.tar.gz
+      continue
+    fi
+    printf '%s\n' "$(target_field "$wf" tarball)-${tag}.tar.gz"
+  done
+  printf '%s\n' "Jiejiebox-v${version}-windows-x64.exe" SHA256SUMS
+}
+
+# expected-assets --tag <tag> --version <version>
+#
+# The contract as data, so a caller can consume it instead of restating it. `release.yml` uses this
+# for both the upload list and the read-back expectation, which is what makes the two incapable of
+# disagreeing.
+cmd_expected_assets() {
+  local tag="" version=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --tag) tag="${2:-}"; shift 2 ;;
+      --version) version="${2:-}"; shift 2 ;;
+      *) die "expected-assets: unknown argument '$1'" ;;
+    esac
+  done
+  [ -n "$tag" ] || die "expected-assets: --tag is required"
+  [ -n "$version" ] || die "expected-assets: --version is required"
+  case "$tag" in
+    v[0-9]*) ;;
+    *) die "expected-assets: '$tag' is not a release tag" ;;
+  esac
+  if [[ "$tag" = *[!0-9A-Za-z._+-]* ]] || [[ "$version" = *[!0-9A-Za-z._+-]* ]]; then
+    die "expected-assets: tag or version contains unsafe characters"
+  fi
+  public_asset_names "$tag" "$version"
+}
+
+# publish-args --dir <upload dir> --tag <tag> --version <version>
+#
+# The upload arguments for `gh release create`, derived from the same contract, one per line.
+# Paths are validated to exist HERE rather than left to `gh`, because a missing path makes `gh`
+# fail after it has already created the release - the one irreversible step - and the failure then
+# reads as a CLI error rather than as "the contract and the staging directory disagree".
+#
+# The caller must word-split this on purpose: the output is one argument per line and paths contain
+# no whitespace, because every name in the contract is derived from a tag and a version that this
+# function has already refused to accept if they contain anything outside [0-9A-Za-z._+-].
+cmd_publish_args() {
+  local dir="" tag="" version="" name
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --dir) dir="${2:-}"; shift 2 ;;
+      --tag) tag="${2:-}"; shift 2 ;;
+      --version) version="${2:-}"; shift 2 ;;
+      *) die "publish-args: unknown argument '$1'" ;;
+    esac
+  done
+  [ -n "$dir" ] || die "publish-args: --dir is required"
+  [ -d "$dir" ] || die "publish-args: '$dir' does not exist"
+  [ -n "$tag" ] || die "publish-args: --tag is required"
+  [ -n "$version" ] || die "publish-args: --version is required"
+
+  local missing=()
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    if [ -f "$dir/$name" ]; then
+      printf '%s\n' "$dir/$name"
+    else
+      missing+=( "$name" )
+    fi
+  done < <(public_asset_names "$tag" "$version")
+
+  [ "${#missing[@]}" -eq 0 ] || die \
+    "publish-args: the staging directory is missing asset(s) the contract requires:
+$(printf '      %s\n' "${missing[@]}")
+      Refusing to hand gh a list it cannot upload. A release created from this directory would be
+      missing exactly these files, which is how v0.1.8 was published without its Apple bundle."
+}
+
+# verify-public-release --repo <owner/name> --tag <tag> --version <version>
+#
+# Reads the PUBLISHED release back from the API and compares its asset names against the contract,
+# BY NAME. Compares by name rather than by count on purpose: v0.1.8 had the right count for the
+# wrong list, and a count-only check cannot tell the difference.
+cmd_verify_public_release() {
+  local repo="" tag="" version=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --repo) repo="${2:-}"; shift 2 ;;
+      --tag) tag="${2:-}"; shift 2 ;;
+      --version) version="${2:-}"; shift 2 ;;
+      *) die "verify-public-release: unknown argument '$1'" ;;
+    esac
+  done
+  [ -n "$repo" ] || die "verify-public-release: --repo is required"
+  [ -n "$tag" ] || die "verify-public-release: --tag is required"
+  [ -n "$version" ] || die "verify-public-release: --version is required"
+
+  local want found
+  want="$(public_asset_names "$tag" "$version" | sort)"
+  found="$(gh release view "$tag" --repo "$repo" --json assets --jq '.assets[].name' | sort)" || die \
+    "verify-public-release: could not read the published release $tag from $repo."
+
+  if [ "$found" != "$want" ]; then
+    local missing extra
+    missing="$(comm -23 <(printf '%s\n' "$want") <(printf '%s\n' "$found"))"
+    extra="$(comm -13 <(printf '%s\n' "$want") <(printf '%s\n' "$found"))"
+    die "the PUBLISHED release $tag does not carry the public asset contract.
+      missing:
+$(printf '      %s\n' ${missing:-<none>})
+      unexpected:
+$(printf '      %s\n' ${extra:-<none>})"
+  fi
+  note "PASS: the published release carries exactly the $(printf '%s\n' "$want" | grep -c .) contract assets"
+}
+
 cmd_check_upload() {
   local out="" tag="" version=""
   while [ "$#" -gt 0 ]; do
@@ -1659,18 +1803,15 @@ cmd_check_upload() {
     die "check-upload: version '$version' contains unsafe characters"
   fi
 
+  # Derived from the ONE contract function, not restated here. This is what makes the staging check
+  # and the upload list incapable of disagreeing: see `public_asset_names` for the v0.1.8 release
+  # that went public with six assets because they were derived in three places and two of them
+  # agreed with each other.
   local expected=() wf
-  for wf in "${TARGET_WORKFLOWS[@]}"; do
-    # A manifest-based target names its asset directly, because it publishes a bundle whose bytes
-    # are already the ones that were verified. See `flatten` for why it is promoted rather than
-    # repacked.
-    if [ "$(target_field "$wf" kind)" = "xcframework-manifest" ]; then
-      expected+=( Libbox.xcframework.tar.gz )
-      continue
-    fi
-    expected+=( "$(target_field "$wf" tarball)-${tag}.tar.gz" )
-  done
-  expected+=( "Jiejiebox-v${version}-windows-x64.exe" SHA256SUMS )
+  while IFS= read -r wf; do
+    [ -n "$wf" ] || continue
+    expected+=( "$wf" )
+  done < <(public_asset_names "$tag" "$version")
 
   local want found extra missing
   want="$(printf '%s\n' "${expected[@]}" | sort)"
@@ -1731,7 +1872,7 @@ $(printf '      %s\n' $named)"
 # ---------------------------------------------------------------------------
 
 main() {
-  [ "$#" -gt 0 ] || die "usage: release-artifacts.sh <check-tag|release-version|plan|evidence|download|desktop|verify|flatten|check-upload|publish-flag> [args]"
+  [ "$#" -gt 0 ] || die "usage: release-artifacts.sh <check-tag|release-version|plan|evidence|download|desktop|verify|flatten|check-upload|publish-flag|expected-assets|publish-args|verify-public-release> [args]"
   local sub="$1"
   shift
   case "$sub" in
@@ -1745,6 +1886,9 @@ main() {
     flatten) cmd_flatten "$@" ;;
     check-upload) cmd_check_upload "$@" ;;
     publish-flag) cmd_publish_flag "$@" ;;
+    expected-assets) cmd_expected_assets "$@" ;;
+    publish-args) cmd_publish_args "$@" ;;
+    verify-public-release) cmd_verify_public_release "$@" ;;
     *) die "unknown subcommand '$sub'" ;;
   esac
 }
