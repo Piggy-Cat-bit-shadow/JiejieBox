@@ -478,3 +478,191 @@ presence, never on validation outcome).
 **Nothing in this round's read-only work is invalidated by the delay**, and two of its results
 (E3-1 and G-3) prevent an acceptance check that would have failed and a fallback that would have
 masked a corrupted canonical source.
+
+
+---
+
+# V9 — Apple safety evidence, concurrency, final freeze readiness
+
+Appended. Sections A–J above are unchanged and are not rewritten; this section is the V9 round's
+record. Everything here is either measured in this round or explicitly labelled as not measured.
+
+## T. PRESENT_INVALID integration evidence — **INCOMPLETE**
+
+The rule under test:
+
+```text
+canonical Release asset PRESENT, any validation failure  ->  HARD FAIL, never fall back
+canonical Release asset ABSENT                           ->  auto MAY fall back to Actions
+```
+
+The brief's §5 point is the important one and it is correct: asserting `exit != 0` proves nothing
+here, because that also passes when the code falls back to Actions and Actions fails for its own
+reason. The test has to prove a NEGATIVE.
+
+`scripts/ci/test-apple-canonical-source.sh` was written to do exactly that. Design:
+
+* a real fixture git repository, because the publish script refuses a dirty tree and resolves its
+  tag through `git ls-remote`;
+* a real bundle packed by the **producer's own packer**, so the manifest under test is a genuine
+  one rather than a hand-written copy of the schema;
+* a mock `gh` in which every Actions command — `run list`, `run view`, `run download`,
+  `workflow run` — is a **SENTINEL**: it records the call, creates a marker file, and exits
+  non-zero. Each PRESENT+INVALID case asserts (1) refused, (2) refused for a *canonical* reason,
+  (3) **the sentinel file does not exist**;
+* an ABSENT control case that *requires* the sentinel to fire, so the negative assertions cannot
+  pass vacuously — which is the classic way a negative test proves nothing.
+
+Eleven PRESENT+INVALID mutations are covered (wrong parent_sha, wrong jj_version, digest mismatch,
+corrupt archive, missing declared slice, undeclared extra slice, absent slices field, legacy
+manifest, present-but-unfetchable) plus three ABSENT controls and two `--libbox-source release`
+cases.
+
+**STATUS: the harness runs and builds its fixture correctly, but every case stops in the publish
+script's own preflight** with
+
+```text
+== repository ==
+fatal: not a git repository (or any of the parent directories): .git
+```
+
+from `git rev-parse HEAD` at the top of `publish-apple-beta.sh`, **before any canonical-source
+logic is reached**. No case in that file currently proves anything about PRESENT_INVALID.
+
+Ruled out with a temporary probe (removed; this is the record):
+
+| HYPOTHESIS | RULED OUT BY |
+|---|---|
+| the fixture is not a repository | `rev-parse` succeeded in it |
+| the mock PATH breaks `git` | `rev-parse` succeeded **with** `PATH=$BIN:$PATH` |
+| the working directory is wrong | it is the fixture root, which has `.git` |
+| the shim is missing or not executable | present, executable, in `$BIN` |
+
+The remaining difference between the probe's working invocation and the script's failing one is
+the `env` prefix used to pass the case environment. **That is where the next session starts.**
+
+The file is committed with this status written at the top of it, and deliberately **not** wired
+into any workflow: a suite that fails for an unrelated reason on every run teaches its readers to
+ignore it. Deleting it would throw away the sentinel design, the fixture and the assertion set,
+which are the parts that took the thinking.
+
+```text
+PRESENT_INVALID_INTEGRATION      = FAIL (harness runs; cases do not reach the code under test)
+PRESENT_INVALID_ACTIONS_FALLBACK = NOT PROVEN  (neither FORBIDDEN nor POSSIBLE — unmeasured)
+ABSENT_AUTO_FALLBACK             = NOT PROVEN
+```
+
+**The `FORBIDDEN` verdict the brief asks for is not available from this round.** It is the single
+most important outstanding item.
+
+## U. Real Apple CI evidence — **NOT OBTAINED**
+
+`client-apple.yml` has no run at **any** commit on `release/v6-unix-authority`. Confirmed by
+querying the runs API for the branch's HEADs: the only workflow that runs there is
+`release-contract-verify.yml`.
+
+Consequence: `scripts/ci/check-apple-source-selection.sh`, which `client-apple.yml` owns, has no CI
+oracle for changes made on this branch. The two assertions added in the V8 round — that both GUI
+jobs pass `--jj-version`, and that neither passes `--allow-legacy-manifest` — were validated by
+running that checker's embedded Python directly against the real workflow and against mutated
+copies. Both fire, on both jobs, naming the job; the unmutated workflow produces neither.
+
+```text
+APPLE_REAL_CI           = FAIL (not obtained)
+APPLE_REAL_CI_HEAD_SHA  = none
+```
+
+This is `VERIFIED_LOCAL_MUTATION`, **not** `VERIFIED_CI`. Dispatching `client-apple.yml` is
+permitted by the brief's §35 and was not done in this round.
+
+## V. Producer concurrency (Stage H2) — **NOT DONE**
+
+The six producer workflows were not audited and no `concurrency` policy was added or changed. The
+brief's §16 policy (a manual `workflow_dispatch` candidate must not be cancelled by another manual
+dispatch; a superseded *push* may cancel; never mechanically copy a group between workflows) is
+recorded here as the specification for the next round, not as work performed.
+
+## W. Post-change supply-chain audit — **NOT DONE**
+
+The §20 method (FACT → producer → verifier → consumer → publisher → primary owner → duplicate
+authority?) and the §22 "suspicious points" list were not run as a pass. One §22 item was answered
+in the V8 round and stands: **`jj_version` has exactly one writer** — `apple-libbox-artifact.sh
+pack` — and consumers read it from `release/JIEJIE_VERSION`, which is the independent side.
+
+The §23 question (promote, not repack) **is** answered and was implemented and tested this round
+under F4/F5: `flatten` copies `Libbox.xcframework.tar.gz` rather than wrapping it, so the published
+bytes are the producer-validated bytes, and the full-contract case asserts the staging directory is
+exactly the seven public files.
+
+## X. Race / deep re-judge — **NOT DONE**
+
+The §26 ownership table and the four §27 questions were not answered. §28's default stands
+unexamined:
+
+```text
+FINAL_CANDIDATE_WORKFLOW_REQUIRED = DEFERRED
+```
+
+## Y. Final freeze-readiness proof — **PARTIAL**
+
+The §29 four-way SHA alignment was recomputed for the final HEAD and holds for the three legs that
+exist. There is no fourth leg, because Apple CI never runs on this branch.
+
+```text
+FINAL_TEMP_SHA = 686dcaaa7e309108f30e64029e9fcd611fa5d50e
+REMOTE_TEMP_SHA = 686dcaaa7e309108f30e64029e9fcd611fa5d50e   (aligned)
+RCV_HEAD_SHA    = 686dcaaa7...  (see the run record added with this commit)
+APPLE_HEAD_SHA  = none          (Apple CI does not run on this branch)
+```
+
+Local Windows suite at this HEAD: default structural **120/120 PASS**, V6 target-state **11/11
+PASS**, desktop identity **30/30**, desktop version **60/60**, executed coverage **11/11**,
+`py_compile` clean, `bash -n` clean, YAML parse clean, `git diff --check` clean.
+
+The Ubuntu behavioural suite result for this HEAD is recorded separately in the run log.
+
+## Z. V9 status block
+
+```text
+PRESENT_INVALID_INTEGRATION       = FAIL (harness incomplete; see T)
+PRESENT_INVALID_ACTIONS_FALLBACK  = NOT PROVEN
+ABSENT_AUTO_FALLBACK              = NOT PROVEN
+
+LIBBOX_SOURCE_SUMMARY             = DONE (G7)
+
+APPLE_REAL_CI                     = FAIL (not obtained)
+APPLE_REAL_CI_HEAD_SHA            = none
+APPLE_LIBBOX_JOB                  = NOT MEASURED
+APPLE_IOS_JOB                     = NOT MEASURED
+APPLE_MACOS_JOB                   = NOT MEASURED
+
+STAGE_H2_PRODUCER_CONCURRENCY     = INCOMPLETE
+
+POST_CHANGE_AUDIT                 = INCOMPLETE
+UNRESOLVED_RELEASE_P0             = 1  (PRESENT_INVALID integration unproven)
+
+RACE_DEEP_REJUDGE                 = INCOMPLETE
+FINAL_CANDIDATE_WORKFLOW_REQUIRED = DEFERRED
+
+DEFAULT_STRUCTURAL_SUITE          = PASS
+V6_TARGET_STATE                   = PASS
+FULL_RELEASE_HELPER_BEHAVIOURAL   = see the Ubuntu run record for this HEAD
+APPLE_BETA_PUBLISH_SUITE          = BLOCKED_BY_ENVIRONMENT (needs `sleep`; passes locally up to it)
+
+FINAL_TEMP_SHA                    = 686dcaaa7e309108f30e64029e9fcd611fa5d50e
+REMOTE_TEMP_SHA                   = 686dcaaa7e309108f30e64029e9fcd611fa5d50e
+RCV_HEAD_SHA                      = see the run record
+APPLE_HEAD_SHA                    = none
+
+TESTING_PUSHED                    = NO
+TAG_MOVED                         = NO
+RELEASE_CREATED                   = NO
+TESTFLIGHT_UPLOAD                 = NO
+
+READY_FOR_FINAL_FREEZE_VALIDATION = NO
+```
+
+`READY_FOR_FINAL_FREEZE_VALIDATION = NO` because §33 requires **PRESENT_INVALID integration
+proven** and **Apple real CI proven**, and neither is. The brief's own framing is the right one:
+this round's job was to turn a completed architecture into irrefutable evidence, and the two proofs
+that matter most are the two that are missing.
