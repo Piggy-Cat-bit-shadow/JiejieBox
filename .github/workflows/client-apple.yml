@@ -58,6 +58,18 @@ on:
         type: boolean
         default: true
 
+# No concurrency policy, DELIBERATELY, and this comment is the policy.
+#
+# This workflow is `workflow_dispatch`-only and release-blocking, so a manual candidate must never
+# be canceled by anything - including a later dispatch of this same workflow. The way to guarantee
+# that is to declare no `concurrency` group at all: with no group there is nothing for a second run
+# to join, so no cancellation is possible rather than merely unlikely.
+#
+# A group is NOT added here for symmetry with the other producers. Adding one would create the very
+# cancellation surface this file is avoiding, and `check-release-workflows.py` now asserts that
+# every release-blocking manual producer either declares `cancel-in-progress: false` or declares no
+# group - so the absence is checked rather than assumed.
+
 permissions:
   contents: read
 

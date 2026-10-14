@@ -79,8 +79,25 @@ on:
 # push run for the same ref no longer cancel each other; a newer run of the SAME
 # mode still supersedes an older one. See the Linux workflow for the measurement.
 concurrency:
+  # MANUAL-ONLY WORKFLOW, so `cancel-in-progress` is FALSE.
+  #
+  # This was `true`, which meant a second `workflow_dispatch` for the same ref and profile
+  # CANCELED the first one. That is the wrong semantics for a candidate: the first dispatch is a
+  # candidate someone deliberately started - the release candidate, in the case this matters - and
+  # a later dispatch is not a newer version of the same thing, it is a second thing. Canceling it
+  # makes "which candidate did I actually validate" depend on dispatch order.
+  #
+  # Superseding is only meaningful when the platform itself makes a new run a replacement. A push
+  # does that: the branch moved, so the old run is about a commit nobody is going to release. A
+  # manual dispatch does not: the commit is whatever the operator chose, and the operator may
+  # deliberately be building two.
+  #
+  # `android-core-arm64.yml` shows the event-aware form, because it supports BOTH triggers and
+  # needs the distinction. This workflow supports only `workflow_dispatch`, so the answer is
+  # unconditional FALSE rather than an expression - a condition on a single-valued variable would
+  # be noise that reads as if a push path existed.
   group: macos-arm64-${{ github.ref }}-${{ inputs.deep_checks && 'deep' || 'fast' }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read

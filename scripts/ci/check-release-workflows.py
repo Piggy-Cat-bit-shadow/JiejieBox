@@ -893,6 +893,93 @@ def check_target_state_v6():
     return 1 if failed else 0
 
 
+# The release-blocking producer workflows. Each one produces an artifact the release consumes, so
+# each one's run is a CANDIDATE, and a canceled candidate is a candidate that cannot be released.
+PRODUCERS = [
+    "server-linux-amd64.yml",
+    "client-macos.yml",
+    "windows-core-amd64.yml",
+    "android-core-arm64.yml",
+    "client-desktop-windows.yml",
+    "client-apple.yml",
+]
+
+
+def check_producer_concurrency():
+    """A manual candidate must not be cancellable by a later manual dispatch.
+
+    The rule, and why it is not "always false":
+
+        push + dispatch   a superseded PUSH may cancel (the branch moved; that run is about a
+                          commit nobody will release), but a dispatch must NEVER cancel another
+                          manual candidate - the operator chose that commit and may deliberately
+                          be building two.
+        dispatch only     cancel-in-progress: false, or no concurrency group at all.
+
+    `server-linux-amd64.yml` and `client-macos.yml` were both dispatch-only with
+    `cancel-in-progress: true`, so a second dispatch silently canceled the first candidate. The
+    failure mode is nasty because both runs look successful in isolation: the first reports
+    "cancelled", which reads as an operator action, and the release then has no successful run at
+    the SHA it wants.
+
+    Three outcomes are accepted, and nothing else:
+      * no concurrency group            -> nothing to join, so nothing to cancel;
+      * cancel-in-progress: false       -> explicit;
+      * an expression guarded on event  -> must be false for workflow_dispatch.
+    """
+    problems = []
+    for name in PRODUCERS:
+        path = os.path.join(REPO, ".github", "workflows", name)
+        if not os.path.isfile(path):
+            problems.append(name + " is missing")
+            continue
+        with open(path, encoding="utf-8") as handle:
+            doc = yaml.safe_load(handle.read())
+        # PyYAML resolves the bare key `on` to True.
+        triggers = doc.get("on") or doc.get(True) or {}
+        dispatch_only = set(triggers.keys()) == {"workflow_dispatch"}
+
+        concurrency = doc.get("concurrency")
+        if concurrency is None:
+            continue  # nothing to cancel
+        if isinstance(concurrency, str):
+            # A bare string is a group with the default cancel-in-progress: true.
+            problems.append(
+                "%s declares a bare concurrency group, which defaults to cancel-in-progress: "
+                "true - a manual candidate could be canceled" % name
+            )
+            continue
+
+        cancel = concurrency.get("cancel-in-progress", True)
+        if cancel is False:
+            continue
+        if cancel is True:
+            problems.append(
+                "%s sets cancel-in-progress: true%s"
+                % (name, " and is dispatch-only, so a later dispatch cancels the candidate"
+                   if dispatch_only else "")
+            )
+            continue
+
+        # An expression. It must be impossible for it to be true under workflow_dispatch.
+        text = str(cancel)
+        guarded = re.search(r"event_name\s*!=\s*['\"]workflow_dispatch['\"]", text)
+        if not guarded:
+            problems.append(
+                "%s guards cancel-in-progress with %r, which does not exempt workflow_dispatch"
+                % (name, text)
+            )
+        if dispatch_only and not guarded:
+            problems.append(name + " is dispatch-only and must not cancel at all")
+
+    report(
+        "producer concurrency: no manual candidate can be canceled",
+        not problems,
+        "; ".join(problems) if problems else "%d producers, all manual-safe" % len(PRODUCERS),
+    )
+    return problems
+
+
 def check_shell_line_endings():
     """Every shell script anything EXECUTES must have LF endings in the index.
 
@@ -1066,6 +1153,8 @@ def main(argv=None):
     check_canonical_fixture_is_executed()
     print()
     check_source_verify()
+    print()
+    check_producer_concurrency()
     print()
     check_shell_line_endings()
     print()
