@@ -313,6 +313,13 @@ jobs:
         shell: bash
         env:
           DESKTOP_CLIENT_DIR: ${{ env.CLIENT_DIR }}
+          # The tooling and the core are TWO checkouts here - `tooling/` at TOOLING_SHA and `core/`
+          # at CORE_SHA - so the script cannot find release/JIEJIE_VERSION or the client gitlink
+          # from its own location. It resolves both against this root. Without it the client path
+          # was looked for under the tooling tree and this gate died with
+          # "FAIL: core/clients/desktop is missing" one step after the submodule had in fact been
+          # checked out, which is exactly what this variable exists to make impossible.
+          DESKTOP_CORE_ROOT: ${{ github.workspace }}/core
           PYTHON: python
         run: |
           set -euo pipefail
@@ -325,6 +332,10 @@ jobs:
           # records), the client is otherwise clean, and after the stamp the only file that
           # differs is version.json. Those are the checks that catch a submodule move which
           # did not take effect - `git add submodule` succeeds either way.
+          #
+          # `scripts/ci/test-desktop-client-root.sh` proves the root resolution itself against a
+          # fixture shaped like this job, because a path bug is invisible to `bash -n` and this job
+          # was the only thing that had ever executed the script.
           bash tooling/scripts/ci/prepare-desktop-client.sh --version "$CORE_VERSION"
           # And the file that will name the installer must carry exactly that value.
           client_version="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' \

@@ -56,6 +56,7 @@ on:
       - "scripts/ci/inject-desktop-release-version.py"
       - "scripts/ci/test-desktop-release-version.py"
       - "scripts/ci/prepare-desktop-client.sh"
+      - "scripts/ci/test-desktop-client-root.sh"
       - "scripts/ci/check-desktop-source-identity.sh"
       - "scripts/ci/test-desktop-source-identity.sh"
       - "scripts/ci/require-executed-coverage.sh"
@@ -261,6 +262,21 @@ jobs:
           set -uo pipefail
           mkdir -p verify-logs
           python3 scripts/ci/check-release-workflows.py 2>&1 | tee verify-logs/workflow-structure.log
+
+      - name: desktop client root resolution (the tooling/core split, really executed)
+        if: always()
+        run: |
+          set -uo pipefail
+          mkdir -p verify-logs
+          # The syntax step above proves this script PARSES. It cannot prove it resolves paths, and
+          # that is the failure that reached a release: the Windows job checks the tooling and the
+          # core out into TWO directories, the script derived its root from its own location, and the
+          # gate died with "FAIL: core/clients/desktop is missing" one step after
+          # `git -C core submodule update --init clients/desktop` had printed a successful checkout.
+          # This step EXECUTES the script against a fixture shaped like that job, so a path bug fails
+          # here rather than on a release run.
+          bash scripts/ci/test-desktop-client-root.sh 2>&1 | tee verify-logs/desktop-client-root.log
+          exit "${PIPESTATUS[0]}"
 
       - name: the suite carries its own mock, so it cannot reach GitHub
         if: always()

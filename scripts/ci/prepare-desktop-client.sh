@@ -77,17 +77,53 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+# `root` is the checkout this SCRIPT lives in, and it is used for exactly one thing: locating the
+# injector, which ships with the tooling. The release version and the client gitlink belong to the
+# CORE checkout, which in the Windows release job is a DIFFERENT directory (`core/`, checked out at
+# CORE_SHA) because the tooling is checked out separately at TOOLING_SHA.
+#
+# Deriving both from this script's own location - which is what it used to do - works only when the
+# tooling and the core are the same checkout. In the release job they are not, so `clients/desktop`
+# resolved against the tooling tree and the job died with
+#
+#     FAIL: core/clients/desktop is missing
+#
+# while `git -C core submodule update --init clients/desktop` in the step above had just printed
+# "Submodule path 'clients/desktop': checked out '917d2a4e…'". The submodule was fine; the path was
+# resolved in the wrong tree.
+#
+# DESKTOP_CORE_ROOT therefore names the checkout that holds release/JIEJIE_VERSION and the client
+# gitlink. It defaults to this script's own root, which keeps every direct invocation inside the
+# core checkout behaving exactly as before.
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+core_root="${DESKTOP_CORE_ROOT:-}"
+if [ -n "$core_root" ]; then
+  [ -d "$core_root" ] || {
+    echo "FAIL: DESKTOP_CORE_ROOT '$core_root' is not a directory." >&2
+    echo "      It must name the checkout that holds release/JIEJIE_VERSION and the client gitlink," >&2
+    echo "      which is not necessarily the checkout this script lives in." >&2
+    exit 1
+  }
+  core_root="$(cd "$core_root" && pwd)"
+else
+  core_root="$root"
+fi
 cd "$root"
+# Relative client paths are relative to the CORE checkout, because that is the tree whose commit
+# records the gitlink; an absolute path is taken as given.
 client_dir="${DESKTOP_CLIENT_DIR:-clients/desktop}"
+case "$client_dir" in
+  /*) ;;
+  *) client_dir="$core_root/$client_dir" ;;
+esac
 [ -d "$client_dir" ] || {
   echo "FAIL: $client_dir is missing" >&2
-  echo "      the client is a submodule: git submodule update --init $client_dir" >&2
+  echo "      the client is a submodule: git -C $core_root submodule update --init ${DESKTOP_CLIENT_DIR:-clients/desktop}" >&2
   exit 1
 }
 
-# The single authority for the fork's release version.
-version_file="$root/release/JIEJIE_VERSION"
+# The single authority for the fork's release version, read from the CORE checkout.
+version_file="$core_root/release/JIEJIE_VERSION"
 [ -f "$version_file" ] || { echo "FAIL: no $version_file" >&2; exit 1; }
 file_version="$(tr -d '[:space:]' < "$version_file")"
 [ -n "$file_version" ] || { echo "FAIL: $version_file is empty" >&2; exit 1; }
@@ -150,9 +186,36 @@ if ! git -C "$client_dir" rev-parse --git-dir >/dev/null 2>&1; then
 fi
 
 client_head="$(git -C "$client_dir" rev-parse HEAD)"
-recorded="$(git rev-parse "HEAD:$client_dir" 2>/dev/null || true)"
+# `-C "$core_root"` and a path relative to that root, because the gitlink belongs to the commit the
+# CORE checkout has out, and the script's own cwd is the tooling checkout in the release job.
+#
+# A gitlink can only be named RELATIVE to the repository that records it - `git rev-parse
+# HEAD:/abs/path` fails - so an absolute DESKTOP_CLIENT_DIR is converted rather than passed through,
+# and a client outside the core checkout is refused outright: a gitlink cannot record a tree the
+# repository does not contain, so such a path could never be the revision this commit records.
+client_gitlink_path="${DESKTOP_CLIENT_DIR:-clients/desktop}"
+case "$client_gitlink_path" in
+  /*)
+    # Strip the core root as a literal prefix rather than calling `realpath --relative-to`: the
+    # relative form has to be computed here, core_root is already absolute and canonical, and
+    # `realpath` is not uniformly available (it returns empty under Git for Windows' MSYS layer).
+    absolute_client="$(cd "$client_dir" && pwd)"
+    case "$absolute_client" in
+      "$core_root"/*)
+        client_gitlink_path="${absolute_client#"$core_root"/}"
+        ;;
+      *)
+        echo "FAIL: DESKTOP_CLIENT_DIR '$client_dir' is not inside $core_root." >&2
+        echo "      The client is recorded as a gitlink of the core, so it must be a path the core" >&2
+        echo "      checkout contains; a client elsewhere cannot be the revision this commit records." >&2
+        exit 1
+        ;;
+    esac
+    ;;
+esac
+recorded="$(git -C "$core_root" rev-parse "HEAD:$client_gitlink_path" 2>/dev/null || true)"
 [ -n "$recorded" ] || {
-  echo "FAIL: HEAD records no gitlink for $client_dir" >&2
+  echo "FAIL: HEAD records no gitlink for $client_gitlink_path in $core_root" >&2
   exit 1
 }
 
@@ -161,7 +224,7 @@ printf '   parent records     = %s\n' "$recorded"
 if [ "$client_head" != "$recorded" ]; then
   echo "FAIL: the checked-out client revision is not the one this commit records." >&2
   echo "      The build would package a revision that is not part of the release." >&2
-  echo "      Fix with: git submodule update --init $client_dir" >&2
+  echo "      Fix with: git -C $core_root submodule update --init $client_gitlink_path" >&2
   exit 1
 fi
 echo "   MATCH: the client is the revision this commit records"
