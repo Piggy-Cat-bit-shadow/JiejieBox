@@ -109,6 +109,12 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | XMUX, stream-one, packet-up, splitHTTP, X-Padding, H2/H3 | XHTTP | `modules/xhttp-client-transport.md` |
 | traffic_class, traffic_scheduler, backpressure, pacing | data path | `modules/data-path-optimization.md` Part B |
 | tag stub, pruning, registry, DEFAULT_BUILD_TAGS | build | `modules/build-pruning-release.md` §1–3 |
+| schema, schema.json, option/schema.go, generated docs, stale generated artifact | the generated-schema chain and its re-check contract | `modules/build-pruning-release.md` §4; `modules/README.md` §Not covered (schema row) |
+| release authority, release contract, canonical asset list, asset allowlist, artifact provenance, exact-SHA provenance, checksum, read-back, draft-first, dry-run, `publish-args`, `expected-assets`, `verify-public-release`, single source of release truth | CI and release provenance | `modules/ci-release.md` §1, §5 |
+| pipeline DAG, unwired gate, duplicate gate, gate ownership, which workflow runs what | CI gate ownership | `modules/ci-release.md` §1–2 |
+| SIGPIPE, pipefail, exit-code false negative in a gate | shell-gate correctness | `modules/ci-release.md` §5 |
+| Apple source authority, Android AAR provenance, Windows artifact provenance, Unix/macOS release authority | per-platform artifact provenance | `modules/ci-release.md` §5; `modules/libbox-platform-contract.md` §6–7 |
+| Windows daemon, boxdd, Named Pipe, peer authentication, service install, worker, executable identity, signer trust, Authenticode, certificate validity, code-signing EKU, same-file check | the Windows daemon trust boundary | `modules/windows-daemon-security.md` |
 | unwired gate, stale evidence, VERIFIED_CI, SKIP | evidence discipline | `modules/ci-release.md` §2–3; `README.md` §the four status labels |
 | orphan, provenance, patch-id, upstream twin | Git provenance | `BASELINE.md` §the provenance test |
 | tag scheme, annotated tag, release identity | release identity | `BASELINE.md` §release-identity trap |
@@ -135,9 +141,10 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | `transport/v2rayxhttp` | `modules/xhttp-client-transport.md` | §1–22 |
 | `experimental/libbox`, `daemon/` | `modules/libbox-platform-contract.md` | §1, §4 |
 | `cmd/internal/*`, `release/*` | `modules/build-pruning-release.md` | §4, §6 |
+| `option/schema.go`, `docs/schema.json`, `schema/generate.go` — the generated schema artifact | `modules/build-pruning-release.md` §4 (the generator) + `modules/README.md` §Not covered (its **stale status and re-check contract**) | §4 / the schema row |
 | `.github/workflows/*`, `scripts/ci/*` | `modules/ci-release.md` | §1–5 |
 | `protocol/vless/encryption` | **not covered** — see `modules/README.md` §Not covered | — |
-| `experimental/boxdd/**` — the Windows daemon | **not covered** — no module owns it; see `modules/README.md` §Not covered | — |
+| `experimental/boxdd/**` — the Windows daemon, service, worker, named pipe | `modules/windows-daemon-security.md` | §1 (roles), §4 (handshake), §5 (Authenticode), §6 (the pin) |
 | `clients/{apple,android,desktop}` | separate repositories; only the core side is recorded | `modules/libbox-platform-contract.md` §6–7 |
 
 ## Route by invariant / acceptance

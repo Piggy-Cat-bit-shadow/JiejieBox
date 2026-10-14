@@ -14,30 +14,55 @@ not all-platform PASS.* Every row below is graded on that basis.
 
 ## 1. What actually runs
 
-| Workflow | Trigger | Blocking? |
-|---|---|---|
-| **`verify.yml`** ("Verify") | `push` to `testing`, **all** `pull_request`, `workflow_dispatch` | **YES — the only automatic gate** |
-| `android-core-arm64.yml` | `push` to `testing` with a `paths:` filter | push only, path-filtered |
-| `client-apple.yml` | **`workflow_dispatch` only** | no |
-| `client-desktop-windows.yml` | **`workflow_dispatch` only** | no |
-| `client-macos.yml` | **`workflow_dispatch` only** | no |
-| `interop-xray.yml` | **`workflow_dispatch` only** | no |
-| `release.yml` | **`workflow_dispatch` only** | no |
-| `server-linux-amd64.yml` | **`workflow_dispatch` only** | no |
-| `windows-core-amd64.yml` | **`workflow_dispatch` only** | no |
+**Re-measured at the `v0.1.9` baseline. There are now FOUR automatic gates, not one.** The previous
+version of this section named `verify.yml` as "the only automatic gate" and listed nine workflows; the
+tree has twelve, and three of them were entirely absent from that list. A reader who trusted the old
+table would have believed that a `push` which moved release tooling, or the mobile contract, or the
+Windows runtime audit, was unchecked.
 
-Required-check / branch-protection configuration is **not in the repository**; do not guess at it.
+| Workflow | push | PR | dispatch | `workflow_run` | Notes |
+|---|---|---|---|---|---|
+| **`verify.yml`** ("Verify") | `testing` | all | YES | — | the **source** gate |
+| **`release-contract-verify.yml`** ("Release contract verification") | `testing`, `release/**`, `fix/release-asset-contract` — **path-filtered** | path-filtered | YES | — | the **release-tooling** gate; see below |
+| **`mobile-contract.yml`** | YES | — | YES | — | mobile contract |
+| `android-core-arm64.yml` | `testing` — **`paths:` filtered** | — | YES | — | Android ABI |
+| `client-desktop-windows-runtime-audit.yml` | — | — | YES | **YES** | runs after the desktop producer, not on push |
+| `client-apple.yml` | — | — | YES | — | |
+| `client-desktop-windows.yml` | — | — | YES | — | |
+| `client-macos.yml` | — | — | YES | — | |
+| `interop-xray.yml` | — | — | YES | — | |
+| `release.yml` | — | — | YES | — | |
+| `server-linux-amd64.yml` | — | — | YES | — | |
+| `windows-core-amd64.yml` | — | — | YES | — | |
 
-> **Android's path filter is a silent-coverage trap.** `android-core-arm64.yml` runs only when a listed
-> path changes. Adding a new top-level directory can therefore **silently drop Android ABI
-> verification** for changes that do affect it. Check the list before assuming Android was checked.
+Required-check / branch-protection configuration is **not in the repository**; do not guess at it. What
+*is* in the repository is the set of workflows that could contribute a check, and that set is the table
+above.
 
-### `verify.yml` — the whole automatic gate, step by step
+### The push gate is path-filtered, and the filter is the contract
+
+`release-contract-verify.yml` runs on a push **only when release tooling moved**. Its own comment gives
+the reasoning, and it is the rule to preserve: *"product source, docs and reports are not its input, and
+a push that touches none of the paths below cannot change its verdict."* The path list is declared
+**once** as a YAML anchor (`&release_tooling_paths`) and aliased into `pull_request:`, *"so the push and
+`pull_request` triggers cannot drift into asserting different things about the same files."*
+
+`workflow_dispatch` is kept **on purpose** even though the push trigger exists: *"the final frozen SHA
+still has to be able to obtain this evidence ON DEMAND, because a `[skip ci]` dependency sync never
+triggers a push run."* Removing it to "clean up" the triggers would remove the only way a frozen
+candidate can obtain its own release evidence.
+
+> **Two path filters, two different traps.** `android-core-arm64.yml` and
+> `release-contract-verify.yml` both narrow their push trigger. Adding a new top-level directory can
+> therefore **silently drop** Android ABI verification or release-contract verification for a change
+> that genuinely affects it. Check the list before assuming either was checked — and if you add a file
+> that the release path depends on, add it to `release_tooling_paths` in the same change.
+
+### `verify.yml` — the source gate, step by step
 
 | Step | What it runs | Proves | Cannot prove |
 |---|---|---|---|
 | release gate self-test | `scripts/ci/test-release-artifacts.sh` | the release selection logic refuses bad evidence — against a **mock `gh`** | that the real `gh`/API behaves so |
-| release ACCEPTANCE self-test | `scripts/ci/verify-release-acceptance-test.sh` | 18 synthetic API snapshots: 1 accepted, 15 rejected, 2 escape-hatch | same — synthetic |
 | gofmt | `gofmt -l` on 10 dirs | formatting | anything semantic |
 | gomobile single-source | `test-gomobile-toolchain.sh` | no version literal outside one declaration | its network half is **opt-in** via `GOMOBILE_TOOLCHAIN_TEST_INSTALL=1` and not run here |
 | nested module integrity | `check-go-module-integrity.sh --require-checked test` | the `test` module resolves the same fork pins as root | runtime behaviour |
@@ -51,44 +76,75 @@ Required-check / branch-protection configuration is **not in the repository**; d
 | **race, fork data paths** | `go test -race … ./common/trafficclass/... ./common/trafficsched/... ./common/dialer/... ./protocol/direct/... ./protocol/tun/... ./route/... ./adapter/...` | races in those 7 trees | **the root package is not in the list**, and neither is `./protocol/masque` |
 | race, config surface | `go test -race … ./option/...` | races in `option` | — |
 
-> **The critical gap, stated exactly:** `verify.yml` is the only automatic gate and it contains **no
-> `go test` invocation that executes the root package**. The 25 root `box_*_test.go` files — every
-> start-time-validation, physical-path and lifecycle contract test — are **compiled by CI and never
-> executed by CI**. See §4 for the correct tag set to run them yourself.
+> **The critical gap, stated exactly:** no automatic gate contains a `go test` invocation that
+> **executes** the root package. The root `box_*_test.go` files — every start-time-validation,
+> physical-path and lifecycle contract test — are **compiled by CI and never executed by CI**. See §4
+> for the correct tag set to run them yourself.
 
 **Merging a PR does not run the artifact workflows.** The artifacts (Apple, macOS, desktop Windows,
-Linux server, Android core, interop) are all manual dispatch.
+Linux server, Android core, interop) are all manual dispatch that the release path then consumes.
 
 ---
 
-## 2. Unwired gates — the largest systemic risk in this repository
+## 2. Gate wiring — what runs, what is declared, and what is merely present
 
-Scripts that exist, are named after a gate, and that **nothing runs**:
+**Re-measured at the `v0.1.9` baseline.** The previous version of this section was titled *"Unwired
+gates — the largest systemic risk"* and listed twelve scripts as running from nothing. **Four of them
+are now genuinely wired**, so that list would send a reader to re-wire something that already runs:
 
-**Gate class** — `check-libbox-abi.sh` (**0 referrers** anywhere outside its own usage block),
-`apple-abi-provenance.sh`, `apple-abi-probe.sh`, `probe-accessors.py` (referenced **only** by
-`check-libbox-abi.sh`, so orphaning one script orphaned its whole subtree), `check-satelite-one-core-pin.py`,
-`test-apple-links.py`, `verify-cronet-ios-archive.sh`, `run-jiejie-suite.sh`, `acceptance/jiejie-masque-vps.sh`,
-`ci/windows/Test-DaemonServiceRegister.ps1`.
+| Script | Previous claim | Measured now |
+|---|---|---|
+| `verify-release-acceptance.sh` | "mentioned in a comment, never invoked" | **invoked** — `release-contract-verify.yml:209` (self-test) and `verify.yml` |
+| `verify-fork-handoff.sh` | "same — comment only" | **invoked** — `verify.yml` |
+| `check-macos-app-name.sh` | "comment only" | **invoked** — `client-apple.yml` |
+| `check-macos-client-config.sh` | "comment only" | **invoked** — `client-macos.yml` |
 
-**Comment-only mentions that read like wiring** — `verify-release-acceptance.sh` (mentioned in a
-`verify.yml` comment, never invoked), `verify-fork-handoff.sh` (same — and `verify.yml`'s comment says
-it *"proves the documents agree with each other"*), `check-macos-app-name.sh`, `check-macos-client-config.sh`.
+### The distinction the old list collapsed, and which still matters
+
+`verify-release-acceptance.sh` is the sharpest example, because it is now *invoked* while still being
+*not a gate on the release path*. `release-contract-verify.yml:210-222` states this explicitly: the step
+that moved there is the **self-test** (*"it proves that the strict acceptance checker still refuses bad
+evidence across 18 API snapshots"*), and the comment goes on to say the engine
+
+> *"is unchanged and is still reachable from nothing in the release path; what changed is which workflow
+> claims to gate on it."*
+
+So there are **three distinct states**, and conflating any two of them produces a wrong answer:
+
+```text
+WIRED        something in a triggered workflow invokes it      -> a red run is possible
+DECLARED     a workflow comments that it is a gate             -> a red run is NOT possible
+PRESENT      the script exists and nothing references it       -> nothing happens at all
+```
+
+`verify-release-acceptance.sh` is **WIRED as a self-test, and its engine is still not a release-path
+gate.** The reason recorded in the workflow is worth keeping: while `verify.yml` ran that self-test,
+`verify.yml` was *"DECLARING the acceptance engine as a gate, although nothing on the release path
+called it"* — and *"a second may-release authority that no release consults is exactly the drift the
+single-authority rule exists to prevent."* The release path's authority is `release.yml` plus
+`release-artifacts.sh` (§5), not this engine.
+
+### Still genuinely unwired at this baseline
+
+`check-libbox-abi.sh` and its subtree (`apple-abi-provenance.sh`, `apple-abi-probe.sh`,
+`probe-accessors.py` — the last referenced *only* by the first, so orphaning one orphaned all four),
+`check-satelite-one-core-pin.py`, `test-apple-links.py`, `verify-cronet-ios-archive.sh`,
+`run-jiejie-suite.sh`, `ci/windows/Test-DaemonServiceRegister.ps1`.
 
 **Test tags referenced by nothing** — `trafficresearch` (`common/trafficsched/adaptive_research_test.go`),
 `p2ios` (three `experimental/libbox` files), `tlsfragment_integration`
 (`common/tlsfragment/integration_test.go`, also `t.Skipf`-gated), `force_stdio` (referenced only by a
-`Makefile` target that is itself dead). **Eight test functions in these files never run in any declared
+`Makefile` target that is itself dead). **Test functions in these files never run in any declared
 configuration.**
 
 **A dead `Makefile` target** — `make test` cannot pass: its first command is untagged, and `TAGS_TEST`
-(used on two lines) is **never defined anywhere in the repository**, so it expands empty. The original
-Stage-1 knowledge base pointed readers at the root suite without ever naming a tag set, which fails the
-same way.
+(used on two lines) is **never defined anywhere in the repository**, so it expands empty.
 
 **Method note for anyone re-deriving this:** a naive extraction of `run:` blocks **under-detects**
 (it misses a script invoked from inside another step's multi-line shell block, e.g.
-`check-reference-coverage.sh` at `server-linux-amd64.yml:742`). Verify each candidate individually.
+`check-reference-coverage.sh` at `server-linux-amd64.yml:742`). The same naive extraction now also
+**over-detects unwiredness** for anything reached through `release-contract-verify.yml`, which the old
+list predates. Verify each candidate individually, against every workflow, including the two new ones.
 
 ---
 
@@ -249,136 +305,163 @@ state and does not survive a change of host.
 
 ## 5. Release provenance
 
-### The design (sound, and verified in the workflow text)
+### The single authority for the asset list
 
-`release.yml` (`workflow_dispatch` only, requires `inputs.tag`, `dry_run` defaults **false**):
+**`scripts/ci/release-artifacts.sh` owns the canonical public asset list, and it derives it in exactly
+one function.** This is the rule that the `v0.1.8` release defect bought:
 
-1. `test the release gate` — the gate's own self-tests run **before** the gate is trusted.
-2. `check-tag` — `HEAD` **is** the tagged commit; tooling is checked out to `tooling/` so the tag
-   checkout cannot delete the script.
-3. `publish-flag` — anything not exactly `true`/`false` fails.
-4. `plan` — selects **one** successful run per product workflow **for this exact SHA**, with a 90-minute
-   timeout. Missing / failed / cancelled / skipped → fail, printing the run URLs.
-5. `download` — from the *selected* runs, not a fresh query.
-6. **`verify`** — per platform: binary + `.sha256` + `BUILD-INFO`, a real `sha256sum -c`, platform read
-   from the file's own header, and the recorded commit must match. *"A hash for one platform does not
-   cover the other."*
-7. `create the release` — `gh release create … --target "$sha"` with `upload/*.tar.gz` and
-   `upload/SHA256SUMS`. Not draft, not prerelease.
+> **ONE FACT = ONE OWNER.** `public_asset_names()` (`release-artifacts.sh:1671`) iterates
+> `TARGET_WORKFLOWS` and emits each target's `tarball` name plus the two non-tarball artifacts. Four
+> subcommands consume it and none of them re-derives it: `expected-assets` (`:1706`), `check-upload`
+> (`:1744`), `publish-args` (`:1821`) and `verify-public-release` (`:1778`).
+
+**What went wrong, because it is the failure mode to avoid repeating.** `v0.1.8` shipped with **six**
+assets where the contract required **seven** (`Libbox.xcframework.tar.gz` was missing). The cause was
+not a missing check — it was **three authorities over one fact**: `check-upload` derived its list from
+`TARGET_WORKFLOWS` and passed; `release.yml`'s `gh release create` carried a *hardcoded literal* of six
+filenames and uploaded six; and `release.yml`'s read-back carried *the same six literals*, so it
+compared six against six and the workflow went green. **Self-consistently wrong.** A count-only check
+cannot detect this, which is why the read-back compares **by name**.
+
+The workflow is now forbidden from holding a second copy: `check-release-workflows.py` asserts that the
+publish step *takes* its list from `publish-args` and that it contains **no** literal asset filename.
+Adding the literal back is a regression to the exact defect, and the checker fails.
+
+### `release.yml` — draft-first, and why the order is the safety property
+
+`workflow_dispatch` only, requiring `inputs.tag`; `dry_run` defaults to **false**. **Seventeen steps**,
+in this order, and the order is load-bearing:
+
+```text
+ 1 check out the tagged commit                    (the SHA is the identity)
+ 2 check out the release tooling at that revision
+ 3 bind the tooling identity to the released commit
+ 4 require exact-SHA source and tooling evidence
+ 5 upload the evidence record
+ 6 resolve and validate the tag                   check-tag
+ 7 resolve the release version                    release-version
+ 8 decide whether this run may publish            publish-flag: anything but true/false dies
+ 9 select the CI runs for this commit             plan: ONE successful run per product workflow,
+                                                  for THIS exact SHA
+10 download the verified artifacts                from the SELECTED runs, not a fresh query
+11 stage the Windows desktop installer
+12 verify the downloaded artifacts                per platform: binary + .sha256 + BUILD-INFO, a real
+                                                  sha256sum -c, platform read from the file's own
+                                                  header, recorded commit must match
+13 flatten the release assets
+14 confirm the upload set is exactly the public contract        check-upload
+─── the irreversible half ───
+15 create the release (draft) and upload the canonical asset set   --draft, assets from publish-args
+16 verify the draft carries exactly the public contract             verify-public-release
+17 publish the draft as the stable release                          gh release edit --draft=false
+                                                                    then verify-public-release AGAIN
+```
+
+**`publish-args` is all-or-nothing.** It validates that every asset in the contract exists on disk and
+prints **nothing at all** on failure, so a partial list can never reach `gh release create`. That is a
+deliberate property, not an implementation detail: printing paths as they are validated would let the
+release be created with whatever happened to be checked before the failure.
+
+**Draft-first is what stops a defective release being publicised.** The release is created as a
+**draft**, the contract is verified **by name** against the draft, and only then is it published. A
+missing asset therefore stops at a draft the public cannot see. `v0.1.8` is the counter-example: it was
+not draft-first, so the six-asset defect was public before anything compared it to the contract.
 
 > **So the claim "product CI produces/proves artifacts; release downloads and re-verifies those exact
-> bytes rather than rebuilding them" is TRUE** — but it is scoped to the platforms the plan step
-> selects, and it depends on 4–5 `workflow_dispatch`-only workflows having been dispatched manually
-> first.
+> bytes rather than rebuilding them" is TRUE** — but it is scoped to the platforms `plan` selects, and
+> those producers are `workflow_dispatch`-only, so they must have been dispatched manually first.
 
-**Platform coverage, measured at the release baseline:** `release.yml:69` sets
-`RELEASE_EXTRA_PLATFORMS: true`, and `release-artifacts.sh:77-85` accepts exactly the strings
-`true`/`false` (anything else dies). With it set, **Windows and Android artifacts ARE in the release
-set**; only the Apple IPA/DMG is still excluded. The comment at `release-artifacts.sh:63-67` still says
-*"Windows, Android and the Apple IPA/DMG are deliberately NOT here"* — **that sentence is stale for
-Windows and Android.**
+**Platform coverage.** `release.yml` sets `RELEASE_EXTRA_PLATFORMS: true`, and `release-artifacts.sh`
+accepts exactly the strings `true`/`false` (anything else dies). With it set, **Windows and Android
+artifacts ARE in the release set**; the Apple IPA/DMG is still excluded.
 
-### A live defect in the release path, measured at the release baseline
+### A defect this module documented — now FIXED
 
-`release.yml:69` sets `RELEASE_EXTRA_PLATFORMS: true`, which is what the contract checks:
+An earlier revision of this section described a **live defect**: the release-tree allowlist was built
+as four names per target and never extended for the extra files the Windows and Android producers
+upload, so `verify` would die with `unexpected file(s) in the release tree` whenever
+`RELEASE_EXTRA_PLATFORMS=true` — which the release workflow itself sets.
 
-```sh
-# release-artifacts.sh:69-86
-TARGET_WORKFLOWS=( ".github/workflows/server-linux-amd64.yml" ".github/workflows/client-macos.yml" )
-case "${RELEASE_EXTRA_PLATFORMS:-false}" in
-  false) ;;
-  true)  TARGET_WORKFLOWS+=( ".github/workflows/windows-core-amd64.yml"
-                            ".github/workflows/android-core-arm64.yml" ) ;;
-  *) die "RELEASE_EXTRA_PLATFORMS must be exactly true or false" ;;
-esac
-```
+**That is fixed at the `v0.1.9` baseline.** The allowlist now carries an Apple branch
+(`release-artifacts.sh:1378`, `Libbox.xcframework.tar.gz SHA256SUMS-LIBBOX.txt manifest.json
+BUILD-INFO-LIBBOX.txt`) alongside the per-target rows (`:1381`), and the `die` moved to `:1396`. Two
+other stale statements in the same file were corrected at the same time: the header comment that said
+Windows/Android were *"deliberately NOT here"* now records that it used to say that (`:79`), and the
+loop that printed *"both platforms"* now explains why that was wrong (`:1403`). The gate's own
+self-test was extended to a **six-entry** canonical `SHA256SUMS` (`test-release-artifacts.sh:1884`),
+where the old fixture asserted two rows and could not have caught the defect.
 
-The `target_field` table **was** extended — `:110-122` carries full Windows and Android rows for
-`binary`, `buildinfo`, `magic`, `platform`, `arch` and `tarball`, so `verify_platform` itself is fine.
-
-**But the release-tree allowlist at `:575-592` is still built as four names per target and never
-extended for the extra files those two products upload:**
-
-```sh
-allowed+=( LICENSE )
-for wf in "${TARGET_WORKFLOWS[@]}"; do
-  allowed+=( "$(target_field "$wf" binary)" "$(target_field "$wf" binary).sha256" "$(target_field "$wf" buildinfo)" )
-done
-while IFS= read -r f; do … [ "$ok" -eq 1 ] || unexpected+=… done < <(find "$dir" -type f -exec basename {} \;)
-[ -n "$unexpected" ] && die "unexpected file(s) in the release tree: …"
-```
-
-| Product | Files uploaded | Matches the allowlist? |
-|---|---|---|
-| Linux, macOS | binary, `binary.sha256`, `BUILD-INFO-*.txt`, `LICENSE` | **yes** — exactly |
-| **Windows** (`windows-core-amd64.yml`) | those four **plus** the ZIP, `SHA256SUMS`, `build-info.json` | **no** — three unexpected |
-| **Android** (`android-core-arm64.yml`) | those four **plus** `libbox.provenance`, `SHA256SUMS.txt` | **no** — two unexpected |
-
-So the `verify` step dies with `unexpected file(s) in the release tree` **whenever
-`RELEASE_EXTRA_PLATFORMS=true`**, which the release workflow itself sets. The gate's own self-test
-does not cover it: `test-release-artifacts.sh:532-533` asserts `SHA256SUMS` has exactly **two** rows —
-the fixtures are still the two-product ones.
-
-Two more stale statements in the same file: the header at `:63-67` still says *"Windows, Android and
-the Apple IPA/DMG are deliberately NOT here"* — written before those rows were added — and `:594`
-still prints *"both platforms verified"* from a loop that can now run four times.
-
-**This is a FOLLOW-UP for the release owner. It is a knowledge finding, not something this knowledge
-base fixes.**
+**This is recorded as a fixed defect rather than deleted, because the shape recurs:** an allowlist and a
+producer's upload set are two statements of one fact, and the way they fail is by agreeing with each
+other while both are wrong.
 
 ### What is out of scope
 
 `scripts/ci/verify-release-acceptance.sh` enforces a **default required-workflow set** of
 `verify.yml`, `interop-xray.yml` and `server-linux-amd64.yml`. **`client-apple.yml` is not in that
 set**, and `verify.yml` does not run the Apple ABI gate — so release acceptance is **structurally
-incapable** of noticing Apple-pin drift.
+incapable** of noticing Apple-pin drift. Note also (§2) that this engine is **not called by the release
+path at all**; the release path's authority is `release.yml` + `release-artifacts.sh`.
 
-### The Apple pin has no wired verifier — state this precisely
+### The Apple source authority — **INVERTED at this baseline**
 
-The fork adopted a deliberate **single-authority** pin design: `release/apple-client-refs.env` declares
-the `clients/apple` gitlink as the sole authority, the refs file is **forbidden** from recording a SHA
-(`check-apple-source-selection.sh:124-136`), and the workflow body is **forbidden** from hardcoding one
-(`:209-210`). That correctly eliminated duplicate-SHA drift.
+**The previous revision of this module stated the opposite of the truth, so read this as a correction
+and not as an addition.** It said the refs file *"declares the `clients/apple` gitlink as the sole
+authority"* and that the refs file is *"forbidden from recording a SHA"*. That was the older model.
+`release/apple-client-refs.env` now says, in its own words:
 
-It also removed every cross-check against an *intended* revision. The last candidate was the
-`VERIFIED_APPLE_SHA` constant in `scripts/ci/check-libbox-abi.sh`, and:
+> *"the authority is the client repository: its tip is resolved to an exact SHA at the start of a"*
+> build — `apple-client-refs.env:31`
 
-* **CORRECTED at the `93d757828` refresh.** The constant no longer mismatches the gitlink. It read
-  `90a0e9ae…` while the gitlink had advanced to `d0524912…`, so layer 5 failed; `ece0fb9d2`
-  ("fix(apple): unblock the release — refs guard read the environment, and the pin constant was stale")
-  moved the constant to `d0524912`, and the later pin advance moved it again to `5cab4ec5`. At
-  `93d757828` the constant and the gitlink are **the same commit**, so layer 5 is **green**, and layer 4
-  was run against a clean `clients/apple` at that revision (`scanned: 670, violations: []`). The
-  derivation, including why the second move is *not* the same argument as the first, is recorded in the
-  script's own comment block.
-* **The consequence for the claim below is narrower than "it is stale".** Nothing wires the verifier, so
-  the pin still moves without objection **in practice** — an unwired constant only agrees with the
-  gitlink because the two were moved together by hand. What changed is that the cross-check is now
-  *satisfiable* rather than already failed.
-* **CORRECTED — the released revision is no longer unrecorded.** The previous revision claimed "the
-  released revision `d0524912…` is recorded nowhere in a tracked non-`.git` file". That revision *is*
-  now named: `scripts/ci/check-libbox-abi.sh` carries it in the derivation comment, and the current pin
-  `5cab4ec5…` appears in the same constant. What is **still** unrecorded is the revision the **v0.1.6**
-  Apple products were actually built from, `a267e99e0` — verified absent from every tracked non-`.git`
-  file.
-* **nothing runs the script** — no workflow, no other script, no `Makefile` target;
-* `c7014ddc1` is proof by demonstration: it moved the pin and **nothing objected**;
-* `check-apple-source-selection.sh` could not have caught it **by design** — every one of its checks is
-  self-referential to the gitlink (they prove iOS and macOS *agree*, and forbid a second copy; they
-  cannot say the revision is the intended one).
+and
 
-> **Correct wording: "the Apple pin has no wired verifier, and the one candidate verifier is unwired."**
-> Do **not** write "the Apple ABI gate is broken" — that implies a gate that runs. **Do not write
-> "unwired and stale" any more either**: at `93d757828` the constant agrees with the gitlink, and
-> repeating the old wording is a stale claim in its own right.
->
-> **What is therefore NOT verified for v0.1.6:** ABI call-site compatibility (the Swift/Kotlin clients
-> against the libbox surface) **at the revision v0.1.6 pinned**. The recorded PASSes are at
-> `bb5309b4a`/`90a0e9ae` — two pin generations earlier — and do not transfer. The layer-4 PASS at
-> `5cab4ec5` is a *newer* revision than the release, so it says nothing about what shipped.
->
-> **What IS wired and gated:** Apple packaging/install validity, signing environment, branding, macOS
-> naming, and source selection — see `libbox-platform-contract.md`.
+> *"The submodule and its gitlink still exist and still work: the local default checkout, the … [gitlink
+> is no longer the] authority, and a published build is no longer asserted to equal the gitlink — that
+> assertion is precisely what made the pin manual. Set `APPLE_CLIENT_REQUIRE_GITLINK=1` to get [the hard
+> equality back]"* — `apple-client-refs.env:42-45`
+
+**Why it was inverted.** Under the gitlink-authority model every client release was a
+**two-repository operation**: the build could only mirror a submodule someone had already bumped by
+hand, so each client commit needed a second commit here and a push. The workflow states the replacement
+model plainly:
+
+> *"The AUTHORITY is the Apple client repository, not this repository's gitlink, so this gate compares
+> the checkout against the RESOLVED source rather than against the gitlink. Requiring the gitlink made
+> every client release a two-repository operation."* — `client-apple.yml:234-237`
+
+**The two authorities now:**
+
+| | Authority | How it is used |
+|---|---|---|
+| **Build selection** | the **client repository tip**, resolved to an exact SHA at the start of a build | what a published Apple artifact is actually built from |
+| **Gitlink** (`clients/apple`) | the local default checkout; **not** the build authority | equality with the resolved source is a **note**, not a failure |
+| `APPLE_CLIENT_REQUIRE_GITLINK=1` | opt-in | restores the **hard** gitlink equality (`client-apple.yml:285`, `:442`) |
+
+**The measured pin.** `VERIFIED_APPLE_SHA="40dd48795579718008518ac51af320b1d61377ac"` at
+`scripts/ci/check-libbox-abi.sh:155`, and `git ls-tree HEAD clients/apple` is **the same commit**. But
+because the gitlink no longer *selects* the build, **that agreement is weaker evidence than this module
+previously claimed** — it is the two having been moved together by hand, not a proof the build used it.
+
+### `check-apple-source-selection.sh` was rewritten and IS wired
+
+The previous revision said this script *"could not have caught [pin drift] **by design** — every one of
+its checks is self-referential to the gitlink"*, and that **nothing runs it**. Both halves are now
+wrong:
+
+* **It is wired** — `client-apple.yml:231` runs it (`./scripts/ci/check-apple-source-selection.sh`).
+* **It was rewritten** to assert the *opposite* of what the old text assumed. It keeps the single-copy
+  scheme checks (`:124-129` "the refs file records no SHA", `:209-210` "neither SHA may be hardcoded"),
+  because those still prevent a *duplicate* authority — but it now also asserts that **moving the
+  gitlink does not move the iOS source**, and that **dropping the gitlink does not change the resolved
+  source**. That is exactly the property the inverted-authority model depends on.
+
+**Measured:** the audit ran it on this host — **72 passed, 0 failed**, exit 0. `VERIFIED_UNIT` for the
+script's own assertions; it does not prove the resolved revision is the *intended* one, which is the
+narrow residual gap.
+
+**The wording to keep:** *"the Apple pin has no wired verifier"* is **no longer the right sentence** — a
+selector and a suite are wired. What remains unwired is any check that the **resolved revision is the one
+someone intended**, as opposed to merely self-consistent.
 
 ### The refs guard: it read the caller's environment, not the file
 

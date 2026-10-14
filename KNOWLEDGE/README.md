@@ -97,6 +97,7 @@ This table is the coarse ownership map.
 
 | Module | Covers |
 |---|---|
+| `modules/windows-daemon-security.md` | `experimental/boxdd/**`: the daemon/service/worker roles, the named-pipe peer handshake, executable and signer identity, Authenticode semantics, the signer pin, service installation, the update path |
 | `modules/core-lifecycle-runtime.md` | `adapter.Scope`, `Box` start/close order, `common/runtimecoord`, `route.ReferenceManager` |
 | `modules/path-selection-validation.md` | `common/physicalpath`, `common/routeflow`, start-time validation, `detour`, groups, cycles, failover |
 | `modules/dns-demand.md` | DNS transports, generations, cache commit, FakeIP, consumer demand |
@@ -119,8 +120,12 @@ Fork-wide: `BASELINE.md`, `INDEX.md`, `PROJECT.md`, `ARCHITECTURE.md`, `INVARIAN
 ## What this knowledge base does not cover
 
 `protocol/vless/encryption` (a new fork package with no recorded incident or acceptance rule),
-**`experimental/boxdd/**` — the Windows daemon**, which changed in the `v0.1.6 → v0.1.9` delta and is
-owned by no module, individual upstream protocol wire formats, the Clash/V2Ray API internals, and the
-Apple / Android / desktop **client** source — those are separate repositories, present as empty
-submodules in a clean worktree. `modules/README.md` says so explicitly rather than leaving silence to
-be mistaken for coverage.
+individual upstream protocol wire formats, the Clash/V2Ray API internals, and the Apple / Android /
+desktop **client** source — those are separate repositories, present as empty submodules in a clean
+worktree. `modules/README.md` says so explicitly rather than leaving silence to be mistaken for
+coverage.
+
+**The Windows daemon (`experimental/boxdd/**`) is no longer in this list.** It was the last unowned
+changed subsystem and is now owned by `modules/windows-daemon-security.md` — with one honest limit that
+belongs here too: **its trust boundary has no end-to-end test and its tests never run in CI.** Owning
+the knowledge is not the same as proving the behaviour, and the module's §15 says which is which.

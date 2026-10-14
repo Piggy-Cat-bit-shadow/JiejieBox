@@ -185,7 +185,10 @@ recorded in `REFRESH.md`'s refresh report.
 * The client **source** repositories (`clients/apple`, `clients/android`, `clients/desktop`) are
   separate repositories and are empty in a clean worktree. Their revisions are recorded as gitlinks;
   their contents are **not** covered by any module.
-* `experimental/boxdd/**` (the Windows daemon) changed in this delta and is **not owned by any
-  registered module.** It is a recorded coverage gap, see `modules/README.md` §Not covered.
+* `experimental/boxdd/**` (the Windows daemon) changed in this delta and is owned by
+  **`modules/windows-daemon-security.md`**. It was the last unowned changed subsystem; the ownership
+  map now resolves it, with `daemon/**`, the build driver and packaging recorded as CROSS-MODULE.
+  **Its trust boundary has no end-to-end test and no CI execution** — see that module's §15, which is
+  the honest limit of what this baseline can claim about it.
 * No claim in this knowledge base is `VERIFIED_CI`: the tree carries no workflow-run record. Evidence
   levels stop at `VERIFIED_SOURCE` / `VERIFIED_UNIT` / `VERIFIED_GIT` unless a module says otherwise.
