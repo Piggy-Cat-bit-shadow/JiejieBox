@@ -1003,7 +1003,9 @@ def check_gh_token():
     a step whose `gh api` call lives INSIDE `release-artifacts.sh`. So the check is two-sided - a
     literal `gh` in the step, and a `release-artifacts.sh` subcommand that reaches the API.
     """
-    workflow = load(os.path.join(WF, "release.yml"))
+    # `load` returns (text, document, on) - a tuple, not the document. Unpacked explicitly because
+    # getting this wrong is a unit-test failure only the interpreter catches, and it cost a run.
+    text, workflow, on = load(os.path.join(WF, "release.yml"))
     jobs = workflow.get("jobs") or {}
 
     # Derived by reading release-artifacts.sh, not guessed: `resolve_workflow_id` and `newest_run`
