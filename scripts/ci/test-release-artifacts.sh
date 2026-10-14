@@ -1081,10 +1081,14 @@ gate_setup "download for the duplicated-binary scenario" download --repo o/r --p
 _dup_dirs=("$work"/assets-dup2/sing-box-linux-amd64/*/)
 if [ "${#_dup_dirs[@]}" -eq 1 ] && [ -d "${_dup_dirs[0]}" ]; then
   cp "${_dup_dirs[0]}sing-box-linux-amd64" "${_dup_dirs[0]}sing-box-linux-amd64.copy"
-  expect_fail "two copies of one binary in the verify tree -> FAIL" "expected exactly 1" -- \
+  # A second copy in the payload directory is now refused by the ALLOWLIST rather than by the
+  # binary-count check: the count still sees exactly one file named `sing-box-linux-amd64`, and
+  # the extra file is caught as "not part of the verified set". That is the stricter of the two
+  # and it is the one that also catches an unexpected file that is not a copy of anything.
+  expect_fail "an extra file in the payload directory -> FAIL" "unexpected file" -- \
     verify --desktop-dir "$DESKTOP_DIR" --version 0.1 --dir "$work/assets-dup2" --sha "$SHA"
 else
-  fail_case "two copies of one binary in the verify tree -> FAIL" \
+  fail_case "an extra file in the payload directory -> FAIL" \
     "the download did not land exactly one payload directory (found ${#_dup_dirs[@]})"
 fi
 
@@ -1793,14 +1797,20 @@ fi
 
 # --- negative: a missing product must not publish --------------------------
 #
-# The release-tree check is rebuilt with Android's artifact directory removed. A release
-# that silently shipped three cores and a desktop would otherwise pass every check, so
-# `verify` must refuse - and name the deliverable that is missing, not merely fail.
+# The release-tree check is rebuilt with Android's whole payload directory removed. A release
+# that silently shipped three cores and a desktop would otherwise pass every check, so `verify`
+# must refuse - and name the artifact it could not find, not merely fail.
+#
+# Removed at the ARTIFACT level rather than the file level, because that is the unit `verify`
+# scopes to now: it derives each product's payload directory from the plan's exact artifact name
+# and refuses before it looks inside. The failure is therefore earlier and names the artifact,
+# which is a better message than "found 0 copies" - the reader learns WHICH artifact is missing
+# rather than which file inside it.
 rm -rf "$work/full/assets-noandroid"
 cp -R "$work/full/assets" "$work/full/assets-noandroid"
 rm -rf "$work/full/assets-noandroid/libbox.aar"
 full_expect_fail "full contract: a missing Android deliverable -> FAIL" \
-  "libbox.aar: found 0 copies" -- \
+  "does not exist" -- \
   verify --dir "$work/full/assets-noandroid" --sha "$SHA" \
     --desktop-dir "$work/full/desktop-dl" --desktop-records "$DESKTOP_RECORDS" \
     --version "$FULL_VERSION"
