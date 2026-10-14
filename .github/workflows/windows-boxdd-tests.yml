@@ -149,16 +149,21 @@ jobs:
           if (-not (Test-Path $exe)) {
             throw "powershell.exe not found at $exe; createStoreCertificate cannot run."
           }
-          $probeScript = @'
-$ErrorActionPreference = 'Stop'
-Import-Module PKI -ErrorAction Stop
-$c = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Jiejiebox CI Probe' `
-       -CertStoreLocation 'Cert:\CurrentUser\My' -NotBefore (Get-Date).AddMinutes(-5) `
-       -NotAfter (Get-Date).AddHours(1) -KeyUsage DigitalSignature -KeyExportPolicy Exportable
-Write-Output $c.Thumbprint
-Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($c.Thumbprint)" -Force -ErrorAction SilentlyContinue
-'@
-          $result = & $exe -NoProfile -NonInteractive -Command $probeScript 2>&1
+          $probePath = Join-Path $env:RUNNER_TEMP 'boxdd-cert-probe.ps1'
+          # The probe is written to a FILE rather than passed as a here-string. A PowerShell here-string
+          # terminator must sit at column 0, which a YAML block scalar cannot express without ending the
+          # scalar - so the here-string form silently leaves the string unterminated and the whole
+          # workflow fails to parse. A file has no such constraint.
+          @(
+            '$ErrorActionPreference = ''Stop'''
+            'Import-Module PKI -ErrorAction Stop'
+            '$c = New-SelfSignedCertificate -Type CodeSigningCert -Subject ''CN=Jiejiebox CI Probe'' -CertStoreLocation ''Cert:\CurrentUser\My'' -NotBefore (Get-Date).AddMinutes(-5) -NotAfter (Get-Date).AddHours(1) -KeyUsage DigitalSignature -KeyExportPolicy Exportable'
+            'Write-Output $c.Thumbprint'
+            'Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($c.Thumbprint)" -Force -ErrorAction SilentlyContinue'
+          ) | Set-Content -LiteralPath $probePath -Encoding utf8
+          Write-Host "probe script:"
+          Get-Content $probePath | ForEach-Object { Write-Host "  $_" }
+          $result = & $exe -NoProfile -NonInteractive -File $probePath 2>&1
           $code = $LASTEXITCODE
           $result | ForEach-Object { Write-Host "  powershell.exe: $_" }
           if ($code -ne 0) {
