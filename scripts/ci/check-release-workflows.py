@@ -980,6 +980,62 @@ def check_producer_concurrency():
     return problems
 
 
+def check_gh_token():
+    """Every release-path step that runs `gh` must authenticate it.
+
+    `gh` refuses to talk to the API inside a workflow unless GH_TOKEN is in the step's environment,
+    and the failure it prints names the WRONG cause:
+
+        gh: To use GitHub CLI in a GitHub Actions workflow, set the GH_TOKEN environment variable.
+        FAIL: cannot resolve workflow '.github/workflows/verify.yml' in '<owner>/<repo>'.
+              Check the repository name and that the workflow still exists.
+
+    The second line is the one a reader acts on, and it sends them to the workflow list, where
+    nothing is wrong. The Formal Release died at its fourth step on exactly this, before it could
+    resolve the tag or download a single artifact - and because the release path had never been
+    executed, nothing had ever noticed.
+
+    Static on purpose: the defect is a missing key in one step's `env`, which is visible in the YAML
+    and invisible to every runtime test, because those supply their own token.
+
+    Scanning the step's `run` block for a literal `gh` is NOT enough, and the first version of this
+    check did only that: it reported "1 authenticated, no offenders" while the release was failing on
+    a step whose `gh api` call lives INSIDE `release-artifacts.sh`. So the check is two-sided - a
+    literal `gh` in the step, and a `release-artifacts.sh` subcommand that reaches the API.
+    """
+    workflow = load(os.path.join(WF, "release.yml"))
+    jobs = workflow.get("jobs") or {}
+
+    # Derived by reading release-artifacts.sh, not guessed: `resolve_workflow_id` and `newest_run`
+    # are the only API readers, and `download`/`desktop` shell out to `gh run download`.
+    api_subcommands = {"evidence", "plan", "download", "desktop"}
+
+    offenders = []
+    authenticated = 0
+    for job_name, job in jobs.items():
+        for index, step in enumerate(job.get("steps") or [], 1):
+            run = step.get("run") or ""
+            body = "\n".join(
+                "" if line.lstrip().startswith("#") else line.split(" #", 1)[0]
+                for line in run.split("\n")
+            )
+            subcommands = set(re.findall(r"release-artifacts\.sh\s+([a-z][a-z-]*)", body))
+            uses_api = bool(subcommands & api_subcommands)
+            literal_gh = bool(
+                re.search(r"(?:^|[;&|(]|\bthen\s+|\bdo\s+|\$\(\s*)gh\s+[a-z]", body, re.M))
+            if not (uses_api or literal_gh):
+                continue
+            env = step.get("env") or {}
+            if any(str(key).upper() in ("GH_TOKEN", "GITHUB_TOKEN") for key in env):
+                authenticated += 1
+                continue
+            why = "gh" if literal_gh else "/".join(sorted(subcommands & api_subcommands))
+            offenders.append("%s step %d (%s) needs %s" % (
+                job_name, index, step.get("name", "<unnamed>"), why))
+    report("gh token: every release step that reaches the API authenticates it", not offenders,
+           "%d authenticated; offenders: %s" % (authenticated, offenders or "none"))
+
+
 def check_shell_line_endings():
     """Every shell script anything EXECUTES must have LF endings in the index.
 
@@ -1155,6 +1211,8 @@ def main(argv=None):
     check_source_verify()
     print()
     check_producer_concurrency()
+    print()
+    check_gh_token()
     print()
     check_shell_line_endings()
     print()
