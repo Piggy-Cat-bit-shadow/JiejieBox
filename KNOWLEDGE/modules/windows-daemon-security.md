@@ -287,9 +287,10 @@ an assumption that was removed because it was both useless and harmful.
 * **No end-to-end test exists for the trust boundary.** `peer_windows.go` has **no Go test file**, and
   the handshake cannot be exercised without a real service installation, a real named pipe and two real
   processes. Everything in §4 is `VERIFIED_SOURCE` only.
-* **No CI runs these tests.** No workflow executes `go test` on a Windows runner —
-  `windows-core-amd64.yml` runs on `ubuntu-latest` and only cross-builds. The eleven
-  `//go:build windows` tests in this package are therefore **never executed in CI**.
+* **No CI ran these tests until the `windows-boxdd-tests.yml` gate was added**; before that, no workflow
+  executed a single `go test` on a Windows runner at all. The gate now covers them, with a step that
+  fails on any skip — because these tests skip (not pass) when `signtool` or a signing certificate is
+  unavailable, and a skip would otherwise look green.
 * `ExtKeyUsageAny` is accepted alongside code signing, which is broader than the name suggests.
 * `--listen` disables the entire boundary; only service mode refuses it.
 * `ProcessStartTime` is never set on Windows (always 0), so the "process started at" observable is
@@ -332,9 +333,34 @@ Each is a "reasonable but wrong" change this codebase has already paid for.
 
 ## 17. Follow-up
 
-* **A Windows runner that executes `go test ./experimental/boxdd/`** — the single highest-value gap,
-  since eleven tests exist and none run in CI.
-* **An end-to-end trust-boundary test**: install the service, connect a worker, and assert both the
-  accept and the reject paths. Requires a machine where a service can be installed.
+* **The trust boundary has no end-to-end test, and that is now the only gap.** The Windows CI gate
+  exists and is green — `.github/workflows/windows-boxdd-tests.yml` runs `go test -count=1 -v
+  ./experimental/boxdd/` on `windows-latest`, with a step that FAILS if any test skips, so a green run
+  means 27 tests executed and none were silently deselected. What it cannot do is start a service:
+  `peer_windows.go` still has no test file, and the handshake needs a real installation, a real named
+  pipe and two real processes.
+* **An end-to-end trust-boundary test needs a disposable Windows VM** with: administrator rights, the
+  ability to install and remove a Windows service, the ability to run an NSIS installer, **control of
+  the VM's own system clock**, reboot, and network. `§15`'s expired/not-yet-valid chain
+  (service install → daemon start → core start → IPC → proxy traffic) cannot be exercised without all
+  six, and the clock control is what makes a genuinely expired signature reachable without re-signing.
+  **Do not attempt this by changing a developer workstation's clock** — the signature must be produced
+  while valid and then verified after expiry, which means either a controllable VM clock or a real wait.
 * Decide whether `ExtKeyUsageAny` should remain accepted (§11).
 * Decide the §9 retirement question.
+
+### What was verified by CI, and what was not
+
+| Claim | Evidence | Level |
+|---|---|---|
+| the allowlist is exact, in both directions | Windows runner, 14-row table + 24-code enumeration | `VERIFIED_CI` |
+| a tampered signed PE is rejected | Windows runner, measured `0x80096010 TRUST_E_BAD_DIGEST` | `VERIFIED_CI` |
+| an unsigned file is rejected | Windows runner, measured 0x800B0003 / 0x800B0100 | `VERIFIED_CI` |
+| code-signing EKU is required | Windows runner | `VERIFIED_CI` |
+| the pin separates two valid certificates | Windows runner | `VERIFIED_CI` |
+| a service starts and serves with an expired certificate | **nothing** | **UNVERIFIED — needs the VM above** |
+
+The last row is the one to be careful about. Everything above it is about *whether the function decides
+correctly*. It says nothing about whether a Windows **service** installs, starts, and serves when the
+certificate behind its executable has expired — which is the user-visible failure this work exists to
+prevent. **Owning the knowledge is not proving the behaviour.**
