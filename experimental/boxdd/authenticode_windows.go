@@ -26,6 +26,69 @@ type cryptProviderCertificate struct {
 	certificateContext *windows.CertContext
 }
 
+// isAllowedUntrustedAuthenticodeError reports whether a `WinVerifyTrustEx` failure still leaves the
+// signer certificate extractable and worth checking by IDENTITY.
+//
+// # Why this exists, and why it is not `trustError != nil`
+//
+// This daemon does not trust the signer by certificate CHAIN — it pins the signer certificate by
+// BYTE EQUALITY against the ones the daemon and worker were built with. Windows, however, evaluates
+// the chain against its own rules first, so it reports a whole family of failures that say nothing
+// about identity: the root is not in the trust store, the chain does not build, or the certificate's
+// clock window has passed. In all of those the signature is intact and the signer is recoverable —
+// `WTHelperProvDataFromStateData` still yields it — and the identity check that follows is strictly
+// stronger than the chain check it replaces. Refusing on them would only mean "this certificate was
+// not issued by a publicly trusted CA", which is a property a CI test certificate deliberately lacks
+// and which this product never relied on.
+//
+// The distinction that must be preserved is TIME versus IDENTITY, and the table below is deliberately
+// an allowlist rather than a denylist. Anything not named here — no signature at all, a corrupted or
+// mismatched signature, the wrong certificate usage, an unsupported subject form, a revoked
+// certificate, an unknown trust-provider failure — is REJECTED, because in those cases either there
+// is no signer to pin or the signer is untrustworthy for a reason time cannot explain.
+//
+// The four codes allowed here are all "no chain trust" or "clock window" verdicts. Which one Windows
+// actually returns is not a matter of taste, and it was MEASURED rather than assumed:
+//
+//	CERT_E_UNTRUSTEDROOT (0x800B0109)  THE OBSERVED CODE, and on this platform the one that actually
+//	                                   matters. Measured against a genuinely expired Authenticode
+//	                                   PE (signed while valid, verified after NotAfter had passed),
+//	                                   and independently reported by Get-AuthenticodeSignature for
+//	                                   the same files. Windows reaches the chain verdict BEFORE it
+//	                                   considers the clock, so an expired certificate whose chain
+//	                                   does not end in a trusted root reports this and never reaches
+//	                                   CERT_E_EXPIRED at all.
+//	CERT_E_EXPIRED (0x800B0101)        the same condition reported once the chain DOES build: an
+//	                                   expired certificate whose root IS trusted. This is the code the
+//	                                   original failure was diagnosed as, and it is what a runner sees
+//	                                   in the window between the CI certificate expiring and the
+//	                                   temporary trust-store entry being cleaned up - see
+//	                                   scripts/ci/windows/New-TestSigningCertificate.ps1, which
+//	                                   imports the certificate into LocalMachine Root for the run.
+//	CERT_E_VALIDITYPERIODNESTING       the clock-window family again: a chain member whose window does
+//	                                   not nest inside its issuer's, which is what a timestamp or an
+//	                                   intermediate turns the same expiry into.
+//	CERT_E_CHAINING                    the chain could not be built at all.
+//
+// All four mean the same thing here: the chain and the clock window are not gates, the identity still
+// is. CERT_E_EXPIRED is retained deliberately even though the measured path normally reports
+// CERT_E_UNTRUSTEDROOT instead, because the trust-store configuration decides which of the two
+// appears and BOTH configurations occur in practice - the CI script creates the first one whenever
+// its cleanup step does not run.
+func isAllowedUntrustedAuthenticodeError(err error) bool {
+	if err == nil {
+		// WinVerifyTrustEx succeeded: the chain is trusted outright, nothing was tolerated.
+		return true
+	}
+	return E.IsMulti(
+		err,
+		windows.Errno(windows.CERT_E_EXPIRED),
+		windows.Errno(windows.CERT_E_VALIDITYPERIODNESTING),
+		windows.Errno(windows.CERT_E_CHAINING),
+		windows.Errno(windows.CERT_E_UNTRUSTEDROOT),
+	)
+}
+
 func authenticodeSigner(path string, file windows.Handle) ([]byte, error) {
 	pathPointer, err := windows.UTF16PtrFromString(path)
 	if err != nil {
@@ -49,11 +112,7 @@ func authenticodeSigner(path string, file windows.Handle) ([]byte, error) {
 		UIContext: windows.WTD_UICONTEXT_EXECUTE,
 	}
 	trustError := windows.WinVerifyTrustEx(windows.InvalidHWND, &windows.WINTRUST_ACTION_GENERIC_VERIFY_V2, &trustData)
-	if trustError != nil && !E.IsMulti(
-		trustError,
-		windows.Errno(windows.CERT_E_UNTRUSTEDROOT),
-		windows.Errno(windows.CERT_E_CHAINING),
-	) {
+	if !isAllowedUntrustedAuthenticodeError(trustError) {
 		trustData.StateAction = windows.WTD_STATEACTION_CLOSE
 		windows.WinVerifyTrustEx(windows.InvalidHWND, &windows.WINTRUST_ACTION_GENERIC_VERIFY_V2, &trustData)
 		return nil, E.Cause(trustError, "verify Authenticode signature")
@@ -72,10 +131,16 @@ func authenticodeSigner(path string, file windows.Handle) ([]byte, error) {
 		return nil, err
 	}
 	if trustError != nil {
-		// ONLY the certificate's TIME VALIDITY is no longer a gate. Everything that actually
-		// restricts which programs may run or connect is untouched and lives elsewhere: the fixed
-		// installed path, the same-file check, the process session and role checks, and the
-		// signer-byte equality that binds every peer to this daemon's own certificate.
+		// Reached only for a chain/trust verdict that `isAllowedUntrustedAuthenticodeError` admitted
+		// - which now includes CERT_E_EXPIRED. Before that code was admitted, an expired certificate
+		// returned from the guard above and never arrived here at all, so the inner time check below
+		// was unreachable for exactly the case it was written for: a complete fix required both this
+		// layer tolerating the code AND the inner layer not re-imposing the window.
+		//
+		// ONLY the certificate's TIME VALIDITY is not a gate. Everything that actually restricts
+		// which programs may run or connect is untouched and lives elsewhere: the fixed installed
+		// path, the same-file check, the process session and role checks, and the signer-byte
+		// equality that binds every peer to this daemon's own certificate.
 		//
 		// The reason is that this certificate is SELF-SIGNED AND PINNED BY BYTE EQUALITY, not by
 		// chain trust. Its NotBefore/NotAfter window therefore adds no security: it cannot be
