@@ -356,13 +356,29 @@ def run_download(args):
         source = fixtures / e["dir"]
         if not source.is_dir():
             fail("fixture directory %r is missing for run %s" % (e["dir"], rid))
-        target = dest / e["name"]
-        if target.exists():
-            shutil.rmtree(target)
-        shutil.copytree(source, target)
+        # WHAT REAL `gh` DOES: the artifact's contents are extracted into the `--dir` given, and no
+        # `--dir/<artifact name>` directory is created. The MOCK USED TO CREATE ONE, and the gate
+        # asserted it - so the mock and the gate agreed with each other and neither agreed with
+        # GitHub, and the formal release failed on its first execution with
+        #
+        #     produced 0 directories in release-assets/sing-box-linux-amd64, expected exactly 1.
+        #
+        # `download` in the gate now unpacks into a scratch directory and renames it to
+        # `$dir/$binary/$artifact`, which is the shape `verify`/`flatten`/`check-upload` consume. So
+        # the mock reproduces THAT: real gh's unpack into the scratch dir, then the rename.
+        for child in sorted(source.iterdir()):
+            target = dest / child.name
+            if target.is_dir():
+                shutil.rmtree(target)
+            elif target.exists():
+                target.unlink()
+            if child.is_dir():
+                shutil.copytree(child, target)
+            else:
+                shutil.copy2(child, target)
         if e.get("duplicate_artifact"):
-            # A second artifact directory holding another copy of the binary. The
-            # release must refuse this rather than pick one.
+            # A second artifact DIRECTORY beside the payload, holding another copy of the binary.
+            # The release must refuse this rather than pick one.
             shutil.copytree(source, dest / (e["name"] + "-again"))
     return 0
 

@@ -743,17 +743,46 @@ cmd_download() {
     # failure, and that a producer RENAMING its artifact turns into a silent mismatch.
     # NOT wrapped in `|| true`: a download that failed leaves the artifact unverified, and an
     # unverified artifact must not be publishable.
-    if ! gh run download "$rid" --repo "$repo" --name "$artifact" --dir "$dest"; then
+    # `gh run download --name X --dir D` extracts the artifact's CONTENTS into D. It does not
+    # create a D/X directory: the zip GitHub stores an artifact as holds the payload files at its
+    # top level, and gh unpacks it into the destination as given. Every consumer downstream -
+    # `verify`, `flatten`, `check-upload` - addresses the payload as `$dir/$binary/$artifact`, so
+    # `download` MATERIALISES that directory here rather than the gate being rewritten around a
+    # layout it cannot produce.
+    #
+    # The previous assertion required exactly one subdirectory named after the artifact, directly
+    # after the download. Against the real API that was unsatisfiable from the day it was written,
+    # and it survived because the test suite's mock gh fabricated `D/X/` with shutil.copytree - so
+    # the mock and the gate agreed with each other and neither agreed with GitHub. The release had
+    # never been executed, so nothing noticed until the dry run:
+    #
+    #     FAIL: downloading artifact 'linux-amd64-<sha>' of run <id> produced 0 directories
+    #           in release-assets/sing-box-linux-amd64, expected exactly 1.
+    #
+    # Unpacking into a scratch directory and renaming it is deliberate rather than downloading
+    # straight into `$dest/$artifact`: a rename cannot leave the payload half-written under the name
+    # the contract publishes, and it keeps the "did anything unexpected land here" check below
+    # meaningful by failing BEFORE the rename when the download produced a different shape.
+    scratch="$dest/.unpack-$$"
+    rm -rf "$scratch"
+    mkdir -p "$scratch"
+    if ! gh run download "$rid" --repo "$repo" --name "$artifact" --dir "$scratch"; then
+      rm -rf "$scratch"
       die "gh run download failed for run $rid ($wf), artifact '$artifact'. $binary is NOT verified; refusing to continue.
       If the run predates the artifact naming this contract expects, re-dispatch that workflow."
     fi
-    subdirs="$(find "$dest" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
-    [ "$subdirs" -eq 1 ] || die \
-      "downloading artifact '$artifact' of run $rid produced $subdirs directories in $dest, expected exactly 1. One artifact, one directory."
-    [ -d "$dest/$artifact" ] || die \
-      "artifact '$artifact' of run $rid did not land in '$dest/$artifact'. The download layout is not the one this gate expects."
-    files="$(find "$dest/$artifact" -type f | wc -l | tr -d ' ')"
-    [ "$files" -gt 0 ] || die "run $rid artifact '$artifact' downloaded no files"
+    files="$(find "$scratch" -type f | wc -l | tr -d ' ')"
+    [ "$files" -gt 0 ] || {
+      rm -rf "$scratch"
+      die "run $rid artifact '$artifact' downloaded no files. The download reported success, so this is not the payload the artifact contract describes."
+    }
+    subdirs="$(find "$scratch" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
+    [ "$subdirs" -eq 0 ] || {
+      rm -rf "$scratch"
+      die "run $rid artifact '$artifact' unpacked $subdirs director(y/ies) at its top level, expected the payload's files. One artifact, one payload."
+    }
+    rm -rf "$dest/$artifact"
+    mv "$scratch" "$dest/$artifact"
 
     # The producer's separated evidence, when it declares one. It goes to its own tree and is
     # NOT part of the payload staging, so no later step can publish it by accident.
@@ -762,11 +791,16 @@ cmd_download() {
       [ -n "$evidence_dir" ] || die \
         "$wf separates its payload from its evidence (artifact '$evidence'), but download was not given --evidence-dir. Refusing to silently drop the evidence."
       note "downloading run $rid ($wf) evidence '$evidence' -> $evidence_dir"
-      if ! gh run download "$rid" --repo "$repo" --name "$evidence" --dir "$evidence_dir"; then
+      # Same layout rule, and the same materialisation, as the payload above.
+      scratch="$evidence_dir/.unpack-$$"
+      rm -rf "$scratch"
+      mkdir -p "$scratch"
+      if ! gh run download "$rid" --repo "$repo" --name "$evidence" --dir "$scratch"; then
+        rm -rf "$scratch"
         die "gh run download failed for run $rid ($wf), evidence artifact '$evidence'. The payload is verified but its build records are not; refusing to continue."
       fi
-      [ -d "$evidence_dir/$evidence" ] || die \
-        "evidence artifact '$evidence' of run $rid did not land in '$evidence_dir/$evidence'."
+      rm -rf "$evidence_dir/$evidence"
+      mv "$scratch" "$evidence_dir/$evidence"
     fi
 
     rows=$((rows + 1))
