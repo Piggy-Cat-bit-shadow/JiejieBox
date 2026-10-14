@@ -1067,7 +1067,13 @@ write_scenario no_artifacts 'scenario["artifacts"]["9002"] = {"no_artifacts": Tr
 gate_setup "plan (setup)" plan --repo o/r --sha "$SHA" --out "$work/plan-na.tsv" --interval 1 --timeout 10
 # A run that uploaded nothing: the exact-name download either finds no such artifact or lands an
 # empty directory. Both are refusals; the message names which.
-expect_fail "a run that uploaded nothing -> FAIL" "produced 0 directories" -- \
+#
+# The expected wording follows the gate's own message. `download` now unpacks into a scratch
+# directory, so an empty download is reported as "downloaded no files ... not the payload the
+# artifact contract describes" - it no longer reports the subdirectory COUNT, because that count is
+# no longer the thing being asserted. A case that pins the old phrasing fails on wording after the
+# behaviour it guards has already improved, which is exactly what happened on the runner.
+expect_fail "a run that uploaded nothing -> FAIL" "downloaded no files" -- \
   download --repo o/r --plan "$work/plan-na.tsv" --dir "$work/assets-na"
 
 # ---------------------------------------------------------------------------
@@ -1076,10 +1082,15 @@ expect_fail "a run that uploaded nothing -> FAIL" "produced 0 directories" -- \
 
 write_scenario dup 'scenario["artifacts"]["9002"]["duplicate_artifact"] = True'
 gate_setup "plan for the two-artifact-directory scenario" plan --repo o/r --sha "$SHA" --out "$work/plan-dup.tsv" --interval 1 --timeout 10
-# An artifact whose directory contains two directories rather than the one the download lands.
+# An artifact that unpacks a DIRECTORY at its top level, where a payload's files belong.
+#
 # The exact name is asked for, so this is not "the wrong artifact was picked" - it is "the
-# artifact's own layout is not the one this gate stages".
-expect_fail "a run publishing two artifact directories -> FAIL" "expected exactly 1" -- \
+# artifact's own layout is not the one this gate stages". The gate refuses before renaming anything
+# into place, so the destination is left holding no payload at all.
+#
+# Same reasoning as the case above about the wording: the refusal is now about the shape the
+# artifact unpacked to rather than about a directory count the gate no longer takes.
+expect_fail "a run publishing two artifact directories -> FAIL" "unpacked 1 director(y/ies)" -- \
   download --repo o/r --plan "$work/plan-dup.tsv" --dir "$work/assets-dup"
 
 # The download path refuses a second DIRECTORY inside one artifact, so the verify-side
