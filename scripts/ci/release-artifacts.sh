@@ -1145,11 +1145,18 @@ verify_apple() {
   [ "$(count_files "$dir" -maxdepth 1 -type f -name 'Libbox.xcframework.tar.gz')" -eq 1 ] || die \
     "$dir holds more than one Libbox.xcframework.tar.gz. Exactly one bundle may be published."
 
-  # The file set is pinned. `manifest.json` and the checksum list are the bundle's own records and
-  # must travel with it; anything else means the producer uploaded something the release has not
-  # been told about.
+  # The file set is pinned. `manifest.json`, the checksum list and the human-readable build record
+  # are the bundle's own records and must travel with it; anything else means the producer uploaded
+  # something the release has not been told about.
+  #
+  # The expected list was wrong on the first run and the failure said so precisely, naming the four
+  # files it found against the three it wanted - which is the whole reason the check reports both
+  # sides rather than just refusing. BUILD-INFO-LIBBOX.txt is redundant with the manifest for a
+  # program, and is exactly what a person reads when a release is being diagnosed; dropping it
+  # would have been the wrong way to make this assertion pass.
   local expected actual
-  expected="$(printf '%s\n%s\n%s\n' Libbox.xcframework.tar.gz SHA256SUMS-LIBBOX.txt manifest.json | sort)"
+  expected="$(printf '%s\n%s\n%s\n%s\n' \
+    Libbox.xcframework.tar.gz SHA256SUMS-LIBBOX.txt manifest.json BUILD-INFO-LIBBOX.txt | sort)"
   actual="$(find "$dir" -maxdepth 1 -type f -exec basename {} \; | sort)"
   [ "$actual" = "$expected" ] || die \
     "the Apple artifact holds an unexpected file set.
@@ -1309,7 +1316,7 @@ cmd_verify() {
   for wf in "${TARGET_WORKFLOWS[@]}"; do
     kind="$(target_field "$wf" kind)"
     if [ "$kind" = "xcframework-manifest" ]; then
-      allowed+=( Libbox.xcframework.tar.gz SHA256SUMS-LIBBOX.txt manifest.json )
+      allowed+=( Libbox.xcframework.tar.gz SHA256SUMS-LIBBOX.txt manifest.json BUILD-INFO-LIBBOX.txt )
       continue
     fi
     allowed+=( "$(target_field "$wf" binary)" "$(target_field "$wf" binary).sha256" "$(target_field "$wf" buildinfo)" )
