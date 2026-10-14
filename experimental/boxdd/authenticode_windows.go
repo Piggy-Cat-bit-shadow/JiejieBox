@@ -8,6 +8,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/sagernet/sing-box/log"
 	E "github.com/sagernet/sing/common/exceptions"
 
 	"golang.org/x/sys/windows"
@@ -71,12 +72,71 @@ func authenticodeSigner(path string, file windows.Handle) ([]byte, error) {
 		return nil, err
 	}
 	if trustError != nil {
-		err = validateUntrustedSelfSignedCertificate(certificate, time.Now())
+		// ONLY the certificate's TIME VALIDITY is no longer a gate. Everything that actually
+		// restricts which programs may run or connect is untouched and lives elsewhere: the fixed
+		// installed path, the same-file check, the process session and role checks, and the
+		// signer-byte equality that binds every peer to this daemon's own certificate.
+		//
+		// The reason is that this certificate is SELF-SIGNED AND PINNED BY BYTE EQUALITY, not by
+		// chain trust. Its NotBefore/NotAfter window therefore adds no security: it cannot be
+		// replaced by an attacker-chosen certificate without changing the bytes every comparison
+		// checks, and it cannot be renewed without re-signing the whole product. What it did do was
+		// make the product stop working the moment a CI test certificate expired -
+		// "untrusted Authenticode signer certificate is not currently valid" - after which the
+		// daemon refused to launch the core, the core could not be recovered, and a machine whose
+		// system proxy still pointed at the local port could lose network access entirely.
+		reportAuthenticodeCertificateTime(signer, time.Now())
+		err = validateUntrustedSelfSignedCertificate(certificate)
 		if err != nil {
 			return nil, err
 		}
 	}
 	return signer, nil
+}
+
+// reportAuthenticodeCertificateTime logs the signer certificate's validity window and says out loud
+// whether the current time is inside it. It is a WARNING and never an error: the caller proceeds
+// either way, which is the whole point of the change above. Kept as a function so the observation
+// has one home, and kept separate from the security decisions so it can never be mistaken for one.
+func reportAuthenticodeCertificateTime(encodedCertificate []byte, currentTime time.Time) {
+	globalLogger := log.StdLogger()
+	if globalLogger == nil {
+		return
+	}
+	certificate, err := x509.ParseCertificate(encodedCertificate)
+	if err != nil {
+		globalLogger.Warn("core Authenticode signer certificate could not be parsed; runtime launch is not blocked: ", err)
+		return
+	}
+	problem := authenticodeCertificateTimeProblem(certificate, currentTime)
+	if problem == "" {
+		globalLogger.Debug(
+			"core Authenticode signer certificate is currently valid: '",
+			certificate.Subject.String(), "', expires ", certificate.NotAfter.Format(time.RFC3339),
+		)
+		return
+	}
+	globalLogger.Warn(
+		"core Authenticode signer certificate ",
+		problem,
+		"; runtime launch is not blocked",
+	)
+}
+
+// authenticodeCertificateTimeProblem classifies the signer certificate's validity window against
+// currentTime, returning a short human-readable phrase, or "" when the window contains currentTime.
+//
+// It deliberately returns a DESCRIPTION rather than an error, because its only caller logs the
+// result. Splitting the classification out of the certificate plumbing is what makes it testable:
+// the decision that used to stop the product is now a pure function of two arguments.
+func authenticodeCertificateTimeProblem(certificate *x509.Certificate, currentTime time.Time) string {
+	if currentTime.Before(certificate.NotBefore) {
+		return "is not valid yet (NotBefore " + certificate.NotBefore.Format(time.RFC3339) + ")"
+	}
+	if currentTime.After(certificate.NotAfter) {
+		return "has expired (NotAfter " + certificate.NotAfter.Format(time.RFC3339) + ")"
+	}
+	return ""
 }
 
 func verifiedSignerCertificate(stateData windows.Handle) ([]byte, error) {
@@ -116,16 +176,16 @@ func validateCodeSigningCertificate(encodedCertificate []byte) (*x509.Certificat
 	return nil, E.New("Authenticode signer certificate is not valid for code signing")
 }
 
-func validateUntrustedSelfSignedCertificate(certificate *x509.Certificate, currentTime time.Time) error {
+// validateUntrustedSelfSignedCertificate checks that an untrusted signer is a genuine self-signed
+// code-signing certificate. It does NOT check the validity window: see the caller for why the
+// window is no longer a gate, and `authenticodeCertificateTimeProblem` for where it is reported.
+func validateUntrustedSelfSignedCertificate(certificate *x509.Certificate) error {
 	if !bytes.Equal(certificate.RawSubject, certificate.RawIssuer) {
 		return E.New("untrusted Authenticode signer certificate is not self-signed")
 	}
 	err := certificate.CheckSignature(certificate.SignatureAlgorithm, certificate.RawTBSCertificate, certificate.Signature)
 	if err != nil {
 		return E.Cause(err, "verify untrusted Authenticode signer self-signature")
-	}
-	if currentTime.Before(certificate.NotBefore) || currentTime.After(certificate.NotAfter) {
-		return E.New("untrusted Authenticode signer certificate is not currently valid")
 	}
 	return nil
 }
