@@ -58,9 +58,10 @@ fail() {
 
 # --- pack --------------------------------------------------------------------
 #
-# The directory is archived with `ditto` on macOS and `tar` elsewhere: ditto is what preserves the
-# symlinks and resource forks an xcframework relies on, and a plain tar round trip has silently
-# dropped them before.
+# This is a gzip tar archive on every runner.  `ditto -c -k` creates a ZIP archive even when the
+# destination is named `.tar.gz`; macOS accepts that archive through its permissive tar wrapper,
+# while the Linux release gate correctly refuses it.  A release asset has to be readable by the
+# release runner and by downstream consumers, so the filename and container format must agree.
 pack() {
   local xcframework="$1" output="$2"
   [ -d "$xcframework" ] || fail "no xcframework at $xcframework"
@@ -68,13 +69,7 @@ pack() {
 
   local tarball="$output/Libbox.xcframework.tar.gz"
   rm -f "$tarball"
-  if command -v ditto >/dev/null 2>&1; then
-    # --sequesterRsrc keeps the bundle's resource forks inside the archive; --keepParent keeps the
-    # top-level directory so extraction restores the name the Xcode project references.
-    ditto -c -k --sequesterRsrc --keepParent "$xcframework" "$tarball"
-  else
-    tar -czf "$tarball" -C "$(dirname "$xcframework")" "$(basename "$xcframework")"
-  fi
+  tar -czf "$tarball" -C "$(dirname "$xcframework")" "$(basename "$xcframework")"
 
   local parent_sha version go_version xcode_version
   parent_sha="$(git rev-parse HEAD)"

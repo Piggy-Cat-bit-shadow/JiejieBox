@@ -1584,11 +1584,20 @@ make_full_artifacts() {
   mkdir -p "$work/fixtures/apple" \
            "$work/apple-slices/Libbox.xcframework/ios-arm64" \
            "$work/apple-slices/Libbox.xcframework/macos-arm64_x86_64"
+  # `ditto -c -k` writes a ZIP payload even when its output has a .tar.gz suffix.
+  # Keep a sentinel ahead of PATH while the producer packs the fixture: a macOS-only
+  # ZIP branch must not come back and escape this Linux release-gate test.
+  cat > "$work/bin/ditto" <<'SH'
+#!/usr/bin/env bash
+echo "FAIL: Libbox packer must produce a real gzip tar, not a ditto ZIP" >&2
+exit 99
+SH
+  chmod +x "$work/bin/ditto"
   # A file in each slice: tar round-trips empty directories differently across platforms, and the
   # slice LISTING would still match while the bundle carried nothing.
   printf 'ios\n' > "$work/apple-slices/Libbox.xcframework/ios-arm64/Info.plist"
   printf 'macos\n' > "$work/apple-slices/Libbox.xcframework/macos-arm64_x86_64/Info.plist"
-  ./scripts/ci/apple-libbox-artifact.sh pack \
+  PATH="$work/bin:$PATH" ./scripts/ci/apple-libbox-artifact.sh pack \
     "$work/apple-slices/Libbox.xcframework" "$work/fixtures/apple" >/dev/null
   python3 - "$work/fixtures/apple/manifest.json" "$SHA" "$work/fixtures/apple/BUILD-INFO-LIBBOX.txt" <<'PY'
 import json, sys
