@@ -686,11 +686,11 @@ $2
 PY
 }
 
-# run_gate <args...> 鈥?runs the gate against the mock.
+# run_gate <args...> 閳?runs the gate against the mock.
 #
 # RELEASE_EXTRA_PLATFORMS is CLEARED, not merely left alone. This suite's general cases run
 # against a two-product fixture on purpose, and the gate defaults to two products only when
-# that variable is unset 鈥?but release.yml sets it at JOB level (`RELEASE_EXTRA_PLATFORMS:
+# that variable is unset 閳?but release.yml sets it at JOB level (`RELEASE_EXTRA_PLATFORMS:
 # true`), so it is inherited by every step in that job, including the step that runs this
 # file. The two-product cases then drove a four-product gate, `plan` demanded
 # windows-core-amd64.yml and android-core-arm64.yml from a fixture that models neither, and
@@ -1741,8 +1741,19 @@ full_expect_ok "full contract: download all five products" \
 # payload tree and its build records are NOT. Before the producer split, the release downloaded
 # six files and deleted two; now the two are staged somewhere the allowlist is never pointed at,
 # so evidence is unable to reach the release rather than being removed before it can.
-_android_payload="$work/full/assets/libbox.aar/$(plan_artifact "$full_plan" .github/workflows/android-core-arm64.yml)"
-if [ -d "$_android_payload" ] \
+#
+# The payload directory is DISCOVERED rather than read out of the plan. `download` asks for the
+# artifact by exact name and requires exactly one directory to land, so after a successful download
+# there is exactly one candidate - and the filesystem states that directly. An earlier version of
+# this block parsed the plan here and aborted the whole suite on the runner, taking every case after
+# it with it; that mechanism is exercised elsewhere and does not need a second dependent.
+_android_dirs=("$work"/full/assets/libbox.aar/*/)
+if [ "${#_android_dirs[@]}" -eq 1 ] && [ -d "${_android_dirs[0]}" ]; then
+  _android_payload="${_android_dirs[0]%/}"
+else
+  _android_payload=""
+fi
+if [ -n "$_android_payload" ] && [ -d "$_android_payload" ] \
    && [ -z "$(find "$work/full/assets" -name 'libbox.provenance' -print -quit)" ] \
    && [ -z "$(find "$work/full/assets" -name 'SHA256SUMS.txt' -print -quit)" ] \
    && [ -n "$(find "$work/full/records" -name 'libbox.provenance' -print -quit)" ] \
@@ -1750,13 +1761,13 @@ if [ -d "$_android_payload" ] \
   report "full contract: android evidence is staged outside the payload tree" 0 0
 else
   report "full contract: android evidence is staged outside the payload tree" 0 1 \
-    "payload=$(find "$work/full/assets" -type f 2>/dev/null | tr '\n' ' ')"
+    "payload=[$_android_payload] files=$(find "$work/full/assets" -type f 2>/dev/null | tr '\n' ' ')"
 fi
 
 # And the payload directory holds EXACTLY the four public files - the same four the producer
 # asserts before it uploads. A release that published five would still be a green release
 # without this.
-if [ -d "$_android_payload" ]; then
+if [ -n "$_android_payload" ] && [ -d "$_android_payload" ]; then
   _android_public="$(printf '%s\n%s\n%s\n%s\n' BUILD-INFO-ANDROID.txt LICENSE libbox.aar libbox.aar.sha256 | sort)"
   _android_actual="$(find "$_android_payload" -maxdepth 1 -type f -exec basename {} \; | sort)"
   if [ "$_android_public" = "$_android_actual" ]; then
@@ -1767,7 +1778,7 @@ if [ -d "$_android_payload" ]; then
   fi
 else
   report "full contract: the android payload is exactly the four public files" 0 1 \
-    "no payload directory at $_android_payload"
+    "no payload directory under $work/full/assets/libbox.aar"
 fi
 
 full_expect_ok "full contract: stage the desktop installer" \
