@@ -222,11 +222,29 @@ for name, body in (("ios", ios), ("macos", macos)):
 for name, body, platform in (("ios", ios, "ios"), ("macos", macos, "macos")):
     if f"APPLE_CLIENT_PLATFORM={platform}" not in body:
         problems.append(f"the {name} job does not declare APPLE_CLIENT_PLATFORM={platform}")
-if "APPLE_CLIENT_DIR=$IOS_APPLE_DIR" not in ios:
-    problems.append("the ios job does not point APPLE_CLIENT_DIR at the iOS working tree")
-if "APPLE_CLIENT_DIR=$MACOS_APPLE_DIR" not in macos:
-    problems.append("the macos job does not point APPLE_CLIENT_DIR at the macOS working tree")
-if "APPLE_CLIENT_DIR=$IOS_APPLE_DIR" in macos:
+# The jobs write the tree paths LITERALLY - `clients/apple` and `build/apple-client-macos` -
+# rather than interpolating the resolver's variables.
+#
+# This used to require the variable form, which the workflow has never used, so it reported "the
+# ios job does not point APPLE_CLIENT_DIR at the iOS working tree" for a job that points it at
+# exactly the right directory. It went unnoticed because nothing ran this suite until the workflow
+# was dispatched for real.
+#
+# What matters is not the spelling but that each product overlays its OWN tree, and that the trees
+# are the ones the resolver declares. The literals are checked against the resolver itself below,
+# which is a stronger assertion than a string match on the workflow: renaming a directory on
+# either side now fails here instead of at build time.
+if "APPLE_CLIENT_DIR=clients/apple" not in ios:
+    problems.append(
+        "the ios job does not point APPLE_CLIENT_DIR at the iOS working tree "
+        "(expected APPLE_CLIENT_DIR=clients/apple)"
+    )
+if "APPLE_CLIENT_DIR=build/apple-client-macos" not in macos:
+    problems.append(
+        "the macos job does not point APPLE_CLIENT_DIR at the macOS working tree "
+        "(expected APPLE_CLIENT_DIR=build/apple-client-macos)"
+    )
+if "APPLE_CLIENT_DIR=clients/apple" in macos:
     problems.append("the macos job overlays the shared iOS working tree")
 if "APPLE_CLIENT_DIR=$MACOS_APPLE_DIR" in ios:
     problems.append("the ios job overlays the macOS working tree")
@@ -284,6 +302,25 @@ for name, body in (("ios", ios), ("macos", macos)):
 if "check-apple-source-selection.sh" not in libbox and "check-apple-source-selection.sh" not in ios:
     problems.append("the source selection suite does not run in CI")
 
+# Cross-check the two literals against the resolver's OWN answers, so a rename on either side
+# fails here rather than at build time. This replaces the string match on a variable name with an
+# assertion about the property: the jobs use the trees the resolver declares.
+import subprocess
+
+for platform, expected in (("ios", "clients/apple"), ("macos", "build/apple-client-macos")):
+    try:
+        got = subprocess.run(
+            ["bash", "scripts/ci/apple-client-source.sh", "dir", platform],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+    except Exception as error:
+        problems.append(f"could not ask the resolver for the {platform} directory: {error}")
+        continue
+    if got != expected:
+        problems.append(
+            f"the {platform} job uses '{expected}' but the resolver declares '{got}'"
+        )
+
 if problems:
     print("apple source selection: the workflow is not wired correctly.", file=sys.stderr)
     for problem in problems:
@@ -310,6 +347,20 @@ echo "== the resolver, against local fixtures =="
 
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
+
+# THE FIXTURE'S RESOLUTION STATE MUST LIVE INSIDE THE FIXTURE.
+#
+# `apple-client-source.sh` defaults its state file to the RELATIVE path
+# `build/apple-client-source.env`, resolved against the caller's directory. This suite runs from the
+# repository root, so without this line the scratch resolver reads the REAL repository's frozen
+# resolution - a commit that exists in the real Apple repository and not in the fixture at all. The
+# fixture was not self-contained, despite its own comment claiming the scratch fixtures "need no
+# network" because they are local repositories.
+#
+# Exported rather than prefixed onto each call: the assertions invoke the resolver from inside
+# `bash -c` subshells, where a shell function does not exist, and an exported variable is inherited
+# by every child process.
+export APPLE_CLIENT_STATE="$scratch/build/apple-client-source.env"
 
 mkdir -p "$scratch/scripts/ci" "$scratch/release"
 cp scripts/ci/apple-client-source.sh "$scratch/scripts/ci/"
@@ -355,8 +406,17 @@ git clone -q "$apple_origin" "$scratch/clients/apple"
 git -C "$scratch/clients/apple" checkout -q "$apple_first"
 git -C "$scratch" add clients/apple
 
-# The refs file as the current model defines it: one repository, one branch, and no SHA - the
-# gitlink above is the only copy of the commit that exists anywhere in the fixture.
+# The refs file as the current model defines it: one repository, one branch, and NO SHA.
+#
+# NOTHING PINS THIS FIXTURE, and that is the point. This repository's model is that the Apple CLIENT
+# REPOSITORY is the authority and the gitlink is a local convenience, so an unpinned resolution
+# follows the tip of APPLE_CLIENT_BRANCH. The fixture's `main` is one commit ahead of the gitlink by
+# construction, which is exactly what lets the assertions below tell the two apart.
+#
+# This suite used to assert the opposite - that the resolution EQUALS the gitlink - in thirteen
+# places, written for the model `apple-client-source.sh` deliberately replaced. Those assertions are
+# inverted rather than deleted: "the resolution is NOT the gitlink, and here is what it is instead"
+# is the property that would catch a per-platform source being reintroduced.
 write_pin() {
   cat > "$scratch/release/apple-client-refs.env" <<EOF
 APPLE_CLIENT_REPOSITORY=$apple_origin
@@ -372,27 +432,49 @@ scratch_resolver="$scratch/scripts/ci/apple-client-source.sh"
 
 echo "== the fixture resolves to one shared source =="
 
-check "the iOS source is the parent gitlink" \
-  bash -c "test \"\$($scratch_resolver sha ios)\" = \"\$(git -C '$scratch' ls-tree HEAD clients/apple | awk '{print \$3}')\""
-check "the macOS source is the same gitlink" \
-  bash -c "test \"\$($scratch_resolver sha macos)\" = '$apple_first'"
-check "neither platform answers with the branch tip" \
-  bash -c "test \"\$($scratch_resolver sha ios)\" != '$apple_second'"
+# The resolver answers with the BRANCH TIP, not the gitlink: the client repository is the
+# authority. The fixture has `main` one commit ahead of its gitlink on purpose, so the two are always
+# distinguishable - an equality here would pass under either model and prove neither.
+check "the iOS source is the branch the refs file declares" \
+  bash -c "test \"\$($scratch_resolver sha ios)\" = '$apple_second'"
+check "the macOS source is the same branch tip" \
+  bash -c "test \"\$($scratch_resolver sha macos)\" = '$apple_second'"
+check "the resolution is NOT the gitlink (a convenience, not the authority)" \
+  bash -c "test \"\$($scratch_resolver sha ios)\" != '$apple_first'"
+check "the gitlink still records the older commit, so the two really differ" \
+  bash -c "test \"\$(git -C '$scratch' ls-tree HEAD clients/apple | awk '{print \$3}')\" = '$apple_first'"
 check "both platforms report the same branch" \
   bash -c "test \"\$($scratch_resolver branch ios)\" = \"\$($scratch_resolver branch macos)\""
 check "the resolver asserts the shared source" "$scratch_resolver" assert-shared-source
-check "the iOS checkout verifies at the gitlink" "$scratch_resolver" verify ios
+# Two explicit steps rather than one `bash -c` with `&&`, so a failure says WHICH step failed. The
+# single-command form collapsed "the checkout did not happen" and "the verification refused" into one
+# FAIL with no output, which is the same undiagnosable shape as several earlier defects in this round.
+scratch_checkout_rc=0
+"$scratch_resolver" checkout ios >/dev/null 2>&1 || scratch_checkout_rc=$?
+scratch_verify_rc=0
+"$scratch_resolver" verify ios >/dev/null 2>&1 || scratch_verify_rc=$?
+if [ "$scratch_checkout_rc" -eq 0 ] && [ "$scratch_verify_rc" -eq 0 ]; then
+  echo "  PASS: the iOS checkout verifies once materialised at the resolved revision"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: the iOS checkout verifies once materialised at the resolved revision" >&2
+  echo "        checkout rc=$scratch_checkout_rc  verify rc=$scratch_verify_rc" >&2
+  echo "        submodule HEAD = $(git -C "$scratch/clients/apple" rev-parse HEAD 2>&1)" >&2
+  echo "        resolver sha   = $("$scratch_resolver" sha ios 2>&1)" >&2
+  echo "        verify output  = $("$scratch_resolver" verify ios 2>&1)" >&2
+  fail=$((fail + 1))
+fi
 
 # `resolve` keeps the historical platform names on purpose, because callers eval its output and
 # then read them; the migration changed what the macOS names resolve TO, not what they are
 # called. Both name sets must therefore carry the one shared SHA.
 resolve_out="$("$scratch_resolver" resolve 2>/dev/null || true)"
 case "$resolve_out" in
-  *"IOS_APPLE_SHA=$apple_first"*)   ios_named=yes ;;
+  *"IOS_APPLE_SHA=$apple_second"*)   ios_named=yes ;;
   *)                                 ios_named=no ;;
 esac
 case "$resolve_out" in
-  *"MACOS_APPLE_SHA=$apple_first"*) macos_named=yes ;;
+  *"MACOS_APPLE_SHA=$apple_second"*) macos_named=yes ;;
   *)                                 macos_named=no ;;
 esac
 check "resolve keeps the iOS names pointing at the shared SHA" test "$ios_named" = "yes"
@@ -423,7 +505,7 @@ write_pin
 # products still need separate trees for their overlays, and this is what proves the tree is a
 # copy of the SAME commit.
 check "the macOS checkout is a copy of the shared source" \
-  bash -c "test \"\$($scratch_resolver checkout macos)\" = '$apple_first'"
+  bash -c "test \"\$($scratch_resolver checkout macos)\" = '$apple_second'"
 check "the macOS checkout verifies at the shared source" "$scratch_resolver" verify macos
 check "the macOS tree is at the iOS source's commit" \
   bash -c "test \"\$(git -C '$scratch/build/apple-client-macos' rev-parse HEAD)\" = \"\$($scratch_resolver sha ios)\""
@@ -438,10 +520,14 @@ echo "== both platforms resolve to this tree's gitlink =="
 # is consistent with itself while this proves it is consistent with what will be built.
 real_gitlink="$(git ls-tree HEAD clients/apple | awk '{print $3}')"
 check "this commit records an Apple gitlink" test -n "$real_gitlink"
-check "the iOS source is this commit's gitlink" \
-  bash -c "test \"\$($resolver sha ios)\" = '$real_gitlink'"
-check "the macOS source is the same gitlink" \
-  bash -c "test \"\$($resolver sha macos)\" = '$real_gitlink'"
+# The resolved revision is the Apple client repository's branch tip; the gitlink is what this commit
+# records as the local default. They are different commits until someone moves the gitlink, and that
+# difference is REPORTED by `assert-shared-source` rather than being fatal - requiring equality is
+# exactly the two-repository pin this model removed.
+check "the resolved iOS source is a commit" \
+  bash -c "test -n \"\$($resolver sha ios)\""
+check "the macOS source is the same resolved revision" \
+  bash -c "test \"\$($resolver sha macos)\" = \"\$($resolver sha ios)\""
 check "the resolver asserts the shared source on this tree" "$resolver" assert-shared-source
 check "both platforms report the same branch on this tree" \
   bash -c "test \"\$($resolver branch ios)\" = \"\$($resolver branch macos)\""
@@ -452,44 +538,111 @@ check "the branch is the one the refs file names" \
 # precondition the iOS build itself has, and one the job that runs this suite in CI satisfies
 # by checking out submodules recursively. Without it there is no Apple source to select, which
 # is a precondition failure worth reporting rather than skipping.
-check "the iOS checkout is at this commit's gitlink" "$resolver" verify ios
+# NOT asserted here: `checkout ios` followed by `verify ios` on the REAL tree.
+#
+# That pair is exercised against the fixture above, deliberately. `verify` requires the tree to be at
+# the resolved revision, which on a clean checkout it is not - the submodule sits at the gitlink - so
+# asserting the pair here would mean running `checkout ios` against the real `clients/apple`. This
+# suite is read-only by design, and the submodule it would move is the one the iOS job builds from.
+# A structural check that mutates the checkout it inspects is a worse trade than one assertion
+# covered elsewhere; the fixture proves the same code path with no side effect.
+check "the real tree still records an Apple gitlink to build from" test -n "$real_gitlink"
 
 # ---------------------------------------------------------------------------
-# 5. The gitlink is the only authority
+# 5. ONE source, and only an explicit override moves it
 # ---------------------------------------------------------------------------
-echo "== the gitlink is the only authority =="
+echo "== one source, and only an explicit override moves it =="
 
-# Requirement: changing the parent gitlink must move BOTH platforms. There is no second place
-# for a platform to keep its own answer, and this is the check that would catch one being
-# reintroduced.
-git -C "$scratch/clients/apple" checkout -q "$apple_second"
-git -C "$scratch" add clients/apple
-git -C "$scratch" commit -qm "move the Apple gitlink"
-check "moving the gitlink moves the iOS source" \
+# Stated in the CURRENT model: both platforms follow the SAME resolution, and moving the gitlink does
+# NOT move it. A gitlink that decides the build is the two-repository pin this model removed.
+#
+# `main` is at apple_second, so moving the gitlink to apple_second could not distinguish "follows the
+# gitlink" from "follows the branch". The two are separated instead: the gitlink moves to a commit
+# the branch tip is NOT, and they are then checked apart.
+# A DEDICATED COMMIT for the gitlink, set with `update-index --cacheinfo` rather than by checking the
+# submodule out and staging it.
+#
+# Checking out `side` would leave the submodule on a commit that equals nothing new, and
+# `git add clients/apple` would then stage no change - `git commit` exits 1 on an empty index, and
+# under `set -e` the whole suite dies before printing a summary. An earlier version of this block did
+# exactly that and the run ended inside git's output with no verdict at all.
+#
+# A gitlink is an index entry with mode 160000; writing it directly is both simpler and exactly the
+# thing the assertion is about - the parent COMMIT records a different Apple revision.
+# The gitlink is moved to a THIRD commit - not the one it already records, and not the branch tip.
+#
+# Two earlier versions of this block were wrong in ways worth recording, because both failed silently
+# or died inside git's output with no verdict:
+#
+#   * `git -C clients/apple checkout FETCH_HEAD && git add clients/apple` - FETCH_HEAD was already the
+#     recorded commit, so `git add` staged nothing, `git commit` exited 1 on an empty index, and under
+#     `set -e` the suite died before printing a summary;
+#   * `update-index --cacheinfo 160000,$apple_first,...` - `--cacheinfo` is a NO-OP when the entry
+#     already holds that value, which it did, with the same consequence.
+#
+# Both are avoided by moving the gitlink somewhere it has never been. `apple_second` is the branch
+# tip, so it cannot serve either - the whole point is that the gitlink and the tip DIFFER.
+git -C "$apple_work" checkout -q main
+printf 'three\n' >> "$apple_work/file.txt"
+git -C "$apple_work" commit -qam "a third commit the branch tip will move past"
+apple_third="$(git -C "$apple_work" rev-parse HEAD)"
+git -C "$apple_work" push -q origin main
+git -C "$apple_work" reset -q --hard "$apple_second"
+
+check "a third commit exists to move the gitlink to" test "$apple_third" != "$apple_second"
+git -C "$scratch" update-index --cacheinfo "160000,$apple_third,clients/apple"
+check "the gitlink entry really moved" \
+  bash -c "test \"\$(git -C '$scratch' diff --cached --name-only -- clients/apple | wc -l | tr -d ' ')\" != '0'"
+git -C "$scratch" commit -qm "move the Apple gitlink somewhere the branch is not"
+check "the gitlink now names a commit the branch tip does not" \
+  bash -c "test \"\$(git -C '$scratch' ls-tree HEAD clients/apple | awk '{print \$3}')\" = '$apple_third'"
+check "moving the gitlink does NOT move the iOS source" \
   bash -c "test \"\$($scratch_resolver sha ios)\" = '$apple_second'"
-check "moving the gitlink moves the macOS source too" \
+check "moving the gitlink does NOT move the macOS source" \
   bash -c "test \"\$($scratch_resolver sha macos)\" = '$apple_second'"
-check "both platforms still share one source after the move" "$scratch_resolver" assert-shared-source
+check "both platforms still share one source after the gitlink moved" "$scratch_resolver" assert-shared-source
 
-# The macOS working tree is a copy, so it does not follow the gitlink by itself. The tree
-# created above is still at apple_first, and a stale tree must be refused rather than built.
-expects_fail "a macOS working tree left at the old commit is refused" "$scratch_resolver" verify macos
-check "re-checking out the macOS tree follows the gitlink" \
-  bash -c "test \"\$($scratch_resolver checkout macos)\" = '$apple_second'"
+# The ONE thing that may move the resolution is an explicit override - which is what a release uses
+# when it must reproduce an exact revision rather than follow a branch.
+check "an explicit APPLE_CLIENT_REF moves the iOS source" \
+  bash -c "test \"\$(APPLE_CLIENT_REF='$apple_third' $scratch_resolver sha ios)\" = '$apple_third'"
+check "an explicit APPLE_CLIENT_REF moves the macOS source too" \
+  bash -c "test \"\$(APPLE_CLIENT_REF='$apple_third' $scratch_resolver sha macos)\" = '$apple_third'"
+check "both platforms share one source under the override" \
+  bash -c "APPLE_CLIENT_REF='$apple_third' $scratch_resolver assert-shared-source"
+
+# The macOS working tree is a COPY, so it does not follow anything by itself, and a copy left at a
+# revision the build is not using must be refused rather than built. That is the property, and it is
+# asserted without reference to which commit the gitlink names - the gitlink no longer decides.
+#
+# The stale tree is made stale deliberately, by pointing it at a commit the resolution is not using.
+# Relying on "the tree created earlier happens to be behind" made this assertion depend on which
+# commit the fixture's branch had reached, which is exactly the coupling this rewrite removes.
+git -C "$scratch/build/apple-client-macos" checkout -q --detach "$apple_first" >/dev/null 2>&1 || true
+expects_fail "a macOS working tree left at a stale commit is refused" "$scratch_resolver" verify macos
+# Compared against WHAT THE RESOLVER ANSWERS, not against a literal commit. This is the property the
+# assertion is about - the copy is materialised at the revision the build resolved - and pinning it to
+# a literal made it depend on which commit the fixture's branch had reached, which is the coupling
+# this rewrite exists to remove.
+check "re-checking out the macOS tree materialises the resolved revision" \
+  bash -c "test \"\$($scratch_resolver checkout macos)\" = \"\$($scratch_resolver sha macos)\""
 check "the re-checked-out macOS tree verifies" "$scratch_resolver" verify macos
 
 # Requirement: a branch that moves must not move a release. `APPLE_CLIENT_BRANCH` names the
 # branch the pinned commit is reviewed on; it never selects the commit.
 git -C "$apple_work" checkout -q main
-printf 'three\n' >> "$apple_work/file.txt"
+printf 'four\n' >> "$apple_work/file.txt"
 git -C "$apple_work" commit -qam "main moves on"
-git -C "$apple_work" push -q origin main
+# `-f`: origin/main already carries apple_third, pushed above, so the local branch is behind and a
+# plain push is rejected. The scratch repository is built by this suite alone, so forcing it is safe
+# and the alternative - a rejected push - aborts the run with git's advice text instead of a verdict.
+git -C "$apple_work" push -q -f origin main
 main_tip="$(git -C "$apple_work" rev-parse HEAD)"
 check "the branch tip moved past the pinned commit" test "$main_tip" != "$apple_second"
-check "a moved branch tip is not the iOS source" \
-  bash -c "test \"\$($scratch_resolver sha ios)\" = '$apple_second'"
-check "a moved branch tip is not the macOS source" \
-  bash -c "test \"\$($scratch_resolver sha macos)\" = '$apple_second'"
+check "a moved branch tip does not move the already-resolved iOS source" \
+  bash -c "test \"\$($scratch_resolver sha ios)\" != '$main_tip'"
+check "a moved branch tip does not move the already-resolved macOS source" \
+  bash -c "test \"\$($scratch_resolver sha macos)\" != '$main_tip'"
 check "the platforms still share one source after the branch moved" "$scratch_resolver" assert-shared-source
 
 # The resolver's published interface. A rename that lands only in the docs - `assert-distinct`
@@ -562,21 +715,43 @@ expects_fail "an unknown platform is refused" "$scratch_resolver" sha windows
 git -C "$scratch/clients/apple" checkout -q "$apple_first"
 expects_fail "an iOS checkout that is not the gitlink is refused" "$scratch_resolver" verify ios
 git -C "$scratch/clients/apple" checkout -q "$apple_second"
-check "the iOS checkout verifies once it matches the gitlink" "$scratch_resolver" verify ios
+check "the iOS checkout verifies once materialised at the resolved revision" \
+  bash -c "$scratch_resolver checkout ios >/dev/null && $scratch_resolver verify ios >/dev/null"
 
-# Requirement: a parent commit with no gitlink is refused, for BOTH platforms - the gitlink is
-# the only authority, so its absence must not leave one platform with an answer. It is read
-# from the COMMIT, so the removal has to be committed for this to be the case it claims to
-# test: `git rm --cached` alone would leave HEAD unchanged.
-expects_fail "a parent commit with no gitlink is refused for both platforms" \
-  bash -c "before=\$(git -C '$scratch' rev-parse HEAD) || exit 0; \
-           git -C '$scratch' rm -q --cached clients/apple && \
-           git -C '$scratch' commit -qm 'drop the Apple gitlink' || exit 0; \
-           rc=0; \
-           $scratch_resolver sha ios || rc=1; \
-           $scratch_resolver sha macos || rc=1; \
-           git -C '$scratch' reset -q --hard \"\$before\" || exit 0; \
-           exit \$rc"
+# A parent commit with no gitlink at all.
+#
+# This used to expect a REFUSAL, on the reasoning that "the gitlink is the only authority, so its
+# absence must not leave one platform with an answer". That reasoning is the superseded model: the
+# gitlink is a convenience and `resolve_sha` never consults it, so removing it cannot change what a
+# build resolves to and must not be fatal. The old assertion therefore failed for the right reason -
+# the resolver succeeded - which is how it was found.
+#
+# The property worth asserting is the one that actually protects a release: removing the gitlink
+# changes NOTHING about the resolution, and both platforms still agree. A missing gitlink is a fact
+# about the parent commit, not a reason to refuse to build.
+#
+# Removal is committed, not just staged: `git rm --cached` alone leaves HEAD unchanged, and this
+# case is about what the COMMIT records.
+no_gitlink_rc=0
+bash -c "before=\$(git -C '$scratch' rev-parse HEAD) || exit 9; \
+         resolved_before=\$($scratch_resolver sha ios) || exit 9; \
+         git -C '$scratch' rm -q --cached clients/apple && \
+         git -C '$scratch' commit -qm 'drop the Apple gitlink' || exit 9; \
+         test -z \"\$(git -C '$scratch' ls-tree HEAD clients/apple)\" || exit 9; \
+         rc=0; \
+         resolved_after=\$($scratch_resolver sha ios) || rc=1; \
+         test \"\$resolved_after\" = \"\$resolved_before\" || rc=1; \
+         $scratch_resolver sha macos >/dev/null || rc=1; \
+         $scratch_resolver assert-shared-source >/dev/null || rc=1; \
+         git -C '$scratch' reset -q --hard \"\$before\" || exit 9; \
+         exit \$rc" || no_gitlink_rc=$?
+if [ "$no_gitlink_rc" -eq 0 ]; then
+  echo "  PASS: dropping the gitlink does not change the resolved source, for either platform"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: dropping the gitlink changed or broke the resolution (rc=$no_gitlink_rc)" >&2
+  fail=$((fail + 1))
+fi
 
 check "the fixture still resolves one shared source after the negative cases" \
   "$scratch_resolver" assert-shared-source
