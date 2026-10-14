@@ -406,6 +406,31 @@ for f in "$ios_app_entitlements" "$ios_tunnel_entitlements" \
 done
 
 read_plist() { plutil -convert xml1 -o - "$1" 2>/dev/null || cat "$1"; }
+
+# plist_edit <file> <python-body>
+#
+# Reads the plist, runs `python3` over the decoded object, writes it back. This replaces
+# `/usr/libexec/PlistBuddy`, and the reason is not portability for its own sake.
+#
+# PlistBuddy is macOS-only. Every call site used `|| true`, so off macOS the edit silently did
+# NOTHING and the failure surfaced later as its own postcondition talking about a key that was
+# never removed. That is why this overlay could not be tested anywhere but a Mac, and why a real
+# CI failure in it arrived with no local reproduction.
+#
+# An editor that works wherever `python3` does turns those postconditions into checks that can be
+# run before pushing, which is the difference between a suite that finds a problem and one that
+# reports it.
+plist_edit() {
+  python3 - "$1" <<PY
+import plistlib, sys
+path = sys.argv[1]
+with open(path, "rb") as handle:
+    doc = plistlib.load(handle)
+$2
+with open(path, "wb") as handle:
+    plistlib.dump(doc, handle)
+PY
+}
 has_key() {
   if read_plist "$1" | grep -q "<key>$2</key>"; then echo 1; else echo 0; fi
 }
@@ -424,7 +449,7 @@ if [ "$APPLE_ENABLE_MULTICAST" = "true" ]; then
 else
   for f in "$ios_tunnel_entitlements" "$macos_sysext_entitlements"; do
     if [ "$(has_key "$f" com.apple.developer.networking.multicast)" = "1" ]; then
-      /usr/libexec/PlistBuddy -c "Delete :com.apple.developer.networking.multicast" "$f" >/dev/null 2>&1 || true
+      plist_edit "$f" 'doc.pop("com.apple.developer.networking.multicast", None)'
       if [ "$(has_key "$f" com.apple.developer.networking.multicast)" != "0" ]; then
         echo "FAIL: could not remove multicast from $f" >&2; fail=1
       else
@@ -502,7 +527,7 @@ for f in "$ios_app_entitlements" "$ios_intents_entitlements" "$macos_app_entitle
     com.apple.developer.ubiquity-container-identifiers
   do
     if [ "$(has_key "$f" "$key")" = "1" ]; then
-      /usr/libexec/PlistBuddy -c "Delete :$key" "$f" >/dev/null 2>&1 || true
+      plist_edit "$f" "doc.pop('$key', None)"
       if [ "$(has_key "$f" "$key")" != "0" ]; then
         echo "FAIL: could not remove $key from $f" >&2; fail=1
       else
@@ -541,7 +566,11 @@ for f in $macos_group_files; do
   current="$(app_group_for "$f")"
   case "$current" in
     *'$(TeamIdentifierPrefix)'*)
-      /usr/libexec/PlistBuddy -c "Set :com.apple.security.application-groups:0 \$(APP_GROUP_IDENTIFIER)" "$f" >/dev/null 2>&1 || true
+      # The FIRST element of the array, set to the same expression the iOS side already uses.
+      # `plist_edit` rather than PlistBuddy for the reason given at its definition: the PlistBuddy
+      # form was a silent no-op everywhere but macOS, which is precisely the environment this check
+      # could not otherwise be exercised in.
+      plist_edit "$f" 'doc["com.apple.security.application-groups"] = ["$(APP_GROUP_IDENTIFIER)"]'
       updated="$(app_group_for "$f")"
       if [ "$updated" != '$(APP_GROUP_IDENTIFIER)' ]; then
         echo "FAIL: could not normalise the App Group in $f (still '$updated')" >&2; fail=1
@@ -552,19 +581,12 @@ for f in $macos_group_files; do
   esac
 done
 
-app_group_for() {
-  read_plist "$1" | python3 -c '
-import plistlib, sys
-data = sys.stdin.buffer.read()
-try:
-    plist = plistlib.loads(data)
-except Exception:
-    print(""); raise SystemExit
-groups = plist.get("com.apple.security.application-groups") or []
-print(groups[0] if groups else "")
-'
-}
-
+# `app_group_for` is defined once, above its first use. It used to be defined TWICE - once at
+# the top of the sections that call it, and again here, five hundred lines later, byte-identical.
+# The duplicate was harmless, which is exactly why it survived: bash takes the last definition, the
+# two agreed, and nothing could observe the difference. It was found by reading the file to answer a
+# different question, and the cost of leaving it is that a future edit to the FIRST definition would
+# silently do nothing on a clean run.
 groups_seen=""
 for f in "$ios_app_entitlements" "$ios_tunnel_entitlements" \
          "$macos_app_entitlements" "$macos_sysext_entitlements" \

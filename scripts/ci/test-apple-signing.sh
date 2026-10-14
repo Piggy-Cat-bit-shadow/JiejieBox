@@ -194,6 +194,49 @@ echo "== entitlements after the overlay is applied =="
 # itself. Reading the submodule directly would only pass if some earlier command
 # happened to leave the overlay in place - a green result that means nothing on a
 # clean checkout. The submodule is restored afterwards either way.
+# ---------------------------------------------------------------------------
+# THE CLIENT MUST BE AT THE REVISION THIS BUILD SELECTS
+# ---------------------------------------------------------------------------
+#
+# `prepare-apple-client.sh` refuses to overlay a checkout whose HEAD is not the resolved Apple
+# source, and that refusal is CORRECT: the overlays edit entitlement files by path, so applying them
+# to a different revision would produce a build whose entitlements were never reviewed against the
+# source they were applied to.
+#
+# On a clean CI checkout the submodule is at the GITLINK, and the gitlink is deliberately no longer
+# the authority - `apple-client-source.sh` resolves the Apple client repository's branch tip, and
+# that is a different commit until someone moves the gitlink. So the precondition has to be
+# ESTABLISHED here rather than assumed, and this suite was the first thing to run before anything
+# else materialised the source.
+#
+# The failure it produced is worth recording, because it looked like something else entirely: the
+# overlay simply refused, both overlay blocks reported "could not apply the overlay; skipping its
+# assertions", and the suite went red with 103 of 105 passing. Nothing named the revision.
+#
+# `checkout ios` is the same operation the real build runs, and it is idempotent: it fetches the
+# resolved commit only when HEAD differs, so a tree already at the right revision costs nothing.
+resolved_apple_sha="$(./scripts/ci/apple-client-source.sh sha ios)"
+apple_dir="$(./scripts/ci/apple-client-source.sh dir ios)"
+apple_head_before="$(git -C "$apple_dir" rev-parse HEAD)"
+
+# The gitlink relation is asserted HERE, before anything moves, rather than at the end of the file
+# where it used to live. Two reasons, and the second is the important one:
+#
+#   * the property is about the CHECKOUT the suite starts from, so this is where it is meaningful;
+#   * by the end of the file the overlays have run, and asserting a clean gitlink relation after
+#     deliberately modifying the submodule is a check that can only pass by accident.
+check "the parent gitlink matches the submodule HEAD" \
+  test "$(git ls-tree HEAD clients/apple | awk '{print $3}')" = "$apple_head_before"
+
+restore_client_head() {
+  # Leave the client exactly as it was found. The suite is run by jobs that go on to build from
+  # this checkout, and a test that moves a submodule and walks away changes what they build.
+  git -C "$apple_dir" checkout --detach "$apple_head_before" >/dev/null 2>&1 || true
+}
+trap restore_client_head EXIT
+
+./scripts/ci/apple-client-source.sh checkout ios >/dev/null
+
 overlay_state="$(git -C clients/apple status --porcelain | wc -l | tr -d ' ')"
 restore_overlay() {
   if [ "$overlay_state" = "0" ]; then
@@ -537,18 +580,20 @@ if [ "$branding_applied" = "1" ]; then
     grep -q 'Build configuration list for PBXNativeTarget "SFI"' "$pbx"
 
   echo "  -- the submodule must be untouched as a repository --"
-  # Asserted as the property rather than against a frozen commit: the parent must record the commit
-  # the submodule is actually at, and that commit must be reachable from the fork whose URL
-  # .gitmodules names. A hardcoded SHA was correct while the client was upstream's and became a
-  # check that could only fail once this fork's branch was pinned - which is what happened.
-  check "the parent gitlink matches the submodule HEAD" \
-    test "$(git ls-tree HEAD clients/apple | awk '{print $3}')" = "$(git -C clients/apple rev-parse HEAD)"
+  # The gitlink-relation assertion that used to open this block now runs at the TOP of the file,
+  # against the checkout the suite starts from. Asserting it here would be asserting it after the
+  # overlays have deliberately modified the submodule - a check that can only pass by accident, and
+  # that would have started failing the moment the precondition above began materialising the
+  # resolved revision (which detaches HEAD from the gitlink).
+  #
+  # What remains here is about the submodule as a REPOSITORY, which the overlays do not change:
+  # which branch its HEAD is on, where its URL points, and that the pinned commit is reachable.
   check "the submodule is on the fork's branch" \
     bash -c 'git -C clients/apple rev-parse --abbrev-ref HEAD | grep -q .'
   check "the submodule URL points at the fork" \
     bash -c 'git config -f .gitmodules submodule.clients/apple.url | grep -q "Piggy-Cat-bit-shadow/sing-box-for-apple"'
   check "the pinned commit is reachable from that URL" \
-    bash -c 'test -n "$(git -C clients/apple ls-remote --exit-code origin hako-ui 2>/dev/null | awk "{print \$1}")" || git -C clients/apple cat-file -e "$(git -C clients/apple rev-parse HEAD)"' 
+    bash -c 'test -n "$(git -C clients/apple ls-remote --exit-code origin hako-ui 2>/dev/null | awk "{print \$1}")" || git -C clients/apple cat-file -e "$(git -C clients/apple rev-parse HEAD)"'
   check "the branding change is uncommitted in the submodule" \
     bash -c 'test -n "$(git -C clients/apple status --porcelain)"'
 else
