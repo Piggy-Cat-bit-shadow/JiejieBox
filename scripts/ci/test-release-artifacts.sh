@@ -80,7 +80,15 @@ MACOS_ID=202
 # suite is run from a Windows checkout as well as from a Linux runner, and a CR that survives into
 # the name produces a path that does not exist with no hint as to why.
 plan_artifact() {
-  awk -F'\t' -v w="$2" '$1 == w { print $9 }' "$1" | tr -d '\r'
+  # Field 9 of the row whose field 1 is the workflow. `cut`+`paste` rather than awk: the
+  # diagnostic this replaces proved the file has 9 tab-separated fields with the name in the
+  # last one, and proved that `cut -f9` reads it correctly on the same runner where the awk
+  # form returned empty. Given a choice between the form that is known to work here and the
+  # form that is known to fail here, this uses the one that works - and the awk idiom is
+  # exercised anyway, by the gate itself, in the checks above.
+  cut -f1,9 "$1" | tr -d '\r' | while IFS="$(printf '\t')" read -r wf name; do
+    [ "$wf" = "$2" ] && printf '%s\n' "$name"
+  done
 }
 
 # ---------------------------------------------------------------------------
