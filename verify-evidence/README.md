@@ -1,6 +1,6 @@
 # verify-evidence
 
-Raw transcripts behind `APPLE_PIN_FINAL_VERIFICATION.md`.
+Raw transcripts behind `docs/archive/2026-10-dev-cycle/APPLE_PIN_FINAL_VERIFICATION.md`.
 
 **Everything here was produced by the code at the commit named in each log's own header.**
 The logs are not curated: they are the verbatim stdout+stderr of the command on line 1,

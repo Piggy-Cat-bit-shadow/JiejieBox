@@ -10,28 +10,38 @@ changed, why, and how to continue without re-reading 1,834 commits*.
 |---|---|
 | Repository | `Piggy-Cat-bit-shadow/sing-box` |
 | Product branch | `testing` |
-| **Production baseline** | `a267e99e0bf1811dc975b013e2e8d7a15ab40d23` — the implementation every module describes |
-| Release baseline | **`v0.1.6`**, the same SHA |
-| **Upstream baseline** | `e4b7e692f4545890bfc9d43960328e1449fa803b` = `refs/remotes/upstream/testing` |
-| Post-baseline production delta | **none** — `v0.1.6..HEAD` is 5 commits (3 knowledge-base, 2 release plumbing) and **no `.go` source changed** |
-| Knowledge reviewed at | 2026-10-12 (Stage 2; delta refresh at `93d757828`) |
+| **Production baseline** | `5fc4f9366a60202fdc7c98cd6fa280cceace65ba` — the implementation every module describes |
+| Release baseline | **`v0.1.9`**, the same SHA |
+| **Upstream baseline** | `e4b7e692f4545890bfc9d43960328e1449fa803b` — the last upstream commit this fork contains (`refs/remotes/upstream/testing` has since moved on) |
+| Post-baseline production delta | **none** — the baseline *is* `HEAD` at the time of writing |
+| Knowledge reviewed at | 2026-10-14 (refresh at the `v0.1.9` release) |
 | Knowledge revision | resolve dynamically: `git log -1 --format=%H -- KNOWLEDGE/BASELINE.md` |
 
-**The knowledge base does not describe `HEAD`.** It describes `a267e99e`, and it says so. Full
-measurements, the provenance test, and the two tag-scheme traps are in `BASELINE.md`.
+**The knowledge base does not describe `HEAD`.** It describes `5fc4f9366` and says so. Full
+measurements, the release lineage, the provenance test, and the three tag traps are in `BASELINE.md`.
+
+**The previous baseline (`a267e99e0`, `v0.1.6`) went stale invisibly for two releases** — its delta row
+claimed "no `.go` source changed" while 181 commits and 12 production files had landed. That failure is
+recorded in `BASELINE.md` rather than quietly corrected, because the lesson is about the model, not
+about one row.
 
 ## Reading order
 
 ```text
 1. BASELINE.md            what SHA this describes, and how to compute the delta since
-2. PROJECT.md             what the fork is and what it deliberately did not change
-3. ARCHITECTURE.md        the eleven boundaries worth preserving
-4. modules/README.md      task -> module map
-5. the 1-2 modules your task touches
-6. INVARIANTS.md          when you are about to change something that looks load-bearing
-7. ACCEPTANCE.md          the requirement -> evidence -> re-check index
-8. COMMIT-INDEX.md        when you need to find the SHAs behind a behaviour
+2. INDEX.md               route first: task / keyword / source path -> exact module section
+3. PROJECT.md             what the fork is and what it deliberately did not change
+4. ARCHITECTURE.md        the eleven boundaries worth preserving
+5. modules/README.md      the module registry and ownership map
+6. the 1-2 modules your task touches
+7. INVARIANTS.md          when you are about to change something that looks load-bearing
+8. ACCEPTANCE.md          the requirement -> evidence -> re-check index
+9. COMMIT-INDEX.md        when you need to find the SHAs behind a behaviour
 ```
+
+**`INDEX.md` and `modules/README.md` are not interchangeable.** `modules/README.md` is the coarse
+registry (which module owns what). `INDEX.md` is the fine router: exact section anchors, aliases, and
+a reverse index by source path and symbol.
 
 **Do not read the modules you do not need.** Each is self-contained: it carries its own source
 anchors, provenance and evidence level.
@@ -82,6 +92,9 @@ all.
 
 ## Modules
 
+Route with `INDEX.md` first — it carries the exact section anchors and a reverse index by source path.
+This table is the coarse ownership map.
+
 | Module | Covers |
 |---|---|
 | `modules/core-lifecycle-runtime.md` | `adapter.Scope`, `Box` start/close order, `common/runtimecoord`, `route.ReferenceManager` |
@@ -100,13 +113,14 @@ all.
 | `modules/build-pruning-release.md` | build tags, pruning, release profiles, generators, pins |
 | `modules/ci-release.md` | workflows, gates, evidence, and what may not be claimed |
 
-Fork-wide: `BASELINE.md`, `PROJECT.md`, `ARCHITECTURE.md`, `INVARIANTS.md`, `ACCEPTANCE.md`,
-`COMMIT-INDEX.md`.
+Fork-wide: `BASELINE.md`, `INDEX.md`, `PROJECT.md`, `ARCHITECTURE.md`, `INVARIANTS.md`,
+`ACCEPTANCE.md`, `COMMIT-INDEX.md`, `REFRESH.md`.
 
 ## What this knowledge base does not cover
 
 `protocol/vless/encryption` (a new fork package with no recorded incident or acceptance rule),
-individual upstream protocol wire formats, the Clash/V2Ray API internals, and the Apple / Android /
-desktop **client** source — those are separate repositories, present as empty submodules in a clean
-worktree. `modules/README.md` says so explicitly rather than leaving silence to be mistaken for
-coverage.
+**`experimental/boxdd/**` — the Windows daemon**, which changed in the `v0.1.6 → v0.1.9` delta and is
+owned by no module, individual upstream protocol wire formats, the Clash/V2Ray API internals, and the
+Apple / Android / desktop **client** source — those are separate repositories, present as empty
+submodules in a clean worktree. `modules/README.md` says so explicitly rather than leaving silence to
+be mistaken for coverage.
