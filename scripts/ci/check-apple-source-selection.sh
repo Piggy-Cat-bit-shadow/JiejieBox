@@ -242,6 +242,19 @@ for name, body in (("ios", ios), ("macos", macos)):
         problems.append(f"the {name} job does not validate the Libbox artifact")
     if "--parent-sha" not in body:
         problems.append(f"the {name} job does not validate Libbox against the parent commit")
+    # The SECOND identity, and it is checked separately because deleting one argument from a
+    # multi-line call leaves the other assertions above perfectly satisfied. `--parent-sha` ties
+    # the bytes to a commit; `--jj-version` ties them to a release. The validator requires both,
+    # so a job that dropped this one would fail at run time - but it would fail on a runner,
+    # mid-build, after the expensive Libbox compile, instead of here.
+    if "--jj-version" not in body:
+        problems.append(f"the {name} job does not validate Libbox against the release version")
+    if "--allow-legacy-manifest" in body:
+        problems.append(
+            f"the {name} job opts out of the schema-2 requirement. A canonical Apple build must "
+            "declare its version and its slices; the opt-out exists for reading old artifacts, "
+            "not for a GUI job"
+        )
     if "--submodule-sha" in body:
         problems.append(f"the {name} job binds Libbox to a copy of the Apple revision")
 

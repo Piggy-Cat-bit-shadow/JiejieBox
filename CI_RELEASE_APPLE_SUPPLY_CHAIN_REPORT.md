@@ -1,4 +1,4 @@
-# CI / Release — Apple supply chain implementation report (V8)
+# CI / Release 闂?Apple supply chain implementation report (V8)
 
 Sole report for the V8 round. Continues from the green V7 baseline
 (`9f43d3209864c555ba133faf6e1b2cb73be4c089` on `release/v6-unix-authority`). Does not rewrite the
@@ -14,7 +14,7 @@ target-state **11/11**, desktop identity **30/30**, desktop version **60/60**, c
 
 ## A. What this round implemented
 
-### A1. Stage F1/F2 — the Libbox manifest records identity and provenance as separate layers
+### A1. Stage F1/F2 闂?the Libbox manifest records identity and provenance as separate layers
 
 The manifest was seven flat fields with one ambiguous name in it. It is now explicitly layered:
 
@@ -33,7 +33,7 @@ can only fail. This supersedes the earlier plan for that check, which the brief 
 
 **`slices` is discovered, not assumed.** The packer lists the xcframework's own slice directories
 and then *requires* an iOS slice and a macOS slice to be present. Nothing hardcodes Xcode's slice
-directory names — a hardcoded list would be wrong the first time a platform is added. Recording
+directory names 闂?a hardcoded list would be wrong the first time a platform is added. Recording
 them turns "does this framework carry what the clients need" from something rediscovered at every
 install into a property of the artifact.
 
@@ -41,7 +41,7 @@ install into a property of the artifact.
 different run id for byte-identical output; binding to it would make the artifact irreproducible
 by design.
 
-### A2. Stage F3 — validation checks the declaration against the archive
+### A2. Stage F3 闂?validation checks the declaration against the archive
 
 `validate` now:
 
@@ -56,9 +56,61 @@ by design.
   link, and an undeclared slice means the manifest is not describing what is about to be installed.
 
 Both `client-apple.yml` GUI jobs now pass `--jj-version`, read from `release/JIEJIE_VERSION` rather
-than from the manifest — so one side of every comparison is an independent authority.
+than from the manifest 闂?so one side of every comparison is an independent authority.
 
-### A3. Stage G — canonical Release asset, with presence and validity kept apart
+### A4. Stage F4/F5 闂?Apple became a release target, promoted rather than repacked
+
+`client-apple.yml` joined `TARGET_WORKFLOWS` under `RELEASE_EXTRA_PLATFORMS`, with its own fields:
+
+```text
+kind         xcframework-manifest   the field that says this target is not a binary
+binary       Libbox.xcframework     the DIRECTORY the payload holds
+buildinfo    manifest.json
+tarball      (empty)                it has no tag-derived name to compose
+```
+
+`kind` exists so the branch in generic code is on **what a target is**, not on its workflow name; a
+second manifest-based target needs no new special case. It is declared for **every** target,
+including the four whose value is the default 闂?see finding 6.
+
+**Verification delegates to the producer.** `verify_apple` calls `apple-libbox-artifact.sh validate`
+as a subprocess rather than reimplementing it. The release contributes the two facts only it knows
+(the commit and the release version from the tag) and keeps ownership of the **file set** 闂?exactly
+the bundle, its manifest, its checksum list and its build record, and nothing else. A release-side
+copy of the schema rules would be a second owner of one fact, which is the failure this whole body
+of work removes.
+
+**Promotion, not repackaging.** `flatten` *copies* `Libbox.xcframework.tar.gz`. Repacking would
+produce different bytes under the same name, so the file the release page offered would no longer be
+the file whose digest the manifest records and that `verify` checked 闂?and `SHA256SUMS` would then
+describe an artifact nobody validated.
+
+---
+
+## A5. What the Ubuntu oracle found, in order
+
+Six real defects, none of which any amount of local reading would have surfaced:
+
+1. **`--jj-version` was rejected by nothing and required by everything.** No 闂?this one was the
+   plan; recorded here because it is the reason the field exists.
+2. **`target_field` died on `kind` for four targets.** `FAIL: the release contract has no 'kind'
+   for workflow 'server-linux-amd64.yml'`. The tempting fix 闂?defaulting an absent `kind` to
+   `binary` 闂?would have put a special case in the shared lookup and silently defaulted the *next*
+   forgotten field. The table was incomplete; the lookup was right.
+3. **The suite aborted with no verdict** immediately after `download all five products`, killing
+   every case after it. Same signature as the earlier duplicate-binary abort: a plan read. Replaced
+   with filesystem discovery, exactly as before.
+4. **`BUILD-INFO-LIBBOX.txt` was missing from the payload contract.** The two-sided message named
+   it precisely. Narrowing the assertion to exclude it would have been the easy way to green and
+   would have quietly dropped a published record.
+5. **The failure text was truncated at 600 characters**, so `expected exit 0, got 1` was the whole
+   report. Widened to 6000; this is what made the next two findings possible in one run each
+   instead of three runs of guessing.
+6. **The fixture hardcoded `0.1.6` while the repository says `0.1.7`** 闂?   `the Libbox artifact declares jj_version '0.1.7', but this release is '0.1.6'`. The Apple packer
+   recorded the *real* version, the release compared it against the fixture's copy, and both the
+   producer's validator and the release refused. The fixture now reads `release/JIEJIE_VERSION`, so
+   it cannot drift from the thing it models.
+
 
 `publish-apple-beta.sh` gains `--libbox-source {auto,release,actions}`, default `auto`.
 
@@ -76,18 +128,18 @@ PRESENT_INVALID  the asset exists and fails a check
 expectations**, that the Actions path uses. Every failure after `PRESENT` is **fatal**:
 `canonical_state` is set before the download, so control cannot reach the fallback afterwards. A
 canonical asset that is present but corrupt, mislabelled, or built from another commit means the
-release's own Apple core is broken — and falling back to Actions would publish something the
+release's own Apple core is broken 闂?and falling back to Actions would publish something the
 release says it is not.
 
 Two details that are load-bearing rather than cosmetic:
 
 * **Sections 3 and 4 are skipped entirely on the canonical path**, not merely tolerated. Section 4
   begins with `rm -rf "$input_dir"`, so running it would delete the validated artifact and
-  substitute a different one — the exact substitution this change exists to prevent.
+  substitute a different one 闂?the exact substitution this change exists to prevent.
 * **The install path names `$validated`, not `$input_dir`.** The bytes proved and the bytes
   installed are the same bytes by construction, rather than by both happening to sit under one
   directory. Reading the manifest from one directory and installing from another is precisely the
-  divergence `check-apple-shared-libbox.sh` exists to catch — and it would catch it only after both
+  divergence `check-apple-shared-libbox.sh` exists to catch 闂?and it would catch it only after both
   clients had been built.
 
 ---
@@ -99,13 +151,13 @@ Two details that are load-bearing rather than cosmetic:
 | F1 manifest schema | **DONE** | schema_version 2, layered identity/revision/provenance |
 | F2 producer records slices + provenance | **DONE** | slices discovered then required |
 | F3 validate checks declaration against archive | **DONE** | schema gate, jj_version, slice extraction |
-| F4 Formal Release validates Apple Libbox | **NOT DONE** | needs `apple-libbox` in `release-artifacts.sh` + fixture |
-| F5 libbox asset in the release allowlist | **NOT DONE** | same |
+| F4 Formal Release validates Apple Libbox | **DONE** | fifth target; `verify_apple` delegates to the producer's validator |
+| F5 libbox asset in the release allowlist | **DONE** | `Libbox.xcframework.tar.gz`, promoted not repacked |
 | G1 `--libbox-source` model | **DONE** | `auto`/`release`/`actions` |
 | G2 `auto` prefers canonical, Actions only on ABSENT | **DONE** | |
 | G3 `PRESENT_INVALID` fatal, never a fallback | **DONE** | single fatal path, state set before download |
 | G4 `release` requires the asset | **DONE** | fatal on an unreadable release too |
-| G5 `actions` unchanged / fail-closed | **DONE** | sections 3–4 untouched |
+| G5 `actions` unchanged / fail-closed | **DONE** | sections 3闂? untouched |
 | G6 `--libbox-source actions` restores previous behaviour | **DONE** | by construction |
 | G7 TestFlight source logging | **PARTIAL** | `libbox_from` is set; not yet printed in the summary block |
 | H2 release-blocking producer concurrency | **NOT DONE** | |
@@ -113,7 +165,7 @@ Two details that are load-bearing rather than cosmetic:
 | J race/deep final decision | **NOT DONE** | |
 | K final-freeze readiness proof | **NOT DONE** | |
 
-`READY_FOR_FINAL_FREEZE_VALIDATION = NO` — F4/F5 (the release does not yet promote the canonical
+`READY_FOR_FINAL_FREEZE_VALIDATION = NO  (F1-F5, G1-G6 done and green on Ubuntu at 83f7258f3; G7, H2, I, J, K and the Stage G state-machine test outstanding)` 闂?F4/F5 (the release does not yet promote the canonical
 Libbox), G7, H2, I, J, K are outstanding.
 
 ---
@@ -134,9 +186,25 @@ Every command below ran in this environment. `git` is portable MinGit 2.50.1, `b
 | `git diff --check` | clean |
 | `test-apple-beta-publish.sh` (partial, local) | passes up to a missing `sleep` stub; remainder needs the Ubuntu oracle |
 
-**NOT RUN, and why:** the full 92-case release-helper suite and the complete Apple suite need
-`jq`, `chmod`, `sleep` and `mktemp` semantics this host does not have. The remote oracle is the
-verification for those, and the previous round established it works: `38490154873` = success.
+**RUN on the GitHub Ubuntu oracle, current HEAD:** `38492804243` = **success**, the full 105-case
+release-helper suite, including the four cases that exercise Apple as a release target:
+
+```text
+PASS  full contract: plan sees all five products
+PASS  full contract: download all five products
+PASS  full contract: verify five products and the installer
+PASS  full contract: the staging directory is exactly the seven public files
+PASS  full contract: the manifest names exactly the six public files
+```
+
+The 105 count is 103 behavioural cases plus the split assertions; earlier rounds reported 92 as the
+suite grew. Six defects were found and fixed across seven oracle runs, all listed in 閹间精5.
+
+**NOT RUN, and why:** the complete Apple suite (`test-apple-beta-publish.sh`) still needs `sleep`
+and further Unix semantics this host lacks - it passes locally up to the first `sleep` and its
+remainder is `BLOCKED_BY_ENVIRONMENT`. The new `PRESENT_INVALID` state machine in
+`publish-apple-beta.sh` is `VERIFIED_SOURCE` (read and syntax-checked) but has **no test fixture**,
+so it is not `VERIFIED_INTEGRATION`.
 
 **What was NOT verified and must not be claimed:** the new manifest schema and the canonical-asset
 state machine have **not been exercised end to end**. They are `VERIFIED_SOURCE` (read and
@@ -149,7 +217,7 @@ yet, which is the single most important behaviour in Stage G.
 
 1. **`test-apple-beta-publish.sh` has no fixture for the new three-state model.** The producer
    changes are backwards compatible (`--allow-legacy-manifest` exists, `--jj-version` is only
-   required when the schema is), so the existing 88 assertions should still pass — but the new
+   required when the schema is), so the existing 88 assertions should still pass 闂?but the new
    behaviour is untested. This is the highest-value next test.
 2. **`check-apple-source-selection.sh` asserts the exact string
    `apple-libbox-artifact.sh validate build/apple-libbox`**, and the GUI jobs now pass an extra
@@ -167,26 +235,24 @@ yet, which is the single most important behaviour in Stage G.
 
 ```text
 TEMP_BRANCH = release/v6-unix-authority
-HEAD        = 291f0abf455be4954ca9d11654b128dce92e4225
+HEAD        = 83f7258f3f6f7150f7049ed03e2593aada28b1e0
 
 Stage A-E            = DONE (unchanged, not reopened)
-Stage F1/F2/F3       = DONE
+Stage F1/F2/F3/F4/F5 = DONE
 Stage G1-G6          = DONE
-Stage F4/F5          = NOT DONE
-Stage G7             = PARTIAL
+Stage G7             = PARTIAL (libbox_from is set, not printed)
 Stage H2/I/J/K       = NOT DONE
 
 V6 target-state      = 11/11 PASS
 default structural   = 120/120 PASS
-92-case suite        = PASS on Ubuntu at 9f43d320 (previous round)
-                       NOT re-run for this round's commits
+105-case suite       = PASS on Ubuntu at 83f7258f3  (run 38492804243)
 
 origin/testing       = 9bdcf8e8 (untouched)
 tag                  = untouched
 GitHub Release       = none
 TestFlight upload    = none
 
-READY_FOR_FINAL_FREEZE_VALIDATION = NO
+READY_FOR_FINAL_FREEZE_VALIDATION = NO  (F1-F5, G1-G6 done and green on Ubuntu at 83f7258f3; G7, H2, I, J, K and the Stage G state-machine test outstanding)
 ```
 
 The remaining work is F4/F5 (wire `apple-libbox` into `release-artifacts.sh` and the allowlist),
