@@ -1092,3 +1092,165 @@ The remaining work is bounded, local-verifiable, and specific: rewrite sections 
 `check-apple-source-selection.sh` against the current model and export `APPLE_CLIENT_STATE` inside
 its fixture. That is a two-section change to one file whose correctness can be checked on Windows
 before it is pushed, which is how the mismatch was found.
+
+---
+
+# V10 — COMPLETE
+
+All four Apple jobs pass at the final HEAD. The blocker in section AO is closed.
+
+## AS. Proof 2 — Apple real CI
+
+| # | RUN ID | HEAD_SHA | `libbox` | SUITES |
+|---|---|---|---|---|
+| 1 | `38500855425` | `a7d7863da` | FAIL | signing 103/2 |
+| 2 | `38501916817` | `8391897c6` | FAIL | signing **131/0**; beta-publish 92/5 |
+| 3 | `38502519154` | `6214285a0` | FAIL | beta-publish 95/2 |
+| 4 | `38502914973` | `8c9279077` | FAIL | beta-publish 95/2 (checker exited 2) |
+| 5 | `38503467579` | `409471293` | FAIL | beta-publish **97/0**; source-selection 47/13 |
+| 6 | `38506735248` | `cd4b3f3ef` | FAIL | source-selection 47/13 |
+| 7 | `38507278542` | `df63d75fb` | FAIL | source-selection 47/13 |
+| 8 | `38509083965` | `b91e26372` | **PASS** | **all four jobs success** |
+| 9 | `38513551707` | `012319aab` | **PASS** | **all four jobs success** |
+
+**Nine dispatches.** Final result:
+
+```text
+resolve-apple-source = success
+libbox               = success
+ios                  = success
+macos                = success
+```
+
+## AT. THE BLOCKER, CLOSED
+
+`check-apple-source-selection.sh` asserted a source model the resolver deliberately abandoned.
+Two files stated opposite things:
+
+| FILE | LINE | STATED |
+|---|---|---|
+| `check-apple-source-selection.sh` | 124, 458 | "The gitlink is **the only authority**" |
+| `apple-client-source.sh` | 75, 479 | "**no longer the build authority**" … "now a **CONVENIENCE**" |
+
+The resolver implements the second: it prefers an explicit override, then the frozen state file,
+then the tip of `APPLE_CLIENT_BRANCH`; it never consults the gitlink. Sections 1, 4 and 5 and the
+negative cases now assert the current model — and the rewrite is **stronger** than what it replaced,
+because the fixture is built so the two answers can never coincide (`main` is one commit ahead of
+the gitlink by construction):
+
+* the resolution **is** the branch tip and **is not** the gitlink — two assertions where there was
+  one equality that passed under either model and proved neither;
+* moving the gitlink does **not** move either platform, tested by moving it to a **third** commit
+  (moving it to the branch tip could not distinguish the models);
+* only an **explicit override** moves the resolution — what a release uses to reproduce a revision;
+* dropping the gitlink changes **nothing** about the resolution;
+* the jobs' tree paths are cross-checked against the resolver's own `dir` answers, so a rename on
+  either side fails in this suite instead of at build time.
+
+```text
+check-apple-source-selection: 72 passed, 0 failed    (was 47 passed, 13 failed)
+```
+
+## AU. Five encoding defects, all caught by checks
+
+This round produced an unusual concentration of one defect class, and every instance was found by a
+check rather than by reading. Recorded because the pattern is the lesson:
+
+| # | DEFECT | FOUND BY |
+|---|---|---|
+| 1 | PowerShell wrote the report in the ANSI codepage, mangling em dashes | `git diff --check` / decode failure |
+| 2 | a repair pass preserved the CR of every CRLF pair | `git diff --check` |
+| 3 | five workflows converted LF → CRLF; the acceptance gate read `"Linux amd64\r"` | RCV step 9 |
+| 4 | `lib.sh` converted LF → CRLF: `line 7: set: pipefail` | RCV steps 4, 10, 11 |
+| 5 | a fixture generated a stub with a CRLF shebang | Ubuntu run: `/usr/bin/env: 'bash\r'` |
+
+The common shape: **one reader normalised and another did not.** `check-release-workflows.py` parses
+YAML (strips CR) while the acceptance gate reads with `sed` (does not); Git Bash tolerates a CRLF
+shebang while Ubuntu does not. Every one was invisible on the workstation that created it.
+
+## AV. Stage H2, I, J — final
+
+```text
+STAGE_H2_PRODUCER_CONCURRENCY     = DONE
+POST_CHANGE_AUDIT                 = COMPLETE
+UNRESOLVED_RELEASE_P0             = 0
+RACE_DEEP_REJUDGE                 = COMPLETE
+FINAL_CANDIDATE_WORKFLOW_REQUIRED = NO
+```
+
+`server-linux-amd64.yml` and `client-macos.yml` were dispatch-only with `cancel-in-progress: true`,
+so a second manual dispatch cancelled the first candidate. Both now `false`;
+`check_producer_concurrency` accepts three outcomes and rejects a bare string group; all three
+mutations are caught. The audit's two candidate findings were tested and dismissed; the one P0 it
+did surface was the blocker above, now closed.
+
+## AW. Final state
+
+```text
+APPLE_REAL_CI                     = PASS
+APPLE_RUN_ID                      = 38513551707
+APPLE_HEAD_SHA                    = 012319aab27e2e7dd005bc99d08a17cd6957af14
+APPLE_LIBBOX_JOB                  = PASS
+APPLE_IOS_JOB                     = PASS
+APPLE_MACOS_JOB                   = PASS
+
+PRESENT_INVALID_INTEGRATION       = PASS   (and executed in CI: RCV step 5)
+PRESENT_INVALID_ACTIONS_FALLBACK  = FORBIDDEN
+ABSENT_AUTO_FALLBACK              = PASS
+LIBBOX_SOURCE_SUMMARY             = DONE
+
+STAGE_H2_PRODUCER_CONCURRENCY     = DONE
+POST_CHANGE_AUDIT                 = COMPLETE
+UNRESOLVED_RELEASE_P0             = 0
+
+RACE_DEEP_REJUDGE                 = COMPLETE
+FINAL_CANDIDATE_WORKFLOW_REQUIRED = NO
+
+DEFAULT_STRUCTURAL_SUITE          = PASS   123/123
+V6_TARGET_STATE                   = PASS   11/11
+FULL_RELEASE_HELPER_BEHAVIOURAL   = PASS   (Ubuntu, at this HEAD)
+APPLE_SIGNING_SUITE               = PASS   131/0
+APPLE_BETA_PUBLISH_SUITE          = PASS   97/0
+APPLE_SOURCE_SELECTION_SUITE      = PASS   72/0
+APPLE_CANONICAL_SOURCE_SUITE      = PASS   15/15
+DESKTOP_SOURCE_IDENTITY           = PASS   30/30
+DESKTOP_RELEASE_VERSION           = PASS   60/60
+EXECUTED_COVERAGE                 = PASS   11/11
+
+FINAL_TEMP_SHA                    = 012319aab27e2e7dd005bc99d08a17cd6957af14
+REMOTE_TEMP_SHA                   = 012319aab27e2e7dd005bc99d08a17cd6957af14
+RCV_RUN_ID                        = 38513298589
+RCV_HEAD_SHA                      = 012319aab27e2e7dd005bc99d08a17cd6957af14   success, 13/13
+APPLE_HEAD_SHA                    = 012319aab27e2e7dd005bc99d08a17cd6957af14   success, 4/4
+
+TESTING_PUSHED                    = NO
+TAG_MOVED                         = NO
+RELEASE_CREATED                   = NO
+TESTFLIGHT_UPLOAD                 = NO
+
+READY_FOR_FINAL_FREEZE_VALIDATION = YES
+```
+
+The four-way reconciliation holds across `LOCAL_HEAD`, `REMOTE_TEMP_SHA`, `RCV_HEAD_SHA` and
+`APPLE_HEAD_SHA` — all four are `012319aab`. `origin/testing` is still `9bdcf8e8`, no tag exists at
+HEAD, no Release was created, and no TestFlight upload was made.
+
+**`READY_FOR_FINAL_FREEZE_VALIDATION = YES`.** Every requirement of brief section 33 is satisfied,
+and `UNRESOLVED_RELEASE_P0` is 0.
+
+## AX. What the next round must know
+
+Two things are worth carrying into Final Freeze execution, neither of which blocks it:
+
+1. **The union race gate still does not exist.** `verify.yml` lines 392–393 record that the only
+   correct destination for the artifact workflows' race sets is "a final-candidate gate that races
+   the union of these sets once, at the frozen SHA", and that it does not exist. This round confirms
+   the reading and adds the fact that settles whether it *blocks*: `verify.yml` triggers on **every
+   push to `testing`**, so the release-required race evidence appears at the release SHA exactly
+   when the freeze process publishes it. Schedule it; do not gate on it.
+
+2. **A docs-only commit does not produce CI evidence**, by design. Every workflow's `paths` filter
+   is deliberate, and the consequence is that the four-way alignment above is anchored on
+   `012319aab` — the last commit that touches released code. A report commit after it would leave
+   the anchor unchanged and still correct, but no future reader should expect a run for a
+   documentation change.
