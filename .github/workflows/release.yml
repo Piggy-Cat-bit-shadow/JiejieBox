@@ -310,6 +310,27 @@ jobs:
 
       # Downloads from the runs the step above selected - not from a fresh query,
       # so the runs that were judged are the runs that are unpacked.
+      #
+      # # Why there is no Android cleanup step any more
+      #
+      # There used to be one, and it was sixty lines of hard-won correctness: the Android artifact
+      # carried `libbox.provenance` and `SHA256SUMS.txt` alongside the four public files, so the
+      # release downloaded six and deleted two. Two earlier versions of that cleanup were wrong in
+      # instructive ways - a root-relative `rm -f` that matched nothing and still exited 0, then a
+      # global `find -name SHA256SUMS.txt` that would have deleted another product's file and turned
+      # a fail-closed allowlist refusal into a silent pass - and the final version was carefully
+      # scoped and asserted its own postcondition.
+      #
+      # All of that is gone because the PRODUCER no longer hands over what it does not ship. The
+      # Android workflow uploads the four public files as `android-core-arm64-<sha>` and the records
+      # as `android-core-arm64-records-<sha>`, and this step downloads both BY EXACT NAME, staging
+      # the records into `release-records/` rather than into the payload tree. Evidence is now
+      # unable to reach the allowlist instead of being deleted before it gets there, which is a
+      # structural property rather than a check that has to keep being right.
+      #
+      # Consumer does not clean up after producer; producer does not hand over what it does not
+      # ship. The allowlist in `release-artifacts.sh verify` is unchanged and still deliberately
+      # narrow: widening it was never the fix.
       - name: download the verified artifacts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -318,79 +339,14 @@ jobs:
           ./tooling/scripts/ci/release-artifacts.sh download \
             --repo "$GITHUB_REPOSITORY" \
             --plan release-plan/runs.tsv \
-            --dir release-assets
+            --dir release-assets \
+            --evidence-dir release-records
 
-          # Two files travel with the Android artifact for BUILD-TIME use and are not public
-          # deliverables, so they are removed before the allowlist sees them:
-          #
-          #   libbox.provenance   what the core builder recorded when it produced the AAR
-          #   SHA256SUMS.txt      that step's own checksum listing
-          #
-          # The android workflow pins its release directory to exactly `libbox.aar`,
-          # `libbox.aar.sha256`, `BUILD-INFO-ANDROID.txt` and `LICENSE`, and its own comment records
-          # that "two extra files are still extra files". They are still uploaded, because they are
-          # useful evidence on the RUN; they are dropped here, because the RELEASE is a different
-          # question. The allowlist in `release-artifacts.sh verify` is the contract, and it is
-          # deliberately NOT widened for them: widening it would also let a future, genuinely
-          # unexpected file through, which is the failure that allowlist exists to catch.
-          #
-          # SCOPED TO THE ANDROID TREE, and it must find something.
-          #
-          # Two earlier versions of this step were wrong in instructive ways, and both are guarded
-          # against here rather than described:
-          #
-          #   `rm -f release-assets/libbox.provenance ...`
-          #       a ROOT-RELATIVE path. `gh run download --dir <dest>` keeps the artifact's own
-          #       directory - the same nesting `gh release download --name` produces - so the files
-          #       sit at `release-assets/<product>/<artifact>/...` and this matched nothing. `rm -f`
-          #       SUCCEEDS when it removes nothing, so the step reported success while doing nothing.
-          #
-          #   `find release-assets -type f -name SHA256SUMS.txt`
-          #       a GLOBAL search for a very ordinary filename. If any other product ever carried a
-          #       file by that name, this would delete it before the allowlist could see it, turning a
-          #       fail-closed refusal into a silent pass - which is the one failure the public
-          #       allowlist exists to catch. The shape of the mistake was "clean up until the check
-          #       passes" instead of "verify the thing is what we think it is".
-          #
-          # So: search only the android subtree, and require both files to be present there. If the
-          # android artifact stops carrying them, this FAILS and points at the step that decides
-          # what it uploads - it does not quietly become a no-op again.
-          # The android subtree is `release-assets/libbox.aar`: `release-artifacts.sh download` sets
-          # `dest="$dir/$binary"`, and the android target's `binary` is `libbox.aar`. Not "android" -
-          # the directory is named for the binary it must contain, by design, so that a second run of
-          # another workflow can never overwrite it. Verified against the recorded dry-run log, which
-          # shows exactly these four destinations:
-          #
-          #     release-assets/sing-box-linux-amd64   release-assets/sing-box-darwin-arm64
-          #     release-assets/sing-box.exe           release-assets/libbox.aar
-          android_tree=release-assets/libbox.aar
-          [ -d "$android_tree" ] || {
-            echo "FAIL: $android_tree does not exist, so the android build-time evidence cannot be" >&2
-            echo "      located. If the staging layout changed, update this step deliberately." >&2
-            exit 1
-          }
-          for evidence in libbox.provenance SHA256SUMS.txt; do
-            hits="$(find "$android_tree" -type f -name "$evidence" -print)"
-            [ -n "$hits" ] || {
-              echo "FAIL: $android_tree carries no $evidence." >&2
-              echo "      The android workflow uploads it as build evidence. If that changed, change" >&2
-              echo "      this step; do not let it become a silent no-op, which is what an earlier" >&2
-              echo "      version of it was." >&2
-              exit 1
-            }
-            printf '%s\n' "$hits" | while IFS= read -r f; do rm -f "$f"; done
-            echo "removed build-time evidence from the android tree: $evidence"
-            printf '  %s\n' $hits
-          done
-          # Postcondition: nothing matching may survive, and nothing outside the android tree is
-          # touched. A leftover here would reach the allowlist and fail there, which is the correct
-          # place for it to fail - this assert only makes the cause obvious earlier.
-          survivors="$(find "$android_tree" -type f \
-            \( -name 'libbox.provenance' -o -name 'SHA256SUMS.txt' \) -print)"
-          [ -z "$survivors" ] || {
-            echo "FAIL: build-time evidence survived the removal: $survivors" >&2
-            exit 1
-          }
+          echo
+          echo "payload staged (public deliverables only):"
+          find release-assets -type f | sort | sed 's/^/  /'
+          echo "evidence staged (never published):"
+          find release-records -type f | sort | sed 's/^/  /'
 
       # The desktop installer is a public deliverable too, and it arrives by a different
       # route: that workflow is dispatch-only and produces a signed-test NSIS installer

@@ -67,6 +67,17 @@ MACOS_WF="client-macos.yml"
 LINUX_ID=101
 MACOS_ID=202
 
+# plan_artifact <plan file> <workflow file>
+#
+# The exact payload-artifact name the gate resolved for a workflow, read from the plan's ninth
+# column - the same field `verify` and `flatten` read. Taken from the plan rather than from a
+# copy of the naming rule here, so a rename on the gate's side cannot leave these fixtures
+# staging an artifact the gate no longer looks for. (Sourcing the gate for its resolver is not an
+# option: it calls `main "$@"` at the top level.)
+plan_artifact() {
+  awk -F'\t' -v w="$2" '$1 == w {print $9}' "$1"
+}
+
 # ---------------------------------------------------------------------------
 # The mock gh
 # ---------------------------------------------------------------------------
@@ -631,8 +642,8 @@ scenario = {
         "9501": [{"name": "release-gate", "conclusion": "success"}],
     },
 }
-scenario["artifacts"]["9002"] = {"dir": "linux", "name": "Jiejie-Linux-amd64-0.1-1111111"}
-scenario["artifacts"]["9102"] = {"dir": "macos", "name": "Jiejie-macOS-arm64-0.1-1111111"}
+scenario["artifacts"]["9002"] = {"dir": "linux", "name": "linux-amd64-" + sha}
+scenario["artifacts"]["9102"] = {"dir": "macos", "name": "macos-arm64-" + sha}
 
 # --- case mutation ---------------------------------------------------------
 $2
@@ -1016,13 +1027,21 @@ gate_setup "plan for the two-artifact-directory scenario" plan --repo o/r --sha 
 expect_fail "a run publishing two artifact directories -> FAIL" "artifact directories" -- \
   download --repo o/r --plan "$work/plan-dup.tsv" --dir "$work/assets-dup"
 
-# The download path refuses a second artifact directory, so the verify-side
-# uniqueness rule is exercised on its own: two copies of the same binary inside the
-# verify tree must be refused rather than one being picked.
+# The download path refuses a second DIRECTORY inside one artifact, so the verify-side
+# uniqueness rule is exercised on its own: two copies of the same binary in the payload
+# directory that `verify` reads must be refused rather than one being picked, because "the
+# binary is somewhere in here" is not the same claim as "there is exactly one of it".
+#
+# `verify` reads the product's payload from the EXACT artifact directory the plan names, so the
+# duplicate is planted inside that directory - the shape a duplicated upload within one artifact
+# would produce.
 write_scenario base_dup2 "pass"
 gate_setup "plan for the duplicated-binary scenario" plan --repo o/r --sha "$SHA" --out "$work/plan-dup2.tsv" --interval 1 --timeout 10
 gate_setup "download for the duplicated-binary scenario" download --repo o/r --plan "$work/plan-dup2.tsv" --dir "$work/assets-dup2"
-cp -R "$work/assets-dup2/sing-box-linux-amd64/Jiejie-Linux-amd64-0.1-1111111" "$work/assets-dup2/sing-box-linux-amd64/COPY"
+_dup_artifact="$(plan_artifact "$work/plan-dup2.tsv" "$LINUX_WF")"
+[ -n "$_dup_artifact" ] || fail_case "plan names the linux payload artifact" "the plan has no ninth field"
+cp "$work/assets-dup2/sing-box-linux-amd64/$_dup_artifact/sing-box-linux-amd64" \
+   "$work/assets-dup2/sing-box-linux-amd64/$_dup_artifact/sing-box-linux-amd64.copy"
 expect_fail "two copies of one binary in the verify tree -> FAIL" "expected exactly 1" -- \
   verify --desktop-dir "$DESKTOP_DIR" --version 0.1 --dir "$work/assets-dup2" --sha "$SHA"
 
@@ -1443,6 +1462,14 @@ make_full_artifacts() {
   cp "$work/fixtures/desktop-src/BUILD-INFO-WINDOWS-DESKTOP-$FULL_VERSION.txt" "$work/fixtures/desktop-records/"
   # The records artifact carries more than the build record in reality, so it does here.
   printf 'runner: ubuntu-latest\n' > "$work/fixtures/desktop-records/runner-environment.txt"
+
+  # Android's build-records artifact (Stage E). The payload fixture is the four files
+  # `make_artifact` wrote; this is the evidence the producer now uploads SEPARATELY, and the
+  # release must download it without letting any of it reach the payload tree.
+  rm -rf "$work/fixtures/android-records"
+  mkdir -p "$work/fixtures/android-records"
+  printf 'gomobile: v0.1.13\n' > "$work/fixtures/android-records/libbox.provenance"
+  printf 'deadbeef  libbox.aar\n' > "$work/fixtures/android-records/SHA256SUMS.txt"
 }
 
 # write_full_scenario - a scenario in which all four products and the desktop have a
@@ -1493,11 +1520,28 @@ for row in [r for r in products.strip().splitlines() if r.strip()]:
 
 workflows = {}
 artifacts = {}
+# The EXACT artifact names the release contract declares in
+# `target_field <workflow> payload_artifact <sha>`. Derived from the same product set, and
+# asserted against the gate's own resolution below, so a rename on one side cannot pass.
+ARTIFACT_PREFIX = {
+    "linux": "linux-amd64",
+    "macos": "macos-arm64",
+    "windows": "windows-core-amd64",
+    "android": "android-core-arm64",
+}
 for i, (name, key) in enumerate(PRODUCT_WORKFLOWS):
     wid = 8000 + i
     rid = rows[key][7]
     workflows[name] = wf(wid, name, [run(int(rid), 10 + i, wid)])
-    artifacts[rid] = {"dir": key, "name": "Jiejie-%s-%s" % (key, sha[:7])}
+    artifacts[rid] = {"dir": key, "name": ARTIFACT_PREFIX[key] + "-" + sha}
+    if key == "android":
+        # Android separates its payload from its build records (Stage E). The release downloads
+        # both by exact name and stages only the payload, so the fixture must model two artifacts
+        # or it would prove the single-artifact shape the split exists to remove.
+        artifacts[rid] = [
+            {"dir": key, "name": ARTIFACT_PREFIX[key] + "-" + sha},
+            {"dir": "android-records", "name": ARTIFACT_PREFIX[key] + "-records-" + sha},
+        ]
 
 workflows["client-desktop-windows.yml"] = wf(
     8010, "client-desktop-windows.yml", [run(desktop_id, 30, 8010)])
@@ -1574,7 +1618,42 @@ DESKTOP_RECORDS="$work/full/desktop-dl.records"
 DESKTOP_INSTALLER="$DESKTOP_STAGE/Jiejiebox-v$FULL_VERSION-windows-x64.exe"
 
 full_expect_ok "full contract: download all four products" \
-  download --repo o/r --plan "$full_plan" --dir "$work/full/assets"
+  download --repo o/r --plan "$full_plan" --dir "$work/full/assets" \
+    --evidence-dir "$work/full/records"
+
+# The payload/evidence boundary is asserted, not assumed: Android's four public files are in the
+# payload tree and its build records are NOT. Before the producer split, the release downloaded
+# six files and deleted two; now the two are staged somewhere the allowlist is never pointed at,
+# so evidence is unable to reach the release rather than being removed before it can.
+_android_payload="$work/full/assets/libbox.aar/$(plan_artifact "$full_plan" .github/workflows/android-core-arm64.yml)"
+if [ -d "$_android_payload" ] \
+   && [ -z "$(find "$work/full/assets" -name 'libbox.provenance' -print -quit)" ] \
+   && [ -z "$(find "$work/full/assets" -name 'SHA256SUMS.txt' -print -quit)" ] \
+   && [ -n "$(find "$work/full/records" -name 'libbox.provenance' -print -quit)" ] \
+   && [ -n "$(find "$work/full/records" -name 'SHA256SUMS.txt' -print -quit)" ]; then
+  report "full contract: android evidence is staged outside the payload tree" 0 0
+else
+  report "full contract: android evidence is staged outside the payload tree" 0 1 \
+    "payload=$(find "$work/full/assets" -type f 2>/dev/null | tr '\n' ' ')"
+fi
+
+# And the payload directory holds EXACTLY the four public files - the same four the producer
+# asserts before it uploads. A release that published five would still be a green release
+# without this.
+if [ -d "$_android_payload" ]; then
+  _android_public="$(printf '%s\n%s\n%s\n%s\n' BUILD-INFO-ANDROID.txt LICENSE libbox.aar libbox.aar.sha256 | sort)"
+  _android_actual="$(find "$_android_payload" -maxdepth 1 -type f -exec basename {} \; | sort)"
+  if [ "$_android_public" = "$_android_actual" ]; then
+    report "full contract: the android payload is exactly the four public files" 0 0
+  else
+    report "full contract: the android payload is exactly the four public files" 0 1 \
+      "got: $(printf '%s' "$_android_actual" | tr '\n' ' ')"
+  fi
+else
+  report "full contract: the android payload is exactly the four public files" 0 1 \
+    "no payload directory at $_android_payload"
+fi
+
 full_expect_ok "full contract: stage the desktop installer" \
   desktop --repo o/r --sha "$SHA" --out "$work/full/desktop-dl" --interval 1 --timeout 10
 

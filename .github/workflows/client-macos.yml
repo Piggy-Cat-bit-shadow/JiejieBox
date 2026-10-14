@@ -252,7 +252,9 @@ jobs:
           source scripts/ci/lib.sh
           ( cd "$OUT" && printf '%s  %s\n' "$(sha256_of sing-box-darwin-arm64)" sing-box-darwin-arm64 > sing-box-darwin-arm64.sha256 )
           echo "ARTIFACT_DIR=$OUT" >> "$GITHUB_ENV"
-          echo "ARTIFACT_NAME=$(basename "$OUT")" >> "$GITHUB_ENV"
+          # Exact artifact identity: the release contract selects this by name, so it is derived
+          # from the commit. See `target_field ... payload_artifact` in release-artifacts.sh.
+          echo "ARTIFACT_NAME=macos-arm64-${GITHUB_SHA}" >> "$GITHUB_ENV"
           ls -la "$OUT"
           cat "$OUT/sing-box-darwin-arm64.sha256"
 

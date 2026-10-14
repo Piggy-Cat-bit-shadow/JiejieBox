@@ -153,8 +153,50 @@ target_field() {
     .github/workflows/android-core-arm64.yml:arch)      echo "arm64" ;;
     .github/workflows/android-core-arm64.yml:tarball)   echo "jiejie-sing-box-android-arm64" ;;
 
+    # The exact name of the Actions artifact that carries this product's PUBLIC PAYLOAD.
+    #
+    # This is the field that turns artifact selection from a search into an identity. Before it,
+    # `download` fetched every artifact of a run and required exactly one directory to appear,
+    # and `download`/`verify` located the binary with `find -name`. Both are guesses about shape:
+    # they happen to work while a producer uploads exactly one artifact of exactly one shape, and
+    # they fail - or worse, silently pick the wrong one - the moment a producer changes what it
+    # uploads. Which is precisely what the Android payload/evidence split does.
+    #
+    # SHA-derived rather than version-derived on purpose: `download` runs BEFORE the tag is
+    # resolved and has no version, so a version-derived name would be unresolvable at the point
+    # it is needed. Every producer therefore names its artifact with the commit it built.
+    .github/workflows/server-linux-amd64.yml:payload_artifact)    echo "linux-amd64-$3" ;;
+    .github/workflows/client-macos.yml:payload_artifact)          echo "macos-arm64-$3" ;;
+    .github/workflows/windows-core-amd64.yml:payload_artifact)    echo "windows-core-amd64-$3" ;;
+    .github/workflows/android-core-arm64.yml:payload_artifact)    echo "android-core-arm64-$3" ;;
+
+    # The evidence artifact, where a producer separates it from the payload. Empty when the
+    # producer uploads one artifact, which is every target except Android today. `download`
+    # treats empty as "nothing to fetch", so adding a split target is a one-line change here
+    # rather than a second code path.
+    .github/workflows/server-linux-amd64.yml:evidence_artifact)   echo "" ;;
+    .github/workflows/client-macos.yml:evidence_artifact)         echo "" ;;
+    .github/workflows/windows-core-amd64.yml:evidence_artifact)   echo "" ;;
+    .github/workflows/android-core-arm64.yml:evidence_artifact)   echo "android-core-arm64-records-$3" ;;
+
     *) die "the release contract has no '$field' for workflow '$wf'" ;;
   esac
+}
+
+# payload_artifact <workflow file> <sha>
+#
+# A convenience wrapper so callers do not have to remember the third argument. Fails closed if a
+# target has no declared payload artifact, because a release whose artifact name is unknown is a
+# release that cannot prove which bytes it is publishing.
+payload_artifact() {
+  local name
+  name="$(target_field "$1" payload_artifact "$2")"
+  [ -n "$name" ] || die "the release contract declares no payload_artifact for '$1'. Every target must name the artifact it publishes."
+  printf '%s\n' "$name"
+}
+
+evidence_artifact() {
+  target_field "$1" evidence_artifact "$2"
 }
 
 # Statuses GitHub may report. Anything that is not a completed run is waited for;
@@ -411,9 +453,12 @@ $(for f in "${TARGET_WORKFLOWS[@]}"; do printf '        gh workflow run %s --rep
           die "the newest run of $wf for $sha did not succeed: conclusion=$conclusion (run $rid). Re-run it and dispatch the release again. $url" ;;
       esac
 
-      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$wf" "$wfid" "$rid" "$rnum" "$status" "$conclusion" "$sha" "$url" >> "$out"
-      note "  $wf: selected run $rid (#$rnum) $conclusion  $url"
+      # The ninth column is the EXACT name of the artifact holding this product's public
+      # payload. `download` reads it back so selection is an identity rather than a search.
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$wf" "$wfid" "$rid" "$rnum" "$status" "$conclusion" "$sha" "$url" \
+        "$(payload_artifact "$wf" "$sha")" >> "$out"
+      note "  $wf: selected run $rid (#$rnum) $conclusion  payload artifact $(payload_artifact "$wf" "$sha")  $url"
     done
 
     [ "$pending" -eq 0 ] && break
@@ -598,12 +643,16 @@ $(printf '      %s\n' $bad)      A run whose job was skipped or failed did not p
 # ---------------------------------------------------------------------------
 
 cmd_download() {
-  local repo="" plan="" dir=""
+  local repo="" plan="" dir="" evidence_dir=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --repo) repo="${2:-}"; shift 2 ;;
       --plan) plan="${2:-}"; shift 2 ;;
       --dir) dir="${2:-}"; shift 2 ;;
+      # Where a producer's separated EVIDENCE artifact goes. Deliberately a different tree from
+      # --dir: the payload tree is what becomes the published tarballs, and the whole point of
+      # the split is that evidence must never be able to reach it.
+      --evidence-dir) evidence_dir="${2:-}"; shift 2 ;;
       *) die "download: unknown argument '$1'" ;;
     esac
   done
@@ -611,43 +660,76 @@ cmd_download() {
   [ -n "$plan" ] || die "download: --plan is required"
   [ -n "$dir" ] || die "download: --dir is required"
   [ -s "$plan" ] || die "download: the release plan '$plan' is empty; nothing was verified for this commit"
+  if [ -n "$evidence_dir" ]; then
+    rm -rf "$evidence_dir"
+    mkdir -p "$evidence_dir"
+  fi
 
   rm -rf "$dir"
   mkdir -p "$dir"
 
   local rows=0
-  local wf wfid rid rnum status conclusion sha url binary dest subdirs files row
+  local wf wfid rid rnum status conclusion sha url artifact evidence dest subdirs files row
   while IFS= read -r row; do
     [ -n "$row" ] || continue
     # See newest_run: an empty field would shift the rest of the row, and here that
     # would mean downloading a run that was never verified. awk counts an empty
     # field where `read` would silently consume it.
-    [ "$(printf '%s' "$row" | awk -F'\t' '{print NF}')" -eq 8 ] || die \
-      "the release plan has a malformed row:
+    #
+    # Nine fields: the first eight are the run identity, the ninth is the payload artifact name.
+    # A plan written before the ninth column existed is refused rather than guessed at, because
+    # a plan is an input like any other and "the field is missing so I will search instead" is
+    # how a release ends up publishing bytes it never identified.
+    [ "$(printf '%s' "$row" | awk -F'\t' '{print NF}')" -eq 9 ] || die \
+      "the release plan has a malformed row (expected 9 fields: run identity plus the payload
+      artifact name). Re-run 'plan' with this version of the gate:
       $row"
-    IFS=$'\t' read -r wf wfid rid rnum status conclusion sha url <<<"$row"
+    IFS=$'\t' read -r wf wfid rid rnum status conclusion sha url artifact <<<"$row"
+    [ -n "$artifact" ] || die "the release plan names no payload artifact for $wf. Refusing to guess which artifact to publish."
     binary="$(target_field "$wf" binary)"
     # One directory per product, named for the binary it must contain, so a
     # second run of the other workflow can never overwrite this one.
     dest="$dir/$binary"
     mkdir -p "$dest"
-    note "downloading run $rid ($wf) -> $dest"
-    # NOT wrapped in `|| true`: a download that failed leaves the artifact
-    # unverified, and an unverified artifact must not be publishable.
-    if ! gh run download "$rid" --repo "$repo" --dir "$dest"; then
-      die "gh run download failed for run $rid ($wf). $binary is NOT verified; refusing to continue."
+    note "downloading run $rid ($wf) artifact '$artifact' -> $dest"
+    # EXACT NAME, no `--dir` sweep. `gh run download <id> --dir` fetches every artifact of the
+    # run and the old code then required exactly one directory to appear - a shape assumption
+    # that a producer adding a second artifact (which Android now does) turns into a hard
+    # failure, and that a producer RENAMING its artifact turns into a silent mismatch.
+    # NOT wrapped in `|| true`: a download that failed leaves the artifact unverified, and an
+    # unverified artifact must not be publishable.
+    if ! gh run download "$rid" --repo "$repo" --name "$artifact" --dir "$dest"; then
+      die "gh run download failed for run $rid ($wf), artifact '$artifact'. $binary is NOT verified; refusing to continue.
+      If the run predates the artifact naming this contract expects, re-dispatch that workflow."
     fi
     subdirs="$(find "$dest" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
     [ "$subdirs" -eq 1 ] || die \
-      "run $rid produced $subdirs artifact directories in $dest, expected exactly 1. The shipped file set must be deterministic."
-    files="$(find "$dest" -type f | wc -l | tr -d ' ')"
-    [ "$files" -gt 0 ] || die "run $rid downloaded no files into $dest"
+      "downloading artifact '$artifact' of run $rid produced $subdirs directories in $dest, expected exactly 1. One artifact, one directory."
+    [ -d "$dest/$artifact" ] || die \
+      "artifact '$artifact' of run $rid did not land in '$dest/$artifact'. The download layout is not the one this gate expects."
+    files="$(find "$dest/$artifact" -type f | wc -l | tr -d ' ')"
+    [ "$files" -gt 0 ] || die "run $rid artifact '$artifact' downloaded no files"
+
+    # The producer's separated evidence, when it declares one. It goes to its own tree and is
+    # NOT part of the payload staging, so no later step can publish it by accident.
+    evidence="$(evidence_artifact "$wf" "$sha")"
+    if [ -n "$evidence" ]; then
+      [ -n "$evidence_dir" ] || die \
+        "$wf separates its payload from its evidence (artifact '$evidence'), but download was not given --evidence-dir. Refusing to silently drop the evidence."
+      note "downloading run $rid ($wf) evidence '$evidence' -> $evidence_dir"
+      if ! gh run download "$rid" --repo "$repo" --name "$evidence" --dir "$evidence_dir"; then
+        die "gh run download failed for run $rid ($wf), evidence artifact '$evidence'. The payload is verified but its build records are not; refusing to continue."
+      fi
+      [ -d "$evidence_dir/$evidence" ] || die \
+        "evidence artifact '$evidence' of run $rid did not land in '$evidence_dir/$evidence'."
+    fi
+
     rows=$((rows + 1))
   done < "$plan"
 
   [ "$rows" -eq "${#TARGET_WORKFLOWS[@]}" ] || die \
     "downloaded $rows run(s), expected ${#TARGET_WORKFLOWS[@]}"
-  note "PASS: downloaded artifacts from $rows verified run(s)"
+  note "PASS: downloaded the exact payload artifact of $rows verified run(s)"
 }
 
 # ---------------------------------------------------------------------------
@@ -1070,9 +1152,17 @@ cmd_verify() {
   [ -n "$sha" ] || die "verify: --sha is required"
   [ -d "$dir" ] || die "verify: '$dir' does not exist"
 
-  local wf
+  # Each product is verified INSIDE the exact artifact directory its producer declared, derived
+  # from the name `download` staged. Walking all of $dir instead would make the check depend on
+  # nothing else having been written there - which is how a payload/evidence split turns into a
+  # false "unexpected file" failure the moment a producer's evidence lands one level up.
+  local wf binary artifact
   for wf in "${TARGET_WORKFLOWS[@]}"; do
-    verify_platform "$dir" "$sha" "$wf"
+    binary="$(target_field "$wf" binary)"
+    artifact="$(payload_artifact "$wf" "$sha")"
+    [ -d "$dir/$binary/$artifact" ] || die \
+      "verify: $wf declares payload artifact '$artifact', but $dir/$binary/$artifact does not exist."
+    verify_platform "$dir/$binary/$artifact" "$sha" "$wf"
   done
 
   # The desktop installer is part of the public contract, so it is verified too - and
@@ -1092,21 +1182,32 @@ cmd_verify() {
   # Nothing outside the contract may reach the release. The allowlist is derived
   # from the same table that produced the checks above, so a third product cannot
   # appear in the tarballs without being added to the contract deliberately.
+  #
+  # Scanned per PRODUCT DIRECTORY rather than over all of $dir. $dir also holds the producer's
+  # separated evidence when a target declares one, and evidence is not payload: it is read for
+  # provenance and must not be publishable, so requiring it to be on this allowlist would be the
+  # wrong fix - it would license publishing a build record. The payload directories are read from
+  # the same `payload_artifact` field the download and the verification used, so the three cannot
+  # disagree about which files are the product.
   local allowed=() wf f unexpected=""
   allowed+=( LICENSE )
   for wf in "${TARGET_WORKFLOWS[@]}"; do
     allowed+=( "$(target_field "$wf" binary)" "$(target_field "$wf" binary).sha256" "$(target_field "$wf" buildinfo)" )
   done
-  while IFS= read -r f; do
-    [ -n "$f" ] || continue
-    local ok=0 a
-    for a in "${allowed[@]}"; do
-      [ "$f" = "$a" ] && ok=1
-    done
-    [ "$ok" -eq 1 ] || unexpected="${unexpected}${f}"$'\n'
-  done < <(find "$dir" -type f -exec basename {} \;)
+  for wf in "${TARGET_WORKFLOWS[@]}"; do
+    binary="$(target_field "$wf" binary)"
+    artifact="$(payload_artifact "$wf" "$sha")"
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      local ok=0 a
+      for a in "${allowed[@]}"; do
+        [ "$f" = "$a" ] && ok=1
+      done
+      [ "$ok" -eq 1 ] || unexpected="${unexpected}${wf}:${f}"$'\n'
+    done < <(find "$dir/$binary/$artifact" -maxdepth 1 -type f -exec basename {} \;)
+  done
   if [ -n "$unexpected" ]; then
-    die "unexpected file(s) in the release tree:
+    die "unexpected file(s) in a product payload directory:
 $(printf '      %s\n' $unexpected)
       The shipped file set must be exactly the verified one."
   fi
@@ -1164,12 +1265,22 @@ cmd_flatten() {
   rm -rf "$out"
   mkdir -p "$out"
 
-  local wf binary buildinfo prefix src expected actual
+  local wf binary buildinfo prefix src expected actual artifact
   for wf in "${TARGET_WORKFLOWS[@]}"; do
     binary="$(target_field "$wf" binary)"
     buildinfo="$(target_field "$wf" buildinfo)"
     prefix="$(target_field "$wf" tarball)"
-    src="$(dirname "$(find "$dir" -type f -name "$binary")")"
+    # The payload directory is derived from the plan's exact artifact name, not from a search for
+    # the binary. `find -name <binary>` would also match a copy of the same file anywhere under
+    # $dir - including inside a producer's EVIDENCE artifact, if one were ever written into the
+    # payload tree - and it silently picks whichever the walk reaches first. The name is in the
+    # plan because `plan` wrote it from the same target table that declares `binary`, so the two
+    # cannot disagree.
+    artifact="$(awk -F'\t' -v w="$wf" '$1 == w {print $9}' "$plan")"
+    [ -n "$artifact" ] || die "flatten: the plan names no payload artifact for $wf"
+    src="$dir/$binary/$artifact"
+    [ -d "$src" ] || die \
+      "flatten: $wf declares payload artifact '$artifact', but $src does not exist. The payload was not staged where the plan says it is."
 
     # The archive contents are pinned to an allowlist, so what a downloader gets
     # is a known, small set that has been verified - not "whatever was in the

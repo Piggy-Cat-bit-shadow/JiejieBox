@@ -415,7 +415,21 @@ jobs:
             echo "| sha256 | see the SHA256SUMS.txt artifact |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload artifacts
+      # Two artifacts, because payload and evidence are different things with different
+      # audiences and different lifetimes.
+      #
+      # `...-release` is the PUBLIC PAYLOAD: exactly the four files the packaging step already
+      # asserts. It is what the release downloads, by exact name, and it is what becomes the
+      # published tarball.
+      #
+      # `...-records-<sha>` is EVIDENCE: the provenance record and the checksum list. It is read
+      # to establish where the bytes came from and is never published. It used to travel inside
+      # the same artifact as the payload, which meant the release downloaded a directory
+      # containing two files that must not be shipped and relied on a downstream file-list check
+      # to keep them out. The producer knew the public payload was four files - it asserts that
+      # above - so the artifact boundary contradicted its own contract. Consumer does not clean up
+      # after producer; producer does not hand over what it does not ship.
+      - name: Upload the release payload
         if: success()
         uses: actions/upload-artifact@v4
         with:
@@ -425,6 +439,14 @@ jobs:
             release-android/libbox.aar.sha256
             release-android/BUILD-INFO-ANDROID.txt
             release-android/LICENSE
+          if-no-files-found: error
+
+      - name: Upload the build records
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-core-arm64-records-${{ github.sha }}
+          path: |
             libbox.provenance
             SHA256SUMS.txt
           if-no-files-found: error

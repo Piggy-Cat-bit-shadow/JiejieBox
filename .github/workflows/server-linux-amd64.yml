@@ -578,7 +578,11 @@ jobs:
           source scripts/ci/lib.sh
           ( cd "$OUT" && printf '%s  %s\n' "$(sha256_of sing-box-linux-amd64)" sing-box-linux-amd64 > sing-box-linux-amd64.sha256 )
           echo "ARTIFACT_DIR=$OUT" >> "$GITHUB_ENV"
-          echo "ARTIFACT_NAME=$(basename "$OUT")" >> "$GITHUB_ENV"
+          # The artifact name is an IDENTITY, not a label. release-artifacts.sh resolves it by
+          # exact name to select the payload, so it is derived from the commit rather than from
+          # whatever a build step happened to name a directory. The release contract declares this
+          # same string in `target_field ... payload_artifact`.
+          echo "ARTIFACT_NAME=linux-amd64-${GITHUB_SHA}" >> "$GITHUB_ENV"
           ls -la "$OUT"
           cat "$OUT/sing-box-linux-amd64.sha256"
 
