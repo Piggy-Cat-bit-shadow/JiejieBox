@@ -162,6 +162,20 @@ target_field() {
     .github/workflows/android-core-arm64.yml:arch)      echo "arm64" ;;
     .github/workflows/android-core-arm64.yml:tarball)   echo "jiejie-sing-box-android-arm64" ;;
 
+    # `kind` is declared for EVERY target, including the four whose value is the default.
+    #
+    # The alternative - defaulting an absent `kind` to "binary" - reads as harmless and is not:
+    # `target_field` fails closed on an unknown field by design, so a caller cannot ask a question
+    # the contract does not answer. Teaching it that one particular field may be missing would put
+    # a special case in the shared lookup, and the next target to forget a field would be silently
+    # defaulted instead of refused. The failure this replaces was real and immediate: the first
+    # runner run after Apple was added died on "no 'kind' for server-linux-amd64.yml", from a
+    # lookup that was working exactly as intended.
+    .github/workflows/server-linux-amd64.yml:kind)      echo "binary" ;;
+    .github/workflows/client-macos.yml:kind)            echo "binary" ;;
+    .github/workflows/windows-core-amd64.yml:kind)      echo "binary" ;;
+    .github/workflows/android-core-arm64.yml:kind)      echo "binary" ;;
+
     # Apple is the one target whose verification is not "a binary plus a sidecar checksum", and the
     # `kind` field is what says so. It publishes `Libbox.xcframework` - a directory - and its
     # identity lives in a manifest the producer writes, not in a `.sha256` file beside a binary.
