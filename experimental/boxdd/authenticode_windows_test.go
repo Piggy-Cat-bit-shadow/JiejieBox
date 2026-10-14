@@ -604,9 +604,15 @@ func TestTamperedSignedPEIsRejectedByTheFirstLayer(t *testing.T) {
 // test skipped with "could not create a signing certificate: exit status 1" and nothing else, which
 // named the step and not the cause - the run had to be dug through to learn anything. A diagnostic that
 // discards its own evidence is worse than no diagnostic, because it looks like one.
+//
+// `Import-Module PKI` is explicit because the `Cert:` drive it provides is NOT reliably auto-loaded
+// under `-NoProfile -NonInteractive`. When it is missing, `-CertStoreLocation 'Cert:\CurrentUser\My'`
+// fails with "Cannot find drive. A drive with the name 'Cert' does not exist" - which reads like a
+// broken certificate store rather than an unloaded module, and cost a CI round-trip to identify.
 func createStoreCertificate(t *testing.T) (string, error) {
 	t.Helper()
 	script := `$ErrorActionPreference='Stop'
+Import-Module PKI -ErrorAction Stop
 $c = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Jiejiebox Integration Fixture' ` +
 		`-CertStoreLocation 'Cert:\CurrentUser\My' -NotBefore (Get-Date).AddMinutes(-5) ` +
 		`-NotAfter (Get-Date).AddHours(2) -KeyUsage DigitalSignature -KeyExportPolicy Exportable

@@ -135,30 +135,39 @@ jobs:
         # The tamper test creates its own signing certificate. When that step fails, the ONLY useful
         # thing is the cause, and the first CI run reported "exit status 1" with no text at all. This
         # step prints the tooling facts up front so a failure is diagnosable from the log alone.
+        #
+        # The probe deliberately runs through `powershell.exe` WITH `-NoProfile -NonInteractive`,
+        # because that is exactly how the Go test invokes it. A probe run under the workflow's own
+        # `pwsh` proved nothing: `pwsh` auto-loads the PKI module, Windows PowerShell 5.1 under a
+        # non-interactive profile did not, so the probe passed while the test skipped.
         shell: pwsh
         run: |
-          Write-Host "powershell (this host): $($PSVersionTable.PSVersion)"
+          $ErrorActionPreference = 'Stop'
+          Write-Host "workflow shell (pwsh): $($PSVersionTable.PSVersion)"
           $exe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
           Write-Host "powershell.exe present: $(Test-Path $exe)"
-          if (Test-Path $exe) {
-            & $exe -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()' 2>&1 |
-              ForEach-Object { Write-Host "  powershell.exe reports: $_" }
+          if (-not (Test-Path $exe)) {
+            throw "powershell.exe not found at $exe; createStoreCertificate cannot run."
           }
-          $cmd = Get-Command New-SelfSignedCertificate -ErrorAction SilentlyContinue
-          Write-Host "New-SelfSignedCertificate: $(if ($cmd) { $cmd.Source } else { 'NOT AVAILABLE' })"
-          Write-Host "PKI module: $((Get-Module -ListAvailable PKI | Select-Object -First 1).Version)"
-          try {
-            $probe = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Jiejiebox CI Probe' `
-                       -CertStoreLocation 'Cert:\CurrentUser\My' -NotBefore (Get-Date).AddMinutes(-5) `
-                       -NotAfter (Get-Date).AddHours(1) -KeyUsage DigitalSignature -KeyExportPolicy Exportable `
-                       -ErrorAction Stop
-            Write-Host "probe certificate created: $($probe.Thumbprint)"
-            Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($probe.Thumbprint)" -Force -ErrorAction SilentlyContinue
-            Write-Host "probe certificate removed"
-          } catch {
-            Write-Host "::error::probe certificate creation FAILED: $($_.Exception.Message)"
-            throw
+          $probeScript = @'
+$ErrorActionPreference = 'Stop'
+Import-Module PKI -ErrorAction Stop
+$c = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Jiejiebox CI Probe' `
+       -CertStoreLocation 'Cert:\CurrentUser\My' -NotBefore (Get-Date).AddMinutes(-5) `
+       -NotAfter (Get-Date).AddHours(1) -KeyUsage DigitalSignature -KeyExportPolicy Exportable
+Write-Output $c.Thumbprint
+Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($c.Thumbprint)" -Force -ErrorAction SilentlyContinue
+'@
+          $result = & $exe -NoProfile -NonInteractive -Command $probeScript 2>&1
+          $code = $LASTEXITCODE
+          $result | ForEach-Object { Write-Host "  powershell.exe: $_" }
+          if ($code -ne 0) {
+            throw "the certificate probe FAILED through powershell.exe exactly as the test invokes it (exit $code). The tamper test would skip, and a SKIP is not a PASS for this gate."
           }
+          if (-not ($result -match '^[0-9A-F]{40}$')) {
+            throw "the certificate probe produced no thumbprint; the tamper test would skip."
+          }
+          Write-Host "certificate probe OK through powershell.exe"
 
       - name: go vet the daemon package
         # A separate step so a compile problem is distinguishable from a test failure.
