@@ -686,11 +686,11 @@ $2
 PY
 }
 
-# run_gate <args...> 闁?runs the gate against the mock.
+# run_gate <args...> 闂?runs the gate against the mock.
 #
 # RELEASE_EXTRA_PLATFORMS is CLEARED, not merely left alone. This suite's general cases run
 # against a two-product fixture on purpose, and the gate defaults to two products only when
-# that variable is unset 闁?but release.yml sets it at JOB level (`RELEASE_EXTRA_PLATFORMS:
+# that variable is unset 闂?but release.yml sets it at JOB level (`RELEASE_EXTRA_PLATFORMS:
 # true`), so it is inherited by every step in that job, including the step that runs this
 # file. The two-product cases then drove a four-product gate, `plan` demanded
 # windows-core-amd64.yml and android-core-arm64.yml from a fixture that models neither, and
@@ -1472,7 +1472,16 @@ macos|sing-box-darwin-arm64|BUILD-INFO-MACOS.txt|darwin|arm64|macho-arm64|jiejie
 windows|sing-box.exe|BUILD-INFO-WINDOWS.txt|windows|amd64|pe-amd64|jiejie-sing-box-windows-amd64|7003
 android|libbox.aar|BUILD-INFO-ANDROID.txt|android|arm64|aar-arm64|jiejie-sing-box-android-arm64|7004
 "
-FULL_VERSION="0.1.6"
+# The REAL release version, read from the repository rather than hardcoded.
+#
+# It was "0.1.6" and the repository says 0.1.7, which the run caught in the most useful possible
+# way: the Apple packer recorded the real jj_version in the manifest, `verify` compared it to this
+# value, and both the producer's validator and the release refused - "declares jj_version '0.1.7',
+# but this release is '0.1.6'". A hardcoded version in a fixture is a claim about the repository
+# that nothing keeps true, and this one silently became false when release/JIEJIE_VERSION moved.
+# Reading it means the fixture cannot drift from the thing it is supposed to be modelling.
+FULL_VERSION="$(tr -d '[:space:]' < "$repo_root/release/JIEJIE_VERSION")"
+[ -n "$FULL_VERSION" ] || { echo "FAIL: release/JIEJIE_VERSION is empty" >&2; exit 1; }
 FULL_TAG="v$FULL_VERSION"
 FULL_DESKTOP_ID=7005
 FULL_APPLE_ID=7006
