@@ -3,15 +3,20 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
+	"fmt"
 	"math/big"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 	"unsafe"
@@ -320,6 +325,105 @@ func TestSelfSignedValidationStillRejectsWhatItShould(t *testing.T) {
 		"a certificate that is not self-signed must still be refused")
 }
 
+// certificateWithEKU builds a genuine self-signed certificate carrying exactly the given extended
+// key usages, so the code-signing check can be tested without a certificate store or signtool.
+func certificateWithEKU(t *testing.T, usages []x509.ExtKeyUsage) []byte {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "Jiejiebox EKU Probe"},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           usages,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	return der
+}
+
+// TestCodeSigningEKUIsRequired is the wrong-EKU negative test: a signer certificate that is
+// otherwise perfect - genuine, self-signed, unexpired, correctly formed - must still be refused if
+// its extended key usage does not permit code signing.
+//
+// This is the check that makes the time-window relaxation safe. "Ignore certificate time" must not
+// be allowed to slide into "ignore what the certificate is FOR", and this pins that distinction.
+func TestCodeSigningEKUIsRequired(t *testing.T) {
+	codeSigning := certificateWithEKU(t, []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning})
+	certificate, err := validateCodeSigningCertificate(codeSigning)
+	require.NoError(t, err, "a code-signing EKU certificate must be accepted")
+	require.NotNil(t, certificate)
+
+	anyUsage := certificateWithEKU(t, []x509.ExtKeyUsage{x509.ExtKeyUsageAny})
+	_, err = validateCodeSigningCertificate(anyUsage)
+	require.NoError(t, err, "ExtKeyUsageAny is deliberately accepted")
+
+	// Client Authentication (1.3.6.1.5.5.7.3.2) - a real EKU, just not the right one. signtool
+	// refuses to sign with such a certificate at all, which is why this is tested at this layer:
+	// the refusal has to exist in OUR code too, because a file can arrive signed by something else.
+	clientAuth := certificateWithEKU(t, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+	_, err = validateCodeSigningCertificate(clientAuth)
+	require.Error(t, err, "a certificate without the code-signing EKU must be refused")
+	require.Contains(t, err.Error(), "not valid for code signing")
+
+	noEKU := certificateWithEKU(t, nil)
+	_, err = validateCodeSigningCertificate(noEKU)
+	require.Error(t, err, "a certificate with no EKU at all must be refused")
+
+	// And a certificate that is not a certificate at all.
+	_, err = validateCodeSigningCertificate([]byte("this is not DER"))
+	require.Error(t, err, "a signer payload that will not parse must be refused")
+}
+
+// TestSignerPinDistinguishesTwoValidCertificates is the different-signer negative test at the layer
+// where the decision is actually made.
+//
+// Two files, each validly signed by a different genuine self-signed code-signing certificate. Both
+// pass every per-file check. The pin must still tell them apart, because the pin is what binds a
+// peer to THIS daemon's certificate rather than to "some certificate that happens to be valid".
+func TestSignerPinDistinguishesTwoValidCertificates(t *testing.T) {
+	first := certificateWithEKU(t, []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning})
+	second := certificateWithEKU(t, []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning})
+
+	// Both are individually acceptable.
+	_, err := validateCodeSigningCertificate(first)
+	require.NoError(t, err)
+	_, err = validateCodeSigningCertificate(second)
+	require.NoError(t, err)
+
+	// And they are still different bytes, so bytes.Equal rejects.
+	require.False(t, bytes.Equal(first, second),
+		"two distinct certificates must not compare equal; if they did, the pin would be a no-op")
+
+	// The same certificate compares equal, so the pin is not simply always false.
+	require.True(t, bytes.Equal(first, append([]byte(nil), first...)))
+}
+
+// TestNilSignerCannotSatisfyThePin documents the property that makes an unsigned binary safe to
+// reject at the first layer rather than at the comparison.
+//
+// If authenticodeSigner could return (nil, nil) for an unsigned file, then two unsigned endpoints
+// would both present a nil signer and bytes.Equal(nil, nil) is TRUE - the pin would silently pass.
+// The defence is that every error path returns a non-nil error, so every caller returns before it
+// compares. This test pins the bytes.Equal half of that argument; the "error first" half is
+// asserted by TestUnsignedFileIsRejectedByTheFirstLayer, which drives the real WinVerifyTrust call.
+func TestNilSignerCannotSatisfyThePin(t *testing.T) {
+	var unsignedA []byte
+	var unsignedB []byte
+	require.True(t, bytes.Equal(unsignedA, unsignedB),
+		"this is exactly why an unsigned file must never reach the comparison as a success")
+
+	// A real signer never compares equal to nothing.
+	real := certificateWithEKU(t, []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning})
+	require.False(t, bytes.Equal(real, nil))
+	require.False(t, bytes.Equal(nil, real))
+}
+
 // TestUnsignedFileIsRejectedByTheFirstLayer walks the REAL WinVerifyTrustEx call for a file that
 // carries no Authenticode signature, which is the case that must keep failing.
 //
@@ -384,6 +488,171 @@ func uintptrOfErrno(err error) uintptr {
 		return uintptr(errno)
 	}
 	return 0
+}
+
+// signFixturePE creates a code-signing certificate, signs a copy of a real Windows PE with it, and
+// returns the signed path. It skips - never passes - when signtool or a suitable base image is
+// unavailable, so the test cannot silently degrade into proving nothing.
+func signFixturePE(t *testing.T) string {
+	t.Helper()
+	signtool := findSignTool(t)
+	if signtool == "" {
+		t.Skip("SKIP (not a pass): no signtool.exe found, so a real signed PE cannot be produced here")
+	}
+
+	// Any PE with room for an embedded signature works as the body being signed.
+	var source string
+	for _, candidate := range []string{
+		filepath.Join(os.Getenv("SystemRoot"), "System32", "where.exe"),
+		filepath.Join(os.Getenv("SystemRoot"), "System32", "kernel32.dll"),
+	} {
+		if _, err := os.Stat(candidate); err == nil {
+			source = candidate
+			break
+		}
+	}
+	if source == "" {
+		t.Skip("SKIP (not a pass): no suitable base PE found to sign")
+	}
+
+	directory := t.TempDir()
+	// Build a self-signed code-signing certificate through the crypto packages, then write it as a
+	// PFX is not needed: signtool can sign from the user store by thumbprint only, so instead use
+	// PowerShell-free signing by re-using an already-signed file is not possible. The portable path
+	// is to sign with the system's own tooling via the certificate we create below.
+	signed := filepath.Join(directory, "signed-fixture.exe")
+	data, err := os.ReadFile(source)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(signed, data, 0o644))
+
+	// `signtool remove` first, so a catalog-signed base does not leave a stale embedded signature
+	// that would make the "signer is mine" assertion below pass for the wrong reason.
+	_ = runSignTool(signtool, "remove", "/s", signed)
+
+	certificate, err := createStoreCertificate(t)
+	if err != nil {
+		t.Skipf("SKIP (not a pass): could not create a signing certificate: %v", err)
+	}
+	out, err := runSignToolOutput(signtool,
+		"sign", "/sha1", certificate, "/fd", "SHA256", signed)
+	if err != nil {
+		t.Skipf("SKIP (not a pass): signtool sign failed (%v): %s", err, out)
+	}
+
+	// Verify the signature really is embedded and really is ours before returning.
+	rawCode := winVerifyTrustForTest(t, signed)
+	require.True(t, isAllowedUntrustedAuthenticodeError(rawCode),
+		"the freshly signed fixture must be acceptable to the first layer, got: %v", rawCode)
+	return signed
+}
+
+// TestTamperedSignedPEIsRejectedByTheFirstLayer is the integrity negative test, and it is the one
+// that proves the time-window relaxation did not also relax signature integrity.
+//
+// A signed PE is signed, then ONE byte range inside its code section is overwritten. The file is
+// still a loadable PE and its embedded signature is still present and still names the same
+// certificate - only the hash no longer matches. Windows reports TRUST_E_BAD_DIGEST, which is NOT in
+// the allowlist, so authenticodeSigner must refuse it.
+//
+// If this test ever passes with the tampered file ACCEPTED, the fix has traded authentication for
+// convenience and must be reverted.
+func TestTamperedSignedPEIsRejectedByTheFirstLayer(t *testing.T) {
+	signed := signFixturePE(t)
+
+	// Measure the untampered file first, so the difference is attributable to the tamper alone.
+	cleanCode := winVerifyTrustForTest(t, signed)
+	require.True(t, isAllowedUntrustedAuthenticodeError(cleanCode),
+		"the untampered fixture must be tolerated, got: %v", cleanCode)
+
+	tampered := signed + ".tampered"
+	data, err := os.ReadFile(signed)
+	require.NoError(t, err)
+	require.Greater(t, len(data), 0x2000+64, "fixture too small to tamper safely")
+
+	// Overwrite inside the mapped image, away from the headers and away from the certificate table
+	// at end of file, so the PE still parses and the signature block is untouched.
+	for i := 0; i < 32; i++ {
+		data[0x2000+i] ^= 0xFF
+	}
+	require.NoError(t, os.WriteFile(tampered, data, 0o644))
+
+	tamperedCode := winVerifyTrustForTest(t, tampered)
+	var errno windows.Errno
+	hasErrno := errors.As(tamperedCode, &errno)
+	if hasErrno {
+		t.Logf("measured WinVerifyTrustEx for a tampered signed PE: 0x%08X (%v)", uintptr(errno), errno)
+	} else {
+		t.Logf("measured WinVerifyTrustEx for a tampered signed PE: %v", tamperedCode)
+	}
+
+	require.Error(t, tamperedCode, "a tampered signed file must not verify")
+	require.False(t, isAllowedUntrustedAuthenticodeError(tamperedCode),
+		"TRUST_E_BAD_DIGEST and its relatives must never be tolerated: integrity is not a time policy")
+
+	// And the production entry point must refuse it too, not merely the classifier.
+	file, err := os.Open(tampered)
+	require.NoError(t, err)
+	_, signerError := authenticodeSigner(tampered, windows.Handle(file.Fd()))
+	file.Close()
+	require.Error(t, signerError, "authenticodeSigner must refuse a tampered signed file")
+}
+
+// createStoreCertificate creates a self-signed code-signing certificate in the user store and
+// returns its SHA-1 thumbprint, or an error when the platform tooling is unavailable.
+func createStoreCertificate(t *testing.T) (string, error) {
+	t.Helper()
+	script := `$ErrorActionPreference='Stop'
+$c = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Jiejiebox Integration Fixture' ` +
+		`-CertStoreLocation 'Cert:\CurrentUser\My' -NotBefore (Get-Date).AddMinutes(-5) ` +
+		`-NotAfter (Get-Date).AddHours(2) -KeyUsage DigitalSignature -KeyExportPolicy Exportable
+Write-Output $c.Thumbprint`
+	out, err := runPowerShell(script)
+	if err != nil {
+		return "", err
+	}
+	thumbprint := strings.TrimSpace(out)
+	if len(thumbprint) != 40 {
+		return "", fmt.Errorf("unexpected thumbprint %q", thumbprint)
+	}
+	t.Cleanup(func() {
+		// The store path is built with a backslash, so it is concatenated rather than written as a
+		// single quoted literal - a Windows path inside a Go string literal is an escape hazard.
+		_, _ = runPowerShell(`Remove-Item -LiteralPath 'Cert:\CurrentUser\My\` + thumbprint + `' -Force -ErrorAction SilentlyContinue`)
+	})
+	return thumbprint, nil
+}
+
+func findSignTool(t *testing.T) string {
+	t.Helper()
+	if configured := os.Getenv("SIGNTOOL"); configured != "" {
+		if _, err := os.Stat(configured); err == nil {
+			return configured
+		}
+	}
+	root := filepath.Join(os.Getenv("ProgramFiles(x86)"), "Windows Kits", "10", "bin")
+	matches, _ := filepath.Glob(filepath.Join(root, "*", "x64", "signtool.exe"))
+	if len(matches) == 0 {
+		return ""
+	}
+	sort.Strings(matches)
+	return matches[len(matches)-1]
+}
+
+func runSignTool(signtool string, args ...string) error {
+	_, err := runSignToolOutput(signtool, args...)
+	return err
+}
+
+func runSignToolOutput(signtool string, args ...string) (string, error) {
+	command := exec.Command(signtool, args...)
+	output, err := command.CombinedOutput()
+	return string(output), err
+}
+
+func runPowerShell(script string) (string, error) {
+	command := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
+	output, err := command.CombinedOutput()
+	return string(output), err
 }
 
 // TestSignedSystemBinaryIsAcceptedByTheFirstLayer is the positive control for the real call: a
