@@ -42,13 +42,27 @@ var (
 )
 
 type NetworkManager struct {
-	ctx                 context.Context
-	logger              logger.ContextLogger
-	router              adapter.Router
-	interfaceFinder     *control.DefaultInterfaceFinder
-	networkInterfaces   common.TypedValue[[]adapter.NetworkInterface]
-	autoDetectInterface bool
-	defaultOptions      adapter.NetworkOptions
+	ctx    context.Context
+	logger logger.ContextLogger
+	router adapter.Router
+	// interfaceFinder is held as the concrete finder because the platform path needs
+	// UpdateInterfaces, which the control.InterfaceFinder interface does not expose.
+	interfaceFinder *control.DefaultInterfaceFinder
+	// interfaceRefreshError, when set, makes the next non-platform interface refresh report this error
+	// instead of enumerating.
+	//
+	// It exists for one assertion: that a failed refresh leaves the previous observation in place
+	// rather than replacing a real one with an empty list. A real finder on a real machine cannot be
+	// made to fail on request, and publishing an empty list in that case would report that the machine
+	// has no interfaces at all - which the capability reads as Unknown for both families, silently
+	// disabling the fast-fail rather than failing open.
+	//
+	// Nil in production, where it costs one predictable branch on a path that runs on network events
+	// rather than per connection.
+	interfaceRefreshError error
+	networkInterfaces     common.TypedValue[[]adapter.NetworkInterface]
+	autoDetectInterface   bool
+	defaultOptions        adapter.NetworkOptions
 	// autoRedirectOutputMark is the routing mark sing-box puts on its own egress while a TUN redirects
 	// traffic, claimed once by the inbound that owns the redirect and read on every dial.
 	//
@@ -388,12 +402,35 @@ func (r *NetworkManager) InterfaceFinder() control.InterfaceFinder {
 func (r *NetworkManager) UpdateInterfaces() error {
 	defer r.postUpdateNetworkEnvironment()
 	if r.platformInterface == nil || !r.platformInterface.UsePlatformNetworkInterfaces() {
-		// The finder refresh is the whole visible effect here, so the interface list the rest of the
-		// manager reads is updated from it. Leaving the list empty on this path is not neutral: the
-		// local family capability is derived from it, so an empty list means the capability is never
-		// known and no dial can ever use it. See observeNonPlatformInterfaces.
+		// The finder is refreshed FIRST, and the public list is published from it after.
+		//
+		// The order is the whole point of this branch. Publishing before the refresh would put the
+		// PREVIOUS finder snapshot into the list the capability is derived from, and the recompute
+		// deferred above reads that list - so one call would produce a capability computed from
+		// addressing that this very call exists to replace. A caller that reaches this entry point
+		// directly, without the monitor having refreshed anything first, would then get a verdict
+		// about the interface state it just moved away from.
+		//
+		// On the ordinary path the monitor has already refreshed the finder before it reports, so the
+		// Update below is a cheap re-read rather than a second enumeration, and the publish that
+		// follows is the same slice copy it would have been.
+		//
+		// A refresh that FAILS returns before publishing, which leaves the previous list in place. That
+		// is deliberate and matches the platform branch below, which also returns on error without
+		// touching the list: the earlier observation is stale but it is still a real observation of
+		// this machine, whereas publishing an empty list would turn an enumeration failure into
+		// "no interfaces", and the capability would report Unknown for both families on a machine that
+		// has addressing. Stale-but-real fails open at worst; empty-therefore-unknown would silently
+		// disable the fast-fail.
+		err := r.interfaceRefreshError
+		if err == nil {
+			err = r.interfaceFinder.Update()
+		}
+		if err != nil {
+			return err
+		}
 		r.observeNonPlatformInterfaces()
-		return r.interfaceFinder.Update()
+		return nil
 	} else {
 		interfaces, err := r.platformInterface.NetworkInterfaces()
 		if err != nil {

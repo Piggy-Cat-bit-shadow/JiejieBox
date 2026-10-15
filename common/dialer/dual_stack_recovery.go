@@ -3,11 +3,9 @@ package dialer
 import (
 	"context"
 	"net/netip"
-	"slices"
 	"strings"
 
 	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing-box/common/netcap"
 	"github.com/sagernet/sing-box/log"
 	M "github.com/sagernet/sing/common/metadata"
 )
@@ -177,18 +175,54 @@ func (d *resolveDialer) withoutUndialableCandidates(addresses []netip.Addr) []ne
 // policy, and keeping it that way is what makes "the same rule applies on every local dial path"
 // checkable instead of merely intended.
 //
-// Like the slice-package delete it wraps, it compacts IN PLACE when it removes something. A caller
-// that still needs to know what was removed must therefore record that first - see refusedFamilyIn,
-// which is exactly that, and which the serial branch calls before this.
+// # It does NOT modify the caller's slice, and that is a contract rather than a nicety
+//
+// The addresses reaching this function come from a resolver - DNSRouter.Lookup, or a family result
+// published on a stream - and the interface says nothing about who owns the backing array. An
+// implementation is free to return a cache-backed slice, and several do exactly that from a cache
+// hit: the same array is handed to every caller for the lifetime of the entry. Compacting it in place
+// would rewrite the resolver's own cache as a side effect of one connection's filtering, which
+// corrupts answers that later callers receive and would be attributed to the resolver.
+//
+// So the two cases are deliberately different:
+//
+//	nothing refused -> the SAME slice, no copy, no allocation, no mutation
+//	anything refused -> a NEW slice; the caller's array is not written at all
+//
+// Copying only when something is removed is what keeps the ordinary dual-stack connection - where the
+// policy refuses nothing - on exactly the path it took before this round, which is why this is not
+// implemented as "clone, then filter".
 func withoutUndialable(addresses []netip.Addr, policy localFamilyPolicy) []netip.Addr {
-	if policy.capability == (netcap.FamilyCapability{}) {
-		// No opinion, so nothing is removed - and the caller's slice is returned as it was, so a
-		// manager that cannot report a capability keeps its previous behaviour exactly.
+	if len(addresses) == 0 {
 		return addresses
 	}
-	filtered := slices.DeleteFunc(addresses, func(address netip.Addr) bool {
-		return !isLocalScopeAddress(address) && policy.excludedAddress(address)
-	})
+	// The first refusal is located before anything is copied, so the common case is one scan and no
+	// allocation, and the copy is exactly as long as it needs to be.
+	firstRefused := -1
+	for index, address := range addresses {
+		if isLocalScopeAddress(address) {
+			continue
+		}
+		if policy.excludedAddress(address) {
+			firstRefused = index
+			break
+		}
+	}
+	if firstRefused < 0 {
+		return addresses
+	}
+	filtered := make([]netip.Addr, firstRefused, len(addresses))
+	copy(filtered, addresses[:firstRefused])
+	for _, address := range addresses[firstRefused+1:] {
+		if isLocalScopeAddress(address) {
+			filtered = append(filtered, address)
+			continue
+		}
+		if policy.excludedAddress(address) {
+			continue
+		}
+		filtered = append(filtered, address)
+	}
 	if len(filtered) == 0 {
 		return nil
 	}
@@ -200,7 +234,10 @@ func withoutUndialable(addresses []netip.Addr, policy localFamilyPolicy) []netip
 //
 // It exists so a caller that is about to filter can still NAME the reason afterwards: the filtered
 // list is empty in exactly the case where the explanation matters most, and an empty list cannot say
-// which family produced it. It must be asked BEFORE withoutUndialable, which compacts in place.
+// which family produced it.
+//
+// It reads the list without modifying it, so it and withoutUndialable can be called in either order;
+// the serial branch calls it first only because that reads better.
 func refusedFamilyIn(addresses []netip.Addr, policy localFamilyPolicy) addressFamily {
 	for _, address := range addresses {
 		if isLocalScopeAddress(address) {

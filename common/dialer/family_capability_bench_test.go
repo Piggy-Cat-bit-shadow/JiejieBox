@@ -81,7 +81,7 @@ func BenchmarkLocalFamilyPolicySnapshot(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		policy := dialer.snapshotLocalFamilyPolicy()
+		policy := dialer.captureLocalFamilyPolicy()
 		if !policy.excluded(familyIPv6) {
 			b.Fatal("the verdict must be read from the manager")
 		}
@@ -98,7 +98,7 @@ func BenchmarkLocalFamilyPolicyAbsent(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		policy := dialer.snapshotLocalFamilyPolicy()
+		policy := dialer.captureLocalFamilyPolicy()
 		if policy.excluded(familyIPv6) || policy.excluded(familyIPv4) {
 			b.Fatal("a dialer with no manager must restrict nothing")
 		}

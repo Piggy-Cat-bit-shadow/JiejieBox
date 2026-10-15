@@ -11,7 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sagernet/sing-box/common/netcap"
 	E "github.com/sagernet/sing/common/exceptions"
 	N "github.com/sagernet/sing/common/network"
 )
@@ -573,6 +572,10 @@ func (s *candidateScheduler) filterLocalFamily(plan candidatePlan) (candidatePla
 // capability - off this code path entirely rather than merely paying little for it. The split is not
 // a micro-optimisation for its own sake: this runs once per connection, and it is the one place in
 // the dial path that was allowed to become more expensive in this round.
+//
+// Every decision here goes through s.localFamily.excluded, which consults network ownership before it
+// answers - so a scheduler whose capture has been superseded drops nothing, and the successor
+// generation's candidates reach the race.
 func (s *candidateScheduler) dropUndialableCandidates(plan candidatePlan) (candidatePlan, addressFamily) {
 	planned := len(plan.candidates)
 	if planned == 0 {
@@ -607,12 +610,13 @@ func (s *candidateScheduler) dropUndialableCandidates(plan candidatePlan) (candi
 // capabilityRestrictsNothing reports whether every candidate of this plan is dialable, without
 // looking at the plan.
 //
-// It answers from the capability alone, which is what makes it constant-time and inlinable: a family
-// that is not provably unavailable cannot refuse any candidate, so there is nothing to scan. It is a
-// method on the plan only because the plan is what the caller holds; the answer does not depend on it.
+// It answers from the capability and its ownership alone, which is what makes it constant-time and
+// inlinable: a policy that cannot refuse anything cannot refuse any candidate, so there is nothing to
+// scan. It delegates the ownership half to the policy rather than re-deriving it, so the fast path and
+// the slow path cannot disagree about whether a verdict is still current - a disagreement there would
+// let the fast path skip a filter that would have removed something.
 func (p candidatePlan) capabilityRestrictsNothing(policy localFamilyPolicy) bool {
-	return policy.capability.IPv4 != netcap.StateUnavailable &&
-		policy.capability.IPv6 != netcap.StateUnavailable
+	return policy.restrictsNothing()
 }
 
 // localFamilyRefusalError reports why no candidate could be attempted.
