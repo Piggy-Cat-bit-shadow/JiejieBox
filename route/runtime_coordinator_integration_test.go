@@ -47,7 +47,7 @@ func newCoordinatorHarness(t *testing.T) (*NetworkManager, *runtimecoord.Coordin
 	}
 	startedCtx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	manager.startedCtx = startedCtx
+	manager.publishStartedContext(startedCtx)
 	manager.logger = logger.NOP()
 	manager.transitionStable.Store(true)
 	manager.pauseManager = &noopPauseManager{}

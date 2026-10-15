@@ -108,7 +108,37 @@ type NetworkManager struct {
 	networkEnvironment      uint64
 	stateAccess             sync.RWMutex
 	environmentUpdateAccess sync.Mutex
-	startedCtx              context.Context
+	// startedCtx is the run's context, published ATOMICALLY.
+	//
+	// # Why it is not a plain field
+	//
+	// It is written once, by Start, on the goroutine running the start sequence - and it is read by
+	// threads this process does not own. The interface monitor's callback runs on sing-tun's own
+	// goroutine (on Windows, the winipcfg interface-change handler's thread) and reaches
+	// environmentTransitionApplies, which reads this field; the monitor is started in the SAME
+	// Start call, earlier in the same switch, so an interface event delivered in that window reads a
+	// field the start goroutine is concurrently writing. That is a data race, and it is not
+	// theoretical: the Phase-3 race sweep caught it.
+	//
+	//	WARNING: DATA RACE
+	//	  Write at route/network.go:391        r.startedCtx = scope.Context()   <- start goroutine
+	//	  Read  at route/network_environment.go:423   if r.startedContext() == nil  <- monitor thread
+	//
+	// The write was guarded by interfaceUpdateAccess, which the reading path does not take and must
+	// not: it is the monitor's callback, and taking that lock there would put every platform
+	// interface event behind every interface update.
+	//
+	// # Why atomic instead of acquiring a lock at the read sites
+	//
+	// The field is written once and read on every interface event and route change. An atomic load
+	// is the cheapest correct publication, and it keeps the read side lock-free - which is the
+	// property the comment above about `stateAccess` is protecting: the transition and update paths
+	// must not be forced to take a lock to ask a lifecycle question.
+	//
+	// The invariant this makes explicit: the context is PUBLISHED before anything that can read it
+	// is started, and it is never un-published (teardown cancels it rather than clearing it). See
+	// close.go's use of `closed` for the flag that does get set at teardown.
+	startedCtx atomic.Pointer[context.Context]
 	// closed is set by the scope cleanup that gives the interface monitor its callback back, and is
 	// checked by every handler the platform can still reach afterwards.
 	//
@@ -232,6 +262,28 @@ type NetworkManager struct {
 	runtimeCoordinator *runtimecoord.Coordinator
 	powerUpdateAccess  sync.Mutex
 	powerUpdateCancel  context.CancelFunc
+}
+
+// startedContext returns the run's context, or nil before the manager has been started.
+//
+// It is an atomic load rather than a field read because the interface monitor's callback reaches
+// this from sing-tun's own goroutine (on Windows, the winipcfg interface-change handler's thread)
+// while the start sequence may still be running. See the field's comment for the exact race the
+// Phase-3 sweep reported.
+//
+// A caller must handle nil: before Start there is no run, and environmentTransitionApplies is the
+// gate that turns that into "no transition applies" rather than into a reset against a context that
+// does not exist.
+func (r *NetworkManager) startedContext() context.Context {
+	if published := r.startedCtx.Load(); published != nil {
+		return *published
+	}
+	return nil
+}
+
+// publishStartedContext records the run's context. Called once, by Start.
+func (r *NetworkManager) publishStartedContext(ctx context.Context) {
+	r.startedCtx.Store(&ctx)
 }
 
 func NewNetworkManager(ctx context.Context, logger logger.ContextLogger, options option.RouteOptions, dnsOptions option.DNSOptions) (*NetworkManager, error) {
@@ -388,7 +440,10 @@ func (r *NetworkManager) Start(stage adapter.StartStage, scope *adapter.Scope) e
 			return nil
 		})
 		r.interfaceUpdateAccess.Lock()
-		r.startedCtx = scope.Context()
+		// Published atomically; see the field's comment for why the guard on this line is not
+		// enough on its own. It is set at the same point in the sequence as before, so nothing
+		// downstream observes a different lifecycle.
+		r.publishStartedContext(scope.Context())
 		if r.interfaceMonitor != nil {
 			r.dispatchInterfaceUpdateLocked()
 		}
@@ -1307,7 +1362,7 @@ func (r *NetworkManager) notifyInterfaceUpdate(_ *control.Interface, _ int) {
 	// Otherwise the pending event already owns a token and this is a repeat of it: coalesce, so a
 	// burst of notifications costs one epoch rather than one each.
 	r.networkResetPending = true
-	if r.startedCtx != nil {
+	if r.startedContext() != nil {
 		r.dispatchInterfaceUpdateLocked()
 	}
 }
@@ -1327,7 +1382,7 @@ func (r *NetworkManager) dispatchInterfaceUpdateLocked() {
 	if r.interfaceUpdateCancel != nil {
 		r.interfaceUpdateCancel()
 	}
-	updateContext, updateCancel := context.WithCancel(r.startedCtx)
+	updateContext, updateCancel := context.WithCancel(r.startedContext())
 	r.interfaceUpdateCancel = updateCancel
 	go r.updateInterface(updateContext, defaultInterface)
 }
@@ -1516,7 +1571,7 @@ func (r *NetworkManager) notifyWindowsPowerEvent(event int) {
 	case winpowrprof.EVENT_SUSPEND:
 		r.pauseManager.DevicePause()
 		r.cancelPowerUpdate()
-		r.ResetNetwork(r.startedCtx)
+		r.ResetNetwork(r.startedContext())
 	case winpowrprof.EVENT_RESUME:
 		if !r.pauseManager.IsDevicePaused() {
 			return
@@ -1524,7 +1579,7 @@ func (r *NetworkManager) notifyWindowsPowerEvent(event int) {
 		fallthrough
 	case winpowrprof.EVENT_RESUME_AUTOMATIC:
 		r.pauseManager.DeviceWake()
-		updateContext, updateCancel := context.WithCancel(r.startedCtx)
+		updateContext, updateCancel := context.WithCancel(r.startedContext())
 		r.powerUpdateAccess.Lock()
 		previousCancel := r.powerUpdateCancel
 		r.powerUpdateCancel = updateCancel

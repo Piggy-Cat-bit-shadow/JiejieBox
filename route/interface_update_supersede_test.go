@@ -96,7 +96,7 @@ func TestUpdateThatIsNotSupersededStillConsumes(t *testing.T) {
 	require.False(t, h.manager.NetworkTransitionStable(),
 		"the notification must mark the network unstable before its update reaches the reset lock")
 
-	h.manager.updateInterface(h.manager.startedCtx, testDefaultInterface())
+	h.manager.updateInterface(h.manager.startedContext(), testDefaultInterface())
 
 	require.Equal(t, baseResets+1, dnsResetCount(h.router), "an un-superseded update performs its reset")
 	require.True(t, h.manager.NetworkTransitionStable(), "and settles the network when it finishes")

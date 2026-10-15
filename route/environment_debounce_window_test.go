@@ -68,7 +68,7 @@ func TestInterfacePathWIFITransitionEstablishesItsBoundaryImmediately(t *testing
 
 	// The Wi-Fi monitor reports a new SSID, and updateInterface reads it through UpdateWIFIState.
 	harness.manager.wifiMonitor = &staticWIFIMonitor{state: adapter.WIFIState{SSID: "B"}}
-	harness.manager.updateInterface(harness.manager.startedCtx, &control.Interface{Index: 1, Name: "en0"})
+	harness.manager.updateInterface(harness.manager.startedContext(), &control.Interface{Index: 1, Name: "en0"})
 
 	require.Equal(t, before+1, harness.resetCount(),
 		"a Wi-Fi transition observed through updateInterface must establish its boundary in that "+

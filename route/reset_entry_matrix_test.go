@@ -47,7 +47,7 @@ func newPowerHarness(t *testing.T) *NetworkManager {
 	}
 	startedCtx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	manager.startedCtx = startedCtx
+	manager.publishStartedContext(startedCtx)
 	manager.logger = logger.NOP()
 	manager.pauseManager = &noopPauseManager{}
 	return manager
@@ -140,7 +140,7 @@ func TestAllResetEntriesShareOneSerialisation(t *testing.T) {
 		go func() {
 			defer waitGroup.Done()
 			<-start
-			manager.ResetNetwork(manager.startedCtx)
+			manager.ResetNetwork(manager.startedContext())
 		}()
 	}
 	// The inner form, as updateInterface and the power goroutine use it.
@@ -150,7 +150,7 @@ func TestAllResetEntriesShareOneSerialisation(t *testing.T) {
 			defer waitGroup.Done()
 			<-start
 			manager.resetRunAccess.Lock()
-			manager.resetNetworkLocked(manager.startedCtx)
+			manager.resetNetworkLocked(manager.startedContext())
 			manager.resetRunAccess.Unlock()
 		}()
 	}

@@ -59,7 +59,7 @@ func newInterfaceTransitionHarness(t *testing.T) *interfaceTransitionHarness {
 	}
 	startedCtx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	manager.startedCtx = startedCtx
+	manager.publishStartedContext(startedCtx)
 	manager.logger = logger.NOP()
 	// The notifier dispatches through the pause manager, so the harness supplies one.
 	manager.pauseManager = &noopPauseManager{}
@@ -171,7 +171,7 @@ func TestInterfaceEnvironmentTransitionCoalescesPendingReset(t *testing.T) {
 	before := harness.resetCount()
 
 	// The production entry: one interface update carrying both reasons.
-	harness.manager.updateInterface(harness.manager.startedCtx, &control.Interface{Index: 1, Name: "en0"})
+	harness.manager.updateInterface(harness.manager.startedContext(), &control.Interface{Index: 1, Name: "en0"})
 
 	require.Equal(t, before+1, harness.resetCount(),
 		"one interface update carrying both an environment transition and a pending interface reset "+
@@ -191,7 +191,7 @@ func TestInterfaceEnvironmentTransitionAloneResetsOnce(t *testing.T) {
 	generationBefore := harness.manager.NetworkResetGeneration()
 	harness.setSSID("B")
 
-	harness.manager.updateInterface(harness.manager.startedCtx, &control.Interface{Index: 1, Name: "en0"})
+	harness.manager.updateInterface(harness.manager.startedContext(), &control.Interface{Index: 1, Name: "en0"})
 
 	require.Equal(t, before+1, harness.resetCount(),
 		"an environment transition with no pending interface reset must still reset")
@@ -203,7 +203,7 @@ func TestInterfacePendingResetAloneResetsOnce(t *testing.T) {
 	harness := newInterfaceTransitionHarness(t)
 	// Settle the fingerprint, then leave it alone, so only the pending event remains as a reason.
 	harness.setSSID("A")
-	harness.manager.updateInterface(harness.manager.startedCtx, &control.Interface{Index: 1, Name: "en0"})
+	harness.manager.updateInterface(harness.manager.startedContext(), &control.Interface{Index: 1, Name: "en0"})
 
 	before := harness.resetCount()
 
@@ -213,7 +213,7 @@ func TestInterfacePendingResetAloneResetsOnce(t *testing.T) {
 	harness.markInterfaceResetPending()
 	generationAfterNotify := harness.manager.NetworkResetGeneration()
 
-	harness.manager.updateInterface(harness.manager.startedCtx, &control.Interface{Index: 1, Name: "en0"})
+	harness.manager.updateInterface(harness.manager.startedContext(), &control.Interface{Index: 1, Name: "en0"})
 
 	require.Equal(t, before+1, harness.resetCount(),
 		"a pending interface event with no environment transition must still reset")
@@ -229,12 +229,12 @@ func TestInterfacePendingResetAloneResetsOnce(t *testing.T) {
 func TestInterfaceUpdateWithNoReasonDoesNotReset(t *testing.T) {
 	harness := newInterfaceTransitionHarness(t)
 	harness.setSSID("A")
-	harness.manager.updateInterface(harness.manager.startedCtx, &control.Interface{Index: 1, Name: "en0"})
+	harness.manager.updateInterface(harness.manager.startedContext(), &control.Interface{Index: 1, Name: "en0"})
 
 	before := harness.resetCount()
 
 	for i := 0; i < 5; i++ {
-		harness.manager.updateInterface(harness.manager.startedCtx, &control.Interface{Index: 1, Name: "en0"})
+		harness.manager.updateInterface(harness.manager.startedContext(), &control.Interface{Index: 1, Name: "en0"})
 	}
 
 	require.Equal(t, before, harness.resetCount(),
@@ -281,7 +281,7 @@ func TestCancelledInterfaceUpdateDoesNotConsumeNewPendingReset(t *testing.T) {
 			"transition is then lost, because the newer update sees nothing to do")
 
 	// And the newer update performs it, exactly once.
-	harness.manager.updateInterface(harness.manager.startedCtx, &control.Interface{Index: 1, Name: "en0"})
+	harness.manager.updateInterface(harness.manager.startedContext(), &control.Interface{Index: 1, Name: "en0"})
 	require.Equal(t, before+1, harness.resetCount(),
 		"the newer update must still perform the pending reset")
 }

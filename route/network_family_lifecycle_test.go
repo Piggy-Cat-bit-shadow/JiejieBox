@@ -49,7 +49,7 @@ func TestResetAloneKeepsTheVerdictAndMovesTheEpoch(t *testing.T) {
 	require.True(t, beforeStable)
 	require.Equal(t, netcap.StateUnavailable, beforeCapability.Capability.IPv6)
 
-	h.manager.ResetNetwork(h.manager.startedCtx)
+	h.manager.ResetNetwork(h.manager.startedContext())
 
 	afterEpoch, afterStable, afterCapability := h.manager.NetworkFamilyCapabilitySnapshot()
 	require.True(t, afterStable, "the reset completes and settles")
@@ -75,7 +75,7 @@ func TestEpochAdvanceWithoutACapabilityRefreshKeepsTheVerdict(t *testing.T) {
 
 	// Several epoch advances with no interface observation at all.
 	for i := 0; i < 3; i++ {
-		h.manager.ResetNetwork(h.manager.startedCtx)
+		h.manager.ResetNetwork(h.manager.startedContext())
 	}
 	_, _, second := h.manager.NetworkFamilyCapabilitySnapshot()
 	require.Equal(t, first, second,

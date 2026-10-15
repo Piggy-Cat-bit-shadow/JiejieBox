@@ -158,7 +158,7 @@ func (r *NetworkManager) EstablishInitialNetworkEnvironment() {
 		// interface). Both leave the manager in the state this call exists to guarantee.
 		return
 	}
-	r.resetNetworkLocked(r.startedCtx)
+	r.resetNetworkLocked(r.startedContext())
 	r.commitTransition(token)
 }
 
@@ -391,7 +391,7 @@ func (r *NetworkManager) boundEnvironmentTransitionExported(token transitionToke
 	if !r.transitionOwns(token) {
 		return
 	}
-	r.resetNetworkLocked(r.startedCtx)
+	r.resetNetworkLocked(r.startedContext())
 }
 
 // boundEnvironmentTransitionLocked is the inner form for a caller holding resetRunAccess.
@@ -420,10 +420,10 @@ func (r *NetworkManager) boundEnvironmentTransitionLocked(ctx context.Context, t
 // lifecycle fact that actually distinguishes them - and the cancellation check also keeps a timer
 // that fires during shutdown from starting a reset the manager is already tearing down.
 func (r *NetworkManager) environmentTransitionApplies() bool {
-	if r.startedCtx == nil {
+	if r.startedContext() == nil {
 		return false
 	}
-	if r.startedCtx.Err() != nil {
+	if r.startedContext().Err() != nil {
 		return false
 	}
 	return true

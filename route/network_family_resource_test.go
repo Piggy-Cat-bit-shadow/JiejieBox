@@ -125,7 +125,7 @@ func TestCloseDuringCapabilityPublicationDoesNotDeadlock(t *testing.T) {
 	// transition; the publication takes stateAccess and then the transition lock. Both orders must
 	// complete.
 	for round := 0; round < 10; round++ {
-		h.manager.ResetNetwork(h.manager.startedCtx)
+		h.manager.ResetNetwork(h.manager.startedContext())
 	}
 	<-done
 

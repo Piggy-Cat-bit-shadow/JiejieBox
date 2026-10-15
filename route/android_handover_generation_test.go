@@ -41,7 +41,7 @@ func TestHandoverNotificationBurstClaimsOneGeneration(t *testing.T) {
 	// transition (no environment -> a fingerprint), so it is taken as the baseline rather than
 	// asserted about.
 	harness.setSSID("A")
-	harness.manager.updateInterface(harness.manager.startedCtx, &control.Interface{Index: 1, Name: "en0"})
+	harness.manager.updateInterface(harness.manager.startedContext(), &control.Interface{Index: 1, Name: "en0"})
 
 	baselineGeneration := harness.manager.NetworkResetGeneration()
 	baselineResets := harness.resetCount()
@@ -77,7 +77,7 @@ func TestHandoverNotificationBurstClaimsOneGeneration(t *testing.T) {
 func TestHandoverGenuineChangeAfterABurstIsNotSwallowed(t *testing.T) {
 	harness := newInterfaceTransitionHarness(t)
 	harness.setSSID("A")
-	harness.manager.updateInterface(harness.manager.startedCtx, &control.Interface{Index: 1, Name: "en0"})
+	harness.manager.updateInterface(harness.manager.startedContext(), &control.Interface{Index: 1, Name: "en0"})
 
 	resetsBefore := harness.resetCount()
 
@@ -94,7 +94,7 @@ func TestHandoverGenuineChangeAfterABurstIsNotSwallowed(t *testing.T) {
 	}, resetWaitTimeout, resetPollInterval, "the burst's transition must run")
 
 	harness.setSSID("B")
-	harness.manager.updateInterface(harness.manager.startedCtx, &control.Interface{Index: 1, Name: "en0"})
+	harness.manager.updateInterface(harness.manager.startedContext(), &control.Interface{Index: 1, Name: "en0"})
 
 	require.Equal(t, resetsBefore+2, harness.resetCount(),
 		"a genuine environment change after a coalesced burst must still reset: coalescing may only "+
@@ -109,15 +109,15 @@ func TestHandoverGenuineChangeAfterABurstIsNotSwallowed(t *testing.T) {
 func TestHandoverRepeatedGenuineChangesEachClaimOnce(t *testing.T) {
 	harness := newInterfaceTransitionHarness(t)
 	harness.setSSID("A")
-	harness.manager.updateInterface(harness.manager.startedCtx, &control.Interface{Index: 1, Name: "en0"})
+	harness.manager.updateInterface(harness.manager.startedContext(), &control.Interface{Index: 1, Name: "en0"})
 
 	resetsBefore := harness.resetCount()
 	generationBefore := harness.manager.NetworkResetGeneration()
 
 	harness.setSSID("B")
-	harness.manager.updateInterface(harness.manager.startedCtx, &control.Interface{Index: 1, Name: "en0"})
+	harness.manager.updateInterface(harness.manager.startedContext(), &control.Interface{Index: 1, Name: "en0"})
 	harness.setSSID("C")
-	harness.manager.updateInterface(harness.manager.startedCtx, &control.Interface{Index: 1, Name: "en0"})
+	harness.manager.updateInterface(harness.manager.startedContext(), &control.Interface{Index: 1, Name: "en0"})
 
 	require.Equal(t, resetsBefore+2, harness.resetCount())
 	require.Equal(t, generationBefore+2, harness.manager.NetworkResetGeneration(),

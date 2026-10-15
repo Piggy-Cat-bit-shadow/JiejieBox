@@ -67,7 +67,7 @@ func TestEnvironmentTransitionTakesTheResetBoundary(t *testing.T) {
 	// the environment is a hash for which 0 is real, so "old == 0" cannot mean "first observation".
 	startedCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	manager.startedCtx = startedCtx
+	manager.publishStartedContext(startedCtx)
 	manager.logger = logger.NOP()
 
 	// Seed a stable environment, as a device that has been up for a while would have.
@@ -123,7 +123,7 @@ func TestUnchangedEnvironmentDoesNotResetOnEveryUpdate(t *testing.T) {
 	}
 	startedCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	manager.startedCtx = startedCtx
+	manager.publishStartedContext(startedCtx)
 	manager.logger = logger.NOP()
 
 	// First call settles the environment to whatever this host reports.
@@ -157,7 +157,7 @@ func TestEnvironmentTransitionDoesNotDeadlockTheLockHoldingPath(t *testing.T) {
 	}
 	startedCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	manager.startedCtx = startedCtx
+	manager.publishStartedContext(startedCtx)
 	manager.logger = logger.NOP()
 
 	done := make(chan struct{})
@@ -195,7 +195,7 @@ func TestConcurrentEnvironmentTransitionsAreSerialised(t *testing.T) {
 	}
 	startedCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	manager.startedCtx = startedCtx
+	manager.publishStartedContext(startedCtx)
 	manager.logger = logger.NOP()
 	manager.networkEnvironment = 0x2222
 
@@ -250,7 +250,7 @@ func TestEnvironmentRecomputeDoesNotHoldItsLockAcrossTheReset(t *testing.T) {
 	}
 	startedCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	manager.startedCtx = startedCtx
+	manager.publishStartedContext(startedCtx)
 	manager.logger = logger.NOP()
 
 	// Stand in for Close: hold the reset lock so the boundary cannot proceed.
@@ -318,7 +318,7 @@ func TestInterfacePathTakesTheInnerResetForATransition(t *testing.T) {
 	}
 	startedCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	manager.startedCtx = startedCtx
+	manager.publishStartedContext(startedCtx)
 	manager.logger = logger.NOP()
 
 	// The interface path's critical section, exactly as updateInterface takes it.

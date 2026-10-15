@@ -32,7 +32,7 @@ func newInitialEnvironmentManager(t *testing.T) *NetworkManager {
 	}
 	startedCtx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	manager.startedCtx = startedCtx
+	manager.publishStartedContext(startedCtx)
 	// NewNetworkManager establishes both of these; a manager built as a struct literal has to.
 	manager.transitionStable.Store(true)
 	manager.pauseManager = &noopPauseManager{}
@@ -120,7 +120,9 @@ func TestUnstartedManagerDoesNotObserveItsEnvironment(t *testing.T) {
 	router := manager.router.(*countingRouter)
 
 	// Before PostStart: the manager has monitors and a default interface, but no lifecycle.
-	manager.startedCtx = nil
+	// Cleared through the field (the atomic publication), with a comment in the same spirit as
+	// publishStartedContext: this is the only state in which startedContext reports nil.
+	manager.startedCtx.Store(nil)
 
 	manager.postUpdateNetworkEnvironment()
 
@@ -136,7 +138,7 @@ func TestUnstartedManagerDoesNotObserveItsEnvironment(t *testing.T) {
 	// Started, and the observation is made for real - the deferred one is not lost.
 	startedCtx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	manager.startedCtx = startedCtx
+	manager.publishStartedContext(startedCtx)
 	manager.EstablishInitialNetworkEnvironment()
 	require.NotZero(t, manager.NetworkEnvironment())
 	require.True(t, manager.NetworkTransitionStable())
@@ -173,7 +175,7 @@ func TestInitialEnvironmentEstablishmentWaitsForAnObservationInFlight(t *testing
 	updateDone := make(chan struct{})
 	go func() {
 		defer close(updateDone)
-		manager.updateInterface(manager.startedCtx, &control.Interface{Index: 1, Name: "en0"})
+		manager.updateInterface(manager.startedContext(), &control.Interface{Index: 1, Name: "en0"})
 	}()
 	select {
 	case <-published:

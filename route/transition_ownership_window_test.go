@@ -79,7 +79,7 @@ func newTransitionWindowHarness(t *testing.T) *transitionWindowHarness {
 	}
 	startedCtx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	manager.startedCtx = startedCtx
+	manager.publishStartedContext(startedCtx)
 	manager.logger = logger.NOP()
 	// NewNetworkManager marks the network settled and supplies a pause manager; the harness builds the
 	// struct directly, so it establishes the same starting state.
@@ -694,7 +694,7 @@ func TestEnvironmentTransitionKeepsItsOwnTokenAcrossNewerClaim(t *testing.T) {
 	// B's body now runs through the REAL boundary function, which is where the implementation
 	// recovers its token with Load() rather than carrying the one its claim produced. B therefore
 	// picks up tokenC and settles C's ownership.
-	h.manager.boundEnvironmentTransitionLocked(h.manager.startedCtx, tokenB)
+	h.manager.boundEnvironmentTransitionLocked(h.manager.startedContext(), tokenB)
 
 	require.False(t, h.manager.NetworkTransitionStable(),
 		"B ran its body and settled the network while C's body had not run. B recovered its token "+
@@ -800,7 +800,7 @@ func TestClaimDuringRunningBodyCannotBeSettledByTheOlderTransition(t *testing.T)
 		close(bodyStarted)
 		h.manager.resetRunAccess.Lock()
 		if h.manager.transitionOwns(tokenB) {
-			h.manager.resetNetworkLocked(h.manager.startedCtx)
+			h.manager.resetNetworkLocked(h.manager.startedContext())
 		}
 		h.manager.resetRunAccess.Unlock()
 		h.manager.commitTransition(tokenB)
@@ -832,7 +832,7 @@ func TestClaimDuringRunningBodyCannotBeSettledByTheOlderTransition(t *testing.T)
 	// C performs its own boundary and settles.
 	require.True(t, h.manager.transitionOwns(tokenC))
 	h.manager.resetRunAccess.Lock()
-	h.manager.resetNetworkLocked(h.manager.startedCtx)
+	h.manager.resetNetworkLocked(h.manager.startedContext())
 	h.manager.resetRunAccess.Unlock()
 	h.manager.commitTransition(tokenC)
 

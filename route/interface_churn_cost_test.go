@@ -75,7 +75,7 @@ func TestRepeatedInterfaceChangesCostBoundedWorkAndAreReversible(t *testing.T) {
 
 	// Establish the first fingerprint: publishing it is not a transition.
 	harness.setSSID("churn-0")
-	harness.manager.updateInterface(harness.manager.startedCtx, &control.Interface{Index: 1, Name: "en0"})
+	harness.manager.updateInterface(harness.manager.startedContext(), &control.Interface{Index: 1, Name: "en0"})
 	require.True(t, waitForTransitionStable(harness.manager, 5*time.Second),
 		"the manager did not settle after establishing the first fingerprint, so no churn measurement "+
 			"below would mean anything")
