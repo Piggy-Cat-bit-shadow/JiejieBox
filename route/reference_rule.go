@@ -157,7 +157,7 @@ func collectDNSRuleReferences(rules []option.DNSRule, mode string, transports *[
 			final = true
 		case C.RuleActionTypeEvaluate:
 			*transports = append(*transports, action.EvaluateOptions.Server)
-		case C.RuleActionTypeRespond, C.RuleActionTypeReject, C.RuleActionTypePredefined:
+		case C.RuleActionTypeRespond, C.RuleActionTypeReject, C.RuleActionTypePredefined, C.RuleActionTypeAdblock:
 			final = true
 		}
 		if final && match == staticMatchAlways {

@@ -99,7 +99,7 @@ func (r *RuleAction) UnmarshalJSON(data []byte) error {
 }
 
 type _DNSRuleAction struct {
-	Action              string                       `json:"action,omitempty" enum:"route,evaluate,respond,route-options,reject,predefined"`
+	Action              string                       `json:"action,omitempty" enum:"route,evaluate,respond,route-options,reject,predefined,adblock"`
 	Race                bool                         `json:"race,omitempty"`
 	RouteOptions        DNSRouteActionOptions        `json:"-"`
 	EvaluateOptions     DNSEvaluateActionOptions     `json:"-"`
@@ -129,6 +129,11 @@ func (r DNSRuleAction) MarshalJSON() ([]byte, error) {
 		v = r.RejectOptions
 	case C.RuleActionTypePredefined:
 		v = r.PredefinedOptions
+	case C.RuleActionTypeAdblock:
+		// adblock is deliberately option-less, exactly like `respond`: it is a semantic
+		// terminal action, and every knob it could grow is a policy decision this fork made
+		// on the operator's behalf. v stays nil so MarshalJSON emits no companion object.
+		v = nil
 	default:
 		return nil, E.New("unknown DNS rule action: " + r.Action)
 	}
@@ -158,6 +163,11 @@ func (r *DNSRuleAction) UnmarshalJSONContext(ctx context.Context, data []byte) e
 		v = &r.RejectOptions
 	case C.RuleActionTypePredefined:
 		v = &r.PredefinedOptions
+	case C.RuleActionTypeAdblock:
+		// No options. v stays nil, so the branch below runs
+		// UnmarshalDisallowUnknownFields and `race`, `ttl`, `method` or any other field a user
+		// might reach for is a hard error rather than a silently ignored one.
+		v = nil
 	default:
 		return E.New("unknown DNS rule action: " + r.Action)
 	}
@@ -419,5 +429,14 @@ func dnsActionUnion(builder schema.Builder) (*schema.Node, error) {
 		{action: C.RuleActionTypeRouteOptions, structType: reflect.TypeFor[DNSRouteOptionsActionOptions](), build: raceProperty},
 		{action: C.RuleActionTypeReject, build: rejectWithRace},
 		{action: C.RuleActionTypePredefined, structType: reflect.TypeFor[DNSRouteActionPredefined](), build: raceProperty},
+		// adblock is the one DNS action with no properties at all - not even `race`.
+		//
+		// `race` is not withheld for tidiness: it means "start the real lookup before the
+		// response-bound match has decided". adblock's whole purpose is that its verdict is
+		// reached without any lookup, so a schema that offered `race` here would advertise a
+		// combination whose only possible effect is an upstream query the action exists to
+		// prevent. Leaving it out rejects that configuration at parse time, which is where a
+		// user can still see why.
+		{action: C.RuleActionTypeAdblock},
 	})
 }
