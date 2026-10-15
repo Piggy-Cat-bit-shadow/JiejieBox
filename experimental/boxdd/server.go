@@ -349,8 +349,7 @@ func (a *daemonAuthorizer) Authorize(ctx context.Context, method string) error {
 	if err != nil {
 		return status.Error(codes.Unauthenticated, err.Error())
 	}
-	desktopPrefix := "/" + DesktopService_ServiceDesc.ServiceName + "/"
-	if strings.HasPrefix(method, desktopPrefix) {
+	if hasServiceMethodPrefix(method, DesktopService_ServiceDesc.ServiceName) {
 		return nil
 	}
 	if ownerProtectedMethod(method) {
@@ -403,10 +402,62 @@ func (a *daemonAuthorizer) InvokeUnary(ctx context.Context, method string, handl
 	return handler()
 }
 
+// hasServiceMethodPrefix reports whether a method belongs to a service, whatever the peer's
+// SPELLING of the leading slash.
+//
+// # Why the slash may not be part of the comparison
+//
+// The method string these callers receive is grpc's `info.FullMethod`, which is built from
+// the HTTP/2 `:path` in `(*Server).handleStream` AFTER a conditional strip:
+//
+//	sm := stream.Method()
+//	if sm != "" && sm[0] == '/' {
+//	    sm = sm[1:]                       // <- the leading slash is removed here
+//	}
+//	...
+//	service := sm[:pos]
+//	method := sm[pos+1:]
+//
+// so `/daemon.StartedService/GetVersion` and `daemon.StartedService/GetVersion` are the SAME
+// handler with two different method strings. A prefix test that embeds the leading slash
+// therefore answers a question about the spelling rather than about the method.
+//
+// # What that cost, measured
+//
+// MEASURED before this change, with the owner recorded as `owner-user`:
+//
+//	ownerProtectedMethod("/daemon.StartedService/GetVersion")  = true
+//	ownerProtectedMethod("daemon.StartedService/GetVersion")   = false
+//	InvokeUnary(owner, canonical)  -> nil            (admitted)
+//	InvokeUnary(owner, slashless)  -> PermissionDenied "the service is not available"
+//
+// So the failure is fail-CLOSED: an owner using the other spelling is refused a method that
+// grpc routed to the same handler, and the error names a service that is in fact available.
+// It is not an escalation - the unprotected branch runs `Authorize`, whose fallback denies
+// everything that is neither desktop-prefixed nor owner-protected, so an attacker is refused
+// too.
+//
+// It is still a defect worth fixing, and not a cosmetic one. An access-control decision that
+// depends on how the caller spelled a path is one refactor away from an escalation: any
+// future change that makes the fallback permissive - a broader desktop prefix, an
+// allow-list for health or reflection, a "not protected, so allow" default - turns this into
+// the CVE-2026-33186 shape, where dispatch and authorization disagree about which method is
+// being called. The fix is to make both sides normalize the same way, which is also what
+// makes the deny branch's message true.
+//
+// `strings.CutPrefix` for exactly ONE slash, mirroring dispatch: grpc strips a single leading
+// slash and then splits on the LAST slash, so for `//svc/M` the service it looks up is
+// `/svc` - which is registered by nothing. Normalizing further than dispatch does would make
+// this predicate claim a method that dispatch will refuse, and the point of the fix is that
+// both sides agree.
+func hasServiceMethodPrefix(method string, serviceName string) bool {
+	stripped, _ := strings.CutPrefix(method, "/")
+	return strings.HasPrefix(stripped, serviceName+"/")
+}
+
 func ownerProtectedMethod(method string) bool {
-	startedPrefix := "/" + daemon.StartedService_ServiceDesc.ServiceName + "/"
-	managedPrefix := "/" + daemon.ManagedService_ServiceDesc.ServiceName + "/"
-	return strings.HasPrefix(method, startedPrefix) || strings.HasPrefix(method, managedPrefix)
+	return hasServiceMethodPrefix(method, daemon.StartedService_ServiceDesc.ServiceName) ||
+		hasServiceMethodPrefix(method, daemon.ManagedService_ServiceDesc.ServiceName)
 }
 
 func (d *Daemon) authorizeOwnerLocked(userID string) error {
