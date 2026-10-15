@@ -1,3 +1,5 @@
+//go:build linux || darwin || (windows && (amd64 || 386))
+
 package bridge
 
 import (
@@ -11,6 +13,14 @@ import (
 )
 
 // Tests for the SCOPE ownership of a bridge instance index.
+//
+// # Why this file carries the production tag
+//
+// It is a test of code that exists only where the bridge has a real backend: it calls
+// usedIndexCount (declared in index_leak_test.go) and backendBase.allocateIndex (declared in
+// packet.go), and both of those are behind the same constraint. Without it the package's tests do
+// not compile on FreeBSD, OpenBSD or NetBSD - see the note at the top of index_leak_test.go, and
+// `GOOS=freebsd go vet ./protocol/bridge/` for the exact failure.
 //
 // # Why this file exists next to index_leak_test.go
 //

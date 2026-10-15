@@ -1,3 +1,5 @@
+//go:build linux || darwin || (windows && (amd64 || 386))
+
 package bridge
 
 import (
@@ -11,6 +13,26 @@ import (
 )
 
 // Tests for the ownership of a bridge instance index.
+//
+// # Why this file carries the production tag
+//
+// The build constraint is packet.go's, and it is load-bearing rather than decorative: this file
+// reads bridgeIndexAccess and bridgeIndexInUse (declared in packet.go) and calls newBackend
+// (declared in backend.go), and BOTH files are compiled only where the bridge has a real backend.
+// Without the tag the package's TESTS do not compile on any other platform:
+//
+//	GOOS=freebsd go vet ./protocol/bridge/
+//	protocol/bridge/index_leak_test.go:31:2: undefined: bridgeIndexAccess
+//
+// That is the same class of defect as the FreeBSD route-reader break: a test written and run on the
+// platforms that have the feature, silently unbuildable on the ones that do not. The difference is
+// that this one only breaks `go test` rather than the shipped binary, which is exactly why it can
+// sit unnoticed - but it means the bridge package cannot be tested AT ALL on FreeBSD, OpenBSD or
+// NetBSD, so a regression there would be found by neither CI nor a developer.
+//
+// The condition is written out to match packet.go and backend.go character for character rather
+// than approximated: `windows && amd64` alone would drop 386, and `linux || darwin || windows`
+// would claim the tag on windows/arm64 where the backend is the stub.
 //
 // # The resource
 //
