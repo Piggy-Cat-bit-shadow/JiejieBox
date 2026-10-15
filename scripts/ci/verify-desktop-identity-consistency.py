@@ -306,6 +306,86 @@ def main():
         "the daemon's service identity",
     )
 
+    # --- every installer PowerShell file is staged into the plugin directory -------------
+    #
+    # `File /oname=$PLUGINSDIR\...` is what puts a script inside the installer, and a script
+    # that is not staged is a script the installer cannot run. NSIS resolves the path at
+    # BUILD time, so the failure is a missing file in the .exe rather than a compile error -
+    # and it surfaces only on the machine where the step mattered, which for the legacy
+    # service cleanup is an upgrade that silently leaves the previous version's service in
+    # place. A new installer-*.ps1 that nobody staged is exactly the mistake this catches.
+    staged = set(re.findall(r"installer-[a-z-]+\.ps1", nsh or ""))
+    on_disk = {
+        name
+        for name in os.listdir(os.path.join(client, "build"))
+        if name.startswith("installer-") and name.endswith(".ps1")
+    }
+    unstaged = sorted(on_disk - staged)
+    if unstaged:
+        failures.extend(
+            f"installer.nsh: {missing} exists in build/ but is never staged with"
+            " `File /oname=$PLUGINSDIR\\...`, so the installer cannot invoke it"
+            for missing in unstaged
+        )
+
+    # --- the legacy service cleanup names the right things -------------------------------
+    #
+    # This step exists to remove the service a PRE-identity version of this fork registered
+    # under the upstream client's name. Both halves of that sentence are load-bearing: the
+    # guard key must be the one only our previous version wrote (the upstream client never
+    # writes it), and the service name must be the upstream one (that is what the previous
+    # version registered). Getting either wrong turns a cleanup into a deletion of another
+    # product's service.
+    legacy = read(
+        os.path.join(client, "build", "installer-remove-legacy-service.ps1"),
+        "installer-remove-legacy-service.ps1",
+    )
+    require(
+        "installer-remove-legacy-service.ps1",
+        legacy,
+        r'^\$legacyServiceName = "([^"]+)"[ \t]*$',
+        "sing-box-daemon",
+        "the service name a pre-identity version of this fork registered",
+    )
+    require(
+        "installer.nsh",
+        nsh,
+        r'^!define LEGACY_INSTALLATION_LAYOUT_REGISTRY_KEY "([^"]+)"[ \t]*$',
+        r"SOFTWARE\SagerNet\sing-box",
+        "the layout key a pre-identity version of this fork wrote",
+    )
+    # The guard key must NOT be the key this version writes, or the step would run on every
+    # install including a fresh one, and would then be hunting for a service that a genuine
+    # upstream installation owns.
+    if install_registry_path == r"SOFTWARE\SagerNet\sing-box":
+        failures.append(
+            "installer.nsh: the current and legacy layout keys are the same; the legacy"
+            " service cleanup could not tell our previous version from the upstream client"
+        )
+    # The step has to be invoked, and only where it is safe: after the preflight, before the
+    # new service is registered.
+    if nsh is not None and "installer-remove-legacy-service.ps1" not in nsh:
+        failures.append("installer.nsh: the legacy service cleanup is never invoked")
+
+    # --- no destructive path names a directory this client does not own -------------------
+    #
+    # The uninstaller used to fall back to `RMDir /r "$APPDATA\sing-box"` when the layout key
+    # named no application data directory. That is the UPSTREAM client's directory, and this
+    # client's own default is now `%APPDATA%\jiejiebox` - so the fallback was the one
+    # destructive path in the installer that could delete another product's data. It cannot
+    # be reintroduced in any spelling: the check is on the directory name, not on the command.
+    if nsh is not None:
+        for line_number, line in enumerate(nsh.splitlines(), start=1):
+            if line.lstrip().startswith("#"):
+                continue
+            if re.search(r'RMDir\s+/r\s+"[^"]*\\' + re.escape(BRAND) + r'?"?', line):
+                continue
+            if re.search(r'RMDir\s+/r\s+"[^"]*(sing-box|nekohasekai)', line):
+                failures.append(
+                    f"installer.nsh:{line_number}: a destructive RMDir targets a directory that"
+                    f" is not this client's: {line.strip()}"
+                )
+
     # --- report -------------------------------------------------------------------------
     if failures:
         print(
