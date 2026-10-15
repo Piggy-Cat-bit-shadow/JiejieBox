@@ -6,8 +6,8 @@ import (
 	"io"
 	"net"
 	"os"
-	"syscall"
 
+	"github.com/sagernet/sing-box/common/dialer"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
@@ -108,17 +108,12 @@ func isDialFailure(err error) bool {
 // EHOSTUNREACH, ETIMEDOUT and EACCES all describe something the operator needs
 // to know about, and silently logging them at debug is how a broken upstream
 // goes unnoticed. Comparison is on syscall.Errno values, never on message text.
+// The comparison goes through dialer.ErroredWith and dialer.PeerGoneErrnos rather than a local
+// list of syscall constants, for the reason that file records: on Windows the raw comparisons are
+// dead, so nothing matched and every scanner disconnect was logged at error level. See
+// isPeerLifecycleErrno's counterpart in protocol/shadowtls for the measurement.
 func isPeerLifecycleErrno(err error) bool {
-	for _, expected := range []syscall.Errno{
-		syscall.ECONNRESET,
-		syscall.ECONNABORTED,
-		syscall.EPIPE,
-	} {
-		if errors.Is(err, expected) {
-			return true
-		}
-	}
-	return false
+	return dialer.ErroredWith(err, dialer.PeerGoneErrnos...)
 }
 
 // preAuthFailureIsError reports whether a pre-auth failure should be logged at

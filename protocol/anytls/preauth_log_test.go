@@ -207,6 +207,26 @@ func TestAnyTLSErrnoClassification(t *testing.T) {
 			{"ECONNRESET", syscall.ECONNRESET},
 			{"ECONNABORTED", syscall.ECONNABORTED},
 			{"EPIPE", syscall.EPIPE},
+
+			// --- THE WINDOWS SPELLINGS OF THE SAME THREE FACTS ---
+			//
+			// These rows are the reason this table had a hole, and they are not
+			// hypothetical. Go spells errno on Windows with the application-defined
+			// bit set, so syscall.ECONNRESET is 0x20000017 while the Winsock error
+			// for the same condition is 10054 - and 10054 is what arrives. Every row
+			// ABOVE passes on Windows for the same reason the classifier was wrong:
+			// they inject the POSIX constants the classifier compares, so both sides
+			// agree on a number production never delivers.
+			//
+			// The consequence is severity, not routing: nothing matched, so every
+			// scanner disconnect was logged at error level - the noise this predicate
+			// exists to remove - on the platform whose inbound is most exposed to it.
+			// It is the third instance of this class in the release (common/dialer,
+			// protocol/group, transport/device); the numbers are written out rather
+			// than aliased so a cleanup has to delete these rows to remove the arm.
+			{"WSAECONNRESET (10054)", syscall.Errno(10054)},
+			{"WSAECONNABORTED (10053)", syscall.Errno(10053)},
+			{"WSAEPIPE (10032)", syscall.Errno(10032)},
 		} {
 			t.Run(testCase.name, func(t *testing.T) {
 				require.True(t, isExpectedPreAuthFailure(readErr(testCase.errno)),

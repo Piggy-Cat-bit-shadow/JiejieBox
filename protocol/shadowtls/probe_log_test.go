@@ -165,6 +165,20 @@ func TestShadowTLSErrnoClassification(t *testing.T) {
 			{"ECONNRESET", syscall.ECONNRESET},
 			{"ECONNABORTED", syscall.ECONNABORTED},
 			{"EPIPE", syscall.EPIPE},
+
+			// --- THE WINDOWS SPELLINGS OF THE SAME THREE FACTS ---
+			//
+			// Go spells errno on Windows with the application-defined bit set, so
+			// syscall.ECONNRESET is 0x20000017 while the Winsock error for the same
+			// condition is 10054 - and 10054 is what arrives. Every row ABOVE passes
+			// on Windows for the same reason the classifier was wrong: they inject the
+			// POSIX constants the classifier compares, so both sides agree on a number
+			// production never delivers. Nothing matched in production, so every
+			// scanner disconnect was logged at error level - the noise this predicate
+			// exists to remove. Third instance of this class in the release.
+			{"WSAECONNRESET (10054)", syscall.Errno(10054)},
+			{"WSAECONNABORTED (10053)", syscall.Errno(10053)},
+			{"WSAEPIPE (10032)", syscall.Errno(10032)},
 		} {
 			t.Run(testCase.name, func(t *testing.T) {
 				require.True(t, shadowTLSErrorIsExpected(readErr(testCase.errno)),

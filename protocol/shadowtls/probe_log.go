@@ -6,8 +6,8 @@ import (
 	"io"
 	"net"
 	"os"
-	"syscall"
 
+	"github.com/sagernet/sing-box/common/dialer"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
@@ -113,18 +113,30 @@ func isDialFailure(err error) bool {
 // is an operator-visible fault, not scanner noise, and silently logging it at
 // debug is how a broken upstream goes unnoticed.
 //
-// The comparison is on syscall.Errno values, not on error strings.
+// The comparison goes through dialer.ErroredWith and dialer.PeerGoneErrnos rather than a local
+// list of syscall constants.
+//
+// # Why not the raw comparison this used to be
+//
+// It was:
+//
+//	for _, expected := range []syscall.Errno{
+//	    syscall.ECONNRESET, syscall.ECONNABORTED, syscall.EPIPE,
+//	} {
+//	    if errors.Is(err, expected) { return true }
+//	}
+//
+// and on Windows every one of those comparisons is DEAD. Go spells errno with the application-defined
+// bit set, so syscall.ECONNRESET is 0x20000017 while the Winsock error for the same condition is
+// 10054, and 10054 is what arrives. Nothing matched, so every scanner disconnect was logged at error
+// level - the exact noise this predicate exists to remove - on the platform whose inbound is most
+// exposed to it.
+//
+// The consequence is severity rather than routing, so it cannot lose a flow; it is fixed here anyway
+// because a local list of errno constants is how this defect survived twice already in this release
+// (common/dialer, then protocol/group). One set, one place, both spellings.
 func isPeerLifecycleErrno(err error) bool {
-	for _, expected := range []syscall.Errno{
-		syscall.ECONNRESET,
-		syscall.ECONNABORTED,
-		syscall.EPIPE,
-	} {
-		if errors.Is(err, expected) {
-			return true
-		}
-	}
-	return false
+	return dialer.ErroredWith(err, dialer.PeerGoneErrnos...)
 }
 
 // shadowTLSErrorIsExpected reports whether a ShadowTLS inbound error should be

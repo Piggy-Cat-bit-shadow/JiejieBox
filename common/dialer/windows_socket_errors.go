@@ -57,6 +57,12 @@ const (
 	// wsaETIMEDOUT is the kernel's connect timeout. It is kept out of PathFailureErrnos for the reason
 	// recorded there, and lives in TimeoutErrnos instead.
 	wsaETIMEDOUT = syscall.Errno(10060)
+
+	// wsaECONNABORTED and wsaEPIPE complete the peer-lifecycle triple with wsaECONNRESET above. Both
+	// are matched only by PeerGoneErrnos, which explains why a log-severity question turned out to need
+	// the same numbers as the routing ones.
+	wsaECONNABORTED = syscall.Errno(10053)
+	wsaEPIPE        = syscall.Errno(10032)
 )
 
 // ErroredWith reports whether err matches any of the given errnos, in either the POSIX spelling this
@@ -155,5 +161,36 @@ var (
 	// forcing one policy on both callers.
 	TimeoutErrnos = []syscall.Errno{
 		syscall.ETIMEDOUT, wsaETIMEDOUT,
+	}
+
+	// PeerGoneErrnos are "this socket's peer went away mid-conversation", and they exist because a
+	// LOG-SEVERITY question turned out to need the same numbers as the routing questions above.
+	//
+	// protocol/anytls and protocol/shadowtls downgrade a peer lifecycle error to debug, because a
+	// scanner that opens a connection and leaves is noise rather than an operator-visible fault, while
+	// a refused or unreachable handshake target stays at error. Both asked it with the same raw list:
+	//
+	//	for _, expected := range []syscall.Errno{
+	//	    syscall.ECONNRESET, syscall.ECONNABORTED, syscall.EPIPE,
+	//	} {
+	//	    if errors.Is(err, expected) { return true }
+	//	}
+	//
+	// which is the dead-on-Windows shape for the third time in this release: the Winsock values are
+	// 10054, 10053 and 10032, so on Windows NOTHING matched and every scanner disconnect was logged at
+	// error. The consequence here is severity rather than routing - it cannot lose a flow - so it is
+	// the mildest instance of the class; it is fixed in the same place rather than with a third local
+	// list, because a local list is how the first two survived.
+	//
+	// Why these three together, when ResetErrnos is a separate set: the QUESTION is different. ResetErrnos
+	// answers "must this FLOW be terminal", where a reset is the one error a second member would
+	// reproduce, and its doc gives that consumer. This set answers "is this a peer lifecycle event or an
+	// operator-visible fault", which is why EPIPE and ECONNABORTED belong to it and not to that one.
+	// Sharing the numbers does not force one policy on both callers - the same reasoning TimeoutErrnos
+	// records above.
+	PeerGoneErrnos = []syscall.Errno{
+		syscall.ECONNRESET, wsaECONNRESET,
+		syscall.ECONNABORTED, wsaECONNABORTED,
+		syscall.EPIPE, wsaEPIPE,
 	}
 )
