@@ -374,22 +374,79 @@ func (e *Endpoint) Start(postStart bool) error {
 			wgPeers = append(wgPeers, wgPeer)
 		}
 	}
+	// Register the pause callbacks BEFORE taking the lock.
+	//
+	// # Why this call may not sit inside the critical section (LX 084's family)
+	//
+	// The pause manager invokes every callback INLINE, while holding its own `access` mutex
+	// (sing/service/pause/default.go: `DevicePause` takes `d.access` and calls `d.emit`, a plain
+	// `for … element.Value(event)` loop with no unlock in between). `onPauseUpdated` takes
+	// `stateAccess`, because it must read `e.device` and publish `e.networkPaused`. Registering
+	// under `stateAccess` therefore put the two locks in both orders at once:
+	//
+	//	startDevice / Close : stateAccess -> pause.access   (RegisterCallback / UnregisterCallback)
+	//	DevicePause et al.  : pause.access -> stateAccess   (emit -> onPauseUpdated)
+	//
+	// That is an ABBA deadlock, and its blast radius is the LX 084 one rather than a stalled
+	// endpoint: `pause.access` is held forever, so every later `emit`, `RegisterCallback` and
+	// `RegisterTicker` blocks behind it - including `URLTestGroup.Touch`'s `RegisterTicker` on the
+	// DIAL path, which takes it under the group's own lock. Every new flow through every urltest
+	// group stops, with no log line, until the process restarts.
+	//
+	// `Endpoint.Close` runs on every config reload and every Box teardown, and the pause events
+	// arrive from platform power handlers on an independent goroutine set, so the pair is reached by
+	// ordinary use rather than by an exotic interleaving.
+	//
+	// # What replaces the lock here, and why it is enough
+	//
+	// The lock was there so a `Close` that is already waiting sees the callbacks and gives them up.
+	// That is preserved by ordering instead of by mutual exclusion: the handles are PUBLISHED under
+	// `stateAccess` below, in the same critical section that checks `closing`. So the two orders are
+	// exhaustive -
+	//
+	//   - Close first: `closing` is set, the check below returns os.ErrClosed before anything is
+	//     published, and the registration is undone on the way out;
+	//   - registration first: the handles are already in `e.pauseCallback` when Close takes the
+	//     lock, and Close gives them up.
+	//
+	// The callback is registered before the device is published, which is the safe direction: an
+	// event that arrives in that window finds `e.device` nil and returns, exactly as it did before
+	// this change, and the publish below is what makes later events effective.
+	//
+	// # Why the delivery stays SYNCHRONOUS
+	//
+	// A pause is a resource contract, not a notification: `EventNetworkPause` must have RELEASED the
+	// UDP socket by the time `DevicePause()` returns, which is what the platform suspend path relies
+	// on (`TestPauseWakeCyclesInterleavedWithRebindsKeepOneSocket` asserts the release at the
+	// boundary with no grace period). Handing the event to a queue would make that contract a race,
+	// so the cycle is broken on THIS side instead of by deferring the callback.
+	var pauseManager pause.Manager
+	var registeredPause, registeredWake *list.Element[pause.Callback]
+	pauseManager = service.FromContext[pause.Manager](e.options.Context)
+	registered := pauseManager != nil
+
 	e.stateAccess.Lock()
 	if e.closing {
 		// Close ran while this device was being built. Nothing was published, so nothing owns the
 		// device: close it here rather than leaving it running against a torn-down endpoint.
+		// The registrations above are released OUTSIDE the lock, so a Close that is already holding
+		// it is not blocked behind us.
 		e.stateAccess.Unlock()
+		if registered {
+			pauseManager.UnregisterCallback(registeredPause)
+			pauseManager.UnregisterCallback(registeredWake)
+		}
 		wgDevice.Close()
 		return os.ErrClosed
 	}
 	e.tunDevice.SetDevice(wgDevice, wgPeers)
 	e.device.Store(wgDevice)
-	e.pause = service.FromContext[pause.Manager](e.options.Context)
-	if e.pause != nil {
-		// Registered under the lock so a Close that is already waiting sees the callbacks and
-		// unregisters them, instead of leaving them live on a closed endpoint.
-		e.pauseCallback = e.pause.RegisterCallback(e.onPauseUpdated)
-		e.deviceWakeCallback = e.pause.RegisterCallback(e.onDeviceWake)
+	e.pause = pauseManager
+	if registered {
+		// Published under the lock, in the same critical section as the `closing` check above: that
+		// pairing is what replaces the mutual exclusion the registration used to hold.
+		e.pauseCallback = registeredPause
+		e.deviceWakeCallback = registeredWake
 	}
 	e.allowedIPs = wgDevice.AllowedIPs()
 	e.stateAccess.Unlock()
@@ -653,22 +710,37 @@ func (e *Endpoint) Close() error {
 		e.removeRegistration()
 		e.removeRegistration = nil
 	}
+	// The handles are taken OUT of the endpoint under the lock, and released to the manager only
+	// after it is dropped. Unregistering inside the critical section is the other half of the ABBA
+	// cycle described at the registration site: `UnregisterCallback` needs `pause.access`, which a
+	// concurrent `emit` holds while it waits for `stateAccess`. Clearing the fields under the lock
+	// still guarantees exactly-one unregister, including for a repeated Close.
 	e.stateAccess.Lock()
 	e.closing = true
-	if e.pauseCallback != nil {
-		e.pause.UnregisterCallback(e.pauseCallback)
-		e.pauseCallback = nil
-	}
-	if e.deviceWakeCallback != nil {
-		e.pause.UnregisterCallback(e.deviceWakeCallback)
-		e.deviceWakeCallback = nil
-	}
+	pauseCallback := e.pauseCallback
+	deviceWakeCallback := e.deviceWakeCallback
+	e.pauseCallback = nil
+	e.deviceWakeCallback = nil
 	wgDevice := e.device.Swap(nil)
 	if wgDevice != nil {
 		wgDevice.Down()
 		wgDevice.Close()
 	}
 	e.stateAccess.Unlock()
+
+	// Released to the manager only now that `stateAccess` is dropped. See the registration site:
+	// `UnregisterCallback` needs `pause.access`, which a concurrent `emit` holds while it waits for
+	// `stateAccess`, so unregistering inside the critical section would close the same cycle from
+	// the other side.
+	pauseManager := e.pause
+	if pauseManager != nil {
+		if pauseCallback != nil {
+			pauseManager.UnregisterCallback(pauseCallback)
+		}
+		if deviceWakeCallback != nil {
+			pauseManager.UnregisterCallback(deviceWakeCallback)
+		}
+	}
 
 	if e.egressPool != nil {
 		e.egressPool.Close()
@@ -695,6 +767,19 @@ func (e *Endpoint) BindUpdate() error {
 	return wgDevice.BindUpdate()
 }
 
+// onPauseUpdated applies a network pause or wake to the live device.
+//
+// # Why this is synchronous, and why that is the constraint the fix had to respect
+//
+// A pause is a resource contract, not a notification: `EventNetworkPause` must have RELEASED the
+// device's UDP socket by the time the manager's `DevicePause()` returns, because the platform
+// suspend path relies on it and `TestPauseWakeCyclesInterleavedWithRebindsKeepOneSocket` asserts
+// the release at the boundary with no grace period. Deferring this to a queue would turn that
+// contract into a race.
+//
+// So the deadlock this callback used to take part in is NOT broken here: it is broken at the
+// registration sites, by keeping `stateAccess` out of the calls into the pause manager. See the
+// comment at `RegisterCallback` in startDevice.
 func (e *Endpoint) onPauseUpdated(event int) {
 	e.stateAccess.Lock()
 	defer e.stateAccess.Unlock()

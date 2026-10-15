@@ -16,6 +16,7 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing/common/buf"
 	E "github.com/sagernet/sing/common/exceptions"
+	M "github.com/sagernet/sing/common/metadata"
 
 	"golang.org/x/crypto/hkdf"
 )
@@ -363,7 +364,11 @@ find:
 		metadata.SniffContext = fragments
 		return E.Cause1(ErrNeedMoreData, err)
 	}
-	metadata.Domain = fingerprint.ServerName
+	// Normalised through the sockaddr parser for the same reason as the TLS sniffer (see
+	// common/sniff/tls.go): the SNI in a QUIC ClientHello is peer-chosen and validated for structure
+	// only, so `1.2.3.4` or `[::1]` would otherwise be written into the domain plane as a domain.
+	// The old oracle for this family is LX 19f57607.
+	metadata.Domain = M.ParseSocksaddrHostPort(fingerprint.ServerName, 0).Fqdn
 	for metadata.Client == "" {
 		if frames.count == 1 {
 			metadata.Client = C.ClientFirefox

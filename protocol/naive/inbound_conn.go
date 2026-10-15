@@ -546,6 +546,63 @@ func (c *hijackedConn) Read(p []byte) (int, error) {
 // stopping at this adapter.
 func (c *hijackedConn) Upstream() any { return c.Conn }
 
+// WriterReplaceable reports that this adapter adds nothing to the WRITE path.
+//
+// # Why this method is load-bearing rather than a formality
+//
+// Adapter wrappers are unwrapped by `N.UnwrapWriter`, which stops at the first
+// layer whose `WriterReplaceable()` is false:
+//
+//	func UnwrapWriter(writer io.Writer) io.Writer {
+//	    if u, ok := writer.(WriterWithUpstream); !ok || !u.WriterReplaceable() { return writer }
+//	    ...
+//	}
+//
+// This type intercepts only READS - the buffered bytes net/http left in the
+// hijacked *bufio.ReadWriter - and its `Write` is the embedded conn's, i.e. the
+// socket, with nothing buffered on the write side. So the write path is
+// transparent and the walk must continue through it.
+//
+// It did not continue before, because `Upstream()` was declared without this
+// method. The walk stopped here, the `.(N.WriteCloser)` assertion in
+// route/conn.go's half-close branch then failed, and that branch fell back to a
+// full `destination.Close()`: a peer that half-closed its side - an HTTP/1.0-style
+// response-then-close, or any full-duplex tunnel where the origin finishes
+// writing while the client is still uploading - had the client's upload
+// destroyed instead of half-closed, so a legitimate in-flight request body was
+// truncated at the proxy.
+//
+// `protocol/socks/guard.go`'s `forwardedConn` is the correct shape in the same
+// tree: it declares `ReaderReplaceable`/`WriterReplaceable` and forwards
+// `CloseRead`/`CloseWrite`, precisely so a wrapper that adds no capability does
+// not switch the core's optional interfaces off.
+func (c *hijackedConn) WriterReplaceable() bool { return true }
+
+// ReaderReplaceable is false: this type's whole purpose is to consume the bytes
+// the HTTP server already read, so its reader is NOT the socket's.
+func (c *hijackedConn) ReaderReplaceable() bool { return false }
+
+// CloseWrite forwards the half-close to the socket.
+//
+// It is declared explicitly rather than left to the unwrap walk so that a caller
+// holding this exact type still gets half-close semantics; a wrapper that
+// silently drops `CloseWrite` turns every half-close into a full close, which is
+// the other half of the same defect.
+func (c *hijackedConn) CloseWrite() error {
+	if closeWriter, isCloseWriter := c.Conn.(interface{ CloseWrite() error }); isCloseWriter {
+		return closeWriter.CloseWrite()
+	}
+	return nil
+}
+
+// CloseRead forwards the read half-close to the socket, for the same reason.
+func (c *hijackedConn) CloseRead() error {
+	if closeReader, isCloseReader := c.Conn.(interface{ CloseRead() error }); isCloseReader {
+		return closeReader.CloseRead()
+	}
+	return nil
+}
+
 // writeFrameForTest draws a padding size and emits one frame.
 //
 // It exists so the writer-contract tests can exercise a single frame with a

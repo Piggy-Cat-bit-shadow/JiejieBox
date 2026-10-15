@@ -364,13 +364,8 @@ var (
 	randomFingerprint     utls.ClientHelloID
 	randomizedFingerprint utls.ClientHelloID
 
-	// modernFingerprints is the pool `utls.fingerprint: random` draws from. It is
-	// a package variable rather than a local of init because the REALITY
-	// fingerprint register asserts what that draw can land on: the pool contains
-	// four presets that cannot present the post-quantum hybrid key share, so a
-	// `random` REALITY client is only able to complete a handshake against a
-	// current reference when the draw happened to be Chrome.
-	modernFingerprints []utls.ClientHelloID
+	// modernFingerprints and realityFingerprints are declared with their rationale in init, below,
+	// because that is where they are populated and where the two-list decision has to be read.
 
 	// uTLSFingerprints is the table of names `utls.fingerprint` accepts.
 	//
@@ -385,6 +380,41 @@ var (
 	uTLSFingerprints map[string]utls.ClientHelloID
 )
 
+// modernFingerprints is the pool `random` draws from, and realityFingerprints is the subset of it
+// that can actually complete a REALITY handshake.
+//
+// # Why these are two lists and not one
+//
+// A REALITY reference at or after Xray v26.9.8 derives the auth key from the X25519MLKEM768 hybrid
+// key share and answers a greeting without one with the camouflage site. Whether a preset carries
+// that share is decided by the pinned uTLS, and on this pin it is:
+//
+//	Chrome/133   hybrid    Firefox/148 hybrid    Safari/26.3 hybrid
+//	Edge/85      no        iOS/14      no
+//
+// `Edge/85` and `iOS/14` are pinned by the dependency itself - uTLS records that HelloEdge_106 is
+// incompatible with the library, and no iOS preset newer than 14 exists in the pin - so neither can
+// be fixed here, in any revision. `edge`, `ios`, `qq`, `android` and `360` therefore stay SELECTABLE
+// names: choosing one explicitly is the operator's tradeoff and it works for every non-REALITY
+// transport.
+//
+// What may not stay is `random` drawing from a pool that contains them. `randomFingerprint` is
+// resolved ONCE per process, so the draw decides whether every REALITY outbound in that process can
+// authenticate at all: with the incompatible presets in the pool, two draws in five produce a client
+// whose REALITY nodes all fail with "reality verification failed" - the same message a wrong public
+// key produces - and the only way out is to restart and hope. That is not a tradeoff the operator
+// made, and it is not the compatibility statement `random` is meant to make.
+//
+// The distinction is the one the register records for `edge` and `ios`: an explicit choice is a
+// documented gap, a randomised process-wide outage is a defect.
+var (
+	// modernFingerprints is every browser preset this fork accepts as a "modern" greeting.
+	modernFingerprints []utls.ClientHelloID
+	// realityFingerprints is the subset that presents X25519MLKEM768, and is what `random` draws
+	// from. It must stay a subset of modernFingerprints, and a test asserts that.
+	realityFingerprints []utls.ClientHelloID
+)
+
 func init() {
 	modernFingerprints = []utls.ClientHelloID{
 		utls.HelloChrome_Auto,
@@ -393,7 +423,12 @@ func init() {
 		utls.HelloSafari_Auto,
 		utls.HelloIOS_Auto,
 	}
-	randomFingerprint = modernFingerprints[rand.Intn(len(modernFingerprints))]
+	realityFingerprints = []utls.ClientHelloID{
+		utls.HelloChrome_Auto,
+		utls.HelloFirefox_Auto,
+		utls.HelloSafari_Auto,
+	}
+	randomFingerprint = realityFingerprints[rand.Intn(len(realityFingerprints))]
 
 	weights := utls.DefaultWeights
 	weights.TLSVersMax_Set_VersionTLS13 = 1

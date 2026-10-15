@@ -45,6 +45,7 @@ package power
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 )
@@ -826,29 +827,84 @@ func (g *Governor) setStateLocked(state State) {
 // never see the released state before it has been told that the pool it is about to use is stale.
 // The pool is retired here, on the boundary, and the work released here is the work that will then
 // dial a fresh path.
+//
+// # Why the lists are COPIED, and why the pass repeats
+//
+// The observers are invoked with the lock released, because an observer's job is to retire
+// connections and that takes locks of its own. That leaves two distinct defects to avoid, and
+// snapshotting the SLICE HEADER avoids neither:
+//
+//   - the header is two words and copying it does not copy the backing array, so `AddObserver`'s
+//     append writes the memory a walk over the snapshot is reading. The walk must own its list, so
+//     the copy is a real copy.
+//   - `pendingNotify` / `pendingReuse` are cleared before the walk, so an observer that registers
+//     while the walk is running is told nothing AND has no debt left to be paid later. For the state
+//     list that merely delays it until the next transition, but a REUSE BOUNDARY is a one-off event:
+//     `ReuseEpoch` has already moved and the boundary will never be republished, so an observer that
+//     starts at a boundary - a subsystem bringing up a child component as the device resumes - would
+//     keep using retired resources forever. Entries registered during a pass are therefore delivered
+//     in the same call.
+//
+// The repetition is bounded rather than unconditional: an observer that registers another observer
+// on every delivery must not turn one transition into an unbounded loop, and a caller on a platform
+// callback thread must not be held there indefinitely.
+//
+// A pass repeats only when a registration actually happened while it was walking, which is measured
+// by the list LENGTH under the lock. Making the repeat unconditional instead would re-notify the
+// whole list on every transition, and for a state observer that is not harmless: the notification is
+// the edge a subsystem acts on, and a duplicated edge is a duplicated retire-and-redial.
 func (g *Governor) flushNotifications() {
-	g.access.Lock()
-	if !g.pendingNotify && !g.pendingReuse {
+	const maxPasses = 8
+	for pass := 0; pass < maxPasses; pass++ {
+		g.access.Lock()
+		if !g.pendingNotify && !g.pendingReuse {
+			g.access.Unlock()
+			return
+		}
+		g.pendingNotify = false
+		pendingReuse := g.pendingReuse
+		g.pendingReuse = false
+		state := g.state
+		boundary := g.lastBoundary
+		observers := slices.Clone(g.observers)
+		observedCount := len(g.observers)
+		var reuseObservers []ReuseObserver
+		reuseObservedCount := 0
+		if pendingReuse {
+			reuseObservers = slices.Clone(g.reuseObservers)
+			reuseObservedCount = len(g.reuseObservers)
+		}
 		g.access.Unlock()
-		return
+
+		for _, observer := range observers {
+			observer(state)
+		}
+		for _, observer := range reuseObservers {
+			observer(boundary)
+		}
+
+		// Did anything register while this pass was walking? Those entries were not in the copies
+		// above, and the debt they would have been paid from was cleared before the walk, so they
+		// are owed this same transition.
+		g.access.Lock()
+		addedDuringPass := len(g.observers) > observedCount ||
+			(pendingReuse && len(g.reuseObservers) > reuseObservedCount)
+		if addedDuringPass {
+			if len(g.observers) > observedCount {
+				g.pendingNotify = true
+			}
+			if pendingReuse && len(g.reuseObservers) > reuseObservedCount {
+				g.pendingReuse = true
+			}
+		}
+		g.access.Unlock()
+		if !addedDuringPass {
+			return
+		}
 	}
-	g.pendingNotify = false
-	pendingReuse := g.pendingReuse
-	g.pendingReuse = false
-	state := g.state
-	boundary := g.lastBoundary
-	observers := g.observers
-	reuseObservers := g.reuseObservers
-	g.access.Unlock()
-	for _, observer := range observers {
-		observer(state)
-	}
-	if !pendingReuse {
-		return
-	}
-	for _, observer := range reuseObservers {
-		observer(boundary)
-	}
+	// The bound was reached with more registrations outstanding. They are served by the next
+	// transition; this pass leaves the flag CLEARED, so the governor is not left owing a debt it can
+	// never discharge.
 }
 
 // ReuseEpoch reports the current reuse epoch, which is zero until a resume boundary the policy

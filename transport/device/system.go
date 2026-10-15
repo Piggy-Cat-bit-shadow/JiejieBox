@@ -137,15 +137,19 @@ func (d *systemDevice) readLoop(tunInterface tun.Tun, mtu int) {
 	frontHeadroom := d.options.PacketFrontHeadroom
 	rearHeadroom := d.options.PacketRearHeadroom
 	readBuffer := make([]byte, systemDeviceReadBufferSize)
+	var readRetry tun.ReadRetry
 	for {
 		readN, err := tunInterface.Read(readBuffer)
 		if err != nil {
-			if E.IsClosed(err) {
+			// A transient read error must not end the datapath (LX 4537a1ac), and a persistent one
+			// must not spin (LX 3f0958bf). See readErrorIsFatal.
+			if d.readErrorIsFatal(err) {
 				return
 			}
-			d.options.Logger.Error(E.Cause(err, "read packet"))
-			return
+			readRetry.Wait(err)
+			continue
 		}
+		readRetry.Reset()
 		if readN <= tun.PacketOffset {
 			continue
 		}
@@ -174,6 +178,7 @@ func (d *systemDevice) readLoopLinux(tunInterface tun.LinuxTUN, batchSize int, m
 		packetBuffers[i] = buf.NewSize(packetSize)
 	}
 	defer buf.ReleaseMulti(packetBuffers)
+	var readRetry tun.ReadRetry
 	for {
 		for i, packetBuffer := range packetBuffers {
 			packetBuffer.Reset()
@@ -199,18 +204,23 @@ func (d *systemDevice) readLoopLinux(tunInterface tun.LinuxTUN, batchSize int, m
 			outboundBuffers = outboundBuffers[:0]
 		}
 		if readErr != nil {
-			if E.IsClosed(readErr) {
+			// The write half above deliberately swallows its error and keeps looping
+			// (LX 4537a1ac); the read half must not do the opposite and end the loop on an error
+			// that is merely a queue condition. See readErrorIsFatal.
+			if d.readErrorIsFatal(readErr) {
 				return
 			}
-			d.options.Logger.Error(E.Cause(readErr, "batch read packet"))
-			return
+			readRetry.Wait(readErr)
+			continue
 		}
+		readRetry.Reset()
 	}
 }
 
 func (d *systemDevice) readLoopDarwin(tunInterface tun.DarwinTUN) {
 	frontHeadroom := d.options.PacketFrontHeadroom
 	rearHeadroom := d.options.PacketRearHeadroom
+	var readRetry tun.ReadRetry
 	for {
 		packetBuffers, readErr := tunInterface.BatchRead(frontHeadroom, rearHeadroom)
 		outboundBuffers := packetBuffers[:0]
@@ -233,13 +243,53 @@ func (d *systemDevice) readLoopDarwin(tunInterface tun.DarwinTUN) {
 			}
 		}
 		if readErr != nil {
-			if E.IsClosed(readErr) || E.IsMulti(readErr, syscall.EBADF) {
+			if d.readErrorIsFatal(readErr) {
 				return
 			}
-			d.options.Logger.Error(E.Cause(readErr, "batch read packet"))
-			return
+			readRetry.Wait(readErr)
+			continue
 		}
+		readRetry.Reset()
 	}
+}
+
+// readErrorIsFatal reports whether a TUN read error ends the device's read loop for good.
+//
+// # The two failures this splits apart
+//
+// LX 4537a1ac and LX 3f0958bf are the two halves of one question, and a read loop can only be
+// wrong in one direction or the other:
+//
+//   - returning on ANY error turns a momentary queue condition into a permanent black hole. The
+//     process stays up, the tunnel still reports connected, and nothing restarts this goroutine -
+//     `Start` is called once per device lifetime - so every later packet is dropped until the
+//     configuration is reloaded;
+//   - `continue`ing on EVERY error turns a permanent one into a spin: error, continue, error,
+//     continue, at 100% of a core, with a log line per iteration.
+//
+// The recoverability test is the pinned dependency's own (`tun.IsRecoverableReadError`), which is
+// the contract the TUN implementations are written against: `ENOBUFS` and `ENOMEM` are what
+// Darwin's `recvmsg_x` and Linux's batch reads report when the queue is full, and they are exactly
+// the errors that should be retried with backoff rather than treated as teardown.
+//
+// # Why this is not a callsite-only patch
+//
+// The same predicate and the same backoff are already applied by `protocol/bridge/backend_linux.go`,
+// which reads the same TUN through the same `BatchRead`. This file was the one place that did not
+// use them, so the two datapaths disagreed about what an `ENOBUFS` means.
+//
+// A fatal error is still logged at Error, and a recoverable one at Debug with the retry's own
+// escalating delay, so a persistently full queue is visible without becoming a log storm.
+func (d *systemDevice) readErrorIsFatal(err error) bool {
+	if E.IsClosed(err) || E.IsMulti(err, syscall.EBADF) {
+		return true
+	}
+	if tun.IsRecoverableReadError(err) {
+		d.options.Logger.Debug(E.Cause(err, "read packet"))
+		return false
+	}
+	d.options.Logger.Error(E.Cause(err, "read packet"))
+	return true
 }
 
 func (d *systemDevice) UpdateConfiguration(configuration Configuration) error {
