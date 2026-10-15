@@ -12,12 +12,26 @@ import (
 // boundary: the Unavailable cases are the ones where a hard fail-fast is allowed, and every other
 // case must come back as something that races.
 
+// observation is an interface that is up and carrying the given addresses.
+//
+// Up is the default because a down interface is the exception a test should have to ask for: every
+// other case in this file is about addressing, and a helper that defaulted to down would make those
+// cases silently about the wrong thing.
 func observation(name string, addresses ...string) InterfaceObservation {
+	return InterfaceObservation{Name: name, Up: true, Addresses: mustPrefixes(addresses...)}
+}
+
+// downObservation is an interface that is present in the list but cannot carry traffic.
+func downObservation(name string, addresses ...string) InterfaceObservation {
+	return InterfaceObservation{Name: name, Up: false, Addresses: mustPrefixes(addresses...)}
+}
+
+func mustPrefixes(addresses ...string) []netip.Prefix {
 	parsed := make([]netip.Prefix, 0, len(addresses))
 	for _, address := range addresses {
 		parsed = append(parsed, netip.MustParsePrefix(address))
 	}
-	return InterfaceObservation{Name: name, Addresses: parsed}
+	return parsed
 }
 
 func TestEvaluateSeparatesProvableFromUnproven(t *testing.T) {
@@ -122,10 +136,37 @@ func TestEvaluateDoesNotCountAnEmptyAddressListAsAddressing(t *testing.T) {
 func TestEvaluateIgnoresInvalidAddresses(t *testing.T) {
 	capability := Evaluate([]InterfaceObservation{{
 		Name:      "en0",
+		Up:        true,
 		Addresses: []netip.Prefix{{}},
 	}})
 	require.Equal(t, StateUnavailable, capability.IPv4)
 	require.Equal(t, StateUnavailable, capability.IPv6)
+}
+
+// TestUsableInterfacesDropsAnInterfaceThatIsNotUp is the invariant that has to hold at THIS boundary
+// rather than in each caller.
+//
+// A disconnected link keeps its address, and the platform's interface list is not required to hide it:
+// one producer of that list is only ever populated with up interfaces, while the other hands over
+// whatever the platform reported. A check that lived in the first caller would be dead code there and
+// missing in the second - so it lives here, where both inputs arrive.
+func TestUsableInterfacesDropsAnInterfaceThatIsNotUp(t *testing.T) {
+	usable, ok := UsableInterfaces([]InterfaceObservation{
+		downObservation("eth0", "192.168.1.10/24", "2001:db8:dead::1/64"),
+	}, nil)
+	require.False(t, ok, "a down interface is not something to look at")
+	require.Empty(t, usable)
+	require.Equal(t, StateUnknown, Evaluate(usable).IPv6,
+		"and with nothing to look at the answer is Unknown, not a hard verdict")
+
+	// Up alongside down: the down one contributes nothing, the up one decides.
+	usable, ok = UsableInterfaces([]InterfaceObservation{
+		downObservation("eth0", "2001:db8:dead::1/64"),
+		observation("eth1", "192.168.1.10/24"),
+	}, nil)
+	require.True(t, ok)
+	require.Equal(t, StateUnavailable, Evaluate(usable).IPv6,
+		"the down interface's stale IPv6 address must not make IPv6 look present")
 }
 
 // TestEvaluateTreatsMappedIPv4AsIPv4 mirrors classifyAddress in the dialer: ::ffff:1.2.3.4 is a

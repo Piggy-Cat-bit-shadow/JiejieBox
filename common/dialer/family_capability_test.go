@@ -77,37 +77,62 @@ var (
 	_ adapter.NetworkFamilyCapabilitySnapshotter = (*capabilityManager)(nil)
 )
 
-// capabilityDialer wraps a fake transport in a real DefaultDialer, so the scheduler, the health and
-// the local-family filter under test are the production ones. Only the socket is fake.
-type capabilityDialer struct {
+// capabilityLeaf is a plain dialer whose fake transport is driven by a real DefaultDialer's
+// capability.
+//
+// # Why the leaf and the parallel layer are two types
+//
+// A dialer that also implements ParallelInterfaceDialer is wrapped by NewResolveDialer as a
+// resolveParallelNetworkDialer, which is correct in production and wrong for a test that wants the
+// ordinary resolution path. Keeping the leaf plain is what lets the same doubles exercise both
+// shapes - the parallel one for the direct outbound, the plain one for a proxy endpoint - without
+// either test accidentally running the other's code.
+type capabilityLeaf struct {
 	owner   *DefaultDialer
 	inner   *stallingDialer
 	manager *capabilityManager
 }
 
-func newCapabilityDialer(t *testing.T, ipv4 netcap.FamilyState, ipv6 netcap.FamilyState) *capabilityDialer {
-	t.Helper()
-	manager := newCapabilityManager(ipv4, ipv6)
-	owner := &DefaultDialer{familyHealth: newFamilyHealth()}
-	owner.familySnapshot = manager.NetworkFamilyCapabilitySnapshot
-	inner := newStallingDialer()
-	return &capabilityDialer{owner: owner, inner: inner, manager: manager}
-}
-
-func (d *capabilityDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+func (d *capabilityLeaf) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	return d.inner.DialContext(ctx, network, destination)
 }
 
-func (d *capabilityDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+func (d *capabilityLeaf) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	return d.inner.ListenPacket(ctx, destination)
 }
 
-func (d *capabilityDialer) newDualStackScheduler(fallbackDelay time.Duration) *candidateScheduler {
+func (d *capabilityLeaf) newDualStackScheduler(fallbackDelay time.Duration) *candidateScheduler {
 	return d.owner.newDualStackScheduler(fallbackDelay)
 }
 
-func (d *capabilityDialer) localFamilyPolicy() localFamilyPolicy {
+func (d *capabilityLeaf) localFamilyPolicy() localFamilyPolicy {
 	return d.owner.localFamilyPolicy()
+}
+
+func (d *capabilityLeaf) tried() []netip.Addr {
+	d.inner.access.Lock()
+	defer d.inner.access.Unlock()
+	out := make([]netip.Addr, len(d.inner.tried))
+	copy(out, d.inner.tried)
+	return out
+}
+
+// capabilityDialer adds the parallel-interface shape on top of the leaf, which is what the direct
+// outbound holds.
+type capabilityDialer struct {
+	*capabilityLeaf
+}
+
+func newCapabilityDialer(t *testing.T, ipv4 netcap.FamilyState, ipv6 netcap.FamilyState) *capabilityDialer {
+	t.Helper()
+	return &capabilityDialer{capabilityLeaf: newCapabilityLeaf(ipv4, ipv6)}
+}
+
+func newCapabilityLeaf(ipv4 netcap.FamilyState, ipv6 netcap.FamilyState) *capabilityLeaf {
+	manager := newCapabilityManager(ipv4, ipv6)
+	owner := &DefaultDialer{familyHealth: newFamilyHealth()}
+	owner.familySnapshot = manager.NetworkFamilyCapabilitySnapshot
+	return &capabilityLeaf{owner: owner, inner: newStallingDialer(), manager: manager}
 }
 
 // DialParallelInterface satisfies ParallelInterfaceDialer. The scheduler only uses it to route the
@@ -118,14 +143,6 @@ func (d *capabilityDialer) DialParallelInterface(ctx context.Context, network st
 
 func (d *capabilityDialer) ListenSerialInterfacePacket(ctx context.Context, destination M.Socksaddr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, error) {
 	return nil, context.Canceled
-}
-
-func (d *capabilityDialer) tried() []netip.Addr {
-	d.inner.access.Lock()
-	defer d.inner.access.Unlock()
-	out := make([]netip.Addr, len(d.inner.tried))
-	copy(out, d.inner.tried)
-	return out
 }
 
 var (
@@ -349,7 +366,11 @@ func TestDialerWithoutACapabilityIsUnchanged(t *testing.T) {
 	require.Nil(t, owner.familySnapshot, "a DefaultDialer built without a manager has no snapshot")
 
 	inner := newStallingDialer()
-	dialer := &capabilityDialer{owner: owner, inner: inner, manager: newCapabilityManager(netcap.StateUnknown, netcap.StateUnknown)}
+	dialer := &capabilityDialer{capabilityLeaf: &capabilityLeaf{
+		owner:   owner,
+		inner:   inner,
+		manager: newCapabilityManager(netcap.StateUnknown, netcap.StateUnknown),
+	}}
 	connectImmediately(dialer)
 
 	conn, err := DialParallelNetwork(context.Background(), dialer, "tcp",
@@ -601,7 +622,11 @@ func TestRecoveryDoesNotOfferCandidatesTheMachineCannotDial(t *testing.T) {
 	})
 
 	t.Run("no capability reported leaves the list exactly as it was", func(t *testing.T) {
-		silent := &resolveDialer{dialer: &capabilityDialer{owner: &DefaultDialer{}, inner: newStallingDialer(), manager: newCapabilityManager(netcap.StateUnavailable, netcap.StateUnavailable)}}
+		silent := &resolveDialer{dialer: &capabilityLeaf{
+			owner:   &DefaultDialer{},
+			inner:   newStallingDialer(),
+			manager: newCapabilityManager(netcap.StateUnavailable, netcap.StateUnavailable),
+		}}
 		addresses := []netip.Addr{address4, address6}
 		require.Equal(t, addresses, silent.withoutUndialableCandidates(addresses),
 			"a chain that cannot report the capability keeps its previous behaviour exactly")

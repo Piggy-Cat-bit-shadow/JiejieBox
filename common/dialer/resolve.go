@@ -142,6 +142,30 @@ func (d *resolveDialer) DialContext(ctx context.Context, network string, destina
 		if err != nil {
 			return nil, err
 		}
+		// The local verdict applies here too, and it has to be applied HERE rather than in the
+		// scheduler: this branch does not use the scheduler at all.
+		//
+		// Serial means "try the resolver's addresses in the resolver's order, one at a time" - which
+		// is exactly the case where an undialable address is most expensive, because the caller waits
+		// out its connect timeout before the next address is reached. Removing it preserves the
+		// resolver's order for everything that can actually be dialled, which is what the serial
+		// contract promises.
+		policy := d.dialerLocalFamilyPolicy()
+		refused := refusedFamilyIn(addresses, policy)
+		addresses = withoutUndialable(addresses, policy)
+		if len(addresses) == 0 {
+			if refused != familyInvalid {
+				// Every address belonged to a family this machine cannot dial. Refusing with the
+				// reason is the whole value of the verdict; falling through would turn it into a
+				// connect timeout that says nothing about the machine.
+				return nil, localFamilyRefusalError(refused)
+			}
+			// The resolver produced nothing and nothing was refused. This must be reported HERE
+			// rather than passed down, because N.DialSerial over an empty address list returns a nil
+			// connection and a nil error - a successful dial that produced nothing, which a caller
+			// would dereference.
+			return nil, E.New("no address for ", destination)
+		}
 		return N.DialSerial(ctx, d.dialer, network, destination, addresses)
 	}
 	// A hostname takes the SAME candidate planner and scheduler as a recovered literal.

@@ -1,6 +1,7 @@
 package route
 
 import (
+	"net"
 	"net/netip"
 	"sync"
 	"testing"
@@ -24,14 +25,23 @@ import (
 
 // interfaceWithAddresses builds the observation shape the manager reads, so a test states addressing
 // rather than a nested struct literal.
+//
+// The interface is marked UP, because addressing counts only where it can be used and an interface that
+// is not up is deliberately not evidence. A helper that left the flags zero would make every test using
+// it silently about a down interface - which is how this helper was wrong the first time.
 func interfaceWithAddresses(index int, name string, addresses ...string) adapter.NetworkInterface {
 	parsed := make([]netip.Prefix, 0, len(addresses))
 	for _, address := range addresses {
 		parsed = append(parsed, netip.MustParsePrefix(address))
 	}
 	return adapter.NetworkInterface{
-		Interface: control.Interface{Index: index, Name: name, Addresses: parsed},
-		Type:      C.InterfaceTypeEthernet,
+		Interface: control.Interface{
+			Index:     index,
+			Name:      name,
+			Flags:     net.FlagUp | net.FlagRunning,
+			Addresses: parsed,
+		},
+		Type: C.InterfaceTypeEthernet,
 	}
 }
 
@@ -266,6 +276,53 @@ func TestCapabilitySnapshotIsConsistentWithItsEpoch(t *testing.T) {
 	require.Equal(t, afterEpoch, finalEpoch)
 	require.Equal(t, netcap.StateProvisioned, finalCapability.Capability.IPv6)
 	require.Equal(t, netcap.StateProvisioned, finalCapability.Capability.IPv4)
+}
+
+// TestCapabilityStillSeesRealIPv6BehindTheExcludedTunnel is the reverse of the self-reference rule,
+// and the reason the exclusion is by interface name rather than by "anything that looks like a
+// tunnel".
+//
+// A dual-stack physical link under a sing-box TUN is the ordinary shape of a tunnelled client on a
+// network that really does have IPv6. Excluding the tunnel must not exclude the underlay with it: if
+// the exclusion were too broad - by address family, by "has a global address", by "carries a default
+// route" - this machine would report IPv6 as absent and refuse a family it actually has.
+func TestCapabilityStillSeesRealIPv6BehindTheExcludedTunnel(t *testing.T) {
+	h := newTransitionWindowHarness(t)
+	h.manager.interfaceMonitor = &staticInterfaceMonitor{
+		current: &control.Interface{Index: 1, Name: "en0"},
+		own:     []string{"utun3"},
+	}
+	setInterfaces(h, "192.0.2.1",
+		// The underlay really has IPv6.
+		interfaceWithAddresses(1, "en0", "192.168.1.10/24", "2001:db8::10/64"),
+		// And so does the tunnel, which is not evidence of anything.
+		interfaceWithAddresses(3, "utun3", "172.19.0.1/30", "2001:db8:dead::1/64"),
+	)
+	h.settle(t, "dual-stack-under-tunnel")
+
+	capability := currentFamilyCapability(t, h).Capability
+	require.Equal(t, netcap.StateProvisioned, capability.IPv6,
+		"the underlay's own IPv6 must survive the tunnel's exclusion")
+	require.Equal(t, netcap.StateProvisioned, capability.IPv4)
+}
+
+// TestAddressingIsNotAValidationClaim is the conservatism rule stated where it can be checked.
+//
+// A machine with IPv6 addressing gets Provisioned and never anything stronger, because addressing is
+// all it has proven. The round's requirement is that "the machine has an IPv6 address" is never
+// presented as "IPv6 works", and the state machine is where that has to be true: no input to the
+// evaluation can produce a validated family.
+func TestAddressingIsNotAValidationClaim(t *testing.T) {
+	h := newTransitionWindowHarness(t)
+	setInterfaces(h, "192.0.2.1",
+		interfaceWithAddresses(1, "en0", "192.168.1.10/24", "2001:db8::10/64", "2606:4700::1/128"))
+	h.settle(t, "plenty-of-addresses")
+
+	capability := currentFamilyCapability(t, h).Capability
+	require.Equal(t, netcap.StateProvisioned, capability.IPv6,
+		"three IPv6 addresses - including a globally routable one - still prove only that the "+
+			"structure exists, not that the public Internet answers")
+	require.NotEqual(t, netcap.StateValidated, capability.IPv6)
 }
 
 // TestCapabilitySnapshotIsRaceFree drives publication and reading concurrently.

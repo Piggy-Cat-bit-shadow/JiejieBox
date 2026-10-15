@@ -388,6 +388,11 @@ func (r *NetworkManager) InterfaceFinder() control.InterfaceFinder {
 func (r *NetworkManager) UpdateInterfaces() error {
 	defer r.postUpdateNetworkEnvironment()
 	if r.platformInterface == nil || !r.platformInterface.UsePlatformNetworkInterfaces() {
+		// The finder refresh is the whole visible effect here, so the interface list the rest of the
+		// manager reads is updated from it. Leaving the list empty on this path is not neutral: the
+		// local family capability is derived from it, so an empty list means the capability is never
+		// known and no dial can ever use it. See observeNonPlatformInterfaces.
+		r.observeNonPlatformInterfaces()
 		return r.interfaceFinder.Update()
 	} else {
 		interfaces, err := r.platformInterface.NetworkInterfaces()
@@ -1118,6 +1123,16 @@ func (r *NetworkManager) clearNetworkPaused() {
 }
 
 func (r *NetworkManager) notifyInterfaceUpdate(_ *control.Interface, _ int) {
+	// The interface list is republished from the finder before anything decides on it, so the state
+	// the reset body and the family capability observe is the state this event reported rather than
+	// whatever the previous event left behind.
+	//
+	// On this path the monitor has already refreshed the finder - it refreshes before it reports -
+	// so this is a copy of a short slice. It is a no-op where a platform interface supplies the list.
+	// It is done before the lock below because it touches neither the pending flag nor the ownership
+	// pair, and holding interfaceUpdateAccess across it would serialise every notification behind a
+	// slice copy.
+	r.observeNonPlatformInterfaces()
 	r.interfaceUpdateAccess.Lock()
 	defer r.interfaceUpdateAccess.Unlock()
 	if !r.networkResetPending {
@@ -1164,6 +1179,17 @@ func (r *NetworkManager) updateInterface(ctx context.Context, defaultInterface *
 	if ctx.Err() != nil {
 		return
 	}
+	// A second place the non-platform list is republished, and it is not redundant with the one in
+	// notifyInterfaceUpdate.
+	//
+	// PostStart dispatches an interface update DIRECTLY, without a notification - it has no event to
+	// notify about, it is asking the monitor where the box woke up - and on that path nothing else
+	// would publish the list at all. The box would then run its whole first network generation with an
+	// empty interface list, which is precisely the generation whose capability the first connections
+	// read.
+	//
+	// It is idempotent, so the ordinary notification path pays one slice copy for it.
+	r.observeNonPlatformInterfaces()
 	var options []string
 	options = append(options, F.ToString("index ", defaultInterface.Index))
 	if C.IsAndroid && r.platformInterface == nil {

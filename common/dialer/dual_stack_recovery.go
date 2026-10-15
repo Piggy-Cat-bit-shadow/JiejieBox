@@ -166,8 +166,24 @@ func (d *resolveDialer) recoverCandidates(ctx context.Context, destination M.Soc
 // A chain that cannot report the capability returns the list unchanged, which is the required
 // degradation: an implementation without the capability keeps its previous behaviour exactly.
 func (d *resolveDialer) withoutUndialableCandidates(addresses []netip.Addr) []netip.Addr {
-	policy := d.dialerLocalFamilyPolicy()
+	return withoutUndialable(addresses, d.dialerLocalFamilyPolicy())
+}
+
+// withoutUndialable drops the addresses a policy refuses, and returns the input untouched when the
+// policy refuses nothing.
+//
+// It is a free function rather than a method because the serial branch of DialContext needs the same
+// filter and must not go through the dialer to get it: the filter is a pure function of a list and a
+// policy, and keeping it that way is what makes "the same rule applies on every local dial path"
+// checkable instead of merely intended.
+//
+// Like the slice-package delete it wraps, it compacts IN PLACE when it removes something. A caller
+// that still needs to know what was removed must therefore record that first - see refusedFamilyIn,
+// which is exactly that, and which the serial branch calls before this.
+func withoutUndialable(addresses []netip.Addr, policy localFamilyPolicy) []netip.Addr {
 	if policy.capability == (netcap.FamilyCapability{}) {
+		// No opinion, so nothing is removed - and the caller's slice is returned as it was, so a
+		// manager that cannot report a capability keeps its previous behaviour exactly.
 		return addresses
 	}
 	filtered := slices.DeleteFunc(addresses, func(address netip.Addr) bool {
@@ -177,6 +193,24 @@ func (d *resolveDialer) withoutUndialableCandidates(addresses []netip.Addr) []ne
 		return nil
 	}
 	return filtered
+}
+
+// refusedFamilyIn reports which family a policy refuses among these addresses, or familyInvalid when
+// it refuses none of them.
+//
+// It exists so a caller that is about to filter can still NAME the reason afterwards: the filtered
+// list is empty in exactly the case where the explanation matters most, and an empty list cannot say
+// which family produced it. It must be asked BEFORE withoutUndialable, which compacts in place.
+func refusedFamilyIn(addresses []netip.Addr, policy localFamilyPolicy) addressFamily {
+	for _, address := range addresses {
+		if isLocalScopeAddress(address) {
+			continue
+		}
+		if policy.excludedAddress(address) {
+			return classifyAddress(address)
+		}
+	}
+	return familyInvalid
 }
 
 // dialerLocalFamilyPolicy reads this dialer's view of which families the machine can dial.

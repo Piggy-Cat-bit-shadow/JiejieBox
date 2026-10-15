@@ -1,10 +1,58 @@
 package route
 
 import (
+	"net"
+
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/netcap"
 	"github.com/sagernet/sing/common"
 )
+
+// observeNonPlatformInterfaces publishes the interface list from the manager's own finder.
+//
+// # Why this exists at all
+//
+// The network interface list is normally written by UpdateInterfaces, and that function reaches the
+// platform branch - the one that stores the list - only when a platform interface supplies the
+// interfaces. Clients that do not have one (the CLI on every platform, the Windows and Linux daemons,
+// any build with no platform interface at all) therefore took the OTHER branch, which refreshed the
+// finder and returned. The list stayed empty for the whole life of the process.
+//
+// That was harmless while the list was only read by paths that tolerate an empty answer. It is not
+// harmless now: the local family capability is derived from this list, so an empty list reports
+// Unknown for both families forever and the fast-fail silently never happens on exactly the clients
+// that cannot get it any other way.
+//
+// # Why it is safe to call on every update
+//
+// The finder is the SAME object the interface monitor refreshes, and the monitor refreshes it before
+// it reports anything - so on this path the data is already current and the call is a copy of a
+// short slice, not an enumeration. It is deliberately not called when a platform interface supplies
+// the list: that list carries facts the finder does not have (interface type, metered and constrained
+// flags, per-interface DNS), and overwriting it with the finder's version would discard them.
+//
+// The refresh is not driven from here, because on this path the caller that knows the network moved
+// is the monitor, and it has already done it. See updateInterface and notifyInterfaceUpdate.
+func (r *NetworkManager) observeNonPlatformInterfaces() {
+	if r.platformInterface != nil && r.platformInterface.UsePlatformNetworkInterfaces() {
+		return
+	}
+	if r.interfaceFinder == nil {
+		// No observer, so no observation. A manager built without a finder - which NewNetworkManager
+		// always supplies, and a hand-built fixture may not - must not take the process down over a
+		// diagnostic it cannot produce.
+		return
+	}
+	interfaces := r.interfaceFinder.Interfaces()
+	up := make([]adapter.NetworkInterface, 0, len(interfaces))
+	for _, iif := range interfaces {
+		if iif.Flags&net.FlagUp == 0 {
+			continue
+		}
+		up = append(up, adapter.NetworkInterface{Interface: iif})
+	}
+	r.networkInterfaces.Store(up)
+}
 
 // localFamilyCapability derives the local dial path's per-family verdict from the interface snapshot
 // the manager already holds.
@@ -49,6 +97,7 @@ func (r *NetworkManager) localFamilyCapability() netcap.FamilyCapability {
 	observations := common.Map(interfaces, func(it adapter.NetworkInterface) netcap.InterfaceObservation {
 		return netcap.InterfaceObservation{
 			Name:      it.Interface.Name,
+			Up:        it.Interface.Flags&net.FlagUp != 0,
 			Addresses: it.Interface.Addresses,
 		}
 	})

@@ -4,6 +4,8 @@ import (
 	"net/netip"
 	"testing"
 	"time"
+
+	"github.com/sagernet/sing-box/common/netcap"
 )
 
 // BenchmarkLocalFamilyFilter measures the cost the capability adds to one dial.
@@ -59,6 +61,48 @@ func BenchmarkLocalFamilyFilter(b *testing.B) {
 			}
 		}
 	})
+}
+
+// BenchmarkLocalFamilyPolicySnapshot measures the read the dial path performs.
+//
+// The requirement this checks is not "fast" but "the right shape": the verdict is read once per dial,
+// off an atomic, with no syscall, no lock and no allocation. A change that enumerated interfaces,
+// scanned a route table, ran a probe or took a lock here would show up as a number in this benchmark
+// long before it showed up as a latency complaint - which is the only reason the benchmark exists.
+//
+// It is deliberately NOT a target to optimise. The comparison is against the cost of the rest of a
+// dial, which is thousands of nanoseconds of syscalls; two atomic loads are already below the noise
+// floor and making them faster would be work with no observable effect.
+func BenchmarkLocalFamilyPolicySnapshot(b *testing.B) {
+	dialer := &DefaultDialer{}
+	manager := newCapabilityManager(netcap.StateProvisioned, netcap.StateUnavailable)
+	dialer.familySnapshot = manager.NetworkFamilyCapabilitySnapshot
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		policy := dialer.snapshotLocalFamilyPolicy()
+		if !policy.excluded(familyIPv6) {
+			b.Fatal("the verdict must be read from the manager")
+		}
+	}
+}
+
+// BenchmarkLocalFamilyPolicyAbsent measures the same read on a dialer that has no manager, which is
+// the shape every test double and every third-party NetworkManager produces.
+//
+// It must be free: one nil check. A dialer without a capability has to be indistinguishable from the
+// code before this round, and a benchmark is how "indistinguishable" stays checkable.
+func BenchmarkLocalFamilyPolicyAbsent(b *testing.B) {
+	dialer := &DefaultDialer{}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		policy := dialer.snapshotLocalFamilyPolicy()
+		if policy.excluded(familyIPv6) || policy.excluded(familyIPv4) {
+			b.Fatal("a dialer with no manager must restrict nothing")
+		}
+	}
 }
 
 func dualCopy(plan candidatePlan) candidatePlan {

@@ -131,6 +131,16 @@ func (c FamilyCapability) Observed() int {
 // this model needs.
 type InterfaceObservation struct {
 	Name string
+	// Up reports whether the interface can currently carry traffic.
+	//
+	// It is a field rather than a caller-side filter because the two producers of this input do not
+	// agree. One of them - the manager's own list for clients with no platform interface - is only
+	// ever populated with interfaces that are up, so a caller-side filter there would be dead code
+	// that looks like a guarantee. The other hands over whatever the PLATFORM reported, and a platform
+	// list may legitimately contain a link that is administratively up in the list while carrying
+	// stale addressing from before it went down. Reading it here makes "addressing counts only where
+	// it can be used" true for both inputs instead of true for the one that happened to be checked.
+	Up bool
 	// Addresses are the interface's own addresses. Whether they are global, unique-local or
 	// link-local does not matter here; see Evaluate.
 	Addresses []netip.Prefix
@@ -216,7 +226,9 @@ func stateFor(present bool) FamilyState {
 // It is exported so that the platform-specific observers - and their tests - agree on what "usable"
 // means instead of each re-deriving it:
 //
-//   - an interface that is not up cannot carry traffic, so it is not evidence of addressing;
+//   - an interface that is not up cannot carry traffic, so it is not evidence of addressing. A
+//     disconnected link keeps its address in the platform's list and loses nothing by doing so, which
+//     is exactly why the check cannot live in the caller;
 //   - this process's own interfaces (its TUN, and any bridge it opened) are split horizon rather
 //     than underlay, so their addresses say nothing about the network underneath;
 //   - loopback is always up and, on every supported platform, carries an address of BOTH families.
@@ -233,6 +245,9 @@ func UsableInterfaces(interfaces []InterfaceObservation, ownInterfaces []string)
 		if observation.Name == "" {
 			// An unnamed interface cannot be matched against the caller's own list, so it cannot
 			// be proven to be underlay. Excluded rather than guessed at.
+			continue
+		}
+		if !observation.Up {
 			continue
 		}
 		if slices.Contains(ownInterfaces, observation.Name) {
