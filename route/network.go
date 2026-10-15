@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/netcap"
 	"github.com/sagernet/sing-box/common/runtimecoord"
 	"github.com/sagernet/sing-box/common/settings"
 	"github.com/sagernet/sing-box/common/taskmonitor"
@@ -59,9 +60,19 @@ type NetworkManager struct {
 	// Nil in production, where it costs one predictable branch on a path that runs on network events
 	// rather than per connection.
 	interfaceRefreshError error
-	networkInterfaces     common.TypedValue[[]adapter.NetworkInterface]
-	autoDetectInterface   bool
-	defaultOptions        adapter.NetworkOptions
+	// routeObservation, when set, replaces the platform's route-table read for the global IPv6 egress
+	// term.
+	//
+	// It exists because the state under test is the ABSENCE of a route, and a developer's machine
+	// cannot be put into that state on request - unlike the interface list, where a fixture simply
+	// supplies the interfaces it wants. Without this the route-evidence path would have no test at all
+	// on the only platform where it is the sole defence, which is the platform whose bug this fixes.
+	//
+	// Nil in production, where it costs one predictable branch per network event.
+	routeObservation    func() netcap.RouteObservation
+	networkInterfaces   common.TypedValue[[]adapter.NetworkInterface]
+	autoDetectInterface bool
+	defaultOptions      adapter.NetworkOptions
 	// autoRedirectOutputMark is the routing mark sing-box puts on its own egress while a TUN redirects
 	// traffic, claimed once by the inbound that owns the redirect and read on every dial.
 	//

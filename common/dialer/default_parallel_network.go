@@ -145,6 +145,24 @@ func ListenSerialNetworkPacket(ctx context.Context, dialer N.Dialer, destination
 	if parallelDialer, isParallel := dialer.(ParallelNetworkDialer); isParallel {
 		return parallelDialer.ListenSerialNetworkPacket(ctx, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
 	}
+	// # Why this loop is the UDP path's only fallback, and what makes it work
+	//
+	// Each address here gets its own socket attempt, and the FIRST address whose socket creation
+	// succeeds wins outright - there is no second phase, no health check, and no way to replace a
+	// winner. That is deliberate for a packet listener: unlike a stream connect, a UDP "success" is
+	// not a verified outcome, so racing two packet sockets would deliver duplicate datagrams and
+	// declare a winner that has never sent anything.
+	//
+	// The consequence is the shape of the real user-reported failure. On Windows a UDP socket to an
+	// unreachable IPv6 network is created SUCCESSFULLY and only fails at the first send, so an
+	// unrefused global IPv6 address wins this loop and the client is handed a dead connection - the
+	// `open UDP connection to [2606:...]` and `send peer batch: unreachable network` lines in the log.
+	//
+	// What makes the loop sufficient is that a refusal happens BEFORE socket creation, in
+	// DefaultDialer.ListenPacket, so a family this machine provably cannot reach never enters it and
+	// the next address - the other family - is tried. The gate is therefore load-bearing twice over
+	// here: it is the fast-fail for a stream and the ONLY thing that can move a packet listener to
+	// another family.
 	var errors []error
 	if parallelDialer, isParallel := dialer.(ParallelInterfaceDialer); isParallel {
 		for _, address := range destinationAddresses {

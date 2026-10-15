@@ -385,8 +385,12 @@ func (d *DefaultDialer) DialContext(ctx context.Context, network string, address
 	// public path this verdict describes. Refusing one would break the connections that must keep
 	// working precisely when public addressing is gone: a local resolver, a LAN peer, a value the
 	// caller bound explicitly.
-	if !isLocalScopeAddress(address.Addr) && localFamily.excludedAddress(address.Addr) {
-		return nil, hardUnavailableError(classifyAddress(address.Addr))
+	//
+	// That exemption is no longer written here. It is a term of the decision - scope decides which
+	// question applies to a destination - so it lives in hardUndialableError with the others, which is
+	// what stops this call site from being one of five places that each have to remember it.
+	if refusal := localFamily.hardUndialableError(address.Addr); refusal != nil {
+		return nil, refusal
 	}
 	if d.networkStrategy == nil {
 		conn, err := listener.ListenNetworkNamespace[net.Conn](ctx, d.netns, func() (net.Conn, error) {
@@ -491,9 +495,10 @@ func (d *DefaultDialer) ListenPacket(ctx context.Context, destination M.Socksadd
 	// The check is skipped for an unspecified address, which is how a caller asks for a wildcard
 	// socket with no destination family at all - the shape a listener uses, and one the packet
 	// transports rely on.
-	if destination.Addr.IsValid() && !destination.Addr.IsUnspecified() &&
-		!isLocalScopeAddress(destination.Addr) && localFamily.excludedAddress(destination.Addr) {
-		return nil, hardUnavailableError(classifyAddress(destination.Addr))
+	if destination.Addr.IsValid() && !destination.Addr.IsUnspecified() {
+		if refusal := localFamily.hardUndialableError(destination.Addr); refusal != nil {
+			return nil, refusal
+		}
 	}
 	if d.networkStrategy == nil {
 		packetConn, err := listener.ListenNetworkNamespace[net.PacketConn](ctx, d.netns, func() (net.PacketConn, error) {

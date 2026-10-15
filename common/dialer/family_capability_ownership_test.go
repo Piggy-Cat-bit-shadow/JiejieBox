@@ -241,12 +241,12 @@ func TestOldVerdictCannotDenyNewGenerationLiteralCaptureWindow(t *testing.T) {
 
 	// The capture: network A. This is what a dial reads when it begins.
 	captured := owned.dialer.captureLocalFamilyPolicy()
-	require.True(t, captured.excludedAddress(address6),
+	require.True(t, captured.hardUndialable(address6),
 		"while A is current, the verdict does refuse IPv6 - otherwise the test proves nothing")
 
 	owned.manager.transitionTo(netcap.StateProvisioned, netcap.StateProvisioned)
 
-	require.False(t, captured.excludedAddress(address6),
+	require.False(t, captured.hardUndialable(address6),
 		"once the generation has moved on, the captured verdict must refuse nothing")
 	require.True(t, captured.restrictsNothing(),
 		"and it must report itself as unable to restrict, so no fast path skips a filter it would "+
@@ -317,7 +317,7 @@ func TestDuringTransitionCannotHardDeny(t *testing.T) {
 	captured := owned.dialer.captureLocalFamilyPolicy()
 	require.False(t, captured.ownership.startedStable,
 		"the capture must record that it began unsettled")
-	require.False(t, captured.excludedAddress(address6),
+	require.False(t, captured.hardUndialable(address6),
 		"a capture taken during a transition must deny nothing: there is no settled network for its "+
 			"verdict to describe")
 	require.True(t, captured.restrictsNothing())
@@ -343,8 +343,8 @@ func TestOwnedVerdictStillHardDeniesOnItsOwnNetwork(t *testing.T) {
 
 	captured := owned.dialer.captureLocalFamilyPolicy()
 	require.False(t, captured.restrictsNothing(), "a live verdict must report itself as restricting")
-	require.True(t, captured.excludedAddress(address6))
-	require.False(t, captured.excludedAddress(address4))
+	require.True(t, captured.hardUndialable(address6))
+	require.False(t, captured.hardUndialable(address4))
 
 	// The scheduler removes it from the plan and from the late stream.
 	scheduler := &candidateScheduler{localFamily: captured}
@@ -413,7 +413,7 @@ func TestUnstableThenSettledCaptureStillDeniesNothing(t *testing.T) {
 
 	require.False(t, captured.ownership.owns(),
 		"a capture that began during a transition is not laundered into a valid one by the commit")
-	require.False(t, captured.excludedAddress(address6))
+	require.False(t, captured.hardUndialable(address6))
 }
 
 // TestLegacyPolicyConstructionIsOwnedByConstruction keeps the helper used by tests and by callers that
@@ -427,7 +427,7 @@ func TestLegacyPolicyConstructionIsOwnedByConstruction(t *testing.T) {
 		IPv6: netcap.StateUnavailable,
 	})
 	require.True(t, policy.ownership.owns())
-	require.True(t, policy.excludedAddress(address6))
-	require.False(t, policy.excludedAddress(address4))
+	require.True(t, policy.hardUndialable(address6))
+	require.False(t, policy.hardUndialable(address4))
 	require.False(t, policy.restrictsNothing())
 }

@@ -214,20 +214,55 @@ func newLocalFamilyPolicy(capability netcap.FamilyCapability) localFamilyPolicy 
 	return localFamilyPolicy{capability: capability}
 }
 
-// excluded reports whether a candidate of this family must not be spent an attempt on, in the network
+// hardUndialable reports whether an attempt at this destination must not be made, in the network
 // generation this policy was captured for.
 //
-// The test is on the PLAN's classification rather than on the address, so that the one place that
-// decides which family an address belongs to stays classifyAddress - including its treatment of an
-// IPv4-mapped IPv6 address as IPv4.
-func (p localFamilyPolicy) excluded(family addressFamily) bool {
+// # This is the single gate, and it is the only thing callers ask
+//
+// The destination goes in and a yes/no comes out. Everything that decides it - address scope, family
+// existence, global IPv6 egress, and network ownership - is resolved inside, and deliberately:
+//
+//	scope        local / site / global, from the address itself
+//	family       does the machine have addressing of this family at all
+//	egress       for a GLOBAL IPv6 destination, is the public path provably absent
+//	ownership    is this capture still the live network generation
+//
+// Those terms used to be composed at five call sites - the literal gate, the packet gate, the
+// candidate scheduler, the serial resolve path and the native-bypass profile - each spelling out
+// "is this destination local-scope, and if not is its family unavailable". That composition was
+// complete for the family question and blind to the egress one, which is exactly how the reported
+// Windows outage got through: every copy asked the right question and none of them knew the second
+// question existed.
+//
+// Taking the destination rather than a family is what makes a single gate possible. A caller that
+// holds only a family classification cannot express "global IPv6", so it cannot be asked to remember
+// the egress term - and a rule that callers must remember is a rule that will be forgotten.
+//
+// # The ownership check is not optional and comes first
+//
+// A verdict captured on a network that has since changed describes a network this attempt is not on;
+// a verdict captured while the network was unsettled describes none at all. In both cases the only
+// safe reading is "no opinion", which fails open.
+func (p localFamilyPolicy) hardUndialable(destination netip.Addr) bool {
+	if !destination.IsValid() {
+		return false
+	}
+	if !p.ownership.owns() {
+		return false
+	}
+	return p.capability.HardUndialable(destination)
+}
+
+// hardUndialableFamily is the same question for a caller that holds a FAMILY and no address.
+//
+// It exists for the plan-level fast path, which asks whether a policy could refuse anything at all
+// before walking a candidate list. It deliberately answers the family question only: a plan is
+// filtered candidate by candidate through hardUndialable, so the egress term is applied to the
+// addresses that actually carry it.
+func (p localFamilyPolicy) hardUndialableFamily(family addressFamily) bool {
 	if family == familyInvalid {
 		return false
 	}
-	// The ownership check comes FIRST and is not optional. A verdict captured on a network that has
-	// since changed describes a network this attempt is not on; a verdict captured while the network
-	// was unsettled describes none at all. In both cases the only safe reading is "no opinion", which
-	// fails open.
 	if !p.ownership.owns() {
 		return false
 	}
@@ -241,37 +276,37 @@ func (p localFamilyPolicy) excluded(family addressFamily) bool {
 	}
 }
 
-// excludedAddress is excluded for a caller that holds an address and no classification.
-func (p localFamilyPolicy) excludedAddress(address netip.Addr) bool {
-	return p.excluded(classifyAddress(address))
-}
-
 // restrictsNothing reports whether this policy cannot refuse anything, so the common path can skip
 // the work of examining a candidate list at all.
 //
-// An unowned policy restricts nothing, because that is what excluded answers for it - the two must
+// An unowned policy restricts nothing, because that is what the gate answers for it - the two must
 // never disagree, or the fast path would skip a filter that would have removed something.
+//
+// It includes the egress term. A policy that can refuse a global IPv6 destination restricts
+// something, and leaving it out here would let the fast path walk past a filter that would have
+// removed candidates - the one disagreement between these two functions that is not merely
+// redundant.
 func (p localFamilyPolicy) restrictsNothing() bool {
 	if !p.ownership.owns() {
 		return true
 	}
-	return !p.capability.HardUnavailable(true) && !p.capability.HardUnavailable(false)
+	return !p.capability.HardUnavailable(true) &&
+		!p.capability.HardUnavailable(false) &&
+		p.capability.GlobalIPv6Egress != netcap.StateUnavailable
 }
 
 // LocalFamilyBlocked implements LocalFamilyDialer.
 //
-// It reports whether this machine has no usable path for the address's family, and it answers false
-// for a local-scope destination for the same reason the dial path does: a link-local, unique-local,
-// loopback or unspecified address is not reached over the public family the verdict describes.
+// It reports whether an attempt at this destination must not be made on the local dial path, and it
+// answers false for a local-scope or site-local destination because neither is reached over the
+// public path this verdict describes: a link-local address is what makes a link-local destination
+// work, and a campus that blackholes public IPv6 still serves ULA.
 //
 // An unsettled or superseded capture answers false - no block - which leaves the bypass available and
 // changes nothing about where the flow goes. See LocalFamilyDialer for why that direction is the
 // conservative one here while it is the unsafe one on a dial gate.
 func (d *DefaultDialer) LocalFamilyBlocked(address netip.Addr) bool {
-	if !address.IsValid() || isLocalScopeAddress(address) {
-		return false
-	}
-	return d.captureLocalFamilyPolicy().excludedAddress(address)
+	return d.captureLocalFamilyPolicy().hardUndialable(address)
 }
 
 // hardUnavailableError reports the refusal for a family the machine cannot dial.
@@ -298,9 +333,18 @@ func (d *DefaultDialer) LocalFamilyBlocked(address netip.Addr) bool {
 // be reporting a property of a network the device has left as though it were a property of the one it
 // is on, which is worse than reporting nothing. The ownership check in excluded is what guarantees
 // that: by the time this error is constructed, the capture was settled and still current.
+// The third refusal is the one this round added, and it is NOT the same fact as the second.
+//
+// "No interface carries an ipv6 address" and "ipv6 exists on the link and nothing routes it to the
+// public Internet" are different states of the machine with different remedies, and collapsing them
+// into one message would make the log say the machine has no IPv6 on a machine whose IPv6 is fine and
+// merely local. The reported outage is the second case, so its message has to be able to say so.
 var (
-	errLocalIPv4Unavailable = E.New("local network has no usable ipv4 path: no interface on this machine carries an ipv4 address")
-	errLocalIPv6Unavailable = E.New("local network has no usable ipv6 path: no interface on this machine carries an ipv6 address")
+	errLocalIPv4Unavailable       = E.New("local network has no usable ipv4 path: no interface on this machine carries an ipv4 address")
+	errLocalIPv6Unavailable       = E.New("local network has no usable ipv6 path: no interface on this machine carries an ipv6 address")
+	errLocalIPv6EgressUnavailable = E.New(
+		"local network has no public ipv6 path: this machine has ipv6 addressing but no route to a global ipv6 destination " +
+			"(link-local and unique-local destinations are unaffected)")
 )
 
 func hardUnavailableError(family addressFamily) error {
@@ -316,36 +360,20 @@ func hardUnavailableError(family addressFamily) error {
 	}
 }
 
-// isLocalScopeAddress reports whether a destination is reached over something other than the public
-// address family this file makes a verdict about.
+// hardUndialableError is the refusal reason for a destination this policy refuses, or nil.
 //
-// # Why the capability must not touch these
-//
-// The structural check says "this machine has no address of family F anywhere", which is a claim
-// about reaching remote destinations of F. The destinations below are not reached that way:
-//
-//   - loopback never leaves the host;
-//   - link-local (fe80::/10, 169.254/16) is scoped to one link, and an interface can carry a
-//     link-local address of a family while carrying no global one of it - which is the normal
-//     state of an interface whose IPv6 is not routed. Refusing it would delete a working local
-//     service on the strength of a verdict about the Internet;
-//   - unique-local (fc00::/7) is the IPv6 counterpart of RFC 1918 space, and a campus or hospital
-//     network that blackholes PUBLIC IPv6 routinely still serves ULA internally. This is the
-//     concrete case the design is required not to collapse;
-//   - the unspecified address means "let the kernel choose", which a caller does when it is
-//     deliberately indifferent to the family - so there is no family to have a verdict about.
-//
-// # Why this is a scope test and not a public/private guess
-//
-// It tests the SCOPE of the destination address, which is a property of the address itself and is
-// decidable without a route lookup. It deliberately does not attempt to classify "is this target on
-// the public Internet", which would be a guess about routing dressed up as a fact about an address.
-func isLocalScopeAddress(address netip.Addr) bool {
-	if !address.IsValid() {
-		return false
+// It is the gate and the explanation in one call, so a caller cannot refuse a destination and then
+// report a family verdict that does not describe why - which is what would happen if the reason were
+// derived from classifyAddress alone.
+func (p localFamilyPolicy) hardUndialableError(destination netip.Addr) error {
+	if !p.hardUndialable(destination) {
+		return nil
 	}
-	return address.IsLoopback() ||
-		address.IsLinkLocalUnicast() ||
-		address.IsPrivate() ||
-		address.IsUnspecified()
+	family := classifyAddress(destination)
+	// A global IPv6 destination is refused by one of two facts, and only the first is a statement
+	// about the family.
+	if family == familyIPv6 && !p.capability.HardUnavailable(false) {
+		return errLocalIPv6EgressUnavailable
+	}
+	return hardUnavailableError(family)
 }

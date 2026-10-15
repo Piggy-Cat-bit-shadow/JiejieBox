@@ -584,7 +584,7 @@ func (d *resolveDialer) dialLiteralWithRecovery(ctx context.Context, network str
 	// the only path by which such a flow connects at all, which makes running recovery more
 	// important here, not less.
 	localFamilyRefusal := addressFamily(familyInvalid)
-	if originalAllowed && !isLocalScopeAddress(destination.Addr) && d.dialerLocalFamilyPolicy().excludedAddress(destination.Addr) {
+	if originalAllowed && d.dialerLocalFamilyPolicy().hardUndialable(destination.Addr) {
 		originalAllowed = false
 		localFamilyRefusal = classifyAddress(destination.Addr)
 	}

@@ -94,11 +94,21 @@ func (r *NetworkManager) localFamilyCapability() netcap.FamilyCapability {
 	if r.interfaceMonitor != nil {
 		ownInterfaces = r.interfaceMonitor.MyInterfaces()
 	}
+	// The route observation is read ONCE for the machine and applied to every interface, because the
+	// question it answers - "is there a way out" - is machine-level: the kernel picks the interface
+	// when the packet is sent, so a route on any of them is a way out for all of them. netcap's OR
+	// over interfaces then means exactly that.
+	//
+	// It is read here, at the same moment as the addressing, so the route fact and the address facts
+	// belong to ONE observation of ONE network - which is what lets them be published, owned and
+	// superseded together.
+	globalRoute := r.machineGlobalIPv6Route()
 	observations := common.Map(interfaces, func(it adapter.NetworkInterface) netcap.InterfaceObservation {
 		return netcap.InterfaceObservation{
-			Name:      it.Interface.Name,
-			Up:        it.Interface.Flags&net.FlagUp != 0,
-			Addresses: it.Interface.Addresses,
+			Name:            it.Interface.Name,
+			Up:              it.Interface.Flags&net.FlagUp != 0,
+			Addresses:       it.Interface.Addresses,
+			GlobalIPv6Route: globalRoute,
 		}
 	})
 	usable, ok := netcap.UsableInterfaces(observations, ownInterfaces)

@@ -387,7 +387,7 @@ func (s *candidateScheduler) dialWithLateCandidates(ctx context.Context, plan ca
 			// late stream never passes through the planner, so filtering only there would let the
 			// second family to answer walk an undialable candidate straight into the race. The
 			// address is marked as seen first, so a stream that repeats it costs nothing.
-			if s.localFamily.excluded(candidate.family) {
+			if s.localFamily.hardUndialable(candidate.address) {
 				continue
 			}
 
@@ -586,7 +586,7 @@ func (s *candidateScheduler) dropUndialableCandidates(plan candidatePlan) (candi
 	firstRefused := -1
 	var refused addressFamily
 	for index, candidate := range plan.candidates {
-		if s.localFamily.excluded(candidate.family) {
+		if s.localFamily.hardUndialable(candidate.address) {
 			firstRefused = index
 			refused = candidate.family
 			break
@@ -598,7 +598,7 @@ func (s *candidateScheduler) dropUndialableCandidates(plan candidatePlan) (candi
 	kept := make([]dualStackCandidate, firstRefused, planned)
 	copy(kept, plan.candidates[:firstRefused])
 	for _, candidate := range plan.candidates[firstRefused+1:] {
-		if s.localFamily.excluded(candidate.family) {
+		if s.localFamily.hardUndialable(candidate.address) {
 			continue
 		}
 		kept = append(kept, candidate)

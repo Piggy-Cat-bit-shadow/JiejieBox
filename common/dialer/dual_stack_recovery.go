@@ -200,10 +200,7 @@ func withoutUndialable(addresses []netip.Addr, policy localFamilyPolicy) []netip
 	// allocation, and the copy is exactly as long as it needs to be.
 	firstRefused := -1
 	for index, address := range addresses {
-		if isLocalScopeAddress(address) {
-			continue
-		}
-		if policy.excludedAddress(address) {
+		if policy.hardUndialable(address) {
 			firstRefused = index
 			break
 		}
@@ -214,11 +211,7 @@ func withoutUndialable(addresses []netip.Addr, policy localFamilyPolicy) []netip
 	filtered := make([]netip.Addr, firstRefused, len(addresses))
 	copy(filtered, addresses[:firstRefused])
 	for _, address := range addresses[firstRefused+1:] {
-		if isLocalScopeAddress(address) {
-			filtered = append(filtered, address)
-			continue
-		}
-		if policy.excludedAddress(address) {
+		if policy.hardUndialable(address) {
 			continue
 		}
 		filtered = append(filtered, address)
@@ -240,10 +233,7 @@ func withoutUndialable(addresses []netip.Addr, policy localFamilyPolicy) []netip
 // the serial branch calls it first only because that reads better.
 func refusedFamilyIn(addresses []netip.Addr, policy localFamilyPolicy) addressFamily {
 	for _, address := range addresses {
-		if isLocalScopeAddress(address) {
-			continue
-		}
-		if policy.excludedAddress(address) {
+		if policy.hardUndialable(address) {
 			return classifyAddress(address)
 		}
 	}
@@ -276,10 +266,7 @@ func (d *resolveDialer) dialerLocalFamilyPolicy() localFamilyPolicy {
 // implementation and test double would have to satisfy, and a dialer that cannot report the
 // capability must keep working unchanged; the type assertion is the capability check.
 func (d *resolveDialer) LocalFamilyBlocked(address netip.Addr) bool {
-	if !address.IsValid() || isLocalScopeAddress(address) {
-		return false
-	}
-	return d.dialerLocalFamilyPolicy().excludedAddress(address)
+	return d.dialerLocalFamilyPolicy().hardUndialable(address)
 }
 
 // validRecoveryDomain returns the sniffed domain to recover through, or empty when it is not

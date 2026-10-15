@@ -642,8 +642,8 @@ func TestCapabilityFallbackWithoutASnapshotterIsSilent(t *testing.T) {
 	owner := &DefaultDialer{familyHealth: newFamilyHealth()}
 	require.Nil(t, owner.familySnapshot, "a dialer with no manager has no snapshot")
 	require.False(t, owner.LocalFamilyBlocked(address6))
-	require.False(t, owner.captureLocalFamilyPolicy().excluded(familyIPv6))
-	require.False(t, owner.captureLocalFamilyPolicy().excluded(familyIPv4))
+	require.False(t, owner.captureLocalFamilyPolicy().hardUndialable(address6))
+	require.False(t, owner.captureLocalFamilyPolicy().hardUndialable(address4))
 
 	// A manager that reports the ownership pair but NOT the capability is the same case: the type
 	// assertion in NewDefault fails, the snapshot stays nil, and nothing is filtered.

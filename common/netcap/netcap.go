@@ -35,6 +35,97 @@ import (
 	"slices"
 )
 
+// DestinationScope is the part of a destination address that decides WHICH question has to be
+// answered about it.
+//
+// The failure this exists for is asymmetric, and the asymmetry is entirely about the destination:
+//
+//	fe80::1        reached over the link, and a link-local address is what makes it reachable.
+//	               An interface that carries ONLY link-local addressing can still dial it.
+//	fd00::1        reached inside the site. A campus that blackholes public IPv6 still serves ULA.
+//	2409:...       reached over the public Internet, and that needs a global source address and a
+//	               route. Neither is implied by the two cases above.
+//
+// A single "IPv6 is available" answer cannot serve all three, and the gap between them is the real
+// user-facing failure this round fixes: a Windows machine with an IPv4 address and a fe80:: link-local
+// address has IPv6 "present" and cannot reach a single global IPv6 destination - every such attempt
+// dies instantly in the kernel with WSAENETUNREACH.
+//
+// So the model answers twice, once per scope, and the decision for a destination is the decision for
+// ITS scope. Declaring it here rather than at each call site is what stops the fifth caller from
+// forgetting one of the terms.
+type DestinationScope uint8
+
+const (
+	// ScopeUnknown is an invalid or unspecified address: there is nothing to have an opinion about,
+	// so it must never be refused.
+	ScopeUnknown DestinationScope = iota
+	// ScopeLocal is loopback, link-local or unspecified: reachable without leaving the host or the
+	// link.
+	ScopeLocal
+	// ScopeSite is a unique-local address (fc00::/7): reachable inside the site.
+	ScopeSite
+	// ScopeGlobal is everything else: reachable only over the public Internet, which is the only
+	// scope that needs a global route to exist.
+	ScopeGlobal
+)
+
+func (s DestinationScope) String() string {
+	switch s {
+	case ScopeLocal:
+		return "local"
+	case ScopeSite:
+		return "site"
+	case ScopeGlobal:
+		return "global"
+	default:
+		return "unknown"
+	}
+}
+
+// ClassifyScope reports which part of the network a destination address is reached over.
+//
+// # Why the capability must not touch local-scope destinations
+//
+// The structural check says "this machine has no address of family F anywhere", which is a claim about
+// reaching REMOTE destinations of F. The scopes below are not reached that way:
+//
+//   - loopback never leaves the host;
+//   - link-local (fe80::/10, 169.254/16) is scoped to one link, and an interface can carry a
+//     link-local address of a family while carrying no global one of it - which is the normal state
+//     of an interface whose IPv6 is not routed. Refusing it would delete a working local service on
+//     the strength of a verdict about the Internet;
+//   - unique-local (fc00::/7) is the IPv6 counterpart of RFC 1918 space, and a campus or hospital
+//     network that blackholes PUBLIC IPv6 routinely still serves ULA internally. This is the concrete
+//     case the design is required not to collapse, and it is why ScopeSite exists as a separate
+//     answer rather than being folded in with either neighbour;
+//   - the unspecified address means "let the kernel choose", which a caller does when it is
+//     deliberately indifferent to the family - so there is no family to have a verdict about.
+//
+// # Why this is a scope test and not a public/private guess
+//
+// It tests the SCOPE of the address, which is a property of the address itself and is decidable
+// without a route lookup. It deliberately does not attempt to classify "is this target on the public
+// Internet", which would be a guess about routing dressed up as a fact about an address.
+//
+// An IPv4-mapped IPv6 address is classified by its IPv4 form, matching classifyAddress in the dialer:
+// ::ffff:1.2.3.4 is a representation of an IPv4 address, and treating it as IPv6 would apply an IPv6
+// question to an IPv4 destination.
+func ClassifyScope(address netip.Addr) DestinationScope {
+	if !address.IsValid() {
+		return ScopeUnknown
+	}
+	address = address.Unmap()
+	switch {
+	case address.IsLoopback(), address.IsLinkLocalUnicast(), address.IsUnspecified():
+		return ScopeLocal
+	case address.IsPrivate():
+		return ScopeSite
+	default:
+		return ScopeGlobal
+	}
+}
+
 // FamilyState is what is known about one address family on the current network generation.
 type FamilyState uint8
 
@@ -100,6 +191,30 @@ func (s FamilyState) String() string {
 type FamilyCapability struct {
 	IPv4 FamilyState
 	IPv6 FamilyState
+	// GlobalIPv6Egress is the SEPARATE question about the public Internet, and it is separate because
+	// the two have different answers on the network this round exists for.
+	//
+	//	IPv6 = Provisioned  and  GlobalIPv6Egress = Unavailable
+	//
+	// is a Windows machine with an IPv4 address and a fe80:: link-local address: IPv6 EXISTS (a
+	// link-local destination is genuinely reachable) and no global IPv6 destination is, which is what
+	// every `dial tcp [2409:...]` in the real failure log proves. Collapsing the two into one IPv6
+	// state would have to pick one of them and be wrong about the other - either refusing link-local
+	// destinations that work, or spending attempts on global ones that cannot.
+	//
+	// # It only ever gates GLOBAL destinations
+	//
+	// A link-local destination is reached over the link and a ULA destination inside the site; neither
+	// needs a global route, so neither may be refused because one is missing. That is the "Do not
+	// enlarge the public failure into the LAN" rule, and it is enforced in HardUndialable rather than
+	// left to each caller.
+	//
+	// # Why it is a state and not a bool
+	//
+	// Because the whole safety of the hard verdict rests on being able to say "not proven" - a
+	// platform with no route-table access, an observation that failed, a network mid-transition. A
+	// bool has no room for that and would have to spell "I do not know" as one of its two answers.
+	GlobalIPv6Egress FamilyState
 	// reachable is the interface count the evaluation was able to look at, excluding this process's
 	// own tunnels and loopback. Zero means nothing could be observed, and it is why the zero value
 	// of this struct reports both families as Unknown rather than as Unavailable.
@@ -107,6 +222,11 @@ type FamilyCapability struct {
 }
 
 // HardUnavailable reports whether a candidate of this family must not be spent an attempt on.
+//
+// It answers the FAMILY-EXISTENCE question only, and it is deliberately not what the dial path asks:
+// a global IPv6 destination depends on GlobalIPv6Egress as well, and a link-local one must not depend
+// on it at all. Callers decide with HardUndialable, which takes the destination and resolves both
+// terms in one place.
 //
 // A zero FamilyCapability - one nobody computed - answers false for both families. That is the
 // required degradation: an implementation that does not provide the capability keeps its previous
@@ -116,6 +236,54 @@ func (c FamilyCapability) HardUnavailable(ipv4 bool) bool {
 		return c.IPv4 == StateUnavailable
 	}
 	return c.IPv6 == StateUnavailable
+}
+
+// HardUndialable reports whether an attempt at this destination must not be made on the local dial
+// path, on the network generation this capability was observed on.
+//
+// # This is the single decision point, and that is the point
+//
+// The composition was previously open-coded at five call sites - the literal gate, the packet gate,
+// the candidate scheduler, the serial resolve path and the native-bypass profile - each spelling out
+// "is this destination local-scope, and if not is its family unavailable". Five copies of a rule is
+// five chances to omit a term, and omitting one is invisible: the gate simply does not fire, and the
+// symptom is the outage this round is fixing rather than a test failure.
+//
+// So the rule lives here, once, and takes the destination rather than a family:
+//
+//	ScopeLocal  -> dialable. Loopback, link-local and unspecified are reached without a global route,
+//	               and a link-local address is exactly what makes a link-local destination work. A
+//	               machine whose IPv6 is a lone fe80:: must still reach its own link.
+//	ScopeSite   -> dialable. A ULA address is reached inside the site, and a campus that blackholes
+//	               public IPv6 routinely still serves ULA internally. The public failure must not be
+//	               enlarged into the LAN.
+//	ScopeGlobal -> needs BOTH: the family must exist AND global egress must not be provably absent.
+//	               Either term being unknown or provisioned means dialable - fail open.
+//
+// # Why "unknown" can never be refused
+//
+// Every field defaults to StateUnknown, so a capability nobody computed refuses nothing, and a
+// platform that cannot read its route table reports GlobalIPv6Egress as unknown rather than as a
+// guess. A network mid-transition leaves ownership unowned, and the policy wrapper refuses nothing
+// for that case before this function is reached.
+func (c FamilyCapability) HardUndialable(destination netip.Addr) bool {
+	switch ClassifyScope(destination) {
+	case ScopeLocal, ScopeSite, ScopeUnknown:
+		return false
+	case ScopeGlobal:
+	default:
+		return false
+	}
+	if c.HardUnavailable(destination.Unmap().Is4()) {
+		return true
+	}
+	// The second term applies to global IPv6 only: "the public Internet is not reachable over IPv6"
+	// says nothing about an IPv4 destination, and there is no equivalent IPv6-side fact that would
+	// gate one.
+	if destination.Unmap().Is6() {
+		return c.GlobalIPv6Egress == StateUnavailable
+	}
+	return false
 }
 
 // Observed reports how many interfaces the evaluation was able to look at.
@@ -144,7 +312,48 @@ type InterfaceObservation struct {
 	// Addresses are the interface's own addresses. Whether they are global, unique-local or
 	// link-local does not matter here; see Evaluate.
 	Addresses []netip.Prefix
+	// GlobalIPv6Route reports whether this interface has a NAVIGABLE global IPv6 route: a default
+	// route (::/0), or any non-default route whose destination is itself global.
+	//
+	// # Why a route and not an address
+	//
+	// A global address proves the machine could be ADDRESSED; it does not prove anything can be
+	// routed. The two come apart on exactly the machines this round exists for - a Windows box whose
+	// only IPv6 is link-local has neither, and a box with a Hyper-V or WSL adapter carrying a global
+	// address can still have no global route at all, because the adapter's prefix is on-link only.
+	// The real failure mode is the one with the address and no route.
+	//
+	// # Why it is per interface
+	//
+	// Because "does this machine have a global IPv6 route" is answered by OR over the interfaces, and
+	// the OR has to be taken over routes rather than over addresses. A virtual adapter's address says
+	// nothing about whether the egress the dial will actually use can carry the packet.
+	//
+	// # Why the caller may leave it unknown
+	//
+	// A platform with no route-table reader reports it as unknown, and unknown contributes nothing -
+	// so the capability degrades to the address-only answer it had before this field existed, rather
+	// than to a guess. A route observation that FAILED is unknown for the same reason.
+	GlobalIPv6Route RouteObservation
 }
+
+// RouteObservation is what an interface can say about routing to global IPv6 destinations.
+type RouteObservation uint8
+
+const (
+	// RouteUnobserved means this interface's routes were not read, or could not be. It contributes
+	// nothing to the evaluation: a platform without a route-table reader keeps its previous
+	// behaviour exactly.
+	RouteUnobserved RouteObservation = iota
+	// RouteAbsent means this interface has no navigable global IPv6 route.
+	//
+	// It is the observation that separates "IPv6 exists on this machine" from "a global IPv6
+	// destination can be reached from it", and it is the one the real failure log is full of.
+	RouteAbsent
+	// RoutePresent means this interface has a global IPv6 default route, or a route to a global IPv6
+	// prefix.
+	RoutePresent
+)
 
 // Evaluate derives the capability from the interfaces the local dial path can use.
 //
@@ -188,8 +397,19 @@ func Evaluate(interfaces []InterfaceObservation) FamilyCapability {
 	if len(interfaces) == 0 {
 		return FamilyCapability{IPv4: StateUnknown, IPv6: StateUnknown}
 	}
-	var hasIPv4, hasIPv6 bool
+	var (
+		hasIPv4, hasIPv6 bool
+		routePresent     bool
+		routeObserved    bool
+	)
 	for _, observation := range interfaces {
+		switch observation.GlobalIPv6Route {
+		case RoutePresent:
+			routePresent = true
+			routeObserved = true
+		case RouteAbsent:
+			routeObserved = true
+		}
 		for _, prefix := range observation.Addresses {
 			address := prefix.Addr()
 			if !address.IsValid() {
@@ -203,12 +423,24 @@ func Evaluate(interfaces []InterfaceObservation) FamilyCapability {
 			}
 		}
 	}
+	// The egress term, in one rule: a route that EXISTS on any interface is enough, because the
+	// question is whether this machine has a way out at all and the kernel picks the interface. Only
+	// when routes were actually read and none of them was navigable is the term a hard negative; if
+	// nobody could read them, the term stays unknown and gates nothing.
+	globalEgress := StateUnknown
+	switch {
+	case routePresent:
+		globalEgress = StateProvisioned
+	case routeObserved:
+		globalEgress = StateUnavailable
+	}
 	capability := FamilyCapability{
 		// An-interface-exists-but-carries-nothing-of-this-family is decisive, which is what
 		// separates this from the empty-list case above.
-		IPv4:      stateFor(hasIPv4),
-		IPv6:      stateFor(hasIPv6),
-		reachable: len(interfaces),
+		IPv4:             stateFor(hasIPv4),
+		IPv6:             stateFor(hasIPv6),
+		GlobalIPv6Egress: globalEgress,
+		reachable:        len(interfaces),
 	}
 	return capability
 }

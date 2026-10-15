@@ -8,6 +8,63 @@ import (
 	"github.com/sagernet/sing-box/common/netcap"
 )
 
+// BenchmarkLocalFamilyGate measures the DECISION on its own, separated from the capture.
+//
+// The two halves have different budgets and different reasons to exist, so measuring them together
+// hides which one moved:
+//
+//	capture - once per dial, and it must not read a route table or take a lock
+//	gate    - once per candidate, and it must not allocate: this is the per-candidate inner loop
+//
+// Both are asserted for allocations rather than only for time, because an allocation here is a cost
+// the connection pays on every dial and a source of GC pressure the process would not otherwise have.
+func BenchmarkLocalFamilyGate(b *testing.B) {
+	globalIPv4 := netip.MustParseAddr("93.184.216.34")
+	globalIPv6 := netip.MustParseAddr("2409:8a00::1")
+	linkLocal := netip.MustParseAddr("fe80::1")
+
+	capability := netcap.FamilyCapability{
+		IPv4:             netcap.StateProvisioned,
+		IPv6:             netcap.StateProvisioned,
+		GlobalIPv6Egress: netcap.StateUnavailable,
+	}
+	policy := newLocalFamilyPolicy(capability)
+
+	b.Run("global-ipv4/allowed", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			if policy.hardUndialable(globalIPv4) {
+				b.Fatal("ipv4 is not gated by an ipv6 egress verdict")
+			}
+		}
+	})
+	b.Run("global-ipv6/refused", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			if !policy.hardUndialable(globalIPv6) {
+				b.Fatal("a global ipv6 destination with no public route must be refused")
+			}
+		}
+	})
+	b.Run("link-local/allowed", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			if policy.hardUndialable(linkLocal) {
+				b.Fatal("a link-local destination is reached over the link")
+			}
+		}
+	})
+	b.Run("zero-policy/allowed", func(b *testing.B) {
+		zero := localFamilyPolicy{}
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			if zero.hardUndialable(globalIPv6) {
+				b.Fatal("a policy nobody computed must refuse nothing")
+			}
+		}
+	})
+}
+
 // BenchmarkLocalFamilyFilter measures the cost the capability adds to one dial.
 //
 // It is a micro-benchmark on purpose. The single-candidate scheduler path is the most frequent
@@ -77,12 +134,33 @@ func BenchmarkLocalFamilyPolicySnapshot(b *testing.B) {
 	dialer := &DefaultDialer{}
 	manager := newCapabilityManager(netcap.StateProvisioned, netcap.StateUnavailable)
 	dialer.familySnapshot = manager.NetworkFamilyCapabilitySnapshot
+	target := netip.MustParseAddr("2001:4860:4860::8888")
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		policy := dialer.captureLocalFamilyPolicy()
-		if !policy.excluded(familyIPv6) {
+		if !policy.hardUndialable(target) {
+			b.Fatal("the verdict must be read from the manager")
+		}
+	}
+}
+
+// BenchmarkLocalFamilyPolicyCaptureOnly is the same read with the gate left out, so the two costs can
+// be attributed.
+//
+// Without it, an allocation in either half is indistinguishable from one in the other - which is
+// exactly how a closure added to the capture would have been blamed on the gate, or worse, shipped.
+func BenchmarkLocalFamilyPolicyCaptureOnly(b *testing.B) {
+	dialer := &DefaultDialer{}
+	manager := newCapabilityManager(netcap.StateProvisioned, netcap.StateUnavailable)
+	dialer.familySnapshot = manager.NetworkFamilyCapabilitySnapshot
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		policy := dialer.captureLocalFamilyPolicy()
+		if policy.capability.IPv6 != netcap.StateUnavailable {
 			b.Fatal("the verdict must be read from the manager")
 		}
 	}
@@ -99,7 +177,8 @@ func BenchmarkLocalFamilyPolicyAbsent(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		policy := dialer.captureLocalFamilyPolicy()
-		if policy.excluded(familyIPv6) || policy.excluded(familyIPv4) {
+		if policy.hardUndialable(netip.MustParseAddr("2001:4860:4860::8888")) ||
+			policy.hardUndialable(netip.MustParseAddr("8.8.8.8")) {
 			b.Fatal("a dialer with no manager must restrict nothing")
 		}
 	}

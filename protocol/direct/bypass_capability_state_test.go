@@ -146,6 +146,49 @@ func TestBypassVerdictIsLiveAndNotPrecomputed(t *testing.T) {
 		"the socket semantics were built from empty options and are unaffected by any of the above")
 }
 
+// TestBypassRefusesAGlobalIPv6DestinationWithoutPublicEgress is this round's case, and it is NOT the
+// same as "the family is absent".
+//
+// The reported failing machine has IPv6 - a fe80:: link-local address, which is what makes a
+// link-local destination work - and no route to a global IPv6 destination. The bypass decision has to
+// separate the two, because a bypassed flow never passes through the scheduler where the verdict is
+// otherwise enforced, and in Linux redirect mode the packet really does leave this process.
+//
+// The predicate used here is the one production wires: DefaultDialer.LocalFamilyBlocked, reached
+// through the LocalFamilyDialer assertion in NewDirect. It is asserted through the same outbound
+// surface as the states above so the two layers cannot drift.
+func TestBypassRefusesAGlobalIPv6DestinationWithoutPublicEgress(t *testing.T) {
+	globalIPv6 := netip.MustParseAddr("2409:8a00:1234::1")
+	linkLocal := netip.MustParseAddr("fe80::1")
+	uniqueLocal := netip.MustParseAddr("fd00:1234::5")
+	publicIPv4 := netip.MustParseAddr("93.184.216.34")
+
+	// The machine: IPv4 and IPv6 both present, no public IPv6 route.
+	outbound := bypassable(option.DialerOptions{})
+	outbound.localFamily = func(address netip.Addr) bool {
+		switch {
+		case address.Unmap().Is4():
+			return false
+		case address.IsLoopback() || address.IsLinkLocalUnicast() || address.IsPrivate():
+			return false
+		default:
+			return true
+		}
+	}
+
+	require.False(t, outbound.CanBypass(N.NetworkTCP, globalIPv6),
+		"a global IPv6 destination cannot be carried by the platform when the machine has no route to one")
+	require.NotZero(t, outbound.BypassBlockers(N.NetworkTCP, globalIPv6)&dialer.BlockerLocalFamilyUnavailable,
+		"and the refusal is attributed to the machine, not to the configuration")
+
+	require.True(t, outbound.CanBypass(N.NetworkTCP, linkLocal),
+		"the link-local destination the fe80:: address exists for is unaffected")
+	require.True(t, outbound.CanBypass(N.NetworkTCP, uniqueLocal),
+		"and so is the campus-internal one: a public failure must not be enlarged into the LAN")
+	require.True(t, outbound.CanBypass(N.NetworkTCP, publicIPv4),
+		"an IPv6 egress verdict says nothing about IPv4")
+}
+
 // TestBypassWithoutTheCapabilityIsUnchanged is the degradation contract at this layer.
 //
 // An outbound whose dialer chain cannot report a verdict must produce byte-identical blockers to the

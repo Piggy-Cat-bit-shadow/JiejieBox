@@ -147,7 +147,7 @@ func TestDuringIsNotHardDenyFromTheFamilySnapshotAlone(t *testing.T) {
 
 	require.False(t, policy.ownership.startedStable, "the capture must record the manager's settled flag")
 	require.EqualValues(t, 1, policy.ownership.epoch, "and its epoch, from the same call")
-	require.False(t, policy.excludedAddress(address6),
+	require.False(t, policy.hardUndialable(address6),
 		"a capture taken during a transition must deny nothing: the manager reported that there is no "+
 			"settled network, and dropping that flag is what made this hard-deny")
 	require.True(t, policy.restrictsNothing())
@@ -177,13 +177,13 @@ func TestStaleIsNotHardDenyFromTheFamilySnapshotAlone(t *testing.T) {
 
 	// Control, taken first: while it is current the verdict does refuse IPv6. Without this the
 	// assertions below would pass against an implementation that never refuses anything.
-	require.True(t, policy.excludedAddress(address6),
+	require.True(t, policy.hardUndialable(address6),
 		"while the capture is current, the verdict must refuse IPv6 - otherwise this test proves nothing")
 
 	// The manager moves on: a new epoch, still settled.
 	manager.epoch.Store(2)
 
-	require.False(t, policy.excludedAddress(address6),
+	require.False(t, policy.hardUndialable(address6),
 		"a capture from a replaced generation must deny nothing")
 	require.True(t, policy.restrictsNothing())
 
@@ -214,8 +214,8 @@ func TestCurrentFamilySnapshotStillHardDenies(t *testing.T) {
 
 	require.True(t, policy.ownership.owns())
 	require.False(t, policy.restrictsNothing())
-	require.True(t, policy.excludedAddress(address6))
-	require.False(t, policy.excludedAddress(address4))
+	require.True(t, policy.hardUndialable(address6))
+	require.False(t, policy.hardUndialable(address4))
 
 	scheduler := &candidateScheduler{localFamily: policy}
 	filtered, refused := scheduler.filterLocalFamily(planCandidates(addressSet(), netip.Addr{}, 0))
@@ -237,12 +237,12 @@ func TestEpochMoveWhileUnsettledIsNotHardDeny(t *testing.T) {
 	manager.stable.Store(true)
 	owner := newFixtureDialer(manager)
 	policy := owner.captureLocalFamilyPolicy()
-	require.True(t, policy.excludedAddress(address6), "control: it refuses while current and settled")
+	require.True(t, policy.hardUndialable(address6), "control: it refuses while current and settled")
 
 	manager.epoch.Store(2)
 	manager.stable.Store(false)
 
-	require.False(t, policy.excludedAddress(address6))
+	require.False(t, policy.hardUndialable(address6))
 }
 
 // TestSettledAgainAfterACommitStillDoesNotLaunderADuringCapture is the case that makes the settled flag
@@ -260,7 +260,7 @@ func TestSettledAgainAfterACommitStillDoesNotLaunderADuringCapture(t *testing.T)
 	owner := newFixtureDialer(manager)
 	policy := owner.captureLocalFamilyPolicy()
 	capturedEpoch := policy.ownership.epoch
-	require.False(t, policy.excludedAddress(address6))
+	require.False(t, policy.hardUndialable(address6))
 
 	// The transition commits: settled again, same epoch.
 	manager.stable.Store(true)
@@ -268,7 +268,7 @@ func TestSettledAgainAfterACommitStillDoesNotLaunderADuringCapture(t *testing.T)
 	require.Equal(t, capturedEpoch, currentEpoch, "a commit settles the state without advancing the epoch")
 	require.True(t, currentStable)
 
-	require.False(t, policy.excludedAddress(address6),
+	require.False(t, policy.hardUndialable(address6),
 		"the commit must not launder a capture that began during the transition into a valid one")
 }
 
@@ -294,7 +294,7 @@ func TestFamilySnapshotOwnedCaptureIsUsedRegardlessOfTheNarrowerGetters(t *testi
 	require.EqualValues(t, 3, policy.ownership.epoch,
 		"the epoch must come from the family snapshot, not from the narrower getter")
 	require.True(t, policy.ownership.startedStable)
-	require.True(t, policy.excludedAddress(address6),
+	require.True(t, policy.hardUndialable(address6),
 		"and the policy must still be current, because its source has not moved")
 }
 
