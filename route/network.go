@@ -760,12 +760,50 @@ func (r *NetworkManager) readWIFIState(ctx context.Context) (adapter.WIFIState, 
 // reset. The generation then advances more than once while the transports and callbacks are reset in
 // an order belonging to neither run, so a transport can be reset after the generation it was pinned
 // to - and a caller observes a state that no single reset produced.
+//
+// # Why it re-observes before it claims
+//
+// This entry point used to claim an epoch and then reset, with no observation in between - and the
+// same was true of the Windows resume path and ReleaseMemory, which reaches this function. The
+// published address-family capability is written by the environment recompute, so claiming an epoch
+// WITHOUT one moved the epoch while leaving the verdict exactly as the previous network left it. A
+// device whose addressing moved while the reset was in flight - an IPv6 lease that expired, or IPv6
+// addressing that appeared - then answered for the whole of the new generation with the previous
+// generation's verdict.
+//
+// That is a P0 rather than a quality issue because the consumer of the verdict is a HARD refusal:
+// common/dialer drops every candidate of a family from the race and fails a literal dial before a
+// socket exists, so an inherited "IPv6 unavailable" verdict refuses IPv6 on a network that has IPv6
+// addressing until some unrelated interface event happens to republish.
+//
+// The shape below is the one updateInterface already uses, and it produces exactly one epoch per
+// logical transition: recomputeNetworkEnvironment claims only when the fingerprint actually moved, so
+// its token is used when there is one, and the fallback claims only when there is not.
+//
+// # Why "re-observe" rather than "clear the verdict on reset"
+//
+// Clearing satisfies the unavailable -> available direction and is wrong in the other two:
+//
+//   - a verdict that is still correct for the network the device is still on would be discarded,
+//     losing a hard negative the machine has legitimately earned;
+//   - an unchanged network would report Unknown forever, so the fast-fail would never engage on a
+//     reset-heavy path such as ReleaseMemory.
+//
+// Re-observing gives the new generation the CURRENT facts whichever way they point, which is also
+// what makes the invariant true: a generation either has a verdict derived from facts observed for
+// it, or it has none.
 func (r *NetworkManager) ResetNetwork(ctx context.Context) {
 	r.resetRunAccess.Lock()
 	defer r.resetRunAccess.Unlock()
-	// Claimed here because this entry point IS the transition: it has no earlier moment at which a
-	// caller could observe a half-published state.
-	token := r.beginTransition()
+	// Re-observation first. When it finds the environment unchanged it publishes only the capability
+	// - the addressing can move without the network moving - and returns no token, and this claims
+	// one. When it DOES find a change it has already claimed and published together, so its token is
+	// used and the epoch moves exactly once.
+	_, token := r.recomputeNetworkEnvironment()
+	if token == noTransition {
+		// No environment change to carry a token: this reset IS the transition.
+		token = r.beginTransition()
+	}
 	defer r.commitTransition(token)
 	r.resetNetworkLocked(ctx)
 }
@@ -1446,7 +1484,15 @@ func (r *NetworkManager) notifyWindowsPowerEvent(event int) {
 			if updateContext.Err() != nil {
 				return
 			}
-			token := r.beginTransition()
+			// Re-observe before claiming, for the same reason ResetNetwork does: this wakes into a
+			// new network generation, and the generation must not carry the previous one's
+			// address-family verdict. A resume is exactly when the device may have moved networks
+			// while it was asleep, so re-observing is the substantive step here rather than a
+			// formality.
+			_, token := r.recomputeNetworkEnvironment()
+			if token == noTransition {
+				token = r.beginTransition()
+			}
 			defer r.commitTransition(token)
 			r.resetNetworkLocked(updateContext)
 		}()
