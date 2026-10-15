@@ -123,8 +123,20 @@ func (h *interfaceTransitionHarness) holdResetLock(t *testing.T) {
 }
 
 // staticInterfaceMonitor is a DefaultInterfaceMonitor whose answer the test controls.
+//
+// `own` is what RegisterMyInterface records, so a test can model the one thing only this process
+// knows: which of the interfaces in its own list are its own. Nothing in these transition tests needs
+// it, but the local-family-capability tests do - a tunnel counted as underlay is a wrong verdict, and
+// the exclusion is only testable if the monitor can report one.
+//
+// `registered` and `unregistered` count callback wiring, so a test can assert that a new component
+// owns no callback. A callback that is registered and never removed is a live pointer into a monitor
+// that outlives its registrant, which is the shape of leak a teardown review has to rule out.
 type staticInterfaceMonitor struct {
-	current *control.Interface
+	current      *control.Interface
+	own          []string
+	registered   int
+	unregistered int
 }
 
 func (m *staticInterfaceMonitor) Start() error                         { return nil }
@@ -133,12 +145,18 @@ func (m *staticInterfaceMonitor) DefaultInterface() *control.Interface { return 
 func (m *staticInterfaceMonitor) OverrideAndroidVPN() bool             { return false }
 func (m *staticInterfaceMonitor) AndroidVPNEnabled() bool              { return false }
 func (m *staticInterfaceMonitor) RegisterCallback(tun.DefaultInterfaceUpdateCallback) *list.Element[tun.DefaultInterfaceUpdateCallback] {
+	m.registered++
 	return nil
 }
 func (m *staticInterfaceMonitor) UnregisterCallback(*list.Element[tun.DefaultInterfaceUpdateCallback]) {
+	m.unregistered++
 }
-func (m *staticInterfaceMonitor) RegisterMyInterface(string) {}
-func (m *staticInterfaceMonitor) MyInterfaces() []string     { return nil }
+
+func (m *staticInterfaceMonitor) RegisterMyInterface(interfaceName string) {
+	m.own = append(m.own, interfaceName)
+}
+
+func (m *staticInterfaceMonitor) MyInterfaces() []string { return m.own }
 
 // TestInterfaceEnvironmentTransitionCoalescesPendingReset is the reproduction.
 func TestInterfaceEnvironmentTransitionCoalescesPendingReset(t *testing.T) {

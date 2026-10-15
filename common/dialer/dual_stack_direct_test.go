@@ -50,6 +50,12 @@ func (d *ownerDialer) newDualStackScheduler(fallbackDelay time.Duration) *candid
 	return d.owner.newDualStackScheduler(fallbackDelay)
 }
 
+// localFamilyPolicy forwards the machine-level verdict the same way the scheduler factory forwards
+// health, so a chain built on this double reports what the production chain reports.
+func (d *ownerDialer) localFamilyPolicy() localFamilyPolicy {
+	return d.owner.localFamilyPolicy()
+}
+
 // DialParallelInterface satisfies ParallelInterfaceDialer. The scheduler only uses it to route
 // the per-attempt connect, so delegating to the fake is enough.
 func (d *ownerDialer) DialParallelInterface(ctx context.Context, network string, destination M.Socksaddr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.Conn, error) {

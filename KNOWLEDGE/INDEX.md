@@ -22,6 +22,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | `COMMIT-INDEX.md` | **PROVENANCE_ONLY** | the SHAs behind a behaviour, grouped by theme |
 | `REFRESH.md` | **REFRESH_ONLY** | the refresh protocol; not a task mode |
 | `docs/archive/**` | **HISTORY_ONLY** | how we got here; never current truth |
+| `sing-box_v0.1.5-v0.1.10_网络链路与Action-Release优化总结.md` | **HISTORY_ONLY** | the v0.1.5→v0.1.10 engineering narrative (link path + Action/Release); a point-in-time summary, not a module |
 
 ## Route by task
 

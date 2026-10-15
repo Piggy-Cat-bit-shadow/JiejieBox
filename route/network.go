@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/netcap"
 	"github.com/sagernet/sing-box/common/runtimecoord"
 	"github.com/sagernet/sing-box/common/settings"
 	"github.com/sagernet/sing-box/common/taskmonitor"
@@ -33,13 +34,42 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-var _ adapter.NetworkManager = (*NetworkManager)(nil)
+var (
+	_ adapter.NetworkManager                     = (*NetworkManager)(nil)
+	_ adapter.NetworkResetCounter                = (*NetworkManager)(nil)
+	_ adapter.NetworkTransitionState             = (*NetworkManager)(nil)
+	_ adapter.NetworkTransitionSnapshotter       = (*NetworkManager)(nil)
+	_ adapter.NetworkFamilyCapabilitySnapshotter = (*NetworkManager)(nil)
+)
 
 type NetworkManager struct {
-	ctx                 context.Context
-	logger              logger.ContextLogger
-	router              adapter.Router
-	interfaceFinder     *control.DefaultInterfaceFinder
+	ctx    context.Context
+	logger logger.ContextLogger
+	router adapter.Router
+	// interfaceFinder is held as the concrete finder because the platform path needs
+	// UpdateInterfaces, which the control.InterfaceFinder interface does not expose.
+	interfaceFinder *control.DefaultInterfaceFinder
+	// interfaceRefreshError, when set, makes the next interface refresh report this error instead of
+	// enumerating.
+	//
+	// It exists for one assertion: that a failed refresh does not promote the previous observation to a
+	// new network generation's verdict. A real finder on a real machine cannot be made to fail on
+	// request, and the failure has to be injectable on BOTH branches - the non-platform refresh and the
+	// Darwin platform refresh - because the ordering rule they share is the thing under test.
+	//
+	// Nil in production, where it costs one predictable branch on a path that runs on network events
+	// rather than per connection.
+	interfaceRefreshError error
+	// routeObservation, when set, replaces the platform's route-table read for the global IPv6 egress
+	// term.
+	//
+	// It exists because the state under test is the ABSENCE of a route, and a developer's machine
+	// cannot be put into that state on request - unlike the interface list, where a fixture simply
+	// supplies the interfaces it wants. Without this the route-evidence path would have no test at all
+	// on the only platform where it is the sole defence, which is the platform whose bug this fixes.
+	//
+	// Nil in production, where it costs one predictable branch per network event.
+	routeObservation    func() netcap.RouteObservation
 	networkInterfaces   common.TypedValue[[]adapter.NetworkInterface]
 	autoDetectInterface bool
 	defaultOptions      adapter.NetworkOptions
@@ -117,6 +147,20 @@ type NetworkManager struct {
 	//
 	// This flag is what makes "during" distinguishable from both "before" and "after".
 	transitionStable atomic.Bool
+	// familyCapability is the local dial path's per-family verdict for the network the manager is
+	// currently on. It is published by the same recompute that publishes the environment
+	// fingerprint, under stateAccess, so a reader never sees an address-family verdict from one
+	// network beside an environment token from another.
+	//
+	// It is not part of the ownership protocol: it does not advance the epoch, a transition is not
+	// required to change it, and nothing refuses a connection because it changed. It answers
+	// "would an attempt of this family be wasted right now", which is a fact about the interfaces.
+	// The network's identity is still the epoch's business, and the dialer still validates
+	// ownership against the epoch at hand-over.
+	//
+	// It is atomic because it is read on the dial path, where taking stateAccess would put every
+	// dial behind every transition.
+	familyCapability atomic.Pointer[adapter.NetworkFamilyCapability]
 	// transitionAccess guards the ownership pair (transitionOwner, transitionStable) so that
 	// claiming, checking ownership and settling are each a single atomic mutation.
 	//
@@ -141,6 +185,18 @@ type NetworkManager struct {
 	interfaceUpdateDecision func()
 	// environmentPublished, when set, runs immediately after a recompute publishes a new fingerprint.
 	environmentPublished func()
+	// familyCapabilityPublished, when set, runs at the instant the local family capability is stored
+	// for a transition: after the epoch has been claimed, before stateAccess is released.
+	//
+	// The two hooks bracket the ordering this matters for. environmentPublished fires while the
+	// capability still belongs to the previous network, so a reader there must see a CONSISTENT
+	// previous state; this one fires once the capability belongs to the new network, so a reader
+	// there must see the new epoch and the unsettled state alongside it. A test that reads the
+	// snapshot at both instants covers the whole publish-claim-store sequence rather than the one
+	// point a single hook could observe.
+	//
+	// Nil in production, where it costs one predictable branch.
+	familyCapabilityPublished func()
 	// beginTransitionHook, when set, runs BETWEEN the two ownership writes in beginTransition.
 	//
 	// It exists so a test can park the claim midway and observe what a reader that does not hold
@@ -353,11 +409,66 @@ func (r *NetworkManager) InterfaceFinder() control.InterfaceFinder {
 	return r.interfaceFinder
 }
 
+// UpdateInterfaces refreshes the interface list and, when that observation succeeded, republishes the
+// network environment and the family verdict derived from it.
+//
+// # Why the recompute is not an unconditional defer
+//
+// It used to be, and that made a failed refresh publish the PREVIOUS network's verdict under the NEW
+// network's ownership. The fingerprint comes from the default interface's gateways, which come from
+// the interface list, so a hand-over whose refresh failed can still move it - and the recompute would
+// then claim a new epoch with a capability computed from addressing the machine has left. The verdict
+// carries the new generation's ownership from that point on, so the dialer's ownership check cannot
+// reject it and nothing later corrects it. See postUpdateNetworkEnvironmentWhenObserved.
+//
+// Both branches now return WITHOUT recomputing when their observation failed, so the rule is one rule:
+// an environment boundary is established only on evidence that was actually observed.
 func (r *NetworkManager) UpdateInterfaces() error {
-	defer r.postUpdateNetworkEnvironment()
+	// observed is set only by a branch that actually published a list, and the recompute is gated on
+	// it. Every early return therefore leaves the environment and the verdict exactly as they were.
+	observed := false
+	defer func() { r.postUpdateNetworkEnvironmentWhenObserved(observed) }()
 	if r.platformInterface == nil || !r.platformInterface.UsePlatformNetworkInterfaces() {
-		return r.interfaceFinder.Update()
+		// The finder is refreshed FIRST, and the public list is published from it after.
+		//
+		// The order is the whole point of this branch. Publishing before the refresh would put the
+		// PREVIOUS finder snapshot into the list the capability is derived from, and the recompute
+		// above reads that list - so one call would produce a capability computed from addressing that
+		// this very call exists to replace. A caller that reaches this entry point directly, without
+		// the monitor having refreshed anything first, would then get a verdict about the interface
+		// state it just moved away from.
+		//
+		// On the ordinary path the monitor has already refreshed the finder before it reports, so the
+		// Update below is a cheap re-read rather than a second enumeration, and the publish that
+		// follows is the same slice copy it would have been.
+		//
+		// A refresh that FAILS returns before publishing, which leaves the previous list in place. That
+		// is deliberate and matches the platform branch below, which also returns on error without
+		// touching the list: the earlier observation is stale but it is still a real observation of
+		// this machine, whereas publishing an empty list would turn an enumeration failure into
+		// "no interfaces", and the capability would report Unknown for both families on a machine that
+		// has addressing. Stale-but-real fails open at worst; empty-therefore-unknown would silently
+		// disable the fast-fail.
+		err := r.interfaceRefreshError
+		if err == nil {
+			err = r.interfaceFinder.Update()
+		}
+		if err != nil {
+			return err
+		}
+		r.observeNonPlatformInterfaces()
+		observed = true
+		return nil
 	} else {
+		// The injected failure is honoured here too, and BEFORE the platform's own list is asked for.
+		//
+		// It has to be: this is the branch where a stale list can be promoted, because the platform
+		// supplies the list and the fingerprint's default interface can have moved to a network the
+		// list does not describe. Checking it only on the other branch would leave the rule under test
+		// unexercised on the path that needs it most.
+		if err := r.interfaceRefreshError; err != nil {
+			return err
+		}
 		interfaces, err := r.platformInterface.NetworkInterfaces()
 		if err != nil {
 			return err
@@ -403,6 +514,7 @@ func (r *NetworkManager) UpdateInterfaces() error {
 				return F.ToString(it.Name, " (", strings.Join(options, ", "), ")")
 			}), ", "))
 		}
+		observed = true
 		return nil
 	}
 }
@@ -846,6 +958,39 @@ func (r *NetworkManager) NetworkTransitionSnapshot() (uint64, bool) {
 	return uint64(r.transitionOwner), r.transitionStable.Load()
 }
 
+// NetworkFamilyCapabilitySnapshot returns the epoch, the settled state and the local family
+// capability as one observation.
+//
+// The capability is read under transitionAccess, the same lock that guards the ownership pair, and
+// that is what makes the triple a state the network really passed through rather than three
+// readings that happen to be adjacent. See adapter.NetworkFamilyCapabilitySnapshotter for the
+// interleaving this closes.
+//
+// The capability's PUBLICATION is not under this lock - it rides the environment recompute - so the
+// value returned here is the last one that recompute published. That is deliberate: a capability is
+// taken from real interfaces, and the lock that could order it against the epoch is held across
+// syscalls elsewhere in this file. The alternative - reading the interfaces here, per call - would
+// put interface enumeration on the dial path, which is the cost this whole design exists to avoid.
+func (r *NetworkManager) NetworkFamilyCapabilitySnapshot() (uint64, bool, adapter.NetworkFamilyCapability) {
+	r.transitionAccess.Lock()
+	defer r.transitionAccess.Unlock()
+	return uint64(r.transitionOwner), r.transitionStable.Load(), r.loadFamilyCapability()
+}
+
+// loadFamilyCapability returns the published capability, or a no-opinion value when none has been
+// computed.
+//
+// The zero NetworkFamilyCapability reports both families as Unknown, so a manager that never
+// published one - a box that has not started, a platform with no interface monitor - leaves every
+// consumer on its previous behaviour rather than losing a family.
+func (r *NetworkManager) loadFamilyCapability() adapter.NetworkFamilyCapability {
+	published := r.familyCapability.Load()
+	if published == nil {
+		return adapter.NetworkFamilyCapability{}
+	}
+	return *published
+}
+
 // NetworkResetGeneration reports the current reset epoch: it increases every time a network
 // reset BEGINS, advanced as the reset's first statement rather than on completion.
 //
@@ -1053,6 +1198,16 @@ func (r *NetworkManager) clearNetworkPaused() {
 }
 
 func (r *NetworkManager) notifyInterfaceUpdate(_ *control.Interface, _ int) {
+	// The interface list is republished from the finder before anything decides on it, so the state
+	// the reset body and the family capability observe is the state this event reported rather than
+	// whatever the previous event left behind.
+	//
+	// On this path the monitor has already refreshed the finder - it refreshes before it reports -
+	// so this is a copy of a short slice. It is a no-op where a platform interface supplies the list.
+	// It is done before the lock below because it touches neither the pending flag nor the ownership
+	// pair, and holding interfaceUpdateAccess across it would serialise every notification behind a
+	// slice copy.
+	r.observeNonPlatformInterfaces()
 	r.interfaceUpdateAccess.Lock()
 	defer r.interfaceUpdateAccess.Unlock()
 	if !r.networkResetPending {
@@ -1099,6 +1254,17 @@ func (r *NetworkManager) updateInterface(ctx context.Context, defaultInterface *
 	if ctx.Err() != nil {
 		return
 	}
+	// A second place the non-platform list is republished, and it is not redundant with the one in
+	// notifyInterfaceUpdate.
+	//
+	// PostStart dispatches an interface update DIRECTLY, without a notification - it has no event to
+	// notify about, it is asking the monitor where the box woke up - and on that path nothing else
+	// would publish the list at all. The box would then run its whole first network generation with an
+	// empty interface list, which is precisely the generation whose capability the first connections
+	// read.
+	//
+	// It is idempotent, so the ordinary notification path pays one slice copy for it.
+	r.observeNonPlatformInterfaces()
 	var options []string
 	options = append(options, F.ToString("index ", defaultInterface.Index))
 	if C.IsAndroid && r.platformInterface == nil {

@@ -8,7 +8,6 @@ import (
 	"net/netip"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	E "github.com/sagernet/sing/common/exceptions"
@@ -87,6 +86,14 @@ type candidateScheduler struct {
 	health *familyHealth
 	// networkEnvironment scopes the health state.
 	networkEnvironment uint64
+	// localFamily is what the machine could dial when this connection began. A family the machine
+	// has no addressing for is dropped from the plan and refused from the late stream, so the race
+	// never spends an attempt - or a fallback interval - on an address that cannot be reached.
+	//
+	// It restricts ONLY a family that is provably undialable; see localFamilyPolicy. The zero value
+	// restricts nothing, which is what a scheduler built without a capability (every test that does
+	// not opt in, and any manager that cannot report one) gets.
+	localFamily localFamilyPolicy
 }
 
 // dial runs the race and returns the winning connection.
@@ -118,14 +125,32 @@ func (s *candidateScheduler) dial(ctx context.Context, plan candidatePlan, attem
 // closed channel means resolution has finished, so the scheduler knows no more are coming and
 // can stop waiting for them.
 func (s *candidateScheduler) dialWithLateCandidates(ctx context.Context, plan candidatePlan, lateCandidates <-chan dualStackCandidate, attempt dialAttemptFunc) (net.Conn, netip.Addr, error) {
+	// Drop the candidates the local machine cannot dial, and report whether anything was dropped so
+	// the empty-plan cases below can tell "no candidate was ever offered" from "every candidate was
+	// refused locally".
+	//
+	// The filter runs here rather than in the planner because a late candidate never passes through
+	// the planner at all: it is appended to the launch queue straight from the resolver's stream, so
+	// a filter installed in planCandidates alone would be bypassed by whichever family answered
+	// second - which is the case that matters, because the slow answer is the one that arrives after
+	// the race has begun.
+	launchPlan, refused := s.filterLocalFamily(plan)
+	plan = launchPlan
 	candidates := plan.candidates
-	if len(candidates) == 0 && lateCandidates == nil {
-		return nil, netip.Addr{}, E.New("no dial candidates")
-	}
 	switch {
+	case len(candidates) == 0 && lateCandidates == nil:
+		if refused == familyInvalid {
+			return nil, netip.Addr{}, E.New("no dial candidates")
+		}
+		// Every candidate belonged to a family the machine cannot dial. Returning here rather than
+		// waiting is the whole point: the alternative is the caller's connect timeout spent on
+		// addresses this machine has no way to reach.
+		return nil, netip.Addr{}, localFamilyRefusalError(refused)
 	case len(candidates) == 0:
 		// Nothing to start with. A late stream was supplied, so wait for it rather than
-		// failing: the fast family may simply not have answered yet.
+		// failing: the fast family may simply not have answered yet. A refused candidate is
+		// dropped from that stream too, so a stream that carries only refused families still
+		// terminates - the scheduler concludes when resolution finishes.
 	case len(candidates) == 1 && lateCandidates == nil:
 		// The hot path, and the common case for a literal IP with no recovery.
 		//
@@ -355,6 +380,16 @@ func (s *candidateScheduler) dialWithLateCandidates(ctx context.Context, plan ca
 			}
 			seen[candidate.address] = struct{}{}
 
+			// A late candidate is subject to the same local-family filter as a planned one.
+			//
+			// This is the half of the filter that a check inside planCandidates cannot reach: the
+			// late stream never passes through the planner, so filtering only there would let the
+			// second family to answer walk an undialable candidate straight into the race. The
+			// address is marked as seen first, so a stream that repeats it costs nothing.
+			if s.localFamily.hardUndialable(candidate.address) {
+				continue
+			}
+
 			// A late candidate joins the queue. If nothing is currently pending it starts at
 			// once, so a family that answers after the race began is not made to wait for a
 			// fallback interval that was scheduled before it existed.
@@ -500,6 +535,98 @@ func (s *candidateScheduler) fallbackDelayOrDefault() time.Duration {
 		return s.fallbackDelay
 	}
 	return N.DefaultFallbackDelay
+}
+
+// filterLocalFamily drops the planned candidates whose family the machine cannot dial.
+//
+// It returns the plan UNCHANGED - the same slice header, so the hot path allocates nothing and the
+// caller's data is not touched - when nothing is refused, which is every connection on a machine that
+// has addressing for both families. Only when something is refused does it build a filtered slice.
+//
+// # Why the filtered slice is a copy rather than an in-place compaction
+//
+// planCandidates hands its result to whoever asked, and the direct outbound's resolved-address path
+// passes a slice it built from metadata. Compacting in place would rewrite the caller's own slice as
+// a side effect of dialling - a mutation nobody asked for, on data whose lifetime the scheduler does
+// not own. The cost of not doing it is one allocation on exactly the connections where a family is
+// provably absent, which is the case the feature exists to make cheap.
+//
+// The refused family is returned rather than a boolean so that the caller can report WHICH family
+// was undialable. That is the difference between an actionable message and "no dial candidates",
+// and it is the message a user sees for the case this whole round exists for: a dual-stack name on
+// a machine with no IPv6 addressing, where the AAAA half of the answer must not cost a connect
+// timeout.
+func (s *candidateScheduler) filterLocalFamily(plan candidatePlan) (candidatePlan, addressFamily) {
+	if plan.capabilityRestrictsNothing(s.localFamily) {
+		return plan, familyInvalid
+	}
+	return s.dropUndialableCandidates(plan)
+}
+
+// dropUndialableCandidates is the slow half of filterLocalFamily: it is reached only when the
+// capability can refuse something.
+//
+// It is a separate function so that the check above stays small enough to inline into the scheduler,
+// which is what keeps the ordinary dial - and every dial made by a manager that cannot report a
+// capability - off this code path entirely rather than merely paying little for it. The split is not
+// a micro-optimisation for its own sake: this runs once per connection, and it is the one place in
+// the dial path that was allowed to become more expensive in this round.
+//
+// Every decision here goes through s.localFamily.excluded, which consults network ownership before it
+// answers - so a scheduler whose capture has been superseded drops nothing, and the successor
+// generation's candidates reach the race.
+func (s *candidateScheduler) dropUndialableCandidates(plan candidatePlan) (candidatePlan, addressFamily) {
+	planned := len(plan.candidates)
+	if planned == 0 {
+		return plan, familyInvalid
+	}
+	// The first refused candidate is located before anything is copied. Everything before it is kept
+	// verbatim, which makes the copy start at the first removal instead of at the front.
+	firstRefused := -1
+	var refused addressFamily
+	for index, candidate := range plan.candidates {
+		if s.localFamily.hardUndialable(candidate.address) {
+			firstRefused = index
+			refused = candidate.family
+			break
+		}
+	}
+	if firstRefused < 0 {
+		return plan, familyInvalid
+	}
+	kept := make([]dualStackCandidate, firstRefused, planned)
+	copy(kept, plan.candidates[:firstRefused])
+	for _, candidate := range plan.candidates[firstRefused+1:] {
+		if s.localFamily.hardUndialable(candidate.address) {
+			continue
+		}
+		kept = append(kept, candidate)
+	}
+	plan.candidates = kept
+	return plan, refused
+}
+
+// capabilityRestrictsNothing reports whether every candidate of this plan is dialable, without
+// looking at the plan.
+//
+// It answers from the capability and its ownership alone, which is what makes it constant-time and
+// inlinable: a policy that cannot refuse anything cannot refuse any candidate, so there is nothing to
+// scan. It delegates the ownership half to the policy rather than re-deriving it, so the fast path and
+// the slow path cannot disagree about whether a verdict is still current - a disagreement there would
+// let the fast path skip a filter that would have removed something.
+func (p candidatePlan) capabilityRestrictsNothing(policy localFamilyPolicy) bool {
+	return policy.restrictsNothing()
+}
+
+// localFamilyRefusalError reports why no candidate could be attempted.
+//
+// A refusal that came from the local family capability is reported as itself, because "no dial
+// candidates" would hide the cause: the resolver answered, and the machine dropped the answer.
+func localFamilyRefusalError(refused addressFamily) error {
+	if refused == familyInvalid {
+		return E.New("no dial candidates")
+	}
+	return hardUnavailableError(refused)
 }
 
 // familyHealth remembers which address family recently failed to establish a connection, so
@@ -701,10 +828,13 @@ func isFamilyPathFailure(err error) bool {
 		return false
 	}
 	// Explicit path errors from the kernel.
-	if errors.Is(err, syscall.ENETUNREACH) ||
-		errors.Is(err, syscall.EHOSTUNREACH) ||
-		errors.Is(err, syscall.EADDRNOTAVAIL) ||
-		errors.Is(err, syscall.ENETDOWN) {
+	//
+	// Matched through pathFailureErrnos rather than against the syscall constants directly, because on
+	// Windows the two are different numbers: the standard library surfaces the raw Winsock errno, so
+	// syscall.ENETUNREACH (0x20000043) never equals the 10051 that arrives. See
+	// windows_socket_errors.go - the checks below were dead on the platform whose reported failure is
+	// exactly this condition.
+	if erroredWith(err, pathFailureErrnos...) {
 		return true
 	}
 	// Cancellation is never a family verdict. A cancelled context means the CALLER stopped
@@ -728,7 +858,10 @@ func isFamilyPathFailure(err error) bool {
 		return false
 	}
 	// A refusal is the peer actively answering: the path works.
-	if errors.Is(err, syscall.ECONNREFUSED) {
+	//
+	// Checked in BOTH spellings for the same reason as the group above, and this is the more dangerous
+	// half: a missed refusal means a healthy family is penalised because one server was down.
+	if erroredWith(err, peerAnsweredErrnos...) {
 		return false
 	}
 	// A timeout means nothing answered on that path. This is the blackhole case the whole

@@ -103,6 +103,20 @@ const (
 	// dialer serves, which the userspace path refuses in order to keep a TUN from routing a
 	// connection back into itself.
 	BlockerSelfAddress
+	// BlockerLocalFamilyUnavailable: the machine has no interface carrying an address of this
+	// destination's family, so the userspace path refuses the attempt immediately rather than spending
+	// a connect timeout on it.
+	//
+	// It exists so that a bypass does not reintroduce the wait the capability removes. On every stack
+	// except Linux redirect mode the bypassed flow still travels the userspace path, so the refusal
+	// would be enforced anyway; in redirect mode the connect is the platform's, and handing it an
+	// address the machine provably cannot reach is exactly the silent stall this round is about.
+	//
+	// The value is a property of the MACHINE and the address's family, not of the outbound's
+	// configuration, which is why it is a separate bit from BlockerFamilyStrategy: an operator whose
+	// own domain_strategy_ decided this needs to look at their configuration, while an operator whose
+	// device has no IPv6 addressing at all needs to look at the device.
+	BlockerLocalFamilyUnavailable
 	// BlockerProfileUnbuilt: the profile was never built from any options.
 	//
 	// It is the zero value's answer, and it exists because the zero value has to be the REFUSING
@@ -139,6 +153,7 @@ var blockerNames = []struct {
 	{BlockerDestinationInvalid, "destination is not a usable literal address"},
 	{BlockerGlobalNetworkPolicy, "ambient network policy (bind interface, routing mark, strategy)"},
 	{BlockerSelfAddress, "destination is this host's own address"},
+	{BlockerLocalFamilyUnavailable, "the local network has no usable path for this destination's address family"},
 	{BlockerProfileUnbuilt, "the dial options were never interpreted"},
 }
 

@@ -53,7 +53,11 @@ type DefaultDialer struct {
 	// networkStable reports whether the network is settled; nil when the manager has no such concept.
 	networkStable func() bool
 	// networkSnapshot returns the epoch and the settled state together; nil when the manager cannot.
-	networkSnapshot        func() (uint64, bool)
+	networkSnapshot func() (uint64, bool)
+	// familySnapshot returns the epoch, the settled state and the local address-family capability
+	// together; nil when the manager cannot report the capability, in which case no family is ever
+	// filtered.
+	familySnapshot         func() (uint64, bool, adapter.NetworkFamilyCapability)
 	powerManager           *powerreport.Manager
 	outboundManager        adapter.OutboundManager
 	dnsTransportManager    adapter.DNSTransportManager
@@ -99,6 +103,15 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 	var networkSnapshot func() (uint64, bool)
 	if snapshotter, isSnapshotter := networkManager.(adapter.NetworkTransitionSnapshotter); isSnapshotter {
 		networkSnapshot = snapshotter.NetworkTransitionSnapshot
+	}
+	// The same observation, with the local address-family capability carried alongside the ownership
+	// pair. It subsumes the two above when the manager provides it: the capability has to be trusted
+	// only if it was read in the same instant as the epoch and the settled state, and three separate
+	// getters let the triple tear so that one network's capability is recorded under another's
+	// epoch. See adapter.NetworkFamilyCapabilitySnapshotter.
+	var familySnapshot func() (uint64, bool, adapter.NetworkFamilyCapability)
+	if snapshotter, isSnapshotter := networkManager.(adapter.NetworkFamilyCapabilitySnapshotter); isSnapshotter {
+		familySnapshot = snapshotter.NetworkFamilyCapabilitySnapshot
 	}
 	platformInterface := service.FromContext[adapter.PlatformInterface](ctx)
 
@@ -290,6 +303,7 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 		networkEpoch:           networkEpoch,
 		networkStable:          networkStable,
 		networkSnapshot:        networkSnapshot,
+		familySnapshot:         familySnapshot,
 		familyHealth:           newFamilyHealth(),
 		powerManager:           service.FromContext[*powerreport.Manager](ctx),
 		outboundManager:        service.FromContext[adapter.OutboundManager](ctx),
@@ -324,10 +338,60 @@ func (d *DefaultDialer) DialContext(ctx context.Context, network string, address
 	} else if address.IsDomain() {
 		return nil, E.New("domain not resolved")
 	}
-	// Captured before any raw work, so a reset landing anywhere between here and the ownership
-	// handover is detected. Capturing after the dial would let a reset slip in before the capture and
-	// make a connection from the previous network look current.
-	epochCurrent := d.captureEpoch()
+	// Ownership and the family verdict are captured as ONE observation, before any raw work.
+	//
+	// They must be one capture for two reasons. The gate below makes a HARD decision - it refuses a
+	// socket that will not otherwise be retried by anything - so it may only act on a verdict from the
+	// network generation this dial belongs to. And capturing the epoch after the gate, which is what
+	// this used to do, meant the gate could refuse on a verdict from generation N while the dial then
+	// recorded ownership of generation N+1: a decision and a claim taken from two different networks.
+	//
+	// Capturing before the dial also keeps the original reason for the ordering: a reset landing
+	// anywhere between here and the hand-over is detected, and capturing after the dial would let a
+	// reset slip in before the capture and make a connection from the previous network look current.
+	localFamily := d.captureLocalFamilyPolicy()
+	epochCurrent := localFamily.ownership.predicate
+	if epochCurrent == nil {
+		// No manager, or one that cannot report an epoch: there is no ordering to enforce, so the
+		// hand-over check accepts everything, exactly as it did before this round.
+		epochCurrent = func() bool { return true }
+	}
+	// The last gate before a socket is created for a destination this machine dials itself.
+	//
+	// # Why this is enforced here as well as in the candidate scheduler
+	//
+	// The scheduler removes a provably undialable family from a candidate race, which is where the
+	// fast-fail has its value: the address is never attempted, no fallback interval is spent on it,
+	// and the healthy family leads. This check covers what the scheduler cannot see - a caller that
+	// arrives with one explicit address and no candidate list, which is every UDP packet connection
+	// and every direct entry into this dialer.
+	//
+	// # Why the policy decides, rather than this function
+	//
+	// excludedAddress is where ownership is consulted, so a verdict captured during a transition or
+	// superseded by one refuses nothing here. That is Invariant A and B in one place: this call site
+	// has no way to skip the check, and no second opinion about which generation it is in.
+	//
+	// # Why a refusal cannot be mistaken for a network failure
+	//
+	// It is produced before any socket exists and is not a path failure by any classifier: it is not
+	// a syscall error, not a timeout, and not a cancellation. Family health therefore records
+	// nothing, which is correct - a family with no addressing is not "recently unlucky", it is
+	// absent, and the scheduler's fallback bias already handles the case this file exists for.
+	//
+	// # Why a local address is exempt
+	//
+	// A loopback, link-local, unique-local or unspecified destination is not reached over the
+	// public path this verdict describes. Refusing one would break the connections that must keep
+	// working precisely when public addressing is gone: a local resolver, a LAN peer, a value the
+	// caller bound explicitly.
+	//
+	// That exemption is no longer written here. It is a term of the decision - scope decides which
+	// question applies to a destination - so it lives in hardUndialableError with the others, which is
+	// what stops this call site from being one of five places that each have to remember it.
+	if refusal := localFamily.hardUndialableError(address.Addr); refusal != nil {
+		return nil, refusal
+	}
 	if d.networkStrategy == nil {
 		conn, err := listener.ListenNetworkNamespace[net.Conn](ctx, d.netns, func() (net.Conn, error) {
 			switch N.NetworkName(network) {
@@ -416,8 +480,26 @@ func (d *DefaultDialer) dialParallelInterfaceEpoch(ctx context.Context, network 
 }
 
 func (d *DefaultDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
-	// Captured before the socket is created, for the same reason as a dial.
-	epochCurrent := d.captureEpoch()
+	// Captured before the socket is created, for the same reason as a dial - and captured as ONE
+	// observation together with the family verdict, so the gate below cannot act on one generation's
+	// verdict while the hand-over check validates another's ownership.
+	localFamily := d.captureLocalFamilyPolicy()
+	epochCurrent := localFamily.ownership.predicate
+	if epochCurrent == nil {
+		epochCurrent = func() bool { return true }
+	}
+	// A connected packet socket is a socket this machine creates for a destination it dials, so it
+	// is subject to the same local verdict as a stream. It is checked here rather than in the
+	// scheduler because a packet connection does not go through a candidate race at all.
+	//
+	// The check is skipped for an unspecified address, which is how a caller asks for a wildcard
+	// socket with no destination family at all - the shape a listener uses, and one the packet
+	// transports rely on.
+	if destination.Addr.IsValid() && !destination.Addr.IsUnspecified() {
+		if refusal := localFamily.hardUndialableError(destination.Addr); refusal != nil {
+			return nil, refusal
+		}
+	}
 	if d.networkStrategy == nil {
 		packetConn, err := listener.ListenNetworkNamespace[net.PacketConn](ctx, d.netns, func() (net.PacketConn, error) {
 			listenConfig := d.udpListener
@@ -765,10 +847,31 @@ func (d *DefaultDialer) networkEnvironment() uint64 {
 // Every production construction goes through here, so a scheduler cannot be created without
 // health by accident - which is how the fast-fallback path ended up existing only in tests
 // while the production schedulers passed health: nil.
+//
+// The local family verdict is captured HERE, as one observation with the network ownership it belongs
+// to, and the scheduler carries both for its whole life. That matters more for the scheduler than for
+// any other consumer: it removes candidates BEFORE a socket exists, so nothing downstream can rescue a
+// family it dropped - the hand-over epoch check only ever sees attempts that were actually made. A
+// scheduler built on a verdict it no longer owns would therefore delete the successor generation's
+// candidates, and no later validation would notice.
+//
+// It is read through the atomic familySnapshot, so constructing a scheduler costs no lock and no
+// syscall on the connection hot path.
 func (d *DefaultDialer) newDualStackScheduler(fallbackDelay time.Duration) *candidateScheduler {
 	return &candidateScheduler{
 		fallbackDelay:      fallbackDelay,
 		health:             d.familyHealth,
 		networkEnvironment: d.networkEnvironment(),
+		localFamily:        d.captureLocalFamilyPolicy(),
 	}
+}
+
+// localFamilyPolicy reads this dialer's view of which families the machine can dial, as one
+// observation with the network ownership it belongs to.
+//
+// It is exposed on the owner rather than on each consumer so that the scheduler, the literal path
+// and the recovery path all ask one question of one object. A caller that read the manager itself
+// would be taking a second observation of the same instant, and the two could disagree.
+func (d *DefaultDialer) localFamilyPolicy() localFamilyPolicy {
+	return d.captureLocalFamilyPolicy()
 }

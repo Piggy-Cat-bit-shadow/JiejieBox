@@ -1,0 +1,379 @@
+package dialer
+
+import (
+	"net/netip"
+
+	"github.com/sagernet/sing-box/common/netcap"
+	E "github.com/sagernet/sing/common/exceptions"
+)
+
+// localDialOwnership is the network ownership pair a dial captured when it began, plus the means to
+// ask whether that capture is still the live one.
+//
+// # Why this is a named type rather than two loose locals
+//
+// The pair (epoch, startedStable) and the predicate derived from it already existed inside
+// captureEpoch. What did NOT exist was any way for a second consumer - the family verdict - to be
+// bound to the same capture. Keeping them as loose locals meant the verdict was read on its own, at a
+// different instant, and then applied to a decision that already belonged to a different network.
+//
+// # The three states it distinguishes
+//
+//	owns            captured stable and the epoch has not moved   -> the capability may restrict
+//	startedUnstable captured during a transition                  -> the capability must not restrict
+//	epochMoved      a transition began after the capture          -> the capability must not restrict
+//
+// The first two are what captureEpoch's predicate already distinguishes; `owns` collapses them into
+// the one question a consumer has to ask, and the underlying predicate keeps the finer semantics for
+// the hand-over check.
+type localDialOwnership struct {
+	// epoch is the reset epoch the dial captured. It is what the hand-over check compares against,
+	// and it is kept here so a reader of a policy can see which generation it describes.
+	epoch uint64
+	// startedStable records whether the network was settled when the dial began. A dial that began
+	// during a transition has no stable network for a verdict to be about.
+	startedStable bool
+	// predicate is the existing ownership check, or nil when no ordering constraint applies because
+	// the manager cannot report an epoch.
+	predicate func() bool
+}
+
+// owns reports whether the network generation this capture describes is still the live one.
+//
+// A capture with no predicate - a manager that cannot report an epoch - owns by construction: the
+// distinction the check exists for does not arise, which is the same degradation every other optional
+// capability in this codebase takes. It is also the shape a test-constructed policy has, so a test
+// that is not about ownership does not have to simulate one.
+func (o localDialOwnership) owns() bool {
+	if o.predicate == nil {
+		return true
+	}
+	return o.predicate()
+}
+
+// localFamilyPolicy is the family verdict a dial captured, bound to the network ownership of the same
+// capture.
+//
+// # Scope
+//
+// It describes the LOCAL dial path only. It is therefore applied where a socket is created on this
+// machine and nowhere else: the destination a remote proxy is asked to reach is the remote peer's
+// business, and this machine's addressing must never rewrite it. That distinction is structural
+// rather than a rule someone has to remember - a detour never reaches DefaultDialer.DialContext,
+// because the detour chain hands the request to another outbound instead of dialling it, so a
+// capability read here cannot reach a remote target even in principle.
+//
+// The same reasoning makes this correct for the proxy's OWN address, which is the case that looks
+// like an exception and is not one: the A/AAAA of a proxy server is dialled by this machine, so it
+// is a local dial and this machine's capability is exactly the right question to ask about it.
+//
+// # Why the verdict is useless without its ownership
+//
+// The verdict is a fact about ONE network. Applying it while the network is unsettled, or after it
+// has changed, is how an old network's answer decides a new network's dial - the failure this round
+// exists to close, and one the race detector cannot see, because every variable involved is correctly
+// synchronized and only the ORDER is wrong.
+//
+// The verdict is therefore never read directly. It is consulted through excluded/excludedAddress,
+// which refuse to restrict anything unless the capture still owns the network. That is Invariant A
+// (an unstable snapshot cannot hard deny) and Invariant B (a superseded generation cannot hard deny)
+// enforced in one place, so no caller can forget either: there is no exported field to read that
+// skips the check.
+//
+// # Why a change to the capability is deliberately NOT a network transition
+//
+// Losing an IPv6 address does not move the reset epoch, invalidate DNS caches or tear down live
+// streams, and making it do so would turn an ordinary short outage into a connection storm. What it
+// does mean is that a dial in flight may be allowed to start on evidence that has since changed - and
+// that is safe, because the address it produces is a real connection on a real socket, and the case
+// this file is about (no address of that family anywhere) fails immediately on its own if the
+// structure really is gone.
+type localFamilyPolicy struct {
+	ownership  localDialOwnership
+	capability netcap.FamilyCapability
+}
+
+// LocalFamilyDialer is implemented by a dialer that can answer whether the local machine has a
+// usable path for an address's family.
+//
+// # Why the native-bypass path needs it
+//
+// A bypassed flow is a connect performed by the platform, so it never passes through the candidate
+// scheduler that enforces the verdict. That is immaterial on every stack except Linux redirect mode,
+// where an ActionBypass really does leave this process - and there, a provably undialable family
+// would be handed to the operating system to spend the whole connect timeout rediscovering what the
+// network manager already knew.
+//
+// A refusal here is therefore a restoration of the userspace behaviour rather than a new policy: the
+// flow falls back to the path that knows the family is unavailable and fails it immediately, with a
+// reason that names the machine instead of a bare timeout.
+//
+// # Why an uncertain answer is NO BLOCK rather than a refusal
+//
+// This is a boolean about an OPTIMISATION, not about a connection. Answering "blocked" only disables
+// the fast path and sends the flow down the userspace path, which is correct but slower - so a stale
+// or unsettled capture must answer "not blocked" and leave the bypass available. That is the opposite
+// polarity from a dial gate, where the conservative direction is to refuse, and it is why the two
+// consume the same policy through the same accessor and still differ only in the polarity of their
+// answer.
+type LocalFamilyDialer interface {
+	LocalFamilyBlocked(address netip.Addr) bool
+}
+
+// captureLocalFamilyPolicy reads the network ownership and the family verdict as ONE observation.
+//
+// This is the only production entry point, and it exists so that no caller can obtain a verdict
+// without the ownership that makes it meaningful: the manager produces both inside its own critical
+// section, and this drops neither. A caller that wants only the verdict has no way to ask for it.
+//
+// The ownership check is built from ONE lifecycle source, and which source depends on what the manager
+// can report:
+//
+//	familySnapshot present -> the manager's own NetworkFamilyCapabilitySnapshot, which the interface
+//	                          contract already requires to be one atomic observation of epoch +
+//	                          settled + verdict. Ownership is taken from the SAME call that produced
+//	                          the verdict, and every later check re-reads the same function.
+//	familySnapshot absent  -> the existing captureEpoch predicate, so a manager that reports an epoch
+//	                          without a verdict keeps exactly the hand-over protection it had.
+//
+// The first case is not a preference, it is a contract: a manager that implements
+// NetworkFamilyCapabilitySnapshotter but neither NetworkResetCounter nor NetworkTransitionState would
+// otherwise be read through a predicate that answers "always owned" - and its `settled` flag, which it
+// DID report, would be dropped. That is the interleaving the snapshotter exists to prevent, defeated
+// by the consumer.
+//
+// A manager that cannot report a capability yields the zero value, which restricts nothing: the dialer
+// keeps its previous behaviour exactly rather than losing a family because a struct was left empty.
+func (d *DefaultDialer) captureLocalFamilyPolicy() localFamilyPolicy {
+	var policy localFamilyPolicy
+	// OWNERSHIP IS CAPTURED EVEN WHEN THE CAPABILITY IS NOT.
+	//
+	// Ownership is not a property of this feature: it is the dial's existing claim on a network
+	// generation, and the hand-over check depends on it. Returning early for a manager that cannot
+	// report a capability - which is every manager but the real one - would silently take that claim
+	// away and hand back connections dialled across a reset. That is exactly the defect this ordering
+	// was written to fix, and it is why the capability is the OPTIONAL half and the ownership is not.
+	if d.familySnapshot != nil {
+		// The unified path. Everything below comes from ONE call.
+		epoch, stable, capability := d.familySnapshot()
+		policy.capability = capability.Capability
+		policy.ownership.epoch = epoch
+		policy.ownership.startedStable = stable
+		policy.ownership.predicate = d.familyOwnershipPredicate(epoch, stable)
+		return policy
+	}
+	if d.networkEpoch != nil {
+		// The fallback for a manager with an epoch and no verdict. Unchanged, so the hand-over
+		// protection it provides is not weakened by the unification above.
+		policy.ownership.predicate = d.captureEpoch()
+	}
+	return policy
+}
+
+// familyOwnershipPredicate reports whether the generation captured from the family snapshot is still
+// the live one.
+//
+// # The three questions, and why the third is not implied by the first two
+//
+//	started settled?      a dial that began during a transition has no stable network for its verdict
+//	                      to describe, and a later commit must not launder it into a valid one
+//	settled now?          a transition that has begun since must not be handed a result
+//	same epoch?            a RESET that has completed since must not be handed a result
+//
+// The epoch alone cannot answer the first: a capture taken DURING a transition records the
+// transition's OWN epoch, so once that transition commits the comparison finds no change and the
+// network reports settled. Both checks pass and a connection produced while ownership was unresolved
+// is handed over as though it belonged to the settled network.
+//
+// # Why it re-reads familySnapshot rather than the narrower getters
+//
+// Because a policy built from the family snapshot must be validated against the same source. Reading
+// the epoch from one interface and the settled state from another makes the pair tearable - and it is
+// the pair, not either value, that decides whether an answer is still current.
+func (d *DefaultDialer) familyOwnershipPredicate(capturedEpoch uint64, startedStable bool) func() bool {
+	return func() bool {
+		if !startedStable {
+			return false
+		}
+		currentEpoch, currentStable, _ := d.familySnapshot()
+		if !currentStable {
+			return false
+		}
+		return currentEpoch == capturedEpoch
+	}
+}
+
+// newLocalFamilyPolicy builds a policy that is OWNED BY CONSTRUCTION, for callers and tests that hold
+// a verdict with no network ordering to bind it to.
+//
+// "Owned by construction" is the right default here for the same reason a manager without an epoch
+// is: with no network lifecycle in the picture there is no transition for the verdict to be stale
+// against, so the ownership check does not apply rather than passing by luck. A test that wants to
+// attack ownership builds the ownership explicitly.
+func newLocalFamilyPolicy(capability netcap.FamilyCapability) localFamilyPolicy {
+	return localFamilyPolicy{capability: capability}
+}
+
+// hardUndialable reports whether an attempt at this destination must not be made, in the network
+// generation this policy was captured for.
+//
+// # This is the single gate, and it is the only thing callers ask
+//
+// The destination goes in and a yes/no comes out. Everything that decides it - address scope, family
+// existence, global IPv6 egress, and network ownership - is resolved inside, and deliberately:
+//
+//	scope        local / site / global, from the address itself
+//	family       does the machine have addressing of this family at all
+//	egress       for a GLOBAL IPv6 destination, is the public path provably absent
+//	ownership    is this capture still the live network generation
+//
+// Those terms used to be composed at five call sites - the literal gate, the packet gate, the
+// candidate scheduler, the serial resolve path and the native-bypass profile - each spelling out
+// "is this destination local-scope, and if not is its family unavailable". That composition was
+// complete for the family question and blind to the egress one, which is exactly how the reported
+// Windows outage got through: every copy asked the right question and none of them knew the second
+// question existed.
+//
+// Taking the destination rather than a family is what makes a single gate possible. A caller that
+// holds only a family classification cannot express "global IPv6", so it cannot be asked to remember
+// the egress term - and a rule that callers must remember is a rule that will be forgotten.
+//
+// # The ownership check is not optional and comes first
+//
+// A verdict captured on a network that has since changed describes a network this attempt is not on;
+// a verdict captured while the network was unsettled describes none at all. In both cases the only
+// safe reading is "no opinion", which fails open.
+func (p localFamilyPolicy) hardUndialable(destination netip.Addr) bool {
+	if !destination.IsValid() {
+		return false
+	}
+	if !p.ownership.owns() {
+		return false
+	}
+	return p.capability.HardUndialable(destination)
+}
+
+// hardUndialableFamily is the same question for a caller that holds a FAMILY and no address.
+//
+// It exists for the plan-level fast path, which asks whether a policy could refuse anything at all
+// before walking a candidate list. It deliberately answers the family question only: a plan is
+// filtered candidate by candidate through hardUndialable, so the egress term is applied to the
+// addresses that actually carry it.
+func (p localFamilyPolicy) hardUndialableFamily(family addressFamily) bool {
+	if family == familyInvalid {
+		return false
+	}
+	if !p.ownership.owns() {
+		return false
+	}
+	switch family {
+	case familyIPv4:
+		return p.capability.HardUnavailable(true)
+	case familyIPv6:
+		return p.capability.HardUnavailable(false)
+	default:
+		return false
+	}
+}
+
+// restrictsNothing reports whether this policy cannot refuse anything, so the common path can skip
+// the work of examining a candidate list at all.
+//
+// An unowned policy restricts nothing, because that is what the gate answers for it - the two must
+// never disagree, or the fast path would skip a filter that would have removed something.
+//
+// It includes the egress term. A policy that can refuse a global IPv6 destination restricts
+// something, and leaving it out here would let the fast path walk past a filter that would have
+// removed candidates - the one disagreement between these two functions that is not merely
+// redundant.
+func (p localFamilyPolicy) restrictsNothing() bool {
+	if !p.ownership.owns() {
+		return true
+	}
+	return !p.capability.HardUnavailable(true) &&
+		!p.capability.HardUnavailable(false) &&
+		p.capability.GlobalIPv6Egress != netcap.StateUnavailable
+}
+
+// LocalFamilyBlocked implements LocalFamilyDialer.
+//
+// It reports whether an attempt at this destination must not be made on the local dial path, and it
+// answers false for a local-scope or site-local destination because neither is reached over the
+// public path this verdict describes: a link-local address is what makes a link-local destination
+// work, and a campus that blackholes public IPv6 still serves ULA.
+//
+// An unsettled or superseded capture answers false - no block - which leaves the bypass available and
+// changes nothing about where the flow goes. See LocalFamilyDialer for why that direction is the
+// conservative one here while it is the unsafe one on a dial gate.
+func (d *DefaultDialer) LocalFamilyBlocked(address netip.Addr) bool {
+	return d.captureLocalFamilyPolicy().hardUndialable(address)
+}
+
+// hardUnavailableError reports the refusal for a family the machine cannot dial.
+//
+// # Why the message names the family and the reason, and no address
+//
+// The refusal is identical for every candidate of that family, so the address would be noise - and
+// a caller that logs one refusal per address would look like a per-destination failure when it is a
+// property of the machine. The reason matters for the opposite purpose: an operator who sees IPv6
+// attempts skipped needs to be able to tell "this device has no IPv6 addressing at all" from "your
+// configuration asked for IPv4 only", which is a different message produced elsewhere
+// (AddressAllowedByStrategy).
+//
+// # Why the values are stored rather than built on each call
+//
+// A refusal is a property of the machine, so two refusals for the same family ARE the same refusal.
+// Storing them makes that comparison available to callers and tests - errors.Is is the ordinary way
+// to ask "was this refused because the machine has no IPv6", and rebuilding the error on each call
+// would make every such check fail while looking correct.
+//
+// # Why this error can only be produced by an OWNED policy
+//
+// The message makes a claim about the CURRENT network. A stale verdict that reached this error would
+// be reporting a property of a network the device has left as though it were a property of the one it
+// is on, which is worse than reporting nothing. The ownership check in excluded is what guarantees
+// that: by the time this error is constructed, the capture was settled and still current.
+// The third refusal is the one this round added, and it is NOT the same fact as the second.
+//
+// "No interface carries an ipv6 address" and "ipv6 exists on the link and nothing routes it to the
+// public Internet" are different states of the machine with different remedies, and collapsing them
+// into one message would make the log say the machine has no IPv6 on a machine whose IPv6 is fine and
+// merely local. The reported outage is the second case, so its message has to be able to say so.
+var (
+	errLocalIPv4Unavailable       = E.New("local network has no usable ipv4 path: no interface on this machine carries an ipv4 address")
+	errLocalIPv6Unavailable       = E.New("local network has no usable ipv6 path: no interface on this machine carries an ipv6 address")
+	errLocalIPv6EgressUnavailable = E.New(
+		"local network has no public ipv6 path: this machine has ipv6 addressing but no route to a global ipv6 destination " +
+			"(link-local and unique-local destinations are unaffected)")
+)
+
+func hardUnavailableError(family addressFamily) error {
+	switch family {
+	case familyIPv4:
+		return errLocalIPv4Unavailable
+	case familyIPv6:
+		return errLocalIPv6Unavailable
+	default:
+		// No family was identified, so the refusal cannot name one. This is reachable only from a
+		// caller that lost the classification, and it must not silently look like a family verdict.
+		return E.New("local network has no usable path for this destination")
+	}
+}
+
+// hardUndialableError is the refusal reason for a destination this policy refuses, or nil.
+//
+// It is the gate and the explanation in one call, so a caller cannot refuse a destination and then
+// report a family verdict that does not describe why - which is what would happen if the reason were
+// derived from classifyAddress alone.
+func (p localFamilyPolicy) hardUndialableError(destination netip.Addr) error {
+	if !p.hardUndialable(destination) {
+		return nil
+	}
+	family := classifyAddress(destination)
+	// A global IPv6 destination is refused by one of two facts, and only the first is a statement
+	// about the family.
+	if family == familyIPv6 && !p.capability.HardUnavailable(false) {
+		return errLocalIPv6EgressUnavailable
+	}
+	return hardUnavailableError(family)
+}

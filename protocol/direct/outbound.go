@@ -53,8 +53,13 @@ type Outbound struct {
 	// policy can come from the resolver's own configuration and is only known once the router can
 	// be asked.
 	familyStrategy func() C.DomainStrategy
-	myAddresses    common.TypedValue[[]netip.Prefix]
-	icmpPort       *ping.Port
+	// localFamily reports whether this machine has no usable path for an address's family, or nil
+	// when the dialer chain cannot say. It is what keeps a bypass from handing the platform an
+	// address the userspace path would have refused immediately; see
+	// dialer.BlockerLocalFamilyUnavailable.
+	localFamily func(netip.Addr) bool
+	myAddresses common.TypedValue[[]netip.Prefix]
+	icmpPort    *ping.Port
 }
 
 func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.DirectOutboundOptions) (adapter.Outbound, error) {
@@ -84,6 +89,12 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	}
 	if reporter, isReporter := outboundDialer.(dialer.ResolveDialer); isReporter {
 		outbound.familyStrategy = reporter.EffectiveFamilyStrategy
+	}
+	// Discovered through the chain rather than configured, for the same reason the resolver is: the
+	// object that knows is the dialer that will actually create the socket, and the bypass must not
+	// hold a second opinion about the machine's addressing.
+	if localFamily, isLocalFamily := outboundDialer.(dialer.LocalFamilyDialer); isLocalFamily {
+		outbound.localFamily = localFamily.LocalFamilyBlocked
 	}
 	//nolint:staticcheck
 	if options.ProxyProtocol != 0 {
@@ -340,6 +351,15 @@ func (h *Outbound) BypassBlockers(network string, destination netip.Addr) dialer
 	}
 	blockers := h.semantics.Blockers(facts)
 	blockers |= dialer.NetworkPolicyBlockers(h.network)
+	if h.localFamily != nil && h.localFamily(destination) {
+		// The userspace path refuses this attempt before creating a socket, because the machine has
+		// no interface carrying an address of this family. A bypass is a connect performed by the
+		// platform, which has no such judgement, so without this the flow would spend the full
+		// connect timeout on an address that cannot be reached - the exact wait the capability
+		// exists to remove. Refusing the bypass sends the flow back to the path that fails it
+		// immediately with a reason.
+		blockers |= dialer.BlockerLocalFamilyUnavailable
+	}
 	if h.isMyLoopbackAddress(destination) {
 		// The userspace path refuses to dial this host's own addresses so a TUN cannot route a
 		// connection back into itself. A bypass is a connect performed by the platform, which has no

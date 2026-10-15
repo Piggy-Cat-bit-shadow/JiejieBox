@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sagernet/sing-box/common/netcap"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/control"
@@ -126,6 +127,73 @@ type NetworkTransitionSnapshotter interface {
 	// NetworkTransitionSnapshot returns the current transition epoch and whether the network is
 	// settled, as a single consistent observation.
 	NetworkTransitionSnapshot() (epoch uint64, stable bool)
+}
+
+// NetworkFamilyCapability is what the local dial path can do with each address family on the
+// network the manager is currently on.
+//
+// # What it is not
+//
+// It is not a claim that the public Internet is reachable over that family, and it is not a place to
+// put one. "This network hands out an IPv6 address and a default route but blackholes public IPv6"
+// is a real and common network - a campus, a hospital, a hotel portal, a half-configured CPE - and
+// this value deliberately reports that network as Provisioned, because that is exactly what has been
+// established. Learning the rest from real traffic is the scheduler's job, per dialer and per
+// network environment; see common/dialer's family health.
+//
+// # Why it carries no settled flag of its own
+//
+// The settled state is a property of the INSTANT a reader looked, so it belongs to the observation
+// rather than to the value. A flag stored beside the capability would report the state as of
+// whenever the capability was last COMPUTED, and those are different instants: the capability is
+// recomputed when the interfaces change and published before the transition that may accompany that
+// change is claimed. A stored flag is therefore stale in exactly the window where it would be
+// consulted - a reader that saw "settled" from it while a transition was being claimed would act on
+// a verdict from a network the device is leaving.
+// NetworkFamilyCapabilitySnapshot returns the settled state under the ownership lock instead, so the
+// pair cannot disagree.
+//
+// # Why a consumer must treat the zero value as "no opinion"
+//
+// A manager that cannot report the capability keeps the previous behaviour exactly. The value is
+// therefore read through FamilyCapability's own accessors, which answer "no restriction" for a zero
+// value, rather than by comparing states at the call site.
+type NetworkFamilyCapability struct {
+	// Capability is the structural verdict for each family.
+	Capability netcap.FamilyCapability
+}
+
+// NetworkFamilyCapabilitySnapshotter reports the transition epoch, the settled state and the local
+// family capability as ONE observation.
+//
+// # Why this is one call and not three getters
+//
+// A consumer has to decide two things before it may use the capability:
+//
+//	"is the epoch I captured still the current one?"    rejects an operation that began BEFORE a
+//	                                                    transition
+//	"is the network settled?"                           rejects one that began DURING one
+//
+// and it must only trust the capability it read in the same instant. Read as separate calls the
+// triple tears in the unsafe direction in both halves:
+//
+//	capability = X      <- read first, for the network being left
+//	                    <- a transition begins, publishes capability Y and then commits
+//	epoch, stable       <- reads the NEW epoch and "settled"
+//
+// The consumer then records a capability of X as belonging to the new generation, and X is the old
+// network's answer - which is how a Wi-Fi verdict ends up deciding a cellular dial. Producing all
+// three inside the manager's own ownership critical section makes the triple a state the network
+// really passed through.
+//
+// This extends NetworkTransitionSnapshotter rather than replacing it: the epoch-and-stability pair
+// is unchanged, so a manager that already reports it keeps working, and a consumer that only needs
+// the pair needs no change.
+type NetworkFamilyCapabilitySnapshotter interface {
+	NetworkTransitionSnapshotter
+	// NetworkFamilyCapabilitySnapshot returns the transition epoch, whether the network is settled,
+	// and the local family capability, as a single consistent observation.
+	NetworkFamilyCapabilitySnapshot() (epoch uint64, stable bool, capability NetworkFamilyCapability)
 }
 
 type NetworkOptions struct {
