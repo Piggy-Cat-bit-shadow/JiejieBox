@@ -3,6 +3,7 @@ package dialer
 import (
 	"context"
 	"net/netip"
+	"sync/atomic"
 	"testing"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -36,37 +37,48 @@ import (
 // is asserted as "not refused". test/jiejie and the Windows builds cover what happens after.
 
 // machineManager is a network manager that reports exactly the three facts this feature consumes.
+//
+// Every field is atomic, because the real manager publishes this triple from a network-event goroutine
+// while dials read it from theirs. A fixture with plain fields would let a test that moves the network
+// mid-dial race - and did: the round-2 attack on the hot path was caught by -race writing these fields
+// from a second goroutine, which is the same defect the atomic publisher exists to prevent.
 type machineManager struct {
-	epoch  uint64
-	stable bool
-	ipv4   netcap.FamilyState
-	ipv6   netcap.FamilyState
-	egress netcap.FamilyState
+	epoch  atomic.Uint64
+	stable atomic.Bool
+	ipv4   atomic.Uint32
+	ipv6   atomic.Uint32
+	egress atomic.Uint32
+}
+
+func (m *machineManager) setStates(ipv4 netcap.FamilyState, ipv6 netcap.FamilyState, egress netcap.FamilyState) {
+	m.ipv4.Store(uint32(ipv4))
+	m.ipv6.Store(uint32(ipv6))
+	m.egress.Store(uint32(egress))
 }
 
 func (m *machineManager) NetworkFamilyCapabilitySnapshot() (uint64, bool, adapter.NetworkFamilyCapability) {
-	return m.epoch, m.stable, adapter.NetworkFamilyCapability{
+	return m.epoch.Load(), m.stable.Load(), adapter.NetworkFamilyCapability{
 		Capability: netcap.FamilyCapability{
-			IPv4:             m.ipv4,
-			IPv6:             m.ipv6,
-			GlobalIPv6Egress: m.egress,
+			IPv4:             netcap.FamilyState(m.ipv4.Load()),
+			IPv6:             netcap.FamilyState(m.ipv6.Load()),
+			GlobalIPv6Egress: netcap.FamilyState(m.egress.Load()),
 		},
 	}
 }
 
-func (m *machineManager) NetworkTransitionSnapshot() (uint64, bool) { return m.epoch, m.stable }
+func (m *machineManager) NetworkTransitionSnapshot() (uint64, bool) {
+	return m.epoch.Load(), m.stable.Load()
+}
 
 // windowsLinkLocalOnly is the reported machine: IPv6 present on the link, no global IPv6 route, and
 // routes that were actually read.
 func windowsLinkLocalOnly() *machineManager {
-	return &machineManager{
-		stable: true,
-		// IPv6 EXISTS - a link-local destination on this machine really is reachable - and no global
-		// IPv6 destination is. Those two facts at once are the whole design.
-		ipv4:   netcap.StateProvisioned,
-		ipv6:   netcap.StateProvisioned,
-		egress: netcap.StateUnavailable,
-	}
+	manager := &machineManager{}
+	manager.stable.Store(true)
+	// IPv6 EXISTS - a link-local destination on this machine really is reachable - and no global IPv6
+	// destination is. Those two facts at once are the whole design.
+	manager.setStates(netcap.StateProvisioned, netcap.StateProvisioned, netcap.StateUnavailable)
+	return manager
 }
 
 func outageDialer(manager *machineManager) *DefaultDialer {
@@ -183,12 +195,9 @@ func TestTheSchedulerDropsTheGlobalIPv6Candidate(t *testing.T) {
 // perfectly good link-local address is a support ticket that goes nowhere.
 func TestTheRefusalNamesTheRightFact(t *testing.T) {
 	// (a) no IPv6 addressing at all -> the family verdict.
-	noIPv6 := &machineManager{
-		stable: true,
-		ipv4:   netcap.StateProvisioned,
-		ipv6:   netcap.StateUnavailable,
-		egress: netcap.StateUnavailable,
-	}
+	noIPv6 := &machineManager{}
+	noIPv6.stable.Store(true)
+	noIPv6.setStates(netcap.StateProvisioned, netcap.StateUnavailable, netcap.StateUnavailable)
 	errA := outageDialer(noIPv6).captureLocalFamilyPolicy().hardUndialableError(netip.MustParseAddr("2409:8a00::1"))
 	require.ErrorIs(t, errA, errLocalIPv6Unavailable)
 	require.NotErrorIs(t, errA, errLocalIPv6EgressUnavailable)
@@ -205,18 +214,15 @@ func TestTheRefusalNamesTheRightFact(t *testing.T) {
 // catastrophic mistake: on a machine whose global IPv6 works, and on one where the routes could not be
 // read at all, nothing about this feature may fire.
 func TestAWorkingGlobalIPv6IsNeverRefused(t *testing.T) {
-	working := &machineManager{
-		stable: true,
-		ipv4:   netcap.StateProvisioned,
-		ipv6:   netcap.StateProvisioned,
-		egress: netcap.StateProvisioned,
+	build := func(egress netcap.FamilyState) *machineManager {
+		manager := &machineManager{}
+		manager.stable.Store(true)
+		manager.setStates(netcap.StateProvisioned, netcap.StateProvisioned, egress)
+		return manager
 	}
-	unobserved := &machineManager{
-		stable: true,
-		ipv4:   netcap.StateProvisioned,
-		ipv6:   netcap.StateProvisioned,
-		egress: netcap.StateUnknown, // no route reader on this platform, or the read failed
-	}
+	working := build(netcap.StateProvisioned)
+	// No route reader on this platform, or the read failed.
+	unobserved := build(netcap.StateUnknown)
 	for name, manager := range map[string]*machineManager{"working route": working, "routes unread": unobserved} {
 		policy := outageDialer(manager).captureLocalFamilyPolicy()
 		for _, target := range globalIPv6Targets() {
@@ -230,20 +236,22 @@ func TestAWorkingGlobalIPv6IsNeverRefused(t *testing.T) {
 // generation ownership. A stale or mid-transition capture must refuse nothing, egress term included -
 // and this is the assertion that keeps the two rounds' work composable rather than additive.
 func TestOwnershipStillGatesTheEgressVerdict(t *testing.T) {
-	for _, testCase := range []struct {
-		name    string
-		manager *machineManager
-	}{
-		{"settled", &machineManager{epoch: 4, stable: true,
-			ipv4: netcap.StateProvisioned, ipv6: netcap.StateProvisioned, egress: netcap.StateUnavailable}},
-		{"unsettled", &machineManager{epoch: 4, stable: false,
-			ipv4: netcap.StateProvisioned, ipv6: netcap.StateProvisioned, egress: netcap.StateUnavailable}},
+	build := func(stable bool) *machineManager {
+		manager := &machineManager{}
+		manager.epoch.Store(4)
+		manager.stable.Store(stable)
+		manager.setStates(netcap.StateProvisioned, netcap.StateProvisioned, netcap.StateUnavailable)
+		return manager
+	}
+	for name, manager := range map[string]*machineManager{
+		"settled":   build(true),
+		"unsettled": build(false),
 	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			policy := outageDialer(testCase.manager).captureLocalFamilyPolicy()
+		t.Run(name, func(t *testing.T) {
+			policy := outageDialer(manager).captureLocalFamilyPolicy()
 			target := netip.MustParseAddr("2409:8a00::1")
 
-			if !testCase.manager.stable {
+			if !manager.stable.Load() {
 				require.False(t, policy.hardUndialable(target),
 					"a capture taken during a transition describes no network, so it refuses nothing")
 				require.NoError(t, policy.hardUndialableError(target))
@@ -253,7 +261,7 @@ func TestOwnershipStillGatesTheEgressVerdict(t *testing.T) {
 			require.True(t, policy.hardUndialable(target), "control: settled and current, so it refuses")
 
 			// A reset moves the generation on, and the same capture must stop refusing.
-			testCase.manager.epoch++
+			manager.epoch.Add(1)
 			require.False(t, policy.hardUndialable(target),
 				"a verdict superseded by a reset must not refuse a destination on the new network")
 			require.NoError(t, policy.hardUndialableError(target))

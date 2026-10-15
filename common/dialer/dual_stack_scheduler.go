@@ -8,7 +8,6 @@ import (
 	"net/netip"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	E "github.com/sagernet/sing/common/exceptions"
@@ -829,10 +828,13 @@ func isFamilyPathFailure(err error) bool {
 		return false
 	}
 	// Explicit path errors from the kernel.
-	if errors.Is(err, syscall.ENETUNREACH) ||
-		errors.Is(err, syscall.EHOSTUNREACH) ||
-		errors.Is(err, syscall.EADDRNOTAVAIL) ||
-		errors.Is(err, syscall.ENETDOWN) {
+	//
+	// Matched through pathFailureErrnos rather than against the syscall constants directly, because on
+	// Windows the two are different numbers: the standard library surfaces the raw Winsock errno, so
+	// syscall.ENETUNREACH (0x20000043) never equals the 10051 that arrives. See
+	// windows_socket_errors.go - the checks below were dead on the platform whose reported failure is
+	// exactly this condition.
+	if erroredWith(err, pathFailureErrnos...) {
 		return true
 	}
 	// Cancellation is never a family verdict. A cancelled context means the CALLER stopped
@@ -856,7 +858,10 @@ func isFamilyPathFailure(err error) bool {
 		return false
 	}
 	// A refusal is the peer actively answering: the path works.
-	if errors.Is(err, syscall.ECONNREFUSED) {
+	//
+	// Checked in BOTH spellings for the same reason as the group above, and this is the more dangerous
+	// half: a missed refusal means a healthy family is penalised because one server was down.
+	if erroredWith(err, peerAnsweredErrnos...) {
 		return false
 	}
 	// A timeout means nothing answered on that path. This is the blackhole case the whole

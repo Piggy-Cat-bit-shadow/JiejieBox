@@ -355,6 +355,17 @@ const (
 	RoutePresent
 )
 
+func (r RouteObservation) String() string {
+	switch r {
+	case RouteAbsent:
+		return "route-absent"
+	case RoutePresent:
+		return "route-present"
+	default:
+		return "route-unobserved"
+	}
+}
+
 // Evaluate derives the capability from the interfaces the local dial path can use.
 //
 // # Why absence of addressing is the only hard negative
