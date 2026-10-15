@@ -741,11 +741,17 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 				if isStale && !options.DisableOptimisticCache {
 					c.backgroundRefreshDNS(transport, cacheKey, message.Copy(), options, responseChecker)
 					logOptimisticResponse(c.logger, ctx, response)
+					// The caller's family strategy is applied on the way out, not only on the way
+					// in: a hit must look the same as an exchange under the strategy that is in
+					// force now, not the one that happened to populate the entry. See
+					// cachedResponseForQuery.
+					response = cachedResponseForQuery(question, response, options)
 					response.Id = message.Id
 					operation.release()
 					return nil, response, exchangeDone, nil
 				} else if !isStale {
 					logCachedResponse(c.logger, ctx, response, ttl)
+					response = cachedResponseForQuery(question, response, options)
 					response.Id = message.Id
 					operation.release()
 					return nil, response, exchangeDone, nil
@@ -858,6 +864,10 @@ func (c *Client) finishExchange(transport adapter.DNSTransport, operation *excha
 	if !disableCache {
 		c.commitCacheState(transport, operation, response, timeToLive)
 	}
+	// The answer leaves this client filtered for THIS caller's family strategy. It is done after the
+	// commit on purpose: the stored entry stays the neutral answer, so a later query under a
+	// different strategy is filtered for itself rather than inheriting this caller's policy.
+	response = cachedResponseForQuery(question, response, operation.options)
 	response.Id = operation.messageId
 	requestEDNSOpt := operation.message.IsEdns0()
 	responseEDNSOpt := response.IsEdns0()
@@ -1235,6 +1245,9 @@ func (c *Client) questionCache(ctx context.Context, transport adapter.DNSTranspo
 		// would be a second site to keep in step for no additional coverage.
 		return nil, ErrNotCached
 	}
+	// This is a second read path onto the same entries, so it owes the caller the same
+	// caller-appropriate answer the Exchange path produces. See cachedResponseForQuery.
+	response = cachedResponseForQuery(question, response, options)
 	if isStale {
 		if options.DisableOptimisticCache {
 			return nil, ErrNotCached
@@ -1308,23 +1321,124 @@ func (c *Client) loadPersistentResponse(key dnsCacheKey) (*dns.Msg, int, bool) {
 	return response, nowTTL, false
 }
 
-func applyResponseOptions(question dns.Question, response *dns.Msg, options adapter.DNSQueryOptions) uint32 {
-	if question.Qtype == dns.TypeHTTPS && (options.Strategy == C.DomainStrategyIPv4Only || options.Strategy == C.DomainStrategyIPv6Only) {
-		for _, rr := range response.Answer {
-			https, isHTTPS := rr.(*dns.HTTPS)
-			if !isHTTPS {
-				continue
+// filterFamilyHints applies the family strategy's SVCB/HTTPS hint filter in place.
+//
+// # Why this is separate from applyResponseOptions
+//
+// It is the only part of that function whose result depends on the CALLER's strategy rather than on
+// the exchange, and that is exactly why it has to run on read as well as on write.
+//
+// The cache key is (question, transport, client subnet, environment). It carries no strategy,
+// because a strategy is a property of the query, not of the answer - the same AAAA record is the
+// same record whoever asks. The FILTERED answer, however, is not: ipv4hint/ipv6hint are removed
+// according to the strategy in force at the time. Applying that only before the store left two
+// holes in one mechanism:
+//
+//	store under AsIS, read under ipv4_only   the hint survives the cache hit, so the strict
+//	                                         strategy is bypassed for the entry's whole TTL
+//	store under ipv4_only, read under AsIS   the entry is hint-less for its whole TTL even though
+//	                                         hint-less was never a statement about the name
+//
+// The second is the milder one and the first is the one that matters: a strict family strategy must
+// not be defeatable by whichever strategy happened to populate the entry first.
+//
+// The filter is idempotent, so running it on both paths is safe. It is deliberately NOT folded into
+// a single call with the TTL normalisation: re-normalising on a cache hit would reset the entry's
+// remaining lifetime to its original value, which is a different defect.
+func filterFamilyHints(question dns.Question, response *dns.Msg, options adapter.DNSQueryOptions) {
+	if question.Qtype != dns.TypeHTTPS {
+		return
+	}
+	if options.Strategy != C.DomainStrategyIPv4Only && options.Strategy != C.DomainStrategyIPv6Only {
+		return
+	}
+	for _, rr := range response.Answer {
+		https, isHTTPS := rr.(*dns.HTTPS)
+		if !isHTTPS {
+			continue
+		}
+		content := https.SVCB
+		content.Value = common.Filter(content.Value, func(it dns.SVCBKeyValue) bool {
+			if options.Strategy == C.DomainStrategyIPv4Only {
+				return it.Key() != dns.SVCB_IPV6HINT
 			}
-			content := https.SVCB
-			content.Value = common.Filter(content.Value, func(it dns.SVCBKeyValue) bool {
-				if options.Strategy == C.DomainStrategyIPv4Only {
-					return it.Key() != dns.SVCB_IPV6HINT
-				}
-				return it.Key() != dns.SVCB_IPV4HINT
-			})
-			https.SVCB = content
+			return it.Key() != dns.SVCB_IPV4HINT
+		})
+		https.SVCB = content
+	}
+}
+
+// cachedResponseForQuery returns the cached response as the CALLER's strategy requires it to look.
+//
+// # Why the read side must apply this at all
+//
+// The cache key is (question, transport, client subnet, environment). It carries no strategy,
+// because a strategy is a property of the QUERY, not of the answer - the same AAAA record is the
+// same record whoever asks. The FILTERED answer is not the same record, though: ipv4hint/ipv6hint
+// are removed according to the strategy in force at the time. So the stored entry is deliberately
+// the NEUTRAL answer, and the family policy is applied per caller, here.
+//
+// Applying it only on the way in left the policy defeatable: an entry populated under AsIS carried
+// the excluded hint back to a later ipv4_only caller, which is exactly the query the policy exists
+// to constrain.
+//
+// A response that already satisfies the caller's strategy - every response for a non-HTTPS
+// question, and every HTTPS response with no family-specific hint to remove - is handed back as it
+// came, because copying it would put an allocation on the hottest path in the resolver to change
+// nothing.
+func cachedResponseForQuery(question dns.Question, response *dns.Msg, options adapter.DNSQueryOptions) *dns.Msg {
+	if !strategyRemovesFamilyHint(question, response, options) {
+		return response
+	}
+	// loadResponse already hands back a copy, so filtering in place here cannot reach the stored
+	// entry. The copy is made anyway only when there IS something to remove, which keeps the
+	// allocation off the path that does not need it.
+	filtered := response.Copy()
+	filterFamilyHints(question, filtered, options)
+	return filtered
+}
+
+// strategyRemovesFamilyHint reports whether the caller's strategy would remove a hint this response
+// carries. It is the cheap test that keeps cachedResponseForQuery from copying every HTTPS answer.
+func strategyRemovesFamilyHint(question dns.Question, response *dns.Msg, options adapter.DNSQueryOptions) bool {
+	if question.Qtype != dns.TypeHTTPS {
+		return false
+	}
+	var unwanted dns.SVCBKey
+	switch options.Strategy {
+	case C.DomainStrategyIPv4Only:
+		unwanted = dns.SVCB_IPV6HINT
+	case C.DomainStrategyIPv6Only:
+		unwanted = dns.SVCB_IPV4HINT
+	default:
+		return false
+	}
+	for _, rr := range response.Answer {
+		https, isHTTPS := rr.(*dns.HTTPS)
+		if !isHTTPS {
+			continue
+		}
+		for _, value := range https.SVCB.Value {
+			if value.Key() == unwanted {
+				return true
+			}
 		}
 	}
+	return false
+}
+
+// applyResponseOptions normalises the answer for storage and for the caller who triggered it.
+//
+// # Why the family hint filter is NOT here
+//
+// It used to be, and that made the cache a policy carrier: this function's result is what
+// commitCacheState stores, so an answer narrowed for one caller's family strategy became the shared
+// entry for every later caller under every other strategy. Filtering belongs to the read side, where
+// the strategy in force is the one that applies; see cachedResponseForQuery.
+//
+// The response returned to the caller that triggered the exchange is filtered separately, by the
+// same read-side helper, so both paths out of this client produce a caller-appropriate answer.
+func applyResponseOptions(_ dns.Question, response *dns.Msg, options adapter.DNSQueryOptions) uint32 {
 	timeToLive := computeTimeToLive(response)
 	if options.RewriteTTL != nil {
 		timeToLive = *options.RewriteTTL
