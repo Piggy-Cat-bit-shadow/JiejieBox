@@ -328,25 +328,72 @@ def main():
             for missing in unstaged
         )
 
-    # --- the legacy service cleanup names the right things -------------------------------
+    # --- the legacy service cleanup must prove ownership ---------------------------------
     #
-    # This step exists to remove the service a PRE-identity version of this fork registered
-    # under the upstream client's name. Both halves of that sentence are load-bearing: the
-    # guard key must be the one only our previous version wrote (the upstream client never
-    # writes it), and the service name must be the upstream one (that is what the previous
-    # version registered). Getting either wrong turns a cleanup into a deletion of another
-    # product's service.
-    legacy = read(
-        os.path.join(client, "build", "installer-remove-legacy-service.ps1"),
-        "installer-remove-legacy-service.ps1",
+    # This step removes a service named `sing-box-daemon` - which is ALSO the name the upstream
+    # client's daemon uses. So the thing to check is not that it can delete, but that it can
+    # only delete with evidence.
+    #
+    # # The premise that had to be corrected
+    #
+    # The first version of this used `HKLM\SOFTWARE\SagerNet\sing-box` as the ownership proof,
+    # on the belief that only this fork's previous version wrote it. The upstream client
+    # carries its own `build/installer.nsh` and this fork's is derived from it, so upstream
+    # writes that key too. A check that asserted the old key as proof would have gone on
+    # passing while the cleanup deleted another product's service.
+    #
+    # # What is checked now
+    #
+    # The decision lives in installer-legacy-service-ownership.ps1 so it can be tested without
+    # a machine (scripts/test-legacy-service-ownership.ps1, whose Case A is exactly the
+    # upstream-service-plus-our-registry-key machine). Here the contract is that the REAL
+    # script requires the marker, and that the marker name is the one the runtime writes.
+    ownership = read(
+        os.path.join(client, "build", "installer-legacy-service-ownership.ps1"),
+        "installer-legacy-service-ownership.ps1",
+    )
+    ownership_marker = re.search(
+        r'^\$ownershipMarkerFileName = "([^"]+)"[ \t]*$', ownership or "", re.MULTILINE
     )
     require(
-        "installer-remove-legacy-service.ps1",
-        legacy,
-        r'^\$legacyServiceName = "([^"]+)"[ \t]*$',
-        "sing-box-daemon",
-        "the service name a pre-identity version of this fork registered",
+        "installer-legacy-service-ownership.ps1",
+        ownership,
+        r'^\$ownershipMarkerFileName = "([^"]+)"[ \t]*$',
+        ".access-control",
+        "the file that proves a sing-box-daemon service belongs to this client",
     )
+    ownership_marker = ownership_marker.group(1) if ownership_marker else "???"
+    # The marker is only evidence if the client actually writes it under that name.
+    security = read(os.path.join(client, "src", "main", "userDataSecurity.ts"), "userDataSecurity.ts")
+    if security is not None and '.access-control' not in security:
+        failures.append(
+            "userDataSecurity.ts no longer writes the '.access-control' marker that"
+            " installer-legacy-service-ownership.ps1 uses as its ownership proof"
+        )
+    # The proof has to be load-bearing: a decision that removes the service without consulting
+    # it is the bug this whole section exists to prevent.
+    if ownership is not None and not re.search(
+        r"if\s*\(\[string\]::IsNullOrWhiteSpace\(\$proofPath\).*?CanRemove\s*=\s*\$false",
+        ownership,
+        re.DOTALL,
+    ):
+        failures.append(
+            "installer-legacy-service-ownership.ps1: the marker is not a failing condition, so"
+            " the cleanup could delete a service that is not provably ours"
+        )
+    # The legacy AppData directory is what the marker is looked for in, and it must be the
+    # directory the pre-identity fork used - not this version's, which does not exist yet.
+    require(
+        "installer.nsh",
+        nsh,
+        r'^!define LEGACY_APPLICATION_DATA_DIRECTORY_NAME "([^"]+)"[ \t]*$',
+        "sing-box",
+        "the application data directory a pre-identity version of this fork used",
+    )
+    legacy_app_data = re.search(
+        r'^!define LEGACY_APPLICATION_DATA_DIRECTORY_NAME "([^"]+)"[ \t]*$', nsh or "", re.MULTILINE
+    )
+    legacy_app_data = legacy_app_data.group(1) if legacy_app_data else "???"
     require(
         "installer.nsh",
         nsh,
@@ -354,18 +401,48 @@ def main():
         r"SOFTWARE\SagerNet\sing-box",
         "the layout key a pre-identity version of this fork wrote",
     )
-    # The guard key must NOT be the key this version writes, or the step would run on every
-    # install including a fresh one, and would then be hunting for a service that a genuine
-    # upstream installation owns.
     if install_registry_path == r"SOFTWARE\SagerNet\sing-box":
         failures.append(
-            "installer.nsh: the current and legacy layout keys are the same; the legacy"
-            " service cleanup could not tell our previous version from the upstream client"
+            "installer.nsh: the current and legacy layout keys are the same, which cannot be"
+            " right and would make the legacy values meaningless"
         )
-    # The step has to be invoked, and only where it is safe: after the preflight, before the
-    # new service is registered.
-    if nsh is not None and "installer-remove-legacy-service.ps1" not in nsh:
-        failures.append("installer.nsh: the legacy service cleanup is never invoked")
+    # Invoked in BOTH directions. An upgrade removes the old service; an uninstall of this
+    # version has to as well, because the 0.1.5-to-now path only ran the cleanup if an upgrade
+    # actually happened.
+    cleanup_calls = (nsh or "").count("installer-remove-legacy-service.ps1\" -LegacyLayoutRegistryKey")
+    if cleanup_calls < 2:
+        failures.append(
+            f"installer.nsh: the legacy service cleanup is invoked {cleanup_calls} time(s); it"
+            " is needed on install (the upgrade path) and on uninstall (the direct path)"
+        )
+
+    # --- the installation directory is not the upstream client's -------------------------
+    #
+    # electron-builder names the default installation directory after the EXECUTABLE name, so
+    # this fork's required `executableName: sing-box` put it and the upstream client - which
+    # is per-machine too - both at `C:\Program Files\sing-box`. The fork therefore chooses its
+    # own directory in customInit, and the value is pinned here, against productName.
+    fork_dir = re.search(
+        r'^!define FORK_INSTALLATION_DIRECTORY_NAME "([^"]+)"[ \t]*$', nsh or "", re.MULTILINE
+    )
+    if fork_dir is None:
+        failures.append(
+            "installer.nsh: FORK_INSTALLATION_DIRECTORY_NAME is gone; the installation"
+            " directory would fall back to the executable name and collide with upstream"
+        )
+    else:
+        if fork_dir.group(1) != "Jiejiebox":
+            failures.append(
+                f"installer.nsh: the fork's installation directory is {fork_dir.group(1)!r},"
+                " which is not the product name; a user would see one name on the folder and"
+                " another everywhere else"
+            )
+        if fork_dir.group(1) == "sing-box":
+            failures.append(
+                "installer.nsh: the fork's installation directory is the upstream client's"
+            )
+    if "!insertmacro chooseForkInstallationDirectory" not in (nsh or ""):
+        failures.append("installer.nsh: nothing chooses the fork's installation directory")
 
     # --- no destructive path names a directory this client does not own -------------------
     #
@@ -402,6 +479,9 @@ def main():
     print("      and experimental/boxdd/service_name.go")
     print(f"  application identity   {application_identity}")
     print(f"  win.appId              {expected_app_id}")
+    print(f"  installation directory <program files>\\{fork_dir.group(1) if fork_dir else '???'} (the")
+    print("                         upstream client's is <program files>\\sing-box)")
+    print(f"  installed executable   sing-box.exe (the daemon authenticates by this path)")
     print(f"  application data       %APPDATA%\\{BRAND}")
     print(f"  daemon data            %ProgramData%\\{expected_daemon_name}")
     print(f"  daemon service / pipe  {daemon_service_name}")
@@ -410,6 +490,7 @@ def main():
     print(f"  installation id stream :{expected_stream}")
     print(f"  taildrop shell verb    {taildrop_key}")
     print(f"  registered scheme      {registered_scheme}://  (still parsing sing-box://)")
+    print(f"  legacy service proof   %APPDATA%\\{legacy_app_data}\\{ownership_marker} exists")
     print(f"  shared on purpose      sing-box.exe, sing-box-daemon.exe, .bpf, sing-box:// input")
     print(f"  {checked} values compared")
     return 0
