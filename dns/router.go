@@ -532,7 +532,12 @@ type exchangeWithRulesResult struct {
 	response     *mDNS.Msg
 	transport    adapter.DNSTransport
 	rejectAction *R.RuleActionReject
-	err          error
+	// localAction records that `response` was PRODUCED by a rule action rather than received from
+	// an upstream server. It is what lets the dialer-path conversion below mark the rcode error as
+	// a verdict, so the router logs a configured answer at Debug instead of reporting it as a
+	// failure. See ErrLocalVerdict.
+	localAction bool
+	err         error
 }
 
 const dnsRespondMissingResponseMessage = "respond action requires an evaluated response from a preceding evaluate action"
@@ -860,6 +865,12 @@ func (r *Router) walkDNSRules(ctx context.Context, rules []adapter.DNSRule, mess
 			}
 			return exchangeWithRulesResult{
 				response: action.Response(message),
+				// A response-producing action answers LOCALLY: the name never left this process,
+				// so a non-success rcode is the configuration working rather than a failure. See
+				// localAction and ErrLocalVerdict. Both actions are marked here because both can
+				// answer a non-success rcode, and the router must not report either as a lookup
+				// failure.
+				localAction: true,
 			}, nil
 		case *R.RuleActionAdblock:
 			// The match already decided this name is advertising, so the answer is built here
@@ -876,7 +887,8 @@ func (r *Router) walkDNSRules(ctx context.Context, rules []adapter.DNSRule, mess
 				return exchangeWithRulesResult{}, &dnsWalkSuspension{drain: true}
 			}
 			return exchangeWithRulesResult{
-				response: action.Response(message),
+				response:    action.Response(message),
+				localAction: true,
 			}, nil
 		}
 	}
@@ -1012,10 +1024,14 @@ func (r *Router) sweepArmedDNSRules(ctx context.Context, message *mDNS.Msg, stat
 		case *R.RuleActionPredefined:
 			return exchangeWithRulesResult{
 				response: action.Response(message),
+				// Both response-producing actions are LOCAL verdicts: the name never left this
+				// process, so a non-success rcode is the configuration working, not a failure.
+				localAction: true,
 			}, nil, true
 		case *R.RuleActionAdblock:
 			return exchangeWithRulesResult{
-				response: action.Response(message),
+				response:    action.Response(message),
+				localAction: true,
 			}, nil, true
 		}
 	}
@@ -1200,6 +1216,14 @@ func (r *Router) lookupWithRulesType(ctx context.Context, rules []adapter.DNSRul
 		return nil, exchangeResult.err
 	}
 	if exchangeResult.response.Rcode != mDNS.RcodeSuccess {
+		if exchangeResult.localAction {
+			// The rcode came from a rule action, so it is a configured verdict rather than an
+			// answer from a server. It is marked so the logging classification can report it at
+			// Debug: "the configuration blocked this name" is the feature working, and calling it
+			// `lookup failed` for every blocked dial is both wrong and the log-volume cost the
+			// action's own documentation reasons about.
+			return nil, LocalVerdictRcode(RcodeError(exchangeResult.response.Rcode))
+		}
 		return nil, RcodeError(exchangeResult.response.Rcode)
 	}
 	return filterAddressesByQueryType(MessageToAddresses(exchangeResult.response), qType), nil
@@ -1938,6 +1962,13 @@ func (r *Router) Lookup(ctx context.Context, domain string, options adapter.DNSQ
 				r.logger.DebugContext(ctx, "lookup rejected for ", domain)
 			} else if errors.Is(err, ErrNotCached) {
 				r.logger.DebugContext(ctx, "cache-only lookup missed for ", domain)
+			} else if IsLocalVerdict(err) {
+				// A rule action answered this lookup: the name was blocked on purpose, so the
+				// verdict is the configuration working and belongs at Debug. It is checked AFTER
+				// the reject/cache branches so those keep their own messages, and it is checked
+				// rather than inferred so an upstream NXDOMAIN still logs at Error - which is the
+				// distinction the marker exists to make.
+				r.logger.DebugContext(ctx, "lookup blocked by a rule for ", domain)
 			} else {
 				r.logger.ErrorContext(ctx, E.Cause(err, "lookup failed for ", domain))
 			}
@@ -2018,8 +2049,13 @@ func (r *Router) Lookup(ctx context.Context, domain string, options adapter.DNSQ
 					// This path resolves for a dialer, so there is no message to answer: the
 					// verdict can only surface as the error the caller already understands for
 					// "this name has no address", which is what NXDOMAIN means to a lookup.
+					//
+					// Marked as a local verdict for the same reason the modern path marks it: the
+					// rcode is this router's configured answer, and the logging classification
+					// must not report it as a lookup failure. The error STRING is unchanged, so a
+					// caller that prints it sees exactly what it saw before.
 					responseAddrs = nil
-					err = RcodeError(mDNS.RcodeNameError)
+					err = LocalVerdictRcode(RcodeError(mDNS.RcodeNameError))
 					goto response
 				}
 			}
