@@ -1853,15 +1853,44 @@ full_expect_ok "full contract: flatten -> PASS" \
 full_expect_ok "full contract: check-upload -> PASS" \
   check-upload --out "$work/full/upload" --tag "$FULL_TAG" --version "$FULL_VERSION"
 
-# The published set is exactly the seven public deliverables: five tag-derived tarballs, the
-# desktop installer, the Apple bundle under its own fixed name, and the manifest.
-full_expected="Jiejiebox-v$FULL_VERSION-windows-x64.exe
-Libbox.xcframework.tar.gz
-jiejie-sing-box-linux-amd64-$FULL_TAG.tar.gz
-jiejie-sing-box-macos-arm64-$FULL_TAG.tar.gz
-jiejie-sing-box-windows-amd64-$FULL_TAG.tar.gz
-jiejie-sing-box-android-arm64-$FULL_TAG.tar.gz
-SHA256SUMS"
+# The published set is DERIVED, not restated.
+#
+# # Why this is a derivation now, and what the copied list cost
+#
+# It used to be a literal seven-line list, and it drifted: it named the Apple asset
+# `Libbox.xcframework.tar.gz`, which is the INNER member of the published bundle and not a public
+# asset at all, while the bundle's real public name - `jiejie-libbox-apple-<version>.tar.gz` - went
+# unnamed. On `testing@c32c210` those two cases failed CI:
+#
+#	FAIL  full contract: the staging directory is exactly the seven public files   got: Jiejiebox-...exe
+#	FAIL  full contract: the manifest names exactly the six public files           got: ...jiejie-libbox-apple-0.1.10.tar.gz
+#
+# The count was right and the CONTENT was wrong, which is the failure mode a copied list always has:
+# it cannot notice that one name was replaced by another, because it does not know where names come
+# from. The production contract had already moved the Apple name into `public_asset_names`, and the
+# test was the one remaining copy.
+#
+# `expected-assets` is that same derivation exposed as data, and `release.yml` already consumes it for
+# both the upload list and the read-back expectation. Consuming it here means the test and the release
+# cannot disagree about a name - adding a product, or renaming one, moves all three together, and a
+# publisher that does not keep up fails its own read-back instead of passing.
+#
+# A check that restates the thing it checks can only prove the two copies match. That is what this
+# case used to assert, and it is why it kept passing while being wrong in the same direction as the
+# release it was supposed to guard.
+full_expected="$(run_gate_full expected-assets --tag "$FULL_TAG" --version "$FULL_VERSION")"
+
+# The inner member of the Apple bundle must never appear as a public asset. This is the specific drift
+# that broke CI, stated so it cannot come back through a future edit of the derivation: the bundle is
+# ONE public file whose name carries the version, and the xcframework archive inside it is what the
+# consumer unpacks - it is published inside the bundle, not beside it.
+full_inner_apple="Libbox.xcframework.tar.gz"
+if ! printf '%s\n' "$full_expected" | grep -qxF -- "$full_inner_apple"; then
+  report "full contract: the inner xcframework is not a public asset" 0 0
+else
+  report "full contract: the inner xcframework is not a public asset" 0 1 \
+    "'$full_inner_apple' is the bundle's inner member and must not be published beside it"
+fi
 
 full_listing="$(find "$work/full/upload" -mindepth 1 -maxdepth 1 -type f -exec basename {} \; | sort)"
 if [ "$full_listing" = "$(printf '%s\n' "$full_expected" | sort)" ]; then
@@ -1889,18 +1918,27 @@ fi
 # The manifest's SHAPE, not just its length. Every line must be a bare filename naming one
 # of the six published files: no path prefix, no './', and none of the CI records that live in
 # the desktop artifact directory - those are provenance, not downloads.
+#
+# The expected names come from the SAME derivation as the staging listing above. SHA256SUMS lists
+# every public asset EXCEPT itself, so the expectation is the contract minus SHA256SUMS - derived
+# rather than restated, for the reason the derivation is documented at `full_expected`.
 full_named="$(sed -n 's/^[0-9a-f]\{64\}  //p' "$work/full/upload/SHA256SUMS" | sort)"
-full_want_named="$(printf '%s\n' \
-  "Jiejiebox-v$FULL_VERSION-windows-x64.exe" \
-  "Libbox.xcframework.tar.gz" \
-  "jiejie-sing-box-linux-amd64-$FULL_TAG.tar.gz" \
-  "jiejie-sing-box-macos-arm64-$FULL_TAG.tar.gz" \
-  "jiejie-sing-box-windows-amd64-$FULL_TAG.tar.gz" \
-  "jiejie-sing-box-android-arm64-$FULL_TAG.tar.gz" | sort)"
+full_want_named="$(printf '%s\n' "$full_expected" | grep -vxF 'SHA256SUMS' | sort)"
 if [ "$full_named" = "$full_want_named" ]; then
   report "full contract: the manifest names exactly the six public files" 0 0
 else
   report "full contract: the manifest names exactly the six public files" 0 1 "got: $full_named"
+fi
+
+# And the manifest must list every public asset exactly once, which the comparison above already
+# enforces - restated here as a COUNT so a future derivation that silently returned one name twice
+# would fail on the count rather than only on the set.
+full_want_count="$(printf '%s\n' "$full_want_named" | grep -c .)"
+if [ "$full_entries" = "$full_want_count" ]; then
+  report "full contract: the manifest lists every public asset but itself" 0 0
+else
+  report "full contract: the manifest lists every public asset but itself" 0 1 \
+    "got $full_entries entries, the contract has $full_want_count public assets besides SHA256SUMS"
 fi
 
 full_shape_bad=""
