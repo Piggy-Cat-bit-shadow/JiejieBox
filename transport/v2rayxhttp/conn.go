@@ -1225,7 +1225,18 @@ func (u *packetUplink) sendPacket(payload []byte) error {
 		response.Body.Close()
 		return E.New("v2ray-xhttp: unexpected upload status: ", response.Status)
 	}
-	drainPacketUpResponse(response.Body)
+	if err = drainPacketUpResponse(response.Body); err != nil {
+		// The body did not finish. A 200 whose body stalls until postCtx expires is NOT a
+		// successful post, and reporting it as one is worse than reporting nothing: the caller
+		// below disarms the pooled connection's failure streak and the manager backoff, so a
+		// wedged upload path would be recorded as genuine data flow and stop being backed off.
+		//
+		// The read error was discarded here before this change (`, _ = io.Copy(...)`). It is the
+		// one signal that distinguishes "the server answered 200 and completed the exchange" from
+		// "the server answered 200 and then went silent", and only the first is evidence the path
+		// works.
+		return E.Cause(err, "v2ray-xhttp: upload response body")
+	}
 	// lx: SPEC 076 — a drained 200 upload POST is genuine data flow: reset the
 	// pooled connection's failure streak and the manager backoff.
 	u.conn.xmux.noteSuccess()
@@ -1361,17 +1372,37 @@ func (c *packetConn) SetWriteDeadline(t time.Time) error { return os.ErrInvalid 
 // NeedAdditionalReadDeadline: the read deadline is one-shot, as in streamConn.
 func (c *packetConn) NeedAdditionalReadDeadline() bool { return true }
 
-// drainPacketUpResponse discards an upload response body without pulling a
-// 32 KiB pooled buffer for it.
+// drainPacketUpResponse consumes an upload response body without pulling a
+// 32 KiB pooled buffer for it, and reports whether the body actually finished.
 //
 // The body must still be fully consumed — HTTP/1.1 keep-alive and HTTP/2 stream
 // state both depend on it — but an XHTTP upload response carries nothing, and
 // drainAndClose allocates its buffer once per post (lx: XHTTP_OUTPERFORM).
 // io.Copy into io.Discard reuses a small internal buffer and allocates only if
 // there is something to read.
-func drainPacketUpResponse(body io.ReadCloser) {
-	_, _ = io.Copy(io.Discard, body)
-	_ = body.Close()
+//
+// # Why the copy error is returned rather than discarded
+//
+// It is the only signal that separates "the server answered 200 and completed the
+// exchange" from "the server answered 200 and then went silent until the post's own
+// deadline expired". The caller treats a nil return as evidence the path works and
+// disarms the pooled connection's failure streak and the manager backoff, so a
+// discarded error lets a wedged upload path be recorded as genuine data flow and
+// stop being backed off — the opposite of what SPEC 076's noteSuccess is for.
+//
+// The body is still closed on the error path: the copy failing does not make the
+// stream state any less the transport's to clean up.
+func drainPacketUpResponse(body io.ReadCloser) error {
+	_, copyErr := io.Copy(io.Discard, body)
+	closeErr := body.Close()
+	// A read failure is the interesting one and is reported first. A close failure on an
+	// otherwise fully-drained body still means the exchange did not end cleanly, so it is
+	// reported when there is nothing better to say — and it is never silent, because silence
+	// here is what the caller reads as "the path works".
+	if copyErr != nil {
+		return copyErr
+	}
+	return closeErr
 }
 
 // byteReader is a one-shot reader over a byte slice used as a fixed-length
