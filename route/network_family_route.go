@@ -73,6 +73,32 @@ func usableGlobalIPv6Route(
 	}
 	isDefault := !destination.IsValid() || destination.IsUnspecified()
 	if !isDefault {
+		// A MULTICAST prefix is not a way out, and it reaches the global branch of the scope test.
+		//
+		// netcap.ClassifyScope answers ScopeGlobal for anything that is not loopback, link-local,
+		// unspecified or private - and ff00::/8 is none of those, so a multicast route would be
+		// accepted as proof of a global IPv6 egress path. That is not hypothetical: Windows installs
+		// an ff00::/8 route on EVERY IPv6-capable interface, so on that platform the route table
+		// virtually always contains an "accepted" row and this predicate reports RoutePresent on a
+		// machine with no unicast IPv6 route at all. MEASURED on the affected host:
+		//
+		//	ZONE-ROW ACCEPTED dest=ff00::/8 multicast=true scope=global   (7 such rows)
+		//	with the multicast row excluded: route-absent, accepted total=0
+		//
+		// The consequence is that the egress term is INERT on the platform whose field report is the
+		// reason it exists: GlobalIPv6Egress stays Provisioned, so HardUndialable never refuses a
+		// global IPv6 destination for the egress reason, and the "global address on an on-link-only
+		// prefix" case is never fast-failed.
+		//
+		// The predicate is shared: the Linux and Darwin readers call it too, so the same hole is
+		// open wherever a multicast route is visible to the kernel route dump.
+		//
+		// It is checked ONCE, before the scope test, because a multicast prefix can never be a way
+		// out regardless of how global it looks - the same reason the family check precedes the
+		// scope test rather than being folded into it.
+		if destination.IsMulticast() {
+			return false
+		}
 		if netcap.ClassifyScope(destination) != netcap.ScopeGlobal {
 			return false
 		}

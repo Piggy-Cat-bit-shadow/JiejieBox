@@ -54,4 +54,29 @@ func TestTheRuleRejectsWhatARealTableContains(t *testing.T) {
 	// And the one that must decide it.
 	require.True(t, usableGlobalIPv6Route(netip.IPv6Unspecified(), 0, true, 0, 1, nil, nil))
 	require.True(t, usableGlobalIPv6Route(netip.MustParseAddr("2409:8a00::"), 32, true, 0, 1, nil, nil))
+
+	// A MULTICAST route is not a way out, and it is present on essentially every IPv6-capable
+	// machine - Windows installs ff00::/8 on every such interface.
+	//
+	// This row is the one that was missing, and its absence made the whole egress term inert on
+	// Windows. The scope test is what let it through: netcap.ClassifyScope answers ScopeGlobal for
+	// anything that is not loopback, link-local, unspecified or private, and ff00:: is none of them.
+	// MEASURED on the affected host, with the physical links carrying link-local addresses only:
+	//
+	//	ZONE-ROW ACCEPTED dest=ff00::/8 multicast=true scope=global    (7 such rows)
+	//	own TUN excluded -> observation=route-present, from index 1, a multicast row
+	//
+	// so globalIPv6RouteObservation reported RoutePresent and GlobalIPv6Egress stayed Provisioned on
+	// a machine with no unicast IPv6 route at all - defeating the commit whose entire purpose is to
+	// refuse global IPv6 when there is no route to one.
+	//
+	// The rows below are spelled with the real prefix AND with a full multicast address, because the
+	// kernel may report either as the destination of the ff00::/8 row.
+	require.False(t, usableGlobalIPv6Route(netip.MustParseAddr("ff00::"), 8, false, 0, 1, nil, nil),
+		"an ff00::/8 multicast route is installed on every IPv6-capable interface and is not a way "+
+			"out; accepting it makes the global-IPv6-egress verdict always Provisioned")
+	require.False(t, usableGlobalIPv6Route(netip.MustParseAddr("ff02::1"), 128, false, 0, 1, nil, nil),
+		"nor is an all-nodes multicast destination")
+	require.False(t, usableGlobalIPv6Route(netip.MustParseAddr("ff00::"), 8, true, 0, 1, nil, nil),
+		"and a gateway on the row does not make a multicast route a way out either")
 }

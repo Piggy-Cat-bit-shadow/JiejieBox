@@ -553,6 +553,43 @@ func (d *DefaultDialer) listenSerialInterfacePacketEpoch(ctx context.Context, de
 	if strategy == nil {
 		return d.ListenPacket(ctx, destination)
 	}
+	// The local family gate, for the same reason ListenPacket has one and with the same shape.
+	//
+	// # Why this entry point needs its own
+	//
+	// This function is a PUBLIC entry point (see the wrapper's comment) and it CREATES the packet
+	// socket itself, so it cannot inherit the gate from ListenPacket: with a non-nil strategy it never
+	// calls it. The package-level serial packet loop reaches exactly this function through its
+	// ParallelInterfaceDialer branch -
+	//
+	//	default_parallel_network.go:167-172
+	//	    conn, err := parallelDialer.ListenSerialInterfacePacket(ctx, ...)
+	//
+	// - which is the branch under the comment stating that "a refusal happens BEFORE socket creation,
+	// in DefaultDialer.ListenPacket, so a family this machine provably cannot reach never enters it".
+	// For that branch the comment was describing a gate that was not there. MEASURED, before this fix,
+	// on a machine with no IPv6 addressing:
+	//
+	//	ListenPacket                  -> refused before socket creation   (control)
+	//	ListenSerialInterfacePacket   -> err=nil, an IPv6 packet socket was created
+	//
+	// # Why it matters more here than for a stream
+	//
+	// A packet listener has no racer and no recovery: the serial loop's FIRST successfully created
+	// socket wins outright and is never replaced (default_parallel_network.go:148-165). A stream that
+	// picks the wrong family reconnects; a packet listener picks the wrong family and delivers nothing,
+	// which is the reported `open UDP connection to [2606:...]` followed by `send peer batch:
+	// unreachable network`. The pre-socket refusal is the ONLY thing that can move it to the other
+	// family, so a missing gate is not a lost optimisation here - it is the difference between a
+	// working fallback and a dead tunnel.
+	//
+	// The unspecified-address exception is the same one ListenPacket documents: it is how a caller asks
+	// for a wildcard socket with no destination family at all.
+	if destination.Addr.IsValid() && !destination.Addr.IsUnspecified() {
+		if refusal := d.captureLocalFamilyPolicy().hardUndialableError(destination.Addr); refusal != nil {
+			return nil, refusal
+		}
+	}
 	if len(interfaceType) == 0 {
 		interfaceType = d.networkType
 	}
