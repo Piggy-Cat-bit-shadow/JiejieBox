@@ -50,12 +50,26 @@ import sys
 # The tags the Windows daemon must carry. Required explicitly rather than diffed against
 # release/DEFAULT_BUILD_TAGS_WINDOWS, so that a tag being dropped from that file is
 # caught instead of silently accepted.
+#
+# tfogo_checklinkname0 is required because build_boxdd APPENDS it unconditionally
+# (cmd/internal/build_boxdd/main.go:248), and the code there says what losing it costs:
+# "dropping it here would silently reduce the daemon's libbox to the stub crash handler and
+# the stub goroutine report". A silently-stubbed crash handler in the shipped Windows daemon
+# is exactly the loss an artifact gate exists to catch, and until this line nothing checked
+# it - the tag appears in NO profile file, by design, because it travels with the
+# -checklinkname=0 flag at the call site that passes that flag.
+#
+# with_external_usbip_drivers is required because build_boxdd appends it for windows
+# alongside with_external_windivert (main.go:251). Requiring one half of a pair that is only
+# ever added together would let the other disappear unnoticed.
 REQUIRED_TAGS = [
     "with_quic",
     "with_naive_outbound",
     "with_utls",
     "with_clash_api",
     "with_external_windivert",
+    "with_external_usbip_drivers",
+    "tfogo_checklinkname0",
 ]
 
 MACHINE_NAMES = {
