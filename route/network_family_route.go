@@ -109,29 +109,24 @@ const (
 	rtnThrow       = 9
 )
 
-// linuxAllTablesSentinel is a table id above any real one, used to keep the netlink library from
-// discarding non-main tables while its own equality test still rejects nothing.
+// Table ids this reader reasons about, written as numbers so the netlink contract can be asserted on
+// every platform rather than only where netlink compiles.
 //
-// # The library trap this exists for
+// netlink is a Linux-only dependency, so anything TYPED by it has to live behind a build tag - and a
+// contract that can only be asserted on Linux is a contract that gets broken by whoever edits the
+// reader from a Mac. These two integers are the whole contract; the Linux file builds the filter from
+// them.
 //
-// The obvious way to read every table - RouteListFiltered(FAMILY_V6, &Route{}, 0) - DOES NOT WORK, and
-// the reason is invisible from the API:
-//
-//	netlink/route_linux.go:1037
-//	    if msg.Table != unix.RT_TABLE_MAIN {
-//	        if filter == nil || filterMask&RT_FILTER_TABLE == 0 {
-//	            continue        // <-- every non-main table is discarded HERE
-//	        }
-//	    }
-//
-// Non-main tables are dropped before any filter is applied unless RT_FILTER_TABLE is set - and when it
-// is set, the comparison at :1049 then keeps only the one table named. There is therefore no filter
-// that selects "all tables", and naming a table cannot enumerate them either.
-//
-// Setting the bit and naming a table that matches nothing opens the gate without closing anything: the
-// kernel sends every table, and the library's own equality check rejects none of them on that test.
-// The routes that survive are filtered by this file, on the facts that actually matter.
-const linuxAllTablesSentinel = 0xFFFFFFFF
+// The values are fixed by the kernel UAPI: linuxTableUnspec is unix.RT_TABLE_UNSPEC and linuxTableMain
+// is unix.RT_TABLE_MAIN.
+const (
+	// linuxTableUnspec is the library's spelling of "no table", and it is load-bearing in two separate
+	// places: it is what makes the client-side comparison at route_linux.go:1049 keep every table
+	// instead of only a named one, and it is what stops a table selector being added to the request at
+	// route_linux.go:872. Any other value narrows the read.
+	linuxTableUnspec = 0
+	linuxTableMain   = 254
+)
 
 // linuxRouteQualifies is the per-route half of the Linux read, split out so the decision is testable
 // without a netlink dump of the host's real tables.

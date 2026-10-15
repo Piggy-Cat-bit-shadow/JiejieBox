@@ -186,22 +186,24 @@ func TestTheReportedFailureStillReportsAbsent(t *testing.T) {
 	// interface list having no global IPv6 addressing, is what refuses the destination.
 }
 
-// TestACustomTableRouteIsAWayOut is defect 2, and it is the one a reader of the old code would have
-// believed was already handled.
+// TestACustomTableRouteIsAWayOut covers the ACCEPTANCE half of the custom-table defect, and only that
+// half.
 //
-// The old Linux reader called RouteListFiltered(FAMILY_V6, &Route{Table: RT_TABLE_MAIN}, RT_FILTER_TABLE)
-// and published RouteAbsent when that came up empty. A policy-routing setup can carry the ONLY IPv6
-// route in a custom table, so that published "no route" on a machine that routes global IPv6
-// perfectly well - a wrongful refusal.
+// The defect had two halves that fail independently:
 //
-// The table is a parameter of the acceptance rule precisely so this can be asserted without a netlink
-// dump of the host's real tables: the same route qualifies whichever table carries it.
+//	ENUMERATION   does the read ever SEE a route in a non-main table (netlink filter)
+//	ACCEPTANCE    given such a route, is it treated as a way out (this rule)
+//
+// This test is the second one. It says nothing about enumeration - it passes a table id straight into
+// the rule, so it would stay green against a reader that never queried a custom table at all. The
+// enumeration half is TestLinuxRouteFilterIsTheDocumentedAllTablesRequest (the request shape, on every
+// platform) and TestLinuxEnumerationReturnsEveryTable (the real kernel, Linux only, and skipped when
+// it cannot actually prove its claim).
 func TestACustomTableRouteIsAWayOut(t *testing.T) {
 	customTables := []int{
 		100, // a typical `ip route add ... table 100`
 		1000,
-		254,                    // RT_TABLE_MAIN, the control
-		linuxAllTablesSentinel, // and the sentinel itself must not be required to match
+		254, // RT_TABLE_MAIN, the control
 	}
 	for _, table := range customTables {
 		require.Truef(t, linuxRouteQualifies(
@@ -212,7 +214,7 @@ func TestACustomTableRouteIsAWayOut(t *testing.T) {
 		), "and so is an IPv6 default route in table %d", table)
 	}
 
-	// A table carrying nothing usable still contributes nothing, so enumerating every table did not
+	// A table carrying nothing usable still contributes nothing, so accepting custom tables did not
 	// turn into "everything qualifies".
 	require.False(t, linuxRouteQualifies(
 		netip.MustParseAddr("fd00::"), 64, true, 0, 100, 3, nil, nil,
@@ -222,21 +224,41 @@ func TestACustomTableRouteIsAWayOut(t *testing.T) {
 	), "nor is a blackhole route, whatever table it is in")
 }
 
-// TestLinuxEnumerationDoesNotStopAtTheMainTable pins the request the reader actually makes.
+// TestLinuxRouteFilterIsTheDocumentedAllTablesRequest pins the ONE filter combination the netlink
+// library documents as "every table", and it is the enumeration half of the defect.
 //
-// Reading only RT_TABLE_MAIN was the defect. The fix is the sentinel, which sets RT_FILTER_TABLE - so
-// the netlink library stops discarding non-main tables at route_linux.go:1038 - while naming a table
-// id above any real one, so its equality check at :1049 rejects nothing. Both halves are load-bearing
-// and both are easy to "simplify" back into the bug.
-func TestLinuxEnumerationDoesNotStopAtTheMainTable(t *testing.T) {
-	// The sentinel must not collide with a real table id, or the filter would select it and discard
-	// everything else - the same bug in a subtler form.
-	require.Greater(t, uint32(linuxAllTablesSentinel), uint32(254), "above RT_TABLE_MAIN")
-	require.Greater(t, uint32(linuxAllTablesSentinel), uint32(32767), "above RT_TABLE_DEFAULT")
-	require.Equal(t, uint32(0xFFFFFFFF), uint32(linuxAllTablesSentinel),
-		"and above the whole 32-bit table space, so no real route can ever carry this id")
+// The library decides two separate things from that one value, and gets both wrong unless the value is
+// exactly RT_TABLE_UNSPEC:
+//
+//	route_linux.go:1038   mask must contain RT_FILTER_TABLE, or non-main tables are dropped before any
+//	                      filter runs - this is why a nil filter or a zero mask cannot work
+//	route_linux.go:1049   the comparison is skipped entirely when filter.Table == RT_TABLE_UNSPEC,
+//	                      so zero is what KEEPS every table; any other value keeps only the one named
+//	route_linux.go:872    the same zero is what stops a table selector being sent to the kernel, so the
+//	                      dump is not narrowed server-side either
+//
+// The wrong fix this replaces named 0xFFFFFFFF, reading "matches nothing" as "filters nothing". It is
+// the opposite: the comparison at :1049 is what KEEPS a route, so a value that matches no route rejects
+// all of them. Both halves of that mistake are asserted against below.
+func TestLinuxRouteFilterIsTheDocumentedAllTablesRequest(t *testing.T) {
+	table, mask := linuxAllTablesRequest()
 
-	// RT_TABLE_MAIN must remain a DIFFERENT value, which is what makes the sentinel meaningful rather
-	// than a rename of the old behaviour.
-	require.NotEqual(t, uint32(254), uint32(linuxAllTablesSentinel))
+	require.Equal(t, linuxTableUnspec, table,
+		"the table must be RT_TABLE_UNSPEC (zero): any other value makes :1049 reject every route "+
+			"whose table differs, which is every route")
+	require.NotEqual(t, linuxTableMain, table,
+		"naming RT_TABLE_MAIN is the original defect: a custom table carrying the only IPv6 route "+
+			"would be invisible and the machine reported as having no route")
+	require.NotEqual(t, 0xFFFFFFFF, table,
+		"a table id above the table space matches no route, and :1049 KEEPS routes that match - so "+
+			"it returns an empty list, not every table")
+
+	// RT_FILTER_TABLE is bit 8 of the filter mask in the netlink UAPI. Spelled numerically because the
+	// constant is not available off Linux, and asserted exactly so no other bit can creep in.
+	const rtFilterTable = uint64(1 << 8)
+	require.Equal(t, rtFilterTable, mask,
+		"the mask must be RT_FILTER_TABLE and nothing else: without the bit the early discard at "+
+			":1038 removes every non-main table, and every OTHER bit narrows the dump by a field this "+
+			"reader does not constrain - a narrowed dump reported as RouteAbsent is the wrongful "+
+			"refusal the reader exists to avoid")
 }

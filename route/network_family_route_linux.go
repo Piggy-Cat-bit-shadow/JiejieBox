@@ -7,7 +7,70 @@ import (
 	"github.com/sagernet/sing-box/common/netcap"
 
 	"github.com/sagernet/netlink"
+	"golang.org/x/sys/unix"
 )
+
+// linuxAllTablesFilter and linuxAllTablesMask are the netlink filter that returns EVERY IPv6 route
+// table. They live here rather than beside their constants because netlink is a Linux-only dependency
+// and these values are TYPED by it; the reasoning is with the constants in network_family_route.go.
+//
+// # The library trap they exist for
+//
+// Non-main tables are discarded before any filter is applied:
+//
+//	netlink/route_linux.go:1037
+//	    if msg.Table != unix.RT_TABLE_MAIN {
+//	        if filter == nil || filterMask&RT_FILTER_TABLE == 0 {
+//	            continue        // <-- every non-main table is dropped HERE
+//	        }
+//	    }
+//
+// So the mask bit is mandatory to see them at all. But setting the bit is only half of it, because the
+// equality test that follows treats a NAMED table very differently from an unnamed one:
+//
+//	netlink/route_linux.go:1049
+//	    case filterMask&RT_FILTER_TABLE != 0 && filter.Table != unix.RT_TABLE_UNSPEC &&
+//	         route.Table != filter.Table:
+//	        continue
+//
+// Naming a real table keeps only that table. Naming RT_TABLE_UNSPEC - zero - short-circuits the whole
+// condition, so nothing is rejected on this test and every table survives it.
+//
+// # Why the request also has to leave the table unset
+//
+// The same zero is what keeps a table selector out of the REQUEST. route_linux.go emits one only when
+// the table is non-zero:
+//
+//	if route.Table > 0 {
+//	    if route.Table >= 256 { msg.Table = RT_TABLE_UNSPEC; RTA_TABLE = ... } else { msg.Table = route.Table }
+//	}
+//
+// With Table == 0 none of that runs, so the dump goes out with no RTA_TABLE and the kernel answers for
+// every table it has. Naming any value at all - including a "sentinel" above the table space - asks
+// the kernel a narrower question instead.
+//
+// # The wrong fix this replaces
+//
+// A table id above the 32-bit space (0xFFFFFFFF) was used here on the reasoning that it "matches
+// nothing, so nothing is filtered". It matches nothing on the CLIENT test at :1049 - which is exactly
+// the problem, because that test is what KEEPS a route. A value that never matches therefore rejected
+// every real route and the read returned an empty list, while also asking the kernel for a table that
+// cannot exist. The correct value is the one the library itself documents as "no table": zero.
+var linuxAllTablesFilter = &netlink.Route{Table: unix.RT_TABLE_UNSPEC}
+
+// linuxAllTablesMask is the mask that goes with linuxAllTablesFilter. RT_FILTER_TABLE must be set, or
+// the early discard at route_linux.go:1038 removes every non-main table before any filter runs.
+const linuxAllTablesMask = netlink.RT_FILTER_TABLE
+
+// linuxRTFilterTable is the same bit as plain number, so the cross-platform contract test can compare
+// the Linux arm against a value it can name without importing netlink.
+const linuxRTFilterTable = uint64(netlink.RT_FILTER_TABLE)
+
+// linuxAllTablesRequest reports the (table, mask) pair this reader sends, as plain numbers, so the
+// contract above can be asserted on every platform instead of only where netlink compiles.
+func linuxAllTablesRequest() (table int, mask uint64) {
+	return linuxAllTablesFilter.Table, uint64(linuxAllTablesMask)
+}
 
 // globalIPv6RouteObservation reads the kernel's IPv6 routing table and answers whether this machine
 // has a usable route to a global IPv6 destination.
@@ -43,14 +106,12 @@ import (
 //	        }
 //	    }
 //
-// The library drops non-main tables before it applies any filter, unless RT_FILTER_TABLE is set - and
-// when it is set, the table comparison at :1049 then keeps only the one table named. So there is no
-// filter that selects "all tables", and requesting a table by name cannot enumerate them either.
-//
-// The way through is to set the bit that disables the early discard while naming a table that matches
-// nothing: linuxAllTablesSentinel is far above any real table id, so the kernel sends every table and
-// the library's own equality check then rejects none of them on that test. The routes that survive are
-// filtered here, by us, on the facts that actually matter.
+// The library drops non-main tables before it applies any filter, unless RT_FILTER_TABLE is set. So a
+// filter is unavoidable - but the VALUE has to be the one the library reads as "no table", because the
+// same value decides both whether the rows survive the client-side comparison and whether a table
+// selector is sent to the kernel. linuxAllTablesFilter and linuxAllTablesMask carry the whole argument;
+// the short version is that the table must be RT_TABLE_UNSPEC and the mask must contain
+// RT_FILTER_TABLE. The routes that survive are then filtered here, by us, on the facts that matter.
 //
 // # What is accepted
 //
@@ -65,7 +126,7 @@ import (
 // the strength of a machine's own address would be exactly the "global address is not global egress"
 // error this term exists to avoid, so on-link routes are required to be shorter than a host route.
 func globalIPv6RouteObservation(ownInterfaceNames []string, ownInterfaceIndices []int) RouteObservationResult {
-	routes, err := netlink.RouteListFiltered(netlink.FAMILY_V6, &netlink.Route{Table: linuxAllTablesSentinel}, netlink.RT_FILTER_TABLE)
+	routes, err := netlink.RouteListFiltered(netlink.FAMILY_V6, linuxAllTablesFilter, linuxAllTablesMask)
 	if err != nil {
 		// The table could not be read. Unobserved contributes nothing, so the capability degrades to
 		// the addressing-only answer instead of guessing.
