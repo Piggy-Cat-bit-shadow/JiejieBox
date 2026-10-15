@@ -62,13 +62,19 @@ func (c *CacheFile) loopFlush(ctx context.Context) {
 	}
 }
 
-func (c *CacheFile) Flush() {
+// Flush writes the pending batch and reports whether it reached the disk.
+//
+// The error is the whole point of the split below. `Flush` is part of `adapter.CacheFile`, so its
+// signature cannot grow a return value without a cross-package change; but a caller that has
+// PROMISED durability needs to know whether the write happened, and silently dropping the batch is
+// not the same as writing it.
+func (c *CacheFile) flush() error {
 	c.flushAccess.Lock()
 	defer c.flushAccess.Unlock()
 	c.pendingAccess.Lock()
 	if c.pending.count == 0 {
 		c.pendingAccess.Unlock()
-		return
+		return nil
 	}
 	writing := c.pending
 	c.writing = writing
@@ -78,11 +84,22 @@ func (c *CacheFile) Flush() {
 		return c.writePending(tx, writing)
 	})
 	if err != nil {
+		// The batch is gone: `pending` was replaced above and `writing` is dropped here, so a
+		// failed flush LOSES the staged writes rather than retrying them. That is why the error
+		// has to reach the caller instead of only the log - see
+		// `CacheFile.FakeIPSaveMetadata`, whose caller re-derives the batch it needs.
 		c.logger.Warn("save cache: ", err)
 	}
 	c.pendingAccess.Lock()
 	c.writing = nil
 	c.pendingAccess.Unlock()
+	return err
+}
+
+// Flush writes the pending batch, reporting nothing. It is the best-effort entry point for the
+// background flusher and for teardown, where there is no caller left to fail.
+func (c *CacheFile) Flush() {
+	_ = c.flush()
 }
 
 func (c *CacheFile) writePending(tx *bbolt.Tx, pending *pendingWrites) error {

@@ -50,19 +50,44 @@ func (c *CacheFile) FakeIPMetadata() *adapter.FakeIPMetadata {
 	return &metadata
 }
 
-// FakeIPSaveMetadata stages the cursor and flushes immediately. Flush takes
-// pendingAccess itself, so the lock is released explicitly before calling it
-// (a defer would deadlock). The caller — the FakeIP store — only calls this once
-// per reserved address window plus once on Close, so blocking here is cheap and
-// keeps the cursor on disk ahead of the addresses issued from that window.
+// FakeIPSaveMetadata stages the cursor and flushes immediately, REPORTING whether it landed.
+//
+// # Why the return value is load-bearing, and was not
+//
+// `adapter.FakeIPStorage` states the contract this implements:
+//
+//	FakeIPSaveMetadata persists the address cursor synchronously. ... the store reserves a
+//	window of addresses ahead of the persisted cursor and rewrites the metadata once per
+//	window, so the cursor on disk already leads every address handed out.
+//
+// and the store acts on it - `dns/transport/fakeip/store.go` refuses to hand out any address of
+// the window when this returns an error:
+//
+//	err := s.storage.FakeIPSaveMetadata(metadata)
+//	if err != nil {
+//	    return netip.Addr{}, E.Cause(err, "save fakeip metadata")
+//	}
+//	s.reservedCount = reservedAddressCount
+//
+// The implementation returned `nil` unconditionally while `Flush` swallowed the write error and
+// DROPPED the batch, so that branch was unreachable and the reservation the comment describes was
+// not enforced: on a failed write the store still advanced `reservedCount` and handed out
+// addresses whose cursor had never reached the disk. A crash then re-issued addresses that clients
+// may still hold mappings for - the exact hazard the comment says the synchronous write prevents.
+//
+// MEASURED before the change: with the database closed underneath it, this function returned nil
+// and the staged cursor was lost with only a warning in the log.
+//
+// Flush takes pendingAccess itself, so the lock is released explicitly before calling it (a defer
+// would deadlock). The caller - the FakeIP store - reserves once per window plus once on Close, so
+// blocking here is cheap.
 func (c *CacheFile) FakeIPSaveMetadata(metadata *adapter.FakeIPMetadata) error {
 	c.pendingAccess.Lock()
 	added := c.pending.fakeIPMetadata == nil
 	c.pending.fakeIPMetadata = metadata
 	c.enqueueLocked(added, 0)
 	c.pendingAccess.Unlock()
-	c.Flush()
-	return nil
+	return c.flush()
 }
 
 func putFakeIPMetadata(tx *bbolt.Tx, metadata *adapter.FakeIPMetadata) error {

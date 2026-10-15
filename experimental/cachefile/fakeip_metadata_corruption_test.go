@@ -2,6 +2,7 @@ package cachefile
 
 import (
 	"context"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"testing"
@@ -169,4 +170,65 @@ func TestEmptyFakeIPMetadataBucketIsTheSupportedShape(t *testing.T) {
 
 	require.Nil(t, cacheFile.FakeIPMetadata(),
 		"a store with no FakeIP metadata must report none, so the caller resets its range")
+}
+
+// TestFakeIPSaveMetadataReportsAFailedFlush is the contract `adapter.FakeIPStorage` states and
+// the implementation did not keep.
+//
+// # The contract, quoted from the interface
+//
+//	FakeIPSaveMetadata persists the address cursor synchronously. ... the store reserves a
+//	window of addresses ahead of the persisted cursor and rewrites the metadata once per
+//	window, so the cursor on disk already leads every address handed out. Buffering that one
+//	write per window only makes the reservation pointless: while the write sits in the batch
+//	the cursor on disk is at an address that was already issued, and a crash then makes the
+//	next start re-issue addresses that clients may still hold mappings for.
+//
+// # Why the caller needs the error
+//
+// `dns/transport/fakeip/store.go` refuses to hand out the window when this returns an error:
+//
+//	err := s.storage.FakeIPSaveMetadata(metadata)
+//	if err != nil { return netip.Addr{}, E.Cause(err, "save fakeip metadata") }
+//	s.reservedCount = reservedAddressCount
+//
+// With an unconditional `nil` that branch was unreachable, so a failed write still advanced the
+// reservation and the store issued addresses whose cursor had never reached the disk.
+//
+// # How the failure is produced
+//
+// By closing the database underneath the cache file. That is not a synthetic fault: it is the
+// state `resetDB` leaves behind when its reopen fails, and it is what a full disk looks like from
+// here. The assertion is the pair: the error must be REPORTED, and nothing may have been persisted.
+func TestFakeIPSaveMetadataReportsAFailedFlush(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cache.db")
+	cacheFile := New(
+		context.Background(),
+		logger.NOP(),
+		option.CacheFileOptions{Enabled: true, Path: path, StoreFakeIP: true},
+	)
+	require.NoError(t, cacheFile.start())
+
+	// Control: against a live database the save lands and reports success. Without this the
+	// assertion below could pass on a function that always fails.
+	require.NoError(t, cacheFile.FakeIPSaveMetadata(testFakeIPMetadata()),
+		"control: a save against a live database must succeed")
+
+	// Now make every write fail.
+	require.NoError(t, cacheFile.database().Close())
+	t.Cleanup(func() {
+		if openDB := cacheFile.database(); openDB != nil {
+			_ = openDB.Close()
+		}
+	})
+
+	advanced := testFakeIPMetadata()
+	advanced.Inet4Current = netip.MustParseAddr("198.18.200.7")
+
+	err := cacheFile.FakeIPSaveMetadata(advanced)
+	require.Error(t, err,
+		"a save whose write could not happen reported success. The store's caller then advances "+
+			"its reservation and hands out addresses whose cursor never reached the disk, which "+
+			"is the re-issue-after-crash hazard the interface comment says this call prevents")
+	t.Logf("reported: %v", err)
 }
