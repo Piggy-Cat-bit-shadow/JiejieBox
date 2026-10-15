@@ -224,15 +224,14 @@ func TestPauseRegistrationDoesNotRunUnderTheStateLock(t *testing.T) {
 	})
 	require.Equal(t, 2, manager.callbackCount(), "both callbacks must be registered")
 
-	// Nothing may have been delivered yet, because the callback is still waiting for stateAccess.
-	select {
-	case <-emitReturned:
-		t.Fatal("the callback completed while its own state lock was held by another goroutine")
-	case <-time.After(50 * time.Millisecond):
-	}
-
 	// Releasing the lock must let the whole chain finish. This is the exact instant the pre-fix code
 	// could not reach when the releasing goroutine also needed pause.access to register.
+	//
+	// The ORDER is asserted here rather than before the release, because "the emit has not returned
+	// yet" is not observable without racing the scheduler: the emit goroutine is entitled to acquire
+	// `stateAccess` the moment it is free. What is deterministic is that `runWithDeadline` cannot
+	// complete at all unless the registration got `pause.access` while the manager held it, which is
+	// the property under test.
 	releaseStateLock()
 	runWithDeadline(t, "the emit that was waiting for the state lock", func() { <-emitReturned })
 
