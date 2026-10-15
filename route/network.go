@@ -28,6 +28,7 @@ import (
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	"github.com/sagernet/sing/common/winpowrprof"
+	"github.com/sagernet/sing/common/x/list"
 	"github.com/sagernet/sing/service"
 	"github.com/sagernet/sing/service/pause"
 
@@ -46,9 +47,17 @@ type NetworkManager struct {
 	ctx    context.Context
 	logger logger.ContextLogger
 	router adapter.Router
-	// interfaceFinder is held as the concrete finder because the platform path needs
-	// UpdateInterfaces, which the control.InterfaceFinder interface does not expose.
-	interfaceFinder *control.DefaultInterfaceFinder
+	// interfaceFinder is the finder this manager reads interfaces from.
+	//
+	// It is typed as networkInterfaceFinder rather than *control.DefaultInterfaceFinder because a TEST
+	// has to be able to supply one: on Darwin the platform path calls Update() and then enriches its
+	// list through ByIndex, so with the default finder a test's fixture is replaced by the RUNNER's own
+	// interfaces and the capability is computed from the host. See test_interface_finder_test.go.
+	//
+	// The interface is the narrow set this file actually calls, and it exists rather than
+	// control.InterfaceFinder because the platform path needs UpdateInterfaces, which that interface
+	// does not expose. *control.DefaultInterfaceFinder satisfies this one unchanged.
+	interfaceFinder networkInterfaceFinder
 	// interfaceRefreshError, when set, makes the next interface refresh report this error instead of
 	// enumerating.
 	//
@@ -285,6 +294,39 @@ func (r *NetworkManager) startedContext() context.Context {
 func (r *NetworkManager) publishStartedContext(ctx context.Context) {
 	r.startedCtx.Store(&ctx)
 }
+
+// networkInterfaceFinder is the interface-contract this manager needs from a finder.
+//
+// # Why it is a local interface and not control.InterfaceFinder
+//
+// The platform path needs `UpdateInterfaces`, which `control.InterfaceFinder` deliberately does not
+// expose: it is the injection point used to tell the finder what the platform says the interfaces are,
+// rather than asking the OS. Widening the upstream interface would force every implementer to carry a
+// method that only exists to be told something, so the narrow contract lives here instead, spelled as
+// the exact method set this file calls.
+//
+// `*control.DefaultInterfaceFinder` satisfies it unchanged - the assertion below is what keeps that
+// true, so an upstream signature change fails here rather than at some distant call site.
+//
+// It is what lets a test install a finder whose enumeration is a fixture. Without that, the Darwin
+// enrichment step reads the machine's real interfaces and no fixture-based test in this package can
+// describe a network the host does not have.
+type networkInterfaceFinder interface {
+	Update() error
+	UpdateInterfaces(interfaces []control.Interface)
+	Interfaces() []control.Interface
+	ByName(name string) (*control.Interface, error)
+	ByIndex(index int) (*control.Interface, error)
+	ByAddr(addr netip.Addr) (*control.Interface, error)
+	// The callback pair is here because a consumer passes this finder to control.BindToInterfaceFunc,
+	// which takes a control.InterfaceFinder. It is part of the contract this file must satisfy rather
+	// than something it calls directly.
+	RegisterInterfaceUpdateCallback(callback control.InterfaceUpdateCallback) *list.Element[control.InterfaceUpdateCallback]
+	UnregisterInterfaceUpdateCallback(element *list.Element[control.InterfaceUpdateCallback])
+}
+
+// The real finder must keep satisfying the narrow contract above.
+var _ networkInterfaceFinder = (*control.DefaultInterfaceFinder)(nil)
 
 func NewNetworkManager(ctx context.Context, logger logger.ContextLogger, options option.RouteOptions, dnsOptions option.DNSOptions) (*NetworkManager, error) {
 	defaultDomainResolver := common.PtrValueOrDefault(options.DefaultDomainResolver)

@@ -61,6 +61,11 @@ func (p *platformInterfaceStub) NetworkInterfaces() ([]adapter.NetworkInterface,
 type platformHandoverHarness struct {
 	manager *NetworkManager
 	stub    *platformInterfaceStub
+	// finder is the fixture-backed finder installed on the manager. It is held here so `observe` can
+	// move the fixture with the platform list: the Darwin enrichment reads the finder back, so the two
+	// have to describe the same machine or the capability is computed from one of them and asserted
+	// against the other.
+	finder *testInterfaceFinder
 }
 
 func newPlatformHandoverHarness(t *testing.T) *platformHandoverHarness {
@@ -73,9 +78,18 @@ func newPlatformHandoverHarness(t *testing.T) *platformHandoverHarness {
 	monitor := &staticInterfaceMonitor{current: &control.Interface{Index: 1, Name: "wlan0"}}
 	h.manager.platformInterface = stub
 	h.manager.interfaceMonitor = monitor
-	// The platform branch pushes its list INTO the finder on every platform except Darwin, so the
-	// finder has to exist even though the failure under test is induced before it is used.
-	h.manager.interfaceFinder = control.NewDefaultInterfaceFinder()
+	// The finder is a FIXTURE-backed one, not the default.
+	//
+	// The platform branch pushes its list INTO the finder on every platform except Darwin, where it
+	// instead calls `interfaceFinder.Update()` and enriches the platform's list via
+	// `interfaceFinder.ByIndex`. With the default finder that `Update` enumerates the RUNNER's
+	// interfaces and `ByIndex(1)` then replaces the fixture's `wlan0` with whatever the machine really
+	// has at index 1 - so the capability below was computed from the host's addressing, and an
+	// IPv4-only fixture reported IPv6 as StateProvisioned on a dual-stack runner. See
+	// test_interface_finder_test.go for the full trace and the macOS failure it produced.
+	h.manager.interfaceFinder = newTestInterfaceFinder(nil)
+	finder, isTestFinder := h.manager.interfaceFinder.(*testInterfaceFinder)
+	require.True(t, isTestFinder, "the harness must install the fixture-backed finder")
 
 	// The route observation is INJECTED, and it has to be, or this file's tests are not portable.
 	//
@@ -98,7 +112,7 @@ func newPlatformHandoverHarness(t *testing.T) *platformHandoverHarness {
 	// drives the route term directly.
 	h.manager.routeObservation = func() netcap.RouteObservation { return netcap.RouteAbsent }
 
-	harness := &platformHandoverHarness{manager: h.manager, stub: stub}
+	harness := &platformHandoverHarness{manager: h.manager, stub: stub, finder: finder}
 
 	// Network A: IPv4 only, gateway 192.0.2.1.
 	harness.observe(t, []adapter.NetworkInterface{
@@ -122,6 +136,15 @@ func (h *platformHandoverHarness) observe(t *testing.T, interfaces []adapter.Net
 		}
 	}
 	h.stub.interfaces = interfaces
+	// The finder fixture moves with the platform list, because that is what the Darwin enrichment
+	// reads back. Without this the fixture would be empty on that branch and `ByIndex` would answer
+	// nothing, which is hermetic but no longer models what the platform supplied.
+	fixture := make([]control.Interface, 0, len(interfaces))
+	for _, it := range interfaces {
+		fixture = append(fixture, it.Interface)
+	}
+	h.finder.fixture = fixture
+	h.finder.UpdateInterfaces(fixture)
 }
 
 // settleOn publishes the environment through the public entry point and asserts the network settled,
