@@ -61,7 +61,7 @@ instead of on one. Results are medians over repetitions, with the raw runs kept:
 | `target` | the destination behind the tunnel: deterministic pattern source, sink, echo and duplex |
 | `loadgen` | the load generator; drives one shaped workload through a SOCKS5 inbound |
 | `shim` | impairment box: one-way delay, jitter, stalls and injected resets |
-| `udpshim` | UDP counting relay: datagrams and wire bytes per direction, per client, in front of the reference server |
+| `udpshim` | UDP counting relay: datagrams and wire bytes per direction, per client, in front of the reference server; optional loss, delay and outage injection |
 | `tlscover` | the camouflage TLS endpoint a REALITY server forwards unauthenticated handshakes to |
 | `procstat` | per-process CPU seconds and working set |
 | `clockprobe` | the measured resolution of the clocks the harness can use |
@@ -105,6 +105,14 @@ instead of on one. Results are medians over repetitions, with the raw runs kept:
   client may open a second QUIC connection from a new source port. CPU measured
   through the relay is not comparable with a direct run — one extra hop copies
   every datagram through userspace — but the ratios are.
+- **The relay also injects faults**, which is how the HTTP/3 failure paths are
+  exercised on a host with no packet filter: `-drop-prob` (datagram loss),
+  `-delay-ms` (added one-way delay, as a queue of release times — never a sleep
+  per datagram, which would make the path stop-and-wait and cap throughput at
+  `datagram/delay`), `-drop-after-ms` (a permanent outage) and
+  `-blackhole-every-ms`/`-blackhole-for-ms` (recurring outages). It counts what it
+  dropped, so a run can prove the impairment happened instead of assuming it did.
+  Reordering is not available: the relay forwards in order.
 - **Affinity and priority are best effort.** Roles are pinned to disjoint cores
   and raised to high priority; a failure to do so is ignored, because an
   unpinned measurement is noisier, not wrong.

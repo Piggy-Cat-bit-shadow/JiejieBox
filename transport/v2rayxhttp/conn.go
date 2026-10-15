@@ -1081,6 +1081,25 @@ func (u *packetUplink) gather() {
 	}
 }
 
+// shouldGatherUpload decides whether the flusher should wait for the writer to
+// pause before posting the batch it is looking at.
+//
+// The window exists to fill a post toward sc_max_each_post_bytes, because the
+// anti-burst interval makes a post's size the stream's rate: for a queue in the
+// middle band, a short wait usually buys a fuller post. Two bands skip it — a
+// queue already deep enough that bulk is flowing, and the session's opening pair,
+// where the two writes are a protocol handshake whose latency IS connection setup
+// (see the call site for the measurements).
+//
+// It is a plain function so the rule can be pinned without timing: a test that
+// measured the actual wait would depend on this host's ~500 us clock.
+func shouldGatherUpload(nextSeq uint64, pendingBytes int) bool {
+	if nextSeq <= 1 {
+		return false
+	}
+	return pendingBytes < packetUpGatherBypass
+}
+
 // run is the flusher: take a batch, post it, repeat until closed and drained.
 func (u *packetUplink) run() {
 	defer close(u.done)
@@ -1093,7 +1112,27 @@ func (u *packetUplink) run() {
 			u.access.Unlock()
 			return
 		}
-		gather := len(u.pending) < packetUpGatherBypass
+		// lx: XHTTP finalization — the OPENING PAIR does not gather.
+		//
+		// A session's first two writes are the VLESS request header and the first
+		// payload: a protocol handshake, not a burst, and the server withholds its
+		// download response until that first uplink arrives, so their latency is
+		// connection setup. MEASURED in-process with production defaults: the pair
+		// merges only when the payload lands within ~300 us; at 600 us and beyond
+		// the header waits out the window and is posted alone anyway, and the
+		// payload costs a second post. Either way the window only adds setup
+		// latency, and the harness showed it: setup p50 0.79x the reference with
+		// the window, 1.00x-1.11x without it for the opening pair, with the upload
+		// win intact (1.19x -> 1.21x).
+		//
+		// From the third post on the window keeps doing its real job — filling a
+		// post toward sc_max_each_post_bytes before the throttle makes that size
+		// the stream's rate. Skipping it for EVERY small queue instead of just the
+		// opening pair was measured and rejected: batching leaves small leftovers
+		// (a 1 MiB cap out of a 1 MiB + 50 B queue leaves 50 B), and each leftover
+		// would become its own throttled post, costing 13% of upload throughput
+		// (23.3 MB/s against 26.8).
+		gather := shouldGatherUpload(u.seq, len(u.pending))
 		u.access.Unlock()
 
 		if gather {

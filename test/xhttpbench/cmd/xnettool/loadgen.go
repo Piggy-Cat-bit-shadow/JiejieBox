@@ -257,7 +257,7 @@ func prepareWorker(options loadGenOptions, worker int) workerResult {
 		case "download", "upload", "duplex":
 			warmupErr = throughputTransfer(options, conn, warmupTransferBytes, make([]byte, 256*1024), timeout, &scratch)
 		case "pingpong":
-			warmupErr = pingPong(conn, options.payload, warmUpIterations(options), options.verify, &scratch)
+			warmupErr = pingPong(conn, options.payload, warmUpIterations(options), options.verify, timeout, &scratch)
 		default:
 			warmupErr = fmt.Errorf("unknown pattern %q", options.pattern)
 		}
@@ -288,7 +288,7 @@ func measureWorker(options loadGenOptions, prepared workerResult) workerResult {
 	case "download", "upload", "duplex":
 		runThroughput(options, prepared.conn, timeout, &result)
 	case "pingpong":
-		if err := pingPong(prepared.conn, options.payload, options.iterations, options.verify, &result); err != nil {
+		if err := pingPong(prepared.conn, options.payload, options.iterations, options.verify, timeout, &result); err != nil {
 			result.err = err
 		}
 	default:
@@ -464,12 +464,24 @@ func readUploadAck(conn net.Conn, size int64, result *workerResult) error {
 
 // pingPong issues one request and waits for its answer, which is the shape that
 // makes packet-up pay for a fresh HTTP request per write.
-func pingPong(conn net.Conn, payload int, iterations int, verify bool, result *workerResult) error {
+//
+// It sets a deadline per iteration, like throughputTransfer does per transfer.
+// Without one this pattern could block forever: dialForLoadGen's SOCKS handshake
+// CLEARS the connection deadline when it finishes (socks.go), so a response that
+// never arrives left the read parked with no timeout at all. Measured the hard
+// way: a 70-minute soak froze for 13 minutes on one such read, at 0% CPU, while
+// the client was healthy (16 goroutines, no stuck transport goroutine, and an
+// independent probe through the same client succeeded). The -timeout-ms option was
+// silently a no-op for this pattern.
+func pingPong(conn net.Conn, payload int, iterations int, verify bool, timeout time.Duration, result *workerResult) error {
 	if _, err := fmt.Fprintf(conn, "P %d %d\n", payload, iterations); err != nil {
 		return err
 	}
 	buffer := make([]byte, payload)
 	for i := 0; i < iterations; i++ {
+		if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+			return err
+		}
 		patternFill(buffer, uint64(i*payload))
 		started := nowMicros()
 		if _, err := conn.Write(buffer); err != nil {

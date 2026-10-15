@@ -331,6 +331,42 @@ func TestPacketUpHandshakeIsNotThrottled(t *testing.T) {
 	}
 }
 
+// TestGatherDecision pins the rule that decides whether the flusher waits for the
+// writer to pause before posting. It is asserted as a plain function because the
+// alternative — measuring the wait — depends on this host's ~500 us clock, which
+// is exactly what makes the window unreliable for the opening pair.
+//
+// Measured justification (harness, TLS/HTTP-2, one stream, three repetitions):
+// with the window applied to the opening pair, connection setup p50 was 0.79x the
+// reference's and upload 1.19x; skipping it for the opening pair only took setup
+// p50 to 1.11x and upload to 1.21x. Skipping it for EVERY small queue cost 13% of
+// upload throughput instead (23.3 MB/s against 26.8), because a batching leftover
+// (a 1 MiB cap out of a 1 MiB + 50 B queue) would become its own throttled post.
+func TestGatherDecision(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name    string
+		nextSeq uint64
+		pending int
+		want    bool
+	}{
+		{name: "opening header never waits", nextSeq: 0, pending: 25, want: false},
+		{name: "opening payload never waits", nextSeq: 1, pending: 12, want: false},
+		{name: "third post gathers a mid-size queue", nextSeq: 2, pending: 4096, want: true},
+		{name: "third post gathers a small leftover", nextSeq: 2, pending: 50, want: true},
+		{name: "deep queue never waits", nextSeq: 3, pending: packetUpGatherBypass, want: false},
+		{name: "just under the bypass gathers", nextSeq: 3, pending: packetUpGatherBypass - 1, want: true},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := shouldGatherUpload(testCase.nextSeq, testCase.pending); got != testCase.want {
+				t.Fatalf("shouldGatherUpload(seq=%d, pending=%d) = %v, want %v",
+					testCase.nextSeq, testCase.pending, got, testCase.want)
+			}
+		})
+	}
+}
+
 // TestPacketUpCloseDeliversTheBufferedTail: the relay writes the last bytes of a
 // request and closes immediately. Buffering must not turn that into data loss.
 func TestPacketUpCloseDeliversTheBufferedTail(t *testing.T) {
