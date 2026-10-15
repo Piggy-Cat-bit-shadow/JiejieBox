@@ -32,15 +32,25 @@
 #
 # # What it deliberately does NOT touch
 #
-#   sing-box-daemon.exe   the daemon keeps its name; it is an internal component
-#   appId                 io.nekohasekai.sfw / .sfl are install identity, not branding
+#   sing-box-daemon.exe   the daemon keeps its file name; it is an internal component
 #   IPC / service ids     internal identifiers
 #   driver, WinDivert     driver names
 #   config schema         user configuration compatibility
 #   localStorage keys     renaming them would silently discard a user's theme and accent
 #   attribution           SagerNet authorship, the licence and the fork lineage
 #
-# The rule is the one the brief states: the user sees Jiejiebox, and the internals keep the
+# `appId` USED to be on that list, as `io.nekohasekai.sfw` / `.sfl` - "install identity,
+# not branding". The Windows half of it is no longer install identity this fork may share:
+# electron-builder derives the uninstall registry key and the uninstaller file name from a
+# UUID v5 of the value and the client passes the same value to setAppUserModelId, so two
+# clients on one machine collide in Add/Remove Programs, share one taskbar group and
+# overwrite each other's notification registration. The overlay's `electron-builder.yml`
+# rule therefore moves `win.appId` to this fork's own value, while `linux.appId` stays
+# `.sfl` - the coexistence work is scoped to Windows. The installed executable is still
+# `sing-box.exe`, which is a security dependency and not this script's business either way:
+# experimental/boxdd authenticates the application by that exact path.
+#
+# The rule is the one the brief states: the user sees Jijiebox, and the internals keep the
 # names they already have. There is no global string replacement here.
 #
 # # Why the rules live in a Python file

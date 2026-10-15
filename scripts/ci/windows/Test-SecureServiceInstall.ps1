@@ -3,7 +3,7 @@
 # Usage:
 #   Test-SecureServiceInstall.ps1 -PackagedDirectory <...\release\win-unpacked> `
 #                                 -ProbeDirectory "C:\Program Files\sing-box-ci-probe" `
-#                                 -WorkingDirectory "C:\ProgramData\sing-box-daemon" `
+#                                 -WorkingDirectory "C:\ProgramData\jiejiebox-daemon" `
 #                                 -RecordPath <file>
 #
 # # Why this gate exists, and why it is separate from gate 5
@@ -40,7 +40,7 @@ param(
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "GateHelpers.ps1")
 
-$serviceName = "sing-box-daemon"
+$serviceName = "jiejiebox-daemon"
 
 $lines = New-Object System.Collections.Generic.List[string]
 $lines.Add("windows secure daemon service install (the installer's own path, no flags)")

@@ -261,14 +261,34 @@ RULES = [
     # the value used for the executable, for afterSign.cjs's fuse/asar check and for the
     # NSIS shortcut target.
     #
-    # The anchored region stops at appId on purpose. The forceCodeSigning rule below
-    # rewrites the next line, and a block whose replacement text contained it would still
-    # apply but could never be read back - the confirmation pass would find its own
-    # replacement text altered and report a rule that had in fact succeeded.
+    # Two decisions in one block, because they are one region of one file and because the
+    # rule engine reads each rule back by its own replacement text: splitting them would make
+    # the second rule's anchor the first rule's output, which the fixture builder cannot model
+    # (it writes every rule's `old` text into one file, so two rules over one line produce a
+    # file with the line twice).
+    #
+    #   win.executableName    the installed file name, not the product name. experimental/boxdd
+    #                         resolves <install>/sing-box.exe to authenticate the app against
+    #                         the daemon's signer, both when the service is registered and on
+    #                         every peer handshake. productName still supplies everything a
+    #                         user reads, and electron-builder honours win.executableName for
+    #                         productFilename - the value used for the executable, for
+    #                         afterSign.cjs's fuse/asar check and for the NSIS shortcut target.
+    #   win.appId             Windows application identity, NOT branding. `io.nekohasekai.sfw`
+    #                         is the UPSTREAM client's, and sharing it is what stops the two
+    #                         coexisting: electron-builder derives the uninstall registry key
+    #                         and the uninstaller file name from a UUID v5 of this value, and
+    #                         src/main/index.ts passes the same value to Electron's
+    #                         setAppUserModelId, so two clients on one machine collide in
+    #                         Add/Remove Programs, share one taskbar group and overwrite each
+    #                         other's notification registration.
+    #
+    # `linux.appId` (`io.nekohasekai.sfl`) is deliberately untouched: the coexistence work
+    # this belongs to is scoped to Windows.
     Rule(
         "electron-builder.yml",
         "win:\n  appId: io.nekohasekai.sfw\n",
-        "win:\n  appId: io.nekohasekai.sfw\n"
+        "win:\n  appId: io.github.piggycatbitshadow.jiejiebox\n"
         "  # EXECUTABLE NAME OVERLAY: the installed file name, not the product name.\n"
         "  # experimental/boxdd resolves <install>/sing-box.exe to authenticate the app\n"
         "  # against the daemon's signer, both when registering the service and on every\n"
@@ -276,7 +296,7 @@ RULES = [
         "  executableName: sing-box\n",
         1,
         kind="block",
-        note="Windows executable name -> sing-box.exe (the name the core authenticates)",
+        note="Windows appId (this fork's) and executable name (sing-box.exe, the name the core authenticates)",
     ),
     # --- unsigned build ------------------------------------------------------
     #

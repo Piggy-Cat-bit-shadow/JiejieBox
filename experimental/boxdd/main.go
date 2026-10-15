@@ -14,8 +14,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const serviceName = "sing-box-daemon"
-
 var mainCommand = &cobra.Command{
 	Use:     serviceName,
 	Version: C.Version,
@@ -26,7 +24,9 @@ var commandVersion = &cobra.Command{
 	Short: "Print the daemon version",
 	Args:  cobra.NoArgs,
 	Run: func(command *cobra.Command, args []string) {
-		fmt.Println("sing-box-daemon version", C.Version)
+		// The reported name is serviceName, not the executable file name: it is what
+		// identifies this daemon, and callers parse it to read the version back.
+		fmt.Println(serviceName, "version", C.Version)
 		fmt.Println("core api version", daemon.APIVersion)
 	},
 }

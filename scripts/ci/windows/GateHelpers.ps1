@@ -134,8 +134,14 @@ function Get-CommandExecutablePath {
 
 # The daemon's command line as the SCM has it. Get-CimInstance rather than parsing
 # `sc.exe qc` output, which is localised.
+#
+# The name is REQUIRED rather than defaulted. A default here is a silent way to gate the
+# wrong service: this client keeps its own service identity (`jiejiebox-daemon`) precisely so
+# that it does not share the upstream client's, and a stale default would make every check
+# below report on a service this installation does not own - passing on an empty machine and
+# failing on a correct one.
 function Get-DaemonServiceCommandLine {
-    param([string]$ServiceName = "sing-box-daemon")
+    param([Parameter(Mandatory = $true)][string]$ServiceName)
     $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'" -ErrorAction SilentlyContinue
     if ($null -eq $service) { return "" }
     return [string]$service.PathName
@@ -157,8 +163,11 @@ function Get-InstallationRootFromDaemonPath {
     return (Get-NormalizedPath $root)
 }
 
+# The installer's own layout key. Required for the same reason as the service name above:
+# this client records its layout under its own key, and reading the upstream client's key
+# would report the other product's installation as this one's.
 function Get-InstallationLayoutRegistry {
-    param([string]$RegistryPath = "HKLM:\SOFTWARE\SagerNet\sing-box")
+    param([Parameter(Mandatory = $true)][string]$RegistryPath)
     $key = Get-ItemProperty -Path $RegistryPath -ErrorAction SilentlyContinue
     if ($null -eq $key) { return $null }
     return $key

@@ -50,11 +50,11 @@ $ErrorActionPreference = "Stop"
 # terminating error. Each call checks $LASTEXITCODE where the result matters.
 $PSNativeCommandUseErrorActionPreference = $false
 
-$serviceName = "sing-box-daemon"
+$serviceName = "jiejiebox-daemon"
 # Set once per run: the uninstall registry is dumped in full the first time an installation
 # is identified, so the record shows what the runner actually has.
 $candidateDumpWritten = $false
-$installationLayoutKey = "HKLM:\SOFTWARE\SagerNet\sing-box"
+$installationLayoutKey = "HKLM:\SOFTWARE\Jiejiebox\jiejiebox"
 
 $lines = New-Object System.Collections.Generic.List[string]
 $lines.Add("windows NSIS installer lifecycle smoke test")
@@ -80,10 +80,10 @@ function Get-InstallationState {
     # product name, while the installation directory and executable are deliberately
     # "sing-box", so the name could legitimately be either - and a name cannot establish
     # identity even when it matches, because the first entry with that name would win.
-    $commandLine = Get-DaemonServiceCommandLine
+    $commandLine = Get-DaemonServiceCommandLine -ServiceName $serviceName
     $daemonPath = Get-CommandExecutablePath $commandLine
     $root = Get-InstallationRootFromDaemonPath $daemonPath
-    $layout = Get-InstallationLayoutRegistry
+    $layout = Get-InstallationLayoutRegistry -RegistryPath $installationLayoutKey
     if ([string]::IsNullOrWhiteSpace($root) -and $null -eq $layout) { return $null }
     $matches = @()
     if (-not [string]::IsNullOrWhiteSpace($root)) {
@@ -209,7 +209,7 @@ function Invoke-Silently {
 function Assert-Installed {
     param([string]$Phase)
     $null = Wait-Until -Description "$Phase installation to become identifiable" -TimeoutSeconds 180 -Condition {
-        -not [string]::IsNullOrWhiteSpace((Get-InstallationRootFromDaemonPath (Get-CommandExecutablePath (Get-DaemonServiceCommandLine))))
+        -not [string]::IsNullOrWhiteSpace((Get-InstallationRootFromDaemonPath (Get-CommandExecutablePath (Get-DaemonServiceCommandLine -ServiceName $serviceName))))
     }
     $state = Get-InstallationState
     if ($null -eq $state -or [string]::IsNullOrWhiteSpace($state.Root)) {
@@ -233,7 +233,7 @@ function Assert-Installed {
     }
 
     if ($null -eq $state.LayoutVersion -or [int]$state.LayoutVersion -ne 2) {
-        Fail-Gate "$Phase`: HKLM SagerNet sing-box does not record LayoutVersion 2 (found '$($state.LayoutVersion)'); clients/desktop reads that key at startup"
+        Fail-Gate "$Phase`: $installationLayoutKey does not record LayoutVersion 2 (found '$($state.LayoutVersion)'); clients/desktop reads that key at startup"
     }
     $lines.Add("  layout registry: LayoutVersion 2, InstallationID $($state.InstallationID)")
 
@@ -316,7 +316,7 @@ function Invoke-Uninstall {
 function Assert-Uninstalled {
     param([string]$Phase, [string]$InstallationRoot, $UninstallEntry, [switch]$DataPreserved)
     $null = Wait-Until -Description "$Phase uninstall to settle" -TimeoutSeconds 300 -Condition {
-        ($null -eq (Get-DaemonServiceCommandLine)) -and ($null -eq (Get-InstallationLayoutRegistry))
+        ($null -eq (Get-DaemonServiceCommandLine -ServiceName $serviceName)) -and ($null -eq (Get-InstallationLayoutRegistry -RegistryPath $installationLayoutKey))
     }
 
     $state = Get-ServiceState
@@ -328,7 +328,7 @@ function Assert-Uninstalled {
         Fail-Gate "$Phase`: the service is marked for deletion; the next install would fail"
     }
 
-    $layout = Get-InstallationLayoutRegistry
+    $layout = Get-InstallationLayoutRegistry -RegistryPath $installationLayoutKey
     if ($DataPreserved) {
         # The uninstaller keeps the data directories unless it is told not to, and it keeps
         # the layout key with them so a reinstall can reuse them. Asserting the key gone

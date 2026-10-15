@@ -47,7 +47,7 @@ $ErrorActionPreference = "Stop"
 # terminating error. Each call checks $LASTEXITCODE where the result matters.
 $PSNativeCommandUseErrorActionPreference = $false
 
-$serviceName = "sing-box-daemon"
+$serviceName = "jiejiebox-daemon"
 
 $lines = New-Object System.Collections.Generic.List[string]
 $lines.Add("windows daemon service smoke test")
