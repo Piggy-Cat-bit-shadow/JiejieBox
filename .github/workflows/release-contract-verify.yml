@@ -64,6 +64,7 @@ on:
       - "scripts/ci/verify-release-acceptance.sh"
       - "scripts/ci/verify-release-acceptance-test.sh"
       - "scripts/ci/verify-desktop-daemon-provenance.py"
+      - "scripts/ci/verify-desktop-identity-consistency.py"
       - "scripts/ci/test-apple-canonical-source.sh"
       - "scripts/ci/apple-libbox-artifact.sh"
       - "scripts/publish-apple-beta.sh"

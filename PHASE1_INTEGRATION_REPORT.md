@@ -582,10 +582,19 @@ DAEMON PROVENANCE GATE  NOT RUN. verify-desktop-daemon-provenance.py requires a 
    parent pins the exact SHA, so the release does not float — but that branch must not be deleted
    until its commits are on a long-term branch there, or the pin becomes unfetchable. Promoting
    it is a fast-forward of `jiejiebox/main`, not a rebase.
-4. **`verify-desktop-identity-consistency.py` now runs on every Windows gate** and reads
-   `clients/desktop/src/main/identity.ts`; it will fail loudly if the pin ever moves back to a
-   revision without that file. That is the intended behaviour and is why §7.1 could not be
-   resolved the other way.
+4. **`verify-desktop-identity-consistency.py` reads `clients/desktop/src/main/identity.ts`** and
+   will fail loudly if the pin ever moves back to a revision without that file. That is the intended
+   behaviour and is why §7.1 could not be resolved the other way.
+
+   **CORRECTION (Phase 2).** This item originally claimed the gate "now runs on every Windows
+   gate". That was FALSE: the gate had no caller anywhere in the repository, no workflow invoked
+   it, and it was not in `release-contract-verify.yml`'s path list. Phase 1 verified the gate's
+   *behaviour* by running it by hand and read that as it being wired. The repository's own doctrine
+   names this exactly — `scripts/ci/check-release-workflows.py`: *"A test that exists but is
+   executed by nothing is worse than no test: an audit sees coverage while nothing is proven"* —
+   and the absence was invisible to Phase 1 because a hand-run of a gate looks the same as a wired
+   one. Phase 2 wired it (`.github/workflows/client-desktop-windows.yml`, gate 2, beside the other
+   client/core consistency checks) and added the file to the contract-verify path triggers.
 5. **netbsd/dragonfly cannot build `transport/wireguard`** through `wireguard-go/ipc`. Pre-existing
    and third-party; recorded so it is not rediscovered as a regression.
 6. **`common/trafficsched` is timing-flaky under full-suite contention.** Measured, not assumed;

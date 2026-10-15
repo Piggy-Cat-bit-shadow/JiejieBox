@@ -372,6 +372,34 @@ jobs:
             echo "FAIL: the client's updater does not match the installer name we publish" >&2; exit 1; }
           echo "executable name, conditional forceCodeSigning, feed and asset matcher are in place"
 
+      - name: "[gate 2] confirm the client's and the core's machine-global identity agree"
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The Windows client and the core daemon cannot import each other, so the same
+          # machine-global names are restated in four places that no compiler can compare:
+          #
+          #   clients/desktop/src/main/identity.ts     the runtime, and the single place the names
+          #                                            are decided
+          #   clients/desktop/build/installer.nsh      NSIS cannot read TypeScript
+          #   clients/desktop/build/installer-*.ps1    likewise
+          #   experimental/boxdd/service_name.go       the daemon's own SCM name
+          #
+          # This script is the only thing that compares them, and it now RUNS here. It was written
+          # by the coexistence work and then never invoked by any workflow, which the repository's
+          # own doctrine forbids in as many words: check-release-workflows.py says "A test that
+          # exists but is executed by nothing is worse than no test: an audit sees coverage while
+          # nothing is proven".
+          #
+          # It is also the check that makes the gitlink pin load-bearing rather than decorative:
+          # it reads clients/desktop/src/main/identity.ts, a file that does not exist on the
+          # revision this pin replaced, so moving the pin backwards fails here instead of shipping
+          # a client whose daemon version probe and legacy-service cleanup both look for the
+          # previous identity.
+          python tooling/scripts/ci/verify-desktop-identity-consistency.py \
+            --client-dir "$CLIENT_DIR" \
+            --core-dir core
+
       - name: "[gate 2] confirm the stamped version is the release version"
         shell: bash
         run: |
