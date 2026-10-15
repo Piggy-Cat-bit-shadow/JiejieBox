@@ -126,8 +126,8 @@ type NetworkManager struct {
 	closed atomic.Bool
 	// interfaceUpdateAccess serialises the interface-update handlers against teardown.
 	interfaceUpdateAccess sync.Mutex
-	interfaceUpdateCancel   context.CancelFunc
-	networkResetPending     bool
+	interfaceUpdateCancel context.CancelFunc
+	networkResetPending   bool
 	// networkResetPendingToken is the transition the pending notification owns.
 	//
 	// The notification claims when it is DELIVERED, not when its update goroutine finally reaches the

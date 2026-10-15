@@ -46,11 +46,11 @@ func (m *writeCountingPauseManager) DeviceWake() {
 //
 // # The interleaving
 //
-//	1. the monitor's `emit` snapshots its callback list under its own lock and RELEASES it
-//	   (sing-tun monitor_shared.go:139-146), then invokes each callback;
-//	2. `NetworkManager` teardown runs `closed.Store(true)` and `UnregisterCallback` - which only
-//	   removes the entry from the live list, so it cannot recall a callback already in the snapshot;
-//	3. the snapshot's copy still runs `notifyInterfaceUpdate`.
+//  1. the monitor's `emit` snapshots its callback list under its own lock and RELEASES it
+//     (sing-tun monitor_shared.go:139-146), then invokes each callback;
+//  2. `NetworkManager` teardown runs `closed.Store(true)` and `UnregisterCallback` - which only
+//     removes the entry from the live list, so it cannot recall a callback already in the snapshot;
+//  3. the snapshot's copy still runs `notifyInterfaceUpdate`.
 //
 // Every check the old code had passes at step 3: `startedCtx` is never nil once set, and it is
 // CANCELLED at teardown rather than cleared, so `r.startedCtx != nil` is true for a dead manager.
