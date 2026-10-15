@@ -3,12 +3,10 @@ package route
 import (
 	"net"
 	"net/netip"
-	"slices"
 
 	"github.com/sagernet/sing-box/common/netcap"
 
 	"github.com/sagernet/netlink"
-	"golang.org/x/sys/unix"
 )
 
 // globalIPv6RouteObservation reads the kernel's IPv6 routing table and answers whether this machine
@@ -21,21 +19,53 @@ import (
 // []netip.Addr of GATEWAYS, dropping the family and the destination prefix on the way out. The
 // information was never missing on Linux; it was discarded.
 //
-// # Why the read is unqualified by table and by interface
+// # Why the read is unqualified by interface
 //
 // The question is "is there a way out", so it must not be scoped to one interface the way
 // systemGateways is: a machine whose physical link has no IPv6 route and whose cellular link has one
 // is a machine with a way out, and an interface-scoped read would report "no route" for the physical
 // one and refuse global IPv6 on a network that can carry it.
 //
-// The main table is read rather than every table, because RT_TABLE_MAIN is where ordinary routes
-// live and a policy-routing setup that reaches the Internet through a custom table is exactly the
-// case where a wrong "no route" would be most damaging. If a custom table carried the only IPv6
-// default route, this reports RouteAbsent and the capability refuses a destination that a policy rule
-// would have routed - so the read is deliberately made to err towards RoutePresent by also accepting
-// any non-default global route, which a policy-routed setup still needs to install.
+// # Why every table is enumerated, and the library trap that makes it awkward
+//
+// A policy-routing setup can carry the ONLY IPv6 route in a custom table. Reading RT_TABLE_MAIN and
+// publishing "no route" when it comes up empty would then refuse every global IPv6 destination on a
+// machine that routes them perfectly well - a wrongful refusal, which is the one outcome this design
+// is required to avoid.
+//
+// The obvious fix - RouteListFiltered(FAMILY_V6, &Route{}, 0) - DOES NOT WORK, and the reason is worth
+// writing down because it is invisible from the API:
+//
+//	netlink/route_linux.go:1037
+//	    if msg.Table != unix.RT_TABLE_MAIN {
+//	        if filter == nil || filterMask&RT_FILTER_TABLE == 0 {
+//	            continue        // <-- every non-main table is DISCARDED here
+//	        }
+//	    }
+//
+// The library drops non-main tables before it applies any filter, unless RT_FILTER_TABLE is set - and
+// when it is set, the table comparison at :1049 then keeps only the one table named. So there is no
+// filter that selects "all tables", and requesting a table by name cannot enumerate them either.
+//
+// The way through is to set the bit that disables the early discard while naming a table that matches
+// nothing: linuxAllTablesSentinel is far above any real table id, so the kernel sends every table and
+// the library's own equality check then rejects none of them on that test. The routes that survive are
+// filtered here, by us, on the facts that actually matter.
+//
+// # What is accepted
+//
+// A usable route is one the kernel would actually use: IPv6, not a reject/blackhole/throw, and not on
+// one of this process's own interfaces. Its destination must be a default route or a GLOBAL prefix,
+// and - this is the part that matters for a directly-connected network - an on-link route to a global
+// prefix counts. A host connected to a routed global /64 with no gateway at all can reach that prefix,
+// and refusing it would be a wrongful refusal.
+//
+// The one on-link case that proves nothing is a /128: that is the host route for an address the
+// interface already owns, and it says only that the machine can reach ITSELF. Refusing global IPv6 on
+// the strength of a machine's own address would be exactly the "global address is not global egress"
+// error this term exists to avoid, so on-link routes are required to be shorter than a host route.
 func globalIPv6RouteObservation(ownInterfaceNames []string, ownInterfaceIndices []int) RouteObservationResult {
-	routes, err := netlink.RouteListFiltered(netlink.FAMILY_V6, &netlink.Route{Table: unixRTTableMain}, netlink.RT_FILTER_TABLE)
+	routes, err := netlink.RouteListFiltered(netlink.FAMILY_V6, &netlink.Route{Table: linuxAllTablesSentinel}, netlink.RT_FILTER_TABLE)
 	if err != nil {
 		// The table could not be read. Unobserved contributes nothing, so the capability degrades to
 		// the addressing-only answer instead of guessing.
@@ -43,48 +73,42 @@ func globalIPv6RouteObservation(ownInterfaceNames []string, ownInterfaceIndices 
 	}
 	for _, currentRoute := range routes {
 		destination := routeDestination(currentRoute.Dst)
-		// A default route, or a route to a global IPv6 prefix. A narrower non-global route -
-		// link-local, unique-local - says nothing about reaching the public Internet.
 		isDefault := currentRoute.Dst == nil
-		if isDefault {
-			destination = netip.IPv6Unspecified()
-		} else if !destination.IsValid() {
-			continue
+		prefixLength := -1
+		if !isDefault {
+			prefixLength = routeDestinationPrefixLength(currentRoute.Dst)
 		}
-		if !isDefault && netcap.ClassifyScope(destination) != netcap.ScopeGlobal {
+		if !linuxRouteQualifies(
+			destination,
+			prefixLength,
+			currentRoute.Gw != nil,
+			currentRoute.Type,
+			currentRoute.Table,
+			currentRoute.LinkIndex,
+			ownInterfaceNames,
+			ownInterfaceIndices,
+		) {
 			continue
-		}
-		// A route with no gateway is on-link, which is a local prefix rather than a way out - except
-		// for a DEFAULT route over a point-to-point link, which legitimately has no gateway (a
-		// cellular PDP context, a WireGuard or PPP link). Rejecting that would report "no route" on
-		// exactly the mobile networks where IPv6 is the primary transport.
-		if currentRoute.Gw == nil && !isDefault {
-			continue
-		}
-		// A route whose TYPE says the packet cannot go anywhere is not a way out, however global its
-		// destination looks. These are how a rejecting default route is expressed on Linux, and
-		// counting one would turn an explicitly unreachable configuration into "IPv6 is available".
-		switch currentRoute.Type {
-		case unix.RTN_BLACKHOLE, unix.RTN_UNREACHABLE, unix.RTN_PROHIBIT, unix.RTN_THROW:
-			continue
-		}
-		if slices.Contains(ownInterfaceIndices, currentRoute.LinkIndex) {
-			continue
-		}
-		if name, nameErr := interfaceNameByIndex(currentRoute.LinkIndex); nameErr == nil {
-			if slices.Contains(ownInterfaceNames, name) {
-				continue
-			}
 		}
 		return RouteObservationResult{Observation: netcap.RoutePresent, InterfaceIndex: currentRoute.LinkIndex}
 	}
-	// The table WAS read and no row qualified, so there is no such route. Only an absence that was
-	// actually observed may produce the hard negative; the read failure above returns Unobserved.
+	// Every table was enumerated and no row qualified, so there is no such route. Only an absence that
+	// was actually observed this way may produce the hard negative.
 	return RouteObservationResult{Observation: netcap.RouteAbsent}
 }
 
-// unixRTTableMain is RT_TABLE_MAIN, the table ordinary routes are installed in.
-const unixRTTableMain = 254
+// routeDestinationPrefixLength returns the prefix length of a route destination, or -1 when it cannot
+// be determined - which the acceptance rule treats as "not a host route" rather than as a rejection.
+func routeDestinationPrefixLength(dst *net.IPNet) int {
+	if dst == nil || dst.Mask == nil {
+		return -1
+	}
+	ones, bits := dst.Mask.Size()
+	if bits != 128 {
+		return -1
+	}
+	return ones
+}
 
 func routeDestination(dst *net.IPNet) netip.Addr {
 	if dst == nil {

@@ -1,6 +1,166 @@
 package route
 
-import "github.com/sagernet/sing-box/common/netcap"
+import (
+	"net/netip"
+	"slices"
+
+	"github.com/sagernet/sing-box/common/netcap"
+)
+
+// usableGlobalIPv6Route is the shared acceptance rule: would the kernel actually use this route to
+// reach a global IPv6 destination?
+//
+// It lives here, in a file with no build tag, so the three platform readers cannot drift apart on what
+// "a way out" means. Each of them is a different primitive - GetIpForwardTable2, a netlink dump, a BSD
+// RIB - and the one thing they must agree on exactly is this predicate, because a platform that
+// answered it differently would either refuse a working destination or miss the fast-fail.
+//
+// # What it accepts
+//
+//	destination     a GLOBAL IPv6 prefix, or nothing at all (a default route)
+//	prefixLength    -1 for a default route or an unknown length, otherwise the route's prefix length
+//	hasGateway      whether the route names a next hop; a route without one is ON-LINK
+//	routeType       the kernel's route type, where the platform has one
+//	linkIndex       the interface the route egresses
+//
+// # Why an on-link global prefix IS accepted
+//
+// A host on a routed global /64 with no gateway at all can reach every address in that prefix. An
+// earlier version rejected every gateway-less route as "a local prefix, not a way out", which was
+// wrong for exactly that topology and would have refused global IPv6 on a directly-connected network -
+// a wrongful refusal, the one outcome this design is required to avoid.
+//
+// # Why a /128 is NOT, and why that is the same rule rather than an exception to it
+//
+// The kernel installs a host route for every address an interface owns. On a machine whose only IPv6
+// is a global /128 - a stub address, a NAT64 or CLAT interface, an address assigned without a prefix
+// route - that host route is the machine reaching ITSELF, and counting it would report global egress
+// on the strength of the machine's own address. That is precisely the "a global address is not a
+// global route" error this whole term exists to avoid, so an on-link route must be shorter than a host
+// route to count.
+//
+// # Why an unknown prefix length is not a rejection
+//
+// -1 means the platform did not report one. Treating "we do not know how wide this is" as "this is a
+// host route" would invent a rejection out of missing information, and the failure direction of this
+// whole feature is chosen to be a missed fast-fail rather than a refused connection.
+func usableGlobalIPv6Route(
+	destination netip.Addr,
+	prefixLength int,
+	hasGateway bool,
+	routeType int,
+	linkIndex int,
+	ownInterfaceNames []string,
+	ownInterfaceIndices []int,
+) bool {
+	// # The three shapes a route destination arrives in
+	//
+	//	no destination at all      a default route (Linux: Dst == nil)
+	//	the unspecified address    also a default route (BSD RIB and MIB report ::/0 this way)
+	//	a concrete prefix          an on-link, directly-connected, or gatewayed destination
+	//
+	// The first two are the same fact spelled two ways, and both are ways out by definition - which is
+	// why they skip the scope test rather than being measured against it.
+	//
+	// # The family check comes FIRST, and that ordering is the whole of defect 3
+	//
+	// 0.0.0.0 is "the unspecified address" just as :: is, so a rule that tested IsUnspecified() before
+	// the family would read an IPv4 default route as an IPv6 one and accept it. That is precisely how
+	// the Darwin reader published GlobalIPv6Egress = Provisioned on a machine with no IPv6 route at
+	// all, and no amount of care later in the function recovers from getting it wrong here.
+	if destination.Is4() || destination.Is4In6() {
+		return false
+	}
+	isDefault := !destination.IsValid() || destination.IsUnspecified()
+	if !isDefault {
+		if netcap.ClassifyScope(destination) != netcap.ScopeGlobal {
+			return false
+		}
+	}
+	switch routeType {
+	case rtnBlackhole, rtnUnreachable, rtnProhibit, rtnThrow:
+		// The kernel was told to refuse this destination. It is not a way out however global it looks,
+		// and counting one would turn an explicitly unreachable configuration into "IPv6 is available".
+		return false
+	}
+	if !isDefault && !hasGateway && prefixLength == 128 {
+		// An on-link HOST route: the machine reaching an address it already owns. See the note above
+		// for why this is the one on-link case that proves nothing.
+		return false
+	}
+	if slices.Contains(ownInterfaceIndices, linkIndex) {
+		return false
+	}
+	if name, nameErr := interfaceNameByIndex(linkIndex); nameErr == nil {
+		if slices.Contains(ownInterfaceNames, name) {
+			return false
+		}
+	}
+	return true
+}
+
+// Route types that mean "the kernel will not carry this", in the RTN_* numbering Linux uses. They are
+// written numerically so this file stays platform-neutral; the Linux reader passes its own
+// unix.RTN_* values, which are these numbers.
+const (
+	rtnBlackhole   = 6
+	rtnUnreachable = 7
+	rtnProhibit    = 8
+	rtnThrow       = 9
+)
+
+// linuxAllTablesSentinel is a table id above any real one, used to keep the netlink library from
+// discarding non-main tables while its own equality test still rejects nothing.
+//
+// # The library trap this exists for
+//
+// The obvious way to read every table - RouteListFiltered(FAMILY_V6, &Route{}, 0) - DOES NOT WORK, and
+// the reason is invisible from the API:
+//
+//	netlink/route_linux.go:1037
+//	    if msg.Table != unix.RT_TABLE_MAIN {
+//	        if filter == nil || filterMask&RT_FILTER_TABLE == 0 {
+//	            continue        // <-- every non-main table is discarded HERE
+//	        }
+//	    }
+//
+// Non-main tables are dropped before any filter is applied unless RT_FILTER_TABLE is set - and when it
+// is set, the comparison at :1049 then keeps only the one table named. There is therefore no filter
+// that selects "all tables", and naming a table cannot enumerate them either.
+//
+// Setting the bit and naming a table that matches nothing opens the gate without closing anything: the
+// kernel sends every table, and the library's own equality check rejects none of them on that test.
+// The routes that survive are filtered by this file, on the facts that actually matter.
+const linuxAllTablesSentinel = 0xFFFFFFFF
+
+// linuxRouteQualifies is the per-route half of the Linux read, split out so the decision is testable
+// without a netlink dump of the host's real tables.
+//
+// table is accepted unconditionally: a policy-routing setup can carry the ONLY IPv6 route in a custom
+// table, and reading RT_TABLE_MAIN alone would then publish RouteAbsent on a machine that routes
+// global IPv6 perfectly well. The parameter is here so the intent is explicit at the call site rather
+// than implied by the absence of a check.
+func linuxRouteQualifies(
+	destination netip.Addr,
+	prefixLength int,
+	hasGateway bool,
+	routeType int,
+	table int,
+	linkIndex int,
+	ownInterfaceNames []string,
+	ownInterfaceIndices []int,
+) bool {
+	_ = table
+	return usableGlobalIPv6Route(
+		destination,
+		prefixLength,
+		hasGateway,
+		routeType,
+		linkIndex,
+		ownInterfaceNames,
+		ownInterfaceIndices,
+	)
+}
 
 // RouteObservationResult is one platform's answer to "does this machine have a route to a global IPv6
 // destination", together with which interface carries it.

@@ -58,43 +58,35 @@ func globalIPv6RouteObservation(ownInterfaceNames []string, ownInterfaceIndices 
 	}
 	defer windows.FreeMibTable(unsafe.Pointer(table))
 
-	ownIndices := make(map[uint32]struct{}, len(ownInterfaceIndices))
-	for _, index := range ownInterfaceIndices {
-		ownIndices[uint32(index)] = struct{}{}
-	}
-	ownNames := make(map[string]struct{}, len(ownInterfaceNames))
-	for _, name := range ownInterfaceNames {
-		ownNames[name] = struct{}{}
-	}
-
 	for _, row := range table.Rows() {
 		if row.DestinationPrefix.PrefixLength == routePrefixUnused {
 			// A row the stack is not currently using. Documented sentinel in the MIB layout.
 			continue
 		}
-		destination := prefixFromMib(&row.DestinationPrefix)
-		if !destination.IsValid() {
-			continue
-		}
-		// A default route, or a route to a global prefix. A narrower non-global route - link-local,
-		// unique-local - says nothing about reaching the public Internet.
-		if row.DestinationPrefix.PrefixLength != 0 && netcap.ClassifyScope(destination.Addr()) != netcap.ScopeGlobal {
-			continue
+		destination := sockaddrInetAddress(&row.DestinationPrefix.Prefix)
+		prefixLength := int(row.DestinationPrefix.PrefixLength)
+		if destination.IsValid() && !destination.Is4() && !destination.Is4In6() {
+			// The destination is carried as an address plus a separate prefix length, so it is masked
+			// here to make it comparable with the other platforms' reads.
+			if masked := netip.PrefixFrom(destination, prefixLength).Masked(); masked.IsValid() {
+				destination = masked.Addr()
+			}
 		}
 		nextHop := addressFromMib(&row.NextHop)
-		if !nextHop.IsValid() || nextHop.IsUnspecified() || nextHop.Is4() {
-			// An on-link route with no next hop is a local prefix, not a way out.
+		// A route is on-link when it names no usable next hop. That is NOT a reason to reject it: a
+		// host on a routed global /64 with no gateway reaches every address in that prefix, and an
+		// earlier version rejected every gateway-less route as "not a way out".
+		hasGateway := nextHop.IsValid() && !nextHop.IsUnspecified() && !nextHop.Is4()
+		if !usableGlobalIPv6Route(
+			destination,
+			prefixLength,
+			hasGateway,
+			0,
+			int(row.InterfaceIndex),
+			ownInterfaceNames,
+			ownInterfaceIndices,
+		) {
 			continue
-		}
-		if _, isOwn := ownIndices[row.InterfaceIndex]; isOwn {
-			continue
-		}
-		if row.InterfaceIndex != 0 {
-			if name, nameErr := interfaceNameByIndex(int(row.InterfaceIndex)); nameErr == nil {
-				if _, isOwn := ownNames[name]; isOwn {
-					continue
-				}
-			}
 		}
 		return RouteObservationResult{Observation: netcap.RoutePresent, InterfaceIndex: int(row.InterfaceIndex)}
 	}

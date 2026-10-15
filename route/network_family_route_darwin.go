@@ -1,7 +1,7 @@
 package route
 
 import (
-	"slices"
+	"net/netip"
 
 	"github.com/sagernet/sing-box/common/netcap"
 
@@ -24,12 +24,19 @@ import (
 //
 // # What is accepted, and what is deliberately not
 //
-// A route counts when its destination is a default route or a global IPv6 prefix, its gateway is a
-// real address, and it is not on one of this process's own interfaces. The RTF_GATEWAY flag is NOT
-// required, unlike in systemGateways: a default route over a point-to-point link (a utun, a cellular
-// PDP context) legitimately has no gateway address, and requiring one would report "no route" on
-// exactly the mobile networks where IPv6 is the primary transport. A route with no gateway and no
-// global destination is still rejected below, so the relaxation cannot admit a local prefix.
+// The acceptance rule itself is usableGlobalIPv6Route, shared with the other two readers so the three
+// cannot drift apart. Two things about the INPUT to it are Darwin-specific and both were wrong before:
+//
+//   - The RIB is fetched with AF_UNSPEC, so it contains IPv4 routes too. An IPv4 0.0.0.0/0 default
+//     route - or any public IPv4 route - says nothing about IPv6, and an earlier version accepted one
+//     because it never asked the destination's family. That published GlobalIPv6Egress = Provisioned
+//     on a machine with no IPv6 route at all, which silently disabled the fast-fail this whole feature
+//     exists for. The family is now checked inside the shared rule.
+//
+//   - The RTF_GATEWAY flag is NOT required, unlike in systemGateways: a default route or an on-link
+//     prefix route over a point-to-point or directly-connected link legitimately has no gateway
+//     address, and requiring one would report "no route" on exactly the mobile and directly-routed
+//     networks where IPv6 is the only transport.
 func globalIPv6RouteObservation(ownInterfaceNames []string, ownInterfaceIndices []int) RouteObservationResult {
 	rib, err := route.FetchRIB(unix.AF_UNSPEC, route.RIBType(unix.NET_RT_FLAGS), unix.RTF_UP)
 	if err != nil {
@@ -45,26 +52,28 @@ func globalIPv6RouteObservation(ownInterfaceNames []string, ownInterfaceIndices 
 			continue
 		}
 		destination := routeAddressAt(routeMessage.Addrs, unix.RTAX_DST)
-		if !destination.IsValid() {
-			continue
+		prefixLength := routeHostRoutePrefix(routeMessage.Flags, destination)
+		// A rejecting route is expressed here as a flag rather than a type.
+		routeType := 0
+		if routeMessage.Flags&unix.RTF_REJECT != 0 {
+			routeType = rtnUnreachable
+		} else if routeMessage.Flags&unix.RTF_BLACKHOLE != 0 {
+			routeType = rtnBlackhole
 		}
-		// A default route, or a route to a global IPv6 prefix. Anything narrower and non-global says
-		// nothing about reaching the public Internet.
-		isDefault := destination.IsUnspecified()
-		if !isDefault && netcap.ClassifyScope(destination) != netcap.ScopeGlobal {
-			continue
+		hasGateway := false
+		if len(routeMessage.Addrs) > unix.RTAX_GATEWAY {
+			_, hasGateway = routeMessage.Addrs[unix.RTAX_GATEWAY].(*route.Inet6Addr)
 		}
-		// A route that cannot leave the machine is not a way out.
-		if routeMessage.Flags&unix.RTF_REJECT != 0 || routeMessage.Flags&unix.RTF_BLACKHOLE != 0 {
+		if !usableGlobalIPv6Route(
+			destination,
+			prefixLength,
+			hasGateway,
+			routeType,
+			routeMessage.Index,
+			ownInterfaceNames,
+			ownInterfaceIndices,
+		) {
 			continue
-		}
-		if slices.Contains(ownInterfaceIndices, routeMessage.Index) {
-			continue
-		}
-		if name, nameErr := interfaceNameByIndex(routeMessage.Index); nameErr == nil {
-			if slices.Contains(ownInterfaceNames, name) {
-				continue
-			}
 		}
 		// The table was read successfully and this row is a live route to a global destination.
 		return RouteObservationResult{Observation: netcap.RoutePresent, InterfaceIndex: routeMessage.Index}
@@ -73,4 +82,28 @@ func globalIPv6RouteObservation(ownInterfaceNames []string, ownInterfaceIndices 
 	// thing that may produce the hard negative, and it is why a read failure above returns Unobserved
 	// instead: "I could not look" and "I looked and there is none" must not be the same answer.
 	return RouteObservationResult{Observation: netcap.RouteAbsent}
+}
+
+// routeHostRoutePrefix maps the BSD RTF_HOST flag onto the shared rule's prefix-length vocabulary.
+//
+// # Why the flag rather than a length
+//
+// golang.org/x/net/route models a destination as a bare address: Inet6Addr carries IP and ZoneID and
+// nothing else, and the prefix length lives in rt_msghdr bits the package does not expose. What BSD
+// does expose is RTF_HOST, set on exactly the routes a /128 would describe - including the host route
+// the kernel installs for each address an interface owns, which is the case that matters here: that
+// route only proves the machine can reach ITSELF.
+//
+// So the flag IS the prefix length for this purpose, and mapping it to 128 keeps the shared rule
+// reading identically on all three platforms. A default route is never a host route, so it is excluded
+// explicitly; and unknown (-1) is not a rejection, because inventing one from missing information is
+// the failure direction this feature is built to avoid.
+func routeHostRoutePrefix(flags int, destination netip.Addr) int {
+	if !destination.IsValid() || destination.IsUnspecified() {
+		return -1
+	}
+	if flags&unix.RTF_HOST != 0 {
+		return 128
+	}
+	return -1
 }
