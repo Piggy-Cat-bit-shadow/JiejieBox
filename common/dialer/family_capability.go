@@ -126,35 +126,81 @@ type LocalFamilyDialer interface {
 // without the ownership that makes it meaningful: the manager produces both inside its own critical
 // section, and this drops neither. A caller that wants only the verdict has no way to ask for it.
 //
-// The ownership predicate is the existing one - captureEpoch - rather than a second implementation of
-// "is this still my network". It already distinguishes BEFORE, DURING and AFTER correctly, including
-// the DURING case that a bare epoch comparison cannot see, and reusing it is what keeps this file from
-// growing a third transition protocol.
+// The ownership check is built from ONE lifecycle source, and which source depends on what the manager
+// can report:
 //
-// A manager that cannot report a capability yields the zero value, which restricts nothing: the
-// dialer keeps its previous behaviour exactly rather than losing a family because a struct was left
-// empty.
+//	familySnapshot present -> the manager's own NetworkFamilyCapabilitySnapshot, which the interface
+//	                          contract already requires to be one atomic observation of epoch +
+//	                          settled + verdict. Ownership is taken from the SAME call that produced
+//	                          the verdict, and every later check re-reads the same function.
+//	familySnapshot absent  -> the existing captureEpoch predicate, so a manager that reports an epoch
+//	                          without a verdict keeps exactly the hand-over protection it had.
+//
+// The first case is not a preference, it is a contract: a manager that implements
+// NetworkFamilyCapabilitySnapshotter but neither NetworkResetCounter nor NetworkTransitionState would
+// otherwise be read through a predicate that answers "always owned" - and its `settled` flag, which it
+// DID report, would be dropped. That is the interleaving the snapshotter exists to prevent, defeated
+// by the consumer.
+//
+// A manager that cannot report a capability yields the zero value, which restricts nothing: the dialer
+// keeps its previous behaviour exactly rather than losing a family because a struct was left empty.
 func (d *DefaultDialer) captureLocalFamilyPolicy() localFamilyPolicy {
 	var policy localFamilyPolicy
-	// OWNERSHIP IS CAPTURED EVEN WHEN THE CAPABILITY IS NOT, and the order of these two blocks is
-	// load-bearing.
+	// OWNERSHIP IS CAPTURED EVEN WHEN THE CAPABILITY IS NOT.
 	//
 	// Ownership is not a property of this feature: it is the dial's existing claim on a network
 	// generation, and the hand-over check depends on it. Returning early for a manager that cannot
 	// report a capability - which is every manager but the real one - would silently take that claim
 	// away and hand back connections dialled across a reset. That is exactly the defect this ordering
 	// was written to fix, and it is why the capability is the OPTIONAL half and the ownership is not.
-	if d.networkEpoch != nil {
-		policy.ownership.predicate = d.captureEpoch()
-	}
-	if d.familySnapshot == nil {
+	if d.familySnapshot != nil {
+		// The unified path. Everything below comes from ONE call.
+		epoch, stable, capability := d.familySnapshot()
+		policy.capability = capability.Capability
+		policy.ownership.epoch = epoch
+		policy.ownership.startedStable = stable
+		policy.ownership.predicate = d.familyOwnershipPredicate(epoch, stable)
 		return policy
 	}
-	epoch, stable, capability := d.familySnapshot()
-	policy.capability = capability.Capability
-	policy.ownership.epoch = epoch
-	policy.ownership.startedStable = stable
+	if d.networkEpoch != nil {
+		// The fallback for a manager with an epoch and no verdict. Unchanged, so the hand-over
+		// protection it provides is not weakened by the unification above.
+		policy.ownership.predicate = d.captureEpoch()
+	}
 	return policy
+}
+
+// familyOwnershipPredicate reports whether the generation captured from the family snapshot is still
+// the live one.
+//
+// # The three questions, and why the third is not implied by the first two
+//
+//	started settled?      a dial that began during a transition has no stable network for its verdict
+//	                      to describe, and a later commit must not launder it into a valid one
+//	settled now?          a transition that has begun since must not be handed a result
+//	same epoch?            a RESET that has completed since must not be handed a result
+//
+// The epoch alone cannot answer the first: a capture taken DURING a transition records the
+// transition's OWN epoch, so once that transition commits the comparison finds no change and the
+// network reports settled. Both checks pass and a connection produced while ownership was unresolved
+// is handed over as though it belonged to the settled network.
+//
+// # Why it re-reads familySnapshot rather than the narrower getters
+//
+// Because a policy built from the family snapshot must be validated against the same source. Reading
+// the epoch from one interface and the settled state from another makes the pair tearable - and it is
+// the pair, not either value, that decides whether an answer is still current.
+func (d *DefaultDialer) familyOwnershipPredicate(capturedEpoch uint64, startedStable bool) func() bool {
+	return func() bool {
+		if !startedStable {
+			return false
+		}
+		currentEpoch, currentStable, _ := d.familySnapshot()
+		if !currentStable {
+			return false
+		}
+		return currentEpoch == capturedEpoch
+	}
 }
 
 // newLocalFamilyPolicy builds a policy that is OWNED BY CONSTRUCTION, for callers and tests that hold
