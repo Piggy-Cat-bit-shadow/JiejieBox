@@ -3,9 +3,11 @@ package dialer
 import (
 	"context"
 	"net/netip"
+	"slices"
 	"strings"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/netcap"
 	"github.com/sagernet/sing-box/log"
 	M "github.com/sagernet/sing/common/metadata"
 )
@@ -144,7 +146,69 @@ func (d *resolveDialer) recoverCandidates(ctx context.Context, destination M.Soc
 	if len(recovered) == 0 {
 		return nil
 	}
-	return recovered
+	return d.withoutUndialableCandidates(recovered)
+}
+
+// withoutUndialableCandidates drops recovered addresses whose family this machine cannot dial.
+//
+// # Why the scheduler's own filter is not enough here
+//
+// The scheduler refuses those candidates anyway, and it is the authoritative place because it also
+// covers late arrivals. Doing it here as well is not redundancy for its own sake: recovery runs while
+// the caller is waiting, and its result decides whether the caller races recovery at all or keeps
+// waiting for the original attempt. A list that LOOKS non-empty but contains only addresses this
+// machine cannot reach would send the caller into a race that cannot produce a connection.
+//
+// It cannot empty the list into losing a fallback: it only removes addresses of a family that is
+// provably undialable here, and those were never candidates in any sense that could have connected.
+// A local-scope destination is exempt for the same reason it is exempt on the dial path.
+//
+// A chain that cannot report the capability returns the list unchanged, which is the required
+// degradation: an implementation without the capability keeps its previous behaviour exactly.
+func (d *resolveDialer) withoutUndialableCandidates(addresses []netip.Addr) []netip.Addr {
+	policy := d.dialerLocalFamilyPolicy()
+	if policy.capability == (netcap.FamilyCapability{}) {
+		return addresses
+	}
+	filtered := slices.DeleteFunc(addresses, func(address netip.Addr) bool {
+		return !isLocalScopeAddress(address) && policy.excludedAddress(address)
+	})
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
+}
+
+// dialerLocalFamilyPolicy reads this dialer's view of which families the machine can dial.
+//
+// It goes through the familyHealthOwner when the underlying dialer has one, so that a resolve
+// dialer - which is a wrapper, not an owner - asks the same object the scheduler will ask. A chain
+// that leads nowhere returns the zero policy, which restricts nothing: an implementation that
+// cannot report the capability keeps its previous behaviour exactly.
+func (d *resolveDialer) dialerLocalFamilyPolicy() localFamilyPolicy {
+	if owner, isOwner := d.dialer.(localFamilyOwner); isOwner {
+		return owner.localFamilyPolicy()
+	}
+	return localFamilyPolicy{}
+}
+
+// LocalFamilyBlocked implements LocalFamilyDialer for the resolving wrapper.
+//
+// # Why the wrapper answers it rather than forwarding only from the leaf
+//
+// The wrapper is what the direct outbound holds: NewResolveDialer wraps the real dialer, so the
+// object the bypass path can see is this one. Answering by forwarding keeps a single source for the
+// verdict - the same object the scheduler will consult - instead of leaving the bypass to read the
+// network manager itself and form a second opinion about the same instant.
+//
+// It is deliberately NOT a method on the ResolveDialer interface. That interface is a contract every
+// implementation and test double would have to satisfy, and a dialer that cannot report the
+// capability must keep working unchanged; the type assertion is the capability check.
+func (d *resolveDialer) LocalFamilyBlocked(address netip.Addr) bool {
+	if !address.IsValid() || isLocalScopeAddress(address) {
+		return false
+	}
+	return d.dialerLocalFamilyPolicy().excludedAddress(address)
 }
 
 // validRecoveryDomain returns the sniffed domain to recover through, or empty when it is not

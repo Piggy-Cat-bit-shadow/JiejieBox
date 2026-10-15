@@ -33,7 +33,13 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-var _ adapter.NetworkManager = (*NetworkManager)(nil)
+var (
+	_ adapter.NetworkManager                     = (*NetworkManager)(nil)
+	_ adapter.NetworkResetCounter                = (*NetworkManager)(nil)
+	_ adapter.NetworkTransitionState             = (*NetworkManager)(nil)
+	_ adapter.NetworkTransitionSnapshotter       = (*NetworkManager)(nil)
+	_ adapter.NetworkFamilyCapabilitySnapshotter = (*NetworkManager)(nil)
+)
 
 type NetworkManager struct {
 	ctx                 context.Context
@@ -117,6 +123,20 @@ type NetworkManager struct {
 	//
 	// This flag is what makes "during" distinguishable from both "before" and "after".
 	transitionStable atomic.Bool
+	// familyCapability is the local dial path's per-family verdict for the network the manager is
+	// currently on. It is published by the same recompute that publishes the environment
+	// fingerprint, under stateAccess, so a reader never sees an address-family verdict from one
+	// network beside an environment token from another.
+	//
+	// It is not part of the ownership protocol: it does not advance the epoch, a transition is not
+	// required to change it, and nothing refuses a connection because it changed. It answers
+	// "would an attempt of this family be wasted right now", which is a fact about the interfaces.
+	// The network's identity is still the epoch's business, and the dialer still validates
+	// ownership against the epoch at hand-over.
+	//
+	// It is atomic because it is read on the dial path, where taking stateAccess would put every
+	// dial behind every transition.
+	familyCapability atomic.Pointer[adapter.NetworkFamilyCapability]
 	// transitionAccess guards the ownership pair (transitionOwner, transitionStable) so that
 	// claiming, checking ownership and settling are each a single atomic mutation.
 	//
@@ -141,6 +161,18 @@ type NetworkManager struct {
 	interfaceUpdateDecision func()
 	// environmentPublished, when set, runs immediately after a recompute publishes a new fingerprint.
 	environmentPublished func()
+	// familyCapabilityPublished, when set, runs at the instant the local family capability is stored
+	// for a transition: after the epoch has been claimed, before stateAccess is released.
+	//
+	// The two hooks bracket the ordering this matters for. environmentPublished fires while the
+	// capability still belongs to the previous network, so a reader there must see a CONSISTENT
+	// previous state; this one fires once the capability belongs to the new network, so a reader
+	// there must see the new epoch and the unsettled state alongside it. A test that reads the
+	// snapshot at both instants covers the whole publish-claim-store sequence rather than the one
+	// point a single hook could observe.
+	//
+	// Nil in production, where it costs one predictable branch.
+	familyCapabilityPublished func()
 	// beginTransitionHook, when set, runs BETWEEN the two ownership writes in beginTransition.
 	//
 	// It exists so a test can park the claim midway and observe what a reader that does not hold
@@ -844,6 +876,39 @@ func (r *NetworkManager) NetworkTransitionSnapshot() (uint64, bool) {
 	r.transitionAccess.Lock()
 	defer r.transitionAccess.Unlock()
 	return uint64(r.transitionOwner), r.transitionStable.Load()
+}
+
+// NetworkFamilyCapabilitySnapshot returns the epoch, the settled state and the local family
+// capability as one observation.
+//
+// The capability is read under transitionAccess, the same lock that guards the ownership pair, and
+// that is what makes the triple a state the network really passed through rather than three
+// readings that happen to be adjacent. See adapter.NetworkFamilyCapabilitySnapshotter for the
+// interleaving this closes.
+//
+// The capability's PUBLICATION is not under this lock - it rides the environment recompute - so the
+// value returned here is the last one that recompute published. That is deliberate: a capability is
+// taken from real interfaces, and the lock that could order it against the epoch is held across
+// syscalls elsewhere in this file. The alternative - reading the interfaces here, per call - would
+// put interface enumeration on the dial path, which is the cost this whole design exists to avoid.
+func (r *NetworkManager) NetworkFamilyCapabilitySnapshot() (uint64, bool, adapter.NetworkFamilyCapability) {
+	r.transitionAccess.Lock()
+	defer r.transitionAccess.Unlock()
+	return uint64(r.transitionOwner), r.transitionStable.Load(), r.loadFamilyCapability()
+}
+
+// loadFamilyCapability returns the published capability, or a no-opinion value when none has been
+// computed.
+//
+// The zero NetworkFamilyCapability reports both families as Unknown, so a manager that never
+// published one - a box that has not started, a platform with no interface monitor - leaves every
+// consumer on its previous behaviour rather than losing a family.
+func (r *NetworkManager) loadFamilyCapability() adapter.NetworkFamilyCapability {
+	published := r.familyCapability.Load()
+	if published == nil {
+		return adapter.NetworkFamilyCapability{}
+	}
+	return *published
 }
 
 // NetworkResetGeneration reports the current reset epoch: it increases every time a network

@@ -124,6 +124,77 @@ func TestCanBypassPreservesTheLoopbackGuard(t *testing.T) {
 		"an unrelated destination is unaffected by the guard")
 }
 
+// TestCanBypassRefusesAProvablyAbsentFamily is the bypass half of the local family capability.
+//
+// A bypassed flow is a connect performed by the platform, so it never passes through the candidate
+// scheduler that enforces the verdict. On every TUN stack that is immaterial - the flow still travels
+// the userspace path - but in Linux redirect mode the packet really does leave this process, and
+// handing the kernel an address this machine has no interface for spends the whole connect timeout
+// rediscovering what the network manager already knew.
+//
+// The refusal is a RESTORATION of the userspace behaviour rather than a new policy: the flow falls
+// back to the path that refuses it immediately and says why.
+func TestCanBypassRefusesAProvablyAbsentFamily(t *testing.T) {
+	ipv4 := netip.MustParseAddr("93.184.216.34")
+	ipv6 := netip.MustParseAddr("2606:2800:220:1:248:1893:25c8:1946")
+
+	outbound := bypassable(option.DialerOptions{})
+	// The dialer chain discovered from the outbound dialer answers the machine-level question. A
+	// predicate is installed directly here because the fake in this package has no network manager;
+	// what is under test is that the outbound ASKS, and what it does with the answer.
+	outbound.localFamily = func(address netip.Addr) bool {
+		return address.Is6()
+	}
+
+	require.True(t, outbound.CanBypass(N.NetworkTCP, ipv4),
+		"the family this machine has addressing for is unaffected")
+	require.False(t, outbound.CanBypass(N.NetworkTCP, ipv6),
+		"an address of a family the machine cannot dial must not be handed to the platform")
+	require.Contains(t, outbound.BypassBlockers(N.NetworkTCP, ipv6).String(),
+		"no usable path for this destination's address family",
+		"the refusal must be attributable, and attributed to the machine rather than to the config")
+	require.False(t, outbound.CanBypass(N.NetworkUDP, ipv6),
+		"a UDP flow is the worst case: nothing answers, so there is no failure to react to")
+
+	// The control. With no verdict reported - a dialer chain that cannot answer, which is every
+	// third-party implementation and every test double - the bypass behaves exactly as before.
+	silent := bypassable(option.DialerOptions{})
+	require.True(t, silent.CanBypass(N.NetworkTCP, ipv6),
+		"a chain that cannot report the capability must keep the previous behaviour exactly")
+}
+
+// TestCanBypassKeepsTheTwoFamilyRefusalsDistinct pins the vocabulary an operator reads.
+//
+// "The bypass was refused" is not actionable. The two family refusals send the reader to different
+// places - one to their configuration, one to their device - so they are separate blockers, and this
+// asserts that neither is reported in place of the other.
+func TestCanBypassKeepsTheTwoFamilyRefusalsDistinct(t *testing.T) {
+	ipv6 := netip.MustParseAddr("2606:2800:220:1:248:1893:25c8:1946")
+
+	// Configuration: a hard family strategy excludes the literal destination.
+	byStrategy := bypassable(option.DialerOptions{
+		AbstractDialerOptions: option.AbstractDialerOptions{
+			DomainResolver: &option.DomainResolveOptions{Server: "local-agh"},
+		},
+	})
+	byStrategy.familyStrategy = func() C.DomainStrategy { return C.DomainStrategyIPv4Only }
+
+	// Device: the configuration permits it, but the machine has no path for the family.
+	byDevice := bypassable(option.DialerOptions{})
+	byDevice.localFamily = func(netip.Addr) bool { return true }
+
+	strategyBlockers := byStrategy.BypassBlockers(N.NetworkTCP, ipv6)
+	deviceBlockers := byDevice.BypassBlockers(N.NetworkTCP, ipv6)
+
+	require.Contains(t, strategyBlockers.String(), "family strategy")
+	require.NotContains(t, strategyBlockers.String(), "no usable path",
+		"a configuration refusal must not be reported as a property of the machine")
+
+	require.Contains(t, deviceBlockers.String(), "no usable path")
+	require.NotContains(t, deviceBlockers.String(), "family strategy",
+		"a machine-level refusal must not be reported as a configuration problem")
+}
+
 // --- per-flow semantics -------------------------------------------------------------------
 
 // TestCanBypassDistinguishesOptionPresenceFromFlowRelevance is the case this round exists for.

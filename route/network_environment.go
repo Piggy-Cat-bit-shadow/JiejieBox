@@ -198,8 +198,31 @@ func (r *NetworkManager) recomputeNetworkEnvironment() (bool, transitionToken) {
 		environmentHash = digest.Sum64()
 	}
 	r.stateAccess.Lock()
+	// The capability is COMPUTED here, inside the same critical section that publishes the
+	// environment fingerprint, but it is not stored until the transition below has been claimed.
+	//
+	// # Why it is not stored at this point
+	//
+	// A reader that took the snapshot in the gap between "the new capability is stored" and "the
+	// epoch is claimed" would see the NEW network's address-family verdict beside the OLD epoch and
+	// the old settled flag - a pair that describes no network, and one that hands the new network's
+	// verdict to an operation that belongs to the old one. Computing it here and storing it next to
+	// the claim makes the epoch, the settled flag and the capability move as one observation: a
+	// reader sees either all of the previous network or all of the new one.
+	//
+	// # Why it is computed even when the fingerprint does not change
+	//
+	// The fingerprint names a NETWORK (gateways, SSID, gateway hardware address), while the
+	// capability describes the ADDRESSING, which can change without the network changing - an
+	// interface that loses its IPv6 address after its DHCPv6 lease expires is the same network with a
+	// different capability. Skipping the publish on an unchanged fingerprint would freeze the verdict
+	// for as long as the network lasted.
+	capability := r.localFamilyCapability()
 	changed := environmentHash != r.networkEnvironment
 	if !changed {
+		// Same network, possibly different addressing. The epoch does not move, so the capability may
+		// be stored directly: there is no claim for it to be ordered against.
+		r.storeFamilyCapability(capability)
 		r.stateAccess.Unlock()
 		return false, noTransition
 	}
@@ -217,6 +240,14 @@ func (r *NetworkManager) recomputeNetworkEnvironment() (bool, transitionToken) {
 	// the claim after the unlock - which is what this replaced - left a window in which a reader saw
 	// the new environment while every ownership token still described the old one.
 	token := r.beginTransition()
+	// Stored AFTER the claim and before the lock is released, so no reader can observe the new
+	// network's capability beside the previous network's ownership, or the reverse. The lock order is
+	// the established one: transitionAccess is only ever taken while stateAccess is held, never the
+	// other way round.
+	r.storeFamilyCapability(capability)
+	if r.familyCapabilityPublished != nil {
+		r.familyCapabilityPublished()
+	}
 	r.stateAccess.Unlock()
 	// A zero fingerprint is a real environment, not a missing reading.
 	//

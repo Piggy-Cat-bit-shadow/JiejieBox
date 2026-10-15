@@ -123,8 +123,14 @@ func (h *interfaceTransitionHarness) holdResetLock(t *testing.T) {
 }
 
 // staticInterfaceMonitor is a DefaultInterfaceMonitor whose answer the test controls.
+//
+// `own` is what RegisterMyInterface records, so a test can model the one thing only this process
+// knows: which of the interfaces in its own list are its own. Nothing in these transition tests needs
+// it, but the local-family-capability tests do - a tunnel counted as underlay is a wrong verdict, and
+// the exclusion is only testable if the monitor can report one.
 type staticInterfaceMonitor struct {
 	current *control.Interface
+	own     []string
 }
 
 func (m *staticInterfaceMonitor) Start() error                         { return nil }
@@ -137,8 +143,12 @@ func (m *staticInterfaceMonitor) RegisterCallback(tun.DefaultInterfaceUpdateCall
 }
 func (m *staticInterfaceMonitor) UnregisterCallback(*list.Element[tun.DefaultInterfaceUpdateCallback]) {
 }
-func (m *staticInterfaceMonitor) RegisterMyInterface(string) {}
-func (m *staticInterfaceMonitor) MyInterfaces() []string     { return nil }
+
+func (m *staticInterfaceMonitor) RegisterMyInterface(interfaceName string) {
+	m.own = append(m.own, interfaceName)
+}
+
+func (m *staticInterfaceMonitor) MyInterfaces() []string { return m.own }
 
 // TestInterfaceEnvironmentTransitionCoalescesPendingReset is the reproduction.
 func TestInterfaceEnvironmentTransitionCoalescesPendingReset(t *testing.T) {

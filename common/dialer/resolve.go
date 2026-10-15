@@ -547,7 +547,23 @@ func (d *resolveDialer) dialLiteralWithRecovery(ctx context.Context, network str
 	// literal IPv6 address would be dialled under ipv4_only, silently turning a strict policy
 	// into a suggestion. The original is preferred, not exempt.
 	// The EFFECTIVE strategy, not the caller's raw value. See effectiveFamilyStrategy.
-	originalAllowed := AddressAllowedByStrategy(destination.Addr, d.effectiveFamilyStrategy())
+	originalStrategy := d.effectiveFamilyStrategy()
+	originalAllowed := AddressAllowedByStrategy(destination.Addr, originalStrategy)
+	// The local family capability applies to the original for the same reason, and independently of
+	// the strategy: this is the address the APPLICATION chose, and it is still dialled by this
+	// machine. Skipping it here is what makes a literal IPv6 destination fail fast on a machine with
+	// no IPv6 addressing, instead of consuming the whole connect timeout and then being reported as
+	// a timeout that says nothing about why.
+	//
+	// Recovery is NOT short-circuited: it is started below regardless, so a literal that belongs to
+	// an undialable family can still be reached through the sniffed domain's other family. That is
+	// the only path by which such a flow connects at all, which makes running recovery more
+	// important here, not less.
+	localFamilyRefusal := addressFamily(familyInvalid)
+	if originalAllowed && !isLocalScopeAddress(destination.Addr) && d.dialerLocalFamilyPolicy().excludedAddress(destination.Addr) {
+		originalAllowed = false
+		localFamilyRefusal = classifyAddress(destination.Addr)
+	}
 	if originalAllowed {
 		originalWorkers.Add(1)
 		go func() {
@@ -558,7 +574,18 @@ func (d *resolveDialer) dialLiteralWithRecovery(ctx context.Context, network str
 	} else {
 		// Nothing to dial for the original. Report the exclusion rather than hanging on a
 		// channel that will never receive.
-		original <- literalDialResult{err: E.New("destination ", destination.Addr, " excluded by strategy ", strategyName(d.effectiveFamilyStrategy()))}
+		//
+		// The two reasons are reported differently because they are different facts about the
+		// world: a strategy exclusion is a configuration decision the operator made, while a local
+		// family refusal is a property of the machine they are on. Collapsing them would send an
+		// operator to look at the wrong thing.
+		var originalErr error
+		if localFamilyRefusal != familyInvalid {
+			originalErr = hardUnavailableError(localFamilyRefusal)
+		} else {
+			originalErr = E.New("destination ", destination.Addr, " excluded by strategy ", strategyName(originalStrategy))
+		}
+		original <- literalDialResult{err: originalErr}
 	}
 
 	// Recovery runs concurrently. Its result channel is buffered and it always sends exactly
@@ -707,8 +734,25 @@ func (d *resolveDialer) newScheduler() *candidateScheduler {
 }
 
 // familyHealthOwner is implemented by dialers that own long-lived family health.
+//
+// It is a one-method interface on purpose. A dialer that owns health is one that can build a
+// scheduler bound to it, and that is the whole contract a caller needs; a second method would force
+// every implementation and every test double to grow state it may have no opinion about - which is
+// the same argument that makes NetworkResetCounter and NetworkTransitionState capabilities rather
+// than methods on NetworkManager.
 type familyHealthOwner interface {
 	newDualStackScheduler(fallbackDelay time.Duration) *candidateScheduler
+}
+
+// localFamilyOwner is implemented by dialers that can report which address families this machine can
+// dial, as they see it.
+//
+// It is separate from familyHealthOwner because the two questions have different answerers: health is
+// per dialer and learned, while the local family capability is a property of the machine that a
+// test double for a reporting dialer has no reason to model. A chain whose owner does not implement
+// this restricts nothing, which is the required degradation.
+type localFamilyOwner interface {
+	localFamilyPolicy() localFamilyPolicy
 }
 
 func (d *resolveDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
