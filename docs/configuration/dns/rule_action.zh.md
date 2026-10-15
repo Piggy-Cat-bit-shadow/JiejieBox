@@ -39,7 +39,7 @@ icon: material/new-box
 
 !!! question "自 sing-box 1.14.0 起"
 
-仅可用于 `route`、`respond`、`reject` 和 `predefined` 动作。
+仅可用于 `route`、`respond`、`reject` 和 `predefined` 动作。不可用于 [`adblock`](#adblock)，该动作不会发起任何上游查询。
 
 需要 [`match_response`](/zh/configuration/dns/rule/#match_response)（对 logical 规则，位于子规则中）。
 与 `speculative` 冲突。
@@ -326,3 +326,45 @@ icon: material/new-box
 #### extra
 
 用于作为额外记录响应的文本 DNS 记录列表。
+
+### adblock
+
+```json
+{
+  "action": "adblock"
+}
+```
+
+`adblock` 终止规则评估，并在本地为命中的域名生成 `NXDOMAIN` 响应，不向任何上游服务器发送查询。
+
+该动作没有任何字段，响应形状固定：
+
+- 响应码 `NXDOMAIN`，回答段为空；
+- 权威段包含一条 SOA，所有者为被查询的域名，负缓存 TTL 为 600 秒
+  （SOA 的 TTL 与其 `MINIMUM` 相同，符合 RFC 2308）；
+- 设置 `QR`、`AA`、`RD`、`RA` 标志；
+- 使用当前请求的 ID 与 Question。
+
+SOA 是它比拒绝更有价值的原因：遵循标准的下游客户端与操作系统可以自行负缓存该结论，从而不再重复询问该域名 —— `A`、`AAAA`、`HTTPS`、`SVCB` 都是如此。
+
+适用于广告规则集：
+
+```json
+{
+  "dns": {
+    "rules": [
+      {
+        "rule_set": ["anti-ad", "AWAvenue-Ads-Rule"],
+        "action": "adblock"
+      }
+    ]
+  }
+}
+```
+
+注意：
+
+- 仅用于 DNS，不能用于路由规则。
+- 该动作不支持 `race`。
+- 该结论是本地策略判定，**不会**写入内核自身的 DNS 缓存，因此删除或更新规则集后，下一次查询即按新规则生效。下游客户端可能仍会在其负缓存 TTL 内保留该 `NXDOMAIN`，这是 DNS 的正常行为。
+- 如需拒绝请求请使用 [`reject`](#reject)，如需构造任意响应请使用 [`predefined`](#predefined)。

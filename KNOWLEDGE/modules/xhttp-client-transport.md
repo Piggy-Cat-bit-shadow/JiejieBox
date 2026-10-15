@@ -605,6 +605,51 @@ Example:
 Do not tune these merely because they are exposed. They alter packet-up request behaviour and can affect
 latency, burstiness and peer compatibility.
 
+### 12.3 Post cadence, and why response completion is not pipelined
+
+A packet-up uplink keeps **one POST in flight**: the next POST starts after the previous POST's
+response has been fully drained, so with a queue that never empties the cadence is
+
+```text
+one POST per max(round trip, sc_min_posts_interval_ms)
+```
+
+Post size is unaffected by latency: gathering still fills every POST to `sc_max_each_post_bytes` at
+every round trip measured (1,000,000 bytes from 0 to 200 ms).
+
+The reference implements the obvious objection to that design — it starts the next POST on
+`httptrace.WroteRequest` and drains the response in a goroutine, i.e. it pipelines response
+completion (`Xray v26.9.30`, `transport/internet/splithttp/dialer.go:495-534`) — so the two were
+compared directly (packet-up, HTTP/2, one stream, same reference server, three repetitions per
+point, 30 runs, 0 payload mismatches):
+
+| Round trip | 0 ms | 30 ms | 50 ms | 100 ms | 200 ms |
+|---|---|---|---|---|---|
+| fork upload | 26.93 MB/s | 24.25 MB/s | 15.57 MB/s | 7.88 MB/s | 3.92 MB/s |
+| reference upload | 22.84 MB/s | 19.67 MB/s | 14.53 MB/s | 7.80 MB/s | 4.04 MB/s |
+| ratio | 1.18x | 1.23x | 1.07x | 1.01x | 0.97x |
+| fork ping-pong p50, 512 B | 30.0 ms | 32.2 ms | 52.0 ms | 102.0 ms | 202.0 ms |
+| reference ping-pong p50 | 30.5 ms | 31.8 ms | 51.8 ms | 101.7 ms | 201.8 ms |
+
+Both implementations fall together (about 27 → 4 MB/s) and the fork is never behind, including in the
+small-post regime where a response wait would hurt most. **The synchronous response wait is therefore
+not a fork-specific high-RTT cliff**: the collapse is "one POST per round trip", which the reference
+shows too even though it pipelines. Pipelining response completion was considered and rejected — it
+needs a bounded in-flight completion set and would change the failure semantics the seq-no-hole
+argument rests on, for no measured gain.
+
+Evidence: `VERIFIED_UNIT` for the invariants (at most one POST in flight, contiguous ascending seq,
+cadence no faster than half the round trip — `TestPacketUpPostCadenceTracksTheRoundTrip` in
+`transport/v2rayxhttp/packetup_pipeline_probe_test.go`); **historical record** for the round-trip
+sweep, which is a manual harness measurement on one host (loopback plus a delay-line impairment shim,
+so added latency costs no bandwidth) and cannot be re-run from CI. Beyond 200 ms there is no data.
+
+Provenance: probe commit `58e3222558c` on branch `perf/xhttp-rtt-pipeline-probe`, on top of the
+finalization branch `b5bc2a8de42`. Both are feature branches; **neither is merged to `testing`**, so
+this subsection describes the fork's XHTTP work rather than the reviewed baseline above.
+
+> XHTTP remains closed; no further optimization justified by current evidence.
+
 ---
 
 ## 13. XMUX

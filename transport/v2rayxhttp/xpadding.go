@@ -4,7 +4,6 @@ import (
 	cryptorand "crypto/rand"
 	"math/rand"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"golang.org/x/net/http2/hpack"
@@ -45,11 +44,13 @@ func (c *Client) applyXPadding(request *http.Request) {
 			return
 		}
 		pad := strings.Repeat("0", n)
-		referer := &url.URL{Scheme: c.scheme, Host: c.host, Path: request.URL.Path}
-		rq := referer.Query()
-		rq.Set("x_padding", pad)
-		referer.RawQuery = rq.Encode()
-		request.Header.Set("Referer", referer.String())
+		// lx: XHTTP_OUTPERFORM — one concatenation instead of
+		// url.URL -> Query -> Encode -> String, which cost ~9 allocations and
+		// three passes over the padding bytes on every request. EscapedPath is
+		// what url.URL.String() itself writes, and url.Values.Encode leaves the
+		// literal '0' padding unescaped, so the bytes are identical; the
+		// equivalence is pinned by TestLegacyPaddingRefererIsByteIdentical.
+		request.Header.Set("Referer", c.scheme+"://"+c.host+request.URL.EscapedPath()+"?x_padding="+pad)
 		return
 	}
 	pad := c.generatePadding()
@@ -67,9 +68,8 @@ func (c *Client) applyXPadding(request *http.Request) {
 		// Build "<scheme>://<host><path>?<key>=<pad>" and put it in the header.
 		// Xray assigns RawQuery directly as key+"="+pad WITHOUT url-encoding the
 		// padding; padding is base62 / 'X'/'Z' only, so this is safe to replicate.
-		u := &url.URL{Scheme: c.scheme, Host: c.host, Path: request.URL.Path}
-		u.RawQuery = m.xPaddingKey + "=" + pad
-		request.Header.Set(m.xPaddingHeader, u.String())
+		// lx: XHTTP_OUTPERFORM — same single concatenation as the legacy branch.
+		request.Header.Set(m.xPaddingHeader, c.scheme+"://"+c.host+request.URL.EscapedPath()+"?"+m.xPaddingKey+"="+pad)
 	}
 }
 

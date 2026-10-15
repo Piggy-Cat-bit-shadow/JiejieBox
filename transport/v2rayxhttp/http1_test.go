@@ -125,10 +125,16 @@ func TestHTTP1PacketUp(t *testing.T) {
 	}
 	defer conn.Close()
 	server.waitRequests(t, 1)
-	for range 3 {
+	// One write per flush, so the POST count is the thing under test rather than
+	// flush timing: since lx: XHTTP_OUTPERFORM the uplink coalesces writes that
+	// queue behind an in-flight post, so three rapid writes are legitimately one
+	// POST. Waiting for each POST keeps "three POSTs, one keep-alive connection"
+	// a statement about reuse.
+	for written := 1; written <= 3; written++ {
 		if _, err := conn.Write([]byte("up")); err != nil {
 			t.Fatal(err)
 		}
+		server.waitRequests(t, 1+written)
 	}
 	buffer := make([]byte, 4)
 	if _, err := io.ReadFull(conn, buffer); err != nil || string(buffer) != "down" {

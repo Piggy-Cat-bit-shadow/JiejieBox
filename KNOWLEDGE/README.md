@@ -101,6 +101,7 @@ This table is the coarse ownership map.
 | `modules/core-lifecycle-runtime.md` | `adapter.Scope`, `Box` start/close order, `common/runtimecoord`, `route.ReferenceManager` |
 | `modules/path-selection-validation.md` | `common/physicalpath`, `common/routeflow`, start-time validation, `detour`, groups, cycles, failover |
 | `modules/dns-demand.md` | DNS transports, generations, cache commit, FakeIP, consumer demand |
+| `modules/dns-adblock-action.md` | the DNS-only `adblock` rule action: local NXDOMAIN + SOA, zero upstream, and why it is not `reject` or a negative-cache entry |
 | `modules/sniff.md` | sniffers, peek/read ownership, fragmented QUIC, the sniff→routing contract |
 | `modules/masque-connectip.md` | MASQUE endpoint and dataplane, capsules, sessions, DNS roles, MTU/PTB |
 | `modules/naive-http-transport.md` | Native Naive, `transport/http`, `http_clients`, the UoT target ACL |

@@ -41,6 +41,7 @@ const (
 	RuleActionTypeSniff        = "sniff"
 	RuleActionTypeResolve      = "resolve"
 	RuleActionTypePredefined   = "predefined"
+	RuleActionTypeAdblock      = "adblock"
 )
 
 const (

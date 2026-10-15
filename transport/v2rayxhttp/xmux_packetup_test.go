@@ -15,10 +15,11 @@ import (
 // SPECS/TASKS/059-XHTTP_XMUX §4
 //
 // h_max_request_times counts HTTP REQUESTS, not streams. packet-up issues one
-// upload POST per Write, so a single long-lived stream can exhaust the limit on
-// its own. Counting streams instead would leave the connection alive far past
-// what the server was told, which is exactly the compatibility gap the task
-// exists to close.
+// upload POST per flush (lx: XHTTP_OUTPERFORM — that used to read "per Write":
+// writes are queued and coalesced now, so a stream's request count is driven by
+// how often its queue flushes, not by how many times the caller wrote). Counting
+// streams instead would leave the connection alive far past what the server was
+// told, which is exactly the compatibility gap the task exists to close.
 
 // countingTransport answers every request with 200 and counts them.
 type countingTransport struct {
@@ -89,15 +90,34 @@ func TestPacketUpUploadsCountAgainstRequestLimit(t *testing.T) {
 	}
 	defer conn.Close()
 
+	// The download GET is dispatched from its own goroutine at dial, so count it
+	// before the loop: otherwise the first write's delta would be the POST plus a
+	// GET that happened to land while the test was waiting.
+	deadline := time.Now().Add(2 * time.Second)
+	for transport.requests.Load() < 1 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// One write per flush: a write queues and the flusher posts it, so waiting
+	// for each POST to land is what makes "three writes, three requests" a
+	// statement about the request budget instead of about flush timing.
 	for i := 0; i < 3; i++ {
+		before := transport.requests.Load()
 		if _, err := conn.Write([]byte("payload")); err != nil {
 			t.Fatalf("write %d: %v", i, err)
+		}
+		deadline = time.Now().Add(2 * time.Second)
+		for transport.requests.Load() == before && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+		}
+		if got := transport.requests.Load(); got != before+1 {
+			t.Fatalf("write %d produced %d upload posts, want 1", i, got-before)
 		}
 	}
 
 	// The download RoundTrip runs in its own goroutine; wait for it to land so the
 	// count is stable.
-	deadline := time.Now().Add(2 * time.Second)
+	deadline = time.Now().Add(2 * time.Second)
 	for transport.requests.Load() < 4 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}

@@ -49,6 +49,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | FakeIP | `modules/dns-demand.md` | §3 |
 | consumer demand | `modules/dns-demand.md` | §4 |
 | DNS leaks | `modules/dns-demand.md` | §5 DNS leaks and the reach of DNS |
+| the `adblock` DNS action, blocking ad names with a local NXDOMAIN | `modules/dns-adblock-action.md` | §2 syntax, §3 behaviour, §8 placement |
 | `systemd-resolved` goroutine leak | `modules/dns-demand.md` | §6 — fixed; the doc saying otherwise is stale |
 | any sniffer, peek/read ownership | `modules/sniff.md` | §2 ownership |
 | sniff loops, fragmented QUIC | `modules/sniff.md` | §3 the two loops → Packet |
@@ -66,6 +67,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | XHTTP field reference | `modules/xhttp-client-transport.md` | §5 full field reference |
 | XMUX reuse, all-or-nothing default | `modules/xhttp-client-transport.md` | §13.4 the important all-or-nothing default rule |
 | XHTTP fork lifecycle / trim / reuse | `modules/xhttp-client-transport.md` | §14 fork-specific XMUX lifecycle behaviour |
+| packet-up POST cadence, high-RTT throughput, response pipeline | `modules/xhttp-client-transport.md` | §12.3 post cadence, and why response completion is not pipelined |
 | Direct Offload | `modules/data-path-optimization.md` | Part A |
 | traffic class + upload scheduler | `modules/data-path-optimization.md` | Part B |
 | dial governor | `modules/data-path-optimization.md` | Part C |
@@ -103,6 +105,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | trim, low memory, memory pressure, ReleaseMemory | memory policy | `modules/core-lifecycle-runtime.md` §3; Android ladder `modules/power-mobile-lifecycle.md` §3 |
 | zero-copy, splice, splice defect, buffer pool, batch | buffer ownership | `modules/buffer-ownership.md` §1–2 |
 | FakeIP, cache commit, DNS leak, domain_resolver | DNS | `modules/dns-demand.md` §2–5 |
+| adblock, ad blocking, advertising rule-set, NXDOMAIN verdict, negative caching of a blocked name, "why not reject" | the adblock action | `modules/dns-adblock-action.md` §1, §5, §7 |
 | peek, read ownership, fragmented QUIC, unsniffable | sniff | `modules/sniff.md` §2–3 |
 | CONNECT-IP, capsule, DATAGRAM, PREF64, PTB | MASQUE | `modules/masque-connectip.md` |
 | UoT, masquerade, padding, `server_limits`, SSRF | Naive | `modules/naive-http-transport.md` §2–3 |
@@ -136,6 +139,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | `common/power` | `modules/power-mobile-lifecycle.md` | §1–2 |
 | `internal/memmetrics` | `modules/power-mobile-lifecycle.md` | §4 |
 | `dns/transport/group` | `modules/dns-demand.md` | §1, §4 |
+| `route/rule/rule_action.go` → `RuleActionAdblock`, `dns/router.go` → `walkDNSRules`, `constant/dns.go` → `DefaultDNSNegativeTTL` | `modules/dns-adblock-action.md` | §8 placement, §13 TTL choice |
 | `transport/masque`, `protocol/masque` | `modules/masque-connectip.md` | §1–2 |
 | `protocol/naive`, `transport/http`, `common/httpclient` | `modules/naive-http-transport.md` | §2, §4 |
 | `transport/v2rayxhttp` | `modules/xhttp-client-transport.md` | §1–22 |

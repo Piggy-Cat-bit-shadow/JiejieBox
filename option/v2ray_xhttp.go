@@ -119,12 +119,17 @@ type V2RayXHTTPOptions struct {
 	// ---- packet-up tuning (client-relevant extras) --------------------------
 
 	// ScMaxEachPostBytes is the "min-max" range bounding the size of a single
-	// packet-up upload POST (the split threshold). Empty defaults to
-	// "1000000-1000000".
+	// packet-up upload POST. Empty defaults to "1000000-1000000".
+	//
+	// It is a CAP ON A BATCH, not a split threshold: queued writes are
+	// coalesced into one POST up to this size, and only the excess becomes
+	// further posts. A small value therefore multiplies the number of requests
+	// and, because sc_min_posts_interval_ms is a floor between POST starts, caps
+	// the stream's uplink rate at roughly this value per interval.
 	ScMaxEachPostBytes string `json:"sc_max_each_post_bytes,omitempty"`
 	// ScMinPostsIntervalMs is the "min-max" range (milliseconds) of the minimum
-	// delay between successive packet-up upload POSTs (anti-burst). Empty defaults
-	// to "30-30".
+	// delay between successive packet-up upload POST starts (anti-burst). Empty
+	// defaults to "30-30". "0" disables the wait entirely.
 	ScMinPostsIntervalMs string `json:"sc_min_posts_interval_ms,omitempty"`
 
 	// ---- legacy / accepted-but-ignored -------------------------------------

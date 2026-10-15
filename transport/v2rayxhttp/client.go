@@ -182,12 +182,11 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		}
 		tlsDialer := tls.NewDialer(dialer, tlsConfig)
 		newConn = func() xmuxConn {
-			return &http2XmuxConn{transport: &http2.Transport{
-				ReadIdleTimeout: xmuxConfig.keepAlivePeriod,
-				DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.STDConfig) (net.Conn, error) {
-					return tlsDialer.DialTLSContext(ctx, M.ParseSocksaddr(addr))
-				},
-			}}
+			// lx: XHTTP Round 2 — the keep-alive period is normalized inside the
+			// builder, the way newHTTP3Transport normalizes it for HTTP/3: 0
+			// selects the reference's Chrome-equivalent default (45 s) instead of
+			// silently disabling pings.
+			return &http2XmuxConn{transport: newHTTP2Transport(tlsDialer, xmuxConfig.keepAlivePeriod)}
 		}
 	}
 	if logger != nil {

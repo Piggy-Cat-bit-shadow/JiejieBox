@@ -461,6 +461,8 @@ func (r *Router) matchDNS(ctx context.Context, rules []adapter.DNSRule, allowFak
 				return nil, currentRule, currentRuleIndex
 			case *R.RuleActionPredefined:
 				return nil, currentRule, currentRuleIndex
+			case *R.RuleActionAdblock:
+				return nil, currentRule, currentRuleIndex
 			}
 		}
 	}
@@ -859,6 +861,23 @@ func (r *Router) walkDNSRules(ctx context.Context, rules []adapter.DNSRule, mess
 			return exchangeWithRulesResult{
 				response: action.Response(message),
 			}, nil
+		case *R.RuleActionAdblock:
+			// The match already decided this name is advertising, so the answer is built here
+			// and the walk ends. No transport is resolved, no query option is applied and no
+			// pending exchange is created - reaching this line is the earliest point in the DNS
+			// path at which a rule action can produce a response, which is what keeps the first
+			// query for an ad name off the wire rather than merely making its answer look right.
+			//
+			// A deliberately armed rule still drains first, like every other response-producing
+			// action: `race` exists so a response-bound rule can decide against a lookup that is
+			// already running, and suppressing that lookup here would change what the armed rule
+			// observes. The user paid for that query by writing `race`.
+			if len(state.armedRules) > 0 {
+				return exchangeWithRulesResult{}, &dnsWalkSuspension{drain: true}
+			}
+			return exchangeWithRulesResult{
+				response: action.Response(message),
+			}, nil
 		}
 	}
 	if len(state.armedRules) > 0 {
@@ -991,6 +1010,10 @@ func (r *Router) sweepArmedDNSRules(ctx context.Context, message *mDNS.Msg, stat
 				}, nil, true
 			}
 		case *R.RuleActionPredefined:
+			return exchangeWithRulesResult{
+				response: action.Response(message),
+			}, nil, true
+		case *R.RuleActionAdblock:
 			return exchangeWithRulesResult{
 				response: action.Response(message),
 			}, nil, true
@@ -1800,6 +1823,11 @@ func (r *Router) exchangeLegacy(ctx context.Context, exchangeCtx *dnsExchangeCon
 				}
 			case *R.RuleActionPredefined:
 				return action.Response(message), nil, nil
+			case *R.RuleActionAdblock:
+				// Same local answer as the modern walk. Legacy mode is selected by an address
+				// filter, not by the action, so an adblock rule can land in either path and both
+				// must terminate before the client.
+				return action.Response(message), nil, nil
 			}
 		}
 		responseCheck := addressLimitResponseCheck(rule, exchangeCtx.metadata)
@@ -1985,6 +2013,13 @@ func (r *Router) Lookup(ctx context.Context, domain string, options adapter.DNSQ
 							}
 						}
 					}
+					goto response
+				case *R.RuleActionAdblock:
+					// This path resolves for a dialer, so there is no message to answer: the
+					// verdict can only surface as the error the caller already understands for
+					// "this name has no address", which is what NXDOMAIN means to a lookup.
+					responseAddrs = nil
+					err = RcodeError(mDNS.RcodeNameError)
 					goto response
 				}
 			}

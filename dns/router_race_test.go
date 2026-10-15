@@ -164,6 +164,20 @@ func raceTestRules(t *testing.T, rawRules []option.DNSRule) []adapter.DNSRule {
 	return rules
 }
 
+// raceTestRulesOn builds rules against the caller's context, so a rule that needs a service out
+// of it (a rule-set reference resolves one) can be constructed exactly as the router builds it.
+func raceTestRulesOn(t *testing.T, ctx context.Context, rawRules []option.DNSRule) []adapter.DNSRule {
+	t.Helper()
+	rules := make([]adapter.DNSRule, 0, len(rawRules))
+	for _, rawRule := range rawRules {
+		rule, err := R.NewDNSRule(ctx, log.NewNOPFactory().Logger(), rawRule, true, false)
+		require.NoError(t, err)
+		require.NoError(t, rule.Start())
+		rules = append(rules, rule)
+	}
+	return rules
+}
+
 func raceTestExchange(router *Router, rules []adapter.DNSRule) exchangeWithRulesResult {
 	return raceTestExchangeContext(context.Background(), router, rules)
 }

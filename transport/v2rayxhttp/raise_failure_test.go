@@ -387,11 +387,19 @@ func TestPacketUpPostsSurviveDialContextExpiry(t *testing.T) {
 // posts no longer ride the (possibly bounded) dial context — a wedged pooled
 // connection costs one post timeout, not a forever-blocked Write inside the
 // WG send path.
+//
+// lx: XHTTP_OUTPERFORM moved WHERE that is observed. Writes are now queued and
+// flushed by packetUplink, so the first write into an empty queue succeeds as
+// soon as the bytes are buffered — that buffering is the fix, and it is what
+// lets one post carry a batch instead of one write. The bounded failure
+// surfaces on the writes that follow, which is the same invariant from the
+// caller's side: a post is one bounded HTTP exchange and a caller is never left
+// blocked on a connection that will not answer.
 func TestPacketUpPostBounded(t *testing.T) {
 	// NOT parallel: overrides packetUpPostTimeout, and a write to the package
 	// var must not race the parallel tests that read it.
 	restore := packetUpPostTimeout
-	packetUpPostTimeout = 500 * time.Millisecond
+	packetUpPostTimeout = 400 * time.Millisecond
 	t.Cleanup(func() { packetUpPostTimeout = restore })
 
 	hang := &hangRoundTripper{}
@@ -402,13 +410,18 @@ func TestPacketUpPostBounded(t *testing.T) {
 	}
 	defer conn.Close()
 
-	select {
-	case err := <-writeUnderTest(conn, []byte("payload")):
-		if err == nil {
-			t.Fatal("Write succeeded against a wedged pooled connection")
+	if _, err = conn.Write([]byte("payload")); err != nil {
+		t.Fatalf("Write into an empty queue: %v", err)
+	}
+	deadline := time.Now().Add(writeFreeBudget)
+	for {
+		if _, err = conn.Write([]byte("after the wedge")); err != nil {
+			return // the bounded post failure, surfaced where the caller can see it
 		}
-	case <-time.After(writeFreeBudget):
-		t.Fatal("Write not bounded: post still blocked on a wedged pooled connection")
+		if time.Now().After(deadline) {
+			t.Fatal("a wedged pooled connection never surfaced an error to the write path")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

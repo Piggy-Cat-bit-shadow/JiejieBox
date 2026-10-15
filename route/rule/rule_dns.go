@@ -73,6 +73,15 @@ func validateDNSRuleAction(action option.DNSRuleAction) error {
 	if action.Action == C.RuleActionTypeReject && action.RejectOptions.Method == C.RuleActionRejectMethodReply {
 		return E.New("reject method `reply` is not supported for DNS rules")
 	}
+	if action.Action == C.RuleActionTypeAdblock && action.Race {
+		// `race` means "start the real lookup before this response-bound rule decides". adblock
+		// never consults a lookup: its verdict comes from the match that selected it. The
+		// combination cannot be honoured, and accepting it would mean silently launching the
+		// upstream query - and paying for it - that the action exists to remove. The published
+		// schema already leaves `race` out of the adblock variant; this check is the runtime half
+		// of the same rule, for a rule built in Go rather than decoded from JSON.
+		return E.New("`race` is not supported by the adblock action: it never consults an upstream lookup")
+	}
 	var routeOptions option.AbstractDNSRouteActionOptions
 	switch action.Action {
 	case "", C.RuleActionTypeRoute:
@@ -87,7 +96,7 @@ func validateDNSRuleAction(action option.DNSRuleAction) error {
 	}
 	if action.Race {
 		switch action.Action {
-		case "", C.RuleActionTypeRoute, C.RuleActionTypeRespond, C.RuleActionTypeReject, C.RuleActionTypePredefined:
+		case "", C.RuleActionTypeRoute, C.RuleActionTypeRespond, C.RuleActionTypeReject, C.RuleActionTypePredefined, C.RuleActionTypeAdblock:
 		default:
 			return E.New("`race` requires a final action")
 		}

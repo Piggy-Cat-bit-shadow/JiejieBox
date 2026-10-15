@@ -182,6 +182,8 @@ func NewDNSRuleAction(logger logger.ContextLogger, action option.DNSRuleAction) 
 			Ns:     common.Map(action.PredefinedOptions.Ns, option.DNSRecordOptions.Build),
 			Extra:  common.Map(action.PredefinedOptions.Extra, option.DNSRecordOptions.Build),
 		}
+	case C.RuleActionTypeAdblock:
+		return &RuleActionAdblock{}
 	default:
 		panic(F.ToString("unknown rule action: ", action.Action))
 	}
@@ -666,4 +668,109 @@ func rewriteRecords(records []dns.RR, question dns.Question) []dns.RR {
 		}
 		return it
 	})
+}
+
+// RuleActionAdblock is a DNS-only terminal action: the rule that carries it has already
+// established that the query name is advertising, so the answer is manufactured here rather
+// than looked up.
+//
+// # Why it is not reject
+//
+// `reject` says "refuse this request". A refused DNS query is a failure the caller is entitled
+// to retry or to re-ask elsewhere, and on this fork's targets it is: a refused or dropped query
+// becomes another query. adblock says the opposite thing - the name is known not to resolve, and
+// the cheapest correct answer is the one the client will stop asking about. That is a different
+// verdict with a different required shape, so it is a different action. `reject/drop` also
+// produces no negative-caching information at all, which is the half of the job this action
+// exists to do.
+//
+// # Why it is not predefined
+//
+// A `predefined` rule can already emit NXDOMAIN, and an operator can already hand-write the SOA
+// for it. What they cannot express with it is intent: `predefined` is a general response builder
+// whose owner decides everything, including whether the result is negative-cacheable. adblock
+// fixes the response - NXDOMAIN, empty answer, one SOA carrying constant.DefaultDNSNegativeTTL -
+// so that a huge third-party rule-set can be attached to it without every user having to
+// re-derive the negative-caching shape. The two share RuleActionPredefined.Response's flag
+// convention, so a local response looks the same whichever action produced it.
+//
+// # Where it takes effect
+//
+// It is handled in the DNS rule walk, which runs before the DNS client, its exact cache, its
+// singleflight and any transport. Nothing about this type reaches a transport: there is no
+// field, no option and no state here that an upstream exchange could be started from. The action
+// holds no data at all, so the same value is safe to share across every rule and goroutine, and
+// answering is allocation-only.
+type RuleActionAdblock struct{}
+
+var _ adapter.RuleAction = (*RuleActionAdblock)(nil)
+
+func (r *RuleActionAdblock) Type() string {
+	return C.RuleActionTypeAdblock
+}
+
+func (r *RuleActionAdblock) String() string {
+	return C.RuleActionTypeAdblock
+}
+
+// Response builds the local NXDOMAIN for the current request.
+//
+// The response is RFC 2308 shape, which is what makes the answer worth more than a refusal:
+// NXDOMAIN states that the NAME does not exist, so a client that caches it stops asking for the
+// A, AAAA, HTTPS and SVCB records separately. The SOA in the authority section is what a client
+// needs to cache it at all - an NXDOMAIN with no SOA carries no negative TTL, and a resolver that
+// follows RFC 2308 has nothing to record. Both the SOA's own TTL and its MINIMUM are set to the
+// same value, because clients disagree about which of the two is authoritative
+// (RFC 2308 section 3 says the minimum of the two).
+//
+// The name, type, class and ID all come from the request being answered. Only the verdict is
+// fixed; a response that described a different question than the one asked would be discarded by
+// the client, and the retry would put the query back on the wire that this action removed it
+// from. The record is newly constructed per call rather than shared, so concurrent queries cannot
+// race on one dns.Msg.
+func (r *RuleActionAdblock) Response(request *dns.Msg) *dns.Msg {
+	response := &dns.Msg{
+		MsgHdr: dns.MsgHdr{
+			// The same flag convention as RuleActionPredefined.Response and the rest of the
+			// locally answered responses in this tree: a DNS server that answered from its own
+			// knowledge marks the answer authoritative, and it does resolve on the client's
+			// behalf. TC/CD/AD are all zero - nothing is truncated, and nothing here is
+			// cryptographically validated.
+			Id:                 request.Id,
+			Response:           true,
+			Authoritative:      true,
+			RecursionDesired:   true,
+			RecursionAvailable: true,
+			Rcode:              dns.RcodeNameError,
+		},
+	}
+	// A question is what makes the answer intelligible, and the router refuses a request without
+	// one long before a rule runs. The guard is here because this action is reachable from Go, and
+	// the alternative to the guard is an index panic in the query path.
+	if len(request.Question) == 0 {
+		return response
+	}
+	question := request.Question[0]
+	response.Question = []dns.Question{question}
+	response.Ns = []dns.RR{&dns.SOA{
+		Hdr: dns.RR_Header{
+			// The zone that makes the statement is the name itself. A synthetic parent zone
+			// would have to invent a name, and every invented name is one more thing a client
+			// or an operator has to interpret.
+			Name:   question.Name,
+			Rrtype: dns.TypeSOA,
+			Class:  question.Qclass,
+			Ttl:    C.DefaultDNSNegativeTTL,
+		},
+		Ns:      "localhost.",
+		Mbox:    "hostmaster.localhost.",
+		Serial:  1,
+		Refresh: 1800,
+		Retry:   900,
+		Expire:  604800,
+		// RFC 2308: the negative TTL is min(SOA TTL, SOA MINIMUM). Both carry the same
+		// constant so no client can read a longer lifetime than the other field promises.
+		Minttl: C.DefaultDNSNegativeTTL,
+	}}
+	return response
 }
