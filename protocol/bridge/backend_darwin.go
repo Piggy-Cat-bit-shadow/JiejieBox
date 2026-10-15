@@ -235,6 +235,16 @@ func (b *backendDarwin) batchReadLoop() {
 	var (
 		batch       [][]byte
 		returnPaths []tun.Return
+		// The same predicate and the same bounded backoff as backend_linux.go, which reads the same
+		// TUN through the same BatchRead. Darwin's `recvmsg_x` returns ENOBUFS/ENOMEM verbatim when
+		// the utun queue is full (sing-tun tun_darwin.go:420-437) and tun_read_error.go classifies
+		// both as recoverable, so the two bridges must not disagree about what they mean.
+		//
+		// Without the retry this loop re-read immediately: an unbounded `continue` on a persistent
+		// error is LX 3f0958bf - error, continue, error, continue at 100% of a core with a log line
+		// per iteration. Without the recoverability test it would be the opposite defect, which this
+		// loop already avoided by continuing rather than returning.
+		readRetry tun.ReadRetry
 	)
 	for {
 		headroom := 0
@@ -251,9 +261,16 @@ func (b *backendDarwin) batchReadLoop() {
 			if E.IsClosed(err) || errors.Is(err, syscall.EBADF) {
 				return
 			}
+			if !tun.IsRecoverableReadError(err) {
+				// A permanent error: end the loop once rather than spinning on it.
+				b.logger.Error(E.Cause(err, "bridge tun read"))
+				return
+			}
 			b.logger.Debug(E.Cause(err, "bridge tun read"))
+			readRetry.Wait(err)
 			continue
 		}
+		readRetry.Reset()
 		if len(packets) == 0 {
 			continue
 		}
