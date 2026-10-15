@@ -39,7 +39,8 @@ The action to perform. `route` will be used by default.
 
 !!! question "Since sing-box 1.14.0"
 
-Only available with `route`, `respond`, `reject` and `predefined` actions.
+Only available with `route`, `respond`, `reject` and `predefined` actions. Not available with
+[`adblock`](#adblock), which never consults an upstream lookup.
 
 Requires [`match_response`](/configuration/dns/rule/#match_response) (for logical rules, in sub-rules).
 Conflict with `speculative`.
@@ -339,3 +340,51 @@ List of text DNS record to respond as name servers.
 #### extra
 
 List of text DNS record to respond as extra records.
+
+### adblock
+
+```json
+{
+  "action": "adblock"
+}
+```
+
+`adblock` terminates rule evaluation and answers the matched name with a locally generated
+`NXDOMAIN`, without sending any query to an upstream server.
+
+It has no fields. The response is fixed:
+
+- rcode `NXDOMAIN`, empty answer;
+- one SOA in the authority section, owned by the queried name, with a negative TTL of 600 seconds
+  (both the SOA TTL and its `MINIMUM`, per RFC 2308);
+- `QR`, `AA`, `RD`, `RA` flags set;
+- the current request's ID and question.
+
+The SOA is what makes the answer worth more than a refusal: it lets conforming clients and operating
+systems negative-cache the verdict themselves, so they stop asking for the name — for `A`, `AAAA`,
+`HTTPS` and `SVCB` alike.
+
+Intended for advertising rule-sets:
+
+```json
+{
+  "dns": {
+    "rules": [
+      {
+        "rule_set": ["anti-ad", "AWAvenue-Ads-Rule"],
+        "action": "adblock"
+      }
+    ]
+  }
+}
+```
+
+Notes:
+
+- DNS only. It cannot be used on a route rule.
+- `race` is not available with this action.
+- The verdict is a local policy decision and is **not** written into the client's DNS cache, so
+  removing or updating the rule-set takes effect on the next query. A downstream client may still
+  hold the `NXDOMAIN` until the advertised negative TTL expires, which is normal DNS behaviour.
+- Use [`reject`](#reject) to refuse a request, and [`predefined`](#predefined) to build an arbitrary
+  response.

@@ -11,6 +11,7 @@ carries its own source anchors, provenance and evidence level.
 | Box start/close order, `Scope`, teardown, network epochs, idle retirement, `route/reference.go` | `core-lifecycle-runtime.md` |
 | Start-time validation, `detour`, selectors/urltest/loadbalance, `PhysicalPath`/`ControlPath`, failover, cycles | `path-selection-validation.md` |
 | DNS routing/caching, FakeIP, `domain_resolver`, DNS Demand, DNS leaks, network-transition DNS | `dns-demand.md` |
+| The `adblock` DNS rule action — blocking advertising names with a local NXDOMAIN, why it is not `reject`/`predefined`, and why it is not written into the client negative cache | `dns-adblock-action.md` |
 | Any sniffer, peek/read, sniff timeouts, fragmented QUIC, sniff→routing metadata | `sniff.md` |
 | MASQUE/CONNECT-IP, capsules, sessions, DATAGRAM batching, address/route/DNS/PREF64, PTB | `masque-connectip.md` |
 | Native Naive, HTTP CONNECT proxy, `transport/http`, `http_clients`, target ACL, padding/masquerade | `naive-http-transport.md` |
