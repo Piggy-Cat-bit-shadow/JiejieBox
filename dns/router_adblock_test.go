@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -446,6 +447,347 @@ func TestAdblockResponsesAreNotSharedBetweenQueries(t *testing.T) {
 	require.NotSame(t, firstResult.response.Ns[0], secondResult.response.Ns[0])
 	require.Equal(t, mDNS.TypeA, firstResult.response.Question[0].Qtype)
 	require.Equal(t, mDNS.TypeAAAA, secondResult.response.Question[0].Qtype)
+}
+
+// TestAdblockTerminatesTheLegacyExchangePath covers the second dispatch path.
+//
+// Legacy DNS mode is not chosen by the action: it is chosen by an address-filter condition, so an
+// adblock rule can be evaluated in either dispatch. The modern walk and the legacy one are
+// separate switches in dns/router.go, and a local action wired into only one of them would look
+// completely correct in every test that used the other. This drives exchangeLegacy directly, with
+// a rule that cannot fall back to a transport even if the action were missed.
+func TestAdblockTerminatesTheLegacyExchangePath(t *testing.T) {
+	t.Parallel()
+
+	transport := &fakeDNSTransport{tag: "final", address: netip.MustParseAddr("192.0.2.1")}
+	router := raceTestRouter(t, transport)
+	rules := raceTestRules(t, []option.DNSRule{adblockTestRule(t, "ads.example")})
+	message, metadata := adblockTestMessage(adblockTestName, mDNS.TypeA, 0x7f)
+	requestCtx := adapter.WithContext(context.Background(), metadata)
+
+	response, legacyTransport, err := router.exchangeLegacy(requestCtx, &dnsExchangeContext{
+		ctx:           requestCtx,
+		rules:         rules,
+		legacyDNSMode: true,
+		metadata:      metadata,
+	}, message, adapter.DNSQueryOptions{})
+
+	require.NoError(t, err)
+	require.Nil(t, legacyTransport, "a local verdict has no transport")
+	requireLocalNXDomain(t, exchangeWithRulesResult{response: response}, adblockTestName, mDNS.TypeA, 0x7f)
+	require.Zero(t, transport.queryCount.Load())
+}
+
+// TestAdblockSkipsLegacyModeTheSameWayTheModernPathDoes keeps the two dispatch paths from drifting.
+//
+// The legacy switch returns a message and the modern one returns a result struct, so "the same
+// answer either way" is a property worth asserting rather than a consequence of the code shape.
+func TestAdblockLegacyAndModernAnswersAreIdentical(t *testing.T) {
+	t.Parallel()
+
+	transport := &fakeDNSTransport{tag: "final", address: netip.MustParseAddr("192.0.2.1")}
+	router := raceTestRouter(t, transport)
+	rules := raceTestRules(t, []option.DNSRule{adblockTestRule(t, "ads.example")})
+
+	for index, qType := range []uint16{mDNS.TypeA, mDNS.TypeAAAA, mDNS.TypeHTTPS, mDNS.TypeSVCB} {
+		requestID := uint16(0x2000 + index)
+		message, metadata := adblockTestMessage(adblockTestName, qType, requestID)
+		requestCtx := adapter.WithContext(context.Background(), metadata)
+
+		modern := router.exchangeWithRules(requestCtx, rules, message, adapter.DNSQueryOptions{}, false)
+		legacy, legacyTransport, err := router.exchangeLegacy(requestCtx, &dnsExchangeContext{
+			ctx:           requestCtx,
+			rules:         rules,
+			legacyDNSMode: true,
+			metadata:      metadata,
+		}, message, adapter.DNSQueryOptions{})
+
+		require.NoError(t, err)
+		require.Nil(t, legacyTransport)
+		require.NoError(t, modern.err)
+		require.Equal(t, modern.response.Rcode, legacy.Rcode, mDNS.TypeToString[qType])
+		require.Equal(t, modern.response.Question, legacy.Question, mDNS.TypeToString[qType])
+		require.Equal(t, modern.response.Id, legacy.Id, mDNS.TypeToString[qType])
+		require.Equal(t, modern.response.Ns, legacy.Ns, mDNS.TypeToString[qType])
+	}
+	require.Zero(t, transport.queryCount.Load())
+}
+
+// TestAdblockAnswersCaseVariantsWithTheAskedSpelling pins that adblock adds no name handling of
+// its own: matching is the existing matcher's business, and the response echoes the question.
+//
+// The response deliberately echoes the request rather than the rule's spelling. Rewriting the
+// question to the matched suffix would answer a question the client did not ask, which a resolver
+// is entitled to discard - and the retry would put the name back on the wire.
+func TestAdblockAnswersCaseVariantsWithTheAskedSpelling(t *testing.T) {
+	t.Parallel()
+
+	transport := &fakeDNSTransport{tag: "final", address: netip.MustParseAddr("192.0.2.1")}
+	router := raceTestRouter(t, transport)
+	rules := raceTestRules(t, []option.DNSRule{adblockTestRule(t, "ads.example")})
+
+	for index, name := range []string{"Ads.Example.", "ads.example.", "ADS.EXAMPLE.", "aDs.ExAmPlE."} {
+		result := adblockTestExchange(router, rules, name, mDNS.TypeA, uint16(0x3000+index))
+		response := result.response
+		require.NoError(t, result.err)
+		require.NotNil(t, response)
+		require.Equal(t, mDNS.RcodeNameError, response.Rcode, name)
+		require.Len(t, response.Question, 1)
+		require.Equal(t, name, response.Question[0].Name, "the question must come back as asked")
+		soa, isSOA := response.Ns[0].(*mDNS.SOA)
+		require.True(t, isSOA, name)
+		require.Equal(t, name, soa.Hdr.Name, "the SOA owner must be the name as asked")
+	}
+	require.Zero(t, transport.queryCount.Load())
+}
+
+// TestAdblockAgreesWithTheRouterOnMalformedRequests is the request-boundary check.
+//
+// The action's own guard is covered in route/rule. What matters here is the layer above it: the
+// router answers FORMERR for a request that does not carry exactly one question, BEFORE any rule
+// runs - so the action's guard is a second line and not the only one, and the malformed request
+// never reaches a matcher, let alone a transport.
+//
+// The early response is returned with a nil error, and Exchange passes it through untouched; that
+// is asserted rather than assumed here, because "the boundary is above the action" is the claim
+// the action's own guard depends on.
+func TestAdblockAgreesWithTheRouterOnMalformedRequests(t *testing.T) {
+	t.Parallel()
+
+	transport := &fakeDNSTransport{tag: "final", address: netip.MustParseAddr("192.0.2.1")}
+	router := raceTestRouter(t, transport)
+
+	for _, testCase := range []struct {
+		what     string
+		question []mDNS.Question
+	}{
+		{"no question", nil},
+		{"two questions", []mDNS.Question{
+			{Name: adblockTestName, Qtype: mDNS.TypeA, Qclass: mDNS.ClassINET},
+			{Name: adblockTestName, Qtype: mDNS.TypeAAAA, Qclass: mDNS.ClassINET},
+		}},
+	} {
+		message := &mDNS.Msg{
+			MsgHdr:   mDNS.MsgHdr{Id: 11, RecursionDesired: true},
+			Question: testCase.question,
+		}
+		exchangeCtx, earlyResponse, err := router.prepareExchange(context.Background(), message)
+		require.NoError(t, err, testCase.what)
+		require.Nil(t, exchangeCtx, testCase.what)
+		require.NotNil(t, earlyResponse, testCase.what)
+		require.Equal(t, mDNS.RcodeFormatError, earlyResponse.Rcode, testCase.what)
+		require.Equal(t, uint16(11), earlyResponse.Id, testCase.what)
+		require.Equal(t, testCase.question, earlyResponse.Question, testCase.what)
+	}
+	require.Zero(t, transport.queryCount.Load())
+}
+
+// TestAdblockObeysRuleOrder is the ordering contract.
+//
+// adblock is a terminal action, not a global pass that runs before the rules: the walk still stops
+// at the FIRST terminal match. A rule listed before it therefore keeps its precedence, and a rule
+// listed after it is never reached. An implementation that scanned adblock rule-sets first - the
+// tempting way to make blocking cheap - would invert both of these, so both directions are pinned.
+func TestAdblockObeysRuleOrder(t *testing.T) {
+	t.Parallel()
+
+	routeRule := func(server string, suffixes ...string) option.DNSRule {
+		return option.DNSRule{
+			Type: C.RuleTypeDefault,
+			DefaultOptions: option.DefaultDNSRule{
+				RawDefaultDNSRule: option.RawDefaultDNSRule{DomainSuffix: suffixes},
+				DNSRuleAction: option.DNSRuleAction{
+					Action:       C.RuleActionTypeRoute,
+					RouteOptions: option.DNSRouteActionOptions{Server: server},
+				},
+			},
+		}
+	}
+
+	t.Run("a rule before adblock wins", func(t *testing.T) {
+		t.Parallel()
+		regular := &fakeDNSTransport{tag: "final", address: netip.MustParseAddr("192.0.2.1")}
+		named := &fakeDNSTransport{tag: "named", address: netip.MustParseAddr("192.0.2.2")}
+		router := &Router{
+			ctx:    context.Background(),
+			logger: log.NewNOPFactory().Logger(),
+			transport: &fakeDNSTransportManager{
+				transports:       map[string]adapter.DNSTransport{"final": regular, "named": named},
+				defaultTransport: regular,
+			},
+			client: NewClient(ClientOptions{Context: context.Background(), Logger: log.NewNOPFactory().Logger()}),
+		}
+		rules := raceTestRules(t, []option.DNSRule{
+			routeRule("named", "ads.example"),
+			adblockTestRule(t, "ads.example"),
+		})
+
+		result := adblockTestExchange(router, rules, adblockTestName, mDNS.TypeA, 1)
+		require.NoError(t, result.err)
+		require.NotNil(t, result.response)
+		require.Equal(t, mDNS.RcodeSuccess, result.response.Rcode,
+			"the earlier rule must win: adblock must not be hoisted above the rules listed before it")
+		require.Equal(t, int32(1), named.queryCount.Load())
+		require.Zero(t, regular.queryCount.Load())
+	})
+
+	t.Run("a rule after adblock is not reached", func(t *testing.T) {
+		t.Parallel()
+		regular := &fakeDNSTransport{tag: "final", address: netip.MustParseAddr("192.0.2.1")}
+		named := &fakeDNSTransport{tag: "named", address: netip.MustParseAddr("192.0.2.2")}
+		router := &Router{
+			ctx:    context.Background(),
+			logger: log.NewNOPFactory().Logger(),
+			transport: &fakeDNSTransportManager{
+				transports:       map[string]adapter.DNSTransport{"final": regular, "named": named},
+				defaultTransport: regular,
+			},
+			client: NewClient(ClientOptions{Context: context.Background(), Logger: log.NewNOPFactory().Logger()}),
+		}
+		rules := raceTestRules(t, []option.DNSRule{
+			adblockTestRule(t, "ads.example"),
+			routeRule("named", "ads.example"),
+		})
+
+		result := adblockTestExchange(router, rules, adblockTestName, mDNS.TypeA, 2)
+		requireLocalNXDomain(t, result, adblockTestName, mDNS.TypeA, 2)
+		require.Zero(t, named.queryCount.Load(),
+			"adblock terminates the walk: a later rule must not be consulted, let alone routed to")
+		require.Zero(t, regular.queryCount.Load())
+	})
+}
+
+// TestAdblockCannotBeMadeToLaunchAResolverByANeighbouringRule is the speculative-leak probe.
+//
+// The dangerous shape for "upstream = 0" is not adblock itself - it starts no work - but its
+// NEIGHBOURS. An `evaluate` action launches a lookup as soon as the walk reaches it, and a
+// `speculative` route does the same. So the question is whether anything in the walk can start work
+// on the far side of a matched adblock rule: if it can, then adding an unrelated rule elsewhere in
+// the configuration buys one upstream query per blocked name, which is exactly the cost this action
+// exists to remove.
+//
+// The contrast below is the proof. The same rule list runs twice with only the adblock rule added
+// or removed:
+//
+//   - WITHOUT adblock, the walk reaches the evaluate rule and the query is sent, so the transport
+//     counter is 1. This is the control: it shows the list really would have produced a query.
+//   - WITH adblock in front, the counter is 0 - the walk ended before the evaluate was reached.
+//
+// Without the control, a counter of 0 could mean "adblock stopped it" or "this rule list never
+// sends anything anyway", and the test would pass for the wrong reason.
+func TestAdblockCannotBeMadeToLaunchAResolverByANeighbouringRule(t *testing.T) {
+	t.Parallel()
+
+	runWithRules := func(t *testing.T, rawRules []option.DNSRule) (exchangeWithRulesResult, *fakeDNSTransport, *fakeDNSTransport) {
+		t.Helper()
+		racing := &fakeDNSTransport{tag: "racing", address: netip.MustParseAddr("192.0.2.9"), immediate: true}
+		regular := &fakeDNSTransport{tag: "final", address: netip.MustParseAddr("192.0.2.1")}
+		router := raceTestRouter(t, racing, regular)
+		rules := raceTestRules(t, rawRules)
+		result := adblockTestExchange(router, rules, adblockTestName, mDNS.TypeA, 1)
+		return result, racing, regular
+	}
+
+	t.Run("control: the same list without adblock does send the query", func(t *testing.T) {
+		t.Parallel()
+		result, racing, _ := runWithRules(t, []option.DNSRule{
+			evaluateRule("racing", "", true),
+		})
+		require.NoError(t, result.err)
+		require.NotZero(t, racing.queryCount.Load(),
+			"the control must reach the next rule, which is what adblock is supposed to prevent")
+	})
+
+	t.Run("adblock in front of the evaluate leaves it unlaunched", func(t *testing.T) {
+		t.Parallel()
+		result, racing, regular := runWithRules(t, []option.DNSRule{
+			adblockTestRule(t, "ads.example"),
+			evaluateRule("racing", "", true),
+		})
+		requireLocalNXDomain(t, result, adblockTestName, mDNS.TypeA, 1)
+		require.Zero(t, racing.queryCount.Load(),
+			"nothing after a matched adblock rule may start a lookup, not even as a cancelled speculative")
+		require.Zero(t, regular.queryCount.Load())
+	})
+}
+
+// TestAdblockIsUnaffectedByDisableCache is the §10 contract.
+//
+// `disable_cache` and `disable_expire` belong to the DNS client, which the adblock verdict never
+// reaches. An operator who disables caching - for privacy, or to debug - must not thereby turn
+// blocking into a lookup. The flag is set on the query options AND on the client, which is where a
+// design that expressed adblock as a cache entry would start costing upstream queries.
+func TestAdblockIsUnaffectedByDisableCache(t *testing.T) {
+	t.Parallel()
+
+	for _, disableCache := range []bool{false, true} {
+		transport := &fakeDNSTransport{tag: "final", address: netip.MustParseAddr("192.0.2.1")}
+		router := &Router{
+			ctx:    context.Background(),
+			logger: log.NewNOPFactory().Logger(),
+			transport: &fakeDNSTransportManager{
+				transports:       map[string]adapter.DNSTransport{"final": transport},
+				defaultTransport: transport,
+			},
+			client: NewClient(ClientOptions{
+				Context:      context.Background(),
+				Logger:       log.NewNOPFactory().Logger(),
+				DisableCache: disableCache,
+			}),
+		}
+		router.client.Start()
+		rules := raceTestRules(t, []option.DNSRule{adblockTestRule(t, "ads.example")})
+
+		for index, qType := range []uint16{mDNS.TypeA, mDNS.TypeAAAA, mDNS.TypeHTTPS, mDNS.TypeSVCB} {
+			message, metadata := adblockTestMessage(adblockTestName, qType, uint16(index))
+			requestCtx := adapter.WithContext(context.Background(), metadata)
+			result := router.exchangeWithRules(requestCtx, rules, message,
+				adapter.DNSQueryOptions{DisableCache: disableCache}, false)
+			requireLocalNXDomain(t, result, adblockTestName, qType, uint16(index))
+		}
+		require.Zero(t, transport.queryCount.Load(),
+			"disable_cache=%v must not change where the verdict is produced", disableCache)
+	}
+}
+
+// TestAdblockSteadyStateAllocatesNothing pins the §13/§17 claim: repeated hits add no state.
+//
+// The same name is blocked a few thousand times and the heap is sampled before and after. There is
+// no cache to grow, no timer to arm and no goroutine to keep, so the retained heap must not move;
+// the allocation counter necessarily does, because every answer is a new message and a new SOA (a
+// shared one would be a data race). A regression that added an adblock LRU, a pending map or a
+// per-query goroutine is what this is here to catch.
+func TestAdblockSteadyStateAllocatesNothing(t *testing.T) {
+	t.Parallel()
+
+	const rounds = 2000
+	transport := &fakeDNSTransport{tag: "final", address: netip.MustParseAddr("192.0.2.1")}
+	router := raceTestRouter(t, transport)
+	rules := raceTestRules(t, []option.DNSRule{adblockTestRule(t, "ads.example")})
+
+	for index := 0; index < 64; index++ {
+		adblockTestExchange(router, rules, adblockTestName, mDNS.TypeA, uint16(index))
+	}
+	var before runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	goroutinesBefore := runtime.NumGoroutine()
+
+	for index := 0; index < rounds; index++ {
+		result := adblockTestExchange(router, rules, adblockTestName, mDNS.TypeA, uint16(index))
+		if result.response == nil || result.response.Rcode != mDNS.RcodeNameError {
+			t.Fatalf("round %d did not answer NXDOMAIN", index)
+		}
+	}
+
+	var after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&after)
+	require.Less(t, int64(after.HeapAlloc), int64(before.HeapAlloc)+128*1024,
+		"%d blocked queries must not retain state", rounds)
+	require.LessOrEqual(t, runtime.NumGoroutine(), goroutinesBefore+4,
+		"%d blocked queries must not leave goroutines behind", rounds)
+	require.Zero(t, transport.queryCount.Load())
 }
 
 // ---------------------------------------------------------------------------

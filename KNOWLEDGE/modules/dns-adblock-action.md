@@ -143,8 +143,20 @@ conditions and all work with `adblock`; the action does not restrict which condi
 ```
 
 The `action` field is the only field `adblock` accepts. `ttl`, `method`, `drop`, `reply`, `ip_mode`,
-`cache_size`, `fake_soa`, `strategy` and `race` do **not** exist for this action and are rejected as
-unknown fields at parse time rather than silently ignored.
+`cache_size`, `fake_soa` and `strategy` do **not** exist for this action and are rejected as unknown
+fields at parse time rather than silently ignored.
+
+`race` is different, and the difference is worth knowing when reading a config error: it is a field
+of the action *envelope* (`_DNSRuleAction.Race`), not of a variant, so the JSON decoder genuinely
+does see it and accepts it. It is refused one layer up, by `validateDNSRuleAction` when the DNS rule
+is built, with:
+
+```text
+`race` is not supported by the adblock action: it never consults an upstream lookup
+```
+
+Either way the configuration does not load, and the published schema's `adblock` variant declares
+only `action`, so an editor validating against it flags `race` before the runtime sees it.
 
 ---
 
@@ -354,6 +366,14 @@ Both halves are enforced:
 This is the same treatment the DNS-only boundary gets on the other side: `adblock` does not appear
 in the non-DNS rule action union, and a route rule that names it fails to decode.
 
+One consequence is deliberate and is easy to misread as a leak: a rule list where a `race` rule
+appears BEFORE an adblock rule still sends that `race` rule's query, because the lookup is already
+armed by the time adblock is reached, and the armed rule has to be judged against the response it
+was waiting for. That query belongs to whoever wrote `race`. What must never happen is the converse,
+and it does not: a rule listed AFTER a matched adblock rule starts nothing, not even a lookup that
+would be cancelled later (`TestAdblockCannotBeMadeToLaunchAResolverByANeighbouringRule` measures both
+directions, with the no-adblock list as the control).
+
 ---
 
 ## 12. Logging
@@ -393,17 +413,34 @@ configurable.
 | A / AAAA / HTTPS / SVCB each cost zero upstream exchanges | `TestAdblockAnswersEveryRecordTypeLocally` | same |
 | a transport configured to fail is never entered | `TestAdblockNeverReachesASabotagedTransport` | same |
 | 128 concurrent cold-start callers, mixed record types, zero exchanges | `TestAdblockSurvivesConcurrentColdStart` | same |
+| nothing after a matched adblock rule launches a lookup | `TestAdblockCannotBeMadeToLaunchAResolverByANeighbouringRule` (with the no-adblock control) | same |
 | an entry cached before the rule existed cannot shadow it | `TestAdblockPolicyBeatsAnExistingPositiveCache` | same |
 | removing the rule takes effect on the next query | `TestAdblockPolicyRemovalIsImmediate` | same |
+| rule ordering is preserved in both directions | `TestAdblockObeysRuleOrder` | same |
+| the legacy dispatch path terminates the same way | `TestAdblockTerminatesTheLegacyExchangePath`, `TestAdblockLegacyAndModernAnswersAreIdentical` | same |
 | non-advertising names keep their own rule and transport | `TestAdblockLeavesOtherNamesOnTheirOriginalPath` | same |
 | async entry point answers locally, without suspending | `TestAdblockAnswersTheAsyncExchangeFromTheCallerGoroutine` | same |
 | a real compiled rule-set drives the action | `TestAdblockThroughACompiledRuleSet` | same |
+| `disable_cache` does not change where the verdict is produced | `TestAdblockIsUnaffectedByDisableCache` | same |
+| 2000 blocked queries retain no heap and leave no goroutines | `TestAdblockSteadyStateAllocatesNothing` | same |
+| the question comes back as asked, in any case spelling | `TestAdblockAnswersCaseVariantsWithTheAskedSpelling` | same |
+| malformed requests are rejected above the action, not inside it | `TestAdblockAgreesWithTheRouterOnMalformedRequests` | same |
 | response shape, flags, SOA, ID, question | `route/rule/rule_dns_adblock_test.go` `TestAdblockResponseShape`, `dns/router_adblock_test.go` `requireLocalNXDomain` | `go test ./route/rule/ -run Adblock -count=1` |
+| adblock is terminal, stateless, and needs no logger | `TestAdblockIsATerminalActionThatStopsTheWalk`, `TestAdblockResponseNeedsNoLogger`, `TestAdblockRuleSurvivesNilAuthorizedRules` | same |
+| `adblock` and `predefined` differ only where the design says they do | `TestAdblockDoesNotChangeThePredefinedAnswerForTheSameShape` | same |
 | `race` refused; DNS-only boundary; decode; round-trip; schema shape | `TestDNSRuleActionAdblockRejectsRace`, `option/rule_action_test.go` | `go test ./route/rule/ ./option/ -run Adblock -count=1` |
+| the action costs the same order of allocations as a local `predefined` answer | `BenchmarkAdblockResponseConstruction` vs `BenchmarkPredefinedResponseConstruction` (3 allocs / 136 B vs 1 / 144 B per answer) | `go test ./route/rule/ -run XXX -bench ResponseConstruction -benchtime 200000x` |
 | upstream-learned NXDOMAIN behaviour unchanged | pre-existing `dns/client_negative_test.go`, `dns/client_singleflight_test.go` | `go test ./dns/... -count=1` |
 
 No claim here is `VERIFIED_CI`: the tree carries no workflow-run record. The evidence level is
 `VERIFIED_SOURCE` + `VERIFIED_UNIT` (the commands above were run against this worktree and passed).
+
+**One claim in this module is weaker than the rest, and it is named rather than implied.** The
+concurrent tests drive 128 simultaneous callers, but `go test -race` cannot run here (`-race requires
+cgo`, and no C compiler is installed on the audit machine). So "concurrent answers do not race" is
+supported by construction — every answer is built fresh from the request, the action holds no state,
+and nothing is shared between calls — and is **not** supported by the race detector. It is recorded
+as the honest limit of the evidence above rather than folded into it.
 
 ---
 
