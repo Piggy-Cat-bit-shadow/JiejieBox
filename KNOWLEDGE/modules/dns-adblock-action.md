@@ -328,6 +328,44 @@ Works with: `domain`, `domain_suffix`, `domain_keyword`, `domain_regex`, `rule_s
 `invert`, and any other DNS rule condition — the action is applied after a match and does not care
 what produced it.
 
+### A pinned resolver bypasses the rule walk entirely
+
+**This action does not apply to a lookup whose transport is pinned by the caller.** It is the
+pre-existing contract for *every* DNS rule action, not something specific to `adblock`, and it is
+recorded here because it is surprising: a name that the rules block will still resolve when
+something asks for it through a pinned server.
+
+```go
+dns/router.go
+    if options.Transport != nil {
+        ...                                  // the rule walk is never entered
+    } else if !legacyDNSMode {
+        responseAddrs, err = r.lookupWithRules(...)
+```
+
+The pin comes from configuration, so this is reachable in production rather than theoretical:
+
+```text
+domain_resolver on an outbound       common/dialer/dialer.go  dnsQueryOptions.Transport, _ = dnsTransport.Transport(...)
+route.default_domain_resolver        the same path
+```
+
+MEASURED, with an `adblock` rule for the name in place:
+
+```text
+Lookup("ads.example.", Transport = pinned)   addresses = [203.0.113.9]   err = <nil>   queryCount = 2
+Lookup("ads.example.", Transport = nil)      addresses = []              err = NXDOMAIN  queryCount = 0
+```
+
+So a dialer whose `domain_resolver` names a server resolves a blocked name through that server and
+connects. The action is not broken — it is never consulted — and changing that would mean changing
+what a pinned resolver means for every DNS action, which is out of scope for this feature.
+
+**Operator consequence:** if a name must not resolve for a dialer, the rule has to be enforced
+where the dialer's resolution happens. Either do not pin a `domain_resolver` for the name, pin one
+that enforces the block itself, or block at the route level (`reject`/`drop` on the destination)
+rather than at DNS.
+
 ---
 
 ## 10. Not handled
@@ -341,6 +379,7 @@ transport reject/drop              — adblock is not an alias for reject and sh
 Fake-IP reverse mapping
 a dedicated adblock cache/LRU/timer/goroutine
 disk persistence of advertising verdicts
+a lookup through a PINNED resolver — see §9: the rule walk is not entered at all
 ```
 
 An advertising rule whose `ip_cidr` list is non-empty still only blocks the **DNS** names that match

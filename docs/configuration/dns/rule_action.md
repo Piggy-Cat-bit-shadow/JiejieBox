@@ -364,6 +364,14 @@ The SOA is what makes the answer worth more than a refusal: it lets conforming c
 systems negative-cache the verdict themselves, so they stop asking for the name — for `A`, `AAAA`,
 `HTTPS` and `SVCB` alike.
 
+!!! note "A pinned resolver bypasses DNS rules"
+
+    A lookup that names its own DNS server — `domain_resolver` on an outbound, or
+    `route.default_domain_resolver` — does not go through the rule list, so no DNS rule action
+    applies to it and `adblock` will not block the name. This is true of every DNS rule action,
+    not only this one. If a name must not resolve for a dialer that pins a resolver, either do not
+    pin one for that name or block the destination at the route level instead.
+
 Intended for advertising rule-sets:
 
 ```json
