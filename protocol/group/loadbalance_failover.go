@@ -10,10 +10,10 @@ import (
 	"sort"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/common/interrupt"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing/common"
@@ -153,22 +153,51 @@ func RetryThisFlow(err error) bool {
 		// transition.
 		return false
 	}
-	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, io.EOF) {
+	if dialer.ErroredWith(err, dialer.ResetErrnos...) || errors.Is(err, io.EOF) {
 		// Something answered and then closed. That is the shape of a destination-side
 		// failure reported in band by a proxy protocol, so it is explicitly NOT retried: an
 		// alternate member would very likely reproduce it, and the flow's one alternate is
 		// worth more than a second look at a target that already spoke.
+		//
+		// Matched through dialer.ResetErrnos rather than against syscall.ECONNRESET, because on
+		// Windows a real reset arrives as Winsock 10054 (0x20000017 is syscall.ECONNRESET) and the
+		// raw comparison never fires. This branch is stated as an explicit test rather than left to
+		// the conservative default at the bottom of this function: the default answers the same way
+		// TODAY, so the change is behaviour-preserving, but it is only correct by coincidence until
+		// it is written down - and the moment another branch grows a broader fallback, an
+		// unclassified reset would be retried, which is precisely what this branch forbids.
 		return false
 	}
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
 		return true
 	}
-	if errors.Is(err, syscall.EHOSTUNREACH) || errors.Is(err, syscall.ENETUNREACH) ||
-		errors.Is(err, syscall.EADDRNOTAVAIL) || errors.Is(err, syscall.ENETDOWN) ||
-		errors.Is(err, syscall.ETIMEDOUT) {
+	// Matched through dialer.ErroredWith and its exported errno sets, NOT against the syscall
+	// constants directly.
+	//
+	// On Windows those constants never equal what actually arrives. Go's syscall package defines
+	// ENETUNREACH as 0x20000043 - 67 with the application-defined bit set - while the Winsock error for
+	// the same condition is 10051, and net/fd_windows.go wraps the raw ConnectEx errno with no
+	// translation. Every `errors.Is(err, syscall.E*UNREACH)` here was therefore dead on Windows, which
+	// is the platform this fork's own reports come from: a kernel-unreachable path did not retry the
+	// flow on another member, and a refusal did not demote a dead member at all.
+	//
+	// The sets are exported from common/dialer rather than copied, so the POSIX and Winsock spellings
+	// cannot drift between the two packages - the same reason that file writes its WSA values out
+	// numerically instead of taking them from a build-tagged source.
+	//
+	// ETIMEDOUT is matched through TimeoutErrnos rather than PathFailureErrnos, and the split is
+	// deliberate: that set is the FAMILY-HEALTH classifier's ("the kernel told us this family cannot
+	// carry the packet"), where a bare timeout is explicitly not a path failure because only the
+	// scheduler knows whether a stall was the network's fault. This function asks a different question
+	// - "would another member help?" - and the doc comment above already lists the kernel connect
+	// timeout as retryable. Both spellings, because a real Windows timeout is Winsock 10060.
+	if dialer.ErroredWith(err, dialer.TimeoutErrnos...) {
 		return true
 	}
-	if errors.Is(err, syscall.ECONNREFUSED) {
+	if dialer.ErroredWith(err, dialer.PathFailureErrnos...) {
+		return true
+	}
+	if dialer.ErroredWith(err, dialer.PeerAnsweredErrnos...) {
 		// A refusal is the one answer that is worth a second member. On a proxying member the
 		// refusal came from the member's own endpoint, and a different member's endpoint is
 		// very likely listening; on a direct member it came from the destination, where the
@@ -236,9 +265,17 @@ func PenalizeMemberGlobally(member adapter.Outbound, err error) bool {
 		// take a working outbound out of the rotation for every future flow.
 		return false
 	}
-	return errors.Is(err, syscall.ECONNREFUSED) ||
-		errors.Is(err, syscall.EHOSTUNREACH) ||
-		errors.Is(err, syscall.ENETUNREACH)
+	// Both facts are matched in both spellings, for the reason given at the RetryThisFlow call site:
+	// on Windows the raw Winsock errno arrives (10061, 10065, 10051) and none of the syscall
+	// constants ever matches it. This is the half that had the worse consequence - a member whose
+	// network is genuinely gone was never demoted, so it stayed in the rotation.
+	//
+	// UnreachableErrnos rather than PathFailureErrnos, because a connect that TIMED OUT is not
+	// evidence that this member's network is gone, and demoting on it would take a working outbound
+	// out of the rotation for a slow destination. The two sets differ by exactly that member, which
+	// is why they are separate.
+	return dialer.ErroredWith(err, dialer.PeerAnsweredErrnos...) ||
+		dialer.ErroredWith(err, dialer.UnreachableErrnos...)
 }
 
 // memberDialsDestination reports whether a failure from this member describes the flow's

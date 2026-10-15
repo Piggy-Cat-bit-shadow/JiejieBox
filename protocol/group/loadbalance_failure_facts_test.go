@@ -50,6 +50,13 @@ type factRow struct {
 	// The policies.
 	retry  bool
 	global bool
+
+	// terminalForTheFlow marks a row that is a REAL failure - neither "not measured" nor unknown -
+	// whose correct answer is nevertheless "do not retry the flow and do not blame the member":
+	// something on the path answered and then closed. It is a field rather than a list of row names
+	// so that the same condition in its second spelling (syscall.ECONNRESET and the Winsock 10054
+	// that Windows actually delivers) is covered by adding a row, not by editing an assertion.
+	terminalForTheFlow bool
 }
 
 func factTable() []factRow {
@@ -81,9 +88,42 @@ func factTable() []factRow {
 		{name: "ECONNREFUSED", err: syscall.ECONNREFUSED, retry: true, global: true},
 		{name: "wrapped ECONNREFUSED", err: wrapped, retry: true, global: true},
 
+		// --- the SAME conditions in the spelling Windows actually delivers -----------------------
+		//
+		// These rows are the reason this defect survived review, and they are not hypothetical. Go's
+		// syscall package on Windows defines ENETUNREACH as 0x20000043 - 67 with the application-defined
+		// bit set - while the Winsock error for the same condition is 10051, and net/fd_windows.go wraps
+		// the raw ConnectEx errno with no translation. So on Windows a real "network unreachable" is
+		// syscall.Errno(10051) and NEVER syscall.ENETUNREACH: every errors.Is comparison against the
+		// POSIX constant was dead, and a kernel-unreachable path did not retry on another member while a
+		// refused member was never demoted.
+		//
+		// The rows above could not catch that, because they inject the very constants the classifier
+		// compared - and on Windows those two are the same number, so both sides agreed on a value
+		// production never produces. A table that only ever feeds a classifier its own constants is a
+		// test of the table.
+		//
+		// The numbers are written out rather than aliased so that a "cleanup" which deletes the Winsock
+		// arm has to delete these rows to do it. They are the values from
+		// https://learn.microsoft.com/en-us/windows/win32/winsock/windows-sockets-error-codes-2 and are
+		// the same ones common/dialer/windows_socket_errors.go names.
+		{name: "WSAENETUNREACH (10051)", err: syscall.Errno(10051), retry: true, global: true},
+		{name: "WSAEHOSTUNREACH (10065)", err: syscall.Errno(10065), retry: true, global: true},
+		{name: "WSAECONNREFUSED (10061)", err: syscall.Errno(10061), retry: true, global: true},
+		{name: "WSAETIMEDOUT (10060)", err: syscall.Errno(10060), retry: true},
+		// Retried but NOT blamed on the member: the local interface is shared by every member, which is
+		// the same divergence the POSIX rows above document.
+		{name: "WSAEADDRNOTAVAIL (10049)", err: syscall.Errno(10049), retry: true},
+		{name: "WSAENETDOWN (10050)", err: syscall.Errno(10050), retry: true},
+		// Wrapped and joined, because the standard library wraps these and a multi-error is how the
+		// failover path actually combines attempt failures.
+		{name: "wrapped WSAENETUNREACH", err: fmt.Errorf("dial tcp 10.0.0.1:443: %w", syscall.Errno(10051)), retry: true, global: true},
+		{name: "joined WSAECONNREFUSED", err: errors.Join(errors.New("attempt 1"), syscall.Errno(10061)), retry: true, global: true},
+
 		// --- measured and bad, but not evidence about the path ----------------------------------
-		{name: "ECONNRESET", err: syscall.ECONNRESET},
-		{name: "io.EOF", err: io.EOF},
+		{name: "ECONNRESET", err: syscall.ECONNRESET, terminalForTheFlow: true},
+		{name: "WSAECONNRESET (10054)", err: syscall.Errno(10054), terminalForTheFlow: true},
+		{name: "io.EOF", err: io.EOF, terminalForTheFlow: true},
 
 		// --- not understood at all: every consumer must be conservative -------------------------
 		{name: "nil", err: nil},
@@ -150,7 +190,7 @@ func TestTheFactsCoverTheWholeCancellationFamily(t *testing.T) {
 			require.False(t, notMeasured, "%s must not be classified as 'not measured'", row.name)
 			continue
 		}
-		require.Equal(t, !(row.retry || row.global || row.name == "ECONNRESET" || row.name == "io.EOF"),
+		require.Equal(t, !(row.retry || row.global || row.terminalForTheFlow),
 			notMeasured, "%s: the cancellation family and the path-failure family disagree", row.name)
 	}
 }
