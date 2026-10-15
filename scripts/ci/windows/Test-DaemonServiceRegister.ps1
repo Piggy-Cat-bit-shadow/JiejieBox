@@ -12,7 +12,7 @@
 [CmdletBinding()]
 param(
     [string]$InstallRoot = 'C:\src\sfw-test\sing-box',
-    [string]$WorkingDirectory = 'C:\ProgramData\sing-box-daemon-test',
+    [string]$WorkingDirectory = 'C:\ProgramData\jiejiebox-daemon-test',
     [string]$LogPath = 'C:\src\_toolchain\p0-2-registration.json',
     [switch]$DryRun,
     [switch]$Uninstall,
@@ -112,7 +112,7 @@ Write-Host ("  user / elevated : {0} / {1}" -f $identity.Name, $isAdmin)
 $record.preflight.elevated = $isAdmin
 $record.preflight.user = $identity.Name
 
-$svcBefore = Get-CimInstance Win32_Service -Filter "Name='sing-box-daemon'" -ErrorAction SilentlyContinue
+$svcBefore = Get-CimInstance Win32_Service -Filter "Name='jiejiebox-daemon'" -ErrorAction SilentlyContinue
 $record.preflight.serviceBefore = if ($svcBefore) { "$($svcBefore.State) :: $($svcBefore.PathName)" } else { 'not installed' }
 Write-Host ("  service before  : {0}" -f $record.preflight.serviceBefore)
 
@@ -169,7 +169,7 @@ $record.attempt = [ordered]@{
 }
 
 Write-Section 'SERVICE STATE AFTER'
-$svcAfter = Get-CimInstance Win32_Service -Filter "Name='sing-box-daemon'" -ErrorAction SilentlyContinue
+$svcAfter = Get-CimInstance Win32_Service -Filter "Name='jiejiebox-daemon'" -ErrorAction SilentlyContinue
 if ($svcAfter) {
     $svcAfter | Select-Object Name, State, StartName, StartMode, PathName, ProcessId | Format-List
     $record.after = [ordered]@{ state = "$($svcAfter.State)"; startName = "$($svcAfter.StartName)"; pathName = "$($svcAfter.PathName)"; processId = $svcAfter.ProcessId }

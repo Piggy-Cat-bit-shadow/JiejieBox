@@ -81,7 +81,7 @@ permissions:
 
 env:
   RECORDS_DIR: build/records
-  SERVICE_WORK_DIR: C:\ProgramData\sing-box-daemon-ci-smoke
+  SERVICE_WORK_DIR: C:\ProgramData\jiejiebox-daemon-ci-smoke
   PROBE_DIR: C:\Program Files\sing-box-ci-probe
 
 jobs:
@@ -354,7 +354,7 @@ jobs:
           ./tooling/scripts/ci/windows/Test-SecureServiceInstall.ps1 `
             -PackagedDirectory "$env:UNPACKED_DIR" `
             -ProbeDirectory "$env:PROBE_DIR" `
-            -WorkingDirectory "C:\ProgramData\sing-box-daemon" `
+            -WorkingDirectory "C:\ProgramData\jiejiebox-daemon" `
             -RecordPath "$env:RECORDS_DIR/secure-service-install.txt"
 
       - name: "[gate 6] NSIS install / reinstall / uninstall lifecycle"
@@ -452,10 +452,10 @@ jobs:
           # would be both wrong and unsafe.
           $ErrorActionPreference = "Continue"
           . (Join-Path $PWD "tooling/scripts/ci/windows/GateHelpers.ps1")
-          $service = Get-Service -Name "sing-box-daemon" -ErrorAction SilentlyContinue
+          $service = Get-Service -Name "jiejiebox-daemon" -ErrorAction SilentlyContinue
           if ($null -ne $service) {
-            Write-Host "removing a leftover sing-box-daemon service"
-            $deleted = Invoke-NativeCommand { sc.exe delete "sing-box-daemon" }
+            Write-Host "removing a leftover jiejiebox-daemon service"
+            $deleted = Invoke-NativeCommand { sc.exe delete "jiejiebox-daemon" }
             Write-Host "  sc.exe delete exited $($deleted.ExitCode)"
           }
           $state = Get-InstallationState
@@ -476,13 +476,13 @@ jobs:
               foreach ($line in (Format-UninstallEntries -Entries $matches)) { Write-Host $line }
             } else {
               Write-Host "no uninstall entry matched $($state.Root); deleting only the service"
-              $deleted = Invoke-NativeCommand { sc.exe delete "sing-box-daemon" }
+              $deleted = Invoke-NativeCommand { sc.exe delete "jiejiebox-daemon" }
               Write-Host "  sc.exe delete exited $($deleted.ExitCode)"
             }
           } else {
             Write-Host "no leftover installation was identifiable"
           }
-          foreach ($leftover in @($env:SERVICE_WORK_DIR, $env:PROBE_DIR, "C:\ProgramData\sing-box-daemon")) {
+          foreach ($leftover in @($env:SERVICE_WORK_DIR, $env:PROBE_DIR, "C:\ProgramData\jiejiebox-daemon")) {
             if (Test-Path -LiteralPath $leftover) {
               Write-Host "removing leftover $leftover"
               Remove-Item -LiteralPath $leftover -Recurse -Force -ErrorAction SilentlyContinue

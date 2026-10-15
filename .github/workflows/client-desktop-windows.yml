@@ -131,7 +131,7 @@ env:
   TOOLING_SHA: ${{ inputs.tooling_sha }}
   CLIENT_DIR: core/clients/desktop
   RECORDS_DIR: build/records
-  SERVICE_WORK_DIR: C:\ProgramData\sing-box-daemon-ci-smoke
+  SERVICE_WORK_DIR: C:\ProgramData\jiejiebox-daemon-ci-smoke
 
 jobs:
   installer:
@@ -674,12 +674,12 @@ jobs:
           # service is exactly what would make the NEXT run's clean-state precondition fail.
           $ErrorActionPreference = "Continue"
           . (Join-Path $PWD "tooling/scripts/ci/windows/GateHelpers.ps1")
-          $service = Get-Service -Name "sing-box-daemon" -ErrorAction SilentlyContinue
+          $service = Get-Service -Name "jiejiebox-daemon" -ErrorAction SilentlyContinue
           if ($null -ne $service) {
-            Write-Host "removing a leftover sing-box-daemon service"
+            Write-Host "removing a leftover jiejiebox-daemon service"
             # Expected to be non-zero when the service is already gone; captured and
             # cleared so it cannot become this job's exit status.
-            $deleted = Invoke-NativeCommand { sc.exe delete "sing-box-daemon" }
+            $deleted = Invoke-NativeCommand { sc.exe delete "jiejiebox-daemon" }
             Write-Host "  sc.exe delete exited $($deleted.ExitCode)"
           }
           # Identity comes from the shared resolver, not from a display name. The installation
@@ -704,13 +704,13 @@ jobs:
               foreach ($line in (Format-UninstallEntries -Entries $matches)) { Write-Host $line }
             } else {
               Write-Host "no uninstall entry matched $($state.Root); deleting only the service"
-              $deleted = Invoke-NativeCommand { sc.exe delete "sing-box-daemon" }
+              $deleted = Invoke-NativeCommand { sc.exe delete "jiejiebox-daemon" }
               Write-Host "  sc.exe delete exited $($deleted.ExitCode)"
             }
           } else {
             Write-Host "no leftover installation was identifiable"
           }
-          foreach ($leftover in @($env:SERVICE_WORK_DIR, "C:\Program Files\sing-box-ci-probe", "C:\ProgramData\sing-box-daemon")) {
+          foreach ($leftover in @($env:SERVICE_WORK_DIR, "C:\Program Files\sing-box-ci-probe", "C:\ProgramData\jiejiebox-daemon")) {
             if (Test-Path -LiteralPath $leftover) {
               Write-Host "removing leftover $leftover"
               Remove-Item -LiteralPath $leftover -Recurse -Force -ErrorAction SilentlyContinue

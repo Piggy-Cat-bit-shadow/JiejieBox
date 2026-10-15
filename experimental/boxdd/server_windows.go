@@ -23,7 +23,11 @@ const pipeSecurityDescriptor = `D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)`
 // pipe buffer.
 const (
 	pipeBufferSize = 65536
-	daemonPipePath = `\\.\pipe\ProtectedPrefix\Administrators\sing-box`
+	// The pipe is a global machine resource in the same sense the service name is: a
+	// second install binding the same path cannot coexist with the first, and the
+	// upstream client owns `...\sing-box`. The protected prefix keeps the mandatory
+	// integrity level; only the name below it is the fork's.
+	daemonPipePath = `\\.\pipe\ProtectedPrefix\Administrators\` + serviceName
 )
 
 func listenEndpoint() (net.Listener, error) {

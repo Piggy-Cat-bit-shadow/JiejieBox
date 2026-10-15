@@ -103,19 +103,26 @@ Get-ChildItem 'C:\Program Files\Jiejiebox' | Select-Object Name
 
 ## 2. Daemon
 
-The daemon is an internal component and keeps its own name: `sing-box-daemon.exe`. That
-is not a branding defect.
+The daemon's executable keeps its own name: `sing-box-daemon.exe`. That is not a branding
+defect, and it is not the daemon's identity either - the name it serves under is
+`jiejiebox-daemon`, which is what its service is called, what its named pipe is bound
+under, and what `version` prints.
 
 | check | expected | result |
 | --- | --- | --- |
 | the GUI reaches the daemon | dashboard populates; no "cannot connect to the service" state | |
 | daemon version | `0.1.5` | |
 | the daemon is a separate process | it survives a GUI restart | |
+| the daemon's service identity | `jiejiebox-daemon`, distinct from the upstream client's `sing-box-daemon` | |
 
 ```powershell
-# What the shipped daemon reports about itself.
+# What the shipped daemon reports about itself. The name on the first line is the daemon's
+# service identity, not the file name it was launched from.
 & 'C:\Program Files\Jiejiebox\resources\daemon\sing-box-daemon.exe' version
-# Expect: sing-box-daemon version 0.1.5  /  core api version <n>
+# Expect: jiejiebox-daemon version 0.1.5  /  core api version <n>
+
+Get-Service -Name jiejiebox-daemon |
+  Select-Object Name, DisplayName, Status
 
 Get-Process | Where-Object { $_.ProcessName -match 'jiejiebox|sing-box' } |
   Select-Object ProcessName, Id, Path

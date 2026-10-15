@@ -220,7 +220,11 @@ def main():
     # --- 3. what the daemon says about itself --------------------------------
     if os.name == "nt":
         output = run([str(daemon), "version"])
-        match = re.search(r"sing-box-daemon version (\S+)", output)
+        # The reported name is the daemon's service identity, which the fork renamed so its
+        # service, event log source and named pipe stop colliding with the upstream
+        # client's. Both spellings are accepted so this remains able to read an artifact
+        # built before the rename.
+        match = re.search(r"(?:jiejiebox|sing-box)-daemon version (\S+)", output)
         reported = match.group(1) if match else None
         if reported != arguments.expect_version:
             fail(
