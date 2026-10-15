@@ -2,6 +2,7 @@ package device
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/netip"
@@ -287,6 +288,43 @@ func TestReadErrorIsFatalClassifiesTheWholeSurface(t *testing.T) {
 		{"ErrTooManySegments is retryable", tun.ErrTooManySegments, false},
 		{"wrapped ENOBUFS is still recoverable", E.Cause(syscall.ENOBUFS, "batch read packet"), false},
 		{"wrapped EPERM is still fatal", E.Cause(syscall.EPERM, "batch read packet"), true},
+
+		// --- THE WINDOWS SPELLINGS OF THE SAME FACTS -------------------------------------------
+		//
+		// These rows are the reason this table had a hole, and they are not hypothetical. Go spells
+		// errno on Windows with the application-defined bit set, so syscall.ENOBUFS is 0x20000046
+		// while the Winsock error for the same condition is 10055 - and the Windows TUN hands over
+		// the raw value:
+		//
+		//	sing-tun/tun_windows.go:428   packet, errno := t.session.ReceivePacket()
+		//	sing-tun/tun_windows.go:447   return 0, fmt.Errorf("read failed: %w", errno)
+		//
+		// fmt.Errorf preserves the chain, so these values DO reach the classifier; only the
+		// constants being compared were wrong. Every row above passes on Windows precisely because
+		// it injects the POSIX constants the classifier compares - so both sides agreed on a number
+		// production never produces. That is the test-theatre shape this fork has now hit three
+		// times (common/dialer, protocol/group, and here).
+		//
+		// The numbers are written out rather than aliased so that a "cleanup" deleting the Windows
+		// arm has to delete these rows to do it.
+		{"WSAEWOULDBLOCK (10035) is retryable on Windows", syscall.Errno(10035), false},
+		{"ERROR_NOT_ENOUGH_MEMORY (8) is a full queue, not a teardown", syscall.Errno(8), false},
+		{"ERROR_OPERATION_ABORTED (995) is a cancellation", syscall.Errno(995), false},
+		{
+			"wrapped WSAEWOULDBLOCK survives the Windows TUN's own wrapping",
+			fmt.Errorf("read failed: %w", syscall.Errno(10035)),
+			false,
+		},
+		{
+			"wrapped ERROR_NOT_ENOUGH_MEMORY survives the Windows TUN's own wrapping",
+			fmt.Errorf("read failed: %w", syscall.Errno(8)),
+			false,
+		},
+		// The negative controls: an ambiguous Windows failure must NOT become recoverable, or this
+		// loop would spin forever on a dead device.
+		{"ERROR_BUFFER_OVERFLOW (111) stays fatal", syscall.Errno(111), true},
+		{"ERROR_HANDLE_EOF (38) stays fatal", syscall.Errno(38), true},
+		{"an unknown Windows errno stays fatal", syscall.Errno(1234), true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			require.Equal(t, testCase.fatal, instance.readErrorIsFatal(testCase.err),

@@ -280,11 +280,22 @@ func (d *systemDevice) readLoopDarwin(tunInterface tun.DarwinTUN) {
 //
 // A fatal error is still logged at Error, and a recoverable one at Debug with the retry's own
 // escalating delay, so a persistently full queue is visible without becoming a log storm.
+//
+// # Why the recoverability test is not tun.IsRecoverableReadError ALONE
+//
+// That helper compares POSIX constants, and on Windows none of them ever matches the value that
+// arrives - Go spells errno with the application-defined bit set, so syscall.ENOBUFS is 0x20000046
+// while the Winsock error for the same condition is 10055, and the Windows TUN hands over the raw
+// value (sing-tun/tun_windows.go:447 `fmt.Errorf("read failed: %w", errno)`). Classifying on the
+// POSIX set alone therefore made this function answer "fatal" for exactly the transient conditions
+// it exists to tolerate, ending the datapath on a buffer-exhausted queue - the LX 4537a1ac class
+// this predicate was added to fix, still live on one platform. See windows_read_errors.go for the
+// measurements and readErrorIsRecoverable for the platform-neutral test.
 func (d *systemDevice) readErrorIsFatal(err error) bool {
 	if E.IsClosed(err) || E.IsMulti(err, syscall.EBADF) {
 		return true
 	}
-	if tun.IsRecoverableReadError(err) {
+	if readErrorIsRecoverable(err) {
 		d.options.Logger.Debug(E.Cause(err, "read packet"))
 		return false
 	}
