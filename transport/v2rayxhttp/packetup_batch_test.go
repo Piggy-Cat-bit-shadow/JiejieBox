@@ -270,41 +270,64 @@ func TestPacketUpBatchRespectsMaxEachPostBytes(t *testing.T) {
 
 // TestPacketUpHandshakeIsNotThrottled pins the exemption in nextPostDelay: the
 // post that carries the first payload leaves promptly even when it is a separate
-// post from the VLESS header.
+// post from the VLESS header, while the interval still applies to the posts after
+// it.
 //
-// The gap stands in for the inbound's own round trip between the two writes
+// The gap between the two writes stands in for the inbound's own round trip
 // (answer the caller, read from it, relay) — local work in the hundreds of
 // microseconds to a few milliseconds, and enough to miss any sub-millisecond
-// timing window. Before the exemption this test measures 30 ms: the anti-burst
-// interval, which is what made connection setup p99 31.7 ms against the
-// reference's 1.6 ms.
+// timing window. The interval is raised to 300 ms so the two cases are separated
+// by two orders of magnitude rather than by a budget that a race-instrumented run
+// can eat: this test must fail on the mechanism, not on a slow machine.
 func TestPacketUpHandshakeIsNotThrottled(t *testing.T) {
 	t.Parallel()
+	const interval = 300 * time.Millisecond
 	transport := newRecordingTransport(false)
-	// Default post interval (30 ms) — the value a real node runs with.
-	conn := dialBatchConn(t, stubClient(t, modePacketUp, transport))
+	client := stubClient(t, modePacketUp, transport)
+	meta, err := normalizeMeta(metaOptions{ScMinPostsIntervalMs: "300-300"}, modePacketUp)
+	if err != nil {
+		t.Fatalf("normalizeMeta: %v", err)
+	}
+	client.meta = meta
+	conn := dialBatchConn(t, client)
 
-	if _, err := conn.Write([]byte("header")); err != nil {
+	waitForPayload := func(payload string) time.Duration {
+		t.Helper()
+		started := time.Now()
+		deadline := started.Add(writeFreeBudget)
+		for {
+			if _, delivered := transport.delivered(payload); delivered {
+				return time.Since(started)
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%q never reached a post", payload)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	if _, err = conn.Write([]byte("header")); err != nil {
 		t.Fatalf("header write: %v", err)
 	}
-	time.Sleep(2 * time.Millisecond)
-	started := time.Now()
-	if _, err := conn.Write([]byte("payload")); err != nil {
+	waitForPayload("header")
+	time.Sleep(20 * time.Millisecond)
+
+	if _, err = conn.Write([]byte("payload")); err != nil {
 		t.Fatalf("payload write: %v", err)
 	}
-
-	deadline := time.Now().Add(writeFreeBudget)
-	for {
-		if _, delivered := transport.delivered("payload"); delivered {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the handshake payload never reached a post")
-		}
-		time.Sleep(time.Millisecond)
+	handshake := waitForPayload("payload")
+	if handshake > interval/3 {
+		t.Fatalf("the handshake payload took %s to reach a post with a %s interval: the opening exchange paid the anti-burst throttle", handshake, interval)
 	}
-	if elapsed := time.Since(started); elapsed > 15*time.Millisecond {
-		t.Fatalf("the payload took %s to reach a post with a 30 ms post interval: the opening exchange paid the anti-burst throttle", elapsed)
+
+	// The post after the opening pair is NOT exempt: it must wait out the
+	// interval, which is what keeps this an exemption rather than a removal.
+	if _, err = conn.Write([]byte("third")); err != nil {
+		t.Fatalf("third write: %v", err)
+	}
+	throttled := waitForPayload("third")
+	if throttled < interval*2/3 {
+		t.Fatalf("the third post left after %s with a %s interval: the anti-burst throttle no longer applies", throttled, interval)
 	}
 }
 

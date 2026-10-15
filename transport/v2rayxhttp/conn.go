@@ -936,6 +936,15 @@ func (c *packetConn) Write(b []byte) (int, error) {
 // Wire compatibility is unaffected: posts are still sequential, still carry a
 // monotonic seq, and the server's reorder buffer is what reassembles them. What
 // changes is how many bytes ride in one post.
+//
+// Failure semantics, stated because buffering changes where they are observed:
+// a failed post stops the flusher and is reported by every later Write (the
+// bytes it carried are lost with it — a stream cannot pretend otherwise, and
+// the reference behaves the same way, interrupting its upload pipe and stopping
+// the posts). It does NOT close the session by itself: the download half may be
+// perfectly healthy, so teardown stays with the caller, whose Close releases the
+// pooled slot exactly once. A post failure is therefore never silent, and never
+// leaves a sequence that continues past the hole.
 type packetUplink struct {
 	conn *packetConn
 
