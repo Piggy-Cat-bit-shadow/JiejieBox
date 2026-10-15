@@ -48,14 +48,13 @@ type NetworkManager struct {
 	// interfaceFinder is held as the concrete finder because the platform path needs
 	// UpdateInterfaces, which the control.InterfaceFinder interface does not expose.
 	interfaceFinder *control.DefaultInterfaceFinder
-	// interfaceRefreshError, when set, makes the next non-platform interface refresh report this error
-	// instead of enumerating.
+	// interfaceRefreshError, when set, makes the next interface refresh report this error instead of
+	// enumerating.
 	//
-	// It exists for one assertion: that a failed refresh leaves the previous observation in place
-	// rather than replacing a real one with an empty list. A real finder on a real machine cannot be
-	// made to fail on request, and publishing an empty list in that case would report that the machine
-	// has no interfaces at all - which the capability reads as Unknown for both families, silently
-	// disabling the fast-fail rather than failing open.
+	// It exists for one assertion: that a failed refresh does not promote the previous observation to a
+	// new network generation's verdict. A real finder on a real machine cannot be made to fail on
+	// request, and the failure has to be injectable on BOTH branches - the non-platform refresh and the
+	// Darwin platform refresh - because the ordering rule they share is the thing under test.
 	//
 	// Nil in production, where it costs one predictable branch on a path that runs on network events
 	// rather than per connection.
@@ -399,17 +398,34 @@ func (r *NetworkManager) InterfaceFinder() control.InterfaceFinder {
 	return r.interfaceFinder
 }
 
+// UpdateInterfaces refreshes the interface list and, when that observation succeeded, republishes the
+// network environment and the family verdict derived from it.
+//
+// # Why the recompute is not an unconditional defer
+//
+// It used to be, and that made a failed refresh publish the PREVIOUS network's verdict under the NEW
+// network's ownership. The fingerprint comes from the default interface's gateways, which come from
+// the interface list, so a hand-over whose refresh failed can still move it - and the recompute would
+// then claim a new epoch with a capability computed from addressing the machine has left. The verdict
+// carries the new generation's ownership from that point on, so the dialer's ownership check cannot
+// reject it and nothing later corrects it. See postUpdateNetworkEnvironmentWhenObserved.
+//
+// Both branches now return WITHOUT recomputing when their observation failed, so the rule is one rule:
+// an environment boundary is established only on evidence that was actually observed.
 func (r *NetworkManager) UpdateInterfaces() error {
-	defer r.postUpdateNetworkEnvironment()
+	// observed is set only by a branch that actually published a list, and the recompute is gated on
+	// it. Every early return therefore leaves the environment and the verdict exactly as they were.
+	observed := false
+	defer func() { r.postUpdateNetworkEnvironmentWhenObserved(observed) }()
 	if r.platformInterface == nil || !r.platformInterface.UsePlatformNetworkInterfaces() {
 		// The finder is refreshed FIRST, and the public list is published from it after.
 		//
 		// The order is the whole point of this branch. Publishing before the refresh would put the
 		// PREVIOUS finder snapshot into the list the capability is derived from, and the recompute
-		// deferred above reads that list - so one call would produce a capability computed from
-		// addressing that this very call exists to replace. A caller that reaches this entry point
-		// directly, without the monitor having refreshed anything first, would then get a verdict
-		// about the interface state it just moved away from.
+		// above reads that list - so one call would produce a capability computed from addressing that
+		// this very call exists to replace. A caller that reaches this entry point directly, without
+		// the monitor having refreshed anything first, would then get a verdict about the interface
+		// state it just moved away from.
 		//
 		// On the ordinary path the monitor has already refreshed the finder before it reports, so the
 		// Update below is a cheap re-read rather than a second enumeration, and the publish that
@@ -430,8 +446,18 @@ func (r *NetworkManager) UpdateInterfaces() error {
 			return err
 		}
 		r.observeNonPlatformInterfaces()
+		observed = true
 		return nil
 	} else {
+		// The injected failure is honoured here too, and BEFORE the platform's own list is asked for.
+		//
+		// It has to be: this is the branch where a stale list can be promoted, because the platform
+		// supplies the list and the fingerprint's default interface can have moved to a network the
+		// list does not describe. Checking it only on the other branch would leave the rule under test
+		// unexercised on the path that needs it most.
+		if err := r.interfaceRefreshError; err != nil {
+			return err
+		}
 		interfaces, err := r.platformInterface.NetworkInterfaces()
 		if err != nil {
 			return err
@@ -477,6 +503,7 @@ func (r *NetworkManager) UpdateInterfaces() error {
 				return F.ToString(it.Name, " (", strings.Join(options, ", "), ")")
 			}), ", "))
 		}
+		observed = true
 		return nil
 	}
 }

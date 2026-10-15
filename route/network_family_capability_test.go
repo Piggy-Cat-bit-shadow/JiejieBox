@@ -98,8 +98,14 @@ func takeOneSnapshot(t *testing.T, h *transitionWindowHarness, install func(func
 }
 
 func currentFamilyCapability(t *testing.T, h *transitionWindowHarness) adapter.NetworkFamilyCapability {
+	return currentFamilyCapabilityOf(t, h.manager)
+}
+
+// currentFamilyCapabilityOf is the same read for a test that holds the manager without a harness
+// around it, which the platform-hand-over tests do.
+func currentFamilyCapabilityOf(t *testing.T, manager *NetworkManager) adapter.NetworkFamilyCapability {
 	t.Helper()
-	_, _, capability := h.manager.NetworkFamilyCapabilitySnapshot()
+	_, _, capability := manager.NetworkFamilyCapabilitySnapshot()
 	return capability
 }
 

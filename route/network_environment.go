@@ -46,6 +46,47 @@ func (r *NetworkManager) postUpdateNetworkEnvironment() {
 	r.updateNetworkEnvironment()
 }
 
+// postUpdateNetworkEnvironmentWhenObserved is the same recompute, gated on the interface observation
+// having actually been taken.
+//
+// # Why the gate exists
+//
+// UpdateInterfaces can fail to refresh the interface list, and on that path the previous observation
+// stays in place - deliberately, because it is stale but REAL, whereas an empty list would report that
+// the machine has no interfaces at all. What must not happen is that the stale observation is then
+// promoted to a new network generation's verdict.
+//
+// The promotion is exactly what an unconditional recompute does. The fingerprint is built from the
+// DEFAULT interface's gateways, and those come from the interface list, so a hand-over whose refresh
+// failed can still move the fingerprint - the monitor has already reported the new default interface,
+// and the gateway lookup is a separate system call. The recompute would then claim a new epoch and
+// publish a capability computed from the OLD list under the NEW generation's ownership:
+//
+//	Wi-Fi, IPv4 only        IPv6 = Unavailable
+//	                        <- hand over to dual-stack cellular
+//	refresh fails           list still describes Wi-Fi
+//	recompute claims N+1    and publishes Wi-Fi's Unavailable as N+1's verdict
+//
+// The device is then on a dual-stack network with its IPv6 refused by a network it has left, and - the
+// part that makes this a semantic defect rather than an inconvenience - the verdict now CARRIES the new
+// generation's ownership, so the consumer-side ownership check in the dialer cannot reject it. There is
+// no later moment at which it would be corrected.
+//
+// # What skipping costs
+//
+// A boundary that this call would have established is deferred, not lost: the fingerprint it would have
+// published is still unpublished, so the next interface event - which by definition has a refresh to
+// publish - takes the same boundary with the same one-epoch accounting. The epoch is deliberately NOT
+// claimed here on its own: claiming it without a publishable verdict would advance ownership for a
+// network transition whose only new information is one the machine could not observe, and the next
+// successful observation is the right moment for it.
+func (r *NetworkManager) postUpdateNetworkEnvironmentWhenObserved(observed bool) {
+	if !observed {
+		return
+	}
+	r.postUpdateNetworkEnvironment()
+}
+
 // updateNetworkEnvironment refreshes the fingerprint and, on a real transition, establishes the
 // transport/generation boundary.
 //
