@@ -66,6 +66,8 @@ on:
       - "scripts/ci/verify-desktop-daemon-provenance.py"
       - "scripts/ci/verify-desktop-identity-consistency.py"
       - "scripts/ci/test-apple-canonical-source.sh"
+      - "scripts/ci/test-apple-libbox-asset-name.sh"
+      - "scripts/ci/test-apple-dispatch-ref.sh"
       - "scripts/ci/apple-libbox-artifact.sh"
       - "scripts/publish-apple-beta.sh"
       - "scripts/ci/version.sh"
@@ -144,6 +146,58 @@ jobs:
           cat verify-logs/canonical-source.log
           echo "canonical-source exit status: $rc"
           echo "$rc" > verify-logs/canonical-source.exit
+          exit "$rc"
+
+      - name: the Apple asset NAME is one fact on both sides
+        # `test-apple-libbox-asset-name.sh` RUNS the contract and compares its answer against what
+        # `publish-apple-beta.sh` actually looks for. It does not inspect either side's text, because
+        # the defect it guards was two sides that were each self-consistently wrong:
+        #
+        #   release-artifacts.sh published  Libbox.xcframework.tar.gz   (the bundle's INNER member)
+        #   publish-apple-beta.sh looked for jiejie-libbox-apple-<version>.tar.gz
+        #
+        # The release published seven assets that satisfied its own contract while the canonical path
+        # was dead on arrival, and the publisher then fell back to the Actions artifact SILENTLY -
+        # the exact downgrade PRESENT_INVALID exists to prevent, arriving through a filename instead
+        # of through validation, so no content check could see it.
+        #
+        # This is the v0.1.10 release failure itself. The suite existed and was invoked by nothing,
+        # which the repository's own doctrine calls out as worse than no test: "an audit sees coverage
+        # while nothing is proven". It is wired here, beside the canonical-source proof, because the
+        # same trust boundary owns both halves of the canonical Apple path.
+        run: |
+          set -uo pipefail
+          mkdir -p verify-logs
+          set +e
+          ./scripts/ci/test-apple-libbox-asset-name.sh > verify-logs/apple-asset-name.log 2>&1
+          rc=$?
+          set -e
+          cat verify-logs/apple-asset-name.log
+          echo "apple-asset-name exit status: $rc"
+          echo "$rc" > verify-logs/apple-asset-name.exit
+          exit "$rc"
+
+      - name: the dispatch ref a release tag resolves to is not a branch
+        # Publishing from a detached release-tag checkout returned HTTP 422 `No ref found for: HEAD`,
+        # because `git rev-parse --abbrev-ref HEAD` answers the literal string `HEAD` there - not an
+        # error, not empty, just a name no remote has. One `branch` variable carried three unrelated
+        # meanings at once (local checkout state, the ref handed to GitHub, and the identity a run is
+        # checked against), which is invisible while the checkout is on a normal branch.
+        #
+        # The suite slices the resolver out of `publish-apple-beta.sh` by its markers and EXECUTES it
+        # against real temporary repositories, so it cannot pass by agreeing with a copy. Wired here
+        # for the same reason as the name proof above: it guards the publishing path, and the
+        # publishing path's owner is this workflow.
+        run: |
+          set -uo pipefail
+          mkdir -p verify-logs
+          set +e
+          ./scripts/ci/test-apple-dispatch-ref.sh > verify-logs/apple-dispatch-ref.log 2>&1
+          rc=$?
+          set -e
+          cat verify-logs/apple-dispatch-ref.log
+          echo "apple-dispatch-ref exit status: $rc"
+          echo "$rc" > verify-logs/apple-dispatch-ref.exit
           exit "$rc"
 
       # A failing suite must say WHY in a place that can be read without credentials. The
