@@ -67,6 +67,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | XHTTP field reference | `modules/xhttp-client-transport.md` | §5 full field reference |
 | XMUX reuse, all-or-nothing default | `modules/xhttp-client-transport.md` | §13.4 the important all-or-nothing default rule |
 | XHTTP fork lifecycle / trim / reuse | `modules/xhttp-client-transport.md` | §14 fork-specific XMUX lifecycle behaviour |
+| packet-up POST cadence, high-RTT throughput, response pipeline | `modules/xhttp-client-transport.md` | §12.3 post cadence, and why response completion is not pipelined |
 | Direct Offload | `modules/data-path-optimization.md` | Part A |
 | traffic class + upload scheduler | `modules/data-path-optimization.md` | Part B |
 | dial governor | `modules/data-path-optimization.md` | Part C |
