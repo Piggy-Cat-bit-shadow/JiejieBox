@@ -11,6 +11,7 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing/common/bufio"
 	E "github.com/sagernet/sing/common/exceptions"
+	M "github.com/sagernet/sing/common/metadata"
 )
 
 // errClientHelloSniffed aborts a server handshake from inside GetConfigForClient, at the point
@@ -96,7 +97,21 @@ func TLSClientHello(ctx context.Context, metadata *adapter.InboundContext, reade
 	}).HandshakeContext(ctx)
 	if clientHello != nil {
 		metadata.Protocol = C.ProtocolTLS
-		metadata.Domain = clientHello.ServerName
+		// The SNI is normalised through the sockaddr parser, exactly as the HTTP sniffer normalises
+		// `Host` (see common/sniff/http.go) and for the same reason: a domain PLANE must only ever
+		// hold a domain.
+		//
+		// crypto/tls validates the SNI's STRUCTURE only - non-empty, no trailing dot
+		// (crypto/tls/handshake_messages.go) - and its own IP-literal filter runs on the SENDING
+		// side (hostnameInSNI). A peer is therefore free to put `1.2.3.4` or `[::1]` or
+		// `example.com:443` in the field, and writing that verbatim into metadata.Domain creates a
+		// domain that is not one. The old oracle for this is LX 19f57607, where the HTTP sniffer did
+		// exactly that with `Host: 1.2.3.4`; the fix normalised there and left this path alone.
+		//
+		// Metadata.Domain is consumed by domain route rules, by the connections API and by the logs,
+		// and a non-empty Domain also disables the direct fast path - so a client could steer its own
+		// classification by choosing what to put in the field.
+		metadata.Domain = M.ParseSocksaddrHostPort(clientHello.ServerName, 0).Fqdn
 		return nil
 	}
 	if errors.Is(err, io.ErrUnexpectedEOF) {
