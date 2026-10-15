@@ -62,8 +62,31 @@ var linuxAllTablesFilter = &netlink.Route{Table: unix.RT_TABLE_UNSPEC}
 // the early discard at route_linux.go:1038 removes every non-main table before any filter runs.
 const linuxAllTablesMask = netlink.RT_FILTER_TABLE
 
-// linuxRTFilterTable is the same bit as plain number, so the cross-platform contract test can compare
-// the Linux arm against a value it can name without importing netlink.
+// linuxRTFilterTable is netlink.RT_FILTER_TABLE as a plain number, so the cross-platform contract test
+// can compare the Linux arm against a value it can name without importing netlink.
+//
+// # Why this is derived here and asserted numerically next door
+//
+// The number has to appear somewhere that compiles off Linux, because the contract test runs on every
+// platform. It used to appear as a HAND-WRITTEN `1 << 8` in the non-Linux arm, described in a comment
+// as "bit 8 of the netlink route filter mask" - and that was wrong: the library's const block is
+//
+//	RT_FILTER_PROTOCOL uint64 = 1 << (1 + iota)   -> 1<<1
+//	RT_FILTER_SCOPE 1<<2, TYPE 1<<3, TOS 1<<4, IIF 1<<5, OIF 1<<6, DST 1<<7, SRC 1<<8,
+//	GW 1<<9, TABLE 1<<10, ...
+//
+// so bit 8 is RT_FILTER_SRC (0x100) and RT_FILTER_TABLE is 1<<10 (0x400).
+//
+// The consequence is the shape this repository keeps having to re-learn: the test passed on Windows,
+// where BOTH sides read the same wrong hand-written constant, and failed on Linux, where this
+// constant is the real one. A check and the thing it checks agreeing with each other is not evidence
+// that either is right - and a test that can only pass on the platform that does not use the code
+// under test proves nothing about it.
+//
+// The cross-platform contract test now asserts this constant, and
+// TestLinuxFilterBitMatchesTheNetlinkLibrary (linux-only, test-build) asserts THAT this equals
+// netlink.RT_FILTER_TABLE. Together the two remove the hand-written number from the chain: a drift in
+// either arm fails on a platform where the drift is real.
 const linuxRTFilterTable = uint64(netlink.RT_FILTER_TABLE)
 
 // linuxAllTablesRequest reports the (table, mask) pair this reader sends, as plain numbers, so the

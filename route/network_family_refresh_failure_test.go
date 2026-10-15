@@ -77,6 +77,27 @@ func newPlatformHandoverHarness(t *testing.T) *platformHandoverHarness {
 	// finder has to exist even though the failure under test is induced before it is used.
 	h.manager.interfaceFinder = control.NewDefaultInterfaceFinder()
 
+	// The route observation is INJECTED, and it has to be, or this file's tests are not portable.
+	//
+	// `machineGlobalIPv6Route` documents this hook as the way to test the state a developer's machine
+	// cannot be put into: a route table with NO global IPv6 route. Network A below is "IPv4 only", so
+	// its verdict must be StateUnavailable - and on a runner whose real table HAS a global IPv6 route,
+	// leaving the hook nil makes production read that table and publish StateProvisioned instead.
+	//
+	// That is what happened on the macOS artifact run on 2026-10-15. Four tests in the route package
+	// failed at this harness's own precondition with `expected: 0x1, actual: 0x2` (StateUnavailable
+	// vs StateProvisioned). They passed on Windows for a reason that has nothing to do with the code
+	// under test: the arm of the route reader outside linux/darwin is a stub that always answers
+	// RouteAbsent, so the absence was being supplied by the PLATFORM rather than by the test. A test
+	// that is hermetic only where the dependency is stubbed is not testing the contract; it is
+	// testing the stub.
+	//
+	// Pinned here rather than in each test because the harness establishes Network A for every test
+	// in this file, so the fact belongs with the establishment. A test that needs a different
+	// observation sets it afterwards, which is what network_family_egress_attack_test.go does when it
+	// drives the route term directly.
+	h.manager.routeObservation = func() netcap.RouteObservation { return netcap.RouteAbsent }
+
 	harness := &platformHandoverHarness{manager: h.manager, stub: stub}
 
 	// Network A: IPv4 only, gateway 192.0.2.1.

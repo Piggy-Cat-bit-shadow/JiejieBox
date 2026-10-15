@@ -253,12 +253,31 @@ func TestLinuxRouteFilterIsTheDocumentedAllTablesRequest(t *testing.T) {
 		"a table id above the table space matches no route, and :1049 KEEPS routes that match - so "+
 			"it returns an empty list, not every table")
 
-	// RT_FILTER_TABLE is bit 8 of the filter mask in the netlink UAPI. Spelled numerically because the
-	// constant is not available off Linux, and asserted exactly so no other bit can creep in.
-	const rtFilterTable = uint64(1 << 8)
-	require.Equal(t, rtFilterTable, mask,
+	// RT_FILTER_TABLE, compared against the constant the reader itself uses rather than against a
+	// number written here.
+	//
+	// This assertion used to spell the bit locally as `1 << 8`, described as "bit 8 of the filter mask
+	// in the netlink UAPI". The bit position was WRONG - TABLE is 1<<10, and 1<<8 is RT_FILTER_SRC -
+	// and because the non-Linux arm carried the same hand-written `1 << 8`, the test passed on
+	// Windows and failed on Linux CI:
+	//
+	//	network_family_route_rule_test.go:259: expected: 0x100, actual: 0x400
+	//
+	// Re-spelling the number here was the defect, not a stylistic choice: a test that restates the
+	// value it checks can only prove the two copies match. linuxRTFilterTable is now the single
+	// portable name, the Linux arm derives it from netlink.RT_FILTER_TABLE, and
+	// TestLinuxFilterBitMatchesTheNetlinkLibrary asserts on Linux that the derivation is real.
+	require.Equal(t, linuxRTFilterTable, mask,
 		"the mask must be RT_FILTER_TABLE and nothing else: without the bit the early discard at "+
 			":1038 removes every non-main table, and every OTHER bit narrows the dump by a field this "+
 			"reader does not constrain - a narrowed dump reported as RouteAbsent is the wrongful "+
 			"refusal the reader exists to avoid")
+
+	// And the bit POSITION, asserted once, so the value above cannot be changed to a different filter
+	// field without this failing.
+	require.Equal(t, uint64(1<<10), linuxRTFilterTable,
+		"RT_FILTER_TABLE is the tenth name in netlink's `1 << (1 + iota)` block, so it is 1<<10 "+
+			"(0x400). If this fails, either the library's const block was reordered - in which case "+
+			"the derived constant is still right and only this expectation is stale - or the constant "+
+			"was hand-edited to a bit that is not TABLE")
 }

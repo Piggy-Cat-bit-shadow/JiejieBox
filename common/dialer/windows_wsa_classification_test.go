@@ -36,39 +36,61 @@ import (
 // matters is ECONNREFUSED: the peer answered, so the path demonstrably works, and blaming the family
 // for it would penalise a healthy path because one server was down.
 func TestWindowsWSAErrorChainIsClassified(t *testing.T) {
-	// The WSA values, spelled out. These are the numbers Windows puts in the errno.
+	// The WSA values come from PRODUCTION, not from a copy written here.
+	//
+	// # Why this no longer restates them
+	//
+	// The table below used to carry its own `const wsaENETUNREACH = syscall.Errno(10051)` block and
+	// then drive the classifier with it. That is a test agreeing with itself: the numbers under test
+	// were declared two lines up, so an edit to `windows_socket_errors.go` that changed a WSA value
+	// would leave this test passing while the classifier compared the wrong number.
+	//
+	// The contract is now explicit - production's constants must BE these numbers - and it is
+	// asserted below, so the two halves are checked against a third thing rather than against each
+	// other.
 	const (
-		wsaENETUNREACH   = syscall.Errno(10051)
-		wsaEHOSTUNREACH  = syscall.Errno(10065)
-		wsaEADDRNOTAVAIL = syscall.Errno(10049)
-		wsaENETDOWN      = syscall.Errno(10050)
-		wsaECONNREFUSED  = syscall.Errno(10061)
-		wsaETIMEDOUT     = syscall.Errno(10060)
+		wantWSAENETUNREACH   = syscall.Errno(10051)
+		wantWSAEHOSTUNREACH  = syscall.Errno(10065)
+		wantWSAEADDRNOTAVAIL = syscall.Errno(10049)
+		wantWSAENETDOWN      = syscall.Errno(10050)
+		wantWSAECONNREFUSED  = syscall.Errno(10061)
+		wantWSAETIMEDOUT     = syscall.Errno(10060)
+		wantWSAECONNRESET    = syscall.Errno(10054)
+		wantWSAECONNABORTED  = syscall.Errno(10053)
+		wantWSAEPIPE         = syscall.Errno(10032)
 	)
+	require.Equal(t, wantWSAENETUNREACH, wsaENETUNREACH)
+	require.Equal(t, wantWSAEHOSTUNREACH, wsaEHOSTUNREACH)
+	require.Equal(t, wantWSAEADDRNOTAVAIL, wsaEADDRNOTAVAIL)
+	require.Equal(t, wantWSAENETDOWN, wsaENETDOWN)
+	require.Equal(t, wantWSAECONNREFUSED, wsaECONNREFUSED)
+	require.Equal(t, wantWSAETIMEDOUT, wsaETIMEDOUT)
+
+	// The peer-lifecycle triple, added by the Phase-4 sweep of the raw comparisons in
+	// protocol/anytls and protocol/shadowtls: they are the same defect class, and they were the last
+	// call sites still comparing POSIX spellings against what Windows delivers.
+	require.Equal(t, wantWSAECONNRESET, wsaECONNRESET)
+	require.Equal(t, wantWSAECONNABORTED, wsaECONNABORTED)
+	require.Equal(t, wantWSAEPIPE, wsaEPIPE)
 
 	// # The relationship that makes this test necessary
 	//
-	// The first version of this test asserted that syscall.ENETUNREACH EQUALS 10051 on Windows. It does
-	// not, and that failure was the finding:
+	// On WINDOWS the two spellings are distinct, and asserting that here is what stops a future
+	// "cleanup" from deleting the WSA arm:
 	//
 	//	syscall.ENETUNREACH   0x20000043  = 67 with the application-defined error bit
 	//	WSAENETUNREACH        10051       = what net/fd_windows.go actually wraps
 	//
-	// So the two spellings are DISTINCT, and a classifier that only knew the syscall constants was
-	// matching nothing at all on Windows. That is asserted here as the fact it is, so a future
-	// "cleanup" that removes the WSA arm has to delete this assertion to do it.
-	require.NotEqual(t, uintptr(wsaENETUNREACH), uintptr(syscall.ENETUNREACH),
-		"the two spellings are different numbers on Windows; an implementation that assumes they are "+
-			"equal is matching a value that never reaches it")
-	require.NotEqual(t, uintptr(wsaECONNREFUSED), uintptr(syscall.ECONNREFUSED),
-		"including the one that must be EXCLUDED: a missed refusal blames a healthy family for a "+
-			"server being down")
-
-	// What the syscall constants actually are, so the distinction is documented rather than asserted
-	// as a bare inequality.
-	require.Equal(t, uintptr(syscall.ENETUNREACH), uintptr(0x20000000|67))
-	require.Equal(t, uintptr(67), uintptr(syscall.ENETUNREACH)&0xFF)
-
+	// It is asserted in windows_wsa_syscall_spelling_test.go, because it is a claim about THIS
+	// platform's syscall constants and this file compiles everywhere. The version here spelled it
+	// inline and made the whole test unpassable off Windows: Linux spells ENETUNREACH 0x65, so the
+	// assertion failed there, and the failure read as a product defect rather than as a test that
+	// could only ever pass on one platform. Verify's race step caught it on 2026-10-15:
+	//
+	//	windows_wsa_classification_test.go:69: expected: 0x65, actual: 0x20000043
+	//
+	// Everything that does NOT depend on the host's syscall table stays in this file, so the suite
+	// this file belongs to keeps its coverage on every platform.
 	testCases := []struct {
 		name       string
 		errno      syscall.Errno
