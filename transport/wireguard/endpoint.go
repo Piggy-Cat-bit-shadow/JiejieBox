@@ -424,6 +424,22 @@ func (e *Endpoint) Start(postStart bool) error {
 	var registeredPause, registeredWake *list.Element[pause.Callback]
 	pauseManager = service.FromContext[pause.Manager](e.options.Context)
 	registered := pauseManager != nil
+	if registered {
+		// REGISTERED HERE, outside stateAccess, which is the whole point of the lock-order note
+		// above: the pre-fix code registered these while holding stateAccess, so a manager that was
+		// mid-`emit` (holding pause.access and waiting for stateAccess) deadlocked against a Start
+		// that held stateAccess and wanted pause.access. Doing it before the lock is taken removes
+		// that cycle while keeping the callbacks SYNCHRONOUS, which the resource contract needs.
+		//
+		// These two assignments were MISSING. `34cc5834d9a` moved the registration out of the locked
+		// section as this comment describes and deleted the calls without re-adding them, so
+		// registeredPause/registeredWake were always nil and the publish below stored nils: the
+		// endpoint never received EventNetworkPause, and the DeviceWake recovery nudge never fired.
+		// Nothing caught it because the package's tests register the callbacks BY HAND on a fake
+		// manager and never call Start, so no test exercised the production registration path.
+		registeredPause = pauseManager.RegisterCallback(e.onPauseUpdated)
+		registeredWake = pauseManager.RegisterCallback(e.onDeviceWake)
+	}
 
 	e.stateAccess.Lock()
 	if e.closing {
