@@ -125,7 +125,7 @@ in the reference's log for each. The affected set is therefore
 | `edge` | broken | **still broken** — no newer preset exists upstream |
 | `ios` | broken | **still broken** — no newer preset exists upstream |
 | `qq` | broken | **still broken** — no newer preset exists upstream |
-| `random` | broken on 4 of 5 draws | broken on 2 of 5 draws |
+| `random` | broken on 4 of 5 draws | **fixed** — draws only from the hybrid-capable presets |
 | `android`, `360` | cannot carry REALITY at all (no TLS 1.3 key share) | unchanged |
 | `chrome` (and its aliases, and the default) | works | works |
 | `randomized` | works (measured over a process) | works |
@@ -135,6 +135,39 @@ leaves three that no available upstream preset can fix. Those three cannot be re
 more commits, so they are not a reason to refuse the fork — they are a reason for the release notes
 to name the workaround (`fingerprint: chrome`), which is what the register test exists to keep
 true.
+
+## `random` is not one of those three
+
+`random` is a different case and was fixed separately, because the exposure was not a compatibility
+claim the operator made — it was a coin flip the code made on their behalf.
+
+`randomFingerprint` is resolved **once per process**, in `init`:
+
+```go
+randomFingerprint = realityFingerprints[rand.Intn(len(realityFingerprints))]
+```
+
+so the draw decides whether *every* REALITY outbound in that process can authenticate at all. While
+the pool was `modernFingerprints` — Chrome, Firefox, Edge, Safari, iOS — two of the five members
+(Edge/85, iOS/14) cannot present X25519MLKEM768, so two restarts in five produced a client whose
+REALITY nodes all failed with `reality verification failed`, which is also the message a wrong
+public key produces, and the only remedy was to restart and hope.
+
+The two lists are therefore separate:
+
+| list | members | why |
+| --- | --- | --- |
+| `modernFingerprints` | Chrome, Firefox, Edge, Safari, iOS | every browser preset the fork accepts as a "modern" greeting |
+| `realityFingerprints` | Chrome, Firefox, Safari | the subset that presents X25519MLKEM768; what `random` draws from |
+
+`edge`, `ios`, `qq`, `android` and `360` all remain selectable by name. Choosing one explicitly is
+the operator's tradeoff and works for every non-REALITY transport; what may not remain is a
+*randomised process-wide outage*, which is a defect rather than a documented gap.
+
+The register encodes the distinction: `random` moved from `fingerprintVaries` to
+`fingerprintHybridFromPool`, a fourth classification meaning "the preset is not fixed, but the
+hybrid share is guaranteed for every member of the pool". It is no longer in the incompatible set.
+
 
 ---
 
@@ -163,6 +196,12 @@ and the key_share extension that preset produces):
 | `360` | 360Browser/7.5 | 245 B | no | **no** | *(none)* |
 | `random` | one of the five "modern" presets, drawn at init | — | 4 of 5 draws: **no** | yes | — |
 | `randomized` | generated spec | — | varies (weight `KeyShare_Append_RandomGroups: 0.50`) | yes | — |
+
+**This table is the pre-change measurement, and it is kept as such.** It describes
+`modernFingerprints` as it stood before the fork split the pool; the `random` row's "one of the five
+'modern' presets, drawn at init" is no longer what the client does. The current pool and the reason
+for the split are in §`random` is not one of those three, above. The other rows are unaffected:
+`edge`, `ios` and `qq` still resolve to the same presets and are still selectable by name.
 
 Everything else §15 Step 2 asks for was checked in the same pass:
 
@@ -367,8 +406,11 @@ protocol check, and it remains unperformed here.
 
 **If that does not happen before the freeze**, the honest state is not "no-go" and not "fixed": it is
 **verified, with a named, proven, unfixed compatibility gap** — `fingerprint: firefox`, `safari`,
-`edge`, `ios`, `qq` and `random` (4 times in 5) cannot complete a REALITY handshake against a
-reference at or after Xray v26.9.8, and `chrome` or `randomized` is the workaround. That sentence,
+`edge`, `ios`, `qq` and `randomized` (and `android`/`360`, for the independent reason that they
+offer no TLS 1.3 key share) cannot complete a REALITY handshake against a reference at or after
+Xray v26.9.8, and `chrome` or `randomized` is the workaround. `random` is deliberately **not** in
+that list any more: it draws only from the hybrid-capable presets, so it can no longer produce a
+greeting a current reference rejects. That sentence,
 with this document as its evidence, is what the release notes owe a user; the register test keeps it
 from being forgotten the moment the dependency does change.
 

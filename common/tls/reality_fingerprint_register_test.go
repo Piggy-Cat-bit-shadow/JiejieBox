@@ -62,6 +62,16 @@ const (
 	// fingerprintVaries: the name does not resolve to one fixed preset, so neither
 	// answer is a property of the name.
 	fingerprintVaries
+	// fingerprintHybridFromPool: the name resolves to one of SEVERAL presets, chosen once per
+	// process, and the hybrid share is guaranteed for EVERY preset in that pool even though the
+	// preset is not fixed.
+	//
+	// It exists because `random` stopped being a probability and became a guarantee: the draw now
+	// comes from the REALITY-compatible subset, so "always carries the hybrid share" is a property
+	// of the name while "resolves to <Client>/<Version>" still is not. Neither of the other two
+	// values can express that, and collapsing it into either would lose one of the two claims -
+	// which is exactly what the register is for.
+	fingerprintHybridFromPool
 )
 
 // fingerprintRegisterEntry is the declared state of one accepted fingerprint name.
@@ -130,12 +140,16 @@ var realityFingerprintRegister = map[string]fingerprintRegisterEntry{
 			"carry REALITY for a reason independent of the hybrid share",
 	},
 	"random": {
-		preset: "one of the modern pool", hybrid: fingerprintVaries, tls13: true,
-		note: "resolved once per process from modernFingerprints. Chrome, Firefox and " +
-			"Safari now carry the hybrid share; edge, ios and qq still do not, so a " +
-			"`random` REALITY client can still lose the draw against a current reference. " +
-			"No upstream preset fixes those three in any revision, so this is a named gap " +
-			"rather than a missing backport",
+		preset: "one of the modern pool", hybrid: fingerprintHybridFromPool, tls13: true,
+		note: "resolved ONCE per process from realityFingerprints, the subset of the modern " +
+			"presets that presents X25519MLKEM768: Chrome, Firefox and Safari. It " +
+			"deliberately EXCLUDES edge and ios, whose presets are pinned by the dependency " +
+			"(Edge/85, iOS/14) and can never carry the hybrid share in any revision, so " +
+			"including them let a coin flip decide whether every REALITY outbound in the " +
+			"process could authenticate at all. Choosing `edge` or `ios` explicitly stays " +
+			"available and is the operator's tradeoff; the draw is not one. The preset " +
+			"string says \"one of the modern pool\" because the entry must satisfy the " +
+			"resolver check, which compares against the SPECIFIC preset this process drew.",
 	},
 	"randomized": {
 		preset: "Randomized/0", hybrid: fingerprintVaries, tls13: true,
@@ -175,7 +189,7 @@ func TestRealityFingerprintRegisterIsExhaustive(t *testing.T) {
 	for name, entry := range realityFingerprintRegister {
 		id, err := uTLSClientHelloID(name)
 		require.NoErrorf(t, err, "registered name %q must resolve", name)
-		if entry.hybrid == fingerprintVaries {
+		if entry.hybrid == fingerprintVaries || entry.hybrid == fingerprintHybridFromPool {
 			continue
 		}
 		require.Equal(t, entry.preset, id.Client+"/"+id.Version,
@@ -199,7 +213,7 @@ func TestRealityFingerprintGreetingMatchesTheRegister(t *testing.T) {
 				"the register's TLS 1.3 claim for %q is measured, not assumed", name)
 
 			switch entry.hybrid {
-			case fingerprintCarriesHybrid:
+			case fingerprintCarriesHybrid, fingerprintHybridFromPool:
 				require.True(t, greeting.hybrid,
 					"%s claims %s carries X25519MLKEM768; if the pin moved, delete this "+
 						"entry's exception and re-run the live fingerprint scenarios "+
@@ -232,7 +246,7 @@ func TestRealityFingerprintIncompatibleSetIsDeclared(t *testing.T) {
 	t.Parallel()
 	var incompatible, notTLS13 []string
 	for name, entry := range realityFingerprintRegister {
-		if entry.hybrid == fingerprintCarriesHybrid {
+		if entry.hybrid == fingerprintCarriesHybrid || entry.hybrid == fingerprintHybridFromPool {
 			continue
 		}
 		if !entry.tls13 {
@@ -247,8 +261,14 @@ func TestRealityFingerprintIncompatibleSetIsDeclared(t *testing.T) {
 	// The set is the deliverable of the uTLS go/no-go, so it is pinned by name: a
 	// change to it is a change to what the release claims about REALITY, and it must
 	// be made deliberately rather than by a dependency bump.
+	//
+	// `random` was in this set and is not any more. It is still an open question which
+	// preset a given process draws, but the pool it draws from now guarantees the hybrid
+	// share for every member, so the NAME can no longer produce a greeting a current
+	// reference rejects. That is the difference between a documented gap and a
+	// randomised process-wide outage, and it is the only reason this list changed.
 	require.Equal(t,
-		[]string{"edge", "ios", "qq", "random", "randomized"},
+		[]string{"edge", "ios", "qq", "randomized"},
 		incompatible,
 		"the set of accepted fingerprints that cannot present X25519MLKEM768, and therefore "+
 			"cannot complete a REALITY handshake against a reference at or after %s, changed. "+
@@ -257,23 +277,36 @@ func TestRealityFingerprintIncompatibleSetIsDeclared(t *testing.T) {
 	require.Equal(t, []string{"360", "android"}, notTLS13,
 		"the fingerprints that cannot carry REALITY because they do not offer TLS 1.3 changed")
 
-	// `random` is worth stating as a number rather than as prose: the draw decides,
-	// so the exposure is a probability, and it is the reason `random` is in the set.
-	var hybridlessModern int
-	for _, id := range modernFingerprints {
+	// `random`'s exposure is a property of the pool it draws from, and the pool is now the
+	// REALITY-compatible subset rather than every modern preset. The count is still the
+	// measurement: it is asserted rather than left as prose because `random` is a probability.
+	var hybridlessRealityPool int
+	for _, id := range realityFingerprints {
 		if !buildGreetingForID(t, id).hybrid {
-			hybridlessModern++
+			hybridlessRealityPool++
 		}
 	}
-	// Chrome, Firefox and Safari carry the hybrid share; edge and ios do not. This is
-	// asserted as a count rather than left as prose because `random` is a probability,
-	// and the count IS that probability: a `random` draw loses to a current reference
-	// two times in five. It moved from 4 to 2 when the fork added Firefox 148 and
-	// Safari 26.3, and it is the number that has to fall again if edge/ios are ever
-	// fixed - no upstream preset does so in any revision today.
-	require.Equal(t, 2, hybridlessModern,
-		"modernFingerprints' hybrid-less count changed, so the `random` entry's stated "+
-			"odds and the exposure it describes are both wrong")
+	require.Zero(t, hybridlessRealityPool,
+		"the `random` pool contains a preset that cannot present X25519MLKEM768, so a `random` "+
+			"REALITY client can lose the draw against a reference at or after %s and the whole "+
+			"process's REALITY outbounds fail until it is restarted. Either drop the preset from "+
+			"realityFingerprints or state the exposure as the probability it is",
+		realityReferenceHybridShareFloor)
+
+	// The pool must also still be a SUBSET of the modern presets, so `random` cannot resolve to a
+	// name the register has not classified.
+	for _, id := range realityFingerprints {
+		require.Contains(t, modernFingerprints, id,
+			"every preset `random` can draw must also be a classified modern preset, or the "+
+				"register no longer covers what users get")
+	}
+	require.NotEmpty(t, realityFingerprints,
+		"an empty pool would panic in init at rand.Intn(0)")
+
+	// And the resolved draw must be one of them, which is the property a user experiences: this is
+	// resolved once per process, so it is the same preset for every REALITY outbound in it.
+	require.Contains(t, realityFingerprints, randomFingerprint,
+		"the resolved `random` fingerprint must come from the REALITY-compatible pool")
 }
 
 // fingerprintGreeting is the measured shape of a built greeting.
