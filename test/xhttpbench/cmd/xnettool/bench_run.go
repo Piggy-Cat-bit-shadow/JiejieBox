@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -78,7 +79,7 @@ func runBench(args []string) error {
 	securities := flags.String("security", "tls", "comma-separated: tls,reality")
 	versions := flags.String("versions", "h1,h2", "comma-separated HTTP versions for TLS cells: h1,h2")
 	h3 := flags.Bool("h3", false, "also measure HTTP/3 cells (TLS only)")
-	impairments := flags.String("impair", "", "comma-separated impairments: rtt50,rtt200,lossy (empty = clean path)")
+	impairments := flags.String("impair", "", "comma-separated impairments: rtt<ms> (e.g. rtt30,rtt50,rtt100,rtt200), lossy (empty = clean path)")
 	xmuxes := flags.String("xmux", "default", "comma-separated XMUX variants: default,single,rotate")
 	patterns := flags.String("patterns", "download,upload,pingpong,connect", "comma-separated load patterns")
 	concurrencies := flags.String("concurrency", "1", "comma-separated concurrency levels")
@@ -402,12 +403,21 @@ func runEnvironment(env benchEnv, loads []benchLoad, reps int, xrayBinary string
 	return results, nil
 }
 
+// impairmentArguments maps an impairment name onto shim flags.
+//
+// `rtt<ms>` is parsed generically rather than enumerated: a round-trip time is a
+// number a caller wants to sweep (a response-pipeline question is a curve, not two
+// points), and the shim's unit is the one-way delay, which is half the round trip.
+// rtt50 and rtt200 keep their historical meaning through the same rule.
 func impairmentArguments(impairment string) []string {
+	if strings.HasPrefix(impairment, "rtt") {
+		roundTripMs, err := strconv.Atoi(strings.TrimPrefix(impairment, "rtt"))
+		if err != nil || roundTripMs < 0 {
+			return nil
+		}
+		return []string{"-delay-ms", strconv.Itoa(roundTripMs / 2)}
+	}
 	switch impairment {
-	case "rtt50":
-		return []string{"-delay-ms", "25"}
-	case "rtt200":
-		return []string{"-delay-ms", "100"}
 	case "lossy":
 		return []string{"-delay-ms", "25", "-jitter-ms", "10", "-stall-prob", "0.02", "-stall-ms", "40",
 			"-reset-prob", "0.05", "-reset-after-ms", "2000"}

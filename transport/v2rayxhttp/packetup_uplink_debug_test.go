@@ -63,6 +63,10 @@ type probeTransport struct {
 	// detects a payload aliased by writers appending behind it.
 	readChunk int
 	readDelay time.Duration
+	// responseDelay stands in for a round trip: the server has consumed the body,
+	// and the response now takes this long to arrive. It is what the high-RTT
+	// response-pipeline probe sweeps.
+	responseDelay time.Duration
 }
 
 func newProbeTransport() *probeTransport {
@@ -116,6 +120,11 @@ func (transport *probeTransport) RoundTrip(request *http.Request) (*http.Respons
 	transport.times = append(transport.times, time.Now())
 	transport.inflight--
 	transport.access.Unlock()
+
+	if transport.responseDelay > 0 {
+		// The body is consumed; the answer is now in flight.
+		time.Sleep(transport.responseDelay)
+	}
 
 	if transport.onPost != nil {
 		return transport.onPost(request, body)

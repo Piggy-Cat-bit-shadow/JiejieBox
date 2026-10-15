@@ -113,6 +113,11 @@ instead of on one. Results are medians over repetitions, with the raw runs kept:
   `-blackhole-every-ms`/`-blackhole-for-ms` (recurring outages). It counts what it
   dropped, so a run can prove the impairment happened instead of assuming it did.
   Reordering is not available: the relay forwards in order.
+- **TCP cells take `-impair rtt<ms>`** (e.g. `rtt30,rtt50,rtt100,rtt200`), which
+  sets the shim's one-way delay to half the round trip; a latency question is a
+  curve, so the value is parsed rather than enumerated. `lossy` remains the only
+  named compound impairment. The shim is a delay line, so added latency does not
+  cost bandwidth — a high-RTT cell measures the client, not the shim.
 - **Affinity and priority are best effort.** Roles are pinned to disjoint cores
   and raised to high priority; a failure to do so is ignored, because an
   unpinned measurement is noisier, not wrong.
