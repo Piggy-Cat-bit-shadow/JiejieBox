@@ -79,7 +79,23 @@ type NetworkManager struct {
 	stateAccess             sync.RWMutex
 	environmentUpdateAccess sync.Mutex
 	startedCtx              context.Context
-	interfaceUpdateAccess   sync.Mutex
+	// closed is set by the scope cleanup that gives the interface monitor its callback back, and is
+	// checked by every handler the platform can still reach afterwards.
+	//
+	// # Why `startedCtx != nil` is not enough
+	//
+	// The monitor's `UnregisterCallback` is not a delivery barrier: sing-tun's
+	// `defaultInterfaceMonitor.emit` snapshots its callback list under its own lock, RELEASES that
+	// lock, and only then invokes each callback (monitor_shared.go:139-146). A notification already
+	// in that window therefore still reaches this manager after the unregister returned - and
+	// `Close` does not stop the monitor's `checkUpdateTimer`, a `time.AfterFunc` armed by
+	// `delayCheckUpdate`, so the emit can happen after the monitor was closed as well.
+	//
+	// `startedCtx` cannot stand in for this flag: it is never nil once set, and it is CANCELLED at
+	// teardown rather than cleared, so the old check passed for a dead manager.
+	closed atomic.Bool
+	// interfaceUpdateAccess serialises the interface-update handlers against teardown.
+	interfaceUpdateAccess sync.Mutex
 	interfaceUpdateCancel   context.CancelFunc
 	networkResetPending     bool
 	// networkResetPendingToken is the transition the pending notification owns.
@@ -265,7 +281,11 @@ func (r *NetworkManager) Start(stage adapter.StartStage, scope *adapter.Scope) e
 			}
 			scope.Add(r.interfaceMonitor.Close)
 			interfaceUpdateElement := r.interfaceMonitor.RegisterCallback(r.notifyInterfaceUpdate)
+			// The flag is set by the cleanup that unregisters the callback, so a notification that
+			// the monitor already snapshotted still finds a manager that knows it is gone. See the
+			// `closed` field for why the unregister alone is not enough.
 			scope.Add(func() error {
+				r.closed.Store(true)
 				r.interfaceMonitor.UnregisterCallback(interfaceUpdateElement)
 				return nil
 			})
@@ -1055,6 +1075,12 @@ func (r *NetworkManager) clearNetworkPaused() {
 func (r *NetworkManager) notifyInterfaceUpdate(_ *control.Interface, _ int) {
 	r.interfaceUpdateAccess.Lock()
 	defer r.interfaceUpdateAccess.Unlock()
+	if r.closed.Load() {
+		// A notification that was already past the monitor's snapshot when this manager gave its
+		// callback back. See the `closed` field: without this, a torn-down Box writes the
+		// SESSION-SHARED pause manager (see below) and the next Box inherits the pause.
+		return
+	}
 	if !r.networkResetPending {
 		// First notification for this event: claim. This is what makes the network unstable before
 		// the update goroutine can be blocked on the reset lock.
@@ -1254,6 +1280,14 @@ func (r *NetworkManager) updateInterface(ctx context.Context, defaultInterface *
 }
 
 func (r *NetworkManager) notifyWindowsPowerEvent(event int) {
+	if r.closed.Load() {
+		// The Windows power listener is closed with the scope, but `PowerUnregisterSuspendResume-
+		// Notification` plus `Unpin` is not a join: the C callback can still be dispatched while it
+		// runs, and it dereferences the pinned context and calls straight through. A suspend that
+		// lands here would pause the SESSION-SHARED pause manager and take the next Box's WireGuard
+		// devices down. See the `closed` field.
+		return
+	}
 	switch event {
 	case winpowrprof.EVENT_SUSPEND:
 		r.pauseManager.DevicePause()
