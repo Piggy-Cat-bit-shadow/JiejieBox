@@ -47,7 +47,17 @@ func TestLinuxFilterBitMatchesTheNetlinkLibrary(t *testing.T) {
 	require.NotZero(t, linuxRTFilterTable,
 		"RT_FILTER_TABLE is a set bit, not the empty mask: a zero mask means the early discard at "+
 			"netlink route_linux.go:1038 removes every non-main table before any filter runs")
-	require.NotEqual(t, uint64(0), linuxRTFilterTable&(linuxRTFilterTable-1),
+	// A single bit is `n & (n-1) == 0`: clearing the lowest set bit leaves nothing. Stated as Zero
+	// rather than NotEqual-zero, which is what this assertion said first - and being backwards, it
+	// failed on the very first Linux run of a test written to catch exactly this kind of mistake:
+	//
+	//	network_family_route_linux_filter_bit_test.go:50: Should not be: 0x0
+	//
+	// The test could not run on the machine it was written on (it is linux-tagged), so the author had
+	// no local execution to catch an inverted assertion. That is the same trap the file's subject
+	// matter is about, one level up, and it is why the assertion is spelled out here rather than left
+	// as a bare inequality that reads correct in either direction.
+	require.Zero(t, linuxRTFilterTable&(linuxRTFilterTable-1),
 		"and it must be a single bit, or it is a mask of several filter fields rather than TABLE")
 
 	// The neighbours, named so a reordering of the library's block is legible in the failure. These
