@@ -337,11 +337,10 @@ func (r *NetworkManager) Start(stage adapter.StartStage, scope *adapter.Scope) e
 			}
 			scope.Add(r.interfaceMonitor.Close)
 			interfaceUpdateElement := r.interfaceMonitor.RegisterCallback(r.notifyInterfaceUpdate)
-			// The flag is set by the cleanup that unregisters the callback, so a notification that
-			// the monitor already snapshotted still finds a manager that knows it is gone. See the
-			// `closed` field for why the unregister alone is not enough.
+			// The callback is unregistered here, and the `closed` flag is NOT armed here: it is
+			// armed by a cleanup registered at the END of PostStart, so that it runs FIRST during
+			// teardown and covers the power listener too. See that cleanup for the ordering.
 			scope.Add(func() error {
-				r.closed.Store(true)
 				r.interfaceMonitor.UnregisterCallback(interfaceUpdateElement)
 				return nil
 			})
@@ -411,6 +410,27 @@ func (r *NetworkManager) Start(stage adapter.StartStage, scope *adapter.Scope) e
 			}
 			scope.Add(r.powerListener.Close)
 		}
+		// ARMED LAST, so that it RUNS FIRST.
+		//
+		// Scope.Close runs cleanups in reverse registration order, and the power listener above is
+		// registered after the interface monitor's cleanup. Arming the flag from that cleanup - which
+		// is where it used to live - therefore ran it AFTER `powerListener.Close`, leaving exactly
+		// the window the flag exists to cover: `PowerUnregisterSuspendResumeNotification` plus
+		// `Unpin` is not a join, so a suspend or resume dispatched while the listener is closing
+		// passed the guard and wrote the SESSION-SHARED pause manager and ran a reset against a
+		// half-torn-down box. See the `closed` field.
+		//
+		// Registering it at the end of PostStart makes it the first cleanup to run, which is the
+		// only position that covers every teardown the platform can still reach. It also arms the
+		// flag for a manager with NO interface monitor - the condition under which the old placement
+		// never set it at all, leaving the power path unguarded for the life of the process.
+		//
+		// The monitor's own callback unregister stays where it is: it is a separate cleanup, and it
+		// still owes the monitor its element back.
+		scope.Add(func() error {
+			r.closed.Store(true)
+			return nil
+		})
 	}
 	return nil
 }
