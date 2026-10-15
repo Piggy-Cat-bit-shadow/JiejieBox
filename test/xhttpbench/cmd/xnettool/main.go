@@ -35,6 +35,8 @@ func main() {
 		err = runLoadGen(os.Args[2:])
 	case "shim":
 		err = runShim(os.Args[2:])
+	case "udpshim":
+		err = runUDPShim(os.Args[2:])
 	case "procstat":
 		err = runProcStat(os.Args[2:])
 	case "clockprobe":

@@ -61,6 +61,7 @@ instead of on one. Results are medians over repetitions, with the raw runs kept:
 | `target` | the destination behind the tunnel: deterministic pattern source, sink, echo and duplex |
 | `loadgen` | the load generator; drives one shaped workload through a SOCKS5 inbound |
 | `shim` | impairment box: one-way delay, jitter, stalls and injected resets |
+| `udpshim` | UDP counting relay: datagrams and wire bytes per direction, per client, in front of the reference server |
 | `tlscover` | the camouflage TLS endpoint a REALITY server forwards unauthenticated handshakes to |
 | `procstat` | per-process CPU seconds and working set |
 | `clockprobe` | the measured resolution of the clocks the harness can use |
@@ -97,6 +98,13 @@ instead of on one. Results are medians over repetitions, with the raw runs kept:
   `QueryPerformanceCounter`). The load generator therefore times per-operation
   latency with QPC where it exists, and no transport behaviour is allowed to
   depend on sub-millisecond timing.
+- **QUIC traffic is counted by a relay, not by the OS.** Windows per-process IO
+  counters do not count Winsock sends, and a packet capture needs privileges this
+  host lacks, so `xnettool udpshim` measures datagrams and wire bytes per
+  direction. It is a NAT (one upstream socket per client address), because the
+  client may open a second QUIC connection from a new source port. CPU measured
+  through the relay is not comparable with a direct run — one extra hop copies
+  every datagram through userspace — but the ratios are.
 - **Affinity and priority are best effort.** Roles are pinned to disjoint cores
   and raised to high priority; a failure to do so is ignored, because an
   unpinned measurement is noisier, not wrong.
