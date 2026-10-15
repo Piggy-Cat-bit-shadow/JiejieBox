@@ -404,6 +404,27 @@ func (r RouteObservation) String() string {
 // A manager that cannot enumerate interfaces must not thereby conclude that neither family exists;
 // that would turn an observation failure into a hard filter. The failure is reported as Unknown and
 // the previous behaviour is kept.
+//
+// # Why an interface with NO address at all is not evidence either
+//
+// The hard negative is "an interface exists on the local dial path and it carries addresses, none of
+// them of this family". An interface that carries no address of EITHER family is not a weaker form of
+// that fact - it is the absence of the fact. Such an interface is exactly what a handover produces:
+// the new link is up and enumerable while it is still waiting for DHCP or a router advertisement, and
+// the old link is already gone. Reading that moment as "this machine has no IPv4 and no IPv6" makes
+// BOTH families decisively impossible, and the scheduler then refuses every candidate without
+// attempting one - turning a few seconds of ordinary re-addressing into a total connection outage on
+// a machine whose network is fine.
+//
+// The distinction is therefore evidence-of-addressing, not interface count: at least one usable
+// interface must have produced at least one valid address before any family may be called
+// unavailable. This is the same refusal as the empty-list case above, one level down, and it errs in
+// the same direction - an unproven family stays attemptable, so the worst case is a missed fast-fail
+// rather than a refused connection.
+//
+// It does not weaken the fast-fail this model exists for. An interface that carries ANY address is a
+// working carrier, and its silence about a family is still decisive: the ordinary IPv4-only link has
+// an IPv4 address, so IPv6 remains Unavailable there exactly as before.
 func Evaluate(interfaces []InterfaceObservation) FamilyCapability {
 	if len(interfaces) == 0 {
 		return FamilyCapability{IPv4: StateUnknown, IPv6: StateUnknown}
@@ -412,6 +433,9 @@ func Evaluate(interfaces []InterfaceObservation) FamilyCapability {
 		hasIPv4, hasIPv6 bool
 		routePresent     bool
 		routeObserved    bool
+		// addressed counts the interfaces that produced at least one valid address, which is what
+		// licenses a hard negative below.
+		addressed int
 	)
 	for _, observation := range interfaces {
 		switch observation.GlobalIPv6Route {
@@ -421,11 +445,13 @@ func Evaluate(interfaces []InterfaceObservation) FamilyCapability {
 		case RouteAbsent:
 			routeObserved = true
 		}
+		interfaceAddressed := false
 		for _, prefix := range observation.Addresses {
 			address := prefix.Addr()
 			if !address.IsValid() {
 				continue
 			}
+			interfaceAddressed = true
 			switch {
 			case address.Is4() || address.Is4In6():
 				hasIPv4 = true
@@ -433,24 +459,24 @@ func Evaluate(interfaces []InterfaceObservation) FamilyCapability {
 				hasIPv6 = true
 			}
 		}
+		if interfaceAddressed {
+			addressed++
+		}
 	}
-	// The egress term, in one rule: a route that EXISTS on any interface is enough, because the
-	// question is whether this machine has a way out at all and the kernel picks the interface. Only
-	// when routes were actually read and none of them was navigable is the term a hard negative; if
-	// nobody could read them, the term stays unknown and gates nothing.
-	globalEgress := StateUnknown
-	switch {
-	case routePresent:
-		globalEgress = StateProvisioned
-	case routeObserved:
-		globalEgress = StateUnavailable
+	if addressed == 0 {
+		// Interfaces exist but none has been addressed yet. Nothing has been observed about either
+		// family, so neither is restricted; see the note above. The route observation is carried
+		// through unchanged, because it is a fact about the machine's routing table rather than about
+		// an interface's addressing, and the two are read at the same instant precisely so they do
+		// not have to be re-derived separately.
+		return FamilyCapability{GlobalIPv6Egress: globalEgressState(routePresent, routeObserved), reachable: len(interfaces)}
 	}
 	capability := FamilyCapability{
-		// An-interface-exists-but-carries-nothing-of-this-family is decisive, which is what
-		// separates this from the empty-list case above.
+		// An-interface-carries-addresses-but-none-of-this-family is decisive, which is what
+		// separates this from both cases above.
 		IPv4:             stateFor(hasIPv4),
 		IPv6:             stateFor(hasIPv6),
-		GlobalIPv6Egress: globalEgress,
+		GlobalIPv6Egress: globalEgressState(routePresent, routeObserved),
 		reachable:        len(interfaces),
 	}
 	return capability
@@ -461,6 +487,26 @@ func stateFor(present bool) FamilyState {
 		return StateProvisioned
 	}
 	return StateUnavailable
+}
+
+// globalEgressState is the egress term, in one rule: a route that EXISTS on any interface is enough,
+// because the question is whether this machine has a way out at all and the kernel picks the
+// interface. Only when routes were actually read and none of them was navigable is the term a hard
+// negative; if nobody could read them, the term stays unknown and gates nothing.
+//
+// It is a function rather than an inline switch because there are two places a capability is built -
+// the ordinary path and the no-interface-is-addressed-yet path - and the second one must not silently
+// answer a DIFFERENT question about routing than the first. The two inputs are the same two facts
+// either way, so both read them here.
+func globalEgressState(routePresent, routeObserved bool) FamilyState {
+	switch {
+	case routePresent:
+		return StateProvisioned
+	case routeObserved:
+		return StateUnavailable
+	default:
+		return StateUnknown
+	}
 }
 
 // UsableInterfaces reduces an interface list to the ones the local dial path can actually use, and

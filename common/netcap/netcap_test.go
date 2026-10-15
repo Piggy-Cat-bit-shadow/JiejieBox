@@ -133,14 +133,63 @@ func TestEvaluateDoesNotCountAnEmptyAddressListAsAddressing(t *testing.T) {
 	require.Equal(t, StateUnavailable, capability.IPv6)
 }
 
+// TestEvaluateIgnoresInvalidAddresses pins that a malformed entry cannot stand in for addressing.
+//
+// This test previously asserted the OPPOSITE - that an interface carrying only an invalid prefix
+// proved BOTH families impossible. That was the same defect as
+// TestEvaluateAddresslessInterfaceIsNotEvidence, seen from the other side: "this interface produced no
+// usable address" is the absence of an observation, and an invalid entry is one more way to produce
+// none. The two cases now answer identically, which is the point - the gate is "did any interface
+// produce at least one valid address", and it does not care WHY an interface produced none.
 func TestEvaluateIgnoresInvalidAddresses(t *testing.T) {
 	capability := Evaluate([]InterfaceObservation{{
 		Name:      "en0",
 		Up:        true,
 		Addresses: []netip.Prefix{{}},
 	}})
-	require.Equal(t, StateUnavailable, capability.IPv4)
-	require.Equal(t, StateUnavailable, capability.IPv6)
+	require.Equal(t, StateUnknown, capability.IPv4,
+		"an invalid address is not evidence that IPv4 is absent")
+	require.Equal(t, StateUnknown, capability.IPv6,
+		"an invalid address is not evidence that IPv6 is absent")
+	require.False(t, capability.HardUnavailable(true))
+	require.False(t, capability.HardUnavailable(false))
+	require.Equal(t, 1, capability.Observed(),
+		"the interface was still looked at, and the diagnostic says so")
+}
+
+// TestEvaluateAddresslessInterfaceIsNotEvidence pins the handover case.
+//
+// An interface that is up and enumerable with no address yet is the ordinary state of a link that is
+// still waiting for DHCP or a router advertisement. It is not evidence that the machine lacks BOTH
+// families, and reading it that way declared each family provably undialable - which the scheduler
+// turns into a hard refusal of every candidate, on a machine whose network is fine.
+//
+// The three inputs below are the three ways an interface arrives with no addressing: the field left
+// out, explicitly nil, and an empty-but-non-nil slice. They must not be distinguishable here.
+func TestEvaluateAddresslessInterfaceIsNotEvidence(t *testing.T) {
+	capability := Evaluate([]InterfaceObservation{
+		{Name: "en0"},
+		{Name: "en1", Addresses: nil},
+		{Name: "en2", Addresses: []netip.Prefix{}},
+	})
+
+	require.Equal(t, StateUnknown, capability.IPv4, "an address-less interface must not prove IPv4 impossible")
+	require.Equal(t, StateUnknown, capability.IPv6, "an address-less interface must not prove IPv6 impossible")
+	require.False(t, capability.HardUnavailable(true))
+	require.False(t, capability.HardUnavailable(false))
+	require.Equal(t, 3, capability.Observed())
+
+	// The other direction, and it is the one that keeps the gate honest: ONE addressed interface
+	// alongside the address-less ones is still decisive, so the gate cannot be satisfied by padding
+	// the list with interfaces that say nothing.
+	capability = Evaluate([]InterfaceObservation{
+		{Name: "en0"},
+		{Name: "en1", Addresses: []netip.Prefix{}},
+		observation("en2", "192.168.1.10/24"),
+	})
+	require.Equal(t, StateProvisioned, capability.IPv4)
+	require.Equal(t, StateUnavailable, capability.IPv6,
+		"an addressed IPv4-only link still proves IPv6 absent")
 }
 
 // TestUsableInterfacesDropsAnInterfaceThatIsNotUp is the invariant that has to hold at THIS boundary
