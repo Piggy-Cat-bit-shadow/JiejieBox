@@ -150,8 +150,7 @@ function Show-InstallerDiagnostic {
         $lines.Add("installer diagnostic channel: not requested")
         return
     }
-    Write-Host "-- installer diagnostic channel ($DiagnosticPath) --"
-    if (-not (Test-Path -LiteralPath $DiagnosticPath)) {
+    Write-Host "-- installer diagnostic channel ($DiagnosticPath) --"    if (-not (Test-Path -LiteralPath $DiagnosticPath)) {
         Write-Host "   (the installer did not create it, so it failed before customInit or could not write)"
         $lines.Add("installer diagnostic channel: file not created at $DiagnosticPath")
         return
@@ -169,6 +168,48 @@ function Show-InstallerDiagnostic {
     } catch {
         Write-Host "   could not preserve it: $($_.Exception.Message)"
     }
+}
+
+function Save-DiagnosticSnapshot {
+    <#
+        Copy the diagnostic channel aside under a phase-specific name, and report its size and
+        last lines.
+
+        WHY PER-PHASE SNAPSHOTS. The channel is one file that every installer and uninstaller
+        invocation appends to, and the uninstaller re-launches itself from a copy in a temp
+        directory. Reading it only at the end means the phase that actually failed is
+        indistinguishable from the ones that succeeded, and a single overwrite or truncation
+        anywhere in the run destroys the whole sequence.
+
+        Size is reported because "the file did not grow" is itself a finding: ciDiagnostic opens
+        with mode `a`, so a phase that ran and wrote nothing leaves the size unchanged.
+    #>
+    param([string]$Phase)
+
+    if ([string]::IsNullOrWhiteSpace($DiagnosticPath)) { return }
+    $records = Split-Path -Parent $RecordPath
+    $safe = ($Phase -replace '[^A-Za-z0-9]+', '-').Trim('-')
+    $dest = Join-Path $records "installer-diagnostic.$safe.txt"
+
+    if (-not (Test-Path -LiteralPath $DiagnosticPath)) {
+        $lines.Add("  diagnostic channel after '$Phase': FILE ABSENT at $DiagnosticPath")
+        Write-Host "   diagnostic after '$Phase': file absent"
+        return
+    }
+    $size = (Get-Item -LiteralPath $DiagnosticPath).Length
+    try {
+        Copy-Item -LiteralPath $DiagnosticPath -Destination $dest -Force -ErrorAction Stop
+    } catch {
+        $lines.Add("  diagnostic channel after '$Phase': could not copy - $($_.Exception.Message)")
+        return
+    }
+    $content = Get-Content -LiteralPath $DiagnosticPath -Raw -ErrorAction SilentlyContinue
+    $all = @(($content -split "`r?`n") | Where-Object { $_ -match '\S' })
+    $lines.Add("  diagnostic channel after '$Phase': $size bytes, $($all.Count) non-blank line(s)")
+    # The tail is what matters for locating a stop: the last marker before silence.
+    foreach ($line in ($all | Select-Object -Last 8)) { $lines.Add("      $line") }
+    Write-Host "   diagnostic after '$Phase': $size bytes; last lines:"
+    foreach ($line in ($all | Select-Object -Last 8)) { Write-Host "      $line" }
 }
 
 function Show-ProcessSnapshot {
@@ -524,6 +565,22 @@ function Invoke-Uninstall {
     }
     # The installer's own rollback uses /S /allusers, so that pair is the supported one.
     $arguments = @("/S", "/allusers")
+    # The diagnostic channel must be requested for the UNINSTALLER too.
+    #
+    # The installer is launched through Get-InstallArguments, which appends this option; the
+    # uninstaller was launched with a hardcoded argument pair that never did. The uninstaller is a
+    # separate executable image with its own command line, and customUnInit reads ITS OWN
+    # parameters - so $ciDiagnosticPath stayed empty in the uninstall pass and every
+    # uninstall-side marker was inert: the guard `$ciDiagnosticPath != ""` was false and nothing
+    # was written.
+    #
+    # That is why the diagnostic file sat at 162 bytes with no uninstall markers, and why "there
+    # is no [service uninstall] marker" was read as evidence that the daemon's uninstall never
+    # ran. It was not evidence. Two independent mistakes produced the same false negative: the
+    # uninstall pass never initialised the variable, and this harness never passed the option.
+    if (-not [string]::IsNullOrWhiteSpace($DiagnosticPath)) {
+        $arguments += "/CI-DIAGNOSTIC-PATH=$DiagnosticPath"
+    }
     if ($DeleteAppData) {
         # build/installer.nsh: `--delete-app-data` sets $keepUninstallData to unchecked,
         # which is the ONLY path that runs the data-removal branch. Without it the
@@ -692,6 +749,7 @@ $lines.Add("")
 # --- first install -----------------------------------------------------------
 $lines.Add("[1/5] silent install")
 $exitCode = Invoke-Silently -FilePath $InstallerPath -Arguments (Get-InstallArguments) -What "install"
+Save-DiagnosticSnapshot -Phase "1-install"
 $lines.Add("  exit code $exitCode")
 if ($exitCode -ne 0) {
     # Which stage aborted is not inferred from the exit code; the diagnostic channel says.
@@ -708,6 +766,7 @@ $lines.Add("[2/5] same-version reinstall")
 $exitCode = Invoke-Silently -FilePath $InstallerPath -Arguments (Get-InstallArguments) -What "reinstall"
 $lines.Add("  exit code $exitCode")
 if ($exitCode -ne 0) { Fail-Gate "the same-version reinstall exited $exitCode" }
+Save-DiagnosticSnapshot -Phase "2-reinstall"
 $reinstalled = Assert-Installed -Phase "after same-version reinstall"
 if ($reinstalled.Root -ne $installationRoot) {
     Fail-Gate "the reinstall moved the installation from $installationRoot to $($reinstalled.Root)"
@@ -718,6 +777,7 @@ $lines.Add("")
 # --- uninstall ---------------------------------------------------------------
 $lines.Add("[3/5] silent uninstall")
 Invoke-Uninstall -Phase "first" -UninstallEntry $uninstallEntry
+Save-DiagnosticSnapshot -Phase "3-first-uninstall"
 # Reported BEFORE the settle wait, so the record shows the machine's actual state at the moment
 # the uninstaller returned 0 - not a state reconstructed after a timeout, which is what made this
 # indistinguishable from a product hang for several rounds.
@@ -731,6 +791,7 @@ $lines.Add("[4/5] clean reinstall after a full uninstall")
 $exitCode = Invoke-Silently -FilePath $InstallerPath -Arguments (Get-InstallArguments) -What "reinstall"
 $lines.Add("  exit code $exitCode")
 if ($exitCode -ne 0) { Fail-Gate "the clean reinstall exited $exitCode" }
+Save-DiagnosticSnapshot -Phase "4-clean-reinstall"
 $reinstalled = Assert-Installed -Phase "after clean reinstall"
 $installationRoot = $reinstalled.Root
 $uninstallEntry = $reinstalled.UninstallEntry
@@ -740,6 +801,7 @@ $lines.Add("")
 # --- final teardown ----------------------------------------------------------
 $lines.Add("[5/5] final uninstall")
 Invoke-Uninstall -Phase "final" -UninstallEntry $uninstallEntry -DeleteAppData
+Save-DiagnosticSnapshot -Phase "5-final-uninstall"
 Assert-Uninstalled -Phase "after final uninstall" -InstallationRoot $installationRoot -UninstallEntry $uninstallEntry
 $lines.Add("  PASS")
 $lines.Add("")
