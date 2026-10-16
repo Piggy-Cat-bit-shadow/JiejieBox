@@ -266,9 +266,26 @@ func serviceUninstall() error {
 		return E.Cause(err, "open service")
 	}
 	defer service.Close()
+	// A stop that fails or times out MUST fail the uninstall.
+	//
+	// This used to be `log.Warn("stop service: ", err)` and then carry on to Delete, so
+	// `service uninstall` returned 0 while the daemon was still RUNNING. The installer takes
+	// that exit code to mean "the service is gone" and reports success, and the SCM entry
+	// survives - which is exactly what the Windows installer lifecycle gate kept observing:
+	// uninstall exit 0, service still RUNNING, daemon PID still alive, and
+	// HKLM\SYSTEM\CurrentControlSet\Services\<name> still present.
+	//
+	// Swallowing the error also destroyed the diagnostic. waitServiceState already times out
+	// after 30 s WITH the current state, the process ID, the Windows exit code and the
+	// service-specific exit code - everything needed to explain why the daemon would not stop.
+	// The warning threw that away.
+	//
+	// Deleting a service that is still running only marks it for deletion: the process keeps
+	// running and the SCM entry persists until every handle closes, so the old order could not
+	// even achieve what it was reporting.
 	err = stopServiceAndWait(service)
 	if err != nil {
-		log.Warn("stop service: ", err)
+		return E.Cause(err, "stop service")
 	}
 	err = service.Delete()
 	if err != nil {
