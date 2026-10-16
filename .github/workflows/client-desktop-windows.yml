@@ -461,6 +461,75 @@ jobs:
           ls -la "$CLIENT_DIR/release/win-unpacked/resources/daemon" \
                  "$CLIENT_DIR/release/win-unpacked/resources/native" || true
 
+      - name: "[gate 2] archive the generated NSIS and the patch provenance"
+        shell: bash
+        run: |
+          set -euo pipefail
+          # WHAT THIS IS FOR
+          #
+          # The generated script is the only artefact that can settle questions the macro names
+          # cannot: in what order customUnInstall runs relative to file deletion, which branch
+          # the uninstaller pass takes for a given conditional, and whether the instance guard
+          # excludes the running installer's own PID. Every such question has so far been
+          # answered by reading upstream's template and inferring that ours matches - which is
+          # exactly the kind of inference that produced two wrong conclusions in this audit.
+          #
+          # electron-builder feeds the generated script to makensis on stdin, so it is not left
+          # on disk by default. What IS on disk is the post-patch template tree, and that is what
+          # we capture: the uninstaller body, the instance guard, and the install section, plus
+          # the patch identity so the templates can be tied to a specific patched version.
+          mkdir -p "$RECORDS_DIR/generated-nsis"
+          out="$RECORDS_DIR/generated-nsis"
+
+          # The patched app-builder-lib templates, wherever pnpm put them.
+          found=0
+          while IFS= read -r tpl; do
+            rel="${tpl#*app-builder-lib@*/node_modules/app-builder-lib/}"
+            rel="$(printf '%s' "$rel" | tr '/' '_')"
+            cp "$tpl" "$out/$rel"
+            found=$((found + 1))
+          done < <(find node_modules "$CLIENT_DIR/node_modules" -path '*app-builder-lib*/templates/nsis/*' \
+                     \( -name '*.nsh' -o -name '*.nsi' \) -type f 2>/dev/null | sort -u)
+
+          # The fork's own include, which IS the source NSIS, kept beside the generated ones so a
+          # reader can diff intent against outcome without a second checkout.
+          cp "$CLIENT_DIR/build/installer.nsh" "$out/source-installer.nsh"
+
+          {
+            echo "generated NSIS archived: $found template file(s)"
+            echo
+            echo "== app-builder-lib version and patch =="
+            if [ -f "$CLIENT_DIR/patches/app-builder-lib@26.15.3.patch" ]; then
+              echo "patch      patches/app-builder-lib@26.15.3.patch"
+              echo "patch sha256 $(sha256sum "$CLIENT_DIR/patches/app-builder-lib@26.15.3.patch" | awk '{print $1}')"
+            else
+              echo "patch      NOT PRESENT at patches/app-builder-lib@26.15.3.patch"
+            fi
+            ver="$(node -e 'try{console.log(require("app-builder-lib/package.json").version)}catch(e){console.log("unknown")}' 2>/dev/null || echo unknown)"
+            echo "app-builder-lib version $ver"
+            echo "electron-builder version $(node -e 'try{console.log(require("electron-builder/package.json").version)}catch(e){console.log("unknown")}' 2>/dev/null || echo unknown)"
+            echo
+            echo "== the identity this build claims =="
+            echo "CORE_SHA=$CORE_SHA"
+            echo "CORE_VERSION=$CORE_VERSION"
+            echo "TOOLING_SHA=$TOOLING_SHA"
+            echo "NON_RELEASE_DIAGNOSTIC=${NON_RELEASE_DIAGNOSTIC:-}"
+            echo "CORE_GITLINK_DESKTOP_SHA=${CORE_GITLINK_DESKTOP_SHA:-}"
+            echo "ACTUAL_DESKTOP_SHA=${ACTUAL_DESKTOP_SHA:-}"
+            echo
+            echo "== files archived =="
+            ls -la "$out"
+          } | tee "$out/PROVENANCE.txt"
+
+          # Fail loudly rather than shipping an empty archive: an archive nobody checks is worse
+          # than no archive, because it reads as evidence.
+          if [ "$found" -lt 3 ]; then
+            echo "FAIL: only $found app-builder-lib NSIS template file(s) found; the archive would" >&2
+            echo "      not contain the uninstaller body or the instance guard, so it could not" >&2
+            echo "      answer the questions it exists for." >&2
+            exit 1
+          fi
+
       # --- GATE 3: static package validation --------------------------------
       - name: "[gate 3] verify the packaged application's integrity checks"
         shell: bash
