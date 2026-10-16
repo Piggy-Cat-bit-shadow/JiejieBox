@@ -454,8 +454,28 @@ function Invoke-Uninstall {
 
 function Assert-Uninstalled {
     param([string]$Phase, [string]$InstallationRoot, $UninstallEntry, [switch]$DataPreserved)
+
+    # The settle condition must match what the uninstaller is SUPPOSED to do in this phase.
+    #
+    # Both phases used to wait for the same thing: the service gone AND the layout key gone.
+    # But the data-preserving uninstall keeps the layout key on purpose - build/installer.nsh
+    # says so, electron-builder.yml sets deleteAppDataOnUninstall: false, and the body of this
+    # very function handles that case explicitly a few lines below. So this wait could never be
+    # satisfied on the data-preserving phase: it burned its full 300 s and then reported a
+    # timeout, which reads exactly like the uninstaller hanging.
+    #
+    # That is what made this look like a product hang. The uninstaller had already exited 0 and
+    # removed the service correctly; the CONDITION was wrong, not the installer.
+    #
+    # Making it conditional is the whole fix, and it keeps the assertion strong: the phase that
+    # passes --delete-app-data still waits for the key to disappear.
     $null = Wait-Until -Description "$Phase uninstall to settle" -TimeoutSeconds 300 -Condition {
-        ($null -eq (Get-DaemonServiceCommandLine -ServiceName $serviceName)) -and ($null -eq (Get-InstallationLayoutRegistry -RegistryPath $installationLayoutKey))
+        if ($DataPreserved) {
+            $null -eq (Get-DaemonServiceCommandLine -ServiceName $serviceName)
+        } else {
+            ($null -eq (Get-DaemonServiceCommandLine -ServiceName $serviceName)) -and
+            ($null -eq (Get-InstallationLayoutRegistry -RegistryPath $installationLayoutKey))
+        }
     }
 
     $state = Get-ServiceState
