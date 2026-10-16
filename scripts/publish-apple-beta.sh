@@ -116,6 +116,29 @@ fi
 # gates exactly that. An earlier revision had two per-platform pins and asserted they
 # differed; that model is gone, and `assert-distinct` no longer exists as an action.
 step "Apple sources"
+
+# Start this release from a FRESH resolution.
+#
+# The resolver freezes the SHA it picks into APPLE_CLIENT_STATE so that one build cannot resolve
+# iOS and macOS to two different commits. That guarantee is WITHIN a build; the file itself lives
+# under build/, which nothing cleans, so it outlives the release that wrote it.
+#
+# Nothing invalidated it, and that shipped a stale UI. v0.1.10 froze 088196af on 2026-10-15; the
+# v0.1.16 run on 2026-10-17 read that file, never asked the remote, and built the OLDER Apple
+# commit - leaving out 6ce67b1 "fix(hako): make the iPhone outbound-mode control work against a
+# real configuration". Every check still passed, which is what makes this failure mode expensive:
+# a frozen commit is a real commit of the right repository, so the SHA agreement, the Libbox
+# manifest and all pre-upload gates are equally satisfied by the wrong answer.
+#
+# So each publish run resolves the tip as it stands NOW and freezes it for its own duration - the
+# documented model, "resolved to an exact SHA at the start of a build". To reproduce an exact
+# revision instead, set APPLE_CLIENT_REF: it wins over everything and is deliberately left alone.
+apple_state="${APPLE_CLIENT_STATE:-build/apple-client-source.env}"
+if [ -f "$apple_state" ]; then
+  echo "  discarding the previous resolution in $apple_state; a new release resolves the tip again"
+  rm -f "$apple_state"
+fi
+
 eval "$(./scripts/ci/apple-client-source.sh resolve)"
 
 ios_client_dir="$IOS_APPLE_DIR"
@@ -631,30 +654,43 @@ else
   Libbox artifact:     PASS"
 fi
 
+# What the gitlink did, said once and truthfully.
+#
+# This line used to be the literal text `gitlink match:     PASS`, printed unconditionally. In the
+# v0.1.16 release the gitlink was 40dd487 and the build used 6ce67b19 - the summary asserted a
+# match that did not exist, which is worse than saying nothing, because the operator reads this
+# block to answer "did the right UI go out?".
+if [ "$gitlink_sha" = "$IOS_APPLE_SHA" ]; then
+  gitlink_line="matches the resolved source"
+else
+  gitlink_line="does NOT match - the resolved source is ahead. Not a failure: the client"
+  gitlink_line="$gitlink_line
+                        repository is the authority, the gitlink is the local default checkout"
+fi
+
 cat <<EOF
 Source:
   commit:              $local_sha
   branch:              $branch
   version:             $JJ_VERSION
 
-Apple sources (one repository, two UI branches, never merged):
+Apple sources (one repository, one source, two products):
   repository:          $APPLE_CLIENT_REPOSITORY
 
   iOS / SFI:
     branch:            $IOS_APPLE_BRANCH
     commit:            $IOS_APPLE_SHA
-    source of truth:   parent clients/apple gitlink
-    gitlink match:     PASS
     working tree:      $IOS_APPLE_DIR
 
   macOS / SFM:
     branch:            $MACOS_APPLE_BRANCH
     commit:            $MACOS_APPLE_SHA
-    source of truth:   parent clients/apple gitlink (the same commit)
-    gitlink match:     PASS
     working tree:      $MACOS_APPLE_DIR
 
-  shared source:       PASS (both products build the one gitlink, as they must)
+  source of truth:     the Apple client repository, resolved when this run started
+  shared source:       PASS (both products build the one commit, as they must)
+  parent gitlink:      $gitlink_sha
+  gitlink:             $gitlink_line
 
   The two working trees differ; the source commit does not. Which UI a device shows is
   decided by the Apple source at runtime, from the device idiom.
