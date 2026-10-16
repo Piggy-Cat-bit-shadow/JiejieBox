@@ -50,11 +50,16 @@ $ErrorActionPreference = "Stop"
 # terminating error. Each call checks $LASTEXITCODE where the result matters.
 $PSNativeCommandUseErrorActionPreference = $false
 
-$serviceName = "jiejiebox-daemon"
+# The service name and the layout registry key are NOT redeclared here. They are this client's
+# identity, they are defined once in GateHelpers.ps1 ($script:JiejieboxServiceName /
+# $script:JiejieboxInstallationLayoutKey), and Get-InstallationState reads them from there. A
+# second copy in this file is how the gate and the workflows' cleanup steps would come to
+# disagree about which service and which registry key this installation owns.
+$serviceName = $script:JiejieboxServiceName
+$installationLayoutKey = $script:JiejieboxInstallationLayoutKey
 # Set once per run: the uninstall registry is dumped in full the first time an installation
 # is identified, so the record shows what the runner actually has.
 $candidateDumpWritten = $false
-$installationLayoutKey = "HKLM:\SOFTWARE\Jiejiebox\jiejiebox"
 
 $lines = New-Object System.Collections.Generic.List[string]
 $lines.Add("windows NSIS installer lifecycle smoke test")
@@ -71,49 +76,12 @@ function Save-Record {
 }
 
 
-function Get-InstallationState {
-    # Identity, in the only order that is a fact rather than a guess: the SCM's own record
-    # of the daemon's command line, the layout that implies, the installer's layout
-    # registry, and only then the uninstall entry whose InstallLocation IS that root.
-    #
-    # A display name is recorded as audit metadata and never used to match. It is the
-    # product name, while the installation directory and executable are deliberately
-    # "sing-box", so the name could legitimately be either - and a name cannot establish
-    # identity even when it matches, because the first entry with that name would win.
-    $commandLine = Get-DaemonServiceCommandLine -ServiceName $serviceName
-    $daemonPath = Get-CommandExecutablePath $commandLine
-    $root = Get-InstallationRootFromDaemonPath $daemonPath
-    $layout = Get-InstallationLayoutRegistry -RegistryPath $installationLayoutKey
-    if ([string]::IsNullOrWhiteSpace($root) -and $null -eq $layout) { return $null }
-    $matches = @()
-    if (-not [string]::IsNullOrWhiteSpace($root)) {
-        $matches = @(Get-UninstallEntriesForInstallation -InstallationRoot $root)
-    }
-    return [pscustomobject]@{
-        ServiceCommandLine   = $commandLine
-        DaemonPath           = $daemonPath
-        Root                 = $root
-        LayoutVersion        = $(if ($null -ne $layout) { $layout.LayoutVersion } else { $null })
-        InstallationID       = $(if ($null -ne $layout) { $layout.InstallationID } else { $null })
-        DaemonDataDirectory  = $(if ($null -ne $layout) { $layout.DaemonDataDirectory } else { $null })
-        UninstallMatches     = $matches
-    }
-}
+# Get-InstallationState and Add-InstallationIdentity used to be defined here. They now live in
+# GateHelpers.ps1, which this script dot-sources, because the `cleanup:` steps of BOTH Windows
+# workflows call Get-InstallationState in their own PowerShell process - where a function defined
+# in a gate step cannot exist. See the identity section of GateHelpers.ps1 for the full reasoning
+# and for what "this installation" means.
 
-
-function Add-InstallationIdentity {
-    param($State)
-    if ($null -eq $State) {
-        $lines.Add("  installation identity: absent")
-        return
-    }
-    $lines.Add("  service command line: $($State.ServiceCommandLine)")
-    $lines.Add("  derived install root: $($State.Root)")
-    $lines.Add("  layout version:       $($State.LayoutVersion)")
-    $lines.Add("  installation id:      $($State.InstallationID)")
-    $lines.Add("  daemon data dir:      $($State.DaemonDataDirectory)")
-    $lines.Add("  uninstall matches:    $(@($State.UninstallMatches).Count)")
-}
 
 function Get-ServiceState {
     # `Get-Service` hands back a ServiceController that holds a HANDLE on the service, and
@@ -188,9 +156,31 @@ function Save-UninstallerProvenance {
 
         The file is COPIED before it can delete itself, and its hash is the answer: if the copies
         from different points differ, no amount of parameter tracing is relevant.
-    #>
-    param([string]$Point, [Parameter(Mandatory = $false)]$UninstallEntry)
 
+        THE ROOT IS A PARAMETER, AND THAT IS NOT COSMETIC. This function used to read a bare
+        `$InstallationRoot`, which is the name of Assert-Uninstalled's parameter and NOT a
+        lifecycle-scope variable - the lifecycle scope spells it `$installationRoot`, lower case,
+        and it is only assigned after the first Assert-Installed returns. So this function
+        depended on a variable that did not exist at any of its call sites. It was also called
+        with `$installed` / `$reinstalled` BEFORE those variables were assigned, so it received
+        $null for the uninstall entry as well.
+
+        The consequence was not an error - it was silence. With no entry and no root, every
+        candidate path was empty, the function took its (correct, guarded) `NOT FOUND` branch and
+        returned, which is why every provenance point cost 4 lines and the FIRST_VS_FINAL hash
+        matrix this whole gate exists to produce never appeared in a single record. Passing the
+        root in explicitly removes the dependency on call-site scoping, and the empty-root case
+        now says so instead of looking like a machine with no uninstaller.
+    #>
+    param(
+        [string]$Point,
+        [Parameter(Mandatory = $true)][string]$InstallationRoot,
+        [Parameter(Mandatory = $false)]$UninstallEntry
+    )
+
+    # An empty root cannot reach here: InstallationRoot is Mandatory, so PowerShell's own binding
+    # refuses `''` and `$null` before the body runs. That is deliberate and is the difference
+    # between the old silent-NOT-FOUND and a harness bug that stops the run.
     $records = Split-Path -Parent $RecordPath
     $safe = ($Point -replace '[^A-Za-z0-9]+', '-').Trim('-')
 
@@ -889,14 +879,27 @@ $lines.Add("")
 # --- first install -----------------------------------------------------------
 $lines.Add("[1/5] silent install")
 $exitCode = Invoke-Silently -FilePath $InstallerPath -Arguments (Get-InstallArguments) -What "install"
-Save-UninstallerProvenance -Point "after-install" -UninstallEntry $installed.UninstallEntry
-Save-DiagnosticSnapshot -Phase "1-install"
 $lines.Add("  exit code $exitCode")
 if ($exitCode -ne 0) {
     # Which stage aborted is not inferred from the exit code; the diagnostic channel says.
     Fail-Gate "the installer exited $exitCode. The stage that aborted is recorded in the installer diagnostic channel above."
 }
+# ORDER IS LOAD-BEARING.
+#
+# Save-UninstallerProvenance used to be called ABOVE Assert-Installed, with
+# `-UninstallEntry $installed.UninstallEntry` - a variable that is not assigned until the line
+# below it. So the entry was always $null AND the root came from `$InstallationRoot`, which does
+# not exist in this scope at all (this scope spells it `$installationRoot`). The provenance points
+# cost 4 lines each and proved nothing.
+#
+# It now runs after Assert-Installed, because that call is what RESOLVES the installation and
+# returns the root and the registry entry this function needs. That is still early enough: the
+# installation is intact at this moment and the uninstaller has not been touched, which is
+# exactly the state "after-install" is supposed to describe. Everything between the two lines is
+# a read, so nothing is disturbed.
 $installed = Assert-Installed -Phase "after first install"
+Save-UninstallerProvenance -Point "after-install" -InstallationRoot $installed.Root -UninstallEntry $installed.UninstallEntry
+Save-DiagnosticSnapshot -Phase "1-install"
 $installationRoot = $installed.Root
 $uninstallEntry = $installed.UninstallEntry
 $lines.Add("  PASS")
@@ -907,9 +910,11 @@ $lines.Add("[2/5] same-version reinstall")
 $exitCode = Invoke-Silently -FilePath $InstallerPath -Arguments (Get-InstallArguments) -What "reinstall"
 $lines.Add("  exit code $exitCode")
 if ($exitCode -ne 0) { Fail-Gate "the same-version reinstall exited $exitCode" }
-Save-UninstallerProvenance -Point "after-reinstall" -UninstallEntry $reinstalled.UninstallEntry
-Save-DiagnosticSnapshot -Phase "2-reinstall"
+# Same ordering rule as the first install: the state has to be resolved before its uninstaller
+# can be preserved. This is the point that answers "did the reinstall replace the uninstaller?".
 $reinstalled = Assert-Installed -Phase "after same-version reinstall"
+Save-UninstallerProvenance -Point "after-reinstall" -InstallationRoot $reinstalled.Root -UninstallEntry $reinstalled.UninstallEntry
+Save-DiagnosticSnapshot -Phase "2-reinstall"
 if ($reinstalled.Root -ne $installationRoot) {
     Fail-Gate "the reinstall moved the installation from $installationRoot to $($reinstalled.Root)"
 }
@@ -918,7 +923,7 @@ $lines.Add("")
 
 # --- uninstall ---------------------------------------------------------------
 $lines.Add("[3/5] silent uninstall")
-Save-UninstallerProvenance -Point "before-first-uninstall" -UninstallEntry $uninstallEntry
+Save-UninstallerProvenance -Point "before-first-uninstall" -InstallationRoot $installationRoot -UninstallEntry $uninstallEntry
 Invoke-Uninstall -Phase "first" -UninstallEntry $uninstallEntry
 Save-DiagnosticSnapshot -Phase "3-first-uninstall"
 # Reported BEFORE the settle wait, so the record shows the machine's actual state at the moment
@@ -934,9 +939,12 @@ $lines.Add("[4/5] clean reinstall after a full uninstall")
 $exitCode = Invoke-Silently -FilePath $InstallerPath -Arguments (Get-InstallArguments) -What "reinstall"
 $lines.Add("  exit code $exitCode")
 if ($exitCode -ne 0) { Fail-Gate "the clean reinstall exited $exitCode" }
-Save-UninstallerProvenance -Point "after-clean-reinstall" -UninstallEntry $reinstalled.UninstallEntry
-Save-DiagnosticSnapshot -Phase "4-clean-reinstall"
+# Same ordering rule again: resolve the state, then preserve its uninstaller. This point is the
+# one that answers "did the clean install write the current uninstaller, where the reinstall did
+# not?" - so it must be collected from the installation this phase just produced.
 $reinstalled = Assert-Installed -Phase "after clean reinstall"
+Save-UninstallerProvenance -Point "after-clean-reinstall" -InstallationRoot $reinstalled.Root -UninstallEntry $reinstalled.UninstallEntry
+Save-DiagnosticSnapshot -Phase "4-clean-reinstall"
 $installationRoot = $reinstalled.Root
 $uninstallEntry = $reinstalled.UninstallEntry
 $lines.Add("  PASS")
@@ -956,7 +964,7 @@ function Get-ChannelSize {
 }
 
 $lines.Add("[5/5] final uninstall")
-Save-UninstallerProvenance -Point "before-final-uninstall" -UninstallEntry $uninstallEntry
+Save-UninstallerProvenance -Point "before-final-uninstall" -InstallationRoot $installationRoot -UninstallEntry $uninstallEntry
 Invoke-Uninstall -Phase "final" -UninstallEntry $uninstallEntry -DeleteAppData
 Save-DiagnosticSnapshot -Phase "5-final-uninstall"
 Assert-Uninstalled -Phase "after final uninstall" -InstallationRoot $installationRoot -UninstallEntry $uninstallEntry
@@ -992,8 +1000,50 @@ if ($script:UninstallerHashes.Count -eq 0) {
     foreach ($point in $script:UninstallerHashes.Keys) {
         $lines.Add(("      {0,-26} {1}" -f $point, $script:UninstallerHashes[$point]))
     }
+
+    # The PAIRWISE relations, not just a distinct count.
+    #
+    # A distinct count cannot answer the question this gate exists for. "3 distinct values in 4
+    # checkpoints" is consistent with the replacement happening at the reinstall, at the clean
+    # reinstall, or with one checkpoint simply failing to read the file - and those imply
+    # different root causes. Each adjacent pair is printed, so the record names the step at which
+    # the installed uninstaller changed rather than leaving it to be inferred from a count.
+    $points = @($script:UninstallerHashes.Keys)
+    $pairs = @(
+        @{ Label = "after-install        == after-reinstall       ?"; From = "after-install";        To = "after-reinstall" },
+        @{ Label = "after-reinstall      == before-first-uninstall ?"; From = "after-reinstall";      To = "before-first-uninstall" },
+        @{ Label = "before-first-uninstall == after-clean-reinstall ?"; From = "before-first-uninstall"; To = "after-clean-reinstall" },
+        @{ Label = "after-clean-reinstall == before-final-uninstall ?"; From = "after-clean-reinstall"; To = "before-final-uninstall" }
+    )
+    $lines.Add("      -- pairwise --")
+    foreach ($pair in $pairs) {
+        if (-not $script:UninstallerHashes.Contains($pair.From) -or -not $script:UninstallerHashes.Contains($pair.To)) {
+            $lines.Add("      $($pair.Label) UNKNOWN (a checkpoint did not resolve a binary)")
+            continue
+        }
+        $relation = if ($script:UninstallerHashes[$pair.From] -eq $script:UninstallerHashes[$pair.To]) { "SAME" } else { "DIFFERENT" }
+        $lines.Add("      $($pair.Label) $relation")
+    }
+
+    # FIRST_UNINSTALL_SHA / FINAL_UNINSTALL_SHA, stated as the two named values the audit is
+    # decided on, rather than left for a reader to pick out of the list above.
+    $firstPoint = "before-first-uninstall"
+    $finalPoint = "before-final-uninstall"
+    if ($script:UninstallerHashes.Contains($firstPoint) -and $script:UninstallerHashes.Contains($finalPoint)) {
+        $firstSha = $script:UninstallerHashes[$firstPoint]
+        $finalSha = $script:UninstallerHashes[$finalPoint]
+        $verdict = if ($firstSha -eq $finalSha) { "SAME" } else { "DIFFERENT" }
+        $lines.Add("")
+        $lines.Add("      FIRST_UNINSTALL_SHA = $firstSha")
+        $lines.Add("      FINAL_UNINSTALL_SHA = $finalSha")
+        $lines.Add("      FIRST_VS_FINAL      = $verdict")
+    } else {
+        $lines.Add("")
+        $lines.Add("      FIRST_VS_FINAL      = UNKNOWN (a checkpoint did not resolve a binary)")
+    }
+
     $distinct = @($script:UninstallerHashes.Values | Sort-Object -Unique)
-    $lines.Add("      distinct sha256 values: $($distinct.Count)")
+    $lines.Add("      distinct sha256 values: $($distinct.Count)   (auxiliary signal only)")
     if ($distinct.Count -gt 1) {
         $lines.Add("      VERDICT: DIFFERENT BINARIES ran at different lifecycle points.")
         $lines.Add("               The first and final uninstalls did not execute the same executable, so")
@@ -1003,6 +1053,10 @@ if ($script:UninstallerHashes.Count -eq 0) {
         $lines.Add("      VERDICT: the SAME binary ran at every checkpoint.")
         $lines.Add("               A parameter-parsing difference between the first and final uninstall is")
         $lines.Add("               therefore not excluded, and the bootstrap probe is justified.")
+        if ($points.Count -lt 4) {
+            $lines.Add("               CAUTION: only $($points.Count) of the 4 provenance points resolved a")
+            $lines.Add("               binary, so 'every checkpoint' is weaker than it reads.")
+        }
     }
 }
 $lines.Add("")
