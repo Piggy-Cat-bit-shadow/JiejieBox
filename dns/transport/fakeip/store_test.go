@@ -208,9 +208,9 @@ func (s *countingStorage) FakeIPLoadDomain(domain string, isIPv6 bool) (netip.Ad
 
 // The retirement record is not what this storage double counts, so it discards it. A store whose
 // storage has no retirement memory must still work, which is what the empty answer also exercises.
-func (s *countingStorage) FakeIPRetireRange(addressRange netip.Prefix) error { return nil }
+func (s *countingStorage) FakeIPRetireInterval(adapter.FakeIPIssuanceInterval) error { return nil }
 
-func (s *countingStorage) FakeIPRetired() []netip.Prefix { return nil }
+func (s *countingStorage) FakeIPRetired() []adapter.FakeIPIssuanceInterval { return nil }
 
 func (s *countingStorage) FakeIPReset() error {
 	return nil

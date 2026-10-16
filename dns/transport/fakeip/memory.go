@@ -21,7 +21,7 @@ type MemoryStorage struct {
 	// because a Store built over it is not: an in-process reload moves the range and builds a new Store
 	// over the SAME storage object, and that is the move whose evidence has to survive.
 	retiredAccess sync.RWMutex
-	retired       []netip.Prefix
+	retired       []adapter.FakeIPIssuanceInterval
 }
 
 func NewMemoryStorage() *MemoryStorage {
@@ -95,32 +95,32 @@ func (s *MemoryStorage) FakeIPReset() error {
 	return nil
 }
 
-// FakeIPRetireRange records a range for as long as this storage lives.
+// FakeIPRetireInterval records an interval for as long as this storage lives.
 //
 // On this path there is no disk, so the record cannot outlive the process - which is the documented
 // boundary of the in-memory configuration, not a gap. It is still recorded, because an in-process
 // range move builds a NEW Store over the SAME storage object, and without this the ledger's
 // `recordRetired` would be the only holder of evidence that a Store could already be asked for.
-func (s *MemoryStorage) FakeIPRetireRange(addressRange netip.Prefix) error {
-	if !addressRange.IsValid() {
+func (s *MemoryStorage) FakeIPRetireInterval(interval adapter.FakeIPIssuanceInterval) error {
+	if !interval.From.IsValid() || !interval.To.IsValid() || interval.From.Compare(interval.To) > 0 {
 		return nil
 	}
 	s.retiredAccess.Lock()
 	defer s.retiredAccess.Unlock()
 	for _, retired := range s.retired {
-		if retired == addressRange {
+		if retired == interval {
 			return nil
 		}
 	}
-	s.retired = append(s.retired, addressRange)
+	s.retired = append(s.retired, interval)
 	if len(s.retired) > adapter.FakeIPMaxRetiredRanges {
 		s.retired = s.retired[len(s.retired)-adapter.FakeIPMaxRetiredRanges:]
 	}
 	return nil
 }
 
-func (s *MemoryStorage) FakeIPRetired() []netip.Prefix {
+func (s *MemoryStorage) FakeIPRetired() []adapter.FakeIPIssuanceInterval {
 	s.retiredAccess.RLock()
 	defer s.retiredAccess.RUnlock()
-	return adapter.FakeIPNormalizeRetiredRanges(append([]netip.Prefix(nil), s.retired...))
+	return adapter.FakeIPNormalizeRetiredIntervals(append([]adapter.FakeIPIssuanceInterval(nil), s.retired...))
 }

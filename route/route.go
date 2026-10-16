@@ -1203,37 +1203,33 @@ func (r *Router) issuedFakeIPAddress(address netip.Addr) (bool, adapter.FakeIPIs
 	return issued, interval
 }
 
-// retiredFakeIPAddress asks whether this installation issued from a range covering the address and has
-// since retired it, reporting the range that covers it.
+// retiredFakeIPAddress asks whether this installation issued from an interval covering the address and
+// has since retired it, reporting the interval that covers it.
 //
 // # Why the STORE answers, and not only the ledger
 //
 // The ledger is one per application session and dies with the process, so it can only attribute what
 // THIS process issued or saw retired. A client holds a FakeIP answer for `constant.DefaultDNSTTL`,
 // which spans a daemon restart, an update or a reboot - and after one of those the ledger is empty
-// while the client is still dialling what it was given. The retired ranges are persisted for exactly
-// that window, and the store is the object that owns them.
+// while the client is still dialling what it was given. The intervals are persisted for exactly that
+// window, and the store is the object that owns them.
 //
-// # It is a WEAKER statement than the ledger's, and the contract says so
+// # It is the SAME kind of statement the ledger makes, not a weaker one
 //
-// `IssuedInterval` is narrow: a cursor-bounded interval of addresses a generation really handed out.
-// This is a range. Its only claim is that a record is MISSING for an address inside it, which is the
-// correct reading for an address with no mapping - and it is still a claim about THIS installation, so
-// a machine that never configured the range keeps crossing.
-func (r *Router) retiredFakeIPAddress(address netip.Addr) (bool, netip.Prefix) {
+// Both are cursor-bounded: `{first issuable address, cursor}` is what a generation really handed out,
+// so an address past everything it reached is not covered by either. This was a RANGE in an earlier
+// version of the change, and the difference is not cosmetic - the A7b end-to-end row failed on it,
+// because a range record refuses `198.18.4.200` on a range whose cursor stopped near `198.18.0.2`.
+func (r *Router) retiredFakeIPAddress(address netip.Addr) (bool, adapter.FakeIPIssuanceInterval) {
 	if !address.IsValid() || r.dnsTransport == nil {
-		return false, netip.Prefix{}
+		return false, adapter.FakeIPIssuanceInterval{}
 	}
 	fakeIP := r.dnsTransport.FakeIP()
 	if fakeIP == nil || fakeIP.Store() == nil {
-		return false, netip.Prefix{}
+		return false, adapter.FakeIPIssuanceInterval{}
 	}
-	for _, retiredRange := range fakeIP.Store().RetiredAddresses() {
-		if retiredRange.Contains(address) {
-			return true, retiredRange
-		}
-	}
-	return false, netip.Prefix{}
+	interval, covered := adapter.FakeIPRetiredCovers(fakeIP.Store().RetiredAddresses(), address)
+	return covered, interval
 }
 
 func (r *Router) matchRule(

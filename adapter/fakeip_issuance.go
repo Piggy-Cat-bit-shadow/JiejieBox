@@ -56,6 +56,15 @@ func (i FakeIPIssuanceInterval) contains(address netip.Addr) bool {
 		i.From.Compare(address) <= 0 && address.Compare(i.To) <= 0
 }
 
+// Covers is `contains`, exported for the packages that have to ask the same question about a retired
+// interval rather than about the ledger's own set.
+//
+// The rule is not re-stated there on purpose: the bit-length agreement above is the part that is easy
+// to get wrong and invisible when it is wrong, so there is exactly one implementation of it.
+func (i FakeIPIssuanceInterval) Covers(address netip.Addr) bool {
+	return i.contains(address)
+}
+
 // issuanceSnapshot is the immutable set of intervals the ledger has recorded, published as one value
 // so readers take no lock.
 //

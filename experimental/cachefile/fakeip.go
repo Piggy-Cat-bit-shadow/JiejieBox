@@ -20,7 +20,7 @@ var (
 	bucketFakeIPDomain6 = []byte(fakeipBucketPrefix + "domain6")
 	keyMetadata         = []byte(fakeipBucketPrefix + "metadata")
 
-	// bucketFakeIPRetired holds the ranges this installation has issued from and retired. It is
+	// bucketFakeIPRetired holds the INTERVALS this installation has issued from and retired. It is
 	// deliberately NOT under bucketFakeIP, because FakeIPReset deletes that bucket wholesale - and
 	// this record is exactly the statement the reset must NOT destroy.
 	bucketFakeIPRetired = []byte(fakeipBucketPrefix + "retired")
@@ -57,30 +57,29 @@ const (
 //
 // # What it does NOT do
 //
-// It records a RANGE, and a range is not proof of issuance. Entries are validated by
-// `adapter.FakeIPNormalizeRetiredRanges` on the way out, and the caller combines this with the
-// ledger's narrow, cursor-bounded intervals. A range alone can only say "this installation once
-// issued from here" - which is what makes an address inside it with no mapping a MISSING RECORD
-// rather than an ordinary literal. Range membership by itself never causes a refusal, so live routed
-// traffic in the same range on a machine that never configured it as a FakeIP range is untouched:
-// that is the positive control which forbids a blanket range guard.
-func (c *CacheFile) FakeIPRetireRange(addressRange netip.Prefix) error {
-	if !addressRange.IsValid() {
+// It records an INTERVAL, not a range, and the difference is the whole reason this is safe. A
+// generation hands addresses out in order, so `{first issuable, cursor}` is exactly what it really
+// handed out; refusing on the RANGE instead would refuse `198.18.4.200` on a range whose cursor stopped
+// near `198.18.0.2`, which is the compatibility regression the ledger's own cursor bound exists to
+// prevent and which the A7b end-to-end row pins. Entries are validated by
+// `adapter.FakeIPNormalizeRetiredIntervals` on the way out.
+func (c *CacheFile) FakeIPRetireInterval(interval adapter.FakeIPIssuanceInterval) error {
+	if !interval.From.IsValid() || !interval.To.IsValid() || interval.From.Compare(interval.To) > 0 {
 		return nil
 	}
 	return c.batch(func(tx *bbolt.Tx) error {
 		// The list is read back from disk inside the write, so two Stores sharing one cache file
 		// cannot each write a one-entry list over the other's.
-		var stored []netip.Prefix
+		var stored []adapter.FakeIPIssuanceInterval
 		if existing := tx.Bucket(bucketFakeIPRetired); existing != nil {
-			stored = unmarshalRetiredRanges(existing.Get(keyRetiredRanges))
+			stored = unmarshalRetiredIntervals(existing.Get(keyRetiredRanges))
 		}
 		for _, retired := range stored {
-			if retired == addressRange {
+			if retired == interval {
 				return nil
 			}
 		}
-		stored = append(stored, addressRange)
+		stored = append(stored, interval)
 		if len(stored) > maxRetiredRanges {
 			stored = stored[len(stored)-maxRetiredRanges:]
 		}
@@ -88,22 +87,22 @@ func (c *CacheFile) FakeIPRetireRange(addressRange netip.Prefix) error {
 		if err != nil {
 			return err
 		}
-		return bucket.Put(keyRetiredRanges, marshalRetiredRanges(stored))
+		return bucket.Put(keyRetiredRanges, marshalRetiredIntervals(stored))
 	})
 }
 
-// FakeIPRetired returns the ranges this installation has issued from and retired, oldest first.
+// FakeIPRetired returns the intervals this installation has issued from and retired, oldest first.
 //
 // A read error is reported as "nothing retired", which refuses nothing - the same degradation as a
 // storage implementation with no retirement memory at all.
-func (c *CacheFile) FakeIPRetired() []netip.Prefix {
-	var stored []netip.Prefix
+func (c *CacheFile) FakeIPRetired() []adapter.FakeIPIssuanceInterval {
+	var stored []adapter.FakeIPIssuanceInterval
 	_ = c.view(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket(bucketFakeIPRetired)
 		if bucket == nil {
 			return nil
 		}
-		stored = unmarshalRetiredRanges(bucket.Get(keyRetiredRanges))
+		stored = unmarshalRetiredIntervals(bucket.Get(keyRetiredRanges))
 		return nil
 	})
 	return stored
@@ -358,50 +357,50 @@ func (c *CacheFile) FakeIPReset() error {
 	})
 }
 
-// The retirement record's encoding is a count, then one entry per range, each written as
+// The retirement record's encoding is a count, then one entry per interval, each written as
 //
-//	family | address | prefix length
+//	family | from | to
 //
-// with a 2-byte count prefix. The family byte comes FIRST so the decoder never has to infer the body
-// length from the body's own contents.
+// with a 2-byte count prefix and fixed-size bodies per family.
 //
-// # Why the family byte may not be omitted
+// # Why the family byte is explicit and comes first
 //
-// The obvious encoding - address then prefix length, family implied by the body length - carries an
-// ambiguity that is not worth having: a 4-byte body would have to be told apart from a truncated
-// 16-byte one by reading the byte AFTER it, which is only valid when that value happens to be in range.
-// An explicit tag removes the inference. The family is chosen from `Addr().BitLen()` rather than
-// `Is4()`, because `netip.PrefixFrom` on a sixteen-byte address yields an address whose `Is4()` is
-// FALSE even when its bits are 0..32 - which is the shape `adapter.FakeIPNormalizeRetiredRanges`
-// produces when it masks a range, so the two must agree or every entry is unreadable.
+// The obvious encoding - addresses alone, family implied by their length - carries an ambiguity that is
+// not worth having: a 4-byte body would have to be told apart from a truncated 16-byte one by reading
+// the byte AFTER it, which is only valid when that value happens to be in range. An explicit tag removes
+// the inference. The family is chosen from `Addr().BitLen()` rather than `Is4()`, because an address
+// built from sixteen bytes reports `Is4() == false` even when its bits are 0..32, and the two ends of one
+// interval must not disagree about their own length.
 //
-// It is deliberately FORWARD compatible rather than versioned: a reader stops at the count it was
-// given and ignores any trailing bytes, so a file written by a build with a larger bound is read
-// correctly by a smaller one, and a truncated value yields the prefix it does hold rather than an
-// error. That is the opposite of the metadata decoder above, which allocates on a length prefix read
-// from disk and reports a truncation - correctly, because a partial CURSOR would re-issue addresses
-// that are still live, while a partial RANGE LIST is still a serviceable set of ranges.
-func marshalRetiredRanges(ranges []netip.Prefix) []byte {
-	data := make([]byte, 0, 2+len(ranges)*18)
-	data = binary.BigEndian.AppendUint16(data, uint16(len(ranges)))
-	for _, addressRange := range ranges {
-		address := addressRange.Addr()
-		if address.BitLen() == 32 {
-			raw := address.As4()
+// It is deliberately FORWARD compatible rather than versioned: a reader stops at the count it was given
+// and ignores any trailing bytes, so a file written by a build with a larger bound is read correctly by
+// a smaller one, and a truncated value yields the entries it does hold rather than an error. That is the
+// opposite of the metadata decoder above, which allocates on a length prefix read from disk and reports a
+// truncation - correctly, because a partial CURSOR would re-issue addresses that are still live, while a
+// partial RETIREMENT LIST is still a serviceable set of intervals.
+func marshalRetiredIntervals(intervals []adapter.FakeIPIssuanceInterval) []byte {
+	data := make([]byte, 0, 2+len(intervals)*34)
+	data = binary.BigEndian.AppendUint16(data, uint16(len(intervals)))
+	for _, interval := range intervals {
+		from, to := interval.From, interval.To
+		if from.BitLen() == 32 {
+			rawFrom := from.As4()
+			rawTo := to.As4()
 			data = append(data, retiredFamilyIPv4)
-			data = append(data, raw[:]...)
-			data = append(data, byte(addressRange.Bits()))
+			data = append(data, rawFrom[:]...)
+			data = append(data, rawTo[:]...)
 			continue
 		}
-		raw := address.As16()
+		rawFrom := from.As16()
+		rawTo := to.As16()
 		data = append(data, retiredFamilyIPv6)
-		data = append(data, raw[:]...)
-		data = append(data, byte(addressRange.Bits()))
+		data = append(data, rawFrom[:]...)
+		data = append(data, rawTo[:]...)
 	}
 	return data
 }
 
-func unmarshalRetiredRanges(data []byte) []netip.Prefix {
+func unmarshalRetiredIntervals(data []byte) []adapter.FakeIPIssuanceInterval {
 	if len(data) < 2 {
 		return nil
 	}
@@ -410,17 +409,14 @@ func unmarshalRetiredRanges(data []byte) []netip.Prefix {
 		count = maxRetiredRanges
 	}
 	offset := 2
-	ranges := make([]netip.Prefix, 0, count)
+	intervals := make([]adapter.FakeIPIssuanceInterval, 0, count)
 	for range count {
 		if offset >= len(data) {
 			break
 		}
 		family := data[offset]
 		offset++
-		var (
-			address netip.Addr
-			length  int
-		)
+		var length int
 		switch family {
 		case retiredFamilyIPv4:
 			length = 4
@@ -428,28 +424,28 @@ func unmarshalRetiredRanges(data []byte) []netip.Prefix {
 			length = 16
 		default:
 			// An unknown family means this value was not written by this encoder. Stop rather than
-			// guess a length and read whatever follows as an address.
-			return adapter.FakeIPNormalizeRetiredRanges(ranges)
+			// guess a length and read whatever follows as addresses.
+			return adapter.FakeIPNormalizeRetiredIntervals(intervals)
 		}
-		if offset+length+1 > len(data) {
+		if offset+length*2 > len(data) {
 			break
 		}
+		var from, to netip.Addr
 		if length == 4 {
-			var raw [4]byte
-			copy(raw[:], data[offset:offset+4])
-			address = netip.AddrFrom4(raw)
+			var rawFrom, rawTo [4]byte
+			copy(rawFrom[:], data[offset:offset+4])
+			copy(rawTo[:], data[offset+4:offset+8])
+			from = netip.AddrFrom4(rawFrom)
+			to = netip.AddrFrom4(rawTo)
 		} else {
-			var raw [16]byte
-			copy(raw[:], data[offset:offset+16])
-			address = netip.AddrFrom16(raw)
+			var rawFrom, rawTo [16]byte
+			copy(rawFrom[:], data[offset:offset+16])
+			copy(rawTo[:], data[offset+16:offset+32])
+			from = netip.AddrFrom16(rawFrom)
+			to = netip.AddrFrom16(rawTo)
 		}
-		offset += length
-		bits := int(data[offset])
-		offset++
-		if bits > address.BitLen() {
-			continue
-		}
-		ranges = append(ranges, netip.PrefixFrom(address, bits))
+		offset += length * 2
+		intervals = append(intervals, adapter.FakeIPIssuanceInterval{From: from, To: to})
 	}
-	return adapter.FakeIPNormalizeRetiredRanges(ranges)
+	return adapter.FakeIPNormalizeRetiredIntervals(intervals)
 }

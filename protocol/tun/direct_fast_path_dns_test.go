@@ -546,7 +546,7 @@ func (s *fakeIPStoreStub) Reset() error                            { return nil 
 // RetiredAddresses reports nothing, which is the correct degradation for a store with no retirement
 // memory: the router then refuses nothing on that basis. This stub models the RANGE question only, and
 // every assertion in this file is about the current range.
-func (s *fakeIPStoreStub) RetiredAddresses() []netip.Prefix { return nil }
+func (s *fakeIPStoreStub) RetiredAddresses() []adapter.FakeIPIssuanceInterval { return nil }
 
 // TestFakeIPIsNotBypassedByRouteAddressSet is the L0 boundary.
 //

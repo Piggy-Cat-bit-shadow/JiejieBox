@@ -11,7 +11,7 @@ type FakeIPStore interface {
 	Contains(address netip.Addr) bool
 	Create(domain string, isIPv6 bool) (netip.Addr, error)
 	Lookup(address netip.Addr) (string, bool)
-	// RetiredAddresses reports the address RANGES an earlier generation of this installation issued
+	// RetiredAddresses reports the address INTERVALS an earlier generation of this installation issued
 	// from and that this one has retired.
 	//
 	// # Why it is on the store rather than only on the issuance ledger
@@ -19,19 +19,21 @@ type FakeIPStore interface {
 	// The ledger is one per application session and dies with the process, so it can only attribute an
 	// address the CURRENT process issued or saw retired. A client holds a FakeIP answer for
 	// `constant.DefaultDNSTTL`, which spans a daemon restart, an update or a reboot - and after one of
-	// those the ledger is empty while the client is still dialling what it was given. The ranges are
-	// therefore persisted, and this is the accessor for them.
+	// those the ledger is empty while the client is still dialling what it was given. These intervals
+	// are persisted, and this is the accessor for them.
 	//
-	// # Why a RANGE and not the address
+	// # Why an INTERVAL and not a range
 	//
-	// A retired generation is described by its configured range, and the ledger's job of narrowing that
-	// to a cursor is what keeps an address the generation never reached from being refused. This method
-	// answers the coarser question ("did we issue from a range that covers this?"), and the caller
-	// treats a positive answer as a MISSING RECORD, not as proof that the address was issued.
+	// A range is not proof, and refusing on one is the blanket range guard this design forbids. A
+	// generation hands addresses out in order, so everything from the first issuable address up to its
+	// cursor was really handed out and nothing beyond the cursor was. That cursor-bounded interval is
+	// the same shape the in-process ledger records, and it is what keeps an address past everything a
+	// generation reached - `198.18.4.200` on a range whose cursor stopped near `198.18.0.2` - crossing
+	// as an ordinary literal.
 	//
 	// A store that cannot answer returns nil, which refuses nothing: the required degradation for an
 	// implementation with no retirement memory.
-	RetiredAddresses() []netip.Prefix
+	RetiredAddresses() []FakeIPIssuanceInterval
 	Reset() error
 }
 
@@ -50,13 +52,13 @@ type FakeIPStorage interface {
 	FakeIPStoreAsync(address netip.Addr, domain string, logger logger.Logger)
 	FakeIPLoad(address netip.Addr) (string, bool)
 	FakeIPLoadDomain(domain string, isIPv6 bool) (netip.Addr, bool)
-	// FakeIPRetireRange records a range this installation issued from and is now retiring, so a LATER
-	// process can still attribute an address a client is holding.
+	// FakeIPRetireInterval records an interval this installation issued from and is now retiring, so a
+	// LATER process can still attribute an address a client is holding.
 	//
 	// It is called on the Start path and must be durable BEFORE the reset that follows it, because the
-	// reset deletes the only other on-disk statement of that range (the cursor metadata).
-	FakeIPRetireRange(addressRange netip.Prefix) error
-	FakeIPRetired() []netip.Prefix
+	// reset deletes the only other on-disk statement of that generation (the cursor metadata).
+	FakeIPRetireInterval(interval FakeIPIssuanceInterval) error
+	FakeIPRetired() []FakeIPIssuanceInterval
 	FakeIPReset() error
 }
 
@@ -86,31 +88,53 @@ type FakeIPTransport interface {
 // scheduled reload, is beyond any real reload cadence while staying a few hundred bytes of disk.
 const FakeIPMaxRetiredRanges = 8
 
-// FakeIPNormalizeRetiredRanges drops entries that cannot describe a range a store could have issued
-// from, and masks host bits so a loosely spelled range still matches.
+// FakeIPNormalizeRetiredIntervals drops entries that cannot describe an interval a store could have
+// issued from, and applies the bound.
 //
 // It is shared by every storage implementation because a malformed entry must be unable to widen the
-// refusal: a `/0` read back from a hand-edited file would otherwise claim the whole address space,
-// which is precisely the blanket range guard this design exists to avoid. A `/32` or `/128` is dropped
-// for the opposite reason - it cannot be a FakeIP range, so treating it as one would refuse a single
-// real address for no evidence at all.
-func FakeIPNormalizeRetiredRanges(ranges []netip.Prefix) []netip.Prefix {
-	if len(ranges) == 0 {
+// refusal. Each rule has a reason: an interval whose ends are inverted contains nothing, and a reader
+// that trusted it would refuse a range's worth of addresses the generation never reached; and ends of
+// different bit lengths cannot be compared at all, because a 4-in-6 spelling is a different value from
+// the IPv4 address it denotes and `Compare` across the two silently misses.
+func FakeIPNormalizeRetiredIntervals(intervals []FakeIPIssuanceInterval) []FakeIPIssuanceInterval {
+	if len(intervals) == 0 {
 		return nil
 	}
-	normalized := make([]netip.Prefix, 0, len(ranges))
-	for _, addressRange := range ranges {
-		if !addressRange.IsValid() {
+	normalized := make([]FakeIPIssuanceInterval, 0, len(intervals))
+	for _, interval := range intervals {
+		if !interval.From.IsValid() || !interval.To.IsValid() {
 			continue
 		}
-		bits := addressRange.Bits()
-		if bits <= 0 || bits >= addressRange.Addr().BitLen() {
+		if interval.From.BitLen() != interval.To.BitLen() {
 			continue
 		}
-		normalized = append(normalized, addressRange.Masked())
+		if interval.From.Compare(interval.To) > 0 {
+			continue
+		}
+		normalized = append(normalized, interval)
 	}
 	if len(normalized) > FakeIPMaxRetiredRanges {
 		normalized = normalized[len(normalized)-FakeIPMaxRetiredRanges:]
 	}
+	if len(normalized) == 0 {
+		return nil
+	}
 	return normalized
+}
+
+// FakeIPRetiredCovers reports whether any retired interval covers the address, returning the interval
+// so a refusal can name it.
+//
+// It exists so the question "did this installation issue from here" is asked the same way by every
+// caller, including the bit-length agreement that `FakeIPIssuanceInterval.Covers` documents.
+func FakeIPRetiredCovers(intervals []FakeIPIssuanceInterval, address netip.Addr) (FakeIPIssuanceInterval, bool) {
+	if !address.IsValid() {
+		return FakeIPIssuanceInterval{}, false
+	}
+	for _, interval := range intervals {
+		if interval.Covers(address) {
+			return interval, true
+		}
+	}
+	return FakeIPIssuanceInterval{}, false
 }
