@@ -534,3 +534,131 @@ jobs:
           # A safety net for FAILED runs, not a gate: the clean end state is asserted by gate 6, and
           # the status of a cleanup pass must not become this job's exit code.
           exit 0
+
+  # A REAL coexistence smoke test, in its own job on its own runner.
+  #
+  # Separate on purpose, for two reasons. It needs a machine where the OFFICIAL sing-box client is
+  # installed and running - the opposite of the clean runner every other gate requires - and it must
+  # not disturb gates 5/5b/6/7, which are about this client alone. A second job gives it both, and
+  # the two jobs cannot then interfere through the machine either.
+  #
+  # The regression it exists for: installing OR uninstalling this fork deleted the official client's
+  # `sing-box-daemon` service, because the ownership proof could not tell the two clients apart. No
+  # other gate can catch that, because no other gate ever constructs "another sing-box client is
+  # already here".
+  windows-coexistence-smoke:
+    name: coexistence smoke (official client beside this one)
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Normalise the audited build SHA
+        id: audited
+        shell: pwsh
+        env:
+          EVENT_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_SHA: ${{ inputs.core_sha }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $auditedSha = if ($env:INPUT_SHA) { $env:INPUT_SHA.Trim() } else { $env:EVENT_SHA }
+          if ($auditedSha -notmatch '^[0-9a-f]{40}$') {
+            throw "the audited build SHA must be 40 lowercase hex characters, got '$auditedSha'"
+          }
+          Write-Host "audited build SHA : $auditedSha"
+          "audited_sha=$auditedSha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Check out the gate tooling at the audited build SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.audited.outputs.audited_sha }}
+          fetch-depth: 1
+
+      - name: Resolve the version from the audited SHA
+        id: version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $versionFile = Join-Path $PWD "release/JIEJIE_VERSION"
+          if (-not (Test-Path -LiteralPath $versionFile)) {
+            throw "release/JIEJIE_VERSION is not present at the audited SHA"
+          }
+          $version = (Get-Content -LiteralPath $versionFile -Raw).Trim()
+          if ($version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+            throw "release/JIEJIE_VERSION is not an X.Y.Z version (got '$version')"
+          }
+          Write-Host "audited version: $version"
+          "core_version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Download the built installer
+        id: download
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AUDITED_SHA: ${{ steps.audited.outputs.audited_sha }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $sha = $env:AUDITED_SHA
+
+          # The newest SUCCESSFUL run of the installer workflow for this commit, selected by
+          # workflow path so a renamed or added workflow cannot be mistaken for it.
+          $runs = gh api "repos/${{ github.repository }}/actions/runs?head_sha=$sha&per_page=100" `
+            --jq '.workflow_runs[] | select(.path == ".github/workflows/client-desktop-windows.yml") | select(.conclusion == "success") | [.id, .run_number] | @tsv'
+          if (-not $runs) {
+            throw "no successful run of client-desktop-windows.yml exists for $sha, so there is no installer to test"
+          }
+          $runId = ($runs -split "`n" | Where-Object { $_.Trim() } | Select-Object -First 1) -split "`t" | Select-Object -First 1
+          Write-Host "installer build run: $runId"
+
+          # Selected by SHAPE, as release-artifacts.sh does, because the artifact name carries a
+          # version that has been stale before.
+          $listing = gh api "repos/${{ github.repository }}/actions/runs/$runId/artifacts?per_page=100" `
+            --jq '.artifacts[] | select(.expired | not) | [.name] | @tsv'
+          $installerArtifact = $null
+          foreach ($name in ($listing -split "`n")) {
+            $name = $name.Trim()
+            if ($name -like "*-signed-test") { $installerArtifact = $name }
+          }
+          if (-not $installerArtifact) { throw "run $runId has no *-signed-test artifact; found: $listing" }
+
+          New-Item -ItemType Directory -Path "installer" -Force | Out-Null
+          gh run download $runId --repo "${{ github.repository }}" --name $installerArtifact --dir "installer"
+          $exe = Get-ChildItem "installer" -Recurse -Filter "*.exe" | Select-Object -First 1
+          if ($null -eq $exe) { throw "the installer artifact contains no .exe" }
+          Write-Host "installer: $($exe.FullName) ($($exe.Length) bytes)"
+          "installer_path=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: "[coexistence] official client -> install this one -> uninstall it -> official still healthy"
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $record = Join-Path $PWD "build/records/coexistence-smoke.txt"
+          New-Item -ItemType Directory -Path (Split-Path -Parent $record) -Force | Out-Null
+
+          & "$PWD/scripts/ci/windows/Test-CoexistenceSmoke.ps1" `
+            -InstallerPath "${{ steps.download.outputs.installer_path }}" `
+            -ExpectedVersion "${{ steps.version.outputs.core_version }}" `
+            -RecordPath $record
+          $code = $LASTEXITCODE
+
+          if (Test-Path -LiteralPath $record) {
+            Get-Content -LiteralPath $record | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          }
+
+          # 44 is the gate saying it could not set the scenario up (the official installer could not
+          # be downloaded or would not install). That is an INFRASTRUCTURE result, not a product
+          # regression, and it is reported as a warning with its own exit code so it can never be
+          # cited as "coexistence is broken".
+          if ($code -eq 44) {
+            Write-Host "::warning::coexistence smoke gate: INFRA_DOWNLOAD_FAILURE - the scenario could not be set up. This is NOT a product regression."
+            exit 44
+          }
+          exit $code
+
+      - name: Upload the coexistence record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jiejiebox-windows-coexistence-smoke-records
+          path: build/records/coexistence-smoke.txt
+          if-no-files-found: warn
+          retention-days: 90
