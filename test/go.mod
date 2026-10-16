@@ -224,10 +224,11 @@ require (
 // rather than claim the handover); the root's pin comment names the commit and the reason.
 replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261011105649-bde7ddda55ef
 
-// Adds the accept-loop recovery (040) and the Go stack's Start/Close handshake. Same fork
-// revision as the root module: the test module runs integration tests against the TUN stack, so
-// without this replace it linked UPSTREAM sing-tun and the Start/Close race fix under test was not
-// the code being tested. See the root go.mod for the fork's base and branch.
+// Adds the accept-loop recovery (040), the Go stack's Start/Close handshake, and the IPv6-only
+// re-bind self-heal. Same fork revision as the root module: the test module runs integration tests
+// against the TUN stack, so without this replace it linked UPSTREAM sing-tun and the Start/Close
+// race fix under test was not the code being tested. See the root go.mod for the fork's base and
+// branch.
 //
 // This pin was one commit behind the root again - 8dde9c8cbe27 while the root built 6937951ec9b6 -
 // and the drift was caught by scripts/ci/check-go-module-integrity.sh on the Final Freeze run for
@@ -237,7 +238,13 @@ replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-
 // because a replace changes which revision is built while the require line names the module's
 // declared base; leaving them split is what made `go list -mod=readonly -m all` refuse to resolve
 // the module graph at all.
-replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261013212953-6937951ec9b6
+//
+// The d092c64 bump moved the root and this module TOGETHER, which is the whole point of the guard
+// above: the audit branch that produced the fix (audit/dual-stack-ipv4-ipv6-lifecycle @ 200274c5076)
+// changed only the root, so as it stood the root built d092c64 while this module still pinned
+// 6937951ec9b6 - the same root-vs-nested drift, and check-go-module-integrity.sh would have failed
+// it. The require line still names the same base (9ffa5391a2ad) because the pin's base did not move.
+replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261015074151-d092c6459f4d
 
 // Same fork revision as the root module, for the same reason as every other pin here: a nested
 // module does not inherit the root's replaces, so a test binary built from this module would
