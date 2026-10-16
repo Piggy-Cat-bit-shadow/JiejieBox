@@ -157,6 +157,127 @@ function Show-InstallerDiagnostic {
     }
 }
 
+function Show-ProcessSnapshot {
+    # Records the process and window state AROUND a hung installer step.
+    #
+    # # Why this exists
+    #
+    # The old timeout message said "in silent mode that means a prompt appeared that /S could not
+    # answer". That reading is too strong: it asserts a CAUSE from a SYMPTOM. A process can also stay
+    # alive with no prompt at all - a child that never returns, an attached helper, a message loop or
+    # timer that outlives the work, a handle held on a mutex.
+    #
+    # Those cases are distinguishable, but only if the state is captured while the process is still
+    # there. So this runs BEFORE anything is killed, and it records the facts that separate them: who
+    # the installer's children are, whether it has a window at all, and whether it is responding.
+    #
+    # Read-only on purpose. It never kills, stops or mutates anything, so it is safe to call from an
+    # already-failing path - and so a run that hangs can be diagnosed without a second run.
+    param([System.Diagnostics.Process]$Process)
+
+    $snapshot = [System.Collections.Generic.List[string]]::new()
+
+    if ($null -eq $Process) {
+        $snapshot.Add("(no process object; the step did not reach Start-Process)")
+        return $snapshot
+    }
+
+    $procId = $Process.Id
+    $snapshot.Add("hung process: PID $procId")
+    try {
+        $Process.Refresh()
+        $snapshot.Add("  image            : $($Process.ProcessName)")
+        if (-not [string]::IsNullOrWhiteSpace($Process.Path)) { $snapshot.Add("  path             : $($Process.Path)") }
+        $snapshot.Add("  started          : $($Process.StartTime.ToUniversalTime().ToString('o'))")
+        $snapshot.Add("  total processor  : $([math]::Round($Process.TotalProcessorTime.TotalSeconds, 1))s")
+        # Responding is false for a blocked message pump, and true for a live loop. It is the single
+        # cheapest discriminator between "waiting for an answer" and "still working".
+        $snapshot.Add("  responding       : $($Process.Responding)")
+        Add-Member -InputObject $Process -NotePropertyName SeenMainWindowTitle -NotePropertyValue "" -Force -ErrorAction SilentlyContinue
+        $title = ""
+        try { $title = $Process.MainWindowTitle } catch { $title = "(unavailable)" }
+        $snapshot.Add("  main window title: '$(if ([string]::IsNullOrEmpty($title)) { '<none>' } else { $title })'")
+        $snapshot.Add("  main window handle: $($Process.MainWindowHandle)")
+        try { $snapshot.Add("  thread count     : $($Process.Threads.Count)") } catch { $snapshot.Add("  thread count     : (unavailable)") }
+        try { $snapshot.Add("  handle count     : $($Process.HandleCount)") } catch { $snapshot.Add("  handle count     : (unavailable)") }
+    } catch {
+        $snapshot.Add("  (process introspection failed: $($_.Exception.Message))")
+    }
+
+    # Every process whose parent chain reaches the hung installer. NSIS spawns children for plugin
+    # calls (nsExec, PowerShell helpers, the daemon), and a child that outlives its parent's work is
+    # exactly hypothesis B/F.
+    try {
+        $all = Get-CimInstance Win32_Process -ErrorAction Stop |
+            Select-Object ProcessId, ParentProcessId, Name, CommandLine, CreationDate
+        $byParent = @{}
+        foreach ($p in $all) {
+            $key = [int]$p.ParentProcessId
+            if (-not $byParent.ContainsKey($key)) { $byParent[$key] = [System.Collections.Generic.List[object]]::new() }
+            $byParent[$key].Add($p)
+        }
+        $descendants = [System.Collections.Generic.List[object]]::new()
+        $frontier = @($procId)
+        $seen = @{}
+        while ($frontier.Count -gt 0) {
+            $next = @()
+            foreach ($parentId in $frontier) {
+                if ($seen.ContainsKey($parentId)) { continue }
+                $seen[$parentId] = $true
+                if (-not $byParent.ContainsKey($parentId)) { continue }
+                foreach ($child in $byParent[$parentId]) {
+                    $descendants.Add($child)
+                    $next += [int]$child.ProcessId
+                }
+            }
+            $frontier = $next
+        }
+        if ($descendants.Count -eq 0) {
+            $snapshot.Add("descendants: NONE (the installer has no child process, so it is not waiting on one)")
+        } else {
+            $snapshot.Add("descendants: $($descendants.Count)")
+            foreach ($d in $descendants) {
+                $cli = $d.CommandLine
+                if ([string]::IsNullOrWhiteSpace($cli)) { $cli = "(no command line)" }
+                if ($cli.Length -gt 400) { $cli = $cli.Substring(0, 400) + "..." }
+                $snapshot.Add("  PID $($d.ProcessId)  parent $($d.ParentProcessId)  $($d.Name)")
+                $snapshot.Add("      started: $($d.CreationDate)")
+                $snapshot.Add("      cmdline: $cli")
+            }
+        }
+
+        # Daemon and any surviving Electron/PowerShell helpers, whether or not they are descendants.
+        foreach ($pattern in @('sing-box-daemon', 'electron', 'powershell', 'pwsh', 'nsExec', 'Un_A', 'Uninstall')) {
+            $hits = $all | Where-Object { $_.Name -like "*$pattern*" }
+            if ($hits) {
+                $snapshot.Add("matching '*${pattern}*':")
+                foreach ($h in $hits) {
+                    $snapshot.Add("  PID $($h.ProcessId)  parent $($h.ParentProcessId)  $($h.Name)  started $($h.CreationDate)")
+                }
+            }
+        }
+    } catch {
+        $snapshot.Add("(process enumeration failed: $($_.Exception.Message))")
+    }
+
+    # Top-level windows that are visible but unowned by a console, which is what a prompt looks like.
+    try {
+        $windows = Get-Process -ErrorAction SilentlyContinue |
+            Where-Object { $_.MainWindowHandle -ne 0 -and -not [string]::IsNullOrEmpty($_.MainWindowTitle) } |
+            Select-Object Id, ProcessName, MainWindowTitle
+        if ($windows) {
+            $snapshot.Add("visible top-level windows:")
+            foreach ($w in $windows) { $snapshot.Add("  PID $($w.Id)  $($w.ProcessName)  '$($w.MainWindowTitle)'") }
+        } else {
+            $snapshot.Add("visible top-level windows: none")
+        }
+    } catch {
+        $snapshot.Add("(window enumeration failed: $($_.Exception.Message))")
+    }
+
+    return $snapshot
+}
+
 function Show-Diagnostics {
     Show-InstallerDiagnostic
     foreach ($diagnostic in @(
@@ -198,8 +319,26 @@ function Invoke-Silently {
     $process = Start-Process -FilePath $FilePath -ArgumentList $Arguments -PassThru
     $null = $process | Wait-Process -Timeout $OperationTimeoutSeconds -ErrorAction SilentlyContinue
     if (-not $process.HasExited) {
+        # Captured BEFORE the kill, because the state that explains the hang is destroyed by it.
+        $snapshot = Show-ProcessSnapshot -Process $process
+        Write-Host ""
+        Write-Host "-- hung-step process snapshot --"
+        foreach ($item in $snapshot) { Write-Host $item }
+        $lines.Add("")
+        $lines.Add("hung-step process snapshot ($What):")
+        foreach ($item in $snapshot) { $lines.Add("  $item") }
+        $snapshotPath = Join-Path (Split-Path -Parent $RecordPath) "hung-step-process-snapshot.txt"
+        try { $snapshot | Set-Content -LiteralPath $snapshotPath -Encoding utf8 -ErrorAction Stop } catch { }
+
         Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-        Fail-Gate "$What did not finish within $OperationTimeoutSeconds seconds; in silent mode that means a prompt appeared that /S could not answer"
+        # The message states the SYMPTOM and stops there.
+        #
+        # It used to say "in silent mode that means a prompt appeared that /S could not answer",
+        # which asserts a CAUSE from a SYMPTOM. A process can outlive its work without any prompt: a
+        # child that never returns, an attached helper, a message loop or timer, a held handle. That
+        # wording pointed every reader at NSIS pages and away from those, and it has now been
+        # falsified once - see the snapshot's `descendants` and `responding` rows.
+        Fail-Gate "$What did not finish within $OperationTimeoutSeconds seconds. It may be waiting on an unanswerable prompt, on a child process, or on a loop/timer that outlived its work; the process snapshot above distinguishes them."
     }
     Write-Host "    exit code $($process.ExitCode)"
     return $process.ExitCode

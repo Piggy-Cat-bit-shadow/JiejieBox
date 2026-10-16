@@ -72,6 +72,14 @@ on:
         description: 'NON-RELEASE DIAGNOSTIC ONLY. Leave EMPTY: the audit tooling is then checked out at core_sha. Set it only to test new scripts against an older artifact, and read the resulting report as a diagnostic, never as an acceptance result.'
         required: false
         default: ''
+      gates:
+        description: 'NON-RELEASE DIAGNOSTIC ONLY. "all" (default) runs every gate and is the only value an acceptance run may use. "gate6" runs gate 6 ALONE on a fresh runner, which is how "does the installer hang by itself, or only after gates 5/5b?" gets MEASURED instead of inferred.'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - gate6
 
 permissions:
   contents: read
@@ -330,17 +338,26 @@ jobs:
       # a failure here fails this job and this workflow.
 
       - name: "[gate 5] daemon service smoke test"
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.gates == 'all' }}
         shell: pwsh
         env:
           UNPACKED_DIR: ${{ steps.download.outputs.unpacked_dir }}
         run: |
           $ErrorActionPreference = "Stop"
+          # Gate 6 alone is a DIAGNOSTIC run: gates 5 and 5b install and remove a service before gate 6
+          # runs, so skipping them is what separates "the installer hangs by itself" from "the installer
+          # hangs because of what an earlier gate left behind". A `gates: gate6` run is never an
+          # acceptance result - the acceptance run is `gates: all`.
+          if ('${{ inputs.gates }}' -eq 'gate6') {
+            Write-Host "DIAGNOSTIC RUN: gates 5 and 5b are SKIPPED. Not an acceptance result."
+          }
           ./tooling/scripts/ci/windows/Test-DaemonService.ps1 `
             -DaemonPath "$env:UNPACKED_DIR/resources/daemon/sing-box-daemon.exe" `
             -WorkingDirectory $env:SERVICE_WORK_DIR `
             -RecordPath "$env:RECORDS_DIR/daemon-service-smoke-test.txt"
 
       - name: "[gate 5b] daemon secure service install (the installer's own path)"
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.gates == 'all' }}
         shell: pwsh
         env:
           UNPACKED_DIR: ${{ steps.download.outputs.unpacked_dir }}
