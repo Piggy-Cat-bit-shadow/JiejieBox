@@ -680,6 +680,36 @@ function Invoke-Uninstall {
     if (-not [string]::IsNullOrWhiteSpace($DiagnosticPath)) {
         $arguments += "/CI-DIAGNOSTIC-PATH=$DiagnosticPath"
     }
+    # ANY OPTION THAT FOLLOWS THE DIAGNOSTIC OPTION MUST BE SEPARATED FROM IT BY `/`.
+    #
+    # NSIS's ${GetOptions} takes everything after `=`, up to the end of the command line OR the
+    # next `/` - and `--delete-app-data` starts with `-`, not `/`, so it is not a boundary. With
+    # nothing between them the option's VALUE becomes
+    #
+    #     <diagnostic path> --delete-app-data
+    #
+    # and the uninstaller dutifully writes its markers to a file whose NAME contains that space
+    # and that word. It is not lost output: it is output written to a mangled path, which is why
+    # the final uninstall recorded +0 bytes while its own markers existed on disk under a name
+    # nobody was looking for.
+    #
+    # MEASURED against the shipped uninstaller (sha256
+    # bf0506c522fc76868460a44a5d55540a37093580476d379f49b8a095397facec, the binary this gate
+    # preserved as FIRST_UNINSTALL_SHA):
+    #
+    #   /CI-DIAGNOSTIC-PATH=<p> --delete-app-data _?=<d>   -> stray "…txt --delete-app-data"
+    #   --delete-app-data _?=<d> /CI-DIAGNOSTIC-PATH=<p>   -> no markers
+    #   /CI-DIAGNOSTIC-PATH=<p> / --delete-app-data _?=<d> -> markers at the intended path
+    #   /CI-DIAGNOSTIC-PATH=<p> / _?=<d>                   -> markers at the intended path
+    #
+    # The diagnostic option keeps its position because the uninstaller parses it early; `/` only
+    # terminates its value. This is harness-only: the installer side needs no terminator because
+    # nothing follows the option there (Get-InstallArguments), which is why install/reinstall were
+    # never affected.
+    $terminateDiagnosticOption = -not [string]::IsNullOrWhiteSpace($DiagnosticPath)
+    if ($terminateDiagnosticOption) {
+        $arguments += "/"
+    }
     if ($DeleteAppData) {
         # build/installer.nsh: `--delete-app-data` sets $keepUninstallData to unchecked,
         # which is the ONLY path that runs the data-removal branch. Without it the
