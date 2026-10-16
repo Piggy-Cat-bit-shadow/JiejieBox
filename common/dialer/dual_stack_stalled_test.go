@@ -34,6 +34,9 @@ type stallingDialer struct {
 	stall map[netip.Addr]bool
 	// connectDelay applies to non-stalling addresses.
 	connectDelay time.Duration
+	// packetConn, when set, is what ListenPacket hands back. The zero value keeps the historical
+	// refusal, so a test that does not opt in cannot silently start exercising a socket.
+	packetConn net.PacketConn
 
 	access  sync.Mutex
 	started []time.Duration
@@ -69,6 +72,13 @@ func (d *stallingDialer) DialContext(ctx context.Context, network string, destin
 }
 
 func (d *stallingDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	d.access.Lock()
+	d.tried = append(d.tried, destination.Addr)
+	conn := d.packetConn
+	d.access.Unlock()
+	if conn != nil {
+		return conn, nil
+	}
 	return nil, context.Canceled
 }
 

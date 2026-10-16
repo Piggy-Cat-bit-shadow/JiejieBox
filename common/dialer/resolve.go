@@ -77,6 +77,7 @@ func NewResolveDialer(ctx context.Context, dialer N.Dialer, parallel bool, serve
 				fallbackDelay: fallbackDelay,
 			},
 			parallelDialer,
+			parallelDialer,
 		}
 	}
 	return &resolveDialer{
@@ -93,6 +94,16 @@ func NewResolveDialer(ctx context.Context, dialer N.Dialer, parallel bool, serve
 type resolveParallelNetworkDialer struct {
 	resolveDialer
 	dialer ParallelInterfaceDialer
+
+	// attempts is the dialer one ATTEMPT goes through, when it is not the same object as `dialer`.
+	//
+	// The distinction exists because of the shape `route.ConnectionManager` produces: it hands
+	// `DialSerialNetwork` the OUTBOUND, and the outbound's `DialParallelNetwork` schedules onto the
+	// resolve wrapper the outbound holds. Scheduling onto `dialer` in that shape would call the
+	// outbound's `DialParallelNetwork` again, which is unbounded recursion. `NewResolveDialer` leaves
+	// this nil, so the wrapper it builds - which sits directly over the leaf - uses the leaf for both
+	// roles and the extra indirection costs nothing. See attemptDialer.
+	attempts ParallelInterfaceDialer
 }
 
 func (d *resolveDialer) initialize() error {
@@ -583,10 +594,11 @@ func (d *resolveDialer) dialLiteralWithRecovery(ctx context.Context, network str
 	// an undialable family can still be reached through the sniffed domain's other family. That is
 	// the only path by which such a flow connects at all, which makes running recovery more
 	// important here, not less.
-	localFamilyRefusal := addressFamily(familyInvalid)
-	if originalAllowed && d.dialerLocalFamilyPolicy().hardUndialable(destination.Addr) {
+	localFamilyPolicy := d.dialerLocalFamilyPolicy()
+	localFamilyRefusal := error(nil)
+	if originalAllowed && localFamilyPolicy.hardUndialable(destination.Addr) {
 		originalAllowed = false
-		localFamilyRefusal = classifyAddress(destination.Addr)
+		localFamilyRefusal = localFamilyPolicy.hardUndialableError(destination.Addr)
 	}
 	if originalAllowed {
 		originalWorkers.Add(1)
@@ -603,9 +615,16 @@ func (d *resolveDialer) dialLiteralWithRecovery(ctx context.Context, network str
 		// world: a strategy exclusion is a configuration decision the operator made, while a local
 		// family refusal is a property of the machine they are on. Collapsing them would send an
 		// operator to look at the wrong thing.
+		//
+		// The refusal is asked for WITH THE DESTINATION, not with the family classification of it.
+		// `classifyAddress` reduces a global IPv6 address to "IPv6", which cannot tell "this machine
+		// has no IPv6 addressing" from "this machine has IPv6 addressing and nothing routes it to the
+		// public Internet" - two states with different remedies. The destination-aware accessor makes
+		// that distinction, and the gate and the explanation are taken from ONE policy capture so the
+		// message cannot describe a network the decision was not made on.
 		var originalErr error
-		if localFamilyRefusal != familyInvalid {
-			originalErr = hardUnavailableError(localFamilyRefusal)
+		if localFamilyRefusal != nil {
+			originalErr = localFamilyRefusal
 		} else {
 			originalErr = E.New("destination ", destination.Addr, " excluded by strategy ", strategyName(originalStrategy))
 		}

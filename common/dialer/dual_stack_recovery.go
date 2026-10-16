@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/sagernet/sing-box/adapter"
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	M "github.com/sagernet/sing/common/metadata"
 )
@@ -238,6 +239,58 @@ func refusedFamilyIn(addresses []netip.Addr, policy localFamilyPolicy) addressFa
 		}
 	}
 	return familyInvalid
+}
+
+// withoutFamilyExcluded drops the addresses a strict single-family strategy excludes, and returns the
+// input untouched when the strategy excludes nothing.
+//
+// # Why this is separate from planCandidates
+//
+// `planCandidates` expresses a PREFERENCE - prefer_ipv4, prefer_ipv6, AsIS - and orders both families
+// accordingly; it has no strict mode. A candidate list that must contain one family only therefore has
+// to be filtered before it is planned, and the planner's ordering then applies within the surviving
+// family.
+//
+// # Why it is separate from withoutUndialable
+//
+// The two filters answer different questions and must not be merged. `withoutUndialable` asks "can
+// this machine dial it" - a fact about the device. This asks "did the operator's policy allow it" - a
+// decision about the configuration. A caller that reported one reason for the other would send an
+// operator to look at the wrong thing, which is the same argument `dialLiteralWithRecovery` makes when
+// it reports a strategy exclusion differently from a local family refusal.
+//
+// Like `withoutUndialable`, it does NOT modify the caller's slice, and that is a contract rather than
+// a nicety: the addresses reaching it can be a resolver's cache-backed array, and compacting it in
+// place would rewrite the resolver's own answer as a side effect of one connection's filtering.
+func withoutFamilyExcluded(addresses []netip.Addr, strategy C.DomainStrategy) []netip.Addr {
+	if len(addresses) == 0 {
+		return addresses
+	}
+	if strategy != C.DomainStrategyIPv4Only && strategy != C.DomainStrategyIPv6Only {
+		return addresses
+	}
+	firstExcluded := -1
+	for index, address := range addresses {
+		if !AddressAllowedByStrategy(address, strategy) {
+			firstExcluded = index
+			break
+		}
+	}
+	if firstExcluded < 0 {
+		return addresses
+	}
+	filtered := make([]netip.Addr, firstExcluded, len(addresses))
+	copy(filtered, addresses[:firstExcluded])
+	for _, address := range addresses[firstExcluded+1:] {
+		if !AddressAllowedByStrategy(address, strategy) {
+			continue
+		}
+		filtered = append(filtered, address)
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
 }
 
 // dialerLocalFamilyPolicy reads this dialer's view of which families the machine can dial.

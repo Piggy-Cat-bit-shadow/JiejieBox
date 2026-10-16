@@ -48,6 +48,14 @@ type scriptedFamilyRouter struct {
 	started   chan struct{}
 	startOnce sync.Once
 
+	// gate, when non-nil, blocks every family until it is closed.
+	//
+	// It exists so a test can hold a lookup OPEN while it asserts on what happened in the meantime -
+	// "the connection did not wait for the resolver" is only provable by a resolver that is still
+	// blocked when the connection completes. A delay can only show that something was faster than a
+	// timeout, which is a weaker and flakier claim.
+	gate chan struct{}
+
 	// exited is closed when the lookup function returns, so a test can prove the producer
 	// actually terminated rather than merely being unblocked.
 	exited   chan struct{}
@@ -104,6 +112,14 @@ func (r *scriptedFamilyRouter) runFamilies(ctx context.Context, publish func(ada
 	r.calls.Add(1)
 	r.startOnce.Do(func() { close(r.started) })
 	defer r.exitOnce.Do(func() { close(r.exited) })
+
+	if r.gate != nil {
+		select {
+		case <-r.gate:
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		}
+	}
 
 	type outcome struct {
 		ipv6      bool
