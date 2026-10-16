@@ -688,6 +688,44 @@ function Invoke-Uninstall {
         # deliberately left behind so a reinstall can reuse the data directories.
         $arguments += "--delete-app-data"
     }
+    # `_?=<installation dir>` - the flag the PRODUCT's own invocation passes, and the reason the
+    # uninstaller's own markers appear when the installer runs it but not when this harness did.
+    # Appended LAST, which is the order electron-builder's uninstallOldVersion uses.
+    #
+    # MEASURED, not inferred. The real installed uninstaller (sha256
+    # 50f0916678c4addc33f1c72bd329c99ec701f7166feb6ab2b5b75134a3755107, the exact binary this gate
+    # preserved as FIRST_UNINSTALL_SHA) was run locally through four command lines:
+    #
+    #     /S /allusers /CI-DIAGNOSTIC-PATH=X                 -> no diagnostic file
+    #     /S /allusers /CI-DIAGNOSTIC-PATH=X /allusers       -> no diagnostic file
+    #     /S /allusers /CI-DIAGNOSTIC-PATH=X _?=<dir>        -> [customUnInit] ENTER ... written
+    #     /S /allusers                                       -> no diagnostic file
+    #
+    # The directory value is irrelevant - `_?=` naming an unrelated, non-existent directory works
+    # the same, and a path with spaces works the same. It is the FLAG.
+    #
+    # NSIS uses `_?=` to mean "run in place": $INSTDIR is not derived and the uninstaller does not
+    # copy itself to $TEMP and re-launch. Without it the process this harness starts reads a
+    # command line that does not carry the options, finds $ciDiagnosticPath empty, and skips every
+    # marker - even though the command line Start-Process was given plainly contained the option.
+    # That is the same "the child does not inherit the parent's context" shape as the cross-step
+    # PowerShell function and the lost gitlink: the flag was never missing from what this harness
+    # passed, it was missing from what the executable reaching customUnInit was reading.
+    #
+    # This is why the installer's own child invocation wrote markers all along -
+    # electron-builder's uninstallOldVersion invokes the uninstaller as
+    #
+    #     ExecWait '"$uninstallerFileNameTemp" /S /KEEP_APP_DATA $0 _?=$installationDir'
+    #
+    # - and now this harness passes the same flag, so the two paths are comparable.
+    #
+    # No product behaviour is involved: this affects only how the harness launches an uninstaller,
+    # and it is how the installer already launches it. The option changes no work the uninstaller
+    # performs - un.atomicRMDir branches on ${isUpdated}, not on `_?=`.
+    $installationDirectory = Split-Path -Parent $uninstaller
+    if (-not [string]::IsNullOrWhiteSpace($installationDirectory)) {
+        $arguments += "_?=$installationDirectory"
+    }
     # Observe the uninstaller from OUTSIDE, and record every image of it that appears.
     #
     # WHY EXTERNAL OBSERVATION RATHER THAN INSTRUMENTING THE UNINSTALLER. The question is whether
