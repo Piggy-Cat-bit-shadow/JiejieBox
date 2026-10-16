@@ -110,10 +110,18 @@ unobservable without running the daemon directly or using the installer's
 
 ### Instrument added
 
-`scripts/ci/windows/Test-DaemonServiceRegister.ps1` reproduces the installer's exact
-`service install` invocation, audits every ancestor under the real rule and records the raw
+`scripts/ci/windows/Test-DaemonServiceRegister.ps1` reproduced the installer's exact
+`service install` invocation, audited every ancestor under the real rule and recorded the raw
 stdout/stderr/exit code plus before/after SCM state. This is what made the root cause
 recoverable instead of inferred.
+
+> That script was **deleted** in the Windows surface audit
+> (`refactor/windows-upstream-minimal-surface`): it was in the PRESENT state — the file existed and
+> no workflow, script or doc invoked it — and it was additionally pinned to a stale local path
+> (`C:\src\sfw-test\sing-box`) that no longer exists, so it could not have run anywhere. The
+> *method* it describes is still the working one, and it now lives in
+> `scripts/ci/windows/Test-CoexistenceSmoke.ps1` and the `[gate 5b]` step, both of which are wired
+> into `client-desktop-windows-runtime-audit.yml`.
 
 ## Reproduce this build
 

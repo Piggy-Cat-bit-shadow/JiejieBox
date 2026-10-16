@@ -129,7 +129,16 @@ single-authority rule exists to prevent."* The release path's authority is `rele
 `check-libbox-abi.sh` and its subtree (`apple-abi-provenance.sh`, `apple-abi-probe.sh`,
 `probe-accessors.py` — the last referenced *only* by the first, so orphaning one orphaned all four),
 `check-satelite-one-core-pin.py`, `test-apple-links.py`, `verify-cronet-ios-archive.sh`,
-`run-jiejie-suite.sh`, `ci/windows/Test-DaemonServiceRegister.ps1`.
+`run-jiejie-suite.sh`.
+
+**Deleted in the Windows surface audit** (`refactor/windows-upstream-minimal-surface`):
+`ci/windows/Test-DaemonServiceRegister.ps1` and `ci/windows/Test-InstallerLegacyAdoption.ps1` were
+both in the PRESENT state — the script exists and nothing references it — so they were removed
+rather than left as dead weight. The same pass checked
+`clients/desktop/scripts/test-legacy-service-ownership.ps1` and `test-install-directory.ps1` and
+**kept** both: the first is referenced by `verify-desktop-identity-consistency.py:348`, the second is
+the only regression cover for the install-directory macro. Neither is invoked by any workflow
+either, so they remain PRESENT and want wiring, not deletion.
 
 **Test tags referenced by nothing** — `trafficresearch` (`common/trafficsched/adaptive_research_test.go`),
 `p2ios` (three `experimental/libbox` files), `tlsfragment_integration`
