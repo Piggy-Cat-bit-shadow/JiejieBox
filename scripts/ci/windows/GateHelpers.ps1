@@ -228,6 +228,78 @@ function Get-UninstallEntriesForInstallation {
     return $matches
 }
 
+# --- the two identity constants, and the state resolver that uses them ------------------------
+#
+# These live here rather than in the lifecycle gate because BOTH the gate and the two workflows'
+# `cleanup:` steps need them. GitHub Actions gives every step a fresh PowerShell process, so a
+# function defined in a gate step does not exist in the cleanup step that follows it - and the
+# cleanup steps dot-source THIS file. That is exactly the failure that was recorded as
+#
+#     The term 'Get-InstallationState' is not recognized ...
+#
+# in the runtime-audit workflow's cleanup while the function plainly existed in the tree, in
+# Test-InstallerLifecycle.ps1, one step away. Two copies that drift is the alternative, and it is
+# worse: the gate and cleanup would disagree about what "this installation" means.
+#
+# The names are this client's own, deliberately. The product is "Jiejiebox", the installation
+# directory and executable are "sing-box", and the Windows service is "jiejiebox-daemon" - so a
+# default derived from any one of them would report on a different object than intended.
+$script:JiejieboxServiceName = "jiejiebox-daemon"
+$script:JiejieboxInstallationLayoutKey = "HKLM:\SOFTWARE\Jiejiebox\jiejiebox"
+
+# The installation this machine currently has, resolved structurally:
+#
+#   1. the SCM's own record of the daemon's command line (Win32_Service.PathName),
+#   2. the directory layout that command line implies (<root>\resources\daemon\sing-box-daemon.exe),
+#   3. the installer's own layout registry key (LayoutVersion 2),
+#   4. and only then the uninstall entry whose InstallLocation IS that root.
+#
+# A display name is never used to match. See the display-name note above.
+#
+# Every step is guarded: the installation legitimately may not exist, and "absent" is a state this
+# has to be able to return rather than throw on.
+function Get-InstallationState {
+    param(
+        [string]$ServiceName = $script:JiejieboxServiceName,
+        [string]$LayoutRegistryKey = $script:JiejieboxInstallationLayoutKey
+    )
+    $commandLine = Get-DaemonServiceCommandLine -ServiceName $ServiceName
+    $daemonPath = Get-CommandExecutablePath $commandLine
+    $root = Get-InstallationRootFromDaemonPath $daemonPath
+    $layout = Get-InstallationLayoutRegistry -RegistryPath $LayoutRegistryKey
+    if ([string]::IsNullOrWhiteSpace($root) -and $null -eq $layout) { return $null }
+    $matches = @()
+    if (-not [string]::IsNullOrWhiteSpace($root)) {
+        $matches = @(Get-UninstallEntriesForInstallation -InstallationRoot $root)
+    }
+    return [pscustomobject]@{
+        ServiceCommandLine   = $commandLine
+        DaemonPath           = $daemonPath
+        Root                 = $root
+        LayoutVersion        = $(if ($null -ne $layout) { $layout.LayoutVersion } else { $null })
+        InstallationID       = $(if ($null -ne $layout) { $layout.InstallationID } else { $null })
+        DaemonDataDirectory  = $(if ($null -ne $layout) { $layout.DaemonDataDirectory } else { $null })
+        UninstallMatches     = $matches
+    }
+}
+
+# Appends the resolver's six fields to the caller's record, through the caller's own `$lines`
+# list. It writes to `$lines` rather than returning text so a gate record and a cleanup log can
+# render the same facts without either owning the other's formatting.
+function Add-InstallationIdentity {
+    param($State)
+    if ($null -eq $State) {
+        $lines.Add("  installation identity: absent")
+        return
+    }
+    $lines.Add("  service command line: $($State.ServiceCommandLine)")
+    $lines.Add("  derived install root: $($State.Root)")
+    $lines.Add("  layout version:       $($State.LayoutVersion)")
+    $lines.Add("  installation id:      $($State.InstallationID)")
+    $lines.Add("  daemon data dir:      $($State.DaemonDataDirectory)")
+    $lines.Add("  uninstall matches:    $(@($State.UninstallMatches).Count)")
+}
+
 function Format-UninstallEntries {
     param([Parameter(Mandatory = $true)]$Entries)
     $lines = New-Object System.Collections.Generic.List[string]

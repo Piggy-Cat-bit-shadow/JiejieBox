@@ -80,6 +80,14 @@ on:
         options:
           - all
           - gate6
+      release_kind:
+        description: 'release (default) audits a tagged candidate. audit is the DIAGNOSTIC path: the build run it consumes was produced with release_kind=audit, so this record must never be cited as a release acceptance result.'
+        required: false
+        default: 'release'
+        type: choice
+        options:
+          - release
+          - audit
 
 permissions:
   contents: read
@@ -250,8 +258,17 @@ jobs:
             "AUDITED_VERSION          = ${{ steps.version.outputs.core_version }}",
             "INSTALLER_ARTIFACT_NAME  = $installerArtifact",
             "UNPACKED_ARTIFACT_NAME   = $unpackedArtifact",
+            "RELEASE_KIND             = ${{ inputs.release_kind }}",
             "NON_RELEASE_DIAGNOSTIC   = $env:NON_RELEASE"
           )
+          # A release-kind audit is non-release by definition, alongside the tooling_ref override.
+          # Stated in the record rather than left to the reader, for the same reason the override is:
+          # a green result that nobody can tell apart from an acceptance result is worse than a red
+          # one, because it gets cited.
+          if ('${{ inputs.release_kind }}' -eq 'audit') {
+            Write-Host "::warning::NON-RELEASE DIAGNOSTIC: this is a release_kind=audit run. The installer under test was built from an untagged commit, so this result must not be cited as a release acceptance result."
+            $lines += "RELEASE_ELIGIBLE         = NO (release_kind=audit: the audited commit is untagged)"
+          }
           foreach ($line in $lines) { Write-Host $line }
           $lines -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
@@ -420,6 +437,14 @@ jobs:
             $summary += @(
               "> **NON-RELEASE DIAGNOSTIC.** The audit tooling was taken from a different commit than",
               "> the audited artifacts. This result must not be cited as an acceptance result.",
+              ""
+            )
+          }
+          if ("${{ inputs.release_kind }}" -eq "audit") {
+            $summary += @(
+              "> **NON-RELEASE DIAGNOSTIC (release_kind=audit).** The audited commit is not the commit",
+              "> the v${{ steps.version.outputs.core_version }} tag names, so this run measures a fix",
+              "> rather than accepting a release. It must not be cited as an acceptance result.",
               ""
             )
           }

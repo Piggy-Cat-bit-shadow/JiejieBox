@@ -108,6 +108,14 @@ on:
       tooling_sha:
         description: 'Tooling commit (40 hex). Must EQUAL core_sha: a candidate carries the tooling that builds and judges it.'
         required: true
+      release_kind:
+        description: 'release (default) requires refs/tags/v<version> to name core_sha. audit is the DIAGNOSTIC path: it drops ONLY that requirement, so a commit can be audited before it is labelled. An audit run is never a release and no release may consume its artifacts.'
+        required: false
+        default: 'release'
+        type: choice
+        options:
+          - release
+          - audit
 
 # No concurrency policy, DELIBERATELY, and this comment is the policy.
 #
@@ -198,6 +206,15 @@ jobs:
           # way - the whole point of the equality it asserts - but taking it from the core
           # means the tooling directory is an INPUT to the proof rather than the source of the
           # proof, so a wrong tooling checkout cannot supply the checker that judges it.
+          #
+          # `release_kind: audit` passes --audit-only, which drops ONLY the "the release tag
+          # names this commit" requirement. That requirement is what forced an audit to move a
+          # published candidate tag before it could test a fix - an inversion, because an audit
+          # is evidence ABOUT a commit and a commit does not become auditable by being
+          # labelled. Everything else the checker asserts still holds in audit mode, and the
+          # mode is announced in the record below rather than being quiet.
+          audit_flag=""
+          if [ "${{ inputs.release_kind }}" = "audit" ]; then audit_flag="--audit-only"; fi
           core/scripts/ci/check-desktop-source-identity.sh \
             --core-dir core \
             --tooling-dir tooling \
@@ -205,7 +222,21 @@ jobs:
             --tooling-sha "$TOOLING_SHA" \
             --version "$CORE_VERSION" \
             --remote origin \
-            --shallow
+            --shallow \
+            $audit_flag
+
+          if [ "${{ inputs.release_kind }}" = "audit" ]; then
+            {
+              echo "RELEASE_KIND          = audit (NON-RELEASE DIAGNOSTIC)"
+              echo "RELEASE_ELIGIBLE      = NO - this run audits the commit; it does not release it."
+              echo "TAG_REQUIREMENT       = dropped; v$CORE_VERSION is not required to name this commit"
+              echo "REQUESTED_SHA         = $CORE_SHA"
+              echo "TOOLING_SHA           = $TOOLING_SHA"
+              echo "DESKTOP_SUBMODULE_SHA = $(git -C core rev-parse HEAD:clients/desktop)"
+              echo "CORE_DESCRIBE         = $(git -C core describe --tags)"
+              echo "VERSION_INJECTION     = SING_BOX_BUILD_VERSION=$CORE_VERSION (git describe cannot name the version here)"
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
 
           echo "desktop client: $(git -C core rev-parse HEAD:clients/desktop)"
           echo "desktop HEAD:   $(git -C "$CLIENT_DIR" rev-parse HEAD)"
@@ -445,6 +476,22 @@ jobs:
         # WinDivert and USBIP drivers build_boxdd emits, windows_share.node via Cargo, the
         # staged PE machine check, electron-builder, and afterPack.cjs signing the daemon and
         # the native module with the certificate above. None of it is reimplemented here.
+        #
+        # SING_BOX_BUILD_VERSION is injected so the daemon's reported version does not depend on
+        # where the commit sits relative to a release tag.
+        #
+        # cmd/internal/build_shared.ReadTag consults this variable FIRST and only then falls back
+        # to `git describe --tags`; the file itself documents the injection as the CI path. On the
+        # audit path the tag deliberately does NOT name the commit under test, so without this the
+        # daemon would report `0.1.15-<sha>` and the runtime audit - which asserts the installed
+        # daemon reports exactly the release version - would fail on a correctly built artifact.
+        #
+        # Setting it on the release path too is not a relaxation: gate 1 has already proved that
+        # refs/tags/v$CORE_VERSION names CORE_SHA there, so the two spell the same version, and
+        # the value is the one release/JIEJIE_VERSION declares. It is the same value the daemon
+        # would have derived for itself.
+        env:
+          SING_BOX_BUILD_VERSION: ${{ inputs.core_version }}
         run: pnpm run package:win x64
 
       - name: "[gate 2] report what was produced"
@@ -460,6 +507,87 @@ jobs:
           echo "== packaged daemon, native module and drivers =="
           ls -la "$CLIENT_DIR/release/win-unpacked/resources/daemon" \
                  "$CLIENT_DIR/release/win-unpacked/resources/native" || true
+
+      - name: "[gate 2] archive the generated NSIS and the patch provenance"
+        shell: bash
+        run: |
+          set -euo pipefail
+          # WHAT THIS IS FOR
+          #
+          # The generated script is the only artefact that can settle questions the macro names
+          # cannot: in what order customUnInstall runs relative to file deletion, which branch
+          # the uninstaller pass takes for a given conditional, and whether the instance guard
+          # excludes the running installer's own PID. Every such question has so far been
+          # answered by reading upstream's template and inferring that ours matches - which is
+          # exactly the kind of inference that produced two wrong conclusions in this audit.
+          #
+          # electron-builder feeds the generated script to makensis on stdin, so it is not left
+          # on disk by default. What IS on disk is the post-patch template tree, and that is what
+          # we capture: the uninstaller body, the instance guard, and the install section, plus
+          # the patch identity so the templates can be tied to a specific patched version.
+          mkdir -p "$RECORDS_DIR/generated-nsis"
+          out="$RECORDS_DIR/generated-nsis"
+
+          # The patched app-builder-lib templates, wherever pnpm put them.
+          found=0
+          while IFS= read -r tpl; do
+            rel="${tpl#*app-builder-lib@*/node_modules/app-builder-lib/}"
+            rel="$(printf '%s' "$rel" | tr '/' '_')"
+            cp "$tpl" "$out/$rel"
+            found=$((found + 1))
+          done < <(find node_modules "$CLIENT_DIR/node_modules" -path '*app-builder-lib*/templates/nsis/*' \
+                     \( -name '*.nsh' -o -name '*.nsi' \) -type f 2>/dev/null | sort -u)
+
+          # The fork's own include, which IS the source NSIS, kept beside the generated ones so a
+          # reader can diff intent against outcome without a second checkout.
+          cp "$CLIENT_DIR/build/installer.nsh" "$out/source-installer.nsh"
+
+          {
+            echo "generated NSIS archived: $found template file(s)"
+            echo
+            echo "== app-builder-lib version and patch =="
+            if [ -f "$CLIENT_DIR/patches/app-builder-lib@26.15.3.patch" ]; then
+              echo "patch      patches/app-builder-lib@26.15.3.patch"
+              echo "patch sha256 $(sha256sum "$CLIENT_DIR/patches/app-builder-lib@26.15.3.patch" | awk '{print $1}')"
+            else
+              echo "patch      NOT PRESENT at patches/app-builder-lib@26.15.3.patch"
+            fi
+            ver="$(node -e 'try{console.log(require("app-builder-lib/package.json").version)}catch(e){console.log("unknown")}' 2>/dev/null || echo unknown)"
+            echo "app-builder-lib version $ver"
+            echo "electron-builder version $(node -e 'try{console.log(require("electron-builder/package.json").version)}catch(e){console.log("unknown")}' 2>/dev/null || echo unknown)"
+            echo
+            echo "== the identity this build claims =="
+            echo "CORE_SHA=$CORE_SHA"
+            echo "CORE_VERSION=$CORE_VERSION"
+            echo "TOOLING_SHA=$TOOLING_SHA"
+            echo "NON_RELEASE_DIAGNOSTIC=${NON_RELEASE_DIAGNOSTIC:-}"
+            echo "CORE_GITLINK_DESKTOP_SHA=${CORE_GITLINK_DESKTOP_SHA:-}"
+            echo "ACTUAL_DESKTOP_SHA=${ACTUAL_DESKTOP_SHA:-}"
+            echo
+            echo "== how this run is to be read =="
+            echo "RELEASE_KIND=${{ inputs.release_kind }}"
+            if [ "${{ inputs.release_kind }}" = "audit" ]; then
+              echo "RELEASE_ELIGIBLE=NO"
+              echo "  This run audited an UNTAGGED commit, so its installer is a diagnostic artifact."
+              echo "  release-artifacts.sh check-tag binds a release to the commit refs/tags/v<version>"
+              echo "  names, and this commit is not that commit, so this artifact cannot be published"
+              echo "  without moving a tag - which is an explicit release decision, not an accident."
+            else
+              echo "RELEASE_ELIGIBLE=YES (release_kind=release; gate 1 proved refs/tags/v$CORE_VERSION names CORE_SHA)"
+            fi
+            echo
+            echo "== files archived =="
+            ls -la "$out"
+          } | tee "$out/PROVENANCE.txt"
+
+          # Fail loudly rather than shipping an empty archive: an archive nobody checks is worse
+          # than no archive, because it reads as evidence.
+          if [ "$found" -lt 3 ]; then
+            echo "FAIL: only $found app-builder-lib NSIS template file(s) found; the archive would" >&2
+            echo "      not contain the uninstaller body or the instance guard, so it could not" >&2
+            echo "      answer the questions it exists for." >&2
+            exit 1
+          fi
 
       # --- GATE 3: static package validation --------------------------------
       - name: "[gate 3] verify the packaged application's integrity checks"

@@ -50,11 +50,16 @@ $ErrorActionPreference = "Stop"
 # terminating error. Each call checks $LASTEXITCODE where the result matters.
 $PSNativeCommandUseErrorActionPreference = $false
 
-$serviceName = "jiejiebox-daemon"
+# The service name and the layout registry key are NOT redeclared here. They are this client's
+# identity, they are defined once in GateHelpers.ps1 ($script:JiejieboxServiceName /
+# $script:JiejieboxInstallationLayoutKey), and Get-InstallationState reads them from there. A
+# second copy in this file is how the gate and the workflows' cleanup steps would come to
+# disagree about which service and which registry key this installation owns.
+$serviceName = $script:JiejieboxServiceName
+$installationLayoutKey = $script:JiejieboxInstallationLayoutKey
 # Set once per run: the uninstall registry is dumped in full the first time an installation
 # is identified, so the record shows what the runner actually has.
 $candidateDumpWritten = $false
-$installationLayoutKey = "HKLM:\SOFTWARE\Jiejiebox\jiejiebox"
 
 $lines = New-Object System.Collections.Generic.List[string]
 $lines.Add("windows NSIS installer lifecycle smoke test")
@@ -71,49 +76,12 @@ function Save-Record {
 }
 
 
-function Get-InstallationState {
-    # Identity, in the only order that is a fact rather than a guess: the SCM's own record
-    # of the daemon's command line, the layout that implies, the installer's layout
-    # registry, and only then the uninstall entry whose InstallLocation IS that root.
-    #
-    # A display name is recorded as audit metadata and never used to match. It is the
-    # product name, while the installation directory and executable are deliberately
-    # "sing-box", so the name could legitimately be either - and a name cannot establish
-    # identity even when it matches, because the first entry with that name would win.
-    $commandLine = Get-DaemonServiceCommandLine -ServiceName $serviceName
-    $daemonPath = Get-CommandExecutablePath $commandLine
-    $root = Get-InstallationRootFromDaemonPath $daemonPath
-    $layout = Get-InstallationLayoutRegistry -RegistryPath $installationLayoutKey
-    if ([string]::IsNullOrWhiteSpace($root) -and $null -eq $layout) { return $null }
-    $matches = @()
-    if (-not [string]::IsNullOrWhiteSpace($root)) {
-        $matches = @(Get-UninstallEntriesForInstallation -InstallationRoot $root)
-    }
-    return [pscustomobject]@{
-        ServiceCommandLine   = $commandLine
-        DaemonPath           = $daemonPath
-        Root                 = $root
-        LayoutVersion        = $(if ($null -ne $layout) { $layout.LayoutVersion } else { $null })
-        InstallationID       = $(if ($null -ne $layout) { $layout.InstallationID } else { $null })
-        DaemonDataDirectory  = $(if ($null -ne $layout) { $layout.DaemonDataDirectory } else { $null })
-        UninstallMatches     = $matches
-    }
-}
+# Get-InstallationState and Add-InstallationIdentity used to be defined here. They now live in
+# GateHelpers.ps1, which this script dot-sources, because the `cleanup:` steps of BOTH Windows
+# workflows call Get-InstallationState in their own PowerShell process - where a function defined
+# in a gate step cannot exist. See the identity section of GateHelpers.ps1 for the full reasoning
+# and for what "this installation" means.
 
-
-function Add-InstallationIdentity {
-    param($State)
-    if ($null -eq $State) {
-        $lines.Add("  installation identity: absent")
-        return
-    }
-    $lines.Add("  service command line: $($State.ServiceCommandLine)")
-    $lines.Add("  derived install root: $($State.Root)")
-    $lines.Add("  layout version:       $($State.LayoutVersion)")
-    $lines.Add("  installation id:      $($State.InstallationID)")
-    $lines.Add("  daemon data dir:      $($State.DaemonDataDirectory)")
-    $lines.Add("  uninstall matches:    $(@($State.UninstallMatches).Count)")
-}
 
 function Get-ServiceState {
     # `Get-Service` hands back a ServiceController that holds a HANDLE on the service, and
@@ -150,8 +118,7 @@ function Show-InstallerDiagnostic {
         $lines.Add("installer diagnostic channel: not requested")
         return
     }
-    Write-Host "-- installer diagnostic channel ($DiagnosticPath) --"
-    if (-not (Test-Path -LiteralPath $DiagnosticPath)) {
+    Write-Host "-- installer diagnostic channel ($DiagnosticPath) --"    if (-not (Test-Path -LiteralPath $DiagnosticPath)) {
         Write-Host "   (the installer did not create it, so it failed before customInit or could not write)"
         $lines.Add("installer diagnostic channel: file not created at $DiagnosticPath")
         return
@@ -169,6 +136,179 @@ function Show-InstallerDiagnostic {
     } catch {
         Write-Host "   could not preserve it: $($_.Exception.Message)"
     }
+}
+
+function Save-UninstallerProvenance {
+    <#
+        Preserve the INSTALLED uninstaller and record its identity, at a named lifecycle point.
+
+        WHY BINARY IDENTITY AND NOT THE PATH. Everything established so far says the generated
+        uninstaller for the CURRENT build contains un.onInit -> initMultiUser -> customUnInit. None
+        of that says the binary sitting in the installation directory at a given moment is from
+        this build. Windows installers rewrite their uninstaller, upgrades may keep an older one,
+        and electron-builder removes the previous version in its own order - so the process that
+        actually ran may be a different generation from the one the producer just built.
+
+        The asymmetry this is aimed at: the FIRST uninstall writes nothing and leaves
+        jiejiebox-daemon RUNNING, while the FINAL uninstall does write and does clean up. A single
+        GetOptions quirk does not explain that asymmetry. A stale uninstaller after the reinstall,
+        replaced by a current one only when the clean install writes it, explains all of it.
+
+        The file is COPIED before it can delete itself, and its hash is the answer: if the copies
+        from different points differ, no amount of parameter tracing is relevant.
+
+        THE ROOT IS A PARAMETER, AND THAT IS NOT COSMETIC. This function used to read a bare
+        `$InstallationRoot`, which is the name of Assert-Uninstalled's parameter and NOT a
+        lifecycle-scope variable - the lifecycle scope spells it `$installationRoot`, lower case,
+        and it is only assigned after the first Assert-Installed returns. So this function
+        depended on a variable that did not exist at any of its call sites. It was also called
+        with `$installed` / `$reinstalled` BEFORE those variables were assigned, so it received
+        $null for the uninstall entry as well.
+
+        The consequence was not an error - it was silence. With no entry and no root, every
+        candidate path was empty, the function took its (correct, guarded) `NOT FOUND` branch and
+        returned, which is why every provenance point cost 4 lines and the FIRST_VS_FINAL hash
+        matrix this whole gate exists to produce never appeared in a single record. Passing the
+        root in explicitly removes the dependency on call-site scoping, and the empty-root case
+        now says so instead of looking like a machine with no uninstaller.
+    #>
+    param(
+        [string]$Point,
+        [Parameter(Mandatory = $true)][string]$InstallationRoot,
+        [Parameter(Mandatory = $false)]$UninstallEntry
+    )
+
+    # An empty root cannot reach here: InstallationRoot is Mandatory, so PowerShell's own binding
+    # refuses `''` and `$null` before the body runs. That is deliberate and is the difference
+    # between the old silent-NOT-FOUND and a harness bug that stops the run.
+    $records = Split-Path -Parent $RecordPath
+    $safe = ($Point -replace '[^A-Za-z0-9]+', '-').Trim('-')
+
+    # Prefer the path the registry names, falling back to the installation root.
+    $candidate = $null
+    if ($null -ne $UninstallEntry -and -not [string]::IsNullOrWhiteSpace($UninstallEntry.UninstallString)) {
+        $candidate = Get-CommandExecutablePath ([string]$UninstallEntry.UninstallString)
+    }
+    if ([string]::IsNullOrWhiteSpace($candidate) -or -not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+        foreach ($guess in @(
+            (Join-Path $InstallationRoot "Uninstall sing-box.exe"),
+            (Join-Path $InstallationRoot "Uninstall Jiejiebox.exe")
+        )) {
+            # Every path test is guarded for null/empty. `Test-Path -LiteralPath $null` throws
+            # "Cannot bind argument to parameter 'Path' because it is null", and this function runs
+            # at points where the installation root may legitimately not be established yet - so an
+            # unguarded test turns a diagnostic into the failure it was meant to describe.
+            if ([string]::IsNullOrWhiteSpace($guess)) { continue }
+            if (Test-Path -LiteralPath $guess -PathType Leaf) { $candidate = $guess; break }
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+        $lines.Add("  uninstaller at '$Point': NOT FOUND (no UninstallString target, no guess present)")
+        return
+    }
+    if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+        $lines.Add("  uninstaller at '$Point': NOT FOUND at '$candidate'")
+        return
+    }
+
+    $item = Get-Item -LiteralPath $candidate
+    # Hashed from the bytes rather than with Get-FileHash, so the value cannot come back null and
+    # take the whole diagnostic down with it.
+    $hash = ""
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes($candidate)
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $hash = (($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString('x2') }) -join '')
+        } finally {
+            $sha.Dispose()
+        }
+    } catch {
+        $hash = "<hash failed: $($_.Exception.Message)>"
+    }
+    $dest = Join-Path $records "uninstaller-$safe.exe"
+    try { Copy-Item -LiteralPath $candidate -Destination $dest -Force -ErrorAction Stop } catch {
+        $lines.Add("  uninstaller at '$Point': could not copy - $($_.Exception.Message)")
+    }
+
+    $fileVersion = ""; $productVersion = ""
+    try {
+        $vi = $item.VersionInfo
+        $fileVersion = [string]$vi.FileVersion
+        $productVersion = [string]$vi.ProductVersion
+    } catch { }
+
+    $sigSubject = ""; $sigStatus = ""
+    try {
+        $sig = Get-AuthenticodeSignature -LiteralPath $candidate
+        $sigStatus = [string]$sig.Status
+        if ($null -ne $sig.SignerCertificate) { $sigSubject = [string]$sig.SignerCertificate.Subject }
+    } catch { }
+
+    $lines.Add("  uninstaller at '$Point':")
+    $lines.Add("      path        : $candidate")
+    $lines.Add("      sha256      : $hash")
+    $lines.Add("      size        : $($item.Length)")
+    $lines.Add("      lastWrite   : $($item.LastWriteTimeUtc.ToString('o'))")
+    $lines.Add("      fileVersion : $fileVersion")
+    $lines.Add("      prodVersion : $productVersion")
+    $lines.Add("      signature   : $sigStatus  $sigSubject")
+    if ($null -ne $UninstallEntry) {
+        $lines.Add("      registry    : UninstallString=$($UninstallEntry.UninstallString)")
+        $lines.Add("      registry    : InstallLocation=$($UninstallEntry.InstallLocation) DisplayVersion=$($UninstallEntry.DisplayVersion)")
+    }
+    $lines.Add("      copied to   : uninstaller-$safe.exe")
+
+    # Recorded so the end-of-run verdict compares generations rather than leaving it to a reader.
+    $script:UninstallerHashes[$Point] = $hash
+    Write-Host "   uninstaller at '$Point': sha256=$($hash.Substring(0,16)) size=$($item.Length) version=$fileVersion"
+}
+
+# The hashes seen so far, so the report can state plainly whether they are all the same binary.
+$script:UninstallerHashes = [ordered]@{}
+$script:ChannelSizes = [ordered]@{}
+
+function Save-DiagnosticSnapshot {
+    <#
+        Copy the diagnostic channel aside under a phase-specific name, and report its size and
+        last lines.
+
+        WHY PER-PHASE SNAPSHOTS. The channel is one file that every installer and uninstaller
+        invocation appends to, and the uninstaller re-launches itself from a copy in a temp
+        directory. Reading it only at the end means the phase that actually failed is
+        indistinguishable from the ones that succeeded, and a single overwrite or truncation
+        anywhere in the run destroys the whole sequence.
+
+        Size is reported because "the file did not grow" is itself a finding: ciDiagnostic opens
+        with mode `a`, so a phase that ran and wrote nothing leaves the size unchanged.
+    #>
+    param([string]$Phase)
+
+    if ([string]::IsNullOrWhiteSpace($DiagnosticPath)) { return }
+    $records = Split-Path -Parent $RecordPath
+    $safe = ($Phase -replace '[^A-Za-z0-9]+', '-').Trim('-')
+    $dest = Join-Path $records "installer-diagnostic.$safe.txt"
+
+    if (-not (Test-Path -LiteralPath $DiagnosticPath)) {
+        $lines.Add("  diagnostic channel after '$Phase': FILE ABSENT at $DiagnosticPath")
+        Write-Host "   diagnostic after '$Phase': file absent"
+        return
+    }
+    $size = (Get-Item -LiteralPath $DiagnosticPath).Length
+    try {
+        Copy-Item -LiteralPath $DiagnosticPath -Destination $dest -Force -ErrorAction Stop
+    } catch {
+        $lines.Add("  diagnostic channel after '$Phase': could not copy - $($_.Exception.Message)")
+        return
+    }
+    $content = Get-Content -LiteralPath $DiagnosticPath -Raw -ErrorAction SilentlyContinue
+    $all = @(($content -split "`r?`n") | Where-Object { $_ -match '\S' })
+    $script:ChannelSizes[$Phase] = $size
+    $lines.Add("  diagnostic channel after '$Phase': $size bytes, $($all.Count) non-blank line(s)")
+    # The tail is what matters for locating a stop: the last marker before silence.
+    foreach ($line in ($all | Select-Object -Last 8)) { $lines.Add("      $line") }
+    Write-Host "   diagnostic after '$Phase': $size bytes; last lines:"
+    foreach ($line in ($all | Select-Object -Last 8)) { Write-Host "      $line" }
 }
 
 function Show-ProcessSnapshot {
@@ -524,6 +664,52 @@ function Invoke-Uninstall {
     }
     # The installer's own rollback uses /S /allusers, so that pair is the supported one.
     $arguments = @("/S", "/allusers")
+    # The diagnostic channel must be requested for the UNINSTALLER too.
+    #
+    # The installer is launched through Get-InstallArguments, which appends this option; the
+    # uninstaller was launched with a hardcoded argument pair that never did. The uninstaller is a
+    # separate executable image with its own command line, and customUnInit reads ITS OWN
+    # parameters - so $ciDiagnosticPath stayed empty in the uninstall pass and every
+    # uninstall-side marker was inert: the guard `$ciDiagnosticPath != ""` was false and nothing
+    # was written.
+    #
+    # That is why the diagnostic file sat at 162 bytes with no uninstall markers, and why "there
+    # is no [service uninstall] marker" was read as evidence that the daemon's uninstall never
+    # ran. It was not evidence. Two independent mistakes produced the same false negative: the
+    # uninstall pass never initialised the variable, and this harness never passed the option.
+    if (-not [string]::IsNullOrWhiteSpace($DiagnosticPath)) {
+        $arguments += "/CI-DIAGNOSTIC-PATH=$DiagnosticPath"
+    }
+    # ANY OPTION THAT FOLLOWS THE DIAGNOSTIC OPTION MUST BE SEPARATED FROM IT BY `/`.
+    #
+    # NSIS's ${GetOptions} takes everything after `=`, up to the end of the command line OR the
+    # next `/` - and `--delete-app-data` starts with `-`, not `/`, so it is not a boundary. With
+    # nothing between them the option's VALUE becomes
+    #
+    #     <diagnostic path> --delete-app-data
+    #
+    # and the uninstaller dutifully writes its markers to a file whose NAME contains that space
+    # and that word. It is not lost output: it is output written to a mangled path, which is why
+    # the final uninstall recorded +0 bytes while its own markers existed on disk under a name
+    # nobody was looking for.
+    #
+    # MEASURED against the shipped uninstaller (sha256
+    # bf0506c522fc76868460a44a5d55540a37093580476d379f49b8a095397facec, the binary this gate
+    # preserved as FIRST_UNINSTALL_SHA):
+    #
+    #   /CI-DIAGNOSTIC-PATH=<p> --delete-app-data _?=<d>   -> stray "…txt --delete-app-data"
+    #   --delete-app-data _?=<d> /CI-DIAGNOSTIC-PATH=<p>   -> no markers
+    #   /CI-DIAGNOSTIC-PATH=<p> / --delete-app-data _?=<d> -> markers at the intended path
+    #   /CI-DIAGNOSTIC-PATH=<p> / _?=<d>                   -> markers at the intended path
+    #
+    # The diagnostic option keeps its position because the uninstaller parses it early; `/` only
+    # terminates its value. This is harness-only: the installer side needs no terminator because
+    # nothing follows the option there (Get-InstallArguments), which is why install/reinstall were
+    # never affected.
+    $terminateDiagnosticOption = -not [string]::IsNullOrWhiteSpace($DiagnosticPath)
+    if ($terminateDiagnosticOption) {
+        $arguments += "/"
+    }
     if ($DeleteAppData) {
         # build/installer.nsh: `--delete-app-data` sets $keepUninstallData to unchecked,
         # which is the ONLY path that runs the data-removal branch. Without it the
@@ -532,7 +718,76 @@ function Invoke-Uninstall {
         # deliberately left behind so a reinstall can reuse the data directories.
         $arguments += "--delete-app-data"
     }
+    # `_?=<installation dir>` - the flag the PRODUCT's own invocation passes, and the reason the
+    # uninstaller's own markers appear when the installer runs it but not when this harness did.
+    # Appended LAST, which is the order electron-builder's uninstallOldVersion uses.
+    #
+    # MEASURED, not inferred. The real installed uninstaller (sha256
+    # 50f0916678c4addc33f1c72bd329c99ec701f7166feb6ab2b5b75134a3755107, the exact binary this gate
+    # preserved as FIRST_UNINSTALL_SHA) was run locally through four command lines:
+    #
+    #     /S /allusers /CI-DIAGNOSTIC-PATH=X                 -> no diagnostic file
+    #     /S /allusers /CI-DIAGNOSTIC-PATH=X /allusers       -> no diagnostic file
+    #     /S /allusers /CI-DIAGNOSTIC-PATH=X _?=<dir>        -> [customUnInit] ENTER ... written
+    #     /S /allusers                                       -> no diagnostic file
+    #
+    # The directory value is irrelevant - `_?=` naming an unrelated, non-existent directory works
+    # the same, and a path with spaces works the same. It is the FLAG.
+    #
+    # NSIS uses `_?=` to mean "run in place": $INSTDIR is not derived and the uninstaller does not
+    # copy itself to $TEMP and re-launch. Without it the process this harness starts reads a
+    # command line that does not carry the options, finds $ciDiagnosticPath empty, and skips every
+    # marker - even though the command line Start-Process was given plainly contained the option.
+    # That is the same "the child does not inherit the parent's context" shape as the cross-step
+    # PowerShell function and the lost gitlink: the flag was never missing from what this harness
+    # passed, it was missing from what the executable reaching customUnInit was reading.
+    #
+    # This is why the installer's own child invocation wrote markers all along -
+    # electron-builder's uninstallOldVersion invokes the uninstaller as
+    #
+    #     ExecWait '"$uninstallerFileNameTemp" /S /KEEP_APP_DATA $0 _?=$installationDir'
+    #
+    # - and now this harness passes the same flag, so the two paths are comparable.
+    #
+    # No product behaviour is involved: this affects only how the harness launches an uninstaller,
+    # and it is how the installer already launches it. The option changes no work the uninstaller
+    # performs - un.atomicRMDir branches on ${isUpdated}, not on `_?=`.
+    $installationDirectory = Split-Path -Parent $uninstaller
+    if (-not [string]::IsNullOrWhiteSpace($installationDirectory)) {
+        $arguments += "_?=$installationDirectory"
+    }
+    # Observe the uninstaller from OUTSIDE, and record every image of it that appears.
+    #
+    # WHY EXTERNAL OBSERVATION RATHER THAN INSTRUMENTING THE UNINSTALLER. The question is whether
+    # the process that actually reaches customUnInit received /CI-DIAGNOSTIC-PATH=. Asking
+    # ciDiagnostic to answer that is circular: if the path failed to parse, nothing is written, and
+    # "nothing written" is then read as "the code did not run". This captures the command lines
+    # from Win32_Process instead, so it holds regardless of whether the diagnostic channel works.
+    #
+    # electron-builder's uninstaller COPIES ITSELF to a temp directory and re-launches, and
+    # ExecWait-based re-launches are a classic place for arguments to be dropped. The daemon's
+    # uninstall path is a separate image again. So there can be two or three processes named like
+    # the uninstaller, with different command lines, and only one of them is the one that runs our
+    # macro. Sampling around the call catches all of them.
+    $before = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like '*Uninstall*' -or $_.CommandLine -like "*$([System.IO.Path]::GetFileName($uninstaller))*" })
+    $lines.Add("  uninstaller processes BEFORE the call: $($before.Count)")
+    foreach ($p in $before) {
+        $lines.Add("      PID $($p.ProcessId) PPID $($p.ParentProcessId) :: $($p.CommandLine)")
+    }
+
     $exitCode = Invoke-Silently -FilePath $uninstaller -Arguments $arguments -What "$Phase uninstall"
+
+    $after = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like '*Uninstall*' -or $_.CommandLine -like "*$([System.IO.Path]::GetFileName($uninstaller))*" })
+    $lines.Add("  uninstaller processes AFTER the call: $($after.Count)")
+    foreach ($p in $after) {
+        $lines.Add("      PID $($p.ProcessId) PPID $($p.ParentProcessId) :: $($p.CommandLine)")
+    }
+    # The composed arguments are recorded too, so the recorded command lines can be compared
+    # against what the harness intended to pass.
+    $lines.Add("  harness passed: `"$uninstaller`" $($arguments -join ' ')")
+
     if ($exitCode -ne 0) { Fail-Gate "$Phase`: the uninstaller exited $exitCode" }
 }
 
@@ -697,7 +952,22 @@ if ($exitCode -ne 0) {
     # Which stage aborted is not inferred from the exit code; the diagnostic channel says.
     Fail-Gate "the installer exited $exitCode. The stage that aborted is recorded in the installer diagnostic channel above."
 }
+# ORDER IS LOAD-BEARING.
+#
+# Save-UninstallerProvenance used to be called ABOVE Assert-Installed, with
+# `-UninstallEntry $installed.UninstallEntry` - a variable that is not assigned until the line
+# below it. So the entry was always $null AND the root came from `$InstallationRoot`, which does
+# not exist in this scope at all (this scope spells it `$installationRoot`). The provenance points
+# cost 4 lines each and proved nothing.
+#
+# It now runs after Assert-Installed, because that call is what RESOLVES the installation and
+# returns the root and the registry entry this function needs. That is still early enough: the
+# installation is intact at this moment and the uninstaller has not been touched, which is
+# exactly the state "after-install" is supposed to describe. Everything between the two lines is
+# a read, so nothing is disturbed.
 $installed = Assert-Installed -Phase "after first install"
+Save-UninstallerProvenance -Point "after-install" -InstallationRoot $installed.Root -UninstallEntry $installed.UninstallEntry
+Save-DiagnosticSnapshot -Phase "1-install"
 $installationRoot = $installed.Root
 $uninstallEntry = $installed.UninstallEntry
 $lines.Add("  PASS")
@@ -708,7 +978,11 @@ $lines.Add("[2/5] same-version reinstall")
 $exitCode = Invoke-Silently -FilePath $InstallerPath -Arguments (Get-InstallArguments) -What "reinstall"
 $lines.Add("  exit code $exitCode")
 if ($exitCode -ne 0) { Fail-Gate "the same-version reinstall exited $exitCode" }
+# Same ordering rule as the first install: the state has to be resolved before its uninstaller
+# can be preserved. This is the point that answers "did the reinstall replace the uninstaller?".
 $reinstalled = Assert-Installed -Phase "after same-version reinstall"
+Save-UninstallerProvenance -Point "after-reinstall" -InstallationRoot $reinstalled.Root -UninstallEntry $reinstalled.UninstallEntry
+Save-DiagnosticSnapshot -Phase "2-reinstall"
 if ($reinstalled.Root -ne $installationRoot) {
     Fail-Gate "the reinstall moved the installation from $installationRoot to $($reinstalled.Root)"
 }
@@ -717,7 +991,9 @@ $lines.Add("")
 
 # --- uninstall ---------------------------------------------------------------
 $lines.Add("[3/5] silent uninstall")
+Save-UninstallerProvenance -Point "before-first-uninstall" -InstallationRoot $installationRoot -UninstallEntry $uninstallEntry
 Invoke-Uninstall -Phase "first" -UninstallEntry $uninstallEntry
+Save-DiagnosticSnapshot -Phase "3-first-uninstall"
 # Reported BEFORE the settle wait, so the record shows the machine's actual state at the moment
 # the uninstaller returned 0 - not a state reconstructed after a timeout, which is what made this
 # indistinguishable from a product hang for several rounds.
@@ -731,19 +1007,127 @@ $lines.Add("[4/5] clean reinstall after a full uninstall")
 $exitCode = Invoke-Silently -FilePath $InstallerPath -Arguments (Get-InstallArguments) -What "reinstall"
 $lines.Add("  exit code $exitCode")
 if ($exitCode -ne 0) { Fail-Gate "the clean reinstall exited $exitCode" }
+# Same ordering rule again: resolve the state, then preserve its uninstaller. This point is the
+# one that answers "did the clean install write the current uninstaller, where the reinstall did
+# not?" - so it must be collected from the installation this phase just produced.
 $reinstalled = Assert-Installed -Phase "after clean reinstall"
+Save-UninstallerProvenance -Point "after-clean-reinstall" -InstallationRoot $reinstalled.Root -UninstallEntry $reinstalled.UninstallEntry
+Save-DiagnosticSnapshot -Phase "4-clean-reinstall"
 $installationRoot = $reinstalled.Root
 $uninstallEntry = $reinstalled.UninstallEntry
 $lines.Add("  PASS")
 $lines.Add("")
 
 # --- final teardown ----------------------------------------------------------
+# Strict per-phase increments, measured from the live channel.
+#
+# "1-install -> 2-reinstall -> 3-first-uninstall -> (clean reinstall) -> 5-final-uninstall" must be
+# reported as four separate numbers. An earlier report merged the clean reinstall and the final
+# uninstall into one "+713" and attributed it to the final uninstall, which the two steps cannot
+# support between them.
+function Get-ChannelSize {
+    if ([string]::IsNullOrWhiteSpace($DiagnosticPath)) { return -1 }
+    if (-not (Test-Path -LiteralPath $DiagnosticPath)) { return -1 }
+    return (Get-Item -LiteralPath $DiagnosticPath).Length
+}
+
 $lines.Add("[5/5] final uninstall")
+Save-UninstallerProvenance -Point "before-final-uninstall" -InstallationRoot $installationRoot -UninstallEntry $uninstallEntry
 Invoke-Uninstall -Phase "final" -UninstallEntry $uninstallEntry -DeleteAppData
+Save-DiagnosticSnapshot -Phase "5-final-uninstall"
 Assert-Uninstalled -Phase "after final uninstall" -InstallationRoot $installationRoot -UninstallEntry $uninstallEntry
 $lines.Add("  PASS")
 $lines.Add("")
 
+# --- strict per-phase increments, and whether one binary or several ran -----------------------
+#
+# Both blocks exist because earlier reports stated things the measurements did not support: a
+# "+713 bytes for the final uninstall" that was really the clean reinstall and the final uninstall
+# added together, and an "uninstaller never writes" generalised from a single phase contributing
+# zero. Deltas are computed from the per-phase snapshot sizes, and the hash verdict is computed from
+# the preserved copies, so neither is a hand-written number.
+$lines.Add("")
+$lines.Add("  -- diagnostic channel: strict per-phase increments --")
+$prevSize = $null
+foreach ($name in $script:ChannelSizes.Keys) {
+    $size = $script:ChannelSizes[$name]
+    if ($null -eq $prevSize) {
+        $lines.Add(("      {0,-26} {1,7} bytes" -f $name, $size))
+    } else {
+        $delta = $size - $prevSize
+        $lines.Add(("      {0,-26} {1,7} bytes   delta {2}" -f $name, $size, $(if ($delta -ge 0) { "+$delta" } else { "$delta" })))
+    }
+    $prevSize = $size
+}
+
+$lines.Add("")
+$lines.Add("  -- installed uninstaller identity: same binary at every checkpoint? --")
+if ($script:UninstallerHashes.Count -eq 0) {
+    $lines.Add("      (no uninstaller was found at any checkpoint)")
+} else {
+    foreach ($point in $script:UninstallerHashes.Keys) {
+        $lines.Add(("      {0,-26} {1}" -f $point, $script:UninstallerHashes[$point]))
+    }
+
+    # The PAIRWISE relations, not just a distinct count.
+    #
+    # A distinct count cannot answer the question this gate exists for. "3 distinct values in 4
+    # checkpoints" is consistent with the replacement happening at the reinstall, at the clean
+    # reinstall, or with one checkpoint simply failing to read the file - and those imply
+    # different root causes. Each adjacent pair is printed, so the record names the step at which
+    # the installed uninstaller changed rather than leaving it to be inferred from a count.
+    $points = @($script:UninstallerHashes.Keys)
+    $pairs = @(
+        @{ Label = "after-install        == after-reinstall       ?"; From = "after-install";        To = "after-reinstall" },
+        @{ Label = "after-reinstall      == before-first-uninstall ?"; From = "after-reinstall";      To = "before-first-uninstall" },
+        @{ Label = "before-first-uninstall == after-clean-reinstall ?"; From = "before-first-uninstall"; To = "after-clean-reinstall" },
+        @{ Label = "after-clean-reinstall == before-final-uninstall ?"; From = "after-clean-reinstall"; To = "before-final-uninstall" }
+    )
+    $lines.Add("      -- pairwise --")
+    foreach ($pair in $pairs) {
+        if (-not $script:UninstallerHashes.Contains($pair.From) -or -not $script:UninstallerHashes.Contains($pair.To)) {
+            $lines.Add("      $($pair.Label) UNKNOWN (a checkpoint did not resolve a binary)")
+            continue
+        }
+        $relation = if ($script:UninstallerHashes[$pair.From] -eq $script:UninstallerHashes[$pair.To]) { "SAME" } else { "DIFFERENT" }
+        $lines.Add("      $($pair.Label) $relation")
+    }
+
+    # FIRST_UNINSTALL_SHA / FINAL_UNINSTALL_SHA, stated as the two named values the audit is
+    # decided on, rather than left for a reader to pick out of the list above.
+    $firstPoint = "before-first-uninstall"
+    $finalPoint = "before-final-uninstall"
+    if ($script:UninstallerHashes.Contains($firstPoint) -and $script:UninstallerHashes.Contains($finalPoint)) {
+        $firstSha = $script:UninstallerHashes[$firstPoint]
+        $finalSha = $script:UninstallerHashes[$finalPoint]
+        $verdict = if ($firstSha -eq $finalSha) { "SAME" } else { "DIFFERENT" }
+        $lines.Add("")
+        $lines.Add("      FIRST_UNINSTALL_SHA = $firstSha")
+        $lines.Add("      FINAL_UNINSTALL_SHA = $finalSha")
+        $lines.Add("      FIRST_VS_FINAL      = $verdict")
+    } else {
+        $lines.Add("")
+        $lines.Add("      FIRST_VS_FINAL      = UNKNOWN (a checkpoint did not resolve a binary)")
+    }
+
+    $distinct = @($script:UninstallerHashes.Values | Sort-Object -Unique)
+    $lines.Add("      distinct sha256 values: $($distinct.Count)   (auxiliary signal only)")
+    if ($distinct.Count -gt 1) {
+        $lines.Add("      VERDICT: DIFFERENT BINARIES ran at different lifecycle points.")
+        $lines.Add("               The first and final uninstalls did not execute the same executable, so")
+        $lines.Add("               parameter handling is not the first suspect - the replacement of the")
+        $lines.Add("               installed uninstaller during reinstall or clean install is.")
+    } else {
+        $lines.Add("      VERDICT: the SAME binary ran at every checkpoint.")
+        $lines.Add("               A parameter-parsing difference between the first and final uninstall is")
+        $lines.Add("               therefore not excluded, and the bootstrap probe is justified.")
+        if ($points.Count -lt 4) {
+            $lines.Add("               CAUTION: only $($points.Count) of the 4 provenance points resolved a")
+            $lines.Add("               binary, so 'every checkpoint' is weaker than it reads.")
+        }
+    }
+}
+$lines.Add("")
 $lines.Add("PASS: install, verify, same-version reinstall, uninstall, clean reinstall and")
 $lines.Add("      final uninstall all completed with no residual service or process state")
 Save-Record
