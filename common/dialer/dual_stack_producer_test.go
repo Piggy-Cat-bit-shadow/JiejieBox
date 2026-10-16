@@ -48,13 +48,30 @@ type scriptedFamilyRouter struct {
 	started   chan struct{}
 	startOnce sync.Once
 
-	// gate, when non-nil, blocks every family until it is closed.
+	// gate, when it holds a non-nil channel, blocks every family until that channel is closed.
 	//
 	// It exists so a test can hold a lookup OPEN while it asserts on what happened in the meantime -
 	// "the connection did not wait for the resolver" is only provable by a resolver that is still
 	// blocked when the connection completes. A delay can only show that something was faster than a
 	// timeout, which is a weaker and flakier claim.
-	gate chan struct{}
+	//
+	// It is an atomic.Value rather than a plain field because the two sides are in different
+	// goroutines by construction, and one of them is not the test's:
+	//
+	//	writer  the test goroutine, in stallLookup/releaseLookup
+	//	reader  runFamilies, reached through LookupFamilies on the recovery goroutine that
+	//	        feedRecoveryAsLateCandidates starts, and the test does not join that goroutine
+	//
+	// A plain field made that pair an unsynchronised read/write pair, and `go test -race` reported
+	// exactly it - read at runFamilies' gate test, previous write in releaseLookup. `atomic.Value`
+	// requires one concrete type, so a lookup that is not gated stores a nil channel: Load never
+	// returns an untyped nil, and "gated" stays a property of the stored value.
+	gate atomic.Value // chan struct{}
+
+	// gateEngaged is closed by the first gated lookup to reach the gate, so a test can wait until
+	// the resolver is provably blocked instead of guessing.
+	gateEngaged chan struct{}
+	gateOnce    sync.Once
 
 	// exited is closed when the lookup function returns, so a test can prove the producer
 	// actually terminated rather than merely being unblocked.
@@ -87,6 +104,45 @@ func (r *scriptedFamilyRouter) ExchangeAsync(ctx context.Context, message *mDNS.
 	callback(nil, errors.New("not implemented"))
 }
 
+// stallLookup installs a gate that blocks every family until releaseLookup is called.
+//
+// The pair is deliberately single-shot: it refuses to install a second gate over an unfinished one,
+// because a test that did that would be asserting on a lookup the gate never covered.
+func (r *scriptedFamilyRouter) stallLookup(t *testing.T) {
+	t.Helper()
+	require.False(t, r.gateEngaged != nil && gateIsArmed(r.gate),
+		"stallLookup was called twice without an intervening releaseLookup")
+	r.gateEngaged = make(chan struct{})
+	r.gateOnce = sync.Once{}
+	r.gate.Store(make(chan struct{}))
+}
+
+// releaseLookup opens the gate and clears it, so no lookup can observe the gate after it has been
+// closed, and then waits until an armed lookup has actually reached the gate.
+//
+// This is what removes the race from the test's side. The gate channel itself is handed between the
+// two goroutines by `atomic.Value`, so the transfer is synchronised; waiting for the arm as well
+// means the test also cannot clear the slot while a lookup is between loading it and selecting on
+// it. Idempotent, because the deferred call and an explicit earlier call may both happen.
+func (r *scriptedFamilyRouter) releaseLookup() {
+	gate, _ := r.gate.Load().(chan struct{})
+	if gate != nil {
+		// Clear first, then close: a lookup that loads after the clear sees no gate at all, and a
+		// lookup that loaded before it is inside runFamilies and sees the close at its select.
+		r.gate.Store(chan struct{}(nil))
+		close(gate)
+		if r.gateEngaged != nil {
+			<-r.gateEngaged
+		}
+	}
+}
+
+// gateIsArmed reports whether a gate channel is currently installed.
+func gateIsArmed(value atomic.Value) bool {
+	gate, _ := value.Load().(chan struct{})
+	return gate != nil
+}
+
 func (r *scriptedFamilyRouter) Lookup(ctx context.Context, domain string, options adapter.DNSQueryOptions) ([]netip.Addr, error) {
 	addressesA, addressesAAAA, err := r.runFamilies(ctx, nil)
 	if err != nil {
@@ -113,9 +169,15 @@ func (r *scriptedFamilyRouter) runFamilies(ctx context.Context, publish func(ada
 	r.startOnce.Do(func() { close(r.started) })
 	defer r.exitOnce.Do(func() { close(r.exited) })
 
-	if r.gate != nil {
+	if gate, _ := r.gate.Load().(chan struct{}); gate != nil {
+		// The gate is published by `stallLookup` through an atomic value, so a locked read would be
+		// enough; `gateOnce` also tells the test the lookup is now parked here, which is what lets
+		// the test wait for the state it asserts on instead of for the wall clock.
+		if r.gateEngaged != nil {
+			r.gateOnce.Do(func() { close(r.gateEngaged) })
+		}
 		select {
-		case <-r.gate:
+		case <-gate:
 		case <-ctx.Done():
 			return nil, nil, ctx.Err()
 		}

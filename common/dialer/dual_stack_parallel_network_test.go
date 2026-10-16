@@ -183,15 +183,16 @@ func (c *parallelProductionChain) lookupCalls() int32 {
 
 // stallLookup holds every family open until releaseLookup is called, so a test can assert on what
 // happened while the resolver was still outstanding.
-func (c *parallelProductionChain) stallLookup() {
-	c.router.gate = make(chan struct{})
+//
+// Both halves are forwarded to the router, which owns the gate: it is the object the lookup goroutine
+// reaches through LookupFamilies, so it is the only place the gate can be handed over without a race.
+func (c *parallelProductionChain) stallLookup(t *testing.T) {
+	t.Helper()
+	c.router.stallLookup(t)
 }
 
 func (c *parallelProductionChain) releaseLookup() {
-	if c.router.gate != nil {
-		close(c.router.gate)
-		c.router.gate = nil
-	}
+	c.router.releaseLookup()
 }
 
 // wechatFlow builds the metadata the router produces for the reported flow: an application that
@@ -318,7 +319,7 @@ func TestNetworkEntryPointPreservesTheOriginalWithinItsFamily(t *testing.T) {
 func TestNetworkEntryPointDoesNotWaitForDiscovery(t *testing.T) {
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyAsIS)
 	defer chain.releaseLookup()
-	chain.stallLookup()
+	chain.stallLookup(t)
 
 	originalIPv4 := netip.MustParseAddr("112.53.55.92")
 
