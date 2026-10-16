@@ -598,6 +598,97 @@ func TestFIPMappedAddressInFourInSixSpellingIsForwardedAsItsDomain(t *testing.T)
 // changed - and the box no longer recognises it, because `Contains` answers about the CURRENT range.
 // The mapping is still on disk, which is exactly what makes the address ATTRIBUTABLE; reading that
 // evidence is what the fix has to do, and it has to do it before `Store.Start` resets it.
+// TestFIPAddressFromADeadProcessDoesNotEscape is the row A3 cannot reach, and the one the reported
+// machine actually hit.
+//
+// # Why A3 is not enough
+//
+// A3 gives both Boxes ONE root context, which is what an in-process reload produces - so the SAME
+// ledger object answers for both, and its recorded range already covers the retired generation. On the
+// reported machine that is not what happened: the client held 198.18.0.6/.8/.9/.20 while the
+// configuration served 198.19.0.0/16, and every one of those four addresses was dialled for real (four
+// five-second `i/o timeout`s, 94 log lines). A ledger that dies with the process cannot explain a
+// refusal there, because the generation that issued those addresses is gone.
+//
+// # What this stand does differently
+//
+// The second Box extends a FRESH root with NO ledger, which is a service restart: `NewStartedService`
+// registers the ledger once per application session, so a restart is a new ledger over a new registry
+// while the CACHE FILE - the only thing that outlives the process - stays the same.
+//
+// The refusal must therefore come from the persisted retirement record alone, and the assertion that
+// keeps the row honest is that this Box has no ledger to fall back on.
+func TestFIPAddressFromADeadProcessDoesNotEscape(t *testing.T) {
+	backend := startEchoServer(t, "tcp", "127.0.0.1:0")
+	peer := startFIPPeerSink(t, echoAddress(backend))
+	cachePath := tempDir(t) + "\\fip-a3x.db"
+
+	// Generation 1: a real session, with the ledger the daemon would register.
+	firstRoot, firstLedger := fipReloadRootContext()
+	first := startChainInContext(t, firstRoot, fipConfig{
+		mixedPort: freePort(t), peer: peer, fakeIPRange: fipRangeCurrent, cacheFilePath: cachePath,
+	}.json(), nil)
+	issued := fipAsk(t, first, "fip-owned.test", 1)
+	t.Logf("A3x generation 1 range=%s issued=%s", fipRangeCurrent, issued)
+	require.True(t, netip.MustParsePrefix(fipRangeCurrent).Contains(issued),
+		"generation 1 must issue from its own range, got %s", issued)
+	require.True(t, firstLedger.Issued(issued),
+		"generation 1 must have recorded what it issued")
+	require.NoError(t, first.closeNow())
+
+	// Generation 2: a NEW session. No ledger, no inheritance, only the cache file.
+	secondPort := freePort(t)
+	second := startChainInContext(t, include.Context(context.Background()), fipConfig{
+		mixedPort: secondPort, peer: peer, fakeIPRange: fipRangeMoved, cacheFilePath: cachePath,
+	}.json(), nil)
+	t.Cleanup(func() { _ = second.closeNow() })
+
+	// The precondition that makes this a different row from A3: this Box has NO ledger, so the narrow
+	// in-process interval cannot be what refuses the address below.
+	require.Nil(t, service.PtrFromContext[adapter.FakeIPIssuanceLedger](second.ctx),
+		"this stand must NOT carry the previous session's ledger, or it would be a duplicate of A3")
+	require.False(t, netip.MustParsePrefix(fipRangeMoved).Contains(issued),
+		"the fixture must actually move the range away from the issued address")
+
+	mark := peer.mark()
+	acceptsBefore := peer.acceptCount()
+	conn, code := socks5Request(t, fipProxyAddress(secondPort), 0x01, issued.String(), 443)
+	if conn != nil {
+		defer conn.Close()
+	}
+	added := peer.awaitSince(mark, 600*time.Millisecond)
+	t.Logf("EGRESS-A3x %s", fipEgress("deadProcessIssued="+issued.String()+" oldRange="+fipRangeCurrent+" newRange="+fipRangeMoved,
+		code, acceptsBefore, peer.acceptCount(), added))
+	t.Logf("A3x retired ranges this second Box reports: %v", fipFakeIPStoreIn(t, second).RetiredAddresses())
+	fipRequireRefused(t, code, added, acceptsBefore, peer.acceptCount(),
+		"an address a PREVIOUS PROCESS issued, dialled after a restart that moved the range")
+
+	// The positive control, in the same Box: a literal in a range this installation NEVER configured must
+	// still cross. This is what keeps the refusal proof-based rather than a range block - the guarantee
+	// the A7 rows make for a single range, restated for a Box that now carries a retired one.
+	//
+	// It is deliberately not an address in the CURRENT range: that case never reaches this branch at all,
+	// because `Contains` answers for the current range first and refuses an unissued address there (the
+	// A2 row). An address in a RETIRED range that was never issued from cannot be separated from one that
+	// was, which is the whole reason the ledger's cursor-bounded intervals exist alongside this record.
+	literal := netip.MustParseAddr("198.24.0.200")
+	require.False(t, netip.MustParsePrefix(fipRangeCurrent).Contains(literal))
+	require.False(t, netip.MustParsePrefix(fipRangeMoved).Contains(literal))
+	literalMark := peer.mark()
+	literalAccepts := peer.acceptCount()
+	literalConn, literalCode := socks5Request(t, fipProxyAddress(secondPort), 0x01, literal.String(), 443)
+	if literalConn != nil {
+		defer literalConn.Close()
+	}
+	literalAdded := peer.awaitSince(literalMark, 400*time.Millisecond)
+	t.Logf("CONTROL-A3x %s", fipEgress("never-configured-literal="+literal.String(), literalCode,
+		literalAccepts, peer.acceptCount(), literalAdded))
+	require.Equal(t, byte(0x00), literalCode,
+		"an ordinary literal must keep crossing: the refusal may not become a range block")
+	require.Equal(t, literal.String(), literalAdded[0].Host,
+		"and it must cross unchanged, not rewritten to something else")
+}
+
 func TestFIPAddressFromThePreviousGenerationDoesNotEscape(t *testing.T) {
 	backend := startEchoServer(t, "tcp", "127.0.0.1:0")
 	peer := startFIPPeerSink(t, echoAddress(backend))

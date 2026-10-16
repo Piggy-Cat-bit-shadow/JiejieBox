@@ -1138,6 +1138,34 @@ func (r *Router) prepareMatchMetadata(ctx context.Context, metadata *adapter.Inb
 			": this instance issued it as a fakeip placeholder in ", interval,
 			", and no fakeip server currently maps it back to a domain. Forwarding it would ask the ",
 			"peer to reach a synthetic address that exists only inside this process")
+	} else if retired, retiredRange := r.retiredFakeIPAddress(destinationAddress); retired {
+		// A range this installation issued from, retired, and with no record left for this address.
+		//
+		// # Why this is a refusal and not an ordinary literal
+		//
+		// The two facts together are what make it one. The client is holding an address this Box
+		// MINTED - not one it resolved from its own DNS - and the record that would say which domain it
+		// stood for is gone, because the range move that retired it also reset the mapping. Forwarding
+		// it asks a peer to reach a synthetic address; on the reported machine that produced four real
+		// dials of 198.18.0.6/.8/.9/.20 and four five-second timeouts.
+		//
+		// # Why it is still proof-based, and what the proof is
+		//
+		// The proof is the installation's own issuance history, not the shape of the address. A range
+		// becomes refuse-able only by having been CONFIGURED as a FakeIP range here and then retired, so
+		// `198.18.0.0/15` on a machine that never configured it stays live routed space and crosses
+		// unchanged - the positive control that forbids a blanket range guard
+		// (`TestFIPLiteralWithoutIssuanceStaysReachable`).
+		//
+		// The ledger's cursor-bounded intervals still narrow the same range where they exist, so an
+		// address past everything a generation reached keeps crossing
+		// (`TestFIPLiteralBeyondTheCursorStaysReachableAfterARangeMove`). This branch is the coarse,
+		// cross-process half: it covers the case where the ledger is empty because the process that
+		// issued the address is gone.
+		return E.New("refusing destination ", destinationAddress,
+			": this instance issued fakeip placeholders from ", retiredRange,
+			" in an earlier generation and has no record of this address. Forwarding it would ask the ",
+			"peer to reach a synthetic address that exists only inside this process")
 	} else if metadata.Domain == "" {
 		domain, loaded := r.dns.LookupReverseMapping(destinationAddress)
 		if loaded {
@@ -1173,6 +1201,39 @@ func (r *Router) issuedFakeIPAddress(address netip.Addr) (bool, adapter.FakeIPIs
 	// reports (issued, interval), which is the order the caller branches on.
 	interval, issued := ledger.IssuedInterval(address)
 	return issued, interval
+}
+
+// retiredFakeIPAddress asks whether this installation issued from a range covering the address and has
+// since retired it, reporting the range that covers it.
+//
+// # Why the STORE answers, and not only the ledger
+//
+// The ledger is one per application session and dies with the process, so it can only attribute what
+// THIS process issued or saw retired. A client holds a FakeIP answer for `constant.DefaultDNSTTL`,
+// which spans a daemon restart, an update or a reboot - and after one of those the ledger is empty
+// while the client is still dialling what it was given. The retired ranges are persisted for exactly
+// that window, and the store is the object that owns them.
+//
+// # It is a WEAKER statement than the ledger's, and the contract says so
+//
+// `IssuedInterval` is narrow: a cursor-bounded interval of addresses a generation really handed out.
+// This is a range. Its only claim is that a record is MISSING for an address inside it, which is the
+// correct reading for an address with no mapping - and it is still a claim about THIS installation, so
+// a machine that never configured the range keeps crossing.
+func (r *Router) retiredFakeIPAddress(address netip.Addr) (bool, netip.Prefix) {
+	if !address.IsValid() || r.dnsTransport == nil {
+		return false, netip.Prefix{}
+	}
+	fakeIP := r.dnsTransport.FakeIP()
+	if fakeIP == nil || fakeIP.Store() == nil {
+		return false, netip.Prefix{}
+	}
+	for _, retiredRange := range fakeIP.Store().RetiredAddresses() {
+		if retiredRange.Contains(address) {
+			return true, retiredRange
+		}
+	}
+	return false, netip.Prefix{}
 }
 
 func (r *Router) matchRule(
