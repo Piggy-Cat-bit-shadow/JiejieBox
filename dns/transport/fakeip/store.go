@@ -132,6 +132,16 @@ func (s *Store) Start() error {
 		if metadata != nil {
 			s.recordRetired(metadata)
 		}
+		// The RETIREMENT RECORD is written here too, and it is deliberately separate from the ledger
+		// above.
+		//
+		// The ledger is one per application session and dies with the process, so it can only attribute
+		// an address THIS process issued or saw retired. The reset below then deletes the cursor
+		// metadata - the only other on-disk statement of the retired range - so after a restart nothing
+		// at all remembers it, and an address the previous process issued is dialled as an ordinary
+		// literal. MEASURED on the reported machine: four such addresses (198.18.0.6/.8/.9/.20), each
+		// burning a five-second connect timeout, 94 log lines in total.
+		s.recordRetiredRanges(storage, metadata)
 		if s.inet4Range.IsValid() {
 			s.inet4Current = s.inet4Range.Addr().Next()
 		}
@@ -186,6 +196,79 @@ func (s *Store) Close() error {
 	}
 	s.addressAccess.Unlock()
 	return s.storage.FakeIPSaveMetadata(metadata)
+}
+
+// recordRetiredRanges persists the ranges whose generation is ending, so a LATER process can still
+// attribute an address a client is holding.
+//
+// # What it records, and why it is the METADATA's ranges and nothing else
+//
+// The recorded range is `metadata.Inet4Range` / `metadata.Inet6Range`: the ranges the generation that
+// just ended was actually configured with, as it left them on disk. That is the tight answer, and the
+// tightness matters in one direction - a range recorded without ever having issued an address makes an
+// address inside it that this installation never handed out look like a missing record. So
+// `s.inet4Range` - the range this Store is ABOUT to be configured with - is deliberately NOT recorded:
+// on a first run it has issued nothing, and on a move it is recorded by the NEXT move, from its own
+// metadata. Recording it here would be a union for its own sake.
+//
+// # The case this cannot reach, and why that is the right boundary
+//
+// If the metadata is nil - no cache file, `store_fakeip` off, or a failed read - nothing on disk names
+// the range being retired, so the store genuinely cannot know it, and guessing from the range it is
+// about to use is the blanket refusal this design exists to avoid. That case is covered where it can
+// be: the in-memory ledger records what THIS process issued, and an in-process range move is exactly
+// the ledger's case (`TestFIPAddressFromThePreviousGenerationDoesNotEscape`). Across a process boundary
+// with no cache file there is no evidence at all.
+//
+// # Why it must run BEFORE FakeIPReset
+//
+// The reset deletes `bucketFakeIP`, and `keyMetadata` lives in it. The record lives in its own bucket
+// precisely because it is the statement the reset must not destroy.
+//
+// # Why it takes the storage as an argument
+//
+// `s.storage` is assigned AFTER this call, because that assignment is the last statement of the branch
+// this runs in. Reading the field here returned nil and recorded nothing - which the cross-process
+// end-to-end row caught as a plain "the address still crossed", with no hint as to why.
+func (s *Store) recordRetiredRanges(storage adapter.FakeIPStorage, metadata *adapter.FakeIPMetadata) {
+	if storage == nil || metadata == nil {
+		return
+	}
+	_ = storage.FakeIPRetireRange(metadata.Inet4Range)
+	_ = storage.FakeIPRetireRange(metadata.Inet6Range)
+}
+
+// RetiredAddresses reports the ranges an earlier generation of this installation issued from.
+//
+// Two sources with different lifetimes, and both are needed:
+//
+//	the storage's record   survives a restart, an in-process reload and - with `store_fakeip` - a
+//	                       reboot; it answers "this INSTALLATION once issued from here".
+//	the in-memory ledger   survives only the process, but it knows intervals the storage never sees
+//	                       when there is no cache file at all.
+//
+// Only RANGES are reported. Narrowing a range to "what was really handed out" is the ledger's
+// cursor-bounded work and the caller adds it; a range by itself is a statement that a record is
+// MISSING for an address inside it, never that the address was issued.
+func (s *Store) RetiredAddresses() []netip.Prefix {
+	s.addressAccess.Lock()
+	defer s.addressAccess.Unlock()
+	var retired []netip.Prefix
+	if s.storage != nil {
+		retired = append(retired, s.storage.FakeIPRetired()...)
+	}
+	if s.ledger != nil {
+		// A generation's live interval is included on purpose: after a move it describes a range that
+		// IS retired, and `Contains` has already answered for whatever range is current, so this cannot
+		// shadow the current-range case.
+		for _, interval := range s.ledger.IssuedIntervals() {
+			if !interval.From.IsValid() {
+				continue
+			}
+			retired = append(retired, netip.PrefixFrom(interval.From, interval.From.BitLen()))
+		}
+	}
+	return adapter.FakeIPNormalizeRetiredRanges(retired)
 }
 
 func (s *Store) Create(domain string, isIPv6 bool) (netip.Addr, error) {

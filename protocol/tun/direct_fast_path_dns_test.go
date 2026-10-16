@@ -543,6 +543,11 @@ func (s *fakeIPStoreStub) Create(string, bool) (netip.Addr, error) { return neti
 func (s *fakeIPStoreStub) Lookup(netip.Addr) (string, bool)        { return "", false }
 func (s *fakeIPStoreStub) Reset() error                            { return nil }
 
+// RetiredAddresses reports nothing, which is the correct degradation for a store with no retirement
+// memory: the router then refuses nothing on that basis. This stub models the RANGE question only, and
+// every assertion in this file is about the current range.
+func (s *fakeIPStoreStub) RetiredAddresses() []netip.Prefix { return nil }
+
 // TestFakeIPIsNotBypassedByRouteAddressSet is the L0 boundary.
 //
 // The route sets decide what the PLATFORM's routing table is trusted to carry, and they run BEFORE
