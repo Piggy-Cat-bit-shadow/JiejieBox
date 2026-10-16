@@ -116,9 +116,23 @@ function Add-InstallationIdentity {
 }
 
 function Get-ServiceState {
+    # `Get-Service` hands back a ServiceController that holds a HANDLE on the service, and
+    # Windows keeps a service alive - its SCM entry and its
+    # HKLM\SYSTEM\CurrentControlSet\Services key - until every handle to it is closed. An
+    # undisposed ServiceController therefore keeps the service in exactly the state this test
+    # waits for it to leave, and 1072 (ERROR_SERVICE_MARKED_FOR_DELETE) persists for as long as
+    # the handle does.
+    #
+    # This function used to return only the status and drop the object, leaving the handle to
+    # the garbage collector. Whoever calls it in a poll loop is deciding how long that takes.
+    # Disposing explicitly makes the handle's lifetime the function call's, not the GC's.
     $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
     if ($null -eq $service) { return "absent" }
-    return $service.Status.ToString()
+    try {
+        return $service.Status.ToString()
+    } finally {
+        $service.Dispose()
+    }
 }
 
 function Get-InstallArguments {
@@ -276,6 +290,77 @@ function Show-ProcessSnapshot {
     }
 
     return $snapshot
+}
+
+function Show-ServiceStateProbe {
+    <#
+        Six facts about the daemon service, printed the moment an uninstall returns 0.
+
+        WHY THIS EXISTS. The uninstaller exits 0 and then the settle wait times out, and the
+        dump taken moments later shows the service already gone. Two very different causes look
+        identical from outside: the service is genuinely slow to leave, or THE HARNESS ITSELF is
+        holding it open.
+
+        The second is not hypothetical. `Get-Service` returns a ServiceController that holds a
+        handle on the service, and Windows will not remove a service - nor its
+        HKLM\SYSTEM\CurrentControlSet\Services key - until every handle to it is closed. A
+        ServiceController that is never disposed keeps that handle for as long as the object is
+        reachable, so a test that polls Get-Service can pin the very service it is waiting to
+        disappear. 1072 (ERROR_SERVICE_MARKED_FOR_DELETE) surviving indefinitely is the classic
+        signature.
+
+        So this probe reports the state in a form that distinguishes them, using sc.exe and CIM
+        only - it deliberately does NOT call Get-Service, because a probe that itself takes a
+        handle could not be trusted to answer the question.
+    #>
+    param([string]$Phase)
+
+    $lines.Add("  -- service state probe ($Phase) --")
+
+    # (1) queryex: state plus the daemon PID, if any.
+    $queryex = Invoke-NativeCommand { sc.exe queryex $serviceName }
+    $lines.Add("  sc.exe queryex $serviceName : exit $($queryex.ExitCode)")
+    foreach ($l in ($queryex.Output -split "`r?`n" | Where-Object { $_ -match '\S' })) { $lines.Add("      $l") }
+
+    # (2) qc: the registered configuration, and whether it still exists at all.
+    $qc = Invoke-NativeCommand { sc.exe qc $serviceName }
+    $lines.Add("  sc.exe qc $serviceName : exit $($qc.ExitCode)")
+
+    # (3) CIM view: State and ProcessId in one place. CIM rather than Get-Service, deliberately.
+    $cim = Get-CimInstance -ClassName Win32_Service -Filter "Name='$serviceName'" -ErrorAction SilentlyContinue
+    if ($null -eq $cim) {
+        $lines.Add("  Win32_Service : absent")
+    } else {
+        $lines.Add("  Win32_Service : State=$($cim.State) ProcessId=$($cim.ProcessId) Started=$($cim.Started) ExitCode=$($cim.ExitCode)")
+    }
+
+    # (4) the registry key whose survival is what actually keeps the settle condition false.
+    $serviceKey = "HKLM:\SYSTEM\CurrentControlSet\Services\$serviceName"
+    if (Test-Path -LiteralPath $serviceKey) {
+        $stamp = Get-ItemProperty -Path $serviceKey -ErrorAction SilentlyContinue
+        $lines.Add("  $serviceKey : PRESENT (DeleteFlag=$($stamp.DeleteFlag) ImagePath=$($stamp.ImagePath))")
+    } else {
+        $lines.Add("  $serviceKey : absent")
+    }
+
+    # (5) is the daemon process itself still alive?
+    $daemonPids = @(Get-CimInstance Win32_Process -Filter "Name='sing-box-daemon.exe'" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty ProcessId)
+    if ($daemonPids.Count -eq 0) {
+        $lines.Add("  sing-box-daemon.exe processes : none")
+    } else {
+        $lines.Add("  sing-box-daemon.exe processes : $($daemonPids -join ', ')  <-- still alive")
+    }
+
+    # (6) the specific code that means "deleted, but something still holds it open".
+    $markedForDelete = ($queryex.Output -match '1060') -eq $false -and ($queryex.Output -match 'marked for deletion')
+    $lines.Add("  interpreted: absent=$(($queryex.Output -match '1060')) markedForDelete=$markedForDelete")
+    return [pscustomobject]@{
+        Absent          = [bool]($queryex.Output -match '1060')
+        MarkedForDelete = [bool]$markedForDelete
+        RegistryPresent = [bool](Test-Path -LiteralPath $serviceKey)
+        CimState        = if ($null -eq $cim) { "absent" } else { [string]$cim.State }
+        DaemonPids      = $daemonPids
+    }
 }
 
 function Show-Diagnostics {
@@ -633,6 +718,10 @@ $lines.Add("")
 # --- uninstall ---------------------------------------------------------------
 $lines.Add("[3/5] silent uninstall")
 Invoke-Uninstall -Phase "first" -UninstallEntry $uninstallEntry
+# Reported BEFORE the settle wait, so the record shows the machine's actual state at the moment
+# the uninstaller returned 0 - not a state reconstructed after a timeout, which is what made this
+# indistinguishable from a product hang for several rounds.
+$firstUninstallProbe = Show-ServiceStateProbe -Phase "immediately after the first uninstall returned 0"
 Assert-Uninstalled -Phase "after first uninstall" -InstallationRoot $installationRoot -UninstallEntry $uninstallEntry -DataPreserved
 $lines.Add("  PASS")
 $lines.Add("")
