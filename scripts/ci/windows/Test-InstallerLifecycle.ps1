@@ -204,16 +204,38 @@ function Save-UninstallerProvenance {
             (Join-Path $InstallationRoot "Uninstall sing-box.exe"),
             (Join-Path $InstallationRoot "Uninstall Jiejiebox.exe")
         )) {
+            # Every path test is guarded for null/empty. `Test-Path -LiteralPath $null` throws
+            # "Cannot bind argument to parameter 'Path' because it is null", and this function runs
+            # at points where the installation root may legitimately not be established yet - so an
+            # unguarded test turns a diagnostic into the failure it was meant to describe.
+            if ([string]::IsNullOrWhiteSpace($guess)) { continue }
             if (Test-Path -LiteralPath $guess -PathType Leaf) { $candidate = $guess; break }
         }
     }
-    if ([string]::IsNullOrWhiteSpace($candidate) -or -not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
         $lines.Add("  uninstaller at '$Point': NOT FOUND (no UninstallString target, no guess present)")
+        return
+    }
+    if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+        $lines.Add("  uninstaller at '$Point': NOT FOUND at '$candidate'")
         return
     }
 
     $item = Get-Item -LiteralPath $candidate
-    $hash = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLower()
+    # Hashed from the bytes rather than with Get-FileHash, so the value cannot come back null and
+    # take the whole diagnostic down with it.
+    $hash = ""
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes($candidate)
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $hash = (($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString('x2') }) -join '')
+        } finally {
+            $sha.Dispose()
+        }
+    } catch {
+        $hash = "<hash failed: $($_.Exception.Message)>"
+    }
     $dest = Join-Path $records "uninstaller-$safe.exe"
     try { Copy-Item -LiteralPath $candidate -Destination $dest -Force -ErrorAction Stop } catch {
         $lines.Add("  uninstaller at '$Point': could not copy - $($_.Exception.Message)")
