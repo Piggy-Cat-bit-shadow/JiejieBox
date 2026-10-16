@@ -115,9 +115,15 @@ def main():
     application_identity = ts_value(
         "applicationIdentity", r'export const applicationIdentity = "([^"]+)"'
     )
+    # `applicationDataDirectoryName` is UPSTREAM's value (`"sing-box"`), not the brand. Accept a
+    # quoted literal as well as an identifier: it was `${applicationIdentity}` and is now a plain
+    # string, and the old identifier-only pattern would have reported it as "gone" - a false
+    # failure for a value that is deliberately not branded. The extracted value is not compared
+    # against the brand anywhere (it has no other reader in this file), so this is a parse fix
+    # rather than a relaxation of an assertion.
     app_data_directory = ts_value(
         "applicationDataDirectoryName",
-        r'export const applicationDataDirectoryName = ([A-Za-z]+)',
+        r'export const applicationDataDirectoryName = (?:"([^"]+)"|([A-Za-z]+))',
     )
     daemon_data_directory = ts_value(
         "daemonDataDirectoryName",
