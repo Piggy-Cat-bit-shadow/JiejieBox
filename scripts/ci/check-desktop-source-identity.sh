@@ -5,9 +5,21 @@
 #   check-desktop-source-identity.sh \
 #     --core-dir <dir> --tooling-dir <dir> \
 #     --version <X.Y.Z> --core-sha <40hex> --tooling-sha <40hex> \
-#     [--remote origin] [--no-fetch] [--shallow]
+#     [--remote origin] [--no-fetch] [--shallow] [--audit-only]
 #
 # Exit: 0 = every identity holds, 1 = one does not, 2 = the caller used it wrongly.
+#
+# # Two modes, and the difference is exactly one requirement
+#
+# RELEASE (default): `refs/tags/v<version>` must exist and name `core_sha`. A commit is a
+# release only when it is labelled as one.
+#
+# AUDIT (`--audit-only`): the tag requirement is DROPPED; everything else - exact core_sha,
+# exact tooling_sha, tooling == core, release/JIEJIE_VERSION agreement - is still enforced.
+# This is the diagnostic path, for auditing a commit that is not the release. It is what
+# stops the audit from depending on the release decision it exists to inform; see the long
+# note at the tag block. A caller that selects this mode must announce it in its own record,
+# and no release may consume its artifacts.
 #
 # # Why this is a script and not an inline `run:` block
 #
@@ -40,7 +52,7 @@
 # network; `--no-fetch` exists so the fixtures in the test suite can assert the rest.
 set -euo pipefail
 
-usage="usage: check-desktop-source-identity.sh --core-dir <dir> --tooling-dir <dir> --version <X.Y.Z> --core-sha <40hex> --tooling-sha <40hex> [--remote origin] [--no-fetch] [--shallow]"
+usage="usage: check-desktop-source-identity.sh --core-dir <dir> --tooling-dir <dir> --version <X.Y.Z> --core-sha <40hex> --tooling-sha <40hex> [--remote origin] [--no-fetch] [--shallow] [--audit-only]"
 
 core_dir=""
 tooling_dir=""
@@ -50,6 +62,7 @@ tooling_sha=""
 remote="origin"
 fetch=1
 shallow=""
+audit_only=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -61,6 +74,7 @@ while [ "$#" -gt 0 ]; do
     --remote)       [ "$#" -ge 2 ] || { echo "FAIL: --remote needs a value. $usage" >&2; exit 2; }; remote="$2"; shift 2 ;;
     --no-fetch)     fetch=0; shift ;;
     --shallow)      shallow="--depth 1"; shift ;;
+    --audit-only)   audit_only=1; shift ;;
     -h|--help)      echo "$usage" >&2; exit 0 ;;
     *)              echo "FAIL: unknown argument '$1'. $usage" >&2; exit 2 ;;
   esac
@@ -115,9 +129,37 @@ echo "core describe:   $(git -C "$core_dir" describe --tags 2>/dev/null || echo 
   echo "FAIL: core is at $head_sha, expected $core_sha" >&2; exit 1; }
 
 describe="$(git -C "$core_dir" describe --tags 2>/dev/null || true)"
-[ "$describe" = "v$version" ] || {
+# `git describe --tags` is what stamps the daemon, so on the RELEASE path it must name exactly
+# `v$version`: a candidate is built at the commit the tag names.
+#
+# In AUDIT mode the commit being audited is expected to sit PAST the release tag - that is the
+# whole point, since the fix under audit is newer than the last candidate. So the requirement
+# becomes "describes the same release", which is exactly the rule
+# scripts/ci/verify-desktop-daemon-provenance.py already applies to this same value:
+#
+#   describe == v<version>                  -> at the tag
+#   describe == v<version>-<n>-g<sha>       -> a descendant of the tag
+#   describe == <no tag> / v<other>         -> refused in BOTH modes
+#
+# The version the daemon actually reports is set by SING_BOX_BUILD_VERSION on the audit path (see
+# build_shared.ReadTag, which consults it first), and it is asserted downstream by the runtime
+# audit's `--expect-version`. What this check still refuses is a checkout that belongs to a
+# DIFFERENT release, in either mode.
+describe_ok=0
+if [ "$describe" = "v$version" ]; then
+  describe_ok=1
+elif [ "$audit_only" -eq 1 ]; then
+  case "$describe" in
+    "v$version"-[0-9]*-g*) describe_ok=1 ;;
+  esac
+fi
+[ "$describe_ok" -eq 1 ] || {
   echo "FAIL: the daemon version stamp derives from \`git describe --tags\`," >&2
   echo "      which must be v$version in this checkout, but is '${describe:-<none>}'" >&2
+  if [ "$audit_only" -eq 1 ]; then
+    echo "      (audit mode accepts 'v$version-<n>-g<sha>' as a descendant of the release tag," >&2
+    echo "      but the checkout must still belong to the v$version release.)" >&2
+  fi
   exit 1; }
 
 # --- the tooling is the SAME revision, and it is a revision ------------------
@@ -131,25 +173,59 @@ echo "tooling HEAD:    $tooling_head"
   echo "FAIL: the tooling checkout is not the core revision" >&2; exit 1; }
 
 # --- the tag must exist AND name this commit --------------------------------
+#
+# # Why the tag is a RELEASE requirement and not an AUDIT precondition
+#
+# Requiring `refs/tags/v<version>` to point at `core_sha` made the audit depend on the release
+# decision it is supposed to inform. The consequence was a real inversion:
+#
+#     wanted:  fix a SHA -> audit it -> the audit passes -> THEN choose the candidate/tag
+#     actual:  move the candidate tag first -> only now may the SHA be audited
+#
+# That is backwards. An audit is evidence about a commit, and a commit does not become auditable
+# by being labelled. It also blocked this audit in practice: the lifecycle fix under test sat one
+# commit past `v0.1.15`, whose tag belongs to a HELD candidate that must not be moved, so the only
+# way to run the lifecycle was to move a published tag - which the release rules forbid.
+#
+# `--audit-only` is therefore the DIAGNOSTIC path: it drops the tag requirement and keeps every
+# other identity check EXACT. `git describe` is what stamps the daemon, so in audit mode the
+# version is injected explicitly (SING_BOX_BUILD_VERSION, read first by build_shared.ReadTag) and
+# the record says so; see the AUDIT_ONLY line this prints at the end.
+#
+# The release path is unchanged and still requires the tag: without `--audit-only`, a tag that is
+# missing, or that names another commit, fails exactly as before.
 tag_ref="refs/tags/v$version"
-if [ "$fetch" -eq 1 ]; then
-  if ! git -C "$tooling_dir" fetch $shallow "$remote" "+$tag_ref:$tag_ref" 2>/dev/null; then
-    echo "FAIL: $tag_ref does not exist on $remote." >&2
-    echo "      The release version names a tag that is not published, so this build" >&2
-    echo "      would be the only record of it." >&2
+if [ "$audit_only" -eq 1 ]; then
+  echo "AUDIT_ONLY:       yes - this run is a DIAGNOSTIC AUDIT of $core_sha."
+  echo "                  The v$version tag is NOT required to name this commit, and this"
+  echo "                  result must never be cited as a release acceptance result."
+  if tag_sha="$(git -C "$tooling_dir" rev-parse "$tag_ref^{commit}" 2>/dev/null)"; then
+    echo "tag v$version:     $tag_sha (present; audit mode does not require it to be core_sha)"
+  else
+    echo "tag v$version:     absent (audit mode does not require it)"
+  fi
+else
+  if [ "$fetch" -eq 1 ]; then
+    if ! git -C "$tooling_dir" fetch $shallow "$remote" "+$tag_ref:$tag_ref" 2>/dev/null; then
+      echo "FAIL: $tag_ref does not exist on $remote." >&2
+      echo "      The release version names a tag that is not published, so this build" >&2
+      echo "      would be the only record of it. Pass --audit-only to audit a commit that" >&2
+      echo "      is not the release." >&2
+      exit 1
+    fi
+  fi
+  if ! tag_sha="$(git -C "$tooling_dir" rev-parse "$tag_ref^{commit}" 2>/dev/null)"; then
+    echo "FAIL: $tag_ref does not resolve in the tooling checkout." >&2
+    echo "      The tag must exist and name this commit; a version whose tag points" >&2
+    echo "      elsewhere names a different release." >&2
     exit 1
   fi
+  echo "tag v$version:     $tag_sha"
+  [ "$tag_sha" = "$core_sha" ] || {
+    echo "FAIL: $tag_ref is $tag_sha, but core_sha is $core_sha." >&2
+    echo "      The version and the commit name different releases." >&2
+    echo "      Pass --audit-only to audit a commit that is not the release." >&2; exit 1; }
 fi
-if ! tag_sha="$(git -C "$tooling_dir" rev-parse "$tag_ref^{commit}" 2>/dev/null)"; then
-  echo "FAIL: $tag_ref does not resolve in the tooling checkout." >&2
-  echo "      The tag must exist and name this commit; a version whose tag points" >&2
-  echo "      elsewhere names a different release." >&2
-  exit 1
-fi
-echo "tag v$version:     $tag_sha"
-[ "$tag_sha" = "$core_sha" ] || {
-  echo "FAIL: $tag_ref is $tag_sha, but core_sha is $core_sha." >&2
-  echo "      The version and the commit name different releases." >&2; exit 1; }
 
 # --- and the checkout's own single version source must agree -----------------
 core_version_file="$core_dir/release/JIEJIE_VERSION"
@@ -161,4 +237,8 @@ echo "JIEJIE_VERSION:  $declared"
   echo "      release/JIEJIE_VERSION is the single authority for the fork's version;" >&2
   echo "      a caller that disagrees with it is releasing something else." >&2; exit 1; }
 
-echo "PASS: source identity holds at $core_sha (tooling = core, tag names the commit, version agrees)"
+if [ "$audit_only" -eq 1 ]; then
+  echo "PASS: source identity holds at $core_sha (tooling = core, version agrees; AUDIT-ONLY, tag not required)"
+else
+  echo "PASS: source identity holds at $core_sha (tooling = core, tag names the commit, version agrees)"
+fi

@@ -191,6 +191,74 @@ g "$CORE" tag -d "v0.1.7"
 report_expect_fail "no tag at HEAD, so describe cannot name the version" chk
 g "$CORE" tag "v0.1.7" "$CORE_SHA"
 
+# --- AUDIT mode: the tag is a release requirement, not an audit precondition --
+#
+# The scenario --audit-only exists for is the one that blocked this audit: the fix under test sits
+# ONE COMMIT PAST the release tag, so `describe` reports v0.1.7-1-g<sha> and the release check
+# refuses it. Audit mode must accept that, and must still refuse a checkout that belongs to a
+# DIFFERENT release or to no release at all.
+g "$CORE" checkout -q --detach "$OTHER_SHA"
+g "$TOOLING" checkout -q --detach "$OTHER_SHA"   # tooling == core, as the inputs require
+g "$CORE" tag -f "v0.1.7" "$CORE_SHA"            # the release tag stays where it belongs
+describe_now="$(git -C "$CORE" describe --tags 2>/dev/null || true)"
+report "12a. the audit fixture really is a descendant of the tag" 0 "describe=$describe_now"
+report_expect_pass "AUDIT: a commit one past the release tag is auditable" \
+  chk --audit-only --core-sha "$OTHER_SHA" --tooling-sha "$OTHER_SHA"
+report_expect_fail "RELEASE: that same commit is still refused without --audit-only" \
+  chk --core-sha "$OTHER_SHA" --tooling-sha "$OTHER_SHA"
+
+# The tag names an ANCESTOR of the audited commit - the exact shape a lifecycle fix has: newer
+# than the last candidate, so `git describe` reports v0.1.7-1-g<sha> while refs/tags/v0.1.7 still
+# points at the previous commit. Both checkouts are the audited commit, as the inputs require.
+g "$CORE" checkout -q --detach "$OTHER_SHA"
+g "$TOOLING" checkout -q --detach "$OTHER_SHA"
+g "$CORE" tag -f "v0.1.7" "$CORE_SHA"
+report_expect_pass "AUDIT: a tag that is behind the audited commit is acceptable" \
+  chk --audit-only --core-sha "$OTHER_SHA" --tooling-sha "$OTHER_SHA"
+
+# ...and the same shape is still refused on the release path.
+report_expect_fail "RELEASE: a tag behind the audited commit is still refused" \
+  chk --core-sha "$OTHER_SHA" --tooling-sha "$OTHER_SHA"
+
+g "$CORE" checkout -q --detach "$CORE_SHA"
+g "$TOOLING" checkout -q --detach "$CORE_SHA"
+
+# --audit-only drops EXACTLY ONE requirement. Everything else is still enforced, or the mode
+# would be a way to audit something other than the commit that was asked for.
+report_expect_fail "AUDIT: a floating tooling ref is still refused" \
+  chk --audit-only --tooling-sha testing
+printf '0.1.6\n' > "$CORE/release/JIEJIE_VERSION"
+report_expect_fail "AUDIT: release/JIEJIE_VERSION must still agree" chk --audit-only
+printf '0.1.7\n' > "$CORE/release/JIEJIE_VERSION"
+
+# `git describe` cannot name the release at all, so the checkout belongs to no release: refused in
+# both modes. This is the case that keeps --audit-only from becoming "audit anything".
+g "$CORE" tag -d "v0.1.7"
+report_expect_fail "AUDIT: a checkout that describes no release at all is still refused" \
+  chk --audit-only
+g "$CORE" tag "v0.1.7" "$CORE_SHA"
+
+# The record has to SAY it was an audit, because the value of an audit-only run is exactly the
+# thing a reader must not mistake for an acceptance result.
+g "$CORE" checkout -q --detach "$OTHER_SHA"
+g "$TOOLING" checkout -q --detach "$OTHER_SHA"
+"$CHECK" --core-dir "$CORE" --tooling-dir "$TOOLING" --no-fetch --audit-only \
+  --version 0.1.7 --core-sha "$OTHER_SHA" --tooling-sha "$OTHER_SHA" >"$WORK/out" 2>&1
+if grep -q 'AUDIT_ONLY:       yes' "$WORK/out"; then
+  report "12b. an audit-only run announces itself in its output" 0
+else
+  report "12b. an audit-only run announces itself in its output" 1 "no AUDIT_ONLY line"
+fi
+"$CHECK" --core-dir "$CORE" --tooling-dir "$TOOLING" --no-fetch \
+  --version 0.1.7 --core-sha "$CORE_SHA" --tooling-sha "$CORE_SHA" >"$WORK/out" 2>&1
+if grep -q 'AUDIT_ONLY' "$WORK/out"; then
+  report "12c. a release run does NOT claim to be an audit" 1 "AUDIT_ONLY present"
+else
+  report "12c. a release run does NOT claim to be an audit" 0
+fi
+g "$CORE" checkout -q --detach "$CORE_SHA"
+g "$TOOLING" checkout -q --detach "$CORE_SHA"
+
 # --- the core checkout must be the named commit -----------------------------
 report_expect_fail "core HEAD is not core_sha" \
   chk --core-sha "$OTHER_SHA" --tooling-sha "$OTHER_SHA"
