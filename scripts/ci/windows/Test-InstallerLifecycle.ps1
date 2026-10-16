@@ -589,7 +589,38 @@ function Invoke-Uninstall {
         # deliberately left behind so a reinstall can reuse the data directories.
         $arguments += "--delete-app-data"
     }
+    # Observe the uninstaller from OUTSIDE, and record every image of it that appears.
+    #
+    # WHY EXTERNAL OBSERVATION RATHER THAN INSTRUMENTING THE UNINSTALLER. The question is whether
+    # the process that actually reaches customUnInit received /CI-DIAGNOSTIC-PATH=. Asking
+    # ciDiagnostic to answer that is circular: if the path failed to parse, nothing is written, and
+    # "nothing written" is then read as "the code did not run". This captures the command lines
+    # from Win32_Process instead, so it holds regardless of whether the diagnostic channel works.
+    #
+    # electron-builder's uninstaller COPIES ITSELF to a temp directory and re-launches, and
+    # ExecWait-based re-launches are a classic place for arguments to be dropped. The daemon's
+    # uninstall path is a separate image again. So there can be two or three processes named like
+    # the uninstaller, with different command lines, and only one of them is the one that runs our
+    # macro. Sampling around the call catches all of them.
+    $before = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like '*Uninstall*' -or $_.CommandLine -like "*$([System.IO.Path]::GetFileName($uninstaller))*" })
+    $lines.Add("  uninstaller processes BEFORE the call: $($before.Count)")
+    foreach ($p in $before) {
+        $lines.Add("      PID $($p.ProcessId) PPID $($p.ParentProcessId) :: $($p.CommandLine)")
+    }
+
     $exitCode = Invoke-Silently -FilePath $uninstaller -Arguments $arguments -What "$Phase uninstall"
+
+    $after = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like '*Uninstall*' -or $_.CommandLine -like "*$([System.IO.Path]::GetFileName($uninstaller))*" })
+    $lines.Add("  uninstaller processes AFTER the call: $($after.Count)")
+    foreach ($p in $after) {
+        $lines.Add("      PID $($p.ProcessId) PPID $($p.ParentProcessId) :: $($p.CommandLine)")
+    }
+    # The composed arguments are recorded too, so the recorded command lines can be compared
+    # against what the harness intended to pass.
+    $lines.Add("  harness passed: `"$uninstaller`" $($arguments -join ' ')")
+
     if ($exitCode -ne 0) { Fail-Gate "$Phase`: the uninstaller exited $exitCode" }
 }
 
