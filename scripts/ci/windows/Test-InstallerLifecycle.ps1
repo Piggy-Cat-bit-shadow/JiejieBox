@@ -170,6 +170,92 @@ function Show-InstallerDiagnostic {
     }
 }
 
+function Save-UninstallerProvenance {
+    <#
+        Preserve the INSTALLED uninstaller and record its identity, at a named lifecycle point.
+
+        WHY BINARY IDENTITY AND NOT THE PATH. Everything established so far says the generated
+        uninstaller for the CURRENT build contains un.onInit -> initMultiUser -> customUnInit. None
+        of that says the binary sitting in the installation directory at a given moment is from
+        this build. Windows installers rewrite their uninstaller, upgrades may keep an older one,
+        and electron-builder removes the previous version in its own order - so the process that
+        actually ran may be a different generation from the one the producer just built.
+
+        The asymmetry this is aimed at: the FIRST uninstall writes nothing and leaves
+        jiejiebox-daemon RUNNING, while the FINAL uninstall does write and does clean up. A single
+        GetOptions quirk does not explain that asymmetry. A stale uninstaller after the reinstall,
+        replaced by a current one only when the clean install writes it, explains all of it.
+
+        The file is COPIED before it can delete itself, and its hash is the answer: if the copies
+        from different points differ, no amount of parameter tracing is relevant.
+    #>
+    param([string]$Point, [Parameter(Mandatory = $false)]$UninstallEntry)
+
+    $records = Split-Path -Parent $RecordPath
+    $safe = ($Point -replace '[^A-Za-z0-9]+', '-').Trim('-')
+
+    # Prefer the path the registry names, falling back to the installation root.
+    $candidate = $null
+    if ($null -ne $UninstallEntry -and -not [string]::IsNullOrWhiteSpace($UninstallEntry.UninstallString)) {
+        $candidate = Get-CommandExecutablePath ([string]$UninstallEntry.UninstallString)
+    }
+    if ([string]::IsNullOrWhiteSpace($candidate) -or -not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+        foreach ($guess in @(
+            (Join-Path $InstallationRoot "Uninstall sing-box.exe"),
+            (Join-Path $InstallationRoot "Uninstall Jiejiebox.exe")
+        )) {
+            if (Test-Path -LiteralPath $guess -PathType Leaf) { $candidate = $guess; break }
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($candidate) -or -not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+        $lines.Add("  uninstaller at '$Point': NOT FOUND (no UninstallString target, no guess present)")
+        return
+    }
+
+    $item = Get-Item -LiteralPath $candidate
+    $hash = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLower()
+    $dest = Join-Path $records "uninstaller-$safe.exe"
+    try { Copy-Item -LiteralPath $candidate -Destination $dest -Force -ErrorAction Stop } catch {
+        $lines.Add("  uninstaller at '$Point': could not copy - $($_.Exception.Message)")
+    }
+
+    $fileVersion = ""; $productVersion = ""
+    try {
+        $vi = $item.VersionInfo
+        $fileVersion = [string]$vi.FileVersion
+        $productVersion = [string]$vi.ProductVersion
+    } catch { }
+
+    $sigSubject = ""; $sigStatus = ""
+    try {
+        $sig = Get-AuthenticodeSignature -LiteralPath $candidate
+        $sigStatus = [string]$sig.Status
+        if ($null -ne $sig.SignerCertificate) { $sigSubject = [string]$sig.SignerCertificate.Subject }
+    } catch { }
+
+    $lines.Add("  uninstaller at '$Point':")
+    $lines.Add("      path        : $candidate")
+    $lines.Add("      sha256      : $hash")
+    $lines.Add("      size        : $($item.Length)")
+    $lines.Add("      lastWrite   : $($item.LastWriteTimeUtc.ToString('o'))")
+    $lines.Add("      fileVersion : $fileVersion")
+    $lines.Add("      prodVersion : $productVersion")
+    $lines.Add("      signature   : $sigStatus  $sigSubject")
+    if ($null -ne $UninstallEntry) {
+        $lines.Add("      registry    : UninstallString=$($UninstallEntry.UninstallString)")
+        $lines.Add("      registry    : InstallLocation=$($UninstallEntry.InstallLocation) DisplayVersion=$($UninstallEntry.DisplayVersion)")
+    }
+    $lines.Add("      copied to   : uninstaller-$safe.exe")
+
+    # Recorded so the end-of-run verdict compares generations rather than leaving it to a reader.
+    $script:UninstallerHashes[$Point] = $hash
+    Write-Host "   uninstaller at '$Point': sha256=$($hash.Substring(0,16)) size=$($item.Length) version=$fileVersion"
+}
+
+# The hashes seen so far, so the report can state plainly whether they are all the same binary.
+$script:UninstallerHashes = [ordered]@{}
+$script:ChannelSizes = [ordered]@{}
+
 function Save-DiagnosticSnapshot {
     <#
         Copy the diagnostic channel aside under a phase-specific name, and report its size and
@@ -205,6 +291,7 @@ function Save-DiagnosticSnapshot {
     }
     $content = Get-Content -LiteralPath $DiagnosticPath -Raw -ErrorAction SilentlyContinue
     $all = @(($content -split "`r?`n") | Where-Object { $_ -match '\S' })
+    $script:ChannelSizes[$Phase] = $size
     $lines.Add("  diagnostic channel after '$Phase': $size bytes, $($all.Count) non-blank line(s)")
     # The tail is what matters for locating a stop: the last marker before silence.
     foreach ($line in ($all | Select-Object -Last 8)) { $lines.Add("      $line") }
@@ -780,6 +867,7 @@ $lines.Add("")
 # --- first install -----------------------------------------------------------
 $lines.Add("[1/5] silent install")
 $exitCode = Invoke-Silently -FilePath $InstallerPath -Arguments (Get-InstallArguments) -What "install"
+Save-UninstallerProvenance -Point "after-install" -UninstallEntry $installed.UninstallEntry
 Save-DiagnosticSnapshot -Phase "1-install"
 $lines.Add("  exit code $exitCode")
 if ($exitCode -ne 0) {
@@ -797,6 +885,7 @@ $lines.Add("[2/5] same-version reinstall")
 $exitCode = Invoke-Silently -FilePath $InstallerPath -Arguments (Get-InstallArguments) -What "reinstall"
 $lines.Add("  exit code $exitCode")
 if ($exitCode -ne 0) { Fail-Gate "the same-version reinstall exited $exitCode" }
+Save-UninstallerProvenance -Point "after-reinstall" -UninstallEntry $reinstalled.UninstallEntry
 Save-DiagnosticSnapshot -Phase "2-reinstall"
 $reinstalled = Assert-Installed -Phase "after same-version reinstall"
 if ($reinstalled.Root -ne $installationRoot) {
@@ -807,6 +896,7 @@ $lines.Add("")
 
 # --- uninstall ---------------------------------------------------------------
 $lines.Add("[3/5] silent uninstall")
+Save-UninstallerProvenance -Point "before-first-uninstall" -UninstallEntry $uninstallEntry
 Invoke-Uninstall -Phase "first" -UninstallEntry $uninstallEntry
 Save-DiagnosticSnapshot -Phase "3-first-uninstall"
 # Reported BEFORE the settle wait, so the record shows the machine's actual state at the moment
@@ -822,6 +912,7 @@ $lines.Add("[4/5] clean reinstall after a full uninstall")
 $exitCode = Invoke-Silently -FilePath $InstallerPath -Arguments (Get-InstallArguments) -What "reinstall"
 $lines.Add("  exit code $exitCode")
 if ($exitCode -ne 0) { Fail-Gate "the clean reinstall exited $exitCode" }
+Save-UninstallerProvenance -Point "after-clean-reinstall" -UninstallEntry $reinstalled.UninstallEntry
 Save-DiagnosticSnapshot -Phase "4-clean-reinstall"
 $reinstalled = Assert-Installed -Phase "after clean reinstall"
 $installationRoot = $reinstalled.Root
@@ -830,13 +921,69 @@ $lines.Add("  PASS")
 $lines.Add("")
 
 # --- final teardown ----------------------------------------------------------
+# Strict per-phase increments, measured from the live channel.
+#
+# "1-install -> 2-reinstall -> 3-first-uninstall -> (clean reinstall) -> 5-final-uninstall" must be
+# reported as four separate numbers. An earlier report merged the clean reinstall and the final
+# uninstall into one "+713" and attributed it to the final uninstall, which the two steps cannot
+# support between them.
+function Get-ChannelSize {
+    if ([string]::IsNullOrWhiteSpace($DiagnosticPath)) { return -1 }
+    if (-not (Test-Path -LiteralPath $DiagnosticPath)) { return -1 }
+    return (Get-Item -LiteralPath $DiagnosticPath).Length
+}
+
 $lines.Add("[5/5] final uninstall")
+Save-UninstallerProvenance -Point "before-final-uninstall" -UninstallEntry $uninstallEntry
 Invoke-Uninstall -Phase "final" -UninstallEntry $uninstallEntry -DeleteAppData
 Save-DiagnosticSnapshot -Phase "5-final-uninstall"
 Assert-Uninstalled -Phase "after final uninstall" -InstallationRoot $installationRoot -UninstallEntry $uninstallEntry
 $lines.Add("  PASS")
 $lines.Add("")
 
+# --- strict per-phase increments, and whether one binary or several ran -----------------------
+#
+# Both blocks exist because earlier reports stated things the measurements did not support: a
+# "+713 bytes for the final uninstall" that was really the clean reinstall and the final uninstall
+# added together, and an "uninstaller never writes" generalised from a single phase contributing
+# zero. Deltas are computed from the per-phase snapshot sizes, and the hash verdict is computed from
+# the preserved copies, so neither is a hand-written number.
+$lines.Add("")
+$lines.Add("  -- diagnostic channel: strict per-phase increments --")
+$prevSize = $null
+foreach ($name in $script:ChannelSizes.Keys) {
+    $size = $script:ChannelSizes[$name]
+    if ($null -eq $prevSize) {
+        $lines.Add(("      {0,-26} {1,7} bytes" -f $name, $size))
+    } else {
+        $delta = $size - $prevSize
+        $lines.Add(("      {0,-26} {1,7} bytes   delta {2}" -f $name, $size, $(if ($delta -ge 0) { "+$delta" } else { "$delta" })))
+    }
+    $prevSize = $size
+}
+
+$lines.Add("")
+$lines.Add("  -- installed uninstaller identity: same binary at every checkpoint? --")
+if ($script:UninstallerHashes.Count -eq 0) {
+    $lines.Add("      (no uninstaller was found at any checkpoint)")
+} else {
+    foreach ($point in $script:UninstallerHashes.Keys) {
+        $lines.Add(("      {0,-26} {1}" -f $point, $script:UninstallerHashes[$point]))
+    }
+    $distinct = @($script:UninstallerHashes.Values | Sort-Object -Unique)
+    $lines.Add("      distinct sha256 values: $($distinct.Count)")
+    if ($distinct.Count -gt 1) {
+        $lines.Add("      VERDICT: DIFFERENT BINARIES ran at different lifecycle points.")
+        $lines.Add("               The first and final uninstalls did not execute the same executable, so")
+        $lines.Add("               parameter handling is not the first suspect - the replacement of the")
+        $lines.Add("               installed uninstaller during reinstall or clean install is.")
+    } else {
+        $lines.Add("      VERDICT: the SAME binary ran at every checkpoint.")
+        $lines.Add("               A parameter-parsing difference between the first and final uninstall is")
+        $lines.Add("               therefore not excluded, and the bootstrap probe is justified.")
+    }
+}
+$lines.Add("")
 $lines.Add("PASS: install, verify, same-version reinstall, uninstall, clean reinstall and")
 $lines.Add("      final uninstall all completed with no residual service or process state")
 Save-Record
