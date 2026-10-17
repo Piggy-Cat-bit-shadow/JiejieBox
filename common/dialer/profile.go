@@ -378,6 +378,15 @@ func (s SocketSemantics) CanNativeBypass(facts NativeBypassFacts) bool {
 // only a domain_resolver is not plain - it resolves names - while a literal-IP flow through it is
 // still reproducible by the platform. Answering both questions from one interpretation is what
 // keeps them from disagreeing.
+//
+// # "Nothing at all" is about CONFIGURATION, not about the socket
+//
+// The userspace TCP dialer always installs this project's keepalive (5m idle, 75s interval) even with an
+// empty option set, and a bypassed flow gets the kernel's default instead. That difference is accepted
+// rather than classified: a keepalive changes the probing cadence of an IDLE connection, not where the
+// connection goes or whether it can be made, and refusing on it would refuse every flow for a semantic
+// nobody configured. It is the same judgement `UDPFragmentDefault` records for the transport the other way
+// round - named here so the claim this function makes is not read as stronger than it is.
 func (s SocketSemantics) IsPlain() bool {
 	if !s.built {
 		return false
@@ -397,6 +406,24 @@ func (s SocketSemantics) IsPlain() bool {
 // It is asked per flow rather than captured at construction because the manager's defaults are
 // live state: an interface change can add or remove a bind while the outbound is running, and a
 // cached answer would keep bypassing a flow that policy has since started to cover.
+//
+// # What it deliberately does NOT treat as a blocker, and why
+//
+// `NetworkOptions` is the CONFIGURED ambient policy. A manager that is merely CAPABLE of binding - an
+// `auto_detect_interface` manager with no `default_interface`, which makes `NewDefault` install an
+// auto-detect bind on every userspace socket - is not asked about here. Neither is the auto-redirect mark
+// wrapper, which is installed unconditionally on the same sockets and is likewise not in NetworkOptions.
+//
+// That is a decision, not an oversight, and it is recorded here because the alternative is what makes a
+// model drift: the next reader finds `auto_detect_interface` unhandled and cannot tell whether it was
+// considered. The bind those functions perform follows the DEFAULT interface, which is the interface a
+// platform connect would select for the same destination in the ordinary single-homed case; refusing on
+// their mere presence would disable the fast path for the default configuration of a TUN deployment, which
+// is the whole audience for it. They differ only where the route table would choose a non-default
+// interface - a multi-homed or source-routed host - and proving the redirect path's behaviour there needs
+// a Linux kernel with the shipped nftables rules, which a unit test cannot supply. Until that is measured
+// the rule stays narrow: an EXPLICIT ambient bind, mark or interface policy refuses; an automatic one
+// does not.
 func NetworkPolicyBlockers(networkManager adapter.NetworkManager) NativeBypassBlocker {
 	if networkManager == nil {
 		return BlockerNone
