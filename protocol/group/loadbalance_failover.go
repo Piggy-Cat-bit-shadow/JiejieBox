@@ -825,6 +825,22 @@ func (g *LoadBalance) dialMember(ctx context.Context, member adapter.Outbound, m
 	if err != nil {
 		return nil, err
 	}
+	// The per-flow dial configuration from `route_options` travels in the context, because a typed assertion on
+	// the failover shim's embedded `adapter.Outbound` hides the parallel surface, and this leaf call used to be
+	// where those four options died:
+	//
+	//	leaf.DialContext(ctx, network, destination)   // no parameter for any of them
+	//
+	// A leaf without the richer surface still gets exactly that call, which is the behaviour before the carrier
+	// existed. A leaf with it now receives the interface strategy, the interface selection and the fallback
+	// cadence the rule asked for, so `failover: true` stops being the one outbound shape where per-connection
+	// dial options are advisory - the packet path kept them all along, because it passes the leaf rather than
+	// the shim.
+	if options := adapter.FailoverDialOptionsFromContext(ctx); !options.IsZero() {
+		if parallel, isParallel := leaf.(dialer.ParallelNetworkDialer); isParallel {
+			return parallel.DialParallelNetwork(ctx, network, destination, options.DestinationAddresses, options.NetworkStrategy, options.NetworkType, options.FallbackNetworkType, options.FallbackDelay)
+		}
+	}
 	return leaf.DialContext(ctx, network, destination)
 }
 

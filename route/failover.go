@@ -3,8 +3,12 @@ package route
 import (
 	"context"
 	"net"
+	"net/netip"
+	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/dialer"
+	C "github.com/sagernet/sing-box/constant"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 )
@@ -139,4 +143,54 @@ func (d *failoverDialer) DialContext(ctx context.Context, network string, destin
 func (d *failoverDialer) EarlyConnectionBufferGrowth() bool {
 	tuner, isTuner := d.Outbound.(adapter.ConnectionCopyTuner)
 	return isTuner && tuner.EarlyConnectionBufferGrowth()
+}
+
+// DialParallelNetwork forwards the per-attempt dial surface, which the embedded interface hides.
+//
+// # The defect this closes
+//
+// `routeDialer` embeds `adapter.Outbound`, and a typed assertion on an embedded INTERFACE promotes only the
+// methods that interface declares. So this shim - which exists so the GROUP owns the failover decision - also
+// hid `dialer.ParallelNetworkDialer`, and `dialer.DialSerialNetwork` therefore fell back to its plain serial
+// loop:
+
+//	leaf.DialContext(ctx, network, destination)
+
+// a signature with no parameter for `network_strategy`, `network_type`, `fallback_network_type` or
+// `fallback_delay`. A rule that set those through `route_options` governed a flow whose outbound was the leaf,
+// and did NOT govern the same flow when that outbound was a `failover: true` loadbalance group - while the
+// packet path kept them, because it passes the leaf rather than this shim. That is the connected-UDP defect
+// with the protocols swapped.
+//
+// # Why the options go through the context
+//
+// The group must still own the failover decision, so this cannot dial around it. The options have to reach
+// whichever member the group selects, across a recursion where a member may itself be a failover group - which
+// is the same problem the flow's attempt budget already solves with a context carrier. `dialMember` reads them
+// and dispatches to the member's own parallel surface when it has one.
+func (d *failoverDialer) DialParallelNetwork(ctx context.Context, network string, destination M.Socksaddr, destinationAddresses []netip.Addr, strategy *C.NetworkStrategy, networkType []C.InterfaceType, fallbackNetworkType []C.InterfaceType, fallbackDelay time.Duration) (net.Conn, error) {
+	ctx = adapter.ContextWithFailoverDialOptions(ctx, adapter.FailoverDialOptions{
+		DestinationAddresses: destinationAddresses,
+		NetworkStrategy:      strategy,
+		NetworkType:          networkType,
+		FallbackNetworkType:  fallbackNetworkType,
+		FallbackDelay:        fallbackDelay,
+	})
+	return d.group.DialWithFailover(ctx, d.metadata, network, destination)
+}
+
+// ListenSerialNetworkPacket forwards the packet half of the same surface.
+//
+// The packet flow does not reach this shim in production - the route layer passes the leaf for packet
+// connections - so this exists to make the shim's capability honest rather than to change a live path. It
+// delegates to the leaf the chain resolved, which is exactly what the packet path does today.
+func (d *failoverDialer) ListenSerialNetworkPacket(ctx context.Context, destination M.Socksaddr, destinationAddresses []netip.Addr, strategy *C.NetworkStrategy, networkType []C.InterfaceType, fallbackNetworkType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, netip.Addr, error) {
+	if parallel, isParallel := d.Outbound.(dialer.ParallelNetworkDialer); isParallel {
+		return parallel.ListenSerialNetworkPacket(ctx, destination, destinationAddresses, strategy, networkType, fallbackNetworkType, fallbackDelay)
+	}
+	conn, err := d.Outbound.ListenPacket(ctx, destination)
+	if err != nil {
+		return nil, netip.Addr{}, err
+	}
+	return conn, destination.Addr, nil
 }
