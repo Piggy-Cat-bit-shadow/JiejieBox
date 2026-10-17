@@ -227,7 +227,7 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	ctx, metadata := adapter.ExtendContext(ctx)
 	metadata.Outbound = h.Tag()
 	metadata.Destination = destination
-	h.logger.InfoContext(ctx, "outbound packet connection")
+	h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 	conn, err := h.dialer.ListenPacket(ctx, destination)
 	if err != nil {
 		return nil, err
@@ -356,7 +356,15 @@ func (h *Outbound) ListenSerialNetworkPacket(ctx context.Context, destination M.
 	ctx, metadata := adapter.ExtendContext(ctx)
 	metadata.Outbound = h.Tag()
 	metadata.Destination = destination
-	h.logger.InfoContext(ctx, "outbound packet connection")
+	// The destination is part of this line, as it is on every other outbound's packet report
+	// (`outbound/http[...]: outbound packet connection to host:port`) and on this outbound's own stream
+	// and connected-packet lines. It was missing here and in ListenPacket, which is why the production
+	// log contains sixteen `outbound/direct[direct]: outbound packet connection` lines with nothing to
+	// identify the flow they belonged to - each followed by a refusal that names a machine property
+	// rather than a destination. A packet connection is the case where the destination is most needed:
+	// the refusal happens before a socket exists, so the log line is the only record of what was asked
+	// for.
+	h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 	return h.listenNetworkPacket(ctx, destination, destinationAddresses, networkStrategy, networkType, fallbackNetworkType, fallbackDelay)
 }
 
