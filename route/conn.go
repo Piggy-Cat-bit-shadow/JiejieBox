@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -263,6 +264,37 @@ func (m *ConnectionManager) initConnState(state *managedConnState) {
 	state.activityObservable.Store(true)
 }
 
+// destinationForError renders the destination a failed connection was for, for the message an operator
+// reads.
+//
+// # Why the port is always included
+//
+// The candidate-list form used to render as a bare bracketed list with NO port - `[2409:8c54:...::2c]`
+// - while the single-address form included it. A refusal logged without its port cannot be matched to
+// the `inbound ... connection to <addr>:<port>` line that produced it, and on a machine where one flow
+// to a host:port fails while another to the same host succeeds (the WeChat case: port 80 refused over
+// IPv6, port 443 fine over the proxy), that is the one field needed to tell them apart.
+//
+// # Why it lives here rather than being inlined three times
+//
+// All three arms of NewConnection/NewPacketConnection (stream, connected packet, unconnected packet)
+// reported the destination, and the unconnected packet arm did not - which is where the production log
+// showed `listen packet connection using  using outbound/direct[direct]`, two blanks and no destination
+// at all. One function means the arms cannot drift again, and it makes the format assertable without
+// standing up a whole connection.
+func destinationForError(metadata adapter.InboundContext) string {
+	if len(metadata.DestinationAddresses) == 0 {
+		return metadata.Destination.String()
+	}
+	addresses := strings.Join(common.Map(metadata.DestinationAddresses, netip.Addr.String), ",")
+	if metadata.Destination.Port == 0 {
+		// A caller that supplied candidates and no port has no port to report; appending ":0" would
+		// claim one it never had.
+		return "[" + addresses + "]"
+	}
+	return "[" + addresses + "]:" + strconv.Itoa(int(metadata.Destination.Port))
+}
+
 func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
 	ctx = adapter.WithContext(ctx, &metadata)
 	var (
@@ -294,17 +326,11 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 	finishSetup()
 	releaseDial()
 	if err != nil {
-		var remoteString string
-		if len(metadata.DestinationAddresses) > 0 {
-			remoteString = "[" + strings.Join(common.Map(metadata.DestinationAddresses, netip.Addr.String), ",") + "]"
-		} else {
-			remoteString = metadata.Destination.String()
-		}
 		var dialerString string
 		if outbound, isOutbound := this.(adapter.Outbound); isOutbound {
 			dialerString = " using outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
 		}
-		err = E.Cause(err, "open connection to ", remoteString, dialerString)
+		err = E.Cause(err, "open connection to ", destinationForError(metadata), dialerString)
 		N.CloseOnHandshakeFailure(conn, onClose, err)
 		m.logger.ErrorContext(ctx, err)
 		return
@@ -538,12 +564,7 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 		finishSetup()
 		releaseDial()
 		if err != nil {
-			var remoteString string
-			if len(metadata.DestinationAddresses) > 0 {
-				remoteString = "[" + strings.Join(common.Map(metadata.DestinationAddresses, netip.Addr.String), ",") + "]"
-			} else {
-				remoteString = metadata.Destination.String()
-			}
+			remoteString := destinationForError(metadata)
 			var dialerString string
 			if outbound, isOutbound := this.(adapter.Outbound); isOutbound {
 				dialerString = " using outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
@@ -567,11 +588,20 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 			remotePacketConn, err = this.ListenPacket(ctx, metadata.Destination)
 		}
 		if err != nil {
+			// The destination is part of this message, not decoration.
+			//
+			// The connected arm above reports the address it tried; this arm used to report only the
+			// outbound, which reads as `listen packet connection using  using outbound/direct[direct]`
+			// - two blanks and no way to tell WHICH flow failed. A packet refusal is a property of the
+			// destination's family (the local-family gate refuses before the socket exists), so a
+			// message without the destination cannot be correlated with the `inbound packet connection
+			// to ...` line that caused it, which is exactly what an operator needs to see.
+			remoteString := destinationForError(metadata)
 			var dialerString string
 			if outbound, isOutbound := this.(adapter.Outbound); isOutbound {
 				dialerString = " using outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
 			}
-			err = E.Cause(err, "listen packet connection using ", dialerString)
+			err = E.Cause(err, "listen packet connection to ", remoteString, dialerString)
 			N.CloseOnHandshakeFailure(conn, onClose, err)
 			m.logger.ErrorContext(ctx, err)
 			return
