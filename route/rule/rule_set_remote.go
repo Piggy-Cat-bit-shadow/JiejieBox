@@ -88,8 +88,27 @@ func (s *RemoteRuleSet) Name() string {
 	return s.tag
 }
 
+// currentRules returns the published rule slice, or nil once it has been released.
+//
+// Every read of `rules` goes through here or through a lock held for a longer section, because the
+// slice is written from three places that are NOT the caller: `loadBytes` publishes a new one on each
+// update, `updateOnce` and `Cleanup` release it when nothing references the set any more, and `Close`
+// releases it on shutdown. `Match` runs on the dial path while a reload can be in flight, so reading
+// the field directly is exactly the race `go test -race` reported between `loadBytes` and `Match`.
+//
+// The snapshot is taken under the read lock and used after it is dropped. That is sound because a
+// published slice is never mutated in place - an update assigns a brand new slice - so the header this
+// returns stays valid and keeps pointing at immutable contents. Holding the lock for the whole match
+// would work too, but it would block a reload for the duration of a packet's rule evaluation for no
+// benefit.
+func (s *RemoteRuleSet) currentRules() []adapter.HeadlessRule {
+	s.access.RLock()
+	defer s.access.RUnlock()
+	return s.rules
+}
+
 func (s *RemoteRuleSet) String() string {
-	return strings.Join(F.MapToString(s.rules), " ")
+	return strings.Join(F.MapToString(s.currentRules()), " ")
 }
 
 func (s *RemoteRuleSet) StartContext(ctx context.Context, startContext *adapter.HTTPStartContext) error {
@@ -162,7 +181,9 @@ func (s *RemoteRuleSet) DecRef() {
 
 func (s *RemoteRuleSet) Cleanup() {
 	if s.refs.Load() == 0 {
+		s.access.Lock()
 		s.rules = nil
+		s.access.Unlock()
 	}
 }
 
@@ -229,7 +250,9 @@ func (s *RemoteRuleSet) updateOnce() {
 	if err != nil {
 		s.logger.Error("fetch rule-set ", s.tag, ": ", err)
 	} else if s.refs.Load() == 0 {
+		s.access.Lock()
 		s.rules = nil
+		s.access.Unlock()
 	}
 }
 
@@ -324,15 +347,17 @@ func (s *RemoteRuleSet) resolveTransport() (adapter.HTTPTransport, error) {
 }
 
 func (s *RemoteRuleSet) Close() error {
+	s.access.Lock()
 	s.rules = nil
+	s.access.Unlock()
 	s.cancel()
 	return nil
 }
 
 func (s *RemoteRuleSet) Match(metadata *adapter.InboundContext) bool {
-	return matchAnyHeadlessRule(s.rules, metadata)
+	return matchAnyHeadlessRule(s.currentRules(), metadata)
 }
 
 func (s *RemoteRuleSet) mergeableRule() *DefaultHeadlessRule {
-	return mergeableRuleIn(s.rules)
+	return mergeableRuleIn(s.currentRules())
 }

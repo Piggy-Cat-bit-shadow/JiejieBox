@@ -81,8 +81,21 @@ func (s *LocalRuleSet) Name() string {
 	return s.tag
 }
 
+// currentRules returns the published rule slice, or nil once it has been released.
+//
+// Same contract as the remote rule-set's helper, and here the writer is the file watcher's goroutine:
+// `reloadRules` publishes a new slice under `access` whenever the file changes, while `Cleanup` and
+// `Close` release it. Reading the field directly from `Match` is a read/write pair against that
+// goroutine, which is the defect the remote type was caught on; the two types share the shape, so
+// they are fixed together rather than leaving one correct and one not.
+func (s *LocalRuleSet) currentRules() []adapter.HeadlessRule {
+	s.access.RLock()
+	defer s.access.RUnlock()
+	return s.rules
+}
+
 func (s *LocalRuleSet) String() string {
-	return strings.Join(F.MapToString(s.rules), " ")
+	return strings.Join(F.MapToString(s.currentRules()), " ")
 }
 
 func (s *LocalRuleSet) StartContext(ctx context.Context, startContext *adapter.HTTPStartContext) error {
@@ -176,7 +189,9 @@ func (s *LocalRuleSet) DecRef() {
 
 func (s *LocalRuleSet) Cleanup() {
 	if s.refs.Load() == 0 {
+		s.access.Lock()
 		s.rules = nil
+		s.access.Unlock()
 	}
 }
 
@@ -193,14 +208,16 @@ func (s *LocalRuleSet) UnregisterCallback(element *list.Element[adapter.RuleSetU
 }
 
 func (s *LocalRuleSet) Close() error {
+	s.access.Lock()
 	s.rules = nil
+	s.access.Unlock()
 	return common.Close(common.PtrOrNil(s.watcher))
 }
 
 func (s *LocalRuleSet) Match(metadata *adapter.InboundContext) bool {
-	return matchAnyHeadlessRule(s.rules, metadata)
+	return matchAnyHeadlessRule(s.currentRules(), metadata)
 }
 
 func (s *LocalRuleSet) mergeableRule() *DefaultHeadlessRule {
-	return mergeableRuleIn(s.rules)
+	return mergeableRuleIn(s.currentRules())
 }
