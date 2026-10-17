@@ -60,7 +60,7 @@ func addressRecoveryDisabled(ctx context.Context) bool {
 // It returns nil when recovery does not apply, which leaves the caller's behaviour exactly as
 // it was. Every condition is a refusal, so an unusual situation degrades to the previous
 // single-candidate dial rather than to a surprising one.
-func (d *resolveDialer) recoverCandidates(ctx context.Context, destination M.Socksaddr) []netip.Addr {
+func (d *resolveDialer) recoverCandidates(ctx context.Context, destination M.Socksaddr, admission admissionPolicy) []netip.Addr {
 	// Only for literal destinations. A domain destination is already resolved by the normal
 	// path, and re-resolving it here would duplicate that work.
 	if !destination.IsIP() {
@@ -160,7 +160,7 @@ func (d *resolveDialer) recoverCandidates(ctx context.Context, destination M.Soc
 				// lookup, be dropped by the strategy on the way out, and the AAAA that arrived later
 				// would never be read. Deciding admission here is what makes the first family to answer
 				// and be ADMITTED the one that ends the lookup.
-				if usable := d.admittedRecoveredCandidates(family); len(usable) > 0 {
+				if usable := d.admittedRecoveredCandidates(family, admission); len(usable) > 0 {
 					recovered = usable
 				}
 			case <-recoveryCtx.Done():
@@ -174,7 +174,7 @@ func (d *resolveDialer) recoverCandidates(ctx context.Context, destination M.Soc
 			// would otherwise have been attempted into an error the user never asked for.
 			return nil
 		}
-		recovered = d.admittedRecoveredCandidates(addresses)
+		recovered = d.admittedRecoveredCandidates(addresses, admission)
 	}
 
 	if len(recovered) == 0 {
@@ -196,8 +196,9 @@ func (d *resolveDialer) recoverCandidates(ctx context.Context, destination M.Soc
 //
 // Applying both here makes the caller's later filtering idempotent instead of load-bearing. It does not
 // change which addresses are ultimately dialled; it changes which family gets to END the lookup.
-func (d *resolveDialer) admittedRecoveredCandidates(addresses []netip.Addr) []netip.Addr {
-	return withoutUndialable(withoutFamilyExcluded(addresses, d.effectiveFamilyStrategy()), d.dialerLocalFamilyPolicy())
+func (d *resolveDialer) admittedRecoveredCandidates(addresses []netip.Addr, admission admissionPolicy) []netip.Addr {
+	admitted, _, _ := admission.admitCandidates(addresses)
+	return admitted
 }
 
 // withoutUndialableCandidates drops recovered addresses whose family this machine cannot dial.
@@ -216,8 +217,8 @@ func (d *resolveDialer) admittedRecoveredCandidates(addresses []netip.Addr) []ne
 //
 // A chain that cannot report the capability returns the list unchanged, which is the required
 // degradation: an implementation without the capability keeps its previous behaviour exactly.
-func (d *resolveDialer) withoutUndialableCandidates(addresses []netip.Addr) []netip.Addr {
-	return withoutUndialable(addresses, d.dialerLocalFamilyPolicy())
+func (d *resolveDialer) withoutUndialableCandidates(addresses []netip.Addr, admission admissionPolicy) []netip.Addr {
+	return withoutUndialable(addresses, admission.localFamily)
 }
 
 // withoutUndialable drops the addresses a policy refuses, and returns the input untouched when the

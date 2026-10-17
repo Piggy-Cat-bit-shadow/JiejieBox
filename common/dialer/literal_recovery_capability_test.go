@@ -84,7 +84,7 @@ func (h *recoveryHarness) dialWithSniffedDomain(t *testing.T, original string) (
 		Destination: h.original,
 		Domain:      "sniffed.example",
 	})
-	conn, err := h.resolver.dialLiteralWithRecovery(ctx, "tcp", h.original)
+	conn, err := h.resolver.dialLiteralWithRecovery(ctx, "tcp", h.original, h.resolver.captureAdmissionPolicy())
 	if conn != nil {
 		conn.Close()
 	}
@@ -211,10 +211,10 @@ func TestRecoveryRefusesToRecurse(t *testing.T) {
 		Destination: M.ParseSocksaddr("2001:db8::1:443"),
 		Domain:      "sniffed.example",
 	})
-	require.NotNil(t, resolver.recoverCandidates(sniffed, M.ParseSocksaddr("2001:db8::1:443")),
+	require.NotNil(t, resolver.recoverCandidates(sniffed, M.ParseSocksaddr("2001:db8::1:443"), resolver.captureAdmissionPolicy()),
 		"a plain sniffed context recovers")
 
-	require.Nil(t, resolver.recoverCandidates(withoutAddressRecovery(sniffed), M.ParseSocksaddr("2001:db8::1:443")),
+	require.Nil(t, resolver.recoverCandidates(withoutAddressRecovery(sniffed), M.ParseSocksaddr("2001:db8::1:443"), resolver.captureAdmissionPolicy()),
 		"a context already inside a recovery lookup must not recover again, however the addresses are "+
 			"filtered afterwards")
 }
@@ -230,12 +230,12 @@ func TestRecoveredUndialableFamilyIsDroppedBeforeTheRace(t *testing.T) {
 	resolver := &resolveDialer{dialer: leaf}
 
 	only6 := []netip.Addr{netip.MustParseAddr("2001:db8::50")}
-	require.Nil(t, resolver.withoutUndialableCandidates(only6),
+	require.Nil(t, resolver.withoutUndialableCandidates(only6, resolver.captureAdmissionPolicy()),
 		"a recovered list of only-undialable addresses becomes empty, so the caller does not race it")
 
 	both := []netip.Addr{netip.MustParseAddr("2001:db8::50"), netip.MustParseAddr("192.0.2.50")}
 	require.Equal(t, []netip.Addr{netip.MustParseAddr("192.0.2.50")},
-		resolver.withoutUndialableCandidates(both),
+		resolver.withoutUndialableCandidates(both, resolver.captureAdmissionPolicy()),
 		"and a mixed list keeps the dialable family in its original order")
 }
 

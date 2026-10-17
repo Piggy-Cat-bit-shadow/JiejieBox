@@ -26,7 +26,7 @@ import (
 //	case first := <-collected:          // first PUBLISHED family
 //		recovered = first
 //	...
-//	return d.withoutUndialableCandidates(recovered)   // filtered AFTER the choice
+//	return d.withoutUndialableCandidates(recovered, d.captureAdmissionPolicy())   // filtered AFTER the choice
 //
 // So when the family that answers first is the one the machine cannot dial, the filter empties the list
 // and recovery returns nothing - while the usable answer from the other family is still in flight, and
@@ -89,7 +89,7 @@ func TestRecoverySkipsAnUndialableAnswerToReachAUsableOne(t *testing.T) {
 	})
 
 	start := time.Now()
-	recovered := harness.resolver.recoverCandidates(ctx, M.SocksaddrFrom(original, 80))
+	recovered := harness.resolver.recoverCandidates(ctx, M.SocksaddrFrom(original, 80), harness.resolver.captureAdmissionPolicy())
 	elapsed := time.Since(start)
 
 	require.Equal(t, []netip.Addr{healthyIPv4}, recovered,
@@ -128,7 +128,7 @@ func TestRecoveryReturnsAtOnceWhenTheFirstFamilyIsUsable(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	recovered := resolver.recoverCandidates(ctx, M.SocksaddrFrom(original, 80))
+	recovered := resolver.recoverCandidates(ctx, M.SocksaddrFrom(original, 80), resolver.captureAdmissionPolicy())
 	elapsed := time.Since(start)
 
 	require.Equal(t, []netip.Addr{healthyIPv4}, recovered)
@@ -163,7 +163,7 @@ func TestRecoveryReportsNothingWhenEveryFamilyIsUndialable(t *testing.T) {
 
 	done := make(chan []netip.Addr, 1)
 	go func() {
-		done <- resolver.recoverCandidates(ctx, M.SocksaddrFrom(original, 80))
+		done <- resolver.recoverCandidates(ctx, M.SocksaddrFrom(original, 80), resolver.captureAdmissionPolicy())
 	}()
 
 	select {

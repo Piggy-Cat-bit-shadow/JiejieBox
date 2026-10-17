@@ -104,8 +104,8 @@ func (d *capabilityLeaf) ListenPacket(ctx context.Context, destination M.Socksad
 	return d.inner.ListenPacket(ctx, destination)
 }
 
-func (d *capabilityLeaf) newDualStackScheduler(fallbackDelay time.Duration) *candidateScheduler {
-	return d.owner.newDualStackScheduler(fallbackDelay)
+func (d *capabilityLeaf) newDualStackScheduler(fallbackDelay time.Duration, admission admissionPolicy) *candidateScheduler {
+	return d.owner.newDualStackScheduler(fallbackDelay, admission)
 }
 
 func (d *capabilityLeaf) localFamilyPolicy() localFamilyPolicy {
@@ -177,7 +177,7 @@ func TestUnavailableFamilyIsNeverAttempted(t *testing.T) {
 	conn, err := DialParallelNetwork(context.Background(), dialer, "tcp",
 		M.SocksaddrFrom(address6, 443),
 		[]netip.Addr{address6, address4},
-		true, nil, nil, nil, 5*time.Millisecond)
+		true, nil, nil, nil, 5*time.Millisecond, admissionForTest(dialer))
 	require.NoError(t, err)
 	require.NotNil(t, conn)
 
@@ -201,7 +201,7 @@ func TestUnavailableFamilyDoesNotDelayTheHealthyOne(t *testing.T) {
 	conn, err := DialParallelNetwork(context.Background(), dialer, "tcp",
 		M.SocksaddrFrom(address4, 443),
 		[]netip.Addr{address4, address6},
-		false, nil, nil, nil, 30*time.Second)
+		false, nil, nil, nil, 30*time.Second, admissionForTest(dialer))
 	require.NoError(t, err)
 	require.NotNil(t, conn)
 
@@ -221,7 +221,7 @@ func TestUnavailableFamilyIsRefusedFromTheLateStream(t *testing.T) {
 	// launched it before the second candidate arrives - so this also pins that a refused candidate
 	// never reaches the transport even when it wins the arrival order.
 	dialer := newCapabilityDialer(t, netcap.StateProvisioned, netcap.StateUnavailable)
-	scheduler := dialer.newDualStackScheduler(5 * time.Millisecond)
+	scheduler := dialer.newDualStackScheduler(5*time.Millisecond, admissionForTest(dialer))
 
 	late := make(chan dualStackCandidate, 2)
 	late <- dualStackCandidate{address: address6, family: familyIPv6}
@@ -250,7 +250,7 @@ func TestUnavailableFamilyIsRefusedFromTheLateStream(t *testing.T) {
 func TestLateCandidateCanJoinWhenTheRaceIsAlreadyRunning(t *testing.T) {
 	dialer := newCapabilityDialer(t, netcap.StateProvisioned, netcap.StateUnavailable)
 	connectImmediately(dialer)
-	scheduler := dialer.newDualStackScheduler(time.Millisecond)
+	scheduler := dialer.newDualStackScheduler(time.Millisecond, admissionForTest(dialer))
 
 	late := make(chan dualStackCandidate, 2)
 	late <- dualStackCandidate{address: address4, family: familyIPv4}
@@ -282,7 +282,7 @@ func TestLateCandidateCanJoinOnceItsFamilyBecomesAvailable(t *testing.T) {
 	late := make(chan dualStackCandidate, 1)
 	late <- dualStackCandidate{address: address6, family: familyIPv6}
 	close(late)
-	scheduler := dialer.newDualStackScheduler(5 * time.Millisecond)
+	scheduler := dialer.newDualStackScheduler(5*time.Millisecond, admissionForTest(dialer))
 	_, _, err := scheduler.dialWithLateCandidates(context.Background(),
 		planCandidates(nil, netip.Addr{}, 0), late,
 		func(ctx context.Context, address netip.Addr) (net.Conn, error) {
@@ -297,7 +297,7 @@ func TestLateCandidateCanJoinOnceItsFamilyBecomesAvailable(t *testing.T) {
 	conn, err := DialParallelNetwork(context.Background(), dialer, "tcp",
 		M.SocksaddrFrom(address6, 443),
 		[]netip.Addr{address6},
-		true, nil, nil, nil, 5*time.Second)
+		true, nil, nil, nil, 5*time.Second, admissionForTest(dialer))
 	require.NoError(t, err)
 	require.NotNil(t, conn)
 	require.Equal(t, []netip.Addr{address6}, dialer.tried(),
@@ -346,7 +346,7 @@ func TestUnknownAndProvisionedFamiliesAreNeverFiltered(t *testing.T) {
 			conn, err := DialParallelNetwork(context.Background(), dialer, "tcp",
 				M.SocksaddrFrom(address6, 443),
 				[]netip.Addr{address6, address4},
-				true, nil, nil, nil, 5*time.Millisecond)
+				true, nil, nil, nil, 5*time.Millisecond, admissionForTest(dialer))
 			require.NoError(t, err)
 			require.NotNil(t, conn)
 			// Both candidates are offered, so whichever the race picks is in the attempt list. The
@@ -379,7 +379,7 @@ func TestDialerWithoutACapabilityIsUnchanged(t *testing.T) {
 	conn, err := DialParallelNetwork(context.Background(), dialer, "tcp",
 		M.SocksaddrFrom(address6, 443),
 		[]netip.Addr{address6, address4},
-		true, nil, nil, nil, 5*time.Millisecond)
+		true, nil, nil, nil, 5*time.Millisecond, admissionForTest(dialer))
 	require.NoError(t, err)
 	require.NotNil(t, conn)
 	// Prefer IPv6, and nothing restricts either family, so the preferred family decides. The losing
@@ -605,20 +605,20 @@ func TestRecoveryDoesNotOfferCandidatesTheMachineCannotDial(t *testing.T) {
 	resolver := &resolveDialer{dialer: dialer}
 
 	t.Run("all candidates undialable", func(t *testing.T) {
-		require.Nil(t, resolver.withoutUndialableCandidates([]netip.Addr{address4}),
+		require.Nil(t, resolver.withoutUndialableCandidates([]netip.Addr{address4}, resolver.captureAdmissionPolicy()),
 			"a list of addresses this machine cannot reach must become empty, so the caller does not "+
 				"race a recovery that cannot connect")
 	})
 
 	t.Run("mixed list keeps the dialable family", func(t *testing.T) {
-		recovered := resolver.withoutUndialableCandidates([]netip.Addr{address4, address6})
+		recovered := resolver.withoutUndialableCandidates([]netip.Addr{address4, address6}, resolver.captureAdmissionPolicy())
 		require.Equal(t, []netip.Addr{address6}, recovered,
 			"the usable family survives, and the resolver's order within it is preserved")
 	})
 
 	t.Run("local scope is never removed", func(t *testing.T) {
 		internal := netip.MustParseAddr("fd00::1")
-		recovered := resolver.withoutUndialableCandidates([]netip.Addr{internal})
+		recovered := resolver.withoutUndialableCandidates([]netip.Addr{internal}, resolver.captureAdmissionPolicy())
 		require.Equal(t, []netip.Addr{internal}, recovered,
 			"a ULA target is not reached over the public path the verdict describes, so a campus "+
 				"network that blackholes public IPv6 still reaches its own services")
@@ -631,7 +631,7 @@ func TestRecoveryDoesNotOfferCandidatesTheMachineCannotDial(t *testing.T) {
 			manager: newCapabilityManager(netcap.StateUnavailable, netcap.StateUnavailable),
 		}}
 		addresses := []netip.Addr{address4, address6}
-		require.Equal(t, addresses, silent.withoutUndialableCandidates(addresses),
+		require.Equal(t, addresses, silent.withoutUndialableCandidates(addresses, silent.captureAdmissionPolicy()),
 			"a chain that cannot report the capability keeps its previous behaviour exactly")
 	})
 }

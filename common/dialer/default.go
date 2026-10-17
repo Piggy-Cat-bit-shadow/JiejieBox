@@ -879,18 +879,25 @@ func (d *DefaultDialer) networkGeneration() uint64 {
 	return d.captureLocalFamilyPolicy().ownership.epoch
 }
 
-// newDualStackScheduler builds a scheduler wired to this dialer's family health.
+// newDualStackScheduler builds a scheduler from ONE flow's admission policy, wired to this dialer's
+// family health.
 //
 // Every production construction goes through here, so a scheduler cannot be created without
 // health by accident - which is how the fast-fallback path ended up existing only in tests
 // while the production schedulers passed health: nil.
 //
-// The local family verdict is captured HERE, as one observation with the network ownership it belongs
-// to, and the scheduler carries both for its whole life. That matters more for the scheduler than for
-// any other consumer: it removes candidates BEFORE a socket exists, so nothing downstream can rescue a
-// family it dropped - the hand-over epoch check only ever sees attempts that were actually made. A
-// scheduler built on a verdict it no longer owns would therefore delete the successor generation's
-// candidates, and no later validation would notice.
+// # Why the policy is a PARAMETER now, and not captured here
+//
+// It used to capture its own: `policy := d.captureLocalFamilyPolicy()`. That made this the THIRD capture
+// of one flow - the literal path had taken one to admit the original, the recovery path had taken one to
+// decide which family ends the lookup, and this took another - so one connection could filter its
+// candidates against three readings of one network, and the family that recovery had just refused could
+// be re-admitted by a later capture in a different instant.
+//
+// The policy now comes from the flow that is starting, so the scheduler's verdict, its health namespace
+// and every decision made before it belong to the SAME reading. The scheduler still carries the two
+// fields rather than the policy value, because it is the object that most needs them on the hot path and
+// because `localFamily` and `networkGeneration` are how the rest of that file names them.
 //
 // # Why the health namespace comes out of the SAME value
 //
@@ -898,15 +905,21 @@ func (d *DefaultDialer) networkGeneration() uint64 {
 // transition landing between them stored one network's identity on a scheduler holding another's
 // verdict. The consequence is bounded (a health verdict filed under the wrong network loses the
 // fast-fallback bias for one dial, it does not deny a flow) but it is the same defect as the rest of this
-// round: two readings composed into one decision. The generation is now the namespace and it comes from
-// the ownership half of this very capture, so there is nothing left to read twice. See networkGeneration.
-func (d *DefaultDialer) newDualStackScheduler(fallbackDelay time.Duration) *candidateScheduler {
-	policy := d.captureLocalFamilyPolicy()
+// round: two readings composed into one decision. Both fields now come from one value, so there is
+// nothing left to read twice. See admissionPolicy.generation.
+//
+// # Why the scheduler still removes candidates itself
+//
+// It is the last gate before a socket exists, so nothing downstream can rescue a family it dropped; a
+// scheduler built on a verdict it no longer owns would delete the successor generation's candidates and no
+// later validation would notice. That is why localFamilyPolicy's ownership predicate is consulted on
+// every refusal rather than resolved once.
+func (d *DefaultDialer) newDualStackScheduler(fallbackDelay time.Duration, admission admissionPolicy) *candidateScheduler {
 	return &candidateScheduler{
 		fallbackDelay:     fallbackDelay,
 		health:            d.familyHealth,
-		networkGeneration: policy.ownership.epoch,
-		localFamily:       policy,
+		networkGeneration: admission.generation(),
+		localFamily:       admission.localFamily,
 	}
 }
 

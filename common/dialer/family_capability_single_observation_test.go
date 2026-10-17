@@ -381,7 +381,7 @@ func TestOnePlanCostsOneOwnershipRead(t *testing.T) {
 	// The scheduler's own capture is read #1, and it is the dial's authoritative observation: the filter
 	// then asks a DIFFERENT question - "is the capture I hold still current?" - which is the one re-read the
 	// design allows, and which the hand-over check makes for the same reason.
-	scheduler := owner.newDualStackScheduler(0)
+	scheduler := owner.newDualStackScheduler(0, admissionForTest(owner))
 	captured := manager.familyCalls.Load()
 	require.Equal(t, int32(1), captured, "constructing the scheduler captures once")
 

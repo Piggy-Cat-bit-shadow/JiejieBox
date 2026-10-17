@@ -81,7 +81,7 @@ func TestPacketDialHasNoRecoveryRacer(t *testing.T) {
 	dialer := &resolveDialer{}
 	// A packet destination with a sniffed domain must not produce recovered candidates, because
 	// the packet path has no per-candidate verification to justify racing.
-	require.Nil(t, dialer.recoverCandidates(context.Background(), M.ParseSocksaddr("192.0.2.1:443")),
+	require.Nil(t, dialer.recoverCandidates(context.Background(), M.ParseSocksaddr("192.0.2.1:443"), dialer.captureAdmissionPolicy()),
 		"recovery must refuse without a sniffed domain, which is the packet path's situation")
 }
 
@@ -94,6 +94,6 @@ func TestPacketDialHasNoRecoveryRacer(t *testing.T) {
 func TestRecoveryRefusesRatherThanGuessingOnFailure(t *testing.T) {
 	dialer := &resolveDialer{}
 	// No sniffed domain in the context: recovery must decline rather than guess a name.
-	require.Nil(t, dialer.recoverCandidates(context.Background(), M.ParseSocksaddr("192.0.2.1:443")),
+	require.Nil(t, dialer.recoverCandidates(context.Background(), M.ParseSocksaddr("192.0.2.1:443"), dialer.captureAdmissionPolicy()),
 		"recovery must not invent a name to resolve")
 }

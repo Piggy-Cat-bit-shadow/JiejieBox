@@ -135,7 +135,7 @@ func TestAChainOverAHopGetsASchedulerBoundToTheOwner(t *testing.T) {
 	resolver, isResolver := chain.(*resolveDialer)
 	require.True(t, isResolver, "the chain the probes build is the serial resolve wrapper")
 
-	scheduler := resolver.newScheduler()
+	scheduler := resolver.newScheduler(resolver.captureAdmissionPolicy())
 	require.NotNil(t, scheduler.health,
 		"the shared family health must be found through the hop, or every probe re-learns a broken family")
 	require.False(t, scheduler.localFamily.restrictsNothing(),

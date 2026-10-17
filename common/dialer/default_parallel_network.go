@@ -61,7 +61,7 @@ func DialSerialNetwork(ctx context.Context, dialer N.Dialer, network string, des
 // The interface and strategy arguments are unchanged; they select the per-attempt dialer.
 // The signature is unchanged so existing callers keep working. What changed is that the
 // function now finds the long-lived family health owner itself rather than being handed one.
-func DialParallelNetwork(ctx context.Context, dialer ParallelInterfaceDialer, network string, destination M.Socksaddr, destinationAddresses []netip.Addr, preferIPv6 bool, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.Conn, error) {
+func DialParallelNetwork(ctx context.Context, dialer ParallelInterfaceDialer, network string, destination M.Socksaddr, destinationAddresses []netip.Addr, preferIPv6 bool, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration, admission admissionPolicy) (net.Conn, error) {
 	// Bind the scheduler to the dialer's own family health, when the chain leads to an owner.
 	//
 	// This path - the direct outbound's DialParallelNetwork, reached by the actionResolve
@@ -72,13 +72,25 @@ func DialParallelNetwork(ctx context.Context, dialer ParallelInterfaceDialer, ne
 	//
 	// The owner is DISCOVERED rather than passed, so no caller has to know about it and the
 	// public signature is untouched.
+	// The scheduler is built from the flow's OWN admission policy, so the family gate and the health
+	// namespace describe the network this flow started on rather than whatever the owner would read a
+	// second time. See DialParallelNetwork's policy parameter.
 	if owner, found := findFamilyHealthOwner(dialer); found {
-		return dialParallelNetwork(ctx, dialer, network, destination, destinationAddresses, preferIPv6, strategy, interfaceType, fallbackInterfaceType, fallbackDelay, owner.newDualStackScheduler(fallbackDelay))
+		return dialParallelNetwork(ctx, dialer, network, destination, destinationAddresses, preferIPv6, strategy, interfaceType, fallbackInterfaceType, fallbackDelay, owner.newDualStackScheduler(fallbackDelay, admission))
 	}
 	// No owner in the chain: a caller-supplied dialer. Racing still works; there is simply no
 	// history to consult. It must not panic, and it must not invent a per-call health that
 	// could never accumulate anything.
-	return dialParallelNetwork(ctx, dialer, network, destination, destinationAddresses, preferIPv6, strategy, interfaceType, fallbackInterfaceType, fallbackDelay, &candidateScheduler{fallbackDelay: fallbackDelay})
+	//
+	// The VERDICT still applies. It used to be dropped here along with the health, which made this the
+	// one racing entry point where a chain without a health owner silently lost the machine's family
+	// capability as well - the "rich value, narrow interface, silently lost" shape this round exists to
+	// remove.
+	return dialParallelNetwork(ctx, dialer, network, destination, destinationAddresses, preferIPv6, strategy, interfaceType, fallbackInterfaceType, fallbackDelay, &candidateScheduler{
+		fallbackDelay:     fallbackDelay,
+		networkGeneration: admission.generation(),
+		localFamily:       admission.localFamily,
+	})
 }
 
 // findFamilyHealthOwner walks the dialer chain looking for a long-lived health owner.

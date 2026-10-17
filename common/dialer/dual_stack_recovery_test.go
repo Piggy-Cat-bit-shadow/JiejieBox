@@ -58,20 +58,20 @@ func TestRecoverCandidatesRefusesWithoutRouter(t *testing.T) {
 	// No DNS router means no configured resolver, and the system resolver is never used:
 	// on a proxy that would leak the user's queries outside the tunnel.
 	dialer := &resolveDialer{}
-	require.Nil(t, dialer.recoverCandidates(context.Background(), M.ParseSocksaddr("192.0.2.1:443")))
+	require.Nil(t, dialer.recoverCandidates(context.Background(), M.ParseSocksaddr("192.0.2.1:443"), dialer.captureAdmissionPolicy()))
 }
 
 func TestRecoverCandidatesRefusesForDomainDestinations(t *testing.T) {
 	// A domain destination is already resolved by the normal path; recovering here would
 	// duplicate that work.
 	dialer := &resolveDialer{}
-	require.Nil(t, dialer.recoverCandidates(context.Background(), M.ParseSocksaddr("example.test:443")))
+	require.Nil(t, dialer.recoverCandidates(context.Background(), M.ParseSocksaddr("example.test:443"), dialer.captureAdmissionPolicy()))
 }
 
 func TestRecoverCandidatesRefusesWhenGuarded(t *testing.T) {
 	dialer := &resolveDialer{}
 	ctx := withoutAddressRecovery(context.Background())
-	require.Nil(t, dialer.recoverCandidates(ctx, M.ParseSocksaddr("192.0.2.1:443")))
+	require.Nil(t, dialer.recoverCandidates(ctx, M.ParseSocksaddr("192.0.2.1:443"), dialer.captureAdmissionPolicy()))
 }
 
 func TestRecoverCandidatesRefusesWithoutSniffedDomain(t *testing.T) {
@@ -79,7 +79,7 @@ func TestRecoverCandidatesRefusesWithoutSniffedDomain(t *testing.T) {
 	ctx := adapter.WithContext(context.Background(), &adapter.InboundContext{
 		Destination: M.ParseSocksaddr("192.0.2.1:443"),
 	})
-	require.Nil(t, dialer.recoverCandidates(ctx, M.ParseSocksaddr("192.0.2.1:443")),
+	require.Nil(t, dialer.recoverCandidates(ctx, M.ParseSocksaddr("192.0.2.1:443"), dialer.captureAdmissionPolicy()),
 		"with no sniffed domain there is nothing to recover")
 }
 

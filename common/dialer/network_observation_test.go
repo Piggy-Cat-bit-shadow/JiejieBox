@@ -180,7 +180,7 @@ func TestTheHealthNamespaceComesFromTheCapture(t *testing.T) {
 	manager.generation.Store(4242)
 
 	owner := &DefaultDialer{network: newNetworkObserver(manager), familyHealth: newFamilyHealth()}
-	scheduler := owner.newDualStackScheduler(0)
+	scheduler := owner.newDualStackScheduler(0, admissionForTest(owner))
 
 	require.EqualValues(t, 4242, scheduler.networkGeneration,
 		"the scheduler's health namespace must be the generation in the observation it carries")

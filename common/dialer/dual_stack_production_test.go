@@ -518,8 +518,8 @@ func (d *ownerBackedDialer) ListenPacket(ctx context.Context, destination M.Sock
 	return d.inner.ListenPacket(ctx, destination)
 }
 
-func (d *ownerBackedDialer) newDualStackScheduler(fallbackDelay time.Duration) *candidateScheduler {
-	return d.owner.newDualStackScheduler(fallbackDelay)
+func (d *ownerBackedDialer) newDualStackScheduler(fallbackDelay time.Duration, admission admissionPolicy) *candidateScheduler {
+	return d.owner.newDualStackScheduler(fallbackDelay, admission)
 }
 
 func (d *recordingDialer) reset() {
@@ -546,7 +546,7 @@ func TestProductionDialerClearsPenaltyOnSuccess(t *testing.T) {
 	inner := &recordingDialer{}
 	// A fallback delay well beyond the blackhole timeout is irrelevant here - there is only
 	// one candidate - but it keeps the scheduler's own timings unambiguous.
-	scheduler := owner.newDualStackScheduler(200 * time.Millisecond)
+	scheduler := owner.newDualStackScheduler(200*time.Millisecond, admissionForTest(owner))
 
 	_, winner, err := scheduler.dial(context.Background(),
 		planCandidates([]netip.Addr{healthy6}, netip.Addr{}, C.DomainStrategyPreferIPv6),

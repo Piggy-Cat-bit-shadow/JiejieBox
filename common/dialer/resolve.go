@@ -123,6 +123,13 @@ func (d *resolveDialer) DialContext(ctx context.Context, network string, destina
 	if err != nil {
 		return nil, err
 	}
+	// ONE admission policy for this whole flow, captured before any decision is made.
+	//
+	// Everything below - the serial filter, the original literal's own admission, the recovered
+	// candidate filter, the planner, the scheduler and the late-candidate guard - is handed this value
+	// and never reads the network again. That is the whole point of the type: one connection, one
+	// worldview. See admissionPolicy.
+	admission := d.captureAdmissionPolicy()
 	if !destination.IsDomain() {
 		// A literal destination is the PRIMARY endpoint and dials immediately.
 		//
@@ -137,7 +144,7 @@ func (d *resolveDialer) DialContext(ctx context.Context, network string, destina
 		// selection, or an earlier legitimate answer. Re-resolving the sniffed name can return
 		// a DIFFERENT address for the same name, and that must never displace the endpoint the
 		// application actually selected.
-		return d.dialLiteralWithRecovery(ctx, network, destination)
+		return d.dialLiteralWithRecovery(ctx, network, destination, admission)
 	}
 	if !d.parallel {
 		// parallel=false is an explicit request for serial behaviour, used by callers that
@@ -187,7 +194,7 @@ func (d *resolveDialer) DialContext(ctx context.Context, network string, destina
 	// and iterated serially inside each - so a hostname did not get interleaving, same-family
 	// stagger, the unified error aggregation or family health. Two implementations of one
 	// policy is how a fix lands on one path and not the other.
-	return d.raceResolvedName(ctx, network, destination)
+	return d.raceResolvedName(ctx, network, destination, admission)
 }
 
 // raceResolvedName resolves a hostname and races the candidates, letting a late family join.
@@ -204,11 +211,10 @@ func (d *resolveDialer) DialContext(ctx context.Context, network string, destina
 // A router that does not implement the optional capability is resolved with the ordinary
 // complete lookup, which is the previous behaviour. That keeps third-party and test routers
 // working rather than requiring them to implement a new interface.
-func (d *resolveDialer) raceResolvedName(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+func (d *resolveDialer) raceResolvedName(ctx context.Context, network string, destination M.Socksaddr, admission admissionPolicy) (net.Conn, error) {
 	lookupCtx := log.ContextWithOverrideLevel(ctx, log.LevelDebug)
-	// The EFFECTIVE strategy: AsIS means "the resolver's default", and planning with the raw
-	// value would discard the preference the resolver applied.
-	strategy := d.effectiveFamilyStrategy()
+	// The flow's policy, not a fresh read: this is the same capture the literal arm and the scheduler
+	// use, so a candidate list planned here and filtered there cannot be judged against two networks.
 
 	dualStackRouter, supportsStreaming := d.router.(adapter.DNSDualStackRouter)
 	if !supportsStreaming {
@@ -216,7 +222,7 @@ func (d *resolveDialer) raceResolvedName(ctx context.Context, network string, de
 		if err != nil {
 			return nil, err
 		}
-		return d.raceCandidates(ctx, network, destination, addresses, strategy)
+		return d.raceCandidates(ctx, network, destination, addresses, admission)
 	}
 
 	// resolutionCtx owns everything that exists only to feed THIS connection's race.
@@ -273,7 +279,7 @@ func (d *resolveDialer) raceResolvedName(ctx context.Context, network string, de
 	// The value arrives with the first family result, so the decision is made inside the feeder
 	// rather than here. Until it is known, nothing is held back and nothing is preferred: the
 	// feeder falls back to the raw option, which is correct for every non-AsIS strategy.
-	preferIPv6 := strategy == C.DomainStrategyPreferIPv6
+	preferIPv6 := admission.strategy == C.DomainStrategyPreferIPv6
 	effectiveKnown := false
 	firstReady := make(chan struct{})
 	var readyOnce sync.Once
@@ -457,14 +463,14 @@ func (d *resolveDialer) raceResolvedName(ctx context.Context, network string, de
 		return nil, ctx.Err()
 	}
 
-	plan := planCandidates(nil, netip.Addr{}, strategy)
-	scheduler := d.newScheduler()
+	plan := planCandidates(nil, netip.Addr{}, admission.strategy)
+	scheduler := d.newScheduler(admission)
 	// The same admission rule the network entry point passes, for the same reason: this path's plan is
 	// empty and EVERYTHING arrives as a late candidate, so without it the scheduler's structural guard
 	// would apply on one production call site and not the other. The stream is already filtered by the DNS
 	// layer (a strict strategy issues one query for the family it admits), so this is a no-op by
 	// construction today - which is exactly the property worth making structural rather than assumed.
-	conn, _, err := scheduler.dialWithLateCandidatesAdmitting(ctx, plan, candidates, d.lateCandidateAdmission(),
+	conn, _, err := scheduler.dialWithLateCandidatesAdmitting(ctx, plan, candidates, admission.lateAdmission(),
 		func(attemptCtx context.Context, address netip.Addr) (net.Conn, error) {
 			return d.dialer.DialContext(attemptCtx, network, M.SocksaddrFrom(address, destination.Port))
 		})
@@ -546,7 +552,7 @@ func (d *resolveDialer) effectiveFamilyStrategy() C.DomainStrategy {
 	return d.effectiveStrategy
 }
 
-func (d *resolveDialer) dialLiteralWithRecovery(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+func (d *resolveDialer) dialLiteralWithRecovery(ctx context.Context, network string, destination M.Socksaddr, admission admissionPolicy) (net.Conn, error) {
 	originalCtx, cancelOriginal := context.WithCancel(ctx)
 	defer cancelOriginal()
 
@@ -590,8 +596,8 @@ func (d *resolveDialer) dialLiteralWithRecovery(ctx context.Context, network str
 	// literal IPv6 address would be dialled under ipv4_only, silently turning a strict policy
 	// into a suggestion. The original is preferred, not exempt.
 	// The EFFECTIVE strategy, not the caller's raw value. See effectiveFamilyStrategy.
-	originalStrategy := d.effectiveFamilyStrategy()
-	originalAllowed := AddressAllowedByStrategy(destination.Addr, originalStrategy)
+	originalStrategy := admission.strategy
+	originalAllowed := admission.strategyAllows(destination.Addr)
 	// The local family capability applies to the original for the same reason, and independently of
 	// the strategy: this is the address the APPLICATION chose, and it is still dialled by this
 	// machine. Skipping it here is what makes a literal IPv6 destination fail fast on a machine with
@@ -602,7 +608,7 @@ func (d *resolveDialer) dialLiteralWithRecovery(ctx context.Context, network str
 	// an undialable family can still be reached through the sniffed domain's other family. That is
 	// the only path by which such a flow connects at all, which makes running recovery more
 	// important here, not less.
-	localFamilyPolicy := d.dialerLocalFamilyPolicy()
+	localFamilyPolicy := admission.localFamily
 	localFamilyRefusal := error(nil)
 	if originalAllowed && localFamilyPolicy.hardUndialable(destination.Addr) {
 		originalAllowed = false
@@ -651,7 +657,7 @@ func (d *resolveDialer) dialLiteralWithRecovery(ctx context.Context, network str
 
 	recovered := make(chan []netip.Addr, 1)
 	go func() {
-		addresses := d.recoverCandidates(recoveryCtx, destination)
+		addresses := d.recoverCandidates(recoveryCtx, destination, admission)
 		recovered <- addresses
 	}()
 
@@ -673,7 +679,7 @@ func (d *resolveDialer) dialLiteralWithRecovery(ctx context.Context, network str
 		// cancellation, so this cannot hang: recoverCandidates honours both.
 		select {
 		case addresses := <-recovered:
-			return d.dialRecoveredOrReport(ctx, network, destination, addresses, result.err)
+			return d.dialRecoveredOrReport(ctx, network, destination, addresses, result.err, admission)
 		case <-ctx.Done():
 			return nil, result.err
 		}
@@ -711,20 +717,20 @@ func (d *resolveDialer) dialLiteralWithRecovery(ctx context.Context, network str
 				claimed = true
 				return result.conn, nil
 			}
-			return d.dialRecoveredOrReport(ctx, network, destination, addresses, result.err)
+			return d.dialRecoveredOrReport(ctx, network, destination, addresses, result.err, admission)
 
 		case <-fallbackTimer.C:
 			// The original has had its head start and is still pending. Dial the recovered
 			// candidates in parallel with it; the first success wins and the other attempt is
 			// cancelled by the deferred cancelOriginal.
-			return d.raceWithPendingOriginal(ctx, network, destination, addresses, original, cancelOriginal)
+			return d.raceWithPendingOriginal(ctx, network, destination, addresses, original, cancelOriginal, admission)
 		}
 	}
 }
 
 // dialRecoveredOrReport dials recovered candidates, or reports the original error when there
 // are none.
-func (d *resolveDialer) dialRecoveredOrReport(ctx context.Context, network string, destination M.Socksaddr, addresses []netip.Addr, originalErr error) (net.Conn, error) {
+func (d *resolveDialer) dialRecoveredOrReport(ctx context.Context, network string, destination M.Socksaddr, addresses []netip.Addr, originalErr error, admission admissionPolicy) (net.Conn, error) {
 	if len(addresses) == 0 {
 		return nil, originalErr
 	}
@@ -734,13 +740,12 @@ func (d *resolveDialer) dialRecoveredOrReport(ctx context.Context, network strin
 	// ipv4_only and an IPv6 original, MergeOriginalDestination put the IPv6 address back into the
 	// plan because it has its own rule for AsIS ("keep the caller's family first") and cannot tell
 	// that the effective policy already answered the question.
-	strategy := d.effectiveFamilyStrategy()
 	original := destination.Addr
-	if !AddressAllowedByStrategy(original, strategy) {
+	if !admission.strategyAllows(original) {
 		original = netip.Addr{}
 	}
-	candidates := MergeOriginalDestination(original, addresses, strategy)
-	conn, err := d.raceCandidatesExcluding(ctx, network, destination, candidates, original, strategy)
+	candidates := MergeOriginalDestination(original, addresses, admission.strategy)
+	conn, err := d.raceCandidatesExcluding(ctx, network, destination, candidates, original, admission)
 	if err != nil {
 		// Both the original endpoint and every recovered candidate failed. The original error
 		// is the more useful one to surface: it is the endpoint the application asked for.
@@ -749,8 +754,8 @@ func (d *resolveDialer) dialRecoveredOrReport(ctx context.Context, network strin
 	return conn, nil
 }
 
-func (d *resolveDialer) raceCandidates(ctx context.Context, network string, destination M.Socksaddr, addresses []netip.Addr, strategy C.DomainStrategy) (net.Conn, error) {
-	return d.raceCandidatesExcluding(ctx, network, destination, addresses, destination.Addr, strategy)
+func (d *resolveDialer) raceCandidates(ctx context.Context, network string, destination M.Socksaddr, addresses []netip.Addr, admission admissionPolicy) (net.Conn, error) {
+	return d.raceCandidatesExcluding(ctx, network, destination, addresses, destination.Addr, admission)
 }
 
 // raceCandidatesExcluding races candidates without treating the given address as the original.
@@ -759,21 +764,21 @@ func (d *resolveDialer) raceCandidates(ctx context.Context, network string, dest
 // When the original is already running as its own owned attempt, passing it here would dial it a
 // second time; passing an invalid address excludes it while keeping the planner's ordering for
 // everything else.
-func (d *resolveDialer) raceCandidatesExcluding(ctx context.Context, network string, destination M.Socksaddr, addresses []netip.Addr, original netip.Addr, strategy C.DomainStrategy) (net.Conn, error) {
-	plan := planCandidates(addresses, original, strategy)
+func (d *resolveDialer) raceCandidatesExcluding(ctx context.Context, network string, destination M.Socksaddr, addresses []netip.Addr, original netip.Addr, admission admissionPolicy) (net.Conn, error) {
+	plan := planCandidates(addresses, original, admission.strategy)
 	if len(plan.candidates) == 0 {
 		// An empty plan because the policy removed everything is a different fact from "nothing was
 		// offered", and reporting the symptom for both is how an operator ends up looking at the network
 		// instead of at the configuration. Every other entry point already names the policy
 		// (DialParallelNetwork, its packet arm, the serial hostname branch and the single-destination
 		// literal path); this was the last one that flattened it into the symptom.
-		if len(addresses) > 0 && (strategy == C.DomainStrategyIPv4Only || strategy == C.DomainStrategyIPv6Only) {
-			return nil, E.New("destination ", destination, " excluded by strategy ", strategyName(strategy),
+		if len(addresses) > 0 && (admission.strategy == C.DomainStrategyIPv4Only || admission.strategy == C.DomainStrategyIPv6Only) {
+			return nil, E.New("destination ", destination, " excluded by strategy ", strategyName(admission.strategy),
 				": every candidate belongs to the family this policy forbids")
 		}
 		return nil, E.New("no dial candidates for ", destination)
 	}
-	scheduler := d.newScheduler()
+	scheduler := d.newScheduler(admission)
 	conn, _, err := scheduler.dial(ctx, plan, func(attemptCtx context.Context, address netip.Addr) (net.Conn, error) {
 		return d.dialer.DialContext(attemptCtx, network, M.SocksaddrFrom(address, destination.Port))
 	})
@@ -797,9 +802,9 @@ func (d *resolveDialer) raceCandidatesExcluding(ctx context.Context, network str
 //
 // `findFamilyHealthOwner` is the single implementation of "where is the owner in this chain", so all three
 // askers now agree by construction rather than by three copies staying in step.
-func (d *resolveDialer) newScheduler() *candidateScheduler {
+func (d *resolveDialer) newScheduler(admission admissionPolicy) *candidateScheduler {
 	if owner, found := findFamilyHealthOwner(d.dialer); found {
-		return owner.newDualStackScheduler(d.fallbackDelay)
+		return owner.newDualStackScheduler(d.fallbackDelay, admission)
 	}
 	return &candidateScheduler{fallbackDelay: d.fallbackDelay}
 }
@@ -812,7 +817,7 @@ func (d *resolveDialer) newScheduler() *candidateScheduler {
 // the same argument that makes NetworkResetCounter and NetworkTransitionState capabilities rather
 // than methods on NetworkManager.
 type familyHealthOwner interface {
-	newDualStackScheduler(fallbackDelay time.Duration) *candidateScheduler
+	newDualStackScheduler(fallbackDelay time.Duration, admission admissionPolicy) *candidateScheduler
 }
 
 // localFamilyOwner is implemented by dialers that can report which address families this machine can
@@ -831,6 +836,9 @@ func (d *resolveDialer) ListenPacket(ctx context.Context, destination M.Socksadd
 	if err != nil {
 		return nil, err
 	}
+	// ONE admission policy for this packet flow, exactly as for a stream: both arms below ask it, and
+	// neither reads the network again.
+	admission := d.captureAdmissionPolicy()
 	if !destination.IsDomain() {
 		// A LITERAL destination is subject to the same hard strategy the other two packet entry points
 		// apply. This is the third place the policy is enforced and the only one that was missing.
@@ -859,7 +867,7 @@ func (d *resolveDialer) ListenPacket(ctx context.Context, destination M.Socksadd
 		// all; it is the same exemption `DefaultDialer.ListenPacket` documents, and applying the policy to
 		// it would refuse a listener that names no family.
 		if destination.Addr.IsValid() && !destination.Addr.IsUnspecified() {
-			familyStrategy := d.effectiveFamilyStrategy()
+			familyStrategy := admission.strategy
 			if !AddressAllowedByStrategy(destination.Addr, familyStrategy) {
 				return nil, E.New("destination ", destination, " excluded by strategy ", strategyName(familyStrategy),
 					": this packet connection names a destination of the family the policy forbids")
@@ -888,7 +896,6 @@ func (d *resolveDialer) ListenPacket(ctx context.Context, destination M.Socksadd
 	// time in this file's history - which is the argument for admitCandidates being one function rather
 	// than a shape each arm re-derives. A socket creation is not a verified outcome, so there is no race
 	// and no scheduler here to catch it later: the list handed to N.ListenSerial IS the decision.
-	admission := d.captureAdmissionPolicy()
 	admitted, refused, strategyExcludedAll := admission.admitCandidates(addresses)
 	if refusal := admission.emptiedListRefusal(destination, admitted, refused, strategyExcludedAll); refusal != nil {
 		return nil, refusal
@@ -924,12 +931,13 @@ func (d *resolveParallelNetworkDialer) DialParallelInterface(ctx context.Context
 	if fallbackDelay == 0 {
 		fallbackDelay = d.fallbackDelay
 	}
+	admission := d.captureAdmissionPolicy()
 	if d.parallel {
-		// preferIPv6 comes from the EFFECTIVE strategy. Deriving it from the raw value made a
+		// preferIPv6 comes from the flow's policy. Deriving it from the raw value made a
 		// router default of prefer_ipv6 invisible here, so the parallel dialler started with the
 		// IPv4 interface.
-		preferIPv6 := d.effectiveFamilyStrategy() == C.DomainStrategyPreferIPv6
-		return DialParallelNetwork(ctx, d.dialer, network, destination, addresses, preferIPv6, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+		preferIPv6 := admission.strategy == C.DomainStrategyPreferIPv6
+		return DialParallelNetwork(ctx, d.dialer, network, destination, addresses, preferIPv6, strategy, interfaceType, fallbackInterfaceType, fallbackDelay, admission)
 	} else {
 		return DialSerialNetwork(ctx, d.dialer, network, destination, addresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
 	}
@@ -1041,7 +1049,7 @@ func strategyName(strategy C.DomainStrategy) string {
 //
 // The wait is bounded by the loser's own attempt, which is itself bounded by raceCtx and the
 // attempt timeout - so this cannot block on a dial that ignores cancellation forever.
-func (d *resolveDialer) raceWithPendingOriginal(ctx context.Context, network string, destination M.Socksaddr, addresses []netip.Addr, original <-chan literalDialResult, cancelOriginal context.CancelFunc) (net.Conn, error) {
+func (d *resolveDialer) raceWithPendingOriginal(ctx context.Context, network string, destination M.Socksaddr, addresses []netip.Addr, original <-chan literalDialResult, cancelOriginal context.CancelFunc, admission admissionPolicy) (net.Conn, error) {
 	// raceCtx governs BOTH attempts. Cancelling it stops the loser's dial; waiting on the
 	// WaitGroup afterwards proves the loser is no longer running.
 	raceCtx, cancelRace := context.WithCancel(ctx)
@@ -1065,8 +1073,7 @@ func (d *resolveDialer) raceWithPendingOriginal(ctx context.Context, network str
 	workers.Add(1)
 	go func() {
 		defer workers.Done()
-		strategy := d.effectiveFamilyStrategy()
-		conn, err := d.raceCandidatesExcluding(raceCtx, network, destination, addresses, netip.Addr{}, strategy)
+		conn, err := d.raceCandidatesExcluding(raceCtx, network, destination, addresses, netip.Addr{}, admission)
 		recoveredResult <- literalDialResult{conn: conn, err: err}
 	}()
 

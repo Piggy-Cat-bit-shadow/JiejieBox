@@ -104,7 +104,7 @@ func TestContinuousLateArrivalsDoNotStarveAPendingLaunch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 900*time.Millisecond)
 	defer cancel()
 
-	scheduler := dialer.newScheduler()
+	scheduler := dialer.newScheduler(dialer.captureAdmissionPolicy())
 	_, _, _ = scheduler.dialWithLateCandidates(ctx, plan, late,
 		func(attemptCtx context.Context, address netip.Addr) (net.Conn, error) {
 			return inner.DialContext(attemptCtx, "tcp", M.SocksaddrFrom(address, 443))
@@ -165,7 +165,7 @@ func TestBurstOfLateCandidatesIsStaggered(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	scheduler := dialer.newScheduler()
+	scheduler := dialer.newScheduler(dialer.captureAdmissionPolicy())
 	_, _, _ = scheduler.dialWithLateCandidates(ctx, plan, late,
 		func(attemptCtx context.Context, address netip.Addr) (net.Conn, error) {
 			return inner.DialContext(attemptCtx, "tcp", M.SocksaddrFrom(address, 443))
@@ -266,7 +266,7 @@ func TestContinuousLateArrivalsDoNotStarveTheTimerPath(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
 	defer cancel()
 
-	scheduler := dialer.newScheduler()
+	scheduler := dialer.newScheduler(dialer.captureAdmissionPolicy())
 	_, _, _ = scheduler.dialWithLateCandidates(ctx, plan, late,
 		func(attemptCtx context.Context, address netip.Addr) (net.Conn, error) {
 			return inner.DialContext(attemptCtx, "tcp", M.SocksaddrFrom(address, 443))
@@ -322,7 +322,7 @@ func TestBurstOfLateCandidatesRespectsTheCadence(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	scheduler := dialer.newScheduler()
+	scheduler := dialer.newScheduler(dialer.captureAdmissionPolicy())
 	_, _, _ = scheduler.dialWithLateCandidates(ctx, plan, late,
 		func(attemptCtx context.Context, address netip.Addr) (net.Conn, error) {
 			return inner.DialContext(attemptCtx, "tcp", M.SocksaddrFrom(address, 443))

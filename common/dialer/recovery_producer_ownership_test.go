@@ -62,7 +62,7 @@ func parkRecoveryFeed(t *testing.T, ctx context.Context, original netip.Addr) (*
 	}
 	chain.router.addressesAAAA = []netip.Addr{original}
 
-	feed := chain.resolver.feedRecoveryAsLateCandidates(ctx, M.SocksaddrFrom(original, 80))
+	feed := chain.resolver.feedRecoveryAsLateCandidates(ctx, M.SocksaddrFrom(original, 80), chain.resolver.captureAdmissionPolicy())
 	return chain, feed
 }
 

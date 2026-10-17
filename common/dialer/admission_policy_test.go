@@ -6,6 +6,7 @@ import (
 
 	"github.com/sagernet/sing-box/common/netcap"
 	C "github.com/sagernet/sing-box/constant"
+	N "github.com/sagernet/sing/common/network"
 
 	"github.com/stretchr/testify/require"
 )
@@ -33,6 +34,21 @@ func admissionStrategySpace() []C.DomainStrategy {
 		C.DomainStrategyIPv4Only,
 		C.DomainStrategyIPv6Only,
 	}
+}
+
+// admissionForTest builds the policy a flow entering through this dialer would capture.
+//
+// A test that drives an inner helper directly IS the flow boundary, so the capture belongs in the test
+// for the same reason it belongs in DialContext in production - and doing it here means the test states
+// which policy it is exercising instead of inheriting one from a helper's internals.
+//
+// The strategy is AsIS: these suites are about the capability term, and a test that wants a strict policy
+// builds the value explicitly with newAdmissionPolicyForTest.
+func admissionForTest(dialer N.Dialer) admissionPolicy {
+	if owner, isOwner := dialer.(localFamilyOwner); isOwner {
+		return newAdmissionPolicyForTest(C.DomainStrategyAsIS, owner.localFamilyPolicy())
+	}
+	return admissionPolicy{}
 }
 
 // TestZeroAdmissionPolicyAdmitsEverything is the degradation the whole design rests on.

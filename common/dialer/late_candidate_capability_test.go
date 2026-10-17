@@ -59,7 +59,7 @@ func TestCapabilityChangeDoesNotRewriteAnInFlightRace(t *testing.T) {
 	// a decided race rather than an in-flight one.
 	inner.connectDelay = 200 * time.Millisecond
 
-	scheduler := dialer.newDualStackScheduler(5 * time.Millisecond)
+	scheduler := dialer.newDualStackScheduler(5*time.Millisecond, admissionForTest(dialer))
 	plan := planCandidates([]netip.Addr{address6, address4}, netip.Addr{}, 0)
 
 	// Flip the machine's answer to "no IPv6" while both attempts are running.
@@ -97,7 +97,7 @@ func TestTheNextRaceGetsTheNewVerdict(t *testing.T) {
 	conn, err := DialParallelNetwork(context.Background(), dialer, "tcp",
 		M.SocksaddrFrom(address6, 443),
 		[]netip.Addr{address6, address4},
-		true, nil, nil, nil, 5*time.Millisecond)
+		true, nil, nil, nil, 5*time.Millisecond, admissionForTest(dialer))
 	require.NoError(t, err)
 	require.NotNil(t, conn)
 	require.Contains(t, dialer.tried(), address6)
@@ -110,7 +110,7 @@ func TestTheNextRaceGetsTheNewVerdict(t *testing.T) {
 	conn, err = DialParallelNetwork(context.Background(), dialer, "tcp",
 		M.SocksaddrFrom(address6, 443),
 		[]netip.Addr{address6, address4},
-		true, nil, nil, nil, 5*time.Millisecond)
+		true, nil, nil, nil, 5*time.Millisecond, admissionForTest(dialer))
 	require.NoError(t, err)
 	require.NotNil(t, conn)
 
@@ -129,7 +129,7 @@ func TestTheNextRaceGetsTheNewVerdict(t *testing.T) {
 func TestRemovingTheLastDialableFamilyFailsTheRaceImmediately(t *testing.T) {
 	dialer := newCapabilityDialer(t, netcap.StateUnavailable, netcap.StateUnavailable)
 	connectImmediately(dialer)
-	scheduler := dialer.newDualStackScheduler(5 * time.Millisecond)
+	scheduler := dialer.newDualStackScheduler(5*time.Millisecond, admissionForTest(dialer))
 
 	late := make(chan dualStackCandidate, 2)
 	late <- dualStackCandidate{address: address4, family: familyIPv4}
@@ -158,7 +158,7 @@ func TestRemovingTheLastDialableFamilyFailsTheRaceImmediately(t *testing.T) {
 func TestAnEmptyPlanWithALateStreamStillWaitsForIt(t *testing.T) {
 	dialer := newCapabilityDialer(t, netcap.StateUnavailable, netcap.StateProvisioned)
 	connectImmediately(dialer)
-	scheduler := dialer.newDualStackScheduler(5 * time.Millisecond)
+	scheduler := dialer.newDualStackScheduler(5*time.Millisecond, admissionForTest(dialer))
 
 	late := make(chan dualStackCandidate)
 	go func() {

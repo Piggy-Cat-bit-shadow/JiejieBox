@@ -45,9 +45,9 @@ func (d *ownerDialer) ListenPacket(ctx context.Context, destination M.Socksaddr)
 	return d.inner.ListenPacket(ctx, destination)
 }
 
-func (d *ownerDialer) newDualStackScheduler(fallbackDelay time.Duration) *candidateScheduler {
+func (d *ownerDialer) newDualStackScheduler(fallbackDelay time.Duration, admission admissionPolicy) *candidateScheduler {
 	d.factoryCalls.Add(1)
-	return d.owner.newDualStackScheduler(fallbackDelay)
+	return d.owner.newDualStackScheduler(fallbackDelay, admission)
 }
 
 // localFamilyPolicy forwards the machine-level verdict the same way the scheduler factory forwards
@@ -83,7 +83,7 @@ func TestExportedDialParallelBindsTheOwner(t *testing.T) {
 	_, err := DialParallelNetwork(context.Background(), bound, "tcp",
 		M.SocksaddrFrom(healthy4, 443),
 		[]netip.Addr{blackhole6, healthy4},
-		true, nil, nil, nil, 60*time.Millisecond)
+		true, nil, nil, nil, 60*time.Millisecond, admissionForTest(bound))
 	require.NoError(t, err)
 
 	require.Greater(t, bound.factoryCalls.Load(), int32(0),
@@ -108,7 +108,7 @@ func TestExportedDialParallelReusesHealthAcrossCalls(t *testing.T) {
 	_, err := DialParallelNetwork(context.Background(), firstBound, "tcp",
 		M.SocksaddrFrom(healthy4, 443),
 		[]netip.Addr{blackhole6, healthy4},
-		true, nil, nil, nil, 60*time.Millisecond)
+		true, nil, nil, nil, 60*time.Millisecond, admissionForTest(firstBound))
 	require.NoError(t, err)
 
 	// --- call two: the verdict must be in force ---
@@ -125,7 +125,7 @@ func TestExportedDialParallelReusesHealthAcrossCalls(t *testing.T) {
 	_, err = DialParallelNetwork(ctx, secondBound, "tcp",
 		M.SocksaddrFrom(healthy4, 443),
 		[]netip.Addr{blackhole6, healthy4},
-		true, nil, nil, nil, 2*time.Second)
+		true, nil, nil, nil, 2*time.Second, admissionForTest(secondBound))
 	require.NoError(t, err)
 
 	times := secondInner.attemptTimes()
@@ -159,7 +159,7 @@ func TestExportedDialParallelWithoutOwnerStillRaces(t *testing.T) {
 	conn, err := DialParallelNetwork(ctx, bare, "tcp",
 		M.SocksaddrFrom(fast4, 443),
 		[]netip.Addr{slow6, fast4},
-		true, nil, nil, nil, 20*time.Millisecond)
+		true, nil, nil, nil, 20*time.Millisecond, admissionForTest(bare))
 	require.NoError(t, err, "a dialer without an owner must still race successfully")
 	require.NotNil(t, conn)
 	require.Contains(t, inner.attempts(), fast4)
@@ -219,7 +219,7 @@ func TestExportedDialParallelIsRaceClean(t *testing.T) {
 			_, err := DialParallelNetwork(ctx, bound, "tcp",
 				M.SocksaddrFrom(address4A, 443),
 				[]netip.Addr{address4A, address4B},
-				false, nil, nil, nil, 10*time.Millisecond)
+				false, nil, nil, nil, 10*time.Millisecond, admissionForTest(bound))
 			done <- err
 		}()
 	}

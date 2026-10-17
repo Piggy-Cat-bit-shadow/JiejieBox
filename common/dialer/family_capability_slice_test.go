@@ -187,7 +187,7 @@ func TestRecoveryFilterAlsoLeavesTheResolversArrayAlone(t *testing.T) {
 	}
 	snapshot := slices.Clone(recovered)
 
-	filtered := resolver.withoutUndialableCandidates(recovered)
+	filtered := resolver.withoutUndialableCandidates(recovered, resolver.captureAdmissionPolicy())
 	require.Equal(t, []netip.Addr{netip.MustParseAddr("192.0.2.50")}, filtered)
 	require.Equal(t, snapshot, recovered,
 		"a recovered list is the resolver's data as much as a lookup result is")

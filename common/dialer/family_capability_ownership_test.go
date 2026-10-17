@@ -152,7 +152,7 @@ func TestOldVerdictCannotDenyNewGenerationScheduler(t *testing.T) {
 	owned := newOwnedDialer(netcap.StateProvisioned, netcap.StateUnavailable)
 
 	// The dial begins here. This is the capture that must own the decision.
-	scheduler := owned.leaf.newDualStackScheduler(5 * time.Millisecond)
+	scheduler := owned.leaf.newDualStackScheduler(5*time.Millisecond, admissionForTest(owned.leaf))
 	require.False(t, scheduler.localFamily.restrictsNothing(),
 		"on network A the verdict does restrict IPv6, so the test is about a live restriction")
 
@@ -192,7 +192,7 @@ func TestOldVerdictCannotDenyNewGenerationScheduler(t *testing.T) {
 // path, which is a separate code path in the scheduler and has to be closed separately.
 func TestOldVerdictCannotDenyNewGenerationSchedulerLateStream(t *testing.T) {
 	owned := newOwnedDialer(netcap.StateProvisioned, netcap.StateUnavailable)
-	scheduler := owned.leaf.newDualStackScheduler(5 * time.Millisecond)
+	scheduler := owned.leaf.newDualStackScheduler(5*time.Millisecond, admissionForTest(owned.leaf))
 
 	owned.manager.transitionTo(netcap.StateProvisioned, netcap.StateProvisioned)
 

@@ -71,7 +71,8 @@ func (c *lateStubConn) SetWriteDeadline(t time.Time) error { return nil }
 // with both families usable so nothing about the machine can mask a policy decision.
 func newCapabilityScheduler(t *testing.T) *candidateScheduler {
 	t.Helper()
-	return newCapabilityLeaf(netcap.StateProvisioned, netcap.StateProvisioned).newDualStackScheduler(5 * time.Millisecond)
+	leaf := newCapabilityLeaf(netcap.StateProvisioned, netcap.StateProvisioned)
+	return leaf.newDualStackScheduler(5*time.Millisecond, admissionForTest(leaf))
 }
 
 // TestALateCandidateTheStrategyExcludesIsNotAttempted is the regression.
