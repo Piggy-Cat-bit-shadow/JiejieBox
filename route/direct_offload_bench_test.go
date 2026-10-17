@@ -12,6 +12,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/buf"
 	"github.com/sagernet/sing/common/bufio"
 	M "github.com/sagernet/sing/common/metadata"
@@ -392,7 +393,12 @@ func TestBypassRefusalAttributionAllocatesDeliberately(t *testing.T) {
 	// BlockerNone.String() is a constant and does not allocate; a non-empty set does.
 	require.Equal(t, "none", production.BypassBlockers(N.NetworkTCP, address).String())
 
-	refusing := &productionDirectOutbound{semantics: boundDirectSemantics()}
+	refusing := newDirectOutboundWith(option.DialerOptions{
+		AbstractDialerOptions: option.AbstractDialerOptions{
+			DomainResolver: &option.DomainResolveOptions{Server: "local-agh"},
+			BindInterface:  "en0",
+		},
+	})
 	require.Contains(t, refusing.BypassBlockers(N.NetworkTCP, address).String(), "bind_interface")
 
 	// The cost is bounded and only paid when something asks for it.

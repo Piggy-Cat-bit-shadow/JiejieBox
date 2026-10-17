@@ -3,14 +3,14 @@ package route
 import (
 	"context"
 	"net"
-	"net/netip"
 	"testing"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/dialer"
-	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/protocol/direct"
+	"github.com/sagernet/sing/service"
 	tun "github.com/sagernet/sing-tun"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -41,45 +41,56 @@ import (
 // unmapping. The per-shape verdicts are exact; the weighted total is only as good as the weights,
 // which is why both are printed.
 
-// productionDirectOutbound models the shipped topology's direct outbound: the real profile built
-// from the real option value, behind the router's own capability check.
+// productionDirectOutbound is the REAL protocol/direct outbound, built by its own constructor.
 //
-// It wraps the profile rather than the protocol/direct outbound so this file stays in the route
-// package; protocol/direct has its own test that the outbound is wired to the same profile.
+// # Why this is not a model, and used to be
+//
+// It used to reimplement `CanBypass` from `SocketSemantics` alone, so it omitted every term the real
+// outbound adds: the ambient network policy, the machine's local-family verdict, the EFFECTIVE family
+// strategy the resolve wrapper reports, and the self-address guard. The hit report and the benchmarks below
+// then measured a strictly more permissive decision than production - the classic shadow model, in the one
+// place whose numbers are quoted as the feature's payoff.
+//
+// Importing protocol/direct from a route TEST introduces no cycle (`protocol/direct` does not import
+// `route`), so there is no longer a reason to model it.
 type productionDirectOutbound struct {
-	adapter.Outbound
+	*direct.Outbound
 	semantics dialer.SocketSemantics
 }
 
+// newProductionDirectOutbound builds the shipped topology's direct outbound: the real constructor, with the
+// option value that topology actually carries (a domain resolver and nothing else).
 func newProductionDirectOutbound() *productionDirectOutbound {
-	return &productionDirectOutbound{
-		semantics: dialer.NativeBypassSemantics(option.DialerOptions{
-			AbstractDialerOptions: option.AbstractDialerOptions{
-				DomainResolver: &option.DomainResolveOptions{Server: "local-agh"},
-			},
-		}),
+	return newDirectOutboundWith(configForProductionTopology())
+}
+
+// configForProductionTopology is the dialer option value that topology carries.
+func configForProductionTopology() option.DialerOptions {
+	return option.DialerOptions{
+		AbstractDialerOptions: option.AbstractDialerOptions{
+			DomainResolver: &option.DomainResolveOptions{Server: "local-agh"},
+		},
 	}
 }
 
-func (o *productionDirectOutbound) Type() string      { return C.TypeDirect }
-func (o *productionDirectOutbound) Tag() string       { return "direct" }
+// newDirectOutboundWith builds a real direct outbound around an arbitrary dialer option value, so a fixture
+// that needs a DIFFERENT configuration still exercises the production decision instead of a model of it.
+func newDirectOutboundWith(dialerOptions option.DialerOptions) *productionDirectOutbound {
+	ctx := service.ContextWithDefaultRegistry(context.Background())
+	built, err := direct.NewOutbound(ctx, nil, log.NewNOPFactory().Logger(), "direct", option.DirectOutboundOptions{
+		DialerOptions: dialerOptions,
+	})
+	if err != nil {
+		panic("the direct outbound used by this fixture must build: " + err.Error())
+	}
+	outbound, isOutbound := built.(*direct.Outbound)
+	if !isOutbound {
+		panic("direct.NewOutbound must return *direct.Outbound")
+	}
+	return &productionDirectOutbound{Outbound: outbound, semantics: dialer.NativeBypassSemantics(dialerOptions)}
+}
+
 func (o *productionDirectOutbound) Network() []string { return []string{N.NetworkTCP, N.NetworkUDP} }
-
-func (o *productionDirectOutbound) CanBypass(network string, destination netip.Addr) bool {
-	return o.semantics.CanNativeBypass(dialer.NativeBypassFacts{
-		Network:              network,
-		DestinationIsLiteral: true,
-		Destination:          destination,
-	})
-}
-
-func (o *productionDirectOutbound) BypassBlockers(network string, destination netip.Addr) dialer.NativeBypassBlocker {
-	return o.semantics.Blockers(dialer.NativeBypassFacts{
-		Network:              network,
-		DestinationIsLiteral: true,
-		Destination:          destination,
-	})
-}
 
 // trackerStub is a connection tracker that does nothing but pass connections through. Its presence
 // is the whole point: the router refuses the fast path on the existence of a tracker, not on what
@@ -261,12 +272,12 @@ func TestDirectOffloadRefusalIsAttributed(t *testing.T) {
 	destination := M.ParseSocksaddr("93.184.216.34:443")
 
 	// An outbound whose options set a bind interface cannot say anything but "not equivalent", and
-	// the detail names the option rather than the outbound.
-	bound := &productionDirectOutbound{
-		semantics: dialer.NativeBypassSemantics(option.DialerOptions{
-			AbstractDialerOptions: option.AbstractDialerOptions{BindInterface: "en0"},
-		}),
-	}
+	// the detail names the option rather than the outbound. It is built by the REAL constructor: a
+	// struct literal here would have no embedded outbound, so `CanBypass` would be a nil dereference -
+	// which is how this fixture broke when the model was replaced by the production object.
+	bound := newDirectOutboundWith(option.DialerOptions{
+		AbstractDialerOptions: option.AbstractDialerOptions{BindInterface: "en0"},
+	})
 	router := &Router{
 		ctx:      context.Background(),
 		logger:   log.NewNOPFactory().Logger(),
@@ -283,12 +294,4 @@ func TestDirectOffloadRefusalIsAttributed(t *testing.T) {
 		BypassRefusedFakeIP,
 		router.canFastBypass(&metadata, destination, []adapter.Outbound{bound}, bound, false),
 		"the earlier condition in the allow-list is the one reported")
-}
-
-// boundDirectSemantics is a profile that refuses: the outbound in the attribution tests carries a
-// bind interface, which no native connect can reproduce.
-func boundDirectSemantics() dialer.SocketSemantics {
-	return dialer.NativeBypassSemantics(option.DialerOptions{
-		AbstractDialerOptions: option.AbstractDialerOptions{BindInterface: "en0"},
-	})
 }

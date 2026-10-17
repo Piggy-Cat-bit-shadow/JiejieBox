@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	M "github.com/sagernet/sing/common/metadata"
@@ -49,14 +48,12 @@ import (
 // ordinaryDirectOutbound is the production profile with one option that refuses the fast path, so the
 // decision runs and declines.
 func ordinaryDirectOutbound() *productionDirectOutbound {
-	return &productionDirectOutbound{
-		semantics: dialer.NativeBypassSemantics(option.DialerOptions{
-			AbstractDialerOptions: option.AbstractDialerOptions{
-				DomainResolver: &option.DomainResolveOptions{Server: "local-agh"},
-				BindInterface:  "en0",
-			},
-		}),
-	}
+	return newDirectOutboundWith(option.DialerOptions{
+		AbstractDialerOptions: option.AbstractDialerOptions{
+			DomainResolver: &option.DomainResolveOptions{Server: "local-agh"},
+			BindInterface:  "en0",
+		},
+	})
 }
 
 func preMatchRouter(outbound adapter.Outbound) *Router {
