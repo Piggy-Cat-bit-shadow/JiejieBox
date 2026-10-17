@@ -76,6 +76,23 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	if err != nil {
 		return nil, err
 	}
+	// The field is declared at the parallel-INTERFACE type because that is the narrowest surface an
+	// attempt needs, and the richer method it also implements is asked for by type assertion at the
+	// point of use (see scheduleNetwork).
+	//
+	// The assertion is CHECKED, and that matters. `dialer.NewWithOptions` returns whatever the leaf
+	// factory produced, wrapped in a resolve dialer only when its own conditions hold; nothing in the
+	// type system makes "the result of that call implements ParallelInterfaceDialer" true. An unchecked
+	// assertion here turns a future change in the factory - or an option combination that skips the
+	// wrapper - into a PANIC during configuration load, where every other failure in this constructor
+	// is a returned error an operator can read and fix. Measured: reverting `NewResolveDialer` to return
+	// the plain wrapper makes this line panic.
+	parallelDialer, isParallelDialer := outboundDialer.(dialer.ParallelInterfaceDialer)
+	if !isParallelDialer {
+		return nil, E.New("direct outbound: the dialer chain produced an object that does not offer the ",
+			"per-attempt parallel surface this outbound schedules attempts through; this is a defect in ",
+			"the dialer factory rather than in the configuration")
+	}
 	outbound := &Outbound{
 		Adapter: outbound.NewAdapterWithDialerOptions(C.TypeDirect, tag, []string{N.NetworkTCP, N.NetworkUDP, N.NetworkICMP}, options.DialerOptions, true),
 		ctx:     ctx,
@@ -84,7 +101,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		//nolint:staticcheck
 		domainStrategy: C.DomainStrategy(options.DomainStrategy),
 		fallbackDelay:  time.Duration(options.FallbackDelay),
-		dialer:         outboundDialer.(dialer.ParallelInterfaceDialer),
+		dialer:         parallelDialer,
 		semantics:      dialer.NativeBypassSemantics(options.DialerOptions),
 	}
 	if reporter, isReporter := outboundDialer.(dialer.ResolveDialer); isReporter {
