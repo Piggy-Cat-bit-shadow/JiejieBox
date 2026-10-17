@@ -3,6 +3,7 @@ package dns
 import (
 	"context"
 	"net/netip"
+	"strconv"
 	"testing"
 	"time"
 
@@ -229,6 +230,113 @@ func TestOptimisticRefreshIsSuppressedWhileTheDeviceIsPaused(t *testing.T) {
 	scheduleRefresh(t, client, transport, "asleep.example.", key)
 	require.Equal(t, queriesAfterWake+1, transport.queries,
 		"the refresh did not resume after the wake")
+}
+
+// TestOptimisticRefreshIsSuppressedWhenTheGovernorIsClosed covers the branch the sleep case cannot.
+//
+// A closed governor still reports the state it was in, so the predicate cannot decide from `State()`
+// alone: `Active()` is what refuses, and its own documentation says a closed governor reports false
+// because it cannot authorise work against a lifecycle that has ended. Without this test the
+// `default` arm of `backgroundRefreshSuppressed` is reachable only by reading the code.
+func TestOptimisticRefreshIsSuppressedWhenTheGovernorIsClosed(t *testing.T) {
+	governor := power.NewGovernor(refreshGatePolicy())
+	transport := newSettledTransport("refresh-closed-governor")
+	client := newSleepGatedClient(t, governor, transport)
+
+	key := primeStaleEntry(t, client, transport, "closed.example.")
+	require.False(t, client.backgroundRefreshSuppressed(),
+		"the gate must be open before the governor is closed, or the assertion below is vacuous")
+
+	governor.Close()
+
+	require.True(t, client.backgroundRefreshSuppressed(),
+		"a closed governor still reported its last state, and the gate read that as permission. A "+
+			"subsystem holding a stale reference - which is exactly what a failed construction "+
+			"leaves behind - would then act on a governor that is no longer being driven")
+
+	queriesBefore := transport.queries
+	scheduleRefresh(t, client, transport, "closed.example.", key)
+	require.Equal(t, queriesBefore, transport.queries,
+		"the refresh dialled after its owner's lifecycle had ended")
+}
+
+// TestASuppressedRefreshLeavesNothingBehind is the bound on the in-flight registry.
+//
+// `backgroundRefreshDNS` guards one refresh per cache key with `LoadOrStore` and deletes the entry in
+// a defer. A refusal path that returned before the defer was registered would leave the key there
+// forever: the refresh would never run again, and the map would grow with every stale entry the
+// device touched while asleep - a cache that only grows, which is the failure mode this tree's
+// familyHealth bound exists to prevent.
+func TestASuppressedRefreshLeavesNothingBehind(t *testing.T) {
+	governor := power.NewGovernor(refreshGatePolicy())
+	t.Cleanup(governor.Close)
+	transport := newSettledTransport("refresh-no-residue")
+	client := newSleepGatedClient(t, governor, transport)
+
+	governor.DevicePaused()
+	require.True(t, client.backgroundRefreshSuppressed())
+
+	// A hundred distinct keys, each of which a real stale hit would schedule.
+	const keys = 100
+	for index := range keys {
+		domain := "residue" + strconv.Itoa(index) + ".example."
+		probe := probeMessage(domain)
+		key := client.newCacheKey(transport, probe.Question[0], probe, adapter.DNSQueryOptions{})
+		client.backgroundRefreshDNS(transport, key,
+			client.prepareExchangeMessage(probe.Copy(), adapter.DNSQueryOptions{}),
+			adapter.DNSQueryOptions{}, nil)
+	}
+	// The registry must DRAIN, and the join is expressed as a poll rather than as a separate
+	// `waitForRefreshIdle` first: a leak then reports the count still registered, which is the
+	// defect, instead of a generic "the refresh never finished". `Eventually` was the first shape and
+	// its message printed a literal %d, because testify does not format msgAndArgs there - a test
+	// that cannot say how much it found is half a test.
+	registered := func() int {
+		count := 0
+		client.backgroundRefresh.Range(func(dnsCacheKey, struct{}) bool {
+			count++
+			return true
+		})
+		return count
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for registered() != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	require.Zero(t, registered(),
+		"%d suppressed refreshes left their key in the in-flight registry. Each one blocks that key "+
+			"from ever refreshing again, and the map grows for as long as the device stays asleep",
+		registered())
+	require.Zero(t, transport.queries, "and none of them may have dialled")
+}
+
+// TestTheClientResolvesTheGovernorAtConstruction pins WHERE the governor is read.
+//
+// The gate lives in a goroutine, so the field it reads must be immutable before the client is
+// shared. `Start` is not that point: it runs after the router already holds the client. This asserts
+// the field is populated by the constructor and populated from the service registry, so moving the
+// read back into `Start` - where it would be a write to an object other goroutines can reach - fails
+// here instead of becoming an ordering argument somebody has to re-derive.
+func TestTheClientResolvesTheGovernorAtConstruction(t *testing.T) {
+	governor := power.NewGovernor(refreshGatePolicy())
+	t.Cleanup(governor.Close)
+
+	wired := NewClient(ClientOptions{
+		Context: service.ContextWith[*power.Governor](context.Background(), governor),
+		Logger:  log.NewNOPFactory().Logger(),
+	})
+	require.Same(t, governor, wired.powerGovernor,
+		"the client must resolve the governor in its constructor. Assigning it in Start would write "+
+			"to a field the refresh goroutine reads, which makes the sleep gate depend on an ordering "+
+			"argument instead of on the object's construction")
+
+	unwired := NewClient(ClientOptions{
+		Context: context.Background(),
+		Logger:  log.NewNOPFactory().Logger(),
+	})
+	require.Nil(t, unwired.powerGovernor,
+		"without a governor in the context the field must be nil, which is the no-op path the CLI "+
+			"and most fixtures take")
 }
 
 // TestOptimisticRefreshIsUnchangedWithoutAGovernor pins the compatibility half.

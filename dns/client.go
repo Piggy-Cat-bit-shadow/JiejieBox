@@ -198,6 +198,24 @@ func NewClient(options ClientOptions) *Client {
 		policyGeneration:   options.PolicyGeneration,
 		policyStoreGuard:   options.PolicyStoreGuard,
 		storePreCommitHook: options.TestStorePreCommitHook,
+		// Resolved HERE, at construction, and never written again.
+		//
+		// # Why this is not read in Start, the way NetworkManager is
+		//
+		// `Start` runs after the client has been handed to the router, so a field assigned there is
+		// written to an object other goroutines can already reach - the refresh goroutine reads it,
+		// and the ordering argument would be "Start happens to run before any query". That is true
+		// today: `initializeMemoryCache` writes `c.cache` in the same function and the read path
+		// would nil-panic without it, so the client already requires Start-before-query. But that is
+		// a TEMPORAL argument for a value that can be made STRUCTURAL. Read once here, the field is
+		// immutable for the object's whole life and the reader needs no ordering argument at all.
+		//
+		// The dependency this creates is real and worth naming: `box.New` registers the governor
+		// (box.go:346) before it builds the DNS router (box.go:569). Moving either would silently
+		// turn the gate into a no-op, which is why
+		// TestTheClientResolvesTheGovernorAtConstruction asserts the field rather than trusting that
+		// nobody reorders the constructor.
+		powerGovernor: service.FromContext[*power.Governor](options.Context),
 	}
 	if client.timeout == 0 {
 		client.timeout = C.DNSTimeout
@@ -587,14 +605,9 @@ func (c *Client) environmentHash(transport adapter.DNSTransport) uint64 {
 
 func (c *Client) Start() {
 	c.networkManager = service.FromContext[adapter.NetworkManager](c.ctx)
-	// powerGovernor is the fork's sleep authority, or nil when none was installed.
-	//
-	// It is read here rather than at construction because that is where this package's other
-	// services are resolved, and because a client cannot serve a query before Start, so a
-	// background refresh cannot exist before this line has run. A MISSING governor is not an error:
-	// the guard is a degradation, and every test fixture and every non-Apple caller that has no
-	// power concept must keep working exactly as before.
-	c.powerGovernor = service.FromContext[*power.Governor](c.ctx)
+	// `powerGovernor` is deliberately NOT resolved here: it is read by the background refresh
+	// goroutine, so it is assigned once in NewClient, before the client is shared. See that
+	// assignment for the full reason.
 	if c.initRDRCFunc != nil {
 		c.rdrc = c.initRDRCFunc()
 	}
