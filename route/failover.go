@@ -124,6 +124,18 @@ type failoverDialer struct {
 	metadata *adapter.InboundContext
 }
 
+// The shim's own contract, pinned at compile time.
+//
+// A typed assertion on an EMBEDDED INTERFACE promotes only what that interface declares, so every capability
+// this shim needs beyond `adapter.Outbound` has to be either forwarded by hand or made reachable through
+// `Upstream`. The first has already been forgotten twice; the pin makes the second a build fact.
+var (
+	_ N.Dialer                          = (*failoverDialer)(nil)
+	_ dialer.ParallelNetworkDialer      = (*failoverDialer)(nil)
+	_ adapter.ConnectionCopyTuner       = (*failoverDialer)(nil)
+	_ interface{ Upstream() any }       = (*failoverDialer)(nil)
+)
+
 // DialContext hands the whole attempt sequence to the group.
 func (d *failoverDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	return d.group.DialWithFailover(ctx, d.metadata, network, destination)

@@ -25,9 +25,20 @@ import (
 	"github.com/database64128/tfo-go/v2"
 )
 
+// Compile-time pins for the capabilities this type is the ONLY production implementer of.
+//
+// They are here because of how the same defect has recurred: a capability reached by runtime assertion
+// stops being reachable when a wrapper in between is added, and nothing notices until real traffic cannot
+// use it. A pin cannot prevent that, but it does make the implementer's side of every assertion a
+// compile-time fact instead of a claim in a comment - so a refactor that drops the method fails the build
+// rather than a production dial.
 var (
 	_ ParallelInterfaceDialer = (*DefaultDialer)(nil)
 	_ UDPListener             = (*DefaultDialer)(nil)
+	_ LocalFamilyDialer       = (*DefaultDialer)(nil)
+	// The two owners are unexported, and they are what every wrapper and hop in the chain walks to.
+	_ localFamilyOwner = (*DefaultDialer)(nil)
+	_ familyHealthOwner = (*DefaultDialer)(nil)
 )
 
 type DefaultDialer struct {

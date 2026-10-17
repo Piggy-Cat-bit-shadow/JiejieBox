@@ -34,7 +34,17 @@ var (
 	_ adapter.FlowOutbound            = (*Outbound)(nil)
 	_ adapter.BypassableOutbound      = (*Outbound)(nil)
 	_ adapter.InterfaceUpdateListener = (*Outbound)(nil)
+	// upstreamReporter is the hop protocol: `common.Cast` and the dialer chain walks follow it to reach the
+	// capabilities that live below an outbound (the family verdict, the shared family health). Pinned
+	// because losing it is silent - the chain would simply answer "this machine has no opinion".
+	_ upstreamReporter = (*Outbound)(nil)
 )
+
+// upstreamReporter is the structural form of `Upstream() any`, kept local so the pin reads as a contract
+// rather than as a mention of an anonymous interface.
+type upstreamReporter interface {
+	Upstream() any
+}
 
 type Outbound struct {
 	outbound.Adapter
