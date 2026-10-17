@@ -92,6 +92,11 @@ func NewTailcatInbound(ctx context.Context, router adapter.Router, logger log.Co
 	if err != nil {
 		return nil, err
 	}
+	// Checked, not assumed - see the direct outbound for the same fix and the reasoning.
+	resolveDialerForQueryOptions, isResolveDialer := outboundDialer.(dialer.ResolveDialer)
+	if !isResolveDialer {
+		return nil, E.New("tailcat inbound: the dialer chain did not produce a resolve dialer, which this inbound requires for its query options; this is a defect in the dialer factory rather than in the configuration")
+	}
 	return &TailcatInbound{
 		Adapter:      inbound.NewAdapter(C.TypeTailcat, tag),
 		ctx:          ctx,
@@ -99,7 +104,7 @@ func NewTailcatInbound(ctx context.Context, router adapter.Router, logger log.Co
 		logger:       logger,
 		dnsRouter:    service.FromContext[adapter.DNSRouter](ctx),
 		dialer:       outboundDialer,
-		queryOptions: outboundDialer.(dialer.ResolveDialer).QueryOptions(),
+		queryOptions: resolveDialerForQueryOptions.QueryOptions(),
 		detour:       options.Detour,
 		privateKey:   tailcatNodePrivate(privateKey),
 		presharedKey: presharedKey,

@@ -91,7 +91,15 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	if options.Realm != nil {
 		var queryOptions adapter.DNSQueryOptions
 		if realmSTUNServersIsDomain {
-			queryOptions = outboundDialer.(dialer.ResolveDialer).QueryOptions()
+			// Checked, not assumed: `NewDialer` and `ResolverOnDetour` are set only when a realm STUN server
+			// is a domain, which is the same condition this branch tests - but that coupling lives in this
+			// file's option literals, not in the type system, so an unchecked assertion would turn a future
+			// divergence into a panic during configuration load. Same defect class as the direct outbound's.
+			resolveDialerForQueryOptions, isResolveDialer := outboundDialer.(dialer.ResolveDialer)
+			if !isResolveDialer {
+				return nil, E.New("hysteria2 outbound: the dialer chain did not produce a resolve dialer, which this outbound requires for its realm STUN servers; this is a defect in the dialer factory rather than in the configuration")
+			}
+			queryOptions = resolveDialerForQueryOptions.QueryOptions()
 		}
 		var httpClientTransport adapter.HTTPTransport
 		httpClientTransport, err = service.FromContext[adapter.HTTPClientManager](ctx).ResolveTransport(ctx, logger, common.PtrValueOrDefault(options.Realm.HTTPClient))

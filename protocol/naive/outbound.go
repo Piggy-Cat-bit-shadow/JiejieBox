@@ -144,11 +144,18 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	//
 	// So the resolution happens exactly once, through the policy below, and the dial layer receives
 	// the result. The two layers are not two authorities.
+	// Checked at construction rather than inside the resolver closure below, where an unchecked assertion
+	// would panic during a DNS exchange instead of failing the configuration load, and where returning an
+	// error is not even possible. Same defect class as the direct outbound's, fixed there first.
+	resolveDialerForQueryOptions, isResolveDialer := outboundDialer.(dialer.ResolveDialer)
+	if !isResolveDialer {
+		return nil, E.New("naive outbound: the dialer chain did not produce a resolve dialer, which this outbound requires for its DNS policy; this is a defect in the dialer factory rather than in the configuration")
+	}
 	dnsRouter := service.FromContext[adapter.DNSRouter](ctx)
 	var dnsResolver cronet.DNSResolverFunc
 	if dnsRouter != nil {
 		dnsResolver = func(dnsContext context.Context, request *mDNS.Msg) *mDNS.Msg {
-			response, err := dnsRouter.Exchange(dnsContext, request, outboundDialer.(dialer.ResolveDialer).QueryOptions())
+			response, err := dnsRouter.Exchange(dnsContext, request, resolveDialerForQueryOptions.QueryOptions())
 			if err != nil {
 				logger.Error("DNS exchange failed: ", err)
 				return dns.FixedResponseStatus(request, mDNS.RcodeServerFailure)

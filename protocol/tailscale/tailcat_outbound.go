@@ -101,13 +101,19 @@ func NewTailcatOutbound(ctx context.Context, router adapter.Router, logger log.C
 	if err != nil {
 		return nil, err
 	}
+	// Checked, not assumed - see the direct outbound for the same fix and the reasoning: an unchecked
+	// assertion panics during configuration load where every other failure here is a returned error.
+	resolveDialerForQueryOptions, isResolveDialer := outboundDialer.(dialer.ResolveDialer)
+	if !isResolveDialer {
+		return nil, E.New("tailcat outbound: the dialer chain did not produce a resolve dialer, which this outbound requires for its query options; this is a defect in the dialer factory rather than in the configuration")
+	}
 	return &TailcatOutbound{
 		Adapter:         outbound.NewAdapterWithDialerOptions(C.TypeTailcat, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.DialerOptions, true),
 		ctx:             ctx,
 		logger:          logger,
 		dnsRouter:       service.FromContext[adapter.DNSRouter](ctx),
 		dialer:          outboundDialer,
-		queryOptions:    outboundDialer.(dialer.ResolveDialer).QueryOptions(),
+		queryOptions:    resolveDialerForQueryOptions.QueryOptions(),
 		privateKey:      tailcatNodePrivate(privateKey),
 		serverPublicKey: key.NodePublicFromRaw32(mem.B(serverPublicKey[:])),
 		serverDiscoKey:  key.DiscoPublicFromRaw32(mem.B(serverDiscoKey[:])),

@@ -49,8 +49,21 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		return nil, E.Cause(err, "build cloudflared tunnel dialer")
 	}
 	dnsRouter := service.FromContext[adapter.DNSRouter](ctx)
-	controlResolver := newRouterResolver(dnsRouter, controlDialer.(dialer.ResolveDialer).QueryOptions())
-	tunnelResolver := newRouterResolver(dnsRouter, tunnelDialer.(dialer.ResolveDialer).QueryOptions())
+	// Both assertions are checked rather than assumed. `NewWithOptions` is documented to wrap a
+	// `RemoteIsDomain` chain in a resolve dialer, but the option set that controls it lives in another
+	// package: if that ever changes, an unchecked assertion turns a configuration load into a panic where
+	// every other failure in this constructor is a returned error the operator can read and fix. The same
+	// defect was fixed for the direct outbound; these are the remaining sites.
+	controlResolveDialer, isControlResolveDialer := controlDialer.(dialer.ResolveDialer)
+	if !isControlResolveDialer {
+		return nil, E.New("cloudflared control dialer: the dialer chain did not produce a resolve dialer, which this inbound requires for its control resolver; this is a defect in the dialer factory rather than in the configuration")
+	}
+	tunnelResolveDialer, isTunnelResolveDialer := tunnelDialer.(dialer.ResolveDialer)
+	if !isTunnelResolveDialer {
+		return nil, E.New("cloudflared tunnel dialer: the dialer chain did not produce a resolve dialer, which this inbound requires for its tunnel resolver; this is a defect in the dialer factory rather than in the configuration")
+	}
+	controlResolver := newRouterResolver(dnsRouter, controlResolveDialer.QueryOptions())
+	tunnelResolver := newRouterResolver(dnsRouter, tunnelResolveDialer.QueryOptions())
 
 	service, err := cloudflared.NewService(cloudflared.ServiceOptions{
 		Logger:           logger,

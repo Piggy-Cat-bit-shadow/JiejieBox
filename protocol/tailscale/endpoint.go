@@ -170,7 +170,15 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 	if err != nil {
 		return nil, err
 	}
-	dialerQueryOptions := outboundDialer.(dialer.ResolveDialer).QueryOptions()
+	// Checked rather than assumed: an unchecked assertion panics during configuration load if the dialer
+	// factory ever stops wrapping a `RemoteIsDomain` chain, where every other failure in this constructor is
+	// a returned error an operator can read. The same defect was fixed for the direct outbound; this is one
+	// of the remaining sites.
+	resolveDialerForQueryOptions, isResolveDialer := outboundDialer.(dialer.ResolveDialer)
+	if !isResolveDialer {
+		return nil, E.New("tailscale endpoint: the dialer chain did not produce a resolve dialer, which this endpoint requires for its query options; this is a defect in the dialer factory rather than in the configuration")
+	}
+	dialerQueryOptions := resolveDialerForQueryOptions.QueryOptions()
 	dnsRouter := service.FromContext[adapter.DNSRouter](ctx)
 	taildropDirectory := options.TaildropDirectory
 	if taildropDirectory == "" {

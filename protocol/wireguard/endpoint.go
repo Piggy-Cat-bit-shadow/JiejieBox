@@ -142,7 +142,19 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		// reachable BEFORE the tunnel, and using it for inner names would send those queries to an
 		// address the tunnel may not route.
 		ResolvePeer: func(domain string) ([]netip.Addr, error) {
-			return ep.dnsRouter.Lookup(ctx, domain, outboundDialer.(dialer.ResolveDialer).QueryOptions())
+			// Asserted HERE, lazily, rather than hoisted to construction.
+			//
+			// An unchecked assertion panics if the factory ever stops wrapping a `RemoteIsDomain` chain, and
+			// this closure runs while resolving a peer endpoint - at runtime, on a live tunnel. But moving the
+			// assertion to construction is the wrong fix: an endpoint whose peers are all addresses never
+			// resolves anything, and refusing such a configuration would reject a valid setup for a capability
+			// it never uses. `ResolvePeer` already returns an error, so the failure belongs here - no panic, and
+			// no config rejected.
+			resolveDialer, isResolveDialer := outboundDialer.(dialer.ResolveDialer)
+			if !isResolveDialer {
+				return nil, E.New("wireguard endpoint: the dialer chain did not produce a resolve dialer, which is required to resolve the peer endpoint ", domain, "; this is a defect in the dialer factory rather than in the configuration")
+			}
+			return ep.dnsRouter.Lookup(ctx, domain, resolveDialer.QueryOptions())
 		},
 		Peers: common.Map(options.Peers, func(it option.WireGuardPeer) wireguard.PeerOptions {
 			return wireguard.PeerOptions{
