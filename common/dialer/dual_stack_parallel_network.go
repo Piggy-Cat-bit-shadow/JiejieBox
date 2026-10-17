@@ -156,10 +156,27 @@ func (d *resolveParallelNetworkDialer) ListenSerialNetworkPacket(ctx context.Con
 		return nil, netip.Addr{}, err
 	}
 	candidates := withoutFamilyExcluded(destinationAddresses, d.effectiveFamilyStrategy())
+	strategyExcludedEverything := len(candidates) == 0 && len(destinationAddresses) > 0
 	if d.recoveryPossible(ctx) && isBareLiteralList(destination, destinationAddresses) {
 		if recovered := d.recoverCandidates(ctx, destination); len(recovered) > 0 {
 			candidates = withoutFamilyExcluded(d.mergeRecovered(destination, recovered), d.effectiveFamilyStrategy())
 		}
+	}
+	if len(candidates) == 0 && strategyExcludedEverything {
+		// The policy emptied the list, and recovery found nothing it admits. This MUST NOT reach the
+		// helper below with an empty list, because the helper reads an empty list as "the caller had no
+		// candidates" and puts `destination.Addr` back:
+		//
+		//	if len(destinationAddresses) == 0 { destinationAddresses = []netip.Addr{destination.Addr} }
+		//
+		// That convenience is right for a caller with nothing and is a policy violation for a caller whose
+		// list is empty BECAUSE THE POLICY EMPTIED IT: measured, with `ipv4_only` and a UDP flow to an IPv6
+		// literal, the excluded literal was re-synthesised and the socket was created for the family the
+		// operator forbade. The re-synthesis happens below this wrapper, so it cannot be prevented from
+		// there - the only place that knows the difference is here, and reporting the exclusion is how it
+		// stays known.
+		return nil, netip.Addr{}, E.New("destination ", destination, " excluded by strategy ", strategyName(d.effectiveFamilyStrategy()),
+			": every supplied candidate belongs to the family this policy forbids")
 	}
 	return ListenSerialNetworkPacket(ctx, d.attemptDialer(), destination, candidates, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
 }
