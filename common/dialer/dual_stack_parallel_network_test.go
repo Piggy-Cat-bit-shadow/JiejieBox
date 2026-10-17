@@ -207,6 +207,22 @@ func (c *parallelProductionChain) lookupCalls() int32 {
 	return c.router.calls.Load()
 }
 
+// activeProducers reports how many recovery lookup goroutines are inside the router RIGHT NOW.
+//
+// # Why a counter rather than a goroutine count
+//
+// `runtime.NumGoroutine()` cannot tell this feature's producer from any other goroutine the test
+// framework or a previous test left behind, so an assertion on it is either flaky or vacuous. This
+// counts exactly the goroutines inside the router, which is the producer's lookup half: a non-zero value
+// after a dial returned means a recovery lookup is still running.
+//
+// It measures the LOOKUP half only. The send half - where a producer parks on a channel nobody reads -
+// is observed by `recoveryFeed.done`, closed as the producer's last act; the two together are why the
+// ownership tests can distinguish "still resolving" from "past the resolver and stuck".
+func (c *parallelProductionChain) activeProducers() int32 {
+	return c.router.activeLookups.Load()
+}
+
 // outboundShape is the object `route.ConnectionManager` is actually handed, built the way production
 // builds it: the direct outbound holds the resolve WRAPPER it schedules onto, and schedules onto it
 // through the richer network surface.
