@@ -545,19 +545,29 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 		// The setup context, for the same reason as in NewConnection: a UDP "connect" to a peer
 		// that never answers is a dial the connection list cannot reach until it returns.
 		setupCtx, finishSetup := m.dialSetups.begin(ctx)
-		parallelDialer, isParallelDialer := this.(dialer.ParallelInterfaceDialer)
-		if len(metadata.DestinationAddresses) > 0 {
-			if isParallelDialer {
-				remoteConn, err = dialer.DialSerialNetwork(setupCtx, parallelDialer, N.NetworkUDP, metadata.Destination, metadata.DestinationAddresses, metadata.NetworkStrategy, metadata.NetworkType, metadata.FallbackNetworkType, metadata.FallbackDelay)
-			} else {
-				remoteConn, err = N.DialSerial(setupCtx, this, N.NetworkUDP, metadata.Destination, metadata.DestinationAddresses)
-			}
-		} else if metadata.Destination.IsIP() {
-			if isParallelDialer {
-				remoteConn, err = dialer.DialSerialNetwork(setupCtx, parallelDialer, N.NetworkUDP, metadata.Destination, metadata.DestinationAddresses, metadata.NetworkStrategy, metadata.NetworkType, metadata.FallbackNetworkType, metadata.FallbackDelay)
-			} else {
-				remoteConn, err = this.DialContext(setupCtx, N.NetworkUDP, metadata.Destination)
-			}
+		// The same shape as the stream arm above, and for the same reason.
+		//
+		// This used to gate the whole decision on `this.(dialer.ParallelInterfaceDialer)`. The DIRECT
+		// outbound does not implement that interface - it implements the richer
+		// ParallelNetworkDialer and nothing narrow - so a connected UDP flow from it took the else
+		// branches and went to N.DialSerial / DialContext, which accept only a destination and an
+		// address list. Nothing failed: DialContext applies the family gate and reaches sniffed-domain
+		// recovery. What it silently DROPPED was the rest of the per-connection dial configuration -
+		// NetworkStrategy, NetworkType, FallbackNetworkType, FallbackDelay - all of which the stream
+		// arm passes unconditionally. The same operator configuration therefore governed TCP traffic
+		// and did not govern UDP traffic, which on a multi-homed machine is a UDP egress on an
+		// interface the operator excluded.
+		//
+		// The guard was also redundant: `dialer.DialSerialNetwork` takes an N.Dialer and dispatches
+		// itself - ParallelNetworkDialer first, then ParallelInterfaceDialer, then a plain serial loop -
+		// so the outer assertion could only ever REMOVE a path. It is the same mistake as the stream
+		// path's, in a third place: a capability check written against the narrow interface, discarding
+		// the richer one.
+		//
+		// A DOMAIN destination stays on DialContext: it has no address to schedule and no candidate
+		// list, and DialSerialNetwork treats that shape as invalid usage.
+		if len(metadata.DestinationAddresses) > 0 || metadata.Destination.IsIP() {
+			remoteConn, err = dialer.DialSerialNetwork(setupCtx, this, N.NetworkUDP, metadata.Destination, metadata.DestinationAddresses, metadata.NetworkStrategy, metadata.NetworkType, metadata.FallbackNetworkType, metadata.FallbackDelay)
 		} else {
 			remoteConn, err = this.DialContext(setupCtx, N.NetworkUDP, metadata.Destination)
 		}
