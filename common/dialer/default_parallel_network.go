@@ -117,22 +117,36 @@ const chainWalkDepth = 8
 // `resolveDialer` and `resolveParallelNetworkDialer` are this package's own, and unwrapping them by the
 // field they hold is exact: it cannot be satisfied by an object that merely looks similar.
 //
-// # Everything else, by the Upstream protocol
+// # Everything else, by the Upstream protocol - except a detour
 //
 // An outbound in ANOTHER package is not a wrapper this package can name - `protocol/direct.Outbound`
 // holds the chain it dials through, and `common/dialer` cannot import it. The Upstream protocol is how
-// that package says "the dialer below me is this", and it is the same protocol `common.Cast` walks. So a
+// that package says where the dialer below it is, and it is the same protocol `common.Cast` walks. So a
 // chain that passes through an outbound reaches the real owner instead of stopping at the hop and
 // concluding that this machine has no opinion about address families.
 //
-// This step is additive: the two concrete wrappers are matched first, so nothing that resolved before
-// resolves differently now.
+// A `*DetourDialer` is REFUSED rather than followed, for two independent reasons:
+//
+//	it is not pure          its Upstream() calls Dialer(), which triggers the lazy outbound resolution. A
+//	                        capability walk must not perform one as a side effect of merely asking - the
+//	                        same rule `resolvedDetour` states for the preflight.
+//	it is semantically wrong what lies below a detour is the PEER's dial path. A family verdict or a
+//	                        health history found there describes how this machine reaches the proxy, not
+//	                        how the destination is reached, so applying it to a destination address would
+//	                        refuse connections the peer can serve.
+//
+// The refusal costs one exotic shape - a detour whose target is a non-empty DIRECT outbound - the verdict
+// it could have used, and that shape had no verdict before this walk existed either.
+//
+// The concrete wrappers are matched first, so nothing that resolved before resolves differently now.
 func unwrapDialer(dialer N.Dialer) (N.Dialer, bool) {
 	switch wrapper := dialer.(type) {
 	case *resolveDialer:
 		return wrapper.dialer, true
 	case *resolveParallelNetworkDialer:
 		return wrapper.dialer, true
+	case *DetourDialer:
+		return nil, false
 	case interface{ Upstream() any }:
 		next, isDialer := wrapper.Upstream().(N.Dialer)
 		if !isDialer || next == nil {
