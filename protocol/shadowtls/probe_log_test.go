@@ -178,7 +178,10 @@ func TestShadowTLSErrnoClassification(t *testing.T) {
 			// exists to remove. Third instance of this class in the release.
 			{"WSAECONNRESET (10054)", syscall.Errno(10054)},
 			{"WSAECONNABORTED (10053)", syscall.Errno(10053)},
-			{"WSAEPIPE (10032)", syscall.Errno(10032)},
+			// No WSAEPIPE row: `10032` is not a Winsock code - it lies in the unassigned gap between
+			// WSAEMFILE (10024) and WSAEWOULDBLOCK (10035) - so the row only proved that a value no
+			// Windows call can return is classified. It was removed from `dialer.PeerGoneErrnos` for
+			// the same reason, and the two real spellings above are what make this arm verifiable.
 		} {
 			t.Run(testCase.name, func(t *testing.T) {
 				require.True(t, shadowTLSErrorIsExpected(readErr(testCase.errno)),

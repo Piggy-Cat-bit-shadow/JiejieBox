@@ -226,7 +226,12 @@ func TestAnyTLSErrnoClassification(t *testing.T) {
 			// than aliased so a cleanup has to delete these rows to remove the arm.
 			{"WSAECONNRESET (10054)", syscall.Errno(10054)},
 			{"WSAECONNABORTED (10053)", syscall.Errno(10053)},
-			{"WSAEPIPE (10032)", syscall.Errno(10032)},
+			// No WSAEPIPE row, and this is the deletion the paragraph above predicted a cleanup would
+			// have to make. `10032` is not a Winsock code - it lies in the unassigned gap between
+			// WSAEMFILE (10024) and WSAEWOULDBLOCK (10035) - so the row proved that a value no Windows
+			// call can return is classified, which is not a property worth holding. It was removed from
+			// `dialer.PeerGoneErrnos` for the same reason; the two real spellings above are what make
+			// the arm verifiable.
 		} {
 			t.Run(testCase.name, func(t *testing.T) {
 				require.True(t, isExpectedPreAuthFailure(readErr(testCase.errno)),
