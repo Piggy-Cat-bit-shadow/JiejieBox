@@ -52,6 +52,16 @@ type ConnectionManager struct {
 	// disagreement is why the transition's counter bump and its setup-gate advance are now one indivisible
 	// step (see dialSetupGate.advanceAndBump); naming the instant correctly here is the same fact stated
 	// where a reader will look for it.
+	//
+	// # This is NOT the network epoch, and the two must never be compared
+	//
+	// The dialer's admission policy, the candidate scheduler and the family-health namespace are all
+	// scoped to `NetworkManager.networkResetGeneration` (Phase 01's capability ownership epoch). This
+	// counter is a different number with a different advance rule: it moves only inside a DRAINING
+	// reclaim, so it does not move at all for ReclaimDeadPath, while the network epoch moves on every
+	// claim. There is no fixed relationship between the two values, nothing in the tree compares them,
+	// and a future check of the form "the setup's generation equals the policy's" must pick ONE of them
+	// and derive the other rather than assume they agree.
 	generation atomic.Uint64
 	// sweepAccess guards sweepTimer, sweepBackoff and closed.
 	sweepAccess sync.Mutex

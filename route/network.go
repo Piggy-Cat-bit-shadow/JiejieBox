@@ -1171,6 +1171,16 @@ func (r *NetworkManager) loadFamilyCapability() adapter.NetworkFamilyCapability 
 //
 // Read by the dialer to decide whether a connection it just produced still belongs to the network it
 // was dialled for. See adapter.NetworkResetCounter.
+//
+// # This epoch is the dialer's ONE clock, and it is deliberately not the connection manager's
+//
+// The admission policy, the candidate scheduler and the family-health namespace all take their
+// generation from here - through the capability snapshot's ownership, so they cannot disagree with each
+// other. `ConnectionManager.generation` is a DIFFERENT counter with a different advance rule: it moves
+// only inside a draining reclaim, so a ReclaimDeadPath reset advances this epoch and not that one. There
+// is no fixed relationship between the two values and nothing compares them; a check that needs both
+// must pick one and derive the other. Written down at both declarations because the question "which
+// generation am I in" has two correct answers that are not the same number.
 func (r *NetworkManager) NetworkResetGeneration() uint64 {
 	return r.networkResetGeneration.Load()
 }
