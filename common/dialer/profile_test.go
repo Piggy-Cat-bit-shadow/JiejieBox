@@ -34,6 +34,18 @@ func TestEveryDialerOptionIsClassified(t *testing.T) {
 	fieldNames := collectDialerOptionFieldNames(t, optionType)
 	require.NotEmpty(t, fieldNames)
 
+	// No two fields may share a name across embeds: the table is keyed by the bare Go name, so a
+	// collision would make one entry classify two different fields. The walk below is by TYPE, so it
+	// sees every embed however it is declared.
+	seen := make(map[string]bool, len(fieldNames))
+	for _, name := range fieldNames {
+		require.False(t, seen[name],
+			"option.DialerOptions has two leaf fields named %s, and dialerOptionClassification is keyed "+
+				"by the bare Go name - so one entry would classify both, and neither could be told apart "+
+				"when one of them changes meaning", name)
+		seen[name] = true
+	}
+
 	for _, name := range fieldNames {
 		_, classified := dialerOptionClassification[name]
 		require.True(t, classified,
@@ -44,8 +56,9 @@ func TestEveryDialerOptionIsClassified(t *testing.T) {
 				"  scopeUDPOnly        only the UDP socket or listener\n"+
 				"  scopeResolutionOnly only when a name is resolved\n"+
 				"  scopeIgnore         it cannot affect a bypass, and say why in a comment\n\n"+
-				"A field left unclassified is refused at runtime rather than ignored, so the cost of "+
-				"forgetting is a missed optimisation - but only after this test is made to pass.",
+				"A field left unclassified is refused at runtime - whether or not it is set - so the cost "+
+				"of forgetting is a fast path that disappears loudly, and this test is what makes it "+
+				"disappear before it ships.",
 			name)
 	}
 
@@ -62,15 +75,69 @@ func TestEveryDialerOptionIsClassified(t *testing.T) {
 	}
 }
 
-// collectDialerOptionFieldNames walks the options struct, following embedded structs, and returns
-// every leaf field's Go name.
+// TestTheRuntimeWalkSeesEveryFieldTheCoverageWalkDoes is the guard against the two walks diverging.
+//
+// The completeness test walks the option struct by TYPE; the profile walks an actual value. Those were
+// two separate implementations, and they could disagree: the value walk skipped embedded structs and
+// unexported fields in ways the type walk did not, so a field could be demanded by the coverage test and
+// IGNORED at runtime - the coverage test passing while the profile silently discarded the field.
+//
+// They are now one function for the value side, and this asserts the two enumerate the same names, which
+// is the property that makes the coverage test mean something. `TestTheOptionWalkerFollowsEveryKindOfEmbed`
+// covers the embed kinds the current option struct does not use yet.
+func TestTheRuntimeWalkSeesEveryFieldTheCoverageWalkDoes(t *testing.T) {
+	var fromValue []string
+	visitDialerOptionFields(reflect.ValueOf(&option.DialerOptions{}).Elem(), func(name string, _ reflect.Value) {
+		fromValue = append(fromValue, name)
+	})
+	require.Equal(t, collectDialerOptionFieldNames(t, reflect.TypeFor[option.DialerOptions]()), fromValue,
+		"the walk the profile uses must enumerate exactly the fields the coverage test demands: a walk "+
+			"that sees fewer fields is a field nobody classifies, and a walk that sees more is a demand "+
+			"no field can satisfy")
+}
+
+// TestTheOptionWalkerFollowsEveryKindOfEmbed pins the walk's shape against structs the options do not
+// use today.
+//
+// A future contributor may embed a struct by pointer. The walk must still reach its fields - including
+// through a NIL pointer, which is the state every unset embed is in - because a field it does not reach
+// is a field the unclassified rule cannot refuse.
+func TestTheOptionWalkerFollowsEveryKindOfEmbed(t *testing.T) {
+	type pointerEmbedded struct {
+		Unexported int
+		Exported   int
+	}
+	type valueEmbedded struct {
+		Value int
+	}
+	type options struct {
+		*pointerEmbedded
+		valueEmbedded
+		Leaf int
+	}
+
+	var names []string
+	visitDialerOptionFields(reflect.ValueOf(options{}), func(name string, _ reflect.Value) {
+		names = append(names, name)
+	})
+	require.Equal(t, []string{"Unexported", "Exported", "Value", "Leaf"}, names,
+		"both embeds must be walked, a nil pointer embed included, and an unexported leaf must not be "+
+			"skipped: each of those three is a way for a field to escape classification")
+}
+
+// collectDialerOptionFieldNames walks the options TYPE, following embedded structs however they are
+// declared, and returns every leaf field's Go name.
 func collectDialerOptionFieldNames(t *testing.T, structType reflect.Type) []string {
 	t.Helper()
 	var names []string
 	for index := 0; index < structType.NumField(); index++ {
 		field := structType.Field(index)
-		if field.Anonymous && field.Type.Kind() == reflect.Struct {
-			names = append(names, collectDialerOptionFieldNames(t, field.Type)...)
+		embeddedType := field.Type
+		if field.Anonymous && embeddedType.Kind() == reflect.Pointer {
+			embeddedType = embeddedType.Elem()
+		}
+		if field.Anonymous && embeddedType.Kind() == reflect.Struct {
+			names = append(names, collectDialerOptionFieldNames(t, embeddedType)...)
 			continue
 		}
 		names = append(names, field.Name)
@@ -165,6 +232,29 @@ func TestUnclassifiedOptionBlocksEverything(t *testing.T) {
 
 	// And the mutilated profile is no longer plain, so the detour question refuses as well.
 	require.False(t, unclassified.IsPlain())
+}
+
+// TestAnUnclassifiedFieldRefusesEvenWhenItIsZero is the half the previous rule could not cover.
+//
+// Withdrawing a classification from a field whose ZERO value is the active one is the failure mode the
+// "is it set?" condition cannot see: the fast build of this test is a zero-valued options struct, which
+// is exactly what an operator who never configures the field sends. Under the old rule the profile
+// reported `BlockerNone` and the flow was bypassed by a model that had never been told what the field
+// means.
+func TestAnUnclassifiedFieldRefusesEvenWhenItIsZero(t *testing.T) {
+	classified, wasClassified := dialerOptionClassification["TCPFastOpen"]
+	require.True(t, wasClassified, "the field used by this test must be classified to begin with")
+	delete(dialerOptionClassification, "TCPFastOpen")
+	defer func() { dialerOptionClassification["TCPFastOpen"] = classified }()
+
+	// NOTHING is set: the withdrawn field is at its zero value, and so is every other field.
+	unclassified := NativeBypassSemantics(option.DialerOptions{})
+	require.Equal(t, BlockerUnclassified, unclassified.Blockers(literalTCPFacts()),
+		"a field the table does not name must refuse the fast path whether or not it is set: 'not set' "+
+			"is only safe when the zero value is known to be inert, and that is the table's claim to "+
+			"make, not the value's")
+	require.False(t, unclassified.IsPlain(),
+		"and the configuration is no longer 'asks for nothing', so a detour to it is refused as well")
 }
 
 func literalTCPFacts() NativeBypassFacts {

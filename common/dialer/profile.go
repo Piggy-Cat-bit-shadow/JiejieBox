@@ -235,10 +235,19 @@ func NativeBypassSemantics(options option.DialerOptions) SocketSemantics {
 	visitDialerOptionFields(reflect.ValueOf(&options).Elem(), func(name string, field reflect.Value) {
 		classification, classified := dialerOptionClassification[name]
 		if !classified {
-			if !field.IsZero() {
-				// Fail closed. See BlockerUnclassified.
-				semantics.always |= BlockerUnclassified
-			}
+			// Fail closed, and NOT conditioned on the value.
+			//
+			// This used to be `if !field.IsZero()`, which asks "is this unknown thing switched on?" -
+			// and a field whose ZERO value is the active one is then invisible. There is exactly one
+			// such field today (the direct constructor sets `UDPFragmentDefault`, so it is set before
+			// the profile is built and therefore visible), but that is a property of the construction
+			// ORDER, not of this mechanism: a future `DisableX bool` or a field defaulted by a
+			// constructor elsewhere would arrive zero and be classified by nobody, and the fast path
+			// would discard it silently. The table is the only thing that says a field is safe to
+			// ignore, so a field it does not name is refused whether or not it is set. The cost of an
+			// unclassified field is then a lost optimisation that is IMPOSSIBLE to miss, instead of a
+			// bypass that is impossible to notice.
+			semantics.always |= BlockerUnclassified
 			return
 		}
 		if classification.scope == scopeIgnore || field.IsZero() {
@@ -260,17 +269,40 @@ func NativeBypassSemantics(options option.DialerOptions) SocketSemantics {
 
 // visitDialerOptionFields walks the struct's fields, following embedded structs, and calls visit
 // for each leaf field with its Go name.
+//
+// # The two kinds of embed, and why a nil pointer still has to be walked
+//
+// An embedded struct is walked at its fields. An embedded POINTER to a struct is walked as well: nil is
+// the common case and it means "nothing configured through this embed", but the fields it declares are
+// still part of the configuration surface - a classification withdrawn from one of them must refuse the
+// profile even while the pointer is nil, which is precisely what the unclassified rule above does. A nil
+// pointer is therefore walked as a zero value of its element type rather than skipped, because skipping
+// it would reintroduce "this field was never considered" one level down.
+//
+// An unexported field is NOT skipped either. It cannot be read through reflection, but this walk only
+// needs its zero-ness and its name, and `IsZero` is defined for unexported fields. Skipping them made
+// the walk disagree with the coverage test, which walks by type and has no such restriction - so a
+// future unexported option would be demanded by the test and ignored at runtime, which is the worst of
+// both.
 func visitDialerOptionFields(value reflect.Value, visit func(name string, field reflect.Value)) {
 	valueType := value.Type()
 	for index := 0; index < valueType.NumField(); index++ {
 		field := value.Field(index)
 		fieldType := valueType.Field(index)
-		if fieldType.Anonymous && field.Kind() == reflect.Struct {
-			visitDialerOptionFields(field, visit)
-			continue
-		}
-		if !field.CanInterface() {
-			continue
+		if fieldType.Anonymous {
+			embeddedType := fieldType.Type
+			if embeddedType.Kind() == reflect.Pointer && embeddedType.Elem().Kind() == reflect.Struct {
+				if field.IsNil() {
+					visitDialerOptionFields(reflect.New(embeddedType.Elem()).Elem(), visit)
+				} else {
+					visitDialerOptionFields(field.Elem(), visit)
+				}
+				continue
+			}
+			if embeddedType.Kind() == reflect.Struct {
+				visitDialerOptionFields(field, visit)
+				continue
+			}
 		}
 		visit(fieldType.Name, field)
 	}
