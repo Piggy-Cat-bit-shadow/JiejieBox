@@ -11,6 +11,8 @@ import (
 
 	"github.com/sagernet/sing-box/common/power"
 	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/service"
 
 	"github.com/stretchr/testify/require"
 )
@@ -74,8 +76,10 @@ func dashboardGatePolicy() power.Policy {
 	return policy
 }
 
-// runDashboardLoop drives the real loop for the duration of the test.
-func runDashboardLoop(t *testing.T, instance *dashboard) {
+// runDashboardLoop drives the real loop for the duration of the test and returns a channel that
+// closes when the loop has returned, so a test can assert WHEN it exits rather than only that it
+// eventually does.
+func runDashboardLoop(t *testing.T, instance *dashboard) <-chan struct{} {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -91,6 +95,7 @@ func runDashboardLoop(t *testing.T, instance *dashboard) {
 			t.Error("the dashboard update loop did not exit after its context was cancelled")
 		}
 	})
+	return done
 }
 
 // TestTheDashboardUpdateLoopRunsWhileTheDeviceIsActive is the CONTROL.
@@ -160,4 +165,75 @@ func TestTheDashboardUpdateIsSuppressedWhileTheDeviceIsPaused(t *testing.T) {
 		10*time.Second, 5*time.Millisecond,
 		"the dashboard updater never resumed after the wake. Suppressing a speculative download "+
 			"during sleep is a saving only if it comes back when the device does")
+}
+
+// TestTheDashboardUpdateLoopExitsWhenItsOwnerCloses is the teardown half.
+//
+// The loop parks inside `WaitProviderRefresh` for the whole of a sleep, which is where a waiter
+// without a wake path becomes a goroutine that outlives its Box. Measured against `common/power`:
+// `Close` closes `stateChanged`, so a parked waiter wakes, sees `closed`, and `waitFor` returns
+// false - and the loop must then RETURN rather than treat the refusal as "try again later", which
+// would spin for the rest of the process's life.
+func TestTheDashboardUpdateLoopExitsWhenItsOwnerCloses(t *testing.T) {
+	governor := power.NewGovernor(dashboardGatePolicy())
+	instance, transport := newDashboardProbe(t, governor, 20*time.Millisecond)
+
+	done := runDashboardLoop(t, instance)
+	require.Eventually(t, func() bool { return transport.requests.Load() >= 2 },
+		10*time.Second, 5*time.Millisecond,
+		"the loop must be running before the sleep below")
+
+	governor.DevicePaused()
+	// Let the next tick arrive and park the loop inside the governor.
+	time.Sleep(60 * time.Millisecond)
+	requestsWhileWaiting := transport.requests.Load()
+
+	governor.Close()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the update loop did not exit after the governor was closed. It parks inside " +
+			"WaitProviderRefresh for the whole of a sleep, so a waiter that does not wake on Close " +
+			"outlives the Box that owns it")
+	}
+
+	// Nothing may run while unwinding, and nothing may run after: the owner has ended.
+	time.Sleep(50 * time.Millisecond)
+	require.Equal(t, requestsWhileWaiting, transport.requests.Load(),
+		"the loop issued a fetch on its way out, after the governor that authorises work had ended")
+}
+
+// TestTheServiceResolvesTheGovernorFromItsContext pins the wiring that makes the gate real in
+// production.
+//
+// A gate that reads a field nobody fills is inert, and inert code passes every test that does not
+// look at the field. `box.New` registers the governor (`box.go:347`) before the service registry is
+// driven (`box.go:561`), so the factory sees it - and this asserts the factory actually asks.
+func TestTheServiceResolvesTheGovernorFromItsContext(t *testing.T) {
+	governor := power.NewGovernor(dashboardGatePolicy())
+	t.Cleanup(governor.Close)
+
+	dashboardOptions := &option.APIDashboardOptions{Enabled: true, Path: t.TempDir()}
+
+	withGovernor := service.ContextWith[*power.Governor](context.Background(), governor)
+	created, err := NewService(withGovernor, log.NewNOPFactory().NewLogger("api-wired"), "api",
+		option.APIServiceOptions{Dashboard: dashboardOptions})
+	require.NoError(t, err)
+	service, isService := created.(*Service)
+	require.True(t, isService)
+	require.NotNil(t, service.dashboard, "the dashboard must have been constructed")
+	require.Same(t, governor, service.dashboard.powerGovernor,
+		"the api service did not resolve the power governor from its context, so the dashboard gate "+
+			"is inert in production while every test that hands the dashboard a governor keeps "+
+			"passing")
+
+	created, err = NewService(context.Background(), log.NewNOPFactory().NewLogger("api-unwired"), "api",
+		option.APIServiceOptions{Dashboard: dashboardOptions})
+	require.NoError(t, err)
+	service, isService = created.(*Service)
+	require.True(t, isService)
+	require.Nil(t, service.dashboard.powerGovernor,
+		"without a governor in the context the field must be nil, which is the no-op path the CLI "+
+			"and every fixture take")
 }
