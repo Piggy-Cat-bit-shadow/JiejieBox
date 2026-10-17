@@ -32,8 +32,8 @@ prefix live at 100k** — with no `[]string` of the list at any point; the heavy
 the only ones that hold runtime resources before first dial; and there is already a sleep authority
 (`common/power`) plus a per-box probe budget. What is *not* absorbed is (a) the **load transient**,
 which is 4–8× the steady structure and lives almost entirely inside the compressed-stream decode, and
-(b) **two background network workers that answer to no power state at all**. This round measured (a),
-landed the cheap half of (b), and refused the rest with reasons.
+(b) **two background network workers that answered to no power state at all**. This round measured (a)
+and closed (b) — both workers, each with a sensitivity-proved test — and refused the rest with reasons.
 
 ---
 
@@ -93,6 +93,20 @@ generation of the same size on top of the first; the old generation is already l
 4. **A rule-set does not cost a goroutine until it is started.** The census asserts that the
    goroutine count is unchanged across a load, at every size: the file watcher is constructed by
    `NewLocalRuleSet` and only started by `StartContext`.
+
+### Cold nodes
+
+Same instrument, one thousand `trojan` outbounds — the shape a 100k-node profile is actually made of:
+a dialer, a TLS config, a transport object, and nothing eager. Constructed, started through all four
+stages, never dialled (`go test -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" -run TestAConstructedNodeCostsNoThread .`):
+
+| nodes | goroutines | live heap | per node |
+|---|---|---|---|
+| 1 000 | **3 → 2** (no growth) | +2 035 840 B | **2 035 B** |
+
+That is the ProjectClash "static description, not a running protocol" claim, holding in this tree and
+now pinned by a test rather than by an audit paragraph. A thousand configured nodes cost two megabytes
+and zero threads; the five endpoint families that break this property are named in §3.
 
 ### Where the 5× goes
 
@@ -172,12 +186,15 @@ in the audit round). The four conclusions that mattered:
    rings). Inventing an eleventh — a global governor over all of them — was considered and **refused**:
    none of the existing pools can be expressed in another's terms, and `route/dial_governor.go` shows
    how much state a budget needs before it earns its keep.
-4. **Two network workers answer to no power state at all**, and they are the real gap:
+4. **Two network workers answered to no power state at all**, and they were the real gap. Both are
+   fixed in this round:
    - `dns.client.backgroundRefreshDNS` — an optimistic cache renewal, one round trip per stale entry,
-     zero references to `power`/`pause`/`Allow()` in the whole `dns` package. **Fixed in this round.**
-   - `service/api` dashboard refresh — a periodic fetch with no gate. **Not fixed**: it is a
-     service-level download, has no correctness cost when skipped, and needs its own decision about
-     whether an operator-visible dashboard may go stale; recorded in §7.
+     zero references to `power`/`pause`/`Allow()` in the whole `dns` package. See §5.1.
+   - `service/api` dashboard refresh — a periodic download with no gate, on a timer that fires whether
+     or not anybody is looking. See §5.2.
+
+   Both were verified by inspecting the packages for *any* power reference rather than by reading the
+   call sites, because the failure mode here is a worker that never asked — not one that asked wrong.
 
    Two more are gated but in a band that does not stop traffic: URL-test health checks are parked only
    by `pause.RegisterTicker` (a *ticker* mechanism — invisible to `time.AfterFunc`), and the power
@@ -222,6 +239,43 @@ believe the test rather than the comment.
 `LoadOrStore`-guarded), it does not touch the forward path, and it does not change any timer cadence.
 A refresh still fires while the device is awake, however many stale entries there are; that bound is
 the cache size, which is already capped.
+
+### 5.2 The dashboard updater now waits for the same window
+
+`service/api/dashboard.go`, `service/api/dashboard_power_test.go` — the second of the two ungated
+network workers, and the last one: after this the only periodic **network** workers in the core are
+the rule-set refresh and this, and both defer to the governor.
+
+It waits rather than skips, which is the difference from 5.1 and is deliberate. The loop is one
+goroutine that already exists, so blocking it holds no resource, and waiting makes the download happen
+the moment the device wakes instead of up to a full interval later. `WaitProviderRefresh` is the
+governor's own category for a provider-shaped download, so no predicate had to be invented.
+
+**The first update is deliberately NOT deferred**, and that is pinned by its own test. On a fresh
+profile the dashboard directory is empty, so that fetch is what fills the panel the operator is
+looking at; deferring it to a wake would be a regression dressed as a saving. Same rule as the
+rule-set refresh, different reason: that one is correctness, this one is the first paint.
+
+**Sensitivity, measured.** With the gate defeated (`if false && !initial && …`) the suppression test
+fails with `expected: 2, actual: 11` — nine downloads inside a 200 ms window on a sleeping device.
+Restored, all three pass.
+
+### 5.3 The cold-node property is now a test, not an audit paragraph
+
+`outbound_cold_cost_test.go` (root package). The audit in §3 concluded that a light node holds no
+runtime resources; that conclusion was static, and a static conclusion decays the moment somebody adds
+a `go func()` to a constructor. A thousand `trojan` nodes — constructed, started through all four
+stages, never dialled — cost **0 goroutines and 2 035 bytes each**.
+
+The five endpoint families that break the property are deliberately NOT asserted: asserting their
+current cost would ratchet behaviour the next round is meant to remove.
+
+**Measurement correction, recorded because it almost shipped as a number.** The first version reported
+`+10 464 bytes, 10 per node` — a thousand trojan outbounds at ten bytes each, which is obviously
+impossible. The compiler was free to treat the node slice as dead after its last syntactic use, so the
+collection inside the heap reading reclaimed all thousand nodes before measuring them;
+`runtime.KeepAlive` after the reading is what makes the number mean what it says. A census that
+reports a number nobody sanity-checks is worse than no census.
 
 ---
 
@@ -274,8 +328,16 @@ a measurement is a result.
   paused for hours will hold staler entries, and the first query after a wake may pay one upstream
   round trip it would previously have pre-paid. That is the intended trade and it is not quantified on
   device (`UNPROVEN`).
-- The waking band is exercised with a 50 ms stagger in the test and with the production 5 s stagger in
-  the product. The *ordering* is proved; the *duration* is a policy value that no test pins.
+- The dashboard gate changes *when* a panel updates, not whether it works: the files on disk keep being
+  served, so a paused device shows the previous dashboard until the wake. On a device that stays paused
+  for days the panel can be visibly old. That is the intended trade and it is not quantified on device
+  (`UNPROVEN`).
+- The waking band is exercised with a 20 ms stagger in the dashboard test and 50 ms in the DNS test,
+  against a production 15 s stagger. The *ordering* is proved; the *duration* is a policy value that no
+  test pins.
+- Both suppression tests use a bounded window for the negative half (200 ms of "nothing happened"). The
+  control test in each file is what makes that window a measurement rather than an absence of evidence —
+  it proves the same fixture lands several updates in a window of that length when the gate is open.
 - The census bounds in `TestRuleSetScaleCensus` are deliberately loose (100 bytes/domain against a
   measured 12). They fail when the representation changes shape, not when it changes by a byte.
 - The census's `load peak` disables the collector for the duration of one load. That is bounded by one
@@ -295,9 +357,7 @@ In the order the measurements justify:
    prize for a million-domain set.
 3. **The URL-test initial round at boot**, once the "config errors stay at Start" boundary is written
    down as a rule for this subsystem rather than argued per change.
-4. **`service/api` dashboard refresh** — the second ungated network worker. It needs a product decision
-   (may an operator dashboard go stale during a sleep?) before it needs code.
-5. **A config-parse measurement**, so §9 of the brief can be answered with a number instead of a
+4. **A config-parse measurement**, so §9 of the brief can be answered with a number instead of a
    preference.
 
 ## 9. Reproducing everything here
@@ -309,9 +369,12 @@ go test ./route/rule/ -run 'TestRuleSetScaleCensus$' -v
 go test ./route/rule/ -run 'TestRuleSetLoadStageBreakdown' -v
 # the 100k / 1M sweep (minutes, hundreds of MiB of fixtures; not part of make test)
 SING_BOX_SCALE_CENSUS=1 go test ./route/rule/ -run 'TestRuleSetScaleCensusLarge' -v
-# the production change
+# the two production changes
 go test ./dns/ -run 'TestOptimisticRefresh' -v
+go test ./service/api/ -run 'TestThe.*Dashboard' -v
+# the cold-node census (root package: needs the physical tags)
+go test -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" -run TestAConstructedNodeCostsNoThread . -v
 # the suites this round re-ran in full
-go test ./dns/ ./route/rule/ -count=1
+go test ./dns/ ./route/rule/ ./service/api/ -count=1
 go test -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" . -count=1
 ```
