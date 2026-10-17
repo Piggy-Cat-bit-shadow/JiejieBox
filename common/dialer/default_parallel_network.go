@@ -86,22 +86,62 @@ func DialParallelNetwork(ctx context.Context, dialer ParallelInterfaceDialer, ne
 // The chain is short and its wrappers are known: a resolveDialer (or its parallel variant)
 // wraps the real dialer, which for the direct outbound is a *DefaultDialer. Each step is
 // unwrapped explicitly rather than by reflection, so adding a wrapper is a deliberate act and
-// cannot silently break the lookup.
+// cannot silently break the lookup - and anything else that speaks the Upstream protocol is
+// followed too, which is what lets a chain that passes through another package's OUTBOUND reach
+// the dialer underneath it. See unwrapDialer.
 func findFamilyHealthOwner(dialer N.Dialer) (familyHealthOwner, bool) {
-	for depth := 0; depth < 8 && dialer != nil; depth++ {
+	for depth := 0; depth < chainWalkDepth && dialer != nil; depth++ {
 		if owner, ok := dialer.(familyHealthOwner); ok {
 			return owner, true
 		}
-		switch wrapper := dialer.(type) {
-		case *resolveDialer:
-			dialer = wrapper.dialer
-		case *resolveParallelNetworkDialer:
-			dialer = wrapper.dialer
-		default:
+		next, ok := unwrapDialer(dialer)
+		if !ok {
 			return nil, false
 		}
+		dialer = next
 	}
 	return nil, false
+}
+
+// chainWalkDepth bounds every walk down a dialer chain.
+//
+// A chain is two or three hops in production. The bound exists because a wrapper whose Upstream
+// returns itself, or two wrappers that return each other, would otherwise spin forever on a dial path
+// where the fault would look like a hang rather than a bug.
+const chainWalkDepth = 8
+
+// unwrapDialer takes one step down a dialer chain.
+//
+// # The two known wrappers, by their fields
+//
+// `resolveDialer` and `resolveParallelNetworkDialer` are this package's own, and unwrapping them by the
+// field they hold is exact: it cannot be satisfied by an object that merely looks similar.
+//
+// # Everything else, by the Upstream protocol
+//
+// An outbound in ANOTHER package is not a wrapper this package can name - `protocol/direct.Outbound`
+// holds the chain it dials through, and `common/dialer` cannot import it. The Upstream protocol is how
+// that package says "the dialer below me is this", and it is the same protocol `common.Cast` walks. So a
+// chain that passes through an outbound reaches the real owner instead of stopping at the hop and
+// concluding that this machine has no opinion about address families.
+//
+// This step is additive: the two concrete wrappers are matched first, so nothing that resolved before
+// resolves differently now.
+func unwrapDialer(dialer N.Dialer) (N.Dialer, bool) {
+	switch wrapper := dialer.(type) {
+	case *resolveDialer:
+		return wrapper.dialer, true
+	case *resolveParallelNetworkDialer:
+		return wrapper.dialer, true
+	case interface{ Upstream() any }:
+		next, isDialer := wrapper.Upstream().(N.Dialer)
+		if !isDialer || next == nil {
+			return nil, false
+		}
+		return next, true
+	default:
+		return nil, false
+	}
 }
 
 // dialParallelNetwork is the explicit form, used by callers that already hold a scheduler.

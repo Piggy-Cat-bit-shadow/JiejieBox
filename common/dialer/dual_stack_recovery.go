@@ -348,32 +348,42 @@ func withoutFamilyExcluded(addresses []netip.Addr, strategy C.DomainStrategy) []
 
 // dialerLocalFamilyPolicy reads this dialer's view of which families the machine can dial.
 //
-// It goes through the localFamilyOwner when the underlying dialer has one, so that a resolve
-// dialer - which is a wrapper, not an owner - asks the same object the scheduler will ask. A chain
-// that leads nowhere returns the zero policy, which restricts nothing: an implementation that
-// cannot report the capability keeps its previous behaviour exactly.
+// It WALKS the chain to the owner, so that a resolve dialer - which is a wrapper, not an owner - asks the
+// same object the scheduler will ask, however many hops separate them. A chain that leads nowhere returns
+// the zero policy, which restricts nothing: an implementation that cannot report the capability keeps its
+// previous behaviour exactly.
 //
-// # The one chain that can never answer, stated because it is otherwise silent
+// # Why it walks rather than asserts once
 //
 // `localFamilyOwner` is unexported and satisfied by exactly one production type, `*DefaultDialer`. An
-// outbound in another package therefore cannot implement it - Go's unexported-method rule forbids it - so a
-// `resolveDialer` built over an `adapter.Outbound` always falls through to the zero policy here, and
-// `newScheduler`'s matching `familyHealthOwner` assertion does the same. Two such chains exist, both in
-// `daemon/started_service.go` (the network-quality and STUN test dialers).
+// outbound in another package therefore cannot implement it - Go's unexported-method rule forbids it - and
+// a `resolveDialer` built over an `adapter.Outbound` used to fall through to the zero policy here, with
+// `findFamilyHealthOwner`'s matching assertion doing the same. Two such chains exist, both in
+// `daemon/started_service.go` (the network-quality and STUN test dialers), and the cost was that the
+// wrapper lost the SHARED family health and its recovery candidate filtering became a no-op - silently,
+// because a zero policy reads as "this machine can dial anything".
 //
-// What that costs is bounded and worth knowing rather than discovering: the wrapper loses the SHARED family
-// health (its scheduler starts with no history) and its recovery candidate filtering becomes a no-op. The
-// leaf's own `DefaultDialer.DialContext` still applies the real per-socket gate, so no family this machine
-// cannot dial is ever dialled - the difference is that a candidate the leaf would refuse is offered first and
-// costs a failed attempt instead of being dropped in advance.
+// What made it fixable was the chain itself: the outbound is a HOP whose dialer is the resolved surface,
+// and it now reports that through the Upstream protocol - the same protocol `common.Cast` walks, and the
+// one the resolve wrappers already implement. So the walk reaches the real owner through it. Nothing is
+// re-exposed across packages and no public API was added; the capability was always in the chain, the
+// chain just had no way to say so.
 //
-// It is left as a documented boundary rather than fixed because there is no local fix: the capability would
-// have to be re-exposed through an exported hook on the outbound and re-discovered here, which is a public
-// API addition across packages for two diagnostic dialers. Recorded so the next reader does not conclude the
-// zero policy means "this machine can dial anything".
+// What is still bounded: the leaf's own `DefaultDialer.DialContext` applies the real per-socket gate
+// regardless, so even a chain that genuinely cannot answer never dials a family this machine lacks - the
+// difference is that a candidate the leaf would refuse is offered first and costs a failed attempt
+// instead of being dropped in advance.
 func (d *resolveDialer) dialerLocalFamilyPolicy() localFamilyPolicy {
-	if owner, isOwner := d.dialer.(localFamilyOwner); isOwner {
-		return owner.localFamilyPolicy()
+	current := d.dialer
+	for depth := 0; depth < chainWalkDepth && current != nil; depth++ {
+		if owner, isOwner := current.(localFamilyOwner); isOwner {
+			return owner.localFamilyPolicy()
+		}
+		next, ok := unwrapDialer(current)
+		if !ok {
+			break
+		}
+		current = next
 	}
 	return localFamilyPolicy{}
 }

@@ -132,6 +132,26 @@ func (h *Outbound) DialsDestinationLocally() bool {
 	return true
 }
 
+// Upstream returns the dialer chain this outbound dials through.
+//
+// # Why an outbound reports a dialer
+//
+// This type is a HOP, not a wrapper: it holds a resolved `LocalDialSurface` whose `Attempt` is the chain
+// that creates this machine's sockets. The capabilities that live in that chain - the family verdict, the
+// shared family health, the recovery candidate filtering - belong to the leaf, and they are reached
+// through UNEXPORTED interfaces (`localFamilyOwner`, `familyHealthOwner`) that a type in another package
+// cannot implement: Go's unexported-method rule forbids it.
+//
+// So it says where they are, on the protocol the resolve wrappers already implement and `common.Cast`
+// already walks. A dialer built OVER this outbound - `daemon/started_service.go` builds exactly that for
+// the network-quality and STUN probes - then reaches the real owner instead of stopping at the hop.
+// Before this, that chain answered "this machine has no opinion about address families", which reads as
+// "it can dial anything": the shared family health was lost and the recovery candidate filtering became a
+// no-op, silently.
+func (h *Outbound) Upstream() any {
+	return h.surface.Attempt
+}
+
 func (h *Outbound) fetchMyAddresses() {
 	interfaceMonitor := h.network.InterfaceMonitor()
 	if interfaceMonitor == nil {

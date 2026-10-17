@@ -9,6 +9,7 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/json/badoption"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
@@ -134,6 +135,32 @@ func TestProductionDialerChainKeepsTheRicherSurfaceAcrossEveryOption(t *testing.
 				"%s: this option shape must not cost the outbound the parallel-network surface", testCase.name)
 		})
 	}
+}
+
+// TestProductionOutboundReportsTheChainBelowIt is the other half of the hop protocol.
+//
+// A dialer built OVER this outbound - `daemon/started_service.go` builds one for the network-quality
+// probe and one for STUN - reaches the family verdict and the shared family health by walking the chain
+// through `Upstream`. That walk can only work if the object the CONSTRUCTOR produces reports the chain it
+// actually dials through, which is what this asserts: a fixture that supplied its own hop would prove the
+// walk and nothing about production.
+func TestProductionOutboundReportsTheChainBelowIt(t *testing.T) {
+	outbound := newProductionOutbound(t, option.DirectOutboundOptions{})
+
+	upstream, isUpstream := any(outbound).(interface{ Upstream() any })
+	require.True(t, isUpstream,
+		"the outbound must say where the capabilities below it live, or a dialer built over it answers "+
+			"'this machine has no opinion about address families'")
+	require.Same(t, any(outbound.surface.Attempt), upstream.Upstream(),
+		"and it must report the chain it actually dials through, not a rebuilt one")
+
+	// The production statement of the same thing: the leaf is reachable from the outbound through the
+	// protocol `common.Cast` walks, which is how every capability below a hop is found.
+	leaf, reached := common.Cast[*dialer.DefaultDialer](outbound)
+	require.True(t, reached,
+		"a caller that walks from the outbound must reach the DefaultDialer underneath: that object is "+
+			"what answers the family verdict and owns the shared family health")
+	require.NotNil(t, leaf)
 }
 
 // TestProductionOutboundStillSatisfiesEveryPublicInterface is the rest of the contract, so a future edit
