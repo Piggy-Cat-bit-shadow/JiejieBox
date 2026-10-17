@@ -68,7 +68,9 @@ func TestWindowsSyscallSpellingsDifferFromTheWSAOnes(t *testing.T) {
 		{"ETIMEDOUT", wsaETIMEDOUT, syscall.ETIMEDOUT},
 		{"ECONNRESET", wsaECONNRESET, syscall.ECONNRESET},
 		{"ECONNABORTED", wsaECONNABORTED, syscall.ECONNABORTED},
-		{"EPIPE", wsaEPIPE, syscall.EPIPE},
+		// No EPIPE row. `wsaEPIPE = 10032` was removed because Winsock defines no such code and the
+		// number is unassigned, so the row asserted that two numbers differ - which they do, trivially,
+		// for a code that can never occur.
 	} {
 		require.NotEqual(t, uintptr(testCase.wsa), uintptr(testCase.posix),
 			"%s: the WSA value and the syscall value are the same number on this platform, so the "+

@@ -58,11 +58,16 @@ const (
 	// recorded there, and lives in TimeoutErrnos instead.
 	wsaETIMEDOUT = syscall.Errno(10060)
 
-	// wsaECONNABORTED and wsaEPIPE complete the peer-lifecycle triple with wsaECONNRESET above. Both
-	// are matched only by PeerGoneErrnos, which explains why a log-severity question turned out to need
-	// the same numbers as the routing ones.
+	// wsaECONNABORTED completes the peer-lifecycle triple with wsaECONNRESET above. It is matched only
+	// by PeerGoneErrnos, which explains why a log-severity question turned out to need the same numbers
+	// as the routing ones.
+	//
+	// There is no `WSAEPIPE`. Winsock defines no such code, and `10032` falls in the unassigned gap
+	// between WSAEMFILE (10024) and WSAEWOULDBLOCK (10035), so a constant named after it can never match
+	// a real error - it was a fabricated number sitting in a classification set, which reads as "this
+	// case is handled" to anyone maintaining the table. On Windows a broken pipe on a socket surfaces as
+	// WSAECONNRESET or WSAESHUTDOWN, and the first is already above.
 	wsaECONNABORTED = syscall.Errno(10053)
-	wsaEPIPE        = syscall.Errno(10032)
 )
 
 // ErroredWith reports whether err matches any of the given errnos, in either the POSIX spelling this
@@ -191,6 +196,9 @@ var (
 	PeerGoneErrnos = []syscall.Errno{
 		syscall.ECONNRESET, wsaECONNRESET,
 		syscall.ECONNABORTED, wsaECONNABORTED,
-		syscall.EPIPE, wsaEPIPE,
+		// `syscall.EPIPE` alone rather than a Winsock twin: EPIPE is a POSIX spelling, and the Windows
+		// sites that produce a broken pipe already appear above as WSAECONNRESET/WSAECONNABORTED. The
+		// fabricated `wsaEPIPE = 10032` that used to sit here advertised a case that could never occur.
+		syscall.EPIPE,
 	}
 )

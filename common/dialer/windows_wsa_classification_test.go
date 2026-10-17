@@ -57,7 +57,6 @@ func TestWindowsWSAErrorChainIsClassified(t *testing.T) {
 		wantWSAETIMEDOUT     = syscall.Errno(10060)
 		wantWSAECONNRESET    = syscall.Errno(10054)
 		wantWSAECONNABORTED  = syscall.Errno(10053)
-		wantWSAEPIPE         = syscall.Errno(10032)
 	)
 	require.Equal(t, wantWSAENETUNREACH, wsaENETUNREACH)
 	require.Equal(t, wantWSAEHOSTUNREACH, wsaEHOSTUNREACH)
@@ -66,12 +65,22 @@ func TestWindowsWSAErrorChainIsClassified(t *testing.T) {
 	require.Equal(t, wantWSAECONNREFUSED, wsaECONNREFUSED)
 	require.Equal(t, wantWSAETIMEDOUT, wsaETIMEDOUT)
 
-	// The peer-lifecycle triple, added by the Phase-4 sweep of the raw comparisons in
+	// The peer-lifecycle pair, added by the Phase-4 sweep of the raw comparisons in
 	// protocol/anytls and protocol/shadowtls: they are the same defect class, and they were the last
 	// call sites still comparing POSIX spellings against what Windows delivers.
 	require.Equal(t, wantWSAECONNRESET, wsaECONNRESET)
 	require.Equal(t, wantWSAECONNABORTED, wsaECONNABORTED)
-	require.Equal(t, wantWSAEPIPE, wsaEPIPE)
+
+	// # Why there is no wsaEPIPE assertion here
+	//
+	// There used to be one, pinning `wsaEPIPE = 10032`. Neither the name nor the number exists: Winsock
+	// defines no WSAEPIPE, and 10032 falls in the unassigned gap between WSAEMFILE (10024) and
+	// WSAEWOULDBLOCK (10035), so the constant could never match a real error. The assertion pinned a
+	// fabricated value and therefore passed forever, which is worse than no assertion - it read as
+	// evidence that the case was covered. A broken pipe on a Windows socket arrives as WSAECONNRESET or
+	// WSAESHUTDOWN, and the first is asserted above.
+	//
+	// A TestPeerLifecycleErrnosAreNotFabricated below keeps the class from returning.
 
 	// # The relationship that makes this test necessary
 	//
