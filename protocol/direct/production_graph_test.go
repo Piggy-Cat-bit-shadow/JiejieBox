@@ -61,33 +61,26 @@ func newProductionOutbound(t *testing.T, options option.DirectOutboundOptions) *
 
 // TestProductionOutboundHoldsTheParallelNetworkSurface is the structural premise of the round-2 fix.
 //
-// `scheduleNetwork` dispatches to the richer surface ONLY if the field holds an object that has it. That
-// is a runtime assertion, so nothing in the type system keeps it true - which is exactly how the
-// capability was lost twice. This asserts it on the object the constructor produces.
+// `scheduleNetwork` used to dispatch to the richer surface only if a narrow field happened to hold an
+// object that had one. That is a runtime assertion, so nothing in the type system kept it true - which is
+// exactly how the capability was lost twice. The field is now the RESOLVED SURFACE, and the constructor
+// refuses a chain that cannot fill it; this asserts both halves on the object the constructor produces.
 func TestProductionOutboundHoldsTheParallelNetworkSurface(t *testing.T) {
 	outbound := newProductionOutbound(t, option.DirectOutboundOptions{})
 
-	require.NotNil(t, outbound.dialer, "the constructor must wire a dialer at all")
-
-	// The field is declared at the narrow type - that is deliberate, and it is what makes this assertion
-	// necessary rather than redundant: a narrow declaration cannot carry the guarantee.
-	var narrow dialer.ParallelInterfaceDialer = outbound.dialer
-	require.NotNil(t, narrow, "the declared field type is the parallel-interface surface")
-
-	networkSurface, isNetworkSurface := outbound.dialer.(dialer.ParallelNetworkDialer)
-	require.True(t, isNetworkSurface,
-		"the direct outbound's dialer must implement ParallelNetworkDialer: without it, DialParallelNetwork "+
-			"falls back to the package helper, domain recovery for a literal destination is never invoked, "+
-			"and a sniffed-domain flow to an unreachable-family literal is refused with no fallback - the "+
-			"exact failure two rounds were spent fixing")
-	require.NotNil(t, networkSurface)
+	require.NotNil(t, outbound.surface.Attempt, "the constructor must resolve a dialer at all")
+	require.NotNil(t, outbound.surface.Network,
+		"the resolved surface must carry the candidate-planning capability: without it a literal "+
+			"destination cannot be recovered from its sniffed domain, and a sniffed-domain flow to an "+
+			"unreachable-family literal is refused with no fallback - the exact failure two rounds were "+
+			"spent fixing")
 
 	// And it must be the RESOLVE wrapper, not the bare leaf: the wrapper is where discovery lives, and it
 	// is also what makes `DialSerialNetwork`'s first type assertion succeed when the connection manager
 	// hands it the outbound.
-	_, holdsResolver := outbound.dialer.(dialer.ResolveDialer)
-	require.True(t, holdsResolver,
-		"and it must be a resolve dialer: that is the object domain recovery is implemented on")
+	require.NotNil(t, outbound.surface.Resolve,
+		"and the surface must carry the resolve wrapper: that is the object domain recovery is implemented "+
+			"on, and the object the native-bypass profile asks for the effective family strategy")
 }
 
 // TestProductionDialerChainKeepsTheRicherSurfaceAcrossEveryOption keeps the premise true for the option
@@ -137,8 +130,7 @@ func TestProductionDialerChainKeepsTheRicherSurfaceAcrossEveryOption(t *testing.
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			outbound := newProductionOutbound(t, testCase.options)
-			_, isNetworkSurface := outbound.dialer.(dialer.ParallelNetworkDialer)
-			require.True(t, isNetworkSurface,
+			require.NotNil(t, outbound.surface.Network,
 				"%s: this option shape must not cost the outbound the parallel-network surface", testCase.name)
 		})
 	}

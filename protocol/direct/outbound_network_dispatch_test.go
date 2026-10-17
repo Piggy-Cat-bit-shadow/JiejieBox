@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sagernet/sing-box/common/dialer"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	M "github.com/sagernet/sing/common/metadata"
@@ -15,15 +16,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The direct outbound must hand a candidate LIST to the richer surface its dialer has.
+// The direct outbound must hand a candidate LIST to the candidate-planning surface it holds.
 //
 // # The defect these pin
 //
-// `Outbound.dialer` is declared at the narrow `ParallelInterfaceDialer` type, because that is the
-// narrowest surface an attempt needs and because a detour dialer has no parallel network surface. The
-// object inside it is normally a `*dialer.resolveParallelNetworkDialer`, which implements the richer
-// `ParallelNetworkDialer` - and that method is the ONLY place domain recovery for a literal destination
-// lives: the sniffed-domain lookup, the late-candidate feed, the family fallback.
+// `Outbound.dialer` used to be declared at the narrow `ParallelInterfaceDialer` type, because that is the
+// narrowest surface an attempt needs. The object inside it was normally a
+// `*dialer.resolveParallelNetworkDialer`, which implements the richer `ParallelNetworkDialer` - and that
+// method is the ONLY place domain recovery for a literal destination lives: the sniffed-domain lookup, the
+// late-candidate feed, the family fallback.
 //
 // The network methods used to call the package-level helper directly, which takes the narrow type and
 // schedules candidates from the list it is given. So the richer method was never invoked, and the
@@ -83,19 +84,22 @@ func (s *networkSurfaceSpy) ListenSerialNetworkPacket(ctx context.Context, desti
 	return nil, netip.Addr{}, context.Canceled
 }
 
-// narrowFieldOutbound is the production outbound with its dialer field set to the spy the way
-// NewOutbound sets it: at the narrow type, over an object that can do more.
+// surfaceOutbound is the outbound with its RESOLVED SURFACE pointing at the spy - the field NewOutbound
+// fills, rather than the narrow dialer field it used to fill.
 //
 // The logger is the piece that must not be faked: `InfoContext` is called on it before the dispatch
 // under test, and a zero interface there panics rather than logging nothing. The factory's own no-op
 // implementation is used so the test exercises the real code path with the real nil-safe logger.
-func narrowFieldOutbound(spy *networkSurfaceSpy) *Outbound {
-	return &Outbound{dialer: spy, logger: log.NewNOPFactory().Logger()}
+func surfaceOutbound(spy *networkSurfaceSpy) *Outbound {
+	return &Outbound{
+		surface: dialer.LocalDialSurface{Attempt: spy, Network: spy},
+		logger:  log.NewNOPFactory().Logger(),
+	}
 }
 
 func TestDialParallelNetworkReachesTheRicherSurface(t *testing.T) {
 	spy := &networkSurfaceSpy{}
-	outbound := narrowFieldOutbound(spy)
+	outbound := surfaceOutbound(spy)
 
 	address := netip.MustParseAddr("2409:8c54:871:1007::2c")
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -113,7 +117,7 @@ func TestDialParallelNetworkReachesTheRicherSurface(t *testing.T) {
 
 func TestDialParallelReachesTheRicherSurface(t *testing.T) {
 	spy := &networkSurfaceSpy{}
-	outbound := narrowFieldOutbound(spy)
+	outbound := surfaceOutbound(spy)
 
 	address := netip.MustParseAddr("2409:8c54:871:1007::2c")
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -130,7 +134,7 @@ func TestDialParallelReachesTheRicherSurface(t *testing.T) {
 
 func TestListenSerialNetworkPacketReachesTheRicherSurface(t *testing.T) {
 	spy := &networkSurfaceSpy{}
-	outbound := narrowFieldOutbound(spy)
+	outbound := surfaceOutbound(spy)
 
 	address := netip.MustParseAddr("2409:8c54:871:1007::2c")
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -147,28 +151,22 @@ func TestListenSerialNetworkPacketReachesTheRicherSurface(t *testing.T) {
 		"the packet walk has no race to fall back on, so the recovered candidate is its only fallback")
 }
 
-// TestNetworkSurfaceFallsBackToAPlainDialer is the other half of the dispatch contract, and the reason
-// the fix cannot be "always delegate".
+// TestAChainWithoutThePlanningSurfaceIsRefusedAtConstruction is the other half of the contract, and the
+// reason the fix cannot be "always delegate".
 //
-// A detour routes to another outbound instead of creating a socket, so its dialer has no parallel
-// network surface at all. That shape must keep working exactly as before - no scheduler, no recovery,
-// no new failure mode - which means the fallback has to be real and tested rather than implied.
-func TestNetworkSurfaceFallsBackToAPlainDialer(t *testing.T) {
+// The outbound used to fall back to the package helper when its dialer lacked the planning surface, and
+// that fallback is what made the loss silent: it existed for a detour-shaped chain, and a direct outbound
+// cannot have one (`detour` is refused outright). So the only way the fallback could ever run in
+// production was if the factory stopped producing the surface - the exact event it then hid. It is now a
+// construction error, and this asserts the error rather than the degraded path.
+func TestAChainWithoutThePlanningSurfaceIsRefusedAtConstruction(t *testing.T) {
 	plain := &plainDialer{}
-	outbound := &Outbound{dialer: plain, logger: log.NewNOPFactory().Logger()}
 
-	address := netip.MustParseAddr("192.0.2.44")
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	conn, err := outbound.DialParallelNetwork(ctx, "tcp", M.SocksaddrFrom(address, 443),
-		[]netip.Addr{address}, nil, nil, nil, 0)
-	require.NoError(t, err)
-	require.NotNil(t, conn)
-	conn.Close()
-
-	require.Equal(t, []netip.Addr{address}, plain.tried,
-		"with no parallel surface the list is dialled as given, one address at a time")
+	_, err := dialer.NewLocalDialSurface(plain)
+	require.Error(t, err,
+		"a chain with only the per-attempt surface must not become a local dial surface")
+	require.Contains(t, err.Error(), "candidate-planning surface",
+		"and the refusal must name the missing capability, because no configuration can cause it")
 }
 
 // plainDialer is the detour shape: a dialer with the per-attempt surface and NO parallel network

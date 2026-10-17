@@ -139,12 +139,12 @@ func TestCanBypassRefusesAProvablyAbsentFamily(t *testing.T) {
 	ipv6 := netip.MustParseAddr("2606:2800:220:1:248:1893:25c8:1946")
 
 	outbound := bypassable(option.DialerOptions{})
-	// The dialer chain discovered from the outbound dialer answers the machine-level question. A
-	// predicate is installed directly here because the fake in this package has no network manager;
-	// what is under test is that the outbound ASKS, and what it does with the answer.
-	outbound.localFamily = func(address netip.Addr) bool {
+	// The dialer chain discovered from the outbound dialer answers the machine-level question. A stub is
+	// installed here because the fake in this package has no network manager; what is under test is that
+	// the outbound ASKS the capability it holds, and what it does with the answer.
+	outbound.surface.LocalFamily = stubLocalFamilyDialer{blocked: func(address netip.Addr) bool {
 		return address.Is6()
-	}
+	}}
 
 	require.True(t, outbound.CanBypass(N.NetworkTCP, ipv4),
 		"the family this machine has addressing for is unaffected")
@@ -177,11 +177,11 @@ func TestCanBypassKeepsTheTwoFamilyRefusalsDistinct(t *testing.T) {
 			DomainResolver: &option.DomainResolveOptions{Server: "local-agh"},
 		},
 	})
-	byStrategy.familyStrategy = func() C.DomainStrategy { return C.DomainStrategyIPv4Only }
+	byStrategy.surface.Resolve = stubResolveDialer{strategy: func() C.DomainStrategy { return C.DomainStrategyIPv4Only }}
 
 	// Device: the configuration permits it, but the machine has no path for the family.
 	byDevice := bypassable(option.DialerOptions{})
-	byDevice.localFamily = func(netip.Addr) bool { return true }
+	byDevice.surface.LocalFamily = stubLocalFamilyDialer{blocked: func(netip.Addr) bool { return true }}
 
 	strategyBlockers := byStrategy.BypassBlockers(N.NetworkTCP, ipv6)
 	deviceBlockers := byDevice.BypassBlockers(N.NetworkTCP, ipv6)
@@ -233,7 +233,7 @@ func TestCanBypassDistinguishesOptionPresenceFromFlowRelevance(t *testing.T) {
 			DomainResolver: &option.DomainResolveOptions{Server: "local-agh"},
 		},
 	})
-	strict.familyStrategy = func() C.DomainStrategy { return C.DomainStrategyIPv4Only }
+	strict.surface.Resolve = stubResolveDialer{strategy: func() C.DomainStrategy { return C.DomainStrategyIPv4Only }}
 
 	require.False(t, strict.CanBypass(N.NetworkTCP, ipv6),
 		"ipv4_only excludes a literal IPv6 destination in the userspace path, so the platform's "+
@@ -247,7 +247,7 @@ func TestCanBypassDistinguishesOptionPresenceFromFlowRelevance(t *testing.T) {
 			DomainResolver: &option.DomainResolveOptions{Server: "local-agh"},
 		},
 	})
-	strict6.familyStrategy = func() C.DomainStrategy { return C.DomainStrategyIPv6Only }
+	strict6.surface.Resolve = stubResolveDialer{strategy: func() C.DomainStrategy { return C.DomainStrategyIPv6Only }}
 	require.False(t, strict6.CanBypass(N.NetworkTCP, ipv4))
 	require.True(t, strict6.CanBypass(N.NetworkTCP, ipv6))
 }

@@ -38,26 +38,22 @@ var (
 
 type Outbound struct {
 	outbound.Adapter
-	ctx            context.Context
-	logger         logger.ContextLogger
-	network        adapter.NetworkManager
-	dialer         dialer.ParallelInterfaceDialer
+	ctx     context.Context
+	logger  logger.ContextLogger
+	network adapter.NetworkManager
+	// surface is the capability set the dialer factory produced for this outbound, resolved ONCE here.
+	//
+	// It replaces a field declared at the per-attempt interface plus two separately-captured closures. The
+	// declaration at the narrow type is what lost sniffed-domain recovery for a literal destination twice
+	// running; a field that holds the resolved surface cannot, because the capability is read from the
+	// object the factory produced rather than re-discovered at the point of use.
+	surface        dialer.LocalDialSurface
 	domainStrategy C.DomainStrategy
 	fallbackDelay  time.Duration
 	// semantics is the precomputed native-bypass profile of this outbound's dial options. It is
 	// built once, here, from the same options the dialer was built from, and it is the only thing
 	// that answers "would the userspace dial path do anything special for this flow?".
-	semantics dialer.SocketSemantics
-	// familyStrategy reports the effective address-family policy of the resolver this outbound was
-	// given, or nil when it has none. It is a function rather than a value because the effective
-	// policy can come from the resolver's own configuration and is only known once the router can
-	// be asked.
-	familyStrategy func() C.DomainStrategy
-	// localFamily reports whether this machine has no usable path for an address's family, or nil
-	// when the dialer chain cannot say. It is what keeps a bypass from handing the platform an
-	// address the userspace path would have refused immediately; see
-	// dialer.BlockerLocalFamilyUnavailable.
-	localFamily func(netip.Addr) bool
+	semantics   dialer.SocketSemantics
 	myAddresses common.TypedValue[[]netip.Prefix]
 	icmpPort    *ping.Port
 }
@@ -76,22 +72,12 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	if err != nil {
 		return nil, err
 	}
-	// The field is declared at the parallel-INTERFACE type because that is the narrowest surface an
-	// attempt needs, and the richer method it also implements is asked for by type assertion at the
-	// point of use (see scheduleNetwork).
-	//
-	// The assertion is CHECKED, and that matters. `dialer.NewWithOptions` returns whatever the leaf
-	// factory produced, wrapped in a resolve dialer only when its own conditions hold; nothing in the
-	// type system makes "the result of that call implements ParallelInterfaceDialer" true. An unchecked
-	// assertion here turns a future change in the factory - or an option combination that skips the
-	// wrapper - into a PANIC during configuration load, where every other failure in this constructor
-	// is a returned error an operator can read and fix. Measured: reverting `NewResolveDialer` to return
-	// the plain wrapper makes this line panic.
-	parallelDialer, isParallelDialer := outboundDialer.(dialer.ParallelInterfaceDialer)
-	if !isParallelDialer {
-		return nil, E.New("direct outbound: the dialer chain produced an object that does not offer the ",
-			"per-attempt parallel surface this outbound schedules attempts through; this is a defect in ",
-			"the dialer factory rather than in the configuration")
+	// The surface is resolved from the object the factory returned, and a chain that cannot schedule
+	// candidates is refused HERE rather than degraded at the point of use. See dialer.LocalDialSurface:
+	// the capability this guarantees is the one whose silent loss took two rounds to find.
+	surface, err := dialer.NewLocalDialSurface(outboundDialer)
+	if err != nil {
+		return nil, E.Cause(err, "direct outbound")
 	}
 	outbound := &Outbound{
 		Adapter: outbound.NewAdapterWithDialerOptions(C.TypeDirect, tag, []string{N.NetworkTCP, N.NetworkUDP, N.NetworkICMP}, options.DialerOptions, true),
@@ -101,23 +87,14 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		//nolint:staticcheck
 		domainStrategy: C.DomainStrategy(options.DomainStrategy),
 		fallbackDelay:  time.Duration(options.FallbackDelay),
-		dialer:         parallelDialer,
+		surface:        surface,
 		semantics:      dialer.NativeBypassSemantics(options.DialerOptions),
-	}
-	if reporter, isReporter := outboundDialer.(dialer.ResolveDialer); isReporter {
-		outbound.familyStrategy = reporter.EffectiveFamilyStrategy
-	}
-	// Discovered through the chain rather than configured, for the same reason the resolver is: the
-	// object that knows is the dialer that will actually create the socket, and the bypass must not
-	// hold a second opinion about the machine's addressing.
-	if localFamily, isLocalFamily := outboundDialer.(dialer.LocalFamilyDialer); isLocalFamily {
-		outbound.localFamily = localFamily.LocalFamilyBlocked
 	}
 	//nolint:staticcheck
 	if options.ProxyProtocol != 0 {
 		return nil, E.New("Proxy Protocol is deprecated and removed in sing-box 1.6.0")
 	}
-	if defaultDialer, isDefaultDialer := common.Cast[*dialer.DefaultDialer](outbound.dialer); isDefaultDialer {
+	if defaultDialer, isDefaultDialer := common.Cast[*dialer.DefaultDialer](outbound.surface.Attempt); isDefaultDialer {
 		outbound.icmpPort = ping.NewPort(ctx, logger, func(destination netip.Addr) control.Func {
 			return defaultDialer.DialerForICMPDestination(destination).Control
 		}, 0)
@@ -217,7 +194,7 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination 
 	case N.NetworkUDP:
 		h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 	}
-	return h.dialer.DialContext(ctx, network, destination)
+	return h.surface.Attempt.DialContext(ctx, network, destination)
 }
 
 func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
@@ -228,7 +205,7 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	metadata.Outbound = h.Tag()
 	metadata.Destination = destination
 	h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
-	conn, err := h.dialer.ListenPacket(ctx, destination)
+	conn, err := h.surface.Attempt.ListenPacket(ctx, destination)
 	if err != nil {
 		return nil, err
 	}
@@ -296,18 +273,17 @@ func (h *Outbound) DialParallelNetwork(ctx context.Context, network string, dest
 	return h.scheduleNetwork(ctx, network, destination, destinationAddresses, len(destinationAddresses) > 0 && destinationAddresses[0].Is6(), networkStrategy, networkType, fallbackNetworkType, fallbackDelay)
 }
 
-// scheduleNetwork hands the candidate list to whichever of the two dialing surfaces this outbound's
-// dialer actually has.
+// scheduleNetwork hands the candidate list to the candidate-planning surface this outbound's dialer has.
 //
-// # Why this is a dispatch rather than a direct call to the package helper
+// # Why the surface is a FIELD and not a type assertion
 //
-// h.dialer is stored as ParallelInterfaceDialer because that is the narrowest surface this outbound
-// needs for an ATTEMPT, and because a detour dialer has no parallel-network surface at all. But the
-// object inside that field is usually a *dialer.resolveParallelNetworkDialer, which implements the
-// richer ParallelNetworkDialer - and its DialParallelNetwork is the only place domain recovery for a
-// literal destination lives: the sniffed-domain lookup, the late-candidate feed, the family fallback.
+// This method used to assert `ParallelNetworkDialer` on `h.dialer`, which was declared at the per-attempt
+// interface because that is the narrowest surface an attempt needs. The object inside it was normally a
+// *dialer.resolveParallelNetworkDialer, which implements the richer surface - and its DialParallelNetwork
+// is the only place domain recovery for a literal destination lives: the sniffed-domain lookup, the
+// late-candidate feed, the family fallback.
 //
-// Calling the package-level helper directly passes h.dialer in at the NARROW type, and
+// Calling the package-level helper directly passed h.dialer in at the NARROW type, and
 // DialParallelNetwork's body never asks whether the object it was handed could have discovered more - it
 // plans the candidates it is given and schedules them. So the richer method was never invoked, and a TUN
 // flow to a global IPv6 literal with a sniffed domain was refused by the local-family gate while the
@@ -317,36 +293,25 @@ func (h *Outbound) DialParallelNetwork(ctx context.Context, network string, dest
 //
 // Fixing the wrapper alone was not enough: `DialSerialNetwork` does reach
 // resolveParallelNetworkDialer.DialParallelNetwork, but only when it is handed the wrapper. The
-// connection manager hands it the OUTBOUND, so this method is the actual entry point and the
-// capability has to survive here.
+// connection manager hands it the OUTBOUND, so this method is the actual entry point and the capability
+// has to survive here - which it now does by CONSTRUCTION: `NewOutbound` resolves the surface once and
+// refuses a chain without this capability, so there is no narrower type for anything to fall back to.
 //
-// # Scope, exactly
+// # Why the fallback that used to be here is gone
 //
-// The STREAM entry points needed this: `dialer.DialParallelNetwork` takes the narrow type and does not
-// re-dispatch. The PACKET one did not - `dialer.ListenSerialNetworkPacket` type-asserts the richer
-// interface itself, so a wrapped dialer already reached its recovery, and listenNetworkPacket below is
-// consistency rather than a fix. Writing the two asymmetrically would mean the next reader has to work
-// out which helper re-dispatches, and getting that wrong is precisely how this bug happened.
+// It existed for a detour-shaped chain, and a direct outbound cannot have one: `detour` is refused
+// outright above. Keeping it meant that if the factory ever stopped producing the planning surface, this
+// method would silently take the narrower path again and every test would still pass - which is exactly how
+// the defect survived two rounds. The refusal is now at construction, where an operator can read it.
 //
 // # Why this cannot recurse
 //
 // The wrapper schedules each attempt onto the object it was built over (`attemptDialer`), which is the
-// leaf, never the outbound: `NewResolveDialer` constructs it over the output of the leaf factory, and
-// the wrapper the outbound holds is the object this field was assigned from. So turning here reaches
-// the scheduler and then a real socket, which is the same graph
+// leaf, never the outbound: `NewResolveDialer` constructs it over the output of the leaf factory. So
+// turning here reaches the scheduler and then a real socket, which is the same graph
 // resolveParallelNetworkDialer.attemptDialer documents.
-//
-// # Why the fallback is not dead code
-//
-// A detour routes to another OUTBOUND instead of creating a socket, so its dialer has no parallel
-// network surface and takes the package helper exactly as before, with no scheduler of its own and no
-// recovery - which is correct, because the destination of a detoured flow is the proxy's business and
-// this machine's addressing must never rewrite it.
 func (h *Outbound) scheduleNetwork(ctx context.Context, network string, destination M.Socksaddr, destinationAddresses []netip.Addr, preferIPv6 bool, networkStrategy *C.NetworkStrategy, networkType []C.InterfaceType, fallbackNetworkType []C.InterfaceType, fallbackDelay time.Duration) (net.Conn, error) {
-	if networkDialer, isNetworkDialer := h.dialer.(dialer.ParallelNetworkDialer); isNetworkDialer {
-		return networkDialer.DialParallelNetwork(ctx, network, destination, destinationAddresses, networkStrategy, networkType, fallbackNetworkType, fallbackDelay)
-	}
-	return dialer.DialParallelNetwork(ctx, h.dialer, network, destination, destinationAddresses, preferIPv6, networkStrategy, networkType, fallbackNetworkType, fallbackDelay)
+	return h.surface.Network.DialParallelNetwork(ctx, network, destination, destinationAddresses, networkStrategy, networkType, fallbackNetworkType, fallbackDelay)
 }
 
 func (h *Outbound) ListenSerialNetworkPacket(ctx context.Context, destination M.Socksaddr, destinationAddresses []netip.Addr, networkStrategy *C.NetworkStrategy, networkType []C.InterfaceType, fallbackNetworkType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, netip.Addr, error) {
@@ -381,7 +346,8 @@ func (h *Outbound) ListenSerialNetworkPacket(ctx context.Context, destination M.
 //
 // It is also not dead weight. A helper that later drops its internal assertion, or a wrapper added
 // between this outbound and the resolve dialer, would silently make the packet path depend on a narrow
-// call again; here the capability is asked for at the point that holds it.
+// call again; here the capability is read from the surface resolved at construction, and a chain that
+// lacks it never becomes an outbound at all.
 //
 // # Why the packet path needs the candidate at all
 //
@@ -394,13 +360,10 @@ func (h *Outbound) ListenSerialNetworkPacket(ctx context.Context, destination M.
 // move the flow to a family that works.
 //
 // The wrapper's packet arm runs that lookup up front, bounded by the caller's context, and orders the
-// recovered addresses BEHIND the application's own - so the walk keeps the "the literal is the endpoint
+// recovered addresses BEHIND the application's own - so the walk keeps "the literal is the endpoint
 // the application chose" rule while giving it somewhere to go when the literal cannot be used.
 func (h *Outbound) listenNetworkPacket(ctx context.Context, destination M.Socksaddr, destinationAddresses []netip.Addr, networkStrategy *C.NetworkStrategy, networkType []C.InterfaceType, fallbackNetworkType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, netip.Addr, error) {
-	if networkDialer, isNetworkDialer := h.dialer.(dialer.ParallelNetworkDialer); isNetworkDialer {
-		return networkDialer.ListenSerialNetworkPacket(ctx, destination, destinationAddresses, networkStrategy, networkType, fallbackNetworkType, fallbackDelay)
-	}
-	return dialer.ListenSerialNetworkPacket(ctx, h.dialer, destination, destinationAddresses, networkStrategy, networkType, fallbackNetworkType, fallbackDelay)
+	return h.surface.Network.ListenSerialNetworkPacket(ctx, destination, destinationAddresses, networkStrategy, networkType, fallbackNetworkType, fallbackDelay)
 }
 
 // IsEmpty reports whether this outbound asks the socket layer for nothing at all.
@@ -446,6 +409,15 @@ func (h *Outbound) CanBypass(network string, destination netip.Addr) bool {
 // It exists beside CanBypass so a refusal can be attributed rather than merely observed: knowing
 // that the fast path is off is not actionable, and knowing it is off because of a routing mark is.
 // The cost is one profile lookup and two comparisons on a path that runs once per flow.
+//
+// # Why every term now comes from the resolved surface
+//
+// The family strategy and the local family verdict used to be two closures captured at construction, both
+// read off the same chain by type assertion at a point where the chain happened to be in hand. That is the
+// same discovery pattern this round removes: a closure is a second field that can be left nil by a future
+// edit, and the shape it was captured from is invisible to the reader of this function. The surface holds
+// them as named, resolvable capabilities, so "the bypass cannot ask what the dial path asks" is a
+// construction-time impossibility rather than a review question.
 func (h *Outbound) BypassBlockers(network string, destination netip.Addr) dialer.NativeBypassBlocker {
 	facts := dialer.NativeBypassFacts{
 		Network: network,
@@ -455,12 +427,17 @@ func (h *Outbound) BypassBlockers(network string, destination netip.Addr) dialer
 		DestinationIsLiteral: true,
 		Destination:          destination,
 	}
-	if h.familyStrategy != nil {
-		facts.FamilyStrategy = h.familyStrategy()
+	if h.surface.Resolve != nil {
+		// The userspace path applies this policy to the LITERAL destination as well as to resolved
+		// candidates, so the profile has to ask the same object the dial path asks. The previous version
+		// inferred it from whether the outbound had configured a resolver, which is a different fact: the
+		// effective policy can come from route.default_domain_resolver or dns.strategy, and inferring it
+		// from the local configuration allowed a bypass for a family the dial path refused.
+		facts.FamilyStrategy = h.surface.Resolve.EffectiveFamilyStrategy()
 	}
 	blockers := h.semantics.Blockers(facts)
 	blockers |= dialer.NetworkPolicyBlockers(h.network)
-	if h.localFamily != nil && h.localFamily(destination) {
+	if h.surface.LocalFamily != nil && h.surface.LocalFamily.LocalFamilyBlocked(destination) {
 		// The userspace path refuses this attempt before creating a socket, because the machine has
 		// no interface carrying an address of this family. A bypass is a connect performed by the
 		// platform, which has no such judgement, so without this the flow would spend the full

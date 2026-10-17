@@ -42,7 +42,7 @@ func TestABypassUsesTheEffectiveFamilyPolicyNotTheOutboundConfig(t *testing.T) {
 	// `resolutionOnly` is zero.
 	outbound := bypassable(option.DialerOptions{})
 	// The effective policy is strict, exactly as it would be if the operator set `dns.strategy`.
-	outbound.familyStrategy = func() C.DomainStrategy { return C.DomainStrategyIPv4Only }
+	outbound.surface.Resolve = stubResolveDialer{strategy: func() C.DomainStrategy { return C.DomainStrategyIPv4Only }}
 
 	require.False(t, outbound.CanBypass(N.NetworkTCP, ipv6),
 		"an ipv4_only policy must refuse a bypass to an IPv6 literal even when the outbound itself "+
@@ -55,18 +55,18 @@ func TestABypassUsesTheEffectiveFamilyPolicyNotTheOutboundConfig(t *testing.T) {
 	require.True(t, outbound.CanBypass(N.NetworkTCP, ipv4),
 		"the family the policy admits is exactly what the userspace path would dial, so it may bypass")
 
-	outbound.familyStrategy = func() C.DomainStrategy { return C.DomainStrategyIPv6Only }
+	outbound.surface.Resolve = stubResolveDialer{strategy: func() C.DomainStrategy { return C.DomainStrategyIPv6Only }}
 	require.True(t, outbound.CanBypass(N.NetworkTCP, ipv6),
 		"the matching strict policy admits this literal")
 	require.False(t, outbound.CanBypass(N.NetworkTCP, ipv4),
 		"and refuses the other one in the other direction")
 
-	outbound.familyStrategy = func() C.DomainStrategy { return C.DomainStrategyPreferIPv4 }
+	outbound.surface.Resolve = stubResolveDialer{strategy: func() C.DomainStrategy { return C.DomainStrategyPreferIPv4 }}
 	require.True(t, outbound.CanBypass(N.NetworkTCP, ipv6),
 		"a preference is not a restriction: treating prefer_ipv4 as a hard policy would refuse bypasses "+
 			"for no reason and cost the fast path")
 
-	outbound.familyStrategy = func() C.DomainStrategy { return C.DomainStrategyAsIS }
+	outbound.surface.Resolve = stubResolveDialer{strategy: func() C.DomainStrategy { return C.DomainStrategyAsIS }}
 	require.True(t, outbound.CanBypass(N.NetworkTCP, ipv6),
 		"and AsIS restricts neither family")
 }
@@ -79,7 +79,7 @@ func TestABypassUsesTheEffectiveFamilyPolicyNotTheOutboundConfig(t *testing.T) {
 func TestABypassWithoutAnEffectivePolicyStillWorks(t *testing.T) {
 	ipv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
 	outbound := bypassable(option.DialerOptions{})
-	require.Nil(t, outbound.familyStrategy, "the fixture must not report a strategy")
+	require.Nil(t, outbound.surface.Resolve, "the fixture must not report a strategy")
 
 	require.True(t, outbound.CanBypass(N.NetworkTCP, ipv6),
 		"an outbound that cannot report an effective policy must not refuse every bypass: a strategy "+

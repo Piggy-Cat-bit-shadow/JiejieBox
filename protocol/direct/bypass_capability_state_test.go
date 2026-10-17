@@ -85,7 +85,7 @@ func TestBypassRefusesOnlyAProvablyAbsentFamily(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			outbound := bypassable(option.DialerOptions{})
-			outbound.localFamily = testCase.blocked
+			outbound.surface.LocalFamily = stubLocalFamilyDialer{blocked: testCase.blocked}
 
 			require.Equal(t, testCase.expectIPv4, outbound.CanBypass(N.NetworkTCP, ipv4),
 				"ipv4: %s", testCase.why)
@@ -125,7 +125,7 @@ func TestBypassVerdictIsLiveAndNotPrecomputed(t *testing.T) {
 
 	outbound := bypassable(option.DialerOptions{})
 	blocked := false
-	outbound.localFamily = func(address netip.Addr) bool { return blocked && address.Is6() }
+	outbound.surface.LocalFamily = stubLocalFamilyDialer{blocked: func(address netip.Addr) bool { return blocked && address.Is6() }}
 
 	require.True(t, outbound.CanBypass(N.NetworkTCP, ipv6),
 		"the machine currently has IPv6 addressing, so the fast path is available")
@@ -165,7 +165,7 @@ func TestBypassRefusesAGlobalIPv6DestinationWithoutPublicEgress(t *testing.T) {
 
 	// The machine: IPv4 and IPv6 both present, no public IPv6 route.
 	outbound := bypassable(option.DialerOptions{})
-	outbound.localFamily = func(address netip.Addr) bool {
+	outbound.surface.LocalFamily = stubLocalFamilyDialer{blocked: func(address netip.Addr) bool {
 		switch {
 		case address.Unmap().Is4():
 			return false
@@ -174,7 +174,7 @@ func TestBypassRefusesAGlobalIPv6DestinationWithoutPublicEgress(t *testing.T) {
 		default:
 			return true
 		}
-	}
+	}}
 
 	require.False(t, outbound.CanBypass(N.NetworkTCP, globalIPv6),
 		"a global IPv6 destination cannot be carried by the platform when the machine has no route to one")
@@ -199,7 +199,7 @@ func TestBypassWithoutTheCapabilityIsUnchanged(t *testing.T) {
 	ipv6 := netip.MustParseAddr("2606:2800:220:1:248:1893:25c8:1946")
 
 	silent := bypassable(option.DialerOptions{})
-	require.Nil(t, silent.localFamily, "a chain that cannot answer leaves the field nil")
+	require.Nil(t, silent.surface.LocalFamily, "a chain that cannot answer leaves the capability nil")
 
 	require.Equal(t, "none", silent.BypassBlockers(N.NetworkTCP, ipv4).String())
 	require.Equal(t, "none", silent.BypassBlockers(N.NetworkTCP, ipv6).String())
@@ -215,7 +215,7 @@ func TestBypassRefusalIsAttributableAndDistinct(t *testing.T) {
 	ipv6 := netip.MustParseAddr("2606:2800:220:1:248:1893:25c8:1946")
 
 	outbound := bypassable(option.DialerOptions{})
-	outbound.localFamily = func(address netip.Addr) bool { return address.Is6() }
+	outbound.surface.LocalFamily = stubLocalFamilyDialer{blocked: func(address netip.Addr) bool { return address.Is6() }}
 
 	blockers := outbound.BypassBlockers(N.NetworkTCP, ipv6)
 	rendered := blockers.String()
