@@ -172,10 +172,15 @@ func (d *resolveDialer) DialContext(ctx context.Context, network string, destina
 		// lives. Two implementations of one policy is how a rule lands on one path and not the other, so
 		// the filter is applied here explicitly.
 		//
-		// Both terms now come from ONE policy capture and ONE composition (admitCandidates), shared with
-		// the unconnected-packet arm below - which was the next arm to be added and the next to be
-		// forgotten, because it was written against the old hand-rolled shape.
-		admission := d.captureAdmissionPolicy()
+		// Both terms come from the FLOW's policy - the one captured at the top of this function, not a
+		// second one taken here. That distinction was a real defect for exactly one commit: the shared
+		// composition below was added while this branch still took its own capture, so a serial hostname
+		// flow read the network twice with the same answer and nothing behaved differently. It was found
+		// by COUNTING captures per flow (TestOneFlowCapturesThePolicyExactlyOnce), which is the only
+		// measurement that can tell one reading from two identical ones.
+		//
+		// The composition is shared with the unconnected-packet arm below, which was the next arm to be
+		// added and the next to be forgotten because it had been written against the old hand-rolled shape.
 		admitted, refused, strategyExcludedAll := admission.admitCandidates(addresses)
 		if refusal := admission.emptiedListRefusal(destination, admitted, refused, strategyExcludedAll); refusal != nil {
 			return nil, refusal
