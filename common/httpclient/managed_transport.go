@@ -8,7 +8,6 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	E "github.com/sagernet/sing/common/exceptions"
-	N "github.com/sagernet/sing/common/network"
 )
 
 type innerTransport interface {
@@ -25,7 +24,6 @@ type ManagedTransport struct {
 	factory       func() (innerTransport, error)
 	cheapRebuild  bool
 
-	dialer          N.Dialer
 	headers         http.Header
 	host            string
 	tag             string

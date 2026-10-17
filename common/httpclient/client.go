@@ -40,7 +40,6 @@ func NewTransport(ctx context.Context, logger logger.ContextLogger, tag string, 
 			return nil, err
 		}
 		return &ManagedTransport{
-			dialer:          rawDialer,
 			headers:         headers,
 			host:            host,
 			tag:             tag,
@@ -72,7 +71,6 @@ func NewTransport(ctx context.Context, logger logger.ContextLogger, tag string, 
 	}
 	managedTransport := &ManagedTransport{
 		cheapRebuild:    cheapRebuild,
-		dialer:          rawDialer,
 		headers:         headers,
 		host:            host,
 		tag:             tag,
