@@ -959,19 +959,17 @@ func (h *familyHealth) recordSuccess(generation uint64, family addressFamily) {
 	}
 }
 
-// invalidateGeneration drops state for one network generation, used when the network changes.
-func (h *familyHealth) invalidateGeneration(generation uint64) {
-	h.access.Lock()
-	defer h.access.Unlock()
-	delete(h.state, generation)
-}
-
-// invalidateAll drops every verdict, for a full reset.
-func (h *familyHealth) invalidateAll() {
-	h.access.Lock()
-	defer h.access.Unlock()
-	h.state = make(map[uint64]familyHealthState)
-}
+// There is deliberately NO invalidateGeneration / invalidateAll here.
+//
+// They existed, with no production caller, and a reader who found a clearing method beside a
+// generation-keyed map would reasonably infer that something calls it on a transition - and then look
+// for the call site instead of finding the key. That is a wrong signpost in the one place this type's
+// scope is decided, and "a second way to forget a verdict" is the kind of parallel mechanism the
+// network-capability work exists to remove. Nothing clears this map on a network change: the new epoch
+// is a new bucket, and the only removal paths left are the three that read or overwrite an entry - the
+// expiry in fallbackImmediately, recordSuccess, and the clear-at-cap in storeLocked. If a future caller
+// genuinely needs an explicit drop, it should be added together with that caller, so the call site and
+// the reason arrive at the same time.
 
 // tcpTimeoutWindow is the lifetime of a family verdict. It is deliberately C.TCPTimeout
 // rather than a new constant, so the window matches the time a connection attempt may

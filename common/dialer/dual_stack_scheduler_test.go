@@ -418,10 +418,12 @@ func TestFamilyHealthIsScopedToTheNetworkGeneration(t *testing.T) {
 	require.False(t, health.fallbackImmediately(cellular, familyIPv6, familyIPv4),
 		"a Wi-Fi IPv6 verdict must not be applied to the cellular network")
 
-	// Switching networks drops the old verdict.
-	health.invalidateGeneration(wifi)
-	require.False(t, health.fallbackImmediately(wifi, familyIPv6, familyIPv4),
-		"an invalidated generation must start fresh")
+	// And the isolation needs no clearing step: the cellular network is unaffected BECAUSE the key is
+	// the generation, not because anything wiped the Wi-Fi entry. There used to be an
+	// invalidateGeneration call here, on a method with no production caller - which made the test read
+	// as though a transition clears the map. Nothing does, and the type now says so.
+	require.True(t, health.fallbackImmediately(wifi, familyIPv6, familyIPv4),
+		"the Wi-Fi entry must still be there: the isolation above is the KEY, not a purge")
 }
 
 // TestFamilyHealthExpires is §74, §107.
