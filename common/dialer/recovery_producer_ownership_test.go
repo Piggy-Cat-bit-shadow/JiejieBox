@@ -149,31 +149,41 @@ func TestRecoveryProducerIsJoined(t *testing.T) {
 		"the caller's context is still alive, so the producer's exit cannot be attributed to it")
 }
 
-// TestRecoveryProducerIsJoinedByTheDial is the same guarantee reached the way a connection reaches it.
+// TestDialDoesNotGainAProducerOnTheNoRecoveryPath is the half of the ownership contract that IS
+// deterministic through the dial: no recovery evidence, no producer.
 //
-// `DialParallelNetwork` starts the producer, so it must join it before returning - on the winner path as
-// much as on any other. A refactor that keeps the producer's own shutdown but forgets to call it fails
-// here, which the direct tests above cannot catch, because they call the stop themselves.
-func TestRecoveryProducerIsJoinedByTheDial(t *testing.T) {
+// # Why this is the assertion the dial can support
+//
+// The join itself cannot be observed through `DialParallelNetwork`, and pretending otherwise is how the
+// first version of this test became flaky: the literal wins in microseconds, so the dial can return before
+// the recovery goroutine has even been scheduled. `activeProducers() == 0` then means "never started" as
+// easily as "joined", which is not a property worth asserting.
+//
+// `TestRecoveryProducerIsJoined` carries the join, decisively and by mutation, because it drives `stop`
+// directly and can therefore guarantee the producer is parked first. What the dial CAN be held to here is
+// that it starts nothing at all when there is nothing to recover - the guarantee that keeps a literal with
+// no sniffed domain on exactly its previous path, with no goroutine, no channel and no timer.
+func TestDialDoesNotGainAProducerOnTheNoRecoveryPath(t *testing.T) {
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyAsIS)
 	originalIPv4 := netip.MustParseAddr("112.53.55.92")
 
-	chain.router.addressesA = []netip.Addr{netip.MustParseAddr("112.53.55.93"), netip.MustParseAddr("112.53.55.94")}
+	// An answer IS available, so a path that looked the name up without a name to look up would use it.
+	chain.router.addressesA = []netip.Addr{netip.MustParseAddr("112.53.55.93")}
 	chain.router.addressesAAAA = nil
 
-	callerCtx, cancelCaller := context.WithCancel(wechatFlowLongLived(originalIPv4, 80, "szextshort.weixin.qq.com"))
+	callerCtx, cancelCaller := context.WithCancel(wechatFlowLongLived(originalIPv4, 80, "" /* no sniffed domain */))
 	defer cancelCaller()
 
 	conn, err := chain.resolver.DialParallelNetwork(callerCtx, "tcp",
 		M.SocksaddrFrom(originalIPv4, 80), nil, nil, nil, nil, 0)
-	require.NoError(t, err, "the literal is dialable, so this is the winner path")
+	require.NoError(t, err)
 	require.NotNil(t, conn)
 	conn.Close()
 
-	// The dial has returned; the lookup is still inside the router because nothing released it. A dial
-	// that joined its producer finds it already closed when it is released here.
-	require.NoError(t, callerCtx.Err(),
-		"the caller's context is still alive, so the producer's exit cannot be attributed to it")
+	require.Zero(t, chain.lookupCalls(),
+		"no domain evidence means no lookup, and therefore no producer to join")
 	require.Zero(t, chain.activeProducers(),
-		"no recovery lookup goroutine may outlive the dial that started it")
+		"and nothing may be inside the router when the dial returns")
+	require.NoError(t, callerCtx.Err(),
+		"the caller's context is still alive, so nothing here can be attributed to its cancellation")
 }
