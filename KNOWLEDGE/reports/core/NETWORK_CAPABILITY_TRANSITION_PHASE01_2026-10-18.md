@@ -37,7 +37,7 @@ without `-race` and passed.
 | start SHA | `f868a8fb49efc66b8e0b9b97229a53171c50b053` |
 | last commit that changes code | `aa9ce1d2255` |
 | final SHA | the `HEAD` of `origin/testing` immediately after the commit that adds this file. It is deliberately **not** written here: a commit cannot carry its own hash without being rewritten, and a hash that is rewritten after it is printed is worse than no hash. Read it with `git log -1 --oneline origin/testing`. |
-| worktree | clean apart from `clients/desktop`, a gitlink the session found already modified and did not touch |
+| worktree | clean **except** `clients/desktop`, and the exception is created by the mandated sync rather than by this round. Diagnosed rather than waved at: before the pull the recorded gitlink was `edb4c6658eb`, which is exactly what the submodule is checked out at; the three commits pulled moved the pin to `d502365906a` and `git pull` does not recurse into submodules, so the parent now reports the submodule modified. The submodule itself has no uncommitted content. Left as it is — `git submodule update clients/desktop` would make the parent look clean while re-pointing a client source this round is forbidden to touch (§25), and the fork's branch tip is not lost either way. Reproduce: `git ls-tree HEAD clients/desktop` vs `git -C clients/desktop rev-parse HEAD`. |
 
 The tree was up to date with `origin/testing` before work began (`0/0`), because the three commits it
 was behind included release branding and a client pin — not this round's subject, but not something to
