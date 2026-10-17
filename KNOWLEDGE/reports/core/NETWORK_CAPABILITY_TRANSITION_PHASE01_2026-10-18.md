@@ -554,11 +554,21 @@ follows the user onto cellular — fails `TestProductionDialerHealthIsPerNetwork
 `TestFamilyHealthIsScopedToTheNetworkGeneration`, `TestFamilyHealthExpires`,
 `TestFamilyHealthRecoversOnSuccess`, `TestAFamilyVerdictCannotCrossEnvironments`.
 
-**Recorded, not changed:** `familyHealth.invalidateGeneration` and `familyHealth.invalidateAll` are
-production methods with **no production caller** — only `dual_stack_scheduler_test.go:422` calls the
-first, and nothing calls the second. They were left in place because the keying makes them redundant
-rather than wrong, and because the test that uses `invalidateGeneration` is asserting the type's stated
-contract. A reader must not mistake them for an active clearing mechanism; §V carries the hazard.
+**Fixed in this round, after the audit found it:** `familyHealth.invalidateGeneration` and
+`familyHealth.invalidateAll` were production methods with **no production caller** — only
+`dual_stack_scheduler_test.go:422` called the first, and nothing at all called the second. They were
+removed rather than left as a documented hazard, because the keying already makes them redundant and a
+clearing method beside a generation-keyed map is a wrong signpost in the one place this type's scope is
+decided: a reader reasonably infers that something calls it on a transition, then looks for the call site
+instead of finding the key. "A second way to forget a verdict" is the parallel mechanism this line of work
+exists to remove.
+
+What the type does now has exactly three removal paths, and they are the three that read or overwrite an
+entry: the expiry inside `fallbackImmediately`, `recordSuccess`, and the clear-at-cap in `storeLocked`.
+The test that used the removed method was rewritten to assert the actual design — that the Wi-Fi entry is
+*still present* — so the isolation it demonstrates is visibly the key rather than a purge.
+`VERIFIED_SOURCE` + `VERIFIED_UNIT` (`go build ./...`, `go vet ./common/dialer`, and the seven
+`familyHealth` tests).
 
 ---
 
@@ -811,15 +821,18 @@ Both described in §T. Recorded as findings rather than as trivia because each i
 future editor would make the reasonable-but-wrong way: a cache flush on a network change, and a dead path
 that drains.
 
-### U.2 `familyHealth`'s two invalidators are dead production code
+### U.2 `familyHealth`'s two invalidators were dead production code — removed
 
-`invalidateGeneration` and `invalidateAll` have no production caller. The generation keying makes them
-redundant, so they are not *wrong* — but a reader who finds an `invalidateGeneration` method beside a
+`invalidateGeneration` and `invalidateAll` had no production caller. The generation keying makes them
+redundant, so they were not *wrong* — but a reader who finds an `invalidateGeneration` method beside a
 generation-scoped map will reasonably infer that something calls it on a transition, and will look for the
 call site instead of finding the key. That is a documentation hazard pointing in the wrong direction, and
-it is exactly the "second clearing mechanism" §10 warns about. Left in place this round: removing it
-touches a test that uses it to assert the type's stated contract, which is a judgement better made with
-Phase 02's consumer convergence in view. `VERIFIED_SOURCE`.
+it is exactly the "second clearing mechanism" §10 warns about.
+
+Removed, with the reason left in their place, and with the one test that used them rewritten to assert the
+opposite of what it had been implying: the Wi-Fi entry is *still present* after another generation has been
+looked up, because the isolation is the key and nothing purges. See §N for the three removal paths that
+remain. `VERIFIED_SOURCE` + `VERIFIED_UNIT`.
 
 ### U.3 The route view is fresher than the addressing on the route-only path
 
@@ -904,7 +917,7 @@ is kept outside the recompute (§U.3).
 | V.3 | **`DeadPath` is not in the capability**, so a genuinely offline device publishes `Unknown`/`Unknown` and spends attempts that cannot succeed. | low | Encoding it would turn a *path* fact into an *addressing* fact and hard-deny a family on a transient platform report. The fast-fail loss is bounded by the caller's connect timeout; the misclassification loss would be an outage. |
 | V.4 | **Platform asymmetry is unverified on device.** Darwin has no separate route-change callback for a platform-monitor client (`networkMonitor` is nil), so a same-interface IPv6 route change may never reach the producer there. | **medium** | `VERIFIED_SOURCE`; there is no Darwin device in this environment. On such a client the interface monitor is the only source, and a route-only change with no address change may be missed — the fail-open direction. Needs a device run; recorded rather than guessed at. |
 | V.5 | **`-race` unverified** | medium | `BLOCKED_BY_ENVIRONMENT`, §header. |
-| V.6 | **Two dead production invalidators invite a second clearing mechanism** | low | §U.2; deferred to Phase 02's consumer convergence. |
+| V.6 | ~~Two dead production invalidators invite a second clearing mechanism~~ | — | **Closed in this round.** Both were removed and the reason was left in their place; the one test that used them now asserts the entry is still present, so the isolation it demonstrates is visibly the key. §U.2, §N. |
 | V.7 | **Windows IPv6-only networks read as dead paths** | low for this round, high if used on such a network | §U.5; upstream dependency, out of the round's scope. |
 | V.8 | **A non-default interface's addressing change does not reach the capability** until the default interface changes, so `r.networkInterfaces` can be a stale view on a multi-interface host. | medium-low | §U.8. Bounded fail-open by the fact that `Evaluate` ORs across interfaces; the fix would make the recompute host-dependent, which is why observation lives outside it. |
 
@@ -912,28 +925,31 @@ is kept outside the recompute (§U.3).
 
 ## W. Commits
 
-The round is `git log --oneline f868a8fb4..HEAD` on `testing`, pushed in order. The two commits that
-change behaviour-of-record are named with their hashes below; the rest are this report and its
-corrections, whose hashes are deliberately not written into themselves (see §A). A correction commit
-after a report is this repository's normal shape, not an anomaly: `convergence/POST_REFACTOR_AUDIT_2026-10-17.md`
-opens by recording that it corrected a construction report after finding a regression that report had
-introduced.
+The round is `git log --oneline f868a8fb4..HEAD` on `testing`, pushed in order. The two commits whose
+effect is a test are named with their hashes below; the remaining commits — the dead-code removal and this
+report plus its corrections — are listed by subject, because a commit cannot contain its own hash and a
+hash rewritten after publication is worse than a pointer to `git log`. A correction commit after a report
+is this repository's normal shape, not an anomaly: `convergence/POST_REFACTOR_AUDIT_2026-10-17.md` opens by
+recording that it corrected a construction report after finding a regression that report had introduced.
 
 | SHA | subject | files |
 |---|---|---|
 | `ad5bbb7e1fa` | `test(netcap): pin the reclaim policy a transition actually asks for` | `route/network_transition_reclaim_reason_test.go` (+147) |
 | `aa9ce1d2255` | `test(netcap): pin the DNS cache boundary of a network transition` | `dns/network_reset_cache_boundary_test.go` (+99), `route/network_transition_dns_cache_test.go` (+91) |
-| *(this commit; hash is `git log -1` on `testing`)* | `docs(knowledge): record the Phase 01 network capability transition audit` | `KNOWLEDGE/reports/core/NETWORK_CAPABILITY_TRANSITION_PHASE01_2026-10-18.md` (+1171), `KNOWLEDGE/reports/README.md` (+1) |
+| *(hash in `git log` — `remove the familyHealth invalidators that nothing called`)* | `refactor(dialer): remove the familyHealth invalidators that nothing called` | `common/dialer/dual_stack_scheduler.go`, `common/dialer/dual_stack_scheduler_test.go` |
+| *(hash in `git log` — the report and its corrections)* | `docs(knowledge): record the Phase 01 network capability transition audit` (+ corrections) | `KNOWLEDGE/reports/core/NETWORK_CAPABILITY_TRANSITION_PHASE01_2026-10-18.md`, `KNOWLEDGE/reports/README.md` |
 
-The report commit's own hash is not printed above, for the reason given in §A: writing a commit's hash
-into the commit invalidates it, and a self-referential hash that was rewritten after publication is a
-worse record than a pointer to `git log -1`.
+**One production file changed, and only to delete dead code.** `common/dialer/dual_stack_scheduler.go`
+lost `familyHealth.invalidateGeneration` / `invalidateAll`, which had no production caller (§U.2); the one
+test that used the first was rewritten to assert the design instead of the method. No behaviour changed:
+`go build ./...`, `go vet ./common/dialer` and the seven `familyHealth` tests pass, and the mutation that
+proves the generation scoping (M3) still fails the same five tests.
 
-No production file was changed. That is the round's result, not an omission: the capability producer,
-its publication, its generation and stability semantics, and its consumers already implement the contract
-this phase was asked to construct, and the audits in §B–§R are the evidence. What was missing was that two
-of the decisions holding that contract together would have survived being broken — and those are commits
-1 and 2.
+That was the whole of the code change, and it is not an omission: the capability producer, its
+publication, its generation and stability semantics, and its consumers already implement the contract this
+phase was asked to construct, and the audits in §B–§R are the evidence. What was missing was that two of
+the decisions holding that contract together would have survived being broken — commits 1 and 2 — plus one
+signpost pointing the wrong way — commit 3.
 
 **Verification run on this host at the final SHA:**
 
@@ -1036,8 +1052,9 @@ name and cannot build on Windows (`AGENTS.md`).
 16. **Which real new bugs were found?** **No live correctness defect in the capability producer.** The
     round's substantive finding is that two boundary decisions holding the contract together were
     unpinned — a network transition flushing the DNS cache (M9/M19) and a confirmed dead path draining
-    instead of closing (M17) — and both would have survived a regression. Four further observations are
-    recorded rather than fixed: the two dead `familyHealth` invalidators (U.2), the route/addressing
+    instead of closing (M17) — and both would have survived a regression. The one finding that was acted
+    on in code is the two dead `familyHealth` invalidators, removed (U.2). Three observations are recorded
+    rather than fixed: the route/addressing
     freshness asymmetry with its ≤1 s self-correction (U.3), the absence of any watcher for a NON-default
     interface's addressing (U.8), and the Windows IPv4-table default-interface picker reading an
     IPv6-only network as a dead path (U.5, upstream). The medium residual risk is Darwin:
@@ -1144,8 +1161,10 @@ name and cannot build on Windows (`AGENTS.md`).
     cleared by a success in that family.
     Soft only: it makes both families start together; it NEVER removes a candidate. Capability is hard
     fact, health is experience - do not merge them.
-    KNOWN HAZARD: invalidateGeneration / invalidateAll have NO production caller. Do not read them as
-    the mechanism; the key is. Candidate for removal once 02's consumers are settled.
+    NO invalidateGeneration / invalidateAll exists any more - they had no production caller and were
+    removed in this round (see U.2). Nothing clears this map on a network change; the new epoch is a new
+    bucket, and the only removal paths are the expiry in fallbackImmediately, recordSuccess and
+    clear-at-cap in storeLocked. Do not re-add a clearing method without its caller.
 
 - Settling flow behavior:
     A dial that begins during Settling must NOT hard-deny: localDialOwnership records startedStable and
@@ -1169,7 +1188,6 @@ name and cannot build on Windows (`AGENTS.md`).
     * Windows: the default-interface picker reads only the IPv4 forward table, so an IPv6-only network
       reads as "no default interface" -> pause -> ReclaimDeadPath after 2 s (report §U.5; upstream
       sing-tun, out of scope).
-    * familyHealth's two dead invalidators (§U.2).
     * The freshness of the capability's ADDRESSING view. It is refreshed by three writers and no other
       event, so on the route-only path it can be one interface-monitor debounce old (§U.3) and on a
       multi-interface host a non-default interface's change may not reach it at all (§U.8). Both are
