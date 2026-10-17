@@ -55,6 +55,7 @@ later. "Status" says whether the report still describes the tree or has been sup
 | `_boxdd_audit.md` | 2026-10-14 | `experimental/boxdd` at `8a008c5d02d2` | historical |
 | `_ci_reaudit.md` | 2026-10-14 | `ci-release` re-audit at `8a008c5d02d2` | historical |
 | `_kb_delta_map.md` | 2026-10-14 | knowledge-base delta `a267e99e0 -> 5fc4f9366` | superseded by later baselines |
+| `HAKO_SCALE_ARCHITECTURE_AUDIT_2026-10-17.md` | 2026-10-17 | large-configuration cost at `42222237d`: the rule-set object-cost table to 1M domains (steady 8.3 MiB, load 42.5 MiB), the load-transient stage breakdown, the outbound static-vs-runtime and background-worker inventories, and the one change it justified — the optimistic DNS refresh now obeys `common/power` | current |
 
 ### release/
 
