@@ -259,7 +259,7 @@ func (h *Outbound) DialParallel(ctx context.Context, network string, destination
 	case N.NetworkUDP:
 		h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 	}
-	return dialer.DialParallelNetwork(ctx, h.dialer, network, destination, destinationAddresses, len(destinationAddresses) > 0 && destinationAddresses[0].Is6(), nil, nil, nil, h.fallbackDelay)
+	return h.scheduleNetwork(ctx, network, destination, destinationAddresses, len(destinationAddresses) > 0 && destinationAddresses[0].Is6(), nil, nil, nil, h.fallbackDelay)
 }
 
 func (h *Outbound) DialParallelNetwork(ctx context.Context, network string, destination M.Socksaddr, destinationAddresses []netip.Addr, networkStrategy *C.NetworkStrategy, networkType []C.InterfaceType, fallbackNetworkType []C.InterfaceType, fallbackDelay time.Duration) (net.Conn, error) {
@@ -276,7 +276,52 @@ func (h *Outbound) DialParallelNetwork(ctx context.Context, network string, dest
 	case N.NetworkUDP:
 		h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 	}
-	return dialer.DialParallelNetwork(ctx, h.dialer, network, destination, destinationAddresses, len(destinationAddresses) > 0 && destinationAddresses[0].Is6(), networkStrategy, networkType, fallbackNetworkType, fallbackDelay)
+	return h.scheduleNetwork(ctx, network, destination, destinationAddresses, len(destinationAddresses) > 0 && destinationAddresses[0].Is6(), networkStrategy, networkType, fallbackNetworkType, fallbackDelay)
+}
+
+// scheduleNetwork hands the candidate list to whichever of the two dialing surfaces this outbound's
+// dialer actually has.
+//
+// # Why this is a dispatch rather than a direct call to the package helper
+//
+// h.dialer is stored as ParallelInterfaceDialer because that is the narrowest surface this outbound
+// needs for an ATTEMPT, and because a detour dialer has no parallel-network surface at all. But the
+// object inside that field is usually a *dialer.resolveParallelNetworkDialer, which implements the
+// richer ParallelNetworkDialer - and its DialParallelNetwork is the only place domain recovery for a
+// literal destination lives: the sniffed-domain lookup, the late-candidate feed, the family fallback.
+//
+// Calling the package-level helper directly passes h.dialer in at the NARROW type, and that helper
+// schedules candidates from what it is given without asking whether the object could have discovered
+// more. So the richer method was never invoked, and a TUN flow to a global IPv6 literal with a sniffed
+// domain was refused by the local-family gate while the recovery machinery sat one call away with the
+// name already in the context metadata. In the production log that is the WeChat flow with
+// `sniffed protocol: http, domain: szminorshort.weixin.qq.com` followed by the IPv6 refusal and no
+// `dns: lookup domain` line between them.
+//
+// Fixing the wrapper alone was not enough: `DialSerialNetwork` does reach
+// resolveParallelNetworkDialer.DialParallelNetwork, but only when it is handed the wrapper. The
+// connection manager hands it the OUTBOUND, so this method is the actual entry point and the
+// capability has to survive here.
+//
+// # Why this cannot recurse
+//
+// The wrapper schedules each attempt onto the object it was built over (`attemptDialer`), which is the
+// leaf, never the outbound: `NewResolveDialer` constructs it over the output of the leaf factory, and
+// the wrapper the outbound holds is the object this field was assigned from. So turning here reaches
+// the scheduler and then a real socket, which is the same graph
+// resolveParallelNetworkDialer.attemptDialer documents.
+//
+// # Why the fallback is not dead code
+//
+// A detour routes to another OUTBOUND instead of creating a socket, so its dialer has no parallel
+// network surface and takes the package helper exactly as before, with no scheduler of its own and no
+// recovery - which is correct, because the destination of a detoured flow is the proxy's business and
+// this machine's addressing must never rewrite it.
+func (h *Outbound) scheduleNetwork(ctx context.Context, network string, destination M.Socksaddr, destinationAddresses []netip.Addr, preferIPv6 bool, networkStrategy *C.NetworkStrategy, networkType []C.InterfaceType, fallbackNetworkType []C.InterfaceType, fallbackDelay time.Duration) (net.Conn, error) {
+	if networkDialer, isNetworkDialer := h.dialer.(dialer.ParallelNetworkDialer); isNetworkDialer {
+		return networkDialer.DialParallelNetwork(ctx, network, destination, destinationAddresses, networkStrategy, networkType, fallbackNetworkType, fallbackDelay)
+	}
+	return dialer.DialParallelNetwork(ctx, h.dialer, network, destination, destinationAddresses, preferIPv6, networkStrategy, networkType, fallbackNetworkType, fallbackDelay)
 }
 
 func (h *Outbound) ListenSerialNetworkPacket(ctx context.Context, destination M.Socksaddr, destinationAddresses []netip.Addr, networkStrategy *C.NetworkStrategy, networkType []C.InterfaceType, fallbackNetworkType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, netip.Addr, error) {
@@ -287,11 +332,31 @@ func (h *Outbound) ListenSerialNetworkPacket(ctx context.Context, destination M.
 	metadata.Outbound = h.Tag()
 	metadata.Destination = destination
 	h.logger.InfoContext(ctx, "outbound packet connection")
-	conn, newDestination, err := dialer.ListenSerialNetworkPacket(ctx, h.dialer, destination, destinationAddresses, networkStrategy, networkType, fallbackNetworkType, fallbackDelay)
-	if err != nil {
-		return nil, netip.Addr{}, err
+	return h.listenNetworkPacket(ctx, destination, destinationAddresses, networkStrategy, networkType, fallbackNetworkType, fallbackDelay)
+}
+
+// listenNetworkPacket is scheduleNetwork's packet counterpart, and it has the same hole for the same
+// reason: the package helper schedules candidates from the list it is handed, so a wrapped dialer that
+// could have discovered a candidate for a literal is passed in at the narrow type and never asked.
+//
+// # Why the packet path matters even though it has no race
+//
+// An unconnected packet flow has no scheduler - a UDP socket creation is not a verified outcome, so
+// racing two sockets would deliver duplicate datagrams and award a winner that never sent anything.
+// `ListenSerialNetworkPacket` is a serial walk whose ONLY fallback is another candidate. On this machine
+// a UDP socket to an unreachable IPv6 network is created successfully and fails at the first send, so an
+// unrecovered global IPv6 literal wins the walk and the client is handed a dead connection. The
+// sniffed-domain candidate is therefore not an optimisation here; it is the only thing that can move the
+// flow to a family that works.
+//
+// The wrapper's packet arm runs that lookup up front, bounded by the caller's context, and orders the
+// recovered addresses BEHIND the application's own - so dispatch here keeps the "the literal is the
+// endpoint the application chose" rule while giving the walk somewhere to go.
+func (h *Outbound) listenNetworkPacket(ctx context.Context, destination M.Socksaddr, destinationAddresses []netip.Addr, networkStrategy *C.NetworkStrategy, networkType []C.InterfaceType, fallbackNetworkType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, netip.Addr, error) {
+	if networkDialer, isNetworkDialer := h.dialer.(dialer.ParallelNetworkDialer); isNetworkDialer {
+		return networkDialer.ListenSerialNetworkPacket(ctx, destination, destinationAddresses, networkStrategy, networkType, fallbackNetworkType, fallbackDelay)
 	}
-	return conn, newDestination, nil
+	return dialer.ListenSerialNetworkPacket(ctx, h.dialer, destination, destinationAddresses, networkStrategy, networkType, fallbackNetworkType, fallbackDelay)
 }
 
 // IsEmpty reports whether this outbound asks the socket layer for nothing at all.

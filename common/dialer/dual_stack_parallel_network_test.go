@@ -64,6 +64,10 @@ type parallelProductionChain struct {
 	resolver *resolveParallelNetworkDialer
 	router   *scriptedFamilyRouter
 	inner    *stallingDialer
+	// stored is the leaf as the direct outbound stores it, and resolved is the wrapper over it. Both are
+	// kept so the two-hop outbound graph can be handed to the entry point exactly as production does.
+	stored   *candidateDialer
+	outbound *directOutboundDouble
 }
 
 // candidateDialer is the object the direct outbound stores: a leaf that can also dial one attempt on a
@@ -126,6 +130,28 @@ var (
 	_ ParallelNetworkDialer   = (*directOutboundDouble)(nil)
 )
 
+// The reason this suite could not see the production defect, and where the assertion for it lives.
+//
+// `directOutboundDouble` forwards to the wrapper STATICALLY, so it exercises the wrapper and never the
+// outbound's choice of surface. That was not a defect in the double - it is what let this file pin the
+// wrapper's semantics while the outbound was still passing the same wrapper in at its narrow type. The
+// production graph is:
+//
+//	ConnectionManager -> DialSerialNetwork -> *direct.Outbound (implements ParallelNetworkDialer)
+//	  -> Outbound.DialParallelNetwork -> h.dialer, declared `ParallelInterfaceDialer`
+//	    -> either the wrapper's richer method (recovery) or the package helper (no recovery)
+//
+// The last hop is a decision inside `protocol/direct`, and this package cannot test it: importing
+// `protocol/direct` from `common/dialer` is an import cycle, and no exported seam exists for "which
+// surface did you choose". Reproducing that choice here would be the wrong fix - a copy of the code
+// under test cannot fail when the code under test is reverted, which is precisely how this bug survived
+// a green suite twice.
+//
+// The decision is therefore pinned in `protocol/direct/outbound_network_dispatch_test.go`, where the
+// real `Outbound` is built over a dialer that implements both surfaces and the assertion is that the
+// network-level method was called. These tests below stay about what the wrapper does once entered, and
+// they are reached here through the same two-hop object graph production uses.
+
 func newParallelProductionChain(t *testing.T, ipv4 netcap.FamilyState, ipv6 netcap.FamilyState, strategy C.DomainStrategy) *parallelProductionChain {
 	t.Helper()
 	leaf := newCapabilityLeaf(ipv4, ipv6)
@@ -154,7 +180,7 @@ func newParallelProductionChain(t *testing.T, ipv4 netcap.FamilyState, ipv6 netc
 		attempts: stored,
 	}
 	outbound.parallel = parallel
-	return &parallelProductionChain{resolver: parallel, router: router, inner: inner}
+	return &parallelProductionChain{resolver: parallel, router: router, inner: inner, stored: stored, outbound: outbound}
 }
 
 // dialSerialNetwork is the production call site, unwrapped: this is the line
@@ -179,6 +205,30 @@ func (c *parallelProductionChain) tried() []netip.Addr {
 
 func (c *parallelProductionChain) lookupCalls() int32 {
 	return c.router.calls.Load()
+}
+
+// outboundShape is the object `route.ConnectionManager` is actually handed, built the way production
+// builds it: the direct outbound holds the resolve WRAPPER it schedules onto, and schedules onto it
+// through the richer network surface.
+//
+// It is built on demand rather than in the constructor so every existing test keeps driving the wrapper
+// directly - those tests are about the wrapper's semantics and must not start depending on the
+// outbound's forwarding decision, which is pinned in its own package. This accessor exists so the two
+// tests below start where a connection starts, at the object the connection manager passes.
+func (c *parallelProductionChain) outboundShape() *directOutboundDouble {
+	return c.outbound
+}
+
+// dialSerialNetworkAtTheOutbound is `ConnectionManager.NewConnection`'s address arm with the object it
+// really passes, so the whole two-hop graph is under test rather than the wrapper alone.
+func (c *parallelProductionChain) dialSerialNetworkAtTheOutbound(ctx context.Context, network string, destination M.Socksaddr, destinationAddresses []netip.Addr) (net.Conn, error) {
+	return DialSerialNetwork(ctx, c.outboundShape(), network, destination, destinationAddresses, nil, nil, nil, 0)
+}
+
+// listenSerialNetworkPacketAtTheOutbound is the packet counterpart, reached through
+// `ConnectionManager.NewPacketConnection`'s unconnected arm.
+func (c *parallelProductionChain) listenSerialNetworkPacketAtTheOutbound(ctx context.Context, destination M.Socksaddr, destinationAddresses []netip.Addr) (net.PacketConn, netip.Addr, error) {
+	return ListenSerialNetworkPacket(ctx, c.outboundShape(), destination, destinationAddresses, nil, nil, nil, 0)
 }
 
 // stallLookup holds every family open until releaseLookup is called, so a test can assert on what
@@ -642,6 +692,97 @@ func TestNetworkPacketEntryPointRecoversTheSniffedDomain(t *testing.T) {
 	require.NotContains(t, tried, originalIPv6,
 		"an unreachable-family candidate must be refused before socket creation: that refusal IS the packet path's fallback")
 }
+
+// ---------------------------------------------------------------------------------------------
+// 9. The whole two-hop graph, entered where a connection starts
+// ---------------------------------------------------------------------------------------------
+
+// TestDirectOutboundGraphRecoversTheWeChatLiteral drives the connection through BOTH hops of the
+// production graph, entered with the object `ConnectionManager` actually passes.
+//
+// # What this does and does not prove
+//
+// Every test above enters at the wrapper, either directly or through a double whose network method
+// forwards to it statically. This one enters at the outbound instead, which is the object
+// `ConnectionManager.NewConnection` hands `DialSerialNetwork`: the latter's type assertion finds
+// `ParallelNetworkDialer`, and the outbound's own network method is what runs.
+//
+// It is worth being precise about its power, because a test that overstates what it covers is how this
+// bug survived a green suite twice. This file cannot see the outbound's CHOICE OF SURFACE: `protocol/direct`
+// cannot be imported here (import cycle), and reproducing its two forwarding lines in a local double
+// would be a copy of the code under test - which does not fail when that code is reverted, as
+// `directOutboundDouble` demonstrated. Mutation-test that claim rather than trusting it: reverting the
+// outbound's dispatch keeps these two tests green, and that is why the decisive assertion lives in
+// `protocol/direct/outbound_network_dispatch_test.go`.
+//
+// What this test therefore covers is the graph itself: that recovery at the end of a two-hop chain -
+// outbound over wrapper over leaf - reaches the resolver, plans the recovered candidate, and connects.
+// The wrapper's own contract was previously only exercised with the outbound out of the picture.
+func TestDirectOutboundGraphRecoversTheWeChatLiteral(t *testing.T) {
+	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateUnavailable, C.DomainStrategyAsIS)
+
+	originalIPv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	healthyIPv4 := netip.MustParseAddr("112.53.55.92")
+	chain.router.addressesA = []netip.Addr{healthyIPv4}
+	chain.router.addressesAAAA = []netip.Addr{originalIPv6}
+
+	ctx, cancel := context.WithTimeout(wechatFlow(originalIPv6, 80, "szminorshort.weixin.qq.com"), 3*time.Second)
+	defer cancel()
+
+	conn, err := chain.dialSerialNetworkAtTheOutbound(ctx, "tcp", M.SocksaddrFrom(originalIPv6, 80), nil)
+	require.NoError(t, err, "the outbound must reach recovery, not schedule the literal itself")
+	require.NotNil(t, conn)
+	conn.Close()
+
+	require.NotZero(t, chain.lookupCalls(),
+		"the sniffed domain must reach the resolver even when the destination is a literal")
+	require.Contains(t, chain.tried(), healthyIPv4,
+		"and the recovered address is what carries the flow")
+	require.NotContains(t, chain.tried(), originalIPv6,
+		"the unreachable-family literal is refused before a socket attempt")
+}
+
+// TestDirectOutboundPacketGraphRecoversTheSniffedDomain is the packet half, over the same two-hop graph.
+//
+// The packet arm has no scheduler and no race, so the recovered candidate is not an optimisation: the
+// serial walk's only fallback is the next candidate, and on this machine an IPv6 UDP socket is created
+// successfully and fails at the first send. Without recovery the flow is handed a dead connection.
+//
+// This one is honest about a limitation the stream half does not have: the packet path already reached
+// discovery before this round's fix, because the package-level `ListenSerialNetworkPacket` helper
+// asserts the richer interface itself. So this test is not falsified by reverting the outbound's
+// dispatch - it pins that the two-hop graph keeps working, which is still worth having, and the
+// falsifiable assertion for the packet arm is the dispatch test in `protocol/direct`.
+func TestDirectOutboundPacketGraphRecoversTheSniffedDomain(t *testing.T) {
+	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateUnavailable, C.DomainStrategyAsIS)
+	chain.inner.packetConn = &countingPacketConn{}
+
+	originalIPv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	healthyIPv4 := netip.MustParseAddr("112.53.55.92")
+	chain.router.addressesA = []netip.Addr{healthyIPv4}
+	chain.router.addressesAAAA = []netip.Addr{originalIPv6}
+
+	ctx, cancel := context.WithTimeout(wechatFlow(originalIPv6, 443, "szminorshort.weixin.qq.com"), 3*time.Second)
+	defer cancel()
+
+	packetConn, destination, err := chain.listenSerialNetworkPacketAtTheOutbound(ctx, M.SocksaddrFrom(originalIPv6, 443), nil)
+	require.NoError(t, err, "the packet walk must be able to leave a family this machine cannot send on")
+	require.NotNil(t, packetConn)
+	packetConn.Close()
+
+	require.Equal(t, healthyIPv4, destination,
+		"the address reported to the caller is the one actually bound")
+	require.NotZero(t, chain.lookupCalls(),
+		"the sniffed domain must reach the resolver on the packet path too")
+	require.Contains(t, chain.tried(), healthyIPv4)
+	require.NotContains(t, chain.tried(), originalIPv6)
+}
+
+// The fallback half of the dispatch - "a dialer with no parallel network surface keeps the package
+// helper" - is pinned with the dispatch itself, in
+// `protocol/direct/outbound_network_dispatch_test.go`. It cannot live here: a wrapper built in this
+// package either has the richer surface or is a plain leaf, and neither shape is the detour that makes
+// the fallback load-bearing.
 
 // ---------------------------------------------------------------------------------------------
 // Fixtures this file owns
