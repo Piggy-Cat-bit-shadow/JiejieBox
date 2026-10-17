@@ -912,7 +912,12 @@ is kept outside the recompute (§U.3).
 
 ## W. Commits
 
-All three on `testing`, in order, each pushed with the branch.
+The round is `git log --oneline f868a8fb4..HEAD` on `testing`, pushed in order. The two commits that
+change behaviour-of-record are named with their hashes below; the rest are this report and its
+corrections, whose hashes are deliberately not written into themselves (see §A). A correction commit
+after a report is this repository's normal shape, not an anomaly: `convergence/POST_REFACTOR_AUDIT_2026-10-17.md`
+opens by recording that it corrected a construction report after finding a regression that report had
+introduced.
 
 | SHA | subject | files |
 |---|---|---|
