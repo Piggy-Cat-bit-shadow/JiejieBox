@@ -164,35 +164,23 @@ func (d *resolveDialer) DialContext(ctx context.Context, network string, destina
 		// only one that did not, because it never reaches the planner or the scheduler where the filter
 		// lives. Two implementations of one policy is how a rule lands on one path and not the other, so
 		// the filter is applied here explicitly.
-		policy := d.dialerLocalFamilyPolicy()
-		familyStrategy := d.effectiveFamilyStrategy()
-		strategyExcludedEverything := false
-		if len(addresses) > 0 {
-			admitted := withoutFamilyExcluded(addresses, familyStrategy)
-			strategyExcludedEverything = len(admitted) == 0
-			addresses = admitted
+		//
+		// Both terms now come from ONE policy capture and ONE composition (admitCandidates), shared with
+		// the unconnected-packet arm below - which was the next arm to be added and the next to be
+		// forgotten, because it was written against the old hand-rolled shape.
+		admission := d.captureAdmissionPolicy()
+		admitted, refused, strategyExcludedAll := admission.admitCandidates(addresses)
+		if refusal := admission.emptiedListRefusal(destination, admitted, refused, strategyExcludedAll); refusal != nil {
+			return nil, refusal
 		}
-		refused := refusedCandidateIn(addresses, policy)
-		addresses = withoutUndialable(addresses, policy)
-		if len(addresses) == 0 {
-			if refused.refused() {
-				// Every address belonged to a family this machine cannot dial. Refusing with the
-				// reason is the whole value of the verdict; falling through would turn it into a
-				// connect timeout that says nothing about the machine.
-				return nil, localFamilyRefusalError(refused, policy)
-			}
-			if strategyExcludedEverything {
-				// A configuration decision, not a property of the machine, and it must read as one.
-				return nil, E.New("destination ", destination, " excluded by strategy ", strategyName(familyStrategy),
-					": every resolved address belongs to the family this policy forbids")
-			}
+		if len(admitted) == 0 {
 			// The resolver produced nothing and nothing was refused. This must be reported HERE
 			// rather than passed down, because N.DialSerial over an empty address list returns a nil
 			// connection and a nil error - a successful dial that produced nothing, which a caller
 			// would dereference.
 			return nil, E.New("no address for ", destination)
 		}
-		return N.DialSerial(ctx, d.dialer, network, destination, addresses)
+		return N.DialSerial(ctx, d.dialer, network, destination, admitted)
 	}
 	// A hostname takes the SAME candidate planner and scheduler as a recovered literal.
 	// Previously this branch called N.DialParallel, which split candidates into family groups
@@ -884,7 +872,28 @@ func (d *resolveDialer) ListenPacket(ctx context.Context, destination M.Socksadd
 	if err != nil {
 		return nil, err
 	}
-	conn, destinationAddress, err := N.ListenSerial(ctx, d.dialer, destination, addresses)
+	// The admission policy applies to this arm too, and it did not.
+	//
+	// # The hole, and how it was found
+	//
+	// Three arms of the packet surface were pinned by tests: the literal here, the caller-supplied
+	// candidate list through ListenSerialNetworkPacket, and the parallel interface packet path. This
+	// fourth one - an unconnected packet flow to a HOSTNAME - went from the resolver's answer straight
+	// into N.ListenSerial, applying neither term of the policy. Measured with `ipv4_only` and a name whose
+	// A answer was empty while AAAA answered: a UDP socket was created for the family the operator had
+	// forbidden, and no test could see it because every strategy test was written for the stream path or
+	// for a candidate list.
+	//
+	// It is the same class as the serial stream branch above, in the sibling entry point, for the third
+	// time in this file's history - which is the argument for admitCandidates being one function rather
+	// than a shape each arm re-derives. A socket creation is not a verified outcome, so there is no race
+	// and no scheduler here to catch it later: the list handed to N.ListenSerial IS the decision.
+	admission := d.captureAdmissionPolicy()
+	admitted, refused, strategyExcludedAll := admission.admitCandidates(addresses)
+	if refusal := admission.emptiedListRefusal(destination, admitted, refused, strategyExcludedAll); refusal != nil {
+		return nil, refusal
+	}
+	conn, destinationAddress, err := N.ListenSerial(ctx, d.dialer, destination, admitted)
 	if err != nil {
 		return nil, err
 	}

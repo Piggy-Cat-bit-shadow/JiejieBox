@@ -5,6 +5,7 @@ import (
 
 	C "github.com/sagernet/sing-box/constant"
 	E "github.com/sagernet/sing/common/exceptions"
+	M "github.com/sagernet/sing/common/metadata"
 )
 
 // admissionPolicy is ONE flow's immutable answer to a single question:
@@ -157,6 +158,38 @@ func (p admissionPolicy) lateAdmission() func(netip.Addr) bool {
 	return func(address netip.Addr) bool {
 		return AddressAllowedByStrategy(address, strategy)
 	}
+}
+
+// emptiedListRefusal renders the error for a candidate list the policy emptied, or nil.
+//
+// # Three outcomes, three errors, and only the caller knows the shape
+//
+// The caller supplies the destination, because the message names it and only the caller has it; this
+// supplies the VERDICT, because that is the part that must not be re-derived. A list emptied by the
+// operator's policy and a list emptied by the machine are different facts with different remedies, and a
+// list that was empty to begin with is neither - "nothing was offered" must not be reported as a refusal,
+// or the package invents a policy decision the policy never made.
+//
+// # Why it is one function
+//
+// This three-way question decides which of three errors a caller returns, and it had been written by hand
+// at four arms of this package. The two that were written first were correct; the arms added later were
+// not, and the packet arm below was missing the whole decision - measured, with `ipv4_only` and a UDP flow
+// to a hostname, a socket was created for the family the operator forbade. A composition a caller can copy
+// is a composition a caller can forget; it is one function now so the fifth arm cannot be the one that
+// forgets.
+func (p admissionPolicy) emptiedListRefusal(destination M.Socksaddr, admitted []netip.Addr, refused localFamilyRefusal, strategyExcludedAll bool) error {
+	if len(admitted) > 0 {
+		return nil
+	}
+	if refused.refused() {
+		return localFamilyRefusalError(refused, p.localFamily)
+	}
+	if strategyExcludedAll {
+		return E.New("destination ", destination, " excluded by strategy ", strategyName(p.strategy),
+			": every candidate belongs to the family this policy forbids")
+	}
+	return nil
 }
 
 // admissionVerdict is why a flow refused one address, or that it did not.
