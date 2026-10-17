@@ -250,6 +250,81 @@ go test -race ...                                  BLOCKED_BY_ENVIRONMENT
 
 ---
 
+## L. Second pass — the matrix and the lag sequences, which the first pass did not run
+
+**The first pass mapped §3 and §5-§7 onto tests that already existed, and for this phase that is not the
+same as executing them.** §3 is a NINE-row transition matrix; §5 and §6 are phase sequences whose whole
+point is a partially-true capability. The first pass ran one three-state sequence. That is recorded here
+because a mapping table without the matrix looks like coverage, and this round's own discipline says a
+mapping is not a measurement.
+
+The second pass (`6c1bbf73dbc`) runs them, with a real flow at every phase:
+
+| brief § | what now exists | level |
+|---|---|---|
+| §3 transition matrix | `TestTheTransitionMatrix` — all nine rows: IPv4-only↔dual, IPv6-only↔dual, IPv4-only↔IPv6-only, and dead path in all three directions. Each row asserts what a flow reaches BEFORE, what it reaches AFTER, and that the flow after captured the published generation | `VERIFIED_UNIT` + `VERIFIED_MUTATION` |
+| §5 address lag | `TestAddressLagPhases` — IPv4 ready, IPv6 **unobserved**, IPv6 address, IPv6 route; a new flow at each phase. The unobserved phase must publish **Unknown**, not unavailable, or the window hard-denies a family that is merely unobserved | `VERIFIED_UNIT` |
+| §6 route lag | `TestRouteLagPhases` — address present with no global route, then the route. Both directions: the early flow must not falsely succeed on a global address it has no route to, and the later flow must not inherit the no-egress verdict | `VERIFIED_UNIT` |
+| §7 IPv4 transition | `TestTheIPv4RouteTransitionIsNotModelledTheSameWayAsIPv6` — the IPv4 term honoured in both directions, plus §7's answer stated as the asymmetry it is | `VERIFIED_UNIT` |
+| §13 old answer leakage | `TestAnAnswerResolvedForTheOldGenerationCannotEnterTheNewScheduler` — generation N with the AAAA answer blocked, the transition, then the answer released; a new flow still sees its own generation and verdict | `VERIFIED_UNIT` |
+| §14 late candidate after the cancel | `TestACandidateDeliveredAfterTheCancelAddsNoAttempt` — the attempt count does not move, 50 iterations | `VERIFIED_UNIT`, and see the caveat below |
+
+### L.1 §7's answer, and how it is asserted
+
+The model has three decision terms — `IPv4`, `IPv6`, `GlobalIPv6Egress` — and **no IPv4 egress term**. So an
+IPv4 default route disappearing cannot reach a flow as "the address is fine but there is no route"; it can
+only arrive as the IPv4 term being unavailable. That is the answer to §7, and it is an asymmetry rather
+than a gap: IPv6 is the family whose reachability splits between address and route in practice (a Windows
+machine with a link-local address and no global route), and collapsing the two would be wrong in both
+directions.
+
+The assertion is against the MODEL rather than behaviour, because behaviour cannot express a term that does
+not exist: writing `.GlobalIPv4Egress` is a compile error, which IS the proof. The guard reflects over
+`netcap.FamilyCapability` and requires exactly `[IPv4 IPv6 GlobalIPv6Egress]` plus one unexported
+`reachable` — the interface COUNT the evaluation could see, which is provenance rather than a decision term.
+**I found that fourth field only because the guard failed on it**, having written the assertion believing
+the struct had three fields.
+
+### L.2 §14's guard, and the honest status of its evidence
+
+§12 states "no late launch" and §14 makes it observable. Both were unmet, and the scheduler now carries a
+cancellation check.
+
+**But removing that check does not fail the §14 test, and this was MEASURED rather than assumed.** The loop
+has a second, independent way to conclude: once the cancelled attempt returns, `started == len(failures)` and
+it exits before reading the channel again. So in every scenario a deterministic fixture can build, the launch
+window is already closed by the time the candidate arrives. The window the check closes is one that only a
+genuine race opens — `cancel()` concurrent with a ready candidate, the select choosing between two ready
+cases at random — and that cannot be built deterministically.
+
+The check is kept because it makes that window deterministic in production. It is **not** claimed as
+test-enforced, and the test's own comment says so, so that a future reader does not remove it expecting a
+failing test.
+
+### L.3 Five of my own premises were wrong in this pass
+
+All are recorded in the tests rather than only here, because each one would otherwise be re-made:
+
+1. A **dead path** needs the transport to be unreachable as well as the verdict to be empty. The first
+   version asserted a failing flow on a dialer that politely succeeded — the fixture now models
+   `ENETUNREACH`.
+2. A row that **expects failure** has no family to compare. "Which family it reached first" is then a
+   question about attempt ORDER, not about capability.
+3. **Unknown refuses nothing**, so on a machine where IPv6 is merely unobserved, a v6-preferring flow
+   legitimately leads with IPv6. I had asserted IPv4.
+4. `netcap.FamilyCapability` has **four** fields, not three (§L.1).
+5. The §14 test's counter **accumulated across iterations** and was compared against 1, so it failed on the
+   second iteration regardless of the code under test — a fixture measuring its own bookkeeping.
+
+Two of these — 3 and 5 — are the same class as the four in the first pass: the test asserted something true
+of a *different* subject. That is now seven times in this round, which is itself the round's most useful
+finding about test design.
+
+### L.4 Still not done
+
+`-race` (§29) remains `BLOCKED_BY_ENVIRONMENT`, unchanged and not implied. §28's stress runs at 200 flows
+(Phase 03 §L.3), not 1000. §25's platform event ordering needs devices. §30's mutation checklist stands at
+**11 of 14 verified**, with items 2, 12 and 13 covered by tests rather than by a mutation.
 ## FOUR-PHASE FINAL VERDICT
 
 ### Phase 01 — Capability producer
