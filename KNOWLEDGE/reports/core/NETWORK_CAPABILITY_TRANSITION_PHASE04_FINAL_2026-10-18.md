@@ -100,7 +100,7 @@ point of a final acceptance; listing them as if all were done here would not be.
 | 25 platform event ordering | Windows / Linux / Darwin | Phase 01 §H/§J: the readers and their predicates are unit-tested; **the ORDER the platforms deliver events in is device-only** | `BLOCKED_BY_ENVIRONMENT` for ordering |
 | 26 Unknown vs Unavailable | is Unknown encoded as unavailable? | Phase 01 §F; `Unknown` is the zero value and refuses nothing, pinned over the whole space by Phase 02's `TestAdmissionFastPathNeverDisagreesWithTheVerdict` | `VERIFIED_UNIT` |
 | 27 performance / wakeups | tickers, goroutines, route scans | §G below | measured |
-| 28 stress | 1000 flows with repeated transitions | **partial** — 100 flaps × 1 flow; not 1000 concurrent flows | measured, partial |
+| 28 stress | 1000 flows with repeated transitions | **run at 200 flows × 50 epoch flips**, not 1000. Two tests, because the first attempt failed and the failure was a distinction rather than a defect: no flow in the OWNED window may dial a family the machine lacks (deterministic, mutation-verified), while a SUPERSEDED capture may cost one attempt but never the connection. See Phase 03 §L.3 | measured at 200 flows |
 | 29 race tests | `-race` | **`BLOCKED_BY_ENVIRONMENT`** | blocked |
 
 ### C.1 The one open item
@@ -217,7 +217,7 @@ A debug round that only reports the code's failures and not its own is not a deb
 | goroutines across 100 route flaps | count held at the pre-run baseline (allowance 2) | no per-transition worker |
 | timers armed by a transition | none — the only timers in the path are the scheduler's fallback delay (per flow) and the grace (per flow) | `VERIFIED_SOURCE` |
 | route reads per event | one route-table dump per **event**, not per flow | Phase 01 §S |
-| 1000 concurrent flows × repeated transitions | **not run** | partial: 100 flaps × 1 flow |
+| concurrent flows × repeated epoch flips | 200 flows × 50 flips: zero failures, zero retained goroutines, and zero attempts on the family the machine lacks **for every capture that was current** | run at 200, not 1000 |
 | `go test -race` | **not run** — `CGO_ENABLED=0`, no C compiler | `BLOCKED_BY_ENVIRONMENT` |
 
 ---
@@ -288,7 +288,8 @@ Open: one cancelled late candidate is still launched (no socket work); recorded 
 Evidence: the phase-driven run proving old-flow retention, new-flow adoption, Settling safety, familyHealth
 re-keying, and a capability-only flap under an unchanged epoch; 100 flaps with the goroutine count held;
 the brief's 16 questions answered with the file or test that supports each.
-Blocked: `-race`; real OS event ordering on three platforms; 1000-flow stress. Device behaviour has never
+Blocked: `-race`; real OS event ordering on three platforms. The stress runs at 200 concurrent flows against
+50 epoch flips rather than the 1000 the brief names, and says so. Device behaviour has never
 been verified in this round and is not claimed.
 
 ### Final architecture
@@ -320,8 +321,9 @@ stash         = none
 
 ### What is NOT claimed
 
-`-race` never ran. No device was involved. The platform event-ordering question is unproven. The 1000-flow
-stress was not run. One lifecycle rule (a cancelled late candidate is still launched, without effect) is
+`-race` never ran. No device was involved. The platform event-ordering question is unproven. The stress runs
+at 200 concurrent flows, not 1000. One lifecycle rule (a cancelled late candidate is still launched, without
+effect) is
 open. No claim in this report is `VERIFIED_CI` — this tree contains no workflow-run record.
 
 Those five sentences are the condition of the PASS above, not a footnote to it: the four phases prove what

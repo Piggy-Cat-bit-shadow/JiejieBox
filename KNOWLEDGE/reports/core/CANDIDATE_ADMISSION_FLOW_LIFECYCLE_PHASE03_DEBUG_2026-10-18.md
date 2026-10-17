@@ -418,9 +418,44 @@ the *policy*, and every such test passed.
 | packet arms answer one policy at three layers | `VERIFIED_UNIT` + `VERIFIED_MUTATION` |
 | policy is never a struct field | `VERIFIED_UNIT` + `VERIFIED_MUTATION` |
 
-**Still not attacked, and named so it is not mistaken for covered:** the manager-close ordering during an
-in-flight setup (Phase 01's scope, and the route suite's `Close` tests), and the 1000-flow stress (Phase 04
-records it as not run). Both remain where they were.
+### L.3 The two surfaces §L named as still open are now closed
+
+**Manager close during an in-flight setup** (`route/setup_close_boundary_test.go`). Four shapes, because
+"the manager was closed" is not the question:
+
+| shape | the silent failure it prevents |
+|---|---|
+| a setup in flight when Close arrives | a dial running on against a manager that has torn its resources down, its connection tracked into a list nobody drains |
+| a setup begun after Close | a live context that lets a component resurrect itself during teardown, and makes Close's report a statement about a set that grew again |
+| Close called twice | the `defer`-plus-explicit-shutdown shape |
+| a setup whose release is never called | teardown appearing to hang |
+
+**The 1000-flow stress, run at 200 flows and labelled as such** (`common/dialer/admission_stress_test.go`).
+The first version was one test asserting that no flow ever dials a family the machine lacks on a machine
+that never had it — and it FAILED, 50 IPv6 attempts, and the failure is not a defect. It is invariant B
+seen from a new angle:
+
+> a capture that is SUPERSEDED mid-flow refuses nothing (fail open), so it may attempt a family the
+> machine lacks and the kernel fails that attempt immediately. The alternative — a stale capture
+> hard-denying — is the one behaviour the design forbids.
+
+So the invariant is two statements and needs two tests: **no flow in the OWNED window dials a family the
+machine lacks** (200 concurrent flows, no epoch movement — deterministic, `VERIFIED_MUTATION`), and **a
+superseded capture costs an attempt, not a connection** (200 flows against 50 epoch flips — every flow
+still succeeds, nothing retained). Asserting the first as if it covered both is what made the first
+version fail.
+
+This is the FIFTH time in the round that a fixture measured a property of the path while claiming to
+measure one of the policy — and the first time the wrong assertion was a genuinely interesting distinction
+rather than a mistake about which code path ran.
+
+**One detail worth recording**: the streaming hostname path is gated by the scheduler's LATE-ARM check, not
+by `filterLocalFamily`. Disabling the plan gate leaves the owned-window stress green; disabling the late
+arm fails it. So the two scheduler gates cover different arrival shapes, and a mutation aimed at "the
+scheduler's local gate" has to say which one.
+
+Still not attacked: nothing from §L. What remains unproven is what was always unproven — `-race`, device
+behaviour, platform event ordering.
 ## PHASE 03 HANDOFF
 
 ```markdown
@@ -491,9 +526,44 @@ the *policy*, and every such test passed.
 | packet arms answer one policy at three layers | `VERIFIED_UNIT` + `VERIFIED_MUTATION` |
 | policy is never a struct field | `VERIFIED_UNIT` + `VERIFIED_MUTATION` |
 
-**Still not attacked, and named so it is not mistaken for covered:** the manager-close ordering during an
-in-flight setup (Phase 01's scope, and the route suite's `Close` tests), and the 1000-flow stress (Phase 04
-records it as not run). Both remain where they were.
+### L.3 The two surfaces §L named as still open are now closed
+
+**Manager close during an in-flight setup** (`route/setup_close_boundary_test.go`). Four shapes, because
+"the manager was closed" is not the question:
+
+| shape | the silent failure it prevents |
+|---|---|
+| a setup in flight when Close arrives | a dial running on against a manager that has torn its resources down, its connection tracked into a list nobody drains |
+| a setup begun after Close | a live context that lets a component resurrect itself during teardown, and makes Close's report a statement about a set that grew again |
+| Close called twice | the `defer`-plus-explicit-shutdown shape |
+| a setup whose release is never called | teardown appearing to hang |
+
+**The 1000-flow stress, run at 200 flows and labelled as such** (`common/dialer/admission_stress_test.go`).
+The first version was one test asserting that no flow ever dials a family the machine lacks on a machine
+that never had it — and it FAILED, 50 IPv6 attempts, and the failure is not a defect. It is invariant B
+seen from a new angle:
+
+> a capture that is SUPERSEDED mid-flow refuses nothing (fail open), so it may attempt a family the
+> machine lacks and the kernel fails that attempt immediately. The alternative — a stale capture
+> hard-denying — is the one behaviour the design forbids.
+
+So the invariant is two statements and needs two tests: **no flow in the OWNED window dials a family the
+machine lacks** (200 concurrent flows, no epoch movement — deterministic, `VERIFIED_MUTATION`), and **a
+superseded capture costs an attempt, not a connection** (200 flows against 50 epoch flips — every flow
+still succeeds, nothing retained). Asserting the first as if it covered both is what made the first
+version fail.
+
+This is the FIFTH time in the round that a fixture measured a property of the path while claiming to
+measure one of the policy — and the first time the wrong assertion was a genuinely interesting distinction
+rather than a mistake about which code path ran.
+
+**One detail worth recording**: the streaming hostname path is gated by the scheduler's LATE-ARM check, not
+by `filterLocalFamily`. Disabling the plan gate leaves the owned-window stress green; disabling the late
+arm fails it. So the two scheduler gates cover different arrival shapes, and a mutation aimed at "the
+scheduler's local gate" has to say which one.
+
+Still not attacked: nothing from §L. What remains unproven is what was always unproven — `-race`, device
+behaviour, platform event ordering.
 ## PHASE 03 HANDOFF
 
 - testing HEAD:
