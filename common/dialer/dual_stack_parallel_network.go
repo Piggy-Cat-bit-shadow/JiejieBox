@@ -9,6 +9,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
+	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 )
@@ -95,6 +96,19 @@ func (d *resolveParallelNetworkDialer) DialParallelNetwork(ctx context.Context, 
 	// of an excluded family must not enter the plan at all, and the candidate list is exactly where
 	// "only means only" is enforceable.
 	candidates := withoutFamilyExcluded(destinationAddresses, d.effectiveFamilyStrategy())
+	if len(candidates) == 0 && len(destinationAddresses) > 0 {
+		// The list is empty because the POLICY emptied it, and that is a different fact from "there was
+		// nothing to try". Reporting it here rather than letting the scheduler conclude is what keeps the
+		// two entry points saying the same thing: the single-destination path names the strategy
+		// ("destination <addr> excluded by strategy ipv4_only"), and this path and
+		// `raceCandidatesExcluding` used to flatten the same operator mistake into "no dial candidates" -
+		// a symptom that names neither the policy nor the destination.
+		//
+		// It also avoids work that cannot succeed: the scheduler would build a plan, run a capability
+		// filter over an empty candidate set, and reach the same conclusion by a longer route.
+		return nil, E.New("destination ", destination, " excluded by strategy ", strategyName(d.effectiveFamilyStrategy()),
+			": every supplied candidate belongs to the family this policy forbids")
+	}
 	if !d.recoveryPossible(ctx) || !isBareLiteralList(destination, destinationAddresses) {
 		return d.schedule(ctx, network, destination, destination.Addr, candidates, strategy, interfaceType, fallbackInterfaceType, fallbackDelay, nil)
 	}

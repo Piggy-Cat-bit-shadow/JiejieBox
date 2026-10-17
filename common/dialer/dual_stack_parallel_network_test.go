@@ -542,6 +542,18 @@ func TestNetworkEntryPointReportsAStrategyExclusionAsOne(t *testing.T) {
 		"this is a configuration decision, not a fact about the machine")
 	require.NotErrorIs(t, err, errLocalIPv6EgressUnavailable)
 	require.Empty(t, chain.tried(), "an address the policy excludes never becomes a socket attempt")
+
+	// And it must NAME the policy. Refusing correctly is not enough: this path and
+	// `raceCandidatesExcluding` used to flatten the same operator mistake into "no dial candidates",
+	// which names neither the policy nor the destination, while the single-destination path said
+	// "destination <addr> excluded by strategy ipv4_only". Two symptoms for one cause is how an operator
+	// ends up looking at the network instead of the configuration.
+	require.Contains(t, err.Error(), "excluded by strategy",
+		"the refusal must say a strategy excluded the destination, not merely that nothing was left")
+	require.Contains(t, err.Error(), "ipv4_only", "and which strategy it was")
+	require.Contains(t, err.Error(), originalIPv6.String(), "and which destination it excluded")
+	require.NotContains(t, err.Error(), "no dial candidates",
+		"the symptom phrase must not replace the cause")
 }
 
 // TestStrictFamilyFilterDoesNotMutateItsInput is the ownership contract of the new list filter.
