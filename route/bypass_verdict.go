@@ -37,6 +37,7 @@ const (
 	BypassRefusedNetworkOptions
 	BypassRefusedTLSOptions
 	BypassRefusedTracker
+	BypassRefusedPowerReport
 	BypassRefusedProcessMetadataUnproven
 	BypassRefusedOutboundChain
 	BypassRefusedOutboundNotBypassable
@@ -62,6 +63,7 @@ var bypassVerdictNames = [...]string{
 	BypassRefusedNetworkOptions:           "network strategy, type or fallback is configured",
 	BypassRefusedTLSOptions:               "TLS fragmentation or spoofing is configured",
 	BypassRefusedTracker:                  "a connection tracker is attached",
+	BypassRefusedPowerReport:              "a power report recorder is counting connections",
 	BypassRefusedProcessMetadataUnproven:  "process metadata could not be proven",
 	BypassRefusedOutboundChain:            "the outbound chain is not a single leaf",
 	BypassRefusedOutboundNotBypassable:    "the selected outbound is not bypassable",

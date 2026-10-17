@@ -888,6 +888,20 @@ func (r *Router) canFastBypass(metadata *adapter.InboundContext, packetDestinati
 		return BypassRefusedTracker
 	}
 
+	// The power report is the OTHER accounting consumer, and it is installed on every userspace
+	// connection rather than by configuration: a build with a recorder running counts each dial it
+	// performs, and a bypassed flow never reaches that code at all. The tracker rule above is the same
+	// argument with a configured tracker; leaving this one out made "silently losing accounting is not
+	// an acceptable optimisation" true for one consumer and false for the other, which is how the
+	// second one would have been found - by a user asking why the report undercounts traffic during a
+	// session where the fast path happened to be eligible.
+	//
+	// It is keyed on the RECORDER, not on the manager: a build registers the manager whether or not
+	// reporting is on, so the manager's presence says nothing about whether anything is being counted.
+	if r.powerReport != nil && r.powerReport.Recorder() != nil {
+		return BypassRefusedPowerReport
+	}
+
 	// Process metadata must have been OBTAINED, not merely absent.
 	//
 	// The rules above are consulted in PreMatch, which walks the whole rule set. A process rule

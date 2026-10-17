@@ -11,6 +11,7 @@ import (
 	"github.com/sagernet/sing-box/common/power"
 	"github.com/sagernet/sing-box/common/process"
 	"github.com/sagernet/sing-box/common/taskmonitor"
+	"github.com/sagernet/sing-box/service/powerreport"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -41,7 +42,12 @@ type Router struct {
 	network      adapter.NetworkManager
 	// powerGovernor is the fork's sleep authority, or nil when none was installed - which is what
 	// every test that builds a Router directly has, so every use of it is nil-checked.
-	powerGovernor     *power.Governor
+	powerGovernor *power.Governor
+	// powerReport is the power-report service, or nil when this build has none. It is held for ONE
+	// reason: an active recorder counts every connection the userspace path opens, and a bypassed flow
+	// would never be counted - the same argument the connection-tracker refusal already makes, applied
+	// to the other accounting consumer. A bypass that silently loses statistics is not an optimisation.
+	powerReport       *powerreport.Manager
 	httpClientManager adapter.HTTPClientManager
 	rules             []adapter.Rule
 	needFindProcess   bool
@@ -94,6 +100,7 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.Route
 		dnsTransport:      service.FromContext[adapter.DNSTransportManager](ctx),
 		connection:        service.FromContext[adapter.ConnectionManager](ctx),
 		powerGovernor:     service.FromContext[*power.Governor](ctx),
+		powerReport:       service.FromContext[*powerreport.Manager](ctx),
 		network:           service.FromContext[adapter.NetworkManager](ctx),
 		httpClientManager: service.FromContext[adapter.HTTPClientManager](ctx),
 		rules:             make([]adapter.Rule, 0, len(options.Rules)),
