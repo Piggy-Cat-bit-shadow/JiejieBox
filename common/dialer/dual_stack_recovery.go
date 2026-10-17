@@ -348,10 +348,29 @@ func withoutFamilyExcluded(addresses []netip.Addr, strategy C.DomainStrategy) []
 
 // dialerLocalFamilyPolicy reads this dialer's view of which families the machine can dial.
 //
-// It goes through the familyHealthOwner when the underlying dialer has one, so that a resolve
+// It goes through the localFamilyOwner when the underlying dialer has one, so that a resolve
 // dialer - which is a wrapper, not an owner - asks the same object the scheduler will ask. A chain
 // that leads nowhere returns the zero policy, which restricts nothing: an implementation that
 // cannot report the capability keeps its previous behaviour exactly.
+//
+// # The one chain that can never answer, stated because it is otherwise silent
+//
+// `localFamilyOwner` is unexported and satisfied by exactly one production type, `*DefaultDialer`. An
+// outbound in another package therefore cannot implement it - Go's unexported-method rule forbids it - so a
+// `resolveDialer` built over an `adapter.Outbound` always falls through to the zero policy here, and
+// `newScheduler`'s matching `familyHealthOwner` assertion does the same. Two such chains exist, both in
+// `daemon/started_service.go` (the network-quality and STUN test dialers).
+//
+// What that costs is bounded and worth knowing rather than discovering: the wrapper loses the SHARED family
+// health (its scheduler starts with no history) and its recovery candidate filtering becomes a no-op. The
+// leaf's own `DefaultDialer.DialContext` still applies the real per-socket gate, so no family this machine
+// cannot dial is ever dialled - the difference is that a candidate the leaf would refuse is offered first and
+// costs a failed attempt instead of being dropped in advance.
+//
+// It is left as a documented boundary rather than fixed because there is no local fix: the capability would
+// have to be re-exposed through an exported hook on the outbound and re-discovered here, which is a public
+// API addition across packages for two diagnostic dialers. Recorded so the next reader does not conclude the
+// zero policy means "this machine can dial anything".
 func (d *resolveDialer) dialerLocalFamilyPolicy() localFamilyPolicy {
 	if owner, isOwner := d.dialer.(localFamilyOwner); isOwner {
 		return owner.localFamilyPolicy()
