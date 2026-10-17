@@ -1334,7 +1334,10 @@ func (r *Router) actionSniff(
 			r.logger.DebugContext(ctx, "stream sniff skipped: the configured sniffers are packet-only")
 			return
 		} else if slices.Equal(metadata.SnifferNames, action.SnifferNames) && metadata.SniffError != nil && !errors.Is(metadata.SniffError, sniff.ErrNeedMoreData) {
-			r.logger.DebugContext(ctx, "packet sniff skipped due to previous error: ", metadata.SniffError)
+			// "stream", not "packet": this is the STREAM arm and it said "packet sniff skipped", so the one
+			// line a reader uses to tell "already tried and failed" from "never ran" named the wrong
+			// transport. Measured on a TCP flow whose sniff had already failed.
+			r.logger.DebugContext(ctx, "stream sniff skipped due to previous error: ", metadata.SniffError)
 			return
 		}
 		streamSniffers := action.StreamSniffers
@@ -1556,11 +1559,16 @@ func (r *Router) actionSniff(
 			} else {
 				r.logger.DebugContext(ctx, "sniffed packet protocol: ", metadata.Protocol)
 			}
-		} else if !errors.Is(err, sniff.ErrNeedMoreData) {
+		} else if errors.Is(err, sniff.ErrNeedMoreData) {
+			// The packet flow ended while the sniffers still wanted bytes. The per-round
+			// "attempt to sniff fragmented QUIC client hello" lines above show the attempts, but nothing
+			// says the flow ENDED still undecided, so this state had no verdict line at all while the
+			// stream arm had one. Reported at the same level and with the same wording as its stream twin
+			// so the two transports read alike.
+			r.logger.DebugContext(ctx, "sniff needed more data than the packet flow provided: ", err)
+		} else {
 			// Same reason as the stream side: a packet flow whose sniff produced nothing reaches the
-			// dial layer with no domain evidence, and that has to be visible. The fragmented-QUIC
-			// rounds already log themselves one by one, so an exhausted retry is not repeated here -
-			// what this adds is the final verdict for a flow that was inspected and yielded nothing.
+			// dial layer with no domain evidence, and that has to be visible.
 			r.logger.DebugContext(ctx, "sniff found no packet protocol for this flow: ", err)
 		}
 	}
