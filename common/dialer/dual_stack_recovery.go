@@ -99,9 +99,27 @@ func (d *resolveDialer) recoverCandidates(ctx context.Context, destination M.Soc
 	// complete set made the recovered IPv4 unusable for three seconds - turning a working fallback
 	// into a stall.
 	//
-	// The first usable family is therefore returned as soon as it arrives. Only if the streaming
-	// interface is unavailable does this fall back to the complete lookup, which keeps third-party
-	// routers working exactly as before.
+	// The first USABLE family is returned as soon as it arrives - usable, not merely non-empty.
+	//
+	// # Why the filter has to be part of the choice, not a step after it
+	//
+	// This took the first published family and filtered it afterwards, which is only equivalent when that
+	// family turns out to be dialable. When it is not, the filter emptied the list and this function
+	// returned nothing, while the other family's answer was still in flight and `cancelStream` killed it.
+	//
+	// That is the reported machine's ordinary case: IPv6 addressing present and no global IPv6 egress
+	// means an AAAA answer is refused by the egress term, A and AAAA are independent queries, and either
+	// can answer first. On the runs where AAAA won, recovery produced nothing and a literal IPv6 flow was
+	// refused with no IPv4 attempt - the symptom the recovery path exists to remove, occurring only under
+	// a resolver ordering.
+	//
+	// The existing fixture had this recorded and routed around: `newRecoveryHarness` delays the AAAA half
+	// "so the A answer is always published first", explaining that otherwise "the IPv6 answer would
+	// sometimes arrive first, be refused by the filter, and end the lookup". So the code was measuring its
+	// own workaround. The loop below is what makes the fixture's delay unnecessary.
+	//
+	// The streaming property is preserved: a family that is usable still ends the loop on its own
+	// publication, so a fast dialable answer is not held waiting for a slow one.
 	var recovered []netip.Addr
 	if dualStackRouter, supportsStreaming := d.router.(adapter.DNSDualStackRouter); supportsStreaming {
 		collected := make(chan []netip.Addr, 1)
@@ -119,18 +137,29 @@ func (d *resolveDialer) recoverCandidates(ctx context.Context, destination M.Soc
 					case <-streamCtx.Done():
 					}
 				})
-			// The stream ended without producing anything usable.
+			// The stream ended. A nil value is the terminator, and it cannot be mistaken for an
+			// answer: a published family is always non-empty (the callback drops empty ones).
 			select {
 			case collected <- nil:
 			case <-streamCtx.Done():
 			}
 		}()
 
-		select {
-		case first := <-collected:
-			recovered = first
-		case <-recoveryCtx.Done():
-			return nil
+		for recovered == nil {
+			select {
+			case family := <-collected:
+				if family == nil {
+					// Resolution finished without a family this machine can dial.
+					return nil
+				}
+				// Filter here, so "usable" is what ends the loop. An answer the machine refuses
+				// keeps the loop open for the other family instead of ending the lookup.
+				if usable := d.withoutUndialableCandidates(family); len(usable) > 0 {
+					recovered = usable
+				}
+			case <-recoveryCtx.Done():
+				return nil
+			}
 		}
 	} else {
 		addresses, err := d.router.Lookup(recoveryCtx, domain, d.queryOptions)
@@ -139,13 +168,13 @@ func (d *resolveDialer) recoverCandidates(ctx context.Context, destination M.Soc
 			// would otherwise have been attempted into an error the user never asked for.
 			return nil
 		}
-		recovered = addresses
+		recovered = d.withoutUndialableCandidates(addresses)
 	}
 
 	if len(recovered) == 0 {
 		return nil
 	}
-	return d.withoutUndialableCandidates(recovered)
+	return recovered
 }
 
 // withoutUndialableCandidates drops recovered addresses whose family this machine cannot dial.

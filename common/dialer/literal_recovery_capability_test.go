@@ -45,11 +45,16 @@ type recoveryHarness struct {
 //
 // # Why the AAAA half is delayed
 //
-// The recovery lookup streams, and it keeps the FIRST usable family - so with both families answering
-// concurrently the fixture would decide the test: the IPv6 answer would sometimes arrive first, be
-// refused by the filter, and end the lookup, leaving the assertion about goroutine scheduling rather
-// than about what the filter does. Delaying the AAAA half makes the intended family arrive first on
-// every run.
+// For DETERMINISM, not to work around a defect. Recovery streams, so with both families answering
+// concurrently the fixture would decide which one this test observes. Delaying the AAAA half makes the A
+// answer arrive first on every run, so the assertions below are about what the filter does rather than
+// about resolver ordering.
+//
+// This delay used to be load-bearing for a different reason: recovery took the first PUBLISHED family and
+// filtered it afterwards, so an undialable AAAA answer arriving first ended the lookup and the usable A
+// answer was discarded. `recoverCandidates` now filters as part of the choice, which is asserted directly
+// by TestRecoverySkipsAnUndialableAnswerToReachAUsableOne; that test answers the undialable family first
+// on purpose, which is the case this fixture avoids.
 func newRecoveryHarness(t *testing.T, ipv4 netcap.FamilyState, ipv6 netcap.FamilyState, recovered []netip.Addr) *recoveryHarness {
 	t.Helper()
 	leaf := newCapabilityLeaf(ipv4, ipv6)
@@ -57,10 +62,8 @@ func newRecoveryHarness(t *testing.T, ipv4 netcap.FamilyState, ipv6 netcap.Famil
 	leaf.inner.connectDelay = 0
 
 	router := newScriptedFamilyRouter()
-	// The AAAA half is delayed so the A answer is always published first. Recovery keeps the FIRST
-	// usable family, and the two families are resolved concurrently, so without a deliberate ordering
-	// the fixture would decide the test: on some runs the IPv6 answer would be the one collected, and
-	// the assertion would be about goroutine scheduling rather than about the filter.
+	// A deliberate ordering, so which family this test observes is decided by the fixture and not by
+	// the scheduler.
 	router.delayAAAA = 50 * time.Millisecond
 	router.addressesA = common4(recovered)
 	router.addressesAAAA = common6(recovered)
