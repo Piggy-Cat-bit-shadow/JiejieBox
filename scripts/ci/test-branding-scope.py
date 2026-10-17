@@ -8,28 +8,32 @@ target's Debug and Release configurations. So the question this answers is not "
 branding happen" but "did ONLY that change".
 
 That distinction is not academic. An earlier revision of the overlay branded
-PRODUCT_NAME as well, which renamed the built product to JiejieBox.app and forced the SFI
-scheme's BuildableName to be rewritten to match. PRODUCT_NAME is identity surface: it is
-what the scheme builds, and it sits next to the bundle identifier, the sing-box:// URL
-scheme and every existing Profile record that keys on the product. The pinned Apple
-client draws the same boundary in its own scripts/dev/audit_apple_ui_boundary.py, where
-PRODUCT_NAME is in PROTECTED_NAME_SETTINGS and CFBundleDisplayName is the single override
-this fork may make. So the display name is asserted as branded AND the identity as
-unchanged, in both cases positively: a reintroduced rename has to fail here.
+PRODUCT_NAME as well, which renamed the built product and forced the SFI scheme's
+BuildableName to be rewritten to match. PRODUCT_NAME is what the scheme builds, and it
+sits next to the bundle identifier, the sing-box:// URL scheme and every existing Profile
+record that keys on the product. The iOS product therefore keeps upstream's
+PRODUCT_NAME = "sing-box"; the macOS product's rename to JiejieBox is committed by the
+Apple client itself and is not this overlay's to make. The pinned Apple client draws the
+same boundary in scripts/dev/audit_apple_ui_boundary.py, where PRODUCT_NAME is protected
+except for the documented SFM rename and CFBundleDisplayName is the overlay's single
+override. So the display name is asserted as branded AND the identity as unchanged, in
+both cases positively: a reintroduced rename has to fail here.
 
-Three targets share PRODUCT_NAME = "sing-box" (SFI, SFT, SFM), so a global string
-replacement would rename the tvOS and macOS apps as well and still leave the SFI target
-looking correct. A test that only counted branded SFI configurations would pass in that
-case, which is why every other configuration is compared against the PINNED project
-rather than against a literal: SFM's committed display name is "Jijiebox" - the macOS
-overlay's own accepted starting state - so "unchanged" has to mean "what the client
-committed", not "sing-box".
+Two targets still read upstream's PRODUCT_NAME = "sing-box" (SFI, SFT), so a global string
+replacement would rename the tvOS app as well and still leave the SFI target looking
+correct. A test that only counted branded SFI configurations would pass in that case, which
+is why every other configuration is compared against the PINNED project rather than
+against a literal: SFM already carries the client's committed JiejieBox product name and
+branded display name, so "unchanged" has to mean "what the client committed", not
+"sing-box".
 
     SFI Debug and Release   CFBundleDisplayName carries a brand spelling the overlay
                             accepts (the client commits "Jiejiebox")
     SFI Debug and Release   PRODUCT_NAME is still "sing-box", and the scheme still
                             builds sing-box.app
-    SFT, SFM, SFM.System    both settings at their pinned values
+    SFT, SFM.System         both settings at their pinned values
+    SFM                     not this overlay's target: compared to the pin, which carries
+                            the client's JiejieBox product name
     every other target      the same; extensions included, whose display names are
                             unquoted and belong to no target this overlay owns
     the URL scheme          sing-box, read from the plist rather than grepped
@@ -61,12 +65,17 @@ SCHEME = "sing-box.xcodeproj/xcshareddata/xcschemes/SFI.xcscheme"
 SCHEME_BUILDABLE = f'BuildableName = "{UPSTREAM}.app"'
 SCHEME_BRANDED_BUILDABLE = f'BuildableName = "{BRAND}.app"'
 
-# Targets that must NOT be branded, with the settings they must still hold.
+# Targets that must NOT be branded by this overlay, with the settings they must still hold.
+#
+# SFM is deliberately absent: the macOS client commits its own JiejieBox product name and
+# branded display name, so its expected values are the PIN, not the upstream literal. The
+# pin comparison at the end of this file still covers it, and covers it more strongly than a
+# literal would - the iOS overlay must leave SFM byte-identical.
 #
 # SFM.System declares no PRODUCT_NAME at all, which is legitimate upstream: it derives
 # its name another way. Requiring "sing-box" there would fail on an untouched project,
 # so its absence is asserted as absence rather than as a specific value.
-UNTOUCHED_TARGETS = ["SFT", "SFM", "SFM.System"]
+UNTOUCHED_TARGETS = ["SFT", "SFM.System"]
 TARGETS_WITHOUT_PRODUCT_NAME = {"SFM.System"}
 
 SETTINGS = [PRODUCT_KEY, DISPLAY_KEY]
@@ -224,9 +233,10 @@ def main() -> int:
               f"SFI {name} {PRODUCT_KEY}: identity, expected {UPSTREAM!r}, got {got!r} "
               "(branding must not rename the product)")
 
-    # --- every other target: both settings at their upstream values ------------
+    # --- every target this overlay does not own: still at their upstream values -----
     # Enumerating the targets we care about is not enough on its own, so the pinned
-    # comparison below catches anything new, extensions included.
+    # comparison below catches anything new, extensions included - and catches SFM, which
+    # the client renames itself and which therefore has no upstream literal to assert.
     for target in UNTOUCHED_TARGETS:
         blocks = config_blocks(src, target)
         check(bool(blocks), f"{target}: no build configurations found; the scope check cannot run")

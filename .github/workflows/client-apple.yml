@@ -760,13 +760,15 @@ jobs:
         # and nothing branded SFM, so the macOS product built, signed and uploaded as
         # sing-box. The check has two halves that need opposite states of the tree:
         #
-        #   the PINNED source still declares the sing-box anchors the overlay rewrites, and
-        #   the checkout is left exactly as the pin records it
+        #   the PINNED source still declares the anchors the overlay validates - the SFM
+        #   product name JiejieBox, the committed Jiejiebox display spelling, and the
+        #   JiejieBox.app scheme buildable - and the checkout is left exactly as the pin
+        #   records it
         #
         #   ...both of which only hold while the tree is pristine, and
         #
         #   the overlay really does apply to a COPY of that pinned source and produce
-        #   Jiejiebox there
+        #   JiejieBox there
         #
         # which is why the suite copies the checkout instead of branding it in place. Running
         # it after prepare-apple-client.sh would ask it to observe a pristine source the build
@@ -827,34 +829,43 @@ jobs:
 
           echo "prepared macOS app name:"
           grep -n 'INFOPLIST_KEY_CFBundleDisplayName = "JiejieBox";' "$pbx"
-          grep -n 'PRODUCT_NAME = "sing-box";' "$pbx"
-          grep -n 'BuildableName = "sing-box.app"' "$scheme"
+          grep -n 'PRODUCT_NAME = "JiejieBox";' "$pbx"
+          grep -n 'BuildableName = "JiejieBox.app"' "$scheme"
 
-          # The overlay owns the visible name only. PRODUCT_NAME and the scheme remain
-          # sing-box identity surface, while both SFM configurations show JiejieBox.
+          # The overlay owns the visible name; the product name is the Apple client's own.
+          # Both SFM configurations must show JiejieBox and build JiejieBox.app, so the
+          # archived app is /Applications/JiejieBox.app rather than the official client's
+          # sing-box.app.
           display_values="$(grep -c 'INFOPLIST_KEY_CFBundleDisplayName = "JiejieBox";' "$pbx")"
           if [ "$display_values" != "2" ]; then
             echo "FAIL: expected SFM Debug and Release to declare JiejieBox as CFBundleDisplayName," >&2
             echo "      found $display_values values." >&2
             exit 1
           fi
-          if [ "$(grep -c 'BuildableName = "sing-box.app"' "$scheme")" != "3" ]; then
-            echo "FAIL: expected all three SFM scheme application buildables to remain sing-box.app." >&2
+          product_values="$(grep -c 'PRODUCT_NAME = "JiejieBox";' "$pbx")"
+          if [ "$product_values" != "2" ]; then
+            echo "FAIL: expected SFM Debug and Release to build JiejieBox.app," >&2
+            echo "      found $product_values values." >&2
+            exit 1
+          fi
+          if [ "$(grep -c 'BuildableName = "JiejieBox.app"' "$scheme")" != "3" ]; then
+            echo "FAIL: expected all three SFM scheme application buildables to be JiejieBox.app." >&2
             exit 1
           fi
 
-          # The neighbours this task must not touch.
-          for untouched in 'PRODUCT_NAME = SFM;' 'PRODUCT_BUNDLE_IDENTIFIER = "$(BASE_PACKAGE_IDENTIFIER).standalone";'; do
+          # The neighbours this task must not touch: the Developer ID product keeps its
+          # own name and bundle id, and the other app targets keep upstream's product name.
+          for untouched in 'PRODUCT_NAME = SFM;' 'PRODUCT_BUNDLE_IDENTIFIER = "$(BASE_PACKAGE_IDENTIFIER).standalone";' 'PRODUCT_NAME = "sing-box";'; do
             grep -qF "$untouched" "$pbx" || {
               echo "FAIL: the prepared tree no longer contains '$untouched'." >&2
               exit 1
             }
           done
-          if grep -q 'PRODUCT_NAME = "Jijiebox"\|PRODUCT_NAME = "JiejieBox"\|PRODUCT_NAME = "Jiejiebox"' "$pbx"; then
-            echo "FAIL: the macOS product identity was renamed instead of using the display name." >&2
+          if grep -q 'BuildableName = "sing-box.app"' "$scheme"; then
+            echo "FAIL: the SFM scheme still names sing-box.app; the archive would collide with the official client." >&2
             exit 1
           fi
-          echo "PASS: the prepared macOS SFM app displays JiejieBox and keeps sing-box identity"
+          echo "PASS: the prepared macOS SFM app is JiejieBox.app displaying JiejieBox, with identity unchanged"
 
       - name: build unsigned DMG
         run: |

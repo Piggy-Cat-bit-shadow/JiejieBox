@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Fails unless an archived macOS app separates its USER-VISIBLE name from its identity
-# in the way this fork requires.
+# Fails unless an archived macOS app carries the name this fork ships it under.
 #
 # Usage: check-macos-app-name.sh <app-bundle> [expected-display-name]
 #
@@ -18,26 +17,24 @@
 #
 # # What "the name" means
 #
-# Brand display and product identity are two different things, and this gate asserts
-# they are BOTH right - not that they are equal:
+#   CFBundleDisplayName   the name in the menu bar, the Dock and About: JiejieBox.
+#   the .app directory    the product name, and what Finder and /Applications show:
+#                         JiejieBox.app. It follows PRODUCT_NAME, which the Apple client
+#                         declares for the SFM target. The rename exists so the App
+#                         Store app no longer shares the official client's name.
+#   CFBundleName          also follows PRODUCT_NAME, and is the fallback when no
+#                         display name is present; when the key is there it must be
+#                         JiejieBox.
 #
-#   CFBundleDisplayName                 the user-visible name: menu bar, Dock, About.
-#                                       Branded: JiejieBox.
-#   the .app bundle's directory name    identity. PRODUCT_NAME, deliberately unchanged
-#   CFBundleName                        identity, and the fallback when no display name
-#                                       is present. Deliberately unchanged.
+# An earlier revision of this gate required the bundle directory and CFBundleName to
+# stay `sing-box` while only the display name was branded, because PRODUCT_NAME was
+# treated as identity. That is no longer the contract: the client's own project declares
+# JiejieBox for SFM, and a `sing-box.app` in the archive is now the defect - it is the
+# collision with the official client that this rename removes.
 #
-# An earlier revision of this gate required the bundle and CFBundleName to EQUAL the
-# display name, which is only true if PRODUCT_NAME was renamed too. Renaming it changes
-# the bundle id's neighbours - the sing-box:// URL scheme, Profile types, and every
-# existing record that keys on the product - which is a trade this repository does not
-# get to make on the client's behalf. The pinned Apple client states the same boundary
-# and enforces it in its own scripts/dev/audit_apple_ui_boundary.py, where PRODUCT_NAME
-# is in PROTECTED_NAME_SETTINGS and CFBundleDisplayName is the single allowed override.
-#
-# So a bundle named sing-box.app showing "JiejieBox" is CORRECT here. A bundle named
-# JiejieBox.app is the regression this gate now catches: it means something renamed the
-# product instead of its presentation.
+# The identifier surface - bundle id, App Group, extension bundle ids - is asserted by
+# the signing gates rather than here: this script judges the archive's name, and the
+# overlay and prepared-tree checks judge the project it was built from.
 #
 # CFBundleName is only asserted when it is present: the project generates its Info.plist
 # and a missing key is legitimate, so requiring it would fail on a correct build. A key
@@ -46,8 +43,8 @@
 # # Expected names
 #
 # Both are read from the branding overlay rather than passed in by every caller, so the
-# names the overlay writes and the names this gate requires cannot drift apart. A caller
-# may still pass the display name explicitly as $2.
+# display name the overlay writes, the product name it verifies and the names this gate
+# requires cannot drift apart. A caller may still pass the display name explicitly as $2.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -98,9 +95,9 @@ if [ -z "$expected" ]; then
   fi
 fi
 
-identity="$(read_overlay identity)"
-if [ -z "$identity" ]; then
-  echo "check-macos-app-name: cannot resolve the expected product identity from $overlay" >&2
+product="$(read_overlay identity)"
+if [ -z "$product" ]; then
+  echo "check-macos-app-name: cannot resolve the expected product name from $overlay" >&2
   exit 2
 fi
 
@@ -126,21 +123,22 @@ if [ "$display" != "$expected" ]; then
   fail "CFBundleDisplayName is '${display:-<missing>}', expected '$expected'"
 fi
 
-# 2. The bundle is identity, so it must still be the upstream product name. Checked as
-#    an equality against the identity rather than "not the brand", so that a third name
-#    is also caught rather than only the one regression we happened to think of.
-if [ "$bundle_name" != "$identity.app" ]; then
-  fail "the app bundle is named '$bundle_name', expected '$identity.app'.
-  The bundle directory name follows PRODUCT_NAME, which is identity surface and is not
-  branded. A bundle named '$expected.app' means the product was renamed instead of its
-  presentation - see the header of this script."
+# 2. The bundle directory follows PRODUCT_NAME, and the product name is JiejieBox.app.
+#    Checked as an equality against the name the overlay declares rather than "not
+#    sing-box", so a third name is caught too rather than only the collision we happened
+#    to think of.
+if [ "$bundle_name" != "$product.app" ]; then
+  fail "the app bundle is named '$bundle_name', expected '$product.app'.
+  The bundle directory name follows PRODUCT_NAME, which the SFM project declares as
+  '$product'. A bundle named 'sing-box.app' means the rename did not reach the project -
+  see the header of this script."
 fi
 
-# 3. CFBundleName is identity too. Absent is fine; present and wrong is not.
-if [ -n "$name" ] && [ "$name" != "$identity" ]; then
-  fail "CFBundleName is '$name', expected '$identity'.
-  CFBundleName follows PRODUCT_NAME (identity), not CFBundleDisplayName (brand).
-  display='$display' identity='$identity' is the correct pairing."
+# 3. CFBundleName follows PRODUCT_NAME too. Absent is fine; present and wrong is not.
+if [ -n "$name" ] && [ "$name" != "$product" ]; then
+  fail "CFBundleName is '$name', expected '$product'.
+  CFBundleName follows PRODUCT_NAME, not CFBundleDisplayName (brand),
+  so '$product' is the correct pairing."
 fi
 
 echo "check-macos-app-name: PASS ($bundle_name, CFBundleDisplayName=$display, CFBundleName=${name:-<absent>})"

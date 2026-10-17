@@ -152,7 +152,37 @@ VERIFIED_ANDROID_SHA="ec61030d3df74f3e7c39ab848c8996008ecd386a"
 # saying so: layers 1-3 need a Go toolchain and a gobind, and the host this was derived on
 # has neither, so this is a layer-4-and-5 derivation and not a whole-gate run. That is
 # equally true of the two moves above - it is a property of the host, not of this range.
-VERIFIED_APPLE_SHA="40dd48795579718008518ac51af320b1d61377ac"
+#
+# Moved again to c001d59c, when the gitlink advanced to ship the App Store app as
+# JiejieBox.app: the client's own five commits since 40dd487 ("separate quota freshness and
+# make metadata probe header-only" through "make the iPhone outbound-mode card one compact
+# row") plus "fix(macos): ship the App Store app as JiejieBox.app". The range is larger than
+# the rename, so it was re-derived rather than inherited:
+#
+#   git -C clients/apple diff --name-status 40dd4879 c001d59c
+#
+# is 34 files: the client's subscription/UI work (Swift pages, Database, Network, the new
+# CommandSubscriptionRecovery plus its harnesses), scripts/dev audits, and the rename
+# itself - two `PRODUCT_NAME` values (`sing-box` -> `JiejieBox`, SFM Debug and Release) and
+# the SFM scheme's three `BuildableName` entries (`sing-box.app` -> `JiejieBox.app`). It
+# touches neither Swift file this contract names,
+# Library/Network/ExtensionPlatformInterface.swift and
+# ApplicationLibrary/Views/Abstract/GlobalChecksModifier.swift, and no method the contract
+# lists is declared or called differently.
+#
+# Layer 4 was RUN against clients/apple at c001d59c rather than reasoned about:
+#
+#   python3 scripts/ci/probe-accessors.py \
+#     --contract docs/fork/libbox-abi-contract.tsv --lang swift --root clients/apple
+#   {"scanned": 418, "violations": [], "interface_methods": 3, "error": ""}
+#
+# `violations: []` on the moved tree, which is the property this constant asserts. The
+# scanned count is recorded as measured here rather than carried over from the earlier move:
+# it is a property of the probe and the tree, not a value this contract fixes.
+#
+# Layers 1-3 still need a Go toolchain and a gobind this host does not have, exactly as for
+# the two moves above.
+VERIFIED_APPLE_SHA="c001d59c17410cbd6ddd15274fa3947bece07880"
 
 client_root=""
 skip_client=0

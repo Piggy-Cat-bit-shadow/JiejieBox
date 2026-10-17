@@ -36,17 +36,16 @@ const (
 //
 // The value that reaches the resource is electron-builder's `appInfo.productName`, which
 // electron-builder computes as `config.productName || metadata.productName || metadata.name`
-// (`app-builder-lib/out/appInfo.js`). This fork's overlay sets `productName: Jiejiebox`, so
-// the shipped installer says "Jiejiebox" - while the constant here said "sing-box", the
-// UPSTREAM product name. The check therefore rejected this fork's own installer and accepted
-// upstream's, which is the opposite of what it is for: `downloadAndInstall` could never
-// succeed, and the guard that was supposed to help would have waved the wrong binary through
-// to the signer check.
+// (`app-builder-lib/out/appInfo.js`). The desktop client sets `productName: JiejieBox`, so the
+// shipped installer says "JiejieBox". This constant once said "sing-box", the UPSTREAM product
+// name, so the check rejected this fork's own installer and accepted upstream's: the opposite
+// of what it is for.
 //
-// Both spellings are accepted because both are genuinely this product: the daemon keeps
-// working against an installer built by an older, unbranded packaging, and the branded
-// installer the fork now ships is accepted. Anything else is still refused here.
-var updateProductNames = []string{"Jiejiebox", "sing-box"}
+// Every spelling this product has shipped under is accepted, because each is genuinely this
+// product: the branded installer the fork ships now, the earlier lower-case "Jiejiebox" one
+// still present on machines in the field, and the unbranded "sing-box" packaging before it.
+// Anything else is still refused here.
+var updateProductNames = []string{"JiejieBox", "Jiejiebox", "sing-box"}
 
 // isAcceptedInstallerProduct reports whether the installer's ProductName is one this daemon
 // will install. It is deliberately a whitelist: a name that is neither spelling is refused.
@@ -95,7 +94,7 @@ func (d *Daemon) installUpdate(identity peerIdentity, installerPath string) (*In
 		return nil, status.Error(codes.InvalidArgument, E.Cause(err, "read update installer identity").Error())
 	}
 	if !isAcceptedInstallerProduct(installerIdentity.productName) {
-		return nil, status.Error(codes.InvalidArgument, "update executable is not a Jiejiebox/sing-box installer")
+		return nil, status.Error(codes.InvalidArgument, "update executable is not a JiejieBox/sing-box installer")
 	}
 	err = validateNSISExecutable(installerFinalPath)
 	if err != nil {

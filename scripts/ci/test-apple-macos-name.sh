@@ -10,40 +10,39 @@
 # nothing renamed it. Every pre-upload gate looked at identifiers, entitlements and
 # signing, so the wrong name reached Apple unchallenged.
 #
-# # Display and identity are separate
+# # Display and product name
 #
 # The macOS overlay writes exactly ONE setting, INFOPLIST_KEY_CFBundleDisplayName, into the
-# SFM target's Debug and Release configurations. It never writes PRODUCT_NAME and never
-# rewrites the scheme: the built .app name, the SFM scheme's BuildableName, the bundle id
-# and the sing-box:// URL scheme are identity and protocol surface that other software keys
-# on, while the brand is what the menu bar, the Dock and About show. An earlier revision
-# branded both settings and rewrote the scheme's buildable, which is the failure these
-# tests exist to keep from coming back.
+# SFM target's Debug and Release configurations. The bundle name is the Apple client's own:
+# the pinned project declares PRODUCT_NAME = "JiejieBox" for SFM, and the SFM scheme names
+# JiejieBox.app. /Applications therefore shows JiejieBox.app and the Dock and menu bar show
+# JiejieBox, neither of which collides with the official sing-box client. The overlay
+# verifies both values instead of writing them, and fails closed when either moves.
 #
 # # What is asserted
 #
 #   1. the macOS overlay brands the SFM display name in Debug and Release, leaves
-#      PRODUCT_NAME = "sing-box" in both, and does not rewrite the SFM scheme - which still
-#      names sing-box.app - or anything else
+#      PRODUCT_NAME = "JiejieBox" in both, and does not rewrite the SFM scheme - which
+#      still names JiejieBox.app - or anything else
 #   2. running it twice changes nothing (idempotent)
 #   3. it FAILS CLOSED: a display name outside the accepted spellings, an SFM PRODUCT_NAME
-#      renamed away from the identity, a configuration set it does not recognise, a scheme
-#      that no longer names the app buildable, a missing project
+#      that is not JiejieBox, a scheme that does not name JiejieBox.app, a configuration set
+#      it does not recognise, a missing project
 #   4. the iOS overlay is unaffected: it still brands SFI and still leaves SFM alone, and
 #      the macOS overlay does not touch SFI; neither overlay writes PRODUCT_NAME
 #   5. prepare-apple-client.sh routes each platform to its own overlay
-#   6. the pre-upload name gate accepts sing-box.app showing the brand and FAILS a bundle
-#      named after the brand, which is the product renamed instead of its presentation
+#   6. the pre-upload name gate accepts JiejieBox.app showing JiejieBox, and FAILS
+#      sing-box.app, an unbranded display name and a misspelt one
 #   7. the pinned macOS source really is the structure the overlay was written for, and
 #      the overlay really does apply to it
 #
 # # Fixtures
 #
 # Checks 1-4 run against a small synthetic Xcode project written by this script: three
-# targets share PRODUCT_NAME = "sing-box" and near-identical configuration bodies, which
-# is exactly the shape an implementation that located configurations by body text rather
-# than by id would get wrong. Synthetic means no network and no Apple checkout, and makes
-# the fail-closed cases expressible at all - they are corruptions of a known-good fixture.
+# targets share near-identical configuration bodies, which is exactly the shape an
+# implementation that located configurations by body text rather than by id would get
+# wrong. Synthetic means no network and no Apple checkout, and makes the fail-closed cases
+# expressible at all - they are corruptions of a known-good fixture.
 #
 # Check 7 then reads the REAL pinned project, because a fixture can only prove the overlay
 # is self-consistent; it cannot prove it matches the source it will be applied to. That is
@@ -52,13 +51,13 @@
 #
 # # When it must run
 #
-# Check 7 asserts the PINNED state - the identity anchors are present, the display name is a
-# spelling the overlay accepts - and applies the overlay to a COPY rather than in place. It
-# therefore has to run BEFORE prepare-apple-client.sh brands the real checkout: a run
-# afterwards would find a checkout the build overlays had already rewritten, and the
-# "unmodified" assertion would fail on a perfectly correct build. The workflow runs it at that
-# point. --source-dir overrides which checkout is read, so the ordering can be demonstrated
-# locally against a checkout whose phase this script does not otherwise know.
+# Check 7 asserts the PINNED state - the product name and display state the overlay
+# accepts - and applies the overlay to a COPY rather than in place. It therefore has to run
+# BEFORE prepare-apple-client.sh brands the real checkout: a run afterwards would find a
+# checkout the build overlays had already rewritten, and the "unmodified" assertion would
+# fail on a perfectly correct build. The workflow runs it at that point. --source-dir
+# overrides which checkout is read, so the ordering can be demonstrated locally against a
+# checkout whose phase this script does not otherwise know.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -115,7 +114,7 @@ if [ ! -f "$overlay" ] || [ ! -f "$name_gate" ]; then
   exit 1
 fi
 
-# The two names under test are READ from the overlay rather than restated here: if the
+# The names under test are READ from the overlay rather than restated here: if the
 # overlay's brand and this suite's notion of it could drift apart, every check below would
 # pass while the app shipped under a name nothing had agreed on.
 #
@@ -129,10 +128,10 @@ if [ -z "$brand" ]; then
   exit 1
 fi
 
-# The identity is the PRODUCT_NAME the overlay protects. PROTECTED is a dict literal, so it
-# is parsed rather than pattern-matched: a renamed product has to be reported here loudly
-# rather than slip past a regex that had quietly stopped matching.
-identity="$(python3 - "$overlay" <<'PY'
+# The product name is the PRODUCT_NAME the overlay protects. PROTECTED is a dict literal,
+# so it is parsed rather than pattern-matched: a reverted product has to be reported here
+# loudly rather than slip past a regex that had quietly stopped matching.
+product="$(python3 - "$overlay" <<'PY'
 import ast, re, sys
 src = open(sys.argv[1], encoding="utf-8").read()
 m = re.search(r'^PROTECTED = (\{.*?\n\})', src, re.M | re.S)
@@ -144,15 +143,15 @@ if "PRODUCT_NAME" not in protected:
 print(protected["PRODUCT_NAME"])
 PY
 )" || {
-  echo "FAIL: the macOS overlay protects no PRODUCT_NAME identity" >&2
+  echo "FAIL: the macOS overlay protects no PRODUCT_NAME" >&2
   exit 1
 }
-if [ -z "$identity" ]; then
+if [ -z "$product" ]; then
   echo "FAIL: the macOS overlay protects an empty PRODUCT_NAME" >&2
   exit 1
 fi
 
-echo "macOS product under test: display name '$brand', identity '$identity'"
+echo "macOS product under test: display name '$brand', product name '$product'"
 
 # ---------------------------------------------------------------------------
 # The fixture
@@ -237,7 +236,7 @@ write_fixture() {
 				CODE_SIGN_ENTITLEMENTS = SFM/SFM.entitlements;
 				INFOPLIST_KEY_CFBundleDisplayName = "sing-box";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BASE_PACKAGE_IDENTIFIER)";
-				PRODUCT_NAME = "sing-box";
+				PRODUCT_NAME = "JiejieBox";
 			};
 			name = Debug;
 		};
@@ -247,14 +246,14 @@ write_fixture() {
 				CODE_SIGN_ENTITLEMENTS = SFM/SFM.entitlements;
 				INFOPLIST_KEY_CFBundleDisplayName = "sing-box";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BASE_PACKAGE_IDENTIFIER)";
-				PRODUCT_NAME = "sing-box";
+				PRODUCT_NAME = "JiejieBox";
 			};
 			name = Release;
 		};
 		3AEECC112A6DF9CA006A0E0C /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				INFOPLIST_KEY_CFBundleDisplayName = "sing-box";
+				INFOPLIST_KEY_CFBundleDisplayName = "Jiejiebox";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BASE_PACKAGE_IDENTIFIER).standalone";
 				PRODUCT_NAME = SFM;
 			};
@@ -263,7 +262,7 @@ write_fixture() {
 		3AEECC122A6DF9CA006A0E0C /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				INFOPLIST_KEY_CFBundleDisplayName = "sing-box";
+				INFOPLIST_KEY_CFBundleDisplayName = "Jiejiebox";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BASE_PACKAGE_IDENTIFIER).standalone";
 				PRODUCT_NAME = SFM;
 			};
@@ -272,7 +271,7 @@ write_fixture() {
 		3AEC20FF2A459AB500A63465 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				INFOPLIST_KEY_CFBundleDisplayName = "sing-box";
+				INFOPLIST_KEY_CFBundleDisplayName = "Jiejiebox";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BASE_PACKAGE_IDENTIFIER)";
 				PRODUCT_NAME = "sing-box";
 			};
@@ -281,7 +280,7 @@ write_fixture() {
 		3AEC21002A459AB500A63465 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				INFOPLIST_KEY_CFBundleDisplayName = "sing-box";
+				INFOPLIST_KEY_CFBundleDisplayName = "Jiejiebox";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BASE_PACKAGE_IDENTIFIER)";
 				PRODUCT_NAME = "sing-box";
 			};
@@ -320,7 +319,7 @@ PBX
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "3AEC21082A459B1900A63465"
-               BuildableName = "sing-box.app"
+               BuildableName = "JiejieBox.app"
                BlueprintName = "SFM"
                ReferencedContainer = "container:sing-box.xcodeproj">
             </BuildableReference>
@@ -345,7 +344,7 @@ PBX
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "3AEC21082A459B1900A63465"
-            BuildableName = "sing-box.app"
+            BuildableName = "JiejieBox.app"
             BlueprintName = "SFM"
             ReferencedContainer = "container:sing-box.xcodeproj">
          </BuildableReference>
@@ -356,7 +355,7 @@ PBX
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "3AEC21082A459B1900A63465"
-            BuildableName = "sing-box.app"
+            BuildableName = "JiejieBox.app"
             BlueprintName = "SFM"
             ReferencedContainer = "container:sing-box.xcodeproj">
          </BuildableReference>
@@ -395,35 +394,34 @@ PY
 
 echo "== the macOS overlay brands SFM Debug and Release =="
 # Both settings live in the same configuration block, so both are asserted: an overlay that
-# branded the display name by renaming the product would satisfy a display-name-only check
-# while shipping exactly the regression this contract exists to forbid.
+# branded the display name by rewriting the product name would satisfy a display-name-only
+# check while changing what the archive is called.
 fixture="$work/apply"
 write_fixture "$fixture"
 scheme_sha_before="$(shasum "$fixture/sing-box.xcodeproj/xcshareddata/xcschemes/SFM.xcscheme" | awk '{print $1}')"
 
-check "the overlay applies cleanly to the upstream fixture" python3 "$overlay" "$fixture"
+check "the overlay applies cleanly to the pinned-shape fixture" python3 "$overlay" "$fixture"
 
 for config in Debug Release; do
   check "SFM $config CFBundleDisplayName is $brand" \
     test "$(setting "$fixture/sing-box.xcodeproj/project.pbxproj" SFM "$config" INFOPLIST_KEY_CFBundleDisplayName)" = "$brand"
-  check "SFM $config PRODUCT_NAME is still $identity" \
-    test "$(setting "$fixture/sing-box.xcodeproj/project.pbxproj" SFM "$config" PRODUCT_NAME)" = "$identity"
+  check "SFM $config PRODUCT_NAME is $product" \
+    test "$(setting "$fixture/sing-box.xcodeproj/project.pbxproj" SFM "$config" PRODUCT_NAME)" = "$product"
 done
 
 # The scheme follows PRODUCT_NAME, so it must be byte-identical after the overlay runs: the
 # overlay validates the buildable it expects and never rewrites it.
-check "all three SFM scheme application buildables are still $identity.app" \
-  bash -c "test \"\$(grep -c 'BuildableName = \"$identity.app\"' '$fixture/sing-box.xcodeproj/xcshareddata/xcschemes/SFM.xcscheme')\" = 3"
-check "the scheme was not rewritten to a branded $brand.app" \
-  bash -c "! grep -q 'BuildableName = \"$brand.app\"' '$fixture/sing-box.xcodeproj/xcshareddata/xcschemes/SFM.xcscheme'"
+check "all three SFM scheme application buildables are $product.app" \
+  bash -c "test \"\$(grep -c 'BuildableName = \"$product.app\"' '$fixture/sing-box.xcodeproj/xcshareddata/xcschemes/SFM.xcscheme')\" = 3"
 check "the overlay did not rewrite the scheme at all" \
   test "$scheme_sha_before" = "$(shasum "$fixture/sing-box.xcodeproj/xcshareddata/xcschemes/SFM.xcscheme" | awk '{print $1}')"
 
-# The pinned client commits "Jiejiebox" (lower-case b) for SFM, which is an accepted starting
-# state that must be normalised rather than refused. It is exercised here because the main
-# fixture starts upstream and check 7 - the only other place that real spelling appears - is
-# SKIPPED when no macOS checkout is present. The spelling is asserted to be neither the brand
-# nor upstream, so a mistyped fixture cannot quietly degrade into the branded case.
+# The pinned client commits "Jiejiebox" (lower-case b) for the SFM display name, which is an
+# accepted starting state that must be normalised rather than refused. It is exercised here
+# because the main fixture starts upstream and check 7 - the only other place that real
+# spelling appears - is SKIPPED when no macOS checkout is present. The spelling is asserted
+# to be neither the brand nor upstream, so a mistyped fixture cannot quietly degrade into
+# the branded case.
 committed="$work/committed-spelling"
 write_fixture "$committed"
 python3 - "$committed/sing-box.xcodeproj/project.pbxproj" <<'PY'
@@ -431,7 +429,8 @@ import sys
 p = sys.argv[1]
 src = open(p, encoding="utf-8").read()
 # Located by configuration id, so only the two SFM blocks change and the shape stays that
-# of the pinned project: SFI already reads a brand spelling there, SFM.System stays upstream.
+# of the pinned project: SFI already reads a brand spelling there, SFM.System stays as the
+# client commits it.
 for header in ("3AEC21162A459B1A00A63465 /* Debug */ = {",
                "3AEC21172A459B1A00A63465 /* Release */ = {"):
     i = src.index(header)
@@ -442,7 +441,7 @@ open(p, "w", encoding="utf-8").write(src)
 PY
 committed_value="$(setting "$committed/sing-box.xcodeproj/project.pbxproj" SFM Debug INFOPLIST_KEY_CFBundleDisplayName)"
 check "the fixture starts from a real source spelling, not the brand or upstream" \
-  bash -c "test -n '$committed_value' && test '$committed_value' != '$brand' && test '$committed_value' != '$identity'"
+  bash -c "test -n '$committed_value' && test '$committed_value' != '$brand' && test '$committed_value' != 'sing-box'"
 check "the overlay accepts and normalises the committed spelling" python3 "$overlay" "$committed"
 check "SFM Debug is branded from the committed spelling" \
   test "$(setting "$committed/sing-box.xcodeproj/project.pbxproj" SFM Debug INFOPLIST_KEY_CFBundleDisplayName)" = "$brand"
@@ -450,21 +449,23 @@ check "SFM Release is branded from the committed spelling too" \
   test "$(setting "$committed/sing-box.xcodeproj/project.pbxproj" SFM Release INFOPLIST_KEY_CFBundleDisplayName)" = "$brand"
 
 echo "== nothing else moved =="
-# The fault lines: three targets share the product name and two share the display name,
-# so a replacement not addressed by configuration id shows up here.
-for target in SFI SFT; do
-  for config in Debug Release; do
-    check "$target $config PRODUCT_NAME is still sing-box" \
-      test "$(setting "$fixture/sing-box.xcodeproj/project.pbxproj" "$target" "$config" PRODUCT_NAME)" = "sing-box"
-    check "$target $config CFBundleDisplayName is still sing-box" \
-      test "$(setting "$fixture/sing-box.xcodeproj/project.pbxproj" "$target" "$config" INFOPLIST_KEY_CFBundleDisplayName)" = "sing-box"
-  done
+# The fault lines: three targets share the product name and two share the display name, so
+# a replacement not addressed by configuration id shows up here.
+for config in Debug Release; do
+  check "SFI $config PRODUCT_NAME is still sing-box" \
+    test "$(setting "$fixture/sing-box.xcodeproj/project.pbxproj" SFI "$config" PRODUCT_NAME)" = "sing-box"
+  check "SFI $config keeps the client's committed display name" \
+    test "$(setting "$fixture/sing-box.xcodeproj/project.pbxproj" SFI "$config" INFOPLIST_KEY_CFBundleDisplayName)" = "Jiejiebox"
+  check "SFT $config PRODUCT_NAME is still sing-box" \
+    test "$(setting "$fixture/sing-box.xcodeproj/project.pbxproj" SFT "$config" PRODUCT_NAME)" = "sing-box"
+  check "SFT $config CFBundleDisplayName is still sing-box" \
+    test "$(setting "$fixture/sing-box.xcodeproj/project.pbxproj" SFT "$config" INFOPLIST_KEY_CFBundleDisplayName)" = "sing-box"
 done
 for config in Debug Release; do
   check "SFM.System $config keeps PRODUCT_NAME = SFM" \
     test "$(setting "$fixture/sing-box.xcodeproj/project.pbxproj" SFM.System "$config" PRODUCT_NAME)" = "SFM"
-  check "SFM.System $config keeps CFBundleDisplayName = sing-box" \
-    test "$(setting "$fixture/sing-box.xcodeproj/project.pbxproj" SFM.System "$config" INFOPLIST_KEY_CFBundleDisplayName)" = "sing-box"
+  check "SFM.System $config keeps the client's committed display name" \
+    test "$(setting "$fixture/sing-box.xcodeproj/project.pbxproj" SFM.System "$config" INFOPLIST_KEY_CFBundleDisplayName)" = "Jiejiebox"
 done
 check "the SFM.System bundle id is unchanged" \
   grep -q 'PRODUCT_BUNDLE_IDENTIFIER = "\$(BASE_PACKAGE_IDENTIFIER).standalone";' \
@@ -486,15 +487,15 @@ after="$(cat "$fixture/sing-box.xcodeproj/project.pbxproj" "$fixture/sing-box.xc
 check "re-applying produced byte-identical files" test "$before" = "$after"
 
 echo "== the macOS overlay fails closed =="
-# Each corruption below is one that a naive implementation would accept: a display name
-# close to the brand but not one of the accepted spellings, a product renamed instead of its
-# presentation, a configuration set the overlay was never reviewed for, and a scheme that no
-# longer names the app buildable.
+# Each corruption below is one that a naive implementation would accept: a display name close
+# to the brand but not one of the accepted spellings, the product reverted to the name this
+# rename exists to move away from, a configuration set the overlay was never reviewed for,
+# and a scheme that no longer names the app buildable.
 #
-# There is no "half branded" state in the old sense any more: the overlay writes ONE setting,
-# so a configuration still reading the upstream name is simply upstream and gets normalised.
-# What must be refused is a display name outside ACCEPTED_SOURCE_NAMES, because that means
-# the pinned client moved in a way nobody reviewed.
+# There is no "half branded" state in the old sense any more: the overlay writes ONE display
+# setting, so a configuration still reading the upstream name is simply upstream and gets
+# normalised. What must be refused is a display name outside ACCEPTED_SOURCE_NAMES, because
+# that means the pinned client moved in a way nobody reviewed.
 # The near-miss most likely to ship: the brand with its second "e" dropped ("JijieBox").
 # It is not the upstream name, not the client's committed "Jiejiebox", and not the brand, so
 # it is outside ACCEPTED_SOURCE_NAMES and the overlay must refuse it rather than normalise it.
@@ -522,27 +523,27 @@ check "that fixture's other configuration is still upstream" \
   test "$(setting "$typo/sing-box.xcodeproj/project.pbxproj" SFM Release INFOPLIST_KEY_CFBundleDisplayName)" = "sing-box"
 expects_fail "a display name outside the accepted spellings is refused" python3 "$overlay" "$typo"
 
-# The rename this contract forbids, in the state a previous revision of the overlay produced:
-# the PRODUCT_NAME itself moved to the brand. It must be refused rather than normalised
-# around, because the scheme, the bundle directory and the sing-box:// URL scheme all follow
-# PRODUCT_NAME, and the overlay is not allowed to decide that trade.
-renamed="$work/renamed-product"
-write_fixture "$renamed"
-python3 - "$renamed/sing-box.xcodeproj/project.pbxproj" "$brand" <<'PY'
+# The rename this contract requires, undone: the PRODUCT_NAME itself moved back to
+# sing-box while the display name stayed right. It must be refused rather than normalised
+# around, because the archive's bundle directory - and the scheme that names it - follow
+# PRODUCT_NAME.
+reverted="$work/reverted-product"
+write_fixture "$reverted"
+python3 - "$reverted/sing-box.xcodeproj/project.pbxproj" <<'PY'
 import sys
-p, brand = sys.argv[1], sys.argv[2]
+p = sys.argv[1]
 src = open(p, encoding="utf-8").read()
 old = '3AEC21162A459B1A00A63465 /* Debug */ = {'
 i = src.index(old)
 j = src.index("name = Debug;", i)
-src = src[:i] + src[i:j].replace('PRODUCT_NAME = "sing-box";', f'PRODUCT_NAME = "{brand}";') + src[j:]
+src = src[:i] + src[i:j].replace('PRODUCT_NAME = "JiejieBox";', 'PRODUCT_NAME = "sing-box";') + src[j:]
 open(p, "w", encoding="utf-8").write(src)
 PY
-check "the fixture really has an SFM product renamed to the brand" \
-  test "$(setting "$renamed/sing-box.xcodeproj/project.pbxproj" SFM Debug PRODUCT_NAME)" = "$brand"
-check "that fixture's display name is untouched, so only the identity moved" \
-  test "$(setting "$renamed/sing-box.xcodeproj/project.pbxproj" SFM Debug INFOPLIST_KEY_CFBundleDisplayName)" = "sing-box"
-expects_fail "an SFM PRODUCT_NAME renamed away from $identity is refused" python3 "$overlay" "$renamed"
+check "the fixture really has an SFM product reverted to sing-box" \
+  test "$(setting "$reverted/sing-box.xcodeproj/project.pbxproj" SFM Debug PRODUCT_NAME)" = "sing-box"
+check "that fixture's display name is untouched, so only the product moved" \
+  test "$(setting "$reverted/sing-box.xcodeproj/project.pbxproj" SFM Debug INFOPLIST_KEY_CFBundleDisplayName)" = "sing-box"
+expects_fail "an SFM PRODUCT_NAME that is not $product is refused" python3 "$overlay" "$reverted"
 
 unexpected="$work/unexpected"
 write_fixture "$unexpected"
@@ -568,7 +569,7 @@ src = src.replace("""		3AEECC112A6DF9CA006A0E0C /* Debug */ = {""", """		3AEC211
 			buildSettings = {
 				INFOPLIST_KEY_CFBundleDisplayName = "sing-box";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BASE_PACKAGE_IDENTIFIER)";
-				PRODUCT_NAME = "sing-box";
+				PRODUCT_NAME = "JiejieBox";
 			};
 			name = Profile;
 		};
@@ -579,37 +580,36 @@ check "the fixture really has an unexpected configuration" \
   grep -q '3AEC21182A459B1A00A63465 /\* Profile \*/' "$unexpected/sing-box.xcodeproj/project.pbxproj"
 expects_fail "an unrecognised configuration set is refused" python3 "$overlay" "$unexpected"
 
-# A scheme already rewritten to the brand's bundle name: what the previous revision of the
-# overlay produced, and what re-running over such a checkout would find. The overlay
-# validates the buildable and never rewrites the scheme, so it must refuse rather than brand
-# a project whose product identity has already moved.
-renamed_scheme="$work/renamed-scheme"
-write_fixture "$renamed_scheme"
-python3 - "$renamed_scheme/sing-box.xcodeproj/xcshareddata/xcschemes/SFM.xcscheme" "$brand" <<'PY'
+# A scheme still naming the old product: what a checkout that missed the rename looks like.
+# The overlay validates the buildable and never rewrites the scheme, so it must refuse
+# rather than brand a project whose scheme would build a different product.
+old_scheme="$work/old-scheme"
+write_fixture "$old_scheme"
+python3 - "$old_scheme/sing-box.xcodeproj/xcshareddata/xcschemes/SFM.xcscheme" "$product" <<'PY'
 import sys
-p, brand = sys.argv[1], sys.argv[2]
+p, product = sys.argv[1], sys.argv[2]
 src = open(p, encoding="utf-8").read()
-# All three application buildables, so the scheme no longer names sing-box.app at all.
-src = src.replace('BuildableName = "sing-box.app"', f'BuildableName = "{brand}.app"')
+# All three application buildables, so the scheme names no JiejieBox.app at all.
+src = src.replace(f'BuildableName = "{product}.app"', 'BuildableName = "sing-box.app"')
 open(p, "w", encoding="utf-8").write(src)
 PY
-check "the fixture really has a scheme renamed to the branded bundle" \
-  bash -c "test \"\$(grep -c 'BuildableName = \"$brand.app\"' '$renamed_scheme/sing-box.xcodeproj/xcshareddata/xcschemes/SFM.xcscheme')\" = 3"
-expects_fail "a scheme already renamed to $brand.app is refused" python3 "$overlay" "$renamed_scheme"
+check "the fixture really has a scheme naming sing-box.app" \
+  bash -c "test \"\$(grep -c 'BuildableName = \"sing-box.app\"' '$old_scheme/sing-box.xcodeproj/xcshareddata/xcschemes/SFM.xcscheme')\" = 3"
+expects_fail "a scheme that still names sing-box.app is refused" python3 "$overlay" "$old_scheme"
 
 # A buildable this overlay has never heard of. The scheme follows PRODUCT_NAME, so a name
-# that is neither the identity nor the brand means the pinned client moved.
+# that is neither the old product name nor the new one means the pinned client moved.
 unknown="$work/unknown"
 write_fixture "$unknown"
 python3 - "$unknown/sing-box.xcodeproj/xcshareddata/xcschemes/SFM.xcscheme" <<'PY'
 import sys
 p = sys.argv[1]
 src = open(p, encoding="utf-8").read()
-src = src.replace('BuildableName = "sing-box.app"', 'BuildableName = "SomeOtherName.app"')
+src = src.replace('BuildableName = "JiejieBox.app"', 'BuildableName = "SomeOtherName.app"')
 open(p, "w", encoding="utf-8").write(src)
 PY
-check "the fixture really has no sing-box.app buildable left" \
-  bash -c "! grep -q 'BuildableName = \"sing-box.app\"' '$unknown/sing-box.xcodeproj/xcshareddata/xcschemes/SFM.xcscheme'"
+check "the fixture really has no JiejieBox.app buildable left" \
+  bash -c "! grep -q 'BuildableName = \"JiejieBox.app\"' '$unknown/sing-box.xcodeproj/xcshareddata/xcschemes/SFM.xcscheme'"
 expects_fail "an unknown application buildable is refused" python3 "$overlay" "$unknown"
 
 missing="$work/missing"
@@ -618,14 +618,14 @@ expects_fail "a project directory with no pbxproj is refused" python3 "$overlay"
 expects_fail "no client directory at all is refused" python3 "$overlay" "$work/does-not-exist"
 
 echo "== the two overlays keep their own scopes =="
-# iOS brands SFI from its own overlay and macOS brands SFM from this one. The scopes are
-# kept apart structurally rather than by running both against one fixture: each overlay
-# addresses a different target and a different scheme FILE, which is what makes it
+# iOS brands SFI from its own overlay and macOS brands SFM's display name from this one. The
+# scopes are kept apart structurally rather than by running both against one fixture: each
+# overlay addresses a different target and a different scheme FILE, which is what makes it
 # possible to change one platform's branding without touching the other platform's build.
 #
-# The iOS overlay's own end-to-end behaviour is covered where it can be covered for real,
-# in test-apple-signing.sh against the pinned iOS client. Duplicating a stand-in iOS
-# project here would assert a fixture rather than the client.
+# The iOS overlay's own end-to-end behaviour is covered where it can be covered for real, in
+# test-apple-signing.sh against the pinned iOS client. Duplicating a stand-in iOS project here
+# would assert a fixture rather than the client.
 check "the iOS overlay still targets the SFI target" \
   grep -q '^TARGET = "SFI"$' "$ios_overlay"
 check "the macOS overlay targets the SFM target" \
@@ -686,51 +686,51 @@ make_bundle() {
 }
 
 bundles="$work/bundles"
-# The correct pairing under this contract: the bundle directory and CFBundleName are the
-# product identity, and only the display name is the brand.
-good="$bundles/$identity.app"
-make_bundle "$good" "$brand" "$identity"
-check "the gate accepts $identity.app with CFBundleDisplayName=$brand" "$name_gate" "$good" "$brand"
+# The correct shape under this contract: the bundle directory and CFBundleName follow
+# PRODUCT_NAME (JiejieBox), and the display name is the brand.
+good="$bundles/$product.app"
+make_bundle "$good" "$brand" "$product"
+check "the gate accepts $product.app with CFBundleDisplayName=$brand" "$name_gate" "$good" "$brand"
 check "the gate resolves the expected names from the overlay when not told" "$name_gate" "$good"
 
-# The bug the branding overlay exists to fix: the app is still called sing-box.
-bad="$bundles/unbranded/$identity.app"
-make_bundle "$bad" sing-box "$identity"
-expects_fail "the gate rejects an unbranded $identity.app, the bug this fix is for" "$name_gate" "$bad"
+# The bug the rename exists to fix: the app is still called sing-box.
+bad="$bundles/unbranded/$product.app"
+make_bundle "$bad" sing-box "$product"
+expects_fail "the gate rejects an unbranded display name, the bug this fix is for" "$name_gate" "$bad"
 
 # Misspellings the contract forbids. A close-but-wrong name installs under a name nobody
 # asked for, so each is asserted to fail rather than trusted to be unlikely. The bundle
-# directory keeps the correct identity, so a rejection here is attributable to the DISPLAY
-# name rather than to the identity check firing on the same fixture.
+# directory keeps the correct product name, so a rejection here is attributable to the
+# DISPLAY name rather than to the bundle-name check firing on the same fixture.
 for wrong in Jijiebox JijieBox Jijiebox2 jiejiebox; do
-  make_bundle "$bundles/wrong/$identity.app" "$wrong" "$identity"
-  expects_fail "the gate rejects '$wrong' as the display name" "$name_gate" "$bundles/wrong/$identity.app"
+  make_bundle "$bundles/wrong/$product.app" "$wrong" "$product"
+  expects_fail "the gate rejects '$wrong' as the display name" "$name_gate" "$bundles/wrong/$product.app"
 done
 
-# The regression the new gate exists for: something renamed the PRODUCT instead of its
-# presentation. A bundle named after the brand is a FAILURE even when it shows the right
-# display name, and this is the assertion that catches the rename the old gate required.
-make_bundle "$bundles/product-renamed/$brand.app" "$brand" "$brand"
-expects_fail "the gate rejects a bundle named $brand.app, the rename this contract forbids" \
-  "$name_gate" "$bundles/product-renamed/$brand.app"
+# The collision this rename removes: something named the archive after the old product.
+# A bundle named sing-box.app is a FAILURE even when it shows the right display name and
+# declares the right CFBundleName.
+make_bundle "$bundles/old-name/sing-box.app" "$brand" sing-box
+expects_fail "the gate rejects a bundle named sing-box.app" \
+  "$name_gate" "$bundles/old-name/sing-box.app"
 
-# CFBundleName is identity, so it must be $identity even when the display name is right. It
-# is the fallback when no display name is present, which is what makes it identity surface
-# rather than presentation.
-make_bundle "$bundles/disagree/$identity.app" "$brand" "$brand"
-expects_fail "the gate rejects a bundle whose CFBundleName is the brand rather than $identity" \
-  "$name_gate" "$bundles/disagree/$identity.app"
+# CFBundleName follows PRODUCT_NAME, so it must be $product even when the display name is
+# right. It is the fallback when no display name is present, which is what makes it part of
+# the product's name rather than presentation.
+make_bundle "$bundles/disagree/$product.app" "$brand" sing-box
+expects_fail "the gate rejects a bundle whose CFBundleName is sing-box rather than $product" \
+  "$name_gate" "$bundles/disagree/$product.app"
 
 # And the same bundle with no CFBundleName key at all must PASS: the project generates its
 # Info.plist, a missing key is legitimate, and the gate only judges the key when it is there.
 # The old gate treated this exact bundle as a failure, which is the expectation this replaces.
-make_bundle "$bundles/no-name-key/$identity.app" "$brand"
-check "the gate accepts $identity.app showing the brand with no CFBundleName key" \
-  "$name_gate" "$bundles/no-name-key/$identity.app"
+make_bundle "$bundles/no-name-key/$product.app" "$brand"
+check "the gate accepts $product.app showing the brand with no CFBundleName key" \
+  "$name_gate" "$bundles/no-name-key/$product.app"
 
 # A bundle with no display name at all is not a branded bundle.
-make_bundle "$bundles/nodisplay/$identity.app" "$brand" "$identity"
-python3 - "$bundles/nodisplay/$identity.app/Contents/Info.plist" <<'PY'
+make_bundle "$bundles/nodisplay/$product.app" "$brand" "$product"
+python3 - "$bundles/nodisplay/$product.app/Contents/Info.plist" <<'PY'
 import re, sys
 p = sys.argv[1]
 src = open(p, encoding="utf-8").read()
@@ -738,7 +738,7 @@ src = re.sub(r"\s*<key>CFBundleDisplayName</key><string>[^<]*</string>", "", src
 open(p, "w", encoding="utf-8").write(src)
 PY
 expects_fail "the gate rejects a bundle with no CFBundleDisplayName" \
-  "$name_gate" "$bundles/nodisplay/$identity.app"
+  "$name_gate" "$bundles/nodisplay/$product.app"
 
 expects_fail "the gate refuses a path that is not a bundle" "$name_gate" "$bundles"
 check "the TestFlight builder runs the gate before uploading" \
@@ -808,6 +808,7 @@ src = open(sys.argv[1], encoding="utf-8").read()
 # refers to BRAND_DISPLAY_NAME by name, which a regex over the literal would not resolve.
 spec = importlib.util.spec_from_file_location("macos_branding_overlay", sys.argv[2])
 overlay = importlib.util.module_from_spec(spec)
+sys.modules["macos_branding_overlay"] = overlay
 spec.loader.exec_module(overlay)
 
 m = re.search(r'Build configuration list for PBXNativeTarget "SFM" \*/ = \{(.*?)\n\t\t\};', src, re.S)
@@ -826,7 +827,8 @@ for cid in ids:
         v = re.search(rf'^\s*{re.escape(key)} = "([^"]*)";', body, re.M)
         return v.group(1) if v else None
 
-    # Identity: exact equality, because the overlay refuses to proceed on anything else.
+    # Product and identifier: exact equality, because the overlay refuses to proceed on
+    # anything else.
     for key, wanted in overlay.PROTECTED.items():
         got = setting(key)
         if got is None:
@@ -848,10 +850,10 @@ PY
 
   check "the pinned SFM scheme has exactly three SFM application buildables" \
     test "$(grep -c 'BlueprintIdentifier = "3AEC21082A459B1900A63465"' "$pinned_scheme")" = "3"
-  check "the pinned SFM scheme names all of them $identity.app" \
-    bash -c "test \"\$(grep -c 'BuildableName = \"$identity.app\"' '$pinned_scheme')\" = 3"
-  check "the pinned SFM scheme names no branded $brand.app" \
-    bash -c "! grep -q 'BuildableName = \"$brand.app\"' '$pinned_scheme'"
+  check "the pinned SFM scheme names all of them $product.app" \
+    bash -c "test \"\$(grep -c 'BuildableName = \"$product.app\"' '$pinned_scheme')\" = 3"
+  check "the pinned SFM scheme names no sing-box.app" \
+    bash -c "! grep -q 'BuildableName = \"sing-box.app\"' '$pinned_scheme'"
   check "the pinned scheme keeps the UI test buildable" \
     grep -q 'BuildableName = "SFMUITests.xctest"' "$pinned_scheme"
 
@@ -863,22 +865,22 @@ PY
   # spelling there - the value is already a brand spelling - only as "unchanged by this run".
   sfi_display_before="$(setting "$pinned_pbx" SFI Release INFOPLIST_KEY_CFBundleDisplayName || true)"
   sfi_identity_before="$(setting "$pinned_pbx" SFI Release PRODUCT_NAME || true)"
-  # SFM.System is read before the apply for the same reason SFI is. The pinned client now
-  # commits a brand spelling for the macOS app that actually ships - SFM.System is the
-  # target the DMG and the pkg contain - so "the overlay did not brand it" can no longer be
-  # asserted as the literal "sing-box". That literal only ever held while the client left
-  # SFM.System unbranded. What this overlay owns is still asserted, as "unchanged by this
-  # run", which is the property the check was always about.
+  # SFM.System is read before the apply for the same reason SFI is. The pinned client commits
+  # a brand spelling for the macOS app that actually ships - SFM.System is the target the DMG
+  # and the pkg contain - so "the overlay did not brand it" can no longer be asserted as the
+  # literal "sing-box". That literal only ever held while the client left SFM.System
+  # unbranded. What this overlay owns is still asserted, as "unchanged by this run", which is
+  # the property the check was always about.
   sfmsystem_display_before="$(setting "$pinned_pbx" SFM.System Release INFOPLIST_KEY_CFBundleDisplayName || true)"
   real_copy="$work/real-copy"
   cp -R "$macos_dir" "$real_copy"
   check "the overlay applies to a copy of the pinned macOS source" python3 "$overlay" "$real_copy"
   check "the pinned SFM Release display name is branded" \
     test "$(setting "$real_copy/sing-box.xcodeproj/project.pbxproj" SFM Release INFOPLIST_KEY_CFBundleDisplayName)" = "$brand"
-  check "the pinned SFM Release PRODUCT_NAME is still $identity" \
-    test "$(setting "$real_copy/sing-box.xcodeproj/project.pbxproj" SFM Release PRODUCT_NAME)" = "$identity"
-  check "the pinned SFM scheme still names $identity.app after the apply" \
-    bash -c "test \"\$(grep -c 'BuildableName = \"$identity.app\"' '$real_copy/sing-box.xcodeproj/xcshareddata/xcschemes/SFM.xcscheme')\" = 3"
+  check "the pinned SFM Release PRODUCT_NAME is $product" \
+    test "$(setting "$real_copy/sing-box.xcodeproj/project.pbxproj" SFM Release PRODUCT_NAME)" = "$product"
+  check "the pinned SFM scheme still names $product.app after the apply" \
+    bash -c "test \"\$(grep -c 'BuildableName = \"$product.app\"' '$real_copy/sing-box.xcodeproj/xcshareddata/xcschemes/SFM.xcscheme')\" = 3"
   check "the macOS overlay left the pinned SFM.System display name alone" \
     test "$(setting "$real_copy/sing-box.xcodeproj/project.pbxproj" SFM.System Release INFOPLIST_KEY_CFBundleDisplayName)" = "$sfmsystem_display_before"
   check "the pinned SFM.System target keeps PRODUCT_NAME = SFM" \

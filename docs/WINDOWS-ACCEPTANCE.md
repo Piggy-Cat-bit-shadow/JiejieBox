@@ -25,7 +25,7 @@ Windows daemon authenticates the installed application against the daemon's own 
 refuses to register the service - and refuses every peer handshake - when the two differ
 (`experimental/boxdd/security_windows.go`, `peer_windows.go`). It also resolves the
 application by the exact path `<install>/sing-box.exe`. So the installed executable keeps
-that file name; `productName` stays `Jiejiebox` and supplies everything a user reads.
+that file name; `productName` is `JiejieBox` and supplies everything a user reads.
 
 ## What only a real machine can prove
 

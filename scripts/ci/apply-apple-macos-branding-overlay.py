@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Sets the macOS app product's USER-VISIBLE name, without touching its identity.
+"""Sets the macOS app's USER-VISIBLE name, and verifies the product name it ships under.
 
 Invoked by scripts/ci/prepare-apple-client.sh. See that file for why this is an
 overlay on the working tree rather than a change to the pinned submodule.
 
-# Brand display and product identity are separate things
+# What this overlay owns, and what it only verifies
 
 This overlay writes exactly ONE setting:
 
@@ -12,26 +12,32 @@ This overlay writes exactly ONE setting:
 
 into the `SFM` target's Debug and Release configurations only.
 
-It does NOT touch `PRODUCT_NAME`. An earlier version of this file branded both
-settings and additionally rewrote the `SFM` scheme's `BuildableName` from
-`sing-box.app` to a branded name. That made the parent repository the thing that
-decided the client's product identity:
+`PRODUCT_NAME` is owned by the Apple client itself, not by this overlay: the pinned
+project declares `JiejieBox` for the SFM target, so the archive contains
+`JiejieBox.app` and does not collide with the official `sing-box.app` in /Applications.
+This script VERIFIES that value, and the matching `SFM` scheme buildable, rather than
+rewriting either. An earlier version of this file branded both settings and rewrote
+the scheme from `sing-box.app` to a branded name, which made the parent repository the
+thing that decided the client's product identity; the client's own project is now the
+authority for the bundle name.
 
-    PRODUCT_NAME              the built .app name, and CFBundleName with it
-    the SFM scheme buildable  what Xcode builds and archives
-    BASE_PACKAGE_IDENTIFIER   the bundle id, the sing-box:// URL scheme, Profile types
+The boundary that remains protected is the identifier surface:
+
+    PRODUCT_BUNDLE_IDENTIFIER   the bundle id, the sing-box:// URL scheme, Profile types
+    BASE_PACKAGE_IDENTIFIER     the prefix every target's bundle id derives from
 
 Those are identity, protocol and signing surface: another process, a server, an
 existing Profile file or a `sing-box://` link keys on them. The Apple repository
 states the same boundary itself and enforces it in
 scripts/dev/audit_apple_ui_boundary.py:
 
-    BRAND_DISPLAY_NAME = "Jiejiebox"       # the one override this fork may make
-    PROTECTED_NAME_SETTINGS = ("PRODUCT_NAME", "PRODUCT_BUNDLE_IDENTIFIER",
+    BRAND_DISPLAY_NAME        the display override this fork may make: "Jiejiebox"
+    BRANDED_PRODUCT_NAME      the product rename, scoped to SFM only: "JiejieBox"
+    PROTECTED_NAME_SETTINGS   ("PRODUCT_NAME", "PRODUCT_BUNDLE_IDENTIFIER",
                                "BASE_PACKAGE_IDENTIFIER")
 
-`CFBundleDisplayName` is the smallest lever that satisfies both: it is the name in the
-menu bar, the Dock and About, and it is the only one of the four nothing else reads.
+`CFBundleDisplayName` is the name in the menu bar, the Dock and About, and it is the
+only one of these nothing else reads.
 
 Note that `SFM.System` - the unsandboxed Developer ID product - is deliberately not
 branded by this overlay, and neither is any extension target. Only the App Store /
@@ -41,8 +47,8 @@ TestFlight app is.
 
 `JiejieBox`, with a capital B, matching the iOS product. The two products present the
 same name to the user; the earlier split spelling (macOS `Jiejiebox`, lower-case b) is
-gone. The Apple client commits `Jiejiebox` for both app targets, which is an accepted
-starting state and is normalised here.
+gone. The Apple client commits `Jiejiebox` as the SFM display name, which is an
+accepted starting state and is normalised here.
 
 Any spelling other than the accepted ones is refused rather than rewritten: a brand name
 is not something to guess at, and a half-remembered variant is exactly the kind of typo
@@ -63,7 +69,7 @@ alone, so a second run changes nothing. Any OTHER value fails closed.
 
 If the pinned client is updated and these settings change or move, this script fails
 rather than silently skipping - a branding overlay that quietly stops working would ship
-an app still called sing-box, which is the bug it exists to fix.
+an app still presenting itself as sing-box, which is the bug it exists to fix.
 """
 import re
 import sys
@@ -80,10 +86,10 @@ BRAND_DISPLAY_NAME = "JiejieBox"
 #: and are deliberately absent, so that a typo is refused rather than propagated.
 ACCEPTED_SOURCE_NAMES = ("sing-box", "Jiejiebox", BRAND_DISPLAY_NAME)
 
-#: Identity surface. Never written by this overlay; asserted so that a reintroduced
-#: rename is caught here rather than discovered in a shipped bundle.
+#: Product and identifier surface. Never written by this overlay; asserted so that the
+#: archive, the project and this script cannot disagree about what ships.
 PROTECTED = {
-    "PRODUCT_NAME": "sing-box",
+    "PRODUCT_NAME": "JiejieBox",
     "PRODUCT_BUNDLE_IDENTIFIER": "$(BASE_PACKAGE_IDENTIFIER)",
 }
 
@@ -95,10 +101,10 @@ TARGET = "SFM"
 # guessing would ship a build nobody reviewed.
 EXPECTED_CONFIG_NAMES = {"Debug", "Release"}
 
-# The scheme names the app buildable. Because PRODUCT_NAME is untouched, this stays
-# `sing-box.app`; the scheme is validated, never rewritten.
+# The scheme names the app buildable. PRODUCT_NAME is the client's, so this must read
+# `JiejieBox.app`; the scheme is validated, never rewritten.
 SCHEME = "sing-box.xcodeproj/xcshareddata/xcschemes/SFM.xcscheme"
-SCHEME_BUILDABLE = 'BuildableName = "sing-box.app"'
+SCHEME_BUILDABLE = 'BuildableName = "JiejieBox.app"'
 
 
 def fail(message: str, details: list[str] | None = None) -> None:
@@ -181,7 +187,7 @@ def scheme_state(client: str) -> str:
     """"pinned" when the scheme names the app buildable; fail on anything else.
 
     An ambiguous scheme is reported and never rewritten: the buildable name follows
-    PRODUCT_NAME, which this overlay deliberately does not change.
+    PRODUCT_NAME, which the client owns and this overlay only verifies.
     """
     path = f"{client}/{SCHEME}"
     try:
@@ -195,7 +201,7 @@ def scheme_state(client: str) -> str:
         "the SFM scheme does not reference the app buildable this overlay expects",
         [
             f"looked for {SCHEME_BUILDABLE!r}",
-            "the scheme follows PRODUCT_NAME, which branding does not change",
+            "the scheme follows PRODUCT_NAME, which this overlay verifies rather than writes",
             "refusing to guess at the intended rename",
         ],
     )
@@ -243,7 +249,7 @@ def main() -> int:
             [f"resolved {len(spans)} ids for {sorted(names)}"],
         )
 
-    # --- identity surface must be intact --------------------------------------
+    # --- product and identifier surface must be intact ------------------------
     for cid, (_, _, name, block) in sorted(spans.items()):
         for key, want in PROTECTED.items():
             got = settable(block, key)
@@ -251,8 +257,8 @@ def main() -> int:
                 fail(
                     f"SFM {name} has {key} = {got!r}, expected {want!r}",
                     [
-                        "PRODUCT_NAME and the bundle identifier are identity surface,",
-                        "not branding; this overlay never changes them",
+                        "PRODUCT_NAME and the bundle identifier are not display settings:",
+                        "this overlay verifies them and never writes them",
                     ],
                 )
 
@@ -295,9 +301,12 @@ def main() -> int:
             f"in {changed_ids} configuration(s)"
         )
 
-    # --- the scheme must still name the unchanged product ---------------------
+    # --- the scheme must name the product the project builds ------------------
     scheme_state(client)
-    print("  [branding] macOS SFM scheme BuildableName unchanged (PRODUCT_NAME is identity)")
+    print(
+        "  [branding] macOS SFM scheme BuildableName is JiejieBox.app "
+        "(matches the SFM PRODUCT_NAME)"
+    )
     return 0
 
 
