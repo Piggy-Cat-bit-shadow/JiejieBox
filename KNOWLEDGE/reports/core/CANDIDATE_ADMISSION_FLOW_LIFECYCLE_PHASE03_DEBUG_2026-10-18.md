@@ -351,15 +351,158 @@ go test -race ...                                  BLOCKED_BY_ENVIRONMENT
 
 ---
 
+## L. Addendum — the second pass
+
+**The first pass was partial, and this section says so before it says anything else.** It attacked the
+policy axis properly (the capture counter, the cross-stage matrix) and then established five lifecycle
+claims by **reading** the test that already covered them: setup cancellation, scheduler lifetime, packet
+parity, refusal distinguishability, and the policy's own lifetime. Reading a test establishes coverage; it
+is not the same as attacking the claim, which is what this round is for. All five were left as "covered by
+Phase 01 or 02" with no new attempt to break them.
+
+The second pass attacks them (`a897deb2f9f`, `admission_debug_lifecycle_test.go`):
+
+| attack | the wrong implementation it catches |
+|---|---|
+| `TestACancelledBeforeItStartsFlowReachesNoTransport` | one that dials a socket and then discards it — which also returns an error, and has woken the radio for a request nobody wants |
+| `TestACancelledMidDialFlowRecordsNoFamilyVerdict` | one that records a caller's cancellation as a family path failure, poisoning the next connection for the whole fifteen-second window |
+| `TestACancelledRaceJoinsItsAttempts` | one whose race "returns quickly" while a worker is still running — the leak that grows per transition on a device |
+| `TestEveryPacketArmAnswersTheSamePolicy` | one arm applying a term another arm owns |
+| `TestTheRefusalReasonsAreMutuallyDistinguishable` | two refusals rendering identically, sending an operator to the wrong subsystem |
+| `TestNoLongLivedStructureHoldsAPolicy` | a struct FIELD holding a policy, which keeps a generation alive past its network and looks harmless at the definition site |
+
+Both new guards are `VERIFIED_MUTATION`: deleting the literal packet arm's strategy check fails the parity
+table on *"the literal arm must refuse a destination of the forbidden family"*, and giving
+`candidateScheduler` an `admissionPolicy` field fails the source guard by name.
+
+### L.1 The finding: the three packet arms answer one policy at three different layers
+
+This is the second pass's substantive result, and it arrived as a **failure of my own table**. The first
+version asserted one expectation for all three arms and failed twice; both failures were the test's fault.
+What it exposed is not written down anywhere else:
+
+```text
+connected UDP, candidate list   the STRATEGY term by the network entry point,
+                                the CAPABILITY term by the scheduler
+                                (both, before a socket exists)
+
+unconnected UDP, literal        the STRATEGY term by the wrapper,
+                                the CAPABILITY term by the LEAF,
+                                after the wrapper hands the literal down
+
+unconnected UDP, hostname       BOTH terms by the wrapper - there is no scheduler and no
+                                candidate list, so the list handed to N.ListenSerial IS
+                                the decision (the arm that was missing the policy entirely
+                                until Phase 02 found it)
+```
+
+So *"every packet arm answers the same policy"* is true in the sense that matters — no arm admits what the
+operator's policy forbids, and no arm creates a socket for a family the machine cannot dial — and **false**
+if it is read as "every arm refuses at the same layer". The table now encodes the asymmetry, and the
+asymmetry is the documentation: a wrapper that applied the capability term to the **literal** arm would hide
+the leaf's gate from every path that does not come through the wrapper, and the leaf's gate is the one
+measured to be load-bearing twice (`default_parallel_network.go:245-261`).
+
+**This is the fourth time in the round that a fixture measured the wrong thing** — Phase 02's planner
+ordering, Phase 03's first pass with the serial walk, Phase 04's superseded capture, and this. The pattern
+is the same every time: the test asserted a property of the *path* while claiming to assert a property of
+the *policy*, and every such test passed.
+
+### L.2 §G updated
+
+| surface | level after the second pass |
+|---|---|
+| setup cancellation by the caller | `VERIFIED_UNIT` + `VERIFIED_MUTATION` (was `VERIFIED_SOURCE`) |
+| scheduler joins its attempts | `VERIFIED_UNIT` |
+| refusal reasons mutually distinguishable | `VERIFIED_UNIT` (was `VERIFIED_SOURCE`) |
+| packet arms answer one policy at three layers | `VERIFIED_UNIT` + `VERIFIED_MUTATION` |
+| policy is never a struct field | `VERIFIED_UNIT` + `VERIFIED_MUTATION` |
+
+**Still not attacked, and named so it is not mistaken for covered:** the manager-close ordering during an
+in-flight setup (Phase 01's scope, and the route suite's `Close` tests), and the 1000-flow stress (Phase 04
+records it as not run). Both remain where they were.
 ## PHASE 03 HANDOFF
 
 ```markdown
+## L. Addendum — the second pass
+
+**The first pass was partial, and this section says so before it says anything else.** It attacked the
+policy axis properly (the capture counter, the cross-stage matrix) and then established five lifecycle
+claims by **reading** the test that already covered them: setup cancellation, scheduler lifetime, packet
+parity, refusal distinguishability, and the policy's own lifetime. Reading a test establishes coverage; it
+is not the same as attacking the claim, which is what this round is for. All five were left as "covered by
+Phase 01 or 02" with no new attempt to break them.
+
+The second pass attacks them (`a897deb2f9f`, `admission_debug_lifecycle_test.go`):
+
+| attack | the wrong implementation it catches |
+|---|---|
+| `TestACancelledBeforeItStartsFlowReachesNoTransport` | one that dials a socket and then discards it — which also returns an error, and has woken the radio for a request nobody wants |
+| `TestACancelledMidDialFlowRecordsNoFamilyVerdict` | one that records a caller's cancellation as a family path failure, poisoning the next connection for the whole fifteen-second window |
+| `TestACancelledRaceJoinsItsAttempts` | one whose race "returns quickly" while a worker is still running — the leak that grows per transition on a device |
+| `TestEveryPacketArmAnswersTheSamePolicy` | one arm applying a term another arm owns |
+| `TestTheRefusalReasonsAreMutuallyDistinguishable` | two refusals rendering identically, sending an operator to the wrong subsystem |
+| `TestNoLongLivedStructureHoldsAPolicy` | a struct FIELD holding a policy, which keeps a generation alive past its network and looks harmless at the definition site |
+
+Both new guards are `VERIFIED_MUTATION`: deleting the literal packet arm's strategy check fails the parity
+table on *"the literal arm must refuse a destination of the forbidden family"*, and giving
+`candidateScheduler` an `admissionPolicy` field fails the source guard by name.
+
+### L.1 The finding: the three packet arms answer one policy at three different layers
+
+This is the second pass's substantive result, and it arrived as a **failure of my own table**. The first
+version asserted one expectation for all three arms and failed twice; both failures were the test's fault.
+What it exposed is not written down anywhere else:
+
+```text
+connected UDP, candidate list   the STRATEGY term by the network entry point,
+                                the CAPABILITY term by the scheduler
+                                (both, before a socket exists)
+
+unconnected UDP, literal        the STRATEGY term by the wrapper,
+                                the CAPABILITY term by the LEAF,
+                                after the wrapper hands the literal down
+
+unconnected UDP, hostname       BOTH terms by the wrapper - there is no scheduler and no
+                                candidate list, so the list handed to N.ListenSerial IS
+                                the decision (the arm that was missing the policy entirely
+                                until Phase 02 found it)
+```
+
+So *"every packet arm answers the same policy"* is true in the sense that matters — no arm admits what the
+operator's policy forbids, and no arm creates a socket for a family the machine cannot dial — and **false**
+if it is read as "every arm refuses at the same layer". The table now encodes the asymmetry, and the
+asymmetry is the documentation: a wrapper that applied the capability term to the **literal** arm would hide
+the leaf's gate from every path that does not come through the wrapper, and the leaf's gate is the one
+measured to be load-bearing twice (`default_parallel_network.go:245-261`).
+
+**This is the fourth time in the round that a fixture measured the wrong thing** — Phase 02's planner
+ordering, Phase 03's first pass with the serial walk, Phase 04's superseded capture, and this. The pattern
+is the same every time: the test asserted a property of the *path* while claiming to assert a property of
+the *policy*, and every such test passed.
+
+### L.2 §G updated
+
+| surface | level after the second pass |
+|---|---|
+| setup cancellation by the caller | `VERIFIED_UNIT` + `VERIFIED_MUTATION` (was `VERIFIED_SOURCE`) |
+| scheduler joins its attempts | `VERIFIED_UNIT` |
+| refusal reasons mutually distinguishable | `VERIFIED_UNIT` (was `VERIFIED_SOURCE`) |
+| packet arms answer one policy at three layers | `VERIFIED_UNIT` + `VERIFIED_MUTATION` |
+| policy is never a struct field | `VERIFIED_UNIT` + `VERIFIED_MUTATION` |
+
+**Still not attacked, and named so it is not mistaken for covered:** the manager-close ordering during an
+in-flight setup (Phase 01's scope, and the route suite's `Close` tests), and the 1000-flow stress (Phase 04
+records it as not run). Both remain where they were.
 ## PHASE 03 HANDOFF
 
 - testing HEAD:
+    a897deb2f9f  test(admission): attack the lifecycle claims the first pass only read   <- second pass
     401d5a8e58e  test(admission): one cross-stage consistency matrix for the whole space
     f264ecf2a63  fix(admission): the serial branch captured the policy a second time
     plus the report commit (hash = `git log -1 --oneline origin/testing`)
+  The first pass was PARTIAL - see §L, which names the five claims it only read and the six
+  attacks that replaced reading them. A reviewer who reads only §A-§K is reading half the round.
   Start SHA for the round: 4e86eae6df7d839e11be181be1dbba99688ac5d3
 
 - Single-policy proof:
