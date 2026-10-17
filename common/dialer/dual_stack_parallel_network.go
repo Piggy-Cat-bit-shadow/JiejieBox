@@ -206,7 +206,11 @@ func (d *resolveParallelNetworkDialer) schedule(ctx context.Context, network str
 	}
 	plan := planCandidates(candidates, plannableOriginal, domainStrategyFor(len(candidates) > 0 && candidates[0].Is6()))
 	scheduler := d.schedulerFor(fallbackDelay)
-	conn, _, err := scheduler.dialWithLateCandidates(ctx, plan, lateCandidates, func(attemptCtx context.Context, address netip.Addr) (net.Conn, error) {
+	// The same admission rule the plan was built under, handed to the scheduler so a LATE candidate - which
+	// never passes through planCandidates - cannot reintroduce a family the policy excluded. The predicate
+	// is captured once, so the guard applies the policy the plan was built with rather than re-reading it
+	// mid-race.
+	conn, _, err := scheduler.dialWithLateCandidatesAdmitting(ctx, plan, lateCandidates, d.lateCandidateAdmission(), func(attemptCtx context.Context, address netip.Addr) (net.Conn, error) {
 		// Each attempt keeps the full configuration the caller supplied: the network strategy, the
 		// interface selection and the fallback interface selection. Racing chooses WHICH address to try,
 		// never how to try it.
@@ -216,6 +220,22 @@ func (d *resolveParallelNetworkDialer) schedule(ctx context.Context, network str
 		return nil, err
 	}
 	return conn, nil
+}
+
+// lateCandidateAdmission returns the predicate a late candidate must satisfy, or nil when the effective
+// policy excludes nothing.
+//
+// A preference (`prefer_ipv4` / `prefer_ipv6` / AsIS) admits both families, so there is nothing to guard and
+// the hot path pays nothing. Only the two `_only` values restrict, and they are the case where a forgotten
+// filter would put the forbidden family into a race.
+func (d *resolveDialer) lateCandidateAdmission() func(netip.Addr) bool {
+	strategy := d.effectiveFamilyStrategy()
+	if strategy != C.DomainStrategyIPv4Only && strategy != C.DomainStrategyIPv6Only {
+		return nil
+	}
+	return func(address netip.Addr) bool {
+		return AddressAllowedByStrategy(address, strategy)
+	}
 }
 
 // domainStrategyFor maps the leading candidate's family to the planner's preference, for internal use.

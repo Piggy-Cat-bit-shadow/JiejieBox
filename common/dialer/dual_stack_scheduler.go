@@ -125,6 +125,28 @@ func (s *candidateScheduler) dial(ctx context.Context, plan candidatePlan, attem
 // closed channel means resolution has finished, so the scheduler knows no more are coming and
 // can stop waiting for them.
 func (s *candidateScheduler) dialWithLateCandidates(ctx context.Context, plan candidatePlan, lateCandidates <-chan dualStackCandidate, attempt dialAttemptFunc) (net.Conn, netip.Addr, error) {
+	return s.dialWithLateCandidatesAdmitting(ctx, plan, lateCandidates, nil, attempt)
+}
+
+// dialWithLateCandidatesAdmitting is dialWithLateCandidates with an admission predicate applied to every
+// candidate that arrives LATE.
+//
+// # Why the scheduler needs to know about admission at all
+//
+// A late candidate never passes through planCandidates: it is appended to the launch queue straight from the
+// resolver's stream. The local-family filter below covers the machine's capability, and nothing covered the
+// operator's policy - so the strict family strategy was enforced on a late candidate only by whichever
+// producer happened to filter it first. Every current producer does (`mergeRecovered` plans the recovered
+// list with the effective strategy before it is fed), which makes the invariant CONVENTIONAL: a fourth
+// producer added later would silently be able to walk the forbidden family into the race.
+//
+// This makes it STRUCTURAL. `admit` is captured once by the caller, so the policy the guard applies is the
+// same policy the plan was built under - a strategy read per candidate could observe a different one
+// mid-race.
+//
+// nil admits everything, which is what every static caller gets, so this changes nothing for a path that has
+// no policy to enforce.
+func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context, plan candidatePlan, lateCandidates <-chan dualStackCandidate, admit func(netip.Addr) bool, attempt dialAttemptFunc) (net.Conn, netip.Addr, error) {
 	// Drop the candidates the local machine cannot dial, and report whether anything was dropped so
 	// the empty-plan cases below can tell "no candidate was ever offered" from "every candidate was
 	// refused locally".
@@ -405,6 +427,12 @@ func (s *candidateScheduler) dialWithLateCandidates(ctx context.Context, plan ca
 			// second family to answer walk an undialable candidate straight into the race. The
 			// address is marked as seen first, so a stream that repeats it costs nothing.
 			if s.localFamily.hardUndialable(candidate.address) {
+				continue
+			}
+			// And the operator's policy, which the machine's capability cannot express. See
+			// dialWithLateCandidatesAdmitting for why this belongs in the scheduler rather than only in
+			// the producer that happens to filter it today.
+			if admit != nil && !admit(candidate.address) {
 				continue
 			}
 
