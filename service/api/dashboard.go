@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/power"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
@@ -42,8 +43,20 @@ type dashboard struct {
 	updateInterval time.Duration
 	fileServer     http.Handler
 	httpClient     *http.Client
-	lastEtag       string
-	lastUpdated    time.Time
+	// powerGovernor is the fork's sleep authority, or nil where none is installed.
+	//
+	// A dashboard update is a download of a zip nobody asked for at that moment, on a timer that
+	// fires whether or not anybody is looking. Left ungated it wakes the radio on a sleeping device
+	// to fetch files that will not be read until the device wakes anyway, which is the exact budget
+	// the tunnel exists to save. Deferring it costs the freshness of an operator panel and nothing
+	// else - the served files stay on disk and the panel keeps working from the last copy.
+	//
+	// The FIRST update is deliberately not deferred: on a fresh profile the panel is empty, and it
+	// is what the operator is waiting for. That is the same rule the rule-set refresh follows, for a
+	// different reason (that one is correctness; this one is the first paint).
+	powerGovernor *power.Governor
+	lastEtag      string
+	lastUpdated   time.Time
 }
 
 func newDashboard(ctx context.Context, logger log.ContextLogger, options option.APIDashboardOptions) *dashboard {
@@ -68,6 +81,7 @@ func newDashboard(ctx context.Context, logger log.ContextLogger, options option.
 		url:            url,
 		updateInterval: updateInterval,
 		fileServer:     http.StripPrefix(dashboardRoutePrefix, http.FileServer(dashboardDir(path))),
+		powerGovernor:  service.FromContext[*power.Governor](ctx),
 	}
 }
 
@@ -113,6 +127,7 @@ func (d *dashboard) loopUpdate(ctx context.Context, status dashboardStatus) {
 	}
 	timer := time.NewTimer(0)
 	defer timer.Stop()
+	initial := true
 	for {
 		select {
 		case <-ctx.Done():
@@ -121,6 +136,22 @@ func (d *dashboard) loopUpdate(ctx context.Context, status dashboardStatus) {
 		}
 		now := time.Now()
 		if !now.Before(nextUpdate) {
+			// The sleep gate. `WaitProviderRefresh` is the governor's own category for a
+			// provider-shaped download, and it returns immediately when the device is awake, so this
+			// costs one uncontended lock on the normal path. Waiting rather than skipping is
+			// deliberate: the loop is one goroutine that already exists, so blocking it holds no
+			// resource, and it makes the update happen as soon as the device wakes instead of up to
+			// a full interval later.
+			//
+			// The first pass is NOT deferred - see the field's comment.
+			if !initial && d.powerGovernor != nil {
+				if !d.powerGovernor.WaitProviderRefresh(ctx) {
+					return
+				}
+				// The wait can be long, so the deadline arithmetic below must start from after it.
+				now = time.Now()
+			}
+			initial = false
 			err := d.fetch(ctx)
 			if err != nil {
 				d.logger.Error(E.Cause(err, "update dashboard"))
