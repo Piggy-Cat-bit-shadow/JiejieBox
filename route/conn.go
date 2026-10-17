@@ -42,8 +42,16 @@ type ConnectionManager struct {
 	// reclaim policies decide on. It used to be a list of bare io.Closer, which is why the only
 	// thing it could do on a network change was close all of them; see conn_reclaim.go.
 	connections list.List[managedConn]
-	// generation counts network transitions. A connection records the value at dial time, so
-	// "belongs to a path the device has left" is one integer comparison.
+	// generation counts network transitions, so "belongs to a path the device has left" is one integer
+	// comparison.
+	//
+	// The stamp is taken when the connection is TRACKED, not when the dial began - `initConnState` reads
+	// it, and tracking happens after the dial returns. This comment used to say "at dial time", which is a
+	// different instant and was measured to matter: a dial can begin before a transition and be tracked
+	// after it, and the two readings disagree about which path the resulting connection belongs to. That
+	// disagreement is why the transition's counter bump and its setup-gate advance are now one indivisible
+	// step (see dialSetupGate.advanceAndBump); naming the instant correctly here is the same fact stated
+	// where a reader will look for it.
 	generation atomic.Uint64
 	// sweepAccess guards sweepTimer, sweepBackoff and closed.
 	sweepAccess sync.Mutex
