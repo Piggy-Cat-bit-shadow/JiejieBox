@@ -112,7 +112,7 @@ func TestBlackholeLoserTeachesTheScheduler(t *testing.T) {
 	first := &candidateScheduler{
 		fallbackDelay:      firstFallbackDelay,
 		health:             health,
-		networkEnvironment: environment,
+		networkGeneration: environment,
 	}
 	_, winner, err := first.dial(context.Background(),
 		planCandidates([]netip.Addr{blackhole6, healthy4}, netip.Addr{}, C.DomainStrategyPreferIPv6),
@@ -133,7 +133,7 @@ func TestBlackholeLoserTeachesTheScheduler(t *testing.T) {
 	second := &candidateScheduler{
 		fallbackDelay:      2 * time.Second,
 		health:             health,
-		networkEnvironment: environment,
+		networkGeneration: environment,
 	}
 	inner2 := newStallingDialer()
 	inner2.stall = map[netip.Addr]bool{blackhole6: true}

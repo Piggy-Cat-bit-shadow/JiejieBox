@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Final cleanup: one observation for ownership AND verdict.
+// One observation for ownership AND verdict, whoever the manager is.
 //
 // # The contract that was not being honoured
 //
@@ -26,8 +26,8 @@ import (
 //	familySnapshot()  -> verdict, with the epoch and settled flag the SAME call returned discarded
 //
 // For a manager that also reports an epoch, the two observations merely duplicate each other. For a
-// manager that reports the family snapshot and NEITHER of the narrower interfaces, captureEpoch returns
-// a predicate that answers "always owned" - so ownership was never checked at all, and a settled=false
+// manager that reports the family snapshot and NEITHER of the narrower interfaces, captureEpoch returned
+// a predicate that answered "always owned" - so ownership was never checked at all, and a settled=false
 // snapshot could still hard-deny:
 //
 //	familySnapshot -> epoch N, settled FALSE, IPv6 Unavailable
@@ -37,11 +37,13 @@ import (
 // That is the exact interleaving the snapshotter exists to prevent, reached by ignoring the flag the
 // manager did report.
 //
-// # The rule now
+// # The rule now, and why it is no longer a rule
 //
-// When familySnapshot is present it is the single source: the capture takes all three values from one
-// call, and every later ownership check re-reads the same function. captureEpoch remains the fallback
-// for a manager with no family capability, unchanged, so nothing loses its hand-over protection.
+// When the manager reports more, it is read through the richer interface: one resolution at
+// construction (newNetworkObserver) picks the strongest source it implements, and BOTH the verdict
+// capture and the hand-over predicate are projections of that one source. The tests below therefore
+// assert the RESOLUTION - which interface an answer comes from - rather than the branch structure of two
+// functions, because there is no longer a branch structure that could disagree with itself.
 
 // familySnapshotOnlyManager reports ONLY the family capability snapshot.
 //
@@ -55,6 +57,9 @@ import (
 // NetworkTransitionState are the two the dialer reads into its epoch and stable getters, and they are
 // exactly what is missing here.
 type familySnapshotOnlyManager struct {
+	// NetworkManager is embedded and nil: the double's whole point is which OPTIONAL interfaces it
+	// does and does not implement, so everything else must come from the interface.
+	adapter.NetworkManager
 	epoch  atomic.Uint64
 	stable atomic.Bool
 	ipv4   atomic.Uint32
@@ -106,12 +111,11 @@ var (
 	}
 )
 
-// newFixtureDialer wires a DefaultDialer to the manager the way NewDefault does for this shape: the
-// family snapshot is set, and the two narrower getters stay nil because the manager does not provide
-// them.
+// newFixtureDialer wires a DefaultDialer to the manager the way NewDefault does: through the one
+// resolution that picks the strongest interface this manager implements.
 func newFixtureDialer(manager *familySnapshotOnlyManager) *DefaultDialer {
 	owner := &DefaultDialer{}
-	owner.familySnapshot = manager.NetworkFamilyCapabilitySnapshot
+	owner.network = newNetworkObserver(manager)
 	return owner
 }
 
@@ -274,21 +278,28 @@ func TestSettledAgainAfterACommitStillDoesNotLaunderADuringCapture(t *testing.T)
 
 // TestFamilySnapshotOwnedCaptureIsUsedRegardlessOfTheNarrowerGetters is the ordering proof.
 //
-// A manager may implement BOTH the family snapshot and the narrower getters - the real one does. When
-// it does, the family snapshot is the source, so ownership and the verdict cannot come from two
-// different observations. The narrower getters are made to disagree on purpose: if they were consulted
-// for ownership, the verdict below would be treated as stale and allowed, and the control assertion
-// would fail.
+// A manager may implement BOTH the family snapshot and the narrower getters - the real one does, and
+// more besides. When it does, the richest observation is the source, so ownership and the verdict cannot
+// come from two different readings. The narrower getters are made to disagree on purpose: if they were
+// consulted for ownership, the verdict below would be treated as stale and allowed, and the control
+// assertion would fail.
+//
+// The previous version of this test had to poke the dialer's fields to build that manager, because the
+// fields were the only way to express it. A field-poked dialer is exactly the shape production never
+// reaches, and it is how "the fixture knows more than the object graph does" happens. The manager below
+// is a real manager that reports every interface and disagrees with itself; the dialer is wired by the
+// production resolution.
 func TestFamilySnapshotOwnedCaptureIsUsedRegardlessOfTheNarrowerGetters(t *testing.T) {
-	manager := newFamilySnapshotOnlyManager(netcap.StateProvisioned, netcap.StateUnavailable)
+	manager := &disagreeingManager{
+		familySnapshotOnlyManager: newFamilySnapshotOnlyManager(netcap.StateProvisioned, netcap.StateUnavailable),
+	}
 	manager.epoch.Store(3)
 	manager.stable.Store(true)
 
-	owner := newFixtureDialer(manager)
-	// An epoch getter that reports a DIFFERENT generation, and a stable getter that reports unsettled.
-	// Neither matches the family snapshot, and neither may be what the policy is validated against.
-	owner.networkEpoch = func() uint64 { return 999 }
-	owner.networkStable = func() bool { return false }
+	owner := newFixtureDialer(manager.familySnapshotOnlyManager)
+	require.Equal(t, sourceFamilyCapability, owner.network.source,
+		"a manager offering the family snapshot must be read through it, not through the two getters it "+
+			"also offers")
 
 	policy := owner.captureLocalFamilyPolicy()
 	require.EqualValues(t, 3, policy.ownership.epoch,
@@ -298,6 +309,27 @@ func TestFamilySnapshotOwnedCaptureIsUsedRegardlessOfTheNarrowerGetters(t *testi
 		"and the policy must still be current, because its source has not moved")
 }
 
+// disagreeingManager reports every optional interface and gives the narrower ones answers that do not
+// match the family snapshot.
+//
+// It exists because the resolution's whole job is to prefer the richest source, and a double that agrees
+// with itself cannot demonstrate which source was used. Every disagreement is in the unsafe direction:
+// the epoch getter reports a generation that never existed, and the settled getter reports a transition
+// that never began.
+type disagreeingManager struct {
+	*familySnapshotOnlyManager
+}
+
+func (m *disagreeingManager) NetworkResetGeneration() uint64 { return 999 }
+func (m *disagreeingManager) NetworkTransitionStable() bool  { return false }
+
+var (
+	_ adapter.NetworkResetCounter      = (*disagreeingManager)(nil)
+	_ adapter.NetworkTransitionState   = (*disagreeingManager)(nil)
+	_ adapter.NetworkTransitionSnapshotter = (*disagreeingManager)(nil)
+	_ adapter.NetworkFamilyCapabilitySnapshotter = (*disagreeingManager)(nil)
+)
+
 // TestFallbackStillProtectsAManagerWithoutAFamilyCapability pins the other half of the branch.
 //
 // A manager that reports an epoch and no verdict keeps the captureEpoch predicate, so its hand-over
@@ -305,11 +337,13 @@ func TestFamilySnapshotOwnedCaptureIsUsedRegardlessOfTheNarrowerGetters(t *testi
 // without the capability gets.
 func TestFallbackStillProtectsAManagerWithoutAFamilyCapability(t *testing.T) {
 	epoch := &atomic.Uint64{}
-	owner := &DefaultDialer{}
-	owner.networkEpoch = epoch.Load
+	owner := &DefaultDialer{network: newNetworkObserver(&epochNetworkManager{
+		epoch:  epoch,
+		finder: control.NewDefaultInterfaceFinder(),
+	})}
 
 	policy := owner.captureLocalFamilyPolicy()
-	require.Nil(t, owner.familySnapshot, "this manager reports no verdict")
+	require.Equal(t, sourceGeneration, owner.network.source, "this manager reports no verdict")
 	require.NotNil(t, policy.ownership.predicate,
 		"so it must still get an ownership capture from the epoch getter")
 	require.True(t, policy.ownership.owns())
@@ -319,3 +353,5 @@ func TestFallbackStillProtectsAManagerWithoutAFamilyCapability(t *testing.T) {
 	require.False(t, policy.ownership.owns(),
 		"and the predicate must notice the reset, so the hand-over check keeps working")
 }
+
+func (m *familySnapshotOnlyManager) NetworkEnvironment() uint64 { return 0 }

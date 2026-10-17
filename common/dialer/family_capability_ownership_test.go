@@ -53,6 +53,9 @@ import (
 // capture function reading a manager that reports a transition snapshot - so the ordering under test
 // is production ordering.
 type ownershipManager struct {
+	// NetworkManager is embedded and nil: this double supplies the optional capabilities and nothing
+	// else, which is the manager shape these tests are about.
+	adapter.NetworkManager
 	epoch  atomic.Uint64
 	stable atomic.Bool
 	ipv4   atomic.Uint32
@@ -124,12 +127,9 @@ type ownedDialer struct {
 func newOwnedDialer(ipv4 netcap.FamilyState, ipv6 netcap.FamilyState) *ownedDialer {
 	manager := newOwnershipManager(ipv4, ipv6)
 	owner := &DefaultDialer{familyHealth: newFamilyHealth()}
-	// The same three functions NewDefault wires from the same optional interfaces, so the capture
-	// under test is the production capture.
-	owner.networkEpoch = manager.NetworkResetGeneration
-	owner.networkStable = manager.NetworkTransitionStable
-	owner.networkSnapshot = manager.NetworkTransitionSnapshot
-	owner.familySnapshot = manager.NetworkFamilyCapabilitySnapshot
+	// The same resolution NewDefault performs, from the same optional interfaces, so the capture under
+	// test is the production capture rather than a hand-wired approximation of it.
+	owner.network = newNetworkObserver(manager)
 	leaf := &capabilityLeaf{owner: owner, inner: newStallingDialer(), manager: nil}
 	leaf.inner.stall = nil
 	leaf.inner.connectDelay = 0
@@ -377,8 +377,10 @@ func TestOwnedVerdictStillHardDeniesOnItsOwnNetwork(t *testing.T) {
 // than a missing fast-fail.
 func TestOwnershipIsCapturedEvenWithoutACapability(t *testing.T) {
 	epoch := &atomic.Uint64{}
-	owner := &DefaultDialer{}
-	owner.networkEpoch = epoch.Load
+	owner := &DefaultDialer{network: newNetworkObserver(&epochNetworkManager{
+		epoch:  epoch,
+		finder: control.NewDefaultInterfaceFinder(),
+	})}
 
 	policy := owner.captureLocalFamilyPolicy()
 	require.NotNil(t, policy.ownership.predicate,
@@ -431,3 +433,5 @@ func TestLegacyPolicyConstructionIsOwnedByConstruction(t *testing.T) {
 	require.False(t, policy.hardUndialable(address4))
 	require.False(t, policy.restrictsNothing())
 }
+
+func (m *ownershipManager) NetworkEnvironment() uint64 { return 0 }

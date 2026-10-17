@@ -220,7 +220,7 @@ func TestSchedulerDoesNotRecordCallerCancellationUntilTheParentIsGone(t *testing
 	scheduler := &candidateScheduler{
 		fallbackDelay:      20 * time.Millisecond,
 		health:             health,
-		networkEnvironment: environment,
+		networkGeneration: environment,
 	}
 	_, winner, err := scheduler.dial(context.Background(),
 		planCandidates([]netip.Addr{address6, address4}, netip.Addr{}, 0),

@@ -463,7 +463,7 @@ func TestProductionDialerRemembersFamilyFailure(t *testing.T) {
 
 	// The production owner must now hold a verdict. This is the wiring assertion: a
 	// scheduler built without health would leave this false.
-	require.True(t, owner.familyHealth.fallbackImmediately(owner.networkEnvironment(), familyIPv6, familyIPv4),
+	require.True(t, owner.familyHealth.fallbackImmediately(owner.networkGeneration(), familyIPv6, familyIPv4),
 		"the production dialer must remember the IPv6 path failure")
 
 	// Second connection: with the verdict recorded, both families' first candidates start

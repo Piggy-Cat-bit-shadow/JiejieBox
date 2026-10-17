@@ -43,6 +43,9 @@ import (
 // mid-dial race - and did: the round-2 attack on the hot path was caught by -race writing these fields
 // from a second goroutine, which is the same defect the atomic publisher exists to prevent.
 type machineManager struct {
+	// NetworkManager is embedded and nil: the machine this models reports addressing, not manager
+	// methods, and every method it answers is one of the optional capabilities.
+	adapter.NetworkManager
 	epoch  atomic.Uint64
 	stable atomic.Bool
 	ipv4   atomic.Uint32
@@ -82,7 +85,7 @@ func windowsLinkLocalOnly() *machineManager {
 }
 
 func outageDialer(manager *machineManager) *DefaultDialer {
-	return &DefaultDialer{familySnapshot: manager.NetworkFamilyCapabilitySnapshot}
+	return &DefaultDialer{network: newNetworkObserver(manager)}
 }
 
 func globalIPv6Targets() []netip.Addr {
@@ -271,3 +274,5 @@ func TestOwnershipStillGatesTheEgressVerdict(t *testing.T) {
 		})
 	}
 }
+
+func (m *machineManager) NetworkEnvironment() uint64 { return 0 }

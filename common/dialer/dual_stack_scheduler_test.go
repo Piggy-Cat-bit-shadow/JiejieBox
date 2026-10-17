@@ -372,7 +372,7 @@ func TestSchedulerFastFallbackSkipsTheDelay(t *testing.T) {
 	scheduler := &candidateScheduler{
 		fallbackDelay:      2 * time.Second, // long enough that waiting would be obvious
 		health:             health,
-		networkEnvironment: environment,
+		networkGeneration: environment,
 	}
 
 	launchTimes := make(map[netip.Addr]time.Duration)
@@ -402,10 +402,12 @@ func TestSchedulerFastFallbackSkipsTheDelay(t *testing.T) {
 		"with a recorded family failure the other family must start immediately, not after the delay")
 }
 
-// TestFamilyHealthIsScopedToTheNetworkEnvironment is §35, §75.
+// TestFamilyHealthIsScopedToTheNetworkGeneration is §35, §75.
 //
-// A verdict from one network must not follow the user onto another.
-func TestFamilyHealthIsScopedToTheNetworkEnvironment(t *testing.T) {
+// A verdict from one network must not follow the user onto another. The key is the network generation,
+// which advances whenever the network environment changes - see familyHealth's Scope notes for why the
+// generation replaced the environment fingerprint as the key, and why replacing it was the safe direction.
+func TestFamilyHealthIsScopedToTheNetworkGeneration(t *testing.T) {
 	health := newFamilyHealth()
 	const wifi = 1
 	const cellular = 2
@@ -417,9 +419,9 @@ func TestFamilyHealthIsScopedToTheNetworkEnvironment(t *testing.T) {
 		"a Wi-Fi IPv6 verdict must not be applied to the cellular network")
 
 	// Switching networks drops the old verdict.
-	health.invalidateEnvironment(wifi)
+	health.invalidateGeneration(wifi)
 	require.False(t, health.fallbackImmediately(wifi, familyIPv6, familyIPv4),
-		"an invalidated environment must start fresh")
+		"an invalidated generation must start fresh")
 }
 
 // TestFamilyHealthExpires is §74, §107.

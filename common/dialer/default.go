@@ -42,22 +42,17 @@ type DefaultDialer struct {
 	autoDetectBindFunc control.Func
 	connectionManager  adapter.ConnectionManager
 	networkManager     adapter.NetworkManager
-	// networkEpoch reports the manager's reset epoch, when it can provide one. The counter is
-	// advanced when a reset BEGINS, not when it completes, so a dial that started before the reset
-	// is recognised as stale even if it finishes while the reset is still running.
+	// network is the SINGLE resolved source of network observations this dialer reads.
 	//
-	// A dial that begins before a reset can succeed after it. That connection belongs to the network
-	// which has been left, and the only way to notice is to compare the epoch it started in against
-	// the epoch that is current when ownership is handed to the caller.
-	networkEpoch func() uint64
-	// networkStable reports whether the network is settled; nil when the manager has no such concept.
-	networkStable func() bool
-	// networkSnapshot returns the epoch and the settled state together; nil when the manager cannot.
-	networkSnapshot func() (uint64, bool)
-	// familySnapshot returns the epoch, the settled state and the local address-family capability
-	// together; nil when the manager cannot report the capability, in which case no family is ever
-	// filtered.
-	familySnapshot         func() (uint64, bool, adapter.NetworkFamilyCapability)
+	// It replaces four independently-wired optional capabilities - an epoch getter, a settled-state
+	// getter, a transition snapshot and a family-capability snapshot - which were resolved in two
+	// different places with two different precedence orders. Every fact a dial decides on now comes
+	// from one reading of one source: the generation a hand-over is validated against, the settled
+	// state, the address-family verdict, and the environment the scheduler namespaces what it learns
+	// by. See networkObserver for why the resolution is taken once, and what each shape degrades to.
+	network networkObserver
+	// powerManager, outboundManager and dnsTransportManager are attribution sources for the power
+	// report; none of them is consulted for a decision.
 	powerManager           *powerreport.Manager
 	outboundManager        adapter.OutboundManager
 	dnsTransportManager    adapter.DNSTransportManager
@@ -83,36 +78,15 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 	connectionManager := service.FromContext[adapter.ConnectionManager](ctx)
 	networkManager := service.FromContext[adapter.NetworkManager](ctx)
 
-	// An optional capability rather than a method on NetworkManager: a manager that cannot report an
-	// epoch is one where this check does not apply, and every mock would otherwise have to grow a
-	// counter it has no use for.
-	var networkEpoch func() uint64
-	if counter, isCounter := networkManager.(adapter.NetworkResetCounter); isCounter {
-		networkEpoch = counter.NetworkResetGeneration
-	}
-	// Also optional, and for the same reason. A manager that cannot report transition state keeps
-	// the previous behaviour exactly.
-	var networkStable func() bool
-	if state, isState := networkManager.(adapter.NetworkTransitionState); isState {
-		networkStable = state.NetworkTransitionStable
-	}
-	// Preferred over the two calls above: it returns the epoch and the settled state as ONE
-	// observation, so the pair cannot tear. Reading them separately can record "started settled" with
-	// the epoch of a transition that began in between, which describes an operation started AFTER the
-	// transition and therefore launders a DURING dial into a valid one.
-	var networkSnapshot func() (uint64, bool)
-	if snapshotter, isSnapshotter := networkManager.(adapter.NetworkTransitionSnapshotter); isSnapshotter {
-		networkSnapshot = snapshotter.NetworkTransitionSnapshot
-	}
-	// The same observation, with the local address-family capability carried alongside the ownership
-	// pair. It subsumes the two above when the manager provides it: the capability has to be trusted
-	// only if it was read in the same instant as the epoch and the settled state, and three separate
-	// getters let the triple tear so that one network's capability is recorded under another's
-	// epoch. See adapter.NetworkFamilyCapabilitySnapshotter.
-	var familySnapshot func() (uint64, bool, adapter.NetworkFamilyCapability)
-	if snapshotter, isSnapshotter := networkManager.(adapter.NetworkFamilyCapabilitySnapshotter); isSnapshotter {
-		familySnapshot = snapshotter.NetworkFamilyCapabilitySnapshot
-	}
+	// ONE resolution of the network facts, from the strongest interface the manager implements.
+	//
+	// This used to be four independent resolutions - an epoch getter, a settled-state getter, a
+	// transition snapshot and a family-capability snapshot - each optional, each wired separately. A
+	// manager that reported a richer observation than one of those four could be read through the
+	// narrower one, dropping the answer it gave; that defect was found and fixed twice, in two files,
+	// because each resolution had its own precedence and neither could see the other. Resolving once
+	// makes the preference a property of this constructor rather than of every consumer.
+	network := newNetworkObserver(networkManager)
 	platformInterface := service.FromContext[adapter.PlatformInterface](ctx)
 
 	var (
@@ -300,10 +274,7 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 		autoDetectBindFunc:     autoDetectBindFunc,
 		connectionManager:      connectionManager,
 		networkManager:         networkManager,
-		networkEpoch:           networkEpoch,
-		networkStable:          networkStable,
-		networkSnapshot:        networkSnapshot,
-		familySnapshot:         familySnapshot,
+		network:                network,
 		familyHealth:           newFamilyHealth(),
 		powerManager:           service.FromContext[*powerreport.Manager](ctx),
 		outboundManager:        service.FromContext[adapter.OutboundManager](ctx),
@@ -669,82 +640,26 @@ func (d *DefaultDialer) UDPListenerControl() (control.Func, bool) {
 // transition is refused, and the caller retries - which is the correct transient failure, not a
 // permanent one, because the transition does complete.
 //
-// # Why the early return keys on the capability, not on one of its sources
+// # Why this is now a projection rather than a second implementation
 //
-// It used to be `if d.networkEpoch == nil`, which is ONE of the three optional interfaces this source
-// can be built from. The fields are wired independently - `networkSnapshot` comes from
-// NetworkTransitionSnapshotter, `networkEpoch` from NetworkResetCounter, `networkStable` from
-// NetworkTransitionStable - so a manager that reports a snapshot and no counter took the early return,
-// the snapshot it DID report was never consulted, and the predicate answered "owned" unconditionally.
+// It used to be the second of two branch trees over the same four optional interfaces, with its own
+// precedence, and it was fixed separately from the other one for the same defect - a manager that
+// reported a fact read through an accessor that could not carry it. Two implementations of "which
+// generation am I in" can prefer different sources for the same manager, and nothing in the type
+// system keeps them in step.
 //
-// That is the same defect `captureLocalFamilyPolicy` was fixed for, in the same shape: a manager that
-// reports a capability and is then read through a narrower one loses the answer it gave. Measured on a
-// manager reporting (epoch 5, unstable) and no counter: the predicate answered true, and stayed true
-// after the epoch advanced to 6, while the snapshot was never called.
-//
-// The snapshot is the STRONGEST source, because it is the only one that returns the epoch and the
-// settled state as one observation; a manager that has it must be read through it.
+// It is now the ownership half of captureLocalFamilyPolicy: literally the same capture, with the
+// verdict left unread. A caller cannot obtain a hand-over check from a different observation than the
+// gate that decided the dial, and an entry point that has already captured a policy passes that
+// capture through instead of taking a second one (see ListenSerialInterfacePacket).
 func (d *DefaultDialer) captureEpoch() func() bool {
-	if d.networkEpoch == nil && d.networkSnapshot == nil {
-		if d.networkStable == nil {
-			return func() bool { return true }
-		}
-		return func() bool { return d.networkStable() }
+	ownership := d.captureLocalFamilyPolicy().ownership
+	if ownership.predicate == nil {
+		// No lifecycle source: the check does not apply, so it must not refuse anything. This is the
+		// same degradation a manager with no epoch has always had.
+		return func() bool { return true }
 	}
-	// The state at START, not only the state at hand-over.
-	//
-	// A commit does not advance the epoch - it only settles the state - so a dial that began during a
-	// transition captures the transition's own epoch and, once the transition commits, the epoch
-	// comparison finds no change and the network reports stable. Both checks pass and the connection
-	// is handed over, even though it was produced while ownership was unresolved and everything it
-	// observed belonged to the network being left.
-	//
-	// Remembering that the dial STARTED unsettled is what closes that: an operation that began in the
-	// DURING state cannot be laundered into a valid one by a later commit.
-	//
-	// Both values come from ONE observation when the manager can provide it. Two separate reads can
-	// tear - "settled" is observed, a transition then begins, and the epoch of that NEW transition is
-	// captured - which records an operation that began DURING as one that began settled. That is the
-	// unsafe direction, since it launders exactly the case this exists to reject.
-	var (
-		capturedEpoch uint64
-		startedStable = true
-	)
-	// The source the capture was TAKEN from is the source the predicate must re-read, and the two go
-	// together in one value: re-reading a different interface would compare an epoch against a generation
-	// that never produced it. `networkSnapshot` is preferred because it returns the epoch and the settled
-	// state as one observation; the narrower getters are the fallback for a manager that reports no
-	// snapshot.
-	currentEpoch := func() uint64 {
-		if d.networkSnapshot != nil {
-			epoch, _ := d.networkSnapshot()
-			return epoch
-		}
-		if d.networkEpoch == nil {
-			// No source to compare against. The capture was therefore taken from `networkStable` alone,
-			// or from nothing, and "the epoch moved" is a question this manager cannot answer - so it
-			// must not be answered with a `false` that would refuse every connection.
-			return capturedEpoch
-		}
-		return d.networkEpoch()
-	}
-	if d.networkSnapshot != nil {
-		capturedEpoch, startedStable = d.networkSnapshot()
-	} else {
-		startedStable = d.networkStable == nil || d.networkStable()
-		if d.networkEpoch != nil {
-			capturedEpoch = d.networkEpoch()
-		}
-	}
-	return func() bool {
-		if !startedStable {
-			return false
-		}
-		if d.networkStable != nil && !d.networkStable() {
-			return false
-		}
-		return currentEpoch() == capturedEpoch
-	}
+	return ownership.predicate
 }
 
 // errNetworkChanged reports that a network operation completed across a network reset.
@@ -927,17 +842,29 @@ func (d *DefaultDialer) dialAttribution(ctx context.Context, destination M.Socks
 	return attribution
 }
 
-// networkEnvironment returns the current network environment identifier for family health
-// scoping.
+// networkGeneration returns the network generation this dialer is on, as the health namespace.
 //
-// Health is per-network: a Wi-Fi network with broken IPv6 says nothing about the cellular
-// network, and carrying a verdict across that boundary would penalise a working path. Zero
-// means "no network manager", which scopes the state to this dialer alone.
-func (d *DefaultDialer) networkEnvironment() uint64 {
-	if d.networkManager == nil {
-		return 0
-	}
-	return d.networkManager.NetworkEnvironment()
+// Health is per-network: a Wi-Fi network with broken IPv6 says nothing about the cellular network, and
+// carrying a verdict across that boundary would penalise a working path.
+//
+// # Why the generation, and not the environment fingerprint it used to be
+//
+// The fingerprint was a SECOND reading of the same network: it came from NetworkManager.NetworkEnvironment
+// while the verdict and its ownership came from the capability snapshot, so a transition landing between
+// the two scoped one network's health to another network's identity. The consequence was bounded - a lost
+// fast-fallback bias - but it was the same defect as the rest of this round, and it was the last place
+// where one dial composed two readings of one instant.
+//
+// The generation is the same namespace for less: every environment change advances it (the reset is
+// claimed in the same critical section that publishes the fingerprint), so a verdict can never be carried
+// across a network change. It is also STRICTER in one direction - a reset that does not change the
+// fingerprint now starts a new bucket - which is the safe direction: forgetting a soft bias costs one
+// fallback delay, and remembering it across a reset is what the bias exists to avoid.
+//
+// It is read from the capture the caller already holds, so this function is the same observation rather
+// than a second read of it.
+func (d *DefaultDialer) networkGeneration() uint64 {
+	return d.captureLocalFamilyPolicy().ownership.epoch
 }
 
 // newDualStackScheduler builds a scheduler wired to this dialer's family health.
@@ -953,14 +880,21 @@ func (d *DefaultDialer) networkEnvironment() uint64 {
 // scheduler built on a verdict it no longer owns would therefore delete the successor generation's
 // candidates, and no later validation would notice.
 //
-// It is read through the atomic familySnapshot, so constructing a scheduler costs no lock and no
-// syscall on the connection hot path.
+// # Why the health namespace comes out of the SAME value
+//
+// It used to be a second call - `d.networkEnvironment()` beside `d.captureLocalFamilyPolicy()` - so a
+// transition landing between them stored one network's identity on a scheduler holding another's
+// verdict. The consequence is bounded (a health verdict filed under the wrong network loses the
+// fast-fallback bias for one dial, it does not deny a flow) but it is the same defect as the rest of this
+// round: two readings composed into one decision. The generation is now the namespace and it comes from
+// the ownership half of this very capture, so there is nothing left to read twice. See networkGeneration.
 func (d *DefaultDialer) newDualStackScheduler(fallbackDelay time.Duration) *candidateScheduler {
+	policy := d.captureLocalFamilyPolicy()
 	return &candidateScheduler{
-		fallbackDelay:      fallbackDelay,
-		health:             d.familyHealth,
-		networkEnvironment: d.networkEnvironment(),
-		localFamily:        d.captureLocalFamilyPolicy(),
+		fallbackDelay:     fallbackDelay,
+		health:            d.familyHealth,
+		networkGeneration: policy.ownership.epoch,
+		localFamily:       policy,
 	}
 }
 

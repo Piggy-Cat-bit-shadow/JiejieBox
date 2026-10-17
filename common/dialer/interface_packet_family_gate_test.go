@@ -26,8 +26,8 @@ func isLocalFamilyRefusal(err error) bool {
 // ungated path would succeed, so a test asserting "an error came back" would be measuring the host.
 func newGateTestDialer(ipv4 netcap.FamilyState, ipv6 netcap.FamilyState) *DefaultDialer {
 	return &DefaultDialer{
-		familyHealth:   newFamilyHealth(),
-		familySnapshot: newCapabilityManager(ipv4, ipv6).NetworkFamilyCapabilitySnapshot,
+		familyHealth: newFamilyHealth(),
+		network:      newNetworkObserver(newCapabilityManager(ipv4, ipv6)),
 	}
 }
 

@@ -269,3 +269,5 @@ func TestDialerWithoutAnEpochDegradesToPreviousBehaviour(t *testing.T) {
 	require.NotNil(t, conn)
 	conn.Close()
 }
+
+func (m *epochNetworkManager) NetworkEnvironment() uint64 { return 0 }

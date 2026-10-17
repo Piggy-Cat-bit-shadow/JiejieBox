@@ -133,7 +133,7 @@ func BenchmarkLocalFamilyFilter(b *testing.B) {
 func BenchmarkLocalFamilyPolicySnapshot(b *testing.B) {
 	dialer := &DefaultDialer{}
 	manager := newCapabilityManager(netcap.StateProvisioned, netcap.StateUnavailable)
-	dialer.familySnapshot = manager.NetworkFamilyCapabilitySnapshot
+	dialer.network = newNetworkObserver(manager)
 	target := netip.MustParseAddr("2001:4860:4860::8888")
 
 	b.ReportAllocs()
@@ -154,7 +154,7 @@ func BenchmarkLocalFamilyPolicySnapshot(b *testing.B) {
 func BenchmarkLocalFamilyPolicyCaptureOnly(b *testing.B) {
 	dialer := &DefaultDialer{}
 	manager := newCapabilityManager(netcap.StateProvisioned, netcap.StateUnavailable)
-	dialer.familySnapshot = manager.NetworkFamilyCapabilitySnapshot
+	dialer.network = newNetworkObserver(manager)
 
 	b.ReportAllocs()
 	b.ResetTimer()

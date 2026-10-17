@@ -70,10 +70,11 @@ func TestDialEpochPredicateRequiresASettledNetwork(t *testing.T) {
 	stable.Store(true)
 	epoch.Store(1)
 
-	dialer := &DefaultDialer{
-		networkEpoch:  epoch.Load,
-		networkStable: stable.Load,
-	}
+	dialer := &DefaultDialer{network: newNetworkObserver(&stabilityNetworkManager{
+		epoch:  epoch,
+		stable: stable,
+		finder: control.NewDefaultInterfaceFinder(),
+	})}
 
 	// CASE 1: dial starts in stable A, a transition begins during it.
 	handOver := dialer.captureEpoch()
@@ -119,7 +120,10 @@ func TestDialEpochPredicateRequiresASettledNetwork(t *testing.T) {
 func TestDialEpochPredicateWithoutStabilityCapabilityKeepsOldBehaviour(t *testing.T) {
 	epoch := &atomic.Uint64{}
 	epoch.Store(1)
-	dialer := &DefaultDialer{networkEpoch: epoch.Load}
+	dialer := &DefaultDialer{network: newNetworkObserver(&epochNetworkManager{
+		epoch:  epoch,
+		finder: control.NewDefaultInterfaceFinder(),
+	})}
 
 	handOver := dialer.captureEpoch()
 	require.True(t, handOver(), "no epoch movement and no stability concept: accepted")
@@ -146,8 +150,10 @@ func TestDialStabilityCapabilityIsReadFromTheManager(t *testing.T) {
 	ctx := service.ContextWith[adapter.NetworkManager](context.Background(), manager)
 	concrete, err := NewDefault(ctx, option.DialerOptions{})
 	require.NoError(t, err)
-	require.NotNil(t, concrete.networkStable,
+	require.True(t, concrete.network.reportsStability,
 		"the dialer must adopt the manager's stability capability, or the check above is dead code")
+	require.Equal(t, sourceGeneration, concrete.network.source,
+		"a manager with no snapshot is read through the pair of getters it does provide")
 	require.False(t, concrete.captureEpoch()(),
 		"an unstable manager must make the dial path refuse hand-over")
 }
@@ -163,7 +169,11 @@ func TestEveryDialEntryPointSharesTheTransitionContract(t *testing.T) {
 	stable := &atomic.Bool{}
 	stable.Store(true)
 	epoch.Store(1)
-	dialer := &DefaultDialer{networkEpoch: epoch.Load, networkStable: stable.Load}
+	dialer := &DefaultDialer{network: newNetworkObserver(&stabilityNetworkManager{
+		epoch:  epoch,
+		stable: stable,
+		finder: control.NewDefaultInterfaceFinder(),
+	})}
 
 	// Start every entry point's capture while the network is settled, then transition.
 	settled := []func() bool{
@@ -243,7 +253,7 @@ func TestDialPrefersTheAtomicSnapshotWhenOffered(t *testing.T) {
 	ctx := service.ContextWith[adapter.NetworkManager](context.Background(), manager)
 	dialer, err := NewDefault(ctx, option.DialerOptions{})
 	require.NoError(t, err)
-	require.NotNil(t, dialer.networkSnapshot,
+	require.Equal(t, sourceTransitionPair, dialer.network.source,
 		"the dialer must adopt the manager's snapshot capability; ignoring it falls back to two "+
 			"separate reads, which can record a DURING dial as one that began settled")
 
@@ -281,3 +291,5 @@ func (m *snapshotNetworkManager) AutoRedirectOutputMarkFunc() control.Func {
 }
 
 var _ adapter.NetworkTransitionSnapshotter = (*snapshotNetworkManager)(nil)
+
+func (m *snapshotNetworkManager) NetworkEnvironment() uint64 { return 0 }

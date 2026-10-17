@@ -84,8 +84,10 @@ type candidateScheduler struct {
 	// health, when set, may promote the first candidate of a recently-failed family so a
 	// broken family costs no delay on the next connection.
 	health *familyHealth
-	// networkEnvironment scopes the health state.
-	networkEnvironment uint64
+	// networkGeneration scopes the health state: a verdict learned on one network generation is never
+	// consulted on another. It is the generation the scheduler's own localFamily capture carries, not a
+	// second reading of the network - see newDualStackScheduler.
+	networkGeneration uint64
 	// localFamily is what the machine could dial when this connection began. A family the machine
 	// has no addressing for is dropped from the plan and refused from the late stream, so the race
 	// never spends an attempt - or a fallback interval - on an address that cannot be reached.
@@ -199,12 +201,12 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 				_ = conn.Close()
 			}
 			if s.health != nil {
-				s.health.recordFailure(s.networkEnvironment, candidates[0].family, err)
+				s.health.recordFailure(s.networkGeneration, candidates[0].family, err)
 			}
 			return nil, netip.Addr{}, E.Cause(err, "dial ", candidates[0].address)
 		}
 		if s.health != nil {
-			s.health.recordSuccess(s.networkEnvironment, candidates[0].family)
+			s.health.recordSuccess(s.networkGeneration, candidates[0].family)
 		}
 		return conn, candidates[0].address, nil
 	}
@@ -260,7 +262,7 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 			// The classification is conservative: caller cancellation and closed connections
 			// - which is how a loser is torn down - record nothing.
 			if err != nil && s.health != nil && parentAlive {
-				s.health.recordFailure(s.networkEnvironment, record.family, err)
+				s.health.recordFailure(s.networkGeneration, record.family, err)
 			}
 
 			select {
@@ -323,7 +325,7 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 		startAttempt(launch[0])
 		nextIndex = 1
 		if len(launch) > 1 && s.health != nil {
-			if s.health.fallbackImmediately(s.networkEnvironment, launch[0].family, launch[1].family) {
+			if s.health.fallbackImmediately(s.networkGeneration, launch[0].family, launch[1].family) {
 				startAttempt(launch[1])
 				nextIndex = 2
 			}
@@ -512,7 +514,7 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 					// would stay penalised for the full window even after it recovered.
 					winnerFamily := classifyAddress(result.address)
 					if s.health != nil && ctx.Err() == nil {
-						s.health.recordSuccess(s.networkEnvironment, winnerFamily)
+						s.health.recordSuccess(s.networkGeneration, winnerFamily)
 
 						// A family that was still outstanding when another family connected has
 						// demonstrably failed to answer. Without this the scheduler learned
@@ -742,16 +744,24 @@ func localFamilyRefusalError(refused localFamilyRefusal, policy localFamilyPolic
 //
 // # Scope
 //
-// Keyed by network environment. A Wi-Fi network with broken IPv6 says nothing about the
+// Keyed by network generation. A Wi-Fi network with broken IPv6 says nothing about the
 // cellular network, and carrying a verdict across that boundary would penalise a working
-// path. The KEY is what makes this safe, not a clearing step: this documented "the environment
+// path. The KEY is what makes this safe, not a clearing step: this documented "the network
 // changing clears the state", which was measured to be literally false - nothing clears it. An entry
-// is removed only when its own environment is consulted again and has expired, so a verdict for an
-// environment that is never revisited persists for the process lifetime. Measured: 100 001 entries
-// after 100 000 distinct environments, with no cap and no eviction.
+// is removed only when its own generation is consulted again and has expired, so a verdict for a
+// generation that is never revisited persists for the process lifetime. Measured: 100 001 entries
+// after 100 000 distinct generations, with no cap and no eviction.
+//
+// The key used to be the network ENVIRONMENT fingerprint rather than the generation, read from the
+// manager as a second call beside the family capture. The generation is the same namespace for less:
+// every environment change advances it, because the reset is claimed in the same critical section that
+// publishes the fingerprint, so no verdict can be carried across a network change - and it arrives with
+// the capture instead of beside it. It is also stricter in one direction, which is the safe one: a reset
+// that does not change the fingerprint starts a new bucket too, so a soft bias is forgotten rather than
+// applied across a reset.
 //
 // The state is still safe to keep in memory only, and for the reason the key already gives: a verdict
-// is only ever read under the environment it was observed on, so an unreachable leftover cannot affect
+// is only ever read under the generation it was observed on, so an unreachable leftover cannot affect
 // any decision. What it costs is memory, which is why the map is now bounded below.
 //
 // # What counts as a failure
@@ -770,17 +780,17 @@ type familyHealth struct {
 	state  map[uint64]familyHealthState
 }
 
-// familyHealthMaxEnvironments bounds the map.
+// familyHealthMaxGenerations bounds the map.
 //
 // A verdict is a soft nudge - it only makes the two families start together instead of waiting out the
 // fallback delay - so discarding every entry when the bound is reached costs a small latency optimisation
 // for the next connection on an old network and nothing else. That is the right failure direction: this
 // type must never refuse a candidate, and clearing cannot.
 //
-// The number is generous against reality rather than tight: an environment is a fingerprint of the default
-// gateway set, the SSID and (when there is no SSID) the gateway MACs, so reaching it requires that many
-// distinct networks to have each recorded a path failure, within one process lifetime.
-const familyHealthMaxEnvironments = 256
+// The number is generous against reality rather than tight: one entry per network GENERATION whose dial
+// recorded a path failure, and a generation advances once per network transition, so reaching it requires
+// that many transitions to have each recorded a failure within one process lifetime.
+const familyHealthMaxGenerations = 256
 
 type familyHealthState struct {
 	failedFamily addressFamily
@@ -792,18 +802,18 @@ func newFamilyHealth() *familyHealth {
 }
 
 // fallbackImmediately reports whether both families' first candidates should start together.
-func (h *familyHealth) fallbackImmediately(environment uint64, preferred addressFamily, other addressFamily) bool {
+func (h *familyHealth) fallbackImmediately(generation uint64, preferred addressFamily, other addressFamily) bool {
 	if preferred == other || preferred == familyInvalid || other == familyInvalid {
 		return false
 	}
 	h.access.Lock()
 	defer h.access.Unlock()
-	entry, known := h.state[environment]
+	entry, known := h.state[generation]
 	if !known {
 		return false
 	}
 	if time.Since(entry.failedAt) > tcpTimeoutWindow {
-		delete(h.state, environment)
+		delete(h.state, generation)
 		return false
 	}
 	// Only promote when the family that recently failed is the one that would otherwise
@@ -856,7 +866,7 @@ func (s *candidateScheduler) recordStalledOppositeFamily(attempts []*pendingAtte
 	}
 
 	if stalled != familyInvalid {
-		s.health.recordStalledFamily(s.networkEnvironment, stalled)
+		s.health.recordStalledFamily(s.networkGeneration, stalled)
 	}
 }
 
@@ -881,13 +891,13 @@ func (s *candidateScheduler) recordStalledOppositeFamily(attempts []*pendingAtte
 // It expires on the same C.TCPTimeout window and clears on the first successful connection in
 // that family, so a transient stall costs one connection's worth of caution rather than
 // changing the user's configuration.
-func (h *familyHealth) recordStalledFamily(environment uint64, family addressFamily) {
+func (h *familyHealth) recordStalledFamily(generation uint64, family addressFamily) {
 	if family == familyInvalid {
 		return
 	}
 	h.access.Lock()
 	defer h.access.Unlock()
-	h.storeLocked(environment, familyHealthState{
+	h.storeLocked(generation, familyHealthState{
 		failedFamily: family,
 		failedAt:     time.Now(),
 	})
@@ -895,22 +905,23 @@ func (h *familyHealth) recordStalledFamily(environment uint64, family addressFam
 
 // storeLocked installs a verdict, keeping the map bounded.
 //
-// The expiry check elsewhere only removes an entry when its own environment is consulted again, so an
-// environment that is never revisited leaves its verdict behind forever - measured at 100 001 entries for
-// 100 000 distinct environments before this bound existed. Clearing the whole map at the cap is deliberate:
+// The expiry check elsewhere only removes an entry when its own generation is consulted again, so a
+// generation that is never revisited leaves its verdict behind forever - measured at 100 001 entries for
+// 100 000 distinct environments (the key of the day) before this bound existed. Clearing the whole map at
+// the cap is deliberate:
 // a verdict only shortens the fallback delay for one family, so losing them all costs a little latency on
 // the next connection and can never refuse a candidate.
-func (h *familyHealth) storeLocked(environment uint64, state familyHealthState) {
-	if len(h.state) >= familyHealthMaxEnvironments {
-		if _, replacing := h.state[environment]; !replacing {
+func (h *familyHealth) storeLocked(generation uint64, state familyHealthState) {
+	if len(h.state) >= familyHealthMaxGenerations {
+		if _, replacing := h.state[generation]; !replacing {
 			clear(h.state)
 		}
 	}
-	h.state[environment] = state
+	h.state[generation] = state
 }
 
 // recordFailure notes a path failure for the family an address belongs to.
-func (h *familyHealth) recordFailure(environment uint64, family addressFamily, err error) {
+func (h *familyHealth) recordFailure(generation uint64, family addressFamily, err error) {
 	if family == familyInvalid {
 		return
 	}
@@ -919,29 +930,29 @@ func (h *familyHealth) recordFailure(environment uint64, family addressFamily, e
 	}
 	h.access.Lock()
 	defer h.access.Unlock()
-	h.storeLocked(environment, familyHealthState{
+	h.storeLocked(generation, familyHealthState{
 		failedFamily: family,
 		failedAt:     time.Now(),
 	})
 }
 
 // recordSuccess clears a family's penalty once it is shown to work again.
-func (h *familyHealth) recordSuccess(environment uint64, family addressFamily) {
+func (h *familyHealth) recordSuccess(generation uint64, family addressFamily) {
 	if family == familyInvalid {
 		return
 	}
 	h.access.Lock()
 	defer h.access.Unlock()
-	if entry, known := h.state[environment]; known && entry.failedFamily == family {
-		delete(h.state, environment)
+	if entry, known := h.state[generation]; known && entry.failedFamily == family {
+		delete(h.state, generation)
 	}
 }
 
-// invalidateEnvironment drops state for one environment, used when the network changes.
-func (h *familyHealth) invalidateEnvironment(environment uint64) {
+// invalidateGeneration drops state for one network generation, used when the network changes.
+func (h *familyHealth) invalidateGeneration(generation uint64) {
 	h.access.Lock()
 	defer h.access.Unlock()
-	delete(h.state, environment)
+	delete(h.state, generation)
 }
 
 // invalidateAll drops every verdict, for a full reset.

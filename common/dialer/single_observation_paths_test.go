@@ -2,9 +2,12 @@ package dialer
 
 import (
 	"net/netip"
+	"sync/atomic"
 	"testing"
 
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/netcap"
+	"github.com/sagernet/sing/common/control"
 
 	"github.com/stretchr/testify/require"
 )
@@ -23,48 +26,75 @@ import (
 // builds reports ALL of the optional interfaces at once. A source that is silently ignored looks exactly
 // like a source that agrees.
 
-// TestSnapshotOnlyManagerIsReadThroughTheSnapshot guards `captureEpoch`'s early return.
+// TestSnapshotOnlyManagerIsReadThroughTheSnapshot guards the resolution's precedence.
 //
-// It keyed on `d.networkEpoch == nil`, which is ONE of the three optional sources the ownership fields can
-// be built from. `familySnapshotOnlyManager` already in this package is the counter-example: it reports
-// NetworkFamilyCapabilitySnapshot and NetworkResetCounter not at all (its own test asserts that shape), so
-// `captureEpoch` took the early return, never consulted the snapshot the manager DID report, and answered
-// "owned" unconditionally.
+// It used to guard `captureEpoch`'s early return, which keyed on `d.networkEpoch == nil` - ONE of the
+// three optional sources the ownership fields could be built from. A manager that reported the
+// transition snapshot and NOT the reset counter took that early return, the snapshot it DID report was
+// never consulted, and the predicate answered "owned" unconditionally. That is the same defect
+// `captureLocalFamilyPolicy` was fixed for, in the same shape, in the same round.
 //
-// That is the same defect `captureLocalFamilyPolicy` was fixed for, in the same shape - a manager that
-// reports a capability and is then read through a narrower one loses the answer it gave - and it matters
-// on this path because `ListenSerialInterfacePacket` used to capture its ownership through it.
+// With one resolution the shape cannot recur: the observer takes the strongest interface the manager
+// implements, and both the capture and the predicate read it. What is asserted here is therefore the
+// RESOLUTION (the dialer is reading the pair interface, and its predicate honours it) and the three
+// orderings a dial can be in - because the resolution only matters if the answer is right.
 func TestSnapshotOnlyManagerIsReadThroughTheSnapshot(t *testing.T) {
 	// DURING: the publisher's unstable window. Nothing may be handed over.
-	during := newFamilySnapshotOnlyManager(netcap.StateProvisioned, netcap.StateProvisioned)
+	during := &pairSnapshotOnlyManager{}
 	during.epoch.Store(5)
 	during.stable.Store(false)
-	duringOwner := newFixtureDialer(during)
-	// The shape the defect needs: a snapshot, and no reset counter.
-	duringOwner.networkEpoch = nil
-	require.Nil(t, duringOwner.networkSnapshot, "the fixture must be wired through the capability below")
-
-	// `newFixtureDialer` sets only the family snapshot; `captureEpoch` reads the TRANSITION snapshot, so
-	// wire the one this path consumes and leave the narrower getters nil - exactly the manager shape the
-	// defect is about.
-	duringOwner.networkSnapshot = during.NetworkTransitionSnapshot
+	duringOwner := &DefaultDialer{network: newNetworkObserver(during)}
+	require.Equal(t, sourceTransitionPair, duringOwner.network.source,
+		"a manager that reports the transition snapshot must be read through it")
+	require.True(t, duringOwner.network.reportsStability,
+		"and the settled flag it reported must be usable, or the DURING case below cannot be rejected")
 	predicate := duringOwner.captureEpoch()
 	require.False(t, predicate(),
 		"a dial that began while the network was unsettled must not be handed over, and the ONLY source "+
 			"of that fact this manager reports is the snapshot it was given")
 
 	// STALE: settled at epoch 5, then the network moves to 6.
-	stale := newFamilySnapshotOnlyManager(netcap.StateProvisioned, netcap.StateProvisioned)
+	stale := &pairSnapshotOnlyManager{}
 	stale.epoch.Store(5)
 	stale.stable.Store(true)
-	staleOwner := newFixtureDialer(stale)
-	staleOwner.networkEpoch = nil
-	staleOwner.networkSnapshot = stale.NetworkTransitionSnapshot
+	staleOwner := &DefaultDialer{network: newNetworkObserver(stale)}
 	stalePredicate := staleOwner.captureEpoch()
 	require.True(t, stalePredicate(), "a settled, unmoved generation may be handed over")
 	stale.epoch.Store(6)
 	require.False(t, stalePredicate(), "once the epoch moves, the captured one is superseded")
 }
+
+// pairSnapshotOnlyManager reports the transition snapshot and NOTHING narrower.
+//
+// It is the shape the defect needed: no reset counter, no settled getter, so a consumer that resolves
+// its source from those two interfaces alone sees nothing at all. The resolution has to notice that the
+// snapshotter is present.
+type pairSnapshotOnlyManager struct {
+	adapter.NetworkManager
+	epoch  atomic.Uint64
+	stable atomic.Bool
+}
+
+func (m *pairSnapshotOnlyManager) NetworkTransitionSnapshot() (uint64, bool) {
+	return m.epoch.Load(), m.stable.Load()
+}
+
+func (m *pairSnapshotOnlyManager) InterfaceFinder() control.InterfaceFinder {
+	return control.NewDefaultInterfaceFinder()
+}
+
+var (
+	_ adapter.NetworkTransitionSnapshotter = (*pairSnapshotOnlyManager)(nil)
+	_                                      = func() {
+		var manager any = &pairSnapshotOnlyManager{}
+		if _, isCounter := manager.(adapter.NetworkResetCounter); isCounter {
+			panic("the double must not implement NetworkResetCounter")
+		}
+		if _, isState := manager.(adapter.NetworkTransitionState); isState {
+			panic("the double must not implement NetworkTransitionState")
+		}
+	}
+)
 
 // TestCaptureEpochWithNoSourceAtAllStillAbsolves is the control that keeps the fix from becoming "always
 // refuse".
@@ -135,3 +165,5 @@ func TestOnePolicyServesThePacketGateAndThePacketHandOver(t *testing.T) {
 	require.ErrorIs(t, owned.hardUndialableError(globalIPv6), errLocalIPv6EgressUnavailable,
 		"and the reason is the machine's real fact, not the general family one")
 }
+
+func (m *pairSnapshotOnlyManager) NetworkEnvironment() uint64 { return 0 }

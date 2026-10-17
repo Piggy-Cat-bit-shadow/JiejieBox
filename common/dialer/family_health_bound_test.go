@@ -30,7 +30,7 @@ func TestTheFamilyHealthTableStaysBounded(t *testing.T) {
 	health := newFamilyHealth()
 
 	// Every environment records a failure, which is the only way an entry is created.
-	for environment := uint64(1); environment <= familyHealthMaxEnvironments*4; environment++ {
+	for environment := uint64(1); environment <= familyHealthMaxGenerations*4; environment++ {
 		health.recordStalledFamily(environment, familyIPv6)
 	}
 
@@ -38,7 +38,7 @@ func TestTheFamilyHealthTableStaysBounded(t *testing.T) {
 	entries := len(health.state)
 	health.access.Unlock()
 
-	require.LessOrEqual(t, entries, familyHealthMaxEnvironments,
+	require.LessOrEqual(t, entries, familyHealthMaxGenerations,
 		"the table must not grow without bound: expiry only happens when the same environment is consulted "+
 			"again, so a long roam across networks that are never revisited accumulates an entry each time")
 	require.Greater(t, entries, 0, "and it must not be emptied for no reason either")
@@ -52,7 +52,7 @@ func TestTheFamilyHealthTableStaysBounded(t *testing.T) {
 func TestClearingTheTableNeverRefusesACandidate(t *testing.T) {
 	fresh := newFamilyHealth()
 	saturated := newFamilyHealth()
-	for environment := uint64(1); environment <= familyHealthMaxEnvironments+1; environment++ {
+	for environment := uint64(1); environment <= familyHealthMaxGenerations+1; environment++ {
 		saturated.recordStalledFamily(environment, familyIPv6)
 	}
 

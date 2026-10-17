@@ -88,7 +88,7 @@ func TestExportedDialParallelBindsTheOwner(t *testing.T) {
 
 	require.Greater(t, bound.factoryCalls.Load(), int32(0),
 		"the exported path must build its scheduler through the owner, not a health-less one")
-	require.True(t, owner.familyHealth.fallbackImmediately(owner.networkEnvironment(), familyIPv6, familyIPv4),
+	require.True(t, owner.familyHealth.fallbackImmediately(owner.networkGeneration(), familyIPv6, familyIPv4),
 		"the direct path must record what it observed into the long-lived owner")
 }
 

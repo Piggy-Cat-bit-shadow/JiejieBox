@@ -34,12 +34,16 @@ import (
 // dialer: the thing under test is the assertion the dialer performs against those interfaces, so a
 // test double that satisfied the same assertions any other way would prove nothing about production.
 type capabilityManager struct {
+	// NetworkManager is embedded and nil: this double is a set of optional capabilities, and the
+	// methods it defines below are the ones a DefaultDialer's construction asks for.
+	adapter.NetworkManager
 	epoch                 atomic.Uint64
 	stable                atomic.Bool
 	ipv4                  atomic.Uint32
 	ipv6                  atomic.Uint32
 	transitionSnapshotter atomic.Uint32 // unused; keeps the struct shape explicit
 }
+
 
 func newCapabilityManager(ipv4 netcap.FamilyState, ipv6 netcap.FamilyState) *capabilityManager {
 	manager := &capabilityManager{}
@@ -131,7 +135,7 @@ func newCapabilityDialer(t *testing.T, ipv4 netcap.FamilyState, ipv6 netcap.Fami
 func newCapabilityLeaf(ipv4 netcap.FamilyState, ipv6 netcap.FamilyState) *capabilityLeaf {
 	manager := newCapabilityManager(ipv4, ipv6)
 	owner := &DefaultDialer{familyHealth: newFamilyHealth()}
-	owner.familySnapshot = manager.NetworkFamilyCapabilitySnapshot
+	owner.network = newNetworkObserver(manager)
 	return &capabilityLeaf{owner: owner, inner: newStallingDialer(), manager: manager}
 }
 
@@ -363,7 +367,7 @@ func TestUnknownAndProvisionedFamiliesAreNeverFiltered(t *testing.T) {
 // constructor path rather than against the policy type alone.
 func TestDialerWithoutACapabilityIsUnchanged(t *testing.T) {
 	owner := &DefaultDialer{familyHealth: newFamilyHealth()}
-	require.Nil(t, owner.familySnapshot, "a DefaultDialer built without a manager has no snapshot")
+	require.Equal(t, sourceNone, owner.network.source, "a DefaultDialer built without a manager has no source")
 
 	inner := newStallingDialer()
 	dialer := &capabilityDialer{capabilityLeaf: &capabilityLeaf{
@@ -640,7 +644,7 @@ func TestRecoveryDoesNotOfferCandidatesTheMachineCannotDial(t *testing.T) {
 // that must not regress. A DefaultDialer built without a manager is the same case.
 func TestCapabilityFallbackWithoutASnapshotterIsSilent(t *testing.T) {
 	owner := &DefaultDialer{familyHealth: newFamilyHealth()}
-	require.Nil(t, owner.familySnapshot, "a dialer with no manager has no snapshot")
+	require.Equal(t, sourceNone, owner.network.source, "a dialer with no manager has no source")
 	require.False(t, owner.LocalFamilyBlocked(address6))
 	require.False(t, owner.captureLocalFamilyPolicy().hardUndialable(address6))
 	require.False(t, owner.captureLocalFamilyPolicy().hardUndialable(address4))
@@ -663,3 +667,5 @@ func (m *ownershipOnlyManager) NetworkTransitionSnapshot() (uint64, bool) {
 }
 
 var _ adapter.NetworkTransitionSnapshotter = (*ownershipOnlyManager)(nil)
+
+func (m *capabilityManager) NetworkEnvironment() uint64 { return 0 }
