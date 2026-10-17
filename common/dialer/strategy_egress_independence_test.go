@@ -1,6 +1,9 @@
 package dialer
 
 import (
+	"context"
+	"errors"
+	"net"
 	"net/netip"
 	"testing"
 
@@ -71,8 +74,10 @@ func TestAnIPv6OnlyStrategyOnAMachineWithNoPublicIPv6StillRefuses(t *testing.T) 
 	// The strategy admits only the IPv6 candidate...
 	require.True(t, AddressAllowedByStrategy(globalIPv6, C.DomainStrategyIPv6Only))
 	// ...and the machine refuses it. The result is a refusal, not a silent downgrade.
-	refused := refusedFamilyIn([]netip.Addr{globalIPv6}, egressRefusingPolicy())
-	require.Equal(t, familyIPv6, refused)
+	refused := refusedCandidateIn([]netip.Addr{globalIPv6}, egressRefusingPolicy())
+	require.Equal(t, familyIPv6, refused.family)
+	require.Equal(t, globalIPv6, refused.address,
+		"the refused destination travels with the family so the reason can name the machine's real verdict")
 
 	filtered := withoutUndialable([]netip.Addr{globalIPv6}, egressRefusingPolicy())
 	require.Empty(t, filtered, "no candidate may survive, and IPv4 must not be substituted")
@@ -117,6 +122,38 @@ func TestTheTwoRulesStayAttributable(t *testing.T) {
 
 	// The configuration's reason is produced elsewhere and is a different error entirely, so the two
 	// can never be confused for one another in a log.
-	require.ErrorIs(t, localFamilyRefusalError(familyIPv6), errLocalIPv6Unavailable)
-	require.NotErrorIs(t, localFamilyRefusalError(familyIPv6), errLocalIPv6EgressUnavailable)
+	//
+	// # Why the scheduler's refusal is asked WITH the destination
+	//
+	// It used to be asked with the family alone, and the previous version of this assertion pinned the
+	// result: `localFamilyRefusalError(familyIPv6)` yielded errLocalIPv6Unavailable, and the test
+	// required it to. That was the defect written down as an expectation. A family value cannot express
+	// the egress term, so on a machine with IPv6 addressing and no global route the scheduler reported
+	// an absent family - the opposite of the truth, and the opposite of what the packet path reported
+	// for the same destination one line earlier in the same log.
+	//
+	// The refusal now carries the destination, so it is asked the same question the gate answers, and
+	// the answer is the egress fact.
+	schedulerRefusal := (&candidateScheduler{localFamily: egressRefusingPolicy()}).dialRefusal(globalIPv6)
+	require.ErrorIs(t, schedulerRefusal, errLocalIPv6EgressUnavailable,
+		"the scheduler must report the machine's real verdict, not the general one")
+	require.NotErrorIs(t, schedulerRefusal, errLocalIPv6Unavailable,
+		"'no interface carries an ipv6 address' is false on a machine that has one")
+	require.Contains(t, schedulerRefusal.Error(), "no route to a global ipv6 destination")
+	require.NotContains(t, schedulerRefusal.Error(), "ipv4_only")
+	require.NotContains(t, schedulerRefusal.Error(), "ipv6_only")
+}
+
+// dialRefusal runs the real scheduler over one refused destination and returns its error, so the
+// assertions above are about what a caller receives rather than about a helper's return value.
+func (s *candidateScheduler) dialRefusal(destination netip.Addr) error {
+	_, _, err := s.dial(context.Background(),
+		planCandidates([]netip.Addr{destination}, netip.Addr{}, C.DomainStrategyAsIS),
+		func(ctx context.Context, address netip.Addr) (net.Conn, error) {
+			return nil, context.Canceled
+		})
+	if err == nil {
+		return errors.New("the scheduler attempted a destination the machine cannot reach")
+	}
+	return err
 }

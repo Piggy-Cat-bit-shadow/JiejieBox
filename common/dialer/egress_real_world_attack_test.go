@@ -228,7 +228,7 @@ func TestTheHealthyDualStackPathAddsNoWork(t *testing.T) {
 	original := planCandidates(addressSet(), netip.Addr{}, 0)
 	scheduler := &candidateScheduler{localFamily: policy}
 	filtered, refused := scheduler.filterLocalFamily(original)
-	require.Equal(t, familyInvalid, refused)
+	require.False(t, refused.refused())
 	require.Equal(t, original.candidates, filtered.candidates,
 		"the plan must come out of the filter byte-identical, not merely equivalent")
 }

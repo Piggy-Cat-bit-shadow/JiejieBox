@@ -513,7 +513,7 @@ func TestFilterLocalFamilyLeavesTheCallersDataAlone(t *testing.T) {
 	callersCopy := append([]dualStackCandidate(nil), plan.candidates...)
 
 	filtered, refused := scheduler.filterLocalFamily(plan)
-	require.Equal(t, familyIPv6, refused)
+	require.Equal(t, familyIPv6, refused.family)
 	require.Len(t, filtered.candidates, 1)
 	require.Equal(t, address4, filtered.candidates[0].address)
 	require.Equal(t, callersCopy, plan.candidates,
@@ -529,7 +529,7 @@ func TestFilterLocalFamilyLeavesAnAllowedPlanAlone(t *testing.T) {
 	plan := planCandidates([]netip.Addr{address6, address4}, netip.Addr{}, 0)
 	original := plan.candidates
 	filtered, refused := scheduler.filterLocalFamily(plan)
-	require.Equal(t, familyInvalid, refused)
+	require.False(t, refused.refused())
 	require.Len(t, filtered.candidates, 2, "a zero policy removes nothing")
 	require.Equal(t, reflect.ValueOf(original).Pointer(), reflect.ValueOf(filtered.candidates).Pointer(),
 		"nothing is refused, so nothing is copied either")

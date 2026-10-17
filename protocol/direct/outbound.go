@@ -290,18 +290,26 @@ func (h *Outbound) DialParallelNetwork(ctx context.Context, network string, dest
 // richer ParallelNetworkDialer - and its DialParallelNetwork is the only place domain recovery for a
 // literal destination lives: the sniffed-domain lookup, the late-candidate feed, the family fallback.
 //
-// Calling the package-level helper directly passes h.dialer in at the NARROW type, and that helper
-// schedules candidates from what it is given without asking whether the object could have discovered
-// more. So the richer method was never invoked, and a TUN flow to a global IPv6 literal with a sniffed
-// domain was refused by the local-family gate while the recovery machinery sat one call away with the
-// name already in the context metadata. In the production log that is the WeChat flow with
-// `sniffed protocol: http, domain: szminorshort.weixin.qq.com` followed by the IPv6 refusal and no
-// `dns: lookup domain` line between them.
+// Calling the package-level helper directly passes h.dialer in at the NARROW type, and
+// DialParallelNetwork's body never asks whether the object it was handed could have discovered more - it
+// plans the candidates it is given and schedules them. So the richer method was never invoked, and a TUN
+// flow to a global IPv6 literal with a sniffed domain was refused by the local-family gate while the
+// recovery machinery sat one call away with the name already in the context metadata. In the production
+// log that is the WeChat flow with `sniffed protocol: http, domain: szminorshort.weixin.qq.com` followed
+// by the IPv6 refusal and no `dns: lookup domain` line between them.
 //
 // Fixing the wrapper alone was not enough: `DialSerialNetwork` does reach
 // resolveParallelNetworkDialer.DialParallelNetwork, but only when it is handed the wrapper. The
 // connection manager hands it the OUTBOUND, so this method is the actual entry point and the
 // capability has to survive here.
+//
+// # Scope, exactly
+//
+// The STREAM entry points needed this: `dialer.DialParallelNetwork` takes the narrow type and does not
+// re-dispatch. The PACKET one did not - `dialer.ListenSerialNetworkPacket` type-asserts the richer
+// interface itself, so a wrapped dialer already reached its recovery, and listenNetworkPacket below is
+// consistency rather than a fix. Writing the two asymmetrically would mean the next reader has to work
+// out which helper re-dispatches, and getting that wrong is precisely how this bug happened.
 //
 // # Why this cannot recurse
 //
@@ -335,23 +343,34 @@ func (h *Outbound) ListenSerialNetworkPacket(ctx context.Context, destination M.
 	return h.listenNetworkPacket(ctx, destination, destinationAddresses, networkStrategy, networkType, fallbackNetworkType, fallbackDelay)
 }
 
-// listenNetworkPacket is scheduleNetwork's packet counterpart, and it has the same hole for the same
-// reason: the package helper schedules candidates from the list it is handed, so a wrapped dialer that
-// could have discovered a candidate for a literal is passed in at the narrow type and never asked.
+// listenNetworkPacket is scheduleNetwork's packet counterpart.
 //
-// # Why the packet path matters even though it has no race
+// # Scope, stated honestly
+//
+// This one is CONSISTENCY, not a repair. `dialer.ListenSerialNetworkPacket` type-asserts the richer
+// interface itself (default_parallel_network.go, its first act), so a wrapped dialer already reached the
+// wrapper's packet arm - and with it recovery - before this existed. Leaving the two arms asymmetrical
+// would mean the next reader has to work out which package helper re-dispatches, and getting that wrong
+// is exactly how the stream defect survived two rounds of fixes. Both arms now say what they mean: hand
+// the list to the surface the object HAS.
+//
+// It is also not dead weight. A helper that later drops its internal assertion, or a wrapper added
+// between this outbound and the resolve dialer, would silently make the packet path depend on a narrow
+// call again; here the capability is asked for at the point that holds it.
+//
+// # Why the packet path needs the candidate at all
 //
 // An unconnected packet flow has no scheduler - a UDP socket creation is not a verified outcome, so
 // racing two sockets would deliver duplicate datagrams and award a winner that never sent anything.
-// `ListenSerialNetworkPacket` is a serial walk whose ONLY fallback is another candidate. On this machine
-// a UDP socket to an unreachable IPv6 network is created successfully and fails at the first send, so an
-// unrecovered global IPv6 literal wins the walk and the client is handed a dead connection. The
-// sniffed-domain candidate is therefore not an optimisation here; it is the only thing that can move the
-// flow to a family that works.
+// `ListenSerialNetworkPacket` is a serial walk whose ONLY fallback is another candidate. On a machine
+// whose global IPv6 does not route, a UDP socket to it can still be created, so an unrecovered global
+// IPv6 literal can win the walk and leave the client with a connection that dies at the first send. The
+// sniffed-domain candidate is therefore not an optimisation on this path; it is the only thing that can
+// move the flow to a family that works.
 //
 // The wrapper's packet arm runs that lookup up front, bounded by the caller's context, and orders the
-// recovered addresses BEHIND the application's own - so dispatch here keeps the "the literal is the
-// endpoint the application chose" rule while giving the walk somewhere to go.
+// recovered addresses BEHIND the application's own - so the walk keeps the "the literal is the endpoint
+// the application chose" rule while giving it somewhere to go when the literal cannot be used.
 func (h *Outbound) listenNetworkPacket(ctx context.Context, destination M.Socksaddr, destinationAddresses []netip.Addr, networkStrategy *C.NetworkStrategy, networkType []C.InterfaceType, fallbackNetworkType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, netip.Addr, error) {
 	if networkDialer, isNetworkDialer := h.dialer.(dialer.ParallelNetworkDialer); isNetworkDialer {
 		return networkDialer.ListenSerialNetworkPacket(ctx, destination, destinationAddresses, networkStrategy, networkType, fallbackNetworkType, fallbackDelay)

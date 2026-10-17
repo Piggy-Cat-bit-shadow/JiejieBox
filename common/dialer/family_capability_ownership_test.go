@@ -163,7 +163,7 @@ func TestOldVerdictCannotDenyNewGenerationScheduler(t *testing.T) {
 	// has left.
 	plan := planCandidates(addressSet(), netip.Addr{}, 0)
 	filtered, refused := scheduler.filterLocalFamily(plan)
-	require.Equal(t, familyInvalid, refused,
+	require.False(t, refused.refused(),
 		"a verdict from the replaced network must not refuse anything on this one")
 	require.Len(t, filtered.candidates, 2,
 		"IPv6 must survive: network A's answer says nothing about network B")
@@ -326,7 +326,7 @@ func TestDuringTransitionCannotHardDeny(t *testing.T) {
 	scheduler := &candidateScheduler{localFamily: captured}
 	plan := planCandidates(addressSet(), netip.Addr{}, 0)
 	filtered, refused := scheduler.filterLocalFamily(plan)
-	require.Equal(t, familyInvalid, refused)
+	require.False(t, refused.refused())
 	require.Len(t, filtered.candidates, 2)
 
 	// And the bypass stays open, which is the conservative direction for an optimisation.
@@ -349,7 +349,7 @@ func TestOwnedVerdictStillHardDeniesOnItsOwnNetwork(t *testing.T) {
 	// The scheduler removes it from the plan and from the late stream.
 	scheduler := &candidateScheduler{localFamily: captured}
 	filtered, refused := scheduler.filterLocalFamily(planCandidates(addressSet(), netip.Addr{}, 0))
-	require.Equal(t, familyIPv6, refused)
+	require.Equal(t, familyIPv6, refused.family)
 	require.Len(t, filtered.candidates, 1)
 	require.Equal(t, address4, filtered.candidates[0].address)
 

@@ -89,7 +89,7 @@ func BenchmarkLocalFamilyFilter(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			if _, refused := scheduler.filterLocalFamily(single); refused != familyInvalid {
+			if _, refused := scheduler.filterLocalFamily(single); refused.family != familyInvalid {
 				b.Fatal("a zero policy must refuse nothing")
 			}
 		}
@@ -100,7 +100,7 @@ func BenchmarkLocalFamilyFilter(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			if _, refused := scheduler.filterLocalFamily(single); refused != familyInvalid {
+			if _, refused := scheduler.filterLocalFamily(single); refused.family != familyInvalid {
 				b.Fatal("a present family must not be refused")
 			}
 		}
@@ -113,7 +113,7 @@ func BenchmarkLocalFamilyFilter(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			// A copy each round: the filter returns a new slice when it removes, and the benchmark
 			// must measure that rather than a plan that shrinks to nothing after one iteration.
-			if _, refused := scheduler.filterLocalFamily(dualCopy(dual)); refused != familyIPv6 {
+			if _, refused := scheduler.filterLocalFamily(dualCopy(dual)); refused.family != familyIPv6 {
 				b.Fatal("the absent family must be refused")
 			}
 		}

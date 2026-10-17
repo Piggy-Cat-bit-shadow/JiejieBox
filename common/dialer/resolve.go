@@ -162,14 +162,14 @@ func (d *resolveDialer) DialContext(ctx context.Context, network string, destina
 		// resolver's order for everything that can actually be dialled, which is what the serial
 		// contract promises.
 		policy := d.dialerLocalFamilyPolicy()
-		refused := refusedFamilyIn(addresses, policy)
+		refused := refusedCandidateIn(addresses, policy)
 		addresses = withoutUndialable(addresses, policy)
 		if len(addresses) == 0 {
-			if refused != familyInvalid {
+			if refused.refused() {
 				// Every address belonged to a family this machine cannot dial. Refusing with the
 				// reason is the whole value of the verdict; falling through would turn it into a
 				// connect timeout that says nothing about the machine.
-				return nil, localFamilyRefusalError(refused)
+				return nil, localFamilyRefusalError(refused, policy)
 			}
 			// The resolver produced nothing and nothing was refused. This must be reported HERE
 			// rather than passed down, because N.DialSerial over an empty address list returns a nil

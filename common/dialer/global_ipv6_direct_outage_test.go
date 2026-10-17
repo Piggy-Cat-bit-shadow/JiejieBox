@@ -177,7 +177,10 @@ func TestTheSchedulerDropsTheGlobalIPv6Candidate(t *testing.T) {
 	scheduler := &candidateScheduler{localFamily: policy}
 
 	filtered, refused := scheduler.filterLocalFamily(planCandidates(addressSet(), netip.Addr{}, 0))
-	require.Equal(t, familyIPv6, refused, "the global IPv6 candidate is the one refused")
+	require.Equal(t, familyIPv6, refused.family, "the global IPv6 candidate is the one refused")
+	require.Equal(t, address6, refused.address,
+		"the refused destination is carried so the reason can name the machine's real verdict - here "+
+			"the egress fact, not an absent family")
 	require.Len(t, filtered.candidates, 1)
 	require.Equal(t, address4, filtered.candidates[0].address)
 
@@ -185,7 +188,7 @@ func TestTheSchedulerDropsTheGlobalIPv6Candidate(t *testing.T) {
 	// scheduler still races it against the IPv4 one.
 	localSet := []netip.Addr{netip.MustParseAddr("fe80::1"), address4}
 	filteredLocal, refusedLocal := scheduler.filterLocalFamily(planCandidates(localSet, netip.Addr{}, 0))
-	require.Equal(t, familyInvalid, refusedLocal,
+	require.False(t, refusedLocal.refused(),
 		"a link-local destination is reached over the link, not over the public path this verdict is about")
 	require.Len(t, filteredLocal.candidates, 2)
 }

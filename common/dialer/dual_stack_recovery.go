@@ -223,22 +223,23 @@ func withoutUndialable(addresses []netip.Addr, policy localFamilyPolicy) []netip
 	return filtered
 }
 
-// refusedFamilyIn reports which family a policy refuses among these addresses, or familyInvalid when
-// it refuses none of them.
+// refusedCandidateIn reports which candidate a policy refuses among these addresses.
 //
-// It exists so a caller that is about to filter can still NAME the reason afterwards: the filtered
-// list is empty in exactly the case where the explanation matters most, and an empty list cannot say
-// which family produced it.
+// It exists so a caller that is about to filter can still NAME the reason afterwards: the filtered list
+// is empty in exactly the case where the explanation matters most, and an empty list cannot say which
+// destination produced it - nor, on a machine that has one address family and no public route for it,
+// WHICH of the two facts did the refusing. The family alone cannot express that, so the address travels
+// with it; see localFamilyRefusal.
 //
 // It reads the list without modifying it, so it and withoutUndialable can be called in either order;
 // the serial branch calls it first only because that reads better.
-func refusedFamilyIn(addresses []netip.Addr, policy localFamilyPolicy) addressFamily {
+func refusedCandidateIn(addresses []netip.Addr, policy localFamilyPolicy) localFamilyRefusal {
 	for _, address := range addresses {
 		if policy.hardUndialable(address) {
-			return classifyAddress(address)
+			return localFamilyRefusal{family: classifyAddress(address), address: address}
 		}
 	}
-	return familyInvalid
+	return localFamilyRefusal{family: familyInvalid}
 }
 
 // withoutFamilyExcluded drops the addresses a strict single-family strategy excludes, and returns the

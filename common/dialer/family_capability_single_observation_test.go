@@ -155,7 +155,7 @@ func TestDuringIsNotHardDenyFromTheFamilySnapshotAlone(t *testing.T) {
 	// And the same through the real consumers, so this is not only a policy-level claim.
 	scheduler := &candidateScheduler{localFamily: policy}
 	filtered, refused := scheduler.filterLocalFamily(planCandidates(addressSet(), netip.Addr{}, 0))
-	require.Equal(t, familyInvalid, refused)
+	require.False(t, refused.refused())
 	require.Len(t, filtered.candidates, 2)
 
 	require.False(t, owner.LocalFamilyBlocked(address6),
@@ -189,7 +189,7 @@ func TestStaleIsNotHardDenyFromTheFamilySnapshotAlone(t *testing.T) {
 
 	scheduler := &candidateScheduler{localFamily: policy}
 	filtered, refused := scheduler.filterLocalFamily(planCandidates(addressSet(), netip.Addr{}, 0))
-	require.Equal(t, familyInvalid, refused)
+	require.False(t, refused.refused())
 	require.Len(t, filtered.candidates, 2)
 
 	// LocalFamilyBlocked is deliberately NOT asserted here. It takes a FRESH capture - it has no dial to
@@ -219,7 +219,7 @@ func TestCurrentFamilySnapshotStillHardDenies(t *testing.T) {
 
 	scheduler := &candidateScheduler{localFamily: policy}
 	filtered, refused := scheduler.filterLocalFamily(planCandidates(addressSet(), netip.Addr{}, 0))
-	require.Equal(t, familyIPv6, refused)
+	require.Equal(t, familyIPv6, refused.family)
 	require.Len(t, filtered.candidates, 1)
 	require.Equal(t, address4, filtered.candidates[0].address)
 

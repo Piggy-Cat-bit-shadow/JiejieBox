@@ -139,18 +139,23 @@ func (s *candidateScheduler) dialWithLateCandidates(ctx context.Context, plan ca
 	candidates := plan.candidates
 	switch {
 	case len(candidates) == 0 && lateCandidates == nil:
-		if refused == familyInvalid {
+		if !refused.refused() {
 			return nil, netip.Addr{}, E.New("no dial candidates")
 		}
 		// Every candidate belonged to a family the machine cannot dial. Returning here rather than
 		// waiting is the whole point: the alternative is the caller's connect timeout spent on
 		// addresses this machine has no way to reach.
-		return nil, netip.Addr{}, localFamilyRefusalError(refused)
+		return nil, netip.Addr{}, localFamilyRefusalError(refused, s.localFamily)
 	case len(candidates) == 0:
 		// Nothing to start with. A late stream was supplied, so wait for it rather than
 		// failing: the fast family may simply not have answered yet. A refused candidate is
 		// dropped from that stream too, so a stream that carries only refused families still
 		// terminates - the scheduler concludes when resolution finishes.
+		//
+		// `refused` is deliberately still live here. The wait exists for a family that may yet
+		// answer, but the plan did not start empty - it was EMPTIED - and when the stream closes
+		// without producing anything, the reason the plan was empty is the only explanation left.
+		// Concluding "no dial candidates" there would discard the one fact the reader needs.
 	case len(candidates) == 1 && lateCandidates == nil:
 		// The hot path, and the common case for a literal IP with no recovery.
 		//
@@ -362,6 +367,12 @@ func (s *candidateScheduler) dialWithLateCandidates(ctx context.Context, plan ca
 				// produces exactly this, and the caller would sit for the whole connect timeout
 				// before being told there was no address.
 				if started == 0 {
+					// The plan was empty and the stream produced nothing. If the plan was empty
+					// because the machine refused its candidates, that refusal is the answer - the
+					// stream having nothing to add does not change why nothing was attempted.
+					if refused.refused() {
+						return nil, netip.Addr{}, localFamilyRefusalError(refused, s.localFamily)
+					}
 					return nil, netip.Addr{}, E.New("no dial candidates")
 				}
 				if nextIndex >= len(launch) && started == len(failures) {
@@ -537,6 +548,59 @@ func (s *candidateScheduler) fallbackDelayOrDefault() time.Duration {
 	return N.DefaultFallbackDelay
 }
 
+// localFamilyRefusal is a refusal the local machine issued, carrying BOTH the family and the address
+// whose attempt it refused.
+//
+// # Why the address has to travel with the family
+//
+// The verdict has two terms. The family existence check answers "does this machine carry an address of
+// that family at all", and the egress check answers "is there a public route for it". A global IPv6
+// destination can be refused by either, and the two have different remedies, so a value that keeps only
+// the family cannot produce the sentence the reader needs - it collapses the more specific verdict into
+// the more general one.
+//
+// That collapse was the defect: `hardUnavailableError(family)` maps ipv6 to "no interface on this
+// machine carries an ipv6 address" unconditionally, so on the reported machine - IPv6 present, no global
+// route - the scheduler told the operator an address was missing while the packet path, holding the same
+// capability, correctly blamed the route.
+//
+// The address is carried rather than a pre-rendered error so the refusal is still decided in ONE place,
+// `localFamilyPolicy.hardUndialableError`, from ONE policy capture. Nothing here re-derives the verdict.
+type localFamilyRefusal struct {
+	family  addressFamily
+	address netip.Addr
+}
+
+// refused reports whether anything was actually refused, which is what decides whether a refusal may be
+// reported at all.
+//
+// A plan that was empty to begin with - a resolver that answered with nothing - must keep saying "no
+// dial candidates": blaming the machine for a name that has no address would be a fabricated verdict.
+func (r localFamilyRefusal) refused() bool {
+	return r.family != familyInvalid || r.address.IsValid()
+}
+
+// error is the refusal reason, from the policy that produced it.
+//
+// The destination-aware accessor is used when an address is available, so the gate and the explanation
+// are the same decision. The family-only fallback remains for a caller that genuinely has no address,
+// which is the case an empty candidate list produces.
+func (r localFamilyRefusal) error(policy localFamilyPolicy) error {
+	if r.address.IsValid() {
+		if refusal := policy.hardUndialableError(r.address); refusal != nil {
+			return refusal
+		}
+		// The address is no longer refused: the policy this read belongs to is not the one the
+		// decision was taken on (a network transition moved the capture), and the honest answer is
+		// the general one rather than a fact about a machine state that has changed.
+		return E.New("no dial candidates")
+	}
+	if r.family == familyInvalid {
+		return E.New("no dial candidates")
+	}
+	return hardUnavailableError(r.family)
+}
+
 // filterLocalFamily drops the planned candidates whose family the machine cannot dial.
 //
 // It returns the plan UNCHANGED - the same slice header, so the hot path allocates nothing and the
@@ -551,14 +615,14 @@ func (s *candidateScheduler) fallbackDelayOrDefault() time.Duration {
 // not own. The cost of not doing it is one allocation on exactly the connections where a family is
 // provably absent, which is the case the feature exists to make cheap.
 //
-// The refused family is returned rather than a boolean so that the caller can report WHICH family
-// was undialable. That is the difference between an actionable message and "no dial candidates",
-// and it is the message a user sees for the case this whole round exists for: a dual-stack name on
-// a machine with no IPv6 addressing, where the AAAA half of the answer must not cost a connect
-// timeout.
-func (s *candidateScheduler) filterLocalFamily(plan candidatePlan) (candidatePlan, addressFamily) {
+// The refused destination is returned rather than a boolean so that the caller can report WHICH
+// destination was undialable AND WHY, from the capability that refused it. That is the difference
+// between an actionable message and "no dial candidates", and it is the message a user sees for the
+// case this whole round exists for: a dual-stack name on a machine with no IPv6 route, where the AAAA
+// half of the answer must not cost a connect timeout.
+func (s *candidateScheduler) filterLocalFamily(plan candidatePlan) (candidatePlan, localFamilyRefusal) {
 	if plan.capabilityRestrictsNothing(s.localFamily) {
-		return plan, familyInvalid
+		return plan, localFamilyRefusal{family: familyInvalid}
 	}
 	return s.dropUndialableCandidates(plan)
 }
@@ -575,24 +639,27 @@ func (s *candidateScheduler) filterLocalFamily(plan candidatePlan) (candidatePla
 // Every decision here goes through s.localFamily.excluded, which consults network ownership before it
 // answers - so a scheduler whose capture has been superseded drops nothing, and the successor
 // generation's candidates reach the race.
-func (s *candidateScheduler) dropUndialableCandidates(plan candidatePlan) (candidatePlan, addressFamily) {
+func (s *candidateScheduler) dropUndialableCandidates(plan candidatePlan) (candidatePlan, localFamilyRefusal) {
 	planned := len(plan.candidates)
 	if planned == 0 {
-		return plan, familyInvalid
+		return plan, localFamilyRefusal{family: familyInvalid}
 	}
 	// The first refused candidate is located before anything is copied. Everything before it is kept
 	// verbatim, which makes the copy start at the first removal instead of at the front.
 	firstRefused := -1
-	var refused addressFamily
+	var refused localFamilyRefusal
 	for index, candidate := range plan.candidates {
 		if s.localFamily.hardUndialable(candidate.address) {
 			firstRefused = index
-			refused = candidate.family
+			// The destination travels with the family so the message can name the machine's ACTUAL
+			// verdict. A value carrying only the family cannot express the egress term, which is how
+			// a machine with IPv6 addressing came to be reported as having none.
+			refused = localFamilyRefusal{family: candidate.family, address: candidate.address}
 			break
 		}
 	}
 	if firstRefused < 0 {
-		return plan, familyInvalid
+		return plan, localFamilyRefusal{family: familyInvalid}
 	}
 	kept := make([]dualStackCandidate, firstRefused, planned)
 	copy(kept, plan.candidates[:firstRefused])
@@ -621,12 +688,11 @@ func (p candidatePlan) capabilityRestrictsNothing(policy localFamilyPolicy) bool
 // localFamilyRefusalError reports why no candidate could be attempted.
 //
 // A refusal that came from the local family capability is reported as itself, because "no dial
-// candidates" would hide the cause: the resolver answered, and the machine dropped the answer.
-func localFamilyRefusalError(refused addressFamily) error {
-	if refused == familyInvalid {
-		return E.New("no dial candidates")
-	}
-	return hardUnavailableError(refused)
+// candidates" would hide the cause: the resolver answered, and the machine dropped the answer. The
+// reason is taken from the SAME policy the filter used, so the refusal and its explanation describe one
+// machine state rather than two reads of a value that may have moved between them.
+func localFamilyRefusalError(refused localFamilyRefusal, policy localFamilyPolicy) error {
+	return refused.error(policy)
 }
 
 // familyHealth remembers which address family recently failed to establish a connection, so
