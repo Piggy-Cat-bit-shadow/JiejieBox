@@ -854,30 +854,20 @@ func (d *DefaultDialer) dialAttribution(ctx context.Context, destination M.Socks
 	return attribution
 }
 
-// networkGeneration returns the network generation this dialer is on, as the health namespace.
+// The network generation this package used to expose as `networkGeneration()` is gone as a production
+// surface, and the reason is worth one paragraph because the function looked harmless.
 //
-// Health is per-network: a Wi-Fi network with broken IPv6 says nothing about the cellular network, and
-// carrying a verdict across that boundary would penalise a working path.
+// It was `d.captureLocalFamilyPolicy().ownership.epoch`: a FRESH capture per call, whose only readers were
+// two tests asking "which namespace will the health table use". Since this round the answer comes from the
+// flow's own policy (`admissionPolicy.generation()`), so the accessor had no production caller - and an
+// accessor that takes a fresh reading of the network to answer a question about one flow is exactly the
+// shape the admission policy was built to remove. Leaving it would have been a signpost pointing at the
+// pattern the round deletes: a reader who found it would have no reason to suspect that a per-flow value
+// exists.
 //
-// # Why the generation, and not the environment fingerprint it used to be
-//
-// The fingerprint was a SECOND reading of the same network: it came from NetworkManager.NetworkEnvironment
-// while the verdict and its ownership came from the capability snapshot, so a transition landing between
-// the two scoped one network's health to another network's identity. The consequence was bounded - a lost
-// fast-fallback bias - but it was the same defect as the rest of this round, and it was the last place
-// where one dial composed two readings of one instant.
-//
-// The generation is the same namespace for less: every environment change advances it (the reset is
-// claimed in the same critical section that publishes the fingerprint), so a verdict can never be carried
-// across a network change. It is also STRICTER in one direction - a reset that does not change the
-// fingerprint now starts a new bucket - which is the safe direction: forgetting a soft bias costs one
-// fallback delay, and remembering it across a reset is what the bias exists to avoid.
-//
-// It is read from the capture the caller already holds, so this function is the same observation rather
-// than a second read of it.
-func (d *DefaultDialer) networkGeneration() uint64 {
-	return d.captureLocalFamilyPolicy().ownership.epoch
-}
+// The health-namespace reasoning it carried - the generation rather than the environment fingerprint,
+// because the fingerprint was a second reading of the same network - lives where the namespace is now
+// decided, in DefaultDialer.newDualStackScheduler and admissionPolicy.generation.
 
 // newDualStackScheduler builds a scheduler from ONE flow's admission policy, wired to this dialer's
 // family health.
