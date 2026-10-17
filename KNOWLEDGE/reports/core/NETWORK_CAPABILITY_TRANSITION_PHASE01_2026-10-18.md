@@ -747,7 +747,7 @@ Per-flow cost — measured on this host, `go test -bench . -benchtime 200000x`:
 imply — a per-flow capture takes no lock and issues no syscall. `TestOnePlanCostsOneOwnershipRead`
 bounds manager reads to one per plan rather than one per candidate. The prohibitions in §26 are
 pinned, not merely intended: `TestCapabilityPublicationRegistersNoCallback`,
-`TestInterfaceUpdatesDoNotAccumulateGoroutines`, `TestRepeatedInterfaceChangesCostBoundedWork...`.
+`TestInterfaceUpdatesDoNotAccumulateGoroutines`, `TestRepeatedInterfaceChangesCostBoundedWorkAndAreReversible`.
 
 **Not measured here:** a real transition's wall-clock latency on a device, and the cost of a route-table
 dump on a host with a very large routing table. Both are `BLOCKED_BY_ENVIRONMENT`; the second would need
@@ -768,7 +768,7 @@ each the tree was restored with `git checkout --` and re-verified clean. The sui
 | id | mutation | result | test that killed it |
 |---|---|---|---|
 | M1 | same-interface IPv6 route loss does not invalidate the capability (`globalRoute := netcap.RouteUnobserved`) | KILLED | `TestAGenerationWithoutAGlobalIPv6RoutePublishesTheEgressVerdict`, `TestTheEgressVerdictMovesOnlyWithItsGeneration`, `TestAGenerationWithAGlobalIPv6RouteKeepsIPv6Dialable`, `TestAVirtualAdapterAloneNeverCreatesEgress`, `TestTheEgressVerdictIsNeverDerivedFromAddressType` |
-| M2 | a superseded/unsettled capability is still honoured (`if true` instead of the nil-source check) | KILLED | `TestOldVerdictCannotDenyNewGenerationScheduler`, `…SchedulerLateStream`, `…LiteralCaptureWindow`, `TestDuringTransitionCannotHardDeny` |
+| M2 | a superseded/unsettled capability is still honoured (`if true` instead of the nil-source check) | KILLED | `TestOldVerdictCannotDenyNewGenerationScheduler`, `TestOldVerdictCannotDenyNewGenerationSchedulerLateStream`, `TestOldVerdictCannotDenyNewGenerationLiteralCaptureWindow`, `TestDuringTransitionCannotHardDeny` |
 | M3 | familyHealth crosses the network generation (store and lookup both keyed on `0`) | KILLED | `TestProductionDialerHealthIsPerNetwork`, `TestFamilyHealthIsScopedToTheNetworkGeneration`, `TestFamilyHealthExpires`, `TestFamilyHealthRecoversOnSuccess`, `TestAFamilyVerdictCannotCrossEnvironments` |
 | M4 | a capture taken while settling may still hard-deny (drop the "began settled" term) | KILLED | `TestUnstableThenSettledCaptureStillDeniesNothing`, `TestSettledAgainAfterACommitStillDoesNotLaunderADuringCapture`, `TestADialThatBeginsDuringATransitionIsRefusedAfterItCommits`, `TestDialEpochPredicateRequiresASettledNetwork` |
 | M5 | recovery offers candidates the machine cannot dial (`withoutUndialable` returns its input) | KILLED | `TestRecoveryDoesNotOfferCandidatesTheMachineCannotDial`, `TestRecoveredUndialableFamilyIsDroppedBeforeTheRace`, `TestRecoveryReportsNothingWhenEveryFamilyIsUndialable` |
@@ -1019,7 +1019,7 @@ name and cannot build on Windows (`AGENTS.md`).
    arrival is filtered by a **fresh** policy read, so a superseded verdict cannot drop it; a setup is
    cancelled by exactly one generation transition and released before establishment, so a transition
    cannot retroactively cancel an established connection. `VERIFIED_MUTATION` (M5, M6) and
-   `TestOldVerdictCannotDenyNewGeneration{Scheduler,SchedulerLateStream,Literal,LiteralCaptureWindow,Serial,Bypass}`.
+   the six `TestOldVerdictCannotDenyNewGeneration*` tests.
 
 10. **Is the DNS cache flushed unnecessarily?** No. `dns.Router.ResetNetwork` advances the generation,
     purges the reverse mapping, resets and re-pins the transports, and leaves both the exact cache and the

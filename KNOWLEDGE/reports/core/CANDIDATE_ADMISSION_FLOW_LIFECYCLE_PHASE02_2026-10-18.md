@@ -206,8 +206,7 @@ Four consequences, all `VERIFIED_SOURCE`:
 2. **Nothing compares them.** A repo-wide search finds no expression that mixes them. So there is no
    split-brain today — the split is *latent*, not live.
 3. **§11 is therefore satisfied per subsystem, not globally.** `policy` / `scheduler` / `familyHealth` all
-   come from the network epoch and provably from ONE capture (`TestTheFlowsPolicyAndItsSchedulerShareOne
-   Generation`). `setup gate` / `connection stamp` come from the route counter, and their atomicity is
+   come from the network epoch and provably from ONE capture (`TestTheFlowsPolicyAndItsSchedulerShareOneGeneration`). `setup gate` / `connection stamp` come from the route counter, and their atomicity is
    `advanceAndBump`'s (`TestATransitionNeverPublishesItsCounterBeforeItsGate`,
    `TestATransitionCancelsSetupsItBeganAfter`).
 4. **The risk is for the next round**: any future check of the form "the setup's generation equals the
@@ -680,12 +679,17 @@ comment now says that.
 §F. Latent, not live. The important consequence is for Phase 03: **do not compare them**. Pick one and
 derive the other.
 
-### U.8 `DefaultDialer.networkGeneration()` has only test callers and captures on every call
+### U.8 `DefaultDialer.networkGeneration()` was a per-call capture with no production caller — removed
 
-`VERIFIED_SOURCE`: two test files call it, no production path does. The live namespace comes from
-`newDualStackScheduler(…, admission)`. It is a test-facing accessor whose per-call capture is exactly the
-shape this round removed elsewhere, so it is named here so the next reader does not mistake it for the
-mechanism.
+`VERIFIED_SOURCE`: two test files called it, no production path did. The live namespace comes from
+`newDualStackScheduler(…, admission)`, so the accessor was a signpost pointing at the pattern this round
+deletes: it took a FRESH capture of the network to answer a question about one flow, which is precisely the
+shape the admission policy exists to remove.
+
+Removed in the close-out, with the reasoning left in its place, and the two test callers migrated to
+`admissionForTest(owner).generation()` — which is the flow-boundary form, so a test that needs a generation
+now states which policy it belongs to. The health-namespace reasoning it carried (generation rather than
+environment fingerprint) lives where the namespace is decided.
 
 ### U.9 The failover boundary is per member, not per group
 
@@ -700,7 +704,7 @@ needs its exceptions written down next to it.
 |---|---|---|---|
 | V.1 | **A failover group's member attempts each capture their own policy** (§M.4, §U.9). | low | A member is a separate setup with its own `domain_strategy`; carrying one member's policy to another would be the interface narrowing this phase removes. Stated as the boundary of the invariant. |
 | V.2 | **`-race` unverified.** | medium | `BLOCKED_BY_ENVIRONMENT`. The functional equivalents ran without it: `TestCapabilitySnapshotIsRaceFree`, `TestDNSEnvironmentChangeIsRaceFree`, `TestConcurrentEnvironmentTransitionsAreSerialised`, `TestCapabilityReadIsConsistentUnderConcurrentTransitions`, `TestRepeatedTransitionsWithDialsInFlightLeakNothing`. |
-| V.3 | **Two generation counters with no fixed relationship** (§F, §U.7). | low now, medium for Phase 03 | Nothing compares them. The risk materialises only if a future check assumes they are equal. |
+| V.3 | **Two generation counters with no fixed relationship** (§F, §U.7). | low now, medium for Phase 03 | Nothing compares them. **Mitigated in the close-out**: the reason is now written at BOTH declarations (`route/conn.go` and `route/network.go`), reciprocally, so the assumption cannot be made by accident. The risk materialises only if a future check ignores both notes. |
 | V.4 | **The literal packet arm's two-gate split** — the wrapper applies the strategy, the leaf applies the capability. | low | Measured and documented as load-bearing twice (`default_parallel_network.go:245-261`); merging them would remove a fast-fail that only the leaf provides on paths the wrapper never sees. |
 | V.5 | **`plannableOriginal`'s `admits` guard cannot fire differently today** (§T M6). | low | Kept as depth per §13; recorded so it is not read as the only gate. |
 | V.6 | **Device behaviour unverified**; Darwin's missing route-change callback and Windows' IPv4-only default-interface picker carry over from Phase 01 (§V.4, §V.7 there). | medium | No device in this environment. Phase 04 is where the dynamic A→B run belongs. |
@@ -910,7 +914,10 @@ and cannot build on Windows (`AGENTS.md`).
     * the two generation counters (§F/U.7): never compare them;
     * the failover per-member boundary (§M.4/U.9);
     * the literal packet arm's two-gate split (V.4);
-    * `DefaultDialer.networkGeneration()` is test-only and captures per call (U.8);
+    * `DefaultDialer.networkGeneration()` was REMOVED in the close-out (U.8) - a test that needs a
+      generation now uses admissionForTest(owner).generation(), so it names the policy it belongs to;
+    * the two counters are now cross-referenced at both declarations - read those notes before assuming
+      either one equals the other;
     * -race is BLOCKED_BY_ENVIRONMENT on this host; the functional equivalents are named in §S.
 
 - Dynamic transition questions reserved for 04:
