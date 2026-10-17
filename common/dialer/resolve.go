@@ -161,7 +161,22 @@ func (d *resolveDialer) DialContext(ctx context.Context, network string, destina
 		// out its connect timeout before the next address is reached. Removing it preserves the
 		// resolver's order for everything that can actually be dialled, which is what the serial
 		// contract promises.
+		//
+		// The strict family strategy applies here for exactly the same reason. It was missing, and the
+		// omission was a live policy violation rather than a theoretical one: measured, with
+		// `ipv4_only` and a resolver answering AAAA, this branch returned a working connection on the
+		// family the operator had forbidden. Every other resolution path filtered it; this one was the
+		// only one that did not, because it never reaches the planner or the scheduler where the filter
+		// lives. Two implementations of one policy is how a rule lands on one path and not the other, so
+		// the filter is applied here explicitly.
 		policy := d.dialerLocalFamilyPolicy()
+		familyStrategy := d.effectiveFamilyStrategy()
+		strategyExcludedEverything := false
+		if len(addresses) > 0 {
+			admitted := withoutFamilyExcluded(addresses, familyStrategy)
+			strategyExcludedEverything = len(admitted) == 0
+			addresses = admitted
+		}
 		refused := refusedCandidateIn(addresses, policy)
 		addresses = withoutUndialable(addresses, policy)
 		if len(addresses) == 0 {
@@ -170,6 +185,11 @@ func (d *resolveDialer) DialContext(ctx context.Context, network string, destina
 				// reason is the whole value of the verdict; falling through would turn it into a
 				// connect timeout that says nothing about the machine.
 				return nil, localFamilyRefusalError(refused, policy)
+			}
+			if strategyExcludedEverything {
+				// A configuration decision, not a property of the machine, and it must read as one.
+				return nil, E.New("destination ", destination, " excluded by strategy ", strategyName(familyStrategy),
+					": every resolved address belongs to the family this policy forbids")
 			}
 			// The resolver produced nothing and nothing was refused. This must be reported HERE
 			// rather than passed down, because N.DialSerial over an empty address list returns a nil
@@ -456,7 +476,12 @@ func (d *resolveDialer) raceResolvedName(ctx context.Context, network string, de
 
 	plan := planCandidates(nil, netip.Addr{}, strategy)
 	scheduler := d.newScheduler()
-	conn, _, err := scheduler.dialWithLateCandidates(ctx, plan, candidates,
+	// The same admission rule the network entry point passes, for the same reason: this path's plan is
+	// empty and EVERYTHING arrives as a late candidate, so without it the scheduler's structural guard
+	// would apply on one production call site and not the other. The stream is already filtered by the DNS
+	// layer (a strict strategy issues one query for the family it admits), so this is a no-op by
+	// construction today - which is exactly the property worth making structural rather than assumed.
+	conn, _, err := scheduler.dialWithLateCandidatesAdmitting(ctx, plan, candidates, d.lateCandidateAdmission(),
 		func(attemptCtx context.Context, address netip.Addr) (net.Conn, error) {
 			return d.dialer.DialContext(attemptCtx, network, M.SocksaddrFrom(address, destination.Port))
 		})
@@ -754,6 +779,15 @@ func (d *resolveDialer) raceCandidates(ctx context.Context, network string, dest
 func (d *resolveDialer) raceCandidatesExcluding(ctx context.Context, network string, destination M.Socksaddr, addresses []netip.Addr, original netip.Addr, strategy C.DomainStrategy) (net.Conn, error) {
 	plan := planCandidates(addresses, original, strategy)
 	if len(plan.candidates) == 0 {
+		// An empty plan because the policy removed everything is a different fact from "nothing was
+		// offered", and reporting the symptom for both is how an operator ends up looking at the network
+		// instead of at the configuration. Every other entry point already names the policy
+		// (DialParallelNetwork, its packet arm, the serial hostname branch and the single-destination
+		// literal path); this was the last one that flattened it into the symptom.
+		if len(addresses) > 0 && (strategy == C.DomainStrategyIPv4Only || strategy == C.DomainStrategyIPv6Only) {
+			return nil, E.New("destination ", destination, " excluded by strategy ", strategyName(strategy),
+				": every candidate belongs to the family this policy forbids")
+		}
 		return nil, E.New("no dial candidates for ", destination)
 	}
 	scheduler := d.newScheduler()

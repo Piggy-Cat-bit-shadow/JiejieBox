@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,14 +35,20 @@ import (
 // be dialled at all.
 
 // recordingAttemptFunc records every address the scheduler hands to a dial and fails the ones asked to.
+//
+// The mutex is not decoration: the scheduler runs attempts on their own goroutines, so a slice appended
+// without it is a data race the moment two candidates race - which is the normal case here, not an edge.
+// The first version of this fixture omitted it and `-race` reported it.
 type recordingAttemptFunc struct {
-	tried   []netip.Addr
-	failOn  map[netip.Addr]bool
-	connect netip.Addr
+	access sync.Mutex
+	tried  []netip.Addr
+	failOn map[netip.Addr]bool
 }
 
 func (f *recordingAttemptFunc) attempt(ctx context.Context, address netip.Addr) (net.Conn, error) {
+	f.access.Lock()
 	f.tried = append(f.tried, address)
+	f.access.Unlock()
 	if f.failOn[address] {
 		return nil, errors.New("refused for the test")
 	}
