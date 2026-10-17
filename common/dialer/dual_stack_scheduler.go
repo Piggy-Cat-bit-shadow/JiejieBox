@@ -422,6 +422,25 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 			}
 			seen[candidate.address] = struct{}{}
 
+			// A candidate that arrives after the setup was cancelled must not be launched.
+			//
+			// §12 of the transition brief states this as part of the cancellation contract -
+			// "no late launch" - and §14 makes it observable as "attempt count unchanged". Both were
+			// unmet until this check existed: the loop's other arm returns on `<-ctx.Done()`, but a
+			// candidate that is ALREADY ready wins the select at random, so the arrival was launched
+			// with an already-cancelled context. It did no durable harm - the attempt carries the
+			// cancelled context, and net.Dialer checks the context before it creates anything, so the
+			// connect failed immediately (pinned by TestEveryAttemptCarriesTheSetupsContext and
+			// TestAPreCancelledAttemptNeverReachesARealSocket) - but it spent a goroutine and a slot on
+			// work whose answer nobody could use, and the outcome of the select was a coin flip.
+			//
+			// Checking here makes the outcome deterministic, which is what lets the invariant be
+			// asserted at all: a test can only require "attempt count unchanged" of an implementation
+			// whose answer is not random.
+			if raceCtx.Err() != nil {
+				continue
+			}
+
 			// A late candidate is subject to the same local-family filter as a planned one.
 			//
 			// This is the half of the filter that a check inside planCandidates cannot reach: the

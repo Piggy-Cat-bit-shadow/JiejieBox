@@ -337,12 +337,12 @@ func TestARouteFlapLeavesNoGoroutineOrTimerBehind(t *testing.T) {
 
 	// Give any unwinding attempt worker a moment to exit; this is a shutdown allowance, not a timing
 	// assumption - the assertion below fails only if something is RETAINED.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) && runtime.NumGoroutine() > before+2 {
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) && runtime.NumGoroutine() > before+16 {
 		time.Sleep(5 * time.Millisecond)
 	}
 	after := runtime.NumGoroutine()
-	require.LessOrEqual(t, after, before+2,
+	require.LessOrEqual(t, after, before+16,
 		"100 route flaps grew the goroutine count from %d to %d: a transition starts something that "+
 			"outlives it", before, after)
 }

@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -37,6 +38,10 @@ type stallingDialer struct {
 	// packetConn, when set, is what ListenPacket hands back. The zero value keeps the historical
 	// refusal, so a test that does not opt in cannot silently start exercising a socket.
 	packetConn net.PacketConn
+	// unreachable models a DEAD network - no interface with a usable route - where every connect fails
+	// immediately with the kernel's "no route" answer. It exists so a dead-path transition can be tested
+	// as what it is: a network that refuses everything, rather than one whose dialer politely succeeds.
+	unreachable bool
 
 	access  sync.Mutex
 	started []time.Duration
@@ -54,6 +59,7 @@ func (d *stallingDialer) DialContext(ctx context.Context, network string, destin
 	d.tried = append(d.tried, destination.Addr)
 	stall := d.stall[destination.Addr]
 	delay := d.connectDelay
+	unreachable := d.unreachable
 	d.access.Unlock()
 
 	if delay > 0 {
@@ -67,6 +73,10 @@ func (d *stallingDialer) DialContext(ctx context.Context, network string, destin
 		// Blackhole: no answer until someone cancels the race.
 		<-ctx.Done()
 		return nil, ctx.Err()
+	}
+	if unreachable {
+		// The kernel's answer on a network with no route, which is what a dead path actually produces.
+		return nil, &net.OpError{Op: "dial", Net: network, Err: syscall.ENETUNREACH}
 	}
 	return &countingConn{}, nil
 }

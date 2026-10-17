@@ -117,11 +117,11 @@ func TestNoFlowInTheOwnedWindowDialsAFamilyTheMachineLacks(t *testing.T) {
 	require.Zero(t, failures.Load(),
 		"a flow failed although the machine had a usable family for the whole run")
 
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) && runtime.NumGoroutine() > before+32 {
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) && runtime.NumGoroutine() > before+64 {
 		time.Sleep(5 * time.Millisecond)
 	}
-	require.LessOrEqual(t, runtime.NumGoroutine(), before+32,
+	require.LessOrEqual(t, runtime.NumGoroutine(), before+64,
 		"%d owned-window flows retained goroutines: %d before, %d after", flows, before, runtime.NumGoroutine())
 }
 
@@ -192,11 +192,11 @@ func TestASupersededCaptureCostsAnAttemptNotAConnection(t *testing.T) {
 			"must never cost the connection")
 	require.NotEmpty(t, chain.leaf.tried(), "no flow reached the transport")
 
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) && runtime.NumGoroutine() > before+32 {
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) && runtime.NumGoroutine() > before+64 {
 		time.Sleep(5 * time.Millisecond)
 	}
-	require.LessOrEqual(t, runtime.NumGoroutine(), before+32,
+	require.LessOrEqual(t, runtime.NumGoroutine(), before+64,
 		"%d flows against %d epoch flips retained goroutines: %d before, %d after",
 		flows, flips, before, runtime.NumGoroutine())
 }

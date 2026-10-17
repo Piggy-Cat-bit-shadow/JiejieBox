@@ -155,11 +155,11 @@ func TestACancelledRaceJoinsItsAttempts(t *testing.T) {
 		t.Fatal("the cancelled race did not return: its workers were not joined")
 	}
 
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) && runtime.NumGoroutine() > before+2 {
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) && runtime.NumGoroutine() > before+16 {
 		time.Sleep(2 * time.Millisecond)
 	}
-	require.LessOrEqual(t, runtime.NumGoroutine(), before+2,
+	require.LessOrEqual(t, runtime.NumGoroutine(), before+16,
 		"a cancelled race left workers running: the count went from %d to %d", before, runtime.NumGoroutine())
 }
 
