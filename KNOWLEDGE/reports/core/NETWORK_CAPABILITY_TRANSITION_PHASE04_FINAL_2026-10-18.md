@@ -114,6 +114,10 @@ A deterministic test of the letter is not available without restructuring the sc
 sleep-and-hope test is what the brief forbids. **Recorded, not fixed** — the fix (refuse the launch when
 `raceCtx.Err() != nil`) changes error aggregation for a case where nothing currently happens.
 
+**Its mechanism is pinned** (Phase 03 §L.4): every attempt carries a context descended from the setup's, so
+the cancellation reaches the socket, and a pre-cancelled dial against a real listener never connects. The
+item is open in its LETTER and verified in the part that matters.
+
 ---
 
 ## D. The run's phases, and what each proves

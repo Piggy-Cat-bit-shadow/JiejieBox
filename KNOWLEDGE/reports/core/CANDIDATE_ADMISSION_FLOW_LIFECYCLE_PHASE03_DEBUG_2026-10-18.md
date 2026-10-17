@@ -201,6 +201,11 @@ Recorded as a finding rather than fixed, because the fix (refusing the launch wh
 would change error aggregation for a case where no work currently happens. It belongs to Phase 04, where
 the dynamic ordering is under test.
 
+**The mechanism that makes it harmless is now pinned rather than reasoned about** (`§L.4`): every context an
+attempt receives must be done by the time the race returns, which is only true if it descends from the
+setup's, and a real listener proves a pre-cancelled dial never connects. So the item stays OPEN in its
+letter and is `VERIFIED_UNIT` in the part that matters.
+
 ---
 
 ## F. 变异
@@ -456,6 +461,28 @@ scheduler's local gate" has to say which one.
 
 Still not attacked: nothing from §L. What remains unproven is what was always unproven — `-race`, device
 behaviour, platform event ordering.
+
+### L.4 The open item's mechanism, pinned
+
+The one item this round leaves OPEN - a late candidate is launched after the setup was cancelled - rests on
+a claim that was only ever reasoned about: *the attempt is handed the setup's context, so the cancellation
+reaches the socket and the connect fails immediately.* That is one argument at one call site, and changing
+it to a detached context would turn harmless work into real work with nothing in the suite noticing, because
+the late-candidate tests assert WHICH addresses are attempted and not what each attempt carries.
+
+Two tests now pin both halves:
+
+| test | what it holds |
+|---|---|
+| `TestEveryAttemptCarriesTheSetupsContext` | every context an attempt receives is DONE by the time the race returns - true only if it descends from the setup's |
+| `TestAPreCancelledAttemptNeverReachesARealSocket` | a pre-cancelled dial against a real listener never connects, so "launched but harmless" does no socket work |
+
+`VERIFIED_MUTATION`: detaching the attempt context (`context.WithoutCancel`) fails the first test - the race
+never returns, because the cancellation can no longer reach the attempt. That failure mode is itself the
+diagnosis.
+
+The item therefore remains **OPEN in its letter** (the launch happens) and is **`VERIFIED_UNIT` in the part
+that matters** (the launch does no work). Both statements are needed; either alone is misleading.
 ## PHASE 03 HANDOFF
 
 ```markdown
@@ -564,6 +591,28 @@ scheduler's local gate" has to say which one.
 
 Still not attacked: nothing from §L. What remains unproven is what was always unproven — `-race`, device
 behaviour, platform event ordering.
+
+### L.4 The open item's mechanism, pinned
+
+The one item this round leaves OPEN - a late candidate is launched after the setup was cancelled - rests on
+a claim that was only ever reasoned about: *the attempt is handed the setup's context, so the cancellation
+reaches the socket and the connect fails immediately.* That is one argument at one call site, and changing
+it to a detached context would turn harmless work into real work with nothing in the suite noticing, because
+the late-candidate tests assert WHICH addresses are attempted and not what each attempt carries.
+
+Two tests now pin both halves:
+
+| test | what it holds |
+|---|---|
+| `TestEveryAttemptCarriesTheSetupsContext` | every context an attempt receives is DONE by the time the race returns - true only if it descends from the setup's |
+| `TestAPreCancelledAttemptNeverReachesARealSocket` | a pre-cancelled dial against a real listener never connects, so "launched but harmless" does no socket work |
+
+`VERIFIED_MUTATION`: detaching the attempt context (`context.WithoutCancel`) fails the first test - the race
+never returns, because the cancellation can no longer reach the attempt. That failure mode is itself the
+diagnosis.
+
+The item therefore remains **OPEN in its letter** (the launch happens) and is **`VERIFIED_UNIT` in the part
+that matters** (the launch does no work). Both statements are needed; either alone is misleading.
 ## PHASE 03 HANDOFF
 
 - testing HEAD:
