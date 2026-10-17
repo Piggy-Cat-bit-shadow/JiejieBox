@@ -355,3 +355,48 @@ func TestFallbackStillProtectsAManagerWithoutAFamilyCapability(t *testing.T) {
 }
 
 func (m *familySnapshotOnlyManager) NetworkEnvironment() uint64 { return 0 }
+
+// TestOnePlanCostsOneOwnershipRead is the candidate filter's single-observation claim, counted.
+//
+// The filter used to ask the policy once per candidate, and each ask re-read network ownership. For one
+// plan that is N reads of one instant, and a transition landing mid-filter could therefore drop the head of
+// the list for a verdict that no longer applied while keeping the tail under "no opinion" - a plan composed
+// from two generations. Every variable is correctly synchronised; only the order is wrong, which is why no
+// race detector and no single-candidate test could see it.
+//
+// The count is the assertion: one plan, one read, whatever the plan's length. A future change that moves the
+// gate inside the loop fails here rather than in production.
+func TestOnePlanCostsOneOwnershipRead(t *testing.T) {
+	manager := newCountingNetworkManager()
+	owner := &DefaultDialer{network: newNetworkObserver(manager)}
+
+	// A plan long enough that a per-candidate read would be obvious, with both families in it.
+	plan := candidatePlan{candidates: []dualStackCandidate{
+		{address: netip.MustParseAddr("2001:4860:4860::8888"), family: familyIPv6},
+		{address: netip.MustParseAddr("112.53.55.92"), family: familyIPv4},
+		{address: netip.MustParseAddr("2001:4860:4860::8844"), family: familyIPv6},
+		{address: netip.MustParseAddr("112.53.55.93"), family: familyIPv4},
+	}}
+
+	// The scheduler's own capture is read #1, and it is the dial's authoritative observation: the filter
+	// then asks a DIFFERENT question - "is the capture I hold still current?" - which is the one re-read the
+	// design allows, and which the hand-over check makes for the same reason.
+	scheduler := owner.newDualStackScheduler(0)
+	captured := manager.familyCalls.Load()
+	require.Equal(t, int32(1), captured, "constructing the scheduler captures once")
+
+	filtered, refused := scheduler.filterLocalFamily(plan)
+
+	require.Equal(t, captured+1, manager.familyCalls.Load(),
+		"and filtering a plan of four candidates must cost ONE currency check, not one per candidate: "+
+			"a per-candidate read lets a transition landing mid-filter judge the list against two "+
+			"generations, so the head is dropped for a verdict that no longer applies while the tail is "+
+			"kept under 'no opinion'")
+	require.Equal(t, familyIPv6, refused.family,
+		"the refusal names the family that was dropped, so the caller can report WHY rather than "+
+			"`no dial candidates`")
+	require.Len(t, filtered.candidates, 2, "and the IPv6 half is gone")
+	for _, candidate := range filtered.candidates {
+		require.Equal(t, familyIPv4, candidate.family)
+	}
+}

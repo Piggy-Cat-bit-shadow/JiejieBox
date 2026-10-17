@@ -428,6 +428,13 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 			// late stream never passes through the planner, so filtering only there would let the
 			// second family to answer walk an undialable candidate straight into the race. The
 			// address is marked as seen first, so a stream that repeats it costs nothing.
+			//
+			// It asks the POLICY, not the plan's gate, and the difference is deliberate: the plan filter
+			// judges one list at one instant, while an arrival is a fresh decision made seconds later.
+			// A gate built when the race started would apply a verdict captured then to an address
+			// discovered now - and a transition in between would have the stale verdict drop a candidate
+			// the successor generation could dial. Re-reading keeps the fail-open direction the design
+			// requires for a superseded capture.
 			if s.localFamily.hardUndialable(candidate.address) {
 				continue
 			}
@@ -665,10 +672,14 @@ func (r localFamilyRefusal) error(policy localFamilyPolicy) error {
 // case this whole round exists for: a dual-stack name on a machine with no IPv6 route, where the AAAA
 // half of the answer must not cost a connect timeout.
 func (s *candidateScheduler) filterLocalFamily(plan candidatePlan) (candidatePlan, localFamilyRefusal) {
-	if plan.capabilityRestrictsNothing(s.localFamily) {
+	// ONE ownership read for the whole plan. Judging each candidate separately would let a transition
+	// landing mid-filter drop the head of the list for a verdict that no longer applies while keeping the
+	// tail under "no opinion" - a plan composed from two network generations. See localFamilyGate.
+	gate := s.localFamily.gate()
+	if gate.restrictsNothing() {
 		return plan, localFamilyRefusal{family: familyInvalid}
 	}
-	return s.dropUndialableCandidates(plan)
+	return dropUndialableCandidates(plan, gate)
 }
 
 // dropUndialableCandidates is the slow half of filterLocalFamily: it is reached only when the
@@ -683,7 +694,7 @@ func (s *candidateScheduler) filterLocalFamily(plan candidatePlan) (candidatePla
 // Every decision here goes through s.localFamily.excluded, which consults network ownership before it
 // answers - so a scheduler whose capture has been superseded drops nothing, and the successor
 // generation's candidates reach the race.
-func (s *candidateScheduler) dropUndialableCandidates(plan candidatePlan) (candidatePlan, localFamilyRefusal) {
+func dropUndialableCandidates(plan candidatePlan, gate localFamilyGate) (candidatePlan, localFamilyRefusal) {
 	planned := len(plan.candidates)
 	if planned == 0 {
 		return plan, localFamilyRefusal{family: familyInvalid}
@@ -693,7 +704,7 @@ func (s *candidateScheduler) dropUndialableCandidates(plan candidatePlan) (candi
 	firstRefused := -1
 	var refused localFamilyRefusal
 	for index, candidate := range plan.candidates {
-		if s.localFamily.hardUndialable(candidate.address) {
+		if gate.undialable(candidate.address) {
 			firstRefused = index
 			// The destination travels with the family so the message can name the machine's ACTUAL
 			// verdict. A value carrying only the family cannot express the egress term, which is how
@@ -708,7 +719,7 @@ func (s *candidateScheduler) dropUndialableCandidates(plan candidatePlan) (candi
 	kept := make([]dualStackCandidate, firstRefused, planned)
 	copy(kept, plan.candidates[:firstRefused])
 	for _, candidate := range plan.candidates[firstRefused+1:] {
-		if s.localFamily.hardUndialable(candidate.address) {
+		if gate.undialable(candidate.address) {
 			continue
 		}
 		kept = append(kept, candidate)

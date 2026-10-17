@@ -159,6 +159,58 @@ func newLocalFamilyPolicy(capability netcap.FamilyCapability) localFamilyPolicy 
 	return localFamilyPolicy{capability: capability}
 }
 
+// localFamilyGate is ONE evaluation of a policy, for a caller that must judge several candidates inside a
+// single decision.
+//
+// # Why the batch form exists
+//
+// `hardUndialable` consults network ownership on every call, which is correct for a single destination:
+// the ownership check is what makes the verdict meaningful, and it cannot be pre-computed for a caller
+// that asks once. A candidate FILTER is not that caller. It asks the same question of every address in one
+// plan, and reading ownership per address means the plan's first candidate and its last can be judged
+// against two different generations - a transition landing mid-filter would have the head of the list
+// dropped for a verdict that no longer applies while the tail is kept under "no opinion". Every variable
+// is correctly synchronised; the plan is simply composed from two network generations.
+//
+// The gate fixes both halves at once: ownership is read ONCE, and the whole list is judged against it. It
+// also removes N-1 manager reads per plan, which is the difference between one short lock per connection
+// and one per candidate.
+type localFamilyGate struct {
+	policy localFamilyPolicy
+	// owned is the single ownership read this gate was built from. False means the capture has been
+	// superseded or was taken during a transition, and then the gate refuses nothing - the direction the
+	// design requires, because a stale verdict must not deny a candidate it no longer describes.
+	owned bool
+}
+
+// gate evaluates the policy's ownership once.
+func (p localFamilyPolicy) gate() localFamilyGate {
+	return localFamilyGate{policy: p, owned: p.ownership.owns()}
+}
+
+// undialable reports whether an attempt at this destination must not be made, in the generation this gate
+// was built from.
+func (g localFamilyGate) undialable(destination netip.Addr) bool {
+	if !g.owned || !destination.IsValid() {
+		return false
+	}
+	return g.policy.capability.HardUndialable(destination)
+}
+
+// restrictsNothing reports whether this gate cannot refuse anything, so the common path can skip the work
+// of examining a candidate list at all.
+//
+// It must agree with undialable exactly: a fast path that said "nothing is restricted" while the slow path
+// would have dropped a candidate is the one disagreement these two functions cannot have.
+func (g localFamilyGate) restrictsNothing() bool {
+	if !g.owned {
+		return true
+	}
+	return !g.policy.capability.HardUnavailable(true) &&
+		!g.policy.capability.HardUnavailable(false) &&
+		g.policy.capability.GlobalIPv6Egress != netcap.StateUnavailable
+}
+
 // hardUndialable reports whether an attempt at this destination must not be made, in the network
 // generation this policy was captured for.
 //
