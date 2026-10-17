@@ -259,10 +259,16 @@ sing-tun anchor (`d769a7080ca2`) is two pins out of date.
 | `60681f27` | FIX | OWN | a resume does not end a sleep episode, so it must not spend its boundary |
 | `e20875359` | FEATURE | **SUPERSEDED** | gated the sleep edge on `IsDevicePaused()` |
 | `e661258a6` | **REVERT** | **ARCHIVE-ONLY** | reverts `e20875359` on device evidence: **0 boundaries** over a ten-minute lock, strictly worse than the bug. Both are kept. |
+| `12aa6db064f` | FEATURE | OWN | the first **consumer**: the optimistic DNS refresh asks the authority instead of waking the radio — refused in `QUIESCENT`/`DEEP_IDLE`/closed, released through `Allow().NetworkProbe` in the `WAKING` band. Tests in `dns/optimistic_refresh_power_test.go` |
+| `dbf8de8b2a5` | FEATURE | OWN | the second consumer: the dashboard download **waits** on `WaitProviderRefresh` rather than fetching through a sleep, and its first pass is deliberately not deferred. Tests in `service/api/dashboard_power_test.go` |
+| `ff897d35772` | FIX | OWN | resolves the DNS governor at construction instead of in `Start`, so the field the refresh goroutine reads is immutable rather than ordered. See `reports/core/HAKO_SCALE_DEBUG_AUDIT_2026-10-17.md` |
 
 **Final behaviour:** level/edge/snapshot are three different things; a display-on publishes only a
 resume edge and the reuse epoch; **only an unlock releases the level**; three reuse bands at 5 s and
-15 s; the trim path never resets the network while the release path does.
+15 s; the trim path never resets the network while the release path does. **Two scheduled outbound
+fetches now defer to the authority** (the DNS optimistic refresh and the dashboard download); the
+WireGuard recovery poll is deliberately left ungated, with the reason recorded in
+`power-mobile-lifecycle.md` §6 and `reports/core/HAKO_SCALE_ARCHITECTURE_AUDIT_2026-10-17.md` §6.
 
 **Device evidence (the only physical-device run recorded here):** iPhone 17 Pro Max, iOS 26.4.2 —
 pre-fix 28 m 24 s → 12 boundaries → 28.29 s; post-fix 13 m 13 s → 1 boundary → 13 m 13.492448 s.
