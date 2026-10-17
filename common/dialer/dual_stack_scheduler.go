@@ -169,6 +169,13 @@ func (s *candidateScheduler) dialWithLateCandidates(ctx context.Context, plan ca
 		// a single-stack connection.
 		conn, err := attempt(ctx, candidates[0].address)
 		if err != nil {
+			// An attempt should not hand back a connection alongside an error - that is its contract,
+			// stated above - but nothing enforces it, and the only way to honour the contract from this
+			// side is to close what we were given. Discarding it would leak a socket on the one path
+			// where nothing else holds a reference to it, and the cost of being careful is one nil check.
+			if conn != nil {
+				_ = conn.Close()
+			}
 			if s.health != nil {
 				s.health.recordFailure(s.networkEnvironment, candidates[0].family, err)
 			}
@@ -504,6 +511,13 @@ func (s *candidateScheduler) dialWithLateCandidates(ctx context.Context, plan ca
 
 			lastErr = result.err
 			failures = append(failures, E.Cause(result.err, result.address.String()))
+
+			// Same defence as the single-candidate path: an attempt that returns a connection together
+			// with an error has violated its contract, and the scheduler is the last owner of that
+			// socket. Closing it is what keeps the contract from becoming a leak.
+			if result.conn != nil {
+				_ = result.conn.Close()
+			}
 
 			// A fast failure frees its slot immediately: waiting out the delay would only
 			// postpone an answer already known to be no.
