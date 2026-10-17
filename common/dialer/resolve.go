@@ -35,11 +35,6 @@ type ResolveDialer interface {
 	EffectiveFamilyStrategy() C.DomainStrategy
 }
 
-type ParallelInterfaceResolveDialer interface {
-	ParallelInterfaceDialer
-	QueryOptions() adapter.DNSQueryOptions
-}
-
 type resolveDialer struct {
 	transport     adapter.DNSTransportManager
 	router        adapter.DNSRouter

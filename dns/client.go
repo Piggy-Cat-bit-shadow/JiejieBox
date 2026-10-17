@@ -403,13 +403,28 @@ var errNetworkTransitioning = E.New("network is transitioning")
 // observable. Reading the settled flag alone is therefore safe, and it avoids putting a manager lock
 // on the DNS hot path where every query would serialise behind every transition.
 //
-// A manager without the capability is one where the distinction does not arise.
+// # Why the snapshotter is the fallback rather than "settled"
+//
+// `NetworkTransitionState` and `NetworkFamilyCapabilitySnapshotter` are independent interfaces: the
+// family snapshotter embeds `NetworkTransitionSnapshotter`, NOT the settled-state getter. So a manager
+// may report the settled state through the snapshot (as the dialer reads it, with one lock) and not
+// through the getter this function asked for - and answering "settled" for it was a silent claim that a
+// transition could never be in progress. The dialer would then believe a fact the DNS cache disbelieved,
+// on the same manager, about the same instant.
+//
+// The order is cheapest-source-first: the lock-free getter when it exists (the production manager, and
+// the reason this function is not simply a snapshot read), and the snapshot's lock only for a manager
+// that cannot answer the cheap way.
 func (c *Client) networkTransitionStable() bool {
 	if c.networkManager == nil {
 		return true
 	}
 	if state, isState := c.networkManager.(adapter.NetworkTransitionState); isState {
 		return state.NetworkTransitionStable()
+	}
+	if snapshotter, isSnapshotter := c.networkManager.(adapter.NetworkTransitionSnapshotter); isSnapshotter {
+		_, stable := snapshotter.NetworkTransitionSnapshot()
+		return stable
 	}
 	return true
 }
