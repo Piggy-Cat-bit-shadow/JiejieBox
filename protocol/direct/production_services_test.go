@@ -11,8 +11,8 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
-	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/control"
+	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
 
 	"github.com/stretchr/testify/require"
@@ -43,12 +43,14 @@ type ambientManager struct {
 }
 
 func (m *ambientManager) DefaultOptions() adapter.NetworkOptions { return m.options }
-func (m *ambientManager) AutoDetectInterface() bool             { return false }
+func (m *ambientManager) AutoDetectInterface() bool              { return false }
 func (m *ambientManager) AutoRedirectOutputMarkFunc() control.Func {
 	return func(network, address string, conn syscall.RawConn) error { return nil }
 }
-func (m *ambientManager) NetworkEnvironment() uint64                      { return 0 }
-func (m *ambientManager) InterfaceFinder() control.InterfaceFinder        { return control.NewDefaultInterfaceFinder() }
+func (m *ambientManager) NetworkEnvironment() uint64 { return 0 }
+func (m *ambientManager) InterfaceFinder() control.InterfaceFinder {
+	return control.NewDefaultInterfaceFinder()
+}
 
 var _ adapter.NetworkManager = (*ambientManager)(nil)
 

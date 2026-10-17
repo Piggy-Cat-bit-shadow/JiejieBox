@@ -31,7 +31,7 @@ type ambientPolicyManager struct {
 }
 
 func (m *ambientPolicyManager) DefaultOptions() adapter.NetworkOptions { return m.options }
-func (m *ambientPolicyManager) AutoDetectInterface() bool             { return m.autoDetect }
+func (m *ambientPolicyManager) AutoDetectInterface() bool              { return m.autoDetect }
 
 // TestEveryAmbientPolicyConditionRefuses is the enumeration.
 func TestEveryAmbientPolicyConditionRefuses(t *testing.T) {

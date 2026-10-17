@@ -37,7 +37,7 @@ var (
 	_ UDPListener             = (*DefaultDialer)(nil)
 	_ LocalFamilyDialer       = (*DefaultDialer)(nil)
 	// The two owners are unexported, and they are what every wrapper and hop in the chain walks to.
-	_ localFamilyOwner = (*DefaultDialer)(nil)
+	_ localFamilyOwner  = (*DefaultDialer)(nil)
 	_ familyHealthOwner = (*DefaultDialer)(nil)
 )
 

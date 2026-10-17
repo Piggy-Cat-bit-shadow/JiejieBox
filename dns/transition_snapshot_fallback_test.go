@@ -52,7 +52,7 @@ func (m *transitionSnapshotOnlyManager) InterfaceFinder() control.InterfaceFinde
 // of the two getters the client prefers.
 var (
 	_ adapter.NetworkTransitionSnapshotter = (*transitionSnapshotOnlyManager)(nil)
-	_                                     = func() {
+	_                                      = func() {
 		var manager any = &transitionSnapshotOnlyManager{}
 		if _, isState := manager.(adapter.NetworkTransitionState); isState {
 			panic("the double must not implement NetworkTransitionState")

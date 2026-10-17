@@ -370,8 +370,8 @@ func TestSchedulerFastFallbackSkipsTheDelay(t *testing.T) {
 		"a recorded IPv6 path failure must promote the IPv4 candidate")
 
 	scheduler := &candidateScheduler{
-		fallbackDelay:      2 * time.Second, // long enough that waiting would be obvious
-		health:             health,
+		fallbackDelay:     2 * time.Second, // long enough that waiting would be obvious
+		health:            health,
 		networkGeneration: environment,
 	}
 

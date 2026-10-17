@@ -110,8 +110,8 @@ func TestBlackholeLoserTeachesTheScheduler(t *testing.T) {
 
 	// --- connection one: the blackhole is observed ---
 	first := &candidateScheduler{
-		fallbackDelay:      firstFallbackDelay,
-		health:             health,
+		fallbackDelay:     firstFallbackDelay,
+		health:            health,
 		networkGeneration: environment,
 	}
 	_, winner, err := first.dial(context.Background(),
@@ -131,8 +131,8 @@ func TestBlackholeLoserTeachesTheScheduler(t *testing.T) {
 	// The fallback delay is far longer than this test will wait. If IPv4 were still waiting for
 	// it, the healthy family would not be attempted within the window below.
 	second := &candidateScheduler{
-		fallbackDelay:      2 * time.Second,
-		health:             health,
+		fallbackDelay:     2 * time.Second,
+		health:            health,
 		networkGeneration: environment,
 	}
 	inner2 := newStallingDialer()

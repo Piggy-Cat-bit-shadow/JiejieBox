@@ -324,9 +324,9 @@ func (m *disagreeingManager) NetworkResetGeneration() uint64 { return 999 }
 func (m *disagreeingManager) NetworkTransitionStable() bool  { return false }
 
 var (
-	_ adapter.NetworkResetCounter      = (*disagreeingManager)(nil)
-	_ adapter.NetworkTransitionState   = (*disagreeingManager)(nil)
-	_ adapter.NetworkTransitionSnapshotter = (*disagreeingManager)(nil)
+	_ adapter.NetworkResetCounter                = (*disagreeingManager)(nil)
+	_ adapter.NetworkTransitionState             = (*disagreeingManager)(nil)
+	_ adapter.NetworkTransitionSnapshotter       = (*disagreeingManager)(nil)
 	_ adapter.NetworkFamilyCapabilitySnapshotter = (*disagreeingManager)(nil)
 )
 

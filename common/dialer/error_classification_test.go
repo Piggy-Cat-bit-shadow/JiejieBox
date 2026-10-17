@@ -218,8 +218,8 @@ func TestSchedulerDoesNotRecordCallerCancellationUntilTheParentIsGone(t *testing
 	inner.stall = map[netip.Addr]bool{address6: true}
 	inner.connectDelay = 60 * time.Millisecond
 	scheduler := &candidateScheduler{
-		fallbackDelay:      20 * time.Millisecond,
-		health:             health,
+		fallbackDelay:     20 * time.Millisecond,
+		health:            health,
 		networkGeneration: environment,
 	}
 	_, winner, err := scheduler.dial(context.Background(),

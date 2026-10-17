@@ -58,7 +58,7 @@ func pathEntryPoints(chain *parallelProductionChain, port uint16) map[string]fun
 		}
 	}
 	return map[string]func(ctx context.Context, address netip.Addr) (bool, error){
-		"stream TCP":         streamColumn(N.NetworkTCP),
+		"stream TCP":           streamColumn(N.NetworkTCP),
 		"stream connected UDP": streamColumn(N.NetworkUDP),
 		"unconnected with candidates": func(ctx context.Context, address netip.Addr) (bool, error) {
 			before := len(chain.tried())

@@ -44,7 +44,6 @@ type capabilityManager struct {
 	transitionSnapshotter atomic.Uint32 // unused; keeps the struct shape explicit
 }
 
-
 func newCapabilityManager(ipv4 netcap.FamilyState, ipv6 netcap.FamilyState) *capabilityManager {
 	manager := &capabilityManager{}
 	manager.stable.Store(true)

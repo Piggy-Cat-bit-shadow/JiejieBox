@@ -123,4 +123,3 @@ func TestTheCapabilityWalkStillCrossesAnOutboundHop(t *testing.T) {
 	_, found := findFamilyHealthOwner(&resolveDialer{dialer: hop})
 	require.True(t, found, "and the health owner is found through it")
 }
-
