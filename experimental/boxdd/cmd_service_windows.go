@@ -20,8 +20,8 @@ import (
 const (
 	// Everything a human reads about the service lives here, so serviceName can stay an
 	// internal identifier. The two must not be conflated: only serviceName is a key.
-	serviceDisplayName     = "Jiejiebox Service"
-	serviceDescriptionText = "Privileged service for Jiejiebox"
+	serviceDisplayName     = "JiejieBox Service"
+	serviceDescriptionText = "Privileged service for JiejieBox"
 	// The daemon's own state tree, and the service's protected working directory. It is
 	// a global machine resource, so the fork keeps its own; the installer normally
 	// supplies this explicitly and this is only the fallback for a manual
