@@ -13,6 +13,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/compatible"
+	"github.com/sagernet/sing-box/common/power"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -47,6 +48,22 @@ type Client struct {
 	initDNSCacheFunc  func() adapter.DNSCacheStore
 	networkManager    adapter.NetworkManager
 	networkGeneration func() uint64
+	// powerGovernor is the fork's sleep authority, or nil where none is installed.
+	//
+	// # Why this field exists
+	//
+	// `backgroundRefreshDNS` is the one worker in this package that makes a network round trip
+	// nobody asked for. It is scheduled from a cache HIT, to renew an entry the caller has already
+	// been served, so it is speculative by construction - and until this field existed it consulted
+	// no power state at all: this package contained no reference to `common/power`, to
+	// `sing/service/pause`, or to any `Allow()` predicate. A device that had just gone to sleep
+	// would therefore wake the radio to renew a record nobody was resolving, once per stale entry,
+	// which is the exact budget the tunnel exists to save.
+	//
+	// It is a degradation, never a correctness input. The caller's answer has already been
+	// delivered and the forward path is untouched, so losing a refresh costs freshness only - the
+	// same rule the bounded familyHealth cache established for every other cache in this tree.
+	powerGovernor *power.Governor
 	// policyGeneration reports the routing-policy epoch; nil means the caller has no policy concept.
 	policyGeneration func() uint64
 	// policyStoreGuard, when set, is what makes the policy epoch a GUARD rather than a hint.
@@ -570,6 +587,14 @@ func (c *Client) environmentHash(transport adapter.DNSTransport) uint64 {
 
 func (c *Client) Start() {
 	c.networkManager = service.FromContext[adapter.NetworkManager](c.ctx)
+	// powerGovernor is the fork's sleep authority, or nil when none was installed.
+	//
+	// It is read here rather than at construction because that is where this package's other
+	// services are resolved, and because a client cannot serve a query before Start, so a
+	// background refresh cannot exist before this line has run. A MISSING governor is not an error:
+	// the guard is a degradation, and every test fixture and every non-Apple caller that has no
+	// power concept must keep working exactly as before.
+	c.powerGovernor = service.FromContext[*power.Governor](c.ctx)
 	if c.initRDRCFunc != nil {
 		c.rdrc = c.initRDRCFunc()
 	}
@@ -585,6 +610,47 @@ func (c *Client) Start() {
 	// NXDOMAIN would be recorded only under its own QTYPE and the name would cost one
 	// upstream query per record type, which is the whole thing this cache exists to avoid.
 	c.initializeNXDomainCache()
+}
+
+// backgroundRefreshSuppressed reports whether the sleep authority forbids a speculative cache
+// renewal right now.
+//
+// # Why this is not `!governor.Active()` and not `!Allow().NetworkProbe`
+//
+// Both one-liners are wrong, in opposite directions, and the reason is worth recording because each
+// looks obviously correct:
+//
+//   - `Allow().NetworkProbe` is TRUE in `StateQuiescent`, and `recomputeLocked` puts the governor
+//     there for the WHOLE of a sleep (`devicePaused || networkPaused`). A NetworkProbe gate would
+//     therefore permit the refresh in exactly the state it is meant to prevent.
+//   - `Active()` is false in `StateWaking` too, which is the band just after a wake in which the
+//     governor releases one category at a time. A refresh withheld for that whole band would stay
+//     withheld while every other subsystem is being let go - and DNS renewal is the cheapest
+//     category and the one everything else resolves through.
+//
+// So the state decides the hard refusals, and inside the waking band the governor's own stagger
+// decides, which is what its comment asks of a caller: "a caller asking 'may I run' gets the answer
+// for its own category, and no subsystem has to own a stagger of its own."
+//
+// A nil governor means no power concept was installed - the CLI, every non-Apple caller, every
+// fixture - and the previous behaviour is preserved exactly.
+func (c *Client) backgroundRefreshSuppressed() bool {
+	governor := c.powerGovernor
+	if governor == nil {
+		return false
+	}
+	switch governor.State() {
+	case power.StateQuiescent, power.StateDeepIdle:
+		// Asleep, or no path, and the idle countdown behind it. Nothing speculative runs.
+		return true
+	case power.StateWaking:
+		return !governor.Allow().NetworkProbe
+	default:
+		// ACTIVE, or a governor that has been closed and is still reporting the state it was in.
+		// `Active` is the authority for the closed case and says so: it reports false because it
+		// cannot authorise work against a lifecycle that has ended.
+		return !governor.Active()
+	}
 }
 
 func (c *Client) initializeMemoryCache() {
@@ -1476,6 +1542,19 @@ func (c *Client) backgroundRefreshDNS(transport adapter.DNSTransport, key dnsCac
 		ctx := adapter.ContextWithDNSTransportTag(c.ctx, transport.Tag())
 		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
+
+		// The sleep gate, and the first thing checked because it is the cheapest refusal.
+		//
+		// This refresh renews an entry the caller has ALREADY been served, so it is speculative
+		// work: skipping it costs freshness and nothing else. See backgroundRefreshSuppressed for
+		// why the predicate is not simply Allow().NetworkProbe.
+		if c.backgroundRefreshSuppressed() {
+			if c.logger != nil {
+				c.logger.DebugContext(ctx, "optimistic refresh skipped for ", FqdnToDomain(key.Name),
+					": background work is suppressed")
+			}
+			return
+		}
 
 		// The refresh makes its OWN round trip, so it captures its OWN start state rather than
 		// inheriting anything from the stale read that scheduled it.
