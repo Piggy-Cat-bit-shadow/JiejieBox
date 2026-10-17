@@ -11,6 +11,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/dialer"
 	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing/common"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 
@@ -188,3 +189,54 @@ func (d *plainLeafDouble) DialContext(ctx context.Context, network string, desti
 }
 
 var _ N.Dialer = (*plainLeafDouble)(nil)
+
+// TestTheShimReportsTheLeafOnTheUpstreamProtocol closes the whole CLASS rather than one capability.
+//
+// The shim embeds `adapter.Outbound`, and a typed assertion on an embedded interface promotes only the
+// methods that interface declares - which is how `EarlyConnectionBufferGrowth` and then
+// `ParallelNetworkDialer` were each lost in turn, one hand-forwarded method at a time. An adversarial
+// sweep found eight more capabilities hidden behind it, all currently unreachable, which means the next
+// reader would meet the same shape for the third time.
+//
+// Reporting the leaf through `Upstream` makes every capability the leaf has reachable from the shim
+// without a forwarding method. `common.Cast` is the consumer that already relies on this protocol
+// everywhere else, so a capability discovered that way cannot be hidden again.
+func TestTheShimReportsTheLeafOnTheUpstreamProtocol(t *testing.T) {
+	leaf := &parallelLeafDouble{}
+	group := &failoverGroupDouble{leaf: leaf}
+
+	wrapped := routeDialer(leaf, group, &adapter.InboundContext{})
+
+	upstream, isUpstream := any(wrapped).(interface{ Upstream() any })
+	require.True(t, isUpstream,
+		"without this, every capability the leaf has and the embedded interface does not declare is "+
+			"invisible from a dialer argument - which is the shape that has now cost two rounds")
+
+	require.Same(t, any(leaf), upstream.Upstream(),
+		"and it must report the leaf the chain resolved, not the group and not a rebuilt object")
+
+	// The production statement: a cast from the shim reaches the leaf's own type, which is how the
+	// dialer family discovers everything below a hop.
+	reached, found := common.Cast[*parallelLeafDouble](wrapped)
+	require.True(t, found,
+		"common.Cast must see through the shim, because that is the protocol every other hop uses")
+	require.Same(t, leaf, reached)
+}
+
+// TestTheShimStillOwnsTheAttempt is the control that keeps the walk from becoming a bypass.
+//
+// Reporting the leaf says where the CAPABILITIES are. It must not say where the DIAL goes: the group owns
+// the attempt sequence, and a caller that reads the chain must not conclude it may dial the leaf directly.
+func TestTheShimStillOwnsTheAttempt(t *testing.T) {
+	leaf := &parallelLeafDouble{}
+	group := &failoverGroupDouble{leaf: leaf}
+
+	wrapped := routeDialer(leaf, group, &adapter.InboundContext{})
+	_, err := wrapped.DialContext(context.Background(), N.NetworkTCP, M.ParseSocksaddrHostPort("example.com", 443))
+	require.NoError(t, err)
+	require.Equal(t, 1, group.failoverCalls,
+		"a plain dial still goes through the group: the chain walk is capability discovery, not routing")
+	attempts, _ := leaf.recorded()
+	require.Equal(t, 0, attempts,
+		"and the leaf is not dialled behind the group's back")
+}

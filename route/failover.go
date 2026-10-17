@@ -194,3 +194,26 @@ func (d *failoverDialer) ListenSerialNetworkPacket(ctx context.Context, destinat
 	}
 	return conn, destination.Addr, nil
 }
+
+// Upstream returns the leaf this shim was built around.
+//
+// # Why a forwarding hop is not enough
+//
+// This type embeds `adapter.Outbound`, and a typed assertion on an embedded INTERFACE promotes only the
+// methods that interface declares. Two capabilities have already had to be forwarded by hand because of
+// that (`EarlyConnectionBufferGrowth`, `DialParallelNetwork`), and an adversarial sweep found eight more
+// hidden: `LocalFamilyDialer`, `PacketDialerWithDestination`, `BypassableOutbound`, `ResolveDialer`,
+// `FlowOutbound`, the two idle-connection interfaces, `OutboundWithPreferredRoutes` and
+// `OutboundWithMultiplex`.
+//
+// Every one of those losses is unreachable TODAY - the route layer passes the leaf for packet flows, and
+// the capabilities it reads from `this` are exactly the forwarded ones - which is why hand-forwarding more
+// of them would be churn without a consumer. What is not unreachable is the shape: the next capability
+// someone reads from a dialer argument would be hidden again, in the same way, for the third time.
+//
+// Reporting the leaf on the Upstream protocol fixes the class instead of the instances: `common.Cast` and
+// the dialer chain walks see through this hop, so a capability the leaf has is reachable from the shim
+// without a forwarding method, and no future interface needs to be remembered here.
+func (d *failoverDialer) Upstream() any {
+	return d.Outbound
+}
