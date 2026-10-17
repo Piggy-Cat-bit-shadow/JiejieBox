@@ -238,13 +238,36 @@ func TestFamilyStrategyAppliesToALiteralAddress(t *testing.T) {
 	facts.FamilyStrategy = C.DomainStrategyPreferIPv6
 	require.Equal(t, BlockerNone, withResolver.Blockers(facts))
 
-	// Without a resolver there is no policy to apply, so the strategy is irrelevant.
+	// Without a resolver of its OWN the strategy still applies, and this is the case the first version of
+	// this test got wrong.
+	//
+	// The assertion used to be `BlockerNone`, on the reasoning that "a family strategy only means
+	// something when a resolver is configured". That is true of a question about the CONFIGURATION and
+	// false of the one this check asks: `facts.FamilyStrategy` is the EFFECTIVE policy, and a strict
+	// strategy reaches the literal dial path from the global DNS policy (`dns.strategy` -> the router's
+	// default -> `ResolveDialer.EffectiveFamilyStrategy`) with the outbound configuring nothing.
+	//
+	// Measured on the pair: with a global ipv4_only and a direct outbound holding no resolver, the
+	// userspace path refused an IPv6 literal with `no dial candidates` while this gate answered
+	// `BlockerNone`, so the platform's own connect was permitted to reach the forbidden family. Gating a
+	// question about the policy on a property of the configuration is what let the two disagree.
 	plainFacts := facts
 	plainFacts.Destination = ipv6
 	plainFacts.FamilyStrategy = C.DomainStrategyIPv4Only
-	require.Equal(t, BlockerNone, NativeBypassSemantics(option.DialerOptions{}).Blockers(plainFacts),
-		"a family strategy only means something when a resolver is configured; an outbound with "+
-			"no resolver does not filter literal destinations")
+	require.Contains(t, NativeBypassSemantics(option.DialerOptions{}).Blockers(plainFacts).String(),
+		"family strategy",
+		"a hard single-family policy filters the LITERAL destination even when the outbound configured "+
+			"no resolver of its own, because the effective policy can come from the global DNS strategy "+
+			"and the userspace dial path applies it to the original attempt")
+
+	// And the matching policy still permits the bypass, so this is a strategy check and not a blanket
+	// refusal of resolver-less outbounds.
+	plainFacts.FamilyStrategy = C.DomainStrategyIPv6Only
+	require.Equal(t, BlockerNone, NativeBypassSemantics(option.DialerOptions{}).Blockers(plainFacts))
+
+	// A preference remains not a restriction.
+	plainFacts.FamilyStrategy = C.DomainStrategyPreferIPv4
+	require.Equal(t, BlockerNone, NativeBypassSemantics(option.DialerOptions{}).Blockers(plainFacts))
 }
 
 // TestBlockersNameEveryBit keeps the diagnostic vocabulary complete.

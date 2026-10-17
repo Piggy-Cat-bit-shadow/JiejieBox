@@ -302,15 +302,30 @@ func (s SocketSemantics) Blockers(facts NativeBypassFacts) NativeBypassBlocker {
 			// which is not the platform's own connect either.
 			blockers |= BlockerDomainResolution
 		}
-	} else if s.resolutionOnly != 0 {
-		// The resolver is not consulted for a literal destination, with one exception that is not
-		// obvious and is the reason this check is here at all: a hard single-family policy also
-		// filters the LITERAL address, because the dial path applies it to the original attempt and
-		// not only to resolved candidates. A profile that stopped at "the resolver is not used for
-		// literals" would bypass a flow the userspace path would have refused to dial.
-		if !AddressAllowedByStrategy(facts.Destination, facts.FamilyStrategy) {
-			blockers |= BlockerFamilyStrategy
-		}
+	} else if !AddressAllowedByStrategy(facts.Destination, facts.FamilyStrategy) {
+		// A hard single-family policy filters the LITERAL address, because the dial path applies it to
+		// the original attempt and not only to resolved candidates. A profile that stopped at "the
+		// resolver is not used for literals" would bypass a flow the userspace path would have refused
+		// to dial.
+		//
+		// # Why this is asked unconditionally, with `resolutionOnly` excluded
+		//
+		// It used to be gated on `s.resolutionOnly != 0`, i.e. on whether THIS OUTBOUND configured a
+		// resolver of its own. That is a question about the outbound's configuration, and the strategy
+		// that actually applies is not: `facts.FamilyStrategy` is the EFFECTIVE policy, and a strict one
+		// can be inherited from the global DNS policy (`dns.strategy` -> the router's default ->
+		// `ResolveDialer.EffectiveFamilyStrategy`) with the outbound configuring nothing at all.
+		//
+		// The consequence is not theoretical, and it was measured on the exact pair this check exists to
+		// keep in step: with a global `ipv4_only` and a direct outbound holding no resolver, the userspace
+		// path refused an IPv6 literal with `no dial candidates` while this gate answered `BlockerNone` -
+		// so the platform's own connect was permitted to reach the one family the operator had forbidden.
+		// Gating a question about the POLICY on a property of the CONFIGURATION is what made the two paths
+		// disagree; asking it for every literal destination is what makes them agree.
+		//
+		// A preference is unaffected: `AddressAllowedByStrategy` admits both families for AsIS,
+		// prefer_ipv4 and prefer_ipv6, and excludes only for the two `_only` values.
+		blockers |= BlockerFamilyStrategy
 	}
 	if !facts.Destination.IsValid() || facts.Destination.Zone() != "" {
 		// The platform's direct path for a bypassed flow is keyed by address alone.
