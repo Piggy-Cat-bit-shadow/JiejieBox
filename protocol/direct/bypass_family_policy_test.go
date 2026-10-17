@@ -4,6 +4,7 @@ import (
 	"net/netip"
 	"testing"
 
+	"github.com/sagernet/sing-box/common/dialer"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
 	N "github.com/sagernet/sing/common/network"
@@ -69,6 +70,38 @@ func TestABypassUsesTheEffectiveFamilyPolicyNotTheOutboundConfig(t *testing.T) {
 	outbound.surface.Resolve = stubResolveDialer{strategy: func() C.DomainStrategy { return C.DomainStrategyAsIS }}
 	require.True(t, outbound.CanBypass(N.NetworkTCP, ipv6),
 		"and AsIS restricts neither family")
+}
+
+// TestTheUDPArmAppliesTheSamePolicy is the network half of the same question.
+//
+// `SocketSemantics.Blockers` applies the family policy to every literal regardless of network, and
+// `facts.Network` only selects the tcpOnly / udpOnly option groups. The userspace side did not match for
+// UDP: `resolveDialer.ListenPacket` sent a literal straight to the leaf, so one flow had two answers -
+// bypass refused, userspace dialled - and the strict policy was enforced on TCP literals and not on UDP
+// ones. `common/dialer/listen_packet_strategy_test.go` is the other half of this pin; it lives there
+// because that is where the dial path's own entry point is reachable.
+//
+// Both halves are asserted separately because the packages cannot import each other's internals, and the
+// property under test is that the two answers agree, not which file the assertion is in.
+func TestTheUDPArmAppliesTheSamePolicy(t *testing.T) {
+	ipv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	ipv4 := netip.MustParseAddr("112.53.55.92")
+
+	outbound := bypassable(option.DialerOptions{})
+	outbound.surface.Resolve = stubResolveDialer{strategy: func() C.DomainStrategy { return C.DomainStrategyIPv4Only }}
+
+	require.False(t, outbound.CanBypass(N.NetworkUDP, ipv6),
+		"a UDP flow to a literal the policy excludes must be refused by the bypass for the same reason "+
+			"the TCP one is: the policy is about the destination's family, not about the transport")
+	require.NotZero(t, outbound.BypassBlockers(N.NetworkUDP, ipv6)&dialer.BlockerFamilyStrategy)
+
+	require.True(t, outbound.CanBypass(N.NetworkUDP, ipv4),
+		"and the admitted family stays bypassable on UDP")
+
+	outbound.surface.Resolve = stubResolveDialer{strategy: func() C.DomainStrategy { return C.DomainStrategyIPv6Only }}
+	require.True(t, outbound.CanBypass(N.NetworkUDP, ipv6))
+	require.False(t, outbound.CanBypass(N.NetworkUDP, ipv4),
+		"including in the other direction, which is what makes this a policy rather than a v4 rule")
 }
 
 // TestABypassWithoutAnEffectivePolicyStillWorks keeps the fail-open direction where it belongs.

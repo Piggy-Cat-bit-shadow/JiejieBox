@@ -838,6 +838,39 @@ func (d *resolveDialer) ListenPacket(ctx context.Context, destination M.Socksadd
 		return nil, err
 	}
 	if !destination.IsDomain() {
+		// A LITERAL destination is subject to the same hard strategy the other two packet entry points
+		// apply. This is the third place the policy is enforced and the only one that was missing.
+		//
+		// # The hole
+		//
+		// `resolveParallelNetworkDialer.ListenSerialNetworkPacket` filters the caller's candidate list and
+		// reports the exclusion rather than letting the helper re-synthesise the literal, and
+		// `DefaultDialer`'s packet path applies the machine's own family gate. Neither runs here: this is
+		// the arm `route.ConnectionManager` takes for an UNCONNECTED packet flow with no candidate list,
+		// and it went straight to the leaf. So with `ipv4_only` a UDP flow to an IPv6 literal created a
+		// socket for the family the policy forbids - the same defect `TestPacketPathNeverDialsAFamilyThe
+		// StrategyExcluded` was written for on the candidate path, surviving in the sibling entry point.
+		//
+		// # Why the two models have to agree here
+		//
+		// The native-bypass profile applies this policy to every literal (`SocketSemantics.Blockers`), so
+		// before this check the two answers for one flow were "userspace dials it" and "bypass refuses",
+		// which is the harmless direction but a permanent loss of the fast path under any strict policy -
+		// and a standing invitation to "fix" the disagreement on the profile side, where it would be
+		// wrong.
+		//
+		// # Why an unspecified destination is exempt
+		//
+		// An unspecified address is how a caller asks for a wildcard socket with no destination family at
+		// all; it is the same exemption `DefaultDialer.ListenPacket` documents, and applying the policy to
+		// it would refuse a listener that names no family.
+		if destination.Addr.IsValid() && !destination.Addr.IsUnspecified() {
+			familyStrategy := d.effectiveFamilyStrategy()
+			if !AddressAllowedByStrategy(destination.Addr, familyStrategy) {
+				return nil, E.New("destination ", destination, " excluded by strategy ", strategyName(familyStrategy),
+					": this packet connection names a destination of the family the policy forbids")
+			}
+		}
 		return d.dialer.ListenPacket(ctx, destination)
 	}
 	ctx = log.ContextWithOverrideLevel(ctx, log.LevelDebug)
