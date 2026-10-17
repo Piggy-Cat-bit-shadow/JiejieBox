@@ -152,9 +152,15 @@ func (d *resolveDialer) recoverCandidates(ctx context.Context, destination M.Soc
 					// Resolution finished without a family this machine can dial.
 					return nil
 				}
-				// Filter here, so "usable" is what ends the loop. An answer the machine refuses
-				// keeps the loop open for the other family instead of ending the lookup.
-				if usable := d.withoutUndialableCandidates(family); len(usable) > 0 {
+				// "Usable" has to mean ADMISSIBLE, not merely dialable, and it has to be decided here
+				// because this is what ends the loop.
+				//
+				// The capability filter alone was not enough: the strict family strategy was applied
+				// one layer up, in `mergeRecovered`, so under `ipv6_only` an A answer would end the
+				// lookup, be dropped by the strategy on the way out, and the AAAA that arrived later
+				// would never be read. Deciding admission here is what makes the first family to answer
+				// and be ADMITTED the one that ends the lookup.
+				if usable := d.admittedRecoveredCandidates(family); len(usable) > 0 {
 					recovered = usable
 				}
 			case <-recoveryCtx.Done():
@@ -168,13 +174,30 @@ func (d *resolveDialer) recoverCandidates(ctx context.Context, destination M.Soc
 			// would otherwise have been attempted into an error the user never asked for.
 			return nil
 		}
-		recovered = d.withoutUndialableCandidates(addresses)
+		recovered = d.admittedRecoveredCandidates(addresses)
 	}
 
 	if len(recovered) == 0 {
 		return nil
 	}
 	return recovered
+}
+
+// admittedRecoveredCandidates drops the recovered addresses this flow may not dial, applying both terms of
+// the decision in one place: the local family capability (a property of the machine) and the strict family
+// strategy (a decision of the operator).
+//
+// # Why both terms belong here, and not one here and one later
+//
+// The two filters used to sit at different layers - capability in this function, strategy in
+// `mergeRecovered` - and that split is what let a forbidden family end the lookup: this function stopped at
+// the first capability-usable answer, the strategy dropped it afterwards, and the family the policy actually
+// admitted was never read even though it was already in flight.
+//
+// Applying both here makes the caller's later filtering idempotent instead of load-bearing. It does not
+// change which addresses are ultimately dialled; it changes which family gets to END the lookup.
+func (d *resolveDialer) admittedRecoveredCandidates(addresses []netip.Addr) []netip.Addr {
+	return withoutUndialable(withoutFamilyExcluded(addresses, d.effectiveFamilyStrategy()), d.dialerLocalFamilyPolicy())
 }
 
 // withoutUndialableCandidates drops recovered addresses whose family this machine cannot dial.

@@ -96,20 +96,37 @@ func (d *resolveParallelNetworkDialer) DialParallelNetwork(ctx context.Context, 
 	// of an excluded family must not enter the plan at all, and the candidate list is exactly where
 	// "only means only" is enforceable.
 	candidates := withoutFamilyExcluded(destinationAddresses, d.effectiveFamilyStrategy())
-	if len(candidates) == 0 && len(destinationAddresses) > 0 {
-		// The list is empty because the POLICY emptied it, and that is a different fact from "there was
-		// nothing to try". Reporting it here rather than letting the scheduler conclude is what keeps the
-		// two entry points saying the same thing: the single-destination path names the strategy
-		// ("destination <addr> excluded by strategy ipv4_only"), and this path and
-		// `raceCandidatesExcluding` used to flatten the same operator mistake into "no dial candidates" -
-		// a symptom that names neither the policy nor the destination.
+	strategyExcludedEverything := len(candidates) == 0 && len(destinationAddresses) > 0
+	recoveryApplies := d.recoveryPossible(ctx) && isBareLiteralList(destination, destinationAddresses)
+
+	if strategyExcludedEverything && recoveryApplies {
+		// The policy excluded every candidate the caller supplied, and there IS a name to recover from.
+		// Recovery therefore runs to completion here, and doing so does not violate "discovery is a
+		// fallback, not a precondition": there is no immediate attempt for it to delay, because the
+		// policy has already removed the one candidate that existed. Waiting is the only way this flow
+		// can connect at all, and refusing immediately would kill a flow the operator's own policy still
+		// admits through the other family.
 		//
-		// It also avoids work that cannot succeed: the scheduler would build a plan, run a capability
-		// filter over an empty candidate set, and reach the same conclusion by a longer route.
+		// This is a correction to an earlier version of the error reporting below, which returned the
+		// strategy exclusion as soon as the filtered list was empty. That produced a good message and
+		// skipped the recovery which could have carried the flow: with `ipv6_only` and an IPv4 literal
+		// whose sniffed name has an AAAA, the userspace path refused a connection it could have made.
+		recovered := d.mergeRecovered(destination, d.recoverCandidates(ctx, destination))
+		if len(recovered) > 0 {
+			return d.schedule(ctx, network, destination, destination.Addr, recovered, strategy, interfaceType, fallbackInterfaceType, fallbackDelay, nil)
+		}
+	}
+	if strategyExcludedEverything {
+		// Either there was nothing to recover from, or recovery found nothing this policy admits. The
+		// list is empty because the POLICY emptied it, which is a different fact from "there was nothing
+		// to try", and it is the fact an operator has to be told: the single-destination path says
+		// "destination <addr> excluded by strategy ipv4_only", and this path and
+		// `raceCandidatesExcluding` used to flatten the same mistake into "no dial candidates" - a
+		// symptom that names neither the policy nor the destination.
 		return nil, E.New("destination ", destination, " excluded by strategy ", strategyName(d.effectiveFamilyStrategy()),
 			": every supplied candidate belongs to the family this policy forbids")
 	}
-	if !d.recoveryPossible(ctx) || !isBareLiteralList(destination, destinationAddresses) {
+	if !recoveryApplies {
 		return d.schedule(ctx, network, destination, destination.Addr, candidates, strategy, interfaceType, fallbackInterfaceType, fallbackDelay, nil)
 	}
 	feed := d.feedRecoveryAsLateCandidates(ctx, destination)
