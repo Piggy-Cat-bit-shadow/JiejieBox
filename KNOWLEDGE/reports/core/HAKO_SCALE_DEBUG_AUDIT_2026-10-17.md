@@ -185,6 +185,26 @@ The A/B method, because a single delta on a 3 µs benchmark is noise: `git workt
 measurement — the gate executes only inside the refresh goroutine, which a fresh cache hit never
 reaches (`BenchmarkDNSExactCacheHit` uses a 3600 s TTL).
 
+## Observed, not caused by this round
+
+Recorded and stopped, per the rule that a debug round does not widen its own scope. None of these is
+a regression of this round; two of them are gaps the round's own inventory exposed.
+
+1. **`transport/wireguard/recovery.go` polls and rebinds with no power gate.** It is bounded (only
+   while a session is stale, self-terminating, one rebind per `runtimecoord` window) and it cannot
+   start during a sleep. Accepted in the construction report's refusal list; the reason is that
+   refusing the rebind trades one datagram for a tunnel that stays broken until the wake.
+2. **`service/ssmapi` refuses the write while suppressed but its 1-minute ticker still fires.** The
+   gate removes the I/O, not the wakeup. A real (if small) sleep-quality gap, in a service this round
+   did not touch; it needs a `WaitStatistics`-style wait to fix, which is a `common/power` addition
+   that should not be made by an audit round.
+3. **The knowledge base's timer census was under-describing the tree.** `KNOWLEDGE/modules/power-mobile-lifecycle.md`
+   §6 said "only two periodic timers are deferrable"; after this round three are, and it did not
+   mention the DNS refresh or the WireGuard poll at all. The census is amended in place — a new row,
+   the count corrected, and the two non-timer workers named — because a census that omits a worker is
+   the one document a future reader consults *before* deciding whether a gate is allowed. This is not
+   a baseline move and not a refresh.
+
 ## Remaining risks
 
 1. **`-race` has never run on these changes.** `CGO_ENABLED=0` and no `gcc` on this host:

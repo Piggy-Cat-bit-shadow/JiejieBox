@@ -154,9 +154,13 @@ not it is ever dialled. "Never used" here means "constructed *and* started").
 | **urltest / loadbalance with `url`** | 1 goroutine at start **and one HTTP probe per member** | A+B |
 | selector, shadowtls, dns, block, socks, anytls, hysteria, hysteria2, tuic, ssh, http, vmess, vless, trojan, shadowsocks, snell | **0 goroutines, 0 fds, 0 timers** — a heap struct of order KB | A |
 
-Repo-wide, **exactly one per-node ticker exists in `protocol/`** (`protocol/group/urltest.go:623`) and
-it is created on first `Touch()` and self-reclaimed after `idleTimeout`. No outbound constructor or
-`Start` opens a socket except the five endpoint families above.
+Repo-wide, **exactly one per-node *repeating* timer exists in `protocol/`**
+(`protocol/group/urltest.go:623`), and it is created on first `Touch()` and self-reclaimed after
+`idleTimeout`. The other timed things in that tree are per-connection, per-session, per-dial or
+one-shot (`cloudflare/inbound.go`, `hysteria2/realm_server.go`, `masque/bootstrap_race.go`,
+`tailscale/ping.go`, `tailscale/taildrop.go`, `tailscale/tailssh/server.go`,
+`tailscale/tailcat_node.go`'s `NewTimer(0)`) — none of them is a cost a configured-but-unused node
+pays. No outbound constructor or `Start` opens a socket except the five endpoint families above.
 
 So the ProjectClash premise "a node in the config must not be a node's worth of runtime" is **already
 true for the node kinds a 100k-node profile is actually made of**, and the remaining answers are the
@@ -243,8 +247,17 @@ the cache size, which is already capped.
 ### 5.2 The dashboard updater now waits for the same window
 
 `service/api/dashboard.go`, `service/api/dashboard_power_test.go` — the second of the two ungated
-network workers, and the last one: after this the only periodic **network** workers in the core are
-the rule-set refresh and this, and both defer to the governor.
+network **fetches**, and the last of them: after this, every scheduled outbound fetch in the core
+defers to the governor.
+
+Correction, because the first version of this paragraph universalised too far: a third periodic
+network worker exists and is deliberately **not** gated. `transport/wireguard/recovery.go` polls
+while a session is stale and rebinds from that poll. It is bounded three ways — the loop exists only
+while a session is stale, it self-terminates when the session resolves, and `runtimecoord` grants one
+rebind per 90 s window — and it cannot *start* during a sleep, since a session only goes stale on
+traffic or a transition. It can continue into a sleep that begins mid-recovery. Refused for this
+round, and recorded in §6, because cancelling it would trade a wasted rebind for an unrecovered
+tunnel.
 
 It waits rather than skips, which is the difference from 5.1 and is deliberate. The loop is one
 goroutine that already exists, so blocking it holds no resource, and waiting makes the download happen
@@ -319,6 +332,12 @@ a measurement is a result.
    40 bytes/entry instead of the ~8–32 the data needs — worse than the growth it removes.
 8. **Apple goroutine start-stack tuning.** Out of scope by the brief's own ordering, and there is no
    Apple memory benchmark in this repository to justify it.
+9. **Gating the WireGuard recovery poll on the sleep state.** Refused, and it is the one network
+   worker in the core that is deliberately left ungated. It exists only while a session is stale, it
+   self-terminates when the session resolves, and `runtimecoord` already allows one rebind per 90 s
+   window; the only case a gate would change is a sleep that begins mid-recovery, and refusing the
+   rebind there leaves a broken tunnel until the next wake for the sake of one datagram. The honest
+   fix if that datagram is ever measured to matter is a shorter poll during a pause, not a refusal.
 
 ---
 

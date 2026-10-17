@@ -189,10 +189,23 @@ watchdog hides a leak; not deferring a poll burns radio time.
 | `internal/memmetrics` sampling | 1 ms | **benchmark-only** |
 | `service/ssmapi/server.go` | 1 min | deferrable — **but the FIRST pass is deliberately not deferred** |
 | `route/rule/rule_set_updater.go` | — | deferrable — **first pass also not deferred** |
+| `service/api/dashboard.go` | 24 h (default) | deferrable — **first pass also not deferred**, and it WAITS rather than skipping: `WaitProviderRefresh` parks the loop, so the download lands on the wake instead of a whole interval later |
 | `dns_cache` | 1 h | must **not** be gated |
 
-**Only two periodic timers are deferrable, and for both the first pass runs regardless.** The
+**Three periodic timers are deferrable, and for all three the first pass runs regardless.** The
 "first pass is not deferred" rule is the one that keeps a deferral from delaying initial correctness.
+
+Two workers in this area are **not timers**, and are gated by state rather than by waiting, so they do
+not belong in the table above:
+
+- `dns.client.backgroundRefreshDNS` — scheduled from a cache HIT, not by a clock. Refused outright
+  while the governor is `QUIESCENT`/`DEEP_IDLE` or closed, and released through
+  `Allow().NetworkProbe` in the `WAKING` band. Skipping costs freshness only.
+- `transport/wireguard/recovery.go` — polls, but only while a session is stale, and it is **not**
+  gated: a rebind is already limited to one per window by `runtimecoord`, and cancelling it during a
+  sleep would trade a wasted rebind for an unrecovered tunnel. Accepted, not deferred.
+
+`HAKO_SCALE_DEBUG_AUDIT_2026-10-17.md` carries the tests and mutations behind both gates.
 
 ---
 
