@@ -284,7 +284,7 @@ single most dangerous stale comment found, because it tells a reader a shipped c
 
 * The root design-guarantee suite is **green** — but only with `DEFAULT_BUILD_TAGS_OTHERS`. Untagged it
   fails 12 tests on tag absence; with `DEFAULT_BUILD_TAGS` it does not even build. A reviewer following
-  `CORE_0.1.6_FINAL_CLOSURE_REPORT.md:18`'s stated tag source gets a false "broken" reading.
+  `KNOWLEDGE/reports/release/CORE_0.1.6_FINAL_CLOSURE_REPORT.md:18`'s stated tag source gets a false "broken" reading.
 * **No CI job executes the root suite at all.** `verify.yml`'s untagged step runs `go test -run '^$'`
   (zero tests) and its race step's package list omits `.`. All 25 root contract test files are compiled
   by CI and never run by it.

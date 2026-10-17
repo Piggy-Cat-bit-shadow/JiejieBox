@@ -37,7 +37,13 @@ about one row.
 7. INVARIANTS.md          when you are about to change something that looks load-bearing
 8. ACCEPTANCE.md          the requirement -> evidence -> re-check index
 9. COMMIT-INDEX.md        when you need to find the SHAs behind a behaviour
+10. reports/README.md      what was audited, when, and against which tree — records, NOT current claims
 ```
+
+> `reports/` is an archive of point-in-time audit and close-out reports. Read its `README.md` first: a
+> report describes the tree at its own date, `BASELINE.md`/`INDEX.md`/`modules/` own the current claims, and
+> where a report and the source disagree the source wins. Adding a report is not a refresh and never moves
+> the baseline.
 
 **`INDEX.md` and `modules/README.md` are not interchangeable.** `modules/README.md` is the coarse
 registry (which module owns what). `INDEX.md` is the fine router: exact section anchors, aliases, and

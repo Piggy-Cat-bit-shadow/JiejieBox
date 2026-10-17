@@ -178,7 +178,7 @@ Consequences worth knowing:
   version treated final as "proves nothing" and pinned a test that a TCP-only final must start; that
   was a **measured false deny**, reversed by `133e6ed4f`. The test it pinned
   (`TestFinalProvesNothingAboutDelivery`) **no longer exists** — if you find it cited in
-  `ROUTE_AWARE_OUTBOUND_CAPABILITY_VALIDATION_FINAL.md` §B/§H, that document is superseded there.
+  `KNOWLEDGE/reports/release/ROUTE_AWARE_OUTBOUND_CAPABILITY_VALIDATION_FINAL.md` §B/§H, that document is superseded there.
 * Provability means scope `Always` **and** `terminates()` (`:214-228`), which mirrors `matchRule`
   (`route/route.go:1191-1206`).
 * **ICMP is deliberately out** (`:338-347`).
@@ -368,13 +368,13 @@ All of the above are **OWN**. `d2b34f1cf`… are shared with `data-path-optimiza
 
 | Document | Superseded where | By |
 |---|---|---|
-| `ROUTE_AWARE_OUTBOUND_CAPABILITY_VALIDATION_FINAL.md` §B (`:141-142`), §H (`:350-367`) | `route.final` proven/unproven; its `TestFinalProvesNothingAboutDelivery` **no longer exists** | `133e6ed4f`; `reach.go:177-183`; `box_physicalpath_unconstrained_test.go:62` |
+| `KNOWLEDGE/reports/release/ROUTE_AWARE_OUTBOUND_CAPABILITY_VALIDATION_FINAL.md` §B (`:141-142`), §H (`:350-367`) | `route.final` proven/unproven; its `TestFinalProvesNothingAboutDelivery` **no longer exists** | `133e6ed4f`; `reach.go:177-183`; `box_physicalpath_unconstrained_test.go:62` |
 | same doc §C (`:169-170`) | "'does not carry' constructed in exactly one place" is tree-wide false | also `common/dialer/capability.go:59`, `dns/transport/capability.go:45`, `common/httpclient/transport_capability.go:44` |
-| `GROUP_CROSSKIND_BRIDGE_CLOSURE.md` §4, §9 | `CROSS_KIND_GRAPH_SOUND=NO`, `ENDPOINT_RESOLVER_EDGE_SOUND=NO`, `DEFAULT_RESOLVER_EDGE_SOUND=NO`, `GROUP_FALSE_DENY_REMAINS=YES` | `ff0040079`, `4e228f539`, `31f250ff1`; `manager_physicalpath_test.go:249-271` |
+| `KNOWLEDGE/reports/release/GROUP_CROSSKIND_BRIDGE_CLOSURE.md` §4, §9 | `CROSS_KIND_GRAPH_SOUND=NO`, `ENDPOINT_RESOLVER_EDGE_SOUND=NO`, `DEFAULT_RESOLVER_EDGE_SOUND=NO`, `GROUP_FALSE_DENY_REMAINS=YES` | `ff0040079`, `4e228f539`, `31f250ff1`; `manager_physicalpath_test.go:249-271` |
 | `docs/fork/v016-five-workstream-final-report.md:565-587`, `docs/fork/v016-overnight-implementation-report.md:479` | declare J-1/J-2/J-3 NOT IMPLEMENTED | all three exist (`01262510`, `common/physicalpath/status.go`, `box.go:1318`) |
 | `docs/fork/v016-correction-round-ledger.md:252-254` | "`Selector.References()` lies before Start" | fixed by `96e6dc419` (`selector.go:269-274`) |
 
-`GROUP_CROSSKIND_BRIDGE_CLOSURE.md` §1's group table is **still correct**.
+`KNOWLEDGE/reports/release/GROUP_CROSSKIND_BRIDGE_CLOSURE.md` §1's group table is **still correct**.
 
 ### Stale citations inside the code itself
 

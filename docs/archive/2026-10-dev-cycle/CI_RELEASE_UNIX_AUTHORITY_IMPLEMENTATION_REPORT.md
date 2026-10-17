@@ -1,7 +1,7 @@
 # CI / Release â Unix release authority implementation report (V6)
 
 Sole report for the V6 round. It does **not** rewrite the V5 audit chapters in
-`CI_RELEASE_POST_GREEN_OPTIMIZATION_REPORT.md`; that file keeps its history, as V6 Â§38 asks.
+`KNOWLEDGE/reports/release/CI_RELEASE_POST_GREEN_OPTIMIZATION_REPORT.md`; that file keeps its history, as V6 Â§38 asks.
 
 **Headline: the construction stages were not run.** V6 Â§2 and Â§3 make a real Unix/macOS/Linux
 environment and a green 92-case baseline preconditions of write work, and both are absent here.

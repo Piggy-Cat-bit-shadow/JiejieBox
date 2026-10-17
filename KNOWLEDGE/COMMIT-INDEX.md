@@ -66,8 +66,8 @@ routed to it. The failure surfaced at dial time, on a user's connection.
 `ControlPath` is descent order; a control group is never a hop; `route.final` is charged the residual as
 proven; `RequiredNetworks` is write-only.
 
-**Superseded:** `ROUTE_AWARE_OUTBOUND_CAPABILITY_VALIDATION_FINAL.md` §B/§H (its
-`TestFinalProvesNothingAboutDelivery` no longer exists); `GROUP_CROSSKIND_BRIDGE_CLOSURE.md` §4/§9 (all
+**Superseded:** `KNOWLEDGE/reports/release/ROUTE_AWARE_OUTBOUND_CAPABILITY_VALIDATION_FINAL.md` §B/§H (its
+`TestFinalProvesNothingAboutDelivery` no longer exists); `KNOWLEDGE/reports/release/GROUP_CROSSKIND_BRIDGE_CLOSURE.md` §4/§9 (all
 three `= NO` verdicts were later closed); two `docs/fork/v016-*` reports still declaring J-1/J-2/J-3
 "NOT IMPLEMENTED" when all three exist.
 

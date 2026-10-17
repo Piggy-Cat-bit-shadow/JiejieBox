@@ -37,11 +37,11 @@ a file invalidates every `file:line` in a citation:
 
 | File | Cited by | Why line numbers matter |
 |---|---|---|
-| `APPLE-PARENT-FINALIZE-REPORT.md` | `modules/ci-release.md:133` | cited as `:198-203` for a gate-layer verdict |
-| `BRANCH_CONSOLIDATION_TO_TESTING_FINAL.md` | `modules/ci-release.md:130` | cited as `:452-458` for a missing stress result |
-| `CORE_0.1.6_FINAL_CLOSURE_REPORT.md` | `modules/ci-release.md:132,422` | cited as `:132-138` and `:18` |
-| `GROUP_CROSSKIND_BRIDGE_CLOSURE.md` | `COMMIT-INDEX.md:70`, `modules/path-selection-validation.md:373,377` | cited by section, and `§1`'s table is still asserted correct |
-| `ROUTE_AWARE_OUTBOUND_CAPABILITY_VALIDATION_FINAL.md` | `COMMIT-INDEX.md:69`, `modules/path-selection-validation.md:181,371` | cited as `§B (:141-142)`, `§H (:350-367)` |
+| `KNOWLEDGE/reports/release/APPLE-PARENT-FINALIZE-REPORT.md` | `modules/ci-release.md:133` | cited as `:198-203` for a gate-layer verdict |
+| `KNOWLEDGE/reports/release/BRANCH_CONSOLIDATION_TO_TESTING_FINAL.md` | `modules/ci-release.md:130` | cited as `:452-458` for a missing stress result |
+| `KNOWLEDGE/reports/release/CORE_0.1.6_FINAL_CLOSURE_REPORT.md` | `modules/ci-release.md:132,422` | cited as `:132-138` and `:18` |
+| `KNOWLEDGE/reports/release/GROUP_CROSSKIND_BRIDGE_CLOSURE.md` | `COMMIT-INDEX.md:70`, `modules/path-selection-validation.md:373,377` | cited by section, and `§1`'s table is still asserted correct |
+| `KNOWLEDGE/reports/release/ROUTE_AWARE_OUTBOUND_CAPABILITY_VALIDATION_FINAL.md` | `COMMIT-INDEX.md:69`, `modules/path-selection-validation.md:181,371` | cited as `§B (:141-142)`, `§H (:350-367)` |
 
 Moving these is a **separate, deliberate change** that must repair each `file:line` in the same commit.
 `REFRESH.md` §29 says an uncertain move is a `KEEP`, so they were kept rather than moved with a guess.

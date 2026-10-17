@@ -192,10 +192,10 @@ failures, only the post-fix passes. And `check-libbox-abi.log` ends with
 
 | Claim | Where it is announced | What exists |
 |---|---|---|
-| Stress results over the 30 packages several branch lines touched | `BRANCH_CONSOLIDATION_TO_TESTING_FINAL.md:452-458` | **Nothing.** Line 451 is literally `<!--STRESS_RESULTS-->` and the next section begins at `:453`. This is the only HTML-comment placeholder in any root report. |
+| Stress results over the 30 packages several branch lines touched | `KNOWLEDGE/reports/release/BRANCH_CONSOLIDATION_TO_TESTING_FINAL.md:452-458` | **Nothing.** Line 451 is literally `<!--STRESS_RESULTS-->` and the next section begins at `:453`. This is the only HTML-comment placeholder in any root report. |
 | `-race` results for any package | all reports | None anywhere; consistently reported as not-run, and the CI step that would produce them leaves no record in the tree. |
-| Apple submodule reachability | `CORE_0.1.6_FINAL_CLOSURE_REPORT.md:132-138` | Needs a host with the submodule and network. |
-| Device / emulator / iOS / Android runtime runs | the Apple reports | None. `APPLE-PARENT-FINALIZE-REPORT.md:198-203` records the gate layers as `SKIP` and the overall verdict as **`PARTIAL`** because a layer was skipped, *"which is deliberately not reported as PASS"*. |
+| Apple submodule reachability | `KNOWLEDGE/reports/release/CORE_0.1.6_FINAL_CLOSURE_REPORT.md:132-138` | Needs a host with the submodule and network. |
+| Device / emulator / iOS / Android runtime runs | the Apple reports | None. `KNOWLEDGE/reports/release/APPLE-PARENT-FINALIZE-REPORT.md:198-203` records the gate layers as `SKIP` and the overall verdict as **`PARTIAL`** because a layer was skipped, *"which is deliberately not reported as PASS"*. |
 | Live Xray / quic-go / masque-go interop | `interop-xray.yml`, `server-linux-amd64.yml` | Workflow declarations only. No artifact in `verify-evidence/`. The QUICHE live interop tests were **deleted** (`0a3993a8c`). |
 | Windows PE / MSI / Authenticode / driver-signature / service-lifecycle | nine `scripts/ci/windows/*.ps1`, `client-desktop-windows.yml` | Declarations only. `windows-core-amd64.yml` runs on **ubuntu-latest** and only inspects symbols; the desktop workflow is dispatch-only; no `.ps1` output is archived in the tree. |
 | Docker-backed fixtures | `test/docker_test.go`, `test/openvpn_test.go` | Not run — no daemon. Note `test/docker_test.go` **has no skip guard**. |
@@ -511,7 +511,7 @@ audit host, so running `apple-client-source.sh` end to end is `BLOCKED_BY_ENVIRO
 
 `verify.yml:214-215` states in-tree that `DEFAULT_BUILD_TAGS` is *"deliberately NOT used here: it
 carries with_naive_outbound, and no Linux product links cronet."* The names are misleading and the
-repository knows it — **a reviewer who follows `CORE_0.1.6_FINAL_CLOSURE_REPORT.md:18`'s stated tag
+repository knows it — **a reviewer who follows `KNOWLEDGE/reports/release/CORE_0.1.6_FINAL_CLOSURE_REPORT.md:18`'s stated tag
 source and runs the root package on Windows gets a setup failure and may wrongly conclude the root
 suite is broken.**
 
