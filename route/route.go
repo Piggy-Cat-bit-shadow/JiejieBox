@@ -1355,6 +1355,24 @@ func (r *Router) actionSniff(
 			} else {
 				r.logger.DebugContext(ctx, "sniffed protocol: ", metadata.Protocol)
 			}
+		} else {
+			// The sniffers ran and none of them claimed this flow, or the read failed before one
+			// could. Either way the outcome is that this connection reaches the dial layer with no
+			// domain evidence - and that is exactly the fact an operator needs, because it is the
+			// difference between "recovery had nothing to work with" and "recovery was skipped".
+			//
+			// Silence here is what made the production log's no-domain refusals unattributable. The
+			// flow shows `match[0] => sniff`, then its route decision, then
+			//
+			//	open connection to [2409:...]:80 ... no usable ipv6 path
+			//
+			// with nothing between them saying whether the sniffer had looked and found nothing, or
+			// had never run at all. Same defect class as the packet report that named no destination:
+			// the failure path was the only one that did not speak.
+			//
+			// Debug rather than warn: failing to identify an unknown protocol is the normal outcome
+			// for most flows a sniffer set does not cover, and warning would make the level useless.
+			r.logger.DebugContext(ctx, "sniff found no protocol for this flow: ", err)
 		}
 		if !sniffBuffer.IsEmpty() {
 			buffer = sniffBuffer
@@ -1507,6 +1525,12 @@ func (r *Router) actionSniff(
 			} else {
 				r.logger.DebugContext(ctx, "sniffed packet protocol: ", metadata.Protocol)
 			}
+		} else if !errors.Is(err, sniff.ErrNeedMoreData) {
+			// Same reason as the stream side: a packet flow whose sniff produced nothing reaches the
+			// dial layer with no domain evidence, and that has to be visible. The fragmented-QUIC
+			// rounds already log themselves one by one, so an exhausted retry is not repeated here -
+			// what this adds is the final verdict for a flow that was inspected and yielded nothing.
+			r.logger.DebugContext(ctx, "sniff found no packet protocol for this flow: ", err)
 		}
 	}
 	return
