@@ -79,6 +79,14 @@ type scriptedFamilyRouter struct {
 	exitOnce sync.Once
 
 	calls atomic.Int32
+
+	// activeLookups counts the lookup goroutines currently inside runFamilies.
+	//
+	// It exists so a test can assert that a recovery producer is GONE rather than that it was merely
+	// unblocked, without counting the whole process's goroutines - which no test can attribute to this
+	// feature. Paired with `exited` it distinguishes "inside the resolver" from "past the resolver and
+	// parked on a send", the two halves of the producer that a single signal cannot separate.
+	activeLookups atomic.Int32
 }
 
 func newScriptedFamilyRouter() *scriptedFamilyRouter {
@@ -184,6 +192,10 @@ func (r *scriptedFamilyRouter) LookupFamilies(ctx context.Context, domain string
 // family through publish when one is supplied.
 func (r *scriptedFamilyRouter) runFamilies(ctx context.Context, publish func(adapter.DNSFamilyResult)) ([]netip.Addr, []netip.Addr, error) {
 	r.calls.Add(1)
+	// The active count is bumped BEFORE the lookup and dropped after it, so a caller can ask "is a
+	// lookup goroutine inside the router right now" without counting the process's goroutines.
+	r.activeLookups.Add(1)
+	defer r.activeLookups.Add(-1)
 	r.startOnce.Do(func() { close(r.started) })
 	defer r.exitOnce.Do(func() { close(r.exited) })
 

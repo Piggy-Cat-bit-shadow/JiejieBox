@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/netip"
+	"sync"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -97,7 +98,13 @@ func (d *resolveParallelNetworkDialer) DialParallelNetwork(ctx context.Context, 
 	if !d.recoveryPossible(ctx) || !isBareLiteralList(destination, destinationAddresses) {
 		return d.schedule(ctx, network, destination, destination.Addr, candidates, strategy, interfaceType, fallbackInterfaceType, fallbackDelay, nil)
 	}
-	return d.schedule(ctx, network, destination, destination.Addr, candidates, strategy, interfaceType, fallbackInterfaceType, fallbackDelay, d.feedRecoveryAsLateCandidates(ctx, destination))
+	feed := d.feedRecoveryAsLateCandidates(ctx, destination)
+	// The feed is joined on the way out, whatever the outcome: a winner must not leave a resolver query
+	// in flight, and a recovered address must not be left parked on a channel the scheduler has stopped
+	// reading. Doing it here rather than relying on the caller's context being cancelled turns the
+	// guarantee into a fact this function keeps - see feedRecoveryAsLateCandidates for why it is owed.
+	defer feed.stop()
+	return d.schedule(ctx, network, destination, destination.Addr, candidates, strategy, interfaceType, fallbackInterfaceType, fallbackDelay, feed.candidates)
 }
 
 // ListenSerialNetworkPacket is the packet counterpart, with the same hole: the caller's else-chain sends
@@ -175,18 +182,66 @@ func domainStrategyFor(preferIPv6 bool) C.DomainStrategy {
 	return C.DomainStrategyPreferIPv4
 }
 
+// recoveryFeed is a running recovery lookup: the candidates it publishes, and the means to stop it.
+//
+// # Why this is a type rather than two return values
+//
+// The lookup's LIFETIME is part of its contract. `stop` cancels the feed and waits for the producer, so
+// after it returns the goroutine has genuinely exited - and that has to be observable, not merely
+// intended. `done` is what makes it observable: a closed channel is ambiguous (a buffered channel can be
+// read without ever having been closed, and a close is not ordered with the goroutine leaving its frame),
+// while a dedicated `done` is closed by the producer as its last act.
+type recoveryFeed struct {
+	// candidates is what the scheduler reads. Closed when the producer finishes, which is how the
+	// scheduler learns no more are coming - the same contract the hostname path uses for a late family.
+	candidates <-chan dualStackCandidate
+	// done is closed by the producer as its final act, after its last send was delivered or abandoned.
+	done <-chan struct{}
+	// stop cancels the feed and WAITS for the producer.
+	stop func()
+}
+
+// ready reports whether the scheduler can read from this feed at all.
+func (f recoveryFeed) ready() bool {
+	return f.candidates != nil
+}
+
 // feedRecoveryAsLateCandidates runs the recovery lookup in the background and publishes what it finds as
 // candidates the race may still join.
 //
-// The channel is closed when the lookup finishes, which is how the scheduler learns no more are coming -
-// the same contract the hostname path uses for a family that answers late. The lookup inherits the
-// caller's context, so a connection the literal established cancels it rather than leaving a resolver
-// query in flight for the lifetime of the flow.
-func (d *resolveParallelNetworkDialer) feedRecoveryAsLateCandidates(ctx context.Context, destination M.Socksaddr) <-chan dualStackCandidate {
+// # Ownership: the caller must stop and join this producer
+//
+// The candidate channel is the producer's OUTPUT, not its lifetime. A caller that returns as soon as the
+// scheduler does - which is every caller, because the scheduler returns on its winner - leaves the
+// producer parked on a channel nobody will read again. The buffer holds one candidate, so the FIRST
+// recovered address can be delivered, but a second one blocks in the send's select until the context is
+// cancelled.
+//
+// That made the previous comment here ("a connection the literal established cancels it") false as
+// written: nothing in this function cancelled anything on the literal's success, and correctness rested
+// on an out-of-file convention - that every caller passes a context it cancels promptly after the dial
+// returns. `route.ConnectionManager` does (`finishSetup`, one statement later), so this was never a
+// production leak; it was a documented guarantee nobody was keeping, which is how a future caller holding
+// a flow-lifetime context inherits a parked goroutine per connection.
+//
+// So the producer now owns its own context, derived from the caller's, and the caller is handed the means
+// to prove it is gone. This mirrors `resolveDialer.raceCandidates` (resolve.go), which does exactly this
+// for the hostname path and says why: a connection lives for minutes, and a producer must stop the moment
+// the winner is known rather than when the connection eventually closes.
+func (d *resolveParallelNetworkDialer) feedRecoveryAsLateCandidates(ctx context.Context, destination M.Socksaddr) recoveryFeed {
+	// Narrower than the connection's lifetime on purpose. Cancelling the feed cannot affect the
+	// connection that won - the producer owns no socket - and it is what releases a send parked on a
+	// channel the scheduler has stopped reading.
+	feedCtx, cancelFeed := context.WithCancel(ctx)
 	lateCandidates := make(chan dualStackCandidate, 1)
+	done := make(chan struct{})
+	var producers sync.WaitGroup
+	producers.Add(1)
 	go func() {
+		defer producers.Done()
+		defer close(done)
 		defer close(lateCandidates)
-		recovered := d.recoverCandidates(ctx, destination)
+		recovered := d.recoverCandidates(feedCtx, destination)
 		if len(recovered) == 0 {
 			return
 		}
@@ -198,12 +253,21 @@ func (d *resolveParallelNetworkDialer) feedRecoveryAsLateCandidates(ctx context.
 			}
 			select {
 			case lateCandidates <- dualStackCandidate{address: unmapAddress(address), family: classifyAddress(address)}:
-			case <-ctx.Done():
+			case <-feedCtx.Done():
 				return
 			}
 		}
 	}()
-	return lateCandidates
+	return recoveryFeed{
+		candidates: lateCandidates,
+		done:       done,
+		// stop cancels the feed and WAITS for the producer, so a caller that invokes it has proof the
+		// goroutine has exited rather than an expectation that it will.
+		stop: func() {
+			cancelFeed()
+			producers.Wait()
+		},
+	}
 }
 
 // mergeRecovered combines the destination literal with the recovered addresses.
