@@ -158,11 +158,23 @@ func ListenSerialNetworkPacket(ctx context.Context, dialer N.Dialer, destination
 	// unrefused global IPv6 address wins this loop and the client is handed a dead connection - the
 	// `open UDP connection to [2606:...]` and `send peer batch: unreachable network` lines in the log.
 	//
-	// What makes the loop sufficient is that a refusal happens BEFORE socket creation, in
-	// DefaultDialer.ListenPacket, so a family this machine provably cannot reach never enters it and
-	// the next address - the other family - is tried. The gate is therefore load-bearing twice over
-	// here: it is the fast-fail for a stream and the ONLY thing that can move a packet listener to
-	// another family.
+	// What makes the loop sufficient is that a refusal happens BEFORE socket creation - but the gate that
+	// does it is NOT the one in DefaultDialer.ListenPacket, and naming it there was wrong.
+	//
+	// The loop below reaches `ListenSerialInterfacePacket`, which with a non-nil strategy never calls
+	// ListenPacket at all: it creates the interface-bound socket itself. So ListenPacket's gate covers the
+	// ELSE branch and the direct callers, and nothing more. The gate the branch below actually depends on
+	// is inside `listenSerialInterfacePacketEpoch`, after the interface selection and before the socket.
+	//
+	// That gate was once MISSING, and the comment above was describing it anyway - which is how a
+	// load-bearing refusal can be deleted by a reader who believes another function already provides it.
+	// MEASURED before it was added, on a machine with no IPv6 addressing: ListenPacket refused before
+	// socket creation (the control), while ListenSerialInterfacePacket returned err=nil and an IPv6 packet
+	// socket was created.
+	//
+	// So the gate is load-bearing twice over: the fast-fail for a stream, and the ONLY thing that can move
+	// a packet listener to another family. It lives in the per-attempt dialer, on both branches, which is
+	// what makes it impossible for this loop to enter a family the machine cannot reach.
 	var errors []error
 	if parallelDialer, isParallel := dialer.(ParallelInterfaceDialer); isParallel {
 		for _, address := range destinationAddresses {

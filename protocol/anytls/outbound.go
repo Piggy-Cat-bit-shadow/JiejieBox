@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"os"
+	"strings"
 
 	"github.com/sagernet/sing-anytls"
 	"github.com/sagernet/sing-box/adapter"
@@ -137,12 +138,60 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination 
 	switch N.NetworkName(network) {
 	case N.NetworkTCP:
 		h.logger.InfoContext(ctx, "outbound connection to ", destination)
-		return h.client.DialContext(ctx, destination)
+		return h.dialThroughProxy(ctx, destination)
 	case N.NetworkUDP:
 		h.logger.InfoContext(ctx, "outbound UoT packet connection to ", destination)
-		return h.uotClient.DialContext(ctx, network, destination)
+		conn, err := h.uotClient.DialContext(ctx, network, destination)
+		if err != nil {
+			return nil, h.nameTheProxy(err)
+		}
+		return conn, nil
 	}
 	return nil, os.ErrInvalid
+}
+
+// dialThroughProxy dials the destination through this outbound's AnyTLS session.
+func (h *Outbound) dialThroughProxy(ctx context.Context, destination M.Socksaddr) (net.Conn, error) {
+	conn, err := h.client.DialContext(ctx, destination)
+	if err != nil {
+		return nil, h.nameTheProxy(err)
+	}
+	return conn, nil
+}
+
+// nameTheProxy attaches which proxy answered to a failure this outbound did not originate.
+//
+// # Why the error needs it
+//
+// The AnyTLS stream reports a target the PROXY's resolver could not resolve as
+// `anytls: remote: lookup <name>: NXDOMAIN` - the exact text of a reproducible failure in the production
+// log, where `analytics.immersivetranslate.com` resolved fine through Cloudflare and Google from this
+// machine but not through the proxy. Nothing in that message says WHICH proxy, so an operator with several
+// AI/overseas outbounds cannot tell whose remote resolver to look at; the tag and the server add the two
+// facts that identify it.
+//
+// # Why this is not a fix for the NXDOMAIN
+//
+// It cannot be: `remote:` means the lookup happened on the proxy's side, against the proxy's own resolver
+// configuration, and the destination is demonstrably valid elsewhere. Wrapping the failure at the outbound
+// boundary is the most this repository can do - turn "some proxy could not resolve this" into "the AI
+// outbound at 95.169.1.53 could not resolve this". Anything more would mean inventing a second resolution
+// path this side of the wire, which is precisely the `destination_dns_ownership` promise the AnyTLS
+// outbound makes instead.
+//
+// The message is prefixed rather than suffixed so it survives the connection logger, which reports the
+// leading segment of the cause chain.
+func (h *Outbound) nameTheProxy(err error) error {
+	if err == nil {
+		return nil
+	}
+	// Idempotent: the message is one line in a connection report, and a retry chain can pass the same
+	// failure through here more than once. A second identical prefix says nothing the first did not.
+	prefix := "proxy " + h.Tag() + " (" + h.server.String() + ")"
+	if strings.Contains(err.Error(), prefix) {
+		return err
+	}
+	return E.Cause(err, prefix)
 }
 
 func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
