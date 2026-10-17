@@ -106,10 +106,22 @@ func (g *dialSetupGate) begin(caller context.Context) (context.Context, func()) 
 	setup, cancelSetup := context.WithCancel(caller)
 	stopGenerationWatch := context.AfterFunc(generation, cancelSetup)
 	return setup, func() {
-		// Order is the ownership transfer, and it is not interchangeable: the generation watch is
-		// stopped BEFORE the setup is released, so a transition that arrives after establishment
-		// finds nothing to cancel. Doing it the other way round would let a transition that raced
-		// the dial's return cancel a connection that already exists.
+		// The generation watch is stopped BEFORE the setup is released, and the reason has to be
+		// stated correctly because the earlier version of this comment overstated it.
+		//
+		// It claimed the ordering prevents a transition from "cancelling a connection that already
+		// exists". It does not, and neither ordering could: the connection a dial returns is not
+		// derived from `setup`, and `cancelSetup` runs on the next line regardless, so a later
+		// transition firing the watch would cancel an already-cancelled setup context. MEASURED by
+		// mutation: replacing this line with `_ = stopGenerationWatch` leaves every test green,
+		// including the ones that assert an established flow survives a transition.
+		//
+		// What the stop actually buys is bounded bookkeeping. An unstopped watch stays registered on
+		// the GENERATION's context until that generation ends, so a busy tunnel accumulates one
+		// closure per completed dial per generation - a leak that grows with dials and is released
+		// only by a transition. Stopping it here keeps the registrations proportional to the dials
+		// in flight, which is what "ownership transfers at establishment" has to mean for a resource
+		// that is not the connection.
 		stopGenerationWatch()
 		cancelSetup()
 	}
