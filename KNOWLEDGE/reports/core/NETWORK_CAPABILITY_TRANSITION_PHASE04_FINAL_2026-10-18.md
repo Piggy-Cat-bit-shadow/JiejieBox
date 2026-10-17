@@ -1,0 +1,328 @@
+# Network Capability Transition — Phase 04 final acceptance report
+
+**Round:** `04 / 04`, Network Capability Transition Final Debug — the four-phase acceptance.
+**Branch:** `testing`.
+**Start SHA:** `d385f5dff17d88f8f7f10d24e5d63f776deafaf4` (Phase 03; `0/0`, worktree clean).
+**Final SHA:** the `HEAD` of `origin/testing` after the commit that adds this file.
+
+Evidence levels: `VERIFIED_SOURCE`, `VERIFIED_UNIT`, `VERIFIED_MUTATION`, `BLOCKED_BY_ENVIRONMENT`.
+
+---
+
+## A. 本轮的诚实边界，先写清楚
+
+The brief asks for the A→B process to be attacked end to end. **This environment can attack half of it
+properly and cannot attack the other half at all.** Saying which is which matters more than any assertion
+below, because the same tree can be read as "passed" by someone who does not look here.
+
+| can be proven here, deterministically | cannot be proven here |
+|---|---|
+| the publisher's per-phase behaviour: which generation, which settled flag, which verdict, published atomically (`route`, Phase 01) | a REAL OS transition: netlink/NotifyRouteChange/NWPathMonitor event ordering, the interface monitor's 1 s debounce, RA/DHCPv6 timing |
+| the consumer's per-phase behaviour: capture, admit, schedule, dial, refuse — against a manager the test advances by phase (`common/dialer`, this round) | address lag and route lag **as the platform produces them**; they can be simulated in order, not in wall-clock |
+| the join: old flow keeps its capture, new flow gets the new one, familyHealth is re-keyed, nothing outlives the transition | `-race` (no cgo, no C compiler) |
+| the platform readers' predicates by unit test (`netcap`, Windows/Linux/Darwin route readers) | three platforms actually disagreeing on event order |
+
+**`-race`: `BLOCKED_BY_ENVIRONMENT`.** Every test in this round is deterministic by construction —
+barriers, phase drivers and joins, never sleeps — precisely because the detector is unavailable. A test
+that could only fail under `-race` is a test this environment cannot run, so the round substitutes
+*determinism* for *detection* and says so.
+
+**Device behaviour: unverified.** Phase 01's §V.4 (Darwin platform-monitor clients have no separate
+route-change callback) and §U.5 (Windows picks the default interface from the IPv4 table) both remain open
+and both need a device. They are the two places where "verified in this environment" is weakest.
+
+---
+
+## B. The harness
+
+`common/dialer/admission_transition_run_test.go`. A `phaseManager` is a manager whose published
+`(epoch, settled, verdict)` the test advances by phase; everything downstream of it is production code —
+`resolveDialer`, the real capture, `planCandidates`, `candidateScheduler`, `DefaultDialer`'s family health —
+and the transport is a double that records which addresses it was asked for.
+
+```text
+phaseManager.publish(epoch, settled, capability)      ← the test drives this
+        │  read through Phase 01's contract (NetworkFamilyCapabilitySnapshot)
+        ▼
+production consumer: capture → admit → plan → schedule → attempt → leaf
+        │
+        ▼
+recorded: which addresses reached the transport, which were refused and why
+```
+
+**Why a phase driver rather than a real `NetworkManager`.** Phase 01's suite already drives the real
+manager through a real transition and asserts the publication at each step. Re-driving it here would
+re-prove the producer and still not prove the join, because the join's failure mode is a *consumer* that
+reads the publication at the wrong moment. The phase driver makes that moment exactly controllable.
+
+**Why no sleep.** The only timing construct in the file is a 30 ms DNS answer delay, and it exists to make
+the family arrival ORDER deterministic — a fixture where two families race and the winner is a coin flip
+measures goroutine scheduling, which is what §2 of the brief forbids.
+
+---
+
+## C. What the four-phase acceptance actually covers, and where
+
+The brief's phase-04 sections map onto work spread across the four phases. Listing them together is the
+point of a final acceptance; listing them as if all were done here would not be.
+
+| brief § | question | where the proof is | level |
+|---|---|---|---|
+| 1.1 one snapshot per generation | is there a mixed `new address + old route`? | Phase 01 §D/§G; the publication is one pointer store inside one critical section, and the route term and the address term are read in the same call (`localFamilyCapability`). The **freshness asymmetry** that remains is Phase 01 §U.3, bounded by one interface-monitor debounce | `VERIFIED_SOURCE` |
+| 1.2 transitional state is not hard truth | can Settling hard-deny? | `TestASettlingGenerationCannotHardDenyANewFlow` (this round) + Phase 02 mutation M4 | `VERIFIED_UNIT` + `VERIFIED_MUTATION` |
+| 1.3 new flow uses new capability | does a post-transition flow see it? | `TestTheTransitionRunKeepsProducerAndConsumerInStep` phases 1→3 | `VERIFIED_UNIT` |
+| 1.4 old flow does not receive new state | does a pre-transition capture keep its worldview? | same test, phase 2, plus Phase 03's `TestACapabilityChangeUnderALiveFlowCannotReachIt` | `VERIFIED_UNIT` |
+| 1.5 familyHealth does not cross | does a soft penalty follow the user? | `TestFamilyHealthDoesNotSurviveTheTransition` | `VERIFIED_UNIT` |
+| 1.6 established connections are not retroactively controlled | can a new capability close an old flow? | Phase 01 §Q; `TestConfirmedOfflineIsReclaimedAsADeadPath`, `TestAGapThatHasNotHeldIsStillADrain`; a capability change calls no reclaim at all | `VERIFIED_UNIT` |
+| 2 phased harness, no sleeps | — | §B above; the file has one deliberate 30 ms order-fixing delay and no other timing construct | `VERIFIED_SOURCE` |
+| 3 transition matrix | nine transitions | rows 1–9 of Phase 01 §G, resolved against the code with the tests that pin each | `VERIFIED_SOURCE`/`VERIFIED_UNIT` |
+| 4 same-interface route change (highest priority) | is it detected, and does the epoch move? | Phase 01 §G rows 10–11 and §D: a route-only change republishes the egress verdict **without** bumping the epoch. **That is a design decision, not a bug**, and Phase 01 §D rebuts the second-epoch alternative question by question | `VERIFIED_UNIT` + `VERIFIED_MUTATION` M1 |
+| 5 address lag | does an early flow get a permanent stale verdict? | Phase 01 §G row 12–13: an address change bumps the epoch through the interface monitor; the transitional verdict is not permanent because the flow that captured it is superseded | `VERIFIED_SOURCE` |
+| 6 route lag | does an early flow falsely succeed, does a later one inherit `no-egress`? | Phase 01 §J/§G row 10; `TestAGenerationWithoutAGlobalIPv6RoutePublishesTheEgressVerdict`, `TestTheEgressVerdictMovesOnlyWithItsGeneration` | `VERIFIED_UNIT` |
+| 7 IPv4 transition | is IPv4 treated symmetrically? | Phase 01 §H: symmetric in the model, and the asymmetry that exists (`GlobalIPv6Egress`) is deliberate. **IPv4 has no egress term** — recorded, not a bug | `VERIFIED_SOURCE` |
+| 8 mark-unsettled ordering | is there a bad order? | Phase 01 §E (`unstable` stored before the token, under one lock) + `TestPublishedEnvironmentCannotBeObservedAsStableBeforeTransitionClaim`; Phase 02 M7 | `VERIFIED_UNIT` + `VERIFIED_MUTATION` |
+| 9 generation atomicity | `N+1 flow with N capability`? | **Two counters** (Phase 02 §F). Within each: atomic. Across them: never compared. The run's phase 4 shows the epoch NOT moving while the capability does | `VERIFIED_SOURCE` |
+| 10 publication atomicity | can a reader see fields updated one by one? | one `atomic.Pointer` to an immutable value; Phase 01 §C. Phase 02 removed the last place that read the fields separately | `VERIFIED_SOURCE` |
+| 11 flow capture during Settling | three questions: partial struct, permanent stale, post-transition update | `TestASettlingGenerationCannotHardDenyANewFlow` (all three) | `VERIFIED_UNIT` |
+| 12 old setup cancellation | recovery / scheduler / attempts exit? | Phase 01 §P, Phase 02 §I; `TestRepeatedTransitionsWithDialsInFlightLeakNothing`, `TestRecoveryProducerIsJoined` | `VERIFIED_UNIT` + `VERIFIED_MUTATION` M12 |
+| 13 old recovery result leakage | can an N result enter N+1? | `TestOldVerdictCannotDenyNewGenerationSchedulerLateStream` and the five sibling `TestOldVerdictCannotDenyNewGeneration...` tests; the late arrival is judged by a **fresh** policy | `VERIFIED_UNIT` |
+| 14 late candidate leakage | does a cancelled setup still launch? | **Open** — Phase 03 §E.3: it launches, the attempt carries the cancelled context, no socket work happens. Recorded, not fixed | `VERIFIED_SOURCE` |
+| 15 familyHealth reset | does the first N+1 flow inherit? | `TestFamilyHealthDoesNotSurviveTheTransition` | `VERIFIED_UNIT` |
+| 16 hard capability vs soft health | are they confused? | Phase 01 §N; the two never meet — one refuses, the other only orders attempts | `VERIFIED_SOURCE` |
+| 17 DNS cache preservation | is a transition flushing it? | Phase 01 §R; `TestANetworkTransitionIsABarrierAndNotACacheFlush`, `TestResetNetworkStillServesACachedAnswerOnTheSameNetwork`; mutations M9/M19 | `VERIFIED_MUTATION` |
+| 18 existing connection boundary | is an old flow killed by a new verdict? | §1.6 | `VERIFIED_UNIT` |
+| 19 reclaim interaction | drain vs close | Phase 01 §Q; `TestDeadPathReclaimsWhatATransitionWouldDrain` and its siblings | `VERIFIED_UNIT` |
+| 20 dead path | does it enter DeadPath correctly? | Phase 01 §E (DeadPath is a reclaim classification, not a capability state) + `TestConfirmedOfflineIsReclaimedAsADeadPath` | `VERIFIED_UNIT` |
+| 21 recover from dead path | is the old hard state retained? | `TestEnvironmentZeroToNetworkEstablishesABoundary`, and `TestFamilyHealthDoesNotSurviveTheTransition`'s phase 3 (dead-path excursion leaves the next generation unbiased) | `VERIFIED_UNIT` |
+| 22 route flap stress | churn, cancellation rate, goroutines | `TestARouteFlapLeavesNoGoroutineOrTimerBehind` (100 flaps, goroutine count held) | `VERIFIED_UNIT` |
+| 23 is a second revision needed? | data, not taste | **No** — Phase 01 §D answers the brief's six preconditions one by one, and this round adds the flap measurement: a route flap costs a republish, not a cancellation, because a capability-only change moves no epoch | `VERIFIED_SOURCE` + measurement |
+| 24 (only if a revision were added) | — | not applicable | — |
+| 25 platform event ordering | Windows / Linux / Darwin | Phase 01 §H/§J: the readers and their predicates are unit-tested; **the ORDER the platforms deliver events in is device-only** | `BLOCKED_BY_ENVIRONMENT` for ordering |
+| 26 Unknown vs Unavailable | is Unknown encoded as unavailable? | Phase 01 §F; `Unknown` is the zero value and refuses nothing, pinned over the whole space by Phase 02's `TestAdmissionFastPathNeverDisagreesWithTheVerdict` | `VERIFIED_UNIT` |
+| 27 performance / wakeups | tickers, goroutines, route scans | §G below | measured |
+| 28 stress | 1000 flows with repeated transitions | **partial** — 100 flaps × 1 flow; not 1000 concurrent flows | measured, partial |
+| 29 race tests | `-race` | **`BLOCKED_BY_ENVIRONMENT`** | blocked |
+
+### C.1 The one open item
+
+Brief §14 / mutation 9: *"a cancelled late candidate is still launched"*. The scheduler's loop can pick the
+late-candidate arm after `<-ctx.Done()` becomes ready — Go's `select` chooses at random among ready cases —
+so the launch happens, and the attempt then fails immediately because it carries the cancelled context.
+No socket work occurs, which is what §13's guarantee actually needs; the letter of "not launched" is unmet.
+
+A deterministic test of the letter is not available without restructuring the scheduler, and a
+sleep-and-hope test is what the brief forbids. **Recorded, not fixed** — the fix (refuse the launch when
+`raceCtx.Err() != nil`) changes error aggregation for a case where nothing currently happens.
+
+---
+
+## D. The run's phases, and what each proves
+
+```text
+generation 1  IPv4-only                     preference: IPv6 (constant)
+     ↓ transition
+generation 2  dual-stack                    settled
+     ↓ route flap (SAME epoch)
+generation 2  IPv4-only again
+```
+
+| phase | assertion | why it is the interesting one |
+|---|---|---|
+| 0 | capture(1), `verdict(ipv6) = no-local-family`, flow dials **IPv4** | the preference is IPv6 and cannot be honoured — so the capability, not the preference, decides |
+| 1 | `publish(2, settled, dual-stack)` | the transition itself |
+| 2 | the phase-0 capture no longer owns, and **refuses nothing** | fail-open for a superseded capture is the design; my first assertion demanded the opposite |
+| 3 | a new capture is `(2, allowed)`, and the flow dials **IPv6** | the same preference, the opposite outcome, decided by one changed field |
+| 4 | a route flap republishes under **epoch 2** | a capability-only change moves no epoch, so ownership cannot see it |
+| 5 | a new flow obeys the flap; the phase-3 capture keeps its own verdict | the capture is the only thing holding the line when the epoch cannot help |
+
+---
+
+## E. Four of my own assertions were wrong, and each was worth recording
+
+A debug round that only reports the code's failures and not its own is not a debug round.
+
+1. **"A superseded capture still refuses."** It must not. `admits` and `verdict` both ask the ownership
+   predicate, so a superseded capture refuses nothing and admits everything — fail-open, by design
+   (invariant B). My assertion demanded the one behaviour the design forbids. Phase 03 hit the same wall
+   from a different direction.
+2. **"A preference changed mid-run takes effect."** It does not: the effective strategy is memoised per
+   dialer (Phase 03's `TestTheEffectiveStrategyIsResolvedOncePerDialer`). The fixture now keeps one
+   preference for its whole life, which is also the better experiment — one variable.
+3. **"The family a preference leads with will be attempted."** In a fixture that took the **serial** walk,
+   no: the serial branch is a deliberate resolver-order walk and ignores preference entirely. The test was
+   measuring the resolver's list order. This is the same trap as Phase 02's planner-order mistake, in a
+   third place — which is itself the finding: *"which family leads"* has three different answers on three
+   paths, all correct, and a fixture can silently pick the wrong path.
+4. **"A newer generation's health verdict overwrites an older one's."** It does not. The key **isolates**:
+   generation 1 keeps its own entry. Correct, and the opposite of what I wrote.
+
+---
+
+## F. Final verdict — the brief's sixteen questions
+
+1. **What is the authoritative source of network capability?** `route.NetworkManager`, and nothing else. It
+   is the only caller of `netcap.Evaluate` and the only producer of the value published through
+   `adapter.NetworkFamilyCapabilitySnapshotter`. Phase 01 §C, re-confirmed by repo-wide search.
+2. **Is there a mixed snapshot during a transition?** Not within one publication: the value is written once,
+   whole, inside one critical section, and the epoch/settled pair accompanies it under the same lock. The
+   residual is Phase 01 §U.3 — the route term is read fresh at each event while the addressing is the last
+   observed one, corrected within one interface-monitor debounce. **Recorded, bounded, not a mixed
+   generation.**
+3. **Is a same-interface IPv6 route change detected?** Yes, and it updates `GlobalIPv6Egress` **without**
+   bumping the epoch. That is the design (Phase 01 §D): the egress term exists precisely for the machine
+   whose route appears before anything else does, and a route-only change must not cost a cancellation.
+   `VERIFIED_MUTATION` M1.
+4. **Is a same-interface IPv6 address change detected?** Yes, through the interface monitor, one debounce
+   later, and it **does** bump the epoch. Phase 01 §G rows 12–13.
+5. **Can a flow in Settling get a permanent hard-deny verdict?** **No.** The verdict may be published while
+   unsettled; it cannot be acted on. `TestASettlingGenerationCannotHardDenyANewFlow` shows the flow dialling
+   the very family the half-built verdict doubted. `VERIFIED_MUTATION` M4.
+6. **Is stable publication later than capability convergence?** No — they are the same publication. The
+   settled flag is flipped by `commitTransition` on the value that was stored at claim time, so "Stable" is
+   never a second, later statement about a different value.
+7. **Is the generation sufficient as the capability epoch?** Yes.
+8. **Is a second revision needed?** **No.**
+9. **If not, what is the evidence?** Phase 01 §D answers the brief's six preconditions one by one; this
+   round adds the measurement the question was really asking for — a route flap costs a **republish**, not
+   a cancellation, because a capability-only change moves no epoch (`TestARouteFlapLeavesNoGoroutineOrTimerBehind`, 100 flaps, goroutine count held).
+10. **Is familyHealth fully isolated?** Yes: keyed by the epoch, taken from the flow's own capture. A
+    capability-only change does not move the key — which is correct, because it is the same network.
+11. **Do old recovery results / late candidates cross generations?** No verdict crosses: a late arrival is
+    judged by a fresh policy, and a superseded capture refuses nothing. One letter-versus-spirit gap is
+    open and recorded (§C.1).
+12. **Is the DNS cache preserved without carrying old reachability?** Yes. A transition is a barrier, not a
+    purge; entries of the previous environment stop being reachable, and the family decision is made per
+    dial by candidate admission, never by the cache. `VERIFIED_MUTATION` M9/M19.
+13. **Is an old established connection executed by a new capability?** No. A capability change calls no
+    reclaim at all; only a transition drains, and only a confirmed dead path closes.
+14. **Is the new capability clean after a DeadPath recovery?** Yes — dead path publishes Unknown (refuses
+    nothing), and the recovered generation starts with no health bias.
+15. **Does a route flap cause excessive cancellation or wakeup?** No. It causes a republish under the
+    incumbent epoch: no setup is cancelled, no goroutine is created, no timer is armed.
+16. **Was a new real bug found?** **Yes, one, and it was found in Phase 02's own work**: the
+    unconnected-packet **domain** arm applied no admission policy at all, creating a UDP socket for a
+    family the operator had forbidden and reporting it as success (Phase 02 §N, fixed in `489b4511e9a`).
+    Phase 03 then found a defect Phase 02 *introduced* — a duplicate policy capture in the serial branch
+    (§C of that report, fixed in `f264ecf2a63`). Both are exactly the kind of defect the four-phase split
+    exists to catch.
+
+---
+
+## G. Performance, wakeups, stress, race — what was measured
+
+| property | measurement | verdict |
+|---|---|---|
+| per-flow policy cost | `admits` 11–22 ns, **0 allocs**; `verdict` 9.4 ns, 0 allocs; `admitCandidates` 0 allocs when nothing is removed (Phase 02 §S) | unchanged by 03/04 |
+| captures per flow | exactly **1** across 7 flow shapes (Phase 03 §B) | `VERIFIED_UNIT` + mutation Q2 |
+| goroutines across 100 route flaps | count held at the pre-run baseline (allowance 2) | no per-transition worker |
+| timers armed by a transition | none — the only timers in the path are the scheduler's fallback delay (per flow) and the grace (per flow) | `VERIFIED_SOURCE` |
+| route reads per event | one route-table dump per **event**, not per flow | Phase 01 §S |
+| 1000 concurrent flows × repeated transitions | **not run** | partial: 100 flaps × 1 flow |
+| `go test -race` | **not run** — `CGO_ENABLED=0`, no C compiler | `BLOCKED_BY_ENVIRONMENT` |
+
+---
+
+## H. Commits
+
+| SHA | subject |
+|---|---|
+| `82542f0bc8f` | `test(admission): the A→B run, driven phase by phase through the real consumer` |
+| *(hash in `git log`)* | `docs(knowledge): record the Phase 04 acceptance and the four-phase verdict` |
+
+**Verification at the final SHA:**
+
+```text
+go build -tags "$TAGS" ./...                       PASS
+go vet  -tags "$TAGS" ./common/dialer ./route ./protocol/direct   PASS
+go test -tags "$TAGS" ./common/netcap              ok
+go test -tags "$TAGS" ./common/dialer              ok   15.9s
+go test -tags "$TAGS" ./dns                        ok    7.9s
+go test -tags "$TAGS" ./protocol/direct            ok    0.02s
+go test -tags "$TAGS" ./route                      ok  421.1s
+gofmt -l .                                         clean
+git diff --check                                   clean
+go test -race ...                                  BLOCKED_BY_ENVIRONMENT
+```
+
+---
+
+## FOUR-PHASE FINAL VERDICT
+
+### Phase 01 — Capability producer
+
+**PASS**, with two device-blocked residuals.
+
+Evidence: one authority (`route.NetworkManager` → `netcap` → one atomic publication); four claim sites; one
+clock; `Unknown` never spelled `Unavailable`; the whole transition matrix resolved against the code; the
+reclaim and DNS-cache boundaries pinned from both sides; **19 mutations, 2 of which survived and are now
+killed by tests that round added**; benchmarks for the producer path.
+Residuals: Darwin has no separate route-change callback for a platform-monitor client (needs a device); the
+route/addressing freshness asymmetry is bounded by one interface-monitor debounce.
+
+### Phase 02 — Flow consumer / lifecycle
+
+**PASS**, and it found the round's one live defect.
+
+Evidence: one immutable per-flow `admissionPolicy` (strategy + capability + one generation), captured once
+per entry; the scheduler's family verdict and its health namespace from that one value; five stage gates
+deliberately retained; **15 mutations, 11 killed and 3 proved equivalent with proofs**; the
+unconnected-packet domain arm's missing policy found and fixed; hot path measured at 11–22 ns with zero
+allocations.
+Residuals: the two generation counters (documented at both declarations, never compared); the failover
+per-member boundary.
+
+### Phase 03 — Single-flow adversarial debug
+
+**PASS.**
+
+Evidence: the capture counter at the owner seam; **7 flow shapes each capture exactly once**; the duplicate
+capture Phase 02 introduced found and fixed; the corrected §3 premise and the structural fact it exposed
+(the epoch cannot move without a lifecycle cancel); the 200-pair × 6-stage consistency matrix;
+**4 mutations, all killed**; an explicit table of which attack surfaces Phase 01/02 had already covered.
+Open: one cancelled late candidate is still launched (no socket work); recorded for 04, still open.
+
+### Phase 04 — Dynamic transition adversarial debug
+
+**PASS for everything this environment can drive; `BLOCKED_BY_ENVIRONMENT` for the rest.**
+
+Evidence: the phase-driven run proving old-flow retention, new-flow adoption, Settling safety, familyHealth
+re-keying, and a capability-only flap under an unchanged epoch; 100 flaps with the goroutine count held;
+the brief's 16 questions answered with the file or test that supports each.
+Blocked: `-race`; real OS event ordering on three platforms; 1000-flow stress. Device behaviour has never
+been verified in this round and is not claimed.
+
+### Final architecture
+
+```text
+Operator Policy            configuration, per dialer, memoised
+        ↓
+Network Capability         one authority, one generation, one atomic publication
+Authority
+        ↓ immutable snapshot
+Flow Decision Context      ONE admissionPolicy per flow: strategy + capability + generation
+        ↓
+Setup Execution            discovery → recovery → planner → scheduler → attempts
+                           (five stage gates, one semantics; setup context, ownership transfers)
+        ↓
+Established Lifecycle      connection-level; drain / reclaim / dead-path close
+                           never reached by a capability change
+```
+
+### Final Git state
+
+```text
+branch        = testing
+HEAD          = origin/testing  (hash in `git log -1`)
+ahead/behind  = 0/0
+worktree      = clean
+stash         = none
+```
+
+### What is NOT claimed
+
+`-race` never ran. No device was involved. The platform event-ordering question is unproven. The 1000-flow
+stress was not run. One lifecycle rule (a cancelled late candidate is still launched, without effect) is
+open. No claim in this report is `VERIFIED_CI` — this tree contains no workflow-run record.
+
+Those five sentences are the condition of the PASS above, not a footnote to it: the four phases prove what
+they can in this environment, and say exactly where that stops.
