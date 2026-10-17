@@ -36,7 +36,7 @@ import (
 // owners are found by walking it. No public API was added and nothing is re-exposed across packages.
 
 // outboundHop is the shape an outbound presents to a dialer built over it: a dialer that forwards to a
-// chain, and says so.
+// chain, and says so on the package-scoped hop protocol.
 type outboundHop struct {
 	chain N.Dialer
 }
@@ -49,7 +49,9 @@ func (h outboundHop) ListenPacket(ctx context.Context, destination M.Socksaddr) 
 	return h.chain.ListenPacket(ctx, destination)
 }
 
-func (h outboundHop) Upstream() any { return h.chain }
+// DialChain is the hop protocol `common/dialer` follows; it is deliberately not `Upstream()`, which
+// `common.Cast` walks repo-wide (see the interface doc in default_parallel_network.go).
+func (h outboundHop) DialChain() N.Dialer { return h.chain }
 
 // newChainOverHop builds the production chain - leaf over the manager, then the resolve wrapper - and
 // puts an outbound-shaped hop in front of it, which is what `NewResolveDialer` sees when it is handed an
@@ -118,3 +120,27 @@ func (h *cyclicHop) ListenPacket(ctx context.Context, destination M.Socksaddr) (
 }
 
 func (h *cyclicHop) Upstream() any { return h.self }
+
+// TestAChainOverAHopGetsASchedulerBoundToTheOwner closes the third asker.
+//
+// `newScheduler` used to assert `d.dialer` directly while the other two lookups walked. For a resolve dialer
+// built over an outbound - the network-quality probe - that meant a scheduler with NO health and, through
+// `newDualStackScheduler`, no `localFamily` either: on one object the verdict was available to the gate and
+// invisible to the plan, so the very candidates the machine cannot dial were raced and refused later.
+//
+// The assertion is that the scheduler carries the owner's own capture, which is the only way the plan and the
+// gate can agree.
+func TestAChainOverAHopGetsASchedulerBoundToTheOwner(t *testing.T) {
+	chain := newChainOverHop(t)
+	resolver, isResolver := chain.(*resolveDialer)
+	require.True(t, isResolver, "the chain the probes build is the serial resolve wrapper")
+
+	scheduler := resolver.newScheduler()
+	require.NotNil(t, scheduler.health,
+		"the shared family health must be found through the hop, or every probe re-learns a broken family")
+	require.False(t, scheduler.localFamily.restrictsNothing(),
+		"and the scheduler must carry the owner's verdict: a zero policy here races candidates the gate will "+
+			"refuse, which is the disagreement this test exists for")
+	require.NotZero(t, scheduler.networkGeneration,
+		"and the health bucket is the generation the same capture describes")
+}

@@ -110,6 +110,24 @@ func findFamilyHealthOwner(dialer N.Dialer) (familyHealthOwner, bool) {
 // where the fault would look like a hang rather than a bug.
 const chainWalkDepth = 8
 
+// dialChainReporter is implemented by an object that is a HOP rather than a wrapper: it holds a dialer
+// chain on someone else's behalf and says where that chain is.
+//
+// # Why this is not `Upstream() any`
+//
+// It was, for one commit, and that was a regression. `Upstream()` is walked by `common.Cast` REPO-WIDE, so
+// answering it on an outbound silently changed unrelated consumers: a WireGuard endpoint whose dialer is a
+// detour to a non-empty direct outbound began discovering a `UDPListener` through the hop, switched from
+// `ClientBind` to `StdNetBind`, and lost the outbound's `netns` in the process. Nothing in the outbound's
+// own tests could see it - the change was in a consumer three packages away, reached by a generic protocol.
+//
+// A capability protocol that any object may answer has to be narrow enough that answering it cannot change
+// code the implementer has never heard of. This name is known only to this package, which is the only code
+// that needs to look below a hop, so a hop that reports a chain changes exactly the two lookups that ask.
+type dialChainReporter interface {
+	DialChain() N.Dialer
+}
+
 // unwrapDialer takes one step down a dialer chain.
 //
 // # The two known wrappers, by their fields
@@ -117,13 +135,13 @@ const chainWalkDepth = 8
 // `resolveDialer` and `resolveParallelNetworkDialer` are this package's own, and unwrapping them by the
 // field they hold is exact: it cannot be satisfied by an object that merely looks similar.
 //
-// # Everything else, by the Upstream protocol - except a detour
+// # Everything else, by dialChainReporter - and nothing else
 //
 // An outbound in ANOTHER package is not a wrapper this package can name - `protocol/direct.Outbound`
-// holds the chain it dials through, and `common/dialer` cannot import it. The Upstream protocol is how
-// that package says where the dialer below it is, and it is the same protocol `common.Cast` walks. So a
-// chain that passes through an outbound reaches the real owner instead of stopping at the hop and
-// concluding that this machine has no opinion about address families.
+// holds the chain it dials through, and `common/dialer` cannot import it. `dialChainReporter` is how that
+// package says where the dialer below it is, and this package is the only code that knows the name, which
+// is the point: see the interface's own doc for the production regression that a repo-wide protocol
+// caused.
 //
 // A `*DetourDialer` is REFUSED rather than followed, for two independent reasons:
 //
@@ -147,9 +165,9 @@ func unwrapDialer(dialer N.Dialer) (N.Dialer, bool) {
 		return wrapper.dialer, true
 	case *DetourDialer:
 		return nil, false
-	case interface{ Upstream() any }:
-		next, isDialer := wrapper.Upstream().(N.Dialer)
-		if !isDialer || next == nil {
+	case dialChainReporter:
+		next := wrapper.DialChain()
+		if next == nil {
 			return nil, false
 		}
 		return next, true

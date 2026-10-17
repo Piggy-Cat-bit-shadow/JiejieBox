@@ -147,20 +147,27 @@ func TestProductionDialerChainKeepsTheRicherSurfaceAcrossEveryOption(t *testing.
 func TestProductionOutboundReportsTheChainBelowIt(t *testing.T) {
 	outbound := newProductionOutbound(t, option.DirectOutboundOptions{})
 
-	upstream, isUpstream := any(outbound).(interface{ Upstream() any })
-	require.True(t, isUpstream,
+	hop, isHop := any(outbound).(interface{ DialChain() N.Dialer })
+	require.True(t, isHop,
 		"the outbound must say where the capabilities below it live, or a dialer built over it answers "+
 			"'this machine has no opinion about address families'")
-	require.Same(t, any(outbound.surface.Attempt), upstream.Upstream(),
+	require.Same(t, any(outbound.surface.Attempt), hop.DialChain(),
 		"and it must report the chain it actually dials through, not a rebuilt one")
 
-	// The production statement of the same thing: the leaf is reachable from the outbound through the
-	// protocol `common.Cast` walks, which is how every capability below a hop is found.
-	leaf, reached := common.Cast[*dialer.DefaultDialer](outbound)
-	require.True(t, reached,
-		"a caller that walks from the outbound must reach the DefaultDialer underneath: that object is "+
-			"what answers the family verdict and owns the shared family health")
-	require.NotNil(t, leaf)
+	// And it must NOT advertise that chain on the REPO-WIDE protocol. `common.Cast` walks `Upstream()`
+	// everywhere, so answering it here changed a consumer three packages away: a WireGuard endpoint whose
+	// dialer is a detour to a non-empty direct outbound began discovering a `UDPListener` through the hop,
+	// switched from `ClientBind` to `StdNetBind`, and lost the outbound's `netns`. The narrow protocol is
+	// what keeps a capability report from changing code the reporter has never heard of.
+	_, isUpstream := any(outbound).(interface{ Upstream() any })
+	require.False(t, isUpstream,
+		"the outbound must not report its chain on `Upstream()`: that protocol is walked by common.Cast "+
+			"repo-wide, and answering it here silently changed a WireGuard endpoint's bind implementation")
+
+	// The consequence, asserted rather than described: `common.Cast` must stop at the outbound.
+	_, reached := common.Cast[*dialer.DefaultDialer](outbound)
+	require.False(t, reached,
+		"common.Cast must NOT reach the dialer below an outbound: that walk is what moved the WireGuard bind")
 }
 
 // TestProductionOutboundStillSatisfiesEveryPublicInterface is the rest of the contract, so a future edit

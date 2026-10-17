@@ -127,13 +127,14 @@ type failoverDialer struct {
 // The shim's own contract, pinned at compile time.
 //
 // A typed assertion on an EMBEDDED INTERFACE promotes only what that interface declares, so every capability
-// this shim needs beyond `adapter.Outbound` has to be either forwarded by hand or made reachable through
-// `Upstream`. The first has already been forgotten twice; the pin makes the second a build fact.
+// this shim needs beyond `adapter.Outbound` has to be forwarded by hand. That has already been forgotten
+// twice - `EarlyConnectionBufferGrowth`, then `ParallelNetworkDialer` - so the forwarded set is a build fact
+// rather than a claim in a comment. It deliberately does NOT pin a chain report: see the note at the end of
+// this file for why this shim must not advertise one.
 var (
-	_ N.Dialer                          = (*failoverDialer)(nil)
-	_ dialer.ParallelNetworkDialer      = (*failoverDialer)(nil)
-	_ adapter.ConnectionCopyTuner       = (*failoverDialer)(nil)
-	_ interface{ Upstream() any }       = (*failoverDialer)(nil)
+	_ N.Dialer                     = (*failoverDialer)(nil)
+	_ dialer.ParallelNetworkDialer = (*failoverDialer)(nil)
+	_ adapter.ConnectionCopyTuner  = (*failoverDialer)(nil)
 )
 
 // DialContext hands the whole attempt sequence to the group.
@@ -207,25 +208,35 @@ func (d *failoverDialer) ListenSerialNetworkPacket(ctx context.Context, destinat
 	return conn, destination.Addr, nil
 }
 
-// Upstream returns the leaf this shim was built around.
+// This shim deliberately reports NO dial chain.
 //
-// # Why a forwarding hop is not enough
+// # Why not, when a hop that reports one is otherwise the right answer
 //
-// This type embeds `adapter.Outbound`, and a typed assertion on an embedded INTERFACE promotes only the
-// methods that interface declares. Two capabilities have already had to be forwarded by hand because of
-// that (`EarlyConnectionBufferGrowth`, `DialParallelNetwork`), and an adversarial sweep found eight more
-// hidden: `LocalFamilyDialer`, `PacketDialerWithDestination`, `BypassableOutbound`, `ResolveDialer`,
+// Two reasons, and the first is fatal.
+//
+//	the described member is not the dialing member   the embedded outbound is the FIRST attempt's leaf, while
+//	                                                the group re-resolves a member for every attempt. Any walk
+//	                                                that crossed this hop would read a capability or a health
+//	                                                history belonging to a member that may not dial, and would
+//	                                                present it as the flow's own.
+//	a repo-wide protocol is the wrong shape          `Upstream()` is walked by `common.Cast` everywhere, so a
+//	                                                capability reported there changes consumers the implementer
+//	                                                has never heard of. That is measured rather than
+//	                                                hypothetical: see `dialer.Outbound.DialChain` for the
+//	                                                WireGuard bind that moved because an outbound answered
+//	                                                `Upstream()`.
+//
+// # What protects the next capability instead
+//
+// The compile-time pins above, and the fact that the route layer reads exactly the capabilities this shim
+// forwards (`DialSerialNetwork`, `ListenSerialNetworkPacket`, `ConnectionCopyTuner`, and `adapter.Outbound`
+// for the log lines). An adversarial sweep found eight more capabilities hidden behind the embedded
+// interface - `LocalFamilyDialer`, `PacketDialerWithDestination`, `BypassableOutbound`, `ResolveDialer`,
 // `FlowOutbound`, the two idle-connection interfaces, `OutboundWithPreferredRoutes` and
-// `OutboundWithMultiplex`.
+// `OutboundWithMultiplex` - and every one of them is unreachable TODAY: the packet path passes the leaf
+// rather than this shim, and nothing else reads them from a dialer argument. Forwarding eight methods with
+// no consumer would be churn that hides which of them is load-bearing.
 //
-// Every one of those losses is unreachable TODAY - the route layer passes the leaf for packet flows, and
-// the capabilities it reads from `this` are exactly the forwarded ones - which is why hand-forwarding more
-// of them would be churn without a consumer. What is not unreachable is the shape: the next capability
-// someone reads from a dialer argument would be hidden again, in the same way, for the third time.
-//
-// Reporting the leaf on the Upstream protocol fixes the class instead of the instances: `common.Cast` and
-// the dialer chain walks see through this hop, so a capability the leaf has is reachable from the shim
-// without a forwarding method, and no future interface needs to be remembered here.
-func (d *failoverDialer) Upstream() any {
-	return d.Outbound
-}
+// The rule for the next reader: when a consumer starts reading a new capability from a dialer argument,
+// forward it HERE and add a pin - do not re-introduce a chain report, because the member it would name is
+// the wrong one.

@@ -798,8 +798,19 @@ func (d *resolveDialer) raceCandidatesExcluding(ctx context.Context, network str
 // connections instead of being relearned every time. The fallback keeps the previously
 // health-less behaviour for dialers that have no state to share, rather than inventing a
 // per-connection one that would never accumulate history.
+//
+// # Why this WALKS rather than asserting once
+//
+// It used to assert `d.dialer` directly, which is one of the three places that ask this question - and the
+// only one that did not walk. So a resolve dialer built over an outbound (the network-quality and STUN
+// probes in `daemon/started_service.go`) got a scheduler with no health AND, through `newDualStackScheduler`,
+// no `localFamily` either - while `dialerLocalFamilyPolicy` said the machine's verdict was available. One
+// object, two answers, and the scheduler is the one that decides which candidates are even raced.
+//
+// `findFamilyHealthOwner` is the single implementation of "where is the owner in this chain", so all three
+// askers now agree by construction rather than by three copies staying in step.
 func (d *resolveDialer) newScheduler() *candidateScheduler {
-	if owner, isOwner := d.dialer.(familyHealthOwner); isOwner {
+	if owner, found := findFamilyHealthOwner(d.dialer); found {
 		return owner.newDualStackScheduler(d.fallbackDelay)
 	}
 	return &candidateScheduler{fallbackDelay: d.fallbackDelay}

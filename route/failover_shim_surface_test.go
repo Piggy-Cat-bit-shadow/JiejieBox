@@ -11,7 +11,6 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/dialer"
 	C "github.com/sagernet/sing-box/constant"
-	"github.com/sagernet/sing/common"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 
@@ -190,37 +189,41 @@ func (d *plainLeafDouble) DialContext(ctx context.Context, network string, desti
 
 var _ N.Dialer = (*plainLeafDouble)(nil)
 
-// TestTheShimReportsTheLeafOnTheUpstreamProtocol closes the whole CLASS rather than one capability.
+// TestTheShimForwardsItsCapabilitiesAndReportsNoChain pins what replaced the chain report.
 //
 // The shim embeds `adapter.Outbound`, and a typed assertion on an embedded interface promotes only the
 // methods that interface declares - which is how `EarlyConnectionBufferGrowth` and then
-// `ParallelNetworkDialer` were each lost in turn, one hand-forwarded method at a time. An adversarial
-// sweep found eight more capabilities hidden behind it, all currently unreachable, which means the next
-// reader would meet the same shape for the third time.
+// `ParallelNetworkDialer` were each lost in turn. An adversarial sweep found eight more capabilities hidden
+// behind it, all currently unreachable.
 //
-// Reporting the leaf through `Upstream` makes every capability the leaf has reachable from the shim
-// without a forwarding method. `common.Cast` is the consumer that already relies on this protocol
-// everywhere else, so a capability discovered that way cannot be hidden again.
-func TestTheShimReportsTheLeafOnTheUpstreamProtocol(t *testing.T) {
+// The tempting fix was to report the leaf on `Upstream()`, and it was WRONG twice over: the embedded member
+// is the FIRST attempt's leaf while the group re-resolves one per attempt, and `Upstream()` is walked by
+// `common.Cast` repo-wide - answering it there moved a WireGuard endpoint's bind choice through a detour,
+// three packages away. So the shim forwards by hand and reports no chain, and this test pins both halves:
+// the forwarded set is present, and no chain is advertised.
+func TestTheShimForwardsItsCapabilitiesAndReportsNoChain(t *testing.T) {
 	leaf := &parallelLeafDouble{}
 	group := &failoverGroupDouble{leaf: leaf}
 
 	wrapped := routeDialer(leaf, group, &adapter.InboundContext{})
 
-	upstream, isUpstream := any(wrapped).(interface{ Upstream() any })
-	require.True(t, isUpstream,
-		"without this, every capability the leaf has and the embedded interface does not declare is "+
-			"invisible from a dialer argument - which is the shape that has now cost two rounds")
+	// The forwarded set, as the route layer reads it.
+	_, isDialer := any(wrapped).(N.Dialer)
+	require.True(t, isDialer, "the connection manager dials it")
+	_, isParallel := any(wrapped).(dialer.ParallelNetworkDialer)
+	require.True(t, isParallel, "DialSerialNetwork dispatches on exactly this")
+	_, isTuner := any(wrapped).(adapter.ConnectionCopyTuner)
+	require.True(t, isTuner, "the copy loop asks, and the leaf's opt-in must survive the shim")
 
-	require.Same(t, any(leaf), upstream.Upstream(),
-		"and it must report the leaf the chain resolved, not the group and not a rebuilt object")
-
-	// The production statement: a cast from the shim reaches the leaf's own type, which is how the
-	// dialer family discovers everything below a hop.
-	reached, found := common.Cast[*parallelLeafDouble](wrapped)
-	require.True(t, found,
-		"common.Cast must see through the shim, because that is the protocol every other hop uses")
-	require.Same(t, leaf, reached)
+	// No chain report on either protocol. `DialChain` is the package-scoped hop protocol and `Upstream` is
+	// the repo-wide one `common.Cast` walks; answering either would name a member that may not dial.
+	_, reportsDialChain := any(wrapped).(interface{ DialChain() N.Dialer })
+	require.False(t, reportsDialChain,
+		"the shim must not report a dial chain: the member it would name is the first attempt's, while the "+
+			"group resolves one per attempt")
+	_, reportsUpstream := any(wrapped).(interface{ Upstream() any })
+	require.False(t, reportsUpstream,
+		"and it must not answer the repo-wide Upstream protocol, which common.Cast walks everywhere")
 }
 
 // TestTheShimStillOwnsTheAttempt is the control that keeps the walk from becoming a bypass.

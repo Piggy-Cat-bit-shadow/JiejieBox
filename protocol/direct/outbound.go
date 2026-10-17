@@ -34,16 +34,18 @@ var (
 	_ adapter.FlowOutbound            = (*Outbound)(nil)
 	_ adapter.BypassableOutbound      = (*Outbound)(nil)
 	_ adapter.InterfaceUpdateListener = (*Outbound)(nil)
-	// upstreamReporter is the hop protocol: `common.Cast` and the dialer chain walks follow it to reach the
-	// capabilities that live below an outbound (the family verdict, the shared family health). Pinned
-	// because losing it is silent - the chain would simply answer "this machine has no opinion".
-	_ upstreamReporter = (*Outbound)(nil)
+	// dialChainReporter is the HOP protocol of package common/dialer: the dialer walks there follow it to
+	// reach the capabilities that live below an outbound (the family verdict, the shared family health).
+	// Pinned because losing it is silent - the chain would simply answer "this machine has no opinion".
+	//
+	// It is deliberately NOT `Upstream() any`, which `common.Cast` walks REPO-WIDE: answering that one
+	// changed a WireGuard endpoint's bind choice through a detour, three packages away. See the interface
+	// doc in common/dialer/default_parallel_network.go.
+	_ dialChainReporter = (*Outbound)(nil)
 )
 
-// upstreamReporter is the structural form of `Upstream() any`, kept local so the pin reads as a contract
-// rather than as a mention of an anonymous interface.
-type upstreamReporter interface {
-	Upstream() any
+type dialChainReporter interface {
+	DialChain() N.Dialer
 }
 
 type Outbound struct {
@@ -142,7 +144,7 @@ func (h *Outbound) DialsDestinationLocally() bool {
 	return true
 }
 
-// Upstream returns the dialer chain this outbound dials through.
+// DialChain returns the dialer chain this outbound dials through.
 //
 // # Why an outbound reports a dialer
 //
@@ -152,13 +154,19 @@ func (h *Outbound) DialsDestinationLocally() bool {
 // through UNEXPORTED interfaces (`localFamilyOwner`, `familyHealthOwner`) that a type in another package
 // cannot implement: Go's unexported-method rule forbids it.
 //
-// So it says where they are, on the protocol the resolve wrappers already implement and `common.Cast`
-// already walks. A dialer built OVER this outbound - `daemon/started_service.go` builds exactly that for
-// the network-quality and STUN probes - then reaches the real owner instead of stopping at the hop.
-// Before this, that chain answered "this machine has no opinion about address families", which reads as
-// "it can dial anything": the shared family health was lost and the recovery candidate filtering became a
-// no-op, silently.
-func (h *Outbound) Upstream() any {
+// So it says where they are. A dialer built OVER this outbound - `daemon/started_service.go` builds exactly
+// that for the network-quality and STUN probes - then reaches the real owner instead of stopping at the hop
+// and answering "this machine has no opinion about address families", which reads as "it can dial anything".
+//
+// # Why the method is not `Upstream()`
+//
+// It was, for one commit, and that was a regression worth recording. `Upstream()` is walked by
+// `common.Cast` repo-wide, so an outbound answering it silently changed a consumer three packages away: a
+// WireGuard endpoint whose dialer is a detour to a non-empty direct outbound began discovering the leaf's
+// `UDPListener` through the hop, switched from `ClientBind` to `StdNetBind`, and lost the outbound's
+// `netns`. `DialChain()` is known only to `common/dialer`, which is the only code that needs to look below
+// a hop, so reporting it changes exactly the two lookups that ask for it.
+func (h *Outbound) DialChain() N.Dialer {
 	return h.surface.Attempt
 }
 

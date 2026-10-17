@@ -65,9 +65,9 @@ func (o *peerOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr
 	return o.chain.ListenPacket(ctx, destination)
 }
 
-// Upstream is what a DIRECT outbound reports (protocol/direct.Outbound). It is on the peer so the walk has
+// DialChain is what a DIRECT outbound reports (protocol/direct.Outbound). It is on the peer so the walk has
 // somewhere to go if it were allowed to cross the detour - which is what makes the assertion meaningful.
-func (o *peerOutbound) Upstream() any { return o.chain }
+func (o *peerOutbound) DialChain() N.Dialer { return o.chain }
 
 func TestTheCapabilityWalkDoesNotCrossADetour(t *testing.T) {
 	// The peer's own dial path, over a machine that cannot dial IPv6 at all. If the walk crossed the detour,

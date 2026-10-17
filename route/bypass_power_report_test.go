@@ -1,12 +1,16 @@
 package route
 
 import (
+	"context"
 	"testing"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/service/powerreport"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
+	"github.com/sagernet/sing/service"
 
 	"github.com/stretchr/testify/require"
 )
@@ -70,4 +74,37 @@ func TestThePowerReportRefusalKeepsTheOrderOfReasons(t *testing.T) {
 	sniffed.Domain = "szminorshort.weixin.qq.com"
 	require.Equal(t, BypassRefusedSniffedDomain, router.canFastBypass(&sniffed, destination, chain, outbound, false),
 		"a flow refused for a structural reason must keep that reason")
+}
+
+// TestTheRouterTakesThePowerReportFromTheServiceContext is the WIRING, which the tests above cannot see.
+//
+// They set `router.powerReport` directly, so deleting the line in `NewRouter` that resolves it from the
+// service registry would leave every one of them green while the guard did nothing in production. That is the
+// shape this campaign exists for - a repair that is correct and unreachable - so the wiring is asserted on the
+// object the constructor produces.
+func TestTheRouterTakesThePowerReportFromTheServiceContext(t *testing.T) {
+	ctx := service.ContextWithDefaultRegistry(context.Background())
+	manager := powerreport.NewManager()
+	service.MustRegister[*powerreport.Manager](ctx, manager)
+
+	router := NewRouter(ctx, log.NewNOPFactory(), option.RouteOptions{}, option.DNSOptions{})
+	require.Same(t, manager, router.powerReport,
+		"the router must read the power report service from its context: the guard is worthless if the field "+
+			"is only ever set by a test")
+
+	// And the end-to-end consequence on that router: a registered manager with no recorder permits, an active
+	// recorder refuses.
+	destination := M.ParseSocksaddr("93.184.216.34:443")
+	outbound := newProductionDirectOutbound()
+	router.outbound = &stubOutboundManager{def: outbound}
+	chain := []adapter.Outbound{outbound}
+	metadata := fastBypassMetadata(N.NetworkTCP, destination)
+
+	require.True(t, router.canFastBypass(&metadata, destination, chain, outbound, false).BypassAllowed(),
+		"a registered manager with no recorder counts nothing")
+	require.NoError(t, manager.Start(powerreport.Options{BasePath: t.TempDir()}))
+	defer manager.Close()
+	require.Equal(t, BypassRefusedPowerReport,
+		router.canFastBypass(&metadata, destination, chain, outbound, false),
+		"and an active recorder on the REAL wiring refuses")
 }
