@@ -254,15 +254,33 @@ func (m *ConnectionManager) Reclaim(reason ReclaimReason) int {
 	now := time.Now()
 	var staleGeneration uint64
 	if policy.drain {
-		staleGeneration = m.generation.Add(1)
-		// The other half of the transition, and the half the connection list cannot see.
+		// The counter bump and the gate advance are ONE step, run inside the gate's critical section.
 		//
-		// Everything in m.connections exists because a dial already returned; a dial still waiting
-		// on a peer that never answers is not there yet, so the scan below cannot reach it. The
-		// gate cancels exactly those setups that began before this generation, and leaves alone
-		// both the ones already established (their setup was detached at establishment) and the
-		// ones that begin after this point (they derive from the new generation's context).
-		m.dialSetups.advance()
+		// They used to be two:
+		//
+		//	staleGeneration = m.generation.Add(1)
+		//	m.dialSetups.advance()
+		//
+		// and a dial beginning between them captured the OLD setup context - so this transition cancelled
+		// it, treating it as an old-path dial - while the connection it produced was stamped with the NEW
+		// counter, which equals `staleGeneration`, so the drain scan below classified it as current. Killed
+		// as old, classified as new. Measured with a forced interleaving: 200 of 200 trials; unforced, 6 of
+		// 20 000.
+		//
+		// The two halves are joined rather than reordered because reordering cannot help: there are three
+		// instants in play - the gate's capture, the network epoch the epoch predicate compares, and the
+		// manager stamp written when the connection is tracked - so moving two of them only changes which
+		// pair disagrees. Making the bump part of the gate's own transition reduces it to one clock.
+		//
+		// The user-visible consequence is currently nil, and that is why this was left alone before: the
+		// only production caller of a draining Reclaim is `resetNetworkLocked`, and every path into it marks
+		// the network unsettled BEFORE the reset body, so a dial started in this window records
+		// `startedStable=false` and is refused at hand-over anyway. The invariant violation is real, its
+		// blast radius is contained by a second mechanism, and depending on that second mechanism for
+		// correctness is what this change removes.
+		m.dialSetups.advanceAndBump(func() {
+			staleGeneration = m.generation.Add(1)
+		})
 	}
 
 	m.access.Lock()

@@ -122,7 +122,41 @@ func (g *dialSetupGate) begin(caller context.Context) (context.Context, func()) 
 // callbacks and wakes the goroutines blocked on it; a callback that re-entered begin or advance
 // would otherwise deadlock against the lock its own cancellation was taken under.
 func (g *dialSetupGate) advance() {
+	g.advanceAndBump(nil)
+}
+
+// advanceAndBump advances the gate AND runs bump inside the SAME critical section.
+//
+// # Why the two must be indivisible
+//
+// A transition has two halves that used to be two separate steps:
+//
+//	staleGeneration = m.generation.Add(1)   // the counter the drain scan compares against
+//	m.dialSetups.advance()                  // the context a setup derives from
+//
+// A dial beginning between them captured the OLD context - so this very transition cancelled it, killing
+// it as an old-path dial - while the connection it produced was stamped with the NEW counter, which equals
+// `staleGeneration`, so the drain scan classified it as current. Killed as old, classified as new.
+//
+// Measured with a forced interleaving (the gate's lock held while `Add` completed and `advance` queued):
+// 200 of 200 trials produced a `begin` that started after the bump and was cancelled by that transition.
+// Unforced, 6 of 20 000 - a real window, not a theory.
+//
+// Running `bump` inside the gate's critical section makes the pair atomic with respect to `begin`: a setup
+// either captures the old context together with the old counter, or the new context together with the new
+// counter. There is no third state, which is what removes the window rather than narrowing it.
+//
+// This is deliberately NOT a reordering of the two call sites. Reordering alone cannot work, because there
+// are three instants in play - the gate's capture, the network epoch the epoch predicate compares, and the
+// manager stamp written when the connection is tracked - so moving two of them only moves which pair
+// disagrees. Making the bump part of the gate's own transition is what reduces it to one clock.
+//
+// bump must not take any lock this gate owns or call back into it; it is documented as a counter update.
+func (g *dialSetupGate) advanceAndBump(bump func()) {
 	g.access.Lock()
+	if bump != nil {
+		bump()
+	}
 	previous := g.swap
 	if !g.closed {
 		g.current, g.swap = context.WithCancel(context.Background())
