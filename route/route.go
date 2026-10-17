@@ -519,9 +519,18 @@ func (r *Router) PreMatch(metadata adapter.InboundContext, firstPacket []byte) a
 				continue
 			}
 			if len(action.PacketSniffers) == 0 && len(action.StreamSniffers) > 0 {
+				r.logger.DebugContext(ctx, "pre-match packet sniff skipped: the configured sniffers are stream-only")
 				continue
 			}
+			// A previous round already sniffed this packet with the same sniffer set and produced an error.
+			//
+			// This skips even for `ErrNeedMoreData`, which `actionSniff` treats as permission to RETRY. The
+			// difference is that this loop re-runs for every matching sniff rule AND has no more data to
+			// offer than the same `firstPacket`, so a retry would ask the sniffers the identical question.
+			// `actionSniff` reads further bytes between attempts, which is why the retry is progress there
+			// and would be a spin here.
 			if slices.Equal(metadata.SnifferNames, action.SnifferNames) && metadata.SniffError != nil {
+				r.logger.DebugContext(ctx, "pre-match packet sniff skipped: this packet was already sniffed with this set: ", metadata.SniffError)
 				continue
 			}
 			packetSniffers := action.PacketSniffers
@@ -1319,6 +1328,10 @@ func (r *Router) actionSniff(
 	}
 	if inputConn != nil {
 		if len(action.StreamSniffers) == 0 && len(action.PacketSniffers) > 0 {
+			// The configured sniffer set cannot apply to this flow's transport: a TCP stream with only
+			// packet sniffers. Silently returning made this state indistinguishable from "no sniff rule
+			// matched at all", which is the opposite conclusion - here the rule DID match and did nothing.
+			r.logger.DebugContext(ctx, "stream sniff skipped: the configured sniffers are packet-only")
 			return
 		} else if slices.Equal(metadata.SnifferNames, action.SnifferNames) && metadata.SniffError != nil && !errors.Is(metadata.SniffError, sniff.ErrNeedMoreData) {
 			r.logger.DebugContext(ctx, "packet sniff skipped due to previous error: ", metadata.SniffError)
@@ -1352,9 +1365,24 @@ func (r *Router) actionSniff(
 				r.logger.DebugContext(ctx, "sniffed protocol: ", metadata.Protocol, ", domain: ", metadata.Domain, ", client: ", metadata.Client)
 			} else if metadata.Domain != "" {
 				r.logger.DebugContext(ctx, "sniffed protocol: ", metadata.Protocol, ", domain: ", metadata.Domain)
+			} else if metadata.Client != "" {
+				// A protocol identity that carries a client string but no name - an SSH banner sets
+				// `Client` and never `Domain`. Without this branch the client string was dropped on the STREAM
+				// arm while the packet arm printed it, so the same sniff outcome was reported two ways
+				// depending on the transport. Measured: `SSH-2.0-OpenSSH_8.9` produces
+				// Protocol="ssh", Client="OpenSSH_8.9", Domain="" and the log said only `sniffed protocol: ssh`.
+				r.logger.DebugContext(ctx, "sniffed protocol: ", metadata.Protocol, ", client: ", metadata.Client)
 			} else {
 				r.logger.DebugContext(ctx, "sniffed protocol: ", metadata.Protocol)
 			}
+		} else if errors.Is(err, sniff.ErrNeedMoreData) {
+			// The sniffers asked for more bytes and the flow ended before they arrived. That is a DIFFERENT
+			// fact from "no sniffer claimed this flow", and collapsing the two made the log unable to answer
+			// the question it exists for: a payload that was too short is a normal protocol shape (a long
+			// preface), while an unrecognised payload means the sniffer set does not cover this traffic. The
+			// failure message used to fold both into one line, distinguishable only by reading "need more
+			// data" out of the aggregate.
+			r.logger.DebugContext(ctx, "sniff needed more data than the flow provided: ", err)
 		} else {
 			// The sniffers ran and none of them claimed this flow, or the read failed before one
 			// could. Either way the outcome is that this connection reaches the dial layer with no
@@ -1381,6 +1409,9 @@ func (r *Router) actionSniff(
 		}
 	} else if inputPacketConn != nil {
 		if len(action.PacketSniffers) == 0 && len(action.StreamSniffers) > 0 {
+			// The mirror of the stream case: a packet flow with only stream sniffers configured. Reported
+			// for the same reason - the rule matched, so a silent return reads as "nothing matched".
+			r.logger.DebugContext(ctx, "packet sniff skipped: the configured sniffers are stream-only")
 			return
 		} else if slices.Equal(metadata.SnifferNames, action.SnifferNames) && metadata.SniffError != nil && !errors.Is(metadata.SniffError, sniff.ErrNeedMoreData) {
 			r.logger.DebugContext(ctx, "packet sniff skipped due to previous error: ", metadata.SniffError)
