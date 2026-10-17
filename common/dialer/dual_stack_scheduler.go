@@ -749,8 +749,8 @@ func localFamilyRefusalError(refused localFamilyRefusal, policy localFamilyPolic
 // path. The KEY is what makes this safe, not a clearing step: this documented "the network
 // changing clears the state", which was measured to be literally false - nothing clears it. An entry
 // is removed only when its own generation is consulted again and has expired, so a verdict for a
-// generation that is never revisited persists for the process lifetime. Measured: 100 001 entries
-// after 100 000 distinct generations, with no cap and no eviction.
+// generation that is never revisited persists for the process lifetime. Measured: 100 001 entries after
+// 100 000 distinct keys, with no cap and no eviction.
 //
 // The key used to be the network ENVIRONMENT fingerprint rather than the generation, read from the
 // manager as a second call beside the family capture. The generation is the same namespace for less:

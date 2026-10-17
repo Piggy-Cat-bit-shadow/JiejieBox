@@ -48,8 +48,9 @@ type DefaultDialer struct {
 	// getter, a transition snapshot and a family-capability snapshot - which were resolved in two
 	// different places with two different precedence orders. Every fact a dial decides on now comes
 	// from one reading of one source: the generation a hand-over is validated against, the settled
-	// state, the address-family verdict, and the environment the scheduler namespaces what it learns
-	// by. See networkObserver for why the resolution is taken once, and what each shape degrades to.
+	// state, the address-family verdict, and the same generation again as the namespace the scheduler
+	// files what it learns about a family under. See networkObserver for why the resolution is taken
+	// once, and what each shape degrades to.
 	network networkObserver
 	// powerManager, outboundManager and dnsTransportManager are attribution sources for the power
 	// report; none of them is consulted for a decision.
