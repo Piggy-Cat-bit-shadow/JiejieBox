@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/netip"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -52,6 +53,8 @@ type matrixWorld struct {
 	leaf     *scriptedLeaf
 	manager  *phaseManager
 	router   *strategyCountingRouter
+	// answersOnce installs the router's answer before the first flow; see dialHostname's note.
+	answersOnce sync.Once
 }
 
 func newMatrixWorld(t *testing.T, strategy C.DomainStrategy, epoch uint64, capability adapter.NetworkFamilyCapability) *matrixWorld {
@@ -80,8 +83,10 @@ func (w *matrixWorld) reach(t *testing.T, ipv4, ipv6 netip.Addr) ([]netip.Addr, 
 	w.leaf.inner.tried = nil
 	w.leaf.inner.access.Unlock()
 
-	w.router.addressesA = []netip.Addr{ipv4}
-	w.router.addressesAAAA = []netip.Addr{ipv6}
+	w.answersOnce.Do(func() {
+		w.router.addressesA = []netip.Addr{ipv4}
+		w.router.addressesAAAA = []netip.Addr{ipv6}
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()

@@ -144,7 +144,10 @@ func TestACancelledRaceJoinsItsAttempts(t *testing.T) {
 	}()
 
 	// Both attempts must be in flight before the cancel, or the test measures a race that never started.
-	require.Eventually(t, func() bool { return len(inner.tried) >= 1 }, 2*time.Second, time.Millisecond)
+	// The count comes from the fixture's LOCKED accessor: polling the field directly was one of the six
+	// data races `go test -race` found in this round, and it is exactly the shape a polling assertion makes
+	// easy to get wrong.
+	require.Eventually(t, func() bool { return inner.triedCount() >= 1 }, 2*time.Second, time.Millisecond)
 	time.Sleep(20 * time.Millisecond) // let the second candidate start; the assertion below is on the JOIN
 	cancel()
 

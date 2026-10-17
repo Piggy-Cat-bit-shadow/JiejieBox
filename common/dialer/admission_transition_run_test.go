@@ -95,6 +95,9 @@ type transitionRun struct {
 	owner    *DefaultDialer
 	manager  *phaseManager
 	router   *strategyCountingRouter
+	// answersOnce installs the router's answer before the first flow, so no phase writes it while a
+	// previous flow's resolver goroutine may still be reading it.
+	answersOnce sync.Once
 }
 
 func newTransitionRun(t *testing.T, manager *phaseManager) *transitionRun {
@@ -132,14 +135,24 @@ func newTransitionRun(t *testing.T, manager *phaseManager) *transitionRun {
 
 // dialHostname runs one flow whose name resolves to both families, and reports which addresses the
 // transport was asked for.
+//
+// # Why the router's answer is installed ONCE
+//
+// It used to be assigned on every call, which `go test -race` reported: the resolver's `runFamily`
+// goroutines read `addressesA`/`addressesAAAA` from the shared router, and a flow that had already returned
+// can still have one of those goroutines running, so re-assigning between phases was a write racing a read.
+// The values are the same on every call, so the fix is to install them once through `sync.Once` - no write
+// happens after the first flow starts, and the race is gone by construction rather than by timing.
 func (r *transitionRun) dialHostname(t *testing.T, ipv4, ipv6 netip.Addr) []netip.Addr {
 	t.Helper()
 	r.leaf.inner.access.Lock()
 	r.leaf.inner.tried = nil
 	r.leaf.inner.access.Unlock()
 
-	r.router.addressesA = []netip.Addr{ipv4}
-	r.router.addressesAAAA = []netip.Addr{ipv6}
+	r.answersOnce.Do(func() {
+		r.router.addressesA = []netip.Addr{ipv4}
+		r.router.addressesAAAA = []netip.Addr{ipv6}
+	})
 
 	conn, err := r.resolver.DialContext(context.Background(), "tcp", M.Socksaddr{Fqdn: "transition.example", Port: 443})
 	require.NoError(t, err, "the run offers a usable family at every phase")

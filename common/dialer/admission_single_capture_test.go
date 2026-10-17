@@ -70,7 +70,17 @@ func (m *scriptedObservationManager) readCount() int {
 }
 
 func (m *scriptedObservationManager) NetworkFamilyCapabilitySnapshot() (uint64, bool, adapter.NetworkFamilyCapability) {
-	return m.epoch, m.stable, m.next()
+	// The epoch and the settled flag are read UNDER THE LOCK every writer takes.
+	//
+	// The first version returned them straight from the fields and guarded only `next()`, and
+	// `go test -race` reported it: four of this round's six race reports came from this one line, against
+	// any test that advanced the epoch while a flow was reading it. The fixture is where a race is easiest
+	// to miss, because a fixture that is only ever read sequentially hides the defect until a test grows a
+	// concurrent writer - which is exactly what the stress and transition tests did.
+	m.access.Lock()
+	epoch, stable := m.epoch, m.stable
+	m.access.Unlock()
+	return epoch, stable, m.next()
 }
 
 // NetworkTransitionSnapshot is part of the same optional contract, and it is not optional here:

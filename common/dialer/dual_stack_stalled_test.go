@@ -53,6 +53,17 @@ func newStallingDialer() *stallingDialer {
 	return &stallingDialer{start: time.Now()}
 }
 
+// triedCount is the LOCKED view of the attempt list.
+//
+// Reading the field directly is what `go test -race` reported against the cancellation test: the list is
+// appended to from the scheduler's attempt goroutines, and a test that polls it is on another goroutine by
+// construction. The accessor exists so a polling assertion cannot be written the wrong way by accident.
+func (d *stallingDialer) triedCount() int {
+	d.access.Lock()
+	defer d.access.Unlock()
+	return len(d.tried)
+}
+
 func (d *stallingDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	d.access.Lock()
 	d.started = append(d.started, time.Since(d.start))
