@@ -826,9 +826,107 @@ and cannot build on Windows (`AGENTS.md`).
 
 ---
 
+---
+
+## M. FINAL CLOSEOUT — the blocker in §V.2 is gone
+
+**Everything above stands**: the five-readings finding, the per-flow `admissionPolicy`, the five retained
+stage gates, the live defect in the unconnected-packet domain arm, and the equivalence proofs for three
+mutations were all re-checked during the closeout and none changed.
+
+### M.1 §V.2 "`-race` unverified" is `SUPERSEDED`
+
+§V.2 and the §header record `-race` as `BLOCKED_BY_ENVIRONMENT` ("no cgo, no C compiler", later narrowed to
+"no mingw-w64 toolchain"). The toolchain was completed and the detector ran:
+
+```powershell
+winget install --id MSYS2.MSYS2 --exact
+C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-gcc
+$env:PATH = "C:\msys64\mingw64\bin;$env:PATH"; $env:CGO_ENABLED='1'; $env:CC='gcc'
+# gcc.exe (Rev6, Built by MSYS2 project) 16.2.0 ; go version go1.25.5 windows/amd64
+
+go test -race -count=1 ./common/dialer    # ok, 21.9s, 0 races
+go test -race -count=1 ./route            # ok, 450s, 0 races
+```
+
+**The first run found six data races and all six were in test fixtures** - four from the scripted manager
+returning `epoch`/`stable` outside its lock, one from a test polling a slice the scheduler appends to, two
+from re-assigning a shared router's answer between phases. All fixed, with the reason attached.
+
+Two consequences for this report:
+
+- **The consumer path this phase built has no data race**, including the per-flow capture, the ownership
+  predicate's re-read, the scheduler's gates and the recovery producer. That was the specific worry §V.2
+  named - "the functional equivalents ran without it" - and it is now answered directly rather than by
+  proxy.
+- **§V.2's mitigation language is superseded, not deleted.** The tests that stood in for the detector are
+  still the primary evidence for behaviour; the detector now also confirms they are not racing.
+
+### M.2 One correction the round's own discipline requires
+
+The four fixture races were **introduced by tests this phase's follow-ups added** (the stress and transition
+tests with a concurrent epoch writer). A fixture that is only ever read sequentially hides that class of
+defect until a concurrent writer appears - which is the same lesson as the duplicate-capture finding of
+Phase 03, one layer lower: the test's own bookkeeping was wrong, and only a different instrument showed it.
+
+### M.3 Unchanged
+
+The two generation counters (§F) are still never compared. The failover per-member boundary still holds. The
+five stage gates are still deliberate. Hot-path numbers (`admits` 11-22 ns, zero allocations) are unchanged
+and uncontested by the detector.
+
 ## PHASE 02 HANDOFF
 
 ```markdown
+---
+
+## M. FINAL CLOSEOUT — the blocker in §V.2 is gone
+
+**Everything above stands**: the five-readings finding, the per-flow `admissionPolicy`, the five retained
+stage gates, the live defect in the unconnected-packet domain arm, and the equivalence proofs for three
+mutations were all re-checked during the closeout and none changed.
+
+### M.1 §V.2 "`-race` unverified" is `SUPERSEDED`
+
+§V.2 and the §header record `-race` as `BLOCKED_BY_ENVIRONMENT` ("no cgo, no C compiler", later narrowed to
+"no mingw-w64 toolchain"). The toolchain was completed and the detector ran:
+
+```powershell
+winget install --id MSYS2.MSYS2 --exact
+C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-gcc
+$env:PATH = "C:\msys64\mingw64\bin;$env:PATH"; $env:CGO_ENABLED='1'; $env:CC='gcc'
+# gcc.exe (Rev6, Built by MSYS2 project) 16.2.0 ; go version go1.25.5 windows/amd64
+
+go test -race -count=1 ./common/dialer    # ok, 21.9s, 0 races
+go test -race -count=1 ./route            # ok, 450s, 0 races
+```
+
+**The first run found six data races and all six were in test fixtures** - four from the scripted manager
+returning `epoch`/`stable` outside its lock, one from a test polling a slice the scheduler appends to, two
+from re-assigning a shared router's answer between phases. All fixed, with the reason attached.
+
+Two consequences for this report:
+
+- **The consumer path this phase built has no data race**, including the per-flow capture, the ownership
+  predicate's re-read, the scheduler's gates and the recovery producer. That was the specific worry §V.2
+  named - "the functional equivalents ran without it" - and it is now answered directly rather than by
+  proxy.
+- **§V.2's mitigation language is superseded, not deleted.** The tests that stood in for the detector are
+  still the primary evidence for behaviour; the detector now also confirms they are not racing.
+
+### M.2 One correction the round's own discipline requires
+
+The four fixture races were **introduced by tests this phase's follow-ups added** (the stress and transition
+tests with a concurrent epoch writer). A fixture that is only ever read sequentially hides that class of
+defect until a concurrent writer appears - which is the same lesson as the duplicate-capture finding of
+Phase 03, one layer lower: the test's own bookkeeping was wrong, and only a different instrument showed it.
+
+### M.3 Unchanged
+
+The two generation counters (§F) are still never compared. The failover per-member boundary still holds. The
+five stage gates are still deliberate. Hot-path numbers (`admits` 11-22 ns, zero allocations) are unchanged
+and uncontested by the detector.
+
 ## PHASE 02 HANDOFF
 
 - testing HEAD:

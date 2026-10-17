@@ -1080,9 +1080,103 @@ name and cannot build on Windows (`AGENTS.md`).
 
 ---
 
+---
+
+## M. FINAL CLOSEOUT — the one conclusion this report got wrong
+
+**The rest of this report stands.** Its construction findings, its mutation campaign, its transition
+analysis and its risk list were all re-checked during the closeout and none changed. What changed is the
+single line every phase report carried.
+
+### M.1 `-race` was never blocked by "no C compiler". It now runs, and this phase's paths are clean.
+
+§A and §header record `-race` as `BLOCKED_BY_ENVIRONMENT`, and the correction block added at the end of the
+previous round already narrowed that to "no mingw-w64 toolchain". **That condition was met:**
+
+```powershell
+winget install --id MSYS2.MSYS2 --exact
+C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-gcc
+$env:PATH = "C:\msys64\mingw64\bin;$env:PATH"; $env:CGO_ENABLED='1'; $env:CC='gcc'
+# gcc.exe (Rev6, Built by MSYS2 project) 16.2.0 ; go version go1.25.5 windows/amd64
+go test -race -count=1 ./common/netcap ./protocol/direct ./common/dialer ./route
+#   ok 1.0s / 1.0s / 21.9s / 450s   -   zero data races
+```
+
+The first run found six races; all six were in test fixtures and are fixed. **None was in the producer
+path this report is about** - not the publish, not the epoch advance, not the transition claim, not the
+reclaim.
+
+### M.2 What that does and does not change here
+
+- The **evidence for §C-§G is unchanged**: the publication is still one atomic pointer swap, the epoch
+  still advances once per transition, the readers are still unit-tested against the platform predicates.
+  `-race` adds a second kind of evidence for the same claims, it does not replace the reasoning.
+- **§S's "route reads per event" and the whole hot-path section are unchanged**, and the detector found no
+  race in them.
+- The **`VERIFIED_CI` note still applies**: no workflow-run record exists. `-race` was run by hand on one
+  Windows host, which is `VERIFIED_UNIT`, not CI.
+- **§V.4 and §U.5 remain open and remain device-blocked** (Darwin has no separate route-change callback for
+  a platform-monitor client; Windows picks the default interface from the IPv4 table). Nothing in the
+  closeout touched them.
+
+### M.3 The one device fact this round added, relevant to the producer
+
+Removing the IPv6 default route on this real Windows host moved the published
+`GlobalIPv6Egress` from `provisioned` to `unavailable` **without touching the interface's addressing**, and
+restoring the route moved it back. That is this report's §D claim - a route-only change is visible, and it
+does not require the address term to move - confirmed against a live route table rather than a fixture, and
+reversible. Detail and scope in Phase 04 §M.4.
+
 ## PHASE 01 HANDOFF
 
 ```markdown
+---
+
+## M. FINAL CLOSEOUT — the one conclusion this report got wrong
+
+**The rest of this report stands.** Its construction findings, its mutation campaign, its transition
+analysis and its risk list were all re-checked during the closeout and none changed. What changed is the
+single line every phase report carried.
+
+### M.1 `-race` was never blocked by "no C compiler". It now runs, and this phase's paths are clean.
+
+§A and §header record `-race` as `BLOCKED_BY_ENVIRONMENT`, and the correction block added at the end of the
+previous round already narrowed that to "no mingw-w64 toolchain". **That condition was met:**
+
+```powershell
+winget install --id MSYS2.MSYS2 --exact
+C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-gcc
+$env:PATH = "C:\msys64\mingw64\bin;$env:PATH"; $env:CGO_ENABLED='1'; $env:CC='gcc'
+# gcc.exe (Rev6, Built by MSYS2 project) 16.2.0 ; go version go1.25.5 windows/amd64
+go test -race -count=1 ./common/netcap ./protocol/direct ./common/dialer ./route
+#   ok 1.0s / 1.0s / 21.9s / 450s   -   zero data races
+```
+
+The first run found six races; all six were in test fixtures and are fixed. **None was in the producer
+path this report is about** - not the publish, not the epoch advance, not the transition claim, not the
+reclaim.
+
+### M.2 What that does and does not change here
+
+- The **evidence for §C-§G is unchanged**: the publication is still one atomic pointer swap, the epoch
+  still advances once per transition, the readers are still unit-tested against the platform predicates.
+  `-race` adds a second kind of evidence for the same claims, it does not replace the reasoning.
+- **§S's "route reads per event" and the whole hot-path section are unchanged**, and the detector found no
+  race in them.
+- The **`VERIFIED_CI` note still applies**: no workflow-run record exists. `-race` was run by hand on one
+  Windows host, which is `VERIFIED_UNIT`, not CI.
+- **§V.4 and §U.5 remain open and remain device-blocked** (Darwin has no separate route-change callback for
+  a platform-monitor client; Windows picks the default interface from the IPv4 table). Nothing in the
+  closeout touched them.
+
+### M.3 The one device fact this round added, relevant to the producer
+
+Removing the IPv6 default route on this real Windows host moved the published
+`GlobalIPv6Egress` from `provisioned` to `unavailable` **without touching the interface's addressing**, and
+restoring the route moved it back. That is this report's §D claim - a route-only change is visible, and it
+does not require the address term to move - confirmed against a live route table rather than a fixture, and
+reversible. Detail and scope in Phase 04 §M.4.
+
 ## PHASE 01 HANDOFF
 
 - testing HEAD:

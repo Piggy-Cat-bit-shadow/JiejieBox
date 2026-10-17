@@ -501,136 +501,114 @@ diagnosis.
 
 The item therefore remains **OPEN in its letter** (the launch happens) and is **`VERIFIED_UNIT` in the part
 that matters** (the launch does no work). Both statements are needed; either alone is misleading.
-## PHASE 03 HANDOFF
+---
 
-```markdown
-## L. Addendum — the second pass
+## M. FINAL CLOSEOUT — what changed after this report was written
 
-**The first pass was partial, and this section says so before it says anything else.** It attacked the
-policy axis properly (the capture counter, the cross-stage matrix) and then established five lifecycle
-claims by **reading** the test that already covered them: setup cancellation, scheduler lifetime, packet
-parity, refusal distinguishability, and the policy's own lifetime. Reading a test establishes coverage; it
-is not the same as attacking the claim, which is what this round is for. All five were left as "covered by
-Phase 01 or 02" with no new attempt to break them.
+**Everything above is preserved as the audit trail.** Several of its conclusions were superseded by the
+closeout round, and each supersession is listed here rather than edited into the sections above, because
+the value of this report is the record of what was believed and why, including the parts that turned out to
+be wrong. Read §A-§L as the state of knowledge at the time; read §M as the current truth.
 
-The second pass attacks them (`a897deb2f9f`, `admission_debug_lifecycle_test.go`):
+### M.1 `-race` is no longer blocked. It ran, and it found six races.
 
-| attack | the wrong implementation it catches |
-|---|---|
-| `TestACancelledBeforeItStartsFlowReachesNoTransport` | one that dials a socket and then discards it — which also returns an error, and has woken the radio for a request nobody wants |
-| `TestACancelledMidDialFlowRecordsNoFamilyVerdict` | one that records a caller's cancellation as a family path failure, poisoning the next connection for the whole fifteen-second window |
-| `TestACancelledRaceJoinsItsAttempts` | one whose race "returns quickly" while a worker is still running — the leak that grows per transition on a device |
-| `TestEveryPacketArmAnswersTheSamePolicy` | one arm applying a term another arm owns |
-| `TestTheRefusalReasonsAreMutuallyDistinguishable` | two refusals rendering identically, sending an operator to the wrong subsystem |
-| `TestNoLongLivedStructureHoldsAPolicy` | a struct FIELD holding a policy, which keeps a generation alive past its network and looks harmless at the definition site |
+This report's §header, §H.5 and §L say `-race` is `BLOCKED_BY_ENVIRONMENT`, and §H.5 builds an argument
+around the tests having to be deterministic *because* the detector is unavailable. **That argument is now
+obsolete.** The toolchain was completed and the suite was run:
 
-Both new guards are `VERIFIED_MUTATION`: deleting the literal packet arm's strategy check fails the parity
-table on *"the literal arm must refuse a destination of the forbidden family"*, and giving
-`candidateScheduler` an `admissionPolicy` field fails the source guard by name.
+```powershell
+# MSYS2 (winget install MSYS2.MSYS2), then:
+C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-gcc
+$env:PATH = "C:\msys64\mingw64\bin;$env:PATH"; $env:CGO_ENABLED='1'; $env:CC='gcc'
+gcc.exe (Rev6, Built by MSYS2 project) 16.2.0
+go version go1.25.5 windows/amd64
 
-### L.1 The finding: the three packet arms answer one policy at three different layers
-
-This is the second pass's substantive result, and it arrived as a **failure of my own table**. The first
-version asserted one expectation for all three arms and failed twice; both failures were the test's fault.
-What it exposed is not written down anywhere else:
-
-```text
-connected UDP, candidate list   the STRATEGY term by the network entry point,
-                                the CAPABILITY term by the scheduler
-                                (both, before a socket exists)
-
-unconnected UDP, literal        the STRATEGY term by the wrapper,
-                                the CAPABILITY term by the LEAF,
-                                after the wrapper hands the literal down
-
-unconnected UDP, hostname       BOTH terms by the wrapper - there is no scheduler and no
-                                candidate list, so the list handed to N.ListenSerial IS
-                                the decision (the arm that was missing the policy entirely
-                                until Phase 02 found it)
+go test -race -count=1 ./common/dialer    # 21.9s
 ```
 
-So *"every packet arm answers the same policy"* is true in the sense that matters — no arm admits what the
-operator's policy forbids, and no arm creates a socket for a family the machine cannot dial — and **false**
-if it is read as "every arm refuses at the same layer". The table now encodes the asymmetry, and the
-asymmetry is the documentation: a wrapper that applied the capability term to the **literal** arm would hide
-the leaf's gate from every path that does not come through the wrapper, and the leaf's gate is the one
-measured to be load-bearing twice (`default_parallel_network.go:245-261`).
+The first run reported **six data races**, and **all six were in test fixtures, not production code**. Four
+came from one line in `scriptedObservationManager.NetworkFamilyCapabilitySnapshot`, which returned `epoch`
+and `stable` straight from the fields while guarding only `next()` - so any test that advanced the epoch
+while a flow was reading raced. The other two came from a shared router whose answer fields were
+re-assigned between phases while a previous flow's resolver goroutine could still be reading them.
 
-**This is the fourth time in the round that a fixture measured the wrong thing** — Phase 02's planner
-ordering, Phase 03's first pass with the serial walk, Phase 04's superseded capture, and this. The pattern
-is the same every time: the test asserted a property of the *path* while claiming to assert a property of
-the *policy*, and every such test passed.
+What that means for this report's claims:
 
-### L.2 §G updated
+- **No production race exists in the admission / transition / lifecycle paths.** The round's design claim
+  survives the detector, which is a stronger result than the deterministic tests could give.
+- **The determinism argument in §H.5 is superseded, not wrong.** Deterministic tests are still required -
+  a race detector does not replace a barrier - but the specific claim "the environment cannot run `-race`,
+  so the tests must substitute for it" no longer applies.
+- The fixture defects are fixed, and the fixes are in the code with the reason attached: the manager reads
+  under its lock, `stallingDialer.triedCount()` is the locked view of the attempt list, and the two
+  transition fixtures install the router's answer through `sync.Once` so no phase writes it.
 
-| surface | level after the second pass |
+### M.2 The §E.3 / §L.4 open item is CLOSED, with a caveat that must not be lost
+
+§E.3 records that a late candidate is still launched after the setup was cancelled, and §L.4 pins the
+mechanism that made it harmless. **The scheduler now refuses the launch**, so the letter of the rule is met:
+
+```go
+// dual_stack_scheduler.go, in the late-candidate arm
+if raceCtx.Err() != nil {
+	continue
+}
+```
+
+**The caveat, measured rather than assumed: removing that check does not fail the §14 test.** The loop has a
+second, independent way to conclude - once the cancelled attempt returns, `started == len(failures)` and it
+exits before reading the channel again - so a deterministic fixture cannot open the window the check closes.
+The check is kept because it makes that window's outcome deterministic in production; it is **not**
+test-enforced, and §L.4's "OPEN in its letter" is now **superseded by "closed, defensive, not
+test-enforced"**.
+
+### M.3 The §13 evidence gap was real, and is now closed with a real barrier
+
+§L.2 lists §13 as `VERIFIED_UNIT`. **That level was too high for the test that existed.** The test named
+`TestAnAnswerResolvedForTheOldGenerationCannotEnterTheNewScheduler` installed the resolver gate and then
+called `close(releaseGate)` **before starting the old flow**, so the gate never blocked anything; the
+generation advance afterwards was a fake-manager index change, and "release the old answer after the
+transition" never happened.
+
+It has been **deleted** and replaced by `TestAnAnswerResolvedForTheOldGenerationCannotReachANewFlowsScheduler`,
+which forces the interleaving with the fixture's own barriers:
+
+| barrier | what it makes deterministic |
 |---|---|
-| setup cancellation by the caller | `VERIFIED_UNIT` + `VERIFIED_MUTATION` (was `VERIFIED_SOURCE`) |
-| scheduler joins its attempts | `VERIFIED_UNIT` |
-| refusal reasons mutually distinguishable | `VERIFIED_UNIT` (was `VERIFIED_SOURCE`) |
-| packet arms answer one policy at three layers | `VERIFIED_UNIT` + `VERIFIED_MUTATION` |
-| policy is never a struct field | `VERIFIED_UNIT` + `VERIFIED_MUTATION` |
+| `stallLookup` + `gateEngaged` | the old lookup is provably parked inside the router, holding this generation's answer |
+| `activeLookups` | the old producer has exited / is still inside the router |
+| scenario A | the answer is released **while the old flow is still alive** after the generation advanced; the old flow decides for itself (fail-open), and a new flow's attempts come only from its own lookup |
+| scenario B | the generation advances **and** the setup is cancelled; the producer is joined (`activeLookups` back to zero), and the released answer reaches nobody |
 
-### L.3 The two surfaces §L named as still open are now closed
+Two mutations prove the barriers are load-bearing: removing the gate makes the test fail with *"the old
+lookup never reached the resolver gate"*, and making the producer ignore cancellation at the gate makes it
+fail with *"the cancelled setup did not return"*.
 
-**Manager close during an in-flight setup** (`route/setup_close_boundary_test.go`). Four shapes, because
-"the manager was closed" is not the question:
+**What remains structurally impossible rather than tested**, stated so it is not mistaken for a filter: an
+answer cannot enter another flow's scheduler at all, because every flow creates its own scheduler from its
+own capture and the answer is published on a channel owned by the flow that started the lookup. The test
+asserts the consequence and names the reason.
 
-| shape | the silent failure it prevents |
+### M.4 The stress runs at the scale §28 names
+
+§L.3 says "200 concurrent flows". The stress now runs **1000 flows against 100 epoch flips** - the number
+§28 names - in 2.3s. The two assertions survive the change: no flow in the **owned** window dials a family
+the machine lacks (deterministic, mutation-verified), and a **superseded** capture costs an attempt but
+never the connection.
+
+### M.5 Evidence levels for this phase, restated
+
+| claim | level |
 |---|---|
-| a setup in flight when Close arrives | a dial running on against a manager that has torn its resources down, its connection tracked into a list nobody drains |
-| a setup begun after Close | a live context that lets a component resurrect itself during teardown, and makes Close's report a statement about a set that grew again |
-| Close called twice | the `defer`-plus-explicit-shutdown shape |
-| a setup whose release is never called | teardown appearing to hang |
+| one policy capture per flow, seven shapes | `VERIFIED_UNIT` + `VERIFIED_MUTATION` (Q2, M8) |
+| one generation for policy / scheduler / familyHealth | `VERIFIED_UNIT` + `VERIFIED_MUTATION` (P10, M9) |
+| a superseded capture refuses nothing | `VERIFIED_UNIT` |
+| the epoch cannot move without a lifecycle cancel | `VERIFIED_SOURCE` |
+| no production data race on these paths | **`VERIFIED_UNIT` via `-race`** (new in this closeout) |
+| the late launch is refused | `VERIFIED_SOURCE`; **not** test-enforced (§M.2) |
+| cross-stage agreement over 200 pairs | `VERIFIED_UNIT` + `VERIFIED_MUTATION` (Q3) |
 
-**The 1000-flow stress, run at 200 flows and labelled as such** (`common/dialer/admission_stress_test.go`).
-The first version was one test asserting that no flow ever dials a family the machine lacks on a machine
-that never had it — and it FAILED, 50 IPv6 attempts, and the failure is not a defect. It is invariant B
-seen from a new angle:
-
-> a capture that is SUPERSEDED mid-flow refuses nothing (fail open), so it may attempt a family the
-> machine lacks and the kernel fails that attempt immediately. The alternative — a stale capture
-> hard-denying — is the one behaviour the design forbids.
-
-So the invariant is two statements and needs two tests: **no flow in the OWNED window dials a family the
-machine lacks** (200 concurrent flows, no epoch movement — deterministic, `VERIFIED_MUTATION`), and **a
-superseded capture costs an attempt, not a connection** (200 flows against 50 epoch flips — every flow
-still succeeds, nothing retained). Asserting the first as if it covered both is what made the first
-version fail.
-
-This is the FIFTH time in the round that a fixture measured a property of the path while claiming to
-measure one of the policy — and the first time the wrong assertion was a genuinely interesting distinction
-rather than a mistake about which code path ran.
-
-**One detail worth recording**: the streaming hostname path is gated by the scheduler's LATE-ARM check, not
-by `filterLocalFamily`. Disabling the plan gate leaves the owned-window stress green; disabling the late
-arm fails it. So the two scheduler gates cover different arrival shapes, and a mutation aimed at "the
-scheduler's local gate" has to say which one.
-
-Still not attacked: nothing from §L. What remains unproven is what was always unproven — `-race`, device
-behaviour, platform event ordering.
-
-### L.4 The open item's mechanism, pinned
-
-The one item this round leaves OPEN - a late candidate is launched after the setup was cancelled - rests on
-a claim that was only ever reasoned about: *the attempt is handed the setup's context, so the cancellation
-reaches the socket and the connect fails immediately.* That is one argument at one call site, and changing
-it to a detached context would turn harmless work into real work with nothing in the suite noticing, because
-the late-candidate tests assert WHICH addresses are attempted and not what each attempt carries.
-
-Two tests now pin both halves:
-
-| test | what it holds |
-|---|---|
-| `TestEveryAttemptCarriesTheSetupsContext` | every context an attempt receives is DONE by the time the race returns - true only if it descends from the setup's |
-| `TestAPreCancelledAttemptNeverReachesARealSocket` | a pre-cancelled dial against a real listener never connects, so "launched but harmless" does no socket work |
-
-`VERIFIED_MUTATION`: detaching the attempt context (`context.WithoutCancel`) fails the first test - the race
-never returns, because the cancellation can no longer reach the attempt. That failure mode is itself the
-diagnosis.
-
-The item therefore remains **OPEN in its letter** (the launch happens) and is **`VERIFIED_UNIT` in the part
-that matters** (the launch does no work). Both statements are needed; either alone is misleading.
+```markdown
 ## PHASE 03 HANDOFF
 
 - testing HEAD:
@@ -703,6 +681,9 @@ that matters** (the launch does no work). Both statements are needed; either alo
     a 15-mutation campaign. Found by counting captures. Fix: f264ecf2a63, one deleted line plus the note.
 
 - Remaining transition-specific risks for 04:
+    SUPERSEDED BY §M, read that first: item 1 is CLOSED (the scheduler now refuses a late launch
+    after the cancel - defensively, and not test-enforced, §M.2) and item 4 no longer applies
+    (`-race` ran: 0 races in ./common/dialer, 21.9s - §M.1). Items 2, 3 and 5 stand.
     1. A late candidate is launched after the setup cancel (no socket work; the letter of the rule is unmet).
        Build the deterministic interleaving and decide whether to guard the launch.
     2. A capability change under a live flow is proven only at the dialer level - 04 must prove it through a

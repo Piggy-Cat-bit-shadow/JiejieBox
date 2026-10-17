@@ -284,7 +284,7 @@ The second pass (`6c1bbf73dbc`) runs them, with a real flow at every phase:
 | §5 address lag | `TestAddressLagPhases` — IPv4 ready, IPv6 **unobserved**, IPv6 address, IPv6 route; a new flow at each phase. The unobserved phase must publish **Unknown**, not unavailable, or the window hard-denies a family that is merely unobserved | `VERIFIED_UNIT` |
 | §6 route lag | `TestRouteLagPhases` — address present with no global route, then the route. Both directions: the early flow must not falsely succeed on a global address it has no route to, and the later flow must not inherit the no-egress verdict | `VERIFIED_UNIT` |
 | §7 IPv4 transition | `TestTheIPv4RouteTransitionIsNotModelledTheSameWayAsIPv6` — the IPv4 term honoured in both directions, plus §7's answer stated as the asymmetry it is | `VERIFIED_UNIT` |
-| §13 old answer leakage | `TestAnAnswerResolvedForTheOldGenerationCannotEnterTheNewScheduler` — generation N with the AAAA answer blocked, the transition, then the answer released; a new flow still sees its own generation and verdict | `VERIFIED_UNIT` |
+| §13 old answer leakage | `TestAnAnswerResolvedForTheOldGenerationCannotReachANewFlowsScheduler` — generation N with the AAAA answer blocked, the transition, then the answer released; a new flow still sees its own generation and verdict. **This row originally named `...CannotEnterTheNewScheduler`, which closed the resolver gate before starting the old flow and never forced the interleaving; it was deleted in the closeout — see §M.3** | `VERIFIED_UNIT` |
 | §14 late candidate after the cancel | `TestACandidateDeliveredAfterTheCancelAddsNoAttempt` — the attempt count does not move, 50 iterations | `VERIFIED_UNIT`, and see the caveat below |
 
 ### L.1 §7's answer, and how it is asserted
@@ -343,6 +343,105 @@ finding about test design.
 `-race` (§29) remains `BLOCKED_BY_ENVIRONMENT`, unchanged and not implied. §28's stress runs at 1000 flows
 (Phase 03 §L.3), not 1000. §25's platform event ordering needs devices. §30's mutation checklist stands at
 **14 of 14 verified.** The three that stood open in the first pass were run afterwards: a **sticky no-egress verdict** so a restored route cannot rebuild the capability (killed by `TestRouteLagPhases`), a **dead-path verdict that survives recovery** (killed by `TestTheTransitionMatrix`), and **one leaked goroutine per transition at the producer** (killed by `TestRepeatedInterfaceChangesCostBoundedWorkAndAreReversible`, whose stack census counts only this package and therefore caught it precisely).
+---
+
+## M. FINAL CLOSEOUT — what changed after this report was written
+
+**Everything above is the audit trail and is preserved as written**, including the parts the closeout
+superseded. Read §A-§L as the state of knowledge then; read §M as the current truth. §L already did this
+once for the matrix; this does it for the three items the closeout brief named.
+
+### M.1 `-race` is no longer blocked - it ran, and this phase's §29 is answered
+
+§A, §G and §L.4 all record `-race` as `BLOCKED_BY_ENVIRONMENT`, and the header correction block names a
+mingw-w64 gcc as the minimum condition to resume. **That condition was met and the detector ran:**
+
+```powershell
+winget install --id MSYS2.MSYS2 --exact
+C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-gcc
+$env:PATH = "C:\msys64\mingw64\bin;$env:PATH"; $env:CGO_ENABLED='1'; $env:CC='gcc'
+# gcc.exe (Rev6, Built by MSYS2 project) 16.2.0 ; go version go1.25.5 windows/amd64
+
+go test -race -count=1 ./common/netcap ./protocol/direct   # ok, 1.0s each
+go test -race -count=1 ./common/dialer                     # ok, 21.9s
+go test -race -count=1 ./route                             # ok, 450s
+```
+
+**The first run reported six data races, and all six were in test fixtures.** Four came from
+`scriptedObservationManager.NetworkFamilyCapabilitySnapshot`, which returned `epoch`/`stable` from the
+fields while guarding only `next()`; one from polling a slice the scheduler appends to; two from
+re-assigning a shared router's answer between phases. All are fixed, and the fixes carry the reason.
+
+So §29's answer is: **`VERIFIED_UNIT` by `-race`, with zero races in the admission / transition /
+lifecycle paths and zero in the tree.** §A's table row "the join: old flow keeps its capture... | `-race`
+(no cgo...)" and §G's "`go test -race` | not run" are **superseded** by this section. The brief's
+`-count=20` filtered runs were not executed; a single full pass of both packages is what is claimed.
+
+### M.2 §14's open item is CLOSED, with a caveat that must survive
+
+§L.1 / §L.2 record the late launch as open, then as "open in its LETTER and verified in the part that
+matters". **The scheduler now refuses the launch** (`if raceCtx.Err() != nil { continue }` in the
+late-candidate arm), so the letter is met.
+
+The caveat, measured: **removing that check does not fail the §14 test**, because the loop has a second,
+independent way to conclude. The check is kept for production determinism; it is not test-enforced. §C.1's
+"Open" row and §L.1's "recorded, not fixed" are **superseded**.
+
+### M.3 §13's evidence gap was real and is now closed with a real barrier
+
+§L's table graded §13 `VERIFIED_UNIT`. The test behind that grade closed the resolver gate **before**
+starting the old flow, so the gate never blocked anything and the "release after the transition" never
+happened. It is deleted; `TestAnAnswerResolvedForTheOldGenerationCannotReachANewFlowsScheduler` forces the
+interleaving with `stallLookup`/`gateEngaged` and `activeLookups`, covers both the live-old-flow and the
+cancelled-setup variants, and is barrier-verified by two mutations. Detail in Phase 03's §M.3.
+
+### M.4 §25 platform ordering and the device acceptance, on the ONE platform available
+
+The brief for this phase asked for §25 across Windows/Linux/Darwin. This host is Windows, so this section
+records what a real machine can and cannot show, and nothing else is implied.
+
+**Device verification performed** (`route/device_capability_probe_test.go`, gated by `DSH_DEVICE_PROBE=1`,
+running the production reader and the production composition against live data):
+
+| phase | route reader | IPv4 | IPv6 | GlobalIPv6Egress |
+|---|---|---|---|---|
+| baseline | `route-present` | provisioned | provisioned | provisioned |
+| `::/0` removed | **`route-absent`** | provisioned | provisioned | **unavailable** |
+| `::/0` restored | `route-present` | provisioned | provisioned | provisioned |
+
+That is §4's highest-priority case - **same interface, IPv6 default route disappears, addresses stay** -
+verified on the real machine, with the egress term following and the address term untouched, and it is
+fully reversible. A second probe removed the interface's non-link-local IPv6 address and `IPv6` stayed
+`provisioned`, because a link-local address still proves IPv6 exists: the two-term split, confirmed on
+device rather than argued.
+
+**NOT verified on device, stated so it cannot be mistaken for done:**
+
+| claim | why not |
+|---|---|
+| `IPv6 = unavailable` (hard family refusal) | reaching it needs IPv6 disabled on `tun0`, the `sing-tun` tunnel carrying this session; its address and default route belong to a live sing-box instance, and the brief forbids breaking the network in use |
+| setup cancellation and the established-connection boundary | needs a driven sing-box instance and a real handover, not a probe |
+| Linux / Darwin event ordering | no such host here |
+
+The changes were applied with the exact restore parameters captured first and re-checked afterwards:
+route and address restored identically, `tun0` Up, all six sing-box processes unchanged (no restarts),
+IPv4 + HTTPS working, IPv6 TCP to `2606:4700:4700::1111:443` succeeding.
+
+### M.5 Evidence levels for this phase, restated
+
+| claim | level |
+|---|---|
+| nine-transition matrix, before/after per row | `VERIFIED_UNIT` + `VERIFIED_MUTATION` |
+| address lag and route lag phase by phase | `VERIFIED_UNIT` |
+| §7's asymmetry, asserted against the model | `VERIFIED_UNIT` |
+| Settling cannot hard-deny | `VERIFIED_UNIT` + `VERIFIED_MUTATION` |
+| familyHealth does not cross generations | `VERIFIED_UNIT` |
+| no data race on these paths | **`VERIFIED_UNIT` via `-race`** (new) |
+| route-only capability change on the real machine | **`VERIFIED_UNIT` on device** (new) |
+| `IPv6 = unavailable` on device | **NOT VERIFIED ON DEVICE** |
+| platform event ordering beyond Windows | **NOT VERIFIED ON DEVICE** |
+| 1000 flows × 100 flips | measured, `VERIFIED_UNIT` |
+
 ## FOUR-PHASE FINAL VERDICT
 
 ### Phase 01 — Capability producer
