@@ -21,6 +21,24 @@ rewritten, and a rewritten hash is worse than a pointer to `git log -1`.
 no NetworkExtension, no real handover. **`-race` is `BLOCKED_BY_ENVIRONMENT`** (`CGO_ENABLED=0`, no C
 compiler); the functional equivalents ran without it and passed, listed in §S.
 
+> **Correction, measured after the round: the `-race` blocker is not what this report first said.**
+> The blocker was recorded as "no C compiler". An MSVC-targeting `clang` **is** present, so that wording
+> was wrong, and being wrong about a blocker is worse than being vague about one - it hides the fact that
+> a single install would unblock the item. What was actually tested:
+>
+> | attempt | result |
+> |---|---|
+> | `CGO_ENABLED=1 CC=clang go build -race ./common/netcap` | **succeeds** - which is why the first probe looked like progress; the package compiles but never links |
+> | `CGO_ENABLED=1 CC=clang go test -race ...` | fails at `runtime/cgo`: `clang: error: unsupported option '-mthreads' for target 'x86_64-unknown-windows-msvc'` - Go's Windows cgo driver passes mingw-style flags that this toolchain rejects |
+> | `CC='clang --target=x86_64-w64-windows-gnu'` | fails at `stdlib.h: file not found` - no mingw sysroot or headers |
+> | a `gcc.exe` anywhere on the host | none (searched) |
+>
+> So `-race` remains `BLOCKED_BY_ENVIRONMENT`, and the **minimum condition to resume** is: a mingw-w64 gcc
+> (e.g. MSYS2's `mingw-w64-x86_64-gcc`) on `PATH`, then
+> `CGO_ENABLED=1 CC=gcc go test -race ./route ./common/dialer`. Everything else this round needed is
+> already in place. `VERIFIED_CI` still does not apply, and no claim in this report depends on `-race`
+> having run.
+
 ---
 
 ## A. Branch / start SHA / final SHA
@@ -739,7 +757,7 @@ go test -tags "$TAGS" ./protocol/direct            ok    0.02s
 go test -tags "$TAGS" ./route                      ok  421.1s
 gofmt -l .                                         clean
 git diff --check                                   clean
-go test -race ...                                  BLOCKED_BY_ENVIRONMENT (no cgo, no C compiler)
+go test -race ...                                  BLOCKED_BY_ENVIRONMENT (no cgo, no mingw-w64 C toolchain)
 ```
 
 `TAGS` is `release/DEFAULT_BUILD_TAGS_OTHERS`; `DEFAULT_BUILD_TAGS` is the Darwin profile despite its name

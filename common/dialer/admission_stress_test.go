@@ -86,7 +86,9 @@ func TestNoFlowInTheOwnedWindowDialsAFamilyTheMachineLacks(t *testing.T) {
 
 	before := runtime.NumGoroutine()
 
-	const flows = 200
+	// §28 of the transition brief names 1000 flows. This runs the number it names rather than a fraction of
+	// it, so the report does not have to explain a reduction.
+	const flows = 1000
 	var (
 		started  sync.WaitGroup
 		failures atomic.Int64
@@ -118,7 +120,7 @@ func TestNoFlowInTheOwnedWindowDialsAFamilyTheMachineLacks(t *testing.T) {
 		"a flow failed although the machine had a usable family for the whole run")
 
 	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) && runtime.NumGoroutine() > before+64 {
+	for time.Now().Before(deadline) && runtime.NumGoroutine() > before+100 {
 		time.Sleep(5 * time.Millisecond)
 	}
 	require.LessOrEqual(t, runtime.NumGoroutine(), before+64,
@@ -139,8 +141,8 @@ func TestNoFlowInTheOwnedWindowDialsAFamilyTheMachineLacks(t *testing.T) {
 // the previous test owns it.
 func TestASupersededCaptureCostsAnAttemptNotAConnection(t *testing.T) {
 	const (
-		flows = 200
-		flips = 50
+		flows = 1000
+		flips = 100
 	)
 	chain := newStressChain(t)
 
@@ -193,7 +195,7 @@ func TestASupersededCaptureCostsAnAttemptNotAConnection(t *testing.T) {
 	require.NotEmpty(t, chain.leaf.tried(), "no flow reached the transport")
 
 	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) && runtime.NumGoroutine() > before+64 {
+	for time.Now().Before(deadline) && runtime.NumGoroutine() > before+100 {
 		time.Sleep(5 * time.Millisecond)
 	}
 	require.LessOrEqual(t, runtime.NumGoroutine(), before+64,

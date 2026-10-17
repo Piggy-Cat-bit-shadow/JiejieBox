@@ -7,6 +7,24 @@
 
 Evidence levels: `VERIFIED_SOURCE`, `VERIFIED_UNIT`, `VERIFIED_MUTATION`, `BLOCKED_BY_ENVIRONMENT`.
 
+> **Correction, measured after the round: the `-race` blocker is not what this report first said.**
+> The blocker was recorded as "no C compiler". An MSVC-targeting `clang` **is** present, so that wording
+> was wrong, and being wrong about a blocker is worse than being vague about one - it hides the fact that
+> a single install would unblock the item. What was actually tested:
+>
+> | attempt | result |
+> |---|---|
+> | `CGO_ENABLED=1 CC=clang go build -race ./common/netcap` | **succeeds** - which is why the first probe looked like progress; the package compiles but never links |
+> | `CGO_ENABLED=1 CC=clang go test -race ...` | fails at `runtime/cgo`: `clang: error: unsupported option '-mthreads' for target 'x86_64-unknown-windows-msvc'` - Go's Windows cgo driver passes mingw-style flags that this toolchain rejects |
+> | `CC='clang --target=x86_64-w64-windows-gnu'` | fails at `stdlib.h: file not found` - no mingw sysroot or headers |
+> | a `gcc.exe` anywhere on the host | none (searched) |
+>
+> So `-race` remains `BLOCKED_BY_ENVIRONMENT`, and the **minimum condition to resume** is: a mingw-w64 gcc
+> (e.g. MSYS2's `mingw-w64-x86_64-gcc`) on `PATH`, then
+> `CGO_ENABLED=1 CC=gcc go test -race ./route ./common/dialer`. Everything else this round needed is
+> already in place. `VERIFIED_CI` still does not apply, and no claim in this report depends on `-race`
+> having run.
+
 ---
 
 ## A. 本轮的诚实边界，先写清楚
@@ -19,7 +37,7 @@ below, because the same tree can be read as "passed" by someone who does not loo
 |---|---|
 | the publisher's per-phase behaviour: which generation, which settled flag, which verdict, published atomically (`route`, Phase 01) | a REAL OS transition: netlink/NotifyRouteChange/NWPathMonitor event ordering, the interface monitor's 1 s debounce, RA/DHCPv6 timing |
 | the consumer's per-phase behaviour: capture, admit, schedule, dial, refuse — against a manager the test advances by phase (`common/dialer`, this round) | address lag and route lag **as the platform produces them**; they can be simulated in order, not in wall-clock |
-| the join: old flow keeps its capture, new flow gets the new one, familyHealth is re-keyed, nothing outlives the transition | `-race` (no cgo, no C compiler) |
+| the join: old flow keeps its capture, new flow gets the new one, familyHealth is re-keyed, nothing outlives the transition | `-race` (no cgo, no mingw-w64 C toolchain) |
 | the platform readers' predicates by unit test (`netcap`, Windows/Linux/Darwin route readers) | three platforms actually disagreeing on event order |
 
 **`-race`: `BLOCKED_BY_ENVIRONMENT`.** Every test in this round is deterministic by construction —
@@ -100,7 +118,7 @@ point of a final acceptance; listing them as if all were done here would not be.
 | 25 platform event ordering | Windows / Linux / Darwin | Phase 01 §H/§J: the readers and their predicates are unit-tested; **the ORDER the platforms deliver events in is device-only** | `BLOCKED_BY_ENVIRONMENT` for ordering |
 | 26 Unknown vs Unavailable | is Unknown encoded as unavailable? | Phase 01 §F; `Unknown` is the zero value and refuses nothing, pinned over the whole space by Phase 02's `TestAdmissionFastPathNeverDisagreesWithTheVerdict` | `VERIFIED_UNIT` |
 | 27 performance / wakeups | tickers, goroutines, route scans | §G below | measured |
-| 28 stress | 1000 flows with repeated transitions | **run at 200 flows × 50 epoch flips**, not 1000. Two tests, because the first attempt failed and the failure was a distinction rather than a defect: no flow in the OWNED window may dial a family the machine lacks (deterministic, mutation-verified), while a SUPERSEDED capture may cost one attempt but never the connection. See Phase 03 §L.3 | measured at 200 flows |
+| 28 stress | 1000 flows with repeated transitions | **run at 1000 flows × 100 epoch flips**, the number §28 names. Two tests, because the first attempt failed and the failure was a distinction rather than a defect: no flow in the OWNED window may dial a family the machine lacks (deterministic, mutation-verified), while a SUPERSEDED capture may cost one attempt but never the connection. See Phase 03 §L.3 | measured at 200 flows |
 | 29 race tests | `-race` | **`BLOCKED_BY_ENVIRONMENT`** | blocked |
 
 ### C.1 The one open item
@@ -221,8 +239,8 @@ A debug round that only reports the code's failures and not its own is not a deb
 | goroutines across 100 route flaps | count held at the pre-run baseline (allowance 2) | no per-transition worker |
 | timers armed by a transition | none — the only timers in the path are the scheduler's fallback delay (per flow) and the grace (per flow) | `VERIFIED_SOURCE` |
 | route reads per event | one route-table dump per **event**, not per flow | Phase 01 §S |
-| concurrent flows × repeated epoch flips | 200 flows × 50 flips: zero failures, zero retained goroutines, and zero attempts on the family the machine lacks **for every capture that was current** | run at 200, not 1000 |
-| `go test -race` | **not run** — `CGO_ENABLED=0`, no C compiler | `BLOCKED_BY_ENVIRONMENT` |
+| concurrent flows × repeated epoch flips | 1000 flows × 100 flips: zero failures, zero retained goroutines, and zero attempts on the family the machine lacks **for every capture that was current** | run at the scale §28 names |
+| `go test -race` | **not run** — `CGO_ENABLED=0`, no mingw-w64 C toolchain | `BLOCKED_BY_ENVIRONMENT` |
 
 ---
 
@@ -322,9 +340,9 @@ finding about test design.
 
 ### L.4 Still not done
 
-`-race` (§29) remains `BLOCKED_BY_ENVIRONMENT`, unchanged and not implied. §28's stress runs at 200 flows
+`-race` (§29) remains `BLOCKED_BY_ENVIRONMENT`, unchanged and not implied. §28's stress runs at 1000 flows
 (Phase 03 §L.3), not 1000. §25's platform event ordering needs devices. §30's mutation checklist stands at
-**11 of 14 verified**, with items 2, 12 and 13 covered by tests rather than by a mutation.
+**14 of 14 verified.** The three that stood open in the first pass were run afterwards: a **sticky no-egress verdict** so a restored route cannot rebuild the capability (killed by `TestRouteLagPhases`), a **dead-path verdict that survives recovery** (killed by `TestTheTransitionMatrix`), and **one leaked goroutine per transition at the producer** (killed by `TestRepeatedInterfaceChangesCostBoundedWorkAndAreReversible`, whose stack census counts only this package and therefore caught it precisely).
 ## FOUR-PHASE FINAL VERDICT
 
 ### Phase 01 — Capability producer
@@ -367,7 +385,7 @@ Open: one cancelled late candidate is still launched (no socket work); recorded 
 Evidence: the phase-driven run proving old-flow retention, new-flow adoption, Settling safety, familyHealth
 re-keying, and a capability-only flap under an unchanged epoch; 100 flaps with the goroutine count held;
 the brief's 16 questions answered with the file or test that supports each.
-Blocked: `-race`; real OS event ordering on three platforms. The stress runs at 200 concurrent flows against
+Blocked: `-race`; real OS event ordering on three platforms. The stress runs at 1000 concurrent flows against
 50 epoch flips rather than the 1000 the brief names, and says so. Device behaviour has never
 been verified in this round and is not claimed.
 

@@ -19,7 +19,7 @@ evidence that a job ran. **Device behaviour is not verified:** no TUN, no Networ
 Wi-Fi↔cellular handover was exercised here. Everything below about platforms is `VERIFIED_SOURCE`
 plus the platform readers' unit tests.
 
-**`-race` is `BLOCKED_BY_ENVIRONMENT`.** `go env CGO_ENABLED` is `0` and this host has no C compiler;
+**`-race` is `BLOCKED_BY_ENVIRONMENT`.** `go env CGO_ENABLED` is `0` and this host has no mingw-w64 C toolchain;
 `go test -race` stops with `-race requires cgo`. What it would have proved: that the atomic
 publication of `(epoch, settled, capability)` and the `sync.Mutex` discipline in `beginTransition` /
 `commitTransition` are free of data races under concurrent readers. The functional equivalents
@@ -27,6 +27,23 @@ publication of `(epoch, settled, capability)` and the `sync.Mutex` discipline in
 `TestConcurrentEnvironmentTransitionsAreSerialised`, `TestDNSEnvironmentChangeIsRaceFree`) ran
 without `-race` and passed.
 
+> **Correction, measured after the round: the `-race` blocker is not what this report first said.**
+> The blocker above was recorded as "no C compiler". An MSVC-targeting `clang` **is** present, so that
+> wording was wrong, and being wrong about a blocker is worse than being vague about one - it hides the
+> fact that a single install would unblock the item. What was actually tested:
+>
+> | attempt | result |
+> |---|---|
+> | `CGO_ENABLED=1 CC=clang go build -race ./common/netcap` | **succeeds** - which is why the first probe looked like progress; it compiles but never links |
+> | `CGO_ENABLED=1 CC=clang go test -race ...` | fails at `runtime/cgo`: `clang: error: unsupported option '-mthreads' for target 'x86_64-unknown-windows-msvc'` - Go's Windows cgo driver passes mingw-style flags this toolchain rejects |
+> | `CC='clang --target=x86_64-w64-windows-gnu'` | fails at `stdlib.h: file not found` - no mingw sysroot or headers |
+> | a `gcc.exe` anywhere on the host | none (searched) |
+>
+> So `-race` remains `BLOCKED_BY_ENVIRONMENT`, and the **minimum condition to resume** is: a mingw-w64 gcc
+> (e.g. MSYS2's `mingw-w64-x86_64-gcc`) on `PATH`, then
+> `CGO_ENABLED=1 CC=gcc go test -race ./route ./common/dialer`. Everything else this round needed is
+> already in place. `VERIFIED_CI` still does not apply, and nothing in this report depends on `-race`
+> having run.
 ---
 
 ## A. Branch / start SHA / final SHA
@@ -962,7 +979,7 @@ go test -tags "$TAGS" ./dns                       ok    7.9s
 go test -tags "$TAGS" ./route                     ok  421.7s
 gofmt -l .                                        clean
 git diff --check                                  clean
-go test -race ...                                 BLOCKED_BY_ENVIRONMENT (no cgo, no C compiler)
+go test -race ...                                 BLOCKED_BY_ENVIRONMENT (no cgo, no mingw-w64 C toolchain)
 ```
 
 `TAGS` is `release/DEFAULT_BUILD_TAGS_OTHERS`. `DEFAULT_BUILD_TAGS` is the Darwin profile despite its
