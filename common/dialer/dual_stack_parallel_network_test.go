@@ -191,8 +191,9 @@ func (c *parallelProductionChain) stallLookup(t *testing.T) {
 	c.router.stallLookup(t)
 }
 
-func (c *parallelProductionChain) releaseLookup() {
-	c.router.releaseLookup()
+func (c *parallelProductionChain) releaseLookup(t *testing.T) {
+	t.Helper()
+	c.router.releaseLookup(t)
 }
 
 // wechatFlow builds the metadata the router produces for the reported flow: an application that
@@ -318,7 +319,7 @@ func TestNetworkEntryPointPreservesTheOriginalWithinItsFamily(t *testing.T) {
 // outstanding, rather than merely completing faster than some timeout.
 func TestNetworkEntryPointDoesNotWaitForDiscovery(t *testing.T) {
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyAsIS)
-	defer chain.releaseLookup()
+	defer chain.releaseLookup(t)
 	chain.stallLookup(t)
 
 	originalIPv4 := netip.MustParseAddr("112.53.55.92")

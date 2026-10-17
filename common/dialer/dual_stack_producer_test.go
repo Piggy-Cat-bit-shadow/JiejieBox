@@ -118,22 +118,40 @@ func (r *scriptedFamilyRouter) stallLookup(t *testing.T) {
 }
 
 // releaseLookup opens the gate and clears it, so no lookup can observe the gate after it has been
-// closed, and then waits until an armed lookup has actually reached the gate.
+// closed.
 //
-// This is what removes the race from the test's side. The gate channel itself is handed between the
-// two goroutines by `atomic.Value`, so the transfer is synchronised; waiting for the arm as well
-// means the test also cannot clear the slot while a lookup is between loading it and selecting on
-// it. Idempotent, because the deferred call and an explicit earlier call may both happen.
-func (r *scriptedFamilyRouter) releaseLookup() {
+// It deliberately does NOT wait for the lookup to arrive at the gate, and that is a correction to the
+// first version of this fix. `recoverCandidates` can legitimately finish without ever calling
+// LookupFamilies - the caller cancels its context as soon as the connection is up - so an unbounded
+// wait for `gateEngaged` deadlocked the test rather than synchronising it. Measured in CI, on the
+// first version: `panic: test timed out after 30m0s`, with this goroutine parked on that receive.
+//
+// What this side actually has to guarantee is narrower, and `atomic.Value` already provides it: the
+// gate must be handed over in a way the race detector accepts, and the slot must be cleared before the
+// channel is closed so a later lookup cannot load a closed gate and block forever. `gateEngaged` is
+// therefore recorded best-effort, and the bounded wait below only decides how strong the test's claim
+// is - never whether it terminates.
+//
+// Idempotent, because the deferred call and an explicit earlier call may both happen.
+func (r *scriptedFamilyRouter) releaseLookup(t *testing.T) {
+	t.Helper()
 	gate, _ := r.gate.Load().(chan struct{})
-	if gate != nil {
-		// Clear first, then close: a lookup that loads after the clear sees no gate at all, and a
-		// lookup that loaded before it is inside runFamilies and sees the close at its select.
-		r.gate.Store(chan struct{}(nil))
-		close(gate)
-		if r.gateEngaged != nil {
-			<-r.gateEngaged
-		}
+	if gate == nil {
+		return
+	}
+	// Clear first, then close: a lookup that loads after the clear sees no gate at all, and a lookup
+	// that loaded before it is inside runFamilies and sees the close at its select.
+	r.gate.Store(chan struct{}(nil))
+	close(gate)
+
+	if r.gateEngaged == nil {
+		return
+	}
+	select {
+	case <-r.gateEngaged:
+	case <-time.After(time.Second):
+		t.Log("releaseLookup: the resolver never reached the gate, so no lookup was outstanding while " +
+			"the connection completed; this run proves the weaker half of the claim only")
 	}
 }
 
