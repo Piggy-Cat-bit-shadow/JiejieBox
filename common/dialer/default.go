@@ -525,7 +525,10 @@ func (d *DefaultDialer) ListenPacket(ctx context.Context, destination M.Socksadd
 		}
 		return d.stillCurrentEpochPacketConn(epochCurrent, tracked)
 	} else {
-		return d.listenSerialInterfacePacketEpoch(ctx, destination, d.networkStrategy, d.networkType, d.fallbackNetworkType, d.networkFallbackDelay, epochCurrent)
+		// The SAME capture is threaded through, so the interface path gates and validates on one
+		// observation rather than taking a second one inside - which is what this call used to do, and
+		// what let the gate decide on a generation this operation never claimed.
+		return d.listenSerialInterfacePacketEpoch(ctx, destination, d.networkStrategy, d.networkType, d.fallbackNetworkType, d.networkFallbackDelay, localFamily)
 	}
 }
 
@@ -539,14 +542,25 @@ func (d *DefaultDialer) DialerForICMPDestination(destination netip.Addr) net.Dia
 
 // ListenSerialInterfacePacket binds a socket to a chosen interface.
 //
-// Like DialParallelInterface this is a public entry point, so it captures its own epoch: a caller
-// that arrives here directly gets the same ownership guarantee as one that arrived through
-// ListenPacket.
+// Like DialParallelInterface this is a public entry point, so it captures its own ownership: a caller
+// that arrives here directly gets the same guarantee as one that arrived through ListenPacket.
+//
+// The capture is taken ONCE and serves both the family gate and the hand-over check. It used to be two
+// independent captures - `captureEpoch()` here and `captureLocalFamilyPolicy()` inside - read through two
+// different optional interfaces, so the two could observe different network states within one call. That
+// is the same teardown `DialContext` and `ListenPacket` already avoid by threading one policy through the
+// whole operation, and this entry point was the one that did not.
+//
+// The harm was bounded - the hand-over check still validated the FIRST capture, so no connection produced
+// under a divergent gate could be handed over - but the gate could hard-deny an operation whose own
+// ownership capture said "not owned", which is the direction the design says must fail open. Measured on
+// a manager whose snapshot reported an epoch the capability interface had already moved past: the gate
+// refused with a family verdict for an operation that began unsettled.
 func (d *DefaultDialer) ListenSerialInterfacePacket(ctx context.Context, destination M.Socksaddr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, error) {
-	return d.listenSerialInterfacePacketEpoch(ctx, destination, strategy, interfaceType, fallbackInterfaceType, fallbackDelay, d.captureEpoch())
+	return d.listenSerialInterfacePacketEpoch(ctx, destination, strategy, interfaceType, fallbackInterfaceType, fallbackDelay, d.captureLocalFamilyPolicy())
 }
 
-func (d *DefaultDialer) listenSerialInterfacePacketEpoch(ctx context.Context, destination M.Socksaddr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration, epochCurrent func() bool) (net.PacketConn, error) {
+func (d *DefaultDialer) listenSerialInterfacePacketEpoch(ctx context.Context, destination M.Socksaddr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration, localFamily localFamilyPolicy) (net.PacketConn, error) {
 	if strategy == nil {
 		strategy = d.networkStrategy
 	}
@@ -585,8 +599,12 @@ func (d *DefaultDialer) listenSerialInterfacePacketEpoch(ctx context.Context, de
 	//
 	// The unspecified-address exception is the same one ListenPacket documents: it is how a caller asks
 	// for a wildcard socket with no destination family at all.
+	//
+	// `localFamily` is the capture taken by the entry point, so this gate and the hand-over check below
+	// describe ONE observation of the network. Re-capturing here would let the gate decide on a verdict
+	// from a generation the operation never claimed.
 	if destination.Addr.IsValid() && !destination.Addr.IsUnspecified() {
-		if refusal := d.captureLocalFamilyPolicy().hardUndialableError(destination.Addr); refusal != nil {
+		if refusal := localFamily.hardUndialableError(destination.Addr); refusal != nil {
 			return nil, refusal
 		}
 	}
@@ -617,7 +635,7 @@ func (d *DefaultDialer) listenSerialInterfacePacketEpoch(ctx context.Context, de
 	if trackErr != nil {
 		return nil, trackErr
 	}
-	return d.stillCurrentEpochPacketConn(epochCurrent, tracked)
+	return d.stillCurrentEpochPacketConn(localFamily.ownership.predicate, tracked)
 }
 
 func (d *DefaultDialer) UDPListenerControl() (control.Func, bool) {
@@ -650,8 +668,24 @@ func (d *DefaultDialer) UDPListenerControl() (control.Func, bool) {
 // Requiring a settled network at hand-over time closes that: a connection dialled during a
 // transition is refused, and the caller retries - which is the correct transient failure, not a
 // permanent one, because the transition does complete.
+//
+// # Why the early return keys on the capability, not on one of its sources
+//
+// It used to be `if d.networkEpoch == nil`, which is ONE of the three optional interfaces this source
+// can be built from. The fields are wired independently - `networkSnapshot` comes from
+// NetworkTransitionSnapshotter, `networkEpoch` from NetworkResetCounter, `networkStable` from
+// NetworkTransitionStable - so a manager that reports a snapshot and no counter took the early return,
+// the snapshot it DID report was never consulted, and the predicate answered "owned" unconditionally.
+//
+// That is the same defect `captureLocalFamilyPolicy` was fixed for, in the same shape: a manager that
+// reports a capability and is then read through a narrower one loses the answer it gave. Measured on a
+// manager reporting (epoch 5, unstable) and no counter: the predicate answered true, and stayed true
+// after the epoch advanced to 6, while the snapshot was never called.
+//
+// The snapshot is the STRONGEST source, because it is the only one that returns the epoch and the
+// settled state as one observation; a manager that has it must be read through it.
 func (d *DefaultDialer) captureEpoch() func() bool {
-	if d.networkEpoch == nil {
+	if d.networkEpoch == nil && d.networkSnapshot == nil {
 		if d.networkStable == nil {
 			return func() bool { return true }
 		}
@@ -676,11 +710,31 @@ func (d *DefaultDialer) captureEpoch() func() bool {
 		capturedEpoch uint64
 		startedStable = true
 	)
+	// The source the capture was TAKEN from is the source the predicate must re-read, and the two go
+	// together in one value: re-reading a different interface would compare an epoch against a generation
+	// that never produced it. `networkSnapshot` is preferred because it returns the epoch and the settled
+	// state as one observation; the narrower getters are the fallback for a manager that reports no
+	// snapshot.
+	currentEpoch := func() uint64 {
+		if d.networkSnapshot != nil {
+			epoch, _ := d.networkSnapshot()
+			return epoch
+		}
+		if d.networkEpoch == nil {
+			// No source to compare against. The capture was therefore taken from `networkStable` alone,
+			// or from nothing, and "the epoch moved" is a question this manager cannot answer - so it
+			// must not be answered with a `false` that would refuse every connection.
+			return capturedEpoch
+		}
+		return d.networkEpoch()
+	}
 	if d.networkSnapshot != nil {
 		capturedEpoch, startedStable = d.networkSnapshot()
 	} else {
 		startedStable = d.networkStable == nil || d.networkStable()
-		capturedEpoch = d.networkEpoch()
+		if d.networkEpoch != nil {
+			capturedEpoch = d.networkEpoch()
+		}
 	}
 	return func() bool {
 		if !startedStable {
@@ -689,7 +743,7 @@ func (d *DefaultDialer) captureEpoch() func() bool {
 		if d.networkStable != nil && !d.networkStable() {
 			return false
 		}
-		return d.networkEpoch() == capturedEpoch
+		return currentEpoch() == capturedEpoch
 	}
 }
 
@@ -771,6 +825,13 @@ func (d *DefaultDialer) trackConn(ctx context.Context, destination M.Socksaddr, 
 // network's interface, so handing it to a caller after a reset gives them a socket on a network that
 // has been left.
 func (d *DefaultDialer) stillCurrentEpochPacketConn(epochCurrent func() bool, conn net.PacketConn) (net.PacketConn, error) {
+	// A manager that can report no ownership constrains nothing, which is the same degradation every
+	// other optional capability here takes. The family-policy capture leaves the predicate nil in that
+	// case rather than inventing a permissive one, so it is normalised HERE - the one place that has to
+	// call it - instead of at each caller, where a missed normalisation would be a nil dereference.
+	if epochCurrent == nil {
+		epochCurrent = func() bool { return true }
+	}
 	if epochCurrent() {
 		return conn, nil
 	}
