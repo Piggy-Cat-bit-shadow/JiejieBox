@@ -18,6 +18,11 @@ faster, and where does the difference live?
 | Startup to SOCKS ready | 253-255 ms vs 248-258 ms (unchanged) |
 | CPU/GiB (throughput cells) | 0.68-1.02x (mostly lower) |
 
+Mihomo v1.19.32 (SDK v3.38.0, product comparison only) also ran: it beats the target on the
+high-mux TCP cells (target/Mihomo 0.95 download, 0.85 upload), while the target wins low-mux TCP
+download (1.07x) and UDP-transport upload (1.27x). This confirms the target's TCP-upload weakness
+rather than hiding it; see `decisions.md` E6.
+
 The UDP-echo win is attributed to this tree's UoT framing (E1), not to the cipher or the server: both
 clients used the same official server and the same echo target. The 6% TCP-upload gap is the one
 repeatable regression and is left visible for the debug round.
@@ -35,6 +40,7 @@ repeatable regression and is left visible for the debug round.
 | `reproduction.md` | build and run commands, including the profile run |
 | `environment.md` | host facts and measurement limits |
 | `ab-interface-update/` | baseline vs after startup/first-byte runs and `comparison.csv` |
+| `references/mihomo/` | REF-E Mihomo v1.19.32 run: summary, three-way comparison, raw cells and YAML configs |
 | `profiles/` | 6 s CPU profile of an 8 GiB TCP download, pprof top/cum, memory snapshot |
 
 ## Raw cell shape

@@ -50,7 +50,7 @@ client that had no underlay or session. `Outbound.dialed` now records the first 
 (re)start, and the pre-dial update returns without touching the client; a network change after a
 dial still rebuilds it.
 
-A/B with 12 cold starts per side: startup medians 251-267 ms (baseline) vs 251-269 ms (after), first-byte
+A/B with 12 cold starts per side: startup medians 249-267 ms (baseline) vs 251-269 ms (after), first-byte
 P50/P95 unchanged, idle CPU 0.086 s vs 0.085 s. There is **no measurable performance claim** here.
 The change is kept because it removes a guaranteed no-op Start/Stop, removes a misleading
 "restarted after network change" log, and closes the only window in which a first dial could wait on
@@ -82,7 +82,23 @@ ChaCha20-Poly1305 12.1%. The adapter's own code does not appear above the 0.09 s
 The remaining work is in the SDK's segment loop and the shared copy pipeline; changing either is not
 a Mieru adapter change. No speculative pool/goroutine work.
 
-### E6. Reference implementations — BLOCKED_BY_ENVIRONMENT
+### E6. Reference implementations — one of five ran, four are BLOCKED_BY_ENVIRONMENT
+
+REF-E, Mihomo v1.19.32 (Mieru SDK **v3.38.0**, product-version comparison only), ran on the same
+official server and the same harness: `references/mihomo/summary.csv`, `comparison.csv`, 4 rounds per
+cell. Target/Mihomo throughput ratios:
+
+| Scenario | TCP download | TCP upload | UDP echo |
+| --- | ---: | ---: | ---: |
+| tcp-low-default | 1.066 | 0.953 | 1.018 |
+| udp-low-default | 1.026 | 1.274 | 1.049 |
+| tcp-high-nowait | 0.945 | 0.851 | 0.933 |
+
+The target is not uniformly fastest: Mihomo wins the high-mux TCP cells (especially upload), the
+target wins the low-mux TCP download and the UDP-transport upload, and both are close on UDP echo.
+Mihomo ships a different SDK (v3.38.0), so this is a product result and cannot be folded into the
+unified-SDK ratios above. It independently confirms the target's TCP-upload weakness: the official
+client and Mihomo both beat it on `tcp-low-default` upload.
 
 | Ref | Reason |
 | --- | --- |
@@ -90,11 +106,10 @@ a Mieru adapter change. No speculative pool/goroutine work.
 | REF-B mbox `1c5b3971` | Android application, no Windows CLI. |
 | REF-C extended `5956780b` | full fork, no tested Windows Mieru CLI artifact here. |
 | REF-D Hiddify `3bbbd61e` | GUI application; no scriptable Mieru-only Windows entry without its UI/core packaging. |
-| REF-E Mihomo `94b13aed` | not built/downloaded in this run; no reference binary on the host and no Linux container to build one. |
 
-These are not PASS and are not folded into the ratios above. The official client (REF-A client half)
-and the official server SDK (the server half mita uses) are the two real reference points that could
-run here. A Linux host with the real mita binary and the four reference apps is the next step.
+These are not PASS and are not folded into the ratios above. The official client (REF-A client half),
+the official server SDK (the server half mita uses) and Mihomo (REF-E) are the real reference points
+that could run here. A Linux host with the real mita binary and the remaining apps is the next step.
 
 ## Reproduction
 

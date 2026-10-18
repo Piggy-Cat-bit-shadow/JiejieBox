@@ -76,6 +76,19 @@
     "samples_per_cell": 4,
     "raw": "raw/<variant>-<scenario>-r<round>-<order>-<mode>.json"
   },
+  "reference_mihomo": {
+    "label": "REF-E",
+    "description": "Mihomo v1.19.32 Windows amd64, mixed-port SOCKS5 entry, Mieru outbound",
+    "binary": "mihomo-windows-amd64-compatible-v1.19.32.exe",
+    "binary_sha256": "04F8D7FC2B314771E1ECBF15951D59F0E1CB7914503C88CFB6972FF6A824E314",
+    "version": "v1.19.32",
+    "sdk": "github.com/enfein/mieru/v3 v3.38.0",
+    "comparison_kind": "product version comparison, not a unified-SDK comparison: Mihomo ships v3.38.0 while the official client and the target use v3.38.1",
+    "lazy_start": "Mihomo starts its Mieru client on the first dial; the runner warms that start before the measured cells, so startup_ms is app-ready, not Mieru-client-ready",
+    "raw": "references/mihomo/raw",
+    "summary": "references/mihomo/summary.csv",
+    "comparison": "references/mihomo/comparison.csv"
+  },
   "not_comparable": {
     "rss": "the target process also contains the sing-box core and a mixed inbound; the official process is a dedicated client. RSS is reported as product-level, never as adapter memory.",
     "cpu": "process CPU includes the whole product; CPU/GiB is reported for throughput modes only and is not an encryption-cost measurement.",
@@ -86,7 +99,6 @@
     "REF-A mita": "no Windows build; this host has no WSL distribution and no Docker, so a real Linux mita peer could not be run.",
     "REF-B enfein/mbox 1c5b39718ebcd05e6adb31f95246fbf056be9bd7": "Android application; no Windows CLI binary.",
     "REF-C shtorm-7/sing-box-extended 5956780ba3f140feff771d003914a1b82ea9d5d0": "full fork; no tested Windows Mieru CLI artifact available on this host.",
-    "REF-D hiddify/hiddify-sing-box 3bbbd61ee4d76cc6ff433b111fed4187ad2f4b4f": "GUI application; no scriptable Windows Mieru-only entry without its UI/core packaging.",
-    "REF-E MetaCubeX/mihomo 94b13aed49b8dc41973e4bb3f721c5fa2c5c5c1f": "not built or downloaded in this run; the Windows host has no reference binary and no Linux container to build one."
+    "REF-D hiddify/hiddify-sing-box 3bbbd61ee4d76cc6ff433b111fed4187ad2f4b4f": "GUI application; no scriptable Windows Mieru-only entry without its UI/core packaging."
   }
 }

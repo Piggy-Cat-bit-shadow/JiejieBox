@@ -1,0 +1,25 @@
+{
+    "variant":  "mihomo",
+    "scenario":  "udp-low-default",
+    "round":  1,
+    "mode":  "tcp-upload",
+    "startup_ms":  253.2,
+    "idle":  {
+                 "CpuSeconds":  0.046875,
+                 "WorkingSetMiB":  22.83
+             },
+    "cpu_seconds":  3.9844,
+    "rss_mib":  51.09,
+    "exit":  0,
+    "result":  {
+                   "label":  "mihomo-udp-low-default",
+                   "mode":  "tcp-upload",
+                   "connections":  4,
+                   "payload_bytes":  268435456,
+                   "wall_seconds":  4.1342912,
+                   "throughput_mib_s":  61.92113414749305,
+                   "success":  4,
+                   "failures":  0
+               },
+    "output":  "{\"label\":\"mihomo-udp-low-default\",\"mode\":\"tcp-upload\",\"connections\":4,\"payload_bytes\":268435456,\"wall_seconds\":4.1342912,\"throughput_mib_s\":61.92113414749305,\"success\":4,\"failures\":0}"
+}

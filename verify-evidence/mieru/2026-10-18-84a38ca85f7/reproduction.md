@@ -87,6 +87,22 @@ Invoke-WebRequest 'http://127.0.0.1:18080/debug/pprof/profile?seconds=6' -OutFil
 `profiles/cpu-tcp-download.pprof` and the two `go tool pprof -top` projections are committed.
 The run itself reported 398.8 MiB/s (`profiles/bench.out`).
 
+## REF-E Mihomo
+
+Download `mihomo-windows-amd64-compatible-v1.19.32.zip` from
+`MetaCubeX/mihomo` v1.19.32, then:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\mieru-bench\run-mihomo.ps1 `
+  -MihomoExe C:\Deepseek\_mieru_refs\mihomo\mihomo-windows-amd64-compatible.exe `
+  -OutDir .\verify-evidence\mieru\2026-10-18-84a38ca85f7\references\mihomo `
+  -Rounds 4 -Connections 4 -Bytes 67108864 -Packets 5000 -Requests 1000
+```
+
+The script writes the YAML per scenario, starts Mihomo per round, warms the
+lazy client start with a 1 MiB dial, then runs the same five cells as the main
+matrix. Mihomo ships Mieru SDK v3.38.0, so this is a product comparison.
+
 ## What is deliberately not reproduced here
 
 - A real Linux `mita` server, mbox, extended, Hiddify and Mihomo: see `decisions.md` E6 and

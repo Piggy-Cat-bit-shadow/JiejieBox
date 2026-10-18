@@ -1,0 +1,25 @@
+{
+    "variant":  "mihomo",
+    "scenario":  "tcp-high-nowait",
+    "round":  1,
+    "mode":  "tcp-upload",
+    "startup_ms":  255.8,
+    "idle":  {
+                 "CpuSeconds":  0.03125,
+                 "WorkingSetMiB":  22.33
+             },
+    "cpu_seconds":  2.0938,
+    "rss_mib":  30,
+    "exit":  0,
+    "result":  {
+                   "label":  "mihomo-tcp-high-nowait",
+                   "mode":  "tcp-upload",
+                   "connections":  4,
+                   "payload_bytes":  268435456,
+                   "wall_seconds":  0.5998335,
+                   "throughput_mib_s":  426.7850995317867,
+                   "success":  4,
+                   "failures":  0
+               },
+    "output":  "{\"label\":\"mihomo-tcp-high-nowait\",\"mode\":\"tcp-upload\",\"connections\":4,\"payload_bytes\":268435456,\"wall_seconds\":0.5998335,\"throughput_mib_s\":426.7850995317867,\"success\":4,\"failures\":0}"
+}

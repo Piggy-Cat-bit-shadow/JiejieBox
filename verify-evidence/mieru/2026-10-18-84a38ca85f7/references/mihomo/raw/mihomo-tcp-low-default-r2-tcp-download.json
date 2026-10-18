@@ -1,0 +1,25 @@
+{
+    "variant":  "mihomo",
+    "scenario":  "tcp-low-default",
+    "round":  2,
+    "mode":  "tcp-download",
+    "startup_ms":  261.3,
+    "idle":  {
+                 "CpuSeconds":  0,
+                 "WorkingSetMiB":  22.73
+             },
+    "cpu_seconds":  2.125,
+    "rss_mib":  29.8,
+    "exit":  0,
+    "result":  {
+                   "label":  "mihomo-tcp-low-default",
+                   "mode":  "tcp-download",
+                   "connections":  4,
+                   "payload_bytes":  268435456,
+                   "wall_seconds":  0.6119782,
+                   "throughput_mib_s":  418.31555437759056,
+                   "success":  4,
+                   "failures":  0
+               },
+    "output":  "{\"label\":\"mihomo-tcp-low-default\",\"mode\":\"tcp-download\",\"connections\":4,\"payload_bytes\":268435456,\"wall_seconds\":0.6119782,\"throughput_mib_s\":418.31555437759056,\"success\":4,\"failures\":0}"
+}

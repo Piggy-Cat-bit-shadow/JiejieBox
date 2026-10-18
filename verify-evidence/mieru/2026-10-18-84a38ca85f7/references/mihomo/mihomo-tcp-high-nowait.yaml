@@ -1,0 +1,17 @@
+mixed-port: 11093
+allow-lan: false
+mode: rule
+log-level: warning
+proxies:
+  - name: mieru
+    type: mieru
+    server: 127.0.0.1
+    port: 18671
+    transport: TCP
+    udp: true
+    username: bench
+    password: bench-password
+    multiplexing: MULTIPLEXING_HIGH
+    handshake-mode: HANDSHAKE_NO_WAIT
+rules:
+  - MATCH,mieru

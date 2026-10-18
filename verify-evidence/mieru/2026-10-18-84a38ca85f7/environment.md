@@ -18,6 +18,7 @@
 | Official client | `mieru.exe` 3.38.1, SHA-256 `37ADD82895EB6B5D5289F82173D334A5AA697567E21937CC104E23DB0C380C31` |
 | Official server | `scripts/mieru-bench/server` built against the same v3.38.1; mita has no Windows build |
 | Target binary | SHA-256 `1150F0CDA39BC3C1EBAB4248D10CBD49998A0B616870B85C81025C4B87834917` |
+| REF-E | Mihomo v1.19.32 Windows amd64, SHA-256 `04F8D7FC2B314771E1ECBF15951D59F0E1CB7914503C88CFB6972FF6A824E314`, Mieru SDK v3.38.0 |
 
 ## Limits that affect the numbers
 

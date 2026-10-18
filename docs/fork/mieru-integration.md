@@ -177,7 +177,12 @@ latency samples.
   observation used to stop and restart a client with no underlay. A/B over 12
   cold starts shows no startup or first-byte change, so this is kept as a
   lifecycle simplification, not sold as a speedup.
-- mbox, extended, Hiddify, Mihomo and the real `mita` binary are
+- Mihomo v1.19.32 (Mieru SDK v3.38.0) ran as a product comparison: target/Mihomo
+  throughput is 1.07x on low-mux TCP download, 0.95x on low-mux TCP upload,
+  0.85x on high-mux TCP upload, 1.27x on UDP-transport upload, and 1.02-1.05x on
+  UDP echo. The target is not uniformly fastest; Mihomo's high-mux TCP upload
+  is the strongest reference result. This is not a unified-SDK comparison.
+- mbox, extended, Hiddify and the real `mita` binary are
   `BLOCKED_BY_ENVIRONMENT` here: this Windows host has no WSL distribution, no
   Docker, and no scriptable Windows build of those references. E6 in the
   evidence records each blocker; no numbers were invented.
@@ -243,9 +248,10 @@ NOT_TESTED
 - Official `mita` binary against this outbound: no Windows build exists. The
   official client and the official server SDK were measured instead; a Linux
   host with the real `mita` binary is the next step.
-- mbox, extended, Hiddify and Mihomo reference adapters: unavailable on this
-  host (no WSL/Docker, no scriptable Windows build). The phase-2 matrix covers
-  the official client and the official server entry point only.
+- mbox, extended and Hiddify reference adapters: unavailable on this host (no
+  WSL/Docker, no scriptable Windows build). Mihomo did run, but with SDK
+  v3.38.0, so its ratios are product-level and are kept out of the unified-SDK
+  matrix.
 - iOS/Android device runs, long-duration soak, packet-loss/latency matrix, and
   Wi-Fi/cellular path changes. These require other hardware.
 - `go test -race` on Linux/macOS: the Windows run used `CGO_ENABLED=1` with the
@@ -256,9 +262,9 @@ NOT_TESTED
 1. Run the official `mita` binary against this outbound on Linux, including
    auth failure, duplicate user names, port ranges, and `traffic_pattern`
    round-trip.
-2. Re-run the phase-2 matrix on Linux against `mita`, then add mbox, extended,
-   Hiddify and Mihomo as reference clients. The Windows numbers are product-
-   level and cannot be compared to their SDK builds directly.
+2. Re-run the phase-2 matrix on Linux against `mita`, then add mbox, extended
+   and Hiddify as reference clients. The Windows Mihomo result is a product
+   comparison at SDK v3.38.0, not a unified-SDK cell.
 3. Investigate the 6% TCP-upload gap at `tcp-low-default`: per the profile the
    cost is in the shared copy pipeline (`copyExtendedWithPool`), not in the
    Mieru adapter, so establish whether it is an inbound/copy-buffer effect
