@@ -166,6 +166,11 @@ DONE
   helpers.
 - Unit tests, SDK conformance tests, loopback end-to-end tests, `-race`,
   full-tag build, `sing-box check` for valid and invalid configurations.
+- Cross-compilation with `CGO_ENABLED=0`: `./protocol/mieru` for
+  linux/amd64, darwin/arm64, freebsd/amd64 and android/arm64, and the full
+  `./cmd/sing-box` tag profile for linux/amd64 and darwin/arm64.
+- The nested `test` module was retidied and `go vet`ed with the production
+  tags; the added SDK is in its graph as an indirect requirement.
 
 PARTIAL
 
