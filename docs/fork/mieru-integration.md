@@ -143,6 +143,45 @@ This is a framing microbenchmark, not a network throughput claim. It measures
 the code that sits once per datagram on a UDP association; the numbers are the
 reason the read path keeps a per-association framer.
 
+## Performance evidence (2026-10-18)
+
+The phase-2 matrix is in
+[`verify-evidence/mieru/2026-10-18-84a38ca85f7`](../../verify-evidence/mieru/2026-10-18-84a38ca85f7/README.md).
+Both clients used the same official `apis/server` harness and local SOCKS5
+entry; 4 ABBA rounds, 4 TCP connections × 64 MiB, 5000 UDP datagrams, 1000
+latency samples.
+
+| Cell | Target vs official |
+| --- | ---: |
+| TCP download, tcp transport, low mux | +10.2% |
+| TCP download, tcp transport, high mux + no_wait | +7.0% |
+| TCP download, udp transport | +3.2% |
+| TCP upload, tcp transport, low mux | **-6.1%** |
+| TCP upload, udp transport | +16.0% |
+| UDP echo, udp transport | +47.4% (P50 0.61x) |
+| TCP P95 latency | 0.98-1.01x |
+
+- The UDP-echo win is the UoT framing above, not the cipher or the server; the
+  server and target are identical for both variants.
+- The 6% TCP-upload gap with the TCP underlay is consistent across rounds and is
+  the one repeatable regression. It is recorded, not hidden; CPU/GiB on that
+  cell is 32% lower, so it is a throughput trade-off.
+- Startup to SOCKS-ready is unchanged (253-255 ms vs 248-258 ms). RSS is not
+  comparable as adapter memory: the target process also contains the sing-box
+  core and a mixed inbound. The only adapter-memory claim is the UoT microbench.
+- A 6 s CPU profile of an 8 GiB download puts 36% in the SDK underlay/socket
+  loop, 23% in the shared route copy, 24% in GC and 12% in ChaCha20; the Mieru
+  adapter is not a flat hotspot. No speculative pool or goroutine work was
+  added.
+- `InterfaceUpdated` now returns before the first dial: the startup network
+  observation used to stop and restart a client with no underlay. A/B over 12
+  cold starts shows no startup or first-byte change, so this is kept as a
+  lifecycle simplification, not sold as a speedup.
+- mbox, extended, Hiddify, Mihomo and the real `mita` binary are
+  `BLOCKED_BY_ENVIRONMENT` here: this Windows host has no WSL distribution, no
+  Docker, and no scriptable Windows build of those references. E6 in the
+  evidence records each blocker; no numbers were invented.
+
 ## What is deliberately NOT done
 
 - No second DNS resolver, socket factory, health model, or sleep/wake state.
@@ -170,6 +209,11 @@ DONE
   DNS router, not by the SDK.
 - An explicit traffic pattern (seed `20261018`) interoperates with the
   official client and the official server in both directions.
+- Phase-2 performance matrix against the official client and official server
+  entry point, with raw cells, CPU/RSS, profile and A/B evidence under
+  `verify-evidence/mieru/2026-10-18-84a38ca85f7`.
+- `InterfaceUpdated` no longer stops/restarts the SDK client before its first
+  dial; after a dial it still rebuilds.
 - Explicit `Stop()` lifecycle, close of established sessions, bounded drain,
   network-change rebuild, listener options applied through the fork's listener
   helpers.
@@ -190,18 +234,20 @@ PARTIAL
   one listener per port — intentional, matching mita.
 - IPv6 is live-tested for the TCP underlay on `::1`; the UDP underlay was
   live-tested on IPv4 only.
-- `InterfaceUpdated` rebuilds the client. It is exercised by the startup
-  network observation in the interop logs and by a unit test; a real Wi-Fi ↔
-  cellular hand-off was not reproduced on this machine.
+- `InterfaceUpdated` rebuilds the client only after the first dial; before that
+  the SDK has no underlay to reset. A real Wi-Fi ↔ cellular hand-off was not
+  reproduced on this machine.
 
 NOT_TESTED
 
 - Official `mita` binary against this outbound: no Windows build exists. The
-  official server SDK path (the same API and the same protocol implementation)
-  was used instead. A Linux host with the real `mita` binary is the next step.
-- iOS/Android device runs, long-duration soak, packet-loss/latency matrix,
-  and throughput comparison against other protocols. These belong to the
-  architecture/performance round.
+  official client and the official server SDK were measured instead; a Linux
+  host with the real `mita` binary is the next step.
+- mbox, extended, Hiddify and Mihomo reference adapters: unavailable on this
+  host (no WSL/Docker, no scriptable Windows build). The phase-2 matrix covers
+  the official client and the official server entry point only.
+- iOS/Android device runs, long-duration soak, packet-loss/latency matrix, and
+  Wi-Fi/cellular path changes. These require other hardware.
 - `go test -race` on Linux/macOS: the Windows run used `CGO_ENABLED=1` with the
   mingw toolchain. CI's race suite is the cross-platform check.
 
@@ -210,11 +256,12 @@ NOT_TESTED
 1. Run the official `mita` binary against this outbound on Linux, including
    auth failure, duplicate user names, port ranges, and `traffic_pattern`
    round-trip.
-2. Measure first-packet latency and throughput for TCP vs UDP underlay,
-   `default` vs `no_wait`, and `off`/`low`/`high` mux with `mita` + a real
-   destination; compare against the SDK's own client on the same host.
-3. Profile the per-datagram path on a high-packet-rate UDP flow; the remaining
-   write allocation (one pooled buffer) and the `Session` encryption cost are
-   the two candidates.
+2. Re-run the phase-2 matrix on Linux against `mita`, then add mbox, extended,
+   Hiddify and Mihomo as reference clients. The Windows numbers are product-
+   level and cannot be compared to their SDK builds directly.
+3. Investigate the 6% TCP-upload gap at `tcp-low-default`: per the profile the
+   cost is in the shared copy pipeline (`copyExtendedWithPool`), not in the
+   Mieru adapter, so establish whether it is an inbound/copy-buffer effect
+   before changing either.
 4. Add a Linux CI interop job that builds `mita` from the pinned tag and runs
    the official `test/deploy/singbox` scripts against this fork.

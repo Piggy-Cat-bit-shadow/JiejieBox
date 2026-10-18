@@ -1,0 +1,39 @@
+﻿File: _mieru_bench_after.exe
+Build ID: C:\Deepseek\_mieru_bench_after.exe2026-10-18 17:04:13.7411896 +0800 CST
+Type: cpu
+Time: 2026-10-18 17:10:59 CST
+Duration: 6s, Total samples = 17.08s (284.66%)
+Showing nodes accounting for 7.70s, 45.08% of 17.08s total
+Dropped 316 nodes (cum <= 0.09s)
+Showing top 30 nodes out of 127
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%      6.48s 37.94%  github.com/enfein/mieru/v3/pkg/protocol.(*Mux).newUnderlay.func1
+     0.01s 0.059% 0.059%      6.48s 37.94%  github.com/enfein/mieru/v3/pkg/protocol.(*StreamUnderlay).RunEventLoop
+     0.07s  0.41%  0.47%      6.22s 36.42%  github.com/enfein/mieru/v3/pkg/protocol.(*StreamUnderlay).readOneSegment
+     0.02s  0.12%  0.59%      5.64s 33.02%  internal/poll.(*FD).execIO
+     5.33s 31.21% 31.79%      5.39s 31.56%  runtime.cgocall
+         0     0% 31.79%      5.39s 31.56%  syscall.SyscallN
+         0     0% 31.79%      5.39s 31.56%  syscall.syscalln
+     0.03s  0.18% 31.97%      5.36s 31.38%  runtime.systemstack
+     0.01s 0.059% 32.03%      5.35s 31.32%  github.com/enfein/mieru/v3/pkg/protocol.(*StreamUnderlay).readDataAckSegment
+         0     0% 32.03%      4.15s 24.30%  runtime.gcBgMarkWorker.func2
+     0.04s  0.23% 32.26%      4.15s 24.30%  runtime.gcDrain
+         0     0% 32.26%      3.94s 23.07%  github.com/sagernet/sing-box/route.(*ConnectionManager).connectionCopy
+         0     0% 32.26%      3.94s 23.07%  github.com/sagernet/sing/common/bufio.CopyWithCounters
+         0     0% 32.26%      3.94s 23.07%  github.com/sagernet/sing/common/bufio.CopyWithIncreateBuffer
+         0     0% 32.26%      3.94s 23.07%  github.com/sagernet/sing/common/bufio.copyExtended
+     0.02s  0.12% 32.38%      3.94s 23.07%  github.com/sagernet/sing/common/bufio.copyExtendedWithPool
+     0.01s 0.059% 32.44%      3.80s 22.25%  runtime.gcBgMarkWorker
+         0     0% 32.44%      3.34s 19.56%  github.com/sagernet/sing/common/bufio.(*ExtendedWriterWrapper).WriteBuffer
+         0     0% 32.44%      3.32s 19.44%  net.(*conn).Write
+         0     0% 32.44%      3.32s 19.44%  net.(*netFD).Write
+     0.01s 0.059% 32.49%      3.31s 19.38%  internal/poll.(*FD).Write
+         0     0% 32.49%      3.12s 18.27%  internal/poll.(*FD).Write.func2
+         0     0% 32.49%      3.12s 18.27%  syscall.WSASend
+     2.12s 12.41% 44.91%      2.70s 15.81%  runtime.scanObject
+     0.02s  0.12% 45.02%      2.58s 15.11%  io.ReadAtLeast
+         0     0% 45.02%      2.58s 15.11%  io.ReadFull (inline)
+     0.01s 0.059% 45.08%      2.55s 14.93%  github.com/sagernet/sing-box/route.(*trackedConn).Read
+         0     0% 45.08%      2.53s 14.81%  runtime.gcDrainMarkWorkerDedicated (inline)
+         0     0% 45.08%      2.52s 14.75%  net.(*conn).Read
+         0     0% 45.08%      2.52s 14.75%  net.(*netFD).Read

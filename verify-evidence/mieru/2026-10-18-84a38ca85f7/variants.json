@@ -1,0 +1,92 @@
+{
+  "schema": 1,
+  "date": "2026-10-18",
+  "head": "84a38ca85f7a46b3910147148dd349da20bb5c17",
+  "target": {
+    "label": "TARGET",
+    "description": "this fork's testing branch: mixed inbound + mieru outbound",
+    "binary": "sing-box (build tags release/DEFAULT_BUILD_TAGS_OTHERS, CGO disabled)",
+    "binary_sha256": "1150F0CDA39BC3C1EBAB4248D10CBD49998A0B616870B85C81025C4B87834917",
+    "go": "go1.26.8 windows/amd64",
+    "sdk": "github.com/enfein/mieru/v3 v3.38.1"
+  },
+  "official": {
+    "label": "REF-OFFICIAL",
+    "description": "official mieru 3.38.1 client daemon; local SOCKS5 entry",
+    "binary_sha256": "37ADD82895EB6B5D5289F82173D334A5AA697567E21937CC104E23DB0C380C31",
+    "version": "3.38.1"
+  },
+  "server": {
+    "label": "official-SDK server harness",
+    "description": "the same apis/server entry point mita uses, plus the minimal SOCKS5 request and UDP relay; mita itself has no Windows build",
+    "binary_sha256": "0D222F643CBEBA98F6739C7B409EE3533D2102F4D60E4DE7E32C4FC3E6A245BC",
+    "sdk": "github.com/enfein/mieru/v3 v3.38.1"
+  },
+  "client_harness": {
+    "description": "scripts/mieru-bench/client: starts local TCP/UDP echo targets and drives them through the variant's SOCKS5 entry",
+    "binary_sha256": "F87D26CD8CEC0131E9C957B5D1C6A7B9550820DE7EB06A2567CC5DB600D85303"
+  },
+  "common": {
+    "host": "same Windows host, loopback only",
+    "os": "Windows 10 Enterprise LTSC 10.0.19044",
+    "cpu": "AMD Ryzen 7 4800H with Radeon Graphics",
+    "user": "bench",
+    "password": "bench-password (test-only)",
+    "server_port": 18671,
+    "official_socks_port": 11091,
+    "target_socks_port": 11092,
+    "rounds": 4,
+    "order": "ABBA by round: target,official / official,target",
+    "tcp_connections": 4,
+    "tcp_bytes_per_connection": 67108864,
+    "udp_datagrams": 5000,
+    "udp_payload_size": 1400,
+    "udp_window": 16,
+    "latency_requests": 1000,
+    "first_byte_requests": 50,
+    "first_byte_warmup": 5
+  },
+  "scenarios": [
+    {
+      "name": "tcp-low-default",
+      "transport": "tcp",
+      "multiplexing": "low",
+      "handshake": "default",
+      "official_enum": ["MULTIPLEXING_LOW", "HANDSHAKE_DEFAULT"]
+    },
+    {
+      "name": "udp-low-default",
+      "transport": "udp",
+      "multiplexing": "low",
+      "handshake": "default",
+      "official_enum": ["MULTIPLEXING_LOW", "HANDSHAKE_DEFAULT"]
+    },
+    {
+      "name": "tcp-high-nowait",
+      "transport": "tcp",
+      "multiplexing": "high",
+      "handshake": "no_wait",
+      "official_enum": ["MULTIPLEXING_HIGH", "HANDSHAKE_NO_WAIT"]
+    }
+  ],
+  "matrix": {
+    "rows": ["official", "target"],
+    "columns": ["tcp-low-default", "udp-low-default", "tcp-high-nowait"],
+    "modes": ["tcp-download", "tcp-upload", "tcp-latency", "udp-echo", "first-byte"],
+    "samples_per_cell": 4,
+    "raw": "raw/<variant>-<scenario>-r<round>-<order>-<mode>.json"
+  },
+  "not_comparable": {
+    "rss": "the target process also contains the sing-box core and a mixed inbound; the official process is a dedicated client. RSS is reported as product-level, never as adapter memory.",
+    "cpu": "process CPU includes the whole product; CPU/GiB is reported for throughput modes only and is not an encryption-cost measurement.",
+    "server": "the official server is the SDK entry point, not the mita binary; the server side is identical for both client variants, so it cancels in the client comparison.",
+    "throughput": "application payload bytes on loopback; wire bytes and framing overhead are not included."
+  },
+  "blocked_references": {
+    "REF-A mita": "no Windows build; this host has no WSL distribution and no Docker, so a real Linux mita peer could not be run.",
+    "REF-B enfein/mbox 1c5b39718ebcd05e6adb31f95246fbf056be9bd7": "Android application; no Windows CLI binary.",
+    "REF-C shtorm-7/sing-box-extended 5956780ba3f140feff771d003914a1b82ea9d5d0": "full fork; no tested Windows Mieru CLI artifact available on this host.",
+    "REF-D hiddify/hiddify-sing-box 3bbbd61ee4d76cc6ff433b111fed4187ad2f4b4f": "GUI application; no scriptable Windows Mieru-only entry without its UI/core packaging.",
+    "REF-E MetaCubeX/mihomo 94b13aed49b8dc41973e4bb3f721c5fa2c5c5c1f": "not built or downloaded in this run; the Windows host has no reference binary and no Linux container to build one."
+  }
+}

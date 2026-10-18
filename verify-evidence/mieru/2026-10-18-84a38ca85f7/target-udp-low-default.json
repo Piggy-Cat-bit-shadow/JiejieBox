@@ -1,0 +1,37 @@
+{
+    "inbounds":  [
+                     {
+                         "type":  "mixed",
+                         "tag":  "mixed-in",
+                         "listen":  "127.0.0.1",
+                         "listen_port":  11092
+                     }
+                 ],
+    "outbounds":  [
+                      {
+                          "type":  "mieru",
+                          "tag":  "mieru-out",
+                          "server":  "127.0.0.1",
+                          "server_port":  18671,
+                          "username":  "bench",
+                          "password":  "bench-password",
+                          "transport":  "udp",
+                          "multiplexing":  "low",
+                          "handshake_mode":  "default"
+                      }
+                  ],
+    "route":  {
+                  "rules":  [
+                                {
+                                    "inbound":  [
+                                                    "mixed-in"
+                                                ],
+                                    "action":  "route",
+                                    "outbound":  "mieru-out"
+                                }
+                            ]
+              },
+    "log":  {
+                "level":  "warn"
+            }
+}

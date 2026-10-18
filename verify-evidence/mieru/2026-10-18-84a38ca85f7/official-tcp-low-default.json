@@ -1,0 +1,33 @@
+{
+    "profiles":  [
+                     {
+                         "profileName":  "default",
+                         "user":  {
+                                      "password":  "bench-password",
+                                      "name":  "bench"
+                                  },
+                         "servers":  [
+                                         {
+                                             "ipAddress":  "127.0.0.1",
+                                             "portBindings":  [
+                                                                  {
+                                                                      "protocol":  "TCP",
+                                                                      "port":  18671
+                                                                  }
+                                                              ]
+                                         }
+                                     ],
+                         "multiplexing":  {
+                                              "level":  "MULTIPLEXING_LOW"
+                                          },
+                         "handshakeMode":  "HANDSHAKE_DEFAULT"
+                     }
+                 ],
+    "activeProfile":  "default",
+    "rpcPort":  18993,
+    "socks5Port":  11091,
+    "advancedSettings":  {
+                             "noCheckUpdate":  true
+                         },
+    "loggingLevel":  "WARN"
+}
