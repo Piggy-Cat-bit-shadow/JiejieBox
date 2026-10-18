@@ -1,0 +1,18 @@
+INFO[0000] inbound/mieru[mieru-in]: mieru tcp server started at 127.0.0.1:18664
+INFO[0000] inbound/mieru[mieru-in]: mieru udp server started at 127.0.0.1:18664
+INFO[0000] inbound/mieru[mieru-in]: mieru server started
+INFO[0000] network: updated default interface WLAN, index 12
+INFO[0000] network: updated network environment: gateway 172.29.0.1, gateway_mac 80:05:88:ce:39:ec
+INFO[0000] sing-box started (0.03s)
+INFO[0003] [958593377 0ms] inbound/mieru[mieru-in]: [baozi] inbound connection from 127.0.0.1:58740 to 127.0.0.1:58364
+INFO[0003] [958593377 0ms] outbound/direct[direct]: outbound connection to 127.0.0.1:58364
+INFO[0003] [2824943472 0ms] inbound/mieru[mieru-in]: [baozi] inbound connection from 127.0.0.1:58741 to 0.0.0.0:0
+INFO[0003] [2824943472 0ms] outbound/direct[direct]: outbound packet connection to 0.0.0.0:0
+DEBUG[0003] [958593377 2ms] connection: connection upload finished
+DEBUG[0003] [958593377 2ms] connection: connection download finished
+INFO[0064] [4166092234 0ms] inbound/mieru[mieru-in]: [baozi] inbound connection from 127.0.0.1:50330 to 127.0.0.1:58445
+INFO[0064] [4166092234 0ms] outbound/direct[direct]: outbound connection to 127.0.0.1:58445
+DEBUG[0064] [4166092234 2ms] connection: connection upload finished
+DEBUG[0064] [4166092234 2ms] connection: connection download finished
+INFO[0064] [832802271 0ms] inbound/mieru[mieru-in]: [baozi] inbound connection from 127.0.0.1:50331 to 0.0.0.0:0
+INFO[0064] [832802271 0ms] outbound/direct[direct]: outbound packet connection to 0.0.0.0:0

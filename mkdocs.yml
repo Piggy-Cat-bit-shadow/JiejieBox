@@ -176,6 +176,7 @@ nav:
           - TUIC: configuration/inbound/tuic.md
           - Hysteria2: configuration/inbound/hysteria2.md
           - AnyTLS: configuration/inbound/anytls.md
+          - Mieru: configuration/inbound/mieru.md
           - Snell: configuration/inbound/snell.md
           - Tun: configuration/inbound/tun.md
           - Redirect: configuration/inbound/redirect.md
@@ -200,6 +201,7 @@ nav:
           - TUIC: configuration/outbound/tuic.md
           - Hysteria2: configuration/outbound/hysteria2.md
           - AnyTLS: configuration/outbound/anytls.md
+          - Mieru: configuration/outbound/mieru.md
           - Snell: configuration/outbound/snell.md
           - Tailcat: configuration/outbound/tailcat.md
           - Tor: configuration/outbound/tor.md
