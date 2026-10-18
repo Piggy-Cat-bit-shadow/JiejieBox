@@ -132,7 +132,8 @@ func factTable() []factRow {
 		{name: "target fact on ECONNREFUSED", err: adapter.WrapFailure(syscall.ECONNREFUSED, adapter.TargetFailureFacts()), terminalForTheFlow: true},
 		// A first-hop dial/handshake failure is retryable and does implicate
 		// this member's own path.
-		{name: "path dial fact on deadline", err: adapter.WrapFailure(context.DeadlineExceeded, adapter.PathFailureFacts(adapter.FailureStageDial)), retry: true, global: true},
+		{name: "path dial fact on deadline", err: adapter.WrapFailure(context.DeadlineExceeded, adapter.PathFailureFacts(adapter.FailureStageDial)), retry: true},
+		{name: "path dial fact on ECONNREFUSED", err: adapter.WrapFailure(syscall.ECONNREFUSED, adapter.PathFailureFacts(adapter.FailureStageDial)), retry: true, global: true},
 		// A proxy handshake failure is worth another member, but is not proof
 		// this member's network is down.
 		{name: "proxy handshake fact", err: adapter.WrapFailure(errors.New("proxy handshake rejected"), adapter.FailureFacts{Stage: adapter.FailureStageHandshake, Origin: adapter.FailureOriginProxy}), retry: true, terminalForTheFlow: true},

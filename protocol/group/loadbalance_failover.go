@@ -286,7 +286,18 @@ func PenalizeMemberGlobally(member adapter.Outbound, err error) bool {
 			// are not evidence that this member's first-hop PATH is broken.
 			return false
 		case adapter.FailureOriginPath:
-			return facts.Stage == adapter.FailureStageDial || facts.Stage == adapter.FailureStageHandshake
+			if facts.Stage != adapter.FailureStageDial && facts.Stage != adapter.FailureStageHandshake {
+				return false
+			}
+			// A timeout is still not proof that this member's path is dead,
+			// even when the protocol proved the failure happened before a
+			// target answer. This is the same conservatism as the errno table:
+			// a wrong-credential or blackholed handshake must not demote a
+			// member that a health probe may find healthy on the next pass.
+			if isTimeoutFailure(err) {
+				return false
+			}
+			return true
 		}
 	}
 	if memberDialsDestination(member) {
@@ -306,6 +317,21 @@ func PenalizeMemberGlobally(member adapter.Outbound, err error) bool {
 	// is why they are separate.
 	return dialer.ErroredWith(err, dialer.PeerAnsweredErrnos...) ||
 		dialer.ErroredWith(err, dialer.UnreachableErrnos...)
+}
+
+// isTimeoutFailure is the narrow timeout fact used by the penalty path. It
+// deliberately checks both the net.Error shape and the kernel errno spellings:
+// a fact may prove a first-hop handshake failed, but it cannot prove the path
+// is permanently gone rather than slow (or a credential/blackhole timeout).
+func isTimeoutFailure(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
+	}
+	if dialer.ErroredWith(err, dialer.TimeoutErrnos...) {
+		return true
+	}
+	var netError net.Error
+	return errors.As(err, &netError) && netError.Timeout()
 }
 
 // memberDialsDestination reports whether a failure from this member describes the flow's

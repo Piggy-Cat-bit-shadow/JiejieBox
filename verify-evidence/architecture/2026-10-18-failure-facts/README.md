@@ -1,4 +1,4 @@
-# Cross-protocol failure facts — implementation evidence
+﻿# Cross-protocol failure facts 鈥?implementation evidence
 
 Tree: `testing`, after the Mieru fallback work. The direct design is
 [`docs/fork/cross-protocol-failure-facts.md`](../../../docs/fork/cross-protocol-failure-facts.md).
@@ -7,10 +7,10 @@ Tree: `testing`, after the Mieru fallback work. The direct design is
 
 The existing group failover predicates had only errno. `ECONNREFUSED` could be:
 
-- the proxy endpoint's listener refusing (first-hop/path failure → another
+- the proxy endpoint's listener refusing (first-hop/path failure 鈫?another
   member should be tried and this member may be demoted), or
 - a valid SOCKS reply from a healthy proxy whose target refused (target
-  failure → retrying another member or demoting this member is wrong).
+  failure 鈫?retrying another member or demoting this member is wrong).
 
 The old code knew this ambiguity and therefore used a narrow errno table plus
 the direct/block member kind. `route/failover.go` documented the missing stage
@@ -31,17 +31,16 @@ instead of adding a universal classifier.
 
 `protocol/group/loadbalance_failover.go`:
 
-- `RetryThisFlow`: Target/Caller/Local → false; Path/Proxy at dial/handshake →
-  true; Data/Unknown → existing errno rules.
-- `PenalizeMemberGlobally`: Target/Caller/Local/Proxy → false; Path at
-  dial/handshake → true; Data/Unknown → existing errno rules.
+- `RetryThisFlow`: Target/Caller/Local 鈫?false; Path/Proxy at dial/handshake 鈫?  true; Data/Unknown 鈫?existing errno rules.
+- `PenalizeMemberGlobally`: Target/Caller/Local/Proxy 鈫?false; Path at
+  dial/handshake 鈫?true; Data/Unknown 鈫?existing errno rules.
 
 `protocol/mieru`:
 
-- Target SOCKS reply → Target/Target.
-- Transport/dial/handshake failure → Handshake/Path.
-- Caller → Dial/Caller.
-- Ambiguous TCP EOF → no fact.
+- Target SOCKS reply 鈫?Target/Target.
+- Transport/dial/handshake failure 鈫?Handshake/Path.
+- Caller 鈫?Dial/Caller.
+- Ambiguous TCP EOF 鈫?no fact.
 - Wrapped both in the disabled single-client path and in the fallback aggregate.
 
 ## Cost
@@ -63,14 +62,14 @@ error path can prove a stage.
 
 ## Evidence
 
-- `CAPABILITY-LEDGER.md` — protocol/owner audit and what was deliberately not
+- `CAPABILITY-LEDGER.md` 鈥?protocol/owner audit and what was deliberately not
   changed.
-- `TEST-MATRIX.md` — positive/negative matrix and commands.
-- `failure-facts-benchmark.txt` — error-path benchmark.
-- `adapter/failure_test.go` — chain/Unknown/aggregate tests.
-- `protocol/group/loadbalance_failure_facts_test.go` — fact table extended
+- `TEST-MATRIX.md` 鈥?positive/negative matrix and commands.
+- `failure-facts-benchmark.txt` 鈥?error-path benchmark.
+- `adapter/failure_test.go` 鈥?chain/Unknown/aggregate tests.
+- `protocol/group/loadbalance_failure_facts_test.go` 鈥?fact table extended
   with target/path/proxy/caller/data rows.
-- `protocol/mieru/fallback_test.go` — producer mapping and fact-less ambiguity.
+- `protocol/mieru/fallback_test.go` 鈥?producer mapping and fact-less ambiguity.
 
 ## Residual
 
@@ -78,3 +77,4 @@ error path can prove a stage.
 - Target refusal behind protocols other than Mieru remains unclassified; their
   existing errno policy is unchanged rather than guessed.
 - Real mobile/TUN/long soak not tested.
+

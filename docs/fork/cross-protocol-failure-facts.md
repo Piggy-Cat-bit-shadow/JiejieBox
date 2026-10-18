@@ -1,4 +1,4 @@
-# Cross-protocol failure facts
+﻿# Cross-protocol failure facts
 
 This is the cross-protocol integration added on `testing` after the Mieru
 fallback work. It addresses the concrete gap that the group classifiers knew
@@ -62,7 +62,7 @@ when present:
 | Caller | false | false |
 | Local | false | false |
 | Proxy handshake | true (one alternate may help) | false (not proof this member's network is down) |
-| Path dial/handshake | true | true |
+| Path dial/handshake, non-timeout | true | true |\n| Path dial/handshake, timeout | true | false (a timeout is not proof the path is gone) |
 | Path data | fall through (EOF -> false) | false |
 | Unknown/no fact | existing errno rules | existing errno rules |
 
@@ -85,6 +85,11 @@ different consumers). The split preserves both boundaries.
 - `protocol/group/loadbalance_failure_facts_test.go`: the existing fact table
   gained target/path/proxy/caller/data rows; `TestTheFactsCover...` keeps the
   "not measured" invariant.
+- `protocol/group/loadbalance_failover_test.go`: same ECONNREFUSED with a
+  target fact does not retry/penalise; with a path fact it retries and
+  penalises; a path-fact timeout still retries but does not penalise. This
+  proves the facts are wired into the live policy without overriding the
+  existing timeout conservatism.
 - `protocol/mieru/fallback_test.go`: Mieru target/path facts; ambiguous EOF
   stays fact-less.
 - Full group/adapter packages pass; full mieru package and race pass.
@@ -101,3 +106,5 @@ or per packet.
   is defined.
 - No change to `IsCallerCancellation`/`IsOwnTeardown`; those remain separate
   and take precedence for their own cases.
+
+

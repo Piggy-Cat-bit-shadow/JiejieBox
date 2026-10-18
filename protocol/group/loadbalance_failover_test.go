@@ -379,6 +379,75 @@ func TestLoadBalanceFailoverDoesNotRetryACancelledCaller(t *testing.T) {
 	require.Equal(t, uint64(1), group.CommittedSelections())
 }
 
+// TestLoadBalanceFailoverTargetFactSuppressesRetry proves the fact is wired into
+// the retry predicate, not just into the table: the same ECONNREFUSED that a
+// path fact retries must not spend the alternate when the producer proved it
+// was the target's answer.
+func TestLoadBalanceFailoverTargetFactSuppressesRetry(t *testing.T) {
+	ctx := failoverContext(t)
+	harness := newFailoverHarness(t)
+	nodeA := &stubOutbound{tag: "node-a", typeName: "mieru"}
+	nodeB := &stubOutbound{tag: "node-b"}
+	nodeA.setDialError(adapter.WrapFailure(syscall.ECONNREFUSED, adapter.TargetFailureFacts()))
+	harness.add(nodeA, nodeB)
+	group := harness.group(t, "lb", nil, option.LoadBalanceOutboundOptions{Strategy: "round_robin", Failover: true})
+
+	conn, err := group.DialWithFailover(ctx, failoverMetadata("example.com"), N.NetworkTCP, failoverDestination())
+	require.ErrorIs(t, err, syscall.ECONNREFUSED)
+	require.Nil(t, conn)
+	require.Equal(t, 1, nodeA.dialCount(), "the target answered")
+	require.Equal(t, 0, nodeB.dialCount(), "a target failure must not spend the flow's alternate")
+	require.Equal(t, 0, penaltyCountOf(group, "node-a"), "a target failure is not a path verdict")
+	require.Equal(t, uint64(1), group.CommittedSelections())
+}
+
+// TestLoadBalanceFailoverPathFactStillRetries is the positive control for the
+// test above: the same errno, with a path fact, must retry and penalise.
+func TestLoadBalanceFailoverPathFactStillRetries(t *testing.T) {
+	ctx := failoverContext(t)
+	harness := newFailoverHarness(t)
+	nodeA := &stubOutbound{tag: "node-a", typeName: "mieru"}
+	nodeB := &stubOutbound{tag: "node-b"}
+	nodeA.setDialError(adapter.WrapFailure(syscall.ECONNREFUSED,
+		adapter.PathFailureFacts(adapter.FailureStageDial)))
+	harness.add(nodeA, nodeB)
+	group := harness.group(t, "lb", nil, option.LoadBalanceOutboundOptions{Strategy: "round_robin", Failover: true})
+
+	conn, err := group.DialWithFailover(ctx, failoverMetadata("example.com"), N.NetworkTCP, failoverDestination())
+	require.NoError(t, err)
+	require.NotNil(t, conn)
+	require.NoError(t, conn.Close())
+	require.Equal(t, 1, nodeA.dialCount())
+	require.Equal(t, 1, nodeB.dialCount())
+	require.Equal(t, 1, penaltyCountOf(group, "node-a"))
+	require.Equal(t, 0, penaltyCountOf(group, "node-b"))
+}
+
+// TestLoadBalanceFailoverPathFactTimeoutDoesNotPenalise is the adversarial
+// pair to the path-fact test: a protocol can prove a handshake path failure
+// without proving the path is permanently gone. The member is still retried,
+// but must not be demoted on a timeout alone.
+func TestLoadBalanceFailoverPathFactTimeoutDoesNotPenalise(t *testing.T) {
+	ctx := failoverContext(t)
+	harness := newFailoverHarness(t)
+	nodeA := &stubOutbound{tag: "node-a", typeName: "mieru"}
+	nodeB := &stubOutbound{tag: "node-b"}
+	nodeA.setDialError(adapter.WrapFailure(timeoutDialError{},
+		adapter.PathFailureFacts(adapter.FailureStageHandshake)))
+	harness.add(nodeA, nodeB)
+	group := harness.group(t, "lb", nil, option.LoadBalanceOutboundOptions{Strategy: "round_robin", Failover: true})
+
+	conn, err := group.DialWithFailover(ctx, failoverMetadata("example.com"), N.NetworkTCP, failoverDestination())
+	require.NoError(t, err)
+	require.NotNil(t, conn)
+	require.NoError(t, conn.Close())
+	require.Equal(t, 1, nodeA.dialCount())
+	require.Equal(t, 1, nodeB.dialCount())
+	require.Equal(t, 0, penaltyCountOf(group, "node-a"),
+		"a proved path stage does not turn a timeout into a permanent path verdict")
+	require.Equal(t, 0, penaltyCountOf(group, "node-b"))
+}
+
 // TestLoadBalanceFailoverDoesNotPenaliseAHealthyMemberForADeadDestination is the asymmetry
 // this split exists for, asserted end to end.
 //
