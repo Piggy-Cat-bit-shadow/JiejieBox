@@ -39,7 +39,7 @@ func TestOutboundLifecycle(t *testing.T) {
 
 	previous := outboundInstance.client
 	outboundInstance.InterfaceUpdated(context.Background())
-	require.NotSame(t, previous, outboundInstance.client, "a network change must replace the SDK client")
+	require.Same(t, previous, outboundInstance.client, "a network change before the first dial has nothing to rebuild")
 	require.True(t, outboundInstance.client.IsRunning())
 
 	// A second Start at the same stage is a no-op, not a second SDK start.

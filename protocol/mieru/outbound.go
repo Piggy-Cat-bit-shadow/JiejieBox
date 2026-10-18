@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -59,6 +60,10 @@ type Outbound struct {
 	// lock first, which prevents new calls, then drain this counter before
 	// stopping the client.
 	inFlight inflightGroup
+	// dialed is set by the first dial after a (re)start. Before that point the
+	// SDK has no underlay or session that could be bound to the old network,
+	// so InterfaceUpdated has nothing to rebuild.
+	dialed atomic.Bool
 
 	closeOnce sync.Once
 	closeErr  error
@@ -160,6 +165,7 @@ func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		return E.Cause(err, "mieru: start client")
 	}
 	h.started = true
+	h.dialed.Store(false)
 	h.access.Unlock()
 	// Add may run the cleanup synchronously if the scope is already closing;
 	// Close takes the same lock, so it must not be held here.
@@ -212,6 +218,13 @@ func (h *Outbound) InterfaceUpdated(ctx context.Context) {
 	if h.closed || !h.started {
 		return
 	}
+	if !h.dialed.Load() {
+		// The startup network observation arrives before the first dial. The
+		// SDK has not created an underlay yet, so stopping and starting the
+		// client here would only add a transient unavailable window (and a
+		// full Mux teardown) before any traffic has been attempted.
+		return
+	}
 	h.drainInFlightLocked()
 	next := mieruclient.NewClient()
 	if err := next.Store(h.config); err != nil {
@@ -224,6 +237,7 @@ func (h *Outbound) InterfaceUpdated(ctx context.Context) {
 	}
 	previous := h.client
 	h.client = next
+	h.dialed.Store(false)
 	if err := previous.Stop(); err != nil {
 		h.logger.WarnContext(ctx, "mieru: stop previous client after network change: ", err)
 	}
@@ -288,6 +302,7 @@ func (h *Outbound) dial(ctx context.Context, destination mierumodel.NetAddrSpec)
 	}
 	h.inFlight.begin()
 	client := h.client
+	h.dialed.Store(true)
 	h.access.RUnlock()
 	defer h.inFlight.done()
 	conn, err := client.DialContext(ctx, destination)

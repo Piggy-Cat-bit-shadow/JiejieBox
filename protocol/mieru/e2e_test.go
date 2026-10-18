@@ -413,6 +413,34 @@ func TestMieruInboundPortRange(t *testing.T) {
 	require.Equal(t, destination, metadata.Destination)
 }
 
+func TestMieruInterfaceUpdateRebuildsAfterDial(t *testing.T) {
+	port := freePortForBothTransports(t)
+	startTestInbound(t, inboundOptionsForPort(port, "tcp"))
+	outboundInstance, _ := startTestOutbound(t, outboundOptionsForPort(port, "tcp", "alice", "alice-password"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	destination := M.ParseSocksaddr("192.0.2.61:443")
+	first, err := outboundInstance.DialContext(ctx, N.NetworkTCP, destination)
+	require.NoError(t, err)
+	_, err = first.Write([]byte("before update"))
+	require.NoError(t, err)
+	require.Equal(t, []byte("before update"), readExactWithTimeout(t, first, len("before update")))
+	require.NoError(t, first.Close())
+
+	previous := outboundInstance.client
+	outboundInstance.InterfaceUpdated(context.Background())
+	require.NotSame(t, previous, outboundInstance.client, "after a dial a network change must replace the SDK client")
+	require.True(t, outboundInstance.client.IsRunning())
+
+	second, err := outboundInstance.DialContext(ctx, N.NetworkTCP, destination)
+	require.NoError(t, err)
+	defer second.Close()
+	_, err = second.Write([]byte("after update"))
+	require.NoError(t, err)
+	require.Equal(t, []byte("after update"), readExactWithTimeout(t, second, len("after update")))
+}
+
 func TestMieruMultiUser(t *testing.T) {
 	port := freePortForBothTransports(t)
 	_, router, _ := startTestInbound(t, inboundOptionsForPort(port, "tcp"))
