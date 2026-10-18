@@ -1,8 +1,14 @@
 package mieru
 
 import (
+	"context"
+	"io"
 	"net"
 	"testing"
+	"time"
+
+	mieruconstant "github.com/enfein/mieru/v3/apis/constant"
+	mierumodel "github.com/enfein/mieru/v3/apis/model"
 
 	"github.com/stretchr/testify/require"
 )
@@ -30,7 +36,60 @@ func TestTrackedConnRemovesItselfFromRegistry(t *testing.T) {
 	require.False(t, registry.add(&trackedConn{Conn: secondClient, registry: &registry}))
 }
 
-// TestConnRegistryClosedBeforeAdd proves a connection accepted while Close is
+// TestHandleConnectionRejectsBeforeSuccess pins the SOCKS5 reply for requests
+// this server cannot route. An unsupported command or an unparseable
+// destination must not receive the synthetic success reply.
+func TestHandleConnectionRejectsBeforeSuccess(t *testing.T) {
+	testCases := []struct {
+		name    string
+		request *mierumodel.Request
+		reply   byte
+	}{
+		{
+			name: "unsupported command",
+			request: &mierumodel.Request{
+				Command: 0x7f,
+				DstAddr: mierumodel.AddrSpec{IP: net.IPv4(192, 0, 2, 1), Port: 80},
+			},
+			reply: mieruconstant.Socks5ReplyCommandNotSupported,
+		},
+		{
+			name: "invalid destination port",
+			request: &mierumodel.Request{
+				Command: mieruconstant.Socks5ConnectCmd,
+				DstAddr: mierumodel.AddrSpec{IP: net.IPv4(192, 0, 2, 1), Port: 70000},
+			},
+			reply: mieruconstant.Socks5ReplyServerFailure,
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			created, err := NewInbound(context.Background(), newEchoRouter(), nopLogger(), "mieru-in", validInboundOptions())
+			require.NoError(t, err)
+			inboundInstance := created.(*Inbound)
+
+			clientConn, serverConn := net.Pipe()
+			defer clientConn.Close()
+			done := make(chan struct{})
+			go func() {
+				inboundInstance.handleConnection(serverConn, testCase.request)
+				close(done)
+			}()
+			require.NoError(t, clientConn.SetReadDeadline(time.Now().Add(5*time.Second)))
+			response := make([]byte, 10)
+			_, err = io.ReadFull(clientConn, response)
+			require.NoError(t, err)
+			require.Equal(t, byte(0x05), response[0], "SOCKS5 version")
+			require.Equal(t, testCase.reply, response[1], "SOCKS5 reply")
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("handleConnection did not return after the failure reply")
+			}
+		})
+	}
+}
+
 // running is closed rather than tracked into a registry nobody will walk.
 func TestConnRegistryClosedBeforeAdd(t *testing.T) {
 	registry := connRegistry{conns: make(map[net.Conn]struct{})}

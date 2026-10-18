@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -83,11 +84,56 @@ func TestOutboundStartOnClosingScopeDoesNotDeadlock(t *testing.T) {
 	}()
 	select {
 	case err = <-done:
-		require.NoError(t, err)
+		require.Error(t, err, "a cleanup that ran synchronously during Start must be reported, not returned as success")
 	case <-time.After(10 * time.Second):
 		t.Fatal("Start deadlocked while registering cleanup on a closing scope")
 	}
 	require.True(t, outboundInstance.closed, "the cleanup registered on a closing scope must have run")
+}
+
+type closeTrackingConn struct {
+	net.Conn
+	closed *atomic.Int32
+}
+
+func (c *closeTrackingConn) Close() error {
+	c.closed.Add(1)
+	return c.Conn.Close()
+}
+
+type fakePacketNDialer struct {
+	N.Dialer
+	conn   net.Conn
+	closed *atomic.Int32
+}
+
+func (d *fakePacketNDialer) DialContext(context.Context, string, M.Socksaddr) (net.Conn, error) {
+	return &closeTrackingConn{Conn: d.conn, closed: d.closed}, nil
+}
+
+// TestServerDialerClosesPacketGeneration pins the adapter's ownership of the
+// UDP underlay socket. PacketUnderlay.Close only wakes the read loop with a
+// deadline, and the SDK loop can overwrite that deadline; the adapter registry
+// is what guarantees the socket is actually closed on Close/rebuild.
+func TestServerDialerClosesPacketGeneration(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	var closed atomic.Int32
+	dialer := &serverDialer{
+		dialer: &fakePacketNDialer{conn: clientConn, closed: &closed},
+		server: M.Socksaddr{Fqdn: "example.com"},
+	}
+	packetConn, err := dialer.ListenPacket(context.Background(), "udp", "", "127.0.0.1:53")
+	require.NoError(t, err)
+	require.Equal(t, 1, dialer.packetConnCount())
+	require.NoError(t, packetConn.Close())
+	require.Equal(t, int32(1), closed.Load())
+	require.Zero(t, dialer.packetConnCount())
+
+	// The final form is idempotent and refuses new sockets.
+	dialer.shutdownPacketConns()
+	_, err = dialer.ListenPacket(context.Background(), "udp", "", "127.0.0.1:53")
+	require.Error(t, err)
 }
 
 // TestOutboundDialErrorIsNotSwallowed checks the common.Close defect directly:

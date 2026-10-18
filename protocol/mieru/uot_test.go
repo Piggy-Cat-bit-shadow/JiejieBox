@@ -3,10 +3,14 @@ package mieru
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net"
 	"net/netip"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/sagernet/sing/common/buf"
 	M "github.com/sagernet/sing/common/metadata"
@@ -52,6 +56,31 @@ func TestSocks5AddressCodecMatchesSDK(t *testing.T) {
 			require.Equal(t, destination, decoded)
 		})
 	}
+}
+
+// TestMaxFQDNAddressEncoding covers the SOCKS5 FQDN boundary. The presentation
+// form sing-box accepts is at most 253 bytes; 254/255 are rejected before the
+// encoder, and a 253-byte name needs a 257-byte SOCKS5 address (ATYP + length +
+// name + port), so the 258-byte scratch buffer is exactly sufficient.
+func TestMaxFQDNAddressEncoding(t *testing.T) {
+	tooLong := M.Socksaddr{Fqdn: strings.Repeat("a", 255), Port: 65535}
+	var rejected [1 + 255 + 2]byte
+	_, err := encodeSocks5Address(rejected[:], tooLong)
+	require.Error(t, err)
+
+	destination := M.Socksaddr{Fqdn: strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 61), Port: 65535}
+	var encoded [1 + 255 + 2]byte
+	var length int
+	require.NotPanics(t, func() {
+		var encodeErr error
+		length, encodeErr = encodeSocks5Address(encoded[:], destination)
+		require.NoError(t, encodeErr)
+	})
+	require.Equal(t, 257, length)
+	decoded, decodedLength, err := readSocks5Address(bytes.NewReader(encoded[:length]))
+	require.NoError(t, err)
+	require.Equal(t, length, decodedLength)
+	require.Equal(t, destination, decoded)
 }
 
 // TestWriteFrameIsReadableBySDK proves the writer is wire compatible with the
@@ -214,6 +243,21 @@ func TestOversizedFrameIsDrained(t *testing.T) {
 	require.Equal(t, small, received[:n])
 }
 
+// TestOversizedFrameRejectsBadSuffix keeps the short-buffer path honest: a
+// frame that is too large for the caller still has to end in 0xff. The old
+// drain discarded one byte without checking it, so a malformed suffix was
+// reported as a plain short buffer.
+func TestOversizedFrameRejectsBadSuffix(t *testing.T) {
+	destination := M.SocksaddrFrom(netip.MustParseAddr("203.0.113.6"), 10)
+	var frame bytes.Buffer
+	require.NoError(t, writeUOTFrame(&frame, bytes.Repeat([]byte{0xcd}, 256), destination))
+	encoded := frame.Bytes()
+	encoded[len(encoded)-1] = 0x00
+	_, _, err := readUOTFrame(bytes.NewReader(encoded), make([]byte, 16))
+	require.Error(t, err)
+	require.NotErrorIs(t, err, io.ErrShortBuffer)
+}
+
 // TestFrameLengthEnvelope checks the exact bytes of a minimal frame, so a
 // change in framing cannot hide behind two implementations that agree.
 func TestFrameLengthEnvelope(t *testing.T) {
@@ -234,6 +278,52 @@ func TestFrameLengthEnvelope(t *testing.T) {
 
 // TestPacketConnRoundTrip exercises the N.PacketConn adapters themselves over
 // a pipe, with the buf API the route layer uses.
+// TestUOTPacketConnConcurrentReads exercises the net.PacketConn contract:
+// concurrent ReadFrom calls must not share the framer's scratch buffers. Before
+// the read mutex, two readers interleaved their header and address reads and
+// the race detector also flagged the shared arrays.
+func TestUOTPacketConnConcurrentReads(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	packetConn := newUOTPacketConn(clientConn)
+	defer packetConn.Close()
+	destination := M.SocksaddrFrom(netip.MustParseAddr("192.0.2.80"), 53)
+
+	const readers = 8
+	results := make(chan string, readers)
+	var waitGroup sync.WaitGroup
+	for index := 0; index < readers; index++ {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			require.NoError(t, packetConn.SetReadDeadline(time.Now().Add(5*time.Second)))
+			buffer := make([]byte, 128)
+			n, _, err := packetConn.ReadFrom(buffer)
+			if err != nil {
+				results <- "error: " + err.Error()
+				return
+			}
+			results <- string(buffer[:n])
+		}()
+	}
+	go func() {
+		for index := 0; index < readers; index++ {
+			if err := writeUOTFrame(serverConn, []byte(fmt.Sprintf("packet-%d", index)), destination); err != nil {
+				return
+			}
+		}
+	}()
+	waitGroup.Wait()
+	close(results)
+	seen := make(map[string]bool, readers)
+	for result := range results {
+		seen[result] = true
+	}
+	for index := 0; index < readers; index++ {
+		require.True(t, seen[fmt.Sprintf("packet-%d", index)], "missing %d, got %v", index, seen)
+	}
+}
+
 func TestPacketConnRoundTrip(t *testing.T) {
 	destination := M.SocksaddrFrom(netip.MustParseAddr("192.0.2.33"), 5353)
 	clientConn, serverConn := net.Pipe()

@@ -63,6 +63,7 @@ type Inbound struct {
 
 	acceptDone chan struct{}
 	active     connRegistry
+	listeners  listenerRegistry
 	handlers   sync.WaitGroup
 }
 
@@ -82,8 +83,8 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	}
 	// The factories are attached BEFORE Store so the server object never holds
 	// a configuration that could bind with the SDK's own listen semantics.
-	streamFactory := &streamListenerFactory{ctx: inboundContext, options: options.ListenOptions, logger: logger}
-	packetFactory := &packetListenerFactory{ctx: inboundContext, options: options.ListenOptions, logger: logger}
+	streamFactory := &streamListenerFactory{ctx: inboundContext, options: options.ListenOptions, logger: logger, listeners: &h.listeners}
+	packetFactory := &packetListenerFactory{ctx: inboundContext, options: options.ListenOptions, logger: logger, listeners: &h.listeners}
 	config.StreamListenerFactory = streamFactory
 	config.PacketListenerFactory = packetFactory
 
@@ -94,6 +95,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	}
 	h.server = server
 	h.active = connRegistry{conns: make(map[net.Conn]struct{})}
+	h.listeners = listenerRegistry{closers: make(map[io.Closer]struct{})}
 	return h, nil
 }
 
@@ -115,6 +117,11 @@ func (h *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		return err
 	}
 	if err := h.server.Start(); err != nil {
+		// The SDK closes the listeners it managed to register on a partial
+		// start, but its packet underlay does not close the PacketConn. Close
+		// every listener this factory created before returning the error.
+		h.listeners.closeAll()
+		h.listeners = listenerRegistry{closers: make(map[io.Closer]struct{})}
 		h.access.Unlock()
 		return E.Cause(err, "mieru: start server")
 	}
@@ -126,6 +133,15 @@ func (h *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	// Close waits on acceptDone.
 	go h.acceptLoop()
 	scope.Add(h.Close)
+	// scope.Add runs the cleanup synchronously when the scope is already
+	// closing. In that case the inbound is now stopped; reporting nil would
+	// tell the caller a closed server started successfully.
+	h.access.Lock()
+	closedDuringStart := h.closed
+	h.access.Unlock()
+	if closedDuringStart {
+		return E.New("mieru: inbound was closed while starting")
+	}
 	h.logger.Info("mieru server started")
 	return nil
 }
@@ -147,6 +163,11 @@ func (h *Inbound) Close() error {
 
 		h.cancel()
 		h.closeErr = h.server.Stop()
+		// PacketUnderlay.Close only interrupts its read loop; it does not
+		// close the PacketConn returned by the listener factory. Closing the
+		// tracked listeners here is what actually releases the UDP port (and
+		// is harmless for the TCP listener the SDK already closed).
+		h.listeners.closeAll()
 		h.active.closeAll()
 		acceptLoopStopped := true
 		if h.acceptDone != nil {
@@ -192,6 +213,10 @@ func (h *Inbound) acceptLoop() {
 			// latch or the Mux itself is closed. While the server claims to be
 			// running that is a dead protocol, not a failed handshake; retrying
 			// it would spin forever.
+			// The SDK's Request.ReadFromSocks5 surfaces io.EOF or
+			// io.ErrUnexpectedEOF from Session.Read when a client disappears;
+			// those are per-connection. io.ErrClosedPipe is the Mux accept
+			// latch set when a listener failed, so it is terminal.
 			if errors.Is(err, io.ErrClosedPipe) {
 				h.logger.Error("mieru accept loop stopped: ", err)
 				return
@@ -231,12 +256,21 @@ func (h *Inbound) handleConnection(conn net.Conn, request *mierumodel.Request) {
 
 	ctx := log.ContextWithNewID(h.ctx)
 
+	destination, destinationErr := fromNetAddrSpec(mierumodel.NetAddrSpec{AddrSpec: request.DstAddr})
+	reply := mieruconstant.Socks5ReplySuccess
+	switch {
+	case request.Command != mieruconstant.Socks5ConnectCmd && request.Command != mieruconstant.Socks5UDPAssociateCmd:
+		reply = mieruconstant.Socks5ReplyCommandNotSupported
+	case destinationErr != nil:
+		reply = mieruconstant.Socks5ReplyServerFailure
+	}
 	// The client waits for the SOCKS5 response before reading application
 	// data (both in the standard and the no-wait handshake mode, where it is
-	// batched with the first write). Send the same synthetic success response
-	// mita sends; the bind address is not used by Mieru.
+	// batched with the first write). The bind address is not used by Mieru,
+	// but the reply code must reflect a request this server cannot route; a
+	// synthetic success followed by a close is a false success.
 	response := &mierumodel.Response{
-		Reply: mieruconstant.Socks5ReplySuccess,
+		Reply: reply,
 		BindAddr: mierumodel.AddrSpec{
 			IP:   net.IPv4zero,
 			Port: 0,
@@ -244,6 +278,14 @@ func (h *Inbound) handleConnection(conn net.Conn, request *mierumodel.Request) {
 	}
 	if err := response.WriteToSocks5(conn); err != nil {
 		h.logger.DebugContext(ctx, "failed to write mieru response: ", err)
+		return
+	}
+	if reply != mieruconstant.Socks5ReplySuccess {
+		if destinationErr != nil {
+			h.logger.DebugContext(ctx, "failed to parse mieru destination: ", destinationErr)
+		} else {
+			h.logger.WarnContext(ctx, "unsupported mieru command: ", request.Command)
+		}
 		return
 	}
 
@@ -258,11 +300,6 @@ func (h *Inbound) handleConnection(conn net.Conn, request *mierumodel.Request) {
 	}
 	if localAddr := conn.LocalAddr(); localAddr != nil {
 		metadata.OriginDestination = M.SocksaddrFromNet(localAddr).Unwrap()
-	}
-	destination, err := fromNetAddrSpec(mierumodel.NetAddrSpec{AddrSpec: request.DstAddr})
-	if err != nil {
-		h.logger.DebugContext(ctx, "failed to parse mieru destination: ", err)
-		return
 	}
 	metadata.Destination = destination
 	if userContext, ok := conn.(mierucommon.UserContext); ok {
@@ -281,8 +318,6 @@ func (h *Inbound) handleConnection(conn net.Conn, request *mierumodel.Request) {
 	case mieruconstant.Socks5UDPAssociateCmd:
 		handedOff = true
 		h.router.RoutePacketConnectionEx(ctx, newInboundPacketConn(tracked), metadata, nil)
-	default:
-		h.logger.WarnContext(ctx, "unsupported mieru command: ", request.Command)
 	}
 }
 
@@ -298,6 +333,8 @@ type trackedConn struct {
 	registry *connRegistry
 }
 
+var _ mierucommon.UserContext = (*trackedConn)(nil)
+
 func (c *trackedConn) Close() error {
 	c.registry.remove(c)
 	return c.Conn.Close()
@@ -305,6 +342,16 @@ func (c *trackedConn) Close() error {
 
 func (c *trackedConn) Upstream() any {
 	return c.Conn
+}
+
+// UserName preserves the SDK's authenticated-user capability across the
+// registry wrapper. A downstream tracker that type-asserts UserContext on the
+// handed-off connection must still see the same name the router metadata got.
+func (c *trackedConn) UserName() string {
+	if userContext, ok := c.Conn.(mierucommon.UserContext); ok {
+		return userContext.UserName()
+	}
+	return ""
 }
 
 // streamListenerFactory is the SDK's StreamListenerFactory backed by the
@@ -315,9 +362,10 @@ func (c *trackedConn) Upstream() any {
 // inbound's construction context is used for socket setup; the SDK still owns
 // closing the returned listener when the Mux shuts down.
 type streamListenerFactory struct {
-	ctx     context.Context
-	options option.ListenOptions
-	logger  logger.ContextLogger
+	ctx       context.Context
+	options   option.ListenOptions
+	logger    logger.ContextLogger
+	listeners *listenerRegistry
 }
 
 func (f *streamListenerFactory) Listen(_ context.Context, network string, address string) (net.Listener, error) {
@@ -329,14 +377,20 @@ func (f *streamListenerFactory) Listen(_ context.Context, network string, addres
 	if err != nil {
 		return nil, E.Cause(err, "mieru: listen tcp ", port)
 	}
+	tracked := &trackedListener{Listener: tcpListener, registry: f.listeners}
+	if !f.listeners.add(tracked) {
+		_ = tcpListener.Close()
+		return nil, E.New("mieru: inbound was closed while creating the TCP listener")
+	}
 	f.logger.Info("mieru tcp server started at ", tcpListener.Addr())
-	return tcpListener, nil
+	return tracked, nil
 }
 
 type packetListenerFactory struct {
-	ctx     context.Context
-	options option.ListenOptions
-	logger  logger.ContextLogger
+	ctx       context.Context
+	options   option.ListenOptions
+	logger    logger.ContextLogger
+	listeners *listenerRegistry
 }
 
 func (f *packetListenerFactory) ListenPacket(_ context.Context, network string, address string) (net.PacketConn, error) {
@@ -348,8 +402,13 @@ func (f *packetListenerFactory) ListenPacket(_ context.Context, network string, 
 	if err != nil {
 		return nil, E.Cause(err, "mieru: listen udp ", port)
 	}
+	tracked := &trackedPacketConn{PacketConn: packetConn, registry: f.listeners}
+	if !f.listeners.add(tracked) {
+		_ = packetConn.Close()
+		return nil, E.New("mieru: inbound was closed while creating the UDP listener")
+	}
 	f.logger.Info("mieru udp server started at ", packetConn.LocalAddr())
-	return packetConn, nil
+	return tracked, nil
 }
 
 func portFromAddress(address string) (uint16, error) {
@@ -403,4 +462,90 @@ func (r *connRegistry) closeAll() {
 	for _, conn := range conns {
 		_ = conn.Close()
 	}
+}
+
+// listenerRegistry owns the listeners the factories created.
+//
+// The SDK's PacketUnderlay.Close interrupts its read loop with a deadline but
+// does not close the underlying PacketConn. Without this registry the UDP port
+// stays bound after Inbound.Close, so a reload cannot rebind it and the process
+// leaks one socket per Mieru UDP inbound. TCP listeners are also registered:
+// closing them twice is harmless, and it keeps the ownership rule uniform.
+type listenerRegistry struct {
+	access  sync.Mutex
+	closed  bool
+	closers map[io.Closer]struct{}
+}
+
+func (r *listenerRegistry) add(closer io.Closer) bool {
+	r.access.Lock()
+	defer r.access.Unlock()
+	if r.closed {
+		return false
+	}
+	if r.closers == nil {
+		r.closers = make(map[io.Closer]struct{})
+	}
+	r.closers[closer] = struct{}{}
+	return true
+}
+
+func (r *listenerRegistry) remove(closer io.Closer) {
+	r.access.Lock()
+	delete(r.closers, closer)
+	r.access.Unlock()
+}
+
+func (r *listenerRegistry) count() int {
+	r.access.Lock()
+	defer r.access.Unlock()
+	return len(r.closers)
+}
+
+func (r *listenerRegistry) closeAll() {
+	r.access.Lock()
+	r.closed = true
+	closers := make([]io.Closer, 0, len(r.closers))
+	for closer := range r.closers {
+		closers = append(closers, closer)
+		delete(r.closers, closer)
+	}
+	r.access.Unlock()
+	for _, closer := range closers {
+		_ = closer.Close()
+	}
+}
+
+type trackedListener struct {
+	net.Listener
+	registry  *listenerRegistry
+	closeOnce sync.Once
+	closeErr  error
+}
+
+func (l *trackedListener) Close() error {
+	l.closeOnce.Do(func() {
+		if l.registry != nil {
+			l.registry.remove(l)
+		}
+		l.closeErr = l.Listener.Close()
+	})
+	return l.closeErr
+}
+
+type trackedPacketConn struct {
+	net.PacketConn
+	registry  *listenerRegistry
+	closeOnce sync.Once
+	closeErr  error
+}
+
+func (c *trackedPacketConn) Close() error {
+	c.closeOnce.Do(func() {
+		if c.registry != nil {
+			c.registry.remove(c)
+		}
+		c.closeErr = c.PacketConn.Close()
+	})
+	return c.closeErr
 }

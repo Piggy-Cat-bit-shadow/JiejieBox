@@ -50,6 +50,10 @@ type Outbound struct {
 	outbound.Adapter
 	logger log.ContextLogger
 	config *mieruclient.ClientConfig
+	// packetDialer owns the UDP underlay sockets. The SDK does not close them
+	// reliably on Stop (its packet read loop can overwrite the wake-up
+	// deadline), so the adapter closes the generation explicitly.
+	packetDialer *serverDialer
 
 	access  sync.RWMutex
 	client  mieruclient.Client
@@ -139,11 +143,12 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		return nil, E.Cause(err, "mieru: store client config")
 	}
 	return &Outbound{
-		Adapter:  outbound.NewAdapterWithDialerOptions(C.TypeMieru, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.DialerOptions, options.ServerIsDomain()),
-		logger:   logger,
-		config:   config,
-		client:   client,
-		inFlight: newInflightGroup(),
+		Adapter:      outbound.NewAdapterWithDialerOptions(C.TypeMieru, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.DialerOptions, options.ServerIsDomain()),
+		logger:       logger,
+		config:       config,
+		client:       client,
+		packetDialer: serverDialer,
+		inFlight:     newInflightGroup(),
 	}, nil
 }
 
@@ -170,6 +175,12 @@ func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	// Add may run the cleanup synchronously if the scope is already closing;
 	// Close takes the same lock, so it must not be held here.
 	scope.Add(h.Close)
+	h.access.Lock()
+	closedDuringStart := h.closed
+	h.access.Unlock()
+	if closedDuringStart {
+		return E.New("mieru: outbound was closed while starting")
+	}
 	h.logger.Info("mieru client started")
 	return nil
 }
@@ -192,6 +203,7 @@ func (h *Outbound) Close() error {
 		h.drainInFlightLocked()
 		h.access.Unlock()
 		h.closeErr = client.Stop()
+		h.packetDialer.shutdownPacketConns()
 	})
 	return h.closeErr
 }
@@ -241,6 +253,7 @@ func (h *Outbound) InterfaceUpdated(ctx context.Context) {
 	if err := previous.Stop(); err != nil {
 		h.logger.WarnContext(ctx, "mieru: stop previous client after network change: ", err)
 	}
+	h.packetDialer.closePacketConns()
 	h.logger.InfoContext(ctx, "mieru client restarted after network change")
 }
 

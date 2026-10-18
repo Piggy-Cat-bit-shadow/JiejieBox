@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"strings"
+	"sync"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/dialer"
@@ -28,6 +29,14 @@ import (
 type serverDialer struct {
 	dialer N.Dialer
 	server M.Socksaddr
+
+	// PacketUnderlay.Close only interrupts its read loop with a deadline; it
+	// does not close the PacketConn. The SDK's read loop can then overwrite
+	// that deadline and stay blocked, so the adapter owns the sockets it
+	// created and closes them when the client generation is torn down.
+	packetAccess sync.Mutex
+	packetClosed bool
+	packetConns  map[net.PacketConn]struct{}
 }
 
 var (
@@ -85,8 +94,87 @@ func (d *serverDialer) ListenPacket(ctx context.Context, network string, laddr s
 	if err != nil {
 		return nil, err
 	}
-	return newConnectedPacketConn(conn, expected), nil
+	tracked := &dialPacketConn{
+		PacketConn: newConnectedPacketConn(conn, expected),
+		server:     d,
+	}
+	if !d.addPacketConn(tracked) {
+		_ = tracked.Close()
+		return nil, E.New("mieru: outbound was closed while creating the UDP underlay")
+	}
+	return tracked, nil
 }
+
+func (d *serverDialer) addPacketConn(conn net.PacketConn) bool {
+	d.packetAccess.Lock()
+	defer d.packetAccess.Unlock()
+	if d.packetClosed {
+		return false
+	}
+	if d.packetConns == nil {
+		d.packetConns = make(map[net.PacketConn]struct{})
+	}
+	d.packetConns[conn] = struct{}{}
+	return true
+}
+
+func (d *serverDialer) removePacketConn(conn net.PacketConn) {
+	d.packetAccess.Lock()
+	delete(d.packetConns, conn)
+	d.packetAccess.Unlock()
+}
+
+func (d *serverDialer) packetConnCount() int {
+	d.packetAccess.Lock()
+	defer d.packetAccess.Unlock()
+	return len(d.packetConns)
+}
+
+// closePacketConns closes the sockets of the current client generation. A
+// rebuild installs a new generation, so new sockets may be registered again.
+// shutdownPacketConns is the final form used by Outbound.Close.
+func (d *serverDialer) closePacketConns() {
+	d.closePacketConnsLocked(false)
+}
+
+func (d *serverDialer) shutdownPacketConns() {
+	d.closePacketConnsLocked(true)
+}
+
+func (d *serverDialer) closePacketConnsLocked(final bool) {
+	d.packetAccess.Lock()
+	if final {
+		d.packetClosed = true
+	}
+	conns := make([]net.PacketConn, 0, len(d.packetConns))
+	for conn := range d.packetConns {
+		conns = append(conns, conn)
+		delete(d.packetConns, conn)
+	}
+	d.packetAccess.Unlock()
+	for _, conn := range conns {
+		_ = conn.Close()
+	}
+}
+
+type dialPacketConn struct {
+	net.PacketConn
+	server    *serverDialer
+	closeOnce sync.Once
+	closeErr  error
+}
+
+func (c *dialPacketConn) Close() error {
+	c.closeOnce.Do(func() {
+		if c.server != nil {
+			c.server.removePacketConn(c)
+		}
+		c.closeErr = c.PacketConn.Close()
+	})
+	return c.closeErr
+}
+
+func (c *dialPacketConn) Upstream() any { return c.PacketConn }
 
 // resolverBridge is the DNS resolver the SDK uses for the UDP transport.
 //

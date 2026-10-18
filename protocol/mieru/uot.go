@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"sync"
 
 	"github.com/sagernet/sing/common/buf"
 	M "github.com/sagernet/sing/common/metadata"
@@ -74,6 +75,13 @@ func writeUOTFrame(w io.Writer, payload []byte, destination M.Socksaddr) error {
 // exists to avoid. One framer lives per association; the fields are bounded
 // (255-byte FQDN maximum) and reused for every packet.
 type uotFramer struct {
+	// access serialises readFrame. The scratch arrays below are per
+	// association, and both net.PacketConn and net.Conn permit concurrent
+	// reads; without this lock two readers interleave their header, address
+	// and payload reads and can hand the first frame's bytes to the second
+	// reader. Writes need no lock: writeUOTFrame allocates its own buffer and
+	// the SDK serialises stream writes.
+	access      sync.Mutex
 	reader      io.Reader
 	remaining   io.LimitedReader
 	frameHeader [3]byte
@@ -90,6 +98,8 @@ func newUOTFramer(reader io.Reader) *uotFramer {
 }
 
 func (f *uotFramer) readFrame(p []byte) (int, M.Socksaddr, error) {
+	f.access.Lock()
+	defer f.access.Unlock()
 	if _, err := io.ReadFull(f.reader, f.frameHeader[:]); err != nil {
 		return 0, M.Socksaddr{}, err
 	}
@@ -126,8 +136,14 @@ func (f *uotFramer) readFrame(p []byte) (int, M.Socksaddr, error) {
 		return 0, M.Socksaddr{}, fmt.Errorf("mieru: UDP frame length %d does not match its address header", dataLength)
 	}
 	if payloadLength > len(p) {
-		if _, err = io.CopyN(io.Discard, f.reader, int64(payloadLength)+1); err != nil {
+		if _, err = io.CopyN(io.Discard, f.reader, int64(payloadLength)); err != nil {
 			return 0, M.Socksaddr{}, err
+		}
+		if _, err = io.ReadFull(f.reader, f.suffix[:]); err != nil {
+			return 0, M.Socksaddr{}, err
+		}
+		if f.suffix[0] != uotFrameSuffix {
+			return 0, M.Socksaddr{}, fmt.Errorf("mieru: UDP frame suffix 0x%02x is not 0xff", f.suffix[0])
 		}
 		return 0, destination, io.ErrShortBuffer
 	}

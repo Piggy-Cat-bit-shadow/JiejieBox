@@ -2,6 +2,8 @@ package mieru
 
 import (
 	"context"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -18,8 +20,9 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
-
 	"github.com/stretchr/testify/require"
+
+	"github.com/enfein/mieru/v3/pkg/cipher"
 )
 
 // echoRouter is the destination side of the loopback tests. It records the
@@ -441,6 +444,389 @@ func TestMieruInterfaceUpdateRebuildsAfterDial(t *testing.T) {
 	require.Equal(t, []byte("after update"), readExactWithTimeout(t, second, len("after update")))
 }
 
+func TestMieruOutboundCloseTerminatesSessions(t *testing.T) {
+	port := freePortForBothTransports(t)
+	startTestInbound(t, inboundOptionsForPort(port, "tcp"))
+	outboundInstance, _ := startTestOutbound(t, outboundOptionsForPort(port, "tcp", "alice", "alice-password"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	conn, err := outboundInstance.DialContext(ctx, N.NetworkTCP, M.ParseSocksaddr("192.0.2.70:443"))
+	require.NoError(t, err)
+	_, err = conn.Write([]byte("before close"))
+	require.NoError(t, err)
+	require.Equal(t, []byte("before close"), readExactWithTimeout(t, conn, len("before close")))
+
+	require.NoError(t, outboundInstance.Close())
+	require.False(t, outboundInstance.client.IsRunning(), "Close must actually stop the SDK client")
+
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(3*time.Second)))
+	_, err = conn.Read(make([]byte, 1))
+	require.Error(t, err, "an established session must not survive Close")
+	var netErr net.Error
+	require.False(t, errors.As(err, &netErr) && netErr.Timeout(),
+		"session was still open after Close; read hit the deadline: %v", err)
+	_, err = conn.Write([]byte("after close"))
+	require.Error(t, err, "write on a closed session must fail")
+}
+
+func TestMieruNoWaitWrongPasswordDoesNotReportSuccess(t *testing.T) {
+	port := freePortForBothTransports(t)
+	startTestInbound(t, inboundOptionsForPort(port, "tcp"))
+	options := outboundOptionsForPort(port, "tcp", "alice", "wrong-password")
+	options.HandshakeMode = "no_wait"
+	outboundInstance, _ := startTestOutbound(t, options)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	conn, dialErr := outboundInstance.DialContext(ctx, N.NetworkTCP, M.ParseSocksaddr("192.0.2.71:443"))
+	if dialErr != nil {
+		// An early failure is also correct: the adapter must not hide it.
+		return
+	}
+	defer conn.Close()
+	_, writeErr := conn.Write([]byte("trigger the deferred handshake"))
+	if writeErr != nil {
+		return
+	}
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(3*time.Second)))
+	_, readErr := conn.Read(make([]byte, 1))
+	require.Error(t, readErr, "wrong password with no_wait produced a usable-looking connection")
+	var netErr net.Error
+	require.False(t, errors.As(readErr, &netErr) && netErr.Timeout(),
+		"the deferred handshake error never surfaced; read hit the deadline: %v", readErr)
+}
+
+func TestMieruUserHintMandatory(t *testing.T) {
+	port := freePortForBothTransports(t)
+	options := inboundOptionsForPort(port, "tcp")
+	options.UserHintIsMandatory = true
+	startTestInbound(t, options)
+
+	outboundInstance, _ := startTestOutbound(t, outboundOptionsForPort(port, "tcp", "alice", "alice-password"))
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	conn, err := outboundInstance.DialContext(ctx, N.NetworkTCP, M.ParseSocksaddr("192.0.2.72:443"))
+	require.NoError(t, err)
+	defer conn.Close()
+	_, err = conn.Write([]byte("user hint"))
+	require.NoError(t, err)
+	require.Equal(t, []byte("user hint"), readExactWithTimeout(t, conn, len("user hint")))
+}
+
+func TestMieruInboundBindFailureIsClean(t *testing.T) {
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer occupied.Close()
+	port := uint16(occupied.Addr().(*net.TCPAddr).Port)
+
+	created, err := NewInbound(context.Background(), newEchoRouter(), nopLogger(), "mieru-in", inboundOptionsForPort(port, "tcp"))
+	require.NoError(t, err)
+	inboundInstance := created.(*Inbound)
+	scope := adapter.NewScope(context.Background(), nopLogger())
+	require.Error(t, inboundInstance.Start(adapter.StartStateStart, scope))
+	require.NoError(t, inboundInstance.Close())
+	require.True(t, inboundInstance.closed)
+}
+
+func TestMieruInboundCloseReleasesListener(t *testing.T) {
+	port := freePortForBothTransports(t)
+	inboundInstance, _, _ := startTestInbound(t, inboundOptionsForPort(port, "both"))
+	require.NoError(t, inboundInstance.Close())
+
+	tcpListener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	require.NoError(t, err, "Close must release the TCP listener")
+	require.NoError(t, tcpListener.Close())
+
+	packetConn, err := net.ListenPacket("udp", fmt.Sprintf("127.0.0.1:%d", port))
+	require.NoError(t, err, "Close must release the UDP listener")
+	require.NoError(t, packetConn.Close())
+}
+
+func TestMieruInboundPartialStartClosesTheFirstListener(t *testing.T) {
+	port := freePortForBothTransports(t)
+	occupiedUDP, err := net.ListenPacket("udp", fmt.Sprintf("127.0.0.1:%d", port))
+	require.NoError(t, err)
+	defer occupiedUDP.Close()
+
+	created, err := NewInbound(context.Background(), newEchoRouter(), nopLogger(), "mieru-in", inboundOptionsForPort(port, "both"))
+	require.NoError(t, err)
+	inboundInstance := created.(*Inbound)
+	scope := adapter.NewScope(context.Background(), nopLogger())
+	require.Error(t, inboundInstance.Start(adapter.StartStateStart, scope), "the occupied UDP port must fail the start")
+	require.NoError(t, inboundInstance.Close())
+
+	// The TCP listener may have been created before the UDP bind failed. It
+	// must have been closed by the partial-start cleanup, otherwise the port
+	// stays unavailable until the process exits.
+	tcpListener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	require.NoError(t, err, "a partially started inbound must release its TCP listener")
+	require.NoError(t, tcpListener.Close())
+}
+
+func TestMieruInboundPartialStartClosesTheUDPListener(t *testing.T) {
+	port := freePortForBothTransports(t)
+	occupiedTCP, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	require.NoError(t, err)
+	defer occupiedTCP.Close()
+
+	created, err := NewInbound(context.Background(), newEchoRouter(), nopLogger(), "mieru-in", inboundOptionsForPort(port, "both"))
+	require.NoError(t, err)
+	inboundInstance := created.(*Inbound)
+	scope := adapter.NewScope(context.Background(), nopLogger())
+	require.Error(t, inboundInstance.Start(adapter.StartStateStart, scope), "the occupied TCP port must fail the start")
+	require.NoError(t, inboundInstance.Close())
+
+	packetConn, err := net.ListenPacket("udp", fmt.Sprintf("127.0.0.1:%d", port))
+	require.NoError(t, err, "a partially started inbound must release its UDP listener")
+	require.NoError(t, packetConn.Close())
+}
+
+func TestMieruInboundCanRebindAfterClose(t *testing.T) {
+	port := freePortForBothTransports(t)
+	first, _, _ := startTestInbound(t, inboundOptionsForPort(port, "both"))
+	require.NoError(t, first.Close())
+
+	// A reload constructs a new Inbound on the same port; the previous Close
+	// must have released both sockets.
+	second, _, _ := startTestInbound(t, inboundOptionsForPort(port, "both"))
+	require.NoError(t, second.Close())
+}
+
+func TestMieruInboundCanRetryAfterBindFailure(t *testing.T) {
+	port := freePortForBothTransports(t)
+	occupied, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	require.NoError(t, err)
+
+	created, err := NewInbound(context.Background(), newEchoRouter(), nopLogger(), "mieru-in", inboundOptionsForPort(port, "tcp"))
+	require.NoError(t, err)
+	inboundInstance := created.(*Inbound)
+	scope := adapter.NewScope(context.Background(), nopLogger())
+	require.Error(t, inboundInstance.Start(adapter.StartStateStart, scope))
+	require.NoError(t, occupied.Close(), "release the port before the retry")
+	require.NoError(t, inboundInstance.Start(adapter.StartStateStart, scope), "a failed Start must be retryable")
+	require.True(t, inboundInstance.server.IsRunning())
+	require.Equal(t, 1, inboundInstance.listeners.count(), "the retried listener must be registered")
+	require.NoError(t, inboundInstance.Close())
+	require.Zero(t, inboundInstance.listeners.count(), "Close must close the registered listener")
+
+	var tcpListener net.Listener
+	for attempt := 0; attempt < 40; attempt++ {
+		tcpListener, err = net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.NoError(t, err, "port still bound after Close")
+	require.NoError(t, tcpListener.Close())
+}
+
+func TestMieruHashedPasswordInterop(t *testing.T) {
+	port := freePortForBothTransports(t)
+	hashed := hex.EncodeToString(cipher.HashPassword([]byte("alice-password"), []byte("alice")))
+
+	// Server stores only the hash, client has the plaintext.
+	serverOptions := inboundOptionsForPort(port, "tcp")
+	serverOptions.Users = []option.MieruUser{{Name: "alice", HashedPassword: hashed}}
+	startTestInbound(t, serverOptions)
+	outboundInstance, _ := startTestOutbound(t, outboundOptionsForPort(port, "tcp", "alice", "alice-password"))
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	conn, err := outboundInstance.DialContext(ctx, N.NetworkTCP, M.ParseSocksaddr("192.0.2.73:443"))
+	require.NoError(t, err)
+	_, err = conn.Write([]byte("hashed server"))
+	require.NoError(t, err)
+	require.Equal(t, []byte("hashed server"), readExactWithTimeout(t, conn, len("hashed server")))
+	require.NoError(t, conn.Close())
+
+	// Client stores only the hash, server has the plaintext.
+	plainPort := freePortForBothTransports(t)
+	startTestInbound(t, inboundOptionsForPort(plainPort, "tcp"))
+	clientOptions := outboundOptionsForPort(plainPort, "tcp", "alice", "")
+	clientOptions.HashedPassword = hashed
+	hashedClient, _ := startTestOutbound(t, clientOptions)
+	hashCtx, hashCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer hashCancel()
+	hashConn, err := hashedClient.DialContext(hashCtx, N.NetworkTCP, M.ParseSocksaddr("192.0.2.74:443"))
+	require.NoError(t, err)
+	defer hashConn.Close()
+	_, err = hashConn.Write([]byte("hashed client"))
+	require.NoError(t, err)
+	require.Equal(t, []byte("hashed client"), readExactWithTimeout(t, hashConn, len("hashed client")))
+}
+
+func TestMieruOutboundCloseTerminatesPacketSession(t *testing.T) {
+	port := freePortForBothTransports(t)
+	startTestInbound(t, inboundOptionsForPort(port, "tcp"))
+	outboundInstance, _ := startTestOutbound(t, outboundOptionsForPort(port, "tcp", "alice", "alice-password"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	destination := M.ParseSocksaddr("192.0.2.75:53")
+	packetConn, err := outboundInstance.ListenPacket(ctx, destination)
+	require.NoError(t, err)
+	defer packetConn.Close()
+	_, err = packetConn.WriteTo([]byte("packet before close"), destination)
+	require.NoError(t, err)
+	require.NoError(t, packetConn.SetReadDeadline(time.Now().Add(10*time.Second)))
+	buffer := make([]byte, 64)
+	n, _, err := packetConn.ReadFrom(buffer)
+	require.NoError(t, err)
+	require.Equal(t, "packet before close", string(buffer[:n]))
+
+	require.NoError(t, outboundInstance.Close())
+	require.NoError(t, packetConn.SetReadDeadline(time.Now().Add(3*time.Second)))
+	_, _, err = packetConn.ReadFrom(buffer)
+	require.Error(t, err, "an established UDP association must not survive Close")
+	var netErr net.Error
+	require.False(t, errors.As(err, &netErr) && netErr.Timeout(),
+		"packet session was still open after Close; read hit the deadline: %v", err)
+}
+
+func TestMieruOutboundDomainServerUDPUsesForkDNS(t *testing.T) {
+	port := freePortForBothTransports(t)
+	startTestInbound(t, inboundOptionsForPort(port, "udp"))
+	ctx := service.ContextWith[adapter.DNSRouter](context.Background(), &staticDNSRouter{
+		addresses: []netip.Addr{netip.MustParseAddr("127.0.0.1")},
+	})
+
+	options := outboundOptionsForPort(port, "udp", "alice", "alice-password")
+	options.Server = "mieru.test"
+	created, err := NewOutbound(ctx, nil, nopLogger(), "mieru-out", options)
+	require.NoError(t, err)
+	outboundInstance := created.(*Outbound)
+	scope := adapter.NewScope(ctx, nopLogger())
+	require.NoError(t, outboundInstance.Start(adapter.StartStateStart, scope))
+	defer scope.Close()
+
+	dialCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	conn, err := outboundInstance.DialContext(dialCtx, N.NetworkTCP, M.ParseSocksaddr("192.0.2.91:80"))
+	require.NoError(t, err)
+	defer conn.Close()
+	_, err = conn.Write([]byte("udp domain server"))
+	require.NoError(t, err)
+	require.Equal(t, []byte("udp domain server"), readExactWithTimeout(t, conn, len("udp domain server")))
+}
+
+func TestMieruInterfaceUpdateClosesOldSessions(t *testing.T) {
+	port := freePortForBothTransports(t)
+	startTestInbound(t, inboundOptionsForPort(port, "tcp"))
+	outboundInstance, _ := startTestOutbound(t, outboundOptionsForPort(port, "tcp", "alice", "alice-password"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	destination := M.ParseSocksaddr("192.0.2.92:443")
+	oldConn, err := outboundInstance.DialContext(ctx, N.NetworkTCP, destination)
+	require.NoError(t, err)
+	_, err = oldConn.Write([]byte("old network"))
+	require.NoError(t, err)
+	require.Equal(t, []byte("old network"), readExactWithTimeout(t, oldConn, len("old network")))
+
+	previous := outboundInstance.client
+	outboundInstance.InterfaceUpdated(context.Background())
+	require.NotSame(t, previous, outboundInstance.client)
+
+	require.NoError(t, oldConn.SetReadDeadline(time.Now().Add(3*time.Second)))
+	_, err = oldConn.Read(make([]byte, 1))
+	require.Error(t, err, "the old network's session must be terminated")
+	var netErr net.Error
+	require.False(t, errors.As(err, &netErr) && netErr.Timeout(),
+		"old session still open after InterfaceUpdated: %v", err)
+
+	newConn, err := outboundInstance.DialContext(ctx, N.NetworkTCP, destination)
+	require.NoError(t, err)
+	defer newConn.Close()
+	_, err = newConn.Write([]byte("new network"))
+	require.NoError(t, err)
+	require.Equal(t, []byte("new network"), readExactWithTimeout(t, newConn, len("new network")))
+}
+
+func TestMieruOutboundUDPCloseReleasesUnderlaySockets(t *testing.T) {
+	port := freePortForBothTransports(t)
+	startTestInbound(t, inboundOptionsForPort(port, "udp"))
+	outboundInstance, _ := startTestOutbound(t, outboundOptionsForPort(port, "udp", "alice", "alice-password"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	conn, err := outboundInstance.DialContext(ctx, N.NetworkTCP, M.ParseSocksaddr("192.0.2.93:443"))
+	require.NoError(t, err)
+	require.Equal(t, 1, outboundInstance.packetDialer.packetConnCount())
+	require.NoError(t, conn.Close())
+	require.NoError(t, outboundInstance.Close())
+	require.Zero(t, outboundInstance.packetDialer.packetConnCount(), "Close must release the UDP underlay socket")
+}
+
+func TestMieruInterfaceUpdateReopensUDPUnderlay(t *testing.T) {
+	port := freePortForBothTransports(t)
+	startTestInbound(t, inboundOptionsForPort(port, "udp"))
+	outboundInstance, _ := startTestOutbound(t, outboundOptionsForPort(port, "udp", "alice", "alice-password"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	destination := M.ParseSocksaddr("192.0.2.94:443")
+	first, err := outboundInstance.DialContext(ctx, N.NetworkTCP, destination)
+	require.NoError(t, err)
+	require.Equal(t, 1, outboundInstance.packetDialer.packetConnCount())
+	require.NoError(t, first.Close())
+
+	outboundInstance.InterfaceUpdated(context.Background())
+	require.Zero(t, outboundInstance.packetDialer.packetConnCount(), "the old generation's UDP socket must be released")
+
+	second, err := outboundInstance.DialContext(ctx, N.NetworkTCP, destination)
+	require.NoError(t, err)
+	require.Equal(t, 1, outboundInstance.packetDialer.packetConnCount(), "the new generation must be able to open a UDP socket")
+	require.NoError(t, second.Close())
+}
+
+func TestMieruInboundCanRetryAfterUDPBindFailure(t *testing.T) {
+	port := freePortForBothTransports(t)
+	occupied, err := net.ListenPacket("udp", fmt.Sprintf("127.0.0.1:%d", port))
+	require.NoError(t, err)
+
+	created, err := NewInbound(context.Background(), newEchoRouter(), nopLogger(), "mieru-in", inboundOptionsForPort(port, "udp"))
+	require.NoError(t, err)
+	inboundInstance := created.(*Inbound)
+	scope := adapter.NewScope(context.Background(), nopLogger())
+	require.Error(t, inboundInstance.Start(adapter.StartStateStart, scope))
+	require.NoError(t, occupied.Close())
+	require.NoError(t, inboundInstance.Start(adapter.StartStateStart, scope), "a failed UDP Start must be retryable")
+	require.True(t, inboundInstance.server.IsRunning())
+	require.NoError(t, inboundInstance.Close())
+
+	packetConn, err := net.ListenPacket("udp", fmt.Sprintf("127.0.0.1:%d", port))
+	require.NoError(t, err, "the retried UDP listener must be released")
+	require.NoError(t, packetConn.Close())
+}
+
+func TestMieruInboundCloseTerminatesPacketSessions(t *testing.T) {
+	port := freePortForBothTransports(t)
+	inboundInstance, _, _ := startTestInbound(t, inboundOptionsForPort(port, "tcp"))
+	outboundInstance, _ := startTestOutbound(t, outboundOptionsForPort(port, "tcp", "alice", "alice-password"))
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	destination := M.ParseSocksaddr("192.0.2.95:53")
+	packetConn, err := outboundInstance.ListenPacket(ctx, destination)
+	require.NoError(t, err)
+	defer packetConn.Close()
+	_, err = packetConn.WriteTo([]byte("inbound packet"), destination)
+	require.NoError(t, err)
+	require.NoError(t, packetConn.SetReadDeadline(time.Now().Add(10*time.Second)))
+	buffer := make([]byte, 64)
+	n, _, err := packetConn.ReadFrom(buffer)
+	require.NoError(t, err)
+	require.Equal(t, "inbound packet", string(buffer[:n]))
+
+	require.NoError(t, inboundInstance.Close())
+	require.NoError(t, packetConn.SetReadDeadline(time.Now().Add(3*time.Second)))
+	_, _, err = packetConn.ReadFrom(buffer)
+	require.Error(t, err, "the association must be closed when the inbound closes")
+	var netErr net.Error
+	require.False(t, errors.As(err, &netErr) && netErr.Timeout(),
+		"packet association was still open after inbound Close: %v", err)
+}
+
 func TestMieruMultiUser(t *testing.T) {
 	port := freePortForBothTransports(t)
 	_, router, _ := startTestInbound(t, inboundOptionsForPort(port, "tcp"))
@@ -481,7 +867,7 @@ func TestMieruInboundStartOnClosingScopeDoesNotDeadlock(t *testing.T) {
 	}()
 	select {
 	case err = <-done:
-		require.NoError(t, err)
+		require.Error(t, err, "a cleanup that ran synchronously during Start must be reported, not returned as success")
 	case <-time.After(10 * time.Second):
 		t.Fatal("Start deadlocked while registering cleanup on a closing scope")
 	}
