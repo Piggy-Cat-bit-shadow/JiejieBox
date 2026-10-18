@@ -305,3 +305,48 @@ func TestAPublishedInterfaceListIsPreferred(t *testing.T) {
 	require.Equal(t, 0, finder.updates,
 		"and reading the published list must not enumerate the interfaces again")
 }
+
+// TestAPlatformThatCannotExpressIPv4OnlyDoesNotSuppress is the Darwin delivery rule, stated as the
+// two halves that matter.
+//
+// The pinned Network Extension client builds NEIPv6Settings and a default ::/0 route
+// unconditionally, so a core that stripped IPv6 addressing would hand it an interface that claims
+// the family and cannot carry it - or settings the system rejects. Until the client patch
+// (docs/fork/ipv6-entry-apple.patch) ships in the built client, the decision must stay "present" on
+// that platform: the previous behaviour, which the dial gate already covers.
+func TestAPlatformThatCannotExpressIPv4OnlyDoesNotSuppress(t *testing.T) {
+	manager, finder := entryPresentmentManager(t, netcap.RouteAbsent,
+		entryTestInterface(1, "en0", "192.0.2.10/24"))
+	manager.SetIPv6EntryDemand(true)
+	manager.entryDeliveryRemovesIPv6 = func() bool { return false }
+
+	require.NoError(t, manager.Start(adapter.StartStateStart, &adapter.Scope{}))
+	require.Equal(t, 0, finder.updates,
+		"a platform that cannot apply the decision must not even observe for it")
+	require.Equal(t, netcap.PresentIPv6, manager.IPv6EntryPresentment(),
+		"a platform that cannot deliver an ipv4-only interface must not have a suppressed decision "+
+			"published: DNS would then refuse AAAA for an interface that still advertises IPv6")
+}
+
+// TestTheCommitRefusesAnUndeliverableSuppression is the invariant at the commit site itself, so a
+// caller that reaches the observation directly cannot publish a decision the platform cannot carry.
+func TestTheCommitRefusesAnUndeliverableSuppression(t *testing.T) {
+	manager, _ := entryPresentmentManager(t, netcap.RouteAbsent,
+		entryTestInterface(1, "en0", "192.0.2.10/24"))
+	manager.entryDeliveryRemovesIPv6 = func() bool { return false }
+
+	manager.observeEntryPresentment()
+	require.Equal(t, netcap.PresentIPv6, manager.IPv6EntryPresentment())
+}
+
+// TestTheDeliveryAnswerIsThePlatformsOwn is the control: with the platform answer restored, the same
+// observation suppresses. Without it the two tests above would pass on a core that never suppresses.
+func TestTheDeliveryAnswerIsThePlatformsOwn(t *testing.T) {
+	manager, _ := entryPresentmentManager(t, netcap.RouteAbsent,
+		entryTestInterface(1, "en0", "192.0.2.10/24"))
+	manager.SetIPv6EntryDemand(true)
+	manager.entryDeliveryRemovesIPv6 = func() bool { return true }
+
+	require.NoError(t, manager.Start(adapter.StartStateStart, &adapter.Scope{}))
+	require.Equal(t, netcap.SuppressIPv6, manager.IPv6EntryPresentment())
+}

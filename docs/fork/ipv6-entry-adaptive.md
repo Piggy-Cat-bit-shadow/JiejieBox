@@ -107,7 +107,10 @@ NOERROR/NODATA before rule matching. Consequences:
 - the Hosts transport is never consulted for that AAAA, so a hosts entry with A and AAAA keeps
   serving A and the AAAA never costs a lookup; the hosts data itself is untouched;
 - Fake-IP never allocates an IPv6 mapping for an application query; `inet6_range` and the store are
-  untouched, and mappings persisted from earlier sessions keep resolving;
+  untouched, and mappings persisted from earlier sessions keep resolving. `Store.Create` has exactly
+  one production caller (`dns/transport/fakeip/fakeip.go:75`, the transport's own `Exchange`), so the
+  unified entry covers every creation path - there is no side channel that could hand out a v6
+  placeholder;
 - no upstream resolver is dialled, no cache entry is written, no reverse mapping is recorded;
 - A, PTR, TXT, HTTPS/SVCB, EDNS and DNSSEC are untouched; HTTPS/SVCB hints are deliberately not
   rewritten (no new protocol surface).
@@ -167,14 +170,47 @@ forbids. Configurations that need proxied real-IPv6 keep presenting IPv6 when th
 unique-local or global IPv6 path; a machine with no IPv6 at all is the case where the entry
 suppresses.
 
+## Platform delivery contracts
+
+The decision is only published where the platform layer can actually express "this interface has no
+IPv6". That is a property of the CLIENT's tunnel-settings code, not of the build tag, and it was
+checked against the pinned clients rather than assumed.
+
+**Android (`satelite-one`, `VPNService.kt`): can, and is enabled.** Every IPv6 fact is derived from
+the options that the core reduces:
+
+- `while (inet6Address.hasNext()) builder.addAddress(...)` - no address, nothing added;
+- API 33+: `if (inet6RouteAddress.hasNext()) ... else if (options.inet6Address.hasNext()) addRoute("::", 0)`
+  - no explicit route and no address, no default route;
+- pre-33: routes come from `options.inet6RouteRange`, which the core builds with
+  `BuildAutoRouteRanges`, whose IPv6 block is gated on `len(Inet6Address) > 0` - again empty;
+- DNS servers come from `options.dnsServerAddress`, which `tun.Options.DNSServerAddress()` derives
+  from the remaining (IPv4) address.
+
+**Darwin (Network Extension, `ExtensionPlatformInterface.swift` `openTun0`): cannot, and is
+therefore disabled for now.** At the pinned SHA (`clients/apple` = `c001d59`) the client creates
+`NEIPv6Settings` and a default `::/0` route **unconditionally** inside `if options.getAutoRoute()`.
+A core that stripped IPv6 addressing would hand it an IPv6 default route with no address - an
+interface that claims the family and cannot carry it - or settings the system rejects. So
+`NetworkManager.entryPresentmentDeliverable()` answers false on Darwin, nothing is committed, and the
+previous behaviour is kept there.
+
+The client-side fix is prepared and verified to apply against the pinned tree:
+`docs/fork/ipv6-entry-apple.patch` wraps that block in `if !ipv6Address.isEmpty { ... }`. It is
+deliberately **not** pushed to the client repository and the `clients/apple` gitlink is **not** moved:
+that is a coordinated release action (client source authority, exact-SHA pinning, artifact
+provenance), and no Apple build was run here. When the patched client is what ships, the flip is one
+line: `entryPresentmentDeliverable()` returns true unconditionally (the platform gate is the
+`!C.IsDarwin` at the bottom of that method), and the Darwin entry decision becomes live.
+
 ## Limits and what was not verified
 
 | item | status |
 |---|---|
 | `common/netcap`, `route`, `dns`, `protocol/tun`, `option` unit tests | `PASS` (see the commit message for the exact commands) |
 | Windows/Linux route readers (reused, unchanged) | `PASS` as existing tests |
-| Android `VpnService.Builder` receiving no IPv6 address/route | `NOT_RUN_BY_REQUEST` - `clients/android` is an empty submodule here and no Gradle/AAR build was run. The expectation rests on the client deriving its IPv6 settings from `tun.Options`, including the API 33+ default `::/0` branch that already requires `inet6Address` |
-| Apple `NEIPv6Settings` omitted when no IPv6 address is configured | `NOT_RUN_BY_REQUEST` - `clients/apple` is an empty submodule here. If the client builds `NEIPv6Settings` unconditionally, it needs the same "no address, no settings" condition; this repository cannot verify or patch that |
+| Android `VpnService.Builder` receiving no IPv6 address/route | **VERIFIED_SOURCE** against `satelite-one-main/app/src/main/java/com/interstellar/proxy/bg/VPNService.kt` and `experimental/libbox/tun.go` + sing-tun `BuildAutoRouteRanges`; **no** Gradle/AAR/emulator run (`NOT_RUN_BY_REQUEST`) |
+| Apple `NEIPv6Settings` with an empty address list | **VERIFIED_SOURCE** against `sing-box-for-apple` `c001d59` `Library/Network/ExtensionPlatformInterface.swift:122-161`: it is unconditional, so the core keeps IPv6 presented on Darwin and a ready patch ships in `docs/fork/ipv6-entry-apple.patch`; no Xcode/iOS/macOS build (`NOT_RUN_BY_REQUEST`) |
 | an application with its own DoH or hard-coded IPv6 literal | not covered by design - the OS-level IPv4-only interface makes such attempts fail immediately, which is earlier than any DNS interception |
 | a network change flipping the decision | not applied until restart, by design (see the trade above) |
 
@@ -184,9 +220,10 @@ suppresses.
 |---|---|
 | `common/netcap/entry.go` | address-shape classification, projection, presentment type |
 | `adapter/network.go` | `IPv6EntryPresentmentReader`, `IPv6EntryPresenter` (optional interfaces) |
-| `route/network_family_entry.go` | read-only observation, commit, reader |
+| `route/network_family_entry.go` | read-only observation, commit, reader, platform deliverability |
 | `route/network.go` | the committed pointer and the demand flag |
 | `option/ipv6_entry.go` | configuration demand summary |
 | `protocol/tun/effective_ipv6.go` | effective-option surgery and the route-set append |
 | `protocol/tun/entry_ipv6.go` | the TUN's consumption and its one correction |
 | `dns/entry_ipv6.go` | the application-facing AAAA gate and its NODATA response |
+| `docs/fork/ipv6-entry-apple.patch` | the Network Extension client's minimal condition, against `clients/apple` `c001d59` |

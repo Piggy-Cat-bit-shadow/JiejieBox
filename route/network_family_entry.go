@@ -82,6 +82,15 @@ func (r *NetworkManager) observeEntryPresentment() {
 			"so applications keep the configured ipv6 presentment")
 		return
 	}
+	if presentment == netcap.SuppressIPv6 && !r.entryPresentmentDeliverable() {
+		// The platform cannot say "this interface has no IPv6" without the platform layer claiming
+		// otherwise. Committing the decision would make the DNS entry refuse AAAA for an interface
+		// that still advertises the family, so the whole decision is dropped: the previous behaviour
+		// is kept, which is the safe direction. See entryPresentmentDeliverable.
+		r.logger.Debug("ipv6 entry presentment: this platform's tunnel delivery cannot express an ",
+			"ipv4-only interface, so applications keep the configured ipv6 presentment")
+		return
+	}
 	r.CommitIPv6EntryPresentment(presentment)
 	if presentment == netcap.SuppressIPv6 {
 		r.logger.Info("ipv6 entry presentment: the local network has no usable ipv6 path, ",
@@ -90,6 +99,36 @@ func (r *NetworkManager) observeEntryPresentment() {
 		r.logger.Debug("ipv6 entry presentment: applications are presented with the configured ",
 			"address families")
 	}
+}
+
+// entryPresentmentDeliverable reports whether this platform's tunnel delivery can express "this
+// interface presents no IPv6".
+//
+// # Windows and Linux can
+//
+// The core opens the interface itself, and clearing `Inet6Address` removes the addressing, the
+// automatic route range and the hijack DNS address in one step - for the kernel, the stack and the
+// auto-redirect rules at the same time.
+//
+// # Darwin cannot, yet, and the pinned client is why
+//
+// Network Extension settings are built by the CLIENT's tunnel provider
+// (`Library/Network/ExtensionPlatformInterface.swift`, `openTun0`). The pinned client
+// (`clients/apple` at `c001d59`) creates `NEIPv6Settings` and a default `::/0` route unconditionally
+// inside `if auto_route`. Handed no IPv6 address it would install an IPv6 default route with no
+// address - an interface that claims the family and cannot carry it, which is the exact false
+// presentment this round removes - or `setTunnelNetworkSettings` would reject the settings outright.
+// Either outcome is worse than presenting IPv6 and letting the dial gate refuse the attempts, so
+// until the client patch (`docs/fork/ipv6-entry-apple.patch`) is part of the built client this
+// answer is false and the core keeps the previous behaviour on that platform.
+//
+// It is a method rather than a constant so the platform can be substituted in a test; the production
+// answer is fixed at build time.
+func (r *NetworkManager) entryPresentmentDeliverable() bool {
+	if r.entryDeliveryRemovesIPv6 != nil {
+		return r.entryDeliveryRemovesIPv6()
+	}
+	return !C.IsDarwin
 }
 
 // observeIPv6EntryPresentment reads the network read-only and projects it into an entry decision.

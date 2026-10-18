@@ -79,10 +79,18 @@ type NetworkManager struct {
 	// on the only platform where it is the sole defence, which is the platform whose bug this fixes.
 	//
 	// Nil in production, where it costs one predictable branch per network event.
-	routeObservation    func() netcap.RouteObservation
-	networkInterfaces   common.TypedValue[[]adapter.NetworkInterface]
-	autoDetectInterface bool
-	defaultOptions      adapter.NetworkOptions
+	// entryDeliveryRemovesIPv6, when set, replaces the platform deliverability answer for the entry
+	// presentment.
+	//
+	// It exists because the answer is a property of the CLIENT's tunnel settings code - Darwin's
+	// Network Extension client builds NEIPv6Settings unconditionally from the options - and a build
+	// tag cannot express "which client version is installed". Nil in production, where the answer is
+	// fixed per platform; a test sets it to drive both platforms on one runner.
+	entryDeliveryRemovesIPv6 func() bool
+	routeObservation         func() netcap.RouteObservation
+	networkInterfaces        common.TypedValue[[]adapter.NetworkInterface]
+	autoDetectInterface      bool
+	defaultOptions           adapter.NetworkOptions
 	// autoRedirectOutputMark is the routing mark sing-box puts on its own egress while a TUN redirects
 	// traffic, claimed once by the inbound that owns the redirect and read on every dial.
 	//
@@ -484,7 +492,10 @@ func (r *NetworkManager) Start(stage adapter.StartStage, scope *adapter.Scope) e
 		// even be carrying: a configuration whose TUN presents no IPv6 can still hand applications a
 		// synthetic AAAA through Fake-IP. The TUN then consumes the decision; see
 		// protocol/tun/entry_ipv6.go.
-		if r.entryDemand {
+		//
+		// The platform gate is checked BEFORE the observation, so a platform whose tunnel delivery
+		// cannot express an IPv4-only interface pays nothing for a decision it could never apply.
+		if r.entryDemand && r.entryPresentmentDeliverable() {
 			r.observeEntryPresentment()
 		}
 		if C.IsAndroid && r.platformInterface == nil {
