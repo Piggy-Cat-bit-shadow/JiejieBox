@@ -15,6 +15,7 @@ Code SHA: `e1efe4cafdc`. All commands from
 | UDP blackhole 鈫?TCP | 10 s SDK handshake timeout on Windows; immediate bare EOF on Linux, now classified as transport | PASS | `TestMieruFallbackUDPBlackholeUsesTCP`; Linux CI `39133901774` caught the EOF variant, fix `c603a02` |
 | TCP accept/silent 鈫?UDP | TCP connect/session succeeds, handshake does not; fallback | PASS | `TestMieruFallbackTCPHandshakeBlackholeUsesUDP` |
 | UDP Associate | fallback for `ListenPacket` in both directions (TCP鈫扷DP and UDP鈫扵CP) | PASS | `TestMieruFallbackUDPAssociateUsesSecondary`, `...UDPBlackholeUDPAssociateUsesTCP` |
+| IPv6 | primary/secondary endpoints on `::1`, TCP-refused→UDP fallback and echo | PASS | `TestMieruFallbackIPv6Endpoint` |
 | Target refusal | valid SOCKS error does not switch; real mita restricted user code 2 | PASS | `TestFallbackTargetRefusalDoesNotTrySecondary`; `interop/mita/target-restricted.log` |
 | Wrong credentials | both transports silent; no success; durable preference returns to primary; one secondary attempt remains | PASS (limitation) | `TestMieruFallbackWrongPasswordDoesNotSwitch`; mutation `repro/bug2.txt` |
 | Existing sessions | established primary survives fallback caused by new-connection proxy failure; established secondary survives primary recovery | PASS | `TestMieruFallbackDoesNotStopExistingPrimarySession`; TCP-refused test |

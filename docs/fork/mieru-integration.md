@@ -355,7 +355,7 @@ DONE
   `verify-evidence/mieru/2026-10-18-fallback/`.
 - Fallback tests: config contract, pure selector/generation/cooldown/backoff,
   real SDK loopback TCP-refused鈫扷DP, UDP blackhole鈫扵CP, TCP accept blackhole鈫扷DP,
-  UDP associate both directions, target refusal no switch, existing primary and
+  UDP associate both directions, IPv6 `::1` fallback, target refusal no switch, existing primary and
   secondary sessions surviving a preference change, concurrent failover,
   single-flight recovery, Close/InterfaceUpdated/socket ownership.
 - Real mita 3.38.1 fallback: healthy primary and TCP-refused鈫扷DP / UDP-blackhole鈫扵CP
@@ -392,9 +392,9 @@ PARTIAL
   reproduced on this machine.
 - Fallback is explicitly **not** an active-session migration: normal preference
   changes only affect new sessions; `InterfaceUpdated` keeps its original
-  network-change semantics. The fallback endpoints were live-tested on IPv4
-  loopback; a different-host/secondary-FQDN and IPv6 fallback path is covered by
-  configuration/dialer ownership, not a separate live matrix.
+  network-change semantics. The fallback endpoints were live-tested on IPv4 and IPv6 `::1` loopback; a
+  different-host secondary-FQDN fallback path is covered by configuration/dialer
+  ownership, not a separate live matrix.
 - The SDK returns a plain error for authentication failure, server close and a
   dead underlay. A bare EOF is kept ambiguous; two silent handshakes are not
   published as a durable secondary preference, but a wrong-credential attempt

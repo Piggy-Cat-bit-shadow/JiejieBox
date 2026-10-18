@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common"
+	"github.com/sagernet/sing/common/json/badoption"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/stretchr/testify/require"
@@ -36,6 +39,20 @@ func differentFreePort(t *testing.T, first uint16) uint16 {
 	}
 	t.Fatal("could not allocate a distinct free port")
 	return 0
+}
+
+func inboundOptionsForIPv6Port(port uint16, transport string) option.MieruInboundOptions {
+	options := validInboundOptions()
+	options.ListenOptions.Listen = common.Ptr(badoption.Addr(netip.MustParseAddr("::1")))
+	options.ListenPort = port
+	options.Transport = transport
+	return options
+}
+
+func outboundOptionsForIPv6Port(port uint16, transport string) option.MieruOutboundOptions {
+	options := outboundOptionsForPort(port, transport, "alice", "alice-password")
+	options.Server = "::1"
+	return options
 }
 
 func readAndWriteEcho(t *testing.T, conn net.Conn, payload string) {
@@ -148,6 +165,30 @@ func TestMieruFallbackStartOnClosingScope(t *testing.T) {
 	require.False(t, outboundInstance.primary.client.IsRunning())
 	require.False(t, outboundInstance.secondary.client.IsRunning())
 	require.NoError(t, outboundInstance.Close())
+}
+
+func TestMieruFallbackIPv6Endpoint(t *testing.T) {
+	primaryPort := freeIPv6PortForBothTransports(t)
+	secondaryPort := freeIPv6PortForBothTransports(t)
+	if secondaryPort == primaryPort {
+		secondaryPort = freeIPv6PortForBothTransports(t)
+	}
+	startTestInbound(t, inboundOptionsForIPv6Port(secondaryPort, "udp"))
+	options := outboundOptionsForIPv6Port(primaryPort, "tcp")
+	options.Fallback = &option.MieruFallbackOptions{
+		Enabled:    true,
+		Transport:  "udp",
+		ServerPort: secondaryPort,
+	}
+	outboundInstance, _ := startTestOutbound(t, options)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	conn, err := outboundInstance.DialContext(ctx, N.NetworkTCP, M.ParseSocksaddr("192.0.2.33:443"))
+	require.NoError(t, err)
+	readAndWriteEcho(t, conn, "ipv6-fallback")
+	require.Equal(t, fallbackSecondary, outboundInstance.fallback.snapshot().Preferred)
+	require.NoError(t, conn.Close())
 }
 
 func TestMieruFallbackDisabledCreatesNoSecondaryRuntime(t *testing.T) {
