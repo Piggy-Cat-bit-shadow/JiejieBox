@@ -1,5 +1,12 @@
 # Risks for the next debug round
 
+Resolved by phase 3 (see `phase3-debug/BUG-LEDGER.md`): the shared UDP listener
+leak/reload failure, the concurrent UoT read race, the outbound UDP underlay
+socket leak on Stop/rebuild, the false SOCKS5 success for unroutable requests,
+Start-on-closing-scope returning nil, and the hidden authenticated user.
+
+Still open:
+
 1. **No real mita / mbox / extended / Hiddify cell.** The server is the official
    SDK entry point, not the mita binary; the other three references have no
    scriptable Windows build on this host. A Linux host is required before any

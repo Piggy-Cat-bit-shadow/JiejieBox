@@ -206,6 +206,36 @@ latency samples.
   Docker, and no scriptable Windows build of those references. E6 in the
   evidence records each blocker; no numbers were invented.
 
+## Boundary and common faults (phase 3)
+
+The phase-3 debug round fixed three P1 and three P2 defects; the full evidence is in
+[`verify-evidence/mieru/2026-10-18-84a38ca85f7/phase3-debug`](../../verify-evidence/mieru/2026-10-18-84a38ca85f7/phase3-debug/README.md).
+
+- **The SDK does not own the packet socket.** `PacketUnderlay.Close` only wakes its read
+  loop; it does not close the `PacketConn`. The inbound now wraps every listener factory
+  result in a registry and closes it on `Close`, partial start and failed-start retry, so the
+  UDP port is released and reload can rebind. The outbound does the same for its UDP
+  underlay sockets; relying on `Stop` alone could leave the read loop blocked after it
+  overwrote the wake-up deadline.
+- **One framer, one reader.** `ReadPacket`/`ReadFrom` may be called concurrently by the
+  `net.PacketConn` contract. The framer's scratch arrays are now protected by a per-
+  association read mutex; the pre-fix race and the post-fix race test are in
+  `phase3-debug/RACE-REPRO.md`.
+- **Failure replies, not false success.** An unsupported command now gets SOCKS5 reply 7 and
+  an unparseable destination reply 1 before the connection is closed; CONNECT/UDP ASSOCIATE
+  still get the synthetic success mita sends.
+- **Start on a closing scope is an error.** `scope.Add` can run the cleanup synchronously;
+  both inbound and outbound now report that closure instead of returning nil for a closed
+  object.
+- **Authenticated user survives the wrapper.** `trackedConn` forwards `UserName()`; the
+  router metadata and any downstream capability check see the same user.
+- **Oversized UoT frames validate the suffix** before `io.ErrShortBuffer`; a malformed
+  frame is not reported as a valid short one.
+
+Performance after the fixes was re-measured with 4-round old/new A/B: TCP within ±2%, UDP
+echo ±5% in opposite directions, latency and startup unchanged. The only measurable cost is
+the UoT read mutex (+9 ns/datagram microbenchmark), accepted for a real data-race fix.
+
 ## What is deliberately NOT done
 
 - No second DNS resolver, socket factory, health model, or sleep/wake state.
@@ -238,6 +268,14 @@ DONE
   `verify-evidence/mieru/2026-10-18-84a38ca85f7`.
 - `InterfaceUpdated` no longer stops/restarts the SDK client before its first
   dial; after a dial it still rebuilds.
+- Phase-3 debug: listener and UDP-underlay registries that close the sockets the
+  SDK leaves open; a per-association UoT read mutex for the `net.PacketConn`
+  concurrent-reader contract; SOCKS5 failure replies for unsupported
+  commands/invalid destinations; explicit error on Start-on-closing-scope;
+  `UserName()` preserved through `trackedConn`; oversized-frame suffix
+  validation. See `phase3-debug/BUG-LEDGER.md`.
+- 4-round old/new performance A/B after the fixes: TCP within ±2%, UDP echo
+  ±5% in opposite directions, latency/startup unchanged.
 - Explicit `Stop()` lifecycle, close of established sessions, bounded drain,
   network-change rebuild, listener options applied through the fork's listener
   helpers.
@@ -271,8 +309,9 @@ NOT_TESTED
   WSL/Docker, no scriptable Windows build). Mihomo did run, but with SDK
   v3.38.0, so its ratios are product-level and are kept out of the unified-SDK
   matrix.
-- iOS/Android device runs, long-duration soak, packet-loss/latency matrix, and
-  Wi-Fi/cellular path changes. These require other hardware.
+- iOS/Android device runs, a 3000-short-connection/long-duration soak, the
+  packet-loss/latency matrix, TUN, and Wi-Fi/cellular path changes. These require
+  other hardware or a privileged runner.
 - `go test -race` on Linux/macOS: the Windows run used `CGO_ENABLED=1` with the
   mingw toolchain. CI's race suite is the cross-platform check.
 

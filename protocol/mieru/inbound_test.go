@@ -36,6 +36,22 @@ func TestTrackedConnRemovesItselfFromRegistry(t *testing.T) {
 	require.False(t, registry.add(&trackedConn{Conn: secondClient, registry: &registry}))
 }
 
+type namedConn struct {
+	net.Conn
+	name string
+}
+
+func (c *namedConn) UserName() string { return c.name }
+
+func TestTrackedConnPreservesUserName(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	tracked := &trackedConn{Conn: &namedConn{Conn: serverConn, name: "alice"}}
+	require.Equal(t, "alice", tracked.UserName())
+	var userContext interface{ UserName() string } = tracked
+	require.Equal(t, "alice", userContext.UserName())
+}
+
 // TestHandleConnectionRejectsBeforeSuccess pins the SOCKS5 reply for requests
 // this server cannot route. An unsupported command or an unparseable
 // destination must not receive the synthetic success reply.

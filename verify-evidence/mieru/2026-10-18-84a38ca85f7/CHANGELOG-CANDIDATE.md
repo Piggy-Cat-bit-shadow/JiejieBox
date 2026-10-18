@@ -24,6 +24,22 @@ Only claims with raw evidence in this directory. No WAN, device or battery claim
 - `InterfaceUpdated` keeps the explicit `Stop()`/rebuild ownership; the SDK
   client is never restarted after `Stop`.
 
+## Fixed
+
+- Mieru inbounds release their TCP and UDP listeners on close, partial start and
+  a failed-start retry; the UDP port no longer stays bound after reload.
+- Mieru outbounds close the UDP underlay sockets of a stopped client generation;
+  a network change no longer leaves the old underlay read loop blocked.
+- Concurrent UoT reads are serialised, removing a data race on the per-association
+  framer scratch buffers.
+- An unsupported command or an unparseable destination receives the matching
+  SOCKS5 failure reply instead of a synthetic success.
+- Starting an inbound or outbound on an already-closing scope now returns an
+  error instead of nil.
+- The authenticated user name survives the inbound tracking wrapper.
+- An oversized UoT frame validates its suffix before returning
+  `io.ErrShortBuffer`.
+
 ## Measured (loopback, official server SDK, 4 ABBA rounds, Windows 10)
 
 - TCP download: +10.2% (tcp, low mux), +7.0% (tcp, high mux + no_wait), +3.2%
