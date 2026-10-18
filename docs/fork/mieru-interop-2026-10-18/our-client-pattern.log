@@ -1,0 +1,16 @@
+INFO[0000] outbound/mieru[mieru-out]: mieru client started
+INFO[0000] inbound/mixed[mixed-in]: tcp server started at 127.0.0.1:11083
+INFO[0000] network: updated default interface WLAN, index 12
+INFO[0000] network: updated network environment: gateway 172.29.0.1, gateway_mac 80:05:88:ce:39:ec
+INFO[0000] outbound/mieru[mieru-out]: mieru client restarted after network change
+INFO[0000] sing-box started (0.04s)
+INFO[0010] [1331189819 0ms] inbound/mixed[mixed-in]: inbound connection from 127.0.0.1:59373
+INFO[0010] [1331189819 3ms] inbound/mixed[mixed-in]: inbound connection to 127.0.0.1:59372
+DEBUG[0010] [1331189819 5ms] router: match[0] inbound=mixed-in => route(mieru-out)
+INFO[0010] [1331189819 5ms] outbound/mieru[mieru-out]: outbound connection to 127.0.0.1:59372
+INFO[0010] [2195095967 0ms] inbound/mixed[mixed-in]: inbound connection from 127.0.0.1:59375
+DEBUG[0010] [1331189819 11ms] connection: connection download finished
+INFO[0010] [2195095967 2ms] inbound/mixed[mixed-in]: inbound packet connection to 127.0.0.1:58452
+DEBUG[0010] [1331189819 12ms] connection: connection upload finished
+DEBUG[0010] [2195095967 2ms] router: match[0] inbound=mixed-in => route(mieru-out)
+INFO[0010] [2195095967 2ms] outbound/mieru[mieru-out]: outbound packet connection to 127.0.0.1:58452

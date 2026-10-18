@@ -100,6 +100,8 @@ official `mieru.exe` 3.38.1 Windows client.
 | Official client → this inbound | `mieru.exe` 3.38.1 | UDP only | `HANDSHAKE_NO_WAIT`, `MULTIPLEXING_OFF` | TCP PASS, UDP associate PASS |
 | This outbound → official server | `apis/server` 3.38.1 | TCP + UDP | `default`, `high` | TCP PASS, UDP associate PASS |
 | This outbound → official server | `apis/server` 3.38.1 | UDP only | `no_wait`, `off` | TCP PASS, UDP associate PASS |
+| Official client → this inbound | `mieru.exe` 3.38.1 | UDP only | `no_wait`, `off`, explicit traffic pattern (seed 20261018) | TCP PASS, UDP associate PASS |
+| This outbound → official server | `apis/server` 3.38.1 | UDP only | `no_wait`, `off`, explicit traffic pattern (same seed) | TCP PASS, UDP associate PASS |
 
 The probe (`tester.exe`, stdlib only) starts a TCP echo server and a UDP echo
 server and drives both through a real SOCKS5 client. The full path in each case
@@ -166,6 +168,8 @@ DONE
   work over `::1`; an additional port from `listen_port_ranges` is really
   bound and served; a domain server name is resolved by the fork's registered
   DNS router, not by the SDK.
+- An explicit traffic pattern (seed `20261018`) interoperates with the
+  official client and the official server in both directions.
 - Explicit `Stop()` lifecycle, close of established sessions, bounded drain,
   network-change rebuild, listener options applied through the fork's listener
   helpers.
@@ -186,9 +190,6 @@ PARTIAL
   one listener per port — intentional, matching mita.
 - IPv6 is live-tested for the TCP underlay on `::1`; the UDP underlay was
   live-tested on IPv4 only.
-- Explicit `traffic_pattern` values are decoded, validated and passed to the
-  SDK on both sides, but a non-default pattern was not exercised against an
-  official peer.
 - `InterfaceUpdated` rebuilds the client. It is exercised by the startup
   network observation in the interop logs and by a unit test; a real Wi-Fi ↔
   cellular hand-off was not reproduced on this machine.

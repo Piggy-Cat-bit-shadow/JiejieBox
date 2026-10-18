@@ -33,6 +33,8 @@ same probe, so the result lines are directly comparable.
 | `client-udp-nowait.log` + `server.log` | official `mieru.exe` → this inbound | UDP-only binding, `MULTIPLEXING_OFF`, `HANDSHAKE_NO_WAIT` | `PASS tcp`, `PASS udp` |
 | `our-client.log` + `official-server.log` | this outbound → official server | `transport: both`, `multiplexing: high` | `PASS tcp`, `PASS udp` |
 | `our-client-udp.log` + `official-server.log` | this outbound → official server | `transport: udp`, `handshake_mode: no_wait`, `multiplexing: off` | `PASS tcp`, `PASS udp` |
+| `client-pattern.log` + `server-pattern.log` | official `mieru.exe` → this inbound | UDP-only binding, `MULTIPLEXING_OFF`, `HANDSHAKE_NO_WAIT`, explicit `trafficPattern: {seed: 20261018}` | `PASS tcp`, `PASS udp` |
+| `our-client-pattern.log` + `official-server-pattern.log` | this outbound → official server | `transport: udp`, `handshake_mode: no_wait`, `multiplexing: off`, explicit `traffic_pattern` (`CJrR1Ak=`, the same seed) | `PASS tcp`, `PASS udp` |
 | `client-bad-auth.log` + `server.log` | official `mieru.exe` with a wrong password → this inbound | TCP binding, wrong password | expected failure: `FAIL tcp: EOF`, `FAIL udp: EOF`; the good client still passed immediately afterwards |
 
 The bad-auth run is a negative control. The SDK drops an undecryptable underlay
@@ -40,6 +42,12 @@ inside the Mux, so `server.Accept()` never sees an authentication error; the
 peer sees EOF. The inbound stayed healthy and the valid client's next TCP and
 UDP runs passed, which is the property that matters (no hot loop, no wedged
 listener).
+
+The explicit-pattern rows use seed `20261018`. This tree's `traffic_pattern`
+option takes the base64 protobuf form used by the downstream integration; the
+official `mieru` CLI config takes the decoded proto object
+(`{"seed": 20261018}`). Both produce the same `TrafficPattern`; the official
+server harness takes the base64 string for the same reason this tree does.
 
 The sing-box logs contain the expected startup line `mieru tcp server started`
 and `mieru udp server started` for the inbound, and
