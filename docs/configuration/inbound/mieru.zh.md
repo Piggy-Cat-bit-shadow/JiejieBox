@@ -46,6 +46,8 @@ icon: material/new-box
 
 底层传输协议：`tcp`、`udp` 或 `both`。默认：`tcp`。
 
+大小写不敏感：既接受小写形式，也接受官方下游集成使用的 `TCP`、`UDP` 拼写。
+
 `both` 会在每个配置的端口上同时提供 TCP 与 UDP，等价于用两个相同端口的
 inbound（一个 `tcp`、一个 `udp`）；两种写法均受支持。
 

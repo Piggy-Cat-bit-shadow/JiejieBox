@@ -47,6 +47,9 @@ startup instead of leaving a partially listening server.
 
 The underlay protocol: `tcp`, `udp`, or `both`. Default: `tcp`.
 
+The value is case-insensitive: the official downstream integration's `TCP` and
+`UDP` spellings are accepted as well as the lowercase forms.
+
 `both` serves both protocols on every configured port from one inbound. This is
 equivalent to running two inbounds with the same ports (one `tcp`, one `udp`),
 and both forms are supported.

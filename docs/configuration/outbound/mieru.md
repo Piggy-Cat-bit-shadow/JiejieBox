@@ -45,6 +45,9 @@ Additional ports or ranges to try on the same server, for example
 
 The underlay protocol: `tcp`, `udp`, or `both`. Default: `tcp`.
 
+The value is case-insensitive: the official downstream integration's `TCP` and
+`UDP` spellings are accepted as well as the lowercase forms.
+
 `both` registers every configured port on both protocols and lets Mieru's
 scheduler choose. `udp` uses Mieru's packet underlay; `tcp` carries everything,
 including UDP associations, as a stream.
@@ -73,12 +76,18 @@ This is **Mieru's** multiplexer, not sing-box's. Do not enable a sing-box
 multiplex on top of this outbound: the traffic would be multiplexed twice, with
 two independent flow-control and buffering layers.
 
+The official SDK enum spellings (`MULTIPLEXING_OFF`, `MULTIPLEXING_LOW`,
+`MULTIPLEXING_MIDDLE`, `MULTIPLEXING_HIGH`) are accepted as aliases.
+
 #### handshake_mode
 
 `default`, `standard`, or `no_wait`. Default: `default` (standard).
 
 `no_wait` sends the proxy request together with the first application write.
 It is not zero-RTT: the peer response is still awaited before the first read.
+
+The official SDK enum spellings (`HANDSHAKE_STANDARD`, `HANDSHAKE_NO_WAIT`) are
+accepted as aliases.
 
 #### mtu
 

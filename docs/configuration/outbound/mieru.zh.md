@@ -44,6 +44,8 @@ icon: material/new-box
 
 底层传输协议：`tcp`、`udp` 或 `both`。默认：`tcp`。
 
+大小写不敏感：既接受小写形式，也接受官方下游集成使用的 `TCP`、`UDP` 拼写。
+
 `both` 会在每个配置端口上同时注册两种协议，由 Mieru 调度器选择。`udp` 使用
 Mieru 的分组 underlay；`tcp` 会把包括 UDP associate 在内的全部流量放进流中。
 
@@ -69,12 +71,17 @@ Mieru 自带的多路复用级别：`default`、`off`、`low`、`middle` 或 `hi
 这是 **Mieru 的**多路复用，不是 sing-box 的。不要在本 outbound 之上再启用
 sing-box 多路复用：流量会被复用两次，并叠加两层独立的流控与缓冲。
 
+同时接受官方 SDK 的枚举拼写（`MULTIPLEXING_OFF`、`MULTIPLEXING_LOW`、
+`MULTIPLEXING_MIDDLE`、`MULTIPLEXING_HIGH`）。
+
 #### handshake_mode
 
 `default`、`standard` 或 `no_wait`。默认：`default`（标准）。
 
 `no_wait` 会把代理请求与第一次应用写入一起发送。它不是真正的零 RTT：第一次
 读取前仍然要等待对端响应。
+
+同时接受官方 SDK 的枚举拼写（`HANDSHAKE_STANDARD`、`HANDSHAKE_NO_WAIT`）。
 
 #### mtu
 
