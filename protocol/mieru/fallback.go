@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/option"
 	N "github.com/sagernet/sing/common/network"
 
@@ -171,6 +172,29 @@ func classifyDialError(ctx context.Context, err error, transport mieruTransport)
 func isTimeout(err error) bool {
 	var netError net.Error
 	return errors.As(err, &netError) && netError.Timeout()
+}
+
+// wrapFailureFacts attaches the narrow adapter failure fact to a Mieru dial
+// error. This is the only producer needed for the cross-protocol policy: a
+// group can then tell a target refusal from a first-hop path failure without
+// parsing strings. Ambiguous EOF stays fact-less (Unknown), so the group's
+// existing conservative errno policy still applies.
+func wrapFailureFacts(err error, class dialFailureClass) error {
+	if err == nil {
+		return nil
+	}
+	var facts adapter.FailureFacts
+	switch class {
+	case dialTargetFailure:
+		facts = adapter.TargetFailureFacts()
+	case dialTransportFailure:
+		facts = adapter.PathFailureFacts(adapter.FailureStageHandshake)
+	case dialCallerFailure:
+		facts = adapter.FailureFacts{Stage: adapter.FailureStageDial, Origin: adapter.FailureOriginCaller}
+	default:
+		return err
+	}
+	return adapter.WrapFailure(err, facts)
 }
 
 type fallbackPreference uint8

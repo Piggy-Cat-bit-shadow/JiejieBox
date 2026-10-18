@@ -125,6 +125,20 @@ func factTable() []factRow {
 		{name: "WSAECONNRESET (10054)", err: syscall.Errno(10054), terminalForTheFlow: true},
 		{name: "io.EOF", err: io.EOF, terminalForTheFlow: true},
 
+		// --- structured facts, when the protocol can prove them ---------------------------------
+		// A valid SOCKS target reply is not a path failure even though its
+		// wire error (ECONNREFUSED for a target refusal) would otherwise look
+		// like one.
+		{name: "target fact on ECONNREFUSED", err: adapter.WrapFailure(syscall.ECONNREFUSED, adapter.TargetFailureFacts()), terminalForTheFlow: true},
+		// A first-hop dial/handshake failure is retryable and does implicate
+		// this member's own path.
+		{name: "path dial fact on deadline", err: adapter.WrapFailure(context.DeadlineExceeded, adapter.PathFailureFacts(adapter.FailureStageDial)), retry: true, global: true},
+		// A proxy handshake failure is worth another member, but is not proof
+		// this member's network is down.
+		{name: "proxy handshake fact", err: adapter.WrapFailure(errors.New("proxy handshake rejected"), adapter.FailureFacts{Stage: adapter.FailureStageHandshake, Origin: adapter.FailureOriginProxy}), retry: true, terminalForTheFlow: true},
+		{name: "caller fact on cancellation", err: adapter.WrapFailure(context.Canceled, adapter.FailureFacts{Stage: adapter.FailureStageDial, Origin: adapter.FailureOriginCaller}), callerCancellation: true},
+		{name: "data-stage path fact on EOF", err: adapter.WrapFailure(io.EOF, adapter.FailureFacts{Stage: adapter.FailureStageData, Origin: adapter.FailureOriginPath}), terminalForTheFlow: true},
+
 		// --- not understood at all: every consumer must be conservative -------------------------
 		{name: "nil", err: nil},
 		{name: "unknown error", err: errors.New("something nobody has classified")},

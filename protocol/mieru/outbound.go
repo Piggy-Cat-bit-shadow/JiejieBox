@@ -499,11 +499,14 @@ func (h *Outbound) dial(ctx context.Context, destination mierumodel.NetAddrSpec)
 		return nil, E.New("mieru: outbound has no transport")
 	}
 	if fallback == nil || secondary == nil {
-		conn, _, err := primary.dial(ctx, destination)
-		if err != nil && errors.Is(err, mieruclient.ErrClientIsNotRunning) {
-			return nil, E.Cause(err, "mieru: dial")
+		conn, class, err := primary.dial(ctx, destination)
+		if err != nil {
+			if errors.Is(err, mieruclient.ErrClientIsNotRunning) {
+				return nil, wrapFailureFacts(E.Cause(err, "mieru: dial"), class)
+			}
+			return nil, wrapFailureFacts(err, class)
 		}
-		return conn, err
+		return conn, nil
 	}
 	return h.dialWithFallback(ctx, destination, primary, secondary, fallback, generation)
 }
@@ -542,15 +545,15 @@ func (h *Outbound) dialWithFallback(ctx context.Context, destination mierumodel.
 		case dialAmbiguousFailure:
 			h.logger.Debug("mieru: ambiguous handshake failure on ", primary.label, " transport; not switching: ", err)
 		}
-		return nil, err
+		return nil, wrapFailureFacts(err, class)
 	}
 	if choice == fallbackSecondary {
-		return nil, err
+		return nil, wrapFailureFacts(err, class)
 	}
 	// The primary failed in a class that may be a transport failure. Preserve
 	// the caller's deadline and try the other transport exactly once.
 	if ctx.Err() != nil {
-		return nil, E.Cause(err, "mieru: primary transport failed")
+		return nil, wrapFailureFacts(E.Cause(err, "mieru: primary transport failed"), class)
 	}
 	h.logger.Info("mieru: primary ", primary.transport.String(), " transport failed, trying fallback ", secondary.transport.String())
 	secondaryConn, secondaryClass, secondaryErr := secondary.dial(ctx, destination)
@@ -559,10 +562,16 @@ func (h *Outbound) dialWithFallback(ctx context.Context, destination mierumodel.
 		return h.acceptGeneratedConn(secondaryConn, generation)
 	}
 	selector.reportBothFailed(generation, class, secondaryClass)
-	return nil, E.Errors(
+	aggregate := E.Errors(
 		E.Cause(err, "mieru: primary transport"),
 		E.Cause(secondaryErr, "mieru: fallback transport"),
 	)
+	switch secondaryClass {
+	case dialTargetFailure, dialTransportFailure:
+		return nil, wrapFailureFacts(aggregate, secondaryClass)
+	default:
+		return nil, aggregate
+	}
 }
 
 // acceptGeneratedConn enforces the ownership boundary after the network may

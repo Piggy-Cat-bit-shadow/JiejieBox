@@ -413,3 +413,44 @@ func TestFallbackStaleGenerationCannotDeliverConnection(t *testing.T) {
 		t.Fatal("stale-generation dial did not return")
 	}
 }
+
+func TestMieruFailureFactsReachGroupConsumers(t *testing.T) {
+	outboundInstance := &Outbound{logger: nopLogger()}
+	spec, err := toNetAddrSpec(M.ParseSocksaddr("192.0.2.64:80"), N.NetworkTCP)
+	require.NoError(t, err)
+
+	targetPrimary := &fakeClient{dialFunc: func(context.Context, net.Addr) (net.Conn, error) {
+		return nil, errors.New("server returned socks5 error code 2")
+	}}
+	_, err = outboundInstance.dialWithFallback(context.Background(), spec,
+		fakeRuntimeForTest("primary", targetPrimary), fakeRuntimeForTest("secondary", &fakeClient{}),
+		newFallbackSelector(1), 1)
+	require.Error(t, err)
+	facts, ok := adapter.FailureFactsOf(err)
+	require.True(t, ok)
+	require.Equal(t, adapter.TargetFailureFacts(), facts)
+
+	pathPrimary := &fakeClient{dialFunc: func(context.Context, net.Addr) (net.Conn, error) {
+		return nil, fmt.Errorf("failed to read socks5 connection response from the server: %w", timeoutTestError{})
+	}}
+	pathSecondary := &fakeClient{dialFunc: func(context.Context, net.Addr) (net.Conn, error) {
+		return nil, fmt.Errorf("failed to read socks5 connection response from the server: %w", timeoutTestError{})
+	}}
+	_, err = outboundInstance.dialWithFallback(context.Background(), spec,
+		fakeRuntimeForTest("primary", pathPrimary), fakeRuntimeForTest("secondary", pathSecondary),
+		newFallbackSelector(1), 1)
+	require.Error(t, err)
+	facts, ok = adapter.FailureFactsOf(err)
+	require.True(t, ok)
+	require.Equal(t, adapter.FailureOriginPath, facts.Origin)
+
+	ambiguous := &fakeClient{dialFunc: func(context.Context, net.Addr) (net.Conn, error) {
+		return nil, fmt.Errorf("failed to read socks5 connection response from the server: %w", io.EOF)
+	}}
+	_, err = outboundInstance.dialWithFallback(context.Background(), spec,
+		fakeRuntimeForTest("primary", ambiguous), fakeRuntimeForTest("secondary", &fakeClient{}),
+		newFallbackSelector(1), 1)
+	require.Error(t, err)
+	_, ok = adapter.FailureFactsOf(err)
+	require.False(t, ok, "an ambiguous EOF must stay Unknown rather than claim a target/path fact")
+}

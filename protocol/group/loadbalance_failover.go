@@ -131,6 +131,10 @@ const loadBalanceForcedRetestInterval = 2 * time.Minute
 //	                     proxy protocol reports a destination-side failure in band
 //	anything unclassified
 //
+// When the protocol attaches adapter.FailureFacts, those facts take precedence: a Target, Caller
+// or Local origin is NEUTRAL; a Path or Proxy origin at the dial/handshake stage is RETRY. Unknown
+// or Data-stage facts fall through to the errno rules above, so an unproven stage is never guessed.
+//
 // The last line is the conservative default: an error this code has never heard of is not
 // evidence that another member would behave differently, and retrying it would spend the
 // flow's only alternate on a guess.
@@ -152,6 +156,20 @@ func RetryThisFlow(err error) bool {
 		// told apart - see adapter.IsCallerCancellation for why that matters to a network
 		// transition.
 		return false
+	}
+	if facts, hasFacts := adapter.FailureFactsOf(err); hasFacts {
+		switch facts.Origin {
+		case adapter.FailureOriginCaller, adapter.FailureOriginLocal, adapter.FailureOriginTarget:
+			// A caller cancellation, a local policy/configuration failure or a
+			// destination that answered cannot be cured by another member.
+			return false
+		case adapter.FailureOriginPath, adapter.FailureOriginProxy:
+			// A first-hop dial/handshake failure is exactly what another
+			// member may survive. A data-stage failure is not a new dial.
+			if facts.Stage == adapter.FailureStageDial || facts.Stage == adapter.FailureStageHandshake {
+				return true
+			}
+		}
 	}
 	if dialer.ErroredWith(err, dialer.ResetErrnos...) || errors.Is(err, io.EOF) {
 		// Something answered and then closed. That is the shape of a destination-side
@@ -229,18 +247,18 @@ func RetryThisFlow(err error) bool {
 //
 // # What the stack does and does not tell this function
 //
-// There is no stage tag anywhere in the dial path: the proxy outbounds return their first-hop
-// transport error unwrapped, and a destination-side failure is reported in band, on the
-// connection, rather than as the dial error. So the errno alone cannot separate the two rows
-// above, and this function refuses to guess from it. The one structural fact available is the
-// member's own kind, used below: a member that dials the DESTINATION (direct, block) never
-// gets a global verdict, because the same errno there describes the destination.
+// The errno alone cannot separate the two rows above. A proxy that can prove the stage may attach
+// adapter.FailureFacts to its error; when present, a Target fact forbids the penalty and a Path
+// fact at dial/handshake permits it. When absent, this function refuses to guess from the errno and
+// falls back to the member's own kind, used below: a member that dials the DESTINATION (direct,
+// block) never gets a global verdict, because the same errno there describes the destination.
 //
 // GLOBAL PENALTY - kernel evidence that a first hop failed before any answer:
 //
 //	ECONNREFUSED    a listener on the member's endpoint refused
 //	EHOSTUNREACH    no route to the member's endpoint
 //	ENETUNREACH     the network carrying the member's endpoint is gone
+//	Path fact at dial/handshake (when a protocol attaches it)
 //
 // NO GLOBAL PENALTY - and this is the point of the split:
 //
@@ -251,6 +269,7 @@ func RetryThisFlow(err error) bool {
 //	ECONNRESET, io.EOF        something answered and closed; possibly the remote destination
 //	context.Canceled          the caller withdrew
 //	a destination dial        member.Type() is direct or block: the error is the destination's
+//	Target/Proxy/Caller/Local fact (when a protocol attaches it)
 //	anything unclassified
 //
 // The result is a ledger that fires rarely but is almost always right: a member is demoted
@@ -258,6 +277,17 @@ func RetryThisFlow(err error) bool {
 func PenalizeMemberGlobally(member adapter.Outbound, err error) bool {
 	if err == nil || member == nil {
 		return false
+	}
+	if facts, hasFacts := adapter.FailureFactsOf(err); hasFacts {
+		switch facts.Origin {
+		case adapter.FailureOriginTarget, adapter.FailureOriginCaller,
+			adapter.FailureOriginLocal, adapter.FailureOriginProxy:
+			// Target, caller, local policy and proxy authentication/configuration
+			// are not evidence that this member's first-hop PATH is broken.
+			return false
+		case adapter.FailureOriginPath:
+			return facts.Stage == adapter.FailureStageDial || facts.Stage == adapter.FailureStageHandshake
+		}
 	}
 	if memberDialsDestination(member) {
 		// The member IS the destination dial. A refusal or an unreachable here describes the
