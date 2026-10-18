@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"strconv"
 	"testing"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -109,6 +110,22 @@ func TestObserveEntryPresentmentDecidesFromTheFixtureNotTheMachine(t *testing.T)
 			name:        "global address without a global route",
 			route:       netcap.RouteAbsent,
 			interfaces:  []control.Interface{entryTestInterface(1, "en0", "192.0.2.10/24", "2001:db8::10/64")},
+			presentment: netcap.SuppressIPv6,
+			observed:    true,
+		},
+		{
+			name:        "global address, route unread",
+			route:       netcap.RouteUnobserved,
+			interfaces:  []control.Interface{entryTestInterface(1, "en0", "192.0.2.10/24", "2001:db8::10/64")},
+			presentment: netcap.PresentIPv6,
+			observed:    true,
+		},
+		{
+			name:       "ipv4-only, route unread",
+			route:      netcap.RouteUnobserved,
+			interfaces: []control.Interface{entryTestInterface(1, "en0", "192.0.2.10/24")},
+			// The family state is a hard negative from addressing alone, so the unread route cannot
+			// turn "this machine has no IPv6" into a fail-open.
 			presentment: netcap.SuppressIPv6,
 			observed:    true,
 		},
@@ -236,7 +253,7 @@ func TestNoDemandMeansNoObservation(t *testing.T) {
 	manager, finder := entryPresentmentManager(t, netcap.RouteAbsent,
 		entryTestInterface(1, "en0", "192.0.2.10/24"))
 
-	require.False(t, manager.entryDemand, "a manager nobody told otherwise demands nothing")
+	require.False(t, manager.entryDemand.Load(), "a manager nobody told otherwise demands nothing")
 	require.NoError(t, manager.Start(adapter.StartStateStart, &adapter.Scope{}))
 	require.Equal(t, 0, finder.updates, "no demand must mean no interface enumeration")
 	require.Equal(t, netcap.PresentIPv6, manager.IPv6EntryPresentment())
@@ -349,4 +366,80 @@ func TestTheDeliveryAnswerIsThePlatformsOwn(t *testing.T) {
 
 	require.NoError(t, manager.Start(adapter.StartStateStart, &adapter.Scope{}))
 	require.Equal(t, netcap.SuppressIPv6, manager.IPv6EntryPresentment())
+}
+
+// TestTheStartupObservationDoesNotResetTheNetwork is I-11 at the stage where the decision is taken.
+//
+// The observation runs inside NetworkManager.Start(StartStateStart), which is also where other
+// per-stage work lives. If it ever reached the reset body - a recompute, a claimed transition, a
+// DNS/transport reset - the box's very first query and dial would race a network change that
+// describes nothing. The router's reset count is the production counter for exactly that.
+func TestTheStartupObservationDoesNotResetTheNetwork(t *testing.T) {
+	manager, finder := entryPresentmentManager(t, netcap.RouteAbsent,
+		entryTestInterface(1, "en0", "192.0.2.10/24"))
+	router := newCountingRouter()
+	manager.router = router
+	manager.SetIPv6EntryDemand(true)
+
+	require.NoError(t, manager.Start(adapter.StartStateStart, &adapter.Scope{}))
+	require.Equal(t, 1, finder.updates, "the observation ran")
+	require.Equal(t, 0, router.count(),
+		"the startup observation reset the network: the first query and dial would race a "+
+			"transition that describes nothing")
+	require.Equal(t, uint64(0), manager.NetworkEnvironment(),
+		"and it must not publish an environment fingerprint of its own")
+	require.Equal(t, uint64(0), manager.NetworkResetGeneration())
+}
+
+// TestTheCommittedDecisionDoesNotFollowALaterNetwork is the latch, stated through the production
+// publish path rather than through a field write.
+//
+// The decision belongs to the interface that was opened, not to the network the device is on later:
+// no platform in this tree can re-address an open TUN, so a reader that followed the live capability
+// would approve AAAA answers for an IPv6 the interface does not carry. The property is asserted in
+// both directions of the same run - the DIAL verdict must follow the new network (it is live), and
+// the ENTRY decision must not.
+//
+// The cost is real and is recorded as an open risk: a box that starts on a network proving no local
+// IPv6 keeps its IPv4-only interface until it is restarted, even if the device later moves to a
+// dual-stack network. The alternative - DNS disagreeing with the interface - is worse, and
+// re-addressing the interface is a platform capability this round cannot verify.
+func TestTheCommittedDecisionDoesNotFollowALaterNetwork(t *testing.T) {
+	harness := newTransitionWindowHarness(t)
+	setInterfaces(harness, "192.0.2.1", interfaceWithAddresses(1, "en0", "192.168.1.10/24"))
+	harness.settle(t, "wifi-ipv4-only")
+
+	require.Equal(t, netcap.StateUnavailable, currentFamilyCapability(t, harness).Capability.IPv6)
+	harness.manager.CommitIPv6EntryPresentment(netcap.SuppressIPv6)
+	require.Equal(t, netcap.SuppressIPv6, harness.manager.IPv6EntryPresentment())
+
+	// The device moves to a dual-stack network. The live verdict must follow it.
+	setInterfaces(harness, "192.0.2.9",
+		interfaceWithAddresses(1, "en0", "192.168.1.10/24", "2001:db8::10/64"))
+	harness.settle(t, "cellular-dual-stack")
+	require.Equal(t, netcap.StateProvisioned, currentFamilyCapability(t, harness).Capability.IPv6,
+		"the dial verdict is live and must describe the network the device is on now")
+
+	// The entry decision must not, because the interface that applied it was never re-addressed.
+	require.Equal(t, netcap.SuppressIPv6, harness.manager.IPv6EntryPresentment(),
+		"the entry decision followed a network change: DNS would then present an IPv6 the open "+
+			"interface does not carry - the split this pipeline exists to prevent")
+}
+
+// TestALaterNetworkCannotMakeTheEntryPresentmentUnstable is the same property under repeated
+// transitions: the committed value must be a fixed point no transition can move, or a network flap
+// would make the DNS answer and the interface disagree transiently.
+func TestALaterNetworkCannotMakeTheEntryPresentmentUnstable(t *testing.T) {
+	harness := newTransitionWindowHarness(t)
+	setInterfaces(harness, "192.0.2.1", interfaceWithAddresses(1, "en0", "192.168.1.10/24", "2001:db8::10/64"))
+	harness.settle(t, "A")
+	harness.manager.CommitIPv6EntryPresentment(netcap.PresentIPv6)
+
+	for index, ssid := range []string{"B", "C", "D"} {
+		setInterfaces(harness, "192.0.2."+strconv.Itoa(index+2),
+			interfaceWithAddresses(1, "en0", "192.168.1.10/24"))
+		harness.settle(t, ssid)
+		require.Equal(t, netcap.PresentIPv6, harness.manager.IPv6EntryPresentment(),
+			"transition ", index, " moved the committed entry decision")
+	}
 }

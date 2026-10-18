@@ -183,3 +183,101 @@ func TestTheDialerResolutionPathIsNotGated(t *testing.T) {
 	require.Greater(t, transport.queryCount.Load(), int32(0),
 		"Lookup must still reach the transport: it resolves for the dialer, not for an application")
 }
+
+// mutablePresentmentReader is the network manager's reader with a value a test can change, which is
+// how the committed decision is simulated as moving from "present" to "suppress" while the router
+// keeps running.
+type mutablePresentmentReader struct {
+	presentment netcap.IPv6Presentment
+}
+
+func (r *mutablePresentmentReader) IPv6EntryPresentment() netcap.IPv6Presentment {
+	return r.presentment
+}
+
+// entryGateCachedRouter is entryGateRouter with the client cache ENABLED, which is the production
+// default and the only way to attack the cache boundary.
+func entryGateCachedRouter(t *testing.T, reader adapter.IPv6EntryPresentmentReader) (*Router, *fakeDNSTransport) {
+	t.Helper()
+	transport := &fakeDNSTransport{
+		tag:       "final",
+		address:   netip.MustParseAddr("2001:db8::7"),
+		immediate: true,
+	}
+	router := &Router{
+		ctx:    context.Background(),
+		logger: log.NewNOPFactory().Logger(),
+		transport: &fakeDNSTransportManager{
+			transports:       map[string]adapter.DNSTransport{transport.tag: transport},
+			defaultTransport: transport,
+		},
+		client: NewClient(ClientOptions{
+			Context: context.Background(),
+			Logger:  log.NewNOPFactory().Logger(),
+		}),
+		entryIPv6Presentment: reader,
+	}
+	return router, transport
+}
+
+// TestACachedAAAAIsNotServedAfterTheDecisionSuppresses is the cache-boundary attack (D09).
+//
+// An AAAA answer that was legitimately resolved and cached while the entry presented IPv6 must not
+// be served after the committed decision became "suppress": the gate has to sit before the cache,
+// not after it. The proof is three queries on one router: the first two establish that the cache is
+// really in play (one transport exchange for two identical questions), and the third must be
+// answered locally with the transport count unchanged.
+func TestACachedAAAAIsNotServedAfterTheDecisionSuppresses(t *testing.T) {
+	reader := &mutablePresentmentReader{presentment: netcap.PresentIPv6}
+	router, transport := entryGateCachedRouter(t, reader)
+	ctx := tunQueryContext(C.TypeTun)
+	query := newQuestion("example.com.", mDNS.TypeAAAA)
+
+	first, err := router.Exchange(ctx, query, adapter.DNSQueryOptions{})
+	require.NoError(t, err)
+	require.Len(t, first.Answer, 1)
+	require.EqualValues(t, 1, transport.queryCount.Load())
+
+	second, err := router.Exchange(ctx, query, adapter.DNSQueryOptions{})
+	require.NoError(t, err)
+	require.Len(t, second.Answer, 1)
+	require.EqualValues(t, 1, transport.queryCount.Load(),
+		"the second identical question must be served from the client cache, or this test proves "+
+			"nothing about the boundary")
+
+	reader.presentment = netcap.SuppressIPv6
+	third, err := router.Exchange(ctx, query, adapter.DNSQueryOptions{})
+	require.NoError(t, err)
+	require.Empty(t, third.Answer,
+		"a cached AAAA was served after the entry stopped presenting IPv6: the gate is behind the cache")
+	require.EqualValues(t, 1, transport.queryCount.Load(),
+		"and the suppressed answer must not reach the transport either")
+	require.Equal(t, mDNS.RcodeSuccess, third.Rcode)
+}
+
+// TestTheGateItselfDoesNotAllocate is the cost claim for the three branches, measured rather than
+// asserted.
+//
+// It measures `applicationEntrySuppressesIPv6` and not a whole exchange, because the exchange's own
+// allocations - the copied InboundContext, the response message, the debug line's formatted question
+// - exist on every DNS query in this router and are not what this round added. A regression that put
+// a map, a slice or a string on the gate would show up here as a non-zero count.
+func TestTheGateItselfDoesNotAllocate(t *testing.T) {
+	router, _ := entryGateRouter(t, presentmentReaderStub{presentment: netcap.SuppressIPv6})
+	tunContext := tunQueryContext(C.TypeTun)
+	otherContext := tunQueryContext(C.TypeSOCKS)
+
+	require.True(t, router.applicationEntrySuppressesIPv6(tunContext))
+	require.Zero(t, testing.AllocsPerRun(1000, func() {
+		_ = router.applicationEntrySuppressesIPv6(tunContext)
+	}), "the gate must be branches only: a nil check, a source comparison and one atomic load")
+
+	// The same cost on the paths that answer false, which is the common case for every non-tun
+	// source in the process.
+	require.Zero(t, testing.AllocsPerRun(1000, func() {
+		_ = router.applicationEntrySuppressesIPv6(otherContext)
+	}))
+	require.Zero(t, testing.AllocsPerRun(1000, func() {
+		_ = router.applicationEntrySuppressesIPv6(context.Background())
+	}))
+}

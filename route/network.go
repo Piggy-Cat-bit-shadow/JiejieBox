@@ -254,9 +254,11 @@ type NetworkManager struct {
 	// present IPv6 at all. It is set once, by the box, from the assembled typed options before the
 	// start sequence runs; false means this manager never observes anything for the entry decision.
 	//
-	// It is a plain bool rather than an atomic because it is written before Start and read inside
-	// Start, on the same goroutine, and nothing else reads it.
-	entryDemand bool
+	// It is atomic because the two calls are not guaranteed to be on one goroutine: a client may
+	// construct the box on its own thread and start it on another, and the publication edge between
+	// them (a channel hand-off, a goroutine creation) is the client's, not this field's. An atomic
+	// makes the hand-off irrelevant; the read happens once per Start stage and costs nothing.
+	entryDemand atomic.Bool
 	// transitionAccess guards the ownership pair (transitionOwner, transitionStable) so that
 	// claiming, checking ownership and settling are each a single atomic mutation.
 	//
@@ -495,7 +497,7 @@ func (r *NetworkManager) Start(stage adapter.StartStage, scope *adapter.Scope) e
 		//
 		// The platform gate is checked BEFORE the observation, so a platform whose tunnel delivery
 		// cannot express an IPv4-only interface pays nothing for a decision it could never apply.
-		if r.entryDemand && r.entryPresentmentDeliverable() {
+		if r.entryDemand.Load() && r.entryPresentmentDeliverable() {
 			r.observeEntryPresentment()
 		}
 		if C.IsAndroid && r.platformInterface == nil {

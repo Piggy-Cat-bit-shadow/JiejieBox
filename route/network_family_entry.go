@@ -48,7 +48,7 @@ import (
 // committed and every consumer answers "present", which is the behaviour of a build without this
 // feature.
 func (r *NetworkManager) SetIPv6EntryDemand(required bool) {
-	r.entryDemand = required
+	r.entryDemand.Store(required)
 }
 
 // observeEntryPresentment takes the startup decision and publishes it.
