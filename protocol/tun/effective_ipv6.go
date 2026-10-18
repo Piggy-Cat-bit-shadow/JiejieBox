@@ -2,8 +2,8 @@ package tun
 
 import (
 	"net/netip"
-	"slices"
 
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common"
 
@@ -98,10 +98,11 @@ func appendRouteSetPrefixes(options *tun.Options, routeAddressSet, routeExcludeA
 //	Inet6Gateway               a next hop for a family with no address
 //	DNSAddress (IPv6 entries)  the hijack DNS server is an address on this interface too
 func applyIPv4OnlyPresentment(options *tun.Options) bool {
-	if len(options.Inet4Address) == 0 {
-		return false
-	}
-	if len(options.DNSAddress) > 0 && !slices.ContainsFunc(options.DNSAddress, netip.Addr.Is4) {
+	// The safety rule is option.TunReducibleToIPv4Only, the SAME function the box-level pre-check
+	// calls before it ever commits an ipv4-only presentment. A second copy here is how the pre-check
+	// and the reduction drift apart, and a drift means one interface is stripped while the shared
+	// decision says otherwise.
+	if !option.TunReducibleToIPv4Only(options.Inet4Address, options.DNSAddress) {
 		return false
 	}
 	options.Inet6Address = nil

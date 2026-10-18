@@ -358,3 +358,74 @@ func TestAFourInSixAddressIsDemand(t *testing.T) {
 			"Inet6DNSAddress filters with Is6, so this address reaches the v6 list too")
 	})
 }
+
+// TestAllTunInboundsReducibleToIPv4OnlyIsTheBoxAnswer is the pre-check the box commits on.
+//
+// It is an AND over every TUN inbound, because the entry decision is one value for the whole box:
+// a single interface that cannot be reduced keeps IPv6 presented everywhere. The order of the two
+// shapes must not matter, which is the property the old per-TUN rollback failed.
+func TestAllTunInboundsReducibleToIPv4OnlyIsTheBoxAnswer(t *testing.T) {
+	reducible := tunInboundForTest(&TunInboundOptions{
+		Address: badoption.Listable[netip.Prefix]{
+			netip.MustParsePrefix("172.19.0.1/30"),
+			netip.MustParsePrefix("fdfe:dcba:9876::1/126"),
+		},
+	})
+	reducibleWithMixedDNS := tunInboundForTest(&TunInboundOptions{
+		Address: badoption.Listable[netip.Prefix]{netip.MustParsePrefix("172.19.0.2/30")},
+		DNSAddress: badoption.Listable[netip.Addr]{
+			netip.MustParseAddr("172.19.0.2"),
+			netip.MustParseAddr("fdfe:dcba:9876::2"),
+		},
+	})
+	v6Only := tunInboundForTest(&TunInboundOptions{
+		Address: badoption.Listable[netip.Prefix]{netip.MustParsePrefix("2001:db8::1/64")},
+	})
+	v6OnlyDNS := tunInboundForTest(&TunInboundOptions{
+		Address:    badoption.Listable[netip.Prefix]{netip.MustParsePrefix("172.19.0.3/30")},
+		DNSAddress: badoption.Listable[netip.Addr]{netip.MustParseAddr("fdfe:dcba:9876::2")},
+	})
+
+	testCases := []struct {
+		name     string
+		inbounds []Inbound
+		expected bool
+	}{
+		{name: "no tun at all", inbounds: nil, expected: true},
+		{name: "single reducible", inbounds: []Inbound{reducible}, expected: true},
+		{name: "single with mixed dns", inbounds: []Inbound{reducibleWithMixedDNS}, expected: true},
+		{name: "single ipv6-only", inbounds: []Inbound{v6Only}, expected: false},
+		{name: "single with ipv6-only dns list", inbounds: []Inbound{v6OnlyDNS}, expected: false},
+		{name: "both reducible", inbounds: []Inbound{reducible, reducibleWithMixedDNS}, expected: true},
+		{name: "reducible then irreducible", inbounds: []Inbound{reducible, v6Only}, expected: false},
+		{name: "irreducible then reducible", inbounds: []Inbound{v6Only, reducible}, expected: false},
+		{name: "dns list decides the box", inbounds: []Inbound{reducible, v6OnlyDNS}, expected: false},
+		{
+			name: "non-tun inbounds are ignored",
+			inbounds: []Inbound{reducible, {
+				Type: C.TypeMixed, Tag: "mixed-in", Options: &HTTPMixedInboundOptions{},
+			}},
+			expected: true,
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			require.Equal(t, testCase.expected, AllTunInboundsReducibleToIPv4Only(testCase.inbounds))
+		})
+	}
+}
+
+// TestTunReducibleToIPv4OnlyIsTheSharedRule pins the primitive itself, including the two reasons a
+// reduction is refused. protocol/tun asserts that its reduction agrees with this function for the
+// same shapes; this test is the rule at its source.
+func TestTunReducibleToIPv4OnlyIsTheSharedRule(t *testing.T) {
+	inet4 := []netip.Prefix{netip.MustParsePrefix("172.19.0.1/30")}
+	require.True(t, TunReducibleToIPv4Only(inet4, nil), "no explicit dns list derives a v4 server")
+	require.True(t, TunReducibleToIPv4Only(inet4, []netip.Addr{netip.MustParseAddr("172.19.0.2")}))
+	require.True(t, TunReducibleToIPv4Only(inet4, []netip.Addr{
+		netip.MustParseAddr("172.19.0.2"), netip.MustParseAddr("fdfe:dcba:9876::2"),
+	}), "one v4 entry is enough to leave a resolver")
+	require.False(t, TunReducibleToIPv4Only(inet4, []netip.Addr{netip.MustParseAddr("fdfe:dcba:9876::2")}),
+		"the only named resolver is removed by the reduction")
+	require.False(t, TunReducibleToIPv4Only(nil, nil), "an interface must keep at least one address")
+}

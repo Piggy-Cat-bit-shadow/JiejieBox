@@ -41,7 +41,7 @@ var (
 	_ adapter.NetworkTransitionState             = (*NetworkManager)(nil)
 	_ adapter.NetworkTransitionSnapshotter       = (*NetworkManager)(nil)
 	_ adapter.NetworkFamilyCapabilitySnapshotter = (*NetworkManager)(nil)
-	_ adapter.IPv6EntryPresenter                 = (*NetworkManager)(nil)
+	_ adapter.IPv6EntryPresentmentReader         = (*NetworkManager)(nil)
 )
 
 type NetworkManager struct {
@@ -259,6 +259,18 @@ type NetworkManager struct {
 	// them (a channel hand-off, a goroutine creation) is the client's, not this field's. An atomic
 	// makes the hand-off irrelevant; the read happens once per Start stage and costs nothing.
 	entryDemand atomic.Bool
+	// entryAllTunReducible records whether EVERY configured TUN can be presented as IPv4 only.
+	//
+	// The decision the entries share is one value for the whole box, so it may only be "suppress" if
+	// every interface it describes can actually be reduced. Deciding per TUN and rolling the value
+	// back afterwards is order-dependent and leaves a window in which one interface is stripped and
+	// the DNS answer still presents IPv6 (or the reverse). The box therefore pre-checks the typed
+	// configuration and this flag makes the answer part of the decision, before anything applies it.
+	//
+	// It defaults to FALSE, which is the safe direction for a manager nobody configured: no
+	// suppression rather than a suppression some interface cannot honour. Atomic for the same
+	// hand-off reason as entryDemand.
+	entryAllTunReducible atomic.Bool
 	// transitionAccess guards the ownership pair (transitionOwner, transitionStable) so that
 	// claiming, checking ownership and settling are each a single atomic mutation.
 	//

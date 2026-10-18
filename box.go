@@ -588,7 +588,16 @@ func New(options Options) (*Box, error) {
 	// owns the network facts. A configuration with no application-facing IPv6 surface sets false and
 	// the whole adaptive entry system - the startup observation, the route-table read, the decision
 	// and its consumers - takes the fast path that does nothing. See option/ipv6_entry.go.
-	networkManager.SetIPv6EntryDemand(option.ResolveIPv6EntryDemand(options.Options).Required())
+	//
+	// The second value is the box-wide safety answer: the decision is one value for every entry, so
+	// it may only be "suppress" when EVERY configured TUN can actually be presented as IPv4 only.
+	// The predicate is the same one the reduction itself uses, so the pre-check and the interface
+	// cannot disagree; a configuration with one irreducible TUN keeps IPv6 everywhere, which is the
+	// fail-open direction and the only order-independent answer.
+	networkManager.SetIPv6EntryDemand(
+		option.ResolveIPv6EntryDemand(options.Options).Required(),
+		option.AllTunInboundsReducibleToIPv4Only(options.Options.Inbounds),
+	)
 	service.MustRegister[adapter.NetworkManager](ctx, networkManager)
 	// Must register after ConnectionManager: the Apple HTTP engine's proxy bridge reads it from the context when Manager.Start resolves the default client.
 	httpClientManager := httpclient.NewManager(ctx, logFactory.NewLogger("httpclient"), options.HTTPClients, routeOptions.DefaultHTTPClient)

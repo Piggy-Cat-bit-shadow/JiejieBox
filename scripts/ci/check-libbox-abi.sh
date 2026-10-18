@@ -182,7 +182,22 @@ VERIFIED_ANDROID_SHA="ec61030d3df74f3e7c39ab848c8996008ecd386a"
 #
 # Layers 1-3 still need a Go toolchain and a gobind this host does not have, exactly as for
 # the two moves above.
-VERIFIED_APPLE_SHA="c001d59c17410cbd6ddd15274fa3947bece07880"
+#
+# Moved again to 6e559a4, which makes the tunnel settings omit IPv6 when the core sends none. The
+# range is ONE file, Library/Network/ExtensionPlatformInterface.swift, and `git -C clients/apple
+# diff -w c001d59 6e559a4` is exactly six added lines: four comment lines, `if !ipv6Address.isEmpty {`
+# and its closing brace. Everything else in the ordinary diff is re-indentation of the block that is
+# now inside the guard.
+#
+# That is the property layer 4 asserts, and it is derivable from the diff without the probe: no call
+# site of a migrated method is added, removed or rewritten - the receiver text is identical modulo
+# leading whitespace - and no declaration the contract lists changes. Layer 4 was NOT re-run on this
+# host, unlike the c001d59 move: the interpreter resolves to a Store alias here and exits 9009. CI
+# runs it against the moved tree with the unchanged contract.
+#
+# The evidence line references in libbox-abi-contract.tsv still point into the audited c001d59 tree.
+# The probe matches by regex rather than by line, and no contract row was edited.
+VERIFIED_APPLE_SHA="6e559a411b5ac99662bbaec31cce655c60cb170c"
 
 client_root=""
 skip_client=0

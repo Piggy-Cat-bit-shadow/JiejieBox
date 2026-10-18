@@ -40,15 +40,21 @@ import (
 //     failure the fork has already paid for once: a DNS layer that says "IPv6 is back" beside a TUN
 //     that cannot carry it.
 
-// SetIPv6EntryDemand records whether this configuration has any application-facing surface that can
-// present IPv6. It must be called before Start; the box calls it with the value it derived from the
-// assembled typed options.
+// SetIPv6EntryDemand records the two configuration facts the decision depends on. It must be called
+// before Start; the box calls it with the values it derived from the assembled typed options.
 //
-// False is the fast path: Start makes no observation, no route table is read, no decision is
-// committed and every consumer answers "present", which is the behaviour of a build without this
-// feature.
-func (r *NetworkManager) SetIPv6EntryDemand(required bool) {
+// `required` is the demand summary: does any application-facing surface of this configuration
+// present IPv6 at all? False is the fast path - Start makes no observation, no route table is read,
+// no decision is committed and every consumer answers "present", which is the behaviour of a build
+// without this feature.
+//
+// `allTunReducible` says whether EVERY configured TUN can be presented as IPv4 only. The decision is
+// one value for the whole box, so it may only be "suppress" if every interface it describes can
+// actually be reduced; deciding per TUN and rolling back afterwards is order-dependent and leaves a
+// split state. See option.AllTunInboundsReducibleToIPv4Only.
+func (r *NetworkManager) SetIPv6EntryDemand(required bool, allTunReducible bool) {
 	r.entryDemand.Store(required)
+	r.entryAllTunReducible.Store(allTunReducible)
 }
 
 // observeEntryPresentment takes the startup decision and publishes it.
@@ -91,7 +97,21 @@ func (r *NetworkManager) observeEntryPresentment() {
 			"ipv4-only interface, so applications keep the configured ipv6 presentment")
 		return
 	}
-	r.CommitIPv6EntryPresentment(presentment)
+	if presentment == netcap.SuppressIPv6 && !r.entryAllTunReducible.Load() {
+		// The network proves no local IPv6, but at least one configured TUN cannot be presented as
+		// IPv4 only (no IPv4 address, or a hijack DNS address list with no IPv4 entry). The decision
+		// is shared by the whole box, and a per-TUN rollback would leave one interface stripped while
+		// the DNS answer still presents IPv6 - so the box keeps IPv6 everywhere and says why.
+		//
+		// The commitment is explicit rather than absent: "present" is a decision that every consumer
+		// reads, and a diagnostic can tell it apart from "nobody asked".
+		r.logger.Info("ipv6 entry presentment: at least one tun cannot be presented ipv4-only ",
+			"(no ipv4 address, or a hijack dns address list with no ipv4 entry), so every ",
+			"application keeps the configured address families")
+		r.commitIPv6EntryPresentment(netcap.PresentIPv6)
+		return
+	}
+	r.commitIPv6EntryPresentment(presentment)
 	if presentment == netcap.SuppressIPv6 {
 		r.logger.Info("ipv6 entry presentment: the local network has no usable ipv6 path, ",
 			"so applications are presented with ipv4 only until restart (the dial gate is unaffected)")
@@ -118,27 +138,28 @@ func (r *NetworkManager) observeEntryPresentment() {
 //	    every IPv6 fact from the same options (VPNService.kt), and sing-tun's automatic route range
 //	    is gated on the address, so the reduction reaches the VPN builder too.
 //
-//	Darwin and iOS (C.IsDarwin covers both)
-//	    CANNOT, yet. Network Extension settings are built by the CLIENT's tunnel provider
-//	    (`Library/Network/ExtensionPlatformInterface.swift`, `openTun0`). The pinned client
-//	    (`clients/apple` at `c001d59`) creates `NEIPv6Settings` and a default `::/0` route
-//	    unconditionally inside `if auto_route`. Handed no IPv6 address it would install an IPv6
-//	    default route with no address - the exact false presentment this round removes - or
-//	    `setTunnelNetworkSettings` would reject the settings outright. Until the client patch
-//	    (`docs/fork/ipv6-entry-apple.patch`) is part of the built client this answer is false.
+//	macOS, iOS and the tvOS flavour (C.IsDarwin covers darwin and ios)
+//	    CAN, since sing-box-for-apple 6e559a4 - the revision `clients/apple` now pins. `openTun0`
+//	    creates `NEIPv6Settings` only when the core sent at least one IPv6 address, and the other
+//	    `setTunnelNetworkSettings` sites re-apply that same stored settings object, so there is no
+//	    second writer that could reintroduce the family. C.IsTvOS is listed separately because the
+//	    Apple project builds a tvOS flavour whose GOOS/tag combination is not guaranteed to satisfy
+//	    IsDarwin; the constant is false on every non-tvOS build.
 //
-//	Everything else (tvOS and any other GOOS the Apple project builds, the BSDs, ...)
-//	    Unknown client contract, so treated like Darwin: false. The list is positive rather than
-//	    "not Darwin" precisely because a client family can grow a platform this tree has never
-//	    built, and `IsDarwin` is a fork constant that does not enumerate every Apple GOOS.
-//
-// It is a method rather than a constant so the platform can be substituted in a test; the production
-// answer is fixed at build time.
+//	Everything else (the BSDs, js, any GOOS without a verified client contract)
+//	    False. The list is positive rather than "not a platform I know is broken", precisely so an
+//	    unverified client falls on the fail-open side.
 func (r *NetworkManager) entryPresentmentDeliverable() bool {
 	if r.entryDeliveryRemovesIPv6 != nil {
 		return r.entryDeliveryRemovesIPv6()
 	}
-	return C.IsLinux || C.IsWindows
+	return entryPresentmentDeliverableOn(C.IsLinux, C.IsWindows, C.IsDarwin, C.IsTvOS)
+}
+
+// entryPresentmentDeliverableOn is the pure platform rule, extracted so it can be tested on one
+// runner for all platforms the fork builds.
+func entryPresentmentDeliverableOn(linux, windows, darwin, tvos bool) bool {
+	return linux || windows || darwin || tvos
 }
 
 // observeIPv6EntryPresentment reads the network read-only and projects it into an entry decision.
@@ -241,19 +262,19 @@ func filterUpInterfaces(interfaces []adapter.NetworkInterface) []adapter.Network
 	})
 }
 
-// CommitIPv6EntryPresentment records the decision now in force.
+// commitIPv6EntryPresentment records the decision now in force.
 //
-// # Why the latest commit wins
+// # Why it is unexported, and why there is only one writer
 //
-// There are exactly two writers and their order is fixed by the start sequence: this file publishes
-// the startup projection from the manager's own Start state, and the TUN - which starts later -
-// corrects it in the one case where the projection cannot be applied (an IPv6-only interface that
-// cannot be reduced without losing its only address). The second write therefore always describes a
-// state the interface is really in, and refusing it would leave DNS suppressing AAAA for an
-// interface that still advertises IPv6.
+// The decision is taken and published in one place - this file's startup observation - because it is
+// a property of the INTERFACE the box opens, not of any consumer. An earlier design let the TUN
+// correct the value when its own reduction was refused; that produced exactly the multi-TUN split it
+// was meant to avoid (one interface stripped, the shared value rolled back by the other, order
+// dependent), and it has been replaced by the box-level pre-check above: the manager never publishes
+// "suppress" unless every configured TUN can honour it, so no consumer has anything to correct.
 //
 // A test double that never commits leaves the pointer nil, and the reader answers PresentIPv6.
-func (r *NetworkManager) CommitIPv6EntryPresentment(presentment netcap.IPv6Presentment) {
+func (r *NetworkManager) commitIPv6EntryPresentment(presentment netcap.IPv6Presentment) {
 	value := presentment
 	r.entryPresentment.Store(&value)
 }

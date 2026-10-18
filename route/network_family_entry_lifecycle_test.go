@@ -263,7 +263,7 @@ func TestNoDemandMeansNoObservation(t *testing.T) {
 func TestTheStartupObservationPublishesTheDecision(t *testing.T) {
 	manager, finder := entryPresentmentManager(t, netcap.RouteAbsent,
 		entryTestInterface(1, "en0", "192.0.2.10/24"))
-	manager.SetIPv6EntryDemand(true)
+	manager.SetIPv6EntryDemand(true, true)
 	// The observation only runs where the platform's delivery can express the decision. The answer
 	// is fixed at build time, so a test that asserts the startup decision must supply it explicitly
 	// or it would only pass on Windows/Linux runners.
@@ -278,7 +278,7 @@ func TestTheStartupObservationPublishesTheDecision(t *testing.T) {
 func TestAFailedStartupObservationPublishesNothing(t *testing.T) {
 	manager, _ := entryPresentmentManager(t, netcap.RouteAbsent)
 	manager.interfaceFinder = &failingInterfaceFinder{testInterfaceFinder: newTestInterfaceFinder(nil)}
-	manager.SetIPv6EntryDemand(true)
+	manager.SetIPv6EntryDemand(true, true)
 	manager.entryDeliveryRemovesIPv6 = func() bool { return true }
 
 	require.NoError(t, manager.Start(adapter.StartStateStart, &adapter.Scope{}),
@@ -297,12 +297,12 @@ func TestTheUncommittedAnswerIsPresent(t *testing.T) {
 func TestTheLatestCommitWins(t *testing.T) {
 	manager, _ := entryPresentmentManager(t, netcap.RouteAbsent)
 
-	manager.CommitIPv6EntryPresentment(netcap.SuppressIPv6)
+	manager.commitIPv6EntryPresentment(netcap.SuppressIPv6)
 	require.Equal(t, netcap.SuppressIPv6, manager.IPv6EntryPresentment())
 
 	// The TUN could not reduce its options, so the interface still presents IPv6 and the correction
 	// must be visible to the DNS entry.
-	manager.CommitIPv6EntryPresentment(netcap.PresentIPv6)
+	manager.commitIPv6EntryPresentment(netcap.PresentIPv6)
 	require.Equal(t, netcap.PresentIPv6, manager.IPv6EntryPresentment(),
 		"the correction by the entry that applied the decision describes the interface really in use")
 }
@@ -339,7 +339,7 @@ func TestAPublishedInterfaceListIsPreferred(t *testing.T) {
 func TestAPlatformThatCannotExpressIPv4OnlyDoesNotSuppress(t *testing.T) {
 	manager, finder := entryPresentmentManager(t, netcap.RouteAbsent,
 		entryTestInterface(1, "en0", "192.0.2.10/24"))
-	manager.SetIPv6EntryDemand(true)
+	manager.SetIPv6EntryDemand(true, true)
 	manager.entryDeliveryRemovesIPv6 = func() bool { return false }
 
 	require.NoError(t, manager.Start(adapter.StartStateStart, &adapter.Scope{}))
@@ -366,7 +366,7 @@ func TestTheCommitRefusesAnUndeliverableSuppression(t *testing.T) {
 func TestTheDeliveryAnswerIsThePlatformsOwn(t *testing.T) {
 	manager, _ := entryPresentmentManager(t, netcap.RouteAbsent,
 		entryTestInterface(1, "en0", "192.0.2.10/24"))
-	manager.SetIPv6EntryDemand(true)
+	manager.SetIPv6EntryDemand(true, true)
 	manager.entryDeliveryRemovesIPv6 = func() bool { return true }
 
 	require.NoError(t, manager.Start(adapter.StartStateStart, &adapter.Scope{}))
@@ -384,7 +384,7 @@ func TestTheStartupObservationDoesNotResetTheNetwork(t *testing.T) {
 		entryTestInterface(1, "en0", "192.0.2.10/24"))
 	router := newCountingRouter()
 	manager.router = router
-	manager.SetIPv6EntryDemand(true)
+	manager.SetIPv6EntryDemand(true, true)
 	manager.entryDeliveryRemovesIPv6 = func() bool { return true }
 
 	require.NoError(t, manager.Start(adapter.StartStateStart, &adapter.Scope{}))
@@ -416,7 +416,7 @@ func TestTheCommittedDecisionDoesNotFollowALaterNetwork(t *testing.T) {
 	harness.settle(t, "wifi-ipv4-only")
 
 	require.Equal(t, netcap.StateUnavailable, currentFamilyCapability(t, harness).Capability.IPv6)
-	harness.manager.CommitIPv6EntryPresentment(netcap.SuppressIPv6)
+	harness.manager.commitIPv6EntryPresentment(netcap.SuppressIPv6)
 	require.Equal(t, netcap.SuppressIPv6, harness.manager.IPv6EntryPresentment())
 
 	// The device moves to a dual-stack network. The live verdict must follow it.
@@ -439,7 +439,7 @@ func TestALaterNetworkCannotMakeTheEntryPresentmentUnstable(t *testing.T) {
 	harness := newTransitionWindowHarness(t)
 	setInterfaces(harness, "192.0.2.1", interfaceWithAddresses(1, "en0", "192.168.1.10/24", "2001:db8::10/64"))
 	harness.settle(t, "A")
-	harness.manager.CommitIPv6EntryPresentment(netcap.PresentIPv6)
+	harness.manager.commitIPv6EntryPresentment(netcap.PresentIPv6)
 
 	for index, ssid := range []string{"B", "C", "D"} {
 		setInterfaces(harness, "192.0.2."+strconv.Itoa(index+2),
@@ -447,5 +447,71 @@ func TestALaterNetworkCannotMakeTheEntryPresentmentUnstable(t *testing.T) {
 		harness.settle(t, ssid)
 		require.Equal(t, netcap.PresentIPv6, harness.manager.IPv6EntryPresentment(),
 			"transition ", index, " moved the committed entry decision")
+	}
+}
+
+// TestABoxWithOneIrreducibleTunKeepsIpv6Everywhere is the multi-TUN rule at the commit site.
+//
+// The network proves no local IPv6 and the demand exists, but one configured TUN cannot be presented
+// as IPv4 only. The decision is shared by the whole box, so the only order-independent answer is to
+// keep IPv6 everywhere - and to commit that explicitly, so a consumer reads a decision rather than
+// an absence.
+func TestABoxWithOneIrreducibleTunKeepsIpv6Everywhere(t *testing.T) {
+	manager, _ := entryPresentmentManager(t, netcap.RouteAbsent,
+		entryTestInterface(1, "en0", "192.0.2.10/24"))
+	manager.SetIPv6EntryDemand(true, false)
+	manager.entryDeliveryRemovesIPv6 = func() bool { return true }
+
+	require.NoError(t, manager.Start(adapter.StartStateStart, &adapter.Scope{}))
+	require.Equal(t, netcap.PresentIPv6, manager.IPv6EntryPresentment(),
+		"one irreducible tun must keep the whole box presenting IPv6: an interface must never "+
+			"be stripped while the shared decision says otherwise")
+}
+
+// TestTheBoxPreCheckGatesAsuppressionThatWouldHaveHappened is the control: the same manager and the
+// same network, with the box answer flipped to reducible, does suppress. Without it the test above
+// would pass on a manager that never suppresses at all.
+func TestTheBoxPreCheckGatesAsuppressionThatWouldHaveHappened(t *testing.T) {
+	manager, _ := entryPresentmentManager(t, netcap.RouteAbsent,
+		entryTestInterface(1, "en0", "192.0.2.10/24"))
+	manager.SetIPv6EntryDemand(true, true)
+	manager.entryDeliveryRemovesIPv6 = func() bool { return true }
+
+	require.NoError(t, manager.Start(adapter.StartStateStart, &adapter.Scope{}))
+	require.Equal(t, netcap.SuppressIPv6, manager.IPv6EntryPresentment())
+}
+
+// TestThePlatformAnswerIsAPositiveList pins the delivery allowlist as pure data, on one runner, for
+// every platform this tree builds for.
+//
+// The property that matters is the last row: a platform nobody verified is FALSE, so it keeps the
+// previous behaviour. Enabling Apple is a deliberate entry here, tied to the client revision that
+// made its delivery expressible (sing-box-for-apple 6e559a4, pinned by clients/apple).
+func TestThePlatformAnswerIsAPositiveList(t *testing.T) {
+	testCases := []struct {
+		name     string
+		linux    bool
+		windows  bool
+		darwin   bool
+		tvos     bool
+		expected bool
+	}{
+		{name: "windows", windows: true, expected: true},
+		{name: "linux", linux: true, expected: true},
+		{name: "android is linux", linux: true, expected: true},
+		{name: "macos", darwin: true, expected: true},
+		{name: "ios is darwin", darwin: true, expected: true},
+		{name: "tvos flavour", tvos: true, expected: true},
+		{name: "tvos as goos=ios", darwin: true, tvos: true, expected: true},
+		{name: "freebsd", expected: false},
+		{name: "openbsd", expected: false},
+		{name: "js", expected: false},
+		{name: "unknown", expected: false},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			require.Equal(t, testCase.expected,
+				entryPresentmentDeliverableOn(testCase.linux, testCase.windows, testCase.darwin, testCase.tvos))
+		})
 	}
 }

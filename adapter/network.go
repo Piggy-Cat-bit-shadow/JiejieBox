@@ -219,38 +219,9 @@ type NetworkFamilyCapabilitySnapshotter interface {
 // A manager that does not implement this keeps its previous behaviour exactly: nothing is
 // suppressed, and no entry has to know whether a manager is present.
 type IPv6EntryPresentmentReader interface {
-	// IPv6EntryPresentment returns the presentment the entries committed for this box, or
-	// netcap.PresentIPv6 when nothing was committed.
+	// IPv6EntryPresentment returns the presentment this box committed, or netcap.PresentIPv6 when
+	// nothing was committed.
 	IPv6EntryPresentment() netcap.IPv6Presentment
-}
-
-// IPv6EntryPresenter is implemented by the network manager that owns the entry decision: it both
-// records what the entries applied and answers what they are applying.
-//
-// # Why one interface and not two
-//
-// The writer is only ever the component that also reads it - the TUN applies the decision to its
-// effective options and, in the one case it cannot apply it, says so. Splitting the read and the
-// write would let a consumer take the writer half without the read half and commit a decision it
-// cannot see, which is the shape of a split state rather than a use case.
-//
-// # Who commits, and in what order
-//
-// The manager itself commits the startup projection (see SetIPv6EntryDemand), and the entry that
-// applies it commits again only to correct it - when the configured options cannot be reduced to a
-// working IPv4-only interface, the interface still presents IPv6 and the recorded decision must say
-// so. Those are the only two writers, and their order is fixed by the start sequence: the manager's
-// observation runs before any inbound starts.
-//
-// A manager that does not implement this keeps its previous behaviour exactly: nothing is
-// suppressed and no entry has to know whether a manager is present.
-type IPv6EntryPresenter interface {
-	// IPv6EntryPresentment returns the presentment the entries are applying, or
-	// netcap.PresentIPv6 when no decision was taken.
-	IPv6EntryPresentment() netcap.IPv6Presentment
-	// CommitIPv6EntryPresentment records the presentment now in force. The latest commit wins; see
-	// the ordering rule above.
-	CommitIPv6EntryPresentment(presentment netcap.IPv6Presentment)
 }
 
 type NetworkOptions struct {

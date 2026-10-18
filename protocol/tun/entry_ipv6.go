@@ -9,47 +9,42 @@ import (
 )
 
 // This file is the inbound's half of the entry IPv6 decision: how it consumes the decision the
-// network manager took at start, and the one case in which it has to correct it.
+// network manager took at start.
 //
 // The decision itself is netcap's (ProjectIPv6Presentment), the observation and publication are the
 // network manager's (route/network_family_entry.go), and the option surgery is effective_ipv6.go.
 // What is here is only the application: the inbound reads the committed value, reduces the options
 // while the interface does not exist yet, and every consumer of those options - the stack, the
-// platform client, the auto-redirect rules and the route-set prefixes appended later in Start - then
-// sees one consistent interface.
+// platform client, the auto-redirect rules and the route-set prefixes appended later in Start -
+// then sees one consistent interface.
 
 // applyEntryIPv6Presentment applies the committed entry decision to this interface's options.
 //
-// # Why the inbound reads the decision instead of taking it
+// # Why the inbound only READS the decision
 //
-// The decision also governs the application-facing DNS answer, and that answer must be consistent
-// with an interface that may not present IPv6 at all - a configuration whose TUN is IPv4-only can
-// still hand applications a synthetic AAAA through Fake-IP. Taking the decision per entry would let
-// the TUN and the DNS router disagree, and it would double the observation at every start. The
-// manager takes it once; every entry consumes it.
+// The decision is shared by the whole box - one TUN address space, one DNS answer, one Fake-IP store
+// - so it is taken once, in the network manager, where the box also proved that every configured TUN
+// can honour it (option.AllTunInboundsReducibleToIPv4Only). An earlier design let each TUN correct
+// the shared value when its own reduction was refused; that was order-dependent and produced exactly
+// the split it was meant to prevent: the first interface stripped, the second rolling the value back
+// to "present" for everyone.
 //
-// # What it does when the decision is "present", or absent
+// # The refusal that should not happen
 //
-// Nothing. The options are exactly the configured ones, no field is touched and no log line is
-// emitted, which is the behaviour of every build before this round.
-//
-// # The correction
-//
-// `applyIPv4OnlyPresentment` can refuse: an IPv6-only interface cannot be reduced without deleting
-// its only address, and a hijack DNS address list with no IPv4 entry cannot be reduced without
-// leaving applications without a resolver. In that case the configured IPv6 stays, and the recorded
-// decision is corrected to "present" - a DNS entry suppressing AAAA beside an interface that still
-// advertises IPv6 is the split this pipeline exists to prevent. The correction is the second and
-// last write; the manager's commit runs first, from its own Start state, which the box's start
-// sequence guarantees happens before any inbound starts.
+// `applyIPv4OnlyPresentment` keeps its guard, because the effective options are the last word on what
+// this interface will be. With the box pre-check in place a refusal here means the two predicates
+// disagreed - a defect, not a configuration. The direction taken is the safe one: the interface keeps
+// its configured IPv6 (there is nothing else to do at this point) and the shared decision is NOT
+// rolled back, so the DNS answer stays conservative rather than presenting an IPv6 this interface
+// was just stripped of. It is logged at Error so the disagreement cannot pass silently.
 func (t *Inbound) applyEntryIPv6Presentment() {
-	presenter, isPresenter := t.networkManager.(adapter.IPv6EntryPresenter)
-	if !isPresenter {
+	reader, isReader := t.networkManager.(adapter.IPv6EntryPresentmentReader)
+	if !isReader {
 		// A manager that cannot report the decision keeps the previous behaviour exactly: the
-		// options are untouched and nothing is recorded.
+		// options are untouched.
 		return
 	}
-	if presenter.IPv6EntryPresentment() != netcap.SuppressIPv6 {
+	if reader.IPv6EntryPresentment() != netcap.SuppressIPv6 {
 		return
 	}
 	if applyIPv4OnlyPresentment(&t.tunOptions) {
@@ -63,10 +58,8 @@ func (t *Inbound) applyEntryIPv6Presentment() {
 			"options; the decision holds until the box is restarted)")
 		return
 	}
-	// The reduction was refused, so this interface keeps presenting IPv6. Say so, or the DNS entry
-	// would suppress AAAA for a family the interface is still advertising.
-	t.logger.Warn("ipv6 entry presentment: keeping the configured ipv6 options because they cannot ",
-		"be reduced to a working ipv4-only interface (an ipv6-only interface, or a hijack dns ",
-		"address list with no ipv4 entry); applications will be presented with ipv6 as configured")
-	presenter.CommitIPv6EntryPresentment(netcap.PresentIPv6)
+	t.logger.Error("ipv6 entry presentment: the box committed an ipv4-only presentment but this ",
+		"interface cannot be reduced (no ipv4 address, or a hijack dns address list with no ipv4 ",
+		"entry); keeping the configured ipv6 on this interface and leaving the shared decision ",
+		"unchanged. The pre-check and the reduction disagree, which is a defect")
 }

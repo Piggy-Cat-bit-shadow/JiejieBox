@@ -131,6 +131,72 @@ func ResolveIPv6EntryDemand(options Options) IPv6EntryDemand {
 	return demand
 }
 
+// TunReducibleToIPv4Only reports whether a TUN with these addresses can be presented as IPv4 only
+// without breaking it.
+//
+// # It is the ONE safety rule, shared by the two layers that need it
+//
+// The box-level pre-check (AllTunInboundsReducibleToIPv4Only) decides whether ANY tun may be
+// reduced; the reduction itself (protocol/tun/effective_ipv6.go) applies it. A second copy of this
+// rule is exactly how a split state appears: the pre-check says "safe", the reduction refuses for a
+// reason the pre-check did not model, and one interface is stripped while the shared decision is
+// rolled back - or, worse, the reverse. Both callers therefore call this function.
+//
+//	no IPv4 address           an interface must keep at least one address
+//	DNS list with no IPv4     the hijack resolver list would have no server left
+//
+// A TUN with no address at all is not reducible either: there is no interface to open.
+func TunReducibleToIPv4Only(inet4Addresses []netip.Prefix, dnsAddresses []netip.Addr) bool {
+	if len(inet4Addresses) == 0 {
+		return false
+	}
+	if len(dnsAddresses) == 0 {
+		return true
+	}
+	for _, address := range dnsAddresses {
+		if address.Is4() {
+			return true
+		}
+	}
+	return false
+}
+
+// AllTunInboundsReducibleToIPv4Only reports whether EVERY TUN inbound in this configuration can be
+// reduced to IPv4 only.
+//
+// # Why the box needs this before it decides anything
+//
+// The entry decision is shared by the whole box (one TUN address space, one DNS answer, one Fake-IP
+// store), so it can only be "suppress" if every interface it describes can actually be reduced.
+// Deciding per TUN and rolling the shared value back afterwards is order-dependent and leaves a
+// window in which one interface is stripped and the DNS answer still presents IPv6 (or the reverse).
+// The pre-check is a pure function of the typed configuration - no network, no side effects - and and
+// is evaluated once in box.New.
+//
+// It returns true for a configuration with no TUN at all, which is the vacuously-correct answer: the
+// callers only suppress when the demand summary says a TUN exists.
+func AllTunInboundsReducibleToIPv4Only(inbounds []Inbound) bool {
+	for _, inbound := range inbounds {
+		if inbound.Type != C.TypeTun {
+			continue
+		}
+		tunOptions, isTun := inbound.Options.(*TunInboundOptions)
+		if !isTun || tunOptions == nil {
+			continue
+		}
+		inet4Addresses := make([]netip.Prefix, 0, len(tunOptions.Address))
+		for _, prefix := range tunOptions.Address {
+			if prefix.Addr().Is4() {
+				inet4Addresses = append(inet4Addresses, prefix)
+			}
+		}
+		if !TunReducibleToIPv4Only(inet4Addresses, tunOptions.DNSAddress) {
+			return false
+		}
+	}
+	return true
+}
+
 // tunInboundOptionsPresentIPv6 reports whether these TUN options could carry an IPv6 fact to the
 // platform, the stack or an application.
 //
