@@ -264,6 +264,10 @@ func TestTheStartupObservationPublishesTheDecision(t *testing.T) {
 	manager, finder := entryPresentmentManager(t, netcap.RouteAbsent,
 		entryTestInterface(1, "en0", "192.0.2.10/24"))
 	manager.SetIPv6EntryDemand(true)
+	// The observation only runs where the platform's delivery can express the decision. The answer
+	// is fixed at build time, so a test that asserts the startup decision must supply it explicitly
+	// or it would only pass on Windows/Linux runners.
+	manager.entryDeliveryRemovesIPv6 = func() bool { return true }
 
 	require.NoError(t, manager.Start(adapter.StartStateStart, &adapter.Scope{}))
 	require.Equal(t, 1, finder.updates)
@@ -275,6 +279,7 @@ func TestAFailedStartupObservationPublishesNothing(t *testing.T) {
 	manager, _ := entryPresentmentManager(t, netcap.RouteAbsent)
 	manager.interfaceFinder = &failingInterfaceFinder{testInterfaceFinder: newTestInterfaceFinder(nil)}
 	manager.SetIPv6EntryDemand(true)
+	manager.entryDeliveryRemovesIPv6 = func() bool { return true }
 
 	require.NoError(t, manager.Start(adapter.StartStateStart, &adapter.Scope{}),
 		"an unobservable network must not keep the box from starting")
@@ -380,6 +385,7 @@ func TestTheStartupObservationDoesNotResetTheNetwork(t *testing.T) {
 	router := newCountingRouter()
 	manager.router = router
 	manager.SetIPv6EntryDemand(true)
+	manager.entryDeliveryRemovesIPv6 = func() bool { return true }
 
 	require.NoError(t, manager.Start(adapter.StartStateStart, &adapter.Scope{}))
 	require.Equal(t, 1, finder.updates, "the observation ran")
