@@ -545,6 +545,7 @@ jobs:
             "github.com/sagernet/sing-box/protocol/shadowtls"
             "github.com/sagernet/sing-box/protocol/shadowsocks"
             "github.com/sagernet/sing-box/protocol/naive"
+            "github.com/sagernet/sing-box/protocol/mieru"
             "github.com/sagernet/sing-box/transport/http"
             # XHTTP, and it is listed as the transport package rather than as the package that
             # imports it. include/v2rayxhttp.go is the blank import that pulls it in, but a

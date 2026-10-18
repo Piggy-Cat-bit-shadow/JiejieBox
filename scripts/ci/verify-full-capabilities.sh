@@ -114,6 +114,7 @@ for spec in \
   "outbound-snell:{\"type\":\"snell\",\"tag\":\"o\",\"server\":\"127.0.0.1\",\"server_port\":1,\"psk\":\"p\",\"version\":4}" \
   "outbound-shadowtls:{\"type\":\"shadowtls\",\"tag\":\"o\",\"server\":\"127.0.0.1\",\"server_port\":1,\"version\":3,\"password\":\"p\",\"tls\":{\"enabled\":true,\"server_name\":\"example.com\"}}" \
   "outbound-anytls:{\"type\":\"anytls\",\"tag\":\"o\",\"server\":\"127.0.0.1\",\"server_port\":1,\"password\":\"p\",\"tls\":{\"enabled\":true,\"server_name\":\"example.com\"}}" \
+  "outbound-mieru:{\"type\":\"mieru\",\"tag\":\"o\",\"server\":\"127.0.0.1\",\"server_port\":1,\"username\":\"u\",\"password\":\"p\"}" \
   "outbound-tor:{\"type\":\"tor\",\"tag\":\"o\"}" \
   "outbound-ssh:{\"type\":\"ssh\",\"tag\":\"o\",\"server\":\"127.0.0.1\",\"server_port\":1,\"user\":\"u\",\"password\":\"p\"}" \
   "outbound-direct:{\"type\":\"direct\",\"tag\":\"o\"}" \
@@ -177,6 +178,7 @@ for spec in \
   "inbound-trojan:{\"type\":\"trojan\",\"tag\":\"i\",\"listen\":\"127.0.0.1\",\"listen_port\":1085,\"users\":[{\"password\":\"p\"}],\"tls\":{\"enabled\":true,\"certificate_path\":\"$cert_dir/cert.pem\",\"key_path\":\"$cert_dir/key.pem\"}}" \
   "inbound-vless:{\"type\":\"vless\",\"tag\":\"i\",\"listen\":\"127.0.0.1\",\"listen_port\":1086,\"users\":[{\"uuid\":\"00000000-0000-0000-0000-000000000000\"}]}" \
   "inbound-anytls:{\"type\":\"anytls\",\"tag\":\"i\",\"listen\":\"127.0.0.1\",\"listen_port\":1087,\"users\":[{\"password\":\"p\"}],\"tls\":{\"enabled\":true,\"certificate_path\":\"$cert_dir/cert.pem\",\"key_path\":\"$cert_dir/key.pem\"}}" \
+  "inbound-mieru:{\"type\":\"mieru\",\"tag\":\"i\",\"listen\":\"127.0.0.1\",\"listen_port\":1095,\"transport\":\"both\",\"users\":[{\"name\":\"u\",\"password\":\"p\"}]}" \
   "inbound-shadowtls:{\"type\":\"shadowtls\",\"tag\":\"i\",\"listen\":\"127.0.0.1\",\"listen_port\":1088,\"version\":3,\"users\":[{\"password\":\"p\"}],\"handshake\":{\"server\":\"127.0.0.1\",\"server_port\":443}}" \
   "inbound-naive:{\"type\":\"naive\",\"tag\":\"i\",\"listen\":\"127.0.0.1\",\"listen_port\":1089,\"users\":[{\"username\":\"u\",\"password\":\"p\"}],\"tls\":{\"enabled\":true,\"certificate_path\":\"$cert_dir/cert.pem\",\"key_path\":\"$cert_dir/key.pem\"}}" \
   "inbound-hysteria:{\"type\":\"hysteria\",\"tag\":\"i\",\"listen\":\"127.0.0.1\",\"listen_port\":1090,\"up_mbps\":100,\"down_mbps\":100,\"users\":[{\"auth_str\":\"p\"}],\"tls\":{\"enabled\":true,\"certificate_path\":\"$cert_dir/cert.pem\",\"key_path\":\"$cert_dir/key.pem\"}}" \
