@@ -38,6 +38,7 @@ var (
 )
 
 var errOutboundClosed = E.New("mieru: outbound is closed")
+var errFallbackStale = E.New("mieru: fallback generation changed")
 
 // Outbound is the Mieru client.
 //
@@ -46,23 +47,39 @@ var errOutboundClosed = E.New("mieru: outbound is closed")
 // domain_resolver / network_strategy / bind_interface / routing_mark), the
 // lifecycle, and the translation between Mieru's SOCKS5 request/response
 // messages and sing-box's connection contract.
+//
+// With fallback disabled the object has exactly one transportRuntime and walks
+// the same path as before. With fallback enabled it owns two independent
+// runtime generations (one TCP, one UDP) and a small selector; the selector
+// chooses only a NEW session and never stops either SDK client on a normal
+// preference change.
 type Outbound struct {
 	outbound.Adapter
 	logger log.ContextLogger
-	config *mieruclient.ClientConfig
-	// packetDialer owns the UDP underlay sockets. The SDK does not close them
-	// reliably on Stop (its packet read loop can overwrite the wake-up
-	// deadline), so the adapter closes the generation explicitly.
+	// primarySpec/secondarySpec are the immutable inputs for each generation.
+	// secondarySpec is nil for a legacy single-transport outbound.
+	primarySpec   *transportSpec
+	secondarySpec *transportSpec
+
+	primary   *transportRuntime
+	secondary *transportRuntime
+	fallback  *fallbackSelector
+
+	// config/client/packetDialer are the primary aliases. They preserve the
+	// existing single-client code paths and the private hooks used by the
+	// lifecycle tests; the actual owners are primary (and secondary).
+	config       *mieruclient.ClientConfig
+	client       mieruclient.Client
 	packetDialer *serverDialer
 
-	access  sync.RWMutex
-	client  mieruclient.Client
-	started bool
-	closed  bool
-	// inFlight counts DialContext calls between snapshotting the client and
-	// returning its connection. Close and InterfaceUpdated take the write
-	// lock first, which prevents new calls, then drain this counter before
-	// stopping the client.
+	access     sync.RWMutex
+	started    bool
+	closed     bool
+	generation uint64
+	// inFlight counts DialContext calls between snapshotting the transport and
+	// returning its connection. Close and InterfaceUpdated take the write lock
+	// first, which prevents new calls, then drain this counter before stopping
+	// the generation.
 	inFlight inflightGroup
 	// dialed is set by the first dial after a (re)start. Before that point the
 	// SDK has no underlay or session that could be bound to the old network,
@@ -122,11 +139,54 @@ func (g *inflightGroup) wait(timeout time.Duration) bool {
 }
 
 func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.MieruOutboundOptions) (adapter.Outbound, error) {
-	outboundDialer, err := dialer.New(ctx, options.DialerOptions, M.IsDomainName(options.Server))
+	secondaryOptions, fallbackEnabled, err := resolveFallbackOptions(options)
 	if err != nil {
 		return nil, err
 	}
-	serverDialer, err := newServerDialer(outboundDialer, options.Server)
+	primarySpec, err := newTransportSpec(ctx, "primary", options)
+	if err != nil {
+		return nil, err
+	}
+	var secondarySpec *transportSpec
+	if fallbackEnabled {
+		secondarySpec, err = newTransportSpec(ctx, "secondary", secondaryOptions)
+		if err != nil {
+			return nil, err
+		}
+	}
+	primary, err := newTransportRuntime(primarySpec)
+	if err != nil {
+		return nil, err
+	}
+	var secondary *transportRuntime
+	if secondarySpec != nil {
+		secondary, err = newTransportRuntime(secondarySpec)
+		if err != nil {
+			_ = primary.stop()
+			return nil, err
+		}
+	}
+	outboundInstance := &Outbound{
+		Adapter:       outbound.NewAdapterWithDialerOptions(C.TypeMieru, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.DialerOptions, options.ServerIsDomain()),
+		logger:        logger,
+		primarySpec:   primarySpec,
+		secondarySpec: secondarySpec,
+		primary:       primary,
+		secondary:     secondary,
+		generation:    1,
+		inFlight:      newInflightGroup(),
+	}
+	if fallbackEnabled {
+		outboundInstance.fallback = newFallbackSelector(outboundInstance.generation)
+	}
+	outboundInstance.setAliasesLocked()
+	return outboundInstance, nil
+}
+
+// newTransportSpec captures the immutable inputs for one primary/secondary
+// SDK generation. No socket or SDK client is created here.
+func newTransportSpec(ctx context.Context, label string, options option.MieruOutboundOptions) (*transportSpec, error) {
+	rawDialer, err := dialer.New(ctx, options.DialerOptions, M.IsDomainName(options.Server))
 	if err != nil {
 		return nil, err
 	}
@@ -134,22 +194,44 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	if err != nil {
 		return nil, err
 	}
-	config, err := buildClientConfig(options, serverDialer, serverDialer, resolver)
-	if err != nil {
-		return nil, err
+	return &transportSpec{label: label, options: options, dialer: rawDialer, resolver: resolver}, nil
+}
+
+// setAliasesLocked keeps the legacy single-client fields pointing at the
+// current primary generation. The caller must hold access (or be constructing
+// the object before publication).
+func (h *Outbound) setAliasesLocked() {
+	if h.primary == nil {
+		h.config = nil
+		h.client = nil
+		h.packetDialer = nil
+		return
 	}
-	client := mieruclient.NewClient()
-	if err = client.Store(config); err != nil {
-		return nil, E.Cause(err, "mieru: store client config")
+	h.config = h.primary.config
+	h.client = h.primary.client
+	h.packetDialer = h.primary.packetDialer
+}
+
+func (h *Outbound) ensureRuntimesLocked() error {
+	if h.primary == nil {
+		primary, err := newTransportRuntime(h.primarySpec)
+		if err != nil {
+			return err
+		}
+		h.primary = primary
 	}
-	return &Outbound{
-		Adapter:      outbound.NewAdapterWithDialerOptions(C.TypeMieru, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.DialerOptions, options.ServerIsDomain()),
-		logger:       logger,
-		config:       config,
-		client:       client,
-		packetDialer: serverDialer,
-		inFlight:     newInflightGroup(),
-	}, nil
+	if h.secondarySpec != nil && h.secondary == nil {
+		secondary, err := newTransportRuntime(h.secondarySpec)
+		if err != nil {
+			_ = h.primary.stop()
+			h.primary = nil
+			h.setAliasesLocked()
+			return err
+		}
+		h.secondary = secondary
+	}
+	h.setAliasesLocked()
+	return nil
 }
 
 func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
@@ -165,12 +247,33 @@ func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		h.access.Unlock()
 		return nil
 	}
-	if err := h.client.Start(); err != nil {
+	if err := h.ensureRuntimesLocked(); err != nil {
 		h.access.Unlock()
-		return E.Cause(err, "mieru: start client")
+		return E.Cause(err, "mieru: prepare client")
+	}
+	if err := h.primary.start(); err != nil {
+		h.stopRuntimesLocked()
+		h.access.Unlock()
+		return E.Cause(err, "mieru: start primary client")
+	}
+	if h.secondary != nil {
+		if err := h.secondary.start(); err != nil {
+			h.stopRuntimesLocked()
+			h.access.Unlock()
+			return E.Cause(err, "mieru: start fallback client")
+		}
 	}
 	h.started = true
+	h.generation++
 	h.dialed.Store(false)
+	fallbackEnabled := h.secondary != nil
+	fallbackTransport := ""
+	if h.secondary != nil {
+		fallbackTransport = h.secondary.transport.String()
+	}
+	if h.fallback != nil {
+		h.fallback.reset(h.generation)
+	}
 	h.access.Unlock()
 	// Add may run the cleanup synchronously if the scope is already closing;
 	// Close takes the same lock, so it must not be held here.
@@ -181,8 +284,31 @@ func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if closedDuringStart {
 		return E.New("mieru: outbound was closed while starting")
 	}
-	h.logger.Info("mieru client started")
+	if fallbackEnabled {
+		h.logger.Info("mieru client started (fallback ", fallbackTransport, " enabled)")
+	} else {
+		h.logger.Info("mieru client started")
+	}
 	return nil
+}
+
+// stopRuntimesLocked releases a generation that may have been only partially
+// started. It is called with the write lock held and leaves the aliases nil;
+// the next Start rebuilds fresh SDK clients (a stopped Client must not be
+// restarted).
+func (h *Outbound) stopRuntimesLocked() {
+	primary := h.primary
+	secondary := h.secondary
+	h.primary = nil
+	h.secondary = nil
+	h.started = false
+	h.setAliasesLocked()
+	if primary != nil {
+		_ = primary.stop()
+	}
+	if secondary != nil {
+		_ = secondary.stop()
+	}
 }
 
 // Close stops the SDK client.
@@ -199,11 +325,25 @@ func (h *Outbound) Close() error {
 	h.closeOnce.Do(func() {
 		h.access.Lock()
 		h.closed = true
-		client := h.client
+		if h.fallback != nil {
+			h.fallback.close()
+		}
 		h.drainInFlightLocked()
+		primary := h.primary
+		secondary := h.secondary
 		h.access.Unlock()
-		h.closeErr = client.Stop()
-		h.packetDialer.shutdownPacketConns()
+		var stopErrors []error
+		if primary != nil {
+			if err := primary.stop(); err != nil {
+				stopErrors = append(stopErrors, E.Cause(err, "mieru: stop primary client"))
+			}
+		}
+		if secondary != nil {
+			if err := secondary.stop(); err != nil {
+				stopErrors = append(stopErrors, E.Cause(err, "mieru: stop fallback client"))
+			}
+		}
+		h.closeErr = E.Errors(stopErrors...)
 	})
 	return h.closeErr
 }
@@ -232,28 +372,62 @@ func (h *Outbound) InterfaceUpdated(ctx context.Context) {
 	}
 	if !h.dialed.Load() {
 		// The startup network observation arrives before the first dial. The
-		// SDK has not created an underlay yet, so stopping and starting the
-		// client here would only add a transient unavailable window (and a
-		// full Mux teardown) before any traffic has been attempted.
+		// SDK has not created an underlay yet, so stopping and starting a
+		// client here would only add a transient unavailable window before any
+		// traffic has been attempted.
 		return
 	}
 	h.drainInFlightLocked()
-	next := mieruclient.NewClient()
-	if err := next.Store(h.config); err != nil {
-		h.logger.ErrorContext(ctx, "mieru: rebuild client config after network change: ", err)
+	nextPrimary, err := newTransportRuntime(h.primarySpec)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "mieru: rebuild primary config after network change: ", err)
 		return
 	}
-	if err := next.Start(); err != nil {
-		h.logger.ErrorContext(ctx, "mieru: restart client after network change: ", err)
+	var nextSecondary *transportRuntime
+	if h.secondarySpec != nil {
+		nextSecondary, err = newTransportRuntime(h.secondarySpec)
+		if err != nil {
+			h.logger.ErrorContext(ctx, "mieru: rebuild fallback config after network change: ", err)
+			_ = nextPrimary.stop()
+			return
+		}
+	}
+	if err = nextPrimary.start(); err != nil {
+		h.logger.ErrorContext(ctx, "mieru: restart primary client after network change: ", err)
+		_ = nextPrimary.stop()
+		if nextSecondary != nil {
+			_ = nextSecondary.stop()
+		}
 		return
 	}
-	previous := h.client
-	h.client = next
+	if nextSecondary != nil {
+		if err = nextSecondary.start(); err != nil {
+			h.logger.ErrorContext(ctx, "mieru: restart fallback client after network change: ", err)
+			_ = nextPrimary.stop()
+			_ = nextSecondary.stop()
+			return
+		}
+	}
+	previousPrimary := h.primary
+	previousSecondary := h.secondary
+	h.primary = nextPrimary
+	h.secondary = nextSecondary
+	h.generation++
 	h.dialed.Store(false)
-	if err := previous.Stop(); err != nil {
-		h.logger.WarnContext(ctx, "mieru: stop previous client after network change: ", err)
+	if h.fallback != nil {
+		h.fallback.reset(h.generation)
 	}
-	h.packetDialer.closePacketConns()
+	h.setAliasesLocked()
+	if previousPrimary != nil {
+		if err = previousPrimary.stop(); err != nil {
+			h.logger.WarnContext(ctx, "mieru: stop previous primary client after network change: ", err)
+		}
+	}
+	if previousSecondary != nil {
+		if err = previousSecondary.stop(); err != nil {
+			h.logger.WarnContext(ctx, "mieru: stop previous fallback client after network change: ", err)
+		}
+	}
 	h.logger.InfoContext(ctx, "mieru client restarted after network change")
 }
 
@@ -314,16 +488,112 @@ func (h *Outbound) dial(ctx context.Context, destination mierumodel.NetAddrSpec)
 		return nil, E.New("mieru: outbound has not started")
 	}
 	h.inFlight.begin()
-	client := h.client
+	primary := h.primary
+	secondary := h.secondary
+	fallback := h.fallback
+	generation := h.generation
 	h.dialed.Store(true)
 	h.access.RUnlock()
 	defer h.inFlight.done()
-	conn, err := client.DialContext(ctx, destination)
-	if err != nil {
-		if errors.Is(err, mieruclient.ErrClientIsNotRunning) {
+	if primary == nil {
+		return nil, E.New("mieru: outbound has no transport")
+	}
+	if fallback == nil || secondary == nil {
+		conn, _, err := primary.dial(ctx, destination)
+		if err != nil && errors.Is(err, mieruclient.ErrClientIsNotRunning) {
 			return nil, E.Cause(err, "mieru: dial")
 		}
+		return conn, err
+	}
+	return h.dialWithFallback(ctx, destination, primary, secondary, fallback, generation)
+}
+
+func (h *Outbound) dialWithFallback(ctx context.Context, destination mierumodel.NetAddrSpec, primary *transportRuntime, secondary *transportRuntime, selector *fallbackSelector, generation uint64) (net.Conn, error) {
+	choice, probe, ok := selector.choose(generation)
+	if !ok {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		// Do not wait for Close/InterfaceUpdated's write lock here: a dial
+		// that lost its generation must finish promptly so the owner can
+		// drain in-flight work.
+		if h.access.TryRLock() {
+			closed := h.closed
+			h.access.RUnlock()
+			if closed {
+				return nil, errOutboundClosed
+			}
+		}
+		return nil, errFallbackStale
+	}
+	selected := primary
+	if choice == fallbackSecondary {
+		selected = secondary
+	}
+	conn, class, err := selected.dial(ctx, destination)
+	selector.report(generation, choice, probe, class)
+	if err == nil {
+		return h.acceptGeneratedConn(conn, generation)
+	}
+	if class != dialTransportFailure {
+		switch class {
+		case dialTargetFailure:
+			h.logger.Debug("mieru: target failure on ", primary.label, " transport; not switching: ", err)
+		case dialAmbiguousFailure:
+			h.logger.Debug("mieru: ambiguous handshake failure on ", primary.label, " transport; not switching: ", err)
+		}
 		return nil, err
+	}
+	if choice == fallbackSecondary {
+		return nil, err
+	}
+	// The primary failed in a class that may be a transport failure. Preserve
+	// the caller's deadline and try the other transport exactly once.
+	if ctx.Err() != nil {
+		return nil, E.Cause(err, "mieru: primary transport failed")
+	}
+	h.logger.Info("mieru: primary ", primary.transport.String(), " transport failed, trying fallback ", secondary.transport.String())
+	secondaryConn, secondaryClass, secondaryErr := secondary.dial(ctx, destination)
+	selector.report(generation, fallbackSecondary, false, secondaryClass)
+	if secondaryErr == nil {
+		return h.acceptGeneratedConn(secondaryConn, generation)
+	}
+	selector.reportBothFailed(generation, class, secondaryClass)
+	return nil, E.Errors(
+		E.Cause(err, "mieru: primary transport"),
+		E.Cause(secondaryErr, "mieru: fallback transport"),
+	)
+}
+
+// acceptGeneratedConn enforces the ownership boundary after the network may
+// have changed while the dial was in flight. The selector already ignores a
+// stale report; without this check the route could still receive a connection
+// created for the previous generation. Closing it here is the only place the
+// adapter can enforce Close/epoch wins without leaking the SDK session.
+func (h *Outbound) acceptGeneratedConn(conn net.Conn, generation uint64) (net.Conn, error) {
+	if !h.access.TryRLock() {
+		if conn != nil {
+			_ = conn.Close()
+		}
+		return nil, errOutboundClosed
+	}
+	closed := h.closed
+	current := h.generation
+	h.access.RUnlock()
+	if closed {
+		if conn != nil {
+			_ = conn.Close()
+		}
+		return nil, errOutboundClosed
+	}
+	if current != generation {
+		if conn != nil {
+			_ = conn.Close()
+		}
+		return nil, errFallbackStale
+	}
+	if conn == nil {
+		return nil, E.New("mieru: transport returned no connection")
 	}
 	return conn, nil
 }

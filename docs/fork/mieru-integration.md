@@ -23,23 +23,23 @@ All reference commits were read at the SHA below; no code was copied.
 | --- | --- | --- | --- |
 | `enfein/mieru` | `v3.38.1` / `a2208ee7` | The protocol semantics, `apis/client` and `apis/server`, `Mux`, listener factories, UDP-over-stream framing, traffic pattern, user hint. | KEEP as the only protocol implementation. |
 | `enfein/mbox` | `1c5b39718ebcd05e6adb31f95246fbf056be9bd7` | The first sing-box skeleton: option field names, client/server config building, SOCKS5 request/response handling. | KEEP the schema names (`server`, `server_port`, `server_ports`, `transport`, `username`, `password`, `multiplexing`, `traffic_pattern`, inbound `users` / `user_hint_is_mandatory`). REJECT its lifecycle: client started in the constructor, `common.Close(o.client)` as cleanup (the SDK client implements neither `io.Closer` nor `Upstream`, so this is a no-op), no listener factory, no connection draining. |
-| `hiddify/hiddify-sing-box` | `v5` / `3bbbd61ee4d76cc6ff433b111fed4187ad2f4b4f` | `Accept()` error backoff (100 ms → 5 s), handshake/multiplexing enum maps, port binding schema. | PARTIAL. Enum mapping ideas were kept (case-insensitive, official enum names accepted). The unconditional backoff was rejected: `server.Accept()` reports per-connection handshake failures as well as a dead Mux, so a blanket delay lets one bad client slow every legitimate connection behind it. The Mux-level failure (`io.ErrClosedPipe`) is terminal and stops the loop; per-connection errors continue immediately. |
+| `hiddify/hiddify-sing-box` | `v5` / `3bbbd61ee4d76cc6ff433b111fed4187ad2f4b4f` | `Accept()` error backoff (100 ms 鈫?5 s), handshake/multiplexing enum maps, port binding schema. | PARTIAL. Enum mapping ideas were kept (case-insensitive, official enum names accepted). The unconditional backoff was rejected: `server.Accept()` reports per-connection handshake failures as well as a dead Mux, so a blanket delay lets one bad client slow every legitimate connection behind it. The Mux-level failure (`io.ErrClosedPipe`) is terminal and stops the loop; per-connection errors continue immediately. |
 | `shtorm-7/sing-box-extended` | `extended` / `5956780ba3f140feff771d003914a1b82ea9d5d0` | Starting the client in `Start` rather than the constructor, MTU/handshake fields. | KEEP the Start-stage lifecycle. REJECT its startup DNS pre-resolution (`addresses[0]`): it discards the fork's dual-stack strategy, fallback and rotation. |
 | `MetaCubeX/mihomo` | `Alpha` / `94b13aed49b8dc41973e4bb3f721c5fa2c5c5c1f` | Explicit `Stop`, lazy start, `StreamListenerFactory`/`PacketListenerFactory`, a resolver and packet dialer. | KEEP explicit `Stop()` and the listener factories. REJECT lazy start on first use: the fork has one lifecycle authority, and a node that starts inside `DialContext` is a second one. REJECT its resolver's single-IP answer for the UDP underlay for the same reason as shtorm. |
 
 ## Data path and ownership
 
 ```
-Config → registry → option.Mieru*Options → protocol/mieru
-  Outbound: NewOutbound → dialer.New (fork dialer; resolves the server through
-            the fork's DNS policy) → buildClientConfig → client.Store
-            Start(stage=Start) → client.Start → Mux
-            DialContext → client.DialContext → Mux → serverDialer → fork N.Dialer
-  Inbound:  NewInbound → buildServerConfig (+ listener factories) → server.Store
-            Start(stage=Start) → server.Start
-              → streamListenerFactory  → listener.ListenTCPWithOptions
-              → packetListenerFactory  → listener.ListenUDPWithOptions
-            acceptLoop → server.Accept → metadata → RouteConnectionEx /
+Config 鈫?registry 鈫?option.Mieru*Options 鈫?protocol/mieru
+  Outbound: NewOutbound 鈫?dialer.New (fork dialer; resolves the server through
+            the fork's DNS policy) 鈫?buildClientConfig 鈫?client.Store
+            Start(stage=Start) 鈫?client.Start 鈫?Mux
+            DialContext 鈫?client.DialContext 鈫?Mux 鈫?serverDialer 鈫?fork N.Dialer
+  Inbound:  NewInbound 鈫?buildServerConfig (+ listener factories) 鈫?server.Store
+            Start(stage=Start) 鈫?server.Start
+              鈫?streamListenerFactory  鈫?listener.ListenTCPWithOptions
+              鈫?packetListenerFactory  鈫?listener.ListenUDPWithOptions
+            acceptLoop 鈫?server.Accept 鈫?metadata 鈫?RouteConnectionEx /
                          RoutePacketConnectionEx
 ```
 
@@ -117,17 +117,16 @@ client.
 
 | Direction | Peer | Transport | Handshake / mux | Result |
 | --- | --- | --- | --- | --- |
-| Official client → this inbound | `mieru.exe` 3.38.1 | TCP + UDP | `HANDSHAKE_DEFAULT`, `MULTIPLEXING_HIGH` | TCP PASS, UDP associate PASS |
-| Official client → this inbound | `mieru.exe` 3.38.1 | UDP only | `HANDSHAKE_NO_WAIT`, `MULTIPLEXING_OFF` | TCP PASS, UDP associate PASS |
-| This outbound → official server | `apis/server` 3.38.1 | TCP + UDP | `default`, `high` | TCP PASS, UDP associate PASS |
-| This outbound → official server | `apis/server` 3.38.1 | UDP only | `no_wait`, `off` | TCP PASS, UDP associate PASS |
-| Official client → this inbound | `mieru.exe` 3.38.1 | UDP only | `no_wait`, `off`, explicit traffic pattern (seed 20261018) | TCP PASS, UDP associate PASS |
-| This outbound → official server | `apis/server` 3.38.1 | UDP only | `no_wait`, `off`, explicit traffic pattern (same seed) | TCP PASS, UDP associate PASS |
+| Official client 鈫?this inbound | `mieru.exe` 3.38.1 | TCP + UDP | `HANDSHAKE_DEFAULT`, `MULTIPLEXING_HIGH` | TCP PASS, UDP associate PASS |
+| Official client 鈫?this inbound | `mieru.exe` 3.38.1 | UDP only | `HANDSHAKE_NO_WAIT`, `MULTIPLEXING_OFF` | TCP PASS, UDP associate PASS |
+| This outbound 鈫?official server | `apis/server` 3.38.1 | TCP + UDP | `default`, `high` | TCP PASS, UDP associate PASS |
+| This outbound 鈫?official server | `apis/server` 3.38.1 | UDP only | `no_wait`, `off` | TCP PASS, UDP associate PASS |
+| Official client 鈫?this inbound | `mieru.exe` 3.38.1 | UDP only | `no_wait`, `off`, explicit traffic pattern (seed 20261018) | TCP PASS, UDP associate PASS |
+| This outbound 鈫?official server | `apis/server` 3.38.1 | UDP only | `no_wait`, `off`, explicit traffic pattern (same seed) | TCP PASS, UDP associate PASS |
 
 The probe (`tester.exe`, stdlib only) starts a TCP echo server and a UDP echo
 server and drives both through a real SOCKS5 client. The full path in each case
-is: SOCKS5 client → sing-box mixed inbound → Mieru outbound → Mieru inbound →
-sing-box direct outbound → echo server. Ports and credentials in the run were
+is: SOCKS5 client 鈫?sing-box mixed inbound 鈫?Mieru outbound 鈫?Mieru inbound 鈫?sing-box direct outbound 鈫?echo server. Ports and credentials in the run were
 ephemeral loopback only.
 
 A wrong-password negative control was also run: the peer saw EOF for TCP and
@@ -169,7 +168,7 @@ reason the read path keeps a per-association framer.
 The phase-2 matrix is in
 [`verify-evidence/mieru/2026-10-18-84a38ca85f7`](../../verify-evidence/mieru/2026-10-18-84a38ca85f7/README.md).
 Both clients used the same official `apis/server` harness and local SOCKS5
-entry; 4 ABBA rounds, 4 TCP connections × 64 MiB, 5000 UDP datagrams, 1000
+entry; 4 ABBA rounds, 4 TCP connections 脳 64 MiB, 5000 UDP datagrams, 1000
 latency samples.
 
 | Cell | Target vs official |
@@ -213,6 +212,17 @@ latency samples.
 - mbox, extended and Hiddify are `BLOCKED_BY_ENVIRONMENT` here: this Windows host has no WSL
   distribution, no Docker, and no scriptable Windows build of those references. E6 in the
   evidence records each blocker; no numbers were invented for them.
+- Fallback disabled old/new (two 4-round pairs, same binary shape): TCP download 1.00-1.07x,
+  TCP upload 1.00-1.02x; UDP echo 0.92-0.95x. No per-datagram code changed on the disabled
+  path, so the UDP-echo difference is treated as run variance, not a claimed result.
+- Fallback enabled with a healthy primary vs disabled, against real mita: TCP download
+  1.024x, TCP upload 1.021x, UDP echo 1.053x, first-byte P50 identical (1.034 ms). Idle
+  (no dials): +0.25 MiB RSS, no extra threads or sockets; selector `choose`+`report` is
+  26.6 ns/op with 0 allocs.
+- Local failover timing: TCP connection-refused→UDP completed in 1.5 ms; the first recovery
+  probe completed in 0.5 ms after the fake clock crossed the cooldown. A UDP blackhole and
+  a TCP accept-but-silent primary each take the SDK's fixed 10 s handshake wait before
+  fallback; that is bounded by the official SDK, not an extra selector timeout.
 
 ## Boundary and common faults (phase 3)
 
@@ -240,9 +250,57 @@ The phase-3 debug round fixed three P1 and three P2 defects; the full evidence i
 - **Oversized UoT frames validate the suffix** before `io.ErrShortBuffer`; a malformed
   frame is not reported as a valid short one.
 
-Performance after the fixes was re-measured with 4-round old/new A/B: TCP within ±2%, UDP
-echo ±5% in opposite directions, latency and startup unchanged. The only measurable cost is
+Performance after the fixes was re-measured with 4-round old/new A/B: TCP within 卤2%, UDP
+echo 卤5% in opposite directions, latency and startup unchanged. The only measurable cost is
 the UoT read mutex (+9 ns/datagram microbenchmark), accepted for a real data-race fix.
+
+## Optional TCP/UDP fallback
+
+The Mieru outbound can optionally keep one TCP and one UDP SDK generation for
+the same `tag`. It is disabled by default; the legacy single-client path is
+still selected when `fallback` is absent or `enabled: false`.
+
+```json
+{
+  "type": "mieru",
+  "tag": "mieru-out",
+  "server": "example.com",
+  "server_port": 8964,
+  "transport": "tcp",
+  "username": "alice",
+  "password": "password",
+  "fallback": {"enabled": true, "transport": "udp"}
+}
+```
+
+`fallback.server` and `fallback.server_port` inherit the primary endpoint.
+`fallback.transport` must be the opposite of the primary. `both` and
+`handshake_mode: "no_wait"` are rejected when fallback is enabled; the server
+only needs corresponding TCP/UDP listeners and does not understand `fallback`.
+The docs page is `docs/configuration/outbound/mieru.md`, and the generated schema
+contains `MieruFallbackOptions`.
+
+Ownership is deliberately literal: `primarySpec`/`secondarySpec` hold the raw
+fork dialer and DNS bridge; each generation creates its own official
+`Client`, `ClientConfig`, `serverDialer` and UDP socket registry. The two
+runtimes never share a mutable client, Mux, packet registry or in-flight count.
+`fallbackSelector` holds only O(1) preference/cooldown/generation state; it has
+no goroutine, timer or background probe. `Outbound.Start`, `Close` and
+`InterfaceUpdated` start/stop both generations under the same Scope and bump a
+local generation; a late result from N cannot update N+1.
+
+The selector only chooses a new session. A normal preference change never calls
+`Stop()` on either SDK client and never migrates an established session.
+A primary transport failure starts a 30 s cooldown; the first business dial
+after it may become the single recovery probe, and every other concurrent dial
+stays on the secondary. A target SOCKS reply (for example connection refused)
+is target-class: it proves the proxy path is healthy and does not trigger
+fallback. Local DNS/cancel/permission errors are caller-class and are not
+retried on the other transport. A bare EOF (possibly wrong credentials or a
+server close) is ambiguous; two silent failures are not published as a durable
+secondary preference. The ambiguous classification is a documented SDK API
+limit: the official `PostDialHandshake` returns a plain error for auth failure,
+server close and underlay death alike.
 
 ## What is deliberately NOT done
 
@@ -282,14 +340,33 @@ DONE
   commands/invalid destinations; explicit error on Start-on-closing-scope;
   `UserName()` preserved through `trackedConn`; oversized-frame suffix
   validation. See `phase3-debug/BUG-LEDGER.md`.
-- 4-round old/new performance A/B after the fixes: TCP within ±2%, UDP echo
-  ±5% in opposite directions, latency/startup unchanged.
+- 4-round old/new performance A/B after the fixes: TCP within 卤2%, UDP echo
+  卤5% in opposite directions, latency/startup unchanged.
 - 4-round target/official matrix against real `mita` 3.38.1 on Windows: TCP download
   +15%/+14%, UDP echo +5%/+9%/+46%, but first-byte P50 ~2x slower and UDP-transport upload
   0.739x; recorded in `phase3-debug/mita/`.
 - 3000 short connections (two runs, 6000 total): 0 failures, P50 1.02 ms / P95 1.07 ms;
   the SDK's idle underlays settle after ~4 min (1 socket, 46 MiB, 329 handles). See
   `phase3-debug/soak/`.
+- Optional `fallback` for one Mieru outbound: explicit primary/secondary TCP↔UDP,
+  two independent SDK generations, protocol-confirmed preference changes, only
+  new sessions, no active-session migration. Disabled by default; `both` and
+  `no_wait` combinations are rejected. See the section above and
+  `verify-evidence/mieru/2026-10-18-fallback/`.
+- Fallback tests: config contract, pure selector/generation/cooldown/backoff,
+  real SDK loopback TCP-refused→UDP, UDP blackhole→TCP, TCP accept blackhole→UDP,
+  UDP associate both directions, target refusal no switch, existing primary and
+  secondary sessions surviving a preference change, concurrent failover,
+  single-flight recovery, Close/InterfaceUpdated/socket ownership.
+- Real mita 3.38.1 fallback: healthy primary and TCP-refused→UDP / UDP-blackhole→TCP
+  both reach the real server; restricted-user target refusal (SOCKS code 2) does
+  not trigger fallback.
+- 4-round disabled old/new A/B: TCP download 1.00-1.07x, upload 1.00-1.02x;
+  UDP echo 0.92-0.95x (no mechanism in the per-datagram path; treated as run
+  variance, not a claimed speedup). Enabled no-failure vs disabled: TCP
+  download 1.024x, upload 1.021x, UDP echo 1.053x, first-byte identical.
+- Idle fallback overhead: +0.25 MiB RSS, no extra threads/sockets; selector
+  hot path 26.6 ns/op, 0 allocs.
 - Explicit `Stop()` lifecycle, close of established sessions, bounded drain,
   network-change rebuild, listener options applied through the fork's listener
   helpers.
@@ -307,12 +384,22 @@ PARTIAL
   Outbound port ranges are translated into SDK endpoints (`server_ports`) and
   covered by config tests, but the SDK's random endpoint choice was not forced
   in a live test. A range is expanded by the SDK, so a very large range creates
-  one listener per port — intentional, matching mita.
+  one listener per port 鈥?intentional, matching mita.
 - IPv6 is live-tested for the TCP underlay on `::1`; the UDP underlay was
   live-tested on IPv4 only.
 - `InterfaceUpdated` rebuilds the client only after the first dial; before that
-  the SDK has no underlay to reset. A real Wi-Fi ↔ cellular hand-off was not
+  the SDK has no underlay to reset. A real Wi-Fi 鈫?cellular hand-off was not
   reproduced on this machine.
+- Fallback is explicitly **not** an active-session migration: normal preference
+  changes only affect new sessions; `InterfaceUpdated` keeps its original
+  network-change semantics. The fallback endpoints were live-tested on IPv4
+  loopback; a different-host/secondary-FQDN and IPv6 fallback path is covered by
+  configuration/dialer ownership, not a separate live matrix.
+- The SDK returns a plain error for authentication failure, server close and a
+  dead underlay. A bare EOF is kept ambiguous; two silent handshakes are not
+  published as a durable secondary preference, but a wrong-credential attempt
+  can still pay one secondary attempt (the SDK offers no discriminator, and the
+  UDP-blackhole path must not be treated as healthy).
 
 NOT_TESTED
 
@@ -322,7 +409,8 @@ NOT_TESTED
   ratios are product-level and are kept out of the unified-SDK matrix.
 - A multi-hour soak, packet-loss/latency matrix, TUN, iOS/Android devices, and
   Wi-Fi/cellular path changes. These require other hardware, a longer run, or a
-  privileged runner. The 3000-short-connection check is done (`phase3-debug/soak/`).
+  privileged runner. The 3000-short-connection check is done (`phase3-debug/soak/`);
+  fallback has a real-mita loopback matrix but no mobile/real-network failover run.
 - `go test -race` on Linux/macOS: the Windows run used `CGO_ENABLED=1` with the
   mingw toolchain. CI's race suite is the cross-platform check.
 

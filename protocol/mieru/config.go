@@ -70,6 +70,63 @@ func (t mieruTransport) String() string {
 	return "tcp"
 }
 
+// resolveFallbackOptions validates the optional failover contract and returns
+// the secondary endpoint in the same shape buildClientConfig consumes.
+//
+// This is deliberately a pure function: NewOutbound and the config tests can
+// reject an invalid combination before any dialer, DNS resolver or SDK client
+// is created. A missing/disabled fallback returns enabled=false and keeps the
+// legacy path completely untouched.
+func resolveFallbackOptions(options option.MieruOutboundOptions) (option.MieruOutboundOptions, bool, error) {
+	fallback := options.Fallback
+	if fallback == nil || !fallback.Enabled {
+		return option.MieruOutboundOptions{}, false, nil
+	}
+	primaryTransport, err := parseTransport(options.Transport)
+	if err != nil {
+		return option.MieruOutboundOptions{}, false, err
+	}
+	if primaryTransport.tcp && primaryTransport.udp {
+		return option.MieruOutboundOptions{}, false, fmt.Errorf("mieru: fallback is not supported with transport \"both\"; choose tcp or udp explicitly")
+	}
+	if strings.TrimSpace(fallback.Transport) == "" {
+		return option.MieruOutboundOptions{}, false, fmt.Errorf("mieru: fallback.transport is required when fallback is enabled")
+	}
+	secondaryTransport, err := parseTransport(fallback.Transport)
+	if err != nil {
+		return option.MieruOutboundOptions{}, false, E.Cause(err, "mieru: fallback.transport")
+	}
+	if secondaryTransport.tcp && secondaryTransport.udp {
+		return option.MieruOutboundOptions{}, false, fmt.Errorf("mieru: fallback.transport must be tcp or udp, not both")
+	}
+	if secondaryTransport.tcp == primaryTransport.tcp && secondaryTransport.udp == primaryTransport.udp {
+		return option.MieruOutboundOptions{}, false, fmt.Errorf("mieru: fallback.transport must differ from the primary transport %q", primaryTransport.String())
+	}
+	switch normalizeEnum(options.HandshakeMode) {
+	case "NO_WAIT", "NOWAIT":
+		return option.MieruOutboundOptions{}, false, fmt.Errorf("mieru: fallback is not supported with handshake_mode \"no_wait\"; use default or standard")
+	}
+
+	secondary := options
+	secondary.Fallback = nil
+	secondary.Transport = secondaryTransport.String()
+	secondary.Server = strings.TrimSpace(fallback.Server)
+	if secondary.Server == "" {
+		secondary.Server = options.Server
+	}
+	secondary.ServerPort = fallback.ServerPort
+	if secondary.ServerPort == 0 {
+		if options.ServerPort == 0 {
+			return option.MieruOutboundOptions{}, false, fmt.Errorf("mieru: fallback.server_port is required when the primary endpoint has no single server_port")
+		}
+		secondary.ServerPort = options.ServerPort
+	}
+	// A fallback endpoint is one explicit port; inheriting or expanding the
+	// primary's ranges would silently change which secondary servers exist.
+	secondary.ServerPortRanges = nil
+	return secondary, true, nil
+}
+
 // buildPortBindings turns a primary port and a list of ranges into the SDK's
 // port-binding form. A zero port with no ranges is rejected by the caller.
 func buildPortBindings(port uint16, ranges []string, transport mieruTransport) ([]*mierupb.PortBinding, error) {

@@ -2,6 +2,7 @@ package mieru
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -23,6 +24,127 @@ func validOutboundOptions() option.MieruOutboundOptions {
 		UserName: "alice",
 		Password: "correct horse battery staple",
 	}
+}
+
+func TestResolveFallbackOptions(t *testing.T) {
+	primary := validOutboundOptions()
+
+	secondary, enabled, err := resolveFallbackOptions(primary)
+	require.NoError(t, err)
+	require.False(t, enabled)
+	require.Equal(t, option.MieruOutboundOptions{}, secondary)
+
+	primary.Fallback = &option.MieruFallbackOptions{Enabled: true, Transport: "UDP"}
+	secondary, enabled, err = resolveFallbackOptions(primary)
+	require.NoError(t, err)
+	require.True(t, enabled)
+	require.Equal(t, "udp", secondary.Transport)
+	require.Equal(t, primary.Server, secondary.Server)
+	require.Equal(t, primary.ServerPort, secondary.ServerPort)
+	require.Nil(t, secondary.Fallback)
+	require.Equal(t, primary.UserName, secondary.UserName)
+	require.Equal(t, primary.Password, secondary.Password)
+
+	primary.Fallback = &option.MieruFallbackOptions{
+		Enabled:    true,
+		Transport:  "tcp",
+		Server:     " fallback.example.com ",
+		ServerPort: 9000,
+	}
+	primary.Transport = "udp"
+	secondary, enabled, err = resolveFallbackOptions(primary)
+	require.NoError(t, err)
+	require.True(t, enabled)
+	require.Equal(t, "tcp", secondary.Transport)
+	require.Equal(t, "fallback.example.com", secondary.Server)
+	require.Equal(t, uint16(9000), secondary.ServerPort)
+
+	primary.Fallback = &option.MieruFallbackOptions{Enabled: false, Transport: "not-a-transport"}
+	secondary, enabled, err = resolveFallbackOptions(primary)
+	require.NoError(t, err)
+	require.False(t, enabled)
+}
+
+func TestResolveFallbackOptionsRejects(t *testing.T) {
+	testCases := []struct {
+		name    string
+		mutate  func(*option.MieruOutboundOptions)
+		message string
+	}{
+		{
+			name: "both primary",
+			mutate: func(options *option.MieruOutboundOptions) {
+				options.Transport = "both"
+				options.Fallback = &option.MieruFallbackOptions{Enabled: true, Transport: "udp"}
+			},
+			message: "not supported with transport \"both\"",
+		},
+		{
+			name: "missing fallback transport",
+			mutate: func(options *option.MieruOutboundOptions) {
+				options.Fallback = &option.MieruFallbackOptions{Enabled: true}
+			},
+			message: "fallback.transport is required",
+		},
+		{
+			name: "same transport",
+			mutate: func(options *option.MieruOutboundOptions) {
+				options.Transport = "tcp"
+				options.Fallback = &option.MieruFallbackOptions{Enabled: true, Transport: "TCP"}
+			},
+			message: "must differ",
+		},
+		{
+			name: "both fallback",
+			mutate: func(options *option.MieruOutboundOptions) {
+				options.Fallback = &option.MieruFallbackOptions{Enabled: true, Transport: "both"}
+			},
+			message: "not both",
+		},
+		{
+			name: "no_wait",
+			mutate: func(options *option.MieruOutboundOptions) {
+				options.HandshakeMode = "no-wait"
+				options.Fallback = &option.MieruFallbackOptions{Enabled: true, Transport: "udp"}
+			},
+			message: "not supported with handshake_mode",
+		},
+		{
+			name: "range only with omitted fallback port",
+			mutate: func(options *option.MieruOutboundOptions) {
+				options.ServerPort = 0
+				options.ServerPortRanges = []string{"8000-8002"}
+				options.Fallback = &option.MieruFallbackOptions{Enabled: true, Transport: "udp"}
+			},
+			message: "fallback.server_port is required",
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			options := validOutboundOptions()
+			testCase.mutate(&options)
+			_, enabled, err := resolveFallbackOptions(options)
+			require.Error(t, err)
+			require.False(t, enabled)
+			require.Contains(t, err.Error(), testCase.message)
+		})
+	}
+}
+
+func TestResolveFallbackOptionsRangeOnlyWithExplicitPort(t *testing.T) {
+	options := validOutboundOptions()
+	options.ServerPort = 0
+	options.ServerPortRanges = []string{"8000-8002"}
+	options.Fallback = &option.MieruFallbackOptions{
+		Enabled:    true,
+		Transport:  "udp",
+		ServerPort: 9000,
+	}
+	secondary, enabled, err := resolveFallbackOptions(options)
+	require.NoError(t, err)
+	require.True(t, enabled)
+	require.Equal(t, uint16(9000), secondary.ServerPort)
+	require.Nil(t, secondary.ServerPortRanges, "the fallback endpoint is one port, not a second range")
 }
 
 func TestBuildClientConfigDefaults(t *testing.T) {
@@ -270,4 +392,38 @@ func TestEnumParsingCompatibility(t *testing.T) {
 	defaultMode, err := parseHandshakeMode("")
 	require.NoError(t, err)
 	require.Nil(t, defaultMode)
+}
+
+func TestMieruFallbackJSONContract(t *testing.T) {
+	raw := `{
+		"type": "mieru",
+		"tag": "mieru-out",
+		"server": "example.com",
+		"server_port": 8964,
+		"transport": "tcp",
+		"username": "alice",
+		"password": "password",
+		"fallback": {
+			"enabled": true,
+			"transport": "udp",
+			"server": "udp.example.com",
+			"server_port": 8965
+		}
+	}`
+	var options option.MieruOutboundOptions
+	require.NoError(t, json.Unmarshal([]byte(raw), &options))
+	require.NotNil(t, options.Fallback)
+	require.True(t, options.Fallback.Enabled)
+	require.Equal(t, "udp", options.Fallback.Transport)
+	require.Equal(t, "udp.example.com", options.Fallback.Server)
+	require.Equal(t, uint16(8965), options.Fallback.ServerPort)
+
+	secondary, enabled, err := resolveFallbackOptions(options)
+	require.NoError(t, err)
+	require.True(t, enabled)
+	require.Equal(t, "udp", secondary.Transport)
+	require.Equal(t, "udp.example.com", secondary.Server)
+	require.Equal(t, uint16(8965), secondary.ServerPort)
+	require.Equal(t, "alice", secondary.UserName)
+	require.Equal(t, "password", secondary.Password)
 }

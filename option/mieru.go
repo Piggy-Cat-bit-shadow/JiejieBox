@@ -41,6 +41,28 @@ type MieruOutboundOptions struct {
 	MTU uint32 `json:"mtu,omitempty"`
 	// TrafficPattern is the base64 protobuf form accepted by mita/mieru.
 	TrafficPattern string `json:"traffic_pattern,omitempty"`
+	// Fallback optionally declares the other Mieru transport as a backup for
+	// NEW sessions of this same outbound. It is disabled by default and must
+	// not change the legacy single-transport or `both` paths.
+	Fallback *MieruFallbackOptions `json:"fallback,omitempty"`
+}
+
+// MieruFallbackOptions is the optional TCP/UDP failover extension.
+//
+// Only the other transport can be selected. Credentials, multiplexing,
+// handshake mode, MTU and traffic pattern are shared with the primary; a
+// separate account or a second sing-box outbound is deliberately not part of
+// this contract.
+type MieruFallbackOptions struct {
+	Enabled bool `json:"enabled,omitempty"`
+	// Transport is the backup underlay. Required when Enabled is true, and it
+	// must be the transport the primary does not use.
+	Transport string `json:"transport,omitempty" enum:"tcp,udp"`
+	// Server and ServerPort inherit the primary endpoint when omitted.
+	// ServerPort inheritance requires the primary to have a single
+	// server_port; a server_ports-only primary must set it explicitly.
+	Server     string `json:"server,omitempty"`
+	ServerPort uint16 `json:"server_port,omitempty"`
 }
 
 // MieruInboundOptions is the server side of the Mieru protocol.

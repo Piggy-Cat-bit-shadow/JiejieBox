@@ -10300,6 +10300,30 @@
       },
       "additionalProperties": false
     },
+    "MieruFallbackOptions": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "transport": {
+          "type": "string",
+          "enum": [
+            "tcp",
+            "udp"
+          ]
+        },
+        "server": {
+          "type": "string"
+        },
+        "server_port": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        }
+      },
+      "additionalProperties": false
+    },
     "MieruUser": {
       "type": "object",
       "properties": {
@@ -13879,6 +13903,9 @@
             },
             "traffic_pattern": {
               "type": "string"
+            },
+            "fallback": {
+              "$ref": "#/$defs/MieruFallbackOptions"
             }
           },
           "required": [
