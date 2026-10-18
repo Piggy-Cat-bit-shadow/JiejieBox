@@ -28,39 +28,6 @@ import (
 // a struct literal in a test, and the properties that must hold - "IPv6 is gone from every field",
 // "the interface is never left addressless" - are asserted without opening an interface.
 
-// tunOptionsPresentIPv6 reports whether these effective options would say anything about IPv6 to
-// the platform, the stack or the kernel.
-//
-// # What counts, and what deliberately does not
-//
-// Every field that can install or advertise an IPv6 fact counts: addressing, routes, exclude
-// routes, an explicit DNS address and the loopback addresses the stack treats as local. `auto_route`
-// alone does NOT, and that is not an omission: sing-tun derives the automatic IPv6 route range only
-// when `Inet6Address` is non-empty (tun_rules.go gates the whole block on it), and the platform
-// clients condition their default ::/0 branch the same way. A TUN with auto_route and no IPv6
-// address presents no IPv6, so there is nothing to decide and nothing to pay for.
-//
-// # Why this is the demand gate
-//
-// It is evaluated before any observation of the network, from typed options only. A configuration
-// whose TUN never presents IPv6 therefore costs one `len()` per field and no interface enumeration,
-// no route-table read and no manager call - the "pure IPv4 configuration does no extra work"
-// promise, enforced at the only place that can decide it cheaply.
-func tunOptionsPresentIPv6(options *tun.Options) bool {
-	if len(options.Inet6Address) > 0 ||
-		len(options.Inet6RouteAddress) > 0 ||
-		len(options.Inet6RouteExcludeAddress) > 0 ||
-		len(options.Inet6LoopbackAddress) > 0 {
-		return true
-	}
-	for _, address := range options.DNSAddress {
-		if address.Is6() {
-			return true
-		}
-	}
-	return false
-}
-
 // appendRouteSetPrefixes copies a rule-set's address prefixes into the effective options, split by
 // family.
 //

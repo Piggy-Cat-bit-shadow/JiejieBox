@@ -23,8 +23,23 @@ func tunInboundForTest(options *TunInboundOptions) Inbound {
 	return Inbound{Type: C.TypeTun, Tag: "tun-in", Options: options}
 }
 
+// ipv4OnlyTun is the TUN every DNS-side case is attached to: the DNS surfaces only matter when a
+// TUN exists, because the application-facing DNS gate is keyed on that inbound as the query source.
+func ipv4OnlyTun() Inbound {
+	return tunInboundForTest(&TunInboundOptions{
+		Address:   badoption.Listable[netip.Prefix]{netip.MustParsePrefix("172.19.0.1/30")},
+		AutoRoute: true,
+	})
+}
+
 func dnsOptionsForTest(servers ...DNSServerOptions) *DNSOptions {
 	return &DNSOptions{RawDNSOptions: RawDNSOptions{Servers: servers}}
+}
+
+func dnsOptionsWithStrategyForTest(strategy DomainStrategy, servers ...DNSServerOptions) *DNSOptions {
+	options := dnsOptionsForTest(servers...)
+	options.Strategy = strategy
+	return options
 }
 
 func fakeIPServer(inet4Range string, inet6Range string) DNSServerOptions {
@@ -76,6 +91,19 @@ func TestResolveIPv6EntryDemandIdentifiesEverySurface(t *testing.T) {
 		{
 			name:    "empty configuration",
 			options: Options{},
+		},
+		{
+			name: "a proxy-only box has no entry this process controls",
+			options: Options{
+				DNS: dnsOptionsForTest(
+					simpleDNSServer(),
+					fakeIPServer("198.19.0.0/16", "fc00::/18"),
+					hostsServer(map[string][]netip.Addr{"example.com": {netip.MustParseAddr("2001:db8::7")}}),
+				),
+			},
+			// The application-facing DNS gate is keyed on the TUN as the query source
+			// (dns/entry_ipv6.go), so without a TUN there is no entry to suppress: an observation
+			// here would be paid for and never consumed.
 		},
 		{
 			name: "tun with an ipv6 address",
@@ -131,20 +159,23 @@ func TestResolveIPv6EntryDemandIdentifiesEverySurface(t *testing.T) {
 		{
 			name: "fakeip with an ipv6 range",
 			options: Options{
-				DNS: dnsOptionsForTest(fakeIPServer("198.19.0.0/16", "fc00::/18")),
+				Inbounds: []Inbound{ipv4OnlyTun()},
+				DNS:      dnsOptionsForTest(fakeIPServer("198.19.0.0/16", "fc00::/18")),
 			},
 			expected: IPv6EntryDemand{FakeIPAllocatesIPv6: true, DNSCanAnswerAAAA: true},
 		},
 		{
 			name: "fakeip with only an ipv4 range",
 			options: Options{
-				DNS: dnsOptionsForTest(fakeIPServer("198.19.0.0/16", "")),
+				Inbounds: []Inbound{ipv4OnlyTun()},
+				DNS:      dnsOptionsForTest(fakeIPServer("198.19.0.0/16", "")),
 			},
 			expected: IPv6EntryDemand{DNSCanAnswerAAAA: true},
 		},
 		{
 			name: "hosts with a predefined ipv6 address",
 			options: Options{
+				Inbounds: []Inbound{ipv4OnlyTun()},
 				DNS: dnsOptionsForTest(hostsServer(map[string][]netip.Addr{
 					"example.com": {netip.MustParseAddr("203.0.113.7"), netip.MustParseAddr("2001:db8::7")},
 				})),
@@ -152,28 +183,61 @@ func TestResolveIPv6EntryDemandIdentifiesEverySurface(t *testing.T) {
 			expected: IPv6EntryDemand{HostsPublishesIPv6: true, DNSCanAnswerAAAA: true},
 		},
 		{
-			name: "hosts with only ipv4 addresses",
+			name: "hosts with only ipv4 predefined entries still loads a file",
 			options: Options{
+				Inbounds: []Inbound{ipv4OnlyTun()},
 				DNS: dnsOptionsForTest(hostsServer(map[string][]netip.Addr{
 					"example.com": {netip.MustParseAddr("203.0.113.7")},
 				})),
 			},
-			expected: IPv6EntryDemand{DNSCanAnswerAAAA: true},
+			// The transport loads the SYSTEM hosts file even when predefined entries are set, and
+			// that file is not read here: deciding it has no AAAA would be the configuration-time
+			// scan this round forbids.
+			expected: IPv6EntryDemand{HostsPublishesIPv6: true, DNSCanAnswerAAAA: true},
 		},
 		{
 			name: "hosts with a file whose contents are not read here",
 			options: Options{
-				DNS: dnsOptionsForTest(hostsServer(nil, "/etc/hosts")),
+				Inbounds: []Inbound{ipv4OnlyTun()},
+				DNS:      dnsOptionsForTest(hostsServer(nil, "/etc/hosts")),
 			},
-			// Proving the file has no AAAA would mean reading and scanning it at configuration
-			// time, which is the per-configuration cost this round must not add.
+			expected: IPv6EntryDemand{HostsPublishesIPv6: true, DNSCanAnswerAAAA: true},
+		},
+		{
+			name: "a bare hosts server",
+			options: Options{
+				Inbounds: []Inbound{ipv4OnlyTun()},
+				DNS:      dnsOptionsForTest(DNSServerOptions{Type: C.DNSTypeHosts, Tag: "hosts", Options: &HostsDNSServerOptions{}}),
+			},
 			expected: IPv6EntryDemand{HostsPublishesIPv6: true, DNSCanAnswerAAAA: true},
 		},
 		{
 			name: "a plain dns server",
 			options: Options{
-				DNS: dnsOptionsForTest(simpleDNSServer()),
+				Inbounds: []Inbound{ipv4OnlyTun()},
+				DNS:      dnsOptionsForTest(simpleDNSServer()),
 			},
+			expected: IPv6EntryDemand{DNSCanAnswerAAAA: true},
+		},
+		{
+			name: "prefer_ipv4 is not an IPv4-only resolver",
+			options: Options{
+				Inbounds: []Inbound{ipv4OnlyTun()},
+				DNS:      dnsOptionsWithStrategyForTest(DomainStrategy(C.DomainStrategyPreferIPv4), simpleDNSServer()),
+			},
+			// prefer_ipv4 still returns AAAA to an application that asks for it.
+			expected: IPv6EntryDemand{DNSCanAnswerAAAA: true},
+		},
+		{
+			name: "ipv4_only is not a demand suppressor either",
+			options: Options{
+				Inbounds: []Inbound{ipv4OnlyTun()},
+				DNS:      dnsOptionsWithStrategyForTest(DomainStrategy(C.DomainStrategyIPv4Only), simpleDNSServer()),
+			},
+			// `dns.strategy` narrows the address family a LOOKUP asks for. An application that asks
+			// AAAA itself is still answered by the transport, so the entry surface exists. Treating
+			// it as "no demand" would leave the application receiving an answer the dial path will
+			// refuse - the failure this feature exists to move earlier.
 			expected: IPv6EntryDemand{DNSCanAnswerAAAA: true},
 		},
 	}
@@ -182,6 +246,27 @@ func TestResolveIPv6EntryDemandIdentifiesEverySurface(t *testing.T) {
 			require.Equal(t, testCase.expected, ResolveIPv6EntryDemand(testCase.options))
 		})
 	}
+}
+
+// TestAProxyOnlyBoxPaysNothingForTheEntryDecision is I-03 stated as the concrete configuration that
+// used to trip it: DNS servers (and even a Fake-IP IPv6 range) with no TUN present a DNS surface
+// this process cannot gate, so the summary must stay empty.
+func TestAProxyOnlyBoxPaysNothingForTheEntryDecision(t *testing.T) {
+	options := Options{
+		Inbounds: []Inbound{{
+			Type:    C.TypeMixed,
+			Tag:     "mixed-in",
+			Options: &HTTPMixedInboundOptions{},
+		}},
+		DNS: dnsOptionsForTest(
+			simpleDNSServer(),
+			fakeIPServer("198.19.0.0/16", "fc00::/18"),
+		),
+	}
+	demand := ResolveIPv6EntryDemand(options)
+	require.False(t, demand.Required(),
+		"no TUN means no application-facing entry this process controls, so the observation would "+
+			"be paid for and never consumed: %+v", demand)
 }
 
 // TestRequiredIsTheDisjunction keeps the fast path honest: only a configuration with none of the
@@ -212,4 +297,64 @@ func TestTheDemandIsDerivedFromTypedOptionsNotRawText(t *testing.T) {
 	require.True(t, demand.TUNPresentsIPv6)
 	require.True(t, demand.FakeIPAllocatesIPv6)
 	require.True(t, demand.Required())
+}
+
+// TestTheDemandDoesNotReadOrWriteTheConfiguration is I-04 at the summary itself: the analysis is a
+// projection, not a rewrite. A hosts table with a large IPv6 address set is the case where a scan
+// would be both expensive and visible.
+func TestTheDemandDoesNotReadOrWriteTheConfiguration(t *testing.T) {
+	predefined := make(map[string][]netip.Addr, 64)
+	for index := 0; index < 64; index++ {
+		predefined[netip.AddrFrom4([4]byte{192, 0, 2, byte(index + 1)}).String()] = []netip.Addr{
+			netip.MustParseAddr("203.0.113.53"),
+			netip.MustParseAddr("2001:db8::53"),
+		}
+	}
+	options := Options{
+		Inbounds: []Inbound{tunInboundForTest(&TunInboundOptions{
+			Address: badoption.Listable[netip.Prefix]{
+				netip.MustParsePrefix("172.19.0.1/30"),
+				netip.MustParsePrefix("fdfe:dcba:9876::1/126"),
+			},
+		})},
+		DNS: dnsOptionsForTest(hostsServer(predefined)),
+	}
+	before := make([]netip.Prefix, len(options.Inbounds[0].Options.(*TunInboundOptions).Address))
+	copy(before, options.Inbounds[0].Options.(*TunInboundOptions).Address)
+	require.True(t, ResolveIPv6EntryDemand(options).Required())
+	require.Equal(t, before, []netip.Prefix(options.Inbounds[0].Options.(*TunInboundOptions).Address),
+		"the summary must not rewrite the typed configuration it reads")
+	for key, addresses := range predefined {
+		require.Equal(t, []netip.Addr{netip.MustParseAddr("203.0.113.53"), netip.MustParseAddr("2001:db8::53")}, addresses,
+			"hosts data must be untouched (", key, ")")
+	}
+}
+
+// TestAFourInSixAddressIsDemand is the predicate-drift test, and it is the reason the demand uses
+// `Is6` rather than the un-mapped form.
+//
+// The TUN splits its address lists with `Is4`/`Is6` (protocol/tun/inbound.go), so ::ffff:172.19.0.1
+// becomes an `Inet6Address` and the platform installs it as an IPv6 address. A demand that
+// un-mapped it would classify the same configuration as IPv4-only and never take a decision, while
+// the interface advertised IPv6 - the false presentment this round removes, reached through the
+// predicate instead of through the network.
+func TestAFourInSixAddressIsDemand(t *testing.T) {
+	t.Run("address", func(t *testing.T) {
+		demand := ResolveIPv6EntryDemand(Options{Inbounds: []Inbound{tunInboundForTest(&TunInboundOptions{
+			Address: badoption.Listable[netip.Prefix]{
+				netip.MustParsePrefix("172.19.0.1/30"),
+				netip.MustParsePrefix("::ffff:172.19.0.1/120"),
+			},
+		})}})
+		require.True(t, demand.TUNPresentsIPv6,
+			"the TUN would install ::ffff:172.19.0.1 as an Inet6Address, so the demand must see it")
+	})
+	t.Run("dns address", func(t *testing.T) {
+		demand := ResolveIPv6EntryDemand(Options{Inbounds: []Inbound{tunInboundForTest(&TunInboundOptions{
+			Address:    badoption.Listable[netip.Prefix]{netip.MustParsePrefix("172.19.0.1/30")},
+			DNSAddress: badoption.Listable[netip.Addr]{netip.MustParseAddr("::ffff:172.19.0.2")},
+		})}})
+		require.True(t, demand.TUNPresentsIPv6,
+			"Inet6DNSAddress filters with Is6, so this address reaches the v6 list too")
+	})
 }

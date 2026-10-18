@@ -41,8 +41,11 @@ type IPv6EntryDemand struct {
 	// FakeIPAllocatesIPv6 reports whether a Fake-IP server is configured with an IPv6 range, so an
 	// AAAA query can be answered with a synthetic IPv6 address.
 	FakeIPAllocatesIPv6 bool
-	// HostsPublishesIPv6 reports whether a hosts server could answer AAAA: a predefined entry
-	// carrying an IPv6 address, or a hosts FILE, whose contents are not read here.
+	// HostsPublishesIPv6 reports whether a hosts server could answer AAAA. It is true for any hosts
+	// server, because the transport always loads a file - the configured paths, or the SYSTEM hosts
+	// file when `path` is empty, and it loads the latter even when `predefined` entries are also set
+	// - and deciding whether that file carries an AAAA record would mean reading and scanning it
+	// here. See hostsServerMayAnswerAAAA.
 	HostsPublishesIPv6 bool
 	// DNSCanAnswerAAAA reports whether this configuration has any DNS server of its own. The DNS
 	// strategy is deliberately not consulted: `ipv4_only` narrows the address families a LOOKUP
@@ -53,10 +56,16 @@ type IPv6EntryDemand struct {
 // Required reports whether any application-facing surface of this configuration can present IPv6.
 //
 // False is the fast path: the entries keep their configured behaviour, no network observation is
-// made for this feature, no decision is taken and nothing is committed. It is the answer for a
-// configuration with no TUN, no DNS server of its own and therefore no application-facing surface
-// this process controls.
+// made for this feature, no decision is taken and nothing is committed. Besides the empty
+// configuration, it is the answer for a box with no TUN inbound at all: the application-facing DNS
+// gate is keyed on that inbound as the query source, so such a box has no entry this process
+// controls. See ResolveIPv6EntryDemand.
 func (d IPv6EntryDemand) Required() bool {
+	// The two DNS-side flags are subsets of DNSCanAnswerAAAA today - a Fake-IP or hosts server is a
+	// DNS server - so this disjunction is really "the TUN presents IPv6, or there is a resolver".
+	// They are kept as separate inputs because they name WHICH surface, which is what a later
+	// per-surface refinement would key on ("this resolver is Fake-IP only", "this hosts server is
+	// file-only"), and because the tests assert each one independently.
 	return d.TUNPresentsIPv6 || d.FakeIPAllocatesIPv6 || d.HostsPublishesIPv6 || d.DNSCanAnswerAAAA
 }
 
@@ -65,8 +74,20 @@ func (d IPv6EntryDemand) Required() bool {
 // It walks the inbound list and the DNS server list once, at construction, and allocates nothing for
 // a configuration that has neither. The work is proportional to the number of inbounds and DNS
 // servers - tens, not the rule count, the node count or the hosts table.
+//
+// # Why a configuration without a TUN has no demand at all
+//
+// The two consumers this summary exists for are the TUN's effective options and the
+// application-facing DNS answer, and the second one is keyed on the query's SOURCE being that TUN
+// (see dns/entry_ipv6.go). A proxy-only box therefore has no entry this process can suppress: a
+// `hijack_dns` query from a socks inbound is deliberately not gated, so committing a decision for it
+// would make the box pay for an observation that nothing consumes. So the DNS-side surfaces are only
+// counted once a TUN inbound exists, and a configuration with no TUN takes the fast path.
 func ResolveIPv6EntryDemand(options Options) IPv6EntryDemand {
-	var demand IPv6EntryDemand
+	var (
+		demand IPv6EntryDemand
+		hasTun bool
+	)
 	for _, inbound := range options.Inbounds {
 		if inbound.Type != C.TypeTun {
 			continue
@@ -75,9 +96,13 @@ func ResolveIPv6EntryDemand(options Options) IPv6EntryDemand {
 		if !isTun || tunOptions == nil {
 			continue
 		}
+		hasTun = true
 		if tunInboundOptionsPresentIPv6(tunOptions) {
 			demand.TUNPresentsIPv6 = true
 		}
+	}
+	if !hasTun {
+		return IPv6EntryDemand{}
 	}
 	if options.DNS == nil {
 		return demand
@@ -127,29 +152,31 @@ func tunInboundOptionsPresentIPv6(options *TunInboundOptions) bool {
 
 // hostsServerMayAnswerAAAA reports whether a hosts server could answer an AAAA question.
 //
-// A configured FILE is reported as "may", because deciding otherwise would mean reading and scanning
-// it here - the expensive per-configuration work this round is required not to introduce. The
-// unified DNS entry still decides at query time whether the answer is presented, so a hosts file
-// with no IPv6 content costs one comparison per AAAA query and nothing at startup.
-func hostsServerMayAnswerAAAA(options *HostsDNSServerOptions) bool {
-	if len(options.Path) > 0 {
-		return true
-	}
-	if options.Predefined == nil {
-		return false
-	}
-	for _, entry := range options.Predefined.Entries() {
-		if anyIPv6Addr(entry.Value) {
-			return true
-		}
-	}
-	return false
+// It is always true, and that is the finding rather than an oversight: the transport loads at least
+// one FILE, and when `path` is empty it loads the SYSTEM hosts file even if `predefined` entries are
+// also configured (dns/transport/hosts.NewTransport). Deciding otherwise would mean reading and
+// scanning that file at configuration time - the per-configuration cost this round is required not
+// to introduce. The unified DNS entry still decides at query time, so a hosts file with no IPv6
+// content costs one comparison per AAAA query and nothing at startup.
+//
+// The function exists rather than a constant so the summary continues to name the SURFACE: when a
+// future hosts transport can prove the answer from compiled metadata, it says so here without
+// touching a caller.
+func hostsServerMayAnswerAAAA(_ *HostsDNSServerOptions) bool {
+	return true
 }
 
 func anyIPv6Prefix(prefixes []netip.Prefix) bool {
 	for _, prefix := range prefixes {
 		address := prefix.Addr()
-		if address.IsValid() && address.Unmap().Is6() {
+		if !address.IsValid() {
+			continue
+		}
+		// Is6, NOT Unmap().Is6(), and the difference is load-bearing: it is the SAME predicate the
+		// TUN splits these lists with (protocol/tun/inbound.go filters Is4 and Is6), so a
+		// four-in-six prefix is a demand here because it becomes an Inet6Address there. Using the
+		// un-mapped form would classify it as IPv4 and miss a TUN that really does install IPv6.
+		if address.Is6() {
 			return true
 		}
 	}
@@ -158,7 +185,7 @@ func anyIPv6Prefix(prefixes []netip.Prefix) bool {
 
 func anyIPv6Addr(addresses []netip.Addr) bool {
 	for _, address := range addresses {
-		if address.IsValid() && address.Unmap().Is6() {
+		if address.IsValid() && address.Is6() {
 			return true
 		}
 	}
