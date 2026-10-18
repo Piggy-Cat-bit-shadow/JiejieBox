@@ -89,6 +89,13 @@ the SDK's replay cache. This is why E3 (a scratch buffer) would not move the hea
 
 ### E6. Reference implementations — one of five ran, four are BLOCKED_BY_ENVIRONMENT
 
+**Phase-3 correction:** the phase-2 claim that mita has no Windows build was wrong. The
+official `cmd/mita` v3.38.1 source builds on Windows and runs in foreground with
+`MITA_INSECURE_UDS=1` and `C:\var\run\mita`; official client and target both reached it
+TCP+UDP. The 4-round real-mita matrix and the negative first-byte/upload results are in
+[`phase3-debug/mita`](phase3-debug/mita/README.md). The historical E6 table below is kept to
+show what the phase-2 run could not do; do not cite it as the current blocker list.
+
 REF-E, Mihomo v1.19.32 (Mieru SDK **v3.38.0**, product-version comparison only), ran on the same
 official server and the same harness: `references/mihomo/summary.csv`, `comparison.csv`, 4 rounds per
 cell. Target/Mihomo throughput ratios:

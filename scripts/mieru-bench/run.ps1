@@ -11,6 +11,10 @@ param(
     [int]$Packets = 2000,
     [int]$Size = 1400,
     [int]$Requests = 500,
+    [int]$ServerPort = 18671,
+    [string]$UserName = "bench",
+    [string]$Password = "bench-password",
+    [switch]$ExternalServer,
     [switch]$SkipOfficial,
     [switch]$SkipBuild
 )
@@ -40,7 +44,6 @@ if (-not $OutDir) {
 $RawDir = Join-Path $OutDir "raw"
 New-Item -ItemType Directory -Force -Path $WorkDir, $OutDir, $RawDir | Out-Null
 
-$ServerPort = 18671
 $OfficialSocksPort = 11091
 $TargetSocksPort = 11092
 $ServerLog = Join-Path $RawDir "server.log"
@@ -126,7 +129,7 @@ function Build-Artifacts {
 function Start-Server {
     Write-Step "start official-SDK server on $ServerPort"
     $script:serverProcess = Start-Process -FilePath $ServerExe `
-        -ArgumentList @("-port", "$ServerPort", "-user", "bench", "-password", "bench-password") `
+        -ArgumentList @("-port", "$ServerPort", "-user", $UserName, "-password", $Password) `
         -PassThru -NoNewWindow -RedirectStandardOutput $ServerLog -RedirectStandardError $ServerErr
     Wait-Port $ServerPort $script:serverProcess 10000
     Write-Host "server pid=$($script:serverProcess.Id)"
@@ -164,7 +167,7 @@ function Write-OfficialConfig([string]$path, [string]$transport, [string]$mux, [
         profiles = @(
             [ordered]@{
                 profileName = "default"
-                user = @{ name = "bench"; password = "bench-password" }
+                user = @{ name = $UserName; password = $Password }
                 servers = @(
                     [ordered]@{
                         ipAddress = "127.0.0.1"
@@ -192,7 +195,7 @@ function Write-TargetConfig([string]$path, [string]$transport, [string]$mux, [st
         outbounds = @(
             [ordered]@{
                 type = "mieru"; tag = "mieru-out"; server = "127.0.0.1"; server_port = $ServerPort
-                username = "bench"; password = "bench-password"
+                username = $UserName; password = $Password
                 transport = $transport; multiplexing = $mux; handshake_mode = $handshake
             }
         )
@@ -378,6 +381,9 @@ function Write-Manifest {
         official_client_sha256 = $officialHash
         server_harness_sha256 = (Get-FileHash -Algorithm SHA256 $ServerExe).Hash
         bench_client_sha256 = (Get-FileHash -Algorithm SHA256 $ClientExe).Hash
+        server_mode = if ($ExternalServer) { "external" } else { "official-SDK harness" }
+        server_port = $ServerPort
+        user = $UserName
         rounds = $Rounds
         connections = $Connections
         bytes = $Bytes
@@ -398,7 +404,11 @@ $variantList = if ($SkipOfficial) { @("target") } else { @("official", "target")
 
 try {
     Build-Artifacts
-    Start-Server
+    if (-not $ExternalServer) {
+        Start-Server
+    } else {
+        Write-Step "use external server on $ServerPort"
+    }
     foreach ($scenario in $scenarioList) {
         for ($round = 1; $round -le $Rounds; $round++) {
             $order = if ($round % 2 -eq 0) { @("official", "target") } else { @("target", "official") }

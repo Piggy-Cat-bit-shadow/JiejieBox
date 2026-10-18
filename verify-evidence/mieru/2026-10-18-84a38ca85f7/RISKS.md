@@ -7,10 +7,9 @@ Start-on-closing-scope returning nil, and the hidden authenticated user.
 
 Still open:
 
-1. **No real mita / mbox / extended / Hiddify cell.** The server is the official
-   SDK entry point, not the mita binary; the other three references have no
-   scriptable Windows build on this host. A Linux host is required before any
-   "faster than mita" claim.
+1. **No mbox / extended / Hiddify cell.** They have no scriptable Windows build on this
+   host and there is no WSL/Docker. Real mita 3.38.1 now runs on Windows
+   (`phase3-debug/mita/`), so the remaining reference gap is those three, not mita.
 2. **TCP upload, low mux, TCP underlay is 6% slower than the official client**
    and 4.7% slower than Mihomo. The CPU profile points at the shared
    `copyExtendedWithPool` path, not the Mieru adapter. Do not "fix" it by adding

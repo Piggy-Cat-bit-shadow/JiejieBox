@@ -62,6 +62,33 @@ C:\Deepseek\_mieru_phase3.exe run -c C:\Deepseek\_mieru_interop\client-our-outbo
 C:\Deepseek\_mieru_interop\tester.exe -socks 127.0.0.1:11083
 ```
 
+## Real mita
+
+```powershell
+# official source, unmodified
+cd C:\Users\Jie\go\pkg\mod\github.com\enfein\mieru\v3@v3.38.1
+go build -o C:\Deepseek\_mieru_refs\mita.exe ./cmd/mita
+New-Item -ItemType Directory -Force -Path C:\var\run\mita
+$env:MITA_CONFIG_JSON_FILE = '...\phase3-debug\mita\server.json'
+$env:MITA_INSECURE_UDS = '1'
+mita.exe run
+```
+
+`MITA_INSECURE_UDS=1` skips only the Linux `chown` of the Unix RPC socket; the source and
+protocol are unmodified. Then run the matrix against the real server instead of the harness:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\mieru-bench\run.ps1 `
+  -TargetBinary C:\Deepseek\_mieru_phase3.exe `
+  -OfficialMieru C:\Deepseek\_mieru_interop\bin\mieru.exe `
+  -OutDir C:\Deepseek\_mita_matrix2 `
+  -Rounds 4 -Connections 4 -Bytes 67108864 -Packets 2000 -Requests 500 `
+  -ServerPort 18666 -ExternalServer -UserName baozi -Password manlianpenfen
+```
+
+The runner's `-ExternalServer`/`-ServerPort`/`-UserName`/`-Password` switches exist for this
+case. The logs and matrices are in `mita/`.
+
 ## Reproducing the closed/leaked port failures
 
 The tests themselves are the smallest reproducer:

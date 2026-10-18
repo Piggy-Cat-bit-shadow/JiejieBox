@@ -25,8 +25,10 @@ Build tags for global work: `release/DEFAULT_BUILD_TAGS_OTHERS`.
 | Invalid request reply | unsupported command, invalid destination port | PASS | BUG-005 test |
 | DNS / dual stack | server domain via fork DNS for TCP and UDP transport; fake resolver family filtering; IPv6 loopback | PASS | `TestMieruOutboundDomainServerUsesForkDNS`, `...UDPUsesForkDNS`, `TestMieruIPv6Loopback`, `TestResolverBridgeFamilyFiltering` |
 | Interop | official `mieru.exe` 3.38.1 → this inbound: TCP + UDP PASS; this outbound → official `apis/server`: TCP + UDP PASS | PASS (rerun after fixes) | `interop-phase3/` logs |
+| Real mita server | official `mita` 3.38.1 built from source, run in foreground on Windows; official client and target both reach it TCP+UDP | PASS | `mita/` |
+| Performance vs real mita | 4-round official-vs-target matrix; target TCP download +14-15%, UDP echo +45%, first-byte P50 ~2x slower, UDP-transport upload 0.739x | PASS (negative results recorded) | `mita/comparison.csv` |
 | Performance | 4-round A/B, same host/server, old vs new binary | PASS (no systematic regression; see below) | `performance/` |
-| Official mita / mbox / extended / Hiddify | no Windows build / no WSL / no Docker | BLOCKED | phase-2 `decisions.md` E6 |
+| mbox / extended / Hiddify | no Windows build / no WSL / no Docker | BLOCKED | phase-2 `decisions.md` E6 |
 | 3000 short connections / long soak / loss matrix | not run in this round | NOT_TESTED | time and host; official scripts are the next step |
 | TUN / iOS / Android device / Apple sleep | no device or TUN permission | NOT_TESTED | phase-2 limitations |
 | Upstream SDK patching | not attempted; adapter fixes only | N/A | — |
@@ -48,6 +50,15 @@ Same target, same official-SDK server, same host, 4 rounds, 4 TCP connections ×
 - First-byte p50 stays 0.52-0.54 ms; startup to SOCKS-ready stays 241-267 ms.
 - The per-run mins/maxes and raw cells are in `performance/old|new/raw`.
 - This is a loopback product comparison; it does not claim a WAN result.
+
+## Real mita (supersedes the phase-2 "no Windows build" claim)
+
+`mita` 3.38.1 builds from the official source and runs in foreground on Windows with
+`MITA_INSECURE_UDS=1` (only for its Unix socket chown) and `C:\var\run\mita` for the socket
+path. Official client and target both reach it TCP+UDP. Four-round target/official
+throughput against real mita: TCP download 1.150 (low), 1.144 (high); TCP upload 1.020,
+0.963; UDP-transport download 1.032; UDP echo 1.050 / 1.091 / 1.455; first-byte P50 1.97x
+slower; UDP-transport upload 0.739x. Details in `mita/README.md` and `mita/comparison.csv`.
 
 ## Commands
 

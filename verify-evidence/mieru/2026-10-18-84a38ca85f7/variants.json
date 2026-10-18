@@ -76,6 +76,16 @@
     "samples_per_cell": 4,
     "raw": "raw/<variant>-<scenario>-r<round>-<order>-<mode>.json"
   },
+  "reference_mita": {
+    "label": "REF-A server",
+    "description": "real mita 3.38.1, built unmodified from github.com/enfein/mieru/v3 v3.38.1 cmd/mita and run in foreground on Windows",
+    "binary_sha256": "7A878036476D1F4D0723FA7544F6EFEA9797C905E358768E721B37687D9964B2",
+    "version": "3.38.1",
+    "run_note": "mita run with MITA_INSECURE_UDS=1 and C:\\var\\run\\mita; the env skips only the Linux chown of the Unix socket, no source patch",
+    "evidence": "phase3-debug/mita",
+    "interop": "official mieru.exe -> mita TCP+UDP PASS; target -> mita TCP+UDP PASS",
+    "matrix": "phase3-debug/mita/comparison.csv (4 rounds; product comparison)"
+  },
   "reference_mihomo": {
     "label": "REF-E",
     "description": "Mihomo v1.19.32 Windows amd64, mixed-port SOCKS5 entry, Mieru outbound",
@@ -96,7 +106,6 @@
     "throughput": "application payload bytes on loopback; wire bytes and framing overhead are not included."
   },
   "blocked_references": {
-    "REF-A mita": "no Windows build; this host has no WSL distribution and no Docker, so a real Linux mita peer could not be run.",
     "REF-B enfein/mbox 1c5b39718ebcd05e6adb31f95246fbf056be9bd7": "Android application; no Windows CLI binary.",
     "REF-C shtorm-7/sing-box-extended 5956780ba3f140feff771d003914a1b82ea9d5d0": "full fork; no tested Windows Mieru CLI artifact available on this host.",
     "REF-D hiddify/hiddify-sing-box 3bbbd61ee4d76cc6ff433b111fed4187ad2f4b4f": "GUI application; no scriptable Windows Mieru-only entry without its UI/core packaging."

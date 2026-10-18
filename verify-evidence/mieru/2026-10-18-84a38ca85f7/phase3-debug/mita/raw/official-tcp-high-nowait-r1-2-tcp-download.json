@@ -1,0 +1,27 @@
+{
+    "variant":  "official",
+    "scenario":  "tcp-high-nowait",
+    "round":  1,
+    "order":  2,
+    "mode":  "tcp-download",
+    "startup_ms":  247.8,
+    "idle":  {
+                 "CpuSeconds":  0.046875,
+                 "WorkingSetMiB":  12.18,
+                 "Handles":  154
+             },
+    "cpu_seconds":  2.6875,
+    "rss_mib":  19.71,
+    "exit":  0,
+    "result":  {
+                   "label":  "official-tcp-high-nowait",
+                   "mode":  "tcp-download",
+                   "connections":  4,
+                   "payload_bytes":  268435456,
+                   "wall_seconds":  0.676121,
+                   "throughput_mib_s":  378.63045224153666,
+                   "success":  4,
+                   "failures":  0
+               },
+    "output":  "{\"label\":\"official-tcp-high-nowait\",\"mode\":\"tcp-download\",\"connections\":4,\"payload_bytes\":268435456,\"wall_seconds\":0.676121,\"throughput_mib_s\":378.63045224153666,\"success\":4,\"failures\":0}"
+}

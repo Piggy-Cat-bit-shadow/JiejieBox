@@ -108,10 +108,12 @@ association. Conformance is pinned against the SDK's
 
 ## Interop evidence (2026-10-18, Windows 11, loopback)
 
-The official `mita` server binary is not published for Windows, so the reverse
-direction was driven against the official `apis/server` entry point that `mita`
-uses, compiled from the same `v3.38.1` module. The forward direction used the
-official `mieru.exe` 3.38.1 Windows client.
+The phase-1 reverse direction used the official `apis/server` entry point that `mita` uses,
+compiled from the same `v3.38.1` module, because the phase-1 assumption was that `mita` had
+no Windows build. Phase 3 disproved that: the official `cmd/mita` source builds on Windows
+and runs in foreground; the real-mita matrix and both interop directions are in
+`phase3-debug/mita/`. The forward direction used the official `mieru.exe` 3.38.1 Windows
+client.
 
 | Direction | Peer | Transport | Handshake / mux | Result |
 | --- | --- | --- | --- | --- |
@@ -201,10 +203,16 @@ latency samples.
   0.85x on high-mux TCP upload, 1.27x on UDP-transport upload, and 0.93-1.05x
   on UDP echo. The target is not uniformly fastest; Mihomo's high-mux TCP upload
   is the strongest reference result. This is not a unified-SDK comparison.
-- mbox, extended, Hiddify and the real `mita` binary are
-  `BLOCKED_BY_ENVIRONMENT` here: this Windows host has no WSL distribution, no
-  Docker, and no scriptable Windows build of those references. E6 in the
-  evidence records each blocker; no numbers were invented.
+- Real `mita` 3.38.1 was built from the official source and run on Windows (foreground
+  `mita run`; `MITA_INSECURE_UDS=1` only for its Unix-socket chown). Official client and
+  target both reach it TCP+UDP. Against real mita the target is 1.15x / 1.14x faster on TCP
+  download and 1.05-1.46x on UDP echo, but first-byte P50 is ~2x slower (1.0 ms vs 0.52 ms;
+  P95 equal) and UDP-transport TCP upload is 0.739x. These negatives are recorded in
+  `phase3-debug/mita/README.md`; this matrix replaces the phase-2 "mita unavailable"
+  limitation.
+- mbox, extended and Hiddify are `BLOCKED_BY_ENVIRONMENT` here: this Windows host has no WSL
+  distribution, no Docker, and no scriptable Windows build of those references. E6 in the
+  evidence records each blocker; no numbers were invented for them.
 
 ## Boundary and common faults (phase 3)
 
@@ -276,6 +284,9 @@ DONE
   validation. See `phase3-debug/BUG-LEDGER.md`.
 - 4-round old/new performance A/B after the fixes: TCP within ±2%, UDP echo
   ±5% in opposite directions, latency/startup unchanged.
+- 4-round target/official matrix against real `mita` 3.38.1 on Windows: TCP download
+  +15%/+14%, UDP echo +5%/+9%/+46%, but first-byte P50 ~2x slower and UDP-transport upload
+  0.739x; recorded in `phase3-debug/mita/`.
 - Explicit `Stop()` lifecycle, close of established sessions, bounded drain,
   network-change rebuild, listener options applied through the fork's listener
   helpers.
@@ -302,13 +313,10 @@ PARTIAL
 
 NOT_TESTED
 
-- Official `mita` binary against this outbound: no Windows build exists. The
-  official client and the official server SDK were measured instead; a Linux
-  host with the real `mita` binary is the next step.
-- mbox, extended and Hiddify reference adapters: unavailable on this host (no
-  WSL/Docker, no scriptable Windows build). Mihomo did run, but with SDK
-  v3.38.0, so its ratios are product-level and are kept out of the unified-SDK
-  matrix.
+- mbox, extended and Hiddify reference adapters: unavailable on this host (no WSL/Docker,
+  no scriptable Windows build). Real `mita` 3.38.1 did run, and both official-client and
+  target directions reached it over TCP+UDP. Mihomo did run, but with SDK v3.38.0, so its
+  ratios are product-level and are kept out of the unified-SDK matrix.
 - iOS/Android device runs, a 3000-short-connection/long-duration soak, the
   packet-loss/latency matrix, TUN, and Wi-Fi/cellular path changes. These require
   other hardware or a privileged runner.
@@ -317,12 +325,13 @@ NOT_TESTED
 
 ## Next round
 
-1. Run the official `mita` binary against this outbound on Linux, including
-   auth failure, duplicate user names, port ranges, and `traffic_pattern`
-   round-trip.
-2. Re-run the phase-2 matrix on Linux against `mita`, then add mbox, extended
-   and Hiddify as reference clients. The Windows Mihomo result is a product
-   comparison at SDK v3.38.0, not a unified-SDK cell.
+1. Real `mita` 3.38.1 now runs on Windows; the 4-round target/official matrix is in
+   `phase3-debug/mita/`. Move the same matrix to Linux to validate the Windows socket and
+   scheduling differences, including auth failure, duplicate user names, port ranges, and
+   `traffic_pattern` round-trip.
+2. Re-run the matrix on Linux against the real mita binary, then add mbox, extended and
+   Hiddify as reference clients. The Windows Mihomo result is a product comparison at SDK
+   v3.38.0, not a unified-SDK cell.
 3. Investigate the 6% TCP-upload gap at `tcp-low-default`: per the profile the
    cost is in the shared copy pipeline (`copyExtendedWithPool`), not in the
    Mieru adapter, so establish whether it is an inbound/copy-buffer effect

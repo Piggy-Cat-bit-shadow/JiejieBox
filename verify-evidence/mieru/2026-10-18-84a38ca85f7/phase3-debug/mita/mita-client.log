@@ -1,0 +1,7 @@
+2026-10-18T18:41:35+08:00 INFO mieru client RPC server is running
+2026-10-18T18:41:35+08:00 INFO Initializing client multiplexer
+2026-10-18T18:41:35+08:00 INFO Mux DNS resolver has been updated
+2026-10-18T18:41:35+08:00 INFO Mux traffic pattern has been updated
+2026-10-18T18:41:35+08:00 INFO Mux multiplexing factor is set to 1
+2026-10-18T18:41:35+08:00 INFO mieru client socks5 server is running
+2026-10-18T18:41:35+08:00 INFO enabled metrics logging with duration 10m0s

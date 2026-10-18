@@ -52,6 +52,10 @@ Only claims with raw evidence in this directory. No WAN, device or battery claim
 - Mihomo v1.19.32 (SDK 3.38.0, product comparison): target/Mihomo 1.07x low-mux
   TCP download, 0.95x low-mux TCP upload, 0.85x high-mux TCP upload, 1.27x
   UDP-transport upload, 0.93-1.05x UDP echo.
+- Real mita 3.38.1 on Windows (official source, unmodified; 4 rounds): target/official TCP
+  download 1.150 / 1.144, TCP upload 1.020 / 0.963, UDP-transport download 1.032, UDP echo
+  1.050 / 1.091 / 1.455; first-byte P50 1.97x slower (P95 equal), UDP-transport upload
+  0.739x. The negatives are recorded in `phase3-debug/mita/`.
 
 ## Not claimed
 

@@ -1,0 +1,27 @@
+{
+    "variant":  "target",
+    "scenario":  "udp-low-default",
+    "round":  4,
+    "order":  2,
+    "mode":  "tcp-upload",
+    "startup_ms":  252.9,
+    "idle":  {
+                 "CpuSeconds":  0.046875,
+                 "WorkingSetMiB":  31.84,
+                 "Handles":  275
+             },
+    "cpu_seconds":  4.8594,
+    "rss_mib":  61.66,
+    "exit":  0,
+    "result":  {
+                   "label":  "target-udp-low-default",
+                   "mode":  "tcp-upload",
+                   "connections":  4,
+                   "payload_bytes":  268435456,
+                   "wall_seconds":  3.1001664,
+                   "throughput_mib_s":  82.57621268329339,
+                   "success":  4,
+                   "failures":  0
+               },
+    "output":  "{\"label\":\"target-udp-low-default\",\"mode\":\"tcp-upload\",\"connections\":4,\"payload_bytes\":268435456,\"wall_seconds\":3.1001664,\"throughput_mib_s\":82.57621268329339,\"success\":4,\"failures\":0}"
+}
