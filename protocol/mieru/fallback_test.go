@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,6 +16,7 @@ import (
 	N "github.com/sagernet/sing/common/network"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/log"
 
 	mieruclient "github.com/enfein/mieru/v3/apis/client"
 	"github.com/enfein/mieru/v3/pkg/stderror"
@@ -414,7 +417,57 @@ func TestFallbackStaleGenerationCannotDeliverConnection(t *testing.T) {
 	}
 }
 
+type captureLogger struct {
+	log.ContextLogger
+	access   sync.Mutex
+	messages []string
+}
+
+func (l *captureLogger) Debug(args ...any) {
+	l.access.Lock()
+	l.messages = append(l.messages, fmt.Sprint(args...))
+	l.access.Unlock()
+	l.ContextLogger.Debug(args...)
+}
+
+func (l *captureLogger) contains(fragment string) bool {
+	l.access.Lock()
+	defer l.access.Unlock()
+	for _, message := range l.messages {
+		if strings.Contains(message, fragment) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestFallbackSecondaryTargetLogNamesTheSelectedTransport(t *testing.T) {
+	primary := &fakeClient{dialFunc: func(context.Context, net.Addr) (net.Conn, error) {
+		t.Fatal("the selector should prefer the secondary in this fixture")
+		return nil, nil
+	}}
+	secondary := &fakeClient{dialFunc: func(context.Context, net.Addr) (net.Conn, error) {
+		return nil, errors.New("server returned socks5 error code 2")
+	}}
+	capture := &captureLogger{ContextLogger: nopLogger()}
+	outboundInstance := &Outbound{logger: capture}
+	spec, err := toNetAddrSpec(M.ParseSocksaddr("192.0.2.65:80"), N.NetworkTCP)
+	require.NoError(t, err)
+	selector := newFallbackSelector(1)
+	selector.report(1, fallbackPrimary, false, dialTransportFailure)
+
+	_, err = outboundInstance.dialWithFallback(context.Background(), spec,
+		fakeRuntimeForTest("primary", primary), fakeRuntimeForTest("secondary", secondary),
+		selector, 1)
+	require.Error(t, err)
+	require.True(t, capture.contains("target failure on secondary transport"),
+		"the log must name the transport that actually returned the target failure, got %v", capture.messages)
+	require.False(t, capture.contains("target failure on primary transport"),
+		"the primary transport was not the one with the target failure")
+}
+
 func TestMieruFailureFactsReachGroupConsumers(t *testing.T) {
+
 	outboundInstance := &Outbound{logger: nopLogger()}
 	spec, err := toNetAddrSpec(M.ParseSocksaddr("192.0.2.64:80"), N.NetworkTCP)
 	require.NoError(t, err)

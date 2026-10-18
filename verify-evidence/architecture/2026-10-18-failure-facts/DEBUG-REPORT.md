@@ -1,4 +1,4 @@
-# Adversarial debug report 閳?failure facts
+# Adversarial debug report 闁?failure facts
 
 Scope: the cross-protocol failure-fact change (`adapter/failure.go`,
 `protocol/group/loadbalance_failover.go`, `protocol/mieru`). This report is
@@ -19,7 +19,7 @@ Mieru fallback / single-client dial
 No resource owner changed. Facts live on the per-attempt error, never on a
 shared outbound; no fact is recorded on success.
 
-## D-01 閳?P1: a fact must not override the timeout conservatism
+## D-01 闁?P1: a fact must not override the timeout conservatism
 
 ### Reproduction
 
@@ -56,7 +56,7 @@ still returns true for the timeout (another member may help), exactly as before.
   `global: true`.
 - The end-to-end target/path fact tests prove the non-timeout branches.
 
-## D-02 鈥?P2: cancellation/teardown must stay ahead of any fact
+## D-02 閳?P2: cancellation/teardown must stay ahead of any fact
 
 ### Reproduction
 
@@ -73,7 +73,7 @@ The function now returns `false` for `adapter.IsCallerCancellation` and
 `path fact on cancellation` and `path fact on own teardown`. This preserves the
 old cancellation attribution and the "not measured" invariant.
 
-## D-03 — P2: URLTest must not delete health on a target refusal
+## D-03 鈥?P2: URLTest must not delete health on a target refusal
 
 ### Reproduction
 
@@ -90,6 +90,22 @@ history untouched for `FailureOriginTarget` and `FailureOriginLocal` facts. A
 `Path` fact still deletes it; the positive control
 `TestATargetFactIsNotAPathFact` pins that. The existing `TestARealDial...`
 cases remain green.
+
+## D-04 — P2: secondary failure log named the wrong transport
+
+### Reproduction
+
+`dialWithFallback` logged a target/ambiguous failure with `primary.label`
+regardless of which transport returned it. When the selector legitimately
+preferred the secondary during a primary cooldown, a secondary target reply was
+reported as a primary failure. The log is the operator's only attribution for
+this path, so the label must be the selected transport.
+
+### Fix
+
+The two debug lines now use `selected.label`. The test forces a primary
+transport failure (secondary preferred), makes only the secondary dial, and
+asserts the message names the secondary and not the primary.
 
 ## Adversarial findings reviewed, no code change
 

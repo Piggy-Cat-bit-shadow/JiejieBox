@@ -541,9 +541,9 @@ func (h *Outbound) dialWithFallback(ctx context.Context, destination mierumodel.
 	if class != dialTransportFailure {
 		switch class {
 		case dialTargetFailure:
-			h.logger.Debug("mieru: target failure on ", primary.label, " transport; not switching: ", err)
+			h.logger.Debug("mieru: target failure on ", selected.label, " transport; not switching: ", err)
 		case dialAmbiguousFailure:
-			h.logger.Debug("mieru: ambiguous handshake failure on ", primary.label, " transport; not switching: ", err)
+			h.logger.Debug("mieru: ambiguous handshake failure on ", selected.label, " transport; not switching: ", err)
 		}
 		return nil, wrapFailureFacts(err, class)
 	}
