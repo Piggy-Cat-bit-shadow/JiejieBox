@@ -125,6 +125,31 @@ func TestMieruFallbackTCPRefusedUsesUDPAndRecovers(t *testing.T) {
 		"Close must release the fallback UDP socket as well as the primary one")
 }
 
+func TestMieruFallbackStartOnClosingScope(t *testing.T) {
+	options := fallbackOutboundOptions(1, "tcp", 2, "udp")
+	options.Server = "127.0.0.1"
+	created, err := NewOutbound(context.Background(), nil, nopLogger(), "mieru-out", options)
+	require.NoError(t, err)
+	outboundInstance := created.(*Outbound)
+	scope := adapter.NewScope(context.Background(), nopLogger())
+	require.NoError(t, scope.Close())
+
+	done := make(chan error, 1)
+	go func() {
+		done <- outboundInstance.Start(adapter.StartStateStart, scope)
+	}()
+	select {
+	case err = <-done:
+		require.Error(t, err, "a fallback outbound closed while starting must not report success")
+	case <-time.After(10 * time.Second):
+		t.Fatal("fallback Start deadlocked on a closing scope")
+	}
+	require.True(t, outboundInstance.closed)
+	require.False(t, outboundInstance.primary.client.IsRunning())
+	require.False(t, outboundInstance.secondary.client.IsRunning())
+	require.NoError(t, outboundInstance.Close())
+}
+
 func TestMieruFallbackDisabledCreatesNoSecondaryRuntime(t *testing.T) {
 	options := outboundOptionsForPort(1, "tcp", "alice", "alice-password")
 	options.Server = "127.0.0.1"
