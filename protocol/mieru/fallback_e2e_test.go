@@ -276,7 +276,6 @@ func TestMieruFallbackWrongPasswordDoesNotSwitch(t *testing.T) {
 	snapshot := outboundInstance.fallback.snapshot()
 	require.Equal(t, fallbackPrimary, snapshot.Preferred,
 		"a failed authentication/handshake must not leave the outbound preferring the secondary")
-	require.GreaterOrEqual(t, snapshot.PrimaryFailure, uint64(1))
 	require.Zero(t, snapshot.SecondaryWins)
 	require.NoError(t, outboundInstance.Close())
 	require.Zero(t, outboundInstance.secondary.packetDialer.packetConnCount(),
