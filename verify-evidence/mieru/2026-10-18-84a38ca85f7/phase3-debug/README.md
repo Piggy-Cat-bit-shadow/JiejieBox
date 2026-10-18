@@ -1,4 +1,4 @@
-# Mieru phase 3 — deep debug
+# Mieru phase 3 鈥?deep debug
 
 Baseline: `789bf4893c6` (phase 2). Code fixes: `3f9303286e0`; this evidence/test commit follows it.
 SDK: `github.com/enfein/mieru/v3 v3.38.1` (unchanged).
@@ -33,10 +33,10 @@ residual risk per defect.
 - `go test ./protocol/mieru ./option ./include`: PASS (21.2 s).
 - `CGO_ENABLED=1 go test -race ./protocol/mieru`: PASS (90.1 s).
 - `go vet`, full tagged build, root package + `common/listener` smoke: PASS.
-- 4-round old/new performance A/B: TCP within ±2%, UDP echo ±5% in opposite directions,
+- 4-round old/new performance A/B: TCP within 卤2%, UDP echo 卤5% in opposite directions,
   latency/startup unchanged; raw cells in `performance/`.
 - 3000 short connections (two runs, 6000 total): 0 failures; P50 1.02 ms / P95 1.07 ms;
-  the apparent intermediate socket retention (72 → 106) is the SDK's idle-underlay window
+  the apparent intermediate socket retention (72 鈫?106) is the SDK's idle-underlay window
   (2 min + up to 61 s), and it settled to one socket / 46 MiB / 329 handles after ~4 min.
   Details and raw cells in `soak/`.
 - Real `mita` 3.38.1 was built from the official source and run on Windows (unmodified;
@@ -45,8 +45,8 @@ residual risk per defect.
   target is +15% / +14% on TCP download, +3% on UDP-transport download, +45% on UDP echo,
   but **first-byte P50 is ~2x** (1.0 ms vs 0.52 ms; P95 equal) and UDP-transport upload is
   0.739x. Those negatives are recorded, not hidden.
-- Interop rerun after the fixes: official `mieru.exe` → this inbound TCP+UDP PASS; this
-  outbound → official `apis/server` TCP+UDP PASS; logs in `interop-phase3/`.
+- Interop rerun after the fixes: official `mieru.exe` 鈫?this inbound TCP+UDP PASS; this
+  outbound 鈫?official `apis/server` TCP+UDP PASS; logs in `interop-phase3/`.
 - CI: final `testing` commit `931697f3a19`: Verify SUCCESS (18m37s, including race);
   Android Core ARM64 and Mobile contract SUCCESS.
 
@@ -55,6 +55,10 @@ residual risk per defect.
 corrected in `mita/README.md`.
 `NOT_TESTED`: multi-hour soak, packet-loss/latency matrix, TUN, iOS/Android devices, Apple
 sleep/wake. The exact reasons are in the phase-2 `variants.json`/`RISKS.md`.
+
+## Next round evidence
+
+- [TCP/UDP fallback feature and debug](../2026-10-18-fallback/README.md) — optional fallback, real mita failover/target-refusal, performance and bug ledger.
 
 ## Files
 

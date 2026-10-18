@@ -1,0 +1,4 @@
+# Idle comparison (no dials; same process binary, same mixed inbound, 3 s after start)
+mode	RSS MiB	handles	threads	CPU s
+disabled	31.36	271	19	0.09375
+enabled (fallback tcp->udp, both SDK clients started)	31.61	265	18	0.078125

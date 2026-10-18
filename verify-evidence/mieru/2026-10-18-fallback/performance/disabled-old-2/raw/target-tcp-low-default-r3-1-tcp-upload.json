@@ -1,0 +1,27 @@
+{
+    "variant":  "target",
+    "scenario":  "tcp-low-default",
+    "round":  3,
+    "order":  1,
+    "mode":  "tcp-upload",
+    "startup_ms":  257.2,
+    "idle":  {
+                 "CpuSeconds":  0.109375,
+                 "WorkingSetMiB":  31.7,
+                 "Handles":  271
+             },
+    "cpu_seconds":  1.9219,
+    "rss_mib":  41.45,
+    "exit":  0,
+    "result":  {
+                   "label":  "target-tcp-low-default",
+                   "mode":  "tcp-upload",
+                   "connections":  4,
+                   "payload_bytes":  268435456,
+                   "wall_seconds":  0.6247821,
+                   "throughput_mib_s":  409.74285274818214,
+                   "success":  4,
+                   "failures":  0
+               },
+    "output":  "{\"label\":\"target-tcp-low-default\",\"mode\":\"tcp-upload\",\"connections\":4,\"payload_bytes\":268435456,\"wall_seconds\":0.6247821,\"throughput_mib_s\":409.74285274818214,\"success\":4,\"failures\":0}"
+}

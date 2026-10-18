@@ -1,0 +1,1 @@
+{"listenIPAddress":"127.0.0.1","portBindings":[{"port":18666,"protocol":"TCP"},{"port":18666,"protocol":"UDP"}],"users":[{"name":"baozi","password":"manlianpenfen","allowPrivateIP":true,"allowLoopbackIP":true}],"loggingLevel":"INFO"}

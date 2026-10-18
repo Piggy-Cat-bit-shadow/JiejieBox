@@ -1,0 +1,1 @@
+{"inbounds":[{"type":"mixed","tag":"in","listen":"127.0.0.1","listen_port":11092}],"outbounds":[{"type":"mieru","tag":"m","server":"127.0.0.1","server_port":18666,"username":"baozi","password":"manlianpenfen","transport":"tcp"}],"route":{"rules":[{"inbound":["in"],"action":"route","outbound":"m"}]},"log":{"level":"warn"}}

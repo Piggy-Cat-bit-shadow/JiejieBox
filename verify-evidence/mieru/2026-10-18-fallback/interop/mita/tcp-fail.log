@@ -1,0 +1,22 @@
+_mieru_fallback.exe : [36mINFO[0m[0000] outbound/mieru[m]: mieru client started (fallback udp enabled)
+所在位置 行:3 字符: 108
++ ... ($false))); & C:\Deepseek\_mieru_fallback.exe run -c (Join-Path $dir  ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([36mINFO[0m[0...ck udp enabled):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+[36mINFO[0m[0000] inbound/mixed[in]: tcp server started at 127.0.0.1:11096
+[36mINFO[0m[0000] network: updated default interface WLAN, index 12
+[36mINFO[0m[0000] network: updated network environment: gateway 172.29.0.1, gateway_mac 80:05:88:ce:39:ec
+[36mINFO[0m[0000] sing-box started (0.03s)
+[36mINFO[0m[0004] [[38;5;202m2074128570[0m 0ms] inbound/mixed[in]: inbound connection from 127.0.0.1:53015
+[36mINFO[0m[0004] [[38;5;202m2074128570[0m 0ms] inbound/mixed[in]: inbound connection to 127.0.0.1:53014
+[37mDEBUG[0m[0004] [[38;5;202m2074128570[0m 0ms] router: match[0] inbound=in => route(m)
+[36mINFO[0m[0004] [[38;5;202m2074128570[0m 0ms] outbound/mieru[m]: outbound connection to 127.0.0.1:53014
+[36mINFO[0m[0004] outbound/mieru[m]: mieru: primary tcp transport failed, trying fallback udp
+[36mINFO[0m[0004] [[38;5;43m1116932594[0m 0ms] inbound/mixed[in]: inbound connection from 127.0.0.1:53018
+[36mINFO[0m[0004] [[38;5;43m1116932594[0m 0ms] inbound/mixed[in]: inbound packet connection to 127.0.0.1:62936
+[37mDEBUG[0m[0004] [[38;5;43m1116932594[0m 0ms] router: match[0] inbound=in => route(m)
+[36mINFO[0m[0004] [[38;5;43m1116932594[0m 0ms] outbound/mieru[m]: outbound packet connection to 127.0.0.1:62936
+[37mDEBUG[0m[0004] [[38;5;202m2074128570[0m 3ms] connection: connection upload finished
+[37mDEBUG[0m[0004] [[38;5;202m2074128570[0m 3ms] connection: connection download finished

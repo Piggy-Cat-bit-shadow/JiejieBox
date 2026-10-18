@@ -1,0 +1,5 @@
+"Mode","Samples","DisabledThroughput","EnabledThroughput","ThroughputRatio","DisabledP50","EnabledP50","DisabledP95","EnabledP95","Success","Fail"
+"first-byte","4","0","0","0","1.034","1.034","1.57","1.581","2000","0"
+"tcp-download","4","377.08","386.08","1.024","0","0","0","0","16","0"
+"tcp-upload","4","358.22","365.79","1.021","0","0","0","0","16","0"
+"udp-echo","4","2.23","2.35","1.053","11.229","11.491","13.052","12.931","7932","0"

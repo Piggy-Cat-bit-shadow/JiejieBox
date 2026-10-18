@@ -1,0 +1,12 @@
+# 3000 short sessions through fallback (primary TCP refused, secondary UDP healthy)
+client mode: first-byte, 64 B, 3000 requests
+wall: 3.29 s; success 3000; failures 0; P50 1.025 ms; P95 1.559 ms; P99 2.045 ms
+
+point	RSS MiB	handles	UDP endpoints	established TCP
+before	31.43	280	0	0
+immediately after	74.07	418	77	0
+after 4 min idle	50.07	334	0	0
+
+The 77 immediate UDP endpoints are the official SDK's idle underlay pool
+(2 min key refresh + up to 61 s jitter); they settle to zero. No per-request
+leak and no TCP established socket remained after the run.

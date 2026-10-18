@@ -1,0 +1,10 @@
+2026-10-18T21:16:20+08:00 INFO mita server daemon RPC server is running
+2026-10-18T21:16:20+08:00 INFO Unable to load previous metrics: os.ReadFile() failed: open /var/lib/mita/metrics.pb: The system cannot find the file specified.
+2026-10-18T21:16:20+08:00 INFO Initializing server multiplexer
+2026-10-18T21:16:20+08:00 INFO Mux traffic pattern has been updated
+2026-10-18T21:16:20+08:00 INFO Mux user hint is mandatory is set to false
+2026-10-18T21:16:20+08:00 INFO Mux is listening to endpoint udp 127.0.0.1:18666
+2026-10-18T21:16:20+08:00 INFO Mux is listening to endpoint tcp 127.0.0.1:18666
+2026-10-18T21:16:20+08:00 INFO Created new server underlay PacketUnderlay{local=127.0.0.1:18666, mtu=1400}
+2026-10-18T21:16:20+08:00 INFO mita server daemon socks5 server is running
+2026-10-18T21:16:20+08:00 INFO enabled metrics logging with duration 10m0s
