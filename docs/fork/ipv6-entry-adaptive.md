@@ -4,9 +4,9 @@
 (`netcap.HardUndialable` through `common/dialer`) already exists and is unchanged; this document
 describes the layer in front of it, which decides what the process *tells applications* about IPv6.
 
-Status: implemented and unit-tested on `testing`. Platform clients (Apple, Android) were **not**
-built or run - see [Limits](#limits-and-what-was-not-verified).
-
+Status: implemented and unit-tested on `testing`. The Apple client change is landed in
+`sing-box-for-apple` `6e559a4` and pinned by `clients/apple`. No Android/iOS/macOS build, simulator or
+device run was performed - see [Limits](#limits-and-what-was-not-verified).
 ## The problem it solves
 
 A machine whose physical network carries no usable IPv6 still usually has *some* IPv6 structure: a
@@ -87,11 +87,28 @@ A failure at any step is "no opinion": nothing is committed and every consumer b
 
 **TUN** (`protocol/tun/entry_ipv6.go`, `protocol/tun/effective_ipv6.go`). When the committed
 decision is "suppress", the effective `tun.Options` lose `Inet6Address`, `Inet6RouteAddress`,
-`Inet6RouteExcludeAddress`, `Inet6LoopbackAddress`, `Inet6Gateway` and any IPv6 `DNSAddress`. Two
-refusals keep the configured options untouched and correct the decision back to "present":
+`Inet6RouteExcludeAddress`, `Inet6LoopbackAddress`, `Inet6Gateway` and any IPv6 `DNSAddress`.
+
+#### Multiple TUNs: the box decides once, and only if every interface can honour it
+
+A box may configure more than one `tun` inbound. The entry decision is one value for the whole box,
+so `box.New` pre-checks the typed configuration with
+`option.AllTunInboundsReducibleToIPv4Only` - the same predicate the reduction itself uses - and the
+manager commits "suppress" only when every interface is reducible. If one is not, the box commits
+"present" and says so in the log; every interface then keeps its configured IPv6.
+
+The two refusals that make a TUN irreducible are the same rule the reduction applies, and they are
+shared rather than duplicated (`option.TunReducibleToIPv4Only`):
 
 1. no IPv4 address - an interface must keep at least one address;
 2. an explicit `dns_address` list with no IPv4 entry - applications would have no resolver.
+
+An earlier revision let each TUN correct the shared value when its own reduction was refused. That
+was order-dependent and produced exactly the split it was meant to prevent: the first interface
+stripped, the second rolling the decision back to "present" for everyone - so DNS presented an IPv6
+one interface was no longer carrying. The correction API is gone; `commitIPv6EntryPresentment` has
+one writer (the manager's observation), and a TUN that cannot apply a committed suppression logs an
+Error and leaves the shared value as the box committed it, which is the safe direction.
 
 The same decision is applied to the IPv6 prefixes a `route_address_set` contributes at start
 (`appendRouteSetPrefixes`), which is the second place IPv6 can enter the options and the one a
@@ -187,26 +204,34 @@ the options that the core reduces:
 - DNS servers come from `options.dnsServerAddress`, which `tun.Options.DNSServerAddress()` derives
   from the remaining (IPv4) address.
 
-**Darwin (Network Extension, `ExtensionPlatformInterface.swift` `openTun0`): cannot, and is
-therefore disabled for now.** At the pinned SHA (`clients/apple` = `c001d59`) the client creates
-`NEIPv6Settings` and a default `::/0` route **unconditionally** inside `if options.getAutoRoute()`.
-A core that stripped IPv6 addressing would hand it an IPv6 default route with no address - an
-interface that claims the family and cannot carry it - or settings the system rejects. So
-`NetworkManager.entryPresentmentDeliverable()` answers false on Darwin, nothing is committed, and the
-previous behaviour is kept there.
+**Darwin, iOS and the tvOS flavour (Network Extension, `ExtensionPlatformInterface.swift`
+`openTun0`): can, and is enabled.** The pinned client used to create `NEIPv6Settings` and a default
+`::/0` route **unconditionally** inside `if options.getAutoRoute()`, so a core that stripped IPv6
+addressing would have handed it an IPv6 default route with no address - an interface that claims the
+family and cannot carry it - or settings the system would reject. That is fixed in
+`sing-box-for-apple` commit `6e559a4` (pushed to `main`; `git diff -w c001d59 6e559a4` is the four
+comment lines, `if !ipv6Address.isEmpty {` and its closing brace, plus re-indentation):
 
-The deliverability answer is a **positive list** - Windows and Linux (which `C.IsLinux` extends to
-Android) - and not `!IsDarwin`: the Apple client family builds GOOS values that this tree's
-`constant.IsDarwin` does not enumerate (tvOS and others), and an unknown client contract belongs on
-the fail-open side. Anything not on the list keeps the previous behaviour.
+```swift
+if !ipv6Address.isEmpty {
+    let ipv6Settings = NEIPv6Settings(addresses: ipv6Address, networkPrefixLengths: ipv6Prefixes)
+    ...
+    settings.ipv6Settings = ipv6Settings
+}
+```
 
-The client-side fix is prepared and verified to apply against the pinned tree:
-`docs/fork/ipv6-entry-apple.patch` wraps that block in `if !ipv6Address.isEmpty { ... }`. It is
-deliberately **not** pushed to the client repository and the `clients/apple` gitlink is **not** moved:
-that is a coordinated release action (client source authority, exact-SHA pinning, artifact
-provenance), and no Apple build was run here. When the patched client is what ships, the flip is one
-line: `entryPresentmentDeliverable()` returns true unconditionally (the platform allowlist at the
-bottom of that method), and the Darwin entry decision becomes live.
+Every dual-stack configuration keeps exactly the previous code path (routes, sub-range default,
+excluded routes, `excludeDefaultRoute`). The other `setTunnelNetworkSettings` call sites re-apply the
+same stored `networkSettings` object, so no second writer can reintroduce the family. The core pins
+that revision (`clients/apple` = `6e559a4`) and `scripts/ci/check-libbox-abi.sh` records the move:
+the range touches no contract method and no call site, layer 4 could not be re-run on this host (no
+Python interpreter), and CI performs it against the moved tree.
+
+The deliverability answer is a **positive list** - Windows, Linux (which `C.IsLinux` extends to
+Android), `C.IsDarwin` (macOS and iOS) and `C.IsTvOS` (spelled out because the tvOS flavour's
+GOOS/tag combination is not guaranteed to satisfy `IsDarwin`) - and not a negative one: any platform
+without a verified client contract keeps the previous behaviour. `route/network_family_entry_test.go`
+pins that table on one runner.
 
 ## Limits and what was not verified
 
@@ -215,23 +240,23 @@ bottom of that method), and the Darwin entry decision becomes live.
 | `common/netcap`, `route`, `dns`, `protocol/tun`, `option` unit tests | `PASS` (see the commit message for the exact commands) |
 | Windows/Linux route readers (reused, unchanged) | `PASS` as existing tests |
 | Android `VpnService.Builder` receiving no IPv6 address/route | **VERIFIED_SOURCE** against `satelite-one-main/app/src/main/java/com/interstellar/proxy/bg/VPNService.kt` and `experimental/libbox/tun.go` + sing-tun `BuildAutoRouteRanges`; **no** Gradle/AAR/emulator run (`NOT_RUN_BY_REQUEST`) |
-| Apple `NEIPv6Settings` with an empty address list | **VERIFIED_SOURCE** against `sing-box-for-apple` `c001d59` `Library/Network/ExtensionPlatformInterface.swift:122-161`: it is unconditional, so the core keeps IPv6 presented on Darwin and a ready patch ships in `docs/fork/ipv6-entry-apple.patch`; no Xcode/iOS/macOS build (`NOT_RUN_BY_REQUEST`) |
+| Apple `NEIPv6Settings` with an empty address list | **VERIFIED_SOURCE** against `sing-box-for-apple` `6e559a4` (the `!ipv6Address.isEmpty` guard) and `swiftc -parse` on the patched file (exit 0). The tunnel-settings change is not exercised by an Xcode build, simulator or device (`NOT_RUN_BY_REQUEST`); the pin is `clients/apple` and the ABI gate records the move |
 | an application with its own DoH or hard-coded IPv6 literal | not covered by design - the OS-level IPv4-only interface makes such attempts fail immediately, which is earlier than any DNS interception |
-| a network change flipping the decision | not applied until restart, by design (see the trade above) |
+| a network change flipping the decision | not applied until restart, by design; see Open risks for why re-deriving it without re-addressing the interface would be worse |
 
 ## Files
 
 | file | role |
 |---|---|
 | `common/netcap/entry.go` | address-shape classification, projection, presentment type |
-| `adapter/network.go` | `IPv6EntryPresentmentReader`, `IPv6EntryPresenter` (optional interfaces) |
+| `adapter/network.go` | `IPv6EntryPresentmentReader` (the optional reader interface) |
 | `route/network_family_entry.go` | read-only observation, commit, reader, platform deliverability |
 | `route/network.go` | the committed pointer and the demand flag |
 | `option/ipv6_entry.go` | configuration demand summary |
 | `protocol/tun/effective_ipv6.go` | effective-option surgery and the route-set append |
-| `protocol/tun/entry_ipv6.go` | the TUN's consumption and its one correction |
+| `protocol/tun/entry_ipv6.go` | the TUN's read and application of the decision |
 | `dns/entry_ipv6.go` | the application-facing AAAA gate and its NODATA response |
-| `docs/fork/ipv6-entry-apple.patch` | the Network Extension client's minimal condition, against `clients/apple` `c001d59` |
+| `docs/fork/ipv6-entry-apple-applied.patch` | the Network Extension client change, archived after it landed as `6e559a4` |
 
 ## Debug round 02: what the attacks changed
 
@@ -245,7 +270,7 @@ are worth recording because each one was reachable by a configuration, not by a 
 | a four-in-six address was classified as IPv4 demand | `::ffff:172.19.0.1/120` in `address` / `dns_address` | the demand now uses `Is6`, the same predicate the TUN splits these lists with, so it cannot miss an address the interface installs |
 | loopback was classified as global addressing | a `::1` address on a non-loopback interface set | `ClassifyIPv6Addressing` ignores loopback; the projection still presents (unproven shape), which the test states explicitly |
 | the entry-demand hand-off was a plain bool across a constructor/Start boundary | a client that constructs the box on one goroutine and starts it on another | `entryDemand` is an `atomic.Bool` |
-| the deliverability answer was `!IsDarwin` | the Apple client family builds GOOS values `constant.IsDarwin` does not enumerate (tvOS, ...) | the answer is now a positive allowlist: Windows and Linux/Android, which are the delivery contracts that were read and verified |
+| the deliverability answer was `!IsDarwin` | the Apple client family builds GOOS values `constant.IsDarwin` does not enumerate (tvOS, ...) | the answer is a positive allowlist; Apple joined it only after its client revision made the delivery expressible (see Platform delivery contracts) |
 
 The tests added by the round were checked against mutations of the production code - the DNS gate
 disabled, the route-set IPv6 prefix re-enabled, the commit-site deliverability guard dropped, the
@@ -261,12 +286,30 @@ load. The new exported type in `option` was also checked against the generated-s
 regenerating the schema produces a byte-identical `docs/schema.json`, and the demand summary is not
 part of the reachable option graph, so no regeneration is owed.
 
+## Closeout round 03: the two cross-cutting gaps, closed
+
+**Apple is delivered, pinned and enabled.** The tunnel-settings defect was fixed in the client
+repository and pushed: `sing-box-for-apple` `6e559a4` on `main`, `git diff -w c001d59 6e559a4` being
+six added lines and re-indentation, `swiftc -parse` exit 0. The core's `clients/apple` gitlink now
+points at that revision, `scripts/ci/check-libbox-abi.sh` records the move and its `VERIFIED_APPLE_SHA`
+matches, and `entryPresentmentDeliverable()` admits macOS, iOS and the tvOS flavour through the same
+positive allowlist that already covered Windows and Linux/Android. Every dual-stack configuration is
+untouched: the guard only fires when the core sends no IPv6 address at all.
+
+**Multiple TUNs share one decision, and no interface can roll it back.** `box.New` pre-checks every
+TUN with the same predicate the reduction uses (`option.TunReducibleToIPv4Only`), the manager commits
+"suppress" only if all of them pass, and the TUN-side correction API is gone: the manager is the only
+writer, and an interface that cannot apply a committed suppression logs an error and leaves the
+shared value alone. The order-dependent split the round-02 report carried as a risk - first interface
+stripped, second rolling the decision back to "present" - can no longer be produced, and
+`TestMultipleTunInboundsShareOneDecision` runs both orders over eight configurations while
+`TestTheBoxPredicateAndTheReductionAgree` pins the shared predicate against the reduction.
 ### Open risks (not fixed, and why)
 
 | risk | impact | mitigation today | shortest next step |
 |---|---|---|---|
-| the entry decision is latched at start | a box that starts on an IPv4-only network keeps an IPv4-only interface after moving to dual-stack, until restart | the decision is a property of the interface that was opened; the dial gate stays live, and the alternative would let DNS present an IPv6 the interface does not carry (I-05) | re-address/reopen the TUN through a platform update or an ordered inbound rebuild, then re-derive and re-commit; needs platform work this round cannot verify |
-| the Apple client patch is not shipped | Darwin keeps the previous behaviour (feature inert there) | `entryPresentmentDeliverable` is false, so nothing can break | ship `docs/fork/ipv6-entry-apple.patch` with the client and drop the allowlist entry |
+| the entry decision is latched at start | a box that starts on an IPv4-only network keeps an IPv4-only interface after moving to dual-stack, until restart | the decision is a property of the interface that was opened. Re-deriving it WITHOUT re-addressing that interface is not a safe fix: the TUN would carry no IPv6 while the DNS answer presented AAAA, and those connections would leave through the physical interface - a bypass of the proxy, not merely a slower failure. The reverse direction is harmless: a TUN that still carries IPv6 captures the traffic, the dial gate refuses direct destinations fast, and proxied IPv6 keeps working | a platform update or an ordered inbound rebuild that re-addresses the interface, then re-derive and re-commit. No platform in this tree exposes one, and this environment cannot verify a TUN re-open on any device |
 | non-Fake-IP proxied real-IPv6-only targets | an application can no longer reach them through the proxy when the entry suppressed AAAA | only fires when the machine has no non-link-local IPv6 at all; Fake-IP configurations keep the capability through the synthetic IPv4 address | per-route DNS decisions would need the route result at DNS time, which is the double evaluation this round forbids |
 | applications with their own DoH / hard-coded IPv6 literals | not gated | the OS-level IPv4-only interface makes such attempts fail immediately | out of scope: MITM/DoH interception is explicitly not wanted |
 | `dns_mode: native` / `disabled` TUNs | application DNS does not traverse the router, so the gate does not fire | the interface is still IPv4-only, so v6 attempts fail at the OS | documented boundary, not a defect |
+| another Box's TUN in the same process | a new Box's startup observation can count that interface as underlay IPv6, because its monitor does not own it | the error can only cause "present", never a suppressed interface, so it cannot strip a working family; this is the same limitation the dial capability has always had | a process-level interface-ownership registry; deliberately not added for an edge that a client restart already resolves |
