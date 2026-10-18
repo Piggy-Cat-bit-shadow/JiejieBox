@@ -75,6 +75,7 @@ func writeUOTFrame(w io.Writer, payload []byte, destination M.Socksaddr) error {
 // (255-byte FQDN maximum) and reused for every packet.
 type uotFramer struct {
 	reader      io.Reader
+	remaining   io.LimitedReader
 	frameHeader [3]byte
 	udpHeader   [socks5UDPHeaderLength]byte
 	addressType [1]byte
@@ -108,13 +109,21 @@ func (f *uotFramer) readFrame(p []byte) (int, M.Socksaddr, error) {
 	if f.udpHeader[2] != 0 {
 		return 0, M.Socksaddr{}, fmt.Errorf("mieru: SOCKS5 UDP fragmentation is not supported (frag=0x%02x)", f.udpHeader[2])
 	}
-	destination, addressLength, err := f.readAddress()
+	// The address is parsed through a LimitedReader bounded by the frame's
+	// declared data length. Parsing it directly from the stream would let a
+	// frame that declares three bytes and then contains an address type read
+	// the suffix - or the next frame - into the address, desynchronising the
+	// association. The SDK's buffer-based decoder cannot over-read; this is
+	// the streaming equivalent of that guarantee.
+	f.remaining.R = f.reader
+	f.remaining.N = int64(dataLength - socks5UDPHeaderLength)
+	destination, addressLength, err := f.readAddressFrom(&f.remaining)
 	if err != nil {
 		return 0, M.Socksaddr{}, err
 	}
 	payloadLength := dataLength - socks5UDPHeaderLength - addressLength
-	if payloadLength < 0 {
-		return 0, M.Socksaddr{}, fmt.Errorf("mieru: UDP frame length %d is shorter than its addresses", dataLength)
+	if payloadLength < 0 || int64(payloadLength) != f.remaining.N {
+		return 0, M.Socksaddr{}, fmt.Errorf("mieru: UDP frame length %d does not match its address header", dataLength)
 	}
 	if payloadLength > len(p) {
 		if _, err = io.CopyN(io.Discard, f.reader, int64(payloadLength)+1); err != nil {
@@ -134,32 +143,32 @@ func (f *uotFramer) readFrame(p []byte) (int, M.Socksaddr, error) {
 	return payloadLength, destination, nil
 }
 
-func (f *uotFramer) readAddress() (M.Socksaddr, int, error) {
-	if _, err := io.ReadFull(f.reader, f.addressType[:]); err != nil {
+func (f *uotFramer) readAddressFrom(reader io.Reader) (M.Socksaddr, int, error) {
+	if _, err := io.ReadFull(reader, f.addressType[:]); err != nil {
 		return M.Socksaddr{}, 0, err
 	}
 	switch f.addressType[0] {
 	case 0x01:
-		if _, err := io.ReadFull(f.reader, f.ipv4[:]); err != nil {
+		if _, err := io.ReadFull(reader, f.ipv4[:]); err != nil {
 			return M.Socksaddr{}, 0, err
 		}
 		address := netip.AddrFrom4([4]byte(f.ipv4[:4]))
 		return M.SocksaddrFrom(address, binary.BigEndian.Uint16(f.ipv4[4:])), 1 + len(f.ipv4), nil
 	case 0x04:
-		if _, err := io.ReadFull(f.reader, f.ipv6[:]); err != nil {
+		if _, err := io.ReadFull(reader, f.ipv6[:]); err != nil {
 			return M.Socksaddr{}, 0, err
 		}
 		address := netip.AddrFrom16([16]byte(f.ipv6[:16]))
 		return M.SocksaddrFrom(address, binary.BigEndian.Uint16(f.ipv6[16:])), 1 + len(f.ipv6), nil
 	case 0x03:
-		if _, err := io.ReadFull(f.reader, f.addressType[:]); err != nil {
+		if _, err := io.ReadFull(reader, f.addressType[:]); err != nil {
 			return M.Socksaddr{}, 0, err
 		}
 		if f.addressType[0] == 0 {
 			return M.Socksaddr{}, 0, fmt.Errorf("mieru: empty FQDN in SOCKS5 UDP header")
 		}
 		fqdnLength := int(f.addressType[0])
-		if _, err := io.ReadFull(f.reader, f.fqdn[:fqdnLength+2]); err != nil {
+		if _, err := io.ReadFull(reader, f.fqdn[:fqdnLength+2]); err != nil {
 			return M.Socksaddr{}, 0, err
 		}
 		return M.Socksaddr{
@@ -179,7 +188,7 @@ func readUOTFrame(r io.Reader, p []byte) (int, M.Socksaddr, error) {
 
 // readSocks5Address is the convenience form used by tests.
 func readSocks5Address(r io.Reader) (M.Socksaddr, int, error) {
-	return newUOTFramer(r).readAddress()
+	return newUOTFramer(r).readAddressFrom(r)
 }
 
 // encodeSocks5Address writes the SOCKS5 address (ATYP + address + port) for a

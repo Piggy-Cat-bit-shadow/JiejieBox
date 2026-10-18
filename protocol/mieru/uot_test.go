@@ -108,6 +108,52 @@ func TestReadFrameFromSDK(t *testing.T) {
 	}
 }
 
+// TestTruncatedAddressCannotConsumeTheNextFrame pins the bounded address
+// parse. A frame whose declared length cannot hold its address type must fail
+// without reading the suffix or the following frame; otherwise a malformed
+// client could desynchronise the association.
+func TestTruncatedAddressCannotConsumeTheNextFrame(t *testing.T) {
+	// Frame 1 claims 3 data bytes (only the SOCKS5 RSV/FRAG bytes) and has a
+	// suffix. It cannot contain an address type.
+	broken := []byte{0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0xff}
+	// Frame 2 is a valid packet.
+	destination := M.SocksaddrFrom(netip.MustParseAddr("192.0.2.77"), 7)
+	valid := &bytes.Buffer{}
+	require.NoError(t, writeUOTFrame(valid, []byte("next"), destination))
+	stream := bytes.NewReader(append(append([]byte{}, broken...), valid.Bytes()...))
+
+	framer := newUOTFramer(stream)
+	buffer := make([]byte, 64)
+	_, _, err := framer.readFrame(buffer)
+	require.Error(t, err)
+	// The suffix of the broken frame is still the next byte: the parser did
+	// not consume it as an address.
+	suffix := make([]byte, 1)
+	_, err = io.ReadFull(stream, suffix)
+	require.NoError(t, err)
+	require.Equal(t, []byte{0xff}, suffix)
+
+	n, decoded, err := framer.readFrame(buffer)
+	require.NoError(t, err)
+	require.Equal(t, []byte("next"), buffer[:n])
+	require.Equal(t, destination, decoded)
+}
+
+// TestTruncatedFixedAddressCannotConsumeSuffix covers the same boundary for a
+// frame that names IPv4 but declares too few bytes after the address type.
+func TestTruncatedFixedAddressCannotConsumeSuffix(t *testing.T) {
+	// data length 6: RSV/FRAG + ATYP + two address bytes; an IPv4 address
+	// needs seven bytes after the RSV/FRAG. The suffix follows.
+	broken := []byte{0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x01, 0xc0, 0x00, 0xff}
+	stream := bytes.NewReader(broken)
+	framer := newUOTFramer(stream)
+	_, _, err := framer.readFrame(make([]byte, 64))
+	require.Error(t, err)
+	remaining, err := io.ReadAll(stream)
+	require.NoError(t, err)
+	require.Equal(t, []byte{0xff}, remaining)
+}
+
 // TestFrameSequenceStaysAligned sends several frames through both encoders
 // and checks that every read returns exactly its own packet.
 func TestFrameSequenceStaysAligned(t *testing.T) {

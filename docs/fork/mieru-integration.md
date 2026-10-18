@@ -132,10 +132,10 @@ Measured with `go test ./protocol/mieru -run '^$' -bench UOTFrame -benchmem`
 
 | Benchmark | ns/op | B/op | allocs/op |
 | --- | ---: | ---: | ---: |
-| `BenchmarkWriteUOTFrame` (this integration) | 116.0 | 64 | 1 |
-| `BenchmarkWriteUOTFrameSDK` (SDK wrapper) | 498.3 | 1280 | 1 |
-| `BenchmarkReadUOTFrame` (this integration) | 77.60 | 0 | 0 |
-| `BenchmarkReadUOTFrameSDK` (SDK wrapper) | 82.79 | 4 | 2 |
+| `BenchmarkWriteUOTFrame` (this integration) | 118.8 | 64 | 1 |
+| `BenchmarkWriteUOTFrameSDK` (SDK wrapper) | 666.1 | 1280 | 1 |
+| `BenchmarkReadUOTFrame` (this integration) | 79.83 | 0 | 0 |
+| `BenchmarkReadUOTFrameSDK` (SDK wrapper) | 86.93 | 4 | 2 |
 
 This is a framing microbenchmark, not a network throughput claim. It measures
 the code that sits once per datagram on a UDP association; the numbers are the
