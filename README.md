@@ -1,3 +1,168 @@
+改进
+一、代理协议与传输层
+
+* MASQUE DATAGRAM 热路径减少两次完整 Payload Copy
+* MASQUE 1280B Owned DATAGRAM 局部吞吐约为复制路径的 2.7 倍
+* MASQUE Capsule 重叠检查由 13.5 秒降至 16 毫秒，约 800 倍
+* MASQUE Capsule 条目限制为 8192，防止 149796 条目消耗 17.65 MiB
+* Naive 64B 缓存首包处理耗时由 470 ns 降至 214 ns
+* Naive 1400B 缓存首包处理耗时由 482 ns 降至 216 ns
+* Naive 16KiB 缓存首包处理耗时由 796 ns 降至 215 ns
+* Naive 缓存首包 Fast Path 分配由 1 次降至 0 次
+* XHTTP 0ms RTT 上传实测 26.93 MB/s，Xray 为 22.84 MB/s
+* XHTTP 30ms RTT 上传实测 24.25 MB/s，Xray 为 19.67 MB/s
+* XHTTP 50ms RTT 上传实测 15.57 MB/s，Xray 为 14.53 MB/s
+* XHTTP 100ms RTT 上传实测 7.88 MB/s，Xray 为 7.80 MB/s
+* XHTTP 200ms RTT 上传实测 3.92 MB/s，Xray 为 4.04 MB/s
+* XHTTP 0–200ms RTT 对照覆盖 30 轮、0 次载荷不一致
+
+二、DNS 与 FakeIP
+
+* DNS 分组 8/32/128 并发冷启动查询仅执行一次竞选扇出
+* DNS 全成员失效时限制为一次尝试，避免无效并发探测
+* DNS 分组历史状态限制每成员最多 64 条记录
+* DNS 跨网络缓存隔离通过 100 轮 Reset 压力测试
+* DNS 同网络重复 Reset 通过 100 轮缓存保持测试
+* 设备休眠时 DNS 乐观后台刷新请求由 1 次降至 0 次
+* 100 次被抑制的 DNS 刷新不遗留 In-flight 记录
+* DNS 缓存命中路径 A/B 测试变化处于约 ±2.4% 噪声范围
+
+三、流量嗅探与协议识别
+
+* TLS Sniff 热路径耗时降低 96.2%
+* TLS Sniff 热路径内存分配次数降低 35.3%
+* TLS Sniff 移除每流约 127 µs 的无效完整握手工作
+* TLS Sniff 消除每流约 13 KiB 的临时握手开销
+* QUIC 分片 ClientHello 嗅探耗时降低 91.9%
+* QUIC 分片 ClientHello 内存分配次数降低 64.5%
+* HTTP Sniff 按需执行使分配量由 4889 B 降至 205 B
+* HTTP Sniff 按需执行使分配次数由 9 次降至 3 次
+* 历史异常嗅探测试曾造成额外 16.7 MiB 缓冲区驻留
+* QUIC Sniff 增加最多 64 轮的读取边界，限制异常资源增长
+* QUIC Sniff 异常输入累计分配曾达约 541.7 MB，现增加轮次与释放保护
+
+四、路由、代理组与智能选路
+
+* 10 节点全部失败时，Failover 最多仅执行 2 次拨号
+* 多层嵌套 Failover 仍共享一次备用节点重试预算
+* 8/32/128 并发 DNS 选举均保持单次扇出
+* Sticky Sessions 通过 10 万步参考模型一致性测试
+* URLTest 与 LoadBalance 共享健康测量，避免独立重复测速状态
+* 负载均衡节点失败与全局惩罚采用独立错误判定，避免扩大故障范围
+
+五、IPv4、IPv6 与拨号体系
+
+* 单流 Admission Policy 判断耗时 11–22 ns，0 次分配
+* 网络能力 Verdict 读取约 9.4 ns，0 次分配
+* LocalFamilyGate 候选判断约 12–23 ns，0 次分配
+* LocalFamilyFilter 单候选判断约 12.2 ns，0 次分配
+* 候选计划网络所有权读取由逐候选读取收敛为一次读取
+* 双候选路径网络能力读取次数由 4 次降至 2 次
+* 网络能力判断不新增后台定时器与轮询 Goroutine
+* 网络能力变化采用事件驱动路由表读取，避免每流查询路由表
+
+六、数据通道与性能优化
+
+* Direct Offload 资格判断耗时约 14–41 ns，0 次分配
+* Direct Offload 快速拒绝判断耗时约 5–11 ns，0 次分配
+* Direct Outbound Profile 查询约 5.3 ns，0 次分配
+* Direct Offload 移除每流约 95 ns 的无效 Debug 参数构造
+* Direct Offload 移除每流 5 次不必要的日志分配
+* Direct BypassDecision 实测约 32.05 ns，0 次分配
+* Direct Fast Path Eligibility 实测约 16.85 ns，0 次分配
+* 无统计跟踪的模型流量中，85% 权重可通过 L1 资格判断
+* 上传调度将高优先级流量 p99 延迟由 146 ms 降至 9 ms
+* 上传调度将平均队列积压由 257 KiB 降至 15 KiB
+* 持续整形将首条交互请求 p50 延迟由 127 ms 降至 2 ms
+* 全通道整形将高优先级探测 p99 延迟由 114 ms 降至 8 ms
+* 85% 带宽整形条件下 Bulk 吞吐约 1.72 MB/s
+* 固定 85% 带宽整形条件下高优先级 p95 约 8 ms
+* 未启用限速的调度路径额外开销约 9 ns/write，0 次分配
+* UDP Batch-64 分配保持 66 次，与未包裹路径一致
+* 上传整形速率上界回归测试限制为配置速率的 102%
+* 64KiB 上传分块保持带宽整形精度与 Backpressure 约束
+
+七、网络生命周期与资源管理
+
+* 100 轮 Sleep/Wake 压力测试验证资源回收一致性
+* 100 轮网络切换压力测试验证跨代资源归属
+* 100 轮连接复用与回收测试验证不产生主动重拨
+* 32 条繁忙连接下验证 Close 及资源回收
+* 本地 E2E 测试中 ResetNetwork 约 140 µs 返回
+* 三层 Failover 仍保持最多一次备用节点重试
+* 空闲回收验证不创建额外拨号及后台连接
+
+八、移动端省电与内存保护
+
+* 低内存 Buffer Geometry 由 32KiB/16KiB 降至 16KiB/8KiB
+* 低内存配置每流驻留 Heap 由 64.1 KiB 降至 32.1 KiB
+* 低内存配置每次 Live Buffer 获取分配由 1.75 B 降至 0.94 B
+* 低内存配置每次 Idle Buffer 获取分配由 0.93 B 降至 0.53 B
+* 40MiB 内存约束下 GOGC 50→100，GC 次数减少 53.4%
+* 40MiB 内存约束下 GOGC 50→100，GC 总暂停减少 51.8%
+* 40MiB 内存约束下 GOGC 50→100，基准吞吐提高 1.23%
+* GOGC 对照采用每组 10 轮交替测试
+* iPhone 真机修复将一次睡眠周期错误拆分的 12 个边界收敛为 1 个
+* iPhone 真机 13 分 13 秒锁屏周期测量精确到秒
+* 设备休眠时 DNS 后台刷新网络请求由 1 次降至 0 次
+* 设备休眠时 Dashboard 测试窗口内请求由 11 次降至 2 次
+* 休眠期间保留 Dashboard 首次必要下载，避免首次显示空白
+* macOS ARM64 无 TUN 实测空闲 RSS 约 43 MiB
+* macOS ARM64 100 连接场景每条连接约占用 20–40 KB
+* macOS ARM64 两轮连接测试间 RSS 增长约 1.6 MiB
+
+九、Windows 与客户端整合
+
+* Windows 核心构建辅助链接由 3 次收敛为 1 次
+* Apple 客户端 iOS/macOS 共用一次 Libbox 产物构建
+* Apple Libbox 工具链安装由 2 次收敛为 1 次
+* Windows 安装包复用已构建内核，减少重复编译
+* Apple Release 校验构建源与实际发布 Commit SHA 一致
+* Windows 订阅用量查询仅读取响应头，不重复下载配置正文
+
+十、构建、发布与工程质量
+
+* 百万域名规则集实测常驻内存约 8.3 MiB
+* 百万域名规则集实测首次加载分配约 42.5 MiB
+* 百万域名规则集命中查询约 429 ns
+* 百万域名规则集未命中查询约 338 ns
+* 十万条 IP-CIDR 规则集常驻内存约 1.0 MiB
+* 十万条 IP-CIDR 规则集首次加载分配约 7.8 MiB
+* 十万条 IP-CIDR 规则集命中查询约 79 ns
+* 千个冷态 Trojan 节点每节点约 2035 B
+* 千个冷态 Trojan 节点启动后不增加 Goroutine
+* 千个冷态节点通过全部四阶段启动测试
+* Apple Libbox C-Archive 编译由 3 份减少至 2 份
+* Apple 构建删除约 116 MB 的未使用 Intel Framework 切片
+* Apple Gomobile 工具链重复安装由 2 次减少至 1 次
+* Windows 核心辅助编译由 3 次收敛为 1 次
+* Release 无效 CI 等待由 5400 秒缩短至约 2 秒
+* 废弃 GitHub Actions 工件清理约 7191 MiB
+* Sniff 性能回归覆盖时间与内存分配指标
+* 上传调度对比覆盖 p50、p95、p99 与吞吐量
+* XHTTP 吞吐对照覆盖 0–200ms RTT
+* GC 对照记录吞吐、循环次数、暂停时间与峰值内存
+* 大规模规则集测试区分常驻内存与加载峰值
+* Direct Offload 零分配由测试断言保护
+
+十一、专项 Bug 修复
+
+* 修复 MASQUE Capsule 二次方复杂度导致的约 800 倍 CPU 放大
+* 修复 MASQUE Capsule 恶意大规模条目导致的 17.65 MiB 堆占用
+* 修复 TLS Sniff 不必要完整握手造成的 CPU 与内存浪费
+* 修复 QUIC Sniff 重复 Reader 构造与无效缓冲分配
+* 修复 Sniff 异常数据引起的缓冲区持续驻留
+* 修复 Direct Offload 关闭 Debug 时仍执行日志分配
+* 修复上传调度仅调整发送顺序却无法改善接收延迟的问题
+* 修复上传整形大块写入未正确计入未来带宽债务的风险
+* 修复网络代际切换时候选计划重复读取网络状态
+* 修复睡眠期间 DNS 乐观后台刷新持续唤醒网络
+* 修复睡眠期间 Dashboard 周期下载未被抑制
+* 修复 Apple 睡眠周期被多次 Resume 错误截断
+* 修复 CI 重复编译与工具链重复安装
+* 修复 Release 长时间等待不存在的 CI 运行
+
+详细清单
 一、代理协议与传输层
 
 * MASQUE HTTP/2、HTTP/3 支持
