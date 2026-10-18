@@ -209,3 +209,32 @@ func TestThePresentmentNeverContradictsTheSameObservation(t *testing.T) {
 		}
 	}
 }
+
+// TestLoopbackIsNotAddressing is the one address a naive scope classifier calls global.
+//
+// ::1 never leaves the host, so it cannot make any destination reachable and must not be counted as
+// global addressing - the case matters because "global address, no route" is one of the three shapes
+// that suppress. The presentment stays PRESENT here, and that is the fail-open rule rather than an
+// oversight: the family state counts ::1 as IPv6 provisioning, so this shape is unproven, and an
+// unproven family is never suppressed.
+func TestLoopbackIsNotAddressing(t *testing.T) {
+	interfaces := []InterfaceObservation{observation("en0", "192.0.2.10/24", "::1/128")}
+	require.Equal(t, AddressingNone, ClassifyIPv6Addressing(interfaces))
+	require.Equal(t, StateProvisioned, Evaluate(interfaces).IPv6,
+		"the family state counts any IPv6 address, which is why the shape is classified separately")
+	require.Equal(t, PresentIPv6,
+		ProjectIPv6Presentment(Evaluate(interfaces), ClassifyIPv6Addressing(interfaces)),
+		"an unproven shape must not suppress")
+}
+
+// TestALoopbackOnlyInterfaceIsNotUsableAtAll is the control at the layer above: an interface whose
+// entire address set is loopback is removed before the shape is classified, so it cannot contribute
+// either family.
+func TestALoopbackOnlyInterfaceIsNotUsableAtAll(t *testing.T) {
+	interfaces := []InterfaceObservation{observation("lo", "127.0.0.1/8", "::1/128")}
+	usable, ok := UsableInterfaces(interfaces, nil)
+	require.False(t, ok, "a loopback-only interface is always up and always dual-stack; keeping it "+
+		"would make 'no interface carries this family' unreachable on every machine")
+	require.Empty(t, usable)
+	require.Equal(t, AddressingUnknown, ClassifyIPv6Addressing(usable))
+}

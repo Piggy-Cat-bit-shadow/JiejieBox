@@ -163,6 +163,11 @@ func ClassifyIPv6Addressing(interfaces []InterfaceObservation) IPv6Addressing {
 				continue
 			}
 			switch {
+			case address.IsLoopback():
+				// A loopback address never leaves the host, so it cannot make a destination
+				// reachable and it is not global addressing however global-looking the classifier
+				// would otherwise find it. ::1 is the one address that would slip through the two
+				// cases below.
 			case address.IsLinkLocalUnicast():
 				linkLocal = true
 			case address.IsPrivate():
