@@ -252,6 +252,15 @@ disabled, the route-set IPv6 prefix re-enabled, the commit-site deliverability g
 projection forced to suppress, the loopback case removed, the proxy-only fast path disabled, the
 demand predicate un-mapped - and each mutation turns at least one of them red.
 
+Three more things were closed by the same pass: the TUN-side demand helper that the box-level
+summary had already replaced is deleted (a second copy of the same predicates is a second place for
+them to drift); the startup tests now supply the platform delivery answer through the existing test
+seam, because they would otherwise have passed only on Windows/Linux runners while the repo also
+builds Apple artifacts; and a 300-query concurrent AAAA burst asserts that the gate stays local under
+load. The new exported type in `option` was also checked against the generated-schema contract:
+regenerating the schema produces a byte-identical `docs/schema.json`, and the demand summary is not
+part of the reachable option graph, so no regeneration is owed.
+
 ### Open risks (not fixed, and why)
 
 | risk | impact | mitigation today | shortest next step |
