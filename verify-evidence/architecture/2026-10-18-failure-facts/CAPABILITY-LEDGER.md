@@ -15,7 +15,7 @@ or reference-client claim.
 | Hysteria2 | `protocol/hysteria2.Outbound` | own QUIC | `InterfaceUpdated` | idle keeper | no producer | Existing. |
 | TUIC | `protocol/tuic.Outbound` | own QUIC | `InterfaceUpdated` | idle keeper | no producer | Existing. |
 | WireGuard | `protocol/wireguard.Endpoint` | own device | `InterfaceUpdated`, `SetKeepIdleConnections` | no generic idle keeper | no producer | Device wake/suspend is endpoint-owned. |
-| Groups | `protocol/group` | route resolves leaf | leaf owns generation | leaf owns idle | **consumer added this round** | Group policy uses facts without owning resources. |
+| Groups | `protocol/group` | route resolves leaf | leaf owns generation | leaf owns idle | **consumer added this round** | LoadBalance retry/penalty and URLTest health both use facts without owning resources. |
 
 ## What the audit actually found
 

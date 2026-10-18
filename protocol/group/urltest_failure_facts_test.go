@@ -119,3 +119,52 @@ func TestARealDialFailureStillDeletesTheHealthEvidence(t *testing.T) {
 		})
 	}
 }
+
+// TestATargetFactLeavesTheHealthEvidenceAlone covers the fourth "not the
+// node" condition: the member carried the probe, but the destination refused
+// or the local configuration rejected the request. The existing condition
+// family is about a measurement that never happened; this one is about a
+// measurement that happened against a third party. In both cases the member's
+// own path is not the thing that failed.
+func TestATargetFactLeavesTheHealthEvidenceAlone(t *testing.T) {
+	member := &probeMarkingOutbound{
+		tag: "node",
+		dialErr: adapter.WrapFailure(
+			errors.New("server returned socks5 error code 2"),
+			adapter.TargetFailureFacts(),
+		),
+	}
+	group, storage := newGroupFixture(t, "https://probe.example/generate_204", member)
+	scope, err := urltest.NewMeasurementScope("https://probe.example/generate_204", nil)
+	require.NoError(t, err)
+
+	previous := &adapter.URLTestHistory{Time: time.Now(), Delay: 42}
+	storage.StoreHealthHistory("node", scope, previous)
+	group.CheckOutbounds(context.Background(), true)
+
+	after := storage.LoadURLTestHistoryFor("node", scope)
+	require.NotNil(t, after, "a target failure must not delete the member's last valid measurement")
+	require.EqualValues(t, previous.Delay, after.Delay)
+}
+
+// TestATargetFactIsNotAPathFact is the positive control for the test above:
+// the same errno wrapped with a Path fact must still invalidate the
+// measurement, so the target branch cannot become "never delete anything".
+func TestATargetFactIsNotAPathFact(t *testing.T) {
+	member := &probeMarkingOutbound{
+		tag: "node",
+		dialErr: adapter.WrapFailure(
+			syscall.ECONNREFUSED,
+			adapter.PathFailureFacts(adapter.FailureStageDial),
+		),
+	}
+	group, storage := newGroupFixture(t, "https://probe.example/generate_204", member)
+	scope, err := urltest.NewMeasurementScope("https://probe.example/generate_204", nil)
+	require.NoError(t, err)
+
+	storage.StoreHealthHistory("node", scope, &adapter.URLTestHistory{Time: time.Now(), Delay: 42})
+	group.CheckOutbounds(context.Background(), true)
+
+	require.Nil(t, storage.LoadURLTestHistoryFor("node", scope),
+		"a proved path failure must still invalidate the stale measurement")
+}

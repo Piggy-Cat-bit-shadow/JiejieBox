@@ -1178,6 +1178,17 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval 
 						b.logger.Debug("outbound ", tag, " not measured: ", testErr)
 						return nil, nil
 					}
+					if facts, hasFacts := adapter.FailureFactsOf(testErr); hasFacts {
+						switch facts.Origin {
+						case adapter.FailureOriginTarget, adapter.FailureOriginLocal:
+							// A target that refused the probe URL, or a local
+							// policy/configuration failure, is not evidence that this member's
+							// proxy path is down. Remove nothing: the next probe or the next
+							// real demand can still use the last valid measurement.
+							b.logger.Debug("outbound ", tag, " measurement target/local failure, health left alone: ", testErr)
+							return nil, nil
+						}
+					}
 					b.logger.Debug("outbound ", tag, " unavailable: ", testErr)
 					if b.mode == TestHistoryHealth {
 						// Only this target's health result is removed. The display entry is left

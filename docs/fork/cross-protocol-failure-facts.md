@@ -70,6 +70,11 @@ when present:
 own-teardown checks ahead of any fact: a producer that attached a Path fact to
 `context.Canceled` or `net.ErrClosed` still cannot demote a member.
 
+`URLTestGroup` also consumes the same facts on a failed probe: a Target or
+Local fact leaves the member's last health measurement alone (the probe target
+or this machine failed, not the node); a Path fact still invalidates it. This
+is the health-layer counterpart of the group retry/penalty rule.
+
 The facts are read **only on the failure path**. Success paths allocate no
 facts and add no lock/timer/goroutine.
 
