@@ -1,4 +1,4 @@
-# Adversarial debug report — failure facts
+# Adversarial debug report 鈥?failure facts
 
 Scope: the cross-protocol failure-fact change (`adapter/failure.go`,
 `protocol/group/loadbalance_failover.go`, `protocol/mieru`). This report is
@@ -19,7 +19,7 @@ Mieru fallback / single-client dial
 No resource owner changed. Facts live on the per-attempt error, never on a
 shared outbound; no fact is recorded on success.
 
-## D-01 — P1: a fact must not override the timeout conservatism
+## D-01 鈥?P1: a fact must not override the timeout conservatism
 
 ### Reproduction
 
@@ -55,6 +55,23 @@ still returns true for the timeout (another member may help), exactly as before.
   `retry: true, global: false`; `path dial fact on ECONNREFUSED` has
   `global: true`.
 - The end-to-end target/path fact tests prove the non-timeout branches.
+
+## D-02 — P2: cancellation/teardown must stay ahead of any fact
+
+### Reproduction
+
+`PenalizeMemberGlobally` checked the fact before the existing caller/own-teardown
+invariant. A protocol that attached a `Path` fact to `context.Canceled` or
+`net.ErrClosed` could make the group demote a member for an operation the
+caller or this process ended. The fact would be structurally wrong, but the
+consumer must not rely on every producer being correct.
+
+### Fix
+
+The function now returns `false` for `adapter.IsCallerCancellation` and
+`adapter.IsOwnTeardown` before reading facts. The fact table gained two rows:
+`path fact on cancellation` and `path fact on own teardown`. This preserves the
+old cancellation attribution and the "not measured" invariant.
 
 ## Adversarial findings reviewed, no code change
 

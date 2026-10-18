@@ -278,6 +278,12 @@ func PenalizeMemberGlobally(member adapter.Outbound, err error) bool {
 	if err == nil || member == nil {
 		return false
 	}
+	if adapter.IsCallerCancellation(err) || adapter.IsOwnTeardown(err) {
+		// A protocol may attach a stage fact to an error that this process or
+		// the caller caused. Neither is evidence against the member; keep the
+		// existing cancellation/teardown invariant ahead of the fact policy.
+		return false
+	}
 	if facts, hasFacts := adapter.FailureFactsOf(err); hasFacts {
 		switch facts.Origin {
 		case adapter.FailureOriginTarget, adapter.FailureOriginCaller,

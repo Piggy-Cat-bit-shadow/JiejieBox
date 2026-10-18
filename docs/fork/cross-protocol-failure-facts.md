@@ -66,6 +66,10 @@ when present:
 | Path data | fall through (EOF -> false) | false |
 | Unknown/no fact | existing errno rules | existing errno rules |
 
+`PenalizeMemberGlobally` keeps the existing caller-cancellation and
+own-teardown checks ahead of any fact: a producer that attached a Path fact to
+`context.Canceled` or `net.ErrClosed` still cannot demote a member.
+
 The facts are read **only on the failure path**. Success paths allocate no
 facts and add no lock/timer/goroutine.
 
