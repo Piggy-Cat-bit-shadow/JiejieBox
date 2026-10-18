@@ -400,7 +400,7 @@ jobs:
         run: |
           set -euo pipefail
           tags="$(cat release/DEFAULT_BUILD_TAGS)"
-          go test -race -count=1 -timeout 30m -tags "$tags" ./common/trafficclass/... ./common/trafficsched/... ./common/dialer/... ./protocol/direct/... ./protocol/tun/... ./route/... ./adapter/...
+          go test -race -count=1 -timeout 30m -tags "$tags" ./common/trafficclass/... ./common/trafficsched/... ./common/dialer/... ./protocol/direct/... ./protocol/mieru/... ./protocol/tun/... ./route/... ./adapter/...
 
       - name: race on the configuration surface
         # The configuration surface is a separate step because the `option` package's TEST
