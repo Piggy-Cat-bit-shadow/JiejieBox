@@ -2,7 +2,7 @@
 
 **Scope:** the application-facing half of the address-family work. The dial-side gate
 (`netcap.HardUndialable` through `common/dialer`) already exists and is unchanged; this document
-describes the layer In front of it, which decides what the process *tells applications* about IPv6.
+describes the layer in front of it, which decides what the process *tells applications* about IPv6.
 
 Status: implemented and unit-tested on `testing`. Platform clients (Apple, Android) were **not**
 built or run - see [Limits](#limits-and-what-was-not-verified).
