@@ -41,6 +41,7 @@ var (
 	_ adapter.NetworkTransitionState             = (*NetworkManager)(nil)
 	_ adapter.NetworkTransitionSnapshotter       = (*NetworkManager)(nil)
 	_ adapter.NetworkFamilyCapabilitySnapshotter = (*NetworkManager)(nil)
+	_ adapter.IPv6EntryPresenter                 = (*NetworkManager)(nil)
 )
 
 type NetworkManager struct {
@@ -216,6 +217,38 @@ type NetworkManager struct {
 	// It is atomic because it is read on the dial path, where taking stateAccess would put every
 	// dial behind every transition.
 	familyCapability atomic.Pointer[adapter.NetworkFamilyCapability]
+	// entryPresentment is what the application-facing entries present about IPv6: the TUN's
+	// effective addressing and, through the same value, whether an application-side AAAA query is
+	// answered or refused.
+	//
+	// # Why a latch and not a live projection
+	//
+	// The dial verdict above is live because a dial is judged per attempt and can be re-read. An
+	// entry cannot: the TUN's addressing is fixed when the interface is opened, and no platform
+	// built from this tree offers a cheap in-place update of it. So the value is published ONCE, by
+	// this manager's own startup observation, and read back unchanged for the life of the box. A
+	// live projection here would let DNS approve AAAA answers for an IPv6 the interface is not
+	// carrying.
+	//
+	// The one later write is a correction by the entry that could not apply the decision - an
+	// IPv6-only interface that cannot be reduced without losing its only address - and it describes
+	// the interface that is really in use.
+	//
+	// It is not part of the ownership protocol and it does not move with the network epoch: the
+	// decision belongs to the box that applied it, and a later network change does not silently
+	// rewrite an interface that is already open.
+	//
+	// Nil means "no decision was taken", which is every configuration with no IPv6 demand and every
+	// test double; the reader answers netcap.PresentIPv6 for it, so the previous behaviour is
+	// preserved exactly.
+	entryPresentment atomic.Pointer[netcap.IPv6Presentment]
+	// entryDemand records whether the configuration has any application-facing surface that can
+	// present IPv6 at all. It is set once, by the box, from the assembled typed options before the
+	// start sequence runs; false means this manager never observes anything for the entry decision.
+	//
+	// It is a plain bool rather than an atomic because it is written before Start and read inside
+	// Start, on the same goroutine, and nothing else reads it.
+	entryDemand bool
 	// transitionAccess guards the ownership pair (transitionOwner, transitionStable) so that
 	// claiming, checking ownership and settling are each a single atomic mutation.
 	//
@@ -440,6 +473,20 @@ func (r *NetworkManager) Start(stage adapter.StartStage, scope *adapter.Scope) e
 			})
 		}
 	case adapter.StartStateStart:
+		// The entry decision is taken HERE, before any inbound exists, when the configuration has an
+		// application-facing surface that can present IPv6 at all. It is the last moment at which a
+		// read-only observation is still cheap and still describes the network the box is starting
+		// on: the manager's first environment boundary is established at the END of Box.Start, after
+		// the TUN has been opened, so the published snapshot is not available yet.
+		//
+		// It runs in this stage rather than in the TUN because the decision also governs the
+		// application-facing DNS answer, which must be consistent with an interface the TUN may not
+		// even be carrying: a configuration whose TUN presents no IPv6 can still hand applications a
+		// synthetic AAAA through Fake-IP. The TUN then consumes the decision; see
+		// protocol/tun/entry_ipv6.go.
+		if r.entryDemand {
+			r.observeEntryPresentment()
+		}
 		if C.IsAndroid && r.platformInterface == nil {
 			monitor.Start("initialize package manager")
 			packageManager, err := tun.NewPackageManager(tun.PackageManagerOptions{

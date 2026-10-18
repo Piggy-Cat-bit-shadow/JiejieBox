@@ -103,14 +103,7 @@ func (r *NetworkManager) localFamilyCapability() netcap.FamilyCapability {
 	// belong to ONE observation of ONE network - which is what lets them be published, owned and
 	// superseded together.
 	globalRoute := r.machineGlobalIPv6Route()
-	observations := common.Map(interfaces, func(it adapter.NetworkInterface) netcap.InterfaceObservation {
-		return netcap.InterfaceObservation{
-			Name:            it.Interface.Name,
-			Up:              it.Interface.Flags&net.FlagUp != 0,
-			Addresses:       it.Interface.Addresses,
-			GlobalIPv6Route: globalRoute,
-		}
-	})
+	observations := r.familyObservations(interfaces, globalRoute)
 	usable, ok := netcap.UsableInterfaces(observations, ownInterfaces)
 	if !ok {
 		// There is no usable interface to look at, so there is nothing to conclude. Reporting
@@ -120,6 +113,22 @@ func (r *NetworkManager) localFamilyCapability() netcap.FamilyCapability {
 		return netcap.FamilyCapability{}
 	}
 	return netcap.Evaluate(usable)
+}
+
+// familyObservations reduces the manager's interface list to the model's input.
+//
+// It exists so that the dial verdict and the entry presentment are computed from ONE mapping of ONE
+// list: the two answers describe the same machine, and a second copy of this loop would be a second
+// place for a future term to be added to only one of them.
+func (r *NetworkManager) familyObservations(interfaces []adapter.NetworkInterface, globalRoute netcap.RouteObservation) []netcap.InterfaceObservation {
+	return common.Map(interfaces, func(it adapter.NetworkInterface) netcap.InterfaceObservation {
+		return netcap.InterfaceObservation{
+			Name:            it.Interface.Name,
+			Up:              it.Interface.Flags&net.FlagUp != 0,
+			Addresses:       it.Interface.Addresses,
+			GlobalIPv6Route: globalRoute,
+		}
+	})
 }
 
 // storeFamilyCapability writes the verdict published with the current network generation.

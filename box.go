@@ -583,6 +583,12 @@ func New(options Options) (*Box, error) {
 	if err != nil {
 		return nil, E.Cause(err, "initialize network manager")
 	}
+	// The entry demand is a fact about the ASSEMBLED configuration, so it is resolved here, once,
+	// where the typed inbound and DNS options are both in scope, and handed to the one component that
+	// owns the network facts. A configuration with no application-facing IPv6 surface sets false and
+	// the whole adaptive entry system - the startup observation, the route-table read, the decision
+	// and its consumers - takes the fast path that does nothing. See option/ipv6_entry.go.
+	networkManager.SetIPv6EntryDemand(option.ResolveIPv6EntryDemand(options.Options).Required())
 	service.MustRegister[adapter.NetworkManager](ctx, networkManager)
 	// Must register after ConnectionManager: the Apple HTTP engine's proxy bridge reads it from the context when Manager.Start resolves the default client.
 	httpClientManager := httpclient.NewManager(ctx, logFactory.NewLogger("httpclient"), options.HTTPClients, routeOptions.DefaultHTTPClient)

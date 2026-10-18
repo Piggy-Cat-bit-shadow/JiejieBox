@@ -196,6 +196,63 @@ type NetworkFamilyCapabilitySnapshotter interface {
 	NetworkFamilyCapabilitySnapshot() (epoch uint64, stable bool, capability NetworkFamilyCapability)
 }
 
+// IPv6EntryPresentmentReader reports what the application-facing entries present about IPv6.
+//
+// # What this is, and what it is not
+//
+// It is the ENTRY question: "should this process tell applications that IPv6 works?" It is not the
+// dial question, which stays `netcap.HardUndialable` per destination. The two are answered from the
+// same observed facts, but they are consumed at different places and one is much coarser than the
+// other: an attempt is judged per destination and per socket, while an entry is judged once for
+// everything the application can see.
+//
+// # Why it is a latch rather than a live projection
+//
+// The decision a READER needs is the decision the entries are actually applying, not the one the
+// network currently justifies. Those differ for exactly one reason: the TUN's addressing is fixed
+// when the interface is opened, and no platform in this tree offers a cheap in-place update of it.
+// A reader that recomputed the decision from live facts would therefore approve AAAA answers for
+// an IPv6 the TUN is not carrying - the split where DNS says the family is back and the interface
+// still has no address for it. The reader returns the value the entry layer committed, so the two
+// halves of the pipeline cannot disagree.
+//
+// A manager that does not implement this keeps its previous behaviour exactly: nothing is
+// suppressed, and no entry has to know whether a manager is present.
+type IPv6EntryPresentmentReader interface {
+	// IPv6EntryPresentment returns the presentment the entries committed for this box, or
+	// netcap.PresentIPv6 when nothing was committed.
+	IPv6EntryPresentment() netcap.IPv6Presentment
+}
+
+// IPv6EntryPresenter is implemented by the network manager that owns the entry decision: it both
+// records what the entries applied and answers what they are applying.
+//
+// # Why one interface and not two
+//
+// The writer is only ever the component that also reads it - the TUN applies the decision to its
+// effective options and, in the one case it cannot apply it, says so. Splitting the read and the
+// write would let a consumer take the writer half without the read half and commit a decision it
+// cannot see, which is the shape of a split state rather than a use case.
+//
+// # Who commits, and in what order
+//
+// The manager itself commits the startup projection (see SetIPv6EntryDemand), and the entry that
+// applies it commits again only to correct it - when the configured options cannot be reduced to a
+// working IPv4-only interface, the interface still presents IPv6 and the recorded decision must say
+// so. Those are the only two writers, and their order is fixed by the start sequence: the manager's
+// observation runs before any inbound starts.
+//
+// A manager that does not implement this keeps its previous behaviour exactly: nothing is
+// suppressed and no entry has to know whether a manager is present.
+type IPv6EntryPresenter interface {
+	// IPv6EntryPresentment returns the presentment the entries are applying, or
+	// netcap.PresentIPv6 when no decision was taken.
+	IPv6EntryPresentment() netcap.IPv6Presentment
+	// CommitIPv6EntryPresentment records the presentment now in force. The latest commit wins; see
+	// the ordering rule above.
+	CommitIPv6EntryPresentment(presentment netcap.IPv6Presentment)
+}
+
 type NetworkOptions struct {
 	BindInterface        string
 	RoutingMark          uint32
