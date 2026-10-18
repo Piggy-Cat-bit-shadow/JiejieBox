@@ -3,6 +3,9 @@ package dns
 import (
 	"context"
 	"net/netip"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -280,4 +283,45 @@ func TestTheGateItselfDoesNotAllocate(t *testing.T) {
 	require.Zero(t, testing.AllocsPerRun(1000, func() {
 		_ = router.applicationEntrySuppressesIPv6(context.Background())
 	}))
+}
+
+// TestConcurrentSuppressedQueriesStayLocal is the load half of D14, at the layer this round
+// controls.
+//
+// The TUN's own admission limiter (dnsHijackConcurrency) is untouched and is tested where it lives.
+// What a burst can still break here is the gate itself: it reads the committed value per query, so
+// the test drives 300 concurrent application AAAA questions through one router and requires that
+// every one is answered locally, none reaches a transport, and no answer is malformed. A gate that
+// consulted a shared mutable plan, took a write lock or allocated per query would show up as a
+// failure or a race report (the race build is unavailable in this environment; the topology is one
+// atomic load and no shared write).
+func TestConcurrentSuppressedQueriesStayLocal(t *testing.T) {
+	router, transport := entryGateRouter(t, presentmentReaderStub{presentment: netcap.SuppressIPv6})
+	ctx := tunQueryContext(C.TypeTun)
+
+	const queries = 300
+	var (
+		waitGroup sync.WaitGroup
+		failures  atomic.Int32
+	)
+	for index := 0; index < queries; index++ {
+		waitGroup.Add(1)
+		go func(index int) {
+			defer waitGroup.Done()
+			name := "example" + strconv.Itoa(index) + ".com."
+			response, err := router.Exchange(ctx, newQuestion(name, mDNS.TypeAAAA), adapter.DNSQueryOptions{})
+			if err != nil || response == nil {
+				failures.Add(1)
+				return
+			}
+			if response.Rcode != mDNS.RcodeSuccess || len(response.Answer) != 0 || len(response.Question) != 1 {
+				failures.Add(1)
+			}
+		}(index)
+	}
+	waitGroup.Wait()
+
+	require.Zero(t, failures.Load(), "%d of %d concurrent suppressed queries were not answered as NODATA", failures.Load(), queries)
+	require.EqualValues(t, 0, transport.queryCount.Load(),
+		"a concurrent AAAA burst reached the transport: the gate is not the only path")
 }
