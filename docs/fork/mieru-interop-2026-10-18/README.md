@@ -29,7 +29,7 @@ same probe, so the result lines are directly comparable.
 
 | Log pair | Direction | Client config | Result |
 | --- | --- | --- | --- |
-| `client.log` + `server.log` | official `mieru.exe` → this inbound | TCP + UDP bindings, `MULTIPLEXING_HIGH`, default handshake | `PASS tcp`, `PASS udp` |
+| `client-high.log` + `server-high.log` | official `mieru.exe` → this inbound | TCP + UDP bindings, `MULTIPLEXING_HIGH`, default handshake | `PASS tcp`, `PASS udp` |
 | `client-udp-nowait.log` + `server.log` | official `mieru.exe` → this inbound | UDP-only binding, `MULTIPLEXING_OFF`, `HANDSHAKE_NO_WAIT` | `PASS tcp`, `PASS udp` |
 | `our-client.log` + `official-server.log` | this outbound → official server | `transport: both`, `multiplexing: high` | `PASS tcp`, `PASS udp` |
 | `our-client-udp.log` + `official-server.log` | this outbound → official server | `transport: udp`, `handshake_mode: no_wait`, `multiplexing: off` | `PASS tcp`, `PASS udp` |
