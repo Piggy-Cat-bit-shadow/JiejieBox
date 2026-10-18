@@ -10,6 +10,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/redir"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/buf"
 	sBufio "github.com/sagernet/sing/common/bufio"
 	"github.com/sagernet/sing/common/control"
@@ -26,44 +27,60 @@ func (l *Listener) ListenUDP() (net.PacketConn, error) {
 }
 
 func (l *Listener) ListenUDPWithConfig(listenConfig net.ListenConfig) (net.PacketConn, error) {
-	bindAddr := M.SocksaddrFrom(l.listenOptions.Listen.Build(netip.AddrFrom4([4]byte{127, 0, 0, 1})), l.listenOptions.ListenPort)
-	if l.listenOptions.BindInterface != "" {
-		listenConfig.Control = control.Append(listenConfig.Control, control.BindToInterface(service.FromContext[adapter.NetworkManager](l.ctx).InterfaceFinder(), l.listenOptions.BindInterface, -1))
+	udpConn, err := ListenUDPWithOptions(l.ctx, l.listenOptions, l.listenOptions.ListenPort, l.tproxy, listenConfig)
+	if err != nil {
+		return nil, err
 	}
-	if l.listenOptions.RoutingMark != 0 {
-		listenConfig.Control = control.Append(listenConfig.Control, control.RoutingMark(uint32(l.listenOptions.RoutingMark)))
+	l.udpConn = udpConn.(*net.UDPConn)
+	l.udpAddr = M.SocksaddrFrom(l.listenOptions.Listen.Build(netip.AddrFrom4([4]byte{127, 0, 0, 1})), l.listenOptions.ListenPort)
+	l.logger.Info("udp server started at ", udpConn.LocalAddr())
+	return udpConn, nil
+}
+
+// ListenUDPWithOptions opens a UDP socket with the socket semantics of the
+// given ListenOptions, on an explicit port, with a caller-supplied base
+// ListenConfig.
+//
+// It is the same code path as (*Listener).ListenUDPWithConfig and exists for
+// the same reason as ListenTCPWithOptions: a protocol SDK that creates its own
+// sockets through a listener factory must still be governed by the inbound's
+// listen options.
+func ListenUDPWithOptions(ctx context.Context, listenOptions option.ListenOptions, port uint16, tproxy bool, listenConfig net.ListenConfig) (net.PacketConn, error) {
+	bindAddr := M.SocksaddrFrom(listenOptions.Listen.Build(netip.AddrFrom4([4]byte{127, 0, 0, 1})), port)
+	if listenOptions.BindInterface != "" {
+		listenConfig.Control = control.Append(listenConfig.Control, control.BindToInterface(service.FromContext[adapter.NetworkManager](ctx).InterfaceFinder(), listenOptions.BindInterface, -1))
 	}
-	if l.listenOptions.ReuseAddr {
+	if listenOptions.RoutingMark != 0 {
+		listenConfig.Control = control.Append(listenConfig.Control, control.RoutingMark(uint32(listenOptions.RoutingMark)))
+	}
+	if listenOptions.ReuseAddr {
 		listenConfig.Control = control.Append(listenConfig.Control, control.ReuseAddr())
 	}
 	var udpFragment bool
-	if l.listenOptions.UDPFragment != nil {
-		udpFragment = *l.listenOptions.UDPFragment
+	if listenOptions.UDPFragment != nil {
+		udpFragment = *listenOptions.UDPFragment
 	} else {
-		udpFragment = l.listenOptions.UDPFragmentDefault
+		udpFragment = listenOptions.UDPFragmentDefault
 	}
 	if udpFragment {
 		listenConfig.Control = control.Append(listenConfig.Control, control.EnableUDPFragment())
 	} else {
 		listenConfig.Control = control.Append(listenConfig.Control, control.DisableUDPFragment())
 	}
-	if l.tproxy {
+	if tproxy {
 		listenConfig.Control = control.Append(listenConfig.Control, func(network, address string, conn syscall.RawConn) error {
 			return control.Raw(conn, func(fd uintptr) error {
 				return redir.TProxy(fd, !strings.HasSuffix(network, "4"), true)
 			})
 		})
 	}
-	udpConn, err := ListenNetworkNamespace[net.PacketConn](l.ctx, l.listenOptions.NetNs, func() (net.PacketConn, error) {
-		return listenConfig.ListenPacket(l.ctx, NetworkWithAddressFamily(N.NetworkUDP, bindAddr.Addr), bindAddr.String())
+	udpConn, err := ListenNetworkNamespace[net.PacketConn](ctx, listenOptions.NetNs, func() (net.PacketConn, error) {
+		return listenConfig.ListenPacket(ctx, NetworkWithAddressFamily(N.NetworkUDP, bindAddr.Addr), bindAddr.String())
 	})
 	if err != nil {
 		return nil, err
 	}
-	l.udpConn = udpConn.(*net.UDPConn)
-	l.udpAddr = bindAddr
-	l.logger.Info("udp server started at ", udpConn.LocalAddr())
-	return udpConn, err
+	return udpConn, nil
 }
 
 func (l *Listener) DialContext(dialer net.Dialer, ctx context.Context, network string, address string) (net.Conn, error) {

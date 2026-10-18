@@ -1,6 +1,7 @@
 package listener
 
 import (
+	"context"
 	"net"
 	"net/netip"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/sagernet/sing-box/common/redir"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/control"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
@@ -21,31 +23,53 @@ import (
 )
 
 func (l *Listener) ListenTCP() (net.Listener, error) {
+	tcpListener, err := ListenTCPWithOptions(l.ctx, l.listenOptions, l.listenOptions.ListenPort, l.tproxy)
+	if err != nil {
+		return nil, err
+	}
+	l.logger.Info("tcp server started at ", tcpListener.Addr())
+	l.tcpListener = tcpListener
+	return tcpListener, nil
+}
+
+// ListenTCPWithOptions opens a TCP listener with the socket semantics of the
+// given ListenOptions, on an explicit port.
+//
+// It is the same code path as (*Listener).ListenTCP, exposed so an inbound
+// whose sockets are created by a protocol SDK (Mieru's listener factories)
+// applies ListenOptions for real instead of accepting the configuration and
+// silently ignoring it.
+//
+// The address comes from listenOptions.Listen (the configuration's listen
+// field), not from a caller-supplied address: a factory receives the SDK's
+// resolved endpoint, whose IP is derived from the same field a moment earlier,
+// and honouring one of them here would be a second source of truth.
+func ListenTCPWithOptions(ctx context.Context, listenOptions option.ListenOptions, port uint16, tproxy bool) (net.Listener, error) {
 	//nolint:staticcheck
-	if l.listenOptions.ProxyProtocol || l.listenOptions.ProxyProtocolAcceptNoHeader {
+	if listenOptions.ProxyProtocol || listenOptions.ProxyProtocolAcceptNoHeader {
 		return nil, E.New("Proxy Protocol is deprecated and removed in sing-box 1.6.0")
 	}
 	var err error
-	bindAddr := M.SocksaddrFrom(l.listenOptions.Listen.Build(netip.AddrFrom4([4]byte{127, 0, 0, 1})), l.listenOptions.ListenPort)
+	bindAddr := M.SocksaddrFrom(listenOptions.Listen.Build(netip.AddrFrom4([4]byte{127, 0, 0, 1})), port)
 	var listenConfig net.ListenConfig
-	if l.listenOptions.BindInterface != "" {
-		listenConfig.Control = control.Append(listenConfig.Control, control.BindToInterface(service.FromContext[adapter.NetworkManager](l.ctx).InterfaceFinder(), l.listenOptions.BindInterface, -1))
+	if listenOptions.BindInterface != "" {
+		listenConfig.Control = control.Append(listenConfig.Control, control.BindToInterface(service.FromContext[adapter.NetworkManager](ctx).InterfaceFinder(), listenOptions.BindInterface, -1))
 	}
-	if l.listenOptions.RoutingMark != 0 {
-		listenConfig.Control = control.Append(listenConfig.Control, control.RoutingMark(uint32(l.listenOptions.RoutingMark)))
+	if listenOptions.RoutingMark != 0 {
+		listenConfig.Control = control.Append(listenConfig.Control, control.RoutingMark(uint32(listenOptions.RoutingMark)))
 	}
-	if l.listenOptions.ReuseAddr {
+	if listenOptions.ReuseAddr {
 		listenConfig.Control = control.Append(listenConfig.Control, control.ReuseAddr())
 	}
-	if l.listenOptions.DisableTCPKeepAlive {
+	if listenOptions.DisableTCPKeepAlive {
 		listenConfig.KeepAlive = -1
 		listenConfig.KeepAliveConfig.Enable = false
 	} else {
-		keepIdle := time.Duration(l.listenOptions.TCPKeepAlive)
+		keepIdle := time.Duration(listenOptions.TCPKeepAlive)
 		if keepIdle == 0 {
 			keepIdle = C.TCPKeepAliveInitial
 		}
-		keepInterval := time.Duration(l.listenOptions.TCPKeepAliveInterval)
+		keepInterval := time.Duration(listenOptions.TCPKeepAliveInterval)
 		if keepInterval == 0 {
 			keepInterval = C.TCPKeepAliveInterval
 		}
@@ -55,31 +79,29 @@ func (l *Listener) ListenTCP() (net.Listener, error) {
 			Interval: keepInterval,
 		}
 	}
-	if l.listenOptions.TCPMultiPath {
+	if listenOptions.TCPMultiPath {
 		listenConfig.SetMultipathTCP(true)
 	}
-	if l.tproxy {
+	if tproxy {
 		listenConfig.Control = control.Append(listenConfig.Control, func(network, address string, conn syscall.RawConn) error {
 			return control.Raw(conn, func(fd uintptr) error {
 				return redir.TProxy(fd, !strings.HasSuffix(network, "4"), false)
 			})
 		})
 	}
-	tcpListener, err := ListenNetworkNamespace[net.Listener](l.ctx, l.listenOptions.NetNs, func() (net.Listener, error) {
-		if l.listenOptions.TCPFastOpen {
+	tcpListener, err := ListenNetworkNamespace[net.Listener](ctx, listenOptions.NetNs, func() (net.Listener, error) {
+		if listenOptions.TCPFastOpen {
 			var tfoConfig tfo.ListenConfig
 			tfoConfig.ListenConfig = listenConfig
-			return tfoConfig.Listen(l.ctx, NetworkWithAddressFamily(N.NetworkTCP, bindAddr.Addr), bindAddr.String())
+			return tfoConfig.Listen(ctx, NetworkWithAddressFamily(N.NetworkTCP, bindAddr.Addr), bindAddr.String())
 		} else {
-			return listenConfig.Listen(l.ctx, NetworkWithAddressFamily(N.NetworkTCP, bindAddr.Addr), bindAddr.String())
+			return listenConfig.Listen(ctx, NetworkWithAddressFamily(N.NetworkTCP, bindAddr.Addr), bindAddr.String())
 		}
 	})
 	if err != nil {
 		return nil, err
 	}
-	l.logger.Info("tcp server started at ", tcpListener.Addr())
-	l.tcpListener = tcpListener
-	return tcpListener, err
+	return tcpListener, nil
 }
 
 func (l *Listener) loopTCPIn() {
