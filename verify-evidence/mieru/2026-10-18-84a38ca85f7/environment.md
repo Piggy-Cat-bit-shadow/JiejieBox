@@ -26,7 +26,8 @@
   Throughput cells are medians of four ABBA rounds, not tail-clean single runs.
 - **Process CPU resolution** is the Windows scheduler tick (~15.6 ms). CPU/GiB is only reported for
   runs that move at least 256 MiB; latency/first-byte CPU columns are meaningless and are ignored.
-- **RSS is sampled** at idle, after each workload, and after close; it is not a peak-RSS counter.
+- **RSS is sampled** at idle and after each workload; it is not a peak-RSS counter
+  and there is no after-close sample.
 - **Product boundaries differ**: the target process contains the sing-box core, a mixed inbound and
   the router; the official process is a dedicated client daemon. RSS and startup include those
   boundaries. Only the UoT framing microbench and the shared-server comparison isolate the adapter.

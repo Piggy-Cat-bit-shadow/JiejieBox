@@ -79,7 +79,7 @@
   "reference_mihomo": {
     "label": "REF-E",
     "description": "Mihomo v1.19.32 Windows amd64, mixed-port SOCKS5 entry, Mieru outbound",
-    "binary": "mihomo-windows-amd64-compatible-v1.19.32.exe",
+    "binary": "mihomo-windows-amd64-compatible.exe",
     "binary_sha256": "04F8D7FC2B314771E1ECBF15951D59F0E1CB7914503C88CFB6972FF6A824E314",
     "version": "v1.19.32",
     "sdk": "github.com/enfein/mieru/v3 v3.38.0",

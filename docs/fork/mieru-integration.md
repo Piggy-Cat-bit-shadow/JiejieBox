@@ -198,8 +198,8 @@ latency samples.
   lifecycle simplification, not sold as a speedup.
 - Mihomo v1.19.32 (Mieru SDK v3.38.0) ran as a product comparison: target/Mihomo
   throughput is 1.07x on low-mux TCP download, 0.95x on low-mux TCP upload,
-  0.85x on high-mux TCP upload, 1.27x on UDP-transport upload, and 1.02-1.05x on
-  UDP echo. The target is not uniformly fastest; Mihomo's high-mux TCP upload
+  0.85x on high-mux TCP upload, 1.27x on UDP-transport upload, and 0.93-1.05x
+  on UDP echo. The target is not uniformly fastest; Mihomo's high-mux TCP upload
   is the strongest reference result. This is not a unified-SDK comparison.
 - mbox, extended, Hiddify and the real `mita` binary are
   `BLOCKED_BY_ENVIRONMENT` here: this Windows host has no WSL distribution, no

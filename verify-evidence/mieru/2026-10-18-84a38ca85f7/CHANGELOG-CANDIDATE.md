@@ -35,7 +35,7 @@ Only claims with raw evidence in this directory. No WAN, device or battery claim
 - TCP P95 latency: 0.98-1.01x. Startup to SOCKS-ready: unchanged within 2 ms.
 - Mihomo v1.19.32 (SDK 3.38.0, product comparison): target/Mihomo 1.07x low-mux
   TCP download, 0.95x low-mux TCP upload, 0.85x high-mux TCP upload, 1.27x
-  UDP-transport upload, 1.02-1.05x UDP echo.
+  UDP-transport upload, 0.93-1.05x UDP echo.
 
 ## Not claimed
 
