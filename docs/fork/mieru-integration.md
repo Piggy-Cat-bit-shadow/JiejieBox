@@ -161,6 +161,11 @@ DONE
 - TCP data path and UDP associate (UoT) in both directions, including both
   underlay transports, `HANDSHAKE_NO_WAIT`, all mux levels, multi-user, and
   `user_hint_is_mandatory` plumbing.
+- Address-shape coverage in the loopback suite: an FQDN destination survives
+  the request and reaches the router; an IPv6 listener and an IPv6 destination
+  work over `::1`; an additional port from `listen_port_ranges` is really
+  bound and served; a domain server name is resolved by the fork's registered
+  DNS router, not by the SDK.
 - Explicit `Stop()` lifecycle, close of established sessions, bounded drain,
   network-change rebuild, listener options applied through the fork's listener
   helpers.
@@ -174,9 +179,16 @@ DONE
 
 PARTIAL
 
-- Inbound port ranges are implemented (`listen_port_ranges`); outbound port
-  ranges are implemented (`server_ports`). A range is expanded by the SDK, so a
-  very large range creates one listener per port — intentional, matching mita.
+- Inbound port ranges are implemented and live-tested (`listen_port_ranges`).
+  Outbound port ranges are translated into SDK endpoints (`server_ports`) and
+  covered by config tests, but the SDK's random endpoint choice was not forced
+  in a live test. A range is expanded by the SDK, so a very large range creates
+  one listener per port — intentional, matching mita.
+- IPv6 is live-tested for the TCP underlay on `::1`; the UDP underlay was
+  live-tested on IPv4 only.
+- Explicit `traffic_pattern` values are decoded, validated and passed to the
+  SDK on both sides, but a non-default pattern was not exercised against an
+  official peer.
 - `InterfaceUpdated` rebuilds the client. It is exercised by the startup
   network observation in the interop logs and by a unit test; a real Wi-Fi ↔
   cellular hand-off was not reproduced on this machine.

@@ -17,6 +17,7 @@ import (
 	"github.com/sagernet/sing/common/json/badoption"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
+	"github.com/sagernet/sing/service"
 
 	"github.com/stretchr/testify/require"
 )
@@ -282,6 +283,133 @@ func TestMieruUDPTransportLoopback(t *testing.T) {
 	metadata := <-router.metadata
 	require.Equal(t, "mieru", metadata.InboundType)
 	require.Equal(t, "alice", metadata.User)
+	require.Equal(t, destination, metadata.Destination)
+}
+
+func TestMieruFQDDestinationRoundTrip(t *testing.T) {
+	port := freePortForBothTransports(t)
+	_, router, _ := startTestInbound(t, inboundOptionsForPort(port, "tcp"))
+	outboundInstance, _ := startTestOutbound(t, outboundOptionsForPort(port, "tcp", "alice", "alice-password"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	destination := M.Socksaddr{Fqdn: "example.com", Port: 443}
+	conn, err := outboundInstance.DialContext(ctx, N.NetworkTCP, destination)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	_, err = conn.Write([]byte("fqdn destination"))
+	require.NoError(t, err)
+	require.Equal(t, []byte("fqdn destination"), readExactWithTimeout(t, conn, len("fqdn destination")))
+
+	metadata := <-router.metadata
+	require.Equal(t, destination, metadata.Destination,
+		"the FQDN must survive the Mieru request and reach the router unchanged")
+}
+
+func freeIPv6PortForBothTransports(t *testing.T) uint16 {
+	t.Helper()
+	listener, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		t.Skip("IPv6 loopback is unavailable: ", err)
+	}
+	port := uint16(listener.Addr().(*net.TCPAddr).Port)
+	require.NoError(t, listener.Close())
+	packetConn, err := net.ListenPacket("udp6", fmt.Sprintf("[::1]:%d", port))
+	if err != nil {
+		t.Skip("IPv6 UDP loopback is unavailable: ", err)
+	}
+	require.NoError(t, packetConn.Close())
+	return port
+}
+
+func TestMieruIPv6Loopback(t *testing.T) {
+	port := freeIPv6PortForBothTransports(t)
+	options := inboundOptionsForPort(port, "tcp")
+	options.ListenOptions.Listen = common.Ptr(badoption.Addr(netip.MustParseAddr("::1")))
+	_, router, _ := startTestInbound(t, options)
+
+	outboundOptions := outboundOptionsForPort(port, "tcp", "alice", "alice-password")
+	outboundOptions.Server = "::1"
+	outboundInstance, _ := startTestOutbound(t, outboundOptions)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	destination := M.ParseSocksaddr("[2001:db8::10]:443")
+	conn, err := outboundInstance.DialContext(ctx, N.NetworkTCP, destination)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	_, err = conn.Write([]byte("ipv6 destination"))
+	require.NoError(t, err)
+	require.Equal(t, []byte("ipv6 destination"), readExactWithTimeout(t, conn, len("ipv6 destination")))
+
+	metadata := <-router.metadata
+	require.Equal(t, destination, metadata.Destination)
+	require.True(t, metadata.Source.Addr.Is6(), "the session source must be the IPv6 loopback")
+}
+
+// TestMieruOutboundDomainServerUsesForkDNS proves the server name is resolved
+// by the fork's dialer rather than by the SDK: the test registers a DNS router
+// that answers the name, sets the outbound server to a name, and expects the
+// connection to reach the loopback listener.
+func TestMieruOutboundDomainServerUsesForkDNS(t *testing.T) {
+	port := freePortForBothTransports(t)
+	startTestInbound(t, inboundOptionsForPort(port, "tcp"))
+	ctx := service.ContextWith[adapter.DNSRouter](context.Background(), &staticDNSRouter{
+		addresses: []netip.Addr{netip.MustParseAddr("127.0.0.1")},
+	})
+
+	options := outboundOptionsForPort(port, "tcp", "alice", "alice-password")
+	options.Server = "mieru.test"
+	created, err := NewOutbound(ctx, nil, nopLogger(), "mieru-out", options)
+	require.NoError(t, err)
+	outboundInstance := created.(*Outbound)
+	scope := adapter.NewScope(ctx, nopLogger())
+	require.NoError(t, outboundInstance.Start(adapter.StartStateStart, scope))
+	defer scope.Close()
+
+	dialCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	conn, err := outboundInstance.DialContext(dialCtx, N.NetworkTCP, M.ParseSocksaddr("192.0.2.99:80"))
+	require.NoError(t, err)
+	defer conn.Close()
+	_, err = conn.Write([]byte("domain server"))
+	require.NoError(t, err)
+	require.Equal(t, []byte("domain server"), readExactWithTimeout(t, conn, len("domain server")))
+}
+
+// TestMieruInboundPortRange proves listen_port_ranges is not just parsed: the
+// additional port is really bound and a client configured for it reaches the
+// same inbound. A one-port range is the minimal form the SDK's range parser
+// accepts, and it keeps the test from depending on two consecutive free ports.
+func TestMieruInboundPortRange(t *testing.T) {
+	primaryPort := freePortForBothTransports(t)
+	var rangePort uint16
+	for attempt := 0; attempt < 32; attempt++ {
+		candidate := freePortForBothTransports(t)
+		if candidate != primaryPort {
+			rangePort = candidate
+			break
+		}
+	}
+	require.NotZero(t, rangePort, "could not find a second free port")
+
+	options := inboundOptionsForPort(primaryPort, "tcp")
+	options.ListenPortRanges = []string{fmt.Sprintf("%d-%d", rangePort, rangePort)}
+	_, router, _ := startTestInbound(t, options)
+
+	outboundInstance, _ := startTestOutbound(t, outboundOptionsForPort(rangePort, "tcp", "alice", "alice-password"))
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	destination := M.ParseSocksaddr("192.0.2.60:443")
+	conn, err := outboundInstance.DialContext(ctx, N.NetworkTCP, destination)
+	require.NoError(t, err, "the additional port from listen_port_ranges must be listening")
+	defer conn.Close()
+	_, err = conn.Write([]byte("range port"))
+	require.NoError(t, err)
+	require.Equal(t, []byte("range port"), readExactWithTimeout(t, conn, len("range port")))
+	metadata := <-router.metadata
 	require.Equal(t, destination, metadata.Destination)
 }
 
