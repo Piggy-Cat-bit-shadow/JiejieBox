@@ -182,9 +182,16 @@ func TestClassifyDialError(t *testing.T) {
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			require.Equal(t, testCase.want, classifyDialError(testCase.ctx, testCase.err))
+			require.Equal(t, testCase.want, classifyDialError(testCase.ctx, testCase.err, mieruTransport{tcp: true}))
 		})
 	}
+	// Linux surfaces an unreachable UDP peer as a bare EOF. A UDP primary
+	// cannot use that value for the TCP authentication/server-close ambiguity.
+	require.Equal(t, dialTransportFailure, classifyDialError(
+		context.Background(),
+		fmt.Errorf("failed to read socks5 connection response from the server: %w", io.EOF),
+		mieruTransport{udp: true},
+	))
 }
 
 type fakeClient struct {

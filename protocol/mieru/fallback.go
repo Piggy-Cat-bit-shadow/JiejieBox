@@ -79,7 +79,7 @@ func (c dialFailureClass) String() string {
 // wrong credentials, a server-side target close and an underlay FIN all look
 // the same at this API boundary. A valid non-success SOCKS reply is target
 // evidence and is never allowed to mark the transport unhealthy.
-func classifyDialError(ctx context.Context, err error) dialFailureClass {
+func classifyDialError(ctx context.Context, err error, transport mieruTransport) dialFailureClass {
 	if err == nil {
 		return dialSuccess
 	}
@@ -130,6 +130,13 @@ func classifyDialError(ctx context.Context, err error) dialFailureClass {
 			return dialTransportFailure
 		}
 		if errors.Is(err, io.EOF) || strings.Contains(lower, "eof") {
+			if transport.udp {
+				// Linux reports an unreachable UDP peer as a bare EOF. A UDP
+				// primary with no reply is exactly the blackhole this fallback
+				// exists for; unlike a TCP EOF it cannot be a server-side
+				// target close after an accepted stream.
+				return dialTransportFailure
+			}
 			return dialAmbiguousFailure
 		}
 		return dialAmbiguousFailure
@@ -433,7 +440,7 @@ func (t *transportRuntime) dial(ctx context.Context, destination mierumodel.NetA
 		if conn != nil {
 			_ = conn.Close()
 		}
-		return nil, classifyDialError(ctx, err), err
+		return nil, classifyDialError(ctx, err, t.transport), err
 	}
 	return conn, dialSuccess, nil
 }

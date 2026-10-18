@@ -15,7 +15,8 @@ claim that every cause can be identified.
 | Handshake read timeout | `failed to read socks5 connection response ... timeout` | transport | yes | cooldown/backoff | includes UDP blackhole and TCP accept-but-silent; 10 s SDK timeout |
 | Handshake read reset/aborted/forcibly closed/broken pipe | same read error text | transport | yes | cooldown | not a clean EOF |
 | Valid SOCKS error reply (e.g. code 1/2) | `server returned socks5 error code N` | target | **no** | primary healthy; no cooldown | proxy/auth path and server processing worked; real mita restricted user code 2 verified 3 ms no-switch |
-| Bare EOF before response | `failed to read ...: EOF` | ambiguous | **no** | no change | can be wrong credentials, server close or underlay FIN; conservative |
+| Bare EOF before response, TCP primary | `failed to read ...: EOF` | ambiguous | **no** | no change | can be wrong credentials, server close or underlay FIN; conservative |
+| Bare EOF before response, UDP primary | `failed to read ...: EOF` (Linux reports an unreachable UDP peer this way) | transport | yes | cooldown | a TCP-style server/target close cannot be inferred on a UDP underlay; this is the Linux blackhole path |
 | DNS NXDOMAIN / address error | `*net.DNSError`, `*net.AddrError` | caller | no | no change | no duplicate DNS/dual attempt |
 | Permission denied / bind policy | `os.ErrPermission` | caller | no | no change | local policy failure |
 | Context canceled / deadline exceeded / client stopped | `ctx.Err`, `context.*`, `ErrClientIsNotRunning` | caller | no | no change | caller budget exhausted; no hidden retry |

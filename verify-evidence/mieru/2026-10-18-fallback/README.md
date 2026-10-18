@@ -69,12 +69,15 @@ background probe to gate.
 - While the secondary is preferred, the first new dial after cooldown becomes
   the single recovery probe; every other concurrent dial stays on the secondary.
   A failed probe doubles the cooldown up to 5 min.
-- A bare EOF is ambiguous: the SDK returns the same plain error for wrong
-  credentials, server close and underlay death. It is not used to publish a
-  durable secondary preference. If both transports fail silently, the selector
-  returns to primary preference instead of leaving the outbound stuck on the
-  secondary. **Limitation:** the official API gives no stable discriminator, so
-  a wrong-credential attempt can still pay one secondary attempt; it cannot
+- A bare EOF is ambiguous on a TCP primary: the SDK returns the same plain
+  error for wrong credentials, server close and underlay death. It is not used
+  to publish a durable secondary preference. On a UDP primary, Linux reports an
+  unreachable peer as a bare EOF; that is transport (the TCP server/target-close
+  interpretation does not apply), which is the Linux blackhole path. If both
+  transports fail silently, the selector returns to primary preference instead
+  of leaving the outbound stuck on the secondary. **Limitation:** the official
+  API gives no stable discriminator, so a wrong-credential attempt can still pay
+  one secondary attempt; it cannot
   produce a successful connection without the secondary also authenticating.
 - Local DNS/address/permission/cancel errors are not retried on the other
   transport.
@@ -83,8 +86,8 @@ Full row-by-row decisions: [ERROR-CLASSIFICATION.md](ERROR-CLASSIFICATION.md).
 
 ## Verification summary
 
-- `go test ./protocol/mieru ./option ./include`: PASS (147 s under host load; fallback subset 59.7 s).
-- `CGO_ENABLED=1 go test -race ./protocol/mieru`: PASS, 85.1 s.
+- `go test ./protocol/mieru ./option ./include`: PASS (82.6 s; fallback subset 59.4 s).
+- `CGO_ENABLED=1 go test -race ./protocol/mieru`: PASS, 150.3 s.
 - tagged full build, `go vet`, `gofmt`: PASS.
 - Real loopback matrices: TCP refused鈫扷DP, UDP blackhole鈫扵CP, TCP
   accept-but-silent鈫扷DP, UDP associate both directions, target refusal, existing

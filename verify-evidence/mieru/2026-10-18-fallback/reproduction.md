@@ -21,8 +21,8 @@ The fallback suite alone:
 go test ./protocol/mieru -run 'TestMieruFallback|TestFallback|TestResolveFallback|TestClassifyDialError|TestTransportRuntimeCloses|TestOutboundStartRollsBack|TestAcceptGenerated|TestMieruFallbackJSON' -count=1 -v
 ```
 
-Saved verbose output is `tests/fallback-tests.txt` (59.7 s); the full package was
-147 s under host load and race 85.1 s (`tests/race.txt`). The 10/20 s cases are
+Saved verbose output is `tests/fallback-tests.txt` (59.4 s); the full package was
+147 s under host load and race 150.3 s (`tests/race.txt`). The 10/20 s cases are
 the official SDK's fixed handshake timeout on silent TCP/UDP paths, not test
 sleeps; the `fallbackSelector` clock is fake in the state tests.
 
