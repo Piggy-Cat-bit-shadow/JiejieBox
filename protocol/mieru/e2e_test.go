@@ -529,18 +529,38 @@ func TestMieruInboundBindFailureIsClean(t *testing.T) {
 	require.True(t, inboundInstance.closed)
 }
 
+func requireTCPPortFree(t *testing.T, port uint16) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			return false
+		}
+		_ = listener.Close()
+		return true
+	}, 3*time.Second, 25*time.Millisecond, "TCP port %d is still bound", port)
+}
+
+func requireUDPPortFree(t *testing.T, port uint16) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		packetConn, err := net.ListenPacket("udp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			return false
+		}
+		_ = packetConn.Close()
+		return true
+	}, 3*time.Second, 25*time.Millisecond, "UDP port %d is still bound", port)
+}
+
 func TestMieruInboundCloseReleasesListener(t *testing.T) {
 	port := freePortForBothTransports(t)
 	inboundInstance, _, _ := startTestInbound(t, inboundOptionsForPort(port, "both"))
 	require.NoError(t, inboundInstance.Close())
+	require.Zero(t, inboundInstance.listeners.count())
 
-	tcpListener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-	require.NoError(t, err, "Close must release the TCP listener")
-	require.NoError(t, tcpListener.Close())
-
-	packetConn, err := net.ListenPacket("udp", fmt.Sprintf("127.0.0.1:%d", port))
-	require.NoError(t, err, "Close must release the UDP listener")
-	require.NoError(t, packetConn.Close())
+	requireTCPPortFree(t, port)
+	requireUDPPortFree(t, port)
 }
 
 func TestMieruInboundPartialStartClosesTheFirstListener(t *testing.T) {
@@ -555,13 +575,12 @@ func TestMieruInboundPartialStartClosesTheFirstListener(t *testing.T) {
 	scope := adapter.NewScope(context.Background(), nopLogger())
 	require.Error(t, inboundInstance.Start(adapter.StartStateStart, scope), "the occupied UDP port must fail the start")
 	require.NoError(t, inboundInstance.Close())
+	require.Zero(t, inboundInstance.listeners.count())
 
 	// The TCP listener may have been created before the UDP bind failed. It
 	// must have been closed by the partial-start cleanup, otherwise the port
 	// stays unavailable until the process exits.
-	tcpListener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-	require.NoError(t, err, "a partially started inbound must release its TCP listener")
-	require.NoError(t, tcpListener.Close())
+	requireTCPPortFree(t, port)
 }
 
 func TestMieruInboundPartialStartClosesTheUDPListener(t *testing.T) {
@@ -576,16 +595,17 @@ func TestMieruInboundPartialStartClosesTheUDPListener(t *testing.T) {
 	scope := adapter.NewScope(context.Background(), nopLogger())
 	require.Error(t, inboundInstance.Start(adapter.StartStateStart, scope), "the occupied TCP port must fail the start")
 	require.NoError(t, inboundInstance.Close())
+	require.Zero(t, inboundInstance.listeners.count())
 
-	packetConn, err := net.ListenPacket("udp", fmt.Sprintf("127.0.0.1:%d", port))
-	require.NoError(t, err, "a partially started inbound must release its UDP listener")
-	require.NoError(t, packetConn.Close())
+	requireUDPPortFree(t, port)
 }
 
 func TestMieruInboundCanRebindAfterClose(t *testing.T) {
 	port := freePortForBothTransports(t)
 	first, _, _ := startTestInbound(t, inboundOptionsForPort(port, "both"))
 	require.NoError(t, first.Close())
+	requireTCPPortFree(t, port)
+	requireUDPPortFree(t, port)
 
 	// A reload constructs a new Inbound on the same port; the previous Close
 	// must have released both sockets.
@@ -609,17 +629,7 @@ func TestMieruInboundCanRetryAfterBindFailure(t *testing.T) {
 	require.Equal(t, 1, inboundInstance.listeners.count(), "the retried listener must be registered")
 	require.NoError(t, inboundInstance.Close())
 	require.Zero(t, inboundInstance.listeners.count(), "Close must close the registered listener")
-
-	var tcpListener net.Listener
-	for attempt := 0; attempt < 40; attempt++ {
-		tcpListener, err = net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-		if err == nil {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	require.NoError(t, err, "port still bound after Close")
-	require.NoError(t, tcpListener.Close())
+	requireTCPPortFree(t, port)
 }
 
 func TestMieruHashedPasswordInterop(t *testing.T) {
