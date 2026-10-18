@@ -45,8 +45,6 @@ startup instead of leaving a partially listening server.
 
 #### transport
 
-==Required==
-
 The underlay protocol: `tcp`, `udp`, or `both`. Default: `tcp`.
 
 `both` serves both protocols on every configured port from one inbound. This is

@@ -44,8 +44,6 @@ icon: material/new-box
 
 #### transport
 
-==必填==
-
 底层传输协议：`tcp`、`udp` 或 `both`。默认：`tcp`。
 
 `both` 会在每个配置的端口上同时提供 TCP 与 UDP，等价于用两个相同端口的
