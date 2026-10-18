@@ -82,10 +82,13 @@ Then, with the official server harness on 18671 and this target on 11092:
 & $client -socks 127.0.0.1:11092 -mode tcp-download -connections 4 -bytes 2147483648
 # while it runs:
 Invoke-WebRequest 'http://127.0.0.1:18080/debug/pprof/profile?seconds=6' -OutFile cpu.pprof
+# in-use heap, after a 4 GiB / 10 s download:
+Invoke-WebRequest 'http://127.0.0.1:18080/debug/pprof/heap?gc=1' -OutFile heap.pprof
 ```
 
-`profiles/cpu-tcp-download.pprof` and the two `go tool pprof -top` projections are committed.
-The run itself reported 398.8 MiB/s (`profiles/bench.out`).
+`profiles/cpu-tcp-download.pprof`, `profiles/heap-tcp-download.pprof` and the `go tool pprof -top`
+projections are committed. The CPU run reported 398.8 MiB/s; the heap run 408.3 MiB/s
+(`profiles/bench.out`).
 
 ## REF-E Mihomo
 

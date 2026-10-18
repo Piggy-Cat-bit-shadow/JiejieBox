@@ -1,0 +1,37 @@
+﻿File: _mieru_bench_after.exe
+Build ID: C:\Deepseek\_mieru_bench_after.exe2026-10-18 17:04:13.7411896 +0800 CST
+Type: inuse_space
+Time: 2026-10-18 17:19:08 CST
+Showing nodes accounting for 10365.29kB, 100% of 10365.29kB total
+Showing top 30 nodes out of 80
+      flat  flat%   sum%        cum   cum%
+ 2572.04kB 24.81% 24.81%  2572.04kB 24.81%  runtime.mallocgc
+ 2101.71kB 20.28% 45.09%  2101.71kB 20.28%  github.com/enfein/mieru/v3/pkg/replay.(*ReplayCache).IsDuplicate
+ 1056.33kB 10.19% 55.28%  1056.33kB 10.19%  golang.org/x/crypto/chacha20poly1305.sliceForAppend (inline)
+ 1024.11kB  9.88% 65.16%  1024.11kB  9.88%  github.com/enfein/mieru/v3/pkg/protocol.(*Session).runInputLoop
+  532.26kB  5.14% 70.30%  3690.30kB 35.60%  github.com/enfein/mieru/v3/pkg/protocol.(*StreamUnderlay).readDataAckSegment
+  516.01kB  4.98% 75.27%   516.01kB  4.98%  github.com/sagernet/tailscale/util/clientmetric.(*Metric).Publish
+  514.63kB  4.96% 80.24%  1026.65kB  9.90%  github.com/sagernet/sing/common/json/internal/contextjson.typeFields
+  512.10kB  4.94% 85.18%   512.10kB  4.94%  github.com/sagernet/tailscale/envknob.RegisterString
+  512.05kB  4.94% 90.12%   512.05kB  4.94%  main.create.func2
+  512.02kB  4.94% 95.06%   512.02kB  4.94%  internal/sync.newEntryNode[go.shape.interface {},go.shape.interface {}] (inline)
+  512.02kB  4.94%   100%   512.02kB  4.94%  golang.org/x/crypto/chacha20poly1305.NewX
+         0     0%   100%   512.02kB  4.94%  github.com/enfein/mieru/v3/pkg/cipher.(*aeadBlockCipher).Clone
+         0     0%   100%  1056.33kB 10.19%  github.com/enfein/mieru/v3/pkg/cipher.(*aeadBlockCipher).Decrypt
+         0     0%   100%   512.02kB  4.94%  github.com/enfein/mieru/v3/pkg/cipher.newXChaCha20Poly1305BlockCipher
+         0     0%   100%  3690.30kB 35.60%  github.com/enfein/mieru/v3/pkg/protocol.(*Mux).newUnderlay.func1
+         0     0%   100%   512.02kB  4.94%  github.com/enfein/mieru/v3/pkg/protocol.(*Session).output
+         0     0%   100%   512.02kB  4.94%  github.com/enfein/mieru/v3/pkg/protocol.(*Session).runOutputLoop
+         0     0%   100%   512.02kB  4.94%  github.com/enfein/mieru/v3/pkg/protocol.(*Session).runOutputOnceStream
+         0     0%   100%  1024.11kB  9.88%  github.com/enfein/mieru/v3/pkg/protocol.(*StreamUnderlay).AddSession.func1
+         0     0%   100%   512.02kB  4.94%  github.com/enfein/mieru/v3/pkg/protocol.(*StreamUnderlay).AddSession.func2
+         0     0%   100%  3690.30kB 35.60%  github.com/enfein/mieru/v3/pkg/protocol.(*StreamUnderlay).RunEventLoop
+         0     0%   100%   512.02kB  4.94%  github.com/enfein/mieru/v3/pkg/protocol.(*StreamUnderlay).maybeInitSendBlockCipher
+         0     0%   100%  3690.30kB 35.60%  github.com/enfein/mieru/v3/pkg/protocol.(*StreamUnderlay).readOneSegment
+         0     0%   100%   512.02kB  4.94%  github.com/enfein/mieru/v3/pkg/protocol.(*StreamUnderlay).writeOneSegment
+         0     0%   100%  1026.65kB  9.90%  github.com/sagernet/sing-box/option.(*Inbound).UnmarshalJSONContext
+         0     0%   100%  1026.65kB  9.90%  github.com/sagernet/sing-box/option.(*Options).UnmarshalJSONContext
+         0     0%   100%  1026.65kB  9.90%  github.com/sagernet/sing/common/json.UnmarshalExtendedContext[go.shape.3ca6dd1560a37784667a24a3a0774f786db1c3940e5e5cbcd6e4b9453b471642]
+         0     0%   100%  1026.65kB  9.90%  github.com/sagernet/sing/common/json/badjson.UnmarshallExcludedContext
+         0     0%   100%  1026.65kB  9.90%  github.com/sagernet/sing/common/json/internal/contextjson.(*Decoder).Decode
+         0     0%   100%  1026.65kB  9.90%  github.com/sagernet/sing/common/json/internal/contextjson.(*decodeState).array

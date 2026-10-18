@@ -82,6 +82,11 @@ ChaCha20-Poly1305 12.1%. The adapter's own code does not appear above the 0.09 s
 The remaining work is in the SDK's segment loop and the shared copy pipeline; changing either is not
 a Mieru adapter change. No speculative pool/goroutine work.
 
+`profiles/heap-tcp-download.pprof` is the in-use heap after a 4 GiB / 10 s download at 408.3 MiB/s:
+`StreamUnderlay.readDataAckSegment` 35.6%, SDK replay cache 20.3%, ChaCha20 buffers 10.2%, session
+input loop 9.9%, config decoding 9.9%. Again no adapter allocation site; the largest single buffer is
+the SDK's replay cache. This is why E3 (a scratch buffer) would not move the heap or the UDP pps.
+
 ### E6. Reference implementations — one of five ran, four are BLOCKED_BY_ENVIRONMENT
 
 REF-E, Mihomo v1.19.32 (Mieru SDK **v3.38.0**, product-version comparison only), ran on the same
@@ -110,6 +115,28 @@ client and Mihomo both beat it on `tcp-low-default` upload.
 These are not PASS and are not folded into the ratios above. The official client (REF-A client half),
 the official server SDK (the server half mita uses) and Mihomo (REF-E) are the real reference points
 that could run here. A Linux host with the real mita binary and the remaining apps is the next step.
+
+## Architecture feedback
+
+- **Nothing Mieru-specific was pushed into the shared core.** The only shared
+  change in this round is the phase-1 `common/listener` option-path extraction;
+  the routing, DNS, dialer, power and copy layers are untouched.
+- **The TCP slow path is shared, not Mieru.** The profile puts 23% in
+  `route.connectionCopy` / `copyExtendedWithPool`; that is the same path every
+  stream outbound uses. Adding a Mieru-only copy buffer would create a second
+  ownership model for no measured gain, so it was rejected.
+- **The UDP pre-resolution is an SDK constraint, not a fork abstraction.** The
+  SDK requires a resolver answer before it opens the outer UDP socket and
+  validates the source against it. Generalising that into a public
+  "pre-resolve" hook would invite fake DNS answers; the adapter-local bridge is
+  the narrowest correct boundary.
+- **InterfaceUpdated ownership is the outbound's, not the route's.** The route
+  broadcasts a network change; the Mieru outbound decides whether it has state
+  to rebuild. Moving that decision into the route would make every outbound pay
+  for Mieru's non-restartable client.
+- **No metrics abstraction.** The shared connection manager already owns
+  counters; a Mieru metrics surface would duplicate it. The SDK's internal
+  metrics stay internal.
 
 ## Reproduction
 

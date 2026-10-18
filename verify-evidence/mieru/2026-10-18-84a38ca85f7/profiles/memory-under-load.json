@@ -1,0 +1,7 @@
+{
+  "heap": "12 MB",
+  "stack": "576 kB",
+  "idle": "4.6 MB",
+  "goroutines": 29,
+  "rss": -1
+}

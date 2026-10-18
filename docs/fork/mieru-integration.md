@@ -70,6 +70,25 @@ Ownership rules:
   in-flight dials. The SDK cannot be restarted after `Stop`, so
   `InterfaceUpdated` builds a new client from the same config, swaps it, then
   stops the old one; the old client's Mux closes its underlays and sessions.
+  Before the first dial there is no underlay to reset, so the startup network
+  observation is a no-op rather than a client restart; after a dial the rebuild
+  still runs. The `dialed` flag is the only added state, and it is cleared on
+  every successful swap.
+- **Metrics** have no Mieru-specific plane. Connection and byte counters belong
+  to the shared route/connection manager, and the SDK's internal metrics are not
+  re-exported. This is deliberate: a second per-protocol metrics surface would
+  duplicate ownership and drift from the shared one.
+
+| Layer | Owner | Mieru adapter role |
+| --- | --- | --- |
+| Config / schema | `option`, `include/registry`, `protocol/mieru/config.go` | decodes Mieru fields, validates, builds SDK client/server configs; no second config source |
+| Routing / connections | `route` (`RouteConnectionEx`, `RoutePacketConnectionEx`, connection manager) | hands accepted conn/packet-conn to the router; never owns the flow after handoff |
+| DNS | `dns` + `common/dialer` (`TargetQueryOptions`, `BypassDialerDNS`) | passes the configured server name to the fork dialer; the UDP bridge answers only the SDK's source-validation query |
+| Dialer / sockets | `common/dialer`, `common/listener` | supplies SDK `Dialer`/`PacketDialer`/listener factories; no direct `net.Dial`/`net.Listen` |
+| SDK / Mux / underlay | `github.com/enfein/mieru/v3` | configures and starts/stops; does not fork or patch the SDK |
+| Packet / UoT | `protocol/mieru/uot.go`, `packetconn.go` | owns the per-datagram frame and packet-conn wrappers; no separate packet scheduler |
+| Lifecycle | `adapter.StartStage`/`Scope`, `Outbound`/`Inbound` | explicit Start at StartStateStart, explicit Stop, bounded drain, pre-dial no-op update |
+| Metrics | shared route/connection manager | none; SDK metrics are not re-exported |
 
 ### UDP association
 
