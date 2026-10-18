@@ -1,4 +1,4 @@
-﻿# Cross-protocol failure facts 鈥?implementation evidence
+# Cross-protocol failure facts 鈥?implementation evidence
 
 Tree: `testing`, after the Mieru fallback work. The direct design is
 [`docs/fork/cross-protocol-failure-facts.md`](../../../docs/fork/cross-protocol-failure-facts.md).
@@ -77,4 +77,3 @@ error path can prove a stage.
 - Target refusal behind protocols other than Mieru remains unclassified; their
   existing errno policy is unchanged rather than guessed.
 - Real mobile/TUN/long soak not tested.
-

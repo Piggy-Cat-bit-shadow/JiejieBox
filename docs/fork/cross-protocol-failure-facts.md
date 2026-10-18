@@ -1,4 +1,4 @@
-﻿# Cross-protocol failure facts
+# Cross-protocol failure facts
 
 This is the cross-protocol integration added on `testing` after the Mieru
 fallback work. It addresses the concrete gap that the group classifiers knew
@@ -106,5 +106,3 @@ or per packet.
   is defined.
 - No change to `IsCallerCancellation`/`IsOwnTeardown`; those remain separate
   and take precedence for their own cases.
-
-

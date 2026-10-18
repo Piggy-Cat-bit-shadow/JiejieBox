@@ -1,4 +1,4 @@
-﻿# Test matrix 鈥?cross-protocol failure facts
+# Test matrix 鈥?cross-protocol failure facts
 
 | Area | Check | Result | Evidence |
 | --- | --- | --- | --- |
@@ -31,5 +31,3 @@ go test -race ./adapter ./protocol/group ./protocol/mieru -count=1
   other protocols keep errno behavior and were not claimed.
 - UI/API display of failure facts: intentionally not added.
 - Mobile/TUN/long soak: environment boundary.
-
-
