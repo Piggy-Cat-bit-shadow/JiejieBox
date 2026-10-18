@@ -29,6 +29,9 @@
   request.
 - A successful connection from a closed/changed generation is rejected and
   closed instead of being handed to the route.
+- Linux reports an unreachable UDP peer as a bare EOF; a UDP-primary EOF is now
+  classified as transport (TCP-primary EOF stays ambiguous), so the UDP
+  blackhole fallback works on Linux. This was caught by the Linux race CI.
 - Secondary Start failure rolls back the already-started primary and clears the
   runtimes for a fresh next Start.
 

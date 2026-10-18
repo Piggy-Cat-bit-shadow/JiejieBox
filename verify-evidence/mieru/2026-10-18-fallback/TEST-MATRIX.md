@@ -12,7 +12,7 @@ Code SHA: `e1efe4cafdc`. All commands from
 | SDK connection ownership | `Client.DialContext` returns live conn + handshake error; runtime closes it | PASS | `TestTransportRuntimeClosesConnectionReturnedWithHandshakeError`; mutation `repro/bug1.txt` |
 | Primary healthy | no secondary UDP socket, both clients running, no switch | PASS | `TestMieruFallbackPrimaryHealthyStaysPrimary` |
 | TCP refused 鈫?UDP | fast fallback; second session secondary; cooldown; primary recovery; old secondary session alive; close | PASS | `TestMieruFallbackTCPRefusedUsesUDPAndRecovers` |
-| UDP blackhole 鈫?TCP | 10 s SDK handshake timeout, then real handshake; no socket-success false positive | PASS | `TestMieruFallbackUDPBlackholeUsesTCP` |
+| UDP blackhole 鈫?TCP | 10 s SDK handshake timeout on Windows; immediate bare EOF on Linux, now classified as transport | PASS | `TestMieruFallbackUDPBlackholeUsesTCP`; Linux CI `39133901774` caught the EOF variant, fix `c603a02` |
 | TCP accept/silent 鈫?UDP | TCP connect/session succeeds, handshake does not; fallback | PASS | `TestMieruFallbackTCPHandshakeBlackholeUsesUDP` |
 | UDP Associate | fallback for `ListenPacket` in both directions (TCP鈫扷DP and UDP鈫扵CP) | PASS | `TestMieruFallbackUDPAssociateUsesSecondary`, `...UDPBlackholeUDPAssociateUsesTCP` |
 | Target refusal | valid SOCKS error does not switch; real mita restricted user code 2 | PASS | `TestFallbackTargetRefusalDoesNotTrySecondary`; `interop/mita/target-restricted.log` |

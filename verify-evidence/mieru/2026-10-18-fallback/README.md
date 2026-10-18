@@ -1,7 +1,8 @@
 # Mieru TCP/UDP fallback 鈥?implementation and evidence
 
 Baseline: `f6daabb9d5c` (phase-3 evidence at `../2026-10-18-84a38ca85f7`).
-Feature code: `e1efe4cafdc621473442302d88897b2e476bbf0a`.
+Feature code: `e1efe4cafdc621473442302d88897b2e476bbf0a`; Linux UDP-EOF fix:
+`c603a023d329925dcfad4042c64c0bdb28411fb1`.
 Date: 2026-10-18. Host: Windows 10 LTSC 19044, Go 1.26.8, AMD Ryzen 7 4800H.
 SDK: `github.com/enfein/mieru/v3 v3.38.1` (unchanged).
 

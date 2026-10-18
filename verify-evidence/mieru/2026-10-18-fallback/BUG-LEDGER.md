@@ -109,6 +109,31 @@ and the backup is one endpoint.
 **Test:** `TestResolveFallbackOptionsRejects/range_only_with_omitted_fallback_port`
 and `...RangeOnlyWithExplicitPort`.
 
+## FB-008 — P1 — Linux UDP-primary bare EOF was misclassified as ambiguous
+
+**Affected:** `classifyDialError` and the UDP-primary fallback path.
+
+**Reproduction (CI, not local Windows):** Verify run `39133901774` on Ubuntu
+reported `TestMieruFallbackUDPBlackholeUsesTCP` and
+`TestMieruFallbackUDPBlackholeUDPAssociateUsesTCP` failing after 1.1 s with
+`failed to read socks5 connection response from the server: EOF`. On Windows the
+same unreachable UDP peer produces the SDK's 10 s timeout, which was classified
+transport; Linux produces an immediate bare EOF, which the generic classifier
+kept ambiguous, so the dial returned the error instead of trying the secondary.
+
+**Root cause:** the classifier had one EOF rule for both transports. On a TCP
+primary a bare EOF can be wrong credentials or a server-side close after an
+accepted stream; on a UDP primary there is no accepted stream whose target can
+close, so an unreachable peer is exactly the blackhole the fallback must cover.
+
+**Fix (`c603a02`):** pass `mieruTransport` into `classifyDialError`; a bare EOF
+on a UDP primary is transport, while a TCP-primary EOF remains ambiguous. Added
+the platform-difference assertion to `TestClassifyDialError`; the two E2E tests
+now pass on Linux CI as well as Windows.
+
+**Lesson:** this is why the Linux `-race` job is a required gate; the Windows
+loopback suite alone did not expose it.
+
 ## Also verified, not claimed as new bugs
 
 - `both` and `handshake_mode: "no_wait"` plus fallback are rejected; the old
