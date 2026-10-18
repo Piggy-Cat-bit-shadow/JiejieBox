@@ -104,23 +104,33 @@ func (r *NetworkManager) observeEntryPresentment() {
 // entryPresentmentDeliverable reports whether this platform's tunnel delivery can express "this
 // interface presents no IPv6".
 //
-// # Windows and Linux can
+// # It is an allowlist, and that is the point
 //
-// The core opens the interface itself, and clearing `Inet6Address` removes the addressing, the
-// automatic route range and the hijack DNS address in one step - for the kernel, the stack and the
-// auto-redirect rules at the same time.
+// The answer is enabled only where the delivery contract was actually read and verified, because
+// the failure mode of guessing is an interface that claims IPv6 and cannot carry it - or a tunnel
+// that will not start. Everything else keeps the previous behaviour, which the live dial gate
+// already covers.
 //
-// # Darwin cannot, yet, and the pinned client is why
+//	Windows, Linux (and Android, which C.IsLinux includes)
+//	    CAN. The core opens the interface itself, and clearing `Inet6Address` removes the
+//	    addressing, the automatic route range and the hijack DNS address in one step - for the
+//	    kernel, the stack and the auto-redirect rules at the same time. Android's client derives
+//	    every IPv6 fact from the same options (VPNService.kt), and sing-tun's automatic route range
+//	    is gated on the address, so the reduction reaches the VPN builder too.
 //
-// Network Extension settings are built by the CLIENT's tunnel provider
-// (`Library/Network/ExtensionPlatformInterface.swift`, `openTun0`). The pinned client
-// (`clients/apple` at `c001d59`) creates `NEIPv6Settings` and a default `::/0` route unconditionally
-// inside `if auto_route`. Handed no IPv6 address it would install an IPv6 default route with no
-// address - an interface that claims the family and cannot carry it, which is the exact false
-// presentment this round removes - or `setTunnelNetworkSettings` would reject the settings outright.
-// Either outcome is worse than presenting IPv6 and letting the dial gate refuse the attempts, so
-// until the client patch (`docs/fork/ipv6-entry-apple.patch`) is part of the built client this
-// answer is false and the core keeps the previous behaviour on that platform.
+//	Darwin and iOS (C.IsDarwin covers both)
+//	    CANNOT, yet. Network Extension settings are built by the CLIENT's tunnel provider
+//	    (`Library/Network/ExtensionPlatformInterface.swift`, `openTun0`). The pinned client
+//	    (`clients/apple` at `c001d59`) creates `NEIPv6Settings` and a default `::/0` route
+//	    unconditionally inside `if auto_route`. Handed no IPv6 address it would install an IPv6
+//	    default route with no address - the exact false presentment this round removes - or
+//	    `setTunnelNetworkSettings` would reject the settings outright. Until the client patch
+//	    (`docs/fork/ipv6-entry-apple.patch`) is part of the built client this answer is false.
+//
+//	Everything else (tvOS and any other GOOS the Apple project builds, the BSDs, ...)
+//	    Unknown client contract, so treated like Darwin: false. The list is positive rather than
+//	    "not Darwin" precisely because a client family can grow a platform this tree has never
+//	    built, and `IsDarwin` is a fork constant that does not enumerate every Apple GOOS.
 //
 // It is a method rather than a constant so the platform can be substituted in a test; the production
 // answer is fixed at build time.
@@ -128,7 +138,7 @@ func (r *NetworkManager) entryPresentmentDeliverable() bool {
 	if r.entryDeliveryRemovesIPv6 != nil {
 		return r.entryDeliveryRemovesIPv6()
 	}
-	return !C.IsDarwin
+	return C.IsLinux || C.IsWindows
 }
 
 // observeIPv6EntryPresentment reads the network read-only and projects it into an entry decision.

@@ -195,13 +195,18 @@ interface that claims the family and cannot carry it - or settings the system re
 `NetworkManager.entryPresentmentDeliverable()` answers false on Darwin, nothing is committed, and the
 previous behaviour is kept there.
 
+The deliverability answer is a **positive list** - Windows and Linux (which `C.IsLinux` extends to
+Android) - and not `!IsDarwin`: the Apple client family builds GOOS values that this tree's
+`constant.IsDarwin` does not enumerate (tvOS and others), and an unknown client contract belongs on
+the fail-open side. Anything not on the list keeps the previous behaviour.
+
 The client-side fix is prepared and verified to apply against the pinned tree:
 `docs/fork/ipv6-entry-apple.patch` wraps that block in `if !ipv6Address.isEmpty { ... }`. It is
 deliberately **not** pushed to the client repository and the `clients/apple` gitlink is **not** moved:
 that is a coordinated release action (client source authority, exact-SHA pinning, artifact
 provenance), and no Apple build was run here. When the patched client is what ships, the flip is one
-line: `entryPresentmentDeliverable()` returns true unconditionally (the platform gate is the
-`!C.IsDarwin` at the bottom of that method), and the Darwin entry decision becomes live.
+line: `entryPresentmentDeliverable()` returns true unconditionally (the platform allowlist at the
+bottom of that method), and the Darwin entry decision becomes live.
 
 ## Limits and what was not verified
 
@@ -227,3 +232,32 @@ line: `entryPresentmentDeliverable()` returns true unconditionally (the platform
 | `protocol/tun/entry_ipv6.go` | the TUN's consumption and its one correction |
 | `dns/entry_ipv6.go` | the application-facing AAAA gate and its NODATA response |
 | `docs/fork/ipv6-entry-apple.patch` | the Network Extension client's minimal condition, against `clients/apple` `c001d59` |
+
+## Debug round 02: what the attacks changed
+
+The Debug pass exercised this system against its own invariants and fixed what broke. The defects
+are worth recording because each one was reachable by a configuration, not by a code review:
+
+| finding | trigger | fix |
+|---|---|---|
+| a proxy-only box paid for the observation and could never consume it | no `tun` inbound, but DNS servers (and possibly a Fake-IP IPv6 range) | `ResolveIPv6EntryDemand` returns the empty summary when no TUN is configured; the DNS gate is keyed on the TUN as the query source, so nothing could consume the decision |
+| a bare hosts server (or `predefined`-only) was reported as "no AAAA" | `{"type":"hosts"}` with no `path` | the transport always loads a file - the system hosts file when `path` is empty - so the answer is "may"; this also removed the summary's only table scan |
+| a four-in-six address was classified as IPv4 demand | `::ffff:172.19.0.1/120` in `address` / `dns_address` | the demand now uses `Is6`, the same predicate the TUN splits these lists with, so it cannot miss an address the interface installs |
+| loopback was classified as global addressing | a `::1` address on a non-loopback interface set | `ClassifyIPv6Addressing` ignores loopback; the projection still presents (unproven shape), which the test states explicitly |
+| the entry-demand hand-off was a plain bool across a constructor/Start boundary | a client that constructs the box on one goroutine and starts it on another | `entryDemand` is an `atomic.Bool` |
+| the deliverability answer was `!IsDarwin` | the Apple client family builds GOOS values `constant.IsDarwin` does not enumerate (tvOS, ...) | the answer is now a positive allowlist: Windows and Linux/Android, which are the delivery contracts that were read and verified |
+
+The tests added by the round were checked against mutations of the production code - the DNS gate
+disabled, the route-set IPv6 prefix re-enabled, the commit-site deliverability guard dropped, the
+projection forced to suppress, the loopback case removed, the proxy-only fast path disabled, the
+demand predicate un-mapped - and each mutation turns at least one of them red.
+
+### Open risks (not fixed, and why)
+
+| risk | impact | mitigation today | shortest next step |
+|---|---|---|---|
+| the entry decision is latched at start | a box that starts on an IPv4-only network keeps an IPv4-only interface after moving to dual-stack, until restart | the decision is a property of the interface that was opened; the dial gate stays live, and the alternative would let DNS present an IPv6 the interface does not carry (I-05) | re-address/reopen the TUN through a platform update or an ordered inbound rebuild, then re-derive and re-commit; needs platform work this round cannot verify |
+| the Apple client patch is not shipped | Darwin keeps the previous behaviour (feature inert there) | `entryPresentmentDeliverable` is false, so nothing can break | ship `docs/fork/ipv6-entry-apple.patch` with the client and drop the allowlist entry |
+| non-Fake-IP proxied real-IPv6-only targets | an application can no longer reach them through the proxy when the entry suppressed AAAA | only fires when the machine has no non-link-local IPv6 at all; Fake-IP configurations keep the capability through the synthetic IPv4 address | per-route DNS decisions would need the route result at DNS time, which is the double evaluation this round forbids |
+| applications with their own DoH / hard-coded IPv6 literals | not gated | the OS-level IPv4-only interface makes such attempts fail immediately | out of scope: MITM/DoH interception is explicitly not wanted |
+| `dns_mode: native` / `disabled` TUNs | application DNS does not traverse the router, so the gate does not fire | the interface is still IPv4-only, so v6 attempts fail at the OS | documented boundary, not a defect |
