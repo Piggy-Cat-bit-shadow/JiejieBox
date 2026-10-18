@@ -182,7 +182,9 @@ func AllTunInboundsReducibleToIPv4Only(inbounds []Inbound) bool {
 		}
 		tunOptions, isTun := inbound.Options.(*TunInboundOptions)
 		if !isTun || tunOptions == nil {
-			continue
+			// A tun inbound whose options cannot be read is not evidence that it can be reduced.
+			// Returning false keeps the box on "present", which cannot strip anything.
+			return false
 		}
 		inet4Addresses := make([]netip.Prefix, 0, len(tunOptions.Address))
 		for _, prefix := range tunOptions.Address {

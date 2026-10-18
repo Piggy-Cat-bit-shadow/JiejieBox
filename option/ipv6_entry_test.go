@@ -429,3 +429,21 @@ func TestTunReducibleToIPv4OnlyIsTheSharedRule(t *testing.T) {
 		"the only named resolver is removed by the reduction")
 	require.False(t, TunReducibleToIPv4Only(nil, nil), "an interface must keep at least one address")
 }
+
+// TestATunWithUnreadableOptionsBlocksSuppression is the fail-closed edge: a tun inbound whose
+// options do not parse as the typed struct must not be counted as "nothing to reduce". The box
+// keeps IPv6 presented instead of committing a suppression that interface might not honour.
+func TestATunWithUnreadableOptionsBlocksSuppression(t *testing.T) {
+	require.False(t, AllTunInboundsReducibleToIPv4Only([]Inbound{
+		{Type: C.TypeTun, Tag: "tun-in", Options: nil},
+	}))
+	require.False(t, AllTunInboundsReducibleToIPv4Only([]Inbound{
+		{Type: C.TypeTun, Tag: "tun-in", Options: &HTTPMixedInboundOptions{}},
+	}))
+	// The control: the same list without the unreadable entry is reducible.
+	require.True(t, AllTunInboundsReducibleToIPv4Only([]Inbound{
+		tunInboundForTest(&TunInboundOptions{
+			Address: badoption.Listable[netip.Prefix]{netip.MustParsePrefix("172.19.0.1/30")},
+		}),
+	}))
+}
