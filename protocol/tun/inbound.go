@@ -106,6 +106,10 @@ type Inbound struct {
 	// table with no closed check of its own.
 	stackStartup     startupGate
 	interfaceStartup startupGate
+	// entryIPv4Only records that the effective options were reduced to IPv4 before the interface was
+	// opened, so the route-set append knows to skip the IPv6 prefixes a rule-set would otherwise
+	// contribute. The decision itself belongs to the network manager; see entry_ipv6.go.
+	entryIPv4Only bool
 }
 
 // autoRedirectMarkReleaser is the release half of the claim protocol, implemented by
@@ -559,6 +563,11 @@ func (t *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 			}
 		}
 	case adapter.StartStateStart:
+		// The entry decision is taken FIRST, before any of the option-derived work below builds on
+		// these options: the Android rules, the route-set prefixes appended further down, the
+		// auto-redirect rules armed in PostStart and the stack all read this struct, and every one
+		// of them must see the same interface. See entry_ipv6.go for the decision itself.
+		t.applyEntryIPv6Presentment()
 		if t.platformInterface == nil &&
 			((C.IsLinux && !t.tunOptions.GSO) || (C.IsDarwin && !t.tunOptions.EXP_MultiPendingPackets)) {
 			// A manager can legitimately be absent from this context, and that is not an error: the
@@ -665,24 +674,11 @@ func (t *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		monitor := taskmonitor.New(t.logger, C.StartTimeout)
 		tunOptions := t.tunOptions
 		if t.autoRedirect == nil && !(runtime.GOOS == "android" && t.platformInterface != nil) {
-			for _, ipSet := range routeAddressSet {
-				for _, prefix := range ipSet.Prefixes() {
-					if prefix.Addr().Is4() {
-						tunOptions.Inet4RouteAddress = append(tunOptions.Inet4RouteAddress, prefix)
-					} else {
-						tunOptions.Inet6RouteAddress = append(tunOptions.Inet6RouteAddress, prefix)
-					}
-				}
-			}
-			for _, ipSet := range routeExcludeAddressSet {
-				for _, prefix := range ipSet.Prefixes() {
-					if prefix.Addr().Is4() {
-						tunOptions.Inet4RouteExcludeAddress = append(tunOptions.Inet4RouteExcludeAddress, prefix)
-					} else {
-						tunOptions.Inet6RouteExcludeAddress = append(tunOptions.Inet6RouteExcludeAddress, prefix)
-					}
-				}
-			}
+			// The prefixes are the SECOND place IPv6 can enter these options, after the leading
+			// address lists that the entry decision already reduced, so the same decision has to be
+			// applied here or a route_address_set would hand the platform the IPv6 routes the
+			// decision just removed. See appendRouteSetPrefixes.
+			appendRouteSetPrefixes(&tunOptions, routeAddressSet, routeExcludeAddressSet, t.entryIPv4Only)
 		}
 		monitor.Start("open interface")
 		if t.platformInterface != nil && t.platformInterface.UsePlatformInterface() {

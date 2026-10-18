@@ -119,10 +119,24 @@ type Router struct {
 	// learned from the previous resolver set.
 	dnsEnvironmentGeneration atomic.Uint64
 	platformInterface        adapter.PlatformInterface
-	legacyDNSMode            bool
-	rulesAccess              sync.RWMutex
-	started                  bool
-	closing                  bool
+	// entryIPv6Presentment is what the application-facing entries present about IPv6, resolved once
+	// from the network manager. It is an OPTIONAL capability: a manager that does not implement it
+	// leaves this nil, and a nil reader answers "present", which is the behaviour of every build
+	// before this round.
+	//
+	// # Why it is resolved at Start and read per query
+	//
+	// The reader is the manager that owns the network facts, and the manager's committed value is
+	// the one the TUN actually applied. Reading the value per query is one atomic load - it is NOT
+	// recomputed from live network facts, because a live projection here would approve AAAA answers
+	// for an IPv6 the interface is not carrying. Caching the value instead would be a second copy of
+	// the decision, and the two copies would differ for exactly the window in which the TUN is being
+	// opened.
+	entryIPv6Presentment adapter.IPv6EntryPresentmentReader
+	legacyDNSMode        bool
+	rulesAccess          sync.RWMutex
+	started              bool
+	closing              bool
 	// testReverseMappingRecordHook, when set, runs inside commitReverseMappingAnswers at the start of
 	// the commit protocol - after every step that runs outside the critical section, and before the
 	// epoch comparison and the writes it guards.
@@ -247,6 +261,13 @@ func (r *Router) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 			closeRules(runtimeRules)
 			return nil
 		})
+		// Resolved here rather than in NewRouter because the manager is constructed AFTER this
+		// router (box.go builds the DNS router first and the network manager second), so it is not
+		// in the context yet at construction time. By Start it is, and it does not change for the
+		// life of the box.
+		if networkManager := service.FromContext[adapter.NetworkManager](r.ctx); networkManager != nil {
+			r.entryIPv6Presentment, _ = networkManager.(adapter.IPv6EntryPresentmentReader)
+		}
 		monitor.Start("initialize DNS client")
 		r.client.Start()
 		monitor.Finish()
@@ -1272,6 +1293,16 @@ func (r *Router) prepareExchange(ctx context.Context, message *mDNS.Msg) (*dnsEx
 			},
 			Question: message.Question,
 		}, nil
+	}
+	// The entry presentment gate. It sits AFTER the two structural early returns above (a malformed
+	// question is a different answer, and a resolver discovery query is not an address question) and
+	// BEFORE rule matching, so a suppressed AAAA never reaches a rule, the Hosts transport, the
+	// Fake-IP store, an upstream resolver or the cache. See entry_ipv6.go for why the answer is a
+	// local NODATA, why only the TUN source is recognised, and why the decision is the committed one
+	// rather than a live recomputation.
+	if message.Question[0].Qtype == mDNS.TypeAAAA && r.applicationEntrySuppressesIPv6(ctx) {
+		r.logger.DebugContext(ctx, "suppressed ipv6 for application query ", FormatQuestion(message.Question[0].String()))
+		return nil, appIPv4OnlyNoData(message), nil
 	}
 	r.rulesAccess.RLock()
 	if r.closing {
