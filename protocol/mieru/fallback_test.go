@@ -339,3 +339,70 @@ func TestOutboundStartRollsBackBothRuntimesOnSecondaryFailure(t *testing.T) {
 	require.NoError(t, outboundInstance.Close())
 	require.NoError(t, scope.Close())
 }
+
+func TestAcceptGeneratedConnRejectsClosedOrStaleConnection(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	var closed atomic.Int32
+	outboundInstance := &Outbound{generation: 2}
+	conn := &closeTrackingConn{Conn: clientConn, closed: &closed}
+
+	rejected, err := outboundInstance.acceptGeneratedConn(conn, 1)
+	require.Nil(t, rejected)
+	require.ErrorIs(t, err, errFallbackStale)
+	require.Equal(t, int32(1), closed.Load(), "a stale generation's success must close its session")
+
+	clientConn, serverConn = net.Pipe()
+	defer serverConn.Close()
+	closed.Store(0)
+	outboundInstance.closed = true
+	rejected, err = outboundInstance.acceptGeneratedConn(
+		&closeTrackingConn{Conn: clientConn, closed: &closed}, 2)
+	require.Nil(t, rejected)
+	require.ErrorIs(t, err, errOutboundClosed)
+	require.Equal(t, int32(1), closed.Load(), "a success racing Close must close its session")
+}
+
+func TestFallbackStaleGenerationCannotDeliverConnection(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	var closed atomic.Int32
+	primary := &fakeClient{dialFunc: func(context.Context, net.Addr) (net.Conn, error) {
+		close(entered)
+		<-release
+		return &closeTrackingConn{Conn: clientConn, closed: &closed}, nil
+	}}
+	selector := newFallbackSelector(1)
+	outboundInstance := &Outbound{logger: nopLogger(), generation: 1}
+	spec, err := toNetAddrSpec(M.ParseSocksaddr("192.0.2.63:80"), N.NetworkTCP)
+	require.NoError(t, err)
+
+	type result struct {
+		conn net.Conn
+		err  error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		conn, dialErr := outboundInstance.dialWithFallback(context.Background(), spec,
+			fakeRuntimeForTest("primary", primary), fakeRuntimeForTest("secondary", &fakeClient{}), selector, 1)
+		resultCh <- result{conn: conn, err: dialErr}
+	}()
+	<-entered
+	outboundInstance.access.Lock()
+	outboundInstance.generation = 2
+	outboundInstance.access.Unlock()
+	selector.reset(2)
+	close(release)
+
+	select {
+	case got := <-resultCh:
+		require.Nil(t, got.conn)
+		require.ErrorIs(t, got.err, errFallbackStale)
+		require.Equal(t, int32(1), closed.Load(),
+			"a generation-1 success must be closed when generation 2 owns the outbound")
+	case <-time.After(10 * time.Second):
+		t.Fatal("stale-generation dial did not return")
+	}
+}

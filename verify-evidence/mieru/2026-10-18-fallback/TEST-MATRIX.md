@@ -19,12 +19,14 @@ Code SHA: `e1efe4cafdc`. All commands from
 | Wrong credentials | both transports silent; no success; durable preference returns to primary; one secondary attempt remains | PASS (limitation) | `TestMieruFallbackWrongPasswordDoesNotSwitch`; mutation `repro/bug2.txt` |
 | Existing sessions | established primary survives fallback caused by new-connection proxy failure; established secondary survives primary recovery | PASS | `TestMieruFallbackDoesNotStopExistingPrimarySession`; TCP-refused test |
 | InterfaceUpdated | both generations replaced, old sockets closed, selector reset, next dial fallback | PASS | `TestMieruFallbackInterfaceUpdateRebuildsBothGenerations` |
+| Stale generation | a generation-1 success completing after generation 2 is closed and rejected | PASS | `TestFallbackStaleGenerationCannotDeliverConnection`, `TestAcceptGeneratedConnRejectsClosedOrStaleConnection` |
+| Start on closing Scope | fallback Start returns error, both clients stopped | PASS | `TestMieruFallbackStartOnClosingScope` |
 | Close | both clients/sockets stopped, active secondary session terminated, in-flight dial cannot report success, <7 s | PASS | `TestMieruFallbackCloseStopsBothRuntimes`, `...CloseWinsAgainstInFlightDial` |
 | Concurrency | 50 concurrent new sessions during primary failure; one recovery probe per window | PASS | `...ConcurrentNewSessions`, `...ConcurrentRecoveryProbeSingleFlight` |
 | Start rollback | primary started, secondary Start fails; both cleared/stopped; no ghost | PASS | `TestOutboundStartRollsBackBothRuntimesOnSecondaryFailure` |
 | Disabled path | no selector, no secondary runtime; existing tcp/udp/both/no_wait tests | PASS | `TestMieruFallbackDisabledCreatesNoSecondaryRuntime` + full package |
-| Unit/package | `go test ./protocol/mieru ./option ./include` | PASS, 81.7 s | `tests/fallback-tests.txt` |
-| Race | `CGO_ENABLED=1 go test -race ./protocol/mieru` | PASS, 85.9 s | `tests/race.txt` |
+| Unit/package | `go test ./protocol/mieru ./option ./include` | PASS (147 s under host load; fallback subset 59.7 s) | `tests/fallback-tests.txt` |
+| Race | `CGO_ENABLED=1 go test -race ./protocol/mieru` | PASS, 85.1 s | `tests/race.txt` |
 | Build/vet | `go build -tags DEFAULT_BUILD_TAGS_OTHERS ./...`, `go vet ./protocol/mieru ./option`, gofmt | PASS | command history |
 | Real mita 3.38.1 | healthy; TCP-refused鈫扷DP; UDP-blackhole鈫扵CP; restricted target refusal | PASS | `interop/mita/` |
 | Performance disabled | two 4-round old/new pairs; TCP 1.00-1.07x, upload 1.00-1.02x, UDP echo 0.92-0.95x | PASS (negative recorded) | `performance/disabled-*`, `disabled-combined.csv` |

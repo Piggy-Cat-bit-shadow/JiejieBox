@@ -18,13 +18,13 @@ go build -tags $tags ./...
 The fallback suite alone:
 
 ```powershell
-go test ./protocol/mieru -run 'TestMieruFallback|TestFallback|TestResolveFallback|TestClassifyDialError|TestTransportRuntimeCloses|TestOutboundStartRollsBack|TestMieruFallbackJSON' -count=1 -v
+go test ./protocol/mieru -run 'TestMieruFallback|TestFallback|TestResolveFallback|TestClassifyDialError|TestTransportRuntimeCloses|TestOutboundStartRollsBack|TestAcceptGenerated|TestMieruFallbackJSON' -count=1 -v
 ```
 
-Saved verbose output is `tests/fallback-tests.txt` (59.8 s); full package was
-81.7 s, race 85.9 s (`tests/race.txt`). The 10/20 s cases are the official
-SDK's fixed handshake timeout on silent TCP/UDP paths, not test sleeps; the
-`fallbackSelector` clock is fake in the state tests.
+Saved verbose output is `tests/fallback-tests.txt` (59.7 s); the full package was
+147 s under host load and race 85.1 s (`tests/race.txt`). The 10/20 s cases are
+the official SDK's fixed handshake timeout on silent TCP/UDP paths, not test
+sleeps; the `fallbackSelector` clock is fake in the state tests.
 
 ## Feature smoke
 

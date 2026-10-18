@@ -83,8 +83,8 @@ Full row-by-row decisions: [ERROR-CLASSIFICATION.md](ERROR-CLASSIFICATION.md).
 
 ## Verification summary
 
-- `go test ./protocol/mieru ./option ./include`: PASS, 81.7 s.
-- `CGO_ENABLED=1 go test -race ./protocol/mieru`: PASS, 85.9 s.
+- `go test ./protocol/mieru ./option ./include`: PASS (147 s under host load; fallback subset 59.7 s).
+- `CGO_ENABLED=1 go test -race ./protocol/mieru`: PASS, 85.1 s.
 - tagged full build, `go vet`, `gofmt`: PASS.
 - Real loopback matrices: TCP refused鈫扷DP, UDP blackhole鈫扵CP, TCP
   accept-but-silent鈫扷DP, UDP associate both directions, target refusal, existing

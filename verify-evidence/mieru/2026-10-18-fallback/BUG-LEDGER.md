@@ -80,9 +80,12 @@ checks `closed` and the current generation, closes the stale conn and returns
 `errFallbackStale`/`errOutboundClosed`. It uses `TryRLock` so the drain is not
 blocked by the same write lock it is waiting on.
 
-**Test:** `TestMieruFallbackCloseWinsAgainstInFlightDial` and the generation
-selector test. This is a **hardening** item; the exact interleaving was reasoned
-from the lifecycle and exercised with Close, not reproduced as a pre-fix failure.
+**Test:** `TestMieruFallbackCloseWinsAgainstInFlightDial` and
+`TestFallbackStaleGenerationCannotDeliverConnection` (controlled fake handshake
+completes after generation 2 is installed; connection is closed and
+`errFallbackStale` returned). This is a **hardening** item; the exact
+interleaving was reasoned from the lifecycle and exercised with a fake
+generation change, not reproduced as a pre-fix production failure.
 
 ## FB-005 — P2 hardening — secondary Start failure rollback
 
