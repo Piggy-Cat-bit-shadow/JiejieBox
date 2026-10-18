@@ -45,6 +45,7 @@ repeatable regression and is left visible for the debug round.
 | `references/mihomo/` | REF-E Mihomo v1.19.32 run: summary, three-way comparison, raw cells and YAML configs |
 | `phase3-debug/` | deep-debug ledger, test matrix, 4-round old/new A/B, race transcript and post-fix interop logs |
 | `phase3-debug/mita/` | real mita 3.38.1 built/run on Windows, 4-round official-vs-target matrix (supersedes "mita unavailable") |
+| `phase3-debug/soak/` | 6000 short connections (two runs), latency and socket/RSS settle curve |
 | `profiles/` | 6 s CPU profile and in-use heap profile of large TCP downloads, pprof top/cum, memory snapshots |
 
 ## Raw cell shape

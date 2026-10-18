@@ -287,6 +287,9 @@ DONE
 - 4-round target/official matrix against real `mita` 3.38.1 on Windows: TCP download
   +15%/+14%, UDP echo +5%/+9%/+46%, but first-byte P50 ~2x slower and UDP-transport upload
   0.739x; recorded in `phase3-debug/mita/`.
+- 3000 short connections (two runs, 6000 total): 0 failures, P50 1.02 ms / P95 1.07 ms;
+  the SDK's idle underlays settle after ~4 min (1 socket, 46 MiB, 329 handles). See
+  `phase3-debug/soak/`.
 - Explicit `Stop()` lifecycle, close of established sessions, bounded drain,
   network-change rebuild, listener options applied through the fork's listener
   helpers.
@@ -317,9 +320,9 @@ NOT_TESTED
   no scriptable Windows build). Real `mita` 3.38.1 did run, and both official-client and
   target directions reached it over TCP+UDP. Mihomo did run, but with SDK v3.38.0, so its
   ratios are product-level and are kept out of the unified-SDK matrix.
-- iOS/Android device runs, a 3000-short-connection/long-duration soak, the
-  packet-loss/latency matrix, TUN, and Wi-Fi/cellular path changes. These require
-  other hardware or a privileged runner.
+- A multi-hour soak, packet-loss/latency matrix, TUN, iOS/Android devices, and
+  Wi-Fi/cellular path changes. These require other hardware, a longer run, or a
+  privileged runner. The 3000-short-connection check is done (`phase3-debug/soak/`).
 - `go test -race` on Linux/macOS: the Windows run used `CGO_ENABLED=1` with the
   mingw toolchain. CI's race suite is the cross-platform check.
 

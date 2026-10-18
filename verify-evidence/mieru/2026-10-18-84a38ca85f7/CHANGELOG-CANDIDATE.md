@@ -56,6 +56,8 @@ Only claims with raw evidence in this directory. No WAN, device or battery claim
   download 1.150 / 1.144, TCP upload 1.020 / 0.963, UDP-transport download 1.032, UDP echo
   1.050 / 1.091 / 1.455; first-byte P50 1.97x slower (P95 equal), UDP-transport upload
   0.739x. The negatives are recorded in `phase3-debug/mita/`.
+- 3000 short connections ×2 (6000 total): 0 failures; P50 1.02 ms / P95 1.07 ms; idle
+  underlays settle to one socket after the SDK's ~4 min window. See `phase3-debug/soak/`.
 
 ## Not claimed
 

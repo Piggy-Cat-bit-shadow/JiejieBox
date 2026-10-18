@@ -29,7 +29,8 @@ Build tags for global work: `release/DEFAULT_BUILD_TAGS_OTHERS`.
 | Performance vs real mita | 4-round official-vs-target matrix; target TCP download +14-15%, UDP echo +45%, first-byte P50 ~2x slower, UDP-transport upload 0.739x | PASS (negative results recorded) | `mita/comparison.csv` |
 | Performance | 4-round A/B, same host/server, old vs new binary | PASS (no systematic regression; see below) | `performance/` |
 | mbox / extended / Hiddify | no Windows build / no WSL / no Docker | BLOCKED | phase-2 `decisions.md` E6 |
-| 3000 short connections / long soak / loss matrix | not run in this round | NOT_TESTED | time and host; official scripts are the next step |
+| 3000 short connections | 6000 new SOCKS connections in two runs, 64-byte echo each; 0 failures; sockets/CPU/RSS settle after the SDK idle window (~4 min) | PASS (idle retention documented) | `soak/` |
+| Long soak / loss / latency matrix | multi-hour trend, packet loss, jitter | NOT_TESTED | time and host; next round |
 | TUN / iOS / Android device / Apple sleep | no device or TUN permission | NOT_TESTED | phase-2 limitations |
 | Upstream SDK patching | not attempted; adapter fixes only | N/A | — |
 

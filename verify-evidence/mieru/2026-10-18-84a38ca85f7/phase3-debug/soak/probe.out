@@ -1,0 +1,1 @@
+﻿{"label":"probe","mode":"first-byte","connections":1,"payload_bytes":128,"wall_seconds":0,"throughput_mib_s":0,"p50_ms":2.059,"p95_ms":2.059,"p99_ms":2.059,"samples_ms":[2.059],"success":1,"failures":0,"connect_samples_ms":[1.547]}
