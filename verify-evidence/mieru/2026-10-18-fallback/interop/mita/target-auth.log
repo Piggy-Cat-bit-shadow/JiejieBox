@@ -1,0 +1,25 @@
+_mieru_final.exe : [36mINFO[0m[0000] outbound/mieru[m]: mieru client started (fallback udp enabled)
+所在位置 行:3 字符: 111
++ ... ($false))); & C:\Deepseek\_mieru_final.exe run -c (Join-Path $dir 'ta ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([36mINFO[0m[0...ck udp enabled):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+[36mINFO[0m[0000] inbound/mixed[in]: tcp server started at 127.0.0.1:11097
+[36mINFO[0m[0000] network: updated default interface WLAN, index 12
+[36mINFO[0m[0000] network: updated network environment: gateway 172.29.0.1, gateway_mac 80:05:88:ce:39:ec
+[36mINFO[0m[0000] sing-box started (0.04s)
+[36mINFO[0m[0004] [[38;5;80m488693824[0m 0ms] inbound/mixed[in]: inbound connection from 127.0.0.1:57701
+[36mINFO[0m[0004] [[38;5;80m488693824[0m 0ms] inbound/mixed[in]: inbound connection to 127.0.0.1:57700
+[37mDEBUG[0m[0004] [[38;5;80m488693824[0m 0ms] router: match[0] inbound=in => route(m)
+[36mINFO[0m[0004] [[38;5;80m488693824[0m 0ms] outbound/mieru[m]: outbound connection to 127.0.0.1:57700
+[36mINFO[0m[0014] outbound/mieru[m]: mieru: primary tcp transport failed, trying fallback udp
+[36mINFO[0m[0019] [[38;5;146m2051169154[0m 0ms] inbound/mixed[in]: inbound connection from 127.0.0.1:57704
+[36mINFO[0m[0019] [[38;5;146m2051169154[0m 0ms] inbound/mixed[in]: inbound packet connection to 127.0.0.1:55535
+[37mDEBUG[0m[0019] [[38;5;146m2051169154[0m 0ms] router: match[0] inbound=in => route(m)
+[36mINFO[0m[0019] [[38;5;146m2051169154[0m 0ms] outbound/mieru[m]: outbound packet connection to 127.0.0.1:55535
+[31mERROR[0m[0024] [[38;5;80m488693824[0m 20.0s] connection: open connection to 127.0.0.1:57700 using outbound/mier
+u[m]: (mieru: primary transport: failed to read socks5 connection response from the server: TIMEOUT | mieru: fallback t
+ransport: failed to read socks5 connection response from the server: TIMEOUT)
+[31mERROR[0m[0029] [[38;5;146m2051169154[0m 10.0s] connection: listen packet connection to 127.0.0.1:55535 using ou
+tbound/mieru[m]: failed to read socks5 connection response from the server: TIMEOUT

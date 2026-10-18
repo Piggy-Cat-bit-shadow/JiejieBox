@@ -17,7 +17,7 @@ Code SHA: `e1efe4cafdc`. All commands from
 | UDP Associate | fallback for `ListenPacket` in both directions (TCP鈫扷DP and UDP鈫扵CP) | PASS | `TestMieruFallbackUDPAssociateUsesSecondary`, `...UDPBlackholeUDPAssociateUsesTCP` |
 | IPv6 | primary/secondary endpoints on `::1`, TCP-refused→UDP fallback and echo | PASS | `TestMieruFallbackIPv6Endpoint` |
 | Target refusal | valid SOCKS error does not switch; real mita restricted user code 2 | PASS | `TestFallbackTargetRefusalDoesNotTrySecondary`; `interop/mita/target-restricted.log` |
-| Wrong credentials | both transports silent; no success; durable preference returns to primary; one secondary attempt remains | PASS (limitation) | `TestMieruFallbackWrongPasswordDoesNotSwitch`; mutation `repro/bug2.txt` |
+| Wrong credentials | both transports silent; no success; durable preference returns to primary; one secondary attempt remains; real mita confirms 10 s + 10 s timeouts | PASS (limitation) | `TestMieruFallbackWrongPasswordDoesNotSwitch`; `interop/mita/target-auth.log`; mutation `repro/bug2.txt` |
 | Existing sessions | established primary survives fallback caused by new-connection proxy failure; established secondary survives primary recovery | PASS | `TestMieruFallbackDoesNotStopExistingPrimarySession`; TCP-refused test |
 | InterfaceUpdated | both generations replaced, old sockets closed, selector reset, next dial fallback | PASS | `TestMieruFallbackInterfaceUpdateRebuildsBothGenerations` |
 | Stale generation | a generation-1 success completing after generation 2 is closed and rejected | PASS | `TestFallbackStaleGenerationCannotDeliverConnection`, `TestAcceptGeneratedConnRejectsClosedOrStaleConnection` |

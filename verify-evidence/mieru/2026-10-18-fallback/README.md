@@ -78,8 +78,10 @@ background probe to gate.
   transports fail silently, the selector returns to primary preference instead
   of leaving the outbound stuck on the secondary. **Limitation:** the official
   API gives no stable discriminator, so a wrong-credential attempt can still pay
-  one secondary attempt; it cannot
-  produce a successful connection without the secondary also authenticating.
+  one secondary attempt; it cannot produce a successful connection without the
+  secondary also authenticating. Real mita confirms the failure path: a wrong
+  password costs TCP 10 s + UDP 10 s, returns an error, and never echoes; see
+  `interop/mita/target-auth.log`.
 - Local DNS/address/permission/cancel errors are not retried on the other
   transport.
 

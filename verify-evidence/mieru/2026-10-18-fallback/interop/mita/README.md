@@ -22,6 +22,7 @@ denied). Target configs use the same Mieru credentials and `fallback`.
 | Primary TCP port has no listener, fallback UDP reaches mita | PASS; log `primary tcp transport failed, trying fallback udp` | `tcp-fail.log` |
 | Primary UDP blackhole, fallback TCP reaches mita | PASS after 10.06 s SDK handshake timeout; log `primary udp ... fallback tcp` | `udp-fail.log` |
 | Restricted user sends a loopback target, mita replies SOCKS code 2 | TCP fails in 3 ms; **no** `transport failed/trying fallback`; UDP target also errors | `target-restricted.log` |
+| Wrong password, same server/credentials, fallback configured | TCP 10 s timeout → one UDP attempt → 10 s timeout; final error, no success; 30 s tester wall time | `target-auth.log`, `mita-auth.log` |
 
 The restricted case is the real target-refusal check: a valid SOCKS reply is
 target-class and must not trip the primary transport health. It did not.

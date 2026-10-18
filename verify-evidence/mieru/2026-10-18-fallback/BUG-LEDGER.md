@@ -154,5 +154,7 @@ The official SDK does not expose a stable discriminator for wrong credentials
 versus an underlay blackhole. A wrong password can therefore pay one secondary
 attempt before both sides fail silently and the selector resets. It cannot
 return a successful connection unless the secondary also authenticates with the
-shared credentials. A future SDK typed error would be required to remove the
+shared credentials. Real mita 3.38.1 confirms the failure path: wrong password,
+TCP 10 s timeout, one UDP attempt, 10 s timeout, total 30 s tester wall time,
+no successful echo (`interop/mita/target-auth.log`). A future SDK typed error would be required to remove the
 attempt; this round does not fork the SDK or add an authentication probe.
