@@ -161,10 +161,25 @@ func (c *Client) openTunnel(ctx context.Context, request tunnelRequest) (net.Con
 		// An application error from a WORKING H3 connection (a status error, for example) is NOT
 		// ErrHTTP3Unavailable and must not be turned into a transport verdict: the version did
 		// come up, the server refused this CONNECT.
-		if !probeExpired && !errors.Is(err, ErrHTTP3Unavailable) {
+		//
+		// A response that is merely SLOWER than the window is the third case: the connection came
+		// up, so the transport is not known to be broken. Falling back for this attempt is right;
+		// remembering the version as unavailable is not, because the next setup would skip a path
+		// that works.
+		switch {
+		case errors.Is(err, errHTTP3ResponsePending):
+			c.noteHTTP3AmbiguousOutcome(http3Attempt)
+		case errors.Is(err, ErrHTTP3Unavailable):
+			c.markHTTP3Broken(http3Attempt)
+		case !probeExpired:
 			return nil, nil, TunnelTransportUnknown, err
+		case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+			c.markHTTP3Broken(http3Attempt)
+		default:
+			// The window expired, but the error is not a timeout (an application response raced
+			// it): still not a transport verdict.
+			c.noteHTTP3AmbiguousOutcome(http3Attempt)
 		}
-		c.markHTTP3Broken(http3Attempt)
 	}
 	if !extendedConnectAvailable && c.tlsDialer != nil && c.disableVersionFallback {
 		return nil, nil, TunnelTransportUnknown, errExtendedConnectUnavailable

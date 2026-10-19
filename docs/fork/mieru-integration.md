@@ -302,6 +302,14 @@ secondary preference. The ambiguous classification is a documented SDK API
 limit: the official `PostDialHandshake` returns a plain error for auth failure,
 server close and underlay death alike.
 
+**Known SDK limit, unchanged.** The SOCKS5 response read inside the official handshake is a fixed
+10 s (`apis/internal/handshake.go:47`) and has no cancellation point. A caller that cancels or times
+out earlier still waits for that read — measured: a 500 ms caller returns after 10.002 s. The adapter
+now returns the SDK error joined with the caller's context so the *reason* is correct, but it does
+**not** shorten the wait. No SDK fork, per-dial goroutine or forced close of a connection the adapter
+does not own is used; the only way below 10 s is an upstream context-aware handshake, or an ownership
+design reviewed on a device. The unchanged wall time must not be read as an optimisation.
+
 ## What is deliberately NOT done
 
 - No second DNS resolver, socket factory, health model, or sleep/wake state.

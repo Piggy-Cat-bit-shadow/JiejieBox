@@ -59,6 +59,16 @@ func (s *countingTunnelTransportServer) counts() (int, int) {
 // startTunnelTransportServer starts a real HTTP/3 server that accepts extended CONNECT.
 func startTunnelTransportServer(t *testing.T) *countingTunnelTransportServer {
 	t.Helper()
+	return startTunnelTransportServerWithResponseDelay(t, 0)
+}
+
+// startTunnelTransportServerWithResponseDelay starts the same real server, but holds the CONNECT-IP
+// response for responseDelay after the QUIC handshake and the request have arrived.
+//
+// This is what separates "H3 is not reachable" from "H3 is up and the server took too long to
+// answer": the existing counting server answers immediately, so a test cannot tell the two apart.
+func startTunnelTransportServerWithResponseDelay(t *testing.T, responseDelay time.Duration) *countingTunnelTransportServer {
+	t.Helper()
 	server := &countingTunnelTransportServer{closed: make(chan struct{})}
 
 	tlsConfig := testServerTLSConfig(t)
@@ -73,6 +83,13 @@ func startTunnelTransportServer(t *testing.T) *countingTunnelTransportServer {
 			server.access.Lock()
 			server.tunnels++
 			server.access.Unlock()
+			if responseDelay > 0 {
+				select {
+				case <-time.After(responseDelay):
+				case <-request.Context().Done():
+					return
+				}
+			}
 			// A tunnel is answered 200 and then held open, so the stream stays usable.
 			writer.WriteHeader(http.StatusOK)
 			if flusher, isFlusher := writer.(http.Flusher); isFlusher {

@@ -348,6 +348,19 @@ func (c *Client) claimHTTP3Outcome(attempt uint64) bool {
 	}
 }
 
+// noteHTTP3AmbiguousOutcome consumes the outcome slot for an attempt that proved the QUIC
+// connection came up but did not complete the tunnel before its window.
+//
+// It deliberately leaves the verdict untouched: a slow application response is not evidence of
+// transport failure, and it is not proof of health either. Claiming keeps the newest-attempt
+// ordering, so an older attempt that failed at the transport layer cannot arm the memory after
+// this newer observation; clearing the verdict would claim more than was proved.
+func (c *Client) noteHTTP3AmbiguousOutcome(attempt uint64) {
+	c.http3VerdictMu.Lock()
+	defer c.http3VerdictMu.Unlock()
+	c.claimHTTP3Outcome(attempt)
+}
+
 // resetHTTP3Verdict marks every attempt issued so far as stale AND clears the verdict, as one
 // transaction.
 //

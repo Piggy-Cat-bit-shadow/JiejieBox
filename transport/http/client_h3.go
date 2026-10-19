@@ -294,6 +294,11 @@ func (c *http3ClientImpl) openStream(ctx context.Context, request *http.Request)
 	stream, clientConn, err := c.openConnectStream(ctx, request)
 	if err != nil {
 		if ctx.Err() != nil {
+			// Preserve the marker that says the connection came up but the response did not
+			// arrive: openTunnel must not turn that delay into a transport verdict.
+			if errors.Is(err, errHTTP3ResponsePending) {
+				return nil, nil, err
+			}
 			return nil, nil, ctx.Err()
 		}
 		return nil, nil, E.Cause(err, "HTTP/3 CONNECT")

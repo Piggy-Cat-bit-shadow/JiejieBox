@@ -324,7 +324,9 @@ func (c *http3ClientImpl) openConnectStream(ctx context.Context, request *http.R
 	stream, err := clientConn.OpenRequestStream(ctx)
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, nil, ctx.Err()
+			// The connection is already established; failing to open a request stream because the
+			// setup window expired is a delay, not evidence that the version is unavailable.
+			return nil, nil, newHTTP3ResponsePendingError(ctx.Err())
 		}
 		return nil, nil, E.Cause1(ErrHTTP3Unavailable, err)
 	}
@@ -338,7 +340,7 @@ func (c *http3ClientImpl) openConnectStream(ctx context.Context, request *http.R
 		stream.CancelRead(quic.StreamErrorCode(h3StreamErrorCodeRequestCanceled))
 		_ = stream.Close()
 		if ctx.Err() != nil {
-			return nil, nil, ctx.Err()
+			return nil, nil, newHTTP3ResponsePendingError(ctx.Err())
 		}
 		return nil, nil, cause
 	}
@@ -366,10 +368,11 @@ func (c *http3ClientImpl) openConnectStream(ctx context.Context, request *http.R
 	}
 	if !stopSetupCancel() && ctx.Err() != nil {
 		// Setup "succeeded" only after the caller gave up. Returning the stream would hand over a
-		// tunnel nobody is waiting for.
+		// tunnel nobody is waiting for. The connection did come up, so this is the pending case,
+		// not a transport verdict.
 		stream.CancelRead(quic.StreamErrorCode(h3StreamErrorCodeRequestCanceled))
 		_ = stream.Close()
-		return nil, nil, ctx.Err()
+		return nil, nil, newHTTP3ResponsePendingError(ctx.Err())
 	}
 	// LIVE. The write side is open and stays open.
 	return stream, clientConn, nil

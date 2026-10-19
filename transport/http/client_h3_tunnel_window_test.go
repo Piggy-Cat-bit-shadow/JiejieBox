@@ -265,3 +265,33 @@ func TestH3TunnelOverRealLoopbackCarriesPayload(t *testing.T) {
 	_, _, _, tunnels, _, _, _ := pair.egressA.snapshot()
 	require.NotZero(t, tunnels)
 }
+
+// TestH3TunnelSlowResponseIsNotATransportVerdict is the boundary the window must not cross.
+//
+// The QUIC connection is established and the CONNECT-IP request reaches the server; only the 200
+// is slower than the window. That is an application/server response delay, not evidence that the
+// HTTP/3 path is unavailable, so it must not arm the broken-version memory. The server counts the
+// connection and the tunnel, so "the handshake really happened" is asserted rather than assumed.
+func TestH3TunnelSlowResponseIsNotATransportVerdict(t *testing.T) {
+	freezeTunnelWindow(t, 100*time.Millisecond)
+
+	server := startTunnelTransportServerWithResponseDelay(t, time.Second)
+	client := newTunnelTransportClient(t, server.address)
+
+	start := time.Now()
+	_, _, transport, err := client.openTunnel(context.Background(), tunnelRequestForTest())
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	require.Equal(t, TunnelTransportUnknown, transport)
+	conns, tunnels := server.counts()
+	require.GreaterOrEqual(t, conns, 1,
+		"the QUIC handshake must have completed for this to be a slow-response case")
+	require.GreaterOrEqual(t, tunnels, 1,
+		"the CONNECT-IP request must have reached the server")
+	require.Less(t, elapsed, 3*time.Second,
+		"the window plus the fallback must stay bounded; measured %s", elapsed)
+	require.Zero(t, client.http3Broken.Load(),
+		"a CONNECT-IP response slower than the window is not evidence that HTTP/3 is unavailable")
+	require.True(t, client.http3Available())
+}
