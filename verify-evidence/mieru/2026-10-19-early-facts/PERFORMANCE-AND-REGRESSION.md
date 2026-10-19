@@ -61,8 +61,8 @@ Raw output: `logs/`.
 |---|---|
 | `go test ./protocol/mieru/ -count=1` (before the change) | `ok ... 77.602s` |
 | `go test ./protocol/mieru/ -count=1` (after) | `ok ... 78.717s` (wall clock is unchanged within noise; the ~15 new tests are mostly deterministic and fast) |
-| `go test ./transport/http/ -tags with_quic -count=1` (after) | `ok ... 25.018s` |
-| `go test ./transport/http/ -tags with_quic -run TestH3Tunnel -v` | 8 tests pass, including the real loopback setup |
+| `go test ./transport/http/ -tags with_quic -count=1` (after) | `ok ... 24.966s` |
+| `go test ./transport/http/ -tags with_quic -run TestH3Tunnel -v` | 9 tests pass, including the real loopback setup (2.1–3.4 ms) and a payload round trip through the returned tunnel |
 | `go test ./protocol/mieru/ -run '^$' -bench ... -benchmem -count=3` | see the table above |
 | `go test -race ./protocol/mieru` | **not run** — build failure `clang: unsupported option '-mthreads'`; no mingw-w64 gcc on this host |
 | `go vet ./protocol/mieru ./transport/http` | clean |

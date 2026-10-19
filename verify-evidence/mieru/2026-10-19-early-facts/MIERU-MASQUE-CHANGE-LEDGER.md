@@ -101,7 +101,9 @@ consumer, the test that fails before it and passes after, and the invariant it k
   `TestH3TunnelCallerDeadlineIsNotExtendedByTheWindow`,
   `TestH3TunnelApplicationRefusalIsNotAVersionVerdict`, `TestH3TunnelImmediateUnavailableFallsBack`,
   `TestH3TunnelSuccessReportsHTTP3`, `TestH3TunnelWindowExpiryErrorNamesTheWindow`,
-  `TestH3TunnelSetupOverRealLoopbackIsFarInsideTheWindow` (3.4 ms measured).
+  `TestH3TunnelSetupOverRealLoopbackIsFarInsideTheWindow` (2.1–3.4 ms measured) and
+  `TestH3TunnelOverRealLoopbackCarriesPayload` (the returned tunnel really carries bytes both
+  ways after setup).
 - **Before-fix evidence:** the same scenario against baseline `c363e04` (worktree `_before-tunnel`):
   "the H3 tunnel attempt is still blocked after 3 s with `h1.calls=0`; the only bound is the caller's
   15 s budget".

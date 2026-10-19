@@ -1,3 +1,3 @@
 == go test ./transport/http/ -tags with_quic -count=1 ==
-ok  	github.com/sagernet/sing-box/transport/http	25.018s
+ok  	github.com/sagernet/sing-box/transport/http	24.966s
 exit=0

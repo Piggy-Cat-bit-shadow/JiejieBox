@@ -8,6 +8,7 @@ package http
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -205,4 +206,39 @@ func TestH3TunnelSetupOverRealLoopbackIsFarInsideTheWindow(t *testing.T) {
 	require.Less(t, elapsed, http3TunnelEstablishTimeout,
 		"a real loopback setup must not depend on the window; measured %s", elapsed)
 	t.Logf("CONNECT-IP setup over loopback HTTP/3: %s (window %s)", elapsed, http3TunnelEstablishTimeout)
+}
+
+// The tunnel returned by the setup is USABLE, not merely a 200: payload written
+// after the window has been cancelled out of the setup context still reaches the
+// server and comes back. This is the "200 is the beginning, not the end" rule on
+// the branch the window touches.
+func TestH3TunnelOverRealLoopbackCarriesPayload(t *testing.T) {
+	pair := newStandPair(t)
+	stand := newStandClient(t, pair.source)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	stream, _, err := stand.client.OpenTunnelWithInfo(ctx, "connect-ip", "/.well-known/masque/ip/*/*/")
+	require.NoError(t, err)
+	defer stream.Close()
+
+	payload := []byte("connect-ip-payload")
+	_, err = stream.Write(payload)
+	require.NoError(t, err)
+
+	echoed := make([]byte, len(payload))
+	echoedCh := make(chan error, 1)
+	go func() {
+		_, readErr := io.ReadFull(stream, echoed)
+		echoedCh <- readErr
+	}()
+	select {
+	case readErr := <-echoedCh:
+		require.NoError(t, readErr)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the tunnel did not carry the payload back")
+	}
+	require.Equal(t, payload, echoed)
+	_, _, _, tunnels, _, _, _ := pair.egressA.snapshot()
+	require.NotZero(t, tunnels)
 }
