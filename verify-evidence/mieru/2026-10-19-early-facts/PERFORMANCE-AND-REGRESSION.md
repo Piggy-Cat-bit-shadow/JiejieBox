@@ -93,7 +93,11 @@ Evidence:
 | `TestMieruInboundCanRebindAfterClose` ×10 | 65.00 s in 2/10 runs | 20× in 0.284 s (with the new test) |
 | New `TestMieruInboundCloseReleasesTheUDPUnderlayPromptly` (20 cycles) | n/a | 0.01 s |
 | Mutation (old ordering restored) | — | test fails at cycle 2: `Close took 1m5.0005327s` |
-| Full suite | 79 s or 143 s, depending on the dice | ~79–80 s |
+| Full suite | 79 s or 143 s, depending on the dice | 78.027 s |
+
+The client-side `PacketUnderlay` shares the same wake-only `Close`, but it was not changed: 25
+iterations of each outbound packet close/rebuild test (75 runs) took 72.3 s total, with no stall to
+justify a teardown-ordering change (ledger, "not fixed" rows).
 
 ## Mutation checks (the tests fail for the right reason)
 

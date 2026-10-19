@@ -201,6 +201,11 @@ moves it before `Stop`.
 **Decision: adopted** (see the ledger, M9). This is also a good example of the study's own rule: the
 SDK is not "the thing that owns shutdown" — the adapter owns the sockets it created.
 
+The CLIENT-side `PacketUnderlay` has the same wake-only `Close`. It was **not** changed, because it
+was not measured: 25 iterations of each of the three outbound packet close/rebuild tests took 72.3 s
+in total with no stall. If an outbound Close ever shows the same 60–120 s shape, the same
+socket-first ordering applies in `transportRuntime.stop()`.
+
 ## 10. Mieru's `NO_WAIT` handshake is not a recovery probe
 
 **Observation.** `apis/client/client.go:138-151`: with `HANDSHAKE_NO_WAIT`, the client returns an
