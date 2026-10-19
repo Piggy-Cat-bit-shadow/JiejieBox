@@ -124,7 +124,16 @@ different consumers). The split preserves both boundaries.
   existing timeout conservatism.
 - `protocol/mieru/fallback_test.go`: Mieru target/path facts; ambiguous EOF
   stays fact-less.
-- Full group/adapter packages pass; full mieru package and race pass.
+- `protocol/mieru/early_failure_test.go`: the socket errno table (WSA and
+  POSIX), the localized-text case, the local-interface case, the both-definite
+  and mixed both-failed matrix, the real-SDK refused endpoint, and the
+  cancelled-caller short circuit. The cost of the bridge is
+  `BenchmarkDialObservationOverhead` (45 ns, 48 B, 1 alloc per new session).
+- Full `protocol/mieru`, `transport/http` (with_quic), `adapter` and
+  `protocol/group` suites pass on Windows 2026-10-19. `-race` was
+  BLOCKED_BY_ENVIRONMENT there (no mingw-w64 gcc); see
+  `verify-evidence/mieru/2026-10-19-early-facts/PERFORMANCE-AND-REGRESSION.md`
+  for the exact blocker and the resume command.
 
 `FailureFactsOf` costs 75 ns on a plain error and 180 ns on a wrapped error,
 with 16 B/op, on the error path only. It is never called for a successful dial
