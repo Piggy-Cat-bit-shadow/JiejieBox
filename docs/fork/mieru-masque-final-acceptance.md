@@ -2,7 +2,7 @@
 
 **Repository:** `github.com/Piggy-Cat-bit-shadow/sing-box`, branch `testing`.
 **Start HEAD:** `3e0b8a11aa9b37a723e32e781bbd8931403658dc` (clean, remote equal).
-**This round's fix:** `6447d0af775f6c14b77170a1f6142cd56ea3f664`.
+**This round's fix:** `6447d0af775f6c14b77170a1f6142cd56ea3f664`; ordering test: `ccc2812e45d8f5fbbca3bc7af14b91bc0ba92a36`.
 **Scope:** only the last MASQUE CONNECT-IP boundary and the documented Mieru SDK limit. No new public
 failure interface, no probe, no state machine, no HTTP client refactor.
 
@@ -104,6 +104,7 @@ The unchanged wall time is not described as an optimisation anywhere in this rou
 | `go vet ./transport/http`, `gofmt -l transport/http` | clean |
 | `go test -tags with_quic ./transport/http -run TestH3Tunnel -count=5` | **PASS** |
 | `go test -tags with_quic ./transport/http -run "TestAmbiguousH3Outcome|TestH3TunnelSlowResponse" -count=5` | **PASS**, 0.542 s |
+| `go test -tags 'with_quic,with_low_memory' ./transport/http -run "TestH3TunnelSlowResponse|TestAmbiguousH3Outcome|TestH3TunnelOverRealLoopbackCarriesPayload" -count=3` | **PASS**, 0.362 s (the geometry the Apple gate uses) |
 | `BenchmarkDialObservationOverhead` | 49.95 ns/op, 48 B/op, 1 alloc/op (unchanged baseline) |
 | `BenchmarkFallbackSelectorChooseReport` | 28.05 ns/op, 0 B/op, 0 alloc/op (unchanged baseline) |
 
