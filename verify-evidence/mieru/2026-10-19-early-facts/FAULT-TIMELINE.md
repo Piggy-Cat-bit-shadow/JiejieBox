@@ -27,7 +27,7 @@ Three different constants are involved and must not be merged into one "15 s":
 | Fallback, TCP refused → UDP live | **1 ms total** | primary definite, secondary success | The refusal is the earliest fact anywhere in this table; the whole primary+secondary decision finished in about the time one socket takes. |
 | Fallback, UDP blackhole → TCP live | **10.002 s** | primary transport, secondary success | The floor is the SDK read deadline; the fallback adds a healthy secondary handshake on top (<1 ms loopback). |
 | Fallback, TCP accept-silent → UDP live | **10.002 s** | primary transport, secondary success | Same floor. |
-| Caller budget 500 ms, primary UDP blackhole | **10.002 s**, error is the SDK timeout | caller | The caller's deadline is NOT a cancellation point inside the SDK handshake. The classification is correct (caller, no preference change), but the return is 9.5 s late. See §Residual. |
+| Caller budget 500 ms, primary UDP blackhole | **10.002 s** (measured before the reporting change below; the wait is unchanged by it), error now carries the caller's reason | caller | The caller's deadline is NOT a cancellation point inside the SDK handshake. The classification is correct (caller, no preference change), but the return is 9.5 s late. The adapter now returns the SDK error joined with `ctx.Err()`, so `errors.Is(err, ctx.Err())` is true and a user cancel is no longer reported as a protocol timeout (`TestCallerDeadlineIsReportedWhenTheSDKAnswersLate`). See §Residual. |
 
 ## Where "15 s" came from
 

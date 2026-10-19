@@ -177,7 +177,31 @@ unreachable.
 **Decision: rejected** — no probe, no ticker, no background goroutine was added this round. The
 observation is recorded so a future round does not re-litigate it as "the SDK is idle anyway".
 
-## 8. Mieru's `NO_WAIT` handshake is not a recovery probe
+## 9. The SDK's own shutdown has an ordering race that a caller can only fix by closing its sockets first
+
+**Observation.** The server `PacketUnderlay` is created when the UDP listener starts
+(`pkg/protocol/mux.go`, `udp` case). Its event loop blocks in `ReadFrom` with a randomised
+60–120 s deadline (`pkg/protocol/underlay_base.go`: `readOneSegmentTimeout = 60 + rng.FixedIntVH(61)`).
+`PacketUnderlay.Close` (`pkg/protocol/underlay_packet.go`) does, in order: stop the clean ticker,
+`SetReadDeadline(time.Now())`, then `baseUnderlay.Close()` which closes sessions and **then** closes
+`done`. The woken read can therefore re-arm a fresh 60–120 s deadline before `done` closes, and
+`Mux.Close` waits for that loop (`serverUnderlayLoopWG.Wait()`).
+
+**Correspondence.** This is the 65 s stall found while settling this round: a *listener shutdown* that
+the caller cannot shorten from inside the SDK API, but can from outside — by closing the `PacketConn`
+the fork created (the SDK's `PacketUnderlay.Close` explicitly does not close it; the previous round
+already recorded that fact for the client side).
+
+**Can existing interfaces close it?** It is not a `FailureFacts`/Admission matter at all. It is an
+ownership fact: the fork owns the listener socket, so the fork can unblock the read.
+
+**Cost.** None: the socket was going to be closed microseconds later anyway; the ordering change only
+moves it before `Stop`.
+
+**Decision: adopted** (see the ledger, M9). This is also a good example of the study's own rule: the
+SDK is not "the thing that owns shutdown" — the adapter owns the sockets it created.
+
+## 10. Mieru's `NO_WAIT` handshake is not a recovery probe
 
 **Observation.** `apis/client/client.go:138-151`: with `HANDSHAKE_NO_WAIT`, the client returns an
 `EarlyConn` **before** `PostDialHandshake`, and the fork rejects `fallback` + `no_wait` in
@@ -190,7 +214,7 @@ reject.
 
 **Decision: rejected** (kept the real request as the probe, single-flight, as before).
 
-## 9. curl's layered connection racing — `UNVERIFIED_EXTERNAL`, not adopted
+## 11. curl's layered connection racing — `UNVERIFIED_EXTERNAL`, not adopted
 
 A web search (the environment cannot fetch external pages) surfaced curl's Happy Eyeballs material
 (`https://everything.curl.dev/usingcurl/connections/happy.html`) and curl issue #19740

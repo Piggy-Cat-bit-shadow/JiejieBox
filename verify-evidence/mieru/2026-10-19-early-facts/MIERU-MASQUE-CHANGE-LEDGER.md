@@ -73,16 +73,21 @@ consumer, the test that fails before it and passes after, and the invariant it k
   expected 1.
 - **Invariant:** the wrong-credential fail-closed property from the previous round is unchanged.
 
-### M6 — an already-cancelled caller does not start a handshake
+### M6 — an already-cancelled caller does not start a handshake, and a late answer still reports the cancellation
 
 - **Files:** `protocol/mieru/fallback.go` (`transportRuntime.dial`).
 - **Old:** the pre-check did not exist; the SDK's `mux.DialContext` checked the context in places, but
-  the 10 s response read could not be cancelled.
+  the 10 s response read could not be cancelled. A caller that gave up during that read received the
+  SDK's own timeout as the whole error, so a user cancel surfaced as a protocol timeout.
 - **New:** if `ctx.Err() != nil` when the transport is entered, return the caller error immediately
-  with `dialCallerFailure` — no SDK session, no socket, no preference change.
+  with `dialCallerFailure` — no SDK session, no socket, no preference change. If the caller cancels
+  *during* the SDK read, the returned error is the SDK error joined with `ctx.Err()`
+  (`E.Cause1`): the SDK detail stays in the message, and `errors.Is(err, ctx.Err())` holds, so
+  `adapter.IsCallerCancellation` / the route's `IsClosedOrCanceled` see the user cancel.
 - **Consumer:** every caller; the selector sees `caller`.
-- **Test:** `TestAlreadyCancelledCallerSkipsTheSDKHandshake`.
-- **Invariant:** caller cancellation is never transport evidence.
+- **Tests:** `TestAlreadyCancelledCallerSkipsTheSDKHandshake`,
+  `TestCallerDeadlineIsReportedWhenTheSDKAnswersLate`.
+- **Invariant:** caller cancellation is never transport evidence, and it is never upgraded to a fault.
 
 ## MASQUE / HTTP transport
 
@@ -111,6 +116,30 @@ consumer, the test that fails before it and passes after, and the invariant it k
 - **Invariants:** strict mode does not fall back and arms nothing; a caller that leaves does not trigger
   an H2 tunnel; an application refusal (`403`) is not a version verdict; the tunnel's 200 still starts a
   long-lived stream with an open write side (no change to `openConnectStream`).
+
+## Inbound lifecycle (unexpected finding during settlement)
+
+### M9 — Close releases the UDP underlay read instead of waiting for the SDK's 60–120 s timeout
+
+- **Files:** `protocol/mieru/inbound.go` (ordering in `Close`), `protocol/mieru/e2e_test.go` (new test).
+- **Found while checking why the full suite sometimes took 143 s instead of 80 s.**
+- **Root cause (source-anchored):** the SDK creates a server `PacketUnderlay` as soon as the UDP listener
+  starts (`pkg/protocol/mux.go`, `udp` case) and its event loop blocks in `ReadFrom` with
+  `readOneSegmentTimeout = 60..120 s` (`pkg/protocol/underlay_base.go`). `PacketUnderlay.Close` only
+  **wakes** that read with `SetReadDeadline(time.Now())` and then closes sessions before closing its
+  done channel (`pkg/protocol/underlay_packet.go`). A woken loop can re-arm a fresh 60–120 s deadline
+  before `done` is closed, so `Mux.Close`'s `serverUnderlayLoopWG.Wait()` (`pkg/protocol/mux.go`) waits
+  for the read. Closing the `PacketConn` we own **before** `server.Stop()` makes the read return
+  `net.ErrClosed` immediately and permanently.
+- **Measured before:** `TestMieruInboundCanRebindAfterClose` at baseline took exactly **65.000 s** in
+  2/10 runs (65 = 60 s read + 5 s `closeWaitTimeout`), and the full suite alternated 79 s / 143 s.
+- **Measured after:** `TestMieruInboundCloseReleasesTheUDPUnderlayPromptly` (20 start/close cycles)
+  passes in 0.01 s; rebind + prompt-close run 20× each in 0.284 s total.
+- **Mutation proof:** restoring the old ordering (`Stop` before `closeAll`) makes the new test fail at
+  cycle 2 with `Close took 1m5.0005327s`.
+- **Invariant:** `closeOnce` still guards the whole body; the listener registry is idempotent and marks
+  itself closed, so a listener created during teardown is refused (`add` returns false) rather than
+  surviving.
 
 ## Documentation
 

@@ -17,7 +17,7 @@ from baseline `c363e04bb3065de68e2123182013124cbb65a900`.
 
 ## What this round changed
 
-Two production behaviours, each with a deterministic before/after:
+Three production behaviours, each with a deterministic before/after:
 
 1. **Mieru: the socket-level failure proof is no longer thrown away by the SDK.**
    The official client flattens every underlay error to text (`%v`). The fork's bridge now records the
@@ -34,6 +34,13 @@ Two production behaviours, each with a deterministic before/after:
    The attempt now gets `http3TunnelEstablishTimeout` (3 s), mirroring the stream-dial window, with
    strict mode, caller cancellation and application refusals keeping their existing semantics.
 
+3. **Mieru inbound shutdown no longer waits out a 60–120 s UDP read (found while settling).**
+   The SDK's server `PacketUnderlay` is woken by a read deadline and can re-arm a fresh one before its
+   done channel closes, so `Mieru Inbound.Close` occasionally took exactly 65 s (2/10 runs at
+   baseline). The fork now closes the listener sockets it owns **before** `server.Stop()`, which
+   releases the read deterministically; this also explains why the package suite alternated between
+   ~79 s and ~143 s.
+
 Nothing else was touched: no new background probe, timer or goroutine; no change to Mieru's wire
 protocol, auth, Mux ownership, or to MASQUE's capsules/MTU/DNS handling.
 
@@ -41,12 +48,14 @@ protocol, auth, Mux ownership, or to MASQUE's capsules/MTU/DNS handling.
 
 - `protocol/mieru/dial_observation.go` (new) — the per-dial typed-evidence ledger.
 - `protocol/mieru/dialer.go` — the bridge records every socket result.
-- `protocol/mieru/fallback.go` — socket classification, two new classes, facts, both-failed rule.
+- `protocol/mieru/fallback.go` — socket classification, two new classes, facts, both-failed rule,
+  caller-reason preservation.
 - `protocol/mieru/outbound.go` — transport-class helper in the fallback branch.
+- `protocol/mieru/inbound.go` — close the listener sockets before the SDK's Stop.
 - `transport/http/tunnel_client.go` — the H3 tunnel window.
 - Tests: `protocol/mieru/early_failure_test.go`,
-  `transport/http/client_h3_tunnel_window_test.go`, plus the classifier call-site update in
-  `protocol/mieru/fallback_test.go`.
+  `transport/http/client_h3_tunnel_window_test.go`, `protocol/mieru/e2e_test.go` (prompt-close
+  regression), plus the classifier call-site update in `protocol/mieru/fallback_test.go`.
 - Design doc updated: `docs/fork/cross-protocol-failure-facts.md` (producer table + the `%v` bridge).
 
 ## Evidence map
@@ -96,7 +105,8 @@ Re-verify, in this order:
 ## Deliberately not claimed
 
 - The Mieru silent-blackhole floor is still the SDK's 10 s response read; no public API exposes a
-  cancellation point there. A caller with a 500 ms budget still waits ~10 s (measured). See
+  cancellation point there. A caller with a 500 ms budget still waits ~10 s (measured), although the
+  returned error now carries the caller's own reason instead of only the SDK timeout. See
   FAULT-TIMELINE.md §Residual and the ledger's "not fixed" rows.
 - No device evidence (iOS/Android/TUN), no real Wi-Fi↔cellular transition, no multi-hour soak.
 - No `-race` run on this host.

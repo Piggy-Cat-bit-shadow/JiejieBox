@@ -60,13 +60,40 @@ Raw output: `logs/`.
 | Command | Result |
 |---|---|
 | `go test ./protocol/mieru/ -count=1` (before the change) | `ok ... 77.602s` |
-| `go test ./protocol/mieru/ -count=1` (after) | `ok ... 80.451s` (the suite's wall clock is dominated by fixed 10 s SDK waits; run-to-run varies by a few seconds, and the new tests are deterministic) |
+| `go test ./protocol/mieru/ -count=1` (after) | `ok ... 78.027s`; the suite's wall clock is dominated by fixed 10 s SDK waits. The earlier bimodal 79 s / 143 s runs were **not** noise: they were the inbound shutdown defect described below, worth exactly 65 s when it fired |
 | `go test ./transport/http/ -tags with_quic -count=1` (after) | `ok ... 24.966s` |
 | `go test ./transport/http/ -tags with_quic -run TestH3Tunnel -v` | 9 tests pass, including the real loopback setup (2.1–3.4 ms) and a payload round trip through the returned tunnel |
 | `go test ./protocol/mieru/ -run '^$' -bench ... -benchmem -count=3` | see the table above |
 | `go test -race ./protocol/mieru` | **not run** — build failure `clang: unsupported option '-mthreads'`; no mingw-w64 gcc on this host |
 | `go vet ./protocol/mieru ./transport/http` | clean |
 | `gofmt -l protocol/mieru transport/http` | no output |
+
+Per-test profile of the slowest cases (from a JSON run, so the outlier above can be attributed):
+wrong password 20.00 s, UDP-blackhole→TCP 10.01 s, no-wait wrong password 10.00 s,
+TCP-blackhole→UDP 10.00 s, UDP-associate blackhole 10.00 s, close-during-dial 6.92 s — all pre-existing
+fixed waits. Every test added this round completes in under 0.1 s except the two real-SDK ones
+(refused endpoint and cancelled caller), which are bounded by their own short deadlines.
+
+## Inbound shutdown: the 65 s that made the suite bimodal
+
+The JSON run also showed `TestMieruInboundCanRebindAfterClose` at **65.00 s** (normally 0.03 s). The
+goroutine dump from `go test -timeout 25s` put the test in
+`Mux.Close → serverUnderlayLoopWG.Wait()`, and the blocked loop in
+`PacketUnderlay.readOneSegment → ReadFrom` with the SDK's 60–120 s deadline.
+
+Root cause and fix: see the ledger M9 and the design study #9. The short form is that
+`PacketUnderlay.Close` only wakes that read and then closes sessions before closing `done`, so the
+woken loop can re-arm the deadline; closing the `PacketConn` the fork owns, before `server.Stop()`,
+makes the read return `net.ErrClosed` immediately.
+
+Evidence:
+
+| Item | Before | After |
+|---|---|---|
+| `TestMieruInboundCanRebindAfterClose` ×10 | 65.00 s in 2/10 runs | 20× in 0.284 s (with the new test) |
+| New `TestMieruInboundCloseReleasesTheUDPUnderlayPromptly` (20 cycles) | n/a | 0.01 s |
+| Mutation (old ordering restored) | — | test fails at cycle 2: `Close took 1m5.0005327s` |
+| Full suite | 79 s or 143 s, depending on the dice | ~79–80 s |
 
 ## Mutation checks (the tests fail for the right reason)
 
