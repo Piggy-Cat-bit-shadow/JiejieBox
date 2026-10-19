@@ -16,7 +16,7 @@ created, nothing was force-pushed, no release/tag was made.
 | `Piggy-Cat-bit-shadow/sing` | `fix/splice-setup-failure-fallback-v2` | `baed8c3b4a3439360102ae2185a8a808ac841b6f` | `git ls-remote origin fix/splice-setup-failure-fallback-v2` |
 | `Piggy-Cat-bit-shadow/quic-go` | `jiejie-masque-mod9` | `7e08ecab` (B4/B6/B7 on top of `1a730c584263`) | `git ls-remote origin jiejie-masque-mod9` |
 | `Piggy-Cat-bit-shadow/sing-quic` | `jiejie-packet-ceiling` | `d0deb03` | `git ls-remote origin jiejie-packet-ceiling` |
-| `Piggy-Cat-bit-shadow/sing-tun` | `fix/listenconfig-ipv6-only-selfheal` | `9c75994` | `git ls-remote origin fix/listenconfig-ipv6-only-selfheal` |
+| `Piggy-Cat-bit-shadow/sing-tun` | `fix/listenconfig-ipv6-only-selfheal` | `19cb9f1` (B1/B8 on top of `9c75994`) | `git ls-remote origin fix/listenconfig-ipv6-only-selfheal` |
 
 Effective dependency pins (all resolvable from the public module proxy):
 
@@ -24,7 +24,7 @@ Effective dependency pins (all resolvable from the public module proxy):
 replace github.com/sagernet/sing      => github.com/Piggy-Cat-bit-shadow/sing      v0.9.6-0.20261019051552-baed8c3b4a34
 replace github.com/sagernet/quic-go   => github.com/Piggy-Cat-bit-shadow/quic-go   v0.61.1-0.20261019061042-7e08ecaba383
 replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261019060901-d0deb0359c06
-replace github.com/sagernet/sing-tun  => github.com/Piggy-Cat-bit-shadow/sing-tun  v0.0.0-20261019061045-9c75994b2ef0
+replace github.com/sagernet/sing-tun  => github.com/Piggy-Cat-bit-shadow/sing-tun  v0.0.0-20261019070229-19cb9f107a3f
 ```
 
 ### 1.1 Main-repository commit sequence
@@ -37,7 +37,8 @@ replace github.com/sagernet/sing-tun  => github.com/Piggy-Cat-bit-shadow/sing-tu
 6. `219f8cbf3fc` docs: construction/debug/audit evidence
 7. `5c88bad7edf` `test(deps): keep the test module's fork pins in parity with the root`
 8. `2a74686af57` `perf(deps): pick up owned datagram, frame right-sizing, drop counters and stream-frame retention fixes` (B4/B5/B7/B8)
-9. this archive commit (reports moved to `KNOWLEDGE/reports/anywhere-round2/`)
+9. `3eec16cc3b9` `perf(tun/masque): transfer owned packets across the port boundary` (B1)
+10. this archive commit (reports moved to `KNOWLEDGE/reports/anywhere-round2/`)
 
 Each is independently revertible; §10 of the construction record gives the order.
 
@@ -51,6 +52,7 @@ Each is independently revertible; §10 of the construction record gives the orde
 | **A1** counted-slice growth | Implemented in the `sing` fork; geometric growth with a 1024-element bounded first chunk | 1M-element probe: 6.0x → below 3x allocation; census below |
 | **B3** decompression budget | Implemented; 128 MiB cap with a one-byte EOF probe and a dedicated error | Bomb/boundary/checksum tests; parser suite |
 | **B2** owned-batch chunking | Implemented; >32-packet bursts keep the batch path in ≤32 chunks | 64-packet test, partial-refusal test, boundary table |
+| **B1** port-boundary ownership | Implemented; `tun.PacketBufferPort` gives the dispatcher a one-copy owned path, and the MASQUE endpoint consumes the buffers unconditionally | Sing-tun stage/refusal/close tests; compile-time capability assertion; `with_quic` protocol/masque suite |
 | **B6** QUIC receive-slot release | Implemented; popped payload slots are niiled | Retention tests fail before, pass after |
 | **B4** small-frame right-sizing | Implemented; over-provisioned sorted frames are copied to exact size and the pooled buffer returned | Frame-sorter tests; MTU-sized frames still keep the pool buffer |
 | **B5** Hysteria2/TUIC owned datagrams | Implemented; packed buffers are handed to `SendDatagramOwned`, released once by the transport | Ownership tests in both packages; fork build + main-repo protocol tests |
@@ -98,17 +100,12 @@ Full detail: [`anywhere-round2-debug-audit.md`](anywhere-round2-debug-audit.md).
 
 ## 4. CI
 
-| SHA | Workflow | Result | Link |
-|---|---|---|---|
-| `526372ef40c` (code + knowledge archive head) | **Verify** | **success** — gofmt, nested-module integrity, tagged/untagged builds, build matrix, **race on the fork's own data paths**, race on the configuration surface | https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39208889339 |
-| `526372ef40c` | Android Core ARM64 | success | https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39208889095 |
-| `526372ef40c` | Mobile contract verification (Apple tags + low-memory) | success | https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39208889120 |
+<!-- FINAL_CI -->
 
 Earlier in the round, Verify failed once on `219f8cb` at the **nested Go module integrity** step
 because `test/go.mod` still pinned the previous fork versions
 (https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39204268737); `5c88bad` fixed exactly
-those four lines and Verify turned green for the remainder of the round. The run above is the final
-code-and-archive head and covers every dependency bump.
+those four lines and Verify turned green for the remainder of the round.
 
 Local `-race` is `BLOCKED_BY_ENVIRONMENT` (no cgo toolchain on this host); the remote race steps are
 what cover the pushed SHA. Device `phys_footprint`, energy and Android mmap remain `NOT_RUN` (no
@@ -119,19 +116,17 @@ local suites recorded in the debug audit plus the main-repository build and test
 
 ## 5. Not implemented
 
-**B1 (CONNECT-IP port-boundary ownership)** — needs a new ownership-carrying capability on `tun.Port`
-plus a dispatcher that allocates the final owned buffer; the refusal path must be proven exactly-once
-before it is acceptable. A wrong ownership transfer is worse than the copy it removes, so it was not
-landed.
-
 **B9 (Android rule-set mmap)** — no Android device or emulator in this environment; the mapping path
 was not enabled blind for all Android production traffic.
 
-Both are recorded as design constraints, not as tasks for the reader.
+This is the only item left unimplemented, and it is recorded as a platform constraint rather than a
+task for the reader.
 
 ## 6. Residual unverified items
 
 - A0's field trigger rate (the lifetime bug is proven, the frequency is not).
+- B1's end-to-end effect on a live TUN: headroom, order, refusal and close ownership are proven at
+  the stage/endpoint boundary; a throughput/CPU measurement through a real TUN is not.
 - B6/B7/B8 effects on a live connection: reachability/counters are proven, RSS deltas are not.
 - B2's production trigger frequency (the deterministic loss above 32 is removed).
 - B4's benefit under a real lossy peer (retained capacity is proven, an RSS delta is not).

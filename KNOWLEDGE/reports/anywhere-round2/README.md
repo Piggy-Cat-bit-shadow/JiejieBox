@@ -27,15 +27,15 @@ not a new baseline.
 | A1 | `varbin.ReadSliceCount` geometric growth with a bounded first chunk (in the `sing` fork) | 1M-domain load allocation 42.5 → 20.6 MiB; GC 10 → 5 |
 | B3 | SRS decompressed-work budget with a real-EOF probe (not a synthetic `io.LimitReader` EOF) | decompression bombs fail bounded, checksum/truncation semantics kept |
 | B2 | MASQUE owned batches chunked at the transport's 32-frame queue | 64-packet bursts keep the batch path; refusal only rolls back its chunk |
+| B1 | `tun.PacketBufferPort` gives the forward dispatcher a one-copy owned path; the MASQUE endpoint consumes the buffers unconditionally | the packet is copied once instead of twice; refusal/close release exactly once |
 | B6 | QUIC/H3 receive queues clear popped slots | delivered payloads are no longer kept reachable by the backing array |
 | B4 | over-provisioned sorted STREAM frames are right-sized | a 128 B frame no longer pins a 1452 B pool buffer |
 | B5 | Hysteria2/TUIC use `SendDatagramOwned` | one fewer copy/allocation per datagram, release exactly once |
 | B7 | received-DATAGRAM drop counter on `quic.Conn` | a shedding tunnel is distinguishable from an idle one |
 | B8 | UDP NAT drop counter (`UDPNatDroppedPackets`) | queue-full and closed-session drops are visible |
 
-Not landed: **B1** (CONNECT-IP port-boundary ownership needs a `tun.Port` interface change whose
-refusal path must be proven exactly-once) and **B9** (Android mmap needs device evidence; not enabled
-blind). Both are design constraints, not tasks for the reader.
+Not landed: **B9** (Android mmap needs device evidence; not enabled blind). It is a platform
+constraint, not a task for the reader.
 
 ## Dependency pins used by the delivered tree
 
@@ -43,7 +43,7 @@ blind). Both are design constraints, not tasks for the reader.
 sing      v0.9.6-0.20261019051552-baed8c3b4a34   (branch fix/splice-setup-failure-fallback-v2)
 quic-go   v0.61.1-0.20261019061042-7e08ecaba383 (branch jiejie-masque-mod9)
 sing-quic v0.7.2-0.20261019060901-d0deb0359c06  (branch jiejie-packet-ceiling)
-sing-tun  v0.0.0-20261019061045-9c75994b2ef0    (branch fix/listenconfig-ipv6-only-selfheal)
+sing-tun  v0.0.0-20261019070229-19cb9f107a3f    (branch fix/listenconfig-ipv6-only-selfheal)
 ```
 
 `test/go.mod` carries the same four pins; the nested-module integrity gate in `Verify` compares them.

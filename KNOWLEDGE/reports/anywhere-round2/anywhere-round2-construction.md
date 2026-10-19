@@ -22,14 +22,14 @@ exact commit.
 | B3 | SRS decompressed-work budget | **IMPLEMENTED / VALIDATED** | `e09a669067e` |
 | B2 | MASQUE owned-batch chunking above 32 datagrams | **IMPLEMENTED / VALIDATED** | `f1f9d28724f` |
 | B6 | QUIC delivered-datagram slot release | **IMPLEMENTED / VALIDATED** (dependency + bump) | `quic-go@1a730c584263` → main `7ecb24dfbed` |
-| B1 | CONNECT-IP second copy across the port boundary | **NOT IMPLEMENTED — deferred (cross-repository ownership interface)** | — |
+| B1 | CONNECT-IP second copy across the port boundary | **IMPLEMENTED / VALIDATED** | `sing-tun@19cb9f1` → main `3eec16cc3b9` |
 | B4 | QUIC receive small-frame pinning | **IMPLEMENTED / VALIDATED** | `quic-go@7e08ecab` → main `2a74686af57` |
 | B5 | Hysteria2/TUIC owned datagram send | **IMPLEMENTED / VALIDATED** | `sing-quic@d0deb03` → main `2a74686af57` |
 | B7 | QUIC received-DATAGRAM drop counter | **IMPLEMENTED / VALIDATED** | `quic-go@7e08ecab` → main `2a74686af57` |
 | B8 | UDP NAT drop counter | **IMPLEMENTED / VALIDATED** | `sing-tun@9c75994` → main `2a74686af57` |
 | B9 | Android rule-set mmap | **NOT IMPLEMENTED — no device; not enabled blind** | — |
 
-`DEFERRED` here means the change was not started, not that it was rejected. The reasons are in §7.
+`DEFERRED` here means the change was not started, not that it was rejected. Only B9 remains deferred.
 
 ---
 
@@ -257,9 +257,19 @@ ok  github.com/sagernet/quic-go/http3
 
 ---
 
-## 7. Follow-up pass: B4, B5, B7, B8
+## 7. Follow-up pass: B1, B4, B5, B7, B8
 
-These four were delivered after the first push, in the same round.
+These five were delivered after the first push, in the same round.
+
+**B1 — owned packets across the port boundary (`sing-tun@19cb9f1` + main `3eec16cc3b9`).**
+`tun.PacketBufferPort` is an optional `Port` capability: `PacketHeadroom() int` plus
+`WritePacketBuffers([]*buf.Buffer) error`, whose contract is that ownership moves **unconditionally**
+before it returns. The forward stage allocates one headroomed buffer per packet and stages it, so the
+packet is copied once instead of once into the stage and again into the endpoint. `Flush` hands the
+buffers over and never touches them again; `Close` releases anything still staged. Tests in
+`sing-tun` cover owned staging with headroom and byte equality, refusal (the port consumes and
+releases exactly once), the unchanged borrowed path for a plain port, and close-time release. The
+main repository asserts `ClientEndpoint` implements `tun.PacketBufferPort` at compile time.
 
 **B4 — right-size over-provisioned sorted frames (`quic-go@7e08ecab`).** `frameSorter.push` now copies
 a frame to an exact-size slice when `cap(Data) > 2*len(Data)`, and releases the pooled frame through
@@ -284,14 +294,10 @@ the queue stays at its bound.
 closed-session drop in `udpNatDroppedPackets`, exposed as `UDPNatDroppedPackets()`. Tests:
 `TestUDPNatCountsQueueFullDrop` and `TestUDPNatCountsClosedSessionDrop`.
 
-## 8. Items not implemented, with reasons
+`go test -tags with_quic ./protocol/masque` (60.3 s) passes with the B1 endpoint and the new
+sing-tun; `go test ./route -short` (61.8 s) and the transport suites pass unchanged.
 
-**B1 (CONNECT-IP second copy).** The copy is real (`sing-tun/flow_dispatch.go:653` then
-`protocol/masque/client.go:649-651`), but removing it requires a new ownership-carrying capability on
-`tun.Port` in the `sing-tun` fork, plus a dispatcher that allocates the final owned buffer itself.
-That is a cross-repository interface change with a refusal path that must be proven exactly-once
-before it is acceptable. It was not attempted because a wrong ownership transfer is worse than the
-copy it removes.
+## 8. Item not implemented, with reason
 
 **B9 (Android mmap).** No Android device or emulator in this environment. The instruction forbids
 silently enabling a new mapping path for all Android production traffic without evidence, and
@@ -314,6 +320,7 @@ behaviour.
 - `go test ./dns ./common/srs ./route/rule`, `go test ./route -short`, `go test ./route` (full),
   `go test -tags with_low_memory ./route/rule ./dns`,
   `go test -tags with_quic ./transport/masque ./transport/http`,
+  `go test -tags with_quic ./protocol/masque` (60.3 s),
   `go test ./protocol/hysteria2/... ./protocol/tuic/...` — results in
   [`anywhere-round2-debug-audit.md`](anywhere-round2-debug-audit.md).
 - Low-memory tag: the changed code paths are not geometry-specific (DNS dispatch, SRS parser,
@@ -322,12 +329,13 @@ behaviour.
 
 ## 10. Rollback order
 
-1. `2a74686af57` (B4/B5/B7/B8 dependency bump) — independent.
-2. `7ecb24dfbed` (B6 quic-go bump) — independent.
-3. `4cb0f07e4ca` (A1 sing bump) — independent.
-4. `f1f9d28724f` (B2) — independent.
-5. `e09a669067e` (B3) — independent.
-6. `ea6e411c135` (A0) — revert only with a `bytes.Clone` stop-gap, because the old code reads
+1. `3eec16cc3b9` (B1 endpoint + sing-tun bump) — independent.
+2. `2a74686af57` (B4/B5/B7/B8 dependency bump) — independent.
+3. `7ecb24dfbed` (B6 quic-go bump) — independent.
+4. `4cb0f07e4ca` (A1 sing bump) — independent.
+5. `f1f9d28724f` (B2) — independent.
+6. `e09a669067e` (B3) — independent.
+7. `ea6e411c135` (A0) — revert only with a `bytes.Clone` stop-gap, because the old code reads
    recycled memory.
 
 Each commit builds on its own; no commit depends on a later one. The fork commits are additive and

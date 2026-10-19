@@ -208,21 +208,27 @@ new chunking, and the tests that pin them were extended rather than replaced.
 
 ---
 
-## 10. Follow-up pass: B4/B5/B7/B8 tests
+## 10. Follow-up pass: B1/B4/B5/B7/B8 tests
 
 | Item | Test | Result |
 |---|---|---|
+| B1 | `go test . -run 'TestForwardStage\|TestForwardDispatcherClose'` (sing-tun) — owned staging with headroom, refusal, plain-port fallback, close-time release | PASS. The capable port receives one headroomed buffer per packet and consumes it exactly once; a plain port keeps the borrowed path; close releases staged buffers directly |
+| B1 | `go test -tags with_quic ./protocol/masque -run 'TestClientEndpointImplementsPacketBufferPort'` | PASS (compile-time capability assertion); full `with_quic` protocol/masque suite PASS in 60.3 s |
 | B4 | `go test . -run 'FrameSorter'` (quic-go) — `TestFrameSorterRightSizesOverProvisionedFrames`, `TestFrameSorterKeepsThePooledBufferForAFullSizeFrame` | PASS. Red proof: the pre-fix sorter keeps cap 1452 for a 128 B frame and the first test fails |
 | B5 | `go test ./hysteria2/... ./tuic/... -run 'TestSendOwnedDatagram'` (sing-quic, built against the fork quic-go) | PASS. Success transfers ownership without a helper release; a refused send releases exactly once |
 | B7 | `go test . -run 'DatagramQueue'` (quic-go) — `TestDatagramQueueCountsReceiveDrops` | PASS. 128 queued + 1 overflow → counter 1, queue stays at bound |
 | B8 | `go test . -run 'TestUDPNatCounts'` (sing-tun) — queue-full and closed-session drops | PASS. Each drop increments `UDPNatDroppedPackets` exactly once |
 
-Cross-component after the second dependency bump:
-`go build ./...` clean; `go test ./protocol/hysteria2/... ./protocol/tuic/...` PASS (0.05 s / 0.03 s);
-`go test -tags with_quic ./transport/masque ./transport/http` PASS (6.8 s / 25.2 s);
-`go test ./dns ./common/srs ./route/rule` PASS (7.9 s / 0.1 s / 2.2 s).
+Cross-component after the third dependency bump:
+`go build ./...` clean; `go test -tags with_quic ./protocol/masque` PASS (60.3 s);
+`go test ./protocol/hysteria2/... ./protocol/tuic/...` PASS (0.05 s / 0.03 s);
+`go test -tags with_quic ./transport/masque ./transport/http` PASS (7.0 s / 25.2 s);
+`go test ./route -short` PASS (61.8 s); `go test ./dns ./common/srs ./route/rule` PASS
+(7.9 s / 0.1 s / 2.2 s).
 
-Residual for this pass: B5's release-exactly-once property is proven at the helper boundary and by
+Residual for this pass: B1's owned-buffer path is proven at the stage/endpoint boundary
+(headroom, order, exactly-once on success and refusal, close-time release), not by a live TUN
+throughput measurement; B5's release-exactly-once property is proven at the helper boundary and by
 the quic-go owned-datagram contract, not by a live QUIC connection; B4's benefit is proven by retained
 capacity, not by an RSS delta under a real lossy peer; B7/B8 counters are exposed but no dashboard or
 clash-api surface consumes them yet.
