@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"compress/zlib"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net/netip"
 	"slices"
@@ -52,6 +53,62 @@ const (
 	ruleItemFinal uint8 = 0xFF
 )
 
+// decompressedSizeLimit bounds how many bytes Read will take out of the zlib stream, rules and
+// verified trailer included.
+//
+// # Why a bound is required at all
+//
+// Read must drain the decompressed stream to its natural end so zlib verifies the Adler-32
+// trailer; that is what makes a truncated or corrupt rule set fail instead of being published.
+// The drain is deliberately memory-bounded (io.Discard), but the WORK is bounded only by the
+// input: a few hundred KiB of highly compressible bytes expand to hundreds of MiB and cost
+// hundreds of milliseconds of a core, on a path an operator-configured (and therefore possibly
+// compromised) subscription URL controls. The same amplification applies to declared rule data,
+// where every decompressed byte is retained: measured 6.5x decompressed size in allocations.
+//
+// # Why the limit is generous rather than tight
+//
+// The largest realistic rule sets are far below it: a one-million-domain .srs decompresses to
+// about 7 MiB, and the live matcher for it is about 8 MiB. 128 MiB leaves more than an order of
+// magnitude of headroom for long-name and IP-heavy profiles while turning a decompression bomb
+// into a prompt, bounded failure. It is a var, not a const, only so the adversarial tests can
+// exercise the boundary at a realistic size; production never changes it.
+var decompressedSizeLimit int64 = 128 << 20
+
+// ErrDecompressedTooLarge reports that a rule-set stream expanded beyond decompressedSizeLimit.
+// It is distinct from a checksum or truncation error on purpose: the stream was not proven
+// corrupt, it was refused for its work, and callers must not report it as an integrity failure.
+var ErrDecompressedTooLarge = E.New("rule-set decompressed size exceeds the limit of 128 MiB")
+
+// decompressedBudgetReader passes the decompressed stream through while accounting for it.
+//
+// The one-byte probe when the budget is spent is the load-bearing part: a bounded reader that
+// simply returns io.EOF at the limit would turn budget exhaustion into a NATURAL end of stream,
+// and the trailing zlib check would then "succeed" on a file it never finished reading. Probing
+// the next byte distinguishes the two: a nil-byte read is the real end of the stream, any byte
+// means the stream continues and the budget is exhausted.
+type decompressedBudgetReader struct {
+	reader    io.Reader
+	remaining int64
+}
+
+func (r *decompressedBudgetReader) Read(p []byte) (int, error) {
+	if r.remaining <= 0 {
+		var probe [1]byte
+		n, err := r.reader.Read(probe[:])
+		if n > 0 {
+			return 0, ErrDecompressedTooLarge
+		}
+		return 0, err
+	}
+	if int64(len(p)) > r.remaining {
+		p = p[:r.remaining]
+	}
+	n, err := r.reader.Read(p)
+	r.remaining -= int64(n)
+	return n, err
+}
+
 func Read(reader io.Reader, recover bool) (ruleSetCompat option.PlainRuleSetCompat, err error) {
 	var magicBytes [3]byte
 	_, err = io.ReadFull(reader, magicBytes[:])
@@ -74,7 +131,12 @@ func Read(reader io.Reader, recover bool) (ruleSetCompat option.PlainRuleSetComp
 	if err != nil {
 		return
 	}
-	bReader := bufio.NewReader(compressReader)
+	// Close releases the flate window. It never verifies the checksum (only reaching the real
+	// end of the stream does), so ignoring its error does not weaken the trailer check below.
+	defer func() {
+		_ = compressReader.Close()
+	}()
+	bReader := bufio.NewReader(&decompressedBudgetReader{reader: compressReader, remaining: decompressedSizeLimit})
 	length, err := binary.ReadUvarint(bReader)
 	if err != nil {
 		return
@@ -99,6 +161,11 @@ func Read(reader io.Reader, recover bool) (ruleSetCompat option.PlainRuleSetComp
 	// never replace a live rule set.
 	_, err = io.Copy(io.Discard, bReader)
 	if err != nil {
+		if errors.Is(err, ErrDecompressedTooLarge) {
+			// Refused for its work, not proven corrupt: keep the dedicated error so a caller (or
+			// a test) cannot mistake budget exhaustion for a checksum/truncation failure.
+			return
+		}
 		err = E.Cause(err, "verify rule-set stream")
 		return
 	}
