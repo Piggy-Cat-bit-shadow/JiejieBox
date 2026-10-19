@@ -122,6 +122,57 @@ message (`mieru: outbound was closed` / `mieru: outbound is closed`) and return 
 
 ---
 
+## BUG-R2-004 — a proxy-endpoint DNS failure was reported as a handshake/path failure
+
+**Severity / user impact.** Medium. The SDK flattens resolver errors to text, so a server FQDN that
+does not resolve was classified `transport` (through the `NewTCPUnderlay() failed` /
+`NewUDPUnderlay() failed` prefix) and published **Handshake/Path**. A group could therefore retry the
+flow and demote the member for a name that never resolved — the exact "local DNS is not the member's
+path" violation the directive names. The round-1 typed `*net.DNSError` check in `classifyDialError`
+never fired because the chain is gone by then.
+
+**Link to the round-1 change.** The typed socket ledger was added by round 1 but only consulted for
+errno-shaped failures; a resolver error is typed, yet not an errno, so it fell through. The UDP path
+resolves inside the SDK *before* `serverDialer.ListenPacket`, so the bridge did not even record it.
+
+**Trigger.** A domain `server` whose resolution fails (NXDOMAIN, local DNS policy), on either
+transport.
+
+**Reproduction.** `TestEndpointResolutionFailureIsLocalButTriesTheOtherEndpoint`: the resolver bridge
+is driven with a failing `DNSRouter`, the error is wrapped the way the SDK does it
+(`NewUDPUnderlay() failed: ResolveUDPAddr() failed: %v`), and before the fix the class was
+`transport`; the new assertions require `endpoint` and a `Dial/Local` fact. The second half of the
+test proves the secondary is **still attempted** when only the primary name fails.
+
+**Root cause / boundary violation.** Two separate things were conflated: "this endpoint's address
+cannot be prepared" (local to the endpoint, still worth trying a differently-addressed backup) and
+"the member's path failed". It also relied on text that only exists after the SDK destroyed the type.
+
+**Minimal fix.**
+
+- `protocol/mieru/dial_observation.go` now records the last setup result, including the resolver
+  (field renamed `setupErr`, accessor `setupFailure`);
+- `resolverBridge.LookupIP` records lookup errors into the ledger (the SDK resolves the UDP endpoint
+  before the packet dialer, so no other producer can see it);
+- `classifySocketError` recognises typed `*net.DNSError` / `*net.AddrError`;
+- new `dialEndpointFailure` class: transport-class for retry (try the other endpoint once) but
+  `Dial/Local` facts (no flow retry, no demotion). Permission/bind/stopped-client stay
+  `dialLocalFailure` (no retry at all).
+- an endpoint failure participates in the both-failed rule as a stable setup fact
+  (`isDefiniteSetupClass`): two unresolvable endpoints keep one dial per request, while
+  endpoint+silent resets to re-test the cheaply-failing primary.
+
+**Failure → pass evidence.** The new test fails before the class/fact assertions and passes after;
+the classifier table and the aggregate matrix gained endpoint rows.
+
+**Adjacent regression.** `TestClassifyDialError`'s `dns` row and `TestFailureFactsPerClass` were
+updated for the endpoint class; group consumers treat `Dial/Local` as neutral (existing row).
+Full package suites re-run.
+
+**Status.** Closed.
+
+---
+
 ## Verified but not a new bug (round-1 work re-audited)
 
 - **Inbound 65 s shutdown** (fixed before this debug round, `protocol/mieru/inbound.go`): reproduced

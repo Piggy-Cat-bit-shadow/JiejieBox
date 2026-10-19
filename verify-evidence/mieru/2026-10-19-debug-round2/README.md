@@ -9,8 +9,8 @@ Directive: `02-testing-BBE48095E99CA2E5A4B8E493A1E690A4E88D.md`. Repository
 |---|---|
 | Pre-construction baseline | `c363e04bb3065de68e2123182013124cbb65a900` |
 | Round-1 final (debug start) | `a003732e8668e3ca1148290acc925df6f061833c` (10 commits) |
-| Round-2 code + tests | `521e2e69b62a45842a60effeb0e657fadbc92d04` |
-| Round-2 evidence | `117b9acfa3b1e24ea622646d51c9cf1a4b48c039` (record), `6f4a620406f3899073e5ea08d4e42f23f1542a36` (soak), plus the state-update commit that contains this row |
+| Round-2 code + tests | `521e2e69b62a45842a60effeb0e657fadbc92d04` (initial) + `a2b588344b15aec19292eb246546d2ef062a42a5` (endpoint-resolution fix) |
+| Round-2 evidence | `117b9acfa3b1e24ea622646d51c9cf1a4b48c039` (record), `6f4a620406f3899073e5ea08d4e42f23f1542a36` (soak), `3c073c3e1d01b3779ae8722799c240900cf430db` (state row), plus the final evidence commit that contains this row |
 | Branch / remote | `testing`; pushed without force to `origin/testing`; no concurrent update observed (`git fetch` before each push) |
 | Worktree | clean after the final evidence commit |
 | Audited range | `git diff c363e04..a003732e` (round-1 changes) and the round-2 fixes on top |
@@ -22,6 +22,7 @@ Directive: `02-testing-BBE48095E99CA2E5A4B8E493A1E690A4E88D.md`. Repository
 | **Introduced by round 1, fixed now** | Aggregate facts used the secondary class; a fact-less soft class erased a proven primary failure, and the stage was wrong for definite+handshake | BUG-R2-001; four failing rows before the fix |
 | **Introduced by round 1, fixed now** | Local failures (DNS/permission/stopped client/local interface) were published as `FailureOriginCaller` | BUG-R2-002 |
 | **Introduced by round 1, fixed now** | Our own teardown error could be classified transport, so a dial racing Close could switch/publish Path facts | BUG-R2-003 |
+| **Introduced by round 1, fixed now** | A proxy-endpoint DNS/address failure was classified transport (Handshake/Path facts, possible demotion) instead of local, because the typed resolver error was never read | BUG-R2-004 |
 | **Pre-existing, found during round-1 settlement and re-audited here** | Mieru inbound `Close` could stall 65 s on the SDK's 60–120 s UDP read | inbound M9 (round-1 commit); test + mutation re-run this round |
 | **Existing behaviour verified unchanged** | Disabled fallback, single TCP/UDP, `no_wait` conflict, target refusal, hashed password, multi-user, H3 backoff/ordering, strict mode, pinned version, MASQUE session lifecycle | package matrix + the specific tests listed in MIERU-AUDIT / MASQUE-AUDIT |
 | **Not changed, with measured limits** | SDK 10 s response floor (500 ms caller waits 10.002 s); client-side packet-underlay close analogue (75 iterations, no stall); TLS errors wrapped as `ErrHTTP3Unavailable` (same TLS config on H2, no bypass) | MIERU-AUDIT, OUT-OF-SCOPE-NOTES |
@@ -35,6 +36,9 @@ Full detail and before/after evidence: [BUG-LEDGER.md](BUG-LEDGER.md).
 - **BUG-R2-002** — `dialLocalFailure` class with `Dial/Local` facts; group table row added.
 - **BUG-R2-003** — lifecycle message checked before the SDK underlay prefix;
   `TestLifecycleClosureIsLocalNotTransport`.
+- **BUG-R2-004** — the bridge records resolver errors too, `classifySocketError` recognises typed
+  DNS/address errors, and the new `dialEndpointFailure` class tries the other endpoint while
+  publishing `Dial/Local` (not the member's path). `TestEndpointResolutionFailureIsLocalButTriesTheOtherEndpoint`.
 
 ## 4. Architecture boundary review
 
@@ -55,7 +59,8 @@ were re-tested.
 - fallback after refusal **1 ms**; after blackhole **10.002–10.003 s**;
 - caller 500 ms budget: still **10.002 s**, but the error now carries
   `context deadline exceeded` (baseline did not) and the preference is unchanged;
-- both-definite outage no longer double-dials (5 requests → 1 primary + 5 secondary, not 5+5);
+- both-definite outage no longer double-dials (5 requests → 1 primary + 5 secondary, not 5+5), where
+  "definite" is a kernel-proven refusal/unreachability or an unresolvable endpoint;
 - recovery: one probe per window at 10/50/100 concurrent requests; cooldown 30 → 60 → 120 → 240 →
   300 s (capped), a cancelled probe does not move it.
 
@@ -71,9 +76,9 @@ reporting and the post-200 write side are covered by tests; the tunnel really ca
 
 [PERF-AND-RESOURCES.md](PERF-AND-RESOURCES.md).
 
-- Package matrix (exit 0): adapter 0.811 s, common/dialer 16.399 s, mieru 79.476 s (final-tree suite
-  82.339 s), group 4.023 s, http 8.508 s; with_quic: http 25.182 s, protocol/masque 57.317 s,
-  transport/masque 7.050 s.
+- Package matrix (exit 0, final tree): adapter 0.706 s, common/dialer 16.219 s, mieru 79.929 s
+  (standalone suite 79.463 s), group 3.852 s, http 8.451 s; with_quic: http 25.036 s,
+  protocol/masque 54.368 s, transport/masque 6.652 s (`logs/packages-quic.txt`).
 - Observation ledger: 49 ns / 48 B / 1 alloc per new session; selector 27.6 ns / 0 alloc.
 - After closing both SDK runtimes and the inbound: goroutines back to the process baseline (2),
   packet conns 0/0, no accumulation over a second cycle.
@@ -122,7 +127,7 @@ Raw logs are in `logs/`:
 |---|---|
 | `packages-untagged.txt` | the untagged matrix |
 | `packages-quic.txt` | the with_quic matrix |
-| `mieru-suite.txt` | final-tree mieru suite (82.339 s) |
+| `mieru-suite.txt` | final-tree mieru suite (79.463 s) |
 | `benchmarks.txt` | the two benchmarks, 3 runs each |
 | `resources.txt` | goroutine/FD-relevant resource scratch run |
 | `fault-timeline.txt` / `fault-timeline-baseline.txt` | same-injection timeline on the debug and baseline trees |

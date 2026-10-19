@@ -19,8 +19,8 @@ session and becomes unreachable when it returns; the tunnel window exists for on
 
 | Command | Result |
 |---|---|
-| `go test ./adapter ./common/dialer ./protocol/mieru ./protocol/group ./transport/http -count=1` | adapter 0.811 s, common/dialer 16.399 s, mieru 79.476 s in the matrix run / **82.339 s** for the final-tree suite, group 4.023 s, http 8.508 s — `logs/packages-untagged.txt`, `logs/mieru-suite.txt` |
-| `go test -tags with_quic ./transport/http ./protocol/masque ./transport/masque -count=1` | http 25.182 s, protocol/masque 57.317 s, transport/masque 7.050 s — `logs/packages-quic.txt` |
+| `go test ./adapter ./common/dialer ./protocol/mieru ./protocol/group ./transport/http -count=1` | final tree: adapter 0.706 s, common/dialer 16.219 s, mieru **79.929 s** (standalone final suite 79.463 s), group 3.852 s, http 8.451 s — `logs/packages-untagged.txt`, `logs/mieru-suite.txt` |
+| `go test -tags with_quic ./transport/http ./protocol/masque ./transport/masque -count=1` | final tree: http 25.036 s, protocol/masque 54.368 s, transport/masque 6.652 s — `logs/packages-quic.txt` |
 | `go test -race ...` | **BLOCKED_BY_ENVIRONMENT** (no mingw-w64 gcc; `clang` MSVC target rejects `-mthreads`). Minimum condition in INVARIANT-MATRIX.md |
 
 The full mieru suite is also run as part of the untagged matrix; the debug fixes added ~20

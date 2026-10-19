@@ -35,7 +35,7 @@ blackholes are still bounded by the SDK's 10 s response read.
 | 3 | reversed roles, different ports/endpoints, range boundaries | `TestMieruFallbackTCPRefusedUsesUDPAndRecovers` (reverse shapes in the UDP-primary tests), `TestMieruFallbackIPv6Endpoint`, `TestResolveFallbackOptionsRangeOnlyWithExplicitPort` | PASS |
 | 4 | fast switch; allowed recovery only; sessions not migrated | `TestMieruFallbackTCPRefusedUsesUDPAndRecovers` (old secondary session still carries after recovery), `TestMieruFallbackDoesNotStopExistingPrimarySession` | PASS |
 | 5 | both fail fast; no per-request double dial; vs fail-closed auth | `TestDefiniteSocketFailureOnBothTransportsDoesNotDoubleDial`, `TestTwoSilentHandshakesStillResetToPrimary` | PASS (bug R2-001 fixed) |
-| 6 | both blackhole; definite + ambiguous; target + broken primary; ≥5 class pairs | `TestAggregateFailureFactsPrecedence` (9 rows), `TestReportBothFailedDecisionTable` (36 pairs), `TestTwoSilentHandshakesStillResetToPrimary` | PASS |
+| 6 | both blackhole; definite + ambiguous; target + broken primary; ≥5 class pairs | `TestAggregateFailureFactsPrecedence` (16 rows), `TestReportBothFailedDecisionTable` (49 pairs), `TestTwoSilentHandshakesStillResetToPrimary` | PASS |
 | 7 | wrong password, wrong hashed password, server-side rejection, `no_wait` conflict | `TestMieruFallbackWrongPasswordDoesNotSwitch`, `TestMieruNoWaitWrongPasswordDoesNotReportSuccess`, `TestNewOutboundRejectsFallbackConflicts`, `TestMieruHashedPasswordInterop` | PASS |
 | 8 | UDP Associate, stream data, target reject, cancel, Close; real payload | `TestMieruFallbackUDPAssociateUsesSecondary`, `TestMieruFallbackUDPBlackholeUDPAssociateUsesTCP`, `readAndWriteEcho` in every E2E, `TestMieruFallbackCloseWinsAgainstInFlightDial` | PASS |
 | 9 | same-generation order: old failure late vs new success; next-session preference | `TestSameGenerationOrderOfDialOutcomes`, `TestLateFailureAffectsTheNextNewSessionPreference` | PASS as a documented, bounded behaviour (see below) |
@@ -71,6 +71,12 @@ for a whole backoff and escalates; the Mieru hint does neither.
 `no_wait` + fallback conflict is still rejected; `transport: both` restrictions unchanged; hashed
 password and multi-user interop unchanged. The debug fixes touched only error classification and
 aggregate fact selection.
+
+One deliberate behaviour to state: a **proxy-endpoint DNS failure is still allowed to try the other
+transport once**. `fallback.server` may be a different name or a literal IP, so refusing the backup
+because the primary name did not resolve would be wrong; the failure is published as `Dial/Local`, so
+no group retry or member demotion follows from it (BUG-R2-004). A permission/bind/stopped-client
+failure is different: it cannot be fixed by the other endpoint and does not retry.
 
 ## Known limit, re-measured
 

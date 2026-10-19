@@ -1,7 +1,7 @@
 == go test ./adapter ./common/dialer ./protocol/mieru ./protocol/group ./transport/http -count=1 ==
-ok  	github.com/sagernet/sing-box/adapter	0.811s
-ok  	github.com/sagernet/sing-box/common/dialer	16.399s
-ok  	github.com/sagernet/sing-box/protocol/mieru	79.476s
-ok  	github.com/sagernet/sing-box/protocol/group	4.023s
-ok  	github.com/sagernet/sing-box/transport/http	8.508s
+ok  	github.com/sagernet/sing-box/adapter	0.706s
+ok  	github.com/sagernet/sing-box/common/dialer	16.219s
+ok  	github.com/sagernet/sing-box/protocol/mieru	79.929s
+ok  	github.com/sagernet/sing-box/protocol/group	3.852s
+ok  	github.com/sagernet/sing-box/transport/http	8.451s
 exit=0

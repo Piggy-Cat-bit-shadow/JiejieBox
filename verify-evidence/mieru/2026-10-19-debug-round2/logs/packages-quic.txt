@@ -1,5 +1,5 @@
 == go test -tags with_quic ./transport/http ./protocol/masque ./transport/masque -count=1 ==
-ok  	github.com/sagernet/sing-box/transport/http	25.182s
-ok  	github.com/sagernet/sing-box/protocol/masque	57.317s
-ok  	github.com/sagernet/sing-box/transport/masque	7.050s
+ok  	github.com/sagernet/sing-box/transport/http	25.036s
+ok  	github.com/sagernet/sing-box/protocol/masque	54.368s
+ok  	github.com/sagernet/sing-box/transport/masque	6.652s
 exit=0
