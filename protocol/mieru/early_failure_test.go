@@ -48,7 +48,7 @@ func TestClassifySocketErrorUsesTheSharedErrnoSets(t *testing.T) {
 	}{
 		{"WSA refused", wsaRefused, dialSocketFailure},
 		{"WSA unreachable", wsaUnreachable, dialSocketFailure},
-		{"WSA address not available is local", wsaAddrNotAvail, dialCallerFailure},
+		{"WSA address not available is local", wsaAddrNotAvail, dialLocalFailure},
 		{"WSA connect timeout is not proof", wsaTimedOut, dialSocketTimeout},
 		{"WSA reset is not proof", wsaReset, dialSocketTimeout},
 		{"POSIX refused", syscall.ECONNREFUSED, dialSocketFailure},
@@ -100,10 +100,10 @@ func TestLocalInterfaceFailureIsNotAPathFailure(t *testing.T) {
 	ctx, observation := withDialObservation(context.Background())
 	observeSocketDial(ctx, syscallOpError(wsaAddrNotAvail))
 	class := classifyDialError(context.Background(), sdkError, mieruTransport{udp: true}, observation)
-	require.Equal(t, dialCallerFailure, class)
+	require.Equal(t, dialLocalFailure, class)
 	facts, known := adapter.FailureFactsOf(wrapFailureFacts(sdkError, class))
 	require.True(t, known)
-	require.Equal(t, adapter.FailureOriginCaller, facts.Origin,
+	require.Equal(t, adapter.FailureOriginLocal, facts.Origin,
 		"a local socket failure must not be published as the member's path failure")
 }
 
@@ -256,6 +256,7 @@ func TestFailureFactsPerClass(t *testing.T) {
 		{"handshake timeout", dialTransportFailure, adapter.PathFailureFacts(adapter.FailureStageHandshake), true},
 		{"definite socket", dialSocketFailure, adapter.PathFailureFacts(adapter.FailureStageDial), true},
 		{"caller", dialCallerFailure, adapter.FailureFacts{Stage: adapter.FailureStageDial, Origin: adapter.FailureOriginCaller}, true},
+		{"local", dialLocalFailure, adapter.FailureFacts{Stage: adapter.FailureStageDial, Origin: adapter.FailureOriginLocal}, true},
 		{"socket timeout is fact-less", dialSocketTimeout, adapter.FailureFacts{}, false},
 		{"ambiguous is fact-less", dialAmbiguousFailure, adapter.FailureFacts{}, false},
 	}

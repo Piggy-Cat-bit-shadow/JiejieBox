@@ -119,6 +119,29 @@ func TestH3TunnelCallerDeadlineIsNotExtendedByTheWindow(t *testing.T) {
 	require.Zero(t, client.http3Broken.Load(), "a caller deadline is not evidence about H3")
 }
 
+// The window must leave the caller with budget: the whole point is that the
+// HTTP/2 attempt runs BEFORE the caller's own deadline. This is the shape the
+// MASQUE client uses (context.WithTimeout(c.ctx, C.TCPTimeout)).
+func TestH3TunnelFallbackLeavesTheCallerBudget(t *testing.T) {
+	freezeTunnelWindow(t, 50*time.Millisecond)
+
+	h3 := &hangingTunnelHTTP3Client{}
+	h1 := &recordingDialer{err: errTestNoConn}
+	client := &Client{http3: h3, http1Dialer: h1}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	start := time.Now()
+	_, _, _, err := client.openTunnel(ctx, tunnelRequestForTest())
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	require.NoError(t, ctx.Err(),
+		"the caller's own budget must still be alive after the bounded H3 attempt")
+	require.Less(t, elapsed, 2*time.Second, "H3 must not consume the caller's 15s budget")
+	require.Equal(t, 1, h1.calls, "the fallback must have had the remaining budget to run")
+}
+
 // An application refusal from a WORKING H3 connection is not a transport verdict: the version
 // came up, the server refused this CONNECT. Falling back would put the tunnel on HTTP/2 for a
 // failure HTTP/2 would reproduce, and would arm a memory that is evidence about nothing.

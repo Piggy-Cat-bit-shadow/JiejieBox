@@ -40,10 +40,14 @@ exports only that proof to the group layer:
 | handshake write/read timeout, reset | Handshake / Path |
 | socket refused / unreachable (typed errno) | Dial / Path |
 | socket connect timeout or reset (typed; the SDK flattens the error to text) | no fact (a stall is not proof, and the flattened error no longer satisfies the group's timeout test) |
-| local interface error (EADDRNOTAVAIL/ENETDOWN) | Dial / Caller |
-| caller cancellation/configuration | Dial / Caller |
+| local interface error (EADDRNOTAVAIL/ENETDOWN), DNS/address policy, permission, stopped client, closed/replaced outbound | Dial / Local |
+| requester cancellation or deadline | Dial / Caller |
 | bare EOF on a TCP-primary handshake | no fact (Unknown; could be auth or close) |
 | bare EOF on a UDP primary (Linux unreachable peer) | Handshake / Path |
+
+The last two "neutral" rows are separate on purpose. Caller means the requester withdrew; Local
+means this process/machine or its configuration could not make the attempt. Both are neutral for
+every consumer (no retry, no demotion), but only Caller is the requester's decision.
 
 The socket rows need one extra step, because the official SDK destroys the error chain
 before this package sees it:
@@ -65,10 +69,20 @@ Mieru evidence that is *definite*: two definite socket failures mean both endpoi
 the fallback selector keeps its secondary preference instead of re-dialling the refused primary on
 every request. Two silent handshakes remain the wrong-credential shape and still reset to primary.
 
-The fallback aggregate (`E.Errors`) is wrapped with the **secondary** result:
-a target failure after a path failure remains target evidence; two path
-failures remain path evidence. Disabled single-client dials use the same
-wrapper, so the integration is not limited to fallback users.
+The fallback aggregate (`E.Errors`) is wrapped with the **strongest proven evidence** of the two
+attempts, not with whichever attempt reported last:
+
+| Aggregate contents | Fact |
+| --- | --- |
+| a target reply anywhere | Target / Target (the proxy path worked through the other transport) |
+| a definite socket failure anywhere | Dial / Path |
+| a handshake-class failure on the secondary | Handshake / Path |
+| a socket connect timeout on the secondary after a handshake failure on the primary | Handshake / Path (that pair published it before the socket classes existed) |
+| only soft evidence (timeouts, ambiguous EOFs, caller/local) | no fact |
+
+The rule matters because a fact-less class would otherwise erase real proof: a refused primary
+(Dial/Path) followed by a secondary timeout used to publish nothing at all. Disabled single-client
+dials use the same wrapper, so the integration is not limited to fallback users.
 
 `protocol/mieru/fallback.go:wrapFailureFacts` is the only producer in this
 round. Other protocols are deliberately not given guessed facts: they retain

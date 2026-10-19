@@ -555,7 +555,7 @@ func (h *Outbound) dialWithFallback(ctx context.Context, destination mierumodel.
 	if ctx.Err() != nil {
 		return nil, wrapFailureFacts(E.Cause(err, "mieru: primary transport failed"), class)
 	}
-	h.logger.Info("mieru: primary ", primary.transport.String(), " transport failed, trying fallback ", secondary.transport.String())
+	h.logger.Info("mieru: primary ", primary.transport.String(), " transport failed (", class, "), trying fallback ", secondary.transport.String())
 	secondaryConn, secondaryClass, secondaryErr := secondary.dial(ctx, destination)
 	selector.report(generation, fallbackSecondary, false, secondaryClass)
 	if secondaryErr == nil {
@@ -566,12 +566,10 @@ func (h *Outbound) dialWithFallback(ctx context.Context, destination mierumodel.
 		E.Cause(err, "mieru: primary transport"),
 		E.Cause(secondaryErr, "mieru: fallback transport"),
 	)
-	switch secondaryClass {
-	case dialTargetFailure, dialTransportFailure, dialSocketFailure, dialSocketTimeout:
-		return nil, wrapFailureFacts(aggregate, secondaryClass)
-	default:
-		return nil, aggregate
+	if aggregateClass, ok := aggregateFailureClass(class, secondaryClass); ok {
+		return nil, wrapFailureFacts(aggregate, aggregateClass)
 	}
+	return nil, aggregate
 }
 
 // acceptGeneratedConn enforces the ownership boundary after the network may

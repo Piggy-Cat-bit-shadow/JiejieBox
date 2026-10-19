@@ -44,10 +44,16 @@ const (
 	// (for example connection refused). The proxy path and authentication are
 	// working; the destination failed. It must not trip the transport health.
 	dialTargetFailure
-	// dialCallerFailure is a local cancellation, DNS/address policy error,
-	// permission error or a lifecycle error. Retrying the other transport
-	// would usually just duplicate the same local failure.
+	// dialCallerFailure is the REQUESTER withdrawing: cancellation or a
+	// deadline. Retrying the other transport would duplicate work nobody is
+	// waiting for.
 	dialCallerFailure
+	// dialLocalFailure is this process/machine or its configuration: DNS
+	// policy, bind/permission, address parsing, a stopped SDK client, or a
+	// local interface that cannot provide an address. It is deliberately not
+	// Caller (nobody withdrew) and not Path (the member is not at fault), so
+	// the exported fact is Dial/Local and no consumer may retry or demote.
+	dialLocalFailure
 	// dialAmbiguousFailure is the conservative bucket. A handshake that ends
 	// with a bare EOF can be an authentication failure, a server-side close or
 	// a dead underlay; the SDK does not expose a stable discriminator. Keeping
@@ -90,6 +96,8 @@ func (c dialFailureClass) String() string {
 		return "target"
 	case dialCallerFailure:
 		return "caller"
+	case dialLocalFailure:
+		return "local"
 	case dialAmbiguousFailure:
 		return "ambiguous"
 	case dialSocketFailure:
@@ -126,18 +134,20 @@ func classifyDialError(ctx context.Context, err error, transport mieruTransport,
 		return dialCallerFailure
 	}
 	if errors.Is(err, mieruclient.ErrClientIsNotRunning) {
-		return dialCallerFailure
+		// This process's lifecycle, not the requester's: the client was
+		// stopped while this dial was pending.
+		return dialLocalFailure
 	}
 	var dnsError *net.DNSError
 	if errors.As(err, &dnsError) {
-		return dialCallerFailure
+		return dialLocalFailure
 	}
 	var addressError *net.AddrError
 	if errors.As(err, &addressError) {
-		return dialCallerFailure
+		return dialLocalFailure
 	}
 	if errors.Is(err, os.ErrPermission) {
-		return dialCallerFailure
+		return dialLocalFailure
 	}
 
 	// Typed socket evidence, recovered from the fork dialer before the SDK
@@ -164,6 +174,16 @@ func classifyDialError(ctx context.Context, err error, transport mieruTransport,
 	lower := strings.ToLower(message)
 	if strings.Contains(message, "server returned socks5 error code") {
 		return dialTargetFailure
+	}
+	// Our OWN lifecycle message, not an OS string: the packet dialer refused to
+	// register a socket because the outbound was closed (or a generation was
+	// replaced). The SDK wraps it as "NewUDPUnderlay() failed: ...", so the
+	// underlay rule below would otherwise report a teardown as a transport
+	// failure and could switch transports after Close. The English text is
+	// stable because this package writes it.
+	if strings.Contains(message, "mieru: outbound was closed") ||
+		strings.Contains(message, "mieru: outbound is closed") {
+		return dialLocalFailure
 	}
 	if strings.Contains(message, "failed to read socks5 connection response") {
 		if isTimeout(err) || strings.Contains(lower, "timeout") || strings.Contains(lower, "deadline exceeded") {
@@ -209,7 +229,9 @@ func classifyDialError(ctx context.Context, err error, transport mieruTransport,
 	if strings.Contains(lower, "client password is not set") ||
 		strings.Contains(lower, "no server listening endpoint") ||
 		strings.Contains(lower, "unsupported network") {
-		return dialCallerFailure
+		// Configuration/lifecycle, not the requester: this process must not
+		// switch transports or blame the member for it.
+		return dialLocalFailure
 	}
 	return dialAmbiguousFailure
 }
@@ -254,7 +276,7 @@ func classifySocketError(err error) (dialFailureClass, bool) {
 		// interface could not provide an address. That is local, not the
 		// member's path, and the other transport would fail the same way, so
 		// it must neither switch preference nor demote the member.
-		return dialCallerFailure, true
+		return dialLocalFailure, true
 	case dialer.ErroredWith(err, dialer.TimeoutErrnos...):
 		// The kernel's own connect timeout is not proof the endpoint is down.
 		return dialSocketTimeout, true
@@ -263,7 +285,7 @@ func classifySocketError(err error) (dialFailureClass, bool) {
 		// answer is not proof that a later attempt fails.
 		return dialSocketTimeout, true
 	case errors.Is(err, os.ErrPermission):
-		return dialCallerFailure, true
+		return dialLocalFailure, true
 	case isTimeout(err):
 		// A media timeout from the connect path (not a bare errno): the
 		// attempt died before any protocol byte, but a stall is not proof.
@@ -287,6 +309,53 @@ func isDefiniteSocketClass(class dialFailureClass) bool {
 	return class == dialSocketFailure
 }
 
+// aggregateFailureClass decides which attempt's evidence the AGGREGATE of a
+// failed primary + failed secondary reports.
+//
+// # Why the secondary's class alone is not enough
+//
+// Before this round the aggregate was wrapped with the secondary class,
+// because the secondary is the last attempt and every class that reached here
+// produced a fact. The socket classes broke that assumption in two directions:
+//
+//   - a definite socket failure on the PRIMARY is stronger evidence (Dial/Path)
+//     than a handshake timeout on the secondary (Handshake/Path), and it is the
+//     stage the directive requires to be accurate;
+//   - a socket connect timeout carries NO fact on purpose, so taking the
+//     secondary class erased the primary's proof completely (a group then
+//     stopped retrying/penalising evidence that still existed).
+//
+// The rule below is the smallest one that keeps both the old contract and the
+// new evidence:
+//
+//	target reply anywhere            -> Target/Target
+//	a definite socket failure        -> Dial/Path
+//	secondary handshake transport    -> Handshake/Path   (the pre-round-1 rule)
+//	secondary socket timeout after a
+//	handshake failure on the primary -> Handshake/Path   (it was `transport`
+//	                                      before this round; do not lose it)
+//	anything else                    -> no fact
+//
+// Target outranks a definite failure because a SOCKS reply proves the proxy
+// path worked through the secondary; the member is healthy and the target is
+// the failure. A secondary-only soft class (timeout, ambiguous, caller) stays
+// fact-less: soft evidence from the LAST attempt cannot borrow certainty from
+// nothing, and the primary's handshake evidence is only restored for the pair
+// that published it before.
+func aggregateFailureClass(primaryClass, secondaryClass dialFailureClass) (dialFailureClass, bool) {
+	switch {
+	case secondaryClass == dialTargetFailure:
+		return secondaryClass, true
+	case primaryClass == dialSocketFailure || secondaryClass == dialSocketFailure:
+		return dialSocketFailure, true
+	case secondaryClass == dialTransportFailure:
+		return secondaryClass, true
+	case secondaryClass == dialSocketTimeout && primaryClass == dialTransportFailure:
+		return primaryClass, true
+	}
+	return dialSuccess, false
+}
+
 // wrapFailureFacts attaches the narrow adapter failure fact to a Mieru dial
 // error. This is the only producer needed for the cross-protocol policy: a
 // group can then tell a target refusal from a first-hop path failure without
@@ -308,6 +377,11 @@ func wrapFailureFacts(err error, class dialFailureClass) error {
 		facts = adapter.PathFailureFacts(adapter.FailureStageDial)
 	case dialCallerFailure:
 		facts = adapter.FailureFacts{Stage: adapter.FailureStageDial, Origin: adapter.FailureOriginCaller}
+	case dialLocalFailure:
+		// DNS policy, permission, configuration or this process's lifecycle.
+		// Local is a neutral origin: no retry, no global penalty, and it is the
+		// truthful answer (nobody withdrew).
+		facts = adapter.FailureFacts{Stage: adapter.FailureStageDial, Origin: adapter.FailureOriginLocal}
 	default:
 		// dialSocketTimeout and dialAmbiguousFailure stay fact-less on purpose:
 		// see the class comments. Unknown is not a verdict.
@@ -431,7 +505,7 @@ func (s *fallbackSelector) report(generation uint64, choice fallbackPreference, 
 		s.primaryUntil = s.now().Add(s.cooldown)
 		s.probing = false
 		s.primaryFailure++
-	case dialCallerFailure:
+	case dialCallerFailure, dialLocalFailure:
 		if probe {
 			s.probing = false
 		}
@@ -617,8 +691,10 @@ func (t *transportRuntime) dial(ctx context.Context, destination mierumodel.NetA
 		// both belong in the chain: the SDK error explains where the attempt
 		// stopped, the caller's reason keeps the result recognisable as a
 		// cancellation (the route logs it as such instead of as a fault).
-		if ctxErr := ctx.Err(); ctxErr != nil && class == dialCallerFailure {
-			return nil, class, E.Cause1(err, ctxErr)
+		if ctx != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil && class == dialCallerFailure {
+				return nil, class, E.Cause1(err, ctxErr)
+			}
 		}
 		return nil, class, err
 	}

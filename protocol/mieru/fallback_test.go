@@ -172,8 +172,8 @@ func TestClassifyDialError(t *testing.T) {
 	}{
 		{"success", context.Background(), nil, dialSuccess},
 		{"canceled", ctx, errors.New("anything"), dialCallerFailure},
-		{"client stopped", context.Background(), mieruclient.ErrClientIsNotRunning, dialCallerFailure},
-		{"dns", context.Background(), &net.DNSError{Err: "no such host", Name: "example.com"}, dialCallerFailure},
+		{"client stopped", context.Background(), mieruclient.ErrClientIsNotRunning, dialLocalFailure},
+		{"dns", context.Background(), &net.DNSError{Err: "no such host", Name: "example.com"}, dialLocalFailure},
 		{"target reply", context.Background(), errors.New("server returned socks5 error code 1"), dialTargetFailure},
 		{"dial refused", context.Background(), errors.New("NewTCPUnderlay() failed: DialContext() failed: dial tcp 127.0.0.1:1: connect: connection refused"), dialTransportFailure},
 		{"write failure", context.Background(), errors.New("failed to write socks5 connection request to the server: broken pipe"), dialTransportFailure},

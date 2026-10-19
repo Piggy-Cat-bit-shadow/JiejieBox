@@ -535,46 +535,98 @@ func TestMieruFallbackConcurrentNewSessions(t *testing.T) {
 	require.NoError(t, outboundInstance.Close())
 }
 
-func TestMieruFallbackConcurrentRecoveryProbeSingleFlight(t *testing.T) {
+func TestMieruFallbackConcurrentInterfaceUpdatesSerialise(t *testing.T) {
 	primaryPort := freePortForBothTransports(t)
 	secondaryPort := differentFreePort(t, primaryPort)
 	startTestInbound(t, inboundOptionsForPort(secondaryPort, "udp"))
 	outboundInstance, _ := startTestOutbound(t, fallbackOutboundOptions(primaryPort, "tcp", secondaryPort, "udp"))
-	now := time.Unix(7000, 0)
-	outboundInstance.fallback.now = func() time.Time { return now }
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	destination := M.ParseSocksaddr("192.0.2.32:443")
-	first, err := outboundInstance.DialContext(ctx, N.NetworkTCP, destination)
+	destination := M.ParseSocksaddr("192.0.2.33:443")
+	conn, err := outboundInstance.DialContext(ctx, N.NetworkTCP, destination)
 	require.NoError(t, err)
-	require.NoError(t, first.Close())
-	require.Equal(t, fallbackSecondary, outboundInstance.fallback.snapshot().Preferred)
+	require.NoError(t, conn.Close())
+	before := outboundInstance.fallback.snapshot().Generation
 
-	now = now.Add(fallbackCooldown + time.Second)
-	const connections = 50
-	errCh := make(chan error, connections)
+	// InterfaceUpdated takes the write lock for the whole rebuild, so concurrent
+	// network notifications must serialise rather than interleave two swaps.
 	var waitGroup sync.WaitGroup
-	for i := 0; i < connections; i++ {
+	for i := 0; i < 4; i++ {
 		waitGroup.Add(1)
 		go func() {
 			defer waitGroup.Done()
-			conn, dialErr := outboundInstance.DialContext(ctx, N.NetworkTCP, destination)
-			if dialErr != nil {
-				errCh <- dialErr
-				return
-			}
-			_ = conn.Close()
+			outboundInstance.InterfaceUpdated(context.Background())
 		}()
 	}
-	waitGroup.Wait()
-	close(errCh)
-	for err := range errCh {
-		require.NoError(t, err)
+	done := make(chan struct{})
+	go func() {
+		waitGroup.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("concurrent InterfaceUpdated calls deadlocked")
 	}
-	require.Equal(t, uint64(1), outboundInstance.fallback.snapshot().Probes,
-		"one cooldown window must allow exactly one primary recovery probe")
-	require.Equal(t, fallbackSecondary, outboundInstance.fallback.snapshot().Preferred)
+	require.Greater(t, outboundInstance.fallback.snapshot().Generation, before,
+		"at least one update must have rebuilt the runtimes")
+	require.True(t, outboundInstance.primary.client.IsRunning())
+	require.True(t, outboundInstance.secondary.client.IsRunning())
+
+	updated, err := outboundInstance.DialContext(ctx, N.NetworkTCP, destination)
+	require.NoError(t, err)
+	readAndWriteEcho(t, updated, "after-concurrent-updates")
+	require.NoError(t, updated.Close())
+}
+
+func TestMieruFallbackConcurrentRecoveryProbeSingleFlight(t *testing.T) {
+	// The directive asks for 10/50/100 simultaneous business requests inside one
+	// cooldown window. The single-flight decision is mutex-guarded and size
+	// independent, but the bound is cheap to measure at all three sizes.
+	for _, connections := range []int{10, 50, 100} {
+		connections := connections
+		t.Run(fmt.Sprint(connections), func(t *testing.T) {
+			primaryPort := freePortForBothTransports(t)
+			secondaryPort := differentFreePort(t, primaryPort)
+			startTestInbound(t, inboundOptionsForPort(secondaryPort, "udp"))
+			outboundInstance, _ := startTestOutbound(t, fallbackOutboundOptions(primaryPort, "tcp", secondaryPort, "udp"))
+			now := time.Unix(7000, 0)
+			outboundInstance.fallback.now = func() time.Time { return now }
+
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			destination := M.ParseSocksaddr("192.0.2.32:443")
+			first, err := outboundInstance.DialContext(ctx, N.NetworkTCP, destination)
+			require.NoError(t, err)
+			require.NoError(t, first.Close())
+			require.Equal(t, fallbackSecondary, outboundInstance.fallback.snapshot().Preferred)
+
+			now = now.Add(fallbackCooldown + time.Second)
+			errCh := make(chan error, connections)
+			var waitGroup sync.WaitGroup
+			for i := 0; i < connections; i++ {
+				waitGroup.Add(1)
+				go func() {
+					defer waitGroup.Done()
+					conn, dialErr := outboundInstance.DialContext(ctx, N.NetworkTCP, destination)
+					if dialErr != nil {
+						errCh <- dialErr
+						return
+					}
+					_ = conn.Close()
+				}()
+			}
+			waitGroup.Wait()
+			close(errCh)
+			for err := range errCh {
+				require.NoError(t, err)
+			}
+			require.Equal(t, uint64(1), outboundInstance.fallback.snapshot().Probes,
+				"one cooldown window must allow exactly one primary recovery probe")
+			require.Equal(t, fallbackSecondary, outboundInstance.fallback.snapshot().Preferred)
+		})
+	}
 }
 
 func TestMieruFallbackCloseStopsBothRuntimes(t *testing.T) {

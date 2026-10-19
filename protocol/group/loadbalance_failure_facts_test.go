@@ -138,6 +138,15 @@ func factTable() []factRow {
 		// this member's network is down.
 		{name: "proxy handshake fact", err: adapter.WrapFailure(errors.New("proxy handshake rejected"), adapter.FailureFacts{Stage: adapter.FailureStageHandshake, Origin: adapter.FailureOriginProxy}), retry: true, terminalForTheFlow: true},
 		{name: "caller fact on cancellation", err: adapter.WrapFailure(context.Canceled, adapter.FailureFacts{Stage: adapter.FailureStageDial, Origin: adapter.FailureOriginCaller}), callerCancellation: true},
+		// A Local origin fact is this process's own problem (DNS policy,
+		// permission, configuration). Both policies stay neutral, and like a
+		// target fact it is a real failure that is neither "not measured" nor
+		// the member's path.
+		{
+			name:               "local fact on DNS error",
+			err:                adapter.WrapFailure(&net.DNSError{Err: "no such host", Name: "example.com"}, adapter.FailureFacts{Stage: adapter.FailureStageDial, Origin: adapter.FailureOriginLocal}),
+			terminalForTheFlow: true,
+		},
 		{name: "path fact on cancellation", err: adapter.WrapFailure(context.Canceled, adapter.PathFailureFacts(adapter.FailureStageHandshake)), callerCancellation: true},
 		{name: "path fact on own teardown", err: adapter.WrapFailure(net.ErrClosed, adapter.PathFailureFacts(adapter.FailureStageHandshake)), ownTeardown: true},
 		{name: "data-stage path fact on EOF", err: adapter.WrapFailure(io.EOF, adapter.FailureFacts{Stage: adapter.FailureStageData, Origin: adapter.FailureOriginPath}), terminalForTheFlow: true},
