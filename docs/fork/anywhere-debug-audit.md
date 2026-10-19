@@ -149,14 +149,32 @@ called only from the `cacheFile == nil && format == binary` branch. The cache/so
 | `gofmt -l route/rule` | clean |
 | `go build ./route/...` (with and without `with_low_memory`) | clean |
 | `go test -race ./route/rule` | **BLOCKED_BY_ENVIRONMENT** — CGO disabled, no mingw-w64 gcc |
-| `scripts/ci/test-low-memory.sh` | **NOT_RUN** — no bash; the `with_low_memory` package test is the covered part |
-| canonical Apple tag set | **BLOCKED_BY_ENVIRONMENT** on Windows: `tfogo_checklinkname0`/`badlinkname` fail the linker on `tfo-go`; not a defect of this change |
-| iOS build / device `phys_footprint` | **NOT_RUN** — no Apple SDK/device |
+| `scripts/ci/test-low-memory.sh` | **NOT_RUN locally** — no bash. **CI**: the `Apple tags and the low-memory data paths` job ran on the pushed SHA and **passed** (see §6.1) |
+| canonical Apple tag set | **BLOCKED locally** on Windows: `tfogo_checklinkname0`/`badlinkname` fail the linker on `tfo-go`. **CI**: the same Apple/low-memory job **passed** |
+| iOS build / device `phys_footprint` | build contract covered by the green Apple CI job; **device measurement NOT_RUN** — no Apple hardware |
+
+### 6.1 Remote CI on the pushed head
+
+Head reported by the API at check time: `48a58f42da3a81cd6afdf2ba079777c0f352a88f` (the code + debug
+documentation commit).
+
+| Check | Result | Job |
+|---|---|---|
+| `verify` | **success** | <https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39188097886/job/117854880387> |
+| `Android ARM64 core` | **success** | <https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39188097883/job/117854695806> |
+| `Apple tags and the low-memory data paths` | **success** | <https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39188097920/job/117854695670> |
+
+The Apple job is the remote counterpart of the locally blocked `scripts/ci/test-low-memory.sh`: it
+builds/tests with the canonical Apple tag set, including `with_low_memory`. Its success does **not**
+replace the device `phys_footprint` measurement (still NOT_RUN), and it does not cover `-race` (still
+BLOCKED locally).
 
 ## 7. Residual risks and unverified combinations
 
 * **No `-race` run**: the changed code adds no shared state (parse and publish remain on the fetch
   goroutine; `access` is the existing lock), but this is reasoning, not a race-detector result.
+* **Device memory is still unmeasured**: the green Apple CI job is a build/test contract, not a
+  `phys_footprint` run on iOS.
 * **Cancellation mid-body** is reasoned, not tested: a cancelled request fails the body read, and
   `srs.Read` returns that error before `publishRules`. A dedicated test would need a controllable
   blocking reader; the truncation test already proves the "read error → no publish" branch.

@@ -34,14 +34,19 @@ partial publication on build/validate errors, callback ordering, concurrent fetc
 ## What was not verified
 
 * `-race`: blocked (no cgo toolchain); the change adds no shared state, but this is reasoning.
-* `scripts/ci/test-low-memory.sh` and the canonical Apple tag set: blocked on this host (no bash;
-  Windows linker rejects `tfo-go`'s netFD reference). The `with_low_memory` package test passes.
-* iOS/Android device `phys_footprint`, HTTP/2/HTTP/3 variants: not run.
+* Device `phys_footprint` on iOS/Android: not run (no device/SDK).
+* HTTP/2 and HTTP/3 server variants were not separately simulated.
+* The local `scripts/ci/test-low-memory.sh` needs bash and was not run, **but its remote counterpart —
+  the `Apple tags and the low-memory data paths` CI job — passed on the pushed SHA**, including
+  `with_low_memory`. The same job resolves the local Windows linker limitation for the canonical Apple
+  tag set.
 
 ## Git
 
 * Debug start: `93ca5351cb20ef659879273b2b4616c5a69a04a1` (clean, `testing`, remote equal).
 * Fix: `1f1775e37d257f6c66cb849478fa57b5c0592eae`; tests: `742da5e8df3f3429002e3924ebfcd6933777c47a`.
+* CI on `48a58f42da3` (code + debug docs): `verify`, `Android ARM64 core` and `Apple tags and the
+  low-memory data paths` all **success**.
 * This report set: the documentation commit that contains it.
 * Branch `testing`; no force push, no history rewrite, no new branch. `git log --oneline 93ca535..HEAD`
   is the exact range.
