@@ -218,6 +218,34 @@ func (s *RemoteRuleSet) loadBytes(content []byte) error {
 	default:
 		return E.New("unknown rule-set format: ", s.options.Format)
 	}
+	return s.publishRules(ruleSet)
+}
+
+// loadBinaryReader parses a binary rule-set straight from the response body.
+//
+// # Why this is not just loadBytes without the slice
+//
+// A binary rule-set is already a stream (`srs.Read` decompresses it as it parses), and the parsed
+// form is compact: the v3+ format stores a succinct matcher, not the domain strings. Reading the
+// whole compressed body into a []byte first therefore adds a second, temporary copy of the entire
+// download to the load's peak for no parsing benefit. On a memory-limited platform that peak is
+// what matters: a 10 MiB rule-set costs 10 MiB of avoidable transient on top of the parsed form.
+//
+// The cache path cannot use this: `CacheFile.SaveRuleSet` takes the bytes and stores them, so the
+// download must be retained in some form. The streaming path is therefore used only when there is
+// no cache file to write; a cached profile keeps the previous behaviour exactly.
+func (s *RemoteRuleSet) loadBinaryReader(reader io.Reader) error {
+	ruleSet, err := srs.Read(reader, false)
+	if err != nil {
+		return err
+	}
+	return s.publishRules(ruleSet)
+}
+
+// publishRules is the one place a parsed generation becomes the live one: build, validate, store,
+// then notify. Both loaders (bytes and stream) must go through it so a cache-less update cannot
+// publish rules with different validation than a cached one.
+func (s *RemoteRuleSet) publishRules(ruleSet option.PlainRuleSetCompat) error {
 	plainRuleSet, err := mmapRuleSet(s.ctx, s.logger, s.tag, ruleSet).Upgrade()
 	if err != nil {
 		return err
@@ -294,11 +322,17 @@ func (s *RemoteRuleSet) fetch(ctx context.Context, isStart bool) error {
 	default:
 		return E.New("unexpected status: ", response.Status)
 	}
-	content, err := io.ReadAll(response.Body)
-	if err != nil {
-		return err
+	var content []byte
+	if s.cacheFile == nil && s.options.Format == C.RuleSetFormatBinary {
+		// No cache to write, so the download does not need to exist as a slice: parse the stream.
+		err = s.loadBinaryReader(response.Body)
+	} else {
+		content, err = io.ReadAll(response.Body)
+		if err != nil {
+			return err
+		}
+		err = s.loadBytes(content)
 	}
-	err = s.loadBytes(content)
 	if err != nil {
 		return err
 	}
