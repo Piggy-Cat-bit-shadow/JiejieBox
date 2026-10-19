@@ -89,6 +89,16 @@ func Read(reader io.Reader, recover bool) (ruleSetCompat option.PlainRuleSetComp
 		}
 		ruleSetCompat.Options.Rules = append(ruleSetCompat.Options.Rules, rule)
 	}
+	// Reading exactly the declared rules stops before the zlib trailer, so a stream truncated
+	// after the last rule, or one whose Adler-32 is corrupt, would otherwise parse successfully:
+	// every rule is present, and only end-of-stream verification can tell that the file is not the
+	// one that was written. Draining forces zlib to check its checksum. It reads no additional
+	// rule data and allocates nothing beyond io.Copy's fixed buffer.
+	_, err = io.Copy(io.Discard, bReader)
+	if err != nil {
+		err = E.Cause(err, "verify rule-set stream")
+		return
+	}
 	return
 }
 

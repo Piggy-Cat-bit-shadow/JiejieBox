@@ -237,16 +237,15 @@ func (s *RemoteRuleSet) loadBytes(content []byte) error {
 //
 // # Why the body is drained after parsing
 //
-// `srs.Read` stops at the end of the declared rules; the zlib footer and any bytes after it are
-// still unread. The read-all path consumed the body to EOF, so a download truncated after the last
-// rule failed the update with an unexpected EOF and left the previous generation live. A streaming
-// parse that returns as soon as the rules are complete would publish that same truncated download:
-// a silent failure-semantics change. Draining restores the old order and error, and copies the
-// remainder through one small buffer instead of retaining it, so the peak win stands.
+// `srs.Read` now verifies its own zlib stream (checksum and truncation), but it stops at the end of
+// that stream: bytes after it, or a body shorter than the HTTP framing claims once the zlib stream
+// is complete, are outside the parser's view. The read-all path read the body to EOF, so such a
+// download failed the update. Draining preserves that HTTP-level check, and copies the remainder
+// through one small buffer instead of retaining it, so the peak win stands.
 //
 // The drain happens BEFORE publish, and its error is returned, for that reason. (It also lets
 // net/http return the connection to the idle pool, but the updater closes idle connections after
-// every non-initial refresh anyway; the truncation check is the load-bearing reason.)
+// every non-initial refresh anyway; the framing check is the load-bearing reason.)
 func (s *RemoteRuleSet) loadBinaryStream(body io.ReadCloser) error {
 	ruleSet, err := srs.Read(body, false)
 	if err != nil {
