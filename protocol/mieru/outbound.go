@@ -538,7 +538,7 @@ func (h *Outbound) dialWithFallback(ctx context.Context, destination mierumodel.
 	if err == nil {
 		return h.acceptGeneratedConn(conn, generation)
 	}
-	if class != dialTransportFailure {
+	if !isTransportClass(class) {
 		switch class {
 		case dialTargetFailure:
 			h.logger.Debug("mieru: target failure on ", selected.label, " transport; not switching: ", err)
@@ -567,7 +567,7 @@ func (h *Outbound) dialWithFallback(ctx context.Context, destination mierumodel.
 		E.Cause(secondaryErr, "mieru: fallback transport"),
 	)
 	switch secondaryClass {
-	case dialTargetFailure, dialTransportFailure:
+	case dialTargetFailure, dialTransportFailure, dialSocketFailure, dialSocketTimeout:
 		return nil, wrapFailureFacts(aggregate, secondaryClass)
 	default:
 		return nil, aggregate

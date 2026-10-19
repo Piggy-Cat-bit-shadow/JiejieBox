@@ -37,10 +37,33 @@ exports only that proof to the group layer:
 | Mieru result | Fact |
 | --- | --- |
 | valid SOCKS target reply (e.g. code 2) | Target / Target |
-| handshake write/read timeout, reset, dial refusal | Handshake / Path |
+| handshake write/read timeout, reset | Handshake / Path |
+| socket refused / unreachable (typed errno) | Dial / Path |
+| socket connect timeout or reset (typed; the SDK flattens the error to text) | no fact (a stall is not proof, and the flattened error no longer satisfies the group's timeout test) |
+| local interface error (EADDRNOTAVAIL/ENETDOWN) | Dial / Caller |
 | caller cancellation/configuration | Dial / Caller |
 | bare EOF on a TCP-primary handshake | no fact (Unknown; could be auth or close) |
 | bare EOF on a UDP primary (Linux unreachable peer) | Handshake / Path |
+
+The socket rows need one extra step, because the official SDK destroys the error chain
+before this package sees it:
+
+```go
+// pkg/protocol/mux.go: fmt.Errorf("NewTCPUnderlay() failed: %v", err)
+```
+
+`%v`, not `%w`. A refused connect therefore reaches Mieru as text, and the OS part of that text is
+formatted in the system language on Windows, so `errors.Is(err, syscall.ECONNREFUSED)` is dead and a
+substring match is not portable across locales. (The SDK's own prefix still identifies a transport
+failure; what text cannot carry is *which kind* of socket failure it was, and therefore whether it is
+proof.) `protocol/mieru/dial_observation.go` records the error at the
+bridge (the fork's `serverDialer`), where it still has its type, and
+`classifySocketError` reads it with the same `common/dialer` errno sets the rest of the tree uses
+(`ErroredWith`, including the raw Winsock spellings). One observation per SDK dial; it carries no
+state beyond that attempt and is never read on a success path. The socket class is also the first
+Mieru evidence that is *definite*: two definite socket failures mean both endpoints are unusable, so
+the fallback selector keeps its secondary preference instead of re-dialling the refused primary on
+every request. Two silent handshakes remain the wrong-credential shape and still reset to primary.
 
 The fallback aggregate (`E.Errors`) is wrapped with the **secondary** result:
 a target failure after a path failure remains target evidence; two path

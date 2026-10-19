@@ -69,7 +69,9 @@ func (d *serverDialer) DialContext(ctx context.Context, network string, address 
 	if !destination.IsValid() {
 		return nil, fmt.Errorf("mieru: invalid server address %q", address)
 	}
-	return d.dialer.DialContext(ctx, network, destination)
+	conn, err := d.dialer.DialContext(ctx, network, destination)
+	observeSocketDial(ctx, err)
+	return conn, err
 }
 
 // ListenPacket opens the UDP transport socket.
@@ -92,8 +94,10 @@ func (d *serverDialer) ListenPacket(ctx context.Context, network string, laddr s
 	destination.Port = expected.Port
 	conn, err := d.dialer.DialContext(ctx, N.NetworkUDP, destination)
 	if err != nil {
+		observeSocketDial(ctx, err)
 		return nil, err
 	}
+	observeSocketDial(ctx, nil)
 	tracked := &dialPacketConn{
 		PacketConn: newConnectedPacketConn(conn, expected),
 		server:     d,

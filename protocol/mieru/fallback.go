@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/option"
 	N "github.com/sagernet/sing/common/network"
 
@@ -52,6 +53,30 @@ const (
 	// the primary preference and returning the real error is safer than
 	// claiming an automatic recovery.
 	dialAmbiguousFailure
+	// dialSocketFailure is DEFINITE evidence from the socket layer: the kernel
+	// refused the attempt, or reported that this endpoint cannot be reached.
+	// The evidence is the typed error captured by the bridge (see
+	// dial_observation.go), classified with the same errno sets as the rest of
+	// the tree (common/dialer.ErroredWith), not a text guess: Windows formats
+	// the message in the system language, so text is not a stable source.
+	//
+	// It behaves like dialTransportFailure for retry and cooldown, and differs
+	// in exactly one decision: two definite socket failures are proof that both
+	// endpoints are unusable right now, so the secondary preference may persist
+	// through its cooldown instead of being reset after every request.
+	dialSocketFailure
+	// dialSocketTimeout is a socket-stage failure whose error is a kernel
+	// connect timeout or a reset during connect. It is transport evidence and
+	// must try the other transport, but it is NOT proof about the endpoint: a
+	// silent path and a slow endpoint are indistinguishable.
+	//
+	// It deliberately carries NO FailureFacts. The SDK flattens this error to
+	// text ("NewTCPUnderlay() failed: ... i/o timeout"), so the group's
+	// isTimeoutFailure can no longer see a net.Error; a Path fact at the dial
+	// stage would then demote a member for a mere stall, which is exactly the
+	// demotion the group's timeout rule exists to prevent. Unknown is the
+	// honest value, and it keeps the group's conservative default.
+	dialSocketTimeout
 )
 
 func (c dialFailureClass) String() string {
@@ -66,6 +91,10 @@ func (c dialFailureClass) String() string {
 		return "caller"
 	case dialAmbiguousFailure:
 		return "ambiguous"
+	case dialSocketFailure:
+		return "socket"
+	case dialSocketTimeout:
+		return "socket-timeout"
 	default:
 		return "unknown"
 	}
@@ -80,7 +109,12 @@ func (c dialFailureClass) String() string {
 // wrong credentials, a server-side target close and an underlay FIN all look
 // the same at this API boundary. A valid non-success SOCKS reply is target
 // evidence and is never allowed to mark the transport unhealthy.
-func classifyDialError(ctx context.Context, err error, transport mieruTransport) dialFailureClass {
+//
+// `observed` is the bridge's typed record of what the fork dialer returned
+// during this attempt. It is consulted before the text rules because the SDK
+// flattens the error with fmt.Errorf("%v") and the type - the only thing that
+// survives localization - is gone by now. See dial_observation.go.
+func classifyDialError(ctx context.Context, err error, transport mieruTransport, observed *dialObservation) dialFailureClass {
 	if err == nil {
 		return dialSuccess
 	}
@@ -103,6 +137,16 @@ func classifyDialError(ctx context.Context, err error, transport mieruTransport)
 	}
 	if errors.Is(err, os.ErrPermission) {
 		return dialCallerFailure
+	}
+
+	// Typed socket evidence, recovered from the fork dialer before the SDK
+	// replaced the chain with a string.
+	if observed != nil {
+		if socketErr := observed.socketFailure(); socketErr != nil {
+			if class, classified := classifySocketError(socketErr); classified {
+				return class
+			}
+		}
 	}
 
 	var typedError stderror.TypedError
@@ -174,6 +218,74 @@ func isTimeout(err error) bool {
 	return errors.As(err, &netError) && netError.Timeout()
 }
 
+// classifySocketError reads the bridge-captured socket error with the shared
+// errno sets instead of matching English text.
+//
+// The sets and ErroredWith come from common/dialer because it is already the
+// single place where the POSIX and Winsock spellings of these conditions live
+// (see common/dialer/windows_socket_errors.go): on Windows the raw 10061
+// "refused" never equals syscall.ECONNREFUSED, and the message itself is
+// formatted in the system language, so neither a syscall constant nor an
+// English string is a portable test.
+//
+// The distinction this function adds is between DEFINITE and soft evidence:
+//
+//	refused / unreachable / cannot assign     definite (dialSocketFailure)
+//	kernel connect timeout, reset at connect  transport evidence, not proof
+//
+// A refused listener is a fact about this moment: something on the path
+// answered and declined. An unreachable network is a fact that the packet
+// never left. A timeout is not proof of anything - only that nobody answered.
+func classifySocketError(err error) (dialFailureClass, bool) {
+	switch {
+	case dialer.ErroredWith(err, dialer.PeerAnsweredErrnos...):
+		// Something answered: the TCP listener refused, or a connected UDP
+		// socket received ICMP port-unreachable. The proxy endpoint is not
+		// accepting this transport right now, which is definite.
+		return dialSocketFailure, true
+	case dialer.ErroredWith(err, dialer.UnreachableErrnos...):
+		// The kernel says this address family/route cannot carry the packet.
+		// Whatever the remote endpoint is doing, this attempt could not reach
+		// it, so the other transport is the only useful next step.
+		return dialSocketFailure, true
+	case dialer.ErroredWith(err, dialer.PathFailureErrnos...):
+		// The leftovers of that set are EADDRNOTAVAIL/ENETDOWN: this MACHINE's
+		// interface could not provide an address. That is local, not the
+		// member's path, and the other transport would fail the same way, so
+		// it must neither switch preference nor demote the member.
+		return dialCallerFailure, true
+	case dialer.ErroredWith(err, dialer.TimeoutErrnos...):
+		// The kernel's own connect timeout is not proof the endpoint is down.
+		return dialSocketTimeout, true
+	case dialer.ErroredWith(err, dialer.ResetErrnos...):
+		// A reset during connect: something answered and closed, but one
+		// answer is not proof that a later attempt fails.
+		return dialSocketTimeout, true
+	case errors.Is(err, os.ErrPermission):
+		return dialCallerFailure, true
+	case isTimeout(err):
+		// A media timeout from the connect path (not a bare errno): the
+		// attempt died before any protocol byte, but a stall is not proof.
+		return dialSocketTimeout, true
+	}
+	return dialSuccess, false
+}
+
+// isTransportClass reports whether this class licenses trying the other
+// transport in the same dial. The definite socket class does, because the
+// evidence names the first hop to the proxy endpoint rather than the target.
+func isTransportClass(class dialFailureClass) bool {
+	return class == dialTransportFailure || class == dialSocketFailure || class == dialSocketTimeout
+}
+
+// isDefiniteSocketClass reports whether a failed attempt carries proof from
+// the socket layer. Only reportBothFailed reads this: two such failures mean
+// neither endpoint is accepting the transport, which is a stable state, while
+// two silent handshakes may be wrong credentials on a healthy endpoint.
+func isDefiniteSocketClass(class dialFailureClass) bool {
+	return class == dialSocketFailure
+}
+
 // wrapFailureFacts attaches the narrow adapter failure fact to a Mieru dial
 // error. This is the only producer needed for the cross-protocol policy: a
 // group can then tell a target refusal from a first-hop path failure without
@@ -189,9 +301,15 @@ func wrapFailureFacts(err error, class dialFailureClass) error {
 		facts = adapter.TargetFailureFacts()
 	case dialTransportFailure:
 		facts = adapter.PathFailureFacts(adapter.FailureStageHandshake)
+	case dialSocketFailure:
+		// The proof came from the socket to the proxy endpoint, before any
+		// Mieru byte could be exchanged: the dial stage, this member's path.
+		facts = adapter.PathFailureFacts(adapter.FailureStageDial)
 	case dialCallerFailure:
 		facts = adapter.FailureFacts{Stage: adapter.FailureStageDial, Origin: adapter.FailureOriginCaller}
 	default:
+		// dialSocketTimeout and dialAmbiguousFailure stay fact-less on purpose:
+		// see the class comments. Unknown is not a verdict.
 		return err
 	}
 	return adapter.WrapFailure(err, facts)
@@ -299,7 +417,7 @@ func (s *fallbackSelector) report(generation uint64, choice fallbackPreference, 
 		s.primaryUntil = time.Time{}
 		s.cooldown = s.baseCooldown
 		s.probing = false
-	case dialTransportFailure:
+	case dialTransportFailure, dialSocketFailure, dialSocketTimeout:
 		if probe {
 			s.cooldown *= 2
 			if s.cooldown > fallbackCooldownMax {
@@ -331,19 +449,36 @@ func (s *fallbackSelector) report(generation uint64, choice fallbackPreference, 
 }
 
 // reportBothFailed handles the case where the primary was classified as a
-// transport failure but the secondary also failed before producing any SOCKS
-// reply. Two silent handshakes are exactly what a wrong password looks like
-// through the official API (the server drops both transports), so the
-// conservative result is to stop preferring the secondary and let the next
-// business request try the primary again. A successful secondary never reaches
-// this method, and a valid SOCKS reply is target-class, not transport.
+// transport-class failure but the secondary also failed before producing any
+// SOCKS reply.
+//
+// Two proven socket failures are a stable fact: neither endpoint accepts this
+// transport right now. Resetting to the primary there would make EVERY request
+// re-dial a refused endpoint and then the secondary - twice the connection
+// churn for the whole outage, with no additional information. So when both
+// sides are definite, the secondary preference stands and the existing
+// cooldown is what schedules the single recovery probe.
+//
+// Two silent handshakes are NOT that fact: they are exactly what a wrong
+// password looks like through the official API (the server drops both
+// transports), and staying on the secondary would strand a misconfigured
+// account on the backup path. The conservative result there remains "try the
+// primary again on the next business request".
+//
+// Mixed evidence (primary proven down, secondary silent) also resets: the
+// primary is cheap to re-test, so re-testing it is how a recovered primary is
+// noticed without waiting out a cooldown that only the primary's own failure
+// earned.
 func (s *fallbackSelector) reportBothFailed(generation uint64, primaryClass, secondaryClass dialFailureClass) {
 	s.access.Lock()
 	defer s.access.Unlock()
 	if s.closed || generation != s.generation {
 		return
 	}
-	if !isSilentHandshakeClass(primaryClass) || !isSilentHandshakeClass(secondaryClass) {
+	if isDefiniteSocketClass(primaryClass) && isDefiniteSocketClass(secondaryClass) {
+		return
+	}
+	if !isSilentHandshakeClass(primaryClass) && !isDefiniteSocketClass(primaryClass) {
 		return
 	}
 	s.preferred = fallbackPrimary
@@ -459,12 +594,23 @@ func (t *transportRuntime) stop() error {
 // together with a handshake error. mieruclient.DialContext returns that
 // non-nil connection in this case; dropping it would leak a session.
 func (t *transportRuntime) dial(ctx context.Context, destination mierumodel.NetAddrSpec) (net.Conn, dialFailureClass, error) {
-	conn, err := t.client.DialContext(ctx, destination)
+	// A caller that has already given up must not cost an SDK handshake: the
+	// public DialContext checks the context while building an underlay but the
+	// SOCKS5 response read inside it is bounded only by the SDK's own 10s
+	// deadline, so a cancelled request would otherwise sit here for seconds
+	// with nobody waiting for it.
+	if ctx != nil && ctx.Err() != nil {
+		return nil, dialCallerFailure, ctx.Err()
+	}
+	// The SDK flattens the underlay error to a string before returning it; the
+	// ledger keeps the typed proof for the classifier. See dial_observation.go.
+	observedContext, observation := withDialObservation(ctx)
+	conn, err := t.client.DialContext(observedContext, destination)
 	if err != nil {
 		if conn != nil {
 			_ = conn.Close()
 		}
-		return nil, classifyDialError(ctx, err, t.transport), err
+		return nil, classifyDialError(ctx, err, t.transport, observation), err
 	}
 	return conn, dialSuccess, nil
 }
