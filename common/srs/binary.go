@@ -94,6 +94,9 @@ func Read(reader io.Reader, recover bool) (ruleSetCompat option.PlainRuleSetComp
 	// every rule is present, and only end-of-stream verification can tell that the file is not the
 	// one that was written. Draining forces zlib to check its checksum. It reads no additional
 	// rule data and allocates nothing beyond io.Copy's fixed buffer.
+	//
+	// The error is returned before the caller can publish, so a truncated or corrupt file can
+	// never replace a live rule set.
 	_, err = io.Copy(io.Discard, bReader)
 	if err != nil {
 		err = E.Cause(err, "verify rule-set stream")
