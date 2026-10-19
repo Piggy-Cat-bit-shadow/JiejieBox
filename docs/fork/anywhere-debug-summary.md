@@ -5,23 +5,31 @@ Companion to [`anywhere-debug-audit.md`](anywhere-debug-audit.md) and the round-
 
 ## What was fixed
 
-One real regression introduced by the round-1 streaming load:
+**1. A real regression introduced by the round-1 streaming load:** a remote binary rule-set whose body
+is truncated after the last rule was accepted. `srs.Read` stopped at the end of the declared rules, the
+round-1 loader published as soon as it returned, while the read-all path it replaced consumed the body
+to EOF, returned `unexpected EOF`, and kept the previous generation. Fix (`1f1775e37d2`): drain the body
+before publish and return the drain error. Added the empty/garbage and mid-body cancellation cases
+(`742da5e8df3`, `bcc55b7072c`).
 
-**A remote binary rule-set whose body is truncated after the last rule was accepted.** `srs.Read`
-stops at the end of the declared rules; the round-1 loader published as soon as it returned, while the
-read-all path it replaced consumed the body to EOF, returned `unexpected EOF`, and kept the previous
-generation. Fix (`1f1775e37d2`): drain the body before publish and return the drain error. Added the
-empty/garbage cases as well (`742da5e8df3`).
+**2. A pre-existing parser integrity gap, found by extending the same root cause:** `Read` stopped
+after the declared rules and never let zlib verify its Adler-32 trailer. A file cut by up to 8 bytes,
+or one with a corrupt trailer, parsed successfully — this affected local files, cache restores and the
+remote read-all path, not only the new streaming path. Fix (`6b50757c032`): drain the decompressed
+stream after the rules, so zlib checks the checksum and reports truncation. Tests fail on the old
+parser (cut 1/2/4 and a flipped last byte) and pass after it.
 
 ## Behaviour and cost
 
-* Behaviour is back to the pre-round-1 contract for a truncated download: the refresh fails, the old
-  rules stay live, the new generation is not published.
+* A truncated download now fails and the old generation stays live; a trailer-truncated or
+  checksum-corrupt rule-set file is rejected at load instead of being used.
 * No configuration/interfaces changed; the cache, source/JSON, `initial_path` and cache-restore paths
   are untouched.
 * Peak memory win stands: the 4 MiB fixture allocated **21,229,120 B** before round 1 and
   **~125 KB** now (`io.Copy`'s small buffer included), with the 4 MiB tail never held as a slice.
-* The drain reads the remainder, exactly as the pre-round-1 `io.ReadAll` did; it is not a new
+* The parser drain reads only the remaining compressed data (the footer for a valid file) and uses
+  `io.Discard`'s pooled buffer; valid files see no measurable cost.
+* The HTTP drain reads the remainder, exactly as the pre-round-1 `io.ReadAll` did; it is not a new
   bandwidth cost relative to the old behaviour, and it is not claimed as a keep-alive optimisation
   (`fetch` closes idle connections after non-initial refreshes anyway).
 
@@ -33,7 +41,8 @@ partial publication on build/validate errors, callback ordering, concurrent fetc
 
 ## What was not verified
 
-* `-race`: blocked (no cgo toolchain); the change adds no shared state, but this is reasoning.
+* Local `-race` is blocked (no cgo toolchain), but the remote `verify` step ran `-race` over
+  `./route/...` on the pushed SHA and passed.
 * Device `phys_footprint` on iOS/Android: not run (no device/SDK).
 * HTTP/2 and HTTP/3 server variants were not separately simulated.
 * The local `scripts/ci/test-low-memory.sh` needs bash and was not run, **but its remote counterpart —

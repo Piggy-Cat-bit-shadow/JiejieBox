@@ -4,8 +4,10 @@
 **Debug start:** `93ca5351cb20ef659879273b2b4616c5a69a04a1`.
 **Round-1 change under audit:** `d846fb6c8c9eef71f76242f4ba3e64f776c183c1` (streaming remote binary
 rule-set load), plus the documentation commits `f38378dd417` and `93ca5351cb2`.
-**Round-2 fixes:** `1f1775e37d257f6c66cb849478fa57b5c0592eae` (the defect),
-`742da5e8df3f3429002e3924ebfcd6933777c47a` (the empty/garbage cases).
+**Round-2 fixes:** `1f1775e37d257f6c66cb849478fa57b5c0592eae` (the remote defect),
+`742da5e8df3f3429002e3924ebfcd6933777c47a` (empty/garbage cases),
+`bcc55b7072c232ccc60f26800a5c53225a53e33d` (cancellation case),
+`6b50757c032bb83b1cde192398a4ee0bf105a3c7` (parser checksum/truncation check).
 **Round-1 reports:** [`anywhere-deep-study.md`](anywhere-deep-study.md),
 [`anywhere-audit-and-construction.md`](anywhere-audit-and-construction.md).
 
@@ -102,6 +104,41 @@ end-of-body check.
 called only from the `cacheFile == nil && format == binary` branch. The cache/source branches still use
 `io.ReadAll` + `loadBytes` exactly as before; `publishRules` is their shared sink.
 
+### BUG-02-2 — the parser accepted a truncated or corrupt zlib trailer (pre-existing)
+
+**Severity:** P3 (integrity of rule-set input; not introduced by round 1).
+
+**Reproduction:** `common/srs/truncated_test.go`. On the old parser, a valid SRS payload cut by
+1, 2 or 4 bytes (the Adler-32 trailer) still parsed with **no error**; flipping the last byte of a
+complete payload also parsed. Every declared rule was present, so the rule count did not reveal the
+damage.
+
+**Root cause:** `Read` stopped immediately after the declared rules. The zlib checksum is only
+verified when the decompressed stream reaches its end, so the parser never asked zlib to validate the
+file it had just decoded. This affected every loader (local, remote read-all, cache restore), not only
+the streaming path; the round-1 change merely made the missing check easier to reason about.
+
+**Fix (`6b50757c032`):** after the rule list, `Read` drains the decompressed stream
+(`io.Copy(io.Discard, bReader)`). That forces zlib to validate the Adler-32 and to report
+`unexpected EOF` for a truncated stream. The call allocates nothing beyond `io.Discard`'s pooled
+buffer and reads only the remaining compressed data (for a valid file, the footer).
+
+**Proof (red → green):**
+
+| Step | Result |
+|---|---|
+| New tests on the old parser | **FAIL**: `cut=1/2/4` and corrupt-checksum cases parsed without error |
+| New tests after the drain | **PASS**; complete payload still parses |
+| `go test ./common/srs -count=1` | **PASS** |
+| `go test ./route/rule -count=1` (streaming/truncation/cancellation/allocation) | **PASS** |
+| `go test ./route -count=1 -short` | **PASS**, 61.170 s |
+
+The remote HTTP drain from BUG-02-1 is still required: the parser validates its zlib stream, but
+`loadBinaryStream` must also see bytes after that stream and a body shorter than the HTTP framing
+claims. The two checks are at different layers and neither subsumes the other.
+
+
+
 ### Checked and not a defect
 
 | Attack / concern | Result | Evidence |
@@ -115,7 +152,7 @@ called only from the `cacheFile == nil && format == binary` branch. The cache/so
 | Error text change | now `unexpected EOF`, matching the read-all path | truncation test log |
 | `publishRules` partial publication | builds into a local slice; assigns under one lock; callbacks after unlock | source read; existing tests |
 | Callback ordering / duplicate callbacks | unchanged code, same list | source read |
-| Context cancellation mid-body | body read fails; no publish (same as read-all) | reasoned from `http` body + `srs.Read`; no dedicated test (see §7) |
+| Context cancellation mid-body | body read fails; no publish (same as read-all) | `TestRemoteRuleSetStreamAbortsWhenTheRequestIsCanceled` (server sends half, blocks; caller cancels) |
 | Concurrent `fetch` calls | not reachable: `StartContext` fetches before the updater starts; `RuleSetUpdater.loopUpdate` calls `updateOnce` serially | source read |
 | Connection reuse | **not claimed**: `fetch` closes idle connections after every non-initial refresh, so the drain is not a keep-alive optimisation; it is the EOF check | source read |
 | Memory of the drain | `io.Copy` uses a fixed 32 KiB buffer; the body is not retained | allocation test |
@@ -134,8 +171,13 @@ called only from the `cacheFile == nil && format == binary` branch. The cache/so
 * The allocation test is a hard bound (`< tail/2`), not a benchmark report; it fails on any regression
   that buffers the download. It logs the observed figure for the record (125,464 B on the final tree, 119,848 B on an earlier run;
   the exact value varies by a few KiB with server-side buffering).
+* The cancellation test uses a **one-shot barrier**: the server writes half the rule set, flushes,
+  closes `started`, and waits on the request context. The test cancels only after `started`, so the
+  cancel cannot race the connection setup; `fetch` must return an error within five seconds and the
+  rule must not be live.
 * No fault-injection hook was added to production code. The "short body" is produced by an honest
-  `Content-Length` mismatch, which is what a broken CDN/proxy produces in the field.
+  `Content-Length` mismatch, which is what a broken CDN/proxy produces in the field; the cancellation
+  is a real `context.WithCancel` on a real `httptest` server.
 
 ## 6. Verification matrix
 
@@ -144,11 +186,12 @@ called only from the `cacheFile == nil && format == binary` branch. The cache/so
 | `go test ./route/rule -count=1` | **PASS**, 2.220 s |
 | `go test -tags with_low_memory ./route/rule -count=1` | **PASS**, 2.195 s |
 | `go test ./route -count=1 -timeout 12m` | **PASS**, 421.389 s (includes the deliberate 6-minute kernel test) |
-| `go test ./route -run TestRemoteRuleSetStream -v` | **PASS** (3 tests + 2 subcases) |
+| `go test ./common/srs -count=1` | **PASS**, 0.022 s (checksum/truncation tests included) |
+| `go test ./route -run TestRemoteRuleSetStream -v` | **PASS** (4 tests + 2 subcases) |
 | `go vet ./route/rule` | clean |
 | `gofmt -l route/rule` | clean |
 | `go build ./route/...` (with and without `with_low_memory`) | clean |
-| `go test -race ./route/rule` | **BLOCKED_BY_ENVIRONMENT** — CGO disabled, no mingw-w64 gcc |
+| `go test -race ./route/rule` | **BLOCKED locally** — CGO disabled, no mingw-w64 gcc. **CI**: `verify`'s `race on the fork's own data paths` runs `go test -race ... ./route/...` and **passed** on `48a58f4` (see §6.1) |
 | `scripts/ci/test-low-memory.sh` | **NOT_RUN locally** — no bash. **CI**: the `Apple tags and the low-memory data paths` job ran on the pushed SHA and **passed** (see §6.1) |
 | canonical Apple tag set | **BLOCKED locally** on Windows: `tfogo_checklinkname0`/`badlinkname` fail the linker on `tfo-go`. **CI**: the same Apple/low-memory job **passed** |
 | iOS build / device `phys_footprint` | build contract covered by the green Apple CI job; **device measurement NOT_RUN** — no Apple hardware |
@@ -165,14 +208,17 @@ documentation commit).
 | `Apple tags and the low-memory data paths` | **success** | <https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39188097920/job/117854695670> |
 
 The Apple job is the remote counterpart of the locally blocked `scripts/ci/test-low-memory.sh`: it
-builds/tests with the canonical Apple tag set, including `with_low_memory`. Its success does **not**
-replace the device `phys_footprint` measurement (still NOT_RUN), and it does not cover `-race` (still
-BLOCKED locally).
+builds/tests with the canonical Apple tag set, including `with_low_memory`. `verify` also contains the
+**race** step (`go test -race ... ./common/trafficsched/... ./protocol/mieru/... ./route/... ./adapter/...`
+under the release tags), so the changed package was race-tested remotely even though the local
+`-race` run is blocked. These successes do **not** replace the device `phys_footprint` measurement
+(still NOT_RUN).
 
 ## 7. Residual risks and unverified combinations
 
-* **No `-race` run**: the changed code adds no shared state (parse and publish remain on the fetch
-  goroutine; `access` is the existing lock), but this is reasoning, not a race-detector result.
+* **Local `-race` is blocked**, but the remote `verify` step ran `-race` over `./route/...` on the
+  pushed SHA and passed. That is the race evidence for the changed package; a local race run would add
+  nothing new except independence from CI.
 * **Device memory is still unmeasured**: the green Apple CI job is a build/test contract, not a
   `phys_footprint` run on iOS.
 * **Cancellation mid-body** is reasoned, not tested: a cancelled request fails the body read, and

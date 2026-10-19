@@ -9,6 +9,7 @@ actually run or a source check that was actually made; "not run" is not written 
 |---|---|---|---|---|---|---|---|---|
 | BUG-02-1 | P2 | `srs.Read` stops at the last rule; the streaming loader published without reading to EOF, accepting a body truncated after the rules (the read-all path returned `unexpected EOF`) | `route/rule/rule_set_remote.go` | `1f1775e37d257f6c66cb849478fa57b5c0592eae` | `TestRemoteRuleSetStreamDoesNotPublishATruncatedBody` | Test fails with the drain removed (`fetch` returns nil); passes on pre-round-1 code and on the fix; asserts old generation stays and new one does not | No `-race` (cgo blocked); no shared state added | CI on `48a58f4`: `verify`, `Android ARM64 core`, `Apple tags and the low-memory data paths` all **success**; no device run |
 | TEST-02-1 | — | The streaming branch's parse-failure path had no deterministic test | `route/rule/rule_set_remote_stream_test.go` | `742da5e8df3f3429002e3924ebfcd6933777c47a` | `TestRemoteRuleSetStreamRejectsUnparseableBodies` (empty + garbage) | Both cases return an error and publish nothing | same | same |
+| BUG-02-2 | P3 (pre-existing) | `srs.Read` stopped after the declared rules, leaving the zlib Adler-32 unverified; a trailer-truncated or corrupt file parsed | `common/srs/binary.go` | `6b50757c032bb83b1cde192398a4ee0bf105a3c7` | `TestReadRejectsTruncatedStream`, `TestReadRejectsCorruptChecksum` | Both tests fail on the old parser (cut 1/2/4 and flipped last byte parsed), pass after the EOF drain; complete payload still parses | `go test ./common/srs`; `route/rule` and `route -short` pass | CI on the parser-fix head: see below |
 
 ## Checked with no defect
 
@@ -26,12 +27,13 @@ actually run or a source check that was actually made; "not run" is not written 
 | NEG-02-10 | Connection reuse | source read (`CloseIdleConnections` after non-initial refresh) | drain is an EOF check, not a keep-alive optimisation; no claim |
 | NEG-02-11 | Allocation bound | `TestRemoteRuleSetStreamsBinaryWithoutCache` | ~125 KB for a 4 MiB tail, bound 2 MiB |
 | NEG-02-12 | iOS buffer geometry | `go test -tags with_low_memory ./route/rule` | PASS |
+| NEG-02-13 | Cancellation while `srs.Read` is blocked mid-body | `TestRemoteRuleSetStreamAbortsWhenTheRequestIsCanceled` (server sends half, blocks, caller cancels) | error, no publish, old generation stays |
 
 ## Environment-blocked / not run
 
 | ID | Item | Reason | What it would have proved |
 |---|---|---|---|
-| ENV-02-1 | `go test -race ./route/rule` | CGO disabled, no mingw-w64 gcc | data-race freedom of the fetch/publish path (source reasoning says no new shared state) |
+| ENV-02-1 | `go test -race ./route/rule` locally | CGO disabled, no mingw-w64 gcc | data-race freedom of the fetch/publish path. **Resolved remotely**: `verify` runs `go test -race ... ./route/...` and passed on `48a58f4` |
 | ENV-02-2 | `scripts/ci/test-low-memory.sh` | no bash on this host | the full Apple tag set + package list. **Resolved remotely**: the Apple CI job on `48a58f4` passed |
 | ENV-02-3 | canonical Apple tag set (`appletags -platform ios`) | Windows linker rejects `tfo-go` `net.(*netFD).init` with `tfogo_checklinkname0`/`badlinkname` | the exact iOS tag build. **Resolved remotely**: the Apple CI job on `48a58f4` passed |
 | ENV-02-4 | iOS/Android device `phys_footprint` | no device/SDK | actual extension memory; this round claims allocation accounting only |
@@ -41,8 +43,10 @@ actually run or a source check that was actually made; "not run" is not written 
 
 | Command | Result |
 |---|---|
-| `go test ./route/rule -run TestRemoteRuleSetStream -v` | PASS (3 tests, 2 subcases) |
+| `go test ./route/rule -run TestRemoteRuleSetStream -v` | PASS (4 tests, 2 subcases) |
 | `go test ./route/rule -count=1` | PASS |
+| `go test ./common/srs -count=1` | PASS (checksum/truncation tests included) |
+| `go test ./route -count=1 -short` | PASS, 61.170 s |
 | `go test -tags with_low_memory ./route/rule -count=1` | PASS |
 | `go test ./route -count=1 -timeout 12m` | PASS, 421.389 s |
 | `go vet ./route/rule` | clean |
