@@ -3,6 +3,7 @@ package route
 import (
 	"context"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -53,19 +54,13 @@ func (r *Router) hijackDNSPacket(ctx context.Context, conn N.PacketConn, packetB
 	return nil
 }
 
-func (r *Router) dispatchDNSPacket(ctx context.Context, payload []byte, writer N.PacketWriter, metadata adapter.InboundContext) {
-	var message mDNS.Msg
-	err := message.Unpack(payload)
-	if err != nil {
-		r.logger.ErrorContext(ctx, E.Cause(err, "process DNS packet: unpack request"))
-		return
-	}
+func (r *Router) dispatchDNSPacket(ctx context.Context, message *mDNS.Msg, writer N.PacketWriter, metadata adapter.InboundContext) {
 	r.searchProcessInfo(ctx, &metadata)
 	destination := metadata.Destination
 	metadata.Destination = M.Socksaddr{}
-	r.dns.ExchangeAsync(adapter.WithContext(ctx, &metadata), &message, adapter.DNSQueryOptions{}, func(response *mDNS.Msg, exchangeErr error) {
+	r.dns.ExchangeAsync(adapter.WithContext(ctx, &metadata), message, adapter.DNSQueryOptions{}, func(response *mDNS.Msg, exchangeErr error) {
 		if exchangeErr == nil {
-			exchangeErr = r.writeDNSPacketResponse(&message, response, writer, destination)
+			exchangeErr = r.writeDNSPacketResponse(message, response, writer, destination)
 		}
 		if exchangeErr != nil && !R.IsRejected(exchangeErr) && !E.IsClosedOrCanceled(exchangeErr) {
 			r.logger.ErrorContext(ctx, E.Cause(exchangeErr, "process DNS packet"))
@@ -99,11 +94,13 @@ const dnsHijackConcurrency = 256
 // waiting. Releasing the loop on dial timeout is also what produces the "works for a minute,
 // dies for four" waves seen in the field.
 //
-// # Why the payload is unpacked inside the goroutine
+// # Why the payload is unpacked before the goroutine
 //
 // The packet buffer behind payload belongs to the stack and is only valid until this function
-// returns. Moving the unpack into the goroutine would read a recycled buffer. Parsing here and
-// passing the copied message keeps the payload's lifetime confined to this call.
+// returns. The parse therefore happens here, on the caller's goroutine, and the goroutine below
+// receives the parsed *mDNS.Msg: the message owns every byte it needs (Unpack copies names,
+// questions, RRs and OPT data), so the stack may recycle the slot immediately after return.
+// Handing the payload to the goroutine instead would read a recycled buffer.
 //
 // # Why a semaphore rather than one goroutine per packet
 //
@@ -133,9 +130,18 @@ func (r *Router) HijackDNSPacket(ctx context.Context, payload []byte, writer N.P
 	}
 	go func() {
 		defer r.dnsHijackInFlight.Add(-1)
-		r.dispatchDNSPacket(ctx, payload, writer, metadata)
+		if hook := testHookDNSPacketDispatch.Load(); hook != nil {
+			(*hook)()
+		}
+		r.dispatchDNSPacket(ctx, &message, writer, metadata)
 	}()
 }
+
+// testHookDNSPacketDispatch runs on the dispatch goroutine before the query is handed to the DNS
+// router. It exists so a test can park the goroutine, recycle the payload the caller passed in,
+// and prove that the parsed message - not the borrowed buffer - crossed the boundary. Production
+// leaves it nil; the load is one atomic read per hijacked packet.
+var testHookDNSPacketDispatch atomic.Pointer[func()]
 
 func (r *Router) writeDNSPacketResponse(message *mDNS.Msg, response *mDNS.Msg, writer N.PacketWriter, destination M.Socksaddr) error {
 	responseBuffer, err := dns.TruncateDNSMessage(message, response, N.CalculateFrontHeadroom(writer), N.CalculateRearHeadroom(writer))
