@@ -294,7 +294,7 @@ replace github.com/sagernet/cronet-go/lib/windows_arm64 => github.com/Piggy-Cat-
 // AFTER the ChromeParrot fingerprint override, so a path this fork has proven carries
 // 1232 bytes is no longer asked to carry Chrome's 1250. It also caps what path MTU
 // discovery may grow to, so the ceiling still holds after the handshake.
-replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261011111900-4d740322a18a
+replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261019051807-1a730c584263
 
 // Carries InitialPacketSizeCeiling through qtls.QUICOptions and ApplyQUICOptions.
 //
