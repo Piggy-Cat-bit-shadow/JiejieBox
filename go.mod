@@ -294,7 +294,7 @@ replace github.com/sagernet/cronet-go/lib/windows_arm64 => github.com/Piggy-Cat-
 // AFTER the ChromeParrot fingerprint override, so a path this fork has proven carries
 // 1232 bytes is no longer asked to carry Chrome's 1250. It also caps what path MTU
 // discovery may grow to, so the ceiling still holds after the handshake.
-replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261019051807-1a730c584263
+replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261019061042-7e08ecaba383
 
 // Carries InitialPacketSizeCeiling through qtls.QUICOptions and ApplyQUICOptions.
 //
@@ -304,7 +304,7 @@ replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v
 // head has since drifted in seven files this round did not measure. Forking rather than
 // reusing the PMTUD boolean is the deliberate choice: the alternative was to keep two
 // meanings in one field, which is the defect being fixed.
-replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261011112547-a3462fc076c9
+replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261019060901-d0deb0359c06
 
 // The system stack's TCP accept loop used to die permanently on one unexpected listener error:
 // the listener is bound to the stack's own address and its port is what every new SYN is rewritten
@@ -351,7 +351,7 @@ replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-qu
 // working, between a stop landing on a starting stack and a reported data race (a nil-engine panic on
 // the unpinned revision), and between an IPv6-only stack and a TCP path that can never self-heal.
 // See docs/fork/lx-stability-audit-phase1.md (040) and FORK.md in the fork.
-replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261015074151-d092c6459f4d
+replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261019061045-9c75994b2ef0
 
 // gVisor is RETIRED, and this is deliberately a comment rather than a replace directive.
 //
