@@ -40,7 +40,8 @@ exports only that proof to the group layer:
 | handshake write/read timeout, reset | Handshake / Path |
 | socket refused / unreachable (typed errno) | Dial / Path |
 | socket connect timeout or reset (typed; the SDK flattens the error to text) | no fact (a stall is not proof, and the flattened error no longer satisfies the group's timeout test) |
-| local interface error (EADDRNOTAVAIL/ENETDOWN), DNS/address policy, permission, stopped client, closed/replaced outbound | Dial / Local |
+| proxy endpoint DNS/address resolution failure (typed resolver error captured by the bridge) | Dial / Local — and it still tries the other transport once, because `fallback.server` may be a different name or a literal IP |
+| local interface error (EADDRNOTAVAIL/ENETDOWN), bind/permission, stopped client, closed/replaced outbound | Dial / Local |
 | requester cancellation or deadline | Dial / Caller |
 | bare EOF on a TCP-primary handshake | no fact (Unknown; could be auth or close) |
 | bare EOF on a UDP primary (Linux unreachable peer) | Handshake / Path |
@@ -142,7 +143,13 @@ different consumers). The split preserves both boundaries.
   POSIX), the localized-text case, the local-interface case, the both-definite
   and mixed both-failed matrix, the real-SDK refused endpoint, and the
   cancelled-caller short circuit. The cost of the bridge is
-  `BenchmarkDialObservationOverhead` (45 ns, 48 B, 1 alloc per new session).
+  `BenchmarkDialObservationOverhead` (49 ns, 48 B, 1 alloc per new session).
+- `protocol/mieru/debug_audit_test.go`: aggregate fact precedence (including the
+  endpoint class and the fact-less socket timeout), the 49-pair both-failed
+  decision table, cooldown 29/30/31 s and doubling to the ceiling, same-generation
+  next-session preference, lifecycle/teardown classification, and the resolver
+  bridge recording that makes a proxy-endpoint DNS failure `Dial/Local` while
+  still trying the other endpoint (`TestEndpointResolutionFailureIsLocalButTriesTheOtherEndpoint`).
 - Full `protocol/mieru`, `transport/http` (with_quic), `adapter` and
   `protocol/group` suites pass on Windows 2026-10-19. `-race` was
   BLOCKED_BY_ENVIRONMENT there (no mingw-w64 gcc); see

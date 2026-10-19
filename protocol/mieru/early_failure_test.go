@@ -65,6 +65,14 @@ func TestClassifySocketErrorUsesTheSharedErrnoSets(t *testing.T) {
 
 	_, classified := classifySocketError(errors.New("some unrecognized failure"))
 	require.False(t, classified, "an unrecognized socket error must not be guessed")
+
+	// Endpoint address preparation is typed even though it is not an errno.
+	dnsClass, classified := classifySocketError(&net.DNSError{Err: "no such host", Name: "example.com"})
+	require.True(t, classified)
+	require.Equal(t, dialEndpointFailure, dnsClass)
+	addrClass, classified := classifySocketError(&net.AddrError{Err: "IP address not found", Addr: "example.com"})
+	require.True(t, classified)
+	require.Equal(t, dialEndpointFailure, addrClass)
 }
 
 // What the bridge adds: the SDK's own English prefix ("NewTCPUnderlay() failed")
@@ -257,6 +265,7 @@ func TestFailureFactsPerClass(t *testing.T) {
 		{"definite socket", dialSocketFailure, adapter.PathFailureFacts(adapter.FailureStageDial), true},
 		{"caller", dialCallerFailure, adapter.FailureFacts{Stage: adapter.FailureStageDial, Origin: adapter.FailureOriginCaller}, true},
 		{"local", dialLocalFailure, adapter.FailureFacts{Stage: adapter.FailureStageDial, Origin: adapter.FailureOriginLocal}, true},
+		{"endpoint", dialEndpointFailure, adapter.FailureFacts{Stage: adapter.FailureStageDial, Origin: adapter.FailureOriginLocal}, true},
 		{"socket timeout is fact-less", dialSocketTimeout, adapter.FailureFacts{}, false},
 		{"ambiguous is fact-less", dialAmbiguousFailure, adapter.FailureFacts{}, false},
 	}
@@ -296,7 +305,7 @@ func TestServerDialerRecordsTypedSocketEvidence(t *testing.T) {
 	ctx, observation := withDialObservation(context.Background())
 	_, err := bridge.DialContext(ctx, "tcp", "203.0.113.9:443")
 	require.Error(t, err)
-	require.ErrorIs(t, observation.socketFailure(), typed,
+	require.ErrorIs(t, observation.setupFailure(), typed,
 		"the bridge must keep the typed errno the SDK is about to flatten")
 
 	// The UDP underlay is dialled through the same bridge, so its socket
@@ -308,14 +317,14 @@ func TestServerDialerRecordsTypedSocketEvidence(t *testing.T) {
 	udpCtx, udpObservation := withDialObservation(context.Background())
 	_, err = udpBridge.ListenPacket(udpCtx, "udp", "", "203.0.113.9:443")
 	require.Error(t, err)
-	require.ErrorIs(t, udpObservation.socketFailure(), typed)
+	require.ErrorIs(t, udpObservation.setupFailure(), typed)
 }
 
 func TestSocketSuccessClearsAnEarlierFailure(t *testing.T) {
 	ctx, observation := withDialObservation(context.Background())
 	observeSocketDial(ctx, syscallOpError(wsaUnreachable))
 	observeSocketDial(ctx, nil)
-	require.Nil(t, observation.socketFailure(),
+	require.Nil(t, observation.setupFailure(),
 		"a later success means the final failure was not at the socket layer")
 }
 
@@ -403,7 +412,7 @@ func BenchmarkDialObservationOverhead(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		observed, observation := withDialObservation(parent)
 		observeSocketDial(observed, nil)
-		if observation.socketFailure() != nil {
+		if observation.setupFailure() != nil {
 			b.Fatal("unexpected socket failure")
 		}
 	}

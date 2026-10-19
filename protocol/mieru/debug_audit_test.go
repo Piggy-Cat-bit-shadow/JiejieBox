@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -23,14 +24,14 @@ import (
 // producing evidence and the SDK's flattened error text.
 func aggregateAttempt(t *testing.T, class dialFailureClass) *fakeClient {
 	t.Helper()
-	var socketErr error
+	var setupErr error
 	var text string
 	switch class {
 	case dialSocketFailure:
-		socketErr = syscallOpError(wsaRefused)
+		setupErr = syscallOpError(wsaRefused)
 		text = localizedRefusalText
 	case dialSocketTimeout:
-		socketErr = syscallOpError(wsaTimedOut)
+		setupErr = syscallOpError(wsaTimedOut)
 		text = "NewTCPUnderlay() failed: DialContext() failed: dial tcp 203.0.113.9:443: i/o timeout"
 	case dialTransportFailure:
 		text = "failed to read socks5 connection response from the server: TIMEOUT"
@@ -42,12 +43,15 @@ func aggregateAttempt(t *testing.T, class dialFailureClass) *fakeClient {
 		text = "client dial stopped: context canceled"
 	case dialLocalFailure:
 		text = "client password is not set"
+	case dialEndpointFailure:
+		setupErr = &net.DNSError{Err: "no such host", Name: "nonexistent.invalid"}
+		text = "NewTCPUnderlay() failed: DialContext() failed: lookup nonexistent.invalid: no such host"
 	default:
 		t.Fatalf("unhandled class %v", class)
 	}
 	return &fakeClient{dialFunc: func(ctx context.Context, _ net.Addr) (net.Conn, error) {
-		if socketErr != nil {
-			observeSocketDial(ctx, socketErr)
+		if setupErr != nil {
+			observeSocketDial(ctx, setupErr)
 		}
 		if class == dialCallerFailure {
 			// The classification checks errors.Is, not the text.
@@ -100,6 +104,11 @@ func TestAggregateFailureFactsPrecedence(t *testing.T) {
 		{"timeout after handshake keeps the handshake evidence", dialTransportFailure, dialSocketTimeout, adapter.PathFailureFacts(adapter.FailureStageHandshake), true},
 		{"socket timeout alone is fact-less", dialSocketTimeout, dialSocketTimeout, adapter.FailureFacts{}, false},
 		{"handshake after socket timeout", dialSocketTimeout, dialTransportFailure, adapter.PathFailureFacts(adapter.FailureStageHandshake), true},
+		{"socket proof outranks endpoint failure", dialSocketFailure, dialEndpointFailure, adapter.PathFailureFacts(adapter.FailureStageDial), true},
+		{"endpoint failure after socket timeout", dialSocketTimeout, dialEndpointFailure, adapter.FailureFacts{}, false},
+		{"handshake after endpoint failure", dialEndpointFailure, dialTransportFailure, adapter.PathFailureFacts(adapter.FailureStageHandshake), true},
+		{"endpoint failure alone is fact-less in the aggregate", dialEndpointFailure, dialEndpointFailure, adapter.FailureFacts{}, false},
+		{"local failure alone is fact-less in the aggregate", dialTransportFailure, dialLocalFailure, adapter.FailureFacts{}, false},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -143,14 +152,68 @@ func pipeConn(t *testing.T) net.Conn {
 	return client
 }
 
+// A proxy-endpoint DNS failure is local to that endpoint (Dial/Local fact) but
+// the fallback endpoint may carry a different server, so it must still try the
+// other transport once. The resolver runs inside the SDK for the UDP path, so
+// the bridge records it explicitly; otherwise only the flattened text exists.
+type failingDNSRouter struct {
+	adapter.DNSRouter
+	err error
+}
+
+func (r *failingDNSRouter) Lookup(context.Context, string, adapter.DNSQueryOptions) ([]netip.Addr, error) {
+	return nil, r.err
+}
+
+func TestEndpointResolutionFailureIsLocalButTriesTheOtherEndpoint(t *testing.T) {
+	bridge := &resolverBridge{router: &failingDNSRouter{
+		err: &net.DNSError{Err: "no such host", Name: "nonexistent.invalid"},
+	}}
+	ctx, observation := withDialObservation(context.Background())
+	_, lookupErr := bridge.LookupIP(ctx, "ip4", "nonexistent.invalid")
+	require.Error(t, lookupErr)
+
+	// The SDK wraps resolution failures with %v before Mieru sees them.
+	sdkErr := fmt.Errorf("NewUDPUnderlay() failed: ResolveUDPAddr() failed: %v", lookupErr)
+	class := classifyDialError(context.Background(), sdkErr, mieruTransport{udp: true}, observation)
+	require.Equal(t, dialEndpointFailure, class,
+		"a resolver failure recorded by the bridge must not be guessed from text")
+	require.True(t, isTransportClass(class),
+		"the fallback endpoint may use a different server, so it is worth one attempt")
+	facts, known := adapter.FailureFactsOf(wrapFailureFacts(sdkErr, class))
+	require.True(t, known)
+	require.Equal(t, adapter.FailureFacts{Stage: adapter.FailureStageDial, Origin: adapter.FailureOriginLocal}, facts,
+		"but the member's path must not be blamed for a name that did not resolve")
+
+	// The fallback really does use the secondary when only the primary name fails.
+	primary := aggregateAttempt(t, dialEndpointFailure)
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+	defer clientConn.Close()
+	secondary := &fakeClient{dialFunc: func(context.Context, net.Addr) (net.Conn, error) {
+		return clientConn, nil
+	}}
+	outboundInstance := &Outbound{logger: nopLogger(), generation: 1}
+	selector := newFallbackSelector(1)
+	spec, err := toNetAddrSpec(M.ParseSocksaddr("192.0.2.100:80"), N.NetworkTCP)
+	require.NoError(t, err)
+	conn, err := outboundInstance.dialWithFallback(context.Background(), spec,
+		fakeRuntimeForTest("primary", primary), fakeRuntimeForTest("secondary", secondary), selector, 1)
+	require.NoError(t, err)
+	require.NotNil(t, conn)
+	require.Equal(t, 1, primary.dials)
+	require.Equal(t, 1, secondary.dials)
+	require.Equal(t, fallbackSecondary, selector.snapshot().Preferred)
+}
+
 // The both-failed decision table, pinned as data rather than as prose. Only two
-// definite socket failures may keep the secondary preference; everything else
-// resets, because only that pair is proof that re-testing the primary cannot
-// help within this cooldown.
+// definite setup failures (socket proof or an unresolvable endpoint) may keep
+// the secondary preference; everything else resets, because only that pair is
+// proof that re-testing the primary cannot help within this cooldown.
 func TestReportBothFailedDecisionTable(t *testing.T) {
 	classes := []dialFailureClass{
 		dialTransportFailure, dialSocketFailure, dialSocketTimeout, dialAmbiguousFailure, dialCallerFailure,
-		dialLocalFailure,
+		dialLocalFailure, dialEndpointFailure,
 	}
 	for _, primaryClass := range classes {
 		for _, secondaryClass := range classes {
@@ -166,13 +229,13 @@ func TestReportBothFailedDecisionTable(t *testing.T) {
 				selector.reportBothFailed(1, primaryClass, secondaryClass)
 
 				snapshot := selector.snapshot()
-				keepSecondary := isDefiniteSocketClass(primaryClass) && isDefiniteSocketClass(secondaryClass)
+				keepSecondary := isDefiniteSetupClass(primaryClass) && isDefiniteSetupClass(secondaryClass)
 				if keepSecondary {
 					require.Equal(t, fallbackSecondary, snapshot.Preferred)
 					require.Equal(t, now.Add(fallbackCooldown), snapshot.PrimaryUntil)
 					return
 				}
-				if isSilentHandshakeClass(primaryClass) || isDefiniteSocketClass(primaryClass) {
+				if isSilentHandshakeClass(primaryClass) || isDefiniteSetupClass(primaryClass) {
 					require.Equal(t, fallbackPrimary, snapshot.Preferred)
 					require.True(t, snapshot.PrimaryUntil.IsZero())
 					return

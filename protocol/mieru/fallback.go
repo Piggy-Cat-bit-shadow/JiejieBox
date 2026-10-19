@@ -48,12 +48,22 @@ const (
 	// deadline. Retrying the other transport would duplicate work nobody is
 	// waiting for.
 	dialCallerFailure
-	// dialLocalFailure is this process/machine or its configuration: DNS
-	// policy, bind/permission, address parsing, a stopped SDK client, or a
-	// local interface that cannot provide an address. It is deliberately not
-	// Caller (nobody withdrew) and not Path (the member is not at fault), so
-	// the exported fact is Dial/Local and no consumer may retry or demote.
+	// dialLocalFailure is this process/machine or its configuration: bind or
+	// permission failures, a stopped SDK client, an invalid address, or a local
+	// interface that cannot provide an address. It is deliberately not Caller
+	// (nobody withdrew) and not Path (the member is not at fault), so the
+	// exported fact is Dial/Local and no consumer may retry or demote. It also
+	// does NOT try the other transport: the same local condition would fail it
+	// the same way.
 	dialLocalFailure
+	// dialEndpointFailure is preparation of the PROXY ENDPOINT's address: DNS
+	// resolution or address lookup of the configured server. It is local to
+	// this endpoint rather than to the requester or the member's path, so the
+	// fact is Dial/Local; but the fallback endpoint may carry a different
+	// server (fallback.server can be another name or a literal IP), so one
+	// attempt on the other transport is legitimate. Keeping the two ideas
+	// apart is what makes "try the backup, but do not blame the node" possible.
+	dialEndpointFailure
 	// dialAmbiguousFailure is the conservative bucket. A handshake that ends
 	// with a bare EOF can be an authentication failure, a server-side close or
 	// a dead underlay; the SDK does not expose a stable discriminator. Keeping
@@ -98,6 +108,8 @@ func (c dialFailureClass) String() string {
 		return "caller"
 	case dialLocalFailure:
 		return "local"
+	case dialEndpointFailure:
+		return "endpoint"
 	case dialAmbiguousFailure:
 		return "ambiguous"
 	case dialSocketFailure:
@@ -140,11 +152,11 @@ func classifyDialError(ctx context.Context, err error, transport mieruTransport,
 	}
 	var dnsError *net.DNSError
 	if errors.As(err, &dnsError) {
-		return dialLocalFailure
+		return dialEndpointFailure
 	}
 	var addressError *net.AddrError
 	if errors.As(err, &addressError) {
-		return dialLocalFailure
+		return dialEndpointFailure
 	}
 	if errors.Is(err, os.ErrPermission) {
 		return dialLocalFailure
@@ -153,8 +165,8 @@ func classifyDialError(ctx context.Context, err error, transport mieruTransport,
 	// Typed socket evidence, recovered from the fork dialer before the SDK
 	// replaced the chain with a string.
 	if observed != nil {
-		if socketErr := observed.socketFailure(); socketErr != nil {
-			if class, classified := classifySocketError(socketErr); classified {
+		if setupErr := observed.setupFailure(); setupErr != nil {
+			if class, classified := classifySocketError(setupErr); classified {
 				return class
 			}
 		}
@@ -260,6 +272,18 @@ func isTimeout(err error) bool {
 // answered and declined. An unreachable network is a fact that the packet
 // never left. A timeout is not proof of anything - only that nobody answered.
 func classifySocketError(err error) (dialFailureClass, bool) {
+	// Address preparation of the endpoint comes first: a resolver error is
+	// typed here even when the SDK flattened it for the caller. The other
+	// transport may use a different server, so it is worth one attempt, but the
+	// fact is Local (see dialEndpointFailure).
+	var dnsError *net.DNSError
+	if errors.As(err, &dnsError) {
+		return dialEndpointFailure, true
+	}
+	var addressError *net.AddrError
+	if errors.As(err, &addressError) {
+		return dialEndpointFailure, true
+	}
 	switch {
 	case dialer.ErroredWith(err, dialer.PeerAnsweredErrnos...):
 		// Something answered: the TCP listener refused, or a connected UDP
@@ -296,17 +320,23 @@ func classifySocketError(err error) (dialFailureClass, bool) {
 
 // isTransportClass reports whether this class licenses trying the other
 // transport in the same dial. The definite socket class does, because the
-// evidence names the first hop to the proxy endpoint rather than the target.
+// evidence names the first hop to the proxy endpoint rather than the target;
+// the endpoint-resolution class does, because the fallback endpoint may carry a
+// different server.
 func isTransportClass(class dialFailureClass) bool {
-	return class == dialTransportFailure || class == dialSocketFailure || class == dialSocketTimeout
+	return class == dialTransportFailure || class == dialSocketFailure || class == dialSocketTimeout ||
+		class == dialEndpointFailure
 }
 
-// isDefiniteSocketClass reports whether a failed attempt carries proof from
-// the socket layer. Only reportBothFailed reads this: two such failures mean
-// neither endpoint is accepting the transport, which is a stable state, while
-// two silent handshakes may be wrong credentials on a healthy endpoint.
-func isDefiniteSocketClass(class dialFailureClass) bool {
-	return class == dialSocketFailure
+// isDefiniteSetupClass reports whether a failed attempt carries a STABLE,
+// locally-proven fact that this endpoint cannot be used right now: the kernel
+// refused/unreachable it, or its address does not resolve. Only
+// reportBothFailed reads this: two such failures mean neither endpoint can be
+// used, while a silent handshake may be wrong credentials on a healthy
+// endpoint and an endpoint failure followed by a silent one is cheap to
+// re-test on the primary.
+func isDefiniteSetupClass(class dialFailureClass) bool {
+	return class == dialSocketFailure || class == dialEndpointFailure
 }
 
 // aggregateFailureClass decides which attempt's evidence the AGGREGATE of a
@@ -377,10 +407,12 @@ func wrapFailureFacts(err error, class dialFailureClass) error {
 		facts = adapter.PathFailureFacts(adapter.FailureStageDial)
 	case dialCallerFailure:
 		facts = adapter.FailureFacts{Stage: adapter.FailureStageDial, Origin: adapter.FailureOriginCaller}
-	case dialLocalFailure:
-		// DNS policy, permission, configuration or this process's lifecycle.
-		// Local is a neutral origin: no retry, no global penalty, and it is the
-		// truthful answer (nobody withdrew).
+	case dialLocalFailure, dialEndpointFailure:
+		// DNS policy, permission, configuration, this process's lifecycle, or
+		// the proxy endpoint's own address lookup. Local is a neutral origin:
+		// no flow retry and no global penalty. Endpoint failures are allowed to
+		// TRY the other transport (see isTransportClass), but the fact must not
+		// blame the member's path for a name that did not resolve.
 		facts = adapter.FailureFacts{Stage: adapter.FailureStageDial, Origin: adapter.FailureOriginLocal}
 	default:
 		// dialSocketTimeout and dialAmbiguousFailure stay fact-less on purpose:
@@ -509,6 +541,22 @@ func (s *fallbackSelector) report(generation uint64, choice fallbackPreference, 
 		if probe {
 			s.probing = false
 		}
+	case dialEndpointFailure:
+		// The primary endpoint could not even be named/resolved. Prefer the
+		// other transport (its server may differ) and start a cooldown, but do
+		// not count a probe as a transport verdict beyond the normal schedule.
+		if probe {
+			s.cooldown *= 2
+			if s.cooldown > fallbackCooldownMax {
+				s.cooldown = fallbackCooldownMax
+			}
+		} else {
+			s.cooldown = s.baseCooldown
+		}
+		s.preferred = fallbackSecondary
+		s.primaryUntil = s.now().Add(s.cooldown)
+		s.probing = false
+		s.primaryFailure++
 	case dialAmbiguousFailure:
 		if probe {
 			// A silent probe (credentials, server close or a dead underlay)
@@ -527,12 +575,13 @@ func (s *fallbackSelector) report(generation uint64, choice fallbackPreference, 
 // transport-class failure but the secondary also failed before producing any
 // SOCKS reply.
 //
-// Two proven socket failures are a stable fact: neither endpoint accepts this
-// transport right now. Resetting to the primary there would make EVERY request
-// re-dial a refused endpoint and then the secondary - twice the connection
-// churn for the whole outage, with no additional information. So when both
-// sides are definite, the secondary preference stands and the existing
-// cooldown is what schedules the single recovery probe.
+// Two proven setup failures are a stable fact: neither endpoint can be used
+// right now (the kernel refused/unreachable it, or its name does not resolve).
+// Resetting to the primary there would make EVERY request re-dial a refused
+// endpoint and then the secondary - twice the connection churn for the whole
+// outage, with no additional information. So when both sides are definite, the
+// secondary preference stands and the existing cooldown is what schedules the
+// single recovery probe.
 //
 // Two silent handshakes are NOT that fact: they are exactly what a wrong
 // password looks like through the official API (the server drops both
@@ -550,10 +599,10 @@ func (s *fallbackSelector) reportBothFailed(generation uint64, primaryClass, sec
 	if s.closed || generation != s.generation {
 		return
 	}
-	if isDefiniteSocketClass(primaryClass) && isDefiniteSocketClass(secondaryClass) {
+	if isDefiniteSetupClass(primaryClass) && isDefiniteSetupClass(secondaryClass) {
 		return
 	}
-	if !isSilentHandshakeClass(primaryClass) && !isDefiniteSocketClass(primaryClass) {
+	if !isSilentHandshakeClass(primaryClass) && !isDefiniteSetupClass(primaryClass) {
 		return
 	}
 	s.preferred = fallbackPrimary

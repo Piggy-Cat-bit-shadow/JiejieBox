@@ -33,10 +33,12 @@ import (
 // cannot become a second health state.
 type dialObservation struct {
 	access sync.Mutex
-	// socketErr is the LAST error the underlying dialer produced, and it is cleared by a later
-	// success. That ordering matters: a failed IPv6 attempt followed by a successful IPv4 attempt
-	// and then a handshake timeout must not be reported as a definite IPv6 socket failure.
-	socketErr error
+	// setupErr is the LAST setup error the underlying dialer or the endpoint
+	// resolver produced, and it is cleared by a later success. That ordering
+	// matters: a failed IPv6 attempt followed by a successful IPv4 attempt and
+	// then a handshake timeout must not be reported as a definite IPv6 socket
+	// failure.
+	setupErr error
 }
 
 type dialObservationKey struct{}
@@ -72,9 +74,11 @@ func dialObservationFrom(ctx context.Context) *dialObservation {
 	return observation
 }
 
-// observeSocketDial is called by the serverDialer for every socket it creates. A nil error records
-// a success; the SDK may dial several endpoints (IPv4 then IPv6, or two underlays) and only the
-// last event describes the state the final error belongs to.
+// observeSocketDial records the last setup result of one SDK dial: a socket the
+// dialer created, or the resolver error that prevented one. The SDK may dial
+// several endpoints (IPv4 then IPv6, or two underlays), and the UDP path
+// resolves the endpoint itself before calling the packet dialer, so both kinds
+// of error belong to the same "what did preparing this attempt prove" question.
 func observeSocketDial(ctx context.Context, err error) {
 	observation := dialObservationFrom(ctx)
 	if observation == nil {
@@ -82,20 +86,20 @@ func observeSocketDial(ctx context.Context, err error) {
 	}
 	observation.access.Lock()
 	if err == nil {
-		observation.socketErr = nil
+		observation.setupErr = nil
 	} else {
-		observation.socketErr = err
+		observation.setupErr = err
 	}
 	observation.access.Unlock()
 }
 
-// socketFailure returns the last socket-level error of this attempt, or nil when the last socket
-// event was a success.
-func (o *dialObservation) socketFailure() error {
+// setupFailure returns the last setup-level error of this attempt (socket or
+// endpoint resolution), or nil when the last setup event was a success.
+func (o *dialObservation) setupFailure() error {
 	if o == nil {
 		return nil
 	}
 	o.access.Lock()
 	defer o.access.Unlock()
-	return o.socketErr
+	return o.setupErr
 }

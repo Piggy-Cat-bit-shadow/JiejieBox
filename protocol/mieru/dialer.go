@@ -223,6 +223,10 @@ func (r *resolverBridge) LookupIP(ctx context.Context, network string, host stri
 	}
 	addresses, err := r.router.Lookup(ctx, apicommon.NormalizeDomainName(host), r.options)
 	if err != nil {
+		// The SDK resolves the UDP endpoint before it calls the packet dialer,
+		// so this error never reaches serverDialer.DialContext; record it here
+		// or the classifier only sees the SDK's flattened text.
+		observeSocketDial(ctx, err)
 		return nil, err
 	}
 	ips := make([]net.IP, 0, len(addresses))
