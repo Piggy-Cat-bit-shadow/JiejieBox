@@ -1,4 +1,5 @@
-改进
+安卓客户端
+https://github.com/Piggy-Cat-bit-shadow/satelite-one
 一、代理协议与传输层
 
 * MASQUE DATAGRAM 热路径减少两次完整 Payload Copy
