@@ -122,7 +122,21 @@ The unchanged wall time is not described as an optimisation anywhere in this rou
 * Mieru's 10 s SDK read remains the floor; this round only makes the caller's reason correct and the
   limitation explicit.
 
-## 5. Close-out conclusion
+## 5. Remote CI on the final head
+
+Head `ccc2812e45d8f5fbbca3bc7af14b91bc0ba92a36` (fix + ordering test + reports):
+
+| Check | Result | Duration |
+|---|---|---|
+| `verify` | **success** | 15m 14s — includes the Mieru race step |
+| `Apple tags and the low-memory data paths` (mobile contract) | **success** | 9m 53s — runs `./transport/http` under the Apple tag set and `with_low_memory`, including the new slow-response test |
+| `Android ARM64 core` | **success** | 2m 13s |
+
+The `transport/http` package is **not** in `verify`'s race subset; the mobile contract runs its tests
+without `-race`. `verify` races `./protocol/mieru/...` (the Mieru section's race evidence). Keep the
+local `-race` limitation in §4: no cgo toolchain here.
+
+## 6. Close-out conclusion
 
 The CONNECT-IP boundary now has a deterministic red/green test and a minimal fix inside the existing
 HTTP connection/handshake/request boundary: a slow application response no longer becomes an HTTP/3
