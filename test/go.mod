@@ -223,7 +223,7 @@ require (
 //
 // The current revision also carries the bufio splice fix (a Pipe2 setup failure must fall back
 // rather than claim the handover); the root's pin comment names the commit and the reason.
-replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261011105649-bde7ddda55ef
+replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261019051552-baed8c3b4a34
 
 // Adds the accept-loop recovery (040), the Go stack's Start/Close handshake, and the IPv6-only
 // re-bind self-heal. Same fork revision as the root module: the test module runs integration tests
@@ -251,7 +251,7 @@ replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun
 // module does not inherit the root's replaces, so a test binary built from this module would
 // otherwise exercise a different QUIC stack than the one that ships. The revision adds
 // InitialPacketSizeCeiling, the hard packet-size ceiling applied after the ChromeParrot override.
-replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261011111900-4d740322a18a
+replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261019051807-1a730c584263
 
 // sing-quic carries that ceiling through qtls.QUICOptions. This module does not import it today,
 // so the replace is here to keep the two modules pinned to the same revision: the guard in
