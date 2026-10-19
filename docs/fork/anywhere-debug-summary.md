@@ -63,6 +63,8 @@ partial publication on build/validate errors, callback ordering, concurrent fetc
   low-memory data paths` all **success**.
 * CI on `a3761cf51bd3` (parser fix): `Verify` **success** (17m 06s, includes the race step) and
   `Android Core ARM64` **success**; the Apple low-memory job was not triggered by its path filter.
+* CI on `ad707eb434d` (HTTP/2 tests + docs): `Verify` **success** (19m 25s), `Android Core ARM64`
+  **success**, and the Apple tags + low-memory contract **success** (10m 39s).
 * This report set: the documentation commit that contains it.
 * Branch `testing`; no force push, no history rewrite, no new branch. `git log --oneline 93ca535..HEAD`
   is the exact range.

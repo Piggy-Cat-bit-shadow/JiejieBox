@@ -195,8 +195,8 @@ claims. The two checks are at different layers and neither subsumes the other.
 | `go build ./route/...` (with and without `with_low_memory`) | clean |
 | `go test -race ./route/rule` | **BLOCKED locally** — CGO disabled, no mingw-w64 gcc. **CI**: `verify`'s `race on the fork's own data paths` runs `go test -race ... ./route/...` and **passed** on `48a58f4`; `verify` on `a3761cf` (parser fix) also **passed** (see §6.1) |
 | `scripts/ci/test-low-memory.sh` | **NOT_RUN locally** — no bash. **CI**: the `Apple tags and the low-memory data paths` job ran on `48a58f4` (which changed `route/rule`) and **passed**; it was not triggered for the later `common/srs` fix (see §6.1) |
-| canonical Apple tag set | **BLOCKED locally** on Windows: `tfogo_checklinkname0`/`badlinkname` fail the linker on `tfo-go`. **CI**: the same Apple/low-memory job **passed** on `48a58f4` |
-| iOS build / device `phys_footprint` | build contract covered by the green Apple job on `48a58f4`; **device measurement NOT_RUN** — no Apple hardware |
+| canonical Apple tag set | **BLOCKED locally** on Windows: `tfogo_checklinkname0`/`badlinkname` fail the linker on `tfo-go`. **CI**: the same Apple/low-memory job **passed** on `48a58f4` and again on `ad707eb` |
+| iOS build / device `phys_footprint` | build contract covered by the green Apple jobs on `48a58f4` and `ad707eb`; **device measurement NOT_RUN** — no Apple hardware |
 
 ### 6.1 Remote CI
 
@@ -215,6 +215,14 @@ claims. The two checks are at different layers and neither subsumes the other.
 | `Verify` | **success** | 17m 06s — <https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39190238658> |
 | `Android Core ARM64` | **success** | 2m 46s — <https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39190238620> |
 | `Apple tags and the low-memory data paths` | **not triggered** | `mobile-contract.yml` only runs for its declared data-path paths; `common/srs/**` is not one of them. The parser is platform-independent and is covered by `Verify`; no Apple-specific code changed. |
+
+**Head `ad707eb434d`** (HTTP/2 + trailing-byte tests and their docs):
+
+| Check | Result | Duration |
+|---|---|---|
+| `Verify` | **success** | 19m 25s (includes the race step) |
+| `Android Core ARM64` | **success** | 2m 6s |
+| `Mobile contract verification` (`Apple tags and the low-memory data paths`) | **success** | 10m 39s |
 
 The Apple job is the remote counterpart of the locally blocked `scripts/ci/test-low-memory.sh`: it
 builds/tests with the canonical Apple tag set, including `with_low_memory`. `verify` also contains the

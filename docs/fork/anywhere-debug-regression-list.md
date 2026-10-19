@@ -58,3 +58,4 @@ actually run or a source check that was actually made; "not run" is not written 
 | parity check: pre-round-1 file from `d846fb6^` | same test PASS (`unexpected EOF`) |
 | GitHub CI on `48a58f4` | `verify` success; `Apple tags and the low-memory data paths` success; `Android ARM64 core` success |
 | GitHub CI on `a3761cf` (parser fix) | `Verify` success (17m 06s, includes the race step); `Android Core ARM64` success; Apple low-memory not triggered by its path filter |
+| GitHub CI on `ad707eb` (H2 tests) | `Verify` success (19m 25s); `Android Core ARM64` success; Mobile contract (Apple tags + low-memory) success (10m 39s) |
