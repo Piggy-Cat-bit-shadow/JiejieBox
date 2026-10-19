@@ -44,7 +44,7 @@ partial publication on build/validate errors, callback ordering, concurrent fetc
 * Local `-race` is blocked (no cgo toolchain), but the remote `verify` step ran `-race` over
   `./route/...` on `48a58f4` and again on the parser-fix head `a3761cf`; both passed.
 * Device `phys_footprint` on iOS/Android: not run (no device/SDK).
-* HTTP/2 and HTTP/3 server variants were not separately simulated.
+* HTTP/2 is covered by a real TLS/H2 test; HTTP/3 was not separately simulated.
 * The local `scripts/ci/test-low-memory.sh` needs bash and was not run. Its remote counterpart, the
   `Apple tags and the low-memory data paths` job, passed on `48a58f4` (the commit that changed
   `route/rule`). It was **not triggered** for the later `common/srs` parser fix because

@@ -158,6 +158,7 @@ claims. The two checks are at different layers and neither subsumes the other.
 | Memory of the drain | `io.Copy` uses a fixed 32 KiB buffer; the body is not retained | allocation test |
 | Rule-set generation visibility | published only after full body read (now); old slice released by GC | truncation test asserts old rules remain |
 | `with_low_memory` | no buffer geometry code touched; package suite passes under the tag | §6 |
+| HTTP/2 response body | streamed and drained over a real TLS/H2 server; the handler asserts `ProtoMajor == 2` so an HTTP/1.1 fallback cannot make it pass | `TestRemoteRuleSetStreamsOverHTTP2` |
 
 ## 5. Adversarial test design notes
 
@@ -186,7 +187,8 @@ claims. The two checks are at different layers and neither subsumes the other.
 | `go test ./route/rule -count=1` | **PASS**, 2.220 s |
 | `go test -tags with_low_memory ./route/rule -count=1` | **PASS**, 2.195 s |
 | `go test ./route -count=1 -timeout 12m` | **PASS**, 421.301 s (includes the deliberate 6-minute kernel test) |
-| `go test ./common/srs -count=1` | **PASS**, 0.022 s (checksum/truncation tests included) |
+| `go test ./common/srs -count=1` | **PASS**, 0.022 s (checksum/truncation/trailing-bytes tests included) |
+| `go test ./route/rule -run TestRemoteRuleSetStreamsOverHTTP2 -v` | **PASS**; handler observed HTTP/2 |
 | `go test ./route -run TestRemoteRuleSetStream -v` | **PASS** (4 tests + 2 subcases) |
 | `go vet ./route/rule` | clean |
 | `gofmt -l route/rule` | clean |
@@ -231,8 +233,8 @@ under the release tags), so the changed packages were race-tested remotely even 
 * **Cancellation mid-body** is tested by `TestRemoteRuleSetStreamAbortsWhenTheRequestIsCanceled`
   (server sends half, blocks; caller cancels; error, no publish). The parser-level cancellation
   (zlib read aborted) is the same read-error path.
-* **HTTP/2 and HTTP/3 transports** are not separately exercised; `response.Body` is the same
-  `io.ReadCloser` contract. The drain reads to EOF, so an H2 stream is closed cleanly rather than reset.
+* **HTTP/2** is covered by a real TLS/H2 server (`TestRemoteRuleSetStreamsOverHTTP2`); **HTTP/3** is
+  not separately simulated. The drain reads to EOF, so an H2 stream is closed cleanly rather than reset.
 * **Very large bodies**: the drain reads the remainder exactly as the old `io.ReadAll` did, but without
   retaining it; a server that streams an endless tail still blocks the refresh until the request context
   ends, same as before.

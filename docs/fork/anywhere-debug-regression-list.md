@@ -28,6 +28,8 @@ actually run or a source check that was actually made; "not run" is not written 
 | NEG-02-11 | Allocation bound | `TestRemoteRuleSetStreamsBinaryWithoutCache` | ~125 KB for a 4 MiB tail, bound 2 MiB |
 | NEG-02-12 | iOS buffer geometry | `go test -tags with_low_memory ./route/rule` | PASS |
 | NEG-02-13 | Cancellation while `srs.Read` is blocked mid-body | `TestRemoteRuleSetStreamAbortsWhenTheRequestIsCanceled` (server sends half, blocks, caller cancels) | error, no publish, old generation stays |
+| NEG-02-14 | HTTP/2 response body | `TestRemoteRuleSetStreamsOverHTTP2` (real TLS server, handler asserts `ProtoMajor == 2`) | parse + drain over H2, rules live |
+| NEG-02-15 | Trailing bytes after the zlib stream | `TestReadAllowsTrailingBytesAfterStream` | accepted; the stream is verified without consuming the trailing bytes |
 
 ## Environment-blocked / not run
 
@@ -37,7 +39,7 @@ actually run or a source check that was actually made; "not run" is not written 
 | ENV-02-2 | `scripts/ci/test-low-memory.sh` | no bash on this host | the full Apple tag set + package list. **Resolved remotely**: the Apple CI job on `48a58f4` passed |
 | ENV-02-3 | canonical Apple tag set (`appletags -platform ios`) | Windows linker rejects `tfo-go` `net.(*netFD).init` with `tfogo_checklinkname0`/`badlinkname` | the exact iOS tag build. **Resolved remotely**: the Apple CI job on `48a58f4` passed |
 | ENV-02-4 | iOS/Android device `phys_footprint` | no device/SDK | actual extension memory; this round claims allocation accounting only |
-| ENV-02-5 | HTTP/2 / HTTP/3 server variants | not separately simulated | transport-independent body drain; the `io.ReadCloser` contract is shared |
+| ENV-02-5 | HTTP/3 server variant | not separately simulated; HTTP/2 is covered by `TestRemoteRuleSetStreamsOverHTTP2` | the remaining transport variant of the body-drain contract |
 
 ## Command log (final tree)
 
