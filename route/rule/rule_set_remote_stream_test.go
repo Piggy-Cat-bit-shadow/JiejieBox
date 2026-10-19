@@ -93,6 +93,38 @@ func TestRemoteRuleSetStreamsBinaryWithoutCache(t *testing.T) {
 	require.True(t, ruleSet.Match(metadata), "the streamed rules must be live, not just parsed")
 }
 
+// TestRemoteRuleSetStreamRejectsUnparseableBodies covers the branch before the drain: a body that
+// is not a binary rule set must fail in srs.Read and publish nothing. The empty body is the
+// truncation-at-byte-zero case; the garbage body is a wrong-format download.
+func TestRemoteRuleSetStreamRejectsUnparseableBodies(t *testing.T) {
+	for name, body := range map[string][]byte{
+		"empty":   nil,
+		"garbage": []byte("this is not an SRS file"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Length", strconv.Itoa(len(body)))
+				_, _ = writer.Write(body)
+			}))
+			t.Cleanup(server.Close)
+
+			ruleSet, err := NewRemoteRuleSet(context.Background(), log.NewNOPFactory().Logger(), "stream-"+name, option.RuleSet{
+				Type:   C.RuleSetTypeRemote,
+				Format: C.RuleSetFormatBinary,
+				RemoteOptions: option.RemoteRuleSet{
+					URL: server.URL,
+				},
+			})
+			require.NoError(t, err)
+			ruleSet.httpClient = server.Client()
+
+			err = ruleSet.fetch(context.Background(), true)
+			require.Error(t, err)
+			require.False(t, remoteRuleSetMatches(t, ruleSet, "10.1.2.3"))
+		})
+	}
+}
+
 // TestRemoteRuleSetStreamDoesNotPublishATruncatedBody pins the failure semantics the streaming
 // path could have silently changed.
 //
