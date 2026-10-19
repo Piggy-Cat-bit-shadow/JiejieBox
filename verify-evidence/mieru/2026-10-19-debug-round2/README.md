@@ -10,9 +10,9 @@ Directive: `02-testing-BBE48095E99CA2E5A4B8E493A1E690A4E88D.md`. Repository
 | Pre-construction baseline | `c363e04bb3065de68e2123182013124cbb65a900` |
 | Round-1 final (debug start) | `a003732e8668e3ca1148290acc925df6f061833c` (10 commits) |
 | Round-2 code + tests | `521e2e69b62a45842a60effeb0e657fadbc92d04` |
-| Round-2 evidence | this commit (parent `521e2e69b62`) |
-| Branch / remote | `testing`; pushed without force to `origin/testing`; no concurrent update observed (`git fetch` before push) |
-| Worktree | clean after the evidence commit |
+| Round-2 evidence | `117b9acfa3b1e24ea622646d51c9cf1a4b48c039` (record), `6f4a620406f3899073e5ea08d4e42f23f1542a36` (soak), plus the state-update commit that contains this row |
+| Branch / remote | `testing`; pushed without force to `origin/testing`; no concurrent update observed (`git fetch` before each push) |
+| Worktree | clean after the final evidence commit |
 | Audited range | `git diff c363e04..a003732e` (round-1 changes) and the round-2 fixes on top |
 
 ## 2. Conclusion matrix
