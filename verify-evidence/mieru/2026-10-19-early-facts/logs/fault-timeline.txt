@@ -1,0 +1,32 @@
+﻿=== RUN   TestScratchTimeline
+=== RUN   TestScratchTimeline/tcp_refused
+    zz_scratch_timeline_test.go:42: TIMELINE tcp refused                        elapsed=1ms          class=socket         facts=unknown/unknown known=false err=NewTCPUnderlay() failed: DialContext() failed: dial tcp 127.0.0.1:64593: connectex: No connection could be made because the target machine actively refused it.
+=== RUN   TestScratchTimeline/tcp_accept_silent
+    zz_scratch_timeline_test.go:56: TIMELINE tcp accept+sleep                   elapsed=10.003s      class=transport      facts=unknown/unknown known=false err=failed to read socks5 connection response from the server: TIMEOUT
+=== RUN   TestScratchTimeline/udp_blackhole
+    zz_scratch_timeline_test.go:68: TIMELINE udp blackhole                      elapsed=10.003s      class=transport      facts=unknown/unknown known=false err=failed to read socks5 connection response from the server: TIMEOUT
+=== RUN   TestScratchTimeline/wrong_password
+    zz_scratch_timeline_test.go:83: TIMELINE wrong password (tcp)               elapsed=10.002s      class=transport      facts=unknown/unknown known=false err=failed to read socks5 connection response from the server: TIMEOUT
+=== RUN   TestScratchTimeline/target_refused
+    zz_scratch_timeline_test.go:102: TIMELINE target refused                     elapsed=1ms          class=success        facts=unknown/unknown known=false err=<nil>
+=== RUN   TestScratchTimeline/fallback_tcp_refused
+    zz_scratch_timeline_test.go:118: TIMELINE fallback tcp refused -> udp        elapsed=1ms          preferred=secondary primaryFailure=1 err=<nil>
+=== RUN   TestScratchTimeline/fallback_udp_blackhole
+    zz_scratch_timeline_test.go:136: TIMELINE fallback udp blackhole -> tcp      elapsed=10.003s      preferred=secondary err=<nil>
+=== RUN   TestScratchTimeline/fallback_tcp_blackhole
+    zz_scratch_timeline_test.go:155: TIMELINE fallback tcp blackhole -> udp      elapsed=10.003s      preferred=secondary err=<nil>
+=== RUN   TestScratchTimeline/caller_cancel
+    zz_scratch_timeline_test.go:175: TIMELINE caller cancel (500ms budget)       elapsed=10.002s      callerDeadline=500ms preferred=primary err=failed to read socks5 connection response from the server: TIMEOUT
+    zz_scratch_timeline_test.go:179: note: error is not the caller deadline: failed to read socks5 connection response from the server: TIMEOUT
+--- PASS: TestScratchTimeline (60.03s)
+    --- PASS: TestScratchTimeline/tcp_refused (0.00s)
+    --- PASS: TestScratchTimeline/tcp_accept_silent (10.00s)
+    --- PASS: TestScratchTimeline/udp_blackhole (10.00s)
+    --- PASS: TestScratchTimeline/wrong_password (10.00s)
+    --- PASS: TestScratchTimeline/target_refused (0.00s)
+    --- PASS: TestScratchTimeline/fallback_tcp_refused (0.00s)
+    --- PASS: TestScratchTimeline/fallback_udp_blackhole (10.01s)
+    --- PASS: TestScratchTimeline/fallback_tcp_blackhole (10.00s)
+    --- PASS: TestScratchTimeline/caller_cancel (10.00s)
+PASS
+ok  	github.com/sagernet/sing-box/protocol/mieru	137.983s
