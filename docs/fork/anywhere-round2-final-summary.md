@@ -32,7 +32,9 @@ Main-repository commit sequence (oldest first; each is independently revertible)
 4. `4cb0f07e4ca` `perf(deps): pick up bounded varbin slice growth for large rule sets`
 5. `7ecb24dfbed` `perf(deps): pick up datagram receive-slot release …`
 6. `219f8cbf3fc` `docs: record the Anywhere round-two construction, debug audit and evidence`
-7. this docs update (final CI record)
+7. `5c88bad7edf` `test(deps): keep the test module's fork pins in parity with the root` (Verify green)
+8. `4b5e9150f82` `docs: record the round-two CI result and final verification`
+9. this docs update (final record)
 
 ---
 
