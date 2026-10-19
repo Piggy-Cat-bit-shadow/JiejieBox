@@ -39,12 +39,13 @@ result, not a throughput claim.
 * `go test -tags with_low_memory ./route/rule -count=1` — PASS (2.288 s); this is the iOS buffer
   geometry.
 * `go test ./route -count=1 -short` — PASS (61.099 s); the skipped test deliberately waits six minutes.
-* `go test ./route -count=1 -timeout 12m` — full suite, PASS (see Report 2 §5).
+* `go test ./route -count=1 -timeout 12m` — full suite, PASS (421.322 s).
 * `go vet ./route/rule`, `gofmt -l route/rule`, `go build ./route/...` — clean, with and without
   `with_low_memory`.
-* **Not run:** `-race` (no cgo toolchain), `scripts/ci/test-low-memory.sh` (no bash), the iOS build and
-  any device `phys_footprint` (no Apple SDK/device). These are `BLOCKED_BY_ENVIRONMENT`/`NOT_RUN`, not
-  PASS.
+* **Not run:** `-race` (no cgo toolchain), `scripts/ci/test-low-memory.sh` (no bash), the canonical
+  Apple tag set on Windows (`tfogo_checklinkname0`+`badlinkname` fail the linker on a non-Apple host;
+  `with_low_memory` alone passes for the affected package), the iOS build and any device
+  `phys_footprint` (no Apple SDK/device). These are `BLOCKED_BY_ENVIRONMENT`/`NOT_RUN`, not PASS.
 
 ## Git
 

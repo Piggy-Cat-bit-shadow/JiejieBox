@@ -158,7 +158,8 @@ win is the heap the process does not have to hold while it parses.
 | `go vet ./route/rule` | clean |
 | `gofmt -l route/rule` | clean |
 | `go test ./route -count=1 -short` | **PASS**, 61.099 s; `-short` skips `TestBackpressure_KernelGiveUpWindow`, which deliberately observes a kernel give-up for up to **6 minutes** (pre-existing test, unrelated to this change) |
-| `go test ./route -count=1 -timeout 12m` (full, including that test) | **PASS**, 421.322 s (6m54s observation plus the rest of the suite; the package's runtime is dominated by the deliberate wait) |
+| `go test ./route -count=1 -timeout 12m` (full, including that test) | **PASS**, 421.322 s (the deliberate 6-minute observation plus the rest of the suite) |
+| `go test -tags "$(go run ./cmd/internal/appletags -platform ios)" ./route/rule` | **BLOCKED_BY_ENVIRONMENT** on Windows: the canonical Apple set carries `tfogo_checklinkname0`+`badlinkname`, and the linker rejects `tfo-go`'s `net.(*netFD).init` reference here. The tag that matters for this change (`with_low_memory`) passes; the full canonical gate is a Linux/macOS job. |
 | `go test -race ./route/rule` | **BLOCKED_BY_ENVIRONMENT** — cgo disabled, no mingw-w64 gcc; `clang` here targets MSVC and rejects `-mthreads` |
 | `scripts/ci/test-low-memory.sh` | **NOT_RUN** — needs bash, absent; the equivalent `-tags with_low_memory` package test was run, but the script's Apple-tag assertions were not |
 | Apple build (`cmd/internal/appletags -platform ios` + `go build`) | **NOT_RUN** — requires the Apple SDK/cgo toolchain, which this Windows host does not have |
