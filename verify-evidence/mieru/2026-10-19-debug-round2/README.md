@@ -77,6 +77,8 @@ reporting and the post-200 write side are covered by tests; the tunnel really ca
 - Observation ledger: 49 ns / 48 B / 1 alloc per new session; selector 27.6 ns / 0 alloc.
 - After closing both SDK runtimes and the inbound: goroutines back to the process baseline (2),
   packet conns 0/0, no accumulation over a second cycle.
+- 1000-session soak on the real SDK: total 1.673 s, P50/P95/P99 **1.601 / 2.172 / 2.399 ms**, one
+  outbound session each with echo payload; goroutines return to 2 after close.
 - Inbound close regression: 20 start/close cycles in 0.01 s (pre-fix 65 s in 2/10).
 - `-race` is BLOCKED_BY_ENVIRONMENT (no mingw-w64 gcc); minimum condition and command in
   [INVARIANT-MATRIX.md](INVARIANT-MATRIX.md).
@@ -124,3 +126,4 @@ Raw logs are in `logs/`:
 | `benchmarks.txt` | the two benchmarks, 3 runs each |
 | `resources.txt` | goroutine/FD-relevant resource scratch run |
 | `fault-timeline.txt` / `fault-timeline-baseline.txt` | same-injection timeline on the debug and baseline trees |
+| `soak.txt` | 1000-session real-SDK load soak |

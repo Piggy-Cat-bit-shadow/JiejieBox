@@ -39,6 +39,21 @@ Inbound shutdown regression: `TestMieruInboundCloseReleasesTheUDPUnderlayPromptl
 start/close cycles in **0.01 s**; rebind + prompt-close at `-count=20` each complete in **0.284 s**
 (the pre-fix behaviour was a 65 s stall in 2/10 runs, reproduced by mutation).
 
+## Load soak on the real SDK (scratch test, host-local)
+
+1000 sequential short sessions through a fallback-enabled outbound (primary healthy, echo payload
+each), then outbound and both test inbounds closed:
+
+| Metric | Value |
+|---|---|
+| total | **1.673 s** |
+| P50 / P95 / P99 per session (dial + echo + close) | **1.601 ms / 2.172 ms / 2.399 ms** |
+| goroutines during the run / after Close | 150 / **2** (process baseline) |
+| preference after the soak | primary, `PrimaryFailure = 0` |
+
+Raw: `logs/soak.txt`. This is the round-2 replacement for the older "3000/3000 sessions" figure,
+which is not restated as a current measurement.
+
 ## Failure-path timings
 
 See MIERU-AUDIT.md for the baseline-vs-debug timeline. The short version: fast failures decide in

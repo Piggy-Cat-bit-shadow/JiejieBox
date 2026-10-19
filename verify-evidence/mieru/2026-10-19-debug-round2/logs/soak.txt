@@ -1,0 +1,4 @@
+=== RUN   TestScratchSoak
+    zz_scratch_soak_test.go:56: SOAK sessions=1000 total=1.673s p50=1.601ms p95=2.172ms p99=2.399ms goroutinesActive=150 afterClose=2 preferred=primary primaryFailure=0
+--- PASS: TestScratchSoak (2.78s)
+ok  	github.com/sagernet/sing-box/protocol/mieru	2.798s
