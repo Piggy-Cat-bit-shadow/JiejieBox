@@ -42,7 +42,8 @@ consumer, the test that fails before it and passes after, and the invariant it k
 - **Consumer:** `protocol/group.RetryThisFlow` / `PenalizeMemberGlobally` (unchanged code, new input),
   and the Mieru selector.
 - **Tests:** `TestFailureFactsPerClass`, `TestLocalInterfaceFailureIsNotAPathFailure`,
-  `TestRealRefusedTCPIsADefiniteDialFailure`.
+  `TestRealRefusedTCPIsADefiniteDialFailure`, `TestFailureFactsSurviveWrappingAndJoin` (the fact
+  survives `E.Cause`, `errors.Join` and the aggregate wrapper; a fact-less class stays fact-less).
 - **Invariant:** a fact is attached only where the stage is proven; `errors.Is/As` still traverses the
   original error (`adapter.WrapFailure`).
 

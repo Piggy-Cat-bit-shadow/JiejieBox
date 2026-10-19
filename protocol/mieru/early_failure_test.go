@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 
@@ -215,6 +216,33 @@ func TestTwoSilentHandshakesStillResetToPrimary(t *testing.T) {
 		fakeRuntimeForTest("primary", silent()), fakeRuntimeForTest("secondary", silent()), selector, 1)
 	require.Error(t, err)
 	require.Equal(t, fallbackPrimary, selector.snapshot().Preferred)
+}
+
+func TestFailureFactsSurviveWrappingAndJoin(t *testing.T) {
+	typed := wrapFailureFacts(errors.New("refused"), dialSocketFailure)
+	facts, known := adapter.FailureFactsOf(typed)
+	require.True(t, known)
+	require.Equal(t, adapter.PathFailureFacts(adapter.FailureStageDial), facts)
+
+	// The aggregate path uses E.Errors and callers may add E.Cause around it;
+	// both must keep the original chain reachable.
+	caused := E.Cause(typed, "mieru: primary transport")
+	facts, known = adapter.FailureFactsOf(caused)
+	require.True(t, known)
+	require.Equal(t, adapter.PathFailureFacts(adapter.FailureStageDial), facts)
+
+	// errors.Join is the shape a multi-member/grouper layer may add.
+	joined := errors.Join(errors.New("unrelated"), typed)
+	facts, known = adapter.FailureFactsOf(joined)
+	require.True(t, known)
+	require.Equal(t, adapter.PathFailureFacts(adapter.FailureStageDial), facts)
+
+	// A fact-less class must stay fact-less through the same wrappers.
+	factless := wrapFailureFacts(errors.New("timeout"), dialSocketTimeout)
+	require.False(t, func() bool {
+		_, found := adapter.FailureFactsOf(E.Cause(errors.Join(factless, errors.New("other")), "wrap"))
+		return found
+	}())
 }
 
 func TestFailureFactsPerClass(t *testing.T) {
