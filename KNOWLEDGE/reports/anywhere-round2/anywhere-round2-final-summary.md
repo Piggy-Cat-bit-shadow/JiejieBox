@@ -98,7 +98,22 @@ Full detail: [`anywhere-round2-debug-audit.md`](anywhere-round2-debug-audit.md).
 
 ## 4. CI
 
-<!-- FINAL_CI -->
+| SHA | Workflow | Result | Link |
+|---|---|---|---|
+| `526372ef40c` (code + knowledge archive head) | **Verify** | **success** — gofmt, nested-module integrity, tagged/untagged builds, build matrix, **race on the fork's own data paths**, race on the configuration surface | https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39208889339 |
+| `526372ef40c` | Android Core ARM64 | success | https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39208889095 |
+| `526372ef40c` | Mobile contract verification (Apple tags + low-memory) | success | https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39208889120 |
+
+Earlier in the round, Verify failed once on `219f8cb` at the **nested Go module integrity** step
+because `test/go.mod` still pinned the previous fork versions
+(https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39204268737); `5c88bad` fixed exactly
+those four lines and Verify turned green for the remainder of the round. The run above is the final
+code-and-archive head and covers every dependency bump.
+
+Local `-race` is `BLOCKED_BY_ENVIRONMENT` (no cgo toolchain on this host); the remote race steps are
+what cover the pushed SHA. Device `phys_footprint`, energy and Android mmap remain `NOT_RUN` (no
+devices), and the dependency forks have no push-triggered CI of their own — their evidence is the
+local suites recorded in the debug audit plus the main-repository build and tests that link them.
 
 ---
 
