@@ -457,12 +457,17 @@ func classifyWrappedDatagramError(err error) (datagramErrorKind, int) {
 //
 // # Why the batch is attempted FIRST and falls back to the loop
 //
-// The batch is all-or-nothing, so any refusal -- an oversized packet, a peer that does not accept
-// datagrams, a stream that has failed -- rejects the WHOLE group and leaves every buffer with this
-// function, exactly as if the batch had never been attempted. That makes the fallback safe by
-// construction: the loop below runs on the complete, unmodified input and performs the same
-// per-packet classification it always did, so the too-large and unsupported handling is not
-// duplicated or re-derived here.
+// The batch is all-or-nothing PER CHUNK, so any refusal -- an oversized packet, a peer that does
+// not accept datagrams, a stream that has failed -- rejects the whole chunk and leaves every
+// buffer of that chunk with this function, exactly as if the chunk had never been attempted. That
+// makes the fallback safe by construction: the loop below runs on the refused remainder and
+// performs the same per-packet classification it always did, so the too-large and unsupported
+// handling is not duplicated or re-derived here.
+//
+// A burst can be larger than the transport's queue (a TUN read burst is up to 64 packets, and the
+// owned DATAGRAM queue accepts 32 per call), so the batch is submitted in chunks. Without that,
+// every burst above 32 fell back to the per-packet loop as a whole, which is the exact fixed cost
+// the batch path exists to remove.
 //
 // A batch of one is NOT sent through this path: the transport charges the same fixed cost for a
 // single-element batch as for a plain send, and the measurement showed a small regression at
@@ -470,11 +475,18 @@ func classifyWrappedDatagramError(err error) (datagramErrorKind, int) {
 func (s *session) writePackets(buffers []*buf.Buffer) error {
 	// len>1 only: see the batch=1 note above.
 	if s.batchOwnedDatagrams != nil && len(buffers) > 1 {
-		if s.writeBatchOwned(buffers) {
+		consumed := s.writeBatchOwned(buffers)
+		if consumed == len(buffers) {
 			return nil
 		}
-		// The batch was refused and every buffer is still ours and unmodified. Fall through to the
-		// per-packet loop, which is what classifies the failure.
+		if consumed > 0 {
+			// The prefix is owned by the transport now. Only the remainder may reach the
+			// per-packet loop: replaying the whole slice would send the accepted packets twice
+			// and release buffers the transport already owns.
+			buffers = buffers[consumed:]
+		}
+		// The refused chunk is still ours and unmodified. Fall through to the per-packet loop,
+		// which is what classifies the failure.
 	}
 	capsules := buffers[:0]
 	for i, buffer := range buffers {
@@ -530,16 +542,27 @@ func (s *session) writePackets(buffers []*buf.Buffer) error {
 	return transportHTTP.WriteDatagramCapsules(s.stream, capsules)
 }
 
-// writeBatchOwned attempts to send the whole group with one ownership-transferring call.
+// maxOwnedDatagramBatch is the largest owned DATAGRAM group the transport accepts in one call.
 //
-// It reports whether the batch was accepted. A false return means every buffer the caller holds is
-// still owned by this function and byte-identical to what the caller passed in, so the caller can
-// safely run the per-packet loop over the same slice.
+// quic-go's send queue holds 32 frames and AddBatch rejects a larger group outright, because a
+// group that cannot fit would wait for room that can never appear. A TUN read burst is up to 64
+// packets, so a single batch call above 32 is refused deterministically; chunking keeps the batch
+// path for the part that fits instead of losing it for the whole burst. A transport with a smaller
+// limit still answers with an error, which sends that chunk down the per-packet path.
+const maxOwnedDatagramBatch = 32
+
+// writeBatchOwned sends buffers through the owned batch path in chunks the transport can accept,
+// and reports how many leading buffers were transferred.
+//
+// A return of len(buffers) means every buffer is now owned by the transport and must not be
+// touched again. A smaller return means the first `n` buffers were transferred and the rest are
+// still owned by the caller, byte-identical to what was passed in. The caller must continue at
+// buffers[n:]; replaying the prefix would send it twice.
 //
 // # The context ID must be undone here, and this was a real bug
 //
 // The transport's rollback only removes the quarter stream ID that HTTP/3 added. It knows nothing
-// about the 1-byte context ID this function prepends, so a refused batch comes back with the
+// about the 1-byte context ID this function prepends, so a refused chunk comes back with the
 // context ID still attached. The fallback loop then prepends a SECOND one, shifting the inner IP
 // header by a byte -- and packetAddresses reads the version nibble from the wrong offset, rejects
 // the packet as invalid, and the packet is dropped with no error.
@@ -548,14 +571,14 @@ func (s *session) writePackets(buffers []*buf.Buffer) error {
 // PTB, no capsule fallback and no error. Every packet was silently discarded. The Advance below is
 // what restores the caller's view.
 //
-// # PrependContextID can CONSUME a buffer, which is why substitution refuses the batch
+// # PrependContextID can CONSUME a buffer, which is why substitution refuses the chunk
 //
 // When a buffer has no headroom for the context-ID byte, PrependContextID allocates a replacement
-// and RELEASES the original. If the batch were then refused, the caller's slice would hold
+// and RELEASES the original. If the chunk were then refused, the caller's slice would hold
 // released -- possibly recycled -- buffers, and the fallback loop would double-release them: silent
 // heap corruption rather than a failure at the call site.
 //
-// So a substitution is detected and the batch is refused BEFORE it is attempted, and the caller's
+// So a substitution is detected and the chunk is refused BEFORE it is attempted, and the caller's
 // slice is updated to the replacement at the index where it happened.
 //
 // # Why substitution is not on the hot path
@@ -563,7 +586,21 @@ func (s *session) writePackets(buffers []*buf.Buffer) error {
 // The device feeding this path reserves PacketHeadroom (>= 9) bytes precisely so the single-byte
 // context ID fits, so substitution does not happen in production. It is a correctness guard for a
 // caller with a differently-shaped pool.
-func (s *session) writeBatchOwned(buffers []*buf.Buffer) bool {
+func (s *session) writeBatchOwned(buffers []*buf.Buffer) int {
+	consumed := 0
+	for consumed < len(buffers) {
+		end := min(consumed+maxOwnedDatagramBatch, len(buffers))
+		if !s.writeOwnedBatchChunk(buffers[consumed:end]) {
+			return consumed
+		}
+		consumed = end
+	}
+	return consumed
+}
+
+// writeOwnedBatchChunk is one all-or-nothing chunk of writeBatchOwned. A false return leaves every
+// buffer of the chunk owned by the caller and byte-identical to the input.
+func (s *session) writeOwnedBatchChunk(buffers []*buf.Buffer) bool {
 	prepared := make([]*buf.Buffer, len(buffers))
 	for i, buffer := range buffers {
 		prepared[i] = transportHTTP.PrependContextID(buffer)
@@ -582,11 +619,11 @@ func (s *session) writeBatchOwned(buffers []*buf.Buffer) bool {
 	if s.batchOwnedDatagrams.SendDatagramsOwned(prepared) == nil {
 		return true
 	}
-	// The batch was refused. Ownership of every buffer is still ours, but each still carries the
+	// The chunk was refused. Ownership of every buffer is still ours, but each still carries the
 	// context ID, so remove it to restore exactly what the caller passed in.
 	//
 	// This is also what makes the fallback correct: without it the loop would prepend a second
-	// context ID and every packet in the batch would be silently dropped.
+	// context ID and every packet in the chunk would be silently dropped.
 	for _, buffer := range buffers {
 		buffer.Advance(1)
 	}

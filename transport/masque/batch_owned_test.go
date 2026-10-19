@@ -146,8 +146,8 @@ func TestBatchRefusalRestoresTheOriginalLayout(t *testing.T) {
 
 	// Attempt the batch directly, so the refusal is observed without the fallback loop running and
 	// consuming the buffers first.
-	if current.session.writeBatchOwned(buffers) {
-		t.Fatal("the fixture refuses every batch, so this must report a refusal")
+	if consumed := current.session.writeBatchOwned(buffers); consumed != 0 {
+		t.Fatalf("the fixture refuses every batch, so this must report a refusal, got %d consumed", consumed)
 	}
 
 	for i, b := range buffers {
