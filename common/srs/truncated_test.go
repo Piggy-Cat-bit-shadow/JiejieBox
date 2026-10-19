@@ -46,6 +46,18 @@ func TestReadRejectsTruncatedStream(t *testing.T) {
 	}
 }
 
+// TestReadAllowsTrailingBytesAfterStream pins that the new end-of-stream check does not over-read:
+// zlib ends at its own trailer, and a container may carry bytes after it. The parser must verify the
+// stream without requiring those bytes to be absent or consuming them.
+func TestReadAllowsTrailingBytesAfterStream(t *testing.T) {
+	payload := testRuleSetPayload(t)
+	trailing := append(append([]byte(nil), payload...), []byte("container-metadata")...)
+
+	ruleSet, err := Read(bytes.NewReader(trailing), false)
+	require.NoError(t, err)
+	require.Len(t, ruleSet.Options.Rules, 1)
+}
+
 // TestReadRejectsCorruptChecksum is the same branch with a complete-length stream whose trailer
 // is wrong: the rules are intact, but the stream is not the one that was written.
 func TestReadRejectsCorruptChecksum(t *testing.T) {

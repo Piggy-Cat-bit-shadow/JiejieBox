@@ -223,3 +223,40 @@ func TestRemoteRuleSetStreamDoesNotPublishATruncatedBody(t *testing.T) {
 	require.False(t, remoteRuleSetMatches(t, ruleSet, "192.168.1.1"),
 		"the truncated generation must not be published")
 }
+
+// TestRemoteRuleSetStreamsOverHTTP2 runs the streaming load over a real TLS/HTTP2 server.
+//
+// The response body contract is shared with HTTP/1.1, but the transport is not: an H2 body is a
+// stream that can be reset independently of the connection. The parse and the post-parse drain must
+// complete over that body, and the handler asserts the request was actually HTTP/2 so a silent
+// fallback to HTTP/1.1 cannot make this test pass without exercising the intended path.
+func TestRemoteRuleSetStreamsOverHTTP2(t *testing.T) {
+	payload := writeRuleSetPayload(t, "10.0.0.0/8")
+	var servedHTTP2 atomic.Bool
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		servedHTTP2.Store(request.ProtoMajor == 2)
+		writer.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+		_, _ = writer.Write(payload)
+	}))
+	server.EnableHTTP2 = true
+	server.StartTLS()
+	t.Cleanup(server.Close)
+
+	ruleSet, err := NewRemoteRuleSet(context.Background(), log.NewNOPFactory().Logger(), "stream-h2-test", option.RuleSet{
+		Type:   C.RuleSetTypeRemote,
+		Format: C.RuleSetFormatBinary,
+		RemoteOptions: option.RemoteRuleSet{
+			URL: server.URL,
+		},
+	})
+	require.NoError(t, err)
+	client := server.Client()
+	transport, isTransport := client.Transport.(*http.Transport)
+	require.True(t, isTransport)
+	transport.ForceAttemptHTTP2 = true
+	ruleSet.httpClient = client
+
+	require.NoError(t, ruleSet.fetch(context.Background(), true))
+	require.True(t, servedHTTP2.Load(), "the fixture must exercise HTTP/2, not fall back to HTTP/1.1")
+	require.True(t, remoteRuleSetMatches(t, ruleSet, "10.1.2.3"))
+}
