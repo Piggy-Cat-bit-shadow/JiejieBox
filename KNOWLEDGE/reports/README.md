@@ -32,6 +32,7 @@ not run, that is `BLOCKED_BY_ENVIRONMENT`, not `PASS`.
 | `core/` | audits of the core packages (root test hygiene, `experimental/boxdd`, CI/release configuration, knowledge-base delta mapping). Files are prefixed `_` where they are working notes rather than formal deliverables |
 | `release/` | release phases, branch consolidation, handoffs and close-outs, in chronological order of the phase names |
 | `windows-client/` | the Windows client's installer / uninstaller / diagnostic-channel and coexistence investigations |
+| `anywhere-round2/` | the second Anywhere research round: audit, construction, adversarial debug and final verification for the DNS/rule-set/MASQUE/QUIC ownership work |
 
 ## Index
 
@@ -105,6 +106,16 @@ later. "Status" says whether the report still describes the tree or has been sup
 | `WINDOWS_COEXISTENCE_SUBSCRIPTION_DEBUG_REPORT.md` | 2026-10-15 | Windows coexistence + subscription traffic: targeted debug | historical |
 | `WINDOWS_COEXISTENCE_SUBSCRIPTION_FINAL_REPORT.md` | 2026-10-15 | Windows coexistence + subscription traffic: delivery report | historical |
 | `WINDOWS_COEXISTENCE_FINAL_CLOSEOUT_REPORT.md` | 2026-10-15 | Windows coexistence close-out | historical |
+
+### anywhere-round2/
+
+| report | date | covers | status |
+|---|---|---|---|
+| `README.md` | 2026-10-19 | the round's executive index, dependency pins and what was delivered | current |
+| `anywhere-second-round-research.md` | 2026-10-19 | independent audit: DNS cache ownership, TUN→QUIC data paths, QUIC ACK/retransmission, queues/budgets, large rule-set loading, A/B/C/D matrix | historical (describes `ccc2812e45d`) |
+| `anywhere-round2-construction.md` | 2026-10-19 | construction matrix: A0/A1/B2–B8, commits, before/after measurements, rollback | current for the delivered head |
+| `anywhere-round2-debug-audit.md` | 2026-10-19 | Red→Green proofs, adversarial and cross-component tests, race/platform limits | current for the delivered head |
+| `anywhere-round2-final-summary.md` | 2026-10-19 | commits, dependency pins, measured results, CI links, residual risks | current for the delivered head |
 
 ## Adding a report
 

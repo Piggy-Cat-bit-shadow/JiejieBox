@@ -1,7 +1,7 @@
 # Anywhere round two — construction record
 
 **Repository:** `github.com/Piggy-Cat-bit-shadow/sing-box`, branch `testing`, delivered directly on it.
-**Round-two audit:** `docs/fork/anywhere-second-round-research.md` (committed with this set).
+**Round-two audit:** [`anywhere-second-round-research.md`](anywhere-second-round-research.md) (archived in this directory).
 **Anywhere reference:** `89905e0e3641bcbd958a66fcb6f027a2bdecec90` (unchanged).
 **Audit baseline:** `ccc2812e45d8f5fbbca3bc7af14b91bc0ba92a36`; external docs-only commits moved the
 branch to `45078a78b1d` before construction started. Construction commits below are on top of that.
@@ -22,12 +22,12 @@ exact commit.
 | B3 | SRS decompressed-work budget | **IMPLEMENTED / VALIDATED** | `e09a669067e` |
 | B2 | MASQUE owned-batch chunking above 32 datagrams | **IMPLEMENTED / VALIDATED** | `f1f9d28724f` |
 | B6 | QUIC delivered-datagram slot release | **IMPLEMENTED / VALIDATED** (dependency + bump) | `quic-go@1a730c584263` → main `7ecb24dfbed` |
-| B1 | CONNECT-IP second copy across the port boundary | **NOT IMPLEMENTED — deferred** | — |
-| B4 | QUIC receive small-frame pinning | **NOT IMPLEMENTED — deferred** | — |
-| B5 | Hysteria2/TUIC owned datagram send | **NOT IMPLEMENTED — deferred** | — |
-| B7 | HTTP/3 multi-stage drop observability | **NOT IMPLEMENTED — deferred** | — |
-| B8 | UDP NAT overflow observability | **NOT IMPLEMENTED — deferred** | — |
-| B9 | Android rule-set mmap | **NOT IMPLEMENTED — blocked on device evidence** | — |
+| B1 | CONNECT-IP second copy across the port boundary | **NOT IMPLEMENTED — deferred (cross-repository ownership interface)** | — |
+| B4 | QUIC receive small-frame pinning | **IMPLEMENTED / VALIDATED** | `quic-go@7e08ecab` → main `2a74686af57` |
+| B5 | Hysteria2/TUIC owned datagram send | **IMPLEMENTED / VALIDATED** | `sing-quic@d0deb03` → main `2a74686af57` |
+| B7 | QUIC received-DATAGRAM drop counter | **IMPLEMENTED / VALIDATED** | `quic-go@7e08ecab` → main `2a74686af57` |
+| B8 | UDP NAT drop counter | **IMPLEMENTED / VALIDATED** | `sing-tun@9c75994` → main `2a74686af57` |
+| B9 | Android rule-set mmap | **NOT IMPLEMENTED — no device; not enabled blind** | — |
 
 `DEFERRED` here means the change was not started, not that it was rejected. The reasons are in §7.
 
@@ -257,30 +257,41 @@ ok  github.com/sagernet/quic-go/http3
 
 ---
 
-## 7. Items not implemented, with reasons
+## 7. Follow-up pass: B4, B5, B7, B8
+
+These four were delivered after the first push, in the same round.
+
+**B4 — right-size over-provisioned sorted frames (`quic-go@7e08ecab`).** `frameSorter.push` now copies
+a frame to an exact-size slice when `cap(Data) > 2*len(Data)`, and releases the pooled frame through
+its `DoneCb`; MTU-sized frames keep their pooled buffer and pay nothing. Tests:
+`TestFrameSorterRightSizesOverProvisionedFrames` (128 B frame in a 1452 B buffer → cap == len, bytes
+intact, `DoneCb` once) and `TestFrameSorterKeepsThePooledBufferForAFullSizeFrame`. Red proof: with the
+pre-fix sorter the first test fails because the queued frame keeps cap 1452.
+
+**B5 — Hysteria2/TUIC owned datagrams (`sing-quic@d0deb03`).** Both `writePacket` paths now hand the
+packed buffer to `SendDatagramOwned`; the buffer is the `DatagramOwner`, so the transport releases it
+exactly once after serialisation, and the helper releases only on a refused send. Tests:
+`TestSendOwnedDatagramTransfersOwnershipOnSuccess` (no release by the helper) and
+`TestSendOwnedDatagramReleasesOnError` (exactly one release) in both packages. The fork builds against
+the fork quic-go; the main-repo `protocol/hysteria2` and `protocol/tuic` tests pass with the bump.
+
+**B7 — received-DATAGRAM drop counter (`quic-go@7e08ecab`).** `datagramQueue` increments an atomic
+counter only on the drop path, and `Conn.DroppedDatagrams()` exposes it. Test:
+`TestDatagramQueueCountsReceiveDrops` fills the 128-entry queue and asserts one counted drop while
+the queue stays at its bound.
+
+**B8 — UDP NAT drop counter (`sing-tun@9c75994`).** `enqueue` counts both the queue-full and the
+closed-session drop in `udpNatDroppedPackets`, exposed as `UDPNatDroppedPackets()`. Tests:
+`TestUDPNatCountsQueueFullDrop` and `TestUDPNatCountsClosedSessionDrop`.
+
+## 8. Items not implemented, with reasons
 
 **B1 (CONNECT-IP second copy).** The copy is real (`sing-tun/flow_dispatch.go:653` then
 `protocol/masque/client.go:649-651`), but removing it requires a new ownership-carrying capability on
 `tun.Port` in the `sing-tun` fork, plus a dispatcher that allocates the final owned buffer itself.
 That is a cross-repository interface change with a refusal path that must be proven exactly-once
-before it is acceptable. It was not attempted in the remaining time because a wrong ownership
-transfer is worse than the copy it removes.
-
-**B4 (QUIC receive small-frame pinning).** The arithmetic amplification is real
-(128 B frames pinning 1452 B pool buffers), but the benefit depends on a peer sending small
-out-of-order frames, and a fix adds an allocation to every such frame. Doing it without a lossy
-network harness would be a change nobody could validate. The frame sorter unit-test harness is the
-next step, not a production edit.
-
-**B5 (Hysteria2/TUIC owned datagrams).** The owned API exists on `*quic.Conn`
-(`SendDatagramOwned(p, owner)`) and the change is small, but `udpPacketConn.quicConn` is a concrete
-`*quic.Conn`, so a release-exactly-once test needs a real QUIC connection or an interface
-refactor. The refactor was not worth taking on late in the round; the audit's ownership analysis
-stands for the next attempt.
-
-**B7/B8 (drop observability).** Both need a metrics surface decision (where the counter lives, who
-reads it) rather than a parser fix. Adding a counter without exposing it would repeat the problem it
-is meant to solve.
+before it is acceptable. It was not attempted because a wrong ownership transfer is worse than the
+copy it removes.
 
 **B9 (Android mmap).** No Android device or emulator in this environment. The instruction forbids
 silently enabling a new mapping path for all Android production traffic without evidence, and
@@ -289,32 +300,35 @@ behaviour.
 
 ---
 
-## 8. Cross-cutting checks performed
+## 9. Cross-cutting checks performed
 
 - `gofmt -l` clean on every touched file; `go vet` on the touched packages.
-- `go mod verify` → all modules verified; the dependency bumps changed only the two `replace`
-  lines and two `go.sum` entries each.
+- `go mod verify` → all modules verified; every dependency bump changed only its `replace` line and
+  its `go.sum` pair (root and `test/` kept in parity).
 - The fork commits were pushed **before** the main repository was updated, and the main repository
   resolves them through the public module proxy (`go list -m` returned the pseudo-versions quoted
   above), so a clean machine can build the bumped tree.
 - `test/go.mod` is kept in parity with the root's fork pins, because the nested module integrity gate
   compares them. The first CI run on `219f8cb` failed exactly there; `5c88bad` updates the four
   `test/go.mod`/`test/go.sum` lines and Verify is green on it.
-- `go test ./dns ./common/srs ./route/rule`, `go test ./route -short`,
+- `go test ./dns ./common/srs ./route/rule`, `go test ./route -short`, `go test ./route` (full),
   `go test -tags with_low_memory ./route/rule ./dns`,
-  `go test -tags with_quic ./transport/masque ./transport/http` — results in
+  `go test -tags with_quic ./transport/masque ./transport/http`,
+  `go test ./protocol/hysteria2/... ./protocol/tuic/...` — results in
   [`anywhere-round2-debug-audit.md`](anywhere-round2-debug-audit.md).
 - Low-memory tag: the changed code paths are not geometry-specific (DNS dispatch, SRS parser,
   MASQUE batching, QUIC queue clearing), and the package tests are run under `with_low_memory`
   where the package is geometry-sensitive.
 
-## 9. Rollback order
+## 10. Rollback order
 
-1. `7ecb24dfbed` (quic-go bump) — independent.
-2. `4cb0f07e4ca` (sing bump) — independent.
-3. `f1f9d28724f` (B2) — independent of both.
-4. `e09a669067e` (B3) — independent.
-5. `ea6e411c135` (A0) — revert only with a `bytes.Clone` stop-gap, because the old code reads
+1. `2a74686af57` (B4/B5/B7/B8 dependency bump) — independent.
+2. `7ecb24dfbed` (B6 quic-go bump) — independent.
+3. `4cb0f07e4ca` (A1 sing bump) — independent.
+4. `f1f9d28724f` (B2) — independent.
+5. `e09a669067e` (B3) — independent.
+6. `ea6e411c135` (A0) — revert only with a `bytes.Clone` stop-gap, because the old code reads
    recycled memory.
 
-Each commit builds on its own; no commit depends on a later one.
+Each commit builds on its own; no commit depends on a later one. The fork commits are additive and
+can be reverted by restoring the previous `replace` pins.

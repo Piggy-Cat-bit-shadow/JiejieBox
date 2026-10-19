@@ -204,4 +204,25 @@ new chunking, and the tests that pin them were extended rather than replaced.
   how often a single flow receives >32 packets in one burst was not instrumented.
 - A1's effect on a real 1M-entry subscription: the census fixture is synthetic (generated domains),
   and the number is allocation, not device footprint.
-- The deferred items' risks are listed in the construction record §7.
+- B1 and B9 are the only items not attempted; their risks are listed in the construction record §8.
+
+---
+
+## 10. Follow-up pass: B4/B5/B7/B8 tests
+
+| Item | Test | Result |
+|---|---|---|
+| B4 | `go test . -run 'FrameSorter'` (quic-go) — `TestFrameSorterRightSizesOverProvisionedFrames`, `TestFrameSorterKeepsThePooledBufferForAFullSizeFrame` | PASS. Red proof: the pre-fix sorter keeps cap 1452 for a 128 B frame and the first test fails |
+| B5 | `go test ./hysteria2/... ./tuic/... -run 'TestSendOwnedDatagram'` (sing-quic, built against the fork quic-go) | PASS. Success transfers ownership without a helper release; a refused send releases exactly once |
+| B7 | `go test . -run 'DatagramQueue'` (quic-go) — `TestDatagramQueueCountsReceiveDrops` | PASS. 128 queued + 1 overflow → counter 1, queue stays at bound |
+| B8 | `go test . -run 'TestUDPNatCounts'` (sing-tun) — queue-full and closed-session drops | PASS. Each drop increments `UDPNatDroppedPackets` exactly once |
+
+Cross-component after the second dependency bump:
+`go build ./...` clean; `go test ./protocol/hysteria2/... ./protocol/tuic/...` PASS (0.05 s / 0.03 s);
+`go test -tags with_quic ./transport/masque ./transport/http` PASS (6.8 s / 25.2 s);
+`go test ./dns ./common/srs ./route/rule` PASS (7.9 s / 0.1 s / 2.2 s).
+
+Residual for this pass: B5's release-exactly-once property is proven at the helper boundary and by
+the quic-go owned-datagram contract, not by a live QUIC connection; B4's benefit is proven by retained
+capacity, not by an RSS delta under a real lossy peer; B7/B8 counters are exposed but no dashboard or
+clash-api surface consumes them yet.

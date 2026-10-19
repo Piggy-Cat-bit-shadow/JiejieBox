@@ -190,6 +190,7 @@ report, read the module first and the archive only for how the decision was reac
 | upstream absorbed changes | `BASELINE.md` §the provenance test; `COMMIT-INDEX.md` provenance vocabulary |
 | sing-tun absorbed/fork fixes | `modules/build-pruning-release.md` §5; `modules/mtu-and-geometry.md` |
 | release allowlist / checksum / dry-run / read-back | `modules/ci-release.md` §5; `ACCEPTANCE.md` §12 |
+| Anywhere round-two research, construction and DNS/rule-set/MASQUE/QUIC ownership work | `reports/anywhere-round2/README.md` (archive); current behaviour still owned by the modules |
 
 ## Maintenance
 
