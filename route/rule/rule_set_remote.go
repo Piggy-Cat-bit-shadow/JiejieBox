@@ -221,7 +221,7 @@ func (s *RemoteRuleSet) loadBytes(content []byte) error {
 	return s.publishRules(ruleSet)
 }
 
-// loadBinaryReader parses a binary rule-set straight from the response body.
+// loadBinaryStream parses a binary rule-set straight from the response body.
 //
 // # Why this is not just loadBytes without the slice
 //
@@ -234,8 +234,25 @@ func (s *RemoteRuleSet) loadBytes(content []byte) error {
 // The cache path cannot use this: `CacheFile.SaveRuleSet` takes the bytes and stores them, so the
 // download must be retained in some form. The streaming path is therefore used only when there is
 // no cache file to write; a cached profile keeps the previous behaviour exactly.
-func (s *RemoteRuleSet) loadBinaryReader(reader io.Reader) error {
-	ruleSet, err := srs.Read(reader, false)
+//
+// # Why the body is drained after parsing
+//
+// `srs.Read` stops at the end of the declared rules; the zlib footer and any bytes after it are
+// still unread. The read-all path consumed the body to EOF, so a download truncated after the last
+// rule failed the update with an unexpected EOF and left the previous generation live. A streaming
+// parse that returns as soon as the rules are complete would publish that same truncated download:
+// a silent failure-semantics change. Draining restores the old order and error, and copies the
+// remainder through one small buffer instead of retaining it, so the peak win stands.
+//
+// The drain happens BEFORE publish, and its error is returned, for that reason. (It also lets
+// net/http return the connection to the idle pool, but the updater closes idle connections after
+// every non-initial refresh anyway; the truncation check is the load-bearing reason.)
+func (s *RemoteRuleSet) loadBinaryStream(body io.ReadCloser) error {
+	ruleSet, err := srs.Read(body, false)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(io.Discard, body)
 	if err != nil {
 		return err
 	}
@@ -325,7 +342,7 @@ func (s *RemoteRuleSet) fetch(ctx context.Context, isStart bool) error {
 	var content []byte
 	if s.cacheFile == nil && s.options.Format == C.RuleSetFormatBinary {
 		// No cache to write, so the download does not need to exist as a slice: parse the stream.
-		err = s.loadBinaryReader(response.Body)
+		err = s.loadBinaryStream(response.Body)
 	} else {
 		content, err = io.ReadAll(response.Body)
 		if err != nil {
