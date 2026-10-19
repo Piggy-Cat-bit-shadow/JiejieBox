@@ -1,5 +1,11 @@
 # Early failure facts and MASQUE tunnel fallback — 2026-10-19
 
+> **Round-2 debug supersedes two statements in this record.** Local failures (DNS, permission,
+> stopped client, `EADDRNOTAVAIL`/`ENETDOWN`) are now `Dial/Local`, not `Dial/Caller`; and the
+> fallback aggregate now reports the strongest proven evidence instead of the secondary's class.
+> See [`../2026-10-19-debug-round2/`](../2026-10-19-debug-round2/README.md). The measurements in this
+> file were re-run and are unchanged.
+
 Scope: the first round of the unified failure-prediction directive
 (`01-testing-BBE48095E99CA2E5A4B8E6BDB7E690A4E88D.md`), executed on `testing`
 from baseline `c363e04bb3065de68e2123182013124cbb65a900`.

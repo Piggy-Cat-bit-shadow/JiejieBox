@@ -1,0 +1,8 @@
+== go test ./protocol/mieru/ -run TestScratchResources -count=1 -v ==
+=== RUN   TestScratchResources
+    zz_scratch_resources_test.go:25: RESOURCES baseline goroutines=2
+    zz_scratch_resources_test.go:49: RESOURCES disabled active=20 after-close=2 delta=0
+    zz_scratch_resources_test.go:74: RESOURCES enabled active=29 after-close=2 delta=0 packetConns=0/0
+    zz_scratch_resources_test.go:87: RESOURCES second teardown after-close=2 delta=0
+--- PASS: TestScratchResources (4.14s)
+ok  	github.com/sagernet/sing-box/protocol/mieru	4.163s

@@ -1,0 +1,12 @@
+goos: windows
+goarch: amd64
+pkg: github.com/sagernet/sing-box/protocol/mieru
+cpu: AMD Ryzen 7 4800H with Radeon Graphics         
+BenchmarkDialObservationOverhead-16         	25637409	        49.46 ns/op	      48 B/op	       1 allocs/op
+BenchmarkDialObservationOverhead-16         	25269434	        48.97 ns/op	      48 B/op	       1 allocs/op
+BenchmarkDialObservationOverhead-16         	23134626	        49.48 ns/op	      48 B/op	       1 allocs/op
+BenchmarkFallbackSelectorChooseReport-16    	43577097	        27.56 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFallbackSelectorChooseReport-16    	43675750	        27.61 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFallbackSelectorChooseReport-16    	43716961	        27.74 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/sagernet/sing-box/protocol/mieru	7.538s
