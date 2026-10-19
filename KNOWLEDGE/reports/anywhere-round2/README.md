@@ -43,7 +43,7 @@ constraint, not a task for the reader.
 sing      v0.9.6-0.20261019051552-baed8c3b4a34   (branch fix/splice-setup-failure-fallback-v2)
 quic-go   v0.61.1-0.20261019061042-7e08ecaba383 (branch jiejie-masque-mod9)
 sing-quic v0.7.2-0.20261019060901-d0deb0359c06  (branch jiejie-packet-ceiling)
-sing-tun  v0.0.0-20261019070229-19cb9f107a3f    (branch fix/listenconfig-ipv6-only-selfheal)
+sing-tun  v0.0.0-20261019070836-a7bd7facc7cc    (branch fix/listenconfig-ipv6-only-selfheal)
 ```
 
 `test/go.mod` carries the same four pins; the nested-module integrity gate in `Verify` compares them.

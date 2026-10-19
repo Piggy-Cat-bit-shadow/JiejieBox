@@ -22,7 +22,7 @@ exact commit.
 | B3 | SRS decompressed-work budget | **IMPLEMENTED / VALIDATED** | `e09a669067e` |
 | B2 | MASQUE owned-batch chunking above 32 datagrams | **IMPLEMENTED / VALIDATED** | `f1f9d28724f` |
 | B6 | QUIC delivered-datagram slot release | **IMPLEMENTED / VALIDATED** (dependency + bump) | `quic-go@1a730c584263` → main `7ecb24dfbed` |
-| B1 | CONNECT-IP second copy across the port boundary | **IMPLEMENTED / VALIDATED** | `sing-tun@19cb9f1` → main `3eec16cc3b9` |
+| B1 | CONNECT-IP second copy across the port boundary | **IMPLEMENTED / VALIDATED** | `sing-tun@a7bd7fa` → main `3eec16cc3b9` |
 | B4 | QUIC receive small-frame pinning | **IMPLEMENTED / VALIDATED** | `quic-go@7e08ecab` → main `2a74686af57` |
 | B5 | Hysteria2/TUIC owned datagram send | **IMPLEMENTED / VALIDATED** | `sing-quic@d0deb03` → main `2a74686af57` |
 | B7 | QUIC received-DATAGRAM drop counter | **IMPLEMENTED / VALIDATED** | `quic-go@7e08ecab` → main `2a74686af57` |
@@ -261,12 +261,14 @@ ok  github.com/sagernet/quic-go/http3
 
 These five were delivered after the first push, in the same round.
 
-**B1 — owned packets across the port boundary (`sing-tun@19cb9f1` + main `3eec16cc3b9`).**
+**B1 — owned packets across the port boundary (`sing-tun@a7bd7fa` + main `3eec16cc3b9`).**
 `tun.PacketBufferPort` is an optional `Port` capability: `PacketHeadroom() int` plus
 `WritePacketBuffers([]*buf.Buffer) error`, whose contract is that ownership moves **unconditionally**
 before it returns. The forward stage allocates one headroomed buffer per packet and stages it, so the
 packet is copied once instead of once into the stage and again into the endpoint. `Flush` hands the
-buffers over and never touches them again; `Close` releases anything still staged. Tests in
+buffers over and never touches them again; `Close` releases anything still staged. The release and
+the port flush run under the same stage lock, so a close cannot free a batch a flush is handing over
+(`a7bd7fa`). Tests in
 `sing-tun` cover owned staging with headroom and byte equality, refusal (the port consumes and
 releases exactly once), the unchanged borrowed path for a plain port, and close-time release. The
 main repository asserts `ClientEndpoint` implements `tun.PacketBufferPort` at compile time.

@@ -16,7 +16,7 @@ created, nothing was force-pushed, no release/tag was made.
 | `Piggy-Cat-bit-shadow/sing` | `fix/splice-setup-failure-fallback-v2` | `baed8c3b4a3439360102ae2185a8a808ac841b6f` | `git ls-remote origin fix/splice-setup-failure-fallback-v2` |
 | `Piggy-Cat-bit-shadow/quic-go` | `jiejie-masque-mod9` | `7e08ecab` (B4/B6/B7 on top of `1a730c584263`) | `git ls-remote origin jiejie-masque-mod9` |
 | `Piggy-Cat-bit-shadow/sing-quic` | `jiejie-packet-ceiling` | `d0deb03` | `git ls-remote origin jiejie-packet-ceiling` |
-| `Piggy-Cat-bit-shadow/sing-tun` | `fix/listenconfig-ipv6-only-selfheal` | `19cb9f1` (B1/B8 on top of `9c75994`) | `git ls-remote origin fix/listenconfig-ipv6-only-selfheal` |
+| `Piggy-Cat-bit-shadow/sing-tun` | `fix/listenconfig-ipv6-only-selfheal` | `a7bd7fa` (B1/B8 on top of `9c75994`) | `git ls-remote origin fix/listenconfig-ipv6-only-selfheal` |
 
 Effective dependency pins (all resolvable from the public module proxy):
 
@@ -24,7 +24,7 @@ Effective dependency pins (all resolvable from the public module proxy):
 replace github.com/sagernet/sing      => github.com/Piggy-Cat-bit-shadow/sing      v0.9.6-0.20261019051552-baed8c3b4a34
 replace github.com/sagernet/quic-go   => github.com/Piggy-Cat-bit-shadow/quic-go   v0.61.1-0.20261019061042-7e08ecaba383
 replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261019060901-d0deb0359c06
-replace github.com/sagernet/sing-tun  => github.com/Piggy-Cat-bit-shadow/sing-tun  v0.0.0-20261019070229-19cb9f107a3f
+replace github.com/sagernet/sing-tun  => github.com/Piggy-Cat-bit-shadow/sing-tun  v0.0.0-20261019070836-a7bd7facc7cc
 ```
 
 ### 1.1 Main-repository commit sequence
