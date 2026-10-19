@@ -54,7 +54,7 @@ handshake, receives the CONNECT-IP request, and holds the 200 for 1 s while the 
 | Caller cancellation does not arm the verdict | `TestH3TunnelCallerDeadlineIsNotExtendedByTheWindow` |
 | HTTP 4xx/application refusal is not a transport verdict | `TestH3TunnelApplicationRefusalIsNotAVersionVerdict` |
 | CONNECT success reports H3 and carries payload | `TestH3TunnelSuccessReportsHTTP3`, `TestH3TunnelOverRealLoopbackCarriesPayload`, `TestH3TunnelSetupOverRealLoopbackIsFarInsideTheWindow` |
-| H3 pool/generation/result order guards | `TestP14*`, `TestTunnelTransport*`, `advg_d5_claim_effect_race_test.go` (full `transport/http` suite) |
+| H3 pool/generation/result order guards | `TestP14*`, `TestTunnelTransport*`, `advg_d5_claim_effect_race_test.go`, `TestAmbiguousH3OutcomeSupersedesOlderFailures` (full `transport/http` suite) |
 
 **Deliberate scope note:** the ordinary stream CONNECT path (`Client.DialContext`) still treats a
 window expiry as a version verdict; this round changed only the CONNECT-IP tunnel branch named by the
@@ -103,6 +103,7 @@ The unchanged wall time is not described as an optimisation anywhere in this rou
 | `go test ./transport/http -count=1` (untagged) | **PASS**, 8.394 s |
 | `go vet ./transport/http`, `gofmt -l transport/http` | clean |
 | `go test -tags with_quic ./transport/http -run TestH3Tunnel -count=5` | **PASS** |
+| `go test -tags with_quic ./transport/http -run "TestAmbiguousH3Outcome|TestH3TunnelSlowResponse" -count=5` | **PASS**, 0.542 s |
 | `BenchmarkDialObservationOverhead` | 49.95 ns/op, 48 B/op, 1 alloc/op (unchanged baseline) |
 | `BenchmarkFallbackSelectorChooseReport` | 28.05 ns/op, 0 B/op, 0 alloc/op (unchanged baseline) |
 

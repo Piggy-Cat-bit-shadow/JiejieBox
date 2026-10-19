@@ -295,3 +295,18 @@ func TestH3TunnelSlowResponseIsNotATransportVerdict(t *testing.T) {
 		"a CONNECT-IP response slower than the window is not evidence that HTTP/3 is unavailable")
 	require.True(t, client.http3Available())
 }
+
+// TestAmbiguousH3OutcomeSupersedesOlderFailures pins the ordering half of the fix: a newer attempt
+// that proved the connection came up claims the outcome slot, so an older transport failure cannot
+// arm the verdict afterwards; a genuinely newer failure still can.
+func TestAmbiguousH3OutcomeSupersedesOlderFailures(t *testing.T) {
+	client := &Client{}
+	client.noteHTTP3AmbiguousOutcome(2)
+	client.markHTTP3Broken(1)
+	require.Zero(t, client.http3Broken.Load(),
+		"an older transport failure must not arm the verdict after a newer ambiguous observation")
+
+	client.markHTTP3Broken(3)
+	require.NotZero(t, client.http3Broken.Load(),
+		"a newer real failure must still arm the verdict")
+}
