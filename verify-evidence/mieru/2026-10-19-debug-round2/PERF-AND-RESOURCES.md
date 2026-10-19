@@ -19,7 +19,7 @@ session and becomes unreachable when it returns; the tunnel window exists for on
 
 | Command | Result |
 |---|---|
-| `go test ./adapter ./common/dialer ./protocol/mieru ./protocol/group ./transport/http -count=1` | final tree: adapter 0.706 s, common/dialer 16.219 s, mieru **79.929 s** (standalone final suite 79.463 s), group 3.852 s, http 8.451 s — `logs/packages-untagged.txt`, `logs/mieru-suite.txt` |
+| `go test ./adapter ./common/dialer ./protocol/mieru ./protocol/group ./transport/http -count=1` | final tree: adapter 0.706 s, common/dialer 16.219 s, mieru **79.929 s** (standalone final suite 80.004 s), group 3.852 s, http 8.451 s — `logs/packages-untagged.txt`, `logs/mieru-suite.txt` |
 | `go test -tags with_quic ./transport/http ./protocol/masque ./transport/masque -count=1` | final tree: http 25.036 s, protocol/masque 54.368 s, transport/masque 6.652 s — `logs/packages-quic.txt` |
 | `go test -race ...` | **BLOCKED_BY_ENVIRONMENT** (no mingw-w64 gcc; `clang` MSVC target rejects `-mthreads`). Minimum condition in INVARIANT-MATRIX.md |
 

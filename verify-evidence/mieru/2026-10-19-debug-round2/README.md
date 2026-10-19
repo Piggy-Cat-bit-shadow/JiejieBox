@@ -77,7 +77,7 @@ reporting and the post-200 write side are covered by tests; the tunnel really ca
 [PERF-AND-RESOURCES.md](PERF-AND-RESOURCES.md).
 
 - Package matrix (exit 0, final tree): adapter 0.706 s, common/dialer 16.219 s, mieru 79.929 s
-  (standalone suite 79.463 s), group 3.852 s, http 8.451 s; with_quic: http 25.036 s,
+  (standalone suite 80.004 s), group 3.852 s, http 8.451 s; with_quic: http 25.036 s,
   protocol/masque 54.368 s, transport/masque 6.652 s (`logs/packages-quic.txt`).
 - Observation ledger: 49 ns / 48 B / 1 alloc per new session; selector 27.6 ns / 0 alloc.
 - After closing both SDK runtimes and the inbound: goroutines back to the process baseline (2),
@@ -127,7 +127,7 @@ Raw logs are in `logs/`:
 |---|---|
 | `packages-untagged.txt` | the untagged matrix |
 | `packages-quic.txt` | the with_quic matrix |
-| `mieru-suite.txt` | final-tree mieru suite (79.463 s) |
+| `mieru-suite.txt` | final-tree mieru suite (80.004 s) |
 | `benchmarks.txt` | the two benchmarks, 3 runs each |
 | `resources.txt` | goroutine/FD-relevant resource scratch run |
 | `fault-timeline.txt` / `fault-timeline-baseline.txt` | same-injection timeline on the debug and baseline trees |

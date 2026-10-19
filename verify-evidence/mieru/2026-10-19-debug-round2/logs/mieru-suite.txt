@@ -1,3 +1,3 @@
 == go test ./protocol/mieru/ -count=1 ==
-ok  	github.com/sagernet/sing-box/protocol/mieru	79.463s
+ok  	github.com/sagernet/sing-box/protocol/mieru	80.004s
 exit=0
