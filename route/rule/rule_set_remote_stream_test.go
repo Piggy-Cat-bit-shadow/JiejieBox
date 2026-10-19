@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/srs"
@@ -93,6 +94,55 @@ func TestRemoteRuleSetStreamsBinaryWithoutCache(t *testing.T) {
 	require.True(t, ruleSet.Match(metadata), "the streamed rules must be live, not just parsed")
 }
 
+// TestRemoteRuleSetStreamAbortsWhenTheRequestIsCanceled covers the cancellation edge the read-all
+// path had for free: the server sends half a rule set and waits, so srs.Read is blocked when the
+// caller cancels. The read must fail, the old generation must stay, and nothing may be published.
+func TestRemoteRuleSetStreamAbortsWhenTheRequestIsCanceled(t *testing.T) {
+	payload := writeRuleSetPayload(t, "10.0.0.0/8")
+	started := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+		_, _ = writer.Write(payload[:len(payload)/2])
+		if flusher, isFlusher := writer.(http.Flusher); isFlusher {
+			flusher.Flush()
+		}
+		close(started)
+		<-request.Context().Done()
+	}))
+	t.Cleanup(server.Close)
+
+	ruleSet, err := NewRemoteRuleSet(context.Background(), log.NewNOPFactory().Logger(), "stream-cancel-test", option.RuleSet{
+		Type:   C.RuleSetTypeRemote,
+		Format: C.RuleSetFormatBinary,
+		RemoteOptions: option.RemoteRuleSet{
+			URL: server.URL,
+		},
+	})
+	require.NoError(t, err)
+	ruleSet.httpClient = server.Client()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		result <- ruleSet.fetch(ctx, true)
+	}()
+
+	<-started
+	cancel()
+	select {
+	case err = <-result:
+		require.Error(t, err)
+		t.Logf("canceled refresh error: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("fetch did not return after the request was canceled")
+	}
+	require.False(t, remoteRuleSetMatches(t, ruleSet, "10.1.2.3"),
+		"a canceled stream must not publish a partial rule set")
+}
+
+// is not a binary rule set must fail in srs.Read and publish nothing. The empty body is the
+// truncation-at-byte-zero case; the garbage body is a wrong-format download.
 // TestRemoteRuleSetStreamRejectsUnparseableBodies covers the branch before the drain: a body that
 // is not a binary rule set must fail in srs.Read and publish nothing. The empty body is the
 // truncation-at-byte-zero case; the garbage body is a wrong-format download.
