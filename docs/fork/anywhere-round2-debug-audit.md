@@ -17,6 +17,7 @@ repository's CI workflow and reported separately in
 |---|---|---|
 | 1 | `go test ./dns ./common/srs ./route/rule -count=1 -timeout 15m` | **PASS** — dns 7.885 s, srs 0.098 s, route/rule 2.189 s |
 | 2 | `go test ./route -count=1 -short -timeout 15m` | **PASS** — 61.550 s (`-short` skips the deliberate six-minute kernel give-up test) |
+| 2b | `go test ./route -count=1 -timeout 15m` | **PASS** — 421.507 s, including the six-minute kernel give-up test |
 | 3 | `go test -tags with_low_memory ./route/rule ./dns -count=1` | **PASS** — 2.176 s / 7.891 s |
 | 4 | `go test -tags with_quic ./transport/masque ./transport/http -count=1 -timeout 20m` | **PASS** — 6.786 s / 25.159 s |
 | 5 | `go test ./route -run 'TestDNSPacketHijack*' -count=1 -v` | **PASS** — 5 tests, including the two new ownership tests |
@@ -157,9 +158,13 @@ control, B9 × rule-set hot update. They remain open risks for the next round, n
   `tfogo_checklinkname0`/`badlinkname`, which the linker rejects on a non-Apple host).
 - **Android / iOS devices:** not available. No `phys_footprint`, energy or Android mmap claim is
   made anywhere in this round.
-- **CI:** the main repository's workflow on the pushed SHA is tracked in the final summary. Where a
-  path filter does not trigger a required job, that is recorded rather than papered over with an
-  older green run.
+- **CI:** the main repository's workflow on the pushed SHA is tracked in the final summary. On
+  `5c88bad7edf`, `Verify` passed including **both race steps** ("race on the fork's own data paths"
+  and "race on the configuration surface"), the nested module integrity check and the tagged/
+  untagged build matrix; Android Core ARM64 and Mobile contract passed on the parent code SHA
+  `219f8cb` (whose code is identical apart from the test-module fingerprint pin). Where a path
+  filter does not trigger a required job, that is recorded rather than papered over with an older
+  green run.
 
 ---
 

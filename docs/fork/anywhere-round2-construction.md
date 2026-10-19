@@ -297,6 +297,9 @@ behaviour.
 - The fork commits were pushed **before** the main repository was updated, and the main repository
   resolves them through the public module proxy (`go list -m` returned the pseudo-versions quoted
   above), so a clean machine can build the bumped tree.
+- `test/go.mod` is kept in parity with the root's fork pins, because the nested module integrity gate
+  compares them. The first CI run on `219f8cb` failed exactly there; `5c88bad` updates the four
+  `test/go.mod`/`test/go.sum` lines and Verify is green on it.
 - `go test ./dns ./common/srs ./route/rule`, `go test ./route -short`,
   `go test -tags with_low_memory ./route/rule ./dns`,
   `go test -tags with_quic ./transport/masque ./transport/http` — results in
