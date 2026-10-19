@@ -408,6 +408,30 @@ func BenchmarkDialObservationOverhead(b *testing.B) {
 	}
 }
 
+// The SDK's response read cannot be cancelled, so a caller that gives up during
+// it still waits for the SDK to return. What the adapter CAN fix is the reported
+// reason: the result must be recognisable as the caller's cancellation (the
+// route then logs it as such instead of as an outbound fault), while the SDK's
+// own error stays in the chain for diagnosis.
+func TestCallerDeadlineIsReportedWhenTheSDKAnswersLate(t *testing.T) {
+	client := &fakeClient{dialFunc: func(ctx context.Context, _ net.Addr) (net.Conn, error) {
+		<-ctx.Done()
+		return nil, errors.New("failed to read socks5 connection response from the server: TIMEOUT")
+	}}
+	runtime := fakeRuntimeForTest("primary", client)
+	spec, err := toNetAddrSpec(M.ParseSocksaddr("192.0.2.82:443"), N.NetworkTCP)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+	_, class, dialErr := runtime.dial(ctx, spec)
+	require.Equal(t, dialCallerFailure, class)
+	require.ErrorIs(t, dialErr, context.DeadlineExceeded,
+		"the caller's cancellation must survive as the recognised reason")
+	require.Contains(t, dialErr.Error(), "TIMEOUT",
+		"the SDK's own error must stay in the message for diagnosis")
+}
+
 // A caller that has already given up must not start an SDK handshake: the SDK
 // cannot cancel its response read, so the request would sit there for 10 s with
 // nobody waiting for it. The check is at the transport boundary because that is

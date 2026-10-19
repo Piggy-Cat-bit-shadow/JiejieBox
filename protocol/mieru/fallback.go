@@ -14,6 +14,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/option"
+	E "github.com/sagernet/sing/common/exceptions"
 	N "github.com/sagernet/sing/common/network"
 
 	mieruclient "github.com/enfein/mieru/v3/apis/client"
@@ -610,7 +611,16 @@ func (t *transportRuntime) dial(ctx context.Context, destination mierumodel.NetA
 		if conn != nil {
 			_ = conn.Close()
 		}
-		return nil, classifyDialError(ctx, err, t.transport, observation), err
+		class := classifyDialError(ctx, err, t.transport, observation)
+		// The SDK's SOCKS5 response read is not context-aware, so a caller that
+		// gave up during it receives the SDK's own timeout. Both are true and
+		// both belong in the chain: the SDK error explains where the attempt
+		// stopped, the caller's reason keeps the result recognisable as a
+		// cancellation (the route logs it as such instead of as a fault).
+		if ctxErr := ctx.Err(); ctxErr != nil && class == dialCallerFailure {
+			return nil, class, E.Cause1(err, ctxErr)
+		}
+		return nil, class, err
 	}
 	return conn, dialSuccess, nil
 }
