@@ -91,7 +91,7 @@ untouched.
 | B2 red→green | Pre-chunking session fails `64 packets must be submitted as two chunks of 32`; fixed tree passes |
 | B3 adversarial | Bomb refused with the dedicated error; boundary enforced; corrupt checksum stays an integrity error; malformed counts fail cheaply |
 | B4/B5/B7/B8 | Ownership/retention tests and red proofs recorded in the debug audit §10 |
-| Package suites | dns, common/srs, route/rule, route -short, **route full 421.5 s**, `with_low_memory`, `with_quic` masque+http, hysteria2/tuic — all PASS |
+| Package suites | dns, common/srs, route/rule, route -short, **route full 421.9 s**, `with_low_memory`, `with_quic` masque+http+protocol/masque (57.3 s), hysteria2/tuic — all PASS |
 | `-race` | `BLOCKED_BY_ENVIRONMENT` locally; covered by the remote Verify race steps |
 
 Full detail: [`anywhere-round2-debug-audit.md`](anywhere-round2-debug-audit.md).
@@ -100,7 +100,14 @@ Full detail: [`anywhere-round2-debug-audit.md`](anywhere-round2-debug-audit.md).
 
 ## 4. CI
 
-<!-- FINAL_CI -->
+| SHA | Workflow | Result | Link |
+|---|---|---|---|
+| `744aa47663f` (code head, B1 + lock hardening + docs) | **Verify** | **success** — gofmt, nested-module integrity, tagged/untagged builds, build matrix, **race on the fork's own data paths**, race on the configuration surface | https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39214546596 |
+| `744aa47663f` | Android Core ARM64 | success | https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39214546616 |
+| `744aa47663f` | Mobile contract verification (Apple tags + low-memory) | success | https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39214546678 |
+
+Android and Mobile were both path-triggered by this head and passed; this is the first head that
+carries every dependency bump including B1 and the close/flush serialization.
 
 Earlier in the round, Verify failed once on `219f8cb` at the **nested Go module integrity** step
 because `test/go.mod` still pinned the previous fork versions
