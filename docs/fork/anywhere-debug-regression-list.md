@@ -9,7 +9,7 @@ actually run or a source check that was actually made; "not run" is not written 
 |---|---|---|---|---|---|---|---|---|
 | BUG-02-1 | P2 | `srs.Read` stops at the last rule; the streaming loader published without reading to EOF, accepting a body truncated after the rules (the read-all path returned `unexpected EOF`) | `route/rule/rule_set_remote.go` | `1f1775e37d257f6c66cb849478fa57b5c0592eae` | `TestRemoteRuleSetStreamDoesNotPublishATruncatedBody` | Test fails with the drain removed (`fetch` returns nil); passes on pre-round-1 code and on the fix; asserts old generation stays and new one does not | No `-race` (cgo blocked); no shared state added | CI on `48a58f4`: `verify`, `Android ARM64 core`, `Apple tags and the low-memory data paths` all **success**; no device run |
 | TEST-02-1 | — | The streaming branch's parse-failure path had no deterministic test | `route/rule/rule_set_remote_stream_test.go` | `742da5e8df3f3429002e3924ebfcd6933777c47a` | `TestRemoteRuleSetStreamRejectsUnparseableBodies` (empty + garbage) | Both cases return an error and publish nothing | same | same |
-| BUG-02-2 | P3 (pre-existing) | `srs.Read` stopped after the declared rules, leaving the zlib Adler-32 unverified; a trailer-truncated or corrupt file parsed | `common/srs/binary.go` | `6b50757c032bb83b1cde192398a4ee0bf105a3c7` | `TestReadRejectsTruncatedStream`, `TestReadRejectsCorruptChecksum` | Both tests fail on the old parser (cut 1/2/4 and flipped last byte parsed), pass after the EOF drain; complete payload still parses | `go test ./common/srs`; `route/rule` and `route -short` pass | CI on the parser-fix head: see below |
+| BUG-02-2 | P3 (pre-existing) | `srs.Read` stopped after the declared rules, leaving the zlib Adler-32 unverified; a trailer-truncated or corrupt file parsed | `common/srs/binary.go` | `6b50757c032bb83b1cde192398a4ee0bf105a3c7` | `TestReadRejectsTruncatedStream`, `TestReadRejectsCorruptChecksum` | Both tests fail on the old parser (cut 1/2/4 and flipped last byte parsed), pass after the EOF drain; complete payload still parses | `go test ./common/srs`; `route/rule` and `route -short` pass | `Verify` + `Android Core ARM64` success on `a3761cf`; Apple gate not triggered (path filter; parser is platform-independent) |
 
 ## Checked with no defect
 
@@ -48,10 +48,11 @@ actually run or a source check that was actually made; "not run" is not written 
 | `go test ./common/srs -count=1` | PASS (checksum/truncation tests included) |
 | `go test ./route -count=1 -short` | PASS, 61.170 s |
 | `go test -tags with_low_memory ./route/rule -count=1` | PASS |
-| `go test ./route -count=1 -timeout 12m` | PASS, 421.389 s |
+| `go test ./route -count=1 -timeout 12m` | PASS, 421.301 s |
 | `go vet ./route/rule` | clean |
 | `gofmt -l route/rule` | clean |
 | `go build ./route/...` / `go build -tags with_low_memory ./route/...` | clean |
 | red check: drain removed | `TestRemoteRuleSetStreamDoesNotPublishATruncatedBody` FAIL (`nil` error) |
 | parity check: pre-round-1 file from `d846fb6^` | same test PASS (`unexpected EOF`) |
 | GitHub CI on `48a58f4` | `verify` success; `Apple tags and the low-memory data paths` success; `Android ARM64 core` success |
+| GitHub CI on `a3761cf` (parser fix) | `Verify` success (17m 06s, includes the race step); `Android Core ARM64` success; Apple low-memory not triggered by its path filter |

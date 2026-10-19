@@ -185,21 +185,20 @@ claims. The two checks are at different layers and neither subsumes the other.
 |---|---|
 | `go test ./route/rule -count=1` | **PASS**, 2.220 s |
 | `go test -tags with_low_memory ./route/rule -count=1` | **PASS**, 2.195 s |
-| `go test ./route -count=1 -timeout 12m` | **PASS**, 421.389 s (includes the deliberate 6-minute kernel test) |
+| `go test ./route -count=1 -timeout 12m` | **PASS**, 421.301 s (includes the deliberate 6-minute kernel test) |
 | `go test ./common/srs -count=1` | **PASS**, 0.022 s (checksum/truncation tests included) |
 | `go test ./route -run TestRemoteRuleSetStream -v` | **PASS** (4 tests + 2 subcases) |
 | `go vet ./route/rule` | clean |
 | `gofmt -l route/rule` | clean |
 | `go build ./route/...` (with and without `with_low_memory`) | clean |
-| `go test -race ./route/rule` | **BLOCKED locally** — CGO disabled, no mingw-w64 gcc. **CI**: `verify`'s `race on the fork's own data paths` runs `go test -race ... ./route/...` and **passed** on `48a58f4` (see §6.1) |
-| `scripts/ci/test-low-memory.sh` | **NOT_RUN locally** — no bash. **CI**: the `Apple tags and the low-memory data paths` job ran on the pushed SHA and **passed** (see §6.1) |
-| canonical Apple tag set | **BLOCKED locally** on Windows: `tfogo_checklinkname0`/`badlinkname` fail the linker on `tfo-go`. **CI**: the same Apple/low-memory job **passed** |
-| iOS build / device `phys_footprint` | build contract covered by the green Apple CI job; **device measurement NOT_RUN** — no Apple hardware |
+| `go test -race ./route/rule` | **BLOCKED locally** — CGO disabled, no mingw-w64 gcc. **CI**: `verify`'s `race on the fork's own data paths` runs `go test -race ... ./route/...` and **passed** on `48a58f4`; `verify` on `a3761cf` (parser fix) also **passed** (see §6.1) |
+| `scripts/ci/test-low-memory.sh` | **NOT_RUN locally** — no bash. **CI**: the `Apple tags and the low-memory data paths` job ran on `48a58f4` (which changed `route/rule`) and **passed**; it was not triggered for the later `common/srs` fix (see §6.1) |
+| canonical Apple tag set | **BLOCKED locally** on Windows: `tfogo_checklinkname0`/`badlinkname` fail the linker on `tfo-go`. **CI**: the same Apple/low-memory job **passed** on `48a58f4` |
+| iOS build / device `phys_footprint` | build contract covered by the green Apple job on `48a58f4`; **device measurement NOT_RUN** — no Apple hardware |
 
-### 6.1 Remote CI on the pushed head
+### 6.1 Remote CI
 
-Head reported by the API at check time: `48a58f42da3a81cd6afdf2ba079777c0f352a88f` (the code + debug
-documentation commit).
+**Head `48a58f42da3`** (the streaming fix + first debug reports):
 
 | Check | Result | Job |
 |---|---|---|
@@ -207,10 +206,18 @@ documentation commit).
 | `Android ARM64 core` | **success** | <https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39188097883/job/117854695806> |
 | `Apple tags and the low-memory data paths` | **success** | <https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39188097920/job/117854695670> |
 
+**Head `a3761cf51bd3`** (the parser checksum fix and its docs):
+
+| Check | Result | Duration / note |
+|---|---|---|
+| `Verify` | **success** | 17m 06s — <https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39190238658> |
+| `Android Core ARM64` | **success** | 2m 46s — <https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39190238620> |
+| `Apple tags and the low-memory data paths` | **not triggered** | `mobile-contract.yml` only runs for its declared data-path paths; `common/srs/**` is not one of them. The parser is platform-independent and is covered by `Verify`; no Apple-specific code changed. |
+
 The Apple job is the remote counterpart of the locally blocked `scripts/ci/test-low-memory.sh`: it
 builds/tests with the canonical Apple tag set, including `with_low_memory`. `verify` also contains the
 **race** step (`go test -race ... ./common/trafficsched/... ./protocol/mieru/... ./route/... ./adapter/...`
-under the release tags), so the changed package was race-tested remotely even though the local
+under the release tags), so the changed packages were race-tested remotely even though the local
 `-race` run is blocked. These successes do **not** replace the device `phys_footprint` measurement
 (still NOT_RUN).
 
@@ -221,9 +228,9 @@ under the release tags), so the changed package was race-tested remotely even th
   nothing new except independence from CI.
 * **Device memory is still unmeasured**: the green Apple CI job is a build/test contract, not a
   `phys_footprint` run on iOS.
-* **Cancellation mid-body** is reasoned, not tested: a cancelled request fails the body read, and
-  `srs.Read` returns that error before `publishRules`. A dedicated test would need a controllable
-  blocking reader; the truncation test already proves the "read error → no publish" branch.
+* **Cancellation mid-body** is tested by `TestRemoteRuleSetStreamAbortsWhenTheRequestIsCanceled`
+  (server sends half, blocks; caller cancels; error, no publish). The parser-level cancellation
+  (zlib read aborted) is the same read-error path.
 * **HTTP/2 and HTTP/3 transports** are not separately exercised; `response.Body` is the same
   `io.ReadCloser` contract. The drain reads to EOF, so an H2 stream is closed cleanly rather than reset.
 * **Very large bodies**: the drain reads the remainder exactly as the old `io.ReadAll` did, but without
@@ -231,6 +238,11 @@ under the release tags), so the changed package was race-tested remotely even th
   ends, same as before.
 * **Cache-file profiles** keep the old peak; making them streaming would require a streaming
   `CacheFile.SaveRuleSet`, which is a contract change and was deliberately not done.
+* **Checksum verification decompresses the remainder.** A malformed SRS that declares few rules but
+  carries a huge compressed tail is now decompressed and discarded to reach the trailer, where the old
+  parser returned early. Memory stays bounded (`io.Discard`), and rule-set files are operator-supplied
+  configuration rather than untrusted user input, but it is a CPU-cost change for malformed input and
+  is recorded rather than hidden.
 
 ## 8. Architecture constraints kept
 
