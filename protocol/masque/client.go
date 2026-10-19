@@ -660,6 +660,25 @@ func (c *ClientEndpoint) writePacketBuffers(packetBuffers []*buf.Buffer) error {
 	return c.client.WritePacketBuffers(packetBuffers, false)
 }
 
+// PacketHeadroom reports the free space a packet needs in front of it. It is the same reservation
+// WritePackets makes, so the forward dispatcher can allocate an owned buffer whose layout the
+// endpoint already expects.
+func (c *ClientEndpoint) PacketHeadroom() int {
+	return masque.PacketHeadroom
+}
+
+// WritePacketBuffers takes ownership of headroomed packets from the forward dispatcher.
+//
+// The transport client consumes every buffer unconditionally: it releases them when no session is
+// ready, and otherwise hands them to the session, which transfers or releases them. The caller
+// therefore must not release them after this returns, whatever the return value.
+func (c *ClientEndpoint) WritePacketBuffers(packetBuffers []*buf.Buffer) error {
+	if c.onDemand {
+		c.client.Resume()
+	}
+	return c.client.WritePacketBuffers(packetBuffers, true)
+}
+
 func (c *ClientEndpoint) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
 	c.newConnection(ctx, c, c.state.Load().localAddresses, conn, source, destination, onClose)
 }
