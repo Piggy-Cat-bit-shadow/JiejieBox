@@ -146,8 +146,9 @@ func (h *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	return nil
 }
 
-// Close stops accepting, stops the SDK server (which closes listeners and
-// underlays), then closes any accepted session still in flight.
+// Close stops accepting, releases the listener sockets this inbound owns, then
+// stops the SDK server (which closes underlays), then closes any accepted
+// session still in flight.
 //
 // The SDK documents that Stop does not terminate established connections as a
 // user-facing convenience; the Mux it closes does tear down its underlays, but
@@ -155,6 +156,20 @@ func (h *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 // Closing the tracked sessions here is what makes "the inbound is closed" true
 // for the traffic that entered through it, instead of leaving the destination
 // copy waiting on a stream the server no longer owns.
+//
+// # Why our sockets are closed BEFORE the SDK's Stop
+//
+// The SDK's server PacketUnderlay is created as soon as the UDP listener starts
+// and its event loop sits in a ReadFrom with a 60-120 s deadline
+// (pkg/protocol/underlay_base.go: readOneSegmentTimeout). PacketUnderlay.Close
+// only WAKES that read (SetReadDeadline(now)) and then closes sessions before
+// closing its own done channel; the woken loop can therefore re-arm a fresh
+// 60-120 s deadline before done is closed and block again. Measured before this
+// ordering change: TestMieruInboundCanRebindAfterClose took exactly 65 s in
+// 2/10 runs at baseline c363e04 - the process was ready to shut down and the
+// UDP read held it. Closing the PacketConn here makes the read return
+// net.ErrClosed immediately and permanently, which is the only way to make the
+// stop deterministic (see TestMieruInboundCloseReleasesTheUDPUnderlayPromptly).
 func (h *Inbound) Close() error {
 	h.closeOnce.Do(func() {
 		h.access.Lock()
@@ -162,12 +177,10 @@ func (h *Inbound) Close() error {
 		h.access.Unlock()
 
 		h.cancel()
-		h.closeErr = h.server.Stop()
-		// PacketUnderlay.Close only interrupts its read loop; it does not
-		// close the PacketConn returned by the listener factory. Closing the
-		// tracked listeners here is what actually releases the UDP port (and
-		// is harmless for the TCP listener the SDK already closed).
+		// This is the line that keeps Close bounded: the sockets are ours, and
+		// closing them is what releases a blocked underlay read.
 		h.listeners.closeAll()
+		h.closeErr = h.server.Stop()
 		h.active.closeAll()
 		acceptLoopStopped := true
 		if h.acceptDone != nil {

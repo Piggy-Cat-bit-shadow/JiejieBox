@@ -613,6 +613,31 @@ func TestMieruInboundCanRebindAfterClose(t *testing.T) {
 	require.NoError(t, second.Close())
 }
 
+// Close must release the server's UDP underlay read.
+//
+// The SDK creates a PacketUnderlay for the UDP listener at Start and its event
+// loop sits in a ReadFrom with a 60-120 s deadline. Waking that read once (which
+// is all PacketUnderlay.Close does before closing sessions) is not enough: the
+// woken loop can re-arm a fresh deadline before the underlay's done channel is
+// closed, and Close then waits for it. Measured at baseline c363e04: the rebind
+// test above took exactly 65 s in 2/10 runs. Closing the PacketConn we own,
+// before asking the SDK to stop, makes the read return immediately and
+// permanently; the cycles here turn an intermittent re-arm into a reliable
+// failure of this test on the old ordering.
+func TestMieruInboundCloseReleasesTheUDPUnderlayPromptly(t *testing.T) {
+	for cycle := 0; cycle < 20; cycle++ {
+		port := freePortForBothTransports(t)
+		inboundInstance, _, _ := startTestInbound(t, inboundOptionsForPort(port, "both"))
+		start := time.Now()
+		require.NoError(t, inboundInstance.Close())
+		elapsed := time.Since(start)
+		require.Less(t, elapsed, closeWaitTimeout,
+			"cycle %d: Close took %s; a blocked UDP underlay read was not released", cycle, elapsed)
+		requireTCPPortFree(t, port)
+		requireUDPPortFree(t, port)
+	}
+}
+
 func TestMieruInboundCanRetryAfterBindFailure(t *testing.T) {
 	port := freePortForBothTransports(t)
 	occupied, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
