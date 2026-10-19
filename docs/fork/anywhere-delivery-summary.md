@@ -15,8 +15,14 @@ old path exactly (`CacheFile.SaveRuleSet` stores the bytes). Both paths go throu
 validation and publication cannot drift.
 
 **Measured (same fixture):** a valid `.srs` plus a 4 MiB non-zlib tail allocated **21,229,120 B**
-before and **108,376 B** after. The test also matches `10.1.2.3` from the streamed rules. This is a peak
-result, not a throughput claim.
+before; **108,376 B** after round 1; **about 125 KB** after the debug round's EOF drain (which keeps the
+truncation error the read-all path had). The test also matches `10.1.2.3` from the streamed rules. This
+is a peak result, not a throughput claim.
+
+**Debug round:** one regression was found and fixed — a body truncated after the last rule was accepted
+by the streaming loader. It now fails like the read-all path, with the previous rule generation still
+live. See [`anywhere-debug-summary.md`](anywhere-debug-summary.md) and
+[`anywhere-debug-audit.md`](anywhere-debug-audit.md).
 
 ## The audit findings that did not become code
 

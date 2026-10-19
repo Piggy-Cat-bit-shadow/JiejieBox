@@ -74,28 +74,33 @@ makes that distinction explicit in the code instead of paying for the cache in e
 **Reproduction (pre-fix):** a remote `rule_set` with `format: binary` and no `cache_file`; the server
 sends a valid `.srs` followed by 4 MiB of non-zlib tail. `fetch` called `io.ReadAll`, so the tail was
 copied into the heap even though `srs.Read` never needs it. The new test measured
-**21,229,120 bytes allocated**; after the fix, **108,376 bytes**.
+**21,229,120 bytes allocated**; after the round-1 fix, **108,376 bytes**. Round 2 found that this
+version accepted a body truncated after the last rule (the read-all path did not) and added an EOF
+drain before publish; the final figure is **119,848 bytes**, and the regression is
+[`BUG-02-1`](anywhere-debug-audit.md#bug-02-1).
 
 **Why it matters:** a 10 MiB blocklist costs 10 MiB of avoidable transient on a platform whose budget is
 tens of MiB. The parsed form is compact (the census in `rule_set_scale_census_test.go` establishes that
 the matcher is built off the stream, without a `[]string` intermediate), so the only large object in
 the load was the copy of the download.
 
-**Fix:** `fetch` uses `loadBinaryReader(response.Body)` when `cacheFile == nil` and the format is binary;
-otherwise the previous `io.ReadAll` + `loadBytes` path runs unchanged. `loadBytes` was split into
-`loadBytes` (decode) and `publishRules` (mmap/upgrade/build/validate/publish), and `loadBinaryReader`
-shares `publishRules`. `cache_file` profiles therefore keep byte-identical behaviour, including the
-cache write.
+**Fix:** `fetch` uses `loadBinaryStream(response.Body)` when `cacheFile == nil` and the format is
+binary; otherwise the previous `io.ReadAll` + `loadBytes` path runs unchanged. `loadBytes` was split
+into `loadBytes` (decode) and `publishRules` (mmap/upgrade/build/validate/publish), and the streaming
+loader shares `publishRules`. It also drains the body to EOF before publishing (added in the debug
+round, see below), so a body truncated after the rules fails exactly as it did under `io.ReadAll`.
+`cache_file` profiles therefore keep byte-identical behaviour, including the cache write.
 
 **Why this is safe:**
 
 * Same parser (`srs.Read`), same `mmapRuleSet`, same `Upgrade`, same validation, same publish point.
-* A truncated or malformed stream returns a `zlib`/format error before anything is published; the
-  previous generation stays live, as before.
-* No new goroutine or lock: the streaming parse runs on the same fetch goroutine.
-* The cache path is textually untouched; `StartContext`'s cache restore and `initialPath` both still call
-  `loadBytes`.
-* Rollback: revert `d846fb6c8c9`; the test then fails on the allocation assertion, which is the point.
+* A malformed stream fails in `srs.Read`; a body truncated after the last rule fails the drain; both
+  leave the previous generation live, and the debug round has a red/green test for the second case.
+* No new goroutine or lock: the streaming parse and drain run on the same fetch goroutine.
+* The cache branch is behaviourally unchanged: `StartContext`'s cache restore and `initialPath` both
+  still call `loadBytes`.
+* Rollback: revert `d846fb6c8c9` and the debug fix `1f1775e37d2`; the allocation/truncation tests then
+  fail, which is the point.
 
 ### 3.2 Verified and corrected: the splice silent-stall defect is fixed in the dependency
 
@@ -139,7 +144,7 @@ before the measurement (the HTTP handler is in-process).
 | Path | Allocated | Test |
 |---|---:|---|
 | before (`io.ReadAll` + `srs.Read`) | **21,229,120 B** | fails `TestRemoteRuleSetStreamsBinaryWithoutCache` |
-| after (stream `srs.Read`) | **108,376 B** | passes, and matches `10.1.2.3` from the streamed rules |
+| after (stream `srs.Read` + EOF drain) | **119,848 B** | passes, and matches `10.1.2.3` from the streamed rules |
 
 This is a transient/peak result, not a throughput claim: the test asserts the allocation bound, and no
 bytes-per-second number is reported for the change. For a real download the wire time dominates; the
@@ -152,7 +157,7 @@ win is the heap the process does not have to hold while it parses.
 | Command | Result |
 |---|---|
 | `go test ./route/rule -count=1` | **PASS**, 2.157 s |
-| `go test ./route/rule -run TestRemoteRuleSetStreamsBinaryWithoutCache -v` | **PASS**; logs 108,376 B |
+| `go test ./route/rule -run TestRemoteRuleSetStreamsBinaryWithoutCache -v` | **PASS**; logs 119,848 B |
 | same test with the fix reverted (temporary checkout) | **FAIL as intended**: 21,229,120 B is not less than 2,097,152 |
 | `go test -tags with_low_memory ./route/rule -count=1` | **PASS**, 2.288 s (iOS 16 KiB buffer geometry) |
 | `go vet ./route/rule` | clean |
