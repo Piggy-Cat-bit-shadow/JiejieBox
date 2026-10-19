@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/sagernet/sing/common/buf"
 	"github.com/sagernet/sing/common/bufio"
@@ -93,6 +94,31 @@ func (c *Client) OpenTunnelWithInfo(ctx context.Context, protocol string, path s
 	return conn, transport, nil
 }
 
+// http3TunnelEstablishTimeout is the window ONE HTTP/3 CONNECT-IP setup gets inside an openTunnel
+// call.
+//
+// # Why the tunnel needed its own bound, and why it is not a copy of the dial window
+//
+// The version fallback below is only reachable while the caller still has budget. Without a bound,
+// an H3 attempt against a silently blackholed UDP path sleeps until the CALLER's deadline - the
+// MASQUE client passes C.TCPTimeout, 15 s - and returns the caller's own deadline error. That error
+// is not ErrHTTP3Unavailable, so the branch returns it and HTTP/2 is never attempted: the observed
+// behaviour is "this node does not work" rather than "the node fell back to HTTP/2", and it repeats
+// on every reconnect because nothing was remembered either.
+//
+// It is deliberately a SEPARATE tunable from http3EstablishTimeout rather than the same constant
+// reused. The two paths have different lifecycles (a stream dial ends with the connection; a tunnel
+// setup ends with the 200 that starts a long-lived session) and a future change to one must not
+// silently move the other. The value is the same 3 s because the measurement supports it, not
+// because the constant was copied: the window covers a UDP dial plus a QUIC handshake plus one
+// CONNECT round trip, which is four round trips of ~750 ms each - well beyond any usable mobile or
+// satellite RTT - while still leaving 12 s of the MASQUE client's 15 s budget for the HTTP/2
+// attempt. Measured on the loopback HTTP/3 stand: a real CONNECT-IP setup takes ~3.4 ms
+// (TestH3TunnelSetupOverRealLoopbackIsFarInsideTheWindow); the before/after evidence, including the
+// 10 s quic-go handshake bound this window must stay under, is
+// verify-evidence/mieru/2026-10-19-early-facts/MIERU-MASQUE-CHANGE-LEDGER.md.
+var http3TunnelEstablishTimeout = 3 * time.Second
+
 // openTunnel returns the transport each successful branch used, so the caller never has to
 // infer it from which connection objects happen to exist.
 func (c *Client) openTunnel(ctx context.Context, request tunnelRequest) (net.Conn, DatagramStream, TunnelTransport, error) {
@@ -103,12 +129,39 @@ func (c *Client) openTunnel(ctx context.Context, request tunnelRequest) (net.Con
 		// Stamped before the attempt for the same reason as in DialContext: the verdict must be
 		// decided by the newest attempt STARTED, not by whichever one reports last.
 		http3Attempt := c.beginHTTP3Attempt()
-		stream, err := c.http3.OpenTunnel(ctx, request)
+		// The attempt gets its OWN window, not the caller's whole tunnel budget. This is the same
+		// shape as DialContext's probe window, applied to the branch that actually carries MASQUE
+		// traffic; context.WithTimeout resolves to the EARLIER of the two, so a caller with less
+		// time is never delayed by it.
+		probeCtx, cancelProbe := context.WithTimeout(ctx, http3TunnelEstablishTimeout)
+		stream, err := c.http3.OpenTunnel(probeCtx, request)
+		probeExpired := probeCtx.Err() != nil
+		cancelProbe()
 		if err == nil {
 			c.clearHTTP3Broken(http3Attempt)
 			return nil, stream, TunnelTransportHTTP3, nil
 		}
-		if c.disableVersionFallback || !errors.Is(err, ErrHTTP3Unavailable) {
+		// The CALLER gave up, or the core is closing. Same rule as the stream path: this is a
+		// local lifecycle event, not evidence about H3, and nobody is waiting for an HTTP/2
+		// tunnel.
+		if ctx.Err() != nil {
+			return nil, nil, TunnelTransportUnknown, ctx.Err()
+		}
+		// Strict mode covers EVERY way H3 can fail, including running out of the window above.
+		// Nothing is armed here either: arming the memory is itself a fallback, because it makes
+		// the next tunnel setup skip H3.
+		if c.disableVersionFallback {
+			if probeExpired {
+				return nil, nil, TunnelTransportUnknown, E.Cause(err, "HTTP/3 tunnel attempt exceeded ", http3TunnelEstablishTimeout)
+			}
+			return nil, nil, TunnelTransportUnknown, err
+		}
+		// An attempt that merely ran out of its window is still an attempt that did not work.
+		// Returning its deadline error would hand a QUIC timeout to MASQUE and never try HTTP/2.
+		// An application error from a WORKING H3 connection (a status error, for example) is NOT
+		// ErrHTTP3Unavailable and must not be turned into a transport verdict: the version did
+		// come up, the server refused this CONNECT.
+		if !probeExpired && !errors.Is(err, ErrHTTP3Unavailable) {
 			return nil, nil, TunnelTransportUnknown, err
 		}
 		c.markHTTP3Broken(http3Attempt)
