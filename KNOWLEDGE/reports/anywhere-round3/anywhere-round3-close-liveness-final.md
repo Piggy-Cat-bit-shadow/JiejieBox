@@ -2,9 +2,9 @@
 
 **Date:** 2026-10-20 (Asia/Shanghai)
 **Branch:** `testing` only. No branch was created, nothing was force-pushed.
-**Runs on:** `11c4c1b27` (start of this pass) plus the one test file added by this pass; dependency
-unchanged at `Piggy-Cat-bit-shadow/sing-tun` `276576ea222c`
-(`v0.0.0-20261020040525-276576ea222c`).
+**Runs on:** `11c4c1b27` (start of this pass) plus the endpoint fix, the mechanism tests and this
+report; dependency moved from `Piggy-Cat-bit-shadow/sing-tun` `276576ea222c` to `109186a15f3b`
+(`v0.0.0-20261020085711-109186a15f3b`) for the composition test.
 **Verdict:** **`PARTIALLY_VERIFIED_ENV_BLOCKED`** — the DATAGRAM branch is bounded (measured); the
 Capsule branch is **not** bounded when a keepalive is in use (measured), and the shutdown path that
 would wait on it is now released by a cancellation-ordering fix whose release mechanism is verified
@@ -161,6 +161,7 @@ HTTP client again.
 | `go test -tags with_quic ./transport/http -run 'TestTheIdleTimeoutBoundsASilentPath\|TestActiveInboundStopsBecauseThePeerIsStarved' -count=1` | PASS (3.3 s + 8.2 s) |
 | `go test -tags with_quic ./transport/http -run 'TestCapsuleWriteWithoutKeepAliveEndsAtThePeerIdleTimeout\|TestCapsuleWriteWithKeepAliveStaysParked' -count=1` | PASS (10.1 s + 23.0 s) |
 | `go test -tags with_quic ./protocol/masque -count=1` (endpoint fix) | PASS (48.3 s) |
+| `sing-tun`: `TestGoStackCloseWaitsForABlockedPortWrite` (real stack, in-memory device, blocked port) | PASS (0.30 s), `-count=3` and `-race` too |
 | the mechanism set together under `-race -count=2` | PASS |
 | `go test -tags with_quic ./transport/http -count=1` (full package) | PASS |
 | `go test ./transport/http ./transport/masque ./protocol/tun -count=1` | PASS |
@@ -172,9 +173,17 @@ Windows timing tests (`TestGoKernelDeadline`, `TestGoKernelPacketBatchIdle`, `Te
 
 ## 8. What is still not verified
 
-1. The **composed** `Box.Close` wall time (real TUN + MASQUE endpoint). `tun.Options` has no
-   injectable device; the Go stack cannot be started without a platform TUN. Both edges are measured
-   separately and the graph is verified; the composition is `NOT_TESTED`.
+1. **The integrated `Box.Close` wall time** (a whole box with a TUN inbound and a stalled MASQUE
+   endpoint) is still not measured: `protocol/tun` creates its device through the platform
+   constructor and exposes no injection point, and a public fake-TUN API is out of scope.
+   **What is measured now is the layer that actually waits.** `sing-tun` grew a composition test that
+   starts a real `Go` stack on the in-memory device (`NewMemoryTun`), runs the real dispatcher and a
+   real `Flush`, and parks the port write: `stack.Close()` — the exact call `tun.Inbound.Close`
+   makes — stayed blocked for the full 300 ms probe and completed the moment the port was released.
+   The sing-box layers between `Box.Close` and `Go.Close` are synchronous pass-throughs
+   (`VERIFIED_SOURCE`: `Scope.Close` → `Inbound.Close` → `stackStartup.releaseByScope` →
+   `tunStack.Close`), so the integrated number is `INFERRED` from a measured link plus a verified
+   chain, not assumed.
 2. WAN, real devices, iOS/Android footprint: `NOT_TESTED`.
 
 ## 9. Verdict
@@ -191,9 +200,10 @@ Windows timing tests (`TestGoKernelDeadline`, `TestGoKernelPacketBatchIdle`, `Te
   cancelled, which `Scope.Close` does before it runs any cleanup. The release mechanism is measured
   (closing the connection frees the parked write in 0 s); the cancel ordering is source-verified; the
   endpoint's full `with_quic` suite passes, so normal close, restart and suspend are unaffected.
-- **Not verified:** the composed `Box.Close` wall time, because this environment has no injectable TUN
-  device (`tun.Options` has no device field, and a public fake-TUN API is explicitly out of scope). The
-  claim that shutdown is now fast is `INFERRED` from the two verified halves, not measured end to end.
+- **Not verified:** the integrated `Box.Close` wall time, because `protocol/tun` has no injectable
+  device. The wait itself is measured at `Go.Close` (real stack, real dispatcher, blocked port write),
+  and the layers between `Box.Close` and `Go.Close` are verified synchronous pass-throughs; the
+  integrated number is therefore `INFERRED` from a measured link and a verified chain.
 
-A later round that can run a real TUN should measure `Box.Close` against this same stalled-capsule
-peer before and after the watcher, which is the only missing link in the chain.
+A later round that can run a whole box should measure `Box.Close` against this same stalled-capsule
+peer before and after the watcher. Everything below that layer is now measured.

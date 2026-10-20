@@ -245,7 +245,7 @@ replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-
 // changed only the root, so as it stood the root built d092c64 while this module still pinned
 // 6937951ec9b6 - the same root-vs-nested drift, and check-go-module-integrity.sh would have failed
 // it. The require line still names the same base (9ffa5391a2ad) because the pin's base did not move.
-replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261020040525-276576ea222c
+replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261020085711-109186a15f3b
 
 // Same fork revision as the root module, for the same reason as every other pin here: a nested
 // module does not inherit the root's replaces, so a test binary built from this module would
