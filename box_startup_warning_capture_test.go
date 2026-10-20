@@ -3,8 +3,8 @@ package box_test
 import (
 	"context"
 	"os"
-	"strings"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	box "github.com/sagernet/sing-box"
