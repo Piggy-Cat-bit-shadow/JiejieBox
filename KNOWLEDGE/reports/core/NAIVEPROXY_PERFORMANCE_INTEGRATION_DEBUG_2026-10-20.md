@@ -41,7 +41,7 @@ BASELINE:                  第一轮报告 §5/§7/§10 + 审计报告 §7/§12
 | 提交 | 内容 |
 |---|---|
 | 本报告之前的 `0ef38b8ff` | 第一轮 P3（被审对象） |
-| `98387b223` | 本轮修复：`h3ProbeContext` 预算切分 + 5 组对抗测试 + fake conn 写入计数 |
+| `98387b223` | 本轮修复：`h3ProbeContext` 预算切分 + 5 组对抗测试 + fake conn 写入计数 |\n| 本报告所在提交 | 补跑 `-race`（含 64 并发 verdict）、重新生成 `docs/schema.json`、本报告 |
 
 ---
 
@@ -60,7 +60,7 @@ BASELINE:                  第一轮报告 §5/§7/§10 + 审计报告 §7/§12
 | H7 | 其它状态码（fake 403） | 不重试、无 fact | 单测：`naiveHandshakeFailureFacts` 无 fact；`h3TransportFailure` false | PASS |
 | H8/H9 | caller 在 probe 中取消 | 不开第二个 dial，返回 caller 错误 | `TestH3FallbackCallerCancelDuringProbeDoesNotRetry`：choices `[true]`，`errors.Is(context.Canceled)` | PASS |
 | H10 | 网络切换 | 窗口清零，旧 attempt 不能重臂 | `TestH3FallbackResetOnNetworkChange` + `(*Outbound).InterfaceUpdated` 调 `reset()` | PASS（单元级） |
-| H11 | 并行失败不延长窗口 | 一次事件一次决策 | `TestH3FallbackDoesNotExtendOnASecondFailure` | PASS |
+| H11 | 并行失败不延长窗口 | 一次事件一次决策；64 并发只 arm 一次 | `TestH3FallbackDoesNotExtendOnASecondFailure` + **`TestH3FallbackConcurrentFailuresArmOnce`（64 goroutine，`-race` ×3）** | PASS |
 | H12/H13 | 旧失败晚于新成功 / 旧成功晚于新失败 | 只接受较新 attempt | `TestH3FallbackIgnoresOutOfOrderOutcomes`（两个方向） | PASS |
 | H14 | 窗口到期 | 允许再试 H3 | `TestH3FallbackWindowExpires`（20 ms 窗口） | PASS |
 | H15 | Close/teardown 与 dial 并发 | 不记 Path、不重试 | `TestH3FallbackTransportFailureMatrix` 的 teardown/cancel 行 | PASS |
@@ -150,7 +150,7 @@ BASELINE:                  第一轮报告 §5/§7/§10 + 审计报告 §7/§12
 | 包 | 命令 | 结果 |
 |---|---|---|
 | `protocol/naive` | `go test -tags OTHERS ./protocol/naive/...` | PASS |
-| `protocol/naive`（Windows profile） | `go test -tags WINDOWS ./protocol/naive/` | PASS |
+| `protocol/naive`（Windows profile） | `go test -tags WINDOWS ./protocol/naive/` | PASS |\n| `protocol/naive`（**race**） | `CGO_ENABLED=1 go test -race -tags WINDOWS ./protocol/naive/` | **PASS**（含 16×200 次混合并发 verdict 访问） |
 | `option` | `go test -tags OTHERS ./option/` | PASS |
 | `protocol/group` | `go test -tags OTHERS ./protocol/group/` | PASS（含 facts 消费者 fixture） |
 | `transport/http` | `go test -tags OTHERS ./transport/http/` | PASS（未改，仅回归） |
@@ -180,10 +180,10 @@ BASELINE:                  第一轮报告 §5/§7/§10 + 审计报告 §7/§12
 |---|---|---|
 | H18 Alt-Svc 诱导 QUIC | `NOT_RUN` | 需要广告 Alt-Svc 的第三方 Naive 服务端；本地服务端不发 |
 | H20 同 Engine H3→H2→H3（进程级） | `PARTIAL` | 需要可在运行中关闭/恢复服务端 UDP 的 harness |
-| `-race` | `NOT_RUN` | Windows 下 cronet（cgo/purego）无可用 race 组合；判定核为 mutex + 序号，未在 race 下跑 |
+| `-race` | **PASS（本轮补跑）** | 用 MSYS2 gcc 16.2 + `CGO_ENABLED=1 -tags WINDOWS` 跑通：`go test -race ./protocol/naive/` 全绿，含 64 并发 verdict 与混合并发访问 3 轮 |
 | macOS/iOS 构建与 footprint | `NOT_RUN` | 无环境 |
 | WAN 性能 A/B | `NOT_RUN` | 无独立试验端 |
-| `docs/schema.json` 重新生成 | `NOT_RUN` | 生成器需 WINDOWS profile；本轮未改，新字段暂不在 schema 中（已知限制） |
+| `docs/schema.json` | **已重新生成** | `go run -tags WINDOWS ./cmd/sing-box schema` 与提交版只差新增字段 3 行，已随本报告提交 |
 
 ---
 
@@ -197,13 +197,13 @@ BASELINE:                  第一轮报告 §5/§7/§10 + 审计报告 §7/§12
 | G3 | 回退无误清/误判/重放 | H1/H2/H4/H6/H17 实测与单测 | PASS（H18 未测） |
 | G4 | facts 被真实消费者看见且不误重试 | 407 链路 + `TestFailureFactsDriveEachPolicyWithItsOwnAnswer` | PASS |
 | G5 | DNS 改动承诺 | `NOT_CHANGED`（P2 未施工），stray 仍在，未宣称修复 | N/A |
-| G6 | Native buffer/lifetime/close | 未改 buffer；10 次拨号线程/句柄稳态；H3 流被 Close | PASS（race 未跑） |
-| G7 | 性能无回退、收益可重复 | +0.519 ms 建连（一次往返）；回退首次/后续数据 | PASS_WITH_LIMITATIONS（无 WAN） |
+| G6 | Native buffer/lifetime/close | 未改 buffer；10 次拨号线程/句柄稳态；H3 流被 Close；**`-race` 全绿** | PASS |
+| G7 | 性能无回退、收益可重复 | +0.519 ms 建连（一次往返）；回退首次/后续数据；WAN 未测 | PASS_WITH_LIMITATIONS |
 | G8 | 依赖/模块/native/pin 一致 | `go list -m`、`go version -m`、DLL 154、三 profile 构建 | PASS |
 | G9 | 修复可回滚、测试不虚报 | 两个修复各自独立提交；SKIP/NOT_RUN 单列 | PASS |
 | G10 | 最小上下游回归，无全仓扩散 | 只改 `protocol/naive` + `option` + 文档 + root pin；回归 7 个包 | PASS |
 
-**最终判定：`READY_WITH_LIMITATIONS`** —— 本轮改动在本环境可验证的范围内正确、有回归保护、默认行为不变；限制是 WAN/macOS/`-race`/Alt-Svc 四类未测，均已列明，不阻塞进入发布前的跨平台验证。
+**最终判定：`READY_WITH_LIMITATIONS`** —— 本轮改动在本环境可验证的范围内正确、有回归保护、默认行为不变，`-race` 与 schema 已在本轮补齐；剩余限制只有 WAN/macOS/Alt-Svc 三类真实环境项与 H20 的进程级 UDP 开关，均已列明，不阻塞跨平台验证。
 
 ---
 

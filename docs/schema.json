@@ -14098,6 +14098,9 @@
             "quic": {
               "type": "boolean"
             },
+            "quic_fallback_to_h2": {
+              "type": "boolean"
+            },
             "quic_congestion_control": {
               "type": "string",
               "enum": [

@@ -422,3 +422,66 @@ func TestH3FallbackNeverWritesBeforeHandshake(t *testing.T) {
 	require.Zero(t, h2.writes, "the dial path must not write before the handshake")
 	require.Equal(t, []bool{true, false}, client.recorded())
 }
+
+// TestH3FallbackConcurrentFailuresArmOnce is H11: 64 attempts that all fail on
+// one event must produce ONE window, not 64 chained extensions. Run under -race,
+// it also proves the verdict is the only synchronization point.
+func TestH3FallbackConcurrentFailuresArmOnce(t *testing.T) {
+	withFallbackWindow(t, time.Minute)
+	fallback := &h3Fallback{}
+	attempts := make([]uint64, 64)
+	for i := range attempts {
+		attempts[i] = fallback.begin()
+	}
+	start := make(chan struct{})
+	var wait sync.WaitGroup
+	for _, attempt := range attempts {
+		wait.Add(1)
+		go func(attempt uint64) {
+			defer wait.Done()
+			<-start
+			fallback.markBroken(attempt, time.Now())
+		}(attempt)
+	}
+	close(start)
+	wait.Wait()
+
+	armedUntil := fallback.brokenUntil
+	require.False(t, armedUntil.IsZero(), "one event must arm the window")
+	require.False(t, fallback.available(time.Now()))
+
+	// A later failure, arriving while the window is open, must not move its end.
+	fallback.markBroken(fallback.begin(), time.Now().Add(30*time.Second))
+	require.Equal(t, armedUntil, fallback.brokenUntil,
+		"concurrent failures of one event must not chain the window forward")
+}
+
+// TestH3FallbackConcurrentMixedAccess exercises every entry point from several
+// goroutines at once. Its value is the race detector: the access mutex is the
+// only thing making brokenUntil/attempt/outcome safe.
+func TestH3FallbackConcurrentMixedAccess(t *testing.T) {
+	withFallbackWindow(t, 5*time.Millisecond)
+	fallback := &h3Fallback{}
+	var wait sync.WaitGroup
+	for worker := 0; worker < 16; worker++ {
+		wait.Add(1)
+		go func(worker int) {
+			defer wait.Done()
+			for round := 0; round < 200; round++ {
+				switch (worker + round) % 4 {
+				case 0:
+					fallback.markBroken(fallback.begin(), time.Now())
+				case 1:
+					fallback.clear(fallback.begin())
+				case 2:
+					_ = fallback.available(time.Now())
+				case 3:
+					fallback.reset()
+				}
+			}
+		}(worker)
+	}
+	wait.Wait()
+	// No assertion beyond "it survives": a lost clear/mark is allowed, a data
+	// race is not, and the race detector fails the test for us.
+}
