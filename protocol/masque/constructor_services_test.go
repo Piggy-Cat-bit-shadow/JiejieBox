@@ -125,3 +125,6 @@ func newTestRegistryContext(dnsRouter adapter.DNSRouter) context.Context {
 	}
 	return ctx
 }
+
+func (m *stubNetworkManager) FlushSystemDNSCache() {}
+

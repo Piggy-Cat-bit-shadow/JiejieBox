@@ -1040,6 +1040,20 @@ func (t *Inbound) releaseRouteSetCallbacks() {
 // radix lookups. Nothing here allocates, takes a lock beyond an RWMutex read of the route sets, or
 // performs a DNS lookup: a flow that reaches step 5 and returns never touches the router, the reverse
 // mapping, the process searcher or any timer.
+func (t *Inbound) FlushSystemDNSCache() {
+	linuxTUN, isLinuxTUN := t.tunIf.(tun.LinuxTUN)
+	if !isLinuxTUN {
+		return
+	}
+	serviceManager := service.FromContext[adapter.ServiceManager](t.ctx)
+	if slices.ContainsFunc(serviceManager.Services(), func(it adapter.Service) bool {
+		return it.Type() == C.TypeResolved
+	}) {
+		return
+	}
+	linuxTUN.FlushDNSCache()
+}
+
 func (t *Inbound) JudgeFlow(network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
 	// The destination is canonicalised BEFORE any policy comparison, and that order is part of the
 	// contract rather than tidiness.

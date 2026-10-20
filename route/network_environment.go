@@ -101,6 +101,7 @@ func (r *NetworkManager) updateNetworkEnvironment() {
 		return
 	}
 	r.boundEnvironmentTransitionExported(token)
+	r.FlushSystemDNSCache()
 }
 
 // EstablishInitialNetworkEnvironment publishes and bounds the box's FIRST environment observation,

@@ -34,6 +34,7 @@ import (
 type DBusResolvedResolver struct {
 	ctx               context.Context
 	logger            logger.ContextLogger
+	networkManager    adapter.NetworkManager
 	interfaceFinder   control.InterfaceFinder
 	interfaceMonitor  tun.DefaultInterfaceMonitor
 	interfaceCallback *list.Element[tun.DefaultInterfaceUpdateCallback]
@@ -152,6 +153,7 @@ func NewResolvedResolver(ctx context.Context, logger logger.ContextLogger) (Reso
 	return &DBusResolvedResolver{
 		ctx:              ctx,
 		logger:           logger,
+		networkManager:   networkManager,
 		interfaceFinder:  networkManager.InterfaceFinder(),
 		interfaceMonitor: interfaceMonitor,
 		networkMonitor:   networkManager.NetworkMonitor(),
@@ -449,6 +451,7 @@ func (t *DBusResolvedResolver) updateStatus(ctx context.Context) error {
 	} else if oldServerSet == nil {
 		t.logger.Debug("systemd-resolved service is available")
 	}
+	t.networkManager.FlushSystemDNSCache()
 	return nil
 }
 

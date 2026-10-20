@@ -1454,6 +1454,21 @@ func (r *NetworkManager) clearNetworkPaused() {
 	r.networkPausedSince.Store(0)
 }
 
+func (r *NetworkManager) FlushSystemDNSCache() {
+	r.interfaceUpdateAccess.Lock()
+	started := r.startedCtx.Load() != nil
+	r.interfaceUpdateAccess.Unlock()
+	if !started {
+		return
+	}
+	for _, inbound := range r.inbound.Inbounds() {
+		flusher, isFlusher := inbound.(adapter.SystemDNSCacheFlusher)
+		if isFlusher {
+			flusher.FlushSystemDNSCache()
+		}
+	}
+}
+
 func (r *NetworkManager) notifyInterfaceUpdate(_ *control.Interface, _ int) {
 	// The interface list is republished from the finder before anything decides on it, so the state
 	// the reset body and the family capability observe is the state this event reported rather than

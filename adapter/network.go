@@ -46,6 +46,7 @@ type NetworkManager interface {
 	// network reset, without touching a resource that is carrying traffic, and without causing a
 	// dial. It must only ever make the process smaller.
 	TrimMemory(ctx context.Context)
+	FlushSystemDNSCache()
 }
 
 // NetworkResetCounter is implemented by a network manager that can report how many network resets
@@ -237,6 +238,10 @@ type NetworkOptions struct {
 
 type InterfaceUpdateListener interface {
 	InterfaceUpdated(ctx context.Context)
+}
+
+type SystemDNSCacheFlusher interface {
+	FlushSystemDNSCache()
 }
 
 type WIFIState struct {

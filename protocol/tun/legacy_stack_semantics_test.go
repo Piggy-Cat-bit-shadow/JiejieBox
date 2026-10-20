@@ -317,3 +317,6 @@ var (
 	_ adapter.NetworkManager = (*stackNetworkManagerStub)(nil)
 	_ deprecated.Manager     = (*recordingDeprecatedManager)(nil)
 )
+
+func (m *stackNetworkManagerStub) FlushSystemDNSCache() {}
+
