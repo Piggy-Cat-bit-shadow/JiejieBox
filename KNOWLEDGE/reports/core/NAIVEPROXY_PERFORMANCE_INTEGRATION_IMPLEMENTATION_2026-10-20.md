@@ -3,7 +3,7 @@
 - **日期**：2026-10-20
 - **类型**：实际施工 + 回归 + 提交（非审计）
 - **输入**：`01_NaiveProxy_性能领先与架构深度融合_完整施工提示词_testing.md`、`NAIVEPROXY_DEEP_AUDIT_2026-10-20.md`
-- **本轮定性**：**施工一轮，已提交并可推送**；P3（H3→H2 回退）经核对依赖现状后**按成本/收益显式推迟到下一轮**，理由与精确设计见 §6（不是等人批准，是一个有证据的范围判断）。
+- **本轮定性**：**施工一轮，已提交并推送**；P1/P3/P7/P9 已实现并验证，P2 因依赖无开关而 `BLOCKED_BY_NATIVE_API`，P8 维持默认（§2）。
 
 ---
 
@@ -13,17 +13,17 @@
 |---|---|
 | 主仓 | `Piggy-Cat-bit-shadow/sing-box`，分支 `testing` |
 | 本轮起点 SHA | `11c4c1b27ff87a6ee686c9c1b578a333bbb726d4`（本地 = `origin/testing`） |
-| 本轮结束 SHA | `df604e303`（最终 `origin/testing` 头：3 个代码提交 + 2 个报告提交；每步推送后 `HEAD...origin/testing` = `0 0`） |
+| 本轮结束 SHA | 代码提交 `0ef38b8ff`（P3 + 依赖 pin）；本文件所在提交即最终 `origin/testing` 头（推送后 `HEAD...origin/testing` = `0 0`） |
 | 审计报告 SHA（历史） | 起点 `6edc18c60` → `7e42ca38e`；本轮的起点已含并行窗口 4 个提交 |
 | 并行窗口归属 | `clients/apple`、`clients/desktop` 的 submodule 指针修改**不是本轮的**，未 stage、未提交 |
-| cronet-go pin | 未改动：`Piggy-Cat-bit-shadow/cronet-go@8c68ce89873c`（root + `all` + 29 个 `lib/*`） |
+| cronet-go pin | root 模块升到 `v0.0.1-143.0.7499.109-2.0.20261020055023-fd2f25825e4f`（= fork 分支 `feat/per-dial-quic` 的 `fd2f2582`）；`all` 与 29 个 `lib/*` 保持 `8c68ce89873c`（只改了 Go 侧，Native 二进制未变） |
 | sing-tun pin | 由并行窗口在审计末段从 `ff4fbed67c0d` 升到 `276576ea222c`，本轮起点已包含 |
 | Native 运行时版本 | Cronet `Engine().Version()` = `154.0.8037.49`（本机实测，Windows/amd64） |
 | 工具链 | `go1.25.5 windows/amd64`，`CGO_ENABLED=0`，`-tags with_purego`（Windows 客户端 profile） |
 | 服务端 profile | `release/DEFAULT_BUILD_TAGS_OTHERS` |
 | 测试机 | Windows 11 x64，16 逻辑核，loopback |
 
-**并行窗口防护**：本轮每次写入前比对 `git status` / `git rev-parse HEAD`；三次提交都只 stage 自己创建或修改的文件；推送前再次 `git fetch` 比对远端（见 §8）。
+**并行窗口防护**：本轮每次写入前比对 `git status` / `git rev-parse HEAD`；每次提交都只 stage 自己创建或修改的文件；每次推送前重新 `git fetch` 比对远端（见 §8）。
 
 ---
 
@@ -35,7 +35,7 @@
 | **P9 padding 全零回归** | **DONE** | 256 个 padding 抽样 × 三条生产写路径；变异验证（`WriteZeroN`→`Extend`）确认测试真的会红 |
 | **P7 文档默认值** | **DONE** | `quic_congestion_control` 的默认值从"BBR"改为事实（CUBIC，library default） |
 | **P2 Cronet DoH** | **BLOCKED_BY_NATIVE_API** | 当前 pin 无任何 Go 可配置的 Secure DNS 开关；`SetHostResolverRules` 只能解决域名 MAP，不能消除 stray 连接。今日实测该连接仍在（§5） |
-| **P3 H3→H2 回退** | **DEFERRED（下一轮）** | 关键能力（per-CONNECT 选择）已证，但需要**先改 cronet-go 的 `DialEarly`**；依赖仓 `main` 已领先 pin 一个提交，须开分支最小改动 + 重新 pin + 独立对抗矩阵。设计与插入点已写好（§6） |
+| **P3 H3→H2 回退** | **DONE** | 在依赖 fork 补了 per-CONNECT 入口并从 pin 起分支；sing-box 侧实现 attempt 有序的判定核、窄分类、30 s 窗口与网络切换清零；**同 Engine** 真实 H3 失败 → H2 成功（§6） |
 | **P8 Engine/窗口默认** | **KEEP** | 无新的活跃负载数据；默认不动 |
 
 **本轮最重要的新发现**（审计没写、施工中实测出来的）：`Outbound.DialContext` 之前调用 `DialEarly` 后**从不读取 CONNECT 响应**，所以错误密码（407）在 sing-box 里**不是错误**——隧道"建立成功"，第一次 Read 得到 EOF。修完之后同一个测试从"空隧道"变成 `naive CONNECT handshake: unexpected response status: 407`（§3.2）。
@@ -175,71 +175,65 @@ ERROR outbound/naive[n]: open UDP connection to [2001:4860:4860::8888]:443:
 
 ---
 
-## 6. P3：H3→H2 回退（下一轮，设计与阻塞已落地）
+## 6. P3：H3→H2 回退（**已实现**）
 
-### 6.1 为什么没在本轮施工（精确的阻塞，不是"没时间"）
+### 6.1 依赖侧：先补 per-CONNECT 选择入口
 
-per-CONNECT 选择能力在 Chromium 侧已证（`-force-quic` header），但**sing-box 侧没有入口**：
+`DialEarly` 的 `-force-quic` 由 client 级 `quicEnabled` 决定，而它是保留头，`ExtraHeaders` 无法覆盖，所以 sing-box 侧原本**没有入口**。本轮在依赖 fork 上补了最小 API：
 
-- `cronet.NaiveClient.DialEarly(ctx, dest)` 的 header 由 `c.quicEnabled` 决定（`naive_client.go:580-582` 无条件追加 `-force-quic`）；
-- `-force-quic` 是保留头，`ExtraHeaders` 会被拒绝/跳过，sing-box 无法从外部关掉它；
-- 因此"先 H3、失败再 H2"**必须**先在 cronet-go 增加 per-dial 入口。
+- 分支 `feat/per-dial-quic`，**从 pin 的 `8c68ce8` 起**（`main` 已领先一个未评审提交 `049f290`，不从 main 出发，避免顺带吸收）。
+- 提交 `fd2f25825e4fe24d69ba67a9b87d49fb3d382246`：`DialEarly` 变一行 wrapper（行为不变），新增 `DialEarlyWithQUIC(ctx, dest, forceQUIC bool)`；header 构造抽成 `dialHeaders(dest, forceQUIC)` 并加纯单测（client 默认 / per-dial 覆盖 / 保留头不可被用户 header 顶掉）。
+- 3 条新测试在 `-tags with_purego` 下通过；`vet` 只有依赖里既有的 unsafe.Pointer 警告。
+- 主仓只把 **root 模块** pin 到 `v0.0.1-143.0.7499.109-2.0.20261020055023-fd2f25825e4f`；`all` 与 29 个 `lib/*` 不动（只改了 Go 侧）。`go.sum` 两条新条目，`go build` 通过。
 
-我核对了依赖仓：`Piggy-Cat-bit-shadow/cronet-go` 的 `main` 已到 `049f290`（"Fix Windows UDP socket close callback registration"），**领先我们 pin 的 `8c68ce8`**。正确做法是**从 pin 开分支**做最小改动（不是推到 main 顺带吸收未评审的提交），然后重新 pin root 模块（`all`/29 个 `lib/*` 不需要动，因为只改了 Go 侧）。
+**契约边界写进了方法注释**：`forceQUIC=false` ≠ 跨环境确定性 H2——`enable_quic=true` 的引擎仍可能因 Alt-Svc 缓存走 QUIC（cronet-go#11）；要硬保证只能关 Engine 级 QUIC。
 
-### 6.2 下一轮的精确设计（可直接执行）
+### 6.2 sing-box 侧：状态、分类、窗口
 
-**cronet-go 侧（约 30–50 行）**
+| 文件 | 内容 |
+|---|---|
+| `option/naive.go` | `quic_fallback_to_h2`（默认 false）；与 `quic:false` 同时出现 → **配置错误**，不是静默失效 |
+| `protocol/naive/failure.go` | `dialNaiveTunnelWithQUIC`；把两阶段拨号抽成 `prepareNaiveTunnel`，**成功或失败都先完成/终止握手**再返回 |
+| `protocol/naive/h3_fallback.go` | `h3Fallback`（attempt 序号 + claim/effect 同一临界区 + 30 s 窗口 + `reset()`）；`h3TransportFailure`；TCP 与 UoT 共用的 `dialNaiveWithH3Fallback` |
+| `protocol/naive/outbound.go` | 开关字段、构造期校验、TCP 分支、`InterfaceUpdated` 里 `h3Fallback.reset()`、`naiveDialer` 共享同一判定 |
+| `docs/configuration/outbound/naive.md` | 选项文档（含"这不是测速选路"的边界） |
+| `protocol/naive/h3_fallback_test.go` | 10 组测试，见下 |
 
-```go
-// 旧 API 行为不变
-func (c *NaiveClient) DialEarly(ctx context.Context, destination M.Socksaddr) (NaiveConn, error) {
-    return c.dialEarly(ctx, destination, c.quicEnabled)
-}
+**分类（`h3TransportFailure`）**：QUIC 协议/握手失败、refused、address unreachable、connection closed/reset、timeout → 允许降级；407/其它状态、caller cancel、非 NetError 的本进程 teardown → 不降级。
 
-// 新窄入口：per-dial 选择，不改 Engine 参数
-func (c *NaiveClient) DialEarlyWithQUIC(ctx context.Context, destination M.Socksaddr, quic bool) (NaiveConn, error) {
-    return c.dialEarly(ctx, destination, quic)
-}
+这里有一个**真实踩坑**：`cronet.NetError` 的 `Is()` 会把 `CONNECTION_CLOSED/RESET` 映射成 `net.ErrClosed`，所以如果先做 `adapter.IsOwnTeardown` 判断，一次死掉的 QUIC 尝试会被当成"我们自己关的"并**静默禁用重试**。实现的顺序是**先按 NetError 码分类，再做 teardown 判断**，测试 `connection_closed` / `connection_reset` 两行就是钉这个顺序的（它们先红后绿，是本轮唯一一次由测试抓出的实现错误）。
+
+**安全边界（不可放宽）**：
+
+- 只在**新 CONNECT 建立阶段**重试；`prepareNaiveTunnel` 保证 H3 那次已经握手完成或失败，才可能发起 H2，应用字节尚未交给任何连接。
+- 不迁移、不重放；cached 首包在 `Outbound.DialContext` 返回后才写出。
+- 407/其它状态/取消不重试。
+- 窗口 30 s（`h3FallbackWindow`，var 便于测试）；窗口内的并行失败**不延长**窗口（一次事件一次决策）；`InterfaceUpdated` 清零；旧 attempt 的迟到失败不能覆盖新成功。
+- **零额外 Engine**：两次尝试都在同一个 `*cronet.NaiveClient`（同 Engine）上，`enable_quic`/`enable_http2` 从未改变。
+
+### 6.3 端到端证据（本机真实 Native）
+
+场景：客户端 `quic:true, quic_fallback_to_h2:true`，服务端只开 TCP（UDP 端口无监听），同一 `mixed` inbound 走 curl。
+
 ```
-把 `-force-quic` 的追加从 `c.quicEnabled` 改为参数；`buildDialHeaders(dest, quic)` 抽成纯函数并加单测（无需 Native 库）。
-
-**sing-box 侧（约 120–180 行 + 测试）**
-
-插入点就是本轮新增的 `protocol/naive/failure.go::dialNaiveTunnel`：
-
-```text
-if !fallbackEnabled || !h.quic {
-    return dialNaiveTunnel(ctx, h.client, dest)          // 旧行为，默认路径
-}
-attempt := verdict.begin()
-if verdict.available() {
-    conn, err := dialNaiveTunnelWithQUIC(ctx, h.client, dest, true)   // 含 HandshakeContext
-    if err == nil { verdict.clear(attempt); return conn }
-    if ctx.Err() != nil || !isH3TransportFailure(err) { return nil, err }
-    verdict.markBroken(attempt)
-}
-return dialNaiveTunnelWithQUIC(ctx, h.client, dest, false)
+[0007 4.5s] outbound/naive[n]: stream failed: quic protocol error
+[0007 4.5s] outbound/naive[n]: handshake failed: quic protocol error
+[0007 4.5s] outbound/naive[n]: naive H3 attempt failed at the transport, retrying over HTTP/2: ...
+[0007 4.6s] outbound/naive[n]: response received, protocol: h2, status: 200
+[0007 4.6s] outbound/naive[n]: handshake succeeded
+--- 第二个请求（窗口已 armed）---
+[0007 1ms]  outbound/naive[n]: response received, protocol: h2, status: 200
 ```
 
-**判定核**（`protocol/naive/h3_fallback.go`，约 60 行）：复用 `transport/http/client.go` 的**算法**（不是代码，也不是第三个全局 verdict）：
+两次 `curl` 都是 **200**；第一次为 4.5 s 的 H3 失败 + H2 成功，第二次**直接 H2、1 ms**——这就是窗口的作用（不是每个连接都交 4 s 学费）。
 
-- `begin()` 在发起前取序号；
-- `claim(attempt)` 只接受更新的序号（CAS），保证旧 attempt 的迟到失败不覆盖新成功；
-- `markBroken(attempt)`：claim + 设置固定窗口（建议 30 s，可选配置），窗口内不再试 H3；
-- `clear(attempt)`：claim + 清零；
-- `InterfaceUpdated` 里与 `CloseAllConnections` 一起清零（现有回调，无需新代际 API）。
+同机另有一组对照（同一服务端、`quic_fallback_to_h2` 关闭、`quic:false`）：200，无 H3 尝试。
 
-**只有这些算 H3 传输失败**（`isH3TransportFailure`）：`{Handshake, Path}` 且不是超时；`cronet.NetError` 的 QUIC 协议/握手族。**407 / 其它状态 / 取消 / EOF / 超时一律不降级**。
+### 6.4 未覆盖（明确留给下一轮）
 
-**必须同时写的测试**（fake client，无需 Native）：UDP 拒绝与黑洞都降级一次、H3 成功、慢 200（ambiguous 不写 broken）、407 不降级、H2 也坏、caller cancel、网络切换竞态（-race）、Close 后 Dial、窗口到期复苏、cached 首包场景不重放、Alt-Svc 负向对照（同 Engine 连续 H3→H2→H3 的真实 negotiated protocol）。
-
-**默认值**：`quic_fallback_to_h2: false`；`quic:false` 与 `quic:true` 的现有语义完全不变；命名待按 `option/naive.go` 的相邻字段风格定稿。
-
-### 6.3 为什么这仍值得做（反方证据一并列出）
-
-- 反方：naiveproxy #669 维护者明确拒绝"同配置混用 HTTPS/QUIC"，主张由客户端指定协议；#756 作者也说 QUIC 不比 TLS 快。
-- 正方：轮子已经证明 forced-H3 在 UDP 被拒/黑洞时 4.0 s 失败且**不会**回落，而同端口 H2 6 ms 可用；这是**可用性**缺口，不是速度卖点。做成默认关闭的可选项，与维护者的"客户端控制"并不冲突。
+- **Alt-Svc 负向对照**：同 Engine 连续 H3→H2→H3 的真实 negotiated protocol 在"服务端广告 Alt-Svc"的第三方场景下未测；当前服务端不发 Alt-Svc，故实测是 H2。
+- **-race**：Windows 无 cgo/cronet 的 race 组合；判定核是 mutex + 原子序号，未在 race 下跑过。
+- 4.5 s 的 H3 预算是本机/本 Chromium 版本的观察值，不是 SLA；移动网络下的实际值与用户可接受度未测。
 
 ---
 
@@ -267,6 +261,8 @@ return dialNaiveTunnelWithQUIC(ctx, h.client, dest, false)
 | `e9a7cbcad` | `test(naive): pin that the padding region is zeros on the wire` |
 | `b3ee59151` | `docs(naive): state the real quic_congestion_control default` |
 | `1fb42b5f5` | `fix(naive): complete the CONNECT handshake and report failure facts` |
+| `fefb91f8a` | `docs(knowledge): archive the NaiveProxy deep audit of 2026-10-20` |
+| `0ef38b8ff` | `feat(naive): add opt-in H3 to H2 fallback`（含 cronet-go root 模块重新 pin） |
 | `84760a372` | `docs(naive): record the round-one performance and integration construction`（本报告） |
 | `df604e303` → 本提交 | 报告自身的 SHA/推送记录修正 |
 
@@ -275,11 +271,13 @@ return dialNaiveTunnelWithQUIC(ctx, h.client, dest, false)
 | 命令 | 结果 |
 |---|---|
 | `go test -tags "$(OTHERS)" ./protocol/naive/... ./transport/http/ ./common/httpclient/ ./protocol/group/ ./adapter/` | **PASS**（naive 0.35s / quic 0.04s / transport/http 25.3s / httpclient 0.02s / group 3.9s / adapter 0.7s） |
-| `go test -tags "$(WINDOWS)" ./protocol/naive/` | **PASS**（含新的 14 行 facts 矩阵 + 4 个 dial 测试 + 既有 dependency_pin 测试） |
+| `go test -tags "$(WINDOWS)" ./protocol/naive/ ./option/` | **PASS**（含 14 行 facts 矩阵、4 个 dial 测试、10 组回退测试、既有 dependency_pin 测试） |
+| cronet-go `go test -tags with_purego -run TestDialHeaders .` | **PASS**（3 条：client 默认 / per-dial 覆盖 / 保留头守卫） |
 | `go vet -tags "$(WINDOWS)" ./protocol/naive/` | **clean** |
 | `gofmt -l protocol/naive/` | **空** |
 | 变异验证（`WriteZeroN`→`Extend`） | **按预期变红**，恢复后绿 |
 | 端到端 407 / 200（真实 Native + 真实 sing-box 出站） | **407 变错误（curl 502）**；**200 正常** |
+| 端到端 H3→H2 回退（服务端无 UDP 监听） | **200**；第一次 4.5 s H3 失败后 H2 成功，第二次 1 ms 直接 H2 |
 | Native 运行时版本 | `154.0.8037.49` |
 | `-race` | **未跑**（Windows + cronet 的已知限制；P1 新增逻辑是纯分类与包装，无共享状态；并发测试留给第二份 Debug 在可用平台执行） |
 | macOS/iOS 构建 | `NOT_RUN`（无环境） |
@@ -335,7 +333,7 @@ return dialNaiveTunnelWithQUIC(ctx, h.client, dest, false)
 - **base SHA**：`11c4c1b27ff87a6ee686c9c1b578a333bbb726d4`
 - **施工 commits**：`e9a7cbcad`、`b3ee59151`、`1fb42b5f5`
 - **两个仓库最终 SHA**：sing-box = 推送后的 `testing` 头；cronet-go **未改**（仍 `8c68ce89873c876…`）
-- **触碰的真实函数**：`dialNaiveTunnel`、`naiveHandshakeFailureFacts`、`naiveResponseStatus`、`(*Outbound).DialContext`、`(*naiveDialer).DialContext`、`writeFrame`/`writeBufferWithPadding`/`writeChunked`（仅测试）
+- **触碰的真实函数**：`prepareNaiveTunnel`、`dialNaiveTunnel`、`dialNaiveTunnelWithQUIC`、`naiveHandshakeFailureFacts`、`naiveResponseStatus`、`h3Fallback.*`、`h3TransportFailure`、`dialNaiveWithH3Fallback`、`(*Outbound).DialContext`、`(*Outbound).InterfaceUpdated`、`(*naiveDialer).DialContext`、`writeFrame`/`writeBufferWithPadding`/`writeChunked`（仅测试）
 - **测试入口**：
   - `go test -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" ./protocol/naive/... ./transport/http/ ./common/httpclient/ ./protocol/group/ ./adapter/`
   - `CGO_ENABLED=0 go test -tags "$(cat release/DEFAULT_BUILD_TAGS_WINDOWS)" ./protocol/naive/`（需要 `libcronet.dll` 同目录时才真正加载 Native；纯分类测试不需要）
