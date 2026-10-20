@@ -75,19 +75,21 @@ max 1.50 ms）。`gather()`（`sb@5064f20a:transport/v2rayxhttp/conn.go:1066-108
 
 **结论四（真阳性，建议施工）：返回路径的分组在每次调用上分配，而有一个热调用者是逐包调用它。**
 `portReturn.ReturnPackets`（`sing-tun@a7bd7fac:flow_dispatch.go:941-971`）每次调用都新建
-`[]returnBatch` 并为每批新建 packet 切片。实测：
+`[]returnBatch` 并为每批新建 packet 切片。**本轮用真代码夹具（不是复刻）测出：**
 
-| 场景 | 时间 | 分配 |
-|---|---:|---|
-| 1 包 / 1 个 writeback（`protocol/bridge/backend.go:259` 的真实形状） | 166 ns | 168 B / 3 allocs |
-| 4 包 / 1 个 writeback | 165 ns | 168 B / 3 allocs |
-| 64 包 / 1 个 writeback | 1 097 ns | 3 432 B / 7 allocs |
-| 64 包 / 8 个 writeback | 2 265 ns | 3 136 B / 33 allocs |
+| 场景 | 时间 | 分配 | 说明 |
+|---|---:|---|---|
+| 1 包 / 1 个 writeback（`protocol/bridge/backend.go:259` 的真实形状） | 236–250 ns | **72 B / 2 allocs** | 两次分配全部来自分组本身 |
+| 64 包 / 1 个 writeback | 11 042–11 152 ns | 3 480 B / 8 allocs | 分组已被摊薄到 ~0.13 alloc/包 |
 
-注意 `slices.IndexFunc` 本身**不是**问题：`writeback` 的数量（B）在生产中通常就是 1
-（一个 stage 一个 writeback），所以那段索引在第一个元素上就命中。**成本全在分配上**，
+注意两点：**① `slices.IndexFunc` 不是问题**——`writeback` 的数量（B）在生产中通常就是 1
+（一个 stage 一个 writeback），索引在第一个元素上就命中；成本全在容器分配上。
+**② 真代码的 1 包耗时（236 ns）远高于纯分组复刻（166 ns）**，因为真路径还包含
+`parseForwardPacket` + `applyRewrite` + 校验和重算；所以这条候选的收益是**分配次数**，
+不是"每次调用省 166 ns"。
 而 `protocol/bridge` 的返回环是 `make([]byte, headroom+len(packet))` + 拷贝 +
-`[][]byte{buffer}`（`sb@5064f20a:protocol/bridge/backend.go:251-263`）——每包一次。
+`[][]byte{buffer}`（`sb@5064f20a:protocol/bridge/backend.go:251-263`）——每包一次，
+所以在这条路径上这 2 次分配是**每包**发生的。
 这是本轮唯一一个"改动局部、语义不变、有确定性数字"的 L1 候选（§6.1）。
 
 **结论五（真阳性，建议施工）：MASQUE L4 CONNECT-UDP 仍然走逐包复制的 DATAGRAM 路径。**
@@ -108,7 +110,7 @@ L4 **已经有**一个批处理 writer（`WriteConnectedPacketBatch`，`capsule.
 
 | 不要做 | 依据 |
 |---|---|
-| 给 `ForwardStage` 的端口查找加 map 索引 | 本批 K 通常为 1，实测 K=1 时线性 6.35 ns **快于** map 7.9 ns；且真正的问题是 `s.ports` 从不回收，不是查找算法（§7.1） |
+| 给 `ForwardStage` 的端口查找加 map 索引 | 真 `Flush` 实测：K=1 时 2.7 ns/包，K=64 时 25.7 ns/包，而 **K 的实际上界是 `min(已选端口数, 每批包数)`**（K=256 与 K=64 同值）；纯扫描复刻里 K=1 线性 6.35 ns 也**快于** map 7.9 ns（§7.1、§12.8） |
 | 用 timer/事件替换 XHTTP gather 轮询 | §1.2 结论二 |
 | 引入 TCP PacketTemplate / 第二套 TCP PacketGenerator | §1.2 结论一 |
 | 把 MASQUE 的 owned-batch 复制到 Hysteria2/TUIC | §1.2 结论三 |
@@ -372,14 +374,14 @@ func (r *portReturn) ReturnPackets(packets [][]byte) [][]byte {
 而 `protocol/bridge` 的返回环是**逐包**调用（`backend.go:255-259`：`make` 一个包缓冲 → 拷贝 →
 `[][]byte{buffer}` → `ReturnPackets`）。
 
-**实测（§12.4）**
+**实测（§12.4 与 §12.8，后者是真代码夹具）**
 
-| 场景 | ns/op | B/op | allocs/op |
-|---|---:|---:|---:|
-| 1 包 / 1 writeback（bridge 的真实形状） | 166 | 168 | **3** |
-| 4 包 / 1 writeback | 165 | 168 | 3 |
-| 64 包 / 1 writeback | 1 097 | 3 432 | **7** |
-| 64 包 / 8 writeback | 2 265 | 3 136 | 33 |
+| 场景 | 真代码 ns/op | 真代码分配 | 纯分组复刻 ns/op |
+|---|---:|---|---:|
+| 1 包 / 1 writeback（bridge 的真实形状） | 236–250 | **2 allocs / 72 B** | 166 |
+| 4 包 / 1 writeback | — | — | 165 |
+| 64 包 / 1 writeback | 11 042–11 152 | 8 allocs / 3 480 B | 1 097 |
+| 64 包 / 8 writeback | — | — | 2 265（复刻，未在真代码上构造） |
 
 **触发频率**　凡是"从代理侧往 TUN 写回"的包都走这里。`transport/device`（CONNECT-IP）
 按批调用；`protocol/bridge`、`transport/wireguard`、`protocol/tailscale` 按批或逐包调用
@@ -395,8 +397,8 @@ func (r *portReturn) ReturnPackets(packets [][]byte) [][]byte {
    共享 scratch 会引入新锁或数据竞争。
 3. `unconsumed := packets[:0]` 的复用语义保持不变。
 
-**预期收益**　常见路径 3 allocs → 0，168 B → 0；按 10 万包/秒的返回速率折算，
-约省 30 万次分配/秒、17 MB/s 的分配压力。**这是"降低 GC 压力"类收益，不是吞吐翻倍**，
+**预期收益**　常见路径 **2 allocs → 0、72 B → 0**（真代码夹具，§12.8）；按 10 万包/秒的返回速率折算，
+约省 20 万次分配/秒、7.2 MB/s 的分配压力。**这是"降低 GC 压力"类收益，不是吞吐翻倍**，
 所以必须以 `allocs/op` 与 GC 次数验收，不能以 MB/s 验收。
 
 **危险与回滚**　唯一危险是内联缓冲越界时误用；用 `append` 到内联切片即可避免。
@@ -502,9 +504,15 @@ K ≤ 配置中的 outbound/endpoint 数量——**有界，但会随订阅规�
 - 若存在"几百节点 load-balance + 频繁切换"的配置，按 `len(s.ports) > 32` 启用批内
   `map[*portNAT]int`（每批清空复用）是安全的，且**不改变输出顺序**（顺序由最终 for 循环保证）。
 
-**现在缺的证据**　生产 K 的分布。获取方式（不施工即可做）：在一次性工作副本里给
-`stagePort` 加一个 `map[*portNAT]struct{}` 计数并把 `len(s.ports)` 与每批 K 打到 `Trace` 日志，
-跑一天真实流量。**在没有这个分布之前，本项只能是 B。**
+**真代码夹具给出的同一结论（§12.8 第 3 项）**：直接跑真 `Flush`（64 包/次、0 分配）——
+K=1 时 **2.7 ns/包**，K=8 时 5.1，K=64 时 25.7，**K=256 时仍是 25.7**。
+最后一点是决定性的：一次 64 包的突发最多只触及 64 个不同端口，所以 K 的实际上界是
+`min(已选端口数, 每批包数)`——配置里写 256 个节点也不会让单次 Flush 扫 256 项。
+线性模型约为"每包每多一个条目 +0.36 ns"，与 §12.3 的纯扫描复刻（K=64 → 31.5 ns）吻合。
+
+**现在缺的证据**　生产里"一次突发到底跨几个 outbound"的分布。
+获取方式（不施工即可做）：在一次性工作副本里把每批实际触及的条目数打到 `Trace` 日志，跑一天真实流量。
+**在拿到这个分布之前本项只能是 B；而上面的真机数据已经说明它的收益上限很小。**
 
 **顺带一个更小、更确定的点**　`Flush` 结束后若某条目两个切片都为空，可以把它从 `s.ports` 删除
 （保持别的条目顺序），使 K 回到"活跃端口数"。这属于 5 行改动，但它和 6.1 一样需要
@@ -533,13 +541,21 @@ K ≤ 配置中的 outbound/endpoint 数量——**有界，但会随订阅规�
 - 语义上 AC **完全等价**：该 item 的语义是"任一关键词是 host 的子串"，
   这就是 AC 的 `any-match`，**不涉及规则顺序、不涉及最长匹配优先级**。
   这与"整个规则引擎"不同——这里没有"改顺序就改行为"的风险，只有"漏匹配"的风险。
-- 收益门槛：K=32 时 320 ns 换 ~100 ns（3×），K=128 时 13×，K=1024 时 100×。
+- 收益门槛（**本轮用两种 AC 原型实测，不是估算**，§12.8 第 4 项）：
+  **稠密转移表 AC 恒为 ~95 ns**（与 K 无关），线性扫描 K=8 → 77 ns、K=32 → 313、
+  K=128 → 1 305、K=1 024 → 11 100。**交叉点在 K≈16–32**（K=8 时线性仍更快）。
+- **布局决定一切**：`map[byte]int32` 边的 AC 在 K≤32 时**慢于** `strings.Contains`
+  （826–968 ns），因为它每字节做一次 map 哈希。照搬"AC 一定更快"的直觉会在小 K 配置上倒退。
+- **内存是真正的约束**：稠密表 1 KiB/节点，K=1 024 要 **2.19 MB 常驻**、构建期 10.6 MB 累计分配；
+  Anywhere 用的 CSR（每边 4 B）+ 扁平列同规模约 17 KB。**要移植就移植 CSR 布局，不要稠密表。**
+- 构建成本一次性：K=128 → 0.53–0.59 ms，K=1 024 → 3.5–3.8 ms（配置加载期，可接受）。
 - **触发频率才是关键**：该 item 只在同一条规则的 `domain`/`domain_suffix` 匹配失败后才跑
   （`matchAnyItem` 短路，`route/rule/rule_abstract.go:126-131,266-270`）。手机端连接速率
-  几十/秒时，K=1024 也只有 0.5 ms/s；但**服务器端或"每连接都重扫"的场景**会放大到可观比例。
+  几十/秒时，K=1 024 也只有 0.5 ms/s；但**服务器端或"每连接都重扫"的场景**会放大到可观比例。
 
 **现在缺的证据**　(a) 真实配置里 `domain_keyword` 的 K 分布；(b) 单位时间规则评估次数。
-两者都可以用 trace 日志在不改语义的前提下采集。**没有这两个分布，本项是 B 而不是 A。**
+两者都可以用 trace 日志在不改语义的前提下采集。**没有这两个分布，本项是 B 而不是 A**——
+而且如上，K≤8 时做 AC 是**净倒退**。
 
 **另一个必须同时修的小问题（见 §9.2）**　关键词没有小写化，配置里写 `Google` 永远不匹配。
 
@@ -739,7 +755,7 @@ for index := range len(first) {
   "大写关键词必须匹配小写 host" 的 Red→Green 测试。注意这会改变行为
   （此前不匹配的规则开始匹配），必须写进 changelog，不能当成纯内部重构。
 
-### 9.3 R3-3：`ForwardStage.Flush` 在持有 stage 锁时可能阻塞（活性风险，需确定性复现）
+### 9.3 R3-3：`ForwardStage.Flush` 在持有 stage 锁时可能阻塞（**已确定性复现**）
 
 **事实链（全部为源码确认）**
 1. `Flush` 在 `s.access` 保护下调用 `bufferPort.WritePacketBuffers(staged.buffers)`
@@ -758,20 +774,31 @@ for index := range len(first) {
 在 gVisor 模式下 `Flush` 是**逐包**调用（`sing-tun@a7bd7fac:stack_gvisor_filter.go:74-75`），
 锁的进出频率也更高。
 
-**为什么是 R 而不是已确认 Bug**　本轮**没有**构造出确定性复现（需要"发送队列满 + 同时 Close"的
-可控夹具），也没有 profile 证明它在真实负载下发生过。按本仓库的规则，这属于
-`SUSPICIOUS / VERIFIED_SOURCE_ONLY`，不能写成"已确认死锁"。
+**已构造确定性复现（§12.8，真代码夹具，非推理）**
 
-**下一轮最小复现计划**
-1. 用一个假 `PacketBufferPort`，其 `WritePacketBuffers` 在 channel 上阻塞；
-2. 一个 goroutine 反复 `Dispatch`+`Flush`，另一个在 100 ms 后 `Close`；
-3. 断言 `Close` 的返回时间有上界（例如 < 2 s），并记录 `s.access` 的等待时长；
-4. 再换 `-race` 与 `-count=100` 复跑，确认不是调度偶然。
-**只有第 3 步失败**（Close 被无限期挂住）才升级为 P1；否则记录为"已知的锁跨 I/O"即可。
+用一个假 `PacketBufferPort`，它的 `WritePacketBuffers` 在 channel 上阻塞（模拟 quic-go 在
+32 帧满时的 `Add`/`AddBatch`），然后：
+
+1. goroutine A：`stage.Flush()`（进入阻塞的 `WritePacketBuffers`）；
+2. goroutine B：`dispatcher.Close()`；
+3. **实测结果：`Close` 在 300 ms 后仍未返回**（A 正在端口调用里阻塞）；
+4. 一旦释放端口，`Flush` 立即返回，`Close` 在 **301.24 ms** 完成（即它等满了整个阻塞期）。
+
+也就是说：**`ForwardStage.access` 确实被跨在 `PacketBufferPort.WritePacketBuffers` 上，
+`Close`/`Dispatch`/`sweep` 会被下游阻塞原样拖住。** 三条源码事实（锁下调用、quic-go 队满阻塞、
+capsule 回退的流控写）由此从"链路上可能"变成"已测到"。
+
+**它仍然不是死锁**：连接关闭会 `close(h.closed)` 让 `AddBatch` 返回；夹具里释放端口后
+`Close` 立刻完成。所以正确的定级是 **P0 风险（阻塞无上界）而非产品缺陷**：
+阻塞时长由拥塞/对端读取决定，没有本地上界。
+
+**为什么仍是 R 而不是 Bug**　复现证明的是"锁被持有到下游返回"，不是"生产里已经发生长阻塞"。
+真实触发需要发送队列满（32 帧）或对端停止读取 capsule；本轮**没有**在真实 QUIC 连接上
+把队列打满并测量过。所以结论是：**耦合已证实，发生频率未证实**。
 
 **可能的修法（本轮只写条件，不实施）**　在锁下把批次摘出并把条目状态置为 `in-flight`，
 锁外写入；`Close` 只释放仍归自己所有的未移交缓冲。**最危险的是 exactly-once 与有序写入**，
-所以门槛是：先有上面第 3 步的红灯，再谈改动。
+所以门槛是：先有一份真实拥塞下的阻塞时长分布（不只是夹具里的 300 ms），再谈改动。
 
 ### 9.4 R3-4：规则集"内存先发布、磁盘后写"的窗口（记录，不建议改）
 
@@ -923,6 +950,8 @@ n = 2000/轮，目标睡眠 50 µs。**结论：请求 50 µs，实际 ~518 µs�
 
 ### 12.3 M3 — `stagePort` 线性扫描 vs map
 
+> 这是**按源码语义复刻**的微基准；真代码的同题测量在 §12.8 第 3 项（结论一致、量级吻合）。
+
 复刻 `flow_dispatch.go:692-706` 的指针比较循环（`[]stagedPort`，每项 56 B）：
 
 | K | 线性 ns/op | map ns/op | 分配 |
@@ -938,6 +967,10 @@ n = 2000/轮，目标睡眠 50 µs。**结论：请求 50 µs，实际 ~518 µs�
 （3 轮，逐轮列出以体现稳定性；`-benchtime` 默认，`-count 3`。）
 
 ### 12.4 M4 — `ReturnPackets` 的分组分配
+
+> 这是**纯分组复刻**（不含 parse/rewrite）；真代码的同题测量在 §12.8 第 2 项：
+> 1 包 = **2 allocs / 72 B / 236 ns**，64 包 = 8 allocs / 3 480 B / 11.0 µs。
+> 复刻只用来把"分组"这一件事单独隔离出来。
 
 复刻 `flow_dispatch.go:941-971` 的 `slices.IndexFunc` + `append` 结构：
 
@@ -990,12 +1023,88 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench \
 结果见 §10.6 的表。**限定**：sink 是进程内 mock，不含 quic-go 队列、TLS、内核与真实 RTT，
 因此**不能**用它证明或否定 batch 的端到端收益；它只证明"mock 下无收益 + 多 1 次分配"。
 
-### 12.8 未执行（NOT_RUN）
+### 12.8 真代码夹具（收尾实测：R3-3 / 返回路径 / K 扫描 / 关键字候选）
+
+此前的 §12.3/§12.4 是"按源码语义复刻"的微基准。收尾阶段补做了**直接跑真实实现**的夹具：
+模块 `C:\tmp\r3real`（仓库外，`go.mod` 直接复制本仓库的完整 require/replace 图，
+因此依赖版本与生产完全一致），实例化真实的
+`tun.NewForwardDispatcher` + `ForwardStage`，配合假的 `Handler`/`Port`/`PacketBufferPort`/
+`ForwardWriteback`，用 `gtcpip/header` 构造合法的 IPv4/UDP 包。**主仓库未改动一个字节。**
+
+**(1) R3-3：`Flush` 持锁跨越阻塞端口调用（确定性复现）**
+
+```
+=== RUN   TestFlushBlocksUnderLock
+    MEASURED: Close still blocked after 300ms while WritePacketBuffers blocks; Stage.access IS held across the port call
+    MEASURED: Close completed 301.2366ms after the port was released
+--- PASS
+```
+
+即：端口阻塞期间 `Close()` 不返回；端口释放后它立刻返回（301 ms ≈ 整个阻塞期）。
+**这是本轮从"源码推理"升级为"实测"的唯一一条**，也是 §9.3 定级为 P0 风险的依据。
+
+**(2) 真 `ReturnPackets` 的分配**
+
+| 形状 | 时间 | 分配 |
+|---|---:|---|
+| 1 包 / 1 writeback | 236.3 / 239.8 / 249.5 ns | **72 B / 2 allocs**（三轮一致） |
+| 64 包 / 1 writeback | 11 042 / 11 071 / 11 152 ns | 3 480 B / 8 allocs |
+
+两次分配就是 `[]returnBatch` 与那个 batch 的 `packets` 切片；64 包时摊薄到 0.125 alloc/包。
+**注意**：1 包的真实耗时（236 ns）远高于纯分组复刻（166 ns），差额是
+`parseForwardPacket` + `applyRewrite` + 校验和；所以这条候选的收益是**分配**，不是时间。
+
+**(3) 真 `Flush` 的 K 扫描成本**（每次 Flush 前预置 64 个包，只计 Flush；0 allocs）
+
+| 该 stage 内的端口条目 K | Flush ns/op | 折算每包 | 相对 K=1 |
+|---:|---:|---:|---:|
+| 1 | 171.8 / 173.6 / 174.2 | 2.7 ns | 1× |
+| 8 | 321.5 / 322.9 / 331.3 | 5.1 ns | 1.9× |
+| 64 | 1 625 / 1 654 / 1 661 | 25.7 ns | 9.5× |
+| 256 | 1 636 / 1 646 / 1 648 | 25.7 ns | 9.5× |
+
+**读法**：K=256 与 K=64 相同，因为一次 64 包的突发最多只触及 64 个不同端口，
+这直接印证了 §7.1 的结论——**K 的上界是 `min(已选端口数, 每批包数)`**。
+线性模型约为"每包每多一个端口条目 ≈ +0.36 ns"，即 K=64 时每包多 ~23 ns。
+对照 §12.3 的纯扫描复刻（K=64 时 31.5 ns），两者吻合，说明**夹具没有引入额外开销**。
+
+**(4) 关键字匹配：Aho–Corasick 原型（两种布局）**
+
+同一 host（37 B、全部未命中），三种实现：
+
+| K | 线性 `strings.Contains` | AC（`map` 边） | AC（稠密 `[]int32` 表） | 稠密表内存 |
+|---:|---:|---:|---:|---:|
+| 8 | **77 ns** | 826 ns | 87 ns | 63 KB / 62 节点 |
+| 32 | 313 ns | 968 ns | **94 ns（3.3×）** | 160 KB / 156 节点 |
+| 128 | 1 305 ns | 952 ns（1.4×） | **95 ns（13.7×）** | 356 KB / 348 节点 |
+| 1 024 | 11 100 ns | 968 ns（11×） | **95 ns（117×）** | 2.19 MB / 2 134 节点 |
+
+- **交叉点在 K≈16–32**（K=8 时线性仍更快）。
+- **布局决定一切**：`map[byte]int32` 边的 AC 在 K≤32 时**慢于** `strings.Contains`
+  （每字节一次 map 哈希），这正是"Go 里照搬 Swift 的 CSR 之前必须测"的证据。
+- **内存是真正的约束**：稠密表 1 KiB/节点，K=1024 要 2.19 MB；构建设施实测
+  K=128 → 0.53–0.59 ms / 1.97 MB 累计分配，K=1024 → 3.5–3.8 ms / 10.6 MB 累计分配。
+  Anywhere 用的是 **CSR（每边 4 B）+ 扁平列**，同规模约 17 KB——**若要移植，必须移植它的布局，
+  而不是稠密表**。
+- 两种实现都通过了等价性测试（`TestACEquivalence` / `TestDenseACEquivalence`：
+  同一批 host 上 AC 与线性结果一致，包括"最后一条关键词命中"的用例）。
+
+**(5) 夹具顺带暴露的两个契约尖角（不是 Bug，但会影响未来的测试与复用）**
+
+1. `Flush` 在 `WritePackets` 返回后立刻 `clear(staged.packets)`（`flow_dispatch.go:796-797`），
+   所以**普通 `Port` 拿到的是借用视图**：调用返回后再读那些字节会看到 nil。
+   这与 B1 的 owned 契约相反，写测试时必须深拷贝（本轮夹具第一次就踩到了，返回空包）。
+2. `ReturnPackets` **就地重写**包头，而且这个重写**不幂等**：首次调用把目的地址改成
+   *原始客户端*，同一缓冲区再喂一次就匹配不到 flow、被当作 unconsumed 返回。
+   真实流量里每个线包都是新的，所以**不是 Bug**；但它意味着"部分失败后用同一缓冲重试"
+   这条路走不通，任何重试逻辑都必须重新构造包。
+
+### 12.9 未执行（NOT_RUN）
 
 | 想测但没测 | 原因 |
 |---|---|
 | 真实 TUN 上的 K 分布与每批包数 | 需要真实流量 + instrumented 构建；本轮禁止改生产源 |
-| `WritePacketBuffers` 在拥塞下的实际阻塞时长 | 需要可控的"队列满"夹具；本轮只有源码契约（§9.3） |
+| 真实 QUIC 拥塞下 `WritePacketBuffers` 的阻塞**时长分布** | 夹具只能证明"耦合"（§12.8 第 1 项，301 ms）；打满真实 32 帧队列需要可注入的拥塞对端 |
 | L4 CONNECT-UDP owned 前后的 `payloadcopies/op` | 需要改代码才能 A/B；本轮不施工 |
 | 真机内存/能耗/`phys_footprint` | 无设备 |
 | 真实 WAN 吞吐/p99 | 无受控对端与网络 |
@@ -1126,6 +1235,9 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench \
 | 10 | `route/rule/rule.go` 存在（提示词与常识默认） | 不存在；引擎在 `rule_default.go`/`rule_abstract.go`/`route/route.go` | 目录实况 |
 | 11 | `reserveNewRequest` 是 XHTTP 的机制 | XHTTP 没有这个名字；`transport/http` 的 H2 里有同名概念，与 XHTTP 无关 | 全仓库 grep 只命中 `transport/http/client_h2*.go` |
 | 12 | MASQUE 每个 session 独立发送队列 | 同一 H3 连接上的所有 session **共享**一个 32 帧 DATAGRAM 发送队列；一个 session 打满会阻塞另一个的 `Add` | `quic-go:datagram_queue.go:15,61-89`；`session` 只持有 `quic.Conn` |
+| 13 | 复刻微基准足以代表真代码 | 复刻只隔离"分组"：166 ns/3 allocs；真代码 236 ns/**2 allocs**（含 parse+rewrite+校验和）。结论方向对，绝对数字必须用真代码 | §12.4 vs §12.8 第 2 项 |
+| 14 | Aho–Corasick 一定比 `strings.Contains` 快 | `map` 边的 AC 在 K≤32 时**更慢**（826–968 ns vs 77–313 ns）；只有稠密表/CSR 才在 K≥16–32 胜出，且稠密表每节点 1 KiB | §12.8 第 4 项 |
+| 15 | `ReturnPackets` 可以在部分失败后用同一缓冲重试 | 它**就地重写**包头且**不幂等**：首次调用把目的地址改成原始客户端，再喂同一缓冲会变成 unconsumed | §12.8 第 5 项 |
 
 **第 12 条值得单独说**：这是一个**没有被任何测试覆盖**的跨 session 耦合
 （`transport/masque` 的隔离测试用的是假 stream）。它不是本轮候选，但应列入下一轮
@@ -1147,7 +1259,7 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench \
 | 6 | B3-2 | `domain_keyword` AC | 中（K≥128 时） | 中（实测曲线，缺频率） | 中（漏匹配风险） | 中 | **B / 先测分布** |
 | 7 | B3-3 | retired Fake-IP 快照 | 低–中 | 低（未 profile） | 中（错拒绝） | 低 | **B** |
 | 8 | B3-4 | PreMatch/matchRule 去重 | 中 | 低（未 profile） | **高** | 高 | **B / 最谨慎** |
-| 9 | R3-3 | Flush 锁跨阻塞 | 未知 | 中（源码链完整，无复现） | **高（活性）** | 高 | **R / 先复现** |
+| 9 | R3-3 | Flush 锁跨阻塞 | 未知 | **高（已确定性复现：Close 被拖住 301 ms）** | **高（活性）** | 高 | **R / 需真实拥塞分布再改** |
 | 10 | — | XHTTP gather timer 化 | ~0 | **高（实测否决）** | — | 中 | **D** |
 | 11 | — | TCP PacketTemplate | ~0.3–0.5 % 单核 | **高（实测否决）** | 高 | 高 | **D** |
 | 12 | — | HY2/TUIC batch | ~0 | **高（假前提）** | — | 中 | **D** |
@@ -1172,7 +1284,7 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench \
 | 并发 | `-race` 全量 | `BLOCKED_BY_ENVIRONMENT`（`CGO_ENABLED=0`，无 cgo 工具链） |
 | 构建 | `with_quic`/`with_low_memory`/iOS tags 的完整套件 | `NOT_RUN`（候选未施工，无需跑） |
 | 测量 | 生产 K 分布、规则评估频率、`retiredFakeIPAddress` 占比 | `NOT_RUN`（需 instrumented 构建或 profile） |
-| 测量 | `WritePacketBuffers` 拥塞阻塞时长 | `NOT_RUN`（需夹具） |
+| 测量 | 真实 QUIC 拥塞下的阻塞时长分布 | `NOT_RUN`（耦合已用夹具复现，时长分布未测） |
 | 交叉 | Xray/官方 AnyTLS/Naive/Mieru 参考实现的互通矩阵 | `NOT_RUN`（本轮不涉及行为变更） |
 | 数据 | 所有 `RECORDED_HISTORY` 数字（XHTTP 26.1–27.8 MB/s、MASQUE "mean ~4"） | 未复测，按"仓库记录值"引用 |
 

@@ -29,7 +29,7 @@ findings that were not in the brief at all.
 
 | Verdict | Item | Why |
 |---|---|---|
-| **A — build next round** | `portReturn.ReturnPackets` allocates a grouping slice on every call, and `protocol/bridge` calls it **once per packet** | 166 ns / 168 B / 3 allocs per returned packet, measured; the same function's 64-packet batch costs 3 432 B / 7 allocs |
+| **A — build next round** | `portReturn.ReturnPackets` allocates a grouping slice on every call, and `protocol/bridge` calls it **once per packet** | real-code harness: 2 allocs / 72 B for the one-packet shape (236 ns), 8 allocs / 3 480 B for 64 packets; both allocations are the grouping itself |
 | **A — build next round** | MASQUE L4 CONNECT-UDP still copies every DATAGRAM payload, while CONNECT-IP has the owned path | `transport/http/capsule.go:572-586,978-1005` (copying `SendDatagram`) vs `client_h3.go:511-552`; the batch writer at `:954-971` already amortises the lock but not the copy, and `FrontHeadroom()` = 6 where owned needs 9 |
 | **B — measure first** | `ForwardStage.ports` is append-only for the stage's lifetime, so the linear scan is O(cumulative outbound count), not O(per-batch) | measured 6.4 ns (K=1) → 31.5 ns (K=64) → 85 ns (K=256) per staged packet; production K unknown |
 | **B — measure first** | `domain_keyword` is a bare `strings.Contains` loop | measured 9.9 ns at 1 keyword → 11.3 µs at 1 024; Aho–Corasick would be ~100× at K≥128 but typical K is unknown |

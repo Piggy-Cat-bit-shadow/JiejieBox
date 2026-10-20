@@ -51,7 +51,8 @@ Mieru 的 fallback 默认关闭。没有任何一侧被本文写成"存在"而�
 2. **L4 CONNECT-UDP 接入 owned DATAGRAM**（`transport/http`，L2）——把 CONNECT-IP 已验证的
    `SendDatagramOwned`/`SendDatagramsOwned` 接到 L4；需要把 `FrontHeadroom` 从 6 提到 9。
 3. **`domain_keyword` 关键词小写化 +（有条件时）AC 自动机**——前者是 3 行正确性修复（大写关键词
-   永不匹配），后者在 K≥128 时有 10× 以上收益，但**必须先拿到 K 分布**。
+   永不匹配）；后者实测**稠密表在 K≥32 时才有 3× 以上收益、K=8 时反而更慢**，且稠密表 1 KiB/节点
+   （K=1 024 → 2.19 MB），**必须用 CSR 布局**并先拿到 K 分布。K≤8 的配置做了就是净倒退。
 
 ### 强烈建议不要动的 3–5 项
 
@@ -76,6 +77,10 @@ Mieru 的 fallback 默认关闭。没有任何一侧被本文写成"存在"而�
 - **空白**（`NOT_TESTED`）：真实 WAN 的 p95/p99、移动端内存/能耗、Cronet 的 native CPU/RSS、
   MASQUE 与真实独立对端的互通、Mieru 与官方 `mieru`/`mita` 的当前版本互通、
   `-race`（本机无 cgo）、以及任何"施工前后"的 A/B（本轮禁止施工，**不存在**本轮自测的收益数据）。
+- **收尾补充（真实代码夹具）**：数据面本体的两项关键数字——`ReturnPackets` 的分配与
+  `Flush` 的 K 扫描——已用**真实 `ForwardDispatcher`** 而非复刻测得（§2.5.1）；
+  `Flush` 持锁跨越阻塞端口调用的**因果关系**也已确定性复现（同上）。仍缺的是这些成本的
+  **真实拥塞/真实流量分布**。
 
 ---
 
@@ -425,6 +430,27 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench 'BenchmarkPaddingWrite|BenchmarkP
 | TCP 段头编码（1 400 B 全量 vs 字节模板） | 62.4 vs 31.9 ns | TCP PacketTemplate 的收益上界 |
 | 1 400 B payload 校验和 | 19.8 ns（≈ 70 GB/s） | 说明模板消不掉的部分有多大 |
 | `domain_keyword` 线性扫描（K=1/32/1 024） | 9.9 / 320 / 11 300 ns | AC 的收益门槛 |
+| 稠密表 Aho–Corasick（K=8/32/128/1 024） | **87 / 94 / 95 / 95 ns**（与 K 无关） | 交叉点 K≈16–32；K=1 024 时 117× |
+| `map` 边 Aho–Corasick（K=8/32/128/1 024） | 826 / 968 / 952 / 968 ns | **布局决定一切**：小 K 时慢于线性 |
+| AC 构建（K=128 / K=1 024） | 0.53–0.59 ms / 3.5–3.8 ms；稠密表 356 KB / **2.19 MB** 常驻 | 移动端必须用 CSR，不能照搬稠密表 |
+
+**真代码夹具（收尾补充，§2.5.1）**：上面最后四行以及 R3-3 的复现，都来自
+`C:\tmp\r3real`——一个直接复制本仓库完整 `require`/`replace` 图的外部模块，
+实例化**真实的** `tun.NewForwardDispatcher` / `ForwardStage`，用假 `Port`/`PacketBufferPort`
+驱动，用 `gtcpip/header` 构造合法 IPv4/UDP 包。主仓库零改动。
+
+#### 2.5.1 真代码夹具的结果（不是复刻）
+
+| 项 | 结果 |
+|---|---|
+| 真 `ReturnPackets`（1 包，`protocol/bridge` 的形状） | 236.3 / 239.8 / 249.5 ns，**72 B / 2 allocs** |
+| 真 `ReturnPackets`（64 包） | 11 042 / 11 071 / 11 152 ns，3 480 B / 8 allocs |
+| 真 `Flush`（64 包/次，0 allocs）K=1 / 8 / 64 / 256 | 171.8–174.2 / 321.5–331.3 / 1 625–1 661 / 1 636–1 648 ns |
+| 折算每包 | **2.7 / 5.1 / 25.7 / 25.7 ns** |
+| R3-3 活性复现 | 端口阻塞期间 `Close()` 300 ms 不返回；释放后 **301.24 ms** 完成 |
+
+K=256 与 K=64 同值这一条是本轮对"K 会随节点数爆炸"的直接否证：
+**一次 64 包的突发最多触及 64 个端口**，所以线性扫描的上界是 `min(已选端口数, 每批包数)`。
 
 ### 2.6 必须并列的历史记录（未复测）
 
@@ -483,7 +509,12 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench 'BenchmarkPaddingWrite|BenchmarkP
 - **不变量**：staged buffer 的"移交后绝不回看"、Flush 与 Close 的串行、包顺序。
 - **预期收益**：只有消除"关机/切网被拥塞拖住"这一类体验问题，**没有吞吐收益**。
 - **证伪与验收**：假 `PacketBufferPort` 阻塞 + 并发 `Close`，断言 `Close` 有界返回。
-- **级别**：P0（风险等级）/ 证据 `VERIFIED_SOURCE`，活性 `NOT_TESTED`。**建议：INVESTIGATE。**
+- **本轮已完成复现（收尾补充）**：`C:\tmp\r3real` 里用真实 `ForwardDispatcher` + 阻塞的
+  `PacketBufferPort` 跑出——**`Close()` 在 300 ms 后仍未返回；释放端口后 301.24 ms 完成**。
+  即"锁被持到下游返回"已从推理变成实测（详见 round3 报告 §12.8 第 1 项）。
+- **仍未测**：真实 QUIC 拥塞下这个阻塞的**时长分布**（需要在真实连接上把 32 帧队列打满）。
+- **级别**：P0（风险等级）/ 证据 `VERIFIED_SOURCE` + **活性 `MEASURED_LOCAL`（耦合已证实）**。
+  **建议：INVESTIGATE（下一步是拥塞时长分布，不是改锁）。**
 
 ### 3.2 Q2（P2，A 类）：返回路径的每次调用分配
 
@@ -497,6 +528,9 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench 'BenchmarkPaddingWrite|BenchmarkP
 - **方案 A**：栈上内联 `[2]returnBatch` + 每批内联小缓冲，超出退化。
 - **预期收益**：GC 压力下降；**不是**吞吐提升。
 - **证伪**：若 `allocs/op` 仍 >0，说明内联数组逃逸，方案失败。
+- **真代码实测（收尾补充）**：1 包 = **72 B / 2 allocs**（236 ns），64 包 = 3 480 B / 8 allocs
+  （11.0 µs）。两次分配就是 `[]returnBatch` 与那个 batch 的 packet 切片，**全部来自分组本身**；
+  时间上 1 包的 236 ns 主要花在 parse/rewrite，所以这条候选的收益是**分配次数**而非吞吐。
 - **级别**：P2。**建议：CHANGE_LATER（可与下一次 sing-tun pin 合并）。**
 
 ### 3.3 Q3（P2，A 类）：MASQUE L4 缺 owned DATAGRAM
@@ -664,7 +698,7 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench 'BenchmarkPaddingWrite|BenchmarkP
 | 1 | `ReturnPackets` 去分配 | 改动 1 个函数、语义不变、已实测 | `allocs/op == 0` + 顺序断言 |
 | 2 | `domain_keyword` 小写化 | 3 行、正确性 | 大写关键词 Red→Green |
 | 3 | MASQUE L4 owned | 同仓库已验证机制漏接 | `payloadcopies/op` + 混合批次顺序 |
-| 4 | `Flush` 锁阻塞复现 | 唯一 P0 风险 | Close 有界返回 |
+| 4 | `Flush` 锁阻塞**时长分布** | 唯一 P0 风险；耦合已复现（301 ms），只剩频率 | 真实拥塞下 `WritePacketBuffers` 的 p95/p99 阻塞 |
 | 5 | 共享 DATAGRAM 队列的多 session 隔离测试 | 未覆盖的公平性 | 两 session p99 |
 
 **如果只做一件**：做 1。**如果只做一件有产品感知的**：做 3。
@@ -794,9 +828,19 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench 'BenchmarkPaddingWrite|BenchmarkP
 
 ## 附录
 
-### A. Q1（`Flush` 锁）的确定性复现计划
+### A. Q1（`Flush` 锁）：已执行的确定性复现
 
-本轮**没有**执行（会需要 instrumented 构建或假 Port），计划如下，供下一轮直接照做：
+**状态：第 1–5 步已在仓库外的一次性模块 `C:\tmp\r3real` 中执行完毕**（假 `PacketBufferPort`
+的 `WritePacketBuffers` 在 channel 上阻塞，真实 `ForwardDispatcher` + `ForwardStage`）：
+
+```
+MEASURED: Close still blocked after 300ms while WritePacketBuffers blocks; Stage.access IS held across the port call
+MEASURED: Close completed 301.2366ms after the port was released
+```
+
+即：**耦合已被证实**（`Close` 等满了整个阻塞期），**发生频率仍未测**——真实触发需要发送队列满
+（32 帧）或对端停止读取 capsule。下面的第 6–7 步仍未做，也是"能不能升级为 P1"的唯一剩余门槛。
+原始计划保留如下，作为可复核的记录：
 
 1. 在**一次性工作副本**（不是主工作树）里写一个假 `tun.PacketBufferPort`：
    - `PacketHeadroom() = 9`
@@ -850,6 +894,10 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench 'BenchmarkPaddingWrite|BenchmarkP
 | `go test -run '^$' -bench 'BenchmarkDataplaneOutboundBatchSize$' -benchmem -benchtime 300x -count 3 ./transport/masque/` | PASS（见 §2.3） |
 | `go test -run '^$' -bench 'BenchmarkPaddingWrite\|BenchmarkPaddingRead\|BenchmarkHeadroom' -benchmem -benchtime 2000x -count 2 ./protocol/naive/` | PASS（见 §2.4） |
 | `go test`（`C:\tmp\r3probe`，7 组微基准 + 2 个计时探针） | PASS（见 round3 报告 §12） |
+| `go test -run 'TestReturnPacketsConsumes\|TestFlushBlocksUnderLock' -v ./...`（`C:\tmp\r3real`，真实 `ForwardDispatcher` + 假 Port） | PASS；`Close` 被拖住 301.24 ms |
+| `go test -run '^$' -bench 'ReturnPacketsReal\|FlushKPorts' ./...`（同上） | 2 allocs/72 B（1 包）；K=1/8/64/256 → 2.7/5.1/25.7/25.7 ns/包 |
+| `go test -run 'TestACEquivalence\|TestDenseACEquivalence' ./...` | PASS（AC 与线性在语料上一致） |
+| `go test -run '^$' -bench 'ACMisz\|DenseAC\|LinearMiss\|ACBuild\|DenseACBuild' ./...` | 稠密表 95 ns 恒定；`map` 边 826–968 ns |
 | `-race` 任何形态 | `BLOCKED_BY_ENVIRONMENT`（`CGO_ENABLED=0`，本机无 cgo） |
 | 六协议 E2E / 真实 WAN / 真机 | `NOT_TESTED` |
 
