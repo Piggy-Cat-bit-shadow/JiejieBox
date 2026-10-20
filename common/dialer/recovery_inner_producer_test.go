@@ -95,6 +95,7 @@ func TestLiteralRecoveryDoesNotWaitForTheLookupToFinish(t *testing.T) {
 		t.Fatal("the resolver returned but its exit signal was not observed")
 	}
 }
+
 // TestParallelNetworkRecoveryInnerLookupExitsWithTheFeed is the parallel chain:
 //
 //	DialParallelNetwork → feedRecoveryAsLateCandidates → recoverCandidates → LookupFamilies goroutine
