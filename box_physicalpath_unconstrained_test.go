@@ -73,11 +73,19 @@ func TestFinalReceivesTheResidualAndIsChargedWithIt(t *testing.T) {
 }`)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = unusable.Close() })
-	startErr := unusable.Start()
-	require.Error(t, startErr,
-		"nothing consumes udp, so udp reaches the TCP-only `final` and the configuration is unusable")
-	require.Contains(t, startErr.Error(), "cannot serve the udp flow",
-		"and the refusal must name the protocol that cannot be carried; got: "+startErr.Error())
+	startErr, warnings := startBoxCapturingWarnings(t, `{
+  "log": {"disabled": true},
+  "outbounds": [
+    {"type": "socks", "tag": "tcp-only", "server": "127.0.0.1", "server_port": 1080,
+     "version": "5", "network": "tcp"}
+  ],
+  "route": {"final": "tcp-only"}
+}`)
+	require.NoError(t, startErr,
+		"nothing consumes udp, so udp reaches the TCP-only `final` - a capability risk, not an "+
+			"unbuildable configuration: tcp is still served")
+	require.Contains(t, warnings, "cannot serve the udp flow",
+		"and the warning must name the protocol that cannot be carried; got:\n"+warnings)
 
 	// A terminating rule narrows the residual to tcp alone, and the same `final` is then legal.
 	usable, err := newBoxFromConfig(t, `{
@@ -151,15 +159,15 @@ func TestAnInvertedRuleProvesNothingAboutDelivery(t *testing.T) {
 	t.Cleanup(func() { _ = instance.Close() })
 }
 
-// TestAProvenNetworkIsRefusedDefinitelyAndNotLeftUnverified is the other half.
+// TestAProvenNetworkIsReportedDefinitelyAndNotLeftUnverified is the other half.
 //
 // The rule proves TCP reaches a network-blind selector, and one of that selector's members declares
-// udp-only. The verdict must be a definite refusal that names the member - never an "unknown", which
-// a reader can only interpret as "not checked".
-func TestAProvenNetworkIsRefusedDefinitelyAndNotLeftUnverified(t *testing.T) {
+// udp-only. The finding must be definite and name the member - never an "unknown", which a reader can
+// only interpret as "not checked" - while the configuration still starts for the flows it can serve.
+func TestAProvenNetworkIsReportedDefinitelyAndNotLeftUnverified(t *testing.T) {
 	t.Parallel()
 
-	instance, err := newBoxFromConfig(t, `{
+	startErr, warnings := startBoxCapturingWarnings(t, `{
   "log": {"disabled": true},
   "outbounds": [
     {"type": "socks", "tag": "dual", "server": "127.0.0.1", "server_port": 1080, "version": "5"},
@@ -173,18 +181,13 @@ func TestAProvenNetworkIsRefusedDefinitelyAndNotLeftUnverified(t *testing.T) {
     ]
   }
 }`)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = instance.Close() })
-
-	err = instance.Start()
-	require.Error(t, err,
-		"the route proves TCP reaches a selector that does not filter, so its udp-only member is "+
-			"reachable by a TCP flow and the configuration cannot work")
-	require.Contains(t, err.Error(), "udp-only",
-		"the refusal must name the member that cannot carry the flow")
-	require.Contains(t, err.Error(), "cannot serve the tcp flow",
+	require.NoError(t, startErr,
+		"the selector can still serve tcp through `dual`, so the proven mismatch is a warning")
+	require.Contains(t, warnings, "udp-only",
+		"the warning must name the member that cannot carry the flow")
+	require.Contains(t, warnings, "cannot serve the tcp flow",
 		"and it must state the definite reason rather than leaving the member unverified")
-	require.NotContains(t, err.Error(), "unknown",
+	require.NotContains(t, warnings, "unknown",
 		"a proven defect must not be reported as an unknown")
 }
 

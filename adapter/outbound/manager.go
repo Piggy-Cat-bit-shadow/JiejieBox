@@ -26,6 +26,10 @@ type Manager struct {
 	defaultOutbound         adapter.Outbound
 	defaultOutboundFallback func() (adapter.Outbound, error)
 	physicalPath            *physicalPathValidation
+	// logger receives the non-fatal validation findings. It is set by the Box through SetLogger so a
+	// warning is produced by the real start path with the normal log interface and level, rather
+	// than by a package-level sink.
+	logger log.ContextLogger
 	// deliveredNetworks is what the ROUTES proved can reach a tag: the networks of the routing
 	// rules that name it and constrain the network explicitly. A tag absent from the map has
 	// nothing proven about it, which is not the same as "nothing reaches it".
@@ -75,6 +79,17 @@ type physicalPathValidation struct {
 	// it is constructed later than this seam. Until then the dry run falls back to the static pair
 	// above, which is what an embedder that never calls the setter keeps.
 	authorityFor func(tag string) bool
+}
+
+// SetLogger installs the logger the reachable-leaf dry run reports non-fatal findings through.
+//
+// It is a setter rather than a constructor argument because the logger belongs to the Box, and the
+// manager is built before the logger factory exists on some embedder paths. A nil logger simply
+// means the non-fatal findings are not reported; it must never turn them into an error.
+func (m *Manager) SetLogger(logger log.ContextLogger) {
+	m.access.Lock()
+	m.logger = logger
+	m.access.Unlock()
 }
 
 // EnablePhysicalPathValidation installs the facts the reachable-leaf dry run needs beyond the
@@ -209,9 +224,22 @@ func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		// Box would be a second answer to the same question. box.go supplies only the facts the
 		// objects cannot report - see EnablePhysicalPathValidation.
 		if validation != nil {
-			err = m.validatePhysicalPaths(outbounds, validation, delivered)
-			if err != nil {
-				return err
+			pathReport, reportErr := m.validatePhysicalPaths(outbounds, validation, delivered)
+			if reportErr != nil {
+				return reportErr
+			}
+			// Fatal findings still refuse the start; capability findings are reported once and the
+			// start proceeds.
+			//
+			// A path that cannot carry one network is a risk about a FUTURE flow, not a reason the
+			// rest of the configuration cannot run: the runtime already fails that flow on its own.
+			// Missing members, identity collisions and unfulfillable declarations stay fatal - they
+			// make the configuration unbuildable, and starting would only move the failure later.
+			if fatalErr := pathReport.Err(); fatalErr != nil {
+				return fatalErr
+			}
+			if warningErr := pathReport.WarningErr(); warningErr != nil && m.logger != nil {
+				m.logger.Warn(warningErr)
 			}
 		}
 		return m.startOutbounds(scope, append(outbounds, common.Map(m.endpoint.Endpoints(), func(it adapter.Endpoint) adapter.Outbound { return it })...), startable)
@@ -234,7 +262,7 @@ func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 //
 // It is read-only: it dials nothing, resolves nothing, changes no selection and consumes no
 // rotation. See common/physicalpath for the model and the per-leaf contract.
-func (m *Manager) validatePhysicalPaths(outbounds []adapter.Outbound, validation *physicalPathValidation, delivered map[string][]string) error {
+func (m *Manager) validatePhysicalPaths(outbounds []adapter.Outbound, validation *physicalPathValidation, delivered map[string][]string) (physicalpath.Report, error) {
 	resolver := physicalpath.NewResolver(m.Outbound, physicalpath.Snapshot{}).
 		WithDomainResolvers(validation.resolverFor, validation.defaultConfig)
 	if validation.authorityFor != nil {
@@ -332,7 +360,7 @@ func (m *Manager) validatePhysicalPaths(outbounds []adapter.Outbound, validation
 		seenRoot[root] = true
 		rootReport, err := physicalpath.ValidateRoots(resolver, []adapter.Outbound{root}, m.endpoint, deliveredNetworksFor(delivered, root), validation.declarations)
 		if err != nil {
-			return err
+			return physicalpath.Report{}, err
 		}
 		report.Roots = append(report.Roots, rootReport.Roots...)
 		report.Nodes = append(report.Nodes, rootReport.Nodes...)
@@ -356,7 +384,7 @@ func (m *Manager) validatePhysicalPaths(outbounds []adapter.Outbound, validation
 			described[failure.Leaf] = true
 		}
 	}
-	return report.Err()
+	return report, nil
 }
 
 // deliveredNetworksFor reports the networks PROVEN to reach one root, or nil when nothing is.

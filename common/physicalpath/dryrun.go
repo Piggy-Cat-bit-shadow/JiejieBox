@@ -89,12 +89,36 @@ type HopCheck struct {
 // failure arrived through, the route says which selection steps led to it, the path says where in
 // the packet order it sits, the hop says the index, the leaf says what object it is, and the
 // reason says what is wrong with it.
+type FailureKind uint8
+
+const (
+	// FailureStructure is fatal: an object the configuration names does not exist, a tag resolves to
+	// two objects, or a route never reaches its far end. These make the configuration unbuildable or
+	// ambiguous rather than risky.
+	//
+	// It is the ZERO value on purpose: a future check that reports a failure without classifying it
+	// is refused rather than silently downgraded to a warning.
+	FailureStructure FailureKind = iota
+	// FailureCapability is the non-fatal kind: a flow COULD reach this object and this object
+	// cannot carry one of its networks. Nothing about the configuration is contradictory, no object
+	// is missing, and every other flow can still be served, so the start proceeds with a warning.
+	//
+	// The runtime still fails the affected flow exactly as before; the warning changes the startup
+	// verdict, not the forwarding behaviour.
+	FailureCapability
+	// FailurePromise is fatal: the configuration declares a behaviour (destination DNS ownership)
+	// that the named object cannot honour. Starting anyway would silently break the promise the user
+	// explicitly asked for.
+	FailurePromise
+)
+
 type Failure struct {
 	Root   string
 	Leaf   string
 	Route  string
 	Path   string
 	Hop    int
+	Kind   FailureKind
 	Reason string
 }
 
@@ -155,15 +179,58 @@ func (r Report) Leaves() []HopCheck {
 //
 // Every failure is reported rather than only the first: an operator fixing one broken member at a
 // time, one start at a time, is the experience this exists to remove.
+// Fatal returns the failures that must still refuse the start.
+func (r Report) Fatal() []Failure {
+	return r.byKind(false)
+}
+
+// Warnings returns the failures that are reported and then allowed through.
+func (r Report) Warnings() []Failure {
+	return r.byKind(true)
+}
+
+func (r Report) byKind(warn bool) []Failure {
+	var failures []Failure
+	for _, failure := range r.Failures {
+		if (failure.Kind == FailureCapability) == warn {
+			failures = append(failures, failure)
+		}
+	}
+	return failures
+}
+
+// Err renders the FATAL part of the report as a start error, or nil.
+//
+// Capability failures are deliberately excluded: they are reported as warnings by the caller and do
+// not stop the start. A caller that wants all of them uses Fatal and Warnings separately, which is
+// also what makes the split a property of the data rather than of a string comparison.
 func (r Report) Err() error {
-	if r.Reachable() {
+	fatal := r.Fatal()
+	if len(fatal) == 0 {
 		return nil
 	}
-	lines := make([]string, 0, len(r.Failures))
-	for _, failure := range r.Failures {
+	return E.New("unusable outbound path member(s):\n  ", strings.Join(failureLines(fatal), "\n  "))
+}
+
+// WarningErr renders the capability part as one message, or nil.
+func (r Report) WarningErr() error {
+	warnings := r.Warnings()
+	if len(warnings) == 0 {
+		return nil
+	}
+	return E.New("the following outbound paths cannot serve some flows; the configuration starts and "+
+		"those flows fail at run time exactly as before:\n  ", strings.Join(failureLines(warnings), "\n  "))
+}
+
+func failureLines(failures []Failure) []string {
+	if len(failures) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, len(failures))
+	for _, failure := range failures {
 		lines = append(lines, failure.String())
 	}
-	return E.New("unusable outbound path member(s):\n  ", strings.Join(lines, "\n  "))
+	return lines
 }
 
 // ValidateRoots runs the reachable-leaf dry run over an explicit set of roots.
@@ -282,6 +349,7 @@ func ValidateRoots(resolver *Resolver, roots []adapter.Outbound, endpoints Endpo
 				report.Failures = append(report.Failures, Failure{
 					Root:  root.Tag(),
 					Leaf:  group.Tag(),
+					Kind:  FailureCapability,
 					Route: routeUnder(reachable, root.Tag()),
 					Path:  routeUnder(reachable, root.Tag()),
 					Hop:   0,
@@ -403,6 +471,7 @@ func truncatedRouteFailure(resolver *Resolver, root adapter.Outbound, nodes []Pa
 			failures = append(failures, Failure{
 				Root:  root.Tag(),
 				Leaf:  node.Tag,
+				Kind:  FailureStructure,
 				Route: node.Route(),
 				Path:  node.Path(),
 				Hop:   node.Position,
@@ -425,6 +494,7 @@ func truncatedRouteFailure(resolver *Resolver, root adapter.Outbound, nodes []Pa
 	return []Failure{{
 		Root:  root.Tag(),
 		Leaf:  last.Tag,
+		Kind:  FailureStructure,
 		Route: last.Route(),
 		Path:  last.Path(),
 		Hop:   last.Position,
@@ -787,13 +857,14 @@ func decidedNetworks(networks []string) []string {
 // and it is used for one thing: the message must not claim a route proof that was never made. See
 // reachabilityClause.
 func validateNode(resolver *Resolver, hop PathNode, endpoints EndpointRegistry, requirement []string, requirementProven bool, declarations Declarations) []Failure {
-	failure := func(reason string) []Failure {
+	failure := func(kind FailureKind, reason string) []Failure {
 		return []Failure{{
 			Root:   hop.Root,
 			Leaf:   hop.Tag,
 			Route:  hop.Route(),
 			Path:   hop.Path(),
 			Hop:    hop.Position,
+			Kind:   kind,
 			Reason: reason,
 		}}
 	}
@@ -801,7 +872,7 @@ func validateNode(resolver *Resolver, hop PathNode, endpoints EndpointRegistry, 
 	//    matters: a group declared this member, so the failure would otherwise arrive at the first
 	//    switch to it rather than at start.
 	if hop.Outbound == nil {
-		return failure("the group declares this member but no outbound or endpoint with this tag " +
+		return failure(FailureStructure, "the group declares this member but no outbound or endpoint with this tag "+
 			"exists; the group would fail on the first switch to it")
 	}
 	// 2. The node can serve the networks required at its position.
@@ -814,9 +885,9 @@ func validateNode(resolver *Resolver, hop PathNode, endpoints EndpointRegistry, 
 	if len(requirement) > 0 {
 		networksCarried := networksOf(hop.Outbound)
 		if len(networksCarried) == 0 {
-			return failure("this outbound reports no network it can carry, so it cannot serve the " +
-				strings.Join(requirement, ",") + " flow routed through it (" +
-				requirementClause(missingNone, requirement, requirementProven) + ")")
+			return failure(FailureCapability, "this outbound reports no network it can carry, so it cannot serve the "+
+				strings.Join(requirement, ",")+" flow routed through it ("+
+				requirementClause(missingNone, requirement, requirementProven)+")")
 		}
 		// EVERY network in the requirement is checked before a verdict is reached, and the report
 		// names the ones this hop CANNOT carry.
@@ -838,10 +909,10 @@ func validateNode(resolver *Resolver, hop PathNode, endpoints EndpointRegistry, 
 			}
 		}
 		if len(missing) > 0 {
-			return failure("this outbound does not carry " + strings.Join(missing, ",") +
-				" (it carries " + strings.Join(networksCarried, ",") + ") and cannot serve the " +
-				strings.Join(missing, ",") + " flow routed through it (" +
-				requirementClause(missing, requirement, requirementProven) + ")")
+			return failure(FailureCapability, "this outbound does not carry "+strings.Join(missing, ",")+
+				" (it carries "+strings.Join(networksCarried, ",")+") and cannot serve the "+
+				strings.Join(missing, ",")+" flow routed through it ("+
+				requirementClause(missing, requirement, requirementProven)+")")
 		}
 	}
 	// 3. Endpoint participation and lifecycle ownership are coherent.
@@ -860,8 +931,8 @@ func validateNode(resolver *Resolver, hop PathNode, endpoints EndpointRegistry, 
 	if endpoints != nil {
 		registered, present := endpoints.Get(hop.Tag)
 		if present && registered != hop.Outbound {
-			return failure("this tag is claimed by BOTH an outbound and an endpoint in the endpoint " +
-				"manager, and they are different objects; the lookup resolves the outbound first, so " +
+			return failure(FailureStructure, "this tag is claimed by BOTH an outbound and an endpoint in the endpoint "+
+				"manager, and they are different objects; the lookup resolves the outbound first, so "+
 				"the endpoint can never be reached and would never be started or closed")
 		}
 	}
@@ -893,19 +964,19 @@ func validateNode(resolver *Resolver, hop PathNode, endpoints EndpointRegistry, 
 		// VALUE started being read rather than only its presence.
 		owner, capable := hop.Outbound.(adapter.DestinationDNSOwner)
 		if !capable {
-			return failure("the configuration declares destination_dns_ownership for this outbound, " +
-				"but outbound type " + hop.Outbound.Type() + " does not implement the capability; it " +
-				"has no way to resolve the destination before writing the request to its peer, so the " +
+			return failure(FailurePromise, "the configuration declares destination_dns_ownership for this outbound, "+
+				"but outbound type "+hop.Outbound.Type()+" does not implement the capability; it "+
+				"has no way to resolve the destination before writing the request to its peer, so the "+
 				"destination domain would reach the peer while the configuration says it must not")
 		}
 		if !owner.DestinationDNSOwnership() {
-			return failure("the configuration declares destination_dns_ownership for this outbound, " +
-				"but outbound type " + hop.Outbound.Type() + " reports that it does NOT resolve the " +
-				"destination itself; the declaration and the object contradict each other, so the " +
+			return failure(FailurePromise, "the configuration declares destination_dns_ownership for this outbound, "+
+				"but outbound type "+hop.Outbound.Type()+" reports that it does NOT resolve the "+
+				"destination itself; the declaration and the object contradict each other, so the "+
 				"destination domain would reach the peer while the configuration says it must not")
 		}
 		if canResolve, reason := resolver.CanResolveDestination(hop.Tag); !canResolve {
-			return failure(reason)
+			return failure(FailurePromise, reason)
 		}
 	}
 	return nil

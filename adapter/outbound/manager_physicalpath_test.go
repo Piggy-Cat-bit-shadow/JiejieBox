@@ -1,6 +1,7 @@
 package outbound
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/physicalpath"
 	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 
@@ -138,6 +140,42 @@ func startWithDryRunDelivering(t *testing.T, outbounds []adapter.Outbound, decla
 	return manager.Start(adapter.StartStateStart, scope)
 }
 
+// startWithDryRunDeliveringCapturing is startWithDryRunDelivering with a logger the test can read.
+//
+// The manager is the production producer of the warning, so asserting here is what ties the message
+// to the code that decides it - and the real factory is used, so the level and the formatting are the
+// ones a user sees.
+func startWithDryRunDeliveringCapturing(t *testing.T, outbounds []adapter.Outbound, declarations physicalpath.Declarations, resolverFor func(tag string) string, delivered map[string][]string) (error, string) {
+	t.Helper()
+	lookup := make(map[string]adapter.Outbound, len(outbounds))
+	for _, outbound := range outbounds {
+		lookup[outbound.Tag()] = outbound
+	}
+	for _, outbound := range outbounds {
+		if group, isGroup := outbound.(*dryRunGroup); isGroup {
+			group.lookup = lookup
+		}
+	}
+	var buffer bytes.Buffer
+	factory, err := log.New(log.Options{Options: option.LogOptions{Level: "warn"}, DefaultWriter: &buffer})
+	require.NoError(t, err)
+	require.NoError(t, factory.Start(), "the factory must be running, or its records are dropped")
+	manager := NewManager(&stubRegistry{}, &cycleEndpointManager{endpoints: map[string]adapter.Endpoint{}}, "")
+	manager.SetLogger(factory.NewLogger("outbound/manager"))
+	for _, outbound := range outbounds {
+		installOutbound(t, manager, outbound)
+	}
+	if resolverFor == nil {
+		resolverFor = func(string) string { return "" }
+	}
+	manager.EnablePhysicalPathValidation(declarations, resolverFor, false)
+	manager.EnablePhysicalPathDelivery(delivered)
+	scope := adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())
+	startErr := manager.Start(adapter.StartStateStart, scope)
+	require.NoError(t, factory.Close())
+	return startErr, buffer.String()
+}
+
 // TestStartRefusesAGroupWhoseUnselectedMemberDoesNotExist is the property the prompt names: a
 // selector whose CURRENT member is fine but whose second member does not exist must fail at Start.
 //
@@ -185,15 +223,15 @@ func TestStartRefusesAGroupWhoseUnselectedMemberCannotCarryTheFlow(t *testing.T)
 	// The demand is DELIVERED rather than advertised. With no route at all this shape is now
 	// accepted, because a group's advertised union is capability rather than flow demand; the
 	// refusal this test exists for needs a proof that TCP really reaches the selector.
-	err := startWithDryRunDelivering(t, []adapter.Outbound{healthy, udpOnly, selector},
+	err, warnings := startWithDryRunDeliveringCapturing(t, []adapter.Outbound{healthy, udpOnly, selector},
 		physicalpath.Declarations{}, nil, map[string][]string{"sel": {N.NetworkTCP}})
-	require.Error(t, err,
-		"the unselected member is broken and MUST fail Start: the first switch would otherwise be "+
-			"the first report of it")
-	require.Contains(t, err.Error(), "udp-only", "the failure must name the member")
-	require.Contains(t, err.Error(), "outbound/sel -> sel -> udp-only",
+	require.NoError(t, err,
+		"the unselected member is a capability risk: the selected one still serves the flow, so the "+
+			"configuration must start and the first switch must not be the first report of it")
+	require.Contains(t, warnings, "udp-only", "the warning must name the member")
+	require.Contains(t, warnings, "outbound/sel -> sel -> udp-only",
 		"and must name the route that reaches it: the root, the selection step, and the member")
-	require.Contains(t, err.Error(), "cannot serve the tcp flow",
+	require.Contains(t, warnings, "cannot serve the tcp flow",
 		"and must say what is wrong with it rather than only that it is unsupported")
 }
 
@@ -238,12 +276,13 @@ func TestStartRefusesAMemberThatCannotCarryTheRoutedNetwork(t *testing.T) {
 		selected: "good",
 	}
 
-	err := startWithDryRunDelivering(t, []adapter.Outbound{good, udpOnly, selector},
+	err, warnings := startWithDryRunDeliveringCapturing(t, []adapter.Outbound{good, udpOnly, selector},
 		physicalpath.Declarations{}, nil, map[string][]string{"sel": {N.NetworkTCP}})
-	require.Error(t, err,
-		"a route that proves TCP reaches this selector makes its TCP-incapable member a defect")
-	require.Contains(t, err.Error(), "udp-only")
-	require.Contains(t, err.Error(), "cannot serve the tcp flow")
+	require.NoError(t, err,
+		"a proven TCP flow to a TCP-incapable member is a capability warning, not a refusal: the "+
+			"selected member still serves it")
+	require.Contains(t, warnings, "udp-only")
+	require.Contains(t, warnings, "cannot serve the tcp flow")
 }
 
 // TestAnAdvertisedOnlyMemberIsNotARefusal pins the OTHER half: with nothing proven, a group's

@@ -291,8 +291,12 @@ type networkRequirementCase struct {
 	why       string
 	config    string
 	wantStart bool
-	// wantErr are the substrings a refusal must contain, so a refusal for the WRONG reason is a
-	// failure rather than a pass.
+	// warn marks a CAPABILITY case: the configuration starts, and wantErr must appear in the warning
+	// the start emitted. The distinction is carried by data rather than by matching the message
+	// text, so a future fatal case cannot be mistaken for a warning one.
+	warn bool
+	// wantErr are the substrings a refusal - or, for a warn case, the warning - must contain, so a
+	// verdict for the WRONG reason is a failure rather than a pass.
 	wantErr []string
 }
 
@@ -344,6 +348,7 @@ var networkRequirementMatrix = []networkRequirementCase{
 		why:       "a rule with no match items matches every flow, so the catch-all really does deliver udp to a tcp-only outbound",
 		config:    networkRequirementUnconstrainedRoute,
 		wantStart: false,
+		warn:      true,
 		wantErr:   []string{"cannot serve the udp flow", "tcp-only"},
 	},
 	{
@@ -357,6 +362,7 @@ var networkRequirementMatrix = []networkRequirementCase{
 		why:       "a route that explicitly delivers UDP to a leaf that declares tcp-only is a real defect and must stay refused",
 		config:    networkRequirementUDPRouteToTCPOnlyLeaf,
 		wantStart: false,
+		warn:      true,
 		wantErr:   []string{"cannot serve the udp flow", "tcp-only"},
 	},
 	{
@@ -364,6 +370,7 @@ var networkRequirementMatrix = []networkRequirementCase{
 		why:       "the routes deliver TCP to a network-blind selector, so its UDP-only member is genuinely illegal",
 		config:    networkRequirementGroupWithIllegalReachableMember,
 		wantStart: false,
+		warn:      true,
 		wantErr:   []string{"cannot serve the tcp flow", "udp-only", "outbound/sel"},
 	},
 	{
@@ -371,6 +378,7 @@ var networkRequirementMatrix = []networkRequirementCase{
 		why:       "the group's illegal member must be refused whichever root is validated first",
 		config:    networkRequirementGroupMemberFirst,
 		wantStart: false,
+		warn:      true,
 		wantErr:   []string{"cannot serve the tcp flow", "udp-only", "outbound/sel"},
 	},
 	{
@@ -378,6 +386,7 @@ var networkRequirementMatrix = []networkRequirementCase{
 		why:       "a group that filters by network is unusable when NO member can carry the network the routes deliver to it",
 		config:    networkRequirementGroupNoMemberCanCarry,
 		wantStart: false,
+		warn:      true,
 		wantErr:   []string{"no reachable member carries udp", "outbound/lb"},
 	},
 	{
@@ -400,6 +409,17 @@ var networkRequirementMatrix = []networkRequirementCase{
 func TestNetworkRequirementMatrix(t *testing.T) {
 	for _, testCase := range networkRequirementMatrix {
 		t.Run(testCase.id, func(t *testing.T) {
+			if testCase.warn {
+				startErr, warnings := startBoxCapturingWarnings(t, testCase.config)
+				require.NoError(t, startErr,
+					"a capability mismatch is reported and allowed through, not refused: "+testCase.why)
+				require.Contains(t, warnings, "WARN", "the verdict must be a warning; got:\n"+warnings)
+				for _, expected := range testCase.wantErr {
+					require.Contains(t, warnings, expected,
+						"the warning must name the right reason; got:\n"+warnings)
+				}
+				return
+			}
 			instance, err := newBoxFromConfig(t, testCase.config)
 			require.NoError(t, err, "construction cannot see this: it is a start-time decision")
 			t.Cleanup(func() { _ = instance.Close() })
@@ -409,7 +429,8 @@ func TestNetworkRequirementMatrix(t *testing.T) {
 				require.NoError(t, err, testCase.why)
 				return
 			}
-			require.Error(t, err, testCase.why)
+			require.Error(t, err,
+				"a structural defect still refuses the start: "+testCase.why)
 			for _, expected := range testCase.wantErr {
 				require.Contains(t, err.Error(), expected,
 					"the refusal must be reported for the right reason; got: "+err.Error())
@@ -419,6 +440,10 @@ func TestNetworkRequirementMatrix(t *testing.T) {
 }
 
 // TestRepeatedStartAndCloseOnARefusedBox is the START-02 re-entrancy fixture at the Box level.
+//
+// The configuration is a STRUCTURAL defect (a declared member that does not exist), not a capability
+// one: capability findings now start with a warning, so a refused Box can only be produced by the
+// fatal half of the dry run, which is what this fixture is about.
 //
 // # What a refused Start leaves behind, and what a retry actually is
 //
@@ -430,13 +455,13 @@ func TestNetworkRequirementMatrix(t *testing.T) {
 // (experimental/boxdd/desktop_service.go, cleanFailedStartLocked). This fixture pins exactly that,
 // so nobody reads a "context canceled" as a second verdict on the configuration.
 func TestRepeatedStartAndCloseOnARefusedBox(t *testing.T) {
-	instance, err := newBoxFromConfig(t, networkRequirementUDPRouteToTCPOnlyLeaf)
+	instance, err := newBoxFromConfig(t, networkRequirementMissingMember)
 	require.NoError(t, err)
 
 	firstErr := instance.Start()
 	require.Error(t, firstErr)
-	require.Contains(t, firstErr.Error(), "cannot serve the udp flow",
-		"the refusal must be the dry run's verdict, not a lifecycle error")
+	require.Contains(t, firstErr.Error(), "dependency[ghost] not found",
+		"the refusal must be the start-order verdict on a missing member, not a lifecycle error")
 
 	secondErr := instance.Start()
 	require.Error(t, secondErr,
@@ -450,7 +475,7 @@ func TestRepeatedStartAndCloseOnARefusedBox(t *testing.T) {
 
 	// The defect itself is stable: the daemon's recovery is a new Box from the same configuration,
 	// and that one must be refused identically.
-	rebuilt, err := newBoxFromConfig(t, networkRequirementUDPRouteToTCPOnlyLeaf)
+	rebuilt, err := newBoxFromConfig(t, networkRequirementMissingMember)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = rebuilt.Close() })
 	rebuiltErr := rebuilt.Start()
@@ -479,7 +504,9 @@ func TestRefusedNetworkRequirementBoxesLeaveNoGoroutines(t *testing.T) {
 	}
 	before := settle()
 	for _, testCase := range networkRequirementMatrix {
-		if testCase.wantStart {
+		// Capability cases start with a warning now; only the fatal ones leave a refused Box whose
+		// teardown this test is about.
+		if testCase.wantStart || testCase.warn {
 			continue
 		}
 		t.Run(testCase.id, func(t *testing.T) {

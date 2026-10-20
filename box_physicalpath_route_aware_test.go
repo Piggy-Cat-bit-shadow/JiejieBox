@@ -627,20 +627,23 @@ func TestRouteAwareNetworkRequirementMatrix(t *testing.T) {
 	for _, testCase := range routeAwareMatrix {
 		t.Run(testCase.id, func(t *testing.T) {
 			t.Parallel()
+			if !testCase.wantStart {
+				// Every non-start case in this matrix is a capability mismatch: the routes DO deliver a
+				// network the target cannot carry. That is reported and allowed through, and the
+				// warning must still name the right reason.
+				startErr, warnings := startBoxCapturingWarnings(t, testCase.config)
+				require.NoError(t, startErr,
+					"a capability mismatch is a warning, not a refusal: "+testCase.why)
+				for _, expected := range testCase.wantErr {
+					require.Contains(t, warnings, expected,
+						"the warning must be reported for the right reason; got:\n"+warnings)
+				}
+				return
+			}
 			instance, err := newBoxFromConfig(t, testCase.config)
 			require.NoError(t, err, "construction cannot see this: it is a start-time decision")
 			t.Cleanup(func() { _ = instance.Close() })
-
-			err = instance.Start()
-			if testCase.wantStart {
-				require.NoError(t, err, testCase.why)
-				return
-			}
-			require.Error(t, err, testCase.why)
-			for _, expected := range testCase.wantErr {
-				require.Contains(t, err.Error(), expected,
-					"the refusal must be reported for the right reason; got: "+err.Error())
-			}
+			require.NoError(t, instance.Start(), testCase.why)
 		})
 	}
 }
@@ -655,15 +658,11 @@ func TestRouteAwareNetworkRequirementMatrix(t *testing.T) {
 func TestRouteAwareDiagnosticStatesTheRealReachability(t *testing.T) {
 	t.Parallel()
 
-	instance, err := newBoxFromConfig(t, caseNetworkUnterminatedCatchAll)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = instance.Close() })
-
-	err = instance.Start()
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "the routes prove tcp,udp reaches this path",
-		"the diagnostic must state the reachability the analysis found; got: "+err.Error())
-	require.NotContains(t, err.Error(), "entry point routes",
+	startErr, warnings := startBoxCapturingWarnings(t, caseNetworkUnterminatedCatchAll)
+	require.NoError(t, startErr, "a capability mismatch is reported and allowed through")
+	require.Contains(t, warnings, "the routes prove tcp,udp reaches this path",
+		"the diagnostic must state the reachability the analysis found; got:\n"+warnings)
+	require.NotContains(t, warnings, "entry point routes",
 		"and it must not describe the entry point's theoretical capability as if it were delivered")
 }
 
@@ -694,21 +693,17 @@ func TestRouteAwareTerminationRemovesTheProtocolFromTheDiagnostic(t *testing.T) 
   }
 }`
 
-	instance, err := newBoxFromConfig(t, fixture)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = instance.Close() })
-
-	err = instance.Start()
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "cannot serve the tcp flow")
+	startErr, warnings := startBoxCapturingWarnings(t, fixture)
+	require.NoError(t, startErr, "a capability mismatch is reported and allowed through")
+	require.Contains(t, warnings, "cannot serve the tcp flow")
 	// The reachability clause is the only part of the report that makes a claim about what ARRIVES,
 	// so it is the part that must be checked. The rest of the sentence legitimately names the
 	// capability the leaf does declare - "it carries udp" is a fact about the object, not a claim
 	// that a udp flow reaches it - and asserting over the whole message would confuse the two.
-	require.Contains(t, err.Error(), "(the routes prove tcp reaches this path, and tcp is part of it)",
-		"the clause must name tcp alone, because udp was terminated before this path; got: "+err.Error())
-	require.NotContains(t, err.Error(), "the routes prove tcp,udp",
-		"the path analysis must not report udp as reachable here; got: "+err.Error())
+	require.Contains(t, warnings, "(the routes prove tcp reaches this path, and tcp is part of it)",
+		"the clause must name tcp alone, because udp was terminated before this path; got:\n"+warnings)
+	require.NotContains(t, warnings, "the routes prove tcp,udp",
+		"the path analysis must not report udp as reachable here; got:\n"+warnings)
 }
 
 // TestRouteAwareDiagnosticDoesNotClaimAProofTheRoutesNeverMade is the other half of the diagnostic
@@ -754,18 +749,16 @@ func TestRouteAwareDiagnosticDoesNotClaimAProofTheRoutesNeverMade(t *testing.T) 
   }
 }`
 
-	instance, err := newBoxFromConfig(t, fixture)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = instance.Close() })
-
-	err = instance.Start()
-	require.Error(t, err, "a selector that does not filter must not be handed either network")
-	require.Contains(t, err.Error(), "the routes prove tcp",
-		"the message must state that the requirement came from the routes, because it DID; got: "+
-			err.Error())
-	require.NotContains(t, err.Error(), "the routes prove nothing here",
-		"and it must not fall back to the objects-only wording when a route proof exists; got: "+
-			err.Error())
+	startErr, warnings := startBoxCapturingWarnings(t, fixture)
+	require.NoError(t, startErr,
+		"a selector that does not filter is a capability risk on one network, not an unbuildable "+
+			"configuration: the other network is still served")
+	require.Contains(t, warnings, "the routes prove tcp",
+		"the warning must state that the requirement came from the routes, because it DID; got:\n"+
+			warnings)
+	require.NotContains(t, warnings, "the routes prove nothing here",
+		"and it must not fall back to the objects-only wording when a route proof exists; got:\n"+
+			warnings)
 }
 
 // TestAnAdvertisedOnlyRootDoesNotClaimAProof is the other half of the diagnostic contract, and it is

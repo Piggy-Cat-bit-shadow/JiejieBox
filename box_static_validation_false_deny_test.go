@@ -388,16 +388,19 @@ func TestFalseDenyMatrix(t *testing.T) {
 			if testCase.refused == "" {
 				return
 			}
-			refused, err := newBoxFromConfig(t, testCase.refused)
-			require.NoError(t, err)
-			t.Cleanup(func() { _ = refused.Close() })
-			startErr := refused.Start()
-			require.Error(t, startErr,
-				"VACUOUS TEST: the twin must still be refused, or this case passes by accepting "+
-					"everything. %s", testCase.why)
+			// The twin is the same configuration with the one difference that makes it risky, and the
+			// risk is a capability one: it must START and say what cannot be served. A twin that was
+			// silently accepted would be the vacuous outcome this case exists to prevent, so the
+			// warning text is asserted rather than only the absence of an error.
+			startErr, warnings := startBoxCapturingWarnings(t, testCase.refused)
+			require.NoError(t, startErr,
+				"the twin is a capability risk, not an unbuildable configuration, so it must start. %s",
+				testCase.why)
+			require.Contains(t, warnings, "cannot serve",
+				"the twin must be reported at warn level; the log was:\n"+warnings)
 			for _, expected := range testCase.refusedLooks {
-				require.Contains(t, startErr.Error(), expected,
-					"the twin must be refused for the right reason; got: "+startErr.Error())
+				require.Contains(t, warnings, expected,
+					"the twin must be reported for the right reason; got:\n"+warnings)
 			}
 		})
 	}

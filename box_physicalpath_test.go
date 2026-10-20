@@ -91,26 +91,25 @@ const physicalPathOwnershipOnIncapableTypeConfig = `{
   ]
 }`
 
-// TestPhysicalPathDryRunRefusesAnUnusableUnselectedMember is the property the dry run adds,
-// asserted through Start.
+// TestPhysicalPathWarnsAboutAnUnusableUnselectedMember is the property the dry run adds.
 //
 // The selector's default is the healthy member, so the group is usable RIGHT NOW and every flow
 // succeeds until the group switches - which a health check or a user action decides, with no
-// configuration change. Start therefore has to refuse it, and the message has to name the route.
-func TestPhysicalPathDryRunRefusesAnUnusableUnselectedMember(t *testing.T) {
-	instance, err := newBoxFromConfig(t, physicalPathSelectorConfig)
-	require.NoError(t, err, "construction cannot see this: it is a start-time decision")
-	t.Cleanup(func() { _ = instance.Close() })
-
-	err = instance.Start()
-	require.Error(t, err,
-		"an unselected member that cannot carry the flow must fail Start, not the first switch to it")
-	require.Contains(t, err.Error(), "udp-only", "the failure must name the member")
-	require.Contains(t, err.Error(), "sel", "and the group that would switch to it")
-	require.Contains(t, err.Error(), "cannot serve the tcp flow",
+// configuration change. That made the check a start-time REFUSAL, which also refused the TCP flows
+// the configuration could serve. It is a capability risk: the configuration starts, and the warning
+// names the member, the group that would switch to it, and the flow that would fail.
+func TestPhysicalPathWarnsAboutAnUnusableUnselectedMember(t *testing.T) {
+	startErr, warnings := startBoxCapturingWarnings(t, physicalPathSelectorConfig)
+	require.NoError(t, startErr,
+		"an unselected member that cannot carry one flow is a capability risk, not an unbuildable "+
+			"configuration: the group still serves the other flow, so start must succeed")
+	require.Contains(t, warnings, "udp-only", "the warning must name the member")
+	require.Contains(t, warnings, "sel", "and the group that would switch to it")
+	require.Contains(t, warnings, "cannot serve the tcp flow",
 		"and must say what is wrong with it rather than only that it is unsupported")
-	require.Contains(t, err.Error(), "outbound/sel",
+	require.Contains(t, warnings, "outbound/sel",
 		"and must name the root whose flow it would carry")
+	require.Contains(t, warnings, "WARN", "and it must be a warning, at warn level")
 }
 
 // TestLegalPhysicalPathConfigurationStillStarts is the compatibility control.

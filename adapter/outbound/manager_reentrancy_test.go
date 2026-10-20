@@ -27,12 +27,15 @@ import (
 // The dry run runs after the Initialize stage has already installed the default-outbound fallback,
 // so a retry that appended it again would grow the outbound list on every attempt - and a retry
 // that reported a different defect would mean the first attempt had left something behind.
-func TestRepeatedStartAfterADryRunFailureLeavesNoState(t *testing.T) {
+func TestRepeatedStartAfterAFailureLeavesNoState(t *testing.T) {
+	// A STRUCTURAL defect: the selector declares a member that does not exist. Capability findings
+	// start with a warning now, so only a fatal one can produce the repeated failure this test is
+	// about - and the repeated-start stability of the fatal path is what it pins.
 	healthy := &dryRunLeaf{tag: "healthy", networks: []string{N.NetworkTCP, N.NetworkUDP}}
 	udpOnly := &dryRunLeaf{tag: "udp-only", networks: []string{N.NetworkUDP}}
 	selector := &dryRunGroup{
 		tag:      "sel",
-		members:  []string{"healthy", "udp-only"},
+		members:  []string{"healthy", "ghost"},
 		networks: []string{N.NetworkTCP, N.NetworkUDP},
 		selected: "healthy",
 	}
@@ -51,9 +54,6 @@ func TestRepeatedStartAfterADryRunFailureLeavesNoState(t *testing.T) {
 	}
 	manager.Initialize(func() (adapter.Outbound, error) { return fallback, nil })
 	manager.EnablePhysicalPathValidation(physicalpath.Declarations{}, func(string) string { return "" }, false)
-	// A PROVEN demand, so the refusal this test repeats stays a refusal. With nothing proven the
-	// shape is accepted now, because a group's advertised union is capability rather than demand.
-	manager.EnablePhysicalPathDelivery(map[string][]string{"sel": {N.NetworkTCP}})
 
 	scope := adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())
 	for attempt := 0; attempt < 3; attempt++ {
@@ -63,8 +63,8 @@ func TestRepeatedStartAfterADryRunFailureLeavesNoState(t *testing.T) {
 			"the fallback must be installed exactly once however many times Start is attempted")
 		err := manager.Start(adapter.StartStateStart, scope)
 		require.Error(t, err, "the refusal must be stable across attempts")
-		require.Contains(t, err.Error(), "udp-only")
-		require.Contains(t, err.Error(), "cannot serve the tcp flow")
+		require.Contains(t, err.Error(), "ghost")
+		require.Contains(t, err.Error(), "not found")
 	}
 }
 
@@ -92,9 +92,7 @@ func TestRepeatedStartOfALegalGraphIsIdempotent(t *testing.T) {
 		installOutbound(t, manager, outbound)
 	}
 	manager.EnablePhysicalPathValidation(physicalpath.Declarations{}, func(string) string { return "" }, false)
-	// A PROVEN demand, so the refusal this test repeats stays a refusal. With nothing proven the
-	// shape is accepted now, because a group's advertised union is capability rather than demand.
-	manager.EnablePhysicalPathDelivery(map[string][]string{"sel": {N.NetworkTCP}})
+
 	manager.EnablePhysicalPathDelivery(map[string][]string{"sel": {N.NetworkTCP}})
 
 	scope := adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())

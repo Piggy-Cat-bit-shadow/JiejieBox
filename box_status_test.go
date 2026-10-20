@@ -346,8 +346,16 @@ func TestStatusAfterCloseAnswersDisconnected(t *testing.T) {
 // Start refused the configuration is closed by Start itself, so the status surface must be detached
 // by that path too - otherwise a caller could keep reading a graph that was never fully brought up.
 func TestStatusAfterAStartErrorIsDisconnected(t *testing.T) {
-	// This configuration is refused by the reachable-leaf dry run; see box_physicalpath_test.go.
-	instance, err := newBoxFromConfig(t, physicalPathSelectorConfig)
+	// This configuration is refused by the start-order sort: `sel` declares a member that does not
+	// exist, which is a structural defect the start still treats as fatal. A capability mismatch
+	// would not refuse the start any more, so it could not produce the state this test is about.
+	instance, err := newBoxFromConfig(t, `{
+  "log": {"disabled": true},
+  "outbounds": [
+    {"type": "socks", "tag": "leaf", "server": "127.0.0.1", "server_port": 1080, "version": "5"},
+    {"type": "selector", "tag": "sel", "outbounds": ["leaf", "ghost"], "default": "leaf"}
+  ]
+}`)
 	require.NoError(t, err, "construction cannot see this: it is a start-time decision")
 
 	require.Error(t, instance.Start())

@@ -71,17 +71,12 @@ const twoIndependentBrokenRoutes = `{
 
 // TestOneLeafBrokenOnTwoRoutesIsReportedForBoth drives the whole path: decode, construct, Start.
 func TestTwoIndependentBrokenRoutesAreBothReported(t *testing.T) {
-	instance, err := newBoxFromConfig(t, twoIndependentBrokenRoutes)
-	require.NoError(t, err,
-		"construction cannot see this: it is a start-time decision about what the routes deliver")
-	t.Cleanup(func() { _ = instance.Close() })
-
-	startErr := instance.Start()
-	require.Error(t, startErr,
-		"a udp rule reaches a member that carries tcp only, and a tcp rule reaches one that carries "+
-			"udp only; a Start that succeeds here would mean the requirement never reached the members")
-
-	message := startErr.Error()
+	startErr, message := startBoxCapturingWarnings(t, twoIndependentBrokenRoutes)
+	require.NoError(t, startErr,
+		"both routes are capability mismatches: each root still serves its own network, so the "+
+			"configuration starts and both flows fail at run time")
+	require.Contains(t, message, "WARN",
+		"the findings must be warnings at warn level; got:\n"+message)
 
 	// Both route rules name their own root, so the two failures are two lines. Keying the
 	// de-duplication on the leaf reported one and dropped the other - and which one survived
@@ -160,15 +155,11 @@ const oneRootWithTwoBrokenMembers = `{
 }`
 
 func TestOneRootWithTwoBrokenMembersIsReportedOnce(t *testing.T) {
-	instance, err := newBoxFromConfig(t, oneRootWithTwoBrokenMembers)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = instance.Close() })
-
-	startErr := instance.Start()
-	require.Error(t, startErr,
-		"the selector's only two members each cannot carry one of the two networks its rules deliver")
-
-	message := startErr.Error()
+	startErr, message := startBoxCapturingWarnings(t, oneRootWithTwoBrokenMembers)
+	require.NoError(t, startErr,
+		"each member serves one of the two networks, so the selector can serve both flows through "+
+			"the right member; the mismatch is a capability warning")
+	require.Contains(t, message, "WARN", "the finding must be a warning; got:\n"+message)
 	require.Contains(t, message, "outbound/A -> A ->",
 		"the failure must be attributed to the selector root: %s", message)
 	require.Equal(t, 1, strings.Count(message, "hop #0 "),
