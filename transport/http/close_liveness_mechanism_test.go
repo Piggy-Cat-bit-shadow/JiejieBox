@@ -34,7 +34,9 @@ import (
 // # What actually happens, measured here
 //
 // A QUIC peer that receives no acknowledgements cannot keep sending: its congestion window never
-// opens. In this test the server has its idle timeout DISABLED and a 200 ms keepalive, and the relay
+// opens. In this test the server uses quic-go's DEFAULT idle timeout (30 s: a zero value selects the
+// default, it does not disable the timeout) with a 200 ms keepalive, and the client uses 3 s, so the
+// effective minimum is the client side. The relay
 // drops only our direction. The peer still stops after ~19 packets, and the client's connection then
 // dies exactly one idle timeout after the LAST inbound packet -- which is what bounds the wait.
 //
@@ -131,8 +133,8 @@ type livenessStand struct {
 
 // startLivenessStand brings up a real connection through the relay.
 //
-// serverIdle of 0 means "disabled" on the server, which is the strongest form of the counterexample:
-// the peer will never close the connection by itself, so only the client's timer can end it.
+// serverIdle of 0 selects quic-go's DEFAULT idle timeout (30 s); it does not disable it. The client
+// value is what the experiment varies, and the effective timeout is the minimum of the two.
 func startLivenessStand(t *testing.T, clientIdle, serverIdle time.Duration, serverKeepAlive time.Duration) *livenessStand {
 	t.Helper()
 	tlsConfig := livenessTLSConfig(t)
@@ -210,7 +212,8 @@ func TestTheIdleTimeoutBoundsASilentPath(t *testing.T) {
 }
 
 // TestActiveInboundStopsBecauseThePeerIsStarved is the counterexample attempt: the peer has its idle
-// timeout disabled and a keepalive, and only our direction is broken, so valid inbound packets do
+// default idle timeout (30 s) with a keepalive, the client at 3 s, and only our direction is broken,
+// so valid inbound packets do
 // arrive and DO refresh the idle timer. They stop anyway, and the connection dies one idle timeout
 // after the last one.
 func TestActiveInboundStopsBecauseThePeerIsStarved(t *testing.T) {

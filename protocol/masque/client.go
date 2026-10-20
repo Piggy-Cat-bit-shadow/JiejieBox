@@ -332,6 +332,27 @@ func (c *ClientEndpoint) Start(stage adapter.StartStage, scope *adapter.Scope) e
 	case adapter.StartStatePostStart:
 		c.client.Start()
 		scope.Add(c.client.Close)
+		// Release this endpoint's QUIC connection when the scope starts closing, not when its own
+		// cleanup comes up in the reverse order.
+		//
+		// # Why the cleanup order is not enough
+		//
+		// Scope.Close cancels this context BEFORE it runs any cleanup, and then runs the cleanups in
+		// reverse: the TUN inbound closes first and the endpoint later. The inbound's close waits for
+		// its stack engine, and that engine may be inside ForwardStage.Flush holding the stage lock
+		// while this endpoint writes. A DATAGRAM write there ends at an idle timeout, but a CAPSULE
+		// write parks on the peer's stream window with the connection still healthy -- and a keepalive
+		// keeps the peer's own idle timer from expiring -- so nothing in the write path ends it. The
+		// close that would release it is the very cleanup scheduled after the inbound that waits for
+		// it.
+		//
+		// Closing the client on cancellation runs before that wait begins, which is the only ordering
+		// that breaks the cycle. Normal traffic is unaffected: the context is cancelled only when the
+		// scope closes, not on an interface update or a session restart.
+		go func() {
+			<-c.ctx.Done()
+			_ = c.client.Close()
+		}()
 	}
 	return nil
 }
