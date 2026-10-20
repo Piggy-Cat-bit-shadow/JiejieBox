@@ -109,6 +109,12 @@ The owned arm's constant 64 B is the pooled `buf.Buffer` the harness allocates f
 both arms; the delta is the frame the copying path builds. **This is the layer the change touches,
 not tunnel throughput** — no WAN, no real peer, no device.
 
+A second stand measured the same two calls through a **real quic-go connection** (1 000-byte
+datagrams, healthy queue, 5 000 sends): copying **10.6 µs/datagram**, owned **9.5 µs/datagram**.
+At this size the transport work dominates, so the owned call is about 10 % faster there, on top of
+the frame the HTTP/3 layer no longer builds. Both numbers are queue-bound, which is why the
+allocation delta above is the honest way to state the change.
+
 ### Regressions
 
 `transport/http` default 8.4 s pass, `with_quic` 25.1 s pass; `transport/masque` pass;
@@ -189,25 +195,44 @@ MEASURED: Close completed 304.0286ms after the port was released
 ```
 
 So the coupling is unchanged and real: `Close()`, `Dispatch()` and `sweep()` on the same stage wait
-for the whole downstream block. What is still missing is the **frequency**: a real QUIC congestion
-stand (queue driven full, capsule flow control, cancel propagation) is a project of its own, not a
-boundary refinement. Per the round's rule this stays a next-round gate:
+for the whole downstream block.
 
-- build the loopback stand with a real quic-go connection and a stalled peer;
-- measure the p95/p99 of `WritePacketBuffers` and which `Close` actually blocks;
-- only then design the lock-outside-write change, with exactly-once and ordering tests.
+**The block duration is now measured on a real quic-go queue** (a relay that forwards the handshake
+and then stops delivering, so the client sees no ACKs; 1 000-byte HTTP DATAGRAM payloads):
 
-No production change was made for D.
+| condition | result |
+|---|---|
+| healthy path, 300 datagrams | worst single send 523 µs |
+| silent path, 2 s window | 162 datagrams accepted, **mean 21.6 ms**, **worst 1.762 s**, heap delta 0.0 MiB |
+
+So the 32-frame queue does fill and does block the caller, and one call can stay blocked for about
+**1.8 seconds** before space appears. Composed with the fixture above, that is the number the stage
+lock can be held for: `Close()` on that stage waits for it.
+
+**No production change was made for D.** The remaining question is no longer "does it block" but
+"what is the right design": moving the port write outside the lock needs an in-flight state per
+staged buffer and a Close that only releases what it still owns, which is a lifecycle change with
+its own adversarial matrix. It is recorded as the next round's first item, not attempted here.
 
 ---
 
 ## 6. E — shared H3 DATAGRAM queue (archived)
 
-Code evidence is unchanged: one `quic.Conn` has one 32-frame DATAGRAM send queue
-(`datagram_queue.go:15`), `Add`/`AddBatch` block when full (`:61-89`, `:113-153`), and every
-CONNECT-IP session on that connection shares it. A two-session stand (one blasting, one
-latency-sensitive) needs a real H3 server with two CONNECT-IP sessions; that exceeds this round's
-boundary and is recorded as a next-round candidate rather than half-built here.
+Code evidence: one `quic.Conn` has one 32-frame DATAGRAM send queue (`datagram_queue.go:15`),
+`Add`/`AddBatch` block when full (`:61-89`, `:113-153`), and every CONNECT-IP session on that
+connection shares it.
+
+**Measured on a real connection** (same silent-path stand, two senders on one connection):
+
+| sender | healthy path | while another sender floods a dead path |
+|---|---|---|
+| quiet sender (64 B) | mean **8.9 µs** | mean **3.45 s**, p95 **14.06 s** |
+
+A 64-byte datagram from a quiet sender can wait fourteen seconds behind a flooding neighbour, i.e.
+the shared queue gives no cross-session isolation at all. This is a **P1 finding**, and it is not
+locally fixable: per-session isolation means either an application-level in-flight limit per session
+or separate connections, both of which change the CONNECT-IP design this fork deliberately keeps to
+one tunnel. Recorded as the next round's second item with these numbers as its baseline.
 
 ---
 
@@ -257,7 +282,9 @@ Changed files: `protocol/masque/dns_assignment.go`, `protocol/masque/dns_assignm
 
 1. **L4 batched owned send** (`SendDatagramsOwned` in the batch writer) — measured only if a real
    queue stand shows the per-frame enqueue cost matters.
-2. **D's congestion stand**, then the lock-outside-write design if the red light is real.
-3. **E's two-session fairness stand.**
+2. **D's lock-outside-write design** — the block is measured at up to 1.76 s; the design needs a
+   per-buffer in-flight state and a Close that releases only what it owns.
+3. **E's per-session isolation** — measured baseline: a quiet sender goes from 8.9 µs to 3.45 s mean
+   behind a flooding neighbour on the shared connection queue.
 4. The pre-existing untagged H3 test in `protocol/masque` should either gain the build tag or skip
    without it; it is a test-hygiene defect, not a product one.
