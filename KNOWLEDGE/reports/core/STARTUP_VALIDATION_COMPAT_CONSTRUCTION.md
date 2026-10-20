@@ -8,6 +8,7 @@ was created; no workflow was dispatched; nothing was force-pushed.
 |---|---|
 | `START_SHA` | `1cecadd9fe845b0c369743ee206600b76f0bf174` |
 | upstream comparison baseline | `SagerNet/sing-box` `testing` = `dfb80349bf5779ec0a3f834c9ec2794345bff8f0` (read at construction time; no fetch/reset was performed against it) |
+| upstream evidence | `gh api repos/SagerNet/sing-box/contents/adapter/outbound/manager.go?ref=dfb80349…` at that SHA is 5,717 bytes / 8 functions and contains **no** `validatePhysicalPaths`, no `physicalpath` import and no dry-run failure text: the blocking preflight is fork-only, as the audit said. The upstream `StartStateStart` block only sorts and starts. |
 | `CONSTRUCTION_SHA` | `cd2316a704a199f8a1289836edfbf01cc2dc2b20` |
 
 ## 1. What the user hit, and what changed
@@ -90,7 +91,7 @@ was modified.
 | `adapter/outbound/manager_physicalpath_test.go` | capability cases assert the logger's warning through the real factory; structural cases unchanged |
 | `adapter/outbound/manager_reentrancy_test.go` | repeated-start stability now pinned on a structural defect |
 | `box_static_validation_{dns_demand,consumer_demand,true_final}_test.go` | capability mismatches assert start + warning; a detour naming nothing still asserts refusal |
-| **new** `box_startup_warning_capture_test.go` | real `box.New` + `Start` with `log.output` to a file, and the incident-shaped chain test |
+| **new** `box_startup_warning_capture_test.go` | real `box.New` + `Start` with `log.output` to a file; the incident-shaped chain test asserts one aggregated warning and one line for the defect |
 | **new** `common/physicalpath/failure_kind_test.go` | the severity split itself, and that each production sentence is tagged at its source |
 
 Commands and results (Windows, `-tags "$(release/DEFAULT_BUILD_TAGS_WINDOWS)"`, `CGO_ENABLED=0`):

@@ -3,6 +3,7 @@ package box_test
 import (
 	"context"
 	"os"
+	"strings"
 	"path/filepath"
 	"testing"
 
@@ -84,4 +85,10 @@ func TestTheReportedUDPCapabilityShapeStartsWithAWarning(t *testing.T) {
 		"and the network that cannot be carried, rather than only that something is unsupported")
 	require.Contains(t, warnings, "WARN",
 		"and it must be emitted at warn level through the production logger")
+	// One aggregated warning per start, one line per defect: a repeated configuration start must not
+	// grow the report, and the same defect must not be emitted twice.
+	require.Equal(t, 1, strings.Count(warnings, "the following outbound paths cannot serve some flows"),
+		"the findings are aggregated into one warning; got:\n"+warnings)
+	require.Equal(t, 1, strings.Count(warnings, "cannot serve the udp flow"),
+		"and the defect is reported once, not once per route that reaches it: got:\n"+warnings)
 }
