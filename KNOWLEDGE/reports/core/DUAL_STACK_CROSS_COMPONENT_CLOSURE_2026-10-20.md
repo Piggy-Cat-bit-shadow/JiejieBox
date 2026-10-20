@@ -8,7 +8,7 @@ nothing was force-pushed, no workflow was dispatched, no tag or release was made
 |---|---|
 | `AUDITED_BASELINE_SHA` | `b721b988fefec4a4da3b25ad320fa6a1cad8a7ee` (tag `v0.1.21`, the audit's snapshot) |
 | `START_SHA` (this round) | `b153ed7fd2b59f922a883501bf48f8f573d1e67b` |
-| `CLOSURE_CODE_SHA` | `a1705021f1084e90a20bfacc877ac5d9cef327bf` |
+| `CLOSURE_CODE_SHA` | `df51e2dc6f638d094ab3b6ad5fa513fa8a9dd957` |
 | `DOCUMENT_SHA` | the commit that adds this file; `git log -1 --format=%H` |
 
 The original audit report is preserved unchanged at
@@ -247,6 +247,7 @@ runtime lifecycle test, `route/TestBackpressure` (environment-limited as recorde
 |---|---|
 | `1c97c3a61` | ssh: retire the session under the lock, plus the mutation-verified race test |
 | `a1705021f` | dialer: the DS-02 serial-cost measurement; transport/http: F7 ceilings |
+| `df51e2dc6` | dialer: record both parallel launches before any goroutine runs (the measurement test failed on its own race under `-race` on CI, not on the behaviour) |
 | the docs commit | this report and the knowledge index row |
 
 Rollback is one `git revert` per commit; no dependency pin, workflow, submodule pointer or release
