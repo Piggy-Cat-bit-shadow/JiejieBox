@@ -144,6 +144,27 @@ The dry run adds one deliberate new refusal: `destination_dns_ownership` on an o
 not implement it. That field is fork-only and added in the same cycle, so **no configuration
 predating it can contain it**.
 
+### Severity: capability findings warn, structural findings refuse (2026-10-20)
+
+`Failure` carries a `Kind`, decided where the finding is produced rather than by matching the
+message:
+
+| kind | examples | start verdict |
+|---|---|---|
+| `FailureCapability` | an exit that does not carry a routed network; an unselected member that cannot serve the flow; a group whose members cannot carry the delivered network | **WARN**, start proceeds |
+| `FailureStructure` | a declared member that does not exist; a tag claimed by both an outbound and an endpoint; a route that never reaches its far end | **ERROR**, start refused |
+| `FailurePromise` | `destination_dns_ownership` declared on a type that cannot honour it | **ERROR**, start refused |
+
+`Report.Err()` returns only the fatal part, `Report.Warnings()` the capability part, and the outbound
+manager logs the latter once through its injected logger (`SetLogger`, wired from `box.go`). The
+runtime is unchanged: a flow that reaches an object which cannot carry it still fails exactly as
+before. The distinction exists because a capability finding is a statement about a FLOW THAT MIGHT
+ARRIVE, while a structural one is a statement about whether the configuration can be built.
+
+The same split applies to the two consumer checks: an HTTP client whose detour exists but cannot
+serve every configured transport, and a DNS transport whose detour exists but cannot carry its
+queries, are warnings; a detour tag that names nothing stays fatal.
+
 ### A latent panic it replaced
 
 The start-order sort marked a node started **by tag** and stopped when the number of started tags
