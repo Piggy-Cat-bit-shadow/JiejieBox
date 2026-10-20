@@ -9,7 +9,7 @@ was created; no workflow was dispatched; nothing was force-pushed.
 | `START_SHA` | `1cecadd9fe845b0c369743ee206600b76f0bf174` |
 | upstream comparison baseline | `SagerNet/sing-box` `testing` = `dfb80349bf5779ec0a3f834c9ec2794345bff8f0` (read at construction time; no fetch/reset was performed against it) |
 | upstream evidence | `gh api repos/SagerNet/sing-box/contents/adapter/outbound/manager.go?ref=dfb80349…` at that SHA is 5,717 bytes / 8 functions and contains **no** `validatePhysicalPaths`, no `physicalpath` import and no dry-run failure text: the blocking preflight is fork-only, as the audit said. The upstream `StartStateStart` block only sorts and starts. |
-| `CONSTRUCTION_SHA` | `cd2316a704a199f8a1289836edfbf01cc2dc2b20` |
+| `CONSTRUCTION_SHA` | `cd2316a704a199f8a1289836edfbf01cc2dc2b20` (production code; follow-ups `7dfe41b9b` and `7f7977162` are the upstream citation, the warning-count assertions and their gofmt) |
 
 ## 1. What the user hit, and what changed
 
