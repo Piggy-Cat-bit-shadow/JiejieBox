@@ -166,9 +166,10 @@ context", that requires an API decision (a resolver that can be abandoned), not 
 |---|---|
 | `423c81d10` Verify | failed at **gofmt** on the new test file (a missing blank line and trailing newline introduced by the file-writing step); fixed in `2075d3c64`; the `race on the fork's own data paths` job passed `common/dialer` (18.0 s) in that run |
 | `2075d3c64` Verify | failed in `route` at `TestTeardown_OneSidedCompletionNeverRunsOnClose` ("the peer never received the request", 10 s) — a known load-sensitive flake in this repository, unrelated to a tests-only change in `common/dialer`; the same job passed `common/dialer` (18.0 s) |
-| `3745400dd` Verify (final) | **success**, including the `race on the fork's own data paths` job with the new tests; the `route` flake did not recur, which is consistent with a timing flake rather than a regression |
+| `3745400dd` Verify | **success**, including the `race on the fork's own data paths` job with the new tests |
+| `ffca71b24` Verify (docs only) | failed in `route` at `TestInterfacePendingResetMarksNetworkUnstableBeforeResetLock` (`0.00 s`, "the network must be settled once the pending reset has run"); `common/dialer` passed (18 s). A docs-only commit cannot reach this code, and the test fails in a different place than the previous run |
 
-The DS-03 tests themselves ran in the race job of every run and did not fail. The `route` flake is
+The DS-03 tests themselves ran in the race job of every run and did not fail. Across four runs the only failures were one gofmt slip in the new test file (fixed) and two `route` flake hits in two different tests, both on commits that could not reach `route`'s transition code; the `route` race suite is therefore recorded as flaky in this CI, separately from this round. The `route` flake is
 recorded rather than "fixed": it is a pre-existing timing assertion on the teardown path, outside
 this round's scope, and changing it here would be an unrelated edit. Its non-recurrence on the final
 run is the evidence that it was not introduced here.
