@@ -306,6 +306,40 @@ func TestTrailingRootDotNormalization(t *testing.T) {
 	}
 }
 
+// TestEqualFoldASCIIFoldsBothOperands proves the comparison is symmetric.
+//
+// It was not: the second operand's fold started at 'B', so a capital 'A' on that side stayed
+// unfolded and "a" vs "A" returned false while "A" vs "a" returned true. Every production caller
+// normalizes the host first, so no caller-visible test could see it; this is the only level at
+// which the defect is reachable at all.
+func TestEqualFoldASCIIFoldsBothOperands(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range []struct {
+		first      string
+		second     string
+		shouldFold bool
+		reason     string
+	}{
+		{"a", "A", true, "the folded operand must accept a capital A"},
+		{"A", "a", true, "and symmetrically"},
+		{"abc", "ABC", true, "a whole ASCII run in either case"},
+		{"ABC", "abc", true, "the reverse direction is what regressed"},
+		{"b", "B", true, "every other capital letter already folded"},
+		{"masque.example", "MASQUE.EXAMPLE", true, "the host shape this exists for"},
+		{"", "", true, "an empty pair is equal"},
+		{"a", "b", false, "different letters"},
+		{"ab", "abc", false, "different lengths"},
+		{"a", "A.", false, "length is checked before folding"},
+		{"ä", "Ä", false, "ASCII-only: a non-ASCII capital must not fold"},
+	} {
+		t.Run(testCase.first+" vs "+testCase.second, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, testCase.shouldFold, equalFoldASCII(testCase.first, testCase.second), testCase.reason)
+		})
+	}
+}
+
 // TestNoDefaultALPNForbidsCleartext proves the parameter is binding rather than advisory.
 //
 // draft-06 §3.2: omitting no-default-alpn indicates the nameserver supports unencrypted DNS.

@@ -743,6 +743,11 @@ func normalizeHostName(host string) string {
 //
 // It is written out rather than using strings.EqualFold so the comparison cannot be affected by
 // Unicode case folding, which is not how host names compare.
+//
+// Both operands must fold the same range. The second one used to start at 'B', which left a
+// capital 'A' unfolded and made the comparison asymmetric: "a" vs "A" was false while "A" vs "a"
+// was true. It was unreachable because every caller normalizes first, which is exactly why nothing
+// caught it — a direct unit test is the only thing that can.
 func equalFoldASCII(first string, second string) bool {
 	if len(first) != len(second) {
 		return false
@@ -752,7 +757,7 @@ func equalFoldASCII(first string, second string) bool {
 		if 'A' <= a && a <= 'Z' {
 			a += 'a' - 'A'
 		}
-		if 'B' <= b && b <= 'Z' {
+		if 'A' <= b && b <= 'Z' {
 			b += 'a' - 'A'
 		}
 		if a != b {
