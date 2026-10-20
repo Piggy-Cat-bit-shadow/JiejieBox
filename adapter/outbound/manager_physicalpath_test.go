@@ -3,8 +3,10 @@ package outbound
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -422,4 +424,100 @@ type countingDryRunGroup struct {
 func (g *countingDryRunGroup) Selected(network string) adapter.Outbound {
 	g.previewed.Add(1)
 	return g.dryRunGroup.Selected(network)
+}
+
+// TestSetLoggerDoesNotRaceWithStart pins the ownership of the logger field.
+//
+// SetLogger takes the manager lock, so a Start that read m.logger later from its divergent copy
+// would be the one unsynchronised access in the pair. The logger is snapshotted with outbounds,
+// validation and delivered, and this test holds the other side of the pair open: a goroutine that
+// installs loggers while the start runs. Under -race the unsnapshotted form is reported here.
+func TestSetLoggerDoesNotRaceWithStart(t *testing.T) {
+	healthy := &dryRunLeaf{tag: "healthy", networks: []string{N.NetworkTCP, N.NetworkUDP}}
+	udpOnly := &dryRunLeaf{tag: "udp-only", networks: []string{N.NetworkUDP}}
+	selector := &dryRunGroup{
+		tag:      "sel",
+		members:  []string{"healthy", "udp-only"},
+		networks: []string{N.NetworkTCP, N.NetworkUDP},
+		selected: "healthy",
+	}
+	outbounds := []adapter.Outbound{healthy, udpOnly, selector}
+	lookup := make(map[string]adapter.Outbound, len(outbounds))
+	for _, outbound := range outbounds {
+		lookup[outbound.Tag()] = outbound
+	}
+	selector.lookup = lookup
+
+	manager := NewManager(&stubRegistry{}, &cycleEndpointManager{endpoints: map[string]adapter.Endpoint{}}, "")
+	for _, outbound := range outbounds {
+		installOutbound(t, manager, outbound)
+	}
+	manager.EnablePhysicalPathValidation(physicalpath.Declarations{}, func(string) string { return "" }, false)
+	manager.EnablePhysicalPathDelivery(map[string][]string{"sel": {N.NetworkTCP}})
+
+	nop := log.NewNOPFactory().NewLogger("race")
+	var waitGroup sync.WaitGroup
+	stop := make(chan struct{})
+	waitGroup.Add(1)
+	go func() {
+		defer waitGroup.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				manager.SetLogger(nop)
+			}
+		}
+	}()
+
+	scope := adapter.NewScope(context.Background(), nop)
+	require.NoError(t, manager.Start(adapter.StartStateStart, scope),
+		"the capability finding is a warning, so the start must succeed")
+	close(stop)
+	waitGroup.Wait()
+}
+
+// failingWriter is a log sink that refuses every write.
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("the log sink is down") }
+
+// TestAWarningWithAFailingLogWriterStillStarts is the sink-failure half of E4.
+//
+// The warning is a diagnostic. A log writer that errors (a full disk, a closed pipe) must not turn
+// the diagnostic into a verdict: the start is decided by the report, not by whether the warning could
+// be delivered.
+func TestAWarningWithAFailingLogWriterStillStarts(t *testing.T) {
+	healthy := &dryRunLeaf{tag: "healthy", networks: []string{N.NetworkTCP, N.NetworkUDP}}
+	udpOnly := &dryRunLeaf{tag: "udp-only", networks: []string{N.NetworkUDP}}
+	selector := &dryRunGroup{
+		tag:      "sel",
+		members:  []string{"healthy", "udp-only"},
+		networks: []string{N.NetworkTCP, N.NetworkUDP},
+		selected: "healthy",
+	}
+	outbounds := []adapter.Outbound{healthy, udpOnly, selector}
+	lookup := make(map[string]adapter.Outbound, len(outbounds))
+	for _, outbound := range outbounds {
+		lookup[outbound.Tag()] = outbound
+	}
+	selector.lookup = lookup
+
+	factory, err := log.New(log.Options{Options: option.LogOptions{Level: "warn"}, DefaultWriter: failingWriter{}})
+	require.NoError(t, err)
+	require.NoError(t, factory.Start())
+	t.Cleanup(func() { _ = factory.Close() })
+
+	manager := NewManager(&stubRegistry{}, &cycleEndpointManager{endpoints: map[string]adapter.Endpoint{}}, "")
+	manager.SetLogger(factory.NewLogger("outbound/manager"))
+	for _, outbound := range outbounds {
+		installOutbound(t, manager, outbound)
+	}
+	manager.EnablePhysicalPathValidation(physicalpath.Declarations{}, func(string) string { return "" }, false)
+	manager.EnablePhysicalPathDelivery(map[string][]string{"sel": {N.NetworkTCP}})
+
+	scope := adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())
+	require.NoError(t, manager.Start(adapter.StartStateStart, scope),
+		"the log writer failing is not a configuration verdict")
 }

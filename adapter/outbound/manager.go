@@ -190,6 +190,10 @@ func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	outbounds := m.outbounds
 	validation := m.physicalPath
 	delivered := m.deliveredNetworks
+	// The logger is snapshotted with the rest for the same reason SetLogger takes the lock: a
+	// concurrent SetLogger must not race with a Start that is already reading the field. Reading it
+	// later from the divergent copy would be the same unsynchronised access this avoids.
+	loggerForStart := m.logger
 	m.access.Unlock()
 	if stage == adapter.StartStateStart {
 		// The start-order sort runs FIRST, and it is the same call the start itself makes.
@@ -238,8 +242,8 @@ func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 			if fatalErr := pathReport.Err(); fatalErr != nil {
 				return fatalErr
 			}
-			if warningErr := pathReport.WarningErr(); warningErr != nil && m.logger != nil {
-				m.logger.Warn(warningErr)
+			if warningErr := pathReport.WarningErr(); warningErr != nil && loggerForStart != nil {
+				loggerForStart.Warn(warningErr)
 			}
 		}
 		return m.startOutbounds(scope, append(outbounds, common.Map(m.endpoint.Endpoints(), func(it adapter.Endpoint) adapter.Outbound { return it })...), startable)
