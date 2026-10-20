@@ -86,8 +86,8 @@ All still `START ERR`, and each test asserts the error text rather than only the
 | E1 | warning must not be a failed start | the outbounds are started, the scope cleanups run, `Close` is clean and idempotent, status is populated (not `disconnected`) | `TestAWarnedStartClosesCleanly` (new) |
 | E2 | a fatal and a warning in one configuration | **FATAL wins**; the error names the missing member and does not carry the capability sentence; no warning is logged for that start | `TestAFatalFindingWinsOverAWarningInTheSameConfiguration` (new) |
 | E3 | `log.disabled` (NOP logger) | start succeeds, no panic | `TestAWarningWithLoggingDisabledNeitherPanicsNorRefuses` (new) |
-| E4 | flood / sensitive data | one aggregated warning per start, one line per defect (count-asserted); messages contain tags and networks only, no credentials | `TestTheReportedUDPCapabilityShapeStartsWithAWarning` |
-| E5 | concurrency | `-race` on the root package, `common/physicalpath`, `common/httpclient`, `adapter/outbound`, `dns/transport`, `dns/transport/quic` | see §4 |
+| E4 | flood / sensitive data / failing sink | one aggregated warning per start, one line per defect (count-asserted); messages contain tags and networks only, no credentials; a log writer that errors does not change the verdict | `TestTheReportedUDPCapabilityShapeStartsWithAWarning`, `TestAWarningWithAFailingLogWriterStillStarts` (new) |
+| E5 | concurrency | `-race` on the root package, `common/physicalpath`, `common/httpclient`, `adapter/outbound`, `dns/transport`, `dns/transport/quic`; `SetLogger` concurrent with `Start` is race-free and the unsnapshotted form is caught by mutation | `TestSetLoggerDoesNotRaceWithStart` (new); §3 |
 | E6 | upstream comparison | upstream `manager.go` at the recorded SHA has no dry run at all; the three representative shapes now start where the fork refused | `gh api` read of the upstream file, recorded in the construction report |
 
 ## 3. Defect found and fixed
@@ -102,6 +102,16 @@ serve some flows; those flows fail at run time exactly as before"*. Covered indi
 warning test (they assert the stable prefix and the per-defect lines) and by
 `TestAFatalFindingWinsOverAWarningInTheSameConfiguration`, which proves that a fatal start logs no
 warning at all.
+
+**A second defect: the logger field was read outside the lock.** `SetLogger` takes the manager
+lock, but the construction round had `Start` read `m.logger` directly when it emitted the warning, so
+a concurrent `SetLogger` and `Start` were an unsynchronised write/read pair - the new field inherited
+none of the snapshot discipline the other fields get. `Start` now snapshots it under the same lock as
+`outbounds`, `validation` and `delivered`.
+
+The regression is a mutation pair, not a claim: `TestSetLoggerDoesNotRaceWithStart` installs loggers
+while the start runs; with the unsnapshotted read restored it reports `WARNING: DATA RACE`, and with
+the snapshot it passes `-race -count=3`.
 
 No other bug was found. In particular, no production consumer re-escalates a warning: the only
 production reader of the report is `adapter/outbound/manager.go`, which calls `Err()` (fatal-only).
@@ -124,8 +134,10 @@ scratch package that Go does not build.
   runtime capability path is untouched by this round — no file under `protocol/`, `route/` or
   `common/dialer` changed — and `git diff` is the evidence; a live harness is the next step if a
   device is available.
-- slow-log-writer and reload-storm behaviour.
-- parallel `Start`/`Close` under `-race` beyond the existing lifecycle tests.
+- reload-storm behaviour.
+- a runtime end-to-end through a live inbound remains the one gap; the logger/`Start` pair and a
+  failing log sink are now covered (E4/E5), and the parallel `Start`/`Close` lifecycle stays on the
+  existing tests.
 
 ## 5. Fatal protections confirmed still fatal
 
