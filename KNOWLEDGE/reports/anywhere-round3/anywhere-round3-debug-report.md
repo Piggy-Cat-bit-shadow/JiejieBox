@@ -126,6 +126,7 @@ prove the gate is still strict.
 | queue block magnitude | `MEASURED_LOCAL` | worst single send 1.762 s over a 2 s window on a silent path |
 | L4 ownership | `MEASURED_LOCAL` + `VERIFIED_SOURCE` | 19 unit tests, live HTTP/3 e2e, two mutation kills |
 | return-path A/B | `MEASURED_LOCAL` | real dispatcher and real `portNAT` |
+| the four neighbouring protocols | `MEASURED_LOCAL` | `protocol/anytls`, `protocol/naive`, `protocol/vless`, `protocol/mieru` (81 s), `transport/v2rayxhttp` (18 s) all pass; no code on their paths changed |
 | WAN, devices, iOS/Android footprint | `NOT_TESTED` | no device, no WAN in this environment |
 
 ## 8. CI and the two flakes this pass had to attribute
@@ -160,10 +161,16 @@ close edge pass `-count=3` and under `-race` on every run above.
 
 1. **Shutdown stall bounded by the idle timeout.** Not a deadlock; the size is a configuration value.
    Exit condition in §3.
-2. **The composed `Box.Close` wall time was not measured end to end.** Both halves were measured
-   separately (lock hold, queue block) and the graph is verified, but there is no single experiment
-   that starts a box with a real TUN inbound and a stalled MASQUE endpoint. That needs a real TUN,
-   which this environment does not have.
+2. **The composed `Box.Close` wall time was not measured end to end.** Both halves are measured
+   separately and the graph is verified, but there is no single experiment that starts a box with a
+   real TUN inbound and a stalled MASQUE endpoint. This pass tried to build one and hit a concrete
+   wall, recorded here so the next attempt starts from it: `tun.Options` has no injectable device, so
+   the Go stack cannot be started without a platform TUN (admin and a driver on Windows); an external
+   harness can drive a `ForwardDispatcher` with a real QUIC queue, but its fresh-flow dispatches did
+   not reach the staging path (Flush observed zero staged buffers), and reproducing that condition
+   needs the in-package fixture, which cannot import the MASQUE endpoint because the module
+   dependency runs the other way. The claim therefore stays `NOT_TESTED` for the composition and
+   `MEASURED_LOCAL` for each edge.
 3. **`route` has a load-sensitive test** (`TestTeardown_OneSidedCompletionNeverRunsOnClose`, a 10 s
    deadline) that flaked once on CI under race and passed on re-run and locally 3/3. It is unrelated
    to this change set and was not modified.
