@@ -128,7 +128,35 @@ prove the gate is still strict.
 | return-path A/B | `MEASURED_LOCAL` | real dispatcher and real `portNAT` |
 | WAN, devices, iOS/Android footprint | `NOT_TESTED` | no device, no WAN in this environment |
 
-## 8. Residual risks
+## 8. CI and the two flakes this pass had to attribute
+
+All gates ran on `411833f4118a9b6e1c78ec3febd2de4739efd7d8`, the SHA carrying the construction, the
+`sing-tun` pin (`276576e`) and this report's predecessors:
+
+| workflow | run | conclusion |
+|---|---|---|
+| Verify | [39367944918](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39367944918) | **success** |
+| Android Core ARM64 | [39367945344](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39367945344) | **success** |
+| Mobile contract verification | [39367944908](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39367944908) | **success** after a re-run (first attempt failed in `route`) |
+
+Neither failure is in this change set, and both were attributed rather than assumed:
+
+1. **`route` flaked twice, on two different tests, across two SHAs.** First
+   `TestTeardown_OneSidedCompletionNeverRunsOnClose` (a 10 s deadline under race), then
+   `TestTheRouterHandsItsRuleSetResourcesToTheScope` (a rule-set lifecycle assertion) on the mobile
+   job. `Verify` passed on both SHAs, the mobile job passed on the previous SHA, and `route` shares no
+   code with this diff. Re-runs passed. No `route` file was modified.
+2. **`sing-tun`'s gVisor integration suite is flaky on this Windows host, pre-existing.** A full run
+   failed in `TestGoKernelFlowControl`; the same test was then run five times on the **pre-change**
+   `flow_dispatch.go` (`a7bd7fa`) and failed **2 of 5** with the same subtests and the same durations
+   (7.19 s / 9.79 s against 7.20 s / 9.79 s on the changed code). It is not caused by the return-path
+   change. The two tests the round already excludes (`TestGoKernelDeadline`,
+   `TestGoKernelPacketBatchIdle`) are the same class of window-timing assertions.
+
+The tests this round added or touched are stable: the return path, the adversarial matrix and the
+close edge pass `-count=3` and under `-race` on every run above.
+
+## 9. Residual risks
 
 1. **Shutdown stall bounded by the idle timeout.** Not a deadlock; the size is a configuration value.
    Exit condition in §3.
@@ -140,7 +168,7 @@ prove the gate is still strict.
    deadline) that flaked once on CI under race and passed on re-run and locally 3/3. It is unrelated
    to this change set and was not modified.
 
-## 9. Verdict
+## 10. Verdict
 
 The three construction items hold under an independent adversarial pass. Nothing was reverted,
 nothing was found that requires a production edit in this pass, and the one open question — whether
