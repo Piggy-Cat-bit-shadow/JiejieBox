@@ -8,7 +8,7 @@ nothing was force-pushed, no workflow was dispatched, no tag or release was made
 |---|---|
 | `AUDITED_BASELINE_SHA` | `b721b988fefec4a4da3b25ad320fa6a1cad8a7ee` (tag `v0.1.21`, the audit's snapshot) |
 | `START_SHA` (this round) | `b153ed7fd2b59f922a883501bf48f8f573d1e67b` |
-| `CLOSURE_CODE_SHA` | `df51e2dc6f638d094ab3b6ad5fa513fa8a9dd957` |
+| `CLOSURE_CODE_SHA` | the commit that adds the DS-01 fix (`fix(dialer): record a late family refusal before dropping it`); the commits before it are listed in §10 |
 | `DOCUMENT_SHA` | the commit that adds this file; `git log -1 --format=%H` |
 
 The original audit report is preserved unchanged at
@@ -21,7 +21,7 @@ point-in-time record of what the audit saw; nothing in it was rewritten to say "
 
 | item | before this round | after | evidence |
 |---|---|---|---|
-| **DS-01** late family refusal shown as `no dial candidates` | reported `CONFIRMED_BUG` by the audit | **not reproducible on the audited baseline or on HEAD**: `localFamilyRefusalError` is already returned at both flattening sites in `b721b988` | `git show b721b988:common/dialer/dual_stack_scheduler.go`; tests in §3 pass |
+| **DS-01** late family refusal shown as `no dial candidates` | reported `CONFIRMED_BUG` by the audit | **confirmed on HEAD and fixed here**: the late-arrival arm dropped a refused candidate without recording the refusal, so the empty-set conclusion could only say `no dial candidates` | red test `TestLateRefusalExplainsWhyNothingWasAttempted`, then green; §2 |
 | **DS-02** group outbound serialises a resolved address list | `HIGH_CONFIDENCE_RISK`, no measurement | **measured**: direct shape 0 ms (races), group shape 300 ms (serial, and it consumes the shared deadline) | `TestGroupShapeDialsAddressesSerially` |
 | **DS-03** recovery producers not joined | `HIGH_CONFIDENCE_RISK` | **already joined** at HEAD: `producers.Wait()` and `originalWorkers.Wait()` with termination comments; ownership tests pass | `common/dialer/resolve.go:467,486,593`; §5 |
 | **ssh** `InterfaceUpdated` unlocked close | not in the audit | **real bug found and fixed**: unlocked read of `clientConn` racing with a dial, and it could close the session the dial had just installed | mutation run reports `DATA RACE`; fixed form passes `-race -count=3` |
@@ -29,42 +29,78 @@ point-in-time record of what the audit saw; nothing in it was rewritten to say "
 | **DS-05** entry presentment latch | `UNVERIFIED_HYPOTHESIS` | design boundary restated; device verification still `NOT_TESTED_DEVICE` | §7 |
 | **F7** load-sensitive liveness assertion | one idle timeout with a 3× ceiling (flaked at 12.3 s under load) | ceilings raised to 5×/6× with the reasoning recorded; a real hang still fails | §8 |
 
-Two production files changed in this round: `protocol/ssh/outbound.go` (the fix) and the two test
-files that pin DS-02 and the ssh race. Nothing else.
+Two production files changed in this round: `common/dialer/dual_stack_scheduler.go` (the DS-01 fix)
+and `protocol/ssh/outbound.go` (the unlocked close), plus the tests that pin each and the DS-02
+measurement. Nothing else.
 
 ---
 
-## 2. DS-01 — the correction
+## 2. DS-01 — confirmed on HEAD, fixed here
 
-The audit reported that a late AAAA candidate, refused by the local IPv6 egress gate, produced
-`no dial candidates` instead of the refusal reason. That is the behaviour the fix targets, and the
-fix is present — **in the audited baseline itself**:
+The audit said a late AAAA candidate, refused by the local IPv6 egress gate, produced
+`no dial candidates` instead of the refusal reason. An interim read of this round concluded the
+opposite, because the streaming conclusion *does* consult `refused` and the plan filter *does* record
+refusals. That read was wrong: neither of those is the arm the late candidate travels through.
+
+**The defect is in the late-arrival arm.** `dialWithLateCandidatesAdmitting` drops a candidate the
+machine cannot dial with a bare `continue`:
+
+```go
+if s.localFamily.hardUndialable(candidate.address) {
+    continue
+}
+```
+
+A late candidate never passes through `filterLocalFamily`, so that drop never reached `refused`. The
+stream then closed with `started == 0` and `refused.refused() == false`, and the conclusion answered
+`no dial candidates` — the symptom, not the cause the machine had already established.
+
+**Reproduction, red before the fix** (`TestLateRefusalExplainsWhyNothingWasAttempted`, empty plan, one
+late global-IPv6 candidate, the reported machine's policy):
 
 ```
-$ git show b721b988:common/dialer/dual_stack_scheduler.go | grep localFamilyRefusalError
-return nil, netip.Addr{}, localFamilyRefusalError(refused, s.localFamily)   # twice
+Error: Target error should be in err chain:
+       in chain: "no dial candidates"
+       Messages: the refusal is the reason nothing was attempted, so it must be the error
 ```
 
-The same is true of the parallel-network call site (`dual_stack_parallel_network.go`), whose comment
-records that `raceCandidatesExcluding` "used to flatten the same mistake into no dial candidates":
-the flattening was already gone at the baseline.
+**The fix** records the first refusal in the late arm, before dropping the candidate:
 
-**Conclusion: `NOT_REPRODUCED_ON_AUDITED_BASELINE`.** The audit's external probe must have exercised
-an older build — the report itself references v0.1.17 logs in §11 — and its status line does not
-describe `b721b988`. No code was changed for DS-01; the behaviour is re-verified by the existing
-regressions:
+```go
+if s.localFamily.hardUndialable(candidate.address) {
+    if !refused.refused() {
+        refused = localFamilyRefusal{family: candidate.family, address: candidate.address}
+    }
+    continue
+}
+```
 
-| test | asserts |
+The first refusal is enough to explain an empty attempt set; a later one cannot be more informative
+and must not overwrite the reason the first candidate was dropped. `localFamilyRefusal.error` re-asks
+the same policy with that address, so if the machine state moved between the drop and the conclusion
+the answer degrades to the general one rather than describing a state that no longer holds — which is
+the same rule the plan-filtered arm already followed.
+
+**Green after the fix**, `-count=3`: the error is now `errLocalIPv6EgressUnavailable` and the test
+also asserts that no attempt was made (a refusal must not be dialed) and that the string
+`no dial candidates` is absent.
+
+**What this changes about the audit**: DS-01 was real, and its A2-7 note ("5 of 6 sites fixed, the
+streaming late arm remains") is accurate against `b721b988` — the plan arm and the streaming
+conclusion were fixed there, the late arm was not. No historical text was rewritten; the audit stays
+as the point-in-time record, and the correction lives here.
+
+| regression | asserts |
 |---|---|
-| `TestGlobalIPv6IsRefusedBeforeASocketExists` | the gate returns `errLocalIPv6EgressUnavailable`, not the family error |
+| `TestLateRefusalExplainsWhyNothingWasAttempted` (**new**) | the late refusal is the error, no attempt, no symptom string |
+| `TestGlobalIPv6IsRefusedBeforeASocketExists` | the gate returns `errLocalIPv6EgressUnavailable` |
 | `TestTheRefusalIsPerDestinationNotPerMachine` | ULA / link-local / LAN destinations are not refused |
-| `dual_stack_parallel_network_test.go` (`ErrorIs`/`NotContains`) | the scheduler and the parallel path surface the refusal, not `no dial candidates` |
+| `dual_stack_parallel_network_test.go` (`ErrorIs`/`NotContains`) | the parallel path surfaces the refusal, not `no dial candidates` |
 | `egress_real_world_attack_test.go` | the refusal survives the real policy wiring |
 
-All pass at `START_SHA` and at `CLOSURE_CODE_SHA` (§9).
+The whole `common/dialer` package passes, and passes under `-race`.
 
 ---
-
 ## 3. DS-02 — measured, and deliberately not changed
 
 ### The production path
@@ -227,6 +263,8 @@ is no path in the test that returns successfully without the connection dying.
 
 | command | result |
 |---|---|
+| `go test ./common/dialer -run 'TestLateRefusalExplainsWhyNothingWasAttempted' -count=3` | PASS (red before the fix, green after) |
+| `go test ./common/dialer -count=1` / `-race` | PASS (16.5 s / 17.7 s) |
 | `go test ./common/dialer -run 'TestGlobalIPv6\|TestEgress\|TestLocalFamily\|TestGroupShape' -count=1` | PASS |
 | `go test ./common/dialer -run 'TestLateFamilyAnswerDoesNotStrandTheProducer\|TestSchedulerClosesImmediatelyWithNoCandidates\|TestLateResolutionErrorDoesNotFailAWinner\|TestOwnership\|TestProducer' -count=1` | PASS |
 | `go test ./protocol/ssh -count=1` | PASS |
@@ -248,6 +286,7 @@ runtime lifecycle test, `route/TestBackpressure` (environment-limited as recorde
 | `1c97c3a61` | ssh: retire the session under the lock, plus the mutation-verified race test |
 | `a1705021f` | dialer: the DS-02 serial-cost measurement; transport/http: F7 ceilings |
 | `df51e2dc6` | dialer: record both parallel launches before any goroutine runs (the measurement test failed on its own race under `-race` on CI, not on the behaviour) |
+| the DS-01 fix commit | dialer: record a late family refusal before dropping it, plus the red→green regression |
 | the docs commit | this report and the knowledge index row |
 
 Rollback is one `git revert` per commit; no dependency pin, workflow, submodule pointer or release
@@ -257,9 +296,11 @@ artifact was touched.
 
 ## 11. Limits
 
-- The DS-01 correction rests on the audited baseline's source and the existing regressions. The
-  audit's original probe output was not available in this environment, so the discrepancy is
-  explained ("older build, consistent with the v0.1.17 references") rather than proven line by line.
+- DS-01 was reproduced from its described shape and the real scheduler entry point, not from the
+  audit's original probe output (which was not available here). The mechanism is proven; the exact
+  probe binary is not. An interim read of this round first concluded "not reproducible" because it
+  looked at the wrong arm — the plan filter and the streaming conclusion both consult `refused`, and
+  the late-arrival arm between them did not. That correction is recorded here rather than hidden.
 - DS-02 has a measurement, not field frequency data. That is why it stays `NO_CHANGE`.
 - The 17 rows are source-verified; only ssh has a runtime test, and only for the field-access race.
 - No device, no WAN, no macOS/Windows/Android runtime network switching.

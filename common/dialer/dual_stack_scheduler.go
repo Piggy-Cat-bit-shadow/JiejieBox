@@ -455,6 +455,17 @@ func (s *candidateScheduler) dialWithLateCandidatesAdmitting(ctx context.Context
 			// the successor generation could dial. Re-reading keeps the fail-open direction the design
 			// requires for a superseded capture.
 			if s.localFamily.hardUndialable(candidate.address) {
+				// Record it. This arm never passes through filterLocalFamily, so before this the
+				// refusal was dropped silently and the conclusion below reported "no dial
+				// candidates" - the symptom - even though the machine already knew the cause: the
+				// candidate was offered, and this machine has no path to it.
+				//
+				// The first refusal is enough to explain an empty attempt set. A later one cannot
+				// be more informative, and it must not overwrite the reason the first candidate
+				// was dropped.
+				if !refused.refused() {
+					refused = localFamilyRefusal{family: candidate.family, address: candidate.address}
+				}
 				continue
 			}
 			// And the operator's policy, which the machine's capability cannot express. See
