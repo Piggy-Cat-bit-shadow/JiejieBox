@@ -247,9 +247,14 @@ were dirty before this round started and were never staged.
 (`CC=…\x86_64-w64-mingw32-clang.exe CGO_ENABLED=1`); the earlier rounds' `BLOCKED_BY_ENVIRONMENT`
 was a toolchain-PATH mistake, now corrected in the debug report.
 
-Pre-existing failures, reproduced on the pre-change code and **not** this round's: `TestGoKernelDeadline`
-and `TestGoKernelPacketBatchIdle` (Windows timing), and six untagged H3 tests in `protocol/masque`
-that need `-tags with_quic`.
+Pre-existing failures, reproduced on the pre-change code and **not** this round's:
+`TestGoKernelDeadline` and `TestGoKernelPacketBatchIdle` (Windows timing; they stay out of scope).
+
+The `protocol/masque` default-build failure was **closed** in this round instead of carried forward:
+19 tests construct a real H3 endpoint or listener and cannot pass without the tag, so they now skip
+through a `requireHTTP3Client` gate that names the tag, while the pure bootstrap tests that pass in
+both profiles stay untagged. The default build passes in 3.0 s with 19 skips, and `with_quic` still
+runs all 19 (57 s, zero skips) — coverage was made explicit, not traded away.
 
 ## 8. CI
 

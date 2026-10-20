@@ -33,7 +33,7 @@ not run, that is `BLOCKED_BY_ENVIRONMENT`, not `PASS`.
 | `release/` | release phases, branch consolidation, handoffs and close-outs, in chronological order of the phase names |
 | `windows-client/` | the Windows client's installer / uninstaller / diagnostic-channel and coexistence investigations |
 | `anywhere-round2/` | the second Anywhere research round: audit, construction, adversarial debug and final verification for the DNS/rule-set/MASQUE/QUIC ownership work |
-| `anywhere-round3/` | the third Anywhere round: an independent deep audit of four previously-favoured candidates (three falsified by local measurement), two new A-class candidates, two confirmed defects, and the next-round blueprint. Documentation only — no production change |
+| `anywhere-round3/` | the third Anywhere round: an independent deep audit of four previously-favoured candidates (three falsified by local measurement), two new A-class candidates, two confirmed defects and the next-round blueprint, followed by the construction record and the debug handoff that turned the A-class items into code |
 
 ## Index
 
@@ -124,6 +124,8 @@ later. "Status" says whether the report still describes the tree or has been sup
 |---|---|---|---|
 | `README.md` | 2026-10-20 | the round's executive index: what was falsified, what is worth building, and what was not run | current |
 | `anywhere-round3-independent-deep-audit.md` | 2026-10-20 | independent audit at `5064f20a9`: the four brief candidates measured (TCP `PacketTemplate`, XHTTP gather polling, HY2/TUIC batching and the TUN batch grouping), the two rejected premises, the two new A-class candidates (`portReturn.ReturnPackets` per-call allocation, L4 CONNECT-UDP missing the owned DATAGRAM path), two confirmed defects (`equalFoldASCII` fold base, `domain_keyword` not lowercased), the `ForwardStage.Flush` lock-across-blocking-enqueue liveness risk, seven autonomous findings, the measured microbenchmark log and the next-round blueprint | current for `5064f20a9` — **not** a claim about later HEADs |
+| `anywhere-round3-construction.md` | 2026-10-20 | the construction record: A3-1 `ReturnPackets` (2 → 0 allocs, with the Red→Green against the pre-change code), A3-2 L4 owned DATAGRAM plus the live HTTP/3 end-to-end test, the close-path dependency graph and the two numbers that bound it, P3, and the rejected batch-owned candidate with its measurements | current for the delivered head |
+| `anywhere-round3-debug-handoff.md` | 2026-10-20 | the sheet for the independent adversarial pass: change list, commands, dangerous edges, suspicious paths, dependency versions, CI links and what is still open | current for the delivered head |
 
 ## Adding a report
 

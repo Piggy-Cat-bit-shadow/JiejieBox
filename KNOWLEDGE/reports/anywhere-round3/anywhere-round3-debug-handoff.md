@@ -42,9 +42,8 @@ go test . -count=1 -skip 'TestGoKernelDeadline|TestGoKernelPacketBatchIdle'
 go test -race . -run 'TestReturnPackets|TestForwardStage|TestDispatcherCloseWaits' -count=3
 ```
 
-`protocol/masque` in the **default** build has six pre-existing failures (they construct H3 endpoints
-that only exist under `with_quic`). Run it with `-tags with_quic`, or filter by test name. Fixing that
-is test hygiene, deliberately not folded into this round.
+`protocol/masque` in the **default** build now passes: the 19 H3-dependent tests skip with a message
+naming `-tags with_quic`. Run the package with the tag to exercise them for real.
 
 ## 3. Where the edges are
 
@@ -103,6 +102,7 @@ round: stale `sing-tun` hashes accumulated in both `go.sum` files across three p
    own round. This is the one item where "debugged" does not mean "resolved".
 2. **An end-to-end `Box.Close` measurement** with a real TUN inbound and a stalled MASQUE endpoint.
    Both ends of the chain were measured separately; the composed wall time was not.
-3. **`protocol/masque` default-build tests.** Six untagged H3 tests fail without `-tags with_quic`.
-   Test hygiene, deliberately out of scope.
+3. ~~`protocol/masque` default-build tests.~~ **Closed**: 19 H3-dependent tests now skip with a
+   message naming `-tags with_quic`, the pure bootstrap tests stay untagged, the default build is
+   green and `with_quic` still runs all 19.
 4. **WAN, devices, capsule flow control under a real congested reading peer.** `NOT_TESTED`.
