@@ -93,6 +93,9 @@ const naiveUnexpectedStatusPrefix = "unexpected response status: "
 // production path.
 type naiveDialerClient interface {
 	DialEarly(ctx context.Context, destination M.Socksaddr) (cronet.NaiveConn, error)
+	// DialEarlyWithQUIC chooses the transport for this request; see the
+	// h3FallbackToH2 path for why the choice is per CONNECT.
+	DialEarlyWithQUIC(ctx context.Context, destination M.Socksaddr, forceQUIC bool) (cronet.NaiveConn, error)
 }
 
 // dialNaiveTunnel opens one Naive tunnel and completes its CONNECT handshake.
@@ -113,7 +116,22 @@ type naiveDialerClient interface {
 // the alternative - keeping the early return - cannot observe the handshake at
 // all.
 func dialNaiveTunnel(ctx context.Context, client naiveDialerClient, destination M.Socksaddr) (net.Conn, error) {
-	conn, err := client.DialEarly(ctx, destination)
+	return prepareNaiveTunnel(ctx, client.DialEarly, destination)
+}
+
+// dialNaiveTunnelWithQUIC is the per-CONNECT transport choice. It exists for the
+// opt-in H3->H2 fallback and for nothing else: the two ordinary modes keep using
+// dialNaiveTunnel and therefore the client-level QUIC option.
+func dialNaiveTunnelWithQUIC(ctx context.Context, client naiveDialerClient, destination M.Socksaddr, forceQUIC bool) (net.Conn, error) {
+	return prepareNaiveTunnel(ctx, func(ctx context.Context, destination M.Socksaddr) (cronet.NaiveConn, error) {
+		return client.DialEarlyWithQUIC(ctx, destination, forceQUIC)
+	}, destination)
+}
+
+// prepareNaiveTunnel runs the two-stage dial and owns the handshake contract:
+// nothing is returned to the caller before the CONNECT response was accepted.
+func prepareNaiveTunnel(ctx context.Context, dial func(context.Context, M.Socksaddr) (cronet.NaiveConn, error), destination M.Socksaddr) (net.Conn, error) {
+	conn, err := dial(ctx, destination)
 	if err != nil {
 		// DialEarly reports local lifecycle and state failures (a closed client,
 		// a stream that could not be created). None of them is evidence about

@@ -39,6 +39,12 @@ type Outbound struct {
 	logger    logger.ContextLogger
 	client    *cronet.NaiveClient
 	uotClient *uot.Client
+	// fallbackToH2 is the opt-in H3->H2 retry (quic_fallback_to_h2). It is read
+	// on the dial path only; when false the outbound behaves exactly as before.
+	fallbackToH2 bool
+	// h3Fallback is owned by this outbound. It is not shared with any other
+	// protocol and holds no per-target state; see h3_fallback.go.
+	h3Fallback h3Fallback
 }
 
 func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.NaiveOutboundOptions) (adapter.Outbound, error) {
@@ -83,6 +89,13 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	}
 	if options.TLS.Reality != nil && options.TLS.Reality.Enabled {
 		return nil, E.New("reality is not supported on naive outbound")
+	}
+	// The fallback only exists for a forced-H3 attempt. Without quic: true there
+	// is no H3 attempt to fall back from, so the combination is a configuration
+	// error rather than a silently inert field.
+	if options.QUICFallbackToH2 && !options.QUIC {
+		return nil, E.New("quic_fallback_to_h2 requires quic: true: ",
+			"without it there is no H3 attempt to fall back from")
 	}
 
 	// Reject a reserved-header collision at configuration time. cronet-go also
@@ -228,27 +241,28 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	if err != nil {
 		return nil, err
 	}
-	var uotClient *uot.Client
+	naiveOutbound := &Outbound{
+		Adapter:      outbound.NewAdapterWithDialerOptions(C.TypeNaive, tag, nil, options.DialerOptions),
+		ctx:          ctx,
+		logger:       logger,
+		client:       client,
+		fallbackToH2: options.QUICFallbackToH2,
+	}
 	uotOptions := common.PtrValueOrDefault(options.UDPOverTCP)
 	if uotOptions.Enabled {
-		uotClient = &uot.Client{
-			Dialer:  &naiveDialer{client},
+		naiveOutbound.uotClient = &uot.Client{
+			Dialer:  &naiveDialer{NaiveClient: client, owner: naiveOutbound},
 			Version: uotOptions.Version,
 		}
 	}
 	var networks []string
-	if uotClient != nil {
+	if naiveOutbound.uotClient != nil {
 		networks = []string{N.NetworkTCP, N.NetworkUDP}
 	} else {
 		networks = []string{N.NetworkTCP}
 	}
-	return &Outbound{
-		Adapter:   outbound.NewAdapterWithDialerOptions(C.TypeNaive, tag, networks, options.DialerOptions),
-		ctx:       ctx,
-		logger:    logger,
-		client:    client,
-		uotClient: uotClient,
-	}, nil
+	naiveOutbound.Adapter = outbound.NewAdapterWithDialerOptions(C.TypeNaive, tag, networks, options.DialerOptions)
+	return naiveOutbound, nil
 }
 
 func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
@@ -268,6 +282,9 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination 
 	switch N.NetworkName(network) {
 	case N.NetworkTCP:
 		h.logger.InfoContext(ctx, "outbound connection to ", destination)
+		if h.fallbackToH2 {
+			return h.dialWithH3Fallback(ctx, destination)
+		}
 		// dialNaiveTunnel completes the CONNECT handshake, so a 407 or a failed
 		// first hop is a DialContext error with adapter.FailureFacts attached,
 		// not a connection that closes on its first read. See failure.go.
@@ -291,6 +308,10 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 }
 
 func (h *Outbound) InterfaceUpdated(ctx context.Context) {
+	// The fallback window describes the network being left, so it is cleared
+	// with the connections it describes: a failure observed on the old network
+	// must not send the first CONNECT on the new one straight to HTTP/2.
+	h.h3Fallback.reset()
 	h.client.CloseAllConnections()
 }
 
@@ -300,6 +321,9 @@ func (h *Outbound) Client() *cronet.NaiveClient {
 
 type naiveDialer struct {
 	*cronet.NaiveClient
+	// owner is the outbound this dialer belongs to. It is used for the opt-in
+	// H3->H2 retry; a nil owner (tests) means "no fallback".
+	owner *Outbound
 }
 
 // DialContext is the entry the UoT client dials through. It uses the same
@@ -309,6 +333,9 @@ type naiveDialer struct {
 func (d *naiveDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	if N.NetworkName(network) != N.NetworkTCP {
 		return nil, E.Extend(N.ErrUnknownNetwork, network)
+	}
+	if d.owner != nil && d.owner.fallbackToH2 {
+		return d.owner.dialWithH3Fallback(ctx, destination)
 	}
 	return dialNaiveTunnel(ctx, d.NaiveClient, destination)
 }

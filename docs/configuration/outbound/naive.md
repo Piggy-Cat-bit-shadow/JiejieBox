@@ -20,6 +20,7 @@ icon: material/new-box
   "stream_receive_window": "",
   "udp_over_tcp": false | {},
   "quic": false,
+  "quic_fallback_to_h2": false,
   "quic_congestion_control": "",
   "quic_session_receive_window": "",
   "tls": {},
@@ -97,6 +98,31 @@ See [UDP Over TCP](/configuration/shared/udp-over-tcp/) for details.
 #### quic
 
 Use QUIC instead of HTTP/2.
+
+#### quic_fallback_to_h2
+
+!!! question "Since sing-box 1.13.0"
+
+Retry a failed QUIC CONNECT once over HTTP/2. Default: `false`.
+
+Only the transport is retried: the request is opened again with HTTP/2 and the
+original credentials, before any application data is handed to the failed
+connection. A CONNECT that the proxy actually answered — `407`, any other status
+— is **not** retried, and neither is a caller cancellation; those say nothing
+about whether QUIC works.
+
+After one transport failure the client uses HTTP/2 directly for 30 seconds
+instead of paying the failed QUIC attempt on every new connection, and a network
+change clears that memory.
+
+Requires `quic: true`, since without a QUIC attempt there is nothing to fall back
+from.
+
+!!! note ""
+
+    This is an availability option, not a speed option. It does not choose
+    "whichever is faster": `quic: true` still means "try QUIC first", and the
+    reference client has no such behaviour at all.
 
 #### quic_congestion_control
 

@@ -48,13 +48,26 @@ func (c *fakeNaiveConn) HandshakeContext(context.Context) error {
 
 // fakeDialClient is the narrow client surface dialNaiveTunnel uses.
 type fakeDialClient struct {
-	conn    *fakeNaiveConn
-	dialErr error
-	calls   int
+	conn      *fakeNaiveConn
+	dialErr   error
+	calls     int
+	forceQUIC []bool
 }
 
 func (c *fakeDialClient) DialEarly(context.Context, M.Socksaddr) (cronet.NaiveConn, error) {
 	c.calls++
+	if c.dialErr != nil {
+		return nil, c.dialErr
+	}
+	return c.conn, nil
+}
+
+// DialEarlyWithQUIC exists so the fake satisfies naiveDialerClient after the
+// per-dial selector was added. The P1 tests never ask for a specific transport,
+// so it records the choice and behaves like DialEarly.
+func (c *fakeDialClient) DialEarlyWithQUIC(_ context.Context, _ M.Socksaddr, forceQUIC bool) (cronet.NaiveConn, error) {
+	c.calls++
+	c.forceQUIC = append(c.forceQUIC, forceQUIC)
 	if c.dialErr != nil {
 		return nil, c.dialErr
 	}

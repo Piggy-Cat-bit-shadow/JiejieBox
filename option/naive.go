@@ -132,7 +132,24 @@ type NaiveOutboundOptions struct {
 	ReceiveWindow                   *byteformats.MemoryBytes `json:"stream_receive_window,omitempty"`
 	UDPOverTCP                      *UDPOverTCPOptions       `json:"udp_over_tcp,omitempty"`
 	QUIC                            bool                     `json:"quic,omitempty"`
-	QUICCongestionControl           string                   `json:"quic_congestion_control,omitempty" enum:"bbr,bbr2,cubic,reno"`
-	QUICSessionReceiveWindow        *byteformats.MemoryBytes `json:"quic_session_receive_window,omitempty"`
+	// QUICFallbackToH2 retries a failed FORCED-H3 CONNECT once over HTTP/2.
+	//
+	// It is an availability feature, not a selection policy: "whichever is faster
+	// wins" is explicitly not what this does. `quic: true` keeps meaning "try H3
+	// first" and `quic: false` keeps meaning "HTTP/2 only"; this option only adds
+	// one bounded second attempt when the H3 attempt failed at the transport
+	// layer before any application byte was handed over.
+	//
+	// It requires quic: true, because without it there is no H3 attempt to fall
+	// back from. The combination is rejected rather than ignored: a field that
+	// silently does nothing is worse than a configuration error.
+	//
+	// Default false. The reference client has no such behaviour, and its
+	// maintainer argued that the protocol should be chosen by the client
+	// (klzgrad/naiveproxy#669), so this is opt-in and the existing two modes are
+	// untouched.
+	QUICFallbackToH2         bool                     `json:"quic_fallback_to_h2,omitempty"`
+	QUICCongestionControl    string                   `json:"quic_congestion_control,omitempty" enum:"bbr,bbr2,cubic,reno"`
+	QUICSessionReceiveWindow *byteformats.MemoryBytes `json:"quic_session_receive_window,omitempty"`
 	OutboundTLSOptionsContainer
 }
