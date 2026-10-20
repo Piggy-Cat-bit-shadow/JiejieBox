@@ -253,12 +253,25 @@ that need `-tags with_quic`.
 
 ## 8. CI
 
-The fork runs `Verify` (which includes two race steps), `Android Core ARM64` and
-`Mobile contract verification` on every push to `testing`. Runs for the final SHA are recorded in
-§9 after they finish; a green run on an earlier SHA is never counted as a run on this one.
+All three gates ran on **`8323753656c14d7ad0acb8c6808cda6215306db0`**, the SHA that contains every
+code commit, the `sing-tun` pin and the go.sum cleanup:
+
+| workflow | run | conclusion |
+|---|---|---|
+| Verify — nested module integrity, `go test -run '^$' ./...`, race on the fork's data paths | [39359862219](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39359862219) | **success** |
+| Android Core ARM64 | [39359862343](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39359862343) | **success** |
+| Mobile contract verification | [39359862096](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39359862096) | **success** |
+
+An earlier SHA's green is never counted as a run on this one, and the `Verify` gate is what caught a
+real defect in this round's own delivery: each pin bump had left the previous `sing-tun` hash in
+`go.sum`, and `go mod tidy -diff` reports it. The fix is its own commit (`8323753`), and the gate is
+clean afterwards.
 
 ## 9. Final state
 
-See the closing section of this file's companion
-[`anywhere-round3-debug-handoff.md`](anywhere-round3-debug-handoff.md) for the exact SHA, the CI
-conclusion for that SHA and the remaining limits.
+- `git rev-parse HEAD` = `git ls-remote origin testing` = **`8323753656c14d7ad0acb8c6808cda6215306db0`**
+  at the time the runs above were taken; the only later commits are the documentation amendments
+  that record these results.
+- Working tree: clean apart from `clients/apple` and `clients/desktop`, the pre-existing submodule
+  pointers that were dirty before the round started and were never staged.
+- Both modules pin `v0.0.0-20261020022904-ff4fbed67c0d`; `go mod tidy -diff` is clean in both.

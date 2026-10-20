@@ -84,5 +84,25 @@ is test hygiene, deliberately not folded into this round.
 ## 6. CI
 
 `Verify` (with two race steps), `Android Core ARM64` and `Mobile contract verification` run on every
-push to `testing`. The runs for the final SHA and their conclusions are listed in the closing section
-below, added after the runs finished — an earlier SHA's green is never reused.
+push to `testing`. For the construction SHA `8323753656c14d7ad0acb8c6808cda6215306db0`:
+
+| workflow | run | conclusion |
+|---|---|---|
+| Verify | [39359862219](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39359862219) | success |
+| Android Core ARM64 | [39359862343](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39359862343) | success |
+| Mobile contract verification | [39359862096](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39359862096) | success |
+
+An earlier SHA's green is never reused. The `Verify` gate also caught a real delivery defect this
+round: stale `sing-tun` hashes accumulated in both `go.sum` files across three pin bumps, and
+`go mod tidy -diff` reports exactly that. Fixed before the runs above.
+
+### 6.1 What is still open
+
+1. **The close-path fix.** The wait chain and its bounds are proven; no production change was made.
+   The three candidate designs are in the construction report §4, each with the reason it needs its
+   own round. This is the one item where "debugged" does not mean "resolved".
+2. **An end-to-end `Box.Close` measurement** with a real TUN inbound and a stalled MASQUE endpoint.
+   Both ends of the chain were measured separately; the composed wall time was not.
+3. **`protocol/masque` default-build tests.** Six untagged H3 tests fail without `-tags with_quic`.
+   Test hygiene, deliberately out of scope.
+4. **WAN, devices, capsule flow control under a real congested reading peer.** `NOT_TESTED`.
