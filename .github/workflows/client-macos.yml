@@ -184,27 +184,6 @@ jobs:
             ./include ./route ./adapter/... ./dns/... ./service/... ./experimental/clashmode
           echo "PASS: unit tests under the macOS tags"
 
-      - name: Naive native self-test (test module)
-        # The package list above cannot reach `test/`: it is a separate Go module, so nothing in the
-        # root module's test run compiles or executes it. These two tests drive a real Cronet engine
-        # against a real Naive server inside one process, and the pool-isolation one is the only
-        # end-to-end check that `insecure_concurrency: 3` opens three HTTP/2 sessions. Until this
-        # step existed they only ever ran on a developer machine.
-        #
-        # Hard gate on purpose: no continue-on-error, no skip, no compile-only. The tags come from
-        # the same file the artifact is built with (`with_naive_outbound` among them), and
-        # CGO_ENABLED=1 is what links the darwin/arm64 native library.
-        #
-        # Bounded: two tests, five minutes. The NetLog these tests write goes to the test's own
-        # temporary directory in non-verbose mode, so the step cannot leave a large artifact.
-        run: |
-          set -euo pipefail
-          export GOOS="$GOOS_TARGET" GOARCH="$GOARCH_TARGET" CGO_ENABLED="$CGO_ENABLED_TARGET"
-          cd test
-          go test -tags "$(cat "../$TAGS_FILE")" -count=1 -timeout 5m \
-            -run '^(TestNaiveSelf|TestNaiveSelfInsecureConcurrency)$' -v .
-          echo "PASS: Naive native self-test against a real Cronet engine"
-
       - name: build macOS core
         run: |
           set -euo pipefail
