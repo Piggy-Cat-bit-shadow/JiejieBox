@@ -200,6 +200,19 @@ Pre-existing failures, verified identical on the pre-change code and therefore *
 | `TestGoKernelPacketBatchIdle` | `sing-tun`, Windows | idle deadline with pooled buffers retained |
 | six untagged H3 tests | `protocol/masque`, default build | they construct H3 endpoints that only exist with `-tags with_quic` |
 
+### 5.1 What this round did not verify
+
+Two gaps, stated rather than papered over:
+
+1. **L4 was exercised against a scripted transport boundary, not a live HTTP/3 peer.** The package
+   has a real-connection end-to-end test, but it drives CONNECT-IP; nothing in this round proves the
+   L4 packet connection against a real server, and CONNECT-IP passing is not evidence for L4. The
+   ownership questions this round asked — who releases, when, how often — are answered at the
+   boundary that owns them, and the real-connection behaviour above that boundary is quic-go's.
+2. **XHTTP, Vision, AnyTLS, Naive and Mieru were not individually exercised.** No code on their
+   paths changed; they appear only through the shared HTTP client suites and the root package. That
+   is a coverage statement, not a pass claim.
+
 ---
 
 ## 6. D and E: re-checked, not changed
