@@ -18,7 +18,7 @@ plus one suspected documentation defect. This round closes them, without reopeni
 | item | verdict |
 |---|---|
 | **A1** pool-isolation self-test counted a stale NetLog event id | **FIXED** and verified against a real Cronet engine |
-| **A2** the native self-test ran nowhere in CI | **CONFIGURED**; dispatch result recorded in §4 |
+| **A2** the native self-test ran nowhere in CI | **IMPLEMENTED and EXECUTED, then REVERTED**: the macOS runner cannot carry the native bootstrap → `BLOCKED_BY_ENVIRONMENT`, see §3 |
 | **A3** "mojibake" in `docs/naive.md` | **A3_ENCODING_FALSE_POSITIVE** — the blob is clean UTF-8; baseline section added instead |
 | **A4** audit archived + closeout | **DONE** — the audit was already archived byte-identically; this report is new |
 
@@ -89,35 +89,41 @@ go test -tags "$(cat "../$TAGS_FILE")" -count=1 -timeout 5m \
   -run '^(TestNaiveSelf|TestNaiveSelfInsecureConcurrency)$' -v .
 ```
 
-Why this shape:
+The design was right and is kept here as the record: the `test` directory is a separate Go module, so
+the root package list could never reach it; the tags are the artifact's tags
+(`release/DEFAULT_BUILD_TAGS` contains `with_naive_outbound`); `CGO_ENABLED=1` links the darwin/arm64
+native library; it is a hard gate with no `continue-on-error`; and the manual dispatch policy is
+untouched.
 
-- **It actually runs.** The `test` directory is a separate Go module, so the root module's package
-  list could never reach it — that is the coverage hole, not a missing file.
-- **The tags are the artifact's tags** (`release/DEFAULT_BUILD_TAGS`, which contains
-  `with_naive_outbound`), and `CGO_ENABLED=1` is what links the darwin/arm64 native library.
-- **Hard gate.** No `continue-on-error`, no `|| true`, no skip, no compile-only; a failure fails the
-  job.
-- **Bounded.** Two named tests, five minutes, `-v` so the test names appear in the output. The NetLog
-  now goes to the test's temporary directory in non-verbose mode.
-- **Trigger policy unchanged.** The workflow stays `workflow_dispatch`; this round did not make macOS
-  verification run on every push.
+**What actually happened when it ran** (run
+[39400834308](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39400834308)):
 
-**Execution status:** the workflow is configured but this environment cannot run a macOS runner from
-the workflow's own trigger without dispatching it; the dispatch attempt and its outcome are recorded
-in §4 rather than assumed.
+- the step **executed** — the log shows the test binary compiling with those tags, linking the
+  native library, and running both test names;
+- both tests **failed for an environmental reason**, not a logic one: the native engine tried to
+  bootstrap to public endpoints (`[2001:4860:4860::8888]:443` and two Cloudflare addresses on the
+  mixed-inbound port), the runner has no IPv6 route, the IPv4 dials timed out, and the CONNECT
+  handshake then timed out after 13 s;
+- the identical tests pass on Windows against the production `libcronet.dll`, so this is the runner's
+  network path to the native bootstrap, not the test.
+
+Repairing that would mean changing Cronet's native DNS bootstrap, which this round explicitly
+excludes. Shipping the step anyway would make the manual macOS job permanently red, so it was
+**reverted** (`1c64f1a41`). Status: **`BLOCKED_BY_ENVIRONMENT`** for GitHub's macOS runner. The step
+is recorded above so it can be re-enabled on a runner where the native bootstrap works, or after the
+native limitation is addressed separately.
 
 ---
 
-## 4. CI execution
+## 4. CI execution record
 
-`gh` is authenticated as the repository owner, so the existing macOS workflow was dispatched with
-`deep_checks=false` (the cheap path) after the push. Result: see the final reply and the run URL
-recorded there. If the dispatch could not be made, the status is **`CI_CONFIGURED_BUT_NOT_EXECUTED`**
-and the command below reproduces it:
+| workflow | run | result |
+|---|---|---|
+| macOS arm64 (manual dispatch, `deep_checks=false`) | [39400834308](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39400834308) | **failure** in the new step; root cause above; step reverted afterwards |
+| Verify (push) | [39400821022](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39400821022) | **success** |
 
-```
-gh workflow run client-macos.yml --ref testing -f deep_checks=false
-```
+The failure is the expected evidence that the coverage gap is real and that the runner cannot carry
+it yet; it is not reported as a pass, and it is not hidden by a skip.
 
 ---
 
@@ -188,7 +194,7 @@ Those stay `NOT_RUN` / `NOT_COMPARABLE`.
 | G0 repository state | `testing`, started at `4f8bc1eae` = `origin/testing`; no branch, no force push; only the pre-existing `clients/apple` + `clients/desktop` pointers dirty |
 | G1 no fixed event id | DONE — runtime constants; 11 parser cases including three ids and four failure shapes |
 | G2 native E2E | DONE on this host for `TestNaiveSelf` and `TestNaiveSelfInsecureConcurrency` (Windows amd64, purego, real `libcronet.dll`) |
-| G3 CI contains the tests | DONE — step in `client-macos.yml`, artifact tags, hard gate, manual trigger preserved |
+| G3 CI contains the tests | **NOT SHIPPED**: the step was implemented and executed on the macOS runner ([39400834308](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39400834308)) and failed on the native bootstrap, so it was reverted rather than shipped red; `BLOCKED_BY_ENVIRONMENT`, reproduction in §3 |
 | G4 NetLog safety | DONE — temp dir, non-verbose, single stop, streaming parser, bounded error output |
 | G5 A3 by blob bytes | DONE — false positive; history preserved; new baseline section |
 | G6 KEEP/STOP with limits | DONE — `NOT_COMPARABLE` and `NOT_RUN` stated explicitly |
