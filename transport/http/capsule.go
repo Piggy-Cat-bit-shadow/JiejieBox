@@ -296,17 +296,21 @@ func (e *DatagramTooLargeError) Unwrap() error {
 }
 
 type http3PacketConn struct {
-	stream      DatagramStream
-	reader      *std_bufio.Reader
-	destination M.Socksaddr
-	localAddr   net.Addr
-	packets     chan *buf.Buffer
-	ctx         context.Context
-	cancel      context.CancelFunc
-	closeOnce   sync.Once
-	waitGroup   sync.WaitGroup
-	writeAccess sync.Mutex
-	err         error
+	stream DatagramStream
+	// ownedDatagrams is the OPTIONAL zero-copy send capability of stream, resolved once at
+	// construction so the packet path never pays for a type assertion. Nil means the stream can
+	// only copy, and every send keeps the original path.
+	ownedDatagrams OwnedDatagramSender
+	reader         *std_bufio.Reader
+	destination    M.Socksaddr
+	localAddr      net.Addr
+	packets        chan *buf.Buffer
+	ctx            context.Context
+	cancel         context.CancelFunc
+	closeOnce      sync.Once
+	waitGroup      sync.WaitGroup
+	writeAccess    sync.Mutex
+	err            error
 
 	// Deferred-success state.
 	//
@@ -417,14 +421,15 @@ func newDeferredHTTP3PacketConn(stream DatagramStream, destination M.Socksaddr, 
 func newHTTP3PacketConnInternal(stream DatagramStream, destination M.Socksaddr, localAddr net.Addr, activated bool) *http3PacketConn {
 	ctx, cancel := context.WithCancel(context.Background())
 	conn := &http3PacketConn{
-		stream:      stream,
-		reader:      std_bufio.NewReader(stream),
-		destination: destination,
-		localAddr:   localAddr,
-		packets:     make(chan *buf.Buffer, 64),
-		ctx:         ctx,
-		cancel:      cancel,
-		settled:     make(chan struct{}),
+		stream:         stream,
+		ownedDatagrams: AsOwnedDatagramSender(stream),
+		reader:         std_bufio.NewReader(stream),
+		destination:    destination,
+		localAddr:      localAddr,
+		packets:        make(chan *buf.Buffer, 64),
+		ctx:            ctx,
+		cancel:         cancel,
+		settled:        make(chan struct{}),
 		// The initial mode, fixed before any goroutine can read it.
 		activated: activated,
 	}
@@ -569,11 +574,28 @@ func (c *http3PacketConn) ReadPacket(buffer *buf.Buffer) (M.Socksaddr, error) {
 	}
 }
 
+// writeDatagram sends one payload as an HTTP Datagram, preferring the owned path.
+//
+// `sent` reports whether the TRANSPORT took ownership of datagram. When it is true the caller must
+// not touch the buffer again: quic-go releases it exactly once, after the bytes are in an outgoing
+// packet. When it is false the caller still owns the buffer, byte-identical to what it passed in,
+// whatever err says -- the HTTP/3 layer rolls its quarter-stream-ID prefix back on failure, which
+// is what makes the capsule fallback and the too-large reply see the original bytes.
+func (c *http3PacketConn) writeDatagram(datagram *buf.Buffer) (sent bool, err error) {
+	if c.ownedDatagrams != nil {
+		err = c.ownedDatagrams.SendDatagramOwned(datagram)
+		return err == nil, err
+	}
+	return false, c.stream.SendDatagram(datagram.Bytes())
+}
+
 func (c *http3PacketConn) WritePacket(buffer *buf.Buffer, destination M.Socksaddr) error {
 	datagram := PrependContextID(buffer)
-	err := c.stream.SendDatagram(datagram.Bytes())
+	sent, err := c.writeDatagram(datagram)
 	if err == nil {
-		datagram.Release()
+		if !sent {
+			datagram.Release()
+		}
 		return nil
 	}
 	if !errors.Is(err, ErrDatagramUnsupported) {
@@ -680,7 +702,19 @@ func (c *http3PacketConn) NeedAdditionalReadDeadline() bool {
 	return true
 }
 
+// connectUDPOwnedHeadroom is the front headroom the zero-copy DATAGRAM path needs: the MASQUE
+// Context ID, then the HTTP/3 quarter stream ID, whose varint reaches 8 bytes once a connection has
+// served enough requests. Sizing for the maximum is what keeps the fast path from silently
+// degrading to a copy on a long-lived connection -- a regression nobody would see.
+//
+// Without the owned capability the capsule framing is the binding constraint, which is why the
+// value is reported per connection rather than as one global constant.
+const connectUDPOwnedHeadroom = 1 + 8
+
 func (c *http3PacketConn) FrontHeadroom() int {
+	if c.ownedDatagrams != nil {
+		return connectUDPOwnedHeadroom
+	}
 	return CapsuleHeadroom
 }
 
@@ -949,8 +983,9 @@ type connectedBatchWriter struct {
 // fallback capsules is written under one acquisition, in order, instead of one
 // lock/unlock per packet.
 //
-// Ownership: the batch AND everything in it belongs to this call in all cases, so it
-// releases every buffer before returning, on every path.
+// Ownership: writeOnePacketLocked CONSUMES its buffer on every path -- it transfers ownership to
+// an owned send, releases it after a copying send, hands it to the capsule writer, or releases it
+// on the error path -- so this function only releases the buffers the loop never reached.
 func (w *connectedBatchWriter) WriteConnectedPacketBatch(buffers []*buf.Buffer) error {
 	c := w.conn
 
@@ -959,38 +994,45 @@ func (w *connectedBatchWriter) WriteConnectedPacketBatch(buffers []*buf.Buffer) 
 	c.writeAccess.Lock()
 	defer c.writeAccess.Unlock()
 
-	defer func() {
-		for _, buffer := range buffers {
-			buffer.Release()
-		}
-	}()
-
-	for _, buffer := range buffers {
+	for index, buffer := range buffers {
 		if err := c.writeOnePacketLocked(buffer); err != nil {
+			// Everything before index has been consumed. The rest is still ours.
+			for _, remaining := range buffers[index+1:] {
+				remaining.Release()
+			}
 			return err
 		}
 	}
 	return nil
 }
 
-// writeOnePacketLocked writes a single payload, datagram-first with a capsule fallback.
-// The caller MUST hold writeAccess.
+// writeOnePacketLocked writes a single payload, datagram-first with a capsule fallback, and
+// CONSUMES buffer on every path.
+//
+// The caller MUST hold writeAccess. Leaving the release to the caller stopped being correct once
+// a send can transfer ownership: a successful owned send means quic-go releases the buffer, so an
+// unconditional caller-side release would be a double free. Making the consumption explicit here
+// keeps exactly one owner on every branch.
 func (c *http3PacketConn) writeOnePacketLocked(buffer *buf.Buffer) error {
 	datagram := PrependContextID(buffer)
 	if c.stream.DatagramsEnabled() {
-		err := c.stream.SendDatagram(datagram.Bytes())
+		sent, err := c.writeDatagram(datagram)
 		switch {
 		case err == nil:
-			// SendDatagram copies the payload into the QUIC frame, so the buffer is
-			// reusable immediately; the caller's deferred release handles it.
+			if !sent {
+				// SendDatagram copies the payload into the QUIC frame, so the buffer is
+				// reusable immediately and this function owns the release.
+				datagram.Release()
+			}
 			return nil
 		case errors.Is(err, ErrDatagramUnsupported):
-			// Fall through to the capsule path.
+			// Fall through to the capsule path. The buffer is still ours, byte-identical.
 		default:
 			var tooLarge *DatagramTooLargeError
 			if !errors.As(err, &tooLarge) {
 				// A real transport error. Returning it lets CopyPacket close the
 				// session instead of silently switching transports.
+				datagram.Release()
 				return err
 			}
 			// Too large for a datagram: a capsule carries it instead. This is a size
