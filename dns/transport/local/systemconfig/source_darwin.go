@@ -326,7 +326,6 @@ func (c *dnsInfoConfig) build(interfaceIndex int) *Config {
 		})
 	}
 	config := &Config{
-		Ndots:    1,
 		Timeout:  5 * time.Second,
 		Attempts: 2,
 	}
