@@ -134,6 +134,7 @@ func newReadinessEndpoint(t *testing.T) *ServerEndpoint {
 // side there, runs Close from beginning to end, and only then lets Start continue. Nothing here is a
 // sleep and nothing is a repetition: the ordering is enforced by the test.
 func TestStartDoesNotAdvertiseReadinessAfterCloseCompleted(t *testing.T) {
+	requireHTTP3Client(t)
 	gate := installReadinessGate(t)
 	endpoint := newReadinessEndpoint(t)
 
@@ -219,6 +220,7 @@ func TestH1H2StartDoesNotAdvertiseReadinessAfterCloseCompleted(t *testing.T) {
 // TestConcurrentClosesAgreeAndLeaveTheEndpointNotReady pins the idempotence contract under two
 // concurrent Close calls, and that neither of them can leave readiness set.
 func TestConcurrentClosesAgreeAndLeaveTheEndpointNotReady(t *testing.T) {
+	requireHTTP3Client(t)
 	endpoint := newReadinessEndpoint(t)
 	scope := adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())
 	name := "endpoint/" + endpoint.Type() + "[" + endpoint.Tag() + "]"
@@ -242,6 +244,7 @@ func TestConcurrentClosesAgreeAndLeaveTheEndpointNotReady(t *testing.T) {
 // cycle: after a successful stop the endpoint is not ready, and a start that is refused does not
 // change that.
 func TestRepeatedStartStopLeavesTheEndpointNotReady(t *testing.T) {
+	requireHTTP3Client(t)
 	endpoint := newReadinessEndpoint(t)
 	scope := adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())
 	name := "endpoint/" + endpoint.Type() + "[" + endpoint.Tag() + "]"

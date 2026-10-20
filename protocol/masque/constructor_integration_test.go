@@ -114,6 +114,18 @@ func closeEndpoint(t *testing.T, endpoint adapter.Endpoint) error {
 	return nil
 }
 
+// requireHTTP3Client skips the caller when the HTTP/3 client is not compiled in.
+//
+// The integration tests below build a real MASQUE client endpoint, whose H3 dialer exists only in
+// with_quic builds. Without the tag the constructor refuses by design, so running them anyway reports
+// a build-profile mismatch as a product failure. The pure bootstrap tests stay untagged: they pass in
+// both profiles and would lose nothing but coverage if they were skipped.
+func requireHTTP3Client(t *testing.T) {
+	t.Helper()
+	if http.HTTP3StreamFunc == nil {
+		t.Skip("the HTTP/3 client is not compiled in; run with -tags with_quic")
+	}
+}
 func buildTestEndpoint(t *testing.T, router adapter.DNSRouter, serverAddress string, tlsOptions option.OutboundTLSOptions) (adapter.Endpoint, error) {
 	t.Helper()
 	ctx := newTestRegistryContext(router)
@@ -159,6 +171,7 @@ var errTestBootstrapUnavailable = E.New("test: bootstrap resolver unavailable")
 // was missing: the cache existed and was unit-tested while nothing in the runtime could
 // reach it.
 func TestConstructorWiresBootstrapRecoveryIntoTheDialer(t *testing.T) {
+	requireHTTP3Client(t)
 	t.Parallel()
 
 	router := &fakeBootstrapRouter{answer: []netip.Addr{netip.MustParseAddr("192.0.2.10")}}
@@ -189,6 +202,7 @@ func TestConstructorWiresBootstrapRecoveryIntoTheDialer(t *testing.T) {
 // hook, no racer. Substituting a wrapper that can only fail would turn a working endpoint
 // into a broken one.
 func TestConstructorLeavesHookNilWithoutAResolver(t *testing.T) {
+	requireHTTP3Client(t)
 	t.Parallel()
 
 	endpoint, err := buildTestEndpoint(t, nil, "192.0.2.10", newBootstrapTLSOptions())
@@ -211,6 +225,7 @@ func TestConstructorLeavesHookNilWithoutAResolver(t *testing.T) {
 // The hook is the only way the handshake racer can run; if it is nil the racer is dead code
 // no matter how well tested it is.
 func TestConstructorSetsTheHTTP3ConnDialer(t *testing.T) {
+	requireHTTP3Client(t)
 	t.Parallel()
 
 	router := &fakeBootstrapRouter{answer: []netip.Addr{netip.MustParseAddr("192.0.2.10")}}
@@ -232,6 +247,7 @@ func TestConstructorSetsTheHTTP3ConnDialer(t *testing.T) {
 // A hook that is set but wired to the wrong thing would pass a nil check and still be
 // useless, so this drives the real closure.
 func TestConstructorHookRacesTheResolvedCandidates(t *testing.T) {
+	requireHTTP3Client(t)
 	t.Parallel()
 
 	router := &fakeBootstrapRouter{answer: []netip.Addr{
@@ -276,6 +292,7 @@ func TestConstructorHookRacesTheResolvedCandidates(t *testing.T) {
 // Without the cache the second call fails, which is the reconnect storm this feature exists
 // to survive.
 func TestBootstrapRecoveryUsesTheCacheAfterTheResolverFails(t *testing.T) {
+	requireHTTP3Client(t)
 	t.Parallel()
 
 	router := &fakeBootstrapRouter{
@@ -311,6 +328,7 @@ func TestBootstrapRecoveryUsesTheCacheAfterTheResolverFails(t *testing.T) {
 // TestBootstrapRecoveryRemembersTheWinningAddress proves promote() is reachable and useful:
 // the address that actually connected is the one the fallback offers first.
 func TestBootstrapRecoveryRemembersTheWinningAddress(t *testing.T) {
+	requireHTTP3Client(t)
 	t.Parallel()
 
 	router := &fakeBootstrapRouter{
@@ -346,6 +364,7 @@ func TestBootstrapRecoveryRemembersTheWinningAddress(t *testing.T) {
 // Two endpoints must not inherit each other's addresses: the cache is keyed to one server
 // hostname, and a shared cache would offer one server's address for another's connection.
 func TestBootstrapCacheIsPerEndpoint(t *testing.T) {
+	requireHTTP3Client(t)
 	t.Parallel()
 
 	firstRouter := &fakeBootstrapRouter{answer: []netip.Addr{netip.MustParseAddr("192.0.2.10")}}
@@ -375,6 +394,7 @@ func TestBootstrapCacheIsPerEndpoint(t *testing.T) {
 // Endpoints are built at configuration reload, which can overlap with an in-flight
 // connection attempt. Each must end up with its own cache and its own hook.
 func TestConcurrentEndpointConstructionIsIndependent(t *testing.T) {
+	requireHTTP3Client(t)
 	t.Parallel()
 
 	var waitGroup sync.WaitGroup
@@ -470,6 +490,7 @@ func newRacerTestTLSConfig(t *testing.T) aTLS.Config {
 // a real endpoint, hands it a capsule the way the session does, and then checks that a lookup
 // is actually routed by it.
 func TestConstructorAcceptsADNSAssignmentAndRoutesOnIt(t *testing.T) {
+	requireHTTP3Client(t)
 	t.Parallel()
 
 	lookupRouter := &recordingRouter{answer: []netip.Addr{netip.MustParseAddr("10.0.0.99")}}
@@ -515,6 +536,7 @@ func TestConstructorAcceptsADNSAssignmentAndRoutesOnIt(t *testing.T) {
 // TestConstructorKeepsPREF64OutOfTheDNSCacheKey proves the two capsules are independent through
 // the real constructor.
 func TestConstructorKeepsPREF64OutOfTheDNSCacheKey(t *testing.T) {
+	requireHTTP3Client(t)
 	t.Parallel()
 
 	lookupRouter := &recordingRouter{answer: []netip.Addr{netip.MustParseAddr("10.0.0.99")}}

@@ -171,6 +171,7 @@ func newConfiguredHTTP3Endpoint(t *testing.T) *ServerEndpoint {
 // The Start goroutine cannot return from ListenHTTP3 until the test lets it, and the test only lets it
 // after Close has returned. There is no timing assumption in either direction.
 func TestServerEndpointReleasesAnH3ListenerAcquiredWhileClosing(t *testing.T) {
+	requireHTTP3Client(t)
 	gate := installHTTP3Gate(t)
 	endpoint := newConfiguredHTTP3Endpoint(t)
 	scope := adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())
@@ -217,6 +218,7 @@ func TestServerEndpointReleasesAnH3ListenerAcquiredWhileClosing(t *testing.T) {
 // one process. The gate fixes the order; the repetition is there to catch a release that is correct
 // once and wrong on a later race.
 func TestServerEndpointH3WindowOnRepeatedInterleavings(t *testing.T) {
+	requireHTTP3Client(t)
 	if testing.Short() {
 		t.Skip("repeated interleaving")
 	}

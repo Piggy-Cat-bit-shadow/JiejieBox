@@ -41,6 +41,7 @@ func newLifecycleEndpoint(t *testing.T) *ClientEndpoint {
 
 // Invariant 7: there is exactly one recovery engine, however the caller drives the lifecycle.
 func TestMasqueLifecycleKeepsOneLoop(t *testing.T) {
+	requireHTTP3Client(t)
 	endpoint := newLifecycleEndpoint(t)
 	client := endpoint.client
 
@@ -64,6 +65,7 @@ func TestMasqueLifecycleKeepsOneLoop(t *testing.T) {
 
 // Invariant 1: after Close, nothing may restart the session, however the caller asks.
 func TestMasqueCloseRefusesLaterRecovery(t *testing.T) {
+	requireHTTP3Client(t)
 	endpoint := newLifecycleEndpoint(t)
 	client := endpoint.client
 	client.Start()
@@ -84,6 +86,7 @@ func TestMasqueCloseRefusesLaterRecovery(t *testing.T) {
 // A suspended client is not dialling, which is what keeps a paused device from reconnecting in the
 // background.
 func TestMasqueSuspendStopsReconnectAttempts(t *testing.T) {
+	requireHTTP3Client(t)
 	endpoint := newLifecycleEndpoint(t)
 	client := endpoint.client
 	client.Start()
@@ -103,6 +106,7 @@ func TestMasqueSuspendStopsReconnectAttempts(t *testing.T) {
 // Start/Close cycles must not accumulate loops or goroutines: the loop is the only worker here, so a
 // leak in it would be a leak per pause/wake cycle on a device.
 func TestMasqueRestartCyclesDoNotLeakLoops(t *testing.T) {
+	requireHTTP3Client(t)
 	baseline := runtime.NumGoroutine()
 	for cycle := 0; cycle < 15; cycle++ {
 		endpoint := newLifecycleEndpoint(t)
