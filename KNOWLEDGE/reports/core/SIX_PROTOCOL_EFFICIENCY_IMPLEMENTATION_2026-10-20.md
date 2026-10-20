@@ -248,7 +248,10 @@ Main repository sequence, each independently revertible:
 1. `d1ba155e3` `fix(masque): fold the second operand of equalFoldASCII from 'A'`
 2. `91091b276` `perf(masque): send L4 CONNECT-UDP datagrams through the owned path`
 3. `a8870b745` `perf(deps): pick up the allocation-free return path in sing-tun`
-4. the archive commit for this report
+
+Archive commits for this record: `7d4ffc39a` (this file) and `11bf41492` (the measured D/E numbers
+that replaced the next-round placeholders). A later docs commit that only records these SHAs is
+itself part of the archive.
 
 Changed files: `protocol/masque/dns_assignment.go`, `protocol/masque/dns_assignment_test.go`,
 `transport/http/capsule.go`, `transport/http/connect_udp_owned_test.go`, `go.mod`, `go.sum`,
