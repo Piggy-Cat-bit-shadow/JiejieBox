@@ -5,7 +5,9 @@ package main
 import (
 	"net/netip"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/sagernet/sing-box/common/tls"
@@ -207,13 +209,18 @@ func TestNaiveSelfECH(t *testing.T) {
 	require.True(t, ok)
 	naiveOutbound := naiveOut.(*naive.Outbound)
 
-	netLogPath := "/tmp/naive_ech_netlog.json"
-	require.True(t, naiveOutbound.Client().Engine().StartNetLogToFile(netLogPath, true))
-	defer naiveOutbound.Client().Engine().StopNetLog()
+	// Same lifecycle rules as the concurrency test below: a per-test directory instead of a shared
+	// /tmp path (which does not exist on Windows), and one stop instead of a stop plus a deferred
+	// second stop. Verbose logging stays on here because the assertion is about a param value.
+	netLogPath := filepath.Join(t.TempDir(), "naive-ech-netlog.json")
+	engine := naiveOutbound.Client().Engine()
+	require.True(t, engine.StartNetLogToFile(netLogPath, true))
+	stopNetLog := sync.OnceFunc(func() { engine.StopNetLog() })
+	defer stopNetLog()
 
 	testTCP(t, clientPort, testPort)
 
-	naiveOutbound.Client().Engine().StopNetLog()
+	stopNetLog()
 
 	logContent, err := os.ReadFile(netLogPath)
 	require.NoError(t, err)
@@ -315,9 +322,18 @@ func TestNaiveSelfInsecureConcurrency(t *testing.T) {
 	require.True(t, ok)
 	naiveOutbound := naiveOut.(*naive.Outbound)
 
-	netLogPath := "/tmp/naive_concurrency_netlog.json"
-	require.True(t, naiveOutbound.Client().Engine().StartNetLogToFile(netLogPath, true))
-	defer naiveOutbound.Client().Engine().StopNetLog()
+	// The NetLog id for HTTP2_SESSION_INITIALIZED is resolved from the file's own constants block,
+	// because Chromium renumbers these events between versions (249 in one release, 267 in the one
+	// this test runs against). Hardcoding either value is what made this test silently count zero.
+	//
+	// The file lives in t.TempDir() so a failing run cannot leave a hundred-megabyte artifact behind,
+	// and verbose logging is off: the session events needed here are recorded either way, and the
+	// non-verbose file is a fraction of the size.
+	netLogPath := filepath.Join(t.TempDir(), "naive-concurrency-netlog.json")
+	engine := naiveOutbound.Client().Engine()
+	require.True(t, engine.StartNetLogToFile(netLogPath, false))
+	stopNetLog := sync.OnceFunc(func() { engine.StopNetLog() })
+	defer stopNetLog()
 
 	// Send multiple sequential connections to trigger round-robin
 	// With insecure_concurrency=3, connections will be distributed to 3 pools
@@ -325,18 +341,15 @@ func TestNaiveSelfInsecureConcurrency(t *testing.T) {
 		testTCP(t, clientPort, testPort)
 	}
 
-	naiveOutbound.Client().Engine().StopNetLog()
+	stopNetLog()
 
 	// Verify NetLog contains multiple independent HTTP/2 sessions
-	logContent, err := os.ReadFile(netLogPath)
-	require.NoError(t, err)
-	logStr := string(logContent)
-
-	// Count HTTP2_SESSION_INITIALIZED events to verify connection pool isolation
-	// NetLog stores event types as numeric IDs, HTTP2_SESSION_INITIALIZED = 249
-	sessionCount := strings.Count(logStr, `"type":249`)
+	sessionCount, eventID, err := netLogEventCount(netLogPath, "HTTP2_SESSION_INITIALIZED")
+	require.NoError(t, err, "the NetLog could not be read; the file is kept for this failure only")
 	require.GreaterOrEqual(t, sessionCount, 3,
-		"Expected at least 3 HTTP/2 sessions with insecure_concurrency=3. NetLog: %s", netLogPath)
+		"Expected at least 3 HTTP/2 sessions with insecure_concurrency=3, found %d (NetLog event id %d, file %s)",
+		sessionCount, eventID, netLogPath)
+	t.Logf("HTTP2_SESSION_INITIALIZED id=%d sessions=%d", eventID, sessionCount)
 }
 
 func TestNaiveSelfQUIC(t *testing.T) {
