@@ -76,10 +76,18 @@ replenishes it without our acknowledgements.
 
 ## 4. The two send branches
 
-| branch | mechanism | result |
+| branch | mechanism | measured result |
 |---|---|---|
-| **DATAGRAM** | 32-frame queue, `Add` waits for a pop; pops continue while the packetizer runs, and the connection dies at `last inbound + idle` | **measured**, bounded, test committed |
-| **Capsule** (reliable stream, flow control) | a stalled stream write waits for the peer's `MAX_STREAM_DATA`; those frames are themselves congestion-controlled on the same broken path | **not measured**; same starvation argument applies, and the analysis says the bound is the same class. Stated as analysis, not as a pass |
+| **DATAGRAM** | 32-frame queue; `Add` waits for a pop. A peer without our ACKs cannot keep sending, so inbound stops and **our** idle timer ends the connection | bounded by **our** idle timeout after the last inbound packet (5.80 s at 6 s; 3.0 s at 3 s) |
+| **Capsule** (reliable stream, flow control) | the write parks on the peer's stream window. Both sides keep acknowledging, so our timer never fires; but while parked we send nothing, so the **peer's** timer expires and it closes the connection | bounded by **the peer's** idle timeout: 10 s measured against a 10 s peer setting, then the next write failed in 0 s with `timeout: no recent network activity` |
+
+The two branches are bounded by **different timers, on opposite sides**. That is why they had to be
+measured separately: the DATAGRAM result ("our idle timer rescues it") is exactly wrong for the
+capsule branch, and the capsule result ("the peer's timer rescues it") does not apply to DATAGRAM.
+
+The operational consequence: the capsule bound is **chosen by the remote**. A peer configured with a
+long idle timeout can hold a blocked capsule write — and the stage lock behind it — for that long.
+The bound is finite, but it is not ours to set.
 
 ## 5. What the earlier reports should say from now on
 
@@ -110,6 +118,8 @@ change to make, with its own before/after measurement.
 | command | result |
 |---|---|
 | `go test -tags with_quic ./transport/http -run 'TestTheIdleTimeoutBoundsASilentPath\|TestActiveInboundStopsBecauseThePeerIsStarved' -count=1` | PASS (3.3 s + 8.2 s) |
+| `go test -tags with_quic ./transport/http -run 'TestCapsuleWriteAgainstAStalledPeer' -count=1` | PASS (10.0 s) |
+| the three mechanism tests together under `-race -count=2` | PASS (43.7 s) |
 | `go test -tags with_quic ./transport/http -count=1` (full package) | PASS |
 | `go test ./transport/http ./transport/masque ./protocol/tun -count=1` | PASS |
 | `go test -race -tags with_quic ./transport/http -run 'TestTheIdleTimeout\|TestActiveInbound'` | PASS |
@@ -124,12 +134,17 @@ Windows timing tests (`TestGoKernelDeadline`, `TestGoKernelPacketBatchIdle`, `Te
 1. The **composed** `Box.Close` wall time (real TUN + MASQUE endpoint). `tun.Options` has no
    injectable device; the Go stack cannot be started without a platform TUN. Both edges are measured
    separately and the graph is verified; the composition is `NOT_TESTED`.
-2. The **Capsule** branch under a stalled reliable stream: analysis only, no experiment.
-3. WAN, real devices, iOS/Android footprint: `NOT_TESTED`.
+2. WAN, real devices, iOS/Android footprint: `NOT_TESTED`.
 
 ## 9. Verdict
 
-**`NO_CHANGE_SUPPORTED_BY_EVIDENCE`.** The blocked send is bounded in every configuration measured,
-including the one designed to defeat the bound, and the mechanism that bounds it is now a committed
-test rather than a sentence in a report. No production code changed; no dependency changed; the only
-addition is the mechanism test that makes the argument reproducible.
+**`NO_CHANGE_SUPPORTED_BY_EVIDENCE`.** Both branches are bounded, including the configuration
+designed to defeat the bound, and each bound now has its mechanism named and a committed test rather
+than a sentence in a report. No production code changed; no dependency changed; the only additions
+are the two mechanism tests that make the argument reproducible.
+
+The one qualification worth carrying forward: the capsule bound is the idle timeout of the peer, so a
+remote peer that sets a long one lengthens the worst-case shutdown wait. The exit condition from the
+debug report applies unchanged — if that ever shows up as a stall users notice, bind the endpoint's
+QUIC client to the scope context so cancellation closes the connection before the inbound cleanup
+runs, and measure it before and after.
