@@ -566,14 +566,15 @@ K=256 与 K=64 同值这一条是本轮对"K 会随节点数爆炸"的直接否�
 - **证伪**：两 session，一个持续打满，另一个测 p99 延迟。
 - **级别**：P1（风险）/ 证据 `VERIFIED_SOURCE`。**建议：INVESTIGATE（先测）。**
 
-### 3.5 Q5（P2）：`domain_keyword` 的两件事
+### 3.5 Q5（P3）：`domain_keyword` 的两件事（其中大小写是上游语义）
 
-- **Q5a 正确性**：关键词未小写化 → 大写关键词永不匹配（`route/rule/rule_item_domain_keyword.go:15-17,29`）。
-  3 行修复，但**是行为变更**。
+- **Q5a 可用性**：关键词未小写化 → 大写关键词永不匹配（`route/rule/rule_item_domain_keyword.go:15-17,29`）。
+  **但该文件与 `upstream/testing` 逐字节相同**，是上游语义；fork 单方面修会让同一配置在
+  fork/上游行为不同。建议只记账（或加一条配置期 warning），不改变匹配语义。
 - **Q5b 性能**：线性 `strings.Contains`；实测 K=1 024 时 11.3 µs/次。
   AC 语义**完全等价**（该 item 是纯布尔"任一子串命中"），门槛 K≈128。
-- **方案 A**：先只做 Q5a；Q5b 等 K 分布。
-- **级别**：Q5a P2（正确性）；Q5b P3。**建议：Q5a CHANGE_LATER，Q5b INVESTIGATE。**
+- **方案 A**：Q5a **不改匹配语义**，只在文档/校验期提示；Q5b 等 K 分布。
+- **级别**：Q5a P3（上游语义分支）；Q5b P3。**建议：Q5a KEEP + 记账，Q5b INVESTIGATE。**
 
 ### 3.6 Q6（P1，研究假设）：`PreMatch` + `matchRule` 的双整表扫描
 
@@ -696,7 +697,7 @@ K=256 与 K=64 同值这一条是本轮对"K 会随节点数爆炸"的直接否�
 | 顺序 | 候选 | 为什么先做 | 要验证什么 |
 |---:|---|---|---|
 | 1 | `ReturnPackets` 去分配 | 改动 1 个函数、语义不变、已实测 | `allocs/op == 0` + 顺序断言 |
-| 2 | `domain_keyword` 小写化 | 3 行、正确性 | 大写关键词 Red→Green |
+| 2 | **`equalFoldASCII` 的 `'B'` → `'A'`**（一个字符，fork 自有代码） | 最小、无分叉风险 | 大小写用例 + 现有 DoH origin 测试 |
 | 3 | MASQUE L4 owned | 同仓库已验证机制漏接 | `payloadcopies/op` + 混合批次顺序 |
 | 4 | `Flush` 锁阻塞**时长分布** | 唯一 P0 风险；耦合已复现（301 ms），只剩频率 | 真实拥塞下 `WritePacketBuffers` 的 p95/p99 阻塞 |
 | 5 | 共享 DATAGRAM 队列的多 session 隔离测试 | 未覆盖的公平性 | 两 session p99 |
@@ -796,7 +797,9 @@ K=256 与 K=64 同值这一条是本轮对"K 会随节点数爆炸"的直接否�
    ④ 所有 Mieru 证据 pin 在旧 SHA；
    ⑤ 没有一条测试覆盖"外部 TUN 把 endpoint 当 `tun.Port` 转发"的拥塞路径。
 9. **只允许改最少代码，下一轮最多三个项目是什么？**
-   ① `ReturnPackets` 去分配；② `domain_keyword` 小写化；③ MASQUE L4 owned（若前两项完成）。
+   ① `ReturnPackets` 去分配；② `equalFoldASCII` 的 `'B'`→`'A'`（fork 自有、一个字符，
+   当前不可达但零风险）；③ MASQUE L4 owned。**不把 `domain_keyword` 大小写算进来**——
+   那是上游语义，改了是分叉（§3.5）。
 10. **是否应该"暂不施工，先扩充测量"？**
     **部分应该**。`Flush` 锁（Q1）、共享队列（Q4）、双规则扫描（Q6）、AnyTLS HOL（Q10）
     都还没有 profile/红灯，贸然改会变成"用新复杂度换未证收益"。

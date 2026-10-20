@@ -115,6 +115,7 @@ L4 **已经有**一个批处理 writer（`WriteConnectedPacketBatch`，`capsule.
 | 引入 TCP PacketTemplate / 第二套 TCP PacketGenerator | §1.2 结论一 |
 | 把 MASQUE 的 owned-batch 复制到 Hysteria2/TUIC | §1.2 结论三 |
 | 在 Fake-IP 映射里缓存"最终路由裁决" | 现有 4 个 per-connection 匹配缓存字段是**死代码**（`sb@5064f20a:adapter/inbound.go:163-188` 只写不读），说明这条路此前已被设计过又放弃；裁决依赖 forward-only 的 sniff 结果、resolve、NAT 重写与规则代际，见 §8.4 |
+| 在上游继承的语义上做 fork-local 行为变更（如把 `domain_keyword` 改成大小写不敏感） | 该文件与 `upstream/testing` 逐字节相同；改了会让同一份配置在 fork/上游行为不同，之后每次同步都要重新解释（§9.2） |
 | 为 TCP 收包合并另造一层 | Go stack 已有 direct-to-app-buffer、receive chain、25 ms delayed ACK、256 KiB ACK 合并（`sing-tun@a7bd7fac:stack_go_tcp_input.go:16-43,593-700`），比 Anywhere 的 200 ms tick 更细（§8.5） |
 
 ---
@@ -170,9 +171,9 @@ $ git diff --stat 5fc4f936..HEAD -- '*.go' -> 343 files changed, 56389 insertion
 | B1 | `tun.PacketBufferPort` owned 路径 | `sing-tun@a7bd7fac:flow.go:79-87` 契约仍在；`flow_dispatch.go:711-733` 实现仍在；`protocol/masque/client.go:670-680` 消费仍在 | **仍生效** |
 | B2 | MASQUE owned batch ≤32 分块 | `transport/masque/session.go:545-599`：`maxOwnedDatagramBatch = 32`，`writeBatchOwned` 分块，`writeOwnedBatchChunk` 全有全无 | **仍生效** |
 | B3 | SRS 128 MiB 解压预算 + 1 字节探针 | `common/srs/binary.go:76` `decompressedSizeLimit = 128 << 20`；`:83-110` 预算 reader；`:85-86` 注释明确"探针是关键，否则预算耗尽 = 自然 EOF" | **仍生效** |
-| B4 | QUIC 小帧精确复制，避免大池缓冲被钉住 | 未在本轮路径重读；B4 结论不构成本轮候选，不重复 | 未复核 |
+| B4 | QUIC 小帧精确复制，避免大池缓冲被钉住 | **`quic-go@7e08ecab:frame_sorter.go:198`**：`return len(data) > 0 && cap(data) > 2*len(data)` 仍在，即"超过 2 倍才精确复制" | **仍生效** |
 | B5 | Hysteria2/TUIC 使用 `SendDatagramOwned` | `sing-quic:hysteria2/packet.go:288-291`、`tuic/packet.go:305-308` 单包路径确为 `sendOwnedDatagram` | **仍生效**，但见 §8.3 的批量前提修正 |
-| B6 | QUIC/H3 收包队列出队清槽 | 未重读 quic-go `ring` 侧；本轮不涉及 | 未复核 |
+| B6 | QUIC/H3 收包队列出队清槽 | **`quic-go@7e08ecab:datagram_queue.go:240-243`** 仍在（注释明确"reslice 会把指针留在底层数组里，GC 扫描整个数组"），并有专门测试 `datagram_queue_retention_test.go:17`；HTTP/3 侧另有 `http3/state_tracking_stream_retention_test.go` | **仍生效** |
 | B7 | `Conn.DroppedDatagrams()` | `quic-go@7e08ecab:connection.go:3227-3234` + `datagram_queue.go:227-230` | **仍生效** |
 | B8 | `UDPNatDroppedPackets()` | `sing-tun@a7bd7fac:udp_nat.go:425-432` | **仍生效** |
 | B9 | Android 大规则 mmap 未开启 | `route/rule/rule_set_mmap_ios.go:17-32` 仅 iOS；stub 在非 iOS 直接返回输入 | 维持（仍无设备证据） |
@@ -742,18 +743,28 @@ for index := range len(first) {
   就会变成真实的路由/DoH 拒绝。修复是改一个字符 + 加一条大小写用例。
   **下一轮应作为 P3 顺手修复，不需要专门窗口。**
 
-### 9.2 R3-2：`domain_keyword` 的关键词没有小写化（确认缺陷，可达）
+### 9.2 R3-2：`domain_keyword` 的关键词没有小写化（**上游继承的语义陷阱**，可达但不是 fork 缺陷）
 
 `NewDomainKeywordItem` 原样保存 `keywords`（`route/rule/rule_item_domain_keyword.go:15-17`），
 而 `Match` 只把 **host** 转小写（`:29`）。因此配置里写 `DomainKeyword: ["Google"]`
 **永远不会匹配**，且没有任何告警。
 
+**本轮把定级改了（见 §15 第 16 条）**：该文件与 `upstream/testing` **逐字节相同**
+（`git show upstream/testing:route/rule/rule_item_domain_keyword.go` 输出同样代码，
+且该路径在上游只有 1 次提交历史）。所以这不是 fork 的缺陷，而是**上游语义**：
+关键词大小写敏感、host 大小写不敏感。文档（`docs/configuration/dns/rule.md:349`）
+也只写 "Match domain using keyword"，没有承诺大小写不敏感。
+
 - **影响方向**：规则静默失效 ⇒ 本该代理的流量走直连（或反之）。属于"配置语义与直觉不符"，
-  不是崩溃。
-- **是否可达**：完全可达，只需要用户写一个大写字母。
-- **最小修复设计**（下一轮）：构造时 `strings.ToLower` 每个关键词并去重；加一条
-  "大写关键词必须匹配小写 host" 的 Red→Green 测试。注意这会改变行为
-  （此前不匹配的规则开始匹配），必须写进 changelog，不能当成纯内部重构。
+  不是崩溃；且与上游行为一致，用户的既有配置在官方 sing-box 上同样如此。
+- **是否可达**：完全可达，只需要用户写一个大写字母（但同一配置在上游也一样不生效）。
+- **为什么不建议 fork 单方面修**：修了会让本 fork 与上游在这一条规则上**行为分叉**——
+  同一份配置在 fork 匹配、在上游不匹配，未来每次同步都要重新解释。更合适的动作是
+  **在文档/知识库记一条注意事项**，或在配置校验期对含大写字母的 `domain_keyword`
+  打一条 warning（不改变匹配语义）。
+- **如果决定要修**：构造时 `strings.ToLower` 每个关键词并去重；加一条
+  "大写关键词必须匹配小写 host" 的 Red→Green 测试；并且必须在 changelog 里写成
+  **行为变更 + 与上游分叉**，不能当成纯内部重构。
 
 ### 9.3 R3-3：`ForwardStage.Flush` 在持有 stage 锁时可能阻塞（**已确定性复现**）
 
@@ -1144,12 +1155,15 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench \
 - **优先级**：P2；若 profile 显示 CONNECT-UDP 是热点则升 P1。
 - **依赖成本**：**不需要**改 quic-go（owned API 已在）；**不需要**改 sing-tun。
 
-### 13.3 P2 — `domain_keyword` 关键词小写化（对应 §9.2）
+### 13.3 P3 — `domain_keyword` 大写关键词（**默认不改**，只记账）
 
-- **拟改文件**：`route/rule/rule_item_domain_keyword.go` 的构造函数（3 行）。
-- **契约变更**：大写关键词**开始生效**——这是行为变更，必须写进 changelog。
-- **测试**：`["Google"]` 对 `google.com` 必须命中；`["GOOGLE"]` 同理；重复关键词去重。
-- **优先级**：P2（正确性），但**不建议**与 AC 自动机混在同一次提交。
+- **结论变更**：本轮原先把它列为"顺手修的正确性缺陷"，核对后改为
+  **上游继承语义**（与 `upstream/testing` 逐字节相同），**默认不建议 fork 单方面改**
+  （理由与分叉成本见 §9.2）。
+- **推荐动作**：在知识库/文档记一条"`domain_keyword` 关键词大小写敏感、host 不敏感"；
+  可选地在配置校验期对含大写字母的关键词打 warning（**不改变匹配语义**，因此不构成分叉）。
+- **若决定要改**：`route/rule/rule_item_domain_keyword.go` 构造函数（3 行）+
+  `["Google"]`/`["GOOGLE"]` 的 Red→Green 测试 + changelog 里写明"行为变更且与上游分叉"。
 
 ### 13.4 暂不设计（只有条件，没有方案）
 
@@ -1238,6 +1252,7 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench \
 | 13 | 复刻微基准足以代表真代码 | 复刻只隔离"分组"：166 ns/3 allocs；真代码 236 ns/**2 allocs**（含 parse+rewrite+校验和）。结论方向对，绝对数字必须用真代码 | §12.4 vs §12.8 第 2 项 |
 | 14 | Aho–Corasick 一定比 `strings.Contains` 快 | `map` 边的 AC 在 K≤32 时**更慢**（826–968 ns vs 77–313 ns）；只有稠密表/CSR 才在 K≥16–32 胜出，且稠密表每节点 1 KiB | §12.8 第 4 项 |
 | 15 | `ReturnPackets` 可以在部分失败后用同一缓冲重试 | 它**就地重写**包头且**不幂等**：首次调用把目的地址改成原始客户端，再喂同一缓冲会变成 unconsumed | §12.8 第 5 项 |
+| 16 | `domain_keyword` 大小写不敏感是 fork 的缺陷 | 该文件与 `upstream/testing` **逐字节相同**，是上游语义；fork 单方面修会造成行为分叉 | `git show upstream/testing:route/rule/rule_item_domain_keyword.go` |
 
 **第 12 条值得单独说**：这是一个**没有被任何测试覆盖**的跨 session 耦合
 （`transport/masque` 的隔离测试用的是假 stream）。它不是本轮候选，但应列入下一轮
@@ -1253,8 +1268,8 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench \
 |---:|---|---|---|---|---|---|---|
 | 1 | A3-1 | `ReturnPackets` 去分配 | 中（GC/分配） | **高（实测）** | 无（纯容器） | 低 | **A / 施工** |
 | 2 | A3-2 | L4 CONNECT-UDP owned | 中高（每包一拷贝+一锁） | 中高（源码对称性 + 已验证的 owned 契约） | 中（所有权） | 中 | **A / 试验后施工** |
-| 3 | R3-2 | `domain_keyword` 小写化 | 低（正确性） | 高（源码） | 中（行为变更） | 极低 | **R / 顺手修** |
-| 4 | R3-1 | `equalFoldASCII` `'B'` | 无（当前不可达） | 高（源码） | 低 | 极低 | **R / 顺手修** |
+| 3 | R3-1 | `equalFoldASCII` `'B'` | 无（当前不可达，fork 自有代码） | 高（源码） | 低 | 极低 | **R / 顺手修** |
+| 4 | R3-2 | `domain_keyword` 大写关键词 | 低（可用性） | 高（源码，**与上游逐字节相同**） | 中（行为变更 + 与上游分叉） | 极低 | **记账 / 不建议 fork 单方面修** |
 | 5 | B3-1 | `s.ports` 累计 K | 低–中 | 中（实测曲线，缺 K 分布） | 无 | 低 | **B / 先测 K** |
 | 6 | B3-2 | `domain_keyword` AC | 中（K≥128 时） | 中（实测曲线，缺频率） | 中（漏匹配风险） | 中 | **B / 先测分布** |
 | 7 | B3-3 | retired Fake-IP 快照 | 低–中 | 低（未 profile） | 中（错拒绝） | 低 | **B** |
