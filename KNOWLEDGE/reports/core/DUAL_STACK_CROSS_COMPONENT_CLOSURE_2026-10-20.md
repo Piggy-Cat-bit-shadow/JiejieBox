@@ -281,7 +281,10 @@ is no path in the test that returns successfully without the connection dying.
 | `git diff --check` | clean |
 
 Not run, and not claimed: real WAN, device network transitions (PMTU/ICMPv6/NAT64), any per-protocol
-runtime lifecycle test, `route/TestBackpressure` (environment-limited as recorded by the audit).
+runtime lifecycle test. `route/TestBackpressure` is **not** in that list any more: it ran here and
+passed (`TestBackpressure_HealthyBlockedWriterIsIdenticalToStalled` 23 s,
+`TestBackpressure_KernelGiveUpWindow` 360 s), which is what the 420 s `./route` figure in the table
+above is mostly made of.
 
 ---
 
