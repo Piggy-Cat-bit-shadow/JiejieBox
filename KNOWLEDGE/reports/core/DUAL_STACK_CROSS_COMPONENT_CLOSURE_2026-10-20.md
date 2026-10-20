@@ -171,6 +171,12 @@ No join was added this round, because the joins are already there and the tests 
 bounded behaviour. The audit's suggestion ("add a WaitGroup") would have been redundant at best and,
 if written as an unconditional wait before returning the winner, harmful.
 
+**Addendum (same day):** the joins above are the *outer* producers. The innermost
+`LookupFamilies` goroutine inside `recoverCandidates` has no join, and a specialist round measured
+what that does and does not cost for both chains — see
+`DS03_RECOVERY_PRODUCER_CLOSURE_2026-10-20.md`. Its verdict is `NO_PRODUCTION_CHANGE`, with the
+non-cooperative-resolver boundary stated as a measurement rather than assumed away.
+
 ---
 
 ## 5. The ssh bug (found while closing the 17-item matrix)
