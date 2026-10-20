@@ -124,10 +124,12 @@ func TestADNSTransportDetourMustCarryTheQuery(t *testing.T) {
   "outbounds": [` + testCase.detour + `, ` + svDNSDirect + `],
   "route": {"final": "direct"}
 }`
-			instance, err := newBoxFromConfig(t, config)
-			require.NoError(t, err)
-			t.Cleanup(func() { _ = instance.Close() })
-			require.Error(t, instance.Start(), testCase.why)
+			startErr, warnings := startBoxCapturingWarnings(t, config)
+			require.NoError(t, startErr,
+				"a detour that exists but cannot carry this transport is a capability warning, not a "+
+					"refusal: "+testCase.why)
+			require.Contains(t, warnings, "does not carry",
+				"the warning must name the missing network; got:\n"+warnings)
 		})
 	}
 }

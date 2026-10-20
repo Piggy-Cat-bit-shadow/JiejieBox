@@ -108,12 +108,12 @@ func TestConsumerDemandContractIsProvableOnly(t *testing.T) {
 		}
 		for name, testCase := range refused {
 			name, testCase := name, testCase
-			t.Run("refused: "+name, func(t *testing.T) {
+			t.Run("warned: "+name, func(t *testing.T) {
 				t.Parallel()
-				instance, err := newBoxFromConfig(t, svHTTPClientConfig(testCase.client, testCase.detour))
-				require.NoError(t, err)
-				t.Cleanup(func() { _ = instance.Close() })
-				require.Error(t, instance.Start())
+				startErr, warnings := startBoxCapturingWarnings(t, svHTTPClientConfig(testCase.client, testCase.detour))
+				require.NoError(t, startErr,
+					"an existing detour that cannot serve the client is a capability warning")
+				require.Contains(t, warnings, "http_client")
 			})
 		}
 	})
@@ -151,12 +151,12 @@ func TestConsumerDemandContractIsProvableOnly(t *testing.T) {
 		}
 		for name, testCase := range refused {
 			name, testCase := name, testCase
-			t.Run("refused: "+name, func(t *testing.T) {
+			t.Run("warned: "+name, func(t *testing.T) {
 				t.Parallel()
-				instance, err := newBoxFromConfig(t, svDNSTransportConfig(testCase.transportType, testCase.detour))
-				require.NoError(t, err)
-				t.Cleanup(func() { _ = instance.Close() })
-				require.Error(t, instance.Start())
+				startErr, warnings := startBoxCapturingWarnings(t, svDNSTransportConfig(testCase.transportType, testCase.detour))
+				require.NoError(t, startErr,
+					"an existing detour that cannot carry this transport is a capability warning")
+				require.Contains(t, warnings, "does not carry")
 			})
 		}
 	})

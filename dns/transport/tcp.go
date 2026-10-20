@@ -36,6 +36,10 @@ type TCPTransport struct {
 	dialer      N.Dialer
 	serverAddr  M.Socksaddr
 	multiplexer *queryMultiplexer
+	// logger reports the non-fatal detour capability finding. The production constructor sets it;
+	// NewTCPRaw leaves it nil, and a nil logger means the finding is not reported rather than an
+	// error - the same rule the outbound manager follows.
+	logger log.ContextLogger
 }
 
 func NewTCP(ctx context.Context, logger log.ContextLogger, tag string, options option.RemoteDNSServerOptions) (adapter.DNSTransport, error) {
@@ -50,7 +54,9 @@ func NewTCP(ctx context.Context, logger log.ContextLogger, tag string, options o
 	if !serverAddr.IsValid() {
 		return nil, E.New("invalid server address: ", serverAddr)
 	}
-	return NewTCPRaw(dns.NewTransportAdapterWithRemoteOptions(C.DNSTypeTCP, tag, options), transportDialer, serverAddr), nil
+	transport := NewTCPRaw(dns.NewTransportAdapterWithRemoteOptions(C.DNSTypeTCP, tag, options), transportDialer, serverAddr)
+	transport.logger = logger
+	return transport, nil
 }
 
 func NewTCPRaw(adapter dns.TransportAdapter, dialer N.Dialer, serverAddr M.Socksaddr) *TCPTransport {
@@ -91,7 +97,12 @@ func (t *TCPTransport) Start(stage adapter.StartStage, scope *adapter.Scope) err
 	// than from its name - udp needs TCP as well, because a truncated response is retried.
 	detourObject, hasDetour := dialer.DetourOf(t.dialer)
 	if hasDetour {
-		return CheckDetourCapability("dns/transport/tcp["+t.Tag()+"]", detourObject, RequirementFor("tcp", nil))
+		// A detour that exists but cannot carry this transport's queries is a capability finding:
+		// the queries it would carry fail at run time, and refusing the whole start here would also
+		// refuse every other lookup the configuration can serve. Reported once, at warn level.
+		if capabilityErr := CheckDetourCapability("dns/transport/tcp["+t.Tag()+"]", detourObject, RequirementFor("tcp", nil)); capabilityErr != nil {
+			t.logger.Warn(capabilityErr)
+		}
 	}
 	return nil
 }

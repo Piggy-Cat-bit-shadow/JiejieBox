@@ -165,7 +165,12 @@ func (t *HTTPSTransport) Start(stage adapter.StartStage, scope *adapter.Scope) e
 	// than from its name - udp needs TCP as well, because a truncated response is retried.
 	detourObject, hasDetour := dialer.DetourOf(t.dialer)
 	if hasDetour {
-		return CheckDetourCapability("dns/transport/https["+t.Tag()+"]", detourObject, RequirementFor("https", nil))
+		// A detour that exists but cannot carry this transport's queries is a capability finding:
+		// the queries it would carry fail at run time, and refusing the whole start here would also
+		// refuse every other lookup the configuration can serve. Reported once, at warn level.
+		if capabilityErr := CheckDetourCapability("dns/transport/https["+t.Tag()+"]", detourObject, RequirementFor("https", nil)); capabilityErr != nil {
+			t.logger.Warn(capabilityErr)
+		}
 	}
 	return nil
 }

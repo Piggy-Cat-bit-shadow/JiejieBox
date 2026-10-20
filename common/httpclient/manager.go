@@ -120,7 +120,11 @@ func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		// This is a static preflight, so it only refuses what is PROVABLE: an object that reports no
 		// networks at all is left alone by CheckDetourCapability rather than assumed to carry none.
 		if capabilityErr := CheckDetourCapability(tag, detourObject, HTTPClientTransportRequirement(define.Options())); capabilityErr != nil {
-			return capabilityErr
+			// The reference exists; the detour simply cannot serve every transport this client
+			// needs. Those requests fail at run time, and refusing the start here would also refuse
+			// every other request the configuration can serve - including clients it never uses.
+			// Reported once, at warn level.
+			m.logger.Warn(capabilityErr)
 		}
 	}
 	scope.Add(m.close)

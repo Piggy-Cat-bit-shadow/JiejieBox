@@ -1,6 +1,7 @@
 package box_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -111,13 +112,27 @@ func TestAnHTTPClientDetourMustCarryTheConfiguredTransports(t *testing.T) {
 	}
 	for name, testCase := range refused {
 		name, testCase := name, testCase
-		t.Run("refused: "+name, func(t *testing.T) {
+		t.Run("warned: "+name, func(t *testing.T) {
 			t.Parallel()
-			instance, err := newBoxFromConfig(t, svHTTPClientDemandFixture(testCase.client, testCase.detour))
-			require.NoError(t, err)
-			t.Cleanup(func() { _ = instance.Close() })
-			startErr := instance.Start()
-			require.Error(t, startErr, testCase.why)
+			if strings.Contains(testCase.client, `"ghost"`) {
+				// A detour naming nothing is a MISSING REFERENCE, which stays fatal: there is no
+				// object to judge a capability of, and starting would only move the failure to the
+				// first request.
+				instance, err := newBoxFromConfig(t, svHTTPClientDemandFixture(testCase.client, testCase.detour))
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = instance.Close() })
+				require.Error(t, instance.Start(),
+					"a missing detour reference must still refuse the start: "+testCase.why)
+				return
+			}
+			// The reference EXISTS; the detour cannot serve every transport this client needs. That
+			// fails the requests that need the missing transport, and refusing the start here would
+			// also refuse every other request the configuration can serve.
+			startErr, warnings := startBoxCapturingWarnings(t, svHTTPClientDemandFixture(testCase.client, testCase.detour))
+			require.NoError(t, startErr,
+				"a capability mismatch on an existing detour is a warning: "+testCase.why)
+			require.Contains(t, warnings, "http_client",
+				"the warning must name the client; got:\n"+warnings)
 		})
 	}
 }

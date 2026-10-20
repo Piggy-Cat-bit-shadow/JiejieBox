@@ -41,6 +41,8 @@ type Transport struct {
 	tlsConfig  tls.Config
 
 	connection *transport.ConnPool[*quic.Conn]
+	// logger reports the non-fatal detour capability finding.
+	logger log.ContextLogger
 }
 
 func NewQUIC(ctx context.Context, logger log.ContextLogger, tag string, options option.RemoteTLSDNSServerOptions) (adapter.DNSTransport, error) {
@@ -67,6 +69,7 @@ func NewQUIC(ctx context.Context, logger log.ContextLogger, tag string, options 
 
 	return &Transport{
 		TransportAdapter: dns.NewTransportAdapterWithRemoteOptions(C.DNSTypeQUIC, tag, options.RemoteDNSServerOptions),
+		logger:           logger,
 		dialer:           transportDialer,
 		serverAddr:       serverAddr,
 		tlsConfig:        tlsConfig,
@@ -94,7 +97,12 @@ func (t *Transport) Start(stage adapter.StartStage, scope *adapter.Scope) error 
 	// QUIC, so they need UDP and nothing else.
 	detourObject, hasDetour := dialer.DetourOf(t.dialer)
 	if hasDetour {
-		return transport.CheckDetourCapability("dns/transport/quic["+t.Tag()+"]", detourObject, transport.RequirementFor("quic", nil))
+		if capabilityErr := transport.CheckDetourCapability("dns/transport/quic["+t.Tag()+"]", detourObject, transport.RequirementFor("quic", nil)); capabilityErr != nil && t.logger != nil {
+			// An existing detour that cannot carry this transport is a capability finding: the queries it
+			// would carry fail at run time, and refusing the start here would also refuse every other
+			// lookup the configuration can serve. Reported once, at warn level.
+			t.logger.Warn(capabilityErr)
+		}
 	}
 	return nil
 }

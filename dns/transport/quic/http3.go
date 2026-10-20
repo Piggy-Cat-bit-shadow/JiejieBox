@@ -159,7 +159,12 @@ func (t *HTTP3Transport) Start(stage adapter.StartStage, scope *adapter.Scope) e
 	// QUIC, so they need UDP and nothing else.
 	detourObject, hasDetour := dialer.DetourOf(t.dialer)
 	if hasDetour {
-		return transport.CheckDetourCapability("dns/transport/h3["+t.Tag()+"]", detourObject, transport.RequirementFor("h3", nil))
+		if capabilityErr := transport.CheckDetourCapability("dns/transport/h3["+t.Tag()+"]", detourObject, transport.RequirementFor("h3", nil)); capabilityErr != nil && t.logger != nil {
+			// An existing detour that cannot carry this transport is a capability finding: the queries it
+			// would carry fail at run time, and refusing the start here would also refuse every other
+			// lookup the configuration can serve. Reported once, at warn level.
+			t.logger.Warn(capabilityErr)
+		}
 	}
 	return nil
 }
