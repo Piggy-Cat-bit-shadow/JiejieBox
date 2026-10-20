@@ -856,8 +856,10 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench 'BenchmarkPaddingWrite|BenchmarkP
 ### D. 工作树变动审计与权限说明
 
 - **本任务被授权写入的范围**：`KNOWLEDGE/reports/core/` 下**这一个**新 Markdown 文件。
-- **实际改动**：只有该文件。`git status` 中除它之外**没有**任何新增/修改的路径
-  （`clients/apple`、`clients/desktop` 两个子模块指针是审计开始前就存在的状态，本轮未触碰）。
+- **实际改动**：本任务只写了这一个文件。同一个提交 `2b5e6951d` 里还包含
+  `KNOWLEDGE/reports/anywhere-round3/` 的两份文档与 `KNOWLEDGE/reports/README.md` 的一行索引——
+  那是**同时执行的另一个任务**（Anywhere 第三轮审计）明确授权的产物，不是本报告的一部分。
+  除这四项外，提交里**没有**任何其它路径。
 - **未修改**：`KNOWLEDGE/INDEX.md`、`KNOWLEDGE/README.md`、`KNOWLEDGE/BASELINE.md`、
   `KNOWLEDGE/modules/**`、既有报告、任何 `.go`/配置/CI/依赖文件。
 - **为什么不在 `KNOWLEDGE/reports/README.md` 里加索引行**：本任务的写权限明确只覆盖这一份报告，
@@ -872,11 +874,11 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench 'BenchmarkPaddingWrite|BenchmarkP
 | 项 | 值 |
 |---|---|
 | 审计时的生产代码 SHA（docs 提交之前） | `5064f20a97880d3d5cfe1624c7f79da8d3b03b5c` |
-| 本次 docs 提交 SHA | 见提交记录（`docs(knowledge): …`） |
-| 推送目标 | `origin/testing` |
-| 推送方式 | 普通 `git push`，**无** `--force`、**无** rebase、**无** reset |
-| 远端一致性 | 推送后 `git ls-remote origin refs/heads/testing` 与本地 HEAD 对比 |
-| 并行窗口 | 提交前 `git fetch origin testing`，若远端前移则只做安全快进 |
+| 归档内容提交 | `2b5e6951dbe370949417de6a316aed69572d0601`（`docs(knowledge): archive Anywhere round-three audit and six-protocol efficiency audit`，与 Anywhere round-three 报告同一个提交；父提交 `5064f20a9`） |
+| 本记录提交 | 只补写本表与 §D 的归档事实，不改任何结论；它使 HEAD 前移，远端 HEAD 等于本记录提交 |
+| 推送目标 / 方式 | `origin/testing`；普通 `git push`（`5064f20a9..2b5e6951d`），**无** `--force`、**无** rebase、**无** reset |
+| 推送后远端一致性 | `git ls-remote origin refs/heads/testing` = `2b5e6951dbe370949417de6a316aed69572d0601`，与本地 HEAD 一致 |
+| 并行窗口 | 提交前 `git fetch origin testing`；远端未前移 |
 
 ### F. 完成条件自检（对应任务的退出检查表）
 

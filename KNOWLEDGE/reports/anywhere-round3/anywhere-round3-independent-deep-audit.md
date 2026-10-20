@@ -1194,7 +1194,17 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench \
 - **工作树**：`git status --porcelain=v1` 只有本轮新增的文档；`clients/apple`、`clients/desktop`
   两个子模块指针是审计开始前就存在的状态，本轮**没有**执行 `submodule update`、
   `reset --hard`、`clean`、`stash`。
-- **提交与推送**：见本节末尾的实测记录（提交 SHA、`git ls-remote` 结果）。
+- **提交与推送（实测记录）**：
+
+| 项 | 值 |
+|---|---|
+| 审计时的生产代码 SHA | `5064f20a97880d3d5cfe1624c7f79da8d3b03b5c` |
+| 归档内容提交 | `2b5e6951dbe370949417de6a316aed69572d0601`（`docs(knowledge): archive Anywhere round-three audit and six-protocol efficiency audit`，父提交 `5064f20a9`） |
+| 本记录提交 | 只改这两份报告的"归档记录"段落，不改任何结论；它使 HEAD 前移，因此远端 HEAD 等于本记录提交（`git log -1 --pretty=%H`） |
+| 推送方式 | 普通 `git push origin testing`（`5064f20a9..2b5e6951d`），**无** `--force`、**无** rebase、**无** reset |
+| 推送后远端 | `git ls-remote origin refs/heads/testing` = `2b5e6951dbe370949417de6a316aed69572d0601`，与本地 HEAD 一致 |
+| 并行窗口 | 提交前 `git fetch origin testing`；远端未前移，无需再整合 |
+| 变动范围 | `git diff --cached --name-only` = 本目录两个文件 + `KNOWLEDGE/reports/README.md` 的索引行；无 `.go`、无 `go.mod`/`go.sum`、无 CI、无子模块 |
 
 ### 18.1 为什么这份报告不移动 Baseline
 
