@@ -5,7 +5,11 @@
 **Runs on:** `11c4c1b27` (start of this pass) plus the one test file added by this pass; dependency
 unchanged at `Piggy-Cat-bit-shadow/sing-tun` `276576ea222c`
 (`v0.0.0-20261020040525-276576ea222c`).
-**Verdict:** **`NO_CHANGE_SUPPORTED_BY_EVIDENCE`** — with the mechanism now measured, not assumed.
+**Verdict:** **`PARTIALLY_VERIFIED_ENV_BLOCKED`** — the DATAGRAM branch is bounded (measured); the
+Capsule branch is **not** bounded when a keepalive is in use (measured), and the shutdown path that
+would wait on it is now released by a cancellation-ordering fix whose release mechanism is verified
+end to end at the transport level. The composed `Box.Close` wall time remains `NOT_TESTED` because
+this environment has no injectable TUN device.
 
 ---
 
@@ -25,13 +29,13 @@ Real quic-go connection on loopback, through a relay that can break **one direct
 
 | role | configuration |
 |---|---|
-| server (peer) | `MaxIdleTimeout: 0` (**disabled**), keepalive every 200 ms |
+| server (peer) | quic-go's **default** idle timeout (`MaxIdleTimeout: 0` selects the 30 s default; it does not disable the timeout), keepalive every 200 ms |
 | client (us) | `MaxIdleTimeout: 3 s` |
 | relay | after warm-up: **drop client→server**, keep forwarding server→client |
 
-The server's idle timeout being disabled is deliberate: it removes the easy way out and makes the
-client's own timer the only thing that could end the connection. The relay drops only our direction,
-which is what a broken outbound path during a network switch looks like.
+The server sits at quic-go's default (30 s) and the client at 3 s, so the effective timeout is the
+client's, which is the value the experiment varies. The relay drops only our direction, which is what
+a broken outbound path during a network switch looks like.
 
 Both cases are now committed as `transport/http/close_liveness_mechanism_test.go` (`with_quic`).
 
@@ -79,15 +83,15 @@ replenishes it without our acknowledgements.
 | branch | mechanism | measured result |
 |---|---|---|
 | **DATAGRAM** | 32-frame queue; `Add` waits for a pop. A peer without our ACKs cannot keep sending, so inbound stops and **our** idle timer ends the connection | bounded by **our** idle timeout after the last inbound packet (5.80 s at 6 s; 3.0 s at 3 s) |
-| **Capsule** (reliable stream, flow control) | the write parks on the peer's stream window. Both sides keep acknowledging, so our timer never fires; but while parked we send nothing, so the **peer's** timer expires and it closes the connection | bounded by **the peer's** idle timeout: 10 s measured against a 10 s peer setting, then the next write failed in 0 s with `timeout: no recent network activity` |
+| **Capsule** (reliable stream, flow control) | the write parks on the peer's stream window. With **no** keepalive, both sides go quiet and the peer's timer ends it. With the production keepalive, the peer keeps receiving our PINGs and we keep receiving its ACKs, so **no timer fires at all** | **no keepalive:** bounded by the peer's idle timeout (9.03 s at 10 s). **with a 200 ms keepalive:** still parked after 12 s (> 4 idle timeouts) with the connection alive — **no idle-timeout bound** |
 
-The two branches are bounded by **different timers, on opposite sides**. That is why they had to be
-measured separately: the DATAGRAM result ("our idle timer rescues it") is exactly wrong for the
-capsule branch, and the capsule result ("the peer's timer rescues it") does not apply to DATAGRAM.
+The two branches have **different bounds, and the capsule one disappears entirely under a keepalive**.
+That is why they had to be measured separately, and why the first capsule test (no keepalive) was not
+enough: it measured the timer, not the branch.
 
-The operational consequence: the capsule bound is **chosen by the remote**. A peer configured with a
-long idle timeout can hold a blocked capsule write — and the stage lock behind it — for that long.
-The bound is finite, but it is not ours to set.
+The operational consequence: a peer that accepts the tunnel and stops reading its request body can
+park the write — and the stage lock behind it — for as long as the connection lives, because our own
+keepalive is what keeps it alive. The fix for that is §6.
 
 ## 5. What the earlier reports should say from now on
 
@@ -100,29 +104,66 @@ the active-traffic case:
 > configuration measured, but it is not "always exactly the configured idle timeout from the start of
 > the block".
 
-## 6. Production change: none, and why
+## 6. Production change: the endpoint now releases its connection on cancellation
 
-The instruction allows two outcomes. The evidence supports the second: the stall cannot be made
-unbounded in this system, because sustaining the inbound stream that would refresh the idle timer
-requires our acknowledgements, which the blocked outbound path is precisely what prevents.
+A second experiment changed the picture, and this section replaces the earlier "no change" reasoning.
 
-A fix would still be possible (bind the endpoint's QUIC client to the scope context so cancellation
-closes the connection before the inbound cleanup runs), and it would shorten the stall from
-`idle timeout` to milliseconds. It is **not** justified by this evidence: there is no unbounded wait
-to repair, and that change alters endpoint shutdown semantics for every MASQUE user. The exit
-condition from the debug report stands: if field data ever shows a stall users notice, that is the
-change to make, with its own before/after measurement.
+**The gap in the first capsule test:** it used no keepalive. Without one, a parked write also means
+we send nothing, so the peer's idle timer expires and closes the connection — which looked like a
+bound. The production MASQUE client does configure a keepalive (`defaultKeepAlivePeriod` in
+`transport/masque`), and the follow-up experiment adds it, with explicit non-zero idle timeouts on
+both sides (3 s) instead of relying on the zero-value default:
+
+| case | measured result |
+|---|---|
+| capsule, **no** keepalive | parked write returned after **9.03 s** (peer idle 10 s) — the old control |
+| capsule, **200 ms keepalive** | after 12 s (> 4 idle timeouts) the connection is **ALIVE** (a second CONNECT-UDP request succeeds on it) and the parked write is **still parked**; closing the tunnel releases it in **0 s** with `deadline exceeded` |
+
+So the capsule branch has **no idle-timeout bound** when a keepalive is in use. That is the
+counterexample this round was asked to settle, and it settles the other way.
+
+**Why it matters for shutdown.** `Scope.Close` cancels its context *before* running cleanups, then
+runs them in reverse: the TUN inbound closes first and waits for its stack engine, and that engine
+can be inside `ForwardStage.Flush` holding the stage lock while it writes through this endpoint. The
+cleanup that would release the write — `c.client.Close` — is scheduled *after* the inbound that waits
+for it. Nothing in the write path ends it. The chain is a wait with its release scheduled behind the
+waiter, and for the capsule branch there is no timer to break the tie.
+
+**The fix (minimal, one watcher).** In `ClientEndpoint.Start`'s post-start stage, next to the existing
+`scope.Add(c.client.Close)`, the endpoint now also waits on its own context:
+
+```go
+go func() {
+    <-c.ctx.Done()
+    _ = c.client.Close()
+}()
+```
+
+`Scope.Close` calls that context's cancel before any cleanup, so the connection is closed before the
+inbound above it begins to wait. Normal traffic is unaffected: the context is only cancelled at scope
+close, not on an interface update or a session restart. The second `Close` from the cleanup is safe —
+`Client.Close` cancels an idempotent context, receives from an already-closed channel, and closes the
+HTTP client again.
+
+**What is proven about the fix, and what is not:**
+
+| claim | evidence |
+|---|---|
+| closing this connection releases a parked capsule write | `MEASURED`: 0 s, `deadline exceeded` |
+| the cancel happens before cleanups | `SOURCE_VERIFIED` (`Scope.Close`: `s.cancel()` before `slices.Backward(cleanups)`) |
+| normal close, restart, suspend still work | `protocol/masque` `with_quic` suite: PASS (48 s) |
+| the composed `Box.Close` is fast in production | `NOT_TESTED` — no injectable TUN device in this environment |
 
 ## 7. Verification
 
 | command | result |
 |---|---|
 | `go test -tags with_quic ./transport/http -run 'TestTheIdleTimeoutBoundsASilentPath\|TestActiveInboundStopsBecauseThePeerIsStarved' -count=1` | PASS (3.3 s + 8.2 s) |
-| `go test -tags with_quic ./transport/http -run 'TestCapsuleWriteAgainstAStalledPeer' -count=1` | PASS (10.0 s) |
-| the three mechanism tests together under `-race -count=2` | PASS (43.7 s) |
+| `go test -tags with_quic ./transport/http -run 'TestCapsuleWriteWithoutKeepAliveEndsAtThePeerIdleTimeout\|TestCapsuleWriteWithKeepAliveStaysParked' -count=1` | PASS (10.1 s + 23.0 s) |
+| `go test -tags with_quic ./protocol/masque -count=1` (endpoint fix) | PASS (48.3 s) |
+| the mechanism set together under `-race -count=2` | PASS |
 | `go test -tags with_quic ./transport/http -count=1` (full package) | PASS |
 | `go test ./transport/http ./transport/masque ./protocol/tun -count=1` | PASS |
-| `go test -race -tags with_quic ./transport/http -run 'TestTheIdleTimeout\|TestActiveInbound'` | PASS |
 | `go mod tidy -diff` in both modules | clean |
 
 Known flakes, unchanged and attributed in the debug report: `route` under load, and the `sing-tun`
@@ -138,13 +179,21 @@ Windows timing tests (`TestGoKernelDeadline`, `TestGoKernelPacketBatchIdle`, `Te
 
 ## 9. Verdict
 
-**`NO_CHANGE_SUPPORTED_BY_EVIDENCE`.** Both branches are bounded, including the configuration
-designed to defeat the bound, and each bound now has its mechanism named and a committed test rather
-than a sentence in a report. No production code changed; no dependency changed; the only additions
-are the two mechanism tests that make the argument reproducible.
+**`PARTIALLY_VERIFIED_ENV_BLOCKED`.**
 
-The one qualification worth carrying forward: the capsule bound is the idle timeout of the peer, so a
-remote peer that sets a long one lengthens the worst-case shutdown wait. The exit condition from the
-debug report applies unchanged — if that ever shows up as a stall users notice, bind the endpoint's
-QUIC client to the scope context so cancellation closes the connection before the inbound cleanup
-runs, and measure it before and after.
+- **DATAGRAM:** bounded, measured, mechanism named (our idle timeout after the last inbound packet,
+  because a peer without our ACKs cannot keep sending). Test committed.
+- **Capsule without keepalive:** bounded by the peer's idle timeout (9.03 s at 10 s). Test committed.
+- **Capsule with the production keepalive:** **not bounded by any idle timeout** — measured parked
+  after 12 s with the connection demonstrably alive. This is the counterexample the round was asked to
+  settle, and it settles against the earlier conclusion.
+- **Production change:** the endpoint now closes its own QUIC client when the scope context is
+  cancelled, which `Scope.Close` does before it runs any cleanup. The release mechanism is measured
+  (closing the connection frees the parked write in 0 s); the cancel ordering is source-verified; the
+  endpoint's full `with_quic` suite passes, so normal close, restart and suspend are unaffected.
+- **Not verified:** the composed `Box.Close` wall time, because this environment has no injectable TUN
+  device (`tun.Options` has no device field, and a public fake-TUN API is explicitly out of scope). The
+  claim that shutdown is now fast is `INFERRED` from the two verified halves, not measured end to end.
+
+A later round that can run a real TUN should measure `Box.Close` against this same stalled-capsule
+peer before and after the watcher, which is the only missing link in the chain.
