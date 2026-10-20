@@ -213,7 +213,26 @@ func (s *Outbound) connect(ctx context.Context) (client *ssh.Client, err error) 
 }
 
 func (s *Outbound) InterfaceUpdated(ctx context.Context) {
-	common.Close(s.clientConn)
+	// Retire the session under the lock, then close outside it.
+	//
+	// The previous form closed s.clientConn without taking clientAccess, while every other path
+	// (connect, CloseIdleConnections, releaseStream, the Wait goroutine) reads and writes that field
+	// under the lock. A network change therefore raced with a concurrent dial: the unlocked read
+	// could observe the connection another goroutine had just installed and close it, retiring the
+	// session that was meant to replace the old one. Clearing s.client as well makes the previous
+	// client's Wait goroutine a no-op, because it only clears the fields while they still point at it.
+	common.Close(s.takeClientConn())
+}
+
+// takeClientConn removes the current session under the lock and returns its connection, so the
+// close itself happens outside the critical section. Every retirement path uses this shape.
+func (s *Outbound) takeClientConn() net.Conn {
+	s.clientAccess.Lock()
+	clientConn := s.clientConn
+	s.client = nil
+	s.clientConn = nil
+	s.clientAccess.Unlock()
+	return clientConn
 }
 
 func (s *Outbound) MultiplexEnabled() bool {
