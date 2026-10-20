@@ -588,9 +588,18 @@ K=256 与 K=64 同值这一条是本轮对"K 会随节点数爆炸"的直接否�
 - **方案 B**：保持现状（规则表通常 < 100 条，两次扫描可能只有几 µs）。
 - **级别**：P1（若 profile 证实）/ 目前 `SUSPECTED`。**建议：INVESTIGATE。**
 
-### 3.7 Q7（P3）：`retiredFakeIPAddress` 每连接重建只随冷事件变化的状态
+### 3.7 Q7（P3）：`retiredFakeIPAddress` 的成本取决于存储后端（已实测）
 
-见 round3 报告 §7.3。**建议：INVESTIGATE（先 profile）。**
+见 round3 报告 §7.3。本轮用真实 `fakeip.NewStore` 与 bbolt 读事务代理测出：
+
+| 后端 | 每次 out-of-range 目的地 | 每连接（PreMatch + matchRule） |
+|---|---|---|
+| 内存（默认） | 25–28 ns，0 allocs | ~55 ns，0 allocs |
+| `store_fakeip: true` | ~590 ns，608 B，7 allocs | **~1.2 µs，14 allocs** |
+
+**结论**：默认配置下这不是问题（此前"每连接重建状态"的描述过于悲观）；只有启用
+`store_fakeip` 时它才是"每连接两次 bbolt 读事务"的真实成本。**建议：内存后端 KEEP；
+`store_fakeip` 用 atomic 快照 + 三个既有失效点（Start / 范围变更 / flush）改造，B+。**
 
 ### 3.8 Q8（P2）：Mieru `dialSocketTimeout` 无事实导致的策略不对称
 

@@ -574,9 +574,24 @@ K=1 时 **2.7 ns/包**，K=8 时 5.1，K=64 时 25.7，**K=256 时仍是 25.7**�
 这里是缓存**区间快照**。缓存一份 `atomic.Pointer[[]netip.Prefix]` 并只在上述三个事件上重建，
 语义上完全等价。
 
-**现在缺的证据**　该路径的真实触发频率与耗时占比。**未测**：
-需要一次 profile（`retiredFakeIPAddress` 在 CPU profile 里的占比）而不是猜。
-因此保持 B。
+**实测（§12.8 第 5 项，真 store + 真 bbolt 代理）**　这条候选的关键不是"重建"，而是**存储后端**：
+
+| 后端 | 每次 out-of-range 目的地的守卫成本 | 每连接（PreMatch + matchRule 两次） |
+|---|---|---|
+| 内存（默认，未开 `store_fakeip`） | **25–28 ns，0 allocs** | ~55 ns，0 allocs |
+| `cache_file`（`store_fakeip: true`） | **~590 ns，608 B，7 allocs**（一次 bbolt 读事务） | **~1.2 µs，14 allocs** |
+
+也就是说：**默认配置下这条路径已经是噪声（28 ns、零分配）**，此前"每连接重建一份状态"
+的描述在内存后端下过于悲观；真正的成本只在启用 `store_fakeip` 时出现，而且因为
+`CacheFile.FakeIPRetired()` 每次调用都开一个 bbolt 读事务
+（`experimental/cachefile/fakeip.go:98-108`），它对**每一个非 Fake-IP 段内的目的地**都要付一次，
+即透明代理下的**每个连接**。
+
+**结论修正**　从"B，需要 profile"改为：**内存后端 = C（已足够好）；`store_fakeip` 后端 = B+**
+（有确定数字，收益取决于连接速率）。最小方案不是"再造缓存"，而是把
+`RetiredAddresses()` 的结果按"仅在 store Start / 范围变更 / 显式 flush 时变化"缓存成
+`atomic.Pointer`，并在上述三个事件上重建——这正是 Fake-IP store 已经拥有的失效点。
+**仍缺**：启用 `store_fakeip` 的真实连接速率分布（决定它是 0.1 % 还是 5 %）。
 
 ### 7.4 B3-4：`PreMatch` 与 `matchRule` 的双整表扫描
 
@@ -1100,7 +1115,18 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench \
 - 两种实现都通过了等价性测试（`TestACEquivalence` / `TestDenseACEquivalence`：
   同一批 host 上 AC 与线性结果一致，包括"最后一条关键词命中"的用例）。
 
-**(5) 夹具顺带暴露的两个契约尖角（不是 Bug，但会影响未来的测试与复用）**
+**(5) Fake-IP 守卫的真实成本（真 store + bbolt 代理）**
+
+用真实的 `dns/transport/fakeip.NewStore`（内存后端）测 `Contains + RetiredAddresses`：
+**25–28 ns/次、0 allocs**；`Lookup`（in-range）同样是 25 ns。
+另用 bbolt 读事务做代理（即 `store_fakeip` 打开时 `CacheFile.FakeIPRetired()`
+在 `experimental/cachefile/fakeip.go:98-108` 每次调用要做的事）：
+**590–595 ns/次、608 B、7 allocs**。
+
+结论见 §7.3：内存后端下这条守卫是噪声；只有 `store_fakeip` 打开时它才变成
+"每连接两次 × 7 allocs"的真实成本。
+
+**(6) 夹具顺带暴露的两个契约尖角（不是 Bug，但会影响未来的测试与复用）**
 
 1. `Flush` 在 `WritePackets` 返回后立刻 `clear(staged.packets)`（`flow_dispatch.go:796-797`），
    所以**普通 `Port` 拿到的是借用视图**：调用返回后再读那些字节会看到 nil。
@@ -1272,7 +1298,7 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench \
 | 4 | R3-2 | `domain_keyword` 大写关键词 | 低（可用性） | 高（源码，**与上游逐字节相同**） | 中（行为变更 + 与上游分叉） | 极低 | **记账 / 不建议 fork 单方面修** |
 | 5 | B3-1 | `s.ports` 累计 K | 低–中 | 中（实测曲线，缺 K 分布） | 无 | 低 | **B / 先测 K** |
 | 6 | B3-2 | `domain_keyword` AC | 中（K≥128 时） | 中（实测曲线，缺频率） | 中（漏匹配风险） | 中 | **B / 先测分布** |
-| 7 | B3-3 | retired Fake-IP 快照 | 低–中 | 低（未 profile） | 中（错拒绝） | 低 | **B** |
+| 7 | B3-3 | retired Fake-IP 快照 | 低–中 | **中（实测：内存 28 ns/0 allocs；`store_fakeip` ~1.2 µs + 14 allocs/连接）** | 中（错拒绝） | 低 | **内存后端 C；`store_fakeip` B+** |
 | 8 | B3-4 | PreMatch/matchRule 去重 | 中 | 低（未 profile） | **高** | 高 | **B / 最谨慎** |
 | 9 | R3-3 | Flush 锁跨阻塞 | 未知 | **高（已确定性复现：Close 被拖住 301 ms）** | **高（活性）** | 高 | **R / 需真实拥塞分布再改** |
 | 10 | — | XHTTP gather timer 化 | ~0 | **高（实测否决）** | — | 中 | **D** |
@@ -1298,7 +1324,8 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench \
 | 网络 | 真实 WAN 吞吐、p95/p99、丢包/重排/PMTU | `NOT_RUN`（无受控对端） |
 | 并发 | `-race` 全量 | `BLOCKED_BY_ENVIRONMENT`（`CGO_ENABLED=0`，无 cgo 工具链） |
 | 构建 | `with_quic`/`with_low_memory`/iOS tags 的完整套件 | `NOT_RUN`（候选未施工，无需跑） |
-| 测量 | 生产 K 分布、规则评估频率、`retiredFakeIPAddress` 占比 | `NOT_RUN`（需 instrumented 构建或 profile） |
+| 测量 | 生产 K 分布、规则评估频率 | `NOT_RUN`（需 instrumented 构建或 profile） |
+| 测量 | 启用 `store_fakeip` 时的真实连接速率 | `NOT_RUN`（守卫成本已实测：~1.2 µs + 14 allocs/连接，只缺速率） |
 | 测量 | 真实 QUIC 拥塞下的阻塞时长分布 | `NOT_RUN`（耦合已用夹具复现，时长分布未测） |
 | 交叉 | Xray/官方 AnyTLS/Naive/Mieru 参考实现的互通矩阵 | `NOT_RUN`（本轮不涉及行为变更） |
 | 数据 | 所有 `RECORDED_HISTORY` 数字（XHTTP 26.1–27.8 MB/s、MASQUE "mean ~4"） | 未复测，按"仓库记录值"引用 |
