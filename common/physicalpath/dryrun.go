@@ -218,8 +218,11 @@ func (r Report) WarningErr() error {
 	if len(warnings) == 0 {
 		return nil
 	}
-	return E.New("the following outbound paths cannot serve some flows; the configuration starts and "+
-		"those flows fail at run time exactly as before:\n  ", strings.Join(failureLines(warnings), "\n  "))
+	// The message deliberately does not claim the start succeeds: this warning is produced BEFORE
+	// startOutbounds runs, and a later stage can still fail for its own reason. Promising a start the
+	// code has not performed would make the log lie in exactly the case an operator is debugging.
+	return E.New("the following outbound paths cannot serve some flows; those flows fail at run time "+
+		"exactly as before:\n  ", strings.Join(failureLines(warnings), "\n  "))
 }
 
 func failureLines(failures []Failure) []string {

@@ -27,8 +27,8 @@ could serve. It now starts, and the same finding is emitted once at warn level t
 logger:
 
 ```
-WARN[0000] the following outbound paths cannot serve some flows; the configuration starts and those
-flows fail at run time exactly as before:
+WARN[0000] the following outbound paths cannot serve some flows; those flows fail at run time
+exactly as before:
   outbound/leak-fish -> leak-fish -> node-select -> global-direct -> us1-tcp-only -> hop #0 ...
   this outbound does not carry udp (it carries tcp) and cannot serve the udp flow routed through it
 ```
