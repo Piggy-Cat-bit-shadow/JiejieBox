@@ -33,6 +33,7 @@ not run, that is `BLOCKED_BY_ENVIRONMENT`, not `PASS`.
 | `release/` | release phases, branch consolidation, handoffs and close-outs, in chronological order of the phase names |
 | `windows-client/` | the Windows client's installer / uninstaller / diagnostic-channel and coexistence investigations |
 | `anywhere-round2/` | the second Anywhere research round: audit, construction, adversarial debug and final verification for the DNS/rule-set/MASQUE/QUIC ownership work |
+| `anywhere-round3/` | the third Anywhere round: an independent deep audit of four previously-favoured candidates (three falsified by local measurement), two new A-class candidates, two confirmed defects, and the next-round blueprint. Documentation only — no production change |
 
 ## Index
 
@@ -116,6 +117,13 @@ later. "Status" says whether the report still describes the tree or has been sup
 | `anywhere-round2-construction.md` | 2026-10-19 | construction matrix: A0/A1/B2–B8, commits, before/after measurements, rollback | current for the delivered head |
 | `anywhere-round2-debug-audit.md` | 2026-10-19 | Red→Green proofs, adversarial and cross-component tests, race/platform limits | current for the delivered head |
 | `anywhere-round2-final-summary.md` | 2026-10-19 | commits, dependency pins, measured results, CI links, residual risks | current for the delivered head |
+
+### anywhere-round3/
+
+| report | date | covers | status |
+|---|---|---|---|
+| `README.md` | 2026-10-20 | the round's executive index: what was falsified, what is worth building, and what was not run | current |
+| `anywhere-round3-independent-deep-audit.md` | 2026-10-20 | independent audit at `5064f20a9`: the four brief candidates measured (TCP `PacketTemplate`, XHTTP gather polling, HY2/TUIC batching and the TUN batch grouping), the two rejected premises, the two new A-class candidates (`portReturn.ReturnPackets` per-call allocation, L4 CONNECT-UDP missing the owned DATAGRAM path), two confirmed defects (`equalFoldASCII` fold base, `domain_keyword` not lowercased), the `ForwardStage.Flush` lock-across-blocking-enqueue liveness risk, seven autonomous findings, the measured microbenchmark log and the next-round blueprint | current for `5064f20a9` — **not** a claim about later HEADs |
 
 ## Adding a report
 
