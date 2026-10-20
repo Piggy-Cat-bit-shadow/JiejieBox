@@ -55,6 +55,12 @@ func (d *measuredDialer) finish() {
 
 func (d *measuredDialer) dialOne(ctx context.Context, address netip.Addr) (net.Conn, error) {
 	d.record(address)
+	return d.attempt(ctx, address)
+}
+
+// attempt is the dial itself, without recording: the parallel shape records both launches
+// synchronously so the observation does not depend on which goroutine the scheduler runs first.
+func (d *measuredDialer) attempt(ctx context.Context, address netip.Addr) (net.Conn, error) {
 	defer d.finish()
 	if address == d.blackhole {
 		<-ctx.Done()
@@ -99,8 +105,12 @@ func (d *parallelMeasuredDialer) DialParallelNetwork(ctx context.Context, networ
 	}
 	results := make(chan result, len(destinationAddresses))
 	for _, address := range destinationAddresses {
+		// Record every launch before any goroutine starts. The race this measurement is about is
+		// "was the healthy family launched immediately", and that must not depend on which goroutine
+		// the runtime schedules first.
+		d.record(address)
 		go func(target netip.Addr) {
-			conn, err := d.dialOne(ctx, target)
+			conn, err := d.attempt(ctx, target)
 			results <- result{conn, err}
 		}(address)
 	}
