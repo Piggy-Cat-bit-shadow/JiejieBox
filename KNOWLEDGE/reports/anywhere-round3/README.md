@@ -24,6 +24,8 @@ findings that were not in the brief at all.
 | file | what it is | evidence |
 |---|---|---|
 | [`anywhere-round3-independent-deep-audit.md`](anywhere-round3-independent-deep-audit.md) | the round-three audit: 18 sections, measured microbenchmarks, falsifications, A/B/C/D/R matrix, next-round blueprint and debug matrix | `MEASURED_LOCAL` (Go 1.25.5, Windows 10 19044, Ryzen 7 4800H) + `VERIFIED_SOURCE`; every device item `NOT_RUN` |
+| [`anywhere-round3-construction.md`](anywhere-round3-construction.md) | the construction record: A3-1, A3-2 (single packet only), the close-path analysis, P3, Red→Green, A/B and the rejected batch-owned candidate | `MEASURED_LOCAL` + `VERIFIED_SOURCE` |
+| [`anywhere-round3-debug-handoff.md`](anywhere-round3-debug-handoff.md) | the sheet for the independent adversarial debug pass: change list, commands, edges, suspicious paths, versions | reference |
 
 ## The one-page result
 
@@ -44,3 +46,26 @@ No production code, test, dependency, configuration, CI file or existing knowled
 modified. The only writes are this directory and the index row in `KNOWLEDGE/reports/README.md`. There was
 no device, no real WAN, no iOS/Android target and no `cgo`, so **no claim here is `VERIFIED_DEVICE`**, and
 the local `-race` runner stays `BLOCKED_BY_ENVIRONMENT` exactly as in round two.
+
+## Construction outcome (added 2026-10-20)
+
+The audit ranked four candidates. The construction round turned that ranking into code and closed
+the remaining question marks:
+
+- **A (build)** — both audit items were built. `ReturnPackets` now allocates nothing on the common
+  path (236 ns / 72 B / 2 allocs → 156 ns / 0 B / 0 allocs), and L4 CONNECT-UDP takes the owned
+  DATAGRAM path (one allocation and one payload copy removed per packet, proven against a live
+  HTTP/3 peer). Batch-owned was **rejected on measurement**, not on taste: on a real queue the two
+  calls differ by ~10 % and both are queue-bound.
+- **C (Flush)** — the close chain is now proven, not hypothesised: `Box.Close` → `Scope.Close`
+  (reverse) → TUN inbound → `Go.Close` waiting for the engine → `Flush` holding the stage lock
+  across the port write. It is a wait, not a cycle, but the resource that would release it is closed
+  later in the same teardown, and a single blocked datagram send measured up to 1.762 s. The wait
+  edge is committed as a deterministic regression test; the fix is classified RISK / NEEDS_FIELD_DATA
+  with the numbers and three candidate designs.
+- **P3** — fixed, with a 20-case origin matrix proving the gate was not loosened.
+- **B-class items** — untouched, as the audit's own evidence already argued.
+
+`-race` also stopped being `BLOCKED_BY_ENVIRONMENT` on this host: the earlier rounds had pointed
+`go env CC` at a `gcc` that does not exist, while the bundled llvm-mingw clang builds the race
+runtime fine. Every touched package was raced in this round.
