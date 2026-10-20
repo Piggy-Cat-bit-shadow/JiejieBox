@@ -268,7 +268,10 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination 
 	switch N.NetworkName(network) {
 	case N.NetworkTCP:
 		h.logger.InfoContext(ctx, "outbound connection to ", destination)
-		return h.client.DialEarly(ctx, destination)
+		// dialNaiveTunnel completes the CONNECT handshake, so a 407 or a failed
+		// first hop is a DialContext error with adapter.FailureFacts attached,
+		// not a connection that closes on its first read. See failure.go.
+		return dialNaiveTunnel(ctx, h.client, destination)
 	case N.NetworkUDP:
 		if h.uotClient == nil {
 			return nil, E.New("UDP is not supported unless UDP over TCP is enabled")
@@ -299,8 +302,15 @@ type naiveDialer struct {
 	*cronet.NaiveClient
 }
 
+// DialContext is the entry the UoT client dials through. It uses the same
+// handshaking tunnel as the TCP path: a UoT session rides inside one CONNECT, so
+// a rejected CONNECT must fail here rather than after the session header was
+// written into a tunnel that does not exist.
 func (d *naiveDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
-	return d.NaiveClient.DialEarly(ctx, destination)
+	if N.NetworkName(network) != N.NetworkTCP {
+		return nil, E.Extend(N.ErrUnknownNetwork, network)
+	}
+	return dialNaiveTunnel(ctx, d.NaiveClient, destination)
 }
 
 // cronetNaiveClientParams carries everything buildCronetNaiveClientOptions needs.
