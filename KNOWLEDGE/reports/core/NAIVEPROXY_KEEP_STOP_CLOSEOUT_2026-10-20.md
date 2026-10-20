@@ -18,7 +18,7 @@ plus one suspected documentation defect. This round closes them, without reopeni
 | item | verdict |
 |---|---|
 | **A1** pool-isolation self-test counted a stale NetLog event id | **FIXED** and verified against a real Cronet engine |
-| **A2** the native self-test ran nowhere in CI | **IMPLEMENTED and EXECUTED, then REVERTED**: the macOS runner cannot carry the native bootstrap → `BLOCKED_BY_ENVIRONMENT`, see §3 |
+| **A2** the native self-test ran nowhere in CI | **PARTIAL**: the parser half now runs in `Verify` on every push; the native half is `BLOCKED_BY_ENVIRONMENT` on the macOS runner, see §3 |
 | **A3** "mojibake" in `docs/naive.md` | **A3_ENCODING_FALSE_POSITIVE** — the blob is clean UTF-8; baseline section added instead |
 | **A4** audit archived + closeout | **DONE** — the audit was already archived byte-identically; this report is new |
 
@@ -113,6 +113,21 @@ excludes. Shipping the step anyway would make the manual macOS job permanently r
 is recorded above so it can be re-enabled on a runner where the native bootstrap works, or after the
 native limitation is addressed separately.
 
+**What is shipped instead, and it is real coverage:** the half of A1 that does not need an engine —
+the NetLog parser — now runs in `Verify` on **every push**, in the `test` module, untagged and
+without cgo:
+
+```yaml
+- name: NetLog parser tests (test module, no native library)
+  run: |
+    cd test
+    go test -count=1 -timeout 2m -run 'TestNetLogEventCount' -v .
+```
+
+That is the code that resolves the event id from the file's constants block; a Chromium renumbering
+or a parser regression now fails the push gate instead of waiting for a machine with the engine.
+The native end-to-end half remains `BLOCKED_BY_ENVIRONMENT` and is not claimed as covered.
+
 ---
 
 ## 4. CI execution record
@@ -194,7 +209,7 @@ Those stay `NOT_RUN` / `NOT_COMPARABLE`.
 | G0 repository state | `testing`, started at `4f8bc1eae` = `origin/testing`; no branch, no force push; only the pre-existing `clients/apple` + `clients/desktop` pointers dirty |
 | G1 no fixed event id | DONE — runtime constants; 11 parser cases including three ids and four failure shapes |
 | G2 native E2E | DONE on this host for `TestNaiveSelf` and `TestNaiveSelfInsecureConcurrency` (Windows amd64, purego, real `libcronet.dll`) |
-| G3 CI contains the tests | **NOT SHIPPED**: the step was implemented and executed on the macOS runner ([39400834308](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39400834308)) and failed on the native bootstrap, so it was reverted rather than shipped red; `BLOCKED_BY_ENVIRONMENT`, reproduction in §3 |
+| G3 CI contains the tests | **PARTIAL**: the parser half runs in `Verify` on every push (Linux, no cgo); the native half was implemented, executed on the macOS runner ([39400834308](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39400834308)) and failed on the native bootstrap, so it was reverted rather than shipped red — `BLOCKED_BY_ENVIRONMENT` |
 | G4 NetLog safety | DONE — temp dir, non-verbose, single stop, streaming parser, bounded error output |
 | G5 A3 by blob bytes | DONE — false positive; history preserved; new baseline section |
 | G6 KEEP/STOP with limits | DONE — `NOT_COMPARABLE` and `NOT_RUN` stated explicitly |

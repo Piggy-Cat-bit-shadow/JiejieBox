@@ -217,6 +217,21 @@ jobs:
           go vet -tags "$tags" ./...
           echo "PASS: the test module type-checks against the working tree"
 
+      - name: NetLog parser tests (test module, no native library)
+        # The Naive pool-isolation self-test needs a real Cronet engine, which this Linux runner
+        # cannot load. Its parser is what turns a NetLog into a session count, and that part is pure
+        # Go: it resolves the event id from the file's own constants block instead of a literal
+        # (Chromium renumbered HTTP2_SESSION_INITIALIZED from 249 to 267, which is exactly how the
+        # self-test came to count zero and pass nothing).
+        #
+        # Running those cases here keeps that fix from regressing on every push. The native half
+        # stays where an engine can actually be loaded.
+        run: |
+          set -euo pipefail
+          cd test
+          go test -count=1 -timeout 2m -run 'TestNetLogEventCount' -v .
+          echo "PASS: NetLog parser tests"
+
       - name: build-tag policy and linkname gates
         # cmd/internal/build_libbox owns the tag composition each shipped artifact is compiled with,
         # and the tests next to it are the only thing that notices when a tag moves. They are easy
