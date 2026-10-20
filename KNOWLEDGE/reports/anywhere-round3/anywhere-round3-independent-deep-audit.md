@@ -1147,6 +1147,7 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench \
 | 真实 WAN 吞吐/p99 | 无受控对端与网络 |
 | `-race` | 无 cgo 工具链 |
 | `with_quic` / `with_low_memory` 下的完整套件 | 本轮候选尚未施工，无需跑 |
+| AnyTLS 单流慢读者的 HOL **影响** | 已用 `net.Pipe` + 真 `sing-anytls` 搭两流 stand，但**对照组**（持续 drain 第一条流）本身无法让第二条流回显，说明夹具没有建立可用基线；按规则记为 `NOT_TESTED`，不把红灯当结论。机制本身由 `sing-anytls:stream.go:59-84` 确认 |
 
 ---
 
