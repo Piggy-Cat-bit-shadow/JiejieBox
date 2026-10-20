@@ -175,7 +175,8 @@ a performance change.**
 | boundary | check | result |
 |---|---|---|
 | `transport/http` H1/H2/H3 | full suite, default and `with_quic` | PASS (8.5 s / 25.1 s) |
-| `transport/http` under `-race` | full suite | PASS (13.6 s) |
+| L4 over a live HTTP/3 peer | `connect_udp_owned_e2e_test.go` (`with_quic`), 32 single + 16 batched packets | PASS, also under `-race -count=2` |
+| `transport/http` under `-race` | full suite, plus the L4 live e2e | PASS (13.6 s) |
 | `transport/masque` (CONNECT-IP owned/batch untouched) | default, `with_quic`, `with_quic,with_low_memory` | PASS (5.5 / 7.1 / 7.1 s) |
 | `transport/masque` under `-race` | `with_quic` | PASS (68.8 s) |
 | `protocol/http`, `protocol/bridge`, `protocol/tun` | default and `with_quic` | PASS |
@@ -202,13 +203,15 @@ Pre-existing failures, verified identical on the pre-change code and therefore *
 
 ### 5.1 What this round did not verify
 
-Two gaps, stated rather than papered over:
+One gap closed after the first draft of this report, one left open:
 
-1. **L4 was exercised against a scripted transport boundary, not a live HTTP/3 peer.** The package
-   has a real-connection end-to-end test, but it drives CONNECT-IP; nothing in this round proves the
-   L4 packet connection against a real server, and CONNECT-IP passing is not evidence for L4. The
-   ownership questions this round asked — who releases, when, how often — are answered at the
-   boundary that owns them, and the real-connection behaviour above that boundary is quic-go's.
+1. **L4 now does have a live HTTP/3 peer** (`connect_udp_owned_e2e_test.go`, `with_quic`): the
+   production `Client.listenPacket` opens a real CONNECT-UDP tunnel, the test asserts that the
+   resolved capability is the owned one and that `FrontHeadroom()` is 9, then sends 32 packets and a
+   real 16-packet `WriteConnectedPacketBatch`, and the live server must receive exactly one datagram
+   per packet, in order, with Context ID 0 and the exact payload. Both cases pass, and again under
+   `-race -count=2`. This is separate from the CONNECT-IP end-to-end test on purpose: the two use
+   different request shapes, and CONNECT-IP passing would not have been evidence for L4.
 2. **XHTTP, Vision, AnyTLS, Naive and Mieru were not individually exercised.** No code on their
    paths changed; they appear only through the shared HTTP client suites and the root package. That
    is a coverage statement, not a pass claim.
