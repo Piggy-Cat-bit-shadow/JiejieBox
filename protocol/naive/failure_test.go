@@ -30,10 +30,14 @@ import (
 type fakeNaiveConn struct {
 	handshakeErr error
 	closed       bool
+	writes       int
 }
 
-func (c *fakeNaiveConn) Read([]byte) (int, error)         { return 0, io.EOF }
-func (c *fakeNaiveConn) Write(p []byte) (int, error)      { return len(p), nil }
+func (c *fakeNaiveConn) Read([]byte) (int, error) { return 0, io.EOF }
+func (c *fakeNaiveConn) Write(p []byte) (int, error) {
+	c.writes++
+	return len(p), nil
+}
 func (c *fakeNaiveConn) Close() error                     { c.closed = true; return nil }
 func (c *fakeNaiveConn) LocalAddr() net.Addr              { return nil }
 func (c *fakeNaiveConn) RemoteAddr() net.Addr             { return nil }

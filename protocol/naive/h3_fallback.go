@@ -175,6 +175,51 @@ func h3TransportFailure(err error) bool {
 	return false
 }
 
+// h3ProbeBudget is the most one H3 attempt may spend before the H2 retry gets
+// what is left of the caller's budget.
+//
+// # Why an H3 attempt needs its own bound
+//
+// The H3 attempt inherits the caller's deadline today, and Chromium's connection
+// attempt budget can consume almost all of it (4.5 s measured on this host).
+// With a 5 s caller deadline that leaves the H2 retry 0.5 s, which is how a
+// fallback turns into a second failure - the user asked for one connection and
+// got none, on a server that would have answered over H2 in milliseconds.
+//
+// # Why half
+//
+// The retry must be able to succeed, which means it needs at least as much time
+// as the attempt that failed. Splitting the remaining budget in half is the
+// smallest rule that guarantees that without inventing an absolute timeout for
+// the whole flow. The 10 s cap exists for callers with a generous deadline: an
+// H3 attempt should not inherit a 60 s budget just because the caller allows it.
+//
+// # Why this is not the MASQUE 3 s window
+//
+// transport/http gives HTTP/3 a fixed 3 s establishment window because a tunnel
+// has nothing to show for a slow handshake. Here the window is derived from the
+// caller's own budget, because a Naive CONNECT on a high-RTT path can legitimately
+// take longer than 3 s and must not be pre-empted on a hunch.
+var h3ProbeBudget = 10 * time.Second
+
+// h3ProbeContext bounds one H3 attempt. The returned bool reports whether a
+// bound was applied; false means there was no budget to split and the caller's
+// own state decides.
+func h3ProbeContext(ctx context.Context) (context.Context, context.CancelFunc, bool) {
+	if deadline, hasDeadline := ctx.Deadline(); hasDeadline {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return ctx, func() {}, false
+		}
+		if half := remaining / 2; half < h3ProbeBudget {
+			probeCtx, cancel := context.WithTimeout(ctx, half)
+			return probeCtx, cancel, true
+		}
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, h3ProbeBudget)
+	return probeCtx, cancel, true
+}
+
 // dialWithH3Fallback is the opt-in availability path used by the TCP outbound.
 func (h *Outbound) dialWithH3Fallback(ctx context.Context, destination M.Socksaddr) (net.Conn, error) {
 	return dialNaiveWithH3Fallback(ctx, h.client, &h.h3Fallback, h.logger, destination)
@@ -185,6 +230,8 @@ func (h *Outbound) dialWithH3Fallback(ctx context.Context, destination M.Socksad
 //
 //	H3 established            -> return it
 //	H3 failed at transport    -> remember, retry the SAME destination over H2
+//	H3 attempt ran out of its probe budget -> AMBIGUOUS: retry this time, do not
+//	                              remember (a slow answer is not a broken path)
 //	H3 failed at the proxy    -> return that error, do not retry
 //	window open               -> straight to H2
 //
@@ -195,21 +242,34 @@ func (h *Outbound) dialWithH3Fallback(ctx context.Context, destination M.Socksad
 func dialNaiveWithH3Fallback(ctx context.Context, client naiveDialerClient, fallback *h3Fallback, l logger.ContextLogger, destination M.Socksaddr) (net.Conn, error) {
 	attempt := fallback.begin()
 	if fallback.available(time.Now()) {
-		conn, err := dialNaiveTunnelWithQUIC(ctx, client, destination, true)
-		if err == nil {
-			fallback.clear(attempt)
-			return conn, nil
+		probeCtx, cancelProbe, bounded := h3ProbeContext(ctx)
+		if bounded {
+			conn, err := dialNaiveTunnelWithQUIC(probeCtx, client, destination, true)
+			probeExpired := probeCtx.Err() != nil
+			cancelProbe()
+			if err == nil {
+				fallback.clear(attempt)
+				return conn, nil
+			}
+			// The CALLER withdrew. That is not evidence about H3 and nobody is
+			// waiting for a second attempt.
+			if ctx.Err() != nil {
+				return nil, err
+			}
+			if probeExpired {
+				// AMBIGUOUS: our own bound fired before Chromium reached a
+				// verdict. The path is neither proven broken nor proven working,
+				// so this flow retries over H2 but the window stays unarmed -
+				// the next connection must be free to try H3 again.
+				l.DebugContext(ctx, "naive H3 attempt ran out of its probe budget, retrying over HTTP/2 for this flow only: ", err)
+				return dialNaiveTunnelWithQUIC(ctx, client, destination, false)
+			}
+			if !h3TransportFailure(err) {
+				return nil, err
+			}
+			fallback.markBroken(attempt, time.Now())
+			l.DebugContext(ctx, "naive H3 attempt failed at the transport, retrying over HTTP/2: ", err)
 		}
-		// The caller withdrew: not evidence about H3, and nobody is waiting for
-		// a second attempt.
-		if ctx.Err() != nil {
-			return nil, err
-		}
-		if !h3TransportFailure(err) {
-			return nil, err
-		}
-		fallback.markBroken(attempt, time.Now())
-		l.DebugContext(ctx, "naive H3 attempt failed at the transport, retrying over HTTP/2: ", err)
 	}
 	return dialNaiveTunnelWithQUIC(ctx, client, destination, false)
 }

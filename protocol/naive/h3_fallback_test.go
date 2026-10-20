@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -273,4 +274,151 @@ func TestH3FallbackDialErrorIsNotRetriedAtDialStage(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, []bool{true}, client.recorded())
 	require.True(t, fallback.available(time.Now()))
+}
+
+// --- adversarial additions (debug round) -----------------------------------
+
+// blockingNaiveConn models an H3 attempt whose handshake consumes its whole
+// budget: the transport is neither proven broken nor proven working.
+type blockingNaiveConn struct {
+	fakeNaiveConn
+}
+
+func (c *blockingNaiveConn) HandshakeContext(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// probeDialClient blocks every H3 attempt until its context ends and answers H2
+// immediately, so a test can drive the probe budget deterministically.
+type probeDialClient struct {
+	access   sync.Mutex
+	choices  []bool
+	h3Closed atomic.Bool
+}
+
+func (c *probeDialClient) DialEarly(ctx context.Context, destination M.Socksaddr) (cronet.NaiveConn, error) {
+	return c.DialEarlyWithQUIC(ctx, destination, true)
+}
+
+func (c *probeDialClient) DialEarlyWithQUIC(_ context.Context, _ M.Socksaddr, forceQUIC bool) (cronet.NaiveConn, error) {
+	c.access.Lock()
+	c.choices = append(c.choices, forceQUIC)
+	c.access.Unlock()
+	if forceQUIC {
+		return &probeBlockingConn{closed: &c.h3Closed}, nil
+	}
+	return &fakeNaiveConn{}, nil
+}
+
+func (c *probeDialClient) recorded() []bool {
+	c.access.Lock()
+	defer c.access.Unlock()
+	return append([]bool(nil), c.choices...)
+}
+
+// probeBlockingConn is a fakeNaiveConn whose close is observable.
+type probeBlockingConn struct {
+	fakeNaiveConn
+	closed *atomic.Bool
+}
+
+func (c *probeBlockingConn) Close() error {
+	c.closed.Store(true)
+	return c.fakeNaiveConn.Close()
+}
+
+func (c *probeBlockingConn) HandshakeContext(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func withProbeBudget(t *testing.T, budget time.Duration) {
+	t.Helper()
+	previous := h3ProbeBudget
+	h3ProbeBudget = budget
+	t.Cleanup(func() { h3ProbeBudget = previous })
+}
+
+// TestH3ProbeContextCapsTheBudget proves a generous caller deadline does not
+// give the H3 attempt an unbounded budget.
+func TestH3ProbeContextCapsTheBudget(t *testing.T) {
+	withProbeBudget(t, time.Minute)
+	probe, cancel, bounded := h3ProbeContext(context.Background())
+	defer cancel()
+	require.True(t, bounded)
+	deadline, has := probe.Deadline()
+	require.True(t, has)
+	require.LessOrEqual(t, time.Until(deadline), time.Minute)
+}
+
+// TestH3ProbeContextSplitsTheCallersBudget proves a tight caller deadline is
+// split so the H2 retry keeps half of it.
+func TestH3ProbeContextSplitsTheCallersBudget(t *testing.T) {
+	withProbeBudget(t, time.Hour)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	probe, probeCancel, bounded := h3ProbeContext(ctx)
+	defer probeCancel()
+	require.True(t, bounded)
+	probeDeadline, _ := probe.Deadline()
+	callerDeadline, _ := ctx.Deadline()
+	require.Less(t, probeDeadline, callerDeadline,
+		"the probe must end before the caller's deadline")
+	require.LessOrEqual(t, time.Until(probeDeadline), 110*time.Millisecond,
+		"the probe should be about half of what the caller had left")
+}
+
+// TestH3FallbackProbeExpiryIsAmbiguous is H4: a slow H3 that runs out of OUR
+// budget retries this flow over H2 but must not arm the window, so the next
+// connection can try H3 again.
+func TestH3FallbackProbeExpiryIsAmbiguous(t *testing.T) {
+	withProbeBudget(t, 20*time.Millisecond)
+	withFallbackWindow(t, time.Minute)
+	client := &probeDialClient{}
+	fallback := &h3Fallback{}
+
+	require.NoError(t, dialFallback(t, client, fallback, context.Background()))
+	require.Equal(t, []bool{true, false}, client.recorded(),
+		"an expired probe must still retry this flow over H2")
+	require.True(t, fallback.available(time.Now()),
+		"a slow H3 attempt proves nothing and must not send later CONNECTs to H2")
+	require.True(t, client.h3Closed.Load(), "the abandoned H3 stream must be closed")
+}
+
+// TestH3FallbackCallerCancelDuringProbeDoesNotRetry is H8: the caller leaving is
+// not evidence and must not start a second dial.
+func TestH3FallbackCallerCancelDuringProbeDoesNotRetry(t *testing.T) {
+	withProbeBudget(t, time.Minute)
+	withFallbackWindow(t, time.Minute)
+	client := &probeDialClient{}
+	fallback := &h3Fallback{}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+	}()
+
+	err := dialFallback(t, client, fallback, ctx)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, []bool{true}, client.recorded(),
+		"no H2 dial may be started for a caller that has already left")
+	require.True(t, fallback.available(time.Now()))
+}
+
+// TestH3FallbackNeverWritesBeforeHandshake is H17: the fallback decision is made
+// before any application byte exists, so a retry cannot replay data.
+func TestH3FallbackNeverWritesBeforeHandshake(t *testing.T) {
+	withProbeBudget(t, time.Minute)
+	withFallbackWindow(t, time.Minute)
+	client := newScriptedClient()
+	client.hand[true] = cronet.NetErrorQUICProtocolError
+	fallback := &h3Fallback{}
+
+	conn, err := dialNaiveWithH3Fallback(context.Background(), client, fallback, logger.NOP(), M.ParseSocksaddr("example.com:443"))
+	require.NoError(t, err)
+	h2, ok := conn.(*fakeNaiveConn)
+	require.True(t, ok)
+	require.Zero(t, h2.writes, "the dial path must not write before the handshake")
+	require.Equal(t, []bool{true, false}, client.recorded())
 }
