@@ -8,7 +8,7 @@
 | identity | value |
 |---|---|
 | `START_SHA` | `b0dddd4a277640edf2239074f642e13f12c6413d` |
-| `DS03_CODE_SHA` | this round's commit (tests only; no production file changed) |
+| `DS03_CODE_SHA` | `54e600a0d67b12f5e3d98a4469f7f18c1907bab8` (tests only; no production file changed) |
 | `DOCUMENT_SHA` | the commit that adds this report |
 
 Historical records stay as they are: the architecture audit
