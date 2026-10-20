@@ -312,6 +312,31 @@ fixture only; they are not a 64 KiB result and not a remote throughput claim.
 | Guard outbound-selection precondition | `TestPacketDestinationGuardOutboundSelectionPrecondition` |
 | Padding vectors shared with the client repo | `test/jiejie/reference/naive_padding_vectors.json` |
 
+## Performance baseline (measured)
+
+The numbers below are one snapshot, not a specification. Sampled 2026-10-20 at repository snapshot
+`5b46c36d3`, Windows 11 amd64, 16 logical cores, Cronet native Chromium 154.0.8037.49, loopback,
+client and server in one process. The full method, matrices and limits are in
+[the performance audit](../KNOWLEDGE/reports/core/NAIVEPROXY_PERFORMANCE_READONLY_AUDIT_2026-10-20.md).
+
+- HTTP/2 single stream: **457.7 MiB/s** median at **5.5 CPU s/GiB**. HTTP/3 single stream:
+  **158.2 MiB/s** at **17.0 CPU s/GiB**. Both figures are the *combined* client and server cost in
+  one process on loopback. They say nothing about WAN throughput, and nothing about macOS or iOS.
+- A real 32 MiB bulk transfer wrote **523** buffers through **523** flushes, with `writeChunked=0`
+  and slicing writes at zero: one write per flush, about 64 KiB each. The Go-side `protocol/naive`
+  code does not appear as a hot path in that run.
+- Engine count and stream count were varied together (`1x1` 457.7, `2x2` 665.2, `4x4` 568.4,
+  `8x8` 537.5 MiB/s). Because both variables move at once, this does **not** establish that two
+  engines are optimal, and no default was changed on the strength of it.
+- The optional H3-to-H2 fallback showed no measurable throughput regression while H3 was usable.
+  When UDP is unavailable the first attempt costs roughly 4 s before later connections go straight
+  to H2; that is failure recovery, not a throughput improvement.
+- **NOT_COMPARABLE:** no official NaiveProxy client or Caddy binary was run under the same
+  conditions, so this is not a claim of being faster than the reference implementation. Window
+  sweeps, WAN runs, mobile platforms and native-internal profiling are **NOT_RUN**.
+- `runtime.cgocall` at about 72.6% of Go profile samples means the Go profiler cannot see inside the
+  native engine. It is not a measurement that Chromium itself consumes 72.6% of the CPU.
+
 ## Known limits
 
 - The VPS self-address gap described under the target ACL above remains open.
