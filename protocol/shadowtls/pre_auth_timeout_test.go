@@ -146,6 +146,30 @@ func TestFirstRecordTimeoutDisabledWhenNonPositive(t *testing.T) {
 	require.Same(t, server, newFirstRecordTimeoutConn(server, -time.Second))
 }
 
+// TestThePreAuthWrapperKeepsOptionalCapabilities pins what a net.Conn wrapper
+// normally breaks: the accepted connection's optional interfaces become
+// unreachable the moment it is wrapped, unless the wrapper exposes Upstream.
+//
+// The consumer here is not hypothetical. N.CloseOnHandshakeFailure, which this
+// inbound calls on every failed handshake, casts the connection to
+// `interface{ SetLinger(int) error }` to make the refusal a reset rather than a
+// lingering close. With the cast broken, that silently degrades to a plain close -
+// a behaviour change in the failure path of a probe-resistance protocol, made by a
+// change that claims to be about read deadlines only.
+func TestThePreAuthWrapperKeepsOptionalCapabilities(t *testing.T) {
+	server, _ := newTCPPair(t)
+	wrapped := newFirstRecordTimeoutConn(server, testPreAuthTimeout)
+	_, isLinger := common.Cast[interface{ SetLinger(sec int) error }](wrapped)
+	require.True(t, isLinger,
+		"the listener's failure path must still be able to reset the refused "+
+			"connection; the wrapper has to expose Upstream for common.Cast to see it")
+
+	// The control: a plain wrapper type without Upstream really does hide it, so the
+	// assertion above is not passing for structural reasons.
+	_, hiddenLinger := common.Cast[interface{ SetLinger(sec int) error }](struct{ net.Conn }{server})
+	require.False(t, hiddenLinger, "a wrapper without Upstream is exactly the failure this guards")
+}
+
 // preAuthTestRouter is the router half the fake inbound needs. The embedded
 // adapter.Router is nil on purpose: none of these tests route a connection, and
 // implementing the full surface would add test doubles that are never invoked.

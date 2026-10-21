@@ -144,3 +144,17 @@ func (c *firstRecordTimeoutConn) preAuthDeadlineArmed() bool {
 	defer c.access.Unlock()
 	return c.armed
 }
+
+// Upstream keeps every optional capability of the accepted connection reachable,
+// because a net.Conn wrapper otherwise hides them from common.Cast.
+//
+// N.CloseOnHandshakeFailure, which this inbound calls on every failed handshake,
+// casts the connection to `interface{ SetLinger(int) error }` to turn the refusal
+// into a reset instead of a lingering close. With the capability hidden, the
+// failure path would silently fall back to a plain close - a small change to how a
+// probe is refused, made by a change that is supposed to be about read deadlines
+// only. common.Cast unwraps through Upstream, so this single method preserves that
+// and every future cast at once.
+func (c *firstRecordTimeoutConn) Upstream() any {
+	return c.Conn
+}
