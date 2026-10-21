@@ -55,9 +55,8 @@ type DNSTransport struct {
 	access                 sync.RWMutex
 	routePrefixes          []netip.Prefix
 	routes                 map[string][]adapter.DNSTransport
-	hosts                  map[string][]netip.Addr
 	magicHosts             nDNSResolver.MagicDNSHosts
-	searchDomains          []string
+	domains                tailnetDomains
 	serverAddresses        []netip.Addr
 	defaultResolvers       []adapter.DNSTransport
 	resolverScope          *adapter.Scope
@@ -101,8 +100,8 @@ func (t *DNSTransport) Start(stage adapter.StartStage, scope *adapter.Scope) err
 		resolverScope := t.resolverScope
 		t.routePrefixes = nil
 		t.routes = nil
-		t.hosts = nil
 		t.magicHosts = nil
+		t.domains = tailnetDomains{}
 		t.serverAddresses = nil
 		t.defaultResolvers = nil
 		t.resolverScope = nil
@@ -116,40 +115,30 @@ func (t *DNSTransport) Start(stage adapter.StartStage, scope *adapter.Scope) err
 }
 
 // CloseIdleConnections retires the idle reusable state of every resolver this transport owns.
-//
-// # Why this transport forwards
-//
-// The runtime resource walk reaches the owners it can enumerate: outbounds, endpoints, DNS transports
-// and the HTTP client service. This transport IS one of those - it is created through the DNS
-// transport manager's registry - but the resolvers it builds for the configuration the far end pushed
-// are created privately and are not in the manager's list. So the walk reached the wrapper and stopped
-// there, and every pooled connection a pushed DoH/DoT resolver held was skipped by the reuse boundary,
-// the memory trim and the DEEP_IDLE release. That is the same omission the HTTP client manager had.
-//
-// Forwarding is the shape protocol/vless already documents for its own transport: the walk sees the
-// owner, so an owner that wants its inner pool to participate has to hand the action down.
-//
-// # Why the retire ACTION and not the eligibility axis
-//
-// This transport has no keep-idle policy of its own - the resolvers exist because the far end pushed
-// them, and whether to hold them open is not a routing question here - so it implements
-// adapter.IdleConnectionReleaser and NOT adapter.IdleConnectionKeeper. Requiring the wider interface
-// would mean implementing a method this type has no meaning for, and that requirement is exactly how
-// the HTTP client manager stayed unreachable in every real build.
-//
-// The action is idle-only by the resolvers' own contract, and no lock is held while they are called:
-// the snapshot is taken under the read lock and released first, which is the same discipline Reset
-// already follows.
+// The resolvers are created privately for the far-end configuration, so they are not in the DNS
+// manager's transport list and a walk that only reaches the manager would skip them.
 func (t *DNSTransport) CloseIdleConnections() {
 	t.access.RLock()
 	resolvers := t.collectResolversLocked()
 	t.access.RUnlock()
 	for _, resolver := range resolvers {
-		retirer, isRetirer := resolver.(adapter.IdleConnectionReleaser)
-		if isRetirer {
-			retirer.CloseIdleConnections()
+		releaser, isReleaser := resolver.(adapter.IdleConnectionReleaser)
+		if isReleaser {
+			releaser.CloseIdleConnections()
 		}
 	}
+}
+
+func (t *DNSTransport) ServerAddresses() []netip.Addr {
+	t.access.RLock()
+	defer t.access.RUnlock()
+	return append([]netip.Addr(nil), t.serverAddresses...)
+}
+
+func (t *DNSTransport) SearchDomains() []string {
+	t.access.RLock()
+	defer t.access.RUnlock()
+	return append([]string(nil), t.domains.searchDomains...)
 }
 
 func (t *DNSTransport) Reset() {
@@ -185,20 +174,13 @@ func (t *DNSTransport) updateDNSServers(routeConfig *router.Config, dnsConfig *n
 				return E.Errors(err, resolverScope.Close())
 			}
 			myResolvers = append(myResolvers, myResolver)
-			serverAddrPort, isIPResolver := resolver.IPPort()
-			if isIPResolver {
-				serverAddresses = append(serverAddresses, serverAddrPort.Addr())
+			if address := M.ParseSocksaddr(resolver.Addr).Addr; address.IsValid() {
+				serverAddresses = append(serverAddresses, address)
 			}
 		}
 		routes[mDNS.CanonicalName(domain.WithTrailingDot())] = myResolvers
 	}
-	hosts := make(map[string][]netip.Addr)
-	for domain, addresses := range dnsConfig.Hosts {
-		hosts[domain.WithTrailingDot()] = addresses
-	}
-	searchDomains := common.Map(dnsConfig.SearchDomains, func(it dnsname.FQDN) string {
-		return it.WithTrailingDot()
-	})
+	domains := newTailnetDomains(dnsConfig)
 	var defaultResolvers []adapter.DNSTransport
 	for _, resolver := range dnsConfig.DefaultResolvers {
 		myResolver, err := t.createResolver(resolverScope, directDialerOnce, resolver)
@@ -206,9 +188,8 @@ func (t *DNSTransport) updateDNSServers(routeConfig *router.Config, dnsConfig *n
 			return E.Errors(err, resolverScope.Close())
 		}
 		defaultResolvers = append(defaultResolvers, myResolver)
-		serverAddrPort, isIPResolver := resolver.IPPort()
-		if isIPResolver {
-			serverAddresses = append(serverAddresses, serverAddrPort.Addr())
+		if address := M.ParseSocksaddr(resolver.Addr).Addr; address.IsValid() {
+			serverAddresses = append(serverAddresses, address)
 		}
 	}
 
@@ -216,9 +197,8 @@ func (t *DNSTransport) updateDNSServers(routeConfig *router.Config, dnsConfig *n
 	oldResolverScope := t.resolverScope
 	t.routePrefixes = routePrefixes
 	t.routes = routes
-	t.hosts = hosts
 	t.magicHosts = t.endpoint.server.ExportLocalBackend().ExportMagicDNSHosts()
-	t.searchDomains = searchDomains
+	t.domains = domains
 	t.serverAddresses = common.Uniq(serverAddresses)
 	t.defaultResolvers = defaultResolvers
 	t.resolverScope = resolverScope
@@ -229,10 +209,10 @@ func (t *DNSTransport) updateDNSServers(routeConfig *router.Config, dnsConfig *n
 	}
 
 	if len(defaultResolvers) > 0 {
-		t.logger.Info("updated ", len(routes), " routes, ", len(hosts), " hosts, ", len(searchDomains), " search domains, default resolvers: ",
+		t.logger.Info("updated ", len(routes), " routes, ", len(dnsConfig.Hosts), " hosts, ", len(domains.searchDomains), " search domains, default resolvers: ",
 			strings.Join(common.Map(dnsConfig.DefaultResolvers, func(it *dnstype.Resolver) string { return it.Addr }), " "))
 	} else {
-		t.logger.Info("updated ", len(routes), " routes, ", len(hosts), " hosts, ", len(searchDomains), " search domains")
+		t.logger.Info("updated ", len(routes), " routes, ", len(dnsConfig.Hosts), " hosts, ", len(domains.searchDomains), " search domains")
 	}
 	return nil
 }
@@ -334,38 +314,86 @@ func (t *DNSTransport) Raw() bool {
 	return true
 }
 
-func (t *DNSTransport) ServerAddresses() []netip.Addr {
-	t.access.RLock()
-	defer t.access.RUnlock()
-	return t.serverAddresses
-}
-
-func (t *DNSTransport) SearchDomains() []string {
-	t.access.RLock()
-	defer t.access.RUnlock()
-	return t.searchDomains
-}
-
 func (t *DNSTransport) PreferredDomain(domain string) bool {
 	t.access.RLock()
-	hosts := t.hosts
+	domains := t.domains
 	magicHosts := t.magicHosts
-	routes := t.routes
-	searchDomains := t.searchDomains
 	t.access.RUnlock()
-	if _, loaded := lookupHosts(hosts, magicHosts, domain); loaded {
+	return domains.match(magicHosts, mDNS.CanonicalName(domain), t.acceptSearchDomain)
+}
+
+type tailnetDomains struct {
+	hosts             map[string][]netip.Addr
+	searchDomains     []string
+	localSuffixes     []string
+	forwardedSuffixes []string
+}
+
+func newTailnetDomains(dnsConfig *nDNS.Config) tailnetDomains {
+	domains := tailnetDomains{
+		hosts: make(map[string][]netip.Addr, len(dnsConfig.Hosts)),
+		searchDomains: common.Map(dnsConfig.SearchDomains, func(it dnsname.FQDN) string {
+			return mDNS.CanonicalName(it.WithTrailingDot())
+		}),
+	}
+	for domain, addresses := range dnsConfig.Hosts {
+		domains.hosts[mDNS.CanonicalName(domain.WithTrailingDot())] = addresses
+	}
+	for domain, resolvers := range dnsConfig.Routes {
+		suffix := mDNS.CanonicalName(domain.WithTrailingDot())
+		if len(resolvers) == 0 {
+			domains.localSuffixes = append(domains.localSuffixes, suffix)
+		} else {
+			domains.forwardedSuffixes = append(domains.forwardedSuffixes, suffix)
+		}
+	}
+	common.SortBy(domains.forwardedSuffixes, func(it string) int {
+		return -mDNS.CountLabel(it)
+	})
+	return domains
+}
+
+func (d tailnetDomains) match(magicHosts nDNSResolver.MagicDNSHosts, domain string, expandSearchDomains bool) bool {
+	routeSuffix, _ := d.matchRoute(domain)
+	if routeSuffix != "" {
 		return true
 	}
-	if t.acceptSearchDomain && len(searchDomains) > 0 && mDNS.CountLabel(domain) == 1 {
+	_, loaded := lookupHosts(d.hosts, magicHosts, domain)
+	if loaded {
 		return true
 	}
-	canonicalDomain := mDNS.CanonicalName(domain)
-	for suffix := range routes {
-		if matchDomainSuffix(canonicalDomain, suffix) {
+	if !expandSearchDomains || mDNS.CountLabel(domain) != 1 {
+		return false
+	}
+	for _, searchDomain := range d.searchDomains {
+		expandedDomain := domain + searchDomain
+		_, loaded = lookupHosts(d.hosts, magicHosts, expandedDomain)
+		if loaded {
+			return true
+		}
+		_, forwarded := d.matchRoute(expandedDomain)
+		if forwarded {
 			return true
 		}
 	}
 	return false
+}
+
+// Tailscale's resolver answers names under resolver-less routes from hosts only
+// and returns NXDOMAIN for the rest without forwarding, even when a forwarded
+// route such as ts.net also matches; otherwise the longest forwarded route wins.
+func (d tailnetDomains) matchRoute(domain string) (suffix string, forwarded bool) {
+	for _, localSuffix := range d.localSuffixes {
+		if matchDomainSuffix(domain, localSuffix) {
+			return localSuffix, false
+		}
+	}
+	for _, forwardedSuffix := range d.forwardedSuffixes {
+		if matchDomainSuffix(domain, forwardedSuffix) {
+			return forwardedSuffix, true
+		}
+	}
+	return "", false
 }
 
 func matchDomainSuffix(domain string, suffix string) bool {
@@ -410,7 +438,7 @@ func (t *DNSTransport) ExchangeAsync(ctx context.Context, message *mDNS.Msg, cal
 
 func (t *DNSTransport) exchangeWithSearchDomains(ctx context.Context, message *mDNS.Msg, callback func(response *mDNS.Msg, err error)) {
 	t.access.RLock()
-	searchDomains := t.searchDomains
+	searchDomains := t.domains.searchDomains
 	t.access.RUnlock()
 	if len(searchDomains) == 0 {
 		callback(nil, dns.RcodeNameError)
@@ -454,13 +482,14 @@ func (t *DNSTransport) exchangeOnce(ctx context.Context, message *mDNS.Msg, allo
 	question := message.Question[0]
 
 	t.access.RLock()
-	hosts := t.hosts
+	domains := t.domains
 	magicHosts := t.magicHosts
 	routes := t.routes
 	defaultResolvers := t.defaultResolvers
 	t.access.RUnlock()
 
-	addresses, hostsLoaded := lookupHosts(hosts, magicHosts, question.Name)
+	canonicalName := mDNS.CanonicalName(question.Name)
+	addresses, hostsLoaded := lookupHosts(domains.hosts, magicHosts, canonicalName)
 	if hostsLoaded {
 		switch question.Qtype {
 		case mDNS.TypeA, mDNS.TypeAAAA:
@@ -470,23 +499,21 @@ func (t *DNSTransport) exchangeOnce(ctx context.Context, message *mDNS.Msg, allo
 		}
 		return
 	}
-	canonicalName := mDNS.CanonicalName(question.Name)
-	for domainSuffix, transports := range routes {
-		if matchDomainSuffix(canonicalName, domainSuffix) {
-			if len(transports) == 0 {
-				callback(&mDNS.Msg{
-					MsgHdr: mDNS.MsgHdr{
-						Id:       message.Id,
-						Rcode:    mDNS.RcodeNameError,
-						Response: true,
-					},
-					Question: []mDNS.Question{question},
-				}, nil)
-				return
-			}
-			transport.ExchangeSequential(ctx, resolverExchangers(transports, message), nil, callback)
-			return
-		}
+	routeSuffix, forwarded := domains.matchRoute(canonicalName)
+	if forwarded {
+		transport.ExchangeSequential(ctx, resolverExchangers(routes[routeSuffix], message), nil, callback)
+		return
+	}
+	if routeSuffix != "" {
+		callback(&mDNS.Msg{
+			MsgHdr: mDNS.MsgHdr{
+				Id:       message.Id,
+				Rcode:    mDNS.RcodeNameError,
+				Response: true,
+			},
+			Question: []mDNS.Question{question},
+		}, nil)
+		return
 	}
 	if allowDefaultResolvers {
 		if len(defaultResolvers) > 0 {
@@ -577,7 +604,4 @@ func (t *DNSTransport) routePrefixesSnapshot() []netip.Prefix {
 	return append([]netip.Prefix(nil), t.routePrefixes...)
 }
 
-var (
-	_ adapter.DNSTransportWithPreferredDomain = (*DNSTransport)(nil)
-	_ adapter.DNSTransportWithConfiguration   = (*DNSTransport)(nil)
-)
+var _ adapter.DNSTransport = (*DNSTransport)(nil)
