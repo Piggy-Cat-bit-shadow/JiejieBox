@@ -321,3 +321,9 @@ temporary       diag/wg-macos-census (deleted), verify/wg-macos-stress (deleted)
 release/tags    untouched; v0.1.23 still resolves to 2a2b3cc
 working tree    clean
 ```
+
+Post-merge: the history above was fast-forward merged into `testing` at `4421c8cb68b`
+(`testing` already pointed at the branch base `2a2b3cc`), pushed to `origin/testing`, and the
+`fix/wg-macos-ci-flaky-tests` branch was deleted locally and on the remote. The verification in §7
+was run on `8d5d715`; the merged tree was re-checked with `go vet`, `gofmt` and the full
+`transport/wireguard` package before the push. No release or tag was created or moved.
