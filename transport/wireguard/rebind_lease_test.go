@@ -255,6 +255,16 @@ func (g *socketGate) socketAttempts() int64 {
 	return g.attempts
 }
 
+// state reports the gate's control state in one snapshot: whether the next operation is armed, how
+// many operations have reached the hook, and how many are inside it right now. A failure diagnostic
+// needs all three together, because "no entry signal" and "entry signal already consumed by an
+// earlier arm" look identical from the count alone.
+func (g *socketGate) state() (armed bool, attempts, inFlight int64) {
+	g.access.Lock()
+	defer g.access.Unlock()
+	return g.armed, g.attempts, g.inFlight
+}
+
 // awaitEntry blocks until a socket operation has actually reached the gate. A test that timed out here is
 // reporting that the fixture never entered the branch it claims to test - the failure mode this file
 // exists to make impossible to miss.
@@ -379,18 +389,33 @@ func (f *rebindFixture) proveStandardBindBranch(t *testing.T) {
 //     the bind is still coming up legitimately sees fewer, so "equal to the first reading" is not a
 //     property of a correct endpoint.
 //   - Because it was a duplicate, the measured helper below was dead code, so the fix that was
-//     supposed to replace it never ran. MEASURED on the macOS runner, where the full set is 1:
-//     the readings within one process were 0 and 1, and this assertion failed on both.
+//     supposed to replace it never ran.
+//
+// # The second, later failure: the first NON-ZERO reading is not the settled reading
+//
+// The helper below then waited for the first sample above zero and recorded THAT value. On the
+// macOS runner the two receivers do not become visible to `runtime.Stack` in the same instant, so
+// the recorded sequence for one endpoint is 1 and then 2 - and the first test in the package (this
+// file sorts after `advg_item7_census_probe_test.go`) recorded 1, logged
+// `SOCKETS_PER_STANDARD_BIND=1`, and then waited 15s for a wake that correctly settled on 2:
+//
+//	--- FAIL: TestAdvGItem7OccupiedPortIsInvisibleWhileTheReopenIsInFlight (15.01s)
+//	SOCKETS_PER_STANDARD_BIND=1 (established on this machine)
+//	ADVG_ITEM7_PINNED port=61130 census=0 port_occupied=true
+//	advg_item7_census_probe_test.go:116: Condition never satisfied
+//	the released wake must settle on one bind's worth of receivers
+//
+// The 1 was a transient reading of a machine whose full set is 2; the test then compared every
+// later reading against the transient. Taking the highest reading was already the intent, but the
+// sampling stopped at the first non-zero value, so the "highest" could never include the value that
+// arrived one millisecond later. The establishment therefore observes a SETTLING WINDOW: it records
+// the maximum over a quiet period, not the first value that happens to be non-zero.
 func (f *rebindFixture) establishSocketsPerStandardBind(t *testing.T) {
 	t.Helper()
-	// The census is SAMPLED, not read once. A single sample taken while the bind is still coming up
-	// legitimately sees no receivers, and treating that as "no settled reading was ever taken" is
-	// what made this preamble - the first test file alphabetically - carry three CI failures in a
-	// test that was not about the property it appeared to be about.
 	settled := measuredSocketsPerStandardBind(t, func() int {
 		return deviceReceiveCensus(f.endpoint.device.Load())
 	})
-	t.Logf("SOCKETS_PER_STANDARD_BIND=%d (established on this machine)", settled)
+	t.Logf("SOCKETS_PER_STANDARD_BIND=%d (%s)", settled, describeSocketsPerStandardBind())
 }
 
 // settleSocketsPerStandardBind returns the number of receivers one standard bind holds, having
@@ -420,14 +445,12 @@ func (f *rebindFixture) settleSocketsPerStandardBind(t *testing.T, what string) 
 	// Taking `expected` from one sample and then waiting for a later sample to equal it is not a
 	// wait - it is a blind expectation. If the establishing sample reads 0, every later comparison
 	// waits for a census of 0 and fails on the timeout with a message about sockets; and if it reads
-	// a transiently high value, the equality can never be met by a correct endpoint. Reading the
-	// established constant removes both, and fails loudly if no test established it.
+	// a transiently low value (the documented macOS 1-then-2 sequence), the equality can never be
+	// met by a correct endpoint. Reading the established constant removes both, and fails loudly if
+	// no test established it.
 	expected := establishedSocketsPerStandardBind(t)
-	require.Eventually(t, func() bool {
-		return socketCensus(t, f.endpoint) == expected
-	}, 10*time.Second, 2*time.Millisecond,
-		"%s: a started endpoint must own exactly one socket's receivers (%d) and must reach "+
-			"that count; it never did", what, expected)
+	awaitSocketCensus(t, f.endpoint, expected, 10*time.Second, 25*time.Millisecond,
+		what+": a started endpoint must own exactly one socket's receivers and must reach that count")
 	return expected
 }
 
@@ -505,10 +528,9 @@ func endpointFrameAddress(pointer any) string {
 // calling goroutine's stack is a prefix of the census's own. `censusSelfFrames` returns that frame set, so
 // the exclusion is a property of the caller rather than a promise in a comment.
 func endpointGoroutineCensus(function string, address string, selfFrames []string) int {
-	buffer := make([]byte, 1<<22)
-	buffer = buffer[:runtime.Stack(buffer, true)]
+	dump, _ := runtimeStackDump()
 	census := 0
-	for _, goroutine := range strings.Split(string(buffer), "\n\n") {
+	for _, goroutine := range strings.Split(dump, "\n\n") {
 		if !strings.Contains(goroutine, function) {
 			continue
 		}
@@ -1119,40 +1141,172 @@ func TestRebindHoldsExactlyOneSocketWhileItReopens(t *testing.T) {
 //
 //	not equal: expected: 2  actual: 1     (TestTwentyFourRecoveriesThroughTheWorker, macOS runner)
 //
-// proveStandardBindBranch takes the first settled reading, so the assertions below compare against what
-// this machine really produces, on the branch the fixture has already proved it is on. `bootstrapping`
-// marks the one reading that establishes it, which is also the reading that must not be compared against
-// itself; every later call asserts that the count it sees equals the established one, so a census that
-// later starts counting the wrong number of sockets still fails.
+// # Why the value is established over a settling window rather than from one sample
+//
+// A standard bind does not reach its full set of receivers atomically: `StdNetBind.Open` listens on
+// udp4, listens on udp6 and only then starts one receiver per listener. The census reads
+// `runtime.Stack`, and the two receiver goroutines do not necessarily appear in it in the same
+// instant - the documented macOS sequence for one endpoint is 1 and then 2.
+//
+// An earlier version waited for the first sample ABOVE ZERO and recorded that value. It therefore
+// recorded the 1 of that sequence, logged `SOCKETS_PER_STANDARD_BIND=1`, and every later equality
+// assertion in the first test compared against a value the correct endpoint had already exceeded.
+// MEASURED on the macOS runner:
+//
+//	--- FAIL: TestAdvGItem7OccupiedPortIsInvisibleWhileTheReopenIsInFlight (15.01s)
+//	SOCKETS_PER_STANDARD_BIND=1 (established on this machine)
+//	ADVG_ITEM7_PINNED port=61130 census=0 port_occupied=true
+//	the released wake must settle on one bind's worth of receivers
+//
+// The 1 was a transient reading of a machine whose full set is 2, not a property of the machine. The
+// establishment now observes a QUIET WINDOW and records the maximum over it, so a reading that is
+// merely early is waited for. The bound is unchanged: 3 or more is still refused as a census that is
+// counting something other than this bind's receivers, and every later assertion is still an exact
+// equality against the established value.
 const socketCountUnmeasured = -1
 
 var (
-	socketsPerStandardBind = socketCountUnmeasured
-	socketCountMu          sync.Mutex
+	socketsPerStandardBind        = socketCountUnmeasured
+	socketCountMu                 sync.Mutex
+	socketCountEstablishedAt      time.Time
+	socketCountEstablishmentTrace string
 )
 
-// measuredSocketsPerStandardBind records `observed` as the count of receivers one standard bind holds on
-// this machine, and returns the established value.
+// observeSocketsPerStandardBindSettling samples `observe` for at least `minimum`, waits until a
+// non-zero reading has been stable for `quiet`, and returns the maximum seen plus a compact trace of
+// every value change.
 //
-// The count is taken as the HIGHEST reading rather than the first or the latest, because a standard bind
-// does not reach its full set of receivers atomically: `StdNetBind.Open` listens on udp4, listens on udp6
-// and only then starts one receiver per listener, so a reading taken while the bind is still coming up
-// can legitimately see fewer. MEASURED on the macOS runner - where the full set is 1 rather than 2, which
-// is the whole reason this is measured - the readings within one process were 1 and 2:
+// The `minimum` window matters as much as the quiet one: the second receiver may become visible a
+// few samples after the first, and a quiet period alone would end the observation before that sample
+// arrives when the change happens late. The window ends only once BOTH have elapsed, or when `limit`
+// is reached. The trace is what makes a failure readable: it shows whether the expectation came from
+// a settled 2, a stable 1 (one address family), or a value that never became non-zero at all.
+func observeSocketsPerStandardBindSettling(observe func() int, minimum, quiet, limit time.Duration) (int, string) {
+	const interval = 5 * time.Millisecond
+	start := time.Now()
+	lastValue := -1
+	lastChange := time.Duration(0)
+	sawNonZero := false
+	maximum := 0
+	samples := 0
+	var changes []string
+	for {
+		value := observe()
+		samples++
+		elapsed := time.Since(start)
+		if value != lastValue {
+			changes = append(changes, fmt.Sprintf("%d@%s", value, elapsed.Round(time.Millisecond)))
+			lastValue = value
+			lastChange = elapsed
+		}
+		if value > maximum {
+			maximum = value
+		}
+		if value > 0 {
+			sawNonZero = true
+		}
+		if sawNonZero && elapsed >= minimum && elapsed-lastChange >= quiet {
+			break
+		}
+		if elapsed >= limit {
+			break
+		}
+		time.Sleep(interval)
+	}
+	elapsed := time.Since(start)
+	settled := sawNonZero && elapsed >= minimum && elapsed-lastChange >= quiet
+	return maximum, fmt.Sprintf("sequence=[%s] samples=%d max=%d settled=%v elapsed=%s",
+		strings.Join(changes, " "), samples, maximum, settled, elapsed.Round(time.Millisecond))
+}
+
+// measuredSocketsPerStandardBind establishes the constant from a SETTLED reading, and returns the
+// established value.
 //
-//	a settled standard bind must hold the same number of receivers every time on this machine;
-//	the first reading established 1 and this one saw 2
+// # Why it waits instead of taking one snapshot
 //
-// Taking the maximum keeps the assertion that matters exact - a bind must not settle on MORE receivers
-// than a standard bind produces - while tolerating the transient smaller reading. A reading of 0 is
-// ignored rather than recorded, and the first NON-ZERO reading is still required, so a census that
-// counts nothing cannot establish itself as the expectation.
+// The reading it was given used to be a SINGLE un-awaited `runtime.Stack` sample, and if that sample
+// happened to be 0 the helper failed immediately. A census of 0 is not "this machine has no
+// receivers": the receive goroutines are started after the listeners open, and a sample taken while
+// the bind is still coming up legitimately sees none. Failing on it turned a transient reading into
+// "no settled reading was ever taken" - the recorded macOS failure - and because this constant is
+// established in the FIRST test file alphabetically, that failure landed in the preamble of an
+// unrelated test, which is why one test carried three of the CI failures.
 //
-// The returned value is NEVER the sentinel. An earlier version returned it when no settled reading had
-// been taken yet, and callers that compared before measuring then asserted that a real census equalled
-// -1: the macOS runner reported that as "expected: 2, actual: 0", because the sentinel had already been
-// overwritten by another test in the same process, so the number in the message was not even the value
-// being compared. Failing here instead makes the mistake say what it is.
+// A census that never becomes non-zero still fails, on the window's timeout rather than on a single
+// early sample, and the observed sequence is in the message.
+//
+// # Why a later reading may raise the memo, but never lower it
+//
+// The first establishment can still be the first fixture to exercise a code path on this machine.
+// Every later fixture re-measures over a short quiet window and may RAISE the memo to the physical
+// maximum (2); it never lowers it. A raise is logged with both sequences, because it means the
+// earlier measurement saw only part of the full set. A census that later starts counting the wrong
+// number of receivers still fails, because every comparison is exact equality and the 3-or-more
+// guard below is unconditional.
+func measuredSocketsPerStandardBind(t *testing.T, observe func() int) int {
+	t.Helper()
+
+	socketCountMu.Lock()
+	alreadyEstablished := socketsPerStandardBind != socketCountUnmeasured
+	socketCountMu.Unlock()
+
+	minimum := 250 * time.Millisecond
+	quiet := 100 * time.Millisecond
+	limit := 3 * time.Second
+	if alreadyEstablished {
+		// A fixture that is already started and on the proven branch needs only enough observation
+		// to catch the second receiver arriving, not a fresh full establishment.
+		minimum = 50 * time.Millisecond
+		quiet = 25 * time.Millisecond
+		limit = time.Second
+	}
+	observed, trace := observeSocketsPerStandardBindSettling(observe, minimum, quiet, limit)
+
+	require.Greater(t, observed, 0,
+		"no settled reading was ever taken: a started, settled standard bind must own at least one "+
+			"receive goroutine, and the census kept reporting none. Observed %s", trace)
+	// 3 is not a value a standard bind can hold: `StdNetBind.Open` listens on at most udp4 and udp6
+	// and starts one receiver per listener, so anything above 2 means the census is counting
+	// something other than this bind's receivers. Recording it would raise the expectation
+	// permanently for every later equality assertion in this process, and the failure would then
+	// surface in a test that had done nothing wrong.
+	require.LessOrEqual(t, observed, 2,
+		"the census reported %d receivers for one standard bind, which is more than udp4+udp6 can "+
+			"produce; the census is counting something else. Observed %s", observed, trace)
+
+	socketCountMu.Lock()
+	previous := socketsPerStandardBind
+	previousTrace := socketCountEstablishmentTrace
+	raised := observed > socketsPerStandardBind
+	if raised {
+		socketsPerStandardBind = observed
+		socketCountEstablishedAt = time.Now()
+		socketCountEstablishmentTrace = trace
+	}
+	established := socketsPerStandardBind
+	socketCountMu.Unlock()
+
+	if raised && previous != socketCountUnmeasured {
+		t.Logf("SOCKETS_PER_STANDARD_BIND raised from %d (%s) to %d (%s); the earlier measurement saw "+
+			"only part of the full set", previous, previousTrace, established, trace)
+	}
+	return established
+}
+
+// describeSocketsPerStandardBind states the established value, when it was established and the
+// observation it came from, for failure diagnostics. A census assertion that fails needs to say
+// whether its expectation was measured from a settled bind or latched from a transient reading.
+func describeSocketsPerStandardBind() string {
+	socketCountMu.Lock()
+	defer socketCountMu.Unlock()
+	if socketsPerStandardBind == socketCountUnmeasured {
+		return "unmeasured"
+	}
+	return fmt.Sprintf("value=%d established_at=%s observed=%s",
+		socketsPerStandardBind, socketCountEstablishedAt.Format(time.RFC3339Nano),
+		socketCountEstablishmentTrace)
+}
+
 // establishedSocketsPerStandardBind returns the memo, and fails the calling test if nothing has
 // established it yet.
 //
@@ -1169,55 +1323,6 @@ func establishedSocketsPerStandardBind(t *testing.T) int {
 		"no settled reading was ever taken, so there is nothing to compare a census against. "+
 			"Establish it from a started, settled endpoint (establishSocketsPerStandardBind) "+
 			"before asserting anything about a census.")
-	return socketsPerStandardBind
-}
-
-// measuredSocketsPerStandardBind establishes the constant, WAITING for a genuine settled reading.
-//
-// # Why it waits instead of taking one snapshot
-//
-// The reading it was given used to be a SINGLE un-awaited `runtime.Stack` sample, and if that sample
-// happened to be 0 the helper failed immediately. A census of 0 is not "this machine has no
-// receivers": the receive goroutines are started after the listeners open, and a sample taken while
-// the bind is still coming up legitimately sees none. Failing on it turned a transient reading into
-// "no settled reading was ever taken" - the recorded macOS failure - and because this constant is
-// established in the FIRST test file alphabetically, that failure landed in the preamble of an
-// unrelated test, which is why one test carried three of the CI failures.
-//
-// `observe` is sampled repeatedly. A census that never becomes non-zero fails on the timeout rather
-// than on a single early sample.
-func measuredSocketsPerStandardBind(t *testing.T, observe func() int) int {
-	t.Helper()
-
-	var observed int
-	require.Eventually(t, func() bool {
-		observed = observe()
-		return observed > 0
-	}, 30*time.Second, time.Millisecond,
-		"no settled reading was ever taken: a started, settled standard bind must own at least one "+
-			"receive goroutine, and the census kept reporting none")
-
-	socketCountMu.Lock()
-	defer socketCountMu.Unlock()
-	// 3 is not a value a standard bind can hold: `StdNetBind.Open` listens on at most udp4 and udp6
-	// and starts one receiver per listener, so anything above 2 means the census is counting
-	// something other than this bind's receivers. Recording it would raise the expectation
-	// permanently for every later equality assertion in this process, and the failure would then
-	// surface in a test that had done nothing wrong.
-	require.LessOrEqual(t, observed, 2,
-		"the census reported %d receivers for one standard bind, which is more than udp4+udp6 can "+
-			"produce; the census is counting something else", observed)
-	// The HIGHEST settled reading is kept, and that is deliberate rather than incidental: the
-	// documented macOS sequence for one endpoint is 1 and then 2, because a reading taken while the
-	// bind is still opening legitimately sees fewer. Keeping the maximum means a later endpoint that
-	// settles on the full set is satisfied; keeping the minimum would make the assertion wait for a
-	// count the endpoint has already exceeded, which is a hang, not a stricter check.
-	if observed > socketsPerStandardBind {
-		if socketsPerStandardBind == socketCountUnmeasured {
-			t.Logf("SOCKETS_PER_STANDARD_BIND=%d (established on this machine)", observed)
-		}
-		socketsPerStandardBind = observed
-	}
 	return socketsPerStandardBind
 }
 
@@ -1727,13 +1832,38 @@ func requirePortReleasedByTheEndpoint(t *testing.T, fixture *rebindFixture, port
 // dumpGoroutineStacks returns the frames of every goroutine whose stack contains `filter`, for the
 // "prove which branch" assertions. It asserts nothing itself; the caller does.
 func dumpGoroutineStacks(filter string) []string {
-	buffer := make([]byte, 1<<22)
-	buffer = buffer[:runtime.Stack(buffer, true)]
+	dump, _ := runtimeStackDump()
 	var frames []string
-	for _, goroutine := range strings.Split(string(buffer), "\n\n") {
+	for _, goroutine := range strings.Split(dump, "\n\n") {
 		if strings.Contains(goroutine, filter) {
 			frames = append(frames, goroutine)
 		}
 	}
 	return frames
+}
+
+// runtimeStackDump returns `runtime.Stack(buffer, true)` in a buffer that GROWS rather than
+// truncates.
+//
+// The census used to read a fixed 4 MiB buffer and never check the returned length, so a crowded
+// process could silently lose whole goroutines from the dump - including the receiver the census is
+// counting - and report a smaller number as if it were the truth. That is an undercount with no
+// signal, in the one instrument the socket assertions trust. The buffer now doubles until the dump
+// fits, with a cap far above any plausible test process (256 MiB, i.e. tens of thousands of
+// goroutines); if the cap is reached the second return value is true and the failure diagnostics
+// say so instead of presenting the partial count as settled.
+func runtimeStackDump() (string, bool) {
+	const maximum = 256 << 20
+	size := 1 << 22
+	for {
+		buffer := make([]byte, size)
+		written := runtime.Stack(buffer, true)
+		if written < len(buffer) {
+			return string(buffer[:written]), false
+		}
+		if size >= maximum {
+			return string(buffer[:written]), true
+		}
+		size *= 2
+	}
 }

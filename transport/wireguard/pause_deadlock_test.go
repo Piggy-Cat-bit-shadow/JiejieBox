@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -48,13 +49,34 @@ import (
 // period. So the callbacks stay SYNCHRONOUS, and `stateAccess` is kept out of the manager calls
 // instead.
 //
-// # Why the manager is driven by hand
+// # Why this file no longer reproduces the deadlock itself
 //
-// The event is delivered through the production `pause.Manager` entry points, in the shape
-// `defaultManager` uses: the manager's lock is taken first and the callbacks are invoked inline from
-// inside it. `pause.WithDefaultManager` cannot be used here because its level guard (`DevicePause`
-// on an already-paused manager emits nothing) would make the test depend on which event happened to
-// be delivered first rather than on the ordering under test.
+// The previous version held `stateAccess` on a helper goroutine, started a real `emit`, and then
+// registered from the test goroutine. That reproduced the production ABBA - and because it did, the
+// run that lost the scheduling race parked the whole test binary for the 25-minute `go test` timeout
+// (measured on a macOS runner: `callbackCount` waiting for `pause.access` while `emit` waited for
+// `stateAccess`, both held by test goroutines). A test that can form the exact cycle it forbids
+// cannot also be the gate that detects it: once the cycle exists neither lock can be released, and
+// no `t.Cleanup` can run.
+//
+// The lock ORDER is therefore asserted directly, from the production entry points, with a
+// `TryLock` probe and an explicit barrier:
+//
+//	the fake manager calls a hook at the top of RegisterCallback / UnregisterCallback;
+//	the hook blocks the goroutine that is inside the production call;
+//	the test then asks `endpoint.stateAccess.TryLock()` whether that production call is still
+//	holding the state lock, and releases the hook.
+//
+// A regression puts the registration back inside the critical section, the probe fails immediately,
+// and the release path still lets Start/Close finish, so the failure is short, specific and leaves
+// nothing locked behind it. Because `sync.Mutex` is not reentrant, `TryLock` also fails for the
+// goroutine that already holds the lock - which is exactly the caller under test.
+//
+// The probe is only sound as an order assertion if no OTHER goroutine can be holding `stateAccess`
+// at that instant. Both tests establish that rather than assuming it: the endpoint is freshly built
+// and no device is published before Start (so nothing but Start touches the lock), and the Close
+// test owns the only Close in flight. The start test additionally checks that the lock is free
+// BEFORE Start runs, so the same probe on the same lock reports both states.
 
 // fakePauseManager reproduces `defaultManager`'s emission contract, and nothing else.
 //
@@ -62,6 +84,13 @@ import (
 type fakePauseManager struct {
 	access    sync.Mutex
 	callbacks list.List[pause.Callback]
+
+	// onRegister and onUnregister run at the TOP of the corresponding production call, BEFORE the
+	// manager's own mutex is taken, so a test can pin that call at its entry without inventing a
+	// lock order the manager does not have. They are test-control hooks, not part of the emission
+	// contract, and are set before the entry point under test starts.
+	onRegister   func()
+	onUnregister func()
 }
 
 func (m *fakePauseManager) DevicePause()  { m.emit(pause.EventDevicePaused) }
@@ -75,6 +104,9 @@ func (m *fakePauseManager) IsPaused() bool        { return false }
 func (m *fakePauseManager) WaitActive()           {}
 
 func (m *fakePauseManager) RegisterCallback(callback pause.Callback) *list.Element[pause.Callback] {
+	if m.onRegister != nil {
+		m.onRegister()
+	}
 	m.access.Lock()
 	defer m.access.Unlock()
 	return m.callbacks.PushBack(callback)
@@ -83,6 +115,9 @@ func (m *fakePauseManager) RegisterCallback(callback pause.Callback) *list.Eleme
 func (m *fakePauseManager) UnregisterCallback(element *list.Element[pause.Callback]) {
 	if element == nil {
 		return
+	}
+	if m.onUnregister != nil {
+		m.onUnregister()
 	}
 	m.access.Lock()
 	defer m.access.Unlock()
@@ -132,159 +167,266 @@ func newPauseEndpoint(t *testing.T, manager pause.Manager) *Endpoint {
 	return endpoint
 }
 
-// runWithDeadline fails the test if fn does not return. A lock-ordering violation does not return an
-// error, it blocks, so a deadline is the only way to observe it.
-func runWithDeadline(t *testing.T, what string, fn func()) {
-	t.Helper()
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		fn()
-	}()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal(what, ": it blocked, so the pause manager's lock and the endpoint's state lock are "+
-			"held in opposite orders and the manager deadlocks for the life of the process")
+// stateLockIsFree reports whether `stateAccess` is free, and is the order probe these tests are
+// built on.
+//
+// A successful TryLock is released immediately, so the probe itself does not hold anything. A
+// failed TryLock means the lock is held - by another goroutine or by the calling goroutine itself
+// (Go mutexes are not reentrant). Both call sites make the second reading unambiguous by
+// establishing that the only goroutine that can hold `stateAccess` is the one inside the production
+// entry point under test.
+func stateLockIsFree(endpoint *Endpoint) bool {
+	if !endpoint.stateAccess.TryLock() {
+		return false
 	}
+	endpoint.stateAccess.Unlock()
+	return true
 }
 
-// holdStateLock takes `endpoint.stateAccess` on a background goroutine and registers the release
-// with `t.Cleanup`.
+// TestPauseRegistrationDoesNotRunUnderTheStateLock asserts the production Start path does not hold
+// `stateAccess` while it calls into the pause manager.
 //
-// # Why the release is registered up front
-//
-// Every assertion between taking the lock and releasing it can call `t.Fatal`, and `t.Fatal` stops
-// the test function right there. A release written after those assertions therefore never runs on
-// the failure path, the goroutine stays parked holding `stateAccess` for the rest of the process,
-// and the NEXT test that needs the lock hangs - which reads as an unrelated flake in a different
-// test. Registering the release first makes the failure path identical to the success one.
-//
-// The returned function releases the lock and waits for the goroutine to finish, and is idempotent,
-// so a test can release early and still be cleaned up correctly if it fails in between.
-func holdStateLock(t *testing.T, endpoint *Endpoint) (release func()) {
-	t.Helper()
-	held := make(chan struct{})
-	releaseCh := make(chan struct{})
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		endpoint.stateAccess.Lock()
-		close(held)
-		<-releaseCh
-		endpoint.stateAccess.Unlock()
-	}()
-	var once sync.Once
-	release = func() {
-		once.Do(func() { close(releaseCh) })
-		select {
-		case <-done:
-		case <-time.After(10 * time.Second):
-			t.Error("the state-lock holder did not release; a later test would block on stateAccess")
-		}
-	}
-	t.Cleanup(release)
-	<-held
-	return release
-}
-
-// TestPauseRegistrationDoesNotRunUnderTheStateLock reproduces the ABBA cycle directly.
-//
-// # The interleaving it drives, step by step
-//
-//	goroutine A (the platform power handler)
-//	    manager.DevicePause()                 -> takes pause.access
-//	    emit -> onPauseUpdated(event)         -> wants stateAccess
-//
-//	goroutine B (this test), acting as startDevice / Close used to
-//	    holds stateAccess
-//	    manager.RegisterCallback(...)         -> wants pause.access     <-- the cycle closes
-//
-// The only thing that breaks it is B NOT holding `stateAccess` while it registers. So the test holds
-// `stateAccess` on B's behalf and then performs the registration: with the fix the registration
-// completes and A is free to acquire `stateAccess`; with the registration back under the lock the
-// two goroutines deadlock and the deadline fires.
+// The barrier is explicit in both directions: Start cannot leave the registration call until the
+// test has read the lock state, and the test cannot read the lock state until Start is inside the
+// call. Nothing here depends on which goroutine the scheduler runs first.
 func TestPauseRegistrationDoesNotRunUnderTheStateLock(t *testing.T) {
 	manager := &fakePauseManager{}
 	endpoint := newPauseEndpoint(t, manager)
 
-	emitReturned := make(chan struct{})
+	// Positive control for the probe: the same check must report FREE before Start, so a failure
+	// below cannot be "TryLock always fails on this mutex" or a leftover holder.
+	require.True(t, stateLockIsFree(endpoint),
+		"precondition: the state lock must be free before Start, or the probe below cannot attribute "+
+			"a held lock to the registration site")
+
+	registerEntered := make(chan struct{}, 1)
+	releaseRegister := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseRegister) }) }
+	var enteredHook atomic.Bool
+	manager.onRegister = func() {
+		if enteredHook.CompareAndSwap(false, true) {
+			registerEntered <- struct{}{}
+			<-releaseRegister
+		}
+	}
+
+	var startErr error
+	startDone := make(chan struct{})
 	go func() {
-		defer close(emitReturned)
-		manager.DevicePause()
+		startErr = endpoint.Start(false)
+		close(startDone)
 	}()
-	releaseStateLock := holdStateLock(t, endpoint)
-
-	// The registration the fix moved out of the critical section. It must complete even though the
-	// callback delivering above it is waiting for the lock this test is holding.
-	runWithDeadline(t, "RegisterCallback while the manager is mid-emit and stateAccess is held", func() {
-		endpoint.pause = manager
-		endpoint.pauseCallback = manager.RegisterCallback(endpoint.onPauseUpdated)
-		endpoint.deviceWakeCallback = manager.RegisterCallback(endpoint.onDeviceWake)
+	// The release is registered BEFORE the assertions: every one of them can call t.Fatal, and a
+	// Fatal stops the test goroutine right there. Releasing first makes the failure path identical
+	// to the success one and keeps Start from being parked in the hook for a later test.
+	t.Cleanup(func() {
+		release()
+		select {
+		case <-startDone:
+		case <-time.After(10 * time.Second):
+			t.Error("Start did not return after the registration hook was released; a later test " +
+				"would block on the pause manager")
+		}
 	})
-	require.Equal(t, 2, manager.callbackCount(), "both callbacks must be registered")
 
-	// Releasing the lock must let the whole chain finish. This is the exact instant the pre-fix code
-	// could not reach when the releasing goroutine also needed pause.access to register.
-	//
-	// The ORDER is asserted here rather than before the release, because "the emit has not returned
-	// yet" is not observable without racing the scheduler: the emit goroutine is entitled to acquire
-	// `stateAccess` the moment it is free. What is deterministic is that `runWithDeadline` cannot
-	// complete at all unless the registration got `pause.access` while the manager held it, which is
-	// the property under test.
-	releaseStateLock()
-	runWithDeadline(t, "the emit that was waiting for the state lock", func() { <-emitReturned })
+	select {
+	case <-registerEntered:
+	case <-time.After(10 * time.Second):
+		release()
+		t.Fatal("Start never called RegisterCallback, so this test did not reach the registration " +
+			"site it describes")
+	}
 
-	require.False(t, endpoint.networkPaused,
-		"the device is nil in this fixture, so the transition must have been skipped, not published")
+	require.True(t, stateLockIsFree(endpoint),
+		"Start called RegisterCallback while holding stateAccess: a pause manager that is mid-emit "+
+			"holds pause.access while its callback waits for stateAccess, so this is the ABBA cycle. "+
+			"The registration must happen BEFORE the state lock is taken")
 
-	runWithDeadline(t, "UnregisterCallback", func() {
-		manager.UnregisterCallback(endpoint.pauseCallback)
-		manager.UnregisterCallback(endpoint.deviceWakeCallback)
-		endpoint.pauseCallback = nil
-		endpoint.deviceWakeCallback = nil
-	})
-	require.Zero(t, manager.callbackCount())
+	release()
+	select {
+	case <-startDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Start did not finish after the registration hook was released")
+	}
+	require.NoError(t, startErr)
+	require.Equal(t, 2, manager.callbackCount(),
+		"the real Start path must register both callbacks; a count of one means the second "+
+			"registration was lost, and a count of two reached through any other path would not prove "+
+			"this one")
+	require.NotNil(t, endpoint.pauseCallback)
+	require.NotNil(t, endpoint.deviceWakeCallback)
 }
 
-// TestCloseUnregistersWithoutHoldingTheStateLock is the same rule on the teardown path - the half
-// that actually races a platform power event, because every config reload runs it.
+// TestCloseUnregistersWithoutHoldingTheStateLock asserts the same rule on the teardown path - the half that
+// actually races a platform power event, because every config reload runs it.
 //
-// Close is driven concurrently with a storm of pause/wake emissions. With the unregistration moved
-// outside the critical section the two complete; with it inside, the pair deadlocks and the
-// deadline fires.
+// Close is the only goroutine that mutates this endpoint, and the fake manager is the only one that
+// can be inside the unregistration call, so the probe's reading is attributable. The manager blocks
+// Close inside the FIRST unregistration until the test has read the lock state; Close then releases
+// both callbacks and the count is checked against the manager, not against a promise.
 func TestCloseUnregistersWithoutHoldingTheStateLock(t *testing.T) {
 	manager := &fakePauseManager{}
 	endpoint := newPauseEndpoint(t, manager)
 
-	endpoint.stateAccess.Lock()
-	endpoint.pause = manager
-	endpoint.pauseCallback = manager.RegisterCallback(endpoint.onPauseUpdated)
-	endpoint.deviceWakeCallback = manager.RegisterCallback(endpoint.onDeviceWake)
-	endpoint.stateAccess.Unlock()
+	require.NoError(t, endpoint.Start(false))
+	require.Equal(t, 2, manager.callbackCount(),
+		"precondition: Start registered both callbacks, or the assertion below is vacuous")
 
-	var waitGroup sync.WaitGroup
-	waitGroup.Add(2)
-	runWithDeadline(t, "Close racing a pause emission storm", func() {
-		go func() {
-			defer waitGroup.Done()
-			_ = endpoint.Close()
-		}()
-		go func() {
-			defer waitGroup.Done()
-			for range 200 {
-				manager.NetworkPause()
-				manager.NetworkWake()
-			}
-		}()
-		waitGroup.Wait()
+	unregisterEntered := make(chan struct{}, 1)
+	releaseUnregister := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseUnregister) }) }
+	var probed atomic.Int32
+	var stateLockHeld atomic.Bool
+	var firstHook sync.Once
+	manager.onUnregister = func() {
+		if !stateLockIsFree(endpoint) {
+			stateLockHeld.Store(true)
+		}
+		probed.Add(1)
+		firstHook.Do(func() {
+			unregisterEntered <- struct{}{}
+			<-releaseUnregister
+		})
+	}
+
+	var closeErr error
+	closeDone := make(chan struct{})
+	go func() {
+		closeErr = endpoint.Close()
+		close(closeDone)
+	}()
+	t.Cleanup(func() {
+		release()
+		select {
+		case <-closeDone:
+		case <-time.After(10 * time.Second):
+			t.Error("Close did not return after the unregistration hook was released; a later test " +
+				"would block on the pause manager")
+		}
 	})
 
-	require.Zero(t, manager.callbackCount(),
-		"Close must give up both callbacks, so a later platform event does not reach a dead endpoint")
-	require.Nil(t, endpoint.device.Load())
+	select {
+	case <-unregisterEntered:
+	case <-time.After(10 * time.Second):
+		release()
+		t.Fatal("Close never called UnregisterCallback, so this test did not reach the teardown " +
+			"site it describes")
+	}
+
+	require.False(t, stateLockHeld.Load(),
+		"Close called UnregisterCallback while holding stateAccess: a concurrent emit holds "+
+			"pause.access while its callback waits for stateAccess, so this is the ABBA cycle. "+
+			"Unregistration must happen after the state lock is dropped")
+
+	release()
+	select {
+	case <-closeDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Close did not finish after the unregistration hook was released")
+	}
+	require.NoError(t, closeErr)
+	require.Equal(t, int32(2), probed.Load(),
+		"Close must give both callbacks back to the manager exactly once; a missing unregistration "+
+			"keeps the endpoint reachable from the session-shared pause manager after teardown")
+	require.Zero(t, manager.callbackCount())
 	require.Nil(t, endpoint.pauseCallback)
 	require.Nil(t, endpoint.deviceWakeCallback)
+	require.Nil(t, endpoint.device.Load())
+}
+
+// TestCloseRacingPauseEmissionsLeavesNoCallback keeps the concurrency the old storm test provided,
+// without letting a regression park the process.
+//
+// The callbacks here are test probes, not `onPauseUpdated`: a probe asks for `stateAccess` with a
+// BOUNDED wait and records a failure instead of blocking forever. That matters because this test
+// deliberately puts Close and an emit in flight at the same time, which is the state that used to
+// form the ABBA cycle. With the fixed order Close drops `stateAccess` before it unregisters, so the
+// probe always gets the lock. With the old order Close is inside the critical section waiting for
+// `pause.access` while the emit holds it waiting for `stateAccess`; the probe records the starved
+// lock and returns, which releases the emit and lets Close finish. A regression therefore FAILS in
+// seconds rather than hanging until `go test`'s timeout - the failure mode this file exists to
+// remove.
+//
+// The probe's access check is the same TryLock question as the order tests above, but here it is
+// asked repeatedly while other goroutines are legitimately using the lock, so it is a bounded wait
+// rather than a single probe. The registration is performed before `stateAccess` is taken, so the
+// test does not itself use the order it forbids.
+func TestCloseRacingPauseEmissionsLeavesNoCallback(t *testing.T) {
+	manager := &fakePauseManager{}
+	endpoint := newPauseEndpoint(t, manager)
+
+	probeEntered := make(chan struct{}, 1)
+	var starved atomic.Bool
+	probe := func(int) {
+		select {
+		case probeEntered <- struct{}{}:
+		default:
+		}
+		deadline := time.Now().Add(time.Second)
+		for {
+			if stateLockIsFree(endpoint) {
+				return
+			}
+			if time.Now().After(deadline) {
+				starved.Store(true)
+				return
+			}
+			time.Sleep(100 * time.Microsecond)
+		}
+	}
+	pauseCallback := manager.RegisterCallback(probe)
+	deviceWakeCallback := manager.RegisterCallback(probe)
+	endpoint.stateAccess.Lock()
+	endpoint.pause = manager
+	endpoint.pauseCallback = pauseCallback
+	endpoint.deviceWakeCallback = deviceWakeCallback
+	endpoint.stateAccess.Unlock()
+	require.Equal(t, 2, manager.callbackCount(),
+		"precondition: the fixture must be registered, or Close has nothing to race against")
+
+	stop := make(chan struct{})
+	emitterDone := make(chan struct{})
+	t.Cleanup(func() {
+		close(stop)
+		<-emitterDone
+	})
+	go func() {
+		defer close(emitterDone)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			manager.NetworkPause()
+			manager.NetworkWake()
+		}
+	}()
+
+	select {
+	case <-probeEntered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the emission loop never reached a registered callback, so Close below would not " +
+			"race an emit")
+	}
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- endpoint.Close() }()
+	select {
+	case err := <-closeDone:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("Close did not return while a pause emission was in flight; a regression must not " +
+			"park the process")
+	}
+
+	require.False(t, starved.Load(),
+		"a callback could not take stateAccess for a full second while Close was unregistering: "+
+			"Close is holding the state lock across the manager call, which is the ABBA cycle")
+	require.Zero(t, manager.callbackCount(),
+		"Close must give both callbacks back to the manager")
 }
 
 // TestCloseRacingStartPublishesNothingAndLeavesNoCallback covers the interleaving the registration

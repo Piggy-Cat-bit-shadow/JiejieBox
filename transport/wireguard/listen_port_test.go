@@ -433,15 +433,13 @@ func freeUDPPort(t *testing.T) uint16 {
 // udpPortIsFree reports whether an independent bind on the wildcard succeeds.
 //
 // The wildcard is the address the standard WireGuard bind uses (":port"), so a successful bind here
-// means the endpoint holds nothing on that port for any local address.
+// means the endpoint holds nothing on that port for any local address. The probe's error is kept by
+// udpWildcardProbeError, which the failure diagnostics report: this boolean deliberately answers
+// only "could another bind take the port", and the two callers that need to know WHY not ask the
+// error-returning form.
 func udpPortIsFree(t *testing.T, port uint16) bool {
 	t.Helper()
-	listener, err := net.ListenPacket("udp4", "0.0.0.0:"+strconv.Itoa(int(port)))
-	if err != nil {
-		return false
-	}
-	_ = listener.Close()
-	return true
+	return udpWildcardProbeError(port) == nil
 }
 
 // ipv6Available reports whether this machine can bind an IPv6 socket at all.

@@ -45,9 +45,11 @@ package wireguard
 // (`held <= socketsPerStandardBind`) therefore passes.
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -63,6 +65,10 @@ func TestAdvGItem7OccupiedPortIsInvisibleWhileTheReopenIsInFlight(t *testing.T) 
 	fixture := newRebindFixture(t, 0)
 	fixture.proveStandardBindBranch(t)
 	endpoint := fixture.endpoint
+	// The expectation is taken ONCE, from the fixture that proved it is on the standard bind, and is
+	// carried through the test. Re-reading the process-global memo later would make the assertion
+	// compare against a value another test may have raised in between.
+	expected := establishedSocketsPerStandardBind(t)
 
 	held := fixture.livePort(t)
 	require.False(t, udpPortIsFree(t, held), "precondition: the endpoint holds its port before the pause")
@@ -83,9 +89,7 @@ func TestAdvGItem7OccupiedPortIsInvisibleWhileTheReopenIsInFlight(t *testing.T) 
 	// passed the same assertion on the next run, which is a wait that cannot make progress rather
 	// than a socket that was not released. The deadline is unchanged, and so is the assertion - only
 	// the pressure the check puts on the thing it measures.
-	require.Eventually(t, func() bool {
-		return socketCensus(t, endpoint) == 0
-	}, 10*time.Second, 25*time.Millisecond,
+	awaitSocketCensus(t, endpoint, 0, 10*time.Second, 25*time.Millisecond,
 		"precondition: a settled pause really does release the socket, which is why the assertion "+
 			"under attack is sound at that point")
 	require.True(t, udpPortIsFree(t, held), "precondition: and the port really is free then")
@@ -104,7 +108,11 @@ func TestAdvGItem7OccupiedPortIsInvisibleWhileTheReopenIsInFlight(t *testing.T) 
 	// The pinned state. `t.Logf` first, so the numbers are in the record even when an assertion fires.
 	census := socketCensus(t, endpoint)
 	portOccupied := !udpPortIsFree(t, held)
-	t.Logf("ADVG_ITEM7_PINNED port=%d census=%d port_occupied=%v", held, census, portOccupied)
+	portProbeError := udpWildcardProbeError(held)
+	armed, attempts, inFlight := fixture.gate.state()
+	t.Logf("ADVG_ITEM7_PINNED port=%d census=%d port_occupied=%v port_probe_err=%v expected=%d "+
+		"gate_armed=%v gate_attempts=%d gate_in_flight=%d",
+		held, census, portOccupied, portProbeError, expected, armed, attempts, inFlight)
 
 	// Release before asserting, so a failure cannot leave the fixture blocked.
 	fixture.gate.release()
@@ -113,9 +121,27 @@ func TestAdvGItem7OccupiedPortIsInvisibleWhileTheReopenIsInFlight(t *testing.T) 
 	case <-time.After(30 * time.Second):
 		t.Fatal("the wake never finished after the gate was released")
 	}
-	require.Eventually(t, func() bool {
-		return socketCensus(t, endpoint) == socketsPerStandardBind
-	}, 15*time.Second, time.Millisecond, "the released wake must settle on one bind's worth of receivers")
+	awaitSocketCensus(t, endpoint, expected, 15*time.Second, 25*time.Millisecond,
+		"the released wake must settle on one bind's worth of receivers",
+		func() []string {
+			wakeClosed := "false"
+			select {
+			case <-wakeDone:
+				wakeClosed = "true"
+			default:
+			}
+			armed, attempts, inFlight := fixture.gate.state()
+			reportedPort := endpoint.currentListenPort(endpoint.device.Load())
+			probeError := udpWildcardProbeError(held)
+			return []string{
+				fmt.Sprintf("wakeDone closed=%s", wakeClosed),
+				fmt.Sprintf("port %d: endpoint reports %d, wildcard probe error=%v (is EADDRINUSE: %v; "+
+					"nil means the OS is willing to hand the port to another bind, while a non-nil "+
+					"non-EADDRINUSE error means the port-table witness itself failed)",
+					held, reportedPort, probeError, errors.Is(probeError, syscall.EADDRINUSE)),
+				fmt.Sprintf("socket gate: armed=%v attempts=%d inFlight=%d", armed, attempts, inFlight),
+			}
+		})
 	require.Equal(t, held, fixture.livePort(t),
 		"the endpoint must end up holding the same port, which is what makes the holder observed in "+
 			"the pinned state the endpoint's OWN socket rather than another process's")
@@ -182,6 +208,7 @@ func TestAdvGItem7TheTwoWitnessesAgreeWheneverNothingIsReopening(t *testing.T) {
 	fixture := newRebindFixture(t, 0)
 	fixture.proveStandardBindBranch(t)
 	endpoint := fixture.endpoint
+	expected := establishedSocketsPerStandardBind(t)
 
 	for cycle := 0; cycle < 3; cycle++ {
 		held := fixture.livePort(t)
@@ -211,16 +238,13 @@ func TestAdvGItem7TheTwoWitnessesAgreeWheneverNothingIsReopening(t *testing.T) {
 		// The final assertion is NOT weakened: a census that never reaches zero still fails, here on
 		// the deadline. This is what real Darwin reported as `cycle 0: settled pause / Should be
 		// zero, but was 2`.
-		require.Eventually(t, func() bool {
-			return socketCensus(t, endpoint) == 0
-		}, 10*time.Second, 2*time.Millisecond,
-			"cycle %d: a settled pause must leave no receiver goroutines behind", cycle)
+		awaitSocketCensus(t, endpoint, 0, 10*time.Second, 25*time.Millisecond,
+			fmt.Sprintf("cycle %d: a settled pause must leave no receiver goroutines behind", cycle))
 		require.True(t, udpPortIsFree(t, held), "cycle %d: settled pause releases the port", cycle)
 
 		endpoint.onPauseUpdated(pause.EventNetworkWake)
-		require.Eventually(t, func() bool {
-			return socketCensus(t, endpoint) == socketsPerStandardBind
-		}, 15*time.Second, time.Millisecond, "cycle %d: settled wake", cycle)
+		awaitSocketCensus(t, endpoint, expected, 15*time.Second, 25*time.Millisecond,
+			fmt.Sprintf("cycle %d: a settled wake must leave exactly one bind's worth of receivers", cycle))
 		require.Eventually(t, func() bool {
 			return !udpPortIsFree(t, held)
 		}, 15*time.Second, time.Millisecond, "cycle %d: the wake reopens on the same port", cycle)
@@ -233,6 +257,7 @@ func TestAdvGReverseWGManyFastPauseWakeCyclesLeaveOneSocket(t *testing.T) {
 	fixture := newRebindFixture(t, 0)
 	fixture.proveStandardBindBranch(t)
 	endpoint := fixture.endpoint
+	expected := establishedSocketsPerStandardBind(t)
 
 	fixture.settleSocketsPerStandardBind(t, "a freshly started endpoint")
 
@@ -249,17 +274,13 @@ func TestAdvGReverseWGManyFastPauseWakeCyclesLeaveOneSocket(t *testing.T) {
 		// This site is tighter than its sibling by construction: the loop runs up to 64 pause/wake
 		// cycles inside one second, so a receiver that only ever left lazily would show up as a
 		// growing count in the assertion below rather than as a flake here.
-		require.Eventually(t, func() bool {
-			return socketCensus(t, endpoint) == 0
-		}, 10*time.Second, 2*time.Millisecond,
-			"cycle %d: a pause must eventually leave no receiver goroutines", cycles)
+		awaitSocketCensus(t, endpoint, 0, 10*time.Second, 25*time.Millisecond,
+			fmt.Sprintf("cycle %d: a pause must eventually leave no receiver goroutines", cycles))
 		endpoint.onPauseUpdated(pause.EventNetworkWake)
 		cycle := cycles
-		require.Eventually(t, func() bool {
-			return socketCensus(t, endpoint) == socketsPerStandardBind
-		}, 15*time.Second, time.Millisecond,
-			"cycle %d: a wake must leave exactly one bind's worth of receivers", cycle)
-		require.LessOrEqual(t, socketCensus(t, endpoint), socketsPerStandardBind,
+		awaitSocketCensus(t, endpoint, expected, 15*time.Second, 25*time.Millisecond,
+			fmt.Sprintf("cycle %d: a wake must leave exactly one bind's worth of receivers", cycle))
+		require.LessOrEqual(t, socketCensus(t, endpoint), expected,
 			"cycle %d: more than one bind's worth of receivers is a leaked socket", cycle)
 		if workers := int64(goroutineCensus(t, endpoint)); workers > atomic.LoadInt64(&workerHigh) {
 			atomic.StoreInt64(&workerHigh, workers)
@@ -269,9 +290,8 @@ func TestAdvGReverseWGManyFastPauseWakeCyclesLeaveOneSocket(t *testing.T) {
 	elapsed := time.Since(start)
 	require.Greater(t, cycles, 3, "the burst must contain several cycles for the question to be asked")
 
-	require.Eventually(t, func() bool {
-		return socketCensus(t, endpoint) == socketsPerStandardBind
-	}, 15*time.Second, time.Millisecond, "the burst must settle on exactly one socket")
+	awaitSocketCensus(t, endpoint, expected, 15*time.Second, 25*time.Millisecond,
+		"the burst must settle on exactly one socket")
 	require.Eventually(t, func() bool {
 		return goroutineCensus(t, endpoint) == 0
 	}, 15*time.Second, time.Millisecond,
