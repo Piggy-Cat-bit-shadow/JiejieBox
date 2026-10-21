@@ -314,7 +314,10 @@ No product behaviour is changed, and no product defect is evidenced by either fa
 ```text
 branch          fix/wg-macos-ci-flaky-tests (from testing @ 2a2b3cc)
 fix commit      8d5d715dada314e604795fa991cb39610ac7bb76   (code under test in R2/R3/R4)
-report commit   the commit that adds this file (branch tip; no code changes)
+report commits  02fe2b4e00a (record), ecf9aaed29c (tables), and the commit that updates this block
+branch tip      the last report commit; no code changes after 8d5d715 (see `git log -3`)
+pushed          origin/fix/wg-macos-ci-flaky-tests (no force-push)
 temporary       diag/wg-macos-census (deleted), verify/wg-macos-stress (deleted)
-release/tags    untouched; no reset, no force-push
+release/tags    untouched; v0.1.23 still resolves to 2a2b3cc
+working tree    clean
 ```
