@@ -202,18 +202,6 @@ commit; each ran `unit tests (macOS tags)`, the real core build, the architectur
 the headless smoke test, the full capability check (56/56) and the summary step. R1 is kept in the
 table because it failed, and it failed in an unrelated package.
 
-### 7.4 Consolidated evidence table
-
-| platform | arch | Go | tags | CGO | command | repeats | result | time | run / SHA |
-|---|---|---|---|---|---|---|---|---|---|
-| Windows | amd64 | 1.25.5 | `DEFAULT_BUILD_TAGS_OTHERS` | 0 | `go test ... ./transport/wireguard` | 5 | PASS | 44.62s | local |
-| Windows | amd64 | 1.25.5 | none | 0 | `go test -count=50 -run '<pause lock-order tests>'` | 50 | PASS | 0.09s | local |
-| Windows | amd64 | 1.25.5 | none | 0 | `go test -count=30 -run '^TestAdvGItem7…$'` | 30 | PASS | 2.03s | local |
-| macOS | arm64 | 1.25.5 | `release/DEFAULT_BUILD_TAGS` | 1 | `go test -count=100 -run '^TestPauseRegistration…$'` | 100 | PASS | 0.049s | [39562601824](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39562601824) / `984b439` |
-| macOS | arm64 | 1.25.5 | `release/DEFAULT_BUILD_TAGS` | 1 | `go test -count=30 -run '^TestAdvGItem7…$'` | 30 | PASS | 2.162s | 39562601824 / `984b439` |
-| macOS | arm64 | 1.25.5 | `release/DEFAULT_BUILD_TAGS` | 1 | `go test -race -count=10 -run '<four tests>'` | 10 | PASS | 2.209s | 39562601824 / `984b439` |
-| macOS | arm64 | 1.25.5 | `release/DEFAULT_BUILD_TAGS` | 1 | full fast-path gate | 3 green | PASS | ~15 min each | R2/R3/R4 above / `8d5d715` |
-
 The WireGuard package is the unit under test. It passed in every run listed; the gate failures were
 in other packages and are pre-existing, documented load/timing flakes:
 
@@ -257,7 +245,8 @@ unit tests (macOS tags)                                                         
   ok github.com/sagernet/sing-box/transport/wireguard 9.528s
 ```
 
-The temporary workflow commit is deleted before the branch is discarded; it is not part of the fix.
+The temporary branch and its workflow commit were deleted after the run; they are not part of the
+fix.
 
 ### 7.3 Diagnostic run (temporary, not part of the fix)
 
@@ -266,6 +255,19 @@ The temporary workflow commit is deleted before the branch is discarded; it is n
 without `-v`; the `TestAdvGItem7…` failure listed after it is the baseline test failing its *pause*
 precondition in that run (not the post-wake assertion), which the fix's diagnostics would report in
 detail if it recurs. The WireGuard package passed `ok` in every fix-branch gate run above.
+
+### 7.4 Consolidated evidence table
+
+| platform | arch | Go | tags | CGO | command | repeats | result | time | run / SHA |
+|---|---|---|---|---|---|---|---|---|---|
+| Windows | amd64 | 1.25.5 | `DEFAULT_BUILD_TAGS_OTHERS` | 0 | `go test ... ./transport/wireguard` | 5 | PASS | 44.62s | local |
+| Windows | amd64 | 1.25.5 | `DEFAULT_BUILD_TAGS_OTHERS` | 0 | `go test -count=50 -run '<pause lock-order tests>'` | 50 | PASS | 0.09s | local |
+| Windows | amd64 | 1.25.5 | `DEFAULT_BUILD_TAGS_OTHERS` | 0 | `go test -count=30 -run '^TestAdvGItem7…$'` | 30 | PASS | 2.03s | local |
+| Windows | amd64 | 1.25.5 | `DEFAULT_BUILD_TAGS_OTHERS` | 0 | `go test -race ...` | — | **BLOCKED_BY_ENVIRONMENT** | — | no mingw toolchain (`clang: unsupported option '-mthreads'`) |
+| macOS | arm64 | 1.25.5 | `release/DEFAULT_BUILD_TAGS` | 1 | `go test -count=100 -run '^TestPauseRegistration…$'` | 100 | PASS | 0.049s | [39562601824](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39562601824) / `984b439` |
+| macOS | arm64 | 1.25.5 | `release/DEFAULT_BUILD_TAGS` | 1 | `go test -count=30 -run '^TestAdvGItem7…$'` | 30 | PASS | 2.162s | 39562601824 / `984b439` |
+| macOS | arm64 | 1.25.5 | `release/DEFAULT_BUILD_TAGS` | 1 | `go test -race -count=10 -run '<four tests>'` | 10 | PASS | 2.209s | 39562601824 / `984b439` |
+| macOS | arm64 | 1.25.5 | `release/DEFAULT_BUILD_TAGS` | 1 | full fast-path gate | 3 green | PASS | ~15 min each | R2/R3/R4 above / `8d5d715` |
 
 ## 8. Verdict
 
