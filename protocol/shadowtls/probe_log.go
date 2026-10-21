@@ -57,7 +57,12 @@ func isExpectedShadowTLSProbeFailure(err error) bool {
 	var opErr *net.OpError
 	if errors.As(err, &opErr) {
 		if errors.Is(opErr.Err, os.ErrDeadlineExceeded) {
-			return true
+			// The dial guard is repeated HERE, and not only in the net.Error
+			// branch above, because this shape does not go through it: a dial
+			// whose own deadline expired arrives as
+			// *net.OpError{Op: "dial"} -> os.ErrDeadlineExceeded, and downgrading
+			// it hid the configured handshake target not answering.
+			return !isDialFailure(err)
 		}
 		// Classify the errno, do NOT downgrade every syscall error.
 		//
@@ -76,8 +81,23 @@ func isExpectedShadowTLSProbeFailure(err error) bool {
 			return isPeerLifecycleErrno(syscallErr.Err)
 		}
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.Canceled) {
+		// Cancellation is the local lifecycle - a shutdown, a config reload, a
+		// peer that went away - and never a fault of the configured upstream, so
+		// it is downgraded whichever operation it interrupted.
 		return true
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		// A deadline reached on a DIAL is the handshake target not answering: the
+		// same operator-visible fault as a refused dial, arriving in the shape the
+		// Go runtime synthesises for a connect timeout rather than as an errno
+		// (net/dial.go's errTimeout reports itself as context.DeadlineExceeded).
+		//
+		// The dial guard appears in all three timeout arms on purpose. There is
+		// exactly one predicate that answers "was this a dial?", and every arm that
+		// can downgrade a timeout has to consult it - the defect this fixes was one
+		// arm having been taught the rule while the other two had not.
+		return !isDialFailure(err)
 	}
 	if E.IsClosedOrCanceled(err) {
 		return true
