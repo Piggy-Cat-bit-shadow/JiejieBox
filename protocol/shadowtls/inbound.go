@@ -63,7 +63,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 				}
 				handshakeForServerName[entry.Key] = shadowtls.HandshakeConfig{
 					Server: entry.Value.ServerOptions.Build(),
-					Dialer: handshakeDialer,
+					Dialer: newTrackingDialer(handshakeDialer),
 				}
 			}
 		}
@@ -87,7 +87,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		}),
 		Handshake: shadowtls.HandshakeConfig{
 			Server: options.Handshake.ServerOptions.Build(),
-			Dialer: handshakeDialer,
+			Dialer: newTrackingDialer(handshakeDialer),
 		},
 		HandshakeForServerName: handshakeForServerName,
 		StrictMode:             options.StrictMode,
@@ -128,7 +128,14 @@ func (h *Inbound) NewConnection(ctx context.Context, conn net.Conn, metadata ada
 	// handshake target. An established session -- and a fallback browser session
 	// being relayed to the decoy -- therefore runs with no deadline at all.
 	conn = newFirstRecordTimeoutConn(conn, h.preAuthTimeout)
-	err := h.service.NewConnection(adapter.WithContext(log.ContextWithNewID(ctx), &metadata), conn, metadata.Source, metadata.Destination, onClose)
+	// The handshake may dial a target connection that sing-shadowtls abandons on an
+	// error return. The dialers handed to the service record what they opened under
+	// this call's own context, so whatever the service did not close can be released
+	// the moment it returns. See handshake_target_cleanup.go.
+	targets := &handshakeTargets{}
+	handshakeCtx := adapter.WithContext(log.ContextWithNewID(ctx), &metadata)
+	err := h.service.NewConnection(contextWithHandshakeTargets(handshakeCtx, targets), conn, metadata.Source, metadata.Destination, onClose)
+	targets.closeLeftovers()
 	N.CloseOnHandshakeFailure(conn, onClose, err)
 	if err != nil {
 		// A non-TLS probe, a truncated record or a scanner disconnect all land
