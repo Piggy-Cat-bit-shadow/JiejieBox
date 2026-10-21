@@ -3,6 +3,7 @@ package shadowtls
 import (
 	"context"
 	"net"
+	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/inbound"
@@ -30,13 +31,18 @@ type Inbound struct {
 	listener   *listener.Listener
 	service    *shadowtls.Service
 	references []string
+	// preAuthTimeout bounds the read of the first TLS record on the public
+	// connection, so a peer that sends nothing (or half a ClientHello) cannot
+	// hold a socket and a goroutine open indefinitely. See pre_auth_timeout.go.
+	preAuthTimeout time.Duration
 }
 
 func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.ShadowTLSInboundOptions) (adapter.Inbound, error) {
 	inbound := &Inbound{
-		Adapter: inbound.NewAdapter(C.TypeShadowTLS, tag),
-		router:  router,
-		logger:  logger,
+		Adapter:        inbound.NewAdapter(C.TypeShadowTLS, tag),
+		router:         router,
+		logger:         logger,
+		preAuthTimeout: defaultPreAuthTimeout,
 	}
 
 	if options.Version == 0 {
@@ -116,6 +122,12 @@ func (h *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 }
 
 func (h *Inbound) NewConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
+	// Bound ONLY the pre-authentication phase: the deadline is armed here and is
+	// cleared the moment the first TLS record has been read in full, which is
+	// before the service either authenticates the peer or relays it to the
+	// handshake target. An established session -- and a fallback browser session
+	// being relayed to the decoy -- therefore runs with no deadline at all.
+	conn = newFirstRecordTimeoutConn(conn, h.preAuthTimeout)
 	err := h.service.NewConnection(adapter.WithContext(log.ContextWithNewID(ctx), &metadata), conn, metadata.Source, metadata.Destination, onClose)
 	N.CloseOnHandshakeFailure(conn, onClose, err)
 	if err != nil {
@@ -123,6 +135,12 @@ func (h *Inbound) NewConnection(ctx context.Context, conn net.Conn, metadata ada
 		// here as read errors. They are routine on a public port and are
 		// classified by TYPE (see probe_log.go); an unrecognised failure still
 		// stays at error level.
+		//
+		// The pre-authentication read timeout lands here too, as a read
+		// *net.OpError on OUR OWN socket, and is therefore classified as an
+		// expected probe outcome rather than a fault - the same severity
+		// protocol/anytls gives its equivalent bound. A timeout on the DIAL to
+		// the handshake target is a different shape and still stays visible.
 		logShadowTLSError(ctx, h.logger, metadata.Source, err)
 	}
 }
