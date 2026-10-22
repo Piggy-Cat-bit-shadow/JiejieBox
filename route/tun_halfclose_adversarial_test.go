@@ -197,7 +197,8 @@ func TestTUNHalfClosedPeerGoneClosesTheTransport(t *testing.T) {
 	require.True(t, target.sawPeerClose(),
 		"the peer must observe the connection close; an entry removed without closing the socket is "+
 			"the failure this assertion exists to catch")
-	require.Equal(t, int64(1), fixture.handler.closed.Load(), "onClose must run exactly once")
+	require.Eventually(t, func() bool { return fixture.handler.closed.Load() == 1 }, 10*time.Second, 5*time.Millisecond,
+		"onClose must run exactly once")
 }
 
 // TestTUNHalfClosedSlowResponseIsNotKilled is the false-positive guard against the fix itself.
@@ -206,7 +207,12 @@ func TestTUNHalfClosedPeerGoneClosesTheTransport(t *testing.T) {
 // idle: the device is alive, so it answers the probes, and the flow must stay up until the response
 // is delivered and the server closes.
 func TestTUNHalfClosedSlowResponseIsNotKilled(t *testing.T) {
-	target := startAdversarialTarget(t, adversarialDelayedResponse, 2*time.Second)
+	// The response delay has to be strictly longer than the observation window asserted below, not
+	// equal to it. The target sleeps `delay` after EOF, writes, then closes - so a 2s delay asserted
+	// at 2s made "not killed yet" race the arrival of the very response this test waits for. That is
+	// how it failed on the macOS gate at v0.1.24, 2.03s in: the response chain won the last few
+	// milliseconds and the flow was gone by the time the counter was read.
+	target := startAdversarialTarget(t, adversarialDelayedResponse, 4*time.Second)
 	fixture := newTUNHalfCloseFixture(t, tunProbeAddr(target.port()))
 	deviceNext, stackNext := fixture.establish(t, 40101, target.port())
 	fixture.waitTraffic(t, 1, 3*time.Second)
@@ -216,7 +222,8 @@ func TestTUNHalfClosedSlowResponseIsNotKilled(t *testing.T) {
 	stopAcks := fixture.ackDevice(t, 40101, target.port(), deviceNext, stackNext)
 	defer stopAcks()
 
-	// Long enough for many probe rounds at the test timings.
+	// Long enough for many probe rounds at the test timings (the armed idle plus probes is ~600ms),
+	// and still two seconds inside the 4s response delay, so neither route can end the flow here.
 	time.Sleep(2 * time.Second)
 	require.Equal(t, int64(0), fixture.handler.closed.Load(),
 		"a slow but legitimate response must not be released as if the peer were gone")
@@ -227,7 +234,8 @@ func TestTUNHalfClosedSlowResponseIsNotKilled(t *testing.T) {
 
 	// The server closes after answering, which is what ends the flow.
 	fixture.waitTraffic(t, 0, 10*time.Second)
-	require.Equal(t, int64(1), fixture.handler.closed.Load())
+	require.Eventually(t, func() bool { return fixture.handler.closed.Load() == 1 }, 10*time.Second, 5*time.Millisecond,
+		"the close the server performed must reach onClose, not only the traffic table")
 }
 
 // TestTUNServerFinFirstThenDeviceFinReleases is the reverse close order: the download direction
@@ -250,7 +258,8 @@ func TestTUNServerFinFirstThenDeviceFinReleases(t *testing.T) {
 	fixture.emit(t, tunProbeTCPFrame(40102, target.port(), deviceNext, stackNext, header.TCPFlagFin|header.TCPFlagAck, nil))
 	fixture.waitTraffic(t, 0, 10*time.Second)
 	fixture.waitRoute(t, 0, 5*time.Second)
-	require.Equal(t, int64(1), fixture.handler.closed.Load())
+	require.Eventually(t, func() bool { return fixture.handler.closed.Load() == 1 }, 10*time.Second, 5*time.Millisecond,
+		"the reverse close order must still end with onClose exactly once")
 }
 
 // TestTUNServerFinFirstThenDeviceResetReleases is the same order with an abort instead of a FIN.

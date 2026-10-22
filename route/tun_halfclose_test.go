@@ -462,7 +462,8 @@ func TestTUNHalfClosedPeerGoneReleasesFlow(t *testing.T) {
 	// stack's keepalive probes go unanswered, the stack reports a terminal error, and the observer
 	// releases the flow.
 	fixture.waitTraffic(t, 0, 10*time.Second)
-	require.Equal(t, int64(1), fixture.handler.closed.Load(), "onClose must run exactly once")
+	require.Eventually(t, func() bool { return fixture.handler.closed.Load() == 1 }, 10*time.Second, 5*time.Millisecond,
+		"onClose must run exactly once")
 }
 
 // TestTUNHalfClosedLiveDeviceKeepsFlow is the false-positive guard at the stack level: a device whose
