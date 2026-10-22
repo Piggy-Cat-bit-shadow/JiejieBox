@@ -204,3 +204,26 @@ func TestTUNCopyFixtureRecordsTheRefusedHandover(t *testing.T) {
 	require.Equal(t, uint64(0), snapshot.LivenessArmed,
 		"nothing is armed on a refused handover; the copy path arms the half-close observer instead")
 }
+
+// TestSplicedLivenessAppearsInTheShutdownLog is the device path itself, not the formatter.
+//
+// The one line a phone run is read from is written by ConnectionManager.Close, and it is gated on the
+// TCP handover counter being non-zero. This test records a handover, arms the liveness on it, closes
+// the manager the way a tunnel stop does, and reads the captured log - so the field the device
+// instructions tell a reader to look for is proven to be emitted there.
+func TestSplicedLivenessAppearsInTheShutdownLog(t *testing.T) {
+	captured := &stallLog{}
+	manager := NewConnectionManager(captured.logger())
+
+	// One accepted handover, recorded the way the stream path records it.
+	manager.tcpSpliceDiagnostics.recordOutcome(spliceReasonHandoverAccepted)
+	require.True(t, manager.armSplicedLiveness(context.Background(), &recordingKeepAlive{}))
+
+	require.NoError(t, manager.Close())
+
+	log := captured.dump()
+	require.Contains(t, log, "TCP handover diagnostics:")
+	require.Contains(t, log, "accepted=1")
+	require.Contains(t, log, "liveness_armed=1",
+		"the device line must carry the arm count, or a phone run cannot tell whether the fix ran")
+}
