@@ -214,12 +214,14 @@ had failed on `5034c5ee0` for exactly that race:
 The state-contract round (`08699fd2c40`) and the earlier records were verified on CI as well:
 `Verify` passed on `ddf9d9fbef2`, `ce8d76658df` and `08699fd2c40`
 (<https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39717123589>), and `Android Core ARM64`
-passed on each of them. `Mobile contract verification` failed once on `08699fd2c40` and passed when the
-same job was re-run: `transport/http`'s `TestActiveInboundStopsBecauseThePeerIsStarved` measured
-2.971s against a `> 3s` floor, in a package that does not depend on `route` and has not been touched by
-this work (last change `a1705021f10`), and the test passes locally at 4.8-7.0s. It is a runner
-scheduling flake, it is recorded here rather than papered over, and no assertion was relaxed to make it
-green.
+passed on each of them. `Mobile contract verification` has failed twice on this branch - once on `08699fd2c40` (2.971s) and
+once on `0039eb4677c` (2.884s) - on the same assertion, `transport/http`'s
+`TestActiveInboundStopsBecauseThePeerIsStarved`, against a `> 3s` floor. Both times the job passed when
+re-run, the `./route` package in the same job passed every time, and the test is in a package that does
+not depend on `route` and has not been touched by this work (last change `a1705021f10`, whose message
+is itself about this test treating scheduler delay as protocol failure); it passes locally at 4.8-7.0s.
+It is a runner scheduling flake and it is recorded here rather than papered over. No assertion was
+relaxed to make it green, and the test is left for the maintainer who owns that package.
 
 **One gate that is NOT green on this host, and must not be claimed as such.** `go test ./...`
 additionally fails three `common/tls` tests - `TestWindowsClientHandshakeTLS13`,
