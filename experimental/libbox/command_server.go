@@ -2,14 +2,11 @@ package libbox
 
 import (
 	"context"
-	"errors"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
-	"syscall"
-	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
@@ -151,19 +148,10 @@ func (s *CommandServer) Start() error {
 	if sCommandServerListenPort == 0 {
 		sockPath := filepath.Join(sBasePath, "command.sock")
 		os.Remove(sockPath)
-		for range 30 {
-			listener, err = net.ListenUnix("unix", &net.UnixAddr{
-				Name: sockPath,
-				Net:  "unix",
-			})
-			if err == nil {
-				break
-			}
-			if !errors.Is(err, syscall.EROFS) {
-				break
-			}
-			time.Sleep(time.Second)
-		}
+		listener, err = net.ListenUnix("unix", &net.UnixAddr{
+			Name: sockPath,
+			Net:  "unix",
+		})
 		if err != nil {
 			return E.Cause(err, "listen command server")
 		}
