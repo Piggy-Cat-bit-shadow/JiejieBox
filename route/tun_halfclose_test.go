@@ -77,6 +77,10 @@ func (d tunProbeDialer) DialContext(ctx context.Context, _ string, _ M.Socksaddr
 	if err != nil {
 		return nil, err
 	}
+	if d.tracker == nil {
+		// No registration: the flow is an ordinary userspace copy rather than a splice target.
+		return conn, nil
+	}
 	return d.tracker.TrackConn(conn), nil
 }
 
@@ -138,12 +142,25 @@ type tunHalfCloseFixture struct {
 
 func newTUNHalfCloseFixture(t *testing.T, target string) *tunHalfCloseFixture {
 	t.Helper()
-	return newTUNHalfCloseFixtureLogged(t, target, nil)
+	return newTUNHalfCloseFixtureWith(t, target, nil, true)
+}
+
+// newTUNHalfCloseFixtureTracked is the same fixture with the outbound socket optionally registered
+// with the connection manager. Registered means the flow is a splice target (the direct-outbound TUN
+// path); unregistered means an ordinary userspace copy.
+func newTUNHalfCloseFixtureTracked(t *testing.T, target string, trackOutbound bool) *tunHalfCloseFixture {
+	t.Helper()
+	return newTUNHalfCloseFixtureWith(t, target, nil, trackOutbound)
 }
 
 // newTUNHalfCloseFixtureLogged is the same fixture with the manager's log captured, so a test can
 // assert the one line a real-device run would be read from.
 func newTUNHalfCloseFixtureLogged(t *testing.T, target string, captured *stallLog) *tunHalfCloseFixture {
+	t.Helper()
+	return newTUNHalfCloseFixtureWith(t, target, captured, true)
+}
+
+func newTUNHalfCloseFixtureWith(t *testing.T, target string, captured *stallLog, trackOutbound bool) *tunHalfCloseFixture {
 	t.Helper()
 	traffic := trafficcontrol.NewManager()
 	managerLogger := log.NewNOPFactory().Logger()
@@ -154,7 +171,10 @@ func newTUNHalfCloseFixtureLogged(t *testing.T, target string, captured *stallLo
 	manager.halfClose = halfCloseTestTimingsTUN
 	fixture := &tunHalfCloseFixture{manager: manager, traffic: traffic}
 	handler := &tunProbeHandler{traffic: traffic, conns: manager}
-	handler.dialer = tunProbeDialer{target: target, tracker: manager}
+	handler.dialer = tunProbeDialer{target: target}
+	if trackOutbound {
+		handler.dialer.tracker = manager
+	}
 	fixture.handler = handler
 	fixture.device = singtun.NewMemoryTun(singtun.MemoryTunOptions{
 		MTU: 1500,

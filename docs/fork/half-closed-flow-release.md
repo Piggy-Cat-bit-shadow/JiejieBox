@@ -144,6 +144,9 @@ TLS-1.3-over-TCP"). They cannot depend on this work: `go list -deps ./common/tls
 `38dad31db` claiming `go test ./... ok` was wrong on this host and is corrected here.
 
 
+The adversarial audit of this fix - what was attacked, what was disproved, and the standing limits -
+is `half-closed-flow-adversarial-audit.md`.
+
 Tests, by what they pin:
 
 | File | Pins |

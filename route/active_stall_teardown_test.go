@@ -224,4 +224,15 @@ func TestTeardown_OneSidedCompletionNeverRunsOnClose(t *testing.T) {
 	// So this test is a characterisation of the shape §20 asks to look at rather than a defect with a
 	// fix attached: the teardown has no owner once one direction has finished, and nothing in the core
 	// can distinguish "the answer is late" from "the answer is never coming".
+	//
+	// # What exists now, and why this test is unchanged
+	//
+	// A later round added route/conn_halfclose.go. After a clean half-close the finished side is kept
+	// under observation: a short keepalive, and a backed-off read that releases the flow ONLY on a
+	// terminal error. That error is the one signal this test's premise does not have - the peer here is
+	// still there and simply has not answered, so it ACKs the probes and nothing happens. The
+	// assertion above (onClose unrun, one surviving copy) is therefore still the correct expectation,
+	// and it is exactly what the new mechanism is forbidden to change. Its paired positive controls are
+	// `TestHalfClosedLivePeerIsNotReleased`, `TestTUNHalfClosedLiveDeviceKeepsFlow` and
+	// `TestTUNHalfClosedSlowResponseIsNotKilled` - a slow but real answer must still arrive.
 }
