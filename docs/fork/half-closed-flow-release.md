@@ -131,6 +131,18 @@ version of the observer - the timer handle was stored from two goroutines, becau
 start before the assignment completes - and that handle is no longer stored at all; there is nothing
 to stop, since a late probe checks the teardown and returns.
 
+`Verify` ran on `38dad31db` and passed, including the "race on the fork's own data paths" step that
+had failed on `5034c5ee0` for exactly that race:
+<https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39699826372>.
+
+**One gate that is NOT green on this host, and must not be claimed as such.** `go test ./...`
+additionally fails three `common/tls` tests - `TestWindowsClientHandshakeTLS13`,
+`TestWindowsClientRoundtripTLS13`, `TestWindowsClientTLS13PostHandshakeConcurrentWrite` - which
+`KNOWLEDGE/ACCEPTANCE.md:219` records as `NETWORK_DEPENDENT` ("this host's Schannel has no
+TLS-1.3-over-TCP"). They cannot depend on this work: `go list -deps ./common/tls` does not include
+`route`. That is why the list above names packages rather than `./...`, and why the commit message of
+`38dad31db` claiming `go test ./... ok` was wrong on this host and is corrected here.
+
 
 Tests, by what they pin:
 
@@ -143,9 +155,10 @@ Tests, by what they pin:
 
 ## 7. Provenance
 
-`5034c5ee0466bc3027eda6ff98d9e8162ef364c6` on `testing` is the mechanism and its tests. The
-diagnostics line, a data race the race detector found in the observer's own scheduler, and this
-record are in the commit immediately on top of it. The Apple client was read at its pinned submodule
-commit `cdaaf2226ea659bd3a5d5dec056d3c6e769dc3ec`; nothing in the client was changed, because the
-client was reporting the truth.
+`5034c5ee0466bc3027eda6ff98d9e8162ef364c6` on `testing` is the mechanism and its tests.
+`38dad31dbe38194121de963c3cc6009f9287760c` is the diagnostics line, the data race the race detector
+found in the observer's own scheduler, and this record; `Verify` passed on it. The Apple client was
+read at its pinned submodule commit `cdaaf2226ea659bd3a5d5dec056d3c6e769dc3ec`; nothing in the client
+was changed, because the client was reporting the truth.
+
 
