@@ -184,10 +184,11 @@ func TestTrafficTrackerReleasesOnShutdown(t *testing.T) {
 // TestTrafficTrackerHalfClosedKernelPeerIsNotObservable pins the standing limit.
 //
 // The client finishes its write side and the peer says nothing. On a kernel-socket inbound the
-// half-close observer has nothing to act on: every later read of that socket returns EOF, so a peer
-// whose socket disappears afterwards is invisible here (only a write would surface it, and an idle
-// server never writes). The entry therefore stays until something else ends it - the application
-// giving up, the peer closing, or close-all.
+// half-close observation is not even armed: a later read of that socket keeps returning EOF, so the
+// verdict cannot be read here (only a write would surface it, and an idle server never writes). The
+// manager counts the flow as `skipped (unobservable read side)` instead, which is asserted directly in
+// route/conn_halfclose_contract_test.go; this test pins the consequence at the table: the entry stays
+// until something else ends it - the application giving up, the peer closing, or close-all.
 //
 // The phone's own path is the TUN inbound, where the userspace stack DOES report the vanished peer
 // to a later read; that is proven in route/tun_halfclose_test.go. This test exists so the kernel-side

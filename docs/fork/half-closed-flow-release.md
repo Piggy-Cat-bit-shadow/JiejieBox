@@ -175,7 +175,7 @@ to stop, since a late probe checks the teardown and returns.
 had failed on `5034c5ee0` for exactly that race:
 <https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39699826372>.
 
-The schema/state-contract round (`08699fd2c40`) and the earlier records were verified on CI as well:
+The state-contract round (`08699fd2c40`) and the earlier records were verified on CI as well:
 `Verify` passed on `ddf9d9fbef2`, `ce8d76658df` and `08699fd2c40`
 (<https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39717123589>), and `Android Core ARM64`
 passed on each of them. `Mobile contract verification` failed once on `08699fd2c40` and passed when the
