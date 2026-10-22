@@ -138,8 +138,19 @@ type tunHalfCloseFixture struct {
 
 func newTUNHalfCloseFixture(t *testing.T, target string) *tunHalfCloseFixture {
 	t.Helper()
+	return newTUNHalfCloseFixtureLogged(t, target, nil)
+}
+
+// newTUNHalfCloseFixtureLogged is the same fixture with the manager's log captured, so a test can
+// assert the one line a real-device run would be read from.
+func newTUNHalfCloseFixtureLogged(t *testing.T, target string, captured *stallLog) *tunHalfCloseFixture {
+	t.Helper()
 	traffic := trafficcontrol.NewManager()
-	manager := NewConnectionManager(log.NewNOPFactory().Logger())
+	managerLogger := log.NewNOPFactory().Logger()
+	if captured != nil {
+		managerLogger = captured.logger()
+	}
+	manager := NewConnectionManager(managerLogger)
 	manager.halfClose = halfCloseTestTimingsTUN
 	fixture := &tunHalfCloseFixture{manager: manager, traffic: traffic}
 	handler := &tunProbeHandler{traffic: traffic, conns: manager}
@@ -473,4 +484,31 @@ func TestTUNHalfClosedLiveDeviceKeepsFlow(t *testing.T) {
 	require.Equal(t, 1, fixture.traffic.ConnectionsLen(),
 		"a device that answers the probes must keep its connection")
 	require.Equal(t, int64(0), fixture.handler.closed.Load())
+}
+
+// TestTUNHalfClosedReleaseIsReportedAtShutdown asserts the number a phone run would report.
+//
+// The device cannot be instrumented for this investigation, so the only evidence a real-device run
+// can produce is the one line the connection manager writes when the tunnel stops. This test drives
+// the mechanism through the real stack and then reads exactly that line.
+func TestTUNHalfClosedReleaseIsReportedAtShutdown(t *testing.T) {
+	port := startHalfCloseTarget(t)
+	captured := &stallLog{}
+	fixture := newTUNHalfCloseFixtureLogged(t, tunProbeAddr(port), captured)
+	deviceNext, stackNext := fixture.establish(t, 40012, port)
+	fixture.waitTraffic(t, 1, 3*time.Second)
+	fixture.emit(t, tunProbeTCPFrame(40012, port, deviceNext, stackNext, header.TCPFlagFin|header.TCPFlagAck, nil))
+	fixture.waitTraffic(t, 0, 10*time.Second)
+
+	snapshot := fixture.manager.HalfCloseDiagnostics()
+	require.Equal(t, uint64(1), snapshot.Observed)
+	require.Equal(t, uint64(1), snapshot.Released)
+	require.Equal(t, uint64(1), snapshot.KeepaliveTimeout,
+		"the userspace stack reported its own keepalive timeout, so this is the timeout half")
+	require.Equal(t, uint64(0), snapshot.PeerReset)
+
+	require.NoError(t, fixture.manager.Close())
+	require.Contains(t, captured.dump(), "half-closed flows: 1 observed",
+		"the summary must be emitted when the tunnel stops, with no instrumentation of its own")
+	require.Contains(t, captured.dump(), "keepalive timeout 1")
 }

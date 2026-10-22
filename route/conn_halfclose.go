@@ -184,7 +184,6 @@ type halfClosedObserver struct {
 	interval  time.Duration
 	maxInterv time.Duration
 	buffer    [1]byte
-	timer     *time.Timer
 	stopped   atomic.Bool
 }
 
@@ -216,6 +215,7 @@ func (m *ConnectionManager) observeHalfClosed(source net.Conn, teardown *flowTea
 		m.logHalfClose(teardown.ctx, "half-closed flow: keepalive unavailable: ", err)
 		return
 	}
+	m.halfCloseDiag.recordObserved()
 	observer := &halfClosedObserver{
 		manager:   m,
 		conn:      source,
@@ -249,11 +249,17 @@ func keepAliveConnOf(conn any) keepAliveConfigurable {
 	return nil
 }
 
+// schedule arms the next probe.
+//
+// The timer is deliberately NOT stored. There is nothing to stop - a probe that runs after the flow
+// ended checks the teardown first and returns - and keeping a timer handle would need a write that
+// the timer's own callback can race: the callback may start before the assignment completes, which
+// is a data race on the field even though the schedule order is correct.
 func (o *halfClosedObserver) schedule() {
 	if o.stopped.Load() {
 		return
 	}
-	o.timer = time.AfterFunc(o.interval, o.probe)
+	time.AfterFunc(o.interval, o.probe)
 }
 
 // probe reads the finished side once, looking for a terminal state.
@@ -274,6 +280,7 @@ func (o *halfClosedObserver) probe() {
 		// any further: stop and leave the flow to its surviving direction. It must never eat stream
 		// data to satisfy a liveness check.
 		o.stopped.Store(true)
+		o.manager.halfCloseDiag.recordStopped()
 		o.manager.logHalfClose(o.teardown.ctx, "half-closed flow: unexpected byte, observation stopped")
 	case err == nil:
 		o.backoff()
@@ -314,6 +321,7 @@ func (o *halfClosedObserver) backoff() {
 // reclaimHalfClosed is the one place a half-closed flow is released because its peer is provably
 // gone. It is a method so the log line, the teardown and the accounting stay together.
 func (m *ConnectionManager) reclaimHalfClosed(teardown *flowTeardown, cause error) {
+	m.halfCloseDiag.recordReleased(cause)
 	m.logHalfClose(teardown.ctx, "half-closed flow released: peer gone: ", cause)
 	teardown.close(cause)
 }

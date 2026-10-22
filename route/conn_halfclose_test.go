@@ -348,6 +348,51 @@ func TestHalfClosedUnexpectedByteStopsObservation(t *testing.T) {
 	}
 }
 
+// TestHalfCloseDiagnosticsCountTheVerdict pins the numbers a real-device run is meant to report.
+//
+// These are the only half-close numbers an operator sees: one line at tunnel shutdown. If they can
+// drift from the mechanism - counting an observation that never started, or a release that never
+// happened - the line becomes a claim nobody can check.
+func TestHalfCloseDiagnosticsCountTheVerdict(t *testing.T) {
+	fixture := newHalfCloseFixture(t)
+	require.Eventually(t, func() bool {
+		return fixture.client.keepAliveSet.Load() == 1
+	}, 3*time.Second, 2*time.Millisecond)
+
+	initial := fixture.manager.HalfCloseDiagnostics()
+	require.Equal(t, uint64(1), initial.Observed, "the observation must be counted when it is armed")
+	require.Equal(t, uint64(0), initial.Released, "nothing was released yet")
+
+	fixture.client.setNextReadErr(syscall.ECONNRESET)
+	select {
+	case <-fixture.closed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the flow was never released")
+	}
+	final := fixture.manager.HalfCloseDiagnostics()
+	require.Equal(t, uint64(1), final.Observed)
+	require.Equal(t, uint64(1), final.Released)
+	require.Equal(t, uint64(1), final.PeerReset,
+		"a reset from the peer's stack is the reset half, not the timeout half")
+	require.Equal(t, uint64(0), final.KeepaliveTimeout)
+	require.Equal(t, uint64(0), final.Stopped)
+
+	summary := final.HalfCloseSummary()
+	require.Contains(t, summary, "half-closed flows: 1 observed")
+	require.Contains(t, summary, "released 1")
+	require.Contains(t, summary, "peer reset 1")
+}
+
+// TestHalfCloseSummaryNamesATimeoutSeparately is the other half of the classification.
+func TestHalfCloseSummaryNamesATimeoutSeparately(t *testing.T) {
+	snapshot := HalfCloseSnapshot{Observed: 3, Released: 2, KeepaliveTimeout: 2}
+	summary := snapshot.HalfCloseSummary()
+	require.Contains(t, summary, "3 observed")
+	require.Contains(t, summary, "released 2")
+	require.Contains(t, summary, "keepalive timeout 2")
+	require.Contains(t, summary, "peer reset 0")
+}
+
 // TestKeepAliveCapabilityWalk pins the fail-safe and the unwrap: a connection that offers no
 // keepalive is not something the observer may judge, and a capability that sits under a transparent
 // wrapper must still be found.

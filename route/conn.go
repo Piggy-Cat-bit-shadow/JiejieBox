@@ -108,6 +108,9 @@ type ConnectionManager struct {
 	// waiting for the production windows - the same convention as drainIdleGraceOverride. The
 	// mechanism itself, and why it is a keepalive rather than a timeout, is in conn_halfclose.go.
 	halfClose halfCloseOptions
+	// halfCloseDiag counts what that observation did, so a real-device run proves the mechanism
+	// without instrumentation. See conn_halfclose_diagnostics.go.
+	halfCloseDiag halfCloseDiagnostics
 }
 
 func NewConnectionManager(logger logger.ContextLogger) *ConnectionManager {
@@ -240,6 +243,11 @@ func (m *ConnectionManager) Close() error {
 	if m.logger != nil {
 		if snapshot := m.TransitionDiagnostics(); snapshot.Transitions > 0 {
 			m.logger.Info(snapshot.TransitionSummary())
+		}
+		// The half-close observation summary, on the same terms: one line, only when the mechanism
+		// actually ran, so a phone run reports it without any instrumentation of its own.
+		if snapshot := m.HalfCloseDiagnostics(); snapshot.Observed > 0 {
+			m.logger.Info(snapshot.HalfCloseSummary())
 		}
 	}
 	return nil
