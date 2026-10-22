@@ -137,8 +137,13 @@ func TestSplicedLivenessDetachesASilentUserspaceStream(t *testing.T) {
 	require.True(t, fixture.manager.armSplicedLiveness(context.Background(), goConn.(keepAliveConfigurable)))
 
 	fixture.waitTraffic(t, 0, 10*time.Second)
-	fixture.waitRoute(t, 0, 5*time.Second)
-	require.Equal(t, int64(1), fixture.handler.closed.Load(), "onClose must run exactly once")
+	// `closed` is the wait, not a read after one. This fixture is the userspace-copy shape, so the
+	// connection manager holds nothing for this flow by construction: `waitRoute(t, 0, ...)` returns
+	// before the keepalive has fired, and reading the counter right after it measured the release
+	// while it was still in flight. That is exactly how this test failed on the macOS gate at
+	// v0.1.24, and why the assertion is an Eventually rather than an Equal.
+	require.Eventually(t, func() bool { return fixture.handler.closed.Load() == 1 }, 10*time.Second, 5*time.Millisecond,
+		"onClose must run exactly once")
 	require.Equal(t, uint64(0), fixture.manager.HalfCloseDiagnostics().Observed,
 		"this release must come from the splice keepalive, not from the copy-path observer")
 	require.Equal(t, uint64(1), fixture.manager.TCPSpliceDiagnostics().LivenessArmed)
@@ -175,11 +180,12 @@ func TestSplicedLivenessKeepsALiveStream(t *testing.T) {
 		"a live peer must never be released by the splice keepalive")
 	require.Equal(t, 1, fixture.traffic.ConnectionsLen())
 
-	// And when it stops answering, the same armed keepalive releases it.
+	// And when it stops answering, the same armed keepalive releases it. Same rule as above: the
+	// copy fixture keeps nothing in the connection manager, so the release is observed on `closed`.
 	stopAcks()
 	fixture.waitTraffic(t, 0, 10*time.Second)
-	fixture.waitRoute(t, 0, 5*time.Second)
-	require.Equal(t, int64(1), fixture.handler.closed.Load())
+	require.Eventually(t, func() bool { return fixture.handler.closed.Load() == 1 }, 10*time.Second, 5*time.Millisecond,
+		"the armed keepalive must release the flow once the device stops acknowledging")
 }
 
 // TestTUNCopyFixtureRecordsTheRefusedHandover is the guard against a test that claims to exercise the
