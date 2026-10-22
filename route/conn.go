@@ -111,6 +111,12 @@ type ConnectionManager struct {
 	// halfCloseDiag counts what that observation did, so a real-device run proves the mechanism
 	// without instrumentation. See conn_halfclose_diagnostics.go.
 	halfCloseDiag halfCloseDiagnostics
+	// spliceKeepAlive overrides the liveness keepalive given to a handed-over stream; zero means
+	// use the constants. See armSplicedLiveness.
+	spliceKeepAlive spliceKeepAliveOptions
+	// spliceLivenessArmed counts handed-over streams whose liveness keepalive was armed, so a
+	// device log can prove the path ran rather than infer it. See armSplicedLiveness.
+	spliceLivenessArmed atomic.Uint64
 	// observersAccess guards observers, the set of half-closed flows whose probe has not settled
 	// yet. It exists so shutdown can settle them instead of reporting them as pending; see
 	// settlePendingObservers.

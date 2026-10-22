@@ -97,6 +97,9 @@ type tunProbeHandler struct {
 	dialer   N.Dialer
 	accepted atomic.Int64
 	closed   atomic.Int64
+	// onAccept, when set, receives the accepted userspace-stack connection. Tests that need to
+	// address the stack socket itself (rather than the flow) use it; production code never sets it.
+	onAccept func(net.Conn)
 }
 
 func (h *tunProbeHandler) JudgeFlow(uint8, netip.AddrPort, netip.AddrPort, []byte) singtun.FlowVerdict {
@@ -107,6 +110,9 @@ func (h *tunProbeHandler) NewDNSPacket([]byte, M.Socksaddr, M.Socksaddr, N.Packe
 
 func (h *tunProbeHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
 	h.accepted.Add(1)
+	if h.onAccept != nil {
+		h.onAccept(conn)
+	}
 	go func() {
 		metadata := adapter.InboundContext{
 			Inbound:       "probe-tun",

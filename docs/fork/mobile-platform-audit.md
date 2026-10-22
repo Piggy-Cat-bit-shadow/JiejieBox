@@ -43,6 +43,24 @@ stub), and the reachable stacks are:
 
 That is exactly the boundary `route/conn_halfclose.go` states, now with the platform facts behind it.
 
+### The DIRECT splice path, per platform
+
+The half-close observer is started by a copy direction; a handed-over DIRECT TCP stream has no copy
+direction. Which platforms can hand over is therefore a coverage question, not a detail:
+
+| Platform | TUN | `supportsSockets()` | DIRECT TCP handover | Proxy handover |
+| --- | --- | --- | --- | --- |
+| iOS | NetworkExtension fd → `*tun.NativeTun` | true (`stack_go_io_darwin.go`) | **yes** (tracker's `SyscallConn` resolves to `*net.TCPConn`) | never (proxy stream is not a `syscall.Conn`) |
+| Android | VpnService fd → `*tun.NativeTun` | true (`stack_go_io_linux.go`) | **yes** | never |
+| Desktop | TUN → `*tun.NativeTun` | true (windows/darwin/linux) | **yes** | never |
+
+So the DIRECT-only symptom the field report describes is the same on all three platforms, and it is
+the reason `route/splice.go` now arms the stack's keepalive right after a confirmed handover (idle 2m,
+interval 30s, count 3 → 3.5 minutes; `liveness_armed` in the TCP handover line proves it ran). The
+memory TUN used by the tests cannot hand over at all (`supportsSockets() == false`), which is why the
+handover step is `BLOCKED_BY_ENVIRONMENT` here and the arm itself is tested on the real userspace
+stack instead.
+
 ## 2. Answers
 
 **Do iOS and Android run the same TCP stack, TUN path and close behaviour?**

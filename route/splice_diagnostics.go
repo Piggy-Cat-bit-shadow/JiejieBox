@@ -276,6 +276,11 @@ type SpliceSnapshot struct {
 	// layer. A report that reads this number as a rate of working kernel splices is wrong in
 	// exactly the way this field was renamed to prevent.
 	Accepted uint64
+	// LivenessArmed is the number of handed-over STREAMS whose liveness keepalive was armed. It is
+	// meaningful for TCP only: a UDP session's NAT entry has its own timeout, so there is no
+	// half-closed stream to watch. A device report reads this next to Accepted: equal means every
+	// handed-over stream got the shorter keepalive, zero means the arm did not run on this path.
+	LivenessArmed uint64
 	// Reasons counts sessions by the point at which the decision ended, excluding
 	// acceptance. Entries are present only when non-zero.
 	Reasons map[string]uint64
@@ -313,7 +318,9 @@ func (m *ConnectionManager) SpliceDiagnostics() SpliceSnapshot {
 // Same cost model as the packet path: one atomic add per connection, at the moment its
 // decision is final, and never per read or per byte.
 func (m *ConnectionManager) TCPSpliceDiagnostics() SpliceSnapshot {
-	return m.tcpSpliceDiagnostics.view()
+	snapshot := m.tcpSpliceDiagnostics.view()
+	snapshot.LivenessArmed = m.spliceLivenessArmed.Load()
+	return snapshot
 }
 
 // view derives a snapshot from one counter array.
@@ -533,6 +540,11 @@ func (s SpliceSnapshot) summary(transport string) string {
 		if count := s.Reasons[reason.String()]; count > 0 {
 			fmt.Fprintf(&summary, " %s=%d", reason.String(), count)
 		}
+	}
+	// Printed only when the stream path armed something, so the packet summary keeps its exact
+	// previous form and a TCP summary without handovers stays byte-identical too.
+	if s.LivenessArmed > 0 {
+		fmt.Fprintf(&summary, " liveness_armed=%d", s.LivenessArmed)
 	}
 	return summary.String()
 }

@@ -18,6 +18,99 @@ import (
 	N "github.com/sagernet/sing/common/network"
 )
 
+// Spliced-stream liveness.
+//
+// # The hole this closes
+//
+// A handover that sing-tun accepts takes the connection out of userspace: `spliceConnection` returns
+// true and NewConnection returns before the copy loops start. That is the point of the feature, and it
+// is also why the half-close observation (conn_halfclose.go) never arms for these flows: the observer
+// is started by a copy direction finishing, and no copy direction exists.
+//
+// For a DIRECT TCP flow with tracking on - the only shape that can be handed over, because the target
+// must be a kernel socket - the remaining liveness signal was the userspace stack's own keepalive,
+// which ships with `idle = tcpEstablishedTimeout` (2h04m), interval 75s and count 9. A peer that
+// finished sending and then disappeared was therefore noticed three hours later, if at all; the
+// connection stayed in the traffic table and the connection list in the meantime, and only an explicit
+// close-all cleared it. Proxy flows never show this: their outbound stream is not a syscall.Conn, the
+// handover is refused, and the copy path's observation covers them in under two minutes.
+//
+// # Why a keepalive and not the copy observer
+//
+// The observer works by reading the finished side. After a handover the userspace stack's bytes move
+// between descriptors in the kernel, so a second reader would either steal stream data or fight the
+// handover - exactly the "two managers on one socket" failure this code must not introduce. A
+// keepalive needs no reader: it configures the TCP state machine that already owns the socket, and the
+// stack itself then detaches the connection when the peer stops answering, which runs the SAME release
+// path as a normal end (`detachConn` -> `spliceDetach` -> `spliceRelease` -> `OnClose` -> the tracker's
+// close). No new timer, no second owner, no bytes touched.
+//
+// # What the timings mean
+//
+// A spliced flow is not known to be half-closed when the handover happens, so the idle cannot be the
+// half-close observer's 20s: that would probe every idle Direct connection. Two minutes of complete
+// silence is not a working connection, and three unanswered probes thirty seconds apart give the
+// verdict. The bound is therefore 2m + 3*30s = 3.5 minutes after the peer stops answering - an order of
+// magnitude below the platform default it replaces, and the same order as the copy path's own bound.
+// A live peer answers a probe in its kernel without waking the application, so a healthy long-poll is
+// not disturbed, and a suspended peer whose socket still exists keeps its connection, which is
+// correct.
+const (
+	// spliceKeepAliveIdle is how long a handed-over stream must be completely silent before the
+	// userspace stack starts probing the peer's kernel.
+	spliceKeepAliveIdle = 2 * time.Minute
+	// spliceKeepAliveInterval is the gap between unanswered probes.
+	spliceKeepAliveInterval = 30 * time.Second
+	// spliceKeepAliveCount is how many unanswered probes mean the peer is gone. The stack raises
+	// ETIMEDOUT and detaches the connection, which releases the flow.
+	spliceKeepAliveCount = 3
+)
+
+// spliceKeepAliveOptions carries the production timings with a test override for each, the same
+// zero-means-constant convention as halfCloseOptions.
+type spliceKeepAliveOptions struct {
+	idle     time.Duration
+	interval time.Duration
+}
+
+func (m *ConnectionManager) spliceKeepAliveTimings() (idle time.Duration, interval time.Duration) {
+	timings := m.spliceKeepAlive
+	idle = timings.idle
+	if idle <= 0 {
+		idle = spliceKeepAliveIdle
+	}
+	interval = timings.interval
+	if interval <= 0 {
+		interval = spliceKeepAliveInterval
+	}
+	return idle, interval
+}
+
+// armSplicedLiveness gives a handed-over stream the only liveness signal userspace still owns.
+//
+// Called after the handover is confirmed and never before: a refused handover falls back to the copy
+// loops, which arm the half-close observer instead. Returns whether the configuration was accepted;
+// a refusal is logged and otherwise ignored, because a connection that cannot be configured is still
+// better served by the stack's default keepalive than by being closed here.
+func (m *ConnectionManager) armSplicedLiveness(ctx context.Context, target keepAliveConfigurable) bool {
+	if target == nil {
+		return false
+	}
+	idle, interval := m.spliceKeepAliveTimings()
+	err := target.SetKeepAliveConfig(net.KeepAliveConfig{
+		Enable:   true,
+		Idle:     idle,
+		Interval: interval,
+		Count:    spliceKeepAliveCount,
+	})
+	if err != nil {
+		m.logHalfClose(ctx, "spliced flow: keepalive unavailable, liveness stays with the stack default: ", err)
+		return false
+	}
+	m.spliceLivenessArmed.Add(1)
+	return true
+}
+
 type spliceTarget struct {
 	socket        tun.SpliceSocket
 	offload       N.PacketOffload
@@ -117,6 +210,10 @@ func (m *ConnectionManager) spliceConnection(ctx context.Context, conn net.Conn,
 		if state := managedConnStateOf(remoteConn); state != nil {
 			state.markKernelOwned()
 		}
+		// Userspace will never read this connection again, so the half-close observer cannot see
+		// it. The stack's own keepalive is the only remaining way to learn that the peer is gone;
+		// arm it with the splice timings rather than the two-hour platform default.
+		m.armSplicedLiveness(ctx, goConn)
 		return true, nil
 	}
 	// Splice declined and returns a bare bool. Its false paths inside sing-tun include the

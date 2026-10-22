@@ -288,7 +288,24 @@ counted. The per-platform evidence, the client-layer differences (iOS keeps its 
 teardown, Android replaces it; Android applies events from unordered coroutines) and the reconnect
 snapshot test are in `mobile-platform-audit.md`.
 
-### 9.6 Where this round landed
+### 9.6 DIRECT handover: the last uncovered path (found after the field report)
+
+The report's follow-up - lingering rows concentrated on DIRECT - located a hole the previous rounds did
+not cover. A tracked DIRECT TCP flow is handed to the kernel (`route/splice.go`), `NewConnection`
+returns before the copy loops, and the half-close observer therefore never arms; the only remaining
+signal was the userspace stack's keepalive at its 2h04m/75s/9 defaults, i.e. a release about three
+hours after the peer disappeared. Proxy flows cannot be handed over (their stream is not a
+`syscall.Conn`, so `trackedConn.SyscallConn` refuses), which is exactly why they released normally.
+
+The fix arms the stack's keepalive with splice timings after a confirmed handover and reports
+`liveness_armed` in the TCP handover summary; the release then runs the existing chain
+`detachConn` -> `spliceDetach` -> `spliceRelease` -> `OnClose` -> tracker close. `route/splice_liveness_test.go`
+pins the configuration, the refusal paths, the counter, and the effect on the real userspace stack
+(silent peer releases, acknowledging peer does not). Executing the handover itself is
+`BLOCKED_BY_ENVIRONMENT` on this host - the memory TUN cannot hand over - and is what the device
+`liveness_armed` line is for.
+
+### 9.7 Where this round landed
 
 - Code: `08699fd2c40dd29d0b66147d24daa805dc97870c` on `testing` (fast-forward push, no tag, no release).
 - CI on that commit: `Verify` PASS

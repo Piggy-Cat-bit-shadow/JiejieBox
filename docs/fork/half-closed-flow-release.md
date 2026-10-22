@@ -98,6 +98,42 @@ core can see. The 60s poll cap (down from 2min) is what keeps the worst case und
 costs one extra read per half-closed flow per minute, on a state that only exists while a request is
 waiting.
 
+### The same problem on the DIRECT path, where there is no copy loop at all
+
+The observation above starts from a copy direction returning EOF. A **direct TCP flow with connection
+tracking on** never gets there: the tracker's connection implements `tun.SpliceSocket`, its
+`SyscallConn` resolves to the real `*net.TCPConn`, and `spliceConnection` hands the stream to the
+kernel. `NewConnection` then returns before the copy loops exist, so no observer is ever armed.
+
+What remained for those flows was the userspace stack's own keepalive, which ships with
+`idle = tcpEstablishedTimeout` (2h04m), interval 75s and count 9 (`sing-tun`
+`flow_dispatch.go:20`, `stack_go_tcp_input.go:33-34`): a peer that finished sending and then
+disappeared was noticed about **3h15m** later, if at all. That is the shape of the field report -
+rows on DIRECT traffic, still Active an hour and fifty-six minutes after the applications closed, while
+proxy flows (which cannot be handed over: their outbound stream is not a `syscall.Conn`, so the
+handover is refused and the copy path's observer covers them in under two minutes) released normally.
+
+The fix arms the stack's keepalive with splice timings immediately after a confirmed handover
+(`armSplicedLiveness`, `route/splice.go`): idle 2m, interval 30s, count 3, so **3.5 minutes** after
+the peer stops answering the stack raises ETIMEDOUT and detaches the stream, which runs the existing
+release chain `detachConn` -> `spliceDetach` -> `spliceRelease` -> `OnClose` -> the tracker's close.
+It adds no timer, no second owner and no read: the observer cannot be reused here (a second reader on
+a handed-over stream would steal data or fight the handover), and the socket stays owned by the stack.
+
+The count is reported in the shutdown line as `liveness_armed=N` next to `accepted=N`, so a device log
+proves the arm ran on the handover path instead of inferring it. A live peer answers the probes in its
+kernel without waking the application, so a healthy long-poll is not disturbed; a silent stream with
+unacknowledged data is never probed (the stack refuses while it still has something to deliver), and
+its retransmission timeout is the signal instead.
+
+**What is executable here and what is not.** The arming, its configuration and its effect on the real
+userspace stack are tested (`route/splice_liveness_test.go`): a silent peer releases the flow through
+`onClose` and both tables, a peer that keeps acknowledging does not, and a refused configuration is
+not counted. The handover itself cannot be executed on this host: `Splice` requires a platform IO that
+supports sockets, and the only socket-capable TUN is a real `*NativeTun` (the memory TUN used by the
+tests reports `supportsSockets() == false`). That one step is `BLOCKED_BY_ENVIRONMENT` and is what the
+device run with `liveness_armed` is for - it is not claimed as verified.
+
 ## 4. The line a real-device run reports
 
 One log line at tunnel shutdown, in the same shape as the splice and transition summaries:
