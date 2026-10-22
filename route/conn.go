@@ -111,6 +111,11 @@ type ConnectionManager struct {
 	// halfCloseDiag counts what that observation did, so a real-device run proves the mechanism
 	// without instrumentation. See conn_halfclose_diagnostics.go.
 	halfCloseDiag halfCloseDiagnostics
+	// observersAccess guards observers, the set of half-closed flows whose probe has not settled
+	// yet. It exists so shutdown can settle them instead of reporting them as pending; see
+	// settlePendingObservers.
+	observersAccess sync.Mutex
+	observers       map[*halfClosedObserver]struct{}
 }
 
 func NewConnectionManager(logger logger.ContextLogger) *ConnectionManager {
@@ -221,6 +226,11 @@ func (m *ConnectionManager) Close() error {
 	if m.scheduler != nil {
 		_ = m.scheduler.Close()
 	}
+	// Settle the half-close observations that are still waiting on a timer. Called AFTER the
+	// connections are closed: at this point the flows ended because the tunnel did, and an
+	// observation that has not read its next probe yet has no verdict to report. Leaving them
+	// pending would print "pending N" for flows this call just closed.
+	m.settlePendingObservers()
 	// One line per tunnel lifetime, and only when UDP actually went through the splice
 	// decision. This is the only place the diagnostics are reported, deliberately: a
 	// per-session or per-packet log would be the very cost the counters exist to measure.

@@ -61,11 +61,18 @@ direction already observes by writing):
 1. arm a keepalive on the finished side — idle 20s, interval 10s, count 3, **only for flows that have
    half-closed**, so a live peer's kernel answers without waking its application and a peer whose
    socket is gone answers with RST;
-2. poll that side, 15s backing off to 2min: a read that has already returned EOF never blocks again,
-   so a reset can only be seen by a read that happens later;
+2. poll that side, 15s backing off to a 60s cap: a read that has already returned EOF never blocks
+   again, so a reset can only be seen by a read that happens later;
 3. release the flow **only** on a terminal error. `io.EOF` never releases, a local read deadline never
-   releases, `net.ErrClosed` (this side was closed by the surviving direction) stops the observer
-   without a verdict, and an unexpected byte stops it rather than eating stream data.
+   releases, `net.ErrClosed` (this side was closed by the surviving direction) settles the observation
+   as stopped without a verdict, and an unexpected byte stops it rather than eating stream data.
+
+Arming the keepalive and being able to read the verdict are two different capabilities, and the code
+checks both. The userspace stack (`*tun.GoConn`) reports the terminal state on a later read; a kernel
+socket (`*net.TCPConn`) accepts the configuration but keeps returning EOF on reads (the measurement
+in §2). Flows whose read side cannot report the verdict are **not observed at all** and are counted
+as skipped, so the boundary shows up in the summary instead of producing a pending entry that could
+never settle.
 
 The teardown is now one `flowTeardown` with a `sync.Once`, shared by both copy directions and the
 observer. `done.Swap(true)` was correct for exactly two participants; the observer is a third, and
@@ -75,39 +82,72 @@ Nothing is killed on elapsed time, zero bytes, a one-sided EOF alone, or "the ap
 background". A silent peer that still owns its socket answers the probes and keeps its connection for
 as long as it likes.
 
+### Detection delay, derived from the constants
+
+Two delays add up, and neither is a cleanup interval:
+
+| Delay | Bound | Where it comes from |
+| --- | --- | --- |
+| peer socket gone → terminal error | 50s | the userspace stack's own schedule: idle 20s + 3 probes × 10s |
+| terminal error → the observer reads it | ≤ 60s | the poll interval in effect, capped at 60s |
+| the read → teardown, both sockets closed | immediate | same goroutine |
+
+Worst case is under two minutes; the typical case is 20–110s, measured from the moment the peer's FIN
+was the last thing observed — **not** from the moment the application exited, which nothing in the
+core can see. The 60s poll cap (down from 2min) is what keeps the worst case under the bound; it
+costs one extra read per half-closed flow per minute, on a state that only exists while a request is
+waiting.
+
 ## 4. The line a real-device run reports
 
 One log line at tunnel shutdown, in the same shape as the splice and transition summaries:
 
 ```
-half-closed flows: 7 observed, released 7 (peer reset 6, keepalive timeout 1), stopped without a verdict 0
+half-closed flows: 7 observed, released 3 (peer reset 2, keepalive timeout 1), stopped 3, pending 0; skipped 4 (no probe capability 1, unobservable read side 3)
 ```
+
+The state contract behind it, and the invariant a reader should check:
+
+| Field | Meaning |
+| --- | --- |
+| `observed` | half-closed flows whose probe was armed |
+| `released` | ended with a peer-gone verdict; split into `peer reset` and `keepalive timeout` |
+| `stopped` | ended without a verdict: the surviving direction finished the flow, this side closed locally, an unexpected byte, or the tunnel shut down first |
+| `pending` | no final state yet; derived, so `observed == released + stopped + pending` always holds |
+| `skipped` | never observed: `no probe capability` (nothing in the chain can probe) or `unobservable read side` (a kernel socket whose later reads cannot report the verdict) |
 
 Acceptance on the phone needs no instrumentation:
 
 1. start the tunnel, use the applications that produce the reported rows (Bilibili is the original);
 2. close them, so their sockets send FIN;
-3. leave the phone idle for a minute or two;
-4. stop the tunnel and read the line above.
+3. leave the phone idle for a couple of minutes (the bound in §3 is under two);
+4. stop the tunnel and read the line above; `pending` should be 0 because shutdown settles what is
+   left, and `observed == released + stopped` must hold.
 
-`observed` counts half-closed flows taken under observation, `released` counts those whose finished
-side reported a terminal error, and the split says whether the peer reset us or nothing answered at
-all. A flow whose peer is still alive is observed and never released, which is the intended result for
-a suspended application.
+`released == observed` is **not** the pass criterion: a flow whose peer is still alive is observed and
+never released, which is the intended result for a suspended application. The criterion is the
+invariant plus the scenario — released flows are the ones whose transport answered "gone", and the
+skipped count says which inbounds the mechanism does not cover.
+
 
 ## 5. What this does not cover
 
 - **A kernel-socket inbound** (mixed, redirect) whose peer vanishes after its FIN. Measured above:
-  the read side reports EOF forever and only a write surfaces the reset. This is recorded as a
-  characterisation test (`e2e/connection_lifecycle_test.go`,
-  `TestTrafficTrackerHalfClosedKernelPeerIsNotObservable`) rather than papered over with a timeout.
-  The phone's own path is the TUN inbound, which is the one this mechanism does cover.
+  the read side reports EOF forever and only a write surfaces the reset, so the flow is **not
+  observed at all** and is counted as `skipped (unobservable read side)` in the summary. The boundary
+  is pinned twice: the skip counter test (`route/conn_halfclose_contract_test.go`,
+  `TestHalfCloseKernelSocketIsSkipped`) and the e2e characterisation
+  (`e2e/connection_lifecycle_test.go`, `TestTrafficTrackerHalfClosedKernelPeerIsNotObservable`). The
+  phone's own path is the TUN inbound, which is the one this mechanism does cover.
+- **A pure-userspace wrapper with no socket in the chain** (and a connection that refuses the
+  keepalive configuration): counted as `skipped (no probe capability)` and left exactly as before.
 - **An application the system suspended** (no FIN at all). The OS still owns the socket, the
   connection is genuinely open, and no probe can distinguish it from one the user is about to resume.
 - It is not a fix for the platform's own keepalive idle: sing-tun's userspace stack initialises it from
   `tcpEstablishedTimeout` (2h04m, upstream behaviour in `stack_go_conn.go:319`), so before this change
   nothing was going to act on an idle flow for about two hours, and even then there was no reader left
   to see it.
+
 
 ## 6. Gates
 

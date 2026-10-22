@@ -53,6 +53,7 @@ type scriptedConn struct {
 	reads        int
 	nextErr      error
 	nextBytes    int
+	configErr    error
 	closed       atomic.Bool
 	halfClosed   atomic.Bool
 	keepAliveSet atomic.Int32
@@ -115,6 +116,12 @@ func (c *scriptedConn) Close() error {
 	return nil
 }
 
+// halfCloseTerminalRead is the second capability the observer needs (see conn_halfclose.go): this
+// double scripts the read side, so it declares that a later read reports the terminal state it is
+// told to return. Without it the observation is correctly skipped and these decision tests would not
+// test anything.
+func (c *scriptedConn) halfCloseTerminalRead() bool { return true }
+
 func (c *scriptedConn) LocalAddr() net.Addr              { return M.Socksaddr{} }
 func (c *scriptedConn) RemoteAddr() net.Addr             { return M.Socksaddr{} }
 func (c *scriptedConn) SetDeadline(time.Time) error      { return nil }
@@ -124,8 +131,15 @@ func (c *scriptedConn) SetKeepAliveConfig(config net.KeepAliveConfig) error {
 	c.keepAliveSet.Add(1)
 	c.access.Lock()
 	c.keepAlive = config
+	configErr := c.configErr
 	c.access.Unlock()
-	return nil
+	return configErr
+}
+
+func (c *scriptedConn) setConfigErr(err error) {
+	c.access.Lock()
+	c.configErr = err
+	c.access.Unlock()
 }
 
 // silentPeerListener accepts connections and never answers, never closes.
@@ -161,7 +175,11 @@ type halfCloseDialer struct{ target M.Socksaddr }
 
 func (d halfCloseDialer) DialContext(ctx context.Context, network string, _ M.Socksaddr) (net.Conn, error) {
 	var dialer net.Dialer
-	return dialer.DialContext(ctx, network, d.target.String())
+	conn, err := dialer.DialContext(ctx, network, d.target.String())
+	if err != nil {
+		return nil, err
+	}
+	return conn, nil
 }
 
 func (d halfCloseDialer) ListenPacket(context.Context, M.Socksaddr) (net.PacketConn, error) {
@@ -177,19 +195,99 @@ type halfCloseFixture struct {
 	closeErr  atomic.Value
 }
 
+// peerSink is the far end: it accepts and records the connection so a test can close it on purpose,
+// which is how "the normal teardown won the race" is produced deterministically.
+type peerSink struct {
+	listener net.Listener
+	access   sync.Mutex
+	conns    []net.Conn
+}
+
+func newPeerSink(t *testing.T) *peerSink {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	sink := &peerSink{listener: listener}
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			sink.access.Lock()
+			sink.conns = append(sink.conns, conn)
+			sink.access.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		listener.Close()
+		sink.closeAll()
+	})
+	return sink
+}
+
+func (s *peerSink) addr() M.Socksaddr { return M.ParseSocksaddr(s.listener.Addr().String()) }
+
+func (s *peerSink) closeAll() {
+	s.access.Lock()
+	defer s.access.Unlock()
+	for _, conn := range s.conns {
+		conn.Close()
+	}
+	s.conns = nil
+}
+
+// closeWriteFirst half-closes the FIRST accepted connection, which is the peer of the inbound under
+// test (the dialer's own connection is accepted after it). That is how a device-side FIN looks from
+// the router: the peer that stops sending is the one whose socket it is reading.
+func (s *peerSink) closeWriteFirst() error {
+	s.access.Lock()
+	defer s.access.Unlock()
+	if len(s.conns) == 0 {
+		return net.ErrClosed
+	}
+	if closer, isCloser := s.conns[0].(interface{ CloseWrite() error }); isCloser {
+		return closer.CloseWrite()
+	}
+	return s.conns[0].Close()
+}
+
+func (s *peerSink) connCount() int {
+	s.access.Lock()
+	defer s.access.Unlock()
+	return len(s.conns)
+}
+
 func newHalfCloseFixture(t *testing.T) *halfCloseFixture {
 	t.Helper()
-	manager := NewConnectionManager(log.NewNOPFactory().Logger())
-	manager.halfClose = halfCloseTestTimings
+	fixture, _ := newHalfCloseFixtureSink(t, halfCloseTestTimings)
+	return fixture
+}
+
+// newHalfCloseFixtureSink is the fixture with its timings and its far end exposed, for the tests
+// that need to control either.
+func newHalfCloseFixtureSink(t *testing.T, timings halfCloseOptions) (*halfCloseFixture, *peerSink) {
+	t.Helper()
+	return newHalfCloseFixtureSinkLogged(t, timings, nil)
+}
+
+func newHalfCloseFixtureSinkLogged(t *testing.T, timings halfCloseOptions, captured *stallLog) (*halfCloseFixture, *peerSink) {
+	t.Helper()
+	managerLogger := log.NewNOPFactory().Logger()
+	if captured != nil {
+		managerLogger = captured.logger()
+	}
+	manager := NewConnectionManager(managerLogger)
+	manager.halfClose = timings
 	fixture := &halfCloseFixture{
 		manager: manager,
 		client:  newScriptedConn(),
 		closed:  make(chan struct{}),
 	}
 	t.Cleanup(func() { _ = manager.Close() })
-	listener := silentPeerListener(t)
+	sink := newPeerSink(t)
 	manager.NewConnection(context.Background(),
-		halfCloseDialer{target: M.ParseSocksaddr(listener.Addr().String())},
+		halfCloseDialer{target: sink.addr()},
 		fixture.client,
 		adapter.InboundContext{Destination: M.ParseSocksaddrHostPort("peer.example", 443)},
 		func(err error) {
@@ -199,7 +297,7 @@ func newHalfCloseFixture(t *testing.T) *halfCloseFixture {
 			}
 			fixture.closeOnce.Do(func() { close(fixture.closed) })
 		})
-	return fixture
+	return fixture, sink
 }
 
 // TestHalfClosedPeerGoneIsReleased is the defect: the peer's socket disappears after its FIN, and

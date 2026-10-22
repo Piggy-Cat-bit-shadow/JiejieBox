@@ -52,7 +52,7 @@ by this environment.
 
 | Layer | Before the first round's fix | After (measured) | Evidence |
 | --- | --- | --- | --- |
-| TUN flow | half-closed flow stays until close-all | released within ~1s of the peer's socket answering with RST / the stack's probe countdown expiring | `TestTUNHalfClosedPeerGoneClosesTheTransport` |
+| TUN flow | half-closed flow stays until close-all | released once a socket error is read; the in-process tests run with compressed timings (~0.8s), production is bounded by §9 | `TestTUNHalfClosedPeerGoneClosesTheTransport` |
 | route manager | count stays 1 | `Count()` returns to 0 | same test, `waitRoute(0, ...)` |
 | traffic table | entry stays, UI shows Active | entry gone, `Observed`/`Released` counted | same test + `HalfCloseDiagnostics` |
 | peer socket | never sees a close | peer observes EOF (the difference between a deleted row and a closed socket) | `target.sawPeerClose()` |
@@ -169,15 +169,110 @@ No production code changed. Why not:
 
 Only these, and only because they need the phone:
 
-1. Start the tunnel, use the applications, close them, leave the phone idle for a minute or two, stop
-   the tunnel. The log line `half-closed flows: N observed, released N (peer reset N, keepalive
-   timeout N), stopped without a verdict N` is the field evidence that the mechanism fires on iOS
-   (the code path is the same userspace stack these tests drive). No log-level change is needed: an
-   unset `log.level` resolves to the most verbose level (`log/log.go`), so the line is emitted by
-   default; a profile that sets `warn` or higher suppresses it.
+1. Start the tunnel, use the applications, close them, leave the phone idle for a couple of minutes,
+   stop the tunnel. The line
+   `half-closed flows: N observed, released N (peer reset N, keepalive timeout N), stopped N, pending N; skipped N (...)` is the field evidence. Read it against the contract in §9.1: `observed ==
+   released + stopped + pending`, `pending` should be 0 because shutdown settles the rest, and
+   `released < observed` is correct when a peer is still alive. `skipped (unobservable read side)`
+   should be non-zero exactly when a mixed/redirect inbound was in use - the boundary, stated up
+   front rather than discovered later. No log-level change is needed: an unset `log.level` resolves
+   to the most verbose level (`log/log.go`), so the line is emitted by default; a profile that sets
+   `warn` or higher suppresses it.
 2. If a row still lingers while the application is running in the background, that is the suspended
    case: the OS still owns the socket, and the observation is designed not to touch it. A screenshot
    of the same id's `closedAt` after the application is force-quit would close that question on the
    device side.
 3. A kernel-socket inbound (mixed) whose peer vanished after its FIN is the one shape measured as
    unobservable on this platform; nothing should be promised for it, and nothing is.
+
+## 9. Finalization round: diagnostics contract, capability boundary, latency
+
+Three things were still loose after the audit, and this round tightened them. Production code changed
+in one file plus its diagnostics, no architecture and no public configuration.
+
+### 9.1 The diagnostics now have a conserved state contract
+
+Before this round `observed` was incremented when the probe was armed, `released` when a verdict
+released the flow, and `stopped` on exactly one path (an unexpected byte). Every other way an
+observation ended - the surviving direction finished first, the socket was closed locally, the tunnel
+shut down - left it invisible, so the numbers did not add up and could not be used as evidence.
+
+Each observation now settles exactly once through one compare-and-swap, into `released` or `stopped`,
+and anything counted but not settled is `pending`, derived rather than stored:
+
+	observed == released + stopped + pending
+
+Details that make it hold under concurrency:
+
+- `observed` is incremented BEFORE the first timer exists, so no observation is ever visible as
+  a settle without having been counted;
+- `settle` is a single compare-and-swap, so a timer callback, the shared teardown, the shutdown sweep
+  and a local close all converge on one final state;
+- the teardown settles a still-pending observation BEFORE it runs `onClose`, so anything a reader
+  does from `onClose` (a log line, the shutdown summary, a test waiting on the channel) sees a
+  consistent state rather than one that becomes consistent a moment later;
+- the snapshot reads the settle counters BEFORE `observed`, so a settle that races the read cannot
+  make the derived `pending` negative.
+
+`pending` is not a rounding error - the probe runs on a timer - but the shutdown summary should not
+show it, so `ConnectionManager.Close` settles every observation still in flight before printing. At
+that moment the flows were closed by the tunnel, not by a verdict, and `stopped` is the truthful
+outcome.
+
+Flows that are never observed are counted separately and are NOT part of the invariant:
+`skipped (no probe capability)` and `skipped (unobservable read side)`.
+
+### 9.2 Keepalive-capable and verdict-capable are different predicates
+
+`SetKeepAliveConfig` only proves that a connection accepted the configuration. What the mechanism
+depends on is narrower: after the peer's FIN has been read, a LATER read must report the terminal
+state the transport learns. Measured on this tree:
+
+	userspace stack (*tun.GoConn)   Read returns c.err before the EOF conditions -> verdict observable
+	kernel socket (*net.TCPConn)    later Reads keep returning EOF; only a WRITE sees the reset
+
+So `observeHalfClosed` now resolves the connection, then checks the second capability
+(`terminalReadObservable`) before arming anything. A kernel-socket inbound is skipped and counted
+rather than observed, because an observation that can never reach a verdict is worse than none: it
+would add a timer and a pending entry that never settles. The wrapping chain (traffic tracker,
+counter, sniff cache, deadline wrapper) is still walked for the first capability, tested against the
+production order, and the walk has cycle and depth guards with their own test.
+
+A note on the shape of the check: the userspace stack is matched by concrete type because it cannot
+be given a marker method here. The unexported marker interface exists for the route package's own
+doubles, which script the read side and therefore have to declare the capability they are simulating.
+
+### 9.3 Latency is stated as a bound, not as a feeling
+
+The old text said "a minute or so" and the poll cap was two minutes, which made the worst case about
+50s + 120s. The cap is now 60s and the record carries the derivation:
+
+	peer gone -> terminal error    50s   idle 20s + 3 probes x 10s (the userspace stack's schedule)
+	error -> the observer reads it <=60s the poll interval in effect, capped
+	the read -> teardown           immediate
+
+Worst case under two minutes, typical 20-110s, measured from the peer's FIN - not from the
+application exiting, which nothing in the core can see. `TestHalfCloseDetectionBoundMatchesTheConstants`
+asserts the derivation against the constants, and `TestHalfClosePollBackoffIsBounded` asserts the
+schedule; a future tuning that breaks the promise fails a test. The cost of halving the cap is one
+extra read per half-closed flow per minute, on a state that exists only while a request waits.
+
+### 9.4 Tests added for the contract
+
+`route/conn_halfclose_contract_test.go` drives the transitions rather than log substrings:
+
+| Test | Pins |
+| --- | --- |
+| `...ReleasedByReset` / `...ReleasedByKeepaliveTimeout` | the two halves of `released`, and the invariant |
+| `...StoppedByNormalTeardown` | the surviving direction winning is `stopped`, never `released` |
+| `...StoppedByLocalClose` | a locally closed socket is `stopped` |
+| `...PendingIsADerivedState` | an armed observation with no read yet is `pending`, and it is the difference |
+| `...ShutdownSettlesPendingObservations` | shutdown leaves `pending 0` and says so in the summary |
+| `...KernelSocketIsSkipped` | a kernel socket is `skipped (unobservable)`, not observed |
+| `...UnarmableConnectionIsSkipped` / `...RefusedConfigurationIsSkipped` | the two ways arming fails |
+| `...DetectionBoundMatchesTheConstants` / `...PollBackoffIsBounded` | the latency promise and the schedule |
+| `...WalkTerminatesOnCycles` | depth and self-reference guards on the walk |
+| `...VerdictAndTeardownRaceSettleOnce` | 30 rounds of the two owners racing: one settlement, one `onClose` |
+
+The existing TUN tests still pass unchanged, which is the evidence that the real userspace stack is
+observable and that the release still closes the peer-visible socket.

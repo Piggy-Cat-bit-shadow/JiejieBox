@@ -63,9 +63,16 @@ func joinDaemonConnection(t *testing.T, manager *trafficcontrol.Manager, destina
 		OutboundChain: daemonProbeChain,
 	}, nil, daemonProbeChain[0])
 	t.Cleanup(func() { tracked.Close() })
-	active := manager.Connections()
-	require.NotEmpty(t, active)
-	return active[len(active)-1].ID
+	// The manager's list is a map iteration, so the new connection is found by the destination this
+	// call used rather than by position. Looking at the tail of the list made two joins in one test
+	// return the same id before this was fixed.
+	for _, metadata := range manager.Connections() {
+		if metadata.Metadata.Destination.Fqdn == destination {
+			return metadata.ID
+		}
+	}
+	t.Fatalf("the connection to %s was not registered", destination)
+	return uuid.Nil
 }
 
 func closedProtoEvents(events []*ConnectionEvent) []*ConnectionEvent {

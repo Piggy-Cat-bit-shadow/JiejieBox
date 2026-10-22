@@ -396,6 +396,8 @@ func TestKeepAliveWalkReachesTheSocketThroughTheSniffCache(t *testing.T) {
 	require.NotNil(t, setter,
 		"the walk must reach the socket the stack can probe, through the sniff cache and the tracker")
 	require.Same(t, socket, setter)
+	require.True(t, terminalReadObservable(setter),
+		"and the resolved connection must be one whose read side can report the verdict")
 	require.NoError(t, setter.SetKeepAliveConfig(net.KeepAliveConfig{Enable: true, Idle: time.Second}))
 	require.Equal(t, 1, socket.configured)
 }
@@ -411,6 +413,11 @@ func (c *walkKeepAliveConn) SetKeepAliveConfig(net.KeepAliveConfig) error {
 	c.configured++
 	return nil
 }
+
+// halfCloseTerminalRead stands in for the userspace stack's read semantics: a later read reports the
+// terminal state. A plain kernel socket does not, and that difference is what the two capabilities
+// separate.
+func (c *walkKeepAliveConn) halfCloseTerminalRead() bool { return true }
 
 type walkProbeOutbound struct{}
 
