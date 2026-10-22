@@ -277,7 +277,18 @@ extra read per half-closed flow per minute, on a state that exists only while a 
 The existing TUN tests still pass unchanged, which is the evidence that the real userspace stack is
 observable and that the release still closes the peer-visible socket.
 
-### 9.5 Where this round landed
+### 9.5 Platform coverage (iOS / Android)
+
+The mechanism is reachable on both phones, but that is a claim about their real path, not about shared
+source: both hand a TUN fd to this core, both resolve the profile's `stack` through the single
+`tun.NewStack` call (`protocol/tun/inbound.go:713`), both mobile artifacts ship without gVisor, and the
+default `stack` is the userspace one whose `*tun.GoConn` is exactly the type the observation accepts.
+A profile that selects `stack: "system"` produces kernel sockets on ANY platform and is skipped and
+counted. The per-platform evidence, the client-layer differences (iOS keeps its store across a
+teardown, Android replaces it; Android applies events from unordered coroutines) and the reconnect
+snapshot test are in `mobile-platform-audit.md`.
+
+### 9.6 Where this round landed
 
 - Code: `08699fd2c40dd29d0b66147d24daa805dc97870c` on `testing` (fast-forward push, no tag, no release).
 - CI on that commit: `Verify` PASS

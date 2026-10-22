@@ -189,3 +189,51 @@ func TestConnectionFilterByStateNeverShowsAClosedRowAsActive(t *testing.T) {
 	closedIDs, _ := rowsByState(connections, ConnectionStateClosed)
 	require.Equal(t, []string{"closed"}, closedIDs)
 }
+
+// TestConnectionReconnectSnapshotDropsRowsAndStaleUpdatesCannotRevive is the mobile reconnect
+// scenario, driven the way both phone clients actually run it.
+//
+// The two clients keep the store differently - iOS keeps one LibboxConnections for the life of the
+// CommandClient (it is only created when nil) and Android replaces it (ConnectionsViewModel nulls
+// the store on onDisconnected) - but both apply the new subscription's FIRST message, which the
+// daemon always sends with Reset (daemon/started_service.go, SubscribeConnections). This pins what
+// that Reset has to achieve on either: rows the new snapshot does not carry are gone, and an event
+// buffered from the old subscription that arrives afterwards can neither recreate them nor reopen
+// them as active.
+func TestConnectionReconnectSnapshotDropsRowsAndStaleUpdatesCannotRevive(t *testing.T) {
+	connections := newTestConnections(
+		connectionEventFor("kept", ConnectionEventNew, 0),
+		connectionEventFor("dropped", ConnectionEventClosed, recentClosedAt()),
+	)
+
+	// Second subscription: the daemon no longer lists "dropped" (its close aged out of the history
+	// window, or it ended while the client was away). The Reset snapshot is the whole truth.
+	connections.ApplyEvents(&ConnectionEvents{
+		Reset: true,
+		events: []*ConnectionEvent{
+			connectionEventFor("kept", ConnectionEventNew, 0),
+		},
+	})
+	allIDs, _ := rowsByState(connections, ConnectionStateAll)
+	require.Equal(t, []string{"kept"}, allIDs,
+		"a row the new snapshot does not carry must not survive the reconnect")
+
+	// A buffered UPDATE from the old subscription must not bring it back.
+	connections.ApplyEvents(&ConnectionEvents{events: []*ConnectionEvent{{
+		Type:          ConnectionEventUpdate,
+		ID:            "dropped",
+		UplinkDelta:   10,
+		DownlinkDelta: 20,
+	}}})
+	activeIDs, _ := rowsByState(connections, ConnectionStateActive)
+	require.Equal(t, []string{"kept"}, activeIDs,
+		"an update for an id the snapshot dropped must not create a row")
+
+	// A late CLOSED for it is harmless: it may be recorded as closed, never as active.
+	connections.ApplyEvents(&ConnectionEvents{events: []*ConnectionEvent{
+		connectionEventFor("dropped", ConnectionEventClosed, recentClosedAt()),
+	}})
+	activeIDs, _ = rowsByState(connections, ConnectionStateActive)
+	require.Equal(t, []string{"kept"}, activeIDs,
+		"a late close for a dropped id must not become an active row either")
+}
