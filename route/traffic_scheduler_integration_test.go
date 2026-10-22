@@ -131,7 +131,12 @@ func TestConfiguredRatePacesTheUserspaceTCPCopyLoop(t *testing.T) {
 
 		var done atomic.Bool
 		start := time.Now()
-		manager.connectionCopy(context.Background(), source, sink, false, bufio.DefaultIncreaseBufferAfter, &done, nil, copyWriter, flow)
+		// The flow's teardown is the object both directions and the half-close observer share. This
+		// test drives ONE direction of a net.Pipe flow (which has no keepalive capability, so the
+		// observer declines immediately), so the teardown exists only to be the real argument the
+		// production signature requires.
+		teardown := newFlowTeardown(context.Background(), nil, source, sink)
+		manager.connectionCopy(context.Background(), source, sink, false, bufio.DefaultIncreaseBufferAfter, &done, nil, copyWriter, flow, teardown)
 		return time.Since(start)
 	}
 
@@ -386,7 +391,8 @@ func TestShutdownReleasesAFlowParkedInTheShaper(t *testing.T) {
 	go func() {
 		defer close(copyReturned)
 		var done atomic.Bool
-		manager.connectionCopy(context.Background(), source, sink, false, bufio.DefaultIncreaseBufferAfter, &done, nil, copyWriter, flow)
+		teardown := newFlowTeardown(context.Background(), nil, source, sink)
+		manager.connectionCopy(context.Background(), source, sink, false, bufio.DefaultIncreaseBufferAfter, &done, nil, copyWriter, flow, teardown)
 	}()
 
 	// Let the copy run into the shaper, then shut the manager down the way a stop or a network
@@ -458,7 +464,8 @@ func TestNetworkTransitionReleasesAFlowParkedInTheShaper(t *testing.T) {
 	go func() {
 		defer close(copyReturned)
 		var done atomic.Bool
-		manager.connectionCopy(context.Background(), source, sink, false, bufio.DefaultIncreaseBufferAfter, &done, nil, copyWriter, flow)
+		teardown := newFlowTeardown(context.Background(), nil, source, sink)
+		manager.connectionCopy(context.Background(), source, sink, false, bufio.DefaultIncreaseBufferAfter, &done, nil, copyWriter, flow, teardown)
 	}()
 
 	time.Sleep(50 * time.Millisecond)

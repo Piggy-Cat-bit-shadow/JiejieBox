@@ -102,6 +102,12 @@ type ConnectionManager struct {
 	// flow and what finalises it, so the scheduler's flow lifetime is exactly a connection's.
 	// See trafficsched.Scheduler for the ownership reasoning.
 	scheduler *trafficsched.Scheduler
+	// halfClose carries the liveness-observation timings for a stream that has half-closed.
+	//
+	// Zero means "use the constants", and it exists so a test can exercise the observation without
+	// waiting for the production windows - the same convention as drainIdleGraceOverride. The
+	// mechanism itself, and why it is a keepalive rather than a timeout, is in conn_halfclose.go.
+	halfClose halfCloseOptions
 }
 
 func NewConnectionManager(logger logger.ContextLogger) *ConnectionManager {
@@ -412,8 +418,14 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 	uploadIncreaseBufferAfter := connectionIncreaseBufferAfter(this, conn, remoteConn)
 	downloadIncreaseBufferAfter := connectionIncreaseBufferAfter(this, remoteConn, conn)
 	uploadWriter, uploadFlow := m.uploadStreamGate(conn, remoteConn, metadata.TrafficClass)
-	go m.connectionCopy(ctx, conn, remoteConn, false, uploadIncreaseBufferAfter, &done, onClose, uploadWriter, uploadFlow)
-	go m.connectionCopy(ctx, remoteConn, conn, true, downloadIncreaseBufferAfter, &done, onClose, nil, nil)
+	// One teardown for this flow, shared by both copy directions and by the half-close observer.
+	//
+	// The decision used to be spelled `done.Swap(true)`: the first direction to finish got false and
+	// left the connection alone, the second got true and tore it down. That is correct for exactly
+	// two participants, and the observer is a third. See conn_halfclose.go.
+	teardown := newFlowTeardown(ctx, onClose, conn, remoteConn)
+	go m.connectionCopy(ctx, conn, remoteConn, false, uploadIncreaseBufferAfter, &done, onClose, uploadWriter, uploadFlow, teardown)
+	go m.connectionCopy(ctx, remoteConn, conn, true, downloadIncreaseBufferAfter, &done, onClose, nil, nil, teardown)
 }
 
 // uploadStreamGate decides whether this upload flow is scheduled, and returns the writer the copy
@@ -898,7 +910,7 @@ func (s *packetBatchLengths) int64s(n int) []int64 {
 	return make([]int64, n)
 }
 
-func (m *ConnectionManager) connectionCopy(ctx context.Context, source net.Conn, destination net.Conn, direction bool, increaseBufferAfter int64, done *atomic.Bool, onClose N.CloseHandlerFunc, copyWriter io.Writer, flow *trafficsched.Flow) {
+func (m *ConnectionManager) connectionCopy(ctx context.Context, source net.Conn, destination net.Conn, direction bool, increaseBufferAfter int64, done *atomic.Bool, onClose N.CloseHandlerFunc, copyWriter io.Writer, flow *trafficsched.Flow, teardown *flowTeardown) {
 	if flow != nil {
 		// Releasing the flow is what lets a close unblock this goroutine, and what removes it from
 		// the scheduler's queues so a torn-down connection cannot hold a lane.
@@ -923,10 +935,15 @@ func (m *ConnectionManager) connectionCopy(ctx context.Context, source net.Conn,
 		}
 	}
 	if done.Swap(true) {
-		if onClose != nil {
-			onClose(err)
-		}
-		common.Close(source, destination)
+		// The second direction to finish owns the teardown. onClose and both closes are one step,
+		// once, whichever participant got here first - the two copy directions and the half-close
+		// observer all reach this through the same object.
+		teardown.close(err)
+	} else if !direction && err == nil {
+		// The FIRST direction to finish, cleanly, in the upload arm: the peer has said it is done
+		// sending and this side will never read it again. Keep watching that peer so a socket that
+		// disappears afterwards is noticed instead of held forever. See conn_halfclose.go.
+		m.observeHalfClosed(source, teardown)
 	}
 	if !direction {
 		if err == nil {
