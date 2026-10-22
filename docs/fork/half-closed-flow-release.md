@@ -195,7 +195,7 @@ TLS-1.3-over-TCP"). They cannot depend on this work: `go list -deps ./common/tls
 
 
 The adversarial audit of this fix - what was attacked, what was disproved, and the standing limits -
-is `half-closed-flow-adversarial-audit.md`.
+is `half-closed-flow-adversarial-audit.md`. The platform question - what iOS and Android actually run, and whether this mechanism is on that path - is `mobile-platform-audit.md`.
 
 Tests, by what they pin:
 
