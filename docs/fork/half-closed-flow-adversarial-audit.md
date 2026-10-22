@@ -276,3 +276,13 @@ extra read per half-closed flow per minute, on a state that exists only while a 
 
 The existing TUN tests still pass unchanged, which is the evidence that the real userspace stack is
 observable and that the release still closes the peer-visible socket.
+
+### 9.5 Where this round landed
+
+- Code: `08699fd2c40dd29d0b66147d24daa805dc97870c` on `testing` (fast-forward push, no tag, no release).
+- CI on that commit: `Verify` PASS
+  (<https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39717123589>), `Android Core ARM64`
+  PASS, `Mobile contract verification` failed once and PASSED on re-run - a 29ms miss on a `>3s`
+  timing floor in `transport/http`'s own liveness test, a package that does not depend on `route` and
+  is untouched by this branch; no assertion was relaxed.
+- Device: still `NOT_VERIFIED_ON_DEVICE`, unchanged from §8.

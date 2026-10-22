@@ -175,6 +175,16 @@ to stop, since a late probe checks the teardown and returns.
 had failed on `5034c5ee0` for exactly that race:
 <https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39699826372>.
 
+The schema/state-contract round (`08699fd2c40`) and the earlier records were verified on CI as well:
+`Verify` passed on `ddf9d9fbef2`, `ce8d76658df` and `08699fd2c40`
+(<https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/39717123589>), and `Android Core ARM64`
+passed on each of them. `Mobile contract verification` failed once on `08699fd2c40` and passed when the
+same job was re-run: `transport/http`'s `TestActiveInboundStopsBecauseThePeerIsStarved` measured
+2.971s against a `> 3s` floor, in a package that does not depend on `route` and has not been touched by
+this work (last change `a1705021f10`), and the test passes locally at 4.8-7.0s. It is a runner
+scheduling flake, it is recorded here rather than papered over, and no assertion was relaxed to make it
+green.
+
 **One gate that is NOT green on this host, and must not be claimed as such.** `go test ./...`
 additionally fails three `common/tls` tests - `TestWindowsClientHandshakeTLS13`,
 `TestWindowsClientRoundtripTLS13`, `TestWindowsClientTLS13PostHandshakeConcurrentWrite` - which
