@@ -90,9 +90,11 @@ func (d tunProbeDialer) ListenPacket(context.Context, M.Socksaddr) (net.PacketCo
 
 // tunProbeHandler wires the real tracker and the real copy engine to the stack.
 type tunProbeHandler struct {
-	traffic  *trafficcontrol.Manager
-	conns    *ConnectionManager
-	dialer   tunProbeDialer
+	traffic *trafficcontrol.Manager
+	conns   *ConnectionManager
+	// An interface, so a test can swap in an outbound whose connection hides every optional
+	// capability - the shape a multiplexed proxy stream has from the route layer's point of view.
+	dialer   N.Dialer
 	accepted atomic.Int64
 	closed   atomic.Int64
 }
@@ -171,10 +173,11 @@ func newTUNHalfCloseFixtureWith(t *testing.T, target string, captured *stallLog,
 	manager.halfClose = halfCloseTestTimingsTUN
 	fixture := &tunHalfCloseFixture{manager: manager, traffic: traffic}
 	handler := &tunProbeHandler{traffic: traffic, conns: manager}
-	handler.dialer = tunProbeDialer{target: target}
+	probeDialer := tunProbeDialer{target: target}
 	if trackOutbound {
-		handler.dialer.tracker = manager
+		probeDialer.tracker = manager
 	}
+	handler.dialer = probeDialer
 	fixture.handler = handler
 	fixture.device = singtun.NewMemoryTun(singtun.MemoryTunOptions{
 		MTU: 1500,

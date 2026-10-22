@@ -13,6 +13,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/trafficcontrol"
 	"github.com/sagernet/sing-tun/gtcpip/header"
+	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/buf"
 	"github.com/sagernet/sing/common/bufio"
 	"github.com/sagernet/sing/common/bufio/deadline"
@@ -464,4 +465,76 @@ func TestTUNSingleConnectionCloseReleasesEverything(t *testing.T) {
 		"closing one tracker must close that connection's socket")
 	require.Eventually(t, func() bool { return fixture.handler.closed.Load() == 1 }, 3*time.Second, 5*time.Millisecond,
 		"onClose must run exactly once for the closed connection")
+}
+
+// plainOutboundConn hides everything optional about a connection: no keepalive capability, no
+// upstream link, no splice capability. It is what a multiplexed proxy outbound looks like from the
+// route layer, where the stream is an object the transport owns.
+type plainOutboundConn struct {
+	net.Conn
+}
+
+// CloseWrite is kept: a multiplexed proxy stream has to propagate a half-close, so hiding it would
+// make this fixture test a shape that does not exist. What is hidden is everything OPTIONAL - the
+// keepalive capability, the upstream link and the splice handover.
+func (c *plainOutboundConn) CloseWrite() error {
+	// Find the real socket's half-close the way a proxy stream would: through its own transport.
+	for conn := any(c.Conn); conn != nil; {
+		if closer, isCloser := conn.(interface{ CloseWrite() error }); isCloser {
+			return closer.CloseWrite()
+		}
+		upstream, hasUpstream := conn.(common.WithUpstream)
+		if !hasUpstream {
+			break
+		}
+		next := upstream.Upstream()
+		if next == conn {
+			break
+		}
+		conn = next
+	}
+	return c.Conn.Close()
+}
+
+type plainOutboundDialer struct {
+	target  string
+	tracker *ConnectionManager
+}
+
+func (d plainOutboundDialer) DialContext(ctx context.Context, _ string, _ M.Socksaddr) (net.Conn, error) {
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(ctx, "tcp", d.target)
+	if err != nil {
+		return nil, err
+	}
+	return &plainOutboundConn{Conn: d.tracker.TrackConn(conn)}, nil
+}
+
+func (d plainOutboundDialer) ListenPacket(context.Context, M.Socksaddr) (net.PacketConn, error) {
+	return nil, net.ErrClosed
+}
+
+// TestTUNHalfClosedReleaseDoesNotDependOnTheOutboundType is the proxy-outbound shape.
+//
+// The observation is armed on the INBOUND connection - the peer whose socket can disappear - so it
+// must not care what the outbound is. This drives the same release with an outbound connection that
+// hides every optional capability (as a multiplexed proxy stream does), and requires the release to
+// work anyway: the tracker leaves, the route entry goes, the peer observes the close, and the
+// observation was armed in the first place.
+func TestTUNHalfClosedReleaseDoesNotDependOnTheOutboundType(t *testing.T) {
+	target := startAdversarialTarget(t, adversarialSilent, 0)
+	fixture := newTUNHalfCloseFixture(t, tunProbeAddr(target.port()))
+	fixture.handler.dialer = plainOutboundDialer{target: tunProbeAddr(target.port()), tracker: fixture.manager}
+
+	deviceNext, stackNext := fixture.establish(t, 40108, target.port())
+	fixture.waitTraffic(t, 1, 3*time.Second)
+	fixture.waitRoute(t, 1, 3*time.Second)
+
+	fixture.emit(t, tunProbeTCPFrame(40108, target.port(), deviceNext, stackNext, header.TCPFlagFin|header.TCPFlagAck, nil))
+	fixture.waitTraffic(t, 0, 10*time.Second)
+	fixture.waitRoute(t, 0, 5*time.Second)
+	require.Eventually(t, target.sawPeerClose, 3*time.Second, 5*time.Millisecond,
+		"the release must close the real socket behind the wrapper")
+	require.Equal(t, uint64(1), fixture.manager.HalfCloseDiagnostics().Observed,
+		"the observation is armed on the inbound side, so a capability-less outbound must not disable it")
 }

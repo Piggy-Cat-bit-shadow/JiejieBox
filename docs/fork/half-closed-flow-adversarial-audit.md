@@ -85,8 +85,31 @@ a boundary, not as a fix; `NOT_COVERED` says why.
 | network drain / pause / wake | PASS as the existing gates | `route` full suite (`conn_reclaim_test.go`, `network_transition_reclaim_reason_test.go`, `box_power_test.go`); untouched by this work |
 | client event order / replay / reset | PASS (unit level) | `experimental/libbox/connection_events_test.go` |
 | concurrency | PASS | full `route` under `-race`; new tests `-race -count=3`; `GOMAXPROCS=1` run |
-| proxy outbounds (not direct) | NOT_COVERED | the observation watches the inbound side only; a proxy's own socket liveness is the surviving direction's writes. No evidence asked for it and no claim is made |
+| proxy outbounds (not direct) | PASS for the mechanism | `TestTUNHalfClosedReleaseDoesNotDependOnTheOutboundType`: an outbound connection that hides every optional capability still releases, closes the peer visible socket and arms the observation - it is armed on the inbound side, so the outbound type cannot disable it. The proxy protocol's own wire behaviour is not claimed |
+| daemon snapshot / reconcile / event translation | PASS | `daemon/connection_events_test.go` (6 tests) |
 | iOS device / system TUN stack | NOT_VERIFIED_ON_DEVICE | see §8 |
+
+## 3a. The daemon layer, driven with the real manager
+
+The UI's rows come from three functions of `StartedService`, and they had no test: the initial
+message, the per-second reconcile, and the per-event translation. Six tests now drive them against a
+real `trafficcontrol.Manager` (no Box, no gRPC stream, because they are pure functions of the manager
+and the snapshot map):
+
+- the initial message carries active connections open and the closed history closed, and only the
+  active ones enter the reconcile snapshot (`TestInitialConnectionStateCarriesActiveAndClosed`);
+- an id that went away between two passes is announced closed once, with its `ClosedAt` and its row,
+  and it is forgotten (`TestReconcileEmitsClosedForAGoneConnection`);
+- a connection created between two passes is announced rather than appearing silently
+  (`TestReconcileEmitsNewForAnUnannouncedConnection`);
+- a late streaming CLOSED after the reconcile already closed and forgot the id still translates to a
+  CLOSED event, never to a NEW one - including for an id it never announced
+  (`TestStreamingClosedAfterReconcileNeverResurrects`);
+- the closed event carries the final totals, the creation time and the chain, which is P4 of the
+  acceptance list (`TestClosedEventCarriesTheFinalTotals`);
+- and the client's summed deltas equal the manager's totals exactly, so "the counters are conserved
+  across the reconcile" is measured rather than assumed
+  (`TestReconcileKeepsTheTrafficDeltaAccounting`).
 
 ## 4. New findings register
 
@@ -98,6 +121,8 @@ a boundary, not as a fix; `NOT_COVERED` says why.
 | 4 | The first round's release test asserted the traffic table only | now also asserts route count, peer-visible close, `onClose` once, and zero surviving copy goroutines | **EVIDENCE GAP CLOSED** |
 | 5 | The first round had no false-positive test at the *integration* level (only at the observer level) | `TestTUNHalfClosedSlowResponseIsNotKilled` drives a real 2s late response through the stack with the observation armed | **EVIDENCE GAP CLOSED** |
 | 6 | `go.sum` gained 175 module-graph lines from a `go doc` invocation during the audit | reverted; no dependency was added or changed | **PROCESS NOTE** |
+| 7 | The daemon's three connection-list functions had no test at all, although the phone's rows are built from exactly them | `daemon/connection_events_test.go` (6 tests, above) | **GAP CLOSED (tests)** |
+| 8 | The observation could conceivably have depended on the outbound's capabilities | `TestTUNHalfClosedReleaseDoesNotDependOnTheOutboundType` with a capability-less outbound wrapper | **DISPROVEN** - it is armed on the inbound side |
 
 ## 5. Implementation notes
 
@@ -119,8 +144,8 @@ No production code changed. Why not:
 
 - Full `./route` package: PASS without race (434s) and PASS under `-race` (443s), on the final tree
   including every test in this record.
-- `./protocol/tun`, `./e2e`, `./common/trafficcontrol`, `./daemon`, `./experimental/libbox`,
-  `./experimental/clashapi` and the root package: PASS.
+- `./protocol/tun`, `./e2e`, `./common/trafficcontrol`, `./daemon` (6 new tests), `./experimental/libbox`
+  (8 new tests), `./experimental/clashapi` and the root package: PASS.
 - New tests: `-race -count=3` PASS; `GOMAXPROCS=1` PASS; `-count=5`/`-count=10` PASS on the e2e and
   TUN gates.
 - Resources over 8 release cycles: route count 0, traffic table 0, copy goroutines 0, goroutines
@@ -147,7 +172,9 @@ Only these, and only because they need the phone:
 1. Start the tunnel, use the applications, close them, leave the phone idle for a minute or two, stop
    the tunnel. The log line `half-closed flows: N observed, released N (peer reset N, keepalive
    timeout N), stopped without a verdict N` is the field evidence that the mechanism fires on iOS
-   (the code path is the same userspace stack these tests drive).
+   (the code path is the same userspace stack these tests drive). No log-level change is needed: an
+   unset `log.level` resolves to the most verbose level (`log/log.go`), so the line is emitted by
+   default; a profile that sets `warn` or higher suppresses it.
 2. If a row still lingers while the application is running in the background, that is the suspended
    case: the OS still owns the socket, and the observation is designed not to touch it. A screenshot
    of the same id's `closedAt` after the application is force-quit would close that question on the
