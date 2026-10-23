@@ -22,6 +22,8 @@ const (
 	defaultMinInterval               = 100 * time.Millisecond
 	defaultMaxInterval               = 10 * time.Second
 	defaultReleaseInterval           = time.Second
+	defaultIdleCooldown              = 30 * time.Second
+	defaultIdleBenefitFloor          = 512 * 1024
 	defaultReleaseShrinkFloor        = 16
 	defaultReleaseShrinkDivisor      = 10
 	defaultMaxRateLookahead          = time.Second
@@ -143,8 +145,13 @@ type adaptiveTimer struct {
 	pressure        *atomic.Uint32
 	limitThresholds pressureThresholds
 
-	access sync.Mutex
-	timer  *time.Timer
+	access            sync.Mutex
+	timer             *time.Timer
+	releaseAccess     sync.Mutex
+	lastUsage         uint64
+	idleCooldownUntil time.Time
+	trimMemory        func(context.Context)
+	freeOSMemory      func()
 
 	// pressureCallbacks tracks memory-pressure callbacks that have passed the active check
 	// and are still running their destructive cleanup.
@@ -345,36 +352,83 @@ func (t *adaptiveTimer) poll() {
 }
 
 func (t *adaptiveTimer) releaseIdleMemory(sample memorySample, connections int) {
+	t.releaseAccess.Lock()
+	defer t.releaseAccess.Unlock()
 	goroutines := runtime.NumGoroutine()
-	gcCycles := readGCCycles()
 	now := time.Now()
 	t.access.Lock()
+	if t.timer == nil {
+		t.access.Unlock()
+		return
+	}
 	shrank := hasMeaningfulDrop(t.lastGoroutines, goroutines) || hasMeaningfulDrop(t.lastConnections, connections)
-	idleGC := gcCycles == t.lastGCCycles
+	dropped := t.lastUsage > sample.usage && t.lastUsage-sample.usage >= defaultIdleBenefitFloor
+	pressure := t.aboveArmed(sample)
 	t.lastGoroutines = goroutines
 	t.lastConnections = connections
-	t.lastGCCycles = gcCycles
-	if t.belowResume(sample) || now.Sub(t.lastRelease) < defaultReleaseInterval || (!shrank && !idleGC) {
+	t.lastUsage = sample.usage
+	// An idle release is justified by an observed opportunity (a meaningful drop since the last
+	// sample) or by real pressure. A completed GC is NOT such an opportunity: FreeOSMemory itself
+	// runs a GC, so using "no GC since last time" as the trigger made the loop self-sustaining at a
+	// stable footprint (the 33 MB / 1 s case). Below-resume still means "the process is comfortably
+	// inside its floor"; above-armed overrides the low-yield cooldown so a real emergency is never
+	// delayed by the ordinary backoff.
+	if t.belowResume(sample) ||
+		now.Sub(t.lastRelease) < defaultReleaseInterval ||
+		(now.Before(t.idleCooldownUntil) && !pressure) ||
+		(!shrank && !dropped && !pressure) {
 		t.access.Unlock()
 		return
 	}
 	t.lastRelease = now
+	// Join the same barrier the pressure callbacks use. Add happens while access is held and
+	// after the timer != nil check, so stop() cannot start waiting between the check and the
+	// Add; Close therefore cannot return while an idle trim/GC is still touching the network.
+	t.pressureCallbacks.Add(1)
 	t.access.Unlock()
-	// Progressive pass first: release what is reusable (idle DNS/HTTP pools, idle outbound
-	// connections) and then let the runtime return the freed memory. This is NOT the aggressive
-	// ReleaseMemory path - it must not reset the network or cause a dial. Memory that is merely
-	// elevated should not cost the user a round of handshakes.
-	//
-	// It runs with t.access released, like every other callback here, because closing pools takes
-	// locks of its own and holding the timer lock across them would serialise them behind a timer.
+	defer t.pressureCallbacks.Done()
+	// Progressive pass first, then let the runtime return freed pages. This is not ReleaseMemory:
+	// it must not reset the network or force a dial.
 	if t.network != nil {
 		t.network.TrimMemory(context.Background())
 	}
-	runtimeDebug.FreeOSMemory()
+	trim := t.trimMemory
+	if trim != nil {
+		trim(context.Background())
+	}
+	free := t.freeOSMemory
+	if free != nil {
+		free()
+	} else {
+		runtimeDebug.FreeOSMemory()
+	}
+	after := memory.Total()
 	t.access.Lock()
 	t.lastGCCycles = readGCCycles()
+	if after+defaultIdleBenefitFloor >= sample.usage {
+		// No measurable gain: the footprint is at its floor. Back off for a while instead of
+		// running a full GC every second; a real pressure state bypasses this cooldown.
+		t.idleCooldownUntil = time.Now().Add(defaultIdleCooldown)
+	}
 	t.access.Unlock()
-	t.logger.Trace("released idle memory, usage: ", byteformats.FormatMemoryBytes(sample.usage), " -> ", byteformats.FormatMemoryBytes(memory.Total()))
+	if after < sample.usage {
+		t.logger.Trace("released idle memory, usage: ", byteformats.FormatMemoryBytes(sample.usage),
+			" -> ", byteformats.FormatMemoryBytes(after), ", delta ", byteformats.FormatMemoryBytes(sample.usage-after))
+	} else {
+		t.logger.Trace("idle release made no measurable gain, cooling down for ", defaultIdleCooldown,
+			", usage: ", byteformats.FormatMemoryBytes(after))
+	}
+}
+
+func (t *adaptiveTimer) aboveArmed(sample memorySample) bool {
+	switch t.policyMode {
+	case policyModeMemoryLimit, policyModeNetworkExtension:
+		return sample.usage >= t.limitThresholds.armed
+	case policyModeAvailable:
+		return sample.availableKnown && sample.available <= t.availableThresholds(sample).armed
+	default:
+		return false
+	}
 }
 
 func hasMeaningfulDrop(previous int, current int) bool {
