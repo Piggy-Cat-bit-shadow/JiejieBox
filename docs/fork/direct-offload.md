@@ -123,11 +123,14 @@ version (`protocol/tun/dns_hijack_consumer_contract_test.go`).
 
 So for a TUN client the eligibility decision in this document has **no data-plane effect**: a flow it
 marks as bypassable is still proxied in userspace. What it does have is a real effect in Linux
-redirect mode. On a shipped configuration the group `fast_path` field does not even reach this
-decision - `direct` is the only bypassable leaf, and transparent chains over it are authorised
-intrinsically, so `unset`, `true` and `false` produce the same verdict on every shape. See
-[tun-fast-path-value-review.md](tun-fast-path-value-review.md) §4 for the table and the tests that
-pin it.
+redirect mode.
+
+The group `fast_path` field controls the ATTEMPT, not the data path. `direct` is the only bypassable
+leaf, so an explicit `false` is the one value that can withhold the intrinsic grant a transparent
+chain over `direct` receives when nobody states a policy; `unset` and `true` are equivalent, and no
+value can grant a bypass the shape forbids. In ordinary TUN even the withhold changes no bytes. See
+[tun-fast-path-value-review.md](tun-fast-path-value-review.md) §4 for the table, the precedence
+decision, and the tests that pin it.
 
 It is worth being precise about what it does *not* cost, because the first version of this document
 claimed one extra rule evaluation and that was wrong. The pre-match verdict is discarded for a direct

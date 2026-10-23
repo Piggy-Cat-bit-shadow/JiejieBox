@@ -2,9 +2,12 @@
 
 Status: **D0_VALUE = NO_DISTINCT_FAST_PATH** for the group `fast_path` feature. The only real
 TUN data-plane difference this fork has is the post-handshake splice/`sendfile` handover, and that is
-already automatic, already default, and not what `fast_path` controls. No production behaviour was
-changed in this round; the code changes are a verification fix and tests, and they are listed in
-[§7](#7-what-this-round-changed).
+already automatic, already default, and not what `fast_path` controls. The field has exactly one
+observable control-plane effect in production - an explicit `false` withholds the bypass attempt on
+the one shape that can take it - and this round applied that precedence (see §4.3), because without
+it the documented tri-state could not switch the attempt off anywhere. No ordinary-TUN byte moves a
+different way because of the field, in either direction. The code changes are that precedence fix,
+one verification fix and tests; they are listed in [§7](#7-what-this-round-changed).
 
 Every claim below carries one of three labels:
 
@@ -60,9 +63,10 @@ unset, which is the default, selects the Go stack (`stack.go`: `case "", "go"` -
 the packet, and the stack terminates the connection in userspace. The verdict is a control-plane
 authorisation with no data-plane counterpart in ordinary TUN.
 
-The group `fast_path` field does not even change that verdict on a shipped configuration. It is
-inert in the strongest sense: see §4. What is real, and what the brief asks us to look for, is the
-**post-handshake splice handover**, which is attempted for every TUN connection that reaches
+The group `fast_path` field does not change that verdict's data-plane consequence either - but it is
+no longer wholly inert: an explicit `false` withholds the attempt on the one shape that can take it,
+and `unset`/`true` are equivalent. See §4. What is real, and what the brief asks us to look for, is
+the **post-handshake splice handover**, which is attempted for every TUN connection that reaches
 `ConnectionManager.NewConnection` (TCP, TLS-rewrite flows excepted) and `NewPacketConnection` (UDP) -
 no group, no field, no opt-in. That is the optimisation that already applies to all eligible TUN
 traffic.
@@ -150,7 +154,7 @@ Only the middle three move bytes **outside this process**, and none of them is g
 
 ---
 
-## 4. What `fast_path` actually does: the policy layer is inert
+## 4. What `fast_path` actually does: an off switch, not a fast path
 
 ### 4.1 The structural argument (`CURRENT_CONFIRMED`)
 
@@ -168,38 +172,43 @@ protocol/group/selector.go:46
 protocol/group/urltest.go:50
 ```
 
-Given that, `resolveFastPathRequest` (`route/fast_path.go:158`) cannot change a verdict:
+Given that, `resolveFastPathRequest` (`route/fast_path.go`) resolves as follows:
 
-1. **Leaf is not `direct`** -> `:164` returns false before any policy is read. The policy map is
-   never consulted.
-2. **Leaf is `direct` behind only transparent groups** -> `directFastPathLeafIsIntrinsic` (`:168`,
-   `:63`) returns true without reading a policy. This is deliberate: commit `afd5b5220c8` made the
-   fast path an intrinsic property of `direct` so that wrapping it in a selector for grouping does
-   not silently lose it.
-3. **Leaf is `direct` behind an opaque group** -> the authorisation may or may not be granted, but
-   `canFastBypass`'s chain gate (`route/route.go:921-925`) refuses because the opaque group may own
-   the dial/retry/accounting. The verdict is `BypassRefusedOutboundChain` either way.
-4. **A bare `direct` leaf** -> the chain gate does not apply (`len(chain) == 1`); the policy has no
-   input at all.
+1. **Leaf is not `direct`** -> returns false before any policy is read. The policy map is never
+   consulted; no value of the field can change this.
+2. **An explicit policy anywhere in the chain** -> the first one, outermost to inner, is the chain's
+   decision (`resolveFastPathPolicy`). On a transparent-direct chain an explicit `false` therefore
+   withholds the attempt, and an explicit `true` takes it.
+3. **No policy anywhere, leaf is `direct` behind only transparent groups** ->
+   `directFastPathLeafIsIntrinsic` returns true. This is deliberate: commit `afd5b5220c8` made the
+   fast path the default for `direct` so that wrapping it in a selector for grouping does not
+   silently lose it. Silence is not a refusal.
+4. **No policy anywhere, leaf is `direct` behind an opaque group** -> the intrinsic rule does not
+   apply, and even an outer explicit `true` cannot carry the flow: `canFastBypass`'s chain gate
+   (`route/route.go:921-925`) refuses because the opaque group may own the dial/retry/accounting.
+5. **A bare `direct` leaf** -> the chain gate does not apply (`len(chain) == 1`); no group exists
+   that could carry the field.
 
-The one shape where the tri-state field can change the authorisation value is a chain with a
-transparent prefix, an opaque group and a direct leaf - and there the verdict is already refused by
-the chain gate. So the field changes neither the decision nor the diagnostic on any shipped
-configuration. The only code that can observe it is a test double with a bypassable non-`direct`
-leaf (`bypassableNonDirectOutbound`), which has no production counterpart.
+So the field has exactly one observable control-plane effect in production: **`false` withholds the
+bypass attempt on the transparent-direct shapes; `unset` and `true` are indistinguishable.** It can
+never grant a bypass the shape forbids, and on ordinary TUN neither direction changes which bytes
+move where (see `protocol/tun` and `e2e`). The effect becomes data-plane-visible only where the
+transport honours the verdict, which today is Linux `auto_redirect`.
 
-This is now pinned by tests (`route/fast_path_production_equivalence_test.go`):
+This is pinned by tests (`route/fast_path_production_equivalence_test.go`):
 
-- `TestFastPathPoliciesCannotChangeAnyProductionVerdict` - every production chain shape x
-  unset/true/false x AI/ordinary tag x TCP/UDP -> the same `PreMatchAction`, and the shape's own
-  action.
-- `TestFastPathPoliciesCannotChangeAnyProductionBypassVerdict` - the same at `BypassVerdict` level,
-  including the refusal reason.
-- `TestDirectIntrinsicAuthorisationIsPolicyIndependent` - on every transparent-direct shape the grant
-  is intrinsic for every policy; withholding it refuses the flow, so the grant is load-bearing and
-  comes from the shape.
-- `TestExplicitFastPathFalseDoesNotSuppressTheDirectChainToday` - the one conflict with the field's
-  own documentation, pinned in the direction the shipped code implements.
+- `TestFastPathUnsetAndTrueAreIndistinguishable` - every production chain shape x unset/true x
+  AI/ordinary tag x TCP/UDP -> the same action and the same full `BypassVerdict`, including the
+  refusal reason.
+- `TestFastPathFalseOnlySuppressesTheIntrinsicShape` - every combination containing an explicit
+  false is resolved independently from the outermost explicit value: it withholds only the
+  transparent-direct shapes, and everywhere else it cannot change even the refusal reason.
+- `TestDirectIntrinsicAuthorisationRequiresSilence` - silence and true keep the grant, false
+  withholds it, and withholding it refuses the flow, so the grant is load-bearing.
+- `TestExplicitFastPathFalseSuppressesTheDirectChain` - the focused regression: the same chain takes
+  the bypass with no policy and falls through with `false`.
+- `TestExplicitFastPathFalseNeedsAGroup` - a bare direct leaf has no group to carry the field, and
+  the chain gate does not apply to it.
 - `TestDirectIsTheOnlyProductionBypassableOutbound` /
   `TestFastPathTransparentGroupsAreTheOnlyPolicyCarriers` - source scans that fail when a second
   bypassable leaf or a new declaring group appears, because that is the moment this whole section
@@ -212,42 +221,48 @@ Rows are the shapes a user can actually configure; columns are the three states 
 
 | Chain | `unset` | `true` | `false` | Difference |
 | --- | --- | --- | --- | --- |
-| `direct` (single leaf) | bypass | bypass | bypass | none |
-| `selector -> direct` | bypass | bypass | bypass | none |
-| `urltest -> direct` | bypass | bypass | bypass | none |
-| `selector -> urltest -> direct` | bypass | bypass | bypass | none |
+| `direct` (single leaf) | bypass | bypass | bypass (no group to carry the field; box.go refuses the key on a leaf) | none |
+| `selector -> direct` | bypass | bypass | **refused (chain)** | `false` withholds the attempt |
+| `urltest -> direct` | bypass | bypass | **refused (chain)** | same |
+| `selector -> urltest -> direct` | bypass | bypass | **refused (chain)** | same |
 | `selector -> loadbalance -> direct` | refused (chain) | refused (chain) | refused (chain) | none |
 | `loadbalance -> direct` | refused (chain) | configuration rejected: `fast_path` cannot be placed on `loadbalance` | configuration rejected | none |
 | any `-> proxy` leaf | refused (not bypassable) | refused (same) | refused (same) | none |
 | same `direct` leaf reached through two different groups | per-flow, each chain resolves its own value | same | same | none in outcome |
 
-The last row is the one piece of the design that **is** implemented and tested and still matters for
-the future: the authorisation is resolved per flow from the complete chain
-(`route/route.go:977-984`), never cached on the leaf, so one residential/direct leaf can be reached
-through an AI group and a plain group and the two answers stay independent
+The per-flow row is the piece of the design that keeps this honest: the authorisation is resolved
+from the complete chain (`route/route.go:977-984`), never cached on the leaf, so one residential or
+direct leaf can be reached through an AI group and a plain group and the two answers stay
+independent - including one group writing `false` and the other saying nothing
 (`TestFastPathPolicyFollowsTheGroupNotTheLeaf`, `TestFastPathPolicyIsNotCachedOnTheLeafTag`).
 
-### 4.3 The conflict the brief asked about
+### 4.3 The conflict the brief asked about, and the decision
 
 `option/fast_path.go` documents the tri-state as "unset = automatic, true = authorise, false =
-refuse, even if the tag looks like AI". `directFastPathLeafIsIntrinsic` is evaluated **before** the
-policy scan, so on `selector -> direct` an explicit `false` is found by the scan
-(`resolveFastPathPolicy` returns "decided, false") and then overruled by the intrinsic rule.
+refuse". Before this round `directFastPathLeafIsIntrinsic` was evaluated **before** the policy scan,
+so on `selector -> direct` an explicit `false` was found by the scan
+(`resolveFastPathPolicy` returned "decided, false") and then overruled by the intrinsic rule. The
+documented value could not occur anywhere: `false` could not suppress the one bypass leaf the
+product has, and on Linux `auto_redirect` - the only mode where the verdict has a real data-plane
+effect - a user who wrote `false` still got the native bypass.
 
-That is the shipped contract, deliberately tested since `afd5b5220c8`, and this round did **not**
-change it. The consequence, stated plainly:
+**The decision applied in this round: an explicit `false` wins over the intrinsic grant.** The policy
+scan now runs first, and the intrinsic rule applies only when no element of the chain states a policy.
+`unset` and `true` behave exactly as before; the regression the intrinsic rule fixed (a silent
+selector losing the fast path) still passes.
 
-- `false` cannot suppress the one bypass leaf the product has.
-- On Linux `auto_redirect` - the only mode where the verdict has a real data-plane effect - a user
-  who writes `false` on a `selector -> direct` group still gets the native bypass. That is the one
-  place where "the name of the setting and its behaviour" can be read as pointing in opposite
-  directions.
-
-The options, with the migration cost of each, are in §8. The recommendation is to let an explicit
-`false` win over the intrinsic grant and keep `unset`/`true` exactly as they are, because that is
-what the field's documentation already promises; it was not applied unattended because it changes the
-meaning of an existing published configuration key, which is a product decision rather than a
-performance fix.
+- Compatibility: the JSON shape is unchanged and no key moves. The only configurations whose
+  behaviour changes are those that explicitly wrote `false` on a transparent-direct chain - and they
+  now get what the key always said. On ordinary TUN the change is invisible in bytes; on Linux
+  `auto_redirect` those flows stay in userspace, slower and fully observed, which is the safe
+  direction for a decision the operator made.
+- Tests updated: `TestDirectFastPathSelectorExplicitFalseDoesNotDisableDirect` became
+  `TestDirectFastPathSelectorExplicitFalseSuppressesTheAttempt`; the nested-precedence test now
+  asserts outermost-first including the intrinsic shape; the production-equivalence tests assert
+  "unset == true" and "false only suppresses the intrinsic shape"; the e2e `false` case now expects
+  `ActionAccept` with identical bytes.
+- What `false` still cannot do: disable `direct` itself. The flow keeps its direct outbound and
+  reaches the same destination; only the native-bypass attempt is withheld.
 
 ---
 
@@ -259,14 +274,15 @@ performance fix.
 | --- | --- | --- |
 | `ActionBypass` vs `ActionAccept` at the shared dispatcher | `protocol/tun/native_bypass_dispatcher_test.go::TestDispatcherConsumesOnlyAFlow`, `TestDispatcherTreatsBypassAndAcceptIdentically` | identical consumption, judge count, write-back and tracker creation |
 | `ActionBypass` vs `ActionAccept` through the real go stack | `protocol/tun/native_bypass_trace_test.go::TestBypassReachesTheSameDataPathAsAccept` | the application's SYN is never handed back; only stack-generated replies are written |
-| `fast_path` unset/true/false through the real router, real stack, real peer, real bytes | `e2e/tun_fast_path_dataplane_test.go::TestFastPathVerdictDoesNotChangeTheTUNDataPath` | all three produce `ActionBypass`; the handler is still delegated to; the echo peer still receives bytes; the socks outbound is never reached |
+| `fast_path` unset/true through the real router, real stack, real peer, real bytes | `e2e/tun_fast_path_dataplane_test.go::TestFastPathVerdictDoesNotChangeTheTUNDataPath` | both produce `ActionBypass`; the handler is still delegated to; the echo peer still receives bytes; the socks outbound is never reached |
+| `fast_path: false` withholds the attempt and changes no bytes | same test, `false` subtest | the verdict flips to `ActionAccept` while bytes, handler delegation and the direct outbound chain stay identical |
 | verdict reversal (`ActionBypass` -> `ActionAccept`) | same test, `tracker-attached` subtest | attaching a tracker changes the verdict and nothing else: same bytes, same handler delegation, same outbound chain |
 | UDP verdict | same file, `TestBypassVerdictStillDeliversUDP` | a bypassed UDP datagram comes back through the userspace NAT, not from the platform |
 | splice refused -> copy still delivers both directions | `route/tcp_splice_diagnostics_test.go::TestTCPSpliceDiagnostics_FallbackKeepsCountersAndOwnership` | the fallback keeps byte integrity and releases the connection |
-| the tri-state cannot change a verdict | `route/fast_path_production_equivalence_test.go` (five tests, §4.1) | the policy layer is inert on every production shape |
+| the policy layer's contract | `route/fast_path_production_equivalence_test.go` (six tests, §4.1) | unset and true are indistinguishable on every production shape; false only suppresses the intrinsic shape; it can never grant |
 | the eligibility predicate allocates nothing | `route/direct_offload_bench_test.go::TestBypassDecisionUsesNoAllocations` | 0 allocs/op is a test, not a benchmark reading |
 
-The two e2e rows and the dispatcher row divide the chain explicitly: the new fixture writes packets
+The e2e rows and the dispatcher row divide the chain explicitly: the new fixture writes packets
 straight into the stack, so it covers the Handler seam and not `ForwardStage.Dispatch`; the
 dispatcher test covers the dispatcher's treatment of the verdict; the stack trace covers the stack's.
 No one of them claims another's layer.
@@ -277,20 +293,22 @@ No one of them claims another's layer.
 
 | Benchmark | Median | Allocs |
 | --- | --- | --- |
-| `BenchmarkBypassDecision` (all conditions pass) | 83.7 ns/op | 0 |
-| `BenchmarkBypassDecisionRefusedEarly` | 3.8 ns/op | 0 |
-| `BenchmarkBypassDecisionRefusedLate` | 5.3 ns/op | 0 |
-| `BenchmarkPreMatchDirectFlow/{eligible,ordinary}` | 80-85 ns/op (indistinguishable) | 0 |
+| `BenchmarkBypassDecision` (all conditions pass) | 85.5 ns/op | 0 |
+| `BenchmarkBypassDecisionRefusedEarly` | 3.7 ns/op | 0 |
+| `BenchmarkBypassDecisionRefusedLate` | 5.2 ns/op | 0 |
+| `BenchmarkPreMatchDirectFlow/{eligible,ordinary}` | 80-86 ns/op (indistinguishable) | 0 |
 | `BenchmarkOutboundBypassProfile` | 66 ns/op | 0 |
-| `BenchmarkFlowSetupBypassed` | 217 ns/op | 0 |
-| `BenchmarkFlowSetupUserspace` | 840 ns/op | 2 allocs, 104 B |
+| `BenchmarkFlowSetupBypassed` | 218 ns/op | 0 |
+| `BenchmarkFlowSetupUserspace` | 939 ns/op | 2 allocs, 104 B |
 
 Two readings matter and one does not:
 
-- The eligibility decision costs **~84 ns and zero allocations per flow** on this machine; the
-  refused paths are 4-5 ns. The earlier Apple M1 figures (14-41 ns) were `HISTORICAL_EVIDENCE` and
-  are directionally consistent; the absolute values are platform-specific.
-- Gating the decision on "the caller cannot honour a bypass" would save at most those ~84 ns for
+- The eligibility decision costs **~85 ns and zero allocations per flow** on this machine; the
+  refused paths are 4-5 ns. The precedence change added one policy-map lookup before the intrinsic
+  probe, which is inside the run-to-run noise (the pre-change median was 83.7 ns). The earlier Apple
+  M1 figures (14-41 ns) were `HISTORICAL_EVIDENCE` and are directionally consistent; the absolute
+  values are platform-specific.
+- Gating the decision on "the caller cannot honour a bypass" would save at most those ~85 ns for
   eligible flows and would break Linux `auto_redirect`, which is the one caller that can honour it.
   The `BenchmarkPreMatchDirectFlow` pair shows the computation and its refusal cost the same thing,
   so there is no order-of-magnitude saving to collect. **No gate was added.**
@@ -313,16 +331,25 @@ Two readings matter and one does not:
 
 | Gate | Result |
 | --- | --- |
-| `go test -count=1 -tags <others> ./route ./protocol/tun ./option ./e2e` | PASS (`route` 441 s, `protocol/tun` 3.6 s, `option` 0.06 s, `e2e` 22 s) |
+| `go test -count=1 -tags <others> ./route ./protocol/tun ./option ./e2e` | PASS (`route` 441.4 s, `protocol/tun` 3.6 s, `option` 0.06 s, `e2e` 22.5 s) |
 | `go test -race -count=3` on the fast-path/boundary test set (`./route`) | PASS |
 | `go test -race -count=3` on the verdict/boundary test set (`./protocol/tun`) | PASS |
 | `go test -race -count=2` on the e2e TUN set | PASS |
-| `go test -race -count=1 ./route/... ./protocol/tun/... ./option/...` | `route`, `protocol/tun`, `option` PASS; `route/rule` FAILED **once** on `TestTheUpdaterDoesNotOutliveItsClose` (expected 3 fetches, saw 4). The same test passes 10/10 when run alone under `-race`, it is in an untouched package, and the mechanism is an HTTP fetch that was already in flight when `Close` returned and completed before the assertion read the counter. Recorded as a pre-existing, load-sensitive test flake (`OUT_OF_SCOPE_DISCOVERY`); it is not caused by, and does not touch, anything in this review. |
 | `go test -count=10` on the fast-path/policy set | PASS |
 | `go build -tags <others> ./...` | PASS |
+| `go vet` on `./route ./option ./protocol/tun ./e2e` | clean |
 | `go test -run '^$' ./e2e ./route ./protocol/tun` (untagged test binaries, the CI compile gate) | PASS |
-| `gofmt -l` on every changed file, `go vet` on the changed packages | clean |
-| GitHub Actions `Verify` on the first pushed SHA `91f6c8fdbeb` (it contains every code change; the commits after it are documentation only) | PASS in 18m40s: gofmt, untagged and tagged builds, build matrix, both race steps. `Android Core ARM64` and `Mobile contract` also passed on that SHA. |
+| `gofmt -l` on every changed file | clean |
+| `BenchmarkBypassDecision` after the precedence change | 85.5 ns/op, 0 allocs (one extra empty-map lookup, inside noise) |
+| GitHub Actions `Verify` on every pushed SHA of this review | PASS. The push gate runs gofmt, untagged and tagged builds, the build matrix and both race steps; run IDs are in the round report. |
+
+The full `-race` sweep of `./route/... ./protocol/tun/... ./option/...` was run once in this round
+and failed **one** unrelated test: `route/rule TestTheUpdaterDoesNotOutliveItsClose` (expected 3
+fetches, saw 4). The same test passes 10/10 when run alone under `-race`, it is in an untouched
+package, and the mechanism is an HTTP fetch that was already in flight when `Close` returned and
+completed before the assertion read the counter. It is recorded as a pre-existing, load-sensitive
+test flake (`OUT_OF_SCOPE_DISCOVERY`); it is not caused by, and does not touch, anything in this
+review.
 
 `-race` required a mingw-w64 gcc (`CGO_ENABLED=1 CC=...gcc`); the default `go env CGO_ENABLED` on this
 host is `0`, so an unqualified `go test -race` fails with "requires cgo". That is an environment
@@ -342,17 +369,19 @@ property, not a repository one, and the CI runner has its own toolchain.
 | TUN TCP splice | all TUN stacks | two syscalls per chunk instead of a copy | attempted automatically for every non-TLS-rewritten TCP flow | loopback benchmark is inconclusive by construction | buffered copy | keep as the default; the real automatic optimisation |
 | TUN UDP splice | all TUN stacks | same | attempted automatically per session | not measured this round | userspace UDP NAT | keep |
 | TUN buffered copy | all | none | the fallback | reference | n/a | keep |
-| Group `fast_path` field | all | none today | changes no verdict on any production shape | **0%** | n/a | keep for compatibility and future bypassable leaves; document as inert (`this document`, §4) |
+| Group `fast_path` field | all | an explicit `false` can withhold the bypass attempt; `unset`/`true` cannot add one | `false` changes the verdict on transparent-direct chains; bytes unchanged in ordinary TUN | **0%** in ordinary TUN; real in Linux redirect mode | n/a (the flow continues on the normal path) | keep; `false` is a real off switch, `unset`/`true` are equivalent |
 
 **D0_VALUE = NO_DISTINCT_FAST_PATH.**
 
 Consequences applied in this round:
 
-- No new auto/manual fast-path scheduler, no gate, no redefinition of `fast_path` semantics.
+- No new auto/manual fast-path scheduler and no eligibility gate.
+- The precedence fix: an explicit `false` now withholds the intrinsic attempt, so the documented
+  tri-state is true wherever it can be true. `unset`/`true` are unchanged and remain equivalent.
 - The control-plane claim is corrected in code comments, tests and this document: a bypass verdict
   is an authorisation, not an acceleration, in ordinary TUN.
-- The tests that would notice a change in that premise are now explicit (§4.1), so a future
-  bypassable outbound cannot silently invalidate this review.
+- The tests that would notice a change in that premise are explicit (§4.1), so a future bypassable
+  leaf cannot silently invalidate this review.
 
 What the user's design intentions mean against the evidence:
 
@@ -361,9 +390,9 @@ What the user's design intentions mean against the evidence:
 2. **TUN automatic mode picks the best executable path** - it already does for the one mechanism
    that matters: splice is attempted for every flow, not gated by any group. There is no
    additional automatic fast path to turn on. `CURRENT_CONFIRMED`.
-3. **Manual group priority expresses intent** - the layer exists, is per-flow, follows the group
-   and not the leaf, and is fully tested; today its value is compatibility and forward-compatibility,
-   not acceleration. `CURRENT_CONFIRMED` (by the equivalence tests).
+3. **Manual group priority expresses intent** - the layer is per-flow, follows the group and not the
+   leaf, and now has a real off switch. There is still no manual setting that makes a flow faster
+   than the automatic path, because there is no faster executable path to unlock. `CURRENT_CONFIRMED`.
 4. **Safe fallback** - a refused verdict returns to the normal path at the same place it always
    did; a refused splice falls back to the copy loops; a refused port creates the normal
    connection. No fallback was added or removed. `CURRENT_CONFIRMED` for the paths tested here.
@@ -372,67 +401,68 @@ What the user's design intentions mean against the evidence:
 
 ## 7. What this round changed
 
-**No production behaviour changed.** The diff is verification and documentation.
+One production behaviour changed, narrowly and with tests: the `fast_path: false` precedence (§4.3).
+Everything else is verification and documentation.
 
 | Change | Why |
 | --- | --- |
+| `route/fast_path.go`: the explicit policy scan now precedes the intrinsic direct grant | The published tri-state could not switch the bypass attempt off anywhere. `unset`/`true` keep their behaviour; only an explicit `false` on a transparent-direct chain changes, and it changes to what the key documents. |
+| `option/fast_path.go`: the tri-state comment states that precedence | The package documents the field's meaning; it has to agree with the resolver. |
 | `protocol/tun/dns_hijack_consumer_contract_test.go`: `singTunModuleDir` now resolves the module from `go list -m` (the `Replace.Dir`) instead of reading the `require` line and `$HOME/go/pkg/mod` | The old helper asserted properties of the module the build does **not** use, and would `t.Skip` when the cache lived anywhere else. A skipped tripwire reads as a pass. `TestPinnedSourceIsTheReplacedFork` now pins the fix. |
-| `route/fast_path_production_equivalence_test.go` (new) | Pins §4 and fails the moment a second bypassable leaf or a precedence change makes the field observable. |
-| `e2e/tun_fast_path_dataplane_test.go` (new) | Carries the verdict through the real router, the real Go stack and real bytes on both TCP and UDP; includes the verdict-reversal control. |
+| `route/fast_path_production_equivalence_test.go` (new) | Pins §4 and fails the moment a second bypassable leaf or a precedence change alters the contract. |
+| `e2e/tun_fast_path_dataplane_test.go` (new) | Carries the verdict through the real router, the real Go stack and real bytes on both TCP and UDP; includes the `false` and tracker verdict-reversal controls. |
 | `e2e/harness_test.go`: `startChainUntracked` and the tracker flag | The default harness attaches a `flowRecorder` to every box, which makes `canFastBypass` refuse every flow with `BypassRefusedTracker`. Without this, an e2e test cannot reach a bypass verdict at all. |
 | `e2e/tun_chain_test.go`: a pluggable `judgeFlow` and a delegation counter | Lets a test drive the real router's `PreMatch` from packets, and observe that the flow reached userspace. |
-| `docs/fork/direct-offload.md` | Corrected the stale "re-verified at" pin; added the current review pointer and the inert-field finding. |
+| `docs/fork/direct-offload.md` | Corrected the stale "re-verified at" pin; added the current review pointer and the field's actual contract. |
 | `docs/fork/native-bypass-trace.md` | Added the current pin, the product-level test, and the harness limitation note. |
-| This document | The D0 review the brief requires. |
+| This document | The D0 review the brief requires, including the decision above. |
 
 Deliberately **not** done, with reasons:
 
-- **No gate on the eligibility decision.** It saves at most ~84 ns per eligible flow and cannot be
+- **No gate on the eligibility decision.** It saves at most ~85 ns per eligible flow and cannot be
   keyed on the inbound type without breaking the one transport that honours the verdict. Measured,
   not assumed.
-- **No redefinition of `fast_path: false`.** It is a product decision; see §8.
 - **No rewrite of the TUN data plane to make `ActionBypass` real.** The mechanism would either loop
   (the routing table sends the packet back into the TUN) or require per-destination route exclusion,
   which is L0 by another name. Recorded in `native-bypass-trace.md` and unchanged.
-- **No deletion of the field.** It decodes, validates, round-trips and is ready for a bypassable
-  leaf that is not `direct`; deleting a public JSON key would break configurations for no benefit.
+- **No deletion of the field.** It decodes, validates, round-trips, and now has a working off switch
+  plus a forward-compatible grant path for a future bypassable leaf that is not `direct`.
 
 ---
 
-## 8. Recommendation on `fast_path: false` (not applied)
+## 8. The `fast_path: false` decision, as applied
 
-The conflict in §4.3 has two defensible resolutions. Both are compatible with existing
-configurations at the JSON level; only the behaviour of an explicit `false` on a direct chain
-changes.
+§4.3 recorded the conflict; this round resolved it. The applied rule is:
 
-**Option A (recommended): an explicit `false` wins over the intrinsic grant.**
+```text
+explicit policy anywhere in the chain, outermost first
+  > intrinsic grant for transparent groups over direct
+  > automatic tag detection
+```
 
-Precedence becomes: explicit policy anywhere in the chain, outermost first -> then intrinsic
-direct -> then the automatic tag matcher. `unset` and `true` behave exactly as today; only a group
-that explicitly wrote `false` stops authorising the bypass attempt.
+Why this option and not "document the intrinsic rule and leave `false` inert":
 
-- Migration cost: a configuration that writes `false` on a `selector -> direct` group will, after the
-  change, keep those flows in userspace on Linux `auto_redirect` instead of bypassing them silently.
-  That is the behaviour the field's documentation already promises; the visible effect is a slower,
-  fully tracked path for exactly the flows the operator asked to keep off the native path. No JSON
-  changes, no new key.
-- Test cost: `fast_path_direct_inheritance_test.go::TestDirectFastPathSelectorExplicitFalseDoesNotDisableDirect`
-  and `TestExplicitFastPathFalseDoesNotSuppressTheDirectChainToday` change expected value; every
-  other test in `route/fast_path_*_test.go` stays.
-- Risk: the bypass is irreversible once taken, so "false keeps it off" is the safe direction; the
-  only cost is performance on a configuration that asked for less performance.
+- The field's own documentation promised `false = refuse`. A user-facing key whose documented value
+  cannot occur is the failure mode where the name and the behaviour point in opposite directions.
+- The bypass is irreversible once taken, so a user asking to keep a flow in userspace is asking for
+  the safer path. Honouring that is strictly safer than ignoring it.
+- The alternative becomes wrong by itself the moment a second bypassable leaf exists: `false` would
+  start working then, a silent semantic change at a distance. Making it work now, with tests, means
+  the behaviour is decided rather than discovered.
 
-**Option B: document the intrinsic rule as the contract and keep `false` inert.**
+Compatibility and migration:
 
-- Migration cost: none.
-- Risk: a user-facing key whose documented value cannot occur is exactly the "the name and the
-  behaviour point in opposite directions" failure the brief forbids. It is defensible only while
-  `direct` is the sole bypassable leaf - and when a second one appears, `false` starts working
-  anyway, which is a silent semantic change at a distance.
-
-Option A was not applied here because it changes an existing published key's meaning, and the brief
-explicitly reserves that decision. The change is small: `resolveFastPathRequest` reorders two
-blocks, and the tests above pin the new contract.
+- No JSON change; no key moves; official sing-box still does not know the key.
+- Only configurations that explicitly wrote `false` on a transparent-direct chain change, and only
+  on a transport that honours the verdict (Linux `auto_redirect`). They move from a native bypass to
+  the userspace direct path - slower, fully observed, and exactly what they asked for.
+- On ordinary TUN the change is invisible in bytes: `false` changes the verdict, and the verdict has
+  no data-plane effect there. The e2e test asserts both halves.
+- Tests changed with the contract: the old "false does not disable direct" test became
+  "false suppresses the attempt"; the nested precedence test now covers outermost-first on the
+  intrinsic shape; the equivalence tests assert `unset == true` and "false only suppresses".
+- If the decision is ever reversed, the tests fail with the contract named in the failure message,
+  not silently.
 
 ---
 
@@ -446,7 +476,7 @@ $tags = (Get-Content .\release\DEFAULT_BUILD_TAGS_OTHERS -Raw).Trim()
 
 go list -m -json github.com/sagernet/sing-tun        # Replace.Dir must be the fork
 go test -count=1 -tags $tags ./route ./protocol/tun ./option ./e2e
-go test -count=1 -tags $tags ./route -run 'TestFastPathPoliciesCannotChange|TestDirectIntrinsic|TestExplicitFastPathFalse|TestDirectIsTheOnly|TestFastPathTransparentGroups|TestDispatcherConsumes|TestBypassReachesTheSameDataPath|TestTCPSpliceDiagnostics_Fallback'
+go test -count=1 -tags $tags ./route -run 'TestFastPathUnsetAndTrue|TestFastPathFalseOnlySuppresses|TestDirectIntrinsicAuthorisationRequiresSilence|TestExplicitFastPathFalse|TestDirectFastPathSelectorExplicitFalse|TestDirectFastPathNested|TestDirectIsTheOnly|TestFastPathTransparentGroups|TestDispatcherConsumes|TestBypassReachesTheSameDataPath|TestTCPSpliceDiagnostics_Fallback'
 go test -count=1 -tags $tags ./e2e -run 'TestFastPathVerdictDoesNotChangeTheTUNDataPath|TestBypassVerdictStillDeliversUDP'
 go test -run '^$' -bench 'BenchmarkBypassDecision|BenchmarkPreMatchDirectFlow|BenchmarkFlowSetup' -benchmem -count=5 -tags $tags ./route
 ```
