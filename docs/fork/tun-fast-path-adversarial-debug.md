@@ -81,7 +81,7 @@ post-handshake splice attempt, and it is not gated by the field.
 | --- | --- | --- | --- |
 | SPLICE-ON-HALF | environment limit, not a defect | NOT_VERIFIED | `supportsSockets()==false` on the memory IO; both TUN shapes record `splice_rejected`, bytes still delivered |
 | EXPLICIT-BYPASS-ACTION | design asymmetry, documented | ACCEPTED | `action: bypass` bypasses the fast-path gate by design (`TestAnExplicitBypassRuleIgnoresTheFastPathGate`); in nfqueue mode those flows are an explicit operator choice to leave userspace |
-| ROUTE-RULE-FLAKE | S3, pre-existing, unrelated | REPORTED | `route/rule TestTheUpdaterDoesNotOutliveItsClose` under full-suite `-race` on a loaded host; passes 10/10 alone |
+| ROUTE-RULE-FLAKE | S3, pre-existing, unrelated | FIXED | the updater fetch loop is sequential, so at most ONE request may complete after `Close`; the assertion now tolerates that one and still fails a loop that outlives the close (it would add ~30 hits in the 150ms window). 20x normal, 20x `-race`, and the whole package 3x under `-race` pass |
 | TUN-VERIFY-01 | S2, fixed earlier in this campaign | FIXED | pinned-source helper now resolves the replaced module |
 | TUN-POLICY-01 | S2, fixed earlier in this campaign | FIXED | explicit false now withholds the intrinsic grant |
 
@@ -134,16 +134,21 @@ add their effects to any ordinary-TUN number.
 | new route and e2e controls under `-race -count=2` | PASS |
 | box-level configuration tests (`go test ./ -run TestFastPath`) | PASS: `fast_path` refused on a leaf and on loadbalance, accepted on selector/urltest, ordinary routing unchanged |
 | `go build`, `go vet`, untagged test-binary compile, `gofmt` | PASS / clean |
+| full `-race` sweep of `./route/... ./protocol/tun/... ./option/...` | PASS (route 451.1s, route/rule 11.4s, protocol/tun 5.4s, option 1.2s) |
 | CI `Verify` on the pushed SHA | PASS (run id in the round report) |
 
-The full `-race` sweep still hits the pre-existing `route/rule` flake on a loaded host, unchanged and
-unrelated; it is recorded in the value review §5.4.
+The `route/rule` flake that the earlier full sweep hit is fixed in this round: the updater's fetch
+loop is sequential, so at most the one request already in flight when `Close` returns may complete;
+the assertion now bounds that and still fails a loop that outlives the close (which would add ~30
+hits in the window). The full sweep above is the gate that used to fail, now green.
 
 ## 10. Unverified limits
 
 Linux nfqueue, L0 route installation, accepted TCP/UDP handovers and kernel movement, real NIC
 throughput/CPU, macOS/iOS/Android/Windows device behaviour, the Android platform auto-redirect
-implementation. Each needs hardware or privileges this environment does not have.
+implementation. Each needs hardware or privileges this environment does not have. The procedure for
+the first three already exists in [real-tun-validation.md](real-tun-validation.md) §1 (L0) and §2
+(splice), including what would falsify each claim; what is missing is the host, not the plan.
 
 ## 11. Gap to the original goal, and the smallest next step
 

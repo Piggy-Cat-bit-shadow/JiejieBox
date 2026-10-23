@@ -361,16 +361,16 @@ Two readings matter and one does not:
 | `go test -run '^$' ./e2e ./route ./protocol/tun` (untagged test binaries, the CI compile gate) | PASS |
 | `gofmt -l` on every changed file | clean |
 | `BenchmarkBypassDecision` after the precedence change | 85.5 ns/op, 0 allocs (one extra empty-map lookup, inside noise) |
+| full `-race` sweep of `./route/... ./protocol/tun/... ./option/...` | PASS (route 451.1 s, route/rule 11.4 s, protocol/tun 5.4 s, option 1.2 s) |
 | GitHub Actions `Verify` on every pushed SHA of this review | PASS. The push gate runs gofmt, untagged and tagged builds, the build matrix and both race steps; run IDs are in the round report. |
 
-The full `-race` sweep of `./route/... ./protocol/tun/... ./option/...` was run once during this
-review (on the tree before the precedence change; the change itself was gated with the targeted
-`-race` runs above) and failed **one** unrelated test: `route/rule TestTheUpdaterDoesNotOutliveItsClose`
-(expected 3 fetches, saw 4). The same test passes 10/10 when run alone under `-race`, it is in an
-untouched package, and the mechanism is an HTTP fetch that was already in flight when `Close`
-returned and completed before the assertion read the counter. It is recorded as a pre-existing,
-load-sensitive test flake (`OUT_OF_SCOPE_DISCOVERY`); it is not caused by, and does not touch,
-anything in this review.
+The full `-race` sweep failed **once** earlier in this review on
+`route/rule TestTheUpdaterDoesNotOutliveItsClose` (expected 3 fetches, saw 4). The test's own fixture
+showed why: the updater's fetch loop is sequential, so exactly one request may already be in flight
+when `Close` returns and complete before the assertion reads the counter. The assertion was comparing
+against a baseline taken immediately after `Close` and so failed on a loaded host without any leak.
+The adversarial round fixed the test to bound that one request; the full sweep above is the gate that
+used to fail, and it is green.
 
 `-race` required a mingw-w64 gcc (`CGO_ENABLED=1 CC=...gcc`); the default `go env CGO_ENABLED` on this
 host is `0`, so an unqualified `go test -race` fails with "requires cgo". That is an environment
