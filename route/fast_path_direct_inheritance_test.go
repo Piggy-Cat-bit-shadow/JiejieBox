@@ -44,8 +44,8 @@ func newBypassableNonDirectOutbound() *bypassableNonDirectOutbound {
 	return leaf
 }
 
-// Direct Fast Path is an intrinsic property of `direct`, not a privilege a transparent selection
-// layer grants or withholds.
+// Direct Fast Path is the DEFAULT for a transparent chain over `direct`, and an explicit decision
+// overrides the default.
 //
 // # The defect these tests pin
 //
@@ -56,13 +56,21 @@ func newBypassableNonDirectOutbound() *bypassableNonDirectOutbound {
 // the very same direct outbound takes when it is named without a group in front of it. The group did
 // not turn the feature off; it said nothing, and silence was treated as refusal.
 //
+// # Silence is not a decision, and a decision is not silence
+//
+// The rule is "a transparent selection layer that says NOTHING does not switch the fast path off".
+// A group that writes `"fast_path": false` HAS said something, and the explicit decision is honoured
+// first: the intrinsic grant below applies only when no element of the chain states a policy. Before
+// that precedence was fixed, an explicit false was found by the policy scan and then overruled,
+// which made the documented tri-state unusable as an off switch on the only leaf that can bypass.
+//
 // # What must stay true, and is tested on the other side of these assertions
 //
-// Only the group AUTHORISATION gate is relaxed, and only for this shape. `direct.CanBypass` and every
-// other blocker in canFastBypass are reached afterwards and unchanged, an opaque group anywhere in
-// the chain still refuses, and every non-direct shape keeps the previous policy precedence - explicit
-// values, nested outermost-first resolution, and the AI tag matcher. The tests below assert both
-// directions, because a relaxation that also relaxed eligibility would pass a one-sided test.
+// Only the group AUTHORISATION gate is involved. `direct.CanBypass` and every other blocker in
+// canFastBypass are reached afterwards and unchanged, an opaque group anywhere in the chain still
+// refuses, and every non-direct shape keeps the previous policy precedence - explicit values, nested
+// outermost-first resolution, and the AI tag matcher. The tests below assert both directions,
+// because a relaxation that also relaxed eligibility would pass a one-sided test.
 //
 // The two tests that matter most for safety are
 // TestDirectFastPathOpaqueGroupStillRefusesUnsetPolicy and
@@ -105,34 +113,50 @@ func TestDirectFastPathSurvivesTransparentSelectorWithNoPolicy(t *testing.T) {
 		"and the flow must actually take the bypass end to end, not merely pass the predicate")
 }
 
-// TestDirectFastPathSelectorExplicitFalseDoesNotDisableDirect is the "false is not an off switch for
-// direct" half, with the control case that keeps the meaning of false intact everywhere else.
-func TestDirectFastPathSelectorExplicitFalseDoesNotDisableDirect(t *testing.T) {
+// TestDirectFastPathSelectorExplicitFalseSuppressesTheAttempt is the "false is an off switch for the
+// ATTEMPT" half, and it is the contract this round fixed.
+//
+// The shape is still the intrinsic one, and the group is still the same object; the only difference
+// is that the group states a decision. The flow must fall through to the normal direct connection -
+// "refuse the attempt" is not "disable direct": the connection still reaches its destination.
+func TestDirectFastPathSelectorExplicitFalseSuppressesTheAttempt(t *testing.T) {
+	destination := M.ParseSocksaddr("93.184.216.34:443")
 	leaf := eligibleLeaf()
 	group := &transparentGroup{tag: "国内直连", selected: leaf}
-	router := fastPathRouter(t, group, FastPathPolicies{"国内直连": {Enabled: false}})
+	falseRouter := fastPathRouter(t, group, FastPathPolicies{"国内直连": {Enabled: false}})
 
-	destination := M.ParseSocksaddr("93.184.216.34:443")
 	metadata := fastBypassMetadata(N.NetworkTCP, destination)
-
 	chain := directIntrinsicChain(t, group, N.NetworkTCP, &metadata)
-	require.True(t, resolveFastPathRequest(chain, router.fastPathPolicies),
-		"a transparent selector cannot switch off an intrinsic property of its direct leaf")
-	require.Equal(t, adapter.PreMatchBypass,
-		router.preMatchFlow(context.Background(), &metadata, destination, nil, "").Action)
+	require.True(t, directFastPathLeafIsIntrinsic(chain), "the SHAPE is still the intrinsic one")
+	require.False(t, resolveFastPathRequest(chain, falseRouter.fastPathPolicies),
+		"but the explicit false must withhold the grant the shape would otherwise supply")
 
-	// Control: the SAME false policy on the SAME group must still refuse when the leaf is a proxy.
-	// Without this, the test above would also pass if `false` had simply stopped meaning anything.
+	falseMetadata := fastBypassMetadata(N.NetworkTCP, destination)
+	require.Equal(t, adapter.PreMatchContinue,
+		falseRouter.preMatchFlow(context.Background(), &falseMetadata, destination, nil, "").Action,
+		"a refused attempt continues on the normal path; the flow is not dropped or redirected")
+
+	// Control 1: the SAME shape with no policy still takes the bypass, so the false is doing the
+	// work and the shape has not silently stopped resolving.
+	unsetRouter := fastPathRouter(t, group, FastPathPolicies{})
+	unsetMetadata := fastBypassMetadata(N.NetworkTCP, destination)
+	require.Equal(t, adapter.PreMatchBypass,
+		unsetRouter.preMatchFlow(context.Background(), &unsetMetadata, destination, nil, "").Action,
+		"silence must keep the intrinsic grant (the regression this feature fixed)")
+
+	// Control 2: the SAME false on the SAME group with a proxy leaf still refuses, and refuses
+	// before the policy is read - the leaf-capability gate is upstream of everything here.
 	proxy := &nonBypassableOutbound{}
 	proxyGroup := &transparentGroup{tag: "国内直连", selected: proxy}
 	proxyRouter := fastPathRouter(t, proxyGroup, FastPathPolicies{"国内直连": {Enabled: false}})
-	proxyChain := directIntrinsicChain(t, proxyGroup, N.NetworkTCP, &metadata)
+	proxyMetadata := fastBypassMetadata(N.NetworkTCP, destination)
+	proxyChain := directIntrinsicChain(t, proxyGroup, N.NetworkTCP, &proxyMetadata)
 	require.False(t, directFastPathLeafIsIntrinsic(proxyChain),
 		"a proxy leaf is not the intrinsic shape, whatever the chain looks like")
 	require.False(t, resolveFastPathRequest(proxyChain, proxyRouter.fastPathPolicies),
 		"explicit false must still refuse a non-direct leaf")
 	require.NotEqual(t, adapter.PreMatchBypass,
-		proxyRouter.preMatchFlow(context.Background(), &metadata, destination, nil, "").Action,
+		proxyRouter.preMatchFlow(context.Background(), &proxyMetadata, destination, nil, "").Action,
 		"and the proxy flow must not be bypassed")
 }
 
@@ -176,35 +200,62 @@ func TestDirectFastPathSurvivesNestedTransparentGroups(t *testing.T) {
 		"depth must not matter: a transparent chain is transparent at any length")
 }
 
-// TestDirectFastPathIgnoresConflictingNestedPolicy covers both conflict directions and, in the same
-// test, proves the nested precedence for non-direct leaves is untouched.
-func TestDirectFastPathIgnoresConflictingNestedPolicy(t *testing.T) {
+// TestDirectFastPathNestedExplicitPolicyWinsOverIntrinsic covers the precedence on the intrinsic
+// shape: the outermost explicit decision wins, an inner explicit false with nothing outside is still
+// a decision, and only a completely silent chain receives the intrinsic grant. The control at the
+// end proves nested precedence for non-direct leaves is untouched.
+func TestDirectFastPathNestedExplicitPolicyWinsOverIntrinsic(t *testing.T) {
 	destination := M.ParseSocksaddr("93.184.216.34:443")
 
 	for _, testCase := range []struct {
-		name       string
-		outerValue bool
-		innerValue bool
+		name     string
+		policies FastPathPolicies
+		want     bool
+		why      string
 	}{
-		{"outer false, inner true", false, true},
-		{"outer true, inner false", true, false},
+		{
+			name:     "outer false, inner true",
+			policies: FastPathPolicies{"outer": {Enabled: false}, "inner": {Enabled: true}},
+			want:     false,
+			why:      "the group the flow entered said no, and an explicit decision wins outermost-first",
+		},
+		{
+			name:     "outer true, inner false",
+			policies: FastPathPolicies{"outer": {Enabled: true}, "inner": {Enabled: false}},
+			want:     true,
+			why:      "the outermost explicit decision wins, exactly as traffic_class resolves",
+		},
+		{
+			name:     "outer unset, inner false",
+			policies: FastPathPolicies{"inner": {Enabled: false}},
+			want:     false,
+			why:      "an inner explicit false is still a decision, and an explicit decision beats the intrinsic default",
+		},
+		{
+			name:     "outer unset, inner unset",
+			policies: FastPathPolicies{},
+			want:     true,
+			why:      "silence keeps the intrinsic grant",
+		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			leaf := eligibleLeaf()
 			inner := &transparentGroup{tag: "inner", selected: leaf}
 			outer := &transparentGroup{tag: "outer", selected: inner}
-			router := fastPathRouter(t, outer, FastPathPolicies{
-				"outer": {Enabled: testCase.outerValue},
-				"inner": {Enabled: testCase.innerValue},
-			})
+			router := fastPathRouter(t, outer, testCase.policies)
 
 			metadata := fastBypassMetadata(N.NetworkTCP, destination)
 			chain := directIntrinsicChain(t, outer, N.NetworkTCP, &metadata)
 			require.True(t, directFastPathLeafIsIntrinsic(chain))
-			require.True(t, resolveFastPathRequest(chain, router.fastPathPolicies),
-				"a policy conflict between transparent groups cannot reach the direct leaf")
-			require.Equal(t, adapter.PreMatchBypass,
-				router.preMatchFlow(context.Background(), &metadata, destination, nil, "").Action)
+			require.Equal(t, testCase.want, resolveFastPathRequest(chain, router.fastPathPolicies),
+				testCase.why)
+
+			result := router.preMatchFlow(context.Background(), &metadata, destination, nil, "")
+			wantAction := adapter.PreMatchContinue
+			if testCase.want {
+				wantAction = adapter.PreMatchBypass
+			}
+			require.Equal(t, wantAction, result.Action, testCase.why)
 		})
 	}
 

@@ -37,6 +37,16 @@ type FastPathPolicies map[string]option.FastPathPolicy
 // front of it. The group was being treated as if it had turned the fast path off, when it had said
 // nothing at all.
 //
+// # Silence is not a decision; a decision is
+//
+// The rule this function implements is "a transparent selection layer that says NOTHING does not
+// switch the fast path off". It is not "a transparent selection layer cannot switch it off": a group
+// that writes `"fast_path": false` has made a decision, and resolveFastPathRequest consults the
+// explicit policy FIRST for exactly that reason. Before that precedence was fixed, an explicit false
+// was found by the policy scan and then overruled here, which made the documented tri-state
+// impossible to use as an off switch on the one leaf that can actually bypass. The intrinsic grant
+// now applies only where no element of the chain states a policy.
+//
 // # Why the transparent-chain condition is not decorative
 //
 // The condition is what keeps this from becoming "any chain ending in direct is bypassed". A group
@@ -120,26 +130,28 @@ func directFastPathLeafIsIntrinsic(chain []adapter.Outbound) bool {
 //  1. A chain whose LEAF cannot carry the fast path on its own is never authorised. One element
 //     means the flow resolved straight to that outbound with no logical group in front of it, so
 //     there is no group policy to read and the existing behaviour stands untouched.
-//  2. A chain that is nothing but transparent selection layers in front of a real `direct` leaf is
-//     authorised WITHOUT consulting policy at all. This is the Direct Fast Path restated as an
-//     intrinsic property of `direct`: a pure selection layer does not get to switch it off. See
-//     directFastPathLeafIsIntrinsic.
-//  3. Otherwise the FIRST explicit fast_path, scanning outermost to inner. An explicit false is a
-//     decision, so it wins over automatic detection just as an explicit "traffic_class": "default"
-//     stops automatic classification.
-//  4. Only if NO element of the chain carries an explicit policy, automatic tag detection - the
-//     same AI matcher that traffic_class uses, again outermost to inner.
+//  2. Otherwise the FIRST explicit fast_path, scanning outermost to inner. An explicit decision is
+//     the chain's decision: it wins over the intrinsic grant below, and an explicit false wins over
+//     automatic detection, just as an explicit "traffic_class": "default" stops automatic
+//     classification. This is the order that makes the tri-state usable as an off switch on the one
+//     leaf the product can bypass.
+//  3. Only if NO element of the chain carries an explicit policy, a chain that is nothing but
+//     transparent selection layers in front of a real `direct` leaf is authorised. This is the
+//     Direct Fast Path restated as an intrinsic property of `direct`: a pure selection layer that
+//     says nothing does not get to switch it off. See directFastPathLeafIsIntrinsic.
+//  4. Only if neither applies, automatic tag detection - the same AI matcher that traffic_class
+//     uses, again outermost to inner.
 //  5. Otherwise false.
 //
-// # Where rule 2 sits, and where it does not
+// # Where the intrinsic rule sits, and where it does not
 //
-// Rule 2 is checked BEFORE the policy scan and applies only to the direct-with-transparent-chain
-// shape. Every other shape - a proxy leaf, a leaf that cannot carry the fast path, any chain
-// containing an opaque group - falls through to rules 3-5 and keeps the previous behaviour exactly,
-// including nested explicit-true/false precedence and the AI matcher. That boundary is the whole
-// safety argument for this rule, so it is stated here rather than left to the call order.
+// Rule 3 is reached only when the chain states no policy at all, and applies only to the
+// direct-with-transparent-chain shape. Every other shape - a proxy leaf, a leaf that cannot carry
+// the fast path, any chain containing an opaque group - falls through to the same rules 2-4 that
+// existed before, including nested explicit-true/false precedence. That boundary is the whole safety
+// argument for this rule, so it is stated here rather than left to the call order.
 //
-// # Why the outermost element wins for those other shapes
+// # Why the outermost element wins
 //
 // Identical to traffic_class, and for the identical business reason. The intent belongs to the
 // logical group the flow was routed into, not to the node that happens to serve it: one residential
@@ -153,7 +165,7 @@ func directFastPathLeafIsIntrinsic(chain []adapter.Outbound) bool {
 // # The leaf is consulted, and only for a negative
 //
 // The leaf participates solely to answer "could this outbound be bypassed at all". It never grants
-// authorisation except through rule 2, where the grant comes from the SHAPE of the chain (transparent
+// authorisation except through rule 3, where the grant comes from the SHAPE of the chain (transparent
 // groups in front of a direct leaf) rather than from anything the leaf reports about itself.
 func resolveFastPathRequest(chain []adapter.Outbound, policies FastPathPolicies) bool {
 	// A single-element chain has no logical group to carry a policy, so there is nothing to
@@ -164,13 +176,18 @@ func resolveFastPathRequest(chain []adapter.Outbound, policies FastPathPolicies)
 	if _, leafCanCarry := chain[len(chain)-1].(adapter.BypassableOutbound); !leafCanCarry {
 		return false
 	}
-	// Rule 2. The one place a group's fast_path configuration is not the deciding input.
-	if directFastPathLeafIsIntrinsic(chain) {
-		return true
-	}
+	// Rule 2. An explicit decision anywhere in the chain is the chain's decision, and it wins over
+	// both the intrinsic grant and automatic detection. This is what makes an explicit false able to
+	// see the fast path off on the one leaf that can take it.
 	if authorised, decided := resolveFastPathPolicy(chain, policies); decided {
 		return authorised
 	}
+	// Rule 3. Nothing in the chain stated a policy, and the shape is transparent groups over
+	// `direct`: silence is not a refusal.
+	if directFastPathLeafIsIntrinsic(chain) {
+		return true
+	}
+	// Rule 4. No explicit policy and not the intrinsic shape: automatic tag detection.
 	for _, outbound := range chain {
 		if !canCarryFastPathPolicy(outbound) {
 			continue

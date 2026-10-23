@@ -29,7 +29,10 @@ import (
 //
 // The third is the one a plain bool cannot express, and it is load-bearing: an operator whose AI
 // selector is used for flows that must stay in userspace writes `false`, and automatic detection
-// must not override a decision that explicit. See FastPathRequest.
+// must not override a decision that explicit. The same applies to the intrinsic grant a transparent
+// chain over `direct` receives when nobody states a policy: an explicit false is a decision, so
+// resolveFastPathRequest reads it BEFORE the intrinsic rule and the chain refuses the attempt. See
+// FastPathRequest.
 //
 // # Why the shared envelope rather than SelectorOutboundOptions
 //

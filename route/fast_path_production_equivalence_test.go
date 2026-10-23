@@ -19,38 +19,36 @@ import (
 
 // The tri-state `fast_path` field, measured against EVERY production chain shape.
 //
-// # The theorem this file pins
+// # The contract this file pins
 //
 // The repository has exactly one production outbound that implements adapter.BypassableOutbound -
 // `direct` - and exactly two groups that declare adapter.FastPathAuthorizedGroup - `selector` and
-// `urltest`, both transparent. Given that, `fast_path` cannot change a verdict:
+// `urltest`, both transparent. Given that:
 //
-//  1. a chain whose leaf is not `direct` is refused by `resolveFastPathRequest` before any policy is
-//     read, because the leaf cannot carry the fast path;
-//  2. a chain of transparent groups ending in `direct` is authorised by
-//     `directFastPathLeafIsIntrinsic` regardless of policy;
-//  3. a chain containing an opaque group is refused by `canFastBypass`'s chain check regardless of
-//     what the policy says;
+//  1. a chain whose leaf is not `direct` is refused by resolveFastPathRequest before any policy is
+//     read, whatever the field says;
+//  2. an explicit policy anywhere in the chain is the chain's decision, scanned outermost to inner.
+//     An explicit false therefore WITHHOLDS the attempt on a transparent-direct chain;
+//  3. when the chain states no policy at all, a transparent chain over `direct` is authorised by
+//     directFastPathLeafIsIntrinsic (silence is not a refusal);
 //  4. a single-leaf `direct` chain needs no authorisation at all, because the chain gate is skipped
-//     when `len(chain) == 1`.
+//     when len(chain) == 1, and no group exists to carry a policy.
 //
-// So `true`, `false` and unset produce the same verdict on every production shape, on every
-// platform, in both transport modes (ordinary TUN and Linux auto_redirect). That is the D0 finding
-// of docs/fork/tun-fast-path-value-review.md: the field is a forward-compatibility surface, not a
-// switch that currently does something. The verdicts themselves are safe; the risk is describing the
-// field as an acceleration the user can turn on.
+// So the field has exactly one observable control-plane effect in production: `false` turns the
+// bypass ATTEMPT off on the one shape that can take it. `unset` and `true` are indistinguishable;
+// neither can grant a bypass the shape forbids. In ordinary TUN the verdict still does not change
+// where the bytes go (see protocol/tun and e2e); the effect is only visible where the transport
+// honours the verdict, which today is Linux auto_redirect.
 //
 // # Why this is a tripwire rather than a description
 //
-// The theorem holds only while `direct` is the only bypassable leaf. The day a second one exists, or
-// the day the intrinsic rule's precedence changes, `fast_path` becomes observable and every
-// conclusion in the D0 review has to be re-derived - including whether `false` should now be able to
-// suppress the fast path. These tests fail at that moment, with that instruction in the failure
-// message, rather than letting the review rot.
+// The contract holds only while `direct` is the only bypassable leaf. The day a second one exists,
+// the field becomes able to authorise shapes that are not the intrinsic one, and every conclusion in
+// the D0 review has to be re-derived. These tests fail at that moment, with that instruction in the
+// failure message, rather than letting the review rot.
 //
 // TestDirectIsTheOnlyProductionBypassableOutbound is the structural half: it scans the production
-// tree for `CanBypass` implementations and names the exact set. The table below is the behavioural
-// half, and it is built from the same set.
+// tree for CanBypass implementations and names the exact set.
 
 // productionChainShape describes one chain the router can actually resolve in a shipped
 // configuration. `groups` lists the logical groups from outermost to innermost; each entry is one of
@@ -109,8 +107,8 @@ func buildProductionChain(shape productionChainShape, tags []string) (defaultOut
 
 // productionTags returns one tag per group for the requested tag style. The style is a dimension of
 // the measurement, not decoration: resolveFastPathRequest falls back to the same AI tag matcher
-// traffic_class uses, so an AI-looking tag is the one other way a chain could become authorised
-// without an explicit policy.
+// traffic_class uses, so an AI-looking tag is the one way a chain could become authorised without an
+// explicit policy.
 func productionTags(shape productionChainShape, aiStyle bool) []string {
 	tags := make([]string, len(shape.groups))
 	for index := range shape.groups {
@@ -132,6 +130,31 @@ func (s productionChainShape) isCarrier(index int) bool {
 type policyCombination struct {
 	name     string
 	policies map[string]bool
+}
+
+// hasFalse reports whether this combination states an explicit false anywhere.
+func (c policyCombination) hasFalse() bool {
+	for _, enabled := range c.policies {
+		if !enabled {
+			return true
+		}
+	}
+	return false
+}
+
+// outermostDecision returns the first explicit value scanning the chain outermost to inner, and
+// whether one exists. It is the test's independent statement of the precedence rule, so the
+// assertions below do not derive their expected value from the function under test.
+func (c policyCombination) outermostDecision(shape productionChainShape, tags []string) (bool, bool) {
+	for index := range shape.groups {
+		if !shape.isCarrier(index) {
+			continue
+		}
+		if value, loaded := c.policies[tags[index]]; loaded {
+			return value, true
+		}
+	}
+	return false, false
 }
 
 // policyCombinations enumerates unset/true/false for each carrier group. The deepest production
@@ -172,89 +195,58 @@ func productionPolicies(combination policyCombination) FastPathPolicies {
 	return policies
 }
 
-// TestFastPathPoliciesCannotChangeAnyProductionVerdict is the behavioural half of the theorem.
-//
-// It resolves every production shape with every assignment of the tri-state field, on TCP and UDP,
-// under both an AI-looking and an ordinary tag, and asserts that the router's ACTION is identical in
-// all of them. It asserts the expected action too, so a table that silently stopped resolving could
-// not pass by producing Continue everywhere.
-func TestFastPathPoliciesCannotChangeAnyProductionVerdict(t *testing.T) {
-	destination := M.ParseSocksaddr("93.184.216.34:443")
-
-	for _, shape := range productionChainShapes {
-		for _, aiStyle := range []bool{false, true} {
-			tags := productionTags(shape, aiStyle)
-			combinations := policyCombinations(shape, tags)
-			for _, network := range []string{N.NetworkTCP, N.NetworkUDP} {
-				t.Run(fmt.Sprintf("%s/ai=%v/%s", shape.name, aiStyle, network), func(t *testing.T) {
-					want := adapter.PreMatchContinue
-					if shape.wantBypass {
-						want = adapter.PreMatchBypass
-					}
-					// Every row is asserted against the SHAPE's expected action, which is stronger
-					// than comparing the rows to each other: a table whose resolution silently broke
-					// would produce Continue everywhere and pass a pure "all rows agree" check.
-					for _, combination := range combinations {
-						outbound, _ := buildProductionChain(shape, tags)
-						router := fastPathRouter(t, outbound, productionPolicies(combination))
-						metadata := fastBypassMetadata(network, destination)
-						result := router.preMatchFlow(context.Background(), &metadata, destination, nil, "")
-						require.Equal(t, want, result.Action,
-							"%s with %s must produce the shape's own verdict: the tri-state field is "+
-								"not allowed to change it", shape.name, combination.name)
-					}
-				})
-			}
-		}
-	}
+// productionAction resolves one flow through the public pre-match entry point.
+func productionAction(t *testing.T, shape productionChainShape, tags []string, combination policyCombination, network string, destination M.Socksaddr) (adapter.PreMatchAction, BypassVerdict) {
+	t.Helper()
+	outbound, leaf := buildProductionChain(shape, tags)
+	router := fastPathRouter(t, outbound, productionPolicies(combination))
+	metadata := fastBypassMetadata(network, destination)
+	chain, err := resolveOutbound(outbound, &metadata, network, true)
+	require.NoError(t, err)
+	authorised := resolveFastPathRequest(chain, router.fastPathPolicies)
+	verdict := router.canFastBypass(&metadata, destination, chain, leaf, authorised)
+	metadata = fastBypassMetadata(network, destination)
+	result := router.preMatchFlow(context.Background(), &metadata, destination, nil, "")
+	return result.Action, verdict
 }
 
-// TestFastPathPoliciesCannotChangeAnyProductionBypassVerdict is the verdict-level form, and it is
-// stronger than the action-level test above: it compares the full BypassVerdict, including the
-// refusal REASON.
+// TestFastPathUnsetAndTrueAreIndistinguishable is the first half of the contract.
 //
-// The reason matters because "the field does nothing" is only true if the reason does not move
-// either. resolveFastPathRequest refuses a chain whose leaf cannot carry the fast path BEFORE it
-// reads any policy, so a proxy leaf never even reaches the policy scan; and a chain that contains an
-// opaque group fails canFastBypass's own chain check whether or not a policy authorised it. The only
-// chain where the authorisation could differ - transparent prefix, opaque group, direct leaf - is
-// refused at the chain gate in both states, with the same spelling. So the field changes neither the
-// decision nor the diagnostic on a shipped configuration.
-func TestFastPathPoliciesCannotChangeAnyProductionBypassVerdict(t *testing.T) {
+// With no explicit false anywhere, the field cannot change anything: every row resolves to the
+// shape's own action and to the same BypassVerdict, including the refusal reason.
+func TestFastPathUnsetAndTrueAreIndistinguishable(t *testing.T) {
 	destination := M.ParseSocksaddr("93.184.216.34:443")
 
 	for _, shape := range productionChainShapes {
 		for _, aiStyle := range []bool{false, true} {
 			tags := productionTags(shape, aiStyle)
-			combinations := policyCombinations(shape, tags)
+			var combinations []policyCombination
+			for _, combination := range policyCombinations(shape, tags) {
+				if !combination.hasFalse() {
+					combinations = append(combinations, combination)
+				}
+			}
 			for _, network := range []string{N.NetworkTCP, N.NetworkUDP} {
 				t.Run(fmt.Sprintf("%s/ai=%v/%s", shape.name, aiStyle, network), func(t *testing.T) {
+					wantAction := adapter.PreMatchContinue
+					if shape.wantBypass {
+						wantAction = adapter.PreMatchBypass
+					}
 					var reference BypassVerdict
 					var referenceName string
 					for _, combination := range combinations {
-						outbound, leaf := buildProductionChain(shape, tags)
-						router := fastPathRouter(t, outbound, productionPolicies(combination))
-						metadata := fastBypassMetadata(network, destination)
-						chain, err := resolveOutbound(outbound, &metadata, network, true)
-						require.NoError(t, err)
-
-						// The authorisation is resolved from the flow's own chain, exactly as
-						// preMatchFlow does it; the policy is the only variable.
-						authorised := resolveFastPathRequest(chain, router.fastPathPolicies)
-						verdict := router.canFastBypass(&metadata, destination, chain, leaf, authorised)
-
+						action, verdict := productionAction(t, shape, tags, combination, network, destination)
+						require.Equal(t, wantAction, action,
+							"%s with %s must produce the shape's own action", shape.name, combination.name)
 						require.Equal(t, shape.wantBypass, verdict.BypassAllowed(),
-							"%s with %s: the verdict must match the shape, not the policy",
-							shape.name, combination.name)
+							"%s with %s must produce the shape's own verdict", shape.name, combination.name)
 						if referenceName == "" {
 							reference, referenceName = verdict, combination.name
 							continue
 						}
 						require.Equal(t, reference, verdict,
-							"%s: %s produced %q but %s produced %q - the tri-state field changed a "+
-								"production verdict or its refusal reason, so it is observable and "+
-								"the D0 review in docs/fork/tun-fast-path-value-review.md must be "+
-								"re-derived", shape.name, combination.name, verdict, referenceName,
+							"%s: %s produced %q but %s produced %q - unset and true must be "+
+								"indistinguishable", shape.name, combination.name, verdict, referenceName,
 							reference)
 					}
 				})
@@ -263,14 +255,76 @@ func TestFastPathPoliciesCannotChangeAnyProductionBypassVerdict(t *testing.T) {
 	}
 }
 
-// TestDirectIntrinsicAuthorisationIsPolicyIndependent pins WHERE the grant comes from.
+// TestFastPathFalseOnlySuppressesTheIntrinsicShape is the second half: the one thing the field can
+// do in production is withhold the attempt on a transparent-direct chain. Everywhere else an
+// explicit false changes nothing, because the shape was already refused.
+func TestFastPathFalseOnlySuppressesTheIntrinsicShape(t *testing.T) {
+	destination := M.ParseSocksaddr("93.184.216.34:443")
+
+	for _, shape := range productionChainShapes {
+		for _, aiStyle := range []bool{false, true} {
+			tags := productionTags(shape, aiStyle)
+			var falseCombinations []policyCombination
+			for _, combination := range policyCombinations(shape, tags) {
+				if combination.hasFalse() {
+					falseCombinations = append(falseCombinations, combination)
+				}
+			}
+			if len(falseCombinations) == 0 {
+				// A bare direct leaf has no group that could carry the field; that is asserted
+				// separately by TestExplicitFastPathFalseNeedsAGroup.
+				continue
+			}
+			for _, network := range []string{N.NetworkTCP, N.NetworkUDP} {
+				t.Run(fmt.Sprintf("%s/ai=%v/%s", shape.name, aiStyle, network), func(t *testing.T) {
+					_, baselineVerdict := productionAction(t, shape, tags,
+						policyCombination{name: "no policy map"}, network, destination)
+
+					for _, combination := range falseCombinations {
+						action, verdict := productionAction(t, shape, tags, combination, network, destination)
+
+						// The chain's own precedence: the outermost explicit value decides; an
+						// inner false under an outer true does NOT withhold anything.
+						decidedValue, decided := combination.outermostDecision(shape, tags)
+						wantBypass := shape.wantBypass && (!decided || decidedValue)
+
+						if wantBypass {
+							require.True(t, verdict.BypassAllowed(),
+								"%s with %s: the outer explicit true must still take the bypass",
+								shape.name, combination.name)
+							require.Equal(t, adapter.PreMatchBypass, action)
+							continue
+						}
+
+						require.False(t, verdict.BypassAllowed(),
+							"%s with %s must never allow a bypass", shape.name, combination.name)
+						require.Equal(t, adapter.PreMatchContinue, action,
+							"%s with %s: a withheld attempt continues on the normal path",
+							shape.name, combination.name)
+
+						if !shape.wantBypass {
+							require.Equal(t, baselineVerdict, verdict,
+								"%s with %s: the shape is already refused, so a policy cannot "+
+									"change the refusal reason", shape.name, combination.name)
+							continue
+						}
+						require.Equal(t, BypassRefusedOutboundChain, verdict,
+							"%s with %s: without the grant the chain gate is the refusal, which is "+
+								"the same gate an unauthorised group flow always hit",
+							shape.name, combination.name)
+					}
+				})
+			}
+		}
+	}
+}
+
+// TestDirectIntrinsicAuthorisationRequiresSilence pins where the grant comes from.
 //
-// On every transparent-only chain over `direct`, the intrinsic rule authorises the flow for every
-// assignment of the tri-state field and for both tag styles. Forcing the authorisation argument to
-// false on the same chain refuses it, which is what proves the grant really is doing work: the flow
-// is allowed because of the SHAPE (transparent groups over direct), not because a policy happened to
-// say true.
-func TestDirectIntrinsicAuthorisationIsPolicyIndependent(t *testing.T) {
+// On every transparent-only chain over `direct`, silence and an explicit true both authorise, an
+// explicit false withholds, and withholding it refuses the flow. The control matters: without it the
+// test would also pass if the chain gate had stopped consulting the argument at all.
+func TestDirectIntrinsicAuthorisationRequiresSilence(t *testing.T) {
 	destination := M.ParseSocksaddr("93.184.216.34:443")
 
 	directShapes := make([]productionChainShape, 0, len(productionChainShapes))
@@ -295,79 +349,95 @@ func TestDirectIntrinsicAuthorisationIsPolicyIndependent(t *testing.T) {
 					chain, err := resolveOutbound(outbound, &metadata, network, true)
 					require.NoError(t, err)
 
-					require.True(t, resolveFastPathRequest(chain, router.fastPathPolicies),
-						"%s with %s must be authorised by the intrinsic rule", shape.name, combination.name)
+					wantAuthorised := true
+					if decidedValue, decided := combination.outermostDecision(shape, tags); decided {
+						wantAuthorised = decidedValue
+					}
+					require.Equal(t, wantAuthorised, resolveFastPathRequest(chain, router.fastPathPolicies),
+						"%s with %s: the outermost explicit value decides; silence keeps the "+
+							"intrinsic grant", shape.name, combination.name)
 
-					require.True(t, router.canFastBypass(&metadata, destination, chain, leaf, true).BypassAllowed(),
-						"%s with %s must reach BypassAllowed when the gate is given the intrinsic "+
-							"authorisation", shape.name, combination.name)
+					require.Equal(t, wantAuthorised,
+						router.canFastBypass(&metadata, destination, chain, leaf,
+							resolveFastPathRequest(chain, router.fastPathPolicies)).BypassAllowed(),
+						"%s with %s: the resolved authorisation must reach the gate unchanged",
+						shape.name, combination.name)
 
-					// The control: withhold the authorisation the intrinsic rule supplies and the
-					// same chain is refused. Without this, the assertion above would also pass if the
-					// chain gate had stopped consulting the argument at all.
-					require.False(t, router.canFastBypass(&metadata, destination, chain, leaf, false).BypassAllowed(),
-						"%s: withholding the authorisation must refuse the flow, otherwise the "+
-							"intrinsic grant is not load-bearing", shape.name)
+					// The control: withholding the authorisation by hand refuses the same chain, so
+					// the grant really is load-bearing.
+					require.False(t,
+						router.canFastBypass(&metadata, destination, chain, leaf, false).BypassAllowed(),
+						"%s: withholding the authorisation must refuse the flow", shape.name)
 				}
 			}
 		}
 	}
 }
 
-// TestExplicitFastPathFalseDoesNotSuppressTheDirectChainToday pins the one conflict between the
-// field's documented tri-state and its precedence, in the direction the shipped code implements.
-//
-// option/fast_path.go documents "fast_path": false as "refuse, even if the tag looks like AI".
-// resolveFastPathRequest rule 2 is checked BEFORE the policy scan, so on a transparent chain over
-// `direct` an explicit false is found by the scan and then overruled by the intrinsic rule. That is
-// deliberate (afd5b5220c8: a pure selection layer does not get to switch off an intrinsic property
-// of `direct`) and it is tested as such, but it means the field cannot suppress the one bypass leaf
-// the product has.
-//
-// The test is written to fail the moment the precedence changes, so that change is a contract
-// decision with a failing test and the review document behind it - not a silent behaviour change.
-func TestExplicitFastPathFalseDoesNotSuppressTheDirectChainToday(t *testing.T) {
+// TestExplicitFastPathFalseSuppressesTheDirectChain is the focused regression for the precedence fix.
+func TestExplicitFastPathFalseSuppressesTheDirectChain(t *testing.T) {
 	destination := M.ParseSocksaddr("93.184.216.34:443")
 	outbound, _ := buildProductionChain(productionChainShape{
 		name: "selector/direct", groups: []string{"selector"}, wantBypass: true,
 	}, []string{"国内直连"})
-	router := fastPathRouter(t, outbound, FastPathPolicies{
+
+	falseRouter := fastPathRouter(t, outbound, FastPathPolicies{
 		"国内直连": option.FastPathPolicy{Enabled: false},
 	})
+	unsetRouter := fastPathRouter(t, outbound, FastPathPolicies{})
 
 	metadata := fastBypassMetadata(N.NetworkTCP, destination)
 	chain, err := resolveOutbound(outbound, &metadata, N.NetworkTCP, true)
 	require.NoError(t, err)
 
-	authorised, decided := resolveFastPathPolicy(chain, router.fastPathPolicies)
+	authorised, decided := resolveFastPathPolicy(chain, falseRouter.fastPathPolicies)
 	require.True(t, decided, "the explicit false must be found by the policy scan")
 	require.False(t, authorised, "and it says refuse")
-	require.True(t, resolveFastPathRequest(chain, router.fastPathPolicies),
-		"...but the intrinsic rule is evaluated first and wins. If this assertion fails, the "+
-			"precedence changed: update docs/fork/tun-fast-path-value-review.md (the false-semantics "+
-			"row of its decision table) and the tests that pin the contract, rather than deleting "+
-			"this one")
+	require.False(t, resolveFastPathRequest(chain, falseRouter.fastPathPolicies),
+		"the explicit decision must win over the intrinsic grant")
+	require.True(t, resolveFastPathRequest(chain, unsetRouter.fastPathPolicies),
+		"while the same chain with no policy keeps the intrinsic grant")
 
-	result := router.preMatchFlow(context.Background(), &metadata, destination, nil, "")
-	require.Equal(t, adapter.PreMatchBypass, result.Action,
-		"the shipped precedence lets the flow take the bypass path even though the group said false")
+	falseResult := falseRouter.preMatchFlow(context.Background(), &metadata, destination, nil, "")
+	require.Equal(t, adapter.PreMatchContinue, falseResult.Action,
+		"the flow falls through to the normal direct path instead of attempting the bypass")
+	unsetMetadata := fastBypassMetadata(N.NetworkTCP, destination)
+	unsetResult := unsetRouter.preMatchFlow(context.Background(), &unsetMetadata, destination, nil, "")
+	require.Equal(t, adapter.PreMatchBypass, unsetResult.Action)
 }
 
-// TestDirectIsTheOnlyProductionBypassableOutbound is the structural half of the theorem.
+// TestExplicitFastPathFalseNeedsAGroup records the one shape where the field cannot be expressed at
+// all: a bare direct leaf has no group to carry it, and box.go refuses the key on a leaf. The chain
+// gate is skipped for it, so it is authorised by structure rather than by policy.
+func TestExplicitFastPathFalseNeedsAGroup(t *testing.T) {
+	destination := M.ParseSocksaddr("93.184.216.34:443")
+	outbound, _ := buildProductionChain(productionChainShape{name: "bare direct", wantBypass: true}, nil)
+	router := fastPathRouter(t, outbound, FastPathPolicies{})
+
+	metadata := fastBypassMetadata(N.NetworkTCP, destination)
+	chain, err := resolveOutbound(outbound, &metadata, N.NetworkTCP, true)
+	require.NoError(t, err)
+	require.Len(t, chain, 1)
+	require.False(t, resolveFastPathRequest(chain, router.fastPathPolicies),
+		"a one-element chain has no group, so nothing is resolved")
+	require.Equal(t, adapter.PreMatchBypass,
+		router.preMatchFlow(context.Background(), &metadata, destination, nil, "").Action,
+		"but the chain gate does not apply, so the leaf's own eligibility decides")
+}
+
+// TestDirectIsTheOnlyProductionBypassableOutbound is the structural half of the contract.
 //
 // It scans the production tree for CanBypass method declarations. The count is part of the argument:
-// with two bypassable leaves, the group authorisation stops being redundant and the whole D0 review
-// has to be repeated. A shape-based test cannot see a new implementation that no shape mentions,
-// which is exactly the change that would invalidate the conclusion while leaving every other test
-// green.
+// with two bypassable leaves, the field stops being an off switch for one shape and becomes a way to
+// authorise shapes the intrinsic rule does not cover, so the whole D0 review has to be repeated.
 func TestDirectIsTheOnlyProductionBypassableOutbound(t *testing.T) {
 	implementations := scanProductionTree(t, ") CanBypass(")
 	require.Equal(t, []string{"protocol/direct/outbound.go"}, implementations,
-		"the Direct Fast Path's authorisation is redundant only while `direct` is the single "+
-			"production outbound that implements adapter.BypassableOutbound. A second implementation "+
-			"makes the tri-state field observable and invalidates the D0 review in "+
-			"docs/fork/tun-fast-path-value-review.md: re-derive it, then decide whether the new leaf "+
-			"should be bypassable at all, before updating this list")
+		"the fast path's authorisation model is derived from `direct` being the single production "+
+			"outbound that implements adapter.BypassableOutbound. A second implementation makes the "+
+			"tri-state field able to authorise shapes that are not the intrinsic one, which "+
+			"invalidates the D0 review in docs/fork/tun-fast-path-value-review.md: re-derive it, "+
+			"then decide whether the new leaf should be bypassable at all, before updating this list")
 }
 
 // TestFastPathTransparentGroupsAreTheOnlyPolicyCarriers is the companion structural check: the

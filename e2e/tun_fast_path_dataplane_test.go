@@ -37,12 +37,12 @@ import (
 // # The four cases, and why each exists
 //
 //	A  fast_path absent   -> the router produces ActionBypass, and the flows must still work
-//	B  fast_path true     -> the same verdict and the same bytes (the field is redundant here)
-//	C  fast_path false    -> the same verdict and the same bytes (the intrinsic rule wins; see
-//	                         docs/fork/tun-fast-path-value-review.md)
+//	B  fast_path true     -> the same verdict and the same bytes (true and unset are equivalent)
+//	C  fast_path false    -> the router refuses the ATTEMPT, so the verdict is ActionAccept, and the
+//	                         bytes are identical: the field controls the attempt, not the data path
 //	D  a tracker attached -> the verdict becomes ActionAccept (BypassRefusedTracker), and the bytes
-//	                         are identical. This is the negative control: the one thing that changed
-//	                         is the verdict, and it changed nothing a user can observe.
+//	                         are identical. This is the second verdict-reversal control: a hard gate,
+//	                         not the policy, is what flips it.
 //
 // A, B and C run on a box with no tracker, which is the state a production box without a dashboard
 // API is in; the default e2e harness attaches one and would therefore put every flow in case D.
@@ -110,7 +110,10 @@ func TestFastPathVerdictDoesNotChangeTheTUNDataPath(t *testing.T) {
 	}{
 		{name: "absent", fastPath: "", wantAction: tun.ActionBypass},
 		{name: "true", fastPath: `, "fast_path": true`, wantAction: tun.ActionBypass},
-		{name: "false", fastPath: `, "fast_path": false`, wantAction: tun.ActionBypass},
+		// An explicit false is a decision: it withholds the attempt the intrinsic direct chain would
+		// otherwise take. The flow is still routed to the same direct outbound - only the verdict
+		// changes, which is the point of keeping the bytes assertions identical across all cases.
+		{name: "false", fastPath: `, "fast_path": false`, wantAction: tun.ActionAccept},
 		{name: "tracker-attached", fastPath: "", attachFlow: true, wantAction: tun.ActionAccept},
 	}
 
