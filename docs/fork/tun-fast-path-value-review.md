@@ -183,9 +183,9 @@ Given that, `resolveFastPathRequest` (`route/fast_path.go`) resolves as follows:
    `directFastPathLeafIsIntrinsic` returns true. This is deliberate: commit `afd5b5220c8` made the
    fast path the default for `direct` so that wrapping it in a selector for grouping does not
    silently lose it. Silence is not a refusal.
-4. **No policy anywhere, leaf is `direct` behind an opaque group** -> the intrinsic rule does not
-   apply, and even an outer explicit `true` cannot carry the flow: `canFastBypass`'s chain gate
-   (`route/route.go:921-925`) refuses because the opaque group may own the dial/retry/accounting.
+4. **Leaf is `direct` behind an opaque group** -> the intrinsic rule does not apply, and even an
+   outer explicit `true` cannot carry the flow: `canFastBypass`'s chain gate (`route/route.go:921-925`)
+   refuses because the opaque group may own the dial/retry/accounting.
 5. **A bare `direct` leaf** -> the chain gate does not apply (`len(chain) == 1`); no group exists
    that could carry the field.
 
@@ -343,13 +343,14 @@ Two readings matter and one does not:
 | `BenchmarkBypassDecision` after the precedence change | 85.5 ns/op, 0 allocs (one extra empty-map lookup, inside noise) |
 | GitHub Actions `Verify` on every pushed SHA of this review | PASS. The push gate runs gofmt, untagged and tagged builds, the build matrix and both race steps; run IDs are in the round report. |
 
-The full `-race` sweep of `./route/... ./protocol/tun/... ./option/...` was run once in this round
-and failed **one** unrelated test: `route/rule TestTheUpdaterDoesNotOutliveItsClose` (expected 3
-fetches, saw 4). The same test passes 10/10 when run alone under `-race`, it is in an untouched
-package, and the mechanism is an HTTP fetch that was already in flight when `Close` returned and
-completed before the assertion read the counter. It is recorded as a pre-existing, load-sensitive
-test flake (`OUT_OF_SCOPE_DISCOVERY`); it is not caused by, and does not touch, anything in this
-review.
+The full `-race` sweep of `./route/... ./protocol/tun/... ./option/...` was run once during this
+review (on the tree before the precedence change; the change itself was gated with the targeted
+`-race` runs above) and failed **one** unrelated test: `route/rule TestTheUpdaterDoesNotOutliveItsClose`
+(expected 3 fetches, saw 4). The same test passes 10/10 when run alone under `-race`, it is in an
+untouched package, and the mechanism is an HTTP fetch that was already in flight when `Close`
+returned and completed before the assertion read the counter. It is recorded as a pre-existing,
+load-sensitive test flake (`OUT_OF_SCOPE_DISCOVERY`); it is not caused by, and does not touch,
+anything in this review.
 
 `-race` required a mingw-w64 gcc (`CGO_ENABLED=1 CC=...gcc`); the default `go env CGO_ENABLED` on this
 host is `0`, so an unqualified `go test -race` fails with "requires cgo". That is an environment
