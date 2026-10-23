@@ -11,6 +11,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-tun"
+	"github.com/sagernet/sing-tun/gtcpip/header"
 
 	"github.com/stretchr/testify/require"
 )
@@ -210,6 +211,117 @@ func TestBypassVerdictStillDeliversUDP(t *testing.T) {
 			"the UDP flow is bypass-eligible, and the verdict must not change where its bytes go")
 	}
 	require.Empty(t, sink.seen(), "no proxied copy")
+}
+
+// TestFastPathMultiSegmentPayloadIsIntact is the byte-integrity half of the verdict control.
+//
+// The small payloads in the cases above prove the path works; this one proves it carries a
+// multi-segment stream unchanged while the router has marked the flow bypassable. Every byte is
+// compared, not just the length, because a truncated or reordered copy is exactly what a fallback
+// bug would produce and a length check would miss it.
+func TestFastPathMultiSegmentPayloadIsIntact(t *testing.T) {
+	destination := localPeerAddress(t)
+	echo := startEchoServer(t, "tcp", net.JoinHostPort(destination.String(), "0"))
+	echoPort := uint16(echo.listener.Addr().(*net.TCPAddr).Port)
+	sink := startSocksSink(t, "127.0.0.1:0")
+
+	config := fmt.Sprintf(fastPathDataplaneConfig, chainLogLevel,
+		uint16(sink.listener.Addr().(*net.TCPAddr).Port), "", destination.String(), echoPort)
+	running := startChainUntracked(t, config)
+
+	verdicts := &verdictRecorder{}
+	judge := func(network uint8, source netip.AddrPort, destinationAddress netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
+		verdict := adapter.JudgeFlow(running.router(), adapter.InboundContext{
+			Inbound:     "tun-in",
+			InboundType: C.TypeTun,
+		}, network, source, destinationAddress, firstPacket)
+		verdicts.record(verdict.Action)
+		return verdict
+	}
+	fixture := newTunFixtureWithJudge(t, running, netip.Addr{}, 0, judge)
+
+	connection := &tcpOverTun{sourcePort: 42090, destination: destination, destinationPort: echoPort}
+	fixture.dialTCP(t, connection, 10*time.Second)
+
+	payload := make([]byte, 8192)
+	for index := range payload {
+		payload[index] = byte(index % 251)
+	}
+	connection.writeChunks(t, payload, 1024)
+	echoed := connection.collectEchoBytes(t, len(payload), 10*time.Second)
+	require.Equal(t, payload, echoed,
+		"an 8 KiB multi-segment stream must arrive byte-identical through the bypassed flow")
+
+	actions := verdicts.snapshot()
+	require.Len(t, actions, 1)
+	require.Equal(t, tun.ActionBypass, actions[0],
+		"the flow under test must be the bypass-eligible one, or the integrity result is about a "+
+			"different path")
+	require.Empty(t, sink.seen(), "no proxied copy")
+}
+
+// writeChunks sends payload in chunkSize segments, advancing the sequence number exactly as one
+// write of the whole payload would.
+func (c *tcpOverTun) writeChunks(t *testing.T, payload []byte, chunkSize int) {
+	t.Helper()
+	for offset := 0; offset < len(payload); offset += chunkSize {
+		end := offset + chunkSize
+		if end > len(payload) {
+			end = len(payload)
+		}
+		c.write(t, string(payload[offset:end]))
+	}
+}
+
+// collectEchoBytes reads device-facing payload segments for this flow until total bytes have
+// arrived, acknowledging each one so the stack's send window stays open.
+//
+// It is deliberately stateful: waitForTCPPayload returns the FIRST matching segment each call, so a
+// loop over it would read the same segment repeatedly and "prove" a one-segment transfer.
+func (c *tcpOverTun) collectEchoBytes(t *testing.T, total int, timeout time.Duration) []byte {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	collected := make([]byte, 0, total)
+	for len(collected) < total {
+		if time.Now().After(deadline) {
+			t.Fatalf("only %d of %d echoed bytes arrived before the deadline", len(collected), total)
+		}
+		segment, payload := c.nextEchoSegment()
+		if payload == nil {
+			select {
+			case <-c.fixture.frameSignal:
+			case <-time.After(2 * time.Millisecond):
+			}
+			continue
+		}
+		collected = append(collected, payload...)
+		c.nextAck = segment.SequenceNumber() + uint32(len(payload))
+		c.fixture.emit(t, tcpFrame(netip.MustParseAddr(tunDeviceAddress), c.sourcePort,
+			c.destination, c.destinationPort, c.nextSeq, c.nextAck, header.TCPFlagAck, nil))
+	}
+	return collected
+}
+
+// nextEchoSegment returns the device-facing segment whose sequence is the next one expected, or nil.
+func (c *tcpOverTun) nextEchoSegment() (header.TCP, []byte) {
+	c.fixture.access.Lock()
+	defer c.fixture.access.Unlock()
+	for _, frame := range c.fixture.frames {
+		ip, transport, ok := parseFrame(frame)
+		if !ok || ip.TransportProtocol() != header.TCPProtocolNumber {
+			continue
+		}
+		segment := header.TCP(transport)
+		if segment.SourcePort() != c.destinationPort || segment.DestinationPort() != c.sourcePort {
+			continue
+		}
+		payload := transport[segment.DataOffset():]
+		if len(payload) == 0 || segment.SequenceNumber() != c.nextAck {
+			continue
+		}
+		return segment, append([]byte(nil), payload...)
+	}
+	return nil, nil
 }
 
 // localPeerAddress finds a literal address on a local interface that the host can dial and that the
