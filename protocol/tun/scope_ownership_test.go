@@ -75,10 +75,11 @@ func newScopeOwnedInbound(access *callbackAccess, platformInterface adapter.Plat
 		// The callbacks are only registered when an auto-redirect exists: Start registers them
 		// together inside `if t.autoRedirect != nil`, so a fixture without one would take a branch
 		// production cannot reach.
-		autoRedirect:        &recordingAutoRedirect{},
-		platformInterface:   platformInterface,
-		routeRuleSet:        []adapter.RuleSet{routeRuleSet},
-		routeExcludeRuleSet: []adapter.RuleSet{routeExcludeRuleSet},
+		autoRedirect:         &recordingAutoRedirect{},
+		platformInterface:    platformInterface,
+		usePlatformInterface: platformInterface != nil && platformInterface.UsePlatformInterface(),
+		routeRuleSet:         []adapter.RuleSet{routeRuleSet},
+		routeExcludeRuleSet:  []adapter.RuleSet{routeExcludeRuleSet},
 	}, routeRuleSet, routeExcludeRuleSet
 }
 

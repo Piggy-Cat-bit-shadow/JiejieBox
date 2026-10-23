@@ -46,10 +46,10 @@ require (
 	github.com/sagernet/quic-go v0.61.0-sing-box-mod.9
 	github.com/sagernet/sing v0.9.7-0.20260929150544-6f21f2425a95
 	github.com/sagernet/sing-anytls v0.0.0-20260928104022-580984e4d8cb
-	github.com/sagernet/sing-cloudflared v0.1.4-0.20261002084126-c1255ae368f2
+	github.com/sagernet/sing-cloudflared v0.1.4-0.20261021152903-2d40d788fcf6
 	github.com/sagernet/sing-mux v0.3.10-0.20260929204512-caf09fe32475
 	github.com/sagernet/sing-openconnect v0.1.1-0.20260929151226-29757281a247
-	github.com/sagernet/sing-openvpn v0.1.1-0.20260929151220-f330676d6d4a
+	github.com/sagernet/sing-openvpn v0.1.1-0.20261020061844-7d24ecd92837
 	github.com/sagernet/sing-quic v0.7.2-0.20260929152029-258509488380
 	github.com/sagernet/sing-shadowsocks v0.2.9-0.20260929152116-0a3456819ce7
 	github.com/sagernet/sing-shadowsocks2 v0.2.2-0.20260929152114-a69d1086332b

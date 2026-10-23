@@ -5,7 +5,6 @@ import (
 	"net"
 	"net/netip"
 	"os"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -62,6 +61,7 @@ type Inbound struct {
 	tunIf                       tun.Tun
 	tunStack                    tun.Stack
 	platformInterface           adapter.PlatformInterface
+	usePlatformInterface        bool
 	platformOptions             option.TunPlatformOptions
 	autoRedirect                tun.AutoRedirect
 	routeRuleSet                []adapter.RuleSet
@@ -412,13 +412,14 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 			Logger:                                logger,
 			EXP_MultiPendingPackets:               C.IsDarwin,
 		},
-		udpTimeout:        udpTimeout,
-		udpMapping:        tun.NATMapping(options.UDPMapping),
-		udpFiltering:      tun.NATFiltering(options.UDPFiltering),
-		udpNATMax:         options.UDPNATMax,
-		stack:             options.Stack,
-		platformInterface: platformInterface,
-		platformOptions:   common.PtrValueOrDefault(options.Platform),
+		udpTimeout:           udpTimeout,
+		udpMapping:           tun.NATMapping(options.UDPMapping),
+		udpFiltering:         tun.NATFiltering(options.UDPFiltering),
+		udpNATMax:            options.UDPNATMax,
+		stack:                options.Stack,
+		platformInterface:    platformInterface,
+		usePlatformInterface: usePlatformInterface,
+		platformOptions:      common.PtrValueOrDefault(options.Platform),
 	}
 	for _, routeAddressSet := range options.RouteAddressSet {
 		ruleSet, loaded := router.RuleSet(routeAddressSet)
@@ -568,7 +569,7 @@ func (t *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		// auto-redirect rules armed in PostStart and the stack all read this struct, and every one
 		// of them must see the same interface. See entry_ipv6.go for the decision itself.
 		t.applyEntryIPv6Presentment()
-		if t.platformInterface == nil &&
+		if !t.usePlatformInterface &&
 			((C.IsLinux && !t.tunOptions.GSO) || (C.IsDarwin && !t.tunOptions.EXP_MultiPendingPackets)) {
 			// A manager can legitimately be absent from this context, and that is not an error: the
 			// probe below asks whether some component can hand a whole flow to the TUN, so a context
@@ -617,7 +618,7 @@ func (t *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 			routeAddressSet        []*netipx.IPSet
 			routeExcludeAddressSet []*netipx.IPSet
 		)
-		if t.autoRedirect != nil || t.platformInterface == nil || C.IsWindows {
+		if t.autoRedirect != nil || !t.usePlatformInterface {
 			for _, routeRuleSet := range t.routeRuleSet {
 				ipSets := routeRuleSet.ExtractIPSet()
 				if len(ipSets) == 0 {
@@ -673,7 +674,7 @@ func (t *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		)
 		monitor := taskmonitor.New(t.logger, C.StartTimeout)
 		tunOptions := t.tunOptions
-		if t.autoRedirect == nil && !(runtime.GOOS == "android" && t.platformInterface != nil) {
+		if t.autoRedirect == nil {
 			// The prefixes are the SECOND place IPv6 can enter these options, after the leading
 			// address lists that the entry decision already reduced, so the same decision has to be
 			// applied here or a route_address_set would hand the platform the IPv6 routes the
@@ -681,7 +682,7 @@ func (t *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 			appendRouteSetPrefixes(&tunOptions, routeAddressSet, routeExcludeAddressSet, t.entryIPv4Only)
 		}
 		monitor.Start("open interface")
-		if t.platformInterface != nil && t.platformInterface.UsePlatformInterface() {
+		if t.usePlatformInterface {
 			tunInterface, err = t.platformInterface.OpenInterface(&tunOptions, t.platformOptions)
 		} else {
 			tunInterface, err = tun.New(tunOptions)

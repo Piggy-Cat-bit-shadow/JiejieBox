@@ -152,10 +152,11 @@ func newRefCountingInboundWith(routeRuleSet, excludeRuleSet *countingRuleSet, au
 			Name:                    refPairingInterfaceName,
 			MTU:                     1500,
 		},
-		autoRedirect:        autoRedirect,
-		platformInterface:   platformInterface,
-		routeRuleSet:        []adapter.RuleSet{routeRuleSet},
-		routeExcludeRuleSet: []adapter.RuleSet{excludeRuleSet},
+		autoRedirect:         autoRedirect,
+		platformInterface:    platformInterface,
+		usePlatformInterface: platformInterface != nil && platformInterface.UsePlatformInterface(),
+		routeRuleSet:         []adapter.RuleSet{routeRuleSet},
+		routeExcludeRuleSet:  []adapter.RuleSet{excludeRuleSet},
 	}
 }
 

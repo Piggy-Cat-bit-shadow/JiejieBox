@@ -252,6 +252,14 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 
 func (h *Outbound) PreMatchFlow(network string, destination netip.Addr) adapter.PreMatchAction {
 	if network == N.NetworkICMP && h.icmpPort != nil {
+		// An ICMP flow is the only network this outbound serves through a Port, and it is the only
+		// one that reaches here before the dial. A ping to this host's own TUN range would be routed
+		// back into the TUN by the port implementation, so it must be rejected, not accepted as a
+		// userspace flow. Upstream b722a038e61b.
+		if h.isMyLoopbackAddress(destination) {
+			h.logger.Error("reject ", network, " connection to ", destination, ": loopback connection to TUN range")
+			return adapter.PreMatchReject
+		}
 		return adapter.PreMatchFlow
 	}
 	return adapter.PreMatchContinue

@@ -1104,7 +1104,7 @@ func (r *Router) preMatchFlow(ctx context.Context, metadata *adapter.InboundCont
 		if len(flowTrackers) == 1 {
 			return flowTrackers[0]
 		}
-		return multiFlowTracker(flowTrackers)
+		return &multiFlowTracker{trackers: flowTrackers}
 	}
 	return result
 }
