@@ -186,6 +186,66 @@ func TestProxiedSpliceRejectionDeliversAMultiSegmentPayload(t *testing.T) {
 	require.NotEmpty(t, sink.seen(), "the flow must have gone through the proxy outbound")
 }
 
+// spliceFastPathIndependenceConfig puts a transparent selector in front of direct. The optional
+// field is appended to the selector so the same flow can be run with unset/true/false.
+const spliceFastPathIndependenceConfig = `{
+  "log": {"level": "%s"},
+  "outbounds": [
+    {"type": "direct", "tag": "direct"},
+    {"type": "selector", "tag": "sel", "outbounds": ["direct"]%s}
+  ],
+  "route": {
+    "rules": [
+      {"ip_cidr": ["%s/32"], "port": [%d], "action": "route", "outbound": "sel"}
+    ],
+    "final": "direct"
+  }
+}`
+
+// TestSpliceAttemptIsIndependentOfFastPath is P05: the field controls the bypass ATTEMPT, not the
+// automatic splice attempt. For unset/true/false the same TUN flow must still reach the handover
+// decision exactly once and deliver its bytes; on this memory platform the decision is the same
+// refusal every time, which is why the assertions are about reachability and bytes, not acceptance.
+func TestSpliceAttemptIsIndependentOfFastPath(t *testing.T) {
+	testCases := []struct {
+		name  string
+		field string
+	}{
+		{name: "unset", field: ""},
+		{name: "true", field: `, "fast_path": true`},
+		{name: "false", field: `, "fast_path": false`},
+	}
+	for index, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			destination := localPeerAddress(t)
+			echo := startEchoServer(t, "tcp", net.JoinHostPort(destination.String(), "0"))
+			echoPort := uint16(echo.listener.Addr().(*net.TCPAddr).Port)
+
+			config := fmt.Sprintf(spliceFastPathIndependenceConfig, chainLogLevel,
+				testCase.field, destination.String(), echoPort)
+			running := startChainUntracked(t, config)
+			fixture := newTunFixture(t, running, netip.Addr{}, 0)
+
+			connection := &tcpOverTun{
+				sourcePort:      uint16(43100 + index),
+				destination:     destination,
+				destinationPort: echoPort,
+			}
+			fixture.dialTCP(t, connection, 10*time.Second)
+			connection.write(t, "splice-independent")
+			connection.expectEcho(t, "splice-independent", 10*time.Second)
+
+			snapshot := tcpSpliceDiagnostics(t, running)
+			require.Equal(t, uint64(1), snapshot.Attempts,
+				"fast_path=%s must not change whether the splice is attempted: %+v", testCase.name, snapshot)
+			require.Zero(t, snapshot.Accepted,
+				"the memory platform cannot accept a handover: %+v", snapshot)
+			require.Equal(t, uint64(1), snapshot.Reasons["splice_rejected"],
+				"the refusal must be recorded once regardless of fast_path: %+v", snapshot)
+		})
+	}
+}
+
 // TestSystemProxyTCPSpliceIsRefusedAtTheSource is the system-proxy baseline: its inbound conn is not
 // a tun.GoConn, so every flow is refused at the source. That is correct and is why the system proxy
 // cannot use the TUN splice path.
