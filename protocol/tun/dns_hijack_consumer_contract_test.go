@@ -2,6 +2,7 @@ package tun
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -32,30 +33,109 @@ import (
 // bump that changes either switch fails here instead of silently changing DNS behaviour in the
 // field. The limitation is recorded rather than papered over.
 
-// singTunModuleDir locates the pinned sing-tun source in the module cache.
+// singTunModuleDir locates the source of the sing-tun module the build actually resolves.
+//
+// # The defect this replaces
+//
+// The first version read the `require github.com/sagernet/sing-tun v...` line from go.mod and looked
+// the module up in `$HOME/go/pkg/mod`. Both halves were wrong in this repository:
+//
+//  1. go.mod carries a `replace` to Piggy-Cat-bit-shadow/sing-tun, so the required version is NOT
+//     the code the binary runs. A source assertion against it proves a property of a module the
+//     build does not use - the exact failure mode "do not verify on the wrong upstream" describes.
+//  2. The module cache is not necessarily under $HOME/go. With a custom GOMODCACHE the lookup fails,
+//     the helper calls t.Skipf, and a skipped tripwire looks exactly like a passing one in a
+//     non-verbose run.
+//
+// The helper now asks the Go toolchain for the directory of the module IN THE BUILD LIST, which
+// already accounts for the replace, rather than re-deriving it from the file. It refuses to fall
+// back to the required version: a fallback that silently checks the wrong tree is worse than a
+// failure, because the tests exist precisely to notice a dependency change.
 func singTunModuleDir(t *testing.T) string {
 	t.Helper()
-	goMod, err := os.ReadFile("../../go.mod")
-	require.NoError(t, err, "go.mod must be readable to find the pinned sing-tun version")
 
-	var version string
-	for _, line := range strings.Split(string(goMod), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "github.com/sagernet/sing-tun ") {
-			version = strings.TrimSpace(strings.TrimPrefix(line, "github.com/sagernet/sing-tun"))
-			break
+	command := exec.Command("go", "list", "-m", "-f", "{{if .Replace}}{{.Replace.Dir}}{{else}}{{.Dir}}{{end}}", "github.com/sagernet/sing-tun")
+	command.Dir = "../.."
+	output, err := command.Output()
+	if err == nil {
+		if dir := strings.TrimSpace(string(output)); dir != "" {
+			if _, statErr := os.Stat(filepath.Join(dir, "flow_dispatch.go")); statErr == nil {
+				return dir
+			}
 		}
 	}
-	require.NotEmpty(t, version, "go.mod must pin github.com/sagernet/sing-tun")
 
-	home, err := os.UserHomeDir()
-	require.NoError(t, err)
-	dir := filepath.Join(home, "go", "pkg", "mod", "github.com", "sagernet",
-		"sing-tun@"+version)
-	if _, statErr := os.Stat(dir); statErr != nil {
-		t.Skipf("pinned sing-tun source not in the module cache at %s: %v", dir, statErr)
+	// The toolchain was not usable from inside the test (a constrained CI sandbox, for example).
+	// Resolve the same thing from the files: the REPLACE, never the require line.
+	replacePath, replaceVersion := singTunReplace(t)
+	moduleCache := os.Getenv("GOMODCACHE")
+	if moduleCache == "" {
+		gopath := os.Getenv("GOPATH")
+		if gopath == "" {
+			home, homeErr := os.UserHomeDir()
+			require.NoError(t, homeErr)
+			gopath = filepath.Join(home, "go")
+		}
+		moduleCache = filepath.Join(gopath, "pkg", "mod")
+	}
+	dir := filepath.Join(moduleCache, escapeModulePath(replacePath)+"@"+replaceVersion)
+	if _, statErr := os.Stat(filepath.Join(dir, "flow_dispatch.go")); statErr != nil {
+		t.Fatalf("the replaced sing-tun source is not at %s (%v). The pinned-source assertions must "+
+			"read the code the build uses; run `go mod download` in this module, or fix the "+
+			"GOMODCACHE the test is using. A skip here would silently disable the tripwire", dir, statErr)
 	}
 	return dir
+}
+
+// singTunReplace reads the `replace github.com/sagernet/sing-tun => <path> <version>` line from
+// go.mod. It fails rather than returning the require version: the require line is the one thing this
+// helper must not trust.
+func singTunReplace(t *testing.T) (path string, version string) {
+	t.Helper()
+	goMod, err := os.ReadFile("../../go.mod")
+	require.NoError(t, err, "go.mod must be readable to find the replaced sing-tun module")
+
+	for _, line := range strings.Split(string(goMod), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "replace github.com/sagernet/sing-tun =>") {
+			continue
+		}
+		fields := strings.Fields(strings.TrimPrefix(line, "replace github.com/sagernet/sing-tun =>"))
+		require.Len(t, fields, 2, "the sing-tun replace must name a module path and a version: %s", line)
+		return fields[0], fields[1]
+	}
+	t.Fatal("go.mod has no replace for github.com/sagernet/sing-tun. The Direct Offload conclusions " +
+		"were derived against the fork; if the fork was removed, re-derive them before deleting this " +
+		"assertion")
+	return "", ""
+}
+
+// escapeModulePath applies the module cache's case escaping: an upper-case letter becomes `!`
+// followed by its lower-case form.
+func escapeModulePath(path string) string {
+	var builder strings.Builder
+	for _, character := range path {
+		if character >= 'A' && character <= 'Z' {
+			builder.WriteByte('!')
+			builder.WriteRune(character + ('a' - 'A'))
+			continue
+		}
+		builder.WriteRune(character)
+	}
+	return builder.String()
+}
+
+// TestPinnedSourceIsTheReplacedFork is the tripwire on the helper itself.
+//
+// It fails if a future edit resolves the required module instead of the replacement - which is what
+// the helper used to do - or if the replace is removed without the Direct Offload conclusions being
+// re-derived.
+func TestPinnedSourceIsTheReplacedFork(t *testing.T) {
+	dir := singTunModuleDir(t)
+	_, replaceVersion := singTunReplace(t)
+	require.Contains(t, filepath.ToSlash(dir), replaceVersion,
+		"the pinned-source assertions must read the replaced module (%s), not the required upstream "+
+			"version", replaceVersion)
 }
 
 // TestPinnedConsumerHandlesTheDNSVerdicts is the consumer half of the contract.
