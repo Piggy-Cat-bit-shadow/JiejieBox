@@ -103,19 +103,31 @@ userspace and calls the Handler back. The header of
 [native-bypass-trace.md](native-bypass-trace.md) records the trace and the experiments that establish
 it.
 
-**Re-verified at sing-tun `v0.9.7-0.20261006124248-d769a7080ca2`**, the revision this fork pins after
-absorbing upstream `a4331b8d` ("Rework forward NAT with UDP mapping and fragment support"). That
-upstream work reworks forward NAT — UDP mapping/filtering options, a kernel port-selection and
-reservation protocol (`tun.PortWithSelectorRange` / `tun.PortWithSelectorReservation`, reached through
-the new `UpstreamPort()` chain), fragmentation — and leaves the handling of an `ActionBypass` verdict
-alone: the merge changed nothing in how any of the three TUN stacks treats it. The claim above is
-therefore unchanged, and it is held there by the same behavioural tripwires rather than by reading
-the new revision: `TestANewTrackerOnABypassIsNeverCreated` and `TestABypassFlowIsNeverCounted`
-(`protocol/tun`), plus the dispatcher trace this paragraph cites, all pass against the new pin.
+**Re-verified at sing-tun `v0.0.0-20261020085711-109186a15f3b`** (2026-10-20), the revision this fork
+pins now; the first re-verification was at `v0.9.7-0.20261006124248-d769a7080ca2` and is historical.
+The upstream work absorbed in between (forward NAT with UDP mapping and fragment support) and the
+fork's own return-path changes left the handling of an `ActionBypass` verdict alone: the merge
+changed nothing in how any of the three TUN stacks treats it, and the fork's `flow_dispatch.go`
+still routes `Bypass` and `Accept` through the same `default` arm
+(`if verdict.Action == ActionBypass && verdict.Port != nil` is the only special case, and it turns
+the pair into a *flow*, not into a bypass). The claim is held there by the same behavioural
+tripwires rather than by reading the new revision: `TestANewTrackerOnABypassIsNeverCreated` and
+`TestABypassFlowIsNeverCounted` (`protocol/tun`), the dispatcher trace this paragraph cites, and the
+product-level `e2e/tun_fast_path_dataplane_test.go`, all pass against the current pin.
+
+The third revision of the pinned-source check mattered here. The helper used to read the `require`
+line and look the module up under `$HOME/go/pkg/mod`; with this repository's `replace` that is the
+wrong tree, and on a machine with a custom `GOMODCACHE` it skipped instead of failing. It now asks
+`go list -m` for the module in the build list and refuses to fall back to the required upstream
+version (`protocol/tun/dns_hijack_consumer_contract_test.go`).
 
 So for a TUN client the eligibility decision in this document has **no data-plane effect**: a flow it
 marks as bypassable is still proxied in userspace. What it does have is a real effect in Linux
-redirect mode.
+redirect mode. On a shipped configuration the group `fast_path` field does not even reach this
+decision - `direct` is the only bypassable leaf, and transparent chains over it are authorised
+intrinsically, so `unset`, `true` and `false` produce the same verdict on every shape. See
+[tun-fast-path-value-review.md](tun-fast-path-value-review.md) §4 for the table and the tests that
+pin it.
 
 It is worth being precise about what it does *not* cost, because the first version of this document
 claimed one extra rule evaluation and that was wrong. The pre-match verdict is discarded for a direct

@@ -8,6 +8,14 @@ than by reading a verdict.
 in userspace. The verdict is honoured by exactly one transport — Linux `auto_redirect` through
 nfqueue — and the TUN route sets bypass by installing OS routes, not by returning a verdict at all.
 
+Pin of record for this document: `github.com/Piggy-Cat-bit-shadow/sing-tun`
+`v0.0.0-20261020085711-109186a15f3b` (commit `109186a15f3b`), resolved from `go.mod`'s `replace`;
+re-measured 2026-10-23. The upstream `require` version in the same file is not the code the build
+runs. The trace below was re-run at this pin, and the product-level experiment in
+[`e2e/tun_fast_path_dataplane_test.go`](../../e2e/tun_fast_path_dataplane_test.go) now carries the
+same verdict through the real router, the real Go stack and real bytes on TCP and UDP, including a
+control where attaching a tracker flips the verdict to `ActionAccept` and changes nothing else.
+
 ---
 
 ## Why this document exists
