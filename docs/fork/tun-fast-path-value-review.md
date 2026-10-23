@@ -44,8 +44,8 @@ source of the running binary. The two commits are also not interchangeable - the
 
 The `direct-offload.md` claim that the L1 behaviour was "re-verified at
 `v0.9.7-0.20261006124248-d769a7080ca2`, the revision this fork pins" had gone stale: the fork has
-moved pin twice since (2026-10-20 is the current one). The claim was re-measured against the current
-pin in this round and the document was corrected.
+moved its pin several times since (2026-10-20 is the current one). The claim was re-measured against
+the current pin in this round and the document was corrected.
 
 ---
 
@@ -322,6 +322,7 @@ Two readings matter and one does not:
 | `go build -tags <others> ./...` | PASS |
 | `go test -run '^$' ./e2e ./route ./protocol/tun` (untagged test binaries, the CI compile gate) | PASS |
 | `gofmt -l` on every changed file, `go vet` on the changed packages | clean |
+| GitHub Actions `Verify` on the first pushed SHA `91f6c8fdbeb` (it contains every code change; the commits after it are documentation only) | PASS in 18m40s: gofmt, untagged and tagged builds, build matrix, both race steps. `Android Core ARM64` and `Mobile contract` also passed on that SHA. |
 
 `-race` required a mingw-w64 gcc (`CGO_ENABLED=1 CC=...gcc`); the default `go env CGO_ENABLED` on this
 host is `0`, so an unqualified `go test -race` fails with "requires cgo". That is an environment
