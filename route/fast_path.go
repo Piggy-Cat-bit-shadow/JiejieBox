@@ -147,9 +147,9 @@ func directFastPathLeafIsIntrinsic(chain []adapter.Outbound) bool {
 //
 // Rule 3 is reached only when the chain states no policy at all, and applies only to the
 // direct-with-transparent-chain shape. Every other shape - a proxy leaf, a leaf that cannot carry
-// the fast path, any chain containing an opaque group - falls through to the same rules 2-4 that
-// existed before, including nested explicit-true/false precedence. That boundary is the whole safety
-// argument for this rule, so it is stated here rather than left to the call order.
+// the fast path, any chain containing an opaque group - is decided by the explicit-policy rule and
+// the matcher exactly as before, including nested explicit-true/false precedence. That boundary is
+// the whole safety argument for this rule, so it is stated here rather than left to the call order.
 //
 // # Why the outermost element wins
 //

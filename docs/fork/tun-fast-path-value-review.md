@@ -279,7 +279,7 @@ selector losing the fast path) still passes.
 | verdict reversal (`ActionBypass` -> `ActionAccept`) | same test, `tracker-attached` subtest | attaching a tracker changes the verdict and nothing else: same bytes, same handler delegation, same outbound chain |
 | UDP verdict | same file, `TestBypassVerdictStillDeliversUDP` | a bypassed UDP datagram comes back through the userspace NAT, not from the platform |
 | splice refused -> copy still delivers both directions | `route/tcp_splice_diagnostics_test.go::TestTCPSpliceDiagnostics_FallbackKeepsCountersAndOwnership` | the fallback keeps byte integrity and releases the connection |
-| the policy layer's contract | `route/fast_path_production_equivalence_test.go` (six tests, §4.1) | unset and true are indistinguishable on every production shape; false only suppresses the intrinsic shape; it can never grant |
+| the policy layer's contract | `route/fast_path_production_equivalence_test.go` (seven tests, §4.1) | unset and true are indistinguishable on every production shape; false only suppresses the intrinsic shape; it can never grant |
 | the eligibility predicate allocates nothing | `route/direct_offload_bench_test.go::TestBypassDecisionUsesNoAllocations` | 0 allocs/op is a test, not a benchmark reading |
 
 The e2e rows and the dispatcher row divide the chain explicitly: the new fixture writes packets
