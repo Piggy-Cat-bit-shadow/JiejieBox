@@ -86,9 +86,17 @@ traffic.
 | Linux `auto_redirect` (nfqueue) | same router, `JudgeFlow` called by the nfqueue handler | the kernel, after `NfRepeat` + output mark | kernel routing | `CURRENT_CONFIRMED` (source), **NOT_VERIFIED** on device |
 | L0 route sets (`route_address_set` / `route_exclude_address_set`) | decided in `JudgeFlow` BEFORE the router; `ActionBypass` | the OS route table (the packet never reaches the TUN) | kernel | `CURRENT_CONFIRMED` (source), **NOT_VERIFIED** on device (needs root) |
 | TUN Flow / `tun.Port` | `ActionFlow` + `Port` | a `Port` implementation | `Port` writes the packet | ICMP only in production (`direct.PreMatchFlow` answers `PreMatchFlow` only for `NetworkICMP`), `CURRENT_CONFIRMED` |
-| TUN TCP splice | decided after handshake, no verdict involved | the kernel, after `GoConn.Splice` accepts | `splice`/`sendfile` between two descriptors | `CURRENT_CONFIRMED` (source + tests); kernel movement after acceptance is unobservable in-process |
+| TUN TCP splice | decided after handshake, no verdict involved | the kernel, after `GoConn.Splice` accepts | `splice`/`sendfile` between two descriptors | attempt `CURRENT_CONFIRMED`; accepted path **NOT_VERIFIED** here (see below) |
 | TUN UDP splice | decided after the first datagram | `UDPNatConn.Splice` + `Port` | kernel `sendmsg`/splice with NAT | `HISTORICAL_EVIDENCE` + tests |
 | TUN buffered copy | the fallback when splice is refused | userspace `connectionCopy` | userspace buffers | `CURRENT_CONFIRMED` (tests) |
+
+The TCP splice row needs one qualification this round measured. The attempt is automatic and every
+TUN connection makes it, but the in-memory TUN **cannot** accept it: sing-tun's memory platform IO
+reports `supportsSockets() == false`, and `GoConn.Splice` refuses on that first check. The product
+level test therefore observes `splice_rejected` for both a direct and a proxied TUN flow, and the
+bytes are delivered by the copy loops; a system-proxy flow observes `source_not_go_conn`. The
+accepted branch and any kernel byte movement after it need a real device (Linux, Darwin, Windows
+Wintun) and are NOT_VERIFIED here.
 
 The two rows that are easy to conflate, and are not the same thing:
 
@@ -279,6 +287,11 @@ selector losing the fast path) still passes.
 | verdict reversal (`ActionBypass` -> `ActionAccept`) | same test, `tracker-attached` subtest | attaching a tracker changes the verdict and nothing else: same bytes, same handler delegation, same outbound chain |
 | UDP verdict | same file, `TestBypassVerdictStillDeliversUDP` | a bypassed UDP datagram comes back through the userspace NAT, not from the platform |
 | splice refused -> copy still delivers both directions | `route/tcp_splice_diagnostics_test.go::TestTCPSpliceDiagnostics_FallbackKeepsCountersAndOwnership` | the fallback keeps byte integrity and releases the connection |
+| the transport decision, read from the live manager | `e2e/tun_splice_dataplane_test.go` | a direct TUN flow reaches the handover and is refused by the memory platform IO (`splice_rejected`), a proxied flow keeps a GoConn source, and a system-proxy flow is refused at the source (`source_not_go_conn`) - all three still deliver |
+| exact refusal verdict and ordering | `route/fast_bypass_verdict_matrix_test.go` | every eligibility condition changes one input and reports its own verdict; seven combinations pin which condition wins |
+| shared leaf, concurrent policy, selector switch (with `false`) | `route/fast_path_adversarial_test.go` | a refusing group and a passing group sharing one direct leaf never leak into each other, in either order or concurrently; `false` survives a membership switch |
+| an explicit `action: bypass` rule | `route/fast_path_adversarial_test.go::TestAnExplicitBypassRuleIgnoresTheFastPathGate` | the explicit action is not the `fast_path` gate: it bypasses even with a tracker attached, by design, while the implicit path still refuses |
+| multi-segment payload through a bypassed flow | `e2e/tun_fast_path_dataplane_test.go::TestFastPathMultiSegmentPayloadIsIntact` | an 8 KiB stream arrives byte-identical, acknowledged segment by segment |
 | the policy layer's contract | `route/fast_path_production_equivalence_test.go` (seven tests, §4.1) | unset and true are indistinguishable on every production shape; false only suppresses the intrinsic shape; it can never grant |
 | the eligibility predicate allocates nothing | `route/direct_offload_bench_test.go::TestBypassDecisionUsesNoAllocations` | 0 allocs/op is a test, not a benchmark reading |
 
@@ -323,6 +336,7 @@ Two readings matter and one does not:
 | Linux `auto_redirect` nfqueue bypass on a real kernel | **NOT_VERIFIED** | No Linux host with CAP_NET_ADMIN here; source inspection only (`nfqueue_linux.go:284`) |
 | L0 route installation and exclusion | **NOT_VERIFIED** | Needs root and a real TUN device |
 | Kernel actually moving bytes after an accepted splice | **NOT_VERIFIED** | Not observable in-process; the diagnostics record `Accepted`, not kernel activity, and say so (`TestSpliceSnapshot_SummaryDoesNotClaimKernelSpliceSuccess`) |
+| An ACCEPTED TCP handover at all, in this environment | **NOT_VERIFIED** | sing-tun's memory platform IO reports `supportsSockets() == false`, so `GoConn.Splice` refuses at its first check; the product-level test observes `splice_rejected` and the copy fallback. A real device IO (Linux, Darwin, Windows Wintun) reports true |
 | Real NIC throughput / CPU per GiB / battery for splice vs copy | **NOT_VERIFIED** | No device under test; the loopback benchmark is dominated by loopback and cannot be extrapolated |
 | macOS / iOS / Android / Windows Wintun device behaviour | **NOT_VERIFIED** | This machine can only drive the in-memory TUN and the Windows loopback peer |
 | `ActionBypass` in the Android platform auto-redirect implementation | **NEEDS_REVALIDATION** | The platform handler is outside this repository's test surface |
@@ -336,6 +350,9 @@ Two readings matter and one does not:
 | `go test -race -count=3` on the verdict/boundary test set (`./protocol/tun`) | PASS |
 | `go test -race -count=2` on the e2e TUN set | PASS |
 | `go test -count=10` on the fast-path/policy set | PASS |
+| `go test -count=10` on the new eligibility/order/adversarial route tests | PASS |
+| `go test -count=3` on the new e2e controls (verdict, splice, multi-segment) | PASS |
+| `go test -race -count=2` on the new route and e2e controls | PASS |
 | `go build -tags <others> ./...` | PASS |
 | `go vet` on `./route ./option ./protocol/tun ./e2e` | clean |
 | `go test -run '^$' ./e2e ./route ./protocol/tun` (untagged test binaries, the CI compile gate) | PASS |
@@ -411,6 +428,10 @@ Everything else is verification and documentation.
 | `option/fast_path.go`: the tri-state comment states that precedence | The package documents the field's meaning; it has to agree with the resolver. |
 | `protocol/tun/dns_hijack_consumer_contract_test.go`: `singTunModuleDir` now resolves the module from `go list -m` (the `Replace.Dir`) instead of reading the `require` line and `$HOME/go/pkg/mod` | The old helper asserted properties of the module the build does **not** use, and would `t.Skip` when the cache lived anywhere else. A skipped tripwire reads as a pass. `TestPinnedSourceIsTheReplacedFork` now pins the fix. |
 | `route/fast_path_production_equivalence_test.go` (new) | Pins §4 and fails the moment a second bypassable leaf or a precedence change alters the contract. |
+| `route/fast_bypass_verdict_matrix_test.go` (new) | Every eligibility condition changes one input and asserts its exact `BypassVerdict`; seven rows pin the order of the conditions. |
+| `route/fast_path_adversarial_test.go` (new) | Shared leaf across refusing/passing groups (sequential and concurrent), `false` across a selector switch, and the explicit `action: bypass` asymmetry. |
+| `e2e/tun_splice_dataplane_test.go` (new) | The transport decision read from the live manager: direct TUN attempt + platform refusal, proxied TUN source classification, system-proxy source refusal. |
+| `e2e/tun_fast_path_dataplane_test.go`: multi-segment payload test | 8 KiB through a bypassed flow, byte-identical, acknowledged segment by segment. |
 | `e2e/tun_fast_path_dataplane_test.go` (new) | Carries the verdict through the real router, the real Go stack and real bytes on both TCP and UDP; includes the `false` and tracker verdict-reversal controls. |
 | `e2e/harness_test.go`: `startChainUntracked` and the tracker flag | The default harness attaches a `flowRecorder` to every box, which makes `canFastBypass` refuse every flow with `BypassRefusedTracker`. Without this, an e2e test cannot reach a bypass verdict at all. |
 | `e2e/tun_chain_test.go`: a pluggable `judgeFlow` and a delegation counter | Lets a test drive the real router's `PreMatch` from packets, and observe that the flow reached userspace. |
@@ -418,8 +439,11 @@ Everything else is verification and documentation.
 | `docs/fork/native-bypass-trace.md` | Added the current pin, the product-level test, and the harness limitation note. |
 | This document | The D0 review the brief requires, including the decision above. |
 
-Deliberately **not** done, with reasons:
+The adversarial acceptance round - the attack matrix, the exact-verdict ordering, the mutation
+controls and the splice limitation - is recorded in
+[tun-fast-path-adversarial-debug.md](tun-fast-path-adversarial-debug.md).
 
+Deliberately **not** done, with reasons:
 - **No gate on the eligibility decision.** It saves at most ~85 ns per eligible flow and cannot be
   keyed on the inbound type without breaking the one transport that honours the verdict. Measured,
   not assumed.
