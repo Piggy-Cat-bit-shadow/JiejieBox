@@ -570,6 +570,15 @@ func (r *Router) PreMatch(metadata adapter.InboundContext, firstPacket []byte) a
 			applyActionRouteOptions(&metadata, action)
 			return r.preMatchFlow(ctx, &metadata, packetDestination, currentRule, action.Outbound)
 		case *R.RuleActionBypass:
+			// This is an explicit operator instruction, not the implicit Direct Fast Path: it
+			// returns the bypass verdict without consulting canFastBypass, so a tracker, a power
+			// report or a dial semantic does not refuse it. The asymmetry is deliberate - the
+			// action's meaning is "let the platform carry this", and the configuration author
+			// wrote it - and it is pinned by
+			// route/fast_path_adversarial_test.go::TestAnExplicitBypassRuleIgnoresTheFastPathGate.
+			// The consequence, recorded rather than discovered later: on Linux redirect mode these
+			// flows leave userspace by explicit choice and are not counted.
+			//
 			// A bypass without an outbound contributes nothing, which is what keeps the verdict
 			// below reachable: its own options can no longer rewrite the destination out from
 			// under it.
