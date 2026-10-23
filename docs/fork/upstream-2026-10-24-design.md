@@ -72,8 +72,8 @@ elsewhere. The audit's value is in the 40 rows that are not.
 
 ## 7. Why this round does not merge ancestry
 
-An ancestry-only merge (`-s ours`) would make `behind_by=0` while 26 `MISSING_FIX` rows stay open. The
-task brief forbids exactly that ordering. The audit and the fourteen ports (one partial) are the real
+An ancestry-only merge (`-s ours`) would make `behind_by=0` while 25 `MISSING_FIX` rows stay open. The
+task brief forbids exactly that ordering. The audit and the fifteen ports (one partial) are the real
 work; the merge is
 withheld until the open table is empty, and the next round starts from
 [upstream-2026-10-24-audit.md](upstream-2026-10-24-audit.md#open-work--the-missing_fix-rows) instead of

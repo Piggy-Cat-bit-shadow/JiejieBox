@@ -57,7 +57,7 @@ func TestSelectorSelectionChangeInterruptsCarriedConnections(t *testing.T) {
 
 			ctx := context.Background()
 			if testCase.isExternal {
-				ctx = interrupt.ContextWithIsExternalConnection(ctx)
+				ctx = interrupt.ContextWithIsExternalConnection(ctx, true)
 			}
 			conn, err := selector.DialContext(ctx, N.NetworkTCP, M.ParseSocksaddr("93.184.216.34:443"))
 			require.NoError(t, err)
