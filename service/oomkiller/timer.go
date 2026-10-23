@@ -505,7 +505,6 @@ func (t *adaptiveTimer) nextState(sample memorySample) pressureState {
 		return nextPressureState(t.state,
 			sample.usage >= t.limitThresholds.trigger,
 			sample.usage >= t.limitThresholds.armed,
-			sample.usage >= t.limitThresholds.resume,
 		)
 	case policyModeAvailable:
 		if !sample.availableKnown {
@@ -515,7 +514,6 @@ func (t *adaptiveTimer) nextState(sample memorySample) pressureState {
 		return nextPressureState(t.state,
 			sample.available <= thresholds.trigger,
 			sample.available <= thresholds.armed,
-			sample.available <= thresholds.resume,
 		)
 	default:
 		return pressureStateNormal
@@ -659,9 +657,13 @@ func (t *adaptiveTimer) logDetails(sample memorySample) string {
 	return ""
 }
 
-func nextPressureState(current pressureState, shouldTrigger, shouldArm, shouldStayTriggered bool) pressureState {
+func nextPressureState(current pressureState, shouldTrigger, shouldArm bool) pressureState {
 	if current == pressureStateTriggered {
-		if shouldStayTriggered {
+		// Exit the crisis state at the ARMED line, not at resume. resume (30 MiB) is the idle
+		// hysteresis floor; a process can sit at 33 MiB forever, so using it here pinned the
+		// killer in Triggered after one reset and kept GOMEMLIMIT/ReleaseMemory pressure on a
+		// process that was no longer near the trigger. Upstream 9c2aa1bed32a.
+		if shouldArm {
 			return pressureStateTriggered
 		}
 		return pressureStateNormal

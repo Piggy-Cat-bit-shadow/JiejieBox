@@ -38,6 +38,12 @@ rather than unconditionally "released idle memory". The idle path joins the exis
 `Close`/`Reload` cannot return while a trim/GC is still touching the network; a `releaseAccess`
 mutex makes the idle cleanup single-flight.
 
+A second defect in the same package: `nextPressureState` left `Triggered` only when usage was
+below `resume` (30 MiB). A process at a stable 33 MiB therefore stayed `Triggered` forever after one
+reset, keeping the crisis pressure flag and the stronger release path armed. The exit condition is
+now `armed` (40 MiB), matching upstream `9c2aa1bed32a`; `resume` remains the idle hysteresis floor
+used by `belowResume`. Test: `TestPressureStateExitsTriggeredAtArmedNotResume`.
+
 No change was made to `TrimMemory`'s downstream behaviour, to the critical `ReleaseMemory` path, or
 to the policy thresholds. Upstream `9c2aa1b` removes the `resume` field from the state machine; that
 is a different change and was not adopted here — the iOS crisis hysteresis is a safety contract, and
@@ -52,6 +58,7 @@ the bug was its misuse as an everyday admission gate.
 | `TestIdleReleaseDoesNotRepeatAtAStableFootprint` | five samples at 33 MB, no drop, no pressure → zero trims, zero forced GCs |
 | `TestIdleReleaseRunsOnceForARealDropThenCoolsDown` | 35 → 33 MB → exactly one release; a second 33 MB sample is suppressed by the cooldown |
 | `TestIdleReleasePressureBypassesTheCooldown` | after a no-gain release, an armed 41 MB sample still releases (pressure overrides the ordinary cooldown) |
+| `TestPressureStateExitsTriggeredAtArmedNotResume` | Triggered exits at 39 MB (below armed), stays at 41 MB; normal/armed entry unchanged |
 
 `go test ./service/oomkiller` passes. The package's existing Darwin policy/lifecycle tests also pass
 unchanged. `-race` was not run on this host for this package (CGO/mingw setup); CI runs the race
