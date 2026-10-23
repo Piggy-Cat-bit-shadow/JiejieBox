@@ -122,11 +122,18 @@ func TestTheUpdaterDoesNotOutliveItsClose(t *testing.T) {
 
 	require.NoError(t, fixture.updater.Close())
 
+	// At most ONE request may complete after Close returns: the loop fetches sequentially, so a
+	// request that was already in flight when Close ran still lands, and it counts. That is not the
+	// leak this test is about - a loop that outlives Close would add ~30 hits in the window below
+	// (5ms interval, 150ms wall). The earlier version compared against an exact baseline taken
+	// immediately after Close and failed on a loaded host when that one in-flight request completed
+	// between the two reads.
 	stopped := fixture.hits.Load()
 	time.Sleep(150 * time.Millisecond)
-	require.Equal(t, stopped, fixture.hits.Load(),
+	require.LessOrEqual(t, fixture.hits.Load(), stopped+1,
 		"the updater kept fetching after Close: at a 5ms interval a still-running loop would have added "+
-			"~30 requests. Every reload would leave one of these behind, holding the old rule-set's rules")
+			"~30 requests, and only the one request already in flight may complete. Every reload would "+
+			"leave one of these behind, holding the old rule-set's rules")
 }
 
 // TestAPeriodicRefreshWaitsForTheDeviceToWake is the fork's sleep gate, end to end.
