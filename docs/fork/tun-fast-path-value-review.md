@@ -63,8 +63,9 @@ authorisation with no data-plane counterpart in ordinary TUN.
 The group `fast_path` field does not even change that verdict on a shipped configuration. It is
 inert in the strongest sense: see §4. What is real, and what the brief asks us to look for, is the
 **post-handshake splice handover**, which is attempted for every TUN connection that reaches
-`ConnectionManager.NewConnection` (TCP) and `NewPacketConnection` (UDP) - no group, no field, no
-opt-in. That is the optimisation that already applies to all eligible TUN traffic.
+`ConnectionManager.NewConnection` (TCP, TLS-rewrite flows excepted) and `NewPacketConnection` (UDP) -
+no group, no field, no opt-in. That is the optimisation that already applies to all eligible TUN
+traffic.
 
 ---
 
@@ -216,7 +217,7 @@ Rows are the shapes a user can actually configure; columns are the three states 
 | `urltest -> direct` | bypass | bypass | bypass | none |
 | `selector -> urltest -> direct` | bypass | bypass | bypass | none |
 | `selector -> loadbalance -> direct` | refused (chain) | refused (chain) | refused (chain) | none |
-| `loadbalance -> direct` | refused (chain) | (configuration rejected: `fast_path` on loadbalance) | (same) | none |
+| `loadbalance -> direct` | refused (chain) | configuration rejected: `fast_path` cannot be placed on `loadbalance` | configuration rejected | none |
 | any `-> proxy` leaf | refused (not bypassable) | refused (same) | refused (same) | none |
 | same `direct` leaf reached through two different groups | per-flow, each chain resolves its own value | same | same | none in outcome |
 
@@ -258,7 +259,8 @@ performance fix.
 | --- | --- | --- |
 | `ActionBypass` vs `ActionAccept` at the shared dispatcher | `protocol/tun/native_bypass_dispatcher_test.go::TestDispatcherConsumesOnlyAFlow`, `TestDispatcherTreatsBypassAndAcceptIdentically` | identical consumption, judge count, write-back and tracker creation |
 | `ActionBypass` vs `ActionAccept` through the real go stack | `protocol/tun/native_bypass_trace_test.go::TestBypassReachesTheSameDataPathAsAccept` | the application's SYN is never handed back; only stack-generated replies are written |
-| `fast_path` unset/true/false through the real router, real stack, real peer, real bytes | `e2e/tun_fast_path_dataplane_test.go::TestFastPathVerdictDoesNotChangeTheTUNDataPath` | all three produce `ActionBypass`; the handler is still delegated to; the echo peer still receives bytes; the socks outbound is never reached || verdict reversal (`ActionBypass` -> `ActionAccept`) | same test, `tracker-attached` subtest | attaching a tracker changes the verdict and nothing else: same bytes, same handler delegation, same outbound chain |
+| `fast_path` unset/true/false through the real router, real stack, real peer, real bytes | `e2e/tun_fast_path_dataplane_test.go::TestFastPathVerdictDoesNotChangeTheTUNDataPath` | all three produce `ActionBypass`; the handler is still delegated to; the echo peer still receives bytes; the socks outbound is never reached |
+| verdict reversal (`ActionBypass` -> `ActionAccept`) | same test, `tracker-attached` subtest | attaching a tracker changes the verdict and nothing else: same bytes, same handler delegation, same outbound chain |
 | UDP verdict | same file, `TestBypassVerdictStillDeliversUDP` | a bypassed UDP datagram comes back through the userspace NAT, not from the platform |
 | splice refused -> copy still delivers both directions | `route/tcp_splice_diagnostics_test.go::TestTCPSpliceDiagnostics_FallbackKeepsCountersAndOwnership` | the fallback keeps byte integrity and releases the connection |
 | the tri-state cannot change a verdict | `route/fast_path_production_equivalence_test.go` (five tests, §4.1) | the policy layer is inert on every production shape |
@@ -408,9 +410,11 @@ Precedence becomes: explicit policy anywhere in the chain, outermost first -> th
 direct -> then the automatic tag matcher. `unset` and `true` behave exactly as today; only a group
 that explicitly wrote `false` stops authorising the bypass attempt.
 
-- Migration cost: a configuration that writes `false` and relied on it doing nothing (only possible
-  on Linux `auto_redirect`, where it was silently bypassing) now keeps its traffic in userspace,
-  which is what the field says. `option/fast_path.go`'s documentation becomes true.
+- Migration cost: a configuration that writes `false` on a `selector -> direct` group will, after the
+  change, keep those flows in userspace on Linux `auto_redirect` instead of bypassing them silently.
+  That is the behaviour the field's documentation already promises; the visible effect is a slower,
+  fully tracked path for exactly the flows the operator asked to keep off the native path. No JSON
+  changes, no new key.
 - Test cost: `fast_path_direct_inheritance_test.go::TestDirectFastPathSelectorExplicitFalseDoesNotDisableDirect`
   and `TestExplicitFastPathFalseDoesNotSuppressTheDirectChainToday` change expected value; every
   other test in `route/fast_path_*_test.go` stays.
@@ -443,7 +447,7 @@ go list -m -json github.com/sagernet/sing-tun        # Replace.Dir must be the f
 go test -count=1 -tags $tags ./route ./protocol/tun ./option ./e2e
 go test -count=1 -tags $tags ./route -run 'TestFastPathPoliciesCannotChange|TestDirectIntrinsic|TestExplicitFastPathFalse|TestDirectIsTheOnly|TestFastPathTransparentGroups|TestDispatcherConsumes|TestBypassReachesTheSameDataPath|TestTCPSpliceDiagnostics_Fallback'
 go test -count=1 -tags $tags ./e2e -run 'TestFastPathVerdictDoesNotChangeTheTUNDataPath|TestBypassVerdictStillDeliversUDP'
-go test -run '^$' -bench 'BenchmarkBypassDecision|BenchmarkPreMatchDirectFlow|BenchmarkFlowSetup' -benchmem -count=5 ./route
+go test -run '^$' -bench 'BenchmarkBypassDecision|BenchmarkPreMatchDirectFlow|BenchmarkFlowSetup' -benchmem -count=5 -tags $tags ./route
 ```
 
 The benchmark numbers in §5.2 are the raw output of the last command on the machine described in the
