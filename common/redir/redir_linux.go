@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"os"
 	"syscall"
+	"unsafe"
 
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/control"
@@ -30,9 +31,14 @@ func GetOriginalDestination(conn net.Conn) (destination netip.AddrPort, err erro
 			if err != nil {
 				return err
 			}
-			var port [2]byte
-			binary.BigEndian.PutUint16(port[:], raw.Addr.Port)
-			destination = netip.AddrPortFrom(M.AddrFromIP(raw.Addr.Addr[:]), binary.LittleEndian.Uint16(port[:]))
+			// raw.Addr.Port is the sin6_port field, which the kernel fills in network byte
+			// order. Go loaded it with the host's byte order, so the value is already
+			// byte-swapped on little-endian. Reading the field's in-memory bytes (which are
+			// still network order) and decoding them as big-endian is correct on both
+			// endiannesses; the old BigEndian.Put + LittleEndian.Uint16 pair only worked on
+			// little-endian. Upstream 6564c26d409b.
+			portBytes := *(*[2]byte)(unsafe.Pointer(&raw.Addr.Port))
+			destination = netip.AddrPortFrom(M.AddrFromIP(raw.Addr.Addr[:]), binary.BigEndian.Uint16(portBytes[:]))
 		}
 		return nil
 	})

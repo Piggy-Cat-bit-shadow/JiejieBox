@@ -24,16 +24,16 @@ patch-id matches are already in the fork; the 73 remaining were audited individu
 
 | classification | count | meaning |
 |---|---|---|
-| MISSING_FIX | 26 | defect applies to the fork and the fix is absent |
+| MISSING_FIX | 25 | defect applies to the fork and the fix is absent |
 | DEPENDENCY_BUMP | 19 | the commit is a dependency pin; the fix lives in a replaced or required module |
 | EQUIVALENT | 5 | the fork has a different implementation with the same contract |
-| PRESENT | 15 | the fix is in the fork (including the fourteen ported this round) |
+| PRESENT | 16 | the fix is in the fork (including the fifteen ported this round) |
 | NOT_APPLICABLE | 3 | an upstream-only path the fork does not have |
 | DOCS_ONLY | 4 | documentation, certificates or version bump |
 | REJECTED_WITH_EVIDENCE | 1 | the upstream change conflicts with a documented fork contract |
 
-At audit time 40 rows were gaps (5 P0, 29 P1, 6 P2). This round fixed 14, rejected 1 with the
-fork's own regression test as evidence, and left 26 open. It is not a zero-lag delivery.
+At audit time 40 rows were gaps (5 P0, 29 P1, 6 P2). This round fixed 15, rejected 1 with the
+fork's own regression test as evidence, and left 25 open. It is not a zero-lag delivery.
 
 ## The queue (all 73)
 
@@ -69,7 +69,6 @@ gap at audit time; rows now `PRESENT` were ported in this round (see the change 
 | `40bc411e8d02` | Fix connection owner lookup on legacy Android | MISSING_FIX | P1 | PORT | experimental/libbox/internal/procfs/procfs.go:33 keeps ResolveSocketByProcSearch(network, source, _ netip.AddrPort) matching local_address only (no rem_address/inode col... |
 | `42f487bd0d04` | Fix IPv6 literal host handling | MISSING_FIX | P1 | PORT | dns/transport/https.go:74-93 and dns/transport/quic/http3.go:72-91 build url.URL from an unbracketed host; service/derp/service.go:351-361 uses hostname unbracketed for ... |
 | `54c60dc7e6cc` | Fix DHCP DNS search domain expansion | MISSING_FIX | P1 | PORT | dns/transport/dhcp/dhcp_shared.go:17 FqdnToDomain then :47 nameList, :61 hasNdots with ndots=1 (dhcp.go:61,88,101), :69 appends every state.search suffix for all names; ... |
-| `6564c26d409b` | Fix IPv6 original destination port on big-endian | MISSING_FIX | P1 | PORT | common/redir/redir_linux.go:33-35 still does the Put plus LittleEndian read; protocol/redirect/redirect.go:58 still calls redir.GetOriginalDestination; common/redir/redi... |
 | `6fb6770cec52` | Keep systemd-resolved servers when configuration is unchanged | MISSING_FIX | P1 | PORT | dns/transport/local/local_resolved_linux.go:467-579 checkResolved builds and starts the complete *resolvedServerSet inline; updateStatus:438-451 swaps and closes oldServ... |
 | `73698e437479` | Update built-in certificates | MISSING_FIX | P1 | PORT | Fork blobs are byte-identical to the upstream pre-image (mozilla.go 551b00c, chrome.go 2204625): common/certificate/mozilla.go:3347 still trusts Entrust Root CA and cont... |
 | `755150a5131e` | Fix config format output | MISSING_FIX | P1 | PORT | option/outbound.go:247 server_port, option/shadowsocks.go:15-29, option/trojan.go:14, option/vless.go:12, option/vmess.go:12,21 (name, security) and option/openvpn.go:19... |
@@ -84,6 +83,7 @@ gap at audit time; rows now `PRESENT` were ported in this round (see the change 
 | `ef0b632920ff` | Limit concurrent auto-redirect flow judgements | MISSING_FIX | P1 | PORT | experimental/libbox/redirect_linux.go:99-111 autoRedirectServiceHandler has no limiter and JudgeFlow calls h.handler.JudgeFlow directly; the handler is built at :51 with... |
 | `0164ce7b8e0a` | Fix shared connections inheriting external interrupt mark | PRESENT | P1 | NO_ACTION | Port in this round: the external-interrupt mark is a typed bool, explicit false for DNS/multiplex sessions and true for routed connections. Build + `./route`/`./dns` tes... |
 | `37bddc915c02` | Fix close handler skipped on packet handshake failure | PRESENT | P1 | NO_ACTION | Port in this round: a packet handshake-success failure now goes through `CloseOnHandshakeFailure` and the close handler runs. Build + `./route` tests pass. Upstream: 37b... |
+| `6564c26d409b` | Fix IPv6 original destination port on big-endian | PRESENT | P1 | NO_ACTION | Port in this round: the IPv6 original-destination port is decoded from the sin6_port field in memory network order, fixing big-endian. `GOOS=linux go build ./common/redi... |
 | `75eef0951443` | Fix tun platform interface checks | PRESENT | P1 | NO_ACTION | Port in this round: `usePlatformInterface` is captured once and replaces the nil-check at the GSO, Start-probe, route-set, auto-redirect and open-interface gates. Build ... |
 | `79d2e8084ed1` | Fix Android package name lookup | PRESENT | P1 | NO_ACTION | Port in this round: Android skips the app_process wrapper paths and the all-users scan; `GOOS=linux go build ./common/process` passes. Upstream: 79d2e8084ed1. |
 | `7f1a439ff069` | Fix process search for redirect inbound | PRESENT | P1 | NO_ACTION | Port in this round: `protocol/redirect` populates `OriginDestination` (delivered in the previous commit). Upstream: 7f1a439ff069. |
@@ -134,7 +134,6 @@ ancestry while substantive `E` items remain.
 | `40bc411e8d02` | Fix connection owner lookup on legacy Android | P1 | Upstream deletes PlatformInterface.UseProcFS and adds connection_owner_android.go. Port requires the libbox change plus switching the Android client from useProcFS to Libbox.findConnectionOwner. |
 | `42f487bd0d04` | Fix IPv6 literal host handling | P1 | Upstream also bundles the http3 SetNextProtos(h3)/TLSClientConfig change and derp SetURLDialer using server.Server; check those when porting. The REALITY nil-request path is a config-triggered crash. |
 | `54c60dc7e6cc` | Fix DHCP DNS search domain expansion | P1 | The same expander also lives in local/systemconfig and the resolved service (next commit). Minimal fix: only expand when mDNS.CountLabel(name)==1, and validate the question name separately. |
-| `6564c26d409b` | Fix IPv6 original destination port on big-endian | P1 | Fix portably in place by reading the uint16 field's in-memory bytes, which the kernel fills in network order (2-byte unsafe view plus BigEndian), not by Put/Get. Big-endian only (s390x/mips/ppc64), h... |
 | `6fb6770cec52` | Keep systemd-resolved servers when configuration is unchanged | P1 | Port the split: checkResolved returns []resolvedScopeSpecification with an equal() method, compare against the saved set and return early when equal, and create a new set only on real change. |
 | `73698e437479` | Update built-in certificates | P1 | Generated data only. The fork's generator cmd/internal/update_certificates is unchanged from the merge base and identical to upstream's, so `make update_certificates` (Makefile:65) reproduces the ref... |
 | `755150a5131e` | Fix config format output | P1 | Cheapest repro: a DERP config with stun: {enabled: true, listen_port: N} through sing-box format loses the port, and daemon FormatConfig writes zero server_port/name/password back. Schema casing alre... |
@@ -169,6 +168,7 @@ ancestry while substantive `E` items remain.
 | `56413a43674e` | the Apple updater includes the helper bundle id | build |
 | `0164ce7b8e0a` | external-interrupt mark is a typed bool, explicit false for DNS/multiplex | build + `./route`/`./dns` |
 | `5372a195b3ee` | a failed URLTest connection deletes the leaf history | `route/url_test_history_test.go` |
+| `6564c26d409b` | the IPv6 original-destination port is decoded from the in-memory network-order field | `GOOS=linux go build ./common/redir` |
 
 Dependency work: `sing-cloudflared` and `sing-openvpn` were moved to upstream's pins and tested;
 the six replaced/API-coupled modules are `BLOCKED_WITH_EVIDENCE` in

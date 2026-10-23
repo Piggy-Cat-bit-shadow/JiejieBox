@@ -297,17 +297,6 @@
   "notes": "The same expander also lives in local/systemconfig and the resolved service (next commit). Minimal fix: only expand when mDNS.CountLabel(name)==1, and validate the question name separately."
  },
  {
-  "sha": "6564c26d409b29f33b3a14a18d4b34d4ff41dcf7",
-  "subject": "Fix IPv6 original destination port on big-endian",
-  "root_cause": "The Linux IPv6 SO_ORIGINAL_DST branch byte-swapped the port (BigEndian.PutUint16 into a [2]byte, then LittleEndian.Uint16), correct only on little-endian hosts, so redirect inbounds on big-endian targets resolved a wrong destination port. Upstream deleted common/redir and moved to sing's control.GetOriginalDestination, dropping the darwin PF copy too.",
-  "classification": "MISSING_FIX",
-  "fork_evidence": "common/redir/redir_linux.go:33-35 still does the Put plus LittleEndian read; protocol/redirect/redirect.go:58 still calls redir.GetOriginalDestination; common/redir/redir_darwin.go and redir_other.go still exist. The fork's replaced sing has the identical swap at control/redirect_linux.go:30-32, so a plain switch would not fix it.",
-  "evidence_level": "CODE_PROVEN",
-  "action": "PORT",
-  "priority": "P1",
-  "notes": "Fix portably in place by reading the uint16 field's in-memory bytes, which the kernel fills in network order (2-byte unsafe view plus BigEndian), not by Put/Get. Big-endian only (s390x/mips/ppc64), hence P1: wrong destination, not a crash."
- },
- {
   "sha": "6fb6770cec52",
   "subject": "Keep systemd-resolved servers when configuration is unchanged",
   "root_cause": "updateStatus rebuilt the whole resolved scope/server set (creating new transports and a new serverScope) on every D-Bus PropertiesChanged/NameOwnerChanged notification, then unconditionally swapped and closed the previous set even when the resolved configuration was identical; live transports were torn down and in-flight queries aborted on no-op updates.",
@@ -456,6 +445,17 @@
   "root_cause": "When N.ReportPacketConnHandshakeSuccess failed, the packet path closed both connections directly instead of calling N.CloseOnHandshakeFailure, so the registered onClose handler never ran: the group's interrupt registration, tracker state and manager bookkeeping for that flow were never released, and no linger or HandshakeFailure signal was sent.",
   "classification": "PRESENT",
   "fork_evidence": "Port in this round: a packet handshake-success failure now goes through `CloseOnHandshakeFailure` and the close handler runs. Build + `./route` tests pass. Upstream: 37bddc915c02.",
+  "evidence_level": "CODE_PROVEN",
+  "action": "NO_ACTION",
+  "priority": "P1",
+  "notes": "Fixed in this round; see docs/fork/upstream-2026-10-24-debug.md."
+ },
+ {
+  "sha": "6564c26d409b29f33b3a14a18d4b34d4ff41dcf7",
+  "subject": "Fix IPv6 original destination port on big-endian",
+  "root_cause": "The Linux IPv6 SO_ORIGINAL_DST branch byte-swapped the port (BigEndian.PutUint16 into a [2]byte, then LittleEndian.Uint16), correct only on little-endian hosts, so redirect inbounds on big-endian targets resolved a wrong destination port. Upstream deleted common/redir and moved to sing's control.GetOriginalDestination, dropping the darwin PF copy too.",
+  "classification": "PRESENT",
+  "fork_evidence": "Port in this round: the IPv6 original-destination port is decoded from the sin6_port field in memory network order, fixing big-endian. `GOOS=linux go build ./common/redir` passes. Upstream: 6564c26d409b.",
   "evidence_level": "CODE_PROVEN",
   "action": "NO_ACTION",
   "priority": "P1",
