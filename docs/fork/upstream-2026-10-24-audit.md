@@ -25,15 +25,15 @@ patch-id matches are already in the fork; the 73 remaining were audited individu
 | classification | count | meaning |
 |---|---|---|
 | MISSING_FIX | 24 | defect applies to the fork and the fix is absent |
-| DEPENDENCY_BUMP | 19 | the commit is a dependency pin; the fix lives in a replaced or required module |
+| DEPENDENCY_BUMP | 17 | the commit is a dependency pin; the fix lives in a replaced or required module |
 | EQUIVALENT | 5 | the fork has a different implementation with the same contract |
-| PRESENT | 17 | the fix is in the fork (including the sixteen ported this round) |
+| PRESENT | 19 | the fix is in the fork (including the eighteen ported this round) |
 | NOT_APPLICABLE | 3 | an upstream-only path the fork does not have |
 | DOCS_ONLY | 4 | documentation, certificates or version bump |
 | REJECTED_WITH_EVIDENCE | 1 | the upstream change conflicts with a documented fork contract |
 
-At audit time 40 rows were gaps (5 P0, 29 P1, 6 P2). This round fixed 16, rejected 1 with the
-fork's own regression test as evidence, and left 24 open. It is not a zero-lag delivery.
+At audit time 40 rows were gaps. The table is authoritative: 24 MISSING_FIX rows remain. This round
+additionally synced two dependency pins (03ab009ea1c0, 6ddf133d3490) and closed the P05/L12 test gaps;
 
 ## The queue (all 73)
 
@@ -42,17 +42,16 @@ gap at audit time; rows now `PRESENT` were ported in this round (see the change 
 
 | SHA | subject | class | prio | action | evidence (abridged) |
 |---|---|---|---|---|---|
-| `03ab009ea1c0` | Fix TUN flow table retaining accepted TCP connections | DEPENDENCY_BUMP | P0 | INVESTIGATE | go.mod:58 requires sing-tun v0.9.7-0.20261013140216-9ffa5391a2ad and :354 replaces it with Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261020085711-109186a15f3b, which FORK.m... |
 | `cc2f91b77a69` | Fix system stack retaining closed TCP sessions | DEPENDENCY_BUMP | P0 | INVESTIGATE | Same sing-tun pin (go.mod:58 require 9ffa5391a2ad, :354 replace 109186a15f3b); upstream fix 84e75a655a43 is later than the fork's base and absent from the fork's sing-tu... |
 | `42cae14c63d1` | Fix Apple TLS engine connection leak | MISSING_FIX | P0 | PORT | common/tls/apple_client_platform.go:48 unix.Dup before :65 resolveAnchors (error return leaks dupFD), :99 non-deferred anchors.Release; apple_client_platform_darwin.m:17... |
 | `cc022098fdec` | Fix WireGuard pause and sleep handling | MISSING_FIX | P0 | PORT | Endpoint half is already owned differently: endpoint.go:799-816 keeps networkPaused under stateAccess, :717-769 closes the device under the same lock. Bind half is not: ... |
+| `03ab009ea1c0` | Fix TUN flow table retaining accepted TCP connections | PRESENT | P0 | NO_ACTION | Dependency sync: the sing-tun pin now includes baaa611 (accepted TCP flow entries removed after handshake); `go test ./protocol/tun` and `go build ./...` pass. Upstream:... |
 | `8e90fc34e6e8` | Fix network namespace with TCP Fast Open | PRESENT | P0 | NO_ACTION | Port in this round: DialSlowContext carries the namespace and the deferred TFO dial enters it via listener.ListenNetworkNamespace. Build + `./common/dialer` tests pass. ... |
 | `92fe54be05f2` | Fix flow close racing with tracker attach | PRESENT | P0 | NO_ACTION | Port in this round: `multiFlowTracker` is a locked struct; AttachFlow and CloseFlow are serialized, the counters stay lock-free. Test: `route/flow_tracker_serialization_... |
 | `b722a038e61b` | Fix TUN loopback protection for ICMP | PRESENT | P0 | NO_ACTION | Port in this round: `protocol/direct` rejects an ICMP flow to the TUN's own range. Test: `protocol/direct/icmp_loopback_test.go`. Upstream: b722a038e61b. |
 | `299655ce043d` | Fix stuck cloudflared edge connections | DEPENDENCY_BUMP | P1 | NO_ACTION | SYNCED this round: go.mod now requires sing-cloudflared v0.1.4-0.20261021152903-2d40d788fcf6 (upstream's pin); go build ./protocol/cloudflare and the module fetch pass. |
 | `38b17bdd01c1` | Fix QUIC Chrome parrot packet size on IPv6 | DEPENDENCY_BUMP | P1 | INVESTIGATE | go.mod:46 requires sagernet/quic-go mod.9, replaced at go.mod:297 by Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261019061042; its chrome_parrot.go:19 still has chromeIniti... |
 | `6aea1f8ba8fb` | Let the dialer resolve the naive server address | DEPENDENCY_BUMP | P1 | INVESTIGATE | go.mod:39-40 still name cronet-go v0.0.0-20260929213745-4d18a60dc3a8, replaced at go.mod:226-232 by Piggy-Cat-bit-shadow/cronet-go v0.0.1-143.0.7499.109-2.0.202610200550... |
-| `6ddf133d3490` | Fix Windows connection loop with weak host send | DEPENDENCY_BUMP | P1 | INVESTIGATE | go.mod:354 pins sing-tun v0.0.0-20261020085711-109186a15f3b, which has no tun_bind_windows.go and no enforceInterfaceBinding/setWeakHostSend; the fork contains no weak-h... |
 | `770d047aeb5f` | Fix VLESS Vision close after direct write | DEPENDENCY_BUMP | P1 | INVESTIGATE | go.mod:60 pins sing-vmess v0.2.9-0.20260929152519-9b95ab8c9478, exactly upstream's pre-fix revision, and protocol/vless/encryption/vision.go:56 expectedSingVMessVersion ... |
 | `85157f4c28cc` | Fix truncated WireGuard IPv6 send address | DEPENDENCY_BUMP | P1 | INVESTIGATE | go.mod:63 pins wireguard-go v0.0.8-0.20260929150556-ca3bc60c4ce7 (no replace), a different commit from both sides of this bump (6731c7387c81 -> 34ff6c5e8c94). The fork's... |
 | `af288b53e6eb` | Fix QUIC and UDP sessions closing on EMSGSIZE | DEPENDENCY_BUMP | P1 | INVESTIGATE | Fork pins its own forks: go.mod:212 sing v0.9.6-0.20261019051552-baed8c3b4a34, go.mod:297 quic-go v0.61.1-0.20261019061042-7e08ecaba383, go.mod:307 sing-quic v0.7.2-0.20... |
@@ -84,6 +83,7 @@ gap at audit time; rows now `PRESENT` were ported in this round (see the change 
 | `0164ce7b8e0a` | Fix shared connections inheriting external interrupt mark | PRESENT | P1 | NO_ACTION | Port in this round: the external-interrupt mark is a typed bool, explicit false for DNS/multiplex sessions and true for routed connections. Build + `./route`/`./dns` tes... |
 | `37bddc915c02` | Fix close handler skipped on packet handshake failure | PRESENT | P1 | NO_ACTION | Port in this round: a packet handshake-success failure now goes through `CloseOnHandshakeFailure` and the close handler runs. Build + `./route` tests pass. Upstream: 37b... |
 | `6564c26d409b` | Fix IPv6 original destination port on big-endian | PRESENT | P1 | NO_ACTION | Port in this round: the IPv6 original-destination port is decoded from the sin6_port field in memory network order, fixing big-endian. `GOOS=linux go build ./common/redi... |
+| `6ddf133d3490` | Fix Windows connection loop with weak host send | PRESENT | P1 | NO_ACTION | Dependency sync: the sing-tun pin now includes 4faef97 (weak-host send interface binding); pin-only upstream commit. Upstream: 6ddf133d3490. |
 | `75eef0951443` | Fix tun platform interface checks | PRESENT | P1 | NO_ACTION | Port in this round: `usePlatformInterface` is captured once and replaces the nil-check at the GSO, Start-probe, route-set, auto-redirect and open-interface gates. Build ... |
 | `79d2e8084ed1` | Fix Android package name lookup | PRESENT | P1 | NO_ACTION | Port in this round: Android skips the app_process wrapper paths and the all-users scan; `GOOS=linux go build ./common/process` passes. Upstream: 79d2e8084ed1. |
 | `7f1a439ff069` | Fix process search for redirect inbound | PRESENT | P1 | NO_ACTION | Port in this round: `protocol/redirect` populates `OriginDestination` (delivered in the previous commit). Upstream: 7f1a439ff069. |
@@ -169,6 +169,8 @@ ancestry while substantive `E` items remain.
 | `5372a195b3ee` | a failed URLTest connection deletes the leaf history | `route/url_test_history_test.go` |
 | `6564c26d409b` | the IPv6 original-destination port is decoded from the in-memory network-order field | `GOOS=linux go build ./common/redir` |
 | `8e90fc34e6e8` | the deferred TFO dial enters the configured network namespace | build + `./common/dialer` |
+| `03ab009ea1c0` | sing-tun pin includes baaa611: accepted TCP flow entries leave the table after handshake | `./protocol/tun`, `go build ./...` |
+| `6ddf133d3490` | sing-tun pin includes 4faef97: Windows weak-host interface binding | build |
 
 Dependency work: `sing-cloudflared` and `sing-openvpn` were moved to upstream's pins and tested;
 the six replaced/API-coupled modules are `BLOCKED_WITH_EVIDENCE` in

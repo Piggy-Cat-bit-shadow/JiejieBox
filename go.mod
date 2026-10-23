@@ -351,7 +351,7 @@ replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-qu
 // working, between a stop landing on a starting stack and a reported data race (a nil-engine panic on
 // the unpinned revision), and between an IPv6-only stack and a TCP path that can never self-heal.
 // See docs/fork/lx-stability-audit-phase1.md (040) and FORK.md in the fork.
-replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261020085711-109186a15f3b
+replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261023224106-1d689640cfb4
 
 // gVisor is RETIRED, and this is deliberately a comment rather than a replace directive.
 //

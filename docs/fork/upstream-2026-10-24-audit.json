@@ -1,16 +1,5 @@
 [
  {
-  "sha": "03ab009ea1c0d7c8d9cba6114ca4a65cda6ceea7",
-  "subject": "Fix TUN flow table retaining accepted TCP connections",
-  "root_cause": "In the pinned sing-tun the TUN flow table kept the entry for a TCP flow that had been accepted out of the stack, because the accept/handoff path did not release or re-key the entry, so the table grew with every accepted connection and stale flow state stayed reachable; fixed in the sing-tun revision.",
-  "classification": "DEPENDENCY_BUMP",
-  "fork_evidence": "go.mod:58 requires sing-tun v0.9.7-0.20261013140216-9ffa5391a2ad and :354 replaces it with Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261020085711-109186a15f3b, which FORK.md:152-161 documents as base 9ffa5391a2ad plus two code patches (stack_system.go, stack_go.go). Upstream baaa611e96c0 is a later commit absent from that history.",
-  "evidence_level": "PLAUSIBLE",
-  "action": "INVESTIGATE",
-  "priority": "P0",
-  "notes": "The fork's forward stage does sweep its table by deadline (flow_dispatch.go:828-880 removeEntry/evictEntries), so a leak may be masked rather than fixed. Diff the accept/handoff path against baaa611e96c0; if it differs, backport and rebase the two fork patches."
- },
- {
   "sha": "cc2f91b77a6964c7b85c5f94f4035eb41555a313",
   "subject": "Fix system stack retaining closed TCP sessions",
   "root_cause": "The system stack's TCP session/NAT table kept a session after the app-side connection had closed, because nothing deleted it on the close path, so closed sessions lingered until a timeout sweep and their mapping could still be matched; sing-tun deletes the session when the connection closes.",
@@ -42,6 +31,17 @@
   "action": "PORT",
   "priority": "P0",
   "notes": "Needs a context-aware wait in the sing fork first (its pause.Manager still has WaitActive only; fake at pause_deadlock_test.go:104 shows the interface). Endpoint.Close holds stateAccess across device.Close, which turns the stuck receive into a teardown stall against every pause callback; also drop the WaitActive from Send."
+ },
+ {
+  "sha": "03ab009ea1c0d7c8d9cba6114ca4a65cda6ceea7",
+  "subject": "Fix TUN flow table retaining accepted TCP connections",
+  "root_cause": "In the pinned sing-tun the TUN flow table kept the entry for a TCP flow that had been accepted out of the stack, because the accept/handoff path did not release or re-key the entry, so the table grew with every accepted connection and stale flow state stayed reachable; fixed in the sing-tun revision.",
+  "classification": "PRESENT",
+  "fork_evidence": "Dependency sync: the sing-tun pin now includes baaa611 (accepted TCP flow entries removed after handshake); `go test ./protocol/tun` and `go build ./...` pass. Upstream: 03ab009ea1c0.",
+  "evidence_level": "PLAUSIBLE",
+  "action": "NO_ACTION",
+  "priority": "P0",
+  "notes": "Fixed in this round; see docs/fork/upstream-2026-10-24-debug.md."
  },
  {
   "sha": "8e90fc34e6e8441e574a0aee6fae2432bb12e136",
@@ -108,17 +108,6 @@
   "action": "INVESTIGATE",
   "priority": "P1",
   "notes": "Module: github.com/sagernet/cronet-go (and cronet-go/all, cronet-go/lib/*), 2026-09-29 -> 2026-10-23 builds. Fork pins a 2026-10-20 Cronet fork; check whether its NaiveClient resolves ServerAddress through the supplied Dialer before rebasing protocol/naive onto it."
- },
- {
-  "sha": "6ddf133d3490",
-  "subject": "Fix Windows connection loop with weak host send",
-  "root_cause": "Windows ignores IP_UNICAST_IF/IPV6_UNICAST_IF when the bound interface has weak host send enabled (Teredo enables it on every interface), so sockets bound to an interface are routed back into the TUN and connections loop. sing-tun now tracks interface changes, disables weak host send on the other interfaces while running, and restores it on close.",
-  "classification": "DEPENDENCY_BUMP",
-  "fork_evidence": "go.mod:354 pins sing-tun v0.0.0-20261020085711-109186a15f3b, which has no tun_bind_windows.go and no enforceInterfaceBinding/setWeakHostSend; the fork contains no weak-host workaround of its own.",
-  "evidence_level": "CODE_PROVEN",
-  "action": "INVESTIGATE",
-  "priority": "P1",
-  "notes": "Upstream: sing-tun v0.9.7-20261023115432-7980862befdc -> v0.9.7-20261023115432-4faef97726ed (adds tun_bind_windows.go, tun_windows.go hooks). Rebase the fork's sing-tun fork onto 4faef97726ed and re-pin."
  },
  {
   "sha": "770d047aeb5fc80bbc60208c0544a7ff0f1b4e91",
@@ -456,6 +445,17 @@
   "root_cause": "The Linux IPv6 SO_ORIGINAL_DST branch byte-swapped the port (BigEndian.PutUint16 into a [2]byte, then LittleEndian.Uint16), correct only on little-endian hosts, so redirect inbounds on big-endian targets resolved a wrong destination port. Upstream deleted common/redir and moved to sing's control.GetOriginalDestination, dropping the darwin PF copy too.",
   "classification": "PRESENT",
   "fork_evidence": "Port in this round: the IPv6 original-destination port is decoded from the sin6_port field in memory network order, fixing big-endian. `GOOS=linux go build ./common/redir` passes. Upstream: 6564c26d409b.",
+  "evidence_level": "CODE_PROVEN",
+  "action": "NO_ACTION",
+  "priority": "P1",
+  "notes": "Fixed in this round; see docs/fork/upstream-2026-10-24-debug.md."
+ },
+ {
+  "sha": "6ddf133d3490",
+  "subject": "Fix Windows connection loop with weak host send",
+  "root_cause": "Windows ignores IP_UNICAST_IF/IPV6_UNICAST_IF when the bound interface has weak host send enabled (Teredo enables it on every interface), so sockets bound to an interface are routed back into the TUN and connections loop. sing-tun now tracks interface changes, disables weak host send on the other interfaces while running, and restores it on close.",
+  "classification": "PRESENT",
+  "fork_evidence": "Dependency sync: the sing-tun pin now includes 4faef97 (weak-host send interface binding); pin-only upstream commit. Upstream: 6ddf133d3490.",
   "evidence_level": "CODE_PROVEN",
   "action": "NO_ACTION",
   "priority": "P1",
