@@ -34,6 +34,7 @@ not run, that is `BLOCKED_BY_ENVIRONMENT`, not `PASS`.
 | `windows-client/` | the Windows client's installer / uninstaller / diagnostic-channel and coexistence investigations |
 | `anywhere-round2/` | the second Anywhere research round: audit, construction, adversarial debug and final verification for the DNS/rule-set/MASQUE/QUIC ownership work |
 | `anywhere-round3/` | the third Anywhere round: an independent deep audit of four previously-favoured candidates (three falsified by local measurement), two new A-class candidates, two confirmed defects and the next-round blueprint, followed by the construction record and the debug handoff that turned the A-class items into code |
+| `tun-fast-path/` | the TUN fast path round: the D0 value review and the adversarial acceptance, archived as produced |
 
 ## Index
 
@@ -137,6 +138,14 @@ later. "Status" says whether the report still describes the tree or has been sup
 | `anywhere-round3-debug-handoff.md` | 2026-10-20 | the sheet for the independent adversarial pass: change list, commands, dangerous edges, suspicious paths, dependency versions, CI links and what is still open | current for the delivered head |
 | `anywhere-round3-close-liveness-final.md` | 2026-10-20 | the close-liveness counterexample attempt: idle-disabled peer plus a one-way broken path, measured timeline, why inbound traffic cannot be sustained without our ACKs, and the committed mechanism test | current for the delivered head |
 | `anywhere-round3-debug-report.md` | 2026-10-20 | the acceptance pass: the close wait measured as bounded, the operations that queue behind a blocked port, the L4 ownership matrix re-verified, and the exit condition for the residual risk | current for the delivered head |
+
+### tun-fast-path/
+
+| report | date | covers | status |
+|---|---|---|---|
+| `README.md` | 2026-10-24 | the round's index: snapshot, files, verdict and limits | current for `32c37219c59` |
+| `tun-fast-path-value-review.md` | 2026-10-24 | D0 value review, path matrix, `fast_path` precedence and decision | current for `32c37219c59` |
+| `tun-fast-path-adversarial-debug.md` | 2026-10-24 | adversarial acceptance, exact verdicts and finding records | current for `32c37219c59` |
 
 ## Adding a report
 
