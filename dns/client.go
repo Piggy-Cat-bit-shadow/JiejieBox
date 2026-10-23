@@ -832,25 +832,27 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 				}
 			}
 			response, ttl, isStale := c.loadResponse(cacheKey)
-			if response != nil {
-				if isStale && !options.DisableOptimisticCache {
+			if response != nil && (!isStale || !options.DisableOptimisticCache) {
+				operation.release()
+				if isStale {
 					c.backgroundRefreshDNS(transport, cacheKey, message.Copy(), options, responseChecker)
-					logOptimisticResponse(c.logger, ctx, response)
-					// The caller's family strategy is applied on the way out, not only on the way
-					// in: a hit must look the same as an exchange under the strategy that is in
-					// force now, not the one that happened to populate the entry. See
-					// cachedResponseForQuery.
-					response = cachedResponseForQuery(question, response, options)
-					response.Id = message.Id
-					operation.release()
-					return nil, response, exchangeDone, nil
-				} else if !isStale {
-					logCachedResponse(c.logger, ctx, response, ttl)
-					response = cachedResponseForQuery(question, response, options)
-					response.Id = message.Id
-					operation.release()
-					return nil, response, exchangeDone, nil
 				}
+				if responseChecker != nil && !responseChecker(response) {
+					logRejectedResponse(c.logger, ctx, response)
+					return nil, nil, exchangeDone, ErrResponseRejectedCached
+				}
+				if isStale {
+					logOptimisticResponse(c.logger, ctx, response)
+				} else {
+					logCachedResponse(c.logger, ctx, response, ttl)
+				}
+				// The caller's family strategy is applied on the way out, not only on the way
+				// in: a hit must look the same as an exchange under the strategy that is in
+				// force now, not the one that happened to populate the entry. See
+				// cachedResponseForQuery.
+				response = cachedResponseForQuery(question, response, options)
+				response.Id = message.Id
+				return nil, response, exchangeDone, nil
 			}
 			// The exact cache missed. Before any upstream work, check whether this NAME
 			// is already known not to exist: RFC 2308 makes NXDOMAIN a statement about
@@ -1348,6 +1350,12 @@ func (c *Client) questionCache(ctx context.Context, transport adapter.DNSTranspo
 			return nil, ErrNotCached
 		}
 		c.backgroundRefreshDNS(transport, cacheKey, c.prepareExchangeMessage(message.Copy(), options), options, responseChecker)
+	}
+	if responseChecker != nil && !responseChecker(response) {
+		logRejectedResponse(c.logger, ctx, response)
+		return nil, ErrResponseRejectedCached
+	}
+	if isStale {
 		logOptimisticResponse(c.logger, ctx, response)
 	}
 	if response.Rcode != dns.RcodeSuccess {
