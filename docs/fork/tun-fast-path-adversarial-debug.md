@@ -132,6 +132,7 @@ add their effects to any ordinary-TUN number.
 | new eligibility/order/adversarial route tests, `-count=10` | PASS |
 | new e2e controls, `-count=3` | PASS |
 | new route and e2e controls under `-race -count=2` | PASS |
+| box-level configuration tests (`go test ./ -run TestFastPath`) | PASS: `fast_path` refused on a leaf and on loadbalance, accepted on selector/urltest, ordinary routing unchanged |
 | `go build`, `go vet`, untagged test-binary compile, `gofmt` | PASS / clean |
 | CI `Verify` on the pushed SHA | PASS (run id in the round report) |
 

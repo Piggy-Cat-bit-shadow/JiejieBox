@@ -1,11 +1,12 @@
 # TUN fast path: value review, real path map, and the D0 verdict
 
 Status: **D0_VALUE = NO_DISTINCT_FAST_PATH** for the group `fast_path` feature. The only real
-TUN data-plane difference this fork has is the post-handshake splice/`sendfile` handover, and that is
-already automatic, already default, and not what `fast_path` controls. The field has exactly one
-observable control-plane effect in production - an explicit `false` withholds the bypass attempt on
-the one shape that can take it - and this round applied that precedence (see §4.3), because without
-it the documented tri-state could not switch the attempt off anywhere. No ordinary-TUN byte moves a
+TUN data-plane difference this fork has is the post-handshake splice/`sendfile` handover - it is
+attempted automatically and is not what `fast_path` controls, but its ACCEPTED half is a device
+capability and is NOT_VERIFIED in this environment (§3.1). The field has exactly one observable
+control-plane effect in production - an explicit `false` withholds the bypass attempt on the one
+shape that can take it - and this round applied that precedence (see §4.3), because without it the
+documented tri-state could not switch the attempt off anywhere. No ordinary-TUN byte moves a
 different way because of the field, in either direction. The code changes are that precedence fix,
 one verification fix and tests; they are listed in [§7](#7-what-this-round-changed).
 
@@ -69,7 +70,8 @@ and `unset`/`true` are equivalent. See §4. What is real, and what the brief ask
 the **post-handshake splice handover**, which is attempted for every TUN connection that reaches
 `ConnectionManager.NewConnection` (TCP, TLS-rewrite flows excepted) and `NewPacketConnection` (UDP) -
 no group, no field, no opt-in. That is the optimisation that already applies to all eligible TUN
-traffic.
+traffic, subject to the platform accepting the handover (a device capability; §3.1 records that this
+environment's in-memory IO cannot).
 
 ---
 
@@ -80,7 +82,7 @@ traffic.
 | Path | Control verdict | Actual owner of the flow | Bytes move by | Label |
 | --- | --- | --- | --- | --- |
 | System proxy (`mixed`/SOCKS/HTTP -> router -> outbound -> socket) | `PreMatchBypass` is refused at `canFastBypass`'s first check (`InboundType != tun`) | userspace connection manager | userspace copy (the inbound stream is not a `*tun.GoConn`, so splice is refused) | `CURRENT_CONFIRMED` (code), unchanged this round |
-| Ordinary TUN, default `go` stack | `JudgeFlow` -> router -> `ActionAccept` or `ActionBypass` | `*tun.GoConn` / `tun.UDPNatConn` in the go stack | userspace copy, or the kernel after a splice handover | `CURRENT_CONFIRMED` |
+| Ordinary TUN, default `go` stack | `JudgeFlow` -> router -> `ActionAccept` or `ActionBypass` | `*tun.GoConn` / `tun.UDPNatConn` in the go stack | userspace copy, or the kernel if a splice handover is accepted (accepted half NOT_VERIFIED here; see below) | `CURRENT_CONFIRMED` |
 | Ordinary TUN, `gvisor` stack | same router; `TCPForwarder.Forward` honours only Reject/Drop | gVisor netstack connection | userspace copy / splice attempt | `HISTORICAL_EVIDENCE` (code path unchanged) |
 | Ordinary TUN, `system` stack | same router; not consumed -> userspace | local NAT listener | userspace copy / splice attempt | `HISTORICAL_EVIDENCE` |
 | Linux `auto_redirect` (nfqueue) | same router, `JudgeFlow` called by the nfqueue handler | the kernel, after `NfRepeat` + output mark | kernel routing | `CURRENT_CONFIRMED` (source), **NOT_VERIFIED** on device |
@@ -353,6 +355,7 @@ Two readings matter and one does not:
 | `go test -count=10` on the new eligibility/order/adversarial route tests | PASS |
 | `go test -count=3` on the new e2e controls (verdict, splice, multi-segment) | PASS |
 | `go test -race -count=2` on the new route and e2e controls | PASS |
+| `go test ./ -run TestFastPath` (box-level configuration) | PASS: refused on a leaf and on loadbalance, accepted on selector/urltest, ordinary routing unchanged |
 | `go build -tags <others> ./...` | PASS |
 | `go vet` on `./route ./option ./protocol/tun ./e2e` | clean |
 | `go test -run '^$' ./e2e ./route ./protocol/tun` (untagged test binaries, the CI compile gate) | PASS |
@@ -384,7 +387,7 @@ property, not a repository one, and the CI runner has its own toolchain.
 | Linux nfqueue L1 | Linux, `auto_redirect` | removes the flow from userspace | `NfRepeat` + output mark | NOT_VERIFIED on device | `NfAccept` when the queue is not enabled | keep; platform-specific |
 | Plain TUN `ActionBypass` | every platform | none | accept entry; userspace connection | **0%** (dispatcher + stack traces) | n/a (same path as accept) | `NONE_DEMONSTRATED` - do not describe as acceleration |
 | TUN Flow / `Port` | ICMP through `direct` today | kernel/Port-carried packets | real for ICMP only | not measured | normal path | keep; do not cite for TCP/UDP |
-| TUN TCP splice | all TUN stacks | two syscalls per chunk instead of a copy | attempted automatically for every non-TLS-rewritten TCP flow | loopback benchmark is inconclusive by construction | buffered copy | keep as the default; the real automatic optimisation |
+| TUN TCP splice | all TUN stacks | two syscalls per chunk instead of a copy | attempted automatically for every non-TLS-rewritten TCP flow; acceptance is a platform-IO capability (device-only, NOT_VERIFIED here) | loopback benchmark is inconclusive by construction | buffered copy | keep as the default; the real automatic optimisation where the platform accepts it |
 | TUN UDP splice | all TUN stacks | same | attempted automatically per session | not measured this round | userspace UDP NAT | keep |
 | TUN buffered copy | all | none | the fallback | reference | n/a | keep |
 | Group `fast_path` field | all | an explicit `false` can withhold the bypass attempt; `unset`/`true` cannot add one | `false` changes the verdict on transparent-direct chains; bytes unchanged in ordinary TUN | **0%** in ordinary TUN; real in Linux redirect mode | n/a (the flow continues on the normal path) | keep; `false` is a real off switch, `unset`/`true` are equivalent |
@@ -406,8 +409,10 @@ What the user's design intentions mean against the evidence:
 1. **System proxy stays light** - unchanged; it is refused by the first eligibility check and never
    enters a TUN-specific path. `CURRENT_CONFIRMED`.
 2. **TUN automatic mode picks the best executable path** - it already does for the one mechanism
-   that matters: splice is attempted for every flow, not gated by any group. There is no
-   additional automatic fast path to turn on. `CURRENT_CONFIRMED`.
+   that matters: splice is attempted for every flow, not gated by any group, and whether the
+   platform accepts the handover is a device capability rather than a policy. There is no
+   additional automatic fast path to turn on. `CURRENT_CONFIRMED` for the attempt; accepted half
+   NOT_VERIFIED here.
 3. **Manual group priority expresses intent** - the layer is per-flow, follows the group and not the
    leaf, and now has a real off switch. There is still no manual setting that makes a flow faster
    than the automatic path, because there is no faster executable path to unlock. `CURRENT_CONFIRMED`.
