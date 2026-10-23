@@ -13,6 +13,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/compatible"
+	"github.com/sagernet/sing-box/common/interrupt"
 	"github.com/sagernet/sing-box/common/power"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing/common"
@@ -889,7 +890,7 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 		operation.release()
 		return nil, nil, exchangeDone, E.New("DNS query loopback in transport[", contextTransport, "]")
 	}
-	operation.ctx = adapter.ContextWithDNSTransportTag(ctx, transport.Tag())
+	operation.ctx = adapter.ContextWithDNSTransportTag(interrupt.ContextWithIsExternalConnection(ctx, false), transport.Tag())
 	if !disableCache && responseChecker != nil && c.rdrc != nil {
 		// The namespace comes from THIS operation's captured environment, not from a fresh read of
 		// the current one: an operation that started on A must consult A's namespace even if the

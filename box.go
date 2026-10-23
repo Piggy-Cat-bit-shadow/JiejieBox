@@ -576,6 +576,9 @@ func New(options Options) (*Box, error) {
 	service.MustRegister[adapter.DNSRouter](ctx, dnsRouter)
 	service.MustRegister[adapter.DNSRuleSetUpdateValidator](ctx, dnsRouter)
 	connectionManager := route.NewConnectionManager(logFactory.NewLogger("connection"))
+	// A failed dial through a URLTest group must clear that node's measurement, or the next flow
+	// picks it again before the periodic test catches up (upstream 5372a195b3e).
+	connectionManager.SetURLTestHistory(service.PtrFromContext[urltest.HistoryStorage](ctx))
 	// The fork's upload scheduler. Absent - the overwhelmingly common case - leaves it inert, so a
 	// configuration that does not mention it behaves exactly as it did before the field existed.
 	if trafficScheduler := routeOptions.TrafficScheduler; trafficScheduler != nil {

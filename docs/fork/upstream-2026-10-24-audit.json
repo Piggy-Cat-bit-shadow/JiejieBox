@@ -220,17 +220,6 @@
   "notes": "Check whether the pinned tailscale's peer-relay listener honours Server.ControlFunc; if not, bump to >= 1688b52f8204 and exercise relay_server_port with a routing mark and bind_interface set (that is when the missing control shows)."
  },
  {
-  "sha": "0164ce7b8e0a60a0542ee118bdae6451d7362ae9",
-  "subject": "Fix shared connections inheriting external interrupt mark",
-  "root_cause": "The external-connection mark was a one-way context value set on every routed flow, so contexts for shared transports (mux session, SSH client, gRPC/HTTP transport, snell reuse, DNS) inherited it. Those transports registered with a group's interrupt group as user connections, so an internal-only interrupt (selection change with interrupt_exist_connections unset) left them on the deselected member.",
-  "classification": "MISSING_FIX",
-  "fork_evidence": "common/interrupt/context.go:7-12 is still one-way (setter takes no bool, read is `!= nil`); adapter/inbound.go:248-256 ContextForMultiplexSession never clears it; shared dials keep the mark: common/mux/client.go:54,58, protocol/snell/outbound.go:115, protocol/ssh/outbound.go:144, transport/v2rayhttp/client.go:48,60, transport/v2raygrpclite/client.go:73,81, dns/client.go:892.",
-  "evidence_level": "CODE_PROVEN",
-  "action": "PORT",
-  "priority": "P1",
-  "notes": "Both halves are needed: the read must become a typed bool, because a stored false under today's `!= nil` check still reads as external. Groups read the mark at selector.go:391, urltest.go:353/381, loadbalance.go:704/727; protocol/group/selector_interrupt_test.go:60 pins the old setter signature."
- },
- {
   "sha": "18aa2cdfe742",
   "subject": "Fix IPv6 interface rule without auto route",
   "root_cause": "With auto_route off and an IPv6 address, sing-tun still installs an oif rule pointing at IPRoute2TableIndex while adding no routes to that table, and derives its priority by decrementing the lowest existing rule, remembered only in memory. Upstream fixes sing-tun (::/0 route, priority clamp, delete by oif/table) and stops forcing the default table/rule index when auto_route is off.",
@@ -262,17 +251,6 @@
   "action": "PORT",
   "priority": "P1",
   "notes": "Needs a wait/wake API in the memory TUN (upstream added WaitWritePackets in sing-tun). Without it, add a bounded blocking writer to the device and use it only on the masque inbound path, keeping the drop policy for the lossy outbound queue."
- },
- {
-  "sha": "37bddc915c0250278fe38d4eb2a01174048cefec",
-  "subject": "Fix close handler skipped on packet handshake failure",
-  "root_cause": "When N.ReportPacketConnHandshakeSuccess failed, the packet path closed both connections directly instead of calling N.CloseOnHandshakeFailure, so the registered onClose handler never ran: the group's interrupt registration, tracker state and manager bookkeeping for that flow were never released, and no linger or HandshakeFailure signal was sent.",
-  "classification": "MISSING_FIX",
-  "fork_evidence": "route/conn.go:674-680 still has the pre-fix body: `conn.Close(); remotePacketConn.Close(); m.logger.ErrorContext(ctx, \"report handshake success: \", err); return`. The dial-failure arms of the same function already use N.CloseOnHandshakeFailure (:637, :669).",
-  "evidence_level": "CODE_PROVEN",
-  "action": "PORT",
-  "priority": "P1",
-  "notes": "Same shape as upstream: err = E.Cause(err, \"report handshake success\"); N.CloseOnHandshakeFailure(conn, onClose, err); m.logger.ErrorContext(ctx, err). sing's CloseOnHandshakeFailure applies SetLinger(0) or HandshakeFailure before closing and always calls onClose."
  },
  {
   "sha": "38bf6879bbad",
@@ -363,17 +341,6 @@
   "notes": "Cheapest repro: a DERP config with stun: {enabled: true, listen_port: N} through sing-box format loses the port, and daemon FormatConfig writes zero server_port/name/password back. Schema casing already fixed; port the tags and the four marshalers. Verify by round-tripping a sample config, not with go test."
  },
  {
-  "sha": "79d2e8084ed1",
-  "subject": "Fix Android package name lookup",
-  "root_cause": "On Android every app's /proc/<pid>/exe is the shared zygote binary /system/bin/app_process*, so the reported process path identifies no app and defeats package-name identification; and the all-users /proc fallback (which exists only for sockets whose creator uid differs from the process uid after a privilege drop) cannot help because netd already chowns app DNS sockets to the app uid, so each miss pays a full /proc scan.",
-  "classification": "MISSING_FIX",
-  "fork_evidence": "common/process/searcher_linux.go:88-93 assigns ProcessPaths unconditionally (no C.IsAndroid / app_process filter; the constant package is not imported there) and :135-150 still iterates {uid, processPathsAllUsers} for every Android lookup. Fork history stops at a5c99abfd8f/3009464fd7c, so the upstream gating commit is not in it.",
-  "evidence_level": "CODE_PROVEN",
-  "action": "PORT",
-  "priority": "P1",
-  "notes": "Port both halves together: drop app_process* entries from ProcessPaths and skip the allUsers scan when C.IsAndroid. The fork's []string redesign only changes where the filter lives (inside buildProcessPaths or after it), not whether the defect exists."
- },
- {
   "sha": "7a0ae5f35889",
   "subject": "Fix tailscale short name and DNS route matching",
   "root_cause": "Tailscale DNS route lookup ranged over the routes map, so overlapping suffixes resolved randomly and resolver-less local routes were not distinct from forwarded ones: a local name could be forwarded upstream or a forwarded name NXDOMAINed by map order. PreferredDomain treated any single-label name as tailnet-owned whenever a search domain existed, without checking the expansion. The fix adds a canonical matcher with local/forwarded suffixes, longest-first order and search-domain expansion.",
@@ -383,17 +350,6 @@
   "action": "PORT",
   "priority": "P1",
   "notes": "Restores Tailscale's local-route NXDOMAIN semantics and MagicDNS short-name preference; otherwise LAN single-label names can be captured by tailscale and local names can leak to forwarded resolvers."
- },
- {
-  "sha": "7f1a439ff069",
-  "subject": "Fix process search for redirect inbound",
-  "root_cause": "Redirect inbound set metadata.Destination from SO_ORIGINAL_DST but left metadata.OriginDestination at the value the TCP listener stored (the local REDIRECT target). Process search prefers a valid OriginDestination, so it looked up the redirect address instead of the real original destination and never found the process.",
-  "classification": "MISSING_FIX",
-  "fork_evidence": "protocol/redirect/redirect.go:57-68 sets only metadata.Destination; common/listener/listener_tcp.go:138 sets OriginDestination = conn.LocalAddr(); route/process_cache.go:66-72 uses OriginDestination whenever valid and falls back to Destination only when it is invalid, so the wrong address is used for redirect flows.",
-  "evidence_level": "CODE_PROVEN",
-  "action": "PORT",
-  "priority": "P1",
-  "notes": "One-line port after parsing the original destination. Do not touch the tproxy/hysteria/wireguard sites, which set OriginDestination to the listener address deliberately."
  },
  {
   "sha": "9c24112d12d5",
@@ -484,11 +440,55 @@
   "notes": "Port the 8-slot semaphore created in NewAutoRedirectService and taken/released around the binder call (release in a defer so a failing JudgeFlow cannot leak a slot)."
  },
  {
+  "sha": "0164ce7b8e0a60a0542ee118bdae6451d7362ae9",
+  "subject": "Fix shared connections inheriting external interrupt mark",
+  "root_cause": "The external-connection mark was a one-way context value set on every routed flow, so contexts for shared transports (mux session, SSH client, gRPC/HTTP transport, snell reuse, DNS) inherited it. Those transports registered with a group's interrupt group as user connections, so an internal-only interrupt (selection change with interrupt_exist_connections unset) left them on the deselected member.",
+  "classification": "PRESENT",
+  "fork_evidence": "Port in this round: the external-interrupt mark is a typed bool, explicit false for DNS/multiplex sessions and true for routed connections. Build + `./route`/`./dns` tests pass. Upstream: 0164ce7b8e0a.",
+  "evidence_level": "CODE_PROVEN",
+  "action": "NO_ACTION",
+  "priority": "P1",
+  "notes": "Fixed in this round; see docs/fork/upstream-2026-10-24-debug.md."
+ },
+ {
+  "sha": "37bddc915c0250278fe38d4eb2a01174048cefec",
+  "subject": "Fix close handler skipped on packet handshake failure",
+  "root_cause": "When N.ReportPacketConnHandshakeSuccess failed, the packet path closed both connections directly instead of calling N.CloseOnHandshakeFailure, so the registered onClose handler never ran: the group's interrupt registration, tracker state and manager bookkeeping for that flow were never released, and no linger or HandshakeFailure signal was sent.",
+  "classification": "PRESENT",
+  "fork_evidence": "Port in this round: a packet handshake-success failure now goes through `CloseOnHandshakeFailure` and the close handler runs. Build + `./route` tests pass. Upstream: 37bddc915c02.",
+  "evidence_level": "CODE_PROVEN",
+  "action": "NO_ACTION",
+  "priority": "P1",
+  "notes": "Fixed in this round; see docs/fork/upstream-2026-10-24-debug.md."
+ },
+ {
   "sha": "75eef0951443",
   "subject": "Fix tun platform interface checks",
   "root_cause": "Platform-interface presence was used as a proxy for 'the platform creates the TUN', but the interface can be non-nil while UsePlatformInterface() is false (Apple outside Network Extension, libbox config-check stub). GSO, flow/auto-redirect setup and route_address_set extraction were then skipped although sing-tun opens the device.",
   "classification": "PRESENT",
   "fork_evidence": "Port in this round: `usePlatformInterface` is captured once and replaces the nil-check at the GSO, Start-probe, route-set, auto-redirect and open-interface gates. Build + `./protocol/tun` tests pass. Upstream: 75eef0951443.",
+  "evidence_level": "CODE_PROVEN",
+  "action": "NO_ACTION",
+  "priority": "P1",
+  "notes": "Fixed in this round; see docs/fork/upstream-2026-10-24-debug.md."
+ },
+ {
+  "sha": "79d2e8084ed1",
+  "subject": "Fix Android package name lookup",
+  "root_cause": "On Android every app's /proc/<pid>/exe is the shared zygote binary /system/bin/app_process*, so the reported process path identifies no app and defeats package-name identification; and the all-users /proc fallback (which exists only for sockets whose creator uid differs from the process uid after a privilege drop) cannot help because netd already chowns app DNS sockets to the app uid, so each miss pays a full /proc scan.",
+  "classification": "PRESENT",
+  "fork_evidence": "Port in this round: Android skips the app_process wrapper paths and the all-users scan; `GOOS=linux go build ./common/process` passes. Upstream: 79d2e8084ed1.",
+  "evidence_level": "CODE_PROVEN",
+  "action": "NO_ACTION",
+  "priority": "P1",
+  "notes": "Fixed in this round; see docs/fork/upstream-2026-10-24-debug.md."
+ },
+ {
+  "sha": "7f1a439ff069",
+  "subject": "Fix process search for redirect inbound",
+  "root_cause": "Redirect inbound set metadata.Destination from SO_ORIGINAL_DST but left metadata.OriginDestination at the value the TCP listener stored (the local REDIRECT target). Process search prefers a valid OriginDestination, so it looked up the redirect address instead of the real original destination and never found the process.",
+  "classification": "PRESENT",
+  "fork_evidence": "Port in this round: `protocol/redirect` populates `OriginDestination` (delivered in the previous commit). Upstream: 7f1a439ff069.",
   "evidence_level": "CODE_PROVEN",
   "action": "NO_ACTION",
   "priority": "P1",
@@ -616,17 +616,6 @@
   "notes": "The defect cannot occur in the fork because a nested replace names module@version, not a sibling tree. The commit's version sweep was not taken (fork pins are older), but that is dependency currency, already guarded against root/nested drift."
  },
  {
-  "sha": "56413a43674e",
-  "subject": "Update helper version in Apple project update script",
-  "root_cause": "The Apple version-bump script rewrites MARKETING_VERSION only for an enumerated list of bundle identifiers; the privileged helper target (io.nekohasekai.sfamt.helper) was missing, so release builds shipped a helper whose CFBundleShortVersionString stayed at the previous release while app/system/standalone moved.",
-  "classification": "MISSING_FIX",
-  "fork_evidence": "cmd/internal/update_apple_version/main.go:58 still lists only sfamt.standalone and sfamt.system. The clients/apple submodule defines PRODUCT_BUNDLE_IDENTIFIER = \"$(BASE_PACKAGE_IDENTIFIER).helper\" twice and HelperService/LaunchDaemons/io.nekohasekai.sfamt.helper.plist; Makefile:223-229 runs the script from release_apple.",
-  "evidence_level": "CODE_PROVEN",
-  "action": "PORT",
-  "priority": "P2",
-  "notes": "Release-path only, not exercised by client-apple.yml. Add \"io.nekohasekai.sfamt.helper\" to the list; the script expands $(BASE_PACKAGE_IDENTIFIER), so the identifier matches, not the raw variable."
- },
- {
   "sha": "972a052ef537",
   "subject": "Remove unused DNS search expansion",
   "root_cause": "Follow-up cleanup after DHCP expansion was restricted to single-label names: the ndots/NameList machinery in the local system config and resolved-service transports still fabricated search-suffixed candidates for client-qualified names and doubled as the invalid-name check. Upstream deletes NameList/ndots and validates question names up front via transport.ValidateQuestionName (length >254, .onion).",
@@ -669,6 +658,17 @@
   "action": "NO_ACTION",
   "priority": "P2",
   "notes": "Porting the gitlinks would revert the fork's Android libbox ABI migration and its Apple/desktop client work, and the upstream SHAs are not the fork's release commits. The changelog hunk (1.14.4 heading) is docs-only; the fork's own changelog already sits at 1.15.0-alpha.10, so ignore unless a docs sync is wanted."
+ },
+ {
+  "sha": "56413a43674e",
+  "subject": "Update helper version in Apple project update script",
+  "root_cause": "The Apple version-bump script rewrites MARKETING_VERSION only for an enumerated list of bundle identifiers; the privileged helper target (io.nekohasekai.sfamt.helper) was missing, so release builds shipped a helper whose CFBundleShortVersionString stayed at the previous release while app/system/standalone moved.",
+  "classification": "PRESENT",
+  "fork_evidence": "Port in this round: the Apple version updater includes `io.nekohasekai.sfamt.helper`. Upstream: 56413a43674e.",
+  "evidence_level": "CODE_PROVEN",
+  "action": "NO_ACTION",
+  "priority": "P2",
+  "notes": "Fixed in this round; see docs/fork/upstream-2026-10-24-debug.md."
  },
  {
   "sha": "9c1efcc186ae",
@@ -724,17 +724,6 @@
   "action": "NO_ACTION",
   "priority": "NA",
   "notes": "The fork does not use addresses[0].Is6(); it keeps an effective-preference model (router default included) and interleaves families, so the wrong-family-first loss is removed by a different, documented mechanism."
- },
- {
-  "sha": "5372a195b3eed7f4f548ef9a452fd2d451254286",
-  "subject": "Fix URL test failover for routed connections",
-  "root_cause": "A failed dial through a URL-test group left the dead member's measurement intact, so the group kept ranking it best and later routed connections kept failing. The fix gives the connection manager the URL-test history store and deletes the failed chain leaf's entry whenever the chain contains an adapter.URLTestGroup.",
-  "classification": "EQUIVALENT",
-  "fork_evidence": "protocol/group/urltest.go:326-360: the group's own DialContext clears the failed member from the live selection via clearSelectionFor (:1258-1295) and requests a single-flight health recheck, which deletes the health entry only if the probe also fails (:1197); ListenPacket does the same (:379-385). route/conn.go:127 needs no history handle.",
-  "evidence_level": "CODE_PROVEN",
-  "action": "NO_ACTION",
-  "priority": "NA",
-  "notes": "Deliberate, documented divergence at :1222-1246: a traffic failure is not evidence about the node, so the measurement is kept and only the selection is cleared. Behavioural difference: the next Select may re-rank the same member until the recheck lands, where upstream removes it outright."
  },
  {
   "sha": "6cde71cfc0ffb91c5ed2086d00db026a1a0bcd1d",
@@ -801,5 +790,16 @@
   "action": "NO_ACTION",
   "priority": "NA",
   "notes": "Identical to the upstream fix; no port needed. The fork's HTTP sniffer already used the same normalisation."
+ },
+ {
+  "sha": "5372a195b3eed7f4f548ef9a452fd2d451254286",
+  "subject": "Fix URL test failover for routed connections",
+  "root_cause": "A failed dial through a URL-test group left the dead member's measurement intact, so the group kept ranking it best and later routed connections kept failing. The fix gives the connection manager the URL-test history store and deletes the failed chain leaf's entry whenever the chain contains an adapter.URLTestGroup.",
+  "classification": "PRESENT",
+  "fork_evidence": "Port in this round: a failed connection through a URLTest group deletes the leaf's history. Test: `route/url_test_history_test.go`. Upstream: 5372a195b3ee.",
+  "evidence_level": "CODE_PROVEN",
+  "action": "NO_ACTION",
+  "priority": "NA",
+  "notes": "Fixed in this round; see docs/fork/upstream-2026-10-24-debug.md."
  }
 ]

@@ -37,13 +37,14 @@ actually pin, and what remains unverified.
 | `go test -count=1 -tags <tags> ./protocol/cloudflare ./protocol/openvpn` after the `go get` pins | PASS |
 | `go test -count=1 -tags <tags> -run 'TestMultiFlowTracker' ./route` | PASS |
 | `go test -count=1 -tags <tags> -run 'TestICMPLoopback' ./protocol/direct` | PASS |
-| full `./route ./protocol/tun` | see the round report; the route suite is the long one |
+| full `./route` | PASS (441.8 s) |
+| `./protocol/tun` | PASS (18.2 s) |
 
 `-race` was not run for this batch: the host needs `CGO_ENABLED=1` + mingw (the earlier TUN round used
-that combination), and the two new tests are deterministic rather than race-detector tests. This is a
+that combination), and the new tests are deterministic rather than race-detector tests. This is a
 limitation, not a PASS.
 
-## The two new negative controls
+## The new negative controls
 
 ### `route/flow_tracker_serialization_test.go`
 

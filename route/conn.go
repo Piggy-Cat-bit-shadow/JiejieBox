@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ import (
 	"github.com/sagernet/sing-box/common/tlsspoof"
 	"github.com/sagernet/sing-box/common/trafficclass"
 	"github.com/sagernet/sing-box/common/trafficsched"
+	"github.com/sagernet/sing-box/common/urltest"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common"
@@ -37,7 +39,11 @@ var _ adapter.ConnectionManager = (*ConnectionManager)(nil)
 
 type ConnectionManager struct {
 	logger logger.ContextLogger
-	access sync.Mutex
+	// urlTestHistory, when set, lets a failed connection through a URLTest group clear that group's
+	// measurement for the leaf it chose. Without it the next flow reuses a node that just failed to
+	// dial. It is optional because most tests construct a manager without a Box context.
+	urlTestHistory *urltest.HistoryStorage
+	access         sync.Mutex
 	// connections holds every dialled connection the manager owns, with the lifecycle record the
 	// reclaim policies decide on. It used to be a list of bare io.Closer, which is why the only
 	// thing it could do on a network change was close all of them; see conn_reclaim.go.
@@ -140,6 +146,28 @@ func NewConnectionManager(logger logger.ContextLogger) *ConnectionManager {
 		// See trafficsched.Options.RateSource.
 		scheduler: trafficsched.NewScheduler(trafficsched.Options{Mode: trafficsched.ModePaced}),
 	}
+}
+
+// SetURLTestHistory installs the Box-owned URLTest history. Optional: a manager constructed without
+// it (every unit test) keeps the previous behaviour.
+func (m *ConnectionManager) SetURLTestHistory(storage *urltest.HistoryStorage) {
+	m.urlTestHistory = storage
+}
+
+// deleteURLTestHistory clears the chosen leaf's measurement when a connection through a URLTest
+// group fails. Upstream 5372a195b3e; without it the group's next selection prefers the node that
+// just failed to dial until the periodic test overwrites the entry.
+func (m *ConnectionManager) deleteURLTestHistory(chain []adapter.Outbound) {
+	if m.urlTestHistory == nil || len(chain) == 0 {
+		return
+	}
+	if !slices.ContainsFunc(chain, func(it adapter.Outbound) bool {
+		_, isURLTestGroup := it.(adapter.URLTestGroup)
+		return isURLTestGroup
+	}) {
+		return
+	}
+	m.urlTestHistory.DeleteURLTestHistory(chain[len(chain)-1].Tag())
 }
 
 func (m *ConnectionManager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
@@ -379,6 +407,7 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 			dialerString = " using outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
 		}
 		err = E.Cause(err, "open connection to ", destinationForError(metadata), dialerString)
+		m.deleteURLTestHistory(metadata.OutboundChain)
 		N.CloseOnHandshakeFailure(conn, onClose, err)
 		m.logger.ErrorContext(ctx, err)
 		return
@@ -387,6 +416,7 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 	if err != nil {
 		err = E.Cause(err, "report handshake success")
 		remoteConn.Close()
+		m.deleteURLTestHistory(metadata.OutboundChain)
 		N.CloseOnHandshakeFailure(conn, onClose, err)
 		m.logger.ErrorContext(ctx, err)
 		return
@@ -395,6 +425,7 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 		var spliced bool
 		spliced, err = m.spliceConnection(ctx, conn, remoteConn, onClose)
 		if err != nil {
+			m.deleteURLTestHistory(metadata.OutboundChain)
 			N.CloseOnHandshakeFailure(conn, onClose, err)
 			remoteConn.Close()
 			m.logger.ErrorContext(ctx, err)
@@ -418,6 +449,7 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 		if spoofErr != nil {
 			spoofErr = E.Cause(spoofErr, "tls_spoof setup")
 			remoteConn.Close()
+			m.deleteURLTestHistory(metadata.OutboundChain)
 			N.CloseOnHandshakeFailure(conn, onClose, spoofErr)
 			m.logger.ErrorContext(ctx, spoofErr)
 			return
@@ -634,6 +666,7 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 				dialerString = " using outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
 			}
 			err = E.Cause(err, "open packet connection to ", remoteString, dialerString)
+			m.deleteURLTestHistory(metadata.OutboundChain)
 			N.CloseOnHandshakeFailure(conn, onClose, err)
 			m.logger.ErrorContext(ctx, err)
 			return
@@ -666,6 +699,7 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 				dialerString = " using outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
 			}
 			err = E.Cause(err, "listen packet connection to ", remoteString, dialerString)
+			m.deleteURLTestHistory(metadata.OutboundChain)
 			N.CloseOnHandshakeFailure(conn, onClose, err)
 			m.logger.ErrorContext(ctx, err)
 			return
@@ -673,9 +707,11 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 	}
 	err = N.ReportPacketConnHandshakeSuccess(conn, remotePacketConn)
 	if err != nil {
-		conn.Close()
+		err = E.Cause(err, "report handshake success")
 		remotePacketConn.Close()
-		m.logger.ErrorContext(ctx, "report handshake success: ", err)
+		m.deleteURLTestHistory(metadata.OutboundChain)
+		N.CloseOnHandshakeFailure(conn, onClose, err)
+		m.logger.ErrorContext(ctx, err)
 		return
 	}
 	udpTimeout := packetTimeout(&metadata)
