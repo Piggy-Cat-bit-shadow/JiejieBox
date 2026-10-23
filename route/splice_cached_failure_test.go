@@ -49,14 +49,17 @@ func TestCachedDrainStopsAtTheFirstWriteFailure(t *testing.T) {
 	second := buf.NewSize(6)
 	_, err = second.Write([]byte("second"))
 	require.NoError(t, err)
+	third := buf.NewSize(5)
+	_, err = third.Write([]byte("third"))
+	require.NoError(t, err)
 
-	source := &cachedBuffersReader{buffers: []*buf.Buffer{first, second}}
+	source := &cachedBuffersReader{buffers: []*buf.Buffer{first, second, third}}
 	remote := &failAfterWriter{failAt: 2}
 
 	_, _, drainErr := drainCachedSource(source, remote)
 	require.Error(t, drainErr)
 	require.Equal(t, 2, remote.writes,
-		"the failing buffer must not be retried and the next buffer must not be written")
+		"the failing buffer must not be retried and the third buffer must not be written")
 }
 
 // The success path still drains every cached buffer in order and only then reports no error.
