@@ -144,6 +144,48 @@ func TestProxiedTUNFlowStillHasAGoConnSource(t *testing.T) {
 			"changed: %+v", snapshot)
 }
 
+// TestProxiedSpliceRejectionDeliversAMultiSegmentPayload pins the cached/refused half of I2.
+//
+// The splice attempt is refused at the platform check, and the bytes that were already read from
+// the TUN (the first packet's payload and every following segment) must reach the proxy outbound
+// exactly once and come back byte-identical. A handover that is refused after userspace has consumed
+// bytes is the one place where a wrong fallback loses or duplicates the beginning of a stream.
+func TestProxiedSpliceRejectionDeliversAMultiSegmentPayload(t *testing.T) {
+	destination := netip.MustParseAddr("10.9.9.31")
+	echo := startEchoServer(t, "tcp", "127.0.0.1:0")
+	echoPort := uint16(echo.listener.Addr().(*net.TCPAddr).Port)
+	sink := startSocksSink(t, "127.0.0.1:0")
+	sink.backendOverride = map[string]string{
+		net.JoinHostPort(destination.String(), fmt.Sprint(echoPort)): echo.listener.Addr().String(),
+	}
+
+	config := fmt.Sprintf(spliceDataplaneConfig, chainLogLevel,
+		uint16(sink.listener.Addr().(*net.TCPAddr).Port), destination.String(), echoPort, "remote")
+	running := startChainUntracked(t, config)
+	fixture := newTunFixture(t, running, netip.Addr{}, 0)
+
+	connection := &tcpOverTun{sourcePort: 43003, destination: destination, destinationPort: echoPort}
+	fixture.dialTCP(t, connection, 10*time.Second)
+
+	payload := make([]byte, 16*1024)
+	for index := range payload {
+		payload[index] = byte(index % 251)
+	}
+	connection.writeChunks(t, payload, 1200)
+	echoed := connection.collectEchoBytes(t, len(payload), 15*time.Second)
+	require.Equal(t, payload, echoed,
+		"a refused handover must fall back to the copy loops without losing or duplicating the "+
+			"cached segments")
+
+	snapshot := tcpSpliceDiagnostics(t, running)
+	require.Equal(t, uint64(1), snapshot.Attempts, "one flow, one decision: %+v", snapshot)
+	require.Zero(t, snapshot.Accepted, "the memory platform cannot accept a handover: %+v", snapshot)
+	require.Equal(t, uint64(1), snapshot.Reasons["splice_rejected"], "%+v", snapshot)
+	require.NotContains(t, snapshot.Reasons, "source_not_go_conn",
+		"the source must stay classified as a TUN stream: %+v", snapshot)
+	require.NotEmpty(t, sink.seen(), "the flow must have gone through the proxy outbound")
+}
+
 // TestSystemProxyTCPSpliceIsRefusedAtTheSource is the system-proxy baseline: its inbound conn is not
 // a tun.GoConn, so every flow is refused at the source. That is correct and is why the system proxy
 // cannot use the TUN splice path.
