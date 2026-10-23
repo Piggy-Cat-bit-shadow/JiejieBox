@@ -136,6 +136,13 @@ add their effects to any ordinary-TUN number.
 | `go build`, `go vet`, untagged test-binary compile, `gofmt` | PASS / clean |
 | full `-race` sweep of `./route/... ./protocol/tun/... ./option/...` | PASS (route 451.1s, route/rule 11.4s, protocol/tun 5.4s, option 1.2s) |
 | CI `Verify` on the pushed SHA | PASS (run id in the round report) |
+| `Mobile contract verification` on the same SHA | PASS on re-run. The first attempt hit the documented `transport/http` flake, `TestActiveInboundStopsBecauseThePeerIsStarved` (3 s floor, measured 2.973 s) - its third recorded occurrence, in a package this work does not touch |
+
+The mobile-contract failure is the pre-existing runner-scheduling flake recorded in
+[half-closed-flow-release.md](half-closed-flow-release.md): the assertion measures inbound arrival
+times against a 3 s floor and a loaded runner landed 27 ms under it. The job passed on re-run, as it
+did for both earlier occurrences, and the assertion was not relaxed for this work. Recorded here
+rather than silently dropped.
 
 The `route/rule` flake that the earlier full sweep hit is fixed in this round: the updater's fetch
 loop is sequential, so at most the one request already in flight when `Close` returns may complete;
