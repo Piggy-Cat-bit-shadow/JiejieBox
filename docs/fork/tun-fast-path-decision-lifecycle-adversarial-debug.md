@@ -115,7 +115,7 @@ was executed is listed; the rest is `NOT_VERIFIED` with the missing condition.
 | L16/L17 (kernel-owned drain/shutdown) | **PASS** in `conn_reclaim_test.go` (`TestTransitionProtectsAKernelOwnedConnection`, `TestShutdownStillClosesEverything`); accepted handover itself NOT_VERIFIED |
 | L18/L19 (half-close, RST/close/network race) | **PASS** in `conn_halfclose*_test.go`; device timing NOT_VERIFIED |
 | L20 (keepalive unsupported) | **PASS** — `armSplicedLiveness` logs and leaves the stack default; no claim of observation |
-| L09/L11/L12/L14 (multi-level wrappers, cache close/failure, handover+copy race) | **SOURCE_CONFIRMED / TEST_GAP** for L12 (a failing remote writer during the cached drain is not injected by a deterministic test) |
+| L09/L11/L12/L14 (multi-level wrappers, cache close/failure, handover+copy race) | **PASS** for L12 (`TestCachedDrainStopsAtTheFirstWriteFailure`); L09/L11/L14 source-confirmed by the wrapper and handover tests |
 | L03/L21/L22/L23 (commit switch, UDP FakeIP/NAT, family mismatch, batch order) | **SOURCE_CONFIRMED**; UDP batch refusal is covered by the packet path tests, not by a deterministic multi-datagram fixture |
 | L26–L30 (TUN restart, L0 callback, nfqueue toggle, tracker at handover, pause/OOM) | **NOT_VERIFIED** — require device/nfqueue or platform pause; recorded as environment limits |
 
@@ -129,7 +129,7 @@ owner and intact bytes; the accepted half has one owner by code and unit tests b
 | eligibility `false` | yes | ordinary route/connection unchanged; `fast_path:false` e2e |
 | platform cannot splice | yes | `splice_rejected`, copy loops deliver 16 KiB byte-identical |
 | source/target not socket-capable | yes | `source_not_go_conn` / `splice_target_*` reasons; no owner transfer |
-| cached write fails mid-drain | **no** — terminal | code returns the error and does not replay; **no deterministic test yet** (L12 gap) |
+| cached write fails mid-drain | **no** — terminal | code returns the error and does not replay; `TestCachedDrainStopsAtTheFirstWriteFailure` (writer sees exactly two writes, the failed one is not retried) |
 | splice accepted | **no further userspace fallback** | success returns `markKernelOwned`; only close/keepalive paths remain |
 | nfqueue already released the packet | not applicable to userspace fallback | kernel owner; not verified here |
 | Port already owns the flow | no preview fallback | Port contract; attach/detach unit tests |
@@ -170,9 +170,17 @@ A/B to claim; the splice accepted/refused CPU comparison remains a device task.
 - `TestProxiedSpliceRejectionDeliversAMultiSegmentPayload` (previous round) — 16 KiB, 1200-byte
   segments, proxied path; the refused handover must not lose or duplicate the cached stream.
 
+`route/splice_cached_failure_test.go`:
+
+- `TestCachedDrainStopsAtTheFirstWriteFailure` — L12: the failing buffer is not retried and the next
+  buffer is not written; the error is returned immediately.
+- `TestCachedDrainWritesEveryBufferInOrder` — the success path drains both buffers in order.
+
 ## 11. Repository closeout
 
-- New: this report and the P05 test. No production code changed.
+- New: this report, the P05 test and the L12 failure test. The only production change is extracting
+  `drainCachedSource` out of `spliceConnection` so the failure is unit-testable; its behaviour is
+  unchanged (same loop, same counters, same terminal error).
 - Commit: the commit adding these files; pushed to `origin/testing`; CI on that SHA below.
 - Worktree clean; the mutation worktree was removed; submodule pointers untouched.
 
@@ -193,5 +201,4 @@ REGRESSIONS = PASS
 ```
 
 Why `PASS_WITH_LIMITATIONS` and not `PASS`: the accepted handover, Linux nfqueue/L0 and every device
-timing are unverified; L12 (cached-write failure) has no deterministic test; the 30-case lifecycle
-matrix was executed only where the fixture can reach the state. Nothing above upgrades those rows.
+timing are unverified; the 30-case lifecycle matrix was executed only where the fixture can reach the state. Nothing above upgrades those rows.

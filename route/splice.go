@@ -142,6 +142,39 @@ func (m *ConnectionManager) spliceClose(ctx context.Context, conn io.Closer, rem
 	}
 }
 
+// drainCachedSource moves the bytes a wrapper has already accepted from the TUN into the outbound
+// before a handover is attempted. It returns the unwrapped reader, the counters it accumulated and
+// the first write error.
+//
+// A write error here is terminal for the connection, not a fallback: the bytes that were already
+// handed to the kernel socket cannot be replayed through the copy loops, and the caller closes the
+// connection instead. The extraction exists so that failure is reachable from a unit test without a
+// real TUN stack; the behaviour is unchanged.
+func drainCachedSource(source io.Reader, remote io.Writer) (io.Reader, []N.CountFunc, error) {
+	var readCounters []N.CountFunc
+	for {
+		source, readCounters = N.UnwrapCountReader(source, readCounters)
+		cachedReader, isCached := source.(N.CachedReader)
+		if !isCached {
+			break
+		}
+		buffer := cachedReader.ReadCached()
+		if buffer == nil {
+			break
+		}
+		dataLen := buffer.Len()
+		_, err := remote.Write(buffer.Bytes())
+		buffer.Release()
+		if err != nil {
+			return source, readCounters, err
+		}
+		for _, counter := range readCounters {
+			counter(int64(dataLen))
+		}
+	}
+	return source, readCounters, nil
+}
+
 func (m *ConnectionManager) spliceConnection(ctx context.Context, conn net.Conn, remoteConn net.Conn, onClose N.CloseHandlerFunc) (bool, error) {
 	// Every path out of this function records exactly one outcome, and the caller records
 	// the one case in which this function is not called at all. That is what makes
@@ -162,33 +195,13 @@ func (m *ConnectionManager) spliceConnection(ctx context.Context, conn net.Conn,
 		m.tcpSpliceDiagnostics.recordOutcome(tcpSpliceTargetReason(targetReason))
 		return false, nil
 	}
-	var (
-		source       io.Reader = conn
-		readCounters []N.CountFunc
-	)
-	for {
-		source, readCounters = N.UnwrapCountReader(source, readCounters)
-		cachedReader, isCached := source.(N.CachedReader)
-		if !isCached {
-			break
-		}
-		buffer := cachedReader.ReadCached()
-		if buffer == nil {
-			break
-		}
-		dataLen := buffer.Len()
-		_, err := remoteConn.Write(buffer.Bytes())
-		buffer.Release()
-		if err != nil {
-			// Data that had to be forwarded before the handover could not be. The
-			// connection is finished by the caller rather than falling back, so this is a
-			// terminal outcome and not a rejection.
-			m.tcpSpliceDiagnostics.recordOutcome(spliceReasonCachedWriteFailed)
-			return false, err
-		}
-		for _, counter := range readCounters {
-			counter(int64(dataLen))
-		}
+	source, readCounters, err := drainCachedSource(conn, remoteConn)
+	if err != nil {
+		// Data that had to be forwarded before the handover could not be. The
+		// connection is finished by the caller rather than falling back, so this is a
+		// terminal outcome and not a rejection.
+		m.tcpSpliceDiagnostics.recordOutcome(spliceReasonCachedWriteFailed)
+		return false, err
 	}
 	goReader, isGoReader := N.CastReader[*tun.GoConn](source)
 	if !isGoReader || goReader != goConn {
