@@ -33,17 +33,6 @@
   "notes": "Leak grows with every TLS connection (fd plus nw_connection object) until exhaustion. No F_DUPFD_CLOEXEC appears anywhere in the fork."
  },
  {
-  "sha": "8e90fc34e6e8441e574a0aee6fae2432bb12e136",
-  "subject": "Fix network namespace with TCP Fast Open",
-  "root_cause": "With TCP Fast Open the real connect is deferred to the first Write of a slowOpenConn; that deferred dial ran after the netns wrapper had already returned, so the socket was created in the host namespace and the configured netns was ignored.",
-  "classification": "MISSING_FIX",
-  "fork_evidence": "common/dialer/tfo.go:34 DialSlowContext accepts no netns and tfo.go:88 dials directly on the first Write; common/dialer/default.go:379 enters the namespace only while creating the wrapper, and default.go:389-391 still call DialSlowContext without netns.",
-  "evidence_level": "CODE_PROVEN",
-  "action": "PORT",
-  "priority": "P0",
-  "notes": "With netns plus tcp_fast_open, every TCP connection is created outside the namespace, i.e. traffic escapes the isolated namespace. Port: pass netns into DialSlowContext and wrap the deferred dial in listener.ListenNetworkNamespace, as upstream did."
- },
- {
   "sha": "cc022098fdec81215e93377fa4594e18f4b7ec62",
   "subject": "Fix WireGuard pause and sleep handling",
   "root_cause": "ClientBind waited on the pause manager with the uncancellable WaitActive() plus a bare time.Sleep, from both wireguard-go's receive and send goroutines, so while the network was paused the receive loop (and device.Close waiting on it) could not be torn down; and the pause callbacks drove device Up/Down from the event type alone without re-reading the pause state, so a late or reordered event could leave the device down after a wake.",
@@ -53,6 +42,17 @@
   "action": "PORT",
   "priority": "P0",
   "notes": "Needs a context-aware wait in the sing fork first (its pause.Manager still has WaitActive only; fake at pause_deadlock_test.go:104 shows the interface). Endpoint.Close holds stateAccess across device.Close, which turns the stuck receive into a teardown stall against every pause callback; also drop the WaitActive from Send."
+ },
+ {
+  "sha": "8e90fc34e6e8441e574a0aee6fae2432bb12e136",
+  "subject": "Fix network namespace with TCP Fast Open",
+  "root_cause": "With TCP Fast Open the real connect is deferred to the first Write of a slowOpenConn; that deferred dial ran after the netns wrapper had already returned, so the socket was created in the host namespace and the configured netns was ignored.",
+  "classification": "PRESENT",
+  "fork_evidence": "Port in this round: DialSlowContext carries the namespace and the deferred TFO dial enters it via listener.ListenNetworkNamespace. Build + `./common/dialer` tests pass. Upstream: 8e90fc34e6e8.",
+  "evidence_level": "CODE_PROVEN",
+  "action": "NO_ACTION",
+  "priority": "P0",
+  "notes": "Fixed in this round; see docs/fork/upstream-2026-10-24-debug.md."
  },
  {
   "sha": "92fe54be05f2b1967f1bda6e43b96b8ea6914f30",

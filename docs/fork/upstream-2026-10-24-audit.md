@@ -24,16 +24,16 @@ patch-id matches are already in the fork; the 73 remaining were audited individu
 
 | classification | count | meaning |
 |---|---|---|
-| MISSING_FIX | 25 | defect applies to the fork and the fix is absent |
+| MISSING_FIX | 24 | defect applies to the fork and the fix is absent |
 | DEPENDENCY_BUMP | 19 | the commit is a dependency pin; the fix lives in a replaced or required module |
 | EQUIVALENT | 5 | the fork has a different implementation with the same contract |
-| PRESENT | 16 | the fix is in the fork (including the fifteen ported this round) |
+| PRESENT | 17 | the fix is in the fork (including the sixteen ported this round) |
 | NOT_APPLICABLE | 3 | an upstream-only path the fork does not have |
 | DOCS_ONLY | 4 | documentation, certificates or version bump |
 | REJECTED_WITH_EVIDENCE | 1 | the upstream change conflicts with a documented fork contract |
 
-At audit time 40 rows were gaps (5 P0, 29 P1, 6 P2). This round fixed 15, rejected 1 with the
-fork's own regression test as evidence, and left 25 open. It is not a zero-lag delivery.
+At audit time 40 rows were gaps (5 P0, 29 P1, 6 P2). This round fixed 16, rejected 1 with the
+fork's own regression test as evidence, and left 24 open. It is not a zero-lag delivery.
 
 ## The queue (all 73)
 
@@ -45,8 +45,8 @@ gap at audit time; rows now `PRESENT` were ported in this round (see the change 
 | `03ab009ea1c0` | Fix TUN flow table retaining accepted TCP connections | DEPENDENCY_BUMP | P0 | INVESTIGATE | go.mod:58 requires sing-tun v0.9.7-0.20261013140216-9ffa5391a2ad and :354 replaces it with Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261020085711-109186a15f3b, which FORK.m... |
 | `cc2f91b77a69` | Fix system stack retaining closed TCP sessions | DEPENDENCY_BUMP | P0 | INVESTIGATE | Same sing-tun pin (go.mod:58 require 9ffa5391a2ad, :354 replace 109186a15f3b); upstream fix 84e75a655a43 is later than the fork's base and absent from the fork's sing-tu... |
 | `42cae14c63d1` | Fix Apple TLS engine connection leak | MISSING_FIX | P0 | PORT | common/tls/apple_client_platform.go:48 unix.Dup before :65 resolveAnchors (error return leaks dupFD), :99 non-deferred anchors.Release; apple_client_platform_darwin.m:17... |
-| `8e90fc34e6e8` | Fix network namespace with TCP Fast Open | MISSING_FIX | P0 | PORT | common/dialer/tfo.go:34 DialSlowContext accepts no netns and tfo.go:88 dials directly on the first Write; common/dialer/default.go:379 enters the namespace only while cr... |
 | `cc022098fdec` | Fix WireGuard pause and sleep handling | MISSING_FIX | P0 | PORT | Endpoint half is already owned differently: endpoint.go:799-816 keeps networkPaused under stateAccess, :717-769 closes the device under the same lock. Bind half is not: ... |
+| `8e90fc34e6e8` | Fix network namespace with TCP Fast Open | PRESENT | P0 | NO_ACTION | Port in this round: DialSlowContext carries the namespace and the deferred TFO dial enters it via listener.ListenNetworkNamespace. Build + `./common/dialer` tests pass. ... |
 | `92fe54be05f2` | Fix flow close racing with tracker attach | PRESENT | P0 | NO_ACTION | Port in this round: `multiFlowTracker` is a locked struct; AttachFlow and CloseFlow are serialized, the counters stay lock-free. Test: `route/flow_tracker_serialization_... |
 | `b722a038e61b` | Fix TUN loopback protection for ICMP | PRESENT | P0 | NO_ACTION | Port in this round: `protocol/direct` rejects an ICMP flow to the TUN's own range. Test: `protocol/direct/icmp_loopback_test.go`. Upstream: b722a038e61b. |
 | `299655ce043d` | Fix stuck cloudflared edge connections | DEPENDENCY_BUMP | P1 | NO_ACTION | SYNCED this round: go.mod now requires sing-cloudflared v0.1.4-0.20261021152903-2d40d788fcf6 (upstream's pin); go build ./protocol/cloudflare and the module fetch pass. |
@@ -125,7 +125,6 @@ ancestry while substantive `E` items remain.
 | SHA | subject | prio | minimal next step |
 |---|---|---|---|
 | `42cae14c63d1` | Fix Apple TLS engine connection leak | P0 | Leak grows with every TLS connection (fd plus nw_connection object) until exhaustion. No F_DUPFD_CLOEXEC appears anywhere in the fork. |
-| `8e90fc34e6e8` | Fix network namespace with TCP Fast Open | P0 | With netns plus tcp_fast_open, every TCP connection is created outside the namespace, i.e. traffic escapes the isolated namespace. Port: pass netns into DialSlowContext and wrap the deferred dial in ... |
 | `cc022098fdec` | Fix WireGuard pause and sleep handling | P0 | Needs a context-aware wait in the sing fork first (its pause.Manager still has WaitActive only; fake at pause_deadlock_test.go:104 shows the interface). Endpoint.Close holds stateAccess across device... |
 | `18aa2cdfe742` | Fix IPv6 interface rule without auto route | P1 | Several VPN devices share table 2022 and its rules, and the IPv6 interface rule resolves in an empty or foreign table. Dep: sing-tun ...94443fe68890 -> ...7980862befdc. |
 | `1cc885e0400e` | Provide default route to Tailscale | P1 | Requires both halves: bump sagernet/tailscale to a revision exposing netmon.SetDefaultRouteFunc (upstream used ...mod.5.0.20261019070639-79c1732442a9) and register the getter with a scope-registered ... |
@@ -169,6 +168,7 @@ ancestry while substantive `E` items remain.
 | `0164ce7b8e0a` | external-interrupt mark is a typed bool, explicit false for DNS/multiplex | build + `./route`/`./dns` |
 | `5372a195b3ee` | a failed URLTest connection deletes the leaf history | `route/url_test_history_test.go` |
 | `6564c26d409b` | the IPv6 original-destination port is decoded from the in-memory network-order field | `GOOS=linux go build ./common/redir` |
+| `8e90fc34e6e8` | the deferred TFO dial enters the configured network namespace | build + `./common/dialer` |
 
 Dependency work: `sing-cloudflared` and `sing-openvpn` were moved to upstream's pins and tested;
 the six replaced/API-coupled modules are `BLOCKED_WITH_EVIDENCE` in
