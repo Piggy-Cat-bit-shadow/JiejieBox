@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -48,15 +49,26 @@ import (
 
 // tunStackHandler is the faithful stand-in described above.
 type tunStackHandler struct {
-	router      adapter.Router
-	tag         string
-	dnsAddress  netip.Addr
-	dnsPort     uint16
-	logger      *testLogger
+	router     adapter.Router
+	tag        string
+	dnsAddress netip.Addr
+	dnsPort    uint16
+	logger     *testLogger
+	// judgeFlow, when set, replaces the DNS/accept stand-in and is called with the packet's flow
+	// identity. It lets a test drive the REAL router's PreMatch (through adapter.JudgeFlow) from
+	// packets, which is the seam this file otherwise does not execute.
+	judgeFlow func(network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict
+	// delegations counts the flows the stack handed to this handler. A flow that was carried
+	// natively would never arrive here, so this is the product-level "the flow stayed in userspace"
+	// observation.
+	delegations atomic.Int64
 	connections sync.WaitGroup
 }
 
-func (h *tunStackHandler) JudgeFlow(network uint8, source netip.AddrPort, destination netip.AddrPort, _ []byte) tun.FlowVerdict {
+func (h *tunStackHandler) JudgeFlow(network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
+	if h.judgeFlow != nil {
+		return h.judgeFlow(network, source, destination, firstPacket)
+	}
 	// The production rule this reproduces: a configured DNS address is hijacked on every port
 	// (protocol/tun/inbound.go, JudgeFlow). The address is taken from the configuration the same
 	// way the inbound takes it from its own options.
@@ -83,6 +95,7 @@ func (h *tunStackHandler) NewDNSPacket(payload []byte, source M.Socksaddr, desti
 }
 
 func (h *tunStackHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
+	h.delegations.Add(1)
 	h.connections.Add(1)
 	defer h.connections.Done()
 	metadata := adapter.InboundContext{
@@ -96,6 +109,7 @@ func (h *tunStackHandler) NewConnectionEx(ctx context.Context, conn net.Conn, so
 }
 
 func (h *tunStackHandler) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
+	h.delegations.Add(1)
 	h.connections.Add(1)
 	defer h.connections.Done()
 	metadata := adapter.InboundContext{
@@ -164,6 +178,14 @@ const (
 
 func newTunFixture(t *testing.T, running *chain, dnsAddress netip.Addr, dnsPort uint16) *tunFixture {
 	t.Helper()
+	return newTunFixtureWithJudge(t, running, dnsAddress, dnsPort, nil)
+}
+
+// newTunFixtureWithJudge is newTunFixture with the flow decision supplied by the caller. The
+// decision runs before the stack, exactly where ForwardStage would call protocol/tun.Inbound's
+// JudgeFlow, so a test can put the real router's verdict in front of the real stack.
+func newTunFixtureWithJudge(t *testing.T, running *chain, dnsAddress netip.Addr, dnsPort uint16, judge func(network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict) *tunFixture {
+	t.Helper()
 	fixture := &tunFixture{t: t, frameSignal: make(chan struct{}, 1)}
 	fixture.handler = &tunStackHandler{
 		router:     running.router(),
@@ -171,6 +193,7 @@ func newTunFixture(t *testing.T, running *chain, dnsAddress netip.Addr, dnsPort 
 		dnsAddress: dnsAddress,
 		dnsPort:    dnsPort,
 		logger:     &testLogger{},
+		judgeFlow:  judge,
 	}
 	fixture.device = tun.NewMemoryTun(tun.MemoryTunOptions{
 		MTU: 1500,

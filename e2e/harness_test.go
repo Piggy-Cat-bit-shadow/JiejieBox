@@ -125,12 +125,32 @@ func startChainWithWriter(t *testing.T, configJSON string, platformLogWriter log
 // second Box" cannot express that with independent roots, which is why this entry point exists.
 func startChainInContext(t *testing.T, root context.Context, configJSON string, platformLogWriter log.PlatformWriter) *chain {
 	t.Helper()
+	return startChainInContextWithTracker(t, root, configJSON, platformLogWriter, true)
+}
+
+// startChainUntracked builds a box whose router has NO tracker attached.
+//
+// The default harness attaches a flowRecorder to every box so a test can read the route decision.
+// That instrument is also an eligibility input: canFastBypass refuses any flow while any tracker is
+// attached, so every TUN flow in a default e2e chain is refused with BypassRefusedTracker. The fast
+// path tests need the state a production box without a dashboard is actually in - no tracker - and
+// this entry point provides exactly that one difference. Callers that use it must observe the flow
+// through its real effects (bytes, the peer, the handler) rather than through flowRecorder.
+func startChainUntracked(t *testing.T, configJSON string) *chain {
+	t.Helper()
+	return startChainInContextWithTracker(t, context.Background(), configJSON, nil, false)
+}
+
+// startChainInContextWithTracker is the shared implementation; attachTracker is the one difference
+// between the two public entry points above.
+func startChainInContextWithTracker(t *testing.T, root context.Context, configJSON string, platformLogWriter log.PlatformWriter, attachTracker bool) *chain {
+	t.Helper()
 	var (
 		result *chain
 		err    error
 	)
 	for attempt := 0; attempt < 3; attempt++ {
-		result = buildChainInContext(t, root, configJSON, platformLogWriter)
+		result = buildChainInContextWithTracker(t, root, configJSON, platformLogWriter, attachTracker)
 		err = result.instance.Start()
 		if err == nil {
 			break
@@ -156,6 +176,12 @@ func buildChain(t *testing.T, configJSON string, platformLogWriter log.PlatformW
 // buildChainInContext is buildChain with the Box extending a caller-supplied root context.
 func buildChainInContext(t *testing.T, root context.Context, configJSON string, platformLogWriter log.PlatformWriter) *chain {
 	t.Helper()
+	return buildChainInContextWithTracker(t, root, configJSON, platformLogWriter, true)
+}
+
+// buildChainInContextWithTracker is buildChainInContext with the tracker instrument optional.
+func buildChainInContextWithTracker(t *testing.T, root context.Context, configJSON string, platformLogWriter log.PlatformWriter, attachTracker bool) *chain {
+	t.Helper()
 	ctx, cancel := context.WithCancel(include.Context(service.ExtendContext(root)))
 	require.NotEmpty(t, configJSON)
 	var options option.Options
@@ -174,7 +200,9 @@ func buildChainInContext(t *testing.T, root context.Context, configJSON string, 
 		t.Fatalf("box.New failed: %v\n--- config ---\n%s", err, configJSON)
 	}
 	result := &chain{t: t, instance: instance, ctx: ctx, root: root, cancel: cancel, tracker: newFlowRecorder()}
-	instance.Router().AppendTracker(result.tracker)
+	if attachTracker {
+		instance.Router().AppendTracker(result.tracker)
+	}
 	t.Cleanup(func() {
 		if result.closed.CompareAndSwap(false, true) {
 			require.NoError(t, instance.Close())
