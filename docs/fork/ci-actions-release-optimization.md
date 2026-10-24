@@ -1,7 +1,7 @@
 # Actions / Release closeout — 2026-10-24
 
 Base: `testing` @ `9b1f95e40a4bbc25a34362557da3363dd30ffb02`.
-Work branch: `ci/actions-release-closeout-20261024` @ `549a5f80be649681eced48cdf25c00fb12078048` plus this
+Work branch: `ci/actions-release-closeout-20261024` @ `0d5dd2f3210a0e1921700f65bbc0034768d6c045` (final code); this
 documentation commit. No `main`, `testing`, tag, Release or asset was modified.
 
 ## 1. What the workflows actually do
@@ -76,16 +76,16 @@ The two race steps were serial after all build/assumption steps. They now run in
 same `verify.yml`; a workflow run is still the conjunction of both jobs, so release evidence is
 unchanged and no test is skipped.
 
-After (`40095336952`):
+After (`40097435132`, final code SHA):
 
 | | |
 |---|---|
-| workflow wall clock | **11m03s** |
-| verify job | 7m04s |
-| race job | 10m55s (checkout/setup included) |
-| runner-job minutes | 17m59s vs 17m23s (~+36s) |
+| workflow wall clock | **10m50s** |
+| verify job | 8m09s |
+| race job | 10m50s (checkout/setup included) |
+| runner-job minutes | 18m59s vs 17m23s (~+1m36s) |
 
-Push feedback improves by about **6m20s (36%)** at a small runner-minute cost. The header now states
+Push feedback improves by about **6m33s (38%)** at a small runner-minute cost. The header now states
 the race job and the release-evidence rationale.
 
 ## 4. Same-SHA evidence / Release
@@ -106,15 +106,15 @@ contract. `release.yml` was not modified.
 
 - `scripts/ci/check-release-workflows.py`: **133 passed, 0 failed** on the branch.
 - All 18 workflow YAML files parse with PyYAML.
-- Release contract run `40095341875` (same branch SHA): success, including
+- Release contract run `40097437803` (final branch SHA): success, including
   `test-release-artifacts.sh` **all 107 cases** and the 92-case helper suite; this is the Linux
   environment the suite requires.
 - Local Windows attempt of `test-release-artifacts.sh` reached all cases but reported four
   platform-magic failures (Android `libbox.aar` and executable-magic checks use Linux/ELF tooling);
   the Linux CI result above is the authoritative one.
-- Verify `40095336952`: success.
-- Two manual Mobile runs `40095339516` / `40095360873`: no cancellation; the first's unrelated
-  timing-test failures passed on rerun.
+- Verify `40097435132` (final branch SHA): success.
+- Two manual Mobile runs `40095339516` / `40095360873` at `549a5f80be6`: no cancellation; the first's unrelated
+  timing-test failures passed on rerun. A third run at the final code SHA, `40098352189`, also succeeded.
 - No release was published; no tag or asset was touched.
 
 ## 6. Remaining human action
