@@ -3,13 +3,13 @@
 ```text
 PHASE = 01/06
 RESULT = PARTIAL_WITH_SPECIFIC_BLOCKER
-SING_TUN_DEV = 4c4e5a2d6e19b043e0b0dc67f8926e7662f96ef0 (merge 17a6a699750980284cae5d4e04a30720c543ccc2 of sync/upstream-fixes-2026-10-24 @ 88e6d8160cf5, port commit 1559fbd, style commits 17db765 and 4c4e5a2)
+SING_TUN_DEV = dcf84577d0eb28b2fa35bcf0a76736836f45a99d (merge 17a6a699750980284cae5d4e04a30720c543ccc2 of sync/upstream-fixes-2026-10-24 @ 88e6d8160cf5, port commit 1559fbd, style 17db765/4c4e5a2, privileged test + workflow dcf8457)
 SING_TUN_SYNC_BRANCH = deleted (dev contains 88e6d81 as an ancestor; no open PRs; main no longer references it)
-MAIN_TESTING = 6af4a4a0925a98abe6dc8d0308d5317052c648e1 (code); ledger commit follows
-EFFECTIVE_SING_TUN_ROOT_AND_TEST = same revision in both modules: v0.0.0-20261024014015-4c4e5a2d6e19, same Replace.Dir
+MAIN_TESTING = f94600ab3bb293af4dbd9734ae4536151379ac9e (code); ledger commit follows
+EFFECTIVE_SING_TUN_ROOT_AND_TEST = same revision in both modules: v0.0.0-20261024025840-dcf84577d0eb, same Replace.Dir
 DEP_TUN_0_1_2_3 = COMPLETED / COMPLETED / COMPLETED / COMPLETED
 MASQUE_BACKPRESSURE = capsule-path park/drain/close/fallback tests pass; MemoryTun full/close/drop tests pass; live QUIC session NOT_VERIFIED_ON_DEVICE
-CI_FINAL_CODE_SHA = 6af4a4a0925 — main Verify / Mobile contract verification / Android Core ARM64 all SUCCESS on 8f7796a8029; sing-tun lint SUCCESS, test FAILURE with pre-existing failures (see below)
+CI_FINAL_CODE_SHA = f94600ab3bb — main Verify / Mobile contract verification / Android Core ARM64 all SUCCESS; sing-tun lint SUCCESS, test FAILURE with pre-existing failures (see below)
 OPEN_SEMANTIC = 20 (was 22; 3454d6d was never open, it is PRESENT in the audit)
 NEXT_PHASE_READY = YES (phase 02 starts from this ledger; DEP-SING-1 still blocks cc022098fd)
 ```
@@ -61,6 +61,8 @@ NEXT_PHASE_READY = YES (phase 02 starts from this ledger; DEP-SING-1 still block
 | sing-tun `-race` on the new NAT, judgement and memory-TUN tests | PASS |
 | sing-tun targeted suites (flow dispatch, system NAT, system accept/listenconfig, memory TUN) | PASS |
 | sing-tun full root package minus `TestGoKernelTCPTransmitLifetime` | fails only `TestGoKernelPacketBatchIdle`, identically on the pre-merge sync tree (host issue) |
+| sing-tun `linux-tun-verify` on GitHub's Ubuntu kernel | PASS: linux-only unit suite as non-root, and the committed dual real-TUN test as root (two TUNs, per-instance rule and `::/0`, Close removes only its own) |
+| main Linux checks (`protocol/tun`, `transport/device`, `transport/masque`, libbox judgement) | PASS |
 | main `go test ./protocol/tun ./transport/device ./transport/masque` | PASS |
 | main same packages under `-race` | PASS |
 | main `go build -tags DEFAULT_BUILD_TAGS_OTHERS ./...` | PASS |
@@ -68,26 +70,25 @@ NEXT_PHASE_READY = YES (phase 02 starts from this ledger; DEP-SING-1 still block
 
 ## CI evidence
 
-**sing-tun** (run on `4c4e5a2`):
+**sing-tun** (run on `dcf8457`):
 
-- lint: SUCCESS (run 40050850848). Earlier runs exposed gci/gofumpt/modernize issues in the
-  converged tree; both style commits fix them and `golangci-lint run` is clean on
-  windows/linux/darwin/android targets locally.
-- test: FAILURE (run 40050850903). macOS passes; Ubuntu (three Go versions) and Windows fail
-  `TestGoConnKeepalive`, `TestGoKernelZeroWindowHalfClose` and `TestGoKernelPacketMapping`.
-  The pre-merge `dev` 7539c98 fails the same set plus `TestGoKernelFlowControl` and
-  `TestGoKernelPacket` (baseline dispatch run 40050607262, branch `ci-baseline-7539c98`, deleted
-  after the comparison). So the convergence adds no failing test; these Go-stack tests fail on this
-  repository's Linux/Windows CI independently of this phase.
+- lint: SUCCESS (run 40056405709).
+- test: FAILURE (run 40056405724; rerun failed the same way). Persistent failures:
+  `TestGoConnKeepalive`, `TestGoKernelZeroWindowHalfClose`, `TestGoKernelPacketMapping` — all on the
+  pre-merge `dev` 7539c98 baseline too (run 40050607262), which additionally failed
+  `TestGoKernelFlowControl` and `TestGoKernelPacket`. `TestGoKernelPacketFragments` failed once and
+  passed on rerun. No new persistent failure.
+- `linux-tun-verify`: SUCCESS (run 40056412780), including the root dual real-TUN test.
 
-**Main repo**: SUCCESS on `8f7796a8029` (code `6af4a4a0925`): Verify (including the race and build
-matrix steps), Mobile contract verification and Android Core ARM64 all succeeded.
+**Main repo**: SUCCESS on `f94600ab3bb`: Verify (run 40057018200), Mobile contract verification
+(40057018099), Android Core ARM64 (40057018028). The Linux package checks also pass separately
+(run 40056761067: `protocol/tun`, `transport/device`, `transport/masque`, `experimental/libbox`).
 
 Not run, and why:
 
-- Real Linux route/rule tables with two TUNs (`NOT_VERIFIED_ON_DEVICE`): this host has no Linux
-  runtime (no WSL, no Docker), so the Linux test files cross-compile only.
-- Android binder behaviour for the 8-slot semaphore (`NOT_VERIFIED_ON_DEVICE`): no Android device.
+- Real Linux rule/route tables are now covered (sing-tun run 40056412780) with two real TUN devices.
+- Android device behaviour for the 8-slot semaphore is still `NOT_VERIFIED_ON_DEVICE`; the Linux
+  runner only proves the channel bound and the defer release.
 - A live QUIC client/server MASQUE datagram session (`NOT_VERIFIED_ON_DEVICE`): the capsule and
   device layers are covered; the transport session was not exercised against a peer here.
 - `internal/winipcfg` tests fail with `ERROR_NOT_FOUND` (no suitable interface) on this host;
