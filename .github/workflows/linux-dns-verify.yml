@@ -1,0 +1,29 @@
+name: linux-dns-verify
+
+# Runs the code paths that only exist on Linux: systemd-resolved detection/reuse/flush, the
+# procfs/SSH helpers and the DNS cache/search tests. The ordinary Verify job does not build
+# with_tailscale, so this gate supplies the tag and the Linux-only files.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Linux DNS, resolved and Tailscale tests
+        run: |
+          go test -count=1 -v ./dns
+          go test -count=1 -v ./dns/transport/dhcp
+          go test -count=1 -v ./dns/transport/local ./dns/transport/local/systemconfig
+          go test -count=1 -v -tags with_tailscale ./protocol/tailscale/... ./protocol/tailscale/tailssh
