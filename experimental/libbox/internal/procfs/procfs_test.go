@@ -16,11 +16,11 @@ func TestFormatSocketAddress(t *testing.T) {
 		address netip.AddrPort
 		want    string
 	}{
-		{"ipv4 loopback", netip.MustParseAddrPort("127.0.0.1:80"), "0100007F:0050"},
-		{"ipv4 any", netip.MustParseAddrPort("0.0.0.0:443"), "00000000:01BB"},
-		{"ipv4 public", netip.MustParseAddrPort("192.0.2.10:12345"), "0A0200C0:3039"},
+		{"ipv4 loopback", netip.MustParseAddrPort("127.0.0.1:80"), "0100007f:0050"},
+		{"ipv4 any", netip.MustParseAddrPort("0.0.0.0:443"), "00000000:01bb"},
+		{"ipv4 public", netip.MustParseAddrPort("192.0.2.10:12345"), "0a0200c0:3039"},
 		{"ipv6 loopback", netip.MustParseAddrPort("[::1]:53"), "00000000000000000000000001000000:0035"},
-		{"ipv6 unspecified", netip.MustParseAddrPort("[::]:5353"), "00000000000000000000000000000000:14E9"},
+		{"ipv6 unspecified", netip.MustParseAddrPort("[::]:5353"), "00000000000000000000000000000000:14e9"},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {

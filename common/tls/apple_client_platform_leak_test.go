@@ -5,13 +5,14 @@ package tls
 import (
 	"crypto/tls"
 	"net"
-	"os"
 	"runtime"
 	"testing"
 	"time"
 
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/json/badoption"
+
+	"golang.org/x/sys/unix"
 )
 
 // The Apple engine used to dup the caller's socket with unix.Dup and release the anchor and
@@ -150,9 +151,15 @@ func TestAppleClientHandshakeFailureDoesNotLeakFileDescriptors(t *testing.T) {
 
 func appleOpenFileDescriptors(t *testing.T) int {
 	t.Helper()
-	entries, err := os.ReadDir("/dev/fd")
+	limit, err := unix.Getdtablesize()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return len(entries)
+	count := 0
+	for fd := 0; fd < limit; fd++ {
+		if _, err = unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0); err == nil {
+			count++
+		}
+	}
+	return count
 }
