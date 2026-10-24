@@ -1,6 +1,7 @@
 package route
 
 import (
+	"context"
 	"net/netip"
 	"testing"
 
@@ -225,6 +226,10 @@ func (m *recordingPauseManager) IsNetworkPaused() bool {
 }
 func (m *recordingPauseManager) IsPaused() bool { return m.devicePaused }
 func (m *recordingPauseManager) WaitActive()    {}
+
+// WaitActiveContext mirrors WaitActive: this fake is never actually paused for the callers under
+// test, and adding the cancellable spelling is only interface compliance.
+func (m *recordingPauseManager) WaitActiveContext(context.Context) {}
 func (m *recordingPauseManager) RegisterCallback(pause.Callback) *list.Element[pause.Callback] {
 	return nil
 }

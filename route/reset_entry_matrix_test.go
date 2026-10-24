@@ -220,6 +220,8 @@ func (m *noopPauseManager) IsDevicePaused() bool  { return m.paused }
 func (m *noopPauseManager) IsNetworkPaused() bool { return false }
 func (m *noopPauseManager) IsPaused() bool        { return m.paused }
 func (m *noopPauseManager) WaitActive()           {}
+func (m *noopPauseManager) WaitActiveContext(context.Context) {
+}
 func (m *noopPauseManager) RegisterCallback(pause.Callback) *list.Element[pause.Callback] {
 	return nil
 }

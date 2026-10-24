@@ -32,6 +32,8 @@ func (m *trackingPauseManager) IsPaused() bool {
 	return m.devicePaused.Load() || m.networkPaused.Load()
 }
 func (m *trackingPauseManager) WaitActive() {}
+func (m *trackingPauseManager) WaitActiveContext(context.Context) {
+}
 func (m *trackingPauseManager) RegisterCallback(pause.Callback) *list.Element[pause.Callback] {
 	return nil
 }
