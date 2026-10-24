@@ -1,0 +1,38 @@
+name: apple-tls-verify
+
+# The Apple TLS engine is darwin+cgo and cannot be exercised on the Windows/Linux hosts used for
+# normal development. This gate runs the real Network.framework handshake and the fd-leak cycles on
+# a macOS runner. It is not an iOS device test: nw_connection on macOS is the same code path, but a
+# device can still differ in entitlement and NetworkExtension behaviour.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Apple TLS handshake and fd-leak tests
+        if: matrix.arch == 'arm64'
+        run: |
+          go test -count=1 -timeout 15m -tags "$(cat release/DEFAULT_BUILD_TAGS)" ./common/tls -run 'TestApple' -v
+      - name: Build sing-box for macOS ${{ matrix.arch }}
+        env:
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: "1"
+        run: |
+          go build -tags "$(cat release/DEFAULT_BUILD_TAGS)" ./...
