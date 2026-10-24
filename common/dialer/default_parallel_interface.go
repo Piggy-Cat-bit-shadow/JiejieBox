@@ -3,6 +3,7 @@ package dialer
 import (
 	"context"
 	"net"
+	"syscall"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -220,6 +221,43 @@ func (d *DefaultDialer) listenSerialInterfacePacket(ctx context.Context, listene
 		errors = append(errors, E.Cause(err, "listen ", fallbackInterface.Name, " (", fallbackInterface.Index, ")"))
 	}
 	return nil, E.Errors(errors...)
+}
+
+// icmpBindToInterface is the socket-control step serialInterfaceControl uses. It is a variable so a
+// test can observe the chosen interface without a real socket; production always uses the package
+// implementation.
+var icmpBindToInterface = control.BindToInterface0
+
+// serialInterfaceControl applies the configured network strategy to an already-created socket. The
+// interface choice is made inside the control callback because the caller creates the socket only
+// after the control func is invoked.
+//
+// Unlike a dial loop, a control func cannot retry by creating another socket: it must bind the one
+// socket it was handed. The candidates are therefore tried in order on that same socket, and the
+// first successful bind wins. A candidate that is the current default interface needs no bind at
+// all - the kernel already routes through it.
+func (d *DefaultDialer) serialInterfaceControl(strategy C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType) control.Func {
+	return func(network, address string, conn syscall.RawConn) error {
+		primaryInterfaces, fallbackInterfaces := selectInterfaces(d.networkManager, strategy, interfaceType, fallbackInterfaceType)
+		if len(primaryInterfaces)+len(fallbackInterfaces) == 0 {
+			return E.New("no available network interface")
+		}
+		defaultInterface := d.networkManager.InterfaceMonitor().DefaultInterface()
+		var bindErrors []error
+		for _, networkInterfaces := range [][]adapter.NetworkInterface{primaryInterfaces, fallbackInterfaces} {
+			for _, networkInterface := range networkInterfaces {
+				if defaultInterface != nil && networkInterface.Index == defaultInterface.Index {
+					return nil
+				}
+				err := icmpBindToInterface(nil, conn, network, address, networkInterface.Name, networkInterface.Index, false)
+				if err == nil {
+					return nil
+				}
+				bindErrors = append(bindErrors, E.Cause(err, "bind ", networkInterface.Name, " (", networkInterface.Index, ")"))
+			}
+		}
+		return E.Errors(bindErrors...)
+	}
 }
 
 func selectInterfaces(networkManager adapter.NetworkManager, strategy C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType) (primaryInterfaces []adapter.NetworkInterface, fallbackInterfaces []adapter.NetworkInterface) {

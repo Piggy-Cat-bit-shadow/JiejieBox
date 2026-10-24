@@ -515,12 +515,36 @@ func (d *DefaultDialer) ListenPacket(ctx context.Context, destination M.Socksadd
 	}
 }
 
+// DialerForICMPDestination is retained for embedders that still select by family. It carries no
+// network strategy - ICMPControl is the strategy-aware spelling (upstream 38bf6879b).
 func (d *DefaultDialer) DialerForICMPDestination(destination netip.Addr) net.Dialer {
 	if !destination.Is6() {
 		return d.dialer4.Dialer
 	} else {
 		return d.dialer6.Dialer
 	}
+}
+
+// ICMPControl returns the socket control an ICMP port uses, following the configured network
+// strategy and interface types instead of selecting by IP family alone. The ICMP path used to return
+// the plain family dialer's Control, so an ICMP probe left through the default route even when the
+// outbound was bound to an interface or a strategy.
+//
+// The EPERM tolerance is scoped to the DEFAULT strategy, matching the TCP/UDP path: on a legacy
+// system whose bind-interface syscall is denied, refusing every ICMP probe is worse than letting the
+// kernel choose. An explicitly configured strategy keeps the error.
+func (d *DefaultDialer) ICMPControl() control.Func {
+	if d.networkStrategy == nil || d.defaultNetworkStrategy && len(d.networkType) == 0 {
+		return d.dialer4.Control
+	}
+	interfaceControl := d.serialInterfaceControl(*d.networkStrategy, d.networkType, d.fallbackNetworkType)
+	return control.Append(d.dialer4.Control, func(network, address string, conn syscall.RawConn) error {
+		err := interfaceControl(network, address, conn)
+		if d.defaultNetworkStrategy && errors.Is(err, syscall.EPERM) {
+			return nil
+		}
+		return err
+	})
 }
 
 // ListenSerialInterfacePacket binds a socket to a chosen interface.
