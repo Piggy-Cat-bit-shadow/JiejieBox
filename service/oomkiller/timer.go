@@ -389,12 +389,11 @@ func (t *adaptiveTimer) releaseIdleMemory(sample memorySample, connections int) 
 	defer t.pressureCallbacks.Done()
 	// Progressive pass first, then let the runtime return freed pages. This is not ReleaseMemory:
 	// it must not reset the network or force a dial.
-	if t.network != nil {
-		t.network.TrimMemory(context.Background())
-	}
 	trim := t.trimMemory
 	if trim != nil {
 		trim(context.Background())
+	} else if t.network != nil {
+		t.network.TrimMemory(context.Background())
 	}
 	free := t.freeOSMemory
 	if free != nil {

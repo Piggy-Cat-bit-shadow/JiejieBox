@@ -3,6 +3,7 @@ package oomkiller
 import (
 	"context"
 	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,7 +33,11 @@ func newIdleReleaseTimer(t *testing.T) (*adaptiveTimer, *int, *int) {
 		trimMemory:      func(context.Context) { trims++ },
 		freeOSMemory:    func() { frees++ },
 	}
-	t.Cleanup(func() { timer.timer.Stop() })
+	t.Cleanup(func() {
+		if timer.timer != nil {
+			timer.timer.Stop()
+		}
+	})
 	return timer, &trims, &frees
 }
 
@@ -78,4 +83,75 @@ func TestIdleReleasePressureBypassesTheCooldown(t *testing.T) {
 	timer.releaseIdleMemory(idleSample(41), 10)
 	require.Equal(t, 2, *trims, "an armed footprint must not be blocked by the low-yield cooldown")
 	require.Equal(t, 2, *frees)
+}
+
+// The idle cleanup is single-flight: a second tick that wants to release must wait for the first,
+// not run a second TrimMemory/FreeOSMemory in parallel.
+func TestIdleReleaseIsSingleFlight(t *testing.T) {
+	timer, _, _ := newIdleReleaseTimer(t)
+	var trims atomic.Int32
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	timer.trimMemory = func(context.Context) {
+		trims.Add(1)
+		close(entered)
+		<-release
+	}
+	timer.lastUsage = 35 * 1024 * 1024
+
+	firstDone := make(chan struct{})
+	go func() {
+		timer.releaseIdleMemory(idleSample(33), 10)
+		close(firstDone)
+	}()
+	<-entered
+
+	secondDone := make(chan struct{})
+	go func() {
+		timer.releaseIdleMemory(idleSample(33), 10)
+		close(secondDone)
+	}()
+	select {
+	case <-secondDone:
+		t.Fatal("the second release entered while the first was still trimming")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	<-firstDone
+	<-secondDone
+	require.Equal(t, int32(1), trims.Load())
+}
+
+// stop must wait for an idle release that already passed its active check, exactly as it waits for a
+// pressure callback. Otherwise Close can return while TrimMemory is still touching the network.
+func TestStopWaitsForAnInFlightIdleRelease(t *testing.T) {
+	timer, _, _ := newIdleReleaseTimer(t)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	timer.trimMemory = func(context.Context) {
+		close(entered)
+		<-release
+	}
+	timer.lastUsage = 35 * 1024 * 1024
+
+	releaseDone := make(chan struct{})
+	go func() {
+		timer.releaseIdleMemory(idleSample(33), 10)
+		close(releaseDone)
+	}()
+	<-entered
+
+	stopDone := make(chan struct{})
+	go func() {
+		timer.stop()
+		close(stopDone)
+	}()
+	select {
+	case <-stopDone:
+		t.Fatal("stop returned while the idle trim was still running")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	<-releaseDone
+	<-stopDone
 }

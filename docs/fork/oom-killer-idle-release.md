@@ -49,6 +49,18 @@ to the policy thresholds. Upstream `9c2aa1b` removes the `resume` field from the
 is a different change and was not adopted here — the iOS crisis hysteresis is a safety contract, and
 the bug was its misuse as an everyday admission gate.
 
+## 2.1 Adversarial round (2026-10-24, after the first fix)
+
+- **Double executor removed**: the first fix called `t.network.TrimMemory` and then an injected
+  `trimMemory`; a test or future caller that set both would trim twice. The injected executor now
+  wins, and the network manager is the fallback.
+- **Single-flight**: `releaseAccess` serializes the whole decision + trim + GC. A second tick that
+  sees an opportunity waits; it does not run a parallel `TrimMemory`/`FreeOSMemory`.
+- **Close barrier**: the idle path joins `pressureCallbacks` (Add under `access` after the
+  `timer != nil` check). `TestStopWaitsForAnInFlightIdleRelease` blocks the trim and proves
+  `stop()` does not return until it finishes.
+- **Race**: `go test -race ./service/oomkiller` passes with `CGO_ENABLED=1` and the mingw gcc.
+
 ## 3. Tests
 
 `service/oomkiller/idle_release_test.go`:
@@ -59,6 +71,8 @@ the bug was its misuse as an everyday admission gate.
 | `TestIdleReleaseRunsOnceForARealDropThenCoolsDown` | 35 → 33 MB → exactly one release; a second 33 MB sample is suppressed by the cooldown |
 | `TestIdleReleasePressureBypassesTheCooldown` | after a no-gain release, an armed 41 MB sample still releases (pressure overrides the ordinary cooldown) |
 | `TestPressureStateExitsTriggeredAtArmedNotResume` | Triggered exits at 39 MB (below armed), stays at 41 MB; normal/armed entry unchanged |
+| `TestIdleReleaseIsSingleFlight` | a second tick blocks behind the first trim; exactly one trim runs |
+| `TestStopWaitsForAnInFlightIdleRelease` | `stop()` waits for the trim that already passed the active check |
 
 `go test ./service/oomkiller` passes. The package's existing Darwin policy/lifecycle tests also pass
 unchanged. `-race` was not run on this host for this package (CGO/mingw setup); CI runs the race
@@ -81,8 +95,9 @@ ROOT_CAUSE = idleGC (no GC since last release) used as a sufficient trigger; Fre
 NEW_ARCHITECTURE = observed-opportunity trigger + 512 KiB benefit floor + 30 s low-yield cooldown + pressure override + lifecycle barrier
 REGRESSION_33MB = PASS (deterministic)
 PRESSURE_SAFETY = PASS (armed bypasses cooldown)
-LIFECYCLE_RACE = PASS (barrier added; race not run locally)
+LIFECYCLE_RACE = PASS (barrier added; package `-race` passes locally)
 MULTIPLATFORM = Windows tests pass; Darwin/Apple tests pass; iOS device NOT_VERIFIED
+CLOSE_RELOAD_RACE = PASS (deterministic barrier + -race)
 NETWORK_REGRESSION = no TrimMemory semantics changed
 BENCHMARK_EVIDENCE = none; no device power/CPU trace
 DEVICE_VALIDATION = NOT_VERIFIED_ON_DEVICE
