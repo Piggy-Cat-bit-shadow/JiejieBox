@@ -1,15 +1,14 @@
 # Upstream integration status
 
-- generated: 2026-10-24T16:10:00+08:00 (phase 03/06)
-- fork testing code: `56a804e6eedb761b1b8b067465f4eb1c7f8f616d`
+- generated: 2026-10-24T17:45:00+08:00 (phase 04/06)
+- fork testing code: `3ddb0e86601391f20f61feeb39a14675c0e6199a`
 - fork testing docs: `9ea9f2935cc8bb423712429a749454380f1f4fda`
 - upstream observed: `a6952ccf6907c18e18917fcb763a433e8e36937b` (2026-10-24T10:08:02+08:00, "Remove stale workflow")
-- behind_by: **110**; ahead_by: 2608
-- open semantic: **17**; open dependency blockers: **2**
+- behind_by: **110**; ahead_by: 2618
+- open semantic: **14**; open dependency blockers: **1**
 
-**Phase 03 closes DEP-QUIC-1 and DEP-QUIC-2** and leaves CRONET and TAILSCALE as the two
-dependency blockers. No semantic audit row is closed this phase; 17 of the audit's 22 `MISSING_FIX`
-rows remain.
+**Phase 04 closes APPLE-TLS, ANDROID-PROC and IPV6-HOST** and **DEP-CRONET-1**. 14 semantic rows
+remain (17 -> 14) and only Tailscale remains as a dependency blocker.
 
 ## Dependency closure (QUIC, phase 03)
 
@@ -24,6 +23,13 @@ Merging the two was rejected with evidence: different module paths, 137 conflict
 on a trial merge, and a second incompatible owned-DATAGRAM API. The release line is pinned by SHA;
 the default branch stays the MetaCubeX line so independent projects keep their baseline.
 
+## Closed in phase 04
+
+| id | upstream | what landed | evidence | not verified |
+|---|---|---|---|---|
+| MAIN-42cae14c63d1 | `42cae14c63d1` | F_DUPFD_CLOEXEC after the anchor lookup, deferred anchor release, autoreleasepool and retained/network object ownership on every path in the ObjC bridge | `apple_client_platform_leak_test.go`: 30 successful + 10 failed handshakes with a flat fd count; macOS gate 40081595184 | iOS device entitlements / NetworkExtension |
+| MAIN-40bc411e8d02 | `40bc411e8d02` | socket inode/procfs fallback moved into `connection_owner_android.go`; table search ranks exact/local/unspecified UDP rows, skips zero inode/uid | `procfs_test.go` address spelling; linux-platform-verify 40081597501; android/arm64 cross-compile | real legacy Android device and cross-user procfs permissions |
+| MAIN-42f487bd0d04 | `42f487bd0d04` | IPv6 literals bracketed in DNS HTTPS/HTTP3, DERP mesh URL and v2ray host; parsed address keeps SNI/ALPN/dial consistent | `https_host_test.go`, `http3_host_test.go`, `mesh_host_test.go` cover domain/IPv4/IPv6 and default/non-default/zero port; linux-platform-verify 40081597501 | HTTP/3 ALPN against a real IPv6-only resolver |
 ## Closed in phase 02
 
 | id | upstream | what landed | evidence | not verified |
@@ -50,7 +56,7 @@ the default branch stays the MetaCubeX line so independent projects keep their b
 | DEP-SING-1 | COMPLETED | `sing/dev` 4200a04 (merge a965eff of the previously pinned side branch, pause port 533bbb8, socks test cleanup 4200a04). `service/pause` tests pass under `-race` locally and in the sing test workflow (all six jobs). |
 | DEP-QUIC-1 | COMPLETED | Sagernet line `jiejie-masque-mod9` at `ce02ee5c`: mod.10 EMSGSIZE read, mod.11 trust_anchors, mod.12 application-limited, on top of the owned-DATAGRAM/ceiling work. Targeted tests, local `go test`/`-race`, linux/darwin/windows/android builds. `jiejie-masque-stable` is the separate `github.com/metacubex/quic-go` line, unmodified; repository default restored to it. |
 | DEP-QUIC-2 | COMPLETED | `sing-quic/main` at `5e5a027`: upstream `7e0a5869` plus the ceiling/owned-datagram commits, resolving quic-go to `ce02ee5c`. Build/tests/race and four-OS builds pass. |
-| DEP-CRONET-1 | OPEN | atomic root/all/lib + ABI matrix |
+| DEP-CRONET-1 | COMPLETED | `cronet-go/main` `8aa139e`: root/all at `8aa139e`, 29 lib modules at `8c68ce8`. All 37 native blobs are byte-identical to the df0c319 build and no cgo/include changed; real native naive self/ECH/concurrency/QUIC tests pass. Archives were not rebuilt, and that is recorded rather than faked. |
 | DEP-TAILSCALE-1 | OPEN | upgrade external module if API present |
 
 ## MASQUE inbound backpressure
@@ -72,23 +78,20 @@ Not verified: a live QUIC client/server datagram session on a device.
 
 Root and nested `test` module both replace `github.com/sagernet/sing-tun` with
 `github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024025840-dcf84577d0eb` and
-`github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261024041103-4200a04a089a`, `github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261024063732-ce02ee5cc210` and `github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261024074641-5e5a0274bd6c`. `go list -m -json`
+`github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261024041103-4200a04a089a`, `github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261024063732-ce02ee5cc210`, `github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261024074641-5e5a0274bd6c`, and cronet-go root/all `8aa139e` with all 29 lib modules at `8c68ce8`. `go list -m -json`
 shows the same `Replace.Dir` in both; `go mod tidy`/`verify` are clean and `go build ./...` passes.
 
 ## CI
 
-- quic-go: Actions is disabled for the repository, so no workflow run exists. On `ce02ee5c`:
-  `go build ./...`, `go test ./...`, `go test -race ./...` and linux/darwin/windows/android builds
-  pass locally.
-- sing-quic: no Actions run. On `5e5a027`: build, `go test ./...`, `-race` and the same four-OS
-  builds pass locally.
-- Main repo **Verify SUCCESS** on `56a804e6eed` (run 40075546655), **Android Core ARM64 SUCCESS**
-  (run 40075546704), **Mobile contract verification SUCCESS** (run 40075546654).
-- **linux-masque-verify RED** on `56a804e6eed` (run 40072195794): `TestMASQUESelfToSelf/HTTP2` and
-  `TestMASQUEPacketTooBig` time out. The phase-02 baseline run `40073782175` fails the same two
-  cases, while HTTP3, HTTP1, version fallback, advertised routes, no-route, reconnect and stuck
-  client PASS. `transport/masque` and `protocol/masque` pass under `-race`; the Linux gate also
-  exposed and fixed a nil-signal crash in the resolved DNS resolver.
+- Main repo **Verify SUCCESS** on `3ddb0e866` (run 40081589236), **Android Core ARM64 SUCCESS**
+  (run 40081589137), **Mobile contract verification SUCCESS** (run 40081589215).
+- **apple-tls-verify SUCCESS** on `3ddb0e866` (run 40081595184): the real Network.framework
+  handshake tests, both fd-leak cycles (30 successful + 10 failed handshakes) and both macOS arches
+  build.
+- **linux-platform-verify SUCCESS** on `3ddb0e866` (run 40081597501): procfs address tests, IPv6
+  URL-host helpers and the Android/arm64 cross-compile.
+- cronet-go has no Actions runs; the native binding evidence is the Windows real naive
+  self/ECH/concurrency/QUIC suite with the `windows_amd64` DLL plus the four-OS build.
 
 ## Open semantic rows (17)
 
@@ -114,7 +117,7 @@ shows the same `Replace.Dir` in both; `go mod tidy`/`verify` are clean and `go b
 
 ## Next executable action
 
-`DEP-CRONET-1` (phase 04, atomic root/all/lib + ABI matrix), then `MAIN-42cae14c63d1` (Apple TLS engine connection leak, P0). `MAIN-cc022098fdec` is closed; its device-level suspend/resume caveat is recorded above.
+`DEP-TAILSCALE-1` (phase 05: default route to Tailscale). `MAIN-cc022098fdec` is closed; its device-level suspend/resume caveat is recorded above.
 
 ## Evidence notes
 
