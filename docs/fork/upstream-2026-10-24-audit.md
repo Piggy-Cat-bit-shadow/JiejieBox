@@ -24,15 +24,15 @@ patch-id matches are already in the fork; the 73 remaining were audited individu
 
 | classification | count | meaning |
 |---|---|---|
-| MISSING_FIX | 23 | defect applies to the fork and the fix is absent |
+| MISSING_FIX | 22 | defect applies to the fork and the fix is absent |
 | DEPENDENCY_BUMP | 17 | the commit is a dependency pin; the fix lives in a replaced or required module |
 | EQUIVALENT | 5 | the fork has a different implementation with the same contract |
-| PRESENT | 20 | the fix is in the fork (including the eighteen ported this round) |
+| PRESENT | 21 | the fix is in the fork (including the eighteen ported this round) |
 | NOT_APPLICABLE | 3 | an upstream-only path the fork does not have |
 | DOCS_ONLY | 4 | documentation, certificates or version bump |
 | REJECTED_WITH_EVIDENCE | 1 | the upstream change conflicts with a documented fork contract |
 
-At audit time 40 rows were gaps. The table is authoritative: 23 MISSING_FIX rows remain. This round
+At audit time 40 rows were gaps. The table is authoritative: 22 MISSING_FIX rows remain. This round
 additionally synced two dependency pins (03ab009ea1c0, 6ddf133d3490) and closed the P05/L12 test gaps;
 
 ## The queue (all 73)
@@ -63,7 +63,6 @@ gap at audit time; rows now `PRESENT` were ported in this round (see the change 
 | `fecadbfaf1b4` | Fix Tailscale peer relay server socket control | DEPENDENCY_BUMP | P1 | INVESTIGATE | go.mod:62 pins tailscale v1.102.1-sing-box-1.14-mod.5.0.20260925112514-35e61219dedd, older than even upstream's pre-fix 481f8d5be5e6 and far older than 1688b52f8204, so ... |
 | `18aa2cdfe742` | Fix IPv6 interface rule without auto route | MISSING_FIX | P1 | PORT | protocol/tun/inbound.go:336-342 still defaults tableIndex/ruleIndex unconditionally; transport/device/system.go:115-116 still hardcodes DefaultIPRoute2TableIndex/RuleInd... |
 | `1cc885e0400e` | Provide default route to Tailscale | MISSING_FIX | P1 | PORT | protocol/tailscale/endpoint.go start() only calls registerSystemBindingCleanup; protocol/tailscale/system_binding.go:54-74 installs netmon.RegisterInterfaceGetter alone,... |
-| `3454d6d2411d` | Apply backpressure to masque inbound packets | MISSING_FIX | P1 | PORT | transport/device/device.go:20-34 Device has only WriteInboundBuffers; transport/device/stack.go:72-79 writes via memoryTun.WritePackets; transport/masque/client.go:680 a... |
 | `38bf6879bbad` | Fix network strategy for ICMP | MISSING_FIX | P1 | PORT | common/dialer/default.go:518-524 DialerForICMPDestination returns dialer4/dialer6 by family and ignores d.networkStrategy/networkType; protocol/direct/outbound.go:110-11... |
 | `40bc411e8d02` | Fix connection owner lookup on legacy Android | MISSING_FIX | P1 | PORT | experimental/libbox/internal/procfs/procfs.go:33 keeps ResolveSocketByProcSearch(network, source, _ netip.AddrPort) matching local_address only (no rem_address/inode col... |
 | `42f487bd0d04` | Fix IPv6 literal host handling | MISSING_FIX | P1 | PORT | dns/transport/https.go:74-93 and dns/transport/quic/http3.go:72-91 build url.URL from an unbracketed host; service/derp/service.go:351-361 uses hostname unbracketed for ... |
@@ -80,6 +79,7 @@ gap at audit time; rows now `PRESENT` were ported in this round (see the change 
 | `db4e5da711ea` | Check DNS address filter rules on cache hit | MISSING_FIX | P1 | PORT | dns/client.go:834-852 returns cached responses from beginExchange without calling responseChecker, and questionCache (:1332-1355) does the same; only finishExchange (:91... |
 | `ef0b632920ff` | Limit concurrent auto-redirect flow judgements | MISSING_FIX | P1 | PORT | experimental/libbox/redirect_linux.go:99-111 autoRedirectServiceHandler has no limiter and JudgeFlow calls h.handler.JudgeFlow directly; the handler is built at :51 with... |
 | `0164ce7b8e0a` | Fix shared connections inheriting external interrupt mark | PRESENT | P1 | NO_ACTION | Port in this round: the external-interrupt mark is a typed bool, explicit false for DNS/multiplex sessions and true for routed connections. Build + `./route`/`./dns` tes... |
+| `3454d6d2411d` | Apply backpressure to masque inbound packets | PRESENT | P1 | NO_ACTION | Wired the memory TUN blocking inbound write through protocol/masque and transport/device: WaitWriteInboundBuffers is preferred when the handler provides it; non-blocking... |
 | `37bddc915c02` | Fix close handler skipped on packet handshake failure | PRESENT | P1 | NO_ACTION | Port in this round: a packet handshake-success failure now goes through `CloseOnHandshakeFailure` and the close handler runs. Build + `./route` tests pass. Upstream: 37b... |
 | `6564c26d409b` | Fix IPv6 original destination port on big-endian | PRESENT | P1 | NO_ACTION | Port in this round: the IPv6 original-destination port is decoded from the sin6_port field in memory network order, fixing big-endian. `GOOS=linux go build ./common/redi... |
 | `6ddf133d3490` | Fix Windows connection loop with weak host send | PRESENT | P1 | NO_ACTION | Dependency sync: the sing-tun pin now includes 4faef97 (weak-host send interface binding); pin-only upstream commit. Upstream: 6ddf133d3490. |
@@ -128,7 +128,6 @@ ancestry while substantive `E` items remain.
 | `cc022098fdec` | Fix WireGuard pause and sleep handling | P0 | Needs a context-aware wait in the sing fork first (its pause.Manager still has WaitActive only; fake at pause_deadlock_test.go:104 shows the interface). Endpoint.Close holds stateAccess across device... |
 | `18aa2cdfe742` | Fix IPv6 interface rule without auto route | P1 | Several VPN devices share table 2022 and its rules, and the IPv6 interface rule resolves in an empty or foreign table. Dep: sing-tun ...94443fe68890 -> ...7980862befdc. |
 | `1cc885e0400e` | Provide default route to Tailscale | P1 | Requires both halves: bump sagernet/tailscale to a revision exposing netmon.SetDefaultRouteFunc (upstream used ...mod.5.0.20261019070639-79c1732442a9) and register the getter with a scope-registered ... |
-| `3454d6d2411d` | Apply backpressure to masque inbound packets | P1 | Needs a wait/wake API in the memory TUN (upstream added WaitWritePackets in sing-tun). Without it, add a bounded blocking writer to the device and use it only on the masque inbound path, keeping the ... |
 | `38bf6879bbad` | Fix network strategy for ICMP | P1 | Port needs a control.Func equivalent of upstream's serialInterfaceControl (the sing fork already has BindToInterface0) plus default-strategy EPERM tolerance; protocol/direct is the only consumer. |
 | `40bc411e8d02` | Fix connection owner lookup on legacy Android | P1 | Upstream deletes PlatformInterface.UseProcFS and adds connection_owner_android.go. Port requires the libbox change plus switching the Android client from useProcFS to Libbox.findConnectionOwner. |
 | `42f487bd0d04` | Fix IPv6 literal host handling | P1 | Upstream also bundles the http3 SetNextProtos(h3)/TLSClientConfig change and derp SetURLDialer using server.Server; check those when porting. The REALITY nil-request path is a config-triggered crash. |

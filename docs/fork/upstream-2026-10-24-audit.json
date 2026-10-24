@@ -231,17 +231,6 @@
   "notes": "Requires both halves: bump sagernet/tailscale to a revision exposing netmon.SetDefaultRouteFunc (upstream used ...mod.5.0.20261019070639-79c1732442a9) and register the getter with a scope-registered reset, mirroring the existing RegisterInterfaceGetter cleanup."
  },
  {
-  "sha": "3454d6d2411d",
-  "subject": "Apply backpressure to masque inbound packets",
-  "root_cause": "Masque session read loops pushed received inner packets into the memory TUN through the non-blocking WritePackets, which silently drops when the stack's inbound ring is full; nothing waited for room, so the peer's QUIC flow-control window never learned about the loss and TCP-in-MASQUE lost packets instead of slowing the sender.",
-  "classification": "MISSING_FIX",
-  "fork_evidence": "transport/device/device.go:20-34 Device has only WriteInboundBuffers; transport/device/stack.go:72-79 writes via memoryTun.WritePackets; transport/masque/client.go:680 and server.go:549 still call WriteInboundBuffers. Pinned sing-tun (go.mod:354) tun_memory.go:119-121 silently 'continue's when the ring is full; no WaitWritePackets exists in the tree.",
-  "evidence_level": "CODE_PROVEN",
-  "action": "PORT",
-  "priority": "P1",
-  "notes": "Needs a wait/wake API in the memory TUN (upstream added WaitWritePackets in sing-tun). Without it, add a bounded blocking writer to the device and use it only on the masque inbound path, keeping the drop policy for the lossy outbound queue."
- },
- {
   "sha": "38bf6879bbad",
   "subject": "Fix network strategy for ICMP",
   "root_cause": "ICMP ping sockets took their creation control from dialer4/dialer6, chosen only by destination family. Those base dialers carry auto-detect/protect/mark controls but not the network_strategy/network_type interface selection, which lives in the parallel/serial dial paths, so ICMP probes ignored the configured strategy and left by the default interface (or failed on multi-homed/Android setups). The fix derives one strategy-aware interface control for ICMP.",
@@ -412,6 +401,17 @@
   "root_cause": "The external-connection mark was a one-way context value set on every routed flow, so contexts for shared transports (mux session, SSH client, gRPC/HTTP transport, snell reuse, DNS) inherited it. Those transports registered with a group's interrupt group as user connections, so an internal-only interrupt (selection change with interrupt_exist_connections unset) left them on the deselected member.",
   "classification": "PRESENT",
   "fork_evidence": "Port in this round: the external-interrupt mark is a typed bool, explicit false for DNS/multiplex sessions and true for routed connections. Build + `./route`/`./dns` tests pass. Upstream: 0164ce7b8e0a.",
+  "evidence_level": "CODE_PROVEN",
+  "action": "NO_ACTION",
+  "priority": "P1",
+  "notes": "Fixed in this round; see docs/fork/upstream-2026-10-24-debug.md."
+ },
+ {
+  "sha": "3454d6d2411d",
+  "subject": "Apply backpressure to masque inbound packets",
+  "root_cause": "Masque session read loops pushed received inner packets into the memory TUN through the non-blocking WritePackets, which silently drops when the stack's inbound ring is full; nothing waited for room, so the peer's QUIC flow-control window never learned about the loss and TCP-in-MASQUE lost packets instead of slowing the sender.",
+  "classification": "PRESENT",
+  "fork_evidence": "Wired the memory TUN blocking inbound write through protocol/masque and transport/device: WaitWriteInboundBuffers is preferred when the handler provides it; non-blocking handlers keep the old path. Test: transport/masque/inbound_wait_test.go. Upstream: 3454d6d2411d.",
   "evidence_level": "CODE_PROVEN",
   "action": "NO_ACTION",
   "priority": "P1",
