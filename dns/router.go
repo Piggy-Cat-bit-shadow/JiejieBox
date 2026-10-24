@@ -2185,7 +2185,11 @@ func (r *Router) ClearCache() {
 	if r.platformInterface != nil {
 		r.platformInterface.ClearDNSCache()
 	}
-	service.FromContext[adapter.NetworkManager](r.ctx).FlushSystemDNSCache()
+	if r.ctx != nil {
+		if networkManager := service.FromContext[adapter.NetworkManager](r.ctx); networkManager != nil {
+			networkManager.FlushSystemDNSCache()
+		}
+	}
 	if r.dnsReverseMapping != nil {
 		r.dnsEnvironmentAccess.Lock()
 		r.dnsReverseMapping.Purge()
