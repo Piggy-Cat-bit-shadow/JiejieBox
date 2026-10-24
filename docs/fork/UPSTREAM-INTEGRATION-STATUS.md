@@ -1,14 +1,14 @@
 # Upstream integration status
 
-- generated: 2026-10-24T17:45:00+08:00 (phase 04/06)
-- fork testing code: `3ddb0e86601391f20f61feeb39a14675c0e6199a`
+- generated: 2026-10-24T19:00:00+08:00 (phase 05/06)
+- fork testing code: `0275cf6aa8b2e94f81c449681207196038bb4e3e`
 - fork testing docs: `ca0982f3c47cc97af83ea55be626b1486bcc8f1a`
 - upstream observed: `a6952ccf6907c18e18917fcb763a433e8e36937b` (2026-10-24T10:08:02+08:00, "Remove stale workflow")
-- behind_by: **110**; ahead_by: 2619
-- open semantic: **14**; open dependency blockers: **1**
+- behind_by: **110**; ahead_by: 2633
+- open semantic: **5**; open dependency blockers: **0**
 
-**Phase 04 closes APPLE-TLS, ANDROID-PROC and IPV6-HOST** and **DEP-CRONET-1**. 14 semantic rows
-remain (17 -> 14) and only Tailscale remains as a dependency blocker.
+**Phase 05 closes the Tailscale route/DNS/SSH rows, the three resolved rows, both DHCP rows and the
+cache-hit checker** (14 -> 5), and **DEP-TAILSCALE-1**. No dependency blocker remains.
 
 ## Dependency closure (QUIC, phase 03)
 
@@ -23,13 +23,26 @@ Merging the two was rejected with evidence: different module paths, 137 conflict
 on a trial merge, and a second incompatible owned-DATAGRAM API. The release line is pinned by SHA;
 the default branch stays the MetaCubeX line so independent projects keep their baseline.
 
+## Closed in phase 05
+
+| id | upstream | what landed | evidence | not verified |
+|---|---|---|---|---|
+| MAIN-1cc885e0400e | `1cc885e0400e6739af0189e5edcc430bd88cbeba` | tailscale dev module 1688b52 supplies netmon.Hooks.DefaultRoute and tsnet.Server.DefaultRouteFunc; system_binding answers both from NetworkManager.InterfaceMonitor().DefaultInterface(); cleanup stays on the binding scope; TestTheInterfaceGetterIsInstalledReadAndCleared drives the hook against a stub interface | real tailnet interface switching/on-demand resume |
+| MAIN-7a0ae5f35889 | `7a0ae5f35889c88eade4410c6d981427328c188f` | tailnetDomains.match separates route suffixes, known hosts and single-label search expansion; TestTailnetDomainsMatch covers known host, search expansion on/off, local/forwarded suffixes and unknown names | live MagicDNS NXDOMAIN against a tailnet |
+| MAIN-c8ba005e84d2 | `c8ba005e84d2b8f2bcf75c32b5aeda64f6fb06ec` | checkSwitchUserPrivilege requires CAP_SETUID\|CAP_SETGID; verifyShellIdentity rejects a different uid before exec; TestNonRootSwitchUserIsRejected and TestSameUserIsNotASwitch run on the Linux gate | root with partial capabilities on a real host |
+| MAIN-a8a2964592c7 | `a8a2964592c7bb55117377eb030a2ab4912829b0` | detection uses /etc/resolv.conf identity against systemd-resolved uplink plus 127.0.0.53 listen addresses; Config.SystemdResolved participates in Equal; Linux gate compiles/runs local packages | containers without resolved and real symlinked resolv.conf variants |
+| MAIN-6fb6770cec52 | `6fb6770cec52bf266a95aad387d2071a42978218` | resolvedScopeSpecification.equal compares interface, DoT mode, domains, default-route, fallback and server list; TestResolvedScopeSpecificationEqual covers identical and changed port/domains/default-route | live config-order churn |
+| MAIN-a130b482d41f | `a130b482d41f4b3eeac5091567a4b26540700037` | NetworkManager.FlushSystemDNSCache walks inbounds; TUN calls LinuxTUN.FlushDNSCache only when no resolved service owns the cache; resolver update flushes too; dns/router.go guard covers fixtures without a context | real resolved cache invalidation timing |
+| MAIN-54c60dc7e6cc | `54c60dc7e6ccbe1b122630201401524280792914` | nameList only expands a single-label name and appends the original name last; TestNameList covers single-label, multi-label, FQDN, empty/duplicate search and IPv6 reverse | real DHCP lease search list |
+| MAIN-972a052ef537 | `972a052ef5379bf828a5fe22576a2a25110a6559` | removed the unused local/search expansion path; the explicit search contract remains in nameList and resolved domains | none |
+| MAIN-db4e5da711ea | `db4e5da711ea49cc46583987a2792a7c1c7bc05a` | beginExchange now runs responseChecker before returning a cache hit, in both stale and fresh branches; questionCache already did; TestCacheHitRunsTheResponseChecker proves rejection does not query upstream and does not evict | production checker rule updates (currently nil in most paths) |
 ## Closed in phase 04
 
 | id | upstream | what landed | evidence | not verified |
 |---|---|---|---|---|
-| MAIN-42cae14c63d1 | `42cae14c63d1` | F_DUPFD_CLOEXEC after the anchor lookup, deferred anchor release, autoreleasepool and retained/network object ownership on every path in the ObjC bridge | `apple_client_platform_leak_test.go`: 30 successful + 10 failed handshakes with a flat fd count; macOS gate 40081595184 | iOS device entitlements / NetworkExtension |
-| MAIN-40bc411e8d02 | `40bc411e8d02` | socket inode/procfs fallback moved into `connection_owner_android.go`; table search ranks exact/local/unspecified UDP rows, skips zero inode/uid | `procfs_test.go` address spelling; linux-platform-verify 40081597501; android/arm64 cross-compile | real legacy Android device and cross-user procfs permissions |
-| MAIN-42f487bd0d04 | `42f487bd0d04` | IPv6 literals bracketed in DNS HTTPS/HTTP3, DERP mesh URL and v2ray host; parsed address keeps SNI/ALPN/dial consistent | `https_host_test.go`, `http3_host_test.go`, `mesh_host_test.go` cover domain/IPv4/IPv6 and default/non-default/zero port; linux-platform-verify 40081597501 | HTTP/3 ALPN against a real IPv6-only resolver |
+| MAIN-42cae14c63d1 | `42cae14c63d1b8645d787f3f93515820c94f01e7` | common/tls/apple_client_platform.go: F_DUPFD_CLOEXEC after the anchor lookup, deferred anchor release, dup after ownership transfer; apple_client_platform_darwin.m: autoreleasepool, NW_RETURNS_RETAINED ownership, release the connection object on every path; apple_client_platform_leak_test.go: 30 successful + 10 failed handshakes, fd count flat; macOS gate 40081595184 PASS | iOS device entitlements/NetworkExtension |
+| MAIN-40bc411e8d02 | `40bc411e8d024e3f8c8f435c2a2ad5e4c0e04bce` | experimental/libbox/connection_owner_android.go: socket inode/procfs fallback moved out of service.go; experimental/libbox/internal/procfs/procfs.go: table search ranks exact, local and unspecified UDP rows, skips zero inode/uid; procfs_test.go pins native-endian address + big-endian port spelling; linux-platform-verify 40081597501 PASS; android/arm64 cross-compile PASS | real legacy Android device / cross-user procfs permissions |
+| MAIN-42f487bd0d04 | `42f487bd0d0482b1b9fd47207cdbbab2dadbfcd3` | dns/transport/https.go, dns/transport/quic/http3.go, service/derp/service.go: helper renders IPv6 literals bracketed, domains/IPv4 untouched; common/tls/reality_client.go, transport/v2rayhttp/client.go, transport/v2rayhttpupgrade/client.go: host/SNI/URL use the parsed address; https_host_test.go, http3_host_test.go, mesh_host_test.go cover domain/IPv4/IPv6, default/non-default/zero port; linux-platform-verify 40081597501 PASS | HTTP/3 ALPN negotiation against a real IPv6-only resolver |
 ## Closed in phase 02
 
 | id | upstream | what landed | evidence | not verified |
@@ -57,19 +70,19 @@ the default branch stays the MetaCubeX line so independent projects keep their b
 | DEP-QUIC-1 | COMPLETED | Sagernet line `jiejie-masque-mod9` at `ce02ee5c`: mod.10 EMSGSIZE read, mod.11 trust_anchors, mod.12 application-limited, on top of the owned-DATAGRAM/ceiling work. Targeted tests, local `go test`/`-race`, linux/darwin/windows/android builds. `jiejie-masque-stable` is the separate `github.com/metacubex/quic-go` line, unmodified; repository default restored to it. |
 | DEP-QUIC-2 | COMPLETED | `sing-quic/main` at `5e5a027`: upstream `7e0a5869` plus the ceiling/owned-datagram commits, resolving quic-go to `ce02ee5c`. Build/tests/race and four-OS builds pass. |
 | DEP-CRONET-1 | COMPLETED | `cronet-go/main` `8aa139e`: root/all at `8aa139e`, 29 lib modules at `8c68ce8`. All 37 native blobs are byte-identical to the df0c319 build and no cgo/include changed; real native naive self/ECH/concurrency/QUIC tests pass. Archives were not rebuilt, and that is recorded rather than faked. |
-| DEP-TAILSCALE-1 | OPEN | upgrade external module if API present |
+| DEP-TAILSCALE-1 | COMPLETED | official `sagernet/tailscale` dev `v1.102.1-sing-box-1.14-mod.5.0.20261022222424-1688b52f8204`, no fork; netmon/tsnet default-route hooks and the sing-box patches are both present. |
 
 ## MASQUE inbound backpressure
 
-Wiring is present: `WaitWriteInboundBuffers` �`transport/device` �`protocol/masque`
+Wiring is present: `WaitWriteInboundBuffers` ?`transport/device` ?`protocol/masque`
 (`ClientEndpoint`/`ServerEndpoint`), with the non-blocking fallback kept.
 
 Real-path evidence added this phase:
 
-- `transport/masque/inbound_backpressure_real_test.go` �a real capsule is parsed by the session,
+- `transport/masque/inbound_backpressure_real_test.go` ?a real capsule is parsed by the session,
   the full device parks the read loop, a drained slot releases exactly one write, `Close` returns
   `os.ErrClosed`, and a handler with no wait contract uses the non-blocking path.
-- sing-tun `tun_memory_wait_test.go` �the underlying `MemoryTun`: full queue parks, a freed slot
+- sing-tun `tun_memory_wait_test.go` ?the underlying `MemoryTun`: full queue parks, a freed slot
   wakes, `Close` wakes with `os.ErrClosed`, the non-blocking path drops at the bound.
 
 Not verified: a live QUIC client/server datagram session on a device.
@@ -78,46 +91,31 @@ Not verified: a live QUIC client/server datagram session on a device.
 
 Root and nested `test` module both replace `github.com/sagernet/sing-tun` with
 `github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024025840-dcf84577d0eb` and
-`github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261024041103-4200a04a089a`, `github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261024063732-ce02ee5cc210`, `github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261024074641-5e5a0274bd6c`, and cronet-go root/all `8aa139e` with all 29 lib modules at `8c68ce8`. `go list -m -json`
+`github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261024041103-4200a04a089a`, `github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261024063732-ce02ee5cc210`, `github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261024074641-5e5a0274bd6c`, cronet-go root/all `8aa139e` with all 29 lib modules at `8c68ce8`, and the official `github.com/sagernet/tailscale v1.102.1-sing-box-1.14-mod.5.0.20261022222424-1688b52f8204` (no fork). `go list -m -json`
 shows the same `Replace.Dir` in both; `go mod tidy`/`verify` are clean and `go build ./...` passes.
 
 ## CI
 
-- Main repo **Verify SUCCESS** on `3ddb0e866` (run 40081589236), **Android Core ARM64 SUCCESS**
-  (run 40081589137), **Mobile contract verification SUCCESS** (run 40081589215).
-- **apple-tls-verify SUCCESS** on `3ddb0e866` (run 40081595184): the real Network.framework
-  handshake tests, both fd-leak cycles (30 successful + 10 failed handshakes) and both macOS arches
-  build.
-- **linux-platform-verify SUCCESS** on `3ddb0e866` (run 40081597501): procfs address tests, IPv6
-  URL-host helpers and the Android/arm64 cross-compile.
-- cronet-go has no Actions runs; the native binding evidence is the Windows real naive
-  self/ECH/concurrency/QUIC suite with the `windows_amd64` DLL plus the four-OS build.
+- Main repo **Verify SUCCESS** on `0275cf6aa8b` (run 40086590102), **Android Core ARM64 SUCCESS**
+  (run 40086590068), **Mobile contract verification SUCCESS** (run 40087286164).
+- **linux-dns-verify SUCCESS** on `a3c2b59` (run 40086299564): DNS cache/search tests, DHCP
+  expansion, resolved scope equality and the Tailscale/SSH tests with `with_tailscale`.
+- Phases 01�C04 CI and fork evidence remain as recorded above; no earlier result is invalidated by
+  this phase.
 
-## Open semantic rows (17)
+## Open semantic rows (5)
 
 | id | prio | upstream | next action |
 |---|---|---|---|
-| MAIN-42cae14c63d1 | P0 | Fix Apple TLS engine connection leak | Port the `F_DUPFD_CLOEXEC` engine change; leak grows per TLS connection. |
-| MAIN-1cc885e0400e | P1 | Provide default route to Tailscale | Bump tailscale for `netmon.SetDefaultRouteFunc` and register it. |
-| MAIN-40bc411e8d02 | P1 | Fix connection owner lookup on legacy Android | Libbox change plus Android client switch away from procfs. |
-| MAIN-42f487bd0d04 | P1 | Fix IPv6 literal host handling | Bundles http3 `SetNextProtos(h3)` and derp URL dialer changes. |
-| MAIN-54c60dc7e6cc | P1 | Fix DHCP DNS search domain expansion | Expand only when `mDNS.CountLabel(name)==1`; validate first. |
-| MAIN-6fb6770cec52 | P1 | Keep systemd-resolved servers when configuration is unchanged | Split `checkResolved` into scopes with an `equal()` early return. |
 | MAIN-73698e437479 | P1 | Update built-in certificates | Generated data only; run the generator. |
 | MAIN-755150a5131e | P1 | Fix config format output | Reproduce DERP `stun.listen_port` loss through `format`. |
-| MAIN-7a0ae5f35889 | P1 | Fix tailscale short name and DNS route matching | Restore local-route NXDOMAIN and MagicDNS short-name preference. |
-| MAIN-a130b482d41f | P1 | Flush systemd-resolved cache on DNS changes | Use the sing-tun `LinuxTUN.FlushDNSCache` now present on dev. |
-| MAIN-a8a2964592c7 | P1 | Fix systemd-resolved detection for local DNS server | Always attempt the resolved resolver; add `SystemdResolved` detection. |
 | MAIN-b6fc3a486355 | P1 | Remove unimplemented direct rule action | Delete the action or implement direct dialing. |
-| MAIN-c8ba005e84d2 | P1 | Reject Tailscale SSH user switch without privilege | Fail closed plus a clear diagnostic. |
-| MAIN-db4e5da711ea | P1 | Check DNS address filter rules on cache hit | Restore the checker contract on cache hits. |
-| MAIN-972a052ef537 | P2 | Remove unused DNS search expansion | Decide which of the two copies survives. |
 | MAIN-ae4826a387e6 | P2 | Remove command server listen retry | Only changes read-only `sBasePath` timing. |
 | MAIN-b02b21b3f3aa | P2 | Run systemd service as root | Packaging: drop `User=`/capability lines and helper files. |
 
 ## Next executable action
 
-`DEP-TAILSCALE-1` (phase 05: default route to Tailscale). `MAIN-cc022098fdec` is closed; its device-level suspend/resume caveat is recorded above.
+Phase 06: the five remaining main-repo rows and ancestry/CI closure. `MAIN-cc022098fdec` is closed; its device-level suspend/resume caveat is recorded above.
 
 ## Evidence notes
 

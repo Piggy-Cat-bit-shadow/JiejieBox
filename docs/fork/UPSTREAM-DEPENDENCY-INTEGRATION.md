@@ -1,4 +1,4 @@
-# Upstream dependency integration — 2026-10-24 (phase 04 state)
+# Upstream dependency integration — 2026-10-24 (phase 05 state)
 
 **Scope.** This is the dependency companion to `UPSTREAM-INTEGRATION-STATUS.json`, which is the
 authoritative ledger. It records the *effective* pins after phases 01–04; the `require` lines are not
@@ -14,7 +14,7 @@ the effective versions, because four modules are redirected to `Piggy-Cat-bit-sh
 | `github.com/sagernet/sing-quic` | `Piggy/sing-quic v0.7.2-0.20261024074641-5e5a0274bd6c` | **COMPLETED** phase 03 (DEP-QUIC-2); upstream 7e0a5869 + ceiling/owned path |
 | `github.com/sagernet/quic-go` | `Piggy/quic-go v0.61.1-0.20261024063732-ce02ee5cc210` | **COMPLETED** phase 03 (DEP-QUIC-1); Sagernet line mod.12, not the MetaCubeX stable line |
 | `github.com/sagernet/cronet-go` + `all` + 29 `lib/*` | root/all `8aa139e9e140`; libs `v0.0.0-20260929202119-8c68ce89873c` | **COMPLETED** phase 04 (DEP-CRONET-1); byte-identical native generation, Go-only binding above it |
-| `github.com/sagernet/tailscale` | `v1.102.1-sing-box-1.14-mod.5.0.20261022222424-1688b52f8204` upstream vs fork `…20260925112514-35e61219dedd` | **OPEN** — needs `netmon.SetDefaultRouteFunc`; phase 05 |
+| `github.com/sagernet/tailscale` | `v1.102.1-sing-box-1.14-mod.5.0.20261022222424-1688b52f8204` (official dev module) | **COMPLETED** phase 05 (DEP-TAILSCALE-1); netmon/tsnet default-route hooks present, no fork |
 | `github.com/sagernet/sing-cloudflared` | same | **SYNCED_UPSTREAM** |
 | `github.com/sagernet/sing-openvpn` | same | **SYNCED_UPSTREAM** |
 | `github.com/sagernet/sing-mux` | same | **FORK_EQUIVALENT_OR_BETTER** |

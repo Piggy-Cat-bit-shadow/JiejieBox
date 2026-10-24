@@ -1,58 +1,116 @@
 {
-    "generated_at":  "2026-10-24T17:45:00+08:00",
-    "phase":  "04/06",
-    "fork_testing_code_sha":  "3ddb0e86601391f20f61feeb39a14675c0e6199a",
+    "generated_at":  "2026-10-24T19:00:00+08:00",
+    "phase":  "05/06",
+    "fork_testing_code_sha":  "0275cf6aa8b2e94f81c449681207196038bb4e3e",
     "fork_testing_docs_sha":  "ca0982f3c47cc97af83ea55be626b1486bcc8f1a",
     "upstream_observed":  {
                               "sha":  "a6952ccf6907c18e18917fcb763a433e8e36937b",
                               "time":  "2026-10-24T10:08:02+08:00"
                           },
     "behind_by":  110,
-    "ahead_by":  2619,
+    "ahead_by":  2633,
     "summary":  {
-                    "open_semantic":  14,
-                    "open_dependency_blockers":  1,
+                    "open_semantic":  5,
+                    "open_dependency_blockers":  0,
                     "unknown":  0,
                     "previous_open_semantic":  20,
                     "previous_open_dependency_blockers":  5,
                     "ledger_correction":  "The 23 in the previous status came from the markdown table counting 3454d6d2411d, which the audit JSON classifies PRESENT (NO_ACTION). The audit is the source of truth: 22 MISSING_FIX before this phase. This phase closed 2 of them.",
                     "ledger_correction_02":  "Phase 01 closed 2 rows and left 20; phase 02 closes cc022098fd, 38bf6879bb and 9c24112d12, leaving 17. DEP-SING-1 is completed, leaving 4 dependency blockers.",
                     "ledger_correction_03":  "Phase 03 closes DEP-QUIC-1 and DEP-QUIC-2, leaving CRONET and TAILSCALE (2 dependency blockers). Semantic rows stay at 17; this phase is dependency integration, not an audit-row close.",
-                    "ledger_correction_04":  "Phase 04 closes APPLE-TLS, ANDROID-PROC and IPV6-HOST (17 -\u003e 14 open semantic) and DEP-CRONET-1 (2 -\u003e 1 dependency blocker; only Tailscale remains)."
+                    "ledger_correction_04":  "Phase 04 closes APPLE-TLS, ANDROID-PROC and IPV6-HOST (17 -\u003e 14 open semantic) and DEP-CRONET-1 (2 -\u003e 1 dependency blocker; only Tailscale remains).",
+                    "ledger_correction_05":  "Phase 05 closes the Tailscale route/DNS/SSH rows, the three resolved rows, both DHCP rows and the DNS cache-hit checker: 14 -\u003e 5 open semantic. DEP-TAILSCALE-1 is completed, so no dependency blocker remains."
                 },
     "closed_this_phase":  [
                               {
-                                  "status":  "CLOSED_CODE_AND_MACOS",
+                                  "status":  "CLOSED_CODE_AND_UNIT",
                                   "evidence":  [
-                                                   "common/tls/apple_client_platform.go: F_DUPFD_CLOEXEC after the anchor lookup, deferred anchor release, dup after ownership transfer",
-                                                   "apple_client_platform_darwin.m: autoreleasepool, NW_RETURNS_RETAINED ownership, release the connection object on every path",
-                                                   "apple_client_platform_leak_test.go: 30 successful + 10 failed handshakes, fd count flat; macOS gate 40081595184 PASS"
+                                                   "tailscale dev module 1688b52 supplies netmon.Hooks.DefaultRoute and tsnet.Server.DefaultRouteFunc",
+                                                   "system_binding answers both from NetworkManager.InterfaceMonitor().DefaultInterface(); cleanup stays on the binding scope",
+                                                   "TestTheInterfaceGetterIsInstalledReadAndCleared drives the hook against a stub interface"
                                                ],
-                                  "upstream_sha":  "42cae14c63d1b8645d787f3f93515820c94f01e7",
-                                  "id":  "MAIN-42cae14c63d1",
-                                  "not_verified":  "iOS device entitlements/NetworkExtension"
+                                  "upstream_sha":  "1cc885e0400e6739af0189e5edcc430bd88cbeba",
+                                  "id":  "MAIN-1cc885e0400e",
+                                  "not_verified":  "real tailnet interface switching/on-demand resume"
+                              },
+                              {
+                                  "status":  "CLOSED_CODE_AND_UNIT",
+                                  "evidence":  [
+                                                   "tailnetDomains.match separates route suffixes, known hosts and single-label search expansion",
+                                                   "TestTailnetDomainsMatch covers known host, search expansion on/off, local/forwarded suffixes and unknown names"
+                                               ],
+                                  "upstream_sha":  "7a0ae5f35889c88eade4410c6d981427328c188f",
+                                  "id":  "MAIN-7a0ae5f35889",
+                                  "not_verified":  "live MagicDNS NXDOMAIN against a tailnet"
                               },
                               {
                                   "status":  "CLOSED_CODE_AND_LINUX_UNIT",
                                   "evidence":  [
-                                                   "experimental/libbox/connection_owner_android.go: socket inode/procfs fallback moved out of service.go",
-                                                   "experimental/libbox/internal/procfs/procfs.go: table search ranks exact, local and unspecified UDP rows, skips zero inode/uid",
-                                                   "procfs_test.go pins native-endian address + big-endian port spelling; linux-platform-verify 40081597501 PASS; android/arm64 cross-compile PASS"
+                                                   "checkSwitchUserPrivilege requires CAP_SETUID|CAP_SETGID; verifyShellIdentity rejects a different uid before exec",
+                                                   "TestNonRootSwitchUserIsRejected and TestSameUserIsNotASwitch run on the Linux gate"
                                                ],
-                                  "upstream_sha":  "40bc411e8d024e3f8c8f435c2a2ad5e4c0e04bce",
-                                  "id":  "MAIN-40bc411e8d02",
-                                  "not_verified":  "real legacy Android device / cross-user procfs permissions"
+                                  "upstream_sha":  "c8ba005e84d2b8f2bcf75c32b5aeda64f6fb06ec",
+                                  "id":  "MAIN-c8ba005e84d2",
+                                  "not_verified":  "root with partial capabilities on a real host"
                               },
                               {
                                   "status":  "CLOSED_CODE_AND_LINUX_UNIT",
                                   "evidence":  [
-                                                   "dns/transport/https.go, dns/transport/quic/http3.go, service/derp/service.go: helper renders IPv6 literals bracketed, domains/IPv4 untouched",
-                                                   "common/tls/reality_client.go, transport/v2rayhttp/client.go, transport/v2rayhttpupgrade/client.go: host/SNI/URL use the parsed address",
-                                                   "https_host_test.go, http3_host_test.go, mesh_host_test.go cover domain/IPv4/IPv6, default/non-default/zero port; linux-platform-verify 40081597501 PASS"
+                                                   "detection uses /etc/resolv.conf identity against systemd-resolved uplink plus 127.0.0.53 listen addresses",
+                                                   "Config.SystemdResolved participates in Equal; Linux gate compiles/runs local packages"
                                                ],
-                                  "upstream_sha":  "42f487bd0d0482b1b9fd47207cdbbab2dadbfcd3",
-                                  "id":  "MAIN-42f487bd0d04",
-                                  "not_verified":  "HTTP/3 ALPN negotiation against a real IPv6-only resolver"
+                                  "upstream_sha":  "a8a2964592c7bb55117377eb030a2ab4912829b0",
+                                  "id":  "MAIN-a8a2964592c7",
+                                  "not_verified":  "containers without resolved and real symlinked resolv.conf variants"
+                              },
+                              {
+                                  "status":  "CLOSED_CODE_AND_UNIT",
+                                  "evidence":  [
+                                                   "resolvedScopeSpecification.equal compares interface, DoT mode, domains, default-route, fallback and server list",
+                                                   "TestResolvedScopeSpecificationEqual covers identical and changed port/domains/default-route"
+                                               ],
+                                  "upstream_sha":  "6fb6770cec52bf266a95aad387d2071a42978218",
+                                  "id":  "MAIN-6fb6770cec52",
+                                  "not_verified":  "live config-order churn"
+                              },
+                              {
+                                  "status":  "CLOSED_CODE_AND_LINUX_BUILD",
+                                  "evidence":  [
+                                                   "NetworkManager.FlushSystemDNSCache walks inbounds; TUN calls LinuxTUN.FlushDNSCache only when no resolved service owns the cache; resolver update flushes too",
+                                                   "dns/router.go guard covers fixtures without a context"
+                                               ],
+                                  "upstream_sha":  "a130b482d41f4b3eeac5091567a4b26540700037",
+                                  "id":  "MAIN-a130b482d41f",
+                                  "not_verified":  "real resolved cache invalidation timing"
+                              },
+                              {
+                                  "status":  "CLOSED_CODE_AND_UNIT",
+                                  "evidence":  [
+                                                   "nameList only expands a single-label name and appends the original name last",
+                                                   "TestNameList covers single-label, multi-label, FQDN, empty/duplicate search and IPv6 reverse"
+                                               ],
+                                  "upstream_sha":  "54c60dc7e6ccbe1b122630201401524280792914",
+                                  "id":  "MAIN-54c60dc7e6cc",
+                                  "not_verified":  "real DHCP lease search list"
+                              },
+                              {
+                                  "status":  "CLOSED_CODE",
+                                  "evidence":  [
+                                                   "removed the unused local/search expansion path; the explicit search contract remains in nameList and resolved domains"
+                                               ],
+                                  "upstream_sha":  "972a052ef5379bf828a5fe22576a2a25110a6559",
+                                  "id":  "MAIN-972a052ef537",
+                                  "not_verified":  "none"
+                              },
+                              {
+                                  "status":  "CLOSED_CODE_AND_UNIT",
+                                  "evidence":  [
+                                                   "beginExchange now runs responseChecker before returning a cache hit, in both stale and fresh branches; questionCache already did",
+                                                   "TestCacheHitRunsTheResponseChecker proves rejection does not query upstream and does not evict"
+                                               ],
+                                  "upstream_sha":  "db4e5da711ea49cc46583987a2792a7c1c7bc05a",
+                                  "id":  "MAIN-db4e5da711ea",
+                                  "not_verified":  "production checker rule updates (currently nil in most paths)"
                               }
                           ],
     "dependencies":  [
@@ -155,11 +213,13 @@
                              "id":  "DEP-TAILSCALE-1",
                              "repo":  "sagernet/tailscale",
                              "target_branch":  "N/A",
-                             "status":  "OPEN",
+                             "status":  "COMPLETED",
                              "blocked_by":  [
 
                                             ],
-                             "next_action":  "upgrade external module if API present; do not create a fork by default"
+                             "next_action":  "upgrade external module if API present; do not create a fork by default",
+                             "version":  "v1.102.1-sing-box-1.14-mod.5.0.20261022222424-1688b52f8204",
+                             "evidence":  "Used the official sagernet/tailscale dev module; no fork created. It is the first revision carrying both the sing-box tsnet patches and netmon default-route hooks. Build, package tests and Linux gate pass; TS-ROUTE/DNS/SSH rows closed."
                          }
                      ],
     "masque_backpressure":  {
@@ -179,30 +239,14 @@
                            "sing":  "github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261024041103-4200a04a089a (root and test module)",
                            "quic_go":  "github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261024063732-ce02ee5cc210 (branch jiejie-masque-mod9, Sagernet module line; root and test)",
                            "sing_quic":  "github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261024074641-5e5a0274bd6c (main; root and test)",
-                           "cronet_go":  "root/all v0.0.1-143.0.7499.109-2.0.20261024085011-8aa139e9e140 / v0.0.0-20261024085011-8aa139e9e140; 29 lib modules v0.0.0-20260929202119-8c68ce89873c (root and test)"
+                           "cronet_go":  "root/all v0.0.1-143.0.7499.109-2.0.20261024085011-8aa139e9e140 / v0.0.0-20261024085011-8aa139e9e140; 29 lib modules v0.0.0-20260929202119-8c68ce89873c (root and test)",
+                           "tailscale":  "github.com/sagernet/tailscale v1.102.1-sing-box-1.14-mod.5.0.20261022222424-1688b52f8204 (official module, no fork)"
                        },
     "ci":  {
-               "apple":  "SUCCESS: apple-tls-verify 40081595184 on 3ddb0e866, including the 30-success/10-failure fd-leak cycles on macOS arm64 and both-arch build",
-               "linux_platform":  "SUCCESS: linux-platform-verify 40081597501 on 3ddb0e866 (procfs + IPv6 helpers + Android cross-compile)",
-               "main_repo":  "SUCCESS on 3ddb0e866 (code): Verify 40081589236, Android Core ARM64 40081589137, Mobile contract verification 40081589215",
-               "cronet":  "Actions has no runs for this repository; local native naive self-tests and the Windows cgo/purego build are the evidence"
+               "main_repo":  "SUCCESS on 0275cf6aa8b (code): Verify 40086590102, Android Core ARM64 40086590068, Mobile contract verification 40087286164",
+               "linux_dns":  "SUCCESS: linux-dns-verify 40086299564 on a3c2b59 (dns, dhcp, resolved local, tailscale/ssh with with_tailscale)"
            },
     "open_semantic_rows":  [
-                               {
-                                   "id":  "MAIN-1cc885e0400e",
-                                   "priority":  "P1",
-                                   "subject":  "Provide default route to Tailscale"
-                               },
-                               {
-                                   "id":  "MAIN-54c60dc7e6cc",
-                                   "priority":  "P1",
-                                   "subject":  "Fix DHCP DNS search domain expansion"
-                               },
-                               {
-                                   "id":  "MAIN-6fb6770cec52",
-                                   "priority":  "P1",
-                                   "subject":  "Keep systemd-resolved servers when configuration is unchanged"
-                               },
                                {
                                    "id":  "MAIN-73698e437479",
                                    "priority":  "P1",
@@ -214,39 +258,9 @@
                                    "subject":  "Fix config format output"
                                },
                                {
-                                   "id":  "MAIN-7a0ae5f35889",
-                                   "priority":  "P1",
-                                   "subject":  "Fix tailscale short name and DNS route matching"
-                               },
-                               {
-                                   "id":  "MAIN-a130b482d41f",
-                                   "priority":  "P1",
-                                   "subject":  "Flush systemd-resolved cache on DNS changes"
-                               },
-                               {
-                                   "id":  "MAIN-a8a2964592c7",
-                                   "priority":  "P1",
-                                   "subject":  "Fix systemd-resolved detection for local DNS server"
-                               },
-                               {
                                    "id":  "MAIN-b6fc3a486355",
                                    "priority":  "P1",
                                    "subject":  "Remove unimplemented direct rule action"
-                               },
-                               {
-                                   "id":  "MAIN-c8ba005e84d2",
-                                   "priority":  "P1",
-                                   "subject":  "Reject Tailscale SSH user switch without privilege"
-                               },
-                               {
-                                   "id":  "MAIN-db4e5da711ea",
-                                   "priority":  "P1",
-                                   "subject":  "Check DNS address filter rules on cache hit"
-                               },
-                               {
-                                   "id":  "MAIN-972a052ef537",
-                                   "priority":  "P2",
-                                   "subject":  "Remove unused DNS search expansion"
                                },
                                {
                                    "id":  "MAIN-ae4826a387e6",
@@ -278,9 +292,13 @@
                       "DEP-CRONET-1: root/all 8aa139e + 29 native libs 8c68ce8, ABI-equal generation",
                       "Apple TLS fd/object leak fix with macOS leak cycles",
                       "Android legacy procfs owner lookup and parser tests",
-                      "IPv6 literal URL host handling across DNS/DERP/v2ray"
+                      "IPv6 literal URL host handling across DNS/DERP/v2ray",
+                      "DEP-TAILSCALE-1 official dev module with default-route hooks",
+                      "Tailscale short-name/DNS-route and SSH switch-user guards",
+                      "systemd-resolved detection/reuse/flush and DNS cache-hit filter",
+                      "DHCP ndots/search expansion and unused-expansion cleanup"
                   ],
-    "next_executable_action":  "DEP-TAILSCALE-1 (Tailscale default route, phase 05)",
+    "next_executable_action":  "Phase 06: remaining main-repo rows (certificates, config format, direct rule action, command server retry, systemd service) plus ancestry/CI closure",
     "closed_phase_01":  [
                             {
                                 "id":  "MAIN-18aa2cdfe742",
@@ -345,5 +363,40 @@
                         ],
     "closed_phase_03":  [
 
+                        ],
+    "closed_phase_04":  [
+                            {
+                                "status":  "CLOSED_CODE_AND_MACOS",
+                                "evidence":  [
+                                                 "common/tls/apple_client_platform.go: F_DUPFD_CLOEXEC after the anchor lookup, deferred anchor release, dup after ownership transfer",
+                                                 "apple_client_platform_darwin.m: autoreleasepool, NW_RETURNS_RETAINED ownership, release the connection object on every path",
+                                                 "apple_client_platform_leak_test.go: 30 successful + 10 failed handshakes, fd count flat; macOS gate 40081595184 PASS"
+                                             ],
+                                "upstream_sha":  "42cae14c63d1b8645d787f3f93515820c94f01e7",
+                                "id":  "MAIN-42cae14c63d1",
+                                "not_verified":  "iOS device entitlements/NetworkExtension"
+                            },
+                            {
+                                "status":  "CLOSED_CODE_AND_LINUX_UNIT",
+                                "evidence":  [
+                                                 "experimental/libbox/connection_owner_android.go: socket inode/procfs fallback moved out of service.go",
+                                                 "experimental/libbox/internal/procfs/procfs.go: table search ranks exact, local and unspecified UDP rows, skips zero inode/uid",
+                                                 "procfs_test.go pins native-endian address + big-endian port spelling; linux-platform-verify 40081597501 PASS; android/arm64 cross-compile PASS"
+                                             ],
+                                "upstream_sha":  "40bc411e8d024e3f8c8f435c2a2ad5e4c0e04bce",
+                                "id":  "MAIN-40bc411e8d02",
+                                "not_verified":  "real legacy Android device / cross-user procfs permissions"
+                            },
+                            {
+                                "status":  "CLOSED_CODE_AND_LINUX_UNIT",
+                                "evidence":  [
+                                                 "dns/transport/https.go, dns/transport/quic/http3.go, service/derp/service.go: helper renders IPv6 literals bracketed, domains/IPv4 untouched",
+                                                 "common/tls/reality_client.go, transport/v2rayhttp/client.go, transport/v2rayhttpupgrade/client.go: host/SNI/URL use the parsed address",
+                                                 "https_host_test.go, http3_host_test.go, mesh_host_test.go cover domain/IPv4/IPv6, default/non-default/zero port; linux-platform-verify 40081597501 PASS"
+                                             ],
+                                "upstream_sha":  "42f487bd0d0482b1b9fd47207cdbbab2dadbfcd3",
+                                "id":  "MAIN-42f487bd0d04",
+                                "not_verified":  "HTTP/3 ALPN negotiation against a real IPv6-only resolver"
+                            }
                         ]
 }
