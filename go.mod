@@ -301,7 +301,7 @@ replace github.com/sagernet/cronet-go/lib/windows_arm64 => github.com/Piggy-Cat-
 // require, and it carries a second, incompatible owned-DATAGRAM API. Merging the two would
 // have meant resolving 137 production-file conflicts and two owners for the same datagram
 // lifetime; the sagernet release line is the one sing-quic and sing-box actually build.
-replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261024061902-8929ebe587f5
+replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261024063732-ce02ee5cc210
 
 // Carries InitialPacketSizeCeiling through qtls.QUICOptions and ApplyQUICOptions, and the
 // owned-DATAGRAM send path for Hysteria2 and TUIC.
