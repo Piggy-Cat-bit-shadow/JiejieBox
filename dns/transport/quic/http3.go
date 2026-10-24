@@ -79,15 +79,7 @@ func NewHTTP3(ctx context.Context, logger log.ContextLogger, tag string, options
 			host = options.Server
 		}
 	}
-	destinationAddress := M.ParseSocksaddrHostPort(host, options.ServerPort)
-	destinationURL := url.URL{Scheme: "https"}
-	if options.ServerPort != 0 && options.ServerPort != 443 {
-		destinationURL.Host = destinationAddress.String()
-	} else if destinationAddress.IsIPv6() {
-		destinationURL.Host = "[" + destinationAddress.AddrString() + "]"
-	} else {
-		destinationURL.Host = destinationAddress.AddrString()
-	}
+	destinationURL := url.URL{Scheme: "https", Host: http3DestinationHost(M.ParseSocksaddrHostPort(host, options.ServerPort), options.ServerPort)}
 	path := options.Path
 	if path == "" {
 		path = "/dns-query"
@@ -280,4 +272,17 @@ func (t *HTTP3Transport) ExchangeAsync(ctx context.Context, message *mDNS.Msg, c
 	go func() {
 		callback(t.Exchange(ctx, message))
 	}()
+}
+
+// http3DestinationHost renders a DNS server address for a url.URL. The same rules as the
+// HTTP/2 transport apply: an explicit non-443 port keeps the address spelling, otherwise an
+// IPv6 literal is bracketed and a domain/IPv4 literal is left alone.
+func http3DestinationHost(address M.Socksaddr, port uint16) string {
+	if port != 0 && port != 443 {
+		return address.String()
+	}
+	if address.IsIPv6() {
+		return "[" + address.AddrString() + "]"
+	}
+	return address.AddrString()
 }

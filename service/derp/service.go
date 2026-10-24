@@ -348,15 +348,7 @@ func (d *Service) startMeshWithHost(derpServer *derpserver.Server, server *optio
 	logf := func(format string, args ...any) {
 		d.logger.Debug(F.ToString("mesh(", hostname, "): ", fmt.Sprintf(format, args...)))
 	}
-	meshAddress := M.ParseSocksaddrHostPort(hostname, server.ServerPort)
-	var meshHost string
-	if server.ServerPort != 0 && server.ServerPort != 443 {
-		meshHost = meshAddress.String()
-	} else if meshAddress.IsIPv6() {
-		meshHost = "[" + meshAddress.AddrString() + "]"
-	} else {
-		meshHost = meshAddress.AddrString()
-	}
+	meshHost := derpMeshHost(hostname, server.ServerPort)
 	var serverURL string
 	if stdConfig != nil {
 		serverURL = "https://" + meshHost + "/derp"
@@ -562,4 +554,17 @@ func (d *Service) References() []string {
 	return common.FilterNotDefault(common.Map(d.meshWith, func(it *option.DERPMeshOptions) string {
 		return it.Detour
 	}))
+}
+
+// derpMeshHost renders the mesh peer URL host. A non-default port needs the address spelling;
+// otherwise an IPv6 literal must be bracketed while a domain or IPv4 literal is left alone.
+func derpMeshHost(hostname string, port uint16) string {
+	address := M.ParseSocksaddrHostPort(hostname, port)
+	if port != 0 && port != 443 {
+		return address.String()
+	}
+	if address.IsIPv6() {
+		return "[" + address.AddrString() + "]"
+	}
+	return address.AddrString()
 }

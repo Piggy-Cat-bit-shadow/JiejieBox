@@ -80,15 +80,7 @@ func NewHTTPS(ctx context.Context, logger log.ContextLogger, tag string, options
 			host = options.Server
 		}
 	}
-	destinationAddress := M.ParseSocksaddrHostPort(host, options.ServerPort)
-	destinationURL := url.URL{Scheme: "https"}
-	if options.ServerPort != 0 && options.ServerPort != 443 {
-		destinationURL.Host = destinationAddress.String()
-	} else if destinationAddress.IsIPv6() {
-		destinationURL.Host = "[" + destinationAddress.AddrString() + "]"
-	} else {
-		destinationURL.Host = destinationAddress.AddrString()
-	}
+	destinationURL := url.URL{Scheme: "https", Host: httpsDestinationHost(M.ParseSocksaddrHostPort(host, options.ServerPort), options.ServerPort)}
 	path := options.Path
 	if path == "" {
 		path = "/dns-query"
@@ -274,4 +266,18 @@ func (t *HTTPSTransport) exchange(ctx context.Context, message *mDNS.Msg) (*mDNS
 		return nil, err
 	}
 	return &responseMessage, nil
+}
+
+// httpsDestinationHost renders a DNS server address for a url.URL. An explicit non-443 port
+// uses the address's own host:port spelling; otherwise the port is omitted and an IPv6 literal
+// needs brackets so the URL parser does not read the address as a host:port pair. Ordinary
+// domains and IPv4 literals must remain unchanged.
+func httpsDestinationHost(address M.Socksaddr, port uint16) string {
+	if port != 0 && port != 443 {
+		return address.String()
+	}
+	if address.IsIPv6() {
+		return "[" + address.AddrString() + "]"
+	}
+	return address.AddrString()
 }
