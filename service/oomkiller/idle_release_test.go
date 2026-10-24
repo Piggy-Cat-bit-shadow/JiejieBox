@@ -32,6 +32,10 @@ func newIdleReleaseTimer(t *testing.T) (*adaptiveTimer, *int, *int) {
 		lastConnections: 10,
 		trimMemory:      func(context.Context) { trims++ },
 		freeOSMemory:    func() { frees++ },
+		// The runtime-evidence gate below the armed line would otherwise skip the forced GC on the
+		// machine running the test, whose real free-span figure is not the 33 MiB fixture's. These
+		// tests assert the release decision, so they state the evidence explicitly.
+		runtimeReclaimable: func() uint64 { return defaultIdleBenefitFloor },
 	}
 	t.Cleanup(func() {
 		if timer.timer != nil {

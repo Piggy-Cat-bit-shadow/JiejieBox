@@ -34,6 +34,24 @@ type Router interface {
 	TrimIdleResources()
 }
 
+// ExpiredCacheReleaser is the router half of the L1 (cheapest) memory layer: drop cache entries the
+// read path can no longer serve, and nothing else.
+//
+// # Why it is separate from TrimIdleResources
+//
+// They have different ownership and different costs. An expired cache entry owns no socket, no
+// reference count and no active flow; dropping it cannot break a connection, only cause a lookup
+// that was going to happen anyway. An idle pool entry owns a transport and may cost a handshake to
+// rebuild. The memory scheduler tries this layer first and measures it, so a cheap megabyte does not
+// also pay for closing pools and a forced GC.
+//
+// The implementation must preserve answers the read path would still serve - notably DNS optimistic
+// stale answers inside their optimistic window - and must not advance any generation or epoch.
+type ExpiredCacheReleaser interface {
+	// TrimExpiredCaches drops expired entries and returns how many it removed.
+	TrimExpiredCaches() int
+}
+
 type PreMatchAction uint8
 
 const (

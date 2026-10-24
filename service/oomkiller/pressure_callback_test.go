@@ -1,6 +1,15 @@
-//go:build darwin && cgo
-
 package oomkiller
+
+// Tests for the platform memory-pressure callback path.
+//
+// # Why these are no longer darwin-only
+//
+// notifyPressure is the logic the Darwin dispatch source drives, but the logic itself is
+// platform-neutral: it queues on the same reclaim executor and joins the same lifecycle barrier as
+// every other path. Keeping the tests behind `darwin && cgo` meant the callback lifecycle was only
+// exercised on a machine that could build the C half - the one environment where reproducing these
+// races is hardest. The callback now compiles everywhere and these tests run on every platform; the
+// dispatch source itself remains covered by the Darwin build and by service_darwin.go's reasoning.
 
 import (
 	"sync/atomic"
@@ -86,15 +95,16 @@ func TestLatePressureCallbackDoesNotReArmTheTimer(t *testing.T) {
 // Guarding the cleanup must not disable the feature: an active service receiving real pressure
 // must still act on it.
 //
-// The assertion targets the pressure BASELINE rather than the pressure value. notifyPressure
-// calls poll() right after releaseMemory(), and poll() recomputes pressure from a fresh sample -
-// so with a low simulated usage the value returns to None immediately, and poll() also consumes
-// the pendingPressureBaseline flag.
+// The assertion targets the pressure BASELINE rather than the pressure value. notifyPressure queues
+// the aggressive pass and accelerates the next observation; that poll consumes
+// pendingPressureBaseline and records the sample it is about to measure growth from. With a low
+// simulated usage the pressure value returns to None immediately, so asserting the value would
+// assert a transient.
 //
-// What survives the poll is pressureBaselineTime, which records that a pressure event was
-// observed and makes subsequent polls measure growth from that moment. Asserting the pressure
-// value would be asserting a transient the very next line overwrites; asserting the flag would
-// be asserting something poll() deliberately consumes.
+// What survives is pressureBaselineTime, which records that a pressure event was observed and makes
+// subsequent polls measure growth from that moment. The test waits for the accelerated poll rather
+// than reading immediately: the callback no longer calls poll() inline, precisely so its state
+// transition cannot overlap the timer's.
 func TestPressureCallbackOnALiveTimerStillWorks(t *testing.T) {
 	pressure := &atomic.Uint32{}
 	pressure.Store(uint32(tun.MemoryPressureNone))
@@ -105,12 +115,18 @@ func TestPressureCallbackOnALiveTimerStillWorks(t *testing.T) {
 
 	timer.notifyPressure()
 
-	timer.access.Lock()
-	baselineTime := timer.pressureBaselineTime
-	timer.access.Unlock()
-
-	if baselineTime.IsZero() {
-		t.Fatal("a pressure callback on a LIVE timer must record a pressure baseline")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		timer.access.Lock()
+		baselineTime := timer.pressureBaselineTime
+		timer.access.Unlock()
+		if !baselineTime.IsZero() {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("a pressure callback on a LIVE timer must record a pressure baseline")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 

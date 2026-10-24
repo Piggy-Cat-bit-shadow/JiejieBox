@@ -42,6 +42,7 @@ var (
 	_ adapter.NetworkTransitionSnapshotter       = (*NetworkManager)(nil)
 	_ adapter.NetworkFamilyCapabilitySnapshotter = (*NetworkManager)(nil)
 	_ adapter.IPv6EntryPresentmentReader         = (*NetworkManager)(nil)
+	_ adapter.CacheMemoryReleaser                = (*NetworkManager)(nil)
 )
 
 type NetworkManager struct {
@@ -189,6 +190,24 @@ type NetworkManager struct {
 	// interface callbacks into a reset storm.
 	networkResetPendingToken transitionToken
 	resetRunAccess           sync.Mutex
+	// memoryReclaimAccess serialises the memory reclaim entry points against each other.
+	//
+	// # Why TrimMemory and ReleaseMemory need a gate of their own
+	//
+	// They walk the same pools. TrimMemory closes idle connections on every outbound, endpoint and
+	// DNS transport; ReleaseMemory resets the network (which drains/retires the same resources) and
+	// then closes idle connections again. Before this gate, a platform RUNNING_LOW trim and a
+	// RUNNING_CRITICAL release are dispatched on independent goroutines, and nothing kept one pass
+	// out of a pool the other was resetting.
+	//
+	// # What it does not cover, deliberately
+	//
+	// Network-transition resets (ResetNetwork from an interface event or the control plane) do not
+	// take this lock. Making a transition wait behind a trim would delay recovery on the path whose
+	// whole purpose is to recover promptly, and a trim only closes resources with no active user
+	// traffic. The reclaim entries serialise the two MEMORY passes, which is the pair that can be
+	// scheduled concurrently from independent pressure notifications.
+	memoryReclaimAccess sync.Mutex
 	// networkResetGeneration increases every time a network reset BEGINS - it is advanced as the
 	// reset's first statement, so an operation in flight when the reset starts is already stale.
 	// Read it as a reset epoch, not as a count of finished resets.
@@ -1363,8 +1382,7 @@ func (r *NetworkManager) resetNetworkLocked(ctx context.Context) {
 	r.router.ResetNetwork()
 }
 
-// TrimMemory is the progressive memory pass: release reusable pools and drop caches, without a
-// network reset.
+// TrimMemory is the progressive pool pass: release reusable pools, without a network reset.
 //
 // # Why this is not ReleaseMemory
 //
@@ -1377,36 +1395,72 @@ func (r *NetworkManager) resetNetworkLocked(ctx context.Context) {
 // nothing dials, nothing wakes, and nothing rebuilds. If a trim could cause a connection it would be
 // a reconnect trigger wearing a memory-management name.
 //
-// The assertions are adapter.IdleConnectionReleaser rather than adapter.IdleConnectionKeeper, by the
-// same argument as the reference manager's walks: both call CloseIdleConnections and nothing else,
-// and requiring SetKeepIdleConnections as well would silently skip any owner that can only drop what
-// is idle. See adapter.IdleConnectionReleaser.
+// # Why the walk lives in the router (and only there)
+//
+// The reference manager already walks every reusable owner in this core - outbounds, endpoints, DNS
+// transports and the HTTP client pool - with the IdleConnectionReleaser contract reviewed per owner.
+// This method used to call that walk and then walk endpoints and outbounds AGAIN itself, so every
+// trim closed each pool twice. The second walk was invisible because the closers are idempotent, but
+// it made "the trim reached this owner once" untestable and doubled the lock traffic on every
+// pressure notification. The router's pass is now the single walk; the local fallback exists only
+// for a manager constructed without a router at all.
+//
+// Cache entries are a separate, cheaper layer and are NOT part of this pass; see TrimCaches and
+// adapter.CacheMemoryReleaser.
 func (r *NetworkManager) TrimMemory(ctx context.Context) {
+	// Serialise against a concurrent ReleaseMemory / platform trim. Both passes own the same pools,
+	// and a memory-pressure notification and a critical notification are dispatched independently.
+	r.memoryReclaimAccess.Lock()
+	defer r.memoryReclaimAccess.Unlock()
 	if r.router != nil {
 		r.router.TrimIdleResources()
+		return
 	}
-	for _, endpoint := range r.endpoint.Endpoints() {
-		keeper, isKeeper := endpoint.(adapter.IdleConnectionReleaser)
-		if isKeeper {
-			keeper.CloseIdleConnections()
+	r.trimIdleOwners()
+}
+
+// TrimCaches is the L1 memory layer: drop expired cache entries without touching a connection.
+//
+// It deliberately does not take memoryReclaimAccess. The pass owns no socket and closes nothing, so
+// serialising it behind a pool walk would only delay the cheap layer; the cache implementations are
+// internally thread-safe and the DNS reverse-mapping purge takes its own commit lock.
+func (r *NetworkManager) TrimCaches(ctx context.Context) int {
+	trimmer, isTrimmer := r.router.(adapter.ExpiredCacheReleaser)
+	if !isTrimmer {
+		return 0
+	}
+	return trimmer.TrimExpiredCaches()
+}
+
+// trimIdleOwners is the local walk used only when this manager has no router to delegate to. In a
+// real box the router's reference manager performs it, once.
+func (r *NetworkManager) trimIdleOwners() {
+	if r.endpoint != nil {
+		for _, endpoint := range r.endpoint.Endpoints() {
+			keeper, isKeeper := endpoint.(adapter.IdleConnectionReleaser)
+			if isKeeper {
+				keeper.CloseIdleConnections()
+			}
 		}
 	}
-	for _, outbound := range r.outbound.Outbounds() {
-		keeper, isKeeper := outbound.(adapter.IdleConnectionReleaser)
-		if isKeeper {
-			keeper.CloseIdleConnections()
+	if r.outbound != nil {
+		for _, outbound := range r.outbound.Outbounds() {
+			keeper, isKeeper := outbound.(adapter.IdleConnectionReleaser)
+			if isKeeper {
+				keeper.CloseIdleConnections()
+			}
 		}
 	}
 }
 
 func (r *NetworkManager) ReleaseMemory(ctx context.Context) {
+	// The same gate as TrimMemory: this pass resets the resources the trim walks, so the two must not
+	// interleave. ResetNetwork below takes the reset lock itself; a network-transition reset that
+	// does not go through here remains independent on purpose (see memoryReclaimAccess).
+	r.memoryReclaimAccess.Lock()
+	defer r.memoryReclaimAccess.Unlock()
 	r.ResetNetwork(ctx)
-	for _, outbound := range r.outbound.Outbounds() {
-		keeper, isKeeper := outbound.(adapter.IdleConnectionReleaser)
-		if isKeeper {
-			keeper.CloseIdleConnections()
-		}
-	}
+	r.trimIdleOwners()
 }
 
 // networkIsConfirmedOffline reports whether the device has been without a default interface for

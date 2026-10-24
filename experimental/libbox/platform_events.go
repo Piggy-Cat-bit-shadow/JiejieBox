@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync/atomic"
 
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/runtimecoord"
 	"github.com/sagernet/sing-box/daemon"
 )
@@ -129,8 +130,12 @@ func (t *boxPlatformTarget) TrimMemory(level runtimecoord.TrimLevel) {
 	if network == nil {
 		return
 	}
-	// This is the progressive pass. It closes pools with no active user traffic and drops cached
-	// state; it cannot dial, and the level that reaches it was classified by the policy, not here.
+	// This is the progressive pass. It drops expired cached state first - the layer that owns no
+	// socket - then closes pools with no active user traffic. Neither can dial, and the level that
+	// reaches it was classified by the policy, not here.
+	if cacheReleaser, isReleaser := network.(adapter.CacheMemoryReleaser); isReleaser {
+		cacheReleaser.TrimCaches(context.Background())
+	}
 	network.TrimMemory(context.Background())
 }
 

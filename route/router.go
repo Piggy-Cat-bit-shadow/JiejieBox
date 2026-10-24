@@ -26,6 +26,7 @@ import (
 )
 
 var _ adapter.Router = (*Router)(nil)
+var _ adapter.ExpiredCacheReleaser = (*Router)(nil)
 
 type Router struct {
 	ctx    context.Context
@@ -322,7 +323,41 @@ func (r *Router) NeighborResolver() adapter.NeighborResolver {
 func (r *Router) TrimIdleResources() {
 	if r.referenceManager != nil {
 		r.referenceManager.TrimIdleResources()
+		return
 	}
+	// A router built without a reference manager (a unit fixture, or the window before box wiring)
+	// still owns the outbound set it can reach. Endpoints are not reachable from this type; a real
+	// box always attaches the manager, whose walk covers them.
+	if r.outbound != nil {
+		for _, outbound := range r.outbound.Outbounds() {
+			keeper, isKeeper := outbound.(adapter.IdleConnectionReleaser)
+			if isKeeper {
+				keeper.CloseIdleConnections()
+			}
+		}
+	}
+}
+
+// TrimExpiredCaches is the L1 pass: it removes entries the read path can no longer serve and does
+// not touch a connection, a reference count or an epoch.
+//
+// The two halves are the DNS caches (exact, negative and reverse mapping, each with its own lifetime
+// and its own reuse semantics - see dns.Client.TrimExpiredCaches) and the process lookup cache,
+// which is a 200ms memoisation whose absence only causes another lookup. Neither can make the next
+// demand dial a different path.
+func (r *Router) TrimExpiredCaches() int {
+	trimmed := 0
+	if trimmer, isTrimmer := r.dns.(adapter.ExpiredCacheReleaser); isTrimmer {
+		trimmed += trimmer.TrimExpiredCaches()
+	}
+	if r.processCache != nil {
+		before := r.processCache.Len()
+		r.processCache.PurgeExpired()
+		if after := r.processCache.Len(); after < before {
+			trimmed += before - after
+		}
+	}
+	return trimmed
 }
 
 func (r *Router) ResetNetwork() {
