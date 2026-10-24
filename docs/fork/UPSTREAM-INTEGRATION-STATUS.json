@@ -1,11 +1,11 @@
 {
-    "generated_at":  "2026-10-24T20:00:00+08:00",
-    "phase":  "06/06",
-    "fork_testing_code_sha":  "c3c23d1059c8834f68d268995557c99be6d787a0",
+    "generated_at":  "2026-10-25T02:30:00+08:00",
+    "phase":  "08/08",
+    "fork_testing_code_sha":  "173957534f1c01e0e26e080d98756efd84d1f51e",
     "fork_testing_docs_sha":  "586611a26f097b27cf58db372302c3c8e815385c",
     "upstream_observed":  "a6952ccf6907c18e18917fcb763a433e8e36937b",
     "behind_by":  0,
-    "ahead_by":  2644,
+    "ahead_by":  2662,
     "summary":  {
                     "open_semantic":  0,
                     "open_dependency_blockers":  0,
@@ -456,5 +456,21 @@
                                              "_p01_main clean",
                                              "pre-existing detached/worktree checkouts left untouched"
                                          ]
-                       }
+                       },
+    "branch_consolidation_phase_08":  {
+                                          "quic":  "sagernet f0f7ab2, mod12 80c132f ancestor; metacubex deleted per user; default sagernet",
+                                          "gates":  [
+                                                        "module integrity PASS",
+                                                        "TUN/device PASS",
+                                                        "MASQUE/Hysteria2/TUIC PASS",
+                                                        "quic-go tests/vet PASS",
+                                                        "sing-quic tests PASS",
+                                                        "main CI pending"
+                                                    ],
+                                          "sing_tun":  "ade2434, upstream/dev 611d83b ancestor, behind 0",
+                                          "cronet":  "8aa139e, behind 0",
+                                          "sing_quic":  "1ef2597, behind 0",
+                                          "ci_branch":  "merged 6fc9c59, deleted",
+                                          "sing":  "4200a04, behind 17, verified hold"
+                                      }
 }

@@ -139,3 +139,17 @@ cronet:   main 8aa139e9e140, go 0d28acc44093 (hold), jiejie-naive-zero-copy 520c
 ```
 
 `_p01_main` is clean at `8795ba09d35`; pre-existing detached release/bench worktrees were not touched.
+
+## Phase 08 update
+
+- CI closeout branch `8b0737c` merged into `testing` (`6fc9c59`) and removed; main repo now has only
+  `testing` and `pending/device-axis-reload-window-tests` (`0477e327e5d`, unchanged).
+- `quic-go`: `sagernet` is `f0f7ab2` and records `80c132f` (mod.12) as an ancestor; the old
+  `verify.yml` trigger now names `sagernet`. Per explicit user instruction the independent
+  `metacubex` line was deleted and `sagernet` is the repository default. `sing-quic/main` follows at
+  `1ef2597`.
+- `sing-tun/dev` is `ade2434` and records upstream `dev 611d83b` as an ancestor (behind 0).
+- `sing/dev` remains `4200a04`, behind 17 upstream `dev` commits; this is the verified hold.
+- `cronet-go/main` remains ahead 14 / behind 0; `go` and `jiejie-naive-zero-copy` are retained holds.
+- Personal `gvisor` has no consumer and was archived; `sing-tun`'s `with_gvisor` source and
+  `github.com/sagernet/gvisor` are untouched.
