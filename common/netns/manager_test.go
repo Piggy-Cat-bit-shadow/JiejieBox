@@ -6,8 +6,11 @@ import (
 	"bufio"
 	"context"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -84,4 +87,67 @@ func TestUnshareNamespace(t *testing.T) {
 		}
 	}
 	t.Fatal("holder process did not exit after close")
+}
+
+func TestHolderIgnoresTerminationSignals(t *testing.T) {
+	if os.Getenv("NETNS_HOLD_TEST") == "1" {
+		Hold()
+		return
+	}
+	command := exec.Command(os.Args[0], "-test.run=^TestHolderIgnoresTerminationSignals$")
+	command.Env = append(os.Environ(), "NETNS_HOLD_TEST=1")
+	stdin, err := command.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	var waitOnce sync.Once
+	wait := func() error {
+		var waitErr error
+		waitOnce.Do(func() {
+			waitErr = command.Wait()
+		})
+		return waitErr
+	}
+	t.Cleanup(func() {
+		_ = stdin.Close()
+		_ = command.Process.Kill()
+		_ = wait()
+	})
+
+	// Ignore is installed before the read loop; give the child a moment to reach it, then send the
+	// signals a terminal or a service manager would.
+	time.Sleep(100 * time.Millisecond)
+	for _, signal := range []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP} {
+		if err = command.Process.Signal(signal); err != nil {
+			t.Fatalf("signal %v: %v", signal, err)
+		}
+	}
+	time.Sleep(100 * time.Millisecond)
+	if err = command.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Fatalf("the holder exited on a termination signal: %v", err)
+	}
+
+	// The parent's pipe close is the exit condition.
+	if err = stdin.Close(); err != nil {
+		t.Fatal(err)
+	}
+	waited := make(chan error, 1)
+	go func() { waited <- wait() }()
+	select {
+	case <-waited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the holder did not exit after stdin was closed")
+	}
+}
+
+func TestOwnsUserNamespaceFalseForRoot(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("root is the only uid that can be asserted without creating a user namespace")
+	}
+	if ownsUserNamespace() {
+		t.Fatal("root in the initial user namespace must not be reported as owning one")
+	}
 }

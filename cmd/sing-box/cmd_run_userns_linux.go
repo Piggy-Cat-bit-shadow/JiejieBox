@@ -15,6 +15,18 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// initialDir is the directory the daemon was started in. The re-exec below creates a user namespace
+// and therefore may start in a different working directory; relative config paths would then resolve
+// against it. Pin the original directory (upstream 9c24112d12).
+var initialDir, _ = os.Getwd()
+
+// hasEffectiveCapabilities reports whether the capability words carry any effective capability. The
+// caller has already established that CAP_SYS_ADMIN is not among them; this is only the "other
+// capabilities" half, kept separate so it can be tested without changing the process's capabilities.
+func hasEffectiveCapabilities(data [2]unix.CapUserData) bool {
+	return data[0].Effective != 0 || data[1].Effective != 0
+}
+
 func runInUserNamespaceIfNeeded(options option.Options, optionsList []*OptionsEntry) error {
 	if !common.Any(options.NetworkNamespaces, func(namespace option.NetworkNamespace) bool {
 		return namespace.Type == C.NetNsTypeUnshare
@@ -31,8 +43,16 @@ func runInUserNamespaceIfNeeded(options option.Options, optionsList []*OptionsEn
 	if data[0].Effective&(1<<unix.CAP_SYS_ADMIN) != 0 {
 		return nil
 	}
+	// A process that holds other effective capabilities cannot be moved into a rootless user
+	// namespace: the clone drops them all, so the child would start without the privilege the caller
+	// configured and the failure would look like a network problem later. Refuse with a diagnostic
+	// instead (upstream 9c24112d12). The no-capability unprivileged case keeps working.
+	if hasEffectiveCapabilities(data) {
+		return E.New("unshare network namespace requires CAP_SYS_ADMIN when running with other capabilities, as the rootless user namespace drops them")
+	}
 	command := exec.Command("/proc/self/exe", os.Args[1:]...)
 	command.Args = os.Args
+	command.Dir = initialDir
 	command.Stdin = os.Stdin
 	for _, entry := range optionsList {
 		if entry.path == "stdin" {
@@ -50,7 +70,7 @@ func runInUserNamespaceIfNeeded(options option.Options, optionsList []*OptionsEn
 			{ContainerID: os.Getegid(), HostID: os.Getegid(), Size: 1},
 		},
 		GidMappingsEnableSetgroups: false,
-		AmbientCaps:                []uintptr{unix.CAP_SYS_ADMIN, unix.CAP_NET_ADMIN, unix.CAP_NET_RAW},
+		AmbientCaps:                []uintptr{unix.CAP_SYS_ADMIN, unix.CAP_NET_ADMIN, unix.CAP_NET_RAW, unix.CAP_NET_BIND_SERVICE},
 		Setpgid:                    true,
 		Pdeathsig:                  syscall.SIGKILL,
 	}

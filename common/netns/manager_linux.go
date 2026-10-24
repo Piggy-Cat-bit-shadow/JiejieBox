@@ -16,6 +16,7 @@ import (
 	"github.com/sagernet/sing/common/logger"
 
 	vnetns "github.com/vishvananda/netns"
+	"golang.org/x/sys/unix"
 )
 
 type Manager struct {
@@ -112,12 +113,36 @@ func (m *Manager) startNamespace(namespace option.NetworkNamespace, scope *adapt
 	}
 	m.paths[namespace.Tag] = netnsPath(pid)
 	m.logger.Info("created network namespace[", namespace.Tag, "], holder pid: ", pid)
-	if os.Geteuid() == 0 {
-		m.logger.Info("enter network namespace[", namespace.Tag, "] with: nsenter -n -t ", pid)
-	} else {
+	// A root process owns no user namespace, so -n alone is enough. A process running inside a
+	// ROOTLESS user namespace needs -U --preserve-credentials to enter the holder's network
+	// namespace with the same credentials (upstream 9c24112d12). Testing euid==0 conflated "root" with
+	// "does not own a user namespace" and printed the wrong command for root inside a container.
+	if ownsUserNamespace() {
 		m.logger.Info("enter network namespace[", namespace.Tag, "] with: nsenter -U --preserve-credentials -n -t ", pid)
+	} else {
+		m.logger.Info("enter network namespace[", namespace.Tag, "] with: nsenter -n -t ", pid)
 	}
 	return nil
+}
+
+// ownsUserNamespace reports whether the current process is in a user namespace it owns, i.e. a
+// rootless user namespace created for this uid. Root in the initial user namespace owns nothing and
+// returns false.
+func ownsUserNamespace() bool {
+	effectiveUID := os.Geteuid()
+	if effectiveUID == 0 {
+		return false
+	}
+	userNamespace, err := os.Open("/proc/self/ns/user")
+	if err != nil {
+		return false
+	}
+	defer userNamespace.Close()
+	ownerUID, err := unix.IoctlGetUint32(int(userNamespace.Fd()), unix.NS_GET_OWNER_UID)
+	if err != nil {
+		return false
+	}
+	return int(ownerUID) == effectiveUID
 }
 
 func (m *Manager) ResolvePath(nameOrPath string) string {

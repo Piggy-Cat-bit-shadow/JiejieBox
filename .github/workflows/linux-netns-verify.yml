@@ -1,0 +1,38 @@
+name: linux-netns-verify
+
+# Manual gate for the Linux-only lifecycle pieces: the unshare namespace holder, the signal policy
+# that keeps it alive until the parent closes the pipe, the root/user-namespace command line, and the
+# strategy-aware ICMP control. These need CAP_SYS_ADMIN, so they are dispatched explicitly instead of
+# running on every push.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            test/go.sum
+      - name: ICMP strategy, WireGuard pause, dialer unit tests
+        run: |
+          go test -count=1 -v -timeout 10m ./common/dialer -run 'TestICMPControl'
+          go test -count=1 -v -timeout 10m ./transport/wireguard -run 'TestClientBindCloseWhilePaused|TestPause|TestPauseWake'
+      - name: Build Linux test binaries
+        run: |
+          go test -c -vet=off -o /tmp/netns.test ./common/netns
+          go test -c -vet=off -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" -o /tmp/cmd.test ./cmd/sing-box
+      - name: Namespace holder and capability guard (root)
+        run: |
+          sudo /tmp/netns.test -test.run 'TestUnshareNamespace|TestHolderIgnoresTerminationSignals|TestOwnsUserNamespaceFalseForRoot' -test.v -test.timeout 120s
+          sudo /tmp/cmd.test -test.run '^TestHasEffectiveCapabilities$' -test.v -test.timeout 60s
