@@ -187,6 +187,8 @@ type adaptiveTimer struct {
 	// hold a callback inside the barrier deterministically instead of racing goroutines and
 	// hoping to hit the interleaving.
 	cleanupHook func()
+	// sampleFunc overrides the process sample in tests. Nil means readMemorySample.
+	sampleFunc func() memorySample
 
 	lastGoroutines  int
 	lastConnections int
@@ -270,6 +272,9 @@ func (t *adaptiveTimer) poll() {
 	var triggered bool
 	var rateTriggered bool
 	sample := readMemorySample(t.policyMode)
+	if t.sampleFunc != nil {
+		sample = t.sampleFunc()
+	}
 
 	t.access.Lock()
 	if t.timer == nil {
@@ -309,7 +314,17 @@ func (t *adaptiveTimer) poll() {
 		}
 	}
 	state := t.state
+	if triggered {
+		// The destructive reset below runs outside the lock, like the idle release. Join the
+		// same barrier so stop()/Close cannot return while an old poll is still resetting the
+		// network or publishing Critical pressure. Add happens under access, after the timer
+		// check, so stop() cannot start waiting between the decision and the Add.
+		t.pressureCallbacks.Add(1)
+	}
 	t.access.Unlock()
+	if triggered {
+		defer t.pressureCallbacks.Done()
+	}
 	t.pressure.Store(uint32(state.memoryPressure()))
 	var connections int
 	if t.connections != nil {
@@ -363,7 +378,6 @@ func (t *adaptiveTimer) releaseIdleMemory(sample memorySample, connections int) 
 	}
 	shrank := hasMeaningfulDrop(t.lastGoroutines, goroutines) || hasMeaningfulDrop(t.lastConnections, connections)
 	dropped := t.lastUsage > sample.usage && t.lastUsage-sample.usage >= defaultIdleBenefitFloor
-	pressure := t.aboveArmed(sample)
 	t.lastGoroutines = goroutines
 	t.lastConnections = connections
 	t.lastUsage = sample.usage
@@ -373,10 +387,14 @@ func (t *adaptiveTimer) releaseIdleMemory(sample memorySample, connections int) 
 	// stable footprint (the 33 MB / 1 s case). Below-resume still means "the process is comfortably
 	// inside its floor"; above-armed overrides the low-yield cooldown so a real emergency is never
 	// delayed by the ordinary backoff.
+	// Opportunistic idle release only. Pressure at/above armed is handled by poll's state machine
+	// (Triggered/reset), not by this path: letting "armed" bypass the cooldown made a stable
+	// 41 MiB footprint run TrimMemory + FreeOSMemory every second, a new version of the original
+	// loop at a higher level. Growth toward the trigger is still observed and escalated by poll.
 	if t.belowResume(sample) ||
 		now.Sub(t.lastRelease) < defaultReleaseInterval ||
-		(now.Before(t.idleCooldownUntil) && !pressure) ||
-		(!shrank && !dropped && !pressure) {
+		now.Before(t.idleCooldownUntil) ||
+		(!shrank && !dropped) {
 		t.access.Unlock()
 		return
 	}
@@ -410,23 +428,21 @@ func (t *adaptiveTimer) releaseIdleMemory(sample memorySample, connections int) 
 		t.idleCooldownUntil = time.Now().Add(defaultIdleCooldown)
 	}
 	t.access.Unlock()
+	delta := uint64(0)
 	if after < sample.usage {
+		delta = sample.usage - after
+	}
+	switch {
+	case delta >= defaultIdleBenefitFloor:
 		t.logger.Trace("released idle memory, usage: ", byteformats.FormatMemoryBytes(sample.usage),
-			" -> ", byteformats.FormatMemoryBytes(after), ", delta ", byteformats.FormatMemoryBytes(sample.usage-after))
-	} else {
+			" -> ", byteformats.FormatMemoryBytes(after), ", delta ", byteformats.FormatMemoryBytes(delta))
+	case delta > 0:
+		t.logger.Trace("idle release gained only ", byteformats.FormatMemoryBytes(delta),
+			", cooling down for ", defaultIdleCooldown, ", usage: ",
+			byteformats.FormatMemoryBytes(sample.usage), " -> ", byteformats.FormatMemoryBytes(after))
+	default:
 		t.logger.Trace("idle release made no measurable gain, cooling down for ", defaultIdleCooldown,
 			", usage: ", byteformats.FormatMemoryBytes(after))
-	}
-}
-
-func (t *adaptiveTimer) aboveArmed(sample memorySample) bool {
-	switch t.policyMode {
-	case policyModeMemoryLimit, policyModeNetworkExtension:
-		return sample.usage >= t.limitThresholds.armed
-	case policyModeAvailable:
-		return sample.availableKnown && sample.available <= t.availableThresholds(sample).armed
-	default:
-		return false
 	}
 }
 

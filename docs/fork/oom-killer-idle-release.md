@@ -61,6 +61,27 @@ the bug was its misuse as an everyday admission gate.
   `stop()` does not return until it finishes.
 - **Race**: `go test -race ./service/oomkiller` passes with `CGO_ENABLED=1` and the mingw gcc.
 
+## 2.2 Final closure round (branch oom-final-2026-10-24)
+
+Two more defects were confirmed from the current source and fixed on the dedicated branch:
+
+- **Stable armed footprint ran the idle loop every second.** `releaseIdleMemory` treated
+  `usage >= armed` as a pressure override of the low-yield cooldown, so a process sitting at 41 MiB
+  (armed 40, trigger 45) with zero benefit executed `TrimMemory + FreeOSMemory` every second. The
+  idle path no longer considers pressure at all: it releases only on a measured opportunity
+  (goroutine/connection drop or >=512 KiB footprint drop). Crisis handling at/above trigger stays in
+  `poll`'s state machine. Test:
+  `TestIdleReleaseDoesNotThrashAtArmedFootprint` (33 -> 41 stable, no second trim/GC).
+- **Triggered `poll` cleanup was outside the stop barrier.** `poll` did destructive work after
+  unlocking without joining `pressureCallbacks`, so `stop()` could return while an old poll was
+  still resetting the network/publishing Critical. The triggered path now Adds under `access`
+  (after the `timer != nil` check) and Dones after cleanup; `stop()` waits. Test:
+  `TestStopWaitsForTriggeredPollCleanup` (blocking `cleanupHook`, stop must not return).
+- **Log accuracy**: a release with 0 < delta < 512 KiB now says "gained only ... cooling down"
+  instead of the unqualified "released idle memory".
+
+`go test -race ./service/oomkiller` passes on this branch.
+
 ## 3. Tests
 
 `service/oomkiller/idle_release_test.go`:
@@ -69,14 +90,13 @@ the bug was its misuse as an everyday admission gate.
 |---|---|
 | `TestIdleReleaseDoesNotRepeatAtAStableFootprint` | five samples at 33 MB, no drop, no pressure → zero trims, zero forced GCs |
 | `TestIdleReleaseRunsOnceForARealDropThenCoolsDown` | 35 → 33 MB → exactly one release; a second 33 MB sample is suppressed by the cooldown |
-| `TestIdleReleasePressureBypassesTheCooldown` | after a no-gain release, an armed 41 MB sample still releases (pressure overrides the ordinary cooldown) |
+| `TestIdleReleaseDoesNotThrashAtArmedFootprint` | a stable 41 MB armed footprint is not an idle opportunity and causes no second trim/GC |
 | `TestPressureStateExitsTriggeredAtArmedNotResume` | Triggered exits at 39 MB (below armed), stays at 41 MB; normal/armed entry unchanged |
 | `TestIdleReleaseIsSingleFlight` | a second tick blocks behind the first trim; exactly one trim runs |
 | `TestStopWaitsForAnInFlightIdleRelease` | `stop()` waits for the trim that already passed the active check |
 
-`go test ./service/oomkiller` passes. The package's existing Darwin policy/lifecycle tests also pass
-unchanged. `-race` was not run on this host for this package (CGO/mingw setup); CI runs the race
-surface for the fork's data paths, not this service. That is a limitation, not a PASS.
+`go test ./service/oomkiller` and `go test -race ./service/oomkiller` (CGO + mingw) pass. The
+package's existing Darwin policy/lifecycle tests also pass unchanged.
 
 ## 4. Limitations
 
@@ -90,11 +110,15 @@ surface for the fork's data paths, not this service. That is a limitation, not a
 
 ```text
 OVERALL = DONE_WITH_LIMITATIONS
-BRANCH = testing
+BRANCH = oom-final-2026-10-24
 ROOT_CAUSE = idleGC (no GC since last release) used as a sufficient trigger; FreeOSMemory itself runs the GC, so the loop is self-sustaining at a stable footprint above resume
-NEW_ARCHITECTURE = observed-opportunity trigger + 512 KiB benefit floor + 30 s low-yield cooldown + pressure override + lifecycle barrier
+NEW_ARCHITECTURE = observed-opportunity idle trigger + 512 KiB benefit floor + 30 s low-yield cooldown; crisis handling stays in poll's state machine; triggered poll and idle path both join the stop barrier
 REGRESSION_33MB = PASS (deterministic)
-PRESSURE_SAFETY = PASS (armed bypasses cooldown)
+ARMED_STABLE_41MB_NO_THRASH = PASS
+TRIGGERED_ESCALATION = PASS (poll state machine, unchanged thresholds)
+STOP_RELOAD_LIFECYCLE = PASS (triggered + idle barriers)
+ALL_RECLAIM_PATHS_SINGLE_FLIGHT_OR_SAFE = PASS (idle single-flight; triggered path joins stop barrier)
+RACE_TEST = PASS
 LIFECYCLE_RACE = PASS (barrier added; package `-race` passes locally)
 MULTIPLATFORM = Windows tests pass; Darwin/Apple tests pass; iOS device NOT_VERIFIED
 CLOSE_RELOAD_RACE = PASS (deterministic barrier + -race)
