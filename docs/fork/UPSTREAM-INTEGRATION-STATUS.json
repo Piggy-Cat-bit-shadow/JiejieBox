@@ -1,60 +1,26 @@
 {
-    "generated_at":  "2026-10-24T13:20:00+08:00",
-    "phase":  "02/06",
-    "fork_testing_code_sha":  "1255f5aa086d4facd5d6111ff900c866a062a5ee",
-    "fork_testing_docs_sha":  "eb9c8eebd300240559e72b649fd9185ff0525b19",
+    "generated_at":  "2026-10-24T16:10:00+08:00",
+    "phase":  "03/06",
+    "fork_testing_code_sha":  "56a804e6eedb761b1b8b067465f4eb1c7f8f616d",
+    "fork_testing_docs_sha":  "the commit carrying this ledger",
     "upstream_observed":  {
                               "sha":  "a6952ccf6907c18e18917fcb763a433e8e36937b",
                               "time":  "2026-10-24T10:08:02+08:00"
                           },
     "behind_by":  110,
-    "ahead_by":  2598,
+    "ahead_by":  2607,
     "summary":  {
                     "open_semantic":  17,
-                    "open_dependency_blockers":  4,
+                    "open_dependency_blockers":  2,
                     "unknown":  0,
                     "previous_open_semantic":  20,
                     "previous_open_dependency_blockers":  5,
                     "ledger_correction":  "The 23 in the previous status came from the markdown table counting 3454d6d2411d, which the audit JSON classifies PRESENT (NO_ACTION). The audit is the source of truth: 22 MISSING_FIX before this phase. This phase closed 2 of them.",
-                    "ledger_correction_02":  "Phase 01 closed 2 rows and left 20; phase 02 closes cc022098fd, 38bf6879bb and 9c24112d12, leaving 17. DEP-SING-1 is completed, leaving 4 dependency blockers."
+                    "ledger_correction_02":  "Phase 01 closed 2 rows and left 20; phase 02 closes cc022098fd, 38bf6879bb and 9c24112d12, leaving 17. DEP-SING-1 is completed, leaving 4 dependency blockers.",
+                    "ledger_correction_03":  "Phase 03 closes DEP-QUIC-1 and DEP-QUIC-2, leaving CRONET and TAILSCALE (2 dependency blockers). Semantic rows stay at 17; this phase is dependency integration, not an audit-row close."
                 },
     "closed_this_phase":  [
-                              {
-                                  "status":  "CLOSED_CODE_AND_RACE",
-                                  "evidence":  [
-                                                   "sing dev 533bbb8: pause.Manager WaitActiveContext, race-free active channel (upstream 5dc452e)",
-                                                   "transport/wireguard/client_bind.go waits on bindCtx and the retry delay is interruptible",
-                                                   "transport/wireguard/endpoint.go applies an in-effect pause at publish",
-                                                   "client_bind_pause_test.go and pause_deadlock_test.go (pause-before-first-packet)"
-                                               ],
-                                  "upstream_sha":  "cc022098fdec81215e93377fa4594e18f4b7ec62",
-                                  "id":  "MAIN-cc022098fdec",
-                                  "not_verified":  "suspend/resume on a real Android/Apple device"
-                              },
-                              {
-                                  "status":  "CLOSED_CODE_AND_LINUX_UNIT",
-                                  "evidence":  [
-                                                   "common/dialer/default.go: ICMPControl uses the network strategy/interface types",
-                                                   "common/dialer/default_parallel_interface.go: serialInterfaceControl (candidate order, default-interface skip, EPERM only for the default strategy)",
-                                                   "protocol/direct/outbound.go installs one destination-independent control",
-                                                   "icmp_strategy_test.go; protocol/direct TestICMPLoopbackToTheTunRangeIsRejected"
-                                               ],
-                                  "upstream_sha":  "38bf6879bbadd65d097b0061053542670219dca8",
-                                  "id":  "MAIN-38bf6879bbad",
-                                  "not_verified":  "real ICMP socket on a device with multiple interfaces"
-                              },
-                              {
-                                  "status":  "CLOSED_CODE_AND_LINUX_NETNS",
-                                  "evidence":  [
-                                                   "cmd/sing-box/cmd_run_userns_linux.go: initialDir, capability guard, CAP_NET_BIND_SERVICE",
-                                                   "common/netns: ownsUserNamespace + nsenter -U reporting, holder ignores INT/TERM/HUP",
-                                                   "manager_test.go: signal-ignore child, root predicate; cmd_run_userns_linux_test.go: capability guard",
-                                                   "linux-netns-verify run 40063708065: TestUnshareNamespace (real namespace holder), signal policy, predicate and guard PASS"
-                                               ],
-                                  "upstream_sha":  "9c24112d12d5cff648f7261ff83ae4c5f3bd0d24",
-                                  "id":  "MAIN-9c24112d12d5",
-                                  "not_verified":  "non-root user-namespace creation on a host whose kernel/AppArmor policy allows it (runner policy blocks it)"
-                              }
+
                           ],
     "dependencies":  [
                          {
@@ -114,21 +80,29 @@
                              "id":  "DEP-QUIC-1",
                              "repo":  "Piggy-Cat-bit-shadow/quic-go",
                              "target_branch":  "jiejie-masque-stable",
-                             "status":  "OPEN",
+                             "status":  "COMPLETED",
                              "blocked_by":  [
 
                                             ],
-                             "next_action":  "audit mod.12 vs fork; preserve buffer pinning"
+                             "next_action":  "audit mod.12 vs fork; preserve buffer pinning",
+                             "branch":  "jiejie-masque-mod9",
+                             "branch_sha":  "ce02ee5cc210fa01019f8e961e10ad93a84ae156",
+                             "upstream_base":  "v0.61.0-sing-box-mod.12 (80c132fe)",
+                             "evidence":  "Sagernet module line only: cherry-picked mod.10 EMSGSIZE read, mod.11 trust_anchors, mod.12 application-limited; added targeted tests; local go test/-race and linux/darwin/windows/android builds pass. Former default jiejie-masque-stable is the separate github.com/metacubex/quic-go line and was not modified; repository default restored to it.",
+                             "module_scope":  "github.com/sagernet/quic-go; never merge into the MetaCubeX stable line"
                          },
                          {
                              "id":  "DEP-QUIC-2",
                              "repo":  "Piggy-Cat-bit-shadow/sing-quic",
                              "target_branch":  "main",
-                             "status":  "OPEN",
+                             "status":  "COMPLETED",
                              "blocked_by":  [
                                                 "DEP-QUIC-1"
                                             ],
-                             "next_action":  "absorb applicable fixes, keep MASQUE logic"
+                             "next_action":  "absorb applicable fixes, keep MASQUE logic",
+                             "branch_sha":  "5e5a0274bd6ca92f75f5641298759d79d16a3a85",
+                             "upstream_sha":  "7e0a5869a5f49ed0a685143345dfda0448bbc708",
+                             "evidence":  "main is upstream 7e0a5869 (hysteria2 port-hopping EMSGSIZE) plus the three ceiling/owned-datagram commits; go.mod resolves quic-go to the same Sagernet tip ce02ee5c; build, tests, race and linux/darwin/windows/android builds pass."
                          },
                          {
                              "id":  "DEP-CRONET-1",
@@ -165,14 +139,15 @@
                            "root_module":  "github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024025840-dcf84577d0eb",
                            "test_module":  "github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024025840-dcf84577d0eb",
                            "verification":  "go list -m -json in both modules resolves to the same Dir; go mod tidy/verify clean; go build ./... clean",
-                           "sing":  "github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261024041103-4200a04a089a (root and test module)"
+                           "sing":  "github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261024041103-4200a04a089a (root and test module)",
+                           "quic_go":  "github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261024063732-ce02ee5cc210 (branch jiejie-masque-mod9, Sagernet module line; root and test)",
+                           "sing_quic":  "github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261024074641-5e5a0274bd6c (main; root and test)"
                        },
     "ci":  {
-               "main_linux":  "SUCCESS: linux-netns-verify 40063708065 on 1255f5aa086",
-               "sing":  {
-                            "test":  "SUCCESS on 4200a04 (run 40061343168, rerun of a flaky SOCKS pool assertion: all six jobs pass); lint=FAILURE (run 40061343203) on pre-existing repository-wide gci/gofumpt/modernize/paralleltest issues unrelated to this phase (service/pause is clean)"
-                        },
-               "main_repo":  "SUCCESS on 1255f5aa086 (code): Verify 40063702396, Android Core ARM64 40063702432, Mobile contract verification 40063710577 (dispatch; the push run was cancelled while a newer commit superseded it)"
+               "sing_quic":  "No Actions run (repository workflows have not executed). Local build, go test ./..., race and linux/darwin/windows/android builds pass on 5e5a027.",
+               "main_repo":  "SUCCESS on 56a804e6eed (code): Verify 40075546655, Android Core ARM64 40075546704, Mobile contract verification 40075546654",
+               "main_linux":  "linux-masque-verify 40072195794 RED on TestMASQUESelfToSelf/HTTP2 and TestMASQUEPacketTooBig; the phase-02 baseline run 40073782175 fails the same two cases, while HTTP3/HTTP1/version fallback/routes/no-route/reconnect/stuck-client PASS. transport/masque and protocol/masque pass under -race.",
+               "quic_go":  "Actions is disabled for this repository, so no workflow run exists. Local go test ./..., go test -race ./..., and linux/darwin/windows/android builds pass on ce02ee5c."
            },
     "open_semantic_rows":  [
                                {
@@ -273,9 +248,12 @@
                       "privileged dual real-TUN IPv6 rule/route lifecycle test and linux-tun-verify workflow",
                       "DEP-SING-1 pause.Manager WaitActiveContext and the WireGuard pause/close fixes",
                       "ICMP network strategy on the control path",
-                      "Linux user-namespace capability guard, holder signal policy and nsenter reporting"
+                      "Linux user-namespace capability guard, holder signal policy and nsenter reporting",
+                      "DEP-QUIC-1: quic-go Sagernet release line at ce02ee5c with mod.10-12",
+                      "DEP-QUIC-2: sing-quic main at 5e5a027 with upstream 7e0a5869 and the owned/ceiling path",
+                      "MASQUE cross-repo H3 e2e and hysteria2/tuic e2e on the new pins"
                   ],
-    "next_executable_action":  "MAIN-42cae14c63d1 (Apple TLS engine connection leak, P0)",
+    "next_executable_action":  "DEP-CRONET-1 (phase 04)",
     "closed_phase_01":  [
                             {
                                 "id":  "MAIN-18aa2cdfe742",
@@ -298,6 +276,44 @@
                                                  "experimental/libbox/redirect_judge_linux_test.go (linux build; PASS on a Linux runner in 40056761067)"
                                              ],
                                 "not_verified":  "Android binder behaviour on device"
+                            }
+                        ],
+    "closed_phase_02":  [
+                            {
+                                "status":  "CLOSED_CODE_AND_RACE",
+                                "evidence":  [
+                                                 "sing dev 533bbb8: pause.Manager WaitActiveContext, race-free active channel (upstream 5dc452e)",
+                                                 "transport/wireguard/client_bind.go waits on bindCtx and the retry delay is interruptible",
+                                                 "transport/wireguard/endpoint.go applies an in-effect pause at publish",
+                                                 "client_bind_pause_test.go and pause_deadlock_test.go (pause-before-first-packet)"
+                                             ],
+                                "upstream_sha":  "cc022098fdec81215e93377fa4594e18f4b7ec62",
+                                "id":  "MAIN-cc022098fdec",
+                                "not_verified":  "suspend/resume on a real Android/Apple device"
+                            },
+                            {
+                                "status":  "CLOSED_CODE_AND_LINUX_UNIT",
+                                "evidence":  [
+                                                 "common/dialer/default.go: ICMPControl uses the network strategy/interface types",
+                                                 "common/dialer/default_parallel_interface.go: serialInterfaceControl (candidate order, default-interface skip, EPERM only for the default strategy)",
+                                                 "protocol/direct/outbound.go installs one destination-independent control",
+                                                 "icmp_strategy_test.go; protocol/direct TestICMPLoopbackToTheTunRangeIsRejected"
+                                             ],
+                                "upstream_sha":  "38bf6879bbadd65d097b0061053542670219dca8",
+                                "id":  "MAIN-38bf6879bbad",
+                                "not_verified":  "real ICMP socket on a device with multiple interfaces"
+                            },
+                            {
+                                "status":  "CLOSED_CODE_AND_LINUX_NETNS",
+                                "evidence":  [
+                                                 "cmd/sing-box/cmd_run_userns_linux.go: initialDir, capability guard, CAP_NET_BIND_SERVICE",
+                                                 "common/netns: ownsUserNamespace + nsenter -U reporting, holder ignores INT/TERM/HUP",
+                                                 "manager_test.go: signal-ignore child, root predicate; cmd_run_userns_linux_test.go: capability guard",
+                                                 "linux-netns-verify run 40063708065: TestUnshareNamespace (real namespace holder), signal policy, predicate and guard PASS"
+                                             ],
+                                "upstream_sha":  "9c24112d12d5cff648f7261ff83ae4c5f3bd0d24",
+                                "id":  "MAIN-9c24112d12d5",
+                                "not_verified":  "non-root user-namespace creation on a host whose kernel/AppArmor policy allows it (runner policy blocks it)"
                             }
                         ]
 }

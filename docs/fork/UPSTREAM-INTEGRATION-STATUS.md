@@ -1,20 +1,36 @@
 # Upstream integration status
 
-- generated: 2026-10-24T13:10:00+08:00 (phase 02/06)
-- fork testing code: `1255f5aa086d4facd5d6111ff900c866a062a5ee`
+- generated: 2026-10-24T16:10:00+08:00 (phase 03/06)
+- fork testing code: `56a804e6eedb761b1b8b067465f4eb1c7f8f616d`
 - fork testing docs: `eb9c8eebd300240559e72b649fd9185ff0525b19`
 - upstream observed: `a6952ccf6907c18e18917fcb763a433e8e36937b` (2026-10-24T10:08:02+08:00, "Remove stale workflow")
-- behind_by: **110**; ahead_by: 2597
-- open semantic: **17**; open dependency blockers: **4**
+- behind_by: **110**; ahead_by: 2606
+- open semantic: **17**; open dependency blockers: **2**
 
-**Phase 02 closes three rows** (`cc022098fdec`, `38bf6879bbad`, `9c24112d12d5`) and
-**DEP-SING-1**. 17 of the audit's 22 `MISSING_FIX` rows remain; the audit JSON is still the source of
-truth for classification.
+**Phase 03 closes DEP-QUIC-1 and DEP-QUIC-2** and leaves CRONET and TAILSCALE as the two
+dependency blockers. No semantic audit row is closed this phase; 17 of the audit's 22 `MISSING_FIX`
+rows remain.
+
+## Dependency closure (QUIC, phase 03)
+
+`quic-go` has two intentionally separate module lines. Only the Sagernet line is consumed here:
+
+| line | module | role | this phase |
+|---|---|---|---|
+| `jiejie-masque-mod9` | `github.com/sagernet/quic-go` | sing-box/sing-quic release line | fast-forwarded to `ce02ee5c` (mod.10-12 + tests + fork verify workflow) |
+| `jiejie-masque-stable` | `github.com/metacubex/quic-go` | independent MASQUE projects (connect-ip-go, jiejie-masque-unified) | untouched, remains repository default |
+
+Merging the two was rejected with evidence: different module paths, 137 conflicting production files
+on a trial merge, and a second incompatible owned-DATAGRAM API. The release line is pinned by SHA;
+the default branch stays the MetaCubeX line so independent projects keep their baseline.
 
 ## Closed in phase 02
 
 | id | upstream | what landed | evidence | not verified |
 |---|---|---|---|---|
+| MAIN-cc022098fdec | `cc022098fdec` | pause.Manager WaitActiveContext and race-free active channel (sing dev 533bbb8); WireGuard waits on bindCtx, interruptible retry, pause applied at publish | `service/pause/pause_test.go`, `client_bind_pause_test.go`, `pause_deadlock_test.go`; sing test workflow green | Android/Apple device suspend |
+| MAIN-38bf6879bbad | `38bf6879bbad` | ICMPControl applies strategy/interface types; serialInterfaceControl candidate order; direct outbound one control | `icmp_strategy_test.go`, TUN ICMP loopback test, Linux unit run | real multi-interface ICMP socket |
+| MAIN-9c24112d12d5 | `9c24112d12d5` | cwd pin, capability guard, CAP_NET_BIND_SERVICE, holder ignores INT/TERM/HUP, ownsUserNamespace nsenter hint | `linux-netns-verify` 40063708065: real unshare, signal, predicate, guard | non-root user namespaces under permissive host policy |
 
 ## Closed in phase 01
 
@@ -32,22 +48,22 @@ truth for classification.
 | DEP-TUN-2 | COMPLETED | `1559fbd`: no-auto-route IPv6 default route, priority clamp above `redirectRouteRulePriority`, delete by identity. Tests `tun_linux_test.go`. |
 | DEP-TUN-3 | COMPLETED | `1559fbd`: bounded held packets (16/flow, 512/stage), async `JudgeFlow`, resume pump on System/Mixed/Go/gvisor and nfqueue, close drops judgements. Tests `flow_dispatch_judge_test.go`. |
 | DEP-SING-1 | COMPLETED | `sing/dev` 4200a04 (merge a965eff of the previously pinned side branch, pause port 533bbb8, socks test cleanup 4200a04). `service/pause` tests pass under `-race` locally and in the sing test workflow (all six jobs). |
-| DEP-QUIC-1 | OPEN | audit mod.12 vs fork; preserve buffer pinning |
-| DEP-QUIC-2 | OPEN | blocked by DEP-QUIC-1 |
+| DEP-QUIC-1 | COMPLETED | Sagernet line `jiejie-masque-mod9` at `ce02ee5c`: mod.10 EMSGSIZE read, mod.11 trust_anchors, mod.12 application-limited, on top of the owned-DATAGRAM/ceiling work. Targeted tests, local `go test`/`-race`, linux/darwin/windows/android builds. `jiejie-masque-stable` is the separate `github.com/metacubex/quic-go` line, unmodified; repository default restored to it. |
+| DEP-QUIC-2 | COMPLETED | `sing-quic/main` at `5e5a027`: upstream `7e0a5869` plus the ceiling/owned-datagram commits, resolving quic-go to `ce02ee5c`. Build/tests/race and four-OS builds pass. |
 | DEP-CRONET-1 | OPEN | atomic root/all/lib + ABI matrix |
 | DEP-TAILSCALE-1 | OPEN | upgrade external module if API present |
 
 ## MASQUE inbound backpressure
 
-Wiring is present: `WaitWriteInboundBuffers` �?`transport/device` �?`protocol/masque`
+Wiring is present: `WaitWriteInboundBuffers` �`transport/device` �`protocol/masque`
 (`ClientEndpoint`/`ServerEndpoint`), with the non-blocking fallback kept.
 
 Real-path evidence added this phase:
 
-- `transport/masque/inbound_backpressure_real_test.go` �?a real capsule is parsed by the session,
+- `transport/masque/inbound_backpressure_real_test.go` �a real capsule is parsed by the session,
   the full device parks the read loop, a drained slot releases exactly one write, `Close` returns
   `os.ErrClosed`, and a handler with no wait contract uses the non-blocking path.
-- sing-tun `tun_memory_wait_test.go` �?the underlying `MemoryTun`: full queue parks, a freed slot
+- sing-tun `tun_memory_wait_test.go` �the underlying `MemoryTun`: full queue parks, a freed slot
   wakes, `Close` wakes with `os.ErrClosed`, the non-blocking path drops at the bound.
 
 Not verified: a live QUIC client/server datagram session on a device.
@@ -56,22 +72,23 @@ Not verified: a live QUIC client/server datagram session on a device.
 
 Root and nested `test` module both replace `github.com/sagernet/sing-tun` with
 `github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024025840-dcf84577d0eb` and
-`github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261024041103-4200a04a089a`. `go list -m -json`
+`github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261024041103-4200a04a089a`, `github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261024063732-ce02ee5cc210` and `github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261024074641-5e5a0274bd6c`. `go list -m -json`
 shows the same `Replace.Dir` in both; `go mod tidy`/`verify` are clean and `go build ./...` passes.
 
 ## CI
 
-- sing-tun: unchanged from phase 01. Lint green; test red only on the pre-existing Go-stack set
-  (subset of the pre-merge baseline), with the privileged dual-TUN workflow green.
-- sing: **test SUCCESS** on `4200a04` (run 40061343168, rerun of one flaky SOCKS pool assertion; all
-  six Linux/macOS/Windows jobs pass). **lint FAILURE** (run 40061343203) on repository-wide
-  pre-existing gci/gofumpt/modernize/paralleltest issues; `service/pause` itself is clean.
-- Main repo **Verify SUCCESS** on `1255f5aa086` (run 40063702396), **Android Core ARM64 SUCCESS**
-  (run 40063702432), **Mobile contract verification SUCCESS** (run 40063710577, dispatched; the push
-  run was cancelled by the newer commit).
-- **linux-netns-verify SUCCESS** on `1255f5aa086` (run 40063708065): real unshare namespace holder,
-  holder signal policy, root user-namespace predicate, capability guard, ICMP strategy and WireGuard
-  pause tests.
+- quic-go: Actions is disabled for the repository, so no workflow run exists. On `ce02ee5c`:
+  `go build ./...`, `go test ./...`, `go test -race ./...` and linux/darwin/windows/android builds
+  pass locally.
+- sing-quic: no Actions run. On `5e5a027`: build, `go test ./...`, `-race` and the same four-OS
+  builds pass locally.
+- Main repo **Verify SUCCESS** on `56a804e6eed` (run 40075546655), **Android Core ARM64 SUCCESS**
+  (run 40075546704), **Mobile contract verification SUCCESS** (run 40075546654).
+- **linux-masque-verify RED** on `56a804e6eed` (run 40072195794): `TestMASQUESelfToSelf/HTTP2` and
+  `TestMASQUEPacketTooBig` time out. The phase-02 baseline run `40073782175` fails the same two
+  cases, while HTTP3, HTTP1, version fallback, advertised routes, no-route, reconnect and stuck
+  client PASS. `transport/masque` and `protocol/masque` pass under `-race`; the Linux gate also
+  exposed and fixed a nil-signal crash in the resolved DNS resolver.
 
 ## Open semantic rows (17)
 
@@ -97,9 +114,7 @@ shows the same `Replace.Dir` in both; `go mod tidy`/`verify` are clean and `go b
 
 ## Next executable action
 
-`MAIN-42cae14c63d1` (Apple TLS engine connection leak, P0), then `MAIN-1cc885e0400e`
-(Tailscale default route). `MAIN-cc022098fdec` is closed in this phase; its remaining device-level
-suspend/resume check is recorded above as not verified.
+`DEP-CRONET-1` (phase 04, atomic root/all/lib + ABI matrix), then `MAIN-42cae14c63d1` (Apple TLS engine connection leak, P0). `MAIN-cc022098fdec` is closed; its device-level suspend/resume caveat is recorded above.
 
 ## Evidence notes
 
