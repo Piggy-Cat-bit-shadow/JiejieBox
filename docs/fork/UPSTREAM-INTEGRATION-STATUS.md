@@ -2,9 +2,9 @@
 
 - generated: 2026-10-24T20:00:00+08:00 (phase 06/06)
 - fork testing code: `c3c23d1059c8834f68d268995557c99be6d787a0`
-- fork testing docs: `0ea3ea30ec31e8a247535a9c9d08a4bcdd9aa3b2`
+- fork testing docs: `586611a26f097b27cf58db372302c3c8e815385c`
 - upstream observed: `a6952ccf6907c18e18917fcb763a433e8e36937b` (2026-10-24T10:08:02+08:00, "Remove stale workflow")
-- behind_by: **0**; ahead_by: 2643
+- behind_by: **0**; ahead_by: 2644
 - open semantic: **0**; open dependency blockers: **0**
 
 **Phase 06 closes the last five main-repo rows** (5 -> 0): certificates, format round-trip, the
