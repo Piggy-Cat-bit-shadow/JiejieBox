@@ -72,12 +72,12 @@ github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_amd64 v0.0.0-2026092920211
 github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_amd64 v0.0.0-20260929202119-8c68ce89873c/go.mod h1:G1otAaHTYRaXZ6mm8TxjvA/Kpyfz82yG2ATRu1RY2Po=
 github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_arm64 v0.0.0-20260929202119-8c68ce89873c h1:EIgOQRW9IabMbMAp6j+qOuZ9CDplHSHjTjf3jpPG6Is=
 github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_arm64 v0.0.0-20260929202119-8c68ce89873c/go.mod h1:AHSjG1k9wfhEfZhRCQCdUosL+qgyd//Ww9lwiRvBhhg=
-github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261019061042-7e08ecaba383 h1:rUnVDBvAmVLp24uncfnQFN2zHBoDFMEeytrw3iR9HzE=
-github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261019061042-7e08ecaba383/go.mod h1:Y7IbYEm6E0KhhcxlLZjjxyAZy6Fkn0anFyiXYLqhqNg=
+github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261024061902-8929ebe587f5 h1:TBsOyZqVaCcyCJu/d92Ha++3NC9tpfgESXLHyPkRf6Y=
+github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261024061902-8929ebe587f5/go.mod h1:Y7IbYEm6E0KhhcxlLZjjxyAZy6Fkn0anFyiXYLqhqNg=
 github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261024041103-4200a04a089a h1:YpC1h4Y5nEmGcdb6X3dBijtODvlGCfHHE7TPFmSP1bM=
 github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261024041103-4200a04a089a/go.mod h1:K3Owt3xPhHugvlnlPPxZJ/exXdaJfEPOTNorGk4AXjo=
-github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261019060901-d0deb0359c06 h1:Rf9fzCjI5G36CuaYyW4yzd2Uszk2hUGOr9gAKNJWxUI=
-github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261019060901-d0deb0359c06/go.mod h1:+KtxC4r3q1f53WPfuY0jQCGWOOv3t+fNu7hJNzJseWs=
+github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261024062028-f3753ab3f9de h1:rrThktQA13LFsbtpSmoSypvBbkm6jVoVdFOL6Hbf4A8=
+github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261024062028-f3753ab3f9de/go.mod h1:k8P+vlzBtWgSLEjzDVDzGHwJ4C0Hhzy2Mtt5IO7onAg=
 github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024025840-dcf84577d0eb h1:hnGrDTYaLblQZgAuveEgFDuXJ6WwIORhl85Z8uoyStk=
 github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024025840-dcf84577d0eb/go.mod h1:liMb9HPIWcFWqF6VJ/ttIY8fTSRPdRltBeSeEcXt1Dk=
 github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261009084700-6c3e08ed4c4d h1:csj8IwzxSc2wGgDymvpff40+xIK+c60XvXq5m4EJ5uw=

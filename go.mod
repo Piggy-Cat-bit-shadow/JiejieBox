@@ -286,25 +286,31 @@ replace github.com/sagernet/cronet-go/lib/windows_amd64 => github.com/Piggy-Cat-
 replace github.com/sagernet/cronet-go/lib/windows_arm64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_arm64 v0.0.0-20260929202119-8c68ce89873c
 
 // Adds the ownership-transferring DATAGRAM API (SendDatagramOwned, SendDatagramsOwned and
-// datagramQueue.AddBatch) used by the MASQUE zero-copy outbound path. Rebased onto
-// v0.61.0-sing-box-mod.9, which brings the OOB socket read fix; the additive DATAGRAM
-// commits are unchanged and SendDatagram keeps its copying semantics.
+// datagramQueue.AddBatch) used by the MASQUE zero-copy outbound path, plus the
+// InitialPacketSizeCeiling that is applied AFTER the ChromeParrot fingerprint override, so a
+// path proven to carry 1232 bytes is not asked to carry Chrome's 1250 (and PMTUD cannot grow
+// past it).
 //
-// InitialPacketSizeCeiling is the round's addition: a hard packet-size ceiling applied
-// AFTER the ChromeParrot fingerprint override, so a path this fork has proven carries
-// 1232 bytes is no longer asked to carry Chrome's 1250. It also caps what path MTU
-// discovery may grow to, so the ceiling still holds after the handshake.
-replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261019061042-7e08ecaba383
+// The release line is now based on v0.61.0-sing-box-mod.12: EMSGSIZE from a connected socket
+// read is recoverable, the Chrome ClientHello carries trust_anchors, and application-limited
+// is decided after every send attempt instead of ending on any sent packet.
+//
+// This is the `jiejie-masque-mod9` branch, made the repository's default branch this round.
+// The former default `jiejie-masque-stable` is a MetaCubeX/quic-go v0.62 lineage: its module
+// path is github.com/metacubex/quic-go, so it cannot satisfy this `github.com/sagernet/quic-go`
+// require, and it carries a second, incompatible owned-DATAGRAM API. Merging the two would
+// have meant resolving 137 production-file conflicts and two owners for the same datagram
+// lifetime; the sagernet release line is the one sing-quic and sing-box actually build.
+replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261024061902-8929ebe587f5
 
-// Carries InitialPacketSizeCeiling through qtls.QUICOptions and ApplyQUICOptions.
+// Carries InitialPacketSizeCeiling through qtls.QUICOptions and ApplyQUICOptions, and the
+// owned-DATAGRAM send path for Hysteria2 and TUIC.
 //
-// The fork's baseline commit is the EXACT tree sing-box already builds against
-// (hash-identical to github.com/sagernet/sing-quic@v0.7.2-0.20260929152029-258509488380),
-// because that revision is no longer reachable from any upstream branch and upstream's
-// head has since drifted in seven files this round did not measure. Forking rather than
-// reusing the PMTUD boolean is the deliberate choice: the alternative was to keep two
-// meanings in one field, which is the defect being fixed.
-replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261019060901-d0deb0359c06
+// Default branch now contains upstream main at 7e0a5869 (EMSGSIZE in the hysteria2 port
+// hopping receive loop) plus the three packet-ceiling/owned-datagram commits that sing-box
+// already pinned. The default branch also resolves quic-go to the fork release line, so it
+// builds and tests on its own; sing-box keeps its own replace, which wins for this build.
+replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261024062028-f3753ab3f9de
 
 // The system stack's TCP accept loop used to die permanently on one unexpected listener error:
 // the listener is bound to the stack's own address and its port is what every new SYN is rewritten
