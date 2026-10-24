@@ -48,7 +48,7 @@ func NewAutoRedirectService(options []byte, handler AutoRedirectHandler) (AutoRe
 	autoRedirect, err := tun.NewAutoRedirect(tun.AutoRedirectOptions{
 		TunOptions:         tunOptions,
 		Context:            context.Background(),
-		Handler:            &autoRedirectServiceHandler{handler: handler, logger: autoRedirectLogger},
+		Handler:            &autoRedirectServiceHandler{handler: handler, logger: autoRedirectLogger, judgeSlots: make(chan struct{}, autoRedirectJudgeConcurrency)},
 		Logger:             autoRedirectLogger,
 		NetworkMonitor:     networkMonitor,
 		InterfaceFinder:    control.NewDefaultInterfaceFinder(),
@@ -96,12 +96,23 @@ func (s *autoRedirectServiceSession) UpdateRouteAddressSet() error {
 	return s.autoRedirect.UpdateRouteAddressSet()
 }
 
+// Each JudgeFlow call is a synchronous binder transaction into the app process. It occupies one
+// thread of the app's binder pool (15 threads by default in libbinder), which also serves the
+// system's calls into the app, until the app returns the verdict. A burst of new auto-redirect
+// flows therefore exhausted that pool and blocked both the VPN read path and the system's calls
+// into the app. The slot channel is the bound; it is released by defer so a panic or early return
+// cannot leak a slot.
+const autoRedirectJudgeConcurrency = 8
+
 type autoRedirectServiceHandler struct {
-	handler AutoRedirectHandler
-	logger  logger.Logger
+	handler    AutoRedirectHandler
+	logger     logger.Logger
+	judgeSlots chan struct{}
 }
 
 func (h *autoRedirectServiceHandler) JudgeFlow(network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
+	h.judgeSlots <- struct{}{}
+	defer func() { <-h.judgeSlots }()
 	action, err := h.handler.JudgeFlow(int32(network), source.Addr().String(), int32(source.Port()), destination.Addr().String(), int32(destination.Port()), firstPacket)
 	if err != nil {
 		h.logger.Error("judge flow ", source, " -> ", destination, ": ", err)

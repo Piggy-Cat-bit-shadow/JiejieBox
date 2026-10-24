@@ -38,6 +38,27 @@ func RegisterInbound(registry *inbound.Registry) {
 	inbound.Register[option.TunInboundOptions](registry, C.TypeTun, NewInbound)
 }
 
+// ipRoute2TableIndex resolves the route table used by the tun instance. With auto_route off the
+// instance must not claim a table of its own: it only installs the explicit route addresses the
+// user configured, and forcing the shared default table would put them in a table that another
+// (auto_route) tun instance also owns. An explicit index is always honoured.
+func ipRoute2TableIndex(options option.TunInboundOptions) int {
+	if options.IPRoute2TableIndex != 0 || !options.AutoRoute {
+		return options.IPRoute2TableIndex
+	}
+	return tun.DefaultIPRoute2TableIndex
+}
+
+// ipRoute2RuleIndex resolves the rule priority used by auto_route. It is always needed when a
+// table is used, which is why it keeps its default even when auto_route is off: sing-tun only reads
+// it in its auto_route rule construction.
+func ipRoute2RuleIndex(options option.TunInboundOptions) int {
+	if options.IPRoute2RuleIndex != 0 {
+		return options.IPRoute2RuleIndex
+	}
+	return tun.DefaultIPRoute2RuleIndex
+}
+
 type Inbound struct {
 	tag              string
 	ctx              context.Context
@@ -333,14 +354,8 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		}
 	}
 
-	tableIndex := options.IPRoute2TableIndex
-	if tableIndex == 0 {
-		tableIndex = tun.DefaultIPRoute2TableIndex
-	}
-	ruleIndex := options.IPRoute2RuleIndex
-	if ruleIndex == 0 {
-		ruleIndex = tun.DefaultIPRoute2RuleIndex
-	}
+	tableIndex := ipRoute2TableIndex(options)
+	ruleIndex := ipRoute2RuleIndex(options)
 	autoRedirectFallbackRuleIndex := options.AutoRedirectFallbackRuleIndex
 	if autoRedirectFallbackRuleIndex == 0 {
 		autoRedirectFallbackRuleIndex = tun.DefaultIPRoute2AutoRedirectFallbackRuleIndex

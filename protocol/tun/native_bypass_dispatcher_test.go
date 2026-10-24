@@ -55,12 +55,59 @@ func (w *dispatcherWriteback) count() int {
 // duration used to imply and the same default the fork's own configuration resolves to. Nothing
 // about what this dispatcher is asked to prove has changed - the parameter moved, it was not
 // relaxed.
-func newTraceDispatcher(t *testing.T, handler *traceHandler) (*tun.ForwardDispatcher, *tun.ForwardStage, *dispatcherWriteback) {
+//
+// Flow judgement is asynchronous in sing-tun 1559fbd (upstream 09dd03d): Dispatch parks the first
+// packet and returns true, and the verdict is applied by the stack's resume pump. The trace pumps
+// that here and reports the old `consumed` bit from whether the packet was handed back to the
+// stack, so the assertion the trace is about is unchanged.
+type traceDispatch struct {
+	dispatcher *tun.ForwardDispatcher
+	stage      *tun.ForwardStage
+	writeback  *dispatcherWriteback
+	resume     chan struct{}
+	access     sync.Mutex
+	stack      int
+}
+
+func newTraceDispatcher(t *testing.T, handler *traceHandler) *traceDispatch {
 	t.Helper()
-	writeback := &dispatcherWriteback{}
-	dispatcher := tun.NewForwardDispatcher(handler, writeback, logger.NOP(), tun.UDPNatOptions{Timeout: 30 * time.Second}, time.Minute)
-	t.Cleanup(dispatcher.Close)
-	return dispatcher, dispatcher.NewStage(writeback), writeback
+	trace := &traceDispatch{
+		writeback: &dispatcherWriteback{},
+		resume:    make(chan struct{}, 16),
+	}
+	trace.dispatcher = tun.NewForwardDispatcher(handler, trace.writeback, logger.NOP(), tun.UDPNatOptions{Timeout: 30 * time.Second}, time.Minute)
+	trace.stage = trace.dispatcher.NewStage(trace.writeback, func() {
+		trace.stage.ResumeJudged(func(packet []byte, meta tun.ForwardFrameMeta) {
+			trace.access.Lock()
+			trace.stack++
+			trace.access.Unlock()
+		})
+		trace.resume <- struct{}{}
+	})
+	t.Cleanup(trace.dispatcher.Close)
+	return trace
+}
+
+func (d *traceDispatch) stackCount() int {
+	d.access.Lock()
+	defer d.access.Unlock()
+	return d.stack
+}
+
+// dispatch returns the old consumed bit: true when the packet did not continue into the stack. It
+// waits for a judgement only when Dispatch reports that it took the packet, and a table hit that
+// needs no judgement is distinguished by the timeout.
+func (d *traceDispatch) dispatch(packet []byte) bool {
+	before := d.stackCount()
+	if !d.stage.Dispatch(packet) {
+		return false
+	}
+	select {
+	case <-d.resume:
+	case <-time.After(100 * time.Millisecond):
+		// No judgement was pending: an installed entry handled this packet synchronously.
+	}
+	return d.stackCount() == before
 }
 
 // TestDispatcherConsumesOnlyAFlow is the shared-layer trace, covering every verdict the router can
@@ -109,14 +156,14 @@ func TestDispatcherConsumesOnlyAFlow(t *testing.T) {
 			handler := newTraceHandler(func(uint8, netip.AddrPort, netip.AddrPort) tun.FlowVerdict {
 				return testCase.verdict
 			})
-			_, stage, writeback := newTraceDispatcher(t, handler)
+			trace := newTraceDispatcher(t, handler)
 
-			consumed := stage.Dispatch(tcpSYN(source, destination, 1000))
+			consumed := trace.dispatch(tcpSYN(source, destination, 1000))
 			require.Equal(t, testCase.consumed, consumed)
-			require.Zero(t, writeback.count(),
+			require.Zero(t, trace.writeback.count(),
 				"the dispatcher never writes an application packet back to the platform: it either "+
 					"consumes it or continues into the stack, and neither hands it back out")
-			stage.Flush()
+			trace.stage.Flush()
 		})
 	}
 }
@@ -138,15 +185,15 @@ func TestDispatcherTreatsBypassAndAcceptIdentically(t *testing.T) {
 				},
 			}
 		})
-		_, stage, writeback := newTraceDispatcher(t, handler)
+		trace := newTraceDispatcher(t, handler)
 
-		consumed = stage.Dispatch(tcpSYN(source, destination, 2000))
+		consumed = trace.dispatch(tcpSYN(source, destination, 2000))
 		// The same flow again, so the installed entry is exercised rather than only the install.
-		stage.Dispatch(tcpSYN(source, destination, 2001))
-		stage.Flush()
+		trace.dispatch(tcpSYN(source, destination, 2001))
+		trace.stage.Flush()
 
 		judgedCount, _, _ := handler.counts()
-		return consumed, judgedCount, writeback.count(), created
+		return consumed, judgedCount, trace.writeback.count(), created
 	}
 
 	acceptConsumed, acceptJudged, acceptWritten, acceptTrackers := observe(tun.ActionAccept)
@@ -177,11 +224,11 @@ func TestDispatcherConsumesAnAcceptEntrysSecondPacketTheSameWay(t *testing.T) {
 	handler := newTraceHandler(func(uint8, netip.AddrPort, netip.AddrPort) tun.FlowVerdict {
 		return tun.FlowVerdict{Action: tun.ActionBypass}
 	})
-	_, stage, _ := newTraceDispatcher(t, handler)
+	trace := newTraceDispatcher(t, handler)
 
-	require.False(t, stage.Dispatch(tcpSYN(source, destination, 3000)))
-	require.False(t, stage.Dispatch(tcpSYN(source, destination, 3001)))
-	stage.Flush()
+	require.False(t, trace.dispatch(tcpSYN(source, destination, 3000)))
+	require.False(t, trace.dispatch(tcpSYN(source, destination, 3001)))
+	trace.stage.Flush()
 
 	judged, _, _ := handler.counts()
 	require.Equal(t, 1, judged,
@@ -198,13 +245,13 @@ func TestDispatcherRemovesAnAcceptEntryOnReset(t *testing.T) {
 	handler := newTraceHandler(func(uint8, netip.AddrPort, netip.AddrPort) tun.FlowVerdict {
 		return tun.FlowVerdict{Action: tun.ActionBypass}
 	})
-	_, stage, _ := newTraceDispatcher(t, handler)
+	trace := newTraceDispatcher(t, handler)
 
-	require.False(t, stage.Dispatch(tcpSYN(source, destination, 4000)))
-	require.False(t, stage.Dispatch(tcpRST(source, destination, 4001)))
+	require.False(t, trace.dispatch(tcpSYN(source, destination, 4000)))
+	require.False(t, trace.dispatch(tcpRST(source, destination, 4001)))
 	// After the reset the entry is gone, so the next packet is judged again.
-	require.False(t, stage.Dispatch(tcpSYN(source, destination, 4002)))
-	stage.Flush()
+	require.False(t, trace.dispatch(tcpSYN(source, destination, 4002)))
+	trace.stage.Flush()
 
 	judged, _, _ := handler.counts()
 	require.Equal(t, 2, judged,
