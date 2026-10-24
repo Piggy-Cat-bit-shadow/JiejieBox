@@ -1,0 +1,35 @@
+name: linux-platform-verify
+
+# Linux-side half of the platform fixes: the procfs parser tests (Android code path compiled for
+# linux), the IPv6 URL-host helpers and the Android cross-compile. The Apple engine has its own
+# macOS gate; this one is for the parts that can be executed on Linux.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - name: procfs and URL-host tests
+        run: |
+          go test -count=1 -v ./experimental/libbox/internal/procfs
+          go test -count=1 -v ./dns/transport ./dns/transport/quic ./service/derp
+      - name: Android cross-compile
+        env:
+          GOOS: android
+          GOARCH: arm64
+          CGO_ENABLED: "0"
+        run: |
+          go test -c -vet=off -o /tmp/procfs-android.test ./experimental/libbox/internal/procfs
+          go build -tags with_quic ./experimental/libbox
