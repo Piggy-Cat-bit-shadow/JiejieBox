@@ -257,7 +257,7 @@ replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v
 // so the replace is here to keep the two modules pinned to the same revision: the guard in
 // scripts/ci/check-go-module-integrity.sh fails when a fork the root builds drifts here, which is
 // how the test module was once found resolving a different sing-tun than the product ships.
-replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261024062028-f3753ab3f9de
+replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261024074641-5e5a0274bd6c
 
 // The cronet-go pin is a tree of modules, not one: see the root module for why every path the
 // repository publishes is pinned. A nested module does not inherit the root's replaces.

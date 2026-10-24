@@ -295,12 +295,12 @@ replace github.com/sagernet/cronet-go/lib/windows_arm64 => github.com/Piggy-Cat-
 // read is recoverable, the Chrome ClientHello carries trust_anchors, and application-limited
 // is decided after every send attempt instead of ending on any sent packet.
 //
-// This is the `jiejie-masque-mod9` branch, made the repository's default branch this round.
-// The former default `jiejie-masque-stable` is a MetaCubeX/quic-go v0.62 lineage: its module
-// path is github.com/metacubex/quic-go, so it cannot satisfy this `github.com/sagernet/quic-go`
-// require, and it carries a second, incompatible owned-DATAGRAM API. Merging the two would
-// have meant resolving 137 production-file conflicts and two owners for the same datagram
-// lifetime; the sagernet release line is the one sing-quic and sing-box actually build.
+// This is the `jiejie-masque-mod9` branch, the Sagernet module line sing-quic and sing-box
+// actually build. It is pinned by SHA; the repository default remains `jiejie-masque-stable`,
+// which is the separate github.com/metacubex/quic-go v0.62 line used by independent MASQUE
+// projects (connect-ip-go, jiejie-masque-unified). The two lines have different module paths
+// and a second, incompatible owned-DATAGRAM API; they must not be merged. The release line is
+// the only one that can satisfy this `github.com/sagernet/quic-go` require.
 replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261024063732-ce02ee5cc210
 
 // Carries InitialPacketSizeCeiling through qtls.QUICOptions and ApplyQUICOptions, and the
@@ -310,7 +310,7 @@ replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v
 // hopping receive loop) plus the three packet-ceiling/owned-datagram commits that sing-box
 // already pinned. The default branch also resolves quic-go to the fork release line, so it
 // builds and tests on its own; sing-box keeps its own replace, which wins for this build.
-replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261024062028-f3753ab3f9de
+replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261024074641-5e5a0274bd6c
 
 // The system stack's TCP accept loop used to die permanently on one unexpected listener error:
 // the listener is bound to the stack's own address and its port is what every new SYN is rewritten
