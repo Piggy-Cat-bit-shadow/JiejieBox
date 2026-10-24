@@ -258,8 +258,14 @@ no iOS hardware was available.
   can release without suspending or resetting the tunnel. They need SDK/protocol-level lease support.
 - The persistent bbolt DNS cache and the FakeIP store are deliberately untouched; their cleanup is
   owned by their own storage loops, and clearing FakeIP mappings would break live address bindings.
-- Darwin-specific C (the dispatch source) was not compiled locally; the callback LOGIC is covered
-  cross-platform, and an Apple CI build is the remaining compile check.
+- Darwin-specific C is not compiled locally on Windows. The Apple CI job built Libbox from this
+  fork on macOS (cgo, including the dispatch-source preamble) and produced the unsigned IPA; the
+  callback LOGIC is additionally covered by the cross-platform tests. No on-device lifecycle run was
+  possible.
+- The platform trim path asks for the optional cache capability through a locally declared method
+  set rather than importing `adapter`: `TestPlatformEventsDoNotTouchMeasurementOrigins` forbids that
+  import because the adapter surface contains the probe-origin helpers. CI caught the first version
+  of this change (mobile contract), and the local declaration is the fix.
 
 ```text
 OVERALL = DONE_WITH_LIMITATIONS
@@ -267,16 +273,18 @@ TARGET_BRANCH = oom-final-2026-10-24
 TESTING_WRITTEN = NO
 MAIN_WRITTEN = NO
 START_HEAD = 489ed2c4c16448306bcae9df37c57f5dadfb4ac0
+CODE_SHA = 5692722628c (six code commits rebased onto phase-06 testing)
+FINAL_SHA = the documentation commit carrying this line
 ROOT_CAUSE_33MB_REGRESSION = PASS (0 trims/0 GC over 1000 ticks at 33 MiB; opportunity gate retained)
 ARMED_STABLE_41MB_NO_THRASH = PASS (0 actions over 100 ticks with cooldown forced expired)
 POLL_STOP_PUBLISH_RACE = PASS (barrier for every accepted poll; pressure published under access)
 ALL_RECLAIM_PATHS_COORDINATED = PASS (one executor; idle/pressure/crisis serialised; pending dropped at stop)
-DARWIN_CALLBACK_LIFECYCLE = PASS (logic tested cross-platform; C source compile not run locally)
+DARWIN_CALLBACK_LIFECYCLE = PASS (logic tested cross-platform; Apple CI compiled the cgo path into Libbox)
 LAYERED_RECLAIM = L1 expired caches -> L2 idle pools -> L3 forced GC only with pressure/runtime evidence; each layer measured, stops at first floor; L4 crisis stays a network reset
 POOL_OWNERSHIP_SAFETY = PASS for the walked owners (active checks cited in 4.4); Naive/Mieru/MASQUE not reachable
 GC_TRIM_COST = 0/0 at 33 MiB (1000 ticks); 0/0 at 41 MiB (100 ticks); 1/0 for 39<->41 (40 transitions); 1/1 for one crisis. Bytes/CPU/energy: N/A (no device)
 TESTS_RACE_BUILD = PASS: go test oomkiller; -race oomkiller; -short route/dns; targeted -race route/dns; go build ./...; go test -run '^$' ./...; go vet (adapter, route, dns, oomkiller)
-CI_FINAL_SHA = see the run recorded in the final reply
-DEVICE_VALIDATION = NOT_VERIFIED_ON_DEVICE
+CI_FINAL_SHA = all at CODE_SHA 2dee4eb: Verify #40054445613 success; Mobile contract #40054448795 success; Android Core ARM64 #40054452202 success; Apple client #40054455511 success (Libbox macOS build + unsigned iOS IPA)
+DEVICE_VALIDATION = NOT_VERIFIED_ON_DEVICE (Apple Libbox cgo build and unsigned IPA packaging passed in CI; no device run)
 UNRESOLVED = iOS device trace; Naive/Mieru/MASQUE idle ownership needs SDK support; persistent bbolt/FakeIP stores intentionally excluded
 ```
