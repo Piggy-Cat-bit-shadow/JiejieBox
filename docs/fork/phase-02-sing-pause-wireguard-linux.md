@@ -4,7 +4,7 @@
 PHASE = 02/06
 RESULT = PARTIAL_WITH_SPECIFIC_BLOCKER
 SING_DEV_SHA = 4200a04a089a8271a2243971790f15c262f7bcfe
-MAIN_TESTING_SHA = 1255f5aa086d4facd5d6111ff900c866a062a5ee (code); ledger commit follows
+MAIN_TESTING_SHA = 1255f5aa086d4facd5d6111ff900c866a062a5ee (code); eb9c8eebd300240559e72b649fd9185ff0525b19 (docs)
 EFFECTIVE_SING_PIN = github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261024041103-4200a04a089a (root and test module)
 WIREGUARD_PAUSE = CLOSED: bind waits on bindCtx, interruptible retry, pause applied at publish; close-while-paused and pause-before-first-packet tests pass (race)
 ICMP_STRATEGY = CLOSED: ICMPControl applies strategy/interface types on the control path; direct outbound uses one destination-independent control; Linux unit + TUN loopback tests pass
