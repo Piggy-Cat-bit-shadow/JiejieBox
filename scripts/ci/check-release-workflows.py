@@ -581,18 +581,23 @@ def check_mobile_concurrency():
            cancel)
 
     # Evaluate the actual expressions for representative events, rather than trusting the shape.
-    # This is a deliberately small GitHub-expression subset: the literals and operators used here.
+    # Only the two reviewed expression forms are supported: a future rewrite must update this
+    # check deliberately instead of being silently accepted by a generic evaluator.
     def render(expression, event, ref, run_id):
         def evaluate(text):
             text = text.strip()
-            text = re.sub(r"github\.event_name\s*==\s*['\"]workflow_dispatch['\"]",
-                          "True" if event == "workflow_dispatch" else "False", text)
-            text = re.sub(r"github\.event_name\s*!=\s*['\"]workflow_dispatch['\"]",
-                          "False" if event == "workflow_dispatch" else "True", text)
-            text = re.sub(r"github\.run_id", repr(str(run_id)), text)
-            text = re.sub(r"github\.ref", repr(ref), text)
-            text = text.replace("&&", " and ").replace("||", " or ")
-            return eval(text, {"__builtins__": {}}, {})
+            if re.fullmatch(
+                r"github\.event_name\s*==\s*['\"]workflow_dispatch['\"]\s*&&\s*"
+                r"github\.run_id\s*\|\|\s*github\.ref",
+                text,
+            ):
+                return run_id if event == "workflow_dispatch" else ref
+            if re.fullmatch(
+                r"github\.event_name\s*!=\s*['\"]workflow_dispatch['\"]",
+                text,
+            ):
+                return event != "workflow_dispatch"
+            raise ValueError("unreviewed GitHub expression: %s" % text)
 
         match = re.search(r"\$\{\{(.*?)\}\}", expression, re.S)
         if match:
