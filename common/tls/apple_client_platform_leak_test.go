@@ -151,13 +151,10 @@ func TestAppleClientHandshakeFailureDoesNotLeakFileDescriptors(t *testing.T) {
 
 func appleOpenFileDescriptors(t *testing.T) int {
 	t.Helper()
-	limit, err := unix.Getdtablesize()
-	if err != nil {
-		t.Fatal(err)
-	}
+	limit := unix.Getdtablesize()
 	count := 0
 	for fd := 0; fd < limit; fd++ {
-		if _, err = unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0); err == nil {
+		if _, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0); err == nil {
 			count++
 		}
 	}

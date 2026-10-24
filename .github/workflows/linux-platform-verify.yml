@@ -24,7 +24,8 @@ jobs:
       - name: procfs and URL-host tests
         run: |
           go test -count=1 -v ./experimental/libbox/internal/procfs
-          go test -count=1 -v ./dns/transport ./dns/transport/quic ./service/derp
+          go test -count=1 -v ./dns/transport ./dns/transport/quic
+          go test -count=1 -v -tags with_tailscale ./service/derp
       - name: Android cross-compile
         env:
           GOOS: android
