@@ -97,9 +97,14 @@ func (c *ClientBind) logError(err error) {
 //
 // service.FromContext returns a nil interface for a service that was never registered, so the call
 // this replaces would have dereferenced a nil pause.Manager.
+//
+// The wait is on the BIND's context, not just the manager's: a Close while the network is paused
+// must release this goroutine. With the manager-only wait, Close cancelled the bind context but the
+// goroutine sat in WaitActive until the network came back, which is the pause/sleep deadlock
+// (upstream cc022098fdec).
 func (c *ClientBind) waitActive() {
 	if c.pauseManager != nil {
-		c.pauseManager.WaitActive()
+		c.pauseManager.WaitActiveContext(c.bindCtx)
 	}
 }
 
@@ -253,15 +258,15 @@ func (c *ClientBind) Close() error {
 	return nil
 }
 
-// sleepRetry waits a second, reporting whether the bind is still open when it wakes. The wait
-// itself is not interruptible, so callers must re-check done rather than assume the sleep proves
-// anything about the bind's state.
+// sleepRetry waits a second, reporting whether the bind is still open when it wakes. The wait is
+// interruptible: Close must not have to wait out the retry delay (upstream cc022098fdec).
 func (c *ClientBind) sleepRetry() bool {
-	time.Sleep(time.Second)
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
 	select {
 	case <-c.done:
 		return false
-	default:
+	case <-timer.C:
 		return true
 	}
 }

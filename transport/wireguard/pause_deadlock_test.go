@@ -103,6 +103,10 @@ func (m *fakePauseManager) IsNetworkPaused() bool { return false }
 func (m *fakePauseManager) IsPaused() bool        { return false }
 func (m *fakePauseManager) WaitActive()           {}
 
+// WaitActiveContext is the cancellable spelling. This fake is never actually paused, so it returns
+// immediately exactly like WaitActive; the endpoint tests that use it are about callback ordering.
+func (m *fakePauseManager) WaitActiveContext(context.Context) {}
+
 func (m *fakePauseManager) RegisterCallback(callback pause.Callback) *list.Element[pause.Callback] {
 	if m.onRegister != nil {
 		m.onRegister()
