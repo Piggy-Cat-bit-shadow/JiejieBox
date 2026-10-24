@@ -288,3 +288,15 @@ CI_FINAL_SHA = all at CODE_SHA 2dee4eb: Verify #40054445613 success; Mobile cont
 DEVICE_VALIDATION = NOT_VERIFIED_ON_DEVICE (Apple Libbox cgo build and unsigned IPA packaging passed in CI; no device run)
 UNRESOLVED = iOS device trace; Naive/Mieru/MASQUE idle ownership needs SDK support; persistent bbolt/FakeIP stores intentionally excluded
 ```
+
+## Phase 07 integration
+
+- Source `oom-final-2026-10-24` @ `66b2b00287fa` was rebased/cherry-picked as five code commits onto
+  phase-06 `testing`; integration tip `e19b74a3540`.
+- `testing` merge: `8795ba09d35178b448a45acc8555c19fce781311`.
+- Final testing CI: Verify `40101905117`, Android Core ARM64 `40101905143`, Mobile contract
+  `40101905187` — all success.
+- Full route suite: `ok 441.594s`; OOM package, DNS and libbox tests pass; OOM/DNS race pass.
+- The source branch, its integration branch and the `integration-release-next` worktree were removed
+  after the final green runs. The semantics remain in `testing`; see
+  `docs/fork/BRANCH-CONSOLIDATION-STATUS.md`.
