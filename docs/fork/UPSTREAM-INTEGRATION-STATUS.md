@@ -1,53 +1,95 @@
 # Upstream integration status
 
-- generated: 2026-10-24T08:35:25.430756+08:00
-- fork testing: `1bccb81a8ab95b7371ac91507774e1b53322fa96`
+- generated: 2026-10-24T09:45:00+08:00 (phase 01/06)
+- fork testing code: `2bef2ff6d0820e3b2345c38fb936ed4116aaef25`
 - upstream observed: `824dbcfb4dd0a95921840b1737b950cde590241e` (2026-10-23T22:39:57+08:00)
-- behind_by: **109**
-- open semantic: **23**; open dependency blockers: **6**
+- behind_by: **109**; ahead_by: 2583
+- open semantic: **20**; open dependency blockers: **5**
 
-## Next executable action
+**Ledger correction.** The previous status said 23 open semantic rows while the report said 22. The
+audit JSON is the source of truth: 22 `MISSING_FIX` rows, and `3454d6d2411d` (MASQUE inbound
+backpressure) is `PRESENT`/`NO_ACTION` in the audit. The markdown table had counted it as open. This
+phase closed 2 of the 22, so 20 remain.
 
-DEP-TUN-0: audit and merge sing-tun sync/upstream-fixes-2026-10-24 (88e6d81) into dev (7539c98); then move the main pin and close DEP-TUN-1..3
+## Closed in phase 01
 
-## Open semantic rows
+| id | upstream | what landed | evidence | not verified |
+|---|---|---|---|---|
+| MAIN-18aa2cdfe742 | `18aa2cdfe742` | `iproute2_table_index` defaults only when `auto_route`; system VPN device no longer claims table 2022 / rule priority; sing-tun dev adds `::/0` for a no-auto-route IPv6 address, clamps the rule priority above the redirect rules and deletes by (family, oif, table) | `protocol/tun/inbound_route_test.go`, `transport/device/system_tun_options_test.go`, sing-tun `tun_linux_test.go` (linux build) | real Linux route/rule table with two TUNs (`NOT_VERIFIED_ON_DEVICE`) |
+| MAIN-ef0b632920ff | `ef0b632920ff` | 8-slot semaphore around the binder `JudgeFlow`, released by defer | `experimental/libbox/redirect_linux.go`, `redirect_judge_linux_test.go` (linux build) | Android binder behaviour on device |
+
+## Dependency closure (sing-tun)
+
+| id | status | evidence |
+|---|---|---|
+| DEP-TUN-0 | COMPLETED | `dev` 1559fbd506eb; merge 17a6a699750980284cae5d4e04a30720c543ccc2 from `sync/upstream-fixes-2026-10-24` 88e6d8160cf5. The sync branch was a rebase of dev's commits onto a newer upstream base, so the resolved tree equals the sync tree; dev keeps `(handled, remove)`, PacketBufferPort, return batching, NAT/fragment and the Go-stack close contract. |
+| DEP-TUN-1 | COMPLETED | `1559fbd`: closed TCP sessions expire on `tcpClosingTimeout`, a late SYN gets a fresh mapping, concurrent sweep re-checks map identity. Tests `stack_system_nat_test.go`. |
+| DEP-TUN-2 | COMPLETED | `1559fbd`: no-auto-route IPv6 default route, priority clamp above `redirectRouteRulePriority`, delete by identity. Tests `tun_linux_test.go`. |
+| DEP-TUN-3 | COMPLETED | `1559fbd`: bounded held packets (16/flow, 512/stage), async `JudgeFlow`, resume pump on System/Mixed/Go/gvisor and nfqueue, close drops judgements. Tests `flow_dispatch_judge_test.go`. |
+| DEP-SING-1 | OPEN | `pause.Manager` context-aware wait; netns/ICMP control |
+| DEP-QUIC-1 | OPEN | audit mod.12 vs fork; preserve buffer pinning |
+| DEP-QUIC-2 | OPEN | blocked by DEP-QUIC-1 |
+| DEP-CRONET-1 | OPEN | atomic root/all/lib + ABI matrix |
+| DEP-TAILSCALE-1 | OPEN | upgrade external module if API present |
+
+## MASQUE inbound backpressure
+
+Wiring is present: `WaitWriteInboundBuffers` → `transport/device` → `protocol/masque`
+(`ClientEndpoint`/`ServerEndpoint`), with the non-blocking fallback kept.
+
+Real-path evidence added this phase:
+
+- `transport/masque/inbound_backpressure_real_test.go` — a real capsule is parsed by the session,
+  the full device parks the read loop, a drained slot releases exactly one write, `Close` returns
+  `os.ErrClosed`, and a handler with no wait contract uses the non-blocking path.
+- sing-tun `tun_memory_wait_test.go` — the underlying `MemoryTun`: full queue parks, a freed slot
+  wakes, `Close` wakes with `os.ErrClosed`, the non-blocking path drops at the bound.
+
+Not verified: a live QUIC client/server datagram session on a device.
+
+## Effective pins
+
+Root and nested `test` module both replace `github.com/sagernet/sing-tun` with
+`github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024012809-1559fbd506eb`. `go list -m -json`
+shows the same `Replace.Dir` in both; `go mod tidy`/`verify` are clean and `go build ./...` passes.
+
+## Open semantic rows (20)
 
 | id | prio | upstream | next action |
 |---|---|---|---|
-| MAIN-42cae14c63d1 | P0 | Fix Apple TLS engine connection leak | Leak grows with every TLS connection (fd plus nw_connection object) until exhaustion. No F_DUPFD_CLOEXEC appears anywhere in the fork. |
-| MAIN-cc022098fdec | P0 | Fix WireGuard pause and sleep handling | Needs a context-aware wait in the sing fork first (its pause.Manager still has WaitActive only; fake at pause_deadlock_test.go:104 shows the interface). Endpoin |
-| MAIN-18aa2cdfe742 | P1 | Fix IPv6 interface rule without auto route | Several VPN devices share table 2022 and its rules, and the IPv6 interface rule resolves in an empty or foreign table. Dep: sing-tun ...94443fe68890 -> ...79808 |
-| MAIN-1cc885e0400e | P1 | Provide default route to Tailscale | Requires both halves: bump sagernet/tailscale to a revision exposing netmon.SetDefaultRouteFunc (upstream used ...mod.5.0.20261019070639-79c1732442a9) and regis |
-| MAIN-3454d6d2411d | P1 | Apply backpressure to masque inbound packets | Needs a wait/wake API in the memory TUN (upstream added WaitWritePackets in sing-tun). Without it, add a bounded blocking writer to the device and use it only o |
-| MAIN-38bf6879bbad | P1 | Fix network strategy for ICMP | Port needs a control.Func equivalent of upstream's serialInterfaceControl (the sing fork already has BindToInterface0) plus default-strategy EPERM tolerance; pr |
-| MAIN-40bc411e8d02 | P1 | Fix connection owner lookup on legacy Android | Upstream deletes PlatformInterface.UseProcFS and adds connection_owner_android.go. Port requires the libbox change plus switching the Android client from usePro |
-| MAIN-42f487bd0d04 | P1 | Fix IPv6 literal host handling | Upstream also bundles the http3 SetNextProtos(h3)/TLSClientConfig change and derp SetURLDialer using server.Server; check those when porting. The REALITY nil-re |
-| MAIN-54c60dc7e6cc | P1 | Fix DHCP DNS search domain expansion | The same expander also lives in local/systemconfig and the resolved service (next commit). Minimal fix: only expand when mDNS.CountLabel(name)==1, and validate  |
-| MAIN-6fb6770cec52 | P1 | Keep systemd-resolved servers when configuration is unchanged | Port the split: checkResolved returns []resolvedScopeSpecification with an equal() method, compare against the saved set and return early when equal, and create |
-| MAIN-73698e437479 | P1 | Update built-in certificates | Generated data only. The fork's generator cmd/internal/update_certificates is unchanged from the merge base and identical to upstream's, so `make update_certifi |
-| MAIN-755150a5131e | P1 | Fix config format output | Cheapest repro: a DERP config with stun: {enabled: true, listen_port: N} through sing-box format loses the port, and daemon FormatConfig writes zero server_port |
-| MAIN-7a0ae5f35889 | P1 | Fix tailscale short name and DNS route matching | Restores Tailscale's local-route NXDOMAIN semantics and MagicDNS short-name preference; otherwise LAN single-label names can be captured by tailscale and local  |
-| MAIN-9c24112d12d5 | P1 | Fix unshare network namespace with capabilities | All four pieces are absent; port them together. The holder signal omission is a lifecycle issue: SIGINT/SIGTERM/SIGHUP can kill the holder and destroy the share |
-| MAIN-a130b482d41f | P1 | Flush systemd-resolved cache on DNS changes | Porting needs the sing-tun fork bumped to a revision carrying LinuxTUN.FlushDNSCache (upstream fba659785148) or a local resolvectl flush-caches call; skip when  |
-| MAIN-a8a2964592c7 | P1 | Fix systemd-resolved detection for local DNS server | Port: always attempt NewResolvedResolver when !preferGo, add Config.SystemdResolved (os.SameFile with /run/systemd/resolve/resolv.conf or listen addrs 127.0.0.5 |
-| MAIN-b6fc3a486355 | P1 | Remove unimplemented direct rule action | Either delete the action (upstream) or implement direct dialing; until then configs using action=direct are accepted but silently ignored, so traffic can be rou |
-| MAIN-c8ba005e84d2 | P1 | Reject Tailscale SSH user switch without privilege | Today the effect is fail-closed (non-root setCredential fails at exec), so this is hardening plus a clear diagnostic rather than a proven escalation. Port verif |
-| MAIN-db4e5da711ea | P1 | Check DNS address filter rules on cache hit | Latent today because every production caller passes a nil checker (dns/router.go:1923, :1946, :2045), but the contract is broken for any future checker. Port: r |
-| MAIN-ef0b632920ff | P1 | Limit concurrent auto-redirect flow judgements | Port the 8-slot semaphore created in NewAutoRedirectService and taken/released around the binder call (release in a defer so a failing JudgeFlow cannot leak a s |
-| MAIN-972a052ef537 | P2 | Remove unused DNS search expansion | Cleanup/validation consolidation rather than a crash fix; the residual over-expansion is the same defect family as 54c60. Porting implies deciding explicitly wh |
-| MAIN-ae4826a387e6 | P2 | Remove command server listen retry | Behaviour differs only when sBasePath is read-only: the fork stalls 30 s before failing, upstream fails at once. Port if the old Android direct-boot EROFS windo |
-| MAIN-b02b21b3f3aa | P2 | Run systemd service as root | Packaging only, no Go code. Porting means dropping User=/Capability lines and deleting the sysusers/polkit files plus their install entries. If the fork deliber |
+| MAIN-42cae14c63d1 | P0 | Fix Apple TLS engine connection leak | Port the `F_DUPFD_CLOEXEC` engine change; leak grows per TLS connection. |
+| MAIN-cc022098fdec | P0 | Fix WireGuard pause and sleep handling | Needs DEP-SING-1 (`pause.Manager` context-aware wait) first. |
+| MAIN-1cc885e0400e | P1 | Provide default route to Tailscale | Bump tailscale for `netmon.SetDefaultRouteFunc` and register it. |
+| MAIN-38bf6879bbad | P1 | Fix network strategy for ICMP | Control-func equivalent plus default-strategy EPERM tolerance. |
+| MAIN-40bc411e8d02 | P1 | Fix connection owner lookup on legacy Android | Libbox change plus Android client switch away from procfs. |
+| MAIN-42f487bd0d04 | P1 | Fix IPv6 literal host handling | Bundles http3 `SetNextProtos(h3)` and derp URL dialer changes. |
+| MAIN-54c60dc7e6cc | P1 | Fix DHCP DNS search domain expansion | Expand only when `mDNS.CountLabel(name)==1`; validate first. |
+| MAIN-6fb6770cec52 | P1 | Keep systemd-resolved servers when configuration is unchanged | Split `checkResolved` into scopes with an `equal()` early return. |
+| MAIN-73698e437479 | P1 | Update built-in certificates | Generated data only; run the generator. |
+| MAIN-755150a5131e | P1 | Fix config format output | Reproduce DERP `stun.listen_port` loss through `format`. |
+| MAIN-7a0ae5f35889 | P1 | Fix tailscale short name and DNS route matching | Restore local-route NXDOMAIN and MagicDNS short-name preference. |
+| MAIN-9c24112d12d5 | P1 | Fix unshare network namespace with capabilities | Port all four pieces together. |
+| MAIN-a130b482d41f | P1 | Flush systemd-resolved cache on DNS changes | Use the sing-tun `LinuxTUN.FlushDNSCache` now present on dev. |
+| MAIN-a8a2964592c7 | P1 | Fix systemd-resolved detection for local DNS server | Always attempt the resolved resolver; add `SystemdResolved` detection. |
+| MAIN-b6fc3a486355 | P1 | Remove unimplemented direct rule action | Delete the action or implement direct dialing. |
+| MAIN-c8ba005e84d2 | P1 | Reject Tailscale SSH user switch without privilege | Fail closed plus a clear diagnostic. |
+| MAIN-db4e5da711ea | P1 | Check DNS address filter rules on cache hit | Restore the checker contract on cache hits. |
+| MAIN-972a052ef537 | P2 | Remove unused DNS search expansion | Decide which of the two copies survives. |
+| MAIN-ae4826a387e6 | P2 | Remove command server listen retry | Only changes read-only `sBasePath` timing. |
+| MAIN-b02b21b3f3aa | P2 | Run systemd service as root | Packaging: drop `User=`/capability lines and helper files. |
 
-## Dependency blockers
+## Next executable action
 
-| id | repo | target | blocked by | next |
-|---|---|---|---|---|
-| DEP-TUN-0 | Piggy-Cat-bit-shadow/sing-tun | dev | - | audit 49/26 divergence, merge sync into dev preserving (handled,remove) and NAT/buffer ownership, push dev, move main pin |
-| DEP-TUN-1 | Piggy-Cat-bit-shadow/sing-tun | dev | DEP-TUN-0 | system stack closed-session NAT cleanup |
-| DEP-TUN-2 | Piggy-Cat-bit-shadow/sing-tun | dev | DEP-TUN-0 | IPv6 interface rule without auto route |
-| DEP-TUN-3 | Piggy-Cat-bit-shadow/sing-tun | dev | DEP-TUN-0 | JudgeFlow without blocking packet processing |
-| DEP-SING-1 | Piggy-Cat-bit-shadow/sing | dev | - | pause.Manager context-aware wait; netns/ICMP control |
-| DEP-QUIC-1 | Piggy-Cat-bit-shadow/quic-go | jiejie-masque-stable | - | audit mod.12 vs fork; preserve buffer pinning |
-| DEP-QUIC-2 | Piggy-Cat-bit-shadow/sing-quic | main | DEP-QUIC-1 | absorb applicable fixes, keep MASQUE logic |
-| DEP-CRONET-1 | Piggy-Cat-bit-shadow/cronet-go | main | - | atomic root/all/lib + ABI matrix |
-| DEP-TAILSCALE-1 | sagernet/tailscale | N/A | - | upgrade external module if API present; do not create a fork by default |
+`MAIN-42cae14c63d1` (Apple TLS engine connection leak, P0). `MAIN-cc022098fdec` stays blocked on
+DEP-SING-1.
+
+## Evidence notes
+
+- `go test` was run on Windows for `protocol/tun`, `transport/device` and `transport/masque`; the
+  sing-tun packages were run with `-race` where the C toolchain is available.
+- Linux-only files (`tun_linux.go`, `libbox/redirect_linux.go` and their tests) cross-compile
+  (`GOOS=linux go test -c`); they were not executed on a Linux device, which is stated per row.
+- `internal/winipcfg` tests fail in this environment with `ERROR_NOT_FOUND` (no suitable interface)
+  and are unrelated to this phase; they are `BLOCKED_BY_ENVIRONMENT`, not PASS.
+- `TestGoKernelPacketBatchIdle` fails identically on the pre-merge `sync/upstream-fixes-2026-10-24`
+  tree, so it is a pre-existing host issue, not a regression from the convergence.

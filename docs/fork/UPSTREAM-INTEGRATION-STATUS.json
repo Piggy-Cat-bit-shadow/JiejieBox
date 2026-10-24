@@ -1,110 +1,172 @@
 {
- "generated_at": "2026-10-24T08:35:25.430756+08:00",
- "fork_testing_sha": "1bccb81a8ab95b7371ac91507774e1b53322fa96",
- "upstream_observed": {
-  "sha": "824dbcfb4dd0a95921840b1737b950cde590241e",
-  "time": "2026-10-23T22:39:57+08:00"
- },
- "behind_by": 109,
- "summary": {
-  "open_semantic": 23,
-  "open_dependency_blockers": 6,
-  "unknown": 0
- },
- "dependencies": [
-  {
-   "id": "DEP-TUN-0",
-   "repo": "Piggy-Cat-bit-shadow/sing-tun",
-   "target_branch": "dev",
-   "status": "OPEN",
-   "start_sha": "7539c9855f19",
-   "sync_sha": "88e6d8160cf5",
-   "blocked_by": [],
-   "next_action": "audit 49/26 divergence, merge sync into dev preserving (handled,remove) and NAT/buffer ownership, push dev, move main pin"
+  "generated_at": "2026-10-24T09:45:00+08:00",
+  "phase": "01/06",
+  "fork_testing_code_sha": "2bef2ff6d0820e3b2345c38fb936ed4116aaef25",
+  "fork_testing_docs_sha": "the commit carrying this ledger",
+  "upstream_observed": {
+    "sha": "824dbcfb4dd0a95921840b1737b950cde590241e",
+    "time": "2026-10-23T22:39:57+08:00"
   },
-  {
-   "id": "DEP-TUN-1",
-   "repo": "Piggy-Cat-bit-shadow/sing-tun",
-   "target_branch": "dev",
-   "status": "OPEN",
-   "upstream_sha": "84e75a6",
-   "blocked_by": [
-    "DEP-TUN-0"
-   ],
-   "next_action": "system stack closed-session NAT cleanup"
+  "behind_by": 109,
+  "ahead_by": 2583,
+  "summary": {
+    "open_semantic": 20,
+    "open_dependency_blockers": 5,
+    "unknown": 0,
+    "previous_open_semantic": 22,
+    "previous_open_dependency_blockers": 6,
+    "ledger_correction": "The 23 in the previous status came from the markdown table counting 3454d6d2411d, which the audit JSON classifies PRESENT (NO_ACTION). The audit is the source of truth: 22 MISSING_FIX before this phase. This phase closed 2 of them."
   },
-  {
-   "id": "DEP-TUN-2",
-   "repo": "Piggy-Cat-bit-shadow/sing-tun",
-   "target_branch": "dev",
-   "status": "OPEN",
-   "upstream_sha": "7980862",
-   "blocked_by": [
-    "DEP-TUN-0"
-   ],
-   "next_action": "IPv6 interface rule without auto route"
+  "closed_this_phase": [
+    {
+      "id": "MAIN-18aa2cdfe742",
+      "upstream_sha": "18aa2cdfe74237ac572fd84b3f712533090ba12c",
+      "status": "CLOSED_CODE_AND_UNIT",
+      "evidence": [
+        "protocol/tun/inbound.go: ipRoute2TableIndex gates the default on AutoRoute",
+        "transport/device/system.go: system VPN device no longer claims table 2022 / rule priority",
+        "protocol/tun/inbound_route_test.go, transport/device/system_tun_options_test.go",
+        "sing-tun dev carries 7980862 adapted: tun_linux.go routes/add default ::/0, nextIPv6RulePriority clamp, delete by oif/table; tun_linux_test.go (linux build)"
+      ],
+      "not_verified": "real route table rules on a Linux device (multi-TUN coexistence, cleanup); cross-compiled only"
+    },
+    {
+      "id": "MAIN-ef0b632920ff",
+      "upstream_sha": "ef0b632920ff7ef6900716fca3f362b60b2eef58",
+      "status": "CLOSED_CODE_AND_LINUX_COMPILE",
+      "evidence": [
+        "experimental/libbox/redirect_linux.go: 8-slot judge semaphore, released by defer",
+        "experimental/libbox/redirect_judge_linux_test.go (linux build; cross-compiled, not run on device)"
+      ],
+      "not_verified": "Android binder behaviour on device"
+    }
+  ],
+  "dependencies": [
+    {
+      "id": "DEP-TUN-0",
+      "repo": "Piggy-Cat-bit-shadow/sing-tun",
+      "target_branch": "dev",
+      "status": "COMPLETED",
+      "merge_commit": "17a6a699750980284cae5d4e04a30720c543ccc2",
+      "merged_branch": "sync/upstream-fixes-2026-10-24 @ 88e6d8160cf56bd440ff20d50bf5c43bff7b259e",
+      "previous_dev": "7539c9855f19bb51a75f0908ecf6ae1d2d749490",
+      "resolution": "The sync branch was a rebase of dev's own commits onto a newer upstream base, so the resolved tree equals the sync tree and dev keeps every fork contract ((handled, remove), PacketBufferPort, return batching, NAT/fragment, Go stack close). Verified by git diff dev..sync before resolving.",
+      "verified_by": "go build windows/linux/darwin/android; targeted go test with -race; cross-compiled linux test binary"
+    },
+    {
+      "id": "DEP-TUN-1",
+      "repo": "Piggy-Cat-bit-shadow/sing-tun",
+      "target_branch": "dev",
+      "status": "COMPLETED",
+      "commit": "1559fbd506eb803888e396f60a438a1c40e0f444",
+      "upstream_sha": "84e75a655a43b671422f9f82d87efbff6b5226d9",
+      "next_action": "closed; RST/FIN-FIN closing timeout, late SYN gets a fresh mapping, sweep re-checks identity"
+    },
+    {
+      "id": "DEP-TUN-2",
+      "repo": "Piggy-Cat-bit-shadow/sing-tun",
+      "target_branch": "dev",
+      "status": "COMPLETED",
+      "commit": "1559fbd506eb803888e396f60a438a1c40e0f444",
+      "upstream_sha": "7980862befdc33548384f3b2e6d03e85c45f694e",
+      "next_action": "closed; ::/0 for no-auto-route IPv6, priority clamp, delete by (family, oif, table)"
+    },
+    {
+      "id": "DEP-TUN-3",
+      "repo": "Piggy-Cat-bit-shadow/sing-tun",
+      "target_branch": "dev",
+      "status": "COMPLETED",
+      "commit": "1559fbd506eb803888e396f60a438a1c40e0f444",
+      "upstream_sha": "09dd03de313656f6a72424c308148d07523e50c4",
+      "next_action": "closed; bounded held packets (16/flow, 512/stage), resume pump on all four stacks and nfqueue, close drops judgements"
+    },
+    {
+      "id": "DEP-SING-1",
+      "repo": "Piggy-Cat-bit-shadow/sing",
+      "target_branch": "dev",
+      "status": "OPEN",
+      "blocked_by": [],
+      "next_action": "pause.Manager context-aware wait; netns/ICMP control"
+    },
+    {
+      "id": "DEP-QUIC-1",
+      "repo": "Piggy-Cat-bit-shadow/quic-go",
+      "target_branch": "jiejie-masque-stable",
+      "status": "OPEN",
+      "blocked_by": [],
+      "next_action": "audit mod.12 vs fork; preserve buffer pinning"
+    },
+    {
+      "id": "DEP-QUIC-2",
+      "repo": "Piggy-Cat-bit-shadow/sing-quic",
+      "target_branch": "main",
+      "status": "OPEN",
+      "blocked_by": ["DEP-QUIC-1"],
+      "next_action": "absorb applicable fixes, keep MASQUE logic"
+    },
+    {
+      "id": "DEP-CRONET-1",
+      "repo": "Piggy-Cat-bit-shadow/cronet-go",
+      "target_branch": "main",
+      "status": "OPEN",
+      "blocked_by": [],
+      "next_action": "atomic root/all/lib + ABI matrix"
+    },
+    {
+      "id": "DEP-TAILSCALE-1",
+      "repo": "sagernet/tailscale",
+      "target_branch": "N/A",
+      "status": "OPEN",
+      "blocked_by": [],
+      "next_action": "upgrade external module if API present; do not create a fork by default"
+    }
+  ],
+  "masque_backpressure": {
+    "status": "PRESENT_CODE_AND_UNIT",
+    "wiring": "WaitWriteInboundBuffers -> transport/device -> protocol/masque (ClientEndpoint/ServerEndpoint), non-blocking fallback kept",
+    "tests": [
+      "transport/masque/inbound_backpressure_real_test.go: real capsule parse path; full device parks the read loop, drain releases exactly one write, close returns os.ErrClosed, non-blocking writer fallback",
+      "sing-tun tun_memory_wait_test.go: MemoryTun full queue parks, a freed slot wakes, Close returns os.ErrClosed, non-blocking path drops at the bound",
+      "transport/masque/inbound_wait_test.go: interface preference"
+    ],
+    "not_verified": "live QUIC client/server datagram session on a device (NOT_VERIFIED_ON_DEVICE)"
   },
-  {
-   "id": "DEP-TUN-3",
-   "repo": "Piggy-Cat-bit-shadow/sing-tun",
-   "target_branch": "dev",
-   "status": "OPEN",
-   "upstream_sha": "09dd03d",
-   "blocked_by": [
-    "DEP-TUN-0"
-   ],
-   "next_action": "JudgeFlow without blocking packet processing"
+  "effective_pins": {
+    "root_module": "github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024012809-1559fbd506eb",
+    "test_module": "github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024012809-1559fbd506eb",
+    "verification": "go list -m -json in both modules resolves to the same Dir; go mod tidy/verify clean; go build ./... clean"
   },
-  {
-   "id": "DEP-SING-1",
-   "repo": "Piggy-Cat-bit-shadow/sing",
-   "target_branch": "dev",
-   "status": "OPEN",
-   "blocked_by": [],
-   "next_action": "pause.Manager context-aware wait; netns/ICMP control"
-  },
-  {
-   "id": "DEP-QUIC-1",
-   "repo": "Piggy-Cat-bit-shadow/quic-go",
-   "target_branch": "jiejie-masque-stable",
-   "status": "OPEN",
-   "blocked_by": [],
-   "next_action": "audit mod.12 vs fork; preserve buffer pinning"
-  },
-  {
-   "id": "DEP-QUIC-2",
-   "repo": "Piggy-Cat-bit-shadow/sing-quic",
-   "target_branch": "main",
-   "status": "OPEN",
-   "blocked_by": [
-    "DEP-QUIC-1"
-   ],
-   "next_action": "absorb applicable fixes, keep MASQUE logic"
-  },
-  {
-   "id": "DEP-CRONET-1",
-   "repo": "Piggy-Cat-bit-shadow/cronet-go",
-   "target_branch": "main",
-   "status": "OPEN",
-   "blocked_by": [],
-   "next_action": "atomic root/all/lib + ABI matrix"
-  },
-  {
-   "id": "DEP-TAILSCALE-1",
-   "repo": "sagernet/tailscale",
-   "target_branch": "N/A",
-   "status": "OPEN",
-   "blocked_by": [],
-   "next_action": "upgrade external module if API present; do not create a fork by default"
-  }
- ],
- "completed": [
-  "OOM idle-release loop and Triggered-at-resume state machine",
-  "sing-tun sync branch 9 upstream fixes",
-  "16 main-repo ported rows",
-  "2 dependency pin rows",
-  "composite fast-path closeout",
-  "decision/lifecycle adversarial round"
- ],
- "next_executable_action": "DEP-TUN-0: audit and merge sing-tun sync/upstream-fixes-2026-10-24 (88e6d81) into dev (7539c98); then move the main pin and close DEP-TUN-1..3"
+  "open_semantic_rows": [
+    {"id": "MAIN-42cae14c63d1", "priority": "P0", "subject": "Fix Apple TLS engine connection leak"},
+    {"id": "MAIN-cc022098fdec", "priority": "P0", "subject": "Fix WireGuard pause and sleep handling"},
+    {"id": "MAIN-1cc885e0400e", "priority": "P1", "subject": "Provide default route to Tailscale"},
+    {"id": "MAIN-38bf6879bbad", "priority": "P1", "subject": "Fix network strategy for ICMP"},
+    {"id": "MAIN-40bc411e8d02", "priority": "P1", "subject": "Fix connection owner lookup on legacy Android"},
+    {"id": "MAIN-42f487bd0d04", "priority": "P1", "subject": "Fix IPv6 literal host handling"},
+    {"id": "MAIN-54c60dc7e6cc", "priority": "P1", "subject": "Fix DHCP DNS search domain expansion"},
+    {"id": "MAIN-6fb6770cec52", "priority": "P1", "subject": "Keep systemd-resolved servers when configuration is unchanged"},
+    {"id": "MAIN-73698e437479", "priority": "P1", "subject": "Update built-in certificates"},
+    {"id": "MAIN-755150a5131e", "priority": "P1", "subject": "Fix config format output"},
+    {"id": "MAIN-7a0ae5f35889", "priority": "P1", "subject": "Fix tailscale short name and DNS route matching"},
+    {"id": "MAIN-9c24112d12d5", "priority": "P1", "subject": "Fix unshare network namespace with capabilities"},
+    {"id": "MAIN-a130b482d41f", "priority": "P1", "subject": "Flush systemd-resolved cache on DNS changes"},
+    {"id": "MAIN-a8a2964592c7", "priority": "P1", "subject": "Fix systemd-resolved detection for local DNS server"},
+    {"id": "MAIN-b6fc3a486355", "priority": "P1", "subject": "Remove unimplemented direct rule action"},
+    {"id": "MAIN-c8ba005e84d2", "priority": "P1", "subject": "Reject Tailscale SSH user switch without privilege"},
+    {"id": "MAIN-db4e5da711ea", "priority": "P1", "subject": "Check DNS address filter rules on cache hit"},
+    {"id": "MAIN-972a052ef537", "priority": "P2", "subject": "Remove unused DNS search expansion"},
+    {"id": "MAIN-ae4826a387e6", "priority": "P2", "subject": "Remove command server listen retry"},
+    {"id": "MAIN-b02b21b3f3aa", "priority": "P2", "subject": "Run systemd service as root"}
+  ],
+  "completed": [
+    "OOM idle-release loop and Triggered-at-resume state machine",
+    "sing-tun dev convergence (merge commit 17a6a69) and the three upstream mechanisms (1559fbd)",
+    "16 main-repo ported rows",
+    "2 dependency pin rows",
+    "composite fast-path closeout",
+    "decision/lifecycle adversarial round",
+    "18aa2cdfe742 and ef0b632920ff ported in this phase",
+    "MASQUE inbound backpressure real-path and memory-TUN tests"
+  ],
+  "next_executable_action": "MAIN-42cae14c63d1 (Apple TLS engine connection leak, P0); then cc022098fd (WireGuard pause) still needs DEP-SING-1"
 }
