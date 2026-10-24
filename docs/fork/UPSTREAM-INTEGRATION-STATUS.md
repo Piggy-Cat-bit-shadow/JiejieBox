@@ -1,14 +1,15 @@
 # Upstream integration status
 
-- generated: 2026-10-24T19:00:00+08:00 (phase 05/06)
-- fork testing code: `0275cf6aa8b2e94f81c449681207196038bb4e3e`
+- generated: 2026-10-24T20:00:00+08:00 (phase 06/06)
+- fork testing code: `c3c23d1059c8834f68d268995557c99be6d787a0`
 - fork testing docs: `0ea3ea30ec31e8a247535a9c9d08a4bcdd9aa3b2`
 - upstream observed: `a6952ccf6907c18e18917fcb763a433e8e36937b` (2026-10-24T10:08:02+08:00, "Remove stale workflow")
-- behind_by: **110**; ahead_by: 2634
-- open semantic: **5**; open dependency blockers: **0**
+- behind_by: **0**; ahead_by: 2643
+- open semantic: **0**; open dependency blockers: **0**
 
-**Phase 05 closes the Tailscale route/DNS/SSH rows, the three resolved rows, both DHCP rows and the
-cache-hit checker** (14 -> 5), and **DEP-TAILSCALE-1**. No dependency blocker remains.
+**Phase 06 closes the last five main-repo rows** (5 -> 0): certificates, format round-trip, the
+ghost direct action, command-server retry, and the systemd root policy as a documented rejection.
+Ancestry is merged: `behind=0`, with the audit evidence in the phase 06 report.
 
 ## Dependency closure (QUIC, phase 03)
 
@@ -22,6 +23,16 @@ cache-hit checker** (14 -> 5), and **DEP-TAILSCALE-1**. No dependency blocker re
 Merging the two was rejected with evidence: different module paths, 137 conflicting production files
 on a trial merge, and a second incompatible owned-DATAGRAM API. The release line is pinned by SHA;
 the default branch stays the MetaCubeX line so independent projects keep their baseline.
+
+## Closed in phase 06
+
+| id | upstream | what landed | evidence | not verified |
+|---|---|---|---|---|
+| MAIN-73698e437479 | `73698e43747939c38d260e40b4db63ce333bcd6a` | chrome.go/mozilla.go regenerated from the checked-in generator sources (CCADB Mozilla IncludedCA and Chrome RootCACertificatesIncludedByRS); TestIncludedRootCAsAreValid parses every PEM, rejects duplicates and pins 92/161 roots plus SHA-256 of the canonical DER sequence | no live update_certificates network run; data source is the upstream generated commit |
+| MAIN-755150a5131e | `755150a5131e5d38ed271bbf2a3bb57b0e5de94c` | omitempty on server_port/security/name/priority and compact DERP STUN port form; format round-trip tests at option and libbox FormatConfig level preserve 443/8443 and omit zero keys; fork sing version needs the option-less action nil guard; restored explicitly | none |
+| MAIN-b6fc3a486355 | `b6fc3a486355f4298dabd9b99083848c00db081b` | direct action type/options/constructor/reference/rule handling and schema removed; TestDirectRuleActionIsRejected proves the ghost now fails config decode; route-aware fixtures use reject instead | operators with existing action:direct configs now get a clear error, not silent no-op |
+| MAIN-ae4826a387e6 | `ae4826a387e6de58d0625b312851ec0d7526cb26` | CommandServer.Start returns the listen error immediately; 30s retry and syscall/time sleeps removed; TestCommandServerListenFailsImmediately bounds failure <2s on an unusable base path | Android direct-boot EROFS device |
+| MAIN-b02b21b3f3aa | `b02b21b3f3aaf97f60a96942ec5cf2f755fb1aeb` | kept User=sing-box, capability bounding/ambient set, sysusers account and scoped polkit rule; TestPackagedServiceKeepsLeastPrivilege locks the policy; root is not required for TUN/routes: CAP_NET_ADMIN/CAP_NET_RAW cover them; split DNS is scoped to the sing-box user | systemd boot on a packaged host; deployments needing root-only features must override the unit deliberately |
 
 ## Closed in phase 05
 
@@ -94,6 +105,23 @@ Root and nested `test` module both replace `github.com/sagernet/sing-tun` with
 `github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261024041103-4200a04a089a`, `github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261024063732-ce02ee5cc210`, `github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261024074641-5e5a0274bd6c`, cronet-go root/all `8aa139e` with all 29 lib modules at `8c68ce8`, and the official `github.com/sagernet/tailscale v1.102.1-sing-box-1.14-mod.5.0.20261022222424-1688b52f8204` (no fork). `go list -m -json`
 shows the same `Replace.Dir` in both; `go mod tidy`/`verify` are clean and `go build ./...` passes.
 
+## Ancestry and branch closure (phase 06)
+
+- Merge base before: `d630fa94c53b2e2bdf256fad8b9d1cff809146ed`.
+- Merge commit: `1649aa4f04b` (`-s ours`); merge base after and upstream tip: `a6952ccf6907c18e18917fcb763a433e8e36937b`.
+- `git rev-list --count HEAD..upstream/testing` = **0**; GitHub compare base `a6952ccf690` head `1649aa4f04b`: `behind_by=0`, `ahead_by=2642`.
+- Why `ours` is not a fake zero: the audited baseline was `824dbcf`; upstream moved exactly one commit to
+  `a6952cc` (`Remove stale workflow`), and `.github/workflows/stale.yml` is already absent. The 73
+  audited rows were closed across phases 01–06 (22 MISSING_FIX, 17 dependency bumps, 21 present,
+  5 equivalent), plus 22 exact patch-id matches. The tree preserves the fork contracts by design.
+- Dependency defaults: sing-tun `dev` = pin; sing `dev` = pin; sing-quic `main` = pin; cronet-go
+  `main` = pin; quic-go default is the independent `jiejie-masque-stable` line (`beb42da7`), while
+  the consumed pin `ce02ee5c` lives on `jiejie-masque-mod9`; tailscale is the official module.
+- No construction branch was created in phase 06. Retained: `oom-final-2026-10-24` (checked out in
+  `integration-release-next`), `perf/xhttp-rtt-pipeline-probe` (checked out in
+  `singbox-consolidation`), `wip/p0ab-stale-base` (5 unique commits, predates this window),
+  `origin/pending/device-axis-reload-window-tests` (1 unique commit). `_p01_main` is clean; the
+  detached release/bench worktrees are pre-existing and were not touched.
 ## CI
 
 - Main repo **Verify SUCCESS** on `0275cf6aa8b` (run 40086590102), **Android Core ARM64 SUCCESS**
@@ -103,19 +131,13 @@ shows the same `Replace.Dir` in both; `go mod tidy`/`verify` are clean and `go b
 - Phases 01�C04 CI and fork evidence remain as recorded above; no earlier result is invalidated by
   this phase.
 
-## Open semantic rows (5)
+## Open semantic rows (0)
 
-| id | prio | upstream | next action |
-|---|---|---|---|
-| MAIN-73698e437479 | P1 | Update built-in certificates | Generated data only; run the generator. |
-| MAIN-755150a5131e | P1 | Fix config format output | Reproduce DERP `stun.listen_port` loss through `format`. |
-| MAIN-b6fc3a486355 | P1 | Remove unimplemented direct rule action | Delete the action or implement direct dialing. |
-| MAIN-ae4826a387e6 | P2 | Remove command server listen retry | Only changes read-only `sBasePath` timing. |
-| MAIN-b02b21b3f3aa | P2 | Run systemd service as root | Packaging: drop `User=`/capability lines and helper files. |
+None. Every applicable audited row is closed or rejected with evidence; see the phase 06 report.
 
 ## Next executable action
 
-Phase 06: the five remaining main-repo rows and ancestry/CI closure. `MAIN-cc022098fdec` is closed; its device-level suspend/resume caveat is recorded above.
+None. All applicable audit rows are closed, dependency blockers are zero, and ancestry is zero-behind.
 
 ## Evidence notes
 
