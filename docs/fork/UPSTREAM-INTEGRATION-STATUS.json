@@ -1,0 +1,110 @@
+{
+ "generated_at": "2026-10-24T08:35:25.430756+08:00",
+ "fork_testing_sha": "1bccb81a8ab95b7371ac91507774e1b53322fa96",
+ "upstream_observed": {
+  "sha": "824dbcfb4dd0a95921840b1737b950cde590241e",
+  "time": "2026-10-23T22:39:57+08:00"
+ },
+ "behind_by": 109,
+ "summary": {
+  "open_semantic": 23,
+  "open_dependency_blockers": 6,
+  "unknown": 0
+ },
+ "dependencies": [
+  {
+   "id": "DEP-TUN-0",
+   "repo": "Piggy-Cat-bit-shadow/sing-tun",
+   "target_branch": "dev",
+   "status": "OPEN",
+   "start_sha": "7539c9855f19",
+   "sync_sha": "88e6d8160cf5",
+   "blocked_by": [],
+   "next_action": "audit 49/26 divergence, merge sync into dev preserving (handled,remove) and NAT/buffer ownership, push dev, move main pin"
+  },
+  {
+   "id": "DEP-TUN-1",
+   "repo": "Piggy-Cat-bit-shadow/sing-tun",
+   "target_branch": "dev",
+   "status": "OPEN",
+   "upstream_sha": "84e75a6",
+   "blocked_by": [
+    "DEP-TUN-0"
+   ],
+   "next_action": "system stack closed-session NAT cleanup"
+  },
+  {
+   "id": "DEP-TUN-2",
+   "repo": "Piggy-Cat-bit-shadow/sing-tun",
+   "target_branch": "dev",
+   "status": "OPEN",
+   "upstream_sha": "7980862",
+   "blocked_by": [
+    "DEP-TUN-0"
+   ],
+   "next_action": "IPv6 interface rule without auto route"
+  },
+  {
+   "id": "DEP-TUN-3",
+   "repo": "Piggy-Cat-bit-shadow/sing-tun",
+   "target_branch": "dev",
+   "status": "OPEN",
+   "upstream_sha": "09dd03d",
+   "blocked_by": [
+    "DEP-TUN-0"
+   ],
+   "next_action": "JudgeFlow without blocking packet processing"
+  },
+  {
+   "id": "DEP-SING-1",
+   "repo": "Piggy-Cat-bit-shadow/sing",
+   "target_branch": "dev",
+   "status": "OPEN",
+   "blocked_by": [],
+   "next_action": "pause.Manager context-aware wait; netns/ICMP control"
+  },
+  {
+   "id": "DEP-QUIC-1",
+   "repo": "Piggy-Cat-bit-shadow/quic-go",
+   "target_branch": "jiejie-masque-stable",
+   "status": "OPEN",
+   "blocked_by": [],
+   "next_action": "audit mod.12 vs fork; preserve buffer pinning"
+  },
+  {
+   "id": "DEP-QUIC-2",
+   "repo": "Piggy-Cat-bit-shadow/sing-quic",
+   "target_branch": "main",
+   "status": "OPEN",
+   "blocked_by": [
+    "DEP-QUIC-1"
+   ],
+   "next_action": "absorb applicable fixes, keep MASQUE logic"
+  },
+  {
+   "id": "DEP-CRONET-1",
+   "repo": "Piggy-Cat-bit-shadow/cronet-go",
+   "target_branch": "main",
+   "status": "OPEN",
+   "blocked_by": [],
+   "next_action": "atomic root/all/lib + ABI matrix"
+  },
+  {
+   "id": "DEP-TAILSCALE-1",
+   "repo": "sagernet/tailscale",
+   "target_branch": "N/A",
+   "status": "OPEN",
+   "blocked_by": [],
+   "next_action": "upgrade external module if API present; do not create a fork by default"
+  }
+ ],
+ "completed": [
+  "OOM idle-release loop and Triggered-at-resume state machine",
+  "sing-tun sync branch 9 upstream fixes",
+  "16 main-repo ported rows",
+  "2 dependency pin rows",
+  "composite fast-path closeout",
+  "decision/lifecycle adversarial round"
+ ],
+ "next_executable_action": "DEP-TUN-0: audit and merge sing-tun sync/upstream-fixes-2026-10-24 (88e6d81) into dev (7539c98); then move the main pin and close DEP-TUN-1..3"
+}
