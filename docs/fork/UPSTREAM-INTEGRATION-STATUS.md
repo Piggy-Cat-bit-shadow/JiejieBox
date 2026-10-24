@@ -2,9 +2,9 @@
 
 - generated: 2026-10-24T19:00:00+08:00 (phase 05/06)
 - fork testing code: `0275cf6aa8b2e94f81c449681207196038bb4e3e`
-- fork testing docs: `ca0982f3c47cc97af83ea55be626b1486bcc8f1a`
+- fork testing docs: `0ea3ea30ec31e8a247535a9c9d08a4bcdd9aa3b2`
 - upstream observed: `a6952ccf6907c18e18917fcb763a433e8e36937b` (2026-10-24T10:08:02+08:00, "Remove stale workflow")
-- behind_by: **110**; ahead_by: 2633
+- behind_by: **110**; ahead_by: 2634
 - open semantic: **5**; open dependency blockers: **0**
 
 **Phase 05 closes the Tailscale route/DNS/SSH rows, the three resolved rows, both DHCP rows and the

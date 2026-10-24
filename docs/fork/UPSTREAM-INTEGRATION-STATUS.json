@@ -2,13 +2,13 @@
     "generated_at":  "2026-10-24T19:00:00+08:00",
     "phase":  "05/06",
     "fork_testing_code_sha":  "0275cf6aa8b2e94f81c449681207196038bb4e3e",
-    "fork_testing_docs_sha":  "ca0982f3c47cc97af83ea55be626b1486bcc8f1a",
+    "fork_testing_docs_sha":  "0ea3ea30ec31e8a247535a9c9d08a4bcdd9aa3b2",
     "upstream_observed":  {
                               "sha":  "a6952ccf6907c18e18917fcb763a433e8e36937b",
                               "time":  "2026-10-24T10:08:02+08:00"
                           },
     "behind_by":  110,
-    "ahead_by":  2633,
+    "ahead_by":  2634,
     "summary":  {
                     "open_semantic":  5,
                     "open_dependency_blockers":  0,

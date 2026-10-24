@@ -3,7 +3,7 @@
 ```text
 PHASE = 05/06
 RESULT = PARTIAL_WITH_SPECIFIC_BLOCKER
-MAIN_SHA = 0275cf6aa8b2e94f81c449681207196038bb4e3e (code); ledger commit follows
+MAIN_SHA = 0275cf6aa8b2e94f81c449681207196038bb4e3e (code); 0ea3ea30ec31e8a247535a9c9d08a4bcdd9aa3b2 (docs)
 TAILSCALE_EFFECTIVE_PIN = github.com/sagernet/tailscale v1.102.1-sing-box-1.14-mod.5.0.20261022222424-1688b52f8204 (official module, no fork)
 TAILSCALE_ROUTE_DNS_SSH = CLOSED_CODE_AND_UNIT: netmon/tsnet default-route hooks; short-name/search-domain split; CAP_SETUID/CAP_SETGID preflight
 SYSTEMD_DETECT_REUSE_FLUSH = CLOSED_CODE_AND_LINUX_UNIT: resolv.conf identity + listen addresses; comparable scope specs; NetworkManager/TUN flush path
