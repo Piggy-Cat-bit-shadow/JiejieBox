@@ -209,7 +209,7 @@ require (
 // fix(bufio): a Pipe2 setup failure must fall back, not claim the stream, and the branch
 // also carries the Linux runtime proof for unix.Splice() that runs in this fork's
 // linux-splice-proof workflow.
-replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261024191059-e70473d8f2fb
+replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261024205452-486e7d4c5341
 
 // Adds async read/write buffer pinning (correctness: the native side retains the pointer
 // until its completion callback) and the EarlyCopyBufferGrowth capability the upload copy
