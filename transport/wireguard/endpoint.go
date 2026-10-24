@@ -464,6 +464,14 @@ func (e *Endpoint) Start(postStart bool) error {
 		e.pauseCallback = registeredPause
 		e.deviceWakeCallback = registeredWake
 	}
+	// A pause that arrived before this device was published could not be applied by the callback
+	// (it saw a nil device), and bindListenPort has already brought the device up. Apply the current
+	// state now, under the same lock the callback takes, so a pause-before-first-packet start does
+	// not leave a live socket on a paused network.
+	if pauseManager != nil && pauseManager.IsNetworkPaused() {
+		e.networkPaused = true
+		wgDevice.Down()
+	}
 	e.allowedIPs = wgDevice.AllowedIPs()
 	e.stateAccess.Unlock()
 

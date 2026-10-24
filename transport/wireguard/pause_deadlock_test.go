@@ -82,8 +82,9 @@ import (
 //
 // Only the lock discipline matters to these tests: `access` is held while a callback runs.
 type fakePauseManager struct {
-	access    sync.Mutex
-	callbacks list.List[pause.Callback]
+	access        sync.Mutex
+	callbacks     list.List[pause.Callback]
+	networkPaused atomic.Bool
 
 	// onRegister and onUnregister run at the TOP of the corresponding production call, BEFORE the
 	// manager's own mutex is taken, so a test can pin that call at its entry without inventing a
@@ -93,13 +94,20 @@ type fakePauseManager struct {
 	onUnregister func()
 }
 
-func (m *fakePauseManager) DevicePause()  { m.emit(pause.EventDevicePaused) }
-func (m *fakePauseManager) DeviceWake()   { m.emit(pause.EventDeviceWake) }
-func (m *fakePauseManager) NetworkPause() { m.emit(pause.EventNetworkPause) }
-func (m *fakePauseManager) NetworkWake()  { m.emit(pause.EventNetworkWake) }
+func (m *fakePauseManager) DevicePause() { m.emit(pause.EventDevicePaused) }
+func (m *fakePauseManager) DeviceWake()  { m.emit(pause.EventDeviceWake) }
+func (m *fakePauseManager) NetworkPause() {
+	m.networkPaused.Store(true)
+	m.emit(pause.EventNetworkPause)
+}
+
+func (m *fakePauseManager) NetworkWake() {
+	m.networkPaused.Store(false)
+	m.emit(pause.EventNetworkWake)
+}
 
 func (m *fakePauseManager) IsDevicePaused() bool  { return false }
-func (m *fakePauseManager) IsNetworkPaused() bool { return false }
+func (m *fakePauseManager) IsNetworkPaused() bool { return m.networkPaused.Load() }
 func (m *fakePauseManager) IsPaused() bool        { return false }
 func (m *fakePauseManager) WaitActive()           {}
 
@@ -452,4 +460,32 @@ func TestCloseRacingStartPublishesNothingAndLeavesNoCallback(t *testing.T) {
 	require.NoError(t, endpoint.Close())
 	require.Zero(t, manager.callbackCount(),
 		"an endpoint that never published must not leave a callback registered on the manager")
+}
+
+// TestPauseBeforeFirstPacketAppliesTheStateAtPublish pins the start-side half of the pause contract.
+//
+// bindListenPort brings the device up before the device is published, and the pause callback cannot
+// apply a pause that is already in effect (it saw a nil device). Publishing used to leave that device
+// up on a paused network until the next network event. The publish step must read the current state
+// and take the device down itself.
+func TestPauseBeforeFirstPacketAppliesTheStateAtPublish(t *testing.T) {
+	manager := &fakePauseManager{}
+	manager.NetworkPause()
+	endpoint := newPauseEndpoint(t, manager)
+
+	require.NoError(t, endpoint.Start(false))
+	endpoint.stateAccess.Lock()
+	pausedAfterStart := endpoint.networkPaused
+	device := endpoint.device.Load()
+	endpoint.stateAccess.Unlock()
+	require.NotNil(t, device)
+	require.True(t, pausedAfterStart,
+		"a start on an already-paused network published the device as active")
+
+	// The wake path must still reach the published device.
+	manager.NetworkWake()
+	endpoint.stateAccess.Lock()
+	pausedAfterWake := endpoint.networkPaused
+	endpoint.stateAccess.Unlock()
+	require.False(t, pausedAfterWake, "the network wake did not clear the published device's pause")
 }

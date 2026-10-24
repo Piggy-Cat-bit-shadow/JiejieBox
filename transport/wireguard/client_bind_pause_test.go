@@ -106,5 +106,7 @@ func TestClientBindCloseWhilePausedReleasesTheSender(t *testing.T) {
 	require.False(t, manager.IsPaused())
 }
 
-var _ N.Dialer = (*pauseRefusingDialer)(nil)
-var _ conn.Bind = (*ClientBind)(nil)
+var (
+	_ N.Dialer  = (*pauseRefusingDialer)(nil)
+	_ conn.Bind = (*ClientBind)(nil)
+)
