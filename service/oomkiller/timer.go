@@ -334,6 +334,29 @@ func (t *adaptiveTimer) startLocked() {
 	t.timer = time.AfterFunc(t.minInterval, t.poll)
 }
 
+// stoppedStateLocked is the state handed to the recorder (and possibly carried into the next
+// instance by a reload).
+//
+// # Why transient intent does not cross a reload
+//
+// `forceMinInterval` and `pendingPressureBaseline` are not observations: they are "the next poll
+// should do X" flags set by a pressure callback. A reload replaces the timer, and the callback that
+// set the flag belonged to the old dispatch delivery - the queued action was dropped by stop() for
+// exactly the same reason. Carrying the flag would make the new instance's first poll measure growth
+// from a sample the old instance took (or treat an already-dropped notification as pending), which is
+// the cross-instance state pollution this helper removes. The observable state and the sampling
+// interval are the parts a reload legitimately carries.
+func (t *adaptiveTimer) stoppedStateLocked() timerState {
+	state := t.timerState
+	state.forceMinInterval = false
+	if state.pendingPressureBaseline {
+		state.pendingPressureBaseline = false
+		state.pressureBaseline = memorySample{}
+		state.pressureBaselineTime = time.Time{}
+	}
+	return state
+}
+
 // stop halts the timer and WAITS for every accepted observation and destructive action to finish.
 //
 // # Why the wait is the point
@@ -372,7 +395,7 @@ func (t *adaptiveTimer) stop() timerState {
 	executorStarted := t.reclaimStarted
 	stopChannel := t.reclaimStop
 	exitedChannel := t.reclaimExited
-	state := t.timerState
+	state := t.stoppedStateLocked()
 	t.access.Unlock()
 
 	if executorStarted {

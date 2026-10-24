@@ -196,6 +196,10 @@ that is still carrying traffic.
   fallen below the armed line. The trigger was observed before the in-flight idle pass finished;
   resetting a network for memory that pass already released would terminate healthy paths for a
   problem that no longer exists.
+- A reload carries the observable pressure state and the sampling interval, but NOT a dropped
+  callback's `forceMinInterval` / `pendingPressureBaseline` intent. The callback belonged to the old
+  delivery; inheriting it would make the new instance poll fast or measure growth from a sample it
+  never took. Test: `TestReloadDoesNotCarryAPendingPressureIntent`.
 
 ### 4.6 Regression evidence
 

@@ -417,6 +417,26 @@ func TestPressureCallbacksCoalesceWhileOneIsRunning(t *testing.T) {
 	timer.stop()
 }
 
+// TestReloadDoesNotCarryAPendingPressureIntent: the state a reload inherits must not contain
+// "the next poll should do X" flags set by a callback whose queued action stop() just dropped. A
+// new instance measuring growth from the old delivery, or treating it as still pending, is exactly
+// the cross-instance pollution the lifecycle contract forbids.
+func TestReloadDoesNotCarryAPendingPressureIntent(t *testing.T) {
+	pressure := &atomic.Uint32{}
+	timer := newPollStopRaceTimer(pressure, 33)
+	timer.minInterval = time.Hour
+	timer.maxInterval = time.Hour
+	timer.freeOSMemory = func() {}
+	timer.start(nil)
+
+	timer.notifyPressure()
+	state := timer.stop()
+
+	require.False(t, state.forceMinInterval, "a dropped pressure delivery forced the new instance to poll fast")
+	require.False(t, state.pendingPressureBaseline, "a dropped pressure delivery became the new instance's baseline")
+	require.True(t, state.pressureBaselineTime.IsZero())
+}
+
 // TestStopIsIdempotentAndReleasesTheExecutor: Close can be called twice and a reload creates a new
 // timer. Neither may leave a worker goroutine behind, or a long-lived client accumulates one per
 // reload.
