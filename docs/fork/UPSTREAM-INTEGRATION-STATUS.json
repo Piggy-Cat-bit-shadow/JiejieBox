@@ -143,7 +143,7 @@
       "test": "FAILURE on 4c4e5a2 (run 40050850903): ubuntu x3 and windows fail on TestGoConnKeepalive / TestGoKernelZeroWindowHalfClose / TestGoKernelPacketMapping; macOS passes. These are pre-existing: the pre-merge dev 7539c98 fails the same set plus TestGoKernelFlowControl and TestGoKernelPacket (baseline dispatch run 40050607262, branch ci-baseline-7539c98). No new failing test is introduced.",
       "baseline_branch": "ci-baseline-7539c98 deleted after the comparison"
     },
-    "main_repo": "PENDING at ledger write time; pushes to testing trigger Verify, Mobile contract verification and Android Core ARM64"
+    "main_repo": "SUCCESS on 8f7796a8029 (code 6af4a4a0925): Verify, Mobile contract verification and Android Core ARM64 all succeeded"
   },
   "open_semantic_rows": [
     {"id": "MAIN-42cae14c63d1", "priority": "P0", "subject": "Fix Apple TLS engine connection leak"},

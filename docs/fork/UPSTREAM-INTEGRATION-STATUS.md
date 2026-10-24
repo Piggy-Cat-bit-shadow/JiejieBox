@@ -62,8 +62,8 @@ shows the same `Replace.Dir` in both; `go mod tidy`/`verify` are clean and `go b
   set plus `TestGoKernelFlowControl` and `TestGoKernelPacket` (manual-dispatch baseline run
   40050607262). No new test fails after the convergence.
 - The baseline comparison branch `ci-baseline-7539c98` was deleted after the run.
-- Main repo workflows (`Verify`, `Mobile contract verification`, `Android Core ARM64`) are
-  **PENDING** at ledger write time.
+- Main repo **SUCCESS** on `8f7796a8029` (code `6af4a4a0925`): Verify, Mobile contract verification
+  and Android Core ARM64 all succeeded.
 
 ## Open semantic rows (20)
 

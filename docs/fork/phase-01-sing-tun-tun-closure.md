@@ -9,7 +9,7 @@ MAIN_TESTING = 6af4a4a0925a98abe6dc8d0308d5317052c648e1 (code); ledger commit fo
 EFFECTIVE_SING_TUN_ROOT_AND_TEST = same revision in both modules: v0.0.0-20261024014015-4c4e5a2d6e19, same Replace.Dir
 DEP_TUN_0_1_2_3 = COMPLETED / COMPLETED / COMPLETED / COMPLETED
 MASQUE_BACKPRESSURE = capsule-path park/drain/close/fallback tests pass; MemoryTun full/close/drop tests pass; live QUIC session NOT_VERIFIED_ON_DEVICE
-CI_FINAL_CODE_SHA = 6af4a4a0925 — main workflows PENDING at write time; sing-tun lint SUCCESS and test FAILURE with pre-existing failures (see below)
+CI_FINAL_CODE_SHA = 6af4a4a0925 — main Verify / Mobile contract verification / Android Core ARM64 all SUCCESS on 8f7796a8029; sing-tun lint SUCCESS, test FAILURE with pre-existing failures (see below)
 OPEN_SEMANTIC = 20 (was 22; 3454d6d was never open, it is PRESENT in the audit)
 NEXT_PHASE_READY = YES (phase 02 starts from this ledger; DEP-SING-1 still blocks cc022098fd)
 ```
@@ -62,6 +62,7 @@ NEXT_PHASE_READY = YES (phase 02 starts from this ledger; DEP-SING-1 still block
 | sing-tun targeted suites (flow dispatch, system NAT, system accept/listenconfig, memory TUN) | PASS |
 | sing-tun full root package minus `TestGoKernelTCPTransmitLifetime` | fails only `TestGoKernelPacketBatchIdle`, identically on the pre-merge sync tree (host issue) |
 | main `go test ./protocol/tun ./transport/device ./transport/masque` | PASS |
+| main same packages under `-race` | PASS |
 | main `go build -tags DEFAULT_BUILD_TAGS_OTHERS ./...` | PASS |
 | main `go mod verify` (root and test) | PASS |
 
@@ -79,8 +80,8 @@ NEXT_PHASE_READY = YES (phase 02 starts from this ledger; DEP-SING-1 still block
   after the comparison). So the convergence adds no failing test; these Go-stack tests fail on this
   repository's Linux/Windows CI independently of this phase.
 
-**Main repo**: workflows are PENDING at ledger write time. The code SHA to watch is
-`6af4a4a0925` (Verify, Mobile contract verification, Android Core ARM64).
+**Main repo**: SUCCESS on `8f7796a8029` (code `6af4a4a0925`): Verify (including the race and build
+matrix steps), Mobile contract verification and Android Core ARM64 all succeeded.
 
 Not run, and why:
 
