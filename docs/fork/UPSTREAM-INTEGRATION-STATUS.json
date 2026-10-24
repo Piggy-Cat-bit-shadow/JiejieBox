@@ -1,183 +1,303 @@
 {
-  "generated_at": "2026-10-24T09:45:00+08:00",
-  "phase": "01/06",
-  "fork_testing_code_sha": "f94600ab3bb293af4dbd9734ae4536151379ac9e",
-  "fork_testing_docs_sha": "the commit carrying this ledger",
-  "upstream_observed": {
-    "sha": "824dbcfb4dd0a95921840b1737b950cde590241e",
-    "time": "2026-10-23T22:39:57+08:00"
-  },
-  "behind_by": 109,
-  "ahead_by": 2583,
-  "summary": {
-    "open_semantic": 20,
-    "open_dependency_blockers": 5,
-    "unknown": 0,
-    "previous_open_semantic": 22,
-    "previous_open_dependency_blockers": 6,
-    "ledger_correction": "The 23 in the previous status came from the markdown table counting 3454d6d2411d, which the audit JSON classifies PRESENT (NO_ACTION). The audit is the source of truth: 22 MISSING_FIX before this phase. This phase closed 2 of them."
-  },
-  "closed_this_phase": [
-    {
-      "id": "MAIN-18aa2cdfe742",
-      "upstream_sha": "18aa2cdfe74237ac572fd84b3f712533090ba12c",
-      "status": "CLOSED_CODE_AND_UNIT",
-      "evidence": [
-        "protocol/tun/inbound.go: ipRoute2TableIndex gates the default on AutoRoute",
-        "transport/device/system.go: system VPN device no longer claims table 2022 / rule priority",
-        "protocol/tun/inbound_route_test.go, transport/device/system_tun_options_test.go",
-        "sing-tun dev carries 7980862 adapted: tun_linux.go routes/add default ::/0, nextIPv6RulePriority clamp, delete by oif/table; tun_linux_test.go (linux build)"
-      ],
-      "not_verified": "multi-TUN coexistence and cleanup now verified on a real Linux kernel (sing-tun linux-tun-verify run 40056412780: two real TUN devices, per-instance rule and ::/0 route, Close removes only its own); Android device behaviour not run"
-    },
-    {
-      "id": "MAIN-ef0b632920ff",
-      "upstream_sha": "ef0b632920ff7ef6900716fca3f362b60b2eef58",
-      "status": "CLOSED_CODE_AND_LINUX_UNIT",
-      "evidence": [
-        "experimental/libbox/redirect_linux.go: 8-slot judge semaphore, released by defer",
-        "experimental/libbox/redirect_judge_linux_test.go (linux build; PASS on a Linux runner in 40056761067)"
-      ],
-      "not_verified": "Android binder behaviour on device"
-    }
-  ],
-  "dependencies": [
-    {
-      "id": "DEP-TUN-0",
-      "repo": "Piggy-Cat-bit-shadow/sing-tun",
-      "target_branch": "dev",
-      "status": "COMPLETED",
-      "dev_tip": "dcf84577d0eb28b2fa35bcf0a76736836f45a99d",
-      "merge_commit": "17a6a699750980284cae5d4e04a30720c543ccc2",
-      "merged_branch": "sync/upstream-fixes-2026-10-24 @ 88e6d8160cf56bd440ff20d50bf5c43bff7b259e",
-      "previous_dev": "7539c9855f19bb51a75f0908ecf6ae1d2d749490",
-      "resolution": "The sync branch was a rebase of dev's own commits onto a newer upstream base, so the resolved tree equals the sync tree and dev keeps every fork contract ((handled, remove), PacketBufferPort, return batching, NAT/fragment, Go stack close). Verified by git diff dev..sync before resolving.",
-      "verified_by": "go build windows/linux/darwin/android; targeted go test with -race; cross-compiled linux test binary"
-    },
-    {
-      "id": "DEP-TUN-1",
-      "repo": "Piggy-Cat-bit-shadow/sing-tun",
-      "target_branch": "dev",
-      "status": "COMPLETED",
-      "commit": "1559fbd506eb803888e396f60a438a1c40e0f444",
-      "upstream_sha": "84e75a655a43b671422f9f82d87efbff6b5226d9",
-      "next_action": "closed; RST/FIN-FIN closing timeout, late SYN gets a fresh mapping, sweep re-checks identity"
-    },
-    {
-      "id": "DEP-TUN-2",
-      "repo": "Piggy-Cat-bit-shadow/sing-tun",
-      "target_branch": "dev",
-      "status": "COMPLETED",
-      "commit": "1559fbd506eb803888e396f60a438a1c40e0f444",
-      "upstream_sha": "7980862befdc33548384f3b2e6d03e85c45f694e",
-      "next_action": "closed; ::/0 for no-auto-route IPv6, priority clamp, delete by (family, oif, table)"
-    },
-    {
-      "id": "DEP-TUN-3",
-      "repo": "Piggy-Cat-bit-shadow/sing-tun",
-      "target_branch": "dev",
-      "status": "COMPLETED",
-      "commit": "1559fbd506eb803888e396f60a438a1c40e0f444",
-      "upstream_sha": "09dd03de313656f6a72424c308148d07523e50c4",
-      "next_action": "closed; bounded held packets (16/flow, 512/stage), resume pump on all four stacks and nfqueue, close drops judgements"
-    },
-    {
-      "id": "DEP-SING-1",
-      "repo": "Piggy-Cat-bit-shadow/sing",
-      "target_branch": "dev",
-      "status": "OPEN",
-      "blocked_by": [],
-      "next_action": "pause.Manager context-aware wait; netns/ICMP control"
-    },
-    {
-      "id": "DEP-QUIC-1",
-      "repo": "Piggy-Cat-bit-shadow/quic-go",
-      "target_branch": "jiejie-masque-stable",
-      "status": "OPEN",
-      "blocked_by": [],
-      "next_action": "audit mod.12 vs fork; preserve buffer pinning"
-    },
-    {
-      "id": "DEP-QUIC-2",
-      "repo": "Piggy-Cat-bit-shadow/sing-quic",
-      "target_branch": "main",
-      "status": "OPEN",
-      "blocked_by": ["DEP-QUIC-1"],
-      "next_action": "absorb applicable fixes, keep MASQUE logic"
-    },
-    {
-      "id": "DEP-CRONET-1",
-      "repo": "Piggy-Cat-bit-shadow/cronet-go",
-      "target_branch": "main",
-      "status": "OPEN",
-      "blocked_by": [],
-      "next_action": "atomic root/all/lib + ABI matrix"
-    },
-    {
-      "id": "DEP-TAILSCALE-1",
-      "repo": "sagernet/tailscale",
-      "target_branch": "N/A",
-      "status": "OPEN",
-      "blocked_by": [],
-      "next_action": "upgrade external module if API present; do not create a fork by default"
-    }
-  ],
-  "masque_backpressure": {
-    "status": "PRESENT_CODE_AND_UNIT",
-    "wiring": "WaitWriteInboundBuffers -> transport/device -> protocol/masque (ClientEndpoint/ServerEndpoint), non-blocking fallback kept",
-    "tests": [
-      "transport/masque/inbound_backpressure_real_test.go: real capsule parse path; full device parks the read loop, drain releases exactly one write, close returns os.ErrClosed, non-blocking writer fallback",
-      "sing-tun tun_memory_wait_test.go: MemoryTun full queue parks, a freed slot wakes, Close returns os.ErrClosed, non-blocking path drops at the bound",
-      "transport/masque/inbound_wait_test.go: interface preference"
-    ],
-    "not_verified": "live QUIC client/server datagram session on a device (NOT_VERIFIED_ON_DEVICE)"
-  },
-  "effective_pins": {
-    "root_module": "github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024025840-dcf84577d0eb",
-    "test_module": "github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024025840-dcf84577d0eb",
-    "verification": "go list -m -json in both modules resolves to the same Dir; go mod tidy/verify clean; go build ./... clean"
-  },
-  "ci": {
-    "sing_tun": {
-      "lint": "SUCCESS on dcf8457 (run 40056405709)",
-      "test": "FAILURE on dcf8457 (run 40056405724; rerun failed the same way). The persistent failures are TestGoConnKeepalive, TestGoKernelZeroWindowHalfClose and TestGoKernelPacketMapping, all present on the pre-merge dev baseline 7539c98 (run 40050607262), which additionally failed TestGoKernelFlowControl and TestGoKernelPacket. TestGoKernelPacketFragments failed in the first run and passed on the rerun (flake). No new persistent failure.",
-      "linux_tun_verify": "SUCCESS (run 40056412780): non-root linux-only unit suite (rule priority, routes, TCP NAT expiry, memory-TUN backpressure, async judgement) and, as root, the committed dual real-TUN test (TestPrivilegedDualTunIPv6RuleAndRouteLifecycle)."
-    },
-    "main_repo": "SUCCESS on f94600ab3bb (code): Verify run 40057018200, Mobile contract verification run 40057018099, Android Core ARM64 run 40057018028",
-    "main_repo_linux": "SUCCESS (run 40056761067): protocol/tun, transport/device, transport/masque and experimental/libbox auto-redirect judgement tests on Ubuntu"
-  },
-  "open_semantic_rows": [
-    {"id": "MAIN-42cae14c63d1", "priority": "P0", "subject": "Fix Apple TLS engine connection leak"},
-    {"id": "MAIN-cc022098fdec", "priority": "P0", "subject": "Fix WireGuard pause and sleep handling"},
-    {"id": "MAIN-1cc885e0400e", "priority": "P1", "subject": "Provide default route to Tailscale"},
-    {"id": "MAIN-38bf6879bbad", "priority": "P1", "subject": "Fix network strategy for ICMP"},
-    {"id": "MAIN-40bc411e8d02", "priority": "P1", "subject": "Fix connection owner lookup on legacy Android"},
-    {"id": "MAIN-42f487bd0d04", "priority": "P1", "subject": "Fix IPv6 literal host handling"},
-    {"id": "MAIN-54c60dc7e6cc", "priority": "P1", "subject": "Fix DHCP DNS search domain expansion"},
-    {"id": "MAIN-6fb6770cec52", "priority": "P1", "subject": "Keep systemd-resolved servers when configuration is unchanged"},
-    {"id": "MAIN-73698e437479", "priority": "P1", "subject": "Update built-in certificates"},
-    {"id": "MAIN-755150a5131e", "priority": "P1", "subject": "Fix config format output"},
-    {"id": "MAIN-7a0ae5f35889", "priority": "P1", "subject": "Fix tailscale short name and DNS route matching"},
-    {"id": "MAIN-9c24112d12d5", "priority": "P1", "subject": "Fix unshare network namespace with capabilities"},
-    {"id": "MAIN-a130b482d41f", "priority": "P1", "subject": "Flush systemd-resolved cache on DNS changes"},
-    {"id": "MAIN-a8a2964592c7", "priority": "P1", "subject": "Fix systemd-resolved detection for local DNS server"},
-    {"id": "MAIN-b6fc3a486355", "priority": "P1", "subject": "Remove unimplemented direct rule action"},
-    {"id": "MAIN-c8ba005e84d2", "priority": "P1", "subject": "Reject Tailscale SSH user switch without privilege"},
-    {"id": "MAIN-db4e5da711ea", "priority": "P1", "subject": "Check DNS address filter rules on cache hit"},
-    {"id": "MAIN-972a052ef537", "priority": "P2", "subject": "Remove unused DNS search expansion"},
-    {"id": "MAIN-ae4826a387e6", "priority": "P2", "subject": "Remove command server listen retry"},
-    {"id": "MAIN-b02b21b3f3aa", "priority": "P2", "subject": "Run systemd service as root"}
-  ],
-  "completed": [
-    "OOM idle-release loop and Triggered-at-resume state machine",
-    "sing-tun dev convergence (merge commit 17a6a69) and the three upstream mechanisms (1559fbd)",
-    "16 main-repo ported rows",
-    "2 dependency pin rows",
-    "composite fast-path closeout",
-    "decision/lifecycle adversarial round",
-    "18aa2cdfe742 and ef0b632920ff ported in this phase",
-    "MASQUE inbound backpressure real-path and memory-TUN tests",
-    "privileged dual real-TUN IPv6 rule/route lifecycle test and linux-tun-verify workflow"
-  ],
-  "next_executable_action": "MAIN-42cae14c63d1 (Apple TLS engine connection leak, P0); then cc022098fd (WireGuard pause) still needs DEP-SING-1"
+    "generated_at":  "2026-10-24T13:10:00+08:00",
+    "phase":  "02/06",
+    "fork_testing_code_sha":  "1255f5aa086d4facd5d6111ff900c866a062a5ee",
+    "fork_testing_docs_sha":  "the commit carrying this ledger",
+    "upstream_observed":  {
+                              "sha":  "a6952ccf6907c18e18917fcb763a433e8e36937b",
+                              "time":  "2026-10-24T10:08:02+08:00"
+                          },
+    "behind_by":  110,
+    "ahead_by":  2597,
+    "summary":  {
+                    "open_semantic":  17,
+                    "open_dependency_blockers":  4,
+                    "unknown":  0,
+                    "previous_open_semantic":  20,
+                    "previous_open_dependency_blockers":  5,
+                    "ledger_correction":  "The 23 in the previous status came from the markdown table counting 3454d6d2411d, which the audit JSON classifies PRESENT (NO_ACTION). The audit is the source of truth: 22 MISSING_FIX before this phase. This phase closed 2 of them.",
+                    "ledger_correction_02":  "Phase 01 closed 2 rows and left 20; phase 02 closes cc022098fd, 38bf6879bb and 9c24112d12, leaving 17. DEP-SING-1 is completed, leaving 4 dependency blockers."
+                },
+    "closed_this_phase":  [
+                              {
+                                  "status":  "CLOSED_CODE_AND_RACE",
+                                  "evidence":  [
+                                                   "sing dev 533bbb8: pause.Manager WaitActiveContext, race-free active channel (upstream 5dc452e)",
+                                                   "transport/wireguard/client_bind.go waits on bindCtx and the retry delay is interruptible",
+                                                   "transport/wireguard/endpoint.go applies an in-effect pause at publish",
+                                                   "client_bind_pause_test.go and pause_deadlock_test.go (pause-before-first-packet)"
+                                               ],
+                                  "upstream_sha":  "cc022098fdec81215e93377fa4594e18f4b7ec62",
+                                  "id":  "MAIN-cc022098fdec",
+                                  "not_verified":  "suspend/resume on a real Android/Apple device"
+                              },
+                              {
+                                  "status":  "CLOSED_CODE_AND_LINUX_UNIT",
+                                  "evidence":  [
+                                                   "common/dialer/default.go: ICMPControl uses the network strategy/interface types",
+                                                   "common/dialer/default_parallel_interface.go: serialInterfaceControl (candidate order, default-interface skip, EPERM only for the default strategy)",
+                                                   "protocol/direct/outbound.go installs one destination-independent control",
+                                                   "icmp_strategy_test.go; protocol/direct TestICMPLoopbackToTheTunRangeIsRejected"
+                                               ],
+                                  "upstream_sha":  "38bf6879bbadd65d097b0061053542670219dca8",
+                                  "id":  "MAIN-38bf6879bbad",
+                                  "not_verified":  "real ICMP socket on a device with multiple interfaces"
+                              },
+                              {
+                                  "status":  "CLOSED_CODE_AND_LINUX_NETNS",
+                                  "evidence":  [
+                                                   "cmd/sing-box/cmd_run_userns_linux.go: initialDir, capability guard, CAP_NET_BIND_SERVICE",
+                                                   "common/netns: ownsUserNamespace + nsenter -U reporting, holder ignores INT/TERM/HUP",
+                                                   "manager_test.go: signal-ignore child, root predicate; cmd_run_userns_linux_test.go: capability guard",
+                                                   "linux-netns-verify run 40063708065: TestUnshareNamespace (real namespace holder), signal policy, predicate and guard PASS"
+                                               ],
+                                  "upstream_sha":  "9c24112d12d5cff648f7261ff83ae4c5f3bd0d24",
+                                  "id":  "MAIN-9c24112d12d5",
+                                  "not_verified":  "non-root user-namespace creation on a host whose kernel/AppArmor policy allows it (runner policy blocks it)"
+                              }
+                          ],
+    "dependencies":  [
+                         {
+                             "id":  "DEP-TUN-0",
+                             "repo":  "Piggy-Cat-bit-shadow/sing-tun",
+                             "target_branch":  "dev",
+                             "status":  "COMPLETED",
+                             "dev_tip":  "dcf84577d0eb28b2fa35bcf0a76736836f45a99d",
+                             "merge_commit":  "17a6a699750980284cae5d4e04a30720c543ccc2",
+                             "merged_branch":  "sync/upstream-fixes-2026-10-24 @ 88e6d8160cf56bd440ff20d50bf5c43bff7b259e",
+                             "previous_dev":  "7539c9855f19bb51a75f0908ecf6ae1d2d749490",
+                             "resolution":  "The sync branch was a rebase of dev\u0027s own commits onto a newer upstream base, so the resolved tree equals the sync tree and dev keeps every fork contract ((handled, remove), PacketBufferPort, return batching, NAT/fragment, Go stack close). Verified by git diff dev..sync before resolving.",
+                             "verified_by":  "go build windows/linux/darwin/android; targeted go test with -race; cross-compiled linux test binary"
+                         },
+                         {
+                             "id":  "DEP-TUN-1",
+                             "repo":  "Piggy-Cat-bit-shadow/sing-tun",
+                             "target_branch":  "dev",
+                             "status":  "COMPLETED",
+                             "commit":  "1559fbd506eb803888e396f60a438a1c40e0f444",
+                             "upstream_sha":  "84e75a655a43b671422f9f82d87efbff6b5226d9",
+                             "next_action":  "closed; RST/FIN-FIN closing timeout, late SYN gets a fresh mapping, sweep re-checks identity"
+                         },
+                         {
+                             "id":  "DEP-TUN-2",
+                             "repo":  "Piggy-Cat-bit-shadow/sing-tun",
+                             "target_branch":  "dev",
+                             "status":  "COMPLETED",
+                             "commit":  "1559fbd506eb803888e396f60a438a1c40e0f444",
+                             "upstream_sha":  "7980862befdc33548384f3b2e6d03e85c45f694e",
+                             "next_action":  "closed; ::/0 for no-auto-route IPv6, priority clamp, delete by (family, oif, table)"
+                         },
+                         {
+                             "id":  "DEP-TUN-3",
+                             "repo":  "Piggy-Cat-bit-shadow/sing-tun",
+                             "target_branch":  "dev",
+                             "status":  "COMPLETED",
+                             "commit":  "1559fbd506eb803888e396f60a438a1c40e0f444",
+                             "upstream_sha":  "09dd03de313656f6a72424c308148d07523e50c4",
+                             "next_action":  "closed; bounded held packets (16/flow, 512/stage), resume pump on all four stacks and nfqueue, close drops judgements"
+                         },
+                         {
+                             "id":  "DEP-SING-1",
+                             "repo":  "Piggy-Cat-bit-shadow/sing",
+                             "target_branch":  "dev",
+                             "status":  "COMPLETED",
+                             "blocked_by":  [
+
+                                            ],
+                             "next_action":  "closed",
+                             "dev_sha":  "4200a04a089a8271a2243971790f15c262f7bcfe",
+                             "merge_commit":  "a965eff35b46316a21e2435cacf12098f95500db",
+                             "pause_commit":  "533bbb8a86f3d79eb4d0bef55f60f8b772a95b0c",
+                             "evidence":  "dev now contains the previously pinned side branch (merge a965eff) plus the pause port (533bbb8) and a socks test cleanup (4200a04). service/pause passes under -race locally and in the sing test workflow on all six jobs."
+                         },
+                         {
+                             "id":  "DEP-QUIC-1",
+                             "repo":  "Piggy-Cat-bit-shadow/quic-go",
+                             "target_branch":  "jiejie-masque-stable",
+                             "status":  "OPEN",
+                             "blocked_by":  [
+
+                                            ],
+                             "next_action":  "audit mod.12 vs fork; preserve buffer pinning"
+                         },
+                         {
+                             "id":  "DEP-QUIC-2",
+                             "repo":  "Piggy-Cat-bit-shadow/sing-quic",
+                             "target_branch":  "main",
+                             "status":  "OPEN",
+                             "blocked_by":  [
+                                                "DEP-QUIC-1"
+                                            ],
+                             "next_action":  "absorb applicable fixes, keep MASQUE logic"
+                         },
+                         {
+                             "id":  "DEP-CRONET-1",
+                             "repo":  "Piggy-Cat-bit-shadow/cronet-go",
+                             "target_branch":  "main",
+                             "status":  "OPEN",
+                             "blocked_by":  [
+
+                                            ],
+                             "next_action":  "atomic root/all/lib + ABI matrix"
+                         },
+                         {
+                             "id":  "DEP-TAILSCALE-1",
+                             "repo":  "sagernet/tailscale",
+                             "target_branch":  "N/A",
+                             "status":  "OPEN",
+                             "blocked_by":  [
+
+                                            ],
+                             "next_action":  "upgrade external module if API present; do not create a fork by default"
+                         }
+                     ],
+    "masque_backpressure":  {
+                                "status":  "PRESENT_CODE_AND_UNIT",
+                                "wiring":  "WaitWriteInboundBuffers -\u003e transport/device -\u003e protocol/masque (ClientEndpoint/ServerEndpoint), non-blocking fallback kept",
+                                "tests":  [
+                                              "transport/masque/inbound_backpressure_real_test.go: real capsule parse path; full device parks the read loop, drain releases exactly one write, close returns os.ErrClosed, non-blocking writer fallback",
+                                              "sing-tun tun_memory_wait_test.go: MemoryTun full queue parks, a freed slot wakes, Close returns os.ErrClosed, non-blocking path drops at the bound",
+                                              "transport/masque/inbound_wait_test.go: interface preference"
+                                          ],
+                                "not_verified":  "live QUIC client/server datagram session on a device (NOT_VERIFIED_ON_DEVICE)"
+                            },
+    "effective_pins":  {
+                           "root_module":  "github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024025840-dcf84577d0eb",
+                           "test_module":  "github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024025840-dcf84577d0eb",
+                           "verification":  "go list -m -json in both modules resolves to the same Dir; go mod tidy/verify clean; go build ./... clean",
+                           "sing":  "github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261024041103-4200a04a089a (root and test module)"
+                       },
+    "ci":  {
+               "main_linux":  "SUCCESS: linux-netns-verify 40063708065 on 1255f5aa086",
+               "sing":  {
+                            "test":  "SUCCESS on 4200a04 (run 40061343168, rerun of a flaky SOCKS pool assertion: all six jobs pass); lint=FAILURE (run 40061343203) on pre-existing repository-wide gci/gofumpt/modernize/paralleltest issues unrelated to this phase (service/pause is clean)"
+                        },
+               "main_repo":  "SUCCESS on 1255f5aa086 (code): Verify 40063702396, Android Core ARM64 40063702432, Mobile contract verification 40063710577 (dispatch; the push run was cancelled while a newer commit superseded it)"
+           },
+    "open_semantic_rows":  [
+                               {
+                                   "id":  "MAIN-42cae14c63d1",
+                                   "priority":  "P0",
+                                   "subject":  "Fix Apple TLS engine connection leak"
+                               },
+                               {
+                                   "id":  "MAIN-1cc885e0400e",
+                                   "priority":  "P1",
+                                   "subject":  "Provide default route to Tailscale"
+                               },
+                               {
+                                   "id":  "MAIN-40bc411e8d02",
+                                   "priority":  "P1",
+                                   "subject":  "Fix connection owner lookup on legacy Android"
+                               },
+                               {
+                                   "id":  "MAIN-42f487bd0d04",
+                                   "priority":  "P1",
+                                   "subject":  "Fix IPv6 literal host handling"
+                               },
+                               {
+                                   "id":  "MAIN-54c60dc7e6cc",
+                                   "priority":  "P1",
+                                   "subject":  "Fix DHCP DNS search domain expansion"
+                               },
+                               {
+                                   "id":  "MAIN-6fb6770cec52",
+                                   "priority":  "P1",
+                                   "subject":  "Keep systemd-resolved servers when configuration is unchanged"
+                               },
+                               {
+                                   "id":  "MAIN-73698e437479",
+                                   "priority":  "P1",
+                                   "subject":  "Update built-in certificates"
+                               },
+                               {
+                                   "id":  "MAIN-755150a5131e",
+                                   "priority":  "P1",
+                                   "subject":  "Fix config format output"
+                               },
+                               {
+                                   "id":  "MAIN-7a0ae5f35889",
+                                   "priority":  "P1",
+                                   "subject":  "Fix tailscale short name and DNS route matching"
+                               },
+                               {
+                                   "id":  "MAIN-a130b482d41f",
+                                   "priority":  "P1",
+                                   "subject":  "Flush systemd-resolved cache on DNS changes"
+                               },
+                               {
+                                   "id":  "MAIN-a8a2964592c7",
+                                   "priority":  "P1",
+                                   "subject":  "Fix systemd-resolved detection for local DNS server"
+                               },
+                               {
+                                   "id":  "MAIN-b6fc3a486355",
+                                   "priority":  "P1",
+                                   "subject":  "Remove unimplemented direct rule action"
+                               },
+                               {
+                                   "id":  "MAIN-c8ba005e84d2",
+                                   "priority":  "P1",
+                                   "subject":  "Reject Tailscale SSH user switch without privilege"
+                               },
+                               {
+                                   "id":  "MAIN-db4e5da711ea",
+                                   "priority":  "P1",
+                                   "subject":  "Check DNS address filter rules on cache hit"
+                               },
+                               {
+                                   "id":  "MAIN-972a052ef537",
+                                   "priority":  "P2",
+                                   "subject":  "Remove unused DNS search expansion"
+                               },
+                               {
+                                   "id":  "MAIN-ae4826a387e6",
+                                   "priority":  "P2",
+                                   "subject":  "Remove command server listen retry"
+                               },
+                               {
+                                   "id":  "MAIN-b02b21b3f3aa",
+                                   "priority":  "P2",
+                                   "subject":  "Run systemd service as root"
+                               }
+                           ],
+    "completed":  [
+                      "OOM idle-release loop and Triggered-at-resume state machine",
+                      "sing-tun dev convergence (merge commit 17a6a69) and the three upstream mechanisms (1559fbd)",
+                      "16 main-repo ported rows",
+                      "2 dependency pin rows",
+                      "composite fast-path closeout",
+                      "decision/lifecycle adversarial round",
+                      "18aa2cdfe742 and ef0b632920ff ported in this phase",
+                      "MASQUE inbound backpressure real-path and memory-TUN tests",
+                      "privileged dual real-TUN IPv6 rule/route lifecycle test and linux-tun-verify workflow",
+                      "DEP-SING-1 pause.Manager WaitActiveContext and the WireGuard pause/close fixes",
+                      "ICMP network strategy on the control path",
+                      "Linux user-namespace capability guard, holder signal policy and nsenter reporting"
+                  ],
+    "next_executable_action":  "MAIN-42cae14c63d1 (Apple TLS engine connection leak, P0)",
+    "closed_phase_01":  [
+                            {
+                                "id":  "MAIN-18aa2cdfe742",
+                                "upstream_sha":  "18aa2cdfe74237ac572fd84b3f712533090ba12c",
+                                "status":  "CLOSED_CODE_AND_UNIT",
+                                "evidence":  [
+                                                 "protocol/tun/inbound.go: ipRoute2TableIndex gates the default on AutoRoute",
+                                                 "transport/device/system.go: system VPN device no longer claims table 2022 / rule priority",
+                                                 "protocol/tun/inbound_route_test.go, transport/device/system_tun_options_test.go",
+                                                 "sing-tun dev carries 7980862 adapted: tun_linux.go routes/add default ::/0, nextIPv6RulePriority clamp, delete by oif/table; tun_linux_test.go (linux build)"
+                                             ],
+                                "not_verified":  "multi-TUN coexistence and cleanup now verified on a real Linux kernel (sing-tun linux-tun-verify run 40056412780: two real TUN devices, per-instance rule and ::/0 route, Close removes only its own); Android device behaviour not run"
+                            },
+                            {
+                                "id":  "MAIN-ef0b632920ff",
+                                "upstream_sha":  "ef0b632920ff7ef6900716fca3f362b60b2eef58",
+                                "status":  "CLOSED_CODE_AND_LINUX_UNIT",
+                                "evidence":  [
+                                                 "experimental/libbox/redirect_linux.go: 8-slot judge semaphore, released by defer",
+                                                 "experimental/libbox/redirect_judge_linux_test.go (linux build; PASS on a Linux runner in 40056761067)"
+                                             ],
+                                "not_verified":  "Android binder behaviour on device"
+                            }
+                        ]
 }

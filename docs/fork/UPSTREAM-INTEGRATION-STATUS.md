@@ -1,15 +1,19 @@
 # Upstream integration status
 
-- generated: 2026-10-24T09:45:00+08:00 (phase 01/06)
-- fork testing code: `f94600ab3bb293af4dbd9734ae4536151379ac9e`
-- upstream observed: `824dbcfb4dd0a95921840b1737b950cde590241e` (2026-10-23T22:39:57+08:00)
-- behind_by: **109**; ahead_by: 2583
-- open semantic: **20**; open dependency blockers: **5**
+- generated: 2026-10-24T13:10:00+08:00 (phase 02/06)
+- fork testing code: `1255f5aa086d4facd5d6111ff900c866a062a5ee`
+- upstream observed: `a6952ccf6907c18e18917fcb763a433e8e36937b` (2026-10-24T10:08:02+08:00, "Remove stale workflow")
+- behind_by: **110**; ahead_by: 2597
+- open semantic: **17**; open dependency blockers: **4**
 
-**Ledger correction.** The previous status said 23 open semantic rows while the report said 22. The
-audit JSON is the source of truth: 22 `MISSING_FIX` rows, and `3454d6d2411d` (MASQUE inbound
-backpressure) is `PRESENT`/`NO_ACTION` in the audit. The markdown table had counted it as open. This
-phase closed 2 of the 22, so 20 remain.
+**Phase 02 closes three rows** (`cc022098fdec`, `38bf6879bbad`, `9c24112d12d5`) and
+**DEP-SING-1**. 17 of the audit's 22 `MISSING_FIX` rows remain; the audit JSON is still the source of
+truth for classification.
+
+## Closed in phase 02
+
+| id | upstream | what landed | evidence | not verified |
+|---|---|---|---|---|
 
 ## Closed in phase 01
 
@@ -26,7 +30,7 @@ phase closed 2 of the 22, so 20 remain.
 | DEP-TUN-1 | COMPLETED | `1559fbd`: closed TCP sessions expire on `tcpClosingTimeout`, a late SYN gets a fresh mapping, concurrent sweep re-checks map identity. Tests `stack_system_nat_test.go`. |
 | DEP-TUN-2 | COMPLETED | `1559fbd`: no-auto-route IPv6 default route, priority clamp above `redirectRouteRulePriority`, delete by identity. Tests `tun_linux_test.go`. |
 | DEP-TUN-3 | COMPLETED | `1559fbd`: bounded held packets (16/flow, 512/stage), async `JudgeFlow`, resume pump on System/Mixed/Go/gvisor and nfqueue, close drops judgements. Tests `flow_dispatch_judge_test.go`. |
-| DEP-SING-1 | OPEN | `pause.Manager` context-aware wait; netns/ICMP control |
+| DEP-SING-1 | COMPLETED | `sing/dev` 4200a04 (merge a965eff of the previously pinned side branch, pause port 533bbb8, socks test cleanup 4200a04). `service/pause` tests pass under `-race` locally and in the sing test workflow (all six jobs). |
 | DEP-QUIC-1 | OPEN | audit mod.12 vs fork; preserve buffer pinning |
 | DEP-QUIC-2 | OPEN | blocked by DEP-QUIC-1 |
 | DEP-CRONET-1 | OPEN | atomic root/all/lib + ABI matrix |
@@ -34,15 +38,15 @@ phase closed 2 of the 22, so 20 remain.
 
 ## MASQUE inbound backpressure
 
-Wiring is present: `WaitWriteInboundBuffers` → `transport/device` → `protocol/masque`
+Wiring is present: `WaitWriteInboundBuffers` �?`transport/device` �?`protocol/masque`
 (`ClientEndpoint`/`ServerEndpoint`), with the non-blocking fallback kept.
 
 Real-path evidence added this phase:
 
-- `transport/masque/inbound_backpressure_real_test.go` — a real capsule is parsed by the session,
+- `transport/masque/inbound_backpressure_real_test.go` �?a real capsule is parsed by the session,
   the full device parks the read loop, a drained slot releases exactly one write, `Close` returns
   `os.ErrClosed`, and a handler with no wait contract uses the non-blocking path.
-- sing-tun `tun_memory_wait_test.go` — the underlying `MemoryTun`: full queue parks, a freed slot
+- sing-tun `tun_memory_wait_test.go` �?the underlying `MemoryTun`: full queue parks, a freed slot
   wakes, `Close` wakes with `os.ErrClosed`, the non-blocking path drops at the bound.
 
 Not verified: a live QUIC client/server datagram session on a device.
@@ -50,35 +54,30 @@ Not verified: a live QUIC client/server datagram session on a device.
 ## Effective pins
 
 Root and nested `test` module both replace `github.com/sagernet/sing-tun` with
-`github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024025840-dcf84577d0eb`. `go list -m -json`
+`github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024025840-dcf84577d0eb` and
+`github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261024041103-4200a04a089a`. `go list -m -json`
 shows the same `Replace.Dir` in both; `go mod tidy`/`verify` are clean and `go build ./...` passes.
 
 ## CI
 
-- sing-tun **lint: SUCCESS** on `dcf8457` (run 40056405709).
-- sing-tun **test: FAILURE** on `dcf8457` (run 40056405724; rerun failed the same way). The
-  persistent failures are `TestGoConnKeepalive`, `TestGoKernelZeroWindowHalfClose` and
-  `TestGoKernelPacketMapping`, all present on the pre-merge `dev` 7539c98 (manual-dispatch baseline
-  run 40050607262), which additionally failed `TestGoKernelFlowControl` and `TestGoKernelPacket`.
-  `TestGoKernelPacketFragments` failed once and passed on the rerun (flake). No new persistent
-  failure is introduced.
-- sing-tun **linux-tun-verify: SUCCESS** (run 40056412780): the non-root linux-only unit suite and,
-  as root, the committed dual real-TUN test. Two real TUN devices with `auto_route=false` and IPv6
-  addresses each install their own oif rule and `::/0` route; the second does not remove the first;
-  `Close` removes only its own rule and route.
-- Main repo **SUCCESS** on `f94600ab3bb` (code): Verify run 40057018200, Mobile contract verification
-  run 40057018099, Android Core ARM64 run 40057018028.
-- Main repo **Linux checks: SUCCESS** (run 40056761067): `protocol/tun`, `transport/device`,
-  `transport/masque` and the libbox auto-redirect judgement tests on Ubuntu.
+- sing-tun: unchanged from phase 01. Lint green; test red only on the pre-existing Go-stack set
+  (subset of the pre-merge baseline), with the privileged dual-TUN workflow green.
+- sing: **test SUCCESS** on `4200a04` (run 40061343168, rerun of one flaky SOCKS pool assertion; all
+  six Linux/macOS/Windows jobs pass). **lint FAILURE** (run 40061343203) on repository-wide
+  pre-existing gci/gofumpt/modernize/paralleltest issues; `service/pause` itself is clean.
+- Main repo **Verify SUCCESS** on `1255f5aa086` (run 40063702396), **Android Core ARM64 SUCCESS**
+  (run 40063702432), **Mobile contract verification SUCCESS** (run 40063710577, dispatched; the push
+  run was cancelled by the newer commit).
+- **linux-netns-verify SUCCESS** on `1255f5aa086` (run 40063708065): real unshare namespace holder,
+  holder signal policy, root user-namespace predicate, capability guard, ICMP strategy and WireGuard
+  pause tests.
 
-## Open semantic rows (20)
+## Open semantic rows (17)
 
 | id | prio | upstream | next action |
 |---|---|---|---|
 | MAIN-42cae14c63d1 | P0 | Fix Apple TLS engine connection leak | Port the `F_DUPFD_CLOEXEC` engine change; leak grows per TLS connection. |
-| MAIN-cc022098fdec | P0 | Fix WireGuard pause and sleep handling | Needs DEP-SING-1 (`pause.Manager` context-aware wait) first. |
 | MAIN-1cc885e0400e | P1 | Provide default route to Tailscale | Bump tailscale for `netmon.SetDefaultRouteFunc` and register it. |
-| MAIN-38bf6879bbad | P1 | Fix network strategy for ICMP | Control-func equivalent plus default-strategy EPERM tolerance. |
 | MAIN-40bc411e8d02 | P1 | Fix connection owner lookup on legacy Android | Libbox change plus Android client switch away from procfs. |
 | MAIN-42f487bd0d04 | P1 | Fix IPv6 literal host handling | Bundles http3 `SetNextProtos(h3)` and derp URL dialer changes. |
 | MAIN-54c60dc7e6cc | P1 | Fix DHCP DNS search domain expansion | Expand only when `mDNS.CountLabel(name)==1`; validate first. |
@@ -86,7 +85,6 @@ shows the same `Replace.Dir` in both; `go mod tidy`/`verify` are clean and `go b
 | MAIN-73698e437479 | P1 | Update built-in certificates | Generated data only; run the generator. |
 | MAIN-755150a5131e | P1 | Fix config format output | Reproduce DERP `stun.listen_port` loss through `format`. |
 | MAIN-7a0ae5f35889 | P1 | Fix tailscale short name and DNS route matching | Restore local-route NXDOMAIN and MagicDNS short-name preference. |
-| MAIN-9c24112d12d5 | P1 | Fix unshare network namespace with capabilities | Port all four pieces together. |
 | MAIN-a130b482d41f | P1 | Flush systemd-resolved cache on DNS changes | Use the sing-tun `LinuxTUN.FlushDNSCache` now present on dev. |
 | MAIN-a8a2964592c7 | P1 | Fix systemd-resolved detection for local DNS server | Always attempt the resolved resolver; add `SystemdResolved` detection. |
 | MAIN-b6fc3a486355 | P1 | Remove unimplemented direct rule action | Delete the action or implement direct dialing. |
@@ -98,8 +96,9 @@ shows the same `Replace.Dir` in both; `go mod tidy`/`verify` are clean and `go b
 
 ## Next executable action
 
-`MAIN-42cae14c63d1` (Apple TLS engine connection leak, P0). `MAIN-cc022098fdec` stays blocked on
-DEP-SING-1.
+`MAIN-42cae14c63d1` (Apple TLS engine connection leak, P0), then `MAIN-1cc885e0400e`
+(Tailscale default route). `MAIN-cc022098fdec` is closed in this phase; its remaining device-level
+suspend/resume check is recorded above as not verified.
 
 ## Evidence notes
 
