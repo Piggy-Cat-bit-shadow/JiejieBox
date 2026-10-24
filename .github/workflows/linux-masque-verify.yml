@@ -26,8 +26,8 @@ jobs:
             test/go.sum
       - name: MASQUE unit and race
         run: |
-          go test -race -count=1 -timeout 20m ./transport/masque ./protocol/masque
+          go test -race -count=1 -timeout 20m -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" ./transport/masque ./protocol/masque
       - name: MASQUE end-to-end (H3 CONNECT-UDP/IP, PTB, fallback, reconnect)
         run: |
           cd test
-          go test -count=1 -timeout 20m -run 'TestMASQUE' -v .
+          go test -count=1 -timeout 20m -tags "$(cat ../release/DEFAULT_BUILD_TAGS_OTHERS)" -run 'TestMASQUE' -v .
