@@ -385,6 +385,12 @@ func (t *DBusResolvedResolver) loopUpdateStatus() {
 		case <-t.signalLoopStop:
 			return
 		}
+		// A closed signal channel delivers a nil. Returning releases the loop instead of
+		// dereferencing it: the bus connection owning the channel is already gone, and
+		// spinning on nils would only turn the teardown into a CPU burn.
+		if signal == nil {
+			return
+		}
 		switch signal.Name {
 		case "org.freedesktop.DBus.NameOwnerChanged":
 			if len(signal.Body) != 3 {
