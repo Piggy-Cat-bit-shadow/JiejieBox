@@ -575,6 +575,19 @@ func (c *ClientEndpoint) WriteInboundBuffers(packetBuffers []*buf.Buffer) error 
 	return err
 }
 
+// WaitWriteInboundBuffers is the blocking variant the MASQUE session uses: it lets the memory TUN
+// apply backpressure instead of dropping the datagram when its queue is full. It releases the
+// buffers exactly once, like WriteInboundBuffers.
+func (c *ClientEndpoint) WaitWriteInboundBuffers(packetBuffers []*buf.Buffer) error {
+	if !c.state.Load().configured {
+		buf.ReleaseMulti(packetBuffers)
+		return nil
+	}
+	err := c.device.WaitWriteInboundBuffers(packetBuffers)
+	buf.ReleaseMulti(packetBuffers)
+	return err
+}
+
 func (c *ClientEndpoint) FrontHeadroom() int {
 	return c.device.FrontHeadroom()
 }

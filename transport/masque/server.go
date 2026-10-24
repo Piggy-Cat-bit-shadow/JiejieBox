@@ -546,7 +546,7 @@ func (s *serverSession) handlePacket(buffer *buf.Buffer) {
 			break
 		}
 		if target == nil {
-			err := s.server.handler.WriteInboundBuffers([]*buf.Buffer{buffer})
+			err := writeInboundBuffers(s.server.handler, []*buf.Buffer{buffer})
 			if err != nil {
 				s.server.logger.DebugContext(s.ctx, E.Cause(err, "write packet to device"))
 			}

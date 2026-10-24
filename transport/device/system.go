@@ -350,6 +350,13 @@ func (d *systemDevice) WriteInboundBuffers(packetBuffers []*buf.Buffer) error {
 	return d.processInboundBuffers(packetBuffers, d.writeBuffers)
 }
 
+// A real system TUN has no writable in-memory queue to wait on: its write is the operating
+// system call. Backpressure there remains the caller's drop policy, so the wait spelling is the
+// same write rather than a fake block.
+func (d *systemDevice) WaitWriteInboundBuffers(packetBuffers []*buf.Buffer) error {
+	return d.WriteInboundBuffers(packetBuffers)
+}
+
 func (d *systemDevice) writeBuffers(packetBuffers []*buf.Buffer) error {
 	d.stateAccess.RLock()
 	tunInterface := d.device

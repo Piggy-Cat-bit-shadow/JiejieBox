@@ -659,6 +659,24 @@ func (s *clientSession) handleAddressRequest(addresses []AssignedAddress) error 
 	return s.writeCapsule(newAddressCapsule(capsuleTypeAddressAssign, rejections))
 }
 
+type inboundBufferWriter interface {
+	WriteInboundBuffers(packetBuffers []*buf.Buffer) error
+}
+
+type inboundBufferWaiter interface {
+	WaitWriteInboundBuffers(packetBuffers []*buf.Buffer) error
+}
+
+// writeInboundBuffers prefers the blocking device write when the handler provides one. Handlers
+// that only implement the non-blocking contract (tests, custom integrations) keep their old
+// behaviour, so the interface change does not break them.
+func writeInboundBuffers(handler inboundBufferWriter, packetBuffers []*buf.Buffer) error {
+	if waiter, ok := handler.(inboundBufferWaiter); ok {
+		return waiter.WaitWriteInboundBuffers(packetBuffers)
+	}
+	return handler.WriteInboundBuffers(packetBuffers)
+}
+
 func (s *clientSession) handlePacket(buffer *buf.Buffer) {
 	_, destination, _, valid := packetAddresses(buffer.Bytes())
 	if !valid {
@@ -677,7 +695,7 @@ func (s *clientSession) handlePacket(buffer *buf.Buffer) {
 		}
 		return
 	}
-	err := s.client.handler.WriteInboundBuffers([]*buf.Buffer{buffer})
+	err := writeInboundBuffers(s.client.handler, []*buf.Buffer{buffer})
 	if err != nil {
 		s.client.logger.Debug(E.Cause(err, "write packet to device"))
 	}
@@ -690,7 +708,7 @@ func (s *clientSession) handlePacketTooBig(buffer *buf.Buffer, mtu int) {
 	if !built {
 		return
 	}
-	err := s.client.handler.WriteInboundBuffers([]*buf.Buffer{reply})
+	err := writeInboundBuffers(s.client.handler, []*buf.Buffer{reply})
 	if err != nil {
 		s.client.logger.Debug(E.Cause(err, "write packet to device"))
 	}

@@ -372,6 +372,14 @@ func (s *ServerEndpoint) WriteInboundBuffers(packetBuffers []*buf.Buffer) error 
 	return err
 }
 
+// WaitWriteInboundBuffers is the blocking variant for the memory TUN; the buffers are released
+// once whether the write is accepted or refused.
+func (s *ServerEndpoint) WaitWriteInboundBuffers(packetBuffers []*buf.Buffer) error {
+	err := s.device.WaitWriteInboundBuffers(packetBuffers)
+	buf.ReleaseMulti(packetBuffers)
+	return err
+}
+
 func (s *ServerEndpoint) FrontHeadroom() int {
 	return s.device.FrontHeadroom()
 }
