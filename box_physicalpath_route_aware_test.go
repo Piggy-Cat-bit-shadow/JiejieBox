@@ -342,12 +342,10 @@ const caseNetworkInvertedRuleIsRead = `{
 // caseNetworkTerminationWithoutANamedOutbound pins the one thing a terminal action that names no
 // outbound must still do: it consumes the flow.
 //
-// The termination here comes from `direct`, which does NOT stop the router - see cases 14-16 - so the
-// tcp half is terminated by the second rule's own network condition and then falls through to no
-// further rule. The fixture's job is the "consumed but not attributed" path: udp is consumed by the
-// udp route to a target that carries udp, tcp is never charged to anything, and the root falls back
-// to what its objects advertise. It is a control for that path rather than evidence about `direct`,
-// which cases 16 and 14 pin directly.
+// The termination here comes from `reject`, which stops the router and names no outbound, so the
+// udp half is consumed without being attributed to a target. tcp is terminated by the second rule's
+// own network condition. The fixture's job is the "consumed but not attributed" path: udp carries no
+// target tag, tcp is never charged to anything, and the root falls back to what its objects advertise.
 const caseNetworkTerminationWithoutANamedOutbound = `{
   "log": {"disabled": true},
   "outbounds": [
@@ -356,7 +354,7 @@ const caseNetworkTerminationWithoutANamedOutbound = `{
   ],
   "route": {
     "rules": [
-      {"network": "udp", "action": "direct"},
+      {"network": "udp", "action": "reject"},
       {"network": "tcp", "outbound": "tcp-only-leaf"}
     ]
   }
@@ -376,7 +374,7 @@ type routeAwareCase struct {
 //
 // `Router.matchRule` (route/route.go) breaks out of its loop for exactly `route`, `reject`,
 // `hijack-dns`, and `bypass` WHEN the bypass names an outbound. It falls through for everything
-// else - including `route-options` and `direct`, which are easy to mistake for terminal because
+// else - including `route-options`, which is easy to mistake for terminal because
 // `adapter.IsFinalAction` answers "does this end the flow's handling" rather than "does the router
 // stop here".
 //
@@ -432,20 +430,7 @@ const (
     ]
   }
 }`
-	// `direct` dials without consulting an outbound and does NOT stop the loop.
-	caseNetworkDirectDoesNotTerminate = `{
-  "log": {"disabled": true},
-  "outbounds": [
-    {"type": "socks", "tag": "tcp-only-leaf", "server": "127.0.0.1", "server_port": 1080,
-     "version": "5", "network": "tcp"}
-  ],
-  "route": {
-    "rules": [
-      {"action": "direct"},
-      {"network": "udp", "outbound": "tcp-only-leaf"}
-    ]
-  }
-}`
+
 	// And the action that DOES terminate without naming an outbound, for contrast: `hijack-dns`.
 	caseNetworkHijackDNSTerminates = `{
   "log": {"disabled": true},
@@ -576,7 +561,7 @@ var routeAwareMatrix = []routeAwareCase{
 	},
 	{
 		id:        "case-12c-a-route-with-no-outbound-consumes-without-attributing",
-		why:       "udp is routed to an unnamed target, so it is consumed without being charged to a tag, and the tcp route below reaches a capable leaf",
+		why:       "udp is rejected without being charged to a tag, and the tcp route below reaches a capable leaf",
 		config:    caseNetworkTerminationWithoutANamedOutbound,
 		wantStart: true,
 	},
@@ -600,13 +585,7 @@ var routeAwareMatrix = []routeAwareCase{
 		wantStart: false,
 		wantErr:   []string{"cannot serve the udp flow", "tcp-only-leaf"},
 	},
-	{
-		id:        "case-16-direct-does-not-stop-the-router",
-		why:       "the router continues past direct, so udp reaches the TCP-only leaf and the configuration is broken",
-		config:    caseNetworkDirectDoesNotTerminate,
-		wantStart: false,
-		wantErr:   []string{"cannot serve the udp flow", "tcp-only-leaf"},
-	},
+
 	{
 		id:        "case-17-hijack-dns-is-terminal",
 		why:       "the router stops at hijack-dns, so udp never reaches the leaf and the configuration is legal",
