@@ -48,6 +48,9 @@ func (r RuleAction) MarshalJSON() ([]byte, error) {
 	default:
 		return nil, E.New("unknown rule action: " + r.Action)
 	}
+	if v == nil {
+		return badjson.MarshallObjects(_RuleAction(r))
+	}
 	return badjson.MarshallObjects(_RuleAction(r), v)
 }
 
@@ -125,6 +128,9 @@ func (r DNSRuleAction) MarshalJSON() ([]byte, error) {
 		v = nil
 	default:
 		return nil, E.New("unknown DNS rule action: " + r.Action)
+	}
+	if v == nil {
+		return badjson.MarshallObjects(_DNSRuleAction(r))
 	}
 	return badjson.MarshallObjects(_DNSRuleAction(r), v)
 }
