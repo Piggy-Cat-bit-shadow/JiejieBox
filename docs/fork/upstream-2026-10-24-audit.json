@@ -341,17 +341,6 @@
   "notes": "All four pieces are absent; port them together. The holder signal omission is a lifecycle issue: SIGINT/SIGTERM/SIGHUP can kill the holder and destroy the shared netns while sing-box still runs."
  },
  {
-  "sha": "9c2aa1bed32ae10ae88c03606db3129a799e506d",
-  "subject": "Fix OOM killer staying triggered after reset",
-  "root_cause": "The pressure state machine left pressureStateTriggered only when usage fell below a fourth resume threshold (limit minus 4x safety margin, or 4x margin of available), so after a reset released memory the state stayed triggered at the armed level; where 4x margin reaches the limit the resume threshold becomes 0 and the latch never clears. The fix removes the resume threshold so triggered exits at the armed level.",
-  "classification": "MISSING_FIX",
-  "fork_evidence": "The whole pre-fix shape is present: timer.go:47-51 resume field, :471-480 resume = limit - min(4*margin, limit), :448-469 passes usage >= resume as shouldStayTriggered, :608-622 latch exits only below resume; recorder.go:215/384 still emit resumeBytes; apple_policy_test.go:86-111 asserts resume < armed < trigger. Canonical 50MiB/5MiB policy gives resume 30MiB, so post-reset usage of 30-40MiB stays critical.",
-  "evidence_level": "CODE_PROVEN",
-  "action": "PORT",
-  "priority": "P1",
-  "notes": "Keep a resume notion for the releaseIdleMemory gate (timer.go:357 belowResume) if wanted; the state machine must exit triggered at the armed level and the recorder's resumeBytes field must go. Update apple_policy_test.go and the timer fixtures with the change."
- },
- {
   "sha": "a130b482d41f",
   "subject": "Flush systemd-resolved cache on DNS changes",
   "root_cause": "Clearing sing-box's in-process DNS cache does not invalidate systemd-resolved's cache: a link's cache is flushed only when its DNS server changes, which neither a network change nor a sing-box DNS reconfiguration does, so the OS resolver serves the old view until TTL. The fix adds NetworkManager.FlushSystemDNSCache, calls it from Router.ClearCache, resolved server-set updates and network-environment changes, and implements it via sing-tun's LinuxTUN.FlushDNSCache (resolvectl flush-caches).",
@@ -500,6 +489,17 @@
   "root_cause": "Linux routes IP_HDRINCL raw packets by the raw socket's bound device, SO_MARK and bound source (raw_sendmsg), not by the addresses inside the supplied header. The spoofer opened an unbound raw socket, so injected ClientHello segments followed the main table, bypassing the outbound's bind_interface/SO_MARK and looping back into the TUN. The fix copies SO_BINDTODEVICE and SO_MARK and binds the source address on the raw socket.",
   "classification": "PRESENT",
   "fork_evidence": "Partial port in this round: `protocol/redirect` populates `OriginDestination`; the TLS-spoof raw-socket half is still open. Upstream: 9073ef8290f0.",
+  "evidence_level": "CODE_PROVEN",
+  "action": "NO_ACTION",
+  "priority": "P1",
+  "notes": "Fixed in this round; see docs/fork/upstream-2026-10-24-debug.md."
+ },
+ {
+  "sha": "9c2aa1bed32ae10ae88c03606db3129a799e506d",
+  "subject": "Fix OOM killer staying triggered after reset",
+  "root_cause": "The pressure state machine left pressureStateTriggered only when usage fell below a fourth resume threshold (limit minus 4x safety margin, or 4x margin of available), so after a reset released memory the state stayed triggered at the armed level; where 4x margin reaches the limit the resume threshold becomes 0 and the latch never clears. The fix removes the resume threshold so triggered exits at the armed level.",
+  "classification": "PRESENT",
+  "fork_evidence": "Ported the state-machine half: Triggered exits at armed, not resume (TestPressureStateExitsTriggeredAtArmedNotResume). resume is kept only as the idle hysteresis floor; the recorder field is retained. Upstream: 9c2aa1bed32a.",
   "evidence_level": "CODE_PROVEN",
   "action": "NO_ACTION",
   "priority": "P1",

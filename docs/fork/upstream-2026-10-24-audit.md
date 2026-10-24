@@ -24,15 +24,15 @@ patch-id matches are already in the fork; the 73 remaining were audited individu
 
 | classification | count | meaning |
 |---|---|---|
-| MISSING_FIX | 24 | defect applies to the fork and the fix is absent |
+| MISSING_FIX | 23 | defect applies to the fork and the fix is absent |
 | DEPENDENCY_BUMP | 17 | the commit is a dependency pin; the fix lives in a replaced or required module |
 | EQUIVALENT | 5 | the fork has a different implementation with the same contract |
-| PRESENT | 19 | the fix is in the fork (including the eighteen ported this round) |
+| PRESENT | 20 | the fix is in the fork (including the eighteen ported this round) |
 | NOT_APPLICABLE | 3 | an upstream-only path the fork does not have |
 | DOCS_ONLY | 4 | documentation, certificates or version bump |
 | REJECTED_WITH_EVIDENCE | 1 | the upstream change conflicts with a documented fork contract |
 
-At audit time 40 rows were gaps. The table is authoritative: 24 MISSING_FIX rows remain. This round
+At audit time 40 rows were gaps. The table is authoritative: 23 MISSING_FIX rows remain. This round
 additionally synced two dependency pins (03ab009ea1c0, 6ddf133d3490) and closed the P05/L12 test gaps;
 
 ## The queue (all 73)
@@ -73,7 +73,6 @@ gap at audit time; rows now `PRESENT` were ported in this round (see the change 
 | `755150a5131e` | Fix config format output | MISSING_FIX | P1 | PORT | option/outbound.go:247 server_port, option/shadowsocks.go:15-29, option/trojan.go:14, option/vless.go:12, option/vmess.go:12,21 (name, security) and option/openvpn.go:19... |
 | `7a0ae5f35889` | Fix tailscale short name and DNS route matching | MISSING_FIX | P1 | PORT | protocol/tailscale/dns_transport.go:349-368 PreferredDomain ranges over routes and returns true for any single-label name; :474-500 exchangeOnce ranges over the routes m... |
 | `9c24112d12d5` | Fix unshare network namespace with capabilities | MISSING_FIX | P1 | PORT | cmd/sing-box/cmd_run_userns_linux.go:31-55 has no capability guard, no initialDir/command.Dir, and AmbientCaps lacks CAP_NET_BIND_SERVICE; common/netns/netns.go:11-17 Ho... |
-| `9c2aa1bed32a` | Fix OOM killer staying triggered after reset | MISSING_FIX | P1 | PORT | The whole pre-fix shape is present: timer.go:47-51 resume field, :471-480 resume = limit - min(4*margin, limit), :448-469 passes usage >= resume as shouldStayTriggered, ... |
 | `a130b482d41f` | Flush systemd-resolved cache on DNS changes | MISSING_FIX | P1 | PORT | adapter/network.go:17-49 NetworkManager has no flush method (FlushSystemDNSCache is absent tree-wide); dns/router.go:2168-2193 ClearCache only clears the in-process clie... |
 | `a8a2964592c7` | Fix systemd-resolved detection for local DNS server | MISSING_FIX | P1 | PORT | dns/transport/local/local.go:77 still gates on isSystemdResolvedManaged(); local_resolved_linux.go:36-53 still scans /etc/resolv.conf comment lines; systemconfig/config.... |
 | `b6fc3a486355` | Remove unimplemented direct rule action | MISSING_FIX | P1 | PORT | route/rule/rule_action.go:76-96 builds RuleActionDirect with an unused Dialer (:400); option/rule_action.go:404 still emits it in routeActionUnion; constant/rule.go:37; ... |
@@ -88,6 +87,7 @@ gap at audit time; rows now `PRESENT` were ported in this round (see the change 
 | `79d2e8084ed1` | Fix Android package name lookup | PRESENT | P1 | NO_ACTION | Port in this round: Android skips the app_process wrapper paths and the all-users scan; `GOOS=linux go build ./common/process` passes. Upstream: 79d2e8084ed1. |
 | `7f1a439ff069` | Fix process search for redirect inbound | PRESENT | P1 | NO_ACTION | Port in this round: `protocol/redirect` populates `OriginDestination` (delivered in the previous commit). Upstream: 7f1a439ff069. |
 | `9073ef8290f0` | Fix tls spoof raw socket routing on Linux | PRESENT | P1 | NO_ACTION | Partial port in this round: `protocol/redirect` populates `OriginDestination`; the TLS-spoof raw-socket half is still open. Upstream: 9073ef8290f0. |
+| `9c2aa1bed32a` | Fix OOM killer staying triggered after reset | PRESENT | P1 | NO_ACTION | Ported the state-machine half: Triggered exits at armed, not resume (TestPressureStateExitsTriggeredAtArmedNotResume). resume is kept only as the idle hysteresis floor; ... |
 | `e2008d6b7dcb` | Always compress DNS responses | PRESENT | P1 | NO_ACTION | Port in this round: the UDP truncation, stream writer and Tailscale peer-DNS reply pack compressed. `./dns` tests pass. Upstream: e2008d6b7dcb. |
 | `e352ada7ab45` | Fix WireGuard system device packet size on darwin | PRESENT | P1 | NO_ACTION | Port in this round: the WireGuard system device subtracts `PacketOffset` from the read size. `./transport/wireguard` tests pass. Upstream: e352ada7ab45. |
 | `fdc44acf6b14` | Fix IPv4 wildcard listen for experimental servers | PRESENT | P1 | NO_ACTION | Port in this round: debug HTTP, Clash API and V2Ray API listeners resolve the address family. Build passes. Upstream: fdc44acf6b14. |
@@ -138,7 +138,6 @@ ancestry while substantive `E` items remain.
 | `755150a5131e` | Fix config format output | P1 | Cheapest repro: a DERP config with stun: {enabled: true, listen_port: N} through sing-box format loses the port, and daemon FormatConfig writes zero server_port/name/password back. Schema casing alre... |
 | `7a0ae5f35889` | Fix tailscale short name and DNS route matching | P1 | Restores Tailscale's local-route NXDOMAIN semantics and MagicDNS short-name preference; otherwise LAN single-label names can be captured by tailscale and local names can leak to forwarded resolvers. |
 | `9c24112d12d5` | Fix unshare network namespace with capabilities | P1 | All four pieces are absent; port them together. The holder signal omission is a lifecycle issue: SIGINT/SIGTERM/SIGHUP can kill the holder and destroy the shared netns while sing-box still runs. |
-| `9c2aa1bed32a` | Fix OOM killer staying triggered after reset | P1 | Keep a resume notion for the releaseIdleMemory gate (timer.go:357 belowResume) if wanted; the state machine must exit triggered at the armed level and the recorder's resumeBytes field must go. Update... |
 | `a130b482d41f` | Flush systemd-resolved cache on DNS changes | P1 | Porting needs the sing-tun fork bumped to a revision carrying LinuxTUN.FlushDNSCache (upstream fba659785148) or a local resolvectl flush-caches call; skip when a resolved service owns DNS. Stale answ... |
 | `a8a2964592c7` | Fix systemd-resolved detection for local DNS server | P1 | Port: always attempt NewResolvedResolver when !preferGo, add Config.SystemdResolved (os.SameFile with /run/systemd/resolve/resolv.conf or listen addrs 127.0.0.53/.54) and consult it in Environment/Ex... |
 | `b6fc3a486355` | Remove unimplemented direct rule action | P1 | Either delete the action (upstream) or implement direct dialing; until then configs using action=direct are accepted but silently ignored, so traffic can be routed by a later rule or the default outb... |
