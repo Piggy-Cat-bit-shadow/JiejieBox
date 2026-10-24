@@ -2,9 +2,9 @@
 
 - generated: 2026-10-24T16:10:00+08:00 (phase 03/06)
 - fork testing code: `56a804e6eedb761b1b8b067465f4eb1c7f8f616d`
-- fork testing docs: `eb9c8eebd300240559e72b649fd9185ff0525b19`
+- fork testing docs: `9ea9f2935cc8bb423712429a749454380f1f4fda`
 - upstream observed: `a6952ccf6907c18e18917fcb763a433e8e36937b` (2026-10-24T10:08:02+08:00, "Remove stale workflow")
-- behind_by: **110**; ahead_by: 2606
+- behind_by: **110**; ahead_by: 2608
 - open semantic: **17**; open dependency blockers: **2**
 
 **Phase 03 closes DEP-QUIC-1 and DEP-QUIC-2** and leaves CRONET and TAILSCALE as the two

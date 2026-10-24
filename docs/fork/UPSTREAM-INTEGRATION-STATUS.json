@@ -2,13 +2,13 @@
     "generated_at":  "2026-10-24T16:10:00+08:00",
     "phase":  "03/06",
     "fork_testing_code_sha":  "56a804e6eedb761b1b8b067465f4eb1c7f8f616d",
-    "fork_testing_docs_sha":  "the commit carrying this ledger",
+    "fork_testing_docs_sha":  "9ea9f2935cc8bb423712429a749454380f1f4fda",
     "upstream_observed":  {
                               "sha":  "a6952ccf6907c18e18917fcb763a433e8e36937b",
                               "time":  "2026-10-24T10:08:02+08:00"
                           },
     "behind_by":  110,
-    "ahead_by":  2607,
+    "ahead_by":  2608,
     "summary":  {
                     "open_semantic":  17,
                     "open_dependency_blockers":  2,
