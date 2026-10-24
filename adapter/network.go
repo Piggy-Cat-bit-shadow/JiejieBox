@@ -42,11 +42,40 @@ type NetworkManager interface {
 	// It is the right answer to a genuine OOM and the wrong answer to memory that is merely
 	// elevated, because rebuilding costs handshakes the user waits on.
 	ReleaseMemory(ctx context.Context)
-	// TrimMemory is the progressive pass: release what is reusable and cheap to lose, without a
+	// TrimMemory is the progressive pool pass: release what is reusable and cheap to lose, without a
 	// network reset, without touching a resource that is carrying traffic, and without causing a
 	// dial. It must only ever make the process smaller.
+	//
+	// It deliberately does NOT include the expired-cache pass. Caches and connection pools have
+	// different costs and different reuse value: a live cache entry is free to keep, while an idle
+	// socket is only worth keeping until the next demand. A caller that wants the cheapest layer
+	// first asks for it separately through CacheMemoryReleaser, measures what it returned, and only
+	// then decides whether the pool pass is justified.
 	TrimMemory(ctx context.Context)
 	FlushSystemDNSCache()
+}
+
+// CacheMemoryReleaser is the optional L1 capability: drop cache entries that cannot be served any
+// more, without touching a connection or invalidating a live answer.
+//
+// # Why this is a capability rather than a NetworkManager method
+//
+// It is the same argument as NetworkResetCounter: the progressive pass is implemented by the route
+// package, but a test double, a platform stub or a build without a DNS cache has no opinion about
+// it. Putting it on the interface would force every implementation to grow a method it cannot
+// meaningfully answer, for a layer only the memory scheduler and the platform trim path call.
+//
+// # The contract
+//
+// Only entries that the read path would already refuse may be dropped. In particular an optimistic
+// DNS deployment legitimately serves a stale answer inside its optimistic window; trimming those is
+// a correctness-preserving but latency-visible change, so the implementation must keep them and
+// report that it did. Rebuildable route caches (process lookups) are in scope; anything whose
+// absence could change a routing verdict for a live flow is not.
+type CacheMemoryReleaser interface {
+	// TrimCaches drops expired entries and returns how many it removed. It must not dial, must not
+	// close a connection, and must not reset any generation or epoch.
+	TrimCaches(ctx context.Context) int
 }
 
 // NetworkResetCounter is implemented by a network manager that can report how many network resets

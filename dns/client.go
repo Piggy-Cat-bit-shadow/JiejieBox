@@ -1246,6 +1246,44 @@ func (c *Client) collectFamiliesComplete(
 	return response4, response6, nil
 }
 
+// TrimExpiredCaches removes entries the read path would already refuse, and reports how many it
+// took. It is the L1 memory-layer action: no connection is touched and no epoch moves.
+//
+// # Why the exact cache is conditional
+//
+// An optimistic deployment serves a lapsed entry inside optimisticTimeout and refreshes it in the
+// background. Purging those entries would not be a correctness bug - the caller still gets a fresh
+// answer - but it would trade a free cache hit for an upstream exchange, which is exactly the
+// trade a memory pass must not make silently. With optimistic serving disabled, a lapsed entry is
+// indistinguishable from a miss: loadResponse removes it on the next read, so purging it here is
+// the same decision made earlier.
+//
+// The negative cache has no optimistic exception: loadNXDomain removes a lapsed verdict on read
+// rather than serving it, so expired entries there are dead weight by construction.
+//
+// Those entries are the ones that cannot be served; live entries, entries stored under
+// disable_expire (which carry no lifetime), and the persistent bbolt cache are deliberately left
+// alone. The persistent store's own cleanup loop owns its expiry, and forcing a bbolt write here
+// would turn a memory pass into disk I/O.
+func (c *Client) TrimExpiredCaches() int {
+	trimmed := 0
+	if c.cache != nil && c.optimisticTimeout <= 0 {
+		before := c.cache.Len()
+		c.cache.PurgeExpired()
+		if after := c.cache.Len(); after < before {
+			trimmed += before - after
+		}
+	}
+	if c.nxdomainCache != nil {
+		before := c.nxdomainCache.Len()
+		c.nxdomainCache.PurgeExpired()
+		if after := c.nxdomainCache.Len(); after < before {
+			trimmed += before - after
+		}
+	}
+	return trimmed
+}
+
 func (c *Client) ClearCache() {
 	// A clear that left name-wide NXDOMAIN verdicts behind would answer subsequent
 	// queries from exactly the state the caller asked to discard.

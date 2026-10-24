@@ -40,6 +40,49 @@ const (
 	pressureStateTriggered
 )
 
+// reclaimKind identifies the one destructive action an adaptiveTimer may be running.
+//
+// # Why the actions need a single authority
+//
+// Three sources can ask for memory back: a timer poll that observed a real opportunity (idle), a
+// timer poll that crossed the crisis threshold (crisis), and the Darwin dispatch source (pressure).
+// They all reach the same pools. Before this existed, only the idle path was serialised by
+// releaseAccess; a crisis poll could run ReleaseMemory while an idle TrimMemory was still walking the
+// same outbound, endpoint and DNS transport lists, and the Linux/Darwin callback could start a third
+// pass. The result was not a slower release, it was a release against pools being reset underneath
+// it, and two forced GCs for one event.
+//
+// The kinds are ordered by urgency. A pending action can be replaced by a more urgent one, and the
+// in-flight action is never interrupted (there is no safe way to cancel a CloseIdleConnections
+// half-way through a pool), only outlasted.
+type reclaimKind uint8
+
+const (
+	reclaimNone reclaimKind = iota
+	// reclaimIdle is the gentle pass: expired caches, then idle pools, then - only when the previous
+	// two did not reach the benefit floor - a forced GC. It must never reset the network.
+	reclaimIdle
+	// reclaimPressure is the Darwin critical notification: flush the cache, publish Critical and
+	// force a GC. It deliberately does not reset the network; a system-wide signal is not proof that
+	// this process's paths are broken.
+	reclaimPressure
+	// reclaimCrisis is the threshold/rate pass: ReleaseMemory (network reset) followed by the same
+	// cache flush and forced GC as a pressure event.
+	reclaimCrisis
+)
+
+// reclaimRequest is one queued destructive action. It carries the sample the decision was taken
+// from, so the telemetry a crisis action writes describes the observation that justified it rather
+// than a later, unrelated one.
+type reclaimRequest struct {
+	kind          reclaimKind
+	sample        memorySample
+	connections   int
+	reason        string
+	rateTriggered bool
+	reportOnly    bool
+}
+
 type memorySample struct {
 	usage          uint64
 	available      uint64
@@ -151,42 +194,89 @@ type adaptiveTimer struct {
 	lastUsage         uint64
 	idleCooldownUntil time.Time
 	trimMemory        func(context.Context)
-	freeOSMemory      func()
+	// trimCaches is the L1 executor: it drops expired cache entries and nothing that carries
+	// traffic. Nil means the network manager has no cache-trimming capability, in which case the
+	// idle pass starts at L2. It is separate from trimMemory so the pass can measure what the
+	// cheap layer actually returned before deciding to close idle pools at all.
+	trimCaches   func(context.Context)
+	freeOSMemory func()
+	// releaseNetwork is the crisis executor (L4). Nil means t.network.ReleaseMemory. A test
+	// supplies it to observe the destructive reset without building a full network manager.
+	releaseNetwork func(context.Context)
+	// readUsage reads the process footprint for the layer-benefit measurements. Nil means
+	// memory.Total(). It is separate from sampleFunc because a test needs to drive both the
+	// observation that triggers a pass and the footprint each layer reports afterwards.
+	readUsage func() uint64
+	// runtimeReclaimable reports bytes the Go runtime could return without another cycle. Nil
+	// means the /memory/classes/heap/free metric. It gates L3 below the armed line: a forced GC
+	// is not free, and it must have a reason other than "the previous layers were quiet".
+	runtimeReclaimable func() uint64
 
-	// pressureCallbacks tracks memory-pressure callbacks that have passed the active check
-	// and are still running their destructive cleanup.
+	// pressureCallbacks tracks every accepted poll, pressure callback and queued/in-flight reclaim
+	// action.
 	//
 	// # Why a WaitGroup is needed at all
 	//
-	// Checking `t.timer != nil` under the lock is necessary but NOT sufficient. The callback
-	// releases the lock before doing its work, precisely so a long FreeOSMemory does not stall
-	// Close. Without something to join on, this sequence is possible:
+	// Checking `t.timer != nil` under the lock is necessary but NOT sufficient. Work that has
+	// passed the check releases the lock before doing anything slow, precisely so a long
+	// FreeOSMemory does not stall Close. Without something to join on, Close can return while that
+	// work is still going to publish a pressure state or touch the network:
 	//
-	//	notifyPressure: active check passes, unlock
-	//	Close:          stop() sets timer = nil, stopTimer() stores None, Close RETURNS
-	//	notifyPressure: releaseMemory() stores Critical, flushes the cache, calls FreeOSMemory
+	//	poll:  active check passes, decision taken, unlock
+	//	Close: timer = nil, pressure = None, Close RETURNS
+	//	poll:  publishes Warning / trims / resets the network
 	//
-	// So Close has returned and the pressure flag a torn-down service reports is Critical
-	// again, with destructive cleanup still to come. The active check bounds WHEN the work
-	// starts; the barrier bounds when it has FINISHED.
+	// The active check bounds WHEN the work starts; the barrier bounds when it has FINISHED.
 	//
 	// # Why this ordering cannot race
 	//
-	// Add(1) happens while t.access is held and only after the active check has passed, and
-	// stop() sets timer = nil while holding the same lock before it Waits. So:
+	// Every Add happens while t.access is held and only after the active check has passed, and
+	// stop() sets timer = nil and reclaimStopped while holding the same lock before it Waits. So:
 	//
-	//   - a callback that entered before stop() took the lock has already Added, and Wait
-	//     observes it;
-	//   - a callback that enters after stop() set timer = nil fails the active check and never
-	//     Adds, so it cannot be missed.
+	//   - work that entered before stop() took the lock has already Added, and Wait observes it;
+	//   - work that enters after sees timer == nil (or stopped) and never Adds, so it cannot be
+	//     missed.
 	//
-	// There is no window in which Add can happen after Wait has decided the count is zero.
+	// There is no window in which Add can happen after Wait has decided the count is zero, which is
+	// the WaitGroup contract stop() relies on.
 	pressureCallbacks sync.WaitGroup
+
+	// The reclaim executor. It exists so the three sources - idle opportunity, crisis threshold,
+	// Darwin pressure - share one destructive authority instead of racing each other through
+	// releaseAccess. Polls only observe and queue; the worker performs. Crisis outranks pressure,
+	// pressure outranks idle, and a more urgent pending request replaces a less urgent one so a
+	// burst of notifications cannot build a queue of stale resets.
+	reclaimWake      chan struct{}
+	reclaimStop      chan struct{}
+	reclaimExited    chan struct{}
+	reclaimStarted   bool
+	reclaimStopped   bool
+	reclaimStopOnce  sync.Once
+	pendingReclaim   *reclaimRequest
+	inFlightReclaim  reclaimKind
+	idleInFlight     bool
+	pressureInFlight bool
+	crisisInFlight   bool
+	// lastAppliedObservation is the newest observation sequence whose state has been applied.
+	// Polls read their sample before taking the lock, so two of them can finish reading out of
+	// order on a Go scheduler that delays one goroutine. Applying the older one last would move the
+	// state machine backwards - and could re-arm crisis - from a sample that predates the one
+	// already applied. See observationSeq.
+	lastAppliedObservation uint64
+	observationSeq         atomic.Uint64
 
 	// cleanupHook, when set, runs at the start of the destructive cleanup. Tests use it to
 	// hold a callback inside the barrier deterministically instead of racing goroutines and
 	// hoping to hit the interleaving.
 	cleanupHook func()
+	// afterDecisionHook, when set, runs after poll has published its decision and released the
+	// lock, before telemetry and before any queued reclaim. It exists so a test can hold a poll in
+	// the post-decision window and prove that stop() now joins on it and that the pressure state
+	// was published while the poll still owned the lifecycle lock. Nil in production, where it
+	// costs one predictable branch per sample.
+	afterDecisionHook func()
+	// sampleFunc overrides the process sample in tests. Nil means readMemorySample.
+	sampleFunc func() memorySample
 
 	lastGoroutines  int
 	lastConnections int
@@ -204,6 +294,16 @@ func newAdaptiveTimer(logger log.ContextLogger, network adapter.NetworkManager, 
 		cacheFile:   cacheFile,
 		recorder:    recorder,
 		pressure:    pressure,
+	}
+	// The cache layer is an optional capability: a manager that cannot answer it simply has no L1,
+	// and the idle pass starts at the pool layer. The assertion is done once here rather than on
+	// every release, which also means a fixture manager without the capability costs nothing.
+	if network != nil {
+		if cacheReleaser, isReleaser := any(network).(adapter.CacheMemoryReleaser); isReleaser {
+			t.trimCaches = func(ctx context.Context) {
+				cacheReleaser.TrimCaches(ctx)
+			}
+		}
 	}
 	if config.policyMode == policyModeMemoryLimit || config.policyMode == policyModeNetworkExtension {
 		t.limitThresholds = computeLimitThresholds(config.memoryLimit, config.safetyMargin)
@@ -234,48 +334,139 @@ func (t *adaptiveTimer) startLocked() {
 	t.timer = time.AfterFunc(t.minInterval, t.poll)
 }
 
-// stop halts the timer and WAITS for in-flight pressure callbacks to finish.
+// stoppedStateLocked is the state handed to the recorder (and possibly carried into the next
+// instance by a reload).
+//
+// # Why transient intent does not cross a reload
+//
+// `forceMinInterval` and `pendingPressureBaseline` are not observations: they are "the next poll
+// should do X" flags set by a pressure callback. A reload replaces the timer, and the callback that
+// set the flag belonged to the old dispatch delivery - the queued action was dropped by stop() for
+// exactly the same reason. Carrying the flag would make the new instance's first poll measure growth
+// from a sample the old instance took (or treat an already-dropped notification as pending), which is
+// the cross-instance state pollution this helper removes. The observable state and the sampling
+// interval are the parts a reload legitimately carries.
+func (t *adaptiveTimer) stoppedStateLocked() timerState {
+	state := t.timerState
+	state.forceMinInterval = false
+	if state.pendingPressureBaseline {
+		state.pendingPressureBaseline = false
+		state.pressureBaseline = memorySample{}
+		state.pressureBaselineTime = time.Time{}
+	}
+	// Triggered means "the reset for this episode has been handled". A queued crisis is dropped at
+	// stop (above), so a reload must not inherit that claim for work that never ran: the new
+	// instance would stay Triggered while the footprint is still above the trigger, and no edge
+	// would ever fire again. Armed forces the next observation to re-decide; if the footprint is
+	// still critical it escalates in one poll, and if it is not, it leaves the crisis band normally.
+	if state.state == pressureStateTriggered {
+		state.state = pressureStateArmed
+	}
+	return state
+}
+
+// stop halts the timer and WAITS for every accepted observation and destructive action to finish.
 //
 // # Why the wait is the point
 //
-// Setting timer = nil under the lock stops new callbacks from starting, but a callback that
-// already passed its active check is still running its destructive cleanup - and if stop
-// returned immediately, Service.Close could return while that cleanup is still going to store
-// Critical. Callers treat the return of stop as "nothing further will touch this service", and
-// the barrier is what makes that true rather than merely likely.
+// Setting timer = nil under the lock stops new observations from starting, but an observation that
+// already passed its check is still publishing pressure, writing telemetry, or waiting in the
+// reclaim queue - and a reclaim that already started is touching the network. If stop returned
+// immediately, Service.Close could return while a torn-down instance still writes Warning/Critical
+// or resets pools the next instance is about to use. Callers treat the return of stop as "nothing
+// further will touch this service", and the barrier is what makes that true rather than likely.
+//
+// # What is dropped rather than waited for
+//
+// A request still QUEUED has not touched anything yet. Closing is exactly the moment not to start a
+// network reset for a service that no longer exists, so pending requests are dropped (and their
+// barrier tokens released). Only work that already started is waited for. This is the difference
+// between "all in-flight destructive work completes" and "everything ever planned completes", and
+// only the first is required for a safe Close.
 //
 // # Why the lock is released before Wait
 //
-// The callback must be able to finish, and it does not need t.access to do so. Waiting while
-// holding the lock would deadlock the moment a callback tried to acquire it, and would also
-// turn a slow FreeOSMemory into a stall for every other reader of the timer state.
+// The work must be able to finish, and it does not need t.access to do so. Waiting while holding
+// the lock would deadlock the moment a poll or the executor tried to acquire it, and would turn a
+// slow FreeOSMemory into a stall for every other reader of the timer state.
 func (t *adaptiveTimer) stop() timerState {
 	t.access.Lock()
 	if t.timer != nil {
 		t.timer.Stop()
 		t.timer = nil
 	}
-	state := t.timerState
+	t.reclaimStopped = true
+	// Anything still queued is discarded before the wait: the service is closing, so starting a
+	// trim or a reset now would be work for a lifecycle that has ended. In-flight work is joined
+	// below.
+	t.dropPendingReclaimLocked()
+	executorStarted := t.reclaimStarted
+	stopChannel := t.reclaimStop
+	exitedChannel := t.reclaimExited
+	state := t.stoppedStateLocked()
 	t.access.Unlock()
 
-	// Everything that legitimately started before timer was set to nil finishes here. Nothing
-	// can join the group after this point: a later callback sees timer == nil and returns
-	// without Add.
+	if executorStarted {
+		t.reclaimStopOnce.Do(func() {
+			close(stopChannel)
+		})
+	}
+
+	// Everything that legitimately started before the lock was released finishes here. Nothing can
+	// join the group after this point: a later poll sees timer == nil, a later callback sees the
+	// stopped flag, and neither Adds.
 	t.pressureCallbacks.Wait()
+
+	if executorStarted {
+		// The barrier proves the work is done; this proves the worker itself has left, so a reload
+		// cannot accumulate one sleeping goroutine per instance.
+		<-exitedChannel
+	}
 
 	return state
 }
 
+// poll observes one sample and decides what, if anything, to do about it.
+//
+// # What happens under the lock and what does not
+//
+// The state transition, the timer re-arm, the pressure publication and the queue decision are one
+// critical section, because a stop() that ran between them could tear the instance's final
+// published state. Telemetry and the destructive work run outside it: a recorder write and a
+// ForceGC must not make every observer wait.
+//
+// # The barrier covers the whole poll, not just the destructive branch
+//
+// The previous version only joined pressureCallbacks when the poll was Triggered. A non-Triggered
+// poll published pressure and wrote telemetry after unlocking with nothing joining on it, so
+// Close could return and then an old poll rewrote None to Warning. Every accepted poll now Adds,
+// and Dones after its telemetry.
 func (t *adaptiveTimer) poll() {
-	var triggered bool
-	var rateTriggered bool
-	sample := readMemorySample(t.policyMode)
+	// The sequence is taken BEFORE the sample for the same reason a generation is captured before
+	// an operation: two polls can read in either order, and the state machine must never apply an
+	// older observation over a newer one. If this poll is overtaken, its sample is dropped rather
+	// than moving the state backwards.
+	observation := t.observationSeq.Add(1)
+	sample := t.readSample()
+	goroutines := runtime.NumGoroutine()
+	var connections int
+	if t.connections != nil {
+		connections = t.connections.Count()
+	}
 
 	t.access.Lock()
-	if t.timer == nil {
+	if t.timer == nil || t.reclaimStopped {
 		t.access.Unlock()
 		return
 	}
+	if observation <= t.lastAppliedObservation {
+		t.access.Unlock()
+		return
+	}
+	t.lastAppliedObservation = observation
+	// From here on this poll is visible to stop(), including its telemetry below.
+	t.pressureCallbacks.Add(1)
+
 	if t.pendingPressureBaseline {
 		t.pressureBaseline = sample
 		t.pressureBaselineTime = time.Now()
@@ -291,9 +482,14 @@ func (t *adaptiveTimer) poll() {
 	}
 	interval := t.intervalForState()
 	t.timer.Reset(interval)
-	triggered = previousState != pressureStateTriggered && t.state == pressureStateTriggered
-	if !triggered && !t.pressureBaselineTime.IsZero() && t.memoryLimit > 0 &&
-		sample.usage > t.pressureBaseline.usage && sample.usage < t.memoryLimit {
+	triggered := previousState != pressureStateTriggered && t.state == pressureStateTriggered
+	rateTriggered := false
+	// The rate prediction may escalate an armed (or normal) sample before the footprint itself
+	// reaches the trigger. It must not fire AGAIN while the state machine is already Triggered:
+	// that would turn one prediction into a reset on every poll for as long as growth continued,
+	// which is a release storm no threshold ever asked for.
+	if !triggered && previousState != pressureStateTriggered && !t.pressureBaselineTime.IsZero() &&
+		t.memoryLimit > 0 && sample.usage > t.pressureBaseline.usage && sample.usage < t.memoryLimit {
 		elapsed := time.Since(t.pressureBaselineTime)
 		if elapsed >= t.minInterval/2 {
 			growth := sample.usage - t.pressureBaseline.usage
@@ -309,11 +505,20 @@ func (t *adaptiveTimer) poll() {
 		}
 	}
 	state := t.state
-	t.access.Unlock()
+	// Publish while the lifecycle lock is still held. This is the write that used to land after
+	// stop() had already published None; doing it here makes "the last published state of a stopped
+	// instance" a statement the lock guarantees rather than one the scheduler happens to preserve.
 	t.pressure.Store(uint32(state.memoryPressure()))
-	var connections int
-	if t.connections != nil {
-		connections = t.connections.Count()
+	if triggered {
+		t.submitCrisisLocked(sample, connections, rateTriggered)
+	} else if t.idleOpportunityLocked(sample, connections, goroutines) {
+		t.submitIdleLocked(sample, connections)
+	}
+	t.access.Unlock()
+	defer t.pressureCallbacks.Done()
+
+	if hook := t.afterDecisionHook; hook != nil {
+		hook()
 	}
 	if t.recorder != nil {
 		t.recorder.sample(sample, state, connections)
@@ -321,105 +526,468 @@ func (t *adaptiveTimer) poll() {
 			t.recorder.recordStateChange(state, sample)
 		}
 	}
-	if !triggered {
-		t.releaseIdleMemory(sample, connections)
-		return
-	}
-	var reason string
-	if rateTriggered {
-		reason = resetReasonRate
-		if t.killerDisabled {
-			t.logger.Warn("memory growth rate critical (report only), usage: ", byteformats.FormatMemoryBytes(sample.usage), t.logDetails(sample))
-		} else {
-			t.logger.Error("memory growth rate critical, usage: ", byteformats.FormatMemoryBytes(sample.usage), t.logDetails(sample), ", resetting network")
-			t.network.ReleaseMemory(context.Background())
-		}
-	} else {
-		reason = resetReasonThreshold
-		if t.killerDisabled {
-			t.logger.Warn("memory threshold reached (report only), usage: ", byteformats.FormatMemoryBytes(sample.usage), t.logDetails(sample))
-		} else {
-			t.logger.Error("memory threshold reached, usage: ", byteformats.FormatMemoryBytes(sample.usage), t.logDetails(sample), ", resetting network")
-			t.network.ReleaseMemory(context.Background())
-		}
-	}
-	t.releaseMemory()
-	if t.recorder != nil {
-		after := readMemorySample(t.policyMode)
-		t.recorder.recordReset(reason, sample, after, connections, t.killerDisabled)
-		t.recorder.snapshot(SnapshotReasonReset, sample, t.belowTrigger(after), false)
-	}
 }
 
+// releaseIdleMemory is the SYNCHRONOUS idle entry point. Production polls queue the action on the
+// reclaim executor instead; this path keeps the decision directly testable and is also the shape a
+// future caller with its own serialisation can use.
+//
+// It takes releaseAccess BEFORE deciding so a direct caller cannot decide against a footprint that
+// an in-flight executor action is about to change. That is the same lock the executor holds for the
+// whole destructive action; the order is releaseAccess -> access, and no path takes them in the
+// other order.
 func (t *adaptiveTimer) releaseIdleMemory(sample memorySample, connections int) {
+	goroutines := runtime.NumGoroutine()
 	t.releaseAccess.Lock()
 	defer t.releaseAccess.Unlock()
-	goroutines := runtime.NumGoroutine()
-	now := time.Now()
+
 	t.access.Lock()
-	if t.timer == nil {
+	if t.timer == nil || t.reclaimStopped {
 		t.access.Unlock()
 		return
 	}
-	shrank := hasMeaningfulDrop(t.lastGoroutines, goroutines) || hasMeaningfulDrop(t.lastConnections, connections)
-	dropped := t.lastUsage > sample.usage && t.lastUsage-sample.usage >= defaultIdleBenefitFloor
-	pressure := t.aboveArmed(sample)
-	t.lastGoroutines = goroutines
-	t.lastConnections = connections
-	t.lastUsage = sample.usage
-	// An idle release is justified by an observed opportunity (a meaningful drop since the last
-	// sample) or by real pressure. A completed GC is NOT such an opportunity: FreeOSMemory itself
-	// runs a GC, so using "no GC since last time" as the trigger made the loop self-sustaining at a
-	// stable footprint (the 33 MB / 1 s case). Below-resume still means "the process is comfortably
-	// inside its floor"; above-armed overrides the low-yield cooldown so a real emergency is never
-	// delayed by the ordinary backoff.
-	if t.belowResume(sample) ||
-		now.Sub(t.lastRelease) < defaultReleaseInterval ||
-		(now.Before(t.idleCooldownUntil) && !pressure) ||
-		(!shrank && !dropped && !pressure) {
+	if !t.idleOpportunityLocked(sample, connections, goroutines) {
 		t.access.Unlock()
 		return
 	}
-	t.lastRelease = now
-	// Join the same barrier the pressure callbacks use. Add happens while access is held and
-	// after the timer != nil check, so stop() cannot start waiting between the check and the
-	// Add; Close therefore cannot return while an idle trim/GC is still touching the network.
+	t.idleInFlight = true
+	// Join the lifecycle barrier under the same lock as the decision, so stop() cannot start
+	// waiting between "I will trim" and the count that lets it wait.
 	t.pressureCallbacks.Add(1)
 	t.access.Unlock()
 	defer t.pressureCallbacks.Done()
-	// Progressive pass first, then let the runtime return freed pages. This is not ReleaseMemory:
-	// it must not reset the network or force a dial.
-	trim := t.trimMemory
-	if trim != nil {
-		trim(context.Background())
-	} else if t.network != nil {
-		t.network.TrimMemory(context.Background())
-	}
-	free := t.freeOSMemory
-	if free != nil {
-		free()
-	} else {
-		runtimeDebug.FreeOSMemory()
-	}
-	after := memory.Total()
+
+	t.runIdleReclaimLocked(&reclaimRequest{kind: reclaimIdle, sample: sample, connections: connections})
+
 	t.access.Lock()
-	t.lastGCCycles = readGCCycles()
-	if after+defaultIdleBenefitFloor >= sample.usage {
-		// No measurable gain: the footprint is at its floor. Back off for a while instead of
-		// running a full GC every second; a real pressure state bypasses this cooldown.
-		t.idleCooldownUntil = time.Now().Add(defaultIdleCooldown)
-	}
+	t.idleInFlight = false
 	t.access.Unlock()
-	if after < sample.usage {
-		t.logger.Trace("released idle memory, usage: ", byteformats.FormatMemoryBytes(sample.usage),
-			" -> ", byteformats.FormatMemoryBytes(after), ", delta ", byteformats.FormatMemoryBytes(sample.usage-after))
-	} else {
-		t.logger.Trace("idle release made no measurable gain, cooling down for ", defaultIdleCooldown,
-			", usage: ", byteformats.FormatMemoryBytes(after))
+}
+
+// idleOpportunityLocked records the baselines of this sample and answers whether an idle release is
+// justified. It must be called with access held.
+//
+// # What is and is not an opportunity
+//
+// A release is justified by an observed opportunity - a meaningful drop in goroutines/connections
+// since the previous sample, or a footprint drop of at least the benefit floor - or by real
+// pressure. A completed GC is NOT one: FreeOSMemory itself runs a GC, so "no GC since last time"
+// made the loop self-sustaining at 33 MiB. Armed is not one either: letting `usage >= armed`
+// substitute for a drop is what made a stable 41 MiB footprint run Trim + GC every second.
+//
+// # What is explicitly excluded
+//
+// A pending or running reclaim of any kind suppresses a new idle request. The opportunity belongs
+// to the sample that observed it, not to a second tick that arrives while the first action is still
+// working; queueing those duplicates is how one drop becomes several trims.
+func (t *adaptiveTimer) idleOpportunityLocked(sample memorySample, connections int, goroutines int) bool {
+	shrank := hasMeaningfulDrop(t.lastGoroutines, goroutines) || hasMeaningfulDrop(t.lastConnections, connections)
+	dropped := t.lastUsage > sample.usage && t.lastUsage-sample.usage >= defaultIdleBenefitFloor
+	t.lastGoroutines = goroutines
+	t.lastConnections = connections
+	t.lastUsage = sample.usage
+
+	now := time.Now()
+	if t.belowResume(sample) ||
+		now.Sub(t.lastRelease) < defaultReleaseInterval ||
+		now.Before(t.idleCooldownUntil) ||
+		(!shrank && !dropped) {
+		return false
+	}
+	if t.idleInFlight || t.pressureInFlight || t.crisisInFlight ||
+		t.pendingReclaim != nil || t.inFlightReclaim != reclaimNone {
+		return false
+	}
+	t.lastRelease = now
+	return true
+}
+
+// submitIdleLocked queues the gentle pass. Callers must have just been granted an opportunity.
+func (t *adaptiveTimer) submitIdleLocked(sample memorySample, connections int) bool {
+	if t.reclaimStopped || t.idleInFlight || t.crisisInFlight || t.pressureInFlight ||
+		t.pendingReclaim != nil || t.inFlightReclaim != reclaimNone {
+		return false
+	}
+	t.idleInFlight = true
+	t.enqueueReclaimLocked(&reclaimRequest{kind: reclaimIdle, sample: sample, connections: connections})
+	return true
+}
+
+// submitPressureLocked queues the Darwin critical pass. It is a no-op when something at least as
+// urgent is already pending or running: a system-wide signal that repeats while this process is
+// already flushing the same cache and forcing the same GC does not need a second execution.
+func (t *adaptiveTimer) submitPressureLocked() bool {
+	if t.reclaimStopped || t.crisisInFlight || t.pressureInFlight {
+		return false
+	}
+	t.pressureInFlight = true
+	t.enqueueReclaimLocked(&reclaimRequest{kind: reclaimPressure})
+	return true
+}
+
+// submitCrisisLocked queues the destructive reset. A crisis request outranks pressure and idle: it
+// replaces a pending request of either kind (reusing that request's barrier token) or waits for the
+// in-flight one. It never queues a second crisis: the state machine is already Triggered and the
+// reset in hand covers the state that would justify another.
+func (t *adaptiveTimer) submitCrisisLocked(sample memorySample, connections int, rateTriggered bool) bool {
+	if t.reclaimStopped || t.crisisInFlight {
+		return false
+	}
+	t.crisisInFlight = true
+	reason := resetReasonThreshold
+	if rateTriggered {
+		reason = resetReasonRate
+	}
+	t.enqueueReclaimLocked(&reclaimRequest{
+		kind:          reclaimCrisis,
+		sample:        sample,
+		connections:   connections,
+		reason:        reason,
+		rateTriggered: rateTriggered,
+		reportOnly:    t.killerDisabled,
+	})
+	return true
+}
+
+// enqueueReclaimLocked installs a request as the single pending action.
+//
+// Replacing a pending request does NOT touch the WaitGroup: the count already represents "one
+// queued action", and the replacement will release it when it runs or is dropped. Adding for the
+// replacement and releasing the old token separately would open a transient zero that stop()'s Wait
+// must never observe between the two operations.
+func (t *adaptiveTimer) enqueueReclaimLocked(request *reclaimRequest) {
+	if pending := t.pendingReclaim; pending != nil {
+		// The pending request is superseded. Its dedicated in-flight flag belongs to the new
+		// request now, so clear the old one to keep the idle admission gate accurate.
+		switch pending.kind {
+		case reclaimIdle:
+			t.idleInFlight = false
+		case reclaimPressure:
+			t.pressureInFlight = false
+		}
+		t.pendingReclaim = request
+		t.signalReclaimLocked()
+		return
+	}
+	t.ensureReclaimExecutorLocked()
+	t.pendingReclaim = request
+	t.pressureCallbacks.Add(1)
+	t.signalReclaimLocked()
+}
+
+func (t *adaptiveTimer) ensureReclaimExecutorLocked() {
+	if t.reclaimStarted {
+		return
+	}
+	t.reclaimStarted = true
+	t.reclaimWake = make(chan struct{}, 1)
+	t.reclaimStop = make(chan struct{})
+	t.reclaimExited = make(chan struct{})
+	go t.reclaimLoop(t.reclaimWake, t.reclaimStop, t.reclaimExited)
+}
+
+func (t *adaptiveTimer) signalReclaimLocked() {
+	select {
+	case t.reclaimWake <- struct{}{}:
+	default:
 	}
 }
 
-func (t *adaptiveTimer) aboveArmed(sample memorySample) bool {
+// dropPendingReclaimLocked discards the queued action and releases its token. The in-flight
+// request, if any, is untouched: stop() waits for that one.
+func (t *adaptiveTimer) dropPendingReclaimLocked() {
+	request := t.pendingReclaim
+	if request == nil {
+		return
+	}
+	t.pendingReclaim = nil
+	switch request.kind {
+	case reclaimIdle:
+		t.idleInFlight = false
+	case reclaimPressure:
+		t.pressureInFlight = false
+	case reclaimCrisis:
+		t.crisisInFlight = false
+	}
+	t.pressureCallbacks.Done()
+}
+
+// reclaimLoop is the single destructive executor. It is started on first use and exits on stop.
+func (t *adaptiveTimer) reclaimLoop(wake <-chan struct{}, stopChannel <-chan struct{}, exited chan<- struct{}) {
+	defer close(exited)
+	for {
+		t.access.Lock()
+		if t.reclaimStopped {
+			t.dropPendingReclaimLocked()
+			t.access.Unlock()
+			return
+		}
+		request := t.pendingReclaim
+		if request == nil {
+			t.access.Unlock()
+			select {
+			case <-wake:
+			case <-stopChannel:
+			}
+			continue
+		}
+		t.pendingReclaim = nil
+		t.inFlightReclaim = request.kind
+		t.access.Unlock()
+
+		t.runReclaim(request)
+
+		t.access.Lock()
+		t.finishReclaimLocked(request.kind)
+		t.access.Unlock()
+		t.pressureCallbacks.Done()
+	}
+}
+
+// finishReclaimLocked clears the flags of the action that just finished and applies the post-crisis
+// cooling. The cooldown is the important half: after a reset the footprint really did drop, and
+// without it the very next ordinary poll sees that drop as a fresh opportunity and runs another
+// Trim + GC immediately after the crisis pass already did both.
+func (t *adaptiveTimer) finishReclaimLocked(kind reclaimKind) {
+	t.inFlightReclaim = reclaimNone
+	switch kind {
+	case reclaimIdle:
+		t.idleInFlight = false
+	case reclaimPressure:
+		t.pressureInFlight = false
+	case reclaimCrisis:
+		t.crisisInFlight = false
+		now := time.Now()
+		t.lastRelease = now
+		t.idleCooldownUntil = now.Add(defaultIdleCooldown)
+	}
+}
+
+func (t *adaptiveTimer) runReclaim(request *reclaimRequest) {
+	switch request.kind {
+	case reclaimIdle:
+		t.runIdleReclaim(request)
+	case reclaimPressure:
+		t.runPressureReclaim()
+	case reclaimCrisis:
+		t.runCrisisReclaim(request)
+	}
+}
+
+// runIdleReclaim is the layered gentle pass.
+//
+// # The order, and why it is observable rather than cosmetic
+//
+//	L1  expired caches          no socket is touched; reuse of live entries is preserved
+//	L2  idle pools              sockets that carry nothing; the next demand may re-handshake
+//	L3  forced GC               STW and CPU; only when L1/L2 did not reach the benefit floor
+//
+// Each stage is measured from the same starting footprint, and a stage that reaches the floor stops
+// the pass. This is what makes "trim before GC" a decision instead of a fixed sequence: a cache
+// trim that returns a megabyte must not also cost a full GC and a round of handshakes. A later pass
+// starts again from L1, so the cheap layer is never skipped merely because it was insufficient once.
+func (t *adaptiveTimer) runIdleReclaim(request *reclaimRequest) {
+	t.releaseAccess.Lock()
+	defer t.releaseAccess.Unlock()
+	t.runIdleReclaimLocked(request)
+}
+
+// runIdleReclaimLocked is the body, for callers that already hold releaseAccess (the synchronous
+// releaseIdleMemory entry point and the executor both do).
+func (t *adaptiveTimer) runIdleReclaimLocked(request *reclaimRequest) {
+	before := t.currentUsage()
+	ctx := context.Background()
+
+	// L1: expired cache entries. This is deliberately first: it has no connection ownership at all.
+	if t.trimCaches != nil {
+		t.trimCaches(ctx)
+		afterCache := t.currentUsage()
+		if gain := droppedBytes(before, afterCache); gain >= defaultIdleBenefitFloor {
+			t.finishIdleReclaim(before, afterCache, "cache", gain)
+			return
+		}
+	}
+
+	// A crisis observed while the cheap layer was running must not wait for a pool walk it does not
+	// need. The layer boundary is the cancellation point: the caches are already trimmed, so ending
+	// here loses nothing and lets the destructive pass take the executor immediately.
+	if t.crisisQueued() {
+		afterCache := t.currentUsage()
+		t.finishIdleReclaim(before, afterCache, "cache (crisis pending)", droppedBytes(before, afterCache))
+		return
+	}
+
+	// L2: idle pools. This is the pass that may cost a handshake, so it only runs when the cheap
+	// layer did not already reach the benefit floor.
+	if t.trimMemory != nil {
+		t.trimMemory(ctx)
+	} else if t.network != nil {
+		t.network.TrimMemory(ctx)
+	}
+	afterPools := t.currentUsage()
+	if gain := droppedBytes(before, afterPools); gain >= defaultIdleBenefitFloor {
+		t.finishIdleReclaim(before, afterPools, "pools", gain)
+		return
+	}
+
+	// Same cancellation point before the most expensive action. A reset already queued behind this
+	// pass will do the runtime work itself.
+	if t.crisisQueued() {
+		afterPools = t.currentUsage()
+		t.finishIdleReclaim(before, afterPools, "pools (crisis pending)", droppedBytes(before, afterPools))
+		return
+	}
+
+	// L3: the runtime. FreeOSMemory is a forced GC plus scavenge, and it is the most expensive
+	// action available short of a network reset. It must have a reason beyond "the first two layers
+	// were quiet": real pressure at/above armed, or idle Go pages the runtime itself reports.
+	if t.shouldFreeOSMemory(request.sample) {
+		if t.freeOSMemory != nil {
+			t.freeOSMemory()
+		} else {
+			runtimeDebug.FreeOSMemory()
+		}
+	}
+	after := t.currentUsage()
+	t.finishIdleReclaim(before, after, "runtime", droppedBytes(before, after))
+}
+
+func (t *adaptiveTimer) finishIdleReclaim(before uint64, after uint64, stage string, gain uint64) {
+	lowYield := after+defaultIdleBenefitFloor >= before
+	t.access.Lock()
+	t.lastGCCycles = readGCCycles()
+	if lowYield {
+		// The footprint is at its floor for this layer set. Back off instead of repeating the same
+		// work on the next sample; a crisis path does not consult this cooldown.
+		t.idleCooldownUntil = time.Now().Add(defaultIdleCooldown)
+	}
+	t.access.Unlock()
+
+	switch {
+	case gain >= defaultIdleBenefitFloor:
+		t.logger.Trace("released idle memory via ", stage, ", usage: ", byteformats.FormatMemoryBytes(before),
+			" -> ", byteformats.FormatMemoryBytes(after), ", delta ", byteformats.FormatMemoryBytes(gain))
+	case gain > 0:
+		t.logger.Trace("idle release via ", stage, " gained only ", byteformats.FormatMemoryBytes(gain),
+			", cooling down for ", defaultIdleCooldown, ", usage: ",
+			byteformats.FormatMemoryBytes(before), " -> ", byteformats.FormatMemoryBytes(after))
+	default:
+		t.logger.Trace("idle release via ", stage, " made no measurable gain, cooling down for ",
+			defaultIdleCooldown, ", usage: ", byteformats.FormatMemoryBytes(after))
+	}
+}
+
+// runPressureReclaim is the Darwin critical pass. It is deliberately not a network reset: the
+// dispatch notification is system-wide and says nothing about whether this process's paths broke.
+func (t *adaptiveTimer) runPressureReclaim() {
+	t.releaseAccess.Lock()
+	defer t.releaseAccess.Unlock()
+	t.releaseMemory()
+}
+
+// runCrisisReclaim is the destructive reset: ReleaseMemory (which retires the network) followed by
+// the cache flush, Critical publication and forced GC that the report-only mode also performs.
+//
+// # The decision is re-checked before the destructive step
+//
+// A crisis request can wait behind an in-flight idle pass. That pass may have released exactly the
+// memory the crisis was called for - the trigger was observed before the trim completed, not after
+// it. Resetting the network then would terminate healthy paths for a footprint that is already back
+// below the armed line: the most expensive possible answer to a problem that no longer exists.
+//
+// The re-check is deliberately against the armed line, not the trigger: the state machine keeps
+// Triggered until armed, and a rate-predicted reset is allowed to act while the footprint is still
+// below the trigger. Report-only mode has no network reset to skip and is left on its own path.
+func (t *adaptiveTimer) runCrisisReclaim(request *reclaimRequest) {
+	t.releaseAccess.Lock()
+	defer t.releaseAccess.Unlock()
+
+	current := t.readSample()
+	if !request.reportOnly && !t.atOrAboveArmed(current) {
+		t.logger.Trace("crisis reset skipped, footprint fell below the armed line: ",
+			byteformats.FormatMemoryBytes(current.usage), t.logDetails(current))
+		return
+	}
+
+	if request.rateTriggered {
+		if request.reportOnly {
+			t.logger.Warn("memory growth rate critical (report only), usage: ", byteformats.FormatMemoryBytes(current.usage), t.logDetails(current))
+		} else {
+			t.logger.Error("memory growth rate critical, usage: ", byteformats.FormatMemoryBytes(current.usage), t.logDetails(current), ", resetting network")
+		}
+	} else {
+		if request.reportOnly {
+			t.logger.Warn("memory threshold reached (report only), usage: ", byteformats.FormatMemoryBytes(current.usage), t.logDetails(current))
+		} else {
+			t.logger.Error("memory threshold reached, usage: ", byteformats.FormatMemoryBytes(current.usage), t.logDetails(current), ", resetting network")
+		}
+	}
+	if !request.reportOnly {
+		t.releaseNetworkMemory(context.Background())
+	}
+	t.releaseMemory()
+	if t.recorder != nil {
+		after := t.readSample()
+		t.recorder.recordReset(request.reason, current, after, request.connections, request.reportOnly)
+		t.recorder.snapshot(SnapshotReasonReset, current, t.belowTrigger(after), false)
+	}
+}
+
+func (t *adaptiveTimer) releaseNetworkMemory(ctx context.Context) {
+	if t.releaseNetwork != nil {
+		t.releaseNetwork(ctx)
+		return
+	}
+	// A timer built without a network manager is a unit fixture; the crisis pass still does the
+	// cache flush and GC, which is what report-only mode does in production too.
+	if t.network != nil {
+		t.network.ReleaseMemory(ctx)
+	}
+}
+
+func (t *adaptiveTimer) readSample() memorySample {
+	if t.sampleFunc != nil {
+		return t.sampleFunc()
+	}
+	return readMemorySample(t.policyMode)
+}
+
+func (t *adaptiveTimer) currentUsage() uint64 {
+	if t.readUsage != nil {
+		return t.readUsage()
+	}
+	return memory.Total()
+}
+
+func droppedBytes(before uint64, after uint64) uint64 {
+	if after >= before {
+		return 0
+	}
+	return before - after
+}
+
+// crisisQueued reports whether the gentle pass should stop at its next layer boundary: a destructive
+// reset is waiting behind it, or the timer is being closed and the remaining layers would be work
+// for a lifecycle that is ending. It is the abort signal the layer boundaries consult.
+func (t *adaptiveTimer) crisisQueued() bool {
+	t.access.Lock()
+	defer t.access.Unlock()
+	return t.crisisInFlight || t.reclaimStopped
+}
+
+// shouldFreeOSMemory decides whether the runtime layer is justified.
+func (t *adaptiveTimer) shouldFreeOSMemory(sample memorySample) bool {
+	if t.atOrAboveArmed(sample) {
+		return true
+	}
+	reclaimable := readRuntimeReclaimableBytes()
+	if t.runtimeReclaimable != nil {
+		reclaimable = t.runtimeReclaimable()
+	}
+	return reclaimable >= defaultIdleBenefitFloor
+}
+
+func (t *adaptiveTimer) atOrAboveArmed(sample memorySample) bool {
 	switch t.policyMode {
 	case policyModeMemoryLimit, policyModeNetworkExtension:
 		return sample.usage >= t.limitThresholds.armed
@@ -428,6 +996,21 @@ func (t *adaptiveTimer) aboveArmed(sample memorySample) bool {
 	default:
 		return false
 	}
+}
+
+// readRuntimeReclaimableBytes reports free Go heap spans that a GC/scavenge can return to the OS.
+//
+// It is evidence for L3 below the armed line. It is not a promise: the runtime may choose to keep
+// some free spans, and the footprint measurement is authoritative. It only prevents a forced GC
+// from running when the runtime has nothing to give - which is the "33 MiB is the working set" case
+// the idle loop must not turn into a collector loop.
+func readRuntimeReclaimableBytes() uint64 {
+	samples := []metrics.Sample{{Name: "/memory/classes/heap/free:bytes"}}
+	metrics.Read(samples)
+	if samples[0].Value.Kind() != metrics.KindUint64 {
+		return 0
+	}
+	return samples[0].Value.Uint64()
 }
 
 func hasMeaningfulDrop(previous int, current int) bool {
@@ -484,7 +1067,11 @@ func (t *adaptiveTimer) releaseMemory() {
 	}
 	t.pressure.Store(uint32(tun.MemoryPressureCritical))
 	badCleanup()
-	runtimeDebug.FreeOSMemory()
+	if t.freeOSMemory != nil {
+		t.freeOSMemory()
+	} else {
+		runtimeDebug.FreeOSMemory()
+	}
 }
 
 func (s pressureState) memoryPressure() tun.MemoryPressure {

@@ -32,6 +32,10 @@ func newIdleReleaseTimer(t *testing.T) (*adaptiveTimer, *int, *int) {
 		lastConnections: 10,
 		trimMemory:      func(context.Context) { trims++ },
 		freeOSMemory:    func() { frees++ },
+		// The runtime-evidence gate below the armed line would otherwise skip the forced GC on the
+		// machine running the test, whose real free-span figure is not the 33 MiB fixture's. These
+		// tests assert the release decision, so they state the evidence explicitly.
+		runtimeReclaimable: func() uint64 { return defaultIdleBenefitFloor },
 	}
 	t.Cleanup(func() {
 		if timer.timer != nil {
@@ -71,18 +75,20 @@ func TestIdleReleaseRunsOnceForARealDropThenCoolsDown(t *testing.T) {
 	require.Equal(t, 1, *frees)
 }
 
-// Real pressure bypasses the ordinary low-yield cooldown: an armed footprint must still be able
-// to release even immediately after a release that produced no gain.
-func TestIdleReleasePressureBypassesTheCooldown(t *testing.T) {
+// A stable armed footprint (41 MiB, between armed 40 and trigger 45) has no observed opportunity:
+// it must not run the idle Trim/GC loop either. Crisis handling at/above trigger belongs to poll's
+// state machine, not to this opportunistic path.
+func TestIdleReleaseDoesNotThrashAtArmedFootprint(t *testing.T) {
 	timer, trims, frees := newIdleReleaseTimer(t)
 	timer.lastUsage = 35 * 1024 * 1024
 	timer.releaseIdleMemory(idleSample(33), 10)
 	require.Equal(t, 1, *frees)
-	timer.lastRelease = time.Time{}
 
-	timer.releaseIdleMemory(idleSample(41), 10)
-	require.Equal(t, 2, *trims, "an armed footprint must not be blocked by the low-yield cooldown")
-	require.Equal(t, 2, *frees)
+	for range 5 {
+		timer.releaseIdleMemory(idleSample(41), 10)
+	}
+	require.Equal(t, 1, *trims, "a stable armed footprint is not an idle-release opportunity")
+	require.Equal(t, 1, *frees, "no second forced GC at a stable 41 MiB")
 }
 
 // The idle cleanup is single-flight: a second tick that wants to release must wait for the first,

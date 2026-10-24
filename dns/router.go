@@ -35,6 +35,7 @@ import (
 var (
 	_ adapter.DNSRouter                 = (*Router)(nil)
 	_ adapter.DNSRuleSetUpdateValidator = (*Router)(nil)
+	_ adapter.ExpiredCacheReleaser      = (*Router)(nil)
 )
 
 type Router struct {
@@ -2165,6 +2166,38 @@ func addressLimitResponseCheck(rule adapter.DNSRule, metadata *adapter.InboundCo
 //
 // The advance happens BEFORE the purge, so a query that captures the new epoch necessarily starts
 // after the invalidation and its answer describes the new policy.
+// TrimExpiredCaches is the cheapest DNS reclaim: remove entries whose lifetime has lapsed, and
+// nothing the read path could still serve.
+//
+// # Why the exact cache is trimmed by the client, not here
+//
+// The client owns the optimistic policy, so it is the only layer that can decide whether a lapsed
+// entry is still serviceable. An optimistic deployment answers inside its optimistic window; purging
+// those entries would be correctness-preserving but latency-visible, and a memory pass must not
+// silently turn chance-to-reuse into an upstream query. See Client.TrimExpiredCaches.
+//
+// The reverse mapping has no such exception: an expired mapping is never returned. Its purge takes
+// dnsEnvironmentAccess for the same reason ClearCache does - the commit protocol holds that lock
+// across its epoch comparison and writes, so a purge outside it could land in the middle and be
+// undone by the write that follows.
+func (r *Router) TrimExpiredCaches() int {
+	trimmed := 0
+	if r.concreteClient != nil {
+		trimmed += r.concreteClient.TrimExpiredCaches()
+	}
+	if r.dnsReverseMapping != nil {
+		r.dnsEnvironmentAccess.Lock()
+		before := r.dnsReverseMapping.Len()
+		r.dnsReverseMapping.PurgeExpired()
+		after := r.dnsReverseMapping.Len()
+		r.dnsEnvironmentAccess.Unlock()
+		if after < before {
+			trimmed += before - after
+		}
+	}
+	return trimmed
+}
+
 func (r *Router) ClearCache() {
 	// The epoch advance and the purge are ONE step with respect to a policy-guarded cache commit.
 	//

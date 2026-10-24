@@ -8,6 +8,19 @@ import (
 	"github.com/sagernet/sing-box/daemon"
 )
 
+// cacheTrimmer is the optional L1 memory capability, declared locally.
+//
+// # Why this is not adapter.CacheMemoryReleaser
+//
+// This file is the Android/Apple ABI transport and is parsed by
+// TestPlatformEventsDoNotTouchMeasurementOrigins, which forbids any import of the adapter package:
+// the adapter surface contains the probe-origin helpers, and a transport that can reach them can
+// silently turn an automatic health round into demand. A local method-set interface asks the same
+// question - "can this manager drop expired caches?" - without widening the transport's reach.
+type cacheTrimmer interface {
+	TrimCaches(ctx context.Context) int
+}
+
 // # Android platform events: the ABI rule this file is written under
 //
 // Every exported method of a bound type is reachable from Kotlin through a generated cgo //export
@@ -129,8 +142,12 @@ func (t *boxPlatformTarget) TrimMemory(level runtimecoord.TrimLevel) {
 	if network == nil {
 		return
 	}
-	// This is the progressive pass. It closes pools with no active user traffic and drops cached
-	// state; it cannot dial, and the level that reaches it was classified by the policy, not here.
+	// This is the progressive pass. It drops expired cached state first - the layer that owns no
+	// socket - then closes pools with no active user traffic. Neither can dial, and the level that
+	// reaches it was classified by the policy, not here.
+	if cacheReleaser, isReleaser := network.(cacheTrimmer); isReleaser {
+		cacheReleaser.TrimCaches(context.Background())
+	}
 	network.TrimMemory(context.Background())
 }
 
