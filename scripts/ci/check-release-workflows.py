@@ -557,6 +557,70 @@ def check_mobile_contract():
            owners == ["mobile-contract.yml"], str(owners))
 
 
+def check_mobile_concurrency():
+    """A manual mobile candidate must survive pushes and other manual runs.
+
+    GitHub keeps at most one RUNNING and one PENDING run per concurrency group. With a shared
+    group, a later push cancels a manual candidate when cancel-in-progress is true, and even
+    with cancel false a third manual run replaces the pending one. The structural fix is to
+    give each dispatch its own group (`github.run_id`) while pushes keep the ref group, and
+    to make cancel-in-progress false for workflow_dispatch.
+    """
+    with open(MOBILE, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh.read())
+    concurrency = doc.get("concurrency") or {}
+    group = str(concurrency.get("group", ""))
+    cancel = str(concurrency.get("cancel-in-progress", ""))
+
+    report("mobile concurrency: manual dispatch gets a unique group (run_id)",
+           "github.run_id" in group, group)
+    report("mobile concurrency: group is event-aware and keeps the ref for pushes",
+           "workflow_dispatch" in group and "github.ref" in group, group)
+    report("mobile concurrency: dispatch is never cancelled",
+           re.search(r"event_name\s*!=\s*['\"]workflow_dispatch['\"]", cancel) is not None,
+           cancel)
+
+    # Evaluate the actual expressions for representative events, rather than trusting the shape.
+    # This is a deliberately small GitHub-expression subset: the literals and operators used here.
+    def render(expression, event, ref, run_id):
+        def evaluate(text):
+            text = text.strip()
+            text = re.sub(r"github\.event_name\s*==\s*['\"]workflow_dispatch['\"]",
+                          "True" if event == "workflow_dispatch" else "False", text)
+            text = re.sub(r"github\.event_name\s*!=\s*['\"]workflow_dispatch['\"]",
+                          "False" if event == "workflow_dispatch" else "True", text)
+            text = re.sub(r"github\.run_id", repr(str(run_id)), text)
+            text = re.sub(r"github\.ref", repr(ref), text)
+            text = text.replace("&&", " and ").replace("||", " or ")
+            return eval(text, {"__builtins__": {}}, {})
+
+        match = re.search(r"\$\{\{(.*?)\}\}", expression, re.S)
+        if match:
+            value = evaluate(match.group(1))
+            prefix, suffix = expression[:match.start()], expression[match.end():]
+            if prefix or suffix:
+                return prefix + str(value) + suffix
+            return value
+        return evaluate(expression)
+
+    push_group = render(group, "push", "refs/heads/testing", 1)
+    push_group_2 = render(group, "push", "refs/heads/testing", 2)
+    dispatch_group = render(group, "workflow_dispatch", "refs/heads/testing", 10)
+    dispatch_group_2 = render(group, "workflow_dispatch", "refs/heads/testing", 11)
+    report("mobile concurrency: two pushes share a group and supersede",
+           push_group == push_group_2, "%s == %s" % (push_group, push_group_2))
+    report("mobile concurrency: two dispatches get distinct groups",
+           dispatch_group != dispatch_group_2, "%s != %s" % (dispatch_group, dispatch_group_2))
+    report("mobile concurrency: a dispatch is not in a push's group",
+           dispatch_group != push_group and dispatch_group_2 != push_group,
+           "%s / %s vs %s" % (dispatch_group, dispatch_group_2, push_group))
+    push_cancel = render(cancel, "push", "refs/heads/testing", 1)
+    dispatch_cancel = render(cancel, "workflow_dispatch", "refs/heads/testing", 10)
+    report("mobile concurrency: push cancels, dispatch does not",
+           push_cancel is True and dispatch_cancel is False,
+           "push=%r dispatch=%r" % (push_cancel, dispatch_cancel))
+
+
 def check_coverage_semantics():
     """A gate that claims coverage must require a PASS, not merely a reported result.
 
@@ -1225,6 +1289,8 @@ def main(argv=None):
     check_apple_resolve_once()
     print()
     check_mobile_contract()
+    print()
+    check_mobile_concurrency()
     print()
     check_coverage_semantics()
     print()
