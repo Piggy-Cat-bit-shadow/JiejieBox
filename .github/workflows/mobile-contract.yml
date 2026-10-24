@@ -84,10 +84,15 @@ permissions:
   contents: read
 
 concurrency:
-  # One run per ref: this is a source contract, so a superseded push's answer is the previous
-  # commit's answer and cancelling it loses nothing.
-  group: mobile-contract-${{ github.ref }}
-  cancel-in-progress: true
+  # A push supersedes the previous push on the same ref: that run is about a commit nobody will
+  # freeze, so cancelling it loses nothing.
+  #
+  # A manual dispatch is different. It may be the formal candidate freeze, and a later push (or
+  # another dispatch) must not cancel it. `run_id` gives each dispatch its own group so two manual
+  # runs cannot replace each other in the single pending slot, while pushes still share the ref
+  # group. This is the same event-guard shape Verify uses, with run_id added for the manual case.
+  group: mobile-contract-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
   mobile-contract:

@@ -372,6 +372,19 @@ jobs:
         # rewriting, so a missing replace is invisible in the source and links upstream in the
         # binary. This checks the resolved replacements and the archive bytes they provide.
         run: ./scripts/ci/verify-cronet-provenance.sh apple
+  race:
+    name: race checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            test/go.sum
 
       - name: race on the fork's own data paths
         # # Why this is still in the push gate, measured rather than assumed

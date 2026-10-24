@@ -45,10 +45,14 @@ on:
     # The list is declared ONCE and aliased below, so the push and pull_request triggers
     # cannot drift into asserting different things about the same files.
     paths: &release_tooling_paths
+      # The structure checker also owns the mobile/Android candidate concurrency and trigger
+      # declarations, so those files are tooling inputs too.
       - ".github/workflows/release.yml"
       - ".github/workflows/release-contract-verify.yml"
       - ".github/workflows/client-desktop-windows.yml"
       - ".github/workflows/verify.yml"
+      - ".github/workflows/mobile-contract.yml"
+      - ".github/workflows/android-core-arm64.yml"
       - "scripts/ci/release-artifacts.sh"
       - "scripts/ci/test-release-artifacts.sh"
       - "scripts/ci/lib.sh"
