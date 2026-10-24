@@ -1,7 +1,7 @@
 # Upstream integration status
 
 - generated: 2026-10-24T09:45:00+08:00 (phase 01/06)
-- fork testing code: `2bef2ff6d0820e3b2345c38fb936ed4116aaef25`
+- fork testing code: `6af4a4a0925a98abe6dc8d0308d5317052c648e1`
 - upstream observed: `824dbcfb4dd0a95921840b1737b950cde590241e` (2026-10-23T22:39:57+08:00)
 - behind_by: **109**; ahead_by: 2583
 - open semantic: **20**; open dependency blockers: **5**
@@ -22,7 +22,7 @@ phase closed 2 of the 22, so 20 remain.
 
 | id | status | evidence |
 |---|---|---|
-| DEP-TUN-0 | COMPLETED | `dev` 1559fbd506eb; merge 17a6a699750980284cae5d4e04a30720c543ccc2 from `sync/upstream-fixes-2026-10-24` 88e6d8160cf5. The sync branch was a rebase of dev's commits onto a newer upstream base, so the resolved tree equals the sync tree; dev keeps `(handled, remove)`, PacketBufferPort, return batching, NAT/fragment and the Go-stack close contract. |
+| DEP-TUN-0 | COMPLETED | `dev` tip 4c4e5a2d6e19; port commit 1559fbd506eb; merge 17a6a699750980284cae5d4e04a30720c543ccc2 from `sync/upstream-fixes-2026-10-24` 88e6d8160cf5. The sync branch was a rebase of dev's commits onto a newer upstream base, so the resolved tree equals the sync tree; dev keeps `(handled, remove)`, PacketBufferPort, return batching, NAT/fragment and the Go-stack close contract. Two follow-up style commits (17db765, 4c4e5a2) make the lint workflow pass on every platform target. |
 | DEP-TUN-1 | COMPLETED | `1559fbd`: closed TCP sessions expire on `tcpClosingTimeout`, a late SYN gets a fresh mapping, concurrent sweep re-checks map identity. Tests `stack_system_nat_test.go`. |
 | DEP-TUN-2 | COMPLETED | `1559fbd`: no-auto-route IPv6 default route, priority clamp above `redirectRouteRulePriority`, delete by identity. Tests `tun_linux_test.go`. |
 | DEP-TUN-3 | COMPLETED | `1559fbd`: bounded held packets (16/flow, 512/stage), async `JudgeFlow`, resume pump on System/Mixed/Go/gvisor and nfqueue, close drops judgements. Tests `flow_dispatch_judge_test.go`. |
@@ -50,8 +50,20 @@ Not verified: a live QUIC client/server datagram session on a device.
 ## Effective pins
 
 Root and nested `test` module both replace `github.com/sagernet/sing-tun` with
-`github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024012809-1559fbd506eb`. `go list -m -json`
+`github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024014015-4c4e5a2d6e19`. `go list -m -json`
 shows the same `Replace.Dir` in both; `go mod tidy`/`verify` are clean and `go build ./...` passes.
+
+## CI
+
+- sing-tun **lint: SUCCESS** on `4c4e5a2` (run 40050850848) after the gci/gofumpt/modernize fixes.
+- sing-tun **test: FAILURE** on `4c4e5a2` (run 40050850903). macOS passes; the three Ubuntu jobs and
+  Windows fail `TestGoConnKeepalive`, `TestGoKernelZeroWindowHalfClose` and
+  `TestGoKernelPacketMapping`. These are pre-existing: the pre-merge `dev` 7539c98 fails the same
+  set plus `TestGoKernelFlowControl` and `TestGoKernelPacket` (manual-dispatch baseline run
+  40050607262). No new test fails after the convergence.
+- The baseline comparison branch `ci-baseline-7539c98` was deleted after the run.
+- Main repo workflows (`Verify`, `Mobile contract verification`, `Android Core ARM64`) are
+  **PENDING** at ledger write time.
 
 ## Open semantic rows (20)
 

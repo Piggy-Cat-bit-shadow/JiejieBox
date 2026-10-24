@@ -3,13 +3,13 @@
 ```text
 PHASE = 01/06
 RESULT = PARTIAL_WITH_SPECIFIC_BLOCKER
-SING_TUN_DEV = 1559fbd506eb803888e396f60a438a1c40e0f444 (merge 17a6a699750980284cae5d4e04a30720c543ccc2 of sync/upstream-fixes-2026-10-24 @ 88e6d8160cf5, then one port commit 1559fbd)
+SING_TUN_DEV = 4c4e5a2d6e19b043e0b0dc67f8926e7662f96ef0 (merge 17a6a699750980284cae5d4e04a30720c543ccc2 of sync/upstream-fixes-2026-10-24 @ 88e6d8160cf5, port commit 1559fbd, style commits 17db765 and 4c4e5a2)
 SING_TUN_SYNC_BRANCH = deleted (dev contains 88e6d81 as an ancestor; no open PRs; main no longer references it)
-MAIN_TESTING = 2bef2ff6d0820e3b2345c38fb936ed4116aaef25 (code); ledger commit follows
-EFFECTIVE_SING_TUN_ROOT_AND_TEST = same revision in both modules: v0.0.0-20261024012809-1559fbd506eb, same Replace.Dir
+MAIN_TESTING = 6af4a4a0925a98abe6dc8d0308d5317052c648e1 (code); ledger commit follows
+EFFECTIVE_SING_TUN_ROOT_AND_TEST = same revision in both modules: v0.0.0-20261024014015-4c4e5a2d6e19, same Replace.Dir
 DEP_TUN_0_1_2_3 = COMPLETED / COMPLETED / COMPLETED / COMPLETED
 MASQUE_BACKPRESSURE = capsule-path park/drain/close/fallback tests pass; MemoryTun full/close/drop tests pass; live QUIC session NOT_VERIFIED_ON_DEVICE
-CI_FINAL_CODE_SHA = 2bef2ff6d08 — PENDING at write time (workflows run on push; see the follow-up evidence commit if it landed)
+CI_FINAL_CODE_SHA = 6af4a4a0925 — main workflows PENDING at write time; sing-tun lint SUCCESS and test FAILURE with pre-existing failures (see below)
 OPEN_SEMANTIC = 20 (was 22; 3454d6d was never open, it is PRESENT in the audit)
 NEXT_PHASE_READY = YES (phase 02 starts from this ledger; DEP-SING-1 still blocks cc022098fd)
 ```
@@ -25,8 +25,7 @@ NEXT_PHASE_READY = YES (phase 02 starts from this ledger; DEP-SING-1 still block
   platform watchers, TPROXY reject). The fork contracts survive: `(handled, remove)`,
   `PacketBufferPort`, allocation-free return batching, NAT/fragment handling, Go-stack Start/Close,
   and the buffer ownership/wake rules.
-- `1559fbd` ports the three remaining mechanisms:
-  - system-stack TCP NAT: RST or FIN-in-both-directions marks a session closed, it expires after
+- `1559fbd` ports the three remaining mechanisms:  - system-stack TCP NAT: RST or FIN-in-both-directions marks a session closed, it expires after
     `tcpClosingTimeout`, a retransmitted SYN gets a fresh mapping, and a concurrent sweep re-checks
     map identity before deleting. `stack_system_nat_test.go`.
   - no-auto-route IPv6: `::/0` is added to the instance's own table, the rule priority is clamped
@@ -54,6 +53,7 @@ NEXT_PHASE_READY = YES (phase 02 starts from this ledger; DEP-SING-1 still block
 
 | Check | Result |
 |---|---|
+| `golangci-lint run` on windows/linux/darwin/android targets | PASS (0 issues) |
 | `go build ./...` (sing-tun, Windows) | PASS |
 | `go build -tags with_gvisor ./...` (Windows) | PASS |
 | cross-builds: linux/amd64, linux/arm64, darwin/arm64, android/arm64, windows/arm64 (with and without `with_gvisor` where applicable) | PASS |
@@ -64,6 +64,23 @@ NEXT_PHASE_READY = YES (phase 02 starts from this ledger; DEP-SING-1 still block
 | main `go test ./protocol/tun ./transport/device ./transport/masque` | PASS |
 | main `go build -tags DEFAULT_BUILD_TAGS_OTHERS ./...` | PASS |
 | main `go mod verify` (root and test) | PASS |
+
+## CI evidence
+
+**sing-tun** (run on `4c4e5a2`):
+
+- lint: SUCCESS (run 40050850848). Earlier runs exposed gci/gofumpt/modernize issues in the
+  converged tree; both style commits fix them and `golangci-lint run` is clean on
+  windows/linux/darwin/android targets locally.
+- test: FAILURE (run 40050850903). macOS passes; Ubuntu (three Go versions) and Windows fail
+  `TestGoConnKeepalive`, `TestGoKernelZeroWindowHalfClose` and `TestGoKernelPacketMapping`.
+  The pre-merge `dev` 7539c98 fails the same set plus `TestGoKernelFlowControl` and
+  `TestGoKernelPacket` (baseline dispatch run 40050607262, branch `ci-baseline-7539c98`, deleted
+  after the comparison). So the convergence adds no failing test; these Go-stack tests fail on this
+  repository's Linux/Windows CI independently of this phase.
+
+**Main repo**: workflows are PENDING at ledger write time. The code SHA to watch is
+`6af4a4a0925` (Verify, Mobile contract verification, Android Core ARM64).
 
 Not run, and why:
 

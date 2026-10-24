@@ -1,7 +1,7 @@
 {
   "generated_at": "2026-10-24T09:45:00+08:00",
   "phase": "01/06",
-  "fork_testing_code_sha": "2bef2ff6d0820e3b2345c38fb936ed4116aaef25",
+  "fork_testing_code_sha": "6af4a4a0925a98abe6dc8d0308d5317052c648e1",
   "fork_testing_docs_sha": "the commit carrying this ledger",
   "upstream_observed": {
     "sha": "824dbcfb4dd0a95921840b1737b950cde590241e",
@@ -47,6 +47,7 @@
       "repo": "Piggy-Cat-bit-shadow/sing-tun",
       "target_branch": "dev",
       "status": "COMPLETED",
+      "dev_tip": "4c4e5a2d6e19b043e0b0dc67f8926e7662f96ef0",
       "merge_commit": "17a6a699750980284cae5d4e04a30720c543ccc2",
       "merged_branch": "sync/upstream-fixes-2026-10-24 @ 88e6d8160cf56bd440ff20d50bf5c43bff7b259e",
       "previous_dev": "7539c9855f19bb51a75f0908ecf6ae1d2d749490",
@@ -132,9 +133,17 @@
     "not_verified": "live QUIC client/server datagram session on a device (NOT_VERIFIED_ON_DEVICE)"
   },
   "effective_pins": {
-    "root_module": "github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024012809-1559fbd506eb",
-    "test_module": "github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024012809-1559fbd506eb",
+    "root_module": "github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024014015-4c4e5a2d6e19",
+    "test_module": "github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024014015-4c4e5a2d6e19",
     "verification": "go list -m -json in both modules resolves to the same Dir; go mod tidy/verify clean; go build ./... clean"
+  },
+  "ci": {
+    "sing_tun": {
+      "lint": "SUCCESS on 4c4e5a2 (run 40050850848), after fixing gci/gofumpt/modernize on the converged tree",
+      "test": "FAILURE on 4c4e5a2 (run 40050850903): ubuntu x3 and windows fail on TestGoConnKeepalive / TestGoKernelZeroWindowHalfClose / TestGoKernelPacketMapping; macOS passes. These are pre-existing: the pre-merge dev 7539c98 fails the same set plus TestGoKernelFlowControl and TestGoKernelPacket (baseline dispatch run 40050607262, branch ci-baseline-7539c98). No new failing test is introduced.",
+      "baseline_branch": "ci-baseline-7539c98 deleted after the comparison"
+    },
+    "main_repo": "PENDING at ledger write time; pushes to testing trigger Verify, Mobile contract verification and Android Core ARM64"
   },
   "open_semantic_rows": [
     {"id": "MAIN-42cae14c63d1", "priority": "P0", "subject": "Fix Apple TLS engine connection leak"},
