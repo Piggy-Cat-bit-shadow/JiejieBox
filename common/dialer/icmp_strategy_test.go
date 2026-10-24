@@ -6,9 +6,9 @@ import (
 	"syscall"
 	"testing"
 
-	tun "github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
+	tun "github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/control"
 
 	"github.com/stretchr/testify/require"
