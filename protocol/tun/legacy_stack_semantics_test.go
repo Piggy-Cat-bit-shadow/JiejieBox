@@ -319,4 +319,3 @@ var (
 )
 
 func (m *stackNetworkManagerStub) FlushSystemDNSCache() {}
-

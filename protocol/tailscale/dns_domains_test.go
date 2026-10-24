@@ -16,7 +16,7 @@ import (
 // This is the short-name / search-domain distinction that the old suffix scan conflated.
 func TestTailnetDomainsMatch(t *testing.T) {
 	hosts := map[dnsname.FQDN][]netip.Addr{
-		"printer.example.com.": {netip.MustParseAddr("100.64.0.10")},
+		"printer.example.com.":  {netip.MustParseAddr("100.64.0.10")},
 		"nas.corp.example.com.": {netip.MustParseAddr("100.64.0.11")},
 	}
 	config := &nDNS.Config{
