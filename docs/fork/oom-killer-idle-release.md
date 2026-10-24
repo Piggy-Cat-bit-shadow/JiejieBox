@@ -181,6 +181,13 @@ that is still carrying traffic.
 | persistent bbolt DNS cache | on-disk answers | its own cleanup loop owns expiry | none | **excluded**: disk I/O is not a memory pass |
 | TUN / packet buffers / object pools | working set of the datapath | not idle ownership; "releasing" only re-allocates | none | **excluded** |
 
+Two existing concurrency tests already pin the most dangerous pools independently of this round:
+`TestQUICTransportTrimKeepsAnActiveExchange` and `TestHTTP3TransportTrimKeepsAnActiveExchange`
+(`dns/transport/quic/trim_test.go`) hold a real exchange open across a trim and fail if the
+connection is closed underneath it; `TestManagedTransportCloseIdleConnectionsDoesNotRebuild`
+(`common/httpclient`) pins that a trim does not swap the transport. `ConnPool.CloseIdle` documents
+and implements the `sharedUsers/sharedWaiters == 0` rule the QUIC transports rely on.
+
 ### 4.5 Intentional behaviour changes
 
 - A queued reclaim is **dropped** at stop rather than executed. This is the only way to keep a
@@ -200,6 +207,11 @@ that is still carrying traffic.
   callback's `forceMinInterval` / `pendingPressureBaseline` intent. The callback belonged to the old
   delivery; inheriting it would make the new instance poll fast or measure growth from a sample it
   never took. Test: `TestReloadDoesNotCarryAPendingPressureIntent`.
+- A reload does not inherit `Triggered` for a reset that `stop()` dropped before it ran. `Triggered`
+  means "this episode has been handled"; carrying it for unperformed work would leave the next
+  instance unable to fire the edge again while the footprint was still above the trigger. The
+  carried state is demoted to `Armed`, so the first observation re-decides. Test:
+  the stopped-state assertion in `TestStopDropsAPendingCrisisInsteadOfResettingDuringClose`.
 
 ### 4.6 Regression evidence
 

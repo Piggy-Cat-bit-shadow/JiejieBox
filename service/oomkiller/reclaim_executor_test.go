@@ -101,9 +101,10 @@ func TestStopDropsAPendingCrisisInsteadOfResettingDuringClose(t *testing.T) {
 	<-crisisSubmitted
 
 	stopDone := make(chan struct{})
+	stoppedStates := make(chan timerState, 1)
 	go func() {
 		defer close(stopDone)
-		timer.stop()
+		stoppedStates <- timer.stop()
 	}()
 
 	// Join on stop having actually closed the lifecycle, not on a sleep: once the stopped flag is
@@ -132,6 +133,8 @@ func TestStopDropsAPendingCrisisInsteadOfResettingDuringClose(t *testing.T) {
 	_, _, crisis, pending := timer.flags()
 	require.False(t, crisis, "the dropped crisis must clear its flag")
 	require.Equal(t, reclaimNone, pending)
+	require.Equal(t, pressureStateArmed, (<-stoppedStates).state,
+		"a reload inherited Triggered for a reset that stop() dropped before it ran")
 }
 
 // TestQueuedCrisisIsRecheckedBeforeResetting: a crisis request can wait behind an in-flight idle

@@ -354,6 +354,14 @@ func (t *adaptiveTimer) stoppedStateLocked() timerState {
 		state.pressureBaseline = memorySample{}
 		state.pressureBaselineTime = time.Time{}
 	}
+	// Triggered means "the reset for this episode has been handled". A queued crisis is dropped at
+	// stop (above), so a reload must not inherit that claim for work that never ran: the new
+	// instance would stay Triggered while the footprint is still above the trigger, and no edge
+	// would ever fire again. Armed forces the next observation to re-decide; if the footprint is
+	// still critical it escalates in one poll, and if it is not, it leaves the crisis band normally.
+	if state.state == pressureStateTriggered {
+		state.state = pressureStateArmed
+	}
 	return state
 }
 
