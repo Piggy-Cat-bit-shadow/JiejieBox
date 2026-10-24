@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/control"
 	"github.com/sagernet/sing/service"
 	"github.com/sagernet/tailscale/net/netmon"
@@ -55,8 +56,22 @@ func (platformNetworkStub) UsePlatformAutoDetectInterfaceControl() bool { return
 // the fixture instead of the code.
 type networkManagerStub struct {
 	adapter.NetworkManager
-	interfaces []control.Interface
-	updates    int
+	interfaces       []control.Interface
+	updates          int
+	defaultInterface *control.Interface
+}
+
+type staticDefaultInterfaceMonitor struct {
+	tun.DefaultInterfaceMonitor
+	iface *control.Interface
+}
+
+func (m *staticDefaultInterfaceMonitor) DefaultInterface() *control.Interface {
+	return m.iface
+}
+
+func (m *networkManagerStub) InterfaceMonitor() tun.DefaultInterfaceMonitor {
+	return &staticDefaultInterfaceMonitor{iface: m.defaultInterface}
 }
 
 func (m *networkManagerStub) UpdateInterfaces() error {
@@ -100,7 +115,8 @@ func TestTheInterfaceGetterIsInstalledReadAndCleared(t *testing.T) {
 	// unambiguous.
 	const stubName = "sing-box-tailscale-system-binding-test"
 	networkManager := &networkManagerStub{
-		interfaces: []control.Interface{{Name: stubName, Index: 4242}},
+		interfaces:       []control.Interface{{Name: stubName, Index: 4242}},
+		defaultInterface: &control.Interface{Name: stubName, Index: 4242},
 	}
 	ctx := service.ContextWith[adapter.NetworkManager](context.Background(), networkManager)
 	ctx = service.ContextWith[adapter.PlatformInterface](ctx, platformNetworkStub{})
@@ -125,6 +141,13 @@ func TestTheInterfaceGetterIsInstalledReadAndCleared(t *testing.T) {
 	require.NotNil(t, list[0].Interface)
 	require.Equal(t, stubName, list[0].Interface.Name,
 		"and it must be the one this package supplied, not the machine's")
+
+	routeHook := binding.hooks(nil).DefaultRoute
+	require.NotNil(t, routeHook, "the binding must expose the platform default route to netmon")
+	details, err := routeHook()
+	require.NoError(t, err)
+	require.Equal(t, stubName, details.InterfaceName,
+		"the default-route hook must answer from the NetworkManager, not the machine")
 
 	// And the cleanup takes it back out.
 	require.NoError(t, cleanup())

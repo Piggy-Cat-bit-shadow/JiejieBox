@@ -22,6 +22,7 @@ import (
 type systemBinding struct {
 	control      func(network, address string, conn syscall.RawConn) error
 	listenPacket func(ctx context.Context, network, address string) (nettype.PacketConn, error)
+	defaultRoute func() (netmon.DefaultRouteDetails, error)
 }
 
 // newSystemBinding builds the network hooks an endpoint or a tailcat node dials through.
@@ -70,11 +71,23 @@ func newSystemBinding(ctx context.Context, logger logger.ContextLogger) (systemB
 				}
 			}), nil
 		})
+		defaultRoute := func() (netmon.DefaultRouteDetails, error) {
+			defaultInterface := network.InterfaceMonitor().DefaultInterface()
+			if defaultInterface == nil {
+				return netmon.DefaultRouteDetails{}, nil
+			}
+			return netmon.DefaultRouteDetails{
+				InterfaceName:  defaultInterface.Name,
+				InterfaceIndex: defaultInterface.Index,
+			}, nil
+		}
 		registerCleanup := func() error {
 			netmon.RegisterInterfaceGetter(nil)
 			return nil
 		}
-		return newSystemBindingWithCleanup(ctx, logger, registerCleanup)
+		binding, cleanup, err := newSystemBindingWithCleanup(ctx, logger, registerCleanup)
+		binding.defaultRoute = defaultRoute
+		return binding, cleanup, err
 	}
 	return newSystemBindingWithCleanup(ctx, logger, nil)
 }
@@ -137,7 +150,7 @@ func newSystemBindingWithCleanup(ctx context.Context, logger logger.ContextLogge
 }
 
 func (b systemBinding) hooks(dialer N.Dialer) netmon.Hooks {
-	return netmon.Hooks{Dialer: dialer, Control: b.control, ListenPacket: b.listenPacket}
+	return netmon.Hooks{Dialer: dialer, Control: b.control, ListenPacket: b.listenPacket, DefaultRoute: b.defaultRoute}
 }
 
 // registerSystemBindingCleanup puts a newSystemBinding cleanup on a scope, tolerating the nil a

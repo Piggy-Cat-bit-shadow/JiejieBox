@@ -310,6 +310,10 @@ func (t *Endpoint) start(scope *adapter.Scope) error {
 	registerSystemBindingCleanup(scope, resetInterfaceGetter)
 	t.server.ControlFunc = binding.control
 	t.server.ListenPacketFunc = binding.listenPacket
+	// tsnet's netmon otherwise discovers the default route itself. With the platform owning the
+	// interfaces that can follow the sing-box TUN device instead of the physical underlay; answer
+	// from the same NetworkManager that supplies the interface getter.
+	t.server.DefaultRouteFunc = binding.defaultRoute
 	if t.systemInterface {
 		mtu := t.systemInterfaceMTU
 		if mtu == 0 {
