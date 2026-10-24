@@ -2,9 +2,9 @@
 
 - generated: 2026-10-24T17:45:00+08:00 (phase 04/06)
 - fork testing code: `3ddb0e86601391f20f61feeb39a14675c0e6199a`
-- fork testing docs: `9ea9f2935cc8bb423712429a749454380f1f4fda`
+- fork testing docs: `ca0982f3c47cc97af83ea55be626b1486bcc8f1a`
 - upstream observed: `a6952ccf6907c18e18917fcb763a433e8e36937b` (2026-10-24T10:08:02+08:00, "Remove stale workflow")
-- behind_by: **110**; ahead_by: 2618
+- behind_by: **110**; ahead_by: 2619
 - open semantic: **14**; open dependency blockers: **1**
 
 **Phase 04 closes APPLE-TLS, ANDROID-PROC and IPV6-HOST** and **DEP-CRONET-1**. 14 semantic rows

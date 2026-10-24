@@ -9,7 +9,7 @@ MAIN_EFFECTIVE_NATIVE_PINS = root/all v0.0.1-143.0.7499.109-2.0.20261024085011-8
 APPLE_TLS_LEAK = CLOSED_CODE_AND_MACOS: F_DUPFD_CLOEXEC, deferred anchor release, ObjC ownership rewrite; 30 success + 10 failure cycles keep fd count flat
 ANDROID_PROCFS = CLOSED_CODE_AND_LINUX_UNIT: connection-owner fallback moved to connection_owner_android.go; procfs ranking/format tests pass; android/arm64 cross-compile passes
 IPV6_HOST = CLOSED_CODE_AND_UNIT: DNS HTTPS/HTTP3, DERP mesh and v2ray host paths bracket IPv6 literals; domain/IPv4 and port cases covered
-CI_FINAL_CODE_SHA_AND_PLATFORM_LIMITS = 3ddb0e866: Verify 40081589236, Android 40081589137, Mobile 40081589215, apple-tls-verify 40081595184, linux-platform-verify 40081597501 all SUCCESS; no iOS/legacy-Android device
+CI_FINAL_CODE_SHA_AND_PLATFORM_LIMITS = docs ca0982f3c47; code 3ddb0e866: Verify 40081589236, Android 40081589137, Mobile 40081589215, apple-tls-verify 40081595184, linux-platform-verify 40081597501 all SUCCESS; no iOS/legacy-Android device
 NEXT_PHASE_READY = YES
 ```
 
