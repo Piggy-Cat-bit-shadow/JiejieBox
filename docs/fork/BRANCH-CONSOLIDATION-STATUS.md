@@ -153,3 +153,14 @@ cronet:   main 8aa139e9e140, go 0d28acc44093 (hold), jiejie-naive-zero-copy 520c
 - `cronet-go/main` remains ahead 14 / behind 0; `go` and `jiejie-naive-zero-copy` are retained holds.
 - Personal `gvisor` has no consumer and was archived; `sing-tun`'s `with_gvisor` source and
   `github.com/sagernet/gvisor` are untouched.
+## Phase 09 final update
+
+- `sing/dev` merged `SagerNet/sing/dev` `03a6cce6` at `e70473d`; all 17 upstream commits are
+  accounted for and the target is an ancestor (`behind=0`). Root and nested test pins are
+  `v0.9.6-0.20261024191059-e70473d8f2fb`.
+- `sing-tun/fix/acceptloop-selfheal` (`1cd9bc`), `cronet-go/go` (`0d28acc`) and
+  `cronet-go/jiejie-naive-zero-copy` (`520c287`) were deleted after source/consumer audit.
+- Final remote branches: sing-box `testing` + `pending`; sing `dev`; sing-tun `dev`; sing-quic
+  `main`; quic-go `sagernet`; cronet-go `main`.
+- Final code SHA `234bc542d56`: Verify `40124382403`, Android `40124382415`, Mobile `40124382395`,
+  all success.
