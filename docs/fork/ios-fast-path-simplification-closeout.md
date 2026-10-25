@@ -8,6 +8,12 @@ Nothing else about `fast_path` moved. The explicit `action: bypass` rule, L0 rou
 splice/copy, `traffic_class`, the configuration surface and every other platform are unchanged, and
 the sections below say where that was checked rather than asserted.
 
+> **Superseded in part by the cross-platform round (8ef6231bd).** implicitDirectFastPathIsExecutable is
+> gone: the gate now runs for the entry whose transport applies the verdict (the auto-redirect handler)
+> and for nothing else, on every platform. The assembly gate this document describes
+> (scripts/ci/verify-ios-fast-path-guard.sh) was deleted with the constant; the replacement invariant is
+> pinned by route/fast_path_consumer_test.go and protocol/tun/judge_flow_consumer_test.go. The iOS
+> outcome below is unchanged. See cross-platform-fast-path-simplification-closeout.md.
 > Adversarial debug pass: `ios-fast-path-simplification-debug.md`. It re-derived the blast radius,
 > ran the TUN data plane under the iOS posture, and closes the one gap it found — the `!C.IsIos`
 > platform check is now also proven against a darwin compile, which the unit tests could not do on a

@@ -1,6 +1,12 @@
 # iOS Fast Path simplification — adversarial debug pass (2026-10-25)
 
-This is the adversarial debug pass on `cc21e7548` (`refactor(route): compile the implicit Direct
+> **Superseded in part (8ef6231bd).** The mechanism this pass validated - a compile-time platform
+> constant plus an assembly gate - has been replaced by an entry-owned capability, so §4, §8 and the
+> FINAL_SHA line below describe the previous state. The platform finding (that !C.IsDarwin was
+> invisible to a non-Mac host) is what motivated the replacement: with no platform constant there is no
+> platform check to get wrong. See cross-platform-fast-path-simplification-closeout.md.
+
+This is the adversarial debug pass on `cc21e7548`This is the adversarial debug pass on `cc21e7548` (`refactor(route): compile the implicit Direct
 Fast Path out on iOS`). It exists to answer one question: **did removing the iOS implicit-bypass
 authorisation and eligibility chain remove anything that the data path, the ownership model or
 another platform was relying on?**
