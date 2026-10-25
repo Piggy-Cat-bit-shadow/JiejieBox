@@ -245,6 +245,21 @@ jobs:
         # that flag. Together they are what keeps a bare `go build ./...` linkable.
         run: go test -count=1 ./cmd/internal/...
 
+      - name: iOS fast-path guard
+        # The iOS build must compile the implicit Direct Fast Path decision out, and the other
+        # platforms must still call it. Neither half can be observed by the test suite, because the
+        # suite does not run as an iOS binary and the mechanism is platform-conditional by design,
+        # so the property is checked against the compiler's own output: the step compiles route for
+        # GOOS=ios and for the host, and counts the CALLs.
+        #
+        # It fails closed on a broken matcher too - if the traffic_class call disappears from the
+        # same output, or the non-iOS build stops calling the decision, the absence it reports
+        # would prove nothing and the step says so.
+        #
+        # This is a compile-only gate (no cgo, no link), so it is cheap enough to sit with the
+        # other seconds-long structural gates rather than in the artifact workflows.
+        run: ./scripts/ci/verify-ios-fast-path-guard.sh
+
       - name: pinned-upstream assumptions
         # The one step that exists for a fork: it fails when an upstream revision changes the meaning
         # of something this fork relies on, and it prints where each assumption lives.

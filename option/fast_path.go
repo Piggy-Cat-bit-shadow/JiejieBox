@@ -43,6 +43,21 @@ import (
 // REJECTED on every other outbound, which the reader does at configuration load: a leaf naming
 // fast_path is a configuration error, never a node property.
 //
+// # iOS: accepted, and inert
+//
+// The key is accepted on iOS and keeps its configuration meaning - it is still group-only, and a
+// leaf that names it is still refused - but it is INERT there. The iOS TUN engine turns an implicit
+// bypass verdict into the same accept entry as an ordinary accept (sing-tun flow_dispatch.go
+// install/installAccept, and the forwarders branch only on reject, drop and hijack), so no flow can
+// change its data path because of this field. The router therefore compiles the whole
+// authorisation-and-eligibility decision out on iOS instead of evaluating it per flow and
+// discarding the answer; see route.implicitDirectFastPathIsExecutable.
+//
+// Writing it is not an error and does not require a migration: a configuration shared between iOS
+// and the desktop platforms states the same intent everywhere, and the platforms that can honour it
+// still do. What it must not be read as - on any platform - is a speed setting: it never selects a
+// node, never reorders a group, and never authorises a splice.
+//
 // # Compatibility
 //
 // The field is omitted when unset, so a configuration that does not use it serialises exactly as

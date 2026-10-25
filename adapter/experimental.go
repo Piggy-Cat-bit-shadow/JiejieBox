@@ -260,6 +260,14 @@ type FlowAwareOutboundGroup interface {
 // A named method cannot be satisfied by accident. It has to be written down by the type that means
 // it, which is the same reason BypassableOutbound is an interface a leaf implements rather than a
 // list of type names.
+//
+// # iOS
+//
+// The capability is still declared and the key is still accepted on iOS, but the decision it feeds
+// is compiled out there: the TUN engine cannot act on an implicit bypass verdict, so the router
+// never reads this policy on that platform. See route.implicitDirectFastPathIsExecutable for the
+// dispatcher evidence and for why the configuration surface is deliberately kept rather than
+// special-cased per platform.
 type FastPathAuthorizedGroup interface {
 	OutboundGroup
 
