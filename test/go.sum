@@ -78,8 +78,8 @@ github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261024181351-1ef2597cc129 h
 github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261024181351-1ef2597cc129/go.mod h1:GeOfu2884pUacFYBnjUsYzUa7gU8iunJ2gMVXwvssRo=
 github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024234618-a0f9f68fec7d h1:/VSwnWX8ZpScLoRrPwOGkb52Nl8i+x//+deyOt5Q+Fc=
 github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024234618-a0f9f68fec7d/go.mod h1:liMb9HPIWcFWqF6VJ/ttIY8fTSRPdRltBeSeEcXt1Dk=
-github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261009084700-6c3e08ed4c4d h1:csj8IwzxSc2wGgDymvpff40+xIK+c60XvXq5m4EJ5uw=
-github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261009084700-6c3e08ed4c4d/go.mod h1:kncGGVhFaoGn5M3pFe3SXhZCzsbCJayNOH4UEqTKTko=
+github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261025000922-e4448e857e07 h1:eeLFfFFmvFTQdyI489AKjte4+kbWzBc8el64qMW83eE=
+github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261025000922-e4448e857e07/go.mod h1:kncGGVhFaoGn5M3pFe3SXhZCzsbCJayNOH4UEqTKTko=
 github.com/RyuaNerin/go-krypto v1.3.0 h1:smavTzSMAx8iuVlGb4pEwl9MD2qicqMzuXR2QWp2/Pg=
 github.com/RyuaNerin/go-krypto v1.3.0/go.mod h1:9R9TU936laAIqAmjcHo/LsaXYOZlymudOAxjaBf62UM=
 github.com/RyuaNerin/testingutil v0.1.0 h1:IYT6JL57RV3U2ml3dLHZsVtPOP6yNK7WUVdzzlpNrss=
