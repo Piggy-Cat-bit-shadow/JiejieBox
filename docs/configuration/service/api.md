@@ -84,7 +84,7 @@ If the directory contains files not downloaded by sing-box, they are served as-i
 
 Download URL of the dashboard archive (zip).
 
-`https://github.com/SagerNet/sing-box-dashboard/archive/refs/heads/gh-pages.zip` will be used by default.
+`https://github.com/Piggy-Cat-bit-shadow/sing-box-dashboard/archive/refs/heads/gh-pages.zip` will be used by default.
 
 ##### http_client
 

@@ -23,7 +23,7 @@ import (
 const (
 	dashboardRoutePrefix  = "/dashboard/"
 	dashboardEtagFileName = ".etag"
-	defaultDashboardURL   = "https://github.com/SagerNet/sing-box-dashboard/archive/refs/heads/gh-pages.zip"
+	defaultDashboardURL   = "https://github.com/Piggy-Cat-bit-shadow/sing-box-dashboard/archive/refs/heads/gh-pages.zip"
 )
 
 type dashboardStatus int

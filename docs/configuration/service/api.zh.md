@@ -81,7 +81,7 @@ API 密钥。
 
 仪表板压缩包（zip）的下载 URL。
 
-默认使用 `https://github.com/SagerNet/sing-box-dashboard/archive/refs/heads/gh-pages.zip`。
+默认使用 `https://github.com/Piggy-Cat-bit-shadow/sing-box-dashboard/archive/refs/heads/gh-pages.zip`。
 
 ##### http_client
 
