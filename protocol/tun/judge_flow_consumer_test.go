@@ -129,3 +129,37 @@ func TestBothEntriesShareTheSameL0Policy(t *testing.T) {
 	require.EqualValues(t, 0, router.calls.Load(),
 		"L0 answers without the router on both entries")
 }
+
+// TestTwoEntriesSharingOneRouterDoNotLeakTheCapability is CPD-12, and it is the test the design
+// exists for.
+//
+// In auto_redirect mode ONE Inbound object serves both entries: the stack is built with
+// Handler: t, and the auto-redirect service is built with Handler: (*autoRedirectHandler)(t). So
+// the capability cannot be a field of the inbound, and it is not: it travels on the per-flow
+// InboundContext. Two inbounds sharing one router - and one inbound serving both entries - must
+// answer each flow according to the entry that judged it, with no persistence and no borrowing.
+func TestTwoEntriesSharingOneRouterDoNotLeakTheCapability(t *testing.T) {
+	// A real router: no rules, one bypassable direct outbound, so a flow is implicit-bypass
+	// eligible exactly when the entry asks for the decision.
+	fixture := newL0ConflictFixture(t, nil, nil)
+	plain := &Inbound{
+		tag:    "tun-plain",
+		ctx:    context.Background(),
+		router: fixture.router,
+		logger: log.NewNOPFactory().Logger(),
+	}
+
+	source := netip.MustParseAddrPort("192.168.1.2:40000")
+	destination := netip.MustParseAddrPort("93.184.216.34:443")
+
+	for round := 0; round < 4; round++ {
+		require.Equal(t, tun.ActionAccept, plain.JudgeFlow(uint8(header.TCPProtocolNumber), source, destination, nil).Action,
+			"round %d: the stack entry of the second inbound must not borrow the other inbound's capability", round)
+		require.Equal(t, tun.ActionBypass, (*autoRedirectHandler)(fixture.inbound).JudgeFlow(uint8(header.TCPProtocolNumber), source, destination, nil).Action,
+			"round %d: the native entry must still receive the verdict", round)
+		require.Equal(t, tun.ActionAccept, fixture.inbound.JudgeFlow(uint8(header.TCPProtocolNumber), source, destination, nil).Action,
+			"round %d: the same inbound, judged by the stack, must not inherit its own native answer", round)
+		require.Equal(t, tun.ActionBypass, (*autoRedirectHandler)(plain).JudgeFlow(uint8(header.TCPProtocolNumber), source, destination, nil).Action,
+			"round %d: the capability belongs to the call, so either inbound can be the native entry", round)
+	}
+}
