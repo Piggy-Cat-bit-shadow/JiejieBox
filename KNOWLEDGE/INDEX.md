@@ -17,6 +17,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | `modules/README.md` | TASK_MATCH | task → module map, fork vocabulary, coverage gaps |
 | `PROJECT.md` | TASK_MATCH | what the fork is and deliberately did not change |
 | `ARCHITECTURE.md` | TASK_MATCH | the eleven boundaries worth preserving |
+| `PERFORMANCE-FACTORS.md` | TASK_MATCH (speed) | 实测的速度关键参数与因素：三条第一原理、客户端/服务端参数表、症状路由、测量规则、已否决结论（无地址/凭据） |
 | `INVARIANTS.md` | **LOAD_BEARING_ONLY** | A1–A20 hard invariants vs conventions |
 | `ACCEPTANCE.md` | **VERIFICATION_ONLY** | requirement → evidence → re-check command |
 | `COMMIT-INDEX.md` | **PROVENANCE_ONLY** | the SHAs behind a behaviour, grouped by theme |
@@ -28,6 +29,8 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 
 | If you are changing / asking about… | Module | Exact section |
 |---|---|---|
+| 速度慢 / 吞吐上不去 / 判断瓶颈在哪一层 | `PERFORMANCE-FACTORS.md` | §1 三条第一原理 → §4 症状路由 → §5 测量方法 |
+| XHTTP 上传慢 / 下载慢 / xmux 与连接数 | `PERFORMANCE-FACTORS.md` | §2 客户端参数（`xmux`）→ §3 服务端参数（h2 请求体缓冲） |
 | `Scope` teardown, `scope.Add` cleanup | `modules/core-lifecycle-runtime.md` | §1 `adapter.Scope` — the ownership primitive |
 | Box start order | `modules/core-lifecycle-runtime.md` | §2 → Start (`box.go:1024-1217`; `PreStart` 1024, `Start` 1034, `preStart` 1069, `start` 1139) |
 | Box close order, teardown | `modules/core-lifecycle-runtime.md` | §2 → Close (`box.go:1219-1253`; `Close` 1219, `close` 1233) |
