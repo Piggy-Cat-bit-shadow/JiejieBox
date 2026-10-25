@@ -92,7 +92,7 @@ expected and desired direction — they encode the mechanism that iOS does not h
 
 ```text
 TestFastBypassPlainDirectTCPEligible, TestFastBypassPlainDirectIPv6Eligible,
-TestFastBypassPlainUDPEEligible, TestFastPathHitSimulation, TestDirectFastBypassVerdictHasNoPort,
+TestFastBypassPlainUDPEligible, TestFastPathHitSimulation, TestDirectFastBypassVerdictHasNoPort,
 TestDirectFastBypassVerdictHasNoPortUDP, TestFastPathFalseSurvivesASelectorSwitch,
 TestFastPathTruthTable, TestDirectFastPathSurvivesTransparentSelectorWithNoPolicy,
 TestDirectFastPathSelectorExplicitFalseSuppressesTheAttempt,
@@ -170,7 +170,7 @@ iOS-posture experiment in §2 is the evidence.
 | D03 nested `urltest → selector → direct` | PASS | `TestDirectFastPathSurvivesNestedTransparentGroups`, `TestDirectFastPathNestedExplicitPolicyWinsOverIntrinsic` |
 | D04 `selector → MASQUE/VLESS/SOCKS` | PASS | `TestFastBypassAuthorizedGroupChainIsEligible`, `TestFastPathVerdictDoesNotChangeTheTUNDataPath` (socks sink must stay empty) |
 | D05 `loadbalance` | PASS | `TestFastPathTransparentGroupsAreTheOnlyPolicyCarriers`, `TestDirectFastPathSelectorsSwitchDoesNotLeakTheIntrinsicGrant` |
-| D06 two groups sharing one leaf | PASS | `TestFastPathSelectorSwitchDoesNotLeakTheIntrinsicGrant`, `TestFastPathFalseSurvivesASelectorSwitch` |
+| D06 two groups sharing one leaf | PASS | `TestDirectFastPathSelectorsSwitchDoesNotLeakTheIntrinsicGrant`, `TestFastPathFalseSurvivesASelectorSwitch` |
 | D07 AI keywords, false positives | PASS | `common/trafficclass` suite (`NaiveProxy`/`mail`/`Thailand` stay unmatched) |
 | D08 system proxy | PASS | `TestSystemProxyTCPSpliceIsRefusedAtTheSource`; no `PreMatch` call site on that path |
 | D09 UDP NAT / connected UDP / timeout | PASS | `protocol/tun` suite, `TestBypassVerdictStillDeliversUDP`, `udp_connect_detour_test.go` |
