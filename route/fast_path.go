@@ -31,8 +31,8 @@ import (
 //
 // So on iOS a flow that resolveFastPathRequest authorises and canFastBypass accepts receives a
 // verdict whose only effect is to record ActionBypass on an entry the dispatcher already treats as
-// accepted. The group authorisation, the AI keyword scan and the twelve eligibility predicates
-// cannot change where the bytes go.
+// accepted. The group authorisation, the AI keyword scan and the twenty refusal reasons in
+// canFastBypass cannot change where the bytes go.
 //
 // # Why a compile-time constant rather than a runtime check
 //
