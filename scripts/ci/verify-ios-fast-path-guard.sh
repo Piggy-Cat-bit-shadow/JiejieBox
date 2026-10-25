@@ -28,12 +28,16 @@
 # # Falsifiability
 #
 # A check for the absence of something is worthless if the thing could never have appeared. The
-# script therefore also asserts two presence controls in the same output:
+# script therefore also asserts three presence controls:
 #
 #   * resolveTrafficClass is still called in the iOS build - the traffic_class decision is a
 #     separate consumer later in the same function and must not be removed by this subtraction;
-#   * the non-iOS build still calls both fast-path symbols - the mechanism is only compiled out on
-#     the platform that cannot honour it.
+#   * the Linux build still calls both fast-path symbols - the mechanism is only compiled out on the
+#     platform that cannot honour it;
+#   * the macOS build still calls both as well. This one exists because C.IsDarwin is true on macOS
+#     and false on Linux/Windows, so a guard written from it is indistinguishable from the correct
+#     one on every host that is not a Mac - and on iOS both spellings are false, so the iOS check
+#     cannot see the difference either. Compiling for darwin makes the mistake visible anywhere.
 #
 # If either control is missing, the matcher or the build is broken and the absence proves nothing,
 # so the gate fails.
@@ -103,7 +107,25 @@ if [ "$host_request" -lt 1 ] || [ "$host_gate" -lt 1 ]; then
         "the guard must be !C.IsIos, not a blanket removal"
 fi
 
+# --- 4. Presence control: macOS is NOT iOS, and must keep the mechanism ------------------------
+# This is the one guard that cannot be proven from a Linux or Windows test run: there C.IsDarwin
+# and C.IsIos are both false, so a guard written as !C.IsDarwin is indistinguishable from the
+# correct one. Compiling the package for darwin makes the difference visible on any host, because
+# !C.IsDarwin would silence the calls on macOS - which still honours the verdict - exactly the way
+# it silences them on iOS.
+emit_assembly "$tmp/darwin.asm" darwin arm64
+
+darwin_request="$(count_calls "$fast_path_request" "$tmp/darwin.asm")"
+darwin_gate="$(count_calls "$fast_path_gate" "$tmp/darwin.asm")"
+if [ "$darwin_request" -lt 1 ] || [ "$darwin_gate" -lt 1 ]; then
+    fail "the macOS build no longer calls the implicit Direct Fast Path decision" \
+        "(resolveFastPathRequest: ${darwin_request} call(s), canFastBypass: ${darwin_gate} call(s)):" \
+        "C.IsDarwin includes iOS, so a guard written from it also disables macOS, where the verdict" \
+        "is still honoured. The guard must be !C.IsIos."
+fi
+
 echo "PASS: the iOS build compiles the implicit Direct Fast Path decision out" \
     "(resolveFastPathRequest: 0, canFastBypass: 0) while still calling traffic_class (${ios_traffic})"
-echo "PASS: the non-iOS build still calls it (resolveFastPathRequest: ${host_request}," \
-    "canFastBypass: ${host_gate})"
+echo "PASS: Linux still calls it (resolveFastPathRequest: ${host_request}," \
+    "canFastBypass: ${host_gate}) and macOS still calls it (resolveFastPathRequest: ${darwin_request}," \
+    "canFastBypass: ${darwin_gate})"

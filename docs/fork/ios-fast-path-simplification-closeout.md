@@ -8,6 +8,11 @@ Nothing else about `fast_path` moved. The explicit `action: bypass` rule, L0 rou
 splice/copy, `traffic_class`, the configuration surface and every other platform are unchanged, and
 the sections below say where that was checked rather than asserted.
 
+> Adversarial debug pass: `ios-fast-path-simplification-debug.md`. It re-derived the blast radius,
+> ran the TUN data plane under the iOS posture, and closes the one gap it found — the `!C.IsIos`
+> platform check is now also proven against a darwin compile, which the unit tests could not do on a
+> non-Mac host. No production code changed in that pass.
+
 ## 1. Judgment: what was real, and what was not
 
 `fast_path` in this fork never was a speed setting. It is a **group authorisation**: a boolean that
@@ -160,8 +165,10 @@ inside a compiled function, not a dropped function.
 
 `scripts/ci/verify-ios-fast-path-guard.sh` reproduces the measurement and fails if either call comes
 back. It is falsifiable by construction: it also requires the `traffic_class` call in the same iOS
-output (proving the package really was compiled) and both fast-path calls in the non-iOS output
-(proving the guard is not a blanket removal).
+output (proving the package really was compiled), both fast-path calls in the **Linux** output
+(proving the guard is not a blanket removal), and both fast-path calls in the **macOS** output
+(proving the guard is not `!C.IsDarwin`, which would silence the mechanism on a platform that still
+honours it). The debug pass added the darwin control; see `ios-fast-path-simplification-debug.md` §4.
 
 ### 6.3 Negative controls (run, then reverted; nothing of them is committed)
 
