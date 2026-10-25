@@ -2,7 +2,6 @@ package route
 
 import (
 	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing-box/common/trafficclass"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
 )
@@ -113,17 +112,12 @@ func directFastPathLeafIsIntrinsic(chain []adapter.Outbound) bool {
 	// And nothing opaque may be in between: every element in front of the leaf must be a group whose
 	// only effect on the flow is choosing it.
 	//
-	// The transparency test is written out here rather than delegated to fastPathChainReachesLeaf,
-	// because that function now calls THIS one. Factoring it the other way round produced mutual
-	// recursion and a stack overflow, which is the kind of defect a test cannot miss but a reader
-	// easily can. canCarryFastPathPolicy remains the single definition of "transparent", so the two
-	// loops cannot drift even though they are written twice.
-	for _, outbound := range chain[:len(chain)-1] {
-		if !canCarryFastPathPolicy(outbound) {
-			return false
-		}
-	}
-	return true
+	// That is exactly the question fastPathChainReachesLeaf answers, so it is delegated rather than
+	// written a second time. An earlier revision wrote the loop out here because the two functions
+	// once called each other; that recursion is gone, and with it the reason to duplicate the rule.
+	// The gate a few lines later calls the same function, which is what keeps "transparent" one
+	// definition instead of two that can drift.
+	return fastPathChainReachesLeaf(chain)
 }
 
 // resolveFastPathRequest determines whether a flow's chain authorises an ATTEMPT at the Direct Fast
@@ -142,24 +136,46 @@ func directFastPathLeafIsIntrinsic(chain []adapter.Outbound) bool {
 //     there is no group policy to read and the existing behaviour stands untouched.
 //  2. Otherwise the FIRST explicit fast_path, scanning outermost to inner. An explicit decision is
 //     the chain's decision: it wins over the intrinsic grant below, and an explicit false wins over
-//     automatic detection, just as an explicit "traffic_class": "default" stops automatic
-//     classification. This is the order that makes the tri-state usable as an off switch on the one
-//     leaf the product can bypass.
+//     everything, just as an explicit "traffic_class": "default" stops automatic classification.
+//     This is the order that makes the tri-state usable as an off switch on the one leaf the product
+//     can bypass.
 //  3. Only if NO element of the chain carries an explicit policy, a chain that is nothing but
 //     transparent selection layers in front of a real `direct` leaf is authorised. This is the
 //     Direct Fast Path restated as an intrinsic property of `direct`: a pure selection layer that
 //     says nothing does not get to switch it off. See directFastPathLeafIsIntrinsic.
-//  4. Only if neither applies, automatic tag detection - the same AI matcher that traffic_class
-//     uses, again outermost to inner.
-//  5. Otherwise false.
+//  4. Otherwise false.
+//
+// # Why the group's TAG is not consulted
+//
+// This used to end with a last-resort rule: if nothing above decided, a group whose tag matched the
+// AI keyword matcher authorised the flow. It is gone, and the reason is that it could not change a
+// single verdict in this tree.
+//
+// `direct` is the only production outbound that implements adapter.BypassableOutbound, so a chain
+// that reaches rule 3 at all either ends in `direct` (and rule 3 has already answered) or contains an
+// opaque group. For the second shape canFastBypass refuses with BypassRefusedOutboundChain unless
+// fastPathChainReachesLeaf holds, and that function is the same transparency test rule 3 uses - so a
+// tag-based grant was consumed by a gate that was going to refuse anyway. The proof, shape by shape,
+// is TestFastPathPolicyTruth: every production shape answers identically with an AI tag and with an
+// ordinary one.
+//
+// Two things follow, and both are deliberate rather than incidental:
+//
+//   - The Fast Path no longer shares a vocabulary with traffic_class. MatchTag is business
+//     classification ("someone is waiting on this response"); using it as an authorisation for a
+//     kernel handover made a group's NAME a security-relevant permission. traffic_class keeps the
+//     matcher and its behaviour is untouched.
+//   - A future non-direct bypassable outbound is authorised by an explicit `fast_path: true`, not by
+//     its group's tag. That is a narrowing, and it is the compatible direction: the configuration
+//     surface already states the intent, and a tag was never a declaration of capability.
 //
 // # Where the intrinsic rule sits, and where it does not
 //
 // Rule 3 is reached only when the chain states no policy at all, and applies only to the
 // direct-with-transparent-chain shape. Every other shape - a proxy leaf, a leaf that cannot carry
-// the fast path, any chain containing an opaque group - is decided by the explicit-policy rule and
-// the matcher exactly as before, including nested explicit-true/false precedence. That boundary is
-// the whole safety argument for this rule, so it is stated here rather than left to the call order.
+// the fast path, any chain containing an opaque group - is decided by the explicit-policy rule,
+// including nested explicit-true/false precedence. That boundary is the whole safety argument for
+// this rule, so it is stated here rather than left to the call order.
 //
 // # Why the outermost element wins
 //
@@ -169,8 +185,8 @@ func directFastPathLeafIsIntrinsic(chain []adapter.Outbound) bool {
 // authorisation inferred from the leaf would grant the fast path to every flow that ever used that
 // leaf. Resolving per flow from the chain is what keeps the two paths independent.
 //
-// An explicit policy anywhere in the chain suppresses automatic detection for the whole chain. The
-// chain is one policy decision, not a set of independent ones.
+// An explicit policy anywhere in the chain is the chain's decision. The chain is one policy
+// decision, not a set of independent ones.
 //
 // # The leaf is consulted, and only for a negative
 //
@@ -187,26 +203,14 @@ func resolveFastPathRequest(chain []adapter.Outbound, policies FastPathPolicies)
 		return false
 	}
 	// Rule 2. An explicit decision anywhere in the chain is the chain's decision, and it wins over
-	// both the intrinsic grant and automatic detection. This is what makes an explicit false able to
-	// see the fast path off on the one leaf that can take it.
+	// the intrinsic grant. This is what makes an explicit false able to see the fast path off on the
+	// one leaf that can take it.
 	if authorised, decided := resolveFastPathPolicy(chain, policies); decided {
 		return authorised
 	}
 	// Rule 3. Nothing in the chain stated a policy, and the shape is transparent groups over
 	// `direct`: silence is not a refusal.
-	if directFastPathLeafIsIntrinsic(chain) {
-		return true
-	}
-	// Rule 4. No explicit policy and not the intrinsic shape: automatic tag detection.
-	for _, outbound := range chain {
-		if !canCarryFastPathPolicy(outbound) {
-			continue
-		}
-		if trafficclass.MatchTag(outbound.Tag()) {
-			return true
-		}
-	}
-	return false
+	return directFastPathLeafIsIntrinsic(chain)
 }
 
 // resolveFastPathPolicy returns the first explicit fast_path policy in the chain, outermost to
@@ -214,7 +218,7 @@ func resolveFastPathRequest(chain []adapter.Outbound, policies FastPathPolicies)
 //
 // The three-state config type exists precisely so that "explicitly false" is findable and
 // distinguishable from "unset": a caller that read a plain bool could not tell the two apart, and
-// would let automatic detection reopen a group an operator had switched off.
+// would let the intrinsic rule reopen a group an operator had switched off.
 //
 // The carrier check is what keeps the key GROUP-ONLY at every level of a nested chain. A policy can
 // only be stored under a tag whose outbound implements adapter.FastPathAuthorizedGroup - box.go

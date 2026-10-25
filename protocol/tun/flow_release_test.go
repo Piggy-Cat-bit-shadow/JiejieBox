@@ -114,6 +114,12 @@ func (h *releaseProbeHandler) NewConnectionEx(ctx context.Context, conn net.Conn
 		}
 		tracked := h.traffic.RoutedConnection(ctx, conn, metadata, nil, releaseProbeOutboundChain[0])
 		h.conns.NewConnection(ctx, h.dialer, tracked, metadata, func(err error) {
+			// This counter is the connection manager running its close path for this flow. It is the
+			// only close observable this harness has: the memory TUN calls NewConnectionEx with a nil
+			// onClose, so the forward below never fires here and a mutation confined to it would be
+			// invisible. The flow's own onClose-exactly-once contract is pinned in route
+			// (TestHalfClosedFlowCloseIsOnceUnderRace, TestHalfCloseVerdictAndTeardownRaceSettleOnce),
+			// and the two together are what the negative controls exercise.
 			h.closed.Add(1)
 			if onClose != nil {
 				onClose(err)
@@ -266,6 +272,34 @@ func (f *releaseProbeFixture) waitTraffic(t *testing.T, want int, timeout time.D
 	t.Fatalf("the traffic table holds %d connections, want %d", last, want)
 }
 
+// waitClosed waits for the flow's close callback, then proves it ran exactly once.
+//
+// # Why this is not the same assertion as waitTraffic
+//
+// The two events are ordered but not atomic: the connection manager removes the traffic entry first,
+// and the handler's wrapper increments the counter and calls onClose on its own goroutine afterwards.
+// Reading the counter the instant waitTraffic returns is therefore a race with that goroutine - it
+// produced an intermittent "expected 1, actual 0" under full-matrix CPU contention while passing
+// 30/30 in isolation, which is the signature of a test asserting too early rather than a leak.
+//
+// Waiting for the callback is the assertion these tests meant. The bounded tail then checks the other
+// half - that it does not run TWICE - which a plain wait-for-at-least-one would not notice: a second
+// invocation belongs to the same teardown, so a short window after the first is enough to catch it
+// without lengthening the test meaningfully.
+func (f *releaseProbeFixture) waitClosed(t *testing.T) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		return f.handler.closed.Load() >= 1
+	}, 5*time.Second, 2*time.Millisecond,
+		"the close path must run once the traffic entry is gone")
+	require.EqualValues(t, 1, f.handler.closed.Load(), "it must run exactly once")
+	settle := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(settle) {
+		require.EqualValues(t, 1, f.handler.closed.Load(), "it must not run twice")
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
 // startReleaseProbeTarget is a loopback peer that echoes and closes when the client finishes.
 func startReleaseProbeTarget(t *testing.T) uint16 {
 	t.Helper()
@@ -313,7 +347,7 @@ func TestTUNDeviceFinReleasesTrackedFlow(t *testing.T) {
 			fixture.waitTraffic(t, 1, 3*time.Second)
 			fixture.emit(t, datapathIPv4TCP(40000, port, deviceNext, stackNext, header.TCPFlagFin|header.TCPFlagAck, nil))
 			fixture.waitTraffic(t, 0, 5*time.Second)
-			require.Equal(t, int64(1), fixture.handler.closed.Load(), "onClose must run exactly once")
+			fixture.waitClosed(t)
 		})
 	}
 }
@@ -332,7 +366,7 @@ func TestTUNDeviceResetReleasesTrackedFlow(t *testing.T) {
 			fixture.waitTraffic(t, 1, 3*time.Second)
 			fixture.emit(t, datapathIPv4TCP(40001, port, deviceNext, stackNext, header.TCPFlagRst|header.TCPFlagAck, nil))
 			fixture.waitTraffic(t, 0, 5*time.Second)
-			require.Equal(t, int64(1), fixture.handler.closed.Load(), "onClose must run exactly once")
+			fixture.waitClosed(t)
 		})
 	}
 }

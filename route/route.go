@@ -992,8 +992,8 @@ func (r *Router) preMatchFlow(ctx context.Context, metadata *adapter.InboundCont
 	//
 	// The whole decision runs only for a caller whose transport applies a Bypass verdict; see
 	// adapter.InboundContext.ConsumesBypassVerdict. The plain TUN stack turns the verdict into the
-	// same accept entry as PreMatchContinue, so for it the authorisation scan, the keyword match and
-	// the eligibility chain cannot change where the bytes go - and are not computed at all.
+	// same accept entry as PreMatchContinue, so for it the authorisation scan and the eligibility
+	// chain cannot change where the bytes go - and are not computed at all.
 	if metadata.ConsumesBypassVerdict {
 		fastPathAuthorized := resolveFastPathRequest(chain, r.fastPathPolicies)
 		if r.canFastBypass(metadata, packetDestination, chain, outbound, fastPathAuthorized).BypassAllowed() {
@@ -1004,9 +1004,14 @@ func (r *Router) preMatchFlow(ctx context.Context, metadata *adapter.InboundCont
 			// at five allocations and about 95 ns per eligible flow - more than the eligibility decision
 			// itself, on exactly the flows the fast path is supposed to make cheaper.
 			if r.debugLogging() {
-				r.logger.DebugContext(ctx, "pre-match: bypass verdict for ", metadata.Network,
-					" connection from ", metadata.Source.AddrString(), " to ", metadata.Destination,
-					" (honoured only where the caller can carry it natively)")
+				// The three facts are named separately because they have different owners and only
+				// the last one is a claim about the data path: the group POLICY authorised the
+				// attempt, the ELIGIBILITY gate allowed it, and the ENTRY that called PreMatch is the
+				// one that applies the verdict natively. This line is reached only from such an
+				// entry, so it never reports a decision nobody can act on.
+				r.logger.DebugContext(ctx, "pre-match: implicit Direct Fast Path authorised and eligible for ",
+					metadata.Network, " connection from ", metadata.Source.AddrString(), " to ", metadata.Destination,
+					"; this entry applies the verdict natively")
 			}
 			return adapter.PreMatchResult{Action: adapter.PreMatchBypass, Outbound: outbound}
 		}

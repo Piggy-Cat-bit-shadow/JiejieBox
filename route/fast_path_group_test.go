@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing-box/common/trafficclass"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	M "github.com/sagernet/sing/common/metadata"
@@ -302,12 +301,8 @@ func chainFor(t *testing.T, group adapter.Outbound) []adapter.Outbound {
 	return chain
 }
 
-// Case A and Case C/D: an explicit true authorises, and an unset tag is decided by the matcher.
-func TestFastPathCaseExplicitTrueAndAutoDetection(t *testing.T) {
-	// "🤖 AI" matches the real matcher: "ai" is a whole token once the emoji splits it off.
-	require.True(t, trafficclass.MatchTag("🤖 AI"), "precondition: this tag must match the AI matcher")
-	// "🌐 普通代理" does not.
-	require.False(t, trafficclass.MatchTag("🌐 普通代理"), "precondition: this tag must NOT match")
+// Cases A/B/D: the explicit policy decides, and an unset tag authorises nothing.
+func TestFastPathExplicitPolicyDecides(t *testing.T) {
 
 	for name, testCase := range map[string]struct {
 		tag         string
@@ -317,19 +312,19 @@ func TestFastPathCaseExplicitTrueAndAutoDetection(t *testing.T) {
 	}{
 		"Case A explicit true": {
 			tag: "🌐 普通代理", policies: FastPathPolicies{"🌐 普通代理": {Enabled: true}}, authorised: true,
-			explanation: "an explicit true authorises even a tag the matcher would not pick up",
+			explanation: "an explicit true authorises",
 		},
 		"Case B explicit false": {
 			tag: "🌐 普通代理", policies: FastPathPolicies{"🌐 普通代理": {Enabled: false}}, authorised: false,
 			explanation: "an explicit false refuses",
 		},
 		"Case C unset + AI tag": {
-			tag: "🤖 AI", policies: nil, authorised: true,
-			explanation: "with nothing explicit, an AI-looking group is authorised automatically",
+			tag: "🤖 AI", policies: nil, authorised: false,
+			explanation: "with nothing explicit an AI-looking group is NOT authorised: a tag is not a decision",
 		},
 		"Case D unset + ordinary tag": {
 			tag: "🌐 普通代理", policies: nil, authorised: false,
-			explanation: "with nothing explicit, an ordinary group is not",
+			explanation: "and an ordinary tag is unauthorised too, so the tag makes no difference",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -342,12 +337,9 @@ func TestFastPathCaseExplicitTrueAndAutoDetection(t *testing.T) {
 	}
 }
 
-// Case E is the precedence rule that matters most: an explicit false must beat automatic detection.
-// Without it, an operator could not switch the fast path off for an AI-named group, and the
-// override would only ever work in the permissive direction.
-func TestFastPathCaseExplicitFalseBeatsTheAIMatcher(t *testing.T) {
-	require.True(t, trafficclass.MatchTag("🤖 AI"), "precondition: the tag alone WOULD authorise")
-
+// Case E: an explicit false refuses, and the refusal is a real gate verdict rather than a boolean.
+// An operator must be able to switch the fast path off for a group whatever its name is.
+func TestFastPathCaseExplicitFalseRefuses(t *testing.T) {
 	group := &transparentGroup{tag: "🤖 AI", selected: newBypassableNonDirectOutbound()}
 	router := fastPathRouter(t, group, FastPathPolicies{"🤖 AI": {Enabled: false}})
 
@@ -367,7 +359,6 @@ func TestFastPathCaseExplicitFalseBeatsTheAIMatcher(t *testing.T) {
 func TestFastPathCaseOutermostExplicitDecisionWins(t *testing.T) {
 	inner := &transparentGroup{tag: "🤖 AI", selected: newBypassableNonDirectOutbound()}
 	outer := &transparentGroup{tag: "🌐 普通代理", selected: inner}
-	require.True(t, trafficclass.MatchTag(inner.tag))
 
 	t.Run("outer false suppresses the inner AI group", func(t *testing.T) {
 		router := fastPathRouter(t, outer, FastPathPolicies{"🌐 普通代理": {Enabled: false}})
@@ -380,10 +371,10 @@ func TestFastPathCaseOutermostExplicitDecisionWins(t *testing.T) {
 		require.True(t, resolveFastPathRequest(chainFor(t, outer), router.fastPathPolicies))
 	})
 
-	t.Run("no explicit policy anywhere falls back to the first AI-looking level", func(t *testing.T) {
+	t.Run("no explicit policy anywhere leaves the chain unauthorised", func(t *testing.T) {
 		router := fastPathRouter(t, outer, nil)
-		require.True(t, resolveFastPathRequest(chainFor(t, outer), router.fastPathPolicies),
-			"the outer tag does not match, the inner one does, so the chain auto-authorises")
+		require.False(t, resolveFastPathRequest(chainFor(t, outer), router.fastPathPolicies),
+			"neither level states a policy, and a tag is not one")
 	})
 }
 

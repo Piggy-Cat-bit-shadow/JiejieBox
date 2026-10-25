@@ -133,8 +133,9 @@ func TestFastPathTruthTable(t *testing.T) {
 		},
 		{
 			name: "unset + AI tag", tag: aiTag, policy: nil, bypassCapable: true,
-			wantAuth: true, wantBypass: true,
-			explanation: "the AI fallback the previous round kept",
+			wantAuth: false, wantBypass: false,
+			explanation: "a tag is not an authorisation: the AI fallback was removed, so only an " +
+				"explicit policy can authorise a leaf that is not `direct`",
 		},
 
 		// --- §3.2: authorisation x leaf capability -------------------------------------------
@@ -308,10 +309,13 @@ func TestFastPathNestedPrecedence(t *testing.T) {
 	})
 
 	t.Run("outer AI tag unset, inner AI tag unset, neither explicit", func(t *testing.T) {
+		// Both tags matched the old AI fallback, and neither is an authorisation: the fallback is
+		// gone, so a chain of tags with no explicit policy and no direct leaf behind a transparent
+		// chain is unauthorised.
 		inner := &transparentGroup{tag: "chatgpt", selected: newBypassableNonDirectOutbound()}
 		router, chain := build(t, "generic", nil, inner, nil)
-		require.True(t, resolveFastPathRequest(chain, router.fastPathPolicies),
-			"with nothing explicit, the first AI-looking level authorises")
+		require.False(t, resolveFastPathRequest(chain, router.fastPathPolicies),
+			"a tag is business vocabulary, not a fast-path authorisation")
 	})
 
 	t.Run("outer explicit true, inner cannot carry a policy at all", func(t *testing.T) {
@@ -348,45 +352,48 @@ func TestFastPathNestedPrecedence(t *testing.T) {
 	})
 }
 
-// TestFastPathAIMatcherRejectsFalsePositives is §10 driven through the real matcher.
+// TestNoGroupTagAuthorisesABypass is the contract that replaced the AI fallback.
 //
-// The brief names NaiveProxy, mail and Thailand specifically. A naive substring match on "ai" would
-// authorise all three, so this test is the difference between reusing the token-aware matcher and
-// having quietly grown a second, weaker one.
-func TestFastPathAIMatcherRejectsFalsePositives(t *testing.T) {
+// The tags below are exactly the ones the removed fallback accepted - the token-aware matcher's true
+// positives - plus the false positives it was written to reject. None of them authorises anything
+// now, and that is the point: a group's NAME is business vocabulary, not a declaration of
+// capability, and it must not be able to hand a flow to the kernel.
+//
+// The negative half is kept deliberately. If someone reintroduces a tag-based rule, the six "looks
+// like AI but is not" rows would go red only if the new rule used the token-aware matcher, so these
+// rows are what keeps a weaker substring match from slipping in.
+func TestNoGroupTagAuthorisesABypass(t *testing.T) {
 	destination := M.ParseSocksaddr("93.184.216.34:443")
 
 	for _, testCase := range []struct {
-		tag     string
-		looksAI bool
-		why     string
+		tag string
+		why string
 	}{
-		{"NaiveProxy", false, "the fork's most common outbound; contains no 'ai' token but is the reason token matching exists"},
-		{"mail-relay", false, "'mail' contains the substring 'ai'"},
-		{"Thailand-01", false, "'Thailand' contains the substring 'ai'"},
-		{"Main", false, "'Main' contains the substring 'ai'"},
-		{"available", false, "'available' contains the substring 'ai'"},
-		{"paid-us", false, "'paid' contains the substring 'ai'"},
-		{"🤖 AI", true, "the emoji is a token boundary, so 'ai' is a whole token"},
-		{"AI-US", true, "'AI' is a whole token before the dash"},
-		{"[AI]", true, "brackets are boundaries"},
-		{"chatgpt", true, "a named provider"},
-		{"🇺🇸人工智能住宅", true, "CJK fragment matching, because CJK has no word separators"},
+		{"NaiveProxy", "the fork's most common outbound; contains no 'ai' token, and is the reason token matching exists"},
+		{"mail-relay", "'mail' contains the substring 'ai'"},
+		{"Thailand-01", "'Thailand' contains the substring 'ai'"},
+		{"Main", "'Main' contains the substring 'ai'"},
+		{"available", "'available' contains the substring 'ai'"},
+		{"paid-us", "'paid' contains the substring 'ai'"},
+		{"🤖 AI", "the emoji is a token boundary, so 'ai' is a whole token - the old fallback's true positive"},
+		{"AI-US", "'AI' is a whole token before the dash"},
+		{"[AI]", "brackets are boundaries"},
+		{"chatgpt", "a named provider"},
+		{"🇺🇸人工智能住宅", "CJK fragment matching, because CJK has no word separators"},
 	} {
 		t.Run(testCase.tag, func(t *testing.T) {
-			// The leaf is bypassable but NOT direct, so the AI matcher is the only thing that can
-			// authorise. With a direct leaf the chain would be the direct-intrinsic shape and every
-			// row would answer true - including the six that exist to prove the matcher does NOT fire
-			// on substrings like "mail" or "Thailand".
+			// A bypassable leaf that is NOT `direct`: rule 3 cannot answer, so this is exactly the
+			// shape the fallback used to decide. It now answers false, and only an explicit policy
+			// can authorise it (pinned by TestABypassableNonDirectLeafNeedsAnExplicitPolicy).
 			group := &transparentGroup{tag: testCase.tag, selected: newBypassableNonDirectOutbound()}
-			router := fastPathRouter(t, group, nil) // NO explicit policy: the matcher decides
+			router := fastPathRouter(t, group, nil) // NO explicit policy: nothing may authorise
 
 			metadata := fastBypassMetadata(N.NetworkTCP, destination)
 			chain, err := resolveOutbound(group, &metadata, N.NetworkTCP, true)
 			require.NoError(t, err)
 
-			require.Equal(t, testCase.looksAI, resolveFastPathRequest(chain, router.fastPathPolicies),
-				"tag %q: %s", testCase.tag, testCase.why)
+			require.False(t, resolveFastPathRequest(chain, router.fastPathPolicies),
+				"tag %q must not authorise a bypass: %s", testCase.tag, testCase.why)
 		})
 	}
 }

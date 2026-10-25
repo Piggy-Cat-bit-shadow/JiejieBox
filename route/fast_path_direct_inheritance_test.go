@@ -451,40 +451,50 @@ func TestDirectFastPathSelectorsSwitchDoesNotLeakTheIntrinsicGrant(t *testing.T)
 		"switching back to direct must restore the fast path")
 }
 
-// TestDirectFastPathAIMatcherStillDecidesForBypassableNonDirectLeaves confirms the AI
-// auto-detection path is untouched for a leaf that can bypass but is not `direct`.
+// TestABypassableNonDirectLeafNeedsAnExplicitPolicy is the future-capability contract that replaced
+// the AI fallback.
 //
-// The leaf here is deliberately bypassable-but-not-direct. Using a direct leaf would make this test
-// vacuous under the new rule, because the intrinsic grant would supply the true result and the
-// matcher would never be the reason. This shape isolates the matcher: the only thing that can
-// authorise it is the tag.
-func TestDirectFastPathAIMatcherStillDecidesForBypassableNonDirectLeaves(t *testing.T) {
+// A leaf that can bypass but is not `direct` is the shape the removed fallback used to decide: the
+// intrinsic rule cannot answer (the leaf is not direct), so nothing tag-based may authorise it. The
+// grant has to be an explicit policy - which is the mechanism that survives, and the one an operator
+// can read in the configuration.
+//
+// This is a deliberate narrowing, recorded rather than incidental: a group's tag was business
+// vocabulary, and using it as a kernel-handover permission made a NAME security-relevant. The
+// extension point is kept, in the place where the configuration states its intent.
+func TestABypassableNonDirectLeafNeedsAnExplicitPolicy(t *testing.T) {
 	destination := M.ParseSocksaddr("93.184.216.34:443")
+
+	leaf := newBypassableNonDirectOutbound()
+	group := &transparentGroup{tag: "🤖 AI", selected: leaf}
 	metadata := fastBypassMetadata(N.NetworkTCP, destination)
-
-	aiLeaf := newBypassableNonDirectOutbound()
-	aiGroup := &transparentGroup{tag: "🤖 AI", selected: aiLeaf}
-	autoChain := directIntrinsicChain(t, aiGroup, N.NetworkTCP, &metadata)
-	require.Equal(t, "block", autoChain[len(autoChain)-1].Type(),
+	chain := directIntrinsicChain(t, group, N.NetworkTCP, &metadata)
+	require.Equal(t, "block", chain[len(chain)-1].Type(),
 		"precondition: the leaf can bypass but is not direct")
-	require.False(t, directFastPathLeafIsIntrinsic(autoChain),
-		"so the intrinsic rule must not apply, leaving the matcher as the only possible grant")
+	require.False(t, directFastPathLeafIsIntrinsic(chain),
+		"so the intrinsic rule must not apply")
 
-	autoRouter := fastPathRouter(t, aiGroup, FastPathPolicies{})
-	require.True(t, resolveFastPathRequest(autoChain, autoRouter.fastPathPolicies),
-		"the AI tag matcher must still authorise a bypassable non-direct leaf")
+	unnamed := fastPathRouter(t, group, FastPathPolicies{})
+	require.False(t, resolveFastPathRequest(chain, unnamed.fastPathPolicies),
+		"an AI-looking tag must not authorise a non-direct bypassable leaf")
 
-	explicitFalseRouter := fastPathRouter(t, aiGroup, FastPathPolicies{"🤖 AI": {Enabled: false}})
-	require.False(t, resolveFastPathRequest(autoChain, explicitFalseRouter.fastPathPolicies),
-		"an explicit false must still beat automatic detection for a non-direct leaf")
+	explicitTrue := fastPathRouter(t, group, FastPathPolicies{"🤖 AI": {Enabled: true}})
+	require.True(t, resolveFastPathRequest(chain, explicitTrue.fastPathPolicies),
+		"an explicit true is the authorisation, and it is what the future leaf gets")
 
-	// And an explicit true on an ordinary (non-AI) tag must still authorise the same leaf, so the
-	// explicit branch is not merely the matcher in disguise.
+	explicitFalse := fastPathRouter(t, group, FastPathPolicies{"🤖 AI": {Enabled: false}})
+	require.False(t, resolveFastPathRequest(chain, explicitFalse.fastPathPolicies),
+		"an explicit false refuses it")
+
+	// And the ordinary tag behaves identically, which is the property the removed fallback broke:
+	// the tag was the decision, so AI and ordinary tags disagreed.
 	ordinaryLeaf := newBypassableNonDirectOutbound()
 	ordinaryGroup := &transparentGroup{tag: "🌐 普通代理", selected: ordinaryLeaf}
 	ordinaryChain := directIntrinsicChain(t, ordinaryGroup, N.NetworkTCP, &metadata)
-	ordinaryRouter := fastPathRouter(t, ordinaryGroup,
-		FastPathPolicies{"🌐 普通代理": {Enabled: true}})
+	ordinaryRouter := fastPathRouter(t, ordinaryGroup, FastPathPolicies{"🌐 普通代理": {Enabled: true}})
 	require.True(t, resolveFastPathRequest(ordinaryChain, ordinaryRouter.fastPathPolicies),
-		"an explicit true still authorises a non-direct bypassable leaf")
+		"an explicit true authorises an ordinary tag too")
+	ordinaryUnset := fastPathRouter(t, ordinaryGroup, FastPathPolicies{})
+	require.False(t, resolveFastPathRequest(ordinaryChain, ordinaryUnset.fastPathPolicies),
+		"and an ordinary tag with nothing explicit is unauthorised, exactly like the AI one")
 }

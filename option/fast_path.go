@@ -23,16 +23,20 @@ import (
 //
 // Three states have to survive decoding:
 //
-//	"fast_path" absent  -> nil   -> fall back to automatic tag detection
+//	"fast_path" absent  -> nil   -> state nothing: a transparent chain over `direct` is authorised
+//	                                intrinsically, and no other shape is authorised at all
 //	"fast_path": true   -> true  -> authorise this group
-//	"fast_path": false  -> false -> refuse, even if the tag looks like AI
+//	"fast_path": false  -> false -> refuse it, including the intrinsic shape
 //
-// The third is the one a plain bool cannot express, and it is load-bearing: an operator whose AI
-// selector is used for flows that must stay in userspace writes `false`, and automatic detection
-// must not override a decision that explicit. The same applies to the intrinsic grant a transparent
-// chain over `direct` receives when nobody states a policy: an explicit false is a decision, so
-// route.resolveFastPathRequest reads it BEFORE the intrinsic rule and the chain refuses the attempt.
-// See the precedence comment on route.resolveFastPathRequest.
+// The third is the one a plain bool cannot express, and it is load-bearing: an operator whose
+// transparent selector is used for flows that must stay in userspace writes `false`, and the
+// intrinsic grant must not override a decision that explicit. It is the only value that changes a
+// verdict in this tree - see route.resolveFastPathRequest, which reads it BEFORE the intrinsic rule
+// and refuses the attempt.
+//
+// The states are NOT a tag heuristic. An earlier version fell back to the AI keyword matcher when
+// nothing was stated; that fallback could not change a verdict for any shape this build can produce
+// and has been removed, so the name of a group has no bearing on what this field does.
 //
 // # Why the shared envelope rather than SelectorOutboundOptions
 //

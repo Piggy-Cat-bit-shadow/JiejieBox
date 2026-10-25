@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/log"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -51,5 +52,36 @@ func BenchmarkPreMatchForAConsumer(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		router.preMatchFlow(context.Background(), &metadata, destination, nil, "")
+	}
+}
+
+// BenchmarkFastPathAuthorisationOpaqueChain measures the shape the removed tag fallback used to
+// decide: transparent selector over an opaque group over `direct`. Rule 3 cannot answer (the
+// loadbalance group is not transparent), so this is exactly where the old code ran the keyword scan
+// and returned true - and where it now returns false immediately.
+//
+// It is here to make the removal measurable rather than asserted: the benchmark is run with and
+// without the fallback restored, and the difference is the scan.
+func BenchmarkFastPathAuthorisationOpaqueChain(b *testing.B) {
+	destination := M.ParseSocksaddr("93.184.216.34:443")
+	root := &transparentGroup{tag: "🤖 AI", selected: &opaqueGroup{tag: "lb", selected: eligibleLeaf()}}
+	router := benchRouterFor(root)
+	metadata := fastBypassMetadata(N.NetworkTCP, destination)
+	chain, err := resolveOutbound(root, &metadata, N.NetworkTCP, true)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		resolveFastPathRequest(chain, router.fastPathPolicies)
+	}
+}
+
+func benchRouterFor(root adapter.Outbound) *Router {
+	return &Router{
+		ctx:      context.Background(),
+		logger:   log.NewNOPFactory().Logger(),
+		outbound: &stubOutboundManager{def: root},
 	}
 }

@@ -3,6 +3,7 @@ package tun
 import (
 	"context"
 	"net/netip"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -152,14 +153,75 @@ func TestTwoEntriesSharingOneRouterDoNotLeakTheCapability(t *testing.T) {
 	source := netip.MustParseAddrPort("192.168.1.2:40000")
 	destination := netip.MustParseAddrPort("93.184.216.34:443")
 
-	for round := 0; round < 4; round++ {
-		require.Equal(t, tun.ActionAccept, plain.JudgeFlow(uint8(header.TCPProtocolNumber), source, destination, nil).Action,
+	// 128 interleaved rounds over both networks: enough that a per-inbound or per-router flag would
+	// be observed carrying over, and both protocols so the capability cannot accidentally be tied to
+	// one of them.
+	for round := 0; round < 128; round++ {
+		protocol := uint8(header.TCPProtocolNumber)
+		if round%2 == 1 {
+			protocol = uint8(header.UDPProtocolNumber)
+		}
+		require.Equal(t, tun.ActionAccept, plain.JudgeFlow(protocol, source, destination, nil).Action,
 			"round %d: the stack entry of the second inbound must not borrow the other inbound's capability", round)
-		require.Equal(t, tun.ActionBypass, (*autoRedirectHandler)(fixture.inbound).JudgeFlow(uint8(header.TCPProtocolNumber), source, destination, nil).Action,
+		require.Equal(t, tun.ActionBypass, (*autoRedirectHandler)(fixture.inbound).JudgeFlow(protocol, source, destination, nil).Action,
 			"round %d: the native entry must still receive the verdict", round)
-		require.Equal(t, tun.ActionAccept, fixture.inbound.JudgeFlow(uint8(header.TCPProtocolNumber), source, destination, nil).Action,
+		require.Equal(t, tun.ActionAccept, fixture.inbound.JudgeFlow(protocol, source, destination, nil).Action,
 			"round %d: the same inbound, judged by the stack, must not inherit its own native answer", round)
-		require.Equal(t, tun.ActionBypass, (*autoRedirectHandler)(plain).JudgeFlow(uint8(header.TCPProtocolNumber), source, destination, nil).Action,
+		require.Equal(t, tun.ActionBypass, (*autoRedirectHandler)(plain).JudgeFlow(protocol, source, destination, nil).Action,
 			"round %d: the capability belongs to the call, so either inbound can be the native entry", round)
 	}
+}
+
+// TestTheCapabilityIsPerCallUnderConcurrency is the same property without the serialisation.
+//
+// Sixteen goroutines drive both inbounds through both entries at once. A capability stored on the
+// Router (a field, a map, a shared variable) would be overwritten between the write and the read;
+// one stored on the Inbound would be overwritten by the other entry of the SAME object. The failures
+// are counted rather than asserted inside the goroutines, because require in a worker goroutine is
+// not allowed to call FailNow.
+func TestTheCapabilityIsPerCallUnderConcurrency(t *testing.T) {
+	fixture := newL0ConflictFixture(t, nil, nil)
+	plain := &Inbound{
+		tag:    "tun-plain",
+		ctx:    context.Background(),
+		router: fixture.router,
+		logger: log.NewNOPFactory().Logger(),
+	}
+
+	source := netip.MustParseAddrPort("192.168.1.2:40000")
+	destination := netip.MustParseAddrPort("93.184.216.34:443")
+
+	var (
+		workers  = 16
+		rounds   = 8
+		failures atomic.Int32
+		wg       sync.WaitGroup
+	)
+	for worker := 0; worker < workers; worker++ {
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+			for round := 0; round < rounds; round++ {
+				protocol := uint8(header.TCPProtocolNumber)
+				if (worker+round)%2 == 1 {
+					protocol = uint8(header.UDPProtocolNumber)
+				}
+				if plain.JudgeFlow(protocol, source, destination, nil).Action != tun.ActionAccept {
+					failures.Add(1)
+				}
+				if (*autoRedirectHandler)(fixture.inbound).JudgeFlow(protocol, source, destination, nil).Action != tun.ActionBypass {
+					failures.Add(1)
+				}
+				if fixture.inbound.JudgeFlow(protocol, source, destination, nil).Action != tun.ActionAccept {
+					failures.Add(1)
+				}
+				if (*autoRedirectHandler)(plain).JudgeFlow(protocol, source, destination, nil).Action != tun.ActionBypass {
+					failures.Add(1)
+				}
+			}
+		}(worker)
+	}
+	wg.Wait()
+	require.Zero(t, failures.Load(),
+		"the capability was observed on a flow that should not have it, or lost on one that should")
 }
