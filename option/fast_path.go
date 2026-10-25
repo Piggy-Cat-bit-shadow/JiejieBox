@@ -43,15 +43,17 @@ import (
 // REJECTED on every other outbound, which the reader does at configuration load: a leaf naming
 // fast_path is a configuration error, never a node property.
 //
-// # iOS: accepted, and inert
+// # Accepted, and inert where it cannot be applied
 //
-// The key is accepted on iOS and keeps its configuration meaning - it is still group-only, and a
-// leaf that names it is still refused - but it is INERT there. The iOS TUN engine turns an implicit
-// bypass verdict into the same accept entry as an ordinary accept (sing-tun flow_dispatch.go
-// install/installAccept, and the forwarders branch only on reject, drop and hijack), so no flow can
-// change its data path because of this field. The router therefore compiles the whole
-// authorisation-and-eligibility decision out on iOS instead of evaluating it per flow and
-// discarding the answer; see route.implicitDirectFastPathIsExecutable.
+// The key is accepted everywhere and keeps its configuration meaning - it is still group-only, and a
+// leaf that names it is still refused - but it only has an effect on an entry whose transport can
+// act on an implicit bypass verdict: sing-tun's nfqueue consumer, which is what auto_redirect uses.
+// Every other transport turns that verdict into the same accept entry as an ordinary accept
+// (flow_dispatch.go install/installAccept, and the forwarders branch only on reject, drop and
+// hijack), so no flow through it can change its data path because of this field. The router
+// therefore does not run the authorisation-and-eligibility decision at all for those entries,
+// rather than evaluating it per flow and discarding the answer; see
+// adapter.InboundContext.ConsumesBypassVerdict.
 //
 // Writing it is not an error and does not require a migration: a configuration shared between iOS
 // and the desktop platforms states the same intent everywhere, and the platforms that can honour it

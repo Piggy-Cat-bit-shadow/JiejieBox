@@ -261,13 +261,16 @@ type FlowAwareOutboundGroup interface {
 // it, which is the same reason BypassableOutbound is an interface a leaf implements rather than a
 // list of type names.
 //
-// # iOS
+// # Where it is inert
 //
-// The capability is still declared and the key is still accepted on iOS, but the decision it feeds
-// is compiled out there: the TUN engine cannot act on an implicit bypass verdict, so the router
-// never reads this policy on that platform. See route.implicitDirectFastPathIsExecutable for the
-// dispatcher evidence and for why the configuration surface is deliberately kept rather than
-// special-cased per platform.
+// The capability is declared everywhere and the key is accepted everywhere, but the decision it
+// feeds only runs for an entry whose transport applies a Bypass verdict: sing-tun's nfqueue
+// consumer, which is what auto_redirect uses. Every other transport - the go, gVisor and system TUN
+// stacks on every platform, iOS included - turns that verdict into the same accept entry as an
+// ordinary accept, so on those entries the router never reads this policy. The configuration
+// surface is deliberately kept rather than special-cased per platform; see
+// adapter.InboundContext.ConsumesBypassVerdict for the consumer inventory and the dispatcher
+// evidence.
 type FastPathAuthorizedGroup interface {
 	OutboundGroup
 
