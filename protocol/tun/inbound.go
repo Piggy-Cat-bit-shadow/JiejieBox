@@ -971,6 +971,20 @@ func (t *Inbound) releaseRouteSetCallbacks() {
 	}
 }
 
+func (t *Inbound) FlushSystemDNSCache() {
+	linuxTUN, isLinuxTUN := t.tunIf.(tun.LinuxTUN)
+	if !isLinuxTUN {
+		return
+	}
+	serviceManager := service.FromContext[adapter.ServiceManager](t.ctx)
+	if slices.ContainsFunc(serviceManager.Services(), func(it adapter.Service) bool {
+		return it.Type() == C.TypeResolved
+	}) {
+		return
+	}
+	linuxTUN.FlushDNSCache()
+}
+
 // JudgeFlow decides what happens to a new flow at the TUN boundary.
 //
 // # The complete order, and what each step is allowed to decide
@@ -1040,21 +1054,8 @@ func (t *Inbound) releaseRouteSetCallbacks() {
 // radix lookups. Nothing here allocates, takes a lock beyond an RWMutex read of the route sets, or
 // performs a DNS lookup: a flow that reaches step 5 and returns never touches the router, the reverse
 // mapping, the process searcher or any timer.
-func (t *Inbound) FlushSystemDNSCache() {
-	linuxTUN, isLinuxTUN := t.tunIf.(tun.LinuxTUN)
-	if !isLinuxTUN {
-		return
-	}
-	serviceManager := service.FromContext[adapter.ServiceManager](t.ctx)
-	if slices.ContainsFunc(serviceManager.Services(), func(it adapter.Service) bool {
-		return it.Type() == C.TypeResolved
-	}) {
-		return
-	}
-	linuxTUN.FlushDNSCache()
-}
-
-// JudgeFlow is the TUN stack's flow judgement.
+//
+// # Which entry calls it
 //
 // The stack installs whatever verdict it is given as an accept entry, so it is not a consumer of a
 // Bypass verdict and does not ask the router to compute one; see
