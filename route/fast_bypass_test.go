@@ -111,9 +111,13 @@ func fastBypassMetadata(network string, destination M.Socksaddr) adapter.Inbound
 	return adapter.InboundContext{
 		Inbound:     "tun-in",
 		InboundType: C.TypeTun,
-		Network:     network,
-		Source:      M.ParseSocksaddr("192.168.1.2:12345"),
-		Destination: destination,
+		// The auto-redirect entry is the only caller whose transport applies a Bypass verdict, so the
+		// implicit Direct Fast Path chain is computed for it and for nothing else. Every test that asserts
+		// a verdict, or a refusal reason, is describing that caller.
+		ConsumesBypassVerdict: true,
+		Network:               network,
+		Source:                M.ParseSocksaddr("192.168.1.2:12345"),
+		Destination:           destination,
 	}
 }
 

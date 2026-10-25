@@ -82,6 +82,33 @@ type InboundContext struct {
 	User        string
 	Outbound    string
 
+	// ConsumesBypassVerdict reports that the caller of PreMatch is an entry whose transport
+	// actually applies a Bypass verdict.
+	//
+	// # The one consumer
+	//
+	// sing-tun applies ActionBypass in exactly one place: its nfqueue handler, which answers
+	// NfRepeat plus the output mark (nfqueue_linux.go, applyVerdict). That handler is what the
+	// auto-redirect entry uses. Every other transport - the go, gVisor and system stacks - turns
+	// the verdict into the same accept entry as ActionAccept (flow_dispatch.go install/installAccept,
+	// and the forwarders branch only on reject, drop and hijack), so for them the verdict cannot
+	// change where the bytes go: the splice decision and the userspace copy run identically.
+	//
+	// # Why the caller sets it, and a platform constant cannot
+	//
+	// auto_redirect is a MODE, not a platform. The same Linux binary - and the same privileged
+	// Android binary, because android satisfies the linux build tag - also serves a plain
+	// VPNService or desktop TUN, and iOS, macOS and Windows can never enter the mode at all. A
+	// platform check cannot tell the two entries of one binary apart; the entry that owns the
+	// nfqueue can, and it is the only one that knows whether its verdict will be applied.
+	//
+	// # What reads it
+	//
+	// route/preMatchFlow: the implicit Direct Fast Path authorisation and eligibility chain runs
+	// only for a caller that can act on its answer. Explicit `action: bypass` rules and L0 route
+	// sets do not consult it - those are operator and platform decisions, not this optimisation.
+	ConsumesBypassVerdict bool
+
 	// power report
 
 	RouteRule     string

@@ -990,10 +990,11 @@ func (r *Router) preMatchFlow(ctx context.Context, metadata *adapter.InboundCont
 	// duration of this call. Nothing is written to the outbound, to the group, or to any map keyed
 	// by tag.
 	//
-	// The whole decision is compiled out where the verdict cannot be honoured, rather than
-	// evaluated and ignored; see implicitDirectFastPathIsExecutable. The guard is a compile-time
-	// constant, so on iOS neither call below exists in the binary.
-	if implicitDirectFastPathIsExecutable {
+	// The whole decision runs only for a caller whose transport applies a Bypass verdict; see
+	// adapter.InboundContext.ConsumesBypassVerdict. The plain TUN stack turns the verdict into the
+	// same accept entry as PreMatchContinue, so for it the authorisation scan, the keyword match and
+	// the eligibility chain cannot change where the bytes go - and are not computed at all.
+	if metadata.ConsumesBypassVerdict {
 		fastPathAuthorized := resolveFastPathRequest(chain, r.fastPathPolicies)
 		if r.canFastBypass(metadata, packetDestination, chain, outbound, fastPathAuthorized).BypassAllowed() {
 			// The message is built only when it will be emitted.

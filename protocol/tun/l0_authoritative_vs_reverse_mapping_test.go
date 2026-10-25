@@ -437,7 +437,11 @@ func TestNonL0FlowReachesTheRouterAndCanUseDNSDerivedPolicy(t *testing.T) {
 	t.Run("no reverse mapping", func(t *testing.T) {
 		fixture := newL0ConflictFixture(t, []option.Rule{blockedDomainRejectRule()}, nil)
 
-		verdict := fixture.inbound.JudgeFlow(uint8(headerTCP), source, destination, nil)
+		// Judged through the auto-redirect entry: it is the only entry whose transport applies a Bypass
+		// verdict, so it is the only one where the router's fast path is observable at this boundary.
+		// The L0, DNS and router decisions are shared by both entries - see
+		// TestBothEntriesShareTheSameFlowPolicy.
+		verdict := (*autoRedirectHandler)(fixture.inbound).JudgeFlow(uint8(headerTCP), source, destination, nil)
 
 		require.Equal(t, tun.ActionBypass, verdict.Action,
 			"with no domain recovered, the flow settles on the plain direct outbound and the "+
@@ -459,7 +463,7 @@ func TestNonL0FlowReachesTheRouterAndCanUseDNSDerivedPolicy(t *testing.T) {
 		fixture := newL0ConflictFixture(t, []option.Rule{blockedDomainRejectRule()},
 			reverseMapping(unrelatedDomain))
 
-		verdict := fixture.inbound.JudgeFlow(uint8(headerTCP), source, destination, nil)
+		verdict := (*autoRedirectHandler)(fixture.inbound).JudgeFlow(uint8(headerTCP), source, destination, nil)
 
 		require.Equal(t, tun.ActionAccept, verdict.Action,
 			"a recovered domain keeps the flow on the userspace path even when no rule matches it")
@@ -509,11 +513,11 @@ func TestL0DoesNotDiscardProcessOrProtocolRulesOnTheNonL0Branch(t *testing.T) {
 			},
 		}}, nil)
 
-		udpVerdict := fixture.inbound.JudgeFlow(uint8(headerUDP), source, destination, nil)
+		udpVerdict := (*autoRedirectHandler)(fixture.inbound).JudgeFlow(uint8(headerUDP), source, destination, nil)
 		require.Equal(t, tun.ActionReject, udpVerdict.Action,
 			"a protocol condition must still be able to decide a flow that reaches the router")
 
-		tcpVerdict := fixture.inbound.JudgeFlow(uint8(headerTCP), source, destination, nil)
+		tcpVerdict := (*autoRedirectHandler)(fixture.inbound).JudgeFlow(uint8(headerTCP), source, destination, nil)
 		require.Equal(t, tun.ActionBypass, tcpVerdict.Action,
 			"and the same destination on the other protocol must not be rejected: the reject above "+
 				"is the protocol condition's doing, not a blanket verdict")
@@ -533,12 +537,12 @@ func TestL0DoesNotDiscardProcessOrProtocolRulesOnTheNonL0Branch(t *testing.T) {
 			},
 		}}, nil)
 
-		verdict := fixture.inbound.JudgeFlow(uint8(headerTCP), source, destination, nil)
+		verdict := (*autoRedirectHandler)(fixture.inbound).JudgeFlow(uint8(headerTCP), source, destination, nil)
 		require.Equal(t, tun.ActionReject, verdict.Action,
 			"a source-address condition is one of the things L0 cannot express - it reads the "+
 				"destination address alone - so it must be evaluated here")
 
-		verdict = fixture.inbound.JudgeFlow(uint8(headerTCP), otherSource, destination, nil)
+		verdict = (*autoRedirectHandler)(fixture.inbound).JudgeFlow(uint8(headerTCP), otherSource, destination, nil)
 		require.Equal(t, tun.ActionBypass, verdict.Action,
 			"and a different source must not match it")
 	})
@@ -556,7 +560,7 @@ func TestL0DoesNotDiscardProcessOrProtocolRulesOnTheNonL0Branch(t *testing.T) {
 			"a process rule must put the router into process-finding mode. This is the process "+
 				"policy L0 has no representation for, and it survives on the branch the flow takes")
 
-		verdict := fixture.inbound.JudgeFlow(uint8(headerTCP), source, destination, nil)
+		verdict := (*autoRedirectHandler)(fixture.inbound).JudgeFlow(uint8(headerTCP), source, destination, nil)
 		require.EqualValues(t, 1, fixture.router.calls.Load(),
 			"the flow reached the rule set that holds the process rule; the rule was walked and "+
 				"evaluated against its metadata")

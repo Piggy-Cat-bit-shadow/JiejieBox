@@ -1054,7 +1054,22 @@ func (t *Inbound) FlushSystemDNSCache() {
 	linuxTUN.FlushDNSCache()
 }
 
+// JudgeFlow is the TUN stack's flow judgement.
+//
+// The stack installs whatever verdict it is given as an accept entry, so it is not a consumer of a
+// Bypass verdict and does not ask the router to compute one; see
+// adapter.InboundContext.ConsumesBypassVerdict. The auto-redirect entry below is the consumer and
+// goes through judgeFlow directly.
 func (t *Inbound) JudgeFlow(network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
+	return t.judgeFlow(network, source, destination, firstPacket, false)
+}
+
+// judgeFlow is JudgeFlow with the caller's ability to apply a Bypass verdict made explicit.
+//
+// Only the auto-redirect handler passes true. Everything in the body is otherwise shared: the same
+// DNS hijack, FakeIP guard, L0 route sets and router pre-match serve both entries, so the two
+// cannot drift into two different flow policies.
+func (t *Inbound) judgeFlow(network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte, consumesBypassVerdict bool) tun.FlowVerdict {
 	// The destination is canonicalised BEFORE any policy comparison, and that order is part of the
 	// contract rather than tidiness.
 	//
@@ -1128,7 +1143,11 @@ func (t *Inbound) JudgeFlow(network uint8, source netip.AddrPort, destination ne
 			return tun.FlowVerdict{Action: tun.ActionBypass}
 		}
 	}
-	return adapter.JudgeFlow(t.router, adapter.InboundContext{Inbound: t.tag, InboundType: C.TypeTun}, network, source, destination, firstPacket)
+	return adapter.JudgeFlow(t.router, adapter.InboundContext{
+		Inbound:               t.tag,
+		InboundType:           C.TypeTun,
+		ConsumesBypassVerdict: consumesBypassVerdict,
+	}, network, source, destination, firstPacket)
 }
 
 // canonicalAddrPort rewrites a v4-mapped IPv6 address to its four-byte form.
@@ -1219,8 +1238,12 @@ func (t *Inbound) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, 
 
 type autoRedirectHandler Inbound
 
+// JudgeFlow is the auto-redirect entry's judgement, and the only entry whose transport applies the
+// verdict it returns: sing-tun's nfqueue handler answers NfRepeat plus the output mark for
+// ActionBypass. It therefore asks the router for the implicit Direct Fast Path decision; the plain
+// TUN stack above does not. See adapter.InboundContext.ConsumesBypassVerdict.
 func (t *autoRedirectHandler) JudgeFlow(network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
-	return (*Inbound)(t).JudgeFlow(network, source, destination, firstPacket)
+	return (*Inbound)(t).judgeFlow(network, source, destination, firstPacket, true)
 }
 
 func (t *autoRedirectHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {

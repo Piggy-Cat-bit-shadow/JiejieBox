@@ -7,56 +7,15 @@ import (
 	"github.com/sagernet/sing-box/option"
 )
 
-// implicitDirectFastPathIsExecutable reports whether an implicit Direct Fast Path verdict can
-// change this build's data path, and therefore whether the authorisation-and-eligibility chain
-// that produces it is worth running per flow at all.
+// The implicit authorisation and eligibility chain below is consulted only for a caller whose
+// transport applies a Bypass verdict: sing-tun's nfqueue consumer, which is what the auto-redirect
+// entry uses. A plain TUN stack installs whatever verdict it is given as an accept entry, so for it
+// this chain cannot change where the bytes go and route/preMatchFlow does not run it at all.
 //
-// # iOS cannot act on the verdict, and that is measured rather than assumed
-//
-// An implicit bypass leaves the router as tun.ActionBypass with no Port (adapter.JudgeFlow
-// deliberately drops the outbound's Port, because a bypass has no flow to describe). In the
-// sing-tun this module replaces, that verdict reaches the same state an accept produces:
-//
-//	flow_dispatch.go install()      ActionFlow builds a port flow; every other action - accept and
-//	                                bypass alike - falls through to installAccept(), which records
-//	                                the entry as ActionAccept and keeps the verdict only so the
-//	                                gvisor forwarders need not judge the flow twice
-//	flow_dispatch.go judge()        "ActionBypass && Port != nil -> ActionFlow"; with no Port this
-//	                                rewrite cannot fire
-//	stack_gvisor_tcp.go Forward()   switches on Reject and Drop only
-//	stack_gvisor_udp.go             switches on Reject, Drop and HijackDNS only
-//	stack_go_udp.go                 the same three cases
-//	stack_gvisor_icmp.go            ActionFlow and ActionBypass together, and ICMP is never
-//	                                eligible here anyway (canFastBypass requires TCP or UDP)
-//
-// So on iOS a flow that resolveFastPathRequest authorises and canFastBypass accepts receives a
-// verdict whose only effect is to record ActionBypass on an entry the dispatcher already treats as
-// accepted. The group authorisation, the AI keyword scan and the twenty refusal reasons in
-// canFastBypass cannot change where the bytes go.
-//
-// # Why a compile-time constant rather than a runtime check
-//
-// C.IsIos is a constant (constant/os.go over constant/goos), so guarding the decision with it
-// removes the calls from the iOS binary instead of calling them and throwing the answer away: the
-// iOS build of (*Router).preMatchFlow contains no call to resolveFastPathRequest and none to
-// canFastBypass. scripts/ci/verify-ios-fast-path-guard.sh compiles this package for GOOS=ios and
-// fails if either call comes back, so the property is enforced rather than documented.
-//
-// # What the guard deliberately does not touch
-//
-//   - The explicit `action: bypass` rule. Its verdict is produced by the rule loop without
-//     consulting any of this and stays an operator instruction on every platform. iOS gives it the
-//     same physical result as an accept, but that is the operator's stated policy, not an
-//     optimisation the router invents - and it is one of the few genuinely cross-platform verdicts
-//     that must not be re-interpreted per platform.
-//   - L0 (route_address_set / route_exclude_address_set). Those flows are decided by the TUN
-//     inbound against the platform routing table and never reach the router at all.
-//   - traffic_class. Its AI matcher is an independent consumer of trafficclass.MatchTag, resolved
-//     later in the same function and untouched by this constant.
-//   - Every other platform. On macOS, Linux, Windows and Android the constant is true and the
-//     behaviour is byte-for-byte what it was, including the intrinsic grant to a transparent
-//     chain over `direct` and the explicit-false off switch.
-const implicitDirectFastPathIsExecutable = !C.IsIos
+// That is a property of the ENTRY, not of the platform. auto_redirect is a MODE: the same Linux
+// binary - and the same privileged Android binary, because android satisfies the linux build tag -
+// also serves a plain VPNService or desktop TUN, and iOS, macOS and Windows cannot enter it at all.
+// See adapter.InboundContext.ConsumesBypassVerdict for the consumer inventory.
 
 // FastPathPolicies maps a logical group's tag to the fast_path intent its configuration states
 // explicitly.

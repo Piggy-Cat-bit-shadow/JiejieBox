@@ -135,6 +135,10 @@ func TestFastPathVerdictDoesNotChangeTheTUNDataPath(t *testing.T) {
 				verdict := adapter.JudgeFlow(running.router(), adapter.InboundContext{
 					Inbound:     "tun-in",
 					InboundType: C.TypeTun,
+					// This harness stands in for the auto-redirect entry, the only caller whose
+					// transport applies a Bypass verdict; see
+					// adapter.InboundContext.ConsumesBypassVerdict.
+					ConsumesBypassVerdict: true,
 				}, network, source, destinationAddress, firstPacket)
 				verdicts.record(verdict.Action)
 				return verdict
@@ -192,6 +196,9 @@ func TestBypassVerdictStillDeliversUDP(t *testing.T) {
 		verdict := adapter.JudgeFlow(running.router(), adapter.InboundContext{
 			Inbound:     "tun-in",
 			InboundType: C.TypeTun,
+			// This harness stands in for the auto-redirect entry, the only caller whose transport
+			// applies a Bypass verdict; see adapter.InboundContext.ConsumesBypassVerdict.
+			ConsumesBypassVerdict: true,
 		}, network, source, destinationAddress, firstPacket)
 		verdicts.record(verdict.Action)
 		return verdict
@@ -234,6 +241,9 @@ func TestFastPathMultiSegmentPayloadIsIntact(t *testing.T) {
 		verdict := adapter.JudgeFlow(running.router(), adapter.InboundContext{
 			Inbound:     "tun-in",
 			InboundType: C.TypeTun,
+			// This harness stands in for the auto-redirect entry, the only caller whose transport
+			// applies a Bypass verdict; see adapter.InboundContext.ConsumesBypassVerdict.
+			ConsumesBypassVerdict: true,
 		}, network, source, destinationAddress, firstPacket)
 		verdicts.record(verdict.Action)
 		return verdict
