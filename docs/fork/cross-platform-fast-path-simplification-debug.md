@@ -246,8 +246,11 @@ entry, pinned by the two `TestTheImplicitFastPath…` tests.
 
 CI on the reviewed code `8ef6231bd`: Verify `40157380698`, Android Core ARM64 `40157380707`, Mobile
 contract `40157380640`, Release contract `40157380633`, macOS arm64 `40158472003` - all success, and
-Verify's `-race` step covers `./route/... ./protocol/tun/... ./adapter/...`. This pass' own commit is
-documentation plus two test files; its runs are in the task answer.
+Verify's `-race` step covers `./route/... ./protocol/tun/... ./adapter/...`.
+
+This pass' own commit `932bc05b6` (the two test files and this document): Verify `40162798201`,
+Android Core ARM64 `40162798177`, Mobile contract `40162798234` - all success. A later docs-only
+commit fills this line and `FINAL_SHA` below; it cannot be part of the commit it describes.
 
 ## 8. Limits
 
@@ -284,7 +287,7 @@ NEGATIVE_CONTROLS = 7/7 RED AS EXPECTED (NC1 NC2 NC3 NC4 NC5 NC6 NC7)
 PRODUCTION_FIXES = 0
 REAL_DEVICE_LIMITATIONS = no iOS/macOS/Android device; no Wintun; no live nfqueue; no accepted splice
 CODE_SHA = 6503ba2c15f572f32493572aa0816207581cb136
-FINAL_SHA = <the commit that adds this document>
+FINAL_SHA = 932bc05b62650b4c9754efb380c1c82da63f7729   (the commit that added this document)
 PUSHED = YES
 OVERALL = DONE_WITH_LIMITATIONS
 ```
