@@ -81,6 +81,11 @@ func (r *Router) LookupFamilies(ctx context.Context, domain string, options adap
 		// The forced family has to win over a preference, so Strategy is set too: the
 		// underlying lookup reads Strategy to decide whether to issue one query or two.
 		familyOptions.Strategy = strategy
+		// A family that genuinely has no records is the normal half-answer here, not a failure:
+		// this caller combines both families and reports the aggregate. Keep it out of the ERROR
+		// log, which otherwise printed `lookup failed for <domain>` once per connection for every
+		// name published as only A or only AAAA.
+		familyOptions.QuietEmptyFamilyResult = true
 
 		addresses, err := r.Lookup(ctx, domain, familyOptions)
 

@@ -103,6 +103,17 @@ type DNSQueryOptions struct {
 	Timeout                time.Duration
 	ClientSubnet           netip.Prefix
 	RemoveClientSubnet     bool
+	// QuietEmptyFamilyResult marks a lookup that asks for ONE family on behalf of a caller which
+	// will combine the answer with the other family's.
+	//
+	// "This name has no records of this family" is then the normal answer, not a fault: the
+	// dual-stack probe in LookupFamilies asks A and AAAA separately, and a name published only as
+	// A or only as AAAA leaves one of them empty on every connection. Without this flag the router
+	// logged `lookup failed for <domain>` at ERROR for that family each time, which is the same
+	// cost the local-verdict marker removed for blocked names: log I/O on the dial path, and an
+	// ERROR line that trains an operator to ignore ERROR lines. The per-family error is still
+	// returned to the caller and still published per family; only its log level changes.
+	QuietEmptyFamilyResult bool
 }
 
 type RDRCStore interface {

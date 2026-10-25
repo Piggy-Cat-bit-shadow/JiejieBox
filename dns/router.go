@@ -1982,7 +1982,8 @@ func (r *Router) Lookup(ctx context.Context, domain string, options adapter.DNSQ
 		err           error
 	)
 	printResult := func() {
-		if err == nil && len(responseAddrs) == 0 {
+		emptyResult := err == nil && len(responseAddrs) == 0
+		if emptyResult {
 			err = E.New("empty result")
 		}
 		if err != nil {
@@ -2001,6 +2002,13 @@ func (r *Router) Lookup(ctx context.Context, domain string, options adapter.DNSQ
 				// rather than inferred so an upstream NXDOMAIN still logs at Error - which is the
 				// distinction the marker exists to make.
 				r.logger.DebugContext(ctx, "lookup blocked by a rule for ", domain)
+			} else if emptyResult && options.QuietEmptyFamilyResult {
+				// One family of a dual-stack probe answered "no records of this type". That is the
+				// normal outcome for a name published only as A or only as AAAA - it happened on
+				// every connection to a hosts-resolved outbound server - so it belongs at Debug.
+				// The error is still returned and still published per family; the caller that
+				// combines both families decides whether the lookup failed.
+				r.logger.DebugContext(ctx, "no addresses for ", domain)
 			} else {
 				r.logger.ErrorContext(ctx, E.Cause(err, "lookup failed for ", domain))
 			}
