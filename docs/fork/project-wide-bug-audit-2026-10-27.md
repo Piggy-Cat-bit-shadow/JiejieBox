@@ -66,14 +66,17 @@ current measurement. Several claims were re-measured and corrected in place (§4
   `--pin-only` is wired, the full gate is in `client-apple.yml`; the measured pin is `3aedd741`.
 * `KNOWLEDGE/modules/libbox-platform-contract.md` — same correction in §6, the evidence row and
   caution 16.
+* `KNOWLEDGE/INVARIANTS.md` A20 — release acceptance is judged by `release-artifacts.sh`, the release
+  path's actual authority; `verify-release-acceptance.sh` is a separate handoff checker with a narrow
+  default set. The previous wording called the release path unprotected because that separate tool is
+  not invoked, which conflated two different gates.
 
 ## 5. Remaining findings, deliberately not fixed
 
 | Item | Why it remains |
 |---|---|
 | Active TCP no-forward-progress stall | The mechanism is proven and reproduced, but the only proposed gate (blocked writer + grace) is not separable from healthy backpressure; `ACTIVE_TCP_STALL_INVESTIGATION.md` records the evidence and the refusal to guess a timeout |
-| `verify-release-acceptance.sh` engine not on the release path (A20) | Wiring it into `release.yml` needs a real candidate run and its snapshot/fetch contract; changing the release path untested is riskier than the gap |
-| `client-apple.yml` not in the acceptance required set (A12) | The engine itself is not invoked; adding the workflow to a set nothing calls would not change the outcome |
+| `verify-release-acceptance.sh` is not the release path authority (A20/A12 corrected) | The release path's authority is `release-artifacts.sh`: it includes `client-apple.yml` under `RELEASE_EXTRA_PLATFORMS=true` and fails on a completed non-success or cancelled run. The separate strict handoff checker's narrow default set is a tool-ownership gap between two checks, not an unprotected release path |
 | `errcheck` close-return findings | 50, almost all cleanup paths (`defer conn.Close`, scope closes) where the error cannot affect the caller; changing them to logged errors would add noise, not correctness |
 | `bodyclose` in libbox/http and xhttp | Both close through `GetContent` / `drainAndClose`; the analyzer cannot see the helper |
 | `nilerr` in `reportPathSize` | Deliberately best-effort: an entry that cannot be stat'ed contributes zero |

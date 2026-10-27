@@ -323,10 +323,18 @@ skipped a layer must not report `PASS`.
 * **Why:** `scripts/ci/apple-ci-job-gate.py`'s docstring is the clearest statement of the class: a
   dispatch with `build_ios: false` **concludes success while a platform was never built**, and skipped
   jobs are not failures. `check-libbox-abi.sh` prints `PARTIAL` with exit 0 for exactly this reason.
-* **Honest gap:** the acceptance script is **invoked by no workflow** — `verify.yml` runs only its
-  self-test (against a mock `gh`). This invariant describes the *design*, and the design is not wired.
-* **Proof:** `apple-ci-job-gate.py`; `check-libbox-abi.sh:427-434`;
-  `verify-release-acceptance.sh`; `verify.yml:54-87`.
+* **The release path's authority is `release-artifacts.sh`, invoked by `release.yml`.** It selects the
+  newest run per target workflow, fails on a completed non-success or a cancelled run, requires each
+  product's artifact and recorded digest, and includes `client-apple.yml` under
+  `RELEASE_EXTRA_PLATFORMS=true`. So the release path does not accept a skipped product job as green.
+* **Honest gap:** the separate strict handoff checker `verify-release-acceptance.sh` is not called by
+  the release path - only its self-test runs in `release-contract-verify.yml`. Its default required
+  set is also narrow (`verify.yml`, `interop-xray.yml`, `server-linux-amd64.yml`). That is a
+  tool/ownership gap between two checks, **not** evidence that the release path is unprotected; the
+  release path's own gate is the one a release is judged by.
+* **Proof:** `release.yml`; `release-artifacts.sh` (`TARGET_WORKFLOWS`, `RELEASE_EXTRA_PLATFORMS`);
+  `verify-release-acceptance.sh`; `release-contract-verify.yml` self-test; `check-libbox-abi.sh
+  --pin-only` + `client-apple.yml` for the ABI pin.
 * **Kind:** release-artifact integrity. **Owner:** `ci-release.md`
 
 ---
