@@ -7,9 +7,6 @@
 package ktls
 
 import (
-	"errors"
-	"io"
-
 	"github.com/sagernet/sing/common/buf"
 	N "github.com/sagernet/sing/common/network"
 )
@@ -19,12 +16,23 @@ func (c *Conn) InitializeReadWaiter(options N.ReadWaitOptions) (needCopy bool) {
 	return false
 }
 
+// deferReadErrorAfterData returns the data buffer the waiter has already filled and queues the
+// record-layer error for the next call. The slow Read path returns (n, err) in this situation; the
+// waiter contract cannot return a buffer with a non-nil error, so the data must go first and the
+// error one call later. Releasing the buffer here (the old non-EOF branch) discarded n real bytes.
+func (c *Conn) deferReadErrorAfterData(buffer *buf.Buffer, err error) (*buf.Buffer, error) {
+	c.pendingReadErr = err
+	c.readWaitOptions.PostReturn(buffer)
+	return buffer, nil
+}
+
 func (c *Conn) WaitReadBuffer() (buffer *buf.Buffer, err error) {
 	c.rawConn.In.Lock()
 	defer c.rawConn.In.Unlock()
-	if c.pendingReadEOF {
-		c.pendingReadEOF = false
-		return nil, io.EOF
+	if c.pendingReadErr != nil {
+		err = c.pendingReadErr
+		c.pendingReadErr = nil
+		return nil, err
 	}
 	for c.rawConn.Input.Len() == 0 {
 		err = c.readRecord()
@@ -93,18 +101,13 @@ func (c *Conn) WaitReadBuffer() (buffer *buf.Buffer, err error) {
 		c.rawConn.RawInput.Bytes()[0] == recordTypeAlert {
 		err = c.readRecord()
 		if err != nil {
-			if errors.Is(err, io.EOF) {
-				// The alert says the peer is done, but the n bytes already read from Input are
-				// real data and MUST reach the caller. Read (the slow path) returns (n, io.EOF);
-				// the waiter cannot express that with the consumer's current contract, which
-				// discards a buffer when err != nil. Return the data with nil and hand the EOF
-				// to the next call: the stream ends one read later instead of losing its tail.
-				c.pendingReadEOF = true
-				c.readWaitOptions.PostReturn(buffer)
-				return buffer, nil
-			}
-			buffer.Release()
-			return nil, err
+			// The n bytes already read from Input are real data. Read (the slow path) returns
+			// (n, err) for ANY error here - close-notify EOF and a non-EOF alert/decrypt error
+			// alike - so the waiter must not release the buffer and turn the call into a pure
+			// (nil, err): that loses the tail. Return the data now and queue the exact error for
+			// the next call. This is the same delayed-delivery mechanism the EOF case used; it is
+			// generalised so the fast path cannot be lossier than the slow path on errors.
+			return c.deferReadErrorAfterData(buffer, err)
 		}
 	}
 

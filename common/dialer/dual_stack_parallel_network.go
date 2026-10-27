@@ -181,7 +181,7 @@ func (d *resolveParallelNetworkDialer) ListenSerialNetworkPacket(ctx context.Con
 		}
 		planStrategy := admission.strategy
 		if planStrategy == C.DomainStrategyAsIS && !plannableOriginal.IsValid() {
-			planStrategy = domainStrategyFor(candidates[0].Is6())
+			planStrategy = domainStrategyFor(classifyAddress(candidates[0]) == familyIPv6)
 		}
 		candidates = planCandidates(candidates, plannableOriginal, planStrategy).addresses()
 	}
@@ -242,7 +242,7 @@ func (d *resolveParallelNetworkDialer) schedule(ctx context.Context, network str
 	// ordered answer keeps it.
 	planStrategy := admission.strategy
 	if planStrategy == C.DomainStrategyAsIS && !plannableOriginal.IsValid() {
-		planStrategy = domainStrategyFor(len(candidates) > 0 && candidates[0].Is6())
+		planStrategy = domainStrategyFor(len(candidates) > 0 && classifyAddress(candidates[0]) == familyIPv6)
 	}
 	plan := planCandidates(candidates, plannableOriginal, planStrategy)
 	scheduler := d.schedulerFor(fallbackDelay, admission)

@@ -1356,11 +1356,17 @@ const maxSniffRounds = 64
 // ClientHello when the FakeIP reverse mapping already supplied the domain. It is a pure helper so
 // the branch can be pinned without constructing a real QUIC Initial packet: the production caller
 // reaches it only on sniff.ErrNeedMoreData, with the configured sniffers empty (an explicit packet
-// sniffer keeps its protocol contract), and with a non-empty metadata.Domain.
+// sniffer keeps its protocol contract), and with a domain that is already authoritative.
+//
+// The real FakeIP path rewrites Destination to Fqdn and sets FakeIP, leaving Domain empty; the
+// reverse-mapping fallback and the sniffer write Domain. Checking only Domain made the production
+// TUN path wait for the rest of the ClientHello even though the name was known. A Fqdn without
+// FakeIP is not treated as authoritative: it can be another transport's per-datagram destination.
 func packetSniffUsesKnownFakeIPDomain(metadata *adapter.InboundContext, action *R.RuleActionSniff, err error) bool {
-	return metadata.Domain != "" &&
-		len(action.PacketSniffers) == 0 &&
-		errors.Is(err, sniff.ErrNeedMoreData)
+	if len(action.PacketSniffers) != 0 || !errors.Is(err, sniff.ErrNeedMoreData) {
+		return false
+	}
+	return metadata.Domain != "" || (metadata.FakeIP && metadata.Destination.Fqdn != "")
 }
 
 func (r *Router) actionSniff(
@@ -1595,6 +1601,15 @@ func (r *Router) actionSniff(
 				if errors.Is(err, sniff.ErrNeedMoreData) {
 					// TODO: replace with generic message when there are more multi-packet protocols
 					r.logger.DebugContext(ctx, "attempt to sniff fragmented QUIC client hello")
+					// This is the real TUN/FakeIP path: the first datagram has just been read and
+					// kept for replay, and the authoritative name is in Destination.Fqdn. Waiting
+					// for another datagram cannot improve routing and can park the flow until the
+					// read deadline. The first loop above handles the caller-supplied-buffers shape;
+					// this loop is the one the production TUN path reaches.
+					if packetSniffUsesKnownFakeIPDomain(metadata, action, err) {
+						r.logger.DebugContext(ctx, "packet sniff: fakeip domain known; not waiting for the rest of a fragmented ClientHello")
+						goto finally
+					}
 					continue
 				}
 			}
