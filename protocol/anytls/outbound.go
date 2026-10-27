@@ -65,6 +65,11 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		Context:        ctx,
 		Options:        options.DialerOptions,
 		RemoteIsDomain: options.ServerIsDomain(),
+		// The AnyTLS server is the one hop every YouTube stream shares. On a dual-stack host
+		// whose active path is IPv4, resolving this name to a secondary interface's IPv6 first
+		// makes short requests look healthy while bulk video through the session stalls; see
+		// dialer.Options.PreferIPv4ForServer. Target destinations are not affected.
+		PreferIPv4ForServer: true,
 	})
 	if err != nil {
 		return nil, err

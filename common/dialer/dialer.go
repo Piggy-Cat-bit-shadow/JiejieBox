@@ -26,6 +26,19 @@ type Options struct {
 	DisableEmptyDirectCheck bool
 	DirectOutbound          bool
 	DefaultOutbound         bool
+	// PreferIPv4ForServer asks the resolver for this dialer's SERVER address to put IPv4 first.
+	//
+	// It exists for a proxy whose server name resolves to both families on a host whose ACTIVE
+	// network is IPv4: the IPv6 candidate can belong to a secondary interface (a cellular
+	// `pdp_ip0` beside Wi-Fi), so it is reachable and wins a Happy-Eyeballs race, but its bulk
+	// throughput is a fraction of the active path's. Field log: a Mac on IPv4 Wi-Fi with a
+	// cellular IPv6 route selected the proxy server over IPv6; short TLS requests still looked
+	// fine, while YouTube video (bulk TCP and UoT/QUIC through the same AnyTLS session) stalled.
+	//
+	// It is deliberately not a global domain strategy and not applied to target names: only the
+	// connection to the proxy server is affected, and an explicit resolver/legacy strategy still
+	// wins below.
+	PreferIPv4ForServer bool
 }
 
 // TODO: merge with NewWithOptions
@@ -82,6 +95,12 @@ func NewWithOptions(options Options) (N.Dialer, error) {
 		if hasDomainResolver {
 			server = dialOptions.DomainResolver.Server
 		}
+		// The server preference is applied only when no resolver policy has chosen a family.
+		// An explicit `domain_resolver.strategy` or the legacy `domain_strategy` below remains
+		// authoritative; this fills the default that would otherwise be AsIS.
+		if options.PreferIPv4ForServer {
+			dnsQueryOptions = preferIPv4ForServer(dnsQueryOptions)
+		}
 		if
 		//nolint:staticcheck
 		dialOptions.DomainStrategy != option.DomainStrategy(C.DomainStrategyAsIS) && (!hasDomainResolver || dialOptions.DomainResolver.Strategy == option.DomainStrategy(C.DomainStrategyAsIS)) {
@@ -99,6 +118,17 @@ func NewWithOptions(options Options) (N.Dialer, error) {
 		)
 	}
 	return dialer, nil
+}
+
+// preferIPv4ForServer fills the family policy for a proxy server name only when nothing else has
+// chosen one. An explicit resolver policy (or the legacy domain_strategy, applied after this call)
+// is authoritative; this changes the DEFAULT so a dual-stack server name is not decided by the
+// ancillary interface's IPv6 route.
+func preferIPv4ForServer(options adapter.DNSQueryOptions) adapter.DNSQueryOptions {
+	if options.Strategy == C.DomainStrategyAsIS {
+		options.Strategy = C.DomainStrategyPreferIPv4
+	}
+	return options
 }
 
 // ResolverAuthority names WHICH source of DNS authority a name resolved by this outbound would
