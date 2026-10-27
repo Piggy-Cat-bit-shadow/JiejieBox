@@ -47,3 +47,38 @@ func TestInterfaceUpdatedAfterCloseDoesNotReset(t *testing.T) {
 	inbound.InterfaceUpdated(context.Background())
 	require.Zero(t, stack.resets.Load(), "a closed inbound must not reset its stack")
 }
+
+// TestInterfaceUpdatedInterleavedWithStackStartDoesNotLoseReset pins the handoff hole: the update
+// goroutine observes stackStarted=false, then Start publishes true and finds no pending flag, and
+// only then does the update store the flag. The post-store re-check must recover that reset.
+func TestInterfaceUpdatedInterleavedWithStackStartDoesNotLoseReset(t *testing.T) {
+	stack := &resetCountingStack{}
+	inbound := &Inbound{tunStack: stack}
+
+	observedNotStarted := make(chan struct{})
+	releaseUpdate := make(chan struct{})
+	inbound.testBeforePendingResetStore = func() {
+		close(observedNotStarted)
+		<-releaseUpdate
+	}
+
+	updateDone := make(chan struct{})
+	go func() {
+		defer close(updateDone)
+		inbound.InterfaceUpdated(context.Background())
+	}()
+
+	<-observedNotStarted
+	// This is the interleaving the old code lost: Start runs while the update is between its
+	// stackStarted load and its pending store, so it sees no pending flag.
+	inbound.stackDidStart()
+	close(releaseUpdate)
+	<-updateDone
+
+	require.Equal(t, int32(1), stack.resets.Load(),
+		"the reset published after Start must be replayed exactly once")
+	require.False(t, inbound.stackResetPending.Load())
+
+	inbound.stackDidStart()
+	require.Equal(t, int32(1), stack.resets.Load(), "a duplicate activation must not replay it")
+}

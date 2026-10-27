@@ -134,6 +134,10 @@ type Inbound struct {
 	// duplicate-tag loser is closed by adapter/inbound/manager.go and nothing else announces it. Nil in
 	// production.
 	testCloseObserver func()
+	// testBeforePendingResetStore, when set, runs after InterfaceUpdated has observed that the stack
+	// is not started and before it stores the pending flag. It exists only for a deterministic
+	// interleaving test; nil in production.
+	testBeforePendingResetStore func()
 	// The two objects StartStatePostStart ACTIVATES are owned through a startupGate, because
 	// Scope.Close does not wait for a Start that is already running: the Scope's release of them can
 	// run while that activation is in flight, and NativeTun.Start programmes the platform routing
@@ -845,22 +849,33 @@ func (t *Inbound) InterfaceUpdated(ctx context.Context) {
 		return
 	}
 	if !t.stackStarted.Load() {
+		if t.testBeforePendingResetStore != nil {
+			t.testBeforePendingResetStore()
+		}
 		t.stackResetPending.Store(true)
-		return
+		// Re-check after publishing. stackDidStart may have loaded the pending flag before this
+		// store and returned; without this second check that reset would be lost forever.
+		if !t.stackStarted.Load() {
+			return
+		}
 	}
-	tunStack := t.tunStack
-	if tunStack != nil {
-		tunStack.ResetNetwork()
-	}
+	t.consumePendingReset()
 }
 
 func (t *Inbound) stackDidStart() {
 	t.stackStarted.Store(true)
-	if t.closed.Load() {
+	t.consumePendingReset()
+}
+
+// consumePendingReset is the single winner of the pending flag. Both the post-Start path and the
+// late InterfaceUpdated re-check go through it, so a reset requested during the handoff runs
+// exactly once and never before the stack is started.
+func (t *Inbound) consumePendingReset() {
+	if t.closed.Load() || !t.stackResetPending.Swap(false) {
 		return
 	}
-	if t.stackResetPending.Swap(false) && t.tunStack != nil {
-		t.tunStack.ResetNetwork()
+	if tunStack := t.tunStack; tunStack != nil {
+		tunStack.ResetNetwork()
 	}
 }
 
