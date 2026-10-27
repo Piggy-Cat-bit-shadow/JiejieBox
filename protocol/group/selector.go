@@ -36,7 +36,7 @@ var (
 	// per-flow behaviour of its own, so a chain through it is transparent and it may carry the
 	// fast_path group policy. See adapter.FastPathAuthorizedGroup.
 	_ adapter.FastPathAuthorizedGroup = (*Selector)(nil)
-	_ D.ParallelNetworkDialer          = (*Selector)(nil)
+	_ D.ParallelNetworkDialer         = (*Selector)(nil)
 )
 
 // FastPathTransparent implements adapter.FastPathAuthorizedGroup.

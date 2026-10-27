@@ -10,8 +10,6 @@ filippo.io/edwards25519 v1.2.0/go.mod h1:xzAOLCNug/yB62zG1bQ8uziwrIqIuxhctzJT18Q
 filippo.io/hpke v0.4.0 h1:p575VVQ6ted4pL+it6M00V/f2qTZITO0zgmdKCkd5+A=
 filippo.io/hpke v0.4.0/go.mod h1:EmAN849/P3qdeK+PCMkDpDm83vRHM5cDipBJ8xbQLVY=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
-github.com/Piggy-Cat-bit-shadow/cronet-go v0.0.1-143.0.7499.109-2.0.20261024085011-8aa139e9e140 h1:bMhtXsifHL7BXKEyNqBDuR3nAFUpAINc+AzGNuBMoJM=
-github.com/Piggy-Cat-bit-shadow/cronet-go v0.0.1-143.0.7499.109-2.0.20261024085011-8aa139e9e140/go.mod h1:T/mwtrpC4JlWfScw73CmSBvHzIvc7BatQ1MhRr+cYNw=
 github.com/Piggy-Cat-bit-shadow/cronet-go v0.0.1-143.0.7499.109-2.0.20261027185739-c9c0e6ec8845 h1:XrQFdMFSRa98LqwShtfpIbptxzAB8E1yLqXK8YEPRZU=
 github.com/Piggy-Cat-bit-shadow/cronet-go v0.0.1-143.0.7499.109-2.0.20261027185739-c9c0e6ec8845/go.mod h1:T/mwtrpC4JlWfScw73CmSBvHzIvc7BatQ1MhRr+cYNw=
 github.com/Piggy-Cat-bit-shadow/cronet-go/all v0.0.0-20261024085011-8aa139e9e140 h1:lVI+gCpR/3yOPcFap3K7nf+1ku14UjhJbDytcxmyfQw=
@@ -74,18 +72,12 @@ github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_amd64 v0.0.0-2026092920211
 github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_amd64 v0.0.0-20260929202119-8c68ce89873c/go.mod h1:G1otAaHTYRaXZ6mm8TxjvA/Kpyfz82yG2ATRu1RY2Po=
 github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_arm64 v0.0.0-20260929202119-8c68ce89873c h1:EIgOQRW9IabMbMAp6j+qOuZ9CDplHSHjTjf3jpPG6Is=
 github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_arm64 v0.0.0-20260929202119-8c68ce89873c/go.mod h1:AHSjG1k9wfhEfZhRCQCdUosL+qgyd//Ww9lwiRvBhhg=
-github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261024181210-f0f7ab2d6f60 h1:QiV2w72SoC0FUnBxEMXGMBwCYc1T9FUYboOmbOsP3i4=
-github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261024181210-f0f7ab2d6f60/go.mod h1:Y7IbYEm6E0KhhcxlLZjjxyAZy6Fkn0anFyiXYLqhqNg=
 github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261027185738-2daa76f5bd52 h1:HJQL4cvr0glF/ITizK01ke6lGTyWaRCFKy1RqwQCK4I=
 github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261027185738-2daa76f5bd52/go.mod h1:Y7IbYEm6E0KhhcxlLZjjxyAZy6Fkn0anFyiXYLqhqNg=
-github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261024214131-f601163d18d1 h1:MSC6dFHOE++ptKTspsrvywcnyswA1yUGKgZ2g4v++g0=
-github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261024214131-f601163d18d1/go.mod h1:K3Owt3xPhHugvlnlPPxZJ/exXdaJfEPOTNorGk4AXjo=
 github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261027185736-1729220c46c4 h1:BgQY/bwwYP6NWLuTuiQ7d4xIPGWTloEtHHbq3xiOkxo=
 github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261027185736-1729220c46c4/go.mod h1:K3Owt3xPhHugvlnlPPxZJ/exXdaJfEPOTNorGk4AXjo=
 github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261024181351-1ef2597cc129 h1:WrP9ZKKBMU2BvEB85T95vyI2wxICQx6EB7k1vpYm4Zo=
 github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261024181351-1ef2597cc129/go.mod h1:GeOfu2884pUacFYBnjUsYzUa7gU8iunJ2gMVXwvssRo=
-github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024234618-a0f9f68fec7d h1:/VSwnWX8ZpScLoRrPwOGkb52Nl8i+x//+deyOt5Q+Fc=
-github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024234618-a0f9f68fec7d/go.mod h1:liMb9HPIWcFWqF6VJ/ttIY8fTSRPdRltBeSeEcXt1Dk=
 github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261027185737-147ab164c5ae h1:4Anzy7baSTIkuywd/WS4Th7d69gYz8n7E+Qgs8z1aro=
 github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261027185737-147ab164c5ae/go.mod h1:liMb9HPIWcFWqF6VJ/ttIY8fTSRPdRltBeSeEcXt1Dk=
 github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261025012215-1bcb8e4d74d2 h1:Jw7E5vuXmT5IJGylrkuw9uL1h5tEDecywVfJYjVlkm0=

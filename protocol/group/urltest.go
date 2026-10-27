@@ -37,7 +37,7 @@ var (
 	_ adapter.OutboundGroup           = (*URLTest)(nil)
 	_ adapter.InterfaceUpdateListener = (*URLTest)(nil)
 	_ adapter.Referrer                = (*URLTest)(nil)
-	_ D.ParallelNetworkDialer          = (*URLTest)(nil)
+	_ D.ParallelNetworkDialer         = (*URLTest)(nil)
 	// Like a selector, a urltest only chooses which member serves a flow - the delay probes it runs
 	// in the background dial the members directly and never pass through the router, so they cannot
 	// inherit a business flow's policy. See adapter.FastPathAuthorizedGroup.

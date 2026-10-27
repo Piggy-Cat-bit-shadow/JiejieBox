@@ -36,7 +36,7 @@ var (
 	_ adapter.FlowAwareOutboundGroup = (*LoadBalance)(nil)
 	_ adapter.FailoverOutboundGroup  = (*LoadBalance)(nil)
 	_ adapter.Referrer               = (*LoadBalance)(nil)
-	_ D.ParallelNetworkDialer         = (*LoadBalance)(nil)
+	_ D.ParallelNetworkDialer        = (*LoadBalance)(nil)
 )
 
 // LoadBalance distributes new flows over its members and keeps each flow on the member it
