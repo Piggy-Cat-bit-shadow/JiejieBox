@@ -5,7 +5,7 @@
 > Reviewed against repository `Piggy-Cat-bit-shadow/sing-box`, branch `testing`.
 >
 > This module documents the fork's **`fast_path` configuration contract**: what the field means, where
-> it may be set, how it interacts with automatic AI detection and with the router's existing
+> it may be set, how it interacts with transparent direct chains and with the router's
 > eligibility gate, and which configurations are refused.
 >
 > If this document conflicts with current source or tests, **source and tests win**.
@@ -23,7 +23,7 @@ This module covers:
 - what `fast_path: true` does and does not authorise;
 - precedence when groups are nested;
 - why the authorisation is per-flow and is never written back to a node;
-- how it relates to `urltest`'s node selection and to automatic AI tag detection;
+- how it relates to `urltest`'s node selection and transparent direct chains;
 - common misconfigurations.
 
 Primary source anchors:
@@ -104,11 +104,11 @@ The field is **three-state**, and the distinction between the three is the whole
 
 | value | meaning |
 |---|---|
-| **not set** | No explicit decision. The existing **automatic AI tag detection** decides whether the group is authorised. |
+| **not set** | No explicit decision. A chain of transparent selectors ending at a real `direct` leaf is intrinsically authorised to attempt bypass. |
 | `"fast_path": true` | **Explicitly authorises** flows this group selects to attempt a Direct Fast Path. |
-| `"fast_path": false` | **Explicitly forbids** it. Even if the group's tag or name would be recognised by automatic AI detection, the group must not authorise. |
+| `"fast_path": false` | **Explicitly forbids** the group authorisation, including the intrinsic direct-chain grant. |
 
-`false` is a **decision**, not an absence. It overrides the automatic mechanism — see §8.
+`false` is a **decision**, not an absence. It overrides the intrinsic grant — see §8.
 
 The three-state config type exists precisely so that "explicitly false" is *findable*: a plain
 boolean could not distinguish "the operator wrote false" from "the operator wrote nothing", and those
@@ -116,7 +116,7 @@ two must behave differently.
 
 ### Two preconditions before any of this applies
 
-Resolution returns `false` — with no authorisation and no automatic detection — in two cases that come
+Resolution returns `false` — with no group authorisation — in two cases that come
 first, before the chain is examined at all:
 
 ```text
@@ -128,8 +128,8 @@ the leaf cannot be bypassed at all
 ```
 
 The second is the reason a proxy leaf can never be bypassed: authorisation is about the *group*, but
-the *leaf* still has to be something the platform could carry. A leaf never grants authorisation — it
-is consulted only for that one negative.
+the *leaf* still has to be something the platform could carry. When no explicit policy exists, a
+real direct leaf behind only transparent groups supplies the intrinsic grant.
 
 ---
 
@@ -177,6 +177,11 @@ this logical group authorises this flow to ATTEMPT a Direct Fast Path
 
 It is **not** a forced directive. After authorisation the flow still has to pass the `canFastBypass` /
 `BypassVerdict` eligibility gate, which is where the real decision is made.
+
+The implicit gate is consulted only where the entry consumes a bypass verdict: the nfqueue
+auto-redirect consumer. A plain TUN does not use the verdict to bypass the userspace path; this is
+an entry-mode distinction, not a blanket operating-system distinction. Explicit bypass actions are
+separate. See `route/fast_path.go`, `route/route.go`, and `adapter/inbound.go`.
 
 **The gate is refined by this field, not left unchanged.** `canFastBypass` takes a
 `fastPathAuthorized bool` argument, and exactly **one** blocker is relaxed because of it:
@@ -233,9 +238,8 @@ That matters concretely. One node may be referenced by several groups at once:
 节点A   <-  "🌍 普通国外流量"  group with no fast_path
 ```
 
-The two flows get **different** answers, and neither contaminates the other. A node is not "a fast
-node" because an AI group once selected it; the authorisation belongs to the group the flow went
-through, for that flow.
+The two flows are evaluated independently; depending on their leaf and chain they may have the same
+answer. Authorisation belongs to the chain for that flow, not to a node permanently.
 
 This is the property that keeps the feature a policy rather than a mode: without it, a single
 selection would permanently change how a node is treated.
@@ -256,13 +260,9 @@ outer group        fast_path: false   <-- decided here; inner values not consult
 Three consequences:
 
 1. The first explicit value wins; later ones in the chain are not consulted.
-2. **`fast_path: false` is an explicit decision**, so it stops the scan — including stopping automatic
-   AI tag detection from authorising further in.
-3. Automatic AI tag detection applies **only when no group in the whole chain sets the field
-   explicitly**.
-
-A chain with `fast_path` set nowhere is therefore the only case where the automatic mechanism is
-consulted at all.
+2. **`fast_path: false` is an explicit decision**, so it stops the scan and overrides the intrinsic grant.
+3. With no explicit policy, an all-transparent chain to a real direct leaf gets the intrinsic grant;
+   other chains do not. The former AI-tag fallback was removed (`c78edf21084`); tags do not authorise.
 
 ---
 
@@ -277,7 +277,8 @@ fast_path   decides whether the flow, having been selected, may ATTEMPT a Direct
 ```
 
 `urltest` measures and picks. `fast_path` does not pick anything and does not measure anything. A
-`urltest` group with no `fast_path` picks nodes exactly as before and authorises nothing.
+`urltest` group with no `fast_path` still picks nodes; a transparent chain to direct may receive the
+intrinsic authorisation described above.
 
 ---
 
@@ -291,7 +292,7 @@ fast_path   decides whether the flow, having been selected, may ATTEMPT a Direct
 4. Expecting fast_path: true to bypass FakeIP / sniffing / tracker
    / process / TLS or network options.                              -> none of them is bypassed
 5. Setting fast_path: false expecting "no opinion".                  -> it is an explicit DENY, and it
-                                                                        suppresses automatic AI detection
+                                                                        overrides the intrinsic grant
 6. Setting fast_path on an outer group while expecting an inner
    group's true to win.                                             -> the OUTER value is seen first
 7. Assuming a node selected once by a fast_path group becomes a

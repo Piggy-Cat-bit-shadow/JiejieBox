@@ -18,11 +18,11 @@ not all-platform PASS.* Every row below is graded on that basis.
 
 ---
 
-## 1. What actually runs
+## 1. Historical workflow census at v0.1.9
 
-**Re-measured at the `v0.1.9` baseline. There are now FOUR automatic gates, not one.** The previous
+**Measured at the `v0.1.9` baseline. There were four automatic gates in that census.** The previous
 version of this section named `verify.yml` as "the only automatic gate" and listed nine workflows; the
-tree has twelve, and three of them were entirely absent from that list. A reader who trusted the old
+tree then had twelve, and three of them were entirely absent from that list. A reader who trusted the old
 table would have believed that a `push` which moved release tooling, or the mobile contract, or the
 Windows runtime audit, was unchecked.
 
@@ -82,10 +82,10 @@ candidate can obtain its own release evidence.
 | **race, fork data paths** | `go test -race … ./common/trafficclass/... ./common/trafficsched/... ./common/dialer/... ./protocol/direct/... ./protocol/tun/... ./route/... ./adapter/...` | races in those 7 trees | **the root package is not in the list**, and neither is `./protocol/masque` |
 | race, config surface | `go test -race … ./option/...` | races in `option` | — |
 
-> **The critical gap, stated exactly:** no automatic gate contains a `go test` invocation that
-> **executes** the root package. The root `box_*_test.go` files — every start-time-validation,
-> physical-path and lifecycle contract test — are **compiled by CI and never executed by CI**. See §4
-> for the correct tag set to run them yourself.
+> **Historical v0.1.9 observation:** the root acceptance suite was compiled but not executed by the
+> then-declared source gate. Current `verify.yml` additionally declares a root-package test filtered
+> to `TestNetLogEventCount`. It does not follow that all root acceptance tests run; inspect the
+> current commands and actual run records. See §4 for the tag set to run root tests locally.
 
 **Merging a PR does not run the artifact workflows.** The artifacts (Apple, macOS, desktop Windows,
 Linux server, Android core, interop) are all manual dispatch that the release path then consumes.
@@ -151,11 +151,11 @@ rather than left as dead weight. The same pass checked
 the only regression cover for the install-directory macro. Neither is invoked by any workflow
 either, so they remain PRESENT and want wiring, not deletion.
 
-**Test tags referenced by nothing** — `trafficresearch` (`common/trafficsched/adaptive_research_test.go`),
+**Historical v0.1.9 inventory; recheck current workflow references:** test tags referenced by nothing then — `trafficresearch` (`common/trafficsched/adaptive_research_test.go`),
 `p2ios` (three `experimental/libbox` files), `tlsfragment_integration`
 (`common/tlsfragment/integration_test.go`, also `t.Skipf`-gated), `force_stdio` (referenced only by a
 `Makefile` target that is itself dead). **Test functions in these files never run in any declared
-configuration.**
+configuration at that historical review.**
 
 **A dead `Makefile` target** — `make test` cannot pass: its first command is untagged, and `TAGS_TEST`
 (used on two lines) is **never defined anywhere in the repository**, so it expands empty.
@@ -549,7 +549,8 @@ DEFAULT_BUILD_TAGS_OTHERS … the same list with with_naive_outbound removed
 1. **Do not claim anything is `VERIFIED_CI`.** No workflow-run record, run ID or artifact digest exists
    in the repository. Every CI statement is a statement about a **declaration**.
 2. **Do not cite `verify-evidence/` for the production baseline.** Its own README disqualifies it.
-3. **Do not cite the root `box_*_test.go` suite as executed by CI.** It is compiled and never run.
+3. **Do not infer that the root `box_*_test.go` suite ran from compile-only CI or from a different
+   filtered root test.** Check the current command and its run record.
 4. **Do not use `DEFAULT_BUILD_TAGS` to run the root package outside Apple.** Use
    `DEFAULT_BUILD_TAGS_OTHERS`.
 5. **Do not run `protocol/masque` or the root package untagged and treat the failures as regressions.**

@@ -1,5 +1,19 @@
 # Buffer ownership and memory
 
+**Dependency path scope:** `common/buf/*`, `common/bufio/*` and `common/cond.go` cited in this
+module are paths within the pinned `github.com/sagernet/sing` replacement, not this repository root.
+Resolve the active fork and version from `go.mod`; old line numbers and pool geometry require
+rechecking against that exact pinned source before use.
+
+## kTLS read-wait tail ownership after v0.1.9
+
+**VERIFIED_SOURCE**, testing target `011f3fdcd99`: the Linux/Go 1.25/`badlinkname` gated
+`common/ktls/ktls_read_wait.go` drains post-handshake messages before returning data. If an alert
+or record error follows data already read, `deferReadErrorAfterData` returns the buffer first and
+queues the error for the next read; releasing it on that branch would lose real tail bytes. See
+`common/ktls/ktls_read_wait_test.go`. These Linux-only paths were not executed in the Windows
+calibration; a Windows Go test cannot validate kernel TLS behavior.
+
 **Scope:** cross-cutting. The rules live in `common/sniff`, `common/bufgeom`,
 `transport/masque`, `route/conn*.go`, `route/splice.go`, `route/packet_destination_guard.go`,
 `common/trafficsched/gate.go`, and the retirement path in `route/reference.go`.

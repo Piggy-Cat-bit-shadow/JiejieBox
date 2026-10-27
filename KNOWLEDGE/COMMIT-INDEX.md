@@ -1,5 +1,20 @@
 # Commit navigation
 
+## Post-v0.1.9 navigation anchors (testing target 011f3fdcd99)
+
+These commits are navigation aids, not substitutes for current source, and do not by themselves
+establish external provenance or test results.
+
+| Commit | Subject and owner |
+|---|---|
+| `01be4b9d42d` | per-flow candidate admission → `modules/dns-demand.md` |
+| `c10ff9186cf` | empty DNS family logging → `modules/dns-demand.md` |
+| `c78edf21084` | remove ineffective AI tag fallback → `modules/fast-path-group-policy.md` |
+| `cd2316a704a` | consumer detour capability warnings → `modules/path-selection-validation.md` |
+| `0ef38b8ff91`, `98387b223d8` | Naive H3/H2 retry and budget → `modules/naive-http-transport.md` |
+| `20482fa067d` | FakeIP sniff, mapped address and kTLS boundaries → `modules/sniff.md` |
+| `3145d7dbdfc`, `1ff0af39110` | TUN handoff and post-start resets → `modules/libbox-platform-contract.md` |
+
 **This is an evolution index, not a changelog.** Each entry names the commits that produced the
 *current* behaviour, in the order they happened, so a reader can see why the code looks the way it does
 rather than only that something happened.

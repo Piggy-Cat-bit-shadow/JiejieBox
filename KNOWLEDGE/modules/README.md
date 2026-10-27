@@ -65,7 +65,7 @@ Established with `git ls-tree` at `e4b7e692` versus `a267e99`, so these are genu
 | `dns/transport/group` | 2,590 | `dns-demand.md` |
 | `internal/memmetrics` | 877 | `power-mobile-lifecycle.md` |
 | `transport/v2rayxhttp` | 7,181 | `xhttp-client-transport.md` |
-| `protocol/vless/encryption` | 1,771 | not covered — see "Not covered" below |
+| `protocol/vless/encryption` | historical count 1,771 | `xhttp-client-transport.md` — client encryption boundary |
 
 ## Heavily modified packages (present below the fork point, substantially rewritten)
 
@@ -87,7 +87,7 @@ What the fork added on top is documented per module with provenance.
 |---|---|
 | **`experimental/boxdd/**` — the Windows daemon** (52 `.go` files + a `.proto`) | **OWNED — `windows-daemon-security.md`.** Previously registered here as "the largest gap". It is the daemon/service/worker/peer-authentication surface: the named-pipe handshake, executable path and same-file resolution, the signer-byte-equality pin, the Authenticode allowlist, service installation and the updater. It is **not** upstream code and **not** covered incidentally by `libbox-platform-contract.md`, which records the client-facing ABI rather than the daemon's authorisation model. **CROSS-MODULE:** `daemon/**` (the in-process core API) → `libbox-platform-contract.md`; `cmd/internal/build_boxdd` and packaging → `build-pruning-release.md` + `ci-release.md` §5; `clients/desktop/**` is a separate repository. |
 | `option/schema.go` → `docs/schema.json` (the generated artifact) | The chain is: `option/schema.go` and the option structs → `schema.Generate` (`cmd/sing-box/cmd_schema.go:36`) → `make schema` (`Makefile:35-36`) → the tracked `docs/schema.json`. It had drifted - not on `fast_path` (that key is present 83 times), but on `User`: the artifact advertised `Username`/`Password` while the option structs carry `json:"username"` / `json:"password"`, so a consumer following the published schema wrote keys the parser does not accept. Fixed by regenerating the artifact and adding `cmd/sing-box/cmd_schema_artifact_test.go`, which compares `schema.Generate` output with the tracked file exactly; `verify.yml` runs it under the canonical tags. The generation contract is now executable: a change to an option struct that changes the schema fails the test instead of surviving until a manual `make schema`. The consumers are still outside the tree (`docs/configuration/schema.md`, `docs/JIEJIE-SERVER.md`, an editor-schema URL), which is why the gate compares bytes rather than trusting the docs. Evidence: `docs/schema.json`, `cmd/sing-box/cmd_schema_artifact_test.go`, `.github/workflows/verify.yml`; re-check `go test -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" -run TestTrackedSchemaMatchesTheGenerator ./cmd/sing-box`. |
-| `protocol/vless/encryption` (5 non-test files, new in the fork) | Its tests carry a `//go:build !race` split, so its ABI checks are absent under `-race`. |
+| `protocol/vless/encryption` | Client boundary covered in `xhttp-client-transport.md`; wire-level interop remains separately evidenced. Some ABI checks carry a `//go:build !race` split. |
 | Individual protocol wire formats (shadowsocks, trojan, tuic, hysteria2, …) | Upstream's. The fork patches specific behaviours; those are called out inside the module that owns the behaviour, not per protocol. |
 | The Apple / Android / desktop **client** source | Separate repositories, checked out as submodules (`clients/apple`, `clients/android`, `clients/desktop`) and empty in a clean worktree. `libbox-platform-contract.md` records only the core side. |
 | Clash API / V2Ray API internals | Upstream's, with fork-specific co-existence notes in `build-pruning-release.md`. |
@@ -98,8 +98,10 @@ What the fork added on top is documented per module with provenance.
 git log --oneline v0.1.9..HEAD -- <paths the module cites>
 ```
 
-If that is empty, the module's statements about those paths are still the reviewed ones. If it is not,
-read the module's `AI cautions` first, then the diff.
+If that is empty, it only means those paths have not changed in that range; it does not establish that
+the original statements were correct or that dependency pins and cross-module behavior are unchanged.
+Inspect the current source and tests for the claim. If the delta is nonempty, also read the module's
+`AI cautions` and map the changed paths before relying on the old description.
 
 Do **not** copy an older tag into this command from memory or from a report. The tag belongs to the
 current production baseline, which is recorded in `BASELINE.md` and **moves**; a stale tag here turns

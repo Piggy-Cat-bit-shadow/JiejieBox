@@ -132,7 +132,6 @@ Fork-wide: `BASELINE.md`, `INDEX.md`, `PROJECT.md`, `ARCHITECTURE.md`, `INVARIAN
 
 ## What this knowledge base does not cover
 
-`protocol/vless/encryption` (a new fork package with no recorded incident or acceptance rule),
 individual upstream protocol wire formats, the Clash/V2Ray API internals, and the Apple / Android /
 desktop **client** source — those are separate repositories, present as empty submodules in a clean
 worktree. `modules/README.md` says so explicitly rather than leaving silence to be mistaken for

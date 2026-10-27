@@ -1,5 +1,14 @@
 # Sniff
 
+## FakeIP and fragmented QUIC after v0.1.9
+
+**VERIFIED_SOURCE**, testing target `011f3fdcd99`: `route/route.go`'s
+`packetSniffUsesKnownFakeIPDomain` handles a FakeIP reverse mapping that already supplies the domain.
+On that eligible path the router stops waiting for the rest of a fragmented QUIC ClientHello; this
+does not justify suppressing sniffing for every fragmented packet. See
+`route/fragmented_quic_known_domain_test.go` and the helper's conditions. Source inspection is not
+evidence of interoperability against arbitrary QUIC clients.
+
 **Scope:** `common/sniff/*` (13 non-test files) and its consumer `route/route.go actionSniff`.
 
 **Provenance:** the fork modified `sniff.go`, `quic.go`, `http.go`, `tls.go` and added `wireguard.go`.
@@ -113,14 +122,15 @@ recorded as `metadata.SniffError` and is **not fatal** (`route/route.go:1251-125
   sentinels excluded (`:1530-1533`) and strict validation via `validSniffedDomain` (`:1544-1565`).
 * `metadata.DestinationAddresses` (`:1493`) is consumed as **dial candidates**
   (`route/conn.go:284-285`, `:523-531`, `:562-563`; `common/dialer/default_parallel_network.go:15-35`).
-* **`Destination` is not rewritten** (`route/route.go:1437-1444`). Domain rules read `Domain` with a
-  fallback to `Destination.Fqdn`; address rules keep reading `Destination`.
-* **The only rewrite is the explicit, deprecated per-action `OverrideDestination`** (`:541-546`,
-  `:1255-1260`, `:1405-1410`; port preserved). `route/rule/rule_action.go:515-516` marks it deprecated.
+* Sniffing alone does not rewrite `Destination`; an explicit, deprecated per-action
+  `OverrideDestination` is the sniff-related exception, with port preserved.
+* Separately, FakeIP reverse mapping in `route/route.go` saves `OriginDestination`, sets
+  `Destination.Fqdn` to the mapped name and marks `FakeIP`. This translation is not a sniff override.
 * A sniffed domain **disqualifies the Direct Offload fast path**:
   `BypassRefusedSniffedDomain` (`route/route.go:791-796`, `route/bypass_verdict.go:29`, `:54`).
-* **`metadata.Domain` has other producers** — FakeIP reverse mapping sets it
-  (`route/route.go:1108-1112`). "Domain is set" does **not** mean "a sniffer set it".
+* `metadata.Domain` is not the only representation of a known domain: the current FakeIP path can
+  leave it empty while setting `FakeIP` and `Destination.Fqdn`. See
+  `packetSniffUsesKnownFakeIPDomain` for the exact accepted cases.
 
 ---
 
@@ -244,7 +254,8 @@ reachability: the fork re-applied upstream patches that its own baseline already
 11. **Never rewrite `Destination` from a sniffed domain** outside the deprecated
     `OverrideDestination` (`route/route.go:1437-1444`), and never resolve a sniffed name without
     `validSniffedDomain` (`:1544-1565`).
-12. **Never treat `metadata.Domain != ""` as "sniffed".** FakeIP reverse mapping also sets it.
+12. **Do not infer the entire FakeIP state from `metadata.Domain`.** Current reverse mapping can
+    carry the known domain in `Destination.Fqdn` instead.
 13. **Never use `runtime.NumGoroutine` for the leak census** (`sniff_stream_test.go:21-47`, `:89-126`);
     the tests are calibrated around a scoped instrument.
 14. **Never attribute `quic.go:302-304` or `http.go:95` to the fork.** Blob equality at `e4b7e692`

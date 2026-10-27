@@ -29,12 +29,16 @@ reports a group as a hop, or reports the hop list backwards, describes a path th
 take.
 → `path-selection-validation.md`
 
-## 4. Start-time validation proves or refuses; it never exercises
+## 4. Start-time validation reports without exercising the path
 
 Validation runs **after** the dependency sort and **before** any component starts. It dials nothing,
 resolves nothing, changes no selection and consumes no rotation — provable from the object graph,
 which holds no dialer, no logger, no context and no clock. Where the leaf is not knowable it reports
-`Unknown` and stops, so a partly-verified path cannot be mistaken for a verified one.
+`Unknown` and stops, so a partly-verified path cannot be mistaken for a verified one. The current
+`common/physicalpath/dryrun.go` distinguishes fatal failures from capability warnings: an existing
+detour that cannot satisfy a consumer can warn while an affected flow still fails at runtime;
+missing references and other fatal classes must not be demoted wholesale. See the path-selection
+module for the exact taxonomy.
 
 **Two documented side effects exist** (a deprecation log and a memoised tag→object resolution). The
 prohibition is on dialling, resolving, selecting and mutating — not on logging.
@@ -50,9 +54,10 @@ and must never fabricate an edge.
 
 ## 6. Sniff metadata informs planning; it does not rewrite the destination
 
-A sniffed domain becomes DNS planning and dial candidates. `Destination` is **not** rewritten — the
-only rewrite is the explicit, deprecated `override_destination` action. And "`metadata.Domain` is set"
-does **not** mean "a sniffer set it": FakeIP reverse mapping sets it too.
+A sniffed domain becomes DNS planning and dial candidates; sniffing alone does not rewrite
+`Destination` unless the explicit deprecated `override_destination` action is used. Separately,
+FakeIP reverse mapping in `route/route.go` saves `OriginDestination` and replaces `Destination` with
+the mapped FQDN. Do not conflate that translation with a sniff-driven override.
 → `sniff.md`
 
 ## 7. Buffer ownership is a correctness contract, not an optimisation surface

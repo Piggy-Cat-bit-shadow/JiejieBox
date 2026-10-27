@@ -138,7 +138,8 @@ status read, not validation.
 | declared ownership has a resolver | dry run | the fail-closed path that would break every named destination |
 
 Every node of a detour chain is checked **at its own position**, not only the exit: a middle hop that
-cannot carry the flow makes the whole chain unusable even when the exit can.
+cannot carry that flow even when the exit can. This capability finding now warns at start; the
+affected flow may still fail at runtime. See the severity table immediately below.
 
 The dry run adds one deliberate new refusal: `destination_dns_ownership` on an outbound type that does
 not implement it. That field is fork-only and added in the same cycle, so **no configuration

@@ -285,8 +285,9 @@ field nil, so `decideHTTP3Availability` can distinguish "absent" from "present b
 
 ### A17 — Sniffed metadata never rewrites the destination
 
-A sniffed domain reaches routing as DNS planning and dial candidates; `Destination` is unchanged. The
-only rewrite is the explicit, deprecated `override_destination`.
+A sniffed domain reaches routing as DNS planning and dial candidates; sniffing alone does not rewrite
+`Destination` except through the explicit, deprecated `override_destination`. Independently, FakeIP
+reverse mapping saves the original and substitutes the FQDN in `route/route.go`.
 
 * **Why:** rewriting the destination from a sniffed name changes which rules match and which address is
   dialled — a policy change disguised as a convenience.

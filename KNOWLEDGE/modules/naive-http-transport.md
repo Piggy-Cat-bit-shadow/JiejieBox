@@ -1,5 +1,17 @@
 # Native Naive and the HTTP transport stack
 
+## Naive outbound H3 fallback after v0.1.9
+
+**VERIFIED_SOURCE**, testing target `011f3fdcd99`: `protocol/naive/outbound.go` is gated by
+`with_naive_outbound`. Its `quic_fallback_to_h2` option is opt-in and requires `quic: true`;
+otherwise construction rejects the combination. `protocol/naive/h3_fallback.go` retries eligible
+H3 transport failures over H2 and keeps a per-outbound, network-resettable 30-second failure window;
+attempt ordering prevents an older failure from overwriting a newer result. HTTP status responses and
+caller cancellation do not establish an H3 transport failure. The retry includes the CONNECT
+handshake, and reserves a retry budget. The Cronet outbound rejects certificate pin options and uTLS
+rather than silently treating them as supported. See `option/naive.go` and the fallback tests. This
+does not assert interoperability with every server.
+
 **Scope:** `protocol/naive/*` (inbound + tag-gated outbound), `transport/http/*` (the fork's largest
 single addition), `common/httpclient/*`, `route/packet_destination_guard.go`.
 
@@ -12,8 +24,9 @@ a dependency bump.
 What the fork did **not** add: a Caddy dependency. `go.mod` carries only `caddyserver/certmagic` and
 `caddyserver/zerossl` (ACME). The HTTP engines are `golang.org/x/net/http2` + `.../http2/h2c`
 (`protocol/naive/inbound.go:32-33`) and the fork's `github.com/sagernet/quic-go` (replaced at
-`go.mod:296`). A **separate client outbound** lives in the fork's `cronet-go` — it is not in this
-repository, which is why a server-side codec test passing proves nothing about the client.
+`go.mod` replacements). The client integration is in `protocol/naive/outbound.go`, while its
+Cronet engine lives in the separate `cronet-go` dependency. A server-side codec test passing proves
+nothing by itself about the client.
 
 **Load this module when changing:** the Naive inbound/outbound, HTTP/2 or HTTP/3 flow-control bounds,
 `transport/http`, `http_clients`, the UoT data path, or the packet-destination guard.

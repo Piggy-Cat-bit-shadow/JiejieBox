@@ -1,5 +1,19 @@
 # MTU, packet size and buffer geometry
 
+**Dependency path scope:** `common/buf/buffer_standard.go`, `common/buf/buffer_low_memory.go` and
+`common/low_memory*.go` cited below are in the pinned `github.com/sagernet/sing` replacement,
+not this repository root. Recheck its `go.mod` pin and source before relying on old geometry or line
+numbers. Concrete MTU values below are historical unless reconfirmed for the target configuration.
+
+## TUIC lower-tunnel ceiling after v0.1.9
+
+**VERIFIED_SOURCE**, testing target `011f3fdcd99`: `protocol/tuic/outbound.go` derives a QUIC
+payload ceiling from `dialer.DetourPathCapacity` when the lower tunnel proves one. It supplies or
+clamps the initial packet size, disables path MTU discovery for that proven ceiling, and refuses a
+ceiling below the QUIC Initial minimum. An unknown path does not assert a ceiling. The code passes
+the result to the pinned sing-quic client; this is a path-capacity constraint, not a measurement of
+the physical link MTU. See the TUIC tests and pinned fork before generalizing to another protocol.
+
 **Scope:** `common/bufgeom` (fork-created), the MASQUE MTU/PTB path, the hysteria2 hard ceiling, the
 WireGuard tunnel MTU, `common/physicalpath/status.go`'s MTU block, and the low-memory geometry profile.
 

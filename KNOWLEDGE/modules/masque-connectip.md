@@ -1,5 +1,13 @@
 # MASQUE / CONNECT-IP
 
+## Client lifecycle after v0.1.9
+
+**VERIFIED_SOURCE**, testing target `011f3fdcd99`: `protocol/masque/client.go` registers both
+the tunnel device and client close functions with the lifecycle scope during startup. Scope cleanup
+therefore covers the tunnel client as well as the device; do not replace it with a close that handles
+only the TUN. `transport/masque/client.go` owns the client close path. This does not establish
+device, server interoperability or performance results.
+
 **Scope:** `transport/masque/*` (the fork's dataplane), `protocol/masque/*` (the endpoint),
 `protocol/http`'s CONNECT path, and the `option/masque.go` surface.
 

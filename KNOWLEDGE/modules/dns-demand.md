@@ -8,6 +8,19 @@ the standalone unquiet case remains distinct. See `dns/empty_family_log_test.go`
 and negative controls. This is a logging distinction, not proof of all dual-stack recovery or
 device behavior. Check the current implementation and test result for the exact target revision.
 
+### Dual-stack lookup and candidate ownership
+
+`dns/router_dual_stack.go`'s `LookupFamilies` reuses `Router.Lookup`, preserving routing, transport,
+cache and response checks. Effective strict IPv4/IPv6 strategies issue only their selected family;
+other strategies publish each family as it completes. `common/dialer` captures an immutable
+`admissionPolicy` per flow, combining configured strategy with a local capability snapshot and its
+ownership epoch. Unknown capability does not by itself refuse a family. The candidate scheduler
+staggers attempts, advances on fast failure and closes losing connections, including late successes
+(`dual_stack_scheduler.go`). Socket creation is not a completed QUIC handshake. Tests include
+`dns/cross_generation_family_test.go`, `common/dialer/admission_policy_test.go` and
+`common/dialer/dual_stack_scheduler_test.go`. These are `VERIFIED_SOURCE` observations at the
+testing target; runtime and network-specific results require their own evidence.
+
 **Scope:** `dns/router.go`, `dns/client.go`, `dns/transport_manager.go`, `dns/transport/*` (including
 `fakeip` and the fork-created `group`), the DNS-facing route actions, and
 `adapter/fakeip_issuance.go`.

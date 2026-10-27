@@ -22,6 +22,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | `ACCEPTANCE.md` | **VERIFICATION_ONLY** | requirement → evidence → re-check command |
 | `COMMIT-INDEX.md` | **PROVENANCE_ONLY** | the SHAs behind a behaviour, grouped by theme |
 | `REFRESH.md` | **REFRESH_ONLY** | the refresh protocol; not a task mode |
+| `CALIBRATION-2026-10-28.md` | **REFRESH_ONLY** | current calibration scope and remaining gaps |
 | `docs/archive/**` | **HISTORY_ONLY** | how we got here; never current truth |
 | `sing-box_v0.1.5-v0.1.10_网络链路与Action-Release优化总结.md` | **HISTORY_ONLY** | the v0.1.5→v0.1.10 engineering narrative (link path + Action/Release); a point-in-time summary, not a module |
 
@@ -49,6 +50,12 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | which outbound types may carry `fast_path` | `modules/fast-path-group-policy.md` | §5 |
 | what `fast_path: true` does **not** bypass | `modules/fast-path-group-policy.md` | §6 |
 | nested group precedence | `modules/fast-path-group-policy.md` | §8 |
+| dual-stack DNS, candidate admission and network transition ownership | `modules/dns-demand.md`, `modules/core-lifecycle-runtime.md` | post-baseline sections |
+| TUN reset before/after stack start | `modules/libbox-platform-contract.md` | post-baseline TUN reset handoff |
+| Naive H3 to H2 retry | `modules/naive-http-transport.md` | post-baseline fallback |
+| VLESS encryption layer and cancellation | `modules/xhttp-client-transport.md` | VLESS encryption boundary |
+| TLS engine selection, ECH retry and fork pins | `modules/build-pruning-release.md` | TLS engines and ECH retry |
+| FakeIP known domain and fragmented QUIC sniff | `modules/sniff.md` | post-baseline FakeIP section |
 | DNS router, generations, cache commit | `modules/dns-demand.md` | §2 the cache-commit invariant |
 | FakeIP | `modules/dns-demand.md` | §3 |
 | consumer demand | `modules/dns-demand.md` | §4 |
@@ -132,7 +139,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | Path or symbol | Primary module | Section |
 |---|---|---|
 | `box.go` | `modules/core-lifecycle-runtime.md` | §2 start/close ordering |
-| `adapter/scope.go`, `adapter.Scope` | `modules/core-lifecycle-runtime.md` | §1 |
+| `adapter/lifecycle.go`, `adapter.Scope` | `modules/core-lifecycle-runtime.md` | §1 |
 | `common/runtimecoord` | `modules/core-lifecycle-runtime.md` | §3 |
 | `route/reference.go`, `ReferenceManager` | `modules/core-lifecycle-runtime.md` | §4 |
 | `common/physicalpath`, `common/routeflow` | `modules/path-selection-validation.md` | §2–3 |
@@ -151,7 +158,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | `cmd/internal/*`, `release/*` | `modules/build-pruning-release.md` | §4, §6 |
 | `option/schema.go`, `docs/schema.json`, `schema/generate.go` — the generated schema artifact | `modules/build-pruning-release.md` §4 (the generator) + `modules/README.md` §Not covered (its **stale status and re-check contract**) | §4 / the schema row |
 | `.github/workflows/*`, `scripts/ci/*` | `modules/ci-release.md` | §1–5 |
-| `protocol/vless/encryption` | **not covered** — see `modules/README.md` §Not covered | — |
+| `protocol/vless/encryption` | `modules/xhttp-client-transport.md` | VLESS encryption boundary |
 | `experimental/boxdd/**` — the Windows daemon, service, worker, named pipe | `modules/windows-daemon-security.md` | §1 (roles), §4 (handshake), §5 (Authenticode), §6 (the pin) |
 | `clients/{apple,android,desktop}` | separate repositories; only the core side is recorded | `modules/libbox-platform-contract.md` §6–7 |
 

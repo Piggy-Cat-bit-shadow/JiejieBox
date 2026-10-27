@@ -1,5 +1,17 @@
 # Core lifecycle and runtime coordination
 
+## Network transition ownership after v0.1.9
+
+**VERIFIED_SOURCE**, testing target `011f3fdcd99`: `adapter/network.go` distinguishes the
+reset generation, transition stability and an atomic `NetworkTransitionSnapshotter` observation.
+`route/network.go` implements the pair under `transitionAccess`: a newly published ownership epoch
+alone cannot prove a transition has settled, because DNS and transport reset may still be pending.
+Per-flow work must not treat a result captured in that window as a stable-network result. The reset
+generation advances when reset starts, not when it finishes; these related counters have different
+roles. Inspect `NetworkTransitionSnapshot`, `beginTransition` and `ResetNetwork` when changing the
+boundary. Tests include `common/dialer/transition_stability_test.go` and
+`common/dialer/reset_epoch_ownership_test.go`. This is not a device recovery measurement.
+
 **Scope:** `adapter.Scope`, `Box` start/close ordering, `common/runtimecoord`, `route.ReferenceManager`,
 `common/power`'s interaction with them.
 

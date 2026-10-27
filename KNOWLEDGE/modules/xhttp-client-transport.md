@@ -1,5 +1,17 @@
 # XHTTP client transport
 
+## VLESS encryption boundary after v0.1.9
+
+**VERIFIED_SOURCE**, testing target `011f3fdcd99`: `option/vless.go` exposes optional VLESS
+`encryption`; empty or `none` leaves it off. `protocol/vless/outbound.go` parses and initializes
+the client encryption layer and wraps a dialed transport before VLESS uses it. The
+`protocol/vless/encryption` package implements the `mlkem768x25519plus` client handshake,
+independently of TLS; `client.go` records adaptation from starifly via Leadaxe and states that the
+server/decryption half was not taken. `protocol/vless/encryption.go` guards the blocking handshake
+against context cancellation. Tests include `protocol/vless/encryption_test.go`,
+`encryption_guard_test.go` and package `encryption` tests. Do not infer server support or wire
+interoperability from client parsing or unit tests alone; some ABI tests are excluded under `-race`.
+
 > Status: `VERIFIED_SOURCE`
 >
 > Reviewed against repository `Piggy-Cat-bit-shadow/sing-box`, branch `testing`,

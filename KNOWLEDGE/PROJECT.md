@@ -27,13 +27,13 @@ work went into making existing behaviour provable, bounded and reversible.
 
 | Area | What the fork did | Module |
 |---|---|---|
-| **Start-time proof** | `common/physicalpath` + `common/routeflow`: refuse a configuration whose declared chain cannot carry the flow it routes, without dialling, resolving, selecting or consuming rotation | `path-selection-validation.md` |
+| **Start-time proof** | `common/physicalpath` + `common/routeflow`: report capability warnings and refuse fatal structural/promise failures without dialling, resolving, selecting or consuming rotation | `path-selection-validation.md` |
 | **Runtime coordination** | `common/runtimecoord`: one monotonic network generation, identity-based rebuild leases, a coalescing window, and a foreground/automatic probe distinction | `core-lifecycle-runtime.md` |
 | **Power / device axis** | `common/power`: platform **facts** in, policy out; three post-wake reuse bands over the pause/resume boundary | `power-mobile-lifecycle.md` |
 | **Upload scheduler + traffic class** | `common/trafficsched`, `common/trafficclass`, `route/dial_governor.go`. `traffic_scheduler` and `traffic_class` **do not exist upstream** — a config using either is not loadable by official sing-box | `data-path-optimization.md` |
 | **Direct Offload** | a provably-equivalent direct flow may leave userspace — with the honest limit that the verdict is a data-path bypass **only** in Linux `auto_redirect` | `data-path-optimization.md` |
 | **MASQUE / CONNECT-IP** | the whole `transport/masque` dataplane, DNS assignment, the bootstrap/inner resolver split, PREF64, a proven MTU ceiling. The **endpoint skeleton** is upstream's | `masque-connectip.md` |
-| **Native Naive** | a NaiveProxy **server inbound** with UoT v1/v2, padding, masquerade, pre-authentication limits and a target ACL. The client outbound lives in the fork's `cronet-go`, not here | `naive-http-transport.md` |
+| **Native Naive** | a NaiveProxy server inbound with UoT, padding, masquerade, pre-authentication limits and a target ACL; the tag-gated client outbound is integrated here and uses forked `cronet-go` | `naive-http-transport.md` |
 | **HTTP transport** | `transport/http` is the fork's largest single addition: 90 files, 137 commits | `naive-http-transport.md` |
 | **Load-balance group + bounded failover** | fork-only `type: loadbalance`; failover is opt-in, with **one retry budget for the whole flow across nesting** | `data-path-optimization.md`, `path-selection-validation.md` |
 | **Buffer geometry** | `common/bufgeom`: poolability and allocation-ceiling rules with a `//go:build race` split | `mtu-and-geometry.md`, `buffer-ownership.md` |

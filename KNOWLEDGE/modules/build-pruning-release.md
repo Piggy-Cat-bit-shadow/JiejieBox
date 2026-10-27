@@ -1,5 +1,31 @@
 # Build, pruning and release profiles
 
+## Protocol registration and build gates at the testing target
+
+**VERIFIED_SOURCE** at `011f3fdcd99`: `include/registry.go` registers TUN, redirect, SOCKS,
+HTTP, Shadowsocks, Snell, VMess, Trojan, Naive inbound, VLESS, AnyTLS and Mieru; outbound
+registration includes selectors, URLTest and load balance, plus those applicable protocols.
+MASQUE is an endpoint. `include/quic.go` registers Hysteria, TUIC and Hysteria2 under `with_quic`;
+`include/naive_outbound.go` registers Naive outbound only under `with_naive_outbound`. The tracked
+`release/DEFAULT_BUILD_TAGS` includes that tag, while `DEFAULT_BUILD_TAGS_OTHERS` does not. Read
+the current profile and stub files for a particular target: a registration or option type alone is
+not proof a distributed binary contains the implementation, nor proof of interoperability.
+
+### TLS engines and ECH retry
+
+`common/tls/client.go` selects Apple or Windows engines when configured, otherwise Go's engine,
+Reality, or uTLS; `common/tls/utls_client.go` requires `with_utls`. The default TLS dialer closes
+the failed connection and retries once with a server-provided ECH retry config only when the error
+is `ECHRejectionError` with a retry list and the selected config supports ECH. The one-retry flag
+prevents an unbounded retry loop. Reality and uTLS share the first-flight transform helper in
+`common/tls/utls_client.go`; inspect the selected engine before assuming feature parity. These are
+`VERIFIED_SOURCE` facts at `011f3fdcd99`, not a claim that every platform or server was exercised.
+
+The Go module's `replace` directives, not `require` versions alone, select the forked `sing`,
+`sing-tun`, `sing-quic`, `quic-go`, `cronet-go` and `utls` source. Resolve the actual pseudo-version
+in `go.mod` and compare the nested test module separately; Git submodule gitlinks for clients are
+distinct from Go module pins and do not establish the contents of a published binary.
+
 **Scope:** `include/*` (the registry and the tag-polar pruning pairs), `release/*` (profiles, version,
 pins), `cmd/internal/*` (builders and generators), `Makefile`, `.gitmodules`.
 

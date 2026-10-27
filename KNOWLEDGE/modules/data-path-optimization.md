@@ -211,8 +211,9 @@ managed domain by construction).
 > `FastPathTransparent() bool`. Without that exception the feature would be inert on every group
 > configuration, because a flow routed into a group necessarily has `len(chain) >= 2`.
 >
-> So the rule is now: **a chain of transparent groups is no longer treated as a chain**; any group that
-> is not declared transparent keeps the original refusal. The owner of that decision is
+> At the current target, the first explicit group policy wins; in its absence the transparent chain
+> to a real direct leaf has intrinsic authorization. Explicit false suppresses it. Opaque groups keep
+> the refusal. Authorization still does not replace the leaf and metadata eligibility checks. The owner is
 > `fast-path-group-policy.md` §6, which is where the capability contract and its per-type table live —
 > this module records only that the Direct Offload verdict changed shape.
 

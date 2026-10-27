@@ -6,6 +6,25 @@ Every row is a **requirement**, the evidence that exists for it, its **evidence 
 
 ## How to read this file
 
+Post-baseline checks run locally at target `011f3fdcd99` on 2026-10-28 (unit tests, not device or CI evidence):
+
+| Requirement | Test | Result |
+|---|---|---|
+| TUN start/reset handoff and post-start updates | `go test ./protocol/tun -run TestInterfaceUpdated -count=1` | PASS |
+| Dual-stack family empty answer logging | `go test ./dns -run 'TestFamilyProbeEmptyAnswerIsNotAnError\|TestUnquietEmptyAnswerStillLogsAnError' -count=1` | PASS |
+| Known FakeIP domain / fragmented sniff | `go test ./route -run 'TestPacketSniffKnownFakeIPDomainDecision\|TestKnownFakeIPDestinationStopsFragmentedSniffOnFirstDatagram' -count=1` | PASS |
+| Family lookup generation and stable transition ownership | `go test ./dns ./common/dialer -run 'TestLookupFamiliesDoesNotMixGenerations\|TestDialEpochPredicate\|TestDialPrefersTheAtomicSnapshotWhenOffered' -count=1` | PASS |
+| Fast-path default and explicit false | `go test ./route -run 'TestFastPathUnsetAndTrueAreIndistinguishable\|TestFastPathFalseOnlySuppressesTheIntrinsicShape\|TestDirectFastPathSurvivesTransparentSelectorWithNoPolicy\|TestDirectFastPathSelectorExplicitFalseSuppressesTheAttempt' -count=1` | PASS |
+
+The pipe escapes above are Markdown table escaping; use ordinary `|` in the shell regex.
+
+On Windows 10 Enterprise LTSC 2021 build 19044 with Go 1.25.5, the broader
+`go test -tags with_utls ./common/tls -count=1` **failed**: `TestWindowsClientHandshakeTLS13`,
+`TestWindowsClientRoundtripTLS13`, and `TestWindowsClientTLS13PostHandshakeConcurrentWrite`
+returned `tls handshake: read handshake: unexpected EOF`; a filtered rerun reproduced all three.
+The cause has not been established. The filtered uTLS fingerprint/ECH and first-flight transform
+tests passed on the same host. Neither result establishes behavior on other Windows versions.
+
 * Run everything from the repository root with the environment in `ci-release.md` §4.
 * `$OTHERS` = the contents of `release/DEFAULT_BUILD_TAGS_OTHERS`. **Most commands need it**, and the
   root package's tests fail without it.
@@ -45,12 +64,11 @@ A clean `go vet -tags "$OTHERS" .` proves the second group touches no root inter
 and `box_test` as two packages in one directory and forbids the external one from naming unexported
 identifiers. Verified, exit 0; and all nineteen contain no `reflect`, `unsafe` or `go:linkname`.
 
-**Also worth knowing when reasoning about coverage:** these tests are **compiled by CI but never
-executed by it.** `verify.yml` runs `go test -run '^$' ./...` (zero tests run) and its race step lists
-explicit package paths that do not include `.`. See `modules/ci-release.md` §2 and its AI caution. So a
-change that breaks compilation fails loudly, while a change that merely relocates silently-running
-tests would remove **no** CI coverage — because there is none to remove. The acceptance commands in this
-file are the only place these tests are actually run.
+**Coverage qualification, 2026-10-28:** `verify.yml` declares a root-package run filtered to
+`TestNetLogEventCount`, as well as a compile-only `go test -run '^$' ./...`; its listed race packages
+do not include the root. This does not establish that the other root acceptance tests execute in CI,
+or that any specific workflow run passed. Inspect current workflow definitions and run records before
+making either claim.
 
 ---
 

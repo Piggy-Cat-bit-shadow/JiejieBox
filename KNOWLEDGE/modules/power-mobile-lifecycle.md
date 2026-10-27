@@ -1,5 +1,14 @@
 # Power and mobile lifecycle
 
+## Progressive memory release after v0.1.9
+
+**VERIFIED_SOURCE**, testing target `011f3fdcd99`: `adapter/network.go` distinguishes optional
+`TrimCaches` (only entries the read path would refuse), `TrimMemory` (reusable pools without a
+network reset or touching live traffic) and aggressive `ReleaseMemory` (reset and release). Their
+implementations are in `route/network.go`. Do not substitute a full network reset for an ordinary
+progressive trim. `box_lifecycle.go` still separates a resume from `woke()`: the latter publishes a
+reuse boundary before releasing the paused level. These source observations are not device tests.
+
 **Scope:** `common/power/governor.go`, `common/runtimecoord/platform_events.go`, `box_lifecycle.go`,
 `experimental/libbox/platform_events.go`, `service/oomkiller`, `internal/memmetrics`, and the reuse
 policy in `route/reference.go`.
