@@ -3997,6 +3997,9 @@
             "initial_packet_size": {
               "type": "integer"
             },
+            "initial_packet_size_ceiling": {
+              "type": "integer"
+            },
             "disable_path_mtu_discovery": {
               "type": "boolean"
             },
@@ -4211,6 +4214,9 @@
               "type": "integer"
             },
             "initial_packet_size": {
+              "type": "integer"
+            },
+            "initial_packet_size_ceiling": {
               "type": "integer"
             },
             "disable_path_mtu_discovery": {
@@ -5831,6 +5837,9 @@
         "initial_packet_size": {
           "type": "integer"
         },
+        "initial_packet_size_ceiling": {
+          "type": "integer"
+        },
         "disable_path_mtu_discovery": {
           "type": "boolean"
         },
@@ -6014,6 +6023,9 @@
               "type": "integer"
             },
             "initial_packet_size": {
+              "type": "integer"
+            },
+            "initial_packet_size_ceiling": {
               "type": "integer"
             },
             "disable_path_mtu_discovery": {
@@ -7137,6 +7149,9 @@
             "initial_packet_size": {
               "type": "integer"
             },
+            "initial_packet_size_ceiling": {
+              "type": "integer"
+            },
             "disable_path_mtu_discovery": {
               "type": "boolean"
             },
@@ -7303,6 +7318,9 @@
               "type": "integer"
             },
             "initial_packet_size": {
+              "type": "integer"
+            },
+            "initial_packet_size_ceiling": {
               "type": "integer"
             },
             "disable_path_mtu_discovery": {
@@ -7489,6 +7507,9 @@
               "type": "integer"
             },
             "initial_packet_size": {
+              "type": "integer"
+            },
+            "initial_packet_size_ceiling": {
               "type": "integer"
             },
             "disable_path_mtu_discovery": {
@@ -9222,6 +9243,9 @@
               "type": "integer"
             },
             "initial_packet_size": {
+              "type": "integer"
+            },
+            "initial_packet_size_ceiling": {
               "type": "integer"
             },
             "disable_path_mtu_discovery": {
@@ -13092,6 +13116,9 @@
             "initial_packet_size": {
               "type": "integer"
             },
+            "initial_packet_size_ceiling": {
+              "type": "integer"
+            },
             "disable_path_mtu_discovery": {
               "type": "boolean"
             },
@@ -13355,6 +13382,9 @@
               "type": "integer"
             },
             "initial_packet_size": {
+              "type": "integer"
+            },
+            "initial_packet_size_ceiling": {
               "type": "integer"
             },
             "disable_path_mtu_discovery": {
@@ -13623,6 +13653,9 @@
               "type": "integer"
             },
             "initial_packet_size": {
+              "type": "integer"
+            },
+            "initial_packet_size_ceiling": {
               "type": "integer"
             },
             "disable_path_mtu_discovery": {
@@ -16053,6 +16086,9 @@
               "type": "integer"
             },
             "initial_packet_size": {
+              "type": "integer"
+            },
+            "initial_packet_size_ceiling": {
               "type": "integer"
             },
             "disable_path_mtu_discovery": {
@@ -18552,6 +18588,9 @@
                         "initial_packet_size": {
                           "type": "integer"
                         },
+                        "initial_packet_size_ceiling": {
+                          "type": "integer"
+                        },
                         "disable_path_mtu_discovery": {
                           "type": "boolean"
                         },
@@ -18744,6 +18783,9 @@
                             "type": "integer"
                           },
                           "initial_packet_size": {
+                            "type": "integer"
+                          },
+                          "initial_packet_size_ceiling": {
                             "type": "integer"
                           },
                           "disable_path_mtu_discovery": {
