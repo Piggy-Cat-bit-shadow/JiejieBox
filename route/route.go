@@ -1075,7 +1075,7 @@ func (r *Router) preMatchFlow(ctx context.Context, metadata *adapter.InboundCont
 		}
 		var newDestination netip.Addr
 		for _, address := range metadata.DestinationAddresses {
-			if address.Is4() == packetDestination.IsIPv4() {
+			if (address.Is4() || address.Is4In6()) == (packetDestination.Addr.Is4() || packetDestination.Addr.Is4In6()) {
 				newDestination = address
 				break
 			}
@@ -1217,7 +1217,7 @@ func (r *Router) prepareMatchMetadata(ctx context.Context, metadata *adapter.Inb
 			r.logger.DebugContext(ctx, "found reserve mapped domain: ", metadata.Domain)
 		}
 	}
-	if destinationAddress.Is4() {
+	if destinationAddress.Is4() || destinationAddress.Is4In6() {
 		metadata.IPVersion = 4
 	} else if destinationAddress.Is6() {
 		metadata.IPVersion = 6

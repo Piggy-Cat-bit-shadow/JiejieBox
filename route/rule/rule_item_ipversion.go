@@ -15,8 +15,9 @@ func NewIPVersionItem(isIPv6 bool) *IPVersionItem {
 }
 
 func (r *IPVersionItem) Match(metadata *adapter.InboundContext) bool {
+	destinationIsIPv6 := metadata.Destination.Addr.Is6() && !metadata.Destination.Addr.Is4In6()
 	return metadata.IPVersion != 0 && metadata.IPVersion == 6 == r.isIPv6 ||
-		metadata.Destination.IsIP() && metadata.Destination.IsIPv6() == r.isIPv6
+		metadata.Destination.IsIP() && destinationIsIPv6 == r.isIPv6
 }
 
 func (r *IPVersionItem) String() string {

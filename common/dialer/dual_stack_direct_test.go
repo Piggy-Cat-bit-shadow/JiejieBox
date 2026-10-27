@@ -27,6 +27,24 @@ import (
 // The fix discovers the owner from the dialer chain instead of taking it as a parameter, so the
 // public signature is unchanged and no caller has to know the concept exists.
 
+// TestParallelDialerFollowsTheCandidateFamily pins the per-attempt dialer choice. A dual-stack
+// scheduler hands DialParallelInterface one address at a time; taking the IPv4 dialer for both
+// families made `inet4_bind_address` apply to IPv6 candidates and ignored `inet6_bind_address`.
+func TestParallelDialerFollowsTheCandidateFamily(t *testing.T) {
+	dialer := &DefaultDialer{}
+	ipv4 := M.SocksaddrFrom(netip.MustParseAddr("192.0.2.1"), 443)
+	ipv6 := M.SocksaddrFrom(netip.MustParseAddr("2001:db8::1"), 443)
+	mapped := M.SocksaddrFrom(netip.MustParseAddr("::ffff:192.0.2.1"), 443)
+
+	require.Same(t, &dialer.dialer4.Dialer, dialer.parallelDialer("tcp", ipv4))
+	require.Same(t, &dialer.dialer6.Dialer, dialer.parallelDialer("tcp", ipv6))
+	require.Same(t, &dialer.dialer4.Dialer, dialer.parallelDialer("tcp", mapped),
+		"an IPv4-mapped address is an IPv4 destination and must use the IPv4 dialer")
+	require.Same(t, &dialer.udpDialer4, dialer.parallelDialer("udp", ipv4))
+	require.Same(t, &dialer.udpDialer6, dialer.parallelDialer("udp", ipv6))
+	require.Same(t, &dialer.udpDialer4, dialer.parallelDialer("udp", mapped))
+}
+
 // ownerDialer is a real DefaultDialer whose connection attempts are delegated to a fake, so the
 // test exercises the production type and the production scheduler factory.
 type ownerDialer struct {

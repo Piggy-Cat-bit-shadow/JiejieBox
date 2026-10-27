@@ -369,6 +369,69 @@ func TestNetworkEntryPointPreservesTheOriginalWithinItsFamily(t *testing.T) {
 		"the endpoint the application selected leads its family; recovery does not displace it")
 }
 
+// TestNetworkEntryPointAsISKeepsTheOriginalFamily pins the third strategy: AsIS has no operator
+// preference, so the family of the endpoint the application selected leads. Deriving the planner's
+// preference from the caller's first candidate overrode that too.
+func TestNetworkEntryPointAsISKeepsTheOriginalFamily(t *testing.T) {
+	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyAsIS)
+	otherIPv4 := netip.MustParseAddr("112.53.55.92")
+	originalIPv6 := netip.MustParseAddr("2409:8c54:871:2003::15")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn, err := chain.dialSerialNetwork(ctx, "tcp", M.SocksaddrFrom(originalIPv6, 80),
+		[]netip.Addr{otherIPv4, originalIPv6})
+	require.NoError(t, err)
+	conn.Close()
+
+	tried := chain.tried()
+	require.NotEmpty(t, tried)
+	require.Equal(t, originalIPv6, tried[0],
+		"AsIS must keep the application's own family first, not the caller's list order")
+}
+
+// TestNetworkEntryPointHonorsPreferIPv4OverTheListOrder pins the operator's preference at the network
+// entry point. A list from the caller may lead with IPv6 (resolver order, TUN metadata, a cached
+// answer); `prefer_ipv4` must still make the IPv4 family lead. Deriving the planner's preference from
+// the first candidate instead silently overrules the configured policy.
+func TestNetworkEntryPointHonorsPreferIPv4OverTheListOrder(t *testing.T) {
+	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyPreferIPv4)
+	originalIPv4 := netip.MustParseAddr("112.53.55.92")
+	otherIPv6 := netip.MustParseAddr("2409:8c54:871:2003::15")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn, err := chain.dialSerialNetwork(ctx, "tcp", M.SocksaddrFrom(originalIPv4, 80),
+		[]netip.Addr{otherIPv6, originalIPv4})
+	require.NoError(t, err)
+	conn.Close()
+
+	tried := chain.tried()
+	require.NotEmpty(t, tried)
+	require.Equal(t, originalIPv4, tried[0],
+		"prefer_ipv4 must lead even when the caller's list starts with IPv6")
+}
+
+// TestNetworkEntryPointHonorsPreferIPv6OverTheListOrder is the mirror: an IPv4-leading list must not
+// turn `prefer_ipv6` into an IPv4-first race.
+func TestNetworkEntryPointHonorsPreferIPv6OverTheListOrder(t *testing.T) {
+	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyPreferIPv6)
+	originalIPv4 := netip.MustParseAddr("112.53.55.92")
+	otherIPv6 := netip.MustParseAddr("2409:8c54:871:2003::15")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn, err := chain.dialSerialNetwork(ctx, "tcp", M.SocksaddrFrom(originalIPv4, 80),
+		[]netip.Addr{originalIPv4, otherIPv6})
+	require.NoError(t, err)
+	conn.Close()
+
+	tried := chain.tried()
+	require.NotEmpty(t, tried)
+	require.Equal(t, otherIPv6, tried[0],
+		"prefer_ipv6 must lead even when the caller's list starts with IPv4")
+}
+
 // ---------------------------------------------------------------------------------------------
 // 2. The healthy literal must not be delayed by discovery
 // ---------------------------------------------------------------------------------------------

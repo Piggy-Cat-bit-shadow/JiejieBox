@@ -209,7 +209,24 @@ func (d *resolveParallelNetworkDialer) schedule(ctx context.Context, network str
 	if admission.admits(original) {
 		plannableOriginal = original
 	}
-	plan := planCandidates(candidates, plannableOriginal, domainStrategyFor(len(candidates) > 0 && candidates[0].Is6()))
+
+	// The planner takes a PREFERENCE and has no strict mode, so a strict policy is expressed by
+	// filtering the list - which `withoutFamilyExcluded` has already done by the time this is called.
+	// The preference itself must come from the EFFECTIVE DOMAIN STRATEGY, not from the first
+	// candidate: a caller's list (TUN metadata, a cached answer, resolver order) can legitimately
+	// lead with the family the operator did not prefer. Deriving "prefer IPv6" from `candidates[0]`
+	// made `prefer_ipv4` race IPv6 first whenever the list did, which is a policy inversion rather
+	// than an ordering detail.
+	//
+	// AsIS is the one strategy that has no preference of its own: it follows the application's
+	// original family when one is present (the planner already implements that from the original
+	// argument), and otherwise follows the list's leading family so a caller that supplied an
+	// ordered answer keeps it.
+	planStrategy := admission.strategy
+	if planStrategy == C.DomainStrategyAsIS && !plannableOriginal.IsValid() {
+		planStrategy = domainStrategyFor(len(candidates) > 0 && candidates[0].Is6())
+	}
+	plan := planCandidates(candidates, plannableOriginal, planStrategy)
 	scheduler := d.schedulerFor(fallbackDelay, admission)
 	// The same admission rule the plan was built under, handed to the scheduler so a LATE candidate - which
 	// never passes through planCandidates - cannot reintroduce a family the policy excluded. The predicate

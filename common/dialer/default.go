@@ -379,13 +379,13 @@ func (d *DefaultDialer) DialContext(ctx context.Context, network string, address
 		conn, err := listener.ListenNetworkNamespace[net.Conn](ctx, d.netns, func() (net.Conn, error) {
 			switch N.NetworkName(network) {
 			case N.NetworkUDP:
-				if !address.IsIPv6() {
+				if !isIPv6DialAddress(address.Addr) {
 					return d.udpDialer4.DialContext(ctx, network, address.String())
 				} else {
 					return d.udpDialer6.DialContext(ctx, network, address.String())
 				}
 			}
-			if !address.IsIPv6() {
+			if !isIPv6DialAddress(address.Addr) {
 				return DialSlowContext(&d.dialer4, ctx, d.netns, network, address)
 			} else {
 				return DialSlowContext(&d.dialer6, ctx, d.netns, network, address)
@@ -426,12 +426,12 @@ func (d *DefaultDialer) dialParallelInterfaceEpoch(ctx context.Context, network 
 	if fallbackDelay == 0 {
 		fallbackDelay = d.networkFallbackDelay
 	}
-	var dialer net.Dialer
-	if N.NetworkName(network) == N.NetworkTCP {
-		dialer = d.dialer4.Dialer
-	} else {
-		dialer = d.udpDialer4
-	}
+	// The per-attempt dialer must follow the CANDIDATE's family. This used to take dialer4
+	// unconditionally, so with `inet4_bind_address` set an IPv6 candidate was dialled from an IPv4
+	// local address (and `inet6_bind_address` was ignored on the IPv6 half); with neither bind the
+	// two are copies and the bug was invisible. The scheduler races one family per attempt, and the
+	// address is already known here, so there is no reason to guess.
+	dialer := *d.parallelDialer(network, address)
 	fastFallback := time.Since(d.networkLastFallback.Load()) < C.TCPTimeout
 	var (
 		conn      net.Conn
@@ -494,9 +494,9 @@ func (d *DefaultDialer) ListenPacket(ctx context.Context, destination M.Socksadd
 					return d.autoDetectBindFunc(network, address, conn)
 				})
 			}
-			if destination.IsIPv6() {
+			if isIPv6DialAddress(destination.Addr) {
 				return listenConfig.ListenPacket(ctx, N.NetworkUDP, d.udpAddr6)
-			} else if destination.IsIPv4() && !destination.Addr.IsUnspecified() {
+			} else if destination.Addr.IsValid() && !destination.Addr.IsUnspecified() {
 				return listenConfig.ListenPacket(ctx, N.NetworkUDP+"4", d.udpAddr4)
 			} else {
 				return listenConfig.ListenPacket(ctx, N.NetworkUDP, d.udpAddr4)
@@ -515,10 +515,34 @@ func (d *DefaultDialer) ListenPacket(ctx context.Context, destination M.Socksadd
 	}
 }
 
+// parallelDialer returns the family-specific dialer for one scheduled attempt.
+//
+// The candidate's family, not the socket type alone, decides which configured bind address applies.
+// Returning a pointer rather than a copy lets a test pin the selection without opening a socket.
+func (d *DefaultDialer) parallelDialer(network string, address M.Socksaddr) *net.Dialer {
+	if N.NetworkName(network) == N.NetworkTCP {
+		if isIPv6DialAddress(address.Addr) {
+			return &d.dialer6.Dialer
+		}
+		return &d.dialer4.Dialer
+	}
+	if isIPv6DialAddress(address.Addr) {
+		return &d.udpDialer6
+	}
+	return &d.udpDialer4
+}
+
+// isIPv6DialAddress is the family question the socket factory asks, with the same answer as the
+// candidate planner: an IPv4-mapped IPv6 address is an IPv4 destination. netip.Addr.Is6() alone
+// would classify ::ffff:192.0.2.1 as IPv6 and apply the IPv6 bind address to an IPv4 dial.
+func isIPv6DialAddress(address netip.Addr) bool {
+	return classifyAddress(address) == familyIPv6
+}
+
 // DialerForICMPDestination is retained for embedders that still select by family. It carries no
 // network strategy - ICMPControl is the strategy-aware spelling (upstream 38bf6879b).
 func (d *DefaultDialer) DialerForICMPDestination(destination netip.Addr) net.Dialer {
-	if !destination.Is6() {
+	if !isIPv6DialAddress(destination) {
 		return d.dialer4.Dialer
 	} else {
 		return d.dialer6.Dialer
@@ -625,7 +649,7 @@ func (d *DefaultDialer) listenSerialInterfacePacketEpoch(ctx context.Context, de
 		fallbackDelay = d.networkFallbackDelay
 	}
 	network := N.NetworkUDP
-	if destination.IsIPv4() && !destination.Addr.IsUnspecified() {
+	if destination.Addr.IsValid() && !destination.Addr.IsUnspecified() && !isIPv6DialAddress(destination.Addr) {
 		network += "4"
 	}
 	packetConn, err := d.listenSerialInterfacePacket(ctx, d.udpListener, network, "", *strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
