@@ -166,7 +166,7 @@ func TestEnvironmentTransitionDoesNotDeadlockTheLockHoldingPath(t *testing.T) {
 		// The interface path: it owns resetRunAccess and must use the inner entry.
 		for i := 0; i < 20; i++ {
 			manager.resetRunAccess.Lock()
-			manager.resetNetworkLocked(startedCtx)
+			manager.resetNetworkLocked(startedCtx, false)
 			manager.resetRunAccess.Unlock()
 		}
 		// The debounced path concurrently, which takes the lock itself for any transition.

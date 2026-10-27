@@ -5,9 +5,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/sagernet/sing-box/adapter"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -63,7 +63,7 @@ func TestAllResetEntryPointsCoexist(t *testing.T) {
 			<-start
 			manager.resetRunAccess.Lock()
 			defer manager.resetRunAccess.Unlock()
-			manager.resetNetworkLocked(context.Background())
+			manager.resetNetworkLocked(context.Background(), false)
 		}()
 	}
 

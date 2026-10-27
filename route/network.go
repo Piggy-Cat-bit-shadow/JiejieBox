@@ -189,7 +189,17 @@ type NetworkManager struct {
 	// than claiming again: each notification would otherwise advance the epoch, turning a burst of
 	// interface callbacks into a reset storm.
 	networkResetPendingToken transitionToken
-	resetRunAccess           sync.Mutex
+	// networkResetPendingHard records that the pending transition is the RECOVERY from a gap that had
+	// already held for HardTransitionConfirm.
+	//
+	// The classification cannot be re-derived when the reset body runs: dispatchInterfaceUpdateLocked
+	// wakes the network first, and NetworkWake is exactly what clears IsNetworkPaused - so the body
+	// always observes a live network and a confirmed outage would be laundered into a medium
+	// transition by the wake that ended it. Capturing the fact at the recovery edge, under the same
+	// lock the consumer reads it with, is what lets a real outage reclaim destructively while a short
+	// handover gap still drains.
+	networkResetPendingHard bool
+	resetRunAccess          sync.Mutex
 	// memoryReclaimAccess serialises the memory reclaim entry points against each other.
 	//
 	// # Why TrimMemory and ReleaseMemory need a gate of their own
@@ -651,11 +661,48 @@ func (r *NetworkManager) InterfaceFinder() control.InterfaceFinder {
 //
 // Both branches now return WITHOUT recomputing when their observation failed, so the rule is one rule:
 // an environment boundary is established only on evidence that was actually observed.
+//
+// # The two halves are separable for the platform monitor
+//
+// The recompute reads the DEFAULT interface. A platform monitor that has just been handed a new
+// default must publish it, and the pause state that goes with it, BEFORE a recompute can run: at the
+// loss edge the monitor still names the old interface, so an eager recompute would publish the old
+// network's (or a zero) fingerprint while the device is already offline - and run the reset that the
+// offline state exists to defer. RefreshInterfaces is the list-only half for that caller;
+// UpdateNetworkEnvironment is the recompute half for the events that do not change the default (a new
+// gateway or SSID on the same path), which no callback would otherwise deliver.
 func (r *NetworkManager) UpdateInterfaces() error {
+	return r.updateInterfaces(true)
+}
+
+// RefreshInterfaces refreshes the interface list and the finder without establishing an environment
+// boundary.
+//
+// It is the platform monitor's first step: the list must be current before the monitor resolves and
+// publishes the new default, and no environment may be published from the refresh itself. The caller
+// is responsible for following with either the default-interface callback (which recomputes with the
+// new default) or UpdateNetworkEnvironment (when the default did not change).
+func (r *NetworkManager) RefreshInterfaces() error {
+	return r.updateInterfaces(false)
+}
+
+// UpdateNetworkEnvironment republishes the environment after an observation that did not change the
+// default interface.
+//
+// The boundary is self-locking and may run the reset body; see postUpdateNetworkEnvironment.
+func (r *NetworkManager) UpdateNetworkEnvironment() {
+	r.postUpdateNetworkEnvironment()
+}
+
+func (r *NetworkManager) updateInterfaces(publishEnvironment bool) error {
 	// observed is set only by a branch that actually published a list, and the recompute is gated on
 	// it. Every early return therefore leaves the environment and the verdict exactly as they were.
 	observed := false
-	defer func() { r.postUpdateNetworkEnvironmentWhenObserved(observed) }()
+	defer func() {
+		if publishEnvironment {
+			r.postUpdateNetworkEnvironmentWhenObserved(observed)
+		}
+	}()
 	if r.platformInterface == nil || !r.platformInterface.UsePlatformNetworkInterfaces() {
 		// The finder is refreshed FIRST, and the public list is published from it after.
 		//
@@ -1033,7 +1080,7 @@ func (r *NetworkManager) ResetNetwork(ctx context.Context) {
 		token = r.beginTransition()
 	}
 	defer r.commitTransition(token)
-	r.resetNetworkLocked(ctx)
+	r.resetNetworkLocked(ctx, false)
 }
 
 // beginTransition claims the epoch for a transition that is about to perform a reset.
@@ -1289,9 +1336,14 @@ func (r *NetworkManager) NetworkResetGeneration() uint64 {
 // finishes inside it, short enough that a device which really is offline is not left holding dead
 // sockets. The cost of being wrong in the generous direction is a slower reclaim; in the stingy
 // direction it is the connection storm this work exists to prevent.
+//
+// The window is measured from the pause onset recorded by noteNetworkPaused, and the recovery edge
+// must carry the verdict it produced: NetworkWake clears the pause before the reset body runs, so a
+// body that re-derived it would classify every handover as medium however long the device was
+// actually offline. See NetworkManager.networkResetPendingHard.
 const HardTransitionConfirm = 2 * time.Second
 
-func (r *NetworkManager) resetNetworkLocked(ctx context.Context) {
+func (r *NetworkManager) resetNetworkLocked(ctx context.Context, recoveredFromConfirmedOffline bool) {
 	// The router is assigned on the initialize stage, and a reset can arrive before the manager
 	// has reached it: the command protocol publishes the instance before Start finishes, so a
 	// network-change RPC in that window (a Wi-Fi to cellular handover during tunnel startup, for
@@ -1308,14 +1360,20 @@ func (r *NetworkManager) resetNetworkLocked(ctx context.Context) {
 		// must; the streams are left to fail on their own or to finish, and the idle ones are
 		// reclaimed. See ReclaimNetworkTransition.
 		//
-		// The class is read from the LIVE state rather than threaded down from whoever decided a
-		// reset was due: what matters is whether the device is offline at the moment the reset body
-		// runs, not what the notification that triggered it believed.
+		// The class is the transition's own, carried from the notification that claimed it: the LIVE
+		// pause state cannot answer this at the moment the body runs, because
+		// dispatchInterfaceUpdateLocked wakes the network before spawning this reset. What mattered
+		// is whether the device was offline long enough BEFORE the wake, and that verdict was
+		// captured at the recovery edge.
 		//
-		// "Offline" is the pause manager's answer, not a fresh guess. dispatchInterfaceUpdateLocked
-		// already drives NetworkPause/NetworkWake from the platform's own report, and IsNetworkPaused
-		// is that state - a second judgement built from one DefaultNetworkInterface lookup would be
-		// the kind of parallel authority this fork avoids.
+		// "Offline" is still the pause manager's answer rather than a fresh guess:
+		// dispatchInterfaceUpdateLocked already drives NetworkPause/NetworkWake from the platform's
+		// own report, and IsNetworkPaused is that state - a second judgement built from one
+		// DefaultNetworkInterface lookup would be the kind of parallel authority this fork avoids.
+		//
+		// The live check below is kept for the entry points that are not a recovery: a reset that
+		// lands WHILE the gap is in effect (an environment transition, an explicit RPC) must still
+		// classify on the instant, and there the pause is genuinely still set.
 		//
 		// It is also not enough on its own, because a Wi-Fi to Cellular handover really does pass
 		// through a moment with no default interface, and the environment fingerprint goes to zero
@@ -1328,7 +1386,7 @@ func (r *NetworkManager) resetNetworkLocked(ctx context.Context) {
 		// would force every test double to grow a method it has no opinion about. The capability is
 		// therefore asked for directly, and its absence falls back to the previous behaviour.
 		reason := ReclaimNetworkTransition
-		if r.networkIsConfirmedOffline() {
+		if recoveredFromConfirmedOffline || r.networkIsConfirmedOffline() {
 			reason = ReclaimDeadPath
 		}
 		if reclaimer, isReclaimer := r.connectionManager.(networkTransitionReclaimer); isReclaimer {
@@ -1546,6 +1604,9 @@ func (r *NetworkManager) notifyInterfaceUpdate(_ *control.Interface, _ int) {
 		// First notification for this event: claim. This is what makes the network unstable before
 		// the update goroutine can be blocked on the reset lock.
 		r.networkResetPendingToken = r.beginTransition()
+		// A new event starts with no inherited classification: the previous transition consumed its
+		// own, and a stale "hard" must not be applied to a gap this event did not observe.
+		r.networkResetPendingHard = false
 	} else if !r.transitionOwns(r.networkResetPendingToken) {
 		// A newer transition claimed while this event was pending - a real environment change, say.
 		// This event is superseded, so it takes a fresh token rather than committing one that now
@@ -1555,6 +1616,13 @@ func (r *NetworkManager) notifyInterfaceUpdate(_ *control.Interface, _ int) {
 	// Otherwise the pending event already owns a token and this is a repeat of it: coalesce, so a
 	// burst of notifications costs one epoch rather than one each.
 	r.networkResetPending = true
+	// The recovery edge is the last instant the gap is still observable: the dispatch below calls
+	// NetworkWake, and the reset body runs after it. A default interface means the device has a path
+	// again, so this notification is the recovery; if the pause had already held long enough to be
+	// confirmed, the transition it ends is hard rather than medium.
+	if r.interfaceMonitor.DefaultInterface() != nil && r.networkIsConfirmedOffline() {
+		r.networkResetPendingHard = true
+	}
 	if r.startedContext() != nil {
 		r.dispatchInterfaceUpdateLocked()
 	}
@@ -1687,6 +1755,10 @@ func (r *NetworkManager) updateInterface(ctx context.Context, defaultInterface *
 	// token the NOTIFICATION claimed, not one this update invents: the notification is what made the
 	// network unstable, so it is what owns the settle.
 	var pendingToken transitionToken
+	// pendingHard is the classification the notification captured at the recovery edge. It belongs to
+	// the pending event, so it is consumed with the token rather than read from the live pause state,
+	// which the wake has already cleared by the time this body runs.
+	var pendingHard bool
 	r.interfaceUpdateAccess.Lock()
 	if ctx.Err() != nil {
 		superseded = true
@@ -1702,6 +1774,8 @@ func (r *NetworkManager) updateInterface(ctx context.Context, defaultInterface *
 			r.networkResetPending = false
 			pendingToken = r.networkResetPendingToken
 			r.networkResetPendingToken = noTransition
+			pendingHard = r.networkResetPendingHard
+			r.networkResetPendingHard = false
 			ownedByThisUpdate = true
 		}
 	}
@@ -1745,7 +1819,7 @@ func (r *NetworkManager) updateInterface(ctx context.Context, defaultInterface *
 		// A newer transition may own the network by now. Running the body anyway would mutate the
 		// successor's state, so the stale body is skipped and only its owner resets.
 		if r.transitionOwns(token) {
-			r.resetNetworkLocked(ctx)
+			r.resetNetworkLocked(ctx, pendingHard)
 		}
 		r.commitTransition(token)
 	}
@@ -1796,7 +1870,7 @@ func (r *NetworkManager) notifyWindowsPowerEvent(event int) {
 				token = r.beginTransition()
 			}
 			defer r.commitTransition(token)
-			r.resetNetworkLocked(updateContext)
+			r.resetNetworkLocked(updateContext, false)
 		}()
 	}
 }

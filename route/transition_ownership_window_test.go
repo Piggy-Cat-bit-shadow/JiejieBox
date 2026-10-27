@@ -800,7 +800,7 @@ func TestClaimDuringRunningBodyCannotBeSettledByTheOlderTransition(t *testing.T)
 		close(bodyStarted)
 		h.manager.resetRunAccess.Lock()
 		if h.manager.transitionOwns(tokenB) {
-			h.manager.resetNetworkLocked(h.manager.startedContext())
+			h.manager.resetNetworkLocked(h.manager.startedContext(), false)
 		}
 		h.manager.resetRunAccess.Unlock()
 		h.manager.commitTransition(tokenB)
@@ -832,7 +832,7 @@ func TestClaimDuringRunningBodyCannotBeSettledByTheOlderTransition(t *testing.T)
 	// C performs its own boundary and settles.
 	require.True(t, h.manager.transitionOwns(tokenC))
 	h.manager.resetRunAccess.Lock()
-	h.manager.resetNetworkLocked(h.manager.startedContext())
+	h.manager.resetNetworkLocked(h.manager.startedContext(), false)
 	h.manager.resetRunAccess.Unlock()
 	h.manager.commitTransition(tokenC)
 

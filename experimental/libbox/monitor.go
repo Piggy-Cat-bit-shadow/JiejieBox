@@ -14,6 +14,22 @@ var (
 	_ InterfaceUpdateListener     = (*platformDefaultInterfaceMonitor)(nil)
 )
 
+// interfaceRefresher is the list-only half of NetworkManager.UpdateInterfaces.
+//
+// It is a capability rather than a method on adapter.NetworkManager because widening that interface
+// would force every implementation and every test double to grow a method it has no opinion about,
+// and the monitor's ordering is the only consumer. A manager that does not implement it keeps the
+// old combined call.
+type interfaceRefresher interface {
+	RefreshInterfaces() error
+}
+
+// networkEnvironmentUpdater publishes a boundary for an event that did not change the default
+// interface, which produces no callback and therefore no other trigger.
+type networkEnvironmentUpdater interface {
+	UpdateNetworkEnvironment()
+}
+
 type platformDefaultInterfaceMonitor struct {
 	*platformInterfaceWrapper
 	logger                      logger.Logger
@@ -141,8 +157,25 @@ func (m *platformDefaultInterfaceMonitor) updateDefaultInterface(interfaceName s
 	}
 	m.isExpensive = isExpensive
 	m.isConstrained = isConstrained
-	err := m.networkManager.UpdateInterfaces()
-	if err != nil {
+	// The refresh and the environment boundary are deliberately two steps here.
+	//
+	// UpdateInterfaces does the boundary as part of the refresh, and the boundary reads the default
+	// interface. At this point the monitor has not published the new one yet, so that recompute sees
+	// the interface the device has just LEFT - or, once the platform has already dropped it from the
+	// list, no gateway at all. It then claims a transition and runs a reset while the pause state for
+	// the loss edge has not been published, which tears transports down in the one window the pause
+	// exists to defer. Refreshing the LIST first, then publishing the default and the pause, lets the
+	// default-interface callback own the single recompute with the state it is about to become.
+	canRefresh := false
+	if refresher, isRefresher := m.networkManager.(interfaceRefresher); isRefresher {
+		canRefresh = true
+		if err := refresher.RefreshInterfaces(); err != nil {
+			m.logger.Error(E.Cause(err, "refresh interfaces"))
+		}
+	} else if err := m.networkManager.UpdateInterfaces(); err != nil {
+		// A NetworkManager that cannot split the two keeps the previous behaviour. The production
+		// manager implements RefreshInterfaces; this arm exists for implementations and doubles that
+		// predate it.
 		m.logger.Error(E.Cause(err, "update interfaces"))
 	}
 	m.defaultInterfaceAccess.Lock()
@@ -166,6 +199,15 @@ func (m *platformDefaultInterfaceMonitor) updateDefaultInterface(interfaceName s
 	m.defaultInterface = newInterface
 	if m.defaultInterfaceInitialized && oldInterface != nil && oldInterface.Name == m.defaultInterface.Name && oldInterface.Index == m.defaultInterface.Index {
 		m.defaultInterfaceAccess.Unlock()
+		// The default interface did not move, so no callback will fire - but the environment can
+		// still have moved under it (a new gateway, a new SSID, a renumbered prefix). Nothing else
+		// publishes that boundary on this path, so it is taken here, after the list is current and
+		// with the default interface already naming where the device is.
+		if canRefresh {
+			if updater, isUpdater := m.networkManager.(networkEnvironmentUpdater); isUpdater {
+				updater.UpdateNetworkEnvironment()
+			}
+		}
 		return
 	}
 	m.defaultInterfaceInitialized = true

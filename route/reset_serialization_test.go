@@ -206,7 +206,7 @@ func TestResetNetworkIsReentrantFromTheInterfacePath(t *testing.T) {
 		// Exactly what updateInterface does: take the lock, then reset.
 		manager.resetRunAccess.Lock()
 		defer manager.resetRunAccess.Unlock()
-		manager.resetNetworkLocked(context.Background())
+		manager.resetNetworkLocked(context.Background(), false)
 	}()
 
 	select {

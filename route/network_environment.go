@@ -159,7 +159,7 @@ func (r *NetworkManager) EstablishInitialNetworkEnvironment() {
 		// interface). Both leave the manager in the state this call exists to guarantee.
 		return
 	}
-	r.resetNetworkLocked(r.startedContext())
+	r.resetNetworkLocked(r.startedContext(), false)
 	r.commitTransition(token)
 }
 
@@ -392,7 +392,7 @@ func (r *NetworkManager) boundEnvironmentTransitionExported(token transitionToke
 	if !r.transitionOwns(token) {
 		return
 	}
-	r.resetNetworkLocked(r.startedContext())
+	r.resetNetworkLocked(r.startedContext(), false)
 }
 
 // boundEnvironmentTransitionLocked is the inner form for a caller holding resetRunAccess.
@@ -410,7 +410,7 @@ func (r *NetworkManager) boundEnvironmentTransitionLocked(ctx context.Context, t
 	if !r.transitionOwns(token) {
 		return
 	}
-	r.resetNetworkLocked(ctx)
+	r.resetNetworkLocked(ctx, false)
 }
 
 // environmentTransitionApplies reports whether a confirmed environment change should be bounded now.

@@ -150,7 +150,7 @@ func TestAllResetEntriesShareOneSerialisation(t *testing.T) {
 			defer waitGroup.Done()
 			<-start
 			manager.resetRunAccess.Lock()
-			manager.resetNetworkLocked(manager.startedContext())
+			manager.resetNetworkLocked(manager.startedContext(), false)
 			manager.resetRunAccess.Unlock()
 		}()
 	}
@@ -222,6 +222,7 @@ func (m *noopPauseManager) IsPaused() bool        { return m.paused }
 func (m *noopPauseManager) WaitActive()           {}
 func (m *noopPauseManager) WaitActiveContext(context.Context) {
 }
+
 func (m *noopPauseManager) RegisterCallback(pause.Callback) *list.Element[pause.Callback] {
 	return nil
 }
