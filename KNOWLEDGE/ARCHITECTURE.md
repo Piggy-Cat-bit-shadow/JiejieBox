@@ -63,8 +63,8 @@ the mapped FQDN. Do not conflate that translation with a sniff-driven override.
 ## 7. Buffer ownership is a correctness contract, not an optimisation surface
 
 Borrowed cursors must not outlive their call; the QUIC working copy is deliberately unpooled; a batch
-send is all-or-nothing; ownership transfers on the owned-datagram path; a context-ID substitution
-**releases the original** and must refuse the batch. Each rule exists because violating it produced a
+send is all-or-nothing per chunk, and earlier accepted chunks have transferred ownership. A context-ID
+substitution **releases the original** and must refuse its chunk. Each rule exists because violating it produced a
 real bug — including one where every packet in a refused batch was silently dropped.
 → `buffer-ownership.md`
 

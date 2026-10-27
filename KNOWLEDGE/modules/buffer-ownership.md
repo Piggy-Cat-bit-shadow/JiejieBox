@@ -63,9 +63,9 @@ bound that does not grow with a coalesced tail (`sniff_bounded_copy_internal_tes
 
 | # | Rule | Anchor | What breaks |
 |---|---|---|---|
-| B11 | A batch send is **all-or-nothing**: a refusal leaves every input buffer unmodified and owned by the caller | `transport/masque/session.go:460-465`, `:533-537` | the caller double-releases, or drops a buffer it still owns |
+| B11 | Each batch **chunk** is all-or-nothing; the accepted prefix is transferred and only the refused remainder stays with the caller | `transport/masque/session.go`, `writeBatchOwned` | replaying an accepted prefix double-sends or releases transferred buffers |
 | B12 | On the **owned-datagram** path, ownership **transfers on success**, so the release is skipped entirely | `transport/masque/session.go:484-489`, `:495`; `transport/http/client_h3.go:506` | **double release / use-after-free** |
-| B13 | A `PrependContextID` **substitution releases the original**, so it must **refuse the batch before it is attempted** and update the caller's slice in place | `transport/masque/session.go:551-579` | **silent packet loss** — the documented past bug: a refused batch kept the context ID, the fallback prepended a second one, `packetAddresses` read the wrong version nibble, and every packet was dropped with no error and no PTB (`:539-549`) |
+| B13 | A `PrependContextID` **substitution releases the original**, so it must refuse the affected chunk before it is attempted and update the caller's slice in place | `transport/masque/session.go`, `writeOwnedBatchChunk` | stale pointers, double release or packet loss on fallback |
 | B14 | Every failure path in `writePackets` releases **exactly the still-owned remainder** | `transport/masque/session.go:518-520` | a leak of pooled buffers |
 | B15 | A batch of **one** never takes the batch path | `transport/masque/session.go:467-472` | a measured regression |
 | B16 | Packet headroom is reserved by the **producer** so the 1-byte context ID fits | `transport/masque/session.go:561-565`; `protocol/masque/client.go:557 FrontHeadroom`; `transport/masque/server.go:428 receivedPacketHeadroom` | every packet takes the B13 substitution path |
@@ -171,7 +171,7 @@ garbage per read.
 | Geometry poolability and no-realloc-after-Advance | `VERIFIED_UNIT` | `go test -count=1 ./common/bufgeom/...` |
 | The allocation ceiling | `VERIFIED_UNIT` **in the `!race` build only** | same; the `race` half needs a cgo-capable host |
 | Sniff ownership (borrowed cursor, retained cap, in-place unmask) | `VERIFIED_UNIT` + fuzz | `go test -count=1 ./common/sniff/...` |
-| MASQUE batch all-or-nothing, owned transfer, substitution refusal | `VERIFIED_UNIT` | `go test -count=1 -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" ./transport/masque/...` |
+| MASQUE atomic chunks, transferred prefix and substitution refusal | `VERIFIED_UNIT` | `go test -count=1 -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" ./transport/masque/...` |
 | Batch-capability loss through a counter wrapper | `VERIFIED_UNIT` with a real red control | `route/udp_batch_capability_test.go` (3 tests) |
 | The retirement walk reaches all four pools | `VERIFIED_UNIT` | `route/reference_coverage_stress_test.go`, `route/reusable_owner_inventory_test.go` |
 | Race-freedom | **`BLOCKED_BY_ENVIRONMENT`** — `-race` needs cgo and there is no C compiler | Linux/macOS or Windows+gcc |

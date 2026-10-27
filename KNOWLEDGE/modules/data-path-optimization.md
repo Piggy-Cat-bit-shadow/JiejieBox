@@ -1,5 +1,10 @@
 # Data-path optimization: Direct Offload, traffic class, upload scheduler
 
+**Cross-module distinction at `011f3fdcd99`:** `route/traffic_class.go` still uses automatic tag
+classification when the chain has no explicit traffic-class policy. That is a separate mechanism
+from the removed AI-tag fallback for `fast_path`; do not remove or reintroduce either by conflating
+the two. Both decisions are per flow, but they answer different questions.
+
 **Scope:** `common/dialer/profile.go`, `protocol/direct/outbound.go`, `route/bypass_verdict.go`,
 `common/trafficclass`, `common/trafficsched`, `route/dial_governor.go`, `route/traffic_class.go`.
 

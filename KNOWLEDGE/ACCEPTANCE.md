@@ -29,6 +29,10 @@ After the branch advanced to `cb71cf80d72` and changed the `cronet-go/all` pin, 
 `go test ./protocol/group ./common/httpclient ./protocol/tuic -count=1` also passed. This does not
 test the Cronet native client.
 
+`go test -tags with_quic ./transport/masque -run 'TestWriteBatchChunksABurstAboveTheQueueCapacity|TestWriteBatchFallsBackOnlyForTheRefusedTail' -count=1 -v`
+passed both named tests. An untagged run selects neither test, so the untagged package result above
+is not evidence for chunk ownership.
+
 On Windows 10 Enterprise LTSC 2021 build 19044 with Go 1.25.5, the broader
 `go test -tags with_utls ./common/tls -count=1` **failed**: `TestWindowsClientHandshakeTLS13`,
 `TestWindowsClientRoundtripTLS13`, and `TestWindowsClientTLS13PostHandshakeConcurrentWrite`
@@ -138,7 +142,7 @@ making either claim.
 | # | Requirement | Evidence | Level | Re-check | Environment |
 |---|---|---|---|---|---|
 | 5.1 | Capsule parse/serialise, address and route types, cross-protocol overlap | `transport/masque` capsule tests | VERIFIED_UNIT | `go test -count=1 -timeout 8m -tags "$OTHERS" ./transport/masque/...` | Go + tags |
-| 5.2 | A batch send is all-or-nothing; a context-ID substitution refuses the whole batch | `batch_order_test.go`; the bug recorded at `session.go:539-549` | VERIFIED_UNIT | same | Go + tags |
+| 5.2 | Each batch chunk is atomic; accepted prefix is not replayed; substitution refuses its chunk | `batch_chunk_test.go`, `batch_order_test.go` | VERIFIED_UNIT | same | Go + tags |
 | 5.3 | Session/stream teardown and close boundaries | `shutdown_test.go`, `close_boundary*.go`, `scope_ownership_test.go` | VERIFIED_UNIT | same | Go + tags |
 | 5.4 | PTB and the three MTU quantities | five MTU test files | VERIFIED_UNIT | same | Go + tags |
 | 5.5 | CONNECT-IP interoperability against an independent implementation | `test/jiejie/reference/connect_ip_go_interop_test.go` — a **separate module** push CI does not run | **UNVERIFIED (declaration only)** | `bash scripts/ci/run-jiejie-suite.sh` | bash + network |

@@ -88,8 +88,8 @@ Route matching: `routeMatcher`, `compileRouteMatcher`, `contains` (`route_matche
 |---|---|---|---|
 | M1 | Single-packet success **releases** the datagram — **except** on the owned-datagram capability, where **ownership transfers** and the release is skipped entirely | `session.go:485-489`, `:495`; `transport/http/client_h3.go:506` | double release / use-after-free |
 | M2 | Every failure path releases **exactly the still-owned remainder**: `datagram.Release()`, `buf.ReleaseMulti(capsules)`, `buf.ReleaseMulti(buffers[i+1:])` | `session.go:518-520` | leak of pooled buffers |
-| M3 | `writeBatchOwned` is **all-or-nothing**: a refusal leaves every buffer unmodified and owned by the caller | `session.go:460-465`, `:533-537` | the caller double-releases or drops a released buffer |
-| M4 | A `PrependContextID` **substitution releases the original**, so a substitution must **refuse the batch before it is attempted** and update the caller's slice in place | `session.go:551-579` | **silent packet loss** — see below |
+| M3 | Each chunk is all-or-nothing; `writeBatchOwned` returns the transferred prefix length and the caller falls back only on the remainder | `session.go`, `writeBatchOwned` | replaying a transferred prefix double-sends or releases it |
+| M4 | A `PrependContextID` **substitution releases the original**, so substitution refuses the affected chunk before send and updates the caller's slice in place | `session.go`, `writeOwnedBatchChunk` | stale pointers, double release or packet loss on fallback |
 | M5 | A batch of **one** never takes the batch path | `session.go:467-472` | a measured regression (batch=1 is slower) |
 | M6 | Packet headroom is reserved by the **producer** so the 1-byte context ID fits | `session.go:561-565`; `protocol/masque/client.go:557 FrontHeadroom`; `transport/masque/server.go:428 receivedPacketHeadroom` | every packet takes the substitution path (M4) |
 
@@ -204,7 +204,7 @@ Any document referencing the deleted files is describing the pre-`e93e297aa` mod
 | Guarantee | Level | Re-check |
 |---|---|---|
 | Capsule parse/serialise, address and route types | `VERIFIED_UNIT` | `go test -count=1 -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" ./transport/masque/...` |
-| Batch is all-or-nothing; owned transfer skips release; substitution refuses | `VERIFIED_UNIT` | `batch_order_test.go`, `session_datagram_error_test.go` |
+| Per-chunk atomicity, transferred prefix and refusal fallback | `VERIFIED_UNIT` | `batch_chunk_test.go`, `batch_order_test.go`, `session_datagram_error_test.go` |
 | Teardown ownership and close boundaries | `VERIFIED_UNIT` | `shutdown_test.go`, `close_boundary*.go`, `scope_ownership_test.go` |
 | MTU ceiling / PTB | `VERIFIED_UNIT` | the five MTU test files |
 | H3 pool rotation, 0-RTT gate, fallback schedule | `VERIFIED_UNIT` | `transport/http` pool tests |
@@ -258,7 +258,7 @@ All except `b83089ec` are **OWN** or, where marked, `EXTERNAL-ADAPTED` with a qu
 4. **Do not make the batch path handle a single packet.** Batch=1 is a measured regression.
 5. **Do not release a datagram on the owned path.** Ownership transferred.
 6. **Do not fix a `PrependContextID` substitution in place.** It releases the original and must refuse
-   the whole batch, updating the caller's slice.
+   the affected chunk, updating the caller's slice; do not replay an already transferred prefix.
 7. **Do not remove the producer-side headroom reservation.** Every packet would take the substitution
    path.
 8. **Do not "correct" the linear overlap check into the obvious quadratic one.** It was measured at

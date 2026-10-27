@@ -195,8 +195,10 @@ e4b7e692..a267e99` returns exactly that commit). `VERIFIED_SOURCE`; execute need
 | `9235f90` | FIX | OWN | the server endpoint's teardown goes to the `Scope` that closes it |
 | `c3b4f567` | FIX | OWN | releases resources acquired **after** `Scope.Close` returned |
 
-**Final behaviour:** the batch path is all-or-nothing; ownership transfers on the owned path; a
-context-ID substitution refuses the whole batch; the outer QUIC packet is capped by a proven capacity.
+**Current behavior:** each batch chunk is all-or-nothing; an accepted prefix transfers ownership and
+only the remaining buffers may fall back. A context-ID substitution refuses the affected chunk.
+The outer QUIC initial size is capped by a proven detour capacity, without proving a hard cap on
+later packets; see `modules/mtu-and-geometry.md`.
 
 ---
 

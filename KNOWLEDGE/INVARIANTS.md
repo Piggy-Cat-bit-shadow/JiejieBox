@@ -94,7 +94,7 @@ A dry run over a real start asserts committed == 0 **and** previewed == 0.
 * **Re-check:** `go test -count=1 ./common/physicalpath/... ./adapter/outbound/...`
 * **Kind:** correctness. **Owner:** `path-selection-validation.md`
 
-### A6 — Buffer ownership: borrowed views, unpooled working copies, all-or-nothing batches
+### A6 — Buffer ownership: borrowed views, unpooled working copies, atomic chunks
 
 Six rules in one:
 
@@ -104,7 +104,8 @@ Six rules in one:
    aliases **it**, never the caller's datagram (`quic.go:183-184`, `:305-306`, `:472-476`);
 4. header protection writes 4 bytes **in place**, so a `Length` that cannot reach them is rejected
    (`quic.go:125-131`);
-5. a MASQUE batch send is **all-or-nothing** (`session.go:460-465`, `:533-537`);
+5. a MASQUE batch send is **all-or-nothing per chunk**; an accepted prefix belongs to the transport
+   and must not be replayed (`transport/masque/session.go`, `writeBatchOwned`);
 6. on the owned-datagram path ownership **transfers on success** and the release is skipped
    (`session.go:484-489`).
 
@@ -118,10 +119,11 @@ Six rules in one:
   `go test -count=1 -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" ./transport/masque/...`
 * **Kind:** buffer-ownership correctness. **Owner:** `buffer-ownership.md`
 
-### A7 — A context-ID substitution releases the original and must refuse the whole batch
+### A7 — A context-ID substitution releases the original and must refuse its chunk
 
 `PrependContextID` may allocate a replacement and **release the original**, so a substitution refuses
-the batch **before it is attempted** and updates the caller's slice in place.
+the affected chunk **before it is attempted** and updates the caller's slice in place. Previously
+accepted chunks remain transferred; only the untransferred remainder may fall back.
 
 * **Why:** this is a documented, real bug. A refused batch kept the context ID, the fallback prepended a
   second one, `packetAddresses` read the wrong version nibble, and **every packet was silently dropped

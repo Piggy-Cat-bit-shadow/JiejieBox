@@ -23,10 +23,10 @@ produced it is given so a reader can re-measure instead of trusting this file.
 |---|---|---|
 | Repository | `Piggy-Cat-bit-shadow/sing-box` | `git remote -v` |
 | Product branch | `testing` (the only long-term source branch) | `git branch --show-current` |
-| **Production baseline** | `5fc4f9366a60202fdc7c98cd6fa280cceace65ba` | `git rev-parse HEAD` |
+| **Production baseline** | `5fc4f9366a60202fdc7c98cd6fa280cceace65ba` | `git rev-parse v0.1.9^{commit}`; this is not necessarily HEAD |
 | Release baseline | tag **`v0.1.9`** = the same commit | `git rev-parse v0.1.9^{commit}` |
 | Release date | 2026-10-14 23:02:14 +0800 ("test(wireguard): the census poll must not starve the goroutine it waits for") | `git log -1 --format=%ci v0.1.9` |
-| Fork version file | `release/JIEJIE_VERSION` = `0.1.9` | `Get-Content release/JIEJIE_VERSION` |
+| Fork version at baseline | `release/JIEJIE_VERSION` = `0.1.9` | `git show v0.1.9:release/JIEJIE_VERSION` |
 | Upstream project | `https://github.com/SagerNet/sing-box.git` (remote `upstream`) | `git remote -v` |
 | **Upstream baseline** | `e4b7e692f4545890bfc9d43960328e1449fa803b` — the last upstream commit this fork contains; **not** `refs/remotes/upstream/testing`, which has moved on to `dfb80349b` | `git merge-base v0.1.9 refs/remotes/upstream/testing` |
 | **Fork branch point** | `0d91c4547921a7b72e9c9913e2bc6f3a556801e2` | see below |
