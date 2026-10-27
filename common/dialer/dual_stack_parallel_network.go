@@ -167,6 +167,24 @@ func (d *resolveParallelNetworkDialer) ListenSerialNetworkPacket(ctx context.Con
 			candidates = withoutFamilyExcluded(d.mergeRecovered(destination, recovered, admission), admission.strategy)
 		}
 	}
+	if len(candidates) > 0 {
+		// The packet path has no scheduler and no race: `ListenSerialNetworkPacket` walks the list
+		// and the FIRST socket that can be created wins outright. Ordering IS the decision here.
+		// Leaving the caller's order untouched made prefer_ipv4 depend on the resolver's A/AAAA
+		// order (and on the application's own list) rather than on the effective strategy. Apply the
+		// SAME planner the stream path uses: the original literal leads its family, the effective
+		// preference interleaves the rest, and AsIS without an original preserves the caller's
+		// leading family.
+		plannableOriginal := netip.Addr{}
+		if admission.admits(destination.Addr) {
+			plannableOriginal = destination.Addr
+		}
+		planStrategy := admission.strategy
+		if planStrategy == C.DomainStrategyAsIS && !plannableOriginal.IsValid() {
+			planStrategy = domainStrategyFor(candidates[0].Is6())
+		}
+		candidates = planCandidates(candidates, plannableOriginal, planStrategy).addresses()
+	}
 	if len(candidates) == 0 && strategyExcludedEverything {
 		// The policy emptied the list, and recovery found nothing it admits. This MUST NOT reach the
 		// helper below with an empty list, because the helper reads an empty list as "the caller had no

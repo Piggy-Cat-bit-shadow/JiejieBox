@@ -52,6 +52,12 @@ The strict strategies were already filtered into one family; `planCandidates` re
 `TestNetworkEntryPointHonorsPreferIPv6OverTheListOrder`,
 `TestNetworkEntryPointAsISKeepsTheOriginalFamily`.
 
+The unconnected **packet** arm had the same inversion, and worse: `ListenSerialNetworkPacket` has no
+scheduler and no race, so the FIRST socket that can be created wins outright — the list order was the
+entire decision. It now applies the same planner to the candidate list before the serial walk.
+**Test:** `TestNetworkPacketEntryPointHonorsPreferIPv4` (a `prefer_ipv4` list leading with IPv6 must
+bind IPv4 first).
+
 ### DS-07 — the per-attempt dialer ignored the candidate's family
 
 `dialParallelInterfaceEpoch` chose the socket factory by transport only:

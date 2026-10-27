@@ -390,6 +390,29 @@ func TestNetworkEntryPointAsISKeepsTheOriginalFamily(t *testing.T) {
 		"AsIS must keep the application's own family first, not the caller's list order")
 }
 
+// TestNetworkPacketEntryPointHonorsPreferIPv4 covers the unconnected packet arm: it has no
+// scheduler and no race, so the first socket that can be created wins. The list order must
+// therefore be planned with the effective strategy, not reused from the caller or the resolver.
+func TestNetworkPacketEntryPointHonorsPreferIPv4(t *testing.T) {
+	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyPreferIPv4)
+	chain.inner.packetConn = &countingPacketConn{}
+	originalIPv4 := netip.MustParseAddr("112.53.55.92")
+	otherIPv6 := netip.MustParseAddr("2409:8c54:871:2003::15")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	packetConn, destination, err := chain.listenSerialNetworkPacketAtTheOutbound(ctx,
+		M.SocksaddrFrom(originalIPv4, 443), []netip.Addr{otherIPv6, originalIPv4})
+	require.NoError(t, err)
+	require.NotNil(t, packetConn)
+	packetConn.Close()
+
+	require.Equal(t, originalIPv4, destination,
+		"prefer_ipv4 must lead the packet walk even when the caller's list starts with IPv6")
+	require.Equal(t, originalIPv4, chain.tried()[0],
+		"the first packet socket created is the family the policy preferred")
+}
+
 // TestNetworkEntryPointHonorsPreferIPv4OverTheListOrder pins the operator's preference at the network
 // entry point. A list from the caller may lead with IPv6 (resolver order, TUN metadata, a cached
 // answer); `prefer_ipv4` must still make the IPv4 family lead. Deriving the planner's preference from
