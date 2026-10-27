@@ -230,7 +230,7 @@ replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-
 // host; see docs/fork/phase-04-cronet-apple-platform.md for the matrix.
 replace github.com/sagernet/cronet-go => github.com/Piggy-Cat-bit-shadow/cronet-go v0.0.1-143.0.7499.109-2.0.20261027185739-c9c0e6ec8845
 
-replace github.com/sagernet/cronet-go/all => github.com/Piggy-Cat-bit-shadow/cronet-go/all v0.0.0-20261024085011-8aa139e9e140
+replace github.com/sagernet/cronet-go/all => github.com/Piggy-Cat-bit-shadow/cronet-go/all v0.0.0-20261027185739-c9c0e6ec8845
 
 replace github.com/sagernet/cronet-go/lib/android_386 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/android_386 v0.0.0-20260929202119-8c68ce89873c
 
