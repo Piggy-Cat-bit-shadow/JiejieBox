@@ -3,6 +3,7 @@ package route
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"syscall"
 )
@@ -35,8 +36,11 @@ import (
 //
 // The invariant `observed == released + stopped + pending` is what a reader should check, and it is
 // asserted by the tests. It holds at any snapshot because `observed` is incremented before the probe
-// is scheduled and each observation settles at most once; the accessor reads the settle counters
-// BEFORE `observed` so a settle racing the read cannot make the right-hand side exceed the left.
+// is scheduled, each observation settles at most once, and the counters are read under ONE lock: a
+// settle in flight is either entirely before the snapshot or entirely after it, so a reader can never
+// see half of it. The same lock is what makes the other promised partition,
+// `released == peer reset + keepalive timeout`, hold while a release is being recorded - two atomic
+// adds can be split by a reader, and the macOS gate did split them on 2026-10-27.
 //
 // `pending` at a runtime snapshot is normal - the probe runs on a timer, so at any instant some
 // observations have not had their next read. At the shutdown summary it should be zero, because
@@ -69,30 +73,46 @@ import (
 // One atomic add per observation, per final state and per skipped flow. Never per probe, per byte or
 // per connection that has not half-closed.
 type halfCloseDiagnostics struct {
-	observed            atomic.Uint64
-	released            atomic.Uint64
-	reset               atomic.Uint64
-	timeout             atomic.Uint64
-	stopped             atomic.Uint64
+	// access makes the settle counters and `observed` ONE observation.
+	//
+	// `recordReleased` has to publish two facts - that the flow settled, and which verdict settled
+	// it - and a reader could previously land between them: released=1 with reset=0 and timeout=0,
+	// which violates `released == peer reset + keepalive timeout` that every snapshot promises. The
+	// macOS gate caught exactly that window on 2026-10-27 (client-macos attempt 1, route
+	// TestHalfCloseVerdictAndTeardownRaceSettleOnce); an atomic per counter cannot make a
+	// multi-counter invariant hold mid-update. The lock is taken once per settled flow and once per
+	// snapshot, never per probe or per byte.
+	access              sync.Mutex
+	observed            uint64
+	released            uint64
+	reset               uint64
+	timeout             uint64
+	stopped             uint64
 	skippedUnarmable    atomic.Uint64
 	skippedUnobservable atomic.Uint64
 }
 
 func (d *halfCloseDiagnostics) recordObserved() {
-	d.observed.Add(1)
+	d.access.Lock()
+	d.observed++
+	d.access.Unlock()
 }
 
 func (d *halfCloseDiagnostics) recordReleased(cause error) {
-	d.released.Add(1)
+	d.access.Lock()
 	if halfCloseCauseIsTimeout(cause) {
-		d.timeout.Add(1)
+		d.timeout++
 	} else {
-		d.reset.Add(1)
+		d.reset++
 	}
+	d.released++
+	d.access.Unlock()
 }
 
 func (d *halfCloseDiagnostics) recordStopped() {
-	d.stopped.Add(1)
+	d.access.Lock()
+	d.stopped++
+	d.access.Unlock()
 }
 
 func (d *halfCloseDiagnostics) recordSkippedUnarmable() {
@@ -147,15 +167,17 @@ func (s HalfCloseSnapshot) HalfCloseSummary() string {
 
 // HalfCloseDiagnostics returns the current half-close observation diagnostics.
 //
-// Reading it is a handful of atomic loads and has no effect on forwarding. The order of the loads is
-// part of the contract: the settle counters are read first and `observed` last, so a settle that
-// races this read cannot produce a negative derived `pending` (see the state contract above).
+// Reading it takes the diagnostics lock once and has no effect on forwarding. The snapshot is one
+// observation of the counters: a settle that is in flight is either before it or after it, so both
+// promised partitions hold in the returned value.
 func (m *ConnectionManager) HalfCloseDiagnostics() HalfCloseSnapshot {
-	released := m.halfCloseDiag.released.Load()
-	peerReset := m.halfCloseDiag.reset.Load()
-	keepaliveTimeout := m.halfCloseDiag.timeout.Load()
-	stopped := m.halfCloseDiag.stopped.Load()
-	observed := m.halfCloseDiag.observed.Load()
+	m.halfCloseDiag.access.Lock()
+	released := m.halfCloseDiag.released
+	peerReset := m.halfCloseDiag.reset
+	keepaliveTimeout := m.halfCloseDiag.timeout
+	stopped := m.halfCloseDiag.stopped
+	observed := m.halfCloseDiag.observed
+	m.halfCloseDiag.access.Unlock()
 	pending := uint64(0)
 	if settled := released + stopped; observed > settled {
 		pending = observed - settled
