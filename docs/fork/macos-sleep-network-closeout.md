@@ -91,6 +91,9 @@ timeout half.
 | `go test ./experimental/libbox -run 'TestPlatformMonitor' -count=1` | **PASS** |
 | `go test -p 1 ./route ./experimental/libbox ./common/suspendwatch ./common/power . -count=1` | **PASS** — route 440.690 s, libbox 1.203 s, suspendwatch 0.078 s, power 4.781 s, root 10.188 s |
 | `go test ./route -short -count=1` on the final source | **PASS** — 80.643 s; skips only the six-minute kernel measurement the full run above covers |
+| CI `Verify` for `0410c9d` (run `40485312923`) | **PASS** — the Linux source gate: gofmt, builds, test binaries, upstream assumptions, race checks |
+| CI `macOS arm64` for `0410c9d` (run `40485385846`) | **PASS** — `gofmt`, unit tests under the macOS tags (including the route suite and the previously flaky half-close test), build, tag/version agreement, headless smoke and capability audit |
+| CI `Apple client` libbox job (run `40485553778`) | **PASS** — Libbox built from this fork with cgo on macOS, Apple regression tests passed |
 | Physical Mac (lid close, same Wi-Fi, wake) | **NOT RUN — `UNVERIFIED`** |
 
 The macOS-specific branch cannot be executed on this Windows host: `C.IsDarwin` is a compile-time
