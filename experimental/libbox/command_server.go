@@ -212,6 +212,12 @@ func (s *CommandServer) Close() {
 		s.grpcServer.Stop()
 	}
 	common.Close(s.listener)
+	// Close is the process-local shutdown, so it owns the Box as well as the subscribers. The
+	// separate CloseService RPC is the ordered path a client uses while the transport is alive;
+	// an embedder that tears the transport down first must not leave the Box running merely
+	// because it did not issue one last RPC. CloseService is idempotent and reuses the same
+	// lifecycle lock, so the ordered path and this one cannot race into a double close.
+	_ = s.CloseService()
 	s.StartedService.Close()
 	s.oomRecorder.Close()
 	s.powerManager.Close()

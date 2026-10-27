@@ -17,6 +17,8 @@ import (
 	"github.com/sagernet/sing-box/dns"
 	"github.com/sagernet/sing-box/dns/transport/local"
 	"github.com/sagernet/sing/service/filemanager"
+
+	"github.com/stretchr/testify/require"
 )
 
 // This file and its siblings carry the `p2ios` build tag on purpose, and that tag is the whole point.
@@ -101,6 +103,17 @@ func (f *deviceAxisFixture) reload(t *testing.T) {
 	if err := f.started.StartOrReloadService(context.Background(), deviceAxisConfig, nil); err != nil {
 		t.Fatalf("reload service: %v", err)
 	}
+}
+
+// TestCommandServerCloseClosesTheBox pins the ownership boundary: CommandServer.Close is the
+// process-local shutdown, not just a subscriber cleanup. An embedder that closes the transport
+// without issuing the separate CloseService RPC must not leave the Box (TUN, DNS, goroutines)
+// running behind a closed command server.
+func TestCommandServerCloseClosesTheBox(t *testing.T) {
+	fixture := newDeviceAxisFixture(t)
+	require.NotNil(t, fixture.started.Instance())
+	fixture.server.Close()
+	require.Nil(t, fixture.started.Instance(), "CommandServer.Close must close the running Box")
 }
 
 // deviceAxisPlatform is the platform surface `NewCommandServer` consumes.
