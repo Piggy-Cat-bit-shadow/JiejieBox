@@ -149,7 +149,9 @@ func ParseMeasurementTarget(link string) (MeasurementTarget, error) {
 // IPv6 literals are re-bracketed, since the bracket is part of the authority syntax and not of the
 // address.
 func canonicalScopeHost(hostname string, portNumber uint64, explicitPort string, scheme string) string {
-	host := hostname
+	// Both branches below assign; an initial `host := hostname` would only be overwritten and
+	// is exactly the kind of dead store the lint gate reports.
+	var host string
 	if address, addressErr := netip.ParseAddr(hostname); addressErr == nil {
 		// An IP literal is canonicalised to its ADDRESS, not merely lowercased.
 		//

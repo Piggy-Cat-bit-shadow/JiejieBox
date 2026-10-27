@@ -89,7 +89,7 @@ func TestURLTestEntryPointPerformsOneUnifiedMeasurement(t *testing.T) {
 	outbound := &passthroughOutbound{tag: "node-a"}
 
 	// The measurement path every caller uses.
-	delay, err := URLTest(context.Background(), target.server.URL+"/generate_204", outbound)
+	_, err := URLTest(context.Background(), target.server.URL+"/generate_204", outbound)
 	require.NoError(t, err)
 
 	// Exactly two requests, the unified-delay signature.
@@ -99,7 +99,9 @@ func TestURLTestEntryPointPerformsOneUnifiedMeasurement(t *testing.T) {
 	require.EqualValues(t, 0, target.getCount.Load(),
 		"GET must never be used; the measurement is HEAD-only")
 
-	require.True(t, delay >= 0)
+	// The delay is a uint16, so `delay >= 0` would be a tautology and assert nothing. The
+	// request counts above are the observable contract; the value that reaches history is
+	// covered by TestHistoryRecordsTheUnifiedDelay.
 }
 
 // TestHistoryRecordsTheUnifiedDelay pins the value that reaches the UI.
@@ -169,14 +171,15 @@ func TestNoSecondTimerImplementationInThePackage(t *testing.T) {
 	target := newCountingTarget(t, false)
 	outbound := &passthroughOutbound{tag: "node"}
 
-	first, err := URLTest(context.Background(), target.server.URL+"/generate_204", outbound)
+	_, err := URLTest(context.Background(), target.server.URL+"/generate_204", outbound)
 	require.NoError(t, err)
 
 	before := target.requests.Load()
-	second, err := URLTest(context.Background(), target.server.URL+"/generate_204", outbound)
+	_, err = URLTest(context.Background(), target.server.URL+"/generate_204", outbound)
 	require.NoError(t, err)
 
 	require.EqualValues(t, 2, target.requests.Load()-before,
 		"each call through the public entry point performs exactly one measurement")
-	require.True(t, first >= 0 && second >= 0)
+	// Both results are uint16; their non-negativity is a property of the type, not of the
+	// measurement. The request count above is the assertion.
 }

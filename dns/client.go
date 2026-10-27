@@ -1356,7 +1356,7 @@ func (c *Client) lookupToExchange(ctx context.Context, transport adapter.DNSTran
 	disableCache := c.disableCache || options.DisableCache
 	if !disableCache {
 		cachedAddresses, err := c.questionCache(ctx, transport, &message, options, responseChecker)
-		if err != ErrNotCached {
+		if !errors.Is(err, ErrNotCached) {
 			return cachedAddresses, err
 		}
 	}

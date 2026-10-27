@@ -16,11 +16,6 @@ func canonicalAppleTags(platform string) []string {
 	return applebuildtags.FullDeploymentTags(platform)
 }
 
-// canonicalAppleTagString is canonicalAppleTags joined for -tags.
-func canonicalAppleTagString(platform string) string {
-	return applebuildtags.FullDeploymentTagString(platform)
-}
-
 // commonAppleTagString is the tag set gomobile receives via -tags for ANY Apple target.
 func commonAppleTagString() string {
 	return applebuildtags.CommonTagString()

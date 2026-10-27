@@ -1127,14 +1127,6 @@ func RuntimeMemoryLimit(memoryLimit uint64) uint64 {
 	return computeLimitThresholds(memoryLimit, defaultSafetyMargin).armed
 }
 
-// runtimeMemoryLimitForPolicy is the runtime soft limit the canonical policy implies.
-//
-// Callers inside a NetworkExtension use this rather than recomputing from the budget, so
-// the value cannot diverge from the thresholds the timer enforces.
-func runtimeMemoryLimitForPolicy() uint64 {
-	return canonicalNetworkExtensionPolicy.runtimeMemoryLimit()
-}
-
 func (t *adaptiveTimer) availableThresholds(sample memorySample) pressureThresholds {
 	var triggerMargin uint64
 	if t.hasSafetyMargin {

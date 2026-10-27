@@ -36,17 +36,14 @@ type DNSTransport struct {
 	acceptDefaultResolvers bool
 	acceptSearchDomain     bool
 	endpointManager        adapter.EndpointManager
-	// endpoint is the owning OpenConnect endpoint; Close detaches itself from it, so the endpoint
-	// does not keep a transport that has already been released.
-	endpoint         *Endpoint
-	dialer           N.Dialer
-	access           sync.RWMutex
-	closed           bool
-	routes           []openConnectDNSRoute
-	searchDomains    []string
-	serverAddresses  []netip.Addr
-	defaultResolvers []adapter.DNSTransport
-	resolverScope    *adapter.Scope
+	dialer                 N.Dialer
+	access                 sync.RWMutex
+	closed                 bool
+	routes                 []openConnectDNSRoute
+	searchDomains          []string
+	serverAddresses        []netip.Addr
+	defaultResolvers       []adapter.DNSTransport
+	resolverScope          *adapter.Scope
 }
 
 type openConnectDNSRoute struct {

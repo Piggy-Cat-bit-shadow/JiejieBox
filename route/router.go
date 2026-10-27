@@ -2,6 +2,7 @@ package route
 
 import (
 	"context"
+	"errors"
 	"os"
 	"runtime"
 	"sync/atomic"
@@ -166,7 +167,7 @@ func (r *Router) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 				resolver, err := newNeighborResolver(r.logger, r.leaseFiles)
 				monitor.Finish()
 				if err != nil {
-					if err != os.ErrInvalid {
+					if !errors.Is(err, os.ErrInvalid) {
 						r.logger.Error(E.Cause(err, "create neighbor resolver"))
 					}
 				} else {
@@ -234,7 +235,7 @@ func (r *Router) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 				})
 				monitor.Finish()
 				if err != nil {
-					if err != os.ErrInvalid {
+					if !errors.Is(err, os.ErrInvalid) {
 						r.logger.Warn(E.Cause(err, "create process searcher"))
 					}
 				} else {

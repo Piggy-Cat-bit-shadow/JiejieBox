@@ -594,7 +594,7 @@ func (r *NetworkManager) Start(stage adapter.StartStage, scope *adapter.Scope) e
 		if r.needWIFIState && !(r.platformInterface != nil && r.platformInterface.UsePlatformWIFIMonitor()) {
 			wifiMonitor, err := settings.NewWIFIMonitor(r.onWIFIStateChanged)
 			if err != nil {
-				if err != os.ErrInvalid {
+				if !errors.Is(err, os.ErrInvalid) {
 					r.logger.Warn(E.Cause(err, "create WIFI monitor"))
 				}
 			} else {

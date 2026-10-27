@@ -1,11 +1,15 @@
 # Fork defect: a failed splice setup silently stops the connection instead of copying
 
-**Status: cannot be fixed from sing-box.** The code is in the sing fork, which exists on this host only as a
-read-only module cache. This note is the deliverable — with the exact reasoning and the one-line fix.
+**Status: FIXED in the sing fork (`cebf939`), and the current pin carries it.** The current pin is
+`github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261024214131-f601163d18d1`: `splice_linux.go` now
+returns `handed=false` on a `Pipe2` setup failure, exposes `splicePipe2` as the one test seam, and
+`splice_linux_test.go` has the regression that forces the failure. The rest of this document is kept
+as the record of the defect and the reasoning, not as a current claim.
 
-Affects: `github.com/Piggy-Cat-bit-shadow/sing` @ `v0.9.6-0.20261008194531-3af46fe99d3b`,
-`common/bufio/splice_linux.go` + `common/bufio/copy.go`. **Linux only** (`splice_stub.go` returns early
-everywhere else, so Windows and darwin never reach this path).
+Historically affected: `github.com/Piggy-Cat-bit-shadow/sing` @
+`v0.9.6-0.20261008194531-3af46fe99d3b`, `common/bufio/splice_linux.go` + `common/bufio/copy.go`.
+**Linux only** (`splice_stub.go` returns early everywhere else, so Windows and darwin never reach
+this path).
 
 ---
 

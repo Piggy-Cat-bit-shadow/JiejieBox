@@ -192,17 +192,15 @@ func writeProvenance() {
 	}
 }
 
-// resolvedTags are the build tags actually compiled into each shipped variant, recorded so a
-// consumer can answer "does this artifact include X" without re-deriving the composition.
+// The build tags actually compiled into each shipped variant are recorded by writeProvenance's
+// `tags.<variant>=` lines, resolved through ResolveBuildTags below. A check that reads the profile
+// tag FILES is not the same as a check on what the artifacts are built with: the libbox builder
+// composes its own tag sets. The 048 gVisor crash was found exactly through that gap - a tripwire
+// that only read the profile files reported "no profile names with_gvisor" while the Android
+// artifacts did compile it. The gap is still real even though this particular tag is gone, which is
+// why the provenance records the resolution and why the inverse invariant is asserted against
+// ResolveBuildTags - the same function the builders call - rather than against the files.
 //
-// This exists because a check that reads the profile tag FILES is not the same as a check on what
-// the artifacts are built with: the libbox builder composes its own tag sets. The 048 gVisor crash
-// was found exactly through that gap - a tripwire that only read the profile files reported "no
-// profile names with_gvisor" while the Android artifacts did compile it. The gap is still real
-// even though this particular tag is gone, which is why the resolution is still recorded here and
-// why the inverse invariant is asserted against the RESOLVED tags rather than the files.
-var resolvedTags = map[string][]string{}
-
 // ResolveBuildTags returns the build tags for the named shipped variant. It is the single source
 // of truth for tag composition: the builders below call it, the provenance record is written from
 // it, and a test asserts the gVisor invariant against it.

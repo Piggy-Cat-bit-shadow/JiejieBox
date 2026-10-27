@@ -1670,29 +1670,6 @@ func (r *Router) dnsEnvironmentFingerprintNow() (uint64, string, bool) {
 	return fingerprint, r.dnsEnvironmentDescriptionFor(), true
 }
 
-// reverseMappingGenerationCurrent reports whether a captured generation still describes the live
-// network.
-//
-// # Why this is one function rather than a condition written twice
-//
-// The guard appeared twice: inline in recordReverseMappingFrom, and again in a test-facing helper
-// that recorded a mapping. Two copies of one rule can drift, and the drift is invisible in the worst
-// direction - production could be corrected while the test-facing copy kept the old behaviour, so the
-// tests would keep passing against a rule the product no longer follows.
-//
-// The condition lives here, and both callers use it.
-//
-// It reads dnsGeneration rather than networkGeneration so that a DNS-only environment change counts
-// as an epoch change for the one cache that has no other namespace. The reverse mapping is a
-// statement about what a name means on a resolver set, so it belongs to that resolver set, not to
-// the route the query happened to travel.
-func (r *Router) reverseMappingGenerationCurrent(generation uint64) bool {
-	if r.dnsReverseMapping == nil {
-		return false
-	}
-	return generation == r.dnsGeneration()
-}
-
 // reverseMappingAnswer is one address-to-name mapping learned from a DNS answer.
 type reverseMappingAnswer struct {
 	address  netip.Addr

@@ -269,15 +269,14 @@ func TestSecondRequestFailureStillReportsTheNodeAsUsable(t *testing.T) {
 		return -1
 	})
 
-	delay, err := measureForTest(context.Background(), server.url(), directDialer{})
+	_, err := measureForTest(context.Background(), server.url(), directDialer{})
 	require.NoError(t, err,
 		"a node that answered the warm-up must not be reported as dead just because the repeat "+
 			"failed; Mihomo falls back to the first request's result instead")
 
-	// The fallback reports the FIRST request's path, so the warm-up cost is included. The
-	// assertion is on the semantics, not on a millisecond figure: a local server can make the
-	// whole attempt sub-millisecond, which truncates to 0.
-	require.True(t, delay >= 0)
+	// The fallback reports the FIRST request's path, so the warm-up cost is included. The delay
+	// is a uint16, so there is no invalid value to assert; the request count below is the
+	// decisive observation.
 
 	// The decisive part is that exactly two requests were attempted and the second failed -
 	// proving the failure was reached and handled rather than skipped.

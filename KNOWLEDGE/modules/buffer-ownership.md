@@ -163,7 +163,7 @@ garbage per read.
 | Race-freedom | **`BLOCKED_BY_ENVIRONMENT`** — `-race` needs cgo and there is no C compiler | Linux/macOS or Windows+gcc |
 | The kTLS read-path fixes | **`VERIFIED_SOURCE`** — textually identical to the reference, and the package cannot be compiled here | needs Linux |
 | `unix.Splice()` actually running | **`UNVERIFIED` here** — proved on Linux by the fork's `linux-splice-proof` workflow on real loopback sockets, not in this environment | that workflow |
-| The splice silent stall | **`VERIFIED_SOURCE`** (`docs/internal/fork-splice-silent-stall.md`) — **not fixed** | — |
+| The splice silent stall | **FIXED in the sing pin** — `cebf939` sets `handed=false` on a `Pipe2` setup failure, adds the `splicePipe2` test seam and the regression that forces the failure; the current pin `v0.9.6-0.20261024214131-f601163d18d1` carries it. `docs/internal/fork-splice-silent-stall.md` is the corrected historical record. | read `common/bufio/splice_linux.go` in the pinned sing source, and run its `splice_linux_test.go` on Linux |
 
 ---
 

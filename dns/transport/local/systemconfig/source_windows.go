@@ -2,6 +2,7 @@ package systemconfig
 
 import (
 	"context"
+	"errors"
 	"net/netip"
 	"os"
 	"slices"
@@ -165,7 +166,8 @@ func adapterAddresses() ([]*windows.IpAdapterAddresses, error) {
 			}
 			break
 		}
-		if err.(syscall.Errno) != syscall.ERROR_BUFFER_OVERFLOW {
+		var errno syscall.Errno
+		if !errors.As(err, &errno) || errno != syscall.ERROR_BUFFER_OVERFLOW {
 			return nil, os.NewSyscallError("getadaptersaddresses", err)
 		}
 		if l <= uint32(len(b)) {

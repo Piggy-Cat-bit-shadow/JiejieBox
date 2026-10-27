@@ -1,6 +1,7 @@
 package route
 
 import (
+	"errors"
 	"net"
 	"net/netip"
 	"slices"
@@ -23,7 +24,7 @@ func systemGateways(interfaceIndex int) []netip.Addr {
 		if err == nil {
 			break
 		}
-		if err != windows.ERROR_BUFFER_OVERFLOW || bufferSize <= uint32(len(buffer)) {
+		if !errors.Is(err, windows.ERROR_BUFFER_OVERFLOW) || bufferSize <= uint32(len(buffer)) {
 			return nil
 		}
 	}

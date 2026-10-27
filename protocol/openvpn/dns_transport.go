@@ -135,10 +135,9 @@ func (t *DNSTransport) updateResolvers(configuration ovpntransport.Configuration
 		return left.Priority - right.Priority
 	})
 	var selectedResolvers []adapter.DNSTransport
-	// newResolvers collects every resolver this update starts, so failResolverUpdate can
-	// release exactly what was built when a later server fails - including resolvers the
-	// update decided not to select, which would otherwise be started and then stranded.
-	var newResolvers []adapter.DNSTransport
+	// Every resolver below is started with resolverScope, which is what failResolverUpdate
+	// closes; a separate slice of "resolvers to release" would be a second ownership record for
+	// the same objects and would not be read by anything.
 	var serverAddresses []netip.Addr
 	if len(servers) > 0 {
 		server := servers[0]
@@ -155,7 +154,6 @@ func (t *DNSTransport) updateResolvers(configuration ovpntransport.Configuration
 				return t.failResolverUpdate(resolverScope, err)
 			}
 			selectedResolvers = append(selectedResolvers, resolver)
-			newResolvers = append(newResolvers, resolver)
 			serverAddresses = append(serverAddresses, address.Addr())
 		}
 		if len(selectedResolvers) == 0 {
@@ -179,7 +177,6 @@ func (t *DNSTransport) updateResolvers(configuration ovpntransport.Configuration
 				return t.failResolverUpdate(resolverScope, err)
 			}
 			selectedResolvers = append(selectedResolvers, resolver)
-			newResolvers = append(newResolvers, resolver)
 			serverAddresses = append(serverAddresses, address)
 		}
 		if len(configuration.DNSRoutes) > 0 {
