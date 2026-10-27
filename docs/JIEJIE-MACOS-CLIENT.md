@@ -73,16 +73,20 @@ Two paths now cover it, because the two products receive different signals:
 
 * The macOS app runs inside a NetworkExtension. Its provider receives `sleep()`/`wake()`; the core
   starts the device episode on `sleep()` and, on `wake()`, lifts it, publishes the reuse verdict and
-  runs the same medium network reset as a Windows resume (`route.NetworkManager.SystemResumed`).
+  runs the hard network reset (`route.NetworkManager.SystemResumed`). The wake and the watchdog
+  reports for one sleep share the sleep episode number, so the duplicate is coalesced without
+  swallowing a second, independent sleep.
 * The headless client has no NetworkExtension. `common/suspendwatch` compares the wall clock with
   the monotonic clock, which stops while the machine sleeps, and calls the same `SystemResumed` when
   it sees a divergence of at least five seconds. The watchdog runs only on macOS, is a watchdog
   rather than a poll of any service, and is stopped by the network manager's scope.
 
-A medium reset drains idle connections and re-pins DNS; it does not terminate an active stream that
-survived a short sleep. The device line to read after a resume is
-`system resumed after <gap> suspended; resetting the network` followed by one `updated default
-interface`/reset sequence in the log. See
+A resume is a hard (dead-path) reset: it closes every managed flow, including an active TCP stream,
+because a suspended process cannot prove which pre-sleep sockets survived. A medium drain would leave
+an active black-holed flow alive indefinitely. The tradeoff is explicit: a stream that might have
+survived a short sleep is closed too; the application sees the close and reconnects. The device line
+to read after a resume is `system resumed after <gap> suspended; resetting the network` followed by
+one `updated default interface`/reset sequence in the log. See
 [the close-out](fork/macos-sleep-network-closeout.md) for the failure chain, the evidence and the
 device checklist.
 

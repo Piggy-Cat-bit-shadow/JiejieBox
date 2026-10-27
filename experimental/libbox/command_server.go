@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
@@ -43,6 +44,11 @@ type CommandServer struct {
 	axisAccess        sync.Mutex
 	deviceAxisPaused  bool
 	deviceAxisTouched bool
+	// sleepEpisode numbers macOS sleep episodes so the wake and the watchdog reports for one sleep
+	// share an identity. It is monotonic for the life of the process and survives a reload; the
+	// network manager dedups by it instead of by a wall-clock window, which could swallow a second,
+	// independent sleep. See NetworkManager.SystemResumed.
+	sleepEpisode atomic.Uint64
 }
 
 type CommandServerHandler interface {
@@ -63,7 +69,12 @@ type CommandServerHandler interface {
 // no opinion about it, and asking for it directly degrades to "nothing to do" instead of forcing
 // every implementation to grow a method.
 type systemResumer interface {
-	SystemResumed()
+	// SetSleepEpisode tells the manager which platform sleep the next resume closes. The
+	// NetworkExtension wake and the watchdog both carry the same number for one sleep.
+	SetSleepEpisode(episode uint64)
+	// SystemResumed closes the episode. Episode 0 means the caller has no platform number (the
+	// watchdog); the manager falls back to its own numbering when the platform announced nothing.
+	SystemResumed(episode uint64)
 }
 
 func NewCommandServer(handler CommandServerHandler, platformInterface PlatformInterface) (*CommandServer, error) {
@@ -376,6 +387,18 @@ func (s *CommandServer) restoreDeviceLevel() {
 	// Read back rather than copy: the manager is the authority even when it was another writer that
 	// moved it, and this is the one place the two are reconciled.
 	s.rememberDeviceLevel(manager.IsDevicePaused())
+	// A replacement Box has a fresh network manager. If the device is still in the sleep this reload
+	// happened inside, hand it the sleep episode Pause numbered; otherwise a watchdog that fires
+	// before the wake would number it independently and a later Wake would look like a second sleep.
+	if C.IsDarwin && manager.IsDevicePaused() {
+		if episode := s.sleepEpisode.Load(); episode != 0 {
+			if box := instance.Box(); box != nil {
+				if resumer, isResumer := box.Network().(systemResumer); isResumer {
+					resumer.SetSleepEpisode(episode)
+				}
+			}
+		}
+	}
 }
 
 // Pause enters the device pause on the platform whose sleep signal means the device is going to
@@ -399,9 +422,22 @@ func (s *CommandServer) Pause() {
 		return
 	}
 	s.rememberDeviceLevel(true)
+	// Number the macOS sleep before the instance is resolved. The number is what lets the wake and
+	// the watchdog reports for THIS sleep be deduplicated without a wall-clock window; a second sleep
+	// increments it even if it happens a second later. The manager is told when one exists; if the
+	// service is mid-reload, Wake carries the same number to the replacement Box.
+	var sleepEpisode uint64
+	if C.IsDarwin {
+		sleepEpisode = s.sleepEpisode.Add(1)
+	}
 	instance := s.StartedService.Instance()
 	if instance == nil || instance.Box() == nil {
 		return
+	}
+	if C.IsDarwin {
+		if resumer, isResumer := instance.Box().Network().(systemResumer); isResumer {
+			resumer.SetSleepEpisode(sleepEpisode)
+		}
 	}
 	// CloseIdleConnections() used to be called here, the moment the device paused. It is not any
 	// more: closing the pool on every screen-off turns each unlock into a burst of DNS, TLS and QUIC
@@ -484,8 +520,15 @@ func (s *CommandServer) Wake() {
 		// from its own sockets: after a sleep on the same network the interface does not move and no
 		// callback arrives, so the stale pools have to be drained here.
 		instance.Box().DeviceWoke()
+		episode := s.sleepEpisode.Load()
 		if resumer, isResumer := instance.Box().Network().(systemResumer); isResumer {
-			resumer.SystemResumed()
+			// Re-state the episode for the replacement Box: Pause may have run with no instance
+			// while a reload was in progress. Episode 0 means no sleep was announced; the manager
+			// treats that as a watchdog-style resume and numbers it itself.
+			if episode != 0 {
+				resumer.SetSleepEpisode(episode)
+			}
+			resumer.SystemResumed(episode)
 		}
 		return
 	}

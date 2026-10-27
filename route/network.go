@@ -131,17 +131,30 @@ type NetworkManager struct {
 	// networkPausedSince is when the device was last seen without a default interface, in Unix
 	// nanoseconds, or 0 while it has one. See networkIsConfirmedOffline.
 	networkPausedSince atomic.Int64
-	// lastSystemResume is when SystemResumed last ran a reset, in Unix nanoseconds, or 0 before the
-	// first resume. It coalesces the two reports one physical resume can produce - the
-	// NetworkExtension wake and the macOS watchdog - so a dial the user starts in the seconds after
-	// opening the lid is not cancelled by a second transition for the same event.
-	lastSystemResume        atomic.Int64
-	needWIFIState           bool
-	wifiMonitor             settings.WIFIMonitor
-	wifiState               adapter.WIFIState
-	networkEnvironment      uint64
-	stateAccess             sync.RWMutex
-	environmentUpdateAccess sync.Mutex
+	// System-resume episode bookkeeping. See SystemResumed.
+	//
+	// The resume reports come from two sources - the NetworkExtension wake and the macOS suspend
+	// watchdog - and they can observe the same physical resume. A wall-clock window cannot tell a
+	// duplicate from a second, genuinely independent sleep: two lid closes inside the window would
+	// have the second resume swallowed. So the dedup is by EPISODE, not by time: the platform sleep
+	// edge numbers its episode, and the two reports for that sleep carry the same number. A second
+	// sleep gets a new number even if it happens one second later.
+	//
+	// systemSleepSeen distinguishes "the platform announced a sleep and we have its episode" from
+	// "the watchdog saw a divergence but the platform said nothing" (the headless client). In the
+	// second case every watchdog detection is a new episode, numbered by systemFallbackEpisode.
+	systemResumeAccess       sync.Mutex
+	systemSleepEpisode       uint64
+	systemSleepSeen          bool
+	systemFallbackEpisode    uint64
+	lastSystemResumeEpisode  uint64
+	lastSystemResumePlatform bool
+	needWIFIState            bool
+	wifiMonitor              settings.WIFIMonitor
+	wifiState                adapter.WIFIState
+	networkEnvironment       uint64
+	stateAccess              sync.RWMutex
+	environmentUpdateAccess  sync.Mutex
 	// startedCtx is the run's context, published ATOMICALLY.
 	//
 	// # Why it is not a plain field
@@ -647,7 +660,10 @@ func (r *NetworkManager) Start(stage adapter.StartStage, scope *adapter.Scope) e
 					return
 				}
 				r.logger.Info("system resumed after ", gap, " suspended; resetting the network")
-				r.SystemResumed()
+				// Episode 0: the watchdog has no platform sleep number. If the platform announced
+				// one, claimSystemResume uses it and dedups the NetworkExtension report; if not
+				// (headless), this detection is a new episode of its own.
+				r.SystemResumed(0)
 			})
 			r.suspendWatcher = watcher
 			scope.Add(func() error {
@@ -1130,6 +1146,54 @@ func (r *NetworkManager) ResetNetwork(ctx context.Context) {
 	r.resetNetworkLocked(ctx, false)
 }
 
+// SetSleepEpisode records the platform sleep episode that a later resume closes.
+//
+// It is called from the macOS sleep edge (CommandServer.Pause), which owns the numbering. The
+// NetworkExtension wake and the watchdog both report resumes; carrying the same episode through both
+// is what lets SystemResumed tell "the second report of one sleep" from "a second sleep".
+//
+// Episode 0 is "unknown" and is ignored: a wake without a preceding sleep must not manufacture a
+// platform episode it never saw.
+func (r *NetworkManager) SetSleepEpisode(episode uint64) {
+	if episode == 0 {
+		return
+	}
+	r.systemResumeAccess.Lock()
+	r.systemSleepEpisode = episode
+	r.systemSleepSeen = true
+	r.systemResumeAccess.Unlock()
+}
+
+// claimSystemResume decides whether this report describes a resume that has not been processed.
+//
+// A report with a platform episode is deduplicated by that episode. A report with episode 0 (the
+// watchdog) uses the platform episode when the platform announced one, so it is a duplicate of the
+// NetworkExtension report for the same sleep; when the platform announced nothing (the headless
+// client), every watchdog detection is a new episode.
+func (r *NetworkManager) claimSystemResume(episode uint64) bool {
+	r.systemResumeAccess.Lock()
+	defer r.systemResumeAccess.Unlock()
+	platform := episode != 0
+	if !platform {
+		if r.systemSleepSeen {
+			episode = r.systemSleepEpisode
+			platform = episode != 0
+		}
+		if !platform {
+			r.systemFallbackEpisode++
+			r.lastSystemResumeEpisode = r.systemFallbackEpisode
+			r.lastSystemResumePlatform = false
+			return true
+		}
+	}
+	if r.lastSystemResumePlatform && r.lastSystemResumeEpisode == episode {
+		return false
+	}
+	r.lastSystemResumeEpisode = episode
+	r.lastSystemResumePlatform = true
+	return true
+}
+
 // SystemResumed records that the host process was suspended and is running again.
 //
 // # Why a resume must reset even when the interface did not move
@@ -1138,17 +1202,33 @@ func (r *NetworkManager) ResetNetwork(ctx context.Context) {
 // back on the same Wi-Fi, with the same gateway and the same SSID, so the environment fingerprint is
 // unchanged and no interface callback fires - and the sockets the outbound pools still hold were
 // black-holed while the radio was off. A reset is what re-pins DNS to the current resolvers, drains
-// the stale pools and lets the next flow dial a path that exists. This is the same action the
-// Windows resume already performs in notifyWindowsPowerEvent; it was simply missing on Darwin.
+// the stale pools and lets the next flow dial a path that exists.
 //
-// It is deliberately a MEDIUM transition: an active stream may still have survived a short sleep,
-// and the drain closes only what it can prove idle. The hard classification stays reserved for an
-// outage the platform actually reported.
+// # Why this is a HARD transition
 //
-// The entry point is reachable from both a platform wake (CommandServer.Wake) and the macOS suspend
-// watchdog. Both observe one physical resume, so a second report inside systemResumeCoalesceWindow is
-// treated as the same event rather than as a new transition.
-func (r *NetworkManager) SystemResumed() {
+// A medium transition drains only what it can prove idle. That is the right answer to an interface
+// change, where a socket may still be carrying traffic on the path the device left. It is NOT enough
+// after a suspend: the process was not running, so no observation made before the sleep proves
+// anything about a flow that was active at the time. A TCP stream whose peer stopped receiving while
+// the radio was off looks exactly like a healthy idle stream to the drain, and the medium reset would
+// leave it black-holed indefinitely. The dead-path classification closes every managed flow instead,
+// which is the only result that proves the pre-sleep sockets are gone; the application sees the close
+// and reconnects. The cost is stated rather than hidden: a stream that might have survived a short
+// sleep is closed too, because this process cannot prove which streams survived.
+//
+// A resume reported with no sleep evidence (episode 0 and no platform episode) gets the same hard
+// treatment: the watchdog only fires on a wall-vs-monotonic divergence, which is itself evidence that
+// the process was not running.
+//
+// # Why the dedup is by episode and not by time
+//
+// One physical resume can be reported twice: the NetworkExtension wake lifts the Box and calls here,
+// and the watchdog sees the same divergence a moment later. A fixed time window would suppress the
+// duplicate, but it has no way to tell a duplicate from a second, genuine sleep that starts inside
+// the window - and suppressing that one leaves the second sleep's black-holed sockets in place. The
+// platform sleep edge numbers each sleep; both reports for one sleep carry that number, and a second
+// sleep carries a new one. See SetSleepEpisode and claimSystemResume.
+func (r *NetworkManager) SystemResumed(episode uint64) {
 	if r.closed.Load() {
 		return
 	}
@@ -1167,25 +1247,26 @@ func (r *NetworkManager) SystemResumed() {
 	if r.pauseManager != nil && r.pauseManager.IsDevicePaused() {
 		r.pauseManager.DeviceWake()
 	}
-	// One physical resume can be reported twice: the NetworkExtension wake lifts the box and calls
-	// here, and the watchdog sees the same wall-vs-monotonic divergence a moment later. The second
-	// report must not start a second transition, because a dial made in those seconds would then be
-	// cancelled by a reset for an event that is already over. The window is longer than the
-	// watchdog's interval and far shorter than a person's next sleep.
-	resumeAt := time.Now().UnixNano()
-	lastResume := r.lastSystemResume.Load()
-	if lastResume != 0 {
-		elapsed := resumeAt - lastResume
-		// A negative elapsed is a wall clock step backwards, not a duplicate report: coalescing it
-		// would suppress every resume until the clock caught up again.
-		if elapsed >= 0 && elapsed < int64(systemResumeCoalesceWindow) {
-			return
-		}
-	}
-	if !r.lastSystemResume.CompareAndSwap(lastResume, resumeAt) {
+	if !r.claimSystemResume(episode) {
 		return
 	}
-	r.ResetNetwork(ctx)
+	r.ResetNetworkHard(ctx)
+}
+
+// ResetNetworkHard is ResetNetwork with the dead-path classification: every managed flow is closed,
+// not only the ones the drain can prove idle.
+//
+// It exists for the one event that invalidates an active flow without producing an interface change:
+// a host resume. See SystemResumed for why a medium reset is insufficient there.
+func (r *NetworkManager) ResetNetworkHard(ctx context.Context) {
+	r.resetRunAccess.Lock()
+	defer r.resetRunAccess.Unlock()
+	_, token := r.recomputeNetworkEnvironment()
+	if token == noTransition {
+		token = r.beginTransition()
+	}
+	defer r.commitTransition(token)
+	r.resetNetworkLocked(ctx, true)
 }
 
 // beginTransition claims the epoch for a transition that is about to perform a reset.
@@ -1457,10 +1538,6 @@ const HardTransitionConfirm = 2 * time.Second
 const (
 	suspendWatchInterval  = 5 * time.Second
 	suspendWatchThreshold = 5 * time.Second
-	// systemResumeCoalesceWindow is how long a second resume report is treated as the same physical
-	// event. It must cover the watchdog interval plus the time the NetworkExtension wake takes to
-	// reach the core, and it must stay far below the shortest gap between two real sleeps.
-	systemResumeCoalesceWindow = 15 * time.Second
 )
 
 func (r *NetworkManager) resetNetworkLocked(ctx context.Context, recoveredFromConfirmedOffline bool) {
