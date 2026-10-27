@@ -858,8 +858,15 @@ func (t *Inbound) InterfaceUpdated(ctx context.Context) {
 		if !t.stackStarted.Load() {
 			return
 		}
+		// The event we just published is the one stackDidStart may have missed. Consume it here;
+		// there is no second, independent event on this branch.
+		t.consumePendingReset()
+		return
 	}
+	// The stack is already running: every accepted network update is its own reset. Pending is
+	// only for events that raced Start, so do not let a still-pending startup event hide this one.
 	t.consumePendingReset()
+	t.resetNetwork()
 }
 
 func (t *Inbound) stackDidStart() {
@@ -872,6 +879,16 @@ func (t *Inbound) stackDidStart() {
 // exactly once and never before the stack is started.
 func (t *Inbound) consumePendingReset() {
 	if t.closed.Load() || !t.stackResetPending.Swap(false) {
+		return
+	}
+	if !t.stackStarted.Load() {
+		return
+	}
+	t.resetNetwork()
+}
+
+func (t *Inbound) resetNetwork() {
+	if t.closed.Load() || !t.stackStarted.Load() {
 		return
 	}
 	if tunStack := t.tunStack; tunStack != nil {

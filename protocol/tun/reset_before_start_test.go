@@ -2,6 +2,7 @@ package tun
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -46,6 +47,78 @@ func TestInterfaceUpdatedAfterCloseDoesNotReset(t *testing.T) {
 
 	inbound.InterfaceUpdated(context.Background())
 	require.Zero(t, stack.resets.Load(), "a closed inbound must not reset its stack")
+}
+
+// TestInterfaceUpdatedAfterStartResetsEveryTime is the normal post-Start path. It exists because the
+// pending flag is only for the startup handoff; a running stack must not require a pending flag to
+// reset, and consecutive updates are independent events.
+func TestInterfaceUpdatedAfterStartResetsEveryTime(t *testing.T) {
+	stack := &resetCountingStack{}
+	inbound := &Inbound{tunStack: stack}
+	inbound.stackStarted.Store(true)
+
+	inbound.InterfaceUpdated(context.Background())
+	inbound.InterfaceUpdated(context.Background())
+	inbound.InterfaceUpdated(context.Background())
+
+	require.Equal(t, int32(3), stack.resets.Load(),
+		"every post-Start update must reset; consecutive updates are independent events")
+	require.False(t, inbound.stackResetPending.Load())
+}
+
+func TestInterfaceUpdatedAfterStartDoesNotMergeAPriorPendingIntoTheNewEvent(t *testing.T) {
+	stack := &resetCountingStack{}
+	inbound := &Inbound{tunStack: stack}
+	inbound.stackStarted.Store(true)
+	inbound.stackResetPending.Store(true) // a pre-Start event that Start has not consumed yet
+
+	inbound.InterfaceUpdated(context.Background())
+
+	require.Equal(t, int32(2), stack.resets.Load(),
+		"the prior pending reset and the new post-Start reset are distinct events and both must run")
+	require.False(t, inbound.stackResetPending.Load())
+}
+
+func TestInterfaceUpdatedConcurrentAfterStartDoesNotCoalesce(t *testing.T) {
+	stack := &resetCountingStack{}
+	inbound := &Inbound{tunStack: stack}
+	inbound.stackStarted.Store(true)
+
+	const updates = 16
+	var waitGroup sync.WaitGroup
+	waitGroup.Add(updates)
+	for range updates {
+		go func() {
+			defer waitGroup.Done()
+			inbound.InterfaceUpdated(context.Background())
+		}()
+	}
+	waitGroup.Wait()
+
+	require.Equal(t, int32(updates), stack.resets.Load(),
+		"each concurrent post-Start update is an independent event")
+}
+
+func TestInterfaceUpdatedConcurrentBeforeStartCoalescesToOnePending(t *testing.T) {
+	stack := &resetCountingStack{}
+	inbound := &Inbound{tunStack: stack}
+
+	const updates = 16
+	var waitGroup sync.WaitGroup
+	waitGroup.Add(updates)
+	for range updates {
+		go func() {
+			defer waitGroup.Done()
+			inbound.InterfaceUpdated(context.Background())
+		}()
+	}
+	waitGroup.Wait()
+	require.True(t, inbound.stackResetPending.Load())
+	require.Zero(t, stack.resets.Load(), "nothing may reset before Start")
+
+	inbound.stackDidStart()
+	require.Equal(t, int32(1), stack.resets.Load(),
+		"all pre-Start updates are the same deferred state and must collapse to one reset")
 }
 
 // TestInterfaceUpdatedInterleavedWithStackStartDoesNotLoseReset pins the handoff hole: the update
