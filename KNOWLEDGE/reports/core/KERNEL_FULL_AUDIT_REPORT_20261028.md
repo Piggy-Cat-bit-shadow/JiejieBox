@@ -5,7 +5,8 @@
 **审计 HEAD：** `fec235746cc943b9965c8453e82a8a42890505ab`（2026-10-28 02:22 +0800）  
 **产品版本：** `release/JIEJIE_VERSION = 0.1.30`；当前 HEAD 为 `v0.1.30-3-gfec235746cc`  
 **审计性质：** 只读源码审计、依赖 Pin 审计、跨仓库调用链推演、受控现有测试；未修改源码、测试、配置、依赖、Pin、Tag 或远端状态。  
-**报告日期：** 2026-10-28
+**报告日期：** 2026-10-28  
+**最终代码 HEAD：** `1ff0af39110d4bd4044c817a0bf209ff01e21f7a`（TUN post-start reset 回归修复）；文档归档提交另计
 
 > **结论先行：** 当前内核没有发现 P0；确认 **2 个 P1、10 个 P2、3 个 P3** 的生产级问题。最严重的是：普通 TUN 在显式 `dns_address` 下可能完全绕过 DNS Hijack（DNS 泄漏/策略绕过），以及 Linux kTLS + mixed/redirect 的 splice 下载路径会在合法 TLS 控制记录上 panic。另有 Naive 证书 Pin 被静默忽略、TUN 网络重置空指针竞态、QUIC Owned DATAGRAM 所有权泄漏、组出站候选地址/接口策略丢失、活跃 TCP 静默停滞等问题。  
 > **发布判断：** 不是“全仓不可发布”，但上述 P1/P2 应进入下一次补丁版本；尤其是使用显式 DNS 地址的 TUN、Linux kTLS、Naive 证书 Pin、组出站双栈场景。当前 `v0.1.30` 已发布，本报告不建议移动该 Tag；修复应进入后续版本。
@@ -1307,7 +1308,7 @@ flowchart TD
 
 **提交：**
 
-- 主仓库：`3145d7dbdfc5b176b448f17d3cb279184128e48c`（已推送 `origin/testing`；`2bfc4df2e57` 为上一轮 Pin/schema 收尾，`3145d7dbdfc` 为本轮 reset handoff 修复）
+- 主仓库：`1ff0af39110d4bd4044c817a0bf209ff01e21f7a`（已推送 `origin/testing`；`3145d7dbdfc` 为 reset handoff 修复，`1ff0af39110` 为此后发现的 post-start reset 回归修复；报告文档提交另计）
 - `sing`：`1729220c46c4cf750726b1057514a8d52a1f5e3b`（`dev`）
 - `sing-tun`：`147ab164c5ae9328c91438246a07ec2b334788b2`（`dev`）
 - `quic-go`：`2daa76f5bd52dcb8d2d2a25f65f280905c48f18e`（`sagernet`）
@@ -1334,11 +1335,11 @@ Linux GOOS=linux go test -c ./protocol/tun       PASS
 
 **CI（GitHub Actions）：**
 
-- `Verify` run **40599630807** at `3145d7dbdfc`：**success**（gofmt、nested module integrity、schema、pinned-upstream、tagged/untagged build、kTLS wait-path、build matrix、race 全部通过）。
-- `Android Core ARM64` run **40599630808** at `3145d7dbdfc`：**success**。
-- `Verify` run **40571748694** at `2bfc4df2e57`：success（上一轮；当时代码和 Pin 已包含本轮的 reset 修复前状态，不能冒充 3145 的验证）。
+- `Verify` run **40602193497** at `1ff0af39110`：**success**（gofmt、nested module integrity、schema、pinned-upstream、tagged/untagged build、kTLS wait-path、build matrix、race 全部通过）。
+- `Android Core ARM64` run **40602193557** at `1ff0af39110`：**success**。
+- `Verify` run **40599630807** at `3145d7dbdfc`：success（reset handoff 修复的上一轮）。
+- `Android Core ARM64` run **40599630808** at `3145d7dbdfc`：success。
 - `Mobile contract verification` run **40569514755** at `92a69c57056`：success（Pin/schema 收尾，未改代码语义）。
-- 早期 `4170602573a` 的 Android/Mobile 失败已由 `92a69c57056`（gofmt/go.sum tidy）、`1f8acf45e69`（schema）、`2bfc4df2e57`（nested pins）关闭；`3145d7dbdfc` 的 Verify/Android 再次通过。
 
 **未作为修复通过的项目：**
 
@@ -1361,6 +1362,15 @@ Linux GOOS=linux go test -c ./protocol/tun       PASS
 - 新增仅测试使用的 `testBeforePendingResetStore` 钩子；生产为 nil，不改变路径。
 
 **测试：** `TestInterfaceUpdatedInterleavedWithStackStartDoesNotLoseReset` 精确构造“先读未启动 -> Start -> 再写 pending”的交错，断言恰好一次 reset；`TestInterfaceUpdatedBeforeStackStartIsDeferred` 和重复 `stackDidStart` 继续覆盖不提前/不重复。定向测试连续 20 次 PASS；本机无 gcc，`-race` 无法执行，race 由 CI 覆盖。
+
+**后续回归（本轮再次发现并修复）：** 上一版在 `stackStarted=true` 时跳过 `pending.Store`，随后只调用 `consumePendingReset()`；正常启动后的网络更新没有 pending，因此 `ResetNetwork` 完全不执行。这是启动后首次更新/连续更新失效的真实回归。修复为：
+
+- 启动前分支存储 pending，re-check 启动后只消费这一条 pending 并返回；
+- 启动后分支先消费可能残留的启动 pending，再为当前这次更新直接调用 `resetNetwork()`；
+- `resetNetwork()` 统一检查 closed/started 后才调用 `tunStack.ResetNetwork()`；
+- 新增 `TestInterfaceUpdatedAfterStartResetsEveryTime`、`TestInterfaceUpdatedAfterStartDoesNotMergeAPriorPendingIntoTheNewEvent`、`TestInterfaceUpdatedConcurrentAfterStartDoesNotCoalesce`、`TestInterfaceUpdatedConcurrentBeforeStartCoalescesToOnePending`，覆盖首更新、连续更新、启动交错、并发独立更新、启动前合并和关闭边界。
+
+**实际调用链核对：** `route/network.go:1681-1685` 的 inbound 循环调用 `adapter.InterfaceUpdateListener.InterfaceUpdated`；`protocol/tun/inbound.go:847` 的 `InterfaceUpdated` 是生产入口；启动后它调用 `resetNetwork()`，再调用 `t.tunStack.ResetNetwork()`（pinned `sing-tun.Go.ResetNetwork`）。route 侧已有 `TestListenersAreNotNotifiedWhilePaused` 从 `NetworkManager.ResetNetwork` 驱动 listener；tun 侧测试直接调用生产 `InterfaceUpdated` 并断言 stack 次数。真实 TUN 设备事件仍受环境限制，不能声称设备级验证完成。
 
 ### 16.2 协议组 ParallelNetworkDialer 透传复核
 
