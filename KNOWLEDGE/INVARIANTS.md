@@ -196,11 +196,15 @@ gitlink — the refs file is forbidden from recording a SHA and the workflow bod
   while nothing ran it. The full gate (layers 1-4, including the client call-site sweep) needs cgo,
   the Darwin profile and a client checkout, so it runs in `client-apple.yml` against the pinned
   source. `client-apple.yml` is still not in the release-acceptance required set (A12); that is the
-  remaining execution gap, not an absent check.
+  remaining execution gap, not an absent check. The missing-gitlink case is a **failure**, not a
+  skip: the gitlink lives in the superproject tree, so a deleted one cannot be "a client checkout
+  that was not initialised". `test-check-libbox-abi.sh` asserts both the correct pair and the deleted
+  Apple gitlink; `verify.yml` runs it.
 * **Proof:** `docs/fork/libbox-abi-contract.tsv`; `release/apple-client-refs.env`;
   `check-apple-source-selection.sh:124-136`, `:209-210`; `check-libbox-abi.sh` (`--pin-only`, layers
-  1-5); `verify.yml` step "client gitlinks match the ABI contract pins"; `client-apple.yml` step
-  "libbox ABI gate against the client call sites"; `apple-client-source.sh:88-105`;
+  1-5); `test-check-libbox-abi.sh`; `verify.yml` steps "client gitlinks match the ABI contract pins"
+  and "ABI pin gate fails closed on a missing gitlink"; `client-apple.yml` step "libbox ABI gate
+  against the client call sites"; `apple-client-source.sh:88-105`;
   `docs/fork/apple-artifact-verification.md:609-616`.
 * **Re-check:** `./scripts/ci/check-libbox-abi.sh --pin-only` on any host with `git`; the full gate is
   `./scripts/ci/check-libbox-abi.sh --client-root <apple-checkout>` on a macOS host with cgo.

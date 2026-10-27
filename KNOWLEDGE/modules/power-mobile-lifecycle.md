@@ -293,3 +293,8 @@ All **OWN**. The upstream family `Use screen state to end device pause on iOS` (
 15. **Do not generalise the one iPhone run to iPad, macOS or another OS build.** The record is one
     device.
 16. **Do not cite `verify-evidence/` for any of this** — see `ci-release.md` §3.
+17. **Do not move the suspendwatch baseline to the first tick.** `Watcher.Start` primes the detector
+    synchronously, before the ticker exists. If the first reading happened on the first tick, a host
+    that suspends immediately after Start would wake with the baseline on the wrong side of the
+    sleep and that first suspend would never be reported. The regression is
+    `TestTheWatcherPrimesAtStartBeforeTheFirstTick`.

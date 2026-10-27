@@ -116,5 +116,14 @@ the libbox job built the framework, passed the full "libbox ABI gate against the
 step, and the macOS DMG built; iOS skipped by input. The docs commit after the code commit was
 pushed with `[skip ci]`, so it did not start a second source run.
 
+Review closeout (`fc287fb`): Verify
+[#40500862220](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40500862220) **success**
+(the first race attempt hit the repository's known 10 s `TestTeardown_OneSidedCompletionNeverRunsOnClose`
+load flake; the rerun passed); macOS arm64
+[#40500894327](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40500894327) **success**
+(9 resume tests, the watcher prime regression, build and capability audit); Apple client
+[#40500904125](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40500904125) **success**
+(libbox, the full ABI gate and the macOS DMG).
+
 No tag was created, `release/JIEJIE_VERSION` stays `0.1.28`, and no GitHub Release was touched. The
 v0.1.28 release was published before this round, by the previous gate.

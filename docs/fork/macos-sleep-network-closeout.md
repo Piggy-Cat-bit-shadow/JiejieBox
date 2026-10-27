@@ -91,13 +91,16 @@ timeout half.
 | `go build -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" ./...` | **PASS** |
 | `go test -run '^$' -tags "$OTHERS" ./...` (every test binary compiles and links) | **PASS** |
 | `go test ./common/suspendwatch -count=5` | **PASS** |
-| `go test ./route -run 'TestHalfCloseSnapshot|TestSystemResumed' -count=1` | **PASS** |
+| `go test ./route -run 'TestSystemResumed' -count=1` | **PASS** — 9 tests: duplicate coalescing, a second sleep immediately after the first, watchdog detections, short-sleep medium, long-sleep dead path, and the watchdog-gap policy |
 | `go test ./experimental/libbox -run 'TestPlatformMonitor' -count=1` | **PASS** |
 | `go test -p 1 ./route ./experimental/libbox ./common/suspendwatch ./common/power . -count=1` | **PASS** — route 440.690 s, libbox 1.203 s, suspendwatch 0.078 s, power 4.781 s, root 10.188 s |
 | `go test ./route -short -count=1` on the final source | **PASS** — 80.643 s; skips only the six-minute kernel measurement the full run above covers |
 | CI `Verify` for `0410c9d` (run `40485312923`) | **PASS** — the Linux source gate: gofmt, builds, test binaries, upstream assumptions, race checks |
 | CI `macOS arm64` for `0410c9d` (run `40485385846`) | **PASS** — `gofmt`, unit tests under the macOS tags (including the route suite and the previously flaky half-close test), build, tag/version agreement, headless smoke and capability audit |
 | CI `Apple client` libbox job (run `40485553778`) | **PASS** — Libbox built from this fork with cgo on macOS, Apple regression tests passed |
+| CI `Verify` for the review closeout `fc287fb` (run `40500862220`) | **PASS** — source gate and race checks; the first race attempt hit the repository's known 10 s `TestTeardown_OneSidedCompletionNeverRunsOnClose` load flake, and the rerun passed |
+| CI `macOS arm64` for `fc287fb` (run `40500894327`) | **PASS** — unit tests under the macOS tags (9 resume tests plus the watcher prime regression), build, tag/version agreement, headless smoke and capability audit |
+| CI `Apple client` for `fc287fb` (run `40500904125`) | **PASS** — libbox, the full ABI gate against the client call sites, and the macOS DMG |
 | Physical Mac (lid close, same Wi-Fi, wake) | **NOT RUN — `UNVERIFIED`** |
 
 The macOS-specific branch cannot be executed on this Windows host: `C.IsDarwin` is a compile-time
