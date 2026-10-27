@@ -281,30 +281,25 @@ and forbid a second copy. They cannot say the revision is the *intended* one.
 The last cross-check against an intended revision was the `VERIFIED_APPLE_SHA` constant in
 `scripts/ci/check-libbox-abi.sh`, and:
 
-* **CORRECTED at the `93d757828` refresh.** The constant no longer mismatches the gitlink. It read
-  `90a0e9ae…` while the gitlink had advanced to `d0524912…`, so layer 5 failed; `ece0fb9d2` moved it to
-  `d0524912`, and the pin advance in `7f31bfd5e` moved it again to `5cab4ec5`. At `93d757828` the
-  constant and the gitlink are **the same commit**, so layer 5 is green, and layer 4 was run against a
-  clean `clients/apple` at that revision (`scanned: 670, violations: []`).
-* **nothing invokes that script** — not a workflow, not another script, not a `Makefile` target. So the
-  pin still moves without objection **in practice**: the constant agrees with the gitlink only because
-  the two were advanced together by hand. That is an obligation on whoever moves the pin, not a wired
-  check — see caution 16.
-* `c7014ddc1` ("fix(apple): align CI branding and iOS target") is proof by demonstration: it moved the
-  gitlink 33 minutes before the release commit and touched only `client-apple.yml` + `clients/apple`.
-  **Nothing objected.**
-* **CORRECTED.** The previous revision said the pinned revision `d052491215144f209b4726bbcf374649881defa3`
-  appears in **no** tracked non-`.git` file. It now does: `scripts/ci/check-libbox-abi.sh` names it in
-  the constant's derivation comment, and names the current pin `5cab4ec5…` in the constant itself. What
-  remains unrecorded is the revision the **v0.1.6** Apple products were built from (`a267e99e0`) —
-  still absent from every tracked non-`.git` file.
+* **UPDATED after v0.1.28.** The constant names `3aedd741…`, the current gitlink. It had drifted: it
+  stayed at `6e559a4` when the gitlink advanced for the path-monitor canary, so layer 5 failed on a
+  correct tree. The pin is now wired: `verify.yml` runs `check-libbox-abi.sh --pin-only` (git only, no
+  cgo) and `client-apple.yml` runs the full gate against the checked-out clients. A lone gitlink move
+  fails the push gate instead of being invisible. `client-apple.yml` is still **not** in
+  `verify-release-acceptance.sh`'s required set, and the acceptance engine is not invoked by the
+  release path (A20); the push gate is the wired objection, not the release gate.
+* The historical demonstrations (`c7014ddc1`, the `5cab4ec5` moves) remain worth reading: they show
+  why the constant exists, not what is wired today.
 * `client-apple.yml` is **not** in `verify-release-acceptance.sh`'s required set (`verify.yml`,
-  `interop-xray.yml`, `server-linux-amd64.yml`), and `verify.yml` does not run the ABI gate — so release
-  acceptance is **structurally incapable** of noticing the drift.
+  `interop-xray.yml`, `server-linux-amd64.yml`); `verify.yml` runs the pin-only half and the full gate
+  runs in the Apple workflow. Release acceptance is therefore still **structurally incapable** of
+  noticing the drift; the push gate is not.
 
-> **Correct statement: "the Apple pin has no wired verifier, and the one candidate verifier is
-> unwired."** Do **not** write "the Apple ABI gate is broken" — that implies a gate that runs. Do **not**
-> write "unwired and stale": at `93d757828` the constant agrees with the gitlink.
+> **Correct statement today: "the Apple pin is checked by the push gate's `--pin-only` half and by the
+> full gate in `client-apple.yml`; the release-acceptance engine still does not consult it."** Do
+> **not** write "the Apple ABI gate is broken" or "the pin has no wired verifier" - both were true
+> before the v0.1.28 canary and are not true now. The client-call-site layer is **UNVERIFIED on this
+> host** (no client checkout, no gobind); it runs in `client-apple.yml`.
 >
 > **What is therefore `UNVERIFIED` for v0.1.6:** ABI call-site compatibility of the Swift/Kotlin clients
 > against the libbox surface **at the pinned revision**. The recorded PASSes are at
@@ -411,7 +406,7 @@ External repositories
 | The trim ladder is complete and an unknown level is ignored | VERIFIED_SOURCE + VERIFIED_UNIT | `go test -count=1 ./common/runtimecoord/...` |
 | `APIVersion = 4` is served and consumed | VERIFIED_SOURCE | `git grep -n APIVersion` |
 | The Apple client is one source for iOS and macOS | VERIFIED_SOURCE (gate declaration) | `bash scripts/ci/check-apple-source-selection.sh` |
-| The Apple **pin cannot move without objection** | **VERIFIED_GIT that no wired mechanism exists** — the `VERIFIED_APPLE_SHA` constant agrees with the gitlink at `93d757828` (`5cab4ec5…`), but nothing *runs* the check that compares them | `git ls-tree HEAD clients/apple`; `git grep VERIFIED_APPLE_SHA= -- scripts/`; `git grep -n check-libbox-abi` for referrers — **KNOWN GAP** |
+| The Apple **pin cannot move without objection** | **VERIFIED_GIT** — `verify.yml` runs `check-libbox-abi.sh --pin-only`, which fails when `VERIFIED_APPLE_SHA` / `VERIFIED_ANDROID_SHA` disagree with the gitlinks; `client-apple.yml` runs the full gate against the checked-out clients | `./scripts/ci/check-libbox-abi.sh --pin-only`; `git ls-tree HEAD clients/apple` |
 | The refs file cannot silently reinstate a two-source pin | VERIFIED_SOURCE + VERIFIED_UNIT | `sed -n '88,105p' scripts/ci/apple-client-source.sh`; assert it greps the **file**, not the environment — `ece0fb9d2` |
 | ABI call-site compatibility at the pinned revision | **UNVERIFIED** | `bash scripts/ci/check-libbox-abi.sh` (needs a client checkout + `gobind`) |
 | Android AAR provenance and architecture | **UNVERIFIED (declaration only)** | `android-core-arm64.yml` |
@@ -442,12 +437,11 @@ External repositories
 14. **Do not claim client-side behaviour.** The client repositories are not in this worktree.
 15. **Do not forget that `include/*` has zero test files.** The registry and the tombstones are
     unguarded; a change there is caught only by a build.
-16. **If you move the Apple pin, the constant must move with it — by hand.** `clients/apple`'s gitlink is
-    the single authority, but `VERIFIED_APPLE_SHA` in `scripts/ci/check-libbox-abi.sh` is a second copy
-    that layer 5 compares against it, and nothing runs that script to tell you when the two diverge. At
-    `93d757828` they agree (`5cab4ec5…`). Moving the gitlink alone re-creates the stale-constant defect
-    `ece0fb9d2` had to unblock the release for. Two rules when you do it: **re-derive** rather than
-    inherit the previous justification — the script's own comment says so, and the two historical moves
-    had *different* arguments (the first changed no source file; the second changed one Swift file) — and
-    **run layer 4** (`probe-accessors.py`, or `check-libbox-abi.sh` where bash exists) against the new
-    revision, because recording a SHA is a statement about it, not a verification of it.
+16. **If you move the Apple pin, the constant must move with it.** `clients/apple`'s gitlink is the
+    single authority, but `VERIFIED_APPLE_SHA` in `scripts/ci/check-libbox-abi.sh` is the cross-check.
+    `verify.yml` now runs `--pin-only` and fails when the two diverge; `client-apple.yml` runs the full
+    gate. The gate tells you they disagree, not which revision was intended: re-derive the
+    justification rather than inheriting the previous one, and run layer 4 against the new revision
+    (`probe-accessors.py`, or `check-libbox-abi.sh --client-root <checkout>` on a macOS host). The
+    v0.1.28 move is the worked example: `6e559a4` -> `3aedd741` changed the quota caption, the profile
+    title and the path monitor, no ABI call site, and the constant had to be re-derived to match.

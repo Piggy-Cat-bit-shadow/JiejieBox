@@ -126,10 +126,15 @@ single-authority rule exists to prevent."* The release path's authority is `rele
 
 ### Still genuinely unwired at this baseline
 
-`check-libbox-abi.sh` and its subtree (`apple-abi-provenance.sh`, `apple-abi-probe.sh`,
-`probe-accessors.py` — the last referenced *only* by the first, so orphaning one orphaned all four),
 `check-satelite-one-core-pin.py`, `test-apple-links.py`, `verify-cronet-ios-archive.sh`,
 `run-jiejie-suite.sh`.
+
+`check-libbox-abi.sh` is **no longer in this list**, and it is split deliberately: its `--pin-only`
+half runs in `verify.yml` (cheap, git-only, catches a gitlink move that lands without the
+`VERIFIED_*_SHA` constant moving with it), and the full gate runs in `client-apple.yml` against the
+checked-out client source. The subtree scripts it owns (`apple-abi-provenance.sh`,
+`apple-abi-probe.sh`, `probe-accessors.py`) are reached only through it, so they are now reached
+through a wired gate when that gate runs.
 
 **Deleted in the Windows surface audit** (`refactor/windows-upstream-minimal-surface`):
 `ci/windows/Test-DaemonServiceRegister.ps1` and `ci/windows/Test-InstallerLegacyAdoption.ps1` were
@@ -272,7 +277,7 @@ bash scripts/ci/verify-upstream-assumptions.sh
 bash scripts/ci/check-go-module-integrity.sh --require-checked test
 bash scripts/ci/verify-cronet-provenance.sh apple
 bash scripts/ci/check-apple-source-selection.sh
-bash scripts/ci/check-libbox-abi.sh          # UNWIRED; layer 5 is now GREEN — see §5
+bash scripts/ci/check-libbox-abi.sh --pin-only  # wired in verify.yml; full gate in client-apple.yml
 ```
 
 **Measured in this audit, so a re-checker knows what "expected" looks like:**
@@ -408,9 +413,10 @@ other while both are wrong.
 
 `scripts/ci/verify-release-acceptance.sh` enforces a **default required-workflow set** of
 `verify.yml`, `interop-xray.yml` and `server-linux-amd64.yml`. **`client-apple.yml` is not in that
-set**, and `verify.yml` does not run the Apple ABI gate — so release acceptance is **structurally
-incapable** of noticing Apple-pin drift. Note also (§2) that this engine is **not called by the release
-path at all**; the release path's authority is `release.yml` + `release-artifacts.sh`.
+set.** `verify.yml` now runs the **pin-only** half of the Apple ABI gate, and the full gate runs in
+`client-apple.yml`; both catch a gitlink/constant disagreement, but release acceptance itself is still
+**structurally incapable** of noticing Apple-pin drift because the engine is **not called by the
+release path at all**; the release path's authority is `release.yml` + `release-artifacts.sh`.
 
 ### The Apple source authority — **INVERTED at this baseline**
 
@@ -446,10 +452,12 @@ model plainly:
 | **Gitlink** (`clients/apple`) | the local default checkout; **not** the build authority | equality with the resolved source is a **note**, not a failure |
 | `APPLE_CLIENT_REQUIRE_GITLINK=1` | opt-in | restores the **hard** gitlink equality (`client-apple.yml:285`, `:442`) |
 
-**The measured pin.** `VERIFIED_APPLE_SHA="40dd48795579718008518ac51af320b1d61377ac"` at
-`scripts/ci/check-libbox-abi.sh:155`, and `git ls-tree HEAD clients/apple` is **the same commit**. But
-because the gitlink no longer *selects* the build, **that agreement is weaker evidence than this module
-previously claimed** — it is the two having been moved together by hand, not a proof the build used it.
+**The measured pin.** `VERIFIED_APPLE_SHA="3aedd7417488e33a69fe2d46dc34539780d76157"` at
+`scripts/ci/check-libbox-abi.sh`, and `git ls-tree HEAD clients/apple` is **the same commit**. It was
+`6e559a4` until 2026-10-27: the gitlink advanced for the v0.1.28 path-monitor canary and the constant
+did not, which the new `--pin-only` push gate now fails. But because the gitlink no longer *selects*
+the build, **that agreement is weaker evidence than this module previously claimed** — it is the two
+having been moved together by hand, not a proof the build used it.
 
 ### `check-apple-source-selection.sh` was rewritten and IS wired
 

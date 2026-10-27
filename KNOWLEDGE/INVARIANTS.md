@@ -188,18 +188,22 @@ gitlink — the refs file is forbidden from recording a SHA and the workflow bod
   two different sources.
 * **Breaks if violated:** a client built against upstream's libbox crashes; two Apple products ship
   from two revisions.
-* **Honest gap:** **no *wired* mechanism can detect the pinned Apple revision moving to an unintended
-  commit.** The one candidate verifier (`scripts/ci/check-libbox-abi.sh`'s `VERIFIED_APPLE_SHA`) is
-  unwired; as of `93d757828` it is no longer *stale* either — `ece0fb9d2` moved the constant onto the
-  gitlink, so its layer 5 is green and it agrees at `5cab4ec5…`. What is missing is execution, not
-  agreement: moving the gitlink alone silently re-creates the divergence, and
-  `check-apple-source-selection.sh` cannot notice it because it is self-referential to the gitlink by
-  design. `client-apple.yml` is not in the release-acceptance required set.
+* **The pin half is wired; the client sweep is not on the push gate.** `check-libbox-abi.sh
+  --pin-only` runs in `verify.yml` and fails when a client gitlink and its `VERIFIED_*_SHA` disagree.
+  That is the half that catches a gitlink move landing alone, and it was added after exactly that
+  happened: the Apple gitlink moved from `6e559a4` to `3aedd741` for the v0.1.28 path-monitor canary
+  and `VERIFIED_APPLE_SHA` stayed behind, so a clean run of the full gate would have failed layer 5
+  while nothing ran it. The full gate (layers 1-4, including the client call-site sweep) needs cgo,
+  the Darwin profile and a client checkout, so it runs in `client-apple.yml` against the pinned
+  source. `client-apple.yml` is still not in the release-acceptance required set (A12); that is the
+  remaining execution gap, not an absent check.
 * **Proof:** `docs/fork/libbox-abi-contract.tsv`; `release/apple-client-refs.env`;
-  `check-apple-source-selection.sh:124-136`, `:209-210`; `check-libbox-abi.sh:98-124`;
-  `apple-client-source.sh:88-105`; `docs/fork/apple-artifact-verification.md:609-616`.
-* **Re-check:** `git ls-tree HEAD clients/apple`; `git grep VERIFIED_APPLE_SHA= -- scripts/` and compare
-  the two by hand — that comparison is the whole check, and nothing performs it for you.
+  `check-apple-source-selection.sh:124-136`, `:209-210`; `check-libbox-abi.sh` (`--pin-only`, layers
+  1-5); `verify.yml` step "client gitlinks match the ABI contract pins"; `client-apple.yml` step
+  "libbox ABI gate against the client call sites"; `apple-client-source.sh:88-105`;
+  `docs/fork/apple-artifact-verification.md:609-616`.
+* **Re-check:** `./scripts/ci/check-libbox-abi.sh --pin-only` on any host with `git`; the full gate is
+  `./scripts/ci/check-libbox-abi.sh --client-root <apple-checkout>` on a macOS host with cgo.
 * **Kind:** ABI/client contract. **Owner:** `libbox-platform-contract.md`
 
 ### A12 — Release re-verifies bytes per platform; it never rebuilds

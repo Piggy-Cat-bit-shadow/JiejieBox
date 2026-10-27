@@ -319,6 +319,20 @@ jobs:
           export PATH="$(go env GOPATH)/bin:$PATH"
           ./scripts/ci/build-apple-libbox.sh both
 
+      - name: libbox ABI gate against the client call sites
+        # The push gate in verify.yml only compares the client gitlinks with the verified-SHA
+        # constants (--pin-only); it cannot build libbox on Linux. This is the full gate, and it
+        # is the layer that would notice a client reverting a migrated method to a bare string
+        # result even though the AAR still builds - the exact failure the contract exists for.
+        #
+        # The client submodules are checked out at the gitlinks the superproject pins; layer 5
+        # compares those gitlinks with the constants, and layer 4 sweeps the call sites. A missing
+        # checkout is reported as SKIP, never as PASS.
+        run: |
+          set -euo pipefail
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          ./scripts/ci/check-libbox-abi.sh --client-root "$GITHUB_WORKSPACE/clients/apple"
+
       - name: pack the Libbox artifact
         # The manifest is what makes the artifact attributable to a commit. The artifact name is
         # informative only; consumers validate against the manifest.

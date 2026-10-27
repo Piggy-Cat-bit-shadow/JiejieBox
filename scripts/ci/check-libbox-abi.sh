@@ -52,7 +52,8 @@
 #
 #   check-libbox-abi.sh
 #   check-libbox-abi.sh --client-root <dir>    also scan a client checkout at <dir>
-#   check-libbox-abi.sh --skip-client          layers 1-3 only
+#   check-libbox-abi.sh --skip-client          layers 1-3 and the client pin only
+#   check-libbox-abi.sh --pin-only             the client pin only, no Go toolchain needed
 #
 # Client source is found automatically in clients/android and clients/apple when the submodules
 # are initialised. Point ANDROID_CLIENT_ROOT / APPLE_CLIENT_ROOT or --client-root at a checkout
@@ -195,16 +196,22 @@ VERIFIED_ANDROID_SHA="ec61030d3df74f3e7c39ab848c8996008ecd386a"
 # host, unlike the c001d59 move: the interpreter resolves to a Store alias here and exits 9009. CI
 # runs it against the moved tree with the unchanged contract.
 #
-# The evidence line references in libbox-abi-contract.tsv still point into the audited c001d59 tree.
-# The probe matches by regex rather than by line, and no contract row was edited.
-VERIFIED_APPLE_SHA="6e559a411b5ac99662bbaec31cce655c60cb170c"
+# Moved again to 3aedd741, the v0.1.28 Apple pin. The range from 6e559a4 is seven commits and
+# touches the Hako profile title, the macOS subscription-quota caption and its test package, the
+# macOS double-click caption, and the network path monitor. `git diff --name-only 6e559a4
+# 3aedd741` contains no file the ABI contract names: the migrated BridgeSession / RoutePrefix /
+# TunOptions call sites are unchanged. Layer 4 is run in client-apple.yml against this exact
+# gitlink, and the pin check is wired into verify.yml so a gitlink move cannot land alone again.
+VERIFIED_APPLE_SHA="3aedd7417488e33a69fe2d46dc34539780d76157"
 
 client_root=""
 skip_client=0
+pin_only=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --client-root) client_root="${2:?--client-root needs a directory}"; shift 2 ;;
     --skip-client) skip_client=1; shift ;;
+    --pin-only) pin_only=1; shift ;;
     -h|--help) sed -n '2,60p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) printf 'FAIL: unknown argument %s\n' "$1" >&2; exit 2 ;;
   esac
@@ -216,6 +223,27 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; fails=$((fails + 1)); }
 ok()   { printf 'PASS: %s\n' "$*"; }
 skip() { printf 'SKIP: %s\n' "$*"; }
 info() { printf '     %s\n' "$*"; }
+
+# check_gitlink compares one client gitlink with the revision this contract was verified
+# against. It is defined here so --pin-only can use it without running the Go surface scanner,
+# which needs cgo and the Darwin profile and therefore cannot run on every push runner.
+check_gitlink() {
+  local path="$1" expected="$2" label="$3" upper actual
+  upper="$(printf '%s' "$label" | tr '[:lower:]' '[:upper:]')"
+  actual="$(cd "$repo_root" && git ls-tree HEAD "clients/$path" 2>/dev/null | awk '{print $3}')"
+  if [ -z "$actual" ]; then
+    skip "$label: no gitlink at clients/$path"
+    return
+  fi
+  if [ "$actual" = "$expected" ]; then
+    ok "$label gitlink is the verified revision (${actual:0:12})"
+  else
+    fail "$label gitlink is ${actual:0:12}, but this contract was verified against
+      ${expected:0:12}. A client at a different revision may still call the old ABI, and the
+      AAR regenerating successfully says nothing about it. Verify the call sites at $actual,
+      then update VERIFIED_${upper}_SHA in this script and the gitlink."
+  fi
+}
 
 [ -f "$CONTRACT" ] || { printf 'FAIL: no ABI contract at %s\n' "$CONTRACT" >&2; exit 2; }
 
@@ -230,6 +258,24 @@ printf '== libbox ABI gate ==\n'
 info "contract: docs/fork/libbox-abi-contract.tsv ($record_count migrated methods)"
 info "gomobile pin: ${PROJECT_GOMOBILE_VERSION:-unknown}"
 printf '\n'
+
+# --pin-only is the cheap half for a push gate: it compares the client gitlinks with the
+# revisions the contract was verified against, without building the Go surface scanner. The
+# scanner needs cgo and the Darwin profile, so it cannot run on every push runner; the full gate
+# runs in client-apple.yml. A gitlink move that lands alone is exactly how the Apple ABI drift
+# this script exists for would reappear, so this half belongs in the push gate.
+if [ "$pin_only" = 1 ]; then
+  printf -- '-- layer 5: client gitlink --\n'
+  check_gitlink android "$VERIFIED_ANDROID_SHA" android
+  check_gitlink apple "$VERIFIED_APPLE_SHA" apple
+  printf '\n'
+  if [ "$fails" -gt 0 ]; then
+    printf 'FAILED: %d client pin violation(s).\n' "$fails" >&2
+    exit 1
+  fi
+  printf 'PASS: client gitlinks match the verified revisions.\n'
+  exit 0
+fi
 
 # ---------------------------------------------------------------------------
 # The gomobile surface inventory
@@ -501,23 +547,6 @@ fi
 # Layer 5: the client pin
 # ---------------------------------------------------------------------------
 printf '\n-- layer 5: client gitlink --\n'
-check_gitlink() {
-  local path="$1" expected="$2" label="$3" upper actual
-  upper="$(printf '%s' "$label" | tr '[:lower:]' '[:upper:]')"
-  actual="$(cd "$repo_root" && git ls-tree HEAD "clients/$path" 2>/dev/null | awk '{print $3}')"
-  if [ -z "$actual" ]; then
-    skip "$label: no gitlink at clients/$path"
-    return
-  fi
-  if [ "$actual" = "$expected" ]; then
-    ok "$label gitlink is the verified revision (${actual:0:12})"
-  else
-    fail "$label gitlink is ${actual:0:12}, but this contract was verified against
-      ${expected:0:12}. A client at a different revision may still call the old ABI, and the
-      AAR regenerating successfully says nothing about it. Verify the call sites at $actual,
-      then update VERIFIED_${upper}_SHA in this script and the gitlink."
-  fi
-}
 check_gitlink android "$VERIFIED_ANDROID_SHA" android
 check_gitlink apple "$VERIFIED_APPLE_SHA" apple
 

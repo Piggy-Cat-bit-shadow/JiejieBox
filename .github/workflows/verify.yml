@@ -168,6 +168,17 @@ jobs:
           fi
           echo "PASS: gofmt clean"
 
+      - name: client gitlinks match the ABI contract pins
+        # The full libbox ABI gate needs cgo and the Darwin profile, so it runs in
+        # client-apple.yml against a real client checkout. This half needs only git, and it is
+        # the half that catches the failure the knowledge base records as A11: a gitlink move
+        # that lands without the verified-SHA constant moving with it.
+        #
+        # It is not hypothetical. The Apple gitlink advanced from 6e559a4 to 3aedd741 for the
+        # v0.1.28 path-monitor canary, the constant stayed at 6e559a4, and nothing noticed
+        # because this gate was unwired. A clean run of the full gate would have failed layer 5.
+        run: ./scripts/ci/check-libbox-abi.sh --pin-only
+
       - name: gomobile single-source check
         # `github.com/sagernet/gomobile/cmd/gomobile@v0.1.13` used to be written out
         # three times: twice in the Apple workflow and once in the Makefile. Nothing
@@ -244,6 +255,22 @@ jobs:
         # TestProfileTagFilesDoNotClaimChecklinkname0 requires the profile tag files to stop claiming
         # that flag. Together they are what keeps a bare `go build ./...` linkable.
         run: go test -count=1 ./cmd/internal/...
+
+      - name: generated schema matches its source
+        # `docs/schema.json` is a tracked product artifact consumed outside this repository -
+        # the documentation site and an editor schema URL - and no gate compared it with
+        # option/schema.go. It had drifted: the `User` definition still advertised `Username`
+        # and `Password` after the Go fields carried `json:"username"` / `json:"password"`, so
+        # a user following the published schema wrote keys the parser does not accept.
+        #
+        # The test regenerates through the same schema.Generate the `make schema` target calls,
+        # under the canonical tag set, and compares exactly. A source change that alters the
+        # schema now fails here instead of surviving until a manual regeneration.
+        run: |
+          set -euo pipefail
+          tags="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
+          go test -count=1 -tags "$tags" -run TestTrackedSchemaMatchesTheGenerator ./cmd/sing-box
+          echo "PASS: docs/schema.json matches option/schema.go"
 
       - name: pinned-upstream assumptions
         # The one step that exists for a fork: it fails when an upstream revision changes the meaning
