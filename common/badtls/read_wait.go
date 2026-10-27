@@ -62,9 +62,13 @@ func (c *ReadWaitConn) WaitReadBuffer() (buffer *buf.Buffer, err error) {
 	}
 	buffer.Truncate(n)
 
-	if n != 0 && c.rawConn.Input.Len() == 0 && c.rawConn.Input.Len() > 0 &&
+	if n != 0 && c.rawConn.Input.Len() == 0 && c.rawConn.RawInput.Len() > 0 &&
 		// recordType(c.RawInput.Bytes()[0]) == recordTypeAlert {
 		c.rawConn.RawInput.Bytes()[0] == 21 {
+		// Mirror Conn.Read's close-notify cleanup. The previous condition tested Input.Len()
+		// twice (`== 0 && > 0`), so it was unsatisfiable and the raw index below was never even
+		// reached - the fast path never consumed the alert, and a reader did not observe EOF until
+		// its next read. The RawInput.Len() > 0 term is also the guard that makes the index safe.
 		_ = c.rawConn.ReadRecord()
 		// return n, err // will be io.EOF on closeNotify
 	}

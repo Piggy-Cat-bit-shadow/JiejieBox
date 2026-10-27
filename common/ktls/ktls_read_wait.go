@@ -7,6 +7,9 @@
 package ktls
 
 import (
+	"errors"
+	"io"
+
 	"github.com/sagernet/sing/common/buf"
 	N "github.com/sagernet/sing/common/network"
 )
@@ -19,6 +22,10 @@ func (c *Conn) InitializeReadWaiter(options N.ReadWaitOptions) (needCopy bool) {
 func (c *Conn) WaitReadBuffer() (buffer *buf.Buffer, err error) {
 	c.rawConn.In.Lock()
 	defer c.rawConn.In.Unlock()
+	if c.pendingReadEOF {
+		c.pendingReadEOF = false
+		return nil, io.EOF
+	}
 	for c.rawConn.Input.Len() == 0 {
 		err = c.readRecord()
 		if err != nil {
@@ -86,6 +93,16 @@ func (c *Conn) WaitReadBuffer() (buffer *buf.Buffer, err error) {
 		c.rawConn.RawInput.Bytes()[0] == recordTypeAlert {
 		err = c.readRecord()
 		if err != nil {
+			if errors.Is(err, io.EOF) {
+				// The alert says the peer is done, but the n bytes already read from Input are
+				// real data and MUST reach the caller. Read (the slow path) returns (n, io.EOF);
+				// the waiter cannot express that with the consumer's current contract, which
+				// discards a buffer when err != nil. Return the data with nil and hand the EOF
+				// to the next call: the stream ends one read later instead of losing its tail.
+				c.pendingReadEOF = true
+				c.readWaitOptions.PostReturn(buffer)
+				return buffer, nil
+			}
 			buffer.Release()
 			return nil, err
 		}

@@ -33,6 +33,11 @@ type Conn struct {
 	kernelTx        bool
 	kernelRx        bool
 	pendingRxSplice bool
+	// pendingReadEOF defers the close-notify EOF by one WaitReadBuffer call. The data that arrived
+	// with the alert has already been read into the caller's buffer; returning nil, io.EOF there
+	// would drop it. Read (the slow path) returns (n, io.EOF); the waiter returns the data now and
+	// this EOF on the next call.
+	pendingReadEOF bool
 }
 
 func NewConn(ctx context.Context, logger logger.ContextLogger, conn aTLS.Conn, txOffload, rxOffload bool) (aTLS.Conn, error) {
