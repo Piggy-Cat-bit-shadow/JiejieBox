@@ -117,7 +117,14 @@ func (d anytlsDialer) ListenPacket(ctx context.Context, destination M.Socksaddr)
 }
 
 func (h *Outbound) dialOut(ctx context.Context) (net.Conn, error) {
-	return h.dialer.DialTLSContext(adapter.ContextForMultiplexSession(ctx), h.server)
+	conn, err := h.dialer.DialTLSContext(adapter.ContextForMultiplexSession(ctx), h.server)
+	if err == nil {
+		// The proxy server's address family is otherwise invisible in the connection log, and a
+		// dual-stack host can reach it over an ancillary interface. This line is what proves which
+		// family the AnyTLS session actually chose when diagnosing a bulk-throughput report.
+		h.logger.DebugContext(ctx, "AnyTLS server connected via ", conn.RemoteAddr())
+	}
+	return conn, err
 }
 
 func (h *Outbound) MultiplexEnabled() bool {
