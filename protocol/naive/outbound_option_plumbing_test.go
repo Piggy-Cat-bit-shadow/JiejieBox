@@ -71,6 +71,42 @@ func TestSingleEngineSwitchReachesCronetOptions(t *testing.T) {
 			"reads to force one engine")
 }
 
+// TestNaiveRejectsCertificatePinning pins the constructor contract: the shared TLS option exposes
+// two pin fields that the Cronet engine cannot enforce, so accepting them would silently downgrade
+// a pin to ordinary CA verification. The constructor must refuse them before it reaches the native
+// client.
+func TestNaiveRejectsCertificatePinning(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range []struct {
+		name string
+		tls  *option.OutboundTLSOptions
+	}{
+		{
+			name: "certificate_sha256",
+			tls: &option.OutboundTLSOptions{
+				Enabled:           true,
+				CertificateSHA256: badoption.Listable[[]byte]{[]byte("pin")},
+			},
+		},
+		{
+			name: "certificate_public_key_sha256",
+			tls: &option.OutboundTLSOptions{
+				Enabled:                    true,
+				CertificatePublicKeySHA256: badoption.Listable[[]byte]{[]byte("pin")},
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, err := NewOutbound(context.Background(), nil, log.NewNOPFactory().Logger(), "naive", option.NaiveOutboundOptions{
+				OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{TLS: testCase.tls},
+			})
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "certificate pinning is not supported")
+		})
+	}
+}
+
 // TestSingleEngineDefaultsToFalseInCronetOptions is the same assertion for the
 // default, which is the property that protects existing behaviour: an operator who
 // never sets the option must get the previous macOS engine layout.

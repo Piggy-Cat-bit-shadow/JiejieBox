@@ -90,6 +90,13 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	if options.TLS.Reality != nil && options.TLS.Reality.Enabled {
 		return nil, E.New("reality is not supported on naive outbound")
 	}
+	// The shared OutboundTLSOptions exposes both pin fields, but the Cronet engine is only given
+	// trusted roots. Accepting a pin here would silently downgrade an operator's explicit
+	// certificate/public-key pin to ordinary CA verification. Reject it until the Cronet pin
+	// callback is wired.
+	if len(options.TLS.CertificateSHA256) > 0 || len(options.TLS.CertificatePublicKeySHA256) > 0 {
+		return nil, E.New("certificate pinning is not supported on naive outbound")
+	}
 	// The fallback only exists for a forced-H3 attempt. Without quic: true there
 	// is no H3 attempt to fall back from, so the combination is a configuration
 	// error rather than a silently inert field.

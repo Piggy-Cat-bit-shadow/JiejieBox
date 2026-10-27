@@ -29,8 +29,9 @@ type HTTP2Options struct {
 
 type QUICOptions struct {
 	HTTP2Options
-	InitialPacketSize       int  `json:"initial_packet_size,omitempty"`
-	DisablePathMTUDiscovery bool `json:"disable_path_mtu_discovery,omitempty"`
+	InitialPacketSize        int  `json:"initial_packet_size,omitempty"`
+	InitialPacketSizeCeiling int  `json:"initial_packet_size_ceiling,omitempty"`
+	DisablePathMTUDiscovery  bool `json:"disable_path_mtu_discovery,omitempty"`
 	// BBRProfile sets the HTTP/3 *server* congestion control profile. It is
 	// resolved from the http inbound `bbr_profile` option.
 	BBRProfile ServerBBRProfile `json:"-"`

@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
+	D "github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/common/interrupt"
 	"github.com/sagernet/sing-box/common/runtimecoord"
 	"github.com/sagernet/sing-box/common/urltest"
@@ -35,6 +37,7 @@ var (
 	_ adapter.OutboundGroup           = (*URLTest)(nil)
 	_ adapter.InterfaceUpdateListener = (*URLTest)(nil)
 	_ adapter.Referrer                = (*URLTest)(nil)
+	_ D.ParallelNetworkDialer          = (*URLTest)(nil)
 	// Like a selector, a urltest only chooses which member serves a flow - the delay probes it runs
 	// in the background dial the members directly and never pass through the router, so they cannot
 	// inherit a business flow's policy. See adapter.FastPathAuthorizedGroup.
@@ -383,6 +386,82 @@ func (s *URLTest) ListenPacket(ctx context.Context, destination M.Socksaddr) (ne
 	s.logger.ErrorContext(ctx, err)
 	current.clearSelectionFor(N.NetworkUDP, outbound)
 	return nil, err
+}
+
+func (s *URLTest) DialParallelNetwork(ctx context.Context, network string, destination M.Socksaddr, destinationAddresses []netip.Addr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.Conn, error) {
+	current := s.currentGroup()
+	if current == nil {
+		return nil, os.ErrClosed
+	}
+	current.Touch()
+	var outbound adapter.Outbound
+	if state := current.selected.Load(); state != nil {
+		switch N.NetworkName(network) {
+		case N.NetworkTCP:
+			outbound = state.tcp
+		case N.NetworkUDP:
+			outbound = state.udp
+		default:
+			return nil, E.Extend(N.ErrUnknownNetwork, network)
+		}
+	} else if N.NetworkName(network) != N.NetworkTCP && N.NetworkName(network) != N.NetworkUDP {
+		return nil, E.Extend(N.ErrUnknownNetwork, network)
+	}
+	if outbound == nil {
+		outbound, _ = current.Select(network)
+	}
+	if outbound == nil {
+		return nil, E.New("missing supported outbound")
+	}
+	var (
+		conn net.Conn
+		err  error
+	)
+	if parallel, isParallel := outbound.(D.ParallelNetworkDialer); isParallel {
+		conn, err = parallel.DialParallelNetwork(ctx, network, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+	} else {
+		conn, err = D.DialSerialNetwork(ctx, outbound, network, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+	}
+	if err == nil {
+		return current.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
+	}
+	s.logger.ErrorContext(ctx, err)
+	current.clearSelectionFor(network, outbound)
+	return nil, err
+}
+
+func (s *URLTest) ListenSerialNetworkPacket(ctx context.Context, destination M.Socksaddr, destinationAddresses []netip.Addr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, netip.Addr, error) {
+	current := s.currentGroup()
+	if current == nil {
+		return nil, netip.Addr{}, os.ErrClosed
+	}
+	current.Touch()
+	var outbound adapter.Outbound
+	if state := current.selected.Load(); state != nil {
+		outbound = state.udp
+	}
+	if outbound == nil {
+		outbound, _ = current.Select(N.NetworkUDP)
+	}
+	if outbound == nil {
+		return nil, netip.Addr{}, E.New("missing supported outbound")
+	}
+	var (
+		conn    net.PacketConn
+		address netip.Addr
+		err     error
+	)
+	if parallel, isParallel := outbound.(D.ParallelNetworkDialer); isParallel {
+		conn, address, err = parallel.ListenSerialNetworkPacket(ctx, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+	} else {
+		conn, address, err = D.ListenSerialNetworkPacket(ctx, outbound, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+	}
+	if err == nil {
+		return current.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), address, nil
+	}
+	s.logger.ErrorContext(ctx, err)
+	current.clearSelectionFor(N.NetworkUDP, outbound)
+	return nil, address, err
 }
 
 // selectedState is one immutable generation of the group's selection.

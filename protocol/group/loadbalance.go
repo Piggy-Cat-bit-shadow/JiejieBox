@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"strings"
 	"sync"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
+	D "github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/common/interrupt"
 	"github.com/sagernet/sing-box/common/runtimecoord"
 	"github.com/sagernet/sing-box/common/urltest"
@@ -34,6 +36,7 @@ var (
 	_ adapter.FlowAwareOutboundGroup = (*LoadBalance)(nil)
 	_ adapter.FailoverOutboundGroup  = (*LoadBalance)(nil)
 	_ adapter.Referrer               = (*LoadBalance)(nil)
+	_ D.ParallelNetworkDialer         = (*LoadBalance)(nil)
 )
 
 // LoadBalance distributes new flows over its members and keeps each flow on the member it
@@ -704,6 +707,29 @@ func (g *LoadBalance) DialContext(ctx context.Context, network string, destinati
 	return g.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 }
 
+// DialParallelNetwork selects the member once, then forwards the complete candidate list. The
+// selected member may be a leaf or another group. Selecting per candidate is deliberately not
+// done: the group's choice for this flow must stay stable across the retry.
+func (g *LoadBalance) DialParallelNetwork(ctx context.Context, network string, destination M.Socksaddr, destinationAddresses []netip.Addr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.Conn, error) {
+	member := g.SelectForFlow(adapter.ContextFrom(ctx), network, true)
+	if member == nil {
+		return nil, E.New(strings.ToUpper(network), " is not supported by outbound: ", g.Tag())
+	}
+	g.Touch()
+	if parallel, isParallel := member.(D.ParallelNetworkDialer); isParallel {
+		conn, err := parallel.DialParallelNetwork(ctx, network, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+		if err != nil {
+			return nil, err
+		}
+		return g.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
+	}
+	conn, err := D.DialSerialNetwork(ctx, member, network, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+	if err != nil {
+		return nil, err
+	}
+	return g.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
+}
+
 // ListenPacket opens the packet connection of the member this flow is given.
 //
 // One call, one member: the returned packet connection is the member's own, so every
@@ -725,6 +751,26 @@ func (g *LoadBalance) ListenPacket(ctx context.Context, destination M.Socksaddr)
 		return nil, err
 	}
 	return g.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
+}
+
+func (g *LoadBalance) ListenSerialNetworkPacket(ctx context.Context, destination M.Socksaddr, destinationAddresses []netip.Addr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, netip.Addr, error) {
+	member := g.SelectForFlow(adapter.ContextFrom(ctx), N.NetworkUDP, true)
+	if member == nil {
+		return nil, netip.Addr{}, E.New(N.NetworkUDP, " is not supported by outbound: ", g.Tag())
+	}
+	g.Touch()
+	if parallel, isParallel := member.(D.ParallelNetworkDialer); isParallel {
+		conn, address, err := parallel.ListenSerialNetworkPacket(ctx, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+		if err != nil {
+			return nil, address, err
+		}
+		return g.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), address, nil
+	}
+	conn, address, err := D.ListenSerialNetworkPacket(ctx, member, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+	if err != nil {
+		return nil, address, err
+	}
+	return g.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), address, nil
 }
 
 // loadBalanceDuplicateTag reports the first tag listed more than once, or empty.

@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	tf "github.com/sagernet/sing-box/common/tlsfragment"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 
 	utls "github.com/metacubex/utls"
 	"github.com/stretchr/testify/require"
@@ -70,4 +72,37 @@ func TestUTLSClient_Client_BothFragment_Wraps(t *testing.T) {
 	require.NoError(t, err)
 	_, isTF := wrapped.NetConn().(*tf.Conn)
 	require.True(t, isTF, "both fragment flags: must wrap with tf.Conn")
+}
+
+func TestUTLSFingerprintSupportsECH(t *testing.T) {
+	t.Parallel()
+
+	for _, fingerprint := range []string{
+		"", "chrome", "chrome_psk", "chrome_psk_shuffle", "chrome_padding_psk_shuffle",
+		"chrome_pq", "chrome_pq_psk", "firefox",
+	} {
+		require.True(t, utlsFingerprintSupportsECH(fingerprint),
+			"%q must be accepted with ECH", fingerprint)
+	}
+	for _, fingerprint := range []string{
+		"safari", "edge", "ios", "android", "360", "qq", "random", "randomized",
+	} {
+		require.False(t, utlsFingerprintSupportsECH(fingerprint),
+			"%q has no ECH-capable extension and must be refused", fingerprint)
+	}
+}
+
+func TestNewUTLSClientRejectsECHOnUnsupportedFingerprint(t *testing.T) {
+	t.Parallel()
+
+	_, err := newUTLSClient(context.Background(), log.NewNOPFactory().Logger(), "example.com", option.OutboundTLSOptions{
+		Enabled: true,
+		UTLS: &option.OutboundUTLSOptions{
+			Enabled:     true,
+			Fingerprint: "safari",
+		},
+		ECH: &option.OutboundECHOptions{Enabled: true},
+	}, false)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "does not support ECH")
 }

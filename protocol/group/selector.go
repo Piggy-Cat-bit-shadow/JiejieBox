@@ -4,11 +4,14 @@ import (
 	"context"
 	"io"
 	"net"
+	"net/netip"
 	"slices"
 	"sync/atomic"
+	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
+	D "github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/common/interrupt"
 	"github.com/sagernet/sing-box/common/urltest"
 	C "github.com/sagernet/sing-box/constant"
@@ -33,6 +36,7 @@ var (
 	// per-flow behaviour of its own, so a chain through it is transparent and it may carry the
 	// fast_path group policy. See adapter.FastPathAuthorizedGroup.
 	_ adapter.FastPathAuthorizedGroup = (*Selector)(nil)
+	_ D.ParallelNetworkDialer          = (*Selector)(nil)
 )
 
 // FastPathTransparent implements adapter.FastPathAuthorizedGroup.
@@ -389,6 +393,43 @@ func (s *Selector) DialContext(ctx context.Context, network string, destination 
 		return nil, err
 	}
 	return s.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
+}
+
+// DialParallelNetwork forwards the candidate list to the selected member after the group has made
+// its one selection. Without this method the route's DialSerialNetwork falls back to one
+// DialContext per candidate, so a blackholed first address consumes the shared deadline and the
+// remaining family is never tried. The selected member may itself be a group; the same method
+// forwards the list again.
+func (s *Selector) DialParallelNetwork(ctx context.Context, network string, destination M.Socksaddr, destinationAddresses []netip.Addr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.Conn, error) {
+	member := s.selected.Load()
+	if parallel, isParallel := member.(D.ParallelNetworkDialer); isParallel {
+		conn, err := parallel.DialParallelNetwork(ctx, network, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+		if err != nil {
+			return nil, err
+		}
+		return s.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
+	}
+	conn, err := D.DialSerialNetwork(ctx, member, network, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+	if err != nil {
+		return nil, err
+	}
+	return s.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
+}
+
+func (s *Selector) ListenSerialNetworkPacket(ctx context.Context, destination M.Socksaddr, destinationAddresses []netip.Addr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, netip.Addr, error) {
+	member := s.selected.Load()
+	if parallel, isParallel := member.(D.ParallelNetworkDialer); isParallel {
+		conn, address, err := parallel.ListenSerialNetworkPacket(ctx, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+		if err != nil {
+			return nil, address, err
+		}
+		return s.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), address, nil
+	}
+	conn, address, err := D.ListenSerialNetworkPacket(ctx, member, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+	if err != nil {
+		return nil, address, err
+	}
+	return s.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), address, nil
 }
 
 func (s *Selector) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {

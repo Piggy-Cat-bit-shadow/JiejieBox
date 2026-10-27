@@ -72,6 +72,19 @@ type Inbound struct {
 	udpNATMax        uint32
 	dnsHijackAddress []netip.Addr
 	dnsHijackByPort  bool
+	// stackStarted records that StartStatePostStart activated the stack. InterfaceUpdated can be
+	// delivered between StartStateStart (where t.tunStack is published) and PostStart; calling
+	// ResetNetwork in that window reaches a Go stack whose dispatcher has not been built yet.
+	// A reset requested before activation is deferred, never dropped, and replayed once.
+	stackStarted      atomic.Bool
+	stackResetPending atomic.Bool
+	// closed is set at the first Close. It stops a late rule-set callback from touching the
+	// auto-redirect after teardown has begun.
+	closed atomic.Bool
+	// autoRedirectAccess serialises UpdateRouteAddressSet against closeAutoRedirect. The
+	// rule-set callback list is copied under its own lock and invoked after that lock is released,
+	// so UnregisterCallback alone cannot retract an already-copied callback.
+	autoRedirectAccess sync.Mutex
 	// fakeIPStore is the configured FakeIP address space, or nil when no FakeIP transport exists.
 	//
 	// The route-set bypass below hands a destination to the platform's routing table, which is
@@ -558,11 +571,7 @@ func (t *Inbound) setFlowCapability() {
 func (t *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	switch stage {
 	case adapter.StartStateInitialize:
-		if t.tunOptions.DNSModeOrDefault() != tun.DNSModeDisabled && len(t.tunOptions.DNSAddress) == 0 {
-			inet4DNSAddress, _ := t.tunOptions.Inet4DNSAddress()
-			inet6DNSAddress, _ := t.tunOptions.Inet6DNSAddress()
-			t.dnsHijackAddress = append(inet4DNSAddress, inet6DNSAddress...)
-		}
+		t.configureDNSHijack()
 		// Transports are constructed before any component starts, so this is the earliest point at
 		// which the FakeIP range is known. It is resolved once rather than per flow: the range is
 		// fixed for the transport's lifetime, and a per-flow lookup would put a manager call on the
@@ -757,6 +766,7 @@ func (t *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		if err != nil {
 			return E.Cause(err, "starting tun stack")
 		}
+		t.stackDidStart()
 		monitor.Start("starting tun interface")
 		err = t.interfaceStartup.activate(t.tunIf.Start)
 		monitor.Finish()
@@ -781,13 +791,37 @@ func (t *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	return nil
 }
 
+func (t *Inbound) configureDNSHijack() {
+	t.dnsHijackAddress = nil
+	mode := t.tunOptions.DNSModeOrDefault()
+	t.dnsHijackByPort = mode == tun.DNSModeHijack
+	// The address list is populated when hijack mode is explicit, or when the mode is enabled and
+	// the operator has not supplied an address (the stack derives the next address). The old gate
+	// skipped an explicitly configured address entirely, which made dns_mode:hijack accept the
+	// configuration and then send the query out as ordinary traffic.
+	if mode != tun.DNSModeHijack && (mode == tun.DNSModeDisabled || len(t.tunOptions.DNSAddress) > 0) {
+		return
+	}
+	inet4DNSAddress, _ := t.tunOptions.Inet4DNSAddress()
+	inet6DNSAddress, _ := t.tunOptions.Inet6DNSAddress()
+	t.dnsHijackAddress = append(inet4DNSAddress, inet6DNSAddress...)
+}
+
 func (t *Inbound) updateRouteAddressSet(it adapter.RuleSet) {
+	if t.closed.Load() {
+		return
+	}
 	routeAddressSet := common.FlatMap(t.routeRuleSet, adapter.RuleSet.ExtractIPSet)
 	routeExcludeAddressSet := common.FlatMap(t.routeExcludeRuleSet, adapter.RuleSet.ExtractIPSet)
 	t.routeAddressSetAccess.Lock()
 	t.routeAddressSet = routeAddressSet
 	t.routeExcludeAddressSet = routeExcludeAddressSet
 	t.routeAddressSetAccess.Unlock()
+	t.autoRedirectAccess.Lock()
+	defer t.autoRedirectAccess.Unlock()
+	if t.closed.Load() || t.autoRedirect == nil {
+		return
+	}
 	err := t.autoRedirect.UpdateRouteAddressSet()
 	if err != nil {
 		t.logger.Error("update route address set: ", err)
@@ -807,9 +841,26 @@ func (t *Inbound) routeAddressSetPrefixes() (include []netip.Prefix, exclude []n
 }
 
 func (t *Inbound) InterfaceUpdated(ctx context.Context) {
+	if t.closed.Load() {
+		return
+	}
+	if !t.stackStarted.Load() {
+		t.stackResetPending.Store(true)
+		return
+	}
 	tunStack := t.tunStack
 	if tunStack != nil {
 		tunStack.ResetNetwork()
+	}
+}
+
+func (t *Inbound) stackDidStart() {
+	t.stackStarted.Store(true)
+	if t.closed.Load() {
+		return
+	}
+	if t.stackResetPending.Swap(false) && t.tunStack != nil {
+		t.tunStack.ResetNetwork()
 	}
 }
 
@@ -817,6 +868,7 @@ func (t *Inbound) Close() error {
 	if t.testCloseObserver != nil {
 		t.testCloseObserver()
 	}
+	t.closed.Store(true)
 	// Release the route-set callbacks and references BEFORE tearing anything down.
 	//
 	// Start registers t.updateRouteAddressSet on every route and exclude rule-set and stores the
@@ -842,7 +894,7 @@ func (t *Inbound) Close() error {
 	closeErr := E.Errors(
 		t.stackStartup.releaseByScope(),
 		t.interfaceStartup.releaseByScope(),
-		common.Close(t.autoRedirect),
+		t.closeAutoRedirectSession(),
 	)
 	// Hand the auto-redirect output mark back LAST, after the redirect that needed it is stopped.
 	//
@@ -935,7 +987,23 @@ func (t *Inbound) releaseRouteSetsCleanup() error {
 // first means a notification that races the teardown finds no observer left, and the window between
 // "auto-redirect closed" and "callbacks released" does not exist.
 func (t *Inbound) closeAutoRedirect() error {
+	t.autoRedirectAccess.Lock()
+	defer t.autoRedirectAccess.Unlock()
+	t.closed.Store(true)
 	t.releaseRouteSets()
+	if t.autoRedirect == nil {
+		return nil
+	}
+	return t.autoRedirect.Close()
+}
+
+// closeAutoRedirectSession serialises the direct Close path with a rule-set callback that is
+// already past its closed check. closeAutoRedirect remains the Scope-owned wrapper because it
+// must release the rule-set callbacks before closing the session; this helper only takes the
+// session half and is used by Close's aggregate error path.
+func (t *Inbound) closeAutoRedirectSession() error {
+	t.autoRedirectAccess.Lock()
+	defer t.autoRedirectAccess.Unlock()
 	if t.autoRedirect == nil {
 		return nil
 	}

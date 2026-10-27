@@ -1241,7 +1241,17 @@ func (s *Box) Close() error {
 	// Idempotent, and safe against a concurrent second call: a repeat Close joins the first one
 	// rather than unregistering a callback that is already gone or walking a half-torn-down scope.
 	s.closeOnce.Do(func() {
-		closeErr := s.close()
+		// A panic in a Scope cleanup unwinds past the remaining cleanups. Recover it here so
+		// sync.Once cannot leave closeErr nil on the next Close: a repeated Close would otherwise
+		// report success after a half-finished teardown.
+		closeErr := func() (closeErr error) {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					closeErr = E.New("panic during close: ", recovered)
+				}
+			}()
+			return s.close()
+		}()
 		s.closeErr.Store(&closeErr)
 	})
 	stored := s.closeErr.Load()

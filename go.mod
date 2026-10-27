@@ -209,7 +209,7 @@ require (
 // fix(bufio): a Pipe2 setup failure must fall back, not claim the stream, and the branch
 // also carries the Linux runtime proof for unix.Splice() that runs in this fork's
 // linux-splice-proof workflow.
-replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261024214131-f601163d18d1
+replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261027185736-1729220c46c4
 
 // Adds async read/write buffer pinning (correctness: the native side retains the pointer
 // until its completion callback) and the EarlyCopyBufferGrowth capability the upload copy
@@ -228,7 +228,7 @@ replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-
 // them (only naive_client.go and its tests), so 8aa139e's Go-only binding is compatible with
 // the 8c68ce8 native generation. Rebuilding archives is not reproducible from a Windows
 // host; see docs/fork/phase-04-cronet-apple-platform.md for the matrix.
-replace github.com/sagernet/cronet-go => github.com/Piggy-Cat-bit-shadow/cronet-go v0.0.1-143.0.7499.109-2.0.20261024085011-8aa139e9e140
+replace github.com/sagernet/cronet-go => github.com/Piggy-Cat-bit-shadow/cronet-go v0.0.1-143.0.7499.109-2.0.20261027185739-c9c0e6ec8845
 
 replace github.com/sagernet/cronet-go/all => github.com/Piggy-Cat-bit-shadow/cronet-go/all v0.0.0-20261024085011-8aa139e9e140
 
@@ -306,7 +306,7 @@ replace github.com/sagernet/cronet-go/lib/windows_arm64 => github.com/Piggy-Cat-
 // projects (connect-ip-go, jiejie-masque-unified). The two lines have different module paths
 // and a second, incompatible owned-DATAGRAM API; they must not be merged. The release line is
 // the only one that can satisfy this `github.com/sagernet/quic-go` require.
-replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261024181210-f0f7ab2d6f60
+replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261027185738-2daa76f5bd52
 
 // Carries InitialPacketSizeCeiling through qtls.QUICOptions and ApplyQUICOptions, and the
 // owned-DATAGRAM send path for Hysteria2 and TUIC.
@@ -362,7 +362,7 @@ replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-qu
 // working, between a stop landing on a starting stack and a reported data race (a nil-engine panic on
 // the unpinned revision), and between an IPv6-only stack and a TCP path that can never self-heal.
 // See docs/fork/lx-stability-audit-phase1.md (040) and FORK.md in the fork.
-replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261024234618-a0f9f68fec7d
+replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261027185737-147ab164c5ae
 
 // gVisor is RETIRED, and this is deliberately a comment rather than a replace directive.
 //

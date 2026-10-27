@@ -204,6 +204,9 @@ func NewUTLSClient(ctx context.Context, logger logger.ContextLogger, serverAddre
 }
 
 func newUTLSClient(ctx context.Context, logger logger.ContextLogger, serverAddress string, options option.OutboundTLSOptions, allowEmptyServerName bool) (Config, error) {
+	if options.ECH != nil && options.ECH.Enabled && (options.UTLS == nil || !utlsFingerprintSupportsECH(options.UTLS.Fingerprint)) {
+		return nil, E.New("the selected uTLS fingerprint does not support ECH")
+	}
 	var serverName string
 	if options.ServerName != "" {
 		serverName = options.ServerName
@@ -466,4 +469,18 @@ func uTLSClientHelloID(name string) (utls.ClientHelloID, error) {
 		return utls.ClientHelloID{}, E.New("unknown uTLS fingerprint: ", name)
 	}
 	return id, nil
+}
+
+// utlsFingerprintSupportsECH lists the presets whose pinned uTLS spec carries an ECH-capable
+// extension. The other exposed presets use specs with no EncryptedClientHelloExtension; uTLS
+// returns an error from computeAndUpdateOuterECHExtension, but MarshalClientHello currently
+// discards it, so ECH would silently not be applied. Reject the combination at configuration
+// time until the pinned presets can carry ECH.
+func utlsFingerprintSupportsECH(name string) bool {
+	switch name {
+	case "", "chrome", "chrome_psk", "chrome_psk_shuffle", "chrome_padding_psk_shuffle", "chrome_pq", "chrome_pq_psk", "firefox":
+		return true
+	default:
+		return false
+	}
 }

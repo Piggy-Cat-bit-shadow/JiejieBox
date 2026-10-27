@@ -127,6 +127,16 @@ func (c *Conn) HandleSyscallReadError(inputErr error) ([]byte, error) {
 		if err != nil {
 			return nil, E.Cause(err, "ktls: handle non-application-data record")
 		}
+		// readRecord parses a handshake record and appends it to Hand rather than consuming it.
+		// This is the splice path's only opportunity to apply a TLS 1.3 KeyUpdate (resetupRX); the
+		// other three record-read sites already drain Hand, and skipping it here leaves the kernel
+		// on the old RX key, so the next application record fails with EBADMSG.
+		for c.rawConn.Hand.Len() > 0 {
+			err = c.rawConn.HandlePostHandshakeMessage()
+			if err != nil {
+				return nil, E.Cause(err, "ktls: handle post-handshake messages")
+			}
+		}
 		var input bytes.Buffer
 		if c.rawConn.Input.Len() > 0 {
 			_, err = c.rawConn.Input.WriteTo(&input)

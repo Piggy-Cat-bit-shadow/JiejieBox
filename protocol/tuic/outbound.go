@@ -140,19 +140,26 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 			"). This path cannot carry a standard QUIC handshake; configure a larger tunnel MTU or ",
 			"reach this server without this detour")
 	}
+	hardCeiling := 0
+	disablePMTUD := options.DisablePathMTUDiscovery
+	if hasCeiling {
+		hardCeiling = int(quicPayloadCeiling)
+		disablePMTUD = true
+	}
 	client, err := tuic.NewClient(tuic.ClientOptions{
 		Context:       ctx,
 		Dialer:        outboundDialer,
 		ServerAddress: options.ServerOptions.Build(),
 		TLSConfig:     tlsConfig,
 		QUICOptions: qtls.QUICOptions{
-			IdleTimeout:             options.IdleTimeout.Build(),
-			KeepAlivePeriod:         options.KeepAlivePeriod.Build(),
-			StreamReceiveWindow:     options.StreamReceiveWindow.Value(),
-			ConnectionReceiveWindow: options.ConnectionReceiveWindow.Value(),
-			MaxConcurrentStreams:    options.MaxConcurrentStreams,
-			InitialPacketSize:       effectiveInitialPacketSize,
-			DisablePathMTUDiscovery: options.DisablePathMTUDiscovery,
+			IdleTimeout:              options.IdleTimeout.Build(),
+			KeepAlivePeriod:          options.KeepAlivePeriod.Build(),
+			StreamReceiveWindow:      options.StreamReceiveWindow.Value(),
+			ConnectionReceiveWindow:  options.ConnectionReceiveWindow.Value(),
+			MaxConcurrentStreams:     options.MaxConcurrentStreams,
+			InitialPacketSize:        effectiveInitialPacketSize,
+			InitialPacketSizeCeiling: hardCeiling,
+			DisablePathMTUDiscovery:  disablePMTUD,
 		},
 		UUID:              userUUID,
 		Password:          options.Password,

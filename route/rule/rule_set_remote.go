@@ -32,6 +32,11 @@ import (
 
 var _ adapter.RuleSet = (*RemoteRuleSet)(nil)
 
+// remoteRuleSetHTTPTimeout bounds one refresh. The updater runs every remote rule-set
+// sequentially, so without a per-client deadline a server that completes the handshake and then
+// never sends response headers blocks every later rule-set for the life of the session.
+const remoteRuleSetHTTPTimeout = 5 * time.Minute
+
 type RemoteRuleSet struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
@@ -53,6 +58,7 @@ type RemoteRuleSet struct {
 	pauseManager   pause.Manager
 	callbacks      list.List[adapter.RuleSetUpdateCallback]
 	refs           atomic.Int32
+	closed         atomic.Bool
 }
 
 func NewRemoteRuleSet(ctx context.Context, logger logger.ContextLogger, tag string, options option.RuleSet) (*RemoteRuleSet, error) {
@@ -118,7 +124,7 @@ func (s *RemoteRuleSet) StartContext(ctx context.Context, startContext *adapter.
 		return E.Cause(err, "create rule-set http client")
 	}
 	startContext.Register(transport)
-	s.httpClient = &http.Client{Transport: transport}
+	s.httpClient = &http.Client{Transport: transport, Timeout: remoteRuleSetHTTPTimeout}
 	if s.cacheFile != nil {
 		savedSet := s.cacheFile.LoadRuleSet(s.tag)
 		if savedSet != nil {
@@ -279,10 +285,17 @@ func (s *RemoteRuleSet) publishRules(ruleSet option.PlainRuleSetCompat) error {
 		return err
 	}
 	s.access.Lock()
+	if s.closed.Load() {
+		s.access.Unlock()
+		return E.New("rule-set is closed")
+	}
 	s.metadata = metadata
 	s.rules = rules
 	callbacks := s.callbacks.Array()
 	s.access.Unlock()
+	if s.closed.Load() {
+		return nil
+	}
 	for _, callback := range callbacks {
 		callback(s)
 	}
@@ -397,6 +410,9 @@ func (s *RemoteRuleSet) resolveTransport() (adapter.HTTPTransport, error) {
 }
 
 func (s *RemoteRuleSet) Close() error {
+	if !s.closed.CompareAndSwap(false, true) {
+		return nil
+	}
 	s.access.Lock()
 	s.rules = nil
 	s.access.Unlock()

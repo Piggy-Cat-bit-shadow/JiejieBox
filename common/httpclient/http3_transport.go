@@ -388,6 +388,9 @@ func NewQUICConfig(options option.QUICOptions) *quic.Config {
 	if options.InitialPacketSize > 0 {
 		quicConfig.InitialPacketSize = uint16(options.InitialPacketSize)
 	}
+	if options.InitialPacketSizeCeiling > 0 {
+		quicConfig.InitialPacketSizeCeiling = uint16(options.InitialPacketSizeCeiling)
+	}
 	if options.MaxConcurrentStreams > 0 {
 		quicConfig.MaxIncomingStreams = int64(options.MaxConcurrentStreams)
 	}
