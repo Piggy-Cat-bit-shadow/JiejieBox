@@ -47,12 +47,12 @@ type oneSidedFixture struct {
 // never comes" and it is reached without any blackhole trickery: the peer simply does not reply.
 // teardownSetupTimeout bounds the SETUP of the one-sided teardown test, not its thesis.
 //
-// The former 10-second deadlines were measured to fail under the race detector on a loaded CI
-// runner in two different places: the client write/peer read, and the copy-goroutine observation
-// (a second copy still winding down). Neither is the property under test - the property is the
-// settled state "one copy alive, onClose unrun" - so a slow scheduler must not fail them. A genuine
-// breakdown still fails, just after a longer ceiling; the assertions themselves are unchanged.
-const teardownSetupTimeout = 30 * time.Second
+// The former 10-second deadlines failed under the race detector on loaded CI, and the 30-second
+// ceiling still expired once during a full 440-second route-suite run (the peer read never saw the
+// request). Neither is the property under test - the property is the settled state "one copy alive,
+// onClose unrun" - so a slow scheduler or suite load must not fail the premise. A genuine breakdown
+// still fails, after a longer ceiling; the assertions themselves are unchanged.
+const teardownSetupTimeout = 2 * time.Minute
 
 func TestTeardown_OneSidedCompletionNeverRunsOnClose(t *testing.T) {
 	// A peer that reads everything and answers nothing: it never closes either.
