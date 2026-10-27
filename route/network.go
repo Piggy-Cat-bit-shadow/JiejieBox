@@ -1228,6 +1228,13 @@ func (r *NetworkManager) claimSystemResume(episode uint64) bool {
 // the window - and suppressing that one leaves the second sleep's black-holed sockets in place. The
 // platform sleep edge numbers each sleep; both reports for one sleep carry that number, and a second
 // sleep carries a new one. See SetSleepEpisode and claimSystemResume.
+//
+// # The assumption this key makes
+//
+// It assumes the platform reports the sleep edge. If macOS announces one sleep and then stops
+// announcing them, the watchdog's next detection is indistinguishable from a duplicate of the last
+// announced episode. The NetworkExtension is the platform's own signal; the watchdog is the
+// no-signal (headless) path, not a cross-check of a partially-reporting platform.
 func (r *NetworkManager) SystemResumed(episode uint64) {
 	if r.closed.Load() {
 		return
