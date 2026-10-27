@@ -1309,6 +1309,8 @@ match:
 			if newBuffer != nil {
 				buffers = append(buffers, newBuffer)
 			} else if len(newPacketBuffers) > 0 {
+				// actionSniff returns only the datagrams it read; the caller's existing set is
+				// still owned here and the new ones follow it. Appending is therefore correct.
 				packetBuffers = append(packetBuffers, newPacketBuffers...)
 			}
 			if newErr != nil {
@@ -1349,6 +1351,17 @@ match:
 // fragmented ClientHello completes in a handful of datagrams; this ceiling exists so that input which
 // never completes cannot grow the router's heap without limit.
 const maxSniffRounds = 64
+
+// packetSniffUsesKnownFakeIPDomain is the decision to stop waiting for a fragmented QUIC
+// ClientHello when the FakeIP reverse mapping already supplied the domain. It is a pure helper so
+// the branch can be pinned without constructing a real QUIC Initial packet: the production caller
+// reaches it only on sniff.ErrNeedMoreData, with the configured sniffers empty (an explicit packet
+// sniffer keeps its protocol contract), and with a non-empty metadata.Domain.
+func packetSniffUsesKnownFakeIPDomain(metadata *adapter.InboundContext, action *R.RuleActionSniff, err error) bool {
+	return metadata.Domain != "" &&
+		len(action.PacketSniffers) == 0 &&
+		errors.Is(err, sniff.ErrNeedMoreData)
+}
 
 func (r *Router) actionSniff(
 	ctx context.Context, metadata *adapter.InboundContext, action *R.RuleActionSniff,
@@ -1486,6 +1499,17 @@ func (r *Router) actionSniff(
 			if errors.Is(err, sniff.ErrNeedMoreData) {
 				// TODO: replace with generic message when there are more multi-packet protocols
 				r.logger.DebugContext(ctx, "attempt to sniff fragmented QUIC client hello")
+				// A FakeIP flow already has an authoritative domain from the reverse mapping.
+				// Waiting for the rest of a fragmented ClientHello cannot improve the routing
+				// decision, and if the rest never arrives the flow is parked here until the read
+				// deadline - holding the first QUIC datagram the application is waiting on. The
+				// first datagram is in `packetBuffers` and is replayed by the caller, so the
+				// handshake can proceed without this sniff. Protocol rules that need the QUIC
+				// ClientHello still get it from the first datagram when it is not fragmented.
+				if packetSniffUsesKnownFakeIPDomain(metadata, action, err) {
+					r.logger.DebugContext(ctx, "packet sniff: fakeip domain known; not waiting for the rest of a fragmented ClientHello")
+					goto finally
+				}
 				continue
 			}
 			goto finally
