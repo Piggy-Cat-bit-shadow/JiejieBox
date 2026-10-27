@@ -6,6 +6,12 @@
 > This is `VERIFIED_SOURCE`, not evidence that any particular run executed or passed. Re-read
 > the current workflows and run records before relying on other gate-coverage claims below.
 
+**Later run evidence:** GitHub Actions [Verify 40602193497](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40602193497)
+and [Android Core ARM64 40602193557](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40602193557)
+both report success at `1ff0af39110d4bd4044c817a0bf209ff01e21f7a`. These run-level results are
+`VERIFIED_CI` for that SHA and workflows only; they do not establish later Cronet pin behavior,
+individual test coverage, artifact publication or device behavior.
+
 **Scope:** `.github/workflows/*`, `scripts/ci/*`, `verify-evidence/*`, `release/*`, and what a future
 AI may and may not claim as "verified".
 
@@ -199,7 +205,11 @@ failures, only the post-fix passes. And `check-libbox-abi.log` ends with
 > Anything at the production baseline that rests **only** on `verify-evidence/` is `UNVERIFIED` at the
 > production baseline.
 
-### The evidence that does not exist at all
+### Evidence absent from the historical v0.1.9 review
+
+This table records what that review found in the tree at the time. It is not a claim that later
+GitHub Actions runs or external evidence do not exist; see the scoped run records above and inspect
+the relevant run for the target under review.
 
 | Claim | Where it is announced | What exists |
 |---|---|---|
@@ -213,17 +223,14 @@ failures, only the post-fix passes. And `check-libbox-abi.log` ends with
 
 ### The repository's own release verdict
 
-`docs/RELEASE-CERTIFICATE.md` opens with:
+At the historical review, `docs/RELEASE-CERTIFICATE.md` opened with:
 
 ```text
 NOT READY FOR A STABLE MILESTONE
 ```
 
-and lists two blockers that "cannot be closed from the development environment": **no real data plane
-has ever been exercised** (no TUN, no root, no Linux, no Apple NetworkExtension — L0 route exclusion,
-L2 splice, the flow table, DNS hijack on a device, FakeIP on a device and network transitions all have
-**zero executed evidence**), and **the Apple products are built and signed by a manual workflow that
-has not run against this tree**.
+and listed missing data-plane and Apple signing evidence for that review. Do not generalize those
+historical absence claims to later releases; obtain evidence for the exact target and platform.
 
 **A third claim in that document is now stale, and it is the one most likely to be repeated.** It
 records a *known, unfixed* goroutine leak in `dns/transport/local.(*DBusResolvedResolver).loopUpdateStatus`

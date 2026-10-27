@@ -14,6 +14,13 @@ ceiling below the QUIC Initial minimum. An unknown path does not assert a ceilin
 the result to the pinned sing-quic client; this is a path-capacity constraint, not a measurement of
 the physical link MTU. See the TUIC tests and pinned fork before generalizing to another protocol.
 
+For MASQUE, `protocol/masque/client.go` already computes `outerPayloadCeiling` from the detour
+and clamps `HTTP3Options.InitialPacketSize` when the capacity is known. The 2026-10-28 historical
+audit's statement that no outer ceiling is computed is therefore too broad. That constructor does
+not assign `InitialPacketSizeCeiling` or disable path MTU discovery from this value, so the initial
+clamp must not be presented as proof of a hard bound on later QUIC packets. This distinction is
+`VERIFIED_SOURCE` at `011f3fdcd99`; no real underlay or peer measurement is implied.
+
 **Scope:** `common/bufgeom` (fork-created), the MASQUE MTU/PTB path, the hysteria2 hard ceiling, the
 WireGuard tunnel MTU, `common/physicalpath/status.go`'s MTU block, and the low-memory geometry profile.
 
@@ -38,7 +45,7 @@ correct answer for another. Conflating them is the failure mode this section exi
 | # | Quantity | Computed at | Bounded at | At the shipped config |
 |---|---|---|---|---|
 | 3 | **inner tunnel MTU** | `protocol/masque/client.go:617-619` (`c.mtu`), seeded `:119-121` | `DefaultMTU = 1280` (`transport/masque/session.go:18`); device `protocol/masque/endpoint.go:83` | **1280** — and it is **configured, not measured** (`client.go:612-616`) |
-| 2 | **outer QUIC packet** | `client.go:134-136` → `min(mtu + 51, MaxUint16)`; server mirror `protocol/masque/server.go:93-94` | the detour ceiling (`client.go:164-192` → `common/dialer/path_mtu.go:250-255`, `:293-303`); floor `path_mtu.go:41` = **1200, refused not clamped** | **1331** |
+| 2 | **outer QUIC initial packet setting** | `client.go` → `min(mtu + 51, MaxUint16)`; server mirror `protocol/masque/server.go` | detour capacity clamps the initial setting; values below 1200 are refused. This is not a hard ceiling for all later packets | **1331** before a lower detour cap |
 | 1 | **outer link MTU** | **nowhere** | **nowhere** | **NOT KNOWN** |
 
 **The 51 is itemised, not magic:** `QUICPacketOverhead = 51` (`session.go:19`) = 1 context ID + 8

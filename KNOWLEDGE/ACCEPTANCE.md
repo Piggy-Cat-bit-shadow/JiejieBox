@@ -25,6 +25,10 @@ On the same Windows host and target, unfiltered package tests passed for `./dns`
 `./protocol/anytls`. `./protocol/snell` reported no test files. These local package results do not
 establish interoperability or behavior on another OS.
 
+After the branch advanced to `cb71cf80d72` and changed the `cronet-go/all` pin, unfiltered
+`go test ./protocol/group ./common/httpclient ./protocol/tuic -count=1` also passed. This does not
+test the Cronet native client.
+
 On Windows 10 Enterprise LTSC 2021 build 19044 with Go 1.25.5, the broader
 `go test -tags with_utls ./common/tls -count=1` **failed**: `TestWindowsClientHandshakeTLS13`,
 `TestWindowsClientRoundtripTLS13`, and `TestWindowsClientTLS13PostHandshakeConcurrentWrite`
@@ -238,17 +242,18 @@ making either claim.
 
 ## Known-failing and known-flaky set
 
-Re-diagnosing these as regressions is the most likely wasted effort in this repository.
+These are historical observations, not proof that a current failure has the same cause. Reproduce
+and compare the current target and environment before classifying a failure.
 
 | Item | Why | Not a regression because |
 |---|---|---|
-| `common/tls` `TestWindowsClient*TLS13` | a real remote handshake; this host's Schannel has no TLS-1.3-over-TCP | `NETWORK_DEPENDENT` |
+| `common/tls` `TestWindowsClient*TLS13` | local test-server handshakes failed with `unexpected EOF` on Windows 10 build 19044 during this refresh | cause not established; see the current result above |
 | `common/sniff` `TestAgentFFrameShape*`, `TestTheSniffCensusMovesForExactlyOneLeakedGoroutine` | **load-sensitive; the failing test name differs run to run** | 5/5 passes in isolation on both the fix and the base |
 | `protocol/group` `TestRecheckSingleFlightCollapsesABurst` | load-sensitive | 20 consecutive isolated runs clean on both trees |
 | `common/trafficsched` under `-count=10` | ~18 minutes of deliberate sleeps trips a timeout | every individual test passes |
 | `protocol/masque` `TestMasqueRestartCyclesDoNotLeakLoops` | **330 s alone** — slow, not hung | measured |
 | untagged root package | 12 tag-absence failures | use `$OTHERS` |
-| untagged `protocol/masque` | 19 tag-absence failures | use `$OTHERS` |
+| untagged `protocol/masque` | historical tag-absence failures | unfiltered package tests passed at the 2026-10-28 target; verify required features and tags separately |
 | `common/windivert`, `common/tlsspoof` | reports call them "3 pre-existing environmental failures" | **they pass here** (25 PASS / 9 PASS, 0 FAIL) — the claim was host-specific, not tree-specific |
 
 ---
@@ -257,10 +262,9 @@ Re-diagnosing these as regressions is the most likely wasted effort in this repo
 
 These are not acceptance gaps to be closed by a test; they are recorded limits.
 
-* **No real data plane has ever been exercised.** No TUN, no root, no Linux, no Apple
-  NetworkExtension. `docs/RELEASE-CERTIFICATE.md` opens with `NOT READY FOR A STABLE MILESTONE`
-  for exactly this reason.
-* **The Apple products are built and signed by a manual workflow that has not run against this tree.**
+* Device and privileged data-plane behavior requires evidence for the specific build and platform;
+  this local Windows refresh did not exercise a real TUN, Linux kTLS or Apple NetworkExtension.
+* Apple artifact claims require a matching workflow run and artifact provenance for the exact target.
 * **`cronet-go/lib/linux_amd64` does not link under `-race` on ubuntu-latest.** No product is affected:
   the Linux product ships `DEFAULT_BUILD_TAGS_OTHERS`, which has no `with_naive_outbound`.
 * **The `systemd-resolved` goroutine leak is FIXED** (`6b495134c`). `docs/RELEASE-CERTIFICATE.md:70-85`

@@ -1,5 +1,11 @@
 # 全内核与依赖组合生产级审计报告
 
+> **后续知识核对（2026-10-28）：** 本报告是时点记录。关于 BUG-012，目标源码
+> `protocol/masque/client.go` 已计算 detour 的 `outerPayloadCeiling` 并限制初始包大小，
+> 故文中“MASQUE 外层仍未计算路径上限”过于宽泛；该构造路径未将此值设置为
+> `InitialPacketSizeCeiling`，初始包限制不等于后续 QUIC 包的硬上限。详见
+> `KNOWLEDGE/modules/mtu-and-geometry.md`；其他缺陷状态仍应按其修复及目标版本核对。
+
 **报告文件：** `KERNEL_FULL_AUDIT_REPORT_20261028.md`  
 **审计对象：** `Piggy-Cat-bit-shadow/sing-box`，`testing` 分支  
 **审计 HEAD：** `fec235746cc943b9965c8453e82a8a42890505ab`（2026-10-28 02:22 +0800）  

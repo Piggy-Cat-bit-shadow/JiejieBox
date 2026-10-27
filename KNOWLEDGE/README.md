@@ -10,7 +10,7 @@ changed, why, and how to continue without re-reading 1,834 commits*.
 |---|---|
 | Repository | `Piggy-Cat-bit-shadow/sing-box` |
 | Product branch | `testing` |
-| **Production baseline** | `5fc4f9366a60202fdc7c98cd6fa280cceace65ba` — the implementation every module describes |
+| **Production baseline** | `5fc4f9366a60202fdc7c98cd6fa280cceace65ba` — the last declared broad baseline; individual later additions identify their own target |
 | Release baseline | **`v0.1.9`**, the same SHA |
 | **Upstream baseline** | `e4b7e692f4545890bfc9d43960328e1449fa803b` — the last upstream commit this fork contains (`refs/remotes/upstream/testing` has since moved on) |
 | Post-baseline production delta | **substantial** — compute `git diff --name-only v0.1.9..HEAD`; see `BASELINE.md` |

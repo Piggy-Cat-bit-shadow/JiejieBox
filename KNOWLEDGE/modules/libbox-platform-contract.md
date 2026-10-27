@@ -12,6 +12,17 @@ in `protocol/tun/reset_before_start_test.go`; their presence does not establish 
 The post-start behavior includes `1ff0af39110`, which is after `v0.1.30`; do not describe it
 as released in v0.1.30. Device network-switch behavior remains unverified here.
 
+### IPv6 entry presentment
+
+`route/network_family_entry.go` publishes the box-level entry decision once; the TUN consumes it
+before opening the interface (`protocol/tun/entry_ipv6.go`). A network change can alter per-dial
+capability without silently rewriting the open TUN's addressing; changing the entry decision requires
+a box restart. The box pre-check is intended to ensure all configured TUNs can apply suppression;
+if the final reduction nevertheless refuses, the inbound keeps IPv6 and logs a disagreement without
+rolling the shared decision back. Note that an older comment in `route/network.go` still describes
+a later correction write; the current store and inbound code, not that comment, define the behavior.
+This is `VERIFIED_SOURCE` for the current source, not a real-device transition test.
+
 **Scope:** `experimental/libbox/*`, `daemon/*`, `include/*` as they define the client-facing surface,
 `cmd/internal/{mobilebuildtags,applebuildtags,appletags}`, `release/apple-client-refs.env`, and the
 Apple/Android artifact pins.

@@ -159,8 +159,9 @@ proofs. **The cap and the release-on-abandon are `VERIFIED_SOURCE` only** — no
 | `296bb6f94` → `3711437d4` | FIX/MEMORY | OWN | the DNS cache, pooling and generation family (17 commits) |
 | `1b405d865` → `c443a8df7` | FEATURE/REFACTOR | OWN | DNS family streaming; the collector was later dropped as dead (`721e6c4db`) |
 
-**Final behaviour:** a response computed against one environment generation may not be delivered or
-cached into another; a FakeIP server cannot resolve a destination; the TCP leg of a DNS transport's
+**Current behavior:** a settled-start DNS query may deliver its dated answer after a transition but
+must not commit it under the changed generation; a query started during transition is not delivered
+as a stable result. A FakeIP server cannot resolve a destination; the TCP leg of a DNS transport's
 requirement is `Conditional` because the retry only fires on truncation.
 
 **Known defect — FIXED, and the document that says otherwise is stale:** the

@@ -12,6 +12,12 @@ roles. Inspect `NetworkTransitionSnapshot`, `beginTransition` and `ResetNetwork`
 boundary. Tests include `common/dialer/transition_stability_test.go` and
 `common/dialer/reset_epoch_ownership_test.go`. This is not a device recovery measurement.
 
+`route/conn_halfclose.go` observes half-closed flows and releases when the peer is demonstrably
+gone; it deliberately does not treat healthy silence as failure. A flow that never half-closes is
+outside this observer, so this mechanism is not a general detector for an active TCP flow that
+silently stalls. See the historical full audit's BUG-007 and the current source before designing an
+idle timeout; no device-level availability claim follows from the observer.
+
 **Scope:** `adapter.Scope`, `Box` start/close ordering, `common/runtimecoord`, `route.ReferenceManager`,
 `common/power`'s interaction with them.
 

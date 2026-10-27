@@ -8,6 +8,11 @@
 > The production baseline is deliberately **not moved**: the intervening subsystems and old
 > claims have not all been re-audited. Compute the delta yourself; ignore historical assertions
 > below that the baseline equals HEAD or that its post-baseline delta is empty.
+>
+> The branch advanced during this calibration to `cb71cf80d7224a51823b455f0be5959ad8556933`:
+> its version file says 0.1.31 and it changes the `cronet-go/all` pin. A GitHub Release and remote
+> tag for v0.1.31 were not found when checked; a version-file change alone is not a publication.
+> Recheck release records and this new dependency pin before attributing the older tests to it.
 
 **Read this file before anything else. The knowledge base does not describe `HEAD`.**
 

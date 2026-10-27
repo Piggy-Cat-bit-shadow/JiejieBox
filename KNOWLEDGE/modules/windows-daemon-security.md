@@ -351,10 +351,9 @@ Each is a "reasonable but wrong" change this codebase has already paid for.
 
 ## 17. Follow-up
 
-* **The trust boundary has no end-to-end test, and that is now the only gap.** The Windows CI gate
-  exists and is green — `.github/workflows/windows-boxdd-tests.yml` runs `go test -count=1 -v
-  ./experimental/boxdd/` on `windows-latest`, with a step that FAILS if any test skips, so a green run
-  means 27 tests executed and none were silently deselected. What it cannot do is start a service:
+* **The trust boundary has no documented end-to-end test.** The Windows CI gate runs `go test -count=1 -v
+  ./experimental/boxdd/` on `windows-latest` and fails on skips; the exact release run and 33-test
+  count are linked above. What it cannot do is start a service:
   `peer_windows.go` still has no test file, and the handshake needs a real installation, a real named
   pipe and two real processes.
 * **An end-to-end trust-boundary test needs a disposable Windows VM** with: administrator rights, the
