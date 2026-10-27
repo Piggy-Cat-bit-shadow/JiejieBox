@@ -347,6 +347,16 @@ jobs:
           go build -tags "$tags" ./...
           echo "PASS: go build -tags \"$tags\" ./..."
 
+      - name: kTLS wait-path tests
+        # The wait path is Linux + badlinkname only, so it is invisible to the Windows host
+        # checks and to the untagged compile gate. Exercise the delayed-data/error contract on
+        # the same Ubuntu runner the wire implementation builds on.
+        run: |
+          set -euo pipefail
+          tags="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
+          go test -count=1 -tags "$tags" ./common/ktls
+          echo "PASS: kTLS wait-path tests"
+
       - name: build matrix
         # A signature change upstream is a build failure here rather than a silent behaviour change
         # later. The main binary is not built for every target: only the packages this fork changes,
