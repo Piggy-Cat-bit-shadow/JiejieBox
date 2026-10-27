@@ -54,15 +54,15 @@ func packetActivityFixture(t *testing.T) (N.PacketWriter, *destinationReportingS
 	return bufio.NewPacketConn(sink), source, func() { _ = sink.Close() }
 }
 
-// TestPacketCopyRecordsActivity is the fix for a packet connection that could never prove it was
-// alive.
+// TestPacketCopyRecordsReceivedActivity is the fix for a packet connection that could never prove it
+// was alive.
 //
 // A transition reclaims only what it can prove is idle, and "no transfer has ever been observed" is
-// deliberately not idle - that is what a spliced connection looks like from userspace. But a packet
-// connection had no observation at all, so every UDP flow stayed in that state for the life of the
-// tunnel and was protected indefinitely: a drain that never ends, the opposite failure from the one
-// the protection was added for.
-func TestPacketCopyRecordsActivity(t *testing.T) {
+// deliberately not idle - that is what a spliced connection looks like from userspace. A packet
+// connection read from the peer is a real observation, so the download direction must record it or
+// every UDP flow would stay in the unobserved state for the life of the tunnel and be protected
+// indefinitely.
+func TestPacketCopyRecordsReceivedActivity(t *testing.T) {
 	manager := NewConnectionManager(log.NewNOPFactory().Logger())
 	t.Cleanup(func() { _ = manager.Close() })
 
@@ -74,11 +74,37 @@ func TestPacketCopyRecordsActivity(t *testing.T) {
 
 	var done atomic.Bool
 	manager.packetConnectionCopy(
-		context.Background(), source, destination, false, &done, nil, nil, nil, &state)
+		context.Background(), source, destination, true, &done, nil, nil, nil, &state)
 
 	require.NotZero(t, state.lastActive.Load(),
-		"the copy loop moved datagrams but the connection still reports no observed activity, so a "+
+		"the copy loop received datagrams but the connection still reports no observed activity, so a "+
 			"transition would protect it forever")
+}
+
+// TestPacketCopyUploadIsNotEvidenceOfAPath is the other half, and the field case: an old UDP flow keeps
+// sending after a Wi-Fi to cellular handover, the kernel keeps accepting the datagrams, and nothing
+// comes back.
+//
+// A UDP write returns success whenever the local socket buffer has room; the route is not consulted
+// for the datagram's fate. If uploads refreshed lastActive, such a flow would never look idle, the
+// transition drain would keep it, and the sweep would keep sparing it - a black hole for the life of
+// the tunnel. The receiving direction is the only observation that can distinguish it.
+func TestPacketCopyUploadIsNotEvidenceOfAPath(t *testing.T) {
+	manager := NewConnectionManager(log.NewNOPFactory().Logger())
+	t.Cleanup(func() { _ = manager.Close() })
+
+	destination, source, cleanup := packetActivityFixture(t)
+	defer cleanup()
+
+	state := managedConnState{createdAt: time.Now(), generation: manager.generation.Load()}
+
+	var done atomic.Bool
+	manager.packetConnectionCopy(
+		context.Background(), source, destination, false, &done, nil, nil, nil, &state)
+
+	require.Zero(t, state.lastActive.Load(),
+		"an upload refreshed lastActive; a dead UDP path would then look active for as long as the "+
+			"application keeps sending")
 }
 
 // TestPacketCopyWithoutStateIsUnchanged keeps the fast path honest: a connection the manager does not

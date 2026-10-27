@@ -1212,12 +1212,26 @@ func (m *ConnectionManager) packetConnectionCopy(ctx context.Context, source N.P
 	// the call site has neither problem - the connection graph is untouched, so batch, splice and
 	// offload keep every capability they had, and what is measured is the bytes this loop moved.
 	//
-	// The engine invokes these from packetCopySession.Transfer, once per datagram, after the write
-	// succeeded; a zero length is not a transfer.
+	// # Only the RECEIVING direction counts
+	//
+	// A successful write to a UDP socket proves nothing about the path: the kernel accepts the
+	// datagram, returns success, and drops it when the route is gone. Counting uploads therefore kept
+	// a black-holed flow "active" for as long as the application kept sending, and the drain - which
+	// only reclaims what it can prove idle - never reclaimed it. A datagram READ FROM THE PEER is the
+	// one observation that still says the path works, so only the download loop carries the counter.
+	//
+	// The write counters are deliberately left empty even on the download loop: the same transfer
+	// already fired the read counter, and a second observation of one datagram would only add work.
+	//
+	// # Why the counter is direction-gated here and not on the connection
+	//
+	// managedConnState is shared by streams and packets, and a stream's write IS evidence: a TCP send
+	// buffer fills when the peer stops acknowledging, so a dead path stops producing successful
+	// writes on its own. UDP has no such backpressure, which is why the distinction belongs to the
+	// packet arm.
 	var readCounters, writeCounters []N.CountFunc
-	if activity != nil {
-		counters := []N.CountFunc{activity.countBytes}
-		readCounters, writeCounters = counters, counters
+	if activity != nil && direction {
+		readCounters = []N.CountFunc{activity.countBytes}
 	}
 	_, err := bufio.CopyPacketWithCounters(copyWriter, source, source, readCounters, writeCounters)
 	if !direction {
