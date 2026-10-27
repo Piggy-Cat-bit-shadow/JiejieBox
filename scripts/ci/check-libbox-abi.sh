@@ -95,7 +95,7 @@ PROJECT_GOMOBILE_VERSION="$(cd "$repo_root" && go list -m -f '{{.Version}}' gith
 # unreachable, which is how the v0.1.6 Apple artifact run was performed - can establish layer 5
 # (this constant and the gitlink agree) and nothing more, and must not report layer 4 as passed
 # on that basis. See docs/fork/apple-artifact-verification.md §9.1.
-VERIFIED_ANDROID_SHA="ec61030d3df74f3e7c39ab848c8996008ecd386a"
+VERIFIED_ANDROID_SHA="9d15717a85c5d995f4179457b48213b5c73b511d"
 # Moved from 90a0e9aef when the Apple gitlink advanced to d05249121, because the two must
 # be the same commit or this gate fails - which is exactly what it did.
 #
