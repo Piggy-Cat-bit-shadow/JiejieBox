@@ -124,7 +124,18 @@ TestParallelDialerFollowsTheCandidateFamily                 PASS
 TestIPVersionItemTreatsMappedAsIPv4                         PASS
 ```
 
-CI evidence is added after the run; no tag, no release, `release/JIEJIE_VERSION` remains `0.1.28`.
+CI:
+
+| Run | Result |
+|---|---|
+| `Verify` #40506575930 (push, `6a1aa55`) | **success** — source gate plus race on `common/dialer` and `route`, including the new preference/bind/rule tests |
+| `Verify` #40507957535 (workflow dispatch, final tree with the mapped-destination canonicalisation) | **success** — the `869788` commit carried `[skip ci]`, so the final tree was dispatched explicitly |
+| `Verify` #40509877506 (push, `a6ee0c0`, packet preference) | **success** — the first race attempt hit the repository's known load-sensitive `TestTeardown_OneSidedCompletionNeverRunsOnClose` failure; the rerun passed |
+| `macOS arm64` #40506590259 (`6a1aa55`) | **success** — gofmt, unit tests under the macOS tags, build, capability audit |
+| `macOS arm64` #40507909551 (`1658800`) | **success** — the mapped-destination tree |
+| `macOS arm64` #40509906363 (`a6ee0c0`) | **success** — the packet path on Darwin |
+
+No tag was created, no GitHub Release was touched, and `release/JIEJIE_VERSION` remains `0.1.28`.
 
 ## 4. What this audit did NOT change
 
