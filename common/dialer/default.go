@@ -316,6 +316,7 @@ func setMarkWrapper(networkManager adapter.NetworkManager, mark uint32, isDefaul
 }
 
 func (d *DefaultDialer) DialContext(ctx context.Context, network string, address M.Socksaddr) (net.Conn, error) {
+	address = canonicalDialSocksaddr(address)
 	if !address.IsValid() {
 		return nil, E.New("invalid address")
 	} else if address.IsDomain() {
@@ -411,6 +412,7 @@ func (d *DefaultDialer) DialParallelInterface(ctx context.Context, network strin
 }
 
 func (d *DefaultDialer) dialParallelInterfaceEpoch(ctx context.Context, network string, address M.Socksaddr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration, epochCurrent func() bool) (net.Conn, error) {
+	address = canonicalDialSocksaddr(address)
 	if strategy == nil {
 		strategy = d.networkStrategy
 	}
@@ -463,6 +465,7 @@ func (d *DefaultDialer) dialParallelInterfaceEpoch(ctx context.Context, network 
 }
 
 func (d *DefaultDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	destination = canonicalDialSocksaddr(destination)
 	// Captured before the socket is created, for the same reason as a dial - and captured as ONE
 	// observation together with the family verdict, so the gate below cannot act on one generation's
 	// verdict while the hand-over check validates another's ownership.
@@ -539,6 +542,16 @@ func isIPv6DialAddress(address netip.Addr) bool {
 	return classifyAddress(address) == familyIPv6
 }
 
+// canonicalDialSocksaddr turns an IPv4-mapped destination into its IPv4 form before it reaches a
+// socket factory. Choosing dialer4 for a mapped address is not enough: the address STRING would
+// still ask the kernel for an IPv6 socket, which then cannot use the IPv4 bind address.
+func canonicalDialSocksaddr(address M.Socksaddr) M.Socksaddr {
+	if address.Addr.Is4In6() {
+		return M.SocksaddrFrom(address.Addr.Unmap(), address.Port)
+	}
+	return address
+}
+
 // DialerForICMPDestination is retained for embedders that still select by family. It carries no
 // network strategy - ICMPControl is the strategy-aware spelling (upstream 38bf6879b).
 func (d *DefaultDialer) DialerForICMPDestination(destination netip.Addr) net.Dialer {
@@ -592,6 +605,7 @@ func (d *DefaultDialer) ListenSerialInterfacePacket(ctx context.Context, destina
 }
 
 func (d *DefaultDialer) listenSerialInterfacePacketEpoch(ctx context.Context, destination M.Socksaddr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration, localFamily localFamilyPolicy) (net.PacketConn, error) {
+	destination = canonicalDialSocksaddr(destination)
 	if strategy == nil {
 		strategy = d.networkStrategy
 	}

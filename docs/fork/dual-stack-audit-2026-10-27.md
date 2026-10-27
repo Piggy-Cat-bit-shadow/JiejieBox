@@ -86,10 +86,12 @@ correctly treats it as IPv4. The divergence still existed in:
 - the FakeIP packet-destination family comparison in `preMatchFlow`.
 
 **Fix:** a single `isIPv6DialAddress` helper (`classifyAddress == familyIPv6`) is used by the socket
-selectors; `IPVersionItem`, the metadata assignment and the packet-destination comparison treat
-`Is4In6` as IPv4.
+selectors; `canonicalDialSocksaddr` unmaps the destination before it reaches a socket factory (choosing
+the IPv4 dialer is not enough if the string still asks for an IPv6 socket); `IPVersionItem`, the
+metadata assignment and the packet-destination comparison treat `Is4In6` as IPv4.
 
-**Test:** `TestIPVersionItemTreatsMappedAsIPv4`, plus the mapped cases in
+**Tests:** `TestIPVersionItemTreatsMappedAsIPv4`,
+`TestCanonicalDialSocksaddrUnmapsMappedDestinations`, plus the mapped cases in
 `TestParallelDialerFollowsTheCandidateFamily`.
 
 ## 3. Verification

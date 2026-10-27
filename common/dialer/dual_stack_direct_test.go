@@ -45,6 +45,16 @@ func TestParallelDialerFollowsTheCandidateFamily(t *testing.T) {
 	require.Same(t, &dialer.udpDialer4, dialer.parallelDialer("udp", mapped))
 }
 
+func TestCanonicalDialSocksaddrUnmapsMappedDestinations(t *testing.T) {
+	mapped := M.SocksaddrFrom(netip.MustParseAddr("::ffff:192.0.2.1"), 443)
+	canonical := canonicalDialSocksaddr(mapped)
+	require.Equal(t, netip.MustParseAddr("192.0.2.1"), canonical.Addr)
+	require.Equal(t, uint16(443), canonical.Port)
+
+	native := M.SocksaddrFrom(netip.MustParseAddr("2001:db8::1"), 443)
+	require.Equal(t, native, canonicalDialSocksaddr(native))
+}
+
 // ownerDialer is a real DefaultDialer whose connection attempts are delegated to a fake, so the
 // test exercises the production type and the production scheduler factory.
 type ownerDialer struct {
