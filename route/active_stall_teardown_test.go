@@ -45,6 +45,15 @@ type oneSidedFixture struct {
 // The application writes one request and then CLOSES ITS WRITE SIDE, which is what cleanly finishing
 // an upload looks like. The peer never answers. That is the ordinary shape of "request sent, response
 // never comes" and it is reached without any blackhole trickery: the peer simply does not reply.
+// teardownSetupTimeout bounds the SETUP of the one-sided teardown test, not its thesis.
+//
+// The former 10-second deadlines were measured to fail under the race detector on a loaded CI
+// runner in two different places: the client write/peer read, and the copy-goroutine observation
+// (a second copy still winding down). Neither is the property under test - the property is the
+// settled state "one copy alive, onClose unrun" - so a slow scheduler must not fail them. A genuine
+// breakdown still fails, just after a longer ceiling; the assertions themselves are unchanged.
+const teardownSetupTimeout = 30 * time.Second
+
 func TestTeardown_OneSidedCompletionNeverRunsOnClose(t *testing.T) {
 	// A peer that reads everything and answers nothing: it never closes either.
 	peer, err := net.Listen("tcp", "127.0.0.1:0")
@@ -135,12 +144,12 @@ func TestTeardown_OneSidedCompletionNeverRunsOnClose(t *testing.T) {
 		if writeErr != nil {
 			t.Fatalf("the request could not be sent: %v", writeErr)
 		}
-	case <-time.After(10 * time.Second):
+	case <-time.After(teardownSetupTimeout):
 		t.Fatalf("the request never went out\n%s", captured.dump())
 	}
 	select {
 	case <-peerRead:
-	case <-time.After(10 * time.Second):
+	case <-time.After(teardownSetupTimeout):
 		t.Fatalf("the peer never received the request\n%s", captured.dump())
 	}
 
@@ -164,7 +173,7 @@ func TestTeardown_OneSidedCompletionNeverRunsOnClose(t *testing.T) {
 		t.Fatalf("onClose ran; the premise is that a one-sided completion leaves it unrun\n%s",
 			captured.dump())
 	case <-peerEOF:
-	case <-time.After(10 * time.Second):
+	case <-time.After(teardownSetupTimeout):
 		t.Fatalf("the peer never saw EOF: the client's half-close did not reach it, so the upload "+
 			"path cannot be said to have completed\n%s", captured.dump())
 	}
@@ -189,7 +198,19 @@ func TestTeardown_OneSidedCompletionNeverRunsOnClose(t *testing.T) {
 	// "the surviving copy is not the download". The upload having completed is already
 	// established above, by the peer having seen EOF - an ordering fact, not a frame name - and
 	// one surviving copy plus an unrun onClose is the state this test exists to pin.
-	observation := observeCopyGoroutines()
+	//
+	// The count is sampled, not instantaneous: the peer has seen EOF, but the upload copy may still
+	// be returning from its final read on a loaded runner. Wait for the settled count instead of
+	// treating a scheduler delay as a second survivor; a genuine second copy never settles.
+	var observation copyObservation
+	deadline := time.Now().Add(teardownSetupTimeout)
+	for {
+		observation = observeCopyGoroutines()
+		if observation.copies <= 1 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	t.Logf("one surviving copy: copies=%d upload=%q download=%q",
 		observation.copies, observation.uploadFrame, observation.downloadFrame)
 	if observation.copies != 1 {
