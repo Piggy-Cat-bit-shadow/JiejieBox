@@ -71,9 +71,12 @@ current evidence
 
 ---
 
-# 3. Core rule: refresh only what changed
+# 3. Core rule: combine delta review with calibration
 
-Do **not** re-audit the whole repository on every refresh.
+Use the delta to prioritize deep review, but do not assume an unchanged document is correct.
+Inventory every current knowledge entry, sample its source anchors and cross-module claims, and
+classify it as valid, update, rewrite, obsolete, or insufficient evidence. Expand the review when
+sampling finds drift. Keep historical reports explicitly scoped to their original trees.
 
 The refresh procedure is:
 
@@ -88,6 +91,8 @@ map changed paths/commits to subsystems
 ↓
 deep-read only affected subsystems
 ↓
+calibrate existing claims and check coverage gaps even when the delta is empty
+↓
 update relevant module knowledge
 ↓
 re-check cross-module invariants
@@ -100,6 +105,12 @@ The goal is to preserve the expensive-to-reconstruct understanding while avoidin
 ---
 
 # 4. First step: identify the real Production Baseline
+
+Discover the repository root, worktree status, local and remote branches, remote heads, tags and
+release records first. Identify the active refresh protocol through the repository entry point;
+do not assume another checkout or a branch called `main` is authoritative. Preserve pre-existing
+changes. Record the target SHA separately from released tags and prove their ancestry. If network
+or release data is unavailable, label it unknown. Never infer release status from a version file.
 
 Read:
 
@@ -1100,6 +1111,19 @@ release baseline confused with knowledge revision
 
 Resolve before finishing.
 
+Check local Markdown links and source paths/symbols, using symbol searches rather than assuming
+historical line numbers still apply. Review TUN/network changes, routing/DNS/fast-path authority,
+dual-stack dial and fallback, protocol/TLS/QUIC lifecycle, platform callbacks and fork dependency
+pins together. Inventory real registered protocols, platform build gates and tests rather than
+assuming the list in this protocol is exhaustive. For each key conclusion record its scope,
+source anchor and evidence level; distinguish source, tests actually run, CI runs, interoperability,
+devices and measurements. Do not claim a quantitative performance result without a matching benchmark.
+
+If interrupted, preserve a concise ledger of reviewed entries, target SHA, unresolved contradictions
+and checks remaining. Resume from that ledger after verifying HEAD and worktree; never advance the
+baseline past unresolved load-bearing gaps. Do not modify runtime code, dependencies, build or
+release configuration as part of a knowledge refresh. Do not recursively refresh this protocol.
+
 ---
 
 # 32. Updating COMMIT-INDEX.md
@@ -1204,7 +1228,8 @@ Do not create one report per subsystem.
 
 # 36. Recommended refresh workflow with Harness / multi-Agent systems
 
-For a large delta, use parallel agents.
+For a large delta, parallel agents may be used when the active execution instructions allow them;
+otherwise perform the same independent reviews sequentially.
 
 ## Phase 1 — coarse map
 
@@ -1308,7 +1333,7 @@ Do not invoke a full multi-agent audit for a trivial change.
 
 # 38. Large-delta refresh workflow
 
-Use a full multi-agent refresh when:
+Use a full, independently checked refresh when:
 
 ```text
 > several hundred relevant commits

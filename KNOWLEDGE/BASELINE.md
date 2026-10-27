@@ -1,5 +1,14 @@
 # Baseline
 
+> **2026-10-28 calibration: INCOMPLETE.** This file's v0.1.9 measurements are historical,
+> not a current delta description. At target `011f3fdcd99173acd3e80483b50cb76b07bf6ff4`,
+> `v0.1.9..target` contains 791 commits and substantial production changes. The published
+> `v0.1.30` tag resolves to `6112aa17052297ec9890e0e7f1541a06120b84b2`, an ancestor of the
+> target; later TUN fixes are on testing and are not established as part of that release.
+> The production baseline is deliberately **not moved**: the intervening subsystems and old
+> claims have not all been re-audited. Compute the delta yourself; ignore historical assertions
+> below that the baseline equals HEAD or that its post-baseline delta is empty.
+
 **Read this file before anything else. The knowledge base does not describe `HEAD`.**
 
 Every value below was measured against the worktree, not copied from a report. The command that
@@ -18,7 +27,7 @@ produced it is given so a reader can re-measure instead of trusting this file.
 | **Fork branch point** | `0d91c4547921a7b72e9c9913e2bc6f3a556801e2` | see below |
 | Knowledge reviewed at | 2026-10-14 (refresh at the v0.1.9 release) | this file's Git history |
 | Knowledge revision | resolve dynamically — `git log -1 --format=%H -- KNOWLEDGE/BASELINE.md` | do not hardcode |
-| **Post-baseline production delta** | **none** — the baseline IS `HEAD`. See the next section for what moved to get here. | `git rev-list --count HEAD..HEAD` is 0 by construction |
+| **Post-baseline production delta** | substantial; inspect dynamically, see the calibration warning above | `git diff --name-only v0.1.9..HEAD` |
 
 ## What this baseline RE placed, and why the move was forced
 
@@ -188,7 +197,7 @@ recorded in `REFRESH.md`'s refresh report.
 * `experimental/boxdd/**` (the Windows daemon) changed in this delta and is owned by
   **`modules/windows-daemon-security.md`**. It was the last unowned changed subsystem; the ownership
   map now resolves it, with `daemon/**`, the build driver and packaging recorded as CROSS-MODULE.
-  **Its trust boundary has no end-to-end test and no CI execution** — see that module's §15, which is
-  the honest limit of what this baseline can claim about it.
+  **Its trust boundary has no documented end-to-end test** — see that module's §15. A Windows
+  test workflow is now declared; actual execution requires run evidence.
 * No claim in this knowledge base is `VERIFIED_CI`: the tree carries no workflow-run record. Evidence
   levels stop at `VERIFIED_SOURCE` / `VERIFIED_UNIT` / `VERIFIED_GIT` unless a module says otherwise.

@@ -1,5 +1,17 @@
 # libbox and the platform contract
 
+## Post-baseline TUN reset handoff (testing, 2026-10-28)
+
+**VERIFIED_SOURCE** at `011f3fdcd99173acd3e80483b50cb76b07bf6ff4`:
+`protocol/tun/inbound.go` implements `InterfaceUpdated`, `stackDidStart`,
+`consumePendingReset` and `resetNetwork`. Before stack start an update sets a pending flag;
+the post-store start recheck and atomic pending swap close the start/update handoff. Multiple
+pre-start events can coalesce. Once started, each accepted update resets independently, and a
+pending startup reset is consumed separately. Closed inbounds do not reset. Regression cases are
+in `protocol/tun/reset_before_start_test.go`; their presence does not establish a test run.
+The post-start behavior includes `1ff0af39110`, which is after `v0.1.30`; do not describe it
+as released in v0.1.30. Device network-switch behavior remains unverified here.
+
 **Scope:** `experimental/libbox/*`, `daemon/*`, `include/*` as they define the client-facing surface,
 `cmd/internal/{mobilebuildtags,applebuildtags,appletags}`, `release/apple-client-refs.env`, and the
 Apple/Android artifact pins.

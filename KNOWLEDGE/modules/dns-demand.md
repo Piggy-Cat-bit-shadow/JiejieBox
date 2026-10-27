@@ -1,5 +1,13 @@
 # DNS
 
+## Post-baseline family-probe logging (testing, 2026-10-28)
+
+**VERIFIED_SOURCE** at `011f3fdcd99173acd3e80483b50cb76b07bf6ff4`: `dns/router.go` uses
+`QuietEmptyFamilyResult` to log an empty family probe at debug rather than as a lookup error;
+the standalone unquiet case remains distinct. See `dns/empty_family_log_test.go` for positive
+and negative controls. This is a logging distinction, not proof of all dual-stack recovery or
+device behavior. Check the current implementation and test result for the exact target revision.
+
 **Scope:** `dns/router.go`, `dns/client.go`, `dns/transport_manager.go`, `dns/transport/*` (including
 `fakeip` and the fork-created `group`), the DNS-facing route actions, and
 `adapter/fakeip_issuance.go`.

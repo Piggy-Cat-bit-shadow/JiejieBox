@@ -1,5 +1,11 @@
 # CI, evidence and release
 
+> **Scope correction, 2026-10-28:** the v0.1.9 workflow census below is historical, not an
+> inventory of the current tree. In particular `.github/workflows/windows-boxdd-tests.yml`
+> declares a Windows runner and path-filtered push/PR plus manual dispatch for boxdd tests.
+> This is `VERIFIED_SOURCE`, not evidence that any particular run executed or passed. Re-read
+> the current workflows and run records before relying on other gate-coverage claims below.
+
 **Scope:** `.github/workflows/*`, `scripts/ci/*`, `verify-evidence/*`, `release/*`, and what a future
 AI may and may not claim as "verified".
 

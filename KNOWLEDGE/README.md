@@ -13,12 +13,18 @@ changed, why, and how to continue without re-reading 1,834 commits*.
 | **Production baseline** | `5fc4f9366a60202fdc7c98cd6fa280cceace65ba` — the implementation every module describes |
 | Release baseline | **`v0.1.9`**, the same SHA |
 | **Upstream baseline** | `e4b7e692f4545890bfc9d43960328e1449fa803b` — the last upstream commit this fork contains (`refs/remotes/upstream/testing` has since moved on) |
-| Post-baseline production delta | **none** — the baseline *is* `HEAD` at the time of writing |
+| Post-baseline production delta | **substantial** — compute `git diff --name-only v0.1.9..HEAD`; see `BASELINE.md` |
 | Knowledge reviewed at | 2026-10-14 (refresh at the `v0.1.9` release) |
 | Knowledge revision | resolve dynamically: `git log -1 --format=%H -- KNOWLEDGE/BASELINE.md` |
 
 **The knowledge base does not describe `HEAD`.** It describes `5fc4f9366` and says so. Full
 measurements, the release lineage, the provenance test, and the three tag traps are in `BASELINE.md`.
+
+**2026-10-28 partial calibration:** the target testing revision is `011f3fdcd99173acd3e80483b50cb76b07bf6ff4`,
+791 commits beyond the baseline. Existing modules are historical unless their specific post-baseline
+claims are rechecked. `v0.1.30` is a published release and an ancestor of that target; subsequent
+testing fixes must not be attributed to it. See `BASELINE.md`, [the calibration ledger](CALIBRATION-2026-10-28.md)
+and the current source.
 
 **The previous baseline (`a267e99e0`, `v0.1.6`) went stale invisibly for two releases** — its delta row
 claimed "no `.go` source changed" while 181 commits and 12 production files had landed. That failure is
@@ -134,5 +140,6 @@ coverage.
 
 **The Windows daemon (`experimental/boxdd/**`) is no longer in this list.** It was the last unowned
 changed subsystem and is now owned by `modules/windows-daemon-security.md` — with one honest limit that
-belongs here too: **its trust boundary has no end-to-end test and its tests never run in CI.** Owning
+belongs here too: **its trust boundary has no documented end-to-end test.** A Windows test workflow
+is declared in `.github/workflows/windows-boxdd-tests.yml`; declaration alone does not prove a run. Owning
 the knowledge is not the same as proving the behaviour, and the module's §15 says which is which.
