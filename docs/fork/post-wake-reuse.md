@@ -302,10 +302,18 @@ callback thread - so the locking has to be stated rather than assumed.
    unlock and on an explicit host event only; it does not guess. See
    `docs/fork/apple-screen-state-observer.md` for the patch, the public-API fallback if the Darwin
    notifications ever stop being posted, and the reasoning for not using a timer.
-6. **macOS never enters the device axis.** `CommandServer.Pause` returns for anything that is not
-   Android or iOS, so a Mac that sleeps has no pause and therefore no reuse boundary. The mechanism
-   here is platform-agnostic; what is missing is a Darwin client that reports the sleep and a wake
-   that lifts it.
+6. **macOS enters the device axis through its own sleep signal.** `CommandServer.Pause`/`Wake` now
+   accept `C.IsDarwin` as well: the NetworkExtension `sleep()` starts the episode and its `wake()`
+   lifts the level, publishes the reuse verdict and resets the network
+   (`route.NetworkManager.SystemResumed`, the same medium transition the Windows resume performs).
+   This is the client half the previous revision listed as missing.
+
+   A headless macOS process has no NetworkExtension to deliver either callback, so it gets a second,
+   coarser signal: `common/suspendwatch` compares the wall clock against the monotonic one, which
+   stops while the machine sleeps, and calls the same `SystemResumed` from
+   `route.NetworkManager`. The watchdog runs only on `C.IsDarwin` and is stopped by the manager's
+   scope. The reset matters even though the interface did not move: a Mac that slept on the same
+   Wi-Fi keeps the same fingerprint and produces no callback, while every pooled socket may be dead.
 
 ## Device validation runbook
 

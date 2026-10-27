@@ -1497,14 +1497,18 @@ func (s *Box) DeviceSlept() {
 
 // DeviceResumed publishes the Apple lifecycle's "the extension is running again" edge.
 //
-// It is deliberately NOT a device wake. On iOS the platform resumes the extension for every push and
-// background task while the device is still locked, so a resume cannot be allowed to lift the device
-// pause: that would release health checks, probes, provider refreshes and statistics for a phone in
-// a pocket - and a push notification lights the lock screen, so "the display is on" cannot be used
-// as a proxy for it either. What a resume does establish is that a sleep ended, so the governor
-// measures it and publishes the reuse verdict, and the owner of a reusable pool retires what is idle
-// before the next flow can be handed a socket that has not been verified since the device went to
-// sleep.
+// It is deliberately NOT a device wake, and it deliberately publishes NOTHING. On iOS the platform
+// resumes the extension for every push and background task while the device is still locked, so a
+// resume cannot be allowed to lift the device pause: that would release health checks, probes,
+// provider refreshes and statistics for a phone in a pocket - and a push notification lights the lock
+// screen, so "the display is on" cannot be used as a proxy for it either.
+//
+// It is also not a reuse boundary. An earlier revision called governor.Resumed() here, and one
+// 28 m 24 s lock with 13 extension resumes produced 13 anchors and a 12-boundary measurement whose
+// last boundary reported 28.29 seconds - the measurement was destroyed by the resumes themselves.
+// The boundary is owed at the END of the episode, which on iOS is the unlock (`LockStateChanged(false)`
+// -> `woke()`), and on macOS is the system wake, which takes the `CommandServer.Wake` branch that
+// lifts the level and resets the network.
 //
 // It is a method rather than a direct call into the governor because the governor is owned by this
 // composition root: the bridge between a platform's lifecycle vocabulary and the core's belongs where

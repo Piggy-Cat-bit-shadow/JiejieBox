@@ -62,6 +62,30 @@ The `tun` inbound uses the default Go userspace stack when `stack` is omitted. `
 
 The shipped `naive` outbound is the Cronet implementation, not a type-only stub. The client uses the `masque-client` endpoint for CONNECT-IP / CONNECT-UDP and an `http` outbound for its MASQUE proxy configuration. Both can use HTTP/3 through the shared transport. Client protocol logic remains in the common source tree; the macOS registry selects the outbound role only. Real remote Naive and MASQUE connectivity is separate from local fixture checks.
 
+## Sleep and wake
+
+A Mac that closes its lid suspends the process without telling it which sockets died. On the same
+Wi-Fi the default interface, gateway and SSID are unchanged after wake, so the platform reports no
+interface update and the environment fingerprint does not move. The stale outbound pools would then
+keep handing out connections the sleep black-holed.
+
+Two paths now cover it, because the two products receive different signals:
+
+* The macOS app runs inside a NetworkExtension. Its provider receives `sleep()`/`wake()`; the core
+  starts the device episode on `sleep()` and, on `wake()`, lifts it, publishes the reuse verdict and
+  runs the same medium network reset as a Windows resume (`route.NetworkManager.SystemResumed`).
+* The headless client has no NetworkExtension. `common/suspendwatch` compares the wall clock with
+  the monotonic clock, which stops while the machine sleeps, and calls the same `SystemResumed` when
+  it sees a divergence of at least five seconds. The watchdog runs only on macOS, is a watchdog
+  rather than a poll of any service, and is stopped by the network manager's scope.
+
+A medium reset drains idle connections and re-pins DNS; it does not terminate an active stream that
+survived a short sleep. The device line to read after a resume is
+`system resumed after <gap> suspended; resetting the network` followed by one `updated default
+interface`/reset sequence in the log. See
+[the close-out](fork/macos-sleep-network-closeout.md) for the failure chain, the evidence and the
+device checklist.
+
 ## Headless usage
 
 ```sh

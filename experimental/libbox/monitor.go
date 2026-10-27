@@ -179,6 +179,15 @@ func (m *platformDefaultInterfaceMonitor) updateDefaultInterface(interfaceName s
 		m.logger.Error(E.Cause(err, "update interfaces"))
 	}
 	m.defaultInterfaceAccess.Lock()
+	// Re-check the fence under the lock the write happens under. The check at the top of this
+	// function only refuses a delivery that began after Close; the refresh above can take real time
+	// (a platform interface enumeration), and a Close that lands inside it would otherwise let this
+	// delivery write the interface the device has left into the wrapper shared with the monitor that
+	// replaced this one. That is the exact contradiction the `closed` field exists to prevent.
+	if m.closed {
+		m.defaultInterfaceAccess.Unlock()
+		return
+	}
 	if interfaceIndex32 == -1 {
 		m.defaultInterface = nil
 		m.defaultInterfaceInitialized = true

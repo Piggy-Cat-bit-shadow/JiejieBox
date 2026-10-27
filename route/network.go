@@ -17,6 +17,7 @@ import (
 	"github.com/sagernet/sing-box/common/netcap"
 	"github.com/sagernet/sing-box/common/runtimecoord"
 	"github.com/sagernet/sing-box/common/settings"
+	"github.com/sagernet/sing-box/common/suspendwatch"
 	"github.com/sagernet/sing-box/common/taskmonitor"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
@@ -112,15 +113,29 @@ type NetworkManager struct {
 	interfaceMonitor        tun.DefaultInterfaceMonitor
 	packageManager          tun.PackageManager
 	powerListener           winpowrprof.EventListener
-	pauseManager            pause.Manager
-	platformInterface       adapter.PlatformInterface
-	connectionManager       adapter.ConnectionManager
-	endpoint                adapter.EndpointManager
-	inbound                 adapter.InboundManager
-	outbound                adapter.OutboundManager
+	// suspendWatcher is the macOS resume detector.
+	//
+	// Windows has a real power listener; Apple has the NetworkExtension sleep()/wake() pair in the
+	// client. A headless macOS process has neither, so a machine that slept would keep every socket
+	// it held and never run the one thing that reclaims them. The watcher is that missing signal:
+	// it compares the wall clock against the monotonic one, which stops while the machine sleeps.
+	//
+	// Nil everywhere except macOS. Stopped by the scope cleanup registered with it.
+	suspendWatcher    *suspendwatch.Watcher
+	pauseManager      pause.Manager
+	platformInterface adapter.PlatformInterface
+	connectionManager adapter.ConnectionManager
+	endpoint          adapter.EndpointManager
+	inbound           adapter.InboundManager
+	outbound          adapter.OutboundManager
 	// networkPausedSince is when the device was last seen without a default interface, in Unix
 	// nanoseconds, or 0 while it has one. See networkIsConfirmedOffline.
-	networkPausedSince      atomic.Int64
+	networkPausedSince atomic.Int64
+	// lastSystemResume is when SystemResumed last ran a reset, in Unix nanoseconds, or 0 before the
+	// first resume. It coalesces the two reports one physical resume can produce - the
+	// NetworkExtension wake and the macOS watchdog - so a dial the user starts in the seconds after
+	// opening the lid is not cancelled by a second transition for the same event.
+	lastSystemResume        atomic.Int64
 	needWIFIState           bool
 	wifiMonitor             settings.WIFIMonitor
 	wifiState               adapter.WIFIState
@@ -622,6 +637,24 @@ func (r *NetworkManager) Start(stage adapter.StartStage, scope *adapter.Scope) e
 			}
 			scope.Add(r.powerListener.Close)
 		}
+		if C.IsDarwin {
+			// macOS has no power listener and the headless client has no NetworkExtension to report
+			// sleep()/wake(). The wall-vs-monotonic divergence is the only signal such a process can
+			// produce, and it is exactly the one that says "this process was not running".
+			watcher := suspendwatch.New(suspendWatchInterval, suspendWatchThreshold)
+			watcher.Start(func(gap time.Duration) {
+				if r.closed.Load() {
+					return
+				}
+				r.logger.Info("system resumed after ", gap, " suspended; resetting the network")
+				r.SystemResumed()
+			})
+			r.suspendWatcher = watcher
+			scope.Add(func() error {
+				watcher.Close()
+				return nil
+			})
+		}
 		// ARMED LAST, so that it RUNS FIRST.
 		//
 		// Scope.Close runs cleanups in reverse registration order, and the power listener above is
@@ -1097,6 +1130,64 @@ func (r *NetworkManager) ResetNetwork(ctx context.Context) {
 	r.resetNetworkLocked(ctx, false)
 }
 
+// SystemResumed records that the host process was suspended and is running again.
+//
+// # Why a resume must reset even when the interface did not move
+//
+// A suspended process is not told that its sockets died. On the lid-close case the machine comes
+// back on the same Wi-Fi, with the same gateway and the same SSID, so the environment fingerprint is
+// unchanged and no interface callback fires - and the sockets the outbound pools still hold were
+// black-holed while the radio was off. A reset is what re-pins DNS to the current resolvers, drains
+// the stale pools and lets the next flow dial a path that exists. This is the same action the
+// Windows resume already performs in notifyWindowsPowerEvent; it was simply missing on Darwin.
+//
+// It is deliberately a MEDIUM transition: an active stream may still have survived a short sleep,
+// and the drain closes only what it can prove idle. The hard classification stays reserved for an
+// outage the platform actually reported.
+//
+// The entry point is reachable from both a platform wake (CommandServer.Wake) and the macOS suspend
+// watchdog. Both observe one physical resume, so a second report inside systemResumeCoalesceWindow is
+// treated as the same event rather than as a new transition.
+func (r *NetworkManager) SystemResumed() {
+	if r.closed.Load() {
+		return
+	}
+	ctx := r.startedContext()
+	if ctx == nil {
+		// Not started yet: there is no network generation to reset, and claiming a transition now
+		// would leave the manager unsettled on a network that never moved.
+		return
+	}
+	// Release the device level as well as resetting the network. The NetworkExtension path already
+	// does this through Box.DeviceWoke before calling here, so this is a no-op there; the headless
+	// watchdog has no Box and needs it, or a Mac that slept after Pause would keep the level latched
+	// and suppress every speculative subsystem for the rest of the process. The pause manager
+	// publishes EventDeviceWake, which the Box maps to governor.Resumed - so the reuse verdict is
+	// published before this reset runs.
+	if r.pauseManager != nil && r.pauseManager.IsDevicePaused() {
+		r.pauseManager.DeviceWake()
+	}
+	// One physical resume can be reported twice: the NetworkExtension wake lifts the box and calls
+	// here, and the watchdog sees the same wall-vs-monotonic divergence a moment later. The second
+	// report must not start a second transition, because a dial made in those seconds would then be
+	// cancelled by a reset for an event that is already over. The window is longer than the
+	// watchdog's interval and far shorter than a person's next sleep.
+	resumeAt := time.Now().UnixNano()
+	lastResume := r.lastSystemResume.Load()
+	if lastResume != 0 {
+		elapsed := resumeAt - lastResume
+		// A negative elapsed is a wall clock step backwards, not a duplicate report: coalescing it
+		// would suppress every resume until the clock caught up again.
+		if elapsed >= 0 && elapsed < int64(systemResumeCoalesceWindow) {
+			return
+		}
+	}
+	if !r.lastSystemResume.CompareAndSwap(lastResume, resumeAt) {
+		return
+	}
+	r.ResetNetwork(ctx)
+}
+
 // beginTransition claims the epoch for a transition that is about to perform a reset.
 //
 // # Why the epoch is claimed separately from the reset body
@@ -1356,6 +1447,21 @@ func (r *NetworkManager) NetworkResetGeneration() uint64 {
 // body that re-derived it would classify every handover as medium however long the device was
 // actually offline. See NetworkManager.networkResetPendingHard.
 const HardTransitionConfirm = 2 * time.Second
+
+// The macOS suspend watchdog.
+//
+// The interval is the upper bound on how long a woken Mac can stay on dead sockets, and the threshold
+// is the divergence that cannot be ordinary scheduling: a delayed callback advances BOTH clocks by
+// the same amount, so only a real suspend produces a gap. Five seconds is below the shortest sleep a
+// person would call "a while" and far above scheduler jitter.
+const (
+	suspendWatchInterval  = 5 * time.Second
+	suspendWatchThreshold = 5 * time.Second
+	// systemResumeCoalesceWindow is how long a second resume report is treated as the same physical
+	// event. It must cover the watchdog interval plus the time the NetworkExtension wake takes to
+	// reach the core, and it must stay far below the shortest gap between two real sleeps.
+	systemResumeCoalesceWindow = 15 * time.Second
+)
 
 func (r *NetworkManager) resetNetworkLocked(ctx context.Context, recoveredFromConfirmedOffline bool) {
 	// The router is assigned on the initialize stage, and a reset can arrive before the manager

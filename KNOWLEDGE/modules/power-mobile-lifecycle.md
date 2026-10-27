@@ -191,6 +191,7 @@ watchdog hides a leak; not deferring a poll burns radio time.
 | `route/rule/rule_set_updater.go` | — | deferrable — **first pass also not deferred** |
 | `service/api/dashboard.go` | 24 h (default) | deferrable — **first pass also not deferred**, and it WAITS rather than skipping: `WaitProviderRefresh` parks the loop, so the download lands on the wake instead of a whole interval later |
 | `dns_cache` | 1 h | must **not** be gated |
+| `route` macOS suspend watchdog | 5 s | **a watchdog, NOT speculation.** Compares the wall clock with the monotonic clock (which stops during sleep) and calls `SystemResumed` on divergence. It exists because a headless Mac has no NetworkExtension sleep/wake callback; the NetworkExtension path uses `CommandServer.Pause`/`Wake` instead. It must **not** be gated on sleep state. |
 
 **Three periodic timers are deferrable, and for all three the first pass runs regardless.** The
 "first pass is not deferred" rule is the one that keeps a deferral from delaying initial correctness.
@@ -230,6 +231,7 @@ not belong in the table above:
 | Sleep edge recorded **before** the level is paused | `VERIFIED_UNIT`, with a vacuity guard | `-run TestTheSleepEdge .` |
 | 100 sleep/wake cycles, 100 network transitions, no resurrection after Close | `VERIFIED_UNIT` (no `-race`) | `-run 'TestOneHundred\|TestNoResurrectionAfterClose' .` |
 | The Apple device axis | **`VERIFIED_DEVICE`** for one iPhone 17 Pro Max / iOS 26.4.2 run; **`UNVERIFIED`** for iPad, macOS, and any other OS | the device record above |
+| macOS sleep/wake repair | `VERIFIED_SOURCE` + `VERIFIED_UNIT` for the decision (wall-vs-monotonic detector, `SystemResumed` reset); **`UNVERIFIED` on a physical Mac** | `go test ./common/suspendwatch -count=1` and `go test ./route -run TestSystemResumed -count=1`; the device line to read is the `system resumed after …` log followed by one reset |
 | Real TUN, real NetworkExtension, network transitions | **`UNVERIFIED`** — zero executed evidence; a release blocker in `docs/RELEASE-CERTIFICATE.md` | needs root + Linux, and a signed Apple build |
 | Race-freedom | **`BLOCKED_BY_ENVIRONMENT`** | needs cgo |
 

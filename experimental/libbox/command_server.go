@@ -55,6 +55,17 @@ type CommandServerHandler interface {
 	ConnectSSHAgent() (int32, error)
 }
 
+// systemResumer is the network manager capability that re-observes the environment and drains the
+// pools after a host suspend.
+//
+// It is a capability rather than a method on adapter.NetworkManager for the same reason the other
+// optional contracts in this tree are: a test double or a platform manager with no sleep signal has
+// no opinion about it, and asking for it directly degrades to "nothing to do" instead of forcing
+// every implementation to grow a method.
+type systemResumer interface {
+	SystemResumed()
+}
+
 func NewCommandServer(handler CommandServerHandler, platformInterface PlatformInterface) (*CommandServer, error) {
 	ctx := baseContext(platformInterface)
 	powerManager := powerreport.NewManager()
@@ -338,7 +349,7 @@ func (s *CommandServer) rememberDeviceLevel(paused bool) {
 // That makes this function self-correcting, which is the property that matters - a stale mirror costs at
 // most one reload's worth of wrongness, not a latch.
 func (s *CommandServer) restoreDeviceLevel() {
-	if !(C.IsAndroid || C.IsIos) || C.IsTvOS {
+	if !(C.IsAndroid || C.IsIos || C.IsDarwin) || C.IsTvOS {
 		return
 	}
 	s.axisAccess.Lock()
@@ -371,15 +382,20 @@ func (s *CommandServer) restoreDeviceLevel() {
 // sleep.
 //
 // It publishes the sleep EDGE and then the LEVEL, and it is the Apple and Android `sleep()` override.
-// The edge is what matters on Apple, where nothing but an unlock lifts the level: a governor driven
-// by levels alone would measure the first sleep of the process and trust every one after it. See
-// Box.DeviceSlept and box_lifecycle.go.
+// The edge is what matters on Apple, where nothing but an unlock (iOS) or a system wake (macOS)
+// lifts the level: a governor driven by levels alone would measure the first sleep of the process
+// and trust every one after it. See Box.DeviceSlept and box_lifecycle.go.
+//
+// macOS is included because its NetworkExtension `sleep()` is the one sleep signal a Mac reports.
+// Before this, Pause returned for anything that was not Android or iOS, so a sleeping Mac never
+// entered the device axis and never earned a reuse boundary; the pools the sleep invalidated stayed
+// in use. docs/fork/post-wake-reuse.md §6 recorded that as a known gap.
 func (s *CommandServer) Pause() {
 	recorder := s.powerManager.Recorder()
 	if recorder != nil {
 		recorder.RecordDeviceSleep()
 	}
-	if !(C.IsAndroid || C.IsIos) || C.IsTvOS {
+	if !(C.IsAndroid || C.IsIos || C.IsDarwin) || C.IsTvOS {
 		return
 	}
 	s.rememberDeviceLevel(true)
@@ -395,9 +411,9 @@ func (s *CommandServer) Pause() {
 	// does not hold sockets. See common/power and the Box observer that performs it.
 	//
 	// The sleep edge and the level are published together, and the level is not published separately
-	// here: on Apple the level is entered once and lifted by an unlock, so a second Pause() that only
-	// touched the level would leave the next sleep unmeasured - which is the reuse defect the edge
-	// exists to close.
+	// here: on Apple the level is entered once and lifted by an unlock (iOS) or a system wake
+	// (macOS), so a second Pause() that only touched the level would leave the next sleep unmeasured -
+	// which is the reuse defect the edge exists to close.
 	instance.Box().DeviceSlept()
 }
 
@@ -409,33 +425,49 @@ func (s *CommandServer) Pause() {
 // of its low-power state and usable again: the pause ends and speculative work is released on the
 // stagger.
 //
+// On macOS the same command is the NetworkExtension's system-wake callback, and unlike iOS it is not
+// delivered for every push: the process only runs again because the machine did. The pause is lifted
+// (the device axis is entered by Pause on macOS too) and the network is reset, because a Mac that
+// slept on the same Wi-Fi produces no interface callback and every socket it held may be dead. See
+// route.NetworkManager.SystemResumed and docs/fork/post-wake-reuse.md.
+//
 // On iOS the same command arrives for every push and background task, while the phone is still
 // locked and nobody is looking at it. Lifting the pause there would be wrong - it would release
 // health checks, probes and provider refreshes for a device in a pocket, which is the wake storm the
-// power policy exists to prevent. But ignoring it entirely is wrong too, and that is what this used
-// to do: a resume is proof that the sleep ended, so reusable state that predates it has not been
-// verified since, and the first flow after the unlock must not discover that by blackholing. The
-// reuse boundary is that verdict. It retires idle pools, it does not dial, and it does not touch a
-// stream that is carrying traffic or a single speculative category.
+// power policy exists to prevent. But ignoring it entirely is wrong too: a resume is proof that the
+// sleep ended, so reusable state that predates it has not been verified since, and the first flow
+// after the unlock must not discover that by blackholing. The reuse boundary is owed at the END of
+// that episode, which on this platform is the unlock - not this resume.
 //
-// An earlier version of this comment said "wake is ignored there and the pause ends on the screen
-// state instead". The first half is no longer true - the resume publishes the reuse edge - and the
-// second half was only ever true of a client that had a screen-state observer, which the revision
-// this superproject pinned does not: see docs/fork/apple-screen-state-observer.md.
+// An earlier version of this comment said the resume published the reuse edge itself. It does not:
+// `Box.DeviceResumed` is deliberately empty after the P1-C measurement (a resume inside a locked
+// episode must not re-anchor the episode's boundary), and the display/lock facts are what publish it.
+// A future reader who "restores" the edge on a resume re-opens the 28-minute-sleep defect recorded in
+// box_lifecycle.go.
 //
-// # Why the remembered level is NOT moved here
+// # Why the remembered level is moved on Android and macOS but NOT on iOS
 //
-// Whether this call moves the LEVEL is platform-dependent - it does on Android, it does not on iOS -
-// and `rememberDeviceLevel` has to record what the manager now holds, not what this method would like
-// it to hold. Recording `false` here would make the remembered level disagree with the manager on
-// iOS, and the next reload would then release a pause the device is still in. So this method leaves
-// the mirror alone and the two places that do move the level on both platforms - `RecordLockState`
-// and `WakeNow` - are the two that write it. `Pause` writes it too, because it moves the level
-// wherever the device axis exists.
+// Whether this call moves the LEVEL is platform-dependent - it does on Android and macOS, it does not
+// on iOS - and `rememberDeviceLevel` has to record what the manager now holds, not what this method
+// would like it to hold. On Android and macOS the level moves with the edge, so the mirror is written
+// before the instance is resolved, which covers the reload window where there is no Box to move; a
+// mirror left saying "paused" would be re-applied by the next `restoreDeviceLevel` and re-enter the
+// level on a device that is awake. On iOS the level does not move here, so writing `false` would make
+// the mirror disagree with the manager and the next reload would then release a pause the device is
+// still in - there the two places that do move the level are `RecordLockState` and `WakeNow`, and
+// they are the two that write it. `Pause` writes it too, because it moves the level wherever the
+// device axis exists.
 func (s *CommandServer) Wake() {
 	recorder := s.powerManager.Recorder()
 	if recorder != nil {
 		recorder.RecordDeviceWake()
+	}
+	// Record the level BEFORE the instance is resolved. This is the reload window: on Android and
+	// macOS this call moves the level, so a wake that arrives while there is no Box must still move
+	// the mirror the replacement Box is restored from. On iOS the level does not move here and the
+	// mirror must not claim it did - see the comment above.
+	if C.IsAndroid || C.IsDarwin {
+		s.rememberDeviceLevel(false)
 	}
 	instance := s.StartedService.Instance()
 	if instance == nil || instance.Box() == nil {
@@ -444,6 +476,17 @@ func (s *CommandServer) Wake() {
 	if C.IsAndroid {
 		// A Doze exit is a device wake: the level moves with the edge.
 		instance.Box().DeviceWoke()
+		return
+	}
+	if C.IsDarwin {
+		// The system woke the machine, so this is the device becoming usable: the level moves with
+		// the edge, exactly as Android's Doze exit. The reset is the half the process cannot infer
+		// from its own sockets: after a sleep on the same network the interface does not move and no
+		// callback arrives, so the stale pools have to be drained here.
+		instance.Box().DeviceWoke()
+		if resumer, isResumer := instance.Box().Network().(systemResumer); isResumer {
+			resumer.SystemResumed()
+		}
 		return
 	}
 	instance.Box().DeviceResumed()
