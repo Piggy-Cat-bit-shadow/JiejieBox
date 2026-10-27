@@ -138,6 +138,50 @@ func isClosed(channel <-chan struct{}) bool {
 	}
 }
 
+// TestTheWatcherPrimesAtStartBeforeTheFirstTick is the regression for a host that suspends
+// immediately after Start. The baseline must exist before Start returns; if it were taken on the
+// first ticker tick, the wake would be the first reading and no divergence would be measured.
+func TestTheWatcherPrimesAtStartBeforeTheFirstTick(t *testing.T) {
+	base := time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC)
+	var (
+		access  sync.Mutex
+		wall    = base
+		mono    time.Duration
+		reads   atomic.Int32
+		reports atomic.Int32
+	)
+	watcher := newWatcher(50*time.Millisecond, time.Second, func() (time.Time, time.Duration) {
+		reads.Add(1)
+		access.Lock()
+		defer access.Unlock()
+		return wall, mono
+	})
+	watcher.Start(func(gap time.Duration) {
+		reports.Add(1)
+	})
+	t.Cleanup(watcher.Close)
+
+	// No tick has fired at 50 ms, so exactly one reading proves Start primed synchronously.
+	require.EqualValues(t, 1, reads.Load(),
+		"Start must take the first reading before returning; otherwise a suspend before the first tick is missed")
+
+	// The host suspends before the first tick: the wall clock advances, the monotonic clock does not.
+	access.Lock()
+	wall = wall.Add(time.Minute)
+	mono += 10 * time.Millisecond
+	access.Unlock()
+
+	require.Eventually(t, func() bool {
+		return reports.Load() == 1
+	}, 2*time.Second, 2*time.Millisecond, "the first tick after wake did not report the suspend")
+
+	// The next reading must not report the same divergence again.
+	require.Eventually(t, func() bool {
+		return reads.Load() >= 2
+	}, 2*time.Second, 2*time.Millisecond)
+	require.EqualValues(t, 1, reports.Load(), "one suspend must produce one report")
+}
+
 // TestCloseWithoutStartDoesNotBlock covers a manager that is closed before PostStart ran the watcher.
 func TestCloseWithoutStartDoesNotBlock(t *testing.T) {
 	watcher := newWatcher(time.Millisecond, time.Second, realClock())

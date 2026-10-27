@@ -81,12 +81,13 @@ Two paths now cover it, because the two products receive different signals:
   it sees a divergence of at least five seconds. The watchdog runs only on macOS, is a watchdog
   rather than a poll of any service, and is stopped by the network manager's scope.
 
-A resume is a hard (dead-path) reset: it closes every managed flow, including an active TCP stream,
-because a suspended process cannot prove which pre-sleep sockets survived. A medium drain would leave
-an active black-holed flow alive indefinitely. The tradeoff is explicit: a stream that might have
-survived a short sleep is closed too; the application sees the close and reconnects. The device line
-to read after a resume is `system resumed after <gap> suspended; resetting the network` followed by
-one `updated default interface`/reset sequence in the log. See
+A resume is duration-aware. A sleep shorter than 30 seconds uses the medium drain, preserving a stream
+that may genuinely have survived a brief lid close. At 30 seconds and above the reset is hard
+(dead-path): it closes every managed flow, including an active TCP stream, because after a long sleep
+the process cannot prove which pre-sleep sockets survived and a medium drain would leave an active
+black-holed flow alive indefinitely. The 30-second threshold is a product policy, not a platform
+fact. The device line to read after a resume is `system resumed after <gap> suspended; resetting the
+network` followed by one `updated default interface`/reset sequence in the log. See
 [the close-out](fork/macos-sleep-network-closeout.md) for the failure chain, the evidence and the
 device checklist.
 

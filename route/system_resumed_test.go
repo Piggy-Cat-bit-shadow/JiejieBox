@@ -2,6 +2,7 @@ package route
 
 import (
 	"testing"
+	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 
@@ -86,17 +87,17 @@ func TestSystemResumedWatchdogDetectionsAreNotSwallowed(t *testing.T) {
 	router := manager.router.(*countingRouter)
 	before := dnsResetCount(router)
 
-	manager.SystemResumed(0)
-	manager.SystemResumed(0)
+	manager.SystemResumedGap(time.Second)
+	manager.SystemResumedGap(time.Second)
 
 	require.Equal(t, before+2, dnsResetCount(router),
 		"the watchdog must be able to report two independent suspends")
 }
 
-// TestSystemResumedUsesTheDeadPathClassification pins the second half of the contract: a resume is
-// not a medium drain. An active stream that was black-holed while the process was suspended looks
-// idle to the drain and would survive it, so the resume must close every managed flow.
-func TestSystemResumedUsesTheDeadPathClassification(t *testing.T) {
+// TestSystemResumedShortSleepUsesTheMediumDrain pins the other half of the resume policy: a brief
+// lid close may leave an active stream genuinely alive, so the medium drain - not the dead-path
+// closeAll - is the right transition.
+func TestSystemResumedShortSleepUsesTheMediumDrain(t *testing.T) {
 	manager := newPowerHarness(t)
 	recorder := &reclaimRecorder{}
 	manager.connectionManager = recorder
@@ -104,8 +105,46 @@ func TestSystemResumedUsesTheDeadPathClassification(t *testing.T) {
 	manager.SetSleepEpisode(1)
 	manager.SystemResumed(1)
 
+	require.Equal(t, []ReclaimReason{ReclaimNetworkTransition}, recorder.reasons,
+		"a short sleep must preserve a stream that may have survived it")
+}
+
+// TestSystemResumedLongSleepUsesTheDeadPath pins the original failure: after a long sleep an active
+// TCP stream can be black-holed while still looking idle to the drain. At the threshold the resume
+// must close every managed flow, not only the provably idle ones.
+func TestSystemResumedLongSleepUsesTheDeadPath(t *testing.T) {
+	manager := newPowerHarness(t)
+	recorder := &reclaimRecorder{}
+	manager.connectionManager = recorder
+	manager.SetSleepEpisode(1)
+	ageSystemSleep(manager, time.Minute)
+
+	manager.SystemResumed(1)
+
 	require.Equal(t, []ReclaimReason{ReclaimDeadPath}, recorder.reasons,
-		"a resume must reclaim with closeAll, not with the medium drain")
+		"a long sleep must reclaim with closeAll, not with the medium drain")
+}
+
+// TestSystemResumedGapAppliesTheSleepLengthPolicy covers the headless path: the watchdog has no
+// platform start time, so its measured gap is the duration that decides short versus long.
+func TestSystemResumedGapAppliesTheSleepLengthPolicy(t *testing.T) {
+	manager := newPowerHarness(t)
+	recorder := &reclaimRecorder{}
+	manager.connectionManager = recorder
+
+	manager.SystemResumedGap(time.Second)
+	manager.SystemResumedGap(time.Minute)
+
+	require.Equal(t, []ReclaimReason{ReclaimNetworkTransition, ReclaimDeadPath}, recorder.reasons,
+		"the watchdog gap must select the same short/long policy as the platform sleep duration")
+}
+
+// ageSystemSleep moves the recorded sleep start into the past, so a test can exercise the long-sleep
+// branch without waiting.
+func ageSystemSleep(manager *NetworkManager, age time.Duration) {
+	manager.systemResumeAccess.Lock()
+	manager.systemSleepStartedAt = time.Now().Add(-age).Round(0)
+	manager.systemResumeAccess.Unlock()
 }
 
 // reclaimRecorder records the reason the reset passed to the connection manager.

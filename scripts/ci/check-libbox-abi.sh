@@ -232,7 +232,11 @@ check_gitlink() {
   upper="$(printf '%s' "$label" | tr '[:lower:]' '[:upper:]')"
   actual="$(cd "$repo_root" && git ls-tree HEAD "clients/$path" 2>/dev/null | awk '{print $3}')"
   if [ -z "$actual" ]; then
-    skip "$label: no gitlink at clients/$path"
+    # A missing gitlink is NOT a "client checkout not initialised" skip. The gitlink lives in the
+    # superproject tree; a missing one means the tree cannot answer which client revision it
+    # contains. Treating it as SKIP made --pin-only print PASS with nothing compared, so a project
+    # that dropped the gitlink would turn the ABI gate green by removing its own input.
+    fail "$label: no gitlink at clients/$path. The superproject must track it; a missing gitlink is not a skipped client."
     return
   fi
   if [ "$actual" = "$expected" ]; then

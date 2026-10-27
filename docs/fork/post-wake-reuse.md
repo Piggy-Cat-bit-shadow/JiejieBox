@@ -304,12 +304,14 @@ callback thread - so the locking has to be stated rather than assumed.
    notifications ever stop being posted, and the reasoning for not using a timer.
 6. **macOS enters the device axis through its own sleep signal.** `CommandServer.Pause`/`Wake` now
    accept `C.IsDarwin` as well: the NetworkExtension `sleep()` starts the episode and its `wake()`
-   lifts the level, publishes the reuse verdict and runs a **hard (dead-path) reset**
-   (`route.NetworkManager.SystemResumed`). The reset closes every managed flow, including active TCP
-   streams: a suspended process cannot prove which pre-sleep sockets survived, and the medium drain
-   would leave a black-holed active stream alive. The sleep is numbered; the wake and watchdog
-   reports for one sleep share the number, and a second sleep gets a new one, so the dedup cannot
-   swallow an independent resume. This is the client half the previous revision listed as missing.
+   lifts the level, publishes the reuse verdict and runs a **duration-aware reset**
+   (`route.NetworkManager.SystemResumed`). A sleep below 30 seconds uses the medium drain, preserving
+   a stream that may have survived a brief lid close; at 30 seconds and above the **hard
+   (dead-path)** reset closes every managed flow, including active TCP streams, because a longer
+   suspend cannot prove which pre-sleep sockets survived and the medium drain would leave a
+   black-holed active stream alive. The sleep is numbered; the wake and watchdog reports for one
+   sleep share the number, and a second sleep gets a new one, so the dedup cannot swallow an
+   independent resume. This is the client half the previous revision listed as missing.
 
    A headless macOS process has no NetworkExtension to deliver either callback, so it gets a second,
    coarser signal: `common/suspendwatch` compares the wall clock against the monotonic one, which

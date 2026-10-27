@@ -42,10 +42,12 @@ Changed:
   step on Android/macOS; a mirror left saying "paused" would have been re-applied by the next
   reload and re-entered the level on an awake machine.
 * `route/network.go` — `NetworkManager.SystemResumed` releases a latched device level, re-observes
-  the environment and runs a **hard (dead-path) reset**, closing every managed flow rather than only
-  the ones the drain can prove idle. The sleep episode number is the dedup key: the wake and the
-  watchdog reports for one sleep share it, and a second sleep gets a new number, so a fixed
-  coalescing window can neither double-reset nor swallow an independent resume.
+  the environment and applies a **duration-aware** reset: below 30 seconds the medium drain preserves
+  a stream that may have survived a brief sleep; at 30 seconds and above the **hard (dead-path)**
+  reset closes every managed flow, including an active TCP stream that a drain cannot prove dead.
+  The sleep episode number is the dedup key: the wake and the watchdog reports for one sleep share
+  it, and a second sleep gets a new number, so a fixed coalescing window can neither double-reset nor
+  swallow an independent resume.
 
 ### 2.2 A headless Mac has no sleep signal at all
 
@@ -110,12 +112,14 @@ measurement that remains.
 3. The log should show one of:
    * `system resumed after <gap> suspended; resetting the network` (headless path), or
    * the NetworkExtension `wake()` path's reset, with the device level lifted.
-4. Follow it with exactly one hard reset (`updated default interface` / DNS re-pin / dead-path
-   reclaim), not a stream of resets. A second lid-close/ wake inside the watchdog interval must
-   produce its own reset: the dedup key is the sleep episode, not a clock window.
-5. A new request after wake must work without restarting the tunnel. An active stream is expected to
-   be closed by the dead-path reclaim - that is the proof that no pre-sleep socket is left
-   black-holed, not a failure; the application reconnects.
+4. Follow it with exactly one reset (`updated default interface` / DNS re-pin), not a stream of
+   resets: medium below 30 seconds, dead-path at or above. A second lid-close/wake inside the
+   watchdog interval must produce its own reset: the dedup key is the sleep episode, not a clock
+   window.
+5. A new request after wake must work without restarting the tunnel. After a sleep of 30 seconds or
+   more an active stream is expected to be closed by the dead-path reclaim - that is the proof that
+   no pre-sleep socket is left black-holed, not a failure; the application reconnects. A shorter
+   sleep may preserve a stream that is still healthy.
 
 If step 3 shows the watchdog line but step 4 repeats, the threshold is interacting with a platform
 whose wall/monotonic clocks behave differently from the recorded Darwin behaviour — capture the gap
@@ -126,6 +130,7 @@ and the two clock readings before changing the constant.
 * `release/JIEJIE_VERSION` stays `0.1.28`; no tag, no publish, no artifact.
 * The Apple client pin is unchanged: the fix is in the core and in the macOS client's existing
   `sleep()`/`wake()` call sites, so no new Apple source is required.
-* The `macOS` resume path uses the **hard** classification: every managed flow is closed, which is
+* The `macOS` resume path is **duration-aware**: below 30 seconds the medium drain preserves a
+  stream that may still be healthy; at 30 seconds and above every managed flow is closed, which is
   the only action that proves the pre-sleep sockets are gone. The medium drain remains the policy for
-  an interface/environment transition, where a socket may still be live on the path the device left.
+  an interface/environment transition and for short sleeps.

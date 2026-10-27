@@ -179,6 +179,12 @@ jobs:
         # because this gate was unwired. A clean run of the full gate would have failed layer 5.
         run: ./scripts/ci/check-libbox-abi.sh --pin-only
 
+      - name: ABI pin gate fails closed on a missing gitlink
+        # A gate whose input can be deleted without failing is not a gate. This builds a throwaway
+        # repository with both gitlinks, checks --pin-only passes, removes the Apple gitlink, and
+        # asserts the same command fails and names the missing client.
+        run: ./scripts/ci/test-check-libbox-abi.sh
+
       - name: gomobile single-source check
         # `github.com/sagernet/gomobile/cmd/gomobile@v0.1.13` used to be written out
         # three times: twice in the Apple workflow and once in the Makefile. Nothing

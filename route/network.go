@@ -145,6 +145,7 @@ type NetworkManager struct {
 	// second case every watchdog detection is a new episode, numbered by systemFallbackEpisode.
 	systemResumeAccess       sync.Mutex
 	systemSleepEpisode       uint64
+	systemSleepStartedAt     time.Time
 	systemSleepSeen          bool
 	systemFallbackEpisode    uint64
 	lastSystemResumeEpisode  uint64
@@ -660,10 +661,10 @@ func (r *NetworkManager) Start(stage adapter.StartStage, scope *adapter.Scope) e
 					return
 				}
 				r.logger.Info("system resumed after ", gap, " suspended; resetting the network")
-				// Episode 0: the watchdog has no platform sleep number. If the platform announced
-				// one, claimSystemResume uses it and dedups the NetworkExtension report; if not
-				// (headless), this detection is a new episode of its own.
-				r.SystemResumed(0)
+				// The watchdog has no platform sleep number, so it reports the gap it measured.
+				// SystemResumedGap shares the episode claim with the NetworkExtension wake and
+				// applies the same short/long policy.
+				r.SystemResumedGap(gap)
 			})
 			r.suspendWatcher = watcher
 			scope.Add(func() error {
@@ -1159,6 +1160,11 @@ func (r *NetworkManager) SetSleepEpisode(episode uint64) {
 		return
 	}
 	r.systemResumeAccess.Lock()
+	if !r.systemSleepSeen || r.systemSleepEpisode != episode {
+		// Wall, not monotonic: the monotonic clock stops while the host sleeps, which is exactly
+		// the interval this duration has to measure. Round(0) strips the monotonic reading.
+		r.systemSleepStartedAt = time.Now().Round(0)
+	}
 	r.systemSleepEpisode = episode
 	r.systemSleepSeen = true
 	r.systemResumeAccess.Unlock()
@@ -1170,9 +1176,13 @@ func (r *NetworkManager) SetSleepEpisode(episode uint64) {
 // watchdog) uses the platform episode when the platform announced one, so it is a duplicate of the
 // NetworkExtension report for the same sleep; when the platform announced nothing (the headless
 // client), every watchdog detection is a new episode.
-func (r *NetworkManager) claimSystemResume(episode uint64) bool {
+//
+// The returned duration is the wall time since the platform sleep edge, or zero when the caller has
+// no platform start (the headless watchdog passes its own gap to SystemResumedGap).
+func (r *NetworkManager) claimSystemResume(episode uint64) (time.Duration, bool) {
 	r.systemResumeAccess.Lock()
 	defer r.systemResumeAccess.Unlock()
+	sleep := time.Duration(0)
 	platform := episode != 0
 	if !platform {
 		if r.systemSleepSeen {
@@ -1183,15 +1193,21 @@ func (r *NetworkManager) claimSystemResume(episode uint64) bool {
 			r.systemFallbackEpisode++
 			r.lastSystemResumeEpisode = r.systemFallbackEpisode
 			r.lastSystemResumePlatform = false
-			return true
+			return 0, true
 		}
 	}
 	if r.lastSystemResumePlatform && r.lastSystemResumeEpisode == episode {
-		return false
+		return 0, false
+	}
+	if !r.systemSleepStartedAt.IsZero() {
+		sleep = time.Now().Round(0).Sub(r.systemSleepStartedAt)
+		if sleep < 0 {
+			sleep = 0
+		}
 	}
 	r.lastSystemResumeEpisode = episode
 	r.lastSystemResumePlatform = true
-	return true
+	return sleep, true
 }
 
 // SystemResumed records that the host process was suspended and is running again.
@@ -1204,21 +1220,21 @@ func (r *NetworkManager) claimSystemResume(episode uint64) bool {
 // black-holed while the radio was off. A reset is what re-pins DNS to the current resolvers, drains
 // the stale pools and lets the next flow dial a path that exists.
 //
-// # Why this is a HARD transition
+// # Short sleeps keep the medium drain; long sleeps use the dead path
 //
 // A medium transition drains only what it can prove idle. That is the right answer to an interface
-// change, where a socket may still be carrying traffic on the path the device left. It is NOT enough
-// after a suspend: the process was not running, so no observation made before the sleep proves
-// anything about a flow that was active at the time. A TCP stream whose peer stopped receiving while
-// the radio was off looks exactly like a healthy idle stream to the drain, and the medium reset would
-// leave it black-holed indefinitely. The dead-path classification closes every managed flow instead,
-// which is the only result that proves the pre-sleep sockets are gone; the application sees the close
-// and reconnects. The cost is stated rather than hidden: a stream that might have survived a short
-// sleep is closed too, because this process cannot prove which streams survived.
+// change, where a socket may still be carrying traffic on the path the device left, and it is also
+// the right answer to a SHORT sleep: an active stream may genuinely have survived it, and closing it
+// would be a self-inflicted failure. A long sleep is different. The process was not running for long
+// enough that no observation made before the sleep proves anything about a flow that was active at
+// the time: a TCP stream whose peer stopped receiving while the radio was off looks exactly like a
+// healthy idle stream to the drain, and the medium reset would leave it black-holed. At or above
+// systemResumeDeadPathAfter the dead-path classification closes every managed flow, including that
+// active stream; below it the medium transition preserves a healthy active stream. The threshold is
+// a product policy, stated here rather than hidden.
 //
-// A resume reported with no sleep evidence (episode 0 and no platform episode) gets the same hard
-// treatment: the watchdog only fires on a wall-vs-monotonic divergence, which is itself evidence that
-// the process was not running.
+// A resume reported with no sleep evidence (the headless watchdog) passes its measured gap to
+// SystemResumedGap and the same threshold applies.
 //
 // # Why the dedup is by episode and not by time
 //
@@ -1245,19 +1261,49 @@ func (r *NetworkManager) SystemResumed(episode uint64) {
 		// would leave the manager unsettled on a network that never moved.
 		return
 	}
-	// Release the device level as well as resetting the network. The NetworkExtension path already
-	// does this through Box.DeviceWoke before calling here, so this is a no-op there; the headless
-	// watchdog has no Box and needs it, or a Mac that slept after Pause would keep the level latched
-	// and suppress every speculative subsystem for the rest of the process. The pause manager
-	// publishes EventDeviceWake, which the Box maps to governor.Resumed - so the reuse verdict is
-	// published before this reset runs.
+	r.releaseDevicePauseAfterResume()
+	sleep, claimed := r.claimSystemResume(episode)
+	if !claimed {
+		return
+	}
+	if sleep >= systemResumeDeadPathAfter {
+		r.ResetNetworkHard(ctx)
+		return
+	}
+	r.ResetNetwork(ctx)
+}
+
+// SystemResumedGap is the watchdog's resume report: it carries the wall-vs-monotonic gap the
+// detector measured, because the watchdog has no platform sleep edge to read a start time from.
+// It shares the episode claim and the device-pause release with SystemResumed; the gap decides
+// whether the resume is short enough for the medium drain or long enough for the dead path.
+func (r *NetworkManager) SystemResumedGap(gap time.Duration) {
+	if r.closed.Load() {
+		return
+	}
+	ctx := r.startedContext()
+	if ctx == nil {
+		return
+	}
+	r.releaseDevicePauseAfterResume()
+	if _, claimed := r.claimSystemResume(0); !claimed {
+		return
+	}
+	if gap >= systemResumeDeadPathAfter {
+		r.ResetNetworkHard(ctx)
+		return
+	}
+	r.ResetNetwork(ctx)
+}
+
+// releaseDevicePauseAfterResume lifts a level that a headless Mac entered through Pause and has no
+// Box to lift. The NetworkExtension path already does this through Box.DeviceWoke, so it is a no-op
+// there. The pause manager publishes EventDeviceWake, which the Box maps to governor.Resumed - so
+// the reuse verdict is published before the reset runs.
+func (r *NetworkManager) releaseDevicePauseAfterResume() {
 	if r.pauseManager != nil && r.pauseManager.IsDevicePaused() {
 		r.pauseManager.DeviceWake()
 	}
-	if !r.claimSystemResume(episode) {
-		return
-	}
-	r.ResetNetworkHard(ctx)
 }
 
 // ResetNetworkHard is ResetNetwork with the dead-path classification: every managed flow is closed,
@@ -1545,6 +1591,12 @@ const HardTransitionConfirm = 2 * time.Second
 const (
 	suspendWatchInterval  = 5 * time.Second
 	suspendWatchThreshold = 5 * time.Second
+	// systemResumeDeadPathAfter is the sleep length at which a resume stops trusting pre-sleep
+	// sockets. Below it the medium drain preserves a stream that may have survived a brief lid
+	// close; at or above it the active black-holed stream would look idle to the drain and stay
+	// forever, so the resume closes every managed flow. It is a product policy: above the shortest
+	// sleep a person would call "a while", and well above scheduler jitter.
+	systemResumeDeadPathAfter = 30 * time.Second
 )
 
 func (r *NetworkManager) resetNetworkLocked(ctx context.Context, recoveredFromConfirmedOffline bool) {

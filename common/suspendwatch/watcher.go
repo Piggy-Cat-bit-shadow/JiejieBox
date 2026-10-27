@@ -66,9 +66,16 @@ func realClock() func() (time.Time, time.Duration) {
 }
 
 // Start launches the watcher. Calling it more than once is a no-op; Close must be called to stop it.
+//
+// The first reading is taken SYNCHRONOUSLY, before the goroutine starts. If the baseline were taken
+// on the first ticker tick, a host that suspends immediately after Start would wake before the
+// baseline existed, and that first suspend would be invisible. The clock read is not concurrent with
+// the ticker: the ticker does not exist until after this call.
 func (w *Watcher) Start(onResume func(gap time.Duration)) {
 	w.startOnce.Do(func() {
 		w.started.Store(true)
+		wall, mono := w.now()
+		w.detector.Observe(wall, mono)
 		go w.run(onResume)
 	})
 }
