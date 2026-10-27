@@ -104,5 +104,14 @@ macOS arm64 [#40485385846](https://github.com/Piggy-Cat-bit-shadow/sing-box/acti
 **success**; Apple client [#40485553778](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40485553778)
 **success** (libbox + macOS DMG; iOS skipped by input).
 
+CI for the audit fixes (`0149950`): Verify
+[#40491621645](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40491621645) **success**
+(11m23s), including the new "generated schema matches its source" and "client gitlinks match the
+ABI contract pins" steps. Apple client
+[#40491667334](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40491667334) **success**:
+the libbox job built the framework, passed the full "libbox ABI gate against the client call sites"
+step, and the macOS DMG built; iOS skipped by input. The docs commit after the code commit was
+pushed with `[skip ci]`, so it did not start a second source run.
+
 No tag was created, `release/JIEJIE_VERSION` stays `0.1.28`, and no GitHub Release was touched. The
 v0.1.28 release was published before this round, by the previous gate.
