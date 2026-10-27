@@ -199,7 +199,21 @@ type NetworkManager struct {
 	// lock the consumer reads it with, is what lets a real outage reclaim destructively while a short
 	// handover gap still drains.
 	networkResetPendingHard bool
-	resetRunAccess          sync.Mutex
+	// lastDefaultInterfaceName, lastDefaultInterfaceIndex and lastDefaultInterfaceKnown remember the
+	// default interface the manager last published.
+	//
+	// They exist to classify a handover on WHAT MOVED, not only on how long the gap lasted. A
+	// Wi-Fi-to-cellular move is a different interface, and the source address of every socket on the
+	// old one is gone the moment it happens - a fact that does not become true only after
+	// HardTransitionConfirm. A same-interface report (a new gateway, a new SSID, a DHCP renewal)
+	// keeps the duration rule, because the address may have survived.
+	//
+	// Guarded by interfaceUpdateAccess: notifyInterfaceUpdate is the only writer, and it already
+	// holds the lock for the pending-transition state it classifies.
+	lastDefaultInterfaceName  string
+	lastDefaultInterfaceIndex int
+	lastDefaultInterfaceKnown bool
+	resetRunAccess            sync.Mutex
 	// memoryReclaimAccess serialises the memory reclaim entry points against each other.
 	//
 	// # Why TrimMemory and ReleaseMemory need a gate of their own
@@ -1618,10 +1632,24 @@ func (r *NetworkManager) notifyInterfaceUpdate(_ *control.Interface, _ int) {
 	r.networkResetPending = true
 	// The recovery edge is the last instant the gap is still observable: the dispatch below calls
 	// NetworkWake, and the reset body runs after it. A default interface means the device has a path
-	// again, so this notification is the recovery; if the pause had already held long enough to be
-	// confirmed, the transition it ends is hard rather than medium.
-	if r.interfaceMonitor.DefaultInterface() != nil && r.networkIsConfirmedOffline() {
-		r.networkResetPendingHard = true
+	// again, so this notification is the recovery.
+	currentInterface := r.interfaceMonitor.DefaultInterface()
+	if currentInterface != nil {
+		// A different interface is a hard transition on its own: the old source address is gone the
+		// moment the system moves, and waiting for HardTransitionConfirm would leave every socket on
+		// it black-holed for the rest of the gap - which on a fast handover is the whole outage. The
+		// duration rule is kept for a same-interface report, where the address may have survived.
+		if r.lastDefaultInterfaceKnown &&
+			(r.lastDefaultInterfaceName != currentInterface.Name ||
+				r.lastDefaultInterfaceIndex != currentInterface.Index) {
+			r.networkResetPendingHard = true
+		}
+		r.lastDefaultInterfaceName = currentInterface.Name
+		r.lastDefaultInterfaceIndex = currentInterface.Index
+		r.lastDefaultInterfaceKnown = true
+		if r.networkIsConfirmedOffline() {
+			r.networkResetPendingHard = true
+		}
 	}
 	if r.startedContext() != nil {
 		r.dispatchInterfaceUpdateLocked()

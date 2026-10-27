@@ -104,6 +104,19 @@ type managedConnState struct {
 	// Conflating them protected every never-used UDP flow for the life of the tunnel, which turned
 	// the drain into a leak.
 	activityObservable atomic.Bool
+	// packet marks a datagram flow.
+	//
+	// A packet flow has no migration and no acknowledgement: its local address and port ARE the
+	// flow's identity, and the kernel will happily keep sending datagrams from an address the device
+	// no longer holds. Waiting for it to look idle therefore waits for the application to stop
+	// sending, which a game, a QUIC session or a keepalive never does. A transition closes it
+	// immediately instead - the same class as a protocol transport bound to the old path - and the
+	// application re-opens it on the new network. Same-IP roams lose their UDP flows too; that is the
+	// deliberate cost of not leaving a black hole behind.
+	//
+	// Set once, before the connection is published, and never mutated; ReclaimIdle and shutdown keep
+	// using the ordinary idleness rule, so memory pressure still spares a fresh flow.
+	packet bool
 }
 
 // markKernelOwned records that this connection's bytes no longer pass through userspace.
@@ -310,7 +323,11 @@ func (m *ConnectionManager) Reclaim(reason ReclaimReason) int {
 				seen++
 			}
 		}
-		if eligible && policy.provenIdleFor > 0 {
+		// A datagram flow is class A at a transition: its 4-tuple is the flow's identity, so the
+		// idleness grace cannot make it safe - only the application's next send can, and that send
+		// goes to the address the device has left. Idle-reclaim (memory pressure) and shutdown still
+		// use the grace; only the draining policy skips it.
+		if eligible && policy.provenIdleFor > 0 && !(state.packet && policy.drain) {
 			if idle, known := state.idleFor(now); !known || idle < m.drainGrace() {
 				eligible = false
 			}

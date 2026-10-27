@@ -317,6 +317,8 @@ func (m *ConnectionManager) TrackPacketConn(conn net.PacketConn) net.PacketConn 
 		manager:       m,
 	}
 	m.initConnState(&tracked.managedConnState)
+	// Datagram flows are class A at a transition: see managedConnState.packet.
+	tracked.managedConnState.packet = true
 	m.access.Lock()
 	tracked.element = m.connections.PushBack(tracked)
 	m.access.Unlock()

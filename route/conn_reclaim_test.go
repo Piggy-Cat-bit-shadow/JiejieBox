@@ -110,6 +110,59 @@ func TestTransitionProtectsAKernelOwnedConnection(t *testing.T) {
 	}
 }
 
+// TestTransitionClosesAPacketFlowWithoutWaitingForIdle is the class-A rule for datagrams.
+//
+// A UDP flow's local address and port are its identity; after an interface change the kernel keeps
+// accepting sends from an address the device no longer holds and nothing comes back. Waiting for the
+// flow to look idle waits for the application to stop sending, which a game or a QUIC keepalive never
+// does - so the transition closes it immediately, activity or not.
+func TestTransitionClosesAPacketFlowWithoutWaitingForIdle(t *testing.T) {
+	h := newDrainHarness(t)
+
+	socket, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer socket.Close()
+	tracked, isTracked := h.manager.TrackPacketConn(socket).(*trackedPacketConn)
+	if !isTracked {
+		t.Fatal("TrackPacketConn did not return a tracked packet connection")
+	}
+	// Observed a moment ago: the idleness rule alone would retain it.
+	tracked.touch()
+
+	if closed := h.manager.Reclaim(ReclaimNetworkTransition); closed != 1 {
+		t.Fatalf("a transition reclaimed %d packet connection(s), want 1", closed)
+	}
+	if h.manager.Count() != 0 {
+		t.Fatal("the packet connection is still tracked after the transition")
+	}
+}
+
+// TestIdleReclaimStillUsesTheGraceForPackets keeps the class-A rule scoped to transitions: memory
+// pressure must not kill a fresh UDP flow merely because it is a packet flow.
+func TestIdleReclaimStillUsesTheGraceForPackets(t *testing.T) {
+	h := newDrainHarness(t)
+
+	socket, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer socket.Close()
+	tracked, isTracked := h.manager.TrackPacketConn(socket).(*trackedPacketConn)
+	if !isTracked {
+		t.Fatal("TrackPacketConn did not return a tracked packet connection")
+	}
+	tracked.touch()
+
+	if closed := h.manager.Reclaim(ReclaimIdle); closed != 0 {
+		t.Fatalf("an idle reclaim closed %d fresh packet connection(s)", closed)
+	}
+	if h.manager.Count() != 1 {
+		t.Fatal("the fresh packet connection left the manager on an idle reclaim")
+	}
+}
+
 // TestNeverUsedObservableConnectionBecomesIdle is the other half of that split, and the reason it
 // exists.
 //
