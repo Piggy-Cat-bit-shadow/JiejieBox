@@ -199,5 +199,5 @@ recorded in `REFRESH.md`'s refresh report.
   map now resolves it, with `daemon/**`, the build driver and packaging recorded as CROSS-MODULE.
   **Its trust boundary has no documented end-to-end test** — see that module's §15. A Windows
   test workflow is now declared; actual execution requires run evidence.
-* No claim in this knowledge base is `VERIFIED_CI`: the tree carries no workflow-run record. Evidence
-  levels stop at `VERIFIED_SOURCE` / `VERIFIED_UNIT` / `VERIFIED_GIT` unless a module says otherwise.
+* Historical v0.1.9 entries here have no associated CI-run record in the tree. A later independently
+  checked Windows daemon run is recorded with its SHA in `modules/windows-daemon-security.md`.

@@ -26,7 +26,8 @@ convention?) and the relevant rows of `KNOWLEDGE/ACCEPTANCE.md` (how do I re-che
    in the range. See `BASELINE.md` §provenance.
 2. **Evidence.** A CI job declaration is not evidence that the job ran; a unit test is not interop; a
    static audit is not device behaviour; one platform's PASS is not all-platform PASS; `SKIP` is not
-   `PASS`. **No claim in `KNOWLEDGE/` is `VERIFIED_CI`** — no workflow-run record exists in the tree.
+   `PASS`. A `VERIFIED_CI` claim requires a specific run and SHA; the Windows daemon module records
+   one independently checked release run, not blanket verification of the current branch.
    And `verify-evidence/**` is stale by its own written rule: do not cite it for the baseline.
 3. **Tags.** `release/DEFAULT_BUILD_TAGS` is the **Darwin** profile despite the name and cannot build
    on Windows. Use `DEFAULT_BUILD_TAGS_OTHERS` for anything general — including running the root

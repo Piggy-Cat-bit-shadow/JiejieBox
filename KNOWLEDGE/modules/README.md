@@ -35,8 +35,8 @@ treat that as a defect, not as a missing document.
 The whole fork in one paragraph — then read the module for the part you need.
 
 > This fork keeps upstream's registry, protocols and build profiles and adds: a **start-time
-> proof system** (`common/physicalpath`, `common/routeflow`) that refuses a configuration whose
-> declared chain cannot carry the flow it routes, without dialling, resolving or selecting; a
+> proof system** (`common/physicalpath`, `common/routeflow`) that reports capability warnings and
+> refuses fatal structural or promise failures without dialling, resolving or selecting; a
 > **runtime coordinator** (`common/runtimecoord`) with one monotonic network generation and
 > identity-based rebuild leases; a **power/device governor** (`common/power`) that turns platform
 > facts into sleep/wake/reuse policy; an **upload traffic scheduler** (`common/trafficsched`) and

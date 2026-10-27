@@ -18,6 +18,13 @@ Post-baseline checks run locally at target `011f3fdcd99` on 2026-10-28 (unit tes
 
 The pipe escapes above are Markdown table escaping; use ordinary `|` in the shell regex.
 
+On the same Windows host and target, unfiltered package tests passed for `./dns`,
+`./dns/transport/...`, `./route/rule/...`, `./common/dialer`, `./common/physicalpath`,
+`./protocol/tun`, `./common/sniff`, `./common/bufgeom`, `./common/runtimecoord`, `./common/power`,
+`./protocol/masque`, `./transport/masque`, `./transport/http`, `./protocol/vless/...` and
+`./protocol/anytls`. `./protocol/snell` reported no test files. These local package results do not
+establish interoperability or behavior on another OS.
+
 On Windows 10 Enterprise LTSC 2021 build 19044 with Go 1.25.5, the broader
 `go test -tags with_utls ./common/tls -count=1` **failed**: `TestWindowsClientHandshakeTLS13`,
 `TestWindowsClientRoundtripTLS13`, and `TestWindowsClientTLS13PostHandshakeConcurrentWrite`
@@ -30,7 +37,8 @@ tests passed on the same host. Neither result establishes behavior on other Wind
   root package's tests fail without it.
 * `BLOCKED_BY_ENVIRONMENT` means *this repository has no environment in which the check has been run* —
   it is not a defect and not a pass.
-* **No row is `VERIFIED_CI`.** No workflow-run record, run ID or artifact digest is stored in the tree.
+* Historical rows below are not `VERIFIED_CI` merely because a workflow is declared. See the Windows
+  daemon module for the separately checked release run and its exact SHA.
 
 ## The `.` in every command below is load-bearing
 
@@ -115,7 +123,7 @@ making either claim.
 
 | # | Requirement | Evidence | Level | Re-check | Environment |
 |---|---|---|---|---|---|
-| 4.1 | A response computed against one environment generation is not delivered or cached into another | `dns/client.go` generation checks | VERIFIED_UNIT | `go test -count=1 ./dns/...` | Go |
+| 4.1 | A dated answer from a settled-start query may be delivered but must not be committed under a changed generation; an unsettled-start result is not delivered as stable | `dns/client.go`; `dns/cross_generation_answer_contract_test.go` | VERIFIED_UNIT | `go test -count=1 ./dns/...` | Go |
 | 4.2 | A FakeIP server cannot answer a destination lookup | `8fad3e9b`; DNS demand tests | VERIFIED_UNIT | `go test -count=1 -run FakeIP ./dns/...` | Go |
 | 4.3 | DNS rule evaluation, cache, reverse mapping and FakeIP generations | `go test ./dns/...` passes | VERIFIED_UNIT | `go test -count=1 ./dns/...` | Go |
 | 4.4 | The `systemd-resolved` goroutine leak is fixed | **it IS fixed**, by `6b495134c` (`signalLoopStop`/`signalLoopDone`/`signalLoopOnce`, a stop-channel `select`, and a **join** in `Close`) — `docs/RELEASE-CERTIFICATE.md:70-85` is **stale** | VERIFIED_SOURCE; `BLOCKED_BY_ENVIRONMENT` to execute | `git log -S'signalLoopStop' e4b7e692..a267e99`; then needs Linux + systemd-resolved | Linux |

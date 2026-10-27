@@ -92,9 +92,10 @@ refuses. And the verdict is a real bypass **only** in Linux `auto_redirect` — 
 ## 11. Release provenance is download-and-re-verify, and it is scoped
 
 Release **downloads** the artifacts a product workflow produced for the exact commit and re-verifies
-per-platform bytes, hashes and recorded commit — it does not rebuild. That is true for the platforms
-the plan step selects, and it depends on 4–5 workflows having been dispatched by hand first. **No
-workflow-run record exists in the repository**, so no claim here is `VERIFIED_CI`.
+per-platform bytes, hashes and recorded commit — it does not rebuild. This description is scoped to
+the historical release workflow and requires rechecking the current plan and run evidence for each
+release. A declaration does not prove execution; a specific Windows daemon CI run is documented in
+`windows-daemon-security.md`, and does not by itself prove the release artifact pipeline.
 → `ci-release.md`
 
 ---

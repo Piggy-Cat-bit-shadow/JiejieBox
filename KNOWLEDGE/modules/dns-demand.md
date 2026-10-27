@@ -68,8 +68,10 @@ start, purely.
 
 ### The invariant, in one sentence
 
-> **A DNS response computed against one environment generation may not be delivered into, or cached
-> into, another.**
+> **Delivery and state mutation are separate.** An exchange started on a settled network may return
+> its dated answer after a transition, but it must not commit that answer under the new generation or
+> changed policy. An exchange started while the transition is pending is not deliverable as a stable
+> result. See `responseDeliverable` and `stateMutationAllowed` in `dns/client.go`.
 
 ### The machinery
 
@@ -85,9 +87,9 @@ start, purely.
 | the commit | `finishCacheKey` `:434`, `transportEnvironment` `:473`, `commitCacheState` `:902` |
 | reset | `ClearCache` `:2066`, `ResetNetwork` `:2184` |
 
-**Failure mode if the invariant is broken:** a response computed while the device was on Wi-Fi is
-delivered or cached after a handover to cellular — the client receives an address that was valid on a
-network it is no longer on, and the cache keeps serving it.
+**Failure mode if the mutation guard is broken:** a dated Wi-Fi answer can be stored and served as
+if it belonged to the new cellular environment. Delivery of an already-started, settled-network
+query is intentionally allowed; that is distinct from recording the answer as current.
 
 ### Which subsystems use the coordinator epoch, and which do not
 
@@ -137,9 +139,11 @@ udp  ⇒  AllOf{udp}  +  Conditional{tcp}
 **Why the TCP leg is `Conditional` and not `AllOf`:** the TCP retry only happens on a **truncated**
 response. Requiring both would refuse a configuration that works perfectly well.
 
-Enforced at `dns/transport/capability.go:34`; the per-type assertions live in
+Reported through `dns/transport/capability.go`; the per-type assertions live in
 `dns/transport/{tcp,tls,udp,https}.go` and `dns/transport/quic/{quic,http3}.go`. These assert
-interfaces at start time and **dial nothing**.
+interfaces at start time and **dial nothing**. An existing detour that lacks the required capability
+is a warning in the current startup validation; a missing detour remains fatal. The affected runtime
+flow can still fail. See `modules/path-selection-validation.md` for the taxonomy.
 
 The provable-demand model itself is `common/routeflow/reach.go` — see
 `path-selection-validation.md` §3 for the UNKNOWN-transparent policy, the `route.final` residual, and
@@ -156,13 +160,13 @@ Every mechanism that keeps DNS from escaping the intended path, and what each do
 
 | Mechanism | What it prevents | Anchor |
 |---|---|---|
-| per-transport **detour** capability check | a DNS transport whose detour cannot carry the query | `dns/transport/capability.go:34` |
+| per-transport **detour** capability check | warns at startup when an existing detour cannot carry the query; does not make that runtime path work | `dns/transport/capability.go` |
 | **bootstrap vs in-tunnel** resolver separation (MASQUE) | resolving the server's own hostname through a tunnel that does not exist yet, or leaking in-tunnel names outward | `masque-connectip.md` §3 |
 | `action_resolve` writing `metadata.DestinationAddresses` | a domain target bypassing an IP-based deny rule — **this is why `resolve` is required, not optional** | `naive-http-transport.md` §3 |
 | the **packet destination guard** | a UoT non-Connect session sending a later datagram somewhere the session-level check never saw | `route/packet_destination_guard.go`; `naive-http-transport.md` §3 |
 | `ui`/`route` DNS hijack ordering | a DNS query leaving sing-box entirely instead of reaching the DNS router | `route/route.go` (`dnsHijackByPort`); fixed by `497d37727` |
 | FakeIP cannot be a destination resolver | a placeholder address being treated as a real answer | §3 above |
-| the environment generation on cache commits | a stale answer delivered after a network change | §2 above |
+| the environment generation on cache commits | a stale answer being recorded as current after a network change | §2 above |
 
 **`route/resolve_uot_sentinel_test.go`** pins the UoT sentinel contract. Note the path: the file is at
 `route/`, not at the repository root.
@@ -233,8 +237,9 @@ Measured here: `go test -count=1 ./dns/...` → **all ok** (`dns` 9.5 s, `dns/tr
 
 1. **Do not make the DNS rule walk synchronous.** The suspension exists so an `evaluate` action can run
    its own exchange and then resume the outer one.
-2. **Do not deliver or cache a response across an environment generation.** That is the whole
-   invariant; the check is at the commit site, not at the lookup site.
+2. **Do not commit a response under a changed generation or policy.** Preserve the distinct
+   delivery contract for a query that started on a settled network; a query started during a pending
+   transition is not deliverable as a stable result.
 3. **Do not remove the reverse-mapping generation check.** A FakeIP→domain mapping committed under an
    old generation is a wrong domain for an address that has been reassigned.
 4. **Do not describe the epoch as global.** DNS has its own generation beside the coordinator's, and

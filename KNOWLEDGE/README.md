@@ -86,8 +86,8 @@ Evidence levels are always qualified: `VERIFIED_SOURCE`, `VERIFIED_GIT`, `VERIFI
 
 Two rules that this repository punishes if ignored:
 
-* **A CI job declaration is not evidence that the job ran.** No workflow-run record exists in the tree,
-  so **no claim here is `VERIFIED_CI`**.
+* **A CI job declaration is not evidence that the job ran.** A `VERIFIED_CI` claim needs a specific
+  independently inspectable run and SHA; the Windows daemon module records one such release run.
 * **`SKIP` is not `PASS`.** The fork's own skips say so explicitly ("NOT a pass"), and one gate prints
   `PARTIAL` with exit 0 by design.
 

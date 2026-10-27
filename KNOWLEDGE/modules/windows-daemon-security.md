@@ -1,5 +1,23 @@
 # Windows daemon and daemon trust boundary
 
+## Post-baseline review and run evidence (2026-10-28)
+
+At `011f3fdcd99`, `peer_windows.go` still authenticates the worker and application identities;
+`authenticode_windows.go` allows only the enumerated chain/time errors before separately checking
+the signer and certificate constraints. `server.go` normalizes one leading slash in the gRPC
+service method before owner authorization; `owner_gate_spelling_test.go` checks both spellings.
+An uninstall must stop the service before deleting it (`cmd_service_windows.go` and
+`cmd_service_uninstall_contract_test.go`). These are `VERIFIED_SOURCE` at the target.
+
+GitHub Actions [run 40535897659](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40535897659)
+executed at released commit `6112aa17052297ec9890e0e7f1541a06120b84b2`; its Windows daemon job
+succeeded and reported 33 tests with no skips, including the tampered PE test (`VERIFIED_CI` at
+that commit). No changes to this package or its workflow occur between that release and target;
+`go.mod` and `go.sum` do change, so this is not equivalent to a run at target and does not prove an
+end-to-end service handshake. Locally on
+Windows 10 build 19044 `go test ./experimental/boxdd -count=1 -v` exited successfully, but the
+tampered PE test skipped because the Cert drive was unavailable: the skip is not a pass.
+
 **Scope:** `experimental/boxdd/**` (52 `.go` files + `desktop_service.proto`), the process roles it
 defines, and the local trust boundary between them. Covers the Windows service, the per-user worker,
 the named-pipe peer handshake, executable/peer authentication, Authenticode semantics, and the update
@@ -10,7 +28,7 @@ installer path, peer authentication, signer handling, or before asserting anythi
 Windows daemon does or does not verify.
 
 **Evidence:** every claim is `VERIFIED_SOURCE` against the `v0.1.9` baseline unless marked otherwise.
-No claim here is `VERIFIED_CI` — no workflow-run record exists in the tree. No Windows end-to-end
+The v0.1.9 claims below carry no CI-run evidence; see the later run above. No Windows end-to-end
 runtime test was run for this module; see `## Known limitations`.
 
 ---
