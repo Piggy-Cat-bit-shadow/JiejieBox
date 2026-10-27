@@ -108,7 +108,8 @@ recorded here rather than implied:
 | Linux cross-build of `common/badtls ./common/ktls ./experimental/libbox` with `GOOS=linux` | PASS (the kTLS files are Linux-only) |
 | `go test -tags p2ios -run TestCommandServerCloseClosesTheBox ./experimental/libbox` | PASS |
 | `go test ./route -short` (from the dual-stack closeout) | PASS |
-| `-race` on the changed packages | **BLOCKED_BY_ENVIRONMENT** on this host (no C compiler); CI runs it |
+| CI `Verify` #40515165886 (push, `fdedca8`) | **success** — source gate and race; the Linux build compiles `common/badtls` and `common/ktls` with `badlinkname`. The p2ios test is local only; no CI job runs that tag. |
+| `-race` on the changed packages | **BLOCKED_BY_ENVIRONMENT** on this host (no C compiler); CI's race set covers `common/dialer` and `route`, not `common/ktls`/`common/badtls` |
 
 `common/ktls` and `common/badtls` have no runtime test for the wait path; the two fixes are verified
 by source inspection and by a Linux cross-build, not by a close-notify fixture. The KB's recommended
