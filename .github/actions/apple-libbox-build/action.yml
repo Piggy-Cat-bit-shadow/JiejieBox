@@ -1,0 +1,96 @@
+name: Build Libbox for the Apple client
+description: >-
+  Compiles Libbox.xcframework from THIS repository, proves the client's call sites against the
+  ABI contract, and packs the artifact with the manifest that ties it to the parent commit.
+
+  # Why this is an action and not two step lists
+
+  There are two ways a run needs the framework:
+
+    * the `libbox` job builds it once and both GUI jobs download it (the dual-platform path,
+      where spending one macOS runner on the framework and two on the products is the right
+      trade);
+
+    * a macOS-only acceptance has to do it inside the single macOS job that will also build the
+      app, because a second macOS runner may never be assigned and the whole point of that mode
+      is one runner.
+
+  Both must build the SAME framework by the SAME commands. Copying the five steps into the second
+  place is how the two paths drift until one of them is subtly wrong - so the sequence exists once,
+  here, and each job supplies only the paths that differ.
+
+inputs:
+  client-root:
+    description: >-
+      Checkout to install the framework into and to scan for ABI call sites. It must already be
+      at the Apple commit the run resolved; both jobs check that out before calling this action.
+    required: true
+  output-dir:
+    description: Directory the packed artifact (framework + MANIFEST + checksums) is written to.
+    required: true
+  install-dir:
+    description: >-
+      Where `build-apple-libbox.sh` installs the xcframework. Defaults to `client-root`, which is
+      what the dual-platform job wants; a macOS-only run points it at a scratch directory so the
+      framework is installed into the product tree by the validated `install` step instead.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: install the gomobile toolchain
+      # The version is not written here: scripts/ci/gomobile-toolchain.sh owns the single
+      # declaration, installs both binaries, and proves from each binary's own `go version -m`
+      # that it was built from the module and version it claims.
+      shell: bash
+      run: ./scripts/ci/gomobile-toolchain.sh install apple
+
+    - name: warm the Go module cache
+      # gomobile prepends its own temporary GOPATH; on a cold runner the whole module graph would
+      # otherwise be fetched from inside the build step, where a slow proxy reads like a build
+      # failure. This is the same warm-up the libbox job used to do in its own step.
+      shell: bash
+      run: go mod download all
+
+    - name: libbox ABI gate against the client call sites
+      # Layer 4 and 5 of the contract: every call site in the client reads the migrated
+      # StringBox through an accessor, and the client gitlinks still match the constants this
+      # contract was verified against. A missing checkout is SKIP, never PASS.
+      shell: bash
+      env:
+        CLIENT_ROOT: ${{ inputs.client-root }}
+      run: |
+        set -euo pipefail
+        ./scripts/ci/check-libbox-abi.sh --client-root "$CLIENT_ROOT"
+
+    - name: build Libbox from this fork
+      # The app links THIS repository at THIS commit: the framework is compiled here and never
+      # downloaded from an upstream release. `both` is ios + macos only - upstream's full matrix
+      # carries an ios simulator amd64 slice the pinned cronet-go cannot link and a tvOS product
+      # this fork does not ship.
+      shell: bash
+      env:
+        CLIENT_ROOT: ${{ inputs.client-root }}
+        INSTALL_DIR: ${{ inputs.install-dir }}
+      run: |
+        set -euo pipefail
+        export PATH="$(go env GOPATH)/bin:$PATH"
+        install_dir="${INSTALL_DIR:-$CLIENT_ROOT}"
+        APPLE_CLIENT_DIR="$install_dir" ./scripts/ci/build-apple-libbox.sh both
+
+    - name: pack the Libbox artifact
+      # The manifest is what makes the artifact attributable to a commit; the artifact name is
+      # informative only, and its consumers validate against the manifest.
+      shell: bash
+      env:
+        CLIENT_ROOT: ${{ inputs.client-root }}
+        INSTALL_DIR: ${{ inputs.install-dir }}
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+      run: |
+        set -euo pipefail
+        install_dir="${INSTALL_DIR:-$CLIENT_ROOT}"
+        ./scripts/ci/apple-libbox-artifact.sh pack \
+          "$install_dir/Libbox.xcframework" "$OUTPUT_DIR"
+        echo "Libbox artifact contents:"
+        ls -la "$OUTPUT_DIR"

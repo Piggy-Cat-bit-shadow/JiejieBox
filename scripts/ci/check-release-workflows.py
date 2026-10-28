@@ -1337,6 +1337,185 @@ def check_release_prepare():
            "unknown=%s declared=%s" % (sorted(referenced - declared_ids), sorted(declared_ids)))
 
 
+# ------------------------------------------------------------------------------------------------
+# Apple: the single-macOS-runner acceptance mode
+# ------------------------------------------------------------------------------------------------
+# The failure this guards is an ORCHESTRATION one, not a build one. A macOS-only acceptance used to
+# request two macOS runners - one for the framework, one for the app - and this account could not
+# get the second one, which is why the candidate sat unproven for hours. The fix moves the framework
+# build into the single macOS job, and the trap in that fix is GitHub's `needs` semantics: a job
+# whose dependency was SKIPPED is skipped too, silently, so the mode would look wired and never run.
+
+def _apple_plan(workflow):
+    """Evaluate which jobs run, and on how many macOS runners, for each input combination.
+
+    A deliberately small evaluator for the subset of expressions this file uses - `inputs.*`,
+    `needs.<job>.result`, `!cancelled()`, `&&`, `||`, `==`, parentheses - so the answer is derived
+    from the YAML rather than restated in prose. A skipped job's dependents are evaluated with
+    result 'skipped', which is exactly the trap this check exists for.
+    """
+    jobs = workflow.get("jobs") or {}
+    order = []
+    pending = list(jobs)
+
+    def ready(name):
+        needs = jobs[name].get("needs") or []
+        if isinstance(needs, str):
+            needs = [needs]
+        return all(dependency in order for dependency in needs)
+
+    while pending:
+        progressed = False
+        for name in list(pending):
+            if ready(name):
+                order.append(name)
+                pending.remove(name)
+                progressed = True
+        if not progressed:
+            return None  # a cycle, or a needs on an unknown job
+
+    def evaluate(expression, inputs, results):
+        text = str(expression).strip()
+        if text.startswith("${{") and text.endswith("}}"):
+            text = text[3:-2].strip()
+        if not text or text == "always()":
+            return True
+        text = text.replace("!cancelled()", "True").replace("cancelled()", "False")
+        text = text.replace("&&", " and ").replace("||", " or ")
+        text = text.replace("!=", " <> ").replace("==", " == ")
+        text = text.replace("!", " not ").replace(" <> ", " != ")
+        for name in ("build_ios", "build_macos"):
+            text = text.replace("inputs.%s" % name, "inputs[%r]" % name)
+        for job in jobs:
+            text = text.replace("needs.%s.result" % job, "results[%r]" % job)
+        if any(token in text for token in ("${{", "inputs.", "needs.", "steps.", "github.")):
+            raise ValueError("unsupported expression: %s" % expression)
+        return bool(eval(text, {"__builtins__": {}}, {"inputs": inputs, "results": results}))
+
+    plans = {}
+    for label, inputs in (
+            ("dual", {"build_ios": True, "build_macos": True}),
+            ("macos-only", {"build_ios": False, "build_macos": True}),
+            ("ios-only", {"build_ios": True, "build_macos": False}),
+            ("neither", {"build_ios": False, "build_macos": False})):
+        results = {}
+        planned = []
+        mac_jobs = []
+        for name in order:
+            job = jobs[name]
+            if evaluate(job.get("if", "always()"), inputs, results):
+                results[name] = "success"
+                planned.append(name)
+                if str(job.get("runs-on", "")).startswith("macos"):
+                    mac_jobs.append(name)
+            else:
+                results[name] = "skipped"
+        plans[label] = {"planned": planned, "macos_jobs": mac_jobs}
+    return plans
+
+
+def check_apple_single_runner_mode():
+    if not os.path.isfile(APPLE):
+        report("apple single-runner: client-apple.yml exists", False, APPLE)
+        return
+    text, workflow, on = load(APPLE)
+    jobs = workflow.get("jobs") or {}
+    inputs = inputs_of(on)
+
+    report("apple single-runner: apple_client_sha is a dispatch input",
+           "apple_client_sha" in inputs
+           and (inputs["apple_client_sha"].get("type") or "string") == "string",
+           "inputs=%s" % sorted(inputs))
+
+    resolve_body = "\n".join(step.get("run") or "" for step in jobs["resolve-apple-source"]["steps"])
+    report("apple single-runner: the resolve job routes the override through the tested resolver",
+           "apple-client-input.sh resolve" in resolve_body
+           and "APPLE_CLIENT_EFFECTIVE_SHA" in resolve_body,
+           "the input's precedence and its refusals live in one script, not in shell order")
+
+    libbox_condition = str(jobs.get("libbox", {}).get("if", ""))
+    report("apple single-runner: libbox runs only for iOS",
+           libbox_condition.strip() == "${{ inputs.build_ios }}",
+           "if=%s" % libbox_condition)
+
+    macos = jobs.get("macos") or {}
+    macos_condition = str(macos.get("if", ""))
+    report("apple single-runner: the macOS job accepts a SKIPPED libbox",
+           "!cancelled()" in macos_condition and "needs.libbox.result == 'skipped'" in macos_condition,
+           "if=%s" % macos_condition)
+    report("apple single-runner: the macOS job still fails closed when libbox fails",
+           "needs.libbox.result == 'success'" in macos_condition,
+           "if=%s" % macos_condition)
+
+    steps = macos.get("steps") or []
+    build_steps = [step for step in steps if step.get("uses") == "./.github/actions/apple-libbox-build"]
+    download_steps = [step for step in steps
+                      if str(step.get("uses", "")).startswith("actions/download-artifact")]
+    report("apple single-runner: the macOS job builds the framework itself in that mode",
+           len(build_steps) == 1
+           and "needs.libbox.result == 'skipped'" in str(build_steps[0].get("if", "")),
+           "%d in-job build step(s)" % len(build_steps))
+    report("apple single-runner: the dual-platform download is the other branch of the same choice",
+           len(download_steps) == 1
+           and "needs.libbox.result == 'success'" in str(download_steps[0].get("if", "")),
+           "%d download step(s)" % len(download_steps))
+
+    install = [step for step in steps if step.get("name") == "validate and install the Libbox artifact"]
+    report("apple single-runner: both modes converge on one validate-and-install step",
+           len(install) == 1 and not install[0].get("if"),
+           "the step after the choice must not know which mode it is in")
+
+    libbox_steps = jobs.get("libbox", {}).get("steps") or []
+    libbox_uses_action = [step for step in libbox_steps
+                          if step.get("uses") == "./.github/actions/apple-libbox-build"]
+    report("apple single-runner: one implementation of the framework build, used twice",
+           len(libbox_uses_action) == 1 and len(build_steps) == 1,
+           "libbox job=%d, macOS in-job=%d, and both are the same action"
+           % (len(libbox_uses_action), len(build_steps)))
+
+    action_path = os.path.join(REPO, ".github", "actions", "apple-libbox-build", "action.yml")
+    report("apple single-runner: the shared action exists and is a composite",
+           os.path.isfile(action_path)
+           and str((load(action_path)[1] or {}).get("runs", {}).get("using")) == "composite",
+           action_path)
+
+    # Only the two steps that decide which framework this job builds are in scope: a `|| true`
+    # elsewhere (there is one, on `xcode-select`, where a missing newest Xcode is not fatal) is
+    # not this check's business.
+    masking = []
+    for step in build_steps + download_steps + install:
+        body = "\n".join(str(step.get(key) or "") for key in ("run", "with", "if"))
+        for pattern in ("continue-on-error", "|| true", "if: always()"):
+            if pattern in body:
+                masking.append("%s: %s" % (step.get("name", "<unnamed>"), pattern))
+    report("apple single-runner: no framework step can mask a failure",
+           not masking, "found: %s" % (", ".join(masking) or "none"))
+
+    plans = _apple_plan(workflow)
+    if plans is None:
+        report("apple single-runner: the job graph is acyclic", False, "needs cycle")
+        return
+    detail = "; ".join("%s -> %d macOS job(s) %s"
+                       % (label, len(plan["macos_jobs"]), plan["macos_jobs"])
+                       for label, plan in plans.items())
+    report("apple single-runner: macOS-only needs exactly ONE macOS runner",
+           len(plans["macos-only"]["macos_jobs"]) == 1
+           and plans["macos-only"]["macos_jobs"] == ["macos"],
+           detail)
+    report("apple single-runner: dual-platform keeps its single shared framework build",
+           plans["dual"]["macos_jobs"] == ["libbox", "ios", "macos"],
+           detail)
+    report("apple single-runner: iOS-only never runs the macOS job",
+           plans["ios-only"]["macos_jobs"] == ["libbox", "ios"],
+           detail)
+    report("apple single-runner: with neither product selected nothing runs on a macOS runner",
+           plans["neither"]["macos_jobs"] == [],
+           detail)
+    report("apple single-runner: the macOS job's timeout is bounded",
+           (macos.get("timeout-minutes") or 0) > 0 and macos.get("timeout-minutes") <= 120,
+           "timeout-minutes=%s" % macos.get("timeout-minutes"))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="check-release-workflows.py",
@@ -1394,6 +1573,8 @@ def main(argv=None):
     check_gh_token()
     print()
     check_release_prepare()
+    print()
+    check_apple_single_runner_mode()
     print()
     check_shell_line_endings()
     print()

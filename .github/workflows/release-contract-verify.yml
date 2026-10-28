@@ -56,6 +56,10 @@ on:
       - ".github/workflows/android-core-arm64.yml"
       - "scripts/ci/release-freeze.py"
       - "scripts/ci/test-release-freeze.py"
+      - ".github/workflows/client-apple.yml"
+      - ".github/actions/apple-libbox-build/action.yml"
+      - "scripts/ci/apple-client-input.sh"
+      - "scripts/ci/test-apple-client-input.sh"
       - "release/dependencies.json"
       - "release/source-lock.json"
       - "scripts/ci/release-artifacts.sh"
@@ -261,6 +265,23 @@ jobs:
           rc="${PIPESTATUS[0]}"
           set -e
           echo "$rc" > verify-logs/release-freeze.exit
+          exit "$rc"
+
+      - name: the Apple client source override's behaviour
+        # Which commit a client-apple run builds is decided by one script, and this is its
+        # behavioural suite: a dispatch input wins, a contradictory repository variable fails
+        # closed, a malformed SHA is refused without printing an answer, and the no-override path
+        # still resolves the branch tip. A run that said one SHA and built another is the defect
+        # class this exists to remove.
+        if: always()
+        run: |
+          set -uo pipefail
+          mkdir -p verify-logs
+          set +e
+          ./scripts/ci/test-apple-client-input.sh 2>&1 | tee verify-logs/apple-client-input.log
+          rc="${PIPESTATUS[0]}"
+          set -e
+          echo "$rc" > verify-logs/apple-client-input.exit
           exit "$rc"
 
       - name: desktop release-version contract tests

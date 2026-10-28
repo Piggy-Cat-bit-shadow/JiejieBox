@@ -57,6 +57,18 @@ on:
         description: 'Build the macOS arm64 DMG'
         type: boolean
         default: true
+      apple_client_sha:
+        # Naming a candidate should not require editing a repository variable: a variable is
+        # shared by every later run, and "the run said X but built Y" is exactly the ambiguity
+        # this pipeline exists to remove. Empty means the refs file's branch tip, as before.
+        #
+        # With build_macos=true and build_ios=false this is the SINGLE-RUNNER acceptance mode: one
+        # macOS job builds the framework and the app, because a second macOS runner may never be
+        # assigned.
+        description: 'Exact Apple client commit to build (40-hex); empty = the branch tip in release/apple-client-refs.env'
+        type: string
+        required: false
+        default: ''
 
 # No concurrency policy, DELIBERATELY, and this comment is the policy.
 #
@@ -112,16 +124,34 @@ jobs:
         id: resolve
         # `ls-remote` resolves the default revision and prints it WITHOUT freezing anything; here
         # it is what turns "main latest" into an exact commit that every later job is pinned to.
-        # An explicit APPLE_CLIENT_REF / APPLE_CLIENT_SHA in the repository variables takes
-        # precedence inside the script, so an override needs no change here.
+        #
+        # The override comes from three places and the precedence is decided by a tested script,
+        # not by shell order here: the `apple_client_sha` dispatch input wins, a repository
+        # variable reproduces an older build, and with neither the refs file's branch tip is
+        # resolved. A contradictory combination fails closed instead of silently preferring one.
         env:
+          APPLE_CLIENT_INPUT_SHA: ${{ inputs.apple_client_sha }}
           APPLE_CLIENT_REF: ${{ vars.APPLE_CLIENT_REF }}
           APPLE_CLIENT_SHA: ${{ vars.APPLE_CLIENT_SHA }}
         run: |
           set -euo pipefail
-          # The resolver reads its configuration from the refs file; a repository variable is an
-          # override ON TOP of it, which is how an older build is reproduced.
-          out="$(./scripts/ci/apple-client-source.sh ls-remote)"
+          # shellcheck source=scripts/ci/apple-client-input.sh
+          override="$(./scripts/ci/apple-client-input.sh resolve)"
+          printf '%s\n' "$override"
+          # Read the answer field by field instead of `eval`-ing it: a repository variable can
+          # carry shell metacharacters, and this step must never turn configuration into syntax.
+          while IFS='=' read -r key value; do
+            case "$key" in
+              APPLE_CLIENT_EFFECTIVE_SHA|APPLE_CLIENT_EFFECTIVE_REF|APPLE_CLIENT_OVERRIDE)
+                export "$key=$value" ;;
+            esac
+          done <<< "$override"
+          echo "override source: $APPLE_CLIENT_OVERRIDE"
+          # The resolver reads its configuration from the refs file and its override from the
+          # environment, which is where the validated answer goes next.
+          out="$(APPLE_CLIENT_SHA="$APPLE_CLIENT_EFFECTIVE_SHA" \
+                 APPLE_CLIENT_REF="$APPLE_CLIENT_EFFECTIVE_REF" \
+                 ./scripts/ci/apple-client-source.sh ls-remote)"
           sha="$(printf '%s\n' "$out" | tail -n 1)"
           case "$sha" in
             [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;;
@@ -131,12 +161,22 @@ jobs:
 
           # shellcheck disable=SC1091
           . release/apple-client-refs.env
-          if [ -n "${APPLE_CLIENT_REF:-}" ]; then
-            mode=explicit-ref
-          elif [ -n "${APPLE_CLIENT_SHA:-}" ]; then
-            mode=explicit-sha
-          else
-            mode=latest-main
+          case "$APPLE_CLIENT_OVERRIDE" in
+            input)    mode=explicit-input ;;
+            variable)
+              if [ -n "$APPLE_CLIENT_EFFECTIVE_REF" ]; then
+                mode=explicit-ref
+              else
+                mode=explicit-sha
+              fi
+              ;;
+            none)     mode=latest-main ;;
+            *) echo "FAIL: the input resolver answered with an unknown source '$APPLE_CLIENT_OVERRIDE'" >&2; exit 1 ;;
+          esac
+          if [ "$APPLE_CLIENT_OVERRIDE" != "none" ] && [ "$sha" != "$APPLE_CLIENT_EFFECTIVE_SHA" ]; then
+            echo "FAIL: the run asked for $APPLE_CLIENT_EFFECTIVE_SHA but the resolver returned $sha." >&2
+            echo "      An override that does not reach the resolver is worse than no override." >&2
+            exit 1
           fi
 
           echo "config:  APPLE_CLIENT_REPOSITORY=$APPLE_CLIENT_REPOSITORY"
@@ -146,7 +186,7 @@ jobs:
             echo "apple_client_sha=$sha"
             echo "apple_client_repository=$APPLE_CLIENT_REPOSITORY"
             echo "apple_client_branch=$APPLE_CLIENT_BRANCH"
-            echo "apple_client_ref=${APPLE_CLIENT_REF:-${APPLE_CLIENT_SHA:-}}"
+            echo "apple_client_ref=${APPLE_CLIENT_EFFECTIVE_REF:-${APPLE_CLIENT_EFFECTIVE_SHA:-}}"
             echo "apple_client_source_mode=$mode"
           } >> "$GITHUB_OUTPUT"
           {
@@ -172,7 +212,11 @@ jobs:
   # platforms deliberately use two different ones.
   libbox:
     needs: resolve-apple-source
-    if: ${{ inputs.build_ios || inputs.build_macos }}
+    # RUNS ONLY FOR iOS. The iOS product cannot build the framework itself without extending its
+    # own job, and the dual-platform path shares this one build between both GUI jobs. A macOS-ONLY
+    # run does NOT come here: it builds the framework inside the single macOS job, because that
+    # mode exists precisely because a second macOS runner may never be assigned.
+    if: ${{ inputs.build_ios }}
     runs-on: macos-latest
     timeout-minutes: 120
     outputs:
@@ -201,18 +245,8 @@ jobs:
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-path
 
-      - name: install gomobile
-        # gomobile is what produces the xcframework; it is not on the runner image.
-        #
-        # The version is NOT written here. It is read from the one declaration in
-        # scripts/ci/gomobile-toolchain.sh, which also installs both binaries, adds
-        # them to PATH, and proves from each binary's own `go version -m` that it
-        # was built from the module and version it claims. The same script is what
-        # the Makefile's lib_install target calls, so a local build and CI cannot
-        # disagree about the toolchain.
-        run: |
-          set -euo pipefail
-          ./scripts/ci/gomobile-toolchain.sh install apple
+      # gomobile is installed inside .github/actions/apple-libbox-build: the toolchain and the
+      # framework build belong together, and the macOS-only path needs both on its single runner.
 
       - name: Apple regression tests
         # Cheap invariant checks for the failures that are otherwise silent: a signed build falling
@@ -291,12 +325,8 @@ jobs:
           fi
           echo "PASS: the Apple source is at the resolved commit $APPLE_CLIENT_SHA"
 
-      - name: warm the Go module cache
-        # gomobile prepends its own temporary GOPATH, and on a cold runner the whole
-        # module graph would be fetched from inside that step. Downloading it here
-        # keeps a slow or flaky proxy from looking like a build failure, and makes
-        # the fetch its own step in the log.
-        run: go mod download all
+      # The module cache is warmed inside .github/actions/apple-libbox-build, where both the
+      # libbox job and the macOS-only path get it from one place.
 
       - name: Apple signing preflight
         # In unsigned mode this prints SKIP. In development mode it fails with an
@@ -304,50 +334,19 @@ jobs:
         # that installs and cannot connect.
         run: ./scripts/ci/check-apple-signing-environment.sh
 
-      - name: build Libbox from this fork
-        # This is the step that makes the app "ours": Libbox.xcframework is compiled
-        # from this repository's experimental/libbox at the current commit and
-        # installed into the Apple client. It never downloads a prebuilt libbox from
-        # an upstream release.
+      - name: build, prove and pack Libbox
+        # The sequence lives in ONE place - .github/actions/apple-libbox-build - because the
+        # macOS-only acceptance mode runs the same five steps inside its single macOS job. Two
+        # copies of "build Libbox" is how the acceptance build and the release build drift apart.
         #
-        # The script is used rather than `make lib_apple` because that target builds
-        # upstream's full Apple matrix (ios,iossimulator,tvos,tvossimulator,macos),
-        # and the amd64 iOS simulator slice cannot link against the pinned cronet-go,
-        # which ships no ios_amd64_simulator library. This builds ios and macos only.
-        run: |
-          set -euo pipefail
-          export PATH="$(go env GOPATH)/bin:$PATH"
-          ./scripts/ci/build-apple-libbox.sh both
-
-      - name: libbox ABI gate against the client call sites
-        # The push gate in verify.yml only compares the client gitlinks with the verified-SHA
-        # constants (--pin-only); it cannot build libbox on Linux. This is the full gate, and it
-        # is the layer that would notice a client reverting a migrated method to a bare string
-        # result even though the AAR still builds - the exact failure the contract exists for.
-        #
-        # The client submodules are checked out at the gitlinks the superproject pins; layer 5
-        # compares those gitlinks with the constants, and layer 4 sweeps the call sites. A missing
-        # checkout is reported as SKIP, never as PASS.
-        run: |
-          set -euo pipefail
-          export PATH="$(go env GOPATH)/bin:$PATH"
-          ./scripts/ci/check-libbox-abi.sh --client-root "$GITHUB_WORKSPACE/clients/apple"
-
-      - name: pack the Libbox artifact
-        # The manifest is what makes the artifact attributable to a commit. The artifact name is
-        # informative only; consumers validate against the manifest.
-        #
-        # It records the parent commit and nothing about the Apple client: both platforms link this
-        # one framework and they build from two different Apple revisions.
-        env:
-          LIBBOX_ARTIFACT: jiejiebox-libbox-${{ github.sha }}
-        run: |
-          set -euo pipefail
-          ./scripts/ci/apple-libbox-artifact.sh pack \
-            "$APPLE_SUBMODULE/Libbox.xcframework" \
-            dist/apple/libbox
-          echo "Libbox artifact contents:"
-          ls -la dist/apple/libbox
+        # This job's client checkout is the resolved Apple commit (the step above moved the
+        # submodule there), so the ABI scan and the framework install both describe the tree the
+        # run selected rather than whatever the gitlink happened to record.
+        uses: ./.github/actions/apple-libbox-build
+        with:
+          client-root: clients/apple
+          output-dir: dist/apple/libbox
+          install-dir: clients/apple
 
       - name: upload the Libbox artifact
         uses: actions/upload-artifact@v4
@@ -665,11 +664,14 @@ jobs:
               echo "> own Apple values to obtain one."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-
   macos:
-    if: ${{ inputs.build_macos }}
-    # Same two real dependencies as the iOS job, and the two GUI jobs remain siblings: nothing
-    # in either depends on the other.
+    # The `needs` list is kept and the condition is written explicitly, because GitHub skips a
+    # dependent job when a job it needs was SKIPPED - and in macOS-only mode `libbox` is skipped on
+    # purpose. `!cancelled()` lets the job run after a skip without also running after a
+    # cancellation; `needs.libbox.result` then distinguishes the two modes: success means the
+    # shared artifact exists to download, skipped means this job builds it itself, failure means
+    # neither is true and the job must not run at all.
+    if: ${{ !cancelled() && inputs.build_macos && (needs.libbox.result == 'success' || needs.libbox.result == 'skipped') }}
     needs: [resolve-apple-source, libbox]
     runs-on: macos-latest
     timeout-minutes: 120
@@ -800,7 +802,32 @@ jobs:
       - name: Apple signing preflight
         run: ./scripts/ci/check-apple-signing-environment.sh
 
-      - name: download the verified Libbox artifact
+      # The framework reaches this job in one of two ways, and they converge on the SAME
+      # directory so that everything after this point - validate, install, overlays, build - is a
+      # single implementation that cannot tell the modes apart.
+      - name: build Libbox inside this job (macOS-only mode)
+        # This is the single-runner path: `libbox` was skipped, so this job compiles the
+        # framework, proves the client's call sites, and packs the artifact with the manifest that
+        # ties it to this commit - all on the one macOS runner it was given.
+        if: ${{ needs.libbox.result == 'skipped' }}
+        uses: ./.github/actions/apple-libbox-build
+        with:
+          # The macOS source checkout, which is the Apple commit this run resolved. Scanning it
+          # here is stronger than scanning a gitlink copy: it is the tree the app is built from.
+          #
+          # Spelled out rather than `${{ env.APPLE_CLIENT_DIR }}` because the step that sets that
+          # variable writes it to `$GITHUB_ENV`, which a step-level expression context cannot see;
+          # an expression there evaluates to the empty string and the action would scan the
+          # workspace root. The path is the one the select step publishes, and the ABI gate fails
+          # loudly on a root that is not a client checkout.
+          client-root: build/apple-client-macos
+          output-dir: build/apple-libbox
+          # Installed into a scratch directory so the product tree receives the framework through
+          # the validated install step below, exactly as it does when the artifact was downloaded.
+          install-dir: build/apple-libbox-build
+
+      - name: download the verified Libbox artifact (dual-platform mode)
+        if: ${{ needs.libbox.result == 'success' }}
         uses: actions/download-artifact@v4
         with:
           name: jiejiebox-libbox-${{ github.sha }}
