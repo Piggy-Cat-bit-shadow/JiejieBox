@@ -23,7 +23,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | `ACCEPTANCE.md` | **VERIFICATION_ONLY** | requirement → evidence → re-check command |
 | `COMMIT-INDEX.md` | **PROVENANCE_ONLY** | the SHAs behind a behaviour, grouped by theme |
 | `REFRESH.md` | **REFRESH_ONLY** | the refresh protocol; not a task mode |
-| `CALIBRATION-2026-10-28.md` | **REFRESH_ONLY** | current calibration scope and remaining gaps |
+| `CALIBRATION-2026-10-28.md` | **REFRESH_ONLY** | completed calibration scope, evidence and remaining verification limits |
 | `docs/archive/**` | **HISTORY_ONLY** | how we got here; never current truth |
 | `sing-box_v0.1.5-v0.1.10_网络链路与Action-Release优化总结.md` | **HISTORY_ONLY** | the v0.1.5→v0.1.10 engineering narrative (link path + Action/Release); a point-in-time summary, not a module |
 

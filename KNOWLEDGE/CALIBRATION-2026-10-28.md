@@ -1,15 +1,22 @@
 # Knowledge calibration ledger — 2026-10-28
 
-**Status: INCOMPLETE.** Resume using `REFRESH.md`; recheck the target and worktree first.
-This is an operational ledger, not a replacement for the modules or a new production baseline.
+**Status: COMPLETE for the source-level knowledge refresh.** This ledger records evidence and
+limitations; it does not turn an unrun device, interoperability, artifact-byte or complete client ABI
+check into a pass. The new production baseline is `cb71cf80d7224a51823b455f0be5959ad8556933`.
 
 - Old production baseline: `5fc4f9366a60202fdc7c98cd6fa280cceace65ba` (v0.1.9).
 - Examined testing target: `011f3fdcd99173acd3e80483b50cb76b07bf6ff4`; 791 commits after baseline.
 - Published v0.1.30 resolves to `6112aa17052297ec9890e0e7f1541a06120b84b2` and is an ancestor of the target. No origin `main` was advertised when checked.
 - Concurrent branch advancement: `cb71cf80d7224a51823b455f0be5959ad8556933` updates the version file to 0.1.31 and the `cronet-go/all` pin. Its tag peels to that commit. An earlier check found no Release; a later GitHub API check found the [v0.1.31 Release](https://github.com/Piggy-Cat-bit-shadow/sing-box/releases/tag/v0.1.31) published 2026-10-28 00:38:59 UTC, non-draft and non-prerelease, with seven listed assets. Their bytes were not independently downloaded or verified. Tests at the prior dependency state do not automatically establish behavior at the new pin.
-- Coarse delta covers protocol, dialer, routing, DNS, TUN, transport, platform, dependencies, CI and release. The large delta has not been fully classified or audited.
+- The final delta is 795 commits from v0.1.9 to the source target. It was coarse-classified by paths
+  and semantic clusters: protocol, dialer, routing, DNS, TUN, transport, platform, dependencies, CI,
+  release, tests and historical records. The 259 changed non-`_test.go` Go paths include test tools;
+  representative load-bearing implementations and related tests were examined, not every commit deep-read.
 - Source-checked corrections: TUN start/reset handoff, dual-stack admission and ownership, empty family logging, FakeIP/sniff translation, transparent-group fast path, capability warning severity, Naive fallback, VLESS client encryption, MASQUE close, progressive memory trim, TUIC path ceiling, Linux kTLS tail ownership, TLS selection and workflow declarations. See the relevant modules and `ACCEPTANCE.md` for anchors and tests. Old global no-delta and no-CI-workflow claims corrected.
-- Other module entries, invariants, acceptance rows, fork provenance, protocol and platform coverage and cross-file contradictions remain to be individually checked. Historical reports remain archives; no wholesale disposition audit was completed. Baseline must remain at v0.1.9 until the unresolved load-bearing gaps are resolved.
+- Existing active modules, root navigation, invariants and acceptance entries were inventoried and
+  calibrated using changed-path review, source anchors and cross-file sampling. Historical reports
+  remain point-in-time archives; relevant findings were reconciled into their owners, not reasserted
+  as current. This is not a re-execution of every historical benchmark or a proof of every old line anchor.
 - Source and local tests do not establish device, interoperability, release artifact or CI-run behavior. No production code, dependency, build or release configuration was changed by this calibration.
 - Windows 10 Enterprise LTSC 2021 build 19044, Go 1.25.5: `go test -tags with_utls ./common/tls -count=1` failed three Windows TLS 1.3 handshake tests with `unexpected EOF`; a filtered rerun reproduced them. Cause unknown. Targeted uTLS/ECH tests passed. Linux kTLS tests cannot execute on this Windows host.
 - `go test -tags with_naive_outbound ./protocol/naive -run TestH3Fallback -count=1` remained at the Cronet fork download and was interrupted; it produced no test result. Retry with the required dependency available.
@@ -244,26 +251,43 @@ This is an operational ledger, not a replacement for the modules or a new produc
   the internal error is returned to the FakeIP metadata caller, but the general failed pending batch
   is not automatically requeued and public `Flush()` is best effort.
 
-### Module review status
+### Module dispositions
 
-The following inventory records the **extent** of this calibration, not a claim that every statement
-or historical line anchor was re-derived:
+The inventory records reviewed source boundaries and explicit evidence limits, not a claim that every
+historical line anchor or measurement was re-derived:
 
 | Entry | Status | Evidence or remaining work |
 |---|---|---|
-| `buffer-ownership`, `mtu-and-geometry` | update, partial | dependency path scope and kTLS/TUIC boundaries checked; re-audit other pool and MTU claims against the exact fork pin |
-| `build-pruning-release`, `ci-release` | update, partial | current registry, TLS selection and selected workflows checked; full profile and workflow/run/artifact audit remains |
-| `core-lifecycle-runtime`, `power-mobile-lifecycle` | update, partial | transition ownership and trim boundaries checked; re-audit all lifecycle and platform callbacks |
-| `dns-demand`, `dns-adblock-action` | update, partial | family lookup/admission and selected adblock tests checked; re-audit cache, FakeIP, transport and rule-set interactions |
-| `fast-path-group-policy`, `data-path-optimization` | update, partial | removed stale AI authorization, checked transparent-direct policy and entry boundary; re-audit all bypass blockers and scheduler claims |
-| `sniff` | update, partial | FakeIP rewrite and known-domain fragmented QUIC verified; remaining protocol sniffers require review |
-| `path-selection-validation` | update, partial | fatal versus warning taxonomy checked; re-audit all topology and runtime group claims |
-| `libbox-platform-contract` | update, partial | TUN handoff checked; full client ABI/platform contract not re-audited |
-| `masque-connectip`, `naive-http-transport`, `xhttp-client-transport` | update, partial | MASQUE close, Naive fallback and VLESS encryption boundaries checked; interop and remaining protocol paths unverified |
-| `mieru` | added, partial | config, underlay/fallback selection and lifecycle source checked; selected tests passed, independent-peer and device recovery evidence not established |
-| `windows-daemon-security` | update, partial | target source and released SHA CI run checked; no end-to-end service handshake verified, and the local signing fixture skipped |
-| root architecture, invariants, acceptance and index | update, partial | corrected identified conflicts and links; old line anchors and all remaining invariants/acceptance claims still need individual revalidation |
+| `buffer-ownership`, `mtu-and-geometry` | updated | exact sing/quic pins, pool release, MASQUE chunk ownership, kTLS and TUIC/MASQUE ceiling boundaries; real kernel splice and physical MTU unverified |
+| `build-pruning-release`, `ci-release` | updated | registry, profile gates, dependencies, workflow triggers, exact-SHA run records and release selection; no independent artifact-byte audit |
+| `core-lifecycle-runtime`, `power-mobile-lifecycle` | updated | Scope/Box, transition/half-close, listener/device/SSH, OOM reclaim, power and trim mappings; real device transitions unverified |
+| `dns-demand`, `dns-adblock-action` | updated | generations, family admission, FakeIP, search paths, endpoint resolvers, groups and negative answers; real DNS/TUN environment matrix unverified |
+| `fast-path-group-policy`, `data-path-optimization` | updated | explicit/intrinsic authorization, all listed blockers, entry consumption and scheduler; historical performance results remain environment-scoped |
+| `sniff` | updated | plans, ownership, QUIC/FakeIP, HTTP and SSH limitations and failure handling; arbitrary peer interop unverified |
+| `path-selection-validation` | updated | dry-run effects, capability-versus-structural severity, topology, group forwarding and rule-set closure; whole-graph soundness is not asserted |
+| `libbox-platform-contract` | updated | TUN, Android trim, monitor and Apple source authority; local Kotlin scan passed, Swift CI scan PARTIAL and local symlink caveat recorded |
+| `masque-connectip`, `naive-http-transport`, `xhttp-client-transport` | updated | ownership, fallback, UoT, client encryption and XMUX; independent peer interop remains unverified |
+| `mieru` | added | config, underlays, fallback and lifecycle source reviewed; selected tests and exact-target CI race package passed, independent-peer recovery unverified |
+| `windows-daemon-security` | updated | trust boundary, certificate policy and exact-target CI tests; no installed-service end-to-end run and local signing fixture skipped |
+| root architecture, invariants, acceptance, index and historical reports | updated / archival | contradictions, test filters, paths, version and evidence scope reconciled; old reports remain historical and old anchors are not universally re-derived |
 
-Next: inventory each entry, classify the delta by subsystem, inspect current source and tests, reconcile
-cross-module claims and indexes, then independently check citations and links. Record actual run evidence
-and environment limitations. Advance the baseline only after `REFRESH.md` §39 is satisfied.
+### Refresh status
+
+```text
+KNOWLEDGE_REFRESH = COMPLETE (source-level; limitations above remain)
+OLD_PRODUCTION_BASELINE = 5fc4f9366a60202fdc7c98cd6fa280cceace65ba
+NEW_PRODUCTION_BASELINE = cb71cf80d7224a51823b455f0be5959ad8556933
+PRODUCTION_CODE_CHANGED_BY_REFRESH = NO
+RUNTIME_BEHAVIOR_CHANGED_BY_REFRESH = NO
+PROTOCOL_BEHAVIOR_CHANGED_BY_REFRESH = NO
+ABI_CHANGED_BY_REFRESH = NO
+GIT_HISTORY_REWRITTEN = NO
+DELTA_CLASSIFIED = YES (coarse; semantic clusters deep-read)
+AFFECTED_SUBSYSTEMS_REAUDITED = YES (source boundaries; evidence limitations recorded)
+COMMIT_PROVENANCE_UPDATED = YES (unresolved historical references labeled)
+INVARIANTS_REAUDITED = YES
+ACCEPTANCE_UPDATED = YES
+HISTORICAL_DOCS_RECONCILED = YES (point-in-time archives retained)
+CROSS_FILE_CONSISTENCY = PASS (reviewed claims and limited mechanical checks)
+FUTURE_AI_INCREMENTAL_READ = PASS (baseline, navigation and delta instructions checked)
+```

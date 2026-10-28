@@ -1,33 +1,28 @@
 # Baseline
 
-> **2026-10-28 calibration: INCOMPLETE.** This file's v0.1.9 measurements are historical,
-> not a current delta description. At target `011f3fdcd99173acd3e80483b50cb76b07bf6ff4`,
-> `v0.1.9..target` contains 791 commits and substantial production changes. The published
-> `v0.1.30` tag resolves to `6112aa17052297ec9890e0e7f1541a06120b84b2`, an ancestor of the
-> target; later TUN fixes are on testing and are not established as part of that release.
-> The production baseline is deliberately **not moved**: the intervening subsystems and old
-> claims have not all been re-audited. Compute the delta yourself; ignore historical assertions
-> below that the baseline equals HEAD or that its post-baseline delta is empty.
->
-> The branch advanced during this calibration to `cb71cf80d7224a51823b455f0be5959ad8556933`:
-> its version file says 0.1.31 and it changes the `cronet-go/all` pin. A later check found the
-> remote v0.1.31 tag peeling to that commit. GitHub subsequently published the non-draft, non-prerelease
-> [v0.1.31 Release](https://github.com/Piggy-Cat-bit-shadow/sing-box/releases/tag/v0.1.31) at
-> 2026-10-28 00:38:59 UTC with seven listed assets; this API observation does not independently verify
-> their bytes. Recheck release records and this dependency pin before attributing older tests to it.
->
-> The locally recorded `upstream/testing` now points to `a6952ccf6907c18e18917fcb763a433e8e36937b`,
-> which is also its merge-base with `cb71cf80d72`. The old `e4b7e692` is a historical comparison anchor,
-> not this target's merge-base. A subsequent `ls-remote` saw upstream's `testing` at
-> `e5d91fa79f6319d5de940d6c81d81f0fe53b9476`; that object was already local and its merge-base with
-> the target is also `a6952ccf`. These are point-in-time ancestry observations, not authorship proof;
-> upstream history has been rewritten.
+## Current calibrated baseline — 2026-10-28
 
-**Read this file before anything else. The knowledge base does not describe `HEAD`.**
+| Field | Value and scope |
+|---|---|
+| Repository / product branch | `Piggy-Cat-bit-shadow/sing-box` / `testing` |
+| Production baseline | `cb71cf80d7224a51823b455f0be5959ad8556933` — source target, not a documentation-only commit |
+| Release baseline | [v0.1.31](https://github.com/Piggy-Cat-bit-shadow/sing-box/releases/tag/v0.1.31), tag peels to the same commit; non-draft, non-prerelease, published 2026-10-28 00:38:59 UTC |
+| Upstream ancestry | checked remote `upstream/testing` was `e5d91fa79f6319d5de940d6c81d81f0fe53b9476`; its merge-base with the production target is `a6952ccf6907c18e18917fcb763a433e8e36937b`. Recheck when refs move; ancestry does not prove authorship. |
+| Previous production baseline | `5fc4f9366a60202fdc7c98cd6fa280cceace65ba` (v0.1.9); 795 commits precede the target in that range |
+| Knowledge revision | resolve dynamically with `git log -1 --format=%H -- KNOWLEDGE/BASELINE.md` |
+| Post-baseline delta | compute `git diff --name-only cb71cf80d7224a51823b455f0be5959ad8556933..HEAD`; the knowledge commits themselves do not change runtime behavior |
 
-The table below records the v0.1.9 review, not today's worktree. Its values were measured for that
-baseline; commands must be interpreted against the named revision, and current branch/release
-status must be measured separately.
+The modules describe the checked source mechanisms at this baseline with explicitly scoped evidence;
+historical line numbers and older audit measurements still require rechecking. A baseline is not proof
+of device, interoperability, artifact-byte or all-platform behavior. The Apple CI call-site scan was
+PARTIAL, and the known Windows TUN errno classification gap, reproduced Windows TLS test failure and
+other limits are recorded in [the calibration ledger](CALIBRATION-2026-10-28.md) and owning modules.
+Do not assume `HEAD` is always the baseline: compute the actual delta.
+
+## Historical v0.1.9 baseline
+
+The following table and narrative preserve the v0.1.9 review. They are not the current baseline;
+their values and claims are scoped to that historical revision.
 
 | Field | Value | How to re-measure |
 |---|---|---|
@@ -95,7 +90,7 @@ to **contradict** it — both are corrected in the same refresh:
 structural claims intact; the anchors are marked rather than blanket-shifted, because a uniform offset
 was never verified anchor by anchor and a guessed line number reads as authoritative.
 
-**This baseline is therefore current for the audited subsystems, and it is not a claim that every
+**At the v0.1.9 review, that baseline was current for the audited subsystems; it was not a claim that every
 line of every module was re-derived.** A module whose paths the delta did not touch was not re-read.
 Any module statement that carries a `file:line` should be re-measured with
 `git log --oneline v0.1.9..HEAD -- <path>` before it is relied on, per `modules/README.md`
