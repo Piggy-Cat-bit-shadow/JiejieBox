@@ -133,12 +133,11 @@ decision record is `docs/fork/v016-final-closure-ledger.md:4-13`.
 > is BLOCKED on the pinned quic-go fork"*, while the header at `:4-13` retracts exactly that. **The
 > banner is current; the body is a record.** Read banners first.
 
-**MASQUE does not share this mechanism — and that is currently untested.** `InitialPacketSizeCeiling`
-exists only in `protocol/hysteria2` (four references). MASQUE instead **clamps the preference eagerly**
-(`client.go:167-192`) and has **no fingerprint field at all** (`option/masque.go:24-52`). The eager
-clamp is safe *only* because nothing overwrites the value afterwards — so **adding a fingerprint or any
-post-construction size override to the MASQUE client would silently void its physical ceiling, and no
-existing test would fail.** If you are about to add one, add the test first.
+MASQUE's constructor does not set `InitialPacketSizeCeiling`: it clamps the initial preference from
+known detour capacity, which does not establish a hard bound on subsequent packets. A later override
+could also invalidate that initial preference. `protocol/tuic/outbound.go` now passes its own hard
+ceiling, so the field is not exclusive to hysteria2. When changing these paths, test both the initial
+packet and later growth under the exact protocol and pinned QUIC implementation.
 
 The hysteria2 distinction is worth stating precisely, because the three fields have different meanings:
 

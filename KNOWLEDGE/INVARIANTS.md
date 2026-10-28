@@ -16,15 +16,16 @@ ownership boundary. Everything else is a convention, a strategy or an implementa
 Each row: the rule, why it must hold, what breaks, the commit or test that proves it, and how to
 re-check.
 
-### A1 — `Scope` owns all teardown; a late cleanup runs on the registering goroutine
+### A1 — Scope-owned cleanups drain in reverse; late cleanup runs on the registering goroutine
 
-`Scope.Close` walks `scope.Add` entries and **never calls a component's `Close()`**; a cleanup
-registered after close returns runs **synchronously on the caller's goroutine**; `Close` does **not**
-wait for an in-flight `Start`.
+`Scope.Close` drains its registered functions, including child scopes created by `Scope.Start`;
+a cleanup registered after close returns runs **synchronously on the caller's goroutine**; `Close`
+does **not** wait for an in-flight `Start`. A cleanup panic interrupts the drain and may leave a
+subsequent direct Scope close waiting; `Box.Close` recovers and records an error, not full cleanup.
 
-* **Why:** a component with a `Close` never handed to the Scope is a component whose teardown the
-  product never runs. Making the late path asynchronous means a resource is alive after `Close`
-  returned with no error.
+* **Why:** every scope-owned resource needs a cleanup registered with its actual owner. Other
+  owners can also close resources; missing a direct `scope.Add` alone does not prove a leak. Making
+  late cleanup asynchronous changes when that late resource is released.
 * **Breaks if violated:** a torn-down `*Inbound` keeps an observer; a listener binds after the drain.
 * **Proof:** `adapter/lifecycle.go:112-138`, `:186-217`; `adapter/lifecycle_close_boundary_test.go`;
   commits `53a3f97e8`, `f2c728d10`, `e3349044a`.
@@ -74,13 +75,13 @@ when `commit` is true.
 * **Re-check:** `go test -count=1 ./common/physicalpath/...`
 * **Kind:** correctness. **Owner:** `path-selection-validation.md`
 
-### A5 — Start-time validation must not dial, resolve, select or mutate
+### A5 — Start-time validation must not dial, resolve DNS or consume selection
 
 `validatePhysicalPaths` dials nothing, resolves nothing, changes no selection and consumes no rotation.
 A dry run over a real start asserts committed == 0 **and** previewed == 0.
 
-* **Why:** the whole value of a start-time refusal is that it is decidable offline and has no runtime
-  consequence.
+* **Why:** the dry run must be decidable offline without changing actual selection or starting traffic.
+  It can still produce the limited logging and memoisation effects described below.
 * **Breaks if violated:** starting a box becomes a side-effecting operation; a validation pass moves a
   selector.
 * **Provable from the object graph:** `Resolver` holds a registry lookup, a `Snapshot` and a network

@@ -55,6 +55,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - Libbox monitor refresh/publish ordering and the close-during-refresh fence were source-checked and
   targeted tests passed with Go 1.26.10 and `p2ios` on Windows. The Apple lifecycle's sleep measurement
   start and reuse-boundary publication were distinguished; neither test result is device validation.
+- The MTU module's claim that only Hysteria2 passes `InitialPacketSizeCeiling` was corrected: TUIC
+  does so too, while MASQUE's initial clamp alone does not prove a hard later-packet ceiling.
+  Focused scheduler default, arbitration and refusal-ownership tests passed locally.
 
 ### Module review status
 

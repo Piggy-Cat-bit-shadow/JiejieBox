@@ -12,6 +12,8 @@ L0 tests, and `./experimental/cachefile` `TestFakeIPSaveMetadataReportsAFailedFl
 These unit tests do not establish retired-range L0 protection or physical device behavior.
 With the same toolchain, `go test -tags p2ios ./experimental/libbox -run TestPlatformMonitor -count=1`
 passed the monitor ordering and close-during-refresh tests using test doubles.
+Three focused `./common/trafficsched` tests for inert default, priority floor and refused packet
+ownership also passed under Go 1.26.10; they are unit evidence, not a throughput benchmark.
 
 Post-baseline checks run locally at target `011f3fdcd99` on 2026-10-28 (unit tests, not device or CI evidence):
 
