@@ -40,6 +40,9 @@ Three root `TestBoxClose*` tests for repeated/concurrent close and error preserv
 `DEFAULT_BUILD_TAGS_OTHERS`; this un-raced run does not prove every panic or concurrency interleaving.
 Four selected `./route` tests for notification coalescing, confirmed offline recovery, short gaps
 and cross-interface handover also passed locally; they do not replace a real-device transition test.
+The three `./route` power-report Fast Path refusal/ordering/context tests also passed locally.
+Two application AAAA suppression/cache tests and two TUN IPv4-only option-reduction tests passed
+locally; this confirms those test paths, not runtime address reconfiguration on a device.
 Selected `./protocol/shadowtls` first-record timeout, listener cleanup and handshake-target cleanup
 tests passed locally; this is not external fallback-server interoperability evidence.
 The endpoint-owned resolver retirement tests for Tailscale, OpenVPN and OpenConnect passed locally

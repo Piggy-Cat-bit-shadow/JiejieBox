@@ -28,6 +28,11 @@ endpoint: a remote proxy may have IPv6 even when the local entry does not. This 
 per-attempt family admission. See `dns/entry_ipv6_test.go` and the TUN presentment contract in
 `libbox-platform-contract.md`.
 
+IPv4-mapped IPv6 destinations must be classified as IPv4: the TUN canonicalizes them before DNS,
+FakeIP and route-set comparisons (`protocol/tun/inbound.go`), and admission checks the unmapped
+family (`common/dialer/admission.go`). See `protocol/tun/mapped_address_test.go` and
+`common/dialer/dual_stack_mapped_asis_test.go`; the local TUN and dialer suites passed in this refresh.
+
 ### Private resolvers owned by endpoints
 
 Tailscale, OpenVPN and OpenConnect DNS transports can own resolvers that are not themselves entries
