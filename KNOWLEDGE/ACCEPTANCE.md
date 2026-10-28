@@ -44,6 +44,8 @@ Selected `./protocol/shadowtls` first-record timeout, listener cleanup and hands
 tests passed locally; this is not external fallback-server interoperability evidence.
 The endpoint-owned resolver retirement tests for Tailscale, OpenVPN and OpenConnect passed locally
 with `with_tailscale`; they cover the targeted pool walk, not a real network transition.
+Selected `common/srs` truncation, checksum and decompression-budget tests and `route/rule` remote
+stream tests passed locally; they do not establish behavior against every live server.
 
 `go test -tags with_quic ./transport/masque -run 'TestWriteBatchChunksABurstAboveTheQueueCapacity|TestWriteBatchFallsBackOnlyForTheRefusedTail' -count=1 -v`
 passed both named tests. An untagged run selects neither test, so the untagged package result above

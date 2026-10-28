@@ -21,6 +21,17 @@ plan to one address. See `protocol/group/parallel_passthrough_test.go`. The unfi
 tests passed locally at `cb71cf80d72`; this does not establish real network switching or all peer
 behavior.
 
+### Remote binary rule-set publication
+
+`common/srs/binary.go` drains the zlib stream to its natural end to verify truncation and checksum
+before returning a parsed rule set; decompressed work is bounded separately, with a distinct
+`ErrDecompressedTooLarge`. `route/rule/rule_set_remote.go` uses the streaming path when there is no
+cache file, drains the HTTP body before publication to catch framing errors, then builds and validates
+the rules before publishing. `Close` marks the set closed and cancels its context; publication checks
+the closed state under the lock. Do not equate completing rule parsing with verifying the enclosing
+stream, or publish a late fetch after close. These are `VERIFIED_SOURCE` at `011f3fdcd99`; local
+`./route/rule/...` tests passed in this refresh, not a live remote-server or device guarantee.
+
 **Scope:** `common/physicalpath`, `common/routeflow`, start-time validation in
 `adapter/outbound/manager.go`, `detour` resolution, outbound groups, cycles, failover.
 
