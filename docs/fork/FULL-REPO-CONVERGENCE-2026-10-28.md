@@ -320,6 +320,9 @@ Android 的删除顺序刻意是：先建 4 个 `archive/*` 标签 → 推送标
 | `sing-box` | `fad9be7a` | docs：本报告 |
 | `sing-box` | `62f5ecef` | fix：伪版本改从 fork 路径计算（dry run 抓到的真实缺陷） |
 | `sing-box` | `e814b2ba` | docs：dry run 结果与 Apple Pin 保持不动的理由 |
+| `sing-box` | `fb3ca4f3` | docs：Android ABI handover 现在有编译证据（含负向对照） |
+| `sing-box` | `328efb29` | docs：Apple"发布 SHA == Snapshot"仍是记录而非门禁 |
+| `sing-box` | `3dbd7158` | docs：四次 macOS 尝试、两个标签全部取消（不是标签问题） |
 
 ---
 
