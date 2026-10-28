@@ -268,6 +268,7 @@ Android 的删除顺序刻意是：先建 4 个 `archive/*` 标签 → 推送标
 | 事实 | 证据 |
 |---|---|
 | 我的 `testing` 提交触发了四套门 | Verify `40702192442`、RCV `40702192446`、Android Core `40702192584`、Mobile contract `40702192400` |
+| 最终冻结树的 Verify 全绿 | 提交 `2de3764a`：Verify `40725323789` = `completed/success`（含新增的 `release-freeze.py verify` 步骤） |
 | **Verify 在推送提交上全绿**（含新增的 `release-freeze.py verify` 步骤） | Verify `40702192442` = `completed/success` |
 | 冻结测试在 Linux CI 上真的执行并通过 | RCV `40702192446` 的步骤 "the freeze helper's behavioural suite" = success |
 | 冻结工具在真实仓库上复现了本轮诊断 | `check` 输出：`BEHIND utls`、`BEHIND clients/apple`、`BEHIND clients/desktop`、`BEHIND nested dashboard`（其中 desktop 已在本轮修复，复核后为 `identical`） |
@@ -284,7 +285,7 @@ Android 的删除顺序刻意是：先建 4 个 `archive/*` 标签 → 推送标
 
 1. **Apple 上游融合的 macOS 编译无证据 → 上游合并停留在候选分支（HOLD）；但 `clients/apple` 已经前移到 `16cf87b4`（fork 自己的 UA 修复，见 §5.3 的 ABI 依据）。**
    - 已拿到：iOS 目标在候选 `be3258a` 上**构建成功**（Apple client run `40698718663` 的 `ios` 作业 = success），因此共享 Swift 代码、`libbox` 链接、`StringBox` ABI 与 `ShareExtension/Info-iOS.plist` 接线都经过真实编译。
-   - 没有拿到：`macos` 目标。**五次尝试（含收尾时的最后一次），两个 runner 标签，全部在排队约 15 分钟后被取消，且一个 step 都没有执行**：`40698718663` 的 `macos`、`40704313767` 的 `libbox`、`40707022945` 的 `libbox`、换成 `macos-14` 的探针 `40710418326` 的 `libbox`（探针分支随后已删除）、以及最后一次 `40722121237` 的 `libbox`。
+   - 没有拿到：`macos` 目标。**六次尝试，两个 runner 标签，全部在排队 15 分钟后被取消，且一个 step 都没有执行**：`40698718663` 的 `macos`、`40704313767` 的 `libbox`、`40707022945` 的 `libbox`、换成 `macos-14` 的探针 `40710418326` 的 `libbox`（探针分支随后已删除）、`40722121237` 与 `40727482951` 的 `libbox`（后者 16:35:54 排队、16:50:56 取消）。
 
    - 取证结论（排除法，而不是猜测）：被取消的 `libbox` 作业 `runner_name` **为空、`steps` 为 0**，即从未分配到 macOS runner；同一时段 GitHub 状态页 `All Systems Operational`（Actions operational，无事故）；仓库本身是 **public fork**，所以这不是"用完了 macOS 分钟数"那种故事。结论：这些作业根本没能拿到 macOS runner，仓库侧没有任何东西能改变它。前两次 macOS 作业（`libbox` 13:53 成功、`ios` 14:09 成功）说明在这之后就再也没排到过。
    - 因此：`apple/main` **保持 `16cf87b4`**（不含上游合并），13 个上游提交的合并留在候选 `sync/upstream-2026-10-28`（`be3258a`，Swift 语法层已验证：422 文件解析通过）。这是施工令要求的"无法可靠编译就停留在旧正式 Pin，报告候选与失败证据"，而不是把未验证的 Swift 变更合进产品线。**注意**：`clients/apple` gitlink 已经前移到 `16cf87b4`，因为那只是 fork 自己的 UA 修复、且已随 v0.1.33 构建过；层 4 扫描（423 文件 / 0 违规）与 `VERIFIED_APPLE_SHA` 在同一个提交里更新。另外记录一个**真实发现**：第一次非 dry-run 的 `release-prepare` 把 gitlink 写进索引后，`check-libbox-abi.sh --pin-only` 仍然通过，因为它读的是 `git ls-tree HEAD`（旧提交）而不是索引——**门禁被自己的执行顺序绕过了**。工作流已改成 提交 → ABI 门 → 推送，让这道门真正检查要推出去的那个提交。
