@@ -16,6 +16,11 @@ Three focused `./common/trafficsched` tests for inert default, priority floor an
 ownership also passed under Go 1.26.10; they are unit evidence, not a throughput benchmark.
 `./protocol/tun` `TestInFlightCallbackUnderCloseIsOrdered` also passed under Go 1.26.10; it does not
 execute a Linux auto-redirect session or prove that every rule-set observer is joined on shutdown.
+On the same branch state, `scripts/ci/check-libbox-abi.sh --pin-only` passed using MSYS2 bash: the
+Android and Apple gitlinks match the script's expected revisions. It did not run the full ABI or
+client call-site sweep, and its output reported the gomobile pin as unknown.
+`TestTrackedSchemaMatchesTheGenerator` passed locally with Go 1.26.10 and
+`DEFAULT_BUILD_TAGS_OTHERS`; it compares the tracked schema with the generator for this tree.
 
 Post-baseline checks run locally at target `011f3fdcd99` on 2026-10-28 (unit tests, not device or CI evidence):
 
@@ -266,7 +271,7 @@ making either claim.
 | 11.5 | The Apple **pin** cannot move without objection | **no *wired* mechanism exists.** `VERIFIED_APPLE_SHA` and the gitlink now **agree** at `5cab4ec5…` (`ece0fb9d2` moved the constant), but nothing runs the comparison; the selection gate is self-referential to the gitlink by design | **KNOWN GAP, VERIFIED_GIT** | `git ls-tree HEAD clients/apple` and `git grep VERIFIED_APPLE_SHA= -- scripts/`, then compare the two by hand | git |
 | 11.5b | A refs file that reinstates a two-source Apple pin is refused, and the refusal does not depend on the caller's environment | `apple-client-source.sh:88-105` greps the **file** before sourcing it; `resolve` (`:386-388`) and `release-apple.sh:181` legitimately export the same names, which the pre-fix environment test mistook for a file declaration | VERIFIED_SOURCE + VERIFIED_UNIT (`ece0fb9d2`) | `sed -n '88,105p' scripts/ci/apple-client-source.sh`; assert the guard greps `$refs_file` and is called before `. "$refs_file"` | sed |
 | 11.6 | ABI call-site compatibility at the pinned revision | **Swift half VERIFIED_UNIT at `5cab4ec5`** — `probe-accessors.py` over a clean `clients/apple`: `scanned 670, violations [], interface_methods 3`. **Kotlin half not run** (no `clients/android` checkout here). For the **v0.1.6 release** revision it stays **UNVERIFIED** — the revision that shipped is older than the one checked | VERIFIED_UNIT (swift) / BLOCKED_BY_ENVIRONMENT (kotlin) | `python3 scripts/ci/probe-accessors.py --contract docs/fork/libbox-abi-contract.tsv --lang swift --root clients/apple` | python3 + submodule |
-| 11.7 | Android AAR provenance and architecture | gates exist; dispatch-only | **UNVERIFIED (declaration only)** | `android-core-arm64.yml` | CI |
+| 11.7 | Android AAR provenance and architecture | workflow declares path-filtered testing pushes and dispatch; run 40602193557 succeeded at `1ff0af39110` | **VERIFIED_CI** for that run; later artifact contents not independently checked | `android-core-arm64.yml` and linked run in `modules/ci-release.md` | CI |
 
 ## 12. Build, CI and release
 

@@ -85,6 +85,14 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - The historical audit's remaining indexed items were mapped to the TUN, Naive, group, lifecycle
   and MTU sections. Active-stream silent stall and startup-fixed IPv6 entry presentment remain
   documented limitations, rather than being labeled universally repaired.
+- Current workflow declarations were cross-checked: Android ARM64 has a path-filtered testing push
+  in addition to dispatch, and the strict release-acceptance self-test runs in the release-contract
+  workflow, while a mention in Verify is a comment rather than a direct invocation.
+- The local libbox ABI pin-only script passed for both client gitlinks using MSYS2 bash. It did not
+  execute the full client ABI sweep; its gomobile pin display was unknown in this environment.
+- The tracked schema comparison passed locally with Go 1.26.10 and `DEFAULT_BUILD_TAGS_OTHERS`.
+  The current Verify race declaration also includes `protocol/mieru`; the historical command list
+  and package count were corrected or marked as revision-scoped.
 
 ### Module review status
 

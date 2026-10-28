@@ -85,7 +85,7 @@ candidate can obtain its own release evidence.
 | tagged build | `go build -tags … ./...` | links under the server profile | — |
 | build matrix | cross-builds linux/amd64, windows/amd64, freebsd/amd64, darwin/arm64 for 8 package trees | those packages compile per-GOOS | nothing runs |
 | cronet provenance | `verify-cronet-provenance.sh apple` | the `replace` directives resolve to the fork archive bytes | — |
-| **race, fork data paths** | `go test -race … ./common/trafficclass/... ./common/trafficsched/... ./common/dialer/... ./protocol/direct/... ./protocol/tun/... ./route/... ./adapter/...` | races in those 7 trees | **the root package is not in the list**, and neither is `./protocol/masque` |
+| **race, fork data paths** | `go test -race … ./common/trafficclass/... ./common/trafficsched/... ./common/dialer/... ./protocol/direct/... ./protocol/mieru/... ./protocol/tun/... ./route/... ./adapter/...` | race checks in the named trees when the job runs | **the root package is not in the list**, and neither is `./protocol/masque` |
 | race, config surface | `go test -race … ./option/...` | races in `option` | — |
 
 > **Historical v0.1.9 observation:** the root acceptance suite was compiled but not executed by the
@@ -93,8 +93,10 @@ candidate can obtain its own release evidence.
 > to `TestNetLogEventCount`. It does not follow that all root acceptance tests run; inspect the
 > current commands and actual run records. See §4 for the tag set to run root tests locally.
 
-**Merging a PR does not run the artifact workflows.** The artifacts (Apple, macOS, desktop Windows,
-Linux server, Android core, interop) are all manual dispatch that the release path then consumes.
+The release path consumes evidence from explicitly selected runs. Do not say every artifact workflow
+is dispatch-only: `android-core-arm64.yml` also declares path-filtered pushes to `testing`, while its
+comment distinguishes a manual dispatch used to produce release evidence. Check each workflow's
+current trigger and the actual run rather than inferring execution from a merge.
 
 ---
 
@@ -106,7 +108,7 @@ are now genuinely wired**, so that list would send a reader to re-wire something
 
 | Script | Previous claim | Measured now |
 |---|---|---|
-| `verify-release-acceptance.sh` | "mentioned in a comment, never invoked" | **invoked** — `release-contract-verify.yml:209` (self-test) and `verify.yml` |
+| `verify-release-acceptance.sh` | "mentioned in a comment, never invoked" | the separate self-test is invoked by `release-contract-verify.yml`; `verify.yml` currently mentions the checker in a comment, not as a direct invocation |
 | `verify-fork-handoff.sh` | "same — comment only" | **invoked** — `verify.yml` |
 | `check-macos-app-name.sh` | "comment only" | **invoked** — `client-apple.yml` |
 | `check-macos-client-config.sh` | "comment only" | **invoked** — `client-macos.yml` |
@@ -250,6 +252,11 @@ it describes.
 ---
 
 ## 4. The commands a re-checker must actually run
+
+The following block records a historical Windows setup and test selection. Paths and tag choices
+are not portable defaults, and later workflows include `protocol/mieru` in the race list. Resolve
+the current Go toolchain, target profile and workflow commands before reusing it; the local 2026-10-28
+pin-only check used MSYS2 bash and is recorded in `ACCEPTANCE.md`.
 
 ```powershell
 # --- environment (Windows amd64) ---
