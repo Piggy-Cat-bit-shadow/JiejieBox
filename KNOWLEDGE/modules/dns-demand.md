@@ -185,6 +185,10 @@ and `route/route.go` for the exact ownership and persistence boundaries.
 does not advance its reservation after that error. The old unconditional-success finding in the
 Round 2 oracle is historical; `TestFakeIPSaveMetadataReportsAFailedFlush` covers the failure path.
 This metadata guarantee should not be generalized to every cache write API.
+`experimental/cachefile/pending.go`'s internal `flush()` replaces the pending batch before writing;
+on failure it returns an error but does not requeue that batch. The public `Flush()` discards the
+error and is best effort. FakeIP metadata specifically propagates the error so its store can avoid
+advancing the reservation; that does not imply every pending cache write is durable or retried.
 
 ---
 
@@ -249,6 +253,12 @@ The separate `service/resolved` transport no longer expands query names through 
 question name and makes sequential attempts with that message. Do not generalize that removal to
 Tailscale's distinct short-name/search-domain matching described above; the two are different paths.
 This is a source-level finding, not a live systemd resolver test.
+
+DHCP DNS is a different path: `dns/transport/dhcp/dhcp_shared.go` validates the question, expands
+one-label names with its supplied search suffixes and then tries the original; multi-label names
+are left as supplied. `dns/transport/local/systemconfig` removed its previous general `NameList` /
+`ndots` expansion. Do not copy the resolved-service behavior onto DHCP or assume every short-name
+resolver uses the same policy. Existing DNS transport tests passed locally, not a live DHCP network.
 
 ---
 

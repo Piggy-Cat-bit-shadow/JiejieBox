@@ -239,6 +239,10 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - After the clean client scans, `clients/apple/Library/Network/ExtensionPlatformInterface.swift` acquired
   a concurrent uncommitted change. It is outside this refresh and was not modified or staged by it;
   the earlier scan result describes the clean checkout observed before that change.
+- DNS search handling was checked across DHCP, local system configuration, resolved service and
+  Tailscale; they do not share one universal expansion rule. Cache flush failure was also narrowed:
+  the internal error is returned to the FakeIP metadata caller, but the general failed pending batch
+  is not automatically requeued and public `Flush()` is best effort.
 
 ### Module review status
 
