@@ -158,11 +158,14 @@ This is an operational ledger, not a replacement for the modules or a new produc
   still cannot override other blockers. Naive reference-client interoperability remains an explicit
   evidence gap instead of a claim inferred from compatible protocol structure.
 - The systemd-resolved loop still has its stop/join, but the join alone does not establish that all
-  separately spawned asynchronous updates have finished. The DNS demand test command's Go regex was
-  corrected, and the obsolete claim that the kTLS package contains no tests was removed.
+  separately spawned asynchronous updates have finished. The DNS demand table's `\|` is Markdown
+  escaping for a rendered regex alternation, not a literal Go regex escape; the obsolete claim that
+  the kTLS package contains no tests was removed.
 - DNS adblock's heap/goroutine test asserts tolerances, not strict zero, and a downstream resolver's
   actual retention cannot be guaranteed from the advertised TTL alone. The Windows certificate
   caution now reflects the validity-policy tradeoff consistently with the security module's analysis.
+- A cross-module pass reconciled validator side-effect scope, the locally completed offline module
+  parity check, current Cronet platform support, and MASQUE initial-size versus later-packet claims.
 
 ### Module review status
 

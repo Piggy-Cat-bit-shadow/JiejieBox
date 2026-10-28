@@ -156,8 +156,10 @@ message, and the sort's computed order is passed to `startOutbounds` rather than
 
 `manager.go:235-237`: *"It is read-only: it dials nothing, resolves nothing, changes no selection and
 consumes no rotation."* Provable from the object graph: `Resolver` (`physicalpath.go`) holds a
-registry lookup, a `Snapshot` and a network name — **no dialer, no logger, no context, no clock** —
-so a walk cannot dial, log or time anything. `Build` never clones: `TestTheReportedLeafIsTheSelectedLeaf`
+registry lookup, a `Snapshot` and a network name — no dialer or clock on the resolver itself.
+That structure supports the no-dial/no-selection contract; it does not prove the entire validation
+call is free of logs or other incidental effects, as the next section explains. `Build` does not clone
+the reported leaf: `TestTheReportedLeafIsTheSelectedLeaf`
 asserts `require.Same` on the registry's object.
 
 Rotation is pinned separately: `TestTheDryRunConsumesNoRotationOnARealStart`

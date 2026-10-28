@@ -287,7 +287,7 @@ commit is confirmed). **`BLOCKED_BY_ENVIRONMENT` to execute** — the path needs
 | DNS rule walk, cache, reverse mapping and FakeIP generations | `VERIFIED_UNIT` | `go test -count=1 ./dns/...` |
 | DNS transports' requirement model | `VERIFIED_UNIT` | `go test -count=1 ./dns/transport/...` |
 | FakeIP cannot answer a destination lookup | `VERIFIED_UNIT` | `go test -count=1 -run FakeIP ./dns/...` |
-| Route-proved DNS demand at start | `VERIFIED_UNIT` (needs tags) | `go test -count=1 -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" -v -run 'TestADNSTransportDetourMustCarryTheQuery|TestTheDefaultDomainResolverIsAGraphEdge' .` |
+| Route-proved DNS demand at start | `VERIFIED_UNIT` (needs tags) | `go test -count=1 -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" -v -run 'TestADNSTransportDetourMustCarryTheQuery\|TestTheDefaultDomainResolverIsAGraphEdge' .` |
 | The resolver-authority parity check | `VERIFIED_UNIT` (needs tags) | `-run TestResolverAuthorityParity .` |
 | The `systemd-resolved` goroutine leak | **it IS fixed**, by `6b495134c` | `git log -S'signalLoopStop' e4b7e692..a267e99`; the symbols at `local_resolved_linux.go:80-82`, `:239-241`, `:374`, `:385` |
 | Multi-platform DNS environment matrix | not run in this calibration | **`UNVERIFIED` here** |

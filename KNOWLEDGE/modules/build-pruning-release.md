@@ -350,12 +350,12 @@ service registration on a mismatch. Exactly **two** i386 PE exceptions are allow
 |---|---|---|
 | `go build ./...` untagged | **`VERIFIED_UNIT`** (run here) | `go build ./...` |
 | `go build -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" ./...` | **`VERIFIED_UNIT`** (run here) | as written |
-| `go build -tags "$(cat release/DEFAULT_BUILD_TAGS)" ./...` | **`VERIFIED_UNIT` that it FAILS on Windows** | as written — expect the cronet build-constraint error |
+| `go build -tags "$(cat release/DEFAULT_BUILD_TAGS)" ./...` | historical Windows failure at the older pin/profile; not a current-platform verdict | check the actual platform profile and Cronet pin; Windows Cronet files now require `with_purego` |
 | Tag composition and the linkname contract | `VERIFIED_UNIT` | `go test -count=1 ./cmd/internal/...` |
-| Nested modules resolve the same pins | **declaration only** — `check-go-module-integrity.sh --require-checked test` needs bash | that script |
+| Nested modules' replacement parity | `check-go-module-integrity.sh --require-checked test` passed offline in this calibration under MSYS2 bash for the three discovered modules; no `go mod verify` or artifact provenance | that script |
 | `verify-full-capabilities.sh` passes for a shipped binary | **declaration only** | needs a built artifact + bash |
 | Reproducibility (build twice, compare sha256) | **declaration only**, and only under `deep_checks` on a Linux runner | `server-linux-amd64.yml` deep path |
-| Anything about a Windows/Android/Apple artifact | **declaration only** — no `.ps1` or artifact output is archived in the tree | the respective dispatch-only workflow |
+| Windows/Android/Apple built artifact contents | not established by these local checks; separately observed workflow runs are SHA-scoped in `ci-release.md` | inspect the exact workflow, run and artifact |
 
 ### Provenance
 

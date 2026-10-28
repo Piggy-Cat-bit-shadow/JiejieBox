@@ -209,10 +209,10 @@ Any document referencing the deleted files is describing the pre-`e93e297aa` mod
 | Capsule parse/serialise, address and route types | `VERIFIED_UNIT` | `go test -count=1 -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" ./transport/masque/...` |
 | Per-chunk atomicity, transferred prefix and refusal fallback | `VERIFIED_UNIT` | `batch_chunk_test.go`, `batch_order_test.go`, `session_datagram_error_test.go` |
 | Teardown ownership and close boundaries | `VERIFIED_UNIT` | `shutdown_test.go`, `close_boundary*.go`, `scope_ownership_test.go` |
-| MTU ceiling / PTB | `VERIFIED_UNIT` | the five MTU test files |
+| MTU initial clamp / PTB | `VERIFIED_UNIT` for the cited test cases; MASQUE's later packets are not shown to have a hard outer ceiling | the MTU test files; `mtu-and-geometry.md` |
 | H3 pool rotation, 0-RTT gate, fallback schedule | `VERIFIED_UNIT` | `transport/http` pool tests |
 | Long-run allocation behaviour | `VERIFIED_UNIT` (slow) | `transport/masque/longrun_alloc_test.go` |
-| CONNECT-IP interoperability against an independent implementation | **declaration only** — `test/jiejie/reference/connect_ip_go_interop_test.go` lives in a separate module CI does not run on push | `run-jiejie-suite.sh` (needs bash) |
+| CONNECT-IP interoperability against an independent implementation | **unverified in this calibration** — `test/jiejie/reference/connect_ip_go_interop_test.go` is in the separate test module; Verify runs a selected test there, not this full reference suite | `run-jiejie-suite.sh` (needs bash) |
 | macOS/H3 device behaviour | **`UNVERIFIED`** | needs a device |
 | Race-freedom | `-race` is **blocked on this host**; inspect the exact package list and SHA in the CI run before claiming coverage of MASQUE | Linux runner |
 | `protocol/masque` suite | untagged tests passed locally during the 2026-10-28 refresh; that does not select QUIC-tagged cases. The historical tagged result is scoped to its recorded baseline. | use the appropriate profile and inspect which tests ran |
