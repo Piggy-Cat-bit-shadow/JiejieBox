@@ -30,6 +30,8 @@ The two named reusable-owner capability and real HTTP-manager retirement-walk te
 locally under Go 1.26.10; they do not enumerate every possible owner.
 Selected `./protocol/mieru` fallback option, cooldown/probe, startup rollback and stale-generation
 tests passed under Go 1.26.10; this does not establish external Mieru interoperability.
+`./protocol/tailscale` `TestTailnetDomainsMatch` and the three named system-binding getter cleanup
+tests passed with `with_tailscale` under Go 1.26.10, using local test fixtures rather than a tailnet.
 `./common/sniff` tests matching `^TestQUICSniffContext` passed under Go 1.26.10; the old
 `TestQUICOwnership` filter matched no test and has been corrected below.
 

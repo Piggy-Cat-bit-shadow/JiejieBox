@@ -55,6 +55,15 @@ forwards reset. See the three `protocol/*/dns_transport.go` implementations. Req
 `IdleConnectionKeeper` interface or walking only global transports can miss these private pools.
 This is `VERIFIED_SOURCE` at `011f3fdcd99`; it is not device or external-network evidence.
 
+For Tailscale, `tailnetDomains` in `protocol/tailscale/dns_transport.go` canonicalizes hosts, search
+domains and route suffixes in one snapshot. A matching resolver-less local suffix takes precedence
+over forwarded suffixes; otherwise forwarded suffixes are checked longest first. Single-label search
+expansion is conditional and must find a known host or forwarded route, not merely any local suffix.
+The endpoint and DNS transport use this model for their preferred-domain decisions. When platform
+interfaces are used, `protocol/tailscale/system_binding.go` supplies Tailscale's default-route hook
+from the network manager and registers cleanup of the shared interface getter. The tagged domain
+and getter-cleanup tests passed locally; they do not establish real tailnet DNS or device handover.
+
 **Scope:** `dns/router.go`, `dns/client.go`, `dns/transport_manager.go`, `dns/transport/*` (including
 `fakeip` and the fork-created `group`), the DNS-facing route actions, and
 `adapter/fakeip_issuance.go`.

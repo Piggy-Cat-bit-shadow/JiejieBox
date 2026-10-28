@@ -126,6 +126,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - DNS group selection, lazy bounded health records, cancellation and NXDOMAIN classification were
   reviewed against source and the earlier local DNS-transport suite. The FakeIP overview was aligned
   with the narrower current-range TUN guard and separate router issuance checks.
+- Tailscale domain matching, resolver-less versus forwarded suffix precedence, platform default-route
+  hook and shared getter cleanup were source-checked. Focused tagged tests passed on Windows; no
+  live tailnet or physical handover was exercised.
 
 ### Module review status
 
