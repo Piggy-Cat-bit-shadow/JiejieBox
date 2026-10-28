@@ -189,16 +189,17 @@ jobs:
             ( cd test && go mod tidy )
           fi
 
-      - name: the frozen pins still satisfy the repository's gates
+      - name: the frozen pins still satisfy the repository's source gates
         run: |
           set -euo pipefail
           ./scripts/ci/check-go-module-integrity.sh --require-checked test
-          ./scripts/ci/check-libbox-abi.sh --pin-only
           go build ./...
           tags="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
           go build -tags "$tags" ./...
           ( cd test && go vet -tags "$tags" ./... )
           echo "PASS: the moved pins build and keep the module graph intact"
+          echo "note: the ABI pin gate runs after the commit, because it reads HEAD and apply"
+          echo "      writes the index - see the step that follows the commit."
 
       # Snapshot AFTER the pins moved, so the lock describes what will be built rather than what
       # was intended. Then verify that claim against the tree: the two must agree, or the file is
@@ -241,7 +242,7 @@ jobs:
 
       # Committed only when there is something to commit. An idempotent preparation must not
       # produce an empty commit or re-trigger a 40-minute Verify for a tree that did not change.
-      - name: commit and push the frozen candidate
+      - name: commit the frozen candidate locally
         id: push
         env:
           CHANGED: ${{ steps.change.outputs.changed }}
@@ -253,7 +254,7 @@ jobs:
             exit 0
           fi
           if [ "$PREP_DRY_RUN" = "true" ]; then
-            echo "dry run: the following would be committed and pushed"
+            echo "dry run: the following would be committed"
             git diff --stat
             git rev-parse HEAD > build/candidate-sha
             exit 0
@@ -262,10 +263,40 @@ jobs:
           git config user.email "release-prepare@users.noreply.github.com"
           git add -A
           git commit -m "release: freeze the dependency sources for $PREP_TAG"
-          # A normal push, never a force: if the branch moved while this ran, re-run the
-          # preparation against the new commit instead of overwriting someone else's work.
-          git push origin "HEAD:testing"
           git rev-parse HEAD > build/candidate-sha
+          echo "committed $(cat build/candidate-sha) locally"
+
+      # Runs on the COMMITTED candidate, where `git ls-tree HEAD` is the freeze. Before the commit
+      # this gate compares the previous gitlink and passes over exactly the move being made.
+      - name: the frozen commit satisfies the client ABI contract
+        run: |
+          set -euo pipefail
+          if [ "$PREP_DRY_RUN" = "true" ]; then
+            echo "dry run: the candidate was not committed, so the ABI pin gate is not evidence"
+            exit 0
+          fi
+          ./scripts/ci/check-libbox-abi.sh --pin-only
+
+      - name: push the frozen candidate
+        env:
+          CHANGED: ${{ steps.change.outputs.changed }}
+        run: |
+          set -euo pipefail
+          if [ "$CHANGED" != "true" ] || [ "$PREP_DRY_RUN" = "true" ]; then
+            echo "nothing to push"
+            exit 0
+          fi
+          # A normal push, never a force. If it is rejected, the branch moved while the gates ran:
+          # the freeze was computed against an older head and must be recomputed, not forced.
+          if ! git push origin "HEAD:testing" 2> build/push.err; then
+            cat build/push.err >&2
+            if grep -q 'rejected' build/push.err; then
+              echo "FAIL: testing moved while this preparation ran; the freeze commit was NOT pushed." >&2
+              echo "      Nothing was forced, and nothing else was changed. Re-run the preparation:" >&2
+              echo "      it resolves the new head and recomputes the freeze on top of it." >&2
+            fi
+            exit 1
+          fi
           echo "pushed $(cat build/candidate-sha)"
 
       # The push above creates the gate runs ASYNCHRONOUSLY. `evidence` fails immediately when a
@@ -286,6 +317,14 @@ jobs:
           if [ "$PREP_DRY_RUN" = "true" ]; then
             echo "dry run: no candidate was pushed, so there is nothing to wait for"
             exit 0
+          fi
+          # The evidence must be about the head that is actually on the branch now, not about a
+          # local commit that failed to push.
+          branch_head="$(git ls-remote origin refs/heads/testing | cut -f1)"
+          if [ "$branch_head" != "$sha" ]; then
+            echo "FAIL: the branch head is $branch_head but this run planned to release $sha." >&2
+            echo "      The branch moved while the preparation ran. Nothing was forced; re-run it." >&2
+            exit 1
           fi
           for attempt in $(seq 1 60); do
             present="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$sha&per_page=100" \
