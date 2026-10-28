@@ -93,13 +93,16 @@ returned `tls handshake: read handshake: unexpected EOF`; a filtered rerun repro
 The cause has not been established. The filtered uTLS fingerprint/ECH and first-flight transform
 tests passed on the same host. Neither result establishes behavior on other Windows versions.
 
-* Run everything from the repository root with the environment in `ci-release.md` §4.
+* Resolve the current toolchain and run root-package commands from the repository root; the setup in
+  `ci-release.md` §4 is a historical example, not a portable requirement.
 * `$OTHERS` = the contents of `release/DEFAULT_BUILD_TAGS_OTHERS`. **Most commands need it**, and the
   root package's tests fail without it.
-* `BLOCKED_BY_ENVIRONMENT` means *this repository has no environment in which the check has been run* —
-  it is not a defect and not a pass.
+* `BLOCKED_BY_ENVIRONMENT` identifies a check unavailable in the stated host or run; it is not a pass
+  and does not imply that no other environment could run it.
 * Historical rows below are not `VERIFIED_CI` merely because a workflow is declared. See the Windows
   daemon module for the separately checked release run and its exact SHA.
+* Unless a row names a newer target or run, its test result is historical v0.1.9 evidence; a command
+  listed for re-checking is not proof it was executed during this calibration.
 
 ## The `.` in every command below is load-bearing
 
@@ -114,7 +117,8 @@ that a repository-tidy pass must not miss:
    package that does not contain the test: the command still exits 0 and now proves nothing. A "tidy"
    move is therefore a silent loss of acceptance coverage, which is worse than an ugly filename.
 
-**The 28 root test files must stay in the root**, and that was measured rather than assumed:
+The historical hygiene audit examined **28 root test files**. Their test names and package placement
+were part of the commands at that revision; re-inventory the current tree before using these counts:
 
 * **9 are `package box` (internal) and cannot move in principle.** They reach root-only identifiers:
   `&Box{ctx:, scope:, statusView:, statusResolver:}` composite literals over unexported fields, plus
@@ -270,9 +274,9 @@ making either claim.
 | 11.2 | The core classifies platform levels; the client only reports them | `common/runtimecoord/platform_events.go:152-220`; `experimental/libbox/platform_events.go` | VERIFIED_SOURCE | read both | — |
 | 11.3 | ABI version is served and consumed | `daemon/started_service.go:39` `APIVersion = 4`; `experimental/libbox/command_client.go:760` | VERIFIED_SOURCE | `git grep -n APIVersion` | git |
 | 11.4 | The Apple client is one source for iOS and macOS | `assert-shared-source` in both jobs; `check-apple-source-selection.sh` **is** wired at `client-apple.yml:134` | VERIFIED_SOURCE (gate declaration) | `bash scripts/ci/check-apple-source-selection.sh` | bash + submodule |
-| 11.5 | The Apple **pin** cannot move without objection | **no *wired* mechanism exists.** `VERIFIED_APPLE_SHA` and the gitlink now **agree** at `5cab4ec5…` (`ece0fb9d2` moved the constant), but nothing runs the comparison; the selection gate is self-referential to the gitlink by design | **KNOWN GAP, VERIFIED_GIT** | `git ls-tree HEAD clients/apple` and `git grep VERIFIED_APPLE_SHA= -- scripts/`, then compare the two by hand | git |
+| 11.5 | Apple gitlink matches its ABI contract pin | `check-libbox-abi.sh --pin-only` is declared in `verify.yml`; the local pin-only check passed for `3aedd741…` | VERIFIED_SOURCE + local script result; not a full ABI sweep or release-artifact proof | `bash scripts/ci/check-libbox-abi.sh --pin-only` | git + bash |
 | 11.5b | A refs file that reinstates a two-source Apple pin is refused, and the refusal does not depend on the caller's environment | `apple-client-source.sh:88-105` greps the **file** before sourcing it; `resolve` (`:386-388`) and `release-apple.sh:181` legitimately export the same names, which the pre-fix environment test mistook for a file declaration | VERIFIED_SOURCE + VERIFIED_UNIT (`ece0fb9d2`) | `sed -n '88,105p' scripts/ci/apple-client-source.sh`; assert the guard greps `$refs_file` and is called before `. "$refs_file"` | sed |
-| 11.6 | ABI call-site compatibility at the pinned revision | **Swift half VERIFIED_UNIT at `5cab4ec5`** — `probe-accessors.py` over a clean `clients/apple`: `scanned 670, violations [], interface_methods 3`. **Kotlin half not run** (no `clients/android` checkout here). For the **v0.1.6 release** revision it stays **UNVERIFIED** — the revision that shipped is older than the one checked | VERIFIED_UNIT (swift) / BLOCKED_BY_ENVIRONMENT (kotlin) | `python3 scripts/ci/probe-accessors.py --contract docs/fork/libbox-abi-contract.tsv --lang swift --root clients/apple` | python3 + submodule |
+| 11.6 | ABI call-site compatibility at the current pinned revisions | a Swift probe was historically run at `5cab4ec5`, not current Apple pin `3aedd741`; Kotlin was not run in that check | UNVERIFIED for current client call sites in this calibration | `python3 scripts/ci/probe-accessors.py --contract docs/fork/libbox-abi-contract.tsv --lang swift --root clients/apple` | Python + checked-out clients |
 | 11.7 | Android AAR provenance and architecture | workflow declares path-filtered testing pushes and dispatch; run 40602193557 succeeded at `1ff0af39110` | **VERIFIED_CI** for that run; later artifact contents not independently checked | `android-core-arm64.yml` and linked run in `modules/ci-release.md` | CI |
 
 ## 12. Build, CI and release
@@ -281,14 +285,14 @@ making either claim.
 |---|---|---|---|---|---|
 | 12.1 | `go build ./...` untagged | run in this audit | **VERIFIED_UNIT** | `go build ./...` | Go |
 | 12.2 | The server profile builds | run in this audit | **VERIFIED_UNIT** | `go build -tags "$OTHERS" ./...` | Go |
-| 12.3 | The Darwin profile **cannot** build on Windows | run in this audit | **VERIFIED_UNIT** of the failure | `go build -tags "$(cat release/DEFAULT_BUILD_TAGS)" ./...` | Go |
+| 12.3 | Target-specific profile and dependency constraints | historical Windows failure; current Windows profile adds `with_purego`, and exact-pinned local Cronet source passed selected purego unit tests | historical failure does not prove current Windows artifact status | inspect current profile and pinned source | target-specific toolchain |
 | 12.4 | The root design-guarantee suite passes **with the right tags** | run in this audit: `ok 5.459s` | **VERIFIED_UNIT** | `go test -count=1 -tags "$OTHERS" .` | Go + tags |
-| 12.5 | The root suite is **executed** by CI | **it is not** — the untagged step runs zero tests | **KNOWN GAP, VERIFIED_SOURCE** | `grep -n 'go test' .github/workflows/*.yml` | — |
+| 12.5 | Root test coverage declared by Verify | untagged compile-only command runs zero tests; a separate filtered root command runs `TestNetLogEventCount` | VERIFIED_SOURCE of declaration; not the full root suite | inspect `.github/workflows/verify.yml` and the exact run | — |
 | 12.6 | Tag composition and the `-checklinkname=0` contract | CI step `:168` | VERIFIED_UNIT | `go test -count=1 ./cmd/internal/...` | Go |
 | 12.7 | Pinned-upstream assumption tripwires | CI step `:179`; the script is wired | **UNVERIFIED (declaration only)** — needs bash | `bash scripts/ci/verify-upstream-assumptions.sh` | bash + network |
 | 12.8 | Nested modules resolve the same fork pins | CI step `:137` | **UNVERIFIED (declaration only)** | `bash scripts/ci/check-go-module-integrity.sh --require-checked test` | bash |
 | 12.9 | Release re-verifies per-platform bytes rather than rebuilding | `release.yml:144-204` | VERIFIED_SOURCE; **no run record** | read the workflow | — |
-| 12.10 | Release acceptance rejects bad evidence | `verify.yml:64`, `:87` run **self-tests against a mock `gh`** | VERIFIED_SOURCE (of the design) | `bash scripts/ci/verify-release-acceptance-test.sh` | bash |
+| 12.10 | Release acceptance rejects bad evidence | `release-contract-verify.yml` declares the self-test against mock `gh`; the release path uses its separate artifact/evidence gate | VERIFIED_SOURCE of declaration, not proof of a current run | `bash scripts/ci/verify-release-acceptance-test.sh` | bash |
 | 12.11 | `verify-evidence/` describes the release tree | **it does not** — all 14 logs name `cfc77dc5`, 101 commits behind, and 15 covered files changed afterwards | **STALE — not evidence** | `head -3 verify-evidence/*.log` | git |
 | 12.12 | The §7.4 stress results | an **empty `<!--STRESS_RESULTS-->` placeholder** | **EVIDENCE ABSENT** | — | — |
 | 12.13 | Windows installer / service / signing gates | nine `.ps1` gates exist; no output archived | **UNVERIFIED (declaration only)** | `client-desktop-windows.yml` (dispatch) | Windows + Admin |

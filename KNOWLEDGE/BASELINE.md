@@ -117,14 +117,14 @@ a fixed one. The defect and its fix are `v0.1.9`; the tag is immutable regardles
 upstream baseline  e4b7e692   the last upstream commit this fork contains
                               (== merge-base with refs/remotes/upstream/testing)
         │
-        │  1,834 fork-only commits at the v0.1.6 baseline
-        │  1,934 fork-only commits including the v0.1.6 -> v0.1.9 delta
+        │  1,834 commits in the historical ancestor range to v0.1.6
+        │  2,015 commits in the historical ancestor range to v0.1.9
         ▼
-production baseline 5fc4f9366  tag v0.1.9 — what the KNOWLEDGE modules now describe
+production baseline 5fc4f9366  tag v0.1.9 — last declared broad knowledge baseline
         │
-        │  documentation and hygiene commits (this refresh)
+        │  substantial production and documentation changes since that baseline
         ▼
-HEAD                          knowledge revision; NOT a production baseline
+HEAD                          current branch tip; re-measure, not necessarily a release
 ```
 
 Measured, so a reader does not have to trust the picture above:
@@ -145,8 +145,9 @@ git diff --shortstat e4b7e692 v0.1.9                  # see the row above
 > `git diff --name-only <a> <b> -- '*.go' ':(exclude)*_test.go'`.
 
 `e4b7e692..a267e99` is an **ancestor-to-descendant range**, not a branch range: `e4b7e692` is the
-upstream tip this fork absorbed and the fork baseline is its descendant. The commits in that range are
-exactly the commits absent from every upstream ref, which is what makes this a fork.
+upstream tip this fork absorbed and the fork baseline is its descendant. The range is not an
+authorship census; upstream rewrites and other refs mean reachability alone cannot establish the
+origin of every patch.
 
 ## The provenance test — use this, never use `git describe`
 
@@ -186,8 +187,8 @@ reachability against it cannot establish upstream provenance.
 git log --oneline v0.1.9..HEAD
 git diff --name-only v0.1.9..HEAD
 
-# 2. If that is empty or documentation-only, the modules are still current.
-#    If not, map the changed paths with modules/README.md and read only those.
+# 2. An empty/code-free delta does not prove old entries are correct.
+#    Map changed paths and independently verify existing load-bearing claims.
 
 # 3. Nothing in KNOWLEDGE/ needs editing for a normal development commit.
 ```

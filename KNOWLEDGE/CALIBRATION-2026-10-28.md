@@ -98,6 +98,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
   resolve/check/dial guarantee cannot be extended to this path without downstream evidence.
   Focused memo/key/no-match tests passed locally; the memo-growth test inserts keys directly and
   does not measure an end-to-end attack. The acceptance rows were narrowed accordingly.
+- A further acceptance/baseline pass corrected the Apple pin gate, root CI test scope, historical
+  release self-test attribution, ancestor-count diagram and the erroneous implication that an empty
+  delta proves old knowledge valid. Historical tests remain scoped to their own revisions.
 
 ### Module review status
 
