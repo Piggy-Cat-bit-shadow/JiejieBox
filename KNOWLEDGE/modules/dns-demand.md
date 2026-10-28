@@ -21,6 +21,15 @@ staggers attempts, advances on fast failure and closes losing connections, inclu
 `common/dialer/dual_stack_scheduler_test.go`. These are `VERIFIED_SOURCE` observations at the
 testing target; runtime and network-specific results require their own evidence.
 
+### Private resolvers owned by endpoints
+
+Tailscale, OpenVPN and OpenConnect DNS transports can own resolvers that are not themselves entries
+in the global DNS manager. Their `CloseIdleConnections` methods snapshot those resolver references
+under the read lock, release the lock and forward the idle-releaser action; `Reset` separately
+forwards reset. See the three `protocol/*/dns_transport.go` implementations. Requiring the broader
+`IdleConnectionKeeper` interface or walking only global transports can miss these private pools.
+This is `VERIFIED_SOURCE` at `011f3fdcd99`; it is not device or external-network evidence.
+
 **Scope:** `dns/router.go`, `dns/client.go`, `dns/transport_manager.go`, `dns/transport/*` (including
 `fakeip` and the fork-created `group`), the DNS-facing route actions, and
 `adapter/fakeip_issuance.go`.
