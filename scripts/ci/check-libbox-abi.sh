@@ -95,7 +95,23 @@ PROJECT_GOMOBILE_VERSION="$(cd "$repo_root" && go list -m -f '{{.Version}}' gith
 # unreachable, which is how the v0.1.6 Apple artifact run was performed - can establish layer 5
 # (this constant and the gitlink agree) and nothing more, and must not report layer 4 as passed
 # on that basis. See docs/fork/apple-artifact-verification.md §9.1.
-VERIFIED_ANDROID_SHA="9d15717a85c5d995f4179457b48213b5c73b511d"
+# Moved to c7837107dc01 on 2026-10-28, when the Android fork converged its five branches into
+# one product main. The move is not a rename: the revision merges that fork's dev (which carried
+# the 2026-10-28 subscription User-Agent fix), the three StringBox commits layer 4 exists for,
+# and SagerNet's dev (nine genuinely unabsorbed commits, three of them the service-lifecycle
+# chain that has to be taken together).
+#
+# What verified it: scripts/ci/probe-accessors.py - the layer-4 scanner - against that checkout,
+# 309 Kotlin files, 3 interface methods, zero violations. That covers both shapes the previous
+# revision got wrong: the extension receiver in Wrappers.kt:49 (RoutePrefix.toIpPrefix) and the
+# implementer in PlatformInterfaceWrapper.kt:445 (RootBridgeSessionWrapper.name).
+#
+# What did NOT verify it, written down so this constant is not read as more than it is: the
+# Kotlin compile. `./gradlew assembleOtherDebug` needs JDK 17 and a build against a freshly
+# regenerated libbox.aar, and the host that performed this merge has neither, so it is NOT_RUN
+# there. The compiler errors recorded in docs/fork/android-abi-migration-closure.md are fixed by
+# the same commits; the accessor sweep is what can be re-run without a toolchain, and it is.
+VERIFIED_ANDROID_SHA="c7837107dc0126fb704fdf08cf203e10b30c8a22"
 # Moved from 90a0e9aef when the Apple gitlink advanced to d05249121, because the two must
 # be the same commit or this gate fails - which is exactly what it did.
 #

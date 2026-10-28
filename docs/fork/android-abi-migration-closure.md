@@ -154,6 +154,38 @@ Three migration gaps, in two distinct shapes:
   missed. This is a whole layer of the migration that a call-site scan cannot see, and the gate
   says so out loud rather than implying it was checked.
 
+### 2026-10-28 status update: L3 is closed on the unified Android main
+
+The table above records the state of the migration when it was written, and the L3 column above
+is the state of the *then*-pinned gitlink (`9d15717a85c5`), which is also the revision the compiler
+output in the next section was produced against. That gitlink has moved, so this section states
+what the new one is and what was actually run, rather than editing the historical rows.
+
+`clients/android` is now `c7837107dc01`: the fork's five branches converged into one product
+`main`, which merges its own `dev` (with the 2026-10-28 subscription User-Agent fix), the three
+StringBox commits (`8e1c3ff`, `ec61030`, `9d15717`) and SagerNet's `dev`.
+
+Evidence, produced by the same layer-4 scanner CI runs:
+
+```sh
+python3 scripts/ci/probe-accessors.py \
+  --contract docs/fork/libbox-abi-contract.tsv --lang kotlin \
+  --root <sing-box-for-android @ c7837107dc01>
+# {"scanned": 309, "violations": [], "interface_methods": 3, "error": ""}
+```
+
+309 Kotlin files read, zero call-site or implementer violations. Both shapes this document said
+the earlier patch missed are now present in the tree: `Wrappers.kt:49`
+(`RoutePrefix.toIpPrefix`'s extension receiver) and `PlatformInterfaceWrapper.kt:445`
+(`RootBridgeSessionWrapper.name` returning a box).
+
+**Not** run: `./gradlew assembleOtherDebug`. It needs JDK 17, Gradle and a regenerated
+`libbox.aar`, and the host that performed this merge has none of them, so the Kotlin compile is
+`NOT_RUN` there - the accessor sweep is the check that can be re-run without a toolchain. The
+compile remains the stronger check and is the one to run on a JDK-17 runner against the AAR from
+`android-core-arm64.yml`; the Android repository itself still has no workflow that compiles
+Kotlin.
+
 ### L4: the Apple fork does not carry the migration at all
 
 The superproject holds `docs/fork/apple-stringbox-callsites.patch` (5 files, 16 lines), but the
