@@ -14,6 +14,11 @@ certificate pin options and uTLS rather than silently treating them as supported
 `option/naive.go` and the fallback tests. This
 does not assert interoperability with every server.
 
+At the `cb71cf80d72` pin, the clean local Cronet fork source `c9c0e6ec8845` declares
+`NaiveClient.Start() (err error)` and assigns a recovered startup panic to that return on its cleanup
+path. This supersedes the historical audit's unnamed-return finding; no native startup-panic or
+target-device run was performed here, and a panic during cleanup is a separate condition.
+
 **Scope:** `protocol/naive/*` (inbound + tag-gated outbound), `transport/http/*` (the fork's largest
 single addition), `common/httpclient/*`, `route/packet_destination_guard.go`.
 
@@ -23,8 +28,9 @@ upstream ancestor `e4b7e692`; at `a267e99` it has **31**, across **64 fork commi
 UoT, padding, masquerade and pre-authentication resource controls."* This is a **fork subsystem**, not
 a dependency bump.
 
-What the fork did **not** add: a Caddy dependency. `go.mod` carries only `caddyserver/certmagic` and
-`caddyserver/zerossl` (ACME). The HTTP engines are `golang.org/x/net/http2` + `.../http2/h2c`
+`go.mod` carries `caddyserver/certmagic` and `caddyserver/zerossl` for certificate management;
+that does not mean the Naive server is implemented with Caddy. The HTTP engines are
+`golang.org/x/net/http2` + `.../http2/h2c`
 (`protocol/naive/inbound.go:32-33`) and the fork's `github.com/sagernet/quic-go` (replaced at
 `go.mod` replacements). The client integration is in `protocol/naive/outbound.go`, while its
 Cronet engine lives in the separate `cronet-go` dependency. A server-side codec test passing proves
@@ -43,10 +49,10 @@ nothing by itself about the client.
 | **Client outbound** | the fork's `cronet-go` | selected by `//go:build with_naive_outbound` (`include/naive_outbound.go:1`) vs a stub (`include/naive_outbound_stub.go`) wired at `include/registry.go:101` |
 
 > **`DEFAULT_BUILD_TAGS_OTHERS` deliberately omits `with_naive_outbound`.** The Linux server therefore
-> ships a Naive **inbound and no Naive outbound** — and that omission is what makes the Linux build
-> possible at all, because the client outbound links `github.com/sagernet/cronet-go/all`, whose files
-> are excluded by build constraints outside Apple platforms. Building with `DEFAULT_BUILD_TAGS` on
-> Windows fails with `build constraints exclude all Go files`.
+> profile includes a Naive **inbound and no Naive outbound**. At the current Cronet fork pin,
+> `cronet-go/all` has Linux and Windows platform files as well as Apple files; the Windows files
+> require `with_purego`, which the Windows profile adds. A local test using exact-pinned Cronet
+> source and purego passed, but does not prove native library loading or artifact support.
 
 Reference-implementation boundary: the two custom codecs are independent, and the two agreeing with
 each other does not substitute for comparison with the reference. Machine-readable padding vectors
@@ -426,7 +432,8 @@ and Caddy references in the fork's own commits and docs.
     address".** They are OR, not AND, within one destination group.
 18. **Do not require both UDP and TCP for HTTP/3-with-fallback.** It is `AnyOf` with UDP
     `Conditional`.
-19. **Do not build with `DEFAULT_BUILD_TAGS` outside Apple.** It carries `with_naive_outbound`, which
-    cannot link there — and that is exactly why `DEFAULT_BUILD_TAGS_OTHERS` exists.
+19. **Select the target's build profile and verify its dependencies.** OTHERS omits Naive outbound;
+    the Windows profile includes `with_purego`. The existence of platform source files alone does
+    not prove that a particular native library or release artifact is usable.
 20. **Do not cite `test/jiejie/**` results from this worktree.** The `test` module is separate, needs a
     reference binary and network, and push CI deliberately does not run it.

@@ -73,6 +73,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
   publication checks closure and TUN serializes redirect updates with close. Updater Close does not
   join, and already-copied general callbacks are not globally recalled; the targeted TUN ordering
   test passed, with no Linux integration claim.
+- Historical BUG-011/014 were rechecked against the uTLS guard and exact local Cronet pin: unsupported
+  ECH fingerprints are rejected at configuration, and Cronet's recovered start panic is assigned to
+  a named return. Native startup failure and every allowed ECH wire combination remain untested.
 
 ### Module review status
 

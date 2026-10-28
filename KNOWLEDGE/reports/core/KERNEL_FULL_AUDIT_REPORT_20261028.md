@@ -9,6 +9,9 @@
 > 并将远程规则集 HTTP 客户端超时设为 5 分钟；不能继续把原报告中的无超时和缺少
 > TUN 关闭保护视为当前状态。Updater 的 Close 仍只取消而不等待，且已复制的通用回调
 > 不等于全部被撤回；应分别核查调用方，不能据此断言所有关闭竞态已解决。
+> 对 BUG-011/014，当前 uTLS 配置入口会拒绝未列入 ECH 支持清单的指纹组合；当前精确
+> Cronet pin 的 `NaiveClient.Start` 使用命名返回值，在恢复 panic 的清理路径中设置错误。
+> 这修正了报告中的旧控制流描述，但不等于已在目标设备上验证所有 ECH 指纹或原生启动失败。
 
 **报告文件：** `KERNEL_FULL_AUDIT_REPORT_20261028.md`  
 **审计对象：** `Piggy-Cat-bit-shadow/sing-box`，`testing` 分支  

@@ -21,6 +21,11 @@ prevents an unbounded retry loop. Reality and uTLS share the first-flight transf
 `common/tls/utls_client.go`; inspect the selected engine before assuming feature parity. These are
 `VERIFIED_SOURCE` facts at `011f3fdcd99`, not a claim that every platform or server was exercised.
 
+`NewUTLSClient` rejects ECH with a fingerprint outside `utlsFingerprintSupportsECH`'s explicit
+allowlist, including the `random` spelling, before constructing the client. The historical full
+audit's claim that these combinations silently proceed predates this gate. This is a configuration
+guard, not wire-level evidence for every allowed preset or server.
+
 The Go module's `replace` directives, not `require` versions alone, select the forked `sing`,
 `sing-tun`, `sing-quic`, `quic-go`, `cronet-go` and `utls` source. Resolve the actual pseudo-version
 in `go.mod` and compare the nested test module separately; Git submodule gitlinks for clients are
