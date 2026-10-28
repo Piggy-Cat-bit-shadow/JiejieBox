@@ -10,8 +10,8 @@
 > below that the baseline equals HEAD or that its post-baseline delta is empty.
 >
 > The branch advanced during this calibration to `cb71cf80d7224a51823b455f0be5959ad8556933`:
-> its version file says 0.1.31 and it changes the `cronet-go/all` pin. A GitHub Release and remote
-> tag for v0.1.31 were not found when checked; a version-file change alone is not a publication.
+> its version file says 0.1.31 and it changes the `cronet-go/all` pin. A later check found the
+> remote v0.1.31 tag peeling to that commit, but no GitHub Release; the tag alone is not a Release.
 > Recheck release records and this new dependency pin before attributing the older tests to it.
 
 **Read this file before anything else. The knowledge base does not describe `HEAD`.**

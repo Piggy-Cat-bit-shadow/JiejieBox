@@ -34,10 +34,15 @@ With `DEFAULT_BUILD_TAGS_OTHERS`, the root tests `TestADNSTransportDetourMustCar
 failure-classification and rollback tests also passed locally; they do not establish interop.
 The unfiltered `go test ./transport/v2rayxhttp -count=1` also passed locally at the newer branch
 state, including the packet-up tests available without extra build tags.
+At the same branch state `go test ./option ./adapter/outbound ./common/trafficclass -count=1`
+passed; this is local unit evidence, not a platform or deployment certification.
 
 `go test -tags with_quic ./transport/masque -run 'TestWriteBatchChunksABurstAboveTheQueueCapacity|TestWriteBatchFallsBackOnlyForTheRefusedTail' -count=1 -v`
 passed both named tests. An untagged run selects neither test, so the untagged package result above
 is not evidence for chunk ownership.
+The tagged HTTP/3 default tests `TestHTTP3MigrationEnabledByDefaultForClient`,
+`TestMASQUEH3PathManagerDefaultsToEnabled`, and `TestParseBBRProfileUnsetKeepsTheLibraryDefault`
+also passed locally; they do not prove migration on a real network.
 
 The unfiltered `go test ./route -count=1` on this Windows host **failed** after 570 seconds:
 `TestTeardown_OneSidedCompletionNeverRunsOnClose` timed out after 120 seconds waiting for the peer

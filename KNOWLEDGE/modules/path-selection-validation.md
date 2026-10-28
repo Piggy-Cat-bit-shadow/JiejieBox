@@ -36,8 +36,9 @@ including 16 test files**.
 
 ```text
 CONTROL PATH   who SELECTS what — the routing rule's outbound root, then every group entered,
-               in descent order. A group selects and then disappears: it never wraps a
-               connection and never sees a byte. It is NOT a hop.
+               in descent order. A group is NOT a physical hop. Selection groups can still wrap
+               the returned connection for interruption/lifecycle management; see selector.go and
+               urltest.go. Physical-path representation must not erase that separate contract.
 
 PHYSICAL PATH  the hops the bytes actually traverse, in PACKET order:
                Hops[0] = nearest this device, Hops[len-1] = the exit.

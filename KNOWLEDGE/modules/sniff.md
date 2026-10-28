@@ -9,6 +9,11 @@ does not justify suppressing sniffing for every fragmented packet. See
 `route/fragmented_quic_known_domain_test.go` and the helper's conditions. Source inspection is not
 evidence of interoperability against arbitrary QUIC clients.
 
+TLS and QUIC SNI also pass through `ParseSocksaddrHostPort(...).Fqdn` before being published to
+`metadata.Domain` (`common/sniff/tls.go`, `common/sniff/quic.go`). This keeps an IP-literal SNI from
+being represented as a domain for rule matching; see `common/sniff/sni_domain_normalization_test.go`.
+The unfiltered `common/sniff` package tests passed locally in this refresh.
+
 **Scope:** `common/sniff/*` (13 non-test files) and its consumer `route/route.go actionSniff`.
 
 **Provenance:** the fork modified `sniff.go`, `quic.go`, `http.go`, `tls.go` and added `wireguard.go`.

@@ -22,8 +22,10 @@ rebuild**, and stale resources retire lazily when demanded.
 
 ## 3. Selection is a preview until it is committed
 
-The routing rules choose an outbound **root**; groups then select. A group **selects and then
-disappears** — it never wraps a connection, never sees a byte, and is **not a hop**. At run time the
+The routing rules choose an outbound **root**; groups then select. A group is a control-plane
+selection, **not a physical hop**. Some groups wrap the returned connection for interruption and
+lifecycle management (`protocol/group/selector.go`, `urltest.go`), so do not infer that selection
+means the group never wraps a connection. At run time the
 `commit` flag is this separation: a preview must not consume a rotation slot. Any diagnostic that
 reports a group as a hop, or reports the hop list backwards, describes a path the traffic does not
 take.

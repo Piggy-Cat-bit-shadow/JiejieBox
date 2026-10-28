@@ -107,9 +107,11 @@ before, **slot 0 served every tunnel**. CONNECT is gated on `HandshakeComplete` 
 a 0-RTT replay window. `http3_fallback` is consumed but its defaults were kept at **5 s / 5 m**, not
 the httpclient's 5 m / 48 h (`9491008a9` — a dead-config fix).
 
-QUIC tuning is **opt-in** (`e4f847ecf`): a `MaxIncomingStreams` of `1<<60` was removed (quic-go's
-default is 100; the production topology asks 256), the path manager is opt-in, and BBR is used only
-if named.
+At the current target, `option/http.go` and `transport/http/server_h3.go` leave the HTTP/3 server
+path manager enabled by default; disabling migration is the opt-in setting. The H3 client test also
+checks that its `DisablePathManager` is false by default. Congestion-control options are separate
+for client and server, and an unset client choice leaves the library default; do not infer BBR from
+an unset option. Verify the particular constructor and pinned QUIC version before generalizing.
 
 ---
 
