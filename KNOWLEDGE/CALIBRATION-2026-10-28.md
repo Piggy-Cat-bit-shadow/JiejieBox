@@ -32,6 +32,10 @@ This is an operational ledger, not a replacement for the modules or a new produc
   in the current tree; two remaining names were verified as shell functions. This is a limited
   spelling check, not proof that each claim or historical line number is correct. Relative Markdown
   links in root/module documents were also checked; this does not validate prose path references.
+- Additional source review distinguished ShadowTLS's first-record deadline and target cleanup,
+  endpoint-owned DNS resolver retirement, power-observer notification copying, and Android's separate
+  procfs helper from the removed `UseProcFS` platform-interface method. Corresponding targeted
+  tests are recorded in `ACCEPTANCE.md`; client-device ABI behavior remains separately unverified.
 
 ### Module review status
 

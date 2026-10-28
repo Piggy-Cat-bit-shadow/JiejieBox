@@ -161,8 +161,13 @@ Not comments — artifacts:
 `PlatformInterface` (`experimental/libbox/platform.go:5-35`) also carries platform-authored
 **judgements** the core consumes without re-deriving: `isExpensive` / `isConstrained` (`:123`),
 `NetworkInterface.Type` / `Metered` (`:141`, `:145`), and capability declarations
-(`UnderNetworkExtension :15`, `IncludeAllNetworks :16`, `UseProcFS :24`, `UsePlatformShell :25`,
+(`UnderNetworkExtension`, `IncludeAllNetworks`, `UsePlatformShell`,
 `UsePlatformBridge :31`, `UsePlatformAutoRedirect :33`).
+
+`UseProcFS` is no longer a `PlatformInterface` method at the reviewed target. The wrapper delegates
+owner lookup to `PlatformInterface.FindConnectionOwner`; Android also exposes a separate libbox
+`FindConnectionOwner` implementation backed by procfs (`connection_owner_android.go`). Do not infer
+that removal of the old wrapper branch removed the Android helper or that every client invokes it.
 
 > **Accurate wording: the core owns lifecycle and memory classification and the actions they earn; the
 > platform owns network cost/type classification and its own capabilities.** Saying "the platform only
