@@ -298,6 +298,7 @@ Android 的删除顺序刻意是：先建 4 个 `archive/*` 标签 → 推送标
      `macos` 作业在 17:51:53 拿到 runner `...1000010972` 并跑到第 22 步（失败在 artifact 下载——第一次探针把
      download 步骤改到了 iOS 作业上，是我自己的编辑错误，已修正）。之后的探针 `40741025099`、`40743992138`、
      `40750571354` 都再次没拿到 runner。
+     （后续又发了三个并发探针 `40752723255`/`40752743375`/`40752762632`，每个有自己的 15 分钟窗口，全部同样被取消。**探针分支在用过之后已删除**，远端只剩 `testing` 与保留的 `pending/…`；重建方法就是上面三处改动——libbox 置 skip、macos 的 download 换成 `gh run download <run> --name jiejiebox-libbox-<core> --dir build/apple-libbox`、validate 的 `--parent-sha` 指向该内核提交——资产名与内核提交都记在上面。）
    - 因此：`apple/main` **保持 `16cf87b4`**（不含上游合并），13 个上游提交的合并留在候选 `sync/upstream-2026-10-28`（`be3258a`，Swift 语法层已验证：422 文件解析通过）。这是施工令要求的"无法可靠编译就停留在旧正式 Pin，报告候选与失败证据"，而不是把未验证的 Swift 变更合进产品线。**注意**：`clients/apple` gitlink 已经前移到 `16cf87b4`，因为那只是 fork 自己的 UA 修复、且已随 v0.1.33 构建过；层 4 扫描（423 文件 / 0 违规）与 `VERIFIED_APPLE_SHA` 在同一个提交里更新。另外记录一个**真实发现**：第一次非 dry-run 的 `release-prepare` 把 gitlink 写进索引后，`check-libbox-abi.sh --pin-only` 仍然通过，因为它读的是 `git ls-tree HEAD`（旧提交）而不是索引——**门禁被自己的执行顺序绕过了**。工作流已改成 提交 → ABI 门 → 推送，让这道门真正检查要推出去的那个提交。
    - 恢复条件：macOS 配额恢复后，`gh workflow run client-apple.yml -f build_ios=false -f build_macos=true`（仓库变量 `APPLE_CLIENT_SHA=be3258ab57dd…`）。绿了以后：fast-forward `apple/main` → 更新 `clients/apple` gitlink 与 `VERIFIED_APPLE_SHA` → 重跑 `release-freeze.py snapshot` → 删除候选分支。
 1b. **准备运行期间主干被推新提交时，工作流会失败而不是强推**（本轮实测：`40715812910` 的推送被 `! [rejected] HEAD -> testing (fetch first)` 拒绝）。这是设计：冻结是对某个 head 算出来的，换成新 head 必须重算。失败信息已改成明确的"分支在运行期间移动了，请重跑"，并在证据步骤前增加一次 `git ls-remote` 对照，避免把本地提交当成发布候选。
