@@ -185,6 +185,18 @@ jobs:
         # asserts the same command fails and names the missing client.
         run: ./scripts/ci/test-check-libbox-abi.sh
 
+      - name: the dependency pins are the ones the release froze
+        # The release path freezes every source it consumes into release/source-lock.json and
+        # builds the tag from that exact commit. This is the other half: a later commit that moves
+        # a replace directive or a client gitlink without regenerating the lock fails HERE, on the
+        # push, rather than being discovered by a release whose installer carries a pin nobody
+        # reviewed. It needs no network - it compares the tree with the file.
+        #
+        # v0.1.33 is the case for it: clients/desktop sat one commit behind the Desktop fix, the
+        # Windows installer shipped the old subscription User-Agent, and every build was green
+        # because a green build only proves the pin is consistent, not that it is current.
+        run: python3 scripts/ci/release-freeze.py verify --lock release/source-lock.json
+
       - name: gomobile single-source check
         # `github.com/sagernet/gomobile/cmd/gomobile@v0.1.13` used to be written out
         # three times: twice in the Apple workflow and once in the Makefile. Nothing

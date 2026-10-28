@@ -1,0 +1,139 @@
+{
+  "schema": 1,
+  "comment": [
+    "The ONE machine-readable statement of which branches a release consumes, and from which forks.",
+    "",
+    "Why this file exists: the release used to consume ten dependency repositories through three",
+    "different mechanisms that could not see each other - Go replace directives in go.mod and",
+    "test/go.mod, gitlinks for the three clients, and a nested gitlink inside the Desktop client,",
+    "plus the Apple source rule in release/apple-client-refs.env which resolved main at build",
+    "time. Nothing compared them, so a pin could lag a fork's product branch for weeks without a",
+    "single red build - which is exactly what happened to clients/desktop before v0.1.33.",
+    "",
+    "This file records INTENT (repository + branch + policy). It deliberately records no SHAs:",
+    "the SHAs live in go.mod and in the gitlinks, and release/source-lock.json is the snapshot",
+    "derived from those. A second copy of a SHA here would be a second truth to keep in sync,",
+    "which is the defect the freeze exists to remove.",
+    "",
+    "Moved here from FORK_REPOSITORIES.md and .gitmodules, which stay as the human-readable",
+    "inventory and the submodule definitions. scripts/ci/release-freeze.py is the only reader.",
+    "",
+    "policy:",
+    "  update      - release preparation may move this pin to the branch tip. The move still has",
+    "                to pass the ABI, module-integrity and build gates; a diverged fork is a",
+    "                failure, never an automatic merge.",
+    "  controlled  - never moved by release preparation. Used for the 29 cronet-go native",
+    "                platform modules, whose archives are built with a Chromium toolchain that",
+    "                does not exist in this repository; rewriting the SHA without rebuilding and",
+    "                re-verifying those archives would ship new bindings against old binaries.",
+    "  report      - resolved and recorded, but never written by release preparation because the",
+    "                pin lives in ANOTHER repository's tree (Desktop's dashboard gitlink). Moving",
+    "                it means a commit in that repository first, so the order stays",
+    "                Dashboard -> Desktop -> kernel."
+  ],
+  "go_modules": [
+    {
+      "module": "github.com/sagernet/sing",
+      "slug": "Piggy-Cat-bit-shadow/sing",
+      "branch": "dev",
+      "policy": "update",
+      "note": "sing-box's socket/transport/pause layer. Tracks SagerNet/sing dev."
+    },
+    {
+      "module": "github.com/sagernet/sing-tun",
+      "slug": "Piggy-Cat-bit-shadow/sing-tun",
+      "branch": "dev",
+      "policy": "update",
+      "note": "TUN/route/nfqueue stack. Tracks SagerNet/sing-tun dev."
+    },
+    {
+      "module": "github.com/sagernet/sing-quic",
+      "slug": "Piggy-Cat-bit-shadow/sing-quic",
+      "branch": "main",
+      "policy": "update",
+      "note": "The option-to-Config pass-through for QUIC; carries the owned-datagram ceiling."
+    },
+    {
+      "module": "github.com/sagernet/quic-go",
+      "slug": "Piggy-Cat-bit-shadow/quic-go",
+      "branch": "sagernet",
+      "policy": "update",
+      "note": "The SagerNet module line only. Never the MetaCubeX line; see docs/fork notes."
+    },
+    {
+      "module": "github.com/metacubex/utls",
+      "slug": "Piggy-Cat-bit-shadow/utls",
+      "branch": "main",
+      "policy": "update",
+      "note": "Tracks MetaCubeX/utls v1.9.0-mod-meta; UPSTREAM.md in that repository is the authority."
+    },
+    {
+      "module": "github.com/sagernet/cronet-go",
+      "slug": "Piggy-Cat-bit-shadow/cronet-go",
+      "branch": "main",
+      "policy": "update",
+      "note": "Root module: Go bindings for the native engine. Moves with `all`."
+    },
+    {
+      "module": "github.com/sagernet/cronet-go/all",
+      "slug": "Piggy-Cat-bit-shadow/cronet-go",
+      "branch": "main",
+      "policy": "update",
+      "note": "The aggregate module. Must equal the root pin; verify enforces it."
+    }
+  ],
+  "cronet_native": {
+    "module_prefix": "github.com/sagernet/cronet-go/lib/",
+    "slug": "Piggy-Cat-bit-shadow/cronet-go",
+    "expected_modules": 29,
+    "policy": "controlled",
+    "note": "The 29 platform archives. They are pinned to an older SHA than the root module on purpose; see go.mod's comment and release/cronet-provenance.txt."
+  },
+  "clients": [
+    {
+      "path": "clients/apple",
+      "slug": "Piggy-Cat-bit-shadow/sing-box-for-apple",
+      "branch": "main",
+      "policy": "update",
+      "note": "One source for iOS and macOS. A formal release must build this exact SHA; release/apple-client-refs.env still allows a manual build to resolve main as a moving target."
+    },
+    {
+      "path": "clients/android",
+      "slug": "Piggy-Cat-bit-shadow/sing-box-for-android",
+      "branch": "main",
+      "policy": "update",
+      "note": "Single product branch since the 2026-10-28 convergence."
+    },
+    {
+      "path": "clients/desktop",
+      "slug": "Piggy-Cat-bit-shadow/sing-box-for-desktop",
+      "branch": "main",
+      "policy": "update",
+      "note": "Windows client and installer."
+    }
+  ],
+  "nested": [
+    {
+      "parent": "clients/desktop",
+      "path": "dashboard",
+      "slug": "Piggy-Cat-bit-shadow/sing-box-dashboard",
+      "branch": "main",
+      "policy": "report",
+      "note": "The web UI embedded in the Desktop client. Its pin lives in the Desktop repository, so a lag is reported here and fixed there first."
+    }
+  ],
+  "upstream_mirrors": [
+    {
+      "slug": "MetaCubeX/utls",
+      "branch": "v1.9.0-mod-meta",
+      "mirror_branch": "mirror/meta-v1.9.0",
+      "note": "Audit baseline only. It is not a product branch and never receives fork commits."
+    },
+    {
+      "slug": "SagerNet/sing-box",
+      "branch": "testing",
+      "mirror_branch": null,
+      "note": "The kernel's own upstream. Reported so a release states how far the fork has moved, not to be merged by the freeze."
+    }
+  ]
+}

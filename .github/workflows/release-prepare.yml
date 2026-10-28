@@ -1,0 +1,355 @@
+name: Release preparation
+
+# Freezes every source a release consumes, BEFORE a tag exists.
+#
+# # The failure this exists for
+#
+# A release of this fork is built from eleven repositories. v0.1.33 was tagged while
+# `clients/desktop` still pointed one commit behind the Desktop fix it was supposed to ship, so
+# the Windows installer carried the old subscription User-Agent - and every build was green,
+# because a green build only proves the pin is CONSISTENT, never that it is CURRENT. The same
+# round also had the Apple client built from a SHA resolved at build time while its gitlink
+# recorded a different one, so two products of one release described their source two ways.
+#
+# # What this workflow does, in order
+#
+#   1. preflight   - the checkout is the product branch, the tree is clean, the version is the
+#                    one asked for, and the tag does not exist yet.
+#   2. resolve     - every declared dependency's tracked branch tip, at an exact SHA.
+#   3. check       - compare those tips with the pins the tree actually builds. A fork that has
+#                    DIVERGED stops the run here: integrating it is a semantic job with tests,
+#                    and this workflow must never merge upstream code or guess a resolution.
+#   4. apply       - move the pins that are merely behind, computing Go pseudo-versions with the
+#                    toolchain. `controlled` pins (the 29 cronet native modules) are never moved.
+#   5. gates       - module integrity, the libbox ABI pin, a real build, and the freeze's own
+#                    verify. A pin that does not compile does not get frozen.
+#   6. commit/push - only when a pin actually moved, so a current tree produces no empty commit
+#                    and does not re-trigger CI for nothing.
+#   7. snapshot    - release/source-lock.json, derived from the tree AFTER the pins were applied.
+#   8. evidence    - wait for the exact-SHA Verify and Release-contract-verification runs of the
+#                    candidate commit, requiring every job to have succeeded. Missing or skipped
+#                    gates are a failure, never a fallback to an older green run.
+#   9. tag         - only with create_tag, only after the evidence step passed, and only at the
+#                    candidate commit that evidence was obtained for.
+#
+# # What it deliberately does NOT do
+#
+#   * It does not publish. Creating the tag is the last act here; publishing stays in Release,
+#     which downloads artifacts that CI already built and verified for that exact commit.
+#   * It does not merge upstream forks, move cronet's native archives, or rewrite the Desktop
+#     repository's nested dashboard pin. Those are separate repositories with their own gates;
+#     when one of them lags, this workflow REPORTS it and the fix is a commit there.
+#   * It does not tag a commit whose CI has not finished. Evidence is resolved by exact head_sha
+#     and the newest run at that SHA must be completed and successful.
+#
+# # The default is a dry run
+#
+# `dry_run` defaults to true: resolve, classify, snapshot, run the gates, and print the report -
+# writing nothing. That is the mode to use while preparing a release. Publishing the tag needs
+# `dry_run: false` AND `create_tag: true`, two deliberate acts, because a tag is immutable here
+# (`release.yml` refuses to move one) and a wrong tag costs a version number to fix.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Report only: resolve, classify, freeze and run the gates, but commit, push and tag nothing'
+        type: boolean
+        default: true
+      create_tag:
+        description: 'Create and push the release tag once the candidate has exact-SHA CI evidence'
+        type: boolean
+        default: false
+      version:
+        description: 'Expected release version (must equal release/JIEJIE_VERSION); empty means take the file'
+        type: string
+        required: false
+        default: ''
+      tag:
+        description: 'Tag to create (default: v<version>)'
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  actions: read
+
+# One preparation at a time, and never cancelled: two runs must not race the same pins, and a
+# cancelled run part-way through a push is exactly the state this workflow exists to prevent.
+concurrency:
+  group: release-prepare
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: check out the product branch with its submodules
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # The nested dashboard pin lives inside clients/desktop, so the freeze reads it from a
+          # real checkout rather than an API call.
+          submodules: recursive
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            test/go.sum
+
+      # Inputs are passed through the ENVIRONMENT and never interpolated into the shell body:
+      # `${{ }}` is substituted before the shell sees it, so an input carrying shell syntax would
+      # become shell syntax. This is the same rule release.yml follows.
+      - name: preflight
+        env:
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_CREATE_TAG: ${{ inputs.create_tag }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          for flag in "$INPUT_DRY_RUN" "$INPUT_CREATE_TAG"; do
+            case "$flag" in
+              true|false) ;;
+              *) echo "FAIL: a boolean input is '$flag', not true or false." >&2; exit 1 ;;
+            esac
+          done
+
+          branch="$(git rev-parse --abbrev-ref HEAD)"
+          if [ "$branch" != "testing" ]; then
+            echo "FAIL: release preparation runs from testing, not '$branch'." >&2
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "FAIL: the working tree is not clean; a freeze must start from committed source." >&2
+            git status --short >&2
+            exit 1
+          fi
+
+          version="$(tr -d '[:space:]' < release/JIEJIE_VERSION)"
+          if [ -n "$INPUT_VERSION" ] && [ "$INPUT_VERSION" != "$version" ]; then
+            echo "FAIL: release/JIEJIE_VERSION says $version, the run asked for $INPUT_VERSION." >&2
+            exit 1
+          fi
+          tag="${INPUT_TAG:-v$version}"
+          case "$tag" in
+            v[0-9]*) ;;
+            *) echo "FAIL: '$tag' does not look like a release tag." >&2; exit 1 ;;
+          esac
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "FAIL: tag $tag already exists. A published tag is immutable here; bump" >&2
+            echo "      release/JIEJIE_VERSION and prepare a new version instead." >&2
+            exit 1
+          fi
+
+          {
+            echo "PREP_VERSION=$version"
+            echo "PREP_TAG=$tag"
+            echo "PREP_DRY_RUN=$INPUT_DRY_RUN"
+            echo "PREP_CREATE_TAG=$INPUT_CREATE_TAG"
+          } >> "$GITHUB_ENV"
+          echo "preparing $tag for version $version (dry_run=$INPUT_DRY_RUN, create_tag=$INPUT_CREATE_TAG)"
+
+      # Every declared dependency's tracked branch tip. This is the ONLY step that asks a remote
+      # what its branch points at; everything downstream compares against the recorded answer,
+      # so a branch moving mid-run cannot produce a half-updated tree.
+      - name: resolve every declared dependency branch
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          python3 scripts/ci/release-freeze.py resolve --out build/resolve.tsv
+
+      # Divergence fails here, before anything is written. The report names the repository, the
+      # pinned SHA, the branch tip and what has to happen instead of an automatic move.
+      - name: compare the branch tips with the pins this tree builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/release-freeze.py check \
+            --resolve build/resolve.tsv --json build/freeze.json
+
+      - name: move the pins that are behind
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/release-freeze.py apply --resolve build/resolve.tsv
+          if [ -n "$(git status --porcelain)" ]; then
+            # A replace directive that names a version must be accompanied by that version's
+            # hashes, and a nested module does not inherit the root's go.sum.
+            go mod tidy
+            ( cd test && go mod tidy )
+          fi
+
+      - name: the frozen pins still satisfy the repository's gates
+        run: |
+          set -euo pipefail
+          ./scripts/ci/check-go-module-integrity.sh --require-checked test
+          ./scripts/ci/check-libbox-abi.sh --pin-only
+          go build ./...
+          tags="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
+          go build -tags "$tags" ./...
+          ( cd test && go vet -tags "$tags" ./... )
+          echo "PASS: the moved pins build and keep the module graph intact"
+
+      # Snapshot AFTER the pins moved, so the lock describes what will be built rather than what
+      # was intended. Then verify that claim against the tree: the two must agree, or the file is
+      # a wish list and the release path would trust it.
+      - name: freeze the source lock
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/release-freeze.py snapshot \
+            --resolve build/resolve.tsv \
+            --out release/source-lock.json \
+            --md build/source-lock.md
+          python3 scripts/ci/release-freeze.py verify --lock release/source-lock.json
+
+      - name: record whether a pin actually moved
+        id: change
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git status --short
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "every pin is current; there is nothing to commit"
+          fi
+
+      - name: upload the freeze report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-freeze-report
+          path: |
+            build/freeze.json
+            build/source-lock.md
+            build/resolve.tsv
+            release/source-lock.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      # Committed only when there is something to commit. An idempotent preparation must not
+      # produce an empty commit or re-trigger a 40-minute Verify for a tree that did not change.
+      - name: commit and push the frozen candidate
+        id: push
+        env:
+          CHANGED: ${{ steps.change.outputs.changed }}
+        run: |
+          set -euo pipefail
+          if [ "$CHANGED" != "true" ]; then
+            echo "nothing to commit"
+            git rev-parse HEAD > build/candidate-sha
+            exit 0
+          fi
+          if [ "$PREP_DRY_RUN" = "true" ]; then
+            echo "dry run: the following would be committed and pushed"
+            git diff --stat
+            git rev-parse HEAD > build/candidate-sha
+            exit 0
+          fi
+          git config user.name "jiejie release preparation"
+          git config user.email "release-prepare@users.noreply.github.com"
+          git add -A
+          git commit -m "release: freeze the dependency sources for $PREP_TAG"
+          # A normal push, never a force: if the branch moved while this ran, re-run the
+          # preparation against the new commit instead of overwriting someone else's work.
+          git push origin "HEAD:testing"
+          git rev-parse HEAD > build/candidate-sha
+          echo "pushed $(cat build/candidate-sha)"
+
+      - name: require exact-SHA evidence for the candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sha="$(cat build/candidate-sha)"
+          echo "candidate commit: $sha"
+          # A dry run does not create the candidate, so claiming evidence for the commit that
+          # happens to be checked out would be a false claim about source that was never frozen.
+          if [ "$PREP_DRY_RUN" = "true" ]; then
+            echo "dry run: no evidence is claimed. Re-run with dry_run=false to produce the"
+            echo "         candidate commit and require its exact-SHA gates."
+            exit 0
+          fi
+          ./scripts/ci/release-artifacts.sh evidence \
+            --repo "$GITHUB_REPOSITORY" \
+            --sha "$sha" \
+            --out build/evidence.tsv \
+            --interval 30 \
+            --timeout 5400
+          echo "required evidence, newest exact-SHA run each, every job successful:"
+          while IFS=$'\t' read -r wf wfid rid rnum status conclusion rsha url; do
+            [ -n "$wf" ] || continue
+            printf '  %-46s run %-12s %s  %s\n' "$wf" "$rid" "$conclusion" "$url"
+          done < build/evidence.tsv
+
+      # The one irreversible act, and it is last. It is gated on the evidence step above having
+      # run for THIS commit, so a tag can only land on a commit whose gates really passed.
+      - name: create the immutable release tag at the frozen candidate
+        if: ${{ inputs.create_tag && !inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          sha="$(cat build/candidate-sha)"
+          if git ls-remote --exit-code --tags origin "refs/tags/$PREP_TAG" >/dev/null 2>&1; then
+            echo "FAIL: $PREP_TAG appeared while this run was preparing; refusing to move it." >&2
+            exit 1
+          fi
+          git config user.name "jiejie release preparation"
+          git config user.email "release-prepare@users.noreply.github.com"
+          # The message is assembled rather than written as a multi-line -m: a here-document or a
+          # literal newline inside this block scalar is what turned the first version of this step
+          # into a YAML parse error, and the tag message is not worth that risk.
+          message="Release $PREP_TAG"
+          message="$message$(printf '\n\n')Frozen source lock: release/source-lock.json at this commit."
+          message="$message$(printf '\n')Every dependency pin in that file was resolved, classified and built before this tag existed."
+          git tag -a "$PREP_TAG" -m "$message" "$sha"
+          git push origin "$PREP_TAG"
+          readback="$(git ls-remote origin "refs/tags/$PREP_TAG" | cut -f1 | head -1)"
+          peeled="$(git ls-remote origin "refs/tags/$PREP_TAG^{}" | cut -f1 | head -1)"
+          echo "tag $PREP_TAG -> ${peeled:-$readback}"
+          if [ "${peeled:-$readback}" != "$sha" ]; then
+            echo "FAIL: the tag did not land on the candidate commit." >&2
+            exit 1
+          fi
+          {
+            echo "### $PREP_TAG is frozen"
+            echo ""
+            echo "Tag \`$PREP_TAG\` points at \`$sha\`, and \`release/source-lock.json\` there is the"
+            echo "source set that passed the gates above."
+            echo ""
+            echo "Next, and only when you want to publish:"
+            echo ""
+            echo '```'
+            echo "gh workflow run release.yml --ref testing -f tag=$PREP_TAG"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: print what a dry run would have done
+        if: ${{ inputs.dry_run }}
+        env:
+          CHANGED: ${{ steps.change.outputs.changed }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### Dry run: nothing was written"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| release | \`$PREP_TAG\` |"
+            echo "| pins moved | \`${CHANGED}\` |"
+            echo "| candidate | \`$(cat build/candidate-sha)\` |"
+            echo ""
+            echo "Re-run with \`dry_run: false\` to commit and push the freeze, then with"
+            echo "\`dry_run: false\` and \`create_tag: true\` to cut the tag once CI is green."
+          } >> "$GITHUB_STEP_SUMMARY"

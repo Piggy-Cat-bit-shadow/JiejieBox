@@ -49,10 +49,15 @@ on:
       # declarations, so those files are tooling inputs too.
       - ".github/workflows/release.yml"
       - ".github/workflows/release-contract-verify.yml"
+      - ".github/workflows/release-prepare.yml"
       - ".github/workflows/client-desktop-windows.yml"
       - ".github/workflows/verify.yml"
       - ".github/workflows/mobile-contract.yml"
       - ".github/workflows/android-core-arm64.yml"
+      - "scripts/ci/release-freeze.py"
+      - "scripts/ci/test-release-freeze.py"
+      - "release/dependencies.json"
+      - "release/source-lock.json"
       - "scripts/ci/release-artifacts.sh"
       - "scripts/ci/test-release-artifacts.sh"
       - "scripts/ci/lib.sh"
@@ -240,6 +245,23 @@ jobs:
           grep -A1 -E '^FAIL ' "$log" | head -40
           echo "RELEASE_GATE_FAILURE_END"
           exit 0
+
+      - name: the freeze helper's behavioural suite
+        # The freeze decides which fork SHAs a release is built from, and it is the only thing
+        # standing between "the pin moved" and "the release fails closed". Its suite drives real
+        # throwaway repositories through the diverged, missing-branch, root/test-mismatch,
+        # cronet-native-split and nested-lag cases, with a fake `gh` so no case can pass because
+        # GitHub happened to answer today.
+        if: always()
+        run: |
+          set -uo pipefail
+          mkdir -p verify-logs
+          set +e
+          python3 scripts/ci/test-release-freeze.py 2>&1 | tee verify-logs/release-freeze.log
+          rc="${PIPESTATUS[0]}"
+          set -e
+          echo "$rc" > verify-logs/release-freeze.exit
+          exit "$rc"
 
       - name: desktop release-version contract tests
         if: always()

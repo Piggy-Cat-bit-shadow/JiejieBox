@@ -66,6 +66,7 @@ AUDIT = os.path.join(WF, "client-desktop-windows-runtime-audit.yml")
 LINUX = os.path.join(WF, "server-linux-amd64.yml")
 MOBILE = os.path.join(WF, "mobile-contract.yml")
 APPLE = os.path.join(WF, "client-apple.yml")
+PREPARE = os.path.join(WF, "release-prepare.yml")
 GATE = os.path.join(REPO, "scripts", "ci", "release-artifacts.sh")
 ACCEPTANCE = os.path.join(REPO, "scripts", "ci", "verify-release-acceptance.sh")
 
@@ -1257,6 +1258,85 @@ def check_executable_invocations():
            ("non-executable: " + ", ".join(stray)) if stray else "all .sh are 100755")
 
 
+def check_release_prepare():
+    """Release preparation must be able to freeze pins without being able to publish.
+
+    This workflow is the only thing in the repository that writes dependency pins and then creates
+    a release tag, so three properties are asserted rather than trusted:
+
+      1. it cannot publish. `contents: write` is needed to push the freeze commit and the tag, and
+         that is exactly why publishing must NOT be reachable from here - the tag is the last act,
+         and Release (which downloads artifacts CI already built) stays the only publisher.
+      2. it cannot run two preparations at once, and a preparation is never cancelled: two runs
+         racing the same pins is the state this workflow exists to prevent.
+      3. no `${{ inputs.* }}` appears inside a `run:` body. `${{ }}` is substituted before the
+         shell sees the text, so an input carrying a backtick or `"; rm -rf /"` becomes shell
+         syntax. Every input here reaches the shell through `env:` instead.
+
+    The tag step is asserted to be gated on BOTH `create_tag` and `not dry_run`, because a dry run
+    that could tag would make the safe default the dangerous one.
+    """
+    if not os.path.isfile(PREPARE):
+        report("release preparation workflow exists", False, PREPARE)
+        return
+    text, workflow, on = load(PREPARE)
+    jobs = workflow.get("jobs") or {}
+    steps = [step for job in jobs.values() for step in (job.get("steps") or [])]
+
+    declared_inputs = set(inputs_of(on))
+    report("release preparation: declares dry_run, create_tag, version and tag",
+           {"dry_run", "create_tag", "version", "tag"} <= declared_inputs,
+           "inputs=%s" % sorted(declared_inputs))
+
+    dry_run = (inputs_of(on).get("dry_run") or {}).get("default")
+    report("release preparation: dry run is the default", dry_run is True, "default=%r" % dry_run)
+
+    leaky = []
+    for index, step in enumerate(steps, 1):
+        body = step.get("run") or ""
+        for match in re.finditer(r"\$\{\{\s*inputs\.[A-Za-z0-9_-]+", body):
+            leaky.append("step %d (%s): %s" % (index, step.get("name", "<unnamed>"), match.group(0)))
+    report("release preparation: no input is interpolated into a shell body",
+           not leaky, "; ".join(leaky) or "inputs travel through env")
+
+    tag_steps = [step for step in steps if "git tag" in (step.get("run") or "")]
+    report("release preparation: there is exactly one tag-creating step", len(tag_steps) == 1,
+           "%d found" % len(tag_steps))
+    if tag_steps:
+        condition = str(tag_steps[0].get("if") or "")
+        report("release preparation: the tag step needs create_tag AND not dry_run",
+               "inputs.create_tag" in condition and "inputs.dry_run" in condition,
+               "if=%s" % (condition or "<none>"))
+
+    concurrency = workflow.get("concurrency") or {}
+    report("release preparation: a preparation is never cancelled concurrently",
+           concurrency.get("cancel-in-progress") is False
+           and isinstance(concurrency.get("group"), str),
+           "concurrency=%r" % concurrency)
+
+    report("release preparation: it cannot publish a release",
+           "gh release" not in text and "release-artifacts.sh publish" not in text,
+           "no `gh release` and no publish subcommand in this workflow")
+
+    evidence = [step for step in steps
+                if "release-artifacts.sh evidence" in (step.get("run") or "")]
+    report("release preparation: the evidence step exists and authenticates gh", len(evidence) == 1,
+           "%d found" % len(evidence))
+    if evidence:
+        env = evidence[0].get("env") or {}
+        report("release preparation: the evidence step sets GH_TOKEN",
+               any(str(key).upper() in ("GH_TOKEN", "GITHUB_TOKEN") for key in env),
+               "env keys=%s" % sorted(env))
+
+    # And the writer side of outputs: every `steps.<id>.outputs` must name a declared id, which is
+    # the check check_step_output_ids performs for the four workflows it knows by name.
+    declared_ids = set(re.findall(r"^\s+id:\s*([A-Za-z0-9_-]+)\s*$", text, re.M))
+    referenced = set(re.findall(r"steps\.([A-Za-z0-9_-]+)\.outputs\.", text))
+    report("release preparation: every steps.<id>.outputs reference names a declared id",
+           not (referenced - declared_ids),
+           "unknown=%s declared=%s" % (sorted(referenced - declared_ids), sorted(declared_ids)))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="check-release-workflows.py",
@@ -1312,6 +1392,8 @@ def main(argv=None):
     check_producer_concurrency()
     print()
     check_gh_token()
+    print()
+    check_release_prepare()
     print()
     check_shell_line_endings()
     print()
