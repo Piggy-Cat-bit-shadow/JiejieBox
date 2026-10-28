@@ -264,8 +264,8 @@ nothing here competes with splice or with the native direct bypass. It is **not*
 
 **Absent, `0`, or an empty `traffic_scheduler` section leaves the scheduler inert** — it observes
 every managed byte and admits all of them immediately, with **no queue, no lock and no timer**. A
-configuration that does not ask for shaping does not get it, and remains loadable by official
-sing-box.
+configuration that does not ask for shaping does not get it. This does not prove that an entire
+configuration using fork-specific fields is loadable by official sing-box.
 
 **When a rate IS configured the shaper runs continuously**, for as long as the process does. That is
 deliberate; see the measurement below.

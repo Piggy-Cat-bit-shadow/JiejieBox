@@ -46,6 +46,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
   `with_purego`. Corrected obsolete Apple-only build claims and the contradictory uTLS profile
   description. AnyTLS server-only IPv4 preference and per-call error naming were traced through
   their dialer and outbound source; they do not prove peer interoperability or throughput.
+- Independent cross-reading corrected the project overview's old release and dependency statements,
+  the architecture overview's scope/validation and MASQUE size overclaims, and the corresponding
+  MASQUE acceptance and invariant rows. Historical counts are explicitly revision-scoped.
 
 ### Module review status
 

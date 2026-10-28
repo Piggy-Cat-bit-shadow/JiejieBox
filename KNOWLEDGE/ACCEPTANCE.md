@@ -245,7 +245,7 @@ making either claim.
 | # | Requirement | Evidence | Level | Re-check | Environment |
 |---|---|---|---|---|---|
 | 10.1 | The three MTU quantities are computed and bounded separately | MASQUE + WireGuard + `common/bufgeom` sources | VERIFIED_SOURCE + VERIFIED_UNIT | `go test -count=1 ./common/bufgeom/...` and the MASQUE suite | Go + tags |
-| 10.2 | The MASQUE outer QUIC packet is capped by a proven detour capacity | `2118ee40`; `outer_quic_mtu_test.go`, `port_mtu_lifecycle_test.go` | VERIFIED_UNIT | MASQUE suite | Go + tags |
+| 10.2 | MASQUE initial QUIC packet size is clamped when detour capacity is known | `protocol/masque/client.go`; `outer_quic_mtu_test.go` | VERIFIED_SOURCE; test evidence scoped to the tested case | tagged MASQUE suite | Go + tags; not proof of a hard ceiling on later packets |
 | 10.3 | The hysteria2 hard ceiling reaches the wire with ChromeParrot on | `protocol/hysteria2/hard_ceiling_wire_test.go`; the retraction banner at `docs/fork/v016-final-closure-ledger.md:4-13` | VERIFIED_UNIT | `go test -count=1 -run HardCeiling ./protocol/hysteria2/` | Go |
 | 10.4 | The low-memory (16 KiB) geometry is selected by the same source the products use | `cmd/internal/appletags -mobile-only`; `verify.yml:252-258` fails if empty | VERIFIED_SOURCE | `go run ./cmd/internal/appletags -mobile-only` | Go |
 

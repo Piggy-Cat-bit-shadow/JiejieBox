@@ -235,8 +235,9 @@ reading the platform from the file's own header and requiring the recorded commi
 Absent/zero/empty `traffic_scheduler` ⇒ the gate observes every managed byte, admits all of them, and
 starts **no queue, no lock and no timer**. The dial governor's zero value applies to nothing.
 
-* **Why:** this is what keeps an unshaped configuration loadable by official sing-box and
-  behaviourally byte-identical; and a permanent dial limit would be a tax paid for a rare event.
+* **Why:** an unset shaping policy should not add a shaping queue or rate limit; a permanent dial
+  limit would impose a cost outside the intended recovery window. This is not a proof of whole-config
+  compatibility or identical end-to-end behavior with upstream.
 * **Breaks if violated:** a config that asks for nothing gets shaping; every dial on a working network
   pays for a burst that is not happening.
 * **Proof:** `common/trafficsched/doc.go:93-97`;

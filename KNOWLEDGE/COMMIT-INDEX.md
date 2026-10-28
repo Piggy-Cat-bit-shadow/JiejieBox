@@ -190,7 +190,7 @@ e4b7e692..a267e99` returns exactly that commit). `VERIFIED_SOURCE`; execute need
 | `6d94da584` → `b5a25edd8` | PERF/ZERO-COPY | OWN | no per-packet alloc; `errors.As(&tooLarge)` escaped to the heap **even when `err == nil`** |
 | `8870623cf` | FEATURE | OWN | the bootstrap cache |
 | `8f1ba42a9` → `1d87f0cf7`, `e93e297aa` | FEATURE/REFACTOR | OWN | DNS roles made explicit; immutable snapshots replacing the deleted `assigned_dns_*` model |
-| `2118ee40` | FEATURE | OWN | caps the MASQUE outer QUIC packet by a **proven detour capacity** |
+| `2118ee40` | FEATURE | OWN | introduced MASQUE detour-capacity handling; see the current initial-size qualification below |
 | `0d28c26d` | FIX | OWN | makes the H3 fallback reachable; lets the tunnel leg fragment |
 | `a367bbe3` | FIX/HARDENING | OWN | closes the readiness window; serialises every DNS invalidation |
 | `a00a2fe6` | FIX | OWN | the H3 acquisition is part of the **close decision** |

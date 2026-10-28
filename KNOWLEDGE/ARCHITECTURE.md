@@ -3,13 +3,14 @@
 Eleven boundaries. Each one is a place where a reasonable-looking change would be wrong, and each is
 stated with the module that carries the detail.
 
-## 1. Ownership: a Scope owns reverse cleanup, and only `scope.Add` entries are ever torn down
+## 1. Ownership: a Scope owns its registered reverse cleanups
 
-`adapter.Scope` is the only teardown path. `Scope.Close` **walks `scope.Add` entries and never calls a
-component's `Close()`** — so a type with a `Close` that is never handed to the Scope is a type whose
-teardown the product never runs. That was a real defect class (exactly two hits in the tree, both
-fixed). A cleanup registered after close returns runs **synchronously on the registering goroutine**,
-and `Close` does **not** wait for an in-flight `Start`.
+`Scope.Close` drains its registered cleanup functions in reverse order, including the child-scope
+cleanup installed by `Scope.Start`; resource close functions must be registered with the appropriate
+owner. Other owners can also perform teardown, so absence of a direct `scope.Add` is not alone proof
+that a resource leaks. A cleanup registered after close returns runs **synchronously on the
+registering goroutine**, and `Close` does **not** wait for an in-flight `Start`. A cleanup panic
+interrupts the drain; `Box.Close` records the panic as an error rather than finishing that drain.
 → `core-lifecycle-runtime.md`
 
 ## 2. One network generation, and a rebuild is a lease, not a flag
@@ -33,7 +34,8 @@ take.
 
 ## 4. Start-time validation reports without exercising the path
 
-Validation runs **after** the dependency sort and **before** any component starts. It dials nothing,
+Outbound validation runs **after** the dependency sort and **before outbounds start**. Other Box
+initialization may already have run. It dials nothing,
 resolves nothing, changes no selection and consumes no rotation — provable from the object graph,
 which holds no dialer, no logger, no context and no clock. Where the leaf is not knowable it reports
 `Unknown` and stops, so a partly-verified path cannot be mistaken for a verified one. The current
@@ -72,16 +74,18 @@ real bug — including one where every packet in a refused batch was silently dr
 
 ## 8. MTU is three quantities, not one
 
-Outer link MTU, outer QUIC packet size and inner tunnel MTU are computed, bounded and proven
-separately. The outer QUIC packet is capped by a **proven detour capacity**, not by a constant.
+Outer link MTU, outer QUIC packet size and inner tunnel MTU are distinct quantities. For MASQUE,
+known detour capacity clamps the initial QUIC packet size; this alone does not prove a hard cap on
+later packets. TUIC has a separate hard-ceiling path. Unknown physical-path capacity is not a proof.
 → `mtu-and-geometry.md`
 
 ## 9. The upload scheduler is opt-in and inert when unset
 
 `traffic_scheduler` and `traffic_class` are fork-only keys. Absent a rate, the gate observes every
-managed byte, admits all of them, and starts **no queue, no lock and no timer** — which is what keeps
-an unshaped configuration loadable by official sing-box and byte-identical in behaviour. When a rate is
-configured, shaping runs **continuously**, not only under contention.
+managed byte, admits all of them, and starts **no queue, no lock and no timer**. An inactive shaping
+gate alone does not prove full configuration compatibility or identical end-to-end behavior with
+another implementation. When a rate is configured, shaping runs **continuously**, not only under
+contention.
 → `data-path-optimization.md`
 
 ## 10. Direct Offload is semantic equivalence, and its data-plane effect is Linux-only

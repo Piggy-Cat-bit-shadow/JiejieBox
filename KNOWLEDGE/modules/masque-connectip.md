@@ -152,7 +152,8 @@ does not exist yet**, or leaks the in-tunnel names to the outer resolver.
 **Three separate quantities** — see `mtu-and-geometry.md` for the full treatment. In MASQUE:
 
 * **outer link MTU** — what the platform path carries;
-* **outer QUIC packet size** — capped by a **proven detour capacity** (`2118ee40`), not by a guess;
+* **outer QUIC initial packet size** — clamped when detour capacity is known; the constructor does
+  not establish a hard ceiling on later packets (see `mtu-and-geometry.md`);
 * **inner tunnel MTU** — what the tunnel promises its payload.
 
 The PTB path: a datagram send fails with `datagramErrorTooLarge` → `mtu := maxPayloadSize - 1`; if
@@ -239,7 +240,7 @@ Any document referencing the deleted files is describing the pre-`e93e297aa` mod
 | `8870623cf` | FEATURE | bootstrap cache |
 | `8f1ba42a9` → `1d87f0cf7` | FEATURE/REFACTOR | DNS roles made explicit; immutable snapshots (`e93e297aa`) |
 | `05fa73391`, `b1961033d`, `a6164dead`, `b81244bdf`, `907dbfb99` | REFACTOR | dead-code removal, incl. the PREF64 clear path and a dead selection rule |
-| `2118ee40` | FEATURE | caps the MASQUE outer QUIC packet by a **proven detour capacity** |
+| `2118ee40` | FEATURE | introduced detour-capacity handling; see the current initial-size qualification in §4 |
 | `0d28c26d` | FIX | makes the H3 fallback reachable; lets the tunnel leg fragment |
 | `a367bbe3` | FIX/HARDENING | readiness window, serialised DNS invalidation |
 | `a00a2fe6` | FIX | HTTP/3 acquisition is part of the close decision |
