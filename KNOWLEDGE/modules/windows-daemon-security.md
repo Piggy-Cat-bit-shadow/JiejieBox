@@ -53,10 +53,11 @@ process spawned by the Electron application; it serves `ApplicationService` and 
 connections. **The authenticated peer identity is the APPLICATION, not the worker**
 (`peer_windows.go:237`) — a distinction that matters for every check in §4.
 
-The package is platform-split throughout: `*_windows.go` / `*_linux.go` / `*_stub.go` triples for
-`peer`, `platform`, `cmd_run`, `cmd_service`, `cmd_worker`, `insecure_mode` and `update`. **Only the
-Windows half carries a security boundary**; the others are the same command surface without peer
-authentication.
+The package has platform-specific implementations for peer and service behavior. Linux is not
+unauthenticated: `peer_linux.go` uses Unix `SO_PEERCRED` and `/proc` process start time to identify a
+local peer, then the common owner authorization applies. This is a different boundary from Windows'
+installed-file and signer checks; `--listen` takes a separate fallback path. This module's detailed
+handshake analysis below is Windows-specific and does not establish Linux device/runtime coverage.
 
 ## 2. Process / service / worker relationship
 
@@ -159,11 +160,11 @@ The measured code for a **tampered signed PE** is `TRUST_E_BAD_DIGEST`; for an *
 not-yet-valid. **There is no path from certificate time to a failure**, and the logger cannot become a
 gate either: a nil logger returns early (`:168`) and a parse failure only warns (`:173`).
 
-> **Why this is safe, and why re-adding it would be a regression.** The certificate is **self-signed and
-> pinned by byte equality**, not by chain trust. Its NotBefore/NotAfter window therefore adds no
-> security: an attacker-chosen certificate changes the bytes every comparison checks, and the
-> certificate cannot be renewed without re-signing the whole product. What the gate *did* do was stop
-> the product the moment a CI test certificate expired. See §11.
+> This is a deliberate availability/trust tradeoff: tolerated trust errors require a valid
+> self-signature, while peer identity is bound to the daemon's signer bytes and other process checks.
+> Expiry previously stopped the product when a CI certificate aged out. Byte equality does not by
+> itself address every certificate lifecycle or key-compromise risk; changing the policy needs an
+> explicit threat-model and deployment review. See §11.
 
 ### Unsigned binaries can never pass — and the reason is structural
 
@@ -258,7 +259,7 @@ Violating any of these is a security hole that no configuration justifies.
 
 | Rule | Status | Why |
 |---|---|---|
-| Certificate validity period is **not** a gate | **deliberate non-gate** | self-signed + byte-pinned; the window added no security and broke the product on CI expiry. Re-adding it is a **regression**, not hardening |
+| Certificate validity period is **not** a gate | **deliberate non-gate** | byte-pinned identity and a self-signed certificate are used on the tolerated-error path; expiry previously broke startup. Reconsidering this requires evaluating the deployment and trust model |
 | Certificate chain trust is **not** required | deliberate | a CI test certificate is self-signed by construction |
 | Code-signing EKU is required | design rule | but `ExtKeyUsageAny` is **also accepted** (`:236`) — a known weakening |
 | Self-signed check | defence in depth | applies only on the tolerated-error branch; the pin is the real check |
@@ -302,13 +303,12 @@ an assumption that was removed because it was both useless and harmful.
 
 ## 15. Known limitations
 
-* **No end-to-end test exists for the trust boundary.** `peer_windows.go` has **no Go test file**, and
-  the handshake cannot be exercised without a real service installation, a real named pipe and two real
-  processes. Everything in §4 is `VERIFIED_SOURCE` only.
-* **No CI ran these tests until the `windows-boxdd-tests.yml` gate was added**; before that, no workflow
-  executed a single `go test` on a Windows runner at all. The gate now covers them, with a step that
-  fails on any skip — because these tests skip (not pass) when `signtool` or a signing certificate is
-  unavailable, and a skip would otherwise look green.
+* The full Windows peer handshake in §4 has not been verified end-to-end in this calibration; it
+  requires the relevant service, pipe, signed processes and installation. Source inspection and the
+  separately cited package CI run do not establish that end-to-end behavior.
+* `windows-boxdd-tests.yml` includes a step that fails on any skip; signing tests can skip when
+  `signtool` or a certificate is unavailable. See the exact run and local skip at the top of this
+  module rather than inferring the history of every Windows workflow.
 * `ExtKeyUsageAny` is accepted alongside code signing, which is broader than the name suggests.
 * `--listen` disables the entire boundary; only service mode refuses it.
 * `ProcessStartTime` is never set on Windows (always 0), so the "process started at" observable is

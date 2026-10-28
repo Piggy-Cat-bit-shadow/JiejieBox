@@ -66,6 +66,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
   unknown; a historical failure does not rule out a later regression.
 - The direct-offload layer table now distinguishes route-prefix setup from auto-redirect flow
   verdicts and no longer asserts that kernel-assisted copy is available on every OS or flow.
+- Windows daemon source review corrected the claim that Linux has no peer authentication: its local
+  socket path uses `SO_PEERCRED` and process-start identity. The Windows certificate-expiry policy is
+  documented as a scoped tradeoff rather than an unconditional security guarantee.
 
 ### Module review status
 
