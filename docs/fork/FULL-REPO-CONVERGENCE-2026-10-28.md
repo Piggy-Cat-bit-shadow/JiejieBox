@@ -1,0 +1,314 @@
+# 全仓库上游融合、分支收敛与发布前依赖冻结 — 施工交接报告
+
+- 施工日期：2026-10-28
+- 主仓库：`Piggy-Cat-bit-shadow/sing-box`，产品分支 `testing`
+- 起点：`a0bbf666`（v0.1.33）；本报告在每个仓库的"结束 SHA"一节给出最终提交
+- 性质：实际实施记录。每一项都注明证据级别；**没有执行的验证一律标 `NOT_RUN`，不用"其余正常"概括**
+
+---
+
+## 1. 执行摘要
+
+这一轮解决的不是"某个 Pin 落后了一次"，而是**同一个源码事实被三套互不相见的规则决定**：
+
+| 源码 | 由谁决定 | 出过的具体后果 |
+|---|---|---|
+| 六个 Go Fork + cronet 31 个模块 | 根 `go.mod` 的 replace | 与 `test/go.mod` 可能不一致；`utls` 少 3 个上游提交 |
+| 三个客户端 | superproject gitlink | v0.1.33 的 Windows 安装包漏掉 Desktop 的订阅 UA 修复 |
+| Apple 客户端 | `apple-client-refs.env` 在构建开始时解析 `main` | 同一个版本里 gitlink 一个 SHA、实际产物另一个 SHA |
+| Desktop 的 dashboard | Desktop 仓库内部的嵌套 gitlink | 落后 dashboard 主线 2 个提交 |
+
+做完的事：
+
+1. **uTLS**：镜像 `mirror/meta-v1.9.0` 快进到真实上游 `a6a364af`（只快进），`main` 用常规 merge `3ab4752` 吸收同一条线的 3 个提交；新增 2 个回归测试（`2da328d`），两条都先在旧镜像上验证会失败。消费方 `go.mod` / `test/go.mod` 同步更新。
+2. **Android**：五条分支收敛为唯一产品 `main`。`dev` → 合入 fix 分支的 3 个 StringBox ABI 提交 → 合入 SagerNet `dev` 的 12 个提交（其中 3 个此前已等价覆盖、2 个是版本元数据、7 个真正吸收）。GitHub 默认分支改为 `main`，四条旧分支删除并留 `archive/*` 标签。
+3. **Apple**：`main` 合入上游 13 个提交（7 个真吸收、2 个已覆盖、4 个元数据跳过）；已合并的 `fix/compact-outbound-mode-ui` 删除。
+4. **Desktop / Dashboard**：dashboard→desktop→内核 顺序更新；`clients/desktop` 从 `eb2dbf8` 前移到 `6d4ccf8`（含订阅 UA 修复与 dashboard 新 Pin）。
+5. **发布前依赖冻结（最高价值产出）**：新增 `release/dependencies.json`、`scripts/ci/release-freeze.py`、`.github/workflows/release-prepare.yml`。它解析 11 个依赖仓库的真实分支头、与树里实际 Pin 比对、只把"落后"的 Pin 前移（分叉一律 fail closed）、从**实际 Pin** 生成 `release/source-lock.json`，在拿到候选提交的 exact-SHA CI 证据后才允许打 Tag。
+6. **11 仓库全量审计 + 分支分类**，`sing-box` 的 `pending/device-axis-reload-window-tests` 经复核后保留（理由见 §4）。
+
+`release-prepare.yml` 已经能在 dry run 下跑完整条链路；是否在本轮真实打 Tag **故意不做**（本轮目标是建立流程，不是发布新版本）。
+
+---
+
+## 2. 11 仓库全量审计表
+
+"上游关系"一列是 2026-10-28 重新 fetch/compare 的实际结果，不是文档里的旧数字。
+
+| # | 仓库 | 产品分支 | 开始 SHA | 结束 SHA | 上游目标 | 与上游关系 | 本轮变更 | 分支状态 | 消费方 Pin 前 → 后 | 验证级别 | 远端 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | `sing-box` | `testing` | `a0bbf666` | `8dac10c1`（+ Apple 合并提交） | `SagerNet/sing-box:testing` `e5d91fa7` | behind 0 | 4 个提交：utls Pin、android gitlink、desktop gitlink、发布冻结工具链 | `testing` 保留；`pending/...` 保留（§4） | utls / android / desktop 三个 Gitlink 与 replace 前移 | `go build` 双模式 PASS；`check-go-module-integrity.sh` PASS（见 §5） | 已推送并回读 |
+| 2 | `sing` | `dev` | `1729220c` | 未变 | `SagerNet/sing:dev` `03a6cce6` | behind 0 / ahead 55 | 无 | 单分支 | `v0.9.6-0.20261027185736-1729220c46c4` 不变 | 复核结论 | — |
+| 3 | `sing-quic` | `main` | `1ef2597c` | 未变 | `sagernet/sing-quic:main` `7e0a5869` | behind 0 / ahead 7 | 无 | 单分支 | `v0.7.2-0.20261024181351-1ef2597cc129` 不变 | 复核结论 | — |
+| 4 | `sing-tun` | `dev` | `8b9a3800` | 未变 | `SagerNet/sing-tun:dev` `5b0a1a7a` | behind 0 / ahead 98 | 无 | 单分支 | `v0.0.0-20261028061444-8b9a38008705` 不变 | 复核结论 | — |
+| 5 | `quic-go` | `sagernet` | `2daa76f5` | 未变 | 最新 mod tag `v0.61.0-sing-box-mod.12` | behind 0 / ahead 18 | 无 | 单分支（SagerNet 模块线，未动 MetaCubeX 线） | `v0.61.1-0.20261027185738-2daa76f5bd52` 不变 | `gh api compare` | — |
+| 6 | `cronet-go` | `main` | `c9c0e6ec` | 未变 | `SagerNet/cronet-go:main` `049f2909` | 上游是祖先，behind 0 | 无（29 个原生模块 Pin 仍为 `8c68ce89873c`） | 单分支 | 根/all `c9c0e6ec`，29 lib `8c68ce8` 不变 | `merge-base --is-ancestor` = True | — |
+| 7 | `utls` | `main` | `1bcb8e4d` | `b63a2e9a` | `MetaCubeX/utls:v1.9.0-mod-meta` `a6a364af` | merge 后 behind 0（原 behind 3 / ahead 65） | 镜像快进、merge `3ab4752`、回归测试 `2da328d`、UPSTREAM.md `b63a2e9` | `main` + 镜像 `a6a364af` 均保留 | `v1.8.8-0.20261025012215-1bcb8e4d74d2` → `v1.8.8-0.20261028133053-2da328dfb92f` | 见 §5.1（含负向证明） | 已推送并回读 |
+| 8 | `sing-box-for-apple` | `main` | `16cf87b4` | `be3258a`（合并提交） | `SagerNet/sing-box-for-apple:dev` `0d1b59fc` | merge 后 behind 0（原 behind 13 / ahead 178） | 13 个上游提交；`fix/...` 删除 | 只剩 `main` | `aeccc754` → 待 CI 绿后前移 | 见 §5.3 | 分支已推送；CI 见 §5.3 |
+| 9 | `sing-box-for-android` | `main`（原 `dev`） | `4085557`（dev） | `c7837107` | `SagerNet/sing-box-for-android:dev` `a548a790` | merge 后 behind 0（原 behind 12 / ahead 5） | 收敛 5 条分支；12 个上游提交 | 只剩 `main`，另有 4 个 `archive/*` 标签 | `9d15717a` → `c7837107` | 见 §5.2（ABI 扫描 309 文件 0 违规） | 已推送并回读 |
+| 10 | `sing-box-for-desktop` | `main` | `d9231d9e` | `6d4ccf8c` | `SagerNet/sing-box-for-desktop:main` `8aab8eab` | behind 0 / ahead 35 | dashboard 嵌套 Pin `d452c24e` → `5e9271e5` | 单分支 | `eb2dbf8b` → `6d4ccf8c` | 见 §5.4 | 已推送并回读 |
+| 11 | `sing-box-dashboard` | `main` | `5e9271e5` | 未变 | `SagerNet/sing-box-dashboard:main` `3e4bf08e` | behind 0 / ahead 4 | 无（只被接受为嵌套 Pin） | `main` + `gh-pages`（部署，保留） | — | 两个提交只改 `.github/workflows/`（`git diff --stat` 32 行） | — |
+
+审计命令（可复核）：
+
+```sh
+# 每仓库的产品分支与上游关系
+gh api repos/<upstream>/compare/<branch>...Piggy-Cat-bit-shadow:<fork-branch> --jq '.behind_by,.ahead_by,.status'
+# cronet-go（compare 因 diff 过大返回 422，改用祖先判定）
+git fetch --filter=blob:none --no-tags upstream main
+git merge-base --is-ancestor upstream/main origin/main
+```
+
+---
+
+## 3. 上游逐项融合账本
+
+分类用施工令的术语：`MERGE_CLEAN` / `CHERRY_PICK` / `SEMANTIC_PORT` / `HYBRID_INTEGRATION` / `ALREADY_COVERED` / `REJECT_WITH_EVIDENCE` / `HOLD`。
+
+### 3.1 uTLS（3 个提交，全部吸收）
+
+| 上游提交 | 解决的问题 | Fork 是否已覆盖 | 策略 | 改动 | 证据 |
+|---|---|---|---|---|---|
+| `72aa2193` fix BuildHandshakeState error handle for UConn | `handshakeContext` 直接 `return err`，绕过了清理：`quic.blockedc`/`signalc` 从未关闭，`UQUICConn.Start` 永久阻塞、`Close` 收不到 goroutine | NOT_PRESENT（fork 与上游基线一致） | `MERGE_CLEAN` | `u_conn.go` | `u_quic_build_error_test.go`：旧代码上 30s 超时失败，合并后 PASS |
+| `183cd009` keep in sync of UConn and Conn | 0-RTT early-data transcript 在 ECH 下应哈希 **inner** ClientHello | NOT_PRESENT | `MERGE_CLEAN` | `u_handshake_client.go` | 合并后全量 `go test -short ./...` PASS；见下方"为什么不需要 fork 适配" |
+| `a6a364af` Only compress ALPN for standard ClientHellos | 自定义 ClientHello 的 inner/outer ALPN 可以不同，压缩会破坏它 | NOT_PRESENT（该分支被写成 `echInner && false`，即永不压缩） | `MERGE_CLEAN` | `handshake_messages.go` | `u_ech_alpn_test.go`：旧代码上"标准 hello 应压缩 ALPN"失败，合并后三种形态全 PASS |
+
+**为什么不需要为 `183cd009` 加 fork 适配（与直觉相反，所以写下来）：**fork 会构建 preset ClientHello，看起来 `ech.innerHello` 可能为 nil。实际不可能：`c.echCtx` 只在两处赋值——`buildHandshakeState`（HelloGolang 分支）和 `MarshalClientHello`——两处都先设置 `ech.innerHello`。因此 `ech != nil` 蕴含 `ech.innerHello != nil`，加防御分支只会掩盖真实不变量。
+
+**镜像纪律：**`mirror/meta-v1.9.0` 只允许快进，且 HEAD 必须与上游严格相等。本轮 `8853e107 → a6a364af` 是 fast-forward，推送后回读一致；`main` 与镜像没有互相污染。
+
+### 3.2 Apple（13 个提交）
+
+| 提交 | 问题 | Fork 覆盖情况 | 策略 |
+|---|---|---|---|
+| `9e920f3` user service endpoint registration | App 拨**无版本号**的 mach service，扩展注册的是 `<group>.system.<version>`；接受 endpoint 后没有刷新 WiFi 状态 | NOT_PRESENT | `MERGE_CLEAN` |
+| `4faffeb` user service connection lifecycle | 客户端缓存一个 registry 取来的连接，endpoint 变了也不重建；teardown 清 registry 时旧连接还活着 | NOT_PRESENT | `SEMANTIC_PORT`（见下） |
+| `cf2e1f7` Remove useProcFS | 内核已不再声明 `UseProcFS`，Swift 侧是死代码 | NOT_PRESENT；**内核侧已确认移除**（`experimental/libbox/platform.go`） | `MERGE_CLEAN` |
+| `f3c1019` Bump build number | TestFlight build number | PARTIAL | `SKIP_WITH_EVIDENCE`（发布构建由 `release/JIEJIE_VERSION` 全局覆盖） |
+| `6d04061` update authorization blocking main thread | `AuthorizationCopyRights` 同步模态框跑在 MainActor 上 | NOT_PRESENT | `MERGE_CLEAN` |
+| `1e2204b` duplicate startup error alert | 启动失败弹两次 | PARTIAL | `SEMANTIC_PORT`（上游组件吸收，Hako 组件**故意保留**，见下） |
+| `55c8fe7` iOS share sheet profiles | 扩展里 `extensionContext.open` 无效，激活规则也被"Open in"抢走 | NOT_PRESENT | `MERGE_CLEAN`（新增 `ShareExtension/Info-iOS.plist`、`Jailbreak/Action.plist`，pbxproj +5 行） |
+| `b4b8d03` stale Tailscale pages | peer/logout 页面持有值快照，登出后仍显示旧数据 | NOT_PRESENT | `MERGE_CLEAN` |
+| `ff0de06` / `2dd154e` / `0d1b59f` | 版本与 marketing 字符串 | PARTIAL | `SKIP_WITH_EVIDENCE`（4 条真冲突，见 §4；发布时整体覆盖） |
+| `20547d4` platform auto redirect stub | 满足新的 `LibboxPlatformInterface` 成员 | **已覆盖**：`ExtensionPlatformInterface.swift:970-978` 与内核 `platform.go:32-33` 一致 | `ALREADY_COVERED` |
+| `1675552` process paths through helper XPC | `processPath: String` → `processPaths: [String]` | **已覆盖**：`ShellHelperXPC.swift:56-73`、`ConnectionLookup`、两个 helper 都已用 `[String]` | `ALREADY_COVERED` |
+
+**`4faffeb` 的语义移植（真正的坑）：**git 报告 2 个冲突文件，其中 `ExtensionProvider.swift` 那个是"fork 把 macOS teardown 移进了 identity-checked 块，上游还在改尾部那段"→ 保留 fork 的删除。但**另一个问题不是 git 冲突**：上游删掉了 `UserServiceEndpointRegistry` 整个类，而 fork 自己搬走的那段仍在调用 `UserServiceEndpointRegistry.shared.clear()`。直接 `git merge` 会得到一个**macOS 编译不过**的树而 git 说"冲突已解决"。处理后 `git grep UserServiceEndpointRegistry` 为空。
+
+**`1e2204b` 为什么只对上游组件生效：**`HakoStartStopButton.swift` 是**另一份**状态机副本（由 `scripts/dev/port_hako_components.py` 从 `c1935cf` 生成，文件头写明了"两套实现刻意分开"）。它的本地 alert 覆盖的是**瞬时失败**——隧道没有经过 `.connecting` 就失败，而 `GlobalChecksModifier` 只在观察到 `notStarted`（即进过 `.connecting`）后才检查，所以删掉它会让手机端在这条路径上**一个提示都没有**。这是有意的产品行为，记录为偏差而不是缺陷。
+
+### 3.3 Android（12 个提交）
+
+| 上游提交 | 结论 | 证据 |
+|---|---|---|
+| `1a79a5c` connection owner legacy | `MERGE_CLEAN`（7 个真吸收之一） | `dev` 里还有 `useProcFS()`；合并后为 0 |
+| `f041963` 应用列表被截断 | `MERGE_CLEAN` | 合并后两套 flavor 的 `getInstalledPackages` 都是新签名，无 2 参残留 |
+| `04bd5b1` 扫描竞态 | `MERGE_CLEAN` | — |
+| `8103b7e` ParceledListSlice 错误 | `MERGE_CLEAN` | — |
+| `7b6d223` 服务启动前等 libbox | `MERGE_CLEAN`（三条生命周期链的第 1 条） | `suspend fun setupLibbox` |
+| `a04705b` 每次启动探测服务模式 | `MERGE_CLEAN`（第 2 条） | `detectServiceMode()` 存在，`rebuildServiceMode()` 改返回 Unit |
+| `1becd23` dashboard 切配置后应用 | `MERGE_CLEAN`（第 3 条，依赖第 2 条） | `applySelectedProfile` 3 处调用，`RequestReconnectService` 0 处 |
+| `f87c2eb` 1.14.4 版本 | `NOT_APPLICABLE` | 被下一条覆盖 |
+| `df64e82` auto redirect | **`ALREADY_COVERED`**（`c9b510f`，+268 行完全一致） | `git diff` 行集相同，patch-id 因上下文行/偏移不同而不同 → 不能只用 `git cherry` |
+| `70fe45b` libghostty | `ALREADY_COVERED`（`eebd6c2`） | patch-id 相等 |
+| `197240e` DNS search domains | `ALREADY_COVERED`（`7eeced6`） | patch-id 相等 |
+| `a548a79` alpha.13 | `NOT_APPLICABLE`，但**版本号采用上游值** | 见下 |
+
+**版本号决策：**`version.properties` 是 Android 客户端唯一版本源（`app/build.gradle.kts` 读它，没有 `buildSrc`）。合并结果取上游 `747 / 1.15.0-alpha.13`，不是本线原来的 `744 / 1.15.0-alpha.11`：客户端自带的更新检查用 `Libbox.compareSemver` 与上游 release 比较，保留 744 会(a)把自己排在上游 alpha 之下、(b)`VERSION_CODE` 小于已安装的上游包，Android 不允许"降级升级"。fork 自己的版本号应当在**下一次**版本步骤里抬到上游之上，不属于这次合并。
+
+### 3.4 其余六个 Go Fork
+
+`sing` / `sing-tun` / `sing-quic` / `quic-go` / `cronet-go` 对既定跟踪目标的已审查提交**没有落后**（见 §2 表）。`sing-quic` 的 7 个 ahead 是 fork 的 ceiling/owned-datagram 工作，`sing-tun` 的 98 个 ahead 是 fork 的 TUN 生命周期改造，都**不是**待清理的落后。`quic-go` 只跟 SagerNet 模块线；MetaCubeX 线**未触碰**。
+
+### 3.5 `sing-box/testing` 自身的 pending 分支
+
+`pending/device-axis-reload-window-tests`（`0477e327`）唯一提交是 891 行测试，落在三个文件上。复核结论：**保留，不删除，也不合入**，理由是可验证的：
+
+- 该测试依赖一个"seam"（`seamDeviceAxisGate`）来在 Windows 上穿过平台门，但 `git grep seamDeviceAxisGate 0477e327 -- '*.go'` 只命中测试文件本身——**分支自己的 `command_server.go` 从未调用它**。也就是说 `TestWindowReconciliationClosesTheWindow` / `...DoesNotManufactureASleepEdge` 在这条分支上也无法真正驱动被测代码。
+- 现行 `testing` 已经用**真实 pause manager**覆盖了设备轴语义（`box_lifecycle_test.go`、`box_lifecycle_ordering_test.go`、`box_lifecycle_stress_test.go`，含"display 打开不得释放设备轴""reload 不得继承无人发布的 pause"）。
+- 分支与 `testing` 没有共同祖先（`git merge-base` 为空），是该仓库历史上"重写前孤儿"的一部分，因此移植需要重写而不是 cherry-pick。
+
+结论：`HISTORICAL_UNIQUE`，保留为现场记录；不删除，也不为了减少分支数丢掉它。
+
+---
+
+## 4. 分支清理台账
+
+| 仓库 | 分支 | 删除前 SHA | 独有提交 | 是否已合并/引用 | 恢复锚点 | 动作与结果 |
+|---|---|---|---|---|---|---|
+| `sing-box` | `pending/device-axis-reload-window-tests` | `0477e327` | 1（891 行测试） | 无共同祖先 | 分支本身保留 | **保留**（§3.5） |
+| `sing-box` | `testing` | `a0bbf666` → `8dac10c1` | — | 产品分支 | — | 保留 |
+| `sing-box-for-android` | `fix/libbox-stringbox-callsites` | `9d15717` | 3 | 已并入 `c7837107`（`git merge-base --is-ancestor`=True） | `archive/fix-libbox-stringbox-callsites-9d15717` | **已删除**，远端回读仅剩 `main` |
+| `sing-box-for-android` | `stable` | `092aefd` | 0 | 完全包含 | `archive/stable-092aefd` | **已删除** |
+| `sing-box-for-android` | `wip` | `2ce3c74` | 2 | **未合并**，已失效（`ec8294f` 终态在 `dev`；`2ce3c74` 被上游 `b8c7451` 吸收，`dev` 已有 `localDNSTransport`） | `archive/wip-2ce3c74` | **已删除**（带理由标签） |
+| `sing-box-for-android` | `dev` | `4085557` | 5 | 已全部包含在 `main` | `archive/dev-4085557` | **已删除**；默认分支已改为 `main` |
+| `sing-box-for-apple` | `fix/compact-outbound-mode-ui` | `3cc3aae` | 0 | 是 `main` 的祖先；0 个 open PR | SHA 仍在 `main` 历史里 | **已删除** |
+| `sing-box-for-apple` | `sync/upstream-2026-10-28` | `be3258a` | 1（合并提交） | 候选分支 | 分支本身 | 合入 `main` 后删除（见 §5.3） |
+| `utls` | `mirror/meta-v1.9.0` | `8853e107` → `a6a364af` | 0（纯镜像） | 上游 HEAD | — | 保留（审计基线） |
+| `sing-box-dashboard` | `gh-pages` | — | — | 部署分支 | — | 保留（部署用途） |
+
+Android 的删除顺序刻意是：先建 4 个 `archive/*` 标签 → 推送标签 → 主仓库 gitlink 移到 `c7837107` → 设置默认分支 `main` → 才删分支。所以 `9d15717` 这个曾被主仓库消费的 SHA **始终可 fetch**。
+
+---
+
+## 5. 验证矩阵（真实执行了什么）
+
+### 5.1 uTLS
+
+| 检查 | 结果 | 级别 |
+|---|---|---|
+| 上游祖先与镜像纯度 | `git diff upstream/v1.9.0-mod-meta..mirror` 为空；镜像 = `a6a364af` | `VERIFIED_GIT` |
+| `go test -short ./...`（合并前基线） | PASS（exit 0） | `VERIFIED_UNIT` |
+| `go test -short ./...`（合并 + 测试后） | PASS | `VERIFIED_UNIT` |
+| `TestECHCompressesALPNOnlyForAStandardClientHello` | 新代码 PASS；**旧代码 FAIL**（"标准 hello 必须压缩 ALPN"失败，outer_extensions = `[10 13 43 51 45]`） | `VERIFIED_UNIT` + 负向 |
+| `TestQUICStartReportsABuildHandshakeStateError` | 新代码 PASS；**旧代码 30s 超时 FAIL**（Start 永久阻塞） | `VERIFIED_UNIT` + 负向 |
+| 消费方 | `go build ./...`、`go build -tags DEFAULT_BUILD_TAGS_OTHERS ./...`、`(cd test && go vet ./...)`、`go mod tidy -diff` 双模块全 PASS；`./common/tls` 失败集与旧 Pin **完全一致**（3 个 Windows TLS1.3 已知失败，先 stash 复测确认） | `VERIFIED_UNIT` |
+
+### 5.2 Android
+
+| 检查 | 结果 | 级别 |
+|---|---|---|
+| 分支祖先关系 | `dev`/`fix`/`stable` 都是新 `main` 的祖先；`wip` 不是（符合预期） | `VERIFIED_GIT` |
+| ABI 调用点扫描（CI 同款扫描器） | `probe-accessors.py --lang kotlin`：**309 文件，0 违规，3 个 interface 方法** | `VERIFIED_SOURCE` |
+| 9 处 StringBox 调用点 | `RootServer:341`、`VPNService:77/83/127/135/173`、`Wrappers:49`（扩展接收者）、`PlatformInterfaceWrapper:445`（实现者）、`DashboardViewModel:222` 全部 `.value` | `VERIFIED_SOURCE` |
+| `useProcFS` | 0 处 | `VERIFIED_SOURCE` |
+| 生命周期链 | `detectServiceMode` 存在、`applySelectedProfile` 3 处、`RequestReconnectService` 0 处、`suspend fun setupLibbox` 存在 | `VERIFIED_SOURCE` |
+| AIDL | `startAutoRedirect = 9` 只出现一次 | `VERIFIED_SOURCE` |
+| 订阅 UA | `HTTPClient.SUBSCRIPTION_USER_AGENT = "sing-box/1.15.0"`，只在 5 处订阅正文请求传入；默认 UA 仍是 `SFA (...)` | `VERIFIED_SOURCE` |
+| **Kotlin 编译** | **`NOT_RUN`**：本机无 JDK 17 / Gradle，且无 Android 仓库的 CI | 缺口 |
+
+### 5.3 Apple
+
+| 检查 | 结果 | 级别 |
+|---|---|---|
+| 上游祖先 | merge 后 `git rev-list --count HEAD..upstream/dev` = 0 | `VERIFIED_GIT` |
+| 冲突 | 5 个 hunk / 2 文件（4 个 `MARKETING_VERSION`、1 个 teardown），全部人工判定 | `VERIFIED_SOURCE` |
+| 静默破坏（非冲突） | `UserServiceEndpointRegistry.clear()` 调用未随类删除 → 已修，`git grep` 为空 | `VERIFIED_SOURCE` |
+| ABI 调用点（Swift） | `probe-accessors.py --lang swift`：**422 文件，0 违规** | `VERIFIED_SOURCE` |
+| UI 边界审计 | `audit_apple_ui_boundary.py`：PASS 16 / FAIL 2 / UNKNOWN 2，**与 `origin/main` worktree 的基线完全一致**（2 个 FAIL 是既有的共享页注释提到 Hako 符号） | `VERIFIED_SOURCE`（相对基线无退化） |
+| 结构门 | `check_platform_structure.py` PASS、`check_swift_structure.py` PASS、`_safety_gate.py` PASS | `VERIFIED_SOURCE` |
+| 品牌/UA 边界 | `INFOPLIST_KEY_CFBundleDisplayName = "Jiejiebox"` ×6、`PRODUCT_NAME = "JiejieBox"`、`HTTPClient.subscriptionUserAgent` 及其 Hako 订阅测试保留 | `VERIFIED_SOURCE` |
+| 真实编译（iOS + macOS） | Apple client 运行 `40698718663`：`resolve` 成功、`libbox` 成功、`ios`/`macos` 在本报告撰写时仍在 macOS runner 排队 → 以运行状态为准 | 待定 → 见 §6 |
+| Hako UI 门 | `gate_hako_platform_imports.py` 报 `undecidable on tvos` 62 项（本机无 tvOS SDK 知识），**未写入任何文件**，与本轮改动无关 | `NOT_RUN`（环境） |
+
+### 5.4 Desktop / Dashboard
+
+| 检查 | 结果 | 级别 |
+|---|---|---|
+| dashboard `d452c24..5e9271e` | 只改 `.github/workflows/ci.yml`(+13)、`deploy.yml`(+19)，`dashboard/src` 未动 | `VERIFIED_SOURCE` |
+| desktop UA 常量 + 测试 | `src/shared/subscription.ts:186` `SUBSCRIPTION_USER_AGENT = "sing-box/1.15.0"`；`subscriptionFetch.test.ts:81-82` 断言常量与请求头 | `VERIFIED_SOURCE` |
+| 嵌套 Pin | desktop 内 `dashboard` = `5e9271e5`；`release-freeze.py` 复核为 `identical` | `VERIFIED_GIT` |
+| 前端构建 / 桌面打包 | **`NOT_RUN`**：本机无 `node_modules`，内置 pnpm 是 broken release（`@pnpm/exe` 缺二进制） | 缺口 |
+
+### 5.5 发布冻结工具链
+
+| 检查 | 结果 | 级别 |
+|---|---|---|
+| 行为测试 | `scripts/ci/test-release-freeze.py`：**33 断言全 PASS**（本机 Python 3.12） | `VERIFIED_UNIT` |
+| CI 上执行 | Release contract verification run **`40702192446`**：步骤 "the freeze helper's behavioural suite" **success** | `VERIFIED_CI` |
+| 工作流结构检查 | `check-release-workflows.py`：**143 PASS / 0 FAIL**（含新增 10 项） | `VERIFIED_SOURCE` |
+| 真实仓库上 `check` | 报告 3 个落后目标（utls Pin、`clients/apple`、nested dashboard 在修复前），`PASS: every target is comparable and none is diverged` | `VERIFIED_SOURCE` |
+| 真实仓库上 `verify` | `PASS: every pin in the tree is the pin the lock records`（7 go modules / 3 clients / 29 native / nested 已解析） | `VERIFIED_SOURCE` |
+| `release-prepare.yml` 真实 dispatch | **尚未执行**（见 §7 下一步第一条） | `NOT_RUN` |
+
+---
+
+## 6. 发布链路证明
+
+### 6.1 调用链
+
+```
+维护者: gh workflow run release-prepare.yml -f dry_run=false [-f create_tag=true]
+  │
+  ├─ preflight        branch=testing / 工作区干净 / version==release/JIEJIE_VERSION / tag 不存在
+  ├─ resolve          release-freeze.py resolve        → 11 个仓库的精确分支头 (build/resolve.tsv)
+  ├─ check            release-freeze.py check          → identical/behind/ahead/diverged；diverged 立即失败
+  ├─ apply            release-freeze.py apply          → 只前移 behind 的 Pin；cronet 29 原生模块不动
+  ├─ go mod tidy ×2   → go.sum 跟上 replace 的版本
+  ├─ gates            check-go-module-integrity.sh / check-libbox-abi.sh --pin-only / go build ×2 / go vet
+  ├─ snapshot         release-freeze.py snapshot       → release/source-lock.json（**从实际 Pin 派生**）
+  ├─ verify           release-freeze.py verify         → 锁与树必须一致
+  ├─ commit+push      **只在 Pin 真的变了时**；否则不产生空提交、不重复触发 CI（幂等）
+  ├─ evidence         release-artifacts.sh evidence --sha <candidate>
+  │                     → 要求 verify.yml + release-contract-verify.yml 在**该 SHA**上最新一次 run
+  │                       全部 job success；缺失/skip/失败都失败，不回退到旧绿灯
+  └─ tag (create_tag) → 再次确认 tag 不存在 → 在 candidate 上打 annotated tag → 回读 peeled SHA 必须相等
+        │
+        └─ 之后的正式发布仍由 release.yml 完成（下载 CI 已构建的产物、逐平台校验、draft→公开）
+```
+
+### 6.2 各环节负责人
+
+| 环节 | 负责者 | 失败时会发生什么 |
+|---|---|---|
+| 解析 fork 分支头 | `release-freeze.py resolve` | 分支不存在 → `MISSING`，`check` 失败 |
+| 分类（含分叉） | `release-freeze.py check` | `DIVERGED` → 退出 1，**不写任何文件**，报告里给出 repo/旧 SHAA/新 SHA/建议 |
+| 前移 Pin | `release-freeze.py apply` | Go 版本用 `go list -m` 计算；`controlled`/`report` 从不改写 |
+| 冻结快照 | `release-freeze.py snapshot` | 有不可比目标时拒绝生成锁 |
+| Push 门 | `verify.yml` 的 `release-freeze.py verify --lock` | 有人改了 Pin 却没重生成锁 → 立刻红 |
+| Tooling 门 | `release-contract-verify.yml` 的冻结行为测试 | 工具本身退化 → 红 |
+| 候选证据 | `release-artifacts.sh evidence`（既有机制，未另造） | 缺 run / job skip / 失败 → 失败 |
+| Tag | `release-prepare.yml` 的 tag 步骤 | tag 已存在 / 落点不符 → 失败；不做 `--force` |
+| 发布 | `release.yml`（未改动） | 仍是唯一发布者；Tag 之后不再拉起任何浮动源码 |
+
+### 6.3 已经拿到的真实证据
+
+| 事实 | 证据 |
+|---|---|
+| 我的 `testing` 提交触发了四套门 | Verify `40702192442`、RCV `40702192446`、Android Core `40702192584`、Mobile contract `40702192400` |
+| **Verify 在推送提交上全绿**（含新增的 `release-freeze.py verify` 步骤） | Verify `40702192442` = `completed/success` |
+| 冻结测试在 Linux CI 上真的执行并通过 | RCV `40702192446` 的步骤 "the freeze helper's behavioural suite" = success |
+| 冻结工具在真实仓库上复现了本轮诊断 | `check` 输出：`BEHIND utls`、`BEHIND clients/apple`、`BEHIND clients/desktop`、`BEHIND nested dashboard`（其中 desktop 已在本轮修复，复核后为 `identical`） |
+| Apple 候选源码解析正确 | Apple client `40698718663`：`resolve` success（`resolved: be3258ab57dd (explicit-sha)`，`libbox` success）；`ios` 构建中；`macos` 在该 run 里被平台取消（无任何 step 执行），已用 `build_ios=false` 重新派发 `40704313767` |
+
+**没有做、也不该在这一轮做的**：没有创建新 release tag，没有修改/移动 `v0.1.33`，没有发布。
+
+---
+
+## 7. 失败、遗留风险与下一步
+
+按"可执行的下一步"写，不写"其余正常"。
+
+1. **`release-prepare.yml` 还没真实 dispatch 过**（`NOT_RUN`）。它已经通过结构检查与 dry-run 代码路径的静态审查，但"workflow 文件存在"不等于"跑过"。下一步：`gh workflow run release-prepare.yml --ref testing -f dry_run=true`，确认 `resolve/check/snapshot/verify` 四步在 runner 上通过；再决定是否 `dry_run=false`。**这是本报告后第一个要做的动作。**
+2. **Apple 客户端候选 `be3258a` 的编译证据仍在排队**（run `40698718663` 的 `ios`/`macos` 作业，macOS runner 排队 >30min）。在它绿之前，`clients/apple` gitlink **保持 `aeccc754` 不动**，`sync/upstream-2026-10-28` 分支保留。若红：修在候选分支上，不要先合 `main`。
+3. **Kotlin/Android 编译仍是 `NOT_RUN`**。本机没有 JDK 17/Gradle，Android 仓库也没有任何 workflow。这是全链路里**唯一没有编译证明的客户端**。下一步（建议单独一轮）：在 Android 仓库加一个 JDK 17 + `./gradlew assembleOtherDebug` 的 workflow，AAR 用父仓库 `android-core-arm64.yml` 的产物；在此之前，ABI 结论只有扫描器级别（`VERIFIED_SOURCE`），不是编译级别。
+4. **Desktop 前端/打包 `NOT_RUN`**：内置 pnpm 是 broken release，`node_modules` 不存在。而 `client-desktop-windows.yml` **不能**用来验证这个新 Pin：它的 `core_sha` / `core_version` 是必填输入，并且会与 `refs/tags/v<version>` 的目标提交交叉校验（见该工作流头部注释）。也就是说它只能针对**已存在 tag** 的提交构建，而本轮没有也无法打 tag。结论：desktop 的 installer 级证明要等到下一次真实发布，或由一个允许"候选 SHA + 不校验 tag"的入口提供。这是本轮明确留下的缺口，不是"跑不跑得动"的问题。
+5. **`release-prepare.yml` 只在 dry-run 里跳过了证据步骤**：如果将来有人把 `dry_run` 改成默认 false，就会在每次运行都等 CI。这是有意的（真实发布必须等证据），但要在使用说明里写清楚。
+6. **既有的 Apple mach service 版本不一致（`R3`）**：`AppConfiguration.systemExtensionMachServiceName` 用 `Bundle.main.version`，而扩展的 `NEMachServiceName` 用 `MARKETING_VERSION`，本地未签名构建下两者可能不同（release 构建会被 `release/JIEJIE_VERSION` 全局覆盖，所以不影响正式包）。不是本轮引入，未在本轮修（需要产品决策），记录在此。
+7. **utls Pin 落后一个"纯文档"提交**：`main` 现在 `b63a2e9`（UPSTREAM.md 修正），Pin 在 `2da328d`（生产合并 + 测试）。按该仓库 UPSTREAM.md 的规则，文档提交不构成改 Pin 的理由，所以本轮刻意不追。下一次 `release-prepare` 会把它前移到 `b63a2e9`（正常，release 就该构建分支最新点）。若希望"只有生产变更才算落后"，需要在 `release-freeze.py` 里按 patch 内容分类——**没有实现，因为那是把简单规则换成需要维护的启发式**。
+8. **`resolve` 依赖 GitHub API 的 compare 端点**（祖先判定）。网络抖动会表现为 `UNKNOWN` 并 fail closed（不会误放行），但会挡住一次准备。重跑即可。
+
+---
+
+## 8. 用户如何操作（极简）
+
+1. **日常**：只在各仓库的产品分支工作——`sing-box/testing`、`sing/dev`、`sing-tun/dev`、`sing-quic/main`、`quic-go/sagernet`、`cronet-go/main`、`utls/main`、`sing-box-for-apple/main`、`sing-box-for-android/main`、`sing-box-for-desktop/main`、`sing-box-dashboard/main`。不要再手工改 Pin。
+2. **发版前**（唯一要做的事）：GitHub → Actions → **Release preparation** → Run workflow →
+   - `dry_run` 保持 **true** 先跑一次：它只解析、分类、冻结、跑门，并给出报告；有分叉会直接红。
+   - 报告没问题后，`dry_run: false` 跑一次：它会把真正落后的 Pin 前移、提交、推送，并等候选提交的 CI 证据。
+   - CI 绿之后，再跑一次 `dry_run: false` + `create_tag: true`：它创建 tag（默认 `v<release/JIEJIE_VERSION>`）。
+3. **发布**：`gh workflow run release.yml -f tag=vX.Y.Z`（和以前一样；它只下载 CI 已构建并校验过的产物）。
+4. **红灯去哪看**：`release-prepare` 的失败步骤会直接说仓库名、旧/新 SHA、关系（behind/diverged/missing）和下一步；`verify.yml` 里的 `release-freeze.py verify` 红灯意味着"有人改了 Pin 却没重新冻结"。
+5. 想手工确认现状：`python3 scripts/ci/release-freeze.py check --resolve <(python3 scripts/ci/release-freeze.py resolve /dev/stdout)`（或先 `resolve --out` 再 `check`）。
+
+---
+
+## 9. 本轮提交清单
+
+| 仓库 | 提交 | 主题 |
+|---|---|---|
+| `utls` | `3ab4752` | merge：吸收 MetaCubeX v1.9.0-mod-meta `a6a364af`（3 个提交） |
+| `utls` | `2da328d` | test：钉住 ECH ALPN 条件与 QUIC 构建错误路径（两个负向证明） |
+| `utls` | `b63a2e9` | docs：记录镜像同步与真实消费方 Pin |
+| `sing-box-for-android` | `61a58ab` | merge：ABI handover（dev + fix 的 3 个 StringBox 提交） |
+| `sing-box-for-android` | `c7837107` | merge：吸收 SagerNet dev 的 12 个提交 |
+| `sing-box-for-apple` | `be3258a` | merge：吸收 SagerNet dev 的 13 个提交（候选，待 CI） |
+| `sing-box-for-desktop` | `6d4ccf8c` | deps：嵌套 dashboard Pin → `5e9271e5` |
+| `sing-box` | `14cfcafd` | deps：utls Pin → `2da328dfb92f`（双模块） |
+| `sing-box` | `0adeb465` | deps：`clients/android` → `c7837107`（含 `VERIFIED_ANDROID_SHA`、契约行号、状态更新） |
+| `sing-box` | `a27e683c` | deps：`clients/desktop` → `6d4ccf8c` |
+| `sing-box` | `8dac10c1` | feat：发布前依赖冻结（manifest + 工具 + 测试 + 工作流 + 锁） |
+
+---
+
+*证据等级用词：`VERIFIED_SOURCE`（读源码/扫描器）、`VERIFIED_GIT`（Git/API 祖先与参考）、`VERIFIED_UNIT`（本机执行的测试）、`VERIFIED_CI`（指定 run id 的 GitHub Actions 执行）、`VERIFIED_ARTIFACT`（真实产物校验）、`NOT_RUN`（附带原因）。本报告没有把任何 `NOT_RUN` 写成 `PASS`。*
