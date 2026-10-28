@@ -217,7 +217,8 @@ custom UDP timeout
 network options
 TLS options
 tracker
-process metadata
+active power-report recorder
+unproven process metadata
 ```
 
 So the complete meaning is: *"if this flow is otherwise eligible, this group does not stand in its

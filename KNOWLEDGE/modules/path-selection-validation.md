@@ -5,7 +5,9 @@
 **VERIFIED_SOURCE** at `011f3fdcd99`: `protocol/mieru/fallback.go` classifies caller cancellation,
 local lifecycle, endpoint, transport, target and ambiguous failures separately. It preserves typed
 socket observations before the SDK flattens error chains; a SOCKS rejection is target evidence and
-must not mark the underlay transport unhealthy. A bare EOF is ambiguous. The Mieru inbound and
+must not mark the underlay transport unhealthy. In the SOCKS response-read classification, a bare
+TCP EOF is ambiguous while the UDP case is classified as a transport failure; inspect the precise
+branch rather than treating every EOF alike. The Mieru inbound and
 outbound register close with their scopes (`protocol/mieru/inbound.go`, `outbound.go`); a close or
 generation replacement must not be interpreted as a transport failure. This is not proof of peer
 interoperability or every failure mode; consult the fallback and early-failure tests for their scope.
