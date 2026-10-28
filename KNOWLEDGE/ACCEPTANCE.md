@@ -28,6 +28,8 @@ Three `./route` packet-destination-guard tests for memo growth, key normalizatio
 behavior passed under Go 1.26.10. The growth test inserts keys directly and is not an attack test.
 The two named reusable-owner capability and real HTTP-manager retirement-walk tests also passed
 locally under Go 1.26.10; they do not enumerate every possible owner.
+Selected `./protocol/mieru` fallback option, cooldown/probe, startup rollback and stale-generation
+tests passed under Go 1.26.10; this does not establish external Mieru interoperability.
 
 Post-baseline checks run locally at target `011f3fdcd99` on 2026-10-28 (unit tests, not device or CI evidence):
 

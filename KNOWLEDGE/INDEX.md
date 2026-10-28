@@ -55,7 +55,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | TUN reset before/after stack start | `modules/libbox-platform-contract.md` | post-baseline TUN reset handoff |
 | Naive H3 to H2 retry | `modules/naive-http-transport.md` | post-baseline fallback |
 | VLESS encryption layer and cancellation | `modules/xhttp-client-transport.md` | VLESS encryption boundary |
-| Mieru fallback failure classification and lifecycle | `modules/path-selection-validation.md` | Mieru transport failure boundaries |
+| Mieru configuration, fallback and lifecycle | `modules/mieru.md`, `modules/path-selection-validation.md` | protocol integration and failure boundaries |
 | AnyTLS server address preference and error attribution | `modules/path-selection-validation.md` | AnyTLS server resolution and failure attribution |
 | ShadowTLS pre-auth timeout and handshake-target cleanup | `modules/core-lifecycle-runtime.md` | protocol ownership |
 | TLS engine selection, ECH retry and fork pins | `modules/build-pruning-release.md` | TLS engines and ECH retry |

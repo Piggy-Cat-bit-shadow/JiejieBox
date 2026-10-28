@@ -16,6 +16,7 @@ carries its own source anchors, provenance and evidence level.
 | MASQUE/CONNECT-IP, capsules, sessions, DATAGRAM batching, address/route/DNS/PREF64, PTB | `masque-connectip.md` |
 | Native Naive, HTTP CONNECT proxy, `transport/http`, `http_clients`, target ACL, padding/masquerade | `naive-http-transport.md` |
 | XHTTP / SplitHTTP / XMUX / stream-one / packet-up — writing a VLESS XHTTP node, mode choice, connection reuse | `xhttp-client-transport.md` |
+| Mieru inbound/outbound, TCP/UDP underlay, opt-in fallback and network rebuild | `mieru.md` |
 | Direct Offload / native bypass, `traffic_class`, `traffic_scheduler`, dial governor | `data-path-optimization.md` |
 | `fast_path` on a selector or urltest group — authorising a group's flows to attempt Direct Fast Path, or refusing it | `fast-path-group-policy.md` |
 | Any zero-copy, allocation, buffer pool, batch ownership, splice question | `buffer-ownership.md` |
@@ -23,8 +24,6 @@ carries its own source anchors, provenance and evidence level.
 | A libbox export, `SetupOptions`, CommandServer API, ABI version, Apple/Android tag set | `libbox-platform-contract.md` |
 | Build tags, protocol pruning, release profiles, generators, CI gates, release artifacts | `build-pruning-release.md` |
 | MTU, packet size bounds, buffer geometry, low-memory profile | `mtu-and-geometry.md` |
-| DNS routing/caching, FakeIP, generations, consumer demand | `dns-demand.md` |
-| Apple/Android ABI, the libbox export surface, the client-facing contract | `libbox-platform-contract.md` |
 
 All files in this map exist at the knowledge revision; the map and the modules are committed
 together. If a link here does not resolve, the knowledge base has been edited inconsistently —
@@ -81,9 +80,9 @@ MASQUE and Naive are **not fork inventions**: `MASQUE support` arrived in `b8308
 support", 世界, 2026-09-21) and `transport/http`/`protocol/naive` already existed at `e4b7e692`.
 What the fork added on top is documented per module with provenance.
 
-## Not covered by these modules — and why
+## Additional ownership and coverage limits
 
-| Area | Why not covered |
+| Area | Coverage and limits |
 |---|---|
 | **`experimental/boxdd/**` — the Windows daemon** (52 `.go` files + a `.proto`) | **OWNED — `windows-daemon-security.md`.** Previously registered here as "the largest gap". It is the daemon/service/worker/peer-authentication surface: the named-pipe handshake, executable path and same-file resolution, the signer-byte-equality pin, the Authenticode allowlist, service installation and the updater. It is **not** upstream code and **not** covered incidentally by `libbox-platform-contract.md`, which records the client-facing ABI rather than the daemon's authorisation model. **CROSS-MODULE:** `daemon/**` (the in-process core API) → `libbox-platform-contract.md`; `cmd/internal/build_boxdd` and packaging → `build-pruning-release.md` + `ci-release.md` §5; `clients/desktop/**` is a separate repository. |
 | `option/schema.go` → `docs/schema.json` (the generated artifact) | The chain is: `option/schema.go` and the option structs → `schema.Generate` (`cmd/sing-box/cmd_schema.go:36`) → `make schema` (`Makefile:35-36`) → the tracked `docs/schema.json`. It had drifted - not on `fast_path` (that key is present 83 times), but on `User`: the artifact advertised `Username`/`Password` while the option structs carry `json:"username"` / `json:"password"`, so a consumer following the published schema wrote keys the parser does not accept. Fixed by regenerating the artifact and adding `cmd/sing-box/cmd_schema_artifact_test.go`, which compares `schema.Generate` output with the tracked file exactly; `verify.yml` runs it under the canonical tags. The generation contract is now executable: a change to an option struct that changes the schema fails the test instead of surviving until a manual `make schema`. The consumers are still outside the tree (`docs/configuration/schema.md`, `docs/JIEJIE-SERVER.md`, an editor-schema URL), which is why the gate compares bytes rather than trusting the docs. Evidence: `docs/schema.json`, `cmd/sing-box/cmd_schema_artifact_test.go`, `.github/workflows/verify.yml`; re-check `go test -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" -run TestTrackedSchemaMatchesTheGenerator ./cmd/sing-box`. |
