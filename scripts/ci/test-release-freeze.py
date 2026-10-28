@@ -588,9 +588,12 @@ def case_nested_lag_is_reported_not_fatal():
         with open(lock, "r", encoding="utf-8") as handle:
             data = json.load(handle)
         nested = data["nested"][0]
-        check("nested-lag: the snapshot records the nested relation",
-              nested["relation"] == "behind" and nested["resolved"] == full(dashboard_tip),
-              json.dumps(nested))
+        check("nested-lag: the lock records the nested pin and not the branch tip",
+              nested["pinned"] == full("cccccccccccc") and "resolved" not in nested
+              and "relation" not in nested, json.dumps(nested))
+        check("nested-lag: the audit view still reports the lag",
+              "clients/desktop:dashboard" in result.stdout
+              and "behind" in result.stdout.lower(), result.stdout[-400:])
         check("nested-lag: the nested pin in the desktop repository was not rewritten",
               fixture.nested_pin() == full("cccccccccccc"), fixture.nested_pin())
     finally:
@@ -713,9 +716,8 @@ def case_verify_skips_nested_without_submodule():
         with open(lock, "r", encoding="utf-8") as handle:
             data = json.load(handle)
         nested = data["nested"][0]
-        check("nested-absent: the lock records that the nested pin could not be read",
-              nested["relation"] == "skipped" and "not checked out" in (nested["reason"] or ""),
-              json.dumps(nested))
+        check("nested-absent: the lock records no nested pin it could not read",
+              nested["pinned"] is None, json.dumps(nested))
         result = fixture.run("verify", "--lock", lock, expect=0)
         check("nested-absent: verify reports SKIPPED rather than a pass",
               "SKIPPED" in result.stdout, result.stdout[-400:])
@@ -788,6 +790,27 @@ def case_parse_block_form():
         fixture.cleanup()
 
 
+
+def case_lock_is_stable_when_only_a_branch_tip_moves():
+    fixture = Fixture()
+    try:
+        first_resolve = fixture.write_resolution(name="resolve-a.tsv")
+        first = os.path.join(fixture.dir, "lock-a.json")
+        fixture.run("snapshot", "--resolve", first_resolve, "--out", first, expect=0)
+
+        # The utls branch moves; nothing in this tree does. A preparation must not produce a commit
+        # for that - which is only true if the lock does not record the branch tip.
+        moved = fixture.write_resolution({"github.com/metacubex/utls": "3" * 11 + "f"},
+                                         name="resolve-b.tsv")
+        second = os.path.join(fixture.dir, "lock-b.json")
+        fixture.run("snapshot", "--resolve", moved, "--out", second, expect=0)
+        with open(first, "rb") as one, open(second, "rb") as two:
+            check("idempotency: a branch-tip move alone does not change the committed lock",
+                  one.read() == two.read())
+    finally:
+        fixture.cleanup()
+
+
 def main():
     cases = [
         case_no_updates_are_idempotent,
@@ -806,6 +829,7 @@ def main():
         case_resolve_from_recorded_file,
         case_lock_records_the_release_version,
         case_parse_block_form,
+        case_lock_is_stable_when_only_a_branch_tip_moves,
     ]
     for case in cases:
         print("--- %s" % case.__name__)

@@ -705,6 +705,44 @@ def cmd_apply(repo, args):
 # snapshot
 # --------------------------------------------------------------------------------------------
 
+
+def lock_projection(report):
+    """The committed lock: the pins and nothing else.
+
+    Deliberately excludes branch tips, relations, reasons and the commit the file was derived at.
+    All of those change when an upstream branch moves, whether or not this tree builds anything
+    different, and a lock that changes for a reason unrelated to the build turns an idempotent
+    preparation into a commit plus a 40-minute CI run. The audit half lives in `check --json` and
+    in the workflow's uploaded report.
+    """
+    lock = {
+        "schema": SCHEMA,
+        "release_version": report.get("release_version"),
+        "go_modules": [
+            {
+                "module": row["module"],
+                "target": row.get("target"),
+                "version": row.get("version"),
+                "pinned": row.get("pinned"),
+            }
+            for row in report["go_modules"]
+        ],
+        "cronet_native": {
+            "modules": (report.get("cronet_native") or {}).get("modules"),
+            "shas": (report.get("cronet_native") or {}).get("shas"),
+            "policy": "controlled",
+        },
+        "clients": [
+            {"path": row["path"], "pinned": row.get("pinned")} for row in report["clients"]
+        ],
+        "nested": [
+            {"parent": row["parent"], "path": row["path"], "pinned": row.get("pinned")}
+            for row in report["nested"]
+        ],
+    }
+    return lock
+
+
 def cmd_snapshot(repo, args):
     data = manifest(repo)
     resolution = read_resolve(args.resolve)
@@ -715,7 +753,7 @@ def cmd_snapshot(repo, args):
             say("FAIL: %-40s %s" % (row.get("module") or row.get("path"), row.get("reason", "")))
         say("refusing to freeze a candidate whose sources are not comparable")
         return 1
-    dump_json(args.out, report)
+    dump_json(args.out, lock_projection(report))
     say("wrote %s" % args.out)
     if args.md:
         with open(args.md, "w", encoding="utf-8", newline="\n") as handle:
@@ -740,6 +778,9 @@ def render_markdown(report):
     lines.append("|---|---|")
     lines.append("| release version | `%s` |" % report.get("release_version"))
     lines.append("| derived at commit | `%s` |" % report.get("derived_at"))
+    lines.append("")
+    lines.append("This file is the report; `release/source-lock.json` is the committed lock and")
+    lines.append("carries the pins only, so a branch moving without changing a pin does not churn it.")
     lines.append("| branch | `%s` |" % report.get("branch"))
     lines.append("")
     lines.append("## Go modules")

@@ -1,176 +1,74 @@
 {
-  "branch": "testing",
   "clients": [
     {
-      "branch": "main",
       "path": "clients/apple",
-      "pinned": "16cf87b4bea0dd4e81d51b2b1b8c2e317ae88423",
-      "policy": "update",
-      "reason": "the pin is the branch tip",
-      "relation": "identical",
-      "resolved": "16cf87b4bea0dd4e81d51b2b1b8c2e317ae88423",
-      "slug": "Piggy-Cat-bit-shadow/sing-box-for-apple"
+      "pinned": "aeccc754a82f9c45f1cead720884d19b6cb7795a"
     },
     {
-      "branch": "main",
       "path": "clients/android",
-      "pinned": "c7837107dc0126fb704fdf08cf203e10b30c8a22",
-      "policy": "update",
-      "reason": "the pin is the branch tip",
-      "relation": "identical",
-      "resolved": "c7837107dc0126fb704fdf08cf203e10b30c8a22",
-      "slug": "Piggy-Cat-bit-shadow/sing-box-for-android"
+      "pinned": "c7837107dc0126fb704fdf08cf203e10b30c8a22"
     },
     {
-      "branch": "main",
       "path": "clients/desktop",
-      "pinned": "6d4ccf8c5cc6dd0749cfee7822f8de45eab4f40b",
-      "policy": "update",
-      "reason": "the pin is the branch tip",
-      "relation": "identical",
-      "resolved": "6d4ccf8c5cc6dd0749cfee7822f8de45eab4f40b",
-      "slug": "Piggy-Cat-bit-shadow/sing-box-for-desktop"
+      "pinned": "6d4ccf8c5cc6dd0749cfee7822f8de45eab4f40b"
     }
   ],
   "cronet_native": {
-    "expected_modules": 29,
     "modules": 29,
+    "policy": "controlled",
     "shas": [
       "8c68ce89873c"
-    ],
-    "test_shas": [
-      "8c68ce89873c"
-    ],
-    "versions": [
-      "v0.0.0-20260929202119-8c68ce89873c"
     ]
   },
-  "derived_at": "57380c6803e0870482078b800c8f43e2e5355360",
   "go_modules": [
     {
-      "branch": "dev",
       "module": "github.com/sagernet/sing",
       "pinned": "1729220c46c4",
-      "policy": "update",
-      "reason": "the pin is the branch tip",
-      "relation": "identical",
-      "resolved": "1729220c46c4cf750726b1057514a8d52a1f5e3b",
-      "slug": "Piggy-Cat-bit-shadow/sing",
       "target": "github.com/Piggy-Cat-bit-shadow/sing",
-      "test_pinned": "1729220c46c4",
-      "test_version": "v0.9.6-0.20261027185736-1729220c46c4",
       "version": "v0.9.6-0.20261027185736-1729220c46c4"
     },
     {
-      "branch": "dev",
       "module": "github.com/sagernet/sing-tun",
       "pinned": "8b9a38008705",
-      "policy": "update",
-      "reason": "the pin is the branch tip",
-      "relation": "identical",
-      "resolved": "8b9a380087059f759441c404e26061be218dfa64",
-      "slug": "Piggy-Cat-bit-shadow/sing-tun",
       "target": "github.com/Piggy-Cat-bit-shadow/sing-tun",
-      "test_pinned": "8b9a38008705",
-      "test_version": "v0.0.0-20261028061444-8b9a38008705",
       "version": "v0.0.0-20261028061444-8b9a38008705"
     },
     {
-      "branch": "main",
       "module": "github.com/sagernet/sing-quic",
       "pinned": "1ef2597cc129",
-      "policy": "update",
-      "reason": "the pin is the branch tip",
-      "relation": "identical",
-      "resolved": "1ef2597cc1298146fcdddfeaa0384999f890d0c3",
-      "slug": "Piggy-Cat-bit-shadow/sing-quic",
       "target": "github.com/Piggy-Cat-bit-shadow/sing-quic",
-      "test_pinned": "1ef2597cc129",
-      "test_version": "v0.7.2-0.20261024181351-1ef2597cc129",
       "version": "v0.7.2-0.20261024181351-1ef2597cc129"
     },
     {
-      "branch": "sagernet",
       "module": "github.com/sagernet/quic-go",
       "pinned": "2daa76f5bd52",
-      "policy": "update",
-      "reason": "the pin is the branch tip",
-      "relation": "identical",
-      "resolved": "2daa76f5bd52dcb8d2d2a25f65f280905c48f18e",
-      "slug": "Piggy-Cat-bit-shadow/quic-go",
       "target": "github.com/Piggy-Cat-bit-shadow/quic-go",
-      "test_pinned": "2daa76f5bd52",
-      "test_version": "v0.61.1-0.20261027185738-2daa76f5bd52",
       "version": "v0.61.1-0.20261027185738-2daa76f5bd52"
     },
     {
-      "branch": "main",
       "module": "github.com/metacubex/utls",
       "pinned": "b63a2e9a7b1e",
-      "policy": "update",
-      "reason": "the pin is the branch tip",
-      "relation": "identical",
-      "resolved": "b63a2e9a7b1eeba03cb7e2db2b92b5bb027894fc",
-      "slug": "Piggy-Cat-bit-shadow/utls",
       "target": "github.com/Piggy-Cat-bit-shadow/utls",
-      "test_pinned": "b63a2e9a7b1e",
-      "test_version": "v1.8.8-0.20261028133436-b63a2e9a7b1e",
       "version": "v1.8.8-0.20261028133436-b63a2e9a7b1e"
     },
     {
-      "branch": "main",
       "module": "github.com/sagernet/cronet-go",
       "pinned": "c9c0e6ec8845",
-      "policy": "update",
-      "reason": "the pin is the branch tip",
-      "relation": "identical",
-      "resolved": "c9c0e6ec884588e72c7970341e2de65b0c307e59",
-      "slug": "Piggy-Cat-bit-shadow/cronet-go",
       "target": "github.com/Piggy-Cat-bit-shadow/cronet-go",
-      "test_pinned": "c9c0e6ec8845",
-      "test_version": "v0.0.1-143.0.7499.109-2.0.20261027185739-c9c0e6ec8845",
       "version": "v0.0.1-143.0.7499.109-2.0.20261027185739-c9c0e6ec8845"
     },
     {
-      "branch": "main",
       "module": "github.com/sagernet/cronet-go/all",
       "pinned": "c9c0e6ec8845",
-      "policy": "update",
-      "reason": "the pin is the branch tip",
-      "relation": "identical",
-      "resolved": "c9c0e6ec884588e72c7970341e2de65b0c307e59",
-      "slug": "Piggy-Cat-bit-shadow/cronet-go",
       "target": "github.com/Piggy-Cat-bit-shadow/cronet-go/all",
-      "test_pinned": "c9c0e6ec8845",
-      "test_version": "v0.0.0-20261027185739-c9c0e6ec8845",
       "version": "v0.0.0-20261027185739-c9c0e6ec8845"
-    }
-  ],
-  "mirrors": [
-    {
-      "branch": "v1.9.0-mod-meta",
-      "mirror_branch": "mirror/meta-v1.9.0",
-      "resolved": "a6a364afbd13015e2d6da7d55f8ad4123f9fc0b9",
-      "slug": "MetaCubeX/utls"
-    },
-    {
-      "branch": "testing",
-      "mirror_branch": null,
-      "resolved": "e5d91fa79f6319d5de940d6c81d81f0fe53b9476",
-      "slug": "SagerNet/sing-box"
     }
   ],
   "nested": [
     {
-      "branch": "main",
       "parent": "clients/desktop",
       "path": "dashboard",
-      "pinned": "5e9271e516e437b001dbb51c4258441490b82318",
-      "policy": "report",
-      "reason": "the pin is the branch tip",
-      "relation": "identical",
-      "resolved": "5e9271e516e437b001dbb51c4258441490b82318",
-      "slug": "Piggy-Cat-bit-shadow/sing-box-dashboard"
+      "pinned": "5e9271e516e437b001dbb51c4258441490b82318"
     }
   ],
   "release_version": "0.1.33",

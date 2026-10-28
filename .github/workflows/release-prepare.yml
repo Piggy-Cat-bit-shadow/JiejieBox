@@ -268,6 +268,42 @@ jobs:
           git rev-parse HEAD > build/candidate-sha
           echo "pushed $(cat build/candidate-sha)"
 
+      # The push above creates the gate runs ASYNCHRONOUSLY. `evidence` fails immediately when a
+      # commit has NO run at all - correctly, because a tag whose CI never ran must not be released
+      # - but that failure is indistinguishable from "the run is a few seconds behind", and that is
+      # exactly what the first real preparation hit:
+      #
+      #     FAIL: no run of .github/workflows/verify.yml exists for commit 325f3158...
+      #
+      # one second after pushing it. This step waits for the two runs to EXIST; `evidence` still
+      # owns waiting for them to finish, and still refuses a skipped or failed job.
+      - name: wait for the candidate's gate runs to be created
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sha="$(cat build/candidate-sha)"
+          if [ "$PREP_DRY_RUN" = "true" ]; then
+            echo "dry run: no candidate was pushed, so there is nothing to wait for"
+            exit 0
+          fi
+          for attempt in $(seq 1 60); do
+            present="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$sha&per_page=100" \
+              --jq '[.workflow_runs[].name] | unique | map(select(. == "Verify" or . == "Release contract verification")) | length')"
+            echo "attempt $attempt: $present of 2 gate workflow(s) have a run for $sha"
+            if [ "$present" = "2" ]; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "FAIL: $sha still has no Verify/Release-contract-verification run after 10 minutes." >&2
+          echo "      Either the push did not trigger them (a [skip ci] directive or a paths filter)," >&2
+          echo "      or they were never created. A release must not proceed on absent evidence." >&2
+          echo "      Dispatch them for the product branch, then re-run this preparation:" >&2
+          echo "        gh workflow run verify.yml --repo $GITHUB_REPOSITORY --ref testing" >&2
+          echo "        gh workflow run release-contract-verify.yml --repo $GITHUB_REPOSITORY --ref testing" >&2
+          exit 1
+
       - name: require exact-SHA evidence for the candidate
         env:
           GH_TOKEN: ${{ github.token }}
