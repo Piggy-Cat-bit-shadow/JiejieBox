@@ -166,6 +166,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
   caution now reflects the validity-policy tradeoff consistently with the security module's analysis.
 - A cross-module pass reconciled validator side-effect scope, the locally completed offline module
   parity check, current Cronet platform support, and MASQUE initial-size versus later-packet claims.
+- Windows process creation-time ordering and the exited-process check are specific checks, not a
+  blanket proof of ancestry or absence of every TOCTOU race. The historical Apple device result is
+  scoped to its measured configuration, revisions and sleep episodes.
 
 ### Module review status
 

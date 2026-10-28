@@ -98,12 +98,12 @@ can connect".
 | 5 | `validateWorkerProcessRole` — command line, private pipe paths, parent PID | it is a worker, not a look-alike | `:360-379` |
 | 6 | `processIdentity` — token user SID, interactive session | which user is connecting | `:313-334` |
 | 7 | worker and application share a process identity | one user's pair, not a mix | `:165` |
-| 8 | parent creation time < worker creation time | the parent is the real ancestor | `:175` |
+| 8 | parent creation time < worker creation time | the observed timestamps satisfy the expected ordering; this check alone does not prove ancestry | `:175` |
 | 9 | parent image path == `expectedApplicationPath` | the installed application | `:205` |
 | 10 | `sameWindowsFile(parentProcessImage, expectedApplication)` | same file, not a copy | `:208` |
 | 11 | `validateApplicationProcessRole` — not an Electron child, parent is the application | role, not just path | `:339-355` |
 | 12 | `authenticodeSigner(application)` == `daemonSigner` | **signer byte-equality again** | `:223` |
-| 13 | neither process exited during authentication | no TOCTOU on a dead process | `:235` |
+| 13 | neither process exited during authentication | rejects a process observed to have exited at the check; not a proof that every possible race is eliminated | `:235` |
 
 Two properties make this robust rather than checklist-shaped:
 
@@ -113,7 +113,7 @@ Two properties make this robust rather than checklist-shaped:
   path of the file actually held open, not a string that could be raced.
 
 **`expectedApplicationPath` is derived from the daemon's own path** (`peer_windows.go:303-304`), which
-is the unforgeable part of the design: a peer cannot nominate which application is legitimate.
+means that this peer cannot nominate an arbitrary expected application path through the handshake.
 
 ## 5. Authenticode semantics
 

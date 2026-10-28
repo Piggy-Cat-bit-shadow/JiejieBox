@@ -88,7 +88,7 @@ later attempt to gate the sleep edge on `IsDevicePaused()` produced **zero** bou
 lock (strictly worse than the bug it fixed) and was reverted (`e20875359` → `e661258a6`, both kept as
 `ARCHIVE-ONLY`). `docs/fork/p1c-iphone-device-closure.md:289-291` states it.
 
-### Device evidence (the only physical-device run recorded in this repository)
+### Historical device evidence for the Apple sleep boundary
 
 Device: **"Jiejie" — iPhone 17 Pro Max (`iPhone18,2`), iOS 26.4.2 (23E261), physical, wired.**
 
@@ -99,7 +99,8 @@ Device: **"Jiejie" — iPhone 17 Pro Max (`iPhone18,2`), iOS 26.4.2 (23E261), ph
 | **rejected** `e20875359` | ~10 min locked | — | **0** | strictly worse than the bug; reverted |
 
 iPad and macOS were **`NOT_RUN` / `SIGNING_OUT_OF_SCOPE`**. This is one device, one OS build, one
-product. It is `VERIFIED_DEVICE` for that configuration and **`UNVERIFIED` for every other**.
+product and the recorded revisions. It is device evidence for that configuration and measured sleep
+episode, not proof of all current builds, other devices or other lifecycle paths.
 
 ---
 
