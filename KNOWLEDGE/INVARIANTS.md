@@ -288,7 +288,7 @@ field nil, so `decideHTTP3Availability` can distinguish "absent" from "present b
 * **Re-check:** build with and without `with_quic` and assert the decision differs.
 * **Kind:** platform/build constraint. **Owner:** `naive-http-transport.md`, `build-pruning-release.md`
 
-### A17 — Sniffed metadata never rewrites the destination
+### A17 — Sniff metadata is not a destination rewrite unless explicitly configured
 
 A sniffed domain reaches routing as DNS planning and dial candidates; sniffing alone does not rewrite
 `Destination` except through the explicit, deprecated `override_destination`. Independently, FakeIP

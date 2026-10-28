@@ -142,9 +142,10 @@ selector
 urltest
 ```
 
-Both are **transparent pure-selection groups**: they choose an outbound and hand the flow on, adding
-no behaviour of their own. That is what makes it meaningful to speak of the group "authorising" a
-flow — the group is not the thing that carries the traffic.
+Both are **transparent for the Fast Path chain check**: they select an outbound and are not a
+physical hop. This does not mean they have no other behavior: selector and urltest can wrap returned
+connections for interruption and lifecycle management. The bypass eligibility and entry-consumer
+checks still determine whether a particular flow may actually bypass.
 
 Refused:
 
