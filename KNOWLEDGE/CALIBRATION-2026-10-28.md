@@ -218,6 +218,12 @@ This is an operational ledger, not a replacement for the modules or a new produc
   index, architecture, invariants and acceptance files. Forty bare module names were made explicit as
   `modules/...` paths; the repeated scan found no missing file among that limited set. Numeric module
   sections referenced by single-module index rows also matched headings in the mechanical check.
+- Correction to the earlier checkout assumption: Apple and Android submodules are initialized and
+  clean at `3aedd7417488` and `9d15717a85c5`; desktop is uninitialized. The Android Kotlin probe
+  scanned 309 files with zero reported violations. The Apple probe nominally returned zero violations
+  over 423 files, but Windows `core.symlinks=false` turns tracked links into text and a target is
+  missing, so that is not a complete Swift scan; the CI skip is not reversed by this local exit code.
+  Android's checked-in idle broadcast → queued pause/wake path was also read; no device race was run.
 
 ### Module review status
 

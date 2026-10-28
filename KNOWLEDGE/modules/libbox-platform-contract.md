@@ -56,9 +56,11 @@ physical Android or Apple network transition.
 `cmd/internal/{mobilebuildtags,applebuildtags,appletags}`, `release/apple-client-refs.env`, and the
 Apple/Android artifact pins.
 
-**This module records the CORE side of the contract only.** `clients/apple`, `clients/android` and
-`clients/desktop` are git submodules, empty in a clean worktree, and are **not auditable from this
-repository**. Where a statement depends on client source, this module says so.
+**This module primarily records the core side of the contract.** The clients are separate Git
+submodules and their availability depends on the checkout. In this calibration, Apple and Android
+are initialized at `3aedd7417488` and `9d15717a85c5`; desktop is uninitialized. Local Windows Git
+has `core.symlinks=false` for Apple, so link entries are materialized as text files, not followed as
+real links. Client-source findings below are scoped to those revisions and this checkout.
 
 **Load this module when changing:** any exported libbox symbol, `SetupOptions`, the CommandServer API,
 the ABI version, a platform-facts API, or the Apple/Android pin.
@@ -201,8 +203,10 @@ Two of the platform's judgements are **reconciled** rather than trusted:
 **One core-side admission of a *client-side* double-driver, quoted and `UNVERIFIED` here:**
 `experimental/libbox/platform_events.go:253-260` records that Android also drives `Pause`/`Wake` from
 `ACTION_DEVICE_IDLE_MODE_CHANGED`, and that mixing the two *"would let a Doze wake lift a pause the
-screen fact still asserts, with neither path knowing."* `clients/android` is empty here, so this
-cannot be checked from this repository.
+screen fact still asserts, with neither path knowing."* At Android client revision `9d15717a85c5`,
+`BoxService.kt` receives `ACTION_DEVICE_IDLE_MODE_CHANGED`, queues `isDeviceIdleMode`, and calls
+`commandServer.pause()` or `.wake()` in the consumer. This confirms that particular client source
+path; it does not by itself establish the reported device-level race or all client configurations.
 
 ---
 
@@ -322,6 +326,13 @@ gitlink and constant **does not prove the independently resolved Apple source is
 inspect the resolved build SHA and actual run, especially if the branch moved. This host ran only the
 pin-only check, not the full client ABI sweep or a device build.
 
+Direct local `probe-accessors.py` scans at the pinned client revisions returned 309 Kotlin files and
+423 Swift/Objective-C files with zero reported violations and three interface methods each. The
+Windows Apple checkout materializes tracked symlinks as text; the `SubscriptionQuotaCaption`
+`SubscriptionInfo.swift` link points to a missing target. Thus the nominal Swift scan's zero exit
+must not be promoted to a complete Swift call-site sweep. The Android result is a static scan, not a
+compiled client, ABI compatibility proof or device test.
+
 The v0.1.31 [Apple workflow run](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40606786576)
 resolved `3aedd7417488` and its ABI step reported **PARTIAL**: binding checks and gitlink checks
 passed, but the Swift accessor probe skipped because a referenced source file was missing. The step's
@@ -418,7 +429,7 @@ External repositories
   - clients/android Piggy-Cat-bit-shadow/sing-box-for-android (fork-located because the ABI
                     migration moves the generated Java signatures)
   - clients/desktop SagerNet/sing-box-for-desktop             (upstream's)
-  None is auditable from this repository; all three are empty in a clean worktree.
+  Checkout status varies; see the scope note and record the actual submodule revision.
 ```
 
 ---
@@ -434,7 +445,7 @@ External repositories
 | The Apple client is one source for iOS and macOS | source and local fixture checks; the selection script passed 72 checks under MSYS2 with bundled Python in this calibration | `bash scripts/ci/check-apple-source-selection.sh`; inspect the actual workflow run |
 | Client gitlinks match ABI contract constants | local pin-only script passed; Verify declares the same gate. This does not prove the resolved Apple build SHA equals the gitlink | `./scripts/ci/check-libbox-abi.sh --pin-only`; inspect Apple workflow's resolved source |
 | The refs file cannot silently reinstate a two-source pin | VERIFIED_SOURCE + VERIFIED_UNIT | `sed -n '88,105p' scripts/ci/apple-client-source.sh`; assert it greps the **file**, not the environment — `ece0fb9d2` |
-| ABI call-site compatibility at the pinned revision | **UNVERIFIED** | `bash scripts/ci/check-libbox-abi.sh` (needs a client checkout + `gobind`) |
+| ABI call-site compatibility at the pinned revisions | Android static probe passed locally; Swift nominal scan is incomplete due to symlink materialization / missing target, and the exact-target CI ABI result was PARTIAL | `probe-accessors.py` per client; full gate needs `gobind` and a valid checkout |
 | Android AAR provenance and architecture | **UNVERIFIED (declaration only)** | `android-core-arm64.yml` |
 | Device behaviour on either platform | **UNVERIFIED** — no device, no SDK, no Xcode | — |
 
@@ -460,7 +471,8 @@ External repositories
 12. **Do not call the ABI gate unwired.** Verify declares its pin-only half and the Apple workflow
     declares the full check; inspect the actual run and resolved source before claiming coverage.
 13. **Do not assume `make proto` works.** `protogen` needs a `protoc` the `Makefile` never installs.
-14. **Do not claim client-side behaviour.** The client repositories are not in this worktree.
+14. **Scope client-side claims to a checked-out client SHA and the actual files inspected.** A
+    superproject gitlink alone does not prove a client build or device behavior.
 15. **Do not forget that `include/*` has zero test files.** The registry and the tombstones are
     unguarded; a change there is caught only by a build.
 16. **If you move the Apple pin, the constant must move with it.** `clients/apple`'s gitlink is the
