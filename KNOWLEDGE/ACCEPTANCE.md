@@ -36,6 +36,8 @@ The unfiltered `go test ./transport/v2rayxhttp -count=1` also passed locally at 
 state, including the packet-up tests available without extra build tags.
 At the same branch state `go test ./option ./adapter/outbound ./common/trafficclass -count=1`
 passed; this is local unit evidence, not a platform or deployment certification.
+Three root `TestBoxClose*` tests for repeated/concurrent close and error preservation passed with
+`DEFAULT_BUILD_TAGS_OTHERS`; this un-raced run does not prove every panic or concurrency interleaving.
 Four selected `./route` tests for notification coalescing, confirmed offline recovery, short gaps
 and cross-interface handover also passed locally; they do not replace a real-device transition test.
 Selected `./protocol/shadowtls` first-record timeout, listener cleanup and handshake-target cleanup

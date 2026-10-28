@@ -34,6 +34,12 @@ interface-update and idle-connection hooks (`protocol/anytls/outbound.go`, `prot
 hook; it is not permission to close every live connection. These are source-level contracts at the
 reviewed target; the Snell package reported no test files in this host's untagged run.
 
+`Box.Close` (`box.go`) serializes repeated calls through `closeOnce` and records the final error. It
+recovers a cleanup panic as an error so a later Close cannot report success after a failed teardown.
+The panic unwinds past remaining cleanups: recovery does **not** prove the rest of teardown ran.
+The status view is detached before the governor and scope teardown. These are `VERIFIED_SOURCE`
+at the reviewed target; check `box_close_test.go` and the exact target before changing the boundary.
+
 ShadowTLS inbound has two distinct ownership boundaries: `protocol/shadowtls/pre_auth_timeout.go`
 bounds the first complete TLS record, then clears that deadline; `handshake_target_cleanup.go`
 tracks target connections for one handshake and closes leftovers after the SDK returns. Avoid applying
