@@ -175,7 +175,7 @@ attributing specific test coverage to that run or a later revision.
 | 1.5 | XHTTP client retains the `ReuseSuspect` capability and the HTTP manager remains reachable | `route/reusable_owner_inventory_test.go` asserts the named owners, not a global count | VERIFIED_UNIT locally for the named cases | `go test -count=1 -run 'TestTheReusableOwnersTheWalkIsDocumentedToReachKeepTheirCapabilities\|TestTheWalkReachesTheRealHTTPClientManager' ./route/` | Go |
 | 1.6 | Start/close ordering (`EstablishInitialNetworkEnvironment` last; governor before scope) | `box.go:1166-1168`, `:1210-1224`; `box_close_test.go` | VERIFIED_SOURCE + VERIFIED_UNIT | `go test -count=1 -tags "$OTHERS" -run TestClose .` | Go + tags |
 | 1.7 | 100 sleep/wake cycles and 100 network transitions leak no goroutines; no resurrection after `Close` | `box_lifecycle_stress_test.go` | VERIFIED_UNIT (no `-race`) | `go test -count=1 -tags "$OTHERS" -v -run 'TestOneHundred\|TestNoResurrectionAfterClose' .` | Go + tags |
-| 1.8 | Race-freedom of this subsystem | CI step `verify.yml:310` exists; **no run record in the tree** | **BLOCKED_BY_ENVIRONMENT** (`-race` needs cgo; no C compiler here) | `go test -race -count=1 ./adapter/... ./route/...` on Linux/macOS | cgo |
+| 1.8 | Race checks for adapter and route | [Verify 40605271219](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40605271219) race job logs `ok` at `cb71cf80d72` | VERIFIED_CI for those packages and tested interleavings; local Windows race run blocked | `go test -race -count=1 ./adapter/... ./route/...` on Linux/macOS | cgo |
 
 ## 2. Path selection and start-time validation
 
@@ -248,7 +248,7 @@ attributing specific test coverage to that run or a later revision.
 | 7.4 | The bypass decision asserts 0 allocs **as a test** | `route/direct_offload_bench_test.go`, `route/bypass_capability_cost_test.go` | VERIFIED_UNIT | `go test -count=1 -run Bypass ./route/` | Go |
 | 7.5 | The scheduler shapes aggregate, admits no over-rate, and releases on transition | `common/trafficsched` gate tests (11) | VERIFIED_UNIT | `go test -count=1 ./common/trafficsched/...` | Go |
 | 7.6 | The research controller cannot reach production | a test fails if it does | VERIFIED_UNIT | same | Go |
-| 7.7 | Race-freedom of `trafficclass`/`trafficsched`/`dialer`/`direct`/`tun`/`route`/`adapter` | CI step `verify.yml:310` exists; no run record | **BLOCKED_BY_ENVIRONMENT** | `go test -race …` on Linux | cgo |
+| 7.7 | Race checks for declared data-path packages | [Verify 40605271219](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40605271219) race job succeeded at `cb71cf80d72` | VERIFIED_CI for declared packages and tested interleavings; not universal race-freedom | inspect `verify.yml` and run log | cgo |
 | 7.8 | Real-link shaped throughput and the AI-lane p95 claims | historical measurement recorded in `doc.go`; the harness is a manual tool | **UNVERIFIED here** | `go run ./common/trafficsched/harness` against a real link | two hosts |
 
 ## 8. Buffer ownership and memory
@@ -260,7 +260,7 @@ attributing specific test coverage to that run or a later revision.
 | 8.3 | Batch capability survives a counter wrapper | 3 tests with a real red control | VERIFIED_UNIT | `go test -count=1 -run PacketBatch ./route/` | Go |
 | 8.4 | The kernel splice actually reaches `unix.Splice()` | the sing fork declares `linux-splice-proof`; no matching run was inspected in this calibration | **UNVERIFIED** for this pin and environment | inspect a run for the exact pinned revision | Linux |
 | 8.5 | A `Pipe2` setup failure leaves splice unhanded so the caller can fall back | pinned `sing` commit `1729220c46c4`, `common/bufio/splice_linux.go`; `splice_actual_linux_test.go` | VERIFIED_SOURCE at that pin; Linux execution not performed in this refresh | run the pinned sing Linux splice tests | Linux |
-| 8.6 | kTLS read-path defects | fixed by mirroring the slow path; compared textually, **not executed** | VERIFIED_SOURCE | needs Linux | Linux |
+| 8.6 | kTLS buffered data and queued read error | [Verify 40605271219](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40605271219) reports `ok` for tagged `./common/ktls` | VERIFIED_CI for unit package; no real kernel splice or live KeyUpdate proven | `go test -tags badlinkname ./common/ktls` with supported Linux Go | Linux |
 | 8.7 | Zero-copy levels 3–5 | **structurally unobservable from sing-box** | **UNKNOWN by construction** | — | — |
 
 ## 9. Power and mobile lifecycle
@@ -295,7 +295,7 @@ attributing specific test coverage to that run or a later revision.
 | 11.4 | The Apple client is one source for iOS and macOS | `assert-shared-source` in both jobs; selection script's local fixtures passed 72 checks with MSYS2 and bundled Python | VERIFIED_SOURCE + local fixture result; not a release artifact check | `bash scripts/ci/check-apple-source-selection.sh` | bash + Python + git |
 | 11.5 | Apple gitlink matches its ABI contract pin | `check-libbox-abi.sh --pin-only` is declared in `verify.yml`; the local pin-only check passed for `3aedd741…` | VERIFIED_SOURCE + local script result; not a full ABI sweep or release-artifact proof | `bash scripts/ci/check-libbox-abi.sh --pin-only` | git + bash |
 | 11.5b | A refs file that reinstates a two-source Apple pin is refused, and the refusal does not depend on the caller's environment | `apple-client-source.sh:88-105` greps the **file** before sourcing it; `resolve` (`:386-388`) and `release-apple.sh:181` legitimately export the same names, which the pre-fix environment test mistook for a file declaration | VERIFIED_SOURCE + VERIFIED_UNIT (`ece0fb9d2`) | `sed -n '88,105p' scripts/ci/apple-client-source.sh`; assert the guard greps `$refs_file` and is called before `. "$refs_file"` | sed |
-| 11.6 | ABI call-site compatibility at the current pinned revisions | a Swift probe was historically run at `5cab4ec5`, not current Apple pin `3aedd741`; Kotlin was not run in that check | UNVERIFIED for current client call sites in this calibration | `python3 scripts/ci/probe-accessors.py --contract docs/fork/libbox-abi-contract.tsv --lang swift --root clients/apple` | Python + checked-out clients |
+| 11.6 | ABI call-site compatibility at the current pinned revisions | [Apple run 40606786576](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40606786576) reported PARTIAL; Swift accessor probe skipped on missing file | UNVERIFIED for the skipped call-site sweep; binding and gitlink layers passed | `python3 scripts/ci/probe-accessors.py --contract docs/fork/libbox-abi-contract.tsv --lang swift --root clients/apple` | Python + checked-out clients |
 | 11.7 | Android AAR provenance and architecture | workflow declares path-filtered testing pushes and dispatch; run 40602193557 succeeded at `1ff0af39110` | **VERIFIED_CI** for that run; later artifact contents not independently checked | `android-core-arm64.yml` and linked run in `modules/ci-release.md` | CI |
 
 ## 12. Build, CI and release

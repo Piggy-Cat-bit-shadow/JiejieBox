@@ -199,6 +199,10 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - Cross-reading the two platform modules against `TrimLevel.Action` found and corrected two incorrect
   rows: Android levels 5 (`TrimRunningModerate`) and 20 (`TrimUIHidden`) both map to `TrimIgnore`, not
   `TrimProgressive`.
+- Exact-target v0.1.31 GitHub run logs were inspected: Verify's selected race packages and tagged
+  kTLS unit package reported `ok`; Apple resolved `3aedd7417488` but the ABI check reported PARTIAL
+  because the Swift accessor probe skipped, and signing preflight skipped in unsigned mode. Release
+  run steps report success, while independent asset-byte and device checks remain outside this audit.
 
 ### Module review status
 

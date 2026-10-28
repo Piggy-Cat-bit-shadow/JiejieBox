@@ -12,6 +12,17 @@ both report success at `1ff0af39110d4bd4044c817a0bf209ff01e21f7a`. These run-lev
 `VERIFIED_CI` for that SHA and workflows only; they do not establish later Cronet pin behavior,
 individual test coverage, artifact publication or device behavior.
 
+**v0.1.31 run evidence:** [Verify 40605271219](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40605271219)
+completed successfully at `cb71cf80d72`. Its race job log reports `ok` for the declared route,
+dialer, scheduler, Mieru and adapter packages; the tagged `common/ktls` unit package also reports
+`ok`. These do not prove real kernel splice or all platforms. [Apple client 40606786576](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40606786576)
+reports success, but its ABI log says **PARTIAL**: the Swift accessor probe was skipped because a
+referenced source file was absent; it resolved Apple source `3aedd7417488`, and the binding and
+gitlink checks reported pass. Signing preflight was skipped in unsigned mode. The successful
+[Release 40609827203](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40609827203)
+reports its download, verification and publication steps succeeded for this SHA. These are run
+records, not an independent local check of the downloaded asset bytes or device behavior.
+
 **Scope:** `.github/workflows/*`, `scripts/ci/*`, `verify-evidence/*`, `release/*`, and what a future
 AI may and may not claim as "verified".
 

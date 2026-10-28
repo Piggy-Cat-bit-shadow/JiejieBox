@@ -322,6 +322,12 @@ gitlink and constant **does not prove the independently resolved Apple source is
 inspect the resolved build SHA and actual run, especially if the branch moved. This host ran only the
 pin-only check, not the full client ABI sweep or a device build.
 
+The v0.1.31 [Apple workflow run](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40606786576)
+resolved `3aedd7417488` and its ABI step reported **PARTIAL**: binding checks and gitlink checks
+passed, but the Swift accessor probe skipped because a referenced source file was missing. The step's
+successful exit is not evidence that the client-call-site sweep passed. Signing preflight also skipped
+in unsigned mode; this was not a physical-device validation.
+
 The source-selection checker is wired in the Apple workflow. The separate
 `verify-release-acceptance.sh` checker is not invoked by the release path; see `ci-release.md` §5 for
 the actual release gates, source-selection history and their distinct evidence. `load_refs` checks
