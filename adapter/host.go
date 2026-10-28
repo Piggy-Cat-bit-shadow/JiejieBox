@@ -3,12 +3,10 @@ package adapter
 import (
 	"context"
 	"net/netip"
-	"sync/atomic"
 
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing-tun/gtcpip/header"
-	"github.com/sagernet/sing/common/byteformats"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 )
@@ -53,7 +51,11 @@ func JudgeHostFlow(ctx context.Context, networkManager NetworkManager, logger lo
 				destinationAddress.Port = 0
 			}
 			logger.InfoContext(flowContext, "forward ", networkName, " connection from ", sourceAddress, " to ", destinationAddress, " via tun")
-			return NewHostFlowTracker(flowContext, logger)
+			return NewFlowLogger(flowContext, logger, InboundContext{
+				Network:     networkName,
+				Source:      sourceAddress,
+				Destination: destinationAddress,
+			}, nil)
 		},
 	}
 }
@@ -69,40 +71,4 @@ func flowNetworkName(network uint8) string {
 	default:
 		return ""
 	}
-}
-
-var _ tun.FlowTracker = (*HostFlowTracker)(nil)
-
-// HostFlowTracker logs one routed host flow: who it was for, and how much it moved.
-//
-// The dispatcher owns the flow table, so the tracker carries no state of its own beyond the
-// counters; CloseFlow is the only place the numbers are read.
-type HostFlowTracker struct {
-	ctx      context.Context
-	logger   log.ContextLogger
-	upload   atomic.Int64
-	download atomic.Int64
-}
-
-func NewHostFlowTracker(ctx context.Context, logger log.ContextLogger) *HostFlowTracker {
-	return &HostFlowTracker{ctx: ctx, logger: logger}
-}
-
-func (l *HostFlowTracker) AttachFlow(handle tun.FlowHandle) {
-}
-
-func (l *HostFlowTracker) CountForward(n int) {
-	l.upload.Add(int64(n))
-}
-
-func (l *HostFlowTracker) CountReverse(n int) {
-	l.download.Add(int64(n))
-}
-
-func (l *HostFlowTracker) FlowEstablished() {
-}
-
-func (l *HostFlowTracker) CloseFlow(reason tun.FlowCloseReason) {
-	l.logger.DebugContext(l.ctx, "flow closed: ", reason,
-		", upload ", byteformats.FormatBytes(uint64(l.upload.Load())), ", download ", byteformats.FormatBytes(uint64(l.download.Load())))
 }
