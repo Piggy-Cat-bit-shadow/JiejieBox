@@ -3,7 +3,7 @@
 ## Apple source and single-runner delta (2026-10-29)
 
 At the current source target the Apple gitlink and ABI check constant both identify
-`16cf87b4bea0dd4e81d51b2b1b8c2e317ae88423`; Android is `c7837107dc0126fb704fdf08cf203e10b30c8a22`.
+`044e6d5447eb1285c950bd12cee10effab641f5a`; Android is `c7837107dc0126fb704fdf08cf203e10b30c8a22`.
 `check-libbox-abi.sh --pin-only` passed locally for those parent gitlinks. It is not a full ABI or
 Swift call-site scan. The two local client checkouts were older than those gitlinks and were not
 altered. Windows symlink materialization and a missing desktop checkout still limit local client

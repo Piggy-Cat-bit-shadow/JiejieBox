@@ -13,7 +13,7 @@ directives, not `require`; Dashboard is a gitlink in Desktop, not a parent gitli
 
 | Source | Previous pin at `cb71cf80d72` | Current parent/owner pin | Consumed as |
 |---|---|---|---|
-| [Apple](https://github.com/Piggy-Cat-bit-shadow/sing-box-for-apple) | `3aedd7417488e33a69fe2d46dc34539780d76157` | `16cf87b4bea0dd4e81d51b2b1b8c2e317ae88423` | parent client gitlink; manual Apple build resolves its own source once |
+| [Apple](https://github.com/Piggy-Cat-bit-shadow/sing-box-for-apple) | `3aedd7417488e33a69fe2d46dc34539780d76157` | `044e6d5447eb1285c950bd12cee10effab641f5a` | parent client gitlink; manual Apple build resolves its own source once |
 | [Android](https://github.com/Piggy-Cat-bit-shadow/sing-box-for-android) | `9d15717a85c5d995f4179457b48213b5c73b511d` | `c7837107dc0126fb704fdf08cf203e10b30c8a22` | parent client gitlink; product branch now `main` |
 | [Desktop](https://github.com/Piggy-Cat-bit-shadow/sing-box-for-desktop) | `eb2dbf8ba7de0bb4f37e524dada0f30c38417282` | `6d4ccf8c5cc6dd0749cfee7822f8de45eab4f40b` | parent client gitlink |
 | [Dashboard](https://github.com/Piggy-Cat-bit-shadow/sing-box-dashboard) | `d452c24` | `5e9271e516e437b001dbb51c4258441490b82318` | nested Desktop gitlink, reported not rewritten by parent freeze |
@@ -44,9 +44,10 @@ physical hotspot test was performed in this refresh.
 
 ### Unconsumed Apple candidate — independent branch snapshot
 
-At the 2026-10-29 observation, `sync/upstream-2026-10-28` was
-`044e6d5447eb1285c950bd12cee10effab641f5a`, while product `main` and the parent pin remained
-`16cf87b4`; **the candidate is not included in that parent pin**. The actual tree diff has 21
+The upstream integration is MERGED as of 2026-10-29: product `main`, the parent gitlink and
+`VERIFIED_APPLE_SHA` are all `044e6d5447eb1285c950bd12cee10effab641f5a`, the candidate branch
+`sync/upstream-2026-10-28` has been deleted, and the macOS client target compiled from that commit on
+a real arm64 macOS runner (run 40776674407). The paragraph below describes what that merge carried. The actual tree diff has 21
 paths. Its `CommandXPC.swift` routes endpoint registration into `UserServiceClient` and requests a
 Wi-Fi refresh when required; `UserServiceXPC.swift` swaps connections under a lock and invalidates the
 old connection, while its invalidation callback clears only the same connection. The publisher uses

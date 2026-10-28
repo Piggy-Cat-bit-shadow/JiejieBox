@@ -9,7 +9,8 @@
 | Freeze behavior | `scripts/ci/test-release-freeze.py`: 35 passed locally | Fixtures use recorded sources; no live release performed |
 | Release/Apple workflow structure | `scripts/ci/check-release-workflows.py`: 159 passed locally | Structural check, not execution or artifact evidence |
 | Apple input conflict rules | `scripts/ci/test-apple-client-input.sh`: 13 passed locally | Does not build an Apple app |
-| Client ABI gitlinks | `check-libbox-abi.sh --pin-only` passed for Apple `16cf87b4` and Android `c7837107` | Full ABI/call-site scan and actual client builds not run locally |
+| Client ABI gitlinks | `check-libbox-abi.sh --pin-only` passed for Apple `044e6d5` and Android `c7837107` | Pin comparison only; the full scan ran in CI |
+| Apple client build | `client-apple.yml` run 40776674407: macOS job success on an arm64 runner - Libbox built in-job, layer 1-5 ABI gate, xcodebuild, signed DMG, artifact identity verified | CI evidence for the macOS target; the iOS target last built on 40698718663 |
 | Target CI | existing Verify run 40765511913 cancelled | NOT a passing CI result; check exact SHA and workflow before release |
 
 Every row is a **requirement**, the evidence that exists for it, its **evidence level**, and a

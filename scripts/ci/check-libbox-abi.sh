@@ -226,7 +226,10 @@ VERIFIED_ANDROID_SHA="c7837107dc0126fb704fdf08cf203e10b30c8a22"
 # no contract-named method is added, removed or reshaped, so the same nine migrated methods are
 # still the ones this gate covers.
 #
-# Moved to 16cf87b4 on 2026-10-28, the Apple fork's own `main` tip - the subscription
+# Moved to 044e6d5 on 2026-10-29, when the 13 upstream commits were merged into the product line
+# and the macOS client target compiled from them on a real arm64 macOS runner.
+#
+# Previously moved to 16cf87b4 on 2026-10-28, the Apple fork's own `main` tip - the subscription
 # User-Agent fix, and the revision the v0.1.33 Apple CI resolved and built while this gitlink
 # still said aeccc754. That gap is the defect this round exists to remove: the superproject
 # recorded one Apple source and the build used another.

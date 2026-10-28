@@ -179,10 +179,50 @@ python3 scripts/ci/test-release-freeze.py            # 35 passed, 0 failed
 python3 scripts/ci/release-freeze.py verify --lock release/source-lock.json
 ```
 
-## 7. 验收运行
+## 7. 验收运行（CLOSED）
 
-见 §7.1（本文件随后更新）：`gh workflow run client-apple.yml --ref testing -f build_ios=false
--f build_macos=true -f apple_client_sha=<candidate>`。
+```sh
+gh workflow run client-apple.yml --ref testing \
+  -f build_ios=false -f build_macos=true \
+  -f apple_client_sha=044e6d5447eb1285c950bd12cee10effab641f5a
+```
+
+| | |
+|---|---|
+| run | `40776674407`（`workflow_dispatch`，`head_sha` = `ed0f3dc4`） |
+| runner | arm64 托管 runner `GitHub Actions 1000011063` |
+| 时间 | 22:03:20Z → 22:21:23Z（约 18 分钟，**一个 macOS job**） |
+| 结论 | **success**，18 个步骤全绿 |
+
+它在一个 job 里依次完成：
+
+1. `build Libbox inside this job (macOS-only mode)` — gomobile + 双切片框架 + **层 1–5 ABI 门**（对着
+   `build/apple-client-macos` 这棵要编译的树）+ pack；
+2. `validate and install the Libbox artifact` — `--parent-sha ed0f3dc4…` 与 `--jj-version 0.1.33` 校验后安装；
+3. `apply the build overlays` / `verify the prepared macOS app is branded`；
+4. **`build unsigned DMG`（真实 xcodebuild 编译 SFM）** → `verify the signed artifact` →
+   `BUILD-INFO and SHA256` → `upload DMG`；
+5. 产物：`jiejiebox-macos-arm64-0.1.33-ed0f3dc46-unsigned.dmg`，77,584,674 字节。
+
+这正是本任务要求的证据：不是语法解析、不是"Libbox 成功"、不是下载旧产物，而是 macOS 客户端目标在真实
+macOS runner 上被编译、签名、打包并通过身份/版本校验。
+
+> 附注（不改结论）：同一晚 arm64 池被 GitHub 注解确认为容量受限——"The job was not acquired by Runner of
+> type hosted even after multiple attempts" / "Due to capacity constraints, jobs targeting macOS arm64
+> runners may experience longer queue times"。为验证是否存在第二条通道，另用一次性分支在 `macos-15-intel`
+> （x64 池）跑过同一套单 runner 流程，它在同一位置也走到了 `build unsigned DMG` 并成功编译；该分支已删除，
+> **正式证据用 arm64 的 `40776674407`**（产物架构即产品架构）。
+
+### 7.1 收尾
+
+| 项 | 结果 |
+|---|---|
+| `sing-box-for-apple` `main` | `16cf87b4` → **`044e6d5`**（fast-forward，已推送回读） |
+| 候选分支 `sync/upstream-2026-10-28` | **已删除**（提交已并入 `main`），远端只剩 `main` |
+| `clients/apple` gitlink | `044e6d5` |
+| `VERIFIED_APPLE_SHA` | `044e6d5`，注释记录 run `40776674407` |
+| `release/source-lock.json` | 重新生成并 `verify --lock` PASS |
+| 主库提交 | `a741e3e9`（pin 前移 + 常量 + 锁） |
 
 ## 8. 结论
 

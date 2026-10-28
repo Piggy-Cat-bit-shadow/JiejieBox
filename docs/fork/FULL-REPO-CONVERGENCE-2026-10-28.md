@@ -44,7 +44,7 @@
 | 5 | `quic-go` | `sagernet` | `2daa76f5` | 未变 | 最新 mod tag `v0.61.0-sing-box-mod.12` | behind 0 / ahead 18 | 无 | 单分支（SagerNet 模块线，未动 MetaCubeX 线） | `v0.61.1-0.20261027185738-2daa76f5bd52` 不变 | `gh api compare` | — |
 | 6 | `cronet-go` | `main` | `c9c0e6ec` | 未变 | `SagerNet/cronet-go:main` `049f2909` | 上游是祖先，behind 0 | 无（29 个原生模块 Pin 仍为 `8c68ce89873c`） | 单分支 | 根/all `c9c0e6ec`，29 lib `8c68ce8` 不变 | `merge-base --is-ancestor` = True | — |
 | 7 | `utls` | `main` | `1bcb8e4d` | `b63a2e9a` | `MetaCubeX/utls:v1.9.0-mod-meta` `a6a364af` | merge 后 behind 0（原 behind 3 / ahead 65） | 镜像快进、merge `3ab4752`、回归测试 `2da328d`、UPSTREAM.md `b63a2e9` | `main` + 镜像 `a6a364af` 均保留 | `v1.8.8-0.20261025012215-1bcb8e4d74d2` → `v1.8.8-0.20261028133053-2da328dfb92f` | 见 §5.1（含负向证明） | 已推送并回读 |
-| 8 | `sing-box-for-apple` | `main` | `16cf87b4` | `be3258a`（候选，未合 `main`） | `SagerNet/sing-box-for-apple:dev` `0d1b59fc` | 候选分支 merge 后 behind 0（原 behind 13 / ahead 178）；产品 `main` 未动 | 13 个上游提交在候选分支；`fix/...` 删除 | 只剩 `main` + `sync/upstream-2026-10-28` | `aeccc754` → `16cf87b4`（fork 自己的 UA 修复，即 v0.1.33 实际构建的源码） | 见 §5.3 | 已推送并回读 |
+| 8 | `sing-box-for-apple` | `main` | `044e6d5` | 已并入（候选分支删除） | `SagerNet/sing-box-for-apple:dev` `0d1b59fc` | 候选分支 merge 后 behind 0（原 behind 13 / ahead 178）；产品 `main` 未动 | 13 个上游提交在候选分支；`fix/...` 删除 | 只剩 `main` + `sync/upstream-2026-10-28` | `aeccc754` → `16cf87b4`（fork 自己的 UA 修复，即 v0.1.33 实际构建的源码） | 见 §5.3 | 已推送并回读 |
 | 9 | `sing-box-for-android` | `main`（原 `dev`） | `4085557`（dev） | `c7837107` | `SagerNet/sing-box-for-android:dev` `a548a790` | merge 后 behind 0（原 behind 12 / ahead 5） | 收敛 5 条分支；12 个上游提交 | 只剩 `main`，另有 4 个 `archive/*` 标签 | `9d15717a` → `c7837107` | 见 §5.2（ABI 扫描 309 文件 0 违规） | 已推送并回读 |
 | 10 | `sing-box-for-desktop` | `main` | `d9231d9e` | `6d4ccf8c` | `SagerNet/sing-box-for-desktop:main` `8aab8eab` | behind 0 / ahead 35 | dashboard 嵌套 Pin `d452c24e` → `5e9271e5` | 单分支 | `eb2dbf8b` → `6d4ccf8c` | 见 §5.4 | 已推送并回读 |
 | 11 | `sing-box-dashboard` | `main` | `5e9271e5` | 未变 | `SagerNet/sing-box-dashboard:main` `3e4bf08e` | behind 0 / ahead 4 | 无（只被接受为嵌套 Pin） | `main` + `gh-pages`（部署，保留） | — | 两个提交只改 `.github/workflows/`（`git diff --stat` 32 行） | — |
@@ -285,7 +285,14 @@ Android 的删除顺序刻意是：先建 4 个 `archive/*` 标签 → 推送标
 
 按"可执行的下一步"写，不写"其余正常"。
 
-1. **Apple 上游融合停在候选分支（HOLD），但阻塞点已经从"源码"移到"runner 分配"，并且工作流已按单 runner 重构。**
+1. **Apple 上游融合已 CLOSED（2026-10-29）。** 13 个上游提交 + `UserServiceEndpointRegistry` 拆除修复 +
+   两条测试符号链接修复，已经在 `sing-box-for-apple` 的 `main` 上（`044e6d5`），主内核 gitlink、
+   `VERIFIED_APPLE_SHA`、`release/source-lock.json` 同步前移，候选分支已删除。关闭它的证据是
+   **run `40776674407`**：arm64 macOS runner 上，一个 job 内完成 Libbox 构建 + 层 1–5 ABI 门 +
+   validate/install + overlays + **真实 xcodebuild 编译 SFM** + 签名 + DMG + 产物身份/版本校验，
+   18 个步骤全绿。工作流的单 runner 改造与设计见
+   [`docs/fork/APPLE-SINGLE-RUNNER-2026-10-29.md`](APPLE-SINGLE-RUNNER-2026-10-29.md)。
+   以下保留的是**关闭之前**的取证，说明为什么需要那次改造。
    - 已有证据（都不等于 macOS App 编译）：iOS 目标在候选上构建成功（run `40698718663` 的 `ios`）；
      422 个 Swift 文件语法解析通过；订阅/UA 的 SPM 行为测试 37 用例 0 失败（含"只有订阅正文用
      `sing-box/1.15.0`、配额探测保留 Clash 兼容 UA"两条边界）；`libbox` 作业成功一次（run `40730518254`，
