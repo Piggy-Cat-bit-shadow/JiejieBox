@@ -156,12 +156,16 @@ git rev-list --count <sha> --not --remotes=upstream
 ```
 
 ```text
-0  ⇒ <sha> is reachable from an upstream ref   ⇒ UPSTREAM-side
-≥1 ⇒ <sha> has commits no upstream ref reaches ⇒ FORK-side
+0  ⇒ <sha> is reachable from an upstream ref
+≥1 ⇒ at least one ancestor of <sha> is not reachable from the current upstream refs
 ```
 
-Read the direction carefully. `--remotes=origin` is **this fork**, so using it inverts the answer and
-will classify the entire fork as upstream.
+This is an ancestry test, not an authorship classifier: rewritten upstream orphans can be unreachable
+from current upstream refs, and one unreachable ancestor does not establish the origin of the named
+commit. Compare patches, blobs and historical evidence when provenance matters.
+
+Read the direction carefully. `--remotes=origin` compares against **this fork**, not upstream;
+reachability against it cannot establish upstream provenance.
 
 ### The three traps this repository has already paid for
 

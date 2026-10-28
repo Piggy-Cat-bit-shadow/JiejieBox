@@ -54,6 +54,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | TUN reset before/after stack start | `modules/libbox-platform-contract.md` | post-baseline TUN reset handoff |
 | Naive H3 to H2 retry | `modules/naive-http-transport.md` | post-baseline fallback |
 | VLESS encryption layer and cancellation | `modules/xhttp-client-transport.md` | VLESS encryption boundary |
+| Mieru fallback failure classification and lifecycle | `modules/path-selection-validation.md` | Mieru transport failure boundaries |
 | TLS engine selection, ECH retry and fork pins | `modules/build-pruning-release.md` | TLS engines and ECH retry |
 | FakeIP known domain and fragmented QUIC sniff | `modules/sniff.md` | post-baseline FakeIP section |
 | DNS router, generations, cache commit | `modules/dns-demand.md` | §2 the cache-commit invariant |
@@ -83,7 +84,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | traffic class + upload scheduler | `modules/data-path-optimization.md` | Part B |
 | dial governor | `modules/data-path-optimization.md` | Part C |
 | buffer rules, borrowed views, batches | `modules/buffer-ownership.md` | §1 the rules, each with what breaks |
-| **the recorded unfixed splice defect** | `modules/buffer-ownership.md` | §2 the splice path |
+| splice setup handover and historical fallback defect | `modules/buffer-ownership.md` | §2 the splice path |
 | MTU quantities (three, not one) | `modules/mtu-and-geometry.md` | §1 |
 | PTB | `modules/mtu-and-geometry.md` | §2 |
 | `common/bufgeom` geometry | `modules/mtu-and-geometry.md` | §4 |

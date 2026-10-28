@@ -29,9 +29,18 @@ After the branch advanced to `cb71cf80d72` and changed the `cronet-go/all` pin, 
 `go test ./protocol/group ./common/httpclient ./protocol/tuic -count=1` also passed. This does not
 test the Cronet native client.
 
+With `DEFAULT_BUILD_TAGS_OTHERS`, the root tests `TestADNSTransportDetourMustCarryTheQuery` and
+`TestAnHTTPClientDetourMustCarryTheConfiguredTransports` passed at the newer branch state. Mieru
+failure-classification and rollback tests also passed locally; they do not establish interop.
+
 `go test -tags with_quic ./transport/masque -run 'TestWriteBatchChunksABurstAboveTheQueueCapacity|TestWriteBatchFallsBackOnlyForTheRefusedTail' -count=1 -v`
 passed both named tests. An untagged run selects neither test, so the untagged package result above
 is not evidence for chunk ownership.
+
+The unfiltered `go test ./route -count=1` on this Windows host **failed** after 570 seconds:
+`TestTeardown_OneSidedCompletionNeverRunsOnClose` timed out after 120 seconds waiting for the peer
+to receive the request. A subsequent isolated run of that test passed in 0.01 seconds. The suite
+failure is not a pass and its cause is not established by the isolated rerun.
 
 On Windows 10 Enterprise LTSC 2021 build 19044 with Go 1.25.5, the broader
 `go test -tags with_utls ./common/tls -count=1` **failed**: `TestWindowsClientHandshakeTLS13`,
@@ -183,7 +192,7 @@ making either claim.
 | 8.2 | The allocation ceiling | asserted in the **`!race`** build only | VERIFIED_UNIT (`!race`); the `race` half needs cgo | same | Go |
 | 8.3 | Batch capability survives a counter wrapper | 3 tests with a real red control | VERIFIED_UNIT | `go test -count=1 -run PacketBatch ./route/` | Go |
 | 8.4 | The kernel splice actually reaches `unix.Splice()` | proved on Linux by the fork's `linux-splice-proof` workflow; **not here** | **BLOCKED_BY_ENVIRONMENT** | that workflow | Linux |
-| 8.5 | The splice silent stall is **fixed** | **it is not** — `handed = true` is set before anything is attempted, so a `Pipe2` failure stops the copy with no error | **KNOWN DEFECT, VERIFIED_SOURCE** | `docs/internal/fork-splice-silent-stall.md` | — |
+| 8.5 | A `Pipe2` setup failure leaves splice unhanded so the caller can fall back | pinned `sing` commit `1729220c46c4`, `common/bufio/splice_linux.go`; `splice_actual_linux_test.go` | VERIFIED_SOURCE at that pin; Linux execution not performed in this refresh | run the pinned sing Linux splice tests | Linux |
 | 8.6 | kTLS read-path defects | fixed by mirroring the slow path; compared textually, **not executed** | VERIFIED_SOURCE | needs Linux | Linux |
 | 8.7 | Zero-copy levels 3–5 | **structurally unobservable from sing-box** | **UNKNOWN by construction** | — | — |
 
@@ -274,6 +283,8 @@ These are not acceptance gaps to be closed by a test; they are recorded limits.
 * **The `systemd-resolved` goroutine leak is FIXED** (`6b495134c`). `docs/RELEASE-CERTIFICATE.md:70-85`
   still says otherwise; that document is stale. The exclusion of the `test/` module's box-level tests
   from push CI was justified by this leak and can be revisited — a CI decision, not a knowledge one.
-* **The splice silent stall is unfixed.**
-* **The Apple pin has no wired verifier.**
+* The historical `Pipe2` false-handover defect is fixed in the pinned `sing` source; a separate
+  general active-flow stall remains a design limitation, as described in `core-lifecycle-runtime.md`.
+* The Apple pin has a declared `--pin-only` verifier in `verify.yml`; the full client check has a
+  different environment and workflow. A declaration is not a run result.
 * **`RequiredNetworks` is write-only.**

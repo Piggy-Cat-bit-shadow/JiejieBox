@@ -87,18 +87,17 @@ bound that does not grow with a coalesced tail (`sniff_bounded_copy_internal_tes
 
 ---
 
-## 2. The splice path — the one place where the fork has a **recorded, unfixed** defect
+## 2. The splice path — corrected setup handover
 
 `docs/internal/fork-splice-silent-stall.md` is irreplaceable: it is the sole record of this defect and
 its fix.
 
-* `handed` means **"the syscall path was *selected*"** — never "the splice ran" and never "data moved".
-* `handed = true` is set **before anything is attempted**, so a `Pipe2` failure (EMFILE/ENFILE/ENOMEM —
-  exactly when the process is busiest) returns `handed=true, n=0` **with no error**; the copy loop
-  terminates and `copyExtended` is never reached.
-* **The connection stops carrying data with zero bytes copied and no data-loss error.**
-* The one-line fix is `handed = false` on that path. It was not made here.
-* The fork's only splice test asserts the flag **on the success path**, which is why it survived.
+* The historical defect reported handover before `Pipe2` succeeded, so a setup failure prevented
+  userspace fallback and could stop the copy without moving data.
+* In the pinned `sing` revision `1729220c46c4`, `common/bufio/splice_linux.go` returns
+  `handed=false` when `splicePipe2` fails and sets `handed=true` only after the pipe exists.
+  `splice_actual_linux_test.go` includes a forced-failure regression. This is source-verified at
+  that pin; Linux execution was not performed in this Windows refresh.
 * The splice counters measure **acceptance**, not a kernel splice (`c02d7cc8e` renamed them to
   `spliceReasonHandoverAccepted` / `Accepted` / `AcceptanceRatio()`), and a source-level test forbids
   the old `Successes` / `successes=` / `"splice success"` / `"splice ratio"` names.
@@ -117,12 +116,9 @@ Two facts that decide whether the kernel splice can engage at all, each checked 
   (`splice_linux.go:68-70`), so a `syscall.Conn`-only source that cannot splice yields to the userspace
   copy on the **first** attempt.
 
-`common/ktls` is `//go:build linux && go1.25 && badlinkname`, has **no test files**, and is the **only
-platform-gated package with no tests that is in the data plane**. Of the 16 platform-gated packages
-with no test files at all, the others are `cmd/sing-box`, `common/certificate`, `common/jni`,
-`common/kernelports`, `common/listener`, `common/redir`, `common/settings`, `common/trafficsched/harness`,
-`constant`, `experimental/libbox/internal/oomprofile`, `include`, `service/ocm`, `service/powerreport`,
-`service/resolved`, `service/usbip`. Every genuine defect found in that workstream came from this file.
+`common/ktls` is gated by `linux && go1.25 && badlinkname`. It now has regression tests including
+`common/ktls/ktls_read_wait_test.go`; those tests require the Linux/tagged environment and were not
+executed in this Windows refresh.
 
 **Because it cannot be run here, two kTLS read-path defects were found by comparing the fast path
 against its slow path and fixed by mirroring rather than by executing:**
@@ -177,7 +173,7 @@ garbage per read.
 | Race-freedom | **`BLOCKED_BY_ENVIRONMENT`** — `-race` needs cgo and there is no C compiler | Linux/macOS or Windows+gcc |
 | The kTLS read-path fixes | **`VERIFIED_SOURCE`** — textually identical to the reference, and the package cannot be compiled here | needs Linux |
 | `unix.Splice()` actually running | **`UNVERIFIED` here** — proved on Linux by the fork's `linux-splice-proof` workflow on real loopback sockets, not in this environment | that workflow |
-| The splice silent stall | **FIXED in the sing pin** — `cebf939` sets `handed=false` on a `Pipe2` setup failure, adds the `splicePipe2` test seam and the regression that forces the failure; the current pin `v0.9.6-0.20261024214131-f601163d18d1` carries it. `docs/internal/fork-splice-silent-stall.md` is the corrected historical record. | read `common/bufio/splice_linux.go` in the pinned sing source, and run its `splice_linux_test.go` on Linux |
+| The splice silent stall | **FIXED in the sing pin** — the current root replacement resolves to `1729220c46c4`, whose `splice_linux.go` returns unhanded on `Pipe2` failure. `docs/internal/fork-splice-silent-stall.md` is the historical record. | inspect the exact pinned `common/bufio/splice_linux.go` and run its Linux regression tests |
 
 ---
 
@@ -203,7 +199,7 @@ garbage per read.
 15. **Do not close the Shadowsocks steady-state copy** without solving the non-power-of-two pool
     constraint; it is a deliberate measured keep.
 16. **Do not assume `-race` covers the allocation ceilings.** They are `!race`-gated by design.
-17. **Do not treat "the package has no test files" as "the package is trivial".** `common/ktls` is the
-    data plane and has none.
-18. **If you fix the splice silent stall, keep `handed` meaning "selected"** and set it false on the
-    failure path — do not redefine the flag.
+17. **Do not treat a platform-gated package as tested by an untagged run.** `common/ktls` is a
+    data-plane path and its Linux/tagged tests need the right environment.
+18. **Preserve the splice handover contract:** a failure before consuming payload must permit fallback;
+    an already handed-over stream must not be replayed.

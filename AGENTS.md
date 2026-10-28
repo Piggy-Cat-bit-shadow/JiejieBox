@@ -18,9 +18,10 @@ convention?) and the relevant rows of `KNOWLEDGE/ACCEPTANCE.md` (how do I re-che
 
 ## The three things that most often go wrong here
 
-1. **Provenance.** This fork's history contains **pre-rewrite upstream orphans**. Verify any SHA with
-   `git rev-list --count <sha> --not --remotes=upstream` — **≥1 = fork-side, 0 = upstream-side** (read
-   the direction carefully; `--remotes=origin` is the fork and will mislead you). Never use
+1. **Provenance.** This fork's history contains **pre-rewrite upstream orphans**. Use
+   `git rev-list --count <sha> --not --remotes=upstream` as an ancestry check only: zero means the
+   commit is reachable from an upstream ref, while a nonzero count does not prove authorship or
+   rule out rewritten upstream history. Compare patches, blobs and historical context. Never use
    `git describe` for provenance: it reports `v1.14.3-38-ge4b7e692f` for a commit that does not carry
    that tag. Never count upstream work by SHA — one logical upstream change appears up to **11 times**
    in the range. See `BASELINE.md` §provenance.

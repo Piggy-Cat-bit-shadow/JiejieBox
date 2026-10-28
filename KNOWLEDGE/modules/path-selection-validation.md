@@ -1,5 +1,24 @@
 # Path selection and start-time validation
 
+## Mieru transport failure boundaries after v0.1.9
+
+**VERIFIED_SOURCE** at `011f3fdcd99`: `protocol/mieru/fallback.go` classifies caller cancellation,
+local lifecycle, endpoint, transport, target and ambiguous failures separately. It preserves typed
+socket observations before the SDK flattens error chains; a SOCKS rejection is target evidence and
+must not mark the underlay transport unhealthy. A bare EOF is ambiguous. The Mieru inbound and
+outbound register close with their scopes (`protocol/mieru/inbound.go`, `outbound.go`); a close or
+generation replacement must not be interpreted as a transport failure. This is not proof of peer
+interoperability or every failure mode; consult the fallback and early-failure tests for their scope.
+
+### Group forwarding of parallel candidates
+
+`Selector`, `URLTest` and `LoadBalance` select a member before forwarding the destination candidate
+list, network strategy, interface types and fallback delay through `DialParallelNetwork` and
+`ListenSerialNetworkPacket`; nested capable groups forward these arguments rather than collapsing the
+plan to one address. See `protocol/group/parallel_passthrough_test.go`. The unfiltered group package
+tests passed locally at `cb71cf80d72`; this does not establish real network switching or all peer
+behavior.
+
 **Scope:** `common/physicalpath`, `common/routeflow`, start-time validation in
 `adapter/outbound/manager.go`, `detour` resolution, outbound groups, cycles, failover.
 
