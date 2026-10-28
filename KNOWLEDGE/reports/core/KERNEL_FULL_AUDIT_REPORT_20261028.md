@@ -5,6 +5,10 @@
 > 故文中“MASQUE 外层仍未计算路径上限”过于宽泛；该构造路径未将此值设置为
 > `InitialPacketSizeCeiling`，初始包限制不等于后续 QUIC 包的硬上限。详见
 > `KNOWLEDGE/modules/mtu-and-geometry.md`；其他缺陷状态仍应按其修复及目标版本核对。
+> 对 BUG-009/015，目标源码已增加规则集关闭状态检查、TUN 回调与关闭的互斥，
+> 并将远程规则集 HTTP 客户端超时设为 5 分钟；不能继续把原报告中的无超时和缺少
+> TUN 关闭保护视为当前状态。Updater 的 Close 仍只取消而不等待，且已复制的通用回调
+> 不等于全部被撤回；应分别核查调用方，不能据此断言所有关闭竞态已解决。
 
 **报告文件：** `KERNEL_FULL_AUDIT_REPORT_20261028.md`  
 **审计对象：** `Piggy-Cat-bit-shadow/sing-box`，`testing` 分支  

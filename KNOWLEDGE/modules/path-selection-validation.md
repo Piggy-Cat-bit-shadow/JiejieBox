@@ -47,6 +47,15 @@ the closed state under the lock. Do not equate completing rule parsing with veri
 stream, or publish a late fetch after close. These are `VERIFIED_SOURCE` at `011f3fdcd99`; local
 `./route/rule/...` tests passed in this refresh, not a live remote-server or device guarantee.
 
+The remote rule-set HTTP client now has a five-minute timeout (`rule_set_remote.go`), so the old
+audit's claim of no per-request timeout is stale. The updater still processes sets serially and
+`Close` cancels its context without joining the loop; one slow request can delay later sets up to
+the effective timeout. Publication checks closed state, but a callback already copied and past its
+check is not universally recalled. TUN's `updateRouteAddressSet` and auto-redirect close serialize
+through `autoRedirectAccess` and recheck closed before calling the redirect. The focused
+`TestInFlightCallbackUnderCloseIsOrdered` passed on Windows in this refresh; that test is not a
+Linux auto-redirect integration test or a proof for every observer.
+
 **Scope:** `common/physicalpath`, `common/routeflow`, start-time validation in
 `adapter/outbound/manager.go`, `detour` resolution, outbound groups, cycles, failover.
 

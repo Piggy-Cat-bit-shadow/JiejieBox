@@ -69,6 +69,10 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - Windows daemon source review corrected the claim that Linux has no peer authentication: its local
   socket path uses `SO_PEERCRED` and process-start identity. The Windows certificate-expiry policy is
   documented as a scoped tradeoff rather than an unconditional security guarantee.
+- Full-audit BUG-009/015 were revisited: the current remote client has a five-minute HTTP timeout,
+  publication checks closure and TUN serializes redirect updates with close. Updater Close does not
+  join, and already-copied general callbacks are not globally recalled; the targeted TUN ordering
+  test passed, with no Linux integration claim.
 
 ### Module review status
 

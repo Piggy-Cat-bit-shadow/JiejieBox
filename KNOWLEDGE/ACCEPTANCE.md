@@ -14,6 +14,8 @@ With the same toolchain, `go test -tags p2ios ./experimental/libbox -run TestPla
 passed the monitor ordering and close-during-refresh tests using test doubles.
 Three focused `./common/trafficsched` tests for inert default, priority floor and refused packet
 ownership also passed under Go 1.26.10; they are unit evidence, not a throughput benchmark.
+`./protocol/tun` `TestInFlightCallbackUnderCloseIsOrdered` also passed under Go 1.26.10; it does not
+execute a Linux auto-redirect session or prove that every rule-set observer is joined on shutdown.
 
 Post-baseline checks run locally at target `011f3fdcd99` on 2026-10-28 (unit tests, not device or CI evidence):
 
