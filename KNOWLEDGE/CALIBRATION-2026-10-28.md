@@ -82,6 +82,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - Historical BUG-005 was checked against exact quic-go pin `2daa76f5bd52`: successful no-headroom
   copies release the payload; a batch failure retains caller ownership even if a copied prefix was
   already queued. Chunk ownership atomicity therefore does not establish exactly-once transmission.
+- The historical audit's remaining indexed items were mapped to the TUN, Naive, group, lifecycle
+  and MTU sections. Active-stream silent stall and startup-fixed IPv6 entry presentment remain
+  documented limitations, rather than being labeled universally repaired.
 
 ### Module review status
 

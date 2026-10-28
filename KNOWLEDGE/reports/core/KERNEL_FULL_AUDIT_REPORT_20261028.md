@@ -18,6 +18,10 @@
 > 对 BUG-005，当前 `quic-go` pin 的 HTTP/3 无 headroom 复制路径在成功时释放原 payload；
 > 失败时所有权留给调用方。批量复制可能在出错前已排队部分数据，因此所有权规则不能
 > 被误写成传输层面的原子性或恰好一次投递。
+> 对 BUG-001/003/004/006/013，当前代码分别补充了 DNS 劫持地址与启动交接、Naive
+> 不支持的证书 pin 拒绝、组候选/网络策略转发，以及 Box.Close 的 panic 错误记录。
+> 这些修正不证明设备行为；Box cleanup panic 仍会中断剩余清理。BUG-007 的活跃流
+> 静默停滞和 BUG-008 的入口决策启动期固定仍是需要按适用场景评估的边界。
 
 **报告文件：** `KERNEL_FULL_AUDIT_REPORT_20261028.md`  
 **审计对象：** `Piggy-Cat-bit-shadow/sing-box`，`testing` 分支  
