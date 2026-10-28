@@ -76,6 +76,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - Historical BUG-011/014 were rechecked against the uTLS guard and exact local Cronet pin: unsupported
   ECH fingerprints are rejected at configuration, and Cronet's recovered start panic is assigned to
   a named return. Native startup failure and every allowed ECH wire combination remain untested.
+- Historical BUG-002/010 were rechecked against `common/ktls/ktls.go` and the exact pinned sing
+  splice source: the successful hook path forwards returned bytes and resumes, and post-handshake
+  messages are drained. Linux kTLS splice/KeyUpdate execution remains unverified on this Windows host.
 
 ### Module review status
 

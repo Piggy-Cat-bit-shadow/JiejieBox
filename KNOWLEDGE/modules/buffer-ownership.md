@@ -14,6 +14,12 @@ queues the error for the next read; releasing it on that branch would lose real 
 `common/ktls/ktls_read_wait_test.go`. These Linux-only paths were not executed in the Windows
 calibration; a Windows Go test cannot validate kernel TLS behavior.
 
+On the splice hook path, current `common/ktls/ktls.go` drains post-handshake messages, while the
+exact pinned sing revision `1729220c46c4` forwards any bytes returned by the hook and continues
+splicing instead of passing a nil error to `E.Cause`. This supersedes the control flow reported as
+BUG-002/010 in the historical full audit. It is source evidence, not an executed Linux kTLS splice
+or KeyUpdate interoperability test.
+
 **Scope:** cross-cutting. The rules live in `common/sniff`, `common/bufgeom`,
 `transport/masque`, `route/conn*.go`, `route/splice.go`, `route/packet_destination_guard.go`,
 `common/trafficsched/gate.go`, and the retirement path in `route/reference.go`.

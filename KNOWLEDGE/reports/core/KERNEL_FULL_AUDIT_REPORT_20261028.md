@@ -12,6 +12,9 @@
 > 对 BUG-011/014，当前 uTLS 配置入口会拒绝未列入 ECH 支持清单的指纹组合；当前精确
 > Cronet pin 的 `NaiveClient.Start` 使用命名返回值，在恢复 panic 的清理路径中设置错误。
 > 这修正了报告中的旧控制流描述，但不等于已在目标设备上验证所有 ECH 指纹或原生启动失败。
+> 对 BUG-002/010，当前 pin 的 sing splice 在 hook 成功时转发返回的数据并继续，
+> `common/ktls/ktls.go` 的相应 hook 也会处理握手后消息；报告中的旧代码路径不再适用。
+> 本次在 Windows 上未执行 Linux kTLS splice 或 KeyUpdate 的真实端到端验证。
 
 **报告文件：** `KERNEL_FULL_AUDIT_REPORT_20261028.md`  
 **审计对象：** `Piggy-Cat-bit-shadow/sing-box`，`testing` 分支  
