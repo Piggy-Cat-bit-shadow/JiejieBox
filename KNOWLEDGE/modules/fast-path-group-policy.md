@@ -222,9 +222,9 @@ active power-report recorder
 unproven process metadata
 ```
 
-So the complete meaning is: *"if this flow is otherwise eligible, this group does not stand in its
-way — and a chain of transparent groups is no longer treated as a chain."* It cannot make an otherwise
-ineligible flow eligible.
+So the complete meaning is: a qualifying transparent group chain may cease to be a chain-based
+refusal, while every other eligibility check still applies. The authorization can therefore change
+the final verdict when that chain refusal was the only blocker; it cannot override the other blockers.
 
 ---
 

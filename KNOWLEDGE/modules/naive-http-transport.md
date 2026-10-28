@@ -68,7 +68,8 @@ Users authenticate with the configured credentials. An authenticated CONNECT est
 authentication failure and unauthenticated traffic are handled by the **masquerade** path when one is
 configured. The order is **parse → authenticate → tunnel**.
 
-**A stock NaiveProxy client interoperates for TCP only.** UoT is a separate extension it does not use.
+The stock NaiveProxy path is TCP; UoT is a separate extension. Actual interoperability with a stock
+client is not established by the local codec tests in this calibration; see the evidence table.
 
 ### UoT v1/v2 — the distinction that matters
 
@@ -277,7 +278,8 @@ Naive -> <VPS_SELF_IP>:443 -> Nginx -> Naive -> <VPS_SELF_IP>:443 -> ...
 
 **The CONNECT hostname and the TLS SNI inside the tunnel are not bound to each other**, so "allow self
 443 for this one domain" is not a reliable recursion defence: a client can CONNECT an allowed domain and
-then switch SNI inside the tunnel. **Only pre-dial rewriting is robust.**
+then switch SNI inside the tunnel. A pre-dial rewrite to a constrained internal ingress is the
+documented topology's mitigation; its safety depends on the actual ingress and route configuration.
 
 There is exactly **one conjunctive TCP-only self-SSH:2222 exception** (`7029722bf`).
 

@@ -154,6 +154,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - The Naive server limiter was checked against its accept path: connection-count refusal closes the
   socket instead of returning the previously documented HTTP 429. Default-limit and refused-connection
   tests passed locally; no inference about the service being unidentifiable is supported.
+- Fast Path authorization can change a verdict when a transparent chain was its sole blocker; it
+  still cannot override other blockers. Naive reference-client interoperability remains an explicit
+  evidence gap instead of a claim inferred from compatible protocol structure.
 
 ### Module review status
 
