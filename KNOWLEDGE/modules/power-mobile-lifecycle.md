@@ -9,6 +9,12 @@ implementations are in `route/network.go`. Do not substitute a full network rese
 progressive trim. `box_lifecycle.go` still separates a resume from `woke()`: the latter publishes a
 reuse boundary before releasing the paused level. These source observations are not device tests.
 
+`common/power/governor.go` copies observer slices before invoking callbacks without the lock, then
+repeats notification passes when observers register during a pass; the loop is bounded to eight
+passes. This prevents a slice backing-array race and handles registration at a one-off reuse boundary
+without holding the governor lock around external callbacks. `governor_observer_race_test.go` is the
+regression anchor; this Windows refresh ran the package without `-race`, not a race-detector run.
+
 **Scope:** `common/power/governor.go`, `common/runtimecoord/platform_events.go`, `box_lifecycle.go`,
 `experimental/libbox/platform_events.go`, `service/oomkiller`, `internal/memmetrics`, and the reuse
 policy in `route/reference.go`.
