@@ -132,6 +132,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - The post-baseline failover shim forwards parallel dial options through the group but deliberately
   does not expose a misleading first-member dial chain; its packet method and production packet path
   have different ownership. Three focused route tests passed locally.
+- The exact sing allocator and `Buffer.Release` were checked: release clears the Buffer struct after
+  returning managed storage, not its backing bytes. Historical geometry benchmarks are scoped to their
+  measured environment rather than claimed as exact or universal performance results.
 
 ### Module review status
 

@@ -168,15 +168,17 @@ rule that a buffer acquired for a packet path is **exactly poolable** and surviv
 
 plus `common/low_memory_stub.go:7` / `low_memory.go:7` (`LowMemory` false/true).
 
-**Measured, both profiles** (real runs, exit 0):
+**Historical measurement, both profiles** (recorded runs, exit 0; not re-benchmarked in this calibration):
 
 | | BufferSize / UDPBufferSize | `LowMemory` | per-flow live heap | per-acquire alloc (live/idle/bulk) |
 |---|---|---|---|---|
 | default | 32768 / 16384 | false | **64.1 KiB** | 1.75 / 0.93 / 1.75 B |
 | `,with_low_memory` | 16384 / 8192 | true | **32.1 KiB** | 0.94 / 0.53 / 0.93 B |
 
-Exactly 2×, and **bulk per-byte allocation is geometry-independent** (6.01 vs 5.48 B/KiB) because
-`copyExtended` grows to 65535 after ~512 KiB (`geometry_bench_test.go:656-724`).
+Approximately 2× for the reported live-heap values. The recorded bulk allocation values were
+6.01 versus 5.48 B/KiB; they do not prove geometry independence for every workload or target.
+The historical explanation points to `copyExtended` growth after approximately 512 KiB
+(`geometry_bench_test.go:656-724`).
 
 | Rule | Anchor | What breaks |
 |---|---|---|
