@@ -310,6 +310,14 @@ mutated `loadbalance.go`'s `Selected` to pass `commit=true` and watched
 * `failoverDialer` (`:117-141`) embeds the leaf for tag/network/copy tuning but dials through
   `group.DialWithFailover` (`:124-126`).
 
+At the testing target, the shim explicitly implements `ParallelNetworkDialer`: it carries the
+candidate list, network strategy, interface preferences and fallback delay in the failover context so
+the selected member can use them. Its packet-listen method delegates to the embedded leaf; the
+production packet path itself passes the leaf and does not use the shim for group retry. The shim
+deliberately exposes no generic dial chain, because its embedded first leaf may not be the member
+used by a later attempt. See `route/failover.go` and `failover_shim_surface_test.go`; targeted tests
+passed locally, not a real network-switch test.
+
 The failover budget belongs to the **user flow**, not the group call: a chain `outer → inner` spends
 **one** alternate in total. A per-group bound would multiply.
 

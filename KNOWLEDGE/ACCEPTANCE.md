@@ -32,6 +32,8 @@ Selected `./protocol/mieru` fallback option, cooldown/probe, startup rollback an
 tests passed under Go 1.26.10; this does not establish external Mieru interoperability.
 `./protocol/tailscale` `TestTailnetDomainsMatch` and the three named system-binding getter cleanup
 tests passed with `with_tailscale` under Go 1.26.10, using local test fixtures rather than a tailnet.
+Three `./route` failover-shim tests for parallel capability forwarding, plain leaf dialing and the
+packet-path boundary passed under Go 1.26.10.
 `./common/sniff` tests matching `^TestQUICSniffContext` passed under Go 1.26.10; the old
 `TestQUICOwnership` filter matched no test and has been corrected below.
 

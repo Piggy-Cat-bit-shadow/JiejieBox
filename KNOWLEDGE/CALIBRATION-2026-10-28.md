@@ -129,6 +129,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - Tailscale domain matching, resolver-less versus forwarded suffix precedence, platform default-route
   hook and shared getter cleanup were source-checked. Focused tagged tests passed on Windows; no
   live tailnet or physical handover was exercised.
+- The post-baseline failover shim forwards parallel dial options through the group but deliberately
+  does not expose a misleading first-member dial chain; its packet method and production packet path
+  have different ownership. Three focused route tests passed locally.
 
 ### Module review status
 
