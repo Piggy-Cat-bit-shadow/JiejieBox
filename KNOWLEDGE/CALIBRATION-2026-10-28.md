@@ -58,6 +58,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - The MTU module's claim that only Hysteria2 passes `InitialPacketSizeCeiling` was corrected: TUIC
   does so too, while MASQUE's initial clamp alone does not prove a hard later-packet ceiling.
   Focused scheduler default, arbitration and refusal-ownership tests passed locally.
+- Historical XHTTP benchmark provenance was checked by ancestry; the recorded measurements are not
+  current performance evidence and do not support the claim that the fork was never behind. The
+  performance index now scopes its dated values and avoids protocol-independent conclusions.
 
 ### Module review status
 

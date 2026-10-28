@@ -18,8 +18,9 @@ and against which tree".
 - Adding a report **does not move the baseline** and is **not** a knowledge-base refresh. It is an archive
   entry, nothing more.
 - Each report states its own evidence level where it has one. **Where a report does not state one, treat it as
-  no stronger than `VERIFIED_SOURCE`.** No report in this directory is `VERIFIED_CI` — this tree contains no
-  workflow-run record, so a CI job declaration is not evidence that the job ran.
+  no stronger than `VERIFIED_SOURCE`.** A workflow declaration is not evidence of execution. Later
+  independently inspected CI runs are linked in the current CI and Windows daemon modules and are
+  scoped to their actual commits; they do not upgrade every archived report or release artifact.
 
 `-race`, device behaviour and cross-platform guarantees are recorded per report. Where a report says they were
 not run, that is `BLOCKED_BY_ENVIRONMENT`, not `PASS`.

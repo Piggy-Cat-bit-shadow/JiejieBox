@@ -648,12 +648,11 @@ point, 30 runs, 0 payload mismatches):
 | fork ping-pong p50, 512 B | 30.0 ms | 32.2 ms | 52.0 ms | 102.0 ms | 202.0 ms |
 | reference ping-pong p50 | 30.5 ms | 31.8 ms | 51.8 ms | 101.7 ms | 201.8 ms |
 
-Both implementations fall together (about 27 → 4 MB/s) and the fork is never behind, including in the
-small-post regime where a response wait would hurt most. **The synchronous response wait is therefore
-not a fork-specific high-RTT cliff**: the collapse is "one POST per round trip", which the reference
-shows too even though it pipelines. Pipelining response completion was considered and rejected — it
-needs a bounded in-flight completion set and would change the failure semantics the seq-no-hole
-argument rests on, for no measured gain.
+Both implementations fall in this particular sweep (about 27 → 4 MB/s); at 200 ms the listed fork
+result is slightly lower than the reference (3.92 versus 4.04 MB/s). These measurements do not prove
+equivalence or the absence of a response-wait penalty on other paths or workloads. Pipelining response
+completion would require bounded in-flight completions and alter failure semantics; assess it with a
+fresh, representative comparison if that tradeoff is revisited.
 
 Evidence: `VERIFIED_UNIT` for the invariants (at most one POST in flight, contiguous ascending seq,
 cadence no faster than half the round trip — `TestPacketUpPostCadenceTracksTheRoundTrip` in
@@ -661,11 +660,9 @@ cadence no faster than half the round trip — `TestPacketUpPostCadenceTracksThe
 sweep, which is a manual harness measurement on one host (loopback plus a delay-line impairment shim,
 so added latency costs no bandwidth) and cannot be re-run from CI. Beyond 200 ms there is no data.
 
-Provenance: probe commit `58e3222558c` on branch `perf/xhttp-rtt-pipeline-probe`, on top of the
-finalization branch `b5bc2a8de42`. Both are feature branches; **neither is merged to `testing`**, so
-this subsection describes the fork's XHTTP work rather than the reviewed baseline above.
-
-> XHTTP remains closed; no further optimization justified by current evidence.
+Provenance: probe commit `58e3222558c` follows `b5bc2a8de42`. Both are ancestors of the examined
+`011f3fdcd99` testing target; that Git relationship does not make the historical manual measurement a
+new test run or establish current performance. Measure the target and deployment before tuning.
 
 ---
 

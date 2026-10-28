@@ -254,7 +254,7 @@ copies. **This test is not about cross-kind cycles**; an earlier description of 
 |---|---|---|
 | Geometry poolability and no-realloc on `Advance`/`Prepend` | `VERIFIED_UNIT` | `go test -count=1 ./common/bufgeom/...` |
 | The allocation ceiling | `VERIFIED_UNIT` in the **`!race`** build only | same |
-| MASQUE PTB correction and the outer-QUIC cap | `VERIFIED_UNIT` | `go test -count=1 -timeout 8m -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" ./transport/masque/... ./protocol/masque/...` |
+| MASQUE PTB correction and initial-size clamp | `VERIFIED_UNIT` for the tested cases; no general later-packet hard ceiling established | `go test -count=1 -timeout 8m -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" ./transport/masque/... ./protocol/masque/...` |
 | The hysteria2 hard ceiling reaches the wire with ChromeParrot on | `VERIFIED_UNIT` | `go test -count=1 -run HardCeiling ./protocol/hysteria2/` |
 | The low-memory geometry is read from one source | `VERIFIED_SOURCE` | `go run ./cmd/internal/appletags -mobile-only` |
 | Status values are copies, not views | `VERIFIED_UNIT` | `go test -count=1 -run TestAgentFEveryHopScalarIsCopiedNotShared ./common/physicalpath/` |
