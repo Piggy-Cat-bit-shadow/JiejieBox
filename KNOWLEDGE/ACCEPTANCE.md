@@ -6,6 +6,11 @@ Every row is a **requirement**, the evidence that exists for it, its **evidence 
 
 ## How to read this file
 
+On Windows with the locally cached Go 1.26.10 toolchain, at the later branch state containing
+`cb71cf80d72`, the `./adapter` `TestScopeClose` tests, three `./protocol/tun` current-FakeIP-range
+L0 tests, and `./experimental/cachefile` `TestFakeIPSaveMetadataReportsAFailedFlush` passed.
+These unit tests do not establish retired-range L0 protection or physical device behavior.
+
 Post-baseline checks run locally at target `011f3fdcd99` on 2026-10-28 (unit tests, not device or CI evidence):
 
 | Requirement | Test | Result |

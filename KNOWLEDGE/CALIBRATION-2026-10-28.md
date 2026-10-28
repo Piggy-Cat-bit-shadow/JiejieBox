@@ -37,6 +37,11 @@ This is an operational ledger, not a replacement for the modules or a new produc
   endpoint-owned DNS resolver retirement, power-observer notification copying, and Android's separate
   procfs helper from the removed `UseProcFS` platform-interface method. Corresponding targeted
   tests are recorded in `ACCEPTANCE.md`; client-device ABI behavior remains separately unverified.
+- Current FakeIP range protection at the TUN L0 decision was distinguished from the router's
+  issuance-ledger and retired-range checks; the former does not consult those latter records.
+  Metadata flush failure is now returned, superseding that particular historical oracle finding.
+  Scope panic behavior and Box start/close stage anchors were checked against source. Focused
+  Windows Go 1.26.10 unit results are recorded in `ACCEPTANCE.md`.
 
 ### Module review status
 

@@ -119,9 +119,11 @@ IP-only.
 minted, with no route in the platform's table and a domain only the router can recover) would be
 handed to the OS and black-holed. Two ordinary configurations reach that: a configured
 `route_address_set` (everything outside bypasses) and a `route_exclude_address_set` that happens to
-cover `198.18.0.0/15`. `JudgeFlow` therefore falls through to the router for a FakeIP destination, at
-the cost of two prefix comparisons, once per flow, skipped entirely when no FakeIP transport is
-configured.
+cover `198.18.0.0/15`. `JudgeFlow` therefore falls through to the router for an address in the
+current FakeIP store's range. This L0 guard consults `fakeIPStore.Contains`, not the router's
+issuance ledger or retired-range history: an address outside that current range may still be
+bypassed by a route set before the router can apply those checks. The guard is skipped when no
+FakeIP transport is configured. See `dns-demand.md` §3 for the distinct router checks.
 
 **DNS stays first.** The order in `JudgeFlow` is: configured DNS address → DNS by port → the route
 sets → the router. That ordering is what keeps DNS-based ad filtering working. It makes **no** claim
@@ -158,7 +160,8 @@ statistics is not an acceptable optimisation), but it means **the L1 gain is rea
 without an API**.
 
 L0, measured where it lives: no route sets → 0/4 shapes; `route_address_set: 10/8` → 2/4;
-`route_exclude_address_set: 198.16/12` → 1/4; FakeIP, any configuration → never.
+`route_exclude_address_set: 198.16/12` → 1/4; an address in the current FakeIP store range falls
+through to the router rather than taking this L0 route-set bypass.
 
 Cost, from `route/direct_offload_bench_test.go` on an Apple M1:
 

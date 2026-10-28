@@ -146,6 +146,18 @@ route in the platform's table and only the router can recover its domain, which 
 Offload path must fall through to the router for a FakeIP destination rather than hand it to the OS
 (`data-path-optimization.md` §A.5).
 
+The current `route/route.go` refuses an address inside the configured current FakeIP range when
+its store has no mapping. Outside that range it refuses an address covered by this process's
+issuance ledger or by a retired range backed by installation issuance history; the latter is a
+coarser cross-process record, not proof that each individual address was issued. Otherwise an
+address is not rejected merely because it resembles a placeholder. See `adapter/fakeip_issuance.go`
+and `route/route.go` for the exact ownership and persistence boundaries.
+
+`experimental/cachefile/fakeip.go` returns the metadata flush error; `dns/transport/fakeip/store.go`
+does not advance its reservation after that error. The old unconditional-success finding in the
+Round 2 oracle is historical; `TestFakeIPSaveMetadataReportsAFailedFlush` covers the failure path.
+This metadata guarantee should not be generalized to every cache write API.
+
 ---
 
 ## 4. Consumer demand

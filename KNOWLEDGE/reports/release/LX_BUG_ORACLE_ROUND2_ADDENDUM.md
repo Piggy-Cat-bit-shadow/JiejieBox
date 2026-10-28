@@ -1,5 +1,11 @@
 # LX Bug Oracle — Round 2 Addendum
 
+> Historical audit at the SHAs below, not a current defect list. In particular, the
+> `FakeIPSaveMetadata` unconditional-success findings in §E and §G were subsequently fixed: at
+> `011f3fdcd99`, `experimental/cachefile/fakeip.go` returns `c.flush()` and
+> `TestFakeIPSaveMetadataReportsAFailedFlush` exercises the failure. This source/test observation
+> does not establish that every other finding in this archive has been resolved.
+
 Companion to the Round-1 A–G report. Same branch, same worktree.
 
 ```text

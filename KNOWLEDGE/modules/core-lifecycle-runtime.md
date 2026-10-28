@@ -61,8 +61,9 @@ leases, idle retirement, memory trim, or anything that reacts to a network trans
 
 ## 1. `adapter.Scope` — the ownership primitive
 
-`adapter/lifecycle.go` (297 lines). Everything that must be torn down is registered here; nothing
-else runs a component's `Close`.
+`adapter/lifecycle.go` owns the cleanups registered with a scope and the child scopes created by
+`Scope.Start`. It does not imply that every resource or every close in the process belongs to that
+scope; follow the actual owner and registration path.
 
 | Element | Anchor | Rule |
 |---|---|---|
@@ -76,7 +77,7 @@ else runs a component's `Close`.
 
 `Scope.Close()` returning means **exactly** this and nothing more:
 
-* every cleanup already in the queue has run and `closeErr` is final;
+* on a normal return, every cleanup already in the queue has run and `closeErr` is final;
 * it does **not** wait for a `component.Start()` that is running and has not yet reached `Add()` —
   nothing bounds how long a `Start` may take, so waiting would make `Close` unbounded;
 * a cleanup registered after that point runs synchronously inside `Add()`, on the registering
@@ -88,53 +89,37 @@ Pinned by `adapter/lifecycle_close_boundary_test.go` (`TestScopeCloseDoesNotWait
 `TestScopeCloseDoesNotFoldInALateCleanupError`, `TestScopeCloseJoinsAnAlreadyStartedDrain`,
 `TestScopeCloseDoesNotWaitForAStartThatNeverRegistered`).
 
-Registration inventory: **219 production `scope.Add` sites**. Exactly **five** close a `*Scope`, and
-every one closes a *nested child* the component created for itself (`protocol/openvpn`,
-`protocol/openconnect`, `protocol/tailscale`, `service/resolved`, `dns/transport/local`). No
-production cleanup closes the scope it was registered on — that would deadlock.
+A cleanup that panics interrupts the drain before `scopeClosed` and `closeDone` are published;
+subsequent direct calls to that scope's `Close` can therefore wait indefinitely. `Box.Close` catches
+the panic and preserves an error for repeated Box calls, but does not resume the interrupted drain.
+Avoid same-scope reentrant cleanup, which would also deadlock. Nested child-scope cleanup is a
+different ownership relationship.
 
 ---
 
 ## 2. `Box` start and close ordering
 
-### Start (`box.go:1024-1217`)
+### Start (`box.go`, `preStart` and `start`)
 
-> **The fine-grained `box.go` line anchors in this section are stale by approximately +47 lines.** The
-> `fast_path` feature added ~47 lines to `New()` above these functions, so every `:NNNN` below lands
-> ~47 lines short of its target. They were **not** blanket-shifted, because a uniform offset was never
-> verified anchor by anchor and a guessed line number is worse than a marked stale one: a reader who
-> trusts it lands in the wrong function and may believe they are reading the right code.
->
-> The section's **ordering and invariants are unaffected** — the orderings, the LIFO/scope rules and
-> the "not up until the network manager has observed its network" rule are structural claims, and those
-> were re-verified against current source. Only the numbers drifted.
->
-> Anchors re-measured at the `v0.1.9` baseline, and therefore **correct**:
->
-> ```text
-> PreStart()  box.go:1024        Start()   box.go:1034
-> preStart()  box.go:1069        start()   box.go:1139
-> Close()     box.go:1219        close()   box.go:1233
-> ```
->
-> Re-derive any other anchor with `git log --oneline v0.1.9..HEAD -- box.go` before trusting it.
+At `011f3fdcd99`, the entry points are `PreStart` at line 1045, `Start` at 1055,
+`preStart` at 1090, `start` at 1160, `Close` at 1240 and `close` at 1264. Locate the
+functions again when the target changes; the old v0.1.9 line numbers were historical anchors.
 
-`preStart()` (now `box.go:1069`):
-1. `logFactory.Start()` (`:1025`)
-2. `scope.Add(runtimeCoordinator.Close)`, then `scope.Add(logFactory.Close)` (`:1033-1034`) —
+`preStart()`:
+1. `logFactory.Start()`
+2. `scope.Add(runtimeCoordinator.Close)`, then `scope.Add(logFactory.Close)` —
    **registered first ⇒ closed last**
-3. owned `HistoryStorage.Close` if `Box` created it (`:1042-1048`)
-4. `applyDebugOptions`, debug HTTP server (`:1049-1056`)
+3. owned `HistoryStorage.Close` if `Box` created it
+4. `applyDebugOptions`, debug HTTP server, then initialize internal services
 5. `startComponents(Initialize)` — **httpClient → network → dns-transport → dns-router →
    connection → router → outbound → endpoint → certificate-provider → inbound → service**
-   (`:1061-1073`)
 6. `startComponents(Start)` — **outbound → dns-transport → network → connection → httpClient →
-   router → dns-router** (`:1077-1085`)
+   router → dns-router**
 
-`start()` (`:1092-1170`) then: `startInternalServices(Start)`, NTP, `startComponents(Start)` =
-**endpoint → cert-provider → inbound → service** (`:1110-1115`), `PostStart` over **all** components
-(`:1119-1130`), `startInternalServices(PostStart)`, `Started` over all (`:1138-1149`), and finally
-`s.network.EstablishInitialNetworkEnvironment()` (`:1166-1168`).
+`start()` then starts internal services, NTP, and **endpoint → cert-provider → inbound → service**;
+it runs `PostStart` and `Started` over the component lists in `start()` and their corresponding
+internal-service stages, then calls `s.network.EstablishInitialNetworkEnvironment()`. The HTTP client
+service is not in those two component lists; do not infer that every component receives every stage.
 
 > **The Box is not "up" until the network manager has observed its network.** `Start` does not return
 > before that call has run **synchronously**. State it precisely: `Start` returns only after the manager
@@ -152,14 +137,10 @@ Two orderings that look arbitrary and are not:
   open a rule-set file or start a process reader — happens at **PostStart** (`route/router.go:237-250`).
   Every start-time validation therefore runs before any rule has been started.
 
-### Close (`box.go:1219-1253`)
+### Close (`box.go`, `Close` and `close`)
 
-> Same ~+47 drift as the Start section: `Close()` is at `box.go:1219` and `close()` at `:1233` at this
-> baseline. The `:NNNN` numbers in the summary line below are stale; the **ordering they describe is
-> not** — governor before scope, because `ReferenceManager` reads it.
-
-`closeOnce.Do` → `statusView.Disconnect()` (`:1210`) → unregister pause callback (`:1213-1216`) →
-**close the power governor** (`:1217-1220`) → `scope.Close()` (`:1224`).
+`closeOnce.Do` → `statusView.Disconnect()` → unregister pause callback →
+**close the power governor** → `scope.Close()`.
 
 > The governor is closed **before** the scope because `ReferenceManager` reads it. Reversing the two
 > closes a resource whose observer is already gone.
