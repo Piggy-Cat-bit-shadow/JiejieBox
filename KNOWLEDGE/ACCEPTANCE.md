@@ -274,7 +274,7 @@ attributing specific test coverage to that run or a later revision.
 | 9.5 | The trim ladder maps every level, and an unknown level is ignored | `common/runtimecoord/platform_events.go:152-220` | VERIFIED_SOURCE + VERIFIED_UNIT | `go test -count=1 ./common/runtimecoord/...` | Go |
 | 9.6 | The Apple device axis on a real device | one **iPhone 17 Pro Max / iOS 26.4.2** run: 13 m 13 s lock → 1 boundary → `13m13.492448s` | **VERIFIED_DEVICE** for that device only | — | that device |
 | 9.7 | iPad, macOS, other OS builds | `NOT_RUN` / `SIGNING_OUT_OF_SCOPE` | **UNVERIFIED** | — | — |
-| 9.8 | Real TUN, real NetworkExtension, network transitions | zero executed evidence; a release blocker | **UNVERIFIED** | `docs/fork/real-tun-validation.md` §1–§7 | root + Linux |
+| 9.8 | Real TUN, real NetworkExtension, network transitions | no device execution in this Windows calibration; inspect evidence for the specific target and environment | **UNVERIFIED here** | `docs/fork/real-tun-validation.md` §1–§7 | relevant platform and device |
 
 ## 10. MTU and geometry
 
@@ -308,7 +308,7 @@ attributing specific test coverage to that run or a later revision.
 | 12.4 | The root design-guarantee suite passes **with the right tags** | run in this audit: `ok 5.459s` | **VERIFIED_UNIT** | `go test -count=1 -tags "$OTHERS" .` | Go + tags |
 | 12.5 | Main-root test coverage declared by Verify | untagged compile-only command runs zero tests; `TestNetLogEventCount` runs after `cd test`, in the separate module | VERIFIED_SOURCE of declaration; not evidence that the main-root suite ran | inspect `.github/workflows/verify.yml` and the exact run | — |
 | 12.6 | Tag composition and the `-checklinkname=0` contract | CI step `:168` | VERIFIED_UNIT | `go test -count=1 ./cmd/internal/...` | Go |
-| 12.7 | Pinned-upstream assumption tripwires | CI step `:179`; the script is wired | **UNVERIFIED (declaration only)** — needs bash | `bash scripts/ci/verify-upstream-assumptions.sh` | bash + network |
+| 12.7 | Pinned-upstream assumption tripwires | [Verify 40605271219](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40605271219) reports the step succeeded at `cb71cf80d72` | VERIFIED_CI for that run; not proof about later pins | `bash scripts/ci/verify-upstream-assumptions.sh` | bash + network |
 | 12.8 | Required root/test fork replacements agree | the local offline integrity script checked all three module graphs and 36 root/test replacement entries | local script PASS; not archive-byte verification | `bash scripts/ci/check-go-module-integrity.sh --require-checked test` | Go + bash |
 | 12.9 | Release re-verifies selected artifacts rather than rebuilding | [Release 40609827203](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40609827203) reports download, verification and publication steps succeeded at `cb71cf80d72` | VERIFIED_CI for that run; no independent local asset-byte verification | read the workflow and run | — |
 | 12.10 | Release acceptance rejects bad evidence | `release-contract-verify.yml` declares the self-test against mock `gh`; the release path uses its separate artifact/evidence gate | VERIFIED_SOURCE of declaration, not proof of a current run | `bash scripts/ci/verify-release-acceptance-test.sh` | bash |

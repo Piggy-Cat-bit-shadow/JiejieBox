@@ -251,7 +251,7 @@ not belong in the table above:
 | Property | Value |
 |---|---|
 | Order | `RetireSuspect()` **first**, then `CloseIdleConnections` (`route/reference.go:496-511`, `:547-556`) |
-| Pool count | exactly **one**; `route/reusable_owner_inventory_test.go:49,96,117` forbids a second |
+| Pool inventory | `route/reusable_owner_inventory_test.go` checks named owners and capabilities; it does not forbid other implementations |
 | Trigger | a **sleep/reuse boundary**, via `powerGovernor.AddReuseObserver(m.onReuseBoundary)` (`:142-144`) |
 | Must not | reset the network, terminate a stream, touch on-demand tunnels, or dial |
 

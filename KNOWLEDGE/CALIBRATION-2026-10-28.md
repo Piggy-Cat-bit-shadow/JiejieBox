@@ -211,6 +211,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
   value and a run ID. Two historical parent commit prefixes did not resolve and are labeled as such;
   the desktop-restore anchor was corrected to the matching current commit `7a46125ded0`. The index's
   stale "live" release allowlist defect was reconciled with the historical fix and current run.
+- Corrected a remaining power-module table that still claimed the named-owner test forbids a second
+  `ReuseSuspect` implementation. Real-device and platform validation remains scoped to the actual
+  target rather than treated as a universal release-blocker conclusion.
 
 ### Module review status
 
