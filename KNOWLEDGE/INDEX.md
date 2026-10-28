@@ -96,6 +96,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | sleep/wake/screen/lock | `modules/power-mobile-lifecycle.md` | §2 level/edge/snapshot vocabularies |
 | device axis, `ReuseSuspect` | `modules/power-mobile-lifecycle.md` | §7 |
 | timer census | `modules/power-mobile-lifecycle.md` | §6 |
+| OOM pressure, layered reclaim, reset and stop/reload barriers | `modules/power-mobile-lifecycle.md` | §4 OOM reclaim coordination |
 | Android trim ladder | `modules/power-mobile-lifecycle.md` | §3 |
 | libbox ABI, `SetupOptions` | `modules/libbox-platform-contract.md` | §1, §5 ABI versioning |
 | CommandServer / CommandClient | `modules/libbox-platform-contract.md` | §4 |

@@ -144,6 +144,10 @@ This is an operational ledger, not a replacement for the modules or a new produc
   navigation entry. Focused bridge index-ownership and endpoint resolver-retirement tests passed on
   Windows with Go 1.26.10; this is not a live bridge or VPN test. The MTU text now limits its
   unknown-path claim to the MASQUE calculation; bridge backends do read interface MTUs.
+- The post-baseline OOM executor, layered idle/pressure/crisis reclaim, recheck, close barrier and
+  reload state were reviewed and documented in the power module. The unfiltered OOM package suite
+  passed on Windows Go 1.26.10. Corrected both the fixed-100-ms poll claim and the inference that an
+  internal JSON-excluded flag means the killer is disabled by default.
 
 ### Module review status
 

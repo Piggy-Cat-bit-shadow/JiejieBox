@@ -157,9 +157,10 @@ Trim must not reset the network, dial, wake suspended work, or terminate active 
 * **Why:** a trim that reconnects turns a memory-pressure response into a traffic event.
 * **Breaks if violated:** trimming during idle builds a new queue and burns radio time; a trim becomes
   a reconnect trigger — the exact shape the memory path must not have.
-* **Honest scope:** `service/oomkiller/timer.go:324-337` **does** call `ReleaseMemory`, which resets the
-  network, and that is deliberate (`route/conn_reclaim.go:18` records it; the killer is disabled by
-  default at `option/oom_killer.go:13`). **Trim ≠ Release.**
+* **Honest scope:** `service/oomkiller/timer.go` crisis reclaim can call `ReleaseMemory`, which resets the
+  network, and that is deliberate (`route/conn_reclaim.go`). Whether the service is present and the
+  crisis is report-only depends on host setup and options; `json:"-"` alone establishes neither.
+  **Trim ≠ Release.**
 * **Proof:** `route/reference.go:154-197`, `:394-411`, `:496-511`, `:547-556`;
   `route/reset_entrypoints_test.go:95`; `route/reset_entry_matrix_test.go:103`.
 * **Re-check:** `go test -count=1 ./route/... ./common/power/...`

@@ -143,13 +143,33 @@ The invariant, and it is a hard one:
 terminate a stream, does not touch on-demand tunnels, does not dial.
 
 **And the honest correction:** the invariant is about the **trim** path, not about every path.
-`service/oomkiller/timer.go:324-337` calls `ReleaseMemory`, which **does** reset the network — and it
+`service/oomkiller/timer.go`'s crisis reclaim calls `ReleaseMemory`, which **does** reset the network — and it
 is *supposed* to. `route/conn_reclaim.go:18` records the intent in the code:
 `ReleaseMemory (OOM killer) -> ResetNetwork + idle … aggressive, and deliberate`. The killer itself is
-disabled by default (`option/oom_killer.go:13`, `json:"-"`). So:
+not established merely by the option's `json:"-"` tag: the daemon conditionally adds the service,
+and its internal `KillerDisabled` flag selects report-only crisis behavior. Inspect the actual host
+setup and service options before assuming it is enabled or disabled. So:
 
 **Trim ≠ Release. A future change that makes the trim path reset the network is the bug; a future
 change that makes the Release path stop resetting it is also a bug.**
+
+### OOM reclaim coordination after v0.1.9
+
+At `cb71cf80d72`, `service/oomkiller/timer.go` serializes idle, platform-pressure and crisis requests
+through one reclaim executor. Crisis outranks pending pressure and idle work, but does not interrupt
+an action already in progress; an idle pass yields at its layer boundaries if a crisis is queued.
+Idle reclaim tries expired caches, then idle pools, then forced GC only when the earlier gain is
+insufficient and runtime or armed-pressure conditions warrant it. Low-yield idle work cools down;
+crisis is not blocked by that idle cooldown. A Darwin pressure notification flushes caches and forces
+GC without a network reset. Crisis rechecks the current sample against the armed threshold before a
+destructive reset; report-only skips the network reset but still performs its reporting/release path.
+
+`stop` rejects new work, drops requests still queued, waits for accepted polls and actions already
+running, and joins the executor. Reload does not carry a pending pressure intent; a carried Triggered
+state becomes Armed so the next sample can decide whether a new crisis still exists. Triggered exits
+at the armed boundary, not the lower idle-resume threshold. `go test ./service/oomkiller -count=1`
+passed on Windows with Go 1.26.10 in this calibration; platform-specific Darwin callback/device
+behavior and race-detector execution were not established by that run.
 
 ### The four pools
 
@@ -200,7 +220,7 @@ watchdog hides a leak; not deferring a poll burns radio time.
 
 | Timer | Cadence | Verdict |
 |---|---|---|
-| `service/oomkiller` poll | 100 ms | **a watchdog, NOT speculation.** *"The honest fix if it is wanted is a slower cadence or an event-driven trigger … not suppression by sleep state."* |
+| `service/oomkiller` poll | adaptive: default minimum 100 ms, maximum 10 s | A watchdog, not speculative wakeup. `intervalForState` ramps in stable conditions and returns to the minimum under pressure; options and platform policy can affect the effective bounds. |
 | `internal/memmetrics` sampling | 1 ms | **benchmark-only** |
 | `service/ssmapi/server.go` | 1 min | deferrable — **but the FIRST pass is deliberately not deferred** |
 | `route/rule/rule_set_updater.go` | — | deferrable — **first pass also not deferred** |
