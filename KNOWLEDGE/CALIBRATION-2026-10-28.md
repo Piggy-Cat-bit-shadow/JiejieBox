@@ -113,6 +113,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - Offline module-integrity script passed under Go 1.26.10 for all three discovered modules; root/test
   replacement parity included 36 entries and all 31 Cronet paths. This did not run `go mod verify`
   or establish native archive/artifact provenance.
+- DNS group selection, lazy bounded health records, cancellation and NXDOMAIN classification were
+  reviewed against source and the earlier local DNS-transport suite. The FakeIP overview was aligned
+  with the narrower current-range TUN guard and separate router issuance checks.
 
 ### Module review status
 

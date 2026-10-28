@@ -154,10 +154,9 @@ truth for all network state".** It is the shared identity for the subsystems tha
 | the transport manager | `dns/transport_manager.go` — `TransportManager` `:18`, `Start` `:43`, `startTransports` `:102`, `Default` `:169`, `FakeIP` `:175`, `Create` `:181`, `isDefaultCandidate` `:269` |
 
 **The rule:** a FakeIP server **must not answer a destination lookup**, and `domain_resolver` could
-name one. Fixed by `8fad3e9b`. **A FakeIP address is a placeholder this process minted** — it has no
-route in the platform's table and only the router can recover its domain, which is why the Direct
-Offload path must fall through to the router for a FakeIP destination rather than hand it to the OS
-(`data-path-optimization.md` §A.5).
+name one. Fixed by `8fad3e9b`. A mapped FakeIP address is a synthetic placeholder whose domain the
+router recovers. The TUN route-set guard falls through for the **current store range**; its scope is
+narrower than the router's issuance and retired-range checks (`data-path-optimization.md` §A.5).
 
 The current `route/route.go` refuses an address inside the configured current FakeIP range when
 its store has no mapping. Outside that range it refuses an address covered by this process's
@@ -197,6 +196,15 @@ why ICMP is deliberately out.
 
 **`dns/transport/group`** is fork-created: `stable`, `fastest` and `parallel` transport groups
 (`5b0a33c`). It selects **among** configured transports; it does not change what a transport is.
+
+At the examined target, stable selection sticks to a clean member; parallel fans to clean members;
+fastest keeps a live winner or starts a single election per generation when no live wins remain.
+When none is clean, every mode makes one least-dirty attempt instead of fanning. Failure records
+and wins expire lazily and are capped per member; a transport failure or SERVFAIL is a failure,
+while NXDOMAIN and empty NOERROR are valid answers. Caller cancellation or group shutdown must not
+be recorded as a member failure. The cache sees only the answer returned by the group. See
+`group.go`, `fan.go` and the ownership/election tests; local `./dns/transport/...` tests passed in
+this refresh, without claiming external DNS interoperability.
 
 ---
 
