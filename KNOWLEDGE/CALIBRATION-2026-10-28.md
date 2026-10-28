@@ -230,6 +230,15 @@ This is an operational ledger, not a replacement for the modules or a new produc
   anchor and is not an ancestor of `a6952ccf`. A later remote check returned upstream `testing` at
   `e5d91fa79f6319d5de940d6c81d81f0fe53b9476`; its object was already local and has the same merge-base
   `a6952ccf` with the target. Ancestry is not authorship proof and these refs may move.
+- The remaining changed Go paths were grouped by subsystem rather than inferred from commit titles.
+  Flow tracker attach/close serialization and lock-free counter boundary were source-checked and the
+  focused tests passed; Linux original-destination decoding, Android process lookup, DERP host handling
+  and generated trust-root changes remain platform/protocol-specific source paths, not blanket interop
+  or device evidence. The tagged DERP host-format unit test passed for its domain, IPv4 and IPv6
+  cases on Windows; it does not exercise a real DERP mesh.
+- After the clean client scans, `clients/apple/Library/Network/ExtensionPlatformInterface.swift` acquired
+  a concurrent uncommitted change. It is outside this refresh and was not modified or staged by it;
+  the earlier scan result describes the clean checkout observed before that change.
 
 ### Module review status
 

@@ -55,6 +55,10 @@ Additional post-baseline entry and lifecycle boundaries at `cb71cf80d72`:
   closes the detached connection outside the lock. This prevents an unlocked update from closing a
   newly installed session; it does not establish seamless live-stream recovery. The SSH package
   tests passed locally on Windows.
+* `route/flow_tracker.go` serializes `AttachFlow` and `CloseFlow` callbacks with one mutex while
+  leaving packet counters outside that lock. Serialization prevents overlap; it does not by itself
+  prove which callback wins if both begin concurrently. The focused serialization and counter tests
+  passed locally on Windows.
 * Linux network-namespace startup keeps the holder alive using its pipe and registers cleanup with
   the scope. `ownsUserNamespace` chooses the logged `nsenter` command using euid and namespace-owner
   inspection; it is not itself the operation that enters the namespace. Linux namespace execution
