@@ -8,6 +8,11 @@ coverage of the integration, not a claim of universal wire compatibility. Select
 classification, option and lifecycle tests passed locally in this calibration; see `ACCEPTANCE.md`
 for their scope.
 
+At the recorded upstream ancestor `e4b7e692`, `protocol/mieru` is absent; this repository's
+integration was introduced by `3f67490206d`, and opt-in fallback by `e1efe4cafdc`. The underlying
+Mieru SDK is an external dependency, so the adapter's addition must not be described as invention of
+the protocol itself. Upstream references may move; recheck blob history before making broader claims.
+
 ## Configuration and data path
 
 `option/mieru.go` and `protocol/mieru/config.go` accept TCP, UDP or both as the **Mieru underlay**;

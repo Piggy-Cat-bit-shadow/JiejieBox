@@ -143,6 +143,7 @@ or historical line anchor was re-derived:
 | `path-selection-validation` | update, partial | fatal versus warning taxonomy checked; re-audit all topology and runtime group claims |
 | `libbox-platform-contract` | update, partial | TUN handoff checked; full client ABI/platform contract not re-audited |
 | `masque-connectip`, `naive-http-transport`, `xhttp-client-transport` | update, partial | MASQUE close, Naive fallback and VLESS encryption boundaries checked; interop and remaining protocol paths unverified |
+| `mieru` | added, partial | config, underlay/fallback selection and lifecycle source checked; selected tests passed, independent-peer and device recovery evidence not established |
 | `windows-daemon-security` | update, partial | target source and released SHA CI run checked; no end-to-end service handshake verified, and the local signing fixture skipped |
 | root architecture, invariants, acceptance and index | update, partial | corrected identified conflicts and links; old line anchors and all remaining invariants/acceptance claims still need individual revalidation |
 

@@ -12,8 +12,9 @@ but must not widen NODATA or transient errors to the whole name. These are `VERI
 > Status: `VERIFIED_SOURCE` (implementation, tests and schema verified in this worktree at the
 > commit that introduced the feature; see `Provenance` below)
 >
-> Reviewed against repository `Piggy-Cat-bit-shadow/sing-box`, branch `feat/dns-adblock-action`,
-> base `c32c210b0dbb1a23fb9b19ef731d164cd8745d34` (`testing`, `release/JIEJIE_VERSION` = `0.1.10`).
+> The original feature review used branch `feat/dns-adblock-action` and base `c32c210b0db` at
+> version 0.1.10. The current testing target `011f3fdcd99` contains the action; later changes and
+> their narrower evidence are noted above. A historical feature branch is not the current release.
 >
 > This module documents the fork's **`adblock` DNS rule action**: a DNS-only terminal action that
 > answers a name the rule-set has already classified as advertising with a locally generated,
