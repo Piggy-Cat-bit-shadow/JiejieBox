@@ -98,8 +98,6 @@ The field is a sibling of `outbounds` and `type`, not a per-outbound or per-node
 
 ## 4. Three-state semantics
 
-### Three-state semantics
-
 The field is **three-state**, and the distinction between the three is the whole point of the design:
 
 | value | meaning |

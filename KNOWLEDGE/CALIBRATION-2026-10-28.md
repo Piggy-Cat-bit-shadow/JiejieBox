@@ -203,6 +203,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
   kTLS unit package reported `ok`; Apple resolved `3aedd7417488` but the ABI check reported PARTIAL
   because the Swift accessor probe skipped, and signing preflight skipped in unsigned mode. Release
   run steps report success, while independent asset-byte and device checks remain outside this audit.
+- The invariants pass aligned fragmented sniff parser verdicts with fatal read/cancellation paths and
+  distinguished release job/artifact success from skipped internal checks. This matters for the
+  observed v0.1.31 Apple ABI PARTIAL result; job success must not erase that skip.
 
 ### Module review status
 

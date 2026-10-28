@@ -142,7 +142,7 @@ accepted chunks remain transferred; only the untransferred remainder may fall ba
 * **Why:** asserting the bundled interface **silently failed at run time on every walk**, so the HTTP
   client pools were unreachable through four passes of review. A full keeper is deliberately not
   required: some transports have no safe "no new stream" state.
-* **Breaks if violated:** a memory trim does nothing at all while reporting success.
+* **Breaks if violated:** affected pools can be missed while other eligible resources are still trimmed.
 * **Proof:** `route/reference.go:440-494` with the rationale at `:479-484`; commits `93823c3d`,
   `8735b1d`; `route/reference_coverage_stress_test.go`.
 * **Re-check:** `go test -count=1 ./route/...`
@@ -227,9 +227,10 @@ reading the platform from the file's own header and requiring the recorded commi
 
 * **Why:** metadata provenance is not binary provenance.
 * **Breaks if violated:** a release attaches bytes nothing built or verified.
-* **Honest scope:** it covers what the plan step selects, requires 4–5 manual dispatches first, and
-  **`client-apple.yml` is not in the acceptance required set** — so acceptance is structurally
-  incapable of noticing Apple-pin drift. This particular release-path statement is
+* **Honest scope:** it covers what the plan step selects; inspect each producer's triggers and the
+  selected runs rather than assuming every producer is dispatch-only. The separate
+  `verify-release-acceptance.sh` does not include `client-apple.yml` and is not invoked by the
+  release path. This particular release-path statement is
   `VERIFIED_SOURCE`; independently linked CI runs in `ci-release.md` apply only to their own SHA
   and do not by themselves verify a release artifact.
 * **Proof:** `release.yml:144-204`; `scripts/ci/release-artifacts.sh`;
@@ -312,8 +313,10 @@ reverse mapping saves the original and substitutes the FQDN in `route/route.go`.
 
 ### A18 — Fragmented QUIC continues only on `ErrNeedMoreData`, bounded, with the buffer released
 
-`maxSniffRounds = 64`; on hitting the cap the just-taken buffer is released and the flow is treated as
-unsniffable; every other error is recorded as `metadata.SniffError` and is **not fatal**.
+`maxSniffRounds = 64` bounds newly read continuation rounds; on hitting the cap the just-taken buffer
+is released and the flow is treated as unsniffable. A parser's non-need-more verdict is recorded as
+`metadata.SniffError`; cancellation and non-timeout packet-read errors can still be fatal. The cap
+does not bound the preceding replay of `inputPacketBuffers`.
 
 * **Why:** the pre-fix behaviour was measured — 1,000 crafted datagrams retained 1,000 buffers
   (+16.7 MB live), with the per-round QUIC buffer growing from 33 KB to 1.06 MB.
@@ -333,8 +336,8 @@ edge it did not observe, and the core must not synthesise one from a level.
 
 ### A20 — Release acceptance is fail-closed
 
-A failed, cancelled, timed-out or skipped product job must not be treated as success, and a gate that
-skipped a layer must not report `PASS`.
+A failed, cancelled, timed-out or skipped product job must not be treated as success. A successful
+job or step also must not be reported as proving a layer that it explicitly skipped.
 
 * **Why:** `scripts/ci/apple-ci-job-gate.py`'s docstring is the clearest statement of the class: a
   dispatch with `build_ios: false` **concludes success while a platform was never built**, and skipped
@@ -342,7 +345,9 @@ skipped a layer must not report `PASS`.
 * **The release path's authority is `release-artifacts.sh`, invoked by `release.yml`.** It selects the
   newest run per target workflow, fails on a completed non-success or a cancelled run, requires each
   product's artifact and recorded digest, and includes `client-apple.yml` under
-  `RELEASE_EXTRA_PLATFORMS=true`. So the release path does not accept a skipped product job as green.
+  `RELEASE_EXTRA_PLATFORMS=true`. This is a job/artifact-level condition, not proof that every
+  internal check ran: the v0.1.31 Apple workflow succeeded with its Swift ABI probe marked SKIP and
+  the ABI checker reporting PARTIAL. See `libbox-platform-contract.md` for that exact run.
 * **Honest gap:** the separate strict handoff checker `verify-release-acceptance.sh` is not called by
   the release path - only its self-test runs in `release-contract-verify.yml`. Its default required
   set is also narrow (`verify.yml`, `interop-xray.yml`, `server-linux-amd64.yml`). That is a
