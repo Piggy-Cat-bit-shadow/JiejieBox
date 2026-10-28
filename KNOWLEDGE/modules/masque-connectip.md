@@ -211,8 +211,8 @@ Any document referencing the deleted files is describing the pre-`e93e297aa` mod
 | Long-run allocation behaviour | `VERIFIED_UNIT` (slow) | `transport/masque/longrun_alloc_test.go` |
 | CONNECT-IP interoperability against an independent implementation | **declaration only** — `test/jiejie/reference/connect_ip_go_interop_test.go` lives in a separate module CI does not run on push | `run-jiejie-suite.sh` (needs bash) |
 | macOS/H3 device behaviour | **`UNVERIFIED`** | needs a device |
-| Race-freedom | CI step exists; **no run record in the repository**; `BLOCKED_BY_ENVIRONMENT` here | Linux runner |
-| `protocol/masque` suite | `VERIFIED_UNIT` **only with tags** — untagged it fails 19 tests with "QUIC is not included in this build". Measured at the release baseline: **ok, 318.4 s** with `DEFAULT_BUILD_TAGS_OTHERS`. | see `ci-release.md` |
+| Race-freedom | `-race` is **blocked on this host**; inspect the exact package list and SHA in the CI run before claiming coverage of MASQUE | Linux runner |
+| `protocol/masque` suite | untagged tests passed locally during the 2026-10-28 refresh; that does not select QUIC-tagged cases. The historical tagged result is scoped to its recorded baseline. | use the appropriate profile and inspect which tests ran |
 
 ---
 

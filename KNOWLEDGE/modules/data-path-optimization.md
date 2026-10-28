@@ -472,7 +472,7 @@ errors.
 | The research controller cannot reach production | `VERIFIED_UNIT` (fails CI if it does) | `common/trafficsched/adaptive_research_test.go` |
 | The gate preserves the extended-writer path and reports MTU truthfully | `VERIFIED_UNIT` | `common/trafficsched` gate tests (11) |
 | Trace-class lane mapping | `VERIFIED_UNIT` | `common/trafficclass`, `route` |
-| Race-freedom of these packages | the CI step exists (`verify.yml:310`) but **no run record is in the repository**, and `-race` is `BLOCKED_BY_ENVIRONMENT` on this host | Linux runner |
+| Race checks for these packages | the `Verify` run linked in `ci-release.md` succeeded at `1ff0af39110`; local `-race` is blocked by missing cgo toolchain. A successful run is scoped to its actual commands and SHA, not a proof of universal race-freedom | Linux runner |
 | Real-link shaped throughput | **historical record** — the harness is a manual engineering tool (`common/trafficsched/harness`) | needs a real link |
 
 ### Provenance

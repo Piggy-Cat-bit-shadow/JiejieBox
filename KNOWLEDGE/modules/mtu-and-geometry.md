@@ -259,7 +259,7 @@ copies. **This test is not about cross-kind cycles**; an earlier description of 
 | The hysteria2 hard ceiling reaches the wire with ChromeParrot on | `VERIFIED_UNIT` | `go test -count=1 -run HardCeiling ./protocol/hysteria2/` |
 | The low-memory geometry is read from one source | `VERIFIED_SOURCE` | `go run ./cmd/internal/appletags -mobile-only` |
 | Status values are copies, not views | `VERIFIED_UNIT` | `go test -count=1 -run TestAgentFEveryHopScalarIsCopiedNotShared ./common/physicalpath/` |
-| A real NIC's MTU behaviour | **`UNVERIFIED`** — needs a real TUN and root; a release blocker | `docs/fork/real-tun-validation.md` |
+| A real NIC's MTU behaviour | **`UNVERIFIED` in this refresh** — needs the relevant real TUN and environment | `docs/fork/real-tun-validation.md` |
 | Race-freedom | **`BLOCKED_BY_ENVIRONMENT`** | needs cgo |
 
 **One withdrawn finding, recorded so it is not re-derived:**

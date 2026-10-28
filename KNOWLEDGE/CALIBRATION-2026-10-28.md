@@ -13,6 +13,15 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - Source and local tests do not establish device, interoperability, release artifact or CI-run behavior. No production code, dependency, build or release configuration was changed by this calibration.
 - Windows 10 Enterprise LTSC 2021 build 19044, Go 1.25.5: `go test -tags with_utls ./common/tls -count=1` failed three Windows TLS 1.3 handshake tests with `unexpected EOF`; a filtered rerun reproduced them. Cause unknown. Targeted uTLS/ECH tests passed. Linux kTLS tests cannot execute on this Windows host.
 - `go test -tags with_naive_outbound ./protocol/naive -run TestH3Fallback -count=1` remained at the Cronet fork download and was interrupted; it produced no test result. Retry with the required dependency available.
+- Additional cross-checks corrected the DNS delivery-versus-cache contract, MASQUE per-chunk ownership,
+  the pinned sing splice fallback, fork provenance interpretation, current sing-tun replacement and
+  the historical MASQUE initial-size versus hard-ceiling claim. `go test ./route -count=1` failed
+  after a 120-second setup timeout in `TestTeardown_OneSidedCompletionNeverRunsOnClose`; an isolated
+  rerun passed. The failure remains recorded in `ACCEPTANCE.md`, not silently reclassified as a pass.
+- GitHub run records were independently queried for the release Windows daemon job and the later
+  Verify/Android jobs; each is scoped to its actual SHA in the corresponding module. Root DNS/HTTP
+  detour tests, Mieru classification, XHTTP package tests and `with_quic` MASQUE chunk tests passed
+  locally; see `ACCEPTANCE.md` for evidence scope.
 
 ### Module review status
 

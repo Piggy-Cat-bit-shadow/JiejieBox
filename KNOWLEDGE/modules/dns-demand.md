@@ -224,7 +224,7 @@ commit is confirmed). **`BLOCKED_BY_ENVIRONMENT` to execute** — the path needs
 | The resolver-authority parity check | `VERIFIED_UNIT` (needs tags) | `-run TestResolverAuthorityParity .` |
 | The `systemd-resolved` goroutine leak | **it IS fixed**, by `6b495134c` | `git log -S'signalLoopStop' e4b7e692..a267e99`; the symbols at `local_resolved_linux.go:80-82`, `:239-241`, `:374`, `:385` |
 | Multi-platform DNS environment matrix | never run | **`UNVERIFIED`** |
-| DNS and FakeIP on a real device | needs a real TUN; zero executed evidence | **`UNVERIFIED`** — a release blocker |
+| DNS and FakeIP on a real device | no real TUN exercised in this Windows refresh | **`UNVERIFIED` here**; check device evidence for the specific build |
 | Race-freedom | `-race` needs cgo | **`BLOCKED_BY_ENVIRONMENT`** |
 
 Measured here: `go test -count=1 ./dns/...` → **all ok** (`dns` 9.5 s, `dns/transport` 6.4 s,
