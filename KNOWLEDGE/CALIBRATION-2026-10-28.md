@@ -61,6 +61,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - Historical XHTTP benchmark provenance was checked by ancestry; the recorded measurements are not
   current performance evidence and do not support the claim that the fork was never behind. The
   performance index now scopes its dated values and avoids protocol-independent conclusions.
+- Removed a stale CI-module diagnosis claiming the Windows TLS 1.3 tests contact a remote host and
+  proving unsupported Schannel. Their local handshake failure was reproduced, but its cause remains
+  unknown; a historical failure does not rule out a later regression.
 
 ### Module review status
 

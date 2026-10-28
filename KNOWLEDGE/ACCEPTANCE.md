@@ -293,7 +293,7 @@ making either claim.
 These are historical observations, not proof that a current failure has the same cause. Reproduce
 and compare the current target and environment before classifying a failure.
 
-| Item | Why | Not a regression because |
+| Item | Historical observation | Scope and follow-up |
 |---|---|---|
 | `common/tls` `TestWindowsClient*TLS13` | local test-server handshakes failed with `unexpected EOF` on Windows 10 build 19044 during this refresh | cause not established; see the current result above |
 | `common/sniff` `TestAgentFFrameShape*`, `TestTheSniffCensusMovesForExactlyOneLeakedGoroutine` | **load-sensitive; the failing test name differs run to run** | 5/5 passes in isolation on both the fix and the base |

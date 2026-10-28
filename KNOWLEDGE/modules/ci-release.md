@@ -310,11 +310,12 @@ bash scripts/ci/check-libbox-abi.sh --pin-only  # wired in verify.yml; full gate
 | `go test -count=1 ./common/trafficsched/... ./common/trafficclass/...` | **exit 0**, 106.4 s / 0.03 s; 51 tests, 0 skipped |
 | `go test -race …` | **BLOCKED** — `go: -race requires cgo` |
 
-**Known-failing and known-flaky set, so it is not re-diagnosed as a regression:**
+**Historical failures and flakes to investigate when they recur:** the prior observation does not
+prove the cause or rule out a new regression at a different target or host.
 
-| Item | Why it fails | Not a regression because |
+| Item | Historical observation | Scope and follow-up |
 |---|---|---|
-| `common/tls` `TestWindowsClient*TLS13` | a **real remote handshake**; this host's Schannel has no TLS-1.3-over-TCP | `NETWORK_DEPENDENT`, recorded in `docs/fork/v016-final-closure-ledger.md:298` |
+| `common/tls` `TestWindowsClient*TLS13` | local handshake tests failed with `unexpected EOF` on this Windows host; isolated cases reproduced | cause unknown; do not infer lack of TLS 1.3 support or a remote-network failure from this observation |
 | `common/sniff` `TestAgentFFrameShape*`, `TestTheSniffCensusMovesForExactlyOneLeakedGoroutine` | **load-sensitive**; the failing test name differs run to run | documented 5/5 passes in isolation on both the fix and the untouched base. A single green run here does **not** prove non-flakiness. |
 | `protocol/group` `TestRecheckSingleFlightCollapsesABurst` | load-sensitive | 20 consecutive isolated runs clean on both trees |
 | `common/trafficsched` under `-count=10` | ~18 minutes of deliberate sleeps trips a timeout | every individual test passes |
@@ -571,7 +572,8 @@ DEFAULT_BUILD_TAGS_OTHERS … the same list with with_naive_outbound removed
 9. **Do not describe `release.yml` as covering all platforms.** It covers what the plan step selects,
    after 4–5 manual dispatches.
 10. **Do not assume a script that exists is a gate that runs.** Check reachability first.
-11. **Do not re-diagnose the known-failing/flaky set in §4 as a regression.**
+11. **Investigate a recurrent failure at its actual target and environment.** A historical flake is
+    context, not proof that a new failure is harmless or has the same cause.
 12. **Do not add a top-level directory without checking `android-core-arm64.yml`'s path filter.**
 13. **Do not delete `<!--STRESS_RESULTS-->`-style placeholders silently.** An unfilled placeholder is a
     record that the evidence was never produced; that is information.
