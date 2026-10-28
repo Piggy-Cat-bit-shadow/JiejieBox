@@ -21,6 +21,13 @@ staggers attempts, advances on fast failure and closes losing connections, inclu
 `common/dialer/dual_stack_scheduler_test.go`. These are `VERIFIED_SOURCE` observations at the
 testing target; runtime and network-specific results require their own evidence.
 
+When the box has committed IPv4-only entry presentment, `dns/entry_ipv6.go` suppresses an
+application-side TUN AAAA question before rules, cache, FakeIP or upstream work and answers NOERROR
+with no data. It does not apply that gate to the dialer's `Lookup` or to DNS forwarded by a remote
+endpoint: a remote proxy may have IPv6 even when the local entry does not. This is separate from
+per-attempt family admission. See `dns/entry_ipv6_test.go` and the TUN presentment contract in
+`libbox-platform-contract.md`.
+
 ### Private resolvers owned by endpoints
 
 Tailscale, OpenVPN and OpenConnect DNS transports can own resolvers that are not themselves entries
