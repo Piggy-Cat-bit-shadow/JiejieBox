@@ -110,6 +110,9 @@ Six rules in one:
 6. on the owned-datagram path ownership **transfers on success** and the release is skipped
    (`session.go:484-489`).
 
+These are ownership rules, not exactly-once delivery: the pinned HTTP/3 batch copy fallback can
+queue a prefix before a later error returns ownership of all payloads to the caller.
+
 * **Why:** each rule exists because violating it produced a real bug.
 * **Breaks if violated:** a retained cursor reads recycled pool memory; a pooled working copy makes a
   fragment outlive its owner; a release on the owned path is a **double free**.

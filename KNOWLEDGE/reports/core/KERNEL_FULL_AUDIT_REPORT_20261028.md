@@ -15,6 +15,9 @@
 > 对 BUG-002/010，当前 pin 的 sing splice 在 hook 成功时转发返回的数据并继续，
 > `common/ktls/ktls.go` 的相应 hook 也会处理握手后消息；报告中的旧代码路径不再适用。
 > 本次在 Windows 上未执行 Linux kTLS splice 或 KeyUpdate 的真实端到端验证。
+> 对 BUG-005，当前 `quic-go` pin 的 HTTP/3 无 headroom 复制路径在成功时释放原 payload；
+> 失败时所有权留给调用方。批量复制可能在出错前已排队部分数据，因此所有权规则不能
+> 被误写成传输层面的原子性或恰好一次投递。
 
 **报告文件：** `KERNEL_FULL_AUDIT_REPORT_20261028.md`  
 **审计对象：** `Piggy-Cat-bit-shadow/sing-box`，`testing` 分支  

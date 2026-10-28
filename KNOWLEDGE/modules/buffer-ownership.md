@@ -70,6 +70,7 @@ bound that does not grow with a coalesced tail (`sniff_bounded_copy_internal_tes
 | # | Rule | Anchor | What breaks |
 |---|---|---|---|
 | B11 | Each batch **chunk** is all-or-nothing; the accepted prefix is transferred and only the refused remainder stays with the caller | `transport/masque/session.go`, `writeBatchOwned` | replaying an accepted prefix double-sends or releases transferred buffers |
+
 | B12 | On the **owned-datagram** path, ownership **transfers on success**, so the release is skipped entirely | `transport/masque/session.go:484-489`, `:495`; `transport/http/client_h3.go:506` | **double release / use-after-free** |
 | B13 | A `PrependContextID` **substitution releases the original**, so it must refuse the affected chunk before it is attempted and update the caller's slice in place | `transport/masque/session.go`, `writeOwnedBatchChunk` | stale pointers, double release or packet loss on fallback |
 | B14 | Every failure path in `writePackets` releases **exactly the still-owned remainder** | `transport/masque/session.go:518-520` | a leak of pooled buffers |
@@ -78,6 +79,13 @@ bound that does not grow with a coalesced tail (`sniff_bounded_copy_internal_tes
 | B17 | `matchRule`'s packet buffers belong to the caller and must be released on **all five** error paths | `route/route.go:394-400`, `:412`, `:422`, `:426`, `:440`; comment `:396-399` records the measurement: **1,817 bytes released vs 18,255 unreleased** | a 16 KiB pooled allocation never recycled |
 | B18 | Release sites are explicit, not inferred: `buf.ReleaseMulti` (`route/route.go:146,156,160,184`), `N.ReleaseMultiPacketBuffer` (`route/route.go:400,412,422,426,440`; `route/dns.go:44`), `route/fakeip_conn.go:205`, `protocol/masque/{client,server}.go`, `transport/masque/client.go`, `common/listener/listener_udp.go`, `common/iponly/conn.go`, `common/trafficsched/gate.go:135,353,376`, `transport/device/*`, `transport/wireguard/device_peer_router.go` | as cited | leaks |
 | B19 | Double-release guards exist and must be preserved: `route/conn_reclaim.go` (`managedConnState`, `markKernelOwned:114`, `reclaimState:118`, `touch:125`, `countBytes:136`) and `route/splice.go` (`spliceSource.takeCached:145`) | as cited | a spliced connection's cached packets released twice |
+
+The chunk statement concerns **ownership**, not exactly-once delivery. In the pinned quic-go HTTP/3
+copy fallback, a batch can queue earlier datagrams before a later send fails; a non-nil result leaves
+all payload ownership with the caller even though some copies may already have been queued. The
+no-headroom copy path now releases the original payload on success, but not on error. See the pinned
+`http3/conn.go` `sendDatagramOwned` and `sendDatagramsOwned`; do not infer wire-level atomicity from
+the ownership contract.
 
 ### 1.4 Lifetime, pools and retirement
 

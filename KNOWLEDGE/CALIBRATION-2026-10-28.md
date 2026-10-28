@@ -79,6 +79,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - Historical BUG-002/010 were rechecked against `common/ktls/ktls.go` and the exact pinned sing
   splice source: the successful hook path forwards returned bytes and resumes, and post-handshake
   messages are drained. Linux kTLS splice/KeyUpdate execution remains unverified on this Windows host.
+- Historical BUG-005 was checked against exact quic-go pin `2daa76f5bd52`: successful no-headroom
+  copies release the payload; a batch failure retains caller ownership even if a copied prefix was
+  already queued. Chunk ownership atomicity therefore does not establish exactly-once transmission.
 
 ### Module review status
 
