@@ -107,6 +107,10 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - A test-name scan found that the cited duplicate-member lint test is absent; the implementation is
   source-verified, while nearby collision tests cover a different setup. Prefix regexes and explicit
   historical names require manual interpretation rather than being counted as missing tests wholesale.
+- A limited source-path scan across module and main acceptance/architecture/invariant documents found
+  234 distinct `.go` path candidates: 223 exist in this repository, nine are present under the exact
+  pinned sing dependency, and two are explicitly attributed to external gomobile/Xray sources. This
+  checks path existence only, not historical line anchors, external source contents or claim accuracy.
 - The same scan found `TestQUICOwnership` matched no definition. The acceptance command now selects
   the actual `TestQUICSniffContext` tests, which passed locally; other unmatched names were confirmed
   to be historical references or non-test text, not automatically treated as current tests.
