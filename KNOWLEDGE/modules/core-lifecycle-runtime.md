@@ -27,6 +27,13 @@ closes all. The interface-update path also considers a changed interface when cl
 do not replace this with a universal `CloseAll` or assume every brief gap is a dead path. See
 `route/handover_recovery_classification_test.go` and `android_handover_generation_test.go`.
 
+Protocol ownership is not interchangeable: AnyTLS and Snell register their clients with the scope;
+VLESS registers its transport and multiplex dialer when present. Their outbounds also implement
+interface-update and idle-connection hooks (`protocol/anytls/outbound.go`, `protocol/snell/outbound.go`,
+`protocol/vless/outbound.go`). An interface update or idle trim should invoke the owner's intended
+hook; it is not permission to close every live connection. These are source-level contracts at the
+reviewed target; the Snell package reported no test files in this host's untagged run.
+
 **Scope:** `adapter.Scope`, `Box` start/close ordering, `common/runtimecoord`, `route.ReferenceManager`,
 `common/power`'s interaction with them.
 

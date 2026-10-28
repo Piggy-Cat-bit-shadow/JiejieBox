@@ -16,8 +16,9 @@
 
 **Read this file before anything else. The knowledge base does not describe `HEAD`.**
 
-Every value below was measured against the worktree, not copied from a report. The command that
-produced it is given so a reader can re-measure instead of trusting this file.
+The table below records the v0.1.9 review, not today's worktree. Its values were measured for that
+baseline; commands must be interpreted against the named revision, and current branch/release
+status must be measured separately.
 
 | Field | Value | How to re-measure |
 |---|---|---|
