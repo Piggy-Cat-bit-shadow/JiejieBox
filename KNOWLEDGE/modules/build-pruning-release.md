@@ -26,6 +26,12 @@ The Go module's `replace` directives, not `require` versions alone, select the f
 in `go.mod` and compare the nested test module separately; Git submodule gitlinks for clients are
 distinct from Go module pins and do not establish the contents of a published binary.
 
+At `cb71cf80d72`, both root and `test/go.mod` replace `github.com/metacubex/utls` with the same
+fork revision, and both replace `cronet-go/all` with `c9c0e6ec8845`. The independent
+`REQUIRED_FORK_REPLACES` list in `scripts/ci/check-go-module-integrity.sh` names four modules plus
+the Cronet prefix; uTLS is not named in that specific required list. Do not infer that the list is a
+complete inventory of every fork replacement or that matching text proves built artifact contents.
+
 **Scope:** `include/*` (the registry and the tag-polar pruning pairs), `release/*` (profiles, version,
 pins), `cmd/internal/*` (builders and generators), `Makefile`, `.gitmodules`.
 
