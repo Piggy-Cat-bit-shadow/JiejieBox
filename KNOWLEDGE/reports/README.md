@@ -40,7 +40,9 @@ not run, that is `BLOCKED_BY_ENVIRONMENT`, not `PASS`.
 ## Index
 
 Dates are the commit date for a report that was already tracked, and the file's own date for one archived
-later. "Status" says whether the report still describes the tree or has been superseded.
+later. The table's historical "current" status refers to the report's own review point, not today's
+tree. Later changes may supersede individual claims even where that status was never rewritten; consult
+the current modules and source. Explicit superseded labels preserve known historical relationships.
 
 ### convergence/
 
@@ -152,7 +154,8 @@ later. "Status" says whether the report still describes the tree or has been sup
 
 1. Put it in the directory that matches its subject, keeping a name that says **what** was audited and
    **when** — `SUBJECT_YYYY-MM-DD.md` for a formal report, `_subject.md` for working notes.
-2. Add a row to the table above: report, date, what it covers, and whether it is current or superseded.
+2. Add a row to the table above: report, date, reviewed revision, what it covers, and any known
+   supersession. Do not label an archive as current for an unspecified future tree.
 3. If the report contradicts a module, fix the module **or** record the conflict in the report — never leave
    both silently disagreeing (rule 1 of `AGENTS.md`).
 4. Do not move `BASELINE.md` for a report. A report is not a refresh.
