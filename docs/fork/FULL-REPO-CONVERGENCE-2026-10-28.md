@@ -192,6 +192,7 @@ Android 的删除顺序刻意是：先建 4 个 `archive/*` 标签 → 推送标
 | 品牌/UA 边界 | `INFOPLIST_KEY_CFBundleDisplayName = "Jiejiebox"` ×6、`PRODUCT_NAME = "JiejieBox"`、`HTTPClient.subscriptionUserAgent` 及其 Hako 订阅测试保留 | `VERIFIED_SOURCE` |
 | 真实编译（iOS） | Apple client 运行 `40698718663`：`resolve` 成功（`explicit-sha` → `be3258ab57dd`）、`libbox` 成功、**`ios` 成功**；macOS 见下一行 | `VERIFIED_CI` |
 | 真实编译（macOS） | **`NOT_RUN`**：四次派发、两个 runner 标签（`macos-latest`、`macos-14`）全部在排队约 15 分钟后被平台取消且一个 step 都没跑（`40698718663` 的 `macos`、`40704313767`、`40707022945`、`40710418326` 的 `libbox`） | 缺口（账号级 macOS 限制） |
+| 合并树的 Swift 语法 | 本地 Swift 6.3.3 `swiftc -parse -enable-bare-slash-regex` 对候选树 **422 个 .swift 文件全部通过**（含被合并改动的 15 个：`PKGInstaller.swift`、`ExtensionProvider.swift`、`TailscalePeerView.swift`、`UserServiceXPC.swift`、`CommandXPC.swift`、`ShareView*.swift` 等）。注意这只是**语法**，不做类型检查；`GitHubEmoji.swift` 需要那个 flag 因为用了裸正则字面量，main 上同样如此。类型检查与链接仍然只有 macOS runner 能给 | `VERIFIED_SOURCE`（语法级） |
 | Apple gitlink 前移的 ABI 依据 | `probe-accessors.py --lang swift` 对 **`16cf87b4` 这一确切提交**：423 文件 / 0 违规 / 3 interface 方法；且 `git diff --name-only aeccc754..16cf87b4` 只有 UA 修复与测试/stub，没有契约命名的文件 | `VERIFIED_SOURCE` |
 | Hako UI 门 | `gate_hako_platform_imports.py` 报 `undecidable on tvos` 62 项（本机无 tvOS SDK 知识），**未写入任何文件**，与本轮改动无关 | `NOT_RUN`（环境） |
 
