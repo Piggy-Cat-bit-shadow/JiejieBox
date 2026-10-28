@@ -380,7 +380,7 @@ branding, macOS naming, and source selection. **Signing assertions skip unless
 (`:269-273`); `jni/arm64-v8a/libbox.so` present, **> 1 MB**, and `file` reports aarch64 (`:286-301`);
 `go version -m` shows no gVisor (soft-fails to a NOTE if unreadable, `:313-315`); the NDK and gomobile
 pins are **derived, never copied** (`:167-171`, `:209-242`); the resolved tags are asserted
-(`:127-138`). It runs on `push` to `testing` **with a 19-path filter** — so a new top-level directory
+(`:127-138`). It runs on `push` to `testing` **with a path filter** — so a new top-level directory
 can silently drop Android ABI verification.
 
 The `StringBox` migration is why the Android submodule points at the **fork** rather than upstream:
