@@ -177,6 +177,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
   behavior was not run. A source/comment discrepancy remains: raw Winsock 10004/10008/10055 do not
   match the recognized POSIX errors on Windows Go 1.26.10 and are not listed as explicit exceptions;
   actual delivery by a device remains unverified. No runtime code was changed in this refresh.
+- The `service/resolved` short-name expansion removed after v0.1.9 is distinguished from Tailscale's
+  separate search-domain logic. Historical Cronet race/link observations are scoped to their pin and
+  profile, rather than asserted for every product or current dependency state.
 
 ### Module review status
 

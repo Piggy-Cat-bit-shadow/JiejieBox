@@ -237,6 +237,12 @@ Every mechanism that keeps DNS from escaping the intended path, and what each do
 `dns_server_address` and `dns_search_domain` rule items were absorbed from upstream
 (`a2df2cdc1` family) — they are not fork work.
 
+The separate `service/resolved` transport no longer expands query names through its former
+`TransportLink.nameList`/`ndots` path. At `cb71cf80d72`, it selects a link, validates the original
+question name and makes sequential attempts with that message. Do not generalize that removal to
+Tailscale's distinct short-name/search-domain matching described above; the two are different paths.
+This is a source-level finding, not a live systemd resolver test.
+
 ---
 
 ## 6. The `systemd-resolved` goroutine leak — fixed, and the document that says otherwise is stale

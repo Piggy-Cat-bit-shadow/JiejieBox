@@ -345,11 +345,13 @@ These are not acceptance gaps to be closed by a test; they are recorded limits.
 * Device and privileged data-plane behavior requires evidence for the specific build and platform;
   this local Windows refresh did not exercise a real TUN, Linux kTLS or Apple NetworkExtension.
 * Apple artifact claims require a matching workflow run and artifact provenance for the exact target.
-* **`cronet-go/lib/linux_amd64` does not link under `-race` on ubuntu-latest.** No product is affected:
-  the Linux product ships `DEFAULT_BUILD_TAGS_OTHERS`, which has no `with_naive_outbound`.
+* A historical Linux `cronet-go/lib/linux_amd64` `-race` link failure was recorded at its prior pin.
+  The referenced Linux profile omits `with_naive_outbound`; that does not establish all builds or
+  current Cronet pins are unaffected. Recheck the chosen profile, revision and toolchain.
 * **The `systemd-resolved` goroutine leak is FIXED** (`6b495134c`). `docs/RELEASE-CERTIFICATE.md:70-85`
-  still says otherwise; that document is stale. The exclusion of the `test/` module's box-level tests
-  from push CI was justified by this leak and can be revisited — a CI decision, not a knowledge one.
+  still says otherwise; that document is stale. The historical exclusion of box-level tests was
+  justified by this leak; current Verify runs one selected test in that separate module, not its full
+  box-level suite. Any coverage change is a CI decision, not a knowledge one.
 * The historical `Pipe2` false-handover defect is fixed in the pinned `sing` source; a separate
   general active-flow stall remains a design limitation, as described in `core-lifecycle-runtime.md`.
 * The Apple pin has a declared `--pin-only` verifier in `verify.yml`; the full client check has a
