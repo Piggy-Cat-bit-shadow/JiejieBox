@@ -99,7 +99,13 @@ fi
 # The install sites use it
 # ---------------------------------------------------------------------------
 
-for site in ".github/workflows/client-apple.yml" "Makefile"; do
+# The Apple install site moved from the workflow into the shared composite action when the
+# macOS-only acceptance began building Libbox inside its single macOS job. It is still exactly one
+# place that installs the toolchain for the Apple products; the check follows the site rather than
+# pinning it to the file it used to live in.
+APPLE_INSTALL_SITE=".github/actions/apple-libbox-build/action.yml"
+
+for site in "$APPLE_INSTALL_SITE" "Makefile"; do
   if grep -q 'gomobile-toolchain.sh' "$repo_root/$site"; then
     report "$site installs through gomobile-toolchain.sh" 0 0
   else
@@ -118,8 +124,8 @@ done
 # The count is therefore one. What the check is FOR is the `apple` argument: if a bare `install`
 # (or the wrong platform) appears, the count of correctly-named sites drops below the number of
 # install sites and this fails.
-sites="$(grep -c 'gomobile-toolchain\.sh install apple' "$repo_root/.github/workflows/client-apple.yml" || true)"
-installs="$(grep -c 'gomobile-toolchain\.sh install' "$repo_root/.github/workflows/client-apple.yml" || true)"
+sites="$(grep -c 'gomobile-toolchain\.sh install apple' "$repo_root/$APPLE_INSTALL_SITE" || true)"
+installs="$(grep -c 'gomobile-toolchain\.sh install' "$repo_root/$APPLE_INSTALL_SITE" || true)"
 if [ "$sites" -eq "$installs" ] && [ "$installs" -ge 1 ]; then
   report "every Apple install site names the apple toolchain" 0 0 "count=$sites"
 else
