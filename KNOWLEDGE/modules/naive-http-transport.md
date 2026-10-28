@@ -382,7 +382,7 @@ advertisement), and `trackedConn`'s activity tracking.
 | The guard does not break server-internal backends | `VERIFIED_UNIT` | `TestJiejieTargetACLDoesNotBreakMasqueradeBackend` |
 | HTTP/2 resource bounds, H3 availability decision | `VERIFIED_UNIT` (needs `with_quic`) | `protocol/naive`, `option/http_resource_bounds_test.go` |
 | Batch-capability loss | `VERIFIED_UNIT` with a real red control | `route/udp_batch_capability_test.go` (3 tests) |
-| Interop against the official NaiveProxy client and Caddy | **`UNVERIFIED` here** — the interop suites live in the separate `test/` module, which push CI deliberately does not run (`scripts/ci/run-jiejie-suite.sh` has **no referrer** in any workflow) | `run-jiejie-suite.sh` (~20 min, needs bash + a reference binary) |
+| Interop against the official NaiveProxy client and Caddy | **`UNVERIFIED` here** — the reference suite was not run in this calibration; Verify runs a different selected test in the separate `test/` module | `run-jiejie-suite.sh` (~20 min, needs bash + a reference binary) |
 | Real-network STUN, IPv6 UDP origin, Caddy performance comparison | **`UNVERIFIED`** — explicitly recorded as not done | — |
 | Device behaviour | **`UNVERIFIED`** | needs a device |
 

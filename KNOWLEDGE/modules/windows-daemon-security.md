@@ -2,6 +2,11 @@
 
 ## Post-baseline review and run evidence (2026-10-28)
 
+At `cb71cf80d72`, [Windows daemon tests 40605271303](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40605271303)
+reported 33 tests and no skips, including `TestTamperedSignedPEIsRejectedByTheFirstLayer` in its log.
+This is CI evidence for that revision and named test suite, not an end-to-end installed-service
+handshake or a guarantee for other binaries and platforms.
+
 At `011f3fdcd99`, `peer_windows.go` still authenticates the worker and application identities;
 `authenticode_windows.go` allows only the enumerated chain/time errors before separately checking
 the signer and certificate constraints. `server.go` normalizes one leading slash in the gRPC

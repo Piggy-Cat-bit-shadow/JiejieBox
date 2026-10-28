@@ -221,7 +221,7 @@ attributing specific test coverage to that run or a later revision.
 | 5.2 | Each batch chunk is atomic for ownership; accepted prefix is not replayed; substitution refuses its chunk | `batch_chunk_test.go`, `batch_order_test.go` | VERIFIED_UNIT for ownership, not exactly-once transmission | same | Go + tags |
 | 5.3 | Session/stream teardown and close boundaries | `shutdown_test.go`, `close_boundary*.go`, `scope_ownership_test.go` | VERIFIED_UNIT | same | Go + tags |
 | 5.4 | PTB and the three MTU quantities | five MTU test files | VERIFIED_UNIT | same | Go + tags |
-| 5.5 | CONNECT-IP interoperability against an independent implementation | `test/jiejie/reference/connect_ip_go_interop_test.go` — a **separate module** push CI does not run | **UNVERIFIED (declaration only)** | `bash scripts/ci/run-jiejie-suite.sh` | bash + network |
+| 5.5 | CONNECT-IP interoperability against an independent implementation | `test/jiejie/reference/connect_ip_go_interop_test.go` — the reference suite was not run in this calibration; Verify runs a different selected test in the separate module | **UNVERIFIED here** | `bash scripts/ci/run-jiejie-suite.sh` | bash + network |
 | 5.6 | macOS / H3 device behaviour | never run | **UNVERIFIED** | — | device |
 | 5.7 | The package's own suite | historical tagged result; unfiltered untagged package tests passed locally at the later target | VERIFIED_UNIT for the respective runs; untagged does not cover tag-gated cases | `go test -count=1 -timeout 8m -tags "$OTHERS" ./protocol/masque/...` | Go + tags |
 
@@ -234,7 +234,7 @@ attributing specific test coverage to that run or a later revision.
 | 6.3 | Session target ACL rebinding example | `TestJiejieTargetACLRebindingCannotBypass` | historical test evidence for its case, not proof for every outbound or per-datagram path | `cd test; go test -count=1 -run TestJiejieTargetACL ./jiejie/` | separate test module + network |
 | 6.4 | UoT destination guard checks new destination keys and permits when no rule matches | `route/packet_destination_guard.go` and guard tests | VERIFIED_SOURCE + selected local unit tests; decisions are cached and domain addresses are not pinned by the guard | `go test ./route -run TestPacketDestinationGuard -count=1` | Go |
 | 6.5 | The guard does not break server-internal backends | `TestJiejieTargetACLDoesNotBreakMasqueradeBackend` | VERIFIED_UNIT | same | Go |
-| 6.6 | Interop with the official NaiveProxy client and Caddy | interop suites exist in `test/` | **UNVERIFIED here** — push CI deliberately does not run that module, and `run-jiejie-suite.sh` has no referrer | `bash scripts/ci/run-jiejie-suite.sh` (~20 min) | bash + reference binary |
+| 6.6 | Interop with the official NaiveProxy client and Caddy | interop suites exist in `test/`; Verify runs a different selected test in that module | **UNVERIFIED here** — this reference suite was not run in the calibration | `bash scripts/ci/run-jiejie-suite.sh` (~20 min) | bash + reference binary |
 | 6.7 | Real-network STUN, independent IPv6 UDP origin, Caddy performance comparison | recorded as not done | **UNVERIFIED** | — | network |
 | 6.8 | The `host's own public address` is in the deny set | recorded as **not done** — the address is deliberately not guessed | **UNVERIFIED / FOLLOW-UP** | confirm on the host | the host |
 
@@ -310,7 +310,7 @@ attributing specific test coverage to that run or a later revision.
 | 12.6 | Tag composition and the `-checklinkname=0` contract | CI step `:168` | VERIFIED_UNIT | `go test -count=1 ./cmd/internal/...` | Go |
 | 12.7 | Pinned-upstream assumption tripwires | CI step `:179`; the script is wired | **UNVERIFIED (declaration only)** — needs bash | `bash scripts/ci/verify-upstream-assumptions.sh` | bash + network |
 | 12.8 | Required root/test fork replacements agree | the local offline integrity script checked all three module graphs and 36 root/test replacement entries | local script PASS; not archive-byte verification | `bash scripts/ci/check-go-module-integrity.sh --require-checked test` | Go + bash |
-| 12.9 | Release re-verifies per-platform bytes rather than rebuilding | `release.yml:144-204` | VERIFIED_SOURCE; **no run record** | read the workflow | — |
+| 12.9 | Release re-verifies selected artifacts rather than rebuilding | [Release 40609827203](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40609827203) reports download, verification and publication steps succeeded at `cb71cf80d72` | VERIFIED_CI for that run; no independent local asset-byte verification | read the workflow and run | — |
 | 12.10 | Release acceptance rejects bad evidence | `release-contract-verify.yml` declares the self-test against mock `gh`; the release path uses its separate artifact/evidence gate | VERIFIED_SOURCE of declaration, not proof of a current run | `bash scripts/ci/verify-release-acceptance-test.sh` | bash |
 | 12.11 | `verify-evidence/` describes the release tree | **it does not** — all 14 logs name `cfc77dc5`, 101 commits behind, and 15 covered files changed afterwards | **STALE — not evidence** | `head -3 verify-evidence/*.log` | git |
 | 12.12 | The §7.4 stress results | an **empty `<!--STRESS_RESULTS-->` placeholder** | **EVIDENCE ABSENT** | — | — |
