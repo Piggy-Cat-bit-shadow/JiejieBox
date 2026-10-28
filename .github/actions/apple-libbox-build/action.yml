@@ -77,6 +77,11 @@ runs:
         set -euo pipefail
         export PATH="$(go env GOPATH)/bin:$PATH"
         install_dir="${INSTALL_DIR:-$CLIENT_ROOT}"
+        # `build-apple-libbox.sh` installs into an existing Apple client checkout and refuses a
+        # missing directory rather than creating a tree that is not an Apple source. The dual
+        # platform path installs into the checkout it was given; the macOS-only path installs into
+        # a scratch directory, which therefore has to exist first.
+        mkdir -p "$install_dir"
         APPLE_CLIENT_DIR="$install_dir" ./scripts/ci/build-apple-libbox.sh both
 
     - name: pack the Libbox artifact
