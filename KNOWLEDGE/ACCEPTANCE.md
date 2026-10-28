@@ -45,6 +45,10 @@ is not evidence for chunk ownership.
 The tagged HTTP/3 default tests `TestHTTP3MigrationEnabledByDefaultForClient`,
 `TestMASQUEH3PathManagerDefaultsToEnabled`, and `TestParseBBRProfileUnsetKeepsTheLibraryDefault`
 also passed locally; they do not prove migration on a real network.
+Naive `TestH3Fallback` cases passed with `with_naive_outbound,with_purego` using a temporary modfile
+that substituted the clean local Cronet checkout at the pinned `c9c0e6ec8845`. This is unit evidence
+for the local source, not evidence that the downloaded module, native ABI or a live peer was tested.
+The unfiltered Naive package suite also passed under that same local-substitution setup.
 
 The unfiltered `go test ./route -count=1` on this Windows host **failed** after 570 seconds:
 `TestTeardown_OneSidedCompletionNeverRunsOnClose` timed out after 120 seconds waiting for the peer

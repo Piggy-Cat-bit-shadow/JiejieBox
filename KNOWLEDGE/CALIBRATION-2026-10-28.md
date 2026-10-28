@@ -13,6 +13,12 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - Source and local tests do not establish device, interoperability, release artifact or CI-run behavior. No production code, dependency, build or release configuration was changed by this calibration.
 - Windows 10 Enterprise LTSC 2021 build 19044, Go 1.25.5: `go test -tags with_utls ./common/tls -count=1` failed three Windows TLS 1.3 handshake tests with `unexpected EOF`; a filtered rerun reproduced them. Cause unknown. Targeted uTLS/ECH tests passed. Linux kTLS tests cannot execute on this Windows host.
 - `go test -tags with_naive_outbound ./protocol/naive -run TestH3Fallback -count=1` remained at the Cronet fork download and was interrupted; it produced no test result. Retry with the required dependency available.
+- A later offline retry with `with_naive_outbound,with_purego` failed at setup because both pinned
+  Cronet modules were absent from this Go cache and `GOPROXY=off`; no Naive test executed.
+- A subsequent retry used a temporary modfile pointing both Cronet modules to the clean local
+  `cronet-fork` checkout at the exact pinned `c9c0e6ec8845`; the `TestH3Fallback` cases passed with
+  `with_naive_outbound,with_purego`. This tests the local source substitution and test doubles,
+  not downloaded module provenance, the native library or live interoperability.
 - Additional cross-checks corrected the DNS delivery-versus-cache contract, MASQUE per-chunk ownership,
   the pinned sing splice fallback, fork provenance interpretation, current sing-tun replacement and
   the historical MASQUE initial-size versus hard-ceiling claim. `go test ./route -count=1` failed
@@ -22,6 +28,10 @@ This is an operational ledger, not a replacement for the modules or a new produc
   Verify/Android jobs; each is scoped to its actual SHA in the corresponding module. Root DNS/HTTP
   detour tests, Mieru classification, XHTTP package tests and `with_quic` MASQUE chunk tests passed
   locally; see `ACCEPTANCE.md` for evidence scope.
+- A mechanical scan of backticked bare `name()` references in module documents found Go symbols
+  in the current tree; two remaining names were verified as shell functions. This is a limited
+  spelling check, not proof that each claim or historical line number is correct. Relative Markdown
+  links in root/module documents were also checked; this does not validate prose path references.
 
 ### Module review status
 
