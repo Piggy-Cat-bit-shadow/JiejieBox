@@ -157,6 +157,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - Fast Path authorization can change a verdict when a transparent chain was its sole blocker; it
   still cannot override other blockers. Naive reference-client interoperability remains an explicit
   evidence gap instead of a claim inferred from compatible protocol structure.
+- The systemd-resolved loop still has its stop/join, but the join alone does not establish that all
+  separately spawned asynchronous updates have finished. The DNS demand test command's Go regex was
+  corrected, and the obsolete claim that the kTLS package contains no tests was removed.
 
 ### Module review status
 

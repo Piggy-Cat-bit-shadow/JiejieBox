@@ -143,9 +143,10 @@ against its slow path and fixed by mirroring rather than by executing:**
 | `ktls_read_wait.go:22-27` | no `Hand` drain after `readRecord` | a TLS 1.3 KeyUpdate was never applied, so the kernel kept the old RX key while the peer moved on |
 
 **The root cause was the absence of the comparison, not either typo.** `Conn.Read` and
-`Conn.WaitReadBuffer` are two implementations of one contract with **no test asserting they agree**, in
-a package with zero tests. The concrete recommendation on record is a table test driving the same
-record sequence through both paths and asserting the same `(n, err)`.
+`Conn.WaitReadBuffer` are two implementations of one contract. The historical audit recommended a
+shared record-sequence comparison; the package now contains `ktls_read_wait_test.go`, so its old
+"zero tests" claim is stale. Test presence alone does not establish identical behavior for every
+record sequence; the Linux/tagged runtime comparison was not executed in this Windows refresh.
 
 ---
 

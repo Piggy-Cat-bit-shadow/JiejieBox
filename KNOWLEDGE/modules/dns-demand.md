@@ -256,6 +256,10 @@ What the fix did, verifiable at `a267e99`:
 | the loop signals its own exit | `:374` (`defer close(t.signalLoopDone)`) |
 | the loop `select`s on the stop channel and deregisters with `RemoveSignal` | `:385`, `:380` |
 
+At the later testing target, `Close` still joins the signal loop, but `postUpdateStatus` also starts
+asynchronous update work. Joining that loop alone is not evidence that every asynchronous update has
+completed; inspect the update lock, cancellation and closed checks for the particular lifecycle claim.
+
 **Blast radius, for the record:** Linux **with `systemd-resolved` present** only — the file is
 `*_linux.go`, and `local_resolved_stub.go` carries `//go:build !linux`. It was unconditional on that
 path, which is why running the `test/` module on a Linux runner for the first time surfaced it and why
@@ -263,9 +267,9 @@ the module's `TestMain` failed the run.
 
 > **Two consequences for a future AI:**
 >
-> 1. **Do not re-report this as an open defect.** Correct the document instead. The `test/` module's
->    box-level tests — including the loadbalance ones — were kept **out of push CI** on the strength of
->    this leak; that exclusion can now be revisited, which is a CI decision, not a knowledge one.
+> 1. **Do not re-report the historical signal-loop leak as open.** The earlier CI exclusion was a
+>    point-in-time decision; current Verify enters the separate `test/` module for a selected test,
+>    but that does not mean its full box-level suite runs. Inspect the current workflow for exact scope.
 > 2. **Do not apply the fix the document proposes.** Closing the dbus *signal* channel would **panic**
 >    here, because dbus is the sender. The shipped fix is a separate stop channel plus a join. That is
 >    the shape to preserve.
@@ -283,10 +287,10 @@ commit is confirmed). **`BLOCKED_BY_ENVIRONMENT` to execute** — the path needs
 | DNS rule walk, cache, reverse mapping and FakeIP generations | `VERIFIED_UNIT` | `go test -count=1 ./dns/...` |
 | DNS transports' requirement model | `VERIFIED_UNIT` | `go test -count=1 ./dns/transport/...` |
 | FakeIP cannot answer a destination lookup | `VERIFIED_UNIT` | `go test -count=1 -run FakeIP ./dns/...` |
-| Route-proved DNS demand at start | `VERIFIED_UNIT` (needs tags) | `go test -count=1 -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" -v -run 'TestADNSTransportDetourMustCarryTheQuery\|TestTheDefaultDomainResolverIsAGraphEdge' .` |
+| Route-proved DNS demand at start | `VERIFIED_UNIT` (needs tags) | `go test -count=1 -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" -v -run 'TestADNSTransportDetourMustCarryTheQuery|TestTheDefaultDomainResolverIsAGraphEdge' .` |
 | The resolver-authority parity check | `VERIFIED_UNIT` (needs tags) | `-run TestResolverAuthorityParity .` |
 | The `systemd-resolved` goroutine leak | **it IS fixed**, by `6b495134c` | `git log -S'signalLoopStop' e4b7e692..a267e99`; the symbols at `local_resolved_linux.go:80-82`, `:239-241`, `:374`, `:385` |
-| Multi-platform DNS environment matrix | never run | **`UNVERIFIED`** |
+| Multi-platform DNS environment matrix | not run in this calibration | **`UNVERIFIED` here** |
 | DNS and FakeIP on a real device | no real TUN exercised in this Windows refresh | **`UNVERIFIED` here**; check device evidence for the specific build |
 | Race-freedom | `-race` needs cgo | **`BLOCKED_BY_ENVIRONMENT`** |
 
