@@ -134,7 +134,7 @@ git merge-base v0.1.9 refs/remotes/upstream/testing   # e4b7e692f…  (it is an 
 git rev-parse refs/remotes/upstream/testing           # dfb80349b…  (upstream has moved on)
 git rev-list --count e4b7e692..a267e99e0              # 1834  (the v0.1.6 baseline)
 git rev-list --count e4b7e692..v0.1.9                 # 2015
-git rev-list --count v0.1.9 --not --remotes=upstream  # 2014  (fork-side)
+git rev-list --count v0.1.9 --not --remotes=upstream  # 2014 at that review; unreachable ancestry, not an authorship count
 git rev-list --count a267e99e0..v0.1.9                # 181   (the delta this refresh absorbed)
 git diff --shortstat e4b7e692 v0.1.9                  # see the row above
 ```

@@ -15,14 +15,15 @@ establish external provenance or test results.
 | `20482fa067d` | FakeIP sniff, mapped address and kTLS boundaries → `modules/sniff.md` |
 | `3145d7dbdfc`, `1ff0af39110` | TUN handoff and post-start resets → `modules/libbox-platform-contract.md` |
 
-**This is an evolution index, not a changelog.** Each entry names the commits that produced the
-*current* behaviour, in the order they happened, so a reader can see why the code looks the way it does
-rather than only that something happened.
+**This is an evolution index, not a changelog.** Entries name commits that shaped behavior at their
+review points, in order, so a reader can investigate why the code looks the way it does. Recheck the
+current source before assuming a historical behavior still survives.
 
 ## How to use it
 
 1. Find the behaviour you are about to change.
-2. Read the **Final behaviour** line first — that is what the code does now.
+2. Read the **Final behaviour** line as the behavior at that entry's review point; compare current
+   source and `BASELINE.md` before treating it as current.
 3. Read the SHAs in order only if you need the reasoning. `git show <sha>` on each is enough; you do not
    need the full diff of the range.
 4. If a **Superseded** line is present, the earlier attempt is worth reading precisely because it is
@@ -30,8 +31,9 @@ rather than only that something happened.
 
 ## Two things to know before reading any SHA here
 
-* **Every SHA in this file is fork-side** — reachable from no upstream ref. Verify with
-  `git rev-list --count <sha> --not --remotes=upstream` (**≥1 = fork-side, 0 = upstream-side**).
+* Reachability from current upstream refs is an ancestry check, not proof of authorship. Upstream
+  history has been rewritten; compare patches, blobs and historical evidence before assigning an
+  origin, including for entries that carry an older provenance label.
 * **Do not count upstream work by SHA.** Upstream rebases `testing`, so one logical upstream change can
   appear up to 11 times in this range under different SHAs. See `BASELINE.md` §provenance.
 
