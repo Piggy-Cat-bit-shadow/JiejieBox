@@ -271,7 +271,7 @@ Android 的删除顺序刻意是：先建 4 个 `archive/*` 标签 → 推送标
 | **Verify 在推送提交上全绿**（含新增的 `release-freeze.py verify` 步骤） | Verify `40702192442` = `completed/success` |
 | 冻结测试在 Linux CI 上真的执行并通过 | RCV `40702192446` 的步骤 "the freeze helper's behavioural suite" = success |
 | 冻结工具在真实仓库上复现了本轮诊断 | `check` 输出：`BEHIND utls`、`BEHIND clients/apple`、`BEHIND clients/desktop`、`BEHIND nested dashboard`（其中 desktop 已在本轮修复，复核后为 `identical`） |
-| Apple 候选源码解析正确 | Apple client `40698718663`：`resolve` success（`resolved: be3258ab57dd (explicit-sha)`）、`libbox` success、**`ios` success**；`macos` 被平台取消（无 step 执行），后续三次重派同样被取消 |
+| Apple 候选源码解析正确 | Apple client `40698718663`：`resolve` success（`resolved: be3258ab57dd (explicit-sha)`）、`libbox` success、**`ios` success**；`macos` 被平台取消（无 step 执行），其后四次重派（含 `macos-14` 探针与收尾时的 `40722121237`）同样在 15 分钟处被取消 |
 | 非 dry-run 的发布准备真的推出了冻结提交 | `325f3158`（run `40713977139`），并且 `40718334061` 走完全链路并拿到精确 SHA 证据（`3c6ca2ea`：Verify `40718300787` + RCV `40718300537`，每个 job 都成功）——幂等与证据都成立 |
 
 **没有做、也不该在这一轮做的**：没有创建新 release tag，没有修改/移动 `v0.1.33`，没有发布。
@@ -284,8 +284,8 @@ Android 的删除顺序刻意是：先建 4 个 `archive/*` 标签 → 推送标
 
 1. **Apple 上游融合的 macOS 编译无证据 → 上游合并停留在候选分支（HOLD）；但 `clients/apple` 已经前移到 `16cf87b4`（fork 自己的 UA 修复，见 §5.3 的 ABI 依据）。**
    - 已拿到：iOS 目标在候选 `be3258a` 上**构建成功**（Apple client run `40698718663` 的 `ios` 作业 = success），因此共享 Swift 代码、`libbox` 链接、`StringBox` ABI 与 `ShareExtension/Info-iOS.plist` 接线都经过真实编译。
-   - 没有拿到：`macos` 目标。**四次尝试，两个 runner 标签，全部在排队约 15 分钟后被平台取消，且一个 step 都没有执行**：run `40698718663` 的 `macos`、`40704313767` 的 `libbox`、`40707022945` 的 `libbox`、以及换成 `macos-14` 的探针 run `40710418326` 的 `libbox`（探针分支随后已删除，远端只剩 `testing` 与 `pending/...`）。既然换标签也一样，这不是容量抖动或标签问题，而是账号级 macOS 配额/限制；本轮无法从代码侧解决。
-   - 因此：`apple/main` **保持 `16cf87b4`**（不含上游合并），13 个上游提交的合并留在候选 `sync/upstream-2026-10-28`（`be3258a`）。这是施工令要求的"无法可靠编译就停留在旧正式 Pin，报告候选与失败证据"，而不是把未验证的 Swift 变更合进产品线。**注意**：`clients/apple` gitlink 已经前移到 `16cf87b4`，因为那只是 fork 自己的 UA 修复、且已随 v0.1.33 构建过；层 4 扫描（423 文件 / 0 违规）与 `VERIFIED_APPLE_SHA` 在同一个提交里更新。另外记录一个**真实发现**：第一次非 dry-run 的 `release-prepare` 把 gitlink 写进索引后，`check-libbox-abi.sh --pin-only` 仍然通过，因为它读的是 `git ls-tree HEAD`（旧提交）而不是索引——**门禁被自己的执行顺序绕过了**。工作流已改成 提交 → ABI 门 → 推送，让这道门真正检查要推出去的那个提交。
+   - 没有拿到：`macos` 目标。**五次尝试（含收尾时的最后一次），两个 runner 标签，全部在排队约 15 分钟后被平台取消，且一个 step 都没有执行**：`40698718663` 的 `macos`、`40704313767` 的 `libbox`、`40707022945` 的 `libbox`、换成 `macos-14` 的探针 `40710418326` 的 `libbox`（探针分支随后已删除）、以及最后一次 `40722121237` 的 `libbox`（16:03 排队，16:18 取消）。五次、两个标签、同样的 15 分钟——这不是容量抖动或标签问题，而是账号级 macOS runner 限制；本轮无法从代码侧解决。
+   - 因此：`apple/main` **保持 `16cf87b4`**（不含上游合并），13 个上游提交的合并留在候选 `sync/upstream-2026-10-28`（`be3258a`，Swift 语法层已验证：422 文件解析通过）。这是施工令要求的"无法可靠编译就停留在旧正式 Pin，报告候选与失败证据"，而不是把未验证的 Swift 变更合进产品线。**注意**：`clients/apple` gitlink 已经前移到 `16cf87b4`，因为那只是 fork 自己的 UA 修复、且已随 v0.1.33 构建过；层 4 扫描（423 文件 / 0 违规）与 `VERIFIED_APPLE_SHA` 在同一个提交里更新。另外记录一个**真实发现**：第一次非 dry-run 的 `release-prepare` 把 gitlink 写进索引后，`check-libbox-abi.sh --pin-only` 仍然通过，因为它读的是 `git ls-tree HEAD`（旧提交）而不是索引——**门禁被自己的执行顺序绕过了**。工作流已改成 提交 → ABI 门 → 推送，让这道门真正检查要推出去的那个提交。
    - 恢复条件：macOS 配额恢复后，`gh workflow run client-apple.yml -f build_ios=false -f build_macos=true`（仓库变量 `APPLE_CLIENT_SHA=be3258ab57dd…`）。绿了以后：fast-forward `apple/main` → 更新 `clients/apple` gitlink 与 `VERIFIED_APPLE_SHA` → 重跑 `release-freeze.py snapshot` → 删除候选分支。
 1b. **准备运行期间主干被推新提交时，工作流会失败而不是强推**（本轮实测：`40715812910` 的推送被 `! [rejected] HEAD -> testing (fetch first)` 拒绝）。这是设计：冻结是对某个 head 算出来的，换成新 head 必须重算。失败信息已改成明确的"分支在运行期间移动了，请重跑"，并在证据步骤前增加一次 `git ls-remote` 对照，避免把本地提交当成发布候选。
 2. **`release-prepare.yml` 已真实 dry run 通过**（run `40706074269`），但它抓到过一个只有真跑才会暴露的缺陷（伪版本算在被 replace 的路径上），已修（`62f5ecef`）。教训保留在工作流里：`apply` 之后仍要 `verify`，两者不能互相替代。
