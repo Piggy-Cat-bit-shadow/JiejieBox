@@ -39,7 +39,7 @@ packet-path boundary passed under Go 1.26.10.
 The unfiltered `./service/oomkiller`, `./common/listener`, `./transport/device` and `./protocol/ssh`
 package tests passed on Windows under Go 1.26.10. These do not run Linux-only namespace or wildcard
 collision tests, Darwin pressure integration or a real TUN device. The device classifier's explicit
-Windows errno coverage is narrower than its comments suggest; see `core-lifecycle-runtime.md`.
+Windows errno coverage is narrower than its comments suggest; see `modules/core-lifecycle-runtime.md`.
 Focused HTTP/SSH sniff fragmentation, half-close lifecycle and XMUX default/retirement tests also
 passed on that host; they do not establish real-device recovery or peer interoperability.
 
@@ -113,7 +113,7 @@ The cause has not been established. The filtered uTLS fingerprint/ECH and first-
 tests passed on the same host. Neither result establishes behavior on other Windows versions.
 
 * Resolve the current toolchain and run root-package commands from the repository root; the setup in
-  `ci-release.md` §4 is a historical example, not a portable requirement.
+  `modules/ci-release.md` §4 is a historical example, not a portable requirement.
 * `$OTHERS` = the contents of `release/DEFAULT_BUILD_TAGS_OTHERS`. **Most commands need it**, and the
   root package's tests fail without it.
 * `BLOCKED_BY_ENVIRONMENT` identifies a check unavailable in the stated host or run; it is not a pass
@@ -353,7 +353,7 @@ These are not acceptance gaps to be closed by a test; they are recorded limits.
   justified by this leak; current Verify runs one selected test in that separate module, not its full
   box-level suite. Any coverage change is a CI decision, not a knowledge one.
 * The historical `Pipe2` false-handover defect is fixed in the pinned `sing` source; a separate
-  general active-flow stall remains a design limitation, as described in `core-lifecycle-runtime.md`.
+  general active-flow stall remains a design limitation, as described in `modules/core-lifecycle-runtime.md`.
 * The Apple pin has a declared `--pin-only` verifier in `verify.yml`; the full client check has a
   different environment and workflow. A declaration is not a run result.
 * **`RequiredNetworks` is write-only.**

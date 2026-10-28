@@ -11,7 +11,7 @@ owner. Other owners can also perform teardown, so absence of a direct `scope.Add
 that a resource leaks. A cleanup registered after close returns runs **synchronously on the
 registering goroutine**, and `Close` does **not** wait for an in-flight `Start`. A cleanup panic
 interrupts the drain; `Box.Close` records the panic as an error rather than finishing that drain.
-→ `core-lifecycle-runtime.md`
+→ `modules/core-lifecycle-runtime.md`
 
 ## 2. One network generation, and a rebuild is a lease, not a flag
 
@@ -19,7 +19,7 @@ interrupts the drain; `Box.Close` records the panic as an error rather than fini
 identity** (`*RebindLease`), not a boolean, so a superseded lease cannot release a newer one. `Stale()`
 and `Acknowledge()` separate "the epoch moved" from "the resource is current". **Publication is not a
 rebuild**, and stale resources retire lazily when demanded.
-→ `core-lifecycle-runtime.md`
+→ `modules/core-lifecycle-runtime.md`
 
 ## 3. Selection is a preview until it is committed
 
@@ -30,7 +30,7 @@ means the group never wraps a connection. At run time the
 `commit` flag is this separation: a preview must not consume a rotation slot. Any diagnostic that
 reports a group as a hop, or reports the hop list backwards, describes a path the traffic does not
 take.
-→ `path-selection-validation.md`
+→ `modules/path-selection-validation.md`
 
 ## 4. Start-time validation reports without exercising the path
 
@@ -48,7 +48,7 @@ module for the exact taxonomy.
 **Two documented incidental side effects exist** (a deprecation log and a memoised tag→object
 resolution). The prohibition is on network resolution, dialling, changing selection and consuming
 rotation, not on logging or all internal memoization.
-→ `path-selection-validation.md`
+→ `modules/path-selection-validation.md`
 
 ## 5. Platform facts are inputs; the core decides policy
 
@@ -56,7 +56,7 @@ A client reports the number its OS gave it (memory level, screen on/off, lock st
 The **core** owns the trim ladder, the coalescing windows, the sleep/wake edges and the reuse policy.
 Level, edge and snapshot are three different things: a current-state re-read **reconciles the level**
 and must never fabricate an edge.
-→ `power-mobile-lifecycle.md`
+→ `modules/power-mobile-lifecycle.md`
 
 ## 6. Sniff metadata informs planning; it does not rewrite the destination
 
@@ -64,7 +64,7 @@ A sniffed domain becomes DNS planning and dial candidates; sniffing alone does n
 `Destination` unless the explicit deprecated `override_destination` action is used. Separately,
 FakeIP reverse mapping in `route/route.go` saves `OriginDestination` and replaces `Destination` with
 the mapped FQDN. Do not conflate that translation with a sniff-driven override.
-→ `sniff.md`
+→ `modules/sniff.md`
 
 ## 7. Buffer ownership is a correctness contract, not an optimisation surface
 
@@ -72,14 +72,14 @@ Borrowed cursors must not outlive their call; the QUIC working copy is deliberat
 send is all-or-nothing per chunk, and earlier accepted chunks have transferred ownership. A context-ID
 substitution **releases the original** and must refuse its chunk. Each rule exists because violating it produced a
 real bug — including one where every packet in a refused batch was silently dropped.
-→ `buffer-ownership.md`
+→ `modules/buffer-ownership.md`
 
 ## 8. MTU is three quantities, not one
 
 Outer link MTU, outer QUIC packet size and inner tunnel MTU are distinct quantities. For MASQUE,
 known detour capacity clamps the initial QUIC packet size; this alone does not prove a hard cap on
 later packets. TUIC has a separate hard-ceiling path. Unknown physical-path capacity is not a proof.
-→ `mtu-and-geometry.md`
+→ `modules/mtu-and-geometry.md`
 
 ## 9. The upload scheduler is opt-in and inert when unset
 
@@ -88,14 +88,14 @@ managed byte, admits all of them, and starts **no queue, no lock and no timer**.
 gate alone does not prove full configuration compatibility or identical end-to-end behavior with
 another implementation. When a rate is configured, shaping runs **continuously**, not only under
 contention.
-→ `data-path-optimization.md`
+→ `modules/data-path-optimization.md`
 
 ## 10. Direct Offload is semantic equivalence, and its data-plane effect is Linux-only
 
 A dial option disqualifies a flow only if the userspace path would actually apply it **to that flow**.
 New `DialerOptions` fields must not be able to make a bypass *safe* by default: an unclassified option
 refuses. And the verdict is a real bypass **only** in Linux `auto_redirect` — no TUN stack honours it.
-→ `data-path-optimization.md`
+→ `modules/data-path-optimization.md`
 
 ## 11. Release provenance is download-and-re-verify, and it is scoped
 
@@ -103,8 +103,8 @@ Release **downloads** the artifacts a product workflow produced for the exact co
 per-platform bytes, hashes and recorded commit — it does not rebuild. This description is scoped to
 the historical release workflow and requires rechecking the current plan and run evidence for each
 release. A declaration does not prove execution; a specific Windows daemon CI run is documented in
-`windows-daemon-security.md`, and does not by itself prove the release artifact pipeline.
-→ `ci-release.md`
+`modules/windows-daemon-security.md`, and does not by itself prove the release artifact pipeline.
+→ `modules/ci-release.md`
 
 ---
 

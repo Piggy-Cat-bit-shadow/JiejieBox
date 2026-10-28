@@ -214,6 +214,10 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - Corrected a remaining power-module table that still claimed the named-owner test forbids a second
   `ReuseSuspect` implementation. Real-device and platform validation remains scoped to the actual
   target rather than treated as a universal release-blocker conclusion.
+- A separate navigation-path scan covered 320 backticked Markdown-file references in the root entry,
+  index, architecture, invariants and acceptance files. Forty bare module names were made explicit as
+  `modules/...` paths; the repeated scan found no missing file among that limited set. Numeric module
+  sections referenced by single-module index rows also matched headings in the mechanical check.
 
 ### Module review status
 

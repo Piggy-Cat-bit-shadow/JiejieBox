@@ -30,7 +30,7 @@ subsequent direct Scope close waiting; `Box.Close` recovers and records an error
 * **Proof:** `adapter/lifecycle.go:112-138`, `:186-217`; `adapter/lifecycle_close_boundary_test.go`;
   commits `53a3f97e8`, `f2c728d10`, `e3349044a`.
 * **Re-check:** `go test -count=1 ./adapter/...`
-* **Kind:** lifecycle bug guard. **Owner:** `core-lifecycle-runtime.md`
+* **Kind:** lifecycle bug guard. **Owner:** `modules/core-lifecycle-runtime.md`
 
 ### A2 — "One recovery at a time" is a lease identity, not a boolean
 
@@ -42,7 +42,7 @@ cancels**; `Expired()` is true when the lease is no longer the current owner.
 * **Proof:** `common/runtimecoord/coordinator.go:191-238`, `:282-310`; `coordinator_test.go`,
   `lease_test.go`.
 * **Re-check:** `go test -count=1 ./common/runtimecoord/...`
-* **Kind:** concurrency-bug guard. **Owner:** `core-lifecycle-runtime.md`
+* **Kind:** concurrency-bug guard. **Owner:** `modules/core-lifecycle-runtime.md`
 
 ### A3 — A preview must not consume a selection slot
 
@@ -58,7 +58,7 @@ when `commit` is true.
   `TestTwoFlowsAdvanceTheCursorExactlyTwiceWithAPreviewInBetween`), validated by a **mutation** that set
   `commit=true` and watched `CommittedSelections()` change.
 * **Re-check:** `go test -count=1 ./route/... ./common/physicalpath/...`
-* **Kind:** confirmed-behaviour guard. **Owner:** `path-selection-validation.md`
+* **Kind:** confirmed-behaviour guard. **Owner:** `modules/path-selection-validation.md`
 
 ### A4 — A group is a control-plane object, never a physical hop
 
@@ -73,7 +73,7 @@ when `commit` is true.
   `route/physicalpath_route_test.go`. The direction fix is `524ea41e`; the `ControlPath` fix is
   `d46717dbd`. **Nine tests went red when the direction landed.**
 * **Re-check:** `go test -count=1 ./common/physicalpath/...`
-* **Kind:** correctness. **Owner:** `path-selection-validation.md`
+* **Kind:** correctness. **Owner:** `modules/path-selection-validation.md`
 
 ### A5 — Start-time validation must not dial, resolve DNS or consume selection
 
@@ -93,7 +93,7 @@ A dry run over a real start asserts committed == 0 **and** previewed == 0.
 * **Proof:** `adapter/outbound/manager.go:235-237`; `manager_physicalpath_test.go:357-373`;
   `TestBuildNeverCallsADialingMethod`; `TestDryRunLeavesTakeNoSelectionPreview`.
 * **Re-check:** `go test -count=1 ./common/physicalpath/... ./adapter/outbound/...`
-* **Kind:** correctness. **Owner:** `path-selection-validation.md`
+* **Kind:** correctness. **Owner:** `modules/path-selection-validation.md`
 
 ### A6 — Buffer ownership: borrowed views, unpooled working copies, atomic chunks
 
@@ -121,7 +121,7 @@ queue a prefix before a later error returns ownership of all payloads to the cal
   `sniff_bounded_copy_internal_test.go:120-156`; `route/udp_batch_capability_test.go`.
 * **Re-check:** `go test -count=1 ./common/sniff/...` and
   `go test -count=1 -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" ./transport/masque/...`
-* **Kind:** buffer-ownership correctness. **Owner:** `buffer-ownership.md`
+* **Kind:** buffer-ownership correctness. **Owner:** `modules/buffer-ownership.md`
 
 ### A7 — A context-ID substitution releases the original and must refuse its chunk
 
@@ -135,7 +135,7 @@ accepted chunks remain transferred; only the untransferred remainder may fall ba
 * **Breaks if violated:** silent total packet loss on a tunnel.
 * **Proof:** `transport/masque/session.go:551-579` with the bug recorded at `:539-549`.
 * **Re-check:** the MASQUE suite under tags.
-* **Kind:** buffer-ownership correctness + confirmed bug. **Owner:** `masque-connectip.md`
+* **Kind:** buffer-ownership correctness + confirmed bug. **Owner:** `modules/masque-connectip.md`
 
 ### A8 — Idle retirement asserts `IdleConnectionReleaser`, never the bundled `IdleConnectionKeeper`
 
@@ -146,7 +146,7 @@ accepted chunks remain transferred; only the untransferred remainder may fall ba
 * **Proof:** `route/reference.go:440-494` with the rationale at `:479-484`; commits `93823c3d`,
   `8735b1d`; `route/reference_coverage_stress_test.go`.
 * **Re-check:** `go test -count=1 ./route/...`
-* **Kind:** confirmed-bug guard. **Owner:** `core-lifecycle-runtime.md`
+* **Kind:** confirmed-bug guard. **Owner:** `modules/core-lifecycle-runtime.md`
 
 ### A9 — Memory trim is idle-only; `ReleaseMemory` is the path that may reset the network
 
@@ -164,7 +164,7 @@ Trim must not reset the network, dial, wake suspended work, or terminate active 
 * **Proof:** `route/reference.go:154-197`, `:394-411`, `:496-511`, `:547-556`;
   `route/reset_entrypoints_test.go:95`; `route/reset_entry_matrix_test.go:103`.
 * **Re-check:** `go test -count=1 ./route/... ./common/power/...`
-* **Kind:** lifecycle guard. **Owner:** `power-mobile-lifecycle.md`, `core-lifecycle-runtime.md`
+* **Kind:** lifecycle guard. **Owner:** `modules/power-mobile-lifecycle.md`, `modules/core-lifecycle-runtime.md`
 
 ### A10 — Platform snapshots are level-only; a current-state read must not become an edge
 
@@ -181,7 +181,7 @@ unlock. `resumed()` publishes nothing.
   `box_lifecycle_ordering_test.go`; `e20875359` → `e661258a6` (revert, both archived);
   `docs/fork/p1c-iphone-device-closure.md:289-291`.
 * **Re-check:** `go test -count=1 -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" -run 'TestTheReuseVerdict|TestTheSleepEdge' .`
-* **Kind:** confirmed-bug guard + platform constraint. **Owner:** `power-mobile-lifecycle.md`
+* **Kind:** confirmed-bug guard + platform constraint. **Owner:** `modules/power-mobile-lifecycle.md`
 
 ### A11 — The libbox ABI surface and the Apple single-source pin
 
@@ -217,7 +217,7 @@ gitlink. Explicit overrides are supported, and gitlink equality is optional for 
   `docs/fork/apple-artifact-verification.md:609-616`.
 * **Re-check:** `./scripts/ci/check-libbox-abi.sh --pin-only` on any host with `git`; the full gate is
   `./scripts/ci/check-libbox-abi.sh --client-root <apple-checkout>` on a macOS host with cgo.
-* **Kind:** ABI/client contract. **Owner:** `libbox-platform-contract.md`
+* **Kind:** ABI/client contract. **Owner:** `modules/libbox-platform-contract.md`
 
 ### A12 — Release re-verifies bytes per platform; it never rebuilds
 
@@ -231,12 +231,12 @@ reading the platform from the file's own header and requiring the recorded commi
   selected runs rather than assuming every producer is dispatch-only. The separate
   `verify-release-acceptance.sh` does not include `client-apple.yml` and is not invoked by the
   release path. This particular release-path statement is
-  `VERIFIED_SOURCE`; independently linked CI runs in `ci-release.md` apply only to their own SHA
+  `VERIFIED_SOURCE`; independently linked CI runs in `modules/ci-release.md` apply only to their own SHA
   and do not by themselves verify a release artifact.
 * **Proof:** `release.yml:144-204`; `scripts/ci/release-artifacts.sh`;
   `scripts/ci/verify-release-acceptance.sh:99-102`, `:151`.
 * **Re-check:** read the workflow; a real run needs `gh` + network.
-* **Kind:** release-artifact integrity. **Owner:** `ci-release.md`
+* **Kind:** release-artifact integrity. **Owner:** `modules/ci-release.md`
 
 ### A13 — The upload scheduler is inert when unset, and the dial governor is inert outside its window
 
@@ -252,7 +252,7 @@ starts **no queue, no lock and no timer**. The dial governor's zero value applie
   `common/trafficsched/scheduler.go` (`Options.RateSource`, `SetRateSource`);
   `route/dial_governor.go:22-24`, `:55-56`; `option/traffic_scheduler_test.go:31`.
 * **Re-check:** `go test -count=1 ./common/trafficsched/... ./route/...`
-* **Kind:** compatibility/ABI-adjacent (config loadability). **Owner:** `data-path-optimization.md`
+* **Kind:** compatibility/ABI-adjacent (config loadability). **Owner:** `modules/data-path-optimization.md`
 
 ### A14 — Every `DialerOptions` field must be classified before it can enable a bypass
 
@@ -264,7 +264,7 @@ test fails until every field is classified, and the table may not name a field t
 * **Proof:** `common/dialer/profile.go`; `TestEveryDialerOptionIsClassified`;
   `TestFamilyStrategyAppliesToALiteralAddress`; `TestZeroProfileRefuses`.
 * **Re-check:** `go test -count=1 ./common/dialer/...`
-* **Kind:** correctness guard. **Owner:** `data-path-optimization.md`
+* **Kind:** correctness guard. **Owner:** `modules/data-path-optimization.md`
 
 ### A15 — Upstream/fork ownership boundary: the pinned-replace set is a prefix rule with four members
 
@@ -280,7 +280,7 @@ test fails until every field is classified, and the table may not name a field t
   the `test` module once silently linked upstream `sing-tun` and *"the old code could not fail on it, by
   construction"*.
 * **Re-check:** `bash scripts/ci/check-go-module-integrity.sh --require-checked test`
-* **Kind:** upstream/fork ownership boundary. **Owner:** `build-pruning-release.md`
+* **Kind:** upstream/fork ownership boundary. **Owner:** `modules/build-pruning-release.md`
 
 ### A16 — A tag stub that guards a runtime availability question must FAIL, not be absent
 
@@ -293,7 +293,7 @@ field nil, so `decideHTTP3Availability` can distinguish "absent" from "present b
   is silently tolerated.
 * **Proof:** `include/quic_stub.go:48`; `protocol/naive/inbound.go:212-236`, `:316-334`.
 * **Re-check:** build with and without `with_quic` and assert the decision differs.
-* **Kind:** platform/build constraint. **Owner:** `naive-http-transport.md`, `build-pruning-release.md`
+* **Kind:** platform/build constraint. **Owner:** `modules/naive-http-transport.md`, `modules/build-pruning-release.md`
 
 ### A17 — Sniff metadata is not a destination rewrite unless explicitly configured
 
@@ -309,7 +309,7 @@ reverse mapping saves the original and substitutes the FQDN in `route/route.go`.
 * **Proof:** `route/route.go:1437-1444`, `:541-546`, `:1255-1260`, `:1405-1410`; `route/route.go:791-796`;
   `route/bypass_verdict.go:29`, `:54`.
 * **Re-check:** `go test -count=1 ./route/... ./common/sniff/...`
-* **Kind:** correctness. **Owner:** `sniff.md`
+* **Kind:** correctness. **Owner:** `modules/sniff.md`
 
 ### A18 — Fragmented QUIC continues only on `ErrNeedMoreData`, bounded, with the buffer released
 
@@ -325,14 +325,14 @@ does not bound the preceding replay of `inputPacketBuffers`.
   no reproducible measurement exists in the tree.
 * **Proof:** `route/route.go:1211-1217`, `:1340-1347`; `common/sniff/sniff.go:182-199`; commit `578663e0`.
 * **Re-check:** `go test -count=1 ./common/sniff/...` (does **not** cover the cap).
-* **Kind:** hardening against a confirmed measurement. **Owner:** `sniff.md`
+* **Kind:** hardening against a confirmed measurement. **Owner:** `modules/sniff.md`
 
 ### A19 — Apple snapshot reconciliation is level-only **(see A10)**
 
 Listed separately in the original because it also constrains the *client*: a client must not send an
 edge it did not observe, and the core must not synthesise one from a level.
 
-* **Kind:** ABI/client contract. **Owner:** `power-mobile-lifecycle.md`, `libbox-platform-contract.md`
+* **Kind:** ABI/client contract. **Owner:** `modules/power-mobile-lifecycle.md`, `modules/libbox-platform-contract.md`
 
 ### A20 — Release acceptance is fail-closed
 
@@ -347,7 +347,7 @@ job or step also must not be reported as proving a layer that it explicitly skip
   product's artifact and recorded digest, and includes `client-apple.yml` under
   `RELEASE_EXTRA_PLATFORMS=true`. This is a job/artifact-level condition, not proof that every
   internal check ran: the v0.1.31 Apple workflow succeeded with its Swift ABI probe marked SKIP and
-  the ABI checker reporting PARTIAL. See `libbox-platform-contract.md` for that exact run.
+  the ABI checker reporting PARTIAL. See `modules/libbox-platform-contract.md` for that exact run.
 * **Honest gap:** the separate strict handoff checker `verify-release-acceptance.sh` is not called by
   the release path - only its self-test runs in `release-contract-verify.yml`. Its default required
   set is also narrow (`verify.yml`, `interop-xray.yml`, `server-linux-amd64.yml`). That is a
@@ -356,7 +356,7 @@ job or step also must not be reported as proving a layer that it explicitly skip
 * **Proof:** `release.yml`; `release-artifacts.sh` (`TARGET_WORKFLOWS`, `RELEASE_EXTRA_PLATFORMS`);
   `verify-release-acceptance.sh`; `release-contract-verify.yml` self-test; `check-libbox-abi.sh
   --pin-only` + `client-apple.yml` for the ABI pin.
-* **Kind:** release-artifact integrity. **Owner:** `ci-release.md`
+* **Kind:** release-artifact integrity. **Owner:** `modules/ci-release.md`
 
 ---
 
