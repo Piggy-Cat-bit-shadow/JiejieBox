@@ -206,6 +206,11 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - The invariants pass aligned fragmented sniff parser verdicts with fatal read/cancellation paths and
   distinguished release job/artifact success from skipped internal checks. This matters for the
   observed v0.1.31 Apple ABI PARTIAL result; job success must not erase that skip.
+- A Git object check covered 279 distinct backticked hex-like references in the commit index, baseline
+  and modules. Most resolve in the parent; the exceptions include client/dependency SHAs, a numeric
+  value and a run ID. Two historical parent commit prefixes did not resolve and are labeled as such;
+  the desktop-restore anchor was corrected to the matching current commit `7a46125ded0`. The index's
+  stale "live" release allowlist defect was reconciled with the historical fix and current run.
 
 ### Module review status
 

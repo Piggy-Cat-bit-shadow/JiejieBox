@@ -14,6 +14,11 @@ establish external provenance or test results.
 | `0ef38b8ff91`, `98387b223d8` | Naive H3/H2 retry and budget → `modules/naive-http-transport.md` |
 | `20482fa067d` | FakeIP sniff, mapped address and kTLS boundaries → `modules/sniff.md` |
 | `3145d7dbdfc`, `1ff0af39110` | TUN handoff and post-start resets → `modules/libbox-platform-contract.md` |
+| `3f67490206d`, `e1efe4cafdc` | Mieru integration and opt-in TCP/UDP fallback → `modules/mieru.md` |
+| `5034c5ee046`, `08699fd2c40` | half-close observation and settlement → `modules/core-lifecycle-runtime.md` |
+| `3edcf4fa226`, `c8f3a740710`, `08ff473b5a5` | serialized OOM reclaim and reload intent → `modules/power-mobile-lifecycle.md` |
+| `a1b2174654a` | wildcard listener address-family selection → `modules/core-lifecycle-runtime.md` |
+| `7c0cc0bacaa` | Windows TUN read-error classification; explicit accepted values are narrower than its comments → `modules/core-lifecycle-runtime.md` |
 
 **This is an evolution index, not a changelog.** Entries name commits that shaped behavior at their
 review points, in order, so a reader can investigate why the code looks the way it does. Recheck the
@@ -318,13 +323,16 @@ pre-fix 28 m 24 s → 12 boundaries → 28.29 s; post-fix 13 m 13 s → 1 bounda
 **Final behaviour:** upstream's registries and profiles, one fork-invented tag, the version stamp and
 the Apple pin metadata; release downloads and re-verifies rather than rebuilding.
 
-**Live defect:** `release-artifacts.sh`'s release-tree allowlist still encodes two products while
-`release.yml:69` enables four → `verify` fails on the Windows and Android trees. See `ci-release.md` §5.
+**Historical defect, fixed at the v0.1.9 review:** the release-tree allowlist omitted extra producer
+files. The current allowlist and release workflow must be checked together; v0.1.31's release run
+reported successful verification. See `ci-release.md` §5 for the revision and evidence limits.
 
 **Superseded:** the environment-based refs guard (`ece0fb9d2` replaces it). It is the shape a future
 change is most likely to repeat, because testing a sourced file's variable names in the *environment*
 looks equivalent to reading the file and is not — `resolve` and `release-apple.sh` legitimately carry
-the same names. Also superseded: two `VERIFIED_APPLE_SHA` values, `90a0e9ae` and `d0524912`. Each was
+the same names. The original cherry-pick reference `24d55d64b` is not present in the current parent
+object database; inspect its original branch or patch before relying on it. Also superseded: two
+Apple-client `VERIFIED_APPLE_SHA` values, `90a0e9ae` and `d0524912`. Each was
 correct for its own gitlink and became wrong the moment the pin moved without it — which is the whole
 failure mode that constant has.
 

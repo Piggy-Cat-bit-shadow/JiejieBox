@@ -301,6 +301,9 @@ prove the code path was exercised is worthless.
 | `12aa6db064f`, `dbf8de8b2a5` | FEATURE | the first two **consumers** of the authority: the optimistic DNS refresh (refused by state) and the dashboard download (parks on `WaitProviderRefresh`). Tests and five mutations in `reports/core/HAKO_SCALE_DEBUG_AUDIT_2026-10-17.md` |
 | `ff897d35772` | FIX | resolves the DNS governor at construction instead of in `Start`: the field a background goroutine reads is made immutable rather than ordered |
 
+The historical census row's `3c6dd135b` does not resolve in the current parent repository; inspect
+the original report or other repository before treating that prefix as a verified commit anchor.
+
 All **OWN**. The upstream family `Use screen state to end device pause on iOS` (×11 in this range) is
 `UPSTREAM-INHERITED`/orphaned — see `BASELINE.md` §provenance.
 

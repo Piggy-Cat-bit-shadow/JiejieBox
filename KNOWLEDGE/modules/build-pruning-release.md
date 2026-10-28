@@ -332,13 +332,13 @@ tags.
 Two Windows workflows exist at the release baseline and they are **different products**:
 `windows-core-amd64.yml` ("Windows amd64 core") builds `sing-box.exe` for an external loader, while
 `client-desktop-windows.yml` ("Windows desktop installer") builds and signs the NSIS installer with a
-daemon SCM service lifecycle. The desktop baseline was **restored verbatim** at `61975ca3`
+daemon SCM service lifecycle. The desktop baseline was **restored verbatim** at `7a46125ded0`
 ("restore(windows): recover the retired desktop installer baseline verbatim", 2026-10-10). **Do not
 describe the fork as "core-only, not the desktop installer" without naming which workflow you mean.**
 
 Windows signing is a **hard install gate**: `WinVerifyTrustEx` plus `secureWindowsInstallation` refuses
 service registration on a mismatch. Exactly **two** i386 PE exceptions are allowed
-(`Jijiebox-v*-windows-x64.exe`, `resources/elevate.exe`).
+(`Jiejiebox-v*-windows-x64.exe`, `resources/elevate.exe`).
 
 ---
 
