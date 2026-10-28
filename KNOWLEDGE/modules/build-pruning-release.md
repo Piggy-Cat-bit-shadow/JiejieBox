@@ -303,8 +303,10 @@ from the root `go.mod` rather than from a static list, so a new platform path de
 being missed. `REQUIRED_FORK_REPLACES` (`:105-115`) demands four: `sing`, `sing-tun`, `quic-go`,
 `sing-quic`.
 
-> **`docs/FORK-DIFF.md:26` lists only three pinned dependencies while the guard demands four.** The
-> guard is authoritative; the document is a summary.
+> **`docs/FORK-DIFF.md:27` was corrected on 2026-10-28 to name all five replaced module paths and
+> the `cronet-go` prefix tree**; before that it summarized three. The guard is still authoritative
+> over the summary: it is not derived from the document, and it fails when the root stops replacing
+> one of the guarded paths.
 
 The same script's history is worth knowing: `check-go-module-integrity.sh:60-66` documents that the
 `test` module once silently linked **upstream sing-tun**, and *"the old code could not fail on it, by
