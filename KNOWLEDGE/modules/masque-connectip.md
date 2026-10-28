@@ -1,5 +1,22 @@
 # MASQUE / CONNECT-IP
 
+## Endpoint-local flows through the TUN stack (2026-10-29)
+
+`protocol/masque/endpoint.go` tests whether the destination is an endpoint local address. In
+system mode it retains `ActionAccept`. In non-system mode it calls `adapter.JudgeHostFlow`; traffic
+for other destinations still calls `adapter.JudgeFlow`. WireGuard (`protocol/wireguard/endpoint.go`)
+and Tailscale (`protocol/tailscale/port.go`) apply the same system/non-system distinction, using
+their own local-address checks. This is source behavior, not proof of end-to-end packet delivery.
+
+At TUN start, `protocol/tun/inbound.go` registers the stack only if it implements `tun.RoutedPort`.
+`route.NetworkManager` keeps the first non-nil registration under a mutex. `JudgeHostFlow` chooses
+the routed port's IPv4 or IPv6 address, preserves the destination port, and returns `ActionFlow`
+for TCP, UDP or ICMP. If the manager or port is absent, the matching address family is invalid, or
+the protocol is unsupported, it returns the prior `ActionAccept`. System and gVisor stacks that
+do not implement the routed port do not register it. `adapter.FlowLogger` is shared by host and
+ordinary route flows; the host tracker has no outbound. See `adapter/host_test.go` for the unit
+cases. No registration replacement/teardown guarantee beyond the first-registration code is implied.
+
 ## Client lifecycle after v0.1.9
 
 **VERIFIED_SOURCE**, testing target `011f3fdcd99`: `protocol/masque/client.go` registers both

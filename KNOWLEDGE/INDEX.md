@@ -23,6 +23,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | `ACCEPTANCE.md` | **VERIFICATION_ONLY** | requirement → evidence → re-check command |
 | `COMMIT-INDEX.md` | **PROVENANCE_ONLY** | the SHAs behind a behaviour, grouped by theme |
 | `REFRESH.md` | **REFRESH_ONLY** | the refresh protocol; not a task mode |
+| `CALIBRATION-2026-10-29.md` | **REFRESH_ONLY** | current delta, validation and inherited limits |
 | `CALIBRATION-2026-10-28.md` | **REFRESH_ONLY** | completed calibration scope, evidence and remaining verification limits |
 | `docs/archive/**` | **HISTORY_ONLY** | how we got here; never current truth |
 | `sing-box_v0.1.5-v0.1.10_网络链路与Action-Release优化总结.md` | **HISTORY_ONLY** | the v0.1.5→v0.1.10 engineering narrative (link path + Action/Release); a point-in-time summary, not a module |
@@ -31,6 +32,9 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 
 | If you are changing / asking about… | Module | Exact section |
 |---|---|---|
+| 子仓库改造 / client gitlinks / 子仓库分支头 / 嵌套 dashboard / forked Go 模块 | `modules/child-repositories.md` | pinned sources, child changes and refresh rules |
+| Endpoint local flow, `JudgeHostFlow`, `HostPort` | `modules/masque-connectip.md` | endpoint-local flows through the TUN stack |
+| Release freeze, source lock, Apple single-runner | `modules/ci-release.md` | release freeze and Apple acceptance |
 | 速度慢 / 吞吐上不去 / 判断瓶颈在哪一层 | `PERFORMANCE-FACTORS.md` | §1 三条第一原理 → §4 症状路由 → §5 测量方法 |
 | XHTTP 上传慢 / 下载慢 / xmux 与连接数 | `PERFORMANCE-FACTORS.md` | §2 客户端参数（`xmux`）→ §3 服务端参数（h2 请求体缓冲） |
 | `Scope` teardown, `scope.Add` cleanup | `modules/core-lifecycle-runtime.md` | §1 `adapter.Scope` — the ownership primitive |

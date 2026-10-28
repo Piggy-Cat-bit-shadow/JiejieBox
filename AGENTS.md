@@ -60,6 +60,11 @@ convention?) and the relevant rows of `KNOWLEDGE/ACCEPTANCE.md` (how do I re-che
    modules drift — which is exactly what happened between `v0.1.6` and `v0.1.9`: this rule named
    `v0.1.6` while 181 commits and 12 production files landed, and the delta row still claimed nothing
    had changed.
+   **Child repositories are in scope:** inspect parent gitlinks, nested gitlinks, Go replacements and
+   the release source lock, then check the relevant child revisions and separately observed branch tips.
+   Route child changes via `KNOWLEDGE/modules/child-repositories.md`; follow `REFRESH.md` §25A for a
+   refresh, including changes on a child branch that the parent has not yet consumed. Never confuse
+   a local checkout or a moving child head with the parent-pinned revision.
 5. **Do not refresh the knowledge base as part of normal development.** A refresh is an explicit
    maintenance operation: re-audit source, Git, tests and CI, update module provenance, then move the
    baseline. A development commit needs no documentation edit.

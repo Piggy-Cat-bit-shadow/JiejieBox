@@ -1,5 +1,17 @@
 # Commit navigation
 
+## 2026-10-29 delta navigation
+
+| Commit | Changed behavior |
+|---|---|
+| Child Apple `aeccc75`, `16cf87b`; Android `c783710`; Desktop `6d4ccf8` | consumed client changes → `modules/child-repositories.md` |
+| Child sing-tun `f9d880f`, `8b9a380`; uTLS `3ab4752`, `2da328d` | routed port and TLS fixes → `modules/child-repositories.md` |
+| Apple candidate `044e6d5` | unconsumed branch snapshot → `modules/child-repositories.md` |
+| `93b2e4f5eec` | endpoint-local flows can use the TUN routed port → `modules/masque-connectip.md` |
+| `ab5fcb59abd` | share flow logger between regular and host flows → same module |
+| `8dac10c14c8`, `62f5ecefdf6`, `d0bccc9bf2a`, `3c6ca2ea336` | release freeze, pseudo-version, idempotency and committed ABI gate → `modules/ci-release.md` |
+| `23730fffed3`, `fc1567f4c4d`, `dbcfc1d359d` | Apple single-runner path, scratch directory and composite-action toolchain check → `modules/ci-release.md` |
+
 ## Post-v0.1.9 navigation anchors (testing target 011f3fdcd99)
 
 These commits are navigation aids, not substitutes for current source, and do not by themselves

@@ -10,23 +10,23 @@ changed, why, and how to continue without re-reading 1,834 commits*.
 |---|---|
 | Repository | `Piggy-Cat-bit-shadow/sing-box` |
 | Product branch | `testing` |
-| **Production baseline** | `cb71cf80d7224a51823b455f0be5959ad8556933` — the source revision calibrated on 2026-10-28 |
-| Release baseline | **`v0.1.31`**, tag peels to the same SHA |
+| **Production baseline** | `dbcfc1d359d6ed818dfaaefb6d4e637b6e785f07` — the source/CI revision calibrated on 2026-10-29 |
+| Release baseline | **`v0.1.33`**, tag peels to `a0bbf666dec` (an ancestor, not the production baseline) |
 | **Historical upstream anchor** | `e4b7e692f4545890bfc9d43960328e1449fa803b` — used by the v0.1.9-era comparisons, not the current upstream merge-base |
-| Post-baseline production delta | compute `git diff --name-only cb71cf80d7224a51823b455f0be5959ad8556933..HEAD`; see `BASELINE.md` |
-| Knowledge reviewed at | 2026-10-28 |
+| Post-baseline production delta | compute `git diff --name-only dbcfc1d359d6ed818dfaaefb6d4e637b6e785f07..HEAD`; see `BASELINE.md` |
+| Knowledge reviewed at | 2026-10-29 |
 | Knowledge revision | resolve dynamically: `git log -1 --format=%H -- KNOWLEDGE/BASELINE.md` |
 
 The knowledge describes the source baseline, not automatically the current `HEAD`. Full measurements,
 the release lineage, the provenance test, and the tag traps are in `BASELINE.md`.
 
-**2026-10-28 calibration:** the first target was `011f3fdcd99173acd3e80483b50cb76b07bf6ff4`,
+**Historical 2026-10-28 calibration:** the first target was `011f3fdcd99173acd3e80483b50cb76b07bf6ff4`,
 791 commits beyond v0.1.9; the final production target is four commits later. `v0.1.30` is a published release and an ancestor of the first target; subsequent
 fixes are not in v0.1.30. A later [v0.1.31 Release](https://github.com/Piggy-Cat-bit-shadow/sing-box/releases/tag/v0.1.31)
 was published at the later `cb71cf80d72` target. See `BASELINE.md`, [the calibration ledger](CALIBRATION-2026-10-28.md)
 and the current source.
 
-At that later target, the merge-base with the checked remote `upstream/testing` tip
+At the historical v0.1.31 target, the merge-base with the checked remote `upstream/testing` tip
 `e5d91fa79f6319d5de940d6c81d81f0fe53b9476` is `a6952ccf6907c18e18917fcb763a433e8e36937b`.
 This is a point-in-time Git ancestry observation, not proof of authorship; remeasure when the refs move.
 
@@ -34,6 +34,11 @@ This is a point-in-time Git ancestry observation, not proof of authorship; remea
 claimed "no `.go` source changed" while 181 commits and 12 production files had landed. That failure is
 recorded in `BASELINE.md` rather than quietly corrected, because the lesson is about the model, not
 about one row.
+
+Child repositories and their independent branch tips are part of this knowledge scope; see
+`modules/child-repositories.md` and `REFRESH.md` §25A.
+
+The current delta and limitations are recorded in [the 2026-10-29 calibration](CALIBRATION-2026-10-29.md).
 
 ## Reading order
 

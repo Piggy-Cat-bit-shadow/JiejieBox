@@ -922,7 +922,36 @@ relevant acceptance rows
 client coordination provenance
 ```
 
-Do not copy the clients' own full knowledge bases into the core repository.
+Child changes belong in the core knowledge scope: follow §25A for source-level review and ownership. Keep the knowledge concise; do not copy entire client repositories.
+
+---
+
+# 25A. Child repositories are part of the kernel knowledge scope
+
+The core knowledge base covers important changes in repositories the kernel consumes or ships:
+client gitlinks, nested gitlinks, forked Go modules and controlled native components. Inventory them
+from `.gitmodules`, actual `go.mod` and `test/go.mod` replacements, and the release manifest/lock
+when present; discover current structure rather than assuming a fixed list. Record, separately:
+
+1. Parent baseline and target gitlink/replace SHA; the child repository and exact pinned revision.
+2. Child product branch tip at observation time, its branch name and whether it differs from the pin.
+   A moving branch or candidate may change without a parent commit; inspect it as a separately scoped
+   delta and never present unconsumed changes as shipped kernel behavior.
+3. Compare old and new child trees and read load-bearing changed source/tests, not just subjects or
+   reports. Trace nested dependencies (e.g. dashboard within desktop), ABI/client contracts, build
+   inputs, lifecycle, releases, evidence and superseded behavior. Record unavailable objects and
+   platform/symlink limitations explicitly, and expand coverage when a child itself has major changes.
+4. Update the owning module, index, module registry, cross-module invariants and acceptance rows as
+   needed. Preserve child-specific design, failure modes, provenance and re-check paths; link to the
+   child source rather than copying its whole repository or treating the gitlink as a source audit.
+5. Re-check pins and branch tips when publishing. Do not alter client checkouts, gitlinks, child
+   branches, Go pins, workflows or releases during a knowledge-only refresh; fetch immutable objects
+   or inspect remote source without overwriting a worktree. If a required important child revision
+   cannot be inspected, mark the coverage incomplete and keep the prior production baseline.
+
+A parent baseline identifies what the parent consumes. It is not a universal child-branch baseline:
+record separately what child head was inspected and when, and keep not-yet-consumed work visibly scoped.
+A successful static scan, unit fixture, CI run, build and device test are distinct evidence levels.
 
 ---
 

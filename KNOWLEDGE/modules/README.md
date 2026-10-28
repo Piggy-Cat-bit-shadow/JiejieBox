@@ -7,6 +7,9 @@ carries its own source anchors, provenance and evidence level.
 
 | If you are changing… | Read |
 |---|---|
+| Child repositories, client gitlinks, nested dashboard and forked dependency changes | `child-repositories.md` |
+| Endpoint-local flows, `JudgeHostFlow`, `HostPort` | `masque-connectip.md` |
+| Release source freeze, source lock, Apple single-runner | `ci-release.md` |
 | Anything in `experimental/boxdd/**`, the Windows service, the per-user worker, the named-pipe peer handshake, peer/executable authentication, Authenticode or signer trust, the update path | `windows-daemon-security.md` |
 | Box start/close order, `Scope`, teardown, network epochs, idle retirement, `route/reference.go` | `core-lifecycle-runtime.md` |
 | Start-time validation, `detour`, selectors/urltest/loadbalance, `PhysicalPath`/`ControlPath`, failover, cycles | `path-selection-validation.md` |

@@ -1,5 +1,14 @@
 # Build, pruning and release profiles
 
+## Dependency pins at the 2026-10-29 target
+
+Root `go.mod` and `test/go.mod` both replace `sing-tun` with fork revision `8b9a38008705` and
+`metacubex/utls` with fork revision `b63a2e9a7b1e`. `release/JIEJIE_VERSION` and the source lock
+record `0.1.33`; [v0.1.33](https://github.com/Piggy-Cat-bit-shadow/sing-box/releases/tag/v0.1.33)
+is a separately verified published release at `a0bbf666dec`, not this later source target.
+The source freeze manifest, controlled native Cronet policy, and dashboard reporting are described
+in `ci-release.md`. The lock and gitlinks do not themselves prove artifact contents.
+
 ## Protocol registration and build gates at the testing target
 
 **VERIFIED_SOURCE** at `011f3fdcd99`: `include/registry.go` registers TUN, redirect, SOCKS,

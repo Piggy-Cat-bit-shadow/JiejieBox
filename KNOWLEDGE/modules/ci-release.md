@@ -1,5 +1,35 @@
 # CI, evidence and release
 
+## Release freeze and Apple acceptance at the 2026-10-29 target
+
+`release/dependencies.json` declares source repository, branch and policy; actual Go replace pins
+and client gitlinks are separate. `scripts/ci/release-freeze.py` resolves once, compares, applies
+eligible updates, snapshots, and verifies `release/source-lock.json`. `update` pins may move only
+when comparable; divergence/missing sources fail closed. The 29 Cronet native archives are
+`controlled` and are not rewritten; Desktop's nested dashboard is `report` only, so repair order is
+Dashboard → Desktop → kernel. The lock projects build pins, not moving branch tips; root/test Go
+replacements, Cronet consistency and client gitlinks are verified. An unavailable desktop checkout
+makes the nested check SKIPPED; a version mismatch is a note rather than a verification failure.
+
+`.github/workflows/release-prepare.yml` is manual dispatch, not an automatic release. It resolves,
+checks, applies, tidies, snapshots and gates, commits/pushes only when changed, then requires
+successful evidence for the exact candidate SHA before tagging. A dry run does not create that
+candidate and is not evidence for it. The Apple ABI pin gate runs after the candidate commit because
+it reads `HEAD`. Inspect the workflow before any real preparation; do not infer publication from a
+version file or a prepared lock.
+
+`client-apple.yml` is manual: `apple_client_sha` accepts an exact 40-character lowercase SHA;
+contradictory repository overrides fail. Without an override it resolves the refs-file branch tip
+once for the run, which may differ from the parent gitlink; formal release must select the frozen
+revision. With iOS and macOS both selected, one Libbox artifact is built and shared. With macOS
+only, the same composite action builds Libbox inside the one macOS job; skipped Libbox dependency
+is explicitly allowed, failed dependency is not. The two paths converge on manifest validation and
+installation. Structure checks are not proof of successful macOS execution or device behavior.
+
+The target's existing [Verify run 40765511913](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40765511913)
+was cancelled, not passed. For the refresh itself use a documentation-only `[skip ci]` commit; never
+manually dispatch Actions merely to validate a knowledge update.
+
 > **Scope correction, 2026-10-28:** the v0.1.9 workflow census below is historical, not an
 > inventory of the current tree. In particular `.github/workflows/windows-boxdd-tests.yml`
 > declares a Windows runner and path-filtered push/PR plus manual dispatch for boxdd tests.

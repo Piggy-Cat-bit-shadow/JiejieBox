@@ -1,23 +1,22 @@
 # Baseline
 
-## Current calibrated baseline — 2026-10-28
+## Current calibrated baseline — 2026-10-29
 
 | Field | Value and scope |
 |---|---|
-| Repository / product branch | `Piggy-Cat-bit-shadow/sing-box` / `testing` |
-| Production baseline | `cb71cf80d7224a51823b455f0be5959ad8556933` — source target, not a documentation-only commit |
-| Release baseline | [v0.1.31](https://github.com/Piggy-Cat-bit-shadow/sing-box/releases/tag/v0.1.31), tag peels to the same commit; non-draft, non-prerelease, published 2026-10-28 00:38:59 UTC |
-| Upstream ancestry | checked remote `upstream/testing` was `e5d91fa79f6319d5de940d6c81d81f0fe53b9476`; its merge-base with the production target is `a6952ccf6907c18e18917fcb763a433e8e36937b`. Recheck when refs move; ancestry does not prove authorship. |
-| Previous production baseline | `5fc4f9366a60202fdc7c98cd6fa280cceace65ba` (v0.1.9); 795 commits precede the target in that range |
-| Knowledge revision | resolve dynamically with `git log -1 --format=%H -- KNOWLEDGE/BASELINE.md` |
-| Post-baseline delta | compute `git diff --name-only cb71cf80d7224a51823b455f0be5959ad8556933..HEAD`; the knowledge commits themselves do not change runtime behavior |
+| Repository / branch | `Piggy-Cat-bit-shadow/sing-box` / `testing` |
+| Production baseline | `dbcfc1d359d6ed818dfaaefb6d4e637b6e785f07` — latest source/CI change reviewed; later branch-tip commits at review were documentation only |
+| Release baseline | [v0.1.33](https://github.com/Piggy-Cat-bit-shadow/sing-box/releases/tag/v0.1.33), non-draft and non-prerelease, published 2026-10-28 11:47:59 UTC; annotated tag peels to `a0bbf666dec8693450c0e8363ed42db3294ac64a`, an ancestor of the production target |
+| Upstream ancestry | observed `upstream/testing` `e5d91fa79f6319d5de940d6c81d81f0fe53b9476` is the merge-base with the production target; ancestry alone does not establish authorship |
+| Previous production baseline | `cb71cf80d7224a51823b455f0be5959ad8556933` (v0.1.31); 125 reachable commits in the baseline-to-target range |
+| Knowledge revision | `git log -1 --format=%H -- KNOWLEDGE/BASELINE.md` |
+| Post-baseline delta | `git diff --name-only dbcfc1d359d6ed818dfaaefb6d4e637b6e785f07..HEAD` |
 
-The modules describe the checked source mechanisms at this baseline with explicitly scoped evidence;
-historical line numbers and older audit measurements still require rechecking. A baseline is not proof
-of device, interoperability, artifact-byte or all-platform behavior. The Apple CI call-site scan was
-PARTIAL, and the known Windows TUN errno classification gap, reproduced Windows TLS test failure and
-other limits are recorded in [the calibration ledger](CALIBRATION-2026-10-28.md) and owning modules.
-Do not assume `HEAD` is always the baseline: compute the actual delta.
+See [the 2026-10-29 calibration](CALIBRATION-2026-10-29.md), and the previous
+[calibration ledger](CALIBRATION-2026-10-28.md) for inherited limits. Source review and local unit
+checks do not establish device, artifact, interop or all-platform behavior. The target's existing
+Verify run was cancelled; it is not a passing CI result. Client gitlinks identify revisions, not
+contents of an uninspected checkout. Always inspect the actual delta before relying on this snapshot.
 
 ## Historical v0.1.9 baseline
 
@@ -207,7 +206,7 @@ recorded in `REFRESH.md`'s refresh report.
 
 * The client **source** repositories (`clients/apple`, `clients/android`, `clients/desktop`) are
   separate repositories and are empty in a clean worktree. Their revisions are recorded as gitlinks;
-  their contents are **not** covered by any module.
+  at the historical v0.1.9 review their contents were not covered. Current child-repository coverage is in `modules/child-repositories.md`.
 * `experimental/boxdd/**` (the Windows daemon) changed in this delta and is owned by
   **`modules/windows-daemon-security.md`**. It was the last unowned changed subsystem; the ownership
   map now resolves it, with `daemon/**`, the build driver and packaging recorded as CROSS-MODULE.

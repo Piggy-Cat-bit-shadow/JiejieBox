@@ -1,5 +1,16 @@
 # Invariants
 
+## Current cross-module boundaries (2026-10-29)
+
+* Endpoint-local flow handling must preserve the system-mode `ActionAccept` boundary and the
+  no-routed-port, unsupported-protocol and missing-family fallback; non-system flow destination
+  uses the registered TUN address of the matching family and retains its port. This is a description
+  of the current implementation; change deliberately with endpoint and stack tests.
+* A frozen release must keep root/test replacements and recorded client gitlinks consistent with
+  the lock. Do not silently update controlled Cronet native archives or the nested dashboard in the
+  parent tree. Apple framework provenance is checked against the parent SHA and version. A skipped
+  client scan, unrun gate or cancelled CI run is not success.
+
 Three lists, in descending strength. **Putting a rule in the wrong list is the failure this file
 exists to prevent**: an over-promoted convention blocks a legitimate future change, and an
 under-promoted correctness rule lets one through.
