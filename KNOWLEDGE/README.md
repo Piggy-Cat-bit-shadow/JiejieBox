@@ -12,7 +12,7 @@ changed, why, and how to continue without re-reading 1,834 commits*.
 | Product branch | `testing` |
 | **Production baseline** | `5fc4f9366a60202fdc7c98cd6fa280cceace65ba` — the last declared broad baseline; individual later additions identify their own target |
 | Release baseline | **`v0.1.9`**, the same SHA |
-| **Upstream baseline** | `e4b7e692f4545890bfc9d43960328e1449fa803b` — the last upstream commit this fork contains (`refs/remotes/upstream/testing` has since moved on) |
+| **Historical upstream anchor** | `e4b7e692f4545890bfc9d43960328e1449fa803b` — used by the v0.1.9-era comparisons, not the current upstream merge-base |
 | Post-baseline production delta | **substantial** — compute `git diff --name-only v0.1.9..HEAD`; see `BASELINE.md` |
 | Knowledge reviewed at | 2026-10-14 (refresh at the `v0.1.9` release) |
 | Knowledge revision | resolve dynamically: `git log -1 --format=%H -- KNOWLEDGE/BASELINE.md` |
@@ -26,6 +26,10 @@ claims are rechecked. `v0.1.30` is a published release and an ancestor of that t
 fixes are not in v0.1.30. A later [v0.1.31 Release](https://github.com/Piggy-Cat-bit-shadow/sing-box/releases/tag/v0.1.31)
 was published at the later `cb71cf80d72` target. See `BASELINE.md`, [the calibration ledger](CALIBRATION-2026-10-28.md)
 and the current source.
+
+At that later target, the merge-base with the checked remote `upstream/testing` tip
+`e5d91fa79f6319d5de940d6c81d81f0fe53b9476` is `a6952ccf6907c18e18917fcb763a433e8e36937b`.
+This is a point-in-time Git ancestry observation, not proof of authorship; remeasure when the refs move.
 
 **The previous baseline (`a267e99e0`, `v0.1.6`) went stale invisibly for two releases** — its delta row
 claimed "no `.go` source changed" while 181 commits and 12 production files had landed. That failure is

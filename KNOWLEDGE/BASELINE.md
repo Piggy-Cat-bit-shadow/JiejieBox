@@ -15,6 +15,13 @@
 > [v0.1.31 Release](https://github.com/Piggy-Cat-bit-shadow/sing-box/releases/tag/v0.1.31) at
 > 2026-10-28 00:38:59 UTC with seven listed assets; this API observation does not independently verify
 > their bytes. Recheck release records and this dependency pin before attributing older tests to it.
+>
+> The locally recorded `upstream/testing` now points to `a6952ccf6907c18e18917fcb763a433e8e36937b`,
+> which is also its merge-base with `cb71cf80d72`. The old `e4b7e692` is a historical comparison anchor,
+> not this target's merge-base. A subsequent `ls-remote` saw upstream's `testing` at
+> `e5d91fa79f6319d5de940d6c81d81f0fe53b9476`; that object was already local and its merge-base with
+> the target is also `a6952ccf`. These are point-in-time ancestry observations, not authorship proof;
+> upstream history has been rewritten.
 
 **Read this file before anything else. The knowledge base does not describe `HEAD`.**
 
@@ -31,7 +38,7 @@ status must be measured separately.
 | Release date | 2026-10-14 23:02:14 +0800 ("test(wireguard): the census poll must not starve the goroutine it waits for") | `git log -1 --format=%ci v0.1.9` |
 | Fork version at baseline | `release/JIEJIE_VERSION` = `0.1.9` | `git show v0.1.9:release/JIEJIE_VERSION` |
 | Upstream project | `https://github.com/SagerNet/sing-box.git` (remote `upstream`) | `git remote -v` |
-| **Upstream baseline** | `e4b7e692f4545890bfc9d43960328e1449fa803b` — the last upstream commit this fork contains; **not** `refs/remotes/upstream/testing`, which has moved on to `dfb80349b` | `git merge-base v0.1.9 refs/remotes/upstream/testing` |
+| **Historical upstream anchor** | `e4b7e692f4545890bfc9d43960328e1449fa803b` — used by the v0.1.9-era review | historical snapshot; remeasure against the desired target and current upstream ref |
 | **Fork branch point** | `0d91c4547921a7b72e9c9913e2bc6f3a556801e2` | see below |
 | Knowledge reviewed at | 2026-10-14 (refresh at the v0.1.9 release) | this file's Git history |
 | Knowledge revision | resolve dynamically — `git log -1 --format=%H -- KNOWLEDGE/BASELINE.md` | do not hardcode |
@@ -116,8 +123,7 @@ a fixed one. The defect and its fix are `v0.1.9`; the tag is immutable regardles
 ## The two baselines are different, and both matter
 
 ```text
-upstream baseline  e4b7e692   the last upstream commit this fork contains
-                              (== merge-base with refs/remotes/upstream/testing)
+historical upstream anchor e4b7e692  used by the v0.1.9-era review
         │
         │  1,834 commits in the historical ancestor range to v0.1.6
         │  2,015 commits in the historical ancestor range to v0.1.9
@@ -132,8 +138,8 @@ HEAD                          current branch tip; re-measure, not necessarily a 
 Measured, so a reader does not have to trust the picture above:
 
 ```sh
-git merge-base v0.1.9 refs/remotes/upstream/testing   # e4b7e692f…  (it is an ancestor)
-git rev-parse refs/remotes/upstream/testing           # dfb80349b…  (upstream has moved on)
+git merge-base v0.1.9 refs/remotes/upstream/testing   # remeasure: the ref may be rewritten
+git rev-parse refs/remotes/upstream/testing           # remeasure the locally recorded ref
 git rev-list --count e4b7e692..a267e99e0              # 1834  (the v0.1.6 baseline)
 git rev-list --count e4b7e692..v0.1.9                 # 2015
 git rev-list --count v0.1.9 --not --remotes=upstream  # 2014 at that review; unreachable ancestry, not an authorship count

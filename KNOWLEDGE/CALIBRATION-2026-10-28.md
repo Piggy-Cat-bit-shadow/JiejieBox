@@ -224,6 +224,12 @@ This is an operational ledger, not a replacement for the modules or a new produc
   over 423 files, but Windows `core.symlinks=false` turns tracked links into text and a target is
   missing, so that is not a complete Swift scan; the CI skip is not reversed by this local exit code.
   Android's checked-in idle broadcast → queued pause/wake path was also read; no device race was run.
+- The upstream ancestry was remeasured: local `upstream/testing` and its merge-base with the later
+  target are `a6952ccf6907c18e18917fcb763a433e8e36937b`; the current local merge-base with v0.1.9
+  is `d630fa94c53b2e2bdf256fad8b9d1cff809146ed`. The former `e4b7e692` remains a historical comparison
+  anchor and is not an ancestor of `a6952ccf`. A later remote check returned upstream `testing` at
+  `e5d91fa79f6319d5de940d6c81d81f0fe53b9476`; its object was already local and has the same merge-base
+  `a6952ccf` with the target. Ancestry is not authorship proof and these refs may move.
 
 ### Module review status
 
