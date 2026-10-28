@@ -188,8 +188,9 @@ unlock. `resumed()` publishes nothing.
 `experimental/libbox.DeprecatedNote.Message()` returns `*StringBox`, **not** `string`, because a bare
 `string` puts a Go pointer in gomobile's packed result frame and produces
 `fatal error: bulkBarrierPreWrite: unaligned arguments`. `adapter.NewAdapterWithDialerOptions` carries
-an extra variadic parameter. And the Apple client source has **one** authority: the `clients/apple`
-gitlink — the refs file is forbidden from recording a SHA and the workflow body from hardcoding one.
+an extra variadic parameter. The Apple workflow resolves one client-source SHA for a build and shares
+it among jobs; by default it comes from the client repository's configured branch, not the parent
+gitlink. Explicit overrides are supported, and gitlink equality is optional for source selection.
 
 * **Why:** the first is an unrecoverable crash; the second is what stops iOS and macOS being built from
   two different sources.
@@ -201,8 +202,9 @@ gitlink — the refs file is forbidden from recording a SHA and the workflow bod
   happened: the Apple gitlink moved from `6e559a4` to `3aedd741` for the v0.1.28 path-monitor canary
   and `VERIFIED_APPLE_SHA` stayed behind, so a clean run of the full gate would have failed layer 5
   while nothing ran it. The full gate (layers 1-4, including the client call-site sweep) needs cgo,
-  the Darwin profile and a client checkout, so it runs in `client-apple.yml` against the pinned
-  source. `client-apple.yml` is still not in the release-acceptance required set (A12); that is the
+  the Darwin profile and a client checkout, so it is declared in `client-apple.yml` against its
+  checked-out source. A gitlink/constant match does not establish that the independently resolved
+  build source is the same SHA. `client-apple.yml` is still not in the release-acceptance required set (A12); that is the
   remaining execution gap, not an absent check. The missing-gitlink case is a **failure**, not a
   skip: the gitlink lives in the superproject tree, so a deleted one cannot be "a client checkout
   that was not initialised". `test-check-libbox-abi.sh` asserts both the correct pair and the deleted

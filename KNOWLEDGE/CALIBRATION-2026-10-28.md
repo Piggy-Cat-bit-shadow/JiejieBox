@@ -188,6 +188,14 @@ This is an operational ledger, not a replacement for the modules or a new produc
   tests, which passed locally. A Markdown link/anchor scan of 115 files found 23 relative links and
   no missing target or detected anchor; most navigation uses backticked references and needs its own
   checks, so this scan is not a blanket proof of the index.
+- Apple source selection was independently reconciled across the refs file, source script, workflow,
+  libbox module and invariants: the workflow freezes one resolved branch/override SHA, while the
+  gitlink/ABI constant check is separate and does not prove that the build used the gitlink. The old
+  contrary single-gitlink-authority and unwired-ABI statements were removed.
+- `check-apple-source-selection.sh` initially exited 1 (65 passed, 2 failed) when `python3` resolved
+  to the Windows app-execution stub (status 49). A rerun with a temporary PATH shim to the bundled
+  Python passed 72 checks with zero failures under MSYS2 bash. This is source/fixture verification,
+  not a device, native build or published-artifact check.
 
 ### Module review status
 

@@ -403,8 +403,9 @@ missing asset therefore stops at a draft the public cannot see. `v0.1.8` is the 
 not draft-first, so the six-asset defect was public before anything compared it to the contract.
 
 > **So the claim "product CI produces/proves artifacts; release downloads and re-verifies those exact
-> bytes rather than rebuilding them" is TRUE** — but it is scoped to the platforms `plan` selects, and
-> those producers are `workflow_dispatch`-only, so they must have been dispatched manually first.
+> bytes rather than rebuilding them" is a source-level description scoped to the platforms `plan`
+> selects. Inspect each producer's triggers and the chosen run: Android also has a path-filtered
+> testing-push trigger, so not every producer is dispatch-only.
 
 **Platform coverage.** `release.yml` sets `RELEASE_EXTRA_PLATFORMS: true`, and `release-artifacts.sh`
 accepts exactly the strings `true`/`false` (anything else dies). With it set, **Windows and Android

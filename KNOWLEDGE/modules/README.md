@@ -43,7 +43,7 @@ The whole fork in one paragraph — then read the module for the part you need.
 > equivalent direct flow be carried by the OS; a full **MASQUE/CONNECT-IP dataplane**
 > (`transport/masque`) plus an inner/bootstrap resolver split; a **Native Naive** inbound with UoT,
 > padding, masquerade and pre-authentication limits; a rewritten **HTTP/2+HTTP/3 transport**
-> (`transport/http`); and **product plumbing** for Apple (one pinned client source, brand-vs-identity
+> (`transport/http`); and **product plumbing** for Apple (one resolved client source per build, brand-vs-identity
 > split), Android (AAR/ABI) and Windows (core-only artifact). The separate strict release-acceptance
 > checker re-verifies evidence and bytes, but is not invoked by the release path; see `ci-release.md`
 > for the actual release-path gates and their limits.

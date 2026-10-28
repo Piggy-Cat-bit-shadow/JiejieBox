@@ -305,65 +305,28 @@ mobile-only tag placed there reaches macOS in a mixed build. `applebuildtags/tag
 
 ## 6. The Apple pin — and the gap
 
-### The design is deliberate and good
+### One resolved source per build, and a separate gitlink check
 
-`release/apple-client-refs.env` declares the `clients/apple` **gitlink** as the **single authority**:
+At `cb71cf80d72`, `release/apple-client-refs.env` chooses the Apple client repository's `main` tip
+by default; `APPLE_CLIENT_REF` or `APPLE_CLIENT_SHA` can override it. `client-apple.yml` resolves one
+exact SHA in its `resolve-apple-source` job and passes that result to the downstream jobs. This is the
+build selection; the parent `clients/apple` gitlink is a local checkout default, not the default build
+authority. `assert-shared-source` requires iOS and macOS to agree, reports a gitlink mismatch, and
+only makes that mismatch fatal when `APPLE_CLIENT_REQUIRE_GITLINK=1`. Re-resolving a moving branch
+independently in each job would defeat the one-SHA boundary.
 
-* the refs file is **forbidden** from recording a SHA (`check-apple-source-selection.sh:124-136`);
-* the workflow body is **forbidden** from hardcoding one (`:209-210`);
-* `APPLE_CLIENT_BRANCH=main` is **informational only** — *"It never selects which commit is built: the
-  gitlink does that, so a branch that moves cannot move a release."*
-* `scripts/ci/apple-client-source.sh sha ios` and `sha macos` both return the gitlink, and
-  `assert-shared-source` fails the build if they ever differ (both jobs call it:
-  `client-apple.yml:238-239`, `:503-504`);
-* `load_refs` asks whether the **refs file itself** declares a per-platform source — a text test on the
-  file, taken *before* sourcing it (`apple-client-source.sh:88-105`, `ece0fb9d2`). It previously tested
-  the caller's *environment*, which `resolve` (`:386-388`) and `release-apple.sh` (`:181`) legitimately
-  populate, so `release-apple.sh testflight` refused its own resolved values and deadlocked. Do not
-  reintroduce the environment test: `ci-release.md` §5 records the full sequence;
-* the rationale is in the file's own header: the two Apple products come from **one** source tree at
-  **one** commit with **one** Libbox framework, and the parent decides **only** which commit that is.
-  Presentation routing (iPhone → the fork's Hako presentation, iPad and macOS → upstream's) is a
-  runtime property of the Apple source, so **the parent must not select a commit per platform**. An
-  earlier revision pinned macOS to an independent `dev` commit; that model is gone.
+The gitlink still matters for a different check: `verify.yml` runs `check-libbox-abi.sh --pin-only`,
+which compares both client gitlinks to the script's `VERIFIED_*_SHA` constants. The full check is
+declared in `client-apple.yml` and includes a call-site scan as well as the gitlink check. A matching
+gitlink and constant **does not prove the independently resolved Apple source is the same commit**;
+inspect the resolved build SHA and actual run, especially if the branch moved. This host ran only the
+pin-only check, not the full client ABI sweep or a device build.
 
-`check-apple-source-selection.sh` **is wired** — `client-apple.yml:134`.
-
-### The gap
-
-`check-apple-source-selection.sh` **cannot** detect the pin moving to an unintended revision. Every one
-of its checks is **self-referential to the gitlink**: they prove iOS and macOS *agree with each other*
-and forbid a second copy. They cannot say the revision is the *intended* one.
-
-The last cross-check against an intended revision was the `VERIFIED_APPLE_SHA` constant in
-`scripts/ci/check-libbox-abi.sh`, and:
-
-* **UPDATED after v0.1.28.** The constant names `3aedd741…`, the current gitlink. It had drifted: it
-  stayed at `6e559a4` when the gitlink advanced for the path-monitor canary, so layer 5 failed on a
-  correct tree. The pin is now wired: `verify.yml` runs `check-libbox-abi.sh --pin-only` (git only, no
-  cgo) and `client-apple.yml` runs the full gate against the checked-out clients. A lone gitlink move
-  fails the push gate instead of being invisible. `client-apple.yml` is still **not** in
-  `verify-release-acceptance.sh`'s required set, and the acceptance engine is not invoked by the
-  release path (A20); the push gate is the wired objection, not the release gate.
-* The historical demonstrations (`c7014ddc1`, the `5cab4ec5` moves) remain worth reading: they show
-  why the constant exists, not what is wired today.
-* `client-apple.yml` is **not** in `verify-release-acceptance.sh`'s required set (`verify.yml`,
-  `interop-xray.yml`, `server-linux-amd64.yml`); `verify.yml` runs the pin-only half and the full gate
-  runs in the Apple workflow. Release acceptance is therefore still **structurally incapable** of
-  noticing the drift; the push gate is not.
-
-> **Correct statement today: "the Apple pin is checked by the push gate's `--pin-only` half and by the
-> full gate in `client-apple.yml`; the release-acceptance engine still does not consult it."** Do
-> **not** write "the Apple ABI gate is broken" or "the pin has no wired verifier" - both were true
-> before the v0.1.28 canary and are not true now. The client-call-site layer is **UNVERIFIED on this
-> host** (no client checkout, no gobind); it runs in `client-apple.yml`.
->
-> **What is therefore `UNVERIFIED` for v0.1.6:** ABI call-site compatibility of the Swift/Kotlin clients
-> against the libbox surface **at the pinned revision**. The recorded PASSes are at
-> `bb5309b4a`/`90a0e9ae` — two pin generations earlier — and do not transfer. The repository says so
-> itself: `docs/fork/apple-artifact-verification.md:609-616` records that whether the pinned revision
-> contains the migrated call sites "is NOT verified here", and that the gate which would answer it
-> "needs a client checkout".
+The source-selection checker is wired in the Apple workflow. The separate
+`verify-release-acceptance.sh` checker is not invoked by the release path; see `ci-release.md` §5 for
+the actual release gates, source-selection history and their distinct evidence. `load_refs` checks
+per-platform declarations in the refs file itself before sourcing it; treating caller environment as
+the file's declarations previously broke the release helper (`ece0fb9d2`).
 
 ### What IS wired for Apple
 
@@ -431,8 +394,8 @@ Client must NOT reinterpret
   - A snapshot read as an edge (`ReconcileScreenState` is not `RecordScreenState`).
   - `libbox.DeprecatedNote.Message()` as a `string`: it returns `*StringBox` so gomobile's
     packed result frame stays aligned.
-  - The Apple client's gitlink as "just a pin": it is the release's only record of which
-    revision the products were built from.
+  - The Apple gitlink as the source used by every build: the workflow resolves and records
+    its Apple source separately; the gitlink is also checked against the ABI contract constant.
   - The build-tag set as fixed: which libbox symbols exist depends on it.
 
 Version / ABI coordination
@@ -445,7 +408,7 @@ Version / ABI coordination
     against one profile is not interchangeable with another.
 
 External repositories
-  - clients/apple   Piggy-Cat-bit-shadow/sing-box-for-apple   (gitlink is the single authority)
+  - clients/apple   Piggy-Cat-bit-shadow/sing-box-for-apple   (build source is resolved separately)
   - clients/android Piggy-Cat-bit-shadow/sing-box-for-android (fork-located because the ABI
                     migration moves the generated Java signatures)
   - clients/desktop SagerNet/sing-box-for-desktop             (upstream's)
@@ -462,8 +425,8 @@ External repositories
 | The core owns trim classification and coalescing | VERIFIED_SOURCE | `common/runtimecoord/platform_events.go:152-231` |
 | The trim ladder is complete and an unknown level is ignored | VERIFIED_SOURCE + VERIFIED_UNIT | `go test -count=1 ./common/runtimecoord/...` |
 | `APIVersion = 4` is served and consumed | VERIFIED_SOURCE | `git grep -n APIVersion` |
-| The Apple client is one source for iOS and macOS | VERIFIED_SOURCE (gate declaration) | `bash scripts/ci/check-apple-source-selection.sh` |
-| The Apple **pin cannot move without objection** | **VERIFIED_GIT** — `verify.yml` runs `check-libbox-abi.sh --pin-only`, which fails when `VERIFIED_APPLE_SHA` / `VERIFIED_ANDROID_SHA` disagree with the gitlinks; `client-apple.yml` runs the full gate against the checked-out clients | `./scripts/ci/check-libbox-abi.sh --pin-only`; `git ls-tree HEAD clients/apple` |
+| The Apple client is one source for iOS and macOS | source and local fixture checks; the selection script passed 72 checks under MSYS2 with bundled Python in this calibration | `bash scripts/ci/check-apple-source-selection.sh`; inspect the actual workflow run |
+| Client gitlinks match ABI contract constants | local pin-only script passed; Verify declares the same gate. This does not prove the resolved Apple build SHA equals the gitlink | `./scripts/ci/check-libbox-abi.sh --pin-only`; inspect Apple workflow's resolved source |
 | The refs file cannot silently reinstate a two-source pin | VERIFIED_SOURCE + VERIFIED_UNIT | `sed -n '88,105p' scripts/ci/apple-client-source.sh`; assert it greps the **file**, not the environment — `ece0fb9d2` |
 | ABI call-site compatibility at the pinned revision | **UNVERIFIED** | `bash scripts/ci/check-libbox-abi.sh` (needs a client checkout + `gobind`) |
 | Android AAR provenance and architecture | **UNVERIFIED (declaration only)** | `android-core-arm64.yml` |
@@ -485,17 +448,17 @@ External repositories
 7. **Do not treat upstream's libbox as drop-in replaceable here.**
 8. **Do not hardcode the Apple geometry tag.** Read it from `cmd/internal/appletags -mobile-only`.
 9. **Do not put a mobile-only tag in the shared Apple set.** `-tags` reaches macOS in a mixed build.
-10. **Do not add a second copy of the Apple client SHA.** The gitlink is the single authority by design
-    — and note that this very design is why the pin has no verifier. If you want a verifier, **wire
-    one**; do not reintroduce a duplicate constant that nothing reads.
+10. **Do not confuse Apple source selection with the gitlink ABI check.** The workflow freezes the
+    resolved source once per build; the separate gitlink/constant check does not select that source.
 11. **Do not claim the Apple ABI is verified at the pinned revision.** It is not.
-12. **Do not describe `check-libbox-abi.sh` as a gate.** Nothing runs it.
+12. **Do not call the ABI gate unwired.** Verify declares its pin-only half and the Apple workflow
+    declares the full check; inspect the actual run and resolved source before claiming coverage.
 13. **Do not assume `make proto` works.** `protogen` needs a `protoc` the `Makefile` never installs.
 14. **Do not claim client-side behaviour.** The client repositories are not in this worktree.
 15. **Do not forget that `include/*` has zero test files.** The registry and the tombstones are
     unguarded; a change there is caught only by a build.
 16. **If you move the Apple pin, the constant must move with it.** `clients/apple`'s gitlink is the
-    single authority, but `VERIFIED_APPLE_SHA` in `scripts/ci/check-libbox-abi.sh` is the cross-check.
+    recorded checkout, and `VERIFIED_APPLE_SHA` in `scripts/ci/check-libbox-abi.sh` is the cross-check.
     `verify.yml` now runs `--pin-only` and fails when the two diverge; `client-apple.yml` runs the full
     gate. The gate tells you they disagree, not which revision was intended: re-derive the
     justification rather than inheriting the previous one, and run layer 4 against the new revision
