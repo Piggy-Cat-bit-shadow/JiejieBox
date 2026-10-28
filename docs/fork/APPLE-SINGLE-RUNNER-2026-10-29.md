@@ -128,8 +128,16 @@ macOS job 的层 4 直接变成 SKIP：
  'build/apple-client-macos/Tests/SubscriptionQuotaCaption/Sources/Caption/SubscriptionInfo.swift'"}
 ```
 
-修复：两条链接改为四级上溯（候选分支 `13726756`）。验证方式是把 `Tests/` 下**每一条**符号链接按路径
-解析回仓库对象（14 条，全部命中）。
+修复：两条链接改为四级上溯。验证方式是把 `Tests/` 下**每一条**符号链接按路径解析回仓库对象（14 条，全部命中）。
+
+**这条路还埋了第二个坑，同一类问题的另一个面具**：第一次修复把目标字符串经 PowerShell 管道送进
+`git hash-object -w --stdin`，管道追加了 CRLF——blob 变成 52/60 字节，而目标只有 50/58。**以换行结尾的
+符号链接目标无法解析**，所以链接在 POSIX 上依然断，只是任何"按文本读"的检查（以及 Windows 检出）都看不见。
+最终修法：写成 ASCII 文件（无终止符）再 `git hash-object -w <file>`，用 `git cat-file -s` 断言的字节数
+（50 / 58）必须等于目标字符串长度。
+
+教训与上面那条同源：**Windows 无法表示这些链接，所以任何本地读取都必须是字节比较而不是文本比较**。
+两次缺陷都是"我在 Windows 上看着它是对的"。
 
 ### 4.2 安装目录必须先存在
 
