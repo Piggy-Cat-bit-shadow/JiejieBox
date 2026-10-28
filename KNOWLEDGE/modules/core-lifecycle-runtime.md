@@ -37,6 +37,29 @@ closes all. The interface-update path also considers a changed interface when cl
 do not replace this with a universal `CloseAll` or assume every brief gap is a dead path. See
 `route/handover_recovery_classification_test.go` and `android_handover_generation_test.go`.
 
+Additional post-baseline entry and lifecycle boundaries at `cb71cf80d72`:
+
+* `common/listener/NetworkWithAddressFamily` gives IPv4 and IPv6 **wildcard** binds explicit `4`
+  and `6` suffixes, while concrete or invalid addresses pass through. TCP and UDP listener factories
+  share the configured listen options, including the Mieru SDK factory path; do not infer that every
+  third-party listener uses these helpers. The local listener package suite passed on Windows, not
+  the Linux-only wildcard collision test.
+* `transport/device/system.go` retries classified transient read failures through `tun.ReadRetry`,
+  stopping on closed and unclassified errors. The Windows-specific additions explicitly recognize
+  raw 10035, 8 and 995. Although comments mention raw Winsock 10004, 10008 and 10055, the current
+  predicate does not explicitly include them, and on Windows Go 1.26.10 they do not match the POSIX
+  constants tested by the pinned `tun.IsRecoverableReadError`. A raw error of those values would be
+  classified fatal by this predicate; whether a real TUN delivers one on a given path is unverified.
+  `transport/device` unit tests passed locally; their Windows cases do not test those three values.
+* SSH `InterfaceUpdated` detaches the current client and connection under `clientAccess`, then
+  closes the detached connection outside the lock. This prevents an unlocked update from closing a
+  newly installed session; it does not establish seamless live-stream recovery. The SSH package
+  tests passed locally on Windows.
+* Linux network-namespace startup keeps the holder alive using its pipe and registers cleanup with
+  the scope. `ownsUserNamespace` chooses the logged `nsenter` command using euid and namespace-owner
+  inspection; it is not itself the operation that enters the namespace. Linux namespace execution
+  was not tested in this Windows calibration.
+
 Protocol ownership is not interchangeable: AnyTLS and Snell register their clients with the scope;
 VLESS registers its transport and multiplex dialer when present. Their outbounds also implement
 interface-update and idle-connection hooks (`protocol/anytls/outbound.go`, `protocol/snell/outbound.go`,

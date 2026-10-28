@@ -172,6 +172,11 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - XHTTP mode selection, XMUX all-or-nothing defaults, pool retirement and packet-up batching were
   cross-checked with source and focused local tests. Pool backoff also applies after suspect retirement;
   these results do not establish live peer interoperability.
+- Listener wildcard family binding, TUN device read retry, SSH session retirement and the Linux
+  namespace holder were inspected. Listener, device and SSH packages passed on Windows; Linux-only
+  behavior was not run. A source/comment discrepancy remains: raw Winsock 10004/10008/10055 do not
+  match the recognized POSIX errors on Windows Go 1.26.10 and are not listed as explicit exceptions;
+  actual delivery by a device remains unverified. No runtime code was changed in this refresh.
 
 ### Module review status
 

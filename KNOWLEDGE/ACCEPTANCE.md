@@ -36,6 +36,12 @@ Three `./route` failover-shim tests for parallel capability forwarding, plain le
 packet-path boundary passed under Go 1.26.10.
 `./common/sniff` tests matching `^TestQUICSniffContext` passed under Go 1.26.10; the old
 `TestQUICOwnership` filter matched no test and has been corrected below.
+The unfiltered `./service/oomkiller`, `./common/listener`, `./transport/device` and `./protocol/ssh`
+package tests passed on Windows under Go 1.26.10. These do not run Linux-only namespace or wildcard
+collision tests, Darwin pressure integration or a real TUN device. The device classifier's explicit
+Windows errno coverage is narrower than its comments suggest; see `core-lifecycle-runtime.md`.
+Focused HTTP/SSH sniff fragmentation, half-close lifecycle and XMUX default/retirement tests also
+passed on that host; they do not establish real-device recovery or peer interoperability.
 
 Post-baseline checks run locally at target `011f3fdcd99` on 2026-10-28 (unit tests, not device or CI evidence):
 

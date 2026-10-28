@@ -36,16 +36,18 @@ take.
 
 Outbound validation runs **after** the dependency sort and **before outbounds start**. Other Box
 initialization may already have run. It dials nothing,
-resolves nothing, changes no selection and consumes no rotation — provable from the object graph,
-which holds no dialer, no logger, no context and no clock. Where the leaf is not knowable it reports
+resolves nothing, changes no selection and consumes no rotation. The physical-path resolver itself
+holds no dialer or clock; that fact alone does not prove that every enclosing call is side-effect-free.
+Where the leaf is not knowable it reports
 `Unknown` and stops, so a partly-verified path cannot be mistaken for a verified one. The current
 `common/physicalpath/dryrun.go` distinguishes fatal failures from capability warnings: an existing
 detour that cannot satisfy a consumer can warn while an affected flow still fails at runtime;
 missing references and other fatal classes must not be demoted wholesale. See the path-selection
 module for the exact taxonomy.
 
-**Two documented side effects exist** (a deprecation log and a memoised tag→object resolution). The
-prohibition is on dialling, resolving, selecting and mutating — not on logging.
+**Two documented incidental side effects exist** (a deprecation log and a memoised tag→object
+resolution). The prohibition is on network resolution, dialling, changing selection and consuming
+rotation, not on logging or all internal memoization.
 → `path-selection-validation.md`
 
 ## 5. Platform facts are inputs; the core decides policy
