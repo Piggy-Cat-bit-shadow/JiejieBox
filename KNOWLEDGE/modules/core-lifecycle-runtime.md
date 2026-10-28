@@ -34,6 +34,13 @@ interface-update and idle-connection hooks (`protocol/anytls/outbound.go`, `prot
 hook; it is not permission to close every live connection. These are source-level contracts at the
 reviewed target; the Snell package reported no test files in this host's untagged run.
 
+ShadowTLS inbound has two distinct ownership boundaries: `protocol/shadowtls/pre_auth_timeout.go`
+bounds the first complete TLS record, then clears that deadline; `handshake_target_cleanup.go`
+tracks target connections for one handshake and closes leftovers after the SDK returns. Avoid applying
+the pre-auth deadline to the subsequent long-lived relay, or assuming the framework owns an SDK
+connection that was never registered. This is `VERIFIED_SOURCE` at `011f3fdcd99`, not a claim of
+interoperability with every fallback server.
+
 **Scope:** `adapter.Scope`, `Box` start/close ordering, `common/runtimecoord`, `route.ReferenceManager`,
 `common/power`'s interaction with them.
 

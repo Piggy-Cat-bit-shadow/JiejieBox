@@ -55,6 +55,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | Naive H3 to H2 retry | `modules/naive-http-transport.md` | post-baseline fallback |
 | VLESS encryption layer and cancellation | `modules/xhttp-client-transport.md` | VLESS encryption boundary |
 | Mieru fallback failure classification and lifecycle | `modules/path-selection-validation.md` | Mieru transport failure boundaries |
+| ShadowTLS pre-auth timeout and handshake-target cleanup | `modules/core-lifecycle-runtime.md` | protocol ownership |
 | TLS engine selection, ECH retry and fork pins | `modules/build-pruning-release.md` | TLS engines and ECH retry |
 | FakeIP known domain and fragmented QUIC sniff | `modules/sniff.md` | post-baseline FakeIP section |
 | DNS router, generations, cache commit | `modules/dns-demand.md` | §2 the cache-commit invariant |

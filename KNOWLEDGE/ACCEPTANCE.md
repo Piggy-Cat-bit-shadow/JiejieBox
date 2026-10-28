@@ -38,6 +38,8 @@ At the same branch state `go test ./option ./adapter/outbound ./common/trafficcl
 passed; this is local unit evidence, not a platform or deployment certification.
 Four selected `./route` tests for notification coalescing, confirmed offline recovery, short gaps
 and cross-interface handover also passed locally; they do not replace a real-device transition test.
+Selected `./protocol/shadowtls` first-record timeout, listener cleanup and handshake-target cleanup
+tests passed locally; this is not external fallback-server interoperability evidence.
 
 `go test -tags with_quic ./transport/masque -run 'TestWriteBatchChunksABurstAboveTheQueueCapacity|TestWriteBatchFallsBackOnlyForTheRefusedTail' -count=1 -v`
 passed both named tests. An untagged run selects neither test, so the untagged package result above
