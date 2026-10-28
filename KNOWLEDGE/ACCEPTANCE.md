@@ -36,6 +36,8 @@ The unfiltered `go test ./transport/v2rayxhttp -count=1` also passed locally at 
 state, including the packet-up tests available without extra build tags.
 At the same branch state `go test ./option ./adapter/outbound ./common/trafficclass -count=1`
 passed; this is local unit evidence, not a platform or deployment certification.
+Four selected `./route` tests for notification coalescing, confirmed offline recovery, short gaps
+and cross-interface handover also passed locally; they do not replace a real-device transition test.
 
 `go test -tags with_quic ./transport/masque -run 'TestWriteBatchChunksABurstAboveTheQueueCapacity|TestWriteBatchFallsBackOnlyForTheRefusedTail' -count=1 -v`
 passed both named tests. An untagged run selects neither test, so the untagged package result above

@@ -23,6 +23,14 @@ rolling the shared decision back. Note that an older comment in `route/network.g
 a later correction write; the current store and inbound code, not that comment, define the behavior.
 This is `VERIFIED_SOURCE` for the current source, not a real-device transition test.
 
+### TUN DNS hijack and fast-path ordering
+
+`protocol/tun/inbound.go` configures the explicit or derived DNS hijack addresses and separately
+tracks port-53 hijack mode. `JudgeFlow` checks DNS hijack before direct bypass or route exclusions;
+UDP and TCP do not have identical resulting actions, so preserve the exact branches. The
+`dns_hijack_configuration_test.go` and `direct_fast_path_dns_test.go` tests cover configuration and
+ordering. The local TUN package suite passed on Windows, but it is not a real-device leak test.
+
 **Scope:** `experimental/libbox/*`, `daemon/*`, `include/*` as they define the client-facing surface,
 `cmd/internal/{mobilebuildtags,applebuildtags,appletags}`, `release/apple-client-refs.env`, and the
 Apple/Android artifact pins.

@@ -18,6 +18,15 @@ outside this observer, so this mechanism is not a general detector for an active
 silently stalls. See the historical full audit's BUG-007 and the current source before designing an
 idle timeout; no device-level availability claim follows from the observer.
 
+`route/network.go` claims a transition token before dispatch and coalesces repeat notifications;
+newer ownership supersedes a pending token. It resets router DNS state independently of whether
+interface listeners are deferred while the network is paused. `route/conn_reclaim.go` distinguishes
+draining a transition from reclaiming a confirmed dead path or shutdown: the drain policy preserves
+recent or unobservable activity and sweeps old-generation flows, while the dead-path/shutdown policy
+closes all. The interface-update path also considers a changed interface when classifying recovery;
+do not replace this with a universal `CloseAll` or assume every brief gap is a dead path. See
+`route/handover_recovery_classification_test.go` and `android_handover_generation_test.go`.
+
 **Scope:** `adapter.Scope`, `Box` start/close ordering, `common/runtimecoord`, `route.ReferenceManager`,
 `common/power`'s interaction with them.
 
