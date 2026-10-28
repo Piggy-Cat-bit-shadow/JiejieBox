@@ -1,5 +1,14 @@
 # DNS Adblock Action
 
+## Local verdicts and multi-family errors after the original review
+
+`dns/verdict_marker.go` marks a local rule's rcode without changing its rcode matching contract.
+`IsLocalVerdict` checks that **every leaf** of an aggregated error is a local verdict: a blocked
+family mixed with a real failure must not hide the failure by matching only one branch. Upstream
+NXDOMAIN caching is separate: `dns/client_negative.go` stores eligible NXDOMAIN with usable SOA,
+but must not widen NODATA or transient errors to the whole name. These are `VERIFIED_SOURCE` at
+`011f3fdcd99`; local DNS package tests passed in this refresh, not real-device validation.
+
 > Status: `VERIFIED_SOURCE` (implementation, tests and schema verified in this worktree at the
 > commit that introduced the feature; see `Provenance` below)
 >
