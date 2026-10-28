@@ -18,6 +18,16 @@ outside this observer, so this mechanism is not a general detector for an active
 silently stalls. See the historical full audit's BUG-007 and the current source before designing an
 idle timeout; no device-level availability claim follows from the observer.
 
+The observer starts after a clean half-close only if the underlying connection accepts keepalive
+configuration **and** a later read can expose a terminal verdict. `terminalReadObservable` accepts
+the userspace `tun.GoConn` and explicit test markers; an ordinary kernel `net.TCPConn` is skipped
+even if keepalive can be armed. EOF and local read deadlines do not release a flow; a terminal error
+settles the observer once and invokes the shared idempotent teardown. Normal teardown or shutdown
+settles pending observations as stopped. The production settings request 20 s idle, three 10 s
+keepalive probes and observer polling from 15 s up to 60 s; these are configuration and scheduling
+parameters, not an observed real-device recovery guarantee. Focused peer-gone, live-peer, kernel-skip,
+shutdown and teardown-race unit tests passed on Windows with Go 1.26.10 in this calibration.
+
 `route/network.go` claims a transition token before dispatch and coalesces repeat notifications;
 newer ownership supersedes a pending token. It resets router DNS state independently of whether
 interface listeners are deferred while the network is paused. `route/conn_reclaim.go` distinguishes

@@ -148,6 +148,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
   reload state were reviewed and documented in the power module. The unfiltered OOM package suite
   passed on Windows Go 1.26.10. Corrected both the fixed-100-ms poll claim and the inference that an
   internal JSON-excluded flag means the killer is disabled by default.
+- Half-close observation now describes the observable userspace-socket gate, kernel socket skip,
+  terminal versus local-deadline verdicts, shutdown settlement and configured timers. Selected route
+  unit tests passed on Windows; active streams and real-device recovery remain outside that evidence.
 
 ### Module review status
 

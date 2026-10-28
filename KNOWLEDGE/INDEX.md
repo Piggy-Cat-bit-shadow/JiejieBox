@@ -37,6 +37,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | Box start order | `modules/core-lifecycle-runtime.md` | §2 → Start; locate `PreStart`, `Start`, `preStart` and `start` in `box.go` |
 | Box close order, teardown | `modules/core-lifecycle-runtime.md` | §2 → Close; locate `Close` and `close` in `box.go` |
 | network generation, rebuild lease, `runtimecoord` | `modules/core-lifecycle-runtime.md` | §3 one generation, identity-based leases |
+| TCP half-close liveness, observer limits and teardown | `modules/core-lifecycle-runtime.md` | network transition ownership; `route/conn_halfclose.go` |
 | `TrimMemory` vs `ReleaseMemory` | `modules/core-lifecycle-runtime.md` | §3 `TrimMemory` and `ReleaseMemory` are different |
 | idle retirement inventory, `route/reference.go` | `modules/core-lifecycle-runtime.md` | §4 `route.ReferenceManager` |
 | `TrimIdleResources` / `CloseIdleConnections` / `RetireSuspect` | `modules/core-lifecycle-runtime.md` | §4 that trio |
