@@ -222,8 +222,9 @@ reading the platform from the file's own header and requiring the recorded commi
 * **Breaks if violated:** a release attaches bytes nothing built or verified.
 * **Honest scope:** it covers what the plan step selects, requires 4–5 manual dispatches first, and
   **`client-apple.yml` is not in the acceptance required set** — so acceptance is structurally
-  incapable of noticing Apple-pin drift. **No workflow-run record exists in the tree**, so this is
-  `VERIFIED_SOURCE`, never `VERIFIED_CI`.
+  incapable of noticing Apple-pin drift. This particular release-path statement is
+  `VERIFIED_SOURCE`; independently linked CI runs in `ci-release.md` apply only to their own SHA
+  and do not by themselves verify a release artifact.
 * **Proof:** `release.yml:144-204`; `scripts/ci/release-artifacts.sh`;
   `scripts/ci/verify-release-acceptance.sh:99-102`, `:151`.
 * **Re-check:** read the workflow; a real run needs `gh` + network.

@@ -32,6 +32,8 @@ test the Cronet native client.
 With `DEFAULT_BUILD_TAGS_OTHERS`, the root tests `TestADNSTransportDetourMustCarryTheQuery` and
 `TestAnHTTPClientDetourMustCarryTheConfiguredTransports` passed at the newer branch state. Mieru
 failure-classification and rollback tests also passed locally; they do not establish interop.
+The unfiltered `go test ./transport/v2rayxhttp -count=1` also passed locally at the newer branch
+state, including the packet-up tests available without extra build tags.
 
 `go test -tags with_quic ./transport/masque -run 'TestWriteBatchChunksABurstAboveTheQueueCapacity|TestWriteBatchFallsBackOnlyForTheRefusedTail' -count=1 -v`
 passed both named tests. An untagged run selects neither test, so the untagged package result above

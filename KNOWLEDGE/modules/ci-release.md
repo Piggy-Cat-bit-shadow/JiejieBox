@@ -553,15 +553,16 @@ DEFAULT_BUILD_TAGS_OTHERS … the same list with with_naive_outbound removed
 
 ## 7. AI cautions
 
-1. **Do not claim anything is `VERIFIED_CI`.** No workflow-run record, run ID or artifact digest exists
-   in the repository. Every CI statement is a statement about a **declaration**.
+1. **Do not turn a declaration into `VERIFIED_CI`.** Cite the exact run, SHA and observed outcome;
+   the later runs linked above are scoped evidence, not proof of every workflow or artifact.
 2. **Do not cite `verify-evidence/` for the production baseline.** Its own README disqualifies it.
 3. **Do not infer that the root `box_*_test.go` suite ran from compile-only CI or from a different
    filtered root test.** Check the current command and its run record.
 4. **Do not use `DEFAULT_BUILD_TAGS` to run the root package outside Apple.** Use
    `DEFAULT_BUILD_TAGS_OTHERS`.
-5. **Do not run `protocol/masque` or the root package untagged and treat the failures as regressions.**
-   They are tag-absence.
+5. **Do not infer feature coverage from an untagged run.** Some MASQUE tests require `with_quic`;
+   root package checks use the appropriate profile. Diagnose actual failures rather than assuming
+   either a regression or a tag problem.
 6. **Do not treat a `SKIP` as a pass.** The fork's skip wording ("NOT a pass") is deliberate.
 7. **Do not treat one platform's PASS as all-platform PASS.**
 8. **Do not describe the Apple ABI situation as "a broken gate".** See §5.

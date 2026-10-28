@@ -284,8 +284,10 @@ The same script's history is worth knowing: `check-go-module-integrity.sh:60-66`
 construction"*. **There are three Go modules in this repository** — the root, `test/`, and
 `test/jiejie/reference/` — and `go test ./...` from the root covers only the first.
 
-`sing-anytls`, `tailscale`, `sing-cloudflared` and `sing-tun` resolve to **upstream's own pins**, not
-fork pins. `gVisor` remains in `go.mod` as `// indirect` at the release baseline, and
+At the current testing target, `sing-anytls`, `tailscale` and `sing-cloudflared` have no fork
+replacement in `go.mod`, while `sing-tun` **does** resolve through the fork replacement. Always
+inspect the actual `replace` directives, rather than inferring from the `require` block. `gVisor`
+remains in `go.mod` as `// indirect` at the historical release baseline, and
 `protocol/tun/inbound.go`, `cmd/internal/build_libbox` and `route/dns.go` still reference it under build
 tags.
 

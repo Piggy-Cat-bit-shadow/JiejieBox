@@ -626,6 +626,11 @@ response has been fully drained, so with a queue that never empties the cadence 
 one POST per max(round trip, sc_min_posts_interval_ms)
 ```
 
+At `011f3fdcd99`, `packetUplink.sendPacket` reports a read or close error from
+`drainPacketUpResponse`; an HTTP 200 whose body stalls or fails is not counted as successful data
+flow and must not clear the connection's failure streak. The POST has its own bounded context.
+See `transport/v2rayxhttp/conn.go`; this source contract does not establish a live-peer result.
+
 Post size is unaffected by latency: gathering still fills every POST to `sc_max_each_post_bytes` at
 every round trip measured (1,000,000 bytes from 0 to 200 ms).
 
