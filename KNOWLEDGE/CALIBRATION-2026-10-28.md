@@ -42,6 +42,10 @@ This is an operational ledger, not a replacement for the modules or a new produc
   Metadata flush failure is now returned, superseding that particular historical oracle finding.
   Scope panic behavior and Box start/close stage anchors were checked against source. Focused
   Windows Go 1.26.10 unit results are recorded in `ACCEPTANCE.md`.
+- The current pinned Cronet fork has Linux and Windows platform files; the Windows files require
+  `with_purego`. Corrected obsolete Apple-only build claims and the contradictory uTLS profile
+  description. AnyTLS server-only IPv4 preference and per-call error naming were traced through
+  their dialer and outbound source; they do not prove peer interoperability or throughput.
 
 ### Module review status
 

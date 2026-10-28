@@ -1,5 +1,20 @@
 # Path selection and start-time validation
 
+## AnyTLS server resolution and failure attribution after v0.1.9
+
+At `011f3fdcd99`, `protocol/anytls/outbound.go` asks its dialer to prefer IPv4 for the proxy
+server name when the resolver strategy is otherwise `AsIS`. Explicit resolver or legacy strategy
+still takes precedence; the preference is applied only where `NewWithOptions` constructs a local
+resolve dialer, not universally to detoured lookups or target destinations. It is a preference,
+not proof that IPv4 is the only possible path or that throughput improves on every network.
+
+For TCP and UoT `DialContext`, an AnyTLS client error is wrapped with the outbound tag and server
+while retaining its cause; this identifies a proxy reporting a remote resolution error without
+fixing that resolver. `ListenPacket` directly returns its UoT client's result and does not pass it
+through this naming wrapper. See `common/dialer/server_preference_test.go` and
+`protocol/anytls/proxy_failure_naming_test.go`. Both packages passed their unfiltered local tests
+in this refresh; this is not live proxy interoperability or performance evidence.
+
 ## Mieru transport failure boundaries after v0.1.9
 
 **VERIFIED_SOURCE** at `011f3fdcd99`: `protocol/mieru/fallback.go` classifies caller cancellation,

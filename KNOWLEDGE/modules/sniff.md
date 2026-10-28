@@ -46,9 +46,10 @@ QUIC, or the sniff→routing metadata contract.
 | packet | `DTLSRecord` | — | `dtls.go` |
 | packet | `NTP` | — | `ntp.go` |
 
-Plan order is **not** a priority list: a parser that claims the payload ends the attempt
-(`sniff.go:45-52`, `:68-77`). Order matters in exactly one place — WireGuard precedes UTP because UTP
-is the weakest check and was stealing WireGuard handshakes (`sniff.go:59-67`, commit `912778dd6`).
+Plans try parsers in order and a parser that claims the payload ends the attempt; changing the order
+can therefore change attribution when recognizers overlap. One documented case is WireGuard before
+UTP: the weaker UTP check was stealing WireGuard handshakes (`sniff.go`, commit `912778dd6`). This
+example does not prove that no other pair can ever overlap.
 
 `sniff.Skip(metadata)` short-circuits SMTP 25/465/587, IMAP 143/993, POP3 110/995 (`sniff.go:23-37`).
 

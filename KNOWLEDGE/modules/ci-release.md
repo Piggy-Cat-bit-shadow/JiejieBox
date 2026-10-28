@@ -526,15 +526,16 @@ audit host, so running `apple-client-source.sh` end to end is `BLOCKED_BY_ENVIRO
 
 | Profile | Contents |
 |---|---|
-| `DEFAULT_BUILD_TAGS` | the **Darwin** profile. Includes `with_naive_outbound`. **Cannot build on Windows.** |
+| `DEFAULT_BUILD_TAGS` | the **Darwin** profile. Includes `with_naive_outbound`; current Windows Cronet files additionally require `with_purego`. |
 | `DEFAULT_BUILD_TAGS_OTHERS` | the same **minus** `with_naive_outbound`. **This is the general/server set.** |
 | `DEFAULT_BUILD_TAGS_WINDOWS` | `DEFAULT_BUILD_TAGS` plus `with_purego` |
 
 `verify.yml:214-215` states in-tree that `DEFAULT_BUILD_TAGS` is *"deliberately NOT used here: it
 carries with_naive_outbound, and no Linux product links cronet."* The names are misleading and the
-repository knows it — **a reviewer who follows `KNOWLEDGE/reports/release/CORE_0.1.6_FINAL_CLOSURE_REPORT.md:18`'s stated tag
-source and runs the root package on Windows gets a setup failure and may wrongly conclude the root
-suite is broken.**
+repository knows it. The Windows setup failure documented in the historical
+`KNOWLEDGE/reports/release/CORE_0.1.6_FINAL_CLOSURE_REPORT.md` is evidence for that environment and
+revision, not a claim that current Cronet lacks all non-Apple targets. See `build-pruning-release.md`
+for the current pinned fork's platform tags and the scope of the Windows purego test.
 
 **The two profiles differ in exactly one entry.** Measured, verbatim:
 
@@ -558,8 +559,9 @@ DEFAULT_BUILD_TAGS_OTHERS … the same list with with_naive_outbound removed
 2. **Do not cite `verify-evidence/` for the production baseline.** Its own README disqualifies it.
 3. **Do not infer that the root `box_*_test.go` suite ran from compile-only CI or from a different
    filtered root test.** Check the current command and its run record.
-4. **Do not use `DEFAULT_BUILD_TAGS` to run the root package outside Apple.** Use
-   `DEFAULT_BUILD_TAGS_OTHERS`.
+4. **Select the platform's actual tag profile.** `DEFAULT_BUILD_TAGS_OTHERS` omits Naive;
+   `DEFAULT_BUILD_TAGS_WINDOWS` includes it and adds `with_purego`. Dependency and native-library
+   availability remain separate build/runtime prerequisites.
 5. **Do not infer feature coverage from an untagged run.** Some MASQUE tests require `with_quic`;
    root package checks use the appropriate profile. Diagnose actual failures rather than assuming
    either a regression or a tag problem.

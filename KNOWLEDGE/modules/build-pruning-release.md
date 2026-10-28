@@ -159,21 +159,23 @@ release/DEFAULT_BUILD_TAGS         the DARWIN profile
 release/DEFAULT_BUILD_TAGS_OTHERS  the same, MINUS with_naive_outbound
 release/DEFAULT_BUILD_TAGS_WINDOWS the same as DEFAULT, PLUS with_purego
 release/LDFLAGS                    -X runtime.godebugDefault=multipathtcp=0,tlssha1=1 -checklinkname=0
-release/JIEJIE_VERSION             0.1.6
+release/JIEJIE_VERSION             0.1.31 at cb71cf80d72; re-read for another target
 ```
 
 Common contents: `with_quic, with_dhcp, with_wireguard, with_utls, with_acme, with_clash_api,
 with_tailscale, with_ccm, with_ocm, with_cloudflared, with_usbip, with_openvpn, with_openconnect,
 with_xhttp, badlinkname`.
 
-> **The two shipped profiles differ in exactly one entry: `with_naive_outbound`.**
+> The Darwin and OTHERS tag files differ in `with_naive_outbound`; the separate Windows file adds
+> `with_purego` to the Darwin list.
 > `docs/BUILD-PROFILES.md:43-44` says the *client* profile "adds `with_utls`" — **that is false**;
 > `with_utls` is in both files.
 
-> **`DEFAULT_BUILD_TAGS` is the Darwin profile despite the name, and it cannot build on Windows** —
-> `with_naive_outbound` pulls `github.com/sagernet/cronet-go/all`, whose files are all excluded by
-> build constraints outside Apple. `verify.yml:214-215` says so in-tree. Use
-> `DEFAULT_BUILD_TAGS_OTHERS` for anything general, including running the root package's tests.
+> `DEFAULT_BUILD_TAGS` is the Darwin profile despite the name. At the current Cronet fork pin,
+> `cronet-go/all` also has Linux files and Windows files; its Windows amd64/arm64 files require
+> `with_purego`. The Windows profile explicitly adds that tag. Use the target's actual profile and
+> toolchain; OTHERS omits the Naive outbound. Locally substituted exact-pinned Cronet source passed
+> Naive purego unit tests on Windows, which does not prove native library loading or a release build.
 
 ### A stale comment that claims a shipped capability was deleted
 
@@ -201,12 +203,13 @@ Both tag files' contents are **upstream's**, not fork-invented; the fork's addit
 
 ### The capability boundary is upstream's
 
-**Both products carry the complete upstream registry** — no fork-specific registry and no capability
-allowlist. The practical difference between the two profiles is upstream's own tag difference:
+The current tree uses the common `include` registry rather than a separate product-specific
+allowlist. Registered capabilities still depend on build tags, platform constraints and the
+actual upstream changes incorporated into this fork. The practical Darwin/OTHERS tag difference is:
 
 * the **server** profile omits `with_naive_outbound` because the Cronet outbound is a client
   capability. **The Naive inbound is present in both** — the production configuration declares one.
-* the **client** profile adds `with_naive_outbound` and `with_utls`. It does **not** add `with_gvisor`:
+* the **client** profile adds `with_naive_outbound`; `with_utls` is in both. It does **not** add `with_gvisor`:
   upstream retired that tag when it moved to the in-process Go TUN stack.
   `scripts/ci/build-macos-client.sh` asserts this **in both directions** — required tags present,
   retired tags not reappearing.
@@ -215,13 +218,13 @@ allowlist. The practical difference between the two profiles is upstream's own t
 management surfaces over **one** instance: they share the traffic manager and the routing-mode manager,
 so a mode set through the Native API's `SetClashMode` is the mode the Clash API reports.
 
-### The registry is upstream's, so inheritance is automatic
+### Registry changes and upstream synchronization
 
-A protocol, endpoint, DNS transport, service or certificate provider that upstream adds is inherited
-without a fork-side list to update and without a CI step to be told about it. `verify-full-capabilities.sh`
-resolves a minimal valid configuration for every major protocol, DNS transport, endpoint and service
-**through the shipped binary's own registry** — replacing an earlier capability audit whose contract was
-the opposite one (proving capabilities were *absent*).
+An upstream addition becomes available here only after the relevant upstream changes are incorporated
+and the selected target profile builds and registers it. No separate product allowlist implies no
+automatic synchronization or universal artifact coverage. `verify-full-capabilities.sh` exercises
+its own named configuration cases through a built binary; inspect the script and exact run for the
+actual coverage before claiming a particular artifact supports a capability.
 
 ### A trap in the version string
 
@@ -356,7 +359,7 @@ idea from an older document.
 2. **Do not remove the registry tombstones.** They carry a specific deprecation message.
 3. **Do not make a stub leave a capability nil where "absent" and "broken" must differ.**
 4. **Do not put `tfogo_checklinkname0` back into the profile tag files.** It broke bare `go build`.
-5. **Do not build or test with `DEFAULT_BUILD_TAGS` outside Apple.**
+5. **Do not assume the Darwin tag file selects the correct profile for another platform.**
 6. **Do not assume `DEFAULT_BUILD_TAGS` is the general default** despite its name.
 7. **Do not add `with_gvisor`.** It is retired and the build script asserts its absence.
 8. **Do not pin one `cronet-go` module path and call it pinned.** It is a prefix tree.

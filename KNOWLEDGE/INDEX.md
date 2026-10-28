@@ -4,7 +4,8 @@
 second knowledge base. Entries are pointers; the truth lives in the module.
 
 > **Never bulk-read `KNOWLEDGE/`.** Route here first, then open the one or two sections the task
-> needs. Every anchor below was verified to exist at the knowledge revision.
+> needs. Section names are navigation aids; historical line numbers and claims still require
+> verification at the target revision. See the calibration ledger for the current review scope.
 
 ## Entry points, by load level
 
@@ -33,8 +34,8 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | 速度慢 / 吞吐上不去 / 判断瓶颈在哪一层 | `PERFORMANCE-FACTORS.md` | §1 三条第一原理 → §4 症状路由 → §5 测量方法 |
 | XHTTP 上传慢 / 下载慢 / xmux 与连接数 | `PERFORMANCE-FACTORS.md` | §2 客户端参数（`xmux`）→ §3 服务端参数（h2 请求体缓冲） |
 | `Scope` teardown, `scope.Add` cleanup | `modules/core-lifecycle-runtime.md` | §1 `adapter.Scope` — the ownership primitive |
-| Box start order | `modules/core-lifecycle-runtime.md` | §2 → Start (`box.go:1024-1217`; `PreStart` 1024, `Start` 1034, `preStart` 1069, `start` 1139) |
-| Box close order, teardown | `modules/core-lifecycle-runtime.md` | §2 → Close (`box.go:1219-1253`; `Close` 1219, `close` 1233) |
+| Box start order | `modules/core-lifecycle-runtime.md` | §2 → Start; locate `PreStart`, `Start`, `preStart` and `start` in `box.go` |
+| Box close order, teardown | `modules/core-lifecycle-runtime.md` | §2 → Close; locate `Close` and `close` in `box.go` |
 | network generation, rebuild lease, `runtimecoord` | `modules/core-lifecycle-runtime.md` | §3 one generation, identity-based leases |
 | `TrimMemory` vs `ReleaseMemory` | `modules/core-lifecycle-runtime.md` | §3 `TrimMemory` and `ReleaseMemory` are different |
 | idle retirement inventory, `route/reference.go` | `modules/core-lifecycle-runtime.md` | §4 `route.ReferenceManager` |
@@ -55,6 +56,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | Naive H3 to H2 retry | `modules/naive-http-transport.md` | post-baseline fallback |
 | VLESS encryption layer and cancellation | `modules/xhttp-client-transport.md` | VLESS encryption boundary |
 | Mieru fallback failure classification and lifecycle | `modules/path-selection-validation.md` | Mieru transport failure boundaries |
+| AnyTLS server address preference and error attribution | `modules/path-selection-validation.md` | AnyTLS server resolution and failure attribution |
 | ShadowTLS pre-auth timeout and handshake-target cleanup | `modules/core-lifecycle-runtime.md` | protocol ownership |
 | TLS engine selection, ECH retry and fork pins | `modules/build-pruning-release.md` | TLS engines and ECH retry |
 | FakeIP known domain and fragmented QUIC sniff | `modules/sniff.md` | post-baseline FakeIP section |
