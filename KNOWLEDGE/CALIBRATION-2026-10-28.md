@@ -140,6 +140,10 @@ This is an operational ledger, not a replacement for the modules or a new produc
   and SSH banner truncation tests passed locally with Go 1.26.10. Historical pacing measurements do
   not establish a host-independent throughput ceiling. The module registry now distinguishes the
   standalone release-acceptance checker from the actual release path.
+- Bridge L3 forwarding and optional OpenVPN/OpenConnect endpoint and DNS registration now have a
+  navigation entry. Focused bridge index-ownership and endpoint resolver-retirement tests passed on
+  Windows with Go 1.26.10; this is not a live bridge or VPN test. The MTU text now limits its
+  unknown-path claim to the MASQUE calculation; bridge backends do read interface MTUs.
 
 ### Module review status
 

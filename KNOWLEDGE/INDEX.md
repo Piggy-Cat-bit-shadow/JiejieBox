@@ -59,6 +59,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | AnyTLS server address preference and error attribution | `modules/path-selection-validation.md` | AnyTLS server resolution and failure attribution |
 | ShadowTLS pre-auth timeout and handshake-target cleanup | `modules/core-lifecycle-runtime.md` | protocol ownership |
 | TLS engine selection, ECH retry and fork pins | `modules/build-pruning-release.md` | TLS engines and ECH retry |
+| Bridge L3 outbound, OpenVPN/OpenConnect registration and build tags | `modules/build-pruning-release.md` | protocol registration and build gates |
 | FakeIP known domain and fragmented QUIC sniff | `modules/sniff.md` | post-baseline FakeIP section |
 | DNS router, generations, cache commit | `modules/dns-demand.md` | §2 the cache-commit invariant |
 | FakeIP | `modules/dns-demand.md` | §3 |

@@ -32,7 +32,7 @@ low-memory profile, or a PTB handling path.
 ## 1. Three MTU quantities, not one
 
 ```text
-outer link MTU          what the platform path carries        ← NOT KNOWN anywhere in this codebase
+outer link MTU          what the platform path carries        ← not proven by the MASQUE path model
         │
 outer QUIC packet size  what the tunnel's own QUIC layer may put on that path
         │
@@ -46,7 +46,7 @@ correct answer for another. Conflating them is the failure mode this section exi
 |---|---|---|---|---|
 | 3 | **inner tunnel MTU** | `protocol/masque/client.go:617-619` (`c.mtu`), seeded `:119-121` | `DefaultMTU = 1280` (`transport/masque/session.go:18`); device `protocol/masque/endpoint.go:83` | **1280** — and it is **configured, not measured** (`client.go:612-616`) |
 | 2 | **outer QUIC initial packet setting** | `client.go` → `min(mtu + 51, MaxUint16)`; server mirror `protocol/masque/server.go` | detour capacity clamps the initial setting; values below 1200 are refused. This is not a hard ceiling for all later packets | **1331** before a lower detour cap |
-| 1 | **outer link MTU** | **nowhere** | **nowhere** | **NOT KNOWN** |
+| 1 | **outer link MTU** | not established by this MASQUE calculation | not established by this calculation | **NOT KNOWN** for the path from these inputs |
 
 **The 51 is itemised, not magic:** `QUICPacketOverhead = 51` (`session.go:19`) = 1 context ID + 8
 quarter-stream-ID varint + 16 AEAD + 1 header + 1 packet number + 24 frame, itemised at
@@ -55,11 +55,12 @@ quarter-stream-ID varint + 16 AEAD + 1 header + 1 packet number + 24 frame, item
 **Asserted inequalities, not comments:** outer > inner (`outer_quic_mtu_test.go:73-77`, `:172-176`),
 and `1280 + 51 − 1232 = 99` exactly (`:181-185`).
 
-**Why the outer link MTU is genuinely unknown, not merely unrecorded:** `client.go:146-147` says so,
+**Why this MASQUE calculation does not establish the outer link MTU:** `client.go:146-147` says so,
 `PathCapacity` has **no link-MTU field at all** (`path_mtu.go:127-155`), and the ceiling that *is*
 carried is a **UDP-payload** number (`path_mtu.go:111-120` = inner − 20/40 − 8 − encapsulation), which
 is one level *below* a link MTU. `outer_quic_mtu_test.go:222-237` pins that the option surface has no
-third knob.
+third knob. Other components can read interface MTU, for example `protocol/bridge/backend_linux.go`;
+an interface MTU is not by itself proof of the end-to-end MASQUE path MTU.
 
 **The ceiling comes from the path model, not from a constant.** `feat(mtu): cap the MASQUE outer QUIC
 packet by a proven detour capacity` (`2118ee40`) is exactly two files: `client.go` +51 lines and

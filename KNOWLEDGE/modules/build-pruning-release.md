@@ -11,6 +11,16 @@ MASQUE is an endpoint. `include/quic.go` registers Hysteria, TUIC and Hysteria2 
 the current profile and stub files for a particular target: a registration or option type alone is
 not proof a distributed binary contains the implementation, nor proof of interoperability.
 
+The outbound registry also includes `bridge`: it implements L3 flow forwarding through a
+platform backend, not ordinary `DialContext` or `ListenPacket` (both return an error). Its
+pre-match rejects local destinations; the platform backends and unsupported-platform stub are in
+`protocol/bridge`. Linux's backend reads the egress interface MTU, which is not proof of a whole
+path MTU. The OpenVPN client/server and OpenConnect endpoints and their DNS transports are
+registered via `with_openvpn` and `with_openconnect` respectively; opposite-tag stubs return an
+actionable build error. Their presence in the registry does not prove a particular profile includes
+them. Endpoint-owned DNS resolver retirement is discussed in `core-lifecycle-runtime.md`. These
+are source boundaries, not live VPN or bridge interoperability evidence.
+
 ### TLS engines and ECH retry
 
 `common/tls/client.go` selects Apple or Windows engines when configured, otherwise Go's engine,
