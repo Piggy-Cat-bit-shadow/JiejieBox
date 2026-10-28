@@ -93,6 +93,11 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - The tracked schema comparison passed locally with Go 1.26.10 and `DEFAULT_BUILD_TAGS_OTHERS`.
   The current Verify race declaration also includes `protocol/mieru`; the historical command list
   and package count were corrected or marked as revision-scoped.
+- The UoT per-datagram guard caches by destination and forwards the original domain after checking
+  resolved addresses. Its check alone does not pin the forwarded address; the session-level
+  resolve/check/dial guarantee cannot be extended to this path without downstream evidence.
+  Focused memo/key/no-match tests passed locally; the memo-growth test inserts keys directly and
+  does not measure an end-to-end attack. The acceptance rows were narrowed accordingly.
 
 ### Module review status
 

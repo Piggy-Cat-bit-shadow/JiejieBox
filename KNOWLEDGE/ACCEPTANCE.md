@@ -21,6 +21,8 @@ Android and Apple gitlinks match the script's expected revisions. It did not run
 client call-site sweep, and its output reported the gomobile pin as unknown.
 `TestTrackedSchemaMatchesTheGenerator` passed locally with Go 1.26.10 and
 `DEFAULT_BUILD_TAGS_OTHERS`; it compares the tracked schema with the generator for this tree.
+Three `./route` packet-destination-guard tests for memo growth, key normalization and no-match
+behavior passed under Go 1.26.10. The growth test inserts keys directly and is not an attack test.
 
 Post-baseline checks run locally at target `011f3fdcd99` on 2026-10-28 (unit tests, not device or CI evidence):
 
@@ -206,8 +208,8 @@ making either claim.
 |---|---|---|---|---|---|
 | 6.1 | Write contract: no short write is silently truncated; the frame counter advances only after a whole frame | `audit_write_contract_test.go` | VERIFIED_UNIT | `go test -count=1 -tags "$OTHERS" ./protocol/naive/...` | Go + tags |
 | 6.2 | Padding is negotiated, first-8-frames, 0..255 never clamped | `padding_test.go`, `padding_segmentation_test.go`, `padding_zero_frame_test.go`, `fuzz_padding_test.go` | VERIFIED_UNIT | same | Go + tags |
-| 6.3 | The target ACL is enforced, and DNS rebinding cannot bypass it | `TestJiejieTargetACLRebindingCannotBypass` | VERIFIED_UNIT | `cd test; go test -count=1 -run TestJiejieTargetACL ./jiejie/` | Go + network |
-| 6.4 | The per-datagram UoT guard checks **every** destination and permits when no rule matches | five named guard tests | VERIFIED_UNIT | same | Go |
+| 6.3 | Session target ACL rebinding example | `TestJiejieTargetACLRebindingCannotBypass` | historical test evidence for its case, not proof for every outbound or per-datagram path | `cd test; go test -count=1 -run TestJiejieTargetACL ./jiejie/` | separate test module + network |
+| 6.4 | UoT destination guard checks new destination keys and permits when no rule matches | `route/packet_destination_guard.go` and guard tests | VERIFIED_SOURCE + selected local unit tests; decisions are cached and domain addresses are not pinned by the guard | `go test ./route -run TestPacketDestinationGuard -count=1` | Go |
 | 6.5 | The guard does not break server-internal backends | `TestJiejieTargetACLDoesNotBreakMasqueradeBackend` | VERIFIED_UNIT | same | Go |
 | 6.6 | Interop with the official NaiveProxy client and Caddy | interop suites exist in `test/` | **UNVERIFIED here** — push CI deliberately does not run that module, and `run-jiejie-suite.sh` has no referrer | `bash scripts/ci/run-jiejie-suite.sh` (~20 min) | bash + reference binary |
 | 6.7 | Real-network STUN, independent IPv6 UDP origin, Caddy performance comparison | recorded as not done | **UNVERIFIED** | — | network |

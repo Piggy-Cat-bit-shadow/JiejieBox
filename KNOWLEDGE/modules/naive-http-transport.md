@@ -218,11 +218,11 @@ The client chooses the proxy destination, so the destination must be constrained
 record: resolve the target, then check the resolved address, then dial exactly that address.**
 
 **Resolution must happen before the address check.** `actionResolve` writes its results into
-`metadata.DestinationAddresses`, and the connection manager then dials each address in that list via
-`DialContext` with an **already-resolved IP**, not the original domain. The outbound therefore does not
-re-resolve, so **the address that was checked is the address that is dialed**. Without a `resolve`
-action a domain target is reachable despite an IP-based deny rule — **which is why `resolve` is
-required rather than optional.**
+`metadata.DestinationAddresses`, and the connection manager passes those candidates to
+`DialSerialNetwork`; its non-parallel fallback dials an already-resolved IP. A parallel-capable
+outbound receives the original destination and the candidate list, so verify that implementation's
+contract and any recovery path before claiming universal address pinning. Without a `resolve` action
+a domain target can avoid an IP-based deny rule; the intended session-level policy requires it.
 
 A DNS-rebinding test confirms this is not theoretical: a domain that first resolves to an allowed
 address and then to loopback is rejected on the second resolution, with the query count proving a
@@ -232,12 +232,13 @@ genuine second lookup occurred (`TestJiejieTargetACLRebindingCannotBypass`).
 
 For non-Connect UoT sessions **each datagram carries its own destination**, so a session that passed
 the session-level check could otherwise send later datagrams somewhere else entirely.
-`route/packet_destination_guard.go` re-applies the same routing rules to **every** destination decoded
-from a datagram and drops rejected ones.
+`route/packet_destination_guard.go` checks destinations decoded from datagrams and drops rejected
+ones. Exact session destinations reuse the session decision; other destinations are memoized for
+the guard's lifetime, so rules and DNS are not re-evaluated on every subsequent packet to that key.
 
 | Property | Value |
 |---|---|
-| Enabled for | **only** non-Connect UoT sessions (`metadata.UoTDatagramDestinations`); other protocols' UDP data paths are unaffected |
+| Enabled for | flows marked `metadata.UoTDatagramDestinations`, used for non-Connect UoT sessions; the marker, not an inbound protocol name, controls the guard |
 | Intercepts on | the **read** side — the write side has a batch fast path that cannot be guaranteed to see every packet, so the read side is the only position that cannot be bypassed |
 | Cost | decisions are memoized per destination, so an allowed datagram costs a map lookup after the first |
 | Normalisation | IPv4-mapped IPv6 is normalised to IPv4 first, so `::ffff:127.0.0.1` cannot smuggle a restricted destination past the rule |
@@ -248,6 +249,17 @@ from a datagram and drops rejected ones.
 would select a different outbound based on the per-datagram destination does not take effect, and the
 datagram still uses the outbound chosen when the session was established.
 `TestPacketDestinationGuardOutboundSelectionPrecondition` fails if anyone adds such a rule.
+
+For a domain carried by a datagram, `checkPacketDestination` resolves addresses for its rule decision,
+but `ReadPacket` returns the original destination and the guard caches the decision by domain and port.
+It does not itself pin a resolved address into the forwarded datagram. Therefore the session-level
+resolve/check/dial guarantee above must not be generalized to this per-datagram path: downstream
+resolution and DNS changes require separate analysis before claiming rebinding resistance.
+
+Both the allowed and rejected memo maps retain distinct destination keys for the life of the
+session without an eviction bound (`packet_destination_guard.go`). A peer supplying many different
+destinations can therefore grow retained state. `TestPacketDestinationGuardMemoGrowsWithDistinctDestinations`
+illustrates the map growth by inserting keys directly; it is not an end-to-end attack measurement.
 
 **Rule order is the security property:** resolve → exception → reject (`d4ead1498` → `7029722bf` →
 `1dc734f75`/`3bbf17907`/`d1f3798a6`).
@@ -362,7 +374,7 @@ advertisement), and `trackedConn`'s activity tracking.
 |---|---|---|
 | Padding/write contract, short writes, frame counter | `VERIFIED_UNIT` | `protocol/naive/audit_write_contract_test.go`, `padding_test.go`, `padding_segmentation_test.go`, `padding_zero_frame_test.go`, `audit_padding_test.go`, `fuzz_padding_test.go` |
 | UoT v1/v2 transport matrix | `VERIFIED_UNIT` | `test/jiejie/jiejie_naive_uot_transport_matrix_test.go` (separate module) |
-| Target ACL + DNS rebinding | `VERIFIED_UNIT` | `TestJiejieTargetACLRebindingCannotBypass` |
+| Target ACL rebinding example | historical test evidence for `TestJiejieTargetACLRebindingCannotBypass`; not a universal or per-datagram guarantee | separate `test/jiejie` module |
 | Per-datagram UoT guard | `VERIFIED_UNIT` | `TestJiejieTargetACLUoTV1MultiTargetChecksEachDatagram`, `TestJiejieTargetACLUoTV2NonConnectMultiTarget`, `TestPacketDestinationGuardPermitsWhenNoRuleMatches`, `TestPacketDestinationGuardExposesNoBypassReadPath`, `TestPacketDestinationGuardOutboundSelectionPrecondition` |
 | The guard does not break server-internal backends | `VERIFIED_UNIT` | `TestJiejieTargetACLDoesNotBreakMasqueradeBackend` |
 | HTTP/2 resource bounds, H3 availability decision | `VERIFIED_UNIT` (needs `with_quic`) | `protocol/naive`, `option/http_resource_bounds_test.go` |
