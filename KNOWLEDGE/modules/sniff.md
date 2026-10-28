@@ -101,8 +101,9 @@ coalesced tail.
    whole packet plan on every continuation datagram.
 4. Each round reads a fresh 16 KiB `buf.NewPacket()` in a goroutine with its own deadline
    (`:1316-1357`).
-5. **Bound: `maxSniffRounds = 64`** (`:1211-1217`, enforced `:1340-1346`). On hitting the cap the
-   just-taken buffer is **released** (`:1343`) and the flow is treated as unsniffable.
+5. **Bound: `maxSniffRounds = 64`** (`route/route.go`, `actionSniff`). This bounds newly read
+   continuation rounds, not the preceding replay of `inputPacketBuffers`. On hitting the cap the
+   just-taken buffer is **released** and the flow is treated as unsniffable.
 6. Other exits: per-round deadline (`:1349-1355`), context cancel (`:1358-1364`), a non-timeout read
    error (`:1365-1370`), any non-need-more verdict (`:1394-1400`).
 
@@ -116,9 +117,10 @@ bytes allocated for 1,083,915 bytes of input.
 
 ### What "unsniffable" means
 
-Sniffing is **optional and fallible**. Only "need more data" is a retry; every other failure is
-recorded as `metadata.SniffError` and is **not fatal** (`route/route.go:1251-1252`, `:1307-1308`,
-`:1392-1393`). `sniff.go:205-208` states that nothing routes on `SniffError`.
+Sniffing is **optional and fallible**. A parser's non-need-more verdict is recorded as
+`metadata.SniffError` rather than itself aborting the flow. The packet reader has separate fatal
+paths: context cancellation and non-timeout read errors return `fatalErr` from `actionSniff`.
+Do not generalize a parser failure's handling to all I/O failures (`route/route.go`, `actionSniff`).
 
 ---
 
@@ -180,6 +182,14 @@ is exactly why the memory-amplification fix needed a different test than behavio
   one-directional and testable: **`GateRejects ⇒ ParserRejects`**, and the gate must never reject
   where the parser would ask for more — verified over >500 prefixes (`http.go:118-133`, `:152-155`).
   `httpReplayReader` (`:62-83`) replays what the gate consumed.
+  The gate's soundness does not imply recognition across every read boundary: the tests document
+  request-line cuts where the underlying parser reports a malformed version and the sniff attempt
+  stops before the next read. Some header cuts also fail. See
+  `TestPeekStreamReadBoundaryInsideTheRequestLine` and
+  `TestStreamSniffingAcrossReadsMatchesPreOptimizationBaseline`.
+* **SSH** — `ssh.go` ignores `bufio.ReadLine`'s `isPrefix`; an unfinished banner may therefore be
+  classified as SSH with a truncated client string. The fragmentation baseline test documents this
+  limitation; do not treat the recorded `Client` as necessarily complete.
 * **QUIC** — cryptographic: the ClientHello must **authenticate** (`quic.go:159-229`).
   **Known unfixed false positive:** `frames.count == 1 ⇒ ClientFirefox` (`quic.go:368-371`), so a
   three-fragment Chrome ClientHello is reported as Firefox. `quic_ownership_test.go:271-280` logs it
@@ -209,7 +219,7 @@ is exactly why the memory-amplification fix needed a different test than behavio
 Measured in this audit: `go test ./common/sniff/... -count=1 -v` → **PASS, ok 6.557s, exit 0**;
 `-count=2` → ok 8.848s; `go vet` clean. The documented flake was **not reproduced** in a single run.
 
-Benchmarks re-measured: `PeekPacketQUIC` 7,339 B/op / 73 allocs; `PeekStreamTLSFragmented`
+Historical audit benchmarks (not re-measured by the 2026-10-28 calibration): `PeekPacketQUIC` 7,339 B/op / 73 allocs; `PeekStreamTLSFragmented`
 70,754 B/op / 212 allocs; the HTTP gate vs ungated DNS-over-stream is 205 B/3 allocs vs 4,889 B/9.
 
 ---

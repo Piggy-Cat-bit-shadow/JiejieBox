@@ -360,7 +360,7 @@ Five real defects were found in the wrapper/capability layer and fixed with red-
 | `route/packet_destination_guard.go` | write side unpinned | one added method batches straight to the raw socket, skipping the check |
 | `transport/http/stream_error.go` | `WriteBuffer`/`ReadBuffer` returned `nil` for a non-`ExtendedConn` | **success reported for a buffer never written** |
 | `transport/v2rayhttp/conn.go` | `ReaderReplaceable` true while `responseCache` held bytes | **silent truncation of the response head** |
-| `transport/trojan/protocol.go` | a load-bearing invariant in a package with **no tests** | an inverted flag sends the payload with no handshake |
+| `transport/trojan/protocol.go` | a load-bearing handshake invariant; the package has `protocol_replaceable_test.go`, but its existence alone does not establish coverage of every flag | an inverted flag can send the payload with no handshake |
 
 Three audit leads were **disproved rather than fixed**: `v2raygrpc`'s `syscall.Conn` (byte-identical to
 `grpc@v1.79.1`), `normalizingConn`'s advertised capabilities (the silent `nil` was the defect, not the

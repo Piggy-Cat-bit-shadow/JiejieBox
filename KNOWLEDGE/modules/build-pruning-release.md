@@ -59,7 +59,10 @@ installs six registries, each an explicit sequence of `Register*` calls:
 | Service | `ServiceRegistry()` `:150` | `:153-162` |
 | Certificate provider | `CertificateProviderRegistry()` `:167` | — |
 
-**Consequence for a future AI:** registering a protocol is **not** a one-file change. `docs/BUILD-PROFILES.md:50-52` claims *"no fork-side list to update, and no CI step that has to be told about it"* — **the inheritance is automatic, the coverage is not.** Nine places must be updated:
+**Consequence for a future AI:** registering a protocol can require changes beyond the registry.
+`docs/BUILD-PROFILES.md:50-52` describes inheritance, but independent coverage lists and profile
+tests may need changes. Review the following places for applicability; they are not nine mandatory
+edits for every protocol (for example, a new source root or tag is conditional):
 
 | # | Where | What |
 |---|---|---|

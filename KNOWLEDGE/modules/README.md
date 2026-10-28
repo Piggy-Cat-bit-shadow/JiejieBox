@@ -44,8 +44,9 @@ The whole fork in one paragraph — then read the module for the part you need.
 > (`transport/masque`) plus an inner/bootstrap resolver split; a **Native Naive** inbound with UoT,
 > padding, masquerade and pre-authentication limits; a rewritten **HTTP/2+HTTP/3 transport**
 > (`transport/http`); and **product plumbing** for Apple (one pinned client source, brand-vs-identity
-> split), Android (AAR/ABI) and Windows (core-only artifact), with a fail-closed release-acceptance
-> gate that re-verifies bytes rather than rebuilding them.
+> split), Android (AAR/ABI) and Windows (core-only artifact). The separate strict release-acceptance
+> checker re-verifies evidence and bytes, but is not invoked by the release path; see `ci-release.md`
+> for the actual release-path gates and their limits.
 
 ## Fork-created packages — the code that did not exist below the fork point
 

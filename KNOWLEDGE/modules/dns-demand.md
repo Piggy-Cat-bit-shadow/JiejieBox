@@ -227,7 +227,7 @@ Every mechanism that keeps DNS from escaping the intended path, and what each do
 | **bootstrap vs in-tunnel** resolver separation (MASQUE) | resolving the server's own hostname through a tunnel that does not exist yet, or leaking in-tunnel names outward | `masque-connectip.md` §3 |
 | `action_resolve` writing `metadata.DestinationAddresses` | a domain target bypassing an IP-based deny rule — **this is why `resolve` is required, not optional** | `naive-http-transport.md` §3 |
 | the **packet destination guard** | a UoT non-Connect session sending a later datagram somewhere the session-level check never saw | `route/packet_destination_guard.go`; `naive-http-transport.md` §3 |
-| `ui`/`route` DNS hijack ordering | a DNS query leaving sing-box entirely instead of reaching the DNS router | `route/route.go` (`dnsHijackByPort`); fixed by `497d37727` |
+| TUN DNS hijack ordering | a configured DNS query being bypassed before the DNS path can handle it | `protocol/tun/inbound.go` (`dnsHijackByPort`, `judgeFlow`); see `libbox-platform-contract.md` |
 | FakeIP cannot be a destination resolver | a placeholder address being treated as a real answer | §3 above |
 | the environment generation on cache commits | a stale answer being recorded as current after a network change | §2 above |
 

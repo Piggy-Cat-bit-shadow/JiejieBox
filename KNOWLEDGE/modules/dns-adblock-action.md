@@ -481,8 +481,9 @@ configurable.
 | the action costs the same order of allocations as a local `predefined` answer | `BenchmarkAdblockResponseConstruction` vs `BenchmarkPredefinedResponseConstruction` (3 allocs / 136 B vs 1 / 144 B per answer) | `go test ./route/rule/ -run XXX -bench ResponseConstruction -benchtime 200000x` |
 | upstream-learned NXDOMAIN behaviour unchanged | pre-existing `dns/client_negative_test.go`, `dns/client_singleflight_test.go` | `go test ./dns/... -count=1` |
 
-No claim here is `VERIFIED_CI`: the tree carries no workflow-run record. The evidence level is
-`VERIFIED_SOURCE` + `VERIFIED_UNIT` (the commands above were run against this worktree and passed).
+The evidence table records source and historical local unit runs, not a specific CI run. The current
+workflow declarations and independently inspected run SHAs are recorded in `ci-release.md` and
+`ACCEPTANCE.md`; those records do not automatically establish each individual row above on HEAD.
 
 **One claim in this module is weaker than the rest, and it is named rather than implied.** The
 concurrent tests drive 128 simultaneous callers, but `go test -race` cannot run here (`-race requires
