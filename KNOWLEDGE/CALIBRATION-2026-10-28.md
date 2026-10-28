@@ -110,6 +110,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - Correction to an earlier calibration statement: Verify runs `TestNetLogEventCount` after `cd test`,
   in the separate test module. It is not a main-root-package test; the acceptance and CI entries have
   been corrected after checking the workflow's working directory and test definitions.
+- Offline module-integrity script passed under Go 1.26.10 for all three discovered modules; root/test
+  replacement parity included 36 entries and all 31 Cronet paths. This did not run `go mod verify`
+  or establish native archive/artifact provenance.
 
 ### Module review status
 

@@ -21,6 +21,9 @@ Android and Apple gitlinks match the script's expected revisions. It did not run
 client call-site sweep, and its output reported the gomobile pin as unknown.
 `TestTrackedSchemaMatchesTheGenerator` passed locally with Go 1.26.10 and
 `DEFAULT_BUILD_TAGS_OTHERS`; it compares the tracked schema with the generator for this tree.
+With Go 1.26.10, MSYS2 bash and `GOPROXY=off`, `check-go-module-integrity.sh --require-checked test`
+passed for all three discovered modules. It checked tidy/read-only module graphs and root/test fork
+replacement parity (including 31 Cronet paths); `--verify` and native artifact integrity were not run.
 Three `./route` packet-destination-guard tests for memo growth, key normalization and no-match
 behavior passed under Go 1.26.10. The growth test inserts keys directly and is not an attack test.
 The two named reusable-owner capability and real HTTP-manager retirement-walk tests also passed
@@ -292,7 +295,7 @@ attributing specific test coverage to that run or a later revision.
 | 12.5 | Main-root test coverage declared by Verify | untagged compile-only command runs zero tests; `TestNetLogEventCount` runs after `cd test`, in the separate module | VERIFIED_SOURCE of declaration; not evidence that the main-root suite ran | inspect `.github/workflows/verify.yml` and the exact run | — |
 | 12.6 | Tag composition and the `-checklinkname=0` contract | CI step `:168` | VERIFIED_UNIT | `go test -count=1 ./cmd/internal/...` | Go |
 | 12.7 | Pinned-upstream assumption tripwires | CI step `:179`; the script is wired | **UNVERIFIED (declaration only)** — needs bash | `bash scripts/ci/verify-upstream-assumptions.sh` | bash + network |
-| 12.8 | Nested modules resolve the same fork pins | CI step `:137` | **UNVERIFIED (declaration only)** | `bash scripts/ci/check-go-module-integrity.sh --require-checked test` | bash |
+| 12.8 | Required root/test fork replacements agree | the local offline integrity script checked all three module graphs and 36 root/test replacement entries | local script PASS; not archive-byte verification | `bash scripts/ci/check-go-module-integrity.sh --require-checked test` | Go + bash |
 | 12.9 | Release re-verifies per-platform bytes rather than rebuilding | `release.yml:144-204` | VERIFIED_SOURCE; **no run record** | read the workflow | — |
 | 12.10 | Release acceptance rejects bad evidence | `release-contract-verify.yml` declares the self-test against mock `gh`; the release path uses its separate artifact/evidence gate | VERIFIED_SOURCE of declaration, not proof of a current run | `bash scripts/ci/verify-release-acceptance-test.sh` | bash |
 | 12.11 | `verify-evidence/` describes the release tree | **it does not** — all 14 logs name `cfc77dc5`, 101 commits behind, and 15 covered files changed afterwards | **STALE — not evidence** | `head -3 verify-evidence/*.log` | git |
