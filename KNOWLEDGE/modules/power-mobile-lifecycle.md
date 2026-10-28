@@ -110,10 +110,10 @@ episode, not proof of all current builds, other devices or other lifecycle paths
 
 | Constant | Value | `Action()` |
 |---|---|---|
-| `TrimRunningModerate` | 5 | `TrimProgressive` |
+| `TrimRunningModerate` | 5 | `TrimIgnore` |
 | `TrimRunningLow` | 10 | `TrimProgressive` |
 | `TrimRunningCritical` | 15 | **`TrimRelease`** |
-| `TrimUIHidden` | 20 | `TrimProgressive` — **but see below** |
+| `TrimUIHidden` | 20 | `TrimIgnore` |
 | `TrimBackground` | 40 | `TrimProgressive` |
 | `TrimModerate` | 60 | `TrimProgressive` |
 | `TrimComplete` | 80 | `TrimProgressive` |

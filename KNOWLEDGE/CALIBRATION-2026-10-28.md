@@ -196,6 +196,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
   to the Windows app-execution stub (status 49). A rerun with a temporary PATH shim to the bundled
   Python passed 72 checks with zero failures under MSYS2 bash. This is source/fixture verification,
   not a device, native build or published-artifact check.
+- Cross-reading the two platform modules against `TrimLevel.Action` found and corrected two incorrect
+  rows: Android levels 5 (`TrimRunningModerate`) and 20 (`TrimUIHidden`) both map to `TrimIgnore`, not
+  `TrimProgressive`.
 
 ### Module review status
 
