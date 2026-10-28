@@ -202,7 +202,14 @@ VERIFIED_ANDROID_SHA="9d15717a85c5d995f4179457b48213b5c73b511d"
 # 3aedd741` contains no file the ABI contract names: the migrated BridgeSession / RoutePrefix /
 # TunOptions call sites are unchanged. Layer 4 is run in client-apple.yml against this exact
 # gitlink, and the pin check is wired into verify.yml so a gitlink move cannot land alone again.
-VERIFIED_APPLE_SHA="3aedd7417488e33a69fe2d46dc34539780d76157"
+#
+# Moved to aeccc754, the v0.1.32 Apple pin. The range 3aedd741..aeccc754 is one file,
+# `Library/Network/ExtensionPlatformInterface.swift`, and it only changes how the utun MTU is
+# derived (clamp to the hotspot bridge under include_all_networks) and adds one log line after
+# `setTunnelNetworkSettings`. The one libbox call in that hunk, `options.getMTU()`, is unchanged;
+# no contract-named method is added, removed or reshaped, so the same nine migrated methods are
+# still the ones this gate covers.
+VERIFIED_APPLE_SHA="aeccc754a82f9c45f1cead720884d19b6cb7795a"
 
 client_root=""
 skip_client=0
