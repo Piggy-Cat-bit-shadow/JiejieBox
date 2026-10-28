@@ -285,6 +285,7 @@ Android 的删除顺序刻意是：先建 4 个 `archive/*` 标签 → 推送标
 6. **既有的 Apple mach service 版本不一致（`R3`）**：`AppConfiguration.systemExtensionMachServiceName` 用 `Bundle.main.version`，而扩展的 `NEMachServiceName` 用 `MARKETING_VERSION`，本地未签名构建下两者可能不同（release 构建会被 `release/JIEJIE_VERSION` 全局覆盖，所以不影响正式包）。不是本轮引入，未在本轮修（需要产品决策），记录在此。
 7. **utls Pin 落后一个"纯文档"提交**：`main` 现在 `b63a2e9`（UPSTREAM.md 修正），Pin 在 `2da328d`（生产合并 + 测试）。按该仓库 UPSTREAM.md 的规则，文档提交不构成改 Pin 的理由，所以本轮刻意不追；dry run 里 `apply` 已证明它能正确地把 Pin 前移到 `b63a2e9`（伪版本 `v1.8.8-0.20261028133436-b63a2e9a7b1e`），只是没有推送。下一次真实 `dry_run=false` 会完成它。若希望"只有生产变更才算落后"，需要在 `release-freeze.py` 里按 patch 内容分类——**没有实现，因为那是把简单规则换成需要维护的启发式**。
 8. **`resolve` 依赖 GitHub API 的 compare 端点**（祖先判定）。网络抖动会表现为 `UNKNOWN` 并 fail closed（不会误放行），但会挡住一次准备。重跑即可。
+9. **Apple"正式发布 SHA == Snapshot"还没有在发布物件层面被强制，目前只有记录。** `release/source-lock.json` 记录 `clients/apple.pinned`，`release-prepare.yml` 每次都会重新派生；但 `release.yml` 发布的 Apple 物件只有 `Libbox.xcframework.tar.gz`（从**内核**构建，带内核 SHA），客户端 app 走 TestFlight 的 `scripts/publish-apple-beta.sh` 路径，两者都不与锁里的 Apple 客户端 SHA 比对。`apple-client-source.sh` 支持 `APPLE_CLIENT_SHA` 覆盖（本轮三次 macOS 派发就是这么指向候选的），所以补法是：候选发布用 `APPLE_CLIENT_SHA=<lock 的 clients/apple.pinned>` 派发，并在 `publish-apple-beta.sh` 或 `verify-release-acceptance.sh` 里把该值与会话记录比对。**本轮没改这条路径**：它属于 macOS 构建/签名链，而本轮拿不到 macOS runner，改了也无法验证——"记录 + 明确下一步"比"改了但没跑过"更安全。
 
 ---
 
