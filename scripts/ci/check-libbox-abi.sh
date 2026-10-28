@@ -225,7 +225,24 @@ VERIFIED_ANDROID_SHA="c7837107dc0126fb704fdf08cf203e10b30c8a22"
 # `setTunnelNetworkSettings`. The one libbox call in that hunk, `options.getMTU()`, is unchanged;
 # no contract-named method is added, removed or reshaped, so the same nine migrated methods are
 # still the ones this gate covers.
-VERIFIED_APPLE_SHA="aeccc754a82f9c45f1cead720884d19b6cb7795a"
+#
+# Moved to 16cf87b4 on 2026-10-28, the Apple fork's own `main` tip - the subscription
+# User-Agent fix, and the revision the v0.1.33 Apple CI resolved and built while this gitlink
+# still said aeccc754. That gap is the defect this round exists to remove: the superproject
+# recorded one Apple source and the build used another.
+#
+# What verified it: layer 4 re-run against the exact revision,
+#
+#   python3 scripts/ci/probe-accessors.py --contract docs/fork/libbox-abi-contract.tsv \
+#     --lang swift --root <sing-box-for-apple @ 16cf87b4>
+#   {"scanned": 423, "violations": [], "interface_methods": 3, "error": ""}
+#
+# and the range aeccc754..16cf87b4 is the UA fix alone - `HTTPClient.swift`,
+# `RemoteProfileFetcher.swift`, `NewProfileViewModel.swift` and the Hako subscription test with its
+# stubs (`git diff --name-only aeccc754..16cf87b4`) - which touches no file this contract names.
+# Layer 3 (the generated binding) is unchanged by it for the same reason. The compile half is the
+# Apple client workflow, which is what the release path consumes.
+VERIFIED_APPLE_SHA="16cf87b4bea0dd4e81d51b2b1b8c2e317ae88423"
 
 client_root=""
 skip_client=0
