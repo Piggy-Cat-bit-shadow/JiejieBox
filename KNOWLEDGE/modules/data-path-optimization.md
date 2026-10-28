@@ -86,10 +86,10 @@ permits everything.
 
 | Layer | What carries the bytes | Per-byte cost to this process | Honoured where |
 |---|---|---|---|
-| **L0** | the TUN's own route sets (`route_address_set` / `route_exclude_address_set`) | zero | **everywhere**, by installing OS routes |
+| **L0** | route-set address policy (`route_address_set` / `route_exclude_address_set`) | bypassed traffic does not traverse the userspace router | non-auto-redirect setup can pass prefixes to TUN options; auto-redirect evaluates route sets before router pre-match. Actual platform route installation and verdict consumption depend on entry and platform |
 | **L1** | the router's semantic bypass — this section | zero **only in redirect mode** | Linux `auto_redirect` (nfqueue) |
-| **L2** | userspace copy with a kernel socket pair (splice / `sendfile`) | two syscalls per chunk | every TUN stack |
-| **L3** | userspace copy through buffers | a copy plus two syscalls per chunk | every TUN stack |
+| **L2** | kernel-assisted copy where the platform, socket types and connection path permit it | path-dependent | conditional, not guaranteed for every flow or OS |
+| **L3** | userspace copy through buffers | path-dependent copy and I/O cost | fallback where applicable |
 
 > **L1 does not bypass in TUN mode.** `tun.ActionBypass` is honoured by the Linux nfqueue handler,
 > where it maps to `NfRepeat` with the output mark and the packet leaves by its original path. In every

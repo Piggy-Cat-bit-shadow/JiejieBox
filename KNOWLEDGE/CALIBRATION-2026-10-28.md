@@ -64,6 +64,8 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - Removed a stale CI-module diagnosis claiming the Windows TLS 1.3 tests contact a remote host and
   proving unsupported Schannel. Their local handshake failure was reproduced, but its cause remains
   unknown; a historical failure does not rule out a later regression.
+- The direct-offload layer table now distinguishes route-prefix setup from auto-redirect flow
+  verdicts and no longer asserts that kernel-assisted copy is available on every OS or flow.
 
 ### Module review status
 
