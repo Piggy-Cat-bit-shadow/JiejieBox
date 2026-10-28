@@ -101,6 +101,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - A further acceptance/baseline pass corrected the Apple pin gate, root CI test scope, historical
   release self-test attribution, ancestor-count diagram and the erroneous implication that an empty
   delta proves old knowledge valid. Historical tests remain scoped to their own revisions.
+- The reusable-owner test checks named types rather than forbidding every second `ReuseSuspect`
+  implementation; its previously cited test command matched no test. Corrected the related
+  cautions and distinguished the sing fork's splice workflow declaration from an observed run.
 
 ### Module review status
 

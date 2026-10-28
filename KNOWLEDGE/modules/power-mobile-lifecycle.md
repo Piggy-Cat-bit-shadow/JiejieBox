@@ -301,7 +301,7 @@ All **OWN**. The upstream family `Use screen state to end device pause on iOS` (
    gated on sleep state.
 10. **If a timer is deferrable, keep the FIRST pass undeferred.**
 11. **Do not assert `IdleConnectionKeeper` where only `IdleConnectionReleaser` is implemented.**
-12. **Do not add a second `ReuseSuspect` pool.**
+12. **Review new `ReuseSuspect` owners against the retirement walk and lifecycle contracts.**
 13. **Do not let background work wake an idle resource.** Demand wakes it.
 14. **Do not write an ordering test without a vacuity guard.** The fork's own best test exists because
     an ordering assertion can pass without the path ever running.

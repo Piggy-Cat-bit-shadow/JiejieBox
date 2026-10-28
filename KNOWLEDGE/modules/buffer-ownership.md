@@ -94,7 +94,7 @@ the ownership contract.
 | B20 | `IdleConnectionReleaser` may only close a resource with **no active user traffic**, and the walk can **never dial** | `adapter/outbound.go:214-219`; `route/reference.go:420-440` | a trim becomes a reconnect trigger — the exact shape the memory path must not have (`route/reference.go:394-411`) |
 | B21 | `ReuseSuspect.RetireSuspect()` runs **before** `CloseIdleConnections`; a pool that can only drop idle gets the old behaviour | `route/reference.go:496-511`, `:547-556` | a new stream attaches to a session nobody trusts |
 | B22 | The retirement walk asserts `IdleConnectionReleaser`, **not** the bundled `IdleConnectionKeeper` | `route/reference.go:479-484` | asserting the bundled interface silently failed at run time on **every** walk, leaving the HTTP client pools unreachable through four review passes (commits `93823c3d`, `8735b1d`) |
-| B23 | `route/reusable_owner_inventory_test.go:49,96,117` **forbids a second `ReuseSuspect` pool** | as cited | "add a new reusable pool" is not an available move without changing that test |
+| B23 | `route/reusable_owner_inventory_test.go` checks the capabilities of named reusable owners, including XHTTP | as cited | weakening or removing a named owner's retirement capability can silently bypass the walk |
 | B24 | Scope cleanups never run while the scope lock is held | `adapter/lifecycle.go:124-125`, `:133-134` | reentrancy deadlock |
 | B25 | `RebindLease.Complete()` **always cancels**, even for a superseded lease | `common/runtimecoord/coordinator.go:307-309` | a cancel func left registered against a live parent |
 | B26 | Pool introspection is a **badlinkname** mirror of the pinned toolchain's `sync.Pool` layout, with a size assertion that fails loudly on layout change | `experimental/libbox/internal/runtimeinfo/pool_badlinkname.go:14,44-47` | a silent misread of pool internals |
@@ -186,7 +186,7 @@ garbage per read.
 | The retirement walk reaches all four pools | `VERIFIED_UNIT` | `route/reference_coverage_stress_test.go`, `route/reusable_owner_inventory_test.go` |
 | Race-freedom | **`BLOCKED_BY_ENVIRONMENT`** — `-race` needs cgo and there is no C compiler | Linux/macOS or Windows+gcc |
 | The kTLS read-path fixes | **`VERIFIED_SOURCE`** — textually identical to the reference, and the package cannot be compiled here | needs Linux |
-| `unix.Splice()` actually running | **`UNVERIFIED` here** — proved on Linux by the fork's `linux-splice-proof` workflow on real loopback sockets, not in this environment | that workflow |
+| `unix.Splice()` actually running | **`UNVERIFIED` here** — the sing fork declares `linux-splice-proof`, but no exact-pin run was inspected in this calibration | inspect a matching workflow run |
 | The splice silent stall | **FIXED in the sing pin** — the current root replacement resolves to `1729220c46c4`, whose `splice_linux.go` returns unhanded on `Pipe2` failure. `docs/internal/fork-splice-silent-stall.md` is the historical record. | inspect the exact pinned `common/bufio/splice_linux.go` and run its Linux regression tests |
 
 ---
@@ -207,7 +207,7 @@ garbage per read.
 9. **Do not remove the producer-side headroom reservation.**
 10. **Do not raise the sniff buffer size to "avoid" `io.ErrShortBuffer`.** That error is the bound.
 11. **Do not assert `IdleConnectionKeeper` where only `IdleConnectionReleaser` is implemented.**
-12. **Do not add a second `ReuseSuspect` pool.**
+12. **Review any additional `ReuseSuspect` owner against the retirement walk and its tests.**
 13. **Do not make a trim dial, wake suspended work, reset the network or terminate an active flow.**
 14. **Do not build a census from `handed`.** It measures "the syscall path was selected".
 15. **Do not close the Shadowsocks steady-state copy** without solving the non-power-of-two pool

@@ -23,6 +23,8 @@ client call-site sweep, and its output reported the gomobile pin as unknown.
 `DEFAULT_BUILD_TAGS_OTHERS`; it compares the tracked schema with the generator for this tree.
 Three `./route` packet-destination-guard tests for memo growth, key normalization and no-match
 behavior passed under Go 1.26.10. The growth test inserts keys directly and is not an attack test.
+The two named reusable-owner capability and real HTTP-manager retirement-walk tests also passed
+locally under Go 1.26.10; they do not enumerate every possible owner.
 
 Post-baseline checks run locally at target `011f3fdcd99` on 2026-10-28 (unit tests, not device or CI evidence):
 
@@ -153,7 +155,7 @@ making either claim.
 | 1.2 | `Scope.Close` does not wait for an in-flight `Start`, and does not fold in a late cleanup error | `adapter/lifecycle_close_boundary_test.go` (4 named tests) | VERIFIED_UNIT | `go test -count=1 -run 'TestScopeClose' ./adapter/` | Go |
 | 1.3 | Epoch is monotone; a superseded lease cannot complete or release a newer one | `common/runtimecoord/coordinator.go:80-104`, `:282-310`; `coordinator_test.go`, `lease_test.go` | VERIFIED_UNIT | `go test -count=1 ./common/runtimecoord/...` | Go |
 | 1.4 | The retirement walk reaches all four pools (outbounds, endpoints, DNS transports, HTTP client manager) | `route/reference.go:440-494`; `route/reference_coverage_stress_test.go` | VERIFIED_UNIT | `go test -count=1 ./route/...` | Go |
-| 1.5 | Exactly one `ReuseSuspect` pool exists | `route/reusable_owner_inventory_test.go:49,96,117` | VERIFIED_UNIT | `go test -count=1 -run TestReusableOwnerInventory ./route/` | Go |
+| 1.5 | XHTTP client retains the `ReuseSuspect` capability and the HTTP manager remains reachable | `route/reusable_owner_inventory_test.go` asserts the named owners, not a global count | VERIFIED_UNIT locally for the named cases | `go test -count=1 -run 'TestTheReusableOwnersTheWalkIsDocumentedToReachKeepTheirCapabilities\|TestTheWalkReachesTheRealHTTPClientManager' ./route/` | Go |
 | 1.6 | Start/close ordering (`EstablishInitialNetworkEnvironment` last; governor before scope) | `box.go:1166-1168`, `:1210-1224`; `box_close_test.go` | VERIFIED_SOURCE + VERIFIED_UNIT | `go test -count=1 -tags "$OTHERS" -run TestClose .` | Go + tags |
 | 1.7 | 100 sleep/wake cycles and 100 network transitions leak no goroutines; no resurrection after `Close` | `box_lifecycle_stress_test.go` | VERIFIED_UNIT (no `-race`) | `go test -count=1 -tags "$OTHERS" -v -run 'TestOneHundred\|TestNoResurrectionAfterClose' .` | Go + tags |
 | 1.8 | Race-freedom of this subsystem | CI step `verify.yml:310` exists; **no run record in the tree** | **BLOCKED_BY_ENVIRONMENT** (`-race` needs cgo; no C compiler here) | `go test -race -count=1 ./adapter/... ./route/...` on Linux/macOS | cgo |
@@ -199,12 +201,12 @@ making either claim.
 | # | Requirement | Evidence | Level | Re-check | Environment |
 |---|---|---|---|---|---|
 | 5.1 | Capsule parse/serialise, address and route types, cross-protocol overlap | `transport/masque` capsule tests | VERIFIED_UNIT | `go test -count=1 -timeout 8m -tags "$OTHERS" ./transport/masque/...` | Go + tags |
-| 5.2 | Each batch chunk is atomic; accepted prefix is not replayed; substitution refuses its chunk | `batch_chunk_test.go`, `batch_order_test.go` | VERIFIED_UNIT | same | Go + tags |
+| 5.2 | Each batch chunk is atomic for ownership; accepted prefix is not replayed; substitution refuses its chunk | `batch_chunk_test.go`, `batch_order_test.go` | VERIFIED_UNIT for ownership, not exactly-once transmission | same | Go + tags |
 | 5.3 | Session/stream teardown and close boundaries | `shutdown_test.go`, `close_boundary*.go`, `scope_ownership_test.go` | VERIFIED_UNIT | same | Go + tags |
 | 5.4 | PTB and the three MTU quantities | five MTU test files | VERIFIED_UNIT | same | Go + tags |
 | 5.5 | CONNECT-IP interoperability against an independent implementation | `test/jiejie/reference/connect_ip_go_interop_test.go` — a **separate module** push CI does not run | **UNVERIFIED (declaration only)** | `bash scripts/ci/run-jiejie-suite.sh` | bash + network |
 | 5.6 | macOS / H3 device behaviour | never run | **UNVERIFIED** | — | device |
-| 5.7 | The package's own suite | **untagged it fails 19 tests** (tag absence). Tagged: `ok 318.4 s` at the release baseline | VERIFIED_UNIT (tagged) | `go test -count=1 -timeout 8m -tags "$OTHERS" ./protocol/masque/...` | Go + tags |
+| 5.7 | The package's own suite | historical tagged result; unfiltered untagged package tests passed locally at the later target | VERIFIED_UNIT for the respective runs; untagged does not cover tag-gated cases | `go test -count=1 -timeout 8m -tags "$OTHERS" ./protocol/masque/...` | Go + tags |
 
 ## 6. Native Naive and HTTP transport
 
@@ -239,7 +241,7 @@ making either claim.
 | 8.1 | Geometry buffers are exactly poolable and `Advance`/`Prepend` never reallocate | `geometry_test.go` | VERIFIED_UNIT | `go test -count=1 ./common/bufgeom/...` | Go |
 | 8.2 | The allocation ceiling | asserted in the **`!race`** build only | VERIFIED_UNIT (`!race`); the `race` half needs cgo | same | Go |
 | 8.3 | Batch capability survives a counter wrapper | 3 tests with a real red control | VERIFIED_UNIT | `go test -count=1 -run PacketBatch ./route/` | Go |
-| 8.4 | The kernel splice actually reaches `unix.Splice()` | proved on Linux by the fork's `linux-splice-proof` workflow; **not here** | **BLOCKED_BY_ENVIRONMENT** | that workflow | Linux |
+| 8.4 | The kernel splice actually reaches `unix.Splice()` | the sing fork declares `linux-splice-proof`; no matching run was inspected in this calibration | **UNVERIFIED** for this pin and environment | inspect a run for the exact pinned revision | Linux |
 | 8.5 | A `Pipe2` setup failure leaves splice unhanded so the caller can fall back | pinned `sing` commit `1729220c46c4`, `common/bufio/splice_linux.go`; `splice_actual_linux_test.go` | VERIFIED_SOURCE at that pin; Linux execution not performed in this refresh | run the pinned sing Linux splice tests | Linux |
 | 8.6 | kTLS read-path defects | fixed by mirroring the slow path; compared textually, **not executed** | VERIFIED_SOURCE | needs Linux | Linux |
 | 8.7 | Zero-copy levels 3–5 | **structurally unobservable from sing-box** | **UNKNOWN by construction** | — | — |

@@ -232,8 +232,9 @@ reuse-drained locally and only offer a destructive close.
 | `retireSuspectResources()` | `:512-537` | Calls `adapter.ReuseSuspect.RetireSuspect()` **first** (`:496-511`), then `CloseIdleConnections` (`:547-556`) |
 | `onReuseBoundary` | `:154-197` | **Does not reset the network, does not terminate a stream, does not touch on-demand tunnels, does not dial.** |
 
-`route/reusable_owner_inventory_test.go:49,96,117` forbids a **second** `ReuseSuspect` pool, so
-"add a new reusable pool" is not an available move without changing that test.
+`route/reusable_owner_inventory_test.go` asserts that named owners, including XHTTP, retain the
+capabilities the walk expects. It does not enumerate and forbid every possible additional
+`ReuseSuspect` implementation; new owners still require an ownership and retirement review.
 
 ---
 
@@ -276,8 +277,8 @@ reuse-drained locally and only offer a destructive close.
 2. **Do not make `Scope.Close` wait for in-flight `Start`s.** It is unbounded by construction; the
    two components that needed it (`protocol/masque/server.go`, `protocol/tun/inbound.go`) got a
    non-blocking handoff (`startupGate`, `acquiredStillOwned`) instead. Copy that shape.
-3. **Do not register a cleanup that closes the scope it was registered on.** Five cleanups close
-   scopes; all five close a nested child.
+3. **Do not register a cleanup that closes the scope it was registered on.** The drain would wait
+   for itself; a nested child scope is a different ownership relationship.
 4. **Do not replace `Registration.lease *RebindLease` with a boolean.** The pointer exists so a
    superseded lease cannot release a newer one.
 5. **Do not treat "epoch advanced" as "resource rebuilt"** — `Stale()` and `Acknowledge()` are two
@@ -288,7 +289,7 @@ reuse-drained locally and only offer a destructive close.
 8. **Do not reorder the close sequence** (status view → pause callback → governor → scope).
 9. **Do not make `TrimMemory` advance the network generation**, and do not make `ReleaseMemory` stop
    doing so.
-10. **Do not add a second `ReuseSuspect` pool** — `route/reusable_owner_inventory_test.go` forbids it.
+10. **Review new `ReuseSuspect` owners against the retirement walk and lifecycle contracts.**
 11. **Do not treat `27d8bb59`/`12ee55eef` as code changes.** Both are ancestry-only merges; reading
     them as features inverts their purpose.
 12. **Do not cite `verify-evidence/` for any of this.** Those logs name `cfc77dc5`, 101 commits behind

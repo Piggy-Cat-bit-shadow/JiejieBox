@@ -361,8 +361,8 @@ Mature practice, not immutable architecture. Depart with a stated reason.
 * **Use capability-specific retirement interfaces** — implement `IdleConnectionReleaser` rather than
   claiming a full keeper.
 * **Keep source/build provenance in artifacts** (`BUILD-INFO`, `.sha256`).
-* **Add a new reusable pool only by extending the existing `ReuseSuspect` inventory**, never as a
-  second pool.
+* **Review each new reusable pool against the retirement walk and its ownership contract.** The named
+  owner test does not prove that no second `ReuseSuspect` implementation may exist.
 * **Guard an ordering assertion against vacuity** — assert that the band or path was actually
   exercised, as `box_lifecycle_ordering_test.go` does.
 * **Do not gate a watchdog on sleep state.** A watchdog that stops watching is not a power saving.
