@@ -169,6 +169,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - Windows process creation-time ordering and the exited-process check are specific checks, not a
   blanket proof of ancestry or absence of every TOCTOU race. The historical Apple device result is
   scoped to its measured configuration, revisions and sleep episodes.
+- XHTTP mode selection, XMUX all-or-nothing defaults, pool retirement and packet-up batching were
+  cross-checked with source and focused local tests. Pool backoff also applies after suspect retirement;
+  these results do not establish live peer interoperability.
 
 ### Module review status
 

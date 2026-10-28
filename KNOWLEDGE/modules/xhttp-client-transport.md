@@ -12,6 +12,13 @@ against context cancellation. Tests include `protocol/vless/encryption_test.go`,
 `encryption_guard_test.go` and package `encryption` tests. Do not infer server support or wire
 interoperability from client parsing or unit tests alone; some ABI tests are excluded under `-race`.
 
+At `cb71cf80d72`, `dialMode` and `normalizeXmux` still implement the mode and all-or-nothing
+defaults described below. `CloseIdleConnections` detaches idle pool entries; `RetireSuspect` and
+`Close` detach all entries and defer closing those still in use. A reuse-boundary redial remains
+subject to an already-armed XMUX breaker backoff. Selected defaulting, live-stream close and
+packet-up batching/tail tests passed on Windows with Go 1.26.10; they are not live peer interop or
+performance measurements.
+
 > Status: `VERIFIED_SOURCE`
 >
 > Reviewed against repository `Piggy-Cat-bit-shadow/sing-box`, branch `testing`,
