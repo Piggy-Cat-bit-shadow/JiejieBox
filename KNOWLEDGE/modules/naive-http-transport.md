@@ -8,8 +8,10 @@ otherwise construction rejects the combination. `protocol/naive/h3_fallback.go` 
 H3 transport failures over H2 and keeps a per-outbound, network-resettable 30-second failure window;
 attempt ordering prevents an older failure from overwriting a newer result. HTTP status responses and
 caller cancellation do not establish an H3 transport failure. The retry includes the CONNECT
-handshake, and reserves a retry budget. The Cronet outbound rejects certificate pin options and uTLS
-rather than silently treating them as supported. See `option/naive.go` and the fallback tests. This
+handshake, and reserves a retry budget. An internally bounded probe that expires is ambiguous: that
+flow may retry over H2, but it does not arm the failure window. The Cronet outbound rejects
+certificate pin options and uTLS rather than silently treating them as supported. See
+`option/naive.go` and the fallback tests. This
 does not assert interoperability with every server.
 
 **Scope:** `protocol/naive/*` (inbound + tag-gated outbound), `transport/http/*` (the fork's largest
