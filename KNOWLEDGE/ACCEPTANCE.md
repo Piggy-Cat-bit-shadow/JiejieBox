@@ -46,6 +46,8 @@ The endpoint-owned resolver retirement tests for Tailscale, OpenVPN and OpenConn
 with `with_tailscale`; they cover the targeted pool walk, not a real network transition.
 Selected `common/srs` truncation, checksum and decompression-budget tests and `route/rule` remote
 stream tests passed locally; they do not establish behavior against every live server.
+`TestCommandServerCloseClosesTheBox` passed on this Windows host with `p2ios` and the other-platform
+build profile; the test is not evidence of a mobile-device lifecycle run.
 
 `go test -tags with_quic ./transport/masque -run 'TestWriteBatchChunksABurstAboveTheQueueCapacity|TestWriteBatchFallsBackOnlyForTheRefusedTail' -count=1 -v`
 passed both named tests. An untagged run selects neither test, so the untagged package result above

@@ -31,6 +31,14 @@ UDP and TCP do not have identical resulting actions, so preserve the exact branc
 `dns_hijack_configuration_test.go` and `direct_fast_path_dns_test.go` tests cover configuration and
 ordering. The local TUN package suite passed on Windows, but it is not a real-device leak test.
 
+### Command-server shutdown
+
+`experimental/libbox/command_server.go` now calls `CloseService` from `CommandServer.Close` before
+closing the `StartedService` subscribers and managers. An embedder that closes the server without
+first issuing the separate close-service RPC therefore still requests Box shutdown. The method
+discards the `CloseService` error, so its void return is not evidence that Box cleanup succeeded.
+See the `p2ios`-tagged `TestCommandServerCloseClosesTheBox`; no device-level result is implied.
+
 **Scope:** `experimental/libbox/*`, `daemon/*`, `include/*` as they define the client-facing surface,
 `cmd/internal/{mobilebuildtags,applebuildtags,appletags}`, `release/apple-client-refs.env`, and the
 Apple/Android artifact pins.
