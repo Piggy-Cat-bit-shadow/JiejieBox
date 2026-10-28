@@ -443,9 +443,9 @@ to make cheap.
 - **Too short** moves the cost back onto the resolver: the client asks again sooner, and each ask is
   a rule match (cheap) that this fork accepts, but the point of the feature is that the client stops
   asking.
-- **Too long** means a downstream OS or application may hold an NXDOMAIN briefly after the operator
-  removes the rule. Because `adblock` writes nothing to any sing-box cache, this is bounded by the
-  advertised TTL alone.
+- **Too long** means a downstream OS or application may hold an NXDOMAIN after the operator removes
+  the rule. The response advertises a TTL, but this code cannot guarantee how a downstream client
+  caches or honors it. The action itself writes no sing-box cache entry.
 
 600 seconds is the repository's own DNS default (it is what every locally answered record here
 reports), the middle of the range used by filtering resolvers, and the shorter end of what the
@@ -471,7 +471,7 @@ configurable.
 | async entry point answers locally, without suspending | `TestAdblockAnswersTheAsyncExchangeFromTheCallerGoroutine` | same |
 | a real compiled rule-set drives the action | `TestAdblockThroughACompiledRuleSet` | same |
 | `disable_cache` does not change where the verdict is produced | `TestAdblockIsUnaffectedByDisableCache` | same |
-| 2000 blocked queries retain no heap and leave no goroutines | `TestAdblockSteadyStateAllocatesNothing` | same |
+| 2000 blocked queries stay within the test's retained-heap and goroutine tolerances | `TestAdblockSteadyStateAllocatesNothing` (less than 128 KiB extra retained heap and at most four extra goroutines; responses do allocate) | same |
 | the question comes back as asked, in any case spelling | `TestAdblockAnswersCaseVariantsWithTheAskedSpelling` | same |
 | malformed requests are rejected above the action, not inside it | `TestAdblockAgreesWithTheRouterOnMalformedRequests` | same |
 | response shape, flags, SOA, ID, question | `route/rule/rule_dns_adblock_test.go` `TestAdblockResponseShape`, `dns/router_adblock_test.go` `requireLocalNXDomain` | `go test ./route/rule/ -run Adblock -count=1` |

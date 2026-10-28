@@ -262,7 +262,7 @@ Violating any of these is a security hole that no configuration justifies.
 | Certificate validity period is **not** a gate | **deliberate non-gate** | byte-pinned identity and a self-signed certificate are used on the tolerated-error path; expiry previously broke startup. Reconsidering this requires evaluating the deployment and trust model |
 | Certificate chain trust is **not** required | deliberate | a CI test certificate is self-signed by construction |
 | Code-signing EKU is required | design rule | but `ExtKeyUsageAny` is **also accepted** (`:236`) — a known weakening |
-| Self-signed check | defence in depth | applies only on the tolerated-error branch; the pin is the real check |
+| Self-signed check | required on tolerated-error branch | validates that the signer is self-signed and its self-signature is valid; it complements signer equality and the other checks |
 | Worker pipe ACL | convention, **not** the gate | `Authenticated Users` can open it; the handshake decides |
 | Update product-name allowlist | convention | the source says explicitly it is **not** a security boundary |
 | `--listen` disables peer authentication | **known limitation** | guarded only by service mode refusing it |
@@ -284,9 +284,9 @@ which is why the module does not need to settle it.
 
 The boundary did **not** start as a byte-equality pin. It arrived there by removing things that could
 not be relied on: chain trust (a CI certificate is self-signed), then the validity window (which broke
-the product on expiry), while **identity stayed and became the whole check**. The direction of travel is
-therefore *fewer trust assumptions, one identity property* — and the failure mode to avoid is restoring
-an assumption that was removed because it was both useless and harmful.
+the product on expiry), while keeping signer identity equality. Signature integrity, EKU, file
+identity and the tolerated-error branch's self-signature checks also matter. The resulting availability
+and validity-policy tradeoff depends on the deployment; byte equality alone is not the whole boundary.
 
 ## 14. Verification
 
@@ -321,9 +321,10 @@ an assumption that was removed because it was both useless and harmful.
 
 Each is a "reasonable but wrong" change this codebase has already paid for.
 
-1. **Do not re-add the certificate validity gate.** It looks like hardening and is a regression: it
-   broke the product when a CI certificate expired, and it protects nothing because the certificate is
-   byte-pinned. §11.
+1. **Do not change the certificate validity policy without evaluating the deployment threat model.**
+   Expiry previously blocked startup; byte pinning establishes an identity match but does not prove
+   that a validity window provides no security benefit. The tolerated-error branch has additional
+   self-signature and EKU checks. §11.
 2. **Do not "fix" `CERT_E_EXPIRED` handling by widening the allowlist.** It is an allowlist on purpose.
    `TRUST_E_BAD_DIGEST` in particular must never be tolerated — that is the difference between
    verifying a signature and decorating a file. §5.

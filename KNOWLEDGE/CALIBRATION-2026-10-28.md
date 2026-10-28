@@ -160,6 +160,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - The systemd-resolved loop still has its stop/join, but the join alone does not establish that all
   separately spawned asynchronous updates have finished. The DNS demand test command's Go regex was
   corrected, and the obsolete claim that the kTLS package contains no tests was removed.
+- DNS adblock's heap/goroutine test asserts tolerances, not strict zero, and a downstream resolver's
+  actual retention cannot be guaranteed from the advertised TTL alone. The Windows certificate
+  caution now reflects the validity-policy tradeoff consistently with the security module's analysis.
 
 ### Module review status
 
