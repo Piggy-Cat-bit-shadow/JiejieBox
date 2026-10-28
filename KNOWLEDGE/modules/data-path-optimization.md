@@ -373,7 +373,7 @@ harness, as measured control groups. `option/traffic_scheduler.go` has **exactly
 (`UploadRate`, `:50`) — **there is no `mode` key, and adding one would expose a mode that was measured
 as indistinguishable from doing nothing.**
 
-### B.4c Two measured properties of the paced path that no document and no test records
+### B.4c Historical measurements of the paced path
 
 Measured with `BenchmarkStreamWriteTax/gate-paced-generous` (rate `1<<40`, i.e. a rate that can never
 bind) at the release baseline:
@@ -386,21 +386,21 @@ bind) at the release baseline:
 
 Two consequences, and both matter:
 
-1. **The paced path allocates**, about 3 allocations per write at 4 KiB and above — while
+1. **That benchmark observed allocations**, about 3 per write at 4 KiB and above — while
    `bench_test.go:81-83` states that a shaped write must never allocate ("a shaped write that
    allocated would turn a rate limit into a garbage source"), and `doc.go:99-106`'s "no allocation on
    the uncontended path" is **true of the inert path only**. No CI test covers the paced path's
    allocations.
-2. **The paced path has a fixed ≈1.40 ms per-write floor that is independent of both the write size
-   and the configured rate** — 4 KiB and 64 KiB cost the same, ≈1.4 × `paceTick`
+2. **That run observed approximately 1.40 ms per write** for its 4 KiB and 64 KiB cases at the
+   generous configured rate, ≈1.4 × `paceTick`
    (`scheduler.go:78`, a 1 ms tick). The inferred mechanism: `chargeLocked` sets `f.owedUntil` a few
    nanoseconds ahead (`:662-677`), `flowTimeReadyLocked` then reports not-ready (`:701-710`), and the
-   only wake path is the 1 ms `paceWakeLoop` tick (`:869-892`). **Practical consequence: one managed
-   flow writing 64 KiB at a time tops out at roughly 47 MB/s whatever rate is configured above it.**
+   wake path includes the 1 ms `paceWakeLoop` tick (`:869-892`). The corresponding rough 47 MB/s
+   arithmetic describes that specific measurement, not a portable throughput ceiling: host wakeup
+   latency, scheduling, write sizes, configuration and implementation changes affect the result.
 
-**So installing any positive rate costs far more per write than the inert gate, before any shaping
-happens.** That is not a reason to avoid the feature — the feature's whole point is the queue — but it
-is a reason not to describe the rate as "a harmless ceiling".
+The historical run showed substantially higher per-write cost than its inert comparison even at a
+generous rate. Re-measure the target build and environment before making a current performance claim.
 
 ### B.5 Cost when nothing contends
 

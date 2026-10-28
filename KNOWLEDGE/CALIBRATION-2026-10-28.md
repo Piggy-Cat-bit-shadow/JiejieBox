@@ -135,6 +135,11 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - The exact sing allocator and `Buffer.Release` were checked: release clears the Buffer struct after
   returning managed storage, not its backing bytes. Historical geometry benchmarks are scoped to their
   measured environment rather than claimed as exact or universal performance results.
+- Sniff parser verdicts were distinguished from packet-read fatal errors, and the continuation-round
+  cap from the preceding replay of captured packets. The documented HTTP request-line fragmentation
+  and SSH banner truncation tests passed locally with Go 1.26.10. Historical pacing measurements do
+  not establish a host-independent throughput ceiling. The module registry now distinguishes the
+  standalone release-acceptance checker from the actual release path.
 
 ### Module review status
 
