@@ -49,6 +49,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - Independent cross-reading corrected the project overview's old release and dependency statements,
   the architecture overview's scope/validation and MASQUE size overclaims, and the corresponding
   MASQUE acceptance and invariant rows. Historical counts are explicitly revision-scoped.
+- Dual-stack admission was checked against the observer, local-family gate and scheduler: a
+  stale local verdict cannot deny, strict configured strategy remains independent, and the
+  bounded, expiring family-health record changes race timing rather than blacklisting a family.
 
 ### Module review status
 

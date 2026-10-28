@@ -21,6 +21,19 @@ staggers attempts, advances on fast failure and closes losing connections, inclu
 `common/dialer/dual_stack_scheduler_test.go`. These are `VERIFIED_SOURCE` observations at the
 testing target; runtime and network-specific results require their own evidence.
 
+The local-family gate applies only to sockets dialed here, including a proxy server's own address,
+not a target handed to a remote proxy. A stale or transition-time capability snapshot cannot hard
+deny a candidate; absent capability means no opinion. The strict configured family strategy remains
+separate and can still exclude it. The observer prefers the combined family/generation/stability
+snapshot; fallback to separate optional getters can produce two distinct readings. A batch gate
+evaluates ownership once for its candidate list (`network_observation.go`, `family_capability.go`).
+
+The scheduler's per-generation family health is softer than a hard capability refusal: a qualifying
+path failure or sufficiently long losing opposite-family attempt can cause both families' first
+candidates to start together on the next race. The entry expires after 15 seconds or clears on
+success for that family, and the map is bounded. It does not blacklist that family or prove a QUIC
+handshake succeeded. See `dual_stack_scheduler.go` and its family-health tests.
+
 When the box has committed IPv4-only entry presentment, `dns/entry_ipv6.go` suppresses an
 application-side TUN AAAA question before rules, cache, FakeIP or upstream work and answers NOERROR
 with no data. It does not apply that gate to the dialer's `Lookup` or to DNS forwarded by a remote
