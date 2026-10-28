@@ -132,7 +132,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | XMUX, stream-one, packet-up, splitHTTP, X-Padding, H2/H3 | XHTTP | `modules/xhttp-client-transport.md` |
 | traffic_class, traffic_scheduler, backpressure, pacing | data path | `modules/data-path-optimization.md` Part B |
 | tag stub, pruning, registry, DEFAULT_BUILD_TAGS | build | `modules/build-pruning-release.md` §1–3 |
-| schema, schema.json, option/schema.go, generated docs, stale generated artifact | the generated-schema chain and its re-check contract | `modules/build-pruning-release.md` §4; `modules/README.md` §Not covered (schema row) |
+| schema, schema.json, option/schema.go, generated docs, stale generated artifact | the generated-schema chain and its re-check contract | `modules/build-pruning-release.md` §4; `modules/README.md` §Additional ownership and coverage limits (schema row) |
 | release authority, release contract, canonical asset list, asset allowlist, artifact provenance, exact-SHA provenance, checksum, read-back, draft-first, dry-run, `publish-args`, `expected-assets`, `verify-public-release`, single source of release truth | CI and release provenance | `modules/ci-release.md` §1, §5 |
 | pipeline DAG, unwired gate, duplicate gate, gate ownership, which workflow runs what | CI gate ownership | `modules/ci-release.md` §1–2 |
 | SIGPIPE, pipefail, exit-code false negative in a gate | shell-gate correctness | `modules/ci-release.md` §5 |
@@ -165,7 +165,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | `transport/v2rayxhttp` | `modules/xhttp-client-transport.md` | §1–22 |
 | `experimental/libbox`, `daemon/` | `modules/libbox-platform-contract.md` | §1, §4 |
 | `cmd/internal/*`, `release/*` | `modules/build-pruning-release.md` | §4, §6 |
-| `option/schema.go`, `docs/schema.json`, `schema/generate.go` — the generated schema artifact | `modules/build-pruning-release.md` §4 (the generator) + `modules/README.md` §Not covered (its **stale status and re-check contract**) | §4 / the schema row |
+| `option/schema.go`, `docs/schema.json`, `schema/generate.go` — the generated schema artifact | `modules/build-pruning-release.md` §4 (the generator) + `modules/README.md` §Additional ownership and coverage limits (schema row) | §4 / the schema row |
 | `.github/workflows/*`, `scripts/ci/*` | `modules/ci-release.md` | §1–5 |
 | `protocol/vless/encryption` | `modules/xhttp-client-transport.md` | VLESS encryption boundary |
 | `experimental/boxdd/**` — the Windows daemon, service, worker, named pipe | `modules/windows-daemon-security.md` | §1 (roles), §4 (handshake), §5 (Authenticode), §6 (the pin) |
@@ -218,7 +218,7 @@ This file is the **fine-grained router** (section anchors, aliases, reverse path
 Do not merge them.
 
 When you add or rename a section in a module, update the anchor here in the same change — a broken
-anchor is a defect, not a missing document (`modules/README.md` §Not covered says the same about a
+anchor is a defect, not a missing document (`modules/README.md` §Task → module says the same about a
 link that does not resolve). An index that points at a section which no longer exists is worse than no
 index, because it reads as authoritative.
 

@@ -23,7 +23,8 @@ measurements, the release lineage, the provenance test, and the three tag traps 
 **2026-10-28 partial calibration:** the target testing revision is `011f3fdcd99173acd3e80483b50cb76b07bf6ff4`,
 791 commits beyond the baseline. Existing modules are historical unless their specific post-baseline
 claims are rechecked. `v0.1.30` is a published release and an ancestor of that target; subsequent
-testing fixes must not be attributed to it. See `BASELINE.md`, [the calibration ledger](CALIBRATION-2026-10-28.md)
+fixes are not in v0.1.30. A later [v0.1.31 Release](https://github.com/Piggy-Cat-bit-shadow/sing-box/releases/tag/v0.1.31)
+was published at the later `cb71cf80d72` target. See `BASELINE.md`, [the calibration ledger](CALIBRATION-2026-10-28.md)
 and the current source.
 
 **The previous baseline (`a267e99e0`, `v0.1.6`) went stale invisibly for two releases** — its delta row

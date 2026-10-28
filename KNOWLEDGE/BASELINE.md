@@ -11,8 +11,10 @@
 >
 > The branch advanced during this calibration to `cb71cf80d7224a51823b455f0be5959ad8556933`:
 > its version file says 0.1.31 and it changes the `cronet-go/all` pin. A later check found the
-> remote v0.1.31 tag peeling to that commit, but no GitHub Release; the tag alone is not a Release.
-> Recheck release records and this new dependency pin before attributing the older tests to it.
+> remote v0.1.31 tag peeling to that commit. GitHub subsequently published the non-draft, non-prerelease
+> [v0.1.31 Release](https://github.com/Piggy-Cat-bit-shadow/sing-box/releases/tag/v0.1.31) at
+> 2026-10-28 00:38:59 UTC with seven listed assets; this API observation does not independently verify
+> their bytes. Recheck release records and this dependency pin before attributing older tests to it.
 
 **Read this file before anything else. The knowledge base does not describe `HEAD`.**
 

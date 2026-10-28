@@ -10,7 +10,8 @@ pre-start events can coalesce. Once started, each accepted update resets indepen
 pending startup reset is consumed separately. Closed inbounds do not reset. Regression cases are
 in `protocol/tun/reset_before_start_test.go`; their presence does not establish a test run.
 The post-start behavior includes `1ff0af39110`, which is after `v0.1.30`; do not describe it
-as released in v0.1.30. Device network-switch behavior remains unverified here.
+as released in v0.1.30. The later v0.1.31 release tag points to a descendant containing that change;
+this ancestry does not establish device network-switch behavior.
 
 ### IPv6 entry presentment
 

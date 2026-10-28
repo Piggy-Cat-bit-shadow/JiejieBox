@@ -6,7 +6,7 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - Old production baseline: `5fc4f9366a60202fdc7c98cd6fa280cceace65ba` (v0.1.9).
 - Examined testing target: `011f3fdcd99173acd3e80483b50cb76b07bf6ff4`; 791 commits after baseline.
 - Published v0.1.30 resolves to `6112aa17052297ec9890e0e7f1541a06120b84b2` and is an ancestor of the target. No origin `main` was advertised when checked.
-- Concurrent branch advancement: `cb71cf80d7224a51823b455f0be5959ad8556933` updates the version file to 0.1.31 and the `cronet-go/all` pin. A later check found remote tag v0.1.31 peeling to that commit, but no GitHub Release. The previously run tests are at the prior dependency state; re-run relevant checks against the new pin.
+- Concurrent branch advancement: `cb71cf80d7224a51823b455f0be5959ad8556933` updates the version file to 0.1.31 and the `cronet-go/all` pin. Its tag peels to that commit. An earlier check found no Release; a later GitHub API check found the [v0.1.31 Release](https://github.com/Piggy-Cat-bit-shadow/sing-box/releases/tag/v0.1.31) published 2026-10-28 00:38:59 UTC, non-draft and non-prerelease, with seven listed assets. Their bytes were not independently downloaded or verified. Tests at the prior dependency state do not automatically establish behavior at the new pin.
 - Coarse delta covers protocol, dialer, routing, DNS, TUN, transport, platform, dependencies, CI and release. The large delta has not been fully classified or audited.
 - Source-checked corrections: TUN start/reset handoff, dual-stack admission and ownership, empty family logging, FakeIP/sniff translation, transparent-group fast path, capability warning severity, Naive fallback, VLESS client encryption, MASQUE close, progressive memory trim, TUIC path ceiling, Linux kTLS tail ownership, TLS selection and workflow declarations. See the relevant modules and `ACCEPTANCE.md` for anchors and tests. Old global no-delta and no-CI-workflow claims corrected.
 - Other module entries, invariants, acceptance rows, fork provenance, protocol and platform coverage and cross-file contradictions remain to be individually checked. Historical reports remain archives; no wholesale disposition audit was completed. Baseline must remain at v0.1.9 until the unresolved load-bearing gaps are resolved.
@@ -183,6 +183,11 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - The `common/netcap` scope and fail-open model were checked independently and its unfiltered unit
   package passed on Windows Go 1.26.10. The AI entry point now also rejects the stale inference that an
   empty Git delta proves old knowledge correct, and uses the baseline recorded at execution time.
+- Independent navigation and command review corrected the renamed module-registry section and an
+  acceptance filter (`TestGate`) that matched no tests. The replacement selected HTTP and TLS gate
+  tests, which passed locally. A Markdown link/anchor scan of 115 files found 23 relative links and
+  no missing target or detected anchor; most navigation uses backticked references and needs its own
+  checks, so this scan is not a blanket proof of the index.
 
 ### Module review status
 

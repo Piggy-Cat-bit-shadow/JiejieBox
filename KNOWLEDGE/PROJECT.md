@@ -83,7 +83,8 @@ the actual blobs and patch history, with confidence scoped to the evidence.
 ## Current release identity
 
 The latest examined testing production state is `cb71cf80d7224a51823b455f0be5959ad8556933`,
-whose version file says `0.1.31` and whose tag resolves to that commit. At the last check no GitHub
-Release existed for that tag; published v0.1.30 was an ancestor. Recheck the branch, tag and Release
+whose version file says `0.1.31` and whose tag resolves to that commit. The non-draft, non-prerelease
+[v0.1.31 GitHub Release](https://github.com/Piggy-Cat-bit-shadow/sing-box/releases/tag/v0.1.31)
+was published at 2026-10-28 00:38:59 UTC; v0.1.30 is an ancestor. Recheck the branch, tag and Release
 independently before making a current release claim. The knowledge baseline remains v0.1.9 pending
 the incomplete calibration recorded in `BASELINE.md` and the calibration ledger.
