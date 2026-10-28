@@ -213,7 +213,12 @@ Android 的删除顺序刻意是：先建 4 个 `archive/*` 标签 → 推送标
 | 工作流结构检查 | `check-release-workflows.py`：**143 PASS / 0 FAIL**（含新增 10 项） | `VERIFIED_SOURCE` |
 | 真实仓库上 `check` | 报告 3 个落后目标（utls Pin、`clients/apple`、nested dashboard 在修复前），`PASS: every target is comparable and none is diverged` | `VERIFIED_SOURCE` |
 | 真实仓库上 `verify` | `PASS: every pin in the tree is the pin the lock records`（7 go modules / 3 clients / 29 native / nested 已解析） | `VERIFIED_SOURCE` |
-| `release-prepare.yml` 真实 dispatch（dry run） | **成功**：run `40706074269`（提交 `62f5ecef`）的 15 个步骤全部 success/skipped-按设计，包括 preflight→resolve→check→apply→module/ABI/build 门→snapshot→verify→"dry run 不提交" | `VERIFIED_CI` |
+| `release-prepare.yml` dry run | **成功**：run `40706074269`（提交 `62f5ecef`），preflight→resolve→check→apply→source 门→snapshot→verify 全绿，dry run 不提交 | `VERIFIED_CI` |
+| `release-prepare.yml` **非 dry-run**：真的前移 Pin 并推送 | **成功产出冻结提交**：run `40713977139`，在 `testing` 上推出 `325f3158`（utls → `v1.8.8-0.20261028133436-b63a2e9a7b1e`，双模块 go.mod/go.sum + 锁）。该 run 随后停在证据步骤——见下一行的竞争条件 | `VERIFIED_CI` + `VERIFIED_GIT` |
+| 证据步骤与推送的竞争 | 第一次非 dry-run 在推送后 **1 秒**就报 `no run of verify.yml exists for commit 325f3158`。已修：工作流先等 `Verify` 与 `Release contract verification` 两条 run 在 API 里**出现**，再交给 `evidence` 等结论；若 10 分钟仍不出现则明确失败并给出 dispatch 命令 | `VERIFIED_CI` |
+| 幂等性 + 完整链路（含精确 SHA 证据） | **全绿**：run `40718334061`（提交 `3c6ca2ea`，17 个步骤）`apply` 判定没有落后目标 → snapshot 与已提交的锁**逐字节相同** → `nothing to commit` / `nothing to push` → ABI 门在 HEAD 上通过 → 等到 `Verify`/`RCV` 两条 run 出现 → **`PASS: every required evidence gate succeeded, every job included, for 3c6ca2ea…`**（Verify `40718300787` #670、RCV `40718300537` #218） | `VERIFIED_CI` |
+| 主干在运行期间被推新提交 | run `40715812910` 的推送被 `! [rejected] HEAD -> testing (fetch first)` 拒绝，**没有强推**；失败信息已改成"分支在运行期间移动了，请重跑"，且证据步骤前增加 `git ls-remote` 对照 | `VERIFIED_CI` |
+| **门禁顺序漏洞（真实发现）** | 第一版把 `check-libbox-abi.sh --pin-only` 放在提交之前：它读 `git ls-tree HEAD`，而 `apply` 写的是索引，于是它对着**旧 gitlink** 报 PASS，放过了正在准备的 Pin 前移。工作流已改为 `提交 → ABI 门 → 推送`，让这道门真正检查要被 Tag 的那个提交 | `VERIFIED_CI` |
 | 该 dry run 抓到的真实缺陷 | 第一次 dry run（`40704668286`）在 `apply` 失败：`go list -m github.com/metacubex/utls@<fork-sha>` 问的是**被 replace 的模块路径**，上游没有这个提交 → `unknown revision`。修复 `62f5ecef`（改为问 replace 目标 `Piggy-Cat-bit-shadow/utls`），并让测试里的假 `go` 拒绝非 fork 路径，防止回归 | `VERIFIED_CI` + `VERIFIED_UNIT` |
 | 修复后 dry run 真的前移了 Pin 并冻结 | 下载 run `40706074269` 的 `release-freeze-report` 产物：runner 上的 `source-lock.json` 里 utls = `v1.8.8-0.20261028133436-b63a2e9a7b1e`，relation `identical`，`derived_at=62f5ecef`。即 `apply`（含 `go mod tidy`）→ gates → `snapshot` → `verify` 在实测里成立，不只是单测 | `VERIFIED_CI` + `VERIFIED_ARTIFACT` |
 
@@ -265,7 +270,8 @@ Android 的删除顺序刻意是：先建 4 个 `archive/*` 标签 → 推送标
 | **Verify 在推送提交上全绿**（含新增的 `release-freeze.py verify` 步骤） | Verify `40702192442` = `completed/success` |
 | 冻结测试在 Linux CI 上真的执行并通过 | RCV `40702192446` 的步骤 "the freeze helper's behavioural suite" = success |
 | 冻结工具在真实仓库上复现了本轮诊断 | `check` 输出：`BEHIND utls`、`BEHIND clients/apple`、`BEHIND clients/desktop`、`BEHIND nested dashboard`（其中 desktop 已在本轮修复，复核后为 `identical`） |
-| Apple 候选源码解析正确 | Apple client `40698718663`：`resolve` success（`resolved: be3258ab57dd (explicit-sha)`，`libbox` success）；`ios` 构建中；`macos` 在该 run 里被平台取消（无任何 step 执行），已用 `build_ios=false` 重新派发 `40704313767` |
+| Apple 候选源码解析正确 | Apple client `40698718663`：`resolve` success（`resolved: be3258ab57dd (explicit-sha)`）、`libbox` success、**`ios` success**；`macos` 被平台取消（无 step 执行），后续三次重派同样被取消 |
+| 非 dry-run 的发布准备真的推出了冻结提交 | `325f3158`（run `40713977139`），并且 `40718334061` 走完全链路并拿到精确 SHA 证据（`3c6ca2ea`：Verify `40718300787` + RCV `40718300537`，每个 job 都成功）——幂等与证据都成立 |
 
 **没有做、也不该在这一轮做的**：没有创建新 release tag，没有修改/移动 `v0.1.33`，没有发布。
 
@@ -326,6 +332,11 @@ Android 的删除顺序刻意是：先建 4 个 `archive/*` 标签 → 推送标
 | `sing-box` | `fb3ca4f3` | docs：Android ABI handover 现在有编译证据（含负向对照） |
 | `sing-box` | `328efb29` | docs：Apple"发布 SHA == Snapshot"仍是记录而非门禁 |
 | `sing-box` | `3dbd7158` | docs：四次 macOS 尝试、两个标签全部取消（不是标签问题） |
+| `sing-box` | `325f3158` | release：冻结提交（由 `release-prepare` 自动生成并推送，utls Pin 前移） |
+| `sing-box` | `d0bccc9b` | fix：锁改为只含 Pin（幂等）+ 证据步骤等待 run 出现 |
+| `sing-box` | `af3aa579` | deps：`clients/apple` → `16cf87b4`，并记录 ABI 验证依据 |
+| `sing-box` | `d0eed4fd` | docs：Apple Pin 前移与其 ABI 依据 |
+| `sing-box` | `3c6ca2ea` | fix：ABI 门放在提交之后 + 推送被拒的可执行信息（本报告所在提交见远端 `testing`） |
 
 ---
 
