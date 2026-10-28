@@ -370,6 +370,27 @@ Android 的删除顺序刻意是：先建 4 个 `archive/*` 标签 → 推送标
 | `sing-box` | `af3aa579` | deps：`clients/apple` → `16cf87b4`，并记录 ABI 验证依据 |
 | `sing-box` | `d0eed4fd` | docs：Apple Pin 前移与其 ABI 依据 |
 | `sing-box` | `3c6ca2ea` | fix：ABI 门放在提交之后 + 推送被拒的可执行信息（本报告所在提交见远端 `testing`） |
+| `sing-box-for-apple` | `1372675` | fix：`Tests/SubscriptionQuotaCaption` 下两条符号链接少一级 `../`（Windows 检出看不见，POSIX 上是断链，ABI 层 4 因此 SKIP） |
+| `sing-box-for-apple` | `044e6d5` | fix：上一条把目标经管道写入 `hash-object`，带上了 CRLF；改为 ASCII 字节写入，并用 `git cat-file -s` 断言 50 / 58 |
+| `sing-box` | `23730fff` | feat：Apple 单 macOS runner 验收模式（`libbox` 只在 iOS 时跑、`macos` 接受 skipped 依赖并在同一 job 内构建框架、`apple_client_sha` 输入、共享 composite action、16 项结构断言） |
+| `sing-box` | `fc1567f4` | fix：单 runner 模式先 `mkdir -p` 临时安装目录（首次真跑暴露） |
+| `sing-box` | `dbcfc1d3` | fix：gomobile 单一安装点检查改为跟随到 composite action |
+| `sing-box` | `b1898bd4` | docs：单 runner 设计与它发现的两个缺陷 |
+| `sing-box` | `8500bf9c` | docs：§7.1 改为"阻塞点是 runner 分配"，并给出恢复命令 |
+| `sing-box` | `5468bf4d` | docs：符号链接修复的二阶缺陷（CRLF） |
+| `sing-box` | `ed0f3dc4` | docs：在 POSIX 形态的树上跑层 4 探针——422 文件 / 0 违规 / 3 interface 方法 |
+| `sing-box` | `a741e3e9` | deps：`clients/apple` → `044e6d5`，`VERIFIED_APPLE_SHA` 与 `release/source-lock.json` 同步前移 |
+| `sing-box` | `92b8f2ba` | docs：Apple 融合 CLOSED（运行证据 + 收尾表） |
+
+## 10. 最终验证证据（run id + head SHA + 它到底覆盖了什么）
+
+| 门 | run | head SHA | 结论 | 覆盖 |
+|---|---|---|---|---|
+| Apple macOS 客户端编译 | [`40776674407`](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40776674407) | `ed0f3dc4` | success，18 步 | 单个 macOS job 内：Libbox 构建 + 层 1–5 ABI 门 + validate/install + overlays + 真实 `xcodebuild` 编译 SFM + 签名 + DMG + 产物身份/版本校验；产物 `jiejiebox-macos-arm64-0.1.33-ed0f3dc46-unsigned.dmg`（77,584,674 B） |
+| Apple iOS 客户端编译 | `40698718663` | 候选 `be3258a` | success | 同一 Apple 源码的 iOS 目标编译（候选阶段证据） |
+| 主库 Verify | `40780461491` | `92b8f2ba` | success | 结构检查、`check-libbox-abi.sh --pin-only`、`release-freeze.py verify --lock`、Go 构建/测试、race |
+| Release contract verification | [`40782289713`](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40782289713) | `92b8f2ba` | success | 冻结助手行为套件、Apple 源覆盖行为套件（13 例，CI 首次运行）、工作流结构、发布链 |
+| 本机四道门 | — | `92b8f2ba` 工作树 | 全绿 | 159 结构 / 35 冻结单测 / `verify --lock` PASS / ABI pin PASS（Apple `044e6d5`、Android `c7837107`） |
 
 ---
 
