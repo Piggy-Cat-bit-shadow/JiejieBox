@@ -68,9 +68,9 @@ boundary."*
 
 ### Why a display turning **on** is not an unlock
 
-`box_lifecycle.go:23-36`, `:173-199`: **display-on publishes only a resume *edge*; only an unlock
-releases the level.** A future change that equates the two re-creates the bug the split was made to
-fix.
+`box_lifecycle.go` routes display-on to `resumed()`, which currently publishes nothing; unlock
+calls `woke()` and releases the level. Treating display-on as unlock would re-create the bug the
+split was made to fix.
 
 ### `resumed()` deliberately publishes nothing
 
@@ -80,8 +80,8 @@ func (l lifecycle) resumed() {}
 
 `box_lifecycle.go:141`. The measured story is at `:109-137`: a **28 m 24 s** sleep with 13 extension
 resumes produced **13 anchors and a 28.29 s boundary** — the measurement was destroyed by the resumes
-themselves. This is why the resume path is a no-op and why the sleep boundary is spent on the sleep
-**edge**, not on a resume.
+themselves. The sleep edge starts the measurement; the reuse boundary is published when the device
+becomes usable via `woke()`, before the level is released. A mere extension resume does neither.
 
 **The anchor and the per-episode boundary latch are the same field.** That is the structural reason a
 later attempt to gate the sleep edge on `IsDevicePaused()` produced **zero** boundaries over a ten-minute

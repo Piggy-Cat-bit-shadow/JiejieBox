@@ -52,6 +52,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - Dual-stack admission was checked against the observer, local-family gate and scheduler: a
   stale local verdict cannot deny, strict configured strategy remains independent, and the
   bounded, expiring family-health record changes race timing rather than blacklisting a family.
+- Libbox monitor refresh/publish ordering and the close-during-refresh fence were source-checked and
+  targeted tests passed with Go 1.26.10 and `p2ios` on Windows. The Apple lifecycle's sleep measurement
+  start and reuse-boundary publication were distinguished; neither test result is device validation.
 
 ### Module review status
 

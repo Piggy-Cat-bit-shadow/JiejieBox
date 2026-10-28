@@ -10,6 +10,8 @@ On Windows with the locally cached Go 1.26.10 toolchain, at the later branch sta
 `cb71cf80d72`, the `./adapter` `TestScopeClose` tests, three `./protocol/tun` current-FakeIP-range
 L0 tests, and `./experimental/cachefile` `TestFakeIPSaveMetadataReportsAFailedFlush` passed.
 These unit tests do not establish retired-range L0 protection or physical device behavior.
+With the same toolchain, `go test -tags p2ios ./experimental/libbox -run TestPlatformMonitor -count=1`
+passed the monitor ordering and close-during-refresh tests using test doubles.
 
 Post-baseline checks run locally at target `011f3fdcd99` on 2026-10-28 (unit tests, not device or CI evidence):
 

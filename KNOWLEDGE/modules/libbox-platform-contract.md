@@ -39,6 +39,18 @@ first issuing the separate close-service RPC therefore still requests Box shutdo
 discards the `CloseService` error, so its void return is not evidence that Box cleanup succeeded.
 See the `p2ios`-tagged `TestCommandServerCloseClosesTheBox`; no device-level result is implied.
 
+### Platform default-interface monitor ordering
+
+At the testing target, `experimental/libbox/monitor.go` refreshes the interface list first when
+the manager supports `RefreshInterfaces`, then publishes the default-interface and pause changes.
+If the default interface remains the same, it invokes `UpdateNetworkEnvironment` when available so
+gateway or other environment changes still get an observation. Older implementations without the
+split interface use `UpdateInterfaces` instead. The monitor rechecks its closed flag under the
+default-interface lock after the potentially slow refresh, preventing an update from writing the
+default interface when close has already landed during that refresh. `monitor_ordering_test.go` and
+`monitor_close_fence_test.go` exercise these boundaries with test doubles; they do not prove a
+physical Android or Apple network transition.
+
 **Scope:** `experimental/libbox/*`, `daemon/*`, `include/*` as they define the client-facing surface,
 `cmd/internal/{mobilebuildtags,applebuildtags,appletags}`, `release/apple-client-refs.env`, and the
 Apple/Android artifact pins.
@@ -378,17 +390,17 @@ clean checkout would call the old ABI against a rebuilt libbox and fail to compi
 `-checklinkname=0` is passed for that build via `cmd/internal/mobilebuildtags` (see
 `build-pruning-release.md` §2).
 
-## 8. The two deliberate upstream-interface breaks
+## 8. Two interface changes in the historical comparison
 
 | Interface | At `e4b7e692` | At `a267e99` | Commit | Why |
 |---|---|---|---|---|
 | `DeprecatedNote.Message()` / `MessageWithLink()` | `string` | `*StringBox` | `eef6bafff` | a bare `string` puts a Go pointer in gomobile's packed result frame → `fatal error: bulkBarrierPreWrite: unaligned arguments`, unrecoverable. Recorded in `docs/fork/libbox-abi-contract.tsv`. |
 | `adapter.NewAdapterWithDialerOptions` | `(…)` | `(…, serverIsDomain ...bool)` | `ff0040079` | the server-domain fact has to reach the adapter |
 
-**Upstream's libbox is not drop-in replaceable in this fork.** Everything else is additive: new
-capabilities are **optional interfaces embedding `Outbound`** (`ConnectionCopyTuner`,
-`CopyBufferGrowthTuner`, `BypassableOutbound`), so upstream implementations still satisfy the
-originals.
+**Do not assume upstream's libbox is a drop-in replacement.** The table is not exhaustive for later
+revisions: `UseProcFS` was subsequently removed from `PlatformInterface`, with a separate Android
+helper retained. Some outbound capabilities are optional interfaces (`ConnectionCopyTuner`,
+`CopyBufferGrowthTuner`, `BypassableOutbound`); that does not establish compatibility of every API.
 
 ---
 
