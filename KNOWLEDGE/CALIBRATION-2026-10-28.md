@@ -107,6 +107,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - A test-name scan found that the cited duplicate-member lint test is absent; the implementation is
   source-verified, while nearby collision tests cover a different setup. Prefix regexes and explicit
   historical names require manual interpretation rather than being counted as missing tests wholesale.
+- The same scan found `TestQUICOwnership` matched no definition. The acceptance command now selects
+  the actual `TestQUICSniffContext` tests, which passed locally; other unmatched names were confirmed
+  to be historical references or non-test text, not automatically treated as current tests.
 - Correction to an earlier calibration statement: Verify runs `TestNetLogEventCount` after `cd test`,
   in the separate test module. It is not a main-root-package test; the acceptance and CI entries have
   been corrected after checking the workflow's working directory and test definitions.

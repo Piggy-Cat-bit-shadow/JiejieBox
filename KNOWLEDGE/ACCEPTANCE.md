@@ -30,6 +30,8 @@ The two named reusable-owner capability and real HTTP-manager retirement-walk te
 locally under Go 1.26.10; they do not enumerate every possible owner.
 Selected `./protocol/mieru` fallback option, cooldown/probe, startup rollback and stale-generation
 tests passed under Go 1.26.10; this does not establish external Mieru interoperability.
+`./common/sniff` tests matching `^TestQUICSniffContext` passed under Go 1.26.10; the old
+`TestQUICOwnership` filter matched no test and has been corrected below.
 
 Post-baseline checks run locally at target `011f3fdcd99` on 2026-10-28 (unit tests, not device or CI evidence):
 
@@ -184,7 +186,7 @@ attributing specific test coverage to that run or a later revision.
 | # | Requirement | Evidence | Level | Re-check | Environment |
 |---|---|---|---|---|---|
 | 3.1 | QUIC packet/datagram boundaries, coalesced packets, malformed headers, `Length < 4` | real tests + two fuzz targets | VERIFIED_UNIT | `go test -count=1 ./common/sniff/...` | Go |
-| 3.2 | A retained QUIC fragment never aliases the caller's datagram | address-range + datagram-poisoning tests | VERIFIED_UNIT | `go test -count=1 -run TestQUICOwnership ./common/sniff/` | Go |
+| 3.2 | A retained QUIC fragment never aliases the caller's datagram | `TestQUICSniffContextOwnershipEndToEnd`, `TestQUICSniffContextFragmentsDoNotAliasTheDatagram` | VERIFIED_UNIT locally for these tests | `go test -count=1 -run '^TestQUICSniffContext' ./common/sniff/` | Go |
 | 3.3 | TLS and HTTP gates never reject a prefix the parser would ask more data for | `sniff_gate_internal_test.go`; >500 prefixes | VERIFIED_UNIT | `go test -count=1 -run TestGate ./common/sniff/` | Go |
 | 3.4 | WireGuard is sniffed; the uTP ambiguity is structural and deliberately not narrowed | `TestSniffWireGuardUTPAmbiguityIsStructural` | VERIFIED_UNIT | `go test -count=1 -run TestSniffWireGuard ./common/sniff/` | Go |
 | 3.5 | Fragmented-QUIC rounds are capped at 64 and the buffer is released on abandon | `route/route.go:1211-1217`, `:1340-1347` | **VERIFIED_SOURCE only** — no test, no reproducible measurement | grep `maxSniffRounds` in `route/*_test.go` → nothing | — |
