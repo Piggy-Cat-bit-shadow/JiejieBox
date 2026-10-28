@@ -37,7 +37,7 @@
 
 | # | 仓库 | 产品分支 | 开始 SHA | 结束 SHA | 上游目标 | 与上游关系 | 本轮变更 | 分支状态 | 消费方 Pin 前 → 后 | 验证级别 | 远端 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | `sing-box` | `testing` | `a0bbf666` | `8dac10c1`（+ Apple 合并提交） | `SagerNet/sing-box:testing` `e5d91fa7` | behind 0 | 4 个提交：utls Pin、android gitlink、desktop gitlink、发布冻结工具链 | `testing` 保留；`pending/...` 保留（§4） | utls / android / desktop 三个 Gitlink 与 replace 前移 | `go build` 双模式 PASS；`check-go-module-integrity.sh` PASS（见 §5） | 已推送并回读 |
+| 1 | `sing-box` | `testing` | `a0bbf666` | `e814b2ba`（本报告所在提交；Apple Gitlink 未动，见 §7.1） | `SagerNet/sing-box:testing` `e5d91fa7` | behind 0 | 6 个提交：utls Pin、android gitlink、desktop gitlink、发布冻结工具链、报告、冻结工具修复 | `testing` 保留；`pending/...` 保留（§4） | utls / android / desktop 三个 Gitlink 与 replace 前移 | `go build` 双模式 PASS；`check-go-module-integrity.sh` PASS（见 §5） | 已推送并回读 |
 | 2 | `sing` | `dev` | `1729220c` | 未变 | `SagerNet/sing:dev` `03a6cce6` | behind 0 / ahead 55 | 无 | 单分支 | `v0.9.6-0.20261027185736-1729220c46c4` 不变 | 复核结论 | — |
 | 3 | `sing-quic` | `main` | `1ef2597c` | 未变 | `sagernet/sing-quic:main` `7e0a5869` | behind 0 / ahead 7 | 无 | 单分支 | `v0.7.2-0.20261024181351-1ef2597cc129` 不变 | 复核结论 | — |
 | 4 | `sing-tun` | `dev` | `8b9a3800` | 未变 | `SagerNet/sing-tun:dev` `5b0a1a7a` | behind 0 / ahead 98 | 无 | 单分支 | `v0.0.0-20261028061444-8b9a38008705` 不变 | 复核结论 | — |
@@ -316,6 +316,7 @@ Android 的删除顺序刻意是：先建 4 个 `archive/*` 标签 → 推送标
 | `sing-box` | `8dac10c1` | feat：发布前依赖冻结（manifest + 工具 + 测试 + 工作流 + 锁） |
 | `sing-box` | `fad9be7a` | docs：本报告 |
 | `sing-box` | `62f5ecef` | fix：伪版本改从 fork 路径计算（dry run 抓到的真实缺陷） |
+| `sing-box` | `e814b2ba` | docs：dry run 结果与 Apple Pin 保持不动的理由 |
 
 ---
 
