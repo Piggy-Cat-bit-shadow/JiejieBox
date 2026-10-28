@@ -242,7 +242,10 @@ VERIFIED_ANDROID_SHA="c7837107dc0126fb704fdf08cf203e10b30c8a22"
 # stubs (`git diff --name-only aeccc754..16cf87b4`) - which touches no file this contract names.
 # Layer 3 (the generated binding) is unchanged by it for the same reason. The compile half is the
 # Apple client workflow, which is what the release path consumes.
-VERIFIED_APPLE_SHA="16cf87b4bea0dd4e81d51b2b1b8c2e317ae88423"
+# VERIFIED on run 40776674407: the macOS client target compiled and packaged on a real
+# macOS runner, from this exact source, with the Libbox framework the run built and the
+# layer 1-5 ABI gate green against the same tree.
+VERIFIED_APPLE_SHA="044e6d5447eb1285c950bd12cee10effab641f5a"
 
 client_root=""
 skip_client=0
