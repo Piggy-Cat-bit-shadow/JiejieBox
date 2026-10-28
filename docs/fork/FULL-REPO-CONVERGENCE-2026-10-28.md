@@ -175,7 +175,9 @@ Android 的删除顺序刻意是：先建 4 个 `archive/*` 标签 → 推送标
 | 生命周期链 | `detectServiceMode` 存在、`applySelectedProfile` 3 处、`RequestReconnectService` 0 处、`suspend fun setupLibbox` 存在 | `VERIFIED_SOURCE` |
 | AIDL | `startAutoRedirect = 9` 只出现一次 | `VERIFIED_SOURCE` |
 | 订阅 UA | `HTTPClient.SUBSCRIPTION_USER_AGENT = "sing-box/1.15.0"`，只在 5 处订阅正文请求传入；默认 UA 仍是 `SFA (...)` | `VERIFIED_SOURCE` |
-| **Kotlin 编译** | **`NOT_RUN`**：本机无 JDK 17 / Gradle，且无 Android 仓库的 CI | 缺口 |
+| **Kotlin/Gradle 真实编译** | **PASS**：`./gradlew --no-daemon assembleOtherDebug`（JDK 17.0.20.1 Temurin、compileSdk 37、SDK `C:\Deepseek\sdk`）→ `BUILD SUCCESSFUL in 4m 16s`，`48 actionable tasks: 48 executed`，产出 5 个 ABI 的 debug APK（`SFA-1.15.0-alpha.13-*-debug.apk`，最大 68.1 MB）。所用 AAR 是父仓库 `android-core-arm64.yml` 为 core `8dac10c1` 构建的产物，`artifact_sha256` 与其自带记录一致（`25f43868…`），`BUILD-INFO-ANDROID.txt` 的 `git_commit` 为 `8dac10c1` | `VERIFIED_UNIT`（编译级） |
+| **负向对照** | 用**同一份新 AAR** 编译旧 `main`（`ae93152`）：`:app:compileOtherDebugKotlin FAILED`，**11 个 `e:` 错误**，`BUILD FAILED in 1m 41s`，命中的文件正是本轮修掉的：`PlatformInterfaceWrapper.kt`（`'useProcFS' overrides nothing` + `fun name(): String` 不是 `StringBox!` 的子类型）、`RootServer.kt:255`、`VPNService.kt:20/77/83/127/135/173`、`Wrappers.kt:49`、`DashboardViewModel.kt`、`ProxyService.kt`。同一 AAR 下新树 PASS、旧树 FAIL ⇒ AAR 确实是迁移后的 ABI，且合并树是它能编译的原因 | `VERIFIED_UNIT` + 负向 |
+| 真机/VPN/TUN/root/auto_redirect | `NOT_RUN`（无设备） | 缺口 |
 
 ### 5.3 Apple
 
@@ -277,7 +279,7 @@ Android 的删除顺序刻意是：先建 4 个 `archive/*` 标签 → 推送标
    - 因此：`clients/apple` gitlink **保持 `aeccc754`**，`apple/main` **保持 `16cf87b4`**，候选提交留在 `sync/upstream-2026-10-28`（`be3258a`）。这是施工令要求的"无法可靠编译就停留在旧正式 Pin，报告候选与失败证据"，而不是把未验证的 Swift 变更合进产品线。
    - 恢复条件：任一 macOS runner 能跑完 `client-apple.yml` 的 `macos` 作业（`gh workflow run client-apple.yml -f build_ios=false -f build_macos=true`，并用仓库变量 `APPLE_CLIENT_SHA=be3258ab57dd…` 指向候选）。绿了以后：fast-forward `apple/main` → 更新 `clients/apple` gitlink 与 `VERIFIED_APPLE_SHA` → 重跑 `release-freeze.py snapshot` → 删除候选分支。
 2. **`release-prepare.yml` 已真实 dry run 通过**（run `40706074269`），但它抓到过一个只有真跑才会暴露的缺陷（伪版本算在被 replace 的路径上），已修（`62f5ecef`）。教训保留在工作流里：`apply` 之后仍要 `verify`，两者不能互相替代。
-3. **Kotlin/Android 编译仍是 `NOT_RUN`**。本机没有 JDK 17/Gradle，Android 仓库也没有任何 workflow。这是全链路里**唯一没有编译证明的客户端**。下一步（建议单独一轮）：在 Android 仓库加一个 JDK 17 + `./gradlew assembleOtherDebug` 的 workflow，AAR 用父仓库 `android-core-arm64.yml` 的产物；在此之前，ABI 结论只有扫描器级别（`VERIFIED_SOURCE`），不是编译级别。
+3. **Android 的 Kotlin 编译本轮已补上，但真机行为仍未验证。** 用 JDK 17 + `libbox.aar`（core `8dac10c1` 的真实产物，checksum 与 `BUILD-INFO-ANDROID.txt` 自洽）在本机跑通 `assembleOtherDebug`；同一份 AAR 对旧 `main`（`ae93152`）做负向对照，`compileOtherDebugKotlin FAILED`、11 个 `e:` 错误、`BUILD FAILED`。仍未做：真机上的 VPN/TUN、service start/stop、root/auto_redirect、默认接口切换、睡眠唤醒、运行中配置切换。这些需要设备，不是自动化能替代的。
 4. **Desktop 前端/打包 `NOT_RUN`**：内置 pnpm 是 broken release，`node_modules` 不存在。而 `client-desktop-windows.yml` **不能**用来验证这个新 Pin：它的 `core_sha` / `core_version` 是必填输入，并且会与 `refs/tags/v<version>` 的目标提交交叉校验（见该工作流头部注释）。也就是说它只能针对**已存在 tag** 的提交构建，而本轮没有也无法打 tag。结论：desktop 的 installer 级证明要等到下一次真实发布，或由一个允许"候选 SHA + 不校验 tag"的入口提供。这是本轮明确留下的缺口，不是"跑不跑得动"的问题。
 5. **`release-prepare.yml` 在 dry-run 下跳过证据步骤**：这是有意的（dry run 不产生候选提交，声称证据就是假证据），但意味着"证据链"本身只有真实运行才验证。本轮没有跑到那一步。
 6. **既有的 Apple mach service 版本不一致（`R3`）**：`AppConfiguration.systemExtensionMachServiceName` 用 `Bundle.main.version`，而扩展的 `NEMachServiceName` 用 `MARKETING_VERSION`，本地未签名构建下两者可能不同（release 构建会被 `release/JIEJIE_VERSION` 全局覆盖，所以不影响正式包）。不是本轮引入，未在本轮修（需要产品决策），记录在此。
