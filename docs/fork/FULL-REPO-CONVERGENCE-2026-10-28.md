@@ -285,22 +285,33 @@ Android 的删除顺序刻意是：先建 4 个 `archive/*` 标签 → 推送标
 
 按"可执行的下一步"写，不写"其余正常"。
 
-1. **Apple 上游融合的 macOS 编译无证据 → 上游合并停留在候选分支（HOLD）；但 `clients/apple` 已经前移到 `16cf87b4`（fork 自己的 UA 修复，见 §5.3 的 ABI 依据）。**
-   - 已拿到：iOS 目标在候选 `be3258a` 上**构建成功**（Apple client run `40698718663` 的 `ios` 作业 = success），因此共享 Swift 代码、`libbox` 链接、`StringBox` ABI 与 `ShareExtension/Info-iOS.plist` 接线都经过真实编译。
-   - 没有拿到：`macos` 目标。**六次尝试，两个 runner 标签，全部在排队 15 分钟后被取消，且一个 step 都没有执行**：`40698718663` 的 `macos`、`40704313767` 的 `libbox`、`40707022945` 的 `libbox`、换成 `macos-14` 的探针 `40710418326` 的 `libbox`（探针分支随后已删除）、`40722121237` 与 `40727482951` 的 `libbox`（后者 16:35:54 排队、16:50:56 取消）。
+1. **Apple 上游融合停在候选分支（HOLD），但阻塞点已经从"源码"移到"runner 分配"，并且工作流已按单 runner 重构。**
+   - 已有证据（都不等于 macOS App 编译）：iOS 目标在候选上构建成功（run `40698718663` 的 `ios`）；
+     422 个 Swift 文件语法解析通过；订阅/UA 的 SPM 行为测试 37 用例 0 失败（含"只有订阅正文用
+     `sing-box/1.15.0`、配额探测保留 Clash 兼容 UA"两条边界）；`libbox` 作业成功一次（run `40730518254`，
+     `make lib_apple` 产出 iOS+macOS 两个切片，并跑通层 1–5 ABI 门对候选客户端的扫描）。
+   - 真正的阻塞：macOS 作业拿不到 runner。取证覆盖 **16 次 macOS 作业派发**，只有 3 次获得 runner；
+     被取消的作业特征一致——`runner_name` 为空、`steps=0`、排队约 15 分钟后 `cancelled`；同一时段
+     GitHub 状态页无事故；仓库是 public fork（与"分钟数用尽"无关）；换 `macos-14` 也一样。
+   - **已完成的改造**（不依赖 runner，先落地）：`client-apple.yml` 现在支持 macOS-only 单 runner 验收模式——
+     `libbox` 只在构建 iOS 时运行，`macos` 作业接受"依赖被 skip"并在同一 job 内构建 Libbox、跑 ABI 门、
+     pack、validate、install，然后编译 SFM。框架构建序列被提取为 `.github/actions/apple-libbox-build`，
+     两个作业共用一份实现；候选 SHA 由新输入 `apple_client_sha` 指定，优先级与拒绝规则由
+     `scripts/ci/apple-client-input.sh`（13 条行为测试）决定。结构门从 YAML 求值四种输入组合，
+     断言 macOS-only **只计划 1 个 macOS 作业**。设计、证据与两个真跑才暴露的缺陷见
+     [`docs/fork/APPLE-SINGLE-RUNNER-2026-10-29.md`](APPLE-SINGLE-RUNNER-2026-10-29.md)。
+   - 真跑发现的两个缺陷（已修）：`Tests/SubscriptionQuotaCaption` 下两条符号链接少了一级 `../`
+     （Windows 检出把符号链接落成文本文件，所以本地永远看不出来；POSIX 上是断链，ABI 层 4 直接 SKIP）；
+     `build-apple-libbox.sh` 拒绝不存在的安装目录，而单 runner 模式要先装进临时目录。
+   - 因此：`apple/main` **保持 `16cf87b4`**（不含上游合并），13 个上游提交 + 上述符号链接修复在候选
+     `sync/upstream-2026-10-28`（`1372675`）。`clients/apple` gitlink 保持 `16cf87b4`（fork 自己的 UA 修复，
+     已随 v0.1.33 构建过；层 4 扫描 423 文件 / 0 违规）。这是施工令要求的"无法可靠编译就停留旧 Pin、
+     报告候选与失败证据"，不是把未验证的 Swift 变更合进产品线。
+   - 恢复条件（一条命令）：macOS runner 可用时
+     `gh workflow run client-apple.yml --ref testing -f build_ios=false -f build_macos=true -f apple_client_sha=13726756f2fc7d1d1c27535146ddd86279c02946`；
+     绿了之后用 `finish-apple-merge.ps1 -RunId <run> -Candidate 1372675…` 一次完成
+     `apple/main` fast-forward → gitlink/`VERIFIED_APPLE_SHA` → 重新 `snapshot` → 推送 → 删候选分支。
 
-   - 取证结论（排除法，而不是猜测）：被取消的 `libbox` 作业 `runner_name` **为空、`steps` 为 0**，即从未分配到 macOS runner；同一时段 GitHub 状态页 `All Systems Operational`（Actions operational，无事故）；仓库本身是 **public fork**，所以这不是"用完了 macOS 分钟数"那种故事。结论：这些作业根本没能拿到 macOS runner，仓库侧没有任何东西能改变它。前两次 macOS 作业（`libbox` 13:53 成功、`ios` 14:09 成功）说明在这之后就再也没排到过。
-   - **为了让 macOS 目标有机会跑，做了一次隔离探针**（分支 `probe/apple-macos-from-artifact`，**临时、待删**，
-     不是产品分支）：它在 `client-apple.yml` 里把 `libbox` 置为 skip，让 `macos` 作业不再等 libbox 结束，
-     改为直接取用 `40730518254` 已产出的 `jiejiebox-libbox-d50794e3…` artifact（`--parent-sha` 指向该内核提交）。
-     目的只有一个：macOS 作业在 run 开始 30 秒内就进入队列，而不是等 libbox 20 分钟后才排队——因为
-     "排队超过 15 分钟即被取消" 才是真正的约束。**这个探针证明轮询是有意义的**：run `40739637008` 的
-     `macos` 作业在 17:51:53 拿到 runner `...1000010972` 并跑到第 22 步（失败在 artifact 下载——第一次探针把
-     download 步骤改到了 iOS 作业上，是我自己的编辑错误，已修正）。之后的探针 `40741025099`、`40743992138`、
-     `40750571354` 都再次没拿到 runner。
-     （后续又发了三个并发探针 `40752723255`/`40752743375`/`40752762632`，每个有自己的 15 分钟窗口，全部同样被取消。**探针分支在用过之后已删除**，远端只剩 `testing` 与保留的 `pending/…`；重建方法就是上面三处改动——libbox 置 skip、macos 的 download 换成 `gh run download <run> --name jiejiebox-libbox-<core> --dir build/apple-libbox`、validate 的 `--parent-sha` 指向该内核提交——资产名与内核提交都记在上面。）
-   - 因此：`apple/main` **保持 `16cf87b4`**（不含上游合并），13 个上游提交的合并留在候选 `sync/upstream-2026-10-28`（`be3258a`，Swift 语法层已验证：422 文件解析通过）。这是施工令要求的"无法可靠编译就停留在旧正式 Pin，报告候选与失败证据"，而不是把未验证的 Swift 变更合进产品线。**注意**：`clients/apple` gitlink 已经前移到 `16cf87b4`，因为那只是 fork 自己的 UA 修复、且已随 v0.1.33 构建过；层 4 扫描（423 文件 / 0 违规）与 `VERIFIED_APPLE_SHA` 在同一个提交里更新。另外记录一个**真实发现**：第一次非 dry-run 的 `release-prepare` 把 gitlink 写进索引后，`check-libbox-abi.sh --pin-only` 仍然通过，因为它读的是 `git ls-tree HEAD`（旧提交）而不是索引——**门禁被自己的执行顺序绕过了**。工作流已改成 提交 → ABI 门 → 推送，让这道门真正检查要推出去的那个提交。
-   - 恢复条件：macOS 配额恢复后，`gh workflow run client-apple.yml -f build_ios=false -f build_macos=true`（仓库变量 `APPLE_CLIENT_SHA=be3258ab57dd…`）。绿了以后：fast-forward `apple/main` → 更新 `clients/apple` gitlink 与 `VERIFIED_APPLE_SHA` → 重跑 `release-freeze.py snapshot` → 删除候选分支。
 1b. **准备运行期间主干被推新提交时，工作流会失败而不是强推**（本轮实测：`40715812910` 的推送被 `! [rejected] HEAD -> testing (fetch first)` 拒绝）。这是设计：冻结是对某个 head 算出来的，换成新 head 必须重算。失败信息已改成明确的"分支在运行期间移动了，请重跑"，并在证据步骤前增加一次 `git ls-remote` 对照，避免把本地提交当成发布候选。
 2. **`release-prepare.yml` 已真实 dry run 通过**（run `40706074269`），但它抓到过一个只有真跑才会暴露的缺陷（伪版本算在被 replace 的路径上），已修（`62f5ecef`）。教训保留在工作流里：`apply` 之后仍要 `verify`，两者不能互相替代。
 3. **Android 的 Kotlin 编译本轮已补上，但真机行为仍未验证。** 用 JDK 17 + `libbox.aar`（core `8dac10c1` 的真实产物，checksum 与 `BUILD-INFO-ANDROID.txt` 自洽）在本机跑通 `assembleOtherDebug`；同一份 AAR 对旧 `main`（`ae93152`）做负向对照，`compileOtherDebugKotlin FAILED`、11 个 `e:` 错误、`BUILD FAILED`。仍未做：真机上的 VPN/TUN、service start/stop、root/auto_redirect、默认接口切换、睡眠唤醒、运行中配置切换。这些需要设备，不是自动化能替代的。
