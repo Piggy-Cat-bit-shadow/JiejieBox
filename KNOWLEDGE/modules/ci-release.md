@@ -89,9 +89,9 @@ candidate can obtain its own release evidence.
 | race, config surface | `go test -race … ./option/...` | races in `option` | — |
 
 > **Historical v0.1.9 observation:** the root acceptance suite was compiled but not executed by the
-> then-declared source gate. Current `verify.yml` additionally declares a root-package test filtered
-> to `TestNetLogEventCount`. It does not follow that all root acceptance tests run; inspect the
-> current commands and actual run records. See §4 for the tag set to run root tests locally.
+> then-declared source gate. Current `verify.yml` runs `TestNetLogEventCount` after `cd test`: that
+> is the separate test module, not this repository's main root package. Inspect current commands and
+> exact run records before attributing root acceptance coverage. See §4 for historical local commands.
 
 The release path consumes evidence from explicitly selected runs. Do not say every artifact workflow
 is dispatch-only: `android-core-arm64.yml` also declares path-filtered pushes to `testing`, while its

@@ -104,6 +104,12 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - The reusable-owner test checks named types rather than forbidding every second `ReuseSuspect`
   implementation; its previously cited test command matched no test. Corrected the related
   cautions and distinguished the sing fork's splice workflow declaration from an observed run.
+- A test-name scan found that the cited duplicate-member lint test is absent; the implementation is
+  source-verified, while nearby collision tests cover a different setup. Prefix regexes and explicit
+  historical names require manual interpretation rather than being counted as missing tests wholesale.
+- Correction to an earlier calibration statement: Verify runs `TestNetLogEventCount` after `cd test`,
+  in the separate test module. It is not a main-root-package test; the acceptance and CI entries have
+  been corrected after checking the workflow's working directory and test definitions.
 
 ### Module review status
 

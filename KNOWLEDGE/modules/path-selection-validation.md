@@ -229,7 +229,11 @@ The start-order sort marked a node started **by tag** and stopped when the numbe
 equalled the number of **nodes**. Two objects under one tag satisfied that count with one unvisited,
 and the code that then reported a dependency problem dereferenced the nil result — measured as
 `invalid memory address or nil pointer dereference` inside `lintOutbounds`, not an error.
-`TestDuplicateMemberTagIsRefusedRatherThanCrashingTheSort` pins the replacement.
+The current `lintOutbounds` checks duplicate object identities and duplicate tags before sorting.
+The previously cited `TestDuplicateMemberTagIsRefusedRatherThanCrashingTheSort` is absent from this
+tree; `adapter/outbound/tag_collision_test.go` documents the namespace-collision setup but does not
+by itself prove the lint path. Treat the lint behavior as source-verified unless an actual matching
+test is located and run.
 
 ### The one construction side effect
 

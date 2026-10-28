@@ -139,11 +139,11 @@ A clean `go vet -tags "$OTHERS" .` proves the second group touches no root inter
 and `box_test` as two packages in one directory and forbids the external one from naming unexported
 identifiers. Verified, exit 0; and all nineteen contain no `reflect`, `unsafe` or `go:linkname`.
 
-**Coverage qualification, 2026-10-28:** `verify.yml` declares a root-package run filtered to
-`TestNetLogEventCount`, as well as a compile-only `go test -run '^$' ./...`; its listed race packages
-do not include the root. This does not establish that the other root acceptance tests execute in CI,
-or that any specific workflow run passed. Inspect current workflow definitions and run records before
-making either claim.
+**Coverage qualification, 2026-10-28:** `verify.yml` runs `TestNetLogEventCount` after `cd test`,
+so that is the separate test module's root package, not the main module's root package. The main
+module's untagged `go test -run '^$' ./...` is compile-only, and its listed race packages do not
+include the main root. The linked Verify run has its own SHA; inspect its jobs and commands before
+attributing specific test coverage to that run or a later revision.
 
 ---
 
@@ -289,7 +289,7 @@ making either claim.
 | 12.2 | The server profile builds | run in this audit | **VERIFIED_UNIT** | `go build -tags "$OTHERS" ./...` | Go |
 | 12.3 | Target-specific profile and dependency constraints | historical Windows failure; current Windows profile adds `with_purego`, and exact-pinned local Cronet source passed selected purego unit tests | historical failure does not prove current Windows artifact status | inspect current profile and pinned source | target-specific toolchain |
 | 12.4 | The root design-guarantee suite passes **with the right tags** | run in this audit: `ok 5.459s` | **VERIFIED_UNIT** | `go test -count=1 -tags "$OTHERS" .` | Go + tags |
-| 12.5 | Root test coverage declared by Verify | untagged compile-only command runs zero tests; a separate filtered root command runs `TestNetLogEventCount` | VERIFIED_SOURCE of declaration; not the full root suite | inspect `.github/workflows/verify.yml` and the exact run | — |
+| 12.5 | Main-root test coverage declared by Verify | untagged compile-only command runs zero tests; `TestNetLogEventCount` runs after `cd test`, in the separate module | VERIFIED_SOURCE of declaration; not evidence that the main-root suite ran | inspect `.github/workflows/verify.yml` and the exact run | — |
 | 12.6 | Tag composition and the `-checklinkname=0` contract | CI step `:168` | VERIFIED_UNIT | `go test -count=1 ./cmd/internal/...` | Go |
 | 12.7 | Pinned-upstream assumption tripwires | CI step `:179`; the script is wired | **UNVERIFIED (declaration only)** — needs bash | `bash scripts/ci/verify-upstream-assumptions.sh` | bash + network |
 | 12.8 | Nested modules resolve the same fork pins | CI step `:137` | **UNVERIFIED (declaration only)** | `bash scripts/ci/check-go-module-integrity.sh --require-checked test` | bash |
