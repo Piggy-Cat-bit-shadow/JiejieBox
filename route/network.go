@@ -112,12 +112,12 @@ type NetworkManager struct {
 	// hostPort is the tun stack as a routed port. It is published once when the stack starts and
 	// read on the flow-judging path, so the read is a plain atomic load: a nil here means "no
 	// routed port", which is the pre-existing behaviour.
-	hostPortAccess sync.Mutex
-	hostPort       tun.RoutedPort
-	networkMonitor          tun.NetworkUpdateMonitor
-	interfaceMonitor        tun.DefaultInterfaceMonitor
-	packageManager          tun.PackageManager
-	powerListener           winpowrprof.EventListener
+	hostPortAccess   sync.Mutex
+	hostPort         tun.RoutedPort
+	networkMonitor   tun.NetworkUpdateMonitor
+	interfaceMonitor tun.DefaultInterfaceMonitor
+	packageManager   tun.PackageManager
+	powerListener    winpowrprof.EventListener
 	// suspendWatcher is the macOS resume detector.
 	//
 	// Windows has a real power listener; Apple has the NetworkExtension sleep()/wake() pair in the

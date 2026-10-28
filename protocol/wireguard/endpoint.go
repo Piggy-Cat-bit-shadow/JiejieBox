@@ -47,12 +47,12 @@ type Endpoint struct {
 	localAddresses []netip.Prefix
 	// system is the `system` option: when set, the endpoint's addresses are configured on the
 	// host and a flow to them is the host's, not the tunnel's, so it stays ActionAccept.
-	system  bool
-	network adapter.NetworkManager
-	endpoint       *wireguard.Endpoint
-	onDemand       bool
-	bindAccess     sync.Mutex
-	started        atomic.Bool
+	system     bool
+	network    adapter.NetworkManager
+	endpoint   *wireguard.Endpoint
+	onDemand   bool
+	bindAccess sync.Mutex
+	started    atomic.Bool
 }
 
 func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.WireGuardEndpointOptions) (adapter.Endpoint, error) {
