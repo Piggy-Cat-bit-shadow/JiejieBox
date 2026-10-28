@@ -139,7 +139,7 @@ add their effects to any ordinary-TUN number.
 | `Mobile contract verification` on the same SHA | PASS on re-run. The first attempt hit the documented `transport/http` flake, `TestActiveInboundStopsBecauseThePeerIsStarved` (3 s floor, measured 2.973 s) - its third recorded occurrence, in a package this work does not touch |
 
 The mobile-contract failure is the pre-existing runner-scheduling flake recorded in
-[half-closed-flow-release.md](half-closed-flow-release.md): the assertion measures inbound arrival
+[half-closed-flow-release.md](../../../docs/fork/half-closed-flow-release.md): the assertion measures inbound arrival
 times against a 3 s floor and a loaded runner landed 27 ms under it. The job passed on re-run, as it
 did for both earlier occurrences, and the assertion was not relaxed for this work. Recorded here
 rather than silently dropped.
@@ -154,7 +154,7 @@ hits in the window). The full sweep above is the gate that used to fail, now gre
 Linux nfqueue, L0 route installation, accepted TCP/UDP handovers and kernel movement, real NIC
 throughput/CPU, macOS/iOS/Android/Windows device behaviour, the Android platform auto-redirect
 implementation. Each needs hardware or privileges this environment does not have. The procedure for
-the first three already exists in [real-tun-validation.md](real-tun-validation.md) §1 (L0) and §2
+the first three already exists in [real-tun-validation.md](../../../docs/fork/real-tun-validation.md) §1 (L0) and §2
 (splice), including what would falsify each claim; what is missing is the host, not the plan.
 
 ## 11. Gap to the original goal, and the smallest next step

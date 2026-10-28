@@ -31,7 +31,8 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - A mechanical scan of backticked bare `name()` references in module documents found Go symbols
   in the current tree; two remaining names were verified as shell functions. This is a limited
   spelling check, not proof that each claim or historical line number is correct. Relative Markdown
-  links in root/module documents were also checked; this does not validate prose path references.
+  links across the knowledge tree were checked after excluding fenced code; two broken archival
+  links were corrected. This does not validate prose path references or Markdown anchors.
 - Additional source review distinguished ShadowTLS's first-record deadline and target cleanup,
   endpoint-owned DNS resolver retirement, power-observer notification copying, and Android's separate
   procfs helper from the removed `UseProcFS` platform-interface method. Corresponding targeted
