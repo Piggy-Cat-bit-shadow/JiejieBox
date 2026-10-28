@@ -142,15 +142,16 @@ as the Hysteria2 and HTTP inbound masquerade, so a normal website can share the 
 * Unset means the upstream behaviour: a proxy authentication challenge or a bad-request status.
 * It does not make the service undetectable.
 
-**Over-limit probes get a locally generated 429 decoy** (`ba999574d`), with **no 401/407 and no
-`WWW-Authenticate`**, so tripping the limiter cannot fingerprint a proxy. The decoy is **not** a cached
-backend page.
+The current connection-count limiter refuses over-limit peers in `limitedListener.Accept` by closing
+the accepted socket before HTTP request handling. It does not generate an HTTP 429 response there;
+the old 429-decoy claim is stale. Neither a masquerade nor a particular refusal shape proves the
+service cannot be fingerprinted. See `server_limited_listener.go` and `server_limiter_test.go`.
 
 ### Pre-authentication resource controls (`server_limits`)
 
-`server_limits` bounds what a peer may hold **before** it authenticates. Every field is optional and
-**omitting the block means unlimited** — no limit is applied by default because the production topology
-serves long-lived tunnels and a guessed limit would silently break them.
+`server_limits` can constrain resources before authentication; connection counts also include
+authenticated connections. Every field is optional and omitting the block leaves these explicit
+limits disabled. Other transport, runtime or operating-system limits may still apply.
 
 | Field | Bounds |
 |---|---|

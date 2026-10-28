@@ -179,7 +179,7 @@ e4b7e692..a267e99` returns exactly that commit). `VERIFIED_SOURCE`; execute need
 |---|---|---|---|
 | `b83089ec` | — | **UPSTREAM-INHERITED** | "Add MASQUE support", 世界, 2026-09-21 — **present below `e4b7e692`**, not a fork feature |
 | `d53c867b7` | FEATURE | OWN | **the fork's first fork-authored commit** — the inbound masquerade handler |
-| `7e57fe8c7` | HARDENING | OWN | the limiter actually bounds; a 429 decoy with no `WWW-Authenticate` |
+| `7e57fe8c7` | HARDENING | OWN | historical limiter work; current connection-count refusals close at accept rather than returning a 429. See `modules/naive-http-transport.md` |
 | `b83695603` → `1511c1c6a` | FEATURE/FIX | OWN | the H3 pool rotates within the **tied-minimum** set (before, slot 0 served every tunnel) |
 | `0271b145a` | HARDENING | OWN | CONNECT gated on `HandshakeComplete` (0-RTT replay) |
 | `9491008a9` | FIX | OWN | `http3_fallback` was dead config |

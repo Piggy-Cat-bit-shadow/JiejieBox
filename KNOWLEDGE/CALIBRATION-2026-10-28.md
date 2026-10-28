@@ -151,6 +151,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - Half-close observation now describes the observable userspace-socket gate, kernel socket skip,
   terminal versus local-deadline verdicts, shutdown settlement and configured timers. Selected route
   unit tests passed on Windows; active streams and real-device recovery remain outside that evidence.
+- The Naive server limiter was checked against its accept path: connection-count refusal closes the
+  socket instead of returning the previously documented HTTP 429. Default-limit and refused-connection
+  tests passed locally; no inference about the service being unidentifiable is supported.
 
 ### Module review status
 
