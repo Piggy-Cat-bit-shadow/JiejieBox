@@ -83,6 +83,8 @@ type stubNetworkManager struct{}
 
 func (m *stubNetworkManager) Start(stage adapter.StartStage, scope *adapter.Scope) error { return nil }
 func (m *stubNetworkManager) Close() error                                               { return nil }
+func (m *stubNetworkManager) RegisterHostPort(port tun.RoutedPort)                       {}
+func (m *stubNetworkManager) HostPort() tun.RoutedPort                                   { return nil }
 func (m *stubNetworkManager) Initialize(ruleSets []adapter.RuleSet)                      {}
 func (m *stubNetworkManager) InterfaceFinder() control.InterfaceFinder                   { return nil }
 func (m *stubNetworkManager) UpdateInterfaces() error                                    { return nil }

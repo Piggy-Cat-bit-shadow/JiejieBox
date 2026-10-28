@@ -60,6 +60,12 @@ type endpointBase struct {
 	endpoint.Adapter
 	router adapter.Router
 	logger log.ContextLogger
+	// ctx, system and network decide what a flow to one of the endpoint's own local addresses
+	// means: in system mode that address belongs to the host, otherwise the local stack serves it
+	// through the routed port (see adapter.JudgeHostFlow).
+	ctx     context.Context
+	system  bool
+	network adapter.NetworkManager
 }
 
 func newDeviceOptions(ctx context.Context, logger log.ContextLogger, handler tun.Handler, options option.MASQUEEndpointOptions, udpTimeout time.Duration, address []netip.Prefix) *device.Options {
@@ -137,7 +143,10 @@ func (e *endpointBase) newDNSPacket(ctx context.Context, endpoint adapter.Endpoi
 
 func (e *endpointBase) judgeFlow(endpoint adapter.Endpoint, localAddresses []netip.Prefix, network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
 	if isLocalAddress(localAddresses, destination.Addr()) {
-		return tun.FlowVerdict{Action: tun.ActionAccept}
+		if e.system {
+			return tun.FlowVerdict{Action: tun.ActionAccept}
+		}
+		return adapter.JudgeHostFlow(e.ctx, e.network, e.logger, network, source, destination)
 	}
 	return adapter.JudgeFlow(e.router, adapter.InboundContext{Inbound: endpoint.Tag(), InboundType: endpoint.Type()}, network, source, destination, firstPacket)
 }

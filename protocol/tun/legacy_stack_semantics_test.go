@@ -286,6 +286,8 @@ func (m *stackNetworkManagerStub) Start(stage adapter.StartStage, scope *adapter
 	return nil
 }
 func (m *stackNetworkManagerStub) Close() error                                       { return nil }
+func (m *stackNetworkManagerStub) RegisterHostPort(port tun.RoutedPort)               {}
+func (m *stackNetworkManagerStub) HostPort() tun.RoutedPort                           { return nil }
 func (m *stackNetworkManagerStub) Initialize(ruleSets []adapter.RuleSet)              {}
 func (m *stackNetworkManagerStub) InterfaceFinder() control.InterfaceFinder           { return nil }
 func (m *stackNetworkManagerStub) UpdateInterfaces() error                            { return nil }

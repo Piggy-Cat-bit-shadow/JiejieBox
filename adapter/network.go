@@ -31,6 +31,11 @@ type NetworkManager interface {
 	AutoRedirectOutputMarkFunc() control.Func
 	RegisterBridgeInterface(interfaceName string)
 	BridgeInterfaces() []string
+	// RegisterHostPort publishes the tun stack as the port that serves flows addressed to the
+	// local stack: the routed port JudgeHostFlow hands such a flow to. The first registration
+	// wins, so a restarted stack cannot replace a live one behind the dispatcher.
+	RegisterHostPort(port tun.RoutedPort)
+	HostPort() tun.RoutedPort
 	NetworkMonitor() tun.NetworkUpdateMonitor
 	InterfaceMonitor() tun.DefaultInterfaceMonitor
 	PackageManager() tun.PackageManager

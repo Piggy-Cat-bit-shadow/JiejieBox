@@ -45,6 +45,10 @@ type Endpoint struct {
 	dnsRouter      adapter.DNSRouter
 	logger         logger.ContextLogger
 	localAddresses []netip.Prefix
+	// system is the `system` option: when set, the endpoint's addresses are configured on the
+	// host and a flow to them is the host's, not the tunnel's, so it stays ActionAccept.
+	system  bool
+	network adapter.NetworkManager
 	endpoint       *wireguard.Endpoint
 	onDemand       bool
 	bindAccess     sync.Mutex
@@ -64,6 +68,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		logger:         logger,
 		localAddresses: options.Address,
 		onDemand:       options.OnDemand,
+		system:         options.System,
 	}
 	if options.Detour != "" && options.ListenPort != 0 {
 		return nil, E.New("`listen_port` is conflict with `detour`")
@@ -86,6 +91,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		udpTimeout = C.UDPTimeout
 	}
 	networkManager := service.FromContext[adapter.NetworkManager](ctx)
+	ep.network = networkManager
 	// A WireGuard endpoint reached through a `detour` is a NESTED tunnel: its own transport messages
 	// travel as UDP payloads inside the lower tunnel's inner IP packets. A lower tunnel that can prove
 	// its capacity therefore bounds this endpoint's inner MTU, and the bound is the same number every
@@ -418,7 +424,10 @@ func (w *Endpoint) DetachReturn(returnPath tun.Return) error {
 func (w *Endpoint) JudgeFlow(network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
 	for _, localPrefix := range w.localAddresses {
 		if localPrefix.Contains(destination.Addr()) {
-			return tun.FlowVerdict{Action: tun.ActionAccept}
+			if w.system {
+				return tun.FlowVerdict{Action: tun.ActionAccept}
+			}
+			return adapter.JudgeHostFlow(w.ctx, w.network, w.logger, network, source, destination)
 		}
 	}
 	return adapter.JudgeFlow(w.router, adapter.InboundContext{Inbound: w.Tag(), InboundType: w.Type()}, network, source, destination, firstPacket)

@@ -761,6 +761,12 @@ func (t *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		t.stackStartup.acquire(tunStack.Close)
 		scope.Add(t.stackStartup.releaseByScope)
 		t.tunStack = tunStack
+		// Publish the stack as the routed port. A stack that cannot serve flows itself (the system
+		// stack, the gVisor stack) keeps the previous behaviour: no registration, and
+		// JudgeHostFlow falls back to ActionAccept.
+		if routedPort, isRoutedPort := t.tunStack.(tun.RoutedPort); isRoutedPort {
+			t.networkManager.RegisterHostPort(routedPort)
+		}
 		t.logger.Info("started at ", t.tunOptions.Name)
 	case adapter.StartStatePostStart:
 		monitor := taskmonitor.New(t.logger, C.StartTimeout)

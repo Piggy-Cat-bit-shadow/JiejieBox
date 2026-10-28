@@ -109,6 +109,11 @@ type NetworkManager struct {
 	autoRedirectOutputMark  atomic.Uint32
 	bridgeInterfaceAccess   sync.Mutex
 	bridgeInterfaces        []string
+	// hostPort is the tun stack as a routed port. It is published once when the stack starts and
+	// read on the flow-judging path, so the read is a plain atomic load: a nil here means "no
+	// routed port", which is the pre-existing behaviour.
+	hostPortAccess sync.Mutex
+	hostPort       tun.RoutedPort
 	networkMonitor          tun.NetworkUpdateMonitor
 	interfaceMonitor        tun.DefaultInterfaceMonitor
 	packageManager          tun.PackageManager
@@ -977,6 +982,24 @@ func (r *NetworkManager) BridgeInterfaces() []string {
 	r.bridgeInterfaceAccess.Lock()
 	defer r.bridgeInterfaceAccess.Unlock()
 	return slices.Clone(r.bridgeInterfaces)
+}
+
+func (r *NetworkManager) RegisterHostPort(port tun.RoutedPort) {
+	if port == nil {
+		return
+	}
+	r.hostPortAccess.Lock()
+	defer r.hostPortAccess.Unlock()
+	if r.hostPort != nil {
+		return
+	}
+	r.hostPort = port
+}
+
+func (r *NetworkManager) HostPort() tun.RoutedPort {
+	r.hostPortAccess.Lock()
+	defer r.hostPortAccess.Unlock()
+	return r.hostPort
 }
 
 func (r *NetworkManager) AutoRedirectOutputMarkFunc() control.Func {
