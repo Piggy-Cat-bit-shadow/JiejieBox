@@ -209,7 +209,9 @@ Android 的删除顺序刻意是：先建 4 个 `archive/*` 标签 → 推送标
 | 工作流结构检查 | `check-release-workflows.py`：**143 PASS / 0 FAIL**（含新增 10 项） | `VERIFIED_SOURCE` |
 | 真实仓库上 `check` | 报告 3 个落后目标（utls Pin、`clients/apple`、nested dashboard 在修复前），`PASS: every target is comparable and none is diverged` | `VERIFIED_SOURCE` |
 | 真实仓库上 `verify` | `PASS: every pin in the tree is the pin the lock records`（7 go modules / 3 clients / 29 native / nested 已解析） | `VERIFIED_SOURCE` |
-| `release-prepare.yml` 真实 dispatch | **尚未执行**（见 §7 下一步第一条） | `NOT_RUN` |
+| `release-prepare.yml` 真实 dispatch（dry run） | **成功**：run `40706074269`（提交 `62f5ecef`）的 15 个步骤全部 success/skipped-按设计，包括 preflight→resolve→check→apply→module/ABI/build 门→snapshot→verify→"dry run 不提交" | `VERIFIED_CI` |
+| 该 dry run 抓到的真实缺陷 | 第一次 dry run（`40704668286`）在 `apply` 失败：`go list -m github.com/metacubex/utls@<fork-sha>` 问的是**被 replace 的模块路径**，上游没有这个提交 → `unknown revision`。修复 `62f5ecef`（改为问 replace 目标 `Piggy-Cat-bit-shadow/utls`），并让测试里的假 `go` 拒绝非 fork 路径，防止回归 | `VERIFIED_CI` + `VERIFIED_UNIT` |
+| 修复后 dry run 真的前移了 Pin 并冻结 | 下载 run `40706074269` 的 `release-freeze-report` 产物：runner 上的 `source-lock.json` 里 utls = `v1.8.8-0.20261028133436-b63a2e9a7b1e`，relation `identical`，`derived_at=62f5ecef`。即 `apply`（含 `go mod tidy`）→ gates → `snapshot` → `verify` 在实测里成立，不只是单测 | `VERIFIED_CI` + `VERIFIED_ARTIFACT` |
 
 ---
 
@@ -269,13 +271,17 @@ Android 的删除顺序刻意是：先建 4 个 `archive/*` 标签 → 推送标
 
 按"可执行的下一步"写，不写"其余正常"。
 
-1. **`release-prepare.yml` 还没真实 dispatch 过**（`NOT_RUN`）。它已经通过结构检查与 dry-run 代码路径的静态审查，但"workflow 文件存在"不等于"跑过"。下一步：`gh workflow run release-prepare.yml --ref testing -f dry_run=true`，确认 `resolve/check/snapshot/verify` 四步在 runner 上通过；再决定是否 `dry_run=false`。**这是本报告后第一个要做的动作。**
-2. **Apple 客户端候选 `be3258a` 的编译证据仍在排队**（run `40698718663` 的 `ios`/`macos` 作业，macOS runner 排队 >30min）。在它绿之前，`clients/apple` gitlink **保持 `aeccc754` 不动**，`sync/upstream-2026-10-28` 分支保留。若红：修在候选分支上，不要先合 `main`。
+1. **Apple 候选的 macOS 编译仍无证据 → 客户端 Pin 按施工令保持在旧值（HOLD）。**
+   - 已拿到：iOS 目标在候选 `be3258a` 上**构建成功**（Apple client run `40698718663` 的 `ios` 作业 = success），因此共享 Swift 代码、`libbox` 链接、`StringBox` ABI 与 `ShareExtension/Info-iOS.plist` 接线都经过真实编译。
+   - 没有拿到：`macos` 目标。第一次 run 的 `macos` 作业在排队约 15 分钟后被平台取消（`completed/cancelled`，**一个 step 都没执行**）；随后两次 `build_ios=false` 的 macOS-only 重派（`40704313767`、`40707022945`）分别在 `libbox` 阶段被取消/仍在排队。三次都是 macOS runner 侧，不是代码失败。
+   - 因此：`clients/apple` gitlink **保持 `aeccc754`**，`apple/main` **保持 `16cf87b4`**，候选提交留在 `sync/upstream-2026-10-28`（`be3258a`）。这是施工令要求的"无法可靠编译就停留在旧正式 Pin，报告候选与失败证据"，而不是把未验证的 Swift 变更合进产品线。
+   - 恢复条件：任一 macOS runner 能跑完 `client-apple.yml` 的 `macos` 作业（`gh workflow run client-apple.yml -f build_ios=false -f build_macos=true`，并用仓库变量 `APPLE_CLIENT_SHA=be3258ab57dd…` 指向候选）。绿了以后：fast-forward `apple/main` → 更新 `clients/apple` gitlink 与 `VERIFIED_APPLE_SHA` → 重跑 `release-freeze.py snapshot` → 删除候选分支。
+2. **`release-prepare.yml` 已真实 dry run 通过**（run `40706074269`），但它抓到过一个只有真跑才会暴露的缺陷（伪版本算在被 replace 的路径上），已修（`62f5ecef`）。教训保留在工作流里：`apply` 之后仍要 `verify`，两者不能互相替代。
 3. **Kotlin/Android 编译仍是 `NOT_RUN`**。本机没有 JDK 17/Gradle，Android 仓库也没有任何 workflow。这是全链路里**唯一没有编译证明的客户端**。下一步（建议单独一轮）：在 Android 仓库加一个 JDK 17 + `./gradlew assembleOtherDebug` 的 workflow，AAR 用父仓库 `android-core-arm64.yml` 的产物；在此之前，ABI 结论只有扫描器级别（`VERIFIED_SOURCE`），不是编译级别。
 4. **Desktop 前端/打包 `NOT_RUN`**：内置 pnpm 是 broken release，`node_modules` 不存在。而 `client-desktop-windows.yml` **不能**用来验证这个新 Pin：它的 `core_sha` / `core_version` 是必填输入，并且会与 `refs/tags/v<version>` 的目标提交交叉校验（见该工作流头部注释）。也就是说它只能针对**已存在 tag** 的提交构建，而本轮没有也无法打 tag。结论：desktop 的 installer 级证明要等到下一次真实发布，或由一个允许"候选 SHA + 不校验 tag"的入口提供。这是本轮明确留下的缺口，不是"跑不跑得动"的问题。
-5. **`release-prepare.yml` 只在 dry-run 里跳过了证据步骤**：如果将来有人把 `dry_run` 改成默认 false，就会在每次运行都等 CI。这是有意的（真实发布必须等证据），但要在使用说明里写清楚。
+5. **`release-prepare.yml` 在 dry-run 下跳过证据步骤**：这是有意的（dry run 不产生候选提交，声称证据就是假证据），但意味着"证据链"本身只有真实运行才验证。本轮没有跑到那一步。
 6. **既有的 Apple mach service 版本不一致（`R3`）**：`AppConfiguration.systemExtensionMachServiceName` 用 `Bundle.main.version`，而扩展的 `NEMachServiceName` 用 `MARKETING_VERSION`，本地未签名构建下两者可能不同（release 构建会被 `release/JIEJIE_VERSION` 全局覆盖，所以不影响正式包）。不是本轮引入，未在本轮修（需要产品决策），记录在此。
-7. **utls Pin 落后一个"纯文档"提交**：`main` 现在 `b63a2e9`（UPSTREAM.md 修正），Pin 在 `2da328d`（生产合并 + 测试）。按该仓库 UPSTREAM.md 的规则，文档提交不构成改 Pin 的理由，所以本轮刻意不追。下一次 `release-prepare` 会把它前移到 `b63a2e9`（正常，release 就该构建分支最新点）。若希望"只有生产变更才算落后"，需要在 `release-freeze.py` 里按 patch 内容分类——**没有实现，因为那是把简单规则换成需要维护的启发式**。
+7. **utls Pin 落后一个"纯文档"提交**：`main` 现在 `b63a2e9`（UPSTREAM.md 修正），Pin 在 `2da328d`（生产合并 + 测试）。按该仓库 UPSTREAM.md 的规则，文档提交不构成改 Pin 的理由，所以本轮刻意不追；dry run 里 `apply` 已证明它能正确地把 Pin 前移到 `b63a2e9`（伪版本 `v1.8.8-0.20261028133436-b63a2e9a7b1e`），只是没有推送。下一次真实 `dry_run=false` 会完成它。若希望"只有生产变更才算落后"，需要在 `release-freeze.py` 里按 patch 内容分类——**没有实现，因为那是把简单规则换成需要维护的启发式**。
 8. **`resolve` 依赖 GitHub API 的 compare 端点**（祖先判定）。网络抖动会表现为 `UNKNOWN` 并 fail closed（不会误放行），但会挡住一次准备。重跑即可。
 
 ---
@@ -308,6 +314,8 @@ Android 的删除顺序刻意是：先建 4 个 `archive/*` 标签 → 推送标
 | `sing-box` | `0adeb465` | deps：`clients/android` → `c7837107`（含 `VERIFIED_ANDROID_SHA`、契约行号、状态更新） |
 | `sing-box` | `a27e683c` | deps：`clients/desktop` → `6d4ccf8c` |
 | `sing-box` | `8dac10c1` | feat：发布前依赖冻结（manifest + 工具 + 测试 + 工作流 + 锁） |
+| `sing-box` | `fad9be7a` | docs：本报告 |
+| `sing-box` | `62f5ecef` | fix：伪版本改从 fork 路径计算（dry run 抓到的真实缺陷） |
 
 ---
 
