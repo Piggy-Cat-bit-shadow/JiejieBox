@@ -44,7 +44,7 @@
 | 5 | `quic-go` | `sagernet` | `2daa76f5` | 未变 | 最新 mod tag `v0.61.0-sing-box-mod.12` | behind 0 / ahead 18 | 无 | 单分支（SagerNet 模块线，未动 MetaCubeX 线） | `v0.61.1-0.20261027185738-2daa76f5bd52` 不变 | `gh api compare` | — |
 | 6 | `cronet-go` | `main` | `c9c0e6ec` | 未变 | `SagerNet/cronet-go:main` `049f2909` | 上游是祖先，behind 0 | 无（29 个原生模块 Pin 仍为 `8c68ce89873c`） | 单分支 | 根/all `c9c0e6ec`，29 lib `8c68ce8` 不变 | `merge-base --is-ancestor` = True | — |
 | 7 | `utls` | `main` | `1bcb8e4d` | `b63a2e9a` | `MetaCubeX/utls:v1.9.0-mod-meta` `a6a364af` | merge 后 behind 0（原 behind 3 / ahead 65） | 镜像快进、merge `3ab4752`、回归测试 `2da328d`、UPSTREAM.md `b63a2e9` | `main` + 镜像 `a6a364af` 均保留 | `v1.8.8-0.20261025012215-1bcb8e4d74d2` → `v1.8.8-0.20261028133053-2da328dfb92f` | 见 §5.1（含负向证明） | 已推送并回读 |
-| 8 | `sing-box-for-apple` | `main` | `16cf87b4` | `be3258a`（合并提交） | `SagerNet/sing-box-for-apple:dev` `0d1b59fc` | merge 后 behind 0（原 behind 13 / ahead 178） | 13 个上游提交；`fix/...` 删除 | 只剩 `main` | `aeccc754` → 待 CI 绿后前移 | 见 §5.3 | 分支已推送；CI 见 §5.3 |
+| 8 | `sing-box-for-apple` | `main` | `16cf87b4` | `be3258a`（候选，未合 `main`） | `SagerNet/sing-box-for-apple:dev` `0d1b59fc` | 候选分支 merge 后 behind 0（原 behind 13 / ahead 178）；产品 `main` 未动 | 13 个上游提交在候选分支；`fix/...` 删除 | 只剩 `main` + `sync/upstream-2026-10-28` | `aeccc754` → `16cf87b4`（fork 自己的 UA 修复，即 v0.1.33 实际构建的源码） | 见 §5.3 | 已推送并回读 |
 | 9 | `sing-box-for-android` | `main`（原 `dev`） | `4085557`（dev） | `c7837107` | `SagerNet/sing-box-for-android:dev` `a548a790` | merge 后 behind 0（原 behind 12 / ahead 5） | 收敛 5 条分支；12 个上游提交 | 只剩 `main`，另有 4 个 `archive/*` 标签 | `9d15717a` → `c7837107` | 见 §5.2（ABI 扫描 309 文件 0 违规） | 已推送并回读 |
 | 10 | `sing-box-for-desktop` | `main` | `d9231d9e` | `6d4ccf8c` | `SagerNet/sing-box-for-desktop:main` `8aab8eab` | behind 0 / ahead 35 | dashboard 嵌套 Pin `d452c24e` → `5e9271e5` | 单分支 | `eb2dbf8b` → `6d4ccf8c` | 见 §5.4 | 已推送并回读 |
 | 11 | `sing-box-dashboard` | `main` | `5e9271e5` | 未变 | `SagerNet/sing-box-dashboard:main` `3e4bf08e` | behind 0 / ahead 4 | 无（只被接受为嵌套 Pin） | `main` + `gh-pages`（部署，保留） | — | 两个提交只改 `.github/workflows/`（`git diff --stat` 32 行） | — |
@@ -190,7 +190,9 @@ Android 的删除顺序刻意是：先建 4 个 `archive/*` 标签 → 推送标
 | UI 边界审计 | `audit_apple_ui_boundary.py`：PASS 16 / FAIL 2 / UNKNOWN 2，**与 `origin/main` worktree 的基线完全一致**（2 个 FAIL 是既有的共享页注释提到 Hako 符号） | `VERIFIED_SOURCE`（相对基线无退化） |
 | 结构门 | `check_platform_structure.py` PASS、`check_swift_structure.py` PASS、`_safety_gate.py` PASS | `VERIFIED_SOURCE` |
 | 品牌/UA 边界 | `INFOPLIST_KEY_CFBundleDisplayName = "Jiejiebox"` ×6、`PRODUCT_NAME = "JiejieBox"`、`HTTPClient.subscriptionUserAgent` 及其 Hako 订阅测试保留 | `VERIFIED_SOURCE` |
-| 真实编译（iOS + macOS） | Apple client 运行 `40698718663`：`resolve` 成功、`libbox` 成功、`ios`/`macos` 在本报告撰写时仍在 macOS runner 排队 → 以运行状态为准 | 待定 → 见 §6 |
+| 真实编译（iOS） | Apple client 运行 `40698718663`：`resolve` 成功（`explicit-sha` → `be3258ab57dd`）、`libbox` 成功、**`ios` 成功**；macOS 见下一行 | `VERIFIED_CI` |
+| 真实编译（macOS） | **`NOT_RUN`**：四次派发、两个 runner 标签（`macos-latest`、`macos-14`）全部在排队约 15 分钟后被平台取消且一个 step 都没跑（`40698718663` 的 `macos`、`40704313767`、`40707022945`、`40710418326` 的 `libbox`） | 缺口（账号级 macOS 限制） |
+| Apple gitlink 前移的 ABI 依据 | `probe-accessors.py --lang swift` 对 **`16cf87b4` 这一确切提交**：423 文件 / 0 违规 / 3 interface 方法；且 `git diff --name-only aeccc754..16cf87b4` 只有 UA 修复与测试/stub，没有契约命名的文件 | `VERIFIED_SOURCE` |
 | Hako UI 门 | `gate_hako_platform_imports.py` 报 `undecidable on tvos` 62 项（本机无 tvOS SDK 知识），**未写入任何文件**，与本轮改动无关 | `NOT_RUN`（环境） |
 
 ### 5.4 Desktop / Dashboard
@@ -273,10 +275,10 @@ Android 的删除顺序刻意是：先建 4 个 `archive/*` 标签 → 推送标
 
 按"可执行的下一步"写，不写"其余正常"。
 
-1. **Apple 候选的 macOS 编译仍无证据 → 客户端 Pin 按施工令保持在旧值（HOLD）。**
+1. **Apple 上游融合的 macOS 编译无证据 → 上游合并停留在候选分支（HOLD）；但 `clients/apple` 已经前移到 `16cf87b4`（fork 自己的 UA 修复，见 §5.3 的 ABI 依据）。**
    - 已拿到：iOS 目标在候选 `be3258a` 上**构建成功**（Apple client run `40698718663` 的 `ios` 作业 = success），因此共享 Swift 代码、`libbox` 链接、`StringBox` ABI 与 `ShareExtension/Info-iOS.plist` 接线都经过真实编译。
    - 没有拿到：`macos` 目标。**四次尝试，两个 runner 标签，全部在排队约 15 分钟后被平台取消，且一个 step 都没有执行**：run `40698718663` 的 `macos`、`40704313767` 的 `libbox`、`40707022945` 的 `libbox`、以及换成 `macos-14` 的探针 run `40710418326` 的 `libbox`（探针分支随后已删除，远端只剩 `testing` 与 `pending/...`）。既然换标签也一样，这不是容量抖动或标签问题，而是账号级 macOS 配额/限制；本轮无法从代码侧解决。
-   - 因此：`clients/apple` gitlink **保持 `aeccc754`**，`apple/main` **保持 `16cf87b4`**，候选提交留在 `sync/upstream-2026-10-28`（`be3258a`）。这是施工令要求的"无法可靠编译就停留在旧正式 Pin，报告候选与失败证据"，而不是把未验证的 Swift 变更合进产品线。
+   - 因此：`apple/main` **保持 `16cf87b4`**（不含上游合并），13 个上游提交的合并留在候选 `sync/upstream-2026-10-28`（`be3258a`）。这是施工令要求的"无法可靠编译就停留在旧正式 Pin，报告候选与失败证据"，而不是把未验证的 Swift 变更合进产品线。**注意**：`clients/apple` gitlink 已经前移到 `16cf87b4`，因为那只是 fork 自己的 UA 修复、且已随 v0.1.33 构建过；它由 `release-prepare` 自动前移时被 ABI Pin 门拦下，直到层 4 扫描与 `VERIFIED_APPLE_SHA` 一起更新才放行。
    - 恢复条件：macOS 配额恢复后，`gh workflow run client-apple.yml -f build_ios=false -f build_macos=true`（仓库变量 `APPLE_CLIENT_SHA=be3258ab57dd…`）。绿了以后：fast-forward `apple/main` → 更新 `clients/apple` gitlink 与 `VERIFIED_APPLE_SHA` → 重跑 `release-freeze.py snapshot` → 删除候选分支。
 2. **`release-prepare.yml` 已真实 dry run 通过**（run `40706074269`），但它抓到过一个只有真跑才会暴露的缺陷（伪版本算在被 replace 的路径上），已修（`62f5ecef`）。教训保留在工作流里：`apply` 之后仍要 `verify`，两者不能互相替代。
 3. **Android 的 Kotlin 编译本轮已补上，但真机行为仍未验证。** 用 JDK 17 + `libbox.aar`（core `8dac10c1` 的真实产物，checksum 与 `BUILD-INFO-ANDROID.txt` 自洽）在本机跑通 `assembleOtherDebug`；同一份 AAR 对旧 `main`（`ae93152`）做负向对照，`compileOtherDebugKotlin FAILED`、11 个 `e:` 错误、`BUILD FAILED`。仍未做：真机上的 VPN/TUN、service start/stop、root/auto_redirect、默认接口切换、睡眠唤醒、运行中配置切换。这些需要设备，不是自动化能替代的。
