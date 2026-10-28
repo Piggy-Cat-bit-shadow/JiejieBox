@@ -30,9 +30,10 @@ convention?) and the relevant rows of `KNOWLEDGE/ACCEPTANCE.md` (how do I re-che
    `PASS`. A `VERIFIED_CI` claim requires a specific run and SHA; the Windows daemon module records
    one independently checked release run, not blanket verification of the current branch.
    And `verify-evidence/**` is stale by its own written rule: do not cite it for the baseline.
-3. **Tags.** `release/DEFAULT_BUILD_TAGS` is the **Darwin** profile despite the name and cannot build
-   on Windows. Use `DEFAULT_BUILD_TAGS_OTHERS` for anything general — including running the root
-   package's tests, which otherwise fail on tag absence and look broken.
+3. **Tags.** `release/DEFAULT_BUILD_TAGS` is the **Darwin** profile despite the name; do not use it
+   as a Windows build recipe. Choose the current target-specific profile and inspect its tag-gated
+   dependencies; Windows Cronet files at the current pin require `with_purego`. For general root
+   tests, inspect `DEFAULT_BUILD_TAGS_OTHERS` and the particular test's requirements.
 
 ## Working rules
 
@@ -45,12 +46,14 @@ convention?) and the relevant rows of `KNOWLEDGE/ACCEPTANCE.md` (how do I re-che
 4. **Inspect `production-baseline..HEAD` before assuming a module is current:**
 
    ```sh
-   git log --oneline v0.1.9..HEAD
-   git diff --name-only v0.1.9..HEAD
+   git log --oneline <baseline>..HEAD
+   git diff --name-only <baseline>..HEAD
    ```
 
-   If that is empty or documentation-only, the modules still describe the tree. If not, map the changed
-   paths with `modules/README.md` (or route with `INDEX.md`) and read only those modules.
+   Replace `<baseline>` with the SHA recorded in `BASELINE.md`. An empty or documentation-only delta
+   does not prove older claims were correct or that an external
+   dependency or environment stayed unchanged. Recheck the relevant claims against current source and
+   evidence; if paths changed, map them with `modules/README.md` (or route with `INDEX.md`).
 
    **Take the tag from `BASELINE.md`, never from this file or from memory.** A tag baked into a
    document goes stale the moment the baseline moves, and then the check silently passes while the

@@ -95,7 +95,7 @@ What the fork added on top is documented per module with provenance.
 ## How to decide whether a module is still accurate
 
 ```sh
-git log --oneline v0.1.9..HEAD -- <paths the module cites>
+git log --oneline <baseline>..HEAD -- <paths the module cites>
 ```
 
 If that is empty, it only means those paths have not changed in that range; it does not establish that

@@ -54,6 +54,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | what `fast_path: true` does **not** bypass | `modules/fast-path-group-policy.md` | §6 |
 | nested group precedence | `modules/fast-path-group-policy.md` | §8 |
 | dual-stack DNS, candidate admission and network transition ownership | `modules/dns-demand.md`, `modules/core-lifecycle-runtime.md` | post-baseline sections |
+| local/site/global family capability and IPv6 entry presentment | `modules/dns-demand.md`, `modules/libbox-platform-contract.md` | dual-stack admission and entry sections |
 | TUN reset before/after stack start | `modules/libbox-platform-contract.md` | post-baseline TUN reset handoff |
 | Naive H3 to H2 retry | `modules/naive-http-transport.md` | post-baseline fallback |
 | VLESS encryption layer and cancellation | `modules/xhttp-client-transport.md` | VLESS encryption boundary |

@@ -180,6 +180,9 @@ This is an operational ledger, not a replacement for the modules or a new produc
 - The `service/resolved` short-name expansion removed after v0.1.9 is distinguished from Tailscale's
   separate search-domain logic. Historical Cronet race/link observations are scoped to their pin and
   profile, rather than asserted for every product or current dependency state.
+- The `common/netcap` scope and fail-open model were checked independently and its unfiltered unit
+  package passed on Windows Go 1.26.10. The AI entry point now also rejects the stale inference that an
+  empty Git delta proves old knowledge correct, and uses the baseline recorded at execution time.
 
 ### Module review status
 

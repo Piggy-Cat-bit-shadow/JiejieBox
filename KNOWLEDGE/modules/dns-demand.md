@@ -28,6 +28,13 @@ separate and can still exclude it. The observer prefers the combined family/gene
 snapshot; fallback to separate optional getters can produce two distinct readings. A batch gate
 evaluates ownership once for its candidate list (`network_observation.go`, `family_capability.go`).
 
+`common/netcap` separately classifies destination scope as local, site, global or unknown and
+evaluates observed interfaces and egress evidence. Site and local addresses must not be refused
+solely because global IPv6 egress is unavailable; unknown evidence fails open. IPv4-mapped IPv6
+is unmapped for classification. This is an address/observation model, not an actual reachability
+probe; its `global` class does not prove the destination is on the public Internet. The unfiltered
+`./common/netcap` unit tests passed on Windows with Go 1.26.10 in this calibration.
+
 The scheduler's per-generation family health is softer than a hard capability refusal: a qualifying
 path failure or sufficiently long losing opposite-family attempt can cause both families' first
 candidates to start together on the next race. The entry expires after 15 seconds or clears on
