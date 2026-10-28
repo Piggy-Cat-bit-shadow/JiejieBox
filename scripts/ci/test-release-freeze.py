@@ -130,6 +130,12 @@ module, sha = args[-1].rsplit("@", 1)
 if len(sha) != 40:
     sys.stderr.write("fake go: %s is not a commit SHA\n" % sha)
     sys.exit(1)
+# A pseudo-version is computed from the repository the commit lives in - the replace TARGET - so
+# asking for the replaced module path is a defect, not a variant. The first dry run of the release
+# workflow did exactly that and failed with "unknown revision"; the fake refuses it now.
+if not module.startswith("github.com/Piggy-Cat-bit-shadow/"):
+    sys.stderr.write("fake go: %s is the replaced module path, not the fork\n" % module)
+    sys.exit(1)
 answers = json.load(open(os.environ["FAKE_GO_ANSWERS"], encoding="utf-8"))
 version = answers.get(module) or "v0.0.0-20261028000000-%s" % sha[:12]
 print(json.dumps({"Path": module, "Version": version}))
@@ -501,7 +507,8 @@ def case_go_module_behind_moves_both_modules():
     fixture = Fixture()
     try:
         new_sha = "1" * 11 + "b"
-        fixture.go_answers["github.com/sagernet/sing"] = \
+        # Keyed by the FORK module path: that is the repository the pseudo-version comes from.
+        fixture.go_answers["github.com/Piggy-Cat-bit-shadow/sing"] = \
             "v0.9.6-0.20261028120000-%s" % new_sha
         fixture._flush_answers()
         resolve = fixture.write_resolution({"github.com/sagernet/sing": new_sha})
@@ -676,9 +683,9 @@ def case_apply_never_moves_controlled_pins():
     fixture = Fixture()
     try:
         new_root = "4" * 11 + "a"
-        fixture.go_answers["github.com/sagernet/cronet-go"] = \
+        fixture.go_answers["github.com/Piggy-Cat-bit-shadow/cronet-go"] = \
             "v0.0.1-143.0.7499.109-2.0.20261028130000-%s" % new_root
-        fixture.go_answers["github.com/sagernet/cronet-go/all"] = \
+        fixture.go_answers["github.com/Piggy-Cat-bit-shadow/cronet-go/all"] = \
             "v0.0.0-20261028130000-%s" % new_root
         fixture._flush_answers()
         resolve = fixture.write_resolution({

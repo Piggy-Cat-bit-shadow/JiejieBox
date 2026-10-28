@@ -467,6 +467,7 @@ def build_report(repo, data, resolution):
         relation, reason = classify(entry, pin.get("sha"), resolved, cache)
         report["go_modules"].append({
             "module": entry["module"],
+            "target": pin.get("target"),
             "slug": entry["slug"],
             "branch": entry["branch"],
             "policy": entry.get("policy", "update"),
@@ -619,15 +620,24 @@ def cmd_check(repo, args):
 # apply
 # --------------------------------------------------------------------------------------------
 
-def go_pseudo_version(module, sha):
-    result = run([GO, "list", "-m", "-json", "%s@%s" % (module, sha)], check=False)
+def go_pseudo_version(target, replaced_module, sha):
+    """The canonical pseudo-version of a fork commit.
+
+    It is computed for the repository the commit lives in (the replace TARGET), not for the module
+    path it replaces. Asking `go list -m github.com/metacubex/utls@<fork-sha>` sends the upstream
+    module a commit it has never seen and fails with "unknown revision" - which is exactly what the
+    first dry run of the release workflow did.
+    """
+    if not target:
+        raise FreezeError("%s has no replace target in the tree" % replaced_module)
+    result = run([GO, "list", "-m", "-json", "%s@%s" % (target, sha)], check=False)
     if result.returncode != 0:
-        raise FreezeError("cannot resolve %s@%s to a canonical version:\n%s"
-                          % (module, sha, result.stderr.strip()))
+        raise FreezeError("cannot resolve %s@%s (the replace target of %s) to a canonical version:"
+                          "\n%s" % (target, sha, replaced_module, result.stderr.strip()))
     data = json.loads(result.stdout)
     version = data.get("Version")
     if not version:
-        raise FreezeError("%s@%s resolved without a version" % (module, sha))
+        raise FreezeError("%s@%s resolved without a version" % (target, sha))
     return version
 
 
@@ -663,7 +673,7 @@ def cmd_apply(repo, args):
             continue
         if not row["resolved"]:
             continue
-        version = go_pseudo_version(row["module"], row["resolved"])
+        version = go_pseudo_version(row.get("target"), row["module"], row["resolved"])
         touched_root = rewrite_replace(os.path.join(repo, ROOT_MODULE), row["module"], version)
         touched_test = rewrite_replace(os.path.join(repo, TEST_MODULE), row["module"], version)
         if touched_root or touched_test:
