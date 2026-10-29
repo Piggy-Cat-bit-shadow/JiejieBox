@@ -276,11 +276,30 @@ for name, body in (("ios", ios), ("macos", macos)):
     if "--submodule-sha" in body:
         problems.append(f"the {name} job binds Libbox to a copy of the Apple revision")
 
-# Libbox must still be compiled exactly once, in the shared job.
-if "build-apple-libbox.sh both" not in libbox:
-    problems.append("the libbox job does not build the framework")
-if "build-apple-libbox.sh both" in ios or "build-apple-libbox.sh both" in macos:
-    problems.append("a platform job compiles Libbox instead of consuming the shared artifact")
+# Libbox must still be compiled exactly once - but "where" changed when a macOS-only acceptance
+# began building it inside its single macOS job, because a second macOS runner may never be
+# assigned. The topology is now:
+#
+#   libbox job        builds, proves and packs through .github/actions/apple-libbox-build (iOS and
+#                     the dual-platform path download the uploaded artifact)
+#   macOS job         calls the SAME action when `libbox` was skipped, and downloads the artifact
+#                     when it ran
+#   iOS job           always consumes the shared artifact
+#
+# So the rule is "one implementation, reached only through the action", not "only this job may
+# build". An inline build anywhere is still a second implementation and still a failure.
+SHARED_ACTION = "uses: ./.github/actions/apple-libbox-build"
+if SHARED_ACTION not in libbox:
+    problems.append("the libbox job does not build the framework through the shared action")
+if SHARED_ACTION not in macos:
+    problems.append(
+        "the macOS job has no path that builds the framework, so a macOS-only run cannot build"
+    )
+for name, body in (("libbox", libbox), ("ios", ios), ("macos", macos)):
+    if "build-apple-libbox.sh both" in body:
+        problems.append(
+            f"the {name} job compiles Libbox inline instead of through the shared action"
+        )
 
 # Every variable the job's later steps read out of the environment must be exported into it.
 # The BUILD-INFO and summary steps run under `set -u`, so a name referenced there but never
@@ -331,12 +350,13 @@ print("  PASS: both Apple jobs assert one shared source")
 print("  PASS: neither job calls the removed assert-distinct action")
 print("  PASS: neither job hardcodes an Apple revision")
 print("  PASS: each job overlays its own working tree of the shared commit")
-print("  PASS: both jobs consume the one shared Libbox artifact")
+print("  PASS: the framework is built once, through one shared action, from both modes")
 print("  PASS: the source selection suite runs in CI")
 PY
 then
   pass=$((pass + 6))
 else
+  echo "  FAIL: the workflow is not wired for one shared Apple source (see the reasons above)" >&2
   fail=$((fail + 1))
 fi
 
