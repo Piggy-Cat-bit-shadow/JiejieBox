@@ -486,8 +486,18 @@ else
   fail=$((fail + 1))
 fi
 
-check "the workflow packs the artifact through the shared helper" \
-  grep -q 'apple-libbox-artifact.sh pack' .github/workflows/client-apple.yml
+# The pack moved with the build. The invariant is unchanged - the artifact is packed by the shared
+# helper, once - so the assertion follows it: the action packs, the workflow does not.
+workflow_packs="$(grep -c 'apple-libbox-artifact.sh pack' .github/workflows/client-apple.yml || true)"
+action_packs="$(grep -c 'apple-libbox-artifact.sh pack' "$APPLE_LIBBOX_ACTION" || true)"
+if [ "$workflow_packs" = "0" ] && [ "$action_packs" = "1" ]; then
+  echo "  PASS: the artifact is packed by the shared helper, once, inside the action"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: expected the shared action to pack the artifact exactly once:" >&2
+  echo "        workflow inline=$workflow_packs action=$action_packs (want 0 and 1)" >&2
+  fail=$((fail + 1))
+fi
 check "this suite runs in CI" \
   grep -q 'test-apple-beta-publish.sh' .github/workflows/client-apple.yml
 check "the signing suite runs in CI too" \

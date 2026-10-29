@@ -1543,6 +1543,14 @@ def check_apple_libbox_single_implementation():
            "%d invocation(s) in .github/actions/apple-libbox-build/action.yml" % in_action)
     report("apple build: the workflow reaches the action from both modes", calls == 2,
            "%d action call(s); iOS through libbox, macOS when libbox was skipped" % calls)
+
+    # The same move took the pack with it, and left the same kind of assertion behind. Both halves
+    # are policed together so a future move has one rule to satisfy, not two to discover.
+    workflow_packs = workflow.count("apple-libbox-artifact.sh pack")
+    action_packs = action.count("apple-libbox-artifact.sh pack")
+    report("apple build: the artifact is packed by the action, not the workflow",
+           workflow_packs == 0 and action_packs == 1,
+           "workflow inline=%d action=%d (want 0 and 1)" % (workflow_packs, action_packs))
     # The suite may READ the workflow (to prove it compiles nothing inline), but its verdict must
     # require the action to hold the single implementation. The old form asserted inline == 1,
     # which is what broke when the build moved.
