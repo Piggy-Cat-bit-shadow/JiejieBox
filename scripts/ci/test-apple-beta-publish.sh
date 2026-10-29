@@ -449,12 +449,28 @@ for job in ios macos; do
   fi
 done
 
-libbox_builds="$(grep -c 'build-apple-libbox.sh both' .github/workflows/client-apple.yml)"
-if [ "$libbox_builds" = "1" ]; then
-  echo "  PASS: Libbox is compiled exactly once per CI run"
+# The compile command moved out of the workflow and into the shared action when the macOS-only
+# acceptance began building the framework inside its single macOS job. The invariant did not
+# change - Libbox is compiled once per run - but it has to be checked where the build now lives:
+#
+#   * the workflow itself must compile nothing (an inline build would be a second implementation);
+#   * the shared action must contain exactly one build;
+#   * the workflow must reach that action from exactly two branches, the `libbox` job (iOS) and the
+#     macOS job when `libbox` was skipped, and those are mutually exclusive by construction.
+#
+# Counting the command in the workflow alone made this suite fail the moment the build moved - a
+# stale test reporting itself as a duplicated build.
+APPLE_LIBBOX_ACTION=".github/actions/apple-libbox-build/action.yml"
+libbox_builds="$(grep -c 'build-apple-libbox.sh both' .github/workflows/client-apple.yml || true)"
+action_builds="$(grep -c 'build-apple-libbox.sh both' "$APPLE_LIBBOX_ACTION" || true)"
+action_calls="$(grep -c 'uses: ./\.github/actions/apple-libbox-build' .github/workflows/client-apple.yml || true)"
+if [ "$libbox_builds" = "0" ] && [ "$action_builds" = "1" ] && [ "$action_calls" = "2" ]; then
+  echo "  PASS: Libbox is compiled by exactly one implementation, reached from both modes"
   pass=$((pass + 1))
 else
-  echo "  FAIL: Libbox is compiled $libbox_builds times per CI run (expected 1)" >&2
+  echo "  FAIL: expected one implementation of the Libbox build, reached twice:" >&2
+  echo "        workflow inline=$libbox_builds action=$action_builds calls=$action_calls" >&2
+  echo "        (inline must be 0, action must be 1, calls must be 2)" >&2
   fail=$((fail + 1))
 fi
 

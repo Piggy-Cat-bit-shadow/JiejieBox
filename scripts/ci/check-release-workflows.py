@@ -39,6 +39,7 @@ is proved by test-release-artifacts.sh on a runner. What they prove is that the 
 still DECLARED, which is the class of mistake an editor makes.
 """
 import argparse
+import io
 import os
 import re
 import sys
@@ -1516,6 +1517,45 @@ def check_apple_single_runner_mode():
            "timeout-minutes=%s" % macos.get("timeout-minutes"))
 
 
+def check_apple_libbox_single_implementation():
+    """The framework build exists once, and the suite that polices it agrees.
+
+    This is here because of a real failure: `scripts/ci/test-apple-beta-publish.sh` counted the
+    inline `build-apple-libbox.sh both` in the workflow, the build moved into a composite action,
+    and the suite then failed every client-apple run. Verify did not run that suite, so `testing`
+    carried a red Apple workflow that only a release candidate noticed.
+    """
+    workflow_path = APPLE
+    action_path = os.path.join(REPO, ".github", "actions", "apple-libbox-build", "action.yml")
+    suite_path = os.path.join(REPO, "scripts", "ci", "test-apple-beta-publish.sh")
+
+    workflow = io.open(workflow_path, encoding="utf-8").read()
+    action = io.open(action_path, encoding="utf-8").read() if os.path.isfile(action_path) else ""
+    suite = io.open(suite_path, encoding="utf-8").read() if os.path.isfile(suite_path) else ""
+
+    inline = workflow.count("build-apple-libbox.sh both")
+    in_action = action.count("build-apple-libbox.sh both")
+    calls = workflow.count("uses: ./.github/actions/apple-libbox-build")
+
+    report("apple build: the workflow compiles Libbox nowhere inline", inline == 0,
+           "%d inline invocation(s)" % inline)
+    report("apple build: the shared action compiles it exactly once", in_action == 1,
+           "%d invocation(s) in .github/actions/apple-libbox-build/action.yml" % in_action)
+    report("apple build: the workflow reaches the action from both modes", calls == 2,
+           "%d action call(s); iOS through libbox, macOS when libbox was skipped" % calls)
+    # The suite may READ the workflow (to prove it compiles nothing inline), but its verdict must
+    # require the action to hold the single implementation. The old form asserted inline == 1,
+    # which is what broke when the build moved.
+    # The suite may READ the workflow (to prove it compiles nothing inline), but it must be shaped
+    # around the shared action: the action path, the action's own count, and the two call sites.
+    # The old form had none of them - it counted the workflow and required exactly one inline build.
+    report("apple build: the suite's verdict requires the action to own the build",
+           "APPLE_LIBBOX_ACTION" in suite
+           and "action_builds" in suite
+           and "action_calls" in suite,
+           "test-apple-beta-publish.sh must count the action and both call sites")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="check-release-workflows.py",
@@ -1575,6 +1615,8 @@ def main(argv=None):
     check_release_prepare()
     print()
     check_apple_single_runner_mode()
+    print()
+    check_apple_libbox_single_implementation()
     print()
     check_shell_line_endings()
     print()
