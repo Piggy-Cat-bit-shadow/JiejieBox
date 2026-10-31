@@ -165,11 +165,22 @@
 - 低内存清理限制并发重复执行，关闭时等待相关清理到达安全边界；内存占用稳定后停止无意义的周期性释放。
 - 修复 Linux 网络命名空间持有对象和 user namespace 凭据的生命周期问题。
 
-### 内存清理执行器
+### 内存回收执行器与分层收益
 
-- 统一协调空闲、平台压力和紧急回收请求，限制重复执行，并在关闭时等待已接纳的工作到达边界。
-- 分层尝试过期缓存与空闲池；低收益空闲清理进入冷却，紧急请求不被普通空闲冷却阻挡。
-- 内存稳定后停止周期性强制释放，调整 Triggered / Armed 状态交接，并在破坏性回收前检查当前条件。
+- 闲时机会、Darwin 压力和危机请求合并到单执行器，优先级为 crisis > pressure > idle；同时只运行一项回收，避免多个来源重置同一组连接池并重复 GC。
+- L1 先清理过期缓存，L2 再释放空闲池，L3 仅在前两层收益不足且压力 / runtime 页面有依据时强制 GC 与 scavenge。
+- 每层从同次起始 footprint 判断收益，达到门槛即停止；下一次仍从 L1 开始。低收益进入冷却，修复稳定占用下每秒反复 FreeOSMemory。
+- 更紧急的请求可替换尚未执行项，不能强行打断已经进入的池遍历；普通回收在层间检查危机并让出。
+- Darwin 压力回收不直接重置网络；紧急路径执行前重新采样，压力已回落时避免使用旧请求重置健康连接。
+- Triggered 在跌破 armed 边界后退出，不再错误等待更低 idle resume 水位，修复危机态长期保持和持续压力问题。
+
+### 关闭屏障与重载状态
+
+- stop 停止接纳新观察与回收，丢弃还在排队的请求，等待已开始的 poll、回调和动作完成，再等待执行器退出。
+- 等待不持有状态锁，避免回收结束路径需要同一锁而死锁；昂贵工作也不阻塞正常状态观察。
+- 重载不携带旧实例临时 pressure intent、强制采样请求和未执行危机；继承的 Triggered 转成 Armed，下一次真实采样重新决定。
+- 紧急回收后给普通空闲整理冷却，避免刚回收完又将 footprint 下降误当成新机会再执行一轮。
+- 补充分层提前停止、GC 条件、排队危机重检、关闭丢弃、幂等 stop、重载隔离和压力回调合并等回归测试。
 
 ### 并行拨号取消与 UDP 批处理
 
@@ -199,6 +210,17 @@
 - 更新并固定 sing、sing-tun、sing-quic、quic-go、uTLS、Cronet 和桌面客户端相关引用；Cronet 的根模块、平台库和聚合模块保持在一致的构建代次。
 - 本次包含来自上游及 fork 自身的修复。不同平台的构建标签、内核权限和设备环境仍会影响实际可用能力。
 
+### Fast Path 从平台判断收敛到消费能力
+
+- 新增由入口报告的 `ConsumesBypassVerdict`，隐式 Direct Fast Path 仅在调用方能实际执行 bypass 时判断；当前对应 nfqueue / auto_redirect。
+- 同一 Linux 二进制运行普通 TUN 时也不评估这条无效分支；不以操作系统常量代替入口运行模式。
+- 显式 bypass 规则和 L0 路由地址集合保持自己的行为边界，不被隐式优化开关重新解释。
+- 修复显式 `fast_path: false` 被 direct 透明链固有授权覆盖的问题，按外到内的首个显式策略作决定。
+- 移除不能改变任何现有生产形态判定的 AI 标签授权回退；`traffic_class` 仍独立使用业务分类。
+- 保留透明链、叶子能力和逐流资格检查，并以生产形态等价性、真假条件和模式边界测试约束行为。
+
+[Fast Path 与内存管理的当前设计、源码和配置边界](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FAST-PATH-AND-MEMORY.md)。
+
 ## [v0.1.24](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.24) — 2026-10-22
 
 改善 TCP 半关闭后的存活观察与资源回收。
@@ -208,6 +230,14 @@
 - 对半关闭连接观察对端状态，对端已离开时释放残留流。
 - 为交接后的 Direct 连接补充观察，不依赖该路径中不存在的普通复制循环。
 - 整理观察状态、释放结果与定时器所有权，增加相应回归覆盖。
+
+### 交接后的 Direct TCP 存活
+
+- 被下层接受接管的流没有普通复制循环，因此不能等待复制方向退出后才启动半关闭观察。
+- 使用已有 TCP keepalive 状态机观察对端，而非另加一个可能抢走数据的读取者；对端失效后走原有 detach、release 与统计关闭链。
+- 配置静默与探测参数来缩短残留连接等待，同时保持正常活跃连接和可响应探测的空闲连接。
+
+[Fast Path 与内存管理的当前设计、源码和配置边界](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FAST-PATH-AND-MEMORY.md)。
 
 ## [v0.1.23](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.23) — 2026-10-21
 
@@ -479,6 +509,15 @@
 - 地址族恢复任务由创建方停止并等待；失败时同时返回的连接也要关闭，避免隐藏资源泄漏。
 - 逐流拨号选项穿过故障切换组时继续保留，避免重试改变用户要求的接口或策略。
 
+### 快速路径与正常拨号保持一致
+
+- 使用有效地址族策略，而非仅看出站自己是否设置 resolver，防止绕行重新允许普通拨号已禁止的字面地址。
+- 将本地能力、全局绑定 / 路由策略与目标范围纳入对应判断，避免用户态与绕行路径遵循不同的网络限制。
+- 未分类选项即使当前是零值也拒绝 profile，覆盖默认即生效的字段；未构造的 profile 同样保守拒绝。
+- 运行中的功耗报告也是流量观察消费者，不能仅检查 tracker 后就绕过其统计。
+
+[Fast Path 与内存管理的当前设计、源码和配置边界](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FAST-PATH-AND-MEMORY.md)。
+
 ## [v0.1.17](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.17) — 2026-10-17
 
 本次修复 FakeIP 退役地址处理，以及 Windows 客户端安装和旧服务清理。
@@ -584,6 +623,14 @@
 - 调整 WinTrust 时间错误处理，避免过期 CI 测试证书阻止内核启动。
 - 增加篡改、未签名、证书用途和签名者固定等边界测试，并接入 Windows 测试环境。
 
+### 透明包装与实际拨号语义
+
+- 修复 direct 被纯选择型组包装后，因组未声明额外策略而失去固有授权的情况。
+- 只允许没有额外拨号 / 重试语义的透明选择链，不将所有“最终指向 direct”的复杂组都视为等价。
+- 这一修复恢复的是考虑资格，原有 FakeIP、绑定、统计及其他拒绝条件继续执行；显式 false 的优先级问题在后续版本继续修正。
+
+[Fast Path 与内存管理的当前设计、源码和配置边界](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FAST-PATH-AND-MEMORY.md)。
+
 ## [v0.1.9](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.9) — 2026-10-14
 
 本次完善发布前的完整性检查和发布顺序。
@@ -617,6 +664,14 @@
 `fast_path` 写在 selector / urltest 出站对象上，不写在 direct 或代理叶子上。它表达逐流快速路径意图，不是节点选择策略，也不保证普通 TUN 绕过用户态。后续版本调整过未配置时的推断行为，旧版本与当前版本应分别对照对应实现。
 
 [当前扩展字段、默认值与配置示例](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FORK-CONFIGURATION.md)；历史版本以对应标签的实现为准。
+
+### 组级策略与热路径成本
+
+- 通过配置策略表按当前流的逻辑链读取授权，保持实际出站对象类型，避免为配置开关增加包装而破坏能力解析。
+- 授权与实际资格分开：组允许尝试不能让代理叶子具备 direct 能力，也不能跳过路由与 socket 检查。
+- 策略在建立流时解析，不作为节点全局标志，也不进入逐包读写循环。
+
+[Fast Path 与内存管理的当前设计、源码和配置边界](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FAST-PATH-AND-MEMORY.md)。
 
 ## [v0.1.6](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.6) — 2026-10-12
 
@@ -748,6 +803,15 @@
 
 [当前扩展字段、默认值与配置示例](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FORK-CONFIGURATION.md)；历史版本以对应标签的实现为准。
 
+### 复用可信度与连接池排空设计
+
+- 区分短时休眠、可疑旧连接与应退役的闲置资源，将复用边界与普通 trim 分开。
+- 对多路复用连接停止接新工作，并让已有流排空；避免立即关闭伤及活跃流，也避免把仍有流的旧会话当作路径存活证明。
+- 回收范围覆盖出站、endpoint、DNS transport 与独立 HTTP client manager；使用实际需要的释放接口，修复因要求更宽接口而始终漏掉 HTTP 池的问题。
+- 普通空闲回收不主动拨号或重置网络，网络变化与紧急释放仍保留自己的更强处理路径。
+
+[Fast Path 与内存管理的当前设计、源码和配置边界](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FAST-PATH-AND-MEMORY.md)。
+
 ## [v0.1.5](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.5) — 2026-10-07
 
 引入由设备状态与真实流量驱动的低功耗管理，减少锁屏和后台运行时的周期性工作。
@@ -759,6 +823,14 @@
 - 分批恢复后台检查和刷新，减少唤醒瞬间的集中任务。
 - 屏幕关闭不再直接清空连接池；按空闲条件回收资源，保留仍可复用的连接。
 - 修复过期截止时间回调干扰新状态，以及深度空闲无法按预期进入的边界问题。
+
+### 低功耗策略与资源回收职责
+
+- 将设备休眠、真实业务流量、深度空闲截止时间和后台工作许可统一到 governor，避免每个后台任务独立决定是否唤醒。
+- 保留连接复用与空闲释放的区别：屏幕关闭本身不意味着清空所有连接；业务流量可以推迟深度空闲。
+- 各类后台任务分批恢复，修复旧回调在新截止时间上继续生效的竞态，减少恢复风暴与重复工作。
+
+[Fast Path 与内存管理的当前设计、源码和配置边界](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FAST-PATH-AND-MEMORY.md)。
 
 ## [v0.1.4](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.4) — 2026-10-07
 
@@ -860,6 +932,15 @@
 | `expected_status` | URLTest / loadbalance 组 | 空不限制响应状态码，严格要求例如 `"204"`。 |
 
 [当前扩展字段、默认值与配置示例](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FORK-CONFIGURATION.md)；历史版本以对应标签的实现为准。
+
+### Direct Offload 的逐流语义设计
+
+- 将路由资格与 socket 语义拆成两层：路由检查 FakeIP、目标改写、元数据和观察要求；拨号器检查接口绑定、mark、namespace 和协议选项。
+- 构造拨号器时预计算选项影响范围，后续逐流判断使用紧凑 profile，减少重复解析配置与日志构造。
+- 按选项对当前流的真实影响判断：TCP 专用设置不应一律排除 UDP，仅解析使用的 resolver 也不应一律排除字面地址。
+- 保留严格策略和统计等必要处理，提供拒绝原因，避免将“未走快速路径”压成无法诊断的单一结果。
+
+[Fast Path 与内存管理的当前设计、源码和配置边界](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FAST-PATH-AND-MEMORY.md)。
 
 ## [v0.1](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1) — 2026-09-30
 

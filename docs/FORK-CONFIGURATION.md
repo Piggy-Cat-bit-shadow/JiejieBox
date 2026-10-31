@@ -414,6 +414,20 @@ MASQUE endpoint 的 `domain_resolver` 解析服务器域名，`inner_domain_reso
 
 `engine`、`version`、`disable_version_fallback`、TLS、detour 及对应版本窗口参数写在 HTTP client 对象；Apple engine 与 Go engine 的平台能力不同。HTTP/3 的传输参数按 `version` 选择，JSON 中没有任意通用的 `HTTP2Options` / `HTTP3Options` 内部结构名。详见 [HTTP Client](configuration/shared/http-client.md)。
 
+## 内存管理服务与平台策略
+
+当前内存服务为 `services[]` 中的 `type: "oom-killer"`。配套客户端可能已经注入服务，需先确认其管理方式。服务接受的主要用户字段如下：
+
+| 字段 | 位置 | 含义与条件 |
+| --- | --- | --- |
+| `memory_limit` | oom-killer 服务本层 | 对应模式的内存预算；不能解读为所有原生与 Go 分配都受 Go 软限制。 |
+| `safety_margin` | 同上 | 预算安全余量，参与模式对应阈值推导。 |
+| `min_interval` / `max_interval` | 同上 | 自适应观察间隔边界；普通配置默认 100ms / 10s，均须正值且 max 不小于 min。 |
+
+Network Extension 使用统一的平台安全策略，普通配置不能任意改变其关键采样间隔和余量。`KillerDisabled` / `MemoryLimitOverride` 是内部字段，不是可以照抄进 JSON 的开关；空闲收益门槛、执行器优先级、复用 freshness 也不是任意用户字段。
+
+回收按过期缓存、空闲池和有条件 runtime 回收逐层执行；紧急重置另有重采样与状态保护。完整示例、关闭 / 重载和 Fast Path 分层见 [Fast Path 与内存管理](FAST-PATH-AND-MEMORY.md)。
+
 ## 配置自查
 
 1. 确认字段所属对象：`dns.rules`、`dns.servers`、`route`、出站、endpoint、TLS 和 transport 不可互换。
