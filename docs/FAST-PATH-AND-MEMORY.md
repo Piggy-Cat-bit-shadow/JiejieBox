@@ -67,7 +67,7 @@ flowchart TD
 - 分组名字不再授予快速路径权限。旧 AI 标签回退无法改变现有生产判定，已被移除；`traffic_class` 的业务分类继续独立工作。
 - 只在流建立时解析策略，不写成节点全局状态，也不放入逐包路径。
 
-配置示例及平台条件见 [扩展字段指南](FORK-CONFIGURATION.md#fast_path不是全平台加速开关)。
+配置示例及平台条件见 [扩展字段指南](FORK-CONFIGURATION.md#fast-path-组策略)。
 
 ### 接管成功、真正复制与连接存活分别观察
 
