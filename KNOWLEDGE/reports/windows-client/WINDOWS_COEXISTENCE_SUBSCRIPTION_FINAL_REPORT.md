@@ -1,4 +1,4 @@
-# Windows 共存 + 订阅剩余流量：施工交付报告
+# Windows 共存与订阅剩余流量：实施交付报告
 
 指引来源：`C:\Users\Jie\Desktop\配置文件\01_WINDOWS_COEXISTENCE_AND_SUBSCRIPTION_CONSTRUCTION.md`
 
@@ -10,7 +10,7 @@
 
 ## 1. 基线
 
-施工起点（三仓库工作树均干净）：
+实施起点（三个仓库的工作树均为干净状态）：
 
 | 仓库 | 路径 | 基线分支 | 基线 SHA |
 | --- | --- | --- | --- |
@@ -18,9 +18,9 @@
 | desktop | `C:\src\sing-box\clients\desktop` | `jiejiebox/main` | `917d2a4e9864528e1c10c4c6a39f3949b6f5d878` |
 | dashboard | `C:\src\sing-box\clients\desktop\dashboard` | `main` | `3d32338fdc35b050cd9728afa7f66c18206e4fb9` |
 
-三个 pin 与指引 1.2 节记录的 SHA **完全一致**，无需回退也无需前进。
+三个固定版本与指引 1.2 节记录的 SHA **完全一致**。
 
-施工终点：
+实施结束时的版本：
 
 | 仓库 | feature 分支 | SHA |
 | --- | --- | --- |
@@ -41,7 +41,7 @@ d452c24ec959d1e30159b6cd5cce1fa48e7dc353 clients/desktop/dashboard (heads/feat/w
 
 ## 2. 架构审计结论
 
-### 2.1 判定为"必须改"的真实 collision（已改）
+### 2.1 需要修改的共存冲突（已修改）
 
 | 资源 | 为什么是全局键 |
 | --- | --- |
@@ -53,10 +53,10 @@ d452c24ec959d1e30159b6cd5cce1fa48e7dc353 clients/desktop/dashboard (heads/feat/w
 | SCM `serviceName = sing-box-daemon` | SCM 以该字符串为键；event log source、service SID、工作目录 ACL 全部由它派生 |
 | `\\.\pipe\ProtectedPrefix\Administrators\sing-box` | 同名 pipe 只能有一个 server |
 | `Software\Classes\*\shell\Taildrop` | 卸载 `DeleteRegKey` 整键删除，会删掉对方的右键菜单 |
-| `%APPDATA%\sing-box-installer\data-transition.json` | 两个 installer 的未完成迁移状态互串 |
-| `sing-box://` 默认 handler | 后装者夺走，先装者失去 |
+| `%APPDATA%\sing-box-installer\data-transition.json` | 两个安装程序未完成的迁移状态互相干扰 |
+| `sing-box://` 默认 handler | 后安装的客户端会覆盖先安装客户端的设置 |
 
-### 2.2 判定为"安全/兼容契约，不能机械改"（保持原值）
+### 2.2 为安全与兼容保留的配置
 
 | 资源 | 为什么保留 |
 | --- | --- |

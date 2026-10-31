@@ -1,4 +1,4 @@
-# Windows 共存 + 订阅剩余流量：定向 Debug 报告
+# Windows 共存与订阅剩余流量：专项排查报告
 
 指引来源：`C:\Users\Jie\Desktop\配置文件\02_WINDOWS_COEXISTENCE_AND_SUBSCRIPTION_DEBUG.md`
 
@@ -21,9 +21,9 @@ desktop base    jiejiebox/main 917d2a4e9864528e1c10c4c6a39f3949b6f5d878
 dashboard base  main           3d32338fdc35b050cd9728afa7f66c18206e4fb9
 ```
 
-三仓库 working tree **clean**，无未提交施工改动，无人在 main/testing 上施工。
+当时三个仓库的工作树均为干净状态，没有未提交的本轮改动，也没有在 main 或 testing 上实施本轮修改。
 
-### source identity 链（第 5 节逐项）
+### 源码版本与依赖固定关系（第 5 节逐项检查）
 
 | 检查 | 结果 |
 | --- | --- |
@@ -32,15 +32,15 @@ dashboard base  main           3d32338fdc35b050cd9728afa7f66c18206e4fb9
 | core / desktop / dashboard 均不在 detached HEAD | PASS（三个 worktree 都在 feature branch 上） |
 | pin 指向的 commit 真实存在（`cat-file -t` = commit） | PASS ×2 |
 | pin 是 feature branch 的祖先（可达，非临时 commit） | PASS ×2 |
-| 没有把 desktop/dashboard 悄悄升到未审计最新 main | PASS（dashboard 仅 1 个 feature commit；desktop 仅 2 个） |
+| desktop/dashboard 未更新到未经审计的最新 main | PASS（dashboard 仅 1 个 feature commit；desktop 仅 2 个） |
 | core 用 exact core SHA 时可 recursive checkout 出完整图 | PASS（三层 gitlink 各自记录 child，child 都在自身 feature branch 上） |
 | 是否已 push | **未 push**（三仓库 `ls-remote --heads origin` 均无该分支） |
 
-不在 detached HEAD 上施工、不存在不可达 commit、不需要 remote 备份解析。
+当时三个仓库均在功能分支上，所需提交均可追溯，无须通过远端备份解析源码。
 
 ---
 
-## 2. Diff 范围
+## 2. 变更范围
 
 ### dashboard（9 文件，+552 / −6）
 
