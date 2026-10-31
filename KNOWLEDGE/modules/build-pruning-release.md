@@ -43,7 +43,7 @@ Reality 或 uTLS；`common/tls/utls_client.go` 需要 `with_utls`。默认 TLS �
 `NewUTLSClient` 在构造客户端之前，会拒绝指纹不在
 `utlsFingerprintSupportsECH` 显式允许列表内的 ECH，`random` 这种写法也一并拒绝。历史完整
 审计中“这些组合会静默继续”的主张早于这道门禁。这是配置
-守卫，不是针对每个允许预设或服务器的线缆级证据。
+守卫，不能证明每个允许的预设都已与各类服务器实际通信验证。
 
 Go 模块的 `replace` 指令 —— 而不是 `require` 里写的版本 —— 决定用哪份 fork 后的 `sing`、
 `sing-tun`、`sing-quic`、`quic-go`、`cronet-go` 与 `utls` 源码。请在 `go.mod` 里解析实际的

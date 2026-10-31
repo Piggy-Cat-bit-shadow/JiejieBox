@@ -297,7 +297,7 @@ Taildrop（`:1354`、`:1367`、`:1441`、`:1543`、`:1556`）的按端点订阅�
 |---|---|
 | 常量 | **`daemon/started_service.go:39` — `const APIVersion = 4`** |
 | 提供方 | `StartedService.GetVersion`（`:208-213`、`:211` 的 `ApiVersion: APIVersion`） |
-| 线缆字段 | `daemon/started_service.pb.go:297`（`ApiVersion int32`）、`GetApiVersion()` `:339` |
+| 协议字段 | `daemon/started_service.pb.go:297`（`ApiVersion int32`）、`GetApiVersion()` `:339` |
 | 消费方 | `experimental/libbox/command_client.go:760 GetAPIVersion()` → `version.ApiVersion`（`:766`） |
 
 `daemon/started_service.pb.go`、`managed_service.pb.go` 及其 `_grpc.pb.go` 是**已入库的

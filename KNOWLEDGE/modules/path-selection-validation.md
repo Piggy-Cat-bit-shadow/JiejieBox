@@ -116,8 +116,7 @@ PHYSICAL PATH  the hops the bytes actually traverse, in PACKET order:
 :198  response, err = ClientHandshake5(tcpConn, command, address, ...)        // the TARGET, in the request
 ```
 
-所以 `exit.detour = entry` 会让设备**先进入 entry、再进入 exit**。这个结论来自一次线缆（wire）
-观测，而不是对上面几行代码的推理：`common/dialer/detour_wire_order_test.go` 用真实的
+所以 `exit.detour = entry` 会让设备**先进入 entry、再进入 exit**。这个结论来自对拨号行为的测试观测：`common/dialer/detour_wire_order_test.go` 用真实的
 `NewDetour` 构建拨号器，换上一个会记录的对端，记下进入的是哪一跳，以及**它被请求的目标
 地址**——只看地址分不清两种情况：“entry 被要求承载一条通往 exit 服务器的连接”，与“设备直接
 拨号到 exit”。

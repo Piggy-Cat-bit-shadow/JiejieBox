@@ -283,7 +283,7 @@ Naive 的 `TestH3Fallback` 各用例在 `with_naive_outbound,with_purego` 下通
 |---|---|---|---|---|---|
 | 10.1 | 三个 MTU 量值分别计算并分别受限 | MASQUE + WireGuard + `common/bufgeom` 源码 | VERIFIED_SOURCE + VERIFIED_UNIT | `go test -count=1 ./common/bufgeom/...` 以及 MASQUE 套件 | Go + 构建标签 |
 | 10.2 | 已知 detour 容量时，MASQUE 初始 QUIC 包大小会被钳制 | `protocol/masque/client.go`；`outer_quic_mtu_test.go` | VERIFIED_SOURCE；测试证据限于已测用例 | 带标签的 MASQUE 套件 | Go + 构建标签；证明不了后续数据包存在硬上限 |
-| 10.3 | 开启 ChromeParrot 时，hysteria2 硬上限会到达线缆 | `protocol/hysteria2/hard_ceiling_wire_test.go`；`docs/fork/v016-final-closure-ledger.md:4-13` 处的撤回横幅 | VERIFIED_UNIT | `go test -count=1 -run HardCeiling ./protocol/hysteria2/` | Go |
+| 10.3 | 开启 ChromeParrot 时，hysteria2 实际发送仍遵守硬上限 | `protocol/hysteria2/hard_ceiling_wire_test.go`；`docs/fork/v016-final-closure-ledger.md:4-13` 处的撤回横幅 | VERIFIED_UNIT | `go test -count=1 -run HardCeiling ./protocol/hysteria2/` | Go |
 | 10.4 | 低内存（16 KiB）几何由产品所用的同一来源选择 | `cmd/internal/appletags -mobile-only`；为空时 `verify.yml:252-258` 会失败 | VERIFIED_SOURCE | `go run ./cmd/internal/appletags -mobile-only` | Go |
 
 ## 11. libbox 与平台契约（libbox and platform contract）
