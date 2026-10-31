@@ -17,7 +17,7 @@
 具体任务绑定；源码审阅或 CI 都证明不了真实设备行为。子仓库源码 pin 和独立观察到的分支头
 是两类不同的事实。
 
-## 历史性的 v0.1.9 基线（Historical v0.1.9 baseline）
+## 历史 v0.1.9 基线（Historical v0.1.9 baseline）
 
 下面的表格和叙述保留了 v0.1.9 那次审阅。它们不是当前基线，取值和结论只适用于那个历史修订。
 
@@ -36,7 +36,7 @@
 | 知识修订 | 动态解析 —— `git log -1 --format=%H -- KNOWLEDGE/BASELINE.md` | 不要硬编码 |
 | **基线之后的生产增量** | 很大；动态检查，见上方的校准警告 | `git diff --name-only v0.1.9..HEAD` |
 
-## 本基线取代了什么，以及为何移动是被迫的（What this baseline RE placed, and why the move was forced）
+## 历史基线为何需要更新（Why the historical baseline needed updating）
 
 上一个基线是 `a267e99e0`（= `v0.1.6`），它的增量行写着：
 

@@ -1,8 +1,8 @@
 # sing-box 分支知识刷新协议（sing-box Fork Knowledge Refresh Protocol）
 
-> 仓库：`Piggy-Cat-bit-shadow/sing-box`
+> 仓库：`Piggy-Cat-bit-shadow/JiejieBox`（原 `sing-box` 地址会重定向）
 >
-> 目的：定义一套**长期、可重复的流程**，用来刷新本仓库的 AI 知识库；既不把文档变成第二棵源码树，也不要求每次提交之后都持续维护。
+> 目的：定义一套**长期、可重复的流程**，用来刷新本仓库的 AI 知识库；记录维护所需的设计与证据，无须复制整套源码，也无须在每次提交后刷新。
 
 ---
 
