@@ -4,58 +4,58 @@
 
 在当前源码目标下，Apple 的 gitlink 与 ABI 检查常量都指向
 `044e6d5447eb1285c950bd12cee10effab641f5a`；Android 为 `c7837107dc0126fb704fdf08cf203e10b30c8a22`。
-`check-libbox-abi.sh --pin-only` 在 `0067b03` 已针对这些父级 gitlink 于本地通过。它并非完整的 ABI 扫描，也不是
-Swift 调用点扫描。两个本地客户端检出比这些 gitlink 更旧，且未被改动。Windows 的符号链接物化
-（symlink materialization）以及缺失的桌面端检出仍然限制着本地客户端检查。关于源码选择、可选的 dispatch SHA、
+`check-libbox-abi.sh --pin-only` 在 `0067b03` 上已针对这些父级 gitlink 本地通过。它不是完整的 ABI 扫描，也不是
+Swift 调用点扫描。两个本地客户端检出比这些 gitlink 更旧，且没有改动过。Windows 的符号链接物化
+（symlink materialization）和缺失的桌面端检出，仍然限制着本地客户端检查。源码选择、可选的 dispatch SHA、
 单运行器模式与冻结发布要求，见 `ci-release.md` 的 2026-10-29 小节；下文历史性的 v0.1.31 观察
-仍仅限定于该修订。
+仍只限定于该修订。
 
 ## 基线后 TUN 重置交接（Post-baseline TUN reset handoff (testing, 2026-10-28)）
 
 在 `011f3fdcd99173acd3e80483b50cb76b07bf6ff4` 处为 **VERIFIED_SOURCE**：
 `protocol/tun/inbound.go` 实现了 `InterfaceUpdated`、`stackDidStart`、
-`consumePendingReset` 与 `resetNetwork`。在栈启动之前，一次更新会设置 pending 标志；
-store 之后的启动复检与原子 pending 交换闭合了启动/更新的交接。多个启动前事件可以合并。一旦启动，
-每个被接受的更新会各自独立重置，而待处理的启动期重置会被单独消费。已关闭的 inbound 不会重置。回归用例位于
-`protocol/tun/reset_before_start_test.go`；它们的存在并不确立一次测试运行。
-启动后的行为包含 `1ff0af39110`，它晚于 `v0.1.30`；不要把它描述为在 v0.1.30 中已发布。稍后的 v0.1.31 发布标签
-指向包含该变更的后代提交；这一祖先关系并不确立设备上的网络切换行为。
+`consumePendingReset` 与 `resetNetwork`。栈启动之前，一次更新会设置 pending 标志；
+store 之后的启动复检与原子 pending 交换，把启动与更新的交接闭合起来。多个启动前事件可以合并。一旦启动，
+每个被接受的更新各自独立重置，待处理的启动期重置则单独消费。已关闭的 inbound 不会重置。回归用例在
+`protocol/tun/reset_before_start_test.go`；它们存在，不等于跑过一次测试。
+启动后的行为含 `1ff0af39110`，它晚于 `v0.1.30`；不要把它说成 v0.1.30 已发布的内容。稍后的 v0.1.31 发布标签
+指向包含该变更的后代提交；这个祖先关系并不确立设备上的网络切换行为。
 
 ### IPv6 入口呈现（IPv6 entry presentment）
 
-`route/network_family_entry.go` 只发布一次 box 级入口决策；TUN 在打开接口之前消费它
-（`protocol/tun/entry_ipv6.go`）。一次网络变化可以改变每次拨号的 capability，而不会静默改写已打开
-TUN 的寻址；要改变入口决策则需要重启 box。box 的前置检查意在确保所有已配置的 TUN 都能施加抑制；
-如果最终归约仍然拒绝，inbound 会保留 IPv6 并记录一次不一致，而不会回滚共享决策。注意
-`route/network.go` 中一条较旧的注释仍描述后续会有一次纠正写入；定义行为的是当前 store 与 inbound 代码，
-而不是那条注释。这是针对当前源码的 `VERIFIED_SOURCE`，不是真机转换测试。
+`route/network_family_entry.go` 只发布一次 box 级入口决策；TUN 在打开接口之前取用它
+（`protocol/tun/entry_ipv6.go`）。网络变化可以改变每次拨号的 capability，却不会悄悄改写已打开
+TUN 的寻址；要改入口决策，需要重启 box。box 的前置检查意在保证所有已配置的 TUN 都能施加抑制；
+如果最终归约仍然拒绝，inbound 会保留 IPv6 并记下一次不一致，不会回滚共享决策。注意
+`route/network.go` 里一条较旧的注释仍说之后会有一次纠正写入；定义行为的是当前的 store 与 inbound 代码，
+不是那条注释。这是针对当前源码的 `VERIFIED_SOURCE`，不是真机转换测试。
 
 ### TUN DNS 劫持与快速路径顺序（TUN DNS hijack and fast-path ordering）
 
 `protocol/tun/inbound.go` 配置显式或推导出的 DNS 劫持地址，并单独跟踪 53 端口劫持模式。
-`JudgeFlow` 在直连绕过或路由排除之前检查 DNS 劫持；
-UDP 与 TCP 所得到的动作并不相同，因此请保留确切的分支。
-`dns_hijack_configuration_test.go` 与 `direct_fast_path_dns_test.go` 测试覆盖了配置与
+`JudgeFlow` 先检查 DNS 劫持，再看直连绕过或路由排除；
+UDP 与 TCP 得到的动作并不相同，所以请保留确切的分支。
+`dns_hijack_configuration_test.go` 与 `direct_fast_path_dns_test.go` 覆盖了配置与
 顺序。本地 TUN 包测试套件在 Windows 上通过，但它不是真机泄漏测试。
 
 ### 命令服务器关闭（Command-server shutdown）
 
-`experimental/libbox/command_server.go` 现在会在关闭 `StartedService` 的订阅者与管理器之前，
-从 `CommandServer.Close` 调用 `CloseService`。因此，即使某个嵌入方在关闭服务器前没有
-先发起单独的 close-service RPC，它仍然会请求 Box 关闭。该方法
-丢弃了 `CloseService` 的错误，因此其空返回值并不是 Box 清理成功的证据。
-参见带 `p2ios` 标签的 `TestCommandServerCloseClosesTheBox`；此处不暗示任何设备级结果。
+`experimental/libbox/command_server.go` 现在会在关掉 `StartedService` 的订阅者与管理器之前，先从
+`CommandServer.Close` 调用 `CloseService`。因此，即使某个嵌入方在关闭服务器前没
+单独发起 close-service RPC，它仍然会请求 Box 关闭。该方法
+丢掉了 `CloseService` 的错误，所以它的空返回值并不是 Box 清理成功的证据。
+参见带 `p2ios` 标签的 `TestCommandServerCloseClosesTheBox`；这里不暗示任何设备级结果。
 
 ### 平台默认接口监视器顺序（Platform default-interface monitor ordering）
 
-在测试目标下，当管理器支持 `RefreshInterfaces` 时，`experimental/libbox/monitor.go` 会先刷新接口列表，
-然后发布默认接口与 pause 变更。
-如果默认接口保持不变，则在可用时调用 `UpdateNetworkEnvironment`，以便
-网关或其他环境变化仍然获得一次观测。没有该拆分接口的较旧实现改用
-`UpdateInterfaces`。监视器在可能较慢的刷新之后、在默认接口锁下复检其 closed 标志，
-从而防止在关闭已在该刷新期间落地时，更新仍写入
+在测试目标下，管理器支持 `RefreshInterfaces` 时，`experimental/libbox/monitor.go` 会先刷新接口列表，
+再发布默认接口与 pause 变更。
+默认接口没变，就在可用时调用 `UpdateNetworkEnvironment`，好让
+网关或其他环境变化仍被观测到一次。没有这个拆分接口的较旧实现改用
+`UpdateInterfaces`。刷新可能很慢，监视器会在刷新之后、默认接口锁下复检 closed 标志，
+从而避免关闭已经在这次刷新期间落地、更新却仍写进
 默认接口。`monitor_ordering_test.go` 与
-`monitor_close_fence_test.go` 用测试替身检验了这些边界；它们并不证明
+`monitor_close_fence_test.go` 用测试替身检验这些边界；它们不证明
 一次真实的 Android 或 Apple 网络转换。
 
 **范围：** `experimental/libbox/*`、`daemon/*`、`include/*`（就它们定义面向客户端的表面而言）、
@@ -63,12 +63,12 @@ UDP 与 TCP 所得到的动作并不相同，因此请保留确切的分支。
 Apple/Android 产物固定值（pin）。
 
 **本模块主要记录契约中核心侧的部分。** 客户端是独立的 Git
-子模块，其可用性取决于检出状态。在 2026-10-31 校准中，父级
-固定值为 Apple `044e6d5447eb` 与 Android `c7837107dc01`；本地客户端工作树未被重置，可能
-停留在其他修订（观测到 Apple `aeccc754`、Android `9d15717a`）。Desktop 未初始化。
-本地 Windows Git 对 Apple 设置了 `core.symlinks=false`，因此链接条目被物化为文本文件，
-而不会作为真实链接被跟随。下文关于客户端源码的发现均限定于这些修订与本次
-检出。
+子模块，能不能用取决于检出状态。2026-10-31 的校准中，父级
+固定值是 Apple `044e6d5447eb` 与 Android `c7837107dc01`；本地客户端工作树没有重置，可能
+停在别的修订（观测到 Apple `aeccc754`、Android `9d15717a`）。Desktop 未初始化。
+本地 Windows Git 对 Apple 设了 `core.symlinks=false`，因此链接条目物化成文本文件，
+不会作为真实链接被跟随。下文关于客户端源码的发现，都限定在这些修订与这次
+检出上。
 
 **在修改以下内容时加载本模块：** 任何导出的 libbox 符号、`SetupOptions`、CommandServer API、
 ABI 版本、平台事实（platform-facts）API，或 Apple/Android 固定值。
@@ -77,11 +77,11 @@ ABI 版本、平台事实（platform-facts）API，或 Apple/Android 固定值�
 
 ## 1. 不存在 `libbox.go`（There is no `libbox.go`）
 
-gomobile 表面分散在 `experimental/libbox/` 中的 110 个 `.go` 文件（90 个非测试）里。
-该树在 `experimental/libbox/internal/**` 下还有 18 个文件 —— `oomprofile`、`runtimeinfo`
-（包括 `linkname.go` / `goroutine_badlinkname.go`）与 `procfs`。这些是内部构建输入，
-不是导出的 ABI；不要把 ABI 问题路由到它们，但在统计 gomobile 构建
-所编译的内容时不要遗漏它们。
+gomobile 表面分散在 `experimental/libbox/` 的 110 个 `.go` 文件里（90 个非测试）。
+这棵树在 `experimental/libbox/internal/**` 下还有 18 个文件 —— `oomprofile`、`runtimeinfo`
+（含 `linkname.go` / `goroutine_badlinkname.go`）与 `procfs`。它们是内部构建输入，
+不是导出的 ABI；不要把 ABI 问题路由到那边，但统计 gomobile 构建
+编译了什么时别漏掉它们。
 
 ### 顶层入口（Top-level entry points）
 
@@ -99,31 +99,31 @@ gomobile 表面分散在 `experimental/libbox/` 中的 110 个 `.go` 文件（90
 
 ### `SetupOptions` —— 平台握手（`SetupOptions` — the platform handshake）
 
-`setup.go:49-66`。**十六个字段**，全部是字符串/整数，因此该调用在构造上就是 ABI 稳定的：
+`setup.go:49-66`。**十六个字段**，全是字符串或整数，所以这个调用在构造上就是 ABI 稳定的：
 
 `BasePath`、`WorkingPath`、`TempPath`、`FixAndroidStack`、`CommandServerListenPort`、
 `CommandServerSecret`、`LogMaxLines`、`Debug`、`CrashReportSource`、`AppVersion`、
 `AppMarketingVersion`、`OomKillerEnabled`、`OomKillerDisabled`、`OomMemoryLimit`、
 `PowerReportEnabled`、`PlatformMetadata`。
 
-**这个握手有三个方面是客户端必须知道的：**
+**这个握手有三点客户端必须知道：**
 
 * **`CommandServerListenPort` 是 `int32`，被收窄为 `uint16` 且没有范围检查**（`setup.go:80`）。
   大于 65535 的值会静默回绕。
-* **`CommandServerSecret` 为空表示不进行认证。**
+* **`CommandServerSecret` 为空表示不做认证。**
 * **不是有效 JSON 的 `PlatformMetadata` 会被静默丢弃为 `nil`**（`setup.go:95-99`）。
-* **`ReloadSetupOptions`（`:90`）只覆盖 16 个字段中的 5 个。** 启动之后请使用它 —— 绝不要再次调用
+* **`ReloadSetupOptions`（`:90`）只覆盖 16 个字段中的 5 个。** 启动之后请用它 —— 绝不要再次调用
   `Setup`。
 
-所声明的表面很大：`gomobile_surface_test.go:348 TestGomobileMethodResultSurface` 统计出
-**452 个绑定声明，其中 23 个带有指针结果** —— 这是一笔已登记的债务，因为 gomobile 打包结果帧中的
+声明出来的表面很大：`gomobile_surface_test.go:348 TestGomobileMethodResultSurface` 数出
+**452 个绑定声明，其中 23 个带指针结果** —— 这是一笔已登记的债务，因为 gomobile 打包结果帧里的
 Go 指针正是 `bulkBarrierPreWrite` 崩溃（§8）。
 
 ---
 
 ## 2. 策略边界：核心决策，平台上报（The policy boundary: the core decides, the platform reports）
 
-**这是真实存在的，并且由分类逻辑所处的位置来强制。**
+**这一点成立，而且由分类逻辑所在的位置来强制。**
 
 | 关注点 | 归属方 | 锚点 |
 |---|---|---|
@@ -132,8 +132,8 @@ Go 指针正是 `bulkBarrierPreWrite` 崩溃（§8）。
 | 合并窗口 | **核心** —— `trimCoalesceWindow = time.Second`（`:223`）、`releaseCoalesceWindow = adapter.RecoveryWindow`（`:231`） | 如上所引 |
 | 设备状态机 | **核心** —— `common/power.Governor` | `power-mobile-lifecycle.md` |
 
-**如果由客户端发送“你应该 trim”，策略就会迁移进三个客户端代码库。** 相反，客户端发送其
-操作系统给出的数字，由核心对它分类。这就是契约。
+**如果让客户端发送“你应该 trim”，策略就会搬进三个客户端代码库。** 所以反过来：客户端发送
+操作系统给出的数字，由核心分类。这就是契约。
 
 ### Android trim 阶梯（由核心拥有）（The Android trim ladder (core-owned)）
 
@@ -164,7 +164,7 @@ a cost paid for a guess. Ignoring it is the safe direction — the consequence i
 tight process keeps its pools until the next level we do understand, while the alternative would make
 every future platform level a silent behavioural change."*（中文：trim 并非无代价：它会丢弃一个 DNS 或
 HTTP 池，下一个请求必须重建，因此对一个含义未知的级别施加 trim 是为一次猜测付出的成本。忽略它是更安全的
-方向 —— 后果仅仅是一个确实吃紧的进程会保留其连接池，直到我们确实理解的下一个级别；而另一种做法会让每一个
+方向 —— 后果仅仅是一个内存确实紧张的进程会保留其连接池，直到我们确实理解的下一个级别；而另一种做法会让每一个
 未来的平台级别都变成一次静默的行为变更。）
 
 **为什么 `TrimUIHidden` 不是内存信号**（`:165-170`）：*"This is a LIFECYCLE fact, not a memory
@@ -181,11 +181,11 @@ adapter.RecoveryWindow = **90 s**`（`:231`、`adapter/runtime.go:153`）。一�
 
 ### 三个结构性证明：决策者是核心而非平台（Three structural proofs that the core, not the platform, decides）
 
-不是注释 —— 而是产物：
+不是注释 —— 是产物：
 
-1. **Android 的 sink 在物理上无法回话。** 每个 `PlatformEvents` 方法都不返回任何内容
+1. **Android 的 sink 在物理上回不了话。** 每个 `PlatformEvents` 方法都不返回任何内容
    （`experimental/libbox/platform_events.go:234-282`），文件头（`:11-17`）给出了原因：
-   `string`/`[]byte` 结果会把 Go 指针放进打包的 cgo 结果帧。**一个由平台做分类的设计
+   `string`/`[]byte` 结果会把 Go 指针放进打包的 cgo 结果帧。**让平台来做分类的设计，
    就需要返回值。** 由
    `platform_events_test.go:106 TestPlatformEventsAreScalarAtTheBoundary` 固定，并由
    `gomobile_surface_test.go:348` 穷举检验。
@@ -198,32 +198,32 @@ adapter.RecoveryWindow = **90 s**`（`:231`、`adapter/runtime.go:153`）。一�
 
 ### 边界不成立之处 —— 范围限制（Where the boundary does NOT hold — the scope limit）
 
-`PlatformInterface`（`experimental/libbox/platform.go:5-35`）还携带由平台撰写、核心消费而不再
-重新推导的**判断**：`isExpensive` / `isConstrained`（`:123`）、
+`PlatformInterface`（`experimental/libbox/platform.go:5-35`）还带着几项**判断**：它们由平台写，
+核心直接消费，不再重新推导——`isExpensive` / `isConstrained`（`:123`）、
 `NetworkInterface.Type` / `Metered`（`:141`、`:145`），以及能力声明
 （`UnderNetworkExtension`、`IncludeAllNetworks`、`UsePlatformShell`、
 `UsePlatformBridge :31`、`UsePlatformAutoRedirect :33`）。
 
-`UseProcFS` 在受审目标上已不再是 `PlatformInterface` 的方法。包装器把
-所有权查找委托给 `PlatformInterface.FindConnectionOwner`；Android 还暴露了一个独立的 libbox
-`FindConnectionOwner` 实现，由 procfs 支持（`connection_owner_android.go`）。不要推断
-移除旧的包装器分支就移除了 Android 助手，也不要推断每个客户端都会调用它。
+在受审目标上，`UseProcFS` 已不是 `PlatformInterface` 的方法。包装器把
+所有权查找委托给 `PlatformInterface.FindConnectionOwner`；Android 另外暴露了一个独立的 libbox
+`FindConnectionOwner` 实现，由 procfs 支持（`connection_owner_android.go`）。不要以为
+删掉旧的包装器分支就等于删掉了 Android 助手，也不要以为每个客户端都会调用它。
 
-> **准确措辞：核心拥有生命周期与内存分类以及它们所换取的动作；
-> 平台拥有网络成本/类型分类及其自身能力。** 把“平台只上报事实”说成 `PlatformInterface` 的
-> 全局不变量是错误的。
+> **准确的说法：生命周期与内存分类，以及它们换来的动作，都归核心；
+> 平台拥有网络成本/类型分类和它自己的能力。** 把“平台只上报事实”当成 `PlatformInterface` 的
+> 全局不变量，是错的。
 
-平台的两项判断是**经核对（reconciled）**而非被信任的：
+平台的两项判断要**经核对（reconciled）**，不是直接信任：
 `handover_coalescing_test.go:234`（一个计量来源必须与 `UpdateDefaultInterface` 一致）与
 `:276`（仅计量变化不得声称一个网络代次）。
 
-**一条核心侧对*客户端侧*双驱动的承认，此处引用并标记为 `UNVERIFIED`：**
-`experimental/libbox/platform_events.go:272-277` 记录 Android 也会从
+**核心侧还承认*客户端侧*存在双驱动，这里引用并标记为 `UNVERIFIED`：**
+`experimental/libbox/platform_events.go:272-277` 记下 Android 也会从
 `ACTION_DEVICE_IDLE_MODE_CHANGED` 驱动 `Pause`/`Wake`，并说明混用两者*"would let a Doze wake lift a pause the
 screen fact still asserts, with neither path knowing."*（中文：会让一次 Doze wake 解除屏幕事实仍然主张的
 pause，而两条路径都不知情。）在 Android 客户端修订 `9d15717a85c5` 上，
-`BoxService.kt` 接收 `ACTION_DEVICE_IDLE_MODE_CHANGED`，将 `isDeviceIdleMode` 入队，并在消费者中调用
-`commandServer.pause()` 或 `.wake()`。这确认了那条特定的客户端源码
+`BoxService.kt` 接收 `ACTION_DEVICE_IDLE_MODE_CHANGED`，把 `isDeviceIdleMode` 入队，再在消费者里调用
+`commandServer.pause()` 或 `.wake()`。这确认了那条具体的客户端源码
 路径；它本身并不确立所报告的设备级竞态，也不覆盖所有客户端配置。
 
 ---
@@ -237,8 +237,8 @@ pause，而两条路径都不知情。）在 Android 客户端修订 `9d15717a85
 | `box_lifecycle.go`（Apple 映射） | `screenState(on)` `:173-179`、`lockState(locked)` `:193-199` | `slept()` `:94-101`、`resumed()` `:141`、`woke()` `:156-163` | `reconcileScreenState` / `reconcileLockState` `:228-252` —— **仅级别** |
 | `runtimecoord/platform_events.go` | trim 阶梯 | 屏幕/前台边沿 | 事件快照 |
 
-**为什么核对 API 必须只处理级别：** 一次当前状态读取不是一次转换。如果一次重读
-就发布一个边沿，那么每次轮询都会看起来像一次新的转换。由
+**为什么核对 API 只能处理级别：** 读一次当前状态不是一次转换。如果一次重读
+就发布一个边沿，那么每次轮询都会像一次新转换。由
 `box_lifecycle_ordering_test.go` 以及 `645d96b4` / `60681f27` 固定。
 
 **为什么显示器点亮不是解锁：** `box_lifecycle.go:23-36`、`:173-199` —— 显示器点亮
@@ -302,27 +302,27 @@ Taildrop（`:1354`、`:1367`、`:1441`、`:1543`、`:1556`）的按端点订阅�
 | 线缆字段 | `daemon/started_service.pb.go:297`（`ApiVersion int32`）、`GetApiVersion()` `:339` |
 | 消费方 | `experimental/libbox/command_client.go:760 GetAPIVersion()` → `version.ApiVersion`（`:766`） |
 
-`daemon/started_service.pb.go`、`managed_service.pb.go` 及其 `_grpc.pb.go` 是**已检查入库的
-生成代码**；`cmd/internal/protogen` 会重新生成它们（`Makefile:57 proto`）。**`protogen` 会执行一个
-`Makefile` 从未安装的 `protoc` 二进制**，因此 `make proto` 需要 `PATH` 上单独存在 `protoc`。
+`daemon/started_service.pb.go`、`managed_service.pb.go` 及其 `_grpc.pb.go` 是**已入库的
+生成代码**；`cmd/internal/protogen` 负责重新生成（`Makefile:57 proto`）。**`protogen` 会去执行一个
+`Makefile` 从未安装的 `protoc`**，所以 `make proto` 需要 `PATH` 上另有一个 `protoc`。
 
 ### ABI 表面随构建标签集合变化（The ABI surface varies with the build tag set）
 
-`include/registry.go` 针对每项能力都是标签极性的（见 `build-pruning-release.md` §2），因此**哪些
-libbox 符号存在取决于标签集合**。这就是为什么存在三个没有
+`include/registry.go` 对每项能力都是标签极性的（见 `build-pruning-release.md` §2），所以**哪些
+libbox 符号存在，取决于标签集合**。这也是为什么有三个没有
 `main.go` 的 `cmd/internal` 包 —— `applebuildtags`、`mobilebuildtags` —— 外加 `appletags`，后者是它们之上的
 打印器。
 
-**Apple 几何标签**由恰好一条命令选出：`go run ./cmd/internal/appletags
--mobile-only`（`appletags/main.go:33`），而低内存 CI 门禁在它返回空时**失败而不是回退**
-（`verify.yml:380-389`）。文档注释说明了它存在的原因：低内存门禁
-与内存基准此前读取 `DEFAULT_BUILD_TAGS_OTHERS`，而它*"does not match what
-libbox builds"*（中文：与 libbox 构建的内容不匹配），因此那些检查*"were testing a configuration no Apple binary ships"*
+**Apple 几何标签**只由一条命令选出：`go run ./cmd/internal/appletags
+-mobile-only`（`appletags/main.go:33`），低内存 CI 门禁在它返回空时**直接失败，不回退**
+（`verify.yml:380-389`）。文档注释说明了它为什么存在：低内存门禁
+与内存基准此前读 `DEFAULT_BUILD_TAGS_OTHERS`，而它*"does not match what
+libbox builds"*（中文：与 libbox 构建的内容不匹配），于是那些检查*"were testing a configuration no Apple binary ships"*
 （中文：在测试一个没有任何 Apple 二进制会发布的配置）。
 
-**仅移动端（mobile-only）**标签绝不能进入共享集合：`-tags` 作用于每个目标，因此放在那里的
-移动端专用标签会在混合构建中到达 macOS。`applebuildtags/tags.go:63` 与
-`mobilebuildtags/tags.go:42` 都这样说明，而该标签通过 gomobile 的 `-tags-not-macos` 传递。
+**仅移动端（mobile-only）**标签绝不能进共享集合：`-tags` 对每个目标都生效，所以放进去的
+移动端专用标签会在混合构建里到达 macOS。`applebuildtags/tags.go:63` 与
+`mobilebuildtags/tags.go:42` 都这么说，而该标签通过 gomobile 的 `-tags-not-macos` 传递。
 
 ---
 
@@ -330,36 +330,36 @@ libbox builds"*（中文：与 libbox 构建的内容不匹配），因此那些
 
 ### 每次构建一个已解析来源，以及独立的 gitlink 检查（One resolved source per build, and a separate gitlink check）
 
-在 `cb71cf80d72` 处，`release/apple-client-refs.env` 默认选择 Apple 客户端仓库的 `main` 顶端；
-`APPLE_CLIENT_REF` 或 `APPLE_CLIENT_SHA` 可以覆盖它。`client-apple.yml` 在其 `resolve-apple-source` 任务中解析出一个
-确切 SHA，并把该结果传给下游任务。这是构建选择；父级的 `clients/apple` gitlink 是本地检出默认值，
-而不是默认的构建权威。`assert-shared-source` 要求 iOS 与 macOS 一致，报告 gitlink 不匹配，
-并且只有在 `APPLE_CLIENT_REQUIRE_GITLINK=1` 时才把该不匹配当作致命错误。在每个任务中独立地
-重新解析一个移动分支，会破坏这个单一 SHA 边界。
+在 `cb71cf80d72` 处，`release/apple-client-refs.env` 默认取 Apple 客户端仓库 `main` 的顶端；
+`APPLE_CLIENT_REF` 或 `APPLE_CLIENT_SHA` 可以覆盖它。`client-apple.yml` 在其 `resolve-apple-source` 任务里解析出一个
+确切 SHA，再把结果传给下游任务。这是构建侧的选择；父级的 `clients/apple` gitlink 只是本地检出默认值，
+不是默认的构建权威。`assert-shared-source` 要求 iOS 与 macOS 一致，会报告 gitlink 不匹配，
+并且只在 `APPLE_CLIENT_REQUIRE_GITLINK=1` 时把这个不匹配当成致命错误。每个任务各自
+重新解析移动分支，就会破坏这个单一 SHA 边界。
 
-gitlink 仍然对另一项检查有意义：`verify.yml` 运行 `check-libbox-abi.sh --pin-only`，
-它把两个客户端 gitlink 与脚本的 `VERIFIED_*_SHA` 常量比较。完整检查声明在
-`client-apple.yml` 中，既包含调用点扫描也包含 gitlink 检查。gitlink 与常量匹配**并不证明**
-独立解析出的 Apple 来源是同一个提交；请检查解析出的构建 SHA 与实际运行，尤其当分支已移动时。
-本主机只运行了 pin-only 检查，没有运行完整的客户端 ABI 扫描或设备构建。
+gitlink 对另一项检查仍然有意义：`verify.yml` 运行 `check-libbox-abi.sh --pin-only`，
+把两个客户端 gitlink 与脚本里的 `VERIFIED_*_SHA` 常量比较。完整检查声明在
+`client-apple.yml` 中，既含调用点扫描，也含 gitlink 检查。gitlink 与常量匹配**并不证明**
+独立解析出的 Apple 来源是同一个提交；请检查解析出的构建 SHA 和实际运行，尤其当分支已经移动时。
+本主机只跑了 pin-only 检查，没有跑完整的客户端 ABI 扫描或设备构建。
 
-在固定的客户端修订上进行本地 `probe-accessors.py` 直接扫描，返回了 309 个 Kotlin 文件与
+在固定的客户端修订上本地直扫 `probe-accessors.py`，返回 309 个 Kotlin 文件与
 423 个 Swift/Objective-C 文件，报告零违规、各三个接口方法。Windows 上的 Apple 检出把受跟踪的
-符号链接物化为文本；`SubscriptionQuotaCaption`
-的 `SubscriptionInfo.swift` 链接指向一个缺失目标。因此，名义上的 Swift 扫描的零退出码
-绝不能被提升为完整的 Swift 调用点扫描。Android 的结果是一次静态扫描，不是
-已编译的客户端、ABI 兼容性证明或设备测试。
+符号链接物化成文本；`SubscriptionQuotaCaption`
+的 `SubscriptionInfo.swift` 链接指向一个缺失目标。所以，名义上的 Swift 扫描即使退出码为零，
+也绝不能提升为完整的 Swift 调用点扫描。Android 的结果是一次静态扫描，不是
+编译过的客户端、不是 ABI 兼容性证明，也不是设备测试。
 
 v0.1.31 的 [Apple 工作流运行](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40606786576)
-解析出 `3aedd7417488`，其 ABI 步骤报告 **PARTIAL**：绑定检查与 gitlink 检查
-通过，但 Swift 访问器探针被跳过，原因是引用的源文件缺失。该步骤的
-成功退出并不是客户端调用点扫描通过的证据。签名预检在未签名模式下也被跳过；
+解析出 `3aedd7417488`，ABI 步骤报告 **PARTIAL**：绑定检查与 gitlink 检查
+通过，Swift 访问器探针却因为引用的源文件缺失而跳过。该步骤
+成功退出，并不是客户端调用点扫描通过的证据。签名预检在未签名模式下也被跳过；
 这不是一次物理设备验证。
 
-源码选择检查器已接入 Apple 工作流。独立的
-`verify-release-acceptance.sh` 检查器并未被发布路径调用；关于实际发布门禁、源码选择历史
-及其各自不同的证据，见 `ci-release.md` §5。`load_refs` 在 source 引用文件之前，
-会先检查该文件内的各平台声明；把调用方环境当作
+源码选择检查器已经接进 Apple 工作流。独立的
+`verify-release-acceptance.sh` 检查器没有被发布路径调用；实际的发布门禁、源码选择历史
+与各自不同的证据，见 `ci-release.md` §5。`load_refs` 在读 source 引用文件之前，
+会先检查该文件里的各平台声明；把调用方环境当成
 该文件的声明，此前曾破坏发布辅助脚本（`ece0fb9d2`）。
 
 ### Apple 侧确实已接线的部分（What IS wired for Apple）
@@ -374,18 +374,18 @@ v0.1.31 的 [Apple 工作流运行](https://github.com/Piggy-Cat-bit-shadow/sing
 
 ## 7. Android 平台（Android）
 
-`android-core-arm64.yml` 构建 AAR 并在 CI 中断言：来源 `commit=` == `GITHUB_SHA`
-（`:275-279`）；`jni/arm64-v8a/libbox.so` 存在、**> 1 MB**，且 `file` 报告 aarch64（`:292-307`）；
-`go version -m` 显示无 gVisor（不可读时软失败为一条 NOTE，`:308-321`）；NDK 与 gomobile
-固定值是**推导出来的，绝不复制**（`:167-171`、`:209-242`）；解析出的标签被断言
-（`:127-138`）。它由对 `testing` 的 `push` 触发，**并带路径过滤** —— 因此一个新的顶层目录
-可能静默地丢掉 Android ABI 验证。
+`android-core-arm64.yml` 构建 AAR，并在 CI 里断言：来源 `commit=` == `GITHUB_SHA`
+（`:275-279`）；`jni/arm64-v8a/libbox.so` 存在、**> 1 MB**，`file` 报告 aarch64（`:292-307`）；
+`go version -m` 显示没有 gVisor（读不出来就软失败成一条 NOTE，`:308-321`）；NDK 与 gomobile
+固定值**推导得到，绝不复制**（`:167-171`、`:209-242`）；解析出的标签被断言
+（`:127-138`）。它由对 `testing` 的 `push` 触发，**还带路径过滤** —— 所以一个新的顶层目录
+可能悄悄让 Android ABI 验证失效。
 
-`StringBox` 迁移正是 Android 子模块指向**fork** 而非上游的原因：
-`.gitmodules` 说明 ABI 迁移改变了生成的 Java 签名，因此客户端调用
-点必须随核心一起移动，并且*"the upstream repository is not writable from here"*（中文：上游仓库从这里
-不可写）。没有它，一次干净的检出会用旧 ABI 去调用重建后的 libbox 并编译失败。
-该构建通过 `cmd/internal/mobilebuildtags` 传入 `-checklinkname=0`（见
+`StringBox` 迁移正是 Android 子模块指向**fork** 而不是上游的原因：
+`.gitmodules` 说明 ABI 迁移改了生成的 Java 签名，所以客户端调用
+点必须跟着核心一起动，而且*"the upstream repository is not writable from here"*（中文：上游仓库从这里
+不可写）。没有它，一次干净的检出会拿旧 ABI 去调重建后的 libbox 并编译失败。
+构建通过 `cmd/internal/mobilebuildtags` 传入 `-checklinkname=0`（见
 `build-pruning-release.md` §2）。
 
 ## 8. 历史对比中的两处接口变更（Two interface changes in the historical comparison）
@@ -395,8 +395,8 @@ v0.1.31 的 [Apple 工作流运行](https://github.com/Piggy-Cat-bit-shadow/sing
 | `DeprecatedNote.Message()` / `MessageWithLink()` | `string` | `*StringBox` | `eef6bafff` | 一个裸 `string` 会把 Go 指针放进 gomobile 打包结果帧 → `fatal error: bulkBarrierPreWrite: unaligned arguments`，不可恢复。记录在 `docs/fork/libbox-abi-contract.tsv`。 |
 | `adapter.NewAdapterWithDialerOptions` | `(…)` | `(…, serverIsDomain ...bool)` | `ff0040079` | 服务器域名这一事实必须到达 adapter |
 
-**不要假设上游的 libbox 是可即插即用的替代品。** 该表对后续
-修订并不穷尽：`UseProcFS` 后来从 `PlatformInterface` 中被移除，同时保留了一个独立的 Android
+**不要假设上游的 libbox 能即插即用。** 这张表对后续
+修订并不穷尽：`UseProcFS` 后来从 `PlatformInterface` 里移除，同时保留了一个独立的 Android
 助手。部分出站能力是可选接口（`ConnectionCopyTuner`、
 `CopyBufferGrowthTuner`、`BypassableOutbound`）；这并不确立每个 API 的兼容性。
 
@@ -470,15 +470,15 @@ External repositories
 
 ## 11. AI 注意事项（AI cautions）
 
-1. **不要去找 `libbox.go`。** 该表面是 110 个 `.go` 文件（90 个非测试）。
+1. **不要去找 `libbox.go`。** 这个表面是 110 个 `.go` 文件（90 个非测试）。
 2. **不要把级别分类移进客户端。** 核心拥有 trim 阶梯、合并
    窗口以及边沿/级别区分。
 3. **不要把未知的 trim 级别默认为渐进动作。** 未知即忽略。
 4. **不要把 `RecordScreenState` 与 `ReconcileScreenState` 合并。** 一个是边沿，一个是级别，
    合并它们会重置生命周期锚点。
 5. **不要把显示器点亮当作解锁。**
-6. **不要把 `DeprecatedNote.Message()` 改回 `string`。** 它返回 `*StringBox` 以保持
-   gomobile 打包结果帧对齐；另一种选择是不可恢复的致命错误。
+6. **不要把 `DeprecatedNote.Message()` 改回 `string`。** 它返回 `*StringBox`，好让
+   gomobile 打包结果帧保持对齐；另一种选择是不可恢复的致命错误。
 7. **不要认为上游的 libbox 在这里可以即插即用替换。**
 8. **不要硬编码 Apple 几何标签。** 从 `cmd/internal/appletags -mobile-only` 读取它。
 9. **不要把仅移动端标签放进共享 Apple 集合。** 在混合构建中 `-tags` 会到达 macOS。

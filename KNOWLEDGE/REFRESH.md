@@ -2,7 +2,7 @@
 
 > 仓库：`Piggy-Cat-bit-shadow/sing-box`
 >
-> 目的：定义一套**长期、可重复的流程**，用于刷新本仓库的 AI 知识库，同时不把文档变成第二棵源码树，也不要求每次提交之后都持续维护。
+> 目的：定义一套**长期、可重复的流程**，用来刷新本仓库的 AI 知识库；既不把文档变成第二棵源码树，也不要求每次提交之后都持续维护。
 
 ---
 
@@ -10,7 +10,7 @@
 
 本仓库采用**快照 + Git 增量**的知识模型。
 
-知识库并不被期望永远描述最新的 `HEAD`。
+知识库不要求永远描述最新的 `HEAD`。
 
 而是：
 
@@ -23,16 +23,16 @@ Current AI Context
 + production-relevant Git delta after that baseline
 ```
 
-因此，知识刷新**不是正常的开发工作**。
+因此，知识刷新**不是日常开发工作**。
 
-它是一次显式的维护操作，周期性执行，例如：
+它是一次显式的维护操作，按周期执行，例如：
 
 - 在一次大版本发布之后，
 - 在一次大规模子系统重写之后，
 - 在较长的开发间隔之后，
 - 在重大发布冻结之前，
-- 在上游历史被重写或被显著重新变基（re-based）之后，
-- 当 `baseline..HEAD` 增量积累过多、无法高效进行增量阅读时。
+- 在上游历史被重写或大幅重新变基（re-based）之后，
+- 当 `baseline..HEAD` 增量积累过多、已无法高效做增量阅读时。
 
 正常的功能/修复提交**不需要**更新 `KNOWLEDGE/`。
 
@@ -60,7 +60,7 @@ Current AI Context
 
 不要为了让文档与代码一致而悄悄重写历史。
 
-而应记录：
+应当改为记录：
 
 ```text
 old claim
@@ -73,10 +73,10 @@ current evidence
 
 # 3. 核心规则：把增量评审与校准结合起来（Core rule: combine delta review with calibration）
 
-用增量来确定深度评审的优先级，但不要假定一份未变的文档就是正确的。
-盘点每一条当前知识条目，抽样核对其源码锚点与跨模块主张，并将其归类为有效、需更新、
-需重写、已过时或证据不足。当抽样发现漂移时，扩大评审范围。
-让历史报告明确限定在其原始代码树范围内。
+用增量确定深度评审的优先级，但不要假定未变的文档就是正确的。
+盘点每一条现存知识，抽样核对它的源码锚点与跨模块主张，再归类为有效、需更新、
+需重写、已过时或证据不足。抽样一旦发现漂移，就扩大评审范围。
+历史报告要明确限定在它原有的代码树范围内。
 
 刷新流程是：
 
@@ -100,16 +100,16 @@ re-check cross-module invariants
 move the Production Baseline
 ```
 
-目标是在保留那些重建成本高昂的理解的同时，避免重复进行全仓库考古。
+目标是在保留高重建成本理解的同时，避免重复做全仓库考古。
 
 ---
 
 # 4. 第一步：识别真正的生产基线（First step: identify the real Production Baseline）
 
-首先查明仓库根目录、worktree 状态、本地与远端分支、远端 head、标签与
-发布记录。通过仓库入口点确认当前生效的刷新协议；不要假定另一份检出或
-一个名为 `main` 的分支就是权威。保留已存在的改动。把目标 SHA 与已发布的标签
-分开记录，并证明它们的祖先关系。如果网络或发布数据不可用，将其标记为未知。
+先查明仓库根目录、worktree 状态、本地与远端分支、远端 head、标签与
+发布记录。从仓库入口点确认当前生效的刷新协议；不要假定另一份检出、或
+一个名为 `main` 的分支就是权威。保留已存在的改动。目标 SHA 与已发布的标签
+要分开记录，并证明两者的祖先关系。如果网络或发布数据不可用，就标记为未知。
 绝不要从版本文件推断发布状态。
 
 阅读：
@@ -133,9 +133,9 @@ Knowledge reviewed date
 
 ## 生产基线（Production Baseline）
 
-知识库完整描述的最新一个生产代码 SHA。
+知识库完整描述的最新生产代码 SHA。
 
-它是以下命令的参照点：
+它是下列命令的参照点：
 
 ```bash
 git log  --oneline <production-baseline>..HEAD
@@ -145,17 +145,17 @@ git diff --name-only <production-baseline>..HEAD
 
 ## 知识修订（Knowledge Revision）
 
-恰好包含当前 Markdown 文件的那个提交。
+恰好包含当前 Markdown 文件的提交。
 
 仅含文档的提交**不会**移动生产基线。
 
-不要追逐知识库自身的提交 SHA。
+不要跟随知识库自身的提交 SHA。
 
 ---
 
 # 5. 阅读 diff 之前，先对增量分类（Before reading diffs, classify the delta）
 
-先获得一个粗粒度视图：
+先取得一个粗粒度的视图：
 
 ```bash
 git log --oneline --decorate <baseline>..HEAD
@@ -179,7 +179,7 @@ REPOSITORY-HYGIENE
 VENDOR/SUBMODULE
 ```
 
-然后按子系统对生产变更分类。
+再按子系统给生产变更分类。
 
 仅含文档的增量通常**不**需要完整知识刷新。
 
@@ -191,15 +191,15 @@ modules/ci-release.md
 possibly build-pruning-release.md
 ```
 
-协议实现的增量不应自动迫使重写无关的平台/发布知识。
+协议实现的增量不应连带要求重写无关的平台/发布知识。
 
 ---
 
 # 6. 分支增量优先（Fork-delta first）
 
-本知识库的存在是为了描述：
+本知识库的作用是描述：
 
-> 本分支相对于上游改动了什么。
+> 本分支相对上游改动了什么。
 
 它**不是**上游 sing-box 文档的替代品。
 
@@ -214,7 +214,7 @@ fork-specific CI/build/release behavior
 
 优先处理。
 
-只在回答下列问题之一时才阅读上游：
+只有在回答下列问题之一时，才阅读上游：
 
 ```text
 What did the fork change from?
@@ -234,11 +234,11 @@ Did upstream rewrite history or rename the equivalent implementation?
 
 因此：
 
-> 仅凭 SHA 祖先关系并不总能确定来源。
+> 仅凭 SHA 祖先关系，并不总能确定来源。
 
-绝不要假定所有当前无法从 `upstream/*` 到达的提交都是 fork 创作的。
+绝不要假定凡是当前无法从 `upstream/*` 到达的提交，都是 fork 创作的。
 
-当来源重要时，使用多项检查。
+来源重要时，要多做几项检查。
 
 推荐：
 
@@ -269,49 +269,49 @@ UNKNOWN
 
 ## 自有（OWN）
 
-仍然存活的、由 fork 创作的变更。
+由 fork 创作、仍然存活的变更。
 
 ## 上游继承（UPSTREAM-INHERITED）
 
-当前存在的行为，仅仅因为 fork 保留了上游行为。
+当前存在的行为，只是因为 fork 保留了上游行为。
 
-不要列出每一个继承来的上游提交。只有当继承本身对未来的决策重要时才记录它。
+不要逐一列出继承来的上游提交。只有当继承本身对未来的决策重要时，才记录它。
 
 ## 上游吸收（UPSTREAM-ABSORBED）
 
-一个上游修复或行为被有意引入 fork，可能以不同的 SHA 或被重写的实现形式出现。
+上游的某个修复或行为被有意引入 fork，可能换了 SHA，也可能以重写的实现出现。
 
 ## 外部改编（EXTERNAL-ADAPTED）
 
-fork 在实质上派生自另一个实现/项目，随后作了改编。
+fork 实质上派生自另一个实现或项目，之后作了改编。
 
-只在有真实来源证据时使用。绝不要仅凭代码相似性推断它。
+只在有真实来源证据时使用。绝不要仅凭代码相似就推断。
 
 ## 核心-客户端协同（CORE-CLIENT-COORDINATED）
 
-其正确性依赖对应的 Apple / Android / libbox 客户端契约的变更。
+它的正确性依赖对应的 Apple / Android / libbox 客户端契约变更。
 
 ## 被取代（SUPERSEDED）
 
-一个历史 fork 提交，其行为已不再是当前行为。
+一个历史 fork 提交，它的行为已不是当前行为。
 
-只有当它能解释以下内容时才保留：
+只有它能解释以下内容时才保留：
 
 - 为什么最终设计看起来不寻常，
-- 为什么一种诱人的做法是错的，
+- 为什么某个诱人的做法是错的，
 - 为什么回归很容易被重新引入。
 
 ## 仅归档（ARCHIVE-ONLY）
 
-有意不构成当前行为一部分的历史证据。
+有意排除在当前行为之外的历史证据。
 
 ---
 
 # 8. 提交分类法（Commit classification taxonomy）
 
-每一个重要的存活变更都应按语义分类。
+每一个重要的存活变更都应按语义归类。
 
-使用以下一个或多个：
+可以使用一个或多个：
 
 ```text
 FEATURE
@@ -340,7 +340,7 @@ DOC
 REPOSITORY-HYGIENE
 ```
 
-不要把一个提交强行塞进单一类别。
+不要强行把提交归入单一类别。
 
 示例：
 
@@ -367,7 +367,7 @@ Provenance:
 
 真正的知识必须按**演进主题**组织。
 
-坏例子：
+错误示例：
 
 ```text
 abc123 -> FIX
@@ -375,7 +375,7 @@ def456 -> FIX
 ghi789 -> TEST
 ```
 
-好例子：
+正确示例：
 
 ```md
 ## Upload scheduler backpressure
@@ -404,15 +404,15 @@ AI caution:
 ...
 ```
 
-重要的对象是**最终设计主题**，而不是单个提交。
+真正要记录的是**最终设计主题**，而不是单个提交。
 
 ---
 
 # 10. 子系统地图（Subsystem map）
 
-在每次刷新中，不要假定当前的模块地图永久正确。
+每次刷新都不要假定当前的模块地图永久正确。
 
-从既有地图出发，但重新评估变更的代码是应归入既有子系统，还是需要拆分/合并。
+从既有地图出发，但要重新评估：变更的代码应归入既有子系统，还是需要拆分/合并。
 
 当前主要知识域可能包括：
 
@@ -444,7 +444,7 @@ Interop / adversarial verification
 
 # 11. 何时拆分模块（When to split a module）
 
-如果以下条件中至少有两项为真，就拆分模块：
+以下条件中至少有两项为真时，就拆分模块：
 
 ```text
 different invariants
@@ -457,13 +457,13 @@ different likely future tasks
 
 示例：
 
-如果未来一个修复 `sniff` 的 Agent 必须加载大量无关的 MASQUE 与 DNS 知识，那么这个模块就太宽了。
+如果将来一个修 `sniff` 的 Agent 必须加载大量无关的 MASQUE 与 DNS 知识，这个模块就太宽了。
 
 ---
 
 # 12. 何时合并模块（When to merge modules）
 
-在以下情况下合并两个模块：
+出现下列情况时，合并两个模块：
 
 ```text
 they always change together
@@ -473,13 +473,13 @@ they share the same verification path
 their separation causes duplicated explanations
 ```
 
-不要仅仅为了让目录看起来有条理而拆分。
+不要为了让目录看起来有条理就拆分。
 
 ---
 
 # 13. 每个重要模块的必需结构（Required structure for every important module）
 
-每个被维护的子系统文件只应包含真正增加价值的章节，但首选模型是：
+每个被维护的子系统文件只应包含真正增加价值的章节，但推荐的结构是：
 
 ```md
 # <Subsystem>
@@ -519,7 +519,7 @@ their separation causes duplicated explanations
 ## Follow-up
 ```
 
-并不是每个模块都需要每一个标题。
+不是每个模块都需要全部标题。
 
 不要添加空的样板章节。
 
@@ -529,7 +529,7 @@ their separation causes duplicated explanations
 
 先前的不变量不会自动永久有效。
 
-对每一条现存不变量提问：
+对每一条现存不变量逐条提问：
 
 ```text
 Is this still true?
@@ -540,7 +540,7 @@ Has a newer implementation made it obsolete?
 Is it actually only a convention?
 ```
 
-只有当某条规则得到以下一项或多项支持时，才把它保留为**硬性不变量（Hard Invariant）**：
+只有当某条规则得到以下一项或多项支持时，才保留为**硬性不变量（Hard Invariant）**：
 
 ```text
 protocol correctness
@@ -562,19 +562,19 @@ Design Preference
 Implementation Detail
 ```
 
-不要无意中把当前实现冻结下来。
+不要无意间把当前实现冻结下来。
 
 ---
 
 # 15. 硬性不变量与当前约定（Hard Invariant vs Current Convention）
 
-严格使用这一区分。
+严格区分这两者。
 
 ## 硬性不变量（Hard Invariant）
 
-除非架构本身有意改变，否则未来代码必须保留的规则。
+除非架构本身有意改变，否则未来代码必须遵守的规则。
 
-示例模式：
+示例：
 
 ```text
 A buffer cannot be retained after ownership transfer.
@@ -585,9 +585,9 @@ A released artifact must correspond to the verified binary.
 
 ## 当前约定（Current Convention）
 
-一种成熟的当前设计，日后可以被更好的实现替换。
+一种当前成熟的设计，日后可以被更好的实现替换。
 
-示例模式：
+示例：
 
 ```text
 Current scheduler data structure
@@ -600,7 +600,7 @@ Current build-script layout
 
 # 16. 证据分级（Evidence classification）
 
-每一条重要主张都应使用精确的证据级别。
+每一条重要主张都应标注精确的证据级别。
 
 允许的级别：
 
@@ -636,7 +636,7 @@ SKIP -> PASS
 
 # 17. 验证条目应当可执行（Verification entries should be executable）
 
-对于重要的验收规则，记录：
+重要的验收规则要记录：
 
 ```text
 Requirement
@@ -649,7 +649,7 @@ How to re-check
 Required environment
 ```
 
-优先使用命令而不是散文。
+优先写命令，不要写散文。
 
 示例：
 
@@ -664,7 +664,7 @@ Re-check:
 go test ./common/physicalpath/... -run <test>
 ```
 
-如果该命令无法在当前环境中运行：
+如果命令无法在当前环境中运行：
 
 ```text
 BLOCKED_BY_ENVIRONMENT
@@ -676,7 +676,7 @@ BLOCKED_BY_ENVIRONMENT
 
 # 18. 嗅探刷新规则（Sniff refresh rules）
 
-当嗅探相关文件变更时，检查增量是否影响：
+嗅探相关文件变更时，检查增量是否影响以下方面：
 
 ```text
 peek/read behavior
@@ -695,7 +695,7 @@ chain-proxy interaction
 false positive / false negative behavior
 ```
 
-谨慎地对变更分类：
+谨慎地给变更分类：
 
 ```text
 PERF
@@ -705,13 +705,13 @@ BEHAVIOR CHANGE
 TEST ONLY
 ```
 
-除非行为确实改变了，否则不要把分配次数的减少描述为协议语义变更。
+除非行为确实改变，否则不要把分配次数减少描述成协议语义变更。
 
 ---
 
 # 19. 链式代理 / 路径选择刷新规则（Chain proxy / path-selection refresh rules）
 
-当路由 / selector / detour / 链式逻辑变更时，显式评估：
+路由 / selector / detour / 链式逻辑变更时，要显式评估：
 
 ```text
 ControlPath
@@ -729,9 +729,9 @@ state mutation
 
 最重要的问题是：
 
-> 校验是仅仅检视拓扑，还是意外地执行了选择/拨号/解析？
+> 校验只检视了拓扑，还是意外执行了选择/拨号/解析？
 
-如果行为改变，更新：
+行为改变时，更新：
 
 ```text
 path-selection module
@@ -764,15 +764,15 @@ leak prevention
 
 如果新行为明确是横切的（cross-cutting），就不要把 DNS 与路由分开记录。
 
-但也不要仅仅因为一个提交同时触及两者，就把它们合并成一个模块。
+但也不要因为一个提交同时触及两者，就把它们合并成一个模块。
 
 ---
 
 # 21. MASQUE 刷新规则（MASQUE refresh rules）
 
-MASQUE 是 fork 的一个高价值领域。
+MASQUE 是 fork 的高价值领域。
 
-任何与 MASQUE 相关的刷新都应检视：
+任何 MASQUE 相关的刷新都应检视：
 
 ```text
 CONNECT-IP
@@ -805,13 +805,13 @@ fork hardening
 interop evidence
 ```
 
-如果某个变更只修改了一条传输路径，就不要声称所有 MASQUE 路径都变了。
+如果某个变更只改了一条传输路径，就不要声称所有 MASQUE 路径都变了。
 
 ---
 
 # 22. Naive 刷新规则（Naive refresh rules）
 
-当 Naive / HTTP 传输变更时，检视：
+Naive / HTTP 传输变更时，检视：
 
 ```text
 client
@@ -827,15 +827,15 @@ dependency compatibility
 interop
 ```
 
-不要仅凭依赖变更推断“原生 Naive 对等性（Native Naive parity）”。
+不要仅凭依赖变更就推断“原生 Naive 对等性（Native Naive parity）”。
 
 ---
 
 # 23. 缓冲区所有权 / 零拷贝刷新规则（Buffer ownership / zero-copy refresh rules）
 
-这个领域需要格外谨慎地记录，因为未来的“优化”可能静默地破坏正确性。
+这个领域要格外谨慎地记录，因为未来的“优化”可能悄悄破坏正确性。
 
-对于变更的热路径回答：
+对变更的热路径回答：
 
 ```text
 Who owns the buffer?
@@ -867,7 +867,7 @@ known unsafe tempting optimization
 
 # 24. 网络 epoch / 复用刷新规则（Network epoch / reuse refresh rules）
 
-如果网络切换、DNS 失效、路由失效、连接复用、接口切换或资源退役发生变更，确定：
+如果网络切换、DNS 失效、路由失效、连接复用、接口切换或资源退役有变更，就要确定：
 
 ```text
 who produces the epoch
@@ -879,13 +879,13 @@ whether rebuild is eager or lazy
 what happens to live connections
 ```
 
-没有证明时，绝不要把一个子系统内部的代次计数器泛化为全 fork 的不变量。
+没有证明时，绝不要把某个子系统内部的代次计数器泛化成全 fork 的不变量。
 
 ---
 
 # 25. 移动生命周期 / 平台契约刷新规则（Mobile lifecycle / platform contract refresh rules）
 
-当核心/客户端生命周期 API 变更时，检视与以下对象的契约：
+核心/客户端生命周期 API 变更时，检视与以下对象的契约：
 
 ```text
 sing-box-for-apple
@@ -906,14 +906,14 @@ core policy
 client policy
 ```
 
-首选的所有权模型应当被验证，而不是被假定：
+首选的所有权模型应当经过验证，不能假定：
 
 ```text
 client reports platform facts
 core interprets policy
 ```
 
-如果 API 变更，更新：
+API 变更时，更新：
 
 ```text
 libbox-platform-contract
@@ -922,42 +922,42 @@ relevant acceptance rows
 client coordination provenance
 ```
 
-子仓库的变更属于核心知识范围：源代码级评审与所有权遵循 §25A。保持知识简洁；不要复制整个客户端仓库。
+子仓库的变更属于核心知识范围：源码级评审与所有权按 §25A 执行。知识保持简洁，不要复制整个客户端仓库。
 
 ---
 
 # 25A. 子仓库属于内核知识范围（Child repositories are part of the kernel knowledge scope）
 
-核心知识库覆盖内核所消费或随其发布的仓库中的重要变更：
-客户端 gitlink、嵌套 gitlink、fork 的 Go 模块以及受控的原生组件。从 `.gitmodules`、实际的
-`go.mod` 与 `test/go.mod` 替换项，以及存在时的发布清单/锁定文件中盘点它们；发现当前结构，
-而不是假定一份固定列表。分别记录：
+核心知识库覆盖内核所消费、或随内核发布的仓库中的重要变更：
+客户端 gitlink、嵌套 gitlink、fork 的 Go 模块，以及受控的原生组件。盘点依据是
+`.gitmodules`、实际的 `go.mod` 与 `test/go.mod` 替换项，以及存在时的发布清单/锁定
+文件；要发现当前结构，不要假定一份固定列表。分别记录：
 
-1. 父基线以及目标 gitlink/replace SHA；子仓库与确切的 pin 修订。
-2. 观察时刻的子产品分支顶端、其分支名，以及它是否与 pin 不同。
-   一个移动的分支或候选点可能在没有父提交的情况下发生变化；把它作为一个单独划定范围的
-   增量来检视，绝不要把尚未消费的变更呈现为已发布内核行为。
-3. 比较新旧子仓库代码树，并阅读承重的变更源码/测试，而不只是提交主题或
+1. 父基线以及目标 gitlink/replace SHA；子仓库及其确切的 pin 修订。
+2. 观察时刻子产品的分支顶端、分支名，以及它是否与 pin 不同。
+   移动中的分支或候选点，可能在父仓库尚无新提交时就已经变化；要把它作为单独划定范围的
+   增量来检视，绝不要把尚未消费的变更说成已发布内核行为。
+3. 比较新旧子仓库代码树，阅读承重的变更源码/测试，而不只是提交标题或
    报告。追踪嵌套依赖（例如 desktop 中的 dashboard）、ABI/客户端契约、构建
-   输入、生命周期、发布、证据与被取代的行为。显式记录不可获得的对象与
-   平台/符号链接限制，并在子仓库自身有重大变更时扩大覆盖范围。
+   输入、生命周期、发布、证据与被取代的行为。显式记录不可获得的对象，以及
+   平台/符号链接限制；子仓库自身有重大变更时，扩大覆盖范围。
 4. 按需更新所属模块、索引、模块注册表、跨模块不变量与验收行。
    保留子仓库特有的设计、故障模式、来源与复检路径；链接到子仓库
-   源码，而不是复制它的整个仓库，或把 gitlink 当作一次源码审计。
-5. 发布时复检 pin 与分支顶端。在仅知识刷新期间，不要改动客户端检出、gitlink、子仓库
-   分支、Go pin、工作流或发布；抓取不可变对象或检查远端源码，而不覆盖
-   worktree。如果某个必需的重要子仓库修订无法检视，标记覆盖不完整，
+   源码，不要复制它的整个仓库，也不要把 gitlink 当作一次源码审计。
+5. 发布时复检 pin 与分支顶端。仅在知识刷新期间，不要改动客户端检出、gitlink、子仓库
+   分支、Go pin、工作流或发布；抓取不可变对象或检查远端源码，但不要覆盖
+   worktree。如果某个必需的重要子仓库修订无法检视，就标记覆盖不完整，
    并保留先前的生产基线。
 
-父基线标识的是父仓库消费了什么。它不是通用的子分支基线：
-单独记录检视了哪个子仓库 head 以及何时检视，并让尚未消费的工作保持可见的范围标注。
-一次成功的静态扫描、单元测试夹具、CI 运行、构建与设备测试属于彼此不同的证据级别。
+父基线只说明父仓库消费了什么，不是通用的子分支基线：
+要单独记录检视了哪个子仓库 head、何时检视，并让尚未消费的工作保持可见的范围标注。
+一次成功的静态扫描、单元测试夹具、CI 运行、构建与设备测试，分属不同的证据级别。
 
 ---
 
 # 26. 构建 / 裁剪刷新规则（Build / pruning refresh rules）
 
-当构建标签、协议注册、生成器或发布 profile 变更时，确定：
+构建标签、协议注册、生成器或发布 profile 变更时，确定：
 
 ```text
 which binaries/platforms are affected
@@ -968,13 +968,13 @@ whether binary size or memory is the goal
 whether a client/server build profile differs
 ```
 
-没有证据时，绝不要把临时的发布 profile 转成永久不变量。
+没有证据时，绝不要把临时的发布 profile 变成永久不变量。
 
 ---
 
 # 27. Apple / Android 构建链接刷新规则（Apple / Android build-linkage refresh rules）
 
-如果任一客户端 pin 或 libbox 构建契约变更，验证：
+任一客户端 pin 或 libbox 构建契约变更时，验证：
 
 ```text
 core SHA
@@ -985,7 +985,7 @@ provenance checks
 artifact content
 ```
 
-仅一个元数据值不能作为二进制来源证明。
+单个元数据值不能作为二进制来源证明。
 
 优先使用：
 
@@ -996,13 +996,13 @@ embedded build info
 ABI gate
 ```
 
-前提是仓库已经提供了它们。
+前提是仓库已经提供。
 
 ---
 
 # 28. CI / 发布刷新规则（CI / release refresh rules）
 
-当工作流或发布代码变更时，分别归类：
+工作流或发布代码变更时，分别归类：
 
 ```text
 workflow declared
@@ -1014,7 +1014,7 @@ artifact released
 
 不要把它们混为一谈。
 
-如果工作流触发器变更，记录：
+工作流触发器变更时，记录：
 
 ```text
 branches
@@ -1024,13 +1024,13 @@ manual dispatch
 automatic gate scope
 ```
 
-如果仅文档的 push 触发了昂贵的验证，那是工作流的属性，而不是生产代码的事实。
+如果仅文档的 push 触发了昂贵的验证，那属于工作流的属性，不是生产代码的事实。
 
 ---
 
 # 29. 历史文档（Historical documents）
 
-历史报告对以下方面有用：
+历史报告在以下方面有用：
 
 ```text
 why a fix exists
@@ -1041,9 +1041,9 @@ branch consolidation
 release incidents
 ```
 
-但把它们当作当前事实是危险的。
+但把它们当作当前事实就有危险。
 
-在每次刷新时，对重要文档分类：
+每次刷新都要给重要文档分类：
 
 ```text
 KEEP
@@ -1054,7 +1054,7 @@ DELETE
 
 ## 保留（KEEP）
 
-仍在运维上有用且当前有效。
+仍在运维上有用，且当前有效。
 
 ## 吸收（ABSORB）
 
@@ -1066,7 +1066,7 @@ DELETE
 
 ## 删除（DELETE）
 
-重复的、过期的，或已被完全取代且不再有任何证据价值的。
+重复、过期，或已被完全取代、不再有任何证据价值的。
 
 拿不准时：
 
@@ -1080,7 +1080,7 @@ ARCHIVE
 
 每个子系统只应保留高价值的注意事项。
 
-一条有用的 AI 注意事项描述的是这样一种变更：
+一条有用的 AI 注意事项，描述的是这样一类变更：
 
 ```text
 looks reasonable locally
@@ -1098,7 +1098,7 @@ Do not rebuild all stale resources merely because an epoch changed.
 Do not duplicate policy interpretation in mobile clients.
 ```
 
-避免诸如以下的泛泛警告：
+避免下面这种泛泛的警告：
 
 ```text
 "be careful"
@@ -1109,7 +1109,7 @@ Do not duplicate policy interpretation in mobile clients.
 
 # 31. 跨文件一致性检查（Cross-file consistency pass）
 
-在移动基线之前，比较：
+移动基线之前，比较：
 
 ```text
 AGENTS.md
@@ -1138,18 +1138,18 @@ fork feature mislabeled upstream
 release baseline confused with knowledge revision
 ```
 
-在结束之前解决它们。
+结束之前要解决它们。
 
-检查本地 Markdown 链接与源码路径/符号，使用符号搜索，而不是假定历史行号仍然适用。
+检查本地 Markdown 链接与源码路径/符号时，用符号搜索，不要假定历史行号仍然适用。
 把 TUN/网络变更、路由/DNS/快速路径权威、双栈拨号与回退、协议/TLS/QUIC 生命周期、
-平台回调以及 fork 依赖 pin 放在一起评审。盘点真实注册的协议、平台构建门禁与测试，
-而不是假定本协议中的列表已经穷尽。对每一个关键结论记录其范围、源码锚点与证据级别；
+平台回调以及 fork 依赖 pin 放在一起评审。盘点真正注册的协议、平台构建门禁与测试，
+不要假定本协议中的列表已经穷尽。每个关键结论都要记录范围、源码锚点与证据级别；
 区分源码、实际运行过的测试、CI 运行、互操作、
 设备与测量。没有匹配的基准测试时，
 不要声称量化性能结果。
 
 如果被中断，保留一份简明的台账，记录已评审条目、目标 SHA、未解决的矛盾和
-剩余检查。在核对 HEAD 与 worktree 之后从该台账恢复；绝不要让基线越过
+剩余检查。核对 HEAD 与 worktree 之后，从台账恢复；绝不要让基线越过
 未解决的承重缺口继续前移。作为知识刷新的一部分，不要修改运行时代码、依赖、构建或
 发布配置。不要递归地刷新本协议。
 
@@ -1161,7 +1161,7 @@ release baseline confused with knowledge revision
 
 只加入有助于解释当前产品的提交。
 
-一个提交若属于以下情况，就应放入其中：
+提交属于以下情况时，就应放入其中：
 
 ```text
 the origin of a surviving feature
@@ -1185,7 +1185,7 @@ every merge with no unique semantic effect
 
 # 33. 更新 BASELINE.md（Updating BASELINE.md）
 
-在所有已变更的子系统都已核对之后，更新：
+所有已变更的子系统都核对完之后，再更新：
 
 ```text
 Production Baseline
@@ -1195,41 +1195,41 @@ Knowledge reviewed date
 Post-baseline production delta
 ```
 
-不要把生产基线设为一个仅含文档的提交。
+不要把生产基线设成仅含文档的提交。
 
 新的生产基线应当是：
 
-> 刷新后的知识完整描述的最新一个生产实现 SHA。
+> 刷新后的知识所完整描述的最新生产实现 SHA。
 
 ---
 
 # 34. 更新 README.md / AGENTS.md（Updating README.md / AGENTS.md）
 
-只有当刷新流程或模块地图改变时才修改这些文件。
+只有刷新流程或模块地图改变时，才修改这些文件。
 
-不要仅因为基线 SHA 变了就更新它们，除非它们重复了那个 SHA。
+不要仅因为基线 SHA 变了就更新它们，除非文件里重复了那个 SHA。
 
-优先使用动态引用：
+优先用动态引用：
 
 ```text
 Read KNOWLEDGE/BASELINE.md
 ```
 
-而不是在多个文件中硬编码基线值。
+不要在多个文件中硬编码基线值。
 
-重复的 SHA 越少，未来的过期就越少。
+重复的 SHA 越少，将来过期就越少。
 
 ---
 
 # 35. 知识刷新报告（Knowledge refresh report）
 
-每次显式刷新都应产生一份简明报告：
+每次显式刷新都应产出一份简明报告：
 
 ```text
 KNOWLEDGE_REFRESH_<DATE_OR_RELEASE>.md
 ```
 
-或者更新仓库选定的刷新报告约定。
+或者按仓库选定的刷新报告约定更新。
 
 它应包含：
 
@@ -1251,13 +1251,13 @@ Production code changed by refresh? NO
 Git history rewritten? NO
 ```
 
-不要为每个子系统各创建一份报告。
+不要给每个子系统各创建一份报告。
 
 ---
 
 # 36. 使用 Harness / 多 Agent 系统的推荐刷新工作流（Recommended refresh workflow with Harness / multi-Agent systems）
 
-对于大增量，在当前生效的执行指令允许时可以使用并行 agent；
+对大增量，在当前生效的执行指令允许时，可以使用并行 agent；
 否则按顺序执行同样的独立评审。
 
 ## 阶段 1——粗粒度地图（Phase 1 — coarse map）
@@ -1274,7 +1274,7 @@ identify affected subsystems
 
 ## 阶段 2——子系统 agent（Phase 2 — subsystem agents）
 
-每个受影响的子系统一个 agent。
+每个受影响的子系统配一个 agent。
 
 每个 agent 获得：
 
@@ -1308,7 +1308,7 @@ UPSTREAM-ABSORBED
 EXTERNAL-ADAPTED
 ```
 
-尤其在上游历史被重写时。
+尤其在上游历史被重写之后。
 
 ## 阶段 4——验证 agent（Phase 4 — verification agent）
 
@@ -1362,7 +1362,7 @@ moves baseline
 
 # 38. 大增量刷新工作流（Large-delta refresh workflow）
 
-在以下情况下使用完整且经独立核查的刷新：
+出现下列情况时，使用完整且经独立核查的刷新：
 
 ```text
 > several hundred relevant commits
@@ -1374,7 +1374,7 @@ major protocol feature added
 knowledge baseline is months old
 ```
 
-在大规模刷新中：
+大规模刷新中：
 
 ```text
 coarse scan all relevant commits
@@ -1386,7 +1386,7 @@ do not deep-read every commit
 
 # 39. 何时不要移动基线（When NOT to move the baseline）
 
-在以下情况下不要移动生产基线：
+出现下列情况时，不要移动生产基线：
 
 ```text
 important changed subsystem remains UNVERIFIED
@@ -1396,7 +1396,7 @@ a major module is knowingly missing
 cross-file consistency fails
 ```
 
-在这种情况下：
+这种情况下：
 
 ```text
 REFRESH = INCOMPLETE
@@ -1408,7 +1408,7 @@ REFRESH = INCOMPLETE
 
 # 40. 最终刷新验收清单（Final refresh acceptance checklist）
 
-只有当一个新的 AI 能够做到以下各项时，刷新才算完成：
+只有当新的 AI 能做到以下各项时，刷新才算完成：
 
 ```text
 1. Read AGENTS.md
@@ -1425,7 +1425,7 @@ REFRESH = INCOMPLETE
 12. Avoid known reasonable-but-wrong changes
 ```
 
-如果任何重要子系统仍然需要全仓库考古：
+如果仍有重要子系统需要全仓库考古：
 
 > 刷新尚未完成。
 
@@ -1461,7 +1461,7 @@ FUTURE_AI_INCREMENTAL_READ = PASS / FAIL
 
 # 42. 需要保留的原则（The principle to preserve）
 
-知识系统在以下情况下才算成功：
+知识系统在以下条件下才算成功：
 
 ```text
 source stays authoritative

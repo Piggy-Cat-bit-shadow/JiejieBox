@@ -5,21 +5,21 @@
 | 字段 | 取值与范围 |
 |---|---|
 | 仓库 / 分支 | `Piggy-Cat-bit-shadow/JiejieBox` / `testing`；先前的 `sing-box` 远端 URL 会重定向到本仓库 |
-| 生产基线 | `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28` —— 最后审阅的源码/发布/CI 变更；审阅时更晚的提交改的是文档 |
-| 发布基线 | [v0.1.34](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.34)，发布于 2026-10-29 05:34:42 UTC，非 draft 且非 prerelease；附注标签（annotated tag）剥离后指向生产基线 |
-| 上游祖先 | 观察到的 `upstream/testing` `e5d91fa79f6319d5de940d6c81d81f0fe53b9476` 是合并基；祖先关系不能证明作者身份 |
+| 生产基线 | `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28` —— 最后审阅的源码/发布/CI 变更；审阅时更晚的提交动的是文档 |
+| 发布基线 | [v0.1.34](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.34)，发布于 2026-10-29 05:34:42 UTC，既不是 draft 也不是 prerelease；附注标签（annotated tag）剥离后指向生产基线 |
+| 上游祖先 | 观察到的 `upstream/testing` `e5d91fa79f6319d5de940d6c81d81f0fe53b9476` 是合并基；祖先关系证明不了作者身份 |
 | 上一个生产基线 | `dbcfc1d359d6ed818dfaaefb6d4e637b6e785f07`；基线到目标区间内有 12 个可达提交，包含知识库/文档 |
 | 知识修订 | `git log -1 --format=%H -- KNOWLEDGE/BASELINE.md` |
 | 基线之后的增量 | `git diff --name-only 0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28..HEAD` |
 
-关于范围与继承下来的限制，见 [2026-10-31 校准](CALIBRATION-2026-10-31.md)、它的
-[全面的第二轮审阅](CALIBRATION-2026-10-31-REVIEW.md)，以及更早的台账。运行证据是与 SHA 和
-具体任务绑定的；源码审阅或 CI 并不证明真实设备行为。子仓库源码 pin 与独立观察到的分支头是不同的事实。
+范围与继承下来的限制见 [2026-10-31 校准](CALIBRATION-2026-10-31.md)、它的
+[全面的第二轮审阅](CALIBRATION-2026-10-31-REVIEW.md)，以及更早的台账。运行证据跟 SHA 和
+具体任务绑定；源码审阅或 CI 都证明不了真实设备行为。子仓库源码 pin 和独立观察到的分支头
+是两类不同的事实。
 
 ## 历史性的 v0.1.9 基线（Historical v0.1.9 baseline）
 
-下面的表格与叙述保留了 v0.1.9 的审阅。它们不是当前基线；其取值与主张的范围限于
-那个历史修订。
+下面的表格和叙述保留了 v0.1.9 那次审阅。它们不是当前基线，取值和主张只覆盖那个历史修订。
 
 | 字段 | 取值 | 如何重新测量 |
 |---|---|---|
@@ -42,7 +42,7 @@
 
 > **基线之后的生产增量**：**没有。** `v0.1.6..HEAD` 是 5 个提交，且**没有任何 `.go` 源码发生变化**。
 
-**那一行后来变成假的，并且在两个 release 期间一直是假的。** 刷新时的实测：
+**那一行后来变成了假话，而且整整两个 release 都是假的。** 刷新时实测：
 
 ```sh
 git rev-list --count a267e99e0..5fc4f9366     # 181        (the row said 5)
@@ -50,7 +50,7 @@ git diff --shortstat  a267e99e0 5fc4f9366     # 141 files changed, 33110 inserti
 git diff --name-only  a267e99e0 5fc4f9366 -- '*.go' ':(exclude)*_test.go'   # 12 files  (the row said 0)
 ```
 
-发生变更的 12 个生产文件：
+有变更的 12 个生产文件：
 
 ```text
 adapter/experimental.go              option/fast_path.go        route/fast_path.go
@@ -60,40 +60,40 @@ experimental/boxdd/authenticode_windows.go
 protocol/group/selector.go           protocol/group/urltest.go
 ```
 
-这就是知识模型被设计来防止的失败模式，它被记录在这里
-而不是被悄悄改正：**增量行是一条带有效期的声明，没有任何东西会自动复检它。** 在 `v0.1.7` 与
-`v0.1.9` 之间相信那一行的读者，会得出“模块仍然描述着这棵树”的结论，并会在一个已发布特性
-（`fast_path` 组策略）、根包（`box.go`）以及 Android/Apple 构建路径上判断错误。
+这正是知识模型要防的失败模式，它被写在这里，而不是悄悄掩盖：**增量行是一句有保质期的
+声明，没有任何机制会自动复检它。** 在 `v0.1.7` 与 `v0.1.9` 之间信了那一行的读者，会以为
+“模块仍然描述着这棵树”，然后在已发布特性（`fast_path` 组策略）、根包（`box.go`）和
+Android/Apple 构建路径上判断出错。
 
-刷新把基线移动到 `HEAD`，是因为变更的子系统已经对照当前源码审计过，
-而不是因为时间流逝。`REFRESH.md` §39 列出了基线**不得**移动的条件；没有一条适用。
+刷新把基线移到 `HEAD`，理由是变更的子系统已经对照当前源码审计过，而不是因为时间过去了。
+`REFRESH.md` §39 列出了基线**不得**移动的条件；这里没有一条适用。
 
-**这里“审计过”的含义要精确说明，因为这一区分正是重点。** 各模块已对照当前源码检查了
-本次增量所改变的行为，其中两个被发现与之**矛盾** —— 两者都在同一次刷新中被修正：
+**这里说的“审计过”要讲精确，因为区别正在于此。** 各模块已经对照当前源码检查了本次增量
+改变的行为，其中两个模块被发现与之**矛盾**——两个都在同一次刷新里修改了：
 
 * `modules/fast-path-group-policy.md` §6 声称 `canFastBypass` 资格门禁 *“unchanged
-  by this field”*（中文：未被该字段改变），并且 *“none of the existing blocking conditions is bypassed.”*（中文：现有阻断条件都没有被绕过。）实际上不成立：
-  `route/route.go` 增加了一个 `fastPathAuthorized` 参数，并且恰好放宽了一个阻断条件
-  （`BypassRefusedOutboundChain`），用于已授权且全透明的链。没有那个分支，该特性就是惰性的，
-  因为被路由进组的流总是有 `len(chain) >= 2`。
-* `modules/data-path-optimization.md` §A.8 把出站链列为不在范围内。对**不透明**组（opaque group）
-  来说仍然成立，这也是 `loadbalance` 仍然拒绝的原因——但对声明了 `FastPathTransparent() bool`
-  的组来说不再成立。
+  by this field”*（中文：未被该字段改变），并且 *“none of the existing blocking conditions is bypassed.”*（中文：现有阻断条件都没有被绕过。）这实际上不成立：
+  `route/route.go` 加了一个 `fastPathAuthorized` 参数，恰好放宽了一个阻断条件
+  （`BypassRefusedOutboundChain`），用在已授权且全透明的链上。少了那个分支，这个特性就是
+  惰性的，因为被路由进组的流总是有 `len(chain) >= 2`。
+* `modules/data-path-optimization.md` §A.8 把出站链列为不在范围内。**不透明**组（opaque group）
+  仍然如此，这也是 `loadbalance` 仍被拒绝的原因——但对声明了 `FastPathTransparent() bool`
+  的组已经不成立。
 
-`modules/core-lifecycle-runtime.md` §2 被发现**行锚点过期约 +47**，但其结构性主张仍然成立；
-锚点被标记出来，而不是被统一平移，因为统一的偏移从未逐锚点验证过，而猜测的行号看起来会像权威结论。
+`modules/core-lifecycle-runtime.md` §2 的**行锚点过期约 +47**，但结构性主张仍然成立；
+锚点只是被标出来，没有统一平移——统一偏移从未逐锚点验证过，猜出来的行号会显得像权威结论。
 
-**在 v0.1.9 审阅时，那个基线对所审计的子系统是最新的；它并不是“每个模块的每一行都重新推导过”的声明。**
-增量未触及路径的模块没有被重读。
-任何带有 `file:line` 的模块陈述，在依赖它之前都应重新测量，测量时按 `modules/README.md`
-§How to decide whether a module is still accurate 使用
+**v0.1.9 那次审阅时，那个基线对所审计的子系统是最新的；它并不等于“每个模块的每一行都重新推导过”。**
+增量没碰到的模块没有重读。
+任何带 `file:line` 的模块陈述，依赖之前都该重新测量，测量时按 `modules/README.md`
+§How to decide whether a module is still accurate 用
 `git log --oneline v0.1.9..HEAD -- <path>`。
 
 ## 分支发布谱系（Fork release lineage）
 
-以下数据是实测的，这样标签自身的对象就不会与被它们命名的提交混淆。**每个分支标签都是附注标签
+下面的数据都是实测的，免得标签自己的对象和被它命名的提交混在一起。**每个分支标签都是附注标签
 （annotated）**，所以 `git rev-parse vX` 返回的是 *标签对象*，而 `git rev-parse vX^{commit}` 返回的是
-提交。用错对象做 diff 的读者，得到的是针对标签对象的 diff，而那是另一回事。
+提交。拿错对象去做 diff，得到的是针对标签对象的 diff，那是另一回事。
 
 | 标签 | 标签对象 | 提交（剥离后） | 日期 | 主题 |
 |---|---|---|---|---|
@@ -103,9 +103,9 @@ protocol/group/selector.go           protocol/group/urltest.go
 | `v0.1.8` | `e4df57f03` | `455458c76` | 2026-10-14 21:12:08 +0800 | fix(release): resolve staged desktop installer path |
 | `v0.1.9` | `58f99c630` | `5fc4f9366` | 2026-10-14 23:02:14 +0800 | test(wireguard): the census poll must not starve the goroutine it waits for |
 
-**`v0.1.8` 是一个历史身份，绝不能被移动。** 它以 GitHub Release 的形式
-发布时带有**六个**资产，而契约要求七个，所以它既是一个*已知缺陷*的发布，也是一个
-被修复的发布。缺陷及其修复是 `v0.1.9`；无论如何该标签不可变。
+**`v0.1.8` 是一个历史身份，绝不能挪。** 它作为 GitHub Release 发布时带了**六个**资产，
+契约却要求七个，所以它既是一次*已知缺陷*的发布，也是一次被修复的发布。缺陷和它的修复
+落在 `v0.1.9`；无论如何这个标签不可变。
 
 ## 两个基线不同，且两者都重要（The two baselines are different, and both matter）
 
@@ -122,7 +122,7 @@ production baseline 5fc4f9366  tag v0.1.9 — last declared broad knowledge base
 HEAD                          current branch tip; re-measure, not necessarily a release
 ```
 
-以下为实测，读者无需相信上面的示意图：
+下面是实测结果，读者不必相信上面那张示意图：
 
 ```sh
 git merge-base v0.1.9 refs/remotes/upstream/testing   # remeasure: the ref may be rewritten
@@ -135,13 +135,12 @@ git diff --shortstat e4b7e692 v0.1.9                  # see the row above
 ```
 
 > 关于最后一行：**不要**把 `.go` 过滤器写成 `... | grep -c '\.go$'`。`grep -c` 在没有匹配时
-> 打印 `0` **并以退出码 1 退出**，所以用脚本复检的人会把一个正确结果读成
-> 失败。使用 `--` 路径规范形式：
-> `git diff --name-only <a> <b> -- '*.go' ':(exclude)*_test.go'`。
+> 打印 `0` **并以退出码 1 退出**，所以用脚本复检时，一个正确结果会被读成失败。过滤器
+> 要改用带 `--` 的路径规范形式：`git diff --name-only <a> <b> -- '*.go' ':(exclude)*_test.go'`。
 
-`e4b7e692..a267e99` 是一个**祖先到后代的区间**，不是分支区间：`e4b7e692` 是这个分支所吸收的
-上游顶端，而分支基线是它的后代。该区间不是作者身份普查；上游重写和其他引用意味着仅凭可达性
-无法确定每个补丁的来源。
+`e4b7e692..a267e99` 是**祖先到后代的区间**，不是分支区间：`e4b7e692` 是本分支吸收的上游
+顶端，分支基线是它的后代。这个区间做不了作者身份普查；上游重写和别的引用意味着光看可达性，
+定不了每个补丁的来源。
 
 ## 来源检验——用它，绝不要用 `git describe`（The provenance test — use this, never use `git describe`）
 
@@ -156,21 +155,21 @@ git rev-list --count <sha> --not --remotes=upstream
 ≥1 ⇒ at least one ancestor of <sha> is not reachable from the current upstream refs
 ```
 
-这是一次祖先关系检验，不是作者身份分类器：被重写的上游孤儿提交可能无法从当前上游引用到达，
-而一个不可达的祖先也不能确定所命名提交的来源。当来源很重要时，比较补丁、blob 和历史证据。
+这是祖先关系检验，不是作者身份分类器：被重写的上游孤儿提交可能到不了当前上游引用；而某个
+祖先不可达，也定不了所命名提交的来源。来源重要时，就比对补丁、blob 和历史证据。
 
-仔细读方向。`--remotes=origin` 是拿**本分支**做比较，不是上游；
-对它的可达性无法确定上游来源。
+方向要读准：`--remotes=origin` 是拿**本分支**做比较，不是上游；拿它做可达性检查，定不了
+上游来源。
 
 ### 本仓库已经付过代价的三个陷阱（The three traps this repository has already paid for）
 
-1. **`git describe` 在这里会说谎。** 对于某个并不携带该标签的提交，它报告
-   `v1.14.3-38-ge4b7e692f`，因为本分支的历史包含重写前的上游孤儿提交。永远不要用它做
-   来源判断。
-2. **上游历史会被重写。** `refs/remotes/upstream/testing` 从 `e4b7e692` 移动到了
-   `dfb80349b`，而本分支并未吸收它。因此仅凭 SHA 祖先关系并不总是足够；当来源是承重信息时，
-   使用不止一种检查。
-3. **绝不要按 SHA 统计上游工作量。** 一次逻辑上的上游变更在重写后，在一个区间里最多可能出现十一次。
+1. **`git describe` 在这里会说谎。** 有个提交并不携带那个标签，它却报告
+   `v1.14.3-38-ge4b7e692f`，原因是本分支的历史里有重写前的上游孤儿提交。来源判断永远
+   不要用它。
+2. **上游历史会被重写。** `refs/remotes/upstream/testing` 从 `e4b7e692` 移到了
+   `dfb80349b`，本分支并没有吸收它。所以光靠 SHA 祖先关系不总够用；来源属于承重信息时，
+   要用不止一种检查手段。
+3. **绝不要按 SHA 统计上游工作量。** 一次逻辑上的上游变更被重写后，在一个区间里最多可能出现十一次。
 
 ## 基线之后的增量阅读——预期工作流（Post-baseline incremental reading — the intended workflow）
 
@@ -187,19 +186,19 @@ git diff --name-only v0.1.9..HEAD
 
 ## 本文件的证据级别（Evidence level of this file）
 
-`VERIFIED_GIT` —— 每一行都是在刷新时针对本工作树产生的命令输出。没有任何一行
-依赖报告、文档或推断。唯一一行是**关于模块的声明**而非关于 Git 的声明，
-即生产基线那一行；它的可信度仅取决于 `REFRESH.md` 刷新报告中记录的模块审计。
+`VERIFIED_GIT` —— 每一行都是刷新时针对本工作树跑出来的命令输出。没有一行依赖报告、文档
+或推断。只有一行是**关于模块的声明**而不是关于 Git 的声明，也就是生产基线那一行；它的
+可信度只取决于 `REFRESH.md` 刷新报告里记录的模块审计。
 
 ## 本基线的已知局限（Known limitations of this baseline）
 
 * 客户端**源码**仓库（`clients/apple`、`clients/android`、`clients/desktop`）是
-  独立仓库，在干净工作树中为空。它们的修订记录为 gitlink；
-  在历史性的 v0.1.9 审阅中，其内容未被覆盖。当前子仓库的覆盖情况见 `modules/child-repositories.md`。
-* `experimental/boxdd/**`（Windows 守护进程）在本次增量中发生了变化，由
-  **`modules/windows-daemon-security.md`** 拥有。它曾是最后一个无主的变更子系统；所有权
-  地图现在解析了它，`daemon/**`、构建驱动与打包被记录为 CROSS-MODULE。
+  独立仓库，在干净工作树里是空的。它们的修订只记为 gitlink；
+  历史性的 v0.1.9 审阅没有覆盖其内容。当前子仓库的覆盖情况见 `modules/child-repositories.md`。
+* `experimental/boxdd/**`（Windows 守护进程）在本次增量里发生了变化，归
+  **`modules/windows-daemon-security.md`** 所有。它曾是最后一个无主的变更子系统；现在
+  所有权地图能解析到它，`daemon/**`、构建驱动和打包记为 CROSS-MODULE。
   **它的信任边界没有文档化的端到端测试** —— 见该模块的 §15。现在声明了一个 Windows
-  测试工作流；实际执行需要运行证据。
-* 这里的历史 v0.1.9 条目在代码树中没有关联的 CI 运行记录。后来一次经独立
-  检查的 Windows 守护进程运行连同其 SHA 记录在 `modules/windows-daemon-security.md` 中。
+  测试工作流；要证明真的跑过，还需要运行证据。
+* 这里的历史 v0.1.9 条目在代码树里没有关联的 CI 运行记录。后来有一次 Windows 守护进程
+  运行经过独立检查，连同 SHA 记在 `modules/windows-daemon-security.md` 里。

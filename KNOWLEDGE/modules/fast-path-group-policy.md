@@ -4,7 +4,7 @@
 >
 > 审阅对象为仓库 `Piggy-Cat-bit-shadow/sing-box`，分支 `testing`。
 >
-> 本模块记录该 fork 的 **`fast_path` 配置契约**：该字段的含义、可以在哪里设置它、它如何与透明
+> 本模块记录这个 fork 的 **`fast_path` 配置契约**：该字段的含义、可以在哪里设置、它如何与透明
 > 直连链以及路由器的资格门禁交互，以及哪些配置会被拒绝。
 >
 > 如果本文档与当前源码或测试冲突，**以源码和测试为准**。
@@ -16,9 +16,9 @@
 本模块覆盖：
 
 - `fast_path` 是什么，以及它不是什么；
-- 确切的 JSON 语法，分别针对 `selector` 与 `urltest`；
+- 分别针对 `selector` 与 `urltest` 的确切 JSON 语法；
 - 该字段的三态语义；
-- 哪些 outbound 类型可以携带它、哪些不可以，以及当不允许携带它的类型携带它时会发生什么；
+- 哪些 outbound 类型可以携带它、哪些不可以；不允许携带它的类型一旦携带，会发生什么；
 - `fast_path: true` 授权了什么、没有授权什么；
 - 组嵌套时的优先级；
 - 为什么授权是按流（per-flow）的，且永不写回节点；
@@ -47,12 +47,11 @@ box_fast_path_group_policy_test.go
 
 ## 2. `fast_path` 是什么（What fast_path is）
 
-`fast_path` 是本 fork 新增的一项**逻辑组策略**。它是**组**的属性，回答一个问题：
+`fast_path` 是这个 fork 新增的**逻辑组策略**。它是**组**的属性，只回答一个问题：
 
-> 对于该组所选中的一条流，该组是否被授权让这条流*尝试*一次 Direct Fast Path？
+> 该组是否授权它选中的一条流*尝试*一次 Direct Fast Path？
 
-它**不是**节点能力。设置它并不会把某个节点标记为“fast”，也不会随节点在任何地方传递。一个
-碰巧可通过 `fast_path: true` 组到达的节点并不会因此成为 fast-path 节点——见 §7。
+它**不是**节点能力。设置它不会把某个节点标记为“fast”，也不会跟着节点传递到别处。一个节点即使能通过 `fast_path: true` 组到达，也不会因此成为 fast-path 节点——见 §7。
 
 ---
 
@@ -88,28 +87,27 @@ box_fast_path_group_policy_test.go
 }
 ```
 
-该字段与 `outbounds` 和 `type` 同级，而不是逐 outbound 或逐节点的条目。
+这个字段与 `outbounds`、`type` 同级，不是逐 outbound 或逐节点的条目。
 
 ---
 
 ## 4. 三态语义（Three-state semantics）
 
-该字段是**三态**的，而这三者之间的区分正是整个设计的意义所在：
+这个字段是**三态**的，三个取值之间的区分正是整个设计的要点：
 
 | 取值 | 含义 |
 |---|---|
-| **未设置** | 没有显式决定。一条以真实 `direct` 叶结尾的透明 selector 链本身就被授权尝试绕过。 |
-| `"fast_path": true` | **显式授权**该组所选中的流尝试一次 Direct Fast Path。 |
+| **未设置** | 没有显式决定。以真实 `direct` 叶结尾的透明 selector 链本身就有权尝试绕过。 |
+| `"fast_path": true` | **显式授权**该组选中的流尝试一次 Direct Fast Path。 |
 | `"fast_path": false` | **显式禁止**组授权，包括那条内在的直连链授予。 |
 
 `false` 是一个**决定**，不是缺失。它会覆盖内在授予——见 §8。
 
-三态配置类型的存在，正是为了让“显式 false”*可被找到*：一个普通布尔值无法区分“操作者写了
-false”与“操作者什么都没写”，而这两者必须表现不同。
+之所以要有三态配置类型，就是为了让“显式 false”*可以被找到*：普通布尔值无法区分“操作者写了 false”与“操作者什么都没写”，而这两者必须表现不同。
 
 ### 以上一切生效前的两个前提（Two preconditions before any of this applies）
 
-解析在两个情形下返回 `false`——且没有任何组授权——这两个情形先于一切，在检查链之前就生效：
+有两种情形会让解析返回 `false`，并且不产生任何组授权。这两条先于一切，在检查链之前生效：
 
 ```text
 the chain has fewer than two elements
@@ -119,8 +117,7 @@ the leaf cannot be bypassed at all
         -> the leaf must implement adapter.BypassableOutbound
 ```
 
-第二个情形正是一个代理叶永远无法被绕过的原因：授权针对的是*组*，但*叶*仍然必须是平台能够承载
-的东西。当不存在显式策略时，一个位于仅由透明组构成的链之后的真实 direct 叶会提供那份内在授予。
+第二种情形，正是代理叶永远无法绕过自身的原因：授权针对的是*组*，而*叶*仍然必须是平台能够承载的东西。不存在显式策略时，一个真实 direct 叶只要位于仅由透明组构成的链之后，就会提供那份内在授予。
 
 ---
 
@@ -133,9 +130,7 @@ selector
 urltest
 ```
 
-两者在 **Fast Path 链检查中都是透明的**：它们选择一个 outbound，而不构成一个物理跳。这并不
-意味着它们没有其他行为：selector 与 urltest 可以包装返回的连接，用于中断与生命周期管理。绕过
-资格与入口消费方检查仍然决定某条特定流是否真的可以绕过。
+两者在 **Fast Path 链检查中都是透明的**：它们只选择一个 outbound，不构成物理跳。这不代表它们没有其他行为：selector 与 urltest 可以包装返回的连接，用于中断与生命周期管理。某条特定流是否真的可以绕过，仍由绕过资格与入口消费方检查决定。
 
 拒绝：
 
@@ -145,14 +140,11 @@ leaf outbounds — VLESS, Trojan, Hysteria2, TUIC, Shadowsocks, and any other
 any other outbound that is not a FastPathAuthorizedGroup
 ```
 
-**`loadbalance` 被有意拒绝。** 它不是透明 selector：它可能拥有拨号、重试与再均衡语义，因此
-一条通过 Fast Path 跳过它的流也会跳过那些语义。仅仅“是一个组”并不够；必须是*透明*组。
+**`loadbalance` 被有意拒绝。** 它不是透明 selector：它可能带有拨号、重试与再均衡语义，因此一条通过 Fast Path 跳过它的流，也会跳过这些语义。只“是一个组”还不够；必须是*透明*组。
 
 ### 配置错误是错误，不是警告（Misconfiguration is an error, not a warning）
 
-把 `fast_path` 放在不允许携带它的 outbound 上会使**配置加载失败**。它不会被忽略，也不会被
-记录后继续：一个要求运行时不会兑现之物的配置会被拒绝，这样操作者在加载时就能得知，而不是通过
-观察与文件静默不符的行为来发现。
+把 `fast_path` 放在不允许携带它的 outbound 上，会让**配置加载失败**。它不会被忽略，也不会记录后继续：配置若要求运行时兑不了的东西，就会被拒绝。这样操作者在加载时就能知道，不必靠观察行为与文件静默不符才发现。
 
 ---
 
@@ -164,29 +156,22 @@ any other outbound that is not a FastPathAuthorizedGroup
 this logical group authorises this flow to ATTEMPT a Direct Fast Path
 ```
 
-它**不是**强制指令。获得授权之后，该流仍然必须通过 `canFastBypass` / `BypassVerdict` 资格
-门禁，真正的决定在那里做出。
+它**不是**强制指令。获得授权之后，这条流仍然必须通过 `canFastBypass` / `BypassVerdict` 资格门禁，真正的决定在那里做出。
 
-只有当入口消费绕过裁决（bypass verdict）时才会查询这个隐式门禁：即 nfqueue 自动重定向消费方。
-普通 TUN 不会用该裁决来绕过用户态路径；这是入口模式层面的区分，而不是笼统的操作系统层面区分。
-显式绕过动作是另一回事。参见 `route/fast_path.go`、`route/route.go` 与 `adapter/inbound.go`。
+只有当入口消费绕过裁决（bypass verdict）时，才会查询这个隐式门禁，也就是 nfqueue 自动重定向消费方。普通 TUN 不会用该裁决绕过用户态路径；这是入口模式层面的区分，不是笼统的操作系统层面区分。显式绕过动作是另一回事。参见 `route/fast_path.go`、`route/route.go` 与 `adapter/inbound.go`。
 
-**该门禁因这个字段而被细化，而不是保持不变。** `canFastBypass` 接收一个
-`fastPathAuthorized bool` 参数，并且恰好有**一个**阻断条件因此被放宽：
+**这个字段细化了门禁，而不是让门禁原地不动。** `canFastBypass` 接收一个
+`fastPathAuthorized bool` 参数，因此恰好有**一个**阻断条件被放宽：
 
 ```text
 BypassRefusedOutboundChain
 ```
 
-并且只有当叶之前的**每一个**元素都是透明的纯选择组（`fastPathChainReachesLeaf`），**并且**
-该叶仍然通过未改动的 `BypassableOutbound` / `CanBypass` 检查时才成立。如果没有这一个分支，
-该字段在每一种组配置上都会是惰性的，因为被路由进某个组的流必然有 `len(chain) >= 2`——因此是
-这一细化让该特性得以存在，而不是它额外授予了一项许可。
+而且只有同时满足两个条件才成立：叶之前的**每一个**元素都是透明的纯选择组（`fastPathChainReachesLeaf`），**并且**该叶仍然通过未改动的 `BypassableOutbound` / `CanBypass` 检查。没有这一个分支，该字段在每一种组配置上都会是惰性的，因为被路由进某个组的流必然有 `len(chain) >= 2`。所以，是这一细化让特性得以存在，而不是它额外授予了一项许可。
 
-一条**未获授权**的组流仍然会得到 `BypassRefusedOutboundChain`，没有变化。`loadbalance` 仍然
-拒绝，因为它没有声明该能力（它可能拥有其选中流的拨号与重试，因此它不是透明的）。
+一条**未获授权**的组流仍然会得到 `BypassRefusedOutboundChain`，行为不变。`loadbalance` 仍然拒绝，因为它没有声明该能力（它可能掌握其选中流的拨号与重试，因此不是透明的）。
 
-**这些阻断条件不受 `fast_path: true` 影响**，而这份清单正是该字段可以安全暴露的原因：
+**这些阻断条件不受 `fast_path: true` 影响**，这份清单正是该字段可以安全暴露的原因：
 
 ```text
 FakeIP destination
@@ -206,26 +191,24 @@ active power-report recorder
 unproven process metadata
 ```
 
-因此完整含义是：一条符合条件的透明组链可以不再构成基于链的拒绝，而其他每一项资格检查仍然适用。
-所以，当那条链式拒绝是唯一阻断条件时，该授权可以改变最终裁决；它无法覆盖其他阻断条件。
+因此完整含义是：一条符合条件的透明组链不再构成基于链的拒绝，其他每一项资格检查仍然适用。所以，只有当链式拒绝是唯一阻断条件时，该授权才能改变最终裁决；它无法覆盖其他阻断条件。
 
 ---
 
 ## 7. 按流处理，永不写回（Per-flow, never written back）
 
-Fast Path 授权是**按流**解析的。它不存储在节点上，也不跨流使用共享的可变状态。
+Fast Path 授权**按流**解析。它不存储在节点上，也不跨流共享可变状态。
 
-这一点有具体影响。一个节点可能同时被多个组引用：
+这一点有具体影响：一个节点可能同时被多个组引用：
 
 ```text
 节点A   <-  "🤖 AI"          group with fast_path: true
 节点A   <-  "🌍 普通国外流量"  group with no fast_path
 ```
 
-这两条流被独立评估；取决于它们各自的叶与链，它们可能得到相同的答案。授权属于该条流的链，而不是
-永久属于某个节点。
+两条流分别独立评估；取决于各自的叶与链，它们可能得到相同的答案。授权属于该条流的链，不会永久属于某个节点。
 
-正是这一属性让该特性保持为策略而非模式：没有它，一次选择就会永久改变某个节点被对待的方式。
+正是这一属性让该特性保持为策略而不是模式：没有它，一次选择就会永久改变系统对待某个节点的方式。
 
 ---
 
@@ -241,24 +224,23 @@ outer group        fast_path: false   <-- decided here; inner values not consult
 
 三个推论：
 
-1. 第一个显式值胜出；链中后续的值不会被查询。
+1. 第一个显式值胜出；链中后续的值不再查询。
 2. **`fast_path: false` 是一个显式决定**，因此它终止扫描并覆盖内在授予。
-3. 在没有任何显式策略时，一条全透明链若指向真实 direct 叶则获得内在授予；其他链不会。先前的
-   AI-tag 回退已被移除（`c78edf21084`）；标签不作授权。
+3. 没有任何显式策略时，一条指向真实 direct 叶的全透明链会获得内在授予；其他链没有。先前的
+   AI-tag 回退已经移除（`c78edf21084`）；标签不作授权。
 
 ---
 
 ## 9. `fast_path` 与 `urltest` 是两个不同的问题（fast_path and urltest are different questions）
 
-两者容易被混为一谈，因为它们都出现在同类组上。但它们回答的是不同问题：
+两者容易混为一谈，因为它们都出现在同类组上，但回答的是不同问题：
 
 ```text
 urltest     decides WHICH NODE is selected
 fast_path   decides whether the flow, having been selected, may ATTEMPT a Direct Fast Path
 ```
 
-`urltest` 做测量与挑选。`fast_path` 不挑选任何东西，也不测量任何东西。没有 `fast_path` 的
-`urltest` 组仍然会挑选节点；一条通往 direct 的透明链仍可能获得上文所述的内在授权。
+`urltest` 负责测量与挑选。`fast_path` 既不挑选，也不测量。没有 `fast_path` 的 `urltest` 组仍然会挑选节点；一条通往 direct 的透明链仍可能获得上文所述的内在授权。
 
 ---
 
@@ -283,7 +265,7 @@ fast_path   decides whether the flow, having been selected, may ATTEMPT a Direct
 
 ## 11. 该行为在哪里被固定（Where the behaviour is pinned）
 
-使这些陈述可被检查而非仅停留于愿望的测试：
+这些测试让上述陈述可以被检查，而不只是愿望：
 
 | 属性 | 测试 |
 |---|---|

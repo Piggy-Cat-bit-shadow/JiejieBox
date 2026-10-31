@@ -4,10 +4,10 @@
 
 **VERIFIED_SOURCE**，测试目标 `011f3fdcd99`：`option/vless.go` 暴露可选的 VLESS
 `encryption`；空值或 `none` 表示关闭。`protocol/vless/outbound.go` 解析并初始化
-客户端加密层，并在 VLESS 使用它之前包装一个已拨号的传输。
+客户端加密层，并在 VLESS 使用之前包装一个已拨号的传输。
 `protocol/vless/encryption` 包实现 `mlkem768x25519plus` 客户端握手，
-与 TLS 无关；`client.go` 记录了经 Leadaxe 从 starifly 适配而来，并声明
-服务端/解密那一半并未被采纳。`protocol/vless/encryption.go` 针对上下文取消保护这个阻塞式握手。
+与 TLS 无关；`client.go` 记录它经 Leadaxe 从 starifly 适配而来，并声明
+服务端/解密那一半并未被采纳。`protocol/vless/encryption.go` 为这个阻塞式握手加上上下文取消保护。
 测试包括 `protocol/vless/encryption_test.go`、
 `encryption_guard_test.go`，以及 `encryption` 包的测试。不要仅凭客户端解析或单元测试就推断服务端支持或
 线上互通性；部分 ABI 测试在 `-race` 下被排除。
@@ -16,7 +16,7 @@
 默认值。`CloseIdleConnections` 摘除空闲池条目；`RetireSuspect` 与
 `Close` 摘除所有条目，并推迟关闭仍在使用的那些。复用边界处的重拨仍然
 受已武装的 XMUX 熔断退避约束。选定的默认值、实时流关闭与
-packet-up 批量/尾部测试已在 Windows 上用 Go 1.26.10 通过；它们不是实时对端互通或
+packet-up 批量/尾部测试已在 Windows 上用 Go 1.26.10 通过；这些测试不是实时对端互通或
 性能测量。
 
 > 状态：`VERIFIED_SOURCE`
@@ -25,7 +25,7 @@ packet-up 批量/尾部测试已在 Windows 上用 Go 1.26.10 通过；它们不
 > HEAD `db8814ced6edf7a266fd2a73b03711332473dad9` 于 2026-10-13 复核。
 >
 > 本模块记录本 fork 的 **客户端 XHTTP / SplitHTTP 传输配置契约**。
-> 它的目的是在无需审计源码的情况下回答“我怎么写一个 XHTTP 节点？”。
+> 它的目的是在无需审计源码的情况下回答“怎么配置一个 XHTTP 节点？”。
 > 如果本文档与当前源码或测试冲突，**以源码和测试为准**。
 
 ---
@@ -61,7 +61,7 @@ protocol/vless/outbound.go
 ```
 
 `option/v2ray_xhttp.go` 中的注释仍然引用旧的 `SPECS/TASKS/...` 路径。
-这些路径并非配置 XHTTP 所必需，而且在本仓库中可能并不存在。
+配置 XHTTP 并不需要这些路径，而且它们在本仓库中可能并不存在。
 本模块就是那份缺失的配置指南在知识库中的替代品。
 
 ---
@@ -70,7 +70,7 @@ protocol/vless/outbound.go
 
 XHTTP **不是** 一种独立出站类型。
 
-对于 VLESS，它在出站的 `transport` 对象下被选中：
+对于 VLESS，通过出站的 `transport` 对象选择 XHTTP：
 
 ```json
 {
@@ -89,7 +89,7 @@ XHTTP **不是** 一种独立出站类型。
 }
 ```
 
-重要的区别是：
+关键区别在于：
 
 ```text
 outbound.type       = vless
@@ -144,7 +144,7 @@ transport.type      = xhttp
 }
 ```
 
-对于订阅/配置转换，这是一个不错的默认哲学：
+对于订阅/配置转换，可以遵循这样一条默认原则：
 
 ```text
 preserve explicitly configured source fields;
@@ -182,15 +182,15 @@ Reality enabled     -> stream-one
 Reality not enabled -> packet-up
 ```
 
-客户端目前并未实现 Xray 那种非对称的 `downloadSettings` 传输选择，
-因此该决策有意地比任何可能的 Xray 拓扑都更简单。
+客户端目前没有实现 Xray 那种非对称的 `downloadSettings` 传输选择，
+因此这里的决策有意比任何可能的 Xray 拓扑都简单。
 
 ### 4.2 `packet-up`（按包上传）
 
 特征：
 
 - 下载是一条长生命周期的 GET 响应；
-- 上传被拆分为顺序的请求；
+- 上传拆分为按顺序的请求；
 - 每个上传数据包都会获得一个序号；
 - 数据包大小与 POST 间延迟可以调优；
 - header/cookie 的上行载荷放置只在这里有效；
@@ -249,7 +249,7 @@ Reality not enabled -> packet-up
 4000-4000
 ```
 
-如果提供了顺序颠倒的范围，解析器会规范化两个端点。
+如果范围的两端顺序颠倒，解析器会把它们规范化。
 
 ---
 
@@ -272,7 +272,7 @@ tls.server_name = TLS SNI / certificate-facing server name
 transport.host  = HTTP Host
 ```
 
-转换节点时，即使两者取值完全相同，显式保留两者也是有效的。
+转换节点时，即使两者取值相同，显式保留两者仍然有效。
 
 示例：
 
@@ -303,9 +303,9 @@ abc
 /abc
 ```
 
-除此之外，配置的尾部斜杠会被保留。
+除此之外，配置中的尾部斜杠会保留下来。
 
-这在反向代理场景下很重要。例如，一个如下的 nginx location：
+这在反向代理场景中很重要。例如下面这个 nginx location：
 
 ```nginx
 location /upload/ {
@@ -319,8 +319,8 @@ location /upload/ {
 /upload -> /upload/
 ```
 
-XHTTP 下载的 `RoundTrip` 并不依赖浏览器式的普通重定向跟随。
-因此端点前面的一个 301/302 可能表现为拨号失败。
+XHTTP 下载的 `RoundTrip` 不依赖浏览器式的自动重定向跟随。
+因此端点前面出现一个 301/302，就可能表现为拨号失败。
 
 如果服务端路径是 `/upload/`，就精确配置 `/upload/`。
 
@@ -444,7 +444,7 @@ Base62
 "session_length": "12-16"
 ```
 
-实现会校验由此产生的 ID 空间。最短长度的字母表空间必须足够大，
+实现会校验生成的 ID 空间。字母表在最短长度下的空间必须足够大，
 以避免不安全的跨客户端会话碰撞风险。
 
 除非兼容性或混淆需求要求，否则两个字段都省略是最简单、
@@ -471,7 +471,7 @@ Base62
 packet-up
 ```
 
-把它们用于流式模式会被拒绝。
+流式模式不接受这两个取值。
 
 默认 key：
 
@@ -492,7 +492,7 @@ header -> 3000-4000
 other  -> sc_max_each_post_bytes
 ```
 
-实现会强制一个最小规范化分块下限：64 个 base64 字符。
+实现会强制一个规范化后的最小分块下限：64 个 base64 字符。
 
 ### 9.3 `uplink_http_method`（上行 HTTP 方法）
 
@@ -524,7 +524,7 @@ POST
 "x_padding_obfs_mode": false
 ```
 
-或者省略该字段时，客户端保持传统的、与 Xray 兼容的 X-Padding 行为。
+或者省略该字段时，客户端保持与 Xray 兼容的传统 X-Padding 行为。
 
 默认的 padding 大小：
 
@@ -576,7 +576,7 @@ stream-up
 Content-Type: application/grpc
 ```
 
-在那些用内容类型来决定流式/不缓冲行为的 CDN/反向代理上，这个头在运维上
+在依靠内容类型决定流式/不缓冲行为的 CDN/反向代理上，这个头在运维上
 可能很重要。
 
 因此：
@@ -589,8 +589,8 @@ Content-Type: application/grpc
 
 不要默认启用它。
 
-在某些反向代理/CDN 路径中，抑制这个头会把一个本来工作的流式 XHTTP 会话变成
-一条持续缓冲或停滞直至超时的连接。
+抑制这个头，会让某些反向代理/CDN 路径上本来正常工作的流式 XHTTP 会话变成
+一条持续缓冲或停滞、直至超时的连接。
 
 ---
 
@@ -603,7 +603,7 @@ Content-Type: application/grpc
 
 ### 12.1 `sc_max_each_post_bytes`（每 POST 字节上限）
 
-约束单个 packet-up 上传 POST 在被拆分之前的载荷大小。
+约束单个 packet-up 上传 POST 在拆分之前的载荷大小。
 
 示例：
 
@@ -621,32 +621,32 @@ Content-Type: application/grpc
 "sc_min_posts_interval_ms": "30-30"
 ```
 
-不要仅仅因为它们被暴露出来就去调优。它们会改变 packet-up 的请求行为，并可能影响
+不要仅仅因为字段被暴露就去调优。它们会改变 packet-up 的请求行为，并可能影响
 延迟、突发性与对端兼容性。
 
 ### 12.3 POST 节奏，以及为什么响应完成没有被流水线化（Post cadence, and why response completion is not pipelined）
 
-一个 packet-up 上行保持 **同一时刻只有一个 POST 在途**：下一个 POST 在上一个 POST 的
-响应被完全排空之后才开始，因此在一个永不排空的队列下，节奏是
+packet-up 上行保持 **同一时刻只有一个 POST 在途**：上一个 POST 的响应完全排空之后，
+下一个 POST 才开始；因此在队列永不排空的情况下，节奏是
 
 ```text
 one POST per max(round trip, sc_min_posts_interval_ms)
 ```
 
-在 `011f3fdcd99` 处，`packetUplink.sendPacket` 会把来自
-`drainPacketUpResponse` 的读取或关闭错误报告出来；一个响应体停滞或失败的 HTTP 200 不会被计为成功的数据
-流，也绝不能清除该连接的失败连续计数。该 POST 有自己受限的上下文。
+在 `011f3fdcd99` 处，`packetUplink.sendPacket` 会报告来自
+`drainPacketUpResponse` 的读取或关闭错误；响应体停滞或失败的 HTTP 200 不会被计为成功的数据
+流，也绝不能清除这条连接的连续失败计数。这个 POST 有自己受限的上下文。
 见 `transport/v2rayxhttp/conn.go`；这个源码契约并不构成实时对端结果。
 
-一旦会话打开，POST 大小就不再受延迟影响：`shouldGatherUpload` 有意地跳过
-前两次写入的聚合（`conn.go:1115-1135`），这两次写入承载了开场交换；从
-第三个 POST 起，在所测的每一个往返时间下，聚合都会把每个 POST 填满到 `sc_max_each_post_bytes`
-（0 到 200 ms 均为 1,000,000 字节）。不要把开场的那一对描述为已聚合。
+会话一旦打开，POST 大小就不再受延迟影响：`shouldGatherUpload` 有意跳过
+前两次写入的聚合（`conn.go:1115-1135`），这两次写入承载开场交换；从
+第三个 POST 起，聚合会把每个 POST 填满到 `sc_max_each_post_bytes`，所测的每一个往返时间下都是如此
+（0 到 200 ms 均为 1,000,000 字节）。不要把开场的那一对说成已经聚合。
 
-参考实现实现了对该设计的那个显而易见的反对方案 —— 它在
-`httptrace.WroteRequest` 上启动下一个 POST，并在一个 goroutine 中排空响应，也就是说它把响应
-完成流水线化了（`Xray v26.9.30`、`transport/internet/splithttp/dialer.go:495-534`）—— 因此两者被
-直接对比（packet-up、HTTP/2、单流、同一参考服务器、每个点三次重复、
+参考实现针对该设计采用了一个显而易见的替代方案：它在
+`httptrace.WroteRequest` 上启动下一个 POST，并在一个 goroutine 中排空响应，也就是把响应
+完成流水线化（`Xray v26.9.30`、`transport/internet/splithttp/dialer.go:495-534`）。因此可以直接
+对比两者（packet-up、HTTP/2、单流、同一参考服务器、每个点三次重复、
 30 次运行、0 次载荷不匹配）：
 
 | 往返时间 | 0 ms | 30 ms | 50 ms | 100 ms | 200 ms |
@@ -658,20 +658,20 @@ one POST per max(round trip, sc_min_posts_interval_ms)
 | 参考 ping-pong p50 | 30.5 ms | 31.8 ms | 51.8 ms | 101.7 ms | 201.8 ms |
 
 两种实现都落在这一特定扫描区间内（约 27 → 4 MB/s）；在 200 ms 处，所列 fork
-结果略低于参考（3.92 对 4.04 MB/s）。这些测量并不证明
-等价，也不证明其他路径或工作负载上不存在响应等待代价。把响应
-完成流水线化会需要有界的在途完成数并改变失败语义；如果重新考虑这一权衡，请用
-新的、有代表性的对比来评估它。
+结果略低于参考（3.92 对 4.04 MB/s）。这些测量不能证明
+两者等价，也不能证明其他路径或工作负载上不存在响应等待代价。把响应
+完成流水线化，需要有界的在途完成数，并会改变失败语义；如果要重新考虑这一权衡，请用
+新的、有代表性的对比来评估。
 
-证据：对不变量（同一时刻至多一个 POST 在途、序号连续递增、
+证据：不变量（同一时刻至多一个 POST 在途、序号连续递增、
 节奏不快于往返时间的一半 —— `TestPacketUpPostCadenceTracksTheRoundTrip`，位于
-`transport/v2rayxhttp/packetup_pipeline_probe_test.go`）为 `VERIFIED_UNIT`；对往返
-扫描为 **历史记录**，那是在单台主机上的手动测试台测量（loopback 加上一个延迟线损伤 shim，
+`transport/v2rayxhttp/packetup_pipeline_probe_test.go`）为 `VERIFIED_UNIT`；往返
+扫描是 **历史记录**，来自单台主机上的手动测试台测量（loopback 加上一个延迟线损伤 shim，
 因此增加的延迟不消耗带宽），无法从 CI 重新运行。超过 200 ms 没有数据。
 
 溯源：探针提交 `58e3222558c` 紧随 `b5bc2a8de42`。两者都是所考察的
-`011f3fdcd99` 测试目标的祖先；这一 Git 关系并不会把那次历史手动测量变成
-一次新的测试运行，也不确立当前性能。调优之前先测量目标与部署。
+`011f3fdcd99` 测试目标的祖先；这层 Git 关系不会把那次历史手动测量变成
+新的测试运行，也不确立当前性能。调优之前，先测量目标与部署。
 
 ---
 
@@ -682,7 +682,7 @@ XMUX 是 **HTTP 连接复用**，不是一种独立的线上协议。
 服务器按会话元数据识别 XHTTP 会话，而不是按具体的池化 HTTP 连接。
 因此池化改变的是客户端侧的连接复用/轮转，而不是逻辑上的 XHTTP 会话格式。
 
-它避免为每一条流都付出一次全新的 TCP+TLS(+Reality) 建立成本。
+它避免为每条流都付出一次全新的 TCP+TLS(+Reality) 建立成本。
 
 ### 13.1 字段（Fields）
 
@@ -730,16 +730,16 @@ XMUX 的范围字段接受本 fork 常规的 XHTTP 范围形式：
 16-16
 ```
 
-option 层在范围类型支持的地方，也接受兼容的双元素数组形式。
+在范围类型支持的地方，option 层也接受兼容的双元素数组形式。
 
 ### 13.3 `max_concurrency` 与 `max_connections`（并发与连接数）
 
-它们代表可互相替代的连接池限界策略，并被记录为互斥。
+它们代表两种可以互相替代的连接池限界策略；文档按互斥处理。
 
 对于普通的手写配置，选择其中一种策略，而不要两者都设置。
 
-解码器/往返测试可能会故意同时包含两者，仅仅是为了证明字段能通过解析；
-那不应被当作推荐做法照抄。
+解码器/往返测试可能故意同时包含两者，只是为了证明字段能通过解析；
+不应把这当成推荐做法照抄。
 
 ### 13.4 重要的全有或全无默认规则（The important all-or-nothing default rule）
 
@@ -759,11 +759,10 @@ h_max_request_times = 600-900
 h_max_reusable_secs = 1800-3000
 ```
 
-但只要 **任何一个 XMUX 字段被显式设置**，该段就被视为显式编写。
+但只要 **任何一个 XMUX 字段被显式设置**，这一段就算显式编写。
 
-其他未指定的范围字段保持为零，这意味着它们正常的“显式段”语义
-（例如无限制/没有相应的退役上限），而不是静默继承完整的
-默认值集合。
+其他未指定的范围字段保持为零，也就是采用它们正常的“显式段”语义
+（例如无限制/没有相应的退役上限），而不是静默继承整套默认值。
 
 因此：
 
@@ -802,40 +801,40 @@ adapter.IdleConnectionKeeper
 adapter.ReuseSuspect
 ```
 
-重要的后果：
+重要后果：
 
 ### 内存裁剪（Memory trim）
 
-`CloseIdleConnections()` 只退役那些不承载活跃流的池化连接。
+`CloseIdleConnections()` 只退役不承载活跃流的池化连接。
 
-有意不允许内存裁剪变成对活跃工作的不必要重连触发。
+代码有意避免让内存裁剪变成对活跃工作的不必要重连触发。
 
 ### 复用边界 / 可疑连接（Reuse boundary / suspect connections）
 
-`RetireSuspect()` 阻止旧的/可疑的池化连接接受新的流。
+`RetireSuspect()` 阻止旧的或可疑的池化连接接受新流。
 
-已经在承载实时流量的连接会被排空，而不是被立即销毁。
+已经在承载实时流量的连接会被排空，而不是立即销毁。
 
 ### 完全关闭 / 网络变更（Full close / network change）
 
 `Close()` 退役整个 XHTTP 池。
 
-既有的使用中拆除会按连接池所有权规则推迟，而不是在不安全的时刻
-盲目杀掉一条共享传输。
+既有的使用中拆除按连接池所有权规则推迟，而不是在不安全的时刻
+盲目终止一条共享传输。
 
 ### 失败熔断（Failure breaker）
 
 复用边界处的重拨仍然受 XMUX 失败熔断约束：三次失败就会武装它
 （`xmuxBreakerThreshold = 3`），退避从 100 ms 增长到 3 s（`xmux.go:56-69`、`:140-156`）。
 `noteBreakerTrip`（`:312`）记录这次跳闸；一次成功的复用会重置退避（`:327`）。这与上面
-连接池的裁剪/退役/关闭生命周期是分开的 —— `RetireSuspect` 之后的一次重拨
-本身并不会重置熔断。
+连接池的裁剪/退役/关闭生命周期相互独立 —— `RetireSuspect` 之后的一次重拨
+本身不会重置熔断。
 
 ### 没有定时器驱动的预热（No timer-driven prewarm）
 
-`SetKeepIdleConnections(true)` 不会主动拨号/预热一条连接。
+`SetKeepIdleConnections(true)` 不会主动拨号/预热连接。
 
-这是有意为之：生命周期策略不应仅仅为了让连接池保持温暖就产生网络拨号。
+这是有意为之：生命周期策略不应仅仅为了让连接池保持温暖就发起网络拨号。
 
 这些行为是 fork 特有的运维上下文，在改动
 `transport/v2rayxhttp` 时应予以保留。
@@ -854,7 +853,7 @@ option 层为了兼容而接受若干字段，尽管客户端并不使用它们�
 | `sc_max_buffered_posts` | 仅服务端；客户端忽略 |
 | `sc_stream_up_server_secs` | 服务端行为；客户端不配置它 |
 
-它们的存在不应被解读为客户端真的实现了对应的
+不能把字段的存在解读为客户端真的实现了对应
 服务端特性的证据。
 
 ---
@@ -869,18 +868,18 @@ XHTTP 是 VLESS 的传输。VLESS 的数据包处理是单独配置的。
 "packet_encoding": "xudp"
 ```
 
-会干净地映射到 VLESS 的 XUDP 路径。
+会清晰映射到 VLESS 的 XUDP 路径。
 
-转换来源订阅时，保留显式的 `xudp` 是有用的，因为它记录了
+转换来源订阅时，最好保留显式的 `xudp`：它记录了
 来源节点预期的数据包行为，即使本 fork 可能有兼容的默认值。
 
-不存在 Mihomo 那样的：
+没有 Mihomo 那样的：
 
 ```json
 "udp": true
 ```
 
-这类在 sing-box 出站中必需的布尔值。
+这类布尔值在 sing-box 出站中并不需要。
 
 同样，不要转换：
 
@@ -890,8 +889,8 @@ network: xhttp
 
 为 sing-box 的 `network`。
 
-如果希望获得常规的 TCP+UDP 可用性，通常把 sing-box 出站的网络选择器
-保持未设置是合适的。
+如果希望获得常规的 TCP+UDP 可用性，通常应让 sing-box 出站的网络选择器
+保持未设置。
 
 ---
 
@@ -1068,8 +1067,7 @@ Reality + auto -> stream-one
 }
 ```
 
-不要静默地添加其他 XMUX 限制，除非来源 profile 或有意的调优决定
-需要它们。
+除非来源 profile 或有意的调优需要，否则不要静默添加其他 XMUX 限制。
 
 ---
 
@@ -1136,7 +1134,7 @@ tls.server_name -> TLS
 
 ### 错误 6 —— 把 `no_grpc_header: true` 当作优化来设置（Mistake 6）
 
-这可能会破坏缓冲式反向代理/CDN 前面的流式行为。
+在缓冲式反向代理/CDN 前面，这会破坏流式行为。
 
 ### 错误 7 —— 设置一个 XMUX 字段，并假定所有被省略的 XMUX 默认值仍然生效（Mistake 7）
 
@@ -1144,14 +1142,14 @@ tls.server_name -> TLS
 
 ### 错误 8 —— 调优每一个被暴露的字段（Mistake 8 — tuning every exposed field）
 
-大多数 XHTTP 字段是为了兼容性与高级传输塑形而存在的。
-一个普通节点不需要指定每一个字段。
+大多数 XHTTP 字段为兼容性与高级传输塑形而存在。
+普通节点不需要指定每一个字段。
 
 ---
 
 ## 20. 配置解码器覆盖（Configuration decoder coverage）
 
-XHTTP 必须仍然可以从真实的 JSON 配置文件到达，而不仅仅是从直接的 Go 构造。
+XHTTP 必须仍然能从真实的 JSON 配置文件到达，而不只是从直接的 Go 构造。
 
 `option/v2ray_transport_xhttp_test.go` 作为这一契约的回归防线而存在。
 
@@ -1163,8 +1161,8 @@ type = xhttp
 
 并通过 JSON 解码/编码把它映射到 `V2RayXHTTPOptions`。
 
-当改动 option 分发、schema 生成、别名或构建标签时，请保留这个回归类别：
-一个能编译、但无法从配置文件被选中的实现，并不是可用的 XHTTP
+改动 option 分发、schema 生成、别名或构建标签时，请保留这个回归类别：
+一个能编译、却无法从配置文件被选中的实现，并不是可用的 XHTTP
 支持。
 
 ---
@@ -1196,7 +1194,7 @@ option/v2ray_transport_xhttp_test.go
 - VLESS/XUDP 集成改变；
 - 生命周期复用/退役语义改变。
 
-不要把过时的 Xray 或 sing-box-lx 文档覆盖到当前源码行为之上。
+不要把过时的 Xray 或 sing-box-lx 文档凌驾于当前源码行为之上。
 
 事实来源的优先顺序：
 
@@ -1211,7 +1209,7 @@ current source and tests
 
 ## 22. 快速参考（Quick reference）
 
-对于一个普通转换后的 XHTTP 节点，通常按这个顺序思考：
+对于一个普通转换后的 XHTTP 节点，通常按以下顺序考虑：
 
 ```text
 1. VLESS server / UUID
@@ -1226,7 +1224,7 @@ current source and tests
 10. leave advanced placement/padding/tuning fields alone unless required
 ```
 
-一个紧凑的常规形式：
+紧凑的常规形式：
 
 ```json
 {
@@ -1250,5 +1248,5 @@ current source and tests
 }
 ```
 
-那就是起点。高级 XHTTP 选项应当在某条对端、代理路径或测得的行为
-需要它们时才添加 —— 而不是仅仅因为字段存在。
+这就是起点。高级 XHTTP 选项应当在某条对端、代理路径或实测行为
+需要时才添加 —— 而不是仅仅因为字段存在。

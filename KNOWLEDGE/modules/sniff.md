@@ -3,24 +3,24 @@
 ## v0.1.9 之后的 FakeIP 与分片 QUIC（FakeIP and fragmented QUIC after v0.1.9）
 
 **VERIFIED_SOURCE**，测试目标 `011f3fdcd99`：`route/route.go` 的 `packetSniffUsesKnownFakeIPDomain`
-会处理那种已经提供了域名的 FakeIP 反向映射。
-在该合格路径上，路由器不再等待分片 QUIC ClientHello 的其余部分；
-这并不足以证明可以抑制对每一个分片数据包的嗅探。
-参见 `route/fragmented_quic_known_domain_test.go` 及该辅助函数的条件。
-源码检查不是针对任意 QUIC 客户端互操作性的证据。
+处理已经给出域名的 FakeIP 反向映射。
+在这条合格路径上，路由器不再等待分片 QUIC ClientHello 的其余部分；
+但这不足以证明可以对每一个分片数据包都跳过嗅探。
+见 `route/fragmented_quic_known_domain_test.go` 与该辅助函数的条件。
+源码检查不能证明与任意 QUIC 客户端互通。
 
-TLS 与 QUIC 的 SNI 也会先经过 `ParseSocksaddrHostPort(...).Fqdn`，然后才发布到
+TLS 与 QUIC 的 SNI 也先经过 `ParseSocksaddrHostPort(...).Fqdn`，之后才写入
 `metadata.Domain`（`common/sniff/tls.go`、`common/sniff/quic.go`）。
-这避免了 IP 字面量 SNI 被表示为域名而用于规则匹配；参见 `common/sniff/sni_domain_normalization_test.go`。
-未加过滤的 `common/sniff` 包测试在本次刷新的本地环境中通过。
+这样 IP 字面量 SNI 不会被当作域名参与规则匹配；见 `common/sniff/sni_domain_normalization_test.go`。
+本次刷新中，未加过滤的 `common/sniff` 包测试在本地通过。
 
 **范围（Scope）：** `common/sniff/*`（13 个非测试文件）及其消费者 `route/route.go actionSniff`。
 
-**来源（Provenance）：** fork 修改了 `sniff.go`、`quic.go`、`http.go`、`tls.go`，并新增了 `wireguard.go`。
+**来源（Provenance）：** fork 修改了 `sniff.go`、`quic.go`、`http.go`、`tls.go`，并新增 `wireguard.go`。
 `dns.go`、`bittorrent.go`、`dtls.go`、`ntp.go`、`rdp.go`、`ssh.go`、`stun.go` 与 `internal/qtls/qtls.go`
-在 `e4b7e692` 与 `a267e99` 上是**逐字节相同**的 —— 无论 fork 的提交列表暗示了什么，
-它们的内容都属于上游。有 25 个 fork 提交触及 `common/sniff`；
-**新增了 22 个测试文件**。
+在 `e4b7e692` 与 `a267e99` 上**逐字节相同**；无论 fork 的提交列表暗示了什么，
+这些内容都属于上游。共有 25 个 fork 提交触及 `common/sniff`，
+**新增 22 个测试文件**。
 
 **在改动以下内容时加载本模块（Load this module when changing）：** 任何嗅探器、
 peek/read 行为、嗅探超时、分片 QUIC，或 sniff→routing 的元数据契约。
@@ -46,10 +46,10 @@ peek/read 行为、嗅探超时、分片 QUIC，或 sniff→routing 的元数据
 | 包 | `DTLSRecord` | — | `dtls.go` |
 | 包 | `NTP` | — | `ntp.go` |
 
-各 plan 按顺序尝试解析器，某个解析器认领了载荷就结束该次尝试；
-因此当识别器重叠时，改变顺序会改变归属。一个已记录的案例是 WireGuard 排在 UTP 之前：
-较弱的 UTP 检查当时会抢走 WireGuard 握手（`sniff.go`，提交 `912778dd6`）。
-这个例子并不证明其他任何一对识别器永远不会重叠。
+各 plan 按顺序尝试解析器；某个解析器认领载荷后，该次尝试就结束。
+因此识别器重叠时，改变顺序会改变归属。已记录的案例是 WireGuard 排在 UTP 之前：
+当时较弱的 UTP 检查会抢走 WireGuard 握手（`sniff.go`，提交 `912778dd6`）。
+这个例子不能证明其他任何一对识别器永远不会重叠。
 
 `sniff.Skip(metadata)` 会短路 SMTP 25/465/587、IMAP 143/993、POP3 110/995（`sniff.go:23-37`）。
 
@@ -74,11 +74,11 @@ peek/read 行为、嗅探超时、分片 QUIC，或 sniff→routing 的元数据
 | S9 | 头部保护在包内**原地写入 4 个字节**，因此无法容纳这些字节的 `Length` 会被拒绝 | `quic.go:125-131`（返回 `os.ErrInvalid`；`:186-189`） | 越界写入数据报尾部 |
 | S10 | `PeekPacket` 的成功路径零分配（两个局部错误槽位，仅在失败时才分配一个切片） | `sniff.go:205-236` | 数据包热路径上每个数据报一次分配 |
 
-S6–S8 是如何证明的（这是异常强的证据，也是拷贝边界可以被信任的原因）：
+S6–S8 的证明方式如下（证据异常强，这也是拷贝边界可以信任的原因）：
 `quic_ownership_test.go:314-350` 断言一个**地址范围**，
-`:206-281` 与 `quic_boundary_test.go:427-456` **毒化调用方的数据报**并表明 `newPacket` 不受影响，
-而 `sniff_bounded_copy_internal_test.go:120-156` 表明保留的 `cap` 不会随
-合并尾部（coalesced tail）而增长。
+`:206-281` 与 `quic_boundary_test.go:427-456` **毒化调用方的数据报**，并表明 `newPacket` 不受影响；
+`sniff_bounded_copy_internal_test.go:120-156` 表明保留的 `cap` 不会随
+合并尾部（coalesced tail）增长。
 
 ---
 
@@ -88,7 +88,7 @@ S6–S8 是如何证明的（这是异常强的证据，也是拷贝边界可以
 
 * 每轮一个 `sniffBuffer`，由**调用方**分配；
 * 只要**任一**嗅探器返回 `ErrNeedMoreData` 就继续循环（`:182-199`）；
-* 受每次读取的截止时间（默认约 300 ms，`action.Timeout` 可覆盖）**以及** 16 KiB 缓冲区上的
+* 同时受每次读取的截止时间（默认约 300 ms，可由 `action.Timeout` 覆盖）**以及** 16 KiB 缓冲区上的
   `io.ErrShortBuffer` 约束；
 * 聚合结果只在**终止**的那一轮构建（`:154-163`、`:191`）。
 
@@ -98,27 +98,27 @@ S6–S8 是如何证明的（这是异常强的证据，也是拷贝边界可以
 2. 是否继续由 `errors.Is(err, ErrNeedMoreData)` 判定（`:1309`、`:1394`）。
 3. **一旦“需要更多”，后续轮次只运行 `sniff.QUICClientHello`**
    （`quicMoreData()` `:1477-1479`；分支 `:1489-1502`、`:1579-1592`）。
-   这就是为什么分片的 QUIC ClientHello 不会在每一个续传数据报上重跑整个 packet plan。
+   因此分片的 QUIC ClientHello 不会在每个续传数据报上重跑整个 packet plan。
 4. 每一轮都在一个自带截止时间的 goroutine 中读取一个新的 16 KiB `buf.NewPacket()`
    （`:1523-1564`）。
 5. **上限：`maxSniffRounds = 64`**（`route/route.go`，`actionSniff`）。
-   它约束的是新读取的续传轮次，而不是之前对 `inputPacketBuffers` 的重放。
-   达到上限时，刚读取的缓冲区会被**释放**，该流被视为不可嗅探。
+   它只约束新读取的续传轮次，不约束之前对 `inputPacketBuffers` 的重放。
+   达到上限时，代码会**释放**刚读取的缓冲区，并视该流为不可嗅探。
 6. 其他退出路径：每轮截止时间（`:1349-1355`）、上下文取消（`:1358-1364`）、
    非超时的读取错误（`:1365-1370`）、任何非“需要更多”的判定（`:1394-1400`）。
 
 `:1529-1546` 处的注释记录了**实测的**修复前增长：1,000 个构造的数据报保留了 1,000 个缓冲区
-（+16.7 MB 常驻），且每轮的 QUIC 缓冲区从 33 KB 增长到 1.06 MB ——
+（+16.7 MB 常驻），每轮 QUIC 缓冲区从 33 KB 增长到 1.06 MB；
 为 1,083,915 字节的输入分配了 541,710,584 字节。
 
-> **该测量无法从工作树复现。** 在 `route/*_test.go` 中 grep
+> **这次测量无法从工作树复现。** 在 `route/*_test.go` 中 grep
 > `maxSniffRounds|sniffRounds|"abandoned after"` 得不到任何结果。上限与
 > 放弃时释放（release-on-abandon）**仅**为 `VERIFIED_SOURCE`；不要把它们当作已测试。
 
 ### “不可嗅探”意味着什么（What "unsniffable" means）
 
-嗅探是**可选的，且可能失败**。解析器的非“需要更多”判定会被记录为 `metadata.SniffError`，
-而不是由其本身中止该流。数据包读取器有独立的致命路径：
+嗅探是**可选的，也可能失败**。解析器给出非“需要更多”的判定时，只会记录为 `metadata.SniffError`，
+不会因此中止该流。数据包读取器有独立的致命路径：
 上下文取消与非超时读取错误会返回 `fatalErr`（来自 `actionSniff`）。
 不要把解析器失败的处理推广到所有 I/O 失败（`route/route.go`、`actionSniff`）。
 
@@ -127,25 +127,25 @@ S6–S8 是如何证明的（这是异常强的证据，也是拷贝边界可以
 ## 4. sniff → routing 契约（The sniff → routing contract）
 
 * 被嗅探出的域名经由 `resolveLookupName` 到达路由（`route/route.go:1725-1762`），
-  其中排除 UoT 哨兵（`:1757-1760`），并通过 `validSniffedDomain` 做严格校验（`:1764-1802`）。
-* `metadata.DestinationAddresses`（`:1720`）被当作**拨号候选**消费
+  途中排除 UoT 哨兵（`:1757-1760`），并由 `validSniffedDomain` 做严格校验（`:1764-1802`）。
+* `metadata.DestinationAddresses`（`:1720`）作为**拨号候选**被消费
   （`route/conn.go:284-285`、`:523-531`、`:562-563`；`common/dialer/default_parallel_network.go:15-35`）。
-* 仅靠嗅探不会重写 `Destination`；一个显式的、已废弃的按动作 `OverrideDestination`
-  是与嗅探相关的例外，并保留端口。
+* 仅靠嗅探不会重写 `Destination`；与嗅探相关的例外是显式且已废弃的按动作
+  `OverrideDestination`，它会保留端口。
 * 另外，`route/route.go` 中的 FakeIP 反向映射会保存 `OriginDestination`，
-  把 `Destination.Fqdn` 设为映射到的名字并标记 `FakeIP`。这一转换不是嗅探覆写。
+  把 `Destination.Fqdn` 设为映射到的名字并标记 `FakeIP`。这次转换不是嗅探覆写。
 * 被嗅探出的域名**会使 Direct Offload 快速路径失效**：
   `BypassRefusedSniffedDomain`（`route/route.go:832-833`、`route/bypass_verdict.go:23`、`:49`）。
-* `metadata.Domain` 并不是已知域名的唯一表示：当前的 FakeIP 路径可以在将其留空的同时
-  设置 `FakeIP` 与 `Destination.Fqdn`。关于确切接受的情形，参见
+* `metadata.Domain` 并不是已知域名的唯一表示：当前 FakeIP 路径可以在留空它的同时，
+  设置 `FakeIP` 与 `Destination.Fqdn`。哪些情形会被接受，见
   `packetSniffUsesKnownFakeIPDomain`。
 
 ---
 
 ## 5. 性能、行为与加固的区分（Perf vs behaviour vs hardening — the classification）
 
-这一区分是承重的：把性能改动描述成协议语义改动（或反之），
-正是本节存在的目的所要防止的失败模式。
+这一区分是承重的：把性能改动说成协议语义改动（或反之），
+正是本节要防止的失败模式。
 **在 sniff 的历史中没有发现这种错误标注。**
 
 | 类别 | 改动 |
@@ -156,18 +156,18 @@ S6–S8 是如何证明的（这是异常强的证据，也是拷贝边界可以
 | **REFACTOR** | `defaultPacketSniffers` 间接层（`route/route.go:41`） |
 | **TEST** | 新增 22 个测试文件；wireguard.go 的文档块仅为注释 |
 
-两点诚实的告诫：
+两点需要如实说明的提醒：
 
 1. **`bfe721454` 在一个提交中融合了 PERF 与 HARDENING。** 它把 QUIC 工作副本收窄到当前数据包，
    *并且*需要 `Length` 下界守卫，因为否则那 4 字节的头部保护写入会 panic。
-   对它而言两个标签都成立。（无论哪种方式结论不变：
+   两个标签对它都成立。（无论哪种方式，结论不变：
    小于 4 字节的数据包在 GCM 下永远无法通过认证。）
-2. **`9167595c7` 的 `perf` 标签建立在一个等价性之上，而该等价性是一个正确性断言** ——
+2. **`9167595c7` 的 `perf` 标签依赖一个等价性，而这个等价性本身是正确性断言** ——
    `frameSummary` 必须保留帧序列所表达的内容。
 
-另外：**fork 修复了一处拷贝，而某次适配器评审曾测得它在语义上是免费的。**
-回退整数据报拷贝后整个包仍然全绿（`sniff_bounded_copy_internal_test.go:22-28`），
-这正是内存放大修复需要一种不同于行为等价性的测试的原因。
+另外：**fork 修复了一处拷贝，而某次适配器评审曾测得这次拷贝在语义上是免费的。**
+回退整数据报拷贝后，整个包仍然全绿（`sniff_bounded_copy_internal_test.go:22-28`）；
+正因如此，内存放大修复需要一种不同于行为等价性的测试。
 
 ---
 
@@ -177,19 +177,19 @@ S6–S8 是如何证明的（这是异常强的证据，也是拷贝边界可以
   部分头部上作决定（`tls.go:29-30`、`:51-62`、`:83-87`）。
   `errClientHelloSniffed` 是一个不得逃出 `TLSClientHello` 的哨兵（`tls.go:97-101`），
   因此非 TLS 载荷不会导致重复读取。已针对真实的 `crypto/tls` 输出做穷举检查（`sniff_gate_internal_test.go:56-80`）。
-* **HTTP** —— 该门禁只重述 `net/http` 自身的请求行规则，其途径是
-  `common/badhttp` 的 `//go:linkname net/http.readRequest`（`badhttp.go:13-14`）。其契约是
-  单向且可测试的：**`GateRejects ⇒ ParserRejects`**，并且门禁绝不能在
+* **HTTP** —— 门禁只重述 `net/http` 自身的请求行规则，借助
+  `common/badhttp` 的 `//go:linkname net/http.readRequest`（`badhttp.go:13-14`）。契约是
+  单向且可测试的：**`GateRejects ⇒ ParserRejects`**；门禁绝不能在
   解析器只会要求更多数据时拒绝 —— 已在 500 多个前缀上验证（`http.go:118-133`、`:152-155`）。
-  `httpReplayReader`（`:62-83`）会重放门禁已消费的内容。
-  门禁的健全性并不意味着在每一个读取边界上都能识别：测试记录了
-  请求行被切断的情形，此时底层解析器报告版本格式错误，
-  而嗅探尝试在下一次读取之前就停止。某些头部切断也会失败。参见
+  `httpReplayReader`（`:62-83`）重放门禁已经消费的内容。
+  门禁健全，并不意味着在每一个读取边界上都能识别：测试记录了
+  请求行被切断的情形 —— 此时底层解析器报告版本格式错误，
+  而嗅探尝试在下一次读取之前已经停止。某些头部切断也会失败。见
   `TestPeekStreamReadBoundaryInsideTheRequestLine` 与
   `TestStreamSniffingAcrossReadsMatchesPreOptimizationBaseline`。
 * **SSH** —— `ssh.go` 忽略了 `bufio.ReadLine` 的 `isPrefix`；
   因此未完成的 banner 可能被归类为 SSH，并带有被截断的客户端字符串。
-  分片基线测试记录了这一限制；不要把记录下来的 `Client` 当作必然完整。
+  分片基线测试记录了这条限制；不要假定记录下来的 `Client` 必然完整。
 * **QUIC** —— 密码学层面：ClientHello 必须**通过认证**（`quic.go:159-229`）。
   **已知且未修复的误报：** `frames.count == 1 ⇒ ClientFirefox`（`quic.go:373-375`），
   因此三片段（three-fragment）的 Chrome ClientHello 会被报告为 Firefox。
@@ -197,7 +197,7 @@ S6–S8 是如何证明的（这是异常强的证据，也是拷贝边界可以
   **不要把它报告为 fork 回归，也不要在没有互操作方案的情况下“修复”它。**
 * **QUIC v1 0-RTT** 通过类型检查但无法通过认证 —— 这是一个**先前已存在的**漏报。
 * **WireGuard** —— 仅结构性检查：保留字节 `[1:4] == 0` 加上精确长度（`wireguard.go:76-113`）。
-  `1/2^16` 的 uTP 残留误判**已被记录，且有意不收窄**（`wireguard.go:44-72`、
+  `1/2^16` 的 uTP 残留误判**已有记录，且有意不收窄**（`wireguard.go:44-72`、
   `TestSniffWireGuardUTPAmbiguityIsStructural`）。不支持 AmneziaWG。
 
 ---
@@ -229,7 +229,7 @@ S6–S8 是如何证明的（这是异常强的证据，也是拷贝边界可以
 | 提交 | 类型 | 它做了什么 |
 |---|---|---|
 | `e053cc733` | PERF + REFACTOR | 显式 plan 列表（`sniff.go:45-77`）；`payloadReader`（`:92-123`）；TLS 头部门禁 + `errClientHelloSniffed`；`defaultPacketSniffers` 间接层；`route/route.go:1239-1241` |
-| `300b167b4` | PERF | 由上一轮的失败驱动的重试（`sniff.go:132-199`）。一处已记录的分歧：一个模仿报文、不触发回绕的错误会使它读取**更多**（`:176-181`），并有专门的测试。 |
+| `300b167b4` | PERF | 重试由上一轮的失败驱动（`sniff.go:132-199`）。有一处已记录的分歧：一个模仿报文、不触发回绕的错误会让它读取**更多**（`:176-181`），并有专门的测试。 |
 | `912778dd6` | FIX | 新增 WireGuard 嗅探器；把 WireGuard 重排到 UTP 之前（`sniff.go:59-67`、`route/rule/rule_action.go:537-540`、`:547`） |
 | `91577eaa2` | PERF | HTTP 门禁 + 重放读取器（`http.go:28-241`） |
 | `4dff25c90` | PERF | `takePacketBytes` 返回视图（`quic.go:36-54`） |
@@ -241,8 +241,8 @@ S6–S8 是如何证明的（这是异常强的证据，也是拷贝边界可以
 | `b93c30f2a` | UPSTREAM-ABSORBED | “Fix protocol input validation” —— `quic.go:302-304` 的 CRYPTO 长度守卫与 `:351` 在 `e4b7e692` 已存在 |
 | `dd4f62edc` | UPSTREAM-ABSORBED | “Rewrite HTTP proxy protocol” —— `http.go:14`、`:95` 在 `e4b7e692` 已存在 |
 
-三行 `UPSTREAM-ABSORBED` 是依据**基线处的 blob 相等性**确立的，而不是依据可达性：
-fork 重新应用了其自身基线已经包含的上游补丁。
+三行 `UPSTREAM-ABSORBED` 依据**基线处的 blob 相等性**确立，而不是依据可达性：
+fork 重新应用了自己基线已经包含的上游补丁。
 
 ---
 
@@ -257,7 +257,7 @@ fork 重新应用了其自身基线已经包含的上游补丁。
    逐字节不变。
 4. **绝不要让 `payloadReader` 逃出 `PeekStream`。** 它借用的是池化的 segments（`sniff.go:79-91`）。
 5. **绝不要拒绝一个解析器只会要求更多数据的前缀**（`http.go:118-133`、`tls.go:51-54`）。
-   那会把 `ErrNeedMoreData` 变成一种判定，并丢失每一个分片的流。
+   那会把 `ErrNeedMoreData` 变成一种判定，并丢掉每一个分片流。
 6. **绝不要让 `errClientHelloSniffed` 逃出 `TLSClientHello`**（`tls.go:97-101`）。
 7. **绝不要跨轮次重新累积 `roundErrors`，也不要每一轮重建聚合结果**
    （`sniff.go:154-163`、`:191`）。
@@ -266,7 +266,7 @@ fork 重新应用了其自身基线已经包含的上游补丁。
 9. **绝不要在没有重新测量的情况下提高 `maxSniffRounds`。** 64 是一个 DoS 上限，
    附有已记录的修复前测量。
 10. **绝不要收紧 UTP 检查，也不要开始检查 WireGuard 的第 4–147 字节**
-    （`wireguard.go:54-71`）。该歧义已被记录，且是结构性的。
+    （`wireguard.go:54-71`）。该歧义已有记录，且是结构性的。
 11. **绝不要用嗅探出的域名重写 `Destination`**，唯一的例外是已废弃的 `OverrideDestination`
     （`route/route.go:1421-1425`），也绝不要在没有 `validSniffedDomain` 的情况下
     解析被嗅探出的名字（`:1764-1802`）。

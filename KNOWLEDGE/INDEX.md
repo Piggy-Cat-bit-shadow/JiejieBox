@@ -1,10 +1,10 @@
 # 知识索引 —— 先路由，再窄读（Knowledge index — route first, read narrowly）
 
-**本文件只回答一个问题：“我需要了解 X —— 该去哪里读？”** 它是一张路由器，而不是第二个知识库。
-条目只是指针；事实真相存在于模块之中。
+**本文件只回答一个问题：“我需要了解 X —— 该去哪里读？”** 它只是一张路由表，不是第二个知识库。
+条目只是指针，事实在模块里。
 
-> **绝不要批量通读 `KNOWLEDGE/`。** 先在这里路由，然后只打开任务所需的那一两个章节。
-> 章节名称只是导航辅助；历史行号与论断仍需要在目标版本处验证。当前评审范围见校准台账
+> **绝不要批量通读 `KNOWLEDGE/`。** 先在这里路由，再只打开任务需要的那一两个章节。
+> 章节名只是导航辅助；历史行号和论断仍需在目标版本上重新验证。当前评审范围见校准台账
 > （calibration ledger）。
 
 ## 入口文件，按加载级别（Entry points, by load level）
@@ -14,12 +14,12 @@
 | `../AGENTS.md` | **ALWAYS** | 这里最常出错的三件事 |
 | `README.md` | **ALWAYS** | 基线指针、状态标签、证据规则 |
 | `INDEX.md`（本文件） | **ALWAYS** | 路由 |
-| `BASELINE.md` | **ALWAYS**，在信任任何模块之前 | 模块所描述的 SHA，以及此后产生的增量 |
+| `BASELINE.md` | **ALWAYS**，在信任任何模块之前 | 模块描述的 SHA，以及此后的增量 |
 | `modules/README.md` | TASK_MATCH | 任务 → 模块映射、fork 术语表、覆盖缺口 |
-| `PROJECT.md` | TASK_MATCH | fork 是什么，以及它刻意没有改动什么 |
+| `PROJECT.md` | TASK_MATCH | fork 是什么，刻意没有改动什么 |
 | `ARCHITECTURE.md` | TASK_MATCH | 值得保留的十一个边界 |
-| `PERFORMANCE-FACTORS.md` | TASK_MATCH（速度） | 实测的速度关键参数与因素：三条第一原理、客户端/服务端参数表、症状路由、测量规则、已否决结论（无地址/凭据） |
-| `INVARIANTS.md` | **LOAD_BEARING_ONLY** | A1–A21 硬性不变量与约定之别 |
+| `PERFORMANCE-FACTORS.md` | TASK_MATCH（速度） | 实测出来的速度关键参数与因素：三条第一原理、客户端/服务端参数表、症状路由、测量规则、已否决结论（无地址/凭据） |
+| `INVARIANTS.md` | **LOAD_BEARING_ONLY** | A1–A21 硬性不变量，以及它与约定的区别 |
 | `ACCEPTANCE.md` | **VERIFICATION_ONLY** | 需求 → 证据 → 复检命令 |
 | `COMMIT-INDEX.md` | **PROVENANCE_ONLY** | 某一行为背后的 SHA，按主题分组 |
 | `REFRESH.md` | **REFRESH_ONLY** | 刷新协议；不是一种任务模式 |
@@ -27,14 +27,14 @@
 | `CALIBRATION-2026-10-31-REVIEW.md` | **REFRESH_ONLY** | 同日全面清单、更正与未决发现 |
 | `CALIBRATION-2026-10-29.md` | **REFRESH_ONLY** | 前一次校准及其证据 |
 | `CALIBRATION-2026-10-28.md` | **REFRESH_ONLY** | 已完成的校准范围、证据与剩余验证限制 |
-| `docs/archive/**` | **HISTORY_ONLY** | 我们如何走到这里；绝不是当前事实 |
-| `sing-box_v0.1.5-v0.1.10_网络链路与Action-Release优化总结.md` | **HISTORY_ONLY** | v0.1.5→v0.1.10 的工程叙事（链路路径 + Action/Release）；一份时点总结，而不是模块 |
+| `docs/archive/**` | **HISTORY_ONLY** | 我们怎么走到这里；绝不是当前事实 |
+| `sing-box_v0.1.5-v0.1.10_网络链路与Action-Release优化总结.md` | **HISTORY_ONLY** | v0.1.5→v0.1.10 的工程叙事（链路路径 + Action/Release）；一份时点总结，不是模块 |
 
 ## 按任务路由（Route by task）
 
 | 如果你正在修改/询问…… | 模块 | 精确章节 |
 |---|---|---|
-| 子仓库改造 / client gitlinks / 子仓库分支头 / 嵌套 dashboard / forked Go 模块 | `modules/child-repositories.md` | 固定的源码、子仓库变更与刷新规则 |
+| 子仓库改造 / client gitlinks / 子仓库分支头 / 嵌套 dashboard / forked Go 模块 | `modules/child-repositories.md` | 固定源码、子仓库变更与刷新规则 |
 | 端点本地流程、`JudgeHostFlow`、`HostPort` | `modules/masque-connectip.md` | 贯穿 TUN 栈的端点本地流程 |
 | 发布冻结、源码锁定、Apple 单运行器 | `modules/ci-release.md` | 发布冻结与 Apple 验收 |
 | 速度慢 / 吞吐上不去 / 判断瓶颈在哪一层 | `PERFORMANCE-FACTORS.md` | §1 三条第一原理 → §4 症状路由 → §5 测量方法 |
@@ -73,10 +73,10 @@
 | DNS 路由器、代次、缓存提交 | `modules/dns-demand.md` | §2 缓存提交不变量 |
 | FakeIP | `modules/dns-demand.md` | §3 |
 | 消费方需求 | `modules/dns-demand.md` | §4 |
-| QNAME 级 NXDOMAIN 否定缓存：什么情况下可以放宽到名字层级、命中/TTL 语义、容量、`disable_expire` | `modules/dns-demand.md` | “The QNAME-wide NXDOMAIN negative cache”一节 |
+| QNAME 级 NXDOMAIN 否定缓存：什么时候可以放宽到名字层级、命中与 TTL 语义、容量、`disable_expire` | `modules/dns-demand.md` | “The QNAME-wide NXDOMAIN negative cache”一节 |
 | DNS 泄漏 | `modules/dns-demand.md` | §5 DNS 泄漏与 DNS 的作用范围 |
 | `adblock` DNS 动作 —— 用本地 NXDOMAIN 拦截广告域名 | `modules/dns-adblock-action.md` | §2 语法、§3 行为、§8 放置位置 |
-| `systemd-resolved` goroutine 泄漏 | `modules/dns-demand.md` | §6 —— 已修复；说有问题的文档已过时 |
+| `systemd-resolved` goroutine 泄漏 | `modules/dns-demand.md` | §6 —— 已修复；称此处有问题的文档已过时 |
 | 任何嗅探器、peek/read 所有权 | `modules/sniff.md` | §2 所有权 |
 | 嗅探循环、分片 QUIC | `modules/sniff.md` | §3 两个循环 → Packet |
 | 嗅探 → 路由元数据契约 | `modules/sniff.md` | §4 |
@@ -184,7 +184,7 @@
 
 | 问题 | 位置 |
 |---|---|
-| 这条规则是承重的，还是仅仅是约定？ | `INVARIANTS.md` §A 硬性不变量 vs §B 约定 vs §C 策略 vs §D 实现细节 |
+| 这条规则是承重的，还是只是约定？ | `INVARIANTS.md` §A 硬性不变量 vs §B 约定 vs §C 策略 vs §D 实现细节 |
 | 哪条不变量负责 `Scope` 拆卸？ | `INVARIANTS.md` A1 |
 | 哪条负责租约 / “一次只做一次恢复”？ | `INVARIANTS.md` A2 |
 | 哪条负责缓冲区所有权？ | `INVARIANTS.md` A6, A7 |
@@ -199,8 +199,8 @@
 
 ## 历史主题 → 当前事实（Historical topics → current truth）
 
-归档报告是**线索，而不是当前事实**（`REFRESH.md` §2）。对于一个已有归档报告的主题，
-先读模块，只在了解决策是如何形成时才去读归档。
+归档报告是**线索，不是当前事实**（`REFRESH.md` §2）。某个主题已经有归档报告时，
+先读模块；只有想理解当初怎么做出的决定，才再查阅归档。
 
 | 历史主题 | 当前事实所在位置 |
 |---|---|
@@ -224,14 +224,14 @@
 ## 维护（Maintenance）
 
 `modules/README.md` 是**模块登记表与所有权地图**（粗粒度：任务 → 模块）。
-本文件是**细粒度路由器**（章节锚点、别名、反向路径/符号索引）。
+本文件是**细粒度路由表**（章节锚点、别名、反向的路径与符号索引）。
 不要把两者合并。
 
-当你在某个模块中新增或重命名章节时，请在同一次变更中同步更新这里的锚点 —— 断掉的
-锚点是一个缺陷，而不是缺失的文档（`modules/README.md` §Task → module 对无法解析的
-链接也这么说）。一张指向已不存在章节的索引，比没有索引更糟：
-因为它读起来像是权威的。
+在某个模块里新增或重命名章节时，请在同一次变更里同步更新这里的锚点 —— 断掉的
+锚点是缺陷，不是缺文档（`modules/README.md` §Task → module 对无法解析的
+链接也是这么说的）。索引指向已不存在的章节，比没有索引更糟：
+它读起来像是权威的。
 
-保持本文件诚实的刷新期义务是 `REFRESH.md` §13（模块结构）、
+刷新时要保住本文件的诚实，义务来自 `REFRESH.md` §13（模块结构）、
 §31（跨文件一致性检查）与 §33（更新 `BASELINE.md`）。那份文档的编号止于 42；
-其中没有关于本文件的章节，所以不要引用任何编号。
+里面没有关于本文件的章节，所以不要引用任何编号。
