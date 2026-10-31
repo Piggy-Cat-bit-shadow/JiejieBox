@@ -76,7 +76,7 @@
 | **VERIFIED** | 直接的源码、历史、测试、CI 声明或产物证据——并且始终指明具体级别 |
 | **INFERRED** | 有推理依据的解读，但没有直接锚点 |
 | **UNVERIFIED** | 项目没有充分证据 |
-| **UNKNOWN** | 在这里根本无法确定 |
+| **UNKNOWN** | 现有信息不足以判断 |
 
 证据级别始终带限定：`VERIFIED_SOURCE`、`VERIFIED_GIT`、`VERIFIED_UNIT`、
 `VERIFIED_INTEGRATION`、`VERIFIED_INTEROP`、`VERIFIED_CI`、`VERIFIED_ARTIFACT`、`VERIFIED_DEVICE`、

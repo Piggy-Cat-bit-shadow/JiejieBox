@@ -41,7 +41,7 @@
 - **协议与传输**：`transport/masque` 实现 MASQUE/CONNECT-IP 数据面并区分内层解析器和引导解析器；Native Naive 入站支持 UoT、填充、伪装和预认证限制；`transport/http` 提供 HTTP/2 和 HTTP/3 传输。
 - **客户端与发布**：构建管线覆盖 Apple 客户端源码解析及品牌身份、Android AAR/ABI 和 Windows 核心产物。独立的严格发布验收检查器会复核证据与字节，但发布路径不调用它；实际发布门禁及限制见 `ci-release.md`。
 
-## fork 创建的包 —— fork 点之下并不存在的代码（Fork-created packages — the code that did not exist below the fork point）
+## fork 新增的包（Fork-created packages）
 
 用 `git ls-tree` 比对 `e4b7e692` 与 `a267e99` 确认，这些确实是全新的：
 
@@ -60,7 +60,7 @@
 | `transport/v2rayxhttp` | 7,181 | `xhttp-client-transport.md` |
 | `protocol/vless/encryption` | 历史计数 1,771 | `xhttp-client-transport.md` —— 客户端加密边界 |
 
-## 重度修改的包（Heavily modified packages (present below the fork point, substantially rewritten)）
+## 大幅修改的包（Heavily modified packages）
 
 | 路径 | 区间内新增文件数 | 模块 |
 |---|---|---|
@@ -98,7 +98,7 @@ go test -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" -run TestTrackedSchemaM
 
 | 领域 | 覆盖与限制 |
 |---|---|
-| `protocol/vless/encryption` | 客户端边界见 `xhttp-client-transport.md`；线级互操作需要独立证据。部分 ABI 检查受 `//go:build !race` 限制。 |
+| `protocol/vless/encryption` | 客户端边界见 `xhttp-client-transport.md`；实际协议互通需要独立证据。部分 ABI 检查受 `//go:build !race` 限制。 |
 | 各协议线格式 | shadowsocks、trojan、tuic、hysteria2 等主要沿用上游；fork 的特定补丁记在对应模块，不逐个复述完整协议。 |
 | Apple、Android、Desktop 客户端 | 客户端是独立 Git 子模块，父仓库 gitlink 与本地检出状态需要分别检查。客户端范围和 Windows 符号链接限制见 `libbox-platform-contract.md`，子仓库变更见 `child-repositories.md`。 |
 | Clash API / V2Ray API 内部实现 | 主要沿用上游；fork 的共存说明见 `build-pruning-release.md`。 |
