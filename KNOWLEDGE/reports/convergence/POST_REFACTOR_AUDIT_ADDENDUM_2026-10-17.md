@@ -18,7 +18,7 @@
 | #6 unregister 与回调体并发 | **由现有结构保证，未新增测试** | 回调体与 release 共用 `routeAddressSetAccess`，两者互斥。进一步验证并发读写需要 race detector，本轮受环境限制未执行（`BLOCKED_BY_ENVIRONMENT`） |
 | #15 reload 发生在未提交 transition 中 | **不是缺陷** | reload 关闭旧 Box 并新建：新 manager 的 epoch 从 0 起，`EstablishInitialNetworkEnvironment` 首次发布指纹时会**claim 一次 transition**，因此启动期本身是 unsettled 的；旧代未提交的状态随旧 manager 一起消失。`TestTheDevicePauseSurvivesAServiceReload` 已覆盖 reload-while-paused 的一半 |
 | #4 recovery 跨 generation | **已决策并解释** | 代码里没有拒绝路径是设计：`admittedRecoveredCandidates` 在 ownership 过期时 fail-open（过期判决不能拒绝可拨地址），跨代连接由 hand-over 拒绝。安全边界由 #2 的真实 socket 测试覆盖；没有增加锁定具体实现方式的测试，因为将 capture 传入 recovery 也是合法的实现方案 |
-| 测试侧影子模型（hit report / benchmarks） | **已修** | `productionDirectOutbound` 现在走 `direct.NewOutbound` 真实构造；三个结构体字面量调用点全部改走构造器（改完后字面量本身会 nil panic，正是它们被找出来的方式）。命中率数字未变（3/6 形状、85% 权重）——因为该拓扑无 ambient 策略且 fixture 机器无判决，这恰恰说明影子模型"在它出错之前都是对的" |
+| 测试侧影子模型（hit report / benchmarks） | **已修** | `productionDirectOutbound` 现在通过 `direct.NewOutbound` 构造；三个直接使用结构体字面量的调用点也已改用构造器。更改后，旧字面量会触发 nil panic，因此得以定位这些调用点。命中率仍为 3/6 个场景、85% 权重：该测试拓扑没有 ambient 策略，fixture 机器也没有相关判决，说明此前结果相同并不能证明影子模型正确 |
 
 **结论：本轮在该环境中可处理的问题已完成。** 剩余事项包括已经落实到代码或测试中的设计取舍（见原报告 F1/F3），以及受环境限制而未完成的验证（见第四节）。
 

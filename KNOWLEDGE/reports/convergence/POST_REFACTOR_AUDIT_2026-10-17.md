@@ -79,8 +79,8 @@ udpListener, isUDPListener := common.Cast[dialer.UDPListener](e.options.Dialer)
 | 三个 packet/stream 入口从未并排驱动 | `TestAStrictFamilyPolicyIsAppliedOnEveryPath` | 严格策略在 **stream TCP / connected UDP / 带候选 / 不带候选** 四条路径上给同一个答案，且每条都带"允许族仍可通过"的控制腿 |
 | 同上，地址族能力行 | `TestALocalFamilyFastFailIsAppliedOnEveryPath` | 报告过的 Windows 停机矩阵化：全局 IPv6 拒绝 + LAN/链路本地/公网 IPv4 豁免 |
 | **connected UDP 从未被 matrix 驱动** | 上面两个测试的 `stream connected UDP` 列 | 发现并写明了地址族判定在三条路径上由**三个不同层**执行（scheduler / leaf packet gate / leaf literal gate） |
-| **无候选列表 + domain** 这条臂无人驱动 | `TestADomainDestinationOnTheLiteralArmResolvesAndBinds` + 字面量不查 DNS 的控制 | `route/conn.go:601` 用 `len(DestinationAddresses) > 0` 选臂，domain 正是空列表的那一形状 |
-| DURING → commit 只有断言层测试 | `TestADialThatBeginsDuringATransitionIsRefusedAfterItCommits` | 用真实 Control hook 卡住 socket，transition 在窗口内提交且 **epoch 不动**；mutation 已验证它专抓"忽略开始状态"这一形状 |
+| **无候选列表 + domain** 这条臂无人驱动 | `TestADomainDestinationOnTheLiteralArmResolvesAndBinds` + 字面量不查 DNS 的控制 | `route/conn.go:601` 用 `len(DestinationAddresses) > 0` 选臂，domain 恰好属于候选列表为空的情况 |
+| DURING → commit 只有断言层测试 | `TestADialThatBeginsDuringATransitionIsRefusedAfterItCommits` | 用真实 Control hook 卡住 socket，transition 在窗口内提交且 **epoch 不动**；变异测试验证它能检出忽略开始状态的问题 |
 | 三个生产对象没有编译期 pin | `DefaultDialer` / `direct.Outbound` / `failoverDialer` 的 `var _` | 之前只有 `resolveParallelNetworkDialer` 有 pin，double 比生产对象管得更严 |
 | ambient 策略只在 dialer 单测里验证 | `production_services_test.go`（真实 constructor + 注册 NetworkManager） | 测试 context 与生产 context 注入服务不同，是"生产专用缺陷"的经典盲区 |
 
@@ -128,7 +128,7 @@ udpListener, isUDPListener := common.Cast[dialer.UDPListener](e.options.Dialer)
 
 1. **family-health 命名空间 = generation**（review R2）。每次 reset 开新桶，包括不换网的 reset 与内存释放。代价：一次 fallback delay 的 soft bias 被遗忘；收益：最后一次跨代读取消失。方向安全（只影响快慢，不影响连接与否），桶上限 256 会整体清空。已写在 `familyHealth` 的 Scope 段。
 2. **`ListenPacket` 的 literal 策略检查影响面比提交信息宽**（review R4）。它作用于任何 `resolveDialer.ListenPacket` 的 literal 目的地，包括 IPv6 STUN 服务器：`dns.strategy: ipv4_only` 下这类探针会快速失败而不是建 socket。这是与 stream 路径**一致的**拒绝，且比 connect 超时更快给出原因——是想要的行为，不是副作用。
-3. **power-report 拒绝的判定顺序**（review R5）。它插在 tracker 拒绝之后、process-metadata 之前，所以 recorder 开着时那些形状的 verdict 会报 `BypassRefusedPowerReport`。只影响归因文字，决定不变。
+3. **power-report 拒绝的判定顺序**（review R5）。它插在 tracker 拒绝之后、process-metadata 之前，所以 启用 recorder 时，这些场景的 verdict 会报告 `BypassRefusedPowerReport`。只影响归因文字，决定不变。
 4. **`route/router.go:103` 现在有接线测试**；但 `dns` 的 snapshot 兜底在当前生产 manager 上仍是死路径（生产 manager 实现了 `NetworkTransitionState`）——它保护的是一种 manager 的接口组合，并非当前生产路径。
 
 ### F2. 必须继续修（下一轮）
@@ -137,7 +137,7 @@ udpListener, isUDPListener := common.Cast[dialer.UDPListener](e.options.Dialer)
 
 ### F3. 明确不修（合理 trade-off）
 
-1. **`DialSerialNetwork` / `ListenSerialNetworkPacket` 对 `ParallelNetworkDialer` 的裸断言 + 串行 fallback**。它的"合法但没有该能力"的调用者只有 detour 链——而 detour 的目的地是对端的业务，逐连接网络选项本来就不该应用在对端地址上；串行 fallback 对那个形状是正确答案。真正的保护在 direct 出站（构造期强制 surface）与 failover shim（已转发 + 已 pin）。这是 inventory 里唯一还靠运行期发现的**正确性相关**能力，理由已记录在此。
+1. **`DialSerialNetwork` / `ListenSerialNetworkPacket` 对 `ParallelNetworkDialer` 的裸断言 + 串行 fallback**。它的"合法但没有该能力"的调用者只有 detour 链——而 detour 的目的地是对端的业务，逐连接网络选项本来就不该应用在对端地址上；在该场景下串行 fallback 是正确的。真正的保护在 direct 出站（构造期强制 surface）与 failover shim（已转发 + 已 pin）。这是 inventory 里唯一还靠运行期发现的**正确性相关**能力，理由已记录在此。
 2. **`failoverDialer` 仍隐藏 8 个能力**。全部当前不可达（路由层对 packet 传 leaf；没有别处从 dialer 参数读它们）。已改成"显式不报告链 + pin 转发集"，并在文件末尾写下给下一位读者的规则：需要新能力时**在这里手写转发并加 pin**，不要重新引入链报告。
 3. **`dialerLocalFamilyPolicy` 在一次 dial 内可能被调用两次**（literal recovery 路径）。安全：hand-over 会拒绝跨代连接，重复 capture 只影响"用哪一代判决过滤候选"。穿 6 个签名重构的收益不抵风险。
 
@@ -153,6 +153,6 @@ udpListener, isUDPListener := common.Cast[dialer.UDPListener](e.options.Dialer)
 | 第一阶段提交 | `200f3b21` `f40ed4c6` `b476e2f7` `ecf8025f` `8889cede` `3ff16b80` `5999fe18` `68c7cf92` `c4f363fb` `831749d3` `a61eb701` |
 | 工作区 | 干净 |
 | 与远端 | 领先 `origin/testing` 17 个提交，**未推送** |
-| 兼容层 | 无并行新旧路径。`NetworkTransitionSnapshot` / `NetworkResetCounter` 仍作为**更弱 manager 的降级来源**存在（非生产形状），`captureEpoch` 是同一 capture 的投影，不是第二套实现 |
+| 兼容层 | 无并行新旧路径。`NetworkTransitionSnapshot` / `NetworkResetCounter` 仍作为**更弱 manager 的降级来源**存在（当前生产环境未使用），`captureEpoch` 是同一 capture 的投影，不是第二套实现 |
 
 **本轮最重要的一条经验**（值得写进 `KNOWLEDGE/`）：一个"任何对象都可以回答"的能力协议，必须窄到"回答它不可能改变实现者从未听说过的代码"。`Upstream()` 属于 `common.Cast` 的仓库级协议，`DialChain()` 属于 `common/dialer` 的包内协议；前者用来表达后者需求，代价是一个 WireGuard bind 静默改变。这与第一阶段那条（"能力不能依赖运行期重新发现"）是同一枚硬币的两面。

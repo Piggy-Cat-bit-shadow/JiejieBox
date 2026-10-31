@@ -84,7 +84,7 @@ Outbound.DialContext            -- 旧代码 return client.DialEarly(...)
 | **QUIC protocol/handshake 失败** | **无 fact（刻意）** | QUIC 失败只表明 UDP 路径存在问题，**不能证明节点不可用**；标记为 Path 会使 H2 仍正常的节点被全局降权。这也是需要回退机制的原因 |
 | timeout / reset / EOF / cancel / closed | 无 fact | group 本来就判中性；超时不是"路径永久消失"的证明 |
 
-消费者对齐（无需改 group）：`RetryThisFlow` 对 `Proxy/Handshake` 与 `Path/Handshake` 都是 RETRY；`PenalizeMemberGlobally` 只对 Path 且非超时降权——已有测试 `protocol/group/loadbalance_failure_facts_test.go` 覆盖这两种形状。
+消费者对齐（无需改 group）：`RetryThisFlow` 对 `Proxy/Handshake` 与 `Path/Handshake` 都是 RETRY；`PenalizeMemberGlobally` 只对 Path 且非超时降权——已有测试 `protocol/group/loadbalance_failure_facts_test.go` 覆盖这两种情况。
 
 ### 3.3 端到端证据（真实 Native + 真实 sing-box 出站）
 

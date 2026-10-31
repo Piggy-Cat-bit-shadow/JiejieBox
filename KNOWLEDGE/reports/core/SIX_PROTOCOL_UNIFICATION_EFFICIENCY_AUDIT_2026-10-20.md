@@ -441,7 +441,7 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench 'BenchmarkPaddingWrite|BenchmarkP
 
 | 项 | 结果 |
 |---|---|
-| 真 `ReturnPackets`（1 包，`protocol/bridge` 的形状） | 236.3 / 239.8 / 249.5 ns，**72 B / 2 allocs** |
+| 真 `ReturnPackets`（1 包，`protocol/bridge` 的调用场景） | 236.3 / 239.8 / 249.5 ns，**72 B / 2 allocs** |
 | 真 `ReturnPackets`（64 包） | 11 042 / 11 071 / 11 152 ns，3 480 B / 8 allocs |
 | 真 `Flush`（64 包/次，0 allocs）K=1 / 8 / 64 / 256 | 171.8–174.2 / 321.5–331.3 / 1 625–1 661 / 1 636–1 648 ns |
 | 折算每包 | **2.7 / 5.1 / 25.7 / 25.7 ns** |
