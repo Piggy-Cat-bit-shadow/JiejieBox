@@ -31,8 +31,14 @@ import sys
 
 SETTING_VIEW = "ApplicationLibrary/Views/Setting/SettingView.swift"
 
-FORK_SOURCE = "https://github.com/Piggy-Cat-bit-shadow/sing-box"
-FORK_RELEASES = "https://github.com/Piggy-Cat-bit-shadow/sing-box/releases"
+# The fork publishes under two repository names: `JiejieBox` since the 2026-10-31 rename and
+# `sing-box` before it. One pinned revision carries one of them; both are the same repository
+# (GitHub redirects the old name), so the check resolves which spelling this checkout uses
+# instead of demanding one. See apply-apple-link-overlay.py.
+FORK_REPOSITORIES = (
+    "https://github.com/Piggy-Cat-bit-shadow/JiejieBox",
+    "https://github.com/Piggy-Cat-bit-shadow/sing-box",
+)
 UPSTREAM_REPO = "https://github.com/SagerNet/sing-box"
 
 # Constructs that would make a row visually present but unclickable, or that could
@@ -64,6 +70,18 @@ def main() -> int:
     # the source sees the releases URL too. The two are counted as complete Swift
     # expressions instead, which is also how the overlay edits them - the prefix
     # relationship is broken by the closing syntax rather than by match ordering.
+    fork_source = next(
+        (url for url in FORK_REPOSITORIES if f'URL(string: String("{url}"))!' in src), None
+    )
+    if fork_source is None:
+        print(
+            "test-apple-links: no source-code link points at this fork; looked for "
+            + ", ".join(FORK_REPOSITORIES),
+            file=sys.stderr,
+        )
+        return 1
+    FORK_SOURCE = fork_source
+    FORK_RELEASES = f"{FORK_SOURCE}/releases"
     source_expression = f'URL(string: String("{FORK_SOURCE}"))!'
     releases_expression = f'URL(string: String("{FORK_RELEASES}"))!'
     check(src.count(source_expression) == 1,

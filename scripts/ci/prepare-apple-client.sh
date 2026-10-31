@@ -335,7 +335,7 @@ fi
 #
 # Both iOS and macOS go through this script, so neither product can end up with the
 # upstream attribution while the other has the fork's.
-echo "overlay [links]: source and releases -> Piggy-Cat-bit-shadow/sing-box"
+echo "overlay [links]: source and releases -> Piggy-Cat-bit-shadow/JiejieBox (or /sing-box before the rename)"
 python3 "$root/scripts/ci/apply-apple-link-overlay.py" "$submodule_path"
 
 # Verified rather than assumed: the checker asserts the fork links are present exactly
@@ -371,8 +371,8 @@ fi
 # two product links point. The checker above already proved these values; printing them
 # makes the run auditable without reading the source out of the artifact.
 echo "[apple-links] submodule=$actual_sha"
-echo "[apple-links] source=https://github.com/Piggy-Cat-bit-shadow/sing-box"
-echo "[apple-links] releases=https://github.com/Piggy-Cat-bit-shadow/sing-box/releases"
+echo "[apple-links] source=https://github.com/Piggy-Cat-bit-shadow/JiejieBox"
+echo "[apple-links] releases=https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases"
 
 # ---------------------------------------------------------------------------
 # 2. [entitlements] Multicast switch and App Group consistency.

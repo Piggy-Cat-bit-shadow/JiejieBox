@@ -48,9 +48,23 @@ spelling-independent:
 
 The URL is matched AS A QUOTED LITERAL, including its closing quote. That is what makes
 the source URL safe to rewrite even though it is a strict prefix of the releases URL:
-after `/sing-box` the source literal requires a closing quote, and the releases URL has a
-`/` there. The prefix relationship is therefore broken by the pattern itself rather than
-by the order the replacements happen to run in.
+after the repository name the source literal requires a closing quote, and the releases
+URL has a `/` there. The prefix relationship is therefore broken by the pattern itself
+rather than by the order the replacements happen to run in.
+
+# Two repository names for one fork
+
+The kernel repository was renamed `Piggy-Cat-bit-shadow/sing-box` ->
+`Piggy-Cat-bit-shadow/JiejieBox` on 2026-10-31, and the custom client's About page was
+repointed to the new name in the same round (sing-box-for-apple 72136e5). The old name is
+a GitHub redirect to the same repository, not a different project, so a client pinned
+before or after the rename legitimately carries either spelling. Both are accepted as
+"the fork"; only SagerNet is upstream. Rewriting an upstream link targets the CANONICAL
+(JiejieBox) name, because that is where the project lives now.
+
+Accepting one spelling only is what broke the Apple build on 2026-10-31: the overlay
+demanded `sing-box`, the pinned client had already moved to `JiejieBox`, and it refused a
+client that was already correct.
 
 # Fail-closed
 
@@ -67,10 +81,21 @@ SOURCE_FILE = "ApplicationLibrary/Views/Setting/SettingView.swift"
 # Matched as quoted string literals, so the surrounding Swift expression is irrelevant:
 # `URL(string: "...")!` and `URL(string: String("..."))!` both contain the same literal.
 UPSTREAM_SOURCE = '"https://github.com/SagerNet/sing-box"'
-FORK_SOURCE = '"https://github.com/Piggy-Cat-bit-shadow/sing-box"'
-
 UPSTREAM_RELEASES = '"https://github.com/SagerNet/sing-box/releases"'
-FORK_RELEASES = '"https://github.com/Piggy-Cat-bit-shadow/sing-box/releases"'
+
+# The fork's own repository, under both of the names it has published as. Element 0 is the
+# canonical name: it is what an upstream link is rewritten TO. See the docstring's
+# "Two repository names for one fork".
+FORK_SOURCE_URLS = (
+    "https://github.com/Piggy-Cat-bit-shadow/JiejieBox",
+    "https://github.com/Piggy-Cat-bit-shadow/sing-box",
+)
+FORK_RELEASES_URLS = tuple(f"{url}/releases" for url in FORK_SOURCE_URLS)
+
+
+def quoted(url: str) -> str:
+    """The Swift string literal carrying `url`, including its closing quote."""
+    return f'"{url}"'
 
 # Anchors that must survive untouched, asserted so that a repinning which rewrites the
 # About section is noticed rather than silently accepted.
@@ -92,8 +117,8 @@ def counts(src: str) -> dict[str, int]:
     return {
         "upstream_source": src.count(UPSTREAM_SOURCE),
         "upstream_releases": src.count(UPSTREAM_RELEASES),
-        "fork_source": src.count(FORK_SOURCE),
-        "fork_releases": src.count(FORK_RELEASES),
+        "fork_source": sum(src.count(quoted(url)) for url in FORK_SOURCE_URLS),
+        "fork_releases": sum(src.count(quoted(url)) for url in FORK_RELEASES_URLS),
     }
 
 
@@ -101,6 +126,7 @@ def describe(c: dict[str, int]) -> list[str]:
     return [
         f"upstream source x{c['upstream_source']}, fork source x{c['fork_source']}",
         f"upstream releases x{c['upstream_releases']}, fork releases x{c['fork_releases']}",
+        "the fork is published as " + " and ".join(FORK_SOURCE_URLS),
     ]
 
 
@@ -156,17 +182,19 @@ def main() -> int:
                 "the About section references BOTH the upstream and the fork links",
                 describe(before) + ["this is a partially applied state that cannot be resolved safely"],
             )
-        src = src.replace(UPSTREAM_RELEASES, FORK_RELEASES)
-        src = src.replace(UPSTREAM_SOURCE, FORK_SOURCE)
+        src = src.replace(UPSTREAM_RELEASES, quoted(FORK_RELEASES_URLS[0]))
+        src = src.replace(UPSTREAM_SOURCE, quoted(FORK_SOURCE_URLS[0]))
         state = "upstream-rewritten"
     elif before["fork_source"] or before["fork_releases"]:
+        # Already correct under either of the fork's repository names. Nothing is written, which
+        # is also what makes a second run a no-op rather than an error.
         state = "already-fork"
     else:
         fail(
             "the About section contains no sing-box repository link at all",
             [
                 f"looked for {UPSTREAM_SOURCE!r}",
-                f"and {FORK_SOURCE!r}",
+                "and any of " + ", ".join(repr(quoted(url)) for url in FORK_SOURCE_URLS),
                 "the About section may have been restructured",
             ],
         )

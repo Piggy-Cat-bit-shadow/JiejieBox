@@ -17,8 +17,9 @@ the fork links must be present, and the upstream documentation links must still 
 
 There is ONE Apple source, so this is one file with one About section - there is no
 "the iOS source" and "the macOS source" to compare. At the pinned revision
-`SettingView.swift` carries one upstream source row and one upstream releases row, and the
-link overlay rewrites both to the fork, so the overlaid tree holds exactly one of each.
+`SettingView.swift` carries one source row and one releases row, already pointing at the
+fork; a revision that still ships upstream attribution has both rewritten by the link
+overlay, and the overlaid tree then holds one of each as well.
 
 The check is still written as "present" rather than "present exactly once" on purpose: the
 About section is a UI surface, and a row may legitimately be added or the section split per
@@ -42,9 +43,19 @@ SOURCE_FILE = "ApplicationLibrary/Views/Setting/SettingView.swift"
 # Matched as quoted literals, so the surrounding Swift expression does not matter. See
 # apply-apple-link-overlay.py for why the quoted form is what makes the source URL safe to
 # look for even though it is a prefix of the releases URL.
-REQUIRED = {
-    "source code": '"https://github.com/Piggy-Cat-bit-shadow/sing-box"',
-    "releases": '"https://github.com/Piggy-Cat-bit-shadow/sing-box/releases"',
+#
+# The fork publishes under two repository names - `JiejieBox` since the 2026-10-31 rename and
+# `sing-box` before it - so either spelling satisfies the requirement. Both are the same
+# repository (GitHub redirects the old name); only SagerNet is upstream. Requiring one
+# spelling is what failed the Apple build when the pinned client moved to the new name.
+FORK_REPOSITORIES = (
+    "https://github.com/Piggy-Cat-bit-shadow/JiejieBox",
+    "https://github.com/Piggy-Cat-bit-shadow/sing-box",
+)
+
+REQUIRED: dict[str, tuple[str, ...]] = {
+    "source code": tuple(f'"{url}"' for url in FORK_REPOSITORIES),
+    "releases": tuple(f'"{url}/releases"' for url in FORK_REPOSITORIES),
 }
 
 DOCUMENTATION = {
@@ -79,10 +90,10 @@ def main() -> int:
 
     problems: list[str] = []
 
-    for label, needle in REQUIRED.items():
-        found = src.count(needle)
+    for label, needles in REQUIRED.items():
+        found = sum(src.count(needle) for needle in needles)
         if found < 1:
-            problems.append(f"{label}: expected at least 1, found {found} -> {needle}")
+            problems.append(f"{label}: expected at least 1, found {found} -> any of {list(needles)}")
 
     for label, needle in DOCUMENTATION.items():
         found = src.count(needle)
@@ -98,8 +109,12 @@ def main() -> int:
         fail("the prepared client does not carry the links this fork ships", problems)
 
     print("check-apple-links: OK")
-    print("    source        = https://github.com/Piggy-Cat-bit-shadow/sing-box")
-    print("    releases      = https://github.com/Piggy-Cat-bit-shadow/sing-box/releases")
+    present = [
+        url
+        for url in FORK_REPOSITORIES
+        if src.count(f'"{url}"') or src.count(f'"{url}/releases"')
+    ]
+    print(f"    fork repo     = {present[0] if len(present) == 1 else ' / '.join(present)}")
     print("    documentation = https://sing-box.sagernet.org/ (upstream technical docs, unchanged)")
     return 0
 
