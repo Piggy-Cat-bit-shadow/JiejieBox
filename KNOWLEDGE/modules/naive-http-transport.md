@@ -320,7 +320,7 @@ loopback 的 CONNECT 仍被拒绝。
 
 ## 4. `transport/http` 与 `common/httpclient`（`transport/http` and `common/httpclient`）
 
-`transport/http` 是本 fork **最大的一次单项新增**：`a267e99` 处 90 个文件，`e4b7e692`
+`transport/http` 是本 fork 大幅扩展的模块：`a267e99` 处有 90 个文件，`e4b7e692`
 处 20 个，被 **137 个提交** 触及。`protocol/http/*` 负责入站，`transport/http/*` 负责客户端传输，两者职责不同。
 
 **HTTP 客户端传输需求。** `common/httpclient/transport_requirement.go`
