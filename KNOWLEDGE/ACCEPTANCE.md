@@ -32,7 +32,7 @@
   它们是单元证据，不是吞吐基准。
 
 - `./protocol/tun` 的 `TestInFlightCallbackUnderCloseIsOrdered` 也在 Go 1.26.10 下通过；该测试没有运行 Linux 自动重定向会话，
-  也证明不了关机时每个规则集观察者都会被汇合。
+  也不能证明关闭时会等待每个规则集观察者退出。
 
 - 同一分支状态下，`scripts/ci/check-libbox-abi.sh --pin-only` 在 MSYS2 bash 下通过：Android 和 Apple 的 gitlink 与脚本期望的修订一致。
   它没有跑完整的 ABI 或客户端调用点扫描，输出里 gomobile pin 报为 unknown。
@@ -40,7 +40,7 @@
 - `TestTrackedSchemaMatchesTheGenerator` 在 Go 1.26.10 与 `DEFAULT_BUILD_TAGS_OTHERS` 下本地通过；该测试比较本代码树中受版本管理的 schema 与生成器输出。
 
 - Go 1.26.10、MSYS2 bash 加 `GOPROXY=off` 下，`check-go-module-integrity.sh --require-checked test` 对全部三个发现的模块通过。
-  它检查了 tidy/只读模块图和根包/测试 fork 替换的一致性（含 31 条 Cronet 路径）；没有跑 `--verify`，也没做原生产物完整性检查。
+  它检查了 tidy/只读模块图和根包/测试 fork 替换的一致性（含 31 条 Cronet 路径）；没有运行 `--verify`，也没有验证原生产物的完整性。
 
 - `./route` 的三个数据包目的地守卫测试在 Go 1.26.10 下通过，分别针对 memo 增长、键规范化和无匹配行为。增长测试直接插入键，不能视为攻击测试。
 

@@ -6,7 +6,7 @@
 |---|---|
 | 子仓库 Apple `aeccc75`, `16cf87b`；Android `c783710`；Desktop `6d4ccf8` | 已纳入父仓库的客户端变更 → `modules/child-repositories.md` |
 | 子仓库 sing-tun `f9d880f`, `8b9a380`；uTLS `3ab4752`, `2da328d` | 路由端口与 TLS 修复 → `modules/child-repositories.md` |
-| Apple `044e6d5`, 父仓库 `a741e3e916f` | 集成已合并，并在 v0.1.34 中被消费 → `modules/child-repositories.md` |
+| Apple `044e6d5`, 父仓库 `a741e3e916f` | 集成已合并，并由 v0.1.34 使用 → `modules/child-repositories.md` |
 | `e61f9d5160e`, `14e21140564`, `0067b03e377` | Apple 构建/打包/拓扑 fixture 与结构守卫修正 → `modules/ci-release.md` |
 | `93b2e4f5eec` | 端点本地的流可以使用 TUN 路由端口 → `modules/masque-connectip.md` |
 | `ab5fcb59abd` | 常规流与宿主流共用同一个流日志器 → 同一模块 |
@@ -336,7 +336,7 @@ Apple pin 元数据；发布流程下载并重新验证，而不重新构建。
 该修订和证据局限见 `ci-release.md` §5。
 
 **被取代：** 基于环境的 refs 守卫（被 `ece0fb9d2` 取代）。它就是未来变更最容易
-重复的形状：在*环境*里测一个被 source 的文件的变量名，看起来等价于读该文件，
+重复出现的问题：在*环境*中检查被 source 的文件所定义的变量，看起来等同于读取该文件，
 其实并不等价——`resolve` 和 `release-apple.sh` 合法地带着同一个名字。
 原始 cherry-pick 引用的 `24d55d64b` 不在当前父仓库的对象数据库里；
 依赖它之前，请先查它原本的分支或补丁。同样被取代的还有两个 Apple 客户端
