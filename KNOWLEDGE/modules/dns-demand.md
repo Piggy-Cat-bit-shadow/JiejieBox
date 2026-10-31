@@ -137,13 +137,12 @@ Tailscale、OpenVPN 和 OpenConnect 的 DNS 传输可能持有私有解析器，
 | 提交（the commit） | `dns/client.go` — `finishCacheKey` `:485`、`transportEnvironment` `:524`、`commitCacheState` `:1009` |
 | 重置（reset） | `dns/router.go` — `ClearCache` `:2186`、`ResetNetwork` `:2309`；客户端级清除是 `dns/client.go:1287` |
 
-**如果变更守卫被破坏，失败模式是：** 一个旧的 Wi-Fi 答案可能被存下来并提供出去，
-仿佛它属于新的蜂窝网络环境。在已稳定网络上已经开始的查询，是故意允许交付的；
-这和把这个答案记录为当前答案不是一回事。
+**守卫失效的风险：** 旧 Wi-Fi 网络的解析结果可能被缓存，并在切换到蜂窝网络后继续使用。
+代码允许已经在稳定网络上开始的查询返回结果，但不意味着可以把它写入新网络环境的缓存。
 
 ### 哪些子系统使用协调器 epoch（Which subsystems use the coordinator epoch, and which do not）
 
-这一点很重要，因为早先的总结过度声称存在一个覆盖所有状态的单一全局“网络 epoch”。
+早期总结曾将网络 epoch 描述为覆盖所有状态的全局计数器；实际情况需要按子系统区分。
 
 | 子系统 | 与 epoch 的关系 | 证据 |
 |---|---|---|
@@ -155,8 +154,8 @@ Tailscale、OpenVPN 和 OpenConnect 的 DNS 传输可能持有私有解析器，
 | `ReleaseMemory` | **会推进** | 同上 |
 
 `common/runtimecoord/coordinator.go:72-79` 指出，两个计数器描述的是同一次切换 ——
-它们是两个视图，不是两个彼此独立的真相。**不要把这个 epoch 描述为“所有网络状态的唯一事实来源”。**
-它只是选择加入的那些子系统共享的身份。
+它们是同一次切换的两个视图。这个 epoch 只供接入协调器的子系统共享，
+不能作为所有网络状态的唯一依据。
 
 ---
 
@@ -360,19 +359,18 @@ cache"（2026-10-09），属于 fork 侧，是发布基线的祖先。
 只等循环结束，不能证明每个异步更新都已完成；要验证具体的生命周期断言，
 请检查更新锁、取消与已关闭检查。
 
-**影响范围，仅作记录：** 只在**装了 `systemd-resolved` 的** Linux 上 —— 相关文件是 `*_linux.go`，
-而 `local_resolved_stub.go` 带着 `//go:build !linux`。
-在这条路径上它是无条件的，这也正是首次在 Linux runner 上运行 `test/` 模块时问题暴露、
-这个模块的 `TestMain` 让运行失败的原因。
+**历史问题的影响范围：** 安装了 `systemd-resolved` 的 Linux 环境。相关实现位于
+`*_linux.go`，非 Linux 平台使用带 `//go:build !linux` 的 `local_resolved_stub.go`。
+首次在 Linux runner 运行 `test/` 模块时，该模块的 `TestMain` 暴露了这一问题，导致运行失败。
 
-> **对未来的 AI 有两点后果：**
+> **后续维护注意：**
 >
 > 1. **不要把历史上的信号循环泄漏重新报告为未修复。** 早先的 CI 排除是一次性决定；
 >    当前的 Verify 会为某个选定测试进入独立的 `test/` 模块，但不代表会运行完整的
 >    盒子级测试套件。请检查当前工作流以确认确切范围。
 > 2. **不要采用那份文档提出的修复方案。** 关闭 dbus *signal* 通道在这里会**panic**，
 >    因为 dbus 是发送方。已交付的修复是单独一个停止通道加一次等待（join）。
->    这才是应当保留的形状。
+>    后续修改应保留这套停止和等待机制。
 
 **证据级别：** `VERIFIED_SOURCE`（这些符号在发布基线上存在，引入修复的提交也已确认）。
 **执行层面为 `BLOCKED_BY_ENVIRONMENT`** ——

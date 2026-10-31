@@ -491,34 +491,13 @@ other  -> sc_max_each_post_bytes
 
 ## 11. `no_grpc_header`（禁用 gRPC 头）
 
-对于流式请求体模式：
-
-```text
-stream-one
-stream-up
-```
-
-客户端通常会设置：
+在 `stream-one` 和 `stream-up` 模式下，客户端通常会发送：
 
 ```http
 Content-Type: application/grpc
 ```
 
-在依靠内容类型决定流式/不缓冲行为的 CDN/反向代理上，这个头在运维上
-可能很重要。
-
-因此：
-
-```json
-"no_grpc_header": true
-```
-
-**不是** 一项通用优化。
-
-不要默认启用它。
-
-抑制这个头，会让某些反向代理/CDN 路径上本来正常工作的流式 XHTTP 会话变成
-一条持续缓冲或停滞、直至超时的连接。
+部分 CDN 或反向代理依赖该内容类型决定是否流式转发、是否缓冲。设置 `"no_grpc_header": true` 会移除这个头，可能使原本正常的连接持续缓冲或停滞直至超时。因此不要将它作为通用优化默认启用，应按对端要求配置。
 
 ---
 

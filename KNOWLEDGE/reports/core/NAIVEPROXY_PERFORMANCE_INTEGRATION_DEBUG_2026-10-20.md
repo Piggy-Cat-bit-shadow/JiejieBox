@@ -1,13 +1,13 @@
-# NaiveProxy 第一轮改动：专项对抗 Debug 与验收报告
+# NaiveProxy 第一轮改动：专项排查与验收报告
 
 - **日期**：2026-10-20
-- **类型**：对抗 Debug + 修复 + 独立验收（不是第二轮架构审计，不新增性能功能）
-- **范围**：由第一轮**真实 diff** 决定 —— P1（CONNECT 握手 + FailureFacts）、P3（H3→H2 回退 + cronet-go per-dial API + root 重 pin）、P9（padding 全零测试）、P7（文档）；P2 未施工（`BLOCKED_BY_NATIVE_API`），P8 未改默认
+- **类型**：针对性排查、修复与独立验收；本轮不做第二次架构审计，也不新增性能功能
+- **范围**：以第一轮实际变更为准，涵盖 P1（CONNECT 握手与 FailureFacts）、P3（H3→H2 回退、cronet-go 单次拨号 API 与根模块依赖固定）、P9（padding 全零测试）和 P7（文档）。P2 受原生 API 限制未实施（`BLOCKED_BY_NATIVE_API`）；P8 未修改默认值。
 - **结论**：`READY_WITH_LIMITATIONS`（见 §8）
 
 ---
 
-## 1. 变更归属账本
+## 1. 变更范围与版本
 
 ```text
 MAIN_REPO:                 Piggy-Cat-bit-shadow/sing-box
@@ -36,7 +36,7 @@ CONCURRENT OTHER WORK:     clients/apple, clients/desktop submodule pointers (no
 BASELINE:                  第一轮报告 §5/§7/§10 + 审计报告 §7/§12
 ```
 
-### 1.1 本轮（Debug）实际改动
+### 1.1 本轮排查与修复
 
 | 提交 | 内容 |
 |---|---|
@@ -46,13 +46,13 @@ BASELINE:                  第一轮报告 §5/§7/§10 + 审计报告 §7/§12
 
 ---
 
-## 2. 攻击假设矩阵
+## 2. 边界场景与验证结果
 
-> 只列**实际执行**的攻击。`H*` 对应第二份提示词 §3.2 的编号；每条都给了真实输入与观测。
+> 下表记录实际执行的边界场景，以及明确标记为未测或部分验证的项目。`H*` 对应第二份提示词 §3.2 的编号。
 
 ### 2.1 H3→H2 回退（专项 A）
 
-| # | 攻击输入 | 期望不变量 | 实际观测 | 结论 |
+| # | 测试输入 | 预期行为 | 实际观测 | 结论 |
 |---|---|---|---|---|
 | H1 | 服务端 tcp+udp，`quic:true, quic_fallback_to_h2:true` | 返回 H3，**不尝试 H2** | 日志 `response received, protocol: quic/1+spdy/3, status: 200`，无 retry 行 | PASS |
 | H2 | 服务端 tcp-only（UDP 端口无监听） | 一次有界等待后 H2 成功；窗口内后续直接 H2 | 第 1 次 **200 / 4063 ms**，随后 9 次 **200 / 28–35 ms**；retry 日志恰好 1 条 | PASS |
@@ -72,13 +72,13 @@ BASELINE:                  第一轮报告 §5/§7/§10 + 审计报告 §7/§12
 
 ### 2.2 FailureFacts 与真实消费者（专项 B）
 
-| 攻击 | 结果 |
+| 检查项 | 结果 |
 |---|---|
-| 把 facts 只包在 `DialEarly` 的返回上（第一轮前的形态） | 这正是本轮修掉的缺陷：`HandshakeContext` 之前没有调用者（审计 §3.1）。修复后 407 才成为错误 |
+| 把 facts 只包在 `DialEarly` 的返回上（第一轮前的形态） | 这是本轮修复的缺陷：此前没有调用 `HandshakeContext`（审计 §3.1），修复后才能将 407 识别为错误 |
 | 错误密码时 group 是否看到 fact | 端到端日志：`open connection to ... using outbound/naive[n]: naive CONNECT handshake: unexpected response status: 407`；`RetryThisFlow`/`PenalizeMemberGlobally` 的真实 fixture `TestFailureFactsDriveEachPolicyWithItsOwnAnswer` 覆盖 `proxy_handshake_fact`（retry=true, penalty=false） |
 | 407 被标 Path | 单测矩阵 + `h3TransportFailure` 矩阵均显式排除；`PenalizeMemberGlobally` 对 `{Handshake,Proxy}` 返回 false |
 | 取消/teardown 被标 Path | `TestNaiveHandshakeFacts` 与 `TestH3FallbackTransportFailureMatrix` 的 cancel/teardown 行 |
-| facts 存到共享 Outbound | 不成立：facts 只附加在当次 error 上（`adapter.WrapFailure`），不改 Outbound 字段 |
+| facts 存到共享 Outbound | 未发现共享状态：facts 只通过 `adapter.WrapFailure` 附加到本次错误，不修改 Outbound 字段 |
 | 包装破坏 `errors.Is/As` | `TestNaiveHandshakeFactKeepsTheErrorChain`：`errors.Is(err, cronet.NetErrorConnectionRefused)` 仍成立 |
 | 日志泄露凭据 | 全链路日志只有 `status: 407`、`protocol:`、错误文本；`proxy-authorization` 从不打印 |
 

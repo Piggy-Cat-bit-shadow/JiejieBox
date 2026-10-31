@@ -35,7 +35,7 @@ outer QUIC packet size  what the tunnel's own QUIC layer may put on that path
 inner tunnel MTU        what the tunnel promises the payload it carries
 ```
 
-这三个量**分别**计算、限制和证明。一个量的正确答案，并不是另一个量的正确答案。把它们混为一谈，正是本节要防止的失败模式。
+这三个量处于不同的协议层，需要分别计算和验证。已知其中一个值，并不能直接推导出另外两个值。
 
 | # | 量 | 在何处计算 | 在何处受限 | 在随附配置中 |
 |---|---|---|---|---|
@@ -43,15 +43,15 @@ inner tunnel MTU        what the tunnel promises the payload it carries
 | 2 | **外层 QUIC 初始数据包设置** | `client.go` → `min(mtu + 51, MaxUint16)`；服务端镜像 `protocol/masque/server.go` | detour 容量钳制初始设置；低于 1200 的值一律拒绝。这不是对所有后续数据包的硬上限 | 在遇到更低的 detour 上限之前是 **1331** |
 | 1 | **外层链路 MTU** | 这套 MASQUE 计算无法确立它 | 这套计算同样无法确立 | 就这些输入而言，该路径上**未知** |
 
-**51 是逐项加出来的，不是魔法数：** `QUICPacketOverhead = 51`（`session.go:19`）= 1 context ID + 8 quarter-stream-ID varint + 16 AEAD + 1 header + 1 packet number + 24 frame，逐项列在 `outer_quic_mtu_test.go:31-46`。
+**51 字节的来源：** `QUICPacketOverhead = 51`（`session.go:19`）= 1 context ID + 8 quarter-stream-ID varint + 16 AEAD + 1 header + 1 packet number + 24 frame，逐项列在 `outer_quic_mtu_test.go:31-46`。
 
-**这些是不等式断言，不是注释：** outer > inner（`outer_quic_mtu_test.go:73-77`、`:172-176`），并且 `1280 + 51 − 1232 = 99` 恰好成立（`:181-185`）。
+**相关测试断言：** outer > inner（`outer_quic_mtu_test.go:73-77`、`:172-176`），并且 `1280 + 51 − 1232 = 99` 恰好成立（`:181-185`）。
 
 **为什么不能由此确定外层链路 MTU：** `PathCapacity` 没有链路 MTU 字段（`path_mtu.go:127-155`）。它携带的是 **UDP payload** 上限，即内层大小减去 20/40 字节 IP 头、8 字节 UDP 头及封装开销（`path_mtu.go:111-120`）；这与链路 MTU 处于不同层次。`outer_quic_mtu_test.go:222-237` 检查相关选项没有第三个配置项。
 
 其他组件可以读取接口 MTU，例如 `protocol/bridge/backend_linux.go`，但接口 MTU 本身不能证明端到端 MASQUE 路径的 MTU。
 
-**上限来自路径模型，不是一个常量。** 提交 `feat(mtu): cap the MASQUE outer QUIC packet by a proven detour capacity`（`2118ee40`）恰好只动两个文件：`client.go` +51 行，`outer_quic_mtu_test.go` +237。WireGuard 的 `validateTunnelMTU`（`transport/wireguard/endpoint.go:523-569`）只拒绝 IPv6-on-sub-1280：一个 1210 字节的 detour 会得出 1130 的嵌套值，而该 detour 自身需要 1360（`:550-552`）。
+**上限由路径模型确定。** 提交 `feat(mtu): cap the MASQUE outer QUIC packet by a proven detour capacity`（`2118ee40`）恰好只动两个文件：`client.go` +51 行，`outer_quic_mtu_test.go` +237。WireGuard 的 `validateTunnelMTU`（`transport/wireguard/endpoint.go:523-569`）只拒绝 IPv6-on-sub-1280：一个 1210 字节的 detour 会得出 1130 的嵌套值，而该 detour 自身需要 1360（`:550-552`）。
 
 **`sing-quic` 是这个上限的关键环节。** `scripts/ci/check-go-module-integrity.sh:105-115` 记录了它为什么是四个 `REQUIRED_FORK_REPLACES` 之一：
 
@@ -73,7 +73,7 @@ inner tunnel MTU        what the tunnel promises the payload it carries
 
 测试：`packet_too_big_test.go`（`:111`、`:175`、`:234`、`:271`、`:294`、`:374`）、`packet_too_big_session_test.go`（`:150`、`:212`、`:270`、`:295`）、`packet_size_bound_test.go:90-186`（`maxPacketSize = 40 + 65535`，`session.go:56-61`）。
 
-**服务端侧头空间：** `server.go:428-430` 报告 `max(PacketHeadroom, handler.FrontHeadroom())`——即传输层自己的预留，或处理器的预留（如果处理器需要更多）。
+**服务端预留空间：** `server.go:428-430` 报告 `max(PacketHeadroom, handler.FrontHeadroom())`——即传输层自己的预留，或处理器的预留（如果处理器需要更多）。
 
 ---
 
@@ -81,9 +81,9 @@ inner tunnel MTU        what the tunnel promises the payload it carries
 
 提交 `91ca1652d`——*"fix(hysteria2): a hard path ceiling is its own field, applied after ChromeParrot"*。
 
-**它解决的问题：** ChromeParrot 指纹覆盖会强制 `initialPacketSize = 1250`（`config.go:105-125`）；MTU 发现未激活时，**没有别的配置字段能降低首个飞行包大小**。于是一个已证明的 1232 字节上限在指纹打开时毫无效果。
+**问题：** ChromeParrot 指纹会将 `initialPacketSize` 覆盖为 1250（`config.go:105-125`）。关闭 MTU 发现时，其他配置字段无法降低首批数据包的大小，因此启用指纹后，已确认的 1232 字节上限无法生效。
 
-**修复：** 给上限单独一个字段（pinned quic-go fork 中的 `Config.InitialPacketSizeCeiling`），并在 ChromeParrot 覆盖**之后**应用。这样，已证明的 1232 在指纹打开时也能到达线路上；同一个字段还限制 MTU 发现能把数据包大小提升到多大。
+**修复：** 给上限单独一个字段（pinned quic-go fork 中的 `Config.InitialPacketSizeCeiling`），并在 ChromeParrot 覆盖**之后**应用。这样，即使启用了指纹，也能把已确认的 1232 字节上限传递到底层；同一个字段还限制 MTU 发现能把数据包大小提升到多大。
 
 **测量与 pin：** `protocol/hysteria2/hard_ceiling_wire_test.go`；pin 在 `go.mod` 中；决策记录是 `docs/fork/v016-final-closure-ledger.md:4-13`。
 
@@ -96,7 +96,7 @@ hysteria2 的这个区分值得说清楚，因为三个字段含义各不相同�
 | 字段 | 种类 | 应用方式 |
 |---|---|---|
 | `InitialPacketSize` | **偏好** | 最先，并被指纹覆盖 |
-| `InitialPacketSizeCeiling` | **约束** | **最后**（`quic-go config.go:127-140`），因此能存活到覆盖之后，并且还限制 PMTUD 的增长（实测 1232 → 1438，`config.go:184-198`） |
+| `InitialPacketSizeCeiling` | **约束** | **最后**（`quic-go config.go:127-140`），因此不会被指纹覆盖，并且还限制 PMTUD 的增长（实测 1232 → 1438，`config.go:184-198`） |
 | `DisablePathMTUDiscovery` | **策略** | `hysteria2/outbound.go:148-156`, `:224`; `quicPathSizing :241-280` |
 
 `config.go:109-125` 说明了顺序为什么重要：ChromeParrot **用 1250 覆盖大小，且从不读取上限**，因此在默认配置下，早先设置的上限会被丢弃（Parrot 默认开启，`outbound.go:228`）。

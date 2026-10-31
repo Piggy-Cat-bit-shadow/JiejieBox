@@ -98,15 +98,12 @@ TLS 记录设定时限，随后把该截止时间清掉；`handshake_target_clea
 
 ### 完成边界 —— 要准确表述（The completion boundary — state it correctly）
 
-`Scope.Close()` 返回，意味着**恰好**是下面这些，仅此而已：
+`Scope.Close()` 的完成范围如下：
 
-* 正常返回时，队列里已有的每一项清理都已执行，`closeErr` 也已是最终值；
-* 它**不**等待一个正在运行、还没走到 `Add()` 的 `component.Start()`——`Start` 的时长没有任何上界，
-  一等就会让 `Close` 变成无界的；
-* 在这个时点之后注册的清理，会在 `Add()` 内部、于注册方的 goroutine 上同步执行——泄漏避免了，但这笔
-  迟到的资源**不**在 `Close` 报告的范围内；
-* 这类迟到清理产生的错误由 `Add()` 记日志，不会被归并到任何地方；`closeErr` 已是最终值，
-  所以后续的 `Close` 也不会把它收进去。
+* 正常返回时，关闭队列中已有的清理函数均已执行，`closeErr` 已确定。
+* 它不等待正在运行、尚未调用 `Add()` 的 `component.Start()`；后者可能没有时间上限。
+* 开始关闭后注册的清理由 `Add()` 在注册方的 goroutine 中同步执行，不属于本次 `Close` 的返回结果。
+* 这类迟到清理的错误由 `Add()` 记录，不会合并进已经确定的 `closeErr`，后续 `Close` 也不会返回它。
 
 由 `adapter/lifecycle_close_boundary_test.go` 固定（`TestScopeCloseDoesNotWaitForAnInFlightStart`、
 `TestScopeCloseDoesNotFoldInALateCleanupError`、`TestScopeCloseJoinsAnAlreadyStartedDrain`、
