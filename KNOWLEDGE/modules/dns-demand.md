@@ -143,7 +143,7 @@ Tailscale、OpenVPN 与 OpenConnect 的 DNS 传输可以拥有解析器，这些
 
 ### 哪些子系统使用协调器纪元，哪些不使用（Which subsystems use the coordinator epoch, and which do not）
 
-这一点很重要，因为早先的总结过度声称存在一个覆盖所有状态的单一全局“网络纪元”（network epoch）。
+这一点很重要，因为早先的总结过度声称存在一个覆盖所有状态的单一全局“网络 epoch”。
 
 | 子系统 | 是否与纪元耦合？ | 证据 |
 |---|---|---|
@@ -151,7 +151,7 @@ Tailscale、OpenVPN 与 OpenConnect 的 DNS 传输可以拥有解析器，这些
 | 仅 DNS 的环境变化 | **是，而且即使没有网络接口变化，它也会获得自己的代次** | `ffec0df1` |
 | 策略存储 | **是** —— 独立的 `policyEpoch` | `dns/router.go:2259` |
 | `runtimecoord.Coordinator.Epoch` | 拨号门禁与退役遍历读取的共享计数器 | `common/runtimecoord/coordinator.go` |
-| `TrimMemory` | **不推进代次** | `1331e8567` |
+| `TrimMemory` | **不推进 generation** | `1331e8567` |
 | `ReleaseMemory` | **会推进** | 同上 |
 
 `common/runtimecoord/coordinator.go:72-79` 指出，两个计数器描述的是同一次切换 ——
@@ -191,7 +191,7 @@ RFC 2308 指出 `NXDOMAIN` 是关于**名字**的陈述，而精确缓存以完�
 
 * 键丢掉 Qtype，但保留精确缓存的命名空间：规范小写 FQDN、QCLASS、传输标签、
   客户端子网与 DNS 环境（`nxdomainCacheKey` `dns/client_negative.go:63`、`nxdomainKeyFrom` `:124`）。
-  两个传输、两个 ECS 子网或两个网络代次永不共享同一判定。
+  两个传输、两个 ECS 子网或两个网络 generation 永不共享同一判定。
 * 命中**针对当前问题重建**：ID、名字、QTYPE 与 QCLASS 都来自请求；
   只复用 `NXDOMAIN` 判定与它的 SOA（`loadNXDomain` `:205`、`nxdomainResponseFor` `:254`）。
   存储的报文会被复制并重新设置问题，
@@ -240,7 +240,7 @@ RFC 2308 指出 `NXDOMAIN` 是关于**名字**的陈述，而精确缓存以完�
 会让重新读取的值 `> 0`。现有的 `TestNXDomain_ZeroSOATTLIsNotPromotedByNameWide` 用 `min(0,0)`，
 也没有设置 `RewriteTTL`，因此覆盖不到这种形状。
 **这是 `UNVERIFIED`，不是已经证明的保证。**
-在 `header=0, MINIMUM>0` 夹具上，针对 `adapter.DNSQueryOptions{RewriteTTL: ...}` 的测试可以定论；
+在 `header=0, MINIMUM>0` fixture 上，针对 `adapter.DNSQueryOptions{RewriteTTL: ...}` 的测试可以定论；
 在那之前，不要依赖“重写提升”这一断言，
 也不要把运行时改动作为知识刷新的一部分。
 
@@ -421,7 +421,7 @@ cache"（2026-10-09），属于 fork 侧，是发布基线的祖先。
    对已被重新分配的地址来说是错误的域名。
 4. **不要把纪元描述为全局的。** DNS 在协调器代次之外有自己的代次，
    策略存储也有自己的纪元。
-5. **不要让 `TrimMemory` 推进代次**，也不要让 `ReleaseMemory` 停止推进代次。
+5. **不要让 `TrimMemory` 推进 generation**，也不要让 `ReleaseMemory` 停止推进 generation。
 6. **不要让 FakeIP 服务器回答目的地查询**，
    也不要让 `domain_resolver` 指向这样的服务器。
 7. **不要要求 DNS 传输同时具备 UDP 与 TCP。** TCP 这条腿是 `Conditional`，

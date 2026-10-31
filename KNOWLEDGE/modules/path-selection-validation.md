@@ -240,7 +240,7 @@ fallback 对象。这是这条路径上唯一的构造。
 `Possible`、`Unclaimed`、`Reached`。`Demand.NetworksFor` 只返回 **`Proven`**
 （`:302-307`），从不返回 `Possible`。
 
-**UNKNOWN 策略**陈述在 `:47-70`，是一条承重规则：
+**UNKNOWN 策略**陈述在 `:47-70`，是一条关键规则：
 
 > 未知规则在**两个方向上都是透明的**——既不给某个标签计费，也不移除它的网络。
 

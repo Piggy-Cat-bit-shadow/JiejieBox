@@ -2,11 +2,11 @@
 
 ## v0.1.9 之后的网络切换所有权（Network transition ownership after v0.1.9）
 
-**VERIFIED_SOURCE**，测试目标 `011f3fdcd99`：`adapter/network.go` 区分重置代次（reset generation）、
+**VERIFIED_SOURCE**，测试目标 `011f3fdcd99`：`adapter/network.go` 区分重置 generation、
 切换稳定性，以及一次原子的 `NetworkTransitionSnapshotter` 观测。`route/network.go` 在
-`transitionAccess` 下实现这一对机制：只凭一个新发布的所有权纪元（ownership epoch），不足以证明
+`transitionAccess` 下实现这一对机制：只凭一个新发布的所有权 epoch，不足以证明
 一次切换已经落定，因为 DNS 与传输层重置可能还挂着。按流（per-flow）的工作不能把在这个窗口里
-捕获的结果当成稳定网络结果。重置代次在重置开始时推进，不在重置完成时推进；这几个相关计数器
+捕获的结果当成稳定网络结果。重置 generation 在重置开始时推进，不在重置完成时推进；这几个相关计数器
 各有各的角色。改这条边界时，请检查 `NetworkTransitionSnapshot`、`beginTransition` 与
 `ResetNetwork`。相关测试是 `common/dialer/transition_stability_test.go` 与
 `common/dialer/reset_epoch_ownership_test.go`。这不是设备恢复测量。
@@ -80,7 +80,7 @@ TLS 记录设定时限，随后把该截止时间清掉；`handshake_target_clea
 `e4b7e692` 处不存在）。`adapter/lifecycle.go`、`box.go`、`box_lifecycle.go` 与 `route/reference.go`
 被大幅修改。触及这些路径的 fork 提交有 **85** 个（`adapter` 77 个，`common/runtimecoord` 8 个）。
 
-**改以下内容时加载本模块：** 启动/关闭顺序、拆除、网络代次、重建租约、空闲退役、内存裁剪，
+**改以下内容时加载本模块：** 启动/关闭顺序、拆除、网络 generation、重建租约、空闲资源退役、内存裁剪，
 或者任何会响应网络切换的东西。
 
 ---
@@ -201,7 +201,7 @@ TLS 记录设定时限，随后把该截止时间清掉；`handshake_target_clea
 
 ### `TrimMemory` 与 `ReleaseMemory` 不同（TrimMemory and ReleaseMemory are different）
 
-`TrimMemory` **不**推进网络代次。`ReleaseMemory` **会**。协调器的 `Trim` 路径（`5f56f02c`、
+`TrimMemory` **不**推进网络 generation。`ReleaseMemory` **会**。协调器的 `Trim` 路径（`5f56f02c`、
 `09964183`、`93823c3d`）与释放/重置路径，在设计上就是两个彼此分离的入口点。
 
 ---
@@ -310,7 +310,7 @@ TLS 记录设定时限，随后把该截止时间清掉；`handshake_target_clea
    静默地让整个退役遍历失效了。
 7. **不要在 `Start` 中把 `EstablishInitialNetworkEnvironment()` 提前。**
 8. **不要重排关闭顺序**（状态视图 → 暂停回调 → governor → scope）。
-9. **不要让 `TrimMemory` 推进网络代次**，也不要让 `ReleaseMemory` 停止推进。
+9. **不要让 `TrimMemory` 推进网络 generation**，也不要让 `ReleaseMemory` 停止推进。
 10. **新的 `ReuseSuspect` 所有者要对照退役遍历与生命周期契约评审。**
 11. **不要把 `27d8bb59`/`12ee55eef` 当作代码变更。** 两者都是只涉及祖先关系的合并；把它们当功能
     来读，正好颠倒它们的目的。

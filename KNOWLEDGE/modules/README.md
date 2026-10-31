@@ -8,13 +8,13 @@
 | 如果你正在修改…… | 阅读 |
 |---|---|
 | 子仓库、客户端 gitlink、嵌套 dashboard 与 fork 依赖变更 | `child-repositories.md` |
-| 端点本地流程、`JudgeHostFlow`、`HostPort` | `masque-connectip.md` |
+| 端点本地流量、`JudgeHostFlow`、`HostPort` | `masque-connectip.md` |
 | 发布源码冻结、源码锁定、Apple 单运行器 | `ci-release.md` |
 | `experimental/boxdd/**` 中的任何内容、Windows 服务、每用户 worker、命名管道对端握手、对端/可执行文件认证、Authenticode 或签名者信任、更新路径 | `windows-daemon-security.md` |
-| Box 启动/关闭顺序、`Scope`、拆卸、网络纪元、空闲退役、`route/reference.go` | `core-lifecycle-runtime.md` |
+| Box 启动/关闭顺序、`Scope`、资源清理、网络 epoch、空闲资源退役、`route/reference.go` | `core-lifecycle-runtime.md` |
 | 启动期校验、`detour`、selector/urltest/loadbalance、`PhysicalPath`/`ControlPath`、故障转移、环 | `path-selection-validation.md` |
 | DNS 路由/缓存、FakeIP、`domain_resolver`、DNS Demand、DNS 泄漏、网络切换期的 DNS | `dns-demand.md` |
-| `adblock` DNS 规则动作 —— 用本地 NXDOMAIN 拦截广告域名，它为什么不是 `reject`/`predefined`，以及为什么不写入客户端否定缓存 | `dns-adblock-action.md` |
+| `adblock` DNS 规则动作 —— 用本地 NXDOMAIN 拦截广告域名，它为什么不是 `reject`/`predefined`，以及为什么不写入客户端负缓存 | `dns-adblock-action.md` |
 | 任何嗅探器、peek/read、嗅探超时、分片 QUIC、嗅探→路由元数据 | `sniff.md` |
 | MASQUE/CONNECT-IP、capsule、会话、DATAGRAM 批处理、地址/路由/DNS/PREF64、PTB | `masque-connectip.md` |
 | 原生 Naive、HTTP CONNECT 代理、`transport/http`、`http_clients`、目标 ACL、填充/伪装 | `naive-http-transport.md` |
@@ -40,7 +40,7 @@
 > 本 fork 保留上游的注册表、协议与构建档位，并新增：一套**启动期
 > 证明系统**（`common/physicalpath`、`common/routeflow`），它报告能力警告，并
 > 在不拨号、不解析、不选择的前提下拒绝致命的结构性失败或承诺失败；一个
-> **运行时协调器**（`common/runtimecoord`），带单一单调网络代次与
+> **运行时协调器**（`common/runtimecoord`），带单一单调网络 generation 与
 > 基于身份的重建租约；一个**电源/设备调速器**（`common/power`），把平台
 > 事实转化为睡眠/唤醒/复用策略；一个**上传流量调度器**（`common/trafficsched`）与
 > **流量类别**（`common/trafficclass`）；一个 **Direct Offload** 模型，让可证明

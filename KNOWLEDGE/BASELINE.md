@@ -5,7 +5,7 @@
 | 字段 | 取值与范围 |
 |---|---|
 | 仓库 / 分支 | `Piggy-Cat-bit-shadow/JiejieBox` / `testing`；先前的 `sing-box` 远端 URL 会重定向到本仓库 |
-| 生产基线 | `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28` —— 最后审阅的源码/发布/CI 变更；审阅时更晚的提交动的是文档 |
+| 生产基线 | `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28` —— 最后审阅的源码/发布/CI 变更；此后审阅到的提交只修改了文档 |
 | 发布基线 | [v0.1.34](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.34)，发布于 2026-10-29 05:34:42 UTC，既不是 draft 也不是 prerelease；附注标签（annotated tag）剥离后指向生产基线 |
 | 上游祖先 | 观察到的 `upstream/testing` `e5d91fa79f6319d5de940d6c81d81f0fe53b9476` 是合并基；祖先关系证明不了作者身份 |
 | 上一个生产基线 | `dbcfc1d359d6ed818dfaaefb6d4e637b6e785f07`；基线到目标区间内有 12 个可达提交，包含知识库/文档 |
@@ -13,13 +13,13 @@
 | 基线之后的增量 | `git diff --name-only 0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28..HEAD` |
 
 范围与继承下来的限制见 [2026-10-31 校准](CALIBRATION-2026-10-31.md)、它的
-[全面的第二轮审阅](CALIBRATION-2026-10-31-REVIEW.md)，以及更早的台账。运行证据跟 SHA 和
+[全面的第二轮审阅](CALIBRATION-2026-10-31-REVIEW.md)，以及更早的台账。运行证据与 SHA 和
 具体任务绑定；源码审阅或 CI 都证明不了真实设备行为。子仓库源码 pin 和独立观察到的分支头
 是两类不同的事实。
 
 ## 历史性的 v0.1.9 基线（Historical v0.1.9 baseline）
 
-下面的表格和叙述保留了 v0.1.9 那次审阅。它们不是当前基线，取值和主张只覆盖那个历史修订。
+下面的表格和叙述保留了 v0.1.9 那次审阅。它们不是当前基线，取值和结论只适用于那个历史修订。
 
 | 字段 | 取值 | 如何重新测量 |
 |---|---|---|
@@ -80,7 +80,7 @@ Android/Apple 构建路径上判断出错。
   仍然如此，这也是 `loadbalance` 仍被拒绝的原因——但对声明了 `FastPathTransparent() bool`
   的组已经不成立。
 
-`modules/core-lifecycle-runtime.md` §2 的**行锚点过期约 +47**，但结构性主张仍然成立；
+`modules/core-lifecycle-runtime.md` §2 的**行锚点过期约 +47**，但架构方面的结论仍然成立；
 锚点只是被标出来，没有统一平移——统一偏移从未逐锚点验证过，猜出来的行号会显得像权威结论。
 
 **v0.1.9 那次审阅时，那个基线对所审计的子系统是最新的；它并不等于“每个模块的每一行都重新推导过”。**
@@ -167,7 +167,7 @@ git rev-list --count <sha> --not --remotes=upstream
    `v1.14.3-38-ge4b7e692f`，原因是本分支的历史里有重写前的上游孤儿提交。来源判断永远
    不要用它。
 2. **上游历史会被重写。** `refs/remotes/upstream/testing` 从 `e4b7e692` 移到了
-   `dfb80349b`，本分支并没有吸收它。所以光靠 SHA 祖先关系不总够用；来源属于承重信息时，
+   `dfb80349b`，本分支并没有吸收它。所以光靠 SHA 祖先关系不总够用；来源属于关键信息时，
    要用不止一种检查手段。
 3. **绝不要按 SHA 统计上游工作量。** 一次逻辑上的上游变更被重写后，在一个区间里最多可能出现十一次。
 
@@ -194,7 +194,7 @@ git diff --name-only v0.1.9..HEAD
 
 * 客户端**源码**仓库（`clients/apple`、`clients/android`、`clients/desktop`）是
   独立仓库，在干净工作树里是空的。它们的修订只记为 gitlink；
-  历史性的 v0.1.9 审阅没有覆盖其内容。当前子仓库的覆盖情况见 `modules/child-repositories.md`。
+  历史 v0.1.9 审阅没有覆盖其内容。当前子仓库的覆盖情况见 `modules/child-repositories.md`。
 * `experimental/boxdd/**`（Windows 守护进程）在本次增量里发生了变化，归
   **`modules/windows-daemon-security.md`** 所有。它曾是最后一个无主的变更子系统；现在
   所有权地图能解析到它，`daemon/**`、构建驱动和打包记为 CROSS-MODULE。

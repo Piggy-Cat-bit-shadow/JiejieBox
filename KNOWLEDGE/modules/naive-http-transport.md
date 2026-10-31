@@ -89,7 +89,7 @@ v2 用 `sp.v2.udp-over-tcp.arpa`，v1 用 `sp.udp-over-tcp.arpa`。**magic 地�
 解包后的数据报以数据包连接的形式交给 router，用户名保持已认证状态，
 因此常规的路由、DNS、出站选择与访问控制都照常适用。
 
-> 早先“v2 非 Connect 是 P0 产品缺陷”的结论其实是 **测试夹具错误**，不是
+> 早先“v2 非 Connect 是 P0 产品缺陷”的结论其实是 **测试 fixture 错误**，不是
 > 产品缺陷。传输矩阵由
 > `test/jiejie/jiejie_naive_uot_transport_matrix_test.go` 固定。
 
@@ -112,7 +112,7 @@ padding FIRST, then the payload budget:
   已认证 CONNECT 都会发，与此无关 —— 那是另一件独立的事。）
 * Padding 只在每个方向的 **前 8 帧** 起作用，之后完全丢弃。
 * 超过 `maxFrameSize - 3 - 255` 就跳过就地分帧。**padding 范围 0..255
-  有意永不钳制到缓冲区。**
+  有意不按缓冲区大小缩小。**
 * **短写就是失败**：`Write` 返回的字节数少于请求量、错误却是 nil 时，
   会报为 `io.ErrShortWrite`，绝不会被静默截断。帧计数器 **只在
   整帧写完之后** 前进，因此服务端与对端的分帧不会分歧。
@@ -360,7 +360,7 @@ HTTP 客户端需要哪些传输：
 | `route/packet_destination_guard.go` | 写侧没有固定住 | 新增一个方法就能直接把批量数据写入原始 socket，跳过检查 |
 | `transport/http/stream_error.go` | 对非 `ExtendedConn` 的 `WriteBuffer`/`ReadBuffer` 返回了 `nil` | **为一个从未写入的缓冲区报告了成功** |
 | `transport/v2rayhttp/conn.go` | 在 `responseCache` 持有字节时 `ReaderReplaceable` 为 true | **响应头被静默截断** |
-| `transport/trojan/protocol.go` | 一个承重的握手不变量；这个包有 `protocol_replaceable_test.go`，但它的存在本身并不能证明覆盖了每个标志位 | 一个被反转的标志位可以在没有握手的情况下发送载荷 |
+| `transport/trojan/protocol.go` | 一个关键的握手不变量；这个包有 `protocol_replaceable_test.go`，但它的存在本身并不能证明覆盖了每个标志位 | 一个被反转的标志位可以在没有握手的情况下发送载荷 |
 
 三条审计线索被 **证伪而非修复**：`v2raygrpc` 的 `syscall.Conn`（与
 `grpc@v1.79.1` 逐字节相同）、`normalizingConn` 宣称的能力（缺陷是那个静默的 `nil`，而不是
@@ -420,7 +420,7 @@ HTTP 客户端需要哪些传输：
 3. **不要测完服务端 codec 就断定客户端正确。** 客户端出站在
    另一个仓库中。
 4. **不要对 HTTP/1 CONNECT 分帧。** `Padding` 头只在 HTTP/2 与 HTTP/3 上被查询。
-5. **不要把 0..255 的 padding 范围钳制到缓冲区。** 试过，后来回退了。
+5. **不要把 0..255 的 padding 范围按缓冲区大小缩小。** 试过，后来回退了。
 6. **不要静默截断或“修复”短写。** 按设计它就是 `io.ErrShortWrite`；帧计数器不得在整帧写完之前前进。
 7. **不要让 `include/quic_stub.go` 安装 nil 构造函数。** 正是这个失败的 stub 让
    `decideHTTP3Availability` 能区分“不存在”与“已损坏”。

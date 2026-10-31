@@ -7,7 +7,7 @@
 | 子仓库 Apple `aeccc75`, `16cf87b`；Android `c783710`；Desktop `6d4ccf8` | 已经消费的客户端变更 → `modules/child-repositories.md` |
 | 子仓库 sing-tun `f9d880f`, `8b9a380`；uTLS `3ab4752`, `2da328d` | 路由端口与 TLS 修复 → `modules/child-repositories.md` |
 | Apple `044e6d5`, 父仓库 `a741e3e916f` | 集成已合并，并在 v0.1.34 中被消费 → `modules/child-repositories.md` |
-| `e61f9d5160e`, `14e21140564`, `0067b03e377` | Apple 构建/打包/拓扑夹具与结构守卫修正 → `modules/ci-release.md` |
+| `e61f9d5160e`, `14e21140564`, `0067b03e377` | Apple 构建/打包/拓扑 fixture 与结构守卫修正 → `modules/ci-release.md` |
 | `93b2e4f5eec` | 端点本地的流可以使用 TUN 路由端口 → `modules/masque-connectip.md` |
 | `ab5fcb59abd` | 常规流与宿主流共用同一个流日志器 → 同一模块 |
 | `8dac10c14c8`, `62f5ecefdf6`, `d0bccc9bf2a`, `3c6ca2ea336` | 发布冻结、伪版本（pseudo-version）、幂等性与已提交的 ABI 门禁 → `modules/ci-release.md` |
@@ -122,10 +122,10 @@
 | `8c7b230d` | LIFECYCLE | OWN | 引入资源生命周期协调器 |
 | `5f56f02c` | MEMORY | OWN | 内存偏高但还没到危急时，裁掉空闲资源 |
 | `09964183` | FIX | OWN | 阻止内存裁剪另建一个传输 |
-| `379b21161` | FIX | OWN | 基于代次（generation）的重绑定预算 |
+| `379b21161` | FIX | OWN | 基于 generation 的重绑定预算 |
 | `93823c3d` | MEMORY | OWN | 退役唤醒后**不可达**的连接池；能排空的就排空 |
 | `8735b1d` | MEMORY | OWN | 让退役遍历覆盖到 HTTP 客户端连接池（此前从未覆盖） |
-| `1331e8567` | FIX | OWN | `TrimMemory` 不推进代次；`ReleaseMemory` 推进 |
+| `1331e8567` | FIX | OWN | `TrimMemory` 不推进 generation；`ReleaseMemory` 推进 |
 | `1f85dbc94` | FIX | OWN | 从边界遍历可达**全部四个**连接池 |
 | `7e13f461` | FIX | **OWN, not upstream** | 清除**由所有者注册的**进程级接口 getter——提交正文说，是 fork 自己的重构把它丢掉的 |
 
@@ -248,7 +248,7 @@ HTTP/3 复制回退可能在后续错误之前先排入若干副本，所以这�
 没有规则匹配就放行。
 
 **测试完整性的瑕疵：** 先前那个“v2 非 Connect 是 P0 缺陷”的结论，其实是个
-**测试夹具错误**。
+**测试 fixture 错误**。
 
 ---
 
@@ -271,8 +271,8 @@ HTTP/3 复制回退可能在后续错误之前先排入若干副本，所以这�
 | `bb21a854c` | TEST | OWN | **`trafficresearch` 构建标签**——该原型在 Linux 上确定性失败 |
 | `4f999d461` | TEST | OWN | HIGH 对 HIGH 的门禁从 p99 改为基于队列与中位数 |
 | `bcc715a72`, `5ab49bdcb` | FEATURE/FIX | OWN | 拨号调速器（dial governor），随后是以等待代替轮询 |
-| `58050da3c` | DOC | OWN | **引用了那个伪造的夹具基准测试** |
-| `22d46966c` | FIX | OWN | 两天后修好了那个基准夹具——但文档始终没更新 |
+| `58050da3c` | DOC | OWN | **引用了那个伪造的 fixture 基准测试** |
+| `22d46966c` | FIX | OWN | 两天后修好了那个基准 fixture——但文档始终没更新 |
 
 **最终行为：** 按语义等价判断，不看配置是否为空；未分类的选项会被拒绝；这个裁决**只**在 Linux
 `auto_redirect` 下才是真正的 bypass；调度器未设置时保持惰性，

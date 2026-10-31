@@ -11,23 +11,23 @@
 | 仓库 | `Piggy-Cat-bit-shadow/JiejieBox` |
 | 产品分支 | `testing` |
 | **生产基线** | `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28` —— 2026-10-31 校准的源码/CI 修订 |
-| 发布基线 | **`v0.1.34`**，这个标签剥离（peel）后指向生产基线 |
+| 发布基线 | **`v0.1.34`**，这个附注标签解析到的提交就是生产基线 |
 | **历史上游锚点** | `e4b7e692f4545890bfc9d43960328e1449fa803b` —— 供 v0.1.9 时期的对比使用，而非当前的上游合并基（merge-base） |
 | 基线之后的生产增量 | 计算 `git diff --name-only 0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28..HEAD`；见 `BASELINE.md` |
 | 知识审阅时间 | 2026-10-31 |
 | 知识修订 | 动态解析：`git log -1 --format=%H -- KNOWLEDGE/BASELINE.md` |
 
-这份知识描述的是源码基线，不会自动描述当前的 `HEAD`。完整的测量、发布谱系、来源检验和
+这份知识库描述的是已校准的源码基线，不一定与当前 `HEAD` 一致。完整的测量、发布谱系、来源检验和
 标签陷阱都在 `BASELINE.md` 里。
 
-**历史性的 2026-10-28 校准：** 最初的目标是 `011f3fdcd99173acd3e80483b50cb76b07bf6ff4`，
+**历史 2026-10-28 校准：** 最初的目标是 `011f3fdcd99173acd3e80483b50cb76b07bf6ff4`，
 比 v0.1.9 多 791 个提交；最终的生产目标比它晚四个提交。`v0.1.30` 已经发布过，也是最初目标的
 祖先；它之后的修复没有进 v0.1.30。后来发布的
 [v0.1.31 Release](https://github.com/Piggy-Cat-bit-shadow/sing-box/releases/tag/v0.1.31)
 落在更晚的 `cb71cf80d72` 目标上。见 `BASELINE.md`、[校准台账](CALIBRATION-2026-10-28.md)
 以及当前源码。
 
-拿历史性的 v0.1.31 目标和检出的远端 `upstream/testing` 顶端
+拿历史 v0.1.31 目标和检出的远端 `upstream/testing` 顶端
 `e5d91fa79f6319d5de940d6c81d81f0fe53b9476` 求合并基，得到 `a6952ccf6907c18e18917fcb763a433e8e36937b`。
 这只是某个时间点上的 Git 祖先关系观察，不能证明作者身份；引用一移动，就得重新测量。
 
@@ -56,9 +56,9 @@
 10. reports/README.md      what was audited, when, and against which tree — records, NOT current claims
 ```
 
-> `reports/` 是时间点审计与收尾报告的存档。先读它的 `README.md`：一份报告描述的是它自己
-> 日期对应的那棵代码树；当前的主张归 `BASELINE.md`/`INDEX.md`/`modules/`，报告和
-> 源码对不上时以源码为准。新增一份报告不算一次刷新（refresh），也永远不会移动基线。
+> `reports/` 保存各次审计和收尾报告。先读其中的 `README.md`：每份报告只描述其审阅时的源码版本。
+> 当前结论见 `BASELINE.md`、`INDEX.md` 和 `modules/`；报告与源码不一致时，以源码为准。
+> 新增报告不等于刷新知识库，也不会改变生产基线。
 
 **`INDEX.md` 与 `modules/README.md` 不可互换。** `modules/README.md` 是粗粒度的
 登记表（哪个模块拥有什么）。`INDEX.md` 则是细粒度的路由器：精确的章节锚点、别名，以及
@@ -109,7 +109,9 @@ current source and tests
 
 **语言约定：** 正文使用简体中文；`file:line`、符号、测试名、命令、JSON 字段、SHA 和
 `VERIFIED_*` 等证据标签保持英文。标题写成“中文（English original）”，既方便中文阅读，也保留
-按原英文名路由的能力；fenced code block 不翻译。
+按原英文名路由的能力；fenced code block 不翻译。产品名、协议名和源码中的术语应保留原文；
+通用技术词优先采用自然、准确的中文，可能产生歧义时保留英文。润色不得改变原有条件、
+证据范围、命令或代码，也不要为了直译而牺牲可读性。
 
 ## 模块（Modules）
 
@@ -136,16 +138,17 @@ current source and tests
 | `modules/child-repositories.md` | 客户端 gitlink、嵌套 dashboard、分叉的 Go 模块与受控的原生 pin、子分支头 |
 | `modules/mieru.md` | Mieru 入站/出站、TCP/UDP 下层、需显式启用的回退与会话生命周期 |
 | `modules/build-pruning-release.md` | 构建标签、裁剪、发布配置档、生成器、pin |
-| `modules/ci-release.md` | 工作流、门禁、证据，以及哪些内容不得主张 |
+| `modules/ci-release.md` | 工作流、门禁、证据，以及哪些结论缺少证据 |
 
 全分支范围：`BASELINE.md`、`INDEX.md`、`PROJECT.md`、`ARCHITECTURE.md`、`INVARIANTS.md`、
 `ACCEPTANCE.md`、`PERFORMANCE-FACTORS.md`、`COMMIT-INDEX.md`、`REFRESH.md`。
 
 ## 本知识库不覆盖的内容（What this knowledge base does not cover）
 
-本知识库不覆盖这些东西：上游各协议自己的线格式（wire format）、Clash/V2Ray API 内部实现，
-以及 Apple / Android / 桌面**客户端**源码——那些是独立的仓库，在干净工作树里表现为空的
-子模块（submodule）。`modules/README.md` 明说了这一点，不靠读者沉默地误以为已有覆盖。
+本知识库不替代上游协议的线格式文档，也不完整覆盖 Clash/V2Ray API 的内部实现。
+Apple、Android、桌面客户端及其他关联仓库的关键改动属于维护范围，见
+`modules/child-repositories.md`；它们各自的完整源码仍以对应仓库为准。子模块可能尚未初始化，
+检查时应区分本地检出、父仓库固定的 gitlink 和子仓库分支头。
 
 **Windows 守护进程（`experimental/boxdd/**`）已经不在这个列表里。** 它曾是最后一个无主的
 变更子系统，现在归 `modules/windows-daemon-security.md` 所有——同时还要记下一条同样属于

@@ -47,13 +47,13 @@ manifest 验证与安装。结构检查不能证明 macOS 成功执行过，也�
 > **范围更正，2026-10-28：** 下面的 v0.1.9 工作流普查只属于历史，不是
 > 当前树的清单。尤其 `.github/workflows/windows-boxdd-tests.yml`
 > 声明了一个 Windows runner、受路径过滤的 push/PR，以及针对 boxdd 测试的手动派发。
-> 这是 `VERIFIED_SOURCE`，不能证明任何一次具体运行执行过或通过。在依赖下文其他门禁覆盖主张之前，
+> 这是 `VERIFIED_SOURCE`，不能证明任何一次具体运行执行过或通过。如果要依赖下文所述的其他门禁覆盖范围，
 > 请先重新读当前工作流与运行记录。
 >
 > 当前树有 **19** 个工作流文件。五个不在普查中，也没有归属小节：
 > `apple-tls-verify.yml`、`linux-dns-verify.yml`、`linux-masque-verify.yml`、
 > `linux-netns-verify.yml`、`linux-platform-verify.yml`。它们只是已声明的源码，不能证明
-> 运行过；提出任何 CI 覆盖主张之前，请直接检查它们。
+> 运行过；声称 CI 已覆盖之前，请直接检查它们。
 
 **更晚的运行证据：** GitHub Actions [Verify 40602193497](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40602193497)
 与 [Android Core ARM64 40602193557](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40602193557)
@@ -297,7 +297,7 @@ single-authority rule exists to prevent."*（中文：第二个没人咨询的�
 NOT READY FOR A STABLE MILESTONE
 ```
 
-并列出那次审查缺失的数据面与 Apple 签名证据。不要把这些历史性的缺失主张推广到更晚的
+并列出那次审查缺失的数据面与 Apple 签名证据。不要把这些历史缺失主张推广到更晚的
 发布；请针对确切的目标与平台取证。
 
 **这份文档的第三条主张现在已过期，而它最有可能被重复。** 文档
@@ -318,7 +318,7 @@ NOT READY FOR A STABLE MILESTONE
 
 ## 4. 复检者必须实际运行的命令（The commands a re-checker must actually run）
 
-下面的块记录一次历史性的 Windows 环境搭建与测试选择。这些路径与标签选择
+下面的块记录一次历史 Windows 环境搭建与测试选择。这些路径与标签选择
 不是可移植的默认值，更晚的工作流也已把 `protocol/mieru` 纳入 race 列表。复用之前，
 请先确定当前的 Go 工具链、目标 profile 与工作流命令；本地 2026-10-28 的
 pin-only 检查用的是 MSYS2 bash，记录在 `ACCEPTANCE.md` 中。
@@ -430,7 +430,7 @@ bash scripts/ci/check-libbox-abi.sh --pin-only  # wired in verify.yml; full gate
 ### `release.yml` —— 草案优先，以及为什么顺序就是安全属性（`release.yml` — draft-first, and why the order is the safety property）
 
 只支持 `workflow_dispatch`，要求 `inputs.tag`；`dry_run` 默认 **false**。**十七个步骤**，
-顺序如下，而这个顺序本身是承重的：
+顺序如下，而这个顺序本身至关重要：
 
 ```text
  1 check out the tagged commit                    (the SHA is the identity)

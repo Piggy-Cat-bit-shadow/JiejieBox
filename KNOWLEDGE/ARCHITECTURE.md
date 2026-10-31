@@ -70,7 +70,7 @@ detour 可以发警告，受影响的流在运行时照样失败；缺失的引�
 ## 8. MTU 是三个量，而不是一个（MTU is three quantities, not one）
 
 外层链路 MTU、外层 QUIC 包大小和内层隧道 MTU 是不同的量。MASQUE 的初始 QUIC 包大小
-受已知的 detour 容量钳制；仅此证明不了后续包存在硬上限。TUIC 有一条单独的硬上限路径。
+受已知的 detour 容量限制；仅此证明不了后续包存在硬上限。TUIC 有一条单独的硬上限路径。
 物理路径容量未知，不构成证明。
 → `modules/mtu-and-geometry.md`
 
@@ -92,7 +92,7 @@ detour 可以发警告，受影响的流在运行时照样失败；缺失的引�
 ## 11. 发布溯源是下载并重新校验，且范围有限（Release provenance is download-and-re-verify, and it is scoped）
 
 发布流程会**下载**某个产品工作流为精确提交产出的产物，再重新校验各平台的字节、哈希
-与记录的提交 —— 它不重新构建。这一描述只覆盖历史性的发布工作流；每个 release 都要
+与记录的提交 —— 它不重新构建。这一描述只覆盖历史发布工作流；每个 release 都要
 重新核对当前计划与运行证据。声明不证明执行；一次具体的 Windows 守护进程 CI 运行记在
 `modules/windows-daemon-security.md` 里，它本身证明不了发布产物的流水线。
 → `modules/ci-release.md`

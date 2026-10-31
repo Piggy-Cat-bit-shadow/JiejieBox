@@ -6,13 +6,13 @@
 |---|---|---|
 | 端点本地裁决与回退 | `adapter/host_test.go`；本地 `go test ./adapter` 通过 | 只是单元级裁决；`go test ./adapter -run TestJudgeHostFlow -count=1` |
 | 冻结的 pin 与代码树一致 | 本地 `release-freeze.py verify --lock release/source-lock.json` 通过 | Desktop 的嵌套 dashboard 因缺少检出而被 SKIPPED；版本不一致只作备注 |
-| 冻结行为 | `scripts/ci/test-release-freeze.py`：本地 35 项通过 | 夹具使用录制下来的来源；没有执行在线发布 |
+| 冻结行为 | `scripts/ci/test-release-freeze.py`：本地 35 项通过 | fixture 使用录制下来的来源；没有执行在线发布 |
 | 发布/Apple 工作流结构 | `scripts/ci/check-release-workflows.py`：本地 159 项通过 | 只是结构检查，不是执行或产物证据 |
 | Apple 输入冲突规则 | `scripts/ci/test-apple-client-input.sh`：本地 13 项通过 | 不构建 Apple 应用 |
 | 客户端 ABI gitlink | `check-libbox-abi.sh --pin-only` 在 `0067b03` 处本地通过，覆盖 Apple `044e6d5` 与 Android `c7837107` | 只比对 pin；完整扫描是另一项 CI 结果 |
 | Apple 客户端构建 | [macOS run 40776674407](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40776674407) 在父仓库 `ed0f3dc` 处成功；[iOS run 40819615363](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40819615363) 在父仓库 `0067b03` 处成功，Apple 为 `044e6d5` | 每次运行都跳过了另一平台的作业；不是设备证据 |
 | 历史目标 CI | `dbcfc1d` 处的 Verify run 40765511913 已取消 | 对该 SHA 不构成通过 |
-| Apple beta 夹具套件 | 本地 Windows 运行：99 项通过，2 项因 `ditto` 不可用而失败 | 安装/复制断言 BLOCKED_BY_ENVIRONMENT；需在 macOS 上重跑 |
+| Apple beta fixture 套件 | 本地 Windows 运行：99 项通过，2 项因 `ditto` 不可用而失败 | 安装/复制断言 BLOCKED_BY_ENVIRONMENT；需在 macOS 上重跑 |
 | v0.1.34 目标 CI | [Verify 40819594893](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40819594893) 在 `0067b03` 处成功 | 运行级 CI 证据；不是设备行为 |
 
 每一行写一条**需求**、这条需求现有的证据、**证据级别**，以及一条**复检它的命令**。没有命令的行不算已验证；
@@ -37,7 +37,7 @@ Go 1.26.10、MSYS2 bash 加 `GOPROXY=off` 下，`check-go-module-integrity.sh --
 两个具名的可复用 owner 能力测试，加上针对真实 HTTP 管理器的退役遍历测试，也在 Go 1.26.10 下本地通过；它们并没有枚举所有可能的 owner。
 `./protocol/mieru` 选定的回退选项、冷却/探测、启动回滚和过期代次测试在 Go 1.26.10 下通过；这证明不了与外部 Mieru 的互操作。
 `./protocol/tailscale` 的 `TestTailnetDomainsMatch` 和三个具名的系统绑定 getter 清理测试在 Go 1.26.10 下带 `with_tailscale` 通过，
-用的是本地测试夹具，不是 tailnet。
+用的是本地测试 fixture，不是 tailnet。
 `./route` 的三个 failover-shim 测试在 Go 1.26.10 下通过，分别针对并行能力转发、普通叶子拨号和数据包路径边界。
 匹配 `^TestQUICSniffContext` 的 `./common/sniff` 测试在 Go 1.26.10 下通过；旧的 `TestQUICOwnership` 过滤没匹配到任何测试，已在下方更正。
 `./service/oomkiller`、`./common/listener`、`./transport/device` 与 `./protocol/ssh` 的未过滤包测试在 Windows、Go 1.26.10 下通过。
@@ -130,7 +130,7 @@ Naive 的 `TestH3Fallback` 各用例在 `with_naive_outbound,with_purego` 下通
   `newStatusSurface`、`releasePowerGovernor`、`applyPauseEvent`、`lifecycle{}`、`deviceAxis`、
   `reconcileScreenState`、`reconcileLockState`、`ensureURLTestServices`。没有任何导出构造器会产生这些形态，
   所以这些测试根本不存在外部形式——改 package 子句同样做不到。
-* **19 个是 `package box_test`，挡路的是机械性障碍，不是语义性障碍。** 这十九个都调用同一个只有根包可用的夹具
+* **19 个是 `package box_test`，挡路的是机械性障碍，不是语义性障碍。** 这十九个都调用同一个只有根包可用的 fixture
   `newBoxFromConfig`（`box_cross_kind_cycle_test.go:91`）。函数体只用导出 API，所以这个辅助函数可以搬——
   但每一种方案（按目的地各复制一份、抽一个共享的测试支持包，或把十九个一起移动）都是改动测试**内容**，
   超出卫生审计的范围。宿主文件的影响面最大，真要移动必须最后移。
@@ -251,7 +251,7 @@ Naive 的 `TestH3Fallback` 各用例在 `with_naive_outbound,with_purego` 下通
 
 | # | 需求 | 证据 | 级别 | 复检 | 环境 |
 |---|---|---|---|---|---|
-| 9.1 | 复用裁决在级别被释放**之前**发布 | `box_lifecycle_ordering_test.go`，带空真守卫 | VERIFIED_UNIT | `go test -count=1 -tags "$OTHERS" -v -run TestTheReuseVerdict .` | Go + 构建标签 |
+| 9.1 | 复用裁决在级别被释放**之前**发布 | `box_lifecycle_ordering_test.go`，带防止空通过的检查 | VERIFIED_UNIT | `go test -count=1 -tags "$OTHERS" -v -run TestTheReuseVerdict .` | Go + 构建标签 |
 | 9.2 | 休眠边沿在级别被暂停**之前**记录 | 同一文件，`probingAxis` | VERIFIED_UNIT | `-run TestTheSleepEdge` | Go + 构建标签 |
 | 9.3 | 复用档位来自策略，未知休眠时长采用严格裁决 | `common/power` + `box` 测试 | VERIFIED_UNIT | `-run 'TestReuseBandsAreThePolicy\|TestTheBridgeUsesThePolicyBandsAndNothingElse'` | Go + 构建标签 |
 | 9.4 | 可疑档位不排空任何东西 | `route.TestTheSuspectBandDrainsNothing` | VERIFIED_UNIT | `go test -count=1 -run TestTheSuspectBandDrainsNothing ./route/` | Go |
@@ -276,7 +276,7 @@ Naive 的 `TestH3Fallback` 各用例在 `with_naive_outbound,with_purego` 下通
 | 11.1 | 导出的 libbox 表面与 `SetupOptions` 契约 | `experimental/libbox/*`；包测试通过 | VERIFIED_UNIT + VERIFIED_SOURCE | `go test -count=1 ./experimental/libbox/...` | Go |
 | 11.2 | 平台级别的分类由核心负责，客户端只上报 | `common/runtimecoord/platform_events.go:152-220`；`experimental/libbox/platform_events.go` | VERIFIED_SOURCE | 读这两处 | — |
 | 11.3 | ABI 版本有提供方，也有消费方 | `daemon/started_service.go:39` `APIVersion = 4`；`experimental/libbox/command_client.go:760` | VERIFIED_SOURCE | `git grep -n APIVersion` | git |
-| 11.4 | Apple 客户端是 iOS 与 macOS 的同一份源码 | 两个作业中的 `assert-shared-source`；选择脚本的本地夹具在 MSYS2 与内置 Python 下通过 72 项检查 | VERIFIED_SOURCE + 本地夹具结果；不是发布产物检查 | `bash scripts/ci/check-apple-source-selection.sh` | bash + Python + git |
+| 11.4 | Apple 客户端是 iOS 与 macOS 的同一份源码 | 两个作业中的 `assert-shared-source`；选择脚本的本地 fixture 在 MSYS2 与内置 Python 下通过 72 项检查 | VERIFIED_SOURCE + 本地 fixture 结果；不是发布产物检查 | `bash scripts/ci/check-apple-source-selection.sh` | bash + Python + git |
 | 11.5 | Apple gitlink 与其 ABI 契约 pin 一致 | `verify.yml` 中声明了 `check-libbox-abi.sh --pin-only`；本地 pin-only 检查对 `044e6d5447eb` 通过 | VERIFIED_SOURCE + 本地脚本结果；不是完整 ABI 扫描，也不是发布产物证明 | `bash scripts/ci/check-libbox-abi.sh --pin-only` | git + bash |
 | 11.5b | 恢复双源 Apple pin 的 refs 文件会被拒绝，而且这个拒绝不取决于调用方的环境 | `apple-client-source.sh:110-133` 在 source 之前先 grep **文件**；`resolve`（`:547-548`）与 `release-apple.sh:181` 合法地导出同名变量，修复前的环境测试把它误当成文件声明 | VERIFIED_SOURCE + VERIFIED_UNIT（`ece0fb9d2`） | 检查 `refs_declares_platform_source`（`:121`）及它在 `. "$refs_file"` 之前的调用 | sed |
 | 11.6 | 当前 pin 版本上的 ABI 调用点兼容性 | Android 本地静态探针：309 个文件，零违规；[Apple run 40606786576](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40606786576) 报告 PARTIAL，Swift 探针因文件缺失被跳过 | 只有 Android 静态扫描；本地 Swift 零退出并不完整，因为 Windows 会把符号链接物化成文本，且有一个目标缺失 | `python3 scripts/ci/probe-accessors.py --contract docs/fork/libbox-abi-contract.tsv --lang swift --root clients/apple` | Python + 有效的客户端检出 |
@@ -299,7 +299,7 @@ Naive 的 `TestH3Fallback` 各用例在 `with_naive_outbound,with_purego` 下通
 | 12.11 | `verify-evidence/` 描述发布代码树 | **它并没有**——全部 13 份日志都指向 `cfc77dc5`，落后 `a267e99` 101 个提交、落后当前基线 1,214 个提交，且此后有 15 个被覆盖文件发生变化 | **STALE — 不构成证据** | `head -3 verify-evidence/*.log` | git |
 | 12.12 | §7.4 的压测结果 | 一个**空的 `<!--STRESS_RESULTS-->` 占位符** | **EVIDENCE ABSENT（证据缺失）** | — | — |
 | 12.13 | Windows 安装器 / 服务 / 签名门禁 | 存在九个 `.ps1` 门禁；没有归档输出 | **UNVERIFIED（仅声明）** | `client-desktop-windows.yml`（dispatch） | Windows + 管理员权限 |
-| 12.14 | Docker 支撑的夹具 | 未运行；`test/docker_test.go` **没有跳过守卫** | **BLOCKED_BY_ENVIRONMENT** | `docker info && go test ./test/...` | Docker |
+| 12.14 | Docker 支撑的 fixture | 未运行；`test/docker_test.go` **没有跳过守卫** | **BLOCKED_BY_ENVIRONMENT** | `docker info && go test ./test/...` | Docker |
 | 12.15 | Xray 参考互操作 | 仅 dispatch；QUICHE 在线互操作测试已被**删除** | **UNVERIFIED（仅声明）** | dispatch `interop-xray.yml` | Linux + 网络 |
 
 ---
@@ -316,7 +316,7 @@ Naive 的 `TestH3Fallback` 各用例在 `with_naive_outbound,with_purego` 下通
 | `common/trafficsched` 在 `-count=10` 下 | 约 18 分钟的刻意休眠会触发超时 | 每个测试单独跑都通过 |
 | `protocol/masque` `TestMasqueRestartCyclesDoNotLeakLoops` | **单独运行 330 秒**——慢，但没有挂起 | 已测量 |
 | 未加标签的根包 | 12 个失败，都是缺标签引起的 | 使用 `$OTHERS` |
-| 未加标签的 `protocol/masque` | 历史性的缺少标签失败 | 未过滤的整包测试在 2026-10-28 目标上通过；需分别核对所需特性与标签 |
+| 未加标签的 `protocol/masque` | 历史缺少标签失败 | 未过滤的整包测试在 2026-10-28 目标上通过；需分别核对所需特性与标签 |
 | `common/windivert`、`common/tlsspoof` | 报告称其为“3 pre-existing environmental failures”（中文：3 个先前存在的环境性失败） | **它们在此处通过**（25 PASS / 9 PASS，0 FAIL）——这个说法是主机特定的，不是代码树特定的 |
 
 ---

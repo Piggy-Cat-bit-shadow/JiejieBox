@@ -40,9 +40,9 @@ inner tunnel MTU        what the tunnel promises the payload it carries
 
 **上限来自路径模型，不是一个常量。** 提交 `feat(mtu): cap the MASQUE outer QUIC packet by a proven detour capacity`（`2118ee40`）恰好只动两个文件：`client.go` +51 行，`outer_quic_mtu_test.go` +237。WireGuard 的 `validateTunnelMTU`（`transport/wireguard/endpoint.go:523-569`）只拒绝 IPv6-on-sub-1280：一个 1210 字节的 detour 会得出 1130 的嵌套值，而该 detour 自身需要 1360（`:550-552`）。
 
-**`sing-quic` 是这个上限的承重件。** `scripts/ci/check-go-module-integrity.sh:105-115` 记录了它为什么是四个 `REQUIRED_FORK_REPLACES` 之一：
+**`sing-quic` 是这个上限的关键环节。** `scripts/ci/check-go-module-integrity.sh:105-115` 记录了它为什么是四个 `REQUIRED_FORK_REPLACES` 之一：
 
-> *"It became load-bearing when the hard packet-size ceiling was given its own field: the ceiling reaches the wire only if this layer forwards it, so a nested module resolving upstream sing-quic would build a product whose proven ceiling silently disappears."*（中文：硬性数据包大小上限有了自己的字段之后，它就成了承重件：只有这一层把上限转发出去，上限才能到达线路上；因此，一个解析到上游 sing-quic 的嵌套模块，会构建出“已证明的上限静默消失”的产品。）
+> *"It became load-bearing when the hard packet-size ceiling was given its own field: the ceiling reaches the wire only if this layer forwards it, so a nested module resolving upstream sing-quic would build a product whose proven ceiling silently disappears."*（中文：硬性数据包大小上限有了自己的字段之后，它就成了关键环节：只有这一层把上限转发出去，上限才能到达线路上；因此，一个解析到上游 sing-quic 的嵌套模块，会构建出“已证明的上限静默消失”的产品。）
 
 ---
 

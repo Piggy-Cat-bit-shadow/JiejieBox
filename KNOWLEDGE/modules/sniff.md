@@ -128,7 +128,7 @@ S6–S8 的证明方式如下（证据异常强，这也是拷贝边界可以信
 
 * 被嗅探出的域名经由 `resolveLookupName` 到达路由（`route/route.go:1725-1762`），
   途中排除 UoT 哨兵（`:1757-1760`），并由 `validSniffedDomain` 做严格校验（`:1764-1802`）。
-* `metadata.DestinationAddresses`（`:1720`）作为**拨号候选**被消费
+* `metadata.DestinationAddresses`（`:1720`）作为**拨号候选**使用
   （`route/conn.go:284-285`、`:523-531`、`:562-563`；`common/dialer/default_parallel_network.go:15-35`）。
 * 仅靠嗅探不会重写 `Destination`；与嗅探相关的例外是显式且已废弃的按动作
   `OverrideDestination`，它会保留端口。
@@ -144,13 +144,13 @@ S6–S8 的证明方式如下（证据异常强，这也是拷贝边界可以信
 
 ## 5. 性能、行为与加固的区分（Perf vs behaviour vs hardening — the classification）
 
-这一区分是承重的：把性能改动说成协议语义改动（或反之），
+这个区分至关重要：把性能改动误说成协议语义改动（或反过来），
 正是本节要防止的失败模式。
 **在 sniff 的历史中没有发现这种错误标注。**
 
 | 类别 | 改动 |
 |---|---|
-| **PERF**（减少分配/拷贝，语义不变） | 用显式 plan 取代 planner 间接层（`sniff.go:45-77`）；用 `payloadReader` 取代 `io.MultiReader`（`:92-123`）；惰性聚合（`:204-248`）；TLS 头部门禁 + 哨兵；`takePacketBytes` 视图；`frameSummary`；**以数据包为界的 QUIC 拷贝**；HTTP 门禁 + 重放读取器 |
+| **PERF**（减少分配/拷贝，语义不变） | 用显式 plan 取代 planner 间接层（`sniff.go:45-77`）；用 `payloadReader` 取代 `io.MultiReader`（`:92-123`）；惰性聚合（`:204-248`）；TLS 头部预检查 + 哨兵；`takePacketBytes` 视图；`frameSummary`；**以数据包为界的 QUIC 拷贝**；HTTP 门禁 + 重放读取器 |
 | **FIX**（行为缺陷） | WireGuard 嗅探器本身；**WireGuard 排在 UTP 之前的次序**；`matchRule` 的错误路径缓冲区释放（`route/route.go:390-403`） |
 | **HARDENING**（恶意输入） | `Length < hdrLen+4` 守卫；`maxSniffRounds` + 放弃时释放 |
 | **REFACTOR** | `defaultPacketSniffers` 间接层（`route/route.go:41`） |
@@ -173,16 +173,16 @@ S6–S8 的证明方式如下（证据异常强，这也是拷贝边界可以信
 
 ## 6. 检测细节，包括两个 fork 并未修复的已记录弱点（Detection specifics, including two documented weaknesses the fork did NOT fix）
 
-* **TLS** —— 5 字节头部门禁，type ∈ {20, 22}，version `< 0x1000`，且它从不在
+* **TLS** —— 5 字节头部预检查，type ∈ {20, 22}，version `< 0x1000`，且它从不在
   部分头部上作决定（`tls.go:29-30`、`:51-62`、`:83-87`）。
   `errClientHelloSniffed` 是一个不得逃出 `TLSClientHello` 的哨兵（`tls.go:97-101`），
   因此非 TLS 载荷不会导致重复读取。已针对真实的 `crypto/tls` 输出做穷举检查（`sniff_gate_internal_test.go:56-80`）。
-* **HTTP** —— 门禁只重述 `net/http` 自身的请求行规则，借助
+* **HTTP** —— 前置检查只复现 `net/http` 自身的请求行规则，借助
   `common/badhttp` 的 `//go:linkname net/http.readRequest`（`badhttp.go:13-14`）。契约是
-  单向且可测试的：**`GateRejects ⇒ ParserRejects`**；门禁绝不能在
+  单向且可测试的：**`GateRejects ⇒ ParserRejects`**；前置检查绝不能在
   解析器只会要求更多数据时拒绝 —— 已在 500 多个前缀上验证（`http.go:118-133`、`:152-155`）。
-  `httpReplayReader`（`:62-83`）重放门禁已经消费的内容。
-  门禁健全，并不意味着在每一个读取边界上都能识别：测试记录了
+  `httpReplayReader`（`:62-83`）重放前置检查已经读取的内容。
+  前置检查正确，并不意味着在每一个读取边界上都能识别：测试记录了
   请求行被切断的情形 —— 此时底层解析器报告版本格式错误，
   而嗅探尝试在下一次读取之前已经停止。某些头部切断也会失败。见
   `TestPeekStreamReadBoundaryInsideTheRequestLine` 与
@@ -208,7 +208,7 @@ S6–S8 的证明方式如下（证据异常强，这也是拷贝边界可以信
 |---|---|---|
 | QUIC 数据包/数据报边界、合并的数据包、9 种头部变体、畸形头部、`Length < 4` | `VERIFIED_UNIT` + fuzz | `go test -count=1 ./common/sniff/...`；`FuzzQUICPacketBoundary`、`FuzzQUICPacketLengthBoundary` |
 | 分片非重叠引用 | `VERIFIED_UNIT`（地址 + 行为） | `quic_ownership_test.go` |
-| TLS/HTTP 门禁健全性 | `VERIFIED_UNIT` | `sniff_gate_internal_test.go` |
+| TLS/HTTP 前置检查正确性 | `VERIFIED_UNIT` | `sniff_gate_internal_test.go` |
 | WireGuard 矩阵 + uTP 歧义 | `VERIFIED_UNIT` | `TestSniffWireGuardUTPAmbiguityIsStructural` |
 | PeekStream 重试/聚合，包括伪装错误 | `VERIFIED_UNIT` | `sniff_aggregate_test.go` |
 | 16 KiB 上限 / 有界拷贝 | `VERIFIED_UNIT` | `sniff_bounded_copy_internal_test.go` |
@@ -228,7 +228,7 @@ S6–S8 的证明方式如下（证据异常强，这也是拷贝边界可以信
 
 | 提交 | 类型 | 它做了什么 |
 |---|---|---|
-| `e053cc733` | PERF + REFACTOR | 显式 plan 列表（`sniff.go:45-77`）；`payloadReader`（`:92-123`）；TLS 头部门禁 + `errClientHelloSniffed`；`defaultPacketSniffers` 间接层；`route/route.go:1239-1241` |
+| `e053cc733` | PERF + REFACTOR | 显式 plan 列表（`sniff.go:45-77`）；`payloadReader`（`:92-123`）；TLS 头部预检查 + `errClientHelloSniffed`；`defaultPacketSniffers` 间接层；`route/route.go:1239-1241` |
 | `300b167b4` | PERF | 重试由上一轮的失败驱动（`sniff.go:132-199`）。有一处已记录的分歧：一个模仿报文、不触发回绕的错误会让它读取**更多**（`:176-181`），并有专门的测试。 |
 | `912778dd6` | FIX | 新增 WireGuard 嗅探器；把 WireGuard 重排到 UTP 之前（`sniff.go:59-67`、`route/rule/rule_action.go:537-540`、`:547`） |
 | `91577eaa2` | PERF | HTTP 门禁 + 重放读取器（`http.go:28-241`） |

@@ -83,7 +83,7 @@ SEMANTIC EQUIVALENCE, NOT CONFIG EMPTINESS
 
 | 层 | 谁承载字节 | 对本进程的每字节成本 | 在何处被兑现 |
 |---|---|---|---|
-| **L0** | 路由集地址策略（`route_address_set` / `route_exclude_address_set`） | 旁路掉的流量不经过用户态路由器 | 非 auto-redirect 的设置可以把前缀传给 TUN 选项；auto-redirect 在路由器预匹配之前评估路由集。实际的路由安装与判定消费取决于入口与平台 |
+| **L0** | 路由集地址策略（`route_address_set` / `route_exclude_address_set`） | 旁路掉的流量不经过用户态路由器 | 非 auto-redirect 的设置可以把前缀传给 TUN 选项；auto-redirect 在路由器预匹配之前评估路由集。实际的路由安装与判定如何生效取决于入口与平台 |
 | **L1** | 路由器的语义旁路——本节 | 零成本，**仅在 redirect 模式**下 | Linux `auto_redirect`（nfqueue） |
 | **L2** | 在平台、套接字类型与连接路径允许时的内核辅助拷贝 | 取决于路径 | 有条件的，并非对每条流或每个 OS 都保证 |
 | **L3** | 经缓冲区的用户态拷贝 | 取决于路径的拷贝与 I/O 成本 | 在适用处作为回退 |
@@ -138,7 +138,7 @@ L0 只在它能起作用的地方测量：无路由集 → 0/4 形态；`route_a
 | TCP 拷贝，用户态缓冲区（L3） | 4 / 32 MiB 时为 3952 / 5567 MB/s |
 | UDP 每数据报（1400 B） | ~66 ns，1 次分配 |
 
-> **“用户态流建立”那一行是个已知有问题的数字，这里引用它只是为了把它退役。** `route/direct_offload_bench_test.go:139-141` 已点明：旧基准量的是它自己的 `net.Pipe` 夹具，*"reported 26 allocations and 2856 B per operation, and the code under test was none of them. A benchmark whose number describes its own fixture is worse than no benchmark, **because it is quoted**."*（中文：每次操作报告 26 次分配和 2856 B，而被测代码与其中任何一项都无关。一个数字描述的是自身夹具的基准，比没有基准更糟，**因为它会被引用**。）本文档引用它两天**之后**，`22d46966c` 才修好；而 `docs/fork/direct-offload.md:225` 至今还带着它。重新测量：**104 B、2 次分配**。其余各行是历史的 M1 数字，换到别的硬件只能大致复现——引用前请重新测量。
+> **“用户态流建立”那一行是个已知有问题的数字，这里引用它只是为了把它退役。** `route/direct_offload_bench_test.go:139-141` 已点明：旧基准量的是它自己的 `net.Pipe` fixture，*"reported 26 allocations and 2856 B per operation, and the code under test was none of them. A benchmark whose number describes its own fixture is worse than no benchmark, **because it is quoted**."*（中文：每次操作报告 26 次分配和 2856 B，而被测代码与其中任何一项都无关。一个数字描述的是自身 fixture 的基准，比没有基准更糟，**因为它会被引用**。）本文档引用它两天**之后**，`22d46966c` 才修好；而 `docs/fork/direct-offload.md:225` 至今还带着它。重新测量：**104 B、2 次分配**。其余各行是历史的 M1 数字，换到别的硬件只能大致复现——引用前请重新测量。
 >
 > **唯一被真实测试套件强制的成本主张是一个 `TEST`**，不是基准：`TestBypassDecisionUsesNoAllocations`（`direct_offload_bench_test.go:354`）使用四次 `testing.AllocsPerRun` + `require.Zero` 调用，覆盖 `canFastBypass`、`CanBypass`、一次 FakeIP **拒绝**，以及 profile 查找。
 
@@ -195,7 +195,7 @@ classify the flow              bound the post-transition        pace the managed
 
 ### B.3 定下设计的四次测量（The four measurements that settled the design）
 
-实验记录在 `common/trafficsched/doc.go`，代码在 `contention_test.go`/`rig_test.go`。指标是竞争状态下小体积高优先级消息对接收方的可见投递延迟，因为那才是产品目标。
+实验记录在 `common/trafficsched/doc.go`，代码在 `contention_test.go`/`rig_test.go`。指标是竞争状态下小体积高优先级消息对接收方的可见送达延迟，因为那才是产品目标。
 
 **1. 重排序不起作用，整形才起作用。**（4 条 NORMAL 流通过每条流 64 KiB 的接受窗口，灌满一个 2 MB/s 的共享 FIFO）
 

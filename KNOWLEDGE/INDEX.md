@@ -3,7 +3,7 @@
 **本文件只回答一个问题：“我需要了解 X —— 该去哪里读？”** 它只是一张路由表，不是第二个知识库。
 条目只是指针，事实在模块里。
 
-> **绝不要批量通读 `KNOWLEDGE/`。** 先在这里路由，再只打开任务需要的那一两个章节。
+> **绝不要批量通读 `KNOWLEDGE/`。** 先查索引，再打开当前任务需要的章节。
 > 章节名只是导航辅助；历史行号和论断仍需在目标版本上重新验证。当前评审范围见校准台账
 > （calibration ledger）。
 
@@ -25,7 +25,7 @@
 | `REFRESH.md` | **REFRESH_ONLY** | 刷新协议；不是一种任务模式 |
 | `CALIBRATION-2026-10-31.md` | **REFRESH_ONLY** | 当前增量、验证情况与继承下来的限制 |
 | `CALIBRATION-2026-10-31-REVIEW.md` | **REFRESH_ONLY** | 同日全面清单、更正与未决发现 |
-| `CALIBRATION-2026-10-29.md` | **REFRESH_ONLY** | 前一次校准及其证据 |
+| `CALIBRATION-2026-10-29.md` | **REFRESH_ONLY** | 2026-10-29 校准及其证据 |
 | `CALIBRATION-2026-10-28.md` | **REFRESH_ONLY** | 已完成的校准范围、证据与剩余验证限制 |
 | `docs/archive/**` | **HISTORY_ONLY** | 我们怎么走到这里；绝不是当前事实 |
 | `sing-box_v0.1.5-v0.1.10_网络链路与Action-Release优化总结.md` | **HISTORY_ONLY** | v0.1.5→v0.1.10 的工程叙事（链路路径 + Action/Release）；一份时点总结，不是模块 |
@@ -36,18 +36,18 @@
 |---|---|---|
 | 子仓库改造 / client gitlinks / 子仓库分支头 / 嵌套 dashboard / forked Go 模块 | `modules/child-repositories.md` | 固定源码、子仓库变更与刷新规则 |
 | TUN、系统代理 / Mixed、嗅探的路径与优化边界 | `modules/data-path-optimization.md`、`modules/sniff.md` | 入口、嗅探与系统代理路径；嗅探所有权 |
-| 端点本地流程、`JudgeHostFlow`、`HostPort` | `modules/masque-connectip.md` | 贯穿 TUN 栈的端点本地流程 |
+| 端点本地流量、`JudgeHostFlow`、`HostPort` | `modules/masque-connectip.md` | 贯穿 TUN 栈的端点本地流量 |
 | 发布冻结、源码锁定、Apple 单运行器 | `modules/ci-release.md` | 发布冻结与 Apple 验收 |
 | 速度慢 / 吞吐上不去 / 判断瓶颈在哪一层 | `PERFORMANCE-FACTORS.md` | §1 三条第一原理 → §4 症状路由 → §5 测量方法 |
 | XHTTP 上传慢 / 下载慢 / xmux 与连接数 | `PERFORMANCE-FACTORS.md` | §2 客户端参数（`xmux`）→ §3 服务端参数（h2 请求体缓冲） |
-| `Scope` 拆卸、`scope.Add` 清理 | `modules/core-lifecycle-runtime.md` | §1 `adapter.Scope` —— 所有权原语 |
+| `Scope` 资源清理、`scope.Add` 清理 | `modules/core-lifecycle-runtime.md` | §1 `adapter.Scope` —— 所有权原语 |
 | Box 启动顺序 | `modules/core-lifecycle-runtime.md` | §2 → Start；在 `box.go` 中定位 `PreStart`、`Start`、`preStart` 与 `start` |
-| Box 关闭顺序、拆卸 | `modules/core-lifecycle-runtime.md` | §2 → Close；在 `box.go` 中定位 `Close` 与 `close` |
-| 网络代次、重建租约、`runtimecoord` | `modules/core-lifecycle-runtime.md` | §3 一个代次、基于身份的租约 |
-| TCP 半关闭存活检测、观察者限制与拆卸 | `modules/core-lifecycle-runtime.md` | 网络切换所有权；`route/conn_halfclose.go` |
+| Box 关闭顺序与资源清理 | `modules/core-lifecycle-runtime.md` | §2 → Close；在 `box.go` 中定位 `Close` 与 `close` |
+| 网络 generation、重建租约、`runtimecoord` | `modules/core-lifecycle-runtime.md` | §3 一个 generation、基于身份的租约 |
+| TCP 半关闭存活检测、观察能力限制与资源清理 | `modules/core-lifecycle-runtime.md` | 网络切换所有权；`route/conn_halfclose.go` |
 | 监听器通配族、TUN 读取错误、SSH 会话退役、Linux namespace 持有者 | `modules/core-lifecycle-runtime.md` | 附加入口与生命周期边界 |
 | `TrimMemory` 与 `ReleaseMemory` 之别 | `modules/core-lifecycle-runtime.md` | §3 `TrimMemory` 与 `ReleaseMemory` 不是一回事 |
-| 空闲退役清单、`route/reference.go` | `modules/core-lifecycle-runtime.md` | §4 `route.ReferenceManager` |
+| 空闲资源退役清单、`route/reference.go` | `modules/core-lifecycle-runtime.md` | §4 `route.ReferenceManager` |
 | `TrimIdleResources` / `CloseIdleConnections` / `RetireSuspect` | `modules/core-lifecycle-runtime.md` | §4 这三个方法 |
 | 启动期校验、`PhysicalPath`、`ControlPath` | `modules/path-selection-validation.md` | §1 三件并不相同的事 |
 | `ControlPath` 的方向 | `modules/path-selection-validation.md` | §1 为什么 `ControlPath` 不是反向的 |
@@ -74,7 +74,7 @@
 | DNS 路由器、代次、缓存提交 | `modules/dns-demand.md` | §2 缓存提交不变量 |
 | FakeIP | `modules/dns-demand.md` | §3 |
 | 消费方需求 | `modules/dns-demand.md` | §4 |
-| QNAME 级 NXDOMAIN 否定缓存：什么时候可以放宽到名字层级、命中与 TTL 语义、容量、`disable_expire` | `modules/dns-demand.md` | “The QNAME-wide NXDOMAIN negative cache”一节 |
+| QNAME 级 NXDOMAIN 负缓存：什么时候可以放宽到名字层级、命中与 TTL 语义、容量、`disable_expire` | `modules/dns-demand.md` | “The QNAME-wide NXDOMAIN negative cache”一节 |
 | DNS 泄漏 | `modules/dns-demand.md` | §5 DNS 泄漏与 DNS 的作用范围 |
 | `adblock` DNS 动作 —— 用本地 NXDOMAIN 拦截广告域名 | `modules/dns-adblock-action.md` | §2 语法、§3 行为、§8 放置位置 |
 | `systemd-resolved` goroutine 泄漏 | `modules/dns-demand.md` | §6 —— 已修复；称此处有问题的文档已过时 |
@@ -185,8 +185,8 @@
 
 | 问题 | 位置 |
 |---|---|
-| 这条规则是承重的，还是只是约定？ | `INVARIANTS.md` §A 硬性不变量 vs §B 约定 vs §C 策略 vs §D 实现细节 |
-| 哪条不变量负责 `Scope` 拆卸？ | `INVARIANTS.md` A1 |
+| 这条规则是硬性不变量，还是一般约定？ | `INVARIANTS.md` §A 硬性不变量 vs §B 约定 vs §C 策略 vs §D 实现细节 |
+| 哪条不变量负责 `Scope` 资源清理？ | `INVARIANTS.md` A1 |
 | 哪条负责租约 / “一次只做一次恢复”？ | `INVARIANTS.md` A2 |
 | 哪条负责缓冲区所有权？ | `INVARIANTS.md` A6, A7 |
 | 哪条负责 NXDOMAIN 的名字级放宽？ | `INVARIANTS.md` A21 |

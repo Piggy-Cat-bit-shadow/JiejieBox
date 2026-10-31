@@ -7,7 +7,7 @@
 `check-libbox-abi.sh --pin-only` 在 `0067b03` 上已针对这些父级 gitlink 本地通过。它不是完整的 ABI 扫描，也不是
 Swift 调用点扫描。两个本地客户端检出比这些 gitlink 更旧，且没有改动过。Windows 的符号链接物化
 （symlink materialization）和缺失的桌面端检出，仍然限制着本地客户端检查。源码选择、可选的 dispatch SHA、
-单运行器模式与冻结发布要求，见 `ci-release.md` 的 2026-10-29 小节；下文历史性的 v0.1.31 观察
+单运行器模式与冻结发布要求，见 `ci-release.md` 的 2026-10-29 小节；下文历史 v0.1.31 观察
 仍只限定于该修订。
 
 ## 基线后 TUN 重置交接（Post-baseline TUN reset handoff (testing, 2026-10-28)）
@@ -215,7 +215,7 @@ adapter.RecoveryWindow = **90 s**`（`:231`、`adapter/runtime.go:153`）。一�
 
 平台的两项判断要**经核对（reconciled）**，不是直接信任：
 `handover_coalescing_test.go:234`（一个计量来源必须与 `UpdateDefaultInterface` 一致）与
-`:276`（仅计量变化不得声称一个网络代次）。
+`:276`（仅计量变化不得声称一个网络 generation）。
 
 **核心侧还承认*客户端侧*存在双驱动，这里引用并标记为 `UNVERIFIED`：**
 `experimental/libbox/platform_events.go:272-277` 记下 Android 也会从
@@ -458,7 +458,7 @@ External repositories
 | 导出的表面与 `SetupOptions` | VERIFIED_SOURCE + VERIFIED_UNIT | `go test -count=1 ./experimental/libbox/...`（实测：ok，20.3 s） |
 | 核心拥有 trim 分类与合并 | VERIFIED_SOURCE | `common/runtimecoord/platform_events.go:152-231` |
 | trim 阶梯完整且未知级别被忽略 | VERIFIED_SOURCE + VERIFIED_UNIT | `go test -count=1 ./common/runtimecoord/...` |
-| `APIVersion = 4` 被提供并被消费 | VERIFIED_SOURCE | `git grep -n APIVersion` |
+| `APIVersion = 4` 由提供方暴露并由调用方使用 | VERIFIED_SOURCE | `git grep -n APIVersion` |
 | Apple 客户端对 iOS 与 macOS 是同一来源 | 源码与本地 fixture 检查；在本次校准中，该选择脚本在 MSYS2 下用随附的 Python 通过了 72 项检查 | `bash scripts/ci/check-apple-source-selection.sh`；检查实际工作流运行 |
 | 客户端 gitlink 与 ABI 契约常量匹配 | 本地 pin-only 脚本通过；Verify 声明同一门禁。这并不证明解析出的 Apple 构建 SHA 等于该 gitlink | `./scripts/ci/check-libbox-abi.sh --pin-only`；检查 Apple 工作流解析出的源码 |
 | refs 文件不能静默恢复双来源固定 | VERIFIED_SOURCE + VERIFIED_UNIT | `sed -n '88,105p' scripts/ci/apple-client-source.sh`；断言它 grep 的是**文件**而非环境 —— `ece0fb9d2` |

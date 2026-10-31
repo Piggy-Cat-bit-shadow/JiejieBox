@@ -153,13 +153,13 @@ iPad 与 macOS 为 **`NOT_RUN` / `SIGNING_OUT_OF_SCOPE`**。这只是一台设�
 
 | 定时器 | 节奏 | 判定 |
 |---|---|---|
-| `service/oomkiller` 轮询 | 自适应：默认最小 100 ms，最大 10 s | 一个看门狗，不是投机性唤醒。`intervalForState` 在稳定状态下逐步拉长，在压力下回到最小值；选项与平台策略会影响有效边界。 |
+| `service/oomkiller` 轮询 | 自适应：默认最小 100 ms，最大 10 s | 这是必要的看门狗，并非无效唤醒。`intervalForState` 在稳定状态下逐步拉长，在压力下回到最小值；选项与平台策略会影响有效边界。 |
 | `internal/memmetrics` 采样 | 1 ms | **仅基准** |
 | `service/ssmapi/server.go` | 1 min | 可推迟——**但第一次遍历刻意不推迟** |
 | `route/rule/rule_set_updater.go` | — | 可推迟——**第一次遍历也不推迟** |
 | `service/api/dashboard.go` | 24 h（默认） | 可推迟——**第一次遍历也不推迟**，而且它是等待而不是跳过：`WaitProviderRefresh` 让循环停驻，于是下载落在唤醒时，而不是再等一整个间隔 |
 | `dns_cache` | 1 h | 必须**不**被门控 |
-| `route` macOS 挂起看门狗 | 5 s | **一个看门狗，不是投机。** 它比较墙上时钟与单调时钟（后者在休眠期间停走），一旦二者分歧就调用 `SystemResumed`。它存在，是因为无头 Mac 拿不到 NetworkExtension 的 sleep/wake 回调；NetworkExtension 路径改用 `CommandServer.Pause`/`Wake`。它必须**不**被休眠状态门控。 |
+| `route` macOS 挂起看门狗 | 5 s | **一个看门狗，不是投机。** 它比较系统时钟（wall clock）与单调时钟（后者在休眠期间停走），一旦二者分歧就调用 `SystemResumed`。它存在，是因为无头 Mac 拿不到 NetworkExtension 的 sleep/wake 回调；NetworkExtension 路径改用 `CommandServer.Pause`/`Wake`。它必须**不**被休眠状态门控。 |
 
 **可推迟的周期定时器有三个，而这三个的第一次遍历无论如何都会跑。**“第一次遍历不推迟”这条规则，正是让推迟不至于拖慢初始正确性的那一条。
 
@@ -193,7 +193,7 @@ iPad 与 macOS 为 **`NOT_RUN` / `SIGNING_OUT_OF_SCOPE`**。这只是一台设�
 | sleep edge 在 level 被暂停**之前**记录 | `VERIFIED_UNIT`，带一个空泛性防护 | `-run TestTheSleepEdge .` |
 | 100 次 sleep/wake 循环、100 次网络转换、Close 之后无复活 | `VERIFIED_UNIT`（无 `-race`） | `-run 'TestOneHundred\|TestNoResurrectionAfterClose' .` |
 | Apple 设备轴 | 对一次 iPhone 17 Pro Max / iOS 26.4.2 运行是 **`VERIFIED_DEVICE`**；iPad、macOS 与任何其他 OS 是 **`UNVERIFIED`** | 上面的设备记录 |
-| macOS 休眠/唤醒修复 | 对决策为 `VERIFIED_SOURCE` + `VERIFIED_UNIT`（墙上时钟对单调时钟的检测器、**以时段为键**的 `SystemResumed`、**感知时长**的重置：30 s 以下为 medium，达到或超过为 dead-path）；**在实体 Mac 上为 `UNVERIFIED`** | `go test ./common/suspendwatch -count=1` 与 `go test ./route -run TestSystemResumed -count=1`（9 个测试，包括第一次之后紧接着第二次休眠、短休眠的 medium 分支与长休眠的 `ReclaimDeadPath` 分支）；设备侧那一行是 `system resumed after …` 日志之后跟一次重置 |
+| macOS 休眠/唤醒修复 | 对决策为 `VERIFIED_SOURCE` + `VERIFIED_UNIT`（系统时钟（wall clock）对单调时钟的检测器、**以时段为键**的 `SystemResumed`、**感知时长**的重置：30 s 以下为 medium，达到或超过为 dead-path）；**在实体 Mac 上为 `UNVERIFIED`** | `go test ./common/suspendwatch -count=1` 与 `go test ./route -run TestSystemResumed -count=1`（9 个测试，包括第一次之后紧接着第二次休眠、短休眠的 medium 分支与长休眠的 `ReclaimDeadPath` 分支）；设备侧那一行是 `system resumed after …` 日志之后跟一次重置 |
 | 真实 TUN、真实 NetworkExtension、网络转换 | **本次 Windows 刷新中为 `UNVERIFIED`**；设备与构建相关的证据必须单独检查 | 需要适当的平台与设备 |
 | 无竞态 | **`BLOCKED_BY_ENVIRONMENT`** | 需要 cgo |
 
@@ -215,7 +215,7 @@ iPad 与 macOS 为 **`NOT_RUN` / `SIGNING_OUT_OF_SCOPE`**。这只是一台设�
 | `645d96b4` | FIX | 一次当前状态的屏幕读取只协调 level，不启动一次休眠 |
 | `60681f27` | FIX | 一次 resume 不会结束一个休眠时段，因此不得消耗掉自己的边界 |
 | `e20875359` → `e661258a6` | FEATURE → **REVERT** | `IsDevicePaused()` 的 sleep-edge 门控，基于设备证据回滚。两份存档都保留。 |
-| `1331e8567`, `1f85dbc94` | FIX | 基于代次的 rebind 预算；`TrimMemory` **不**推进网络代次，而 `ReleaseMemory` 会 |
+| `1331e8567`, `1f85dbc94` | FIX | 基于 generation 的 rebind 预算；`TrimMemory` **不**推进网络 generation，而 `ReleaseMemory` 会 |
 | `5f56f02c`, `09964183`, `93823c3d` | MEMORY | 裁剪路径；四个池全部可达 |
 | `3c6dd135b`, `f8b0af5f6`, `48dd4469e`, `10f9e17d2`, `eac9cc83d`, `b5c0009d1`, `95159084c`, `666470cbe`, `b5c39a11e`, `c2d93396e`, `da14572a7`, `1965bbf35` | TEST | 泄漏普查/测试完整性家族——**其中多项修的是根本无法失败的测试** |
 | `12aa6db064f`, `dbf8de8b2a5` | FEATURE | 权威的前两个**消费者**：乐观 DNS 刷新（按状态拒绝）与 dashboard 下载（停驻在 `WaitProviderRefresh` 上）。测试与五个变异在 `reports/core/HAKO_SCALE_DEBUG_AUDIT_2026-10-17.md` |

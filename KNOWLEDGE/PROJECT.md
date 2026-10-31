@@ -7,7 +7,7 @@
 ## 这个分支是什么（What this fork is）
 
 这是 `SagerNet/sing-box` 的一个分支，做了大量加固、证据和特性工作。下面的提交主题
-普查是历史性的，测自 `e4b7e692..a267e99`；它不是对当前每个提交作者身份或影响的归类：
+普查是历史数据，测自 `e4b7e692..a267e99`；它不是对当前每个提交的作者身份或影响的归类：
 
 | | 数量 | 占比 |
 |---|---|---|
@@ -29,7 +29,7 @@
 | 领域 | 本分支做了什么 | 模块 |
 |---|---|---|
 | **启动期证明** | `common/physicalpath` + `common/routeflow`：报告能力警告；遇到致命的结构性/承诺失败直接拒绝，过程里不拨号、不解析、不改变选择、不消耗轮换 | `path-selection-validation.md` |
-| **运行时协调** | `common/runtimecoord`：一个单调的网络代次、基于身份的重建租约、一个合并窗口，以及前台/自动探测的区分 | `core-lifecycle-runtime.md` |
+| **运行时协调** | `common/runtimecoord`：一个单调的网络 generation、基于身份的重建租约、一个合并窗口，以及前台/自动探测的区分 | `core-lifecycle-runtime.md` |
 | **电源 / 设备轴** | `common/power`：平台**事实**输入，策略输出；跨越暂停/恢复边界的三档唤醒后复用区间 | `power-mobile-lifecycle.md` |
 | **上传调度器 + 流量类别** | `common/trafficsched`、`common/trafficclass`、`route/dial_governor.go`。`traffic_scheduler` 与 `traffic_class` **上游没有** —— 配置里用了其中任何一个，官方 sing-box 都加载不了 | `data-path-optimization.md` |
 | **Direct Offload** | 可证明等价的直连流可以离开用户态 —— 但有一条要说明的限制：这个判定**仅**在 Linux `auto_redirect` 中才构成数据面绕过 | `data-path-optimization.md` |
