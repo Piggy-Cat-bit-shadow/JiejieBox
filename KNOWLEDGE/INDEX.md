@@ -35,6 +35,7 @@
 | 如果你正在修改/询问…… | 模块 | 精确章节 |
 |---|---|---|
 | 子仓库改造 / client gitlinks / 子仓库分支头 / 嵌套 dashboard / forked Go 模块 | `modules/child-repositories.md` | 固定源码、子仓库变更与刷新规则 |
+| TUN、系统代理 / Mixed、嗅探的路径与优化边界 | `modules/data-path-optimization.md`、`modules/sniff.md` | 入口、嗅探与系统代理路径；嗅探所有权 |
 | 端点本地流程、`JudgeHostFlow`、`HostPort` | `modules/masque-connectip.md` | 贯穿 TUN 栈的端点本地流程 |
 | 发布冻结、源码锁定、Apple 单运行器 | `modules/ci-release.md` | 发布冻结与 Apple 验收 |
 | 速度慢 / 吞吐上不去 / 判断瓶颈在哪一层 | `PERFORMANCE-FACTORS.md` | §1 三条第一原理 → §4 症状路由 → §5 测量方法 |

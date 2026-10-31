@@ -1,5 +1,24 @@
 # 数据路径优化：Direct Offload、traffic class 与上传调度器（Data-path optimization: Direct Offload, traffic class, upload scheduler）
 
+## 入口、嗅探与系统代理路径
+
+以下为 `0067b03e377` 生产基线的源码范围；不同入口共用路由规则，但不共享所有数据面快捷路径。
+
+| 路径 | 行为与优化 | 限制及源码 / 测试入口 |
+|---|---|---|
+| TUN 与 endpoint 本地目的地址 | `protocol/tun/inbound.go` 在栈实现 `tun.RoutedPort` 时注册端口；MASQUE、WireGuard、Tailscale 非 system 模式的本地流量由 `adapter.JudgeHostFlow` 交给同地址族的栈地址，保留目标端口。 | 无端口、缺地址族或不支持的协议回退 `ActionAccept`；system 模式保留原路径。见 `adapter/host.go`、`adapter/host_test.go`、`masque-connectip.md`。 |
+| TUN 网络变化 | 启动前的网络更新通过 pending 标记与启动后的复查交接；栈启动后每次接受的更新各自触发重置。 | 见 `protocol/tun/inbound.go`、`protocol/tun/reset_before_start_test.go`；这不是设备网络切换验证。 |
+| TUN 回包与直连 | 单包单写回复用调用方切片；受条件约束的 TCP 接管失败后回退复制。 | TUN 普通栈的 `ActionBypass` 不实现隐式系统绕行；Linux nfqueue / auto-redirect 的执行边界见本模块 A.5。接管不等于已发生内核 splice。 |
+| 系统代理 / Mixed | `protocol/mixed/inbound.go` 以一个 reader 分辨 SOCKS 与 HTTP；`GuardSOCKS5Address` 在缓冲前安装，`NewFirstPayloadConn` 在握手之后交出缓存的首包；没有配置用户时跳过认证上下文读取。TCP / UDP 分别送入 `RouteConnectionEx` / `RoutePacketConnectionEx`。 | 保留已配置用户的认证、连接所有权、首包与路由元数据；系统代理入口不走 TUN `PreMatch` / TUN 专用 splice 接管。见 `e2e/system_proxy_chain_test.go` 与 `e2e/tun_splice_dataplane_test.go`。 |
+| HTTP / TLS / QUIC 嗅探 | `common/sniff/http.go` 用有界头部先排除确定不是 HTTP 的输入并重放已读内容；`common/sniff/tls.go` 只对完整可判定的首记录快速拒绝，取到 ClientHello 后停止多余握手；分片续读只重跑 QUIC，新增读取最多 64 轮。 | 已有 FakeIP 域名仅在 `packetSniffUsesKnownFakeIPDomain` 条件成立时提前结束等待。保留超时、部分头部和缓存所有权；详见 `sniff.md`。 |
+
+`e2e/system_proxy_chain_test.go` 用 loopback 上真实 mixed、DNS 与目的端验证路径、选择及元数据；
+`e2e/tun_chain_test.go` 使用 MemoryTun 和 Go 栈，不证明真实设备路由。2026-10-31 在 Windows
+本地 Go 1.26.10 下，`go test ./e2e -run '^(TestSystemProxyChain|TestSystemProxyTCPSpliceIsRefusedAtTheSource)$' -count=1`
+通过；这是 loopback 和测试替身证据，不是系统代理设置或真机 TUN 验证。历史基准与具体运行结果
+应从相应记录核对，不把单机基准扩展为真实网络吞吐承诺。
+
+
 **`011f3fdcd99` 处的跨模块区分：** 链上没有显式的 traffic-class 策略时，`route/traffic_class.go` 仍会使用自动标签分类。这套机制独立于已移除的 `fast_path` AI 标签回退（AI-tag fallback）；不要把两者混为一谈，进而移除或重新引入其中任何一个。两者都按流（per flow）决策，但回答的是不同的问题。
 
 **范围（Scope）：** `common/dialer/profile.go`、`protocol/direct/outbound.go`、`route/bypass_verdict.go`、`common/trafficclass`、`common/trafficsched`、`route/dial_governor.go`、`route/traffic_class.go`。

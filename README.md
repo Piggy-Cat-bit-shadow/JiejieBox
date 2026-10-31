@@ -204,6 +204,15 @@ DNS 分组提供 `stable`、`fastest`、`parallel` 三种模式：复用稳定�
 
 优化也包括容易被忽略的边界：数据包交给下一层后由谁释放、批量发送部分成功时哪些数据不能重发、异步 DNS 查询是否仍引用可复用缓冲区，以及网络重置时尚未建立的连接是否能够取消。项目对这些路径分别维护所有权规则和回归测试，降低性能改动带来的丢包、重复发送与资源泄漏风险。
 
+#### TUN、系统代理与嗅探路径
+
+- **TUN 收发与恢复**：端点访问自身地址时，支持 routed port 的 TUN 栈可接管本地流量；缺少端口或对应地址族时保留原有处理。网络接口变化在栈启动前合并待处理重置，启动后按事件重置，避免漏掉交接窗口。
+- **TUN 回包和连接交接**：常见单写回路径复用切片，减少临时分配；Direct TCP 接管仅在连接类型及其他条件匹配时尝试，失败回退到用户态复制。普通 TUN 不执行无法生效的隐式系统绕行。
+- **系统代理入口**：Mixed 入站复用同一读取器区分 HTTP 与 SOCKS，处理握手与首包交接；未配置用户时跳过认证上下文查询，已配置用户仍保留认证与路由元数据。系统代理走普通连接路由，不经过 TUN 的预匹配或专用接管。
+- **嗅探按需做工作**：HTTP 和 TLS 先快速排除确定不匹配的输入；TLS 提取 ClientHello 后不再继续无用的服务端握手。分片 QUIC 后续轮次只运行 QUIC 嗅探，并限制新读轮次；FakeIP 已提供有效域名且满足条件时，不再等待剩余片段。
+
+以上优化保持各自入口的路由、认证与缓冲区所有权边界；它们不代表所有系统代理流量都绕过用户态，也不能代替真实设备测试。源码、验证条件和限制见 [入口与嗅探路径](KNOWLEDGE/modules/data-path-optimization.md#入口嗅探与系统代理路径)、[嗅探设计](KNOWLEDGE/modules/sniff.md) 和 [平台契约](KNOWLEDGE/modules/libbox-platform-contract.md)。
+
 #### Fast Path：策略、实际绕行与复制路径分层
 
 地址集合 / 平台路由、隐式 Direct Offload、连接接管和用户态复制优化是不同层次。某层获得快速路径资格，不等于跳过所有后续处理，也不等于统计仍然完整或真正发生了内核 splice。
@@ -310,46 +319,6 @@ MTU 管理也区分内层隧道 MTU、外层 QUIC 初始包与后续硬上限。
 | 客户端和依赖的配套修改 | [关联源码说明](KNOWLEDGE/modules/child-repositories.md) |
 
 工程记录各自注明基线和验证范围，历史审计结论需结合当前源码阅读。
-
-## 扩展配置示例
-
-DNS 广告拦截：
-
-```json
-{
-  "dns": {
-    "rules": [
-      {
-        "domain_suffix": [
-          "ads.example"
-        ],
-        "action": "adblock"
-      }
-    ]
-  }
-}
-```
-
-上传限速与业务分类：
-
-```json
-{
-  "route": {
-    "traffic_scheduler": {
-      "upload_rate": "8 MiB/s"
-    }
-  },
-  "outbounds": [
-    {
-      "type": "direct",
-      "tag": "interactive-out",
-      "traffic_class": "interactive"
-    }
-  ]
-}
-```
-
-合并到自己的配置，并让路由选择对应出站。DNS 分组、负载均衡、Fast Path、XHTTP、REALITY、Mieru、Naive、MASQUE 和内存服务的完整放置示例见 [扩展配置示例](docs/FORK-CONFIGURATION.md)。
 
 ## 文档
 
