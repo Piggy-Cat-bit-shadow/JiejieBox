@@ -179,9 +179,9 @@ classify the flow              bound the post-transition        pace the managed
                                dial burst
 ```
 
-`route/traffic_class.go` 持有策略映射；`option/traffic_class.go` 持有配置。不要把这三者当作三个独立的包：改动 class 词表会同时牵动三者。
+`route/traffic_class.go` 负责策略映射，`option/traffic_class.go` 定义配置。分类、拨号调速和上传调度相互配合；修改 class 的取值时，应同步检查这几处。
 
-**Class 解析：** 对解析出的链按**从最外层到叶子**扫描；第一个显式策略获胜；显式的 `default` **会抑制整条链的自动检测**。class 按流实际经过的链解析，所以经同一个 group 不同成员的两条流可以带着不同的 class。
+**Class 解析：** 沿解析出的链从最外层向最终出站扫描，采用第一个显式策略；显式设置 `default` 会抑制整条链的自动检测。class 按每条流实际经过的链计算，同一 group 的不同成员可以得到不同结果。
 
 ### B.2 上传调度器（The upload scheduler）
 
@@ -189,9 +189,9 @@ classify the flow              bound the post-transition        pace the managed
 
 **`upload_rate` 完全按写下的内容生效。** 这里**没有隐藏的安全系数**：配置 `8 MiB/s`，托管上传就放行 `8 MiB/s`。
 
-**缺省、为 `0`，或 `traffic_scheduler` 段为空，调度器都保持惰性**——它看着每一个托管字节并立即放行，**没有队列、没有锁、没有定时器**。不要求整形，就不会得到整形。这并不证明一份用了 fork 专有字段的完整配置能被官方 sing-box 加载。
+`upload_rate` 未设置、为 `0`，或 `traffic_scheduler` 为空时，调度器保持惰性：统计受管理字节后立即放行，不使用队列、锁或定时器。这并不代表包含 fork 专有字段的配置可以被官方 sing-box 加载。
 
-**确实配置了速率时，整形器就持续运行**，进程活着它就跑。这是刻意的；见下面的测量。
+配置速率后，整形器会持续生效；原因见下方测量。
 
 可接受的写法：`8388608` 与 `"8388608"`（字节/秒）；`"8 MiB/s"`、`"8MiB"`（二进制单位，`/s` 只是装饰——这个字段始终是速率）；`"20 MB/s"`（十进制）；`"20 Mbps"`、`"16000kbps"`（比特，按 8 比特折一字节换算）。负值、未知单位、小数值，或会溢出 `int64` 的换算，都会**让配置失败**，而不是接受后忽略——对速率限制来说，一个被静默忽略的值意味着配置声称了进程并不执行的策略。
 

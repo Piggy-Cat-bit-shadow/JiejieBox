@@ -104,10 +104,10 @@ close 返回之后再注册的清理，会**在调用方的 goroutine 上同步�
 
 六条规则并作一条：
 
-1. `payloadReader` 游标不能比创建它的 `PeekStream` 调用活得久（`sniff.go:88-91`）；
+1. `payloadReader` 游标不能在创建它的 `PeekStream` 调用结束后继续使用（`sniff.go:88-91`）；
 2. `takePacketBytes` 返回的视图只在数据报存活期间有效（`quic.go:36-54`）；
-3. QUIC 的工作副本每次调用都新建一个 `make`，刻意不池化；被保留的片段
-   以**它**为别名，绝不是调用方的数据报（`quic.go:183-184`、`:305-306`、`:472-476`）；
+3. QUIC 工作副本每次调用都通过 `make` 新建，不放入池；保留的片段
+   与**工作副本**共享底层内存，不引用调用方数据报（`quic.go:183-184`、`:305-306`、`:472-476`）；
 4. 头部保护**原地**写 4 个字节，所以无法覆盖到它们的 `Length` 会被拒绝
    （`quic.go:125-131`）；
 5. MASQUE 批量发送是**按块全有或全无**；被接受的前缀属于传输层，
@@ -159,9 +159,8 @@ close 返回之后再注册的清理，会**在调用方的 goroutine 上同步�
 `ReuseSuspect.RetireSuspect()` 是更强的**睡眠/复用边界**动作，在
 `CloseIdleConnections` **之前**运行。
 
-* **原因：** 一次会重连的裁剪，把应对内存压力变成了流量事件。
-* **违反后果：** 空闲期裁剪新建一个队列，耗掉射频时间；裁剪成了
-  重连触发器——这正是内存路径绝不能有的形态。
+* **原因：** 裁剪本应回收空闲资源，不应触发网络重连。
+* **违反后果：** 空闲期裁剪可能触发新连接和后台工作，增加网络与设备功耗。
 * **适用范围：** `service/oomkiller/timer.go` 的危急回收可以调用 `ReleaseMemory`，后者会重置
   网络，这是有意为之（`route/conn_reclaim.go`）。该服务是否存在、危急处理
   是否只上报，取决于宿主配置与选项；光看 `json:"-"` 推不出这两点。
@@ -177,11 +176,9 @@ close 返回之后再注册的清理，会**在调用方的 goroutine 上同步�
 解锁。`resumed()` 不发布任何东西。
 
 * **原因：** 在真实设备上测得：一次 28 m 24 s 的睡眠期间出现了 13 次 resume 回调，产生 13 个
-  锚点和一个 28.29 s 的边界，把这次测量毁掉了。另外，锚点与按事件（per-episode）的
-  边界锁存器是**同一个字段**，所以拿“已暂停”状态去门控睡眠边沿，在十分钟锁屏期间产生的是**零个**
-  边界——比原来的缺陷更糟——因此被回退。
-* **违反后果：** 睡眠时长上报出错；复用边界被“看一眼屏幕”（screen glances）
-  这种动作消耗掉。
+  锚点和一个 28.29 s 的边界，导致测量失真。锚点与每个休眠时段的边界锁存器共用一个字段；
+  后续尝试以“已暂停”状态控制睡眠边沿时，十分钟锁屏期间没有产生任何边界，因此该修改被回退。
+* **违反后果：** 睡眠时长上报错误；短暂亮屏可能错误地消耗复用边界。
 * **证明：** `box_lifecycle.go:141`、`:173-199`、`:228-252`；提交 `645d96b4`、`60681f27`、`0ff90482`；
   `box_lifecycle_ordering_test.go`；`e20875359` → `e661258a6`（回退，两者均已归档）；
   `docs/fork/p1c-iphone-device-closure.md:289-291`。
@@ -201,19 +198,11 @@ gitlink。显式覆盖是支持的，而且就源码选择而言，gitlink 相�
   两份不同源码构建的机制。
 * **违反后果：** 按上游 libbox 构建的 client 会崩溃；两个 Apple 产品从
   两个不同的修订版本发布。
-* **固定这一半已经接线；client 扫描不在推送门禁上。** `check-libbox-abi.sh
-  --pin-only` 在 `verify.yml` 里跑，某个 client gitlink 与它的 `VERIFIED_*_SHA` 对不上时就失败。
-  这一半抓的是单独落地的 gitlink 移动，而且正是在这种情况发生过之后才加进来的：
-  Apple gitlink 因 v0.1.28 的路径监视金丝雀测试从 `6e559a4` 挪到 `3aedd741`，
-  `VERIFIED_APPLE_SHA` 却没跟着更新，于是完整门禁哪怕完整执行一次也会在第 5 层失败，
-  尽管根本没有任何东西去执行它。完整门禁（第 1-4 层，含 client 调用点扫描）需要 cgo、
-  Darwin 构建配置和一份 client 检出，所以它声明在 `client-apple.yml` 中，针对已检出的
-  源码运行。gitlink/常量匹配并不能证明独立解析出的
-  构建源码是同一个 SHA。`client-apple.yml` 仍不在发布验收的必需集合里（A12）；这是
-  剩下的落地缺口，不是缺检查。gitlink 缺失算**失败**，不算
-  跳过：gitlink 就在超级项目树里，所以删掉一个 gitlink 不能解释成“一个
-  尚未初始化的 client 检出”（"a client checkout that was not initialised"）。`test-check-libbox-abi.sh` 同时断言正确配对与
-  被删除的 Apple gitlink 两种情况；`verify.yml` 会运行它。
+* **检查范围：** `verify.yml` 运行 `check-libbox-abi.sh --pin-only`，比较客户端 gitlink 和 `VERIFIED_*_SHA`；gitlink 缺失或版本不一致均应失败。`test-check-libbox-abi.sh` 覆盖正确配对与 Apple gitlink 被删除的情况。
+
+  这项检查用于发现只有 gitlink 更新、常量未更新的情况。例如 v0.1.28 路径监视金丝雀测试将 Apple gitlink 从 `6e559a4` 移至 `3aedd741`，当时 `VERIFIED_APPLE_SHA` 没有同步更新。
+
+  完整检查的第 1–4 层包括客户端调用点扫描，需要 cgo、Darwin 构建配置及客户端检出，由 `client-apple.yml` 针对已检出源码运行。gitlink 与常量一致，并不能证明工作流独立解析的构建源码是同一 SHA；该工作流也不在独立发布验收的必需集合中（A12）。应分别核实工作流的实际运行结果。
 * **证明：** `docs/fork/libbox-abi-contract.tsv`；`release/apple-client-refs.env`；
   `check-apple-source-selection.sh:124-136`、`:209-210`；`check-libbox-abi.sh`（`--pin-only`，第
   1-5 层）；`test-check-libbox-abi.sh`；`verify.yml` 的步骤 "client gitlinks match the ABI contract pins"
