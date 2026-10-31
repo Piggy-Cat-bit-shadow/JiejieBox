@@ -36,7 +36,7 @@
 `PacketTemplate`（`aw@89905e0e:Packages/AnywhereIP/Sources/AnywhereIP/TCP/PacketTemplate.swift:8-101`）
 要消除的工作。本轮用同一台机器测出这条工作的真实量级：
 
-| 载荷 | 现状（全量重编码） | 仅折叠部分和 | 完整字节模板（Anywhere 形状） | 现状总成本中可被模板消除的部分 |
+| 载荷 | 现状（全量重编码） | 仅折叠部分和 | 完整字节模板（Anywhere 实现方式） | 现状总成本中可被模板消除的部分 |
 |---|---:|---:|---:|---:|
 | 1 400 B | 62.4 ns | 53.7 ns | 31.9 ns | ≤ 30.5 ns（乐观上界），现实 8.7 ns |
 | 64 B | 46.8 ns | 38.4 ns | — | ≤ 8.4 ns |
@@ -44,7 +44,7 @@
 
 按 1 Gbps、满 MTU、单向发送折算：62.4 ns / 1 400 B ≈ 0.55 % 单核；换成完整字节模板后仍是
 1 400 B / 31.9 ns ≈ 0.28 % 单核。**也就是说整条优化最多省下 0.27 个百分点的一个核，而在手机上
-200 Mbps 量级只有 0.05 个百分点。** 这不是"值得下一轮施工"的量级，且它还引入 IP ID、选项、
+200 Mbps 量级只有 0.05 个百分点。** 这一收益不足以支持下一轮实施，且它还引入 IP ID、选项、
 GSO/offload、MTU 变更、地址变更五类失效条件（见 §9.6、§15.2）。
 更关键的是：**Anywhere 自己也省不掉大头**——它的模板每段仍要重算 TCP 头部分和与
 payload 部分和（`aw@89905e0e:.../PacketTemplate.swift:93-94`），而本轮测出 1 400 B 载荷的
@@ -72,13 +72,13 @@ max 1.50 ms）。`gather()`（`sb@5064f20a:transport/v2rayxhttp/conn.go:1066-108
 `SendDatagramsOwned` 搬过来需要先在适配层造出一个批次来源，属于"为了复用而新增层"，
 按 §11 的负面清单应否决（结论：D，附复核条件）。
 
-**结论四（真阳性，建议施工）：返回路径的分组在每次调用上分配，而有一个热调用者是逐包调用它。**
+**结论四（已确认，建议实施）：返回路径每次分组都会分配内存，而一个高频调用方逐包调用该路径。**
 `portReturn.ReturnPackets`（`sing-tun@a7bd7fac:flow_dispatch.go:941-971`）每次调用都新建
 `[]returnBatch` 并为每批新建 packet 切片。**本轮用真代码夹具（不是复刻）测出：**
 
 | 场景 | 时间 | 分配 | 说明 |
 |---|---:|---|---|
-| 1 包 / 1 个 writeback（`protocol/bridge/backend.go:259` 的真实形状） | 236–250 ns | **72 B / 2 allocs** | 两次分配全部来自分组本身 |
+| 1 包 / 1 次 writeback（`protocol/bridge/backend.go:259` 的实际调用方式） | 236–250 ns | **72 B / 2 allocs** | 两次分配全部来自分组本身 |
 | 64 包 / 1 个 writeback | 11 042–11 152 ns | 3 480 B / 8 allocs | 分组已被摊薄到 ~0.13 alloc/包 |
 
 注意两点：**① `slices.IndexFunc` 不是问题**——`writeback` 的数量（B）在生产中通常就是 1
@@ -91,7 +91,7 @@ max 1.50 ms）。`gather()`（`sb@5064f20a:transport/v2rayxhttp/conn.go:1066-108
 所以在这条路径上这 2 次分配是**每包**发生的。
 这是本轮唯一一个"改动局部、语义不变、有确定性数字"的 L1 候选（§6.1）。
 
-**结论五（真阳性，建议施工）：MASQUE L4 CONNECT-UDP 仍然走逐包复制的 DATAGRAM 路径。**
+**结论五（已确认，建议实施）：MASQUE L4 CONNECT-UDP 的 DATAGRAM 路径仍逐包复制。**
 CONNECT-IP 已经有完整的 owned/batch 契约（`sb@5064f20a:transport/masque/session.go:475-543`），
 但同一套 `transport/http` 里的 L4 `http3PacketConn.WritePacket`
 （`sb@5064f20a:transport/http/capsule.go:572-586`）是
@@ -214,7 +214,7 @@ $ git diff --stat 5fc4f936..HEAD -- '*.go' -> 343 files changed, 56389 insertion
 **(3) 预计算"不变量 + 可加部分和"，而不是缓存整帧。**
 `PacketTemplate` 存的是 IPv4 首部固定部分和、12 字节伪首部和、打包后的端口
 （`PacketTemplate.swift:19-59`）；`encode` 只把 `totalLength`/`seq`/`ack`/`flags`/`window`
-加上去再折叠（`:61-96`）。这条思路本身正确，**但本轮用它自己的形状去测，收益被载荷校验和
+加上去再折叠（`:61-96`）。这条思路本身正确，**但本轮按其实现方式测试时，收益被载荷校验和
 与 TCP 头重算吃掉了**（§1.2 结论一）。所以"能迁移的"是**部分和的可加性**，不是"给 TCP 建模板"。
 
 **(4) 收包侧的"未封尾 chunk"模型。**
@@ -342,7 +342,7 @@ HTTP GET → 分支：
 
 ## 6. A 类确认候选详解
 
-### 6.1 A3-1：返回路径 `ReturnPackets` 的每次调用分配（L1，建议施工）
+### 6.1 A3-1：返回路径 `ReturnPackets` 的每次调用分配（L1，建议实施）
 
 **出处**　`sing-tun@a7bd7fac:flow_dispatch.go:941-971`（`portReturn.ReturnPackets`），
 调用者之一 `sb@5064f20a:protocol/bridge/backend.go:251-263`。
@@ -378,7 +378,7 @@ func (r *portReturn) ReturnPackets(packets [][]byte) [][]byte {
 
 | 场景 | 真代码 ns/op | 真代码分配 | 纯分组复刻 ns/op |
 |---|---:|---|---:|
-| 1 包 / 1 writeback（bridge 的真实形状） | 236–250 | **2 allocs / 72 B** | 166 |
+| 1 包 / 1 次 writeback（bridge 的实际调用方式） | 236–250 | **2 allocs / 72 B** | 166 |
 | 4 包 / 1 writeback | — | — | 165 |
 | 64 包 / 1 writeback | 11 042–11 152 | 8 allocs / 3 480 B | 1 097 |
 | 64 包 / 8 writeback | — | — | 2 265（复刻，未在真代码上构造） |
@@ -408,7 +408,7 @@ func (r *portReturn) ReturnPackets(packets [][]byte) [][]byte {
 回滚单点。唯一的前提是"bridge/wireguard 这批调用者被真实使用"，这一点在 Windows 上
 `protocol/bridge` 可配置（`type: bridge` inbound）即可成立。
 
-### 6.2 A3-2：L4 CONNECT-UDP 缺少 owned DATAGRAM（L2，建议试验后施工）
+### 6.2 A3-2：L4 CONNECT-UDP 缺少 owned DATAGRAM（L2，建议试验后实施）
 
 **出处**　`sb@5064f20a:transport/http/capsule.go:572-586`（单包）、`:923-1010`（批处理 writer）。
 
@@ -472,7 +472,7 @@ func (c *http3PacketConn) writeOnePacketLocked(buffer *buf.Buffer) error {
 **风险**　(a) 头部预算从 6 变 9 会抬高 relay 侧每包预留，需确认没有别处硬编码 6；
 (b) 批内混排 datagram/capsule 的顺序必须与逐包路径等价，需要一条"混合批次顺序"测试；
 (c) 失败时 `SendDatagramsOwned` 全有全无，拒绝的块必须原样回退到逐包路径
-（`transport/masque/session.go:603-631` 已有可抄的 rollback 形状）。
+（`transport/masque/session.go:603-631` 已有可参考的回滚实现）。
 
 ---
 
@@ -516,7 +516,7 @@ K=1 时 **2.7 ns/包**，K=8 时 5.1，K=64 时 25.7，**K=256 时仍是 25.7**�
 
 **顺带一个更小、更确定的点**　`Flush` 结束后若某条目两个切片都为空，可以把它从 `s.ports` 删除
 （保持别的条目顺序），使 K 回到"活跃端口数"。这属于 5 行改动，但它和 6.1 一样需要
-"是否值得"的判断——在 K≤8 的世界里它只省一点 L1 访问，**不建议单独为它开一轮施工**。
+"是否值得"的判断——当 K≤8 时，它只能减少少量 L1 缓存访问，**不建议为此单独启动一轮实施**。
 
 ### 7.2 B3-2：`domain_keyword` 的线性扫描（阈值 K≈128）
 
@@ -1014,7 +1014,7 @@ n = 2000/轮，目标睡眠 50 µs。**结论：请求 50 µs，实际 ~518 µs�
 |---|---:|---:|---:|
 | A. 现状（`encodeHeaders` + `goEncodeNetworkHeader` + 全量校验和） | 62.4 ns | 46.8 ns | 44.8 ns |
 | B. 只把两个部分和改成可加折叠（仍调 `Encode`） | 53.7 ns | 38.4 ns | 36.1 ns |
-| C. 完整字节模板（Anywhere `PacketTemplate` 形状：memcpy 40 B + 只写动态字段） | **31.9 ns** | — | **17.7 ns** |
+| C. 完整字节模板（采用 Anywhere `PacketTemplate` 的方式：memcpy 40 B + 只写动态字段） | **31.9 ns** | — | **17.7 ns** |
 | 分解：IPv4 头 `Encode` + `CalculateChecksum` | 21.0 ns | | |
 | 分解：`PseudoHeaderChecksum` | 5.1 ns | | |
 | 分解：`header.TCP.Encode` | 5.9 ns | | |
@@ -1070,7 +1070,7 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench \
 
 **(2) 真 `ReturnPackets` 的分配**
 
-| 形状 | 时间 | 分配 |
+| 测试场景 | 时间 | 分配 |
 |---|---:|---|
 | 1 包 / 1 writeback | 236.3 / 239.8 / 249.5 ns | **72 B / 2 allocs**（三轮一致） |
 | 64 包 / 1 writeback | 11 042 / 11 071 / 11 152 ns | 3 480 B / 8 allocs |
