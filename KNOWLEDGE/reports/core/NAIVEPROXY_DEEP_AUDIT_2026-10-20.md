@@ -1,7 +1,7 @@
 # NaiveProxy 深度只读审计：Cronet 原生栈、性能架构、公共集成与 H3→H2 回退
 
 - **日期**：2026-10-20
-- **类型**：只读审计 / 参考实现复盘 / 受控本机原生实测 / 可行性设计
+- **类型**：只读审计、参考实现核对、本机受控实测与可行性设计
 - **本轮未修改任何生产代码、依赖、配置、CI、子模块 gitlink 或 Native 二进制**
 - **结论**：在审计版本上，Go 服务端 codec 和公共集成无需重写。需要进一步处理的有三项：Naive 出站尚不产生 `adapter.FailureFacts`；Cronet 启动时的 DoH bootstrap 不受 sing-box DNS 策略控制，且当时没有关闭开关；H3→H2 回退可不修改 Chromium 实现，但需要单独设计有界判定窗口和状态所有权，不能直接复用现有 H3 verdict 语义。
 
@@ -13,7 +13,7 @@
 
 **审计建议：** 服务端保持 `NO_CHANGE`；客户端的三个缺口分别评估。H3→H2 回退标记为 `RECOMMEND`，建议采用显式启用、默认关闭、单 Engine、按 CONNECT 选择的最小方案；本轮不实施。
 
-### 1.2 已测 / 未测分界（严格区分）
+### 1.2 已验证与未验证的范围
 
 | 结论 | 证据等级 | 依据 |
 |---|---|---|
@@ -28,30 +28,30 @@
 | **服务端 padding 头算法与 Caddy forwardproxy 逐字节一致**（长度公式 + 16 字符集 + `~` 填充） | `VERIFIED_SOURCE` | `forwardproxy.go:308-320` vs `inbound_conn.go:32-44`；而官方**客户端**是 16..32 + 另一套字符集（§5.5） |
 | **路由层流量计数对 Naive 隧道真实生效** | `MEASURED_LOCAL` | Clash API：`{"upload":41,"download":1078,"type":"naive/naive-in","rule":"final"}`，两次采样一致（§9.5） |
 | 与官方客户端 / Caddy 的真实互通矩阵 | `NOT_RUN` | 需要参考二进制与独立试验环境，本机不具备；命令已给出（§12.4） |
-| 真实网络 RTT/丢包/带宽下的 H2 vs H3 吞吐 | `NOT_RUN` | 本机只有 loopback；不给 loopback 吞吐冒充结论 |
+| 真实网络 RTT/丢包/带宽下的 H2 vs H3 吞吐 | `NOT_RUN` | 本机只有 loopback；不能用 loopback 吞吐量代替真实网络结论 |
 
-### 1.3 三个最值得决策的项目（按 ROI）
+### 1.3 三项待决策工作（按投入产出排序）
 
-1. **P1｜Naive 出站补 `adapter.FailureFacts`**（`INTEGRATION`，小）：全仓已在 `mieru` 建立先例（`protocol/mieru/fallback.go:419-430`），loadbalance/urltest 已消费（`protocol/group/loadbalance_failover.go:160,287`、`urltest.go:1181`）。Naive 现在**一条 fact 都不产生**，于是"首跳 QUIC 建连失败"和"目标拒绝"在分组层无法区分。这是本轮**唯一**一个既有明确前例、又有明确消费者、且不改变任何协议行为的施工项。
+1. **P1｜Naive 出站补 `adapter.FailureFacts`**（`INTEGRATION`，小）：全仓已在 `mieru` 建立先例（`protocol/mieru/fallback.go:419-430`），loadbalance/urltest 已消费（`protocol/group/loadbalance_failover.go:160,287`、`urltest.go:1181`）。审计时的 Naive 出站**不产生任何 fact**，因此分组层无法区分“首跳 QUIC 建连失败”和“目标拒绝”。这是本轮**唯一**一个既有明确前例、又有明确消费者、且不改变任何协议行为的施工项。
 2. **P2｜Cronet DoH bootstrap 的策略缺口**（`INTEGRATION`/`BUG`，小-中）：已实测存在；`SetHostResolverRules` **在 pin 住的 cronet-go 里已经导出**（`engine_params_experimental_options.go:55-66`）却从未被 `naive_client.go` 或 `outbound.go` 调用。它不能消除那条 stray UDP 连接，但能把"代理域名解析"从 DoH 路径上摘出来，缓解 sing-box#4620 的整条出站不可用。需要一次 probe 决定"MAP 规则"还是"等上游提供禁用 DoH 的开关"。
 3. **P3｜H3→H2 自动回退**（`FALLBACK`，中）：可行性已被本机原生实测证明**无需 Native patch**（per-CONNECT header 选择）。但它与现有两套 H3 verdict 语义不同（attempt 有序 vs per-authority），**不应**复制第三套状态机。建议先做 §14 的判定试验，再决定是否施工。
 
-### 1.4 明确不需要改的东西（KEEP）
+### 1.4 建议保持不变的部分（KEEP）
 
 - Go 服务端的 padding framing、H1/H2/H3 接入、ALPN per-transport 隔离、`serveWebOrReject` 的 parse→auth→tunnel 顺序、`:scheme/:path` 拒绝、hijack 缓冲字节保留、H2 flush 错误传播、headroom/MTU 几何、`EarlyCopyBufferGrowth`。
 - 客户端 `trackedNaiveConn`/`NaiveConn` 的 pinning 生命周期、cached-first-payload 几何判定、`IsReservedNaiveHeader` 的双向共用。
 - `transport/http` 的 H3 verdict（attempt 序号 + 窗口 + 退避 + 网络切换 reset）。它是全仓最严谨的一份状态机，**不要**为 Naive 改写它。
 
-### 1.5 本轮的两次自我纠正（写在本页，避免带着错误结论被采纳）
+### 1.5 审计过程中纠正的两项结论
 
-审计过程中我做了第二轮证据核对（直接检出 `klzgrad/forwardproxy@d62c80d3` 与 `SagerNet/naiveproxy@97ae698` 两个参考源码树），推翻了初稿里的两条判断：
+审计过程中进行了第二轮证据核对（直接检出 `klzgrad/forwardproxy@d62c80d3` 与 `SagerNet/naiveproxy@97ae698` 两个参考源码树），推翻了初稿里的两条判断：
 
 | 初稿说法 | 纠正后的事实 | 依据 |
 |---|---|---|
 | "参考服务端 padding 头是 30..62 + HPACK 字符集，我们 30..61 与之不同" | **Caddy forwardproxy（我们的服务端参考）就是 `rand.Intn(32)+30` + Caddy 的 16 字符常量 + `'~'` 填充，与本仓服务端逐字节相同**；30..62 + HPACK 字符集是 naiveproxy **内置**服务端的行为，不是我们的参考 | `forwardproxy.go:308-320` vs `http_proxy_server_socket.cc:41-42,451-462` |
 | "参考对纯 GET 也回 407，我们回 400" | **参考把非 CONNECT 请求交给 `next.ServeHTTP`**（PAC 或后续 handler），自己不给固定状态码；407 只出现在"CONNECT + 认证失败 + 无 probe_resistance" | `forwardproxy.go:252-277` |
 
-这两条都不影响总体结论（服务端仍然 `NO_CHANGE`，P4 仍为 `ARCHIVE`），但它们把两个"看起来像缺陷"的条目降级为"设计差异"，也把 §5.5 的归因从"我们抄错了"改成"我们抄对了 Caddy、但客户端与官方客户端不同"。
+两项纠正不影响总体结论：服务端仍为 `NO_CHANGE`，P4 仍为 `ARCHIVE`。原先疑似缺陷的两项均属于设计差异；§5.5 中，服务端与 Caddy 参考实现一致，但客户端与官方客户端不同。
 
 ---
 

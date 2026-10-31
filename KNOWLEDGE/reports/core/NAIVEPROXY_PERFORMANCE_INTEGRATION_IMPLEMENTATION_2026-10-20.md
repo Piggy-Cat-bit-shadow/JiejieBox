@@ -1,13 +1,13 @@
-# NaiveProxy 性能与架构深度融合：第一轮施工报告
+# NaiveProxy 性能与架构整合：第一轮实施报告
 
 - **日期**：2026-10-20
-- **类型**：实际施工 + 回归 + 提交（非审计）
+- **类型**：功能实施、回归验证与提交记录
 - **输入**：`01_NaiveProxy_性能领先与架构深度融合_完整施工提示词_testing.md`、`NAIVEPROXY_DEEP_AUDIT_2026-10-20.md`
-- **本轮定性**：**施工一轮，已提交并推送**；P1/P3/P7/P9 已实现并验证，P2 因依赖无开关而 `BLOCKED_BY_NATIVE_API`，P8 维持默认（§2）。
+- **结果**：本轮改动已提交并推送。P1、P3、P7、P9 已实现并验证；P2 因依赖缺少相应开关而标记为 `BLOCKED_BY_NATIVE_API`；P8 保持默认值（§2）。
 
 ---
 
-## 1. 现场、SHA 与归属
+## 1. 工作环境、版本与变更归属
 
 | 项 | 值 |
 |---|---|
@@ -23,13 +23,13 @@
 | 服务端 profile | `release/DEFAULT_BUILD_TAGS_OTHERS` |
 | 测试机 | Windows 11 x64，16 逻辑核，loopback |
 
-**并行窗口防护**：本轮每次写入前比对 `git status` / `git rev-parse HEAD`；每次提交都只 stage 自己创建或修改的文件；每次推送前重新 `git fetch` 比对远端（见 §8）。
+**并行工作期间的检查**：每次写入前检查 `git status` 和 `git rev-parse HEAD`；提交时只暂存本轮创建或修改的文件；推送前重新 `git fetch` 并比对远端（见 §8）。
 
 ---
 
 ## 2. 结论摘要
 
-| 项目 | 状态 | 一句话 |
+| 项目 | 状态 | 结果 |
 |---|---|---|
 | **P1 Naive × FailureFacts** | **DONE** | 出站现在会**完成 CONNECT 握手**并把结果映射成 `adapter.FailureFacts`；顺带修复了一个比审计描述更严重的真实缺陷：**407 从来不是错误** |
 | **P9 padding 全零回归** | **DONE** | 256 个 padding 抽样 × 三条生产写路径；变异验证（`WriteZeroN`→`Extend`）确认测试真的会红 |
@@ -44,7 +44,7 @@
 
 ## 3. P1：Naive × 公共故障事实
 
-### 3.1 审计没说透的异步真相
+### 3.1 旧版异步握手的行为
 
 ```
 Outbound.DialContext            -- 旧代码 return client.DialEarly(...)
@@ -55,7 +55,7 @@ Outbound.DialContext            -- 旧代码 return client.DialEarly(...)
   -> copy loop                 -- 第一次 Read 才 waitForHeaders
 ```
 
-**结论**：旧代码里 `NaiveConn.HandshakeContext` **没有任何调用者**。因此：
+**结论**：旧代码没有调用 `NaiveConn.HandshakeContext`，由此产生以下问题：
 - `DialEarly` 的 error 永远不可能携带协议事实（它看不到协议）；
 - 407 不会被识别，客户端看到的是"连接后立刻 EOF"；
 - 在 `Outbound.DialContext` 外面包一层 `WrapFailure(err)` 属于审计里说的"只修到表皮"，甚至更糟——它会把 dial 阶段的错误误标成协议事实。
@@ -70,18 +70,18 @@ Outbound.DialContext            -- 旧代码 return client.DialEarly(...)
 - `naiveResponseStatus`：从依赖的错误文本里取状态码（后缀匹配，外层 `E.Cause` 不影响；非数字/越界返回"不是状态"）。
 
 `protocol/naive/outbound.go`：
-- TCP 路径与 UoT 的 `naiveDialer.DialContext` 都改走 `dialNaiveTunnel`。UoT 会话骑在一个 CONNECT 里，必须在写 session header **之前**知道隧道被拒。
+- TCP 路径与 UoT 的 `naiveDialer.DialContext` 都改走 `dialNaiveTunnel`。UoT 会话通过 CONNECT 隧道传输，因此必须在写入 session header **之前**确认隧道是否被拒绝。
 
-**映射表（故意窄）**
+**故障映射（只覆盖可明确判断的情况）**
 
 | 握手结果 | facts | 理由 |
 |---|---|---|
 | CONNECT 407 | `{Handshake, Proxy}` | 代理拒绝了凭据；绝不能被当成目标或路径问题 |
-| CONNECT 其它状态 | 无 fact | 有东西应答了，403/502 无法区分目标拒绝与代理策略 → unknown 优于猜 |
+| CONNECT 其它状态 | 无 fact | 收到 403 或 502 时，无法区分目标拒绝与代理策略，因此保留为未知 |
 | `NetErrorConnectionRefused` / `NetErrorAddressUnreachable` | `{Handshake, Path}` | 内核级的"端点不可达"，与 group 已信任的 ECONNREFUSED/EHOSTUNREACH 同类 |
 | `NetErrorNameNotResolved` | `{Handshake, Local}` | DNS 策略/配置，属于本进程 |
-| TLS/证书类 | `{Handshake, Proxy}` | 端点跑到了 TLS 并失败 |
-| **QUIC protocol/handshake 失败** | **无 fact（刻意）** | QUIC 失败只证明 UDP 路不通，**不证明节点坏了**；标 Path 会把一个 H2 健康的节点全局降权。这一条正是回退特性存在的理由 |
+| TLS/证书类 | `{Handshake, Proxy}` | 连接已进入 TLS 阶段并失败 |
+| **QUIC protocol/handshake 失败** | **无 fact（刻意）** | QUIC 失败只表明 UDP 路径存在问题，**不能证明节点不可用**；标记为 Path 会使 H2 仍正常的节点被全局降权。这也是需要回退机制的原因 |
 | timeout / reset / EOF / cancel / closed | 无 fact | group 本来就判中性；超时不是"路径永久消失"的证明 |
 
 消费者对齐（无需改 group）：`RetryThisFlow` 对 `Proxy/Handshake` 与 `Path/Handshake` 都是 RETRY；`PenalizeMemberGlobally` 只对 Path 且非超时降权——已有测试 `protocol/group/loadbalance_failure_facts_test.go` 覆盖这两种形状。
