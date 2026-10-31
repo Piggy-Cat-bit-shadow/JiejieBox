@@ -1,4 +1,4 @@
-# 架构收敛后深度 Debug / 对抗审计报告（第二阶段 · 补充）
+# 架构收敛后的深度排查与审计（第二阶段补充）
 
 - **终点 HEAD**：`dbfcca7deb1`（本补充新增 1 个提交，累计 18 个）
 - **工作区**：干净；`testing` 领先 `origin/testing` 18 个提交，未推送
@@ -6,37 +6,37 @@
 
 ---
 
-## 一、把"能解决的全部解决"清到了什么程度
+## 一、原报告待办的处理结果
 
-原报告里有 6 条"未覆盖的 interleaving"与 1 条"测试侧影子模型"。逐条终局：
+原报告列出六项尚未覆盖的并发时序和一项测试侧影子模型问题，本轮处理结果如下：
 
 | 条目 | 终局 | 证据 |
 |---|---|---|
 | #11 Wi-Fi 回调 × 电源 resume **结果**（非仅互斥） | **已写** | `route/reset_outcome_race_test.go`：既接受 2 次也接受 3 次 reset（合并是合法决策），但断言环境指纹等于一次干净发布、网络最终 settled、DNS 重置数 == epoch 推进数 |
 | #2 真实 socket 跨 transition commit | **已写**（上一批） | `common/dialer/transition_during_dial_test.go`：epoch 不动，仅靠"开始状态"拒绝；mutation 已验证 |
 | #14 FakeIP 退役区间 + 进程重启 | **原报告判断错误——早已覆盖** | `e2e/zz_fip_placeholder_escape_test.go` 的 `TestFIPAddressFromADeadProcessDoesNotEscape` 已在本环境**实跑通过**：第二代 Box 用**全新 registry、无 ledger**，只靠缓存文件里的退役记录拒绝，日志行即为拒绝原因；对照组 `198.24.0.200` 正常放行 |
-| #6 unregister 与回调体并发 | **由结构覆盖，不再造测试** | 回调体与 release 共用 `routeAddressSetAccess`，二者互斥；写"并发"测试只会测那把锁。真正的并发窗口需要 race detector，而它是 `BLOCKED_BY_ENVIRONMENT` |
+| #6 unregister 与回调体并发 | **由现有结构保证，未新增测试** | 回调体与 release 共用 `routeAddressSetAccess`，两者互斥。进一步验证并发读写需要 race detector，本轮受环境限制未执行（`BLOCKED_BY_ENVIRONMENT`） |
 | #15 reload 发生在未提交 transition 中 | **不是缺陷** | reload 关闭旧 Box 并新建：新 manager 的 epoch 从 0 起，`EstablishInitialNetworkEnvironment` 首次发布指纹时会**claim 一次 transition**，因此启动期本身是 unsettled 的；旧代未提交的状态随旧 manager 一起消失。`TestTheDevicePauseSurvivesAServiceReload` 已覆盖 reload-while-paused 的一半 |
-| #4 recovery 跨 generation | **已决策并解释** | 代码里没有拒绝路径是设计：`admittedRecoveredCandidates` 在 ownership 过期时 fail-open（过期判决不能否认可拨地址），跨代连接由 hand-over 拒绝。安全半边由 #2 的真实 socket 测试覆盖；不再造一个 pin"机制"的测试，因为把 capture 穿过 recovery 是另一种合法修法，pin 住今天的形状会与之冲突 |
+| #4 recovery 跨 generation | **已决策并解释** | 代码里没有拒绝路径是设计：`admittedRecoveredCandidates` 在 ownership 过期时 fail-open（过期判决不能拒绝可拨地址），跨代连接由 hand-over 拒绝。安全边界由 #2 的真实 socket 测试覆盖；没有增加锁定具体实现方式的测试，因为将 capture 传入 recovery 也是合法的实现方案 |
 | 测试侧影子模型（hit report / benchmarks） | **已修** | `productionDirectOutbound` 现在走 `direct.NewOutbound` 真实构造；三个结构体字面量调用点全部改走构造器（改完后字面量本身会 nil panic，正是它们被找出来的方式）。命中率数字未变（3/6 形状、85% 权重）——因为该拓扑无 ambient 策略且 fixture 机器无判决，这恰恰说明影子模型"在它出错之前都是对的" |
 
 **结论：本轮在该环境中可处理的问题已完成。** 剩余事项包括已经落实到代码或测试中的设计取舍（见原报告 F1/F3），以及受环境限制而未完成的验证（见第四节）。
 
 ---
 
-## 二、极性清单（prompt §八 要求的表格）
+## 二、失败处理策略（任务要求的清单）
 
-`fail-closed` = 不确定时拒绝；`fail-open` = 不确定时放行。**每一个"无意见"分支都必须能说出为什么放行是安全的。**
+`fail-closed` = 不确定时拒绝；`fail-open` = 不确定时放行。**每个不作判断并选择放行的分支，都需要说明放行为何安全。**
 
 | 位置 | 极性 | 理由（也是它的守护测试） |
 |---|---|---|
-| `SocketSemantics` 零值 / 未分类字段 | **closed** | 没人解释过的 profile 不能自称"等价于普通 connect"；`TestUnclassifiedOptionBlocksEverything`、`TestAnUnclassifiedFieldRefusesEvenWhenItIsZero` |
-| `NetworkPolicyBlockers(nil)` | **open** | 没有 manager 就没有 ambient 策略可丢；`TestNoAmbientPolicyStillAllowsTheBypass` |
+| `SocketSemantics` 零值 / 未分类字段 | **closed** | 未分类的 profile 不能视为与普通 connect 等价；`TestUnclassifiedOptionBlocksEverything`、`TestAnUnclassifiedFieldRefusesEvenWhenItIsZero` |
+| `NetworkPolicyBlockers(nil)` | **open** | 没有 manager 时不存在会被遗漏的 ambient 策略；`TestNoAmbientPolicyStillAllowsTheBypass` |
 | `NetworkPolicyBlockers`：`auto_detect_interface` | **open（有意）** | 与平台在单网卡下的选路一致；拒绝会关掉默认配置的 fast path；`TestAutomaticBindingIsDeliberatelyNotABlocker` |
 | bypass：链上无 resolve wrapper | **open** | 此时 userspace 也不应用策略，两侧一致；`TestABypassWithoutAnEffectivePolicyStillWorks` |
 | bypass：无 `LocalFamily` 能力 | **open** | 能力缺失 ≠ 可拨；"无意见"是设计降级；`TestBypassWithoutTheCapabilityIsUnchanged` |
-| bypass：目的地址非法 / 带 zone | **closed** | 平台路径按地址索引，表达不了；`TestLiteralDestinationIsNotResolution` 一族 |
-| bypass：tracker / power report 活动 | **closed** | 静默丢会计不可接受；`TestARunningPowerReportRefusesTheFastPath` |
+| bypass：目的地址非法 / 带 zone | **closed** | 平台路径按地址索引，无法表达此类地址；`TestLiteralDestinationIsNotResolution` 一族 |
+| bypass：tracker / power report 活动 | **closed** | 不能静默丢失统计信息；`TestARunningPowerReportRefusesTheFastPath` |
 | `localFamilyPolicy`：ownership 过期或 unsettled | **open** | 过期判决不能否认候选；由 hand-over 兜底；`TestOldVerdictCannotDenyNewGenerationScheduler` |
 | `localFamilyPolicy`：能力缺失 | **open** | 同 `restrictsNothing`；`TestDialerWithoutACapabilityIsUnchanged` |
 | `ownership`：无 source（manager 什么也不报） | **open** | 区分不成立，检查不适用；`TestCaptureEpochWithNoSourceAtAllStillAbsolves` |
