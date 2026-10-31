@@ -26,8 +26,8 @@ GitHub Actions 的 [run 40535897659](https://github.com/Piggy-Cat-bit-shadow/sin
 审阅时该目录有 55 个 `.go` 文件，其中 51 个不是测试文件，另有 `desktop_service.proto`。
 `daemon/**` 的职责见 `libbox-platform-contract.md`；本模块重点记录两侧的信任边界。
 
-**遇到以下情况时加载本模块：** 改动 `experimental/boxdd/**` 中的任何内容、Windows 服务或安装器路径、
-对端认证、签名者处理，或者在断言 Windows 守护进程验证了什么、没验证什么之前。
+**以下改动需要阅读本模块：** `experimental/boxdd/**`、Windows 服务与安装器、
+对端认证或签名者处理。判断 Windows 守护进程的验证范围时，也应先核对这里的证据。
 
 **证据：** 除非另有标注，每条断言相对于 `v0.1.9` 基线都是 `VERIFIED_SOURCE`。
 下文这些 v0.1.9 断言不带 CI 运行证据；后续运行见上文。本模块没有跑过 Windows 端到端
@@ -37,7 +37,7 @@ GitHub Actions 的 [run 40535897659](https://github.com/Piggy-Cat-bit-shadow/sin
 
 ## 1. 当前设计（Current design）
 
-`sing-box-daemon` 是一个二进制文件，带四个命令（`main.go:17`、`:22`、`cmd_run.go:24`、
+`sing-box-daemon` 是一个二进制文件，提供以下命令（`main.go:17`、`:22`、`cmd_run.go:24`、
 `cmd_service.go:15`、`cmd_worker.go:30`）：
 
 ```text

@@ -15,7 +15,7 @@ Linux、Go 1.25 和 `badlinkname` 构建条件限制的路径。它在返回应�
 
 在 splice 钩子路径上，当前的 `common/ktls/ktls.go` 会排空握手后消息；确切的 pinned sing 修订版 `1729220c46c4` 则转发钩子返回的任何字节并继续 splice，而不是把 nil 错误传给 `E.Cause`。这取代了历史上完整审计中报告为 BUG-002/010 的控制流。这是源码证据，不是一次已执行的 Linux kTLS splice 或 KeyUpdate 互操作测试。
 
-**范围：** 横切。规则分布在 `common/sniff`、`common/bufgeom`、`transport/masque`、`route/conn*.go`、`route/splice.go`、`route/packet_destination_guard.go`、`common/trafficsched/gate.go`，以及 `route/reference.go` 中的退役路径。
+**范围：** 这些规则横跨多个模块，包括 `common/sniff`、`common/bufgeom`、`transport/masque`、`route/conn*.go`、`route/splice.go`、`route/packet_destination_guard.go`、`common/trafficsched/gate.go`，以及 `route/reference.go` 中的退役路径。
 
 **来源：** `common/bufgeom` 由 **fork 创建**。所有权文档以及普查/有界拷贝测试都是 fork 的工作。许多具体规则沿用上游设计，由 fork 新增的测试验证。
 
@@ -60,9 +60,9 @@ B6–B10 的依据包括**地址范围测试**（`quic_ownership_test.go:314-350
 | B12 | 在**自有数据报（owned-datagram）**路径上，所有权**在成功时转移**，因此完全跳过释放 | `transport/masque/session.go:496-500`; `transport/http/client_h3.go:507` | **重复释放 / use-after-free** |
 | B13 | 一次 `PrependContextID` **替换会释放原件**，因此代码必须在尝试替换之前拒绝受影响的块，并原地更新调用方的 slice | `transport/masque/session.go`, `writeOwnedBatchChunk` | 悬垂指针、重复释放，或回退时丢包 |
 | B14 | `writePackets` 中每一条失败路径都**恰好释放仍然拥有的剩余部分** | `transport/masque/session.go:530-533` | 池化缓冲区泄漏 |
-| B15 | **单个**批次永远不走批次路径 | `transport/masque/session.go:472-477` | 一次实测到的回归 |
+| B15 | 批次中**只有一个数据包**时，不走批量发送路径 | `transport/masque/session.go:472-477` | 一次实测到的回归 |
 | B16 | 数据包头空间由**生产者**预留，以便容纳 1 字节的 context ID | `transport/masque/session.go:584-588`; `protocol/masque/client.go:594 FrontHeadroom`; `transport/masque/server.go:428 receivedPacketHeadroom` | 每个数据包都走 B13 的替换路径 |
-| B17 | `matchRule` 的数据包缓冲区属于调用方，必须在**全部五条**错误路径上释放 | `route/route.go:394-400`, `:412`, `:422`, `:426`, `:440`; 注释 `:396-399` 记录了测量结果：**释放 1,817 字节 vs 未释放 18,255 字节** | 一次 16 KiB 的池化分配永远不会被回收 |
+| B17 | `matchRule` 的数据包缓冲区属于调用方，必须在**全部五条**错误路径上释放 | `route/route.go:394-400`, `:412`, `:422`, `:426`, `:440`; 注释 `:396-399` 记录了测量结果：**释放 1,817 字节 vs 未释放 18,255 字节** | 可能导致 16 KiB 的池化缓冲区未及时归还 |
 | B18 | 释放点是显式的，不靠推断：`buf.ReleaseMulti` (`route/route.go:146,156,160,184`)、`N.ReleaseMultiPacketBuffer` (`route/route.go:400,412,422,426,440`; `route/dns.go:44`)、`route/fakeip_conn.go:205`、`protocol/masque/{client,server}.go`、`transport/masque/client.go`、`common/listener/listener_udp.go`、`common/iponly/conn.go`、`common/trafficsched/gate.go:135,353,376`、`transport/device/*`、`transport/wireguard/device_peer_router.go` | 如所引 | 泄漏 |
 | B19 | 重复释放防护存在，必须保留：`route/conn_reclaim.go` (`managedConnState`, `markKernelOwned:114`, `reclaimState:118`, `touch:125`, `countBytes:136`) 与 `route/splice.go` (`spliceSource.takeCached:145`) | 如所引 | 一条 splice 连接的缓存数据包被释放两次 |
 
