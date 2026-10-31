@@ -68,7 +68,7 @@ BASELINE:                  第一轮报告 §5/§7/§10 + 审计报告 §7/§12
 | H17 | 已写应用字节后失败 | **绝不**重试 | 单元：回退发生在 `DialContext` 内，`fakeNaiveConn.writes==0`；真实链路：`route/conn.go` 的 cached 首包在 DialContext 返回后才写 | PASS（结构保证 + 测试） |
 | H18 | Alt-Svc 让非 forced 请求仍走 QUIC | 未见 H2 不得宣称回退成功 | **未测**：本地服务端不发 Alt-Svc；cronet-go#11 已把风险写进 `DialEarlyWithQUIC` 文档 | `NOT_RUN` |
 | H19 | H2 也失败 | 返回真实失败组合，不无限重试 | `TestH3FallbackBothTransportsFail`：返回 H2 的错误；真实链路（无服务端）502 | PASS |
-| H20 | 同 Engine H3→H2→H3 | 无幽灵 broken | **部分**：同 Engine 内 H3 失败→H2 成功已实测；H2→H3 复苏只有单元级（进程级需要可控 UDP 开关） | `PARTIAL` |
+| H20 | 同 Engine H3→H2→H3 | 不会遗留错误的失效状态 | **部分**：同 Engine 内 H3 失败→H2 成功已实测；H2→H3 复苏只有单元级（进程级需要可控 UDP 开关） | `PARTIAL` |
 
 ### 2.2 FailureFacts 与真实消费者（专项 B）
 

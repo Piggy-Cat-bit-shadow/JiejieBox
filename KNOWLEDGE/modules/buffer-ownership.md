@@ -49,7 +49,7 @@ Linux、Go 1.25 和 `badlinkname` 构建条件限制的路径。它在返回应�
 | B9 | 被保留的 `qCryptoFragment.payload` 与**工作副本**互为别名，从不与调用方的数据报；重组缓冲区由 `defer` 释放 | `common/sniff/quic.go:306-307`, `:342-343`, `:477-481` | 保留的分段会在数据报 `Release` 之后仍然存活 |
 | B10 | 头部保护会**原地写入 4 个字节**；`Length` 覆盖不到这些字节的头部会被拒绝 | `common/sniff/quic.go:125-131`, `:186-189` | 向数据报尾部越界写入 |
 
-B6–B10 的依据包括**地址范围测试**（`quic_ownership_test.go:314-350`）、**数据报投毒后的等价性测试**（`:206-281`、`quic_boundary_test.go:427-456`），以及验证 `cap` 上界不随合并尾部增长的测试（`sniff_bounded_copy_internal_test.go:120-156`）。另见 `sniff.md` §2。
+B6–B10 的依据包括**地址范围测试**（`quic_ownership_test.go:314-350`）、**修改原始数据报后的等价性测试**（`:206-281`、`quic_boundary_test.go:427-456`），以及验证 `cap` 上界不随合并尾部增长的测试（`sniff_bounded_copy_internal_test.go:120-156`）。另见 `sniff.md` §2。
 
 ### 1.3 所有权转移与批次（Ownership transfer and batch）
 

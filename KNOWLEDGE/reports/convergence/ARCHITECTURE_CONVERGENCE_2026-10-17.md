@@ -161,7 +161,7 @@ capability 派生必须与 claim 共用同一把锁，拆开只会把同一临�
 策略一致性    TestListenPacketRefusesALiteralTheStrategyExcludes / TestTheUDPArmAppliesTheSamePolicy
 profile       TestAnUnclassifiedFieldRefusesEvenWhenItIsZero / TestTheRuntimeWalkSeesEveryFieldTheCoverageWalkDoes
               TestTheOptionWalkerFollowsEveryKindOfEmbed
-会计          TestARunningPowerReportRefusesTheFastPath / TestThePowerReportRefusalKeepsTheOrderOfReasons
+流量统计      TestARunningPowerReportRefusesTheFastPath / TestThePowerReportRefusalKeepsTheOrderOfReasons
 DNS           TestTheSettledStateIsReadFromTheSnapshotWhenTheGetterIsAbsent
               TestTheLockFreeGetterIsPreferredWhenBothArePresent
 穿链          TestAFamilyVerdictIsReachedThroughAnOutboundHop / TestTheWalkIsBoundedAndSurvivesACycle

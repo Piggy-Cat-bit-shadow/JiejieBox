@@ -6,6 +6,8 @@ JiejieBox 基于 [sing-box](https://github.com/SagerNet/sing-box) 持续开发�
 
 [下载与更新日志](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) · [Android 客户端](https://github.com/Piggy-Cat-bit-shadow/satelite-one) · [配置文档](docs/configuration) · [反馈问题](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/issues)
 
+**配置兼容：** 当前内核的上游基线已包含 sing-box `v1.15.0-alpha.13`；常规配置语法以该版本为参考，原有入站、出站、DNS 和路由配置可按 sing-box 文档编写。具体能力仍受平台、构建标签和上游弃用规则影响；本项目新增的字段需要配套内核。详见[配置参考](docs/configuration)与[扩展配置示例](docs/FORK-CONFIGURATION.md)。
+
 ## 这个项目具体做了什么
 
 JiejieBox 的改动覆盖一条网络流的完整处理过程：从 TUN / 入站收包、DNS 与 FakeIP、协议嗅探、规则匹配和代理组选路，到双栈拨号、加密与传输，再到网络切换后的恢复和资源释放。协议扩展、性能改进和生命周期修复共同维护，相关行为也延伸到配套客户端和底层依赖。
@@ -27,6 +29,12 @@ JiejieBox 的改动覆盖一条网络流的完整处理过程：从 TUN / 入站
 Apple 平台以 `./scripts/publish-apple-beta.sh` 为入口，使用对应提交的已验证 Libbox，再执行客户端归档、签名和 TestFlight 上传；本地需准备 Apple 签名及 App Store Connect 配置。
 
 ## 项目特点
+
+### 统一生命周期与协议复用
+
+协议接入不仅提供握手和传输，还与内核现有的 DNS、拨号、路由、连接管理和资源回收机制配合。例如，Mieru 复用共享的解析与拨号能力；XHTTP、VLESS、AnyTLS 等连接与各自的生命周期管理相衔接，网络变化、休眠恢复和关闭时按各自的资源归属处理。不同协议的处理边界可能不同，具体能力以对应实现为准。
+
+代理链同样纳入这套架构：通过 `detour` 组合多跳出站，配合 selector、URLTest 和负载均衡组进行选路；系统在启动时检查依赖环和部分能力约束，并在拨号时传递适用的地址候选、网络策略和故障信息。这样可以把协议扩展、链式代理和网络恢复放在同一条处理路径中理解和排查。
 
 ### 丰富的协议与传输能力
 

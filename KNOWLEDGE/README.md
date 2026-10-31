@@ -37,6 +37,8 @@
 客户端和依赖子仓库及其独立分支也在维护范围内。如何区分父仓库固定版本与子仓库分支头，
 见 `modules/child-repositories.md` 和 `REFRESH.md` §25A。
 
+配置语法以上游 sing-box `v1.15.0-alpha.13` 为参考：该标签是当前基线的祖先，所记录的上游合并基还包含其后两个提交。配置的实际可用性仍取决于平台、构建标签和上游弃用规则；本项目扩展字段须使用配套内核。首页 [README](../README.md) 概述了统一生命周期、协议复用与链式代理，具体边界见 `modules/core-lifecycle-runtime.md` 和 `modules/path-selection-validation.md`。
+
 当前的增量和局限记录在 [2026-10-31 校准](CALIBRATION-2026-10-31.md)
 和 [全面的第二轮审阅](CALIBRATION-2026-10-31-REVIEW.md) 里。
 

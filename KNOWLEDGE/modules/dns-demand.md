@@ -205,7 +205,7 @@ RFC 2308 指出 `NXDOMAIN` 是关于**名字**的陈述，而精确缓存以完�
   `nxdomainCacheForCapacity` `:94`）：名字缓存不超出配置的 DNS 缓存预算，
   不在预算之外额外加一份。
 * `disable_cache: true` 同时禁用两个缓存（`initializeNXDomainCache` `:103`）。
-* `disable_expire: true` 会**不带生存期**地存储判定，和精确缓存一样，
+* 设置 `disable_expire: true` 时，名字级判定与精确缓存一样不会过期；
   命中时报告 TTL 0，不凭空编造一个值（`:187-189`、`:216-224`）。
 * `Router.ClearCache` 会清除它（`dns/router.go:2186`；客户端清理见 `dns/client.go:1287`），
   `TrimExpiredCaches` 会移除失效判定（`dns/client.go:1268`）。
@@ -408,8 +408,8 @@ cache"（2026-10-09），属于 fork 侧，是发布基线的祖先。
    切换待定期间开始的查询，不能作为稳定结果返回。
 3. **不要移除反向映射的代次检查。** 在旧代次下提交的 FakeIP→domain 映射，
    对已被重新分配的地址来说是错误的域名。
-4. **不要把纪元描述为全局的。** DNS 在协调器代次之外有自己的代次，
-   策略存储也有自己的纪元。
+4. **不要把网络代次描述为全局统一计数器。** DNS 在协调器代次之外有自己的代次，
+   策略存储也有自己的代次。
 5. **不要让 `TrimMemory` 推进 generation**，也不要让 `ReleaseMemory` 停止推进 generation。
 6. **不要让 FakeIP 服务器回答目的地查询**，
    也不要让 `domain_resolver` 指向这样的服务器。
@@ -429,7 +429,7 @@ cache"（2026-10-09），属于 fork 侧，是发布基线的祖先。
     `storeNXDomain` 中的资格守卫是名字级缓存的正确性边界，
     而不是优化细节。
 14. **不要重放已存储的 NXDOMAIN 报文或其原始 TTL。** 针对当前请求重建 ID/问题
-    并报告剩余生存期；重放会回答成不同的 QTYPE。
+    并报告剩余有效期；重放会回答成不同的 QTYPE。
 15. **在“头部为零 / MINIMUM 为正”的情形得到测试之前，不要声称 `rewrite_ttl` 不能提升零负 TTL。**
     源码顺序（`normalizeTTL` 在存储时的 `extractNegativeTTL` 之前）使这种情形仍然悬而未决；
     参见 NXDOMAIN 一节中的后续说明。

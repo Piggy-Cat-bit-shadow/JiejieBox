@@ -169,7 +169,7 @@ Naive 的 `TestH3Fallback` 各用例在 `with_naive_outbound,with_purego` 下通
 |---|---|---|---|---|---|
 | 1.1 | 注册到正在关闭的 Scope 上的清理函数，会在注册它的 goroutine 上同步执行，绝不会被丢弃 | `adapter/lifecycle.go:112-138`；`adapter/lifecycle*_test.go` | VERIFIED_UNIT + VERIFIED_SOURCE | `go test -count=1 ./adapter/...` | Go |
 | 1.2 | `Scope.Close` 不等正在进行的 `Start`，也不并入迟到的清理错误 | `adapter/lifecycle_close_boundary_test.go`（4 个具名测试） | VERIFIED_UNIT | `go test -count=1 -run 'TestScopeClose' ./adapter/` | Go |
-| 1.3 | 纪元单调递增；被取代的租约完不成，也释放不了更新的租约 | `common/runtimecoord/coordinator.go:80-104`, `:282-310`；`coordinator_test.go`, `lease_test.go` | VERIFIED_UNIT | `go test -count=1 ./common/runtimecoord/...` | Go |
+| 1.3 | 网络代次单调递增；被取代的租约不能完成操作，也不能释放较新的租约 | `common/runtimecoord/coordinator.go:80-104`, `:282-310`；`coordinator_test.go`, `lease_test.go` | VERIFIED_UNIT | `go test -count=1 ./common/runtimecoord/...` | Go |
 | 1.4 | 退役遍历覆盖全部四个池（outbound、endpoint、DNS 传输、HTTP 客户端管理器） | `route/reference.go:440-494`；`route/reference_coverage_stress_test.go` | VERIFIED_UNIT | `go test -count=1 ./route/...` | Go |
 | 1.5 | XHTTP 客户端保留 `ReuseSuspect` 能力，HTTP 管理器也仍然可达 | `route/reusable_owner_inventory_test.go` 断言的是具名 owner，不是全局计数 | VERIFIED_UNIT（只有已命名用例的本地结果） | `go test -count=1 -run 'TestTheReusableOwnersTheWalkIsDocumentedToReachKeepTheirCapabilities\|TestTheWalkReachesTheRealHTTPClientManager' ./route/` | Go |
 | 1.6 | 启动/关闭顺序（`EstablishInitialNetworkEnvironment` 最后；governor 先于 scope） | `box.go:1166-1168`, `:1210-1224`；`box_close_test.go` | VERIFIED_SOURCE + VERIFIED_UNIT | `go test -count=1 -tags "$OTHERS" -run TestClose .` | Go + 构建标签 |
@@ -271,7 +271,7 @@ Naive 的 `TestH3Fallback` 各用例在 `with_naive_outbound,with_purego` 下通
 | 9.1 | 复用裁决在级别被释放**之前**发布 | `box_lifecycle_ordering_test.go`，带防止空通过的检查 | VERIFIED_UNIT | `go test -count=1 -tags "$OTHERS" -v -run TestTheReuseVerdict .` | Go + 构建标签 |
 | 9.2 | 休眠边沿在级别被暂停**之前**记录 | 同一文件，`probingAxis` | VERIFIED_UNIT | `-run TestTheSleepEdge` | Go + 构建标签 |
 | 9.3 | 复用档位来自策略，未知休眠时长采用严格裁决 | `common/power` + `box` 测试 | VERIFIED_UNIT | `-run 'TestReuseBandsAreThePolicy\|TestTheBridgeUsesThePolicyBandsAndNothingElse'` | Go + 构建标签 |
-| 9.4 | 可疑档位不排空任何东西 | `route.TestTheSuspectBandDrainsNothing` | VERIFIED_UNIT | `go test -count=1 -run TestTheSuspectBandDrainsNothing ./route/` | Go |
+| 9.4 | 可疑状态下不触发连接池排空或空闲资源清理 | `route.TestTheSuspectBandDrainsNothing` | VERIFIED_UNIT | `go test -count=1 -run TestTheSuspectBandDrainsNothing ./route/` | Go |
 | 9.5 | 裁剪阶梯映射每个级别，未知级别被忽略 | `common/runtimecoord/platform_events.go:152-220` | VERIFIED_SOURCE + VERIFIED_UNIT | `go test -count=1 ./common/runtimecoord/...` | Go |
 | 9.6 | 真实设备上的 Apple 设备轴 | 一次 **iPhone 17 Pro Max / iOS 26.4.2** 运行：锁屏 13 分 13 秒 → 1 个边界 → `13m13.492448s` | **VERIFIED_DEVICE**（仅对该设备） | — | 该设备 |
 | 9.7 | iPad、macOS、其他操作系统构建 | `NOT_RUN` / `SIGNING_OUT_OF_SCOPE` | **UNVERIFIED** | — | — |

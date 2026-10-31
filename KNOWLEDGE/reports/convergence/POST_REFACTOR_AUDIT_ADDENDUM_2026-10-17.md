@@ -45,7 +45,7 @@
 | `DialSerialNetwork`：无并行面 → 串行 fallback | **open** | 唯一"合法缺失"的调用者是 detour，其目的地是对端业务，逐连接网络选项本不适用；`TestAPlainLeafStillDialsThroughTheFailoverGroup` |
 | DNS `networkTransitionStable`：无 source | **open** | 区分不成立；否则所有查询都不缓存；`TestTheSettledStateIsReadFromTheSnapshotWhenTheGetterIsAbsent` 的末段 |
 | DNS 缓存：捕获到的 environment 未知(0) 且当前非 0 | **closed** | 无法归属的答案不入缓存；`finishCacheKey` 一族测试 |
-| DNS：策略纪元守卫（check-then-store） | **closed** | 跨纪元答案不能落到新纪元；`policy_cache_commit_window_test.go` |
+| DNS：策略代次检查（check-then-store） | **closed** | 旧策略下的答案不能写入新策略的缓存；`policy_cache_commit_window_test.go` |
 | `resolveDialer.ListenPacket`：literal 被有效策略排除 | **closed** | 与 stream 一致；`TestAStrictFamilyPolicyIsAppliedOnEveryPath` |
 | `NextLocalDialSurface`：缺规划面 | **closed（构造错误）** | 不降级到窄 helper；`TestASurfaceWithoutThePlanningCapabilityIsAnError` |
 

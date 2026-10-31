@@ -485,7 +485,7 @@ External repositories
 13. **不要假设 `make proto` 可用。** `protogen` 需要一个 `Makefile` 从未安装的 `protoc`。
 14. **把客户端侧主张限定到已检出的客户端 SHA 与实际检查过的文件。** 仅凭
     父项目 gitlink 并不证明客户端构建或设备行为。
-15. **不要忘记 `include/*` 零测试文件。** 注册表与 tombstone 条目是
+15. **不要忘记 `include/*` 零测试文件。** 注册表与已移除类型的占位注册是
     无守卫的；那里的改动只能被一次构建捕获。
 16. **如果你移动了 Apple 固定值，常量必须随之移动。** `clients/apple` 的 gitlink 是
     记录的检出，而 `scripts/ci/check-libbox-abi.sh` 中的 `VERIFIED_APPLE_SHA` 是交叉校验。

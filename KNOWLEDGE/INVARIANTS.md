@@ -120,7 +120,7 @@
 * **原因：** 每条规则之所以存在，都是因为违反它曾产生过真实缺陷。
 * **违反后果：** 被保留的游标读到已回收的池内存；工作副本一旦池化，片段就会活得
   比所有者更久；在拥有所有权的路径上做释放就是**双重释放**。
-* **证明：** 地址范围测试 `quic_ownership_test.go:314-350`；数据报投毒测试
+* **证明：** 地址范围测试 `quic_ownership_test.go:314-350`；修改原始数据报的测试
   `:206-281` 与 `quic_boundary_test.go:427-456`；`cap` 上界
   `sniff_bounded_copy_internal_test.go:120-156`；`route/udp_batch_capability_test.go`。
 * **复检：** `go test -count=1 ./common/sniff/...` 以及

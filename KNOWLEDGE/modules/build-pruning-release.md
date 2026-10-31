@@ -93,17 +93,17 @@ Cronet 前缀；uTLS 不在这份必需列表里。不要将该列表当作
 | ⑥ | `cmd/internal/build_libbox/tag_golden_test.go:43-99` | 冻结的已解析标签字符串，针对 **8 个平台** |
 | ⑦ | `cmd/internal/modlayout/layout.go:54-74` | `SourceRoots`，用于新的顶层目录 |
 | ⑧ | `cmd/internal/{mobilebuildtags,applebuildtags}` + profile 文件 | 如果它受标签门控 |
-| ⑨ | `include/registry.go:180-193` | **移除**一项时保留 tombstone 条目，而不是直接删除 |
+| ⑨ | `include/registry.go:180-193` | 移除类型时保留报错用的占位注册，提供明确的迁移提示 |
 
 `include/registry.go:77-80,111-113` **无条件**调用这些注册表符号，两种极性因此都必须
 定义它们。Endpoint、DNS 传输与服务注册表
 在 `:118+`、`:130+` 与 `:153+` 各自带着自己的列表。
 
-### 有意保留的 tombstone 条目（The deliberate tombstones）
+### 已移除类型的占位注册（Stubs for removed types）
 
 `include/registry.go:180-193`，在 `:80` 与 `:113` 处**最后**调用，所以不会被任何东西遮蔽：
 
-| tombstone 条目 | 消息 | 来源 |
+| 已移除的类型 | 提示消息 | 来源 |
 |---|---|---|
 | ShadowsocksR（inbound + outbound） | *"deprecated and removed in sing-box 1.6.0"*（中文：已在 sing-box 1.6.0 中弃用并移除） | 上游 |
 | `C.TypeWireGuard` + `option.StubOptions` | *"WireGuard outbound is deprecated in sing-box 1.11.0 and removed in sing-box 1.13.0, use WireGuard endpoint instead"*（中文：WireGuard 出站已在 sing-box 1.11.0 中弃用、在 sing-box 1.13.0 中移除，请改用 WireGuard endpoint） | **fork 新增**（在 `e4b7e692` 处不存在） |
@@ -380,7 +380,7 @@ Windows 签名是一道**硬性安装门禁**：`WinVerifyTrustEx` 加上 `secur
 ### AI 注意事项（AI cautions）
 
 1. **不要靠编辑 map 来添加协议。** 没有 map；请改注册表函数。
-2. **不要删掉注册表中的 tombstone 条目。** 它们承载着具体的弃用消息。
+2. **不要删掉注册表中已移除类型的占位注册。** 它们承载着具体的弃用消息。
 3. **在“缺失”与“损坏”必须区分的地方，不要让 stub 把某项能力留成 nil。**
 4. **不要把 `tfogo_checklinkname0` 放回 profile 标签文件。** 它会破坏裸 `go build`。
 5. **不要假设 Darwin 标签文件能为另一个平台选对 profile。**

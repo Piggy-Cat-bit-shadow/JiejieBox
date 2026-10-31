@@ -158,7 +158,7 @@ goroutine 上同步运行。
 **最终行为（Final behaviour）：** TLS 嗅探不做服务器握手；QUIC 用限定到当前包的数据报视图来检视；
 分片循环只在 `ErrNeedMoreData` 时继续，上限 64。
 
-**证据：** 22 个新增测试文件、两个 fuzz 目标、地址范围与数据报投毒（datagram-poisoning）的所有权
+**证据：** 22 个新增测试文件、两个 fuzz 目标、地址范围与修改原始数据报的所有权
 证明。**上限和放弃时释放只有 `VERIFIED_SOURCE`**——没有测试覆盖它们。
 
 ---
