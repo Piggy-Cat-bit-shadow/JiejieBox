@@ -19,10 +19,9 @@
 这取代了历史审计中关于未命名返回值的发现；本次没有执行原生启动期 panic，也没有在
 目标设备上运行，而且清理期间的 panic 是另一种情形。
 
-**范围：** `protocol/naive/*`（入站 + 受 tag 门禁的出站）、`transport/http/*`（本 fork 最大的一处
-单点新增）、`common/httpclient/*`、`route/packet_destination_guard.go`。
+**范围：** `protocol/naive/*`（入站 + 受 tag 门禁的出站）、`transport/http/*`（本 fork 大幅扩展的 HTTP 传输模块）、`common/httpclient/*`、`route/packet_destination_guard.go`。
 
-**溯源：** 上游祖先 `e4b7e692` 的 `protocol/naive` 有 **4 个文件**；到 `a267e99` 时增至 **31 个文件**，涉及 **64 个 fork 提交**。`docs/FORK-DIFF.md` 第 15 行将 Native Naive 描述为 NaiveProxy 服务端入站，支持 UoT、padding、masquerade 和预认证阶段的资源控制。这是 fork 中开发的子系统，不能归为一次简单的依赖升级。
+**溯源：** 上游祖先 `e4b7e692` 的 `protocol/naive` 有 **4 个文件**；到 `a267e99` 时增至 **31 个文件**，涉及 **64 个 fork 提交**。`docs/FORK-DIFF.md` 第 15 行将 Native Naive 描述为 NaiveProxy 服务端入站，支持 UoT、padding、masquerade 和预认证阶段的资源控制。本 fork 在上游基础上对这一子系统做了较多扩展，不能仅归为依赖升级。
 
 `go.mod` 为证书管理引入了 `caddyserver/certmagic` 与 `caddyserver/zerossl`；
 这不意味着 Naive 服务器是用 Caddy 实现的。HTTP 引擎是
@@ -33,7 +32,7 @@
 特有的引擎控制属于客户端契约：`insecure_concurrency` / `insecure_concurrency_single_engine`
 （`option/naive.go:100-118,134`；`protocol/naive/outbound.go:239,256`）选择共享的还是按网络的
 Cronet 引擎，并限制并行的不安全握手数；`quic_congestion_control` / `quic_session_receive_window`
-（`option/naive.go:152-153`）则传给 QUIC 引擎。这些是客户端引擎的旋钮，不是服务端语义。
+（`option/naive.go:152-153`）则传给 QUIC 引擎。这些参数控制客户端引擎，不影响服务端协议语义。
 
 **在改动以下内容时加载本模块：** Naive 入站/出站、HTTP/2 或 HTTP/3 的流控上限、
 `transport/http`、`http_clients`、UoT 数据路径，或 packet-destination guard。
