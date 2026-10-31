@@ -56,11 +56,11 @@ Windows 校准没有启用 `-race`，因此不能算一次竞态检测。
 
 > **Apple 的快照协调只处理 level。它不得伪造 sleep/wake edge，也不得仅凭一次屏幕读取就释放一次暂停。**
 
-`645d96b4` 是那个提交：*"a current-state screen read reconciles the level, it does not start a sleep."*（中文：一次当前状态的屏幕读取只协调 level，不启动一次休眠。）`60681f27` 是它的一对：*"a resume does not end a sleep episode, so it must not spend its boundary."*（中文：一次 resume 不会结束一次休眠时段，因此不得花掉自己的边界。）
+这两条约束分别来自提交 `645d96b4` 和 `60681f27`：读取当前屏幕状态只协调 level，不开启新的休眠时段；resume 本身也不会结束休眠时段，因此不能消耗该时段的复用边界。
 
 ### 为什么显示屏亮起**不算**解锁（Why a display turning **on** is not an unlock）
 
-`box_lifecycle.go` 把 display-on 路由到 `resumed()`，而这个入口目前不发布任何东西；解锁则调用 `woke()` 并释放 level。把 display-on 当成解锁，就会重新造出这次拆分本来要修掉的那个 bug。
+在 `box_lifecycle.go` 中，display-on 进入 `resumed()`，目前不会发布事件；解锁则进入 `woke()`，并释放暂停状态。两者不能混为一谈，否则会重新引入此次拆分所修复的缺陷。
 
 ### `resumed()` 刻意不发布任何东西（`resumed()` deliberately publishes nothing）
 
@@ -68,9 +68,9 @@ Windows 校准没有启用 `-race`，因此不能算一次竞态检测。
 func (l lifecycle) resumed() {}
 ```
 
-`box_lifecycle.go:141`。完整的实测经过在 `:109-137`：一次 **28 m 24 s** 的休眠，伴随 13 次扩展 resume，产出 **13 个锚点和一个 28.29 s 的边界**——测量被 resume 本身毁了。sleep edge 启动测量；复用边界在设备经 `woke()` 变为可用时发布，且在 level 被释放之前。单纯一次扩展 resume，这两件事都不做。
+实现位于 `box_lifecycle.go:141`，实测经过记录在 `:109-137`。在一次 **28 m 24 s** 的休眠中，13 次扩展 resume 产生了 **13 个锚点和一个 28.29 s 的边界**，导致测量结果失真。正确的顺序是：由 sleep edge 启动测量；设备通过 `woke()` 恢复可用时，在释放 level 之前发布复用边界。单独收到扩展 resume 时，两者都不应发生。
 
-**锚点与每时段边界的闩锁（latch）是同一个字段。** 这就是那个结构性原因。后来有人试过用 `IsDevicePaused()` 去门控 sleep edge，结果在十分钟锁屏期间产出**零**个边界——严格劣于它要修复的缺陷。这次尝试随即被回滚（`e20875359` → `e661258a6`，两者都作为 `ARCHIVE-ONLY` 保留）。`docs/fork/p1c-iphone-device-closure.md:289-291` 写明了这一点。
+**锚点和每个休眠时段的边界闩锁（latch）共用同一个字段。** 后续曾尝试用 `IsDevicePaused()` 控制 sleep edge，但在约十分钟的锁屏测试中没有产生任何边界，结果比原缺陷更差。这项修改随后被回滚（`e20875359` → `e661258a6`；两者均标为 `ARCHIVE-ONLY`）。详情见 `docs/fork/p1c-iphone-device-closure.md:289-291`。
 
 ### Apple 睡眠边界的历史设备证据（Historical device evidence for the Apple sleep boundary）
 

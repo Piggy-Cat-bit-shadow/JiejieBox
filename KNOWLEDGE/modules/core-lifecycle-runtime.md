@@ -236,7 +236,7 @@ TLS 记录设定时限，随后把该截止时间清掉；`handshake_target_clea
   `adapter.Referrer`（`:249-302`）；
 * 最后是 `IdleConnectionKeeper` 的决策（`:306-358`）与未被引用传输的重置（`:333-358`）。
 
-### 花掉四轮评审的那条规则（The rule that cost four review passes）
+### 退役遍历必须使用正确的接口（The rule that cost four review passes）
 
 `retireIdleResources()`（`:440-494`）覆盖 outbound、endpoint、DNS 传输**以及 HTTP 客户端
 管理器**。断言的类型是 **`adapter.IdleConnectionReleaser`**，*不是*随附的

@@ -1,4 +1,4 @@
-# Windows 守护进程与守护进程信任边界（Windows daemon and daemon trust boundary）
+# Windows 守护进程及其信任边界（Windows daemon and daemon trust boundary）
 
 ## 基线后复核与运行证据（Post-baseline review and run evidence）(2026-10-28)
 

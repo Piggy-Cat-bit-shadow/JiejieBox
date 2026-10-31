@@ -2,12 +2,13 @@
 
 ## 原始评审之后的本地判定与多地址族错误（Local verdicts and multi-family errors after the original review）
 
-`dns/verdict_marker.go` 给本地规则标上 rcode，不改变它的 rcode 匹配契约。
-`IsLocalVerdict` 检查聚合错误的**每一个叶子**都是本地判定：
-被拦截的地址族与真实失败混在一起时，不得只凭匹配其中一个分支就掩盖那个失败。
-上游 NXDOMAIN 缓存是另一回事：`dns/client_negative.go` 存下带可用 SOA 的合格 NXDOMAIN，
-但不得把 NODATA 或瞬时错误扩大到整个名字。这些是 `VERIFIED_SOURCE`，位于 `011f3fdcd99`；
-本次刷新中本地 DNS 包测试通过，但不是真实设备验证。
+`dns/verdict_marker.go` 为本地规则结果标记 rcode，不改变 rcode 匹配的原有语义。
+`IsLocalVerdict` 要求聚合错误的**每个叶子**都属于本地判定：如果一个地址族被拦截，另一个
+地址族发生真实错误，不能只因为前者匹配就掩盖后者。
+
+上游 NXDOMAIN 缓存是独立机制：`dns/client_negative.go` 只把带可用 SOA 的合格 NXDOMAIN
+作为名称级负缓存，不能把 NODATA 或瞬时错误扩大到整个名称。这些是 `011f3fdcd99` 上的
+`VERIFIED_SOURCE` 结论；本地 DNS 包测试通过，不代表真实设备已经验证。
 
 > 状态：`VERIFIED_SOURCE`（实现、测试与 schema 已在本工作树中、引入这个特性的提交上核实；
 > 见下方 `Provenance`）
@@ -32,14 +33,13 @@ adblock 是本 fork 新增的 DNS rule action。
 不访问 upstream DNS。
 ```
 
-`adblock` 是**零配置、只用于 DNS、终止型**的动作：
+`adblock` 不需要额外参数，只能用于 DNS 规则；一旦匹配，该动作就结束本次规则处理：
 
-- 规则本身已经判定这个名字是广告（`domain`、`domain_suffix`、
-  `domain_keyword`、`domain_regex`、`rule_set`、…）；
-- 动作不会请求上游服务器确认这个判定；
-- 它用 `NXDOMAIN` 加一个带负 TTL 的 SOA 作答，客户端因此可以自行缓存
-  这个判定；
-- 它从不静默丢弃查询，也从不返回 `REFUSED`、`SERVFAIL` 或沉洞地址（sinkhole address）。
+- 域名是否应被拦截由规则条件决定，例如 `domain`、`domain_suffix`、`domain_keyword`、
+  `domain_regex` 或 `rule_set`。
+- 命中后直接返回本地生成的 `NXDOMAIN` 和携带负缓存 TTL 的 SOA，不再查询上游。
+- 客户端可以按响应中的负缓存信息自行缓存结果。
+- 该动作不会静默丢弃查询，也不会返回 `REFUSED`、`SERVFAIL` 或 sinkhole 地址。
 
 主要源码锚点：
 

@@ -8,7 +8,7 @@
 它也不代表 IPv4 是唯一可用路径，更不能证明所有网络上的吞吐都会提高。
 
 对 TCP 与 UoT 的 `DialContext`，AnyTLS 客户端错误会带上 outbound 标签与服务器名，同时保留
-原始成因。这样能看出某个代理报告了远端解析错误，却不会修复那个解析器。`ListenPacket` 直接
+原始错误原因，便于定位是哪个代理的服务器解析失败。`ListenPacket` 直接
 返回 UoT 客户端的结果，不经过这层命名包装。参见
 `common/dialer/server_preference_test.go` 与 `protocol/anytls/proxy_failure_naming_test.go`。
 在本次刷新中，两个包都通过了未加过滤的本地测试；这不是实时代理互通或性能证据。
@@ -18,8 +18,7 @@
 在 `011f3fdcd99` 上为 **VERIFIED_SOURCE**：`protocol/mieru/fallback.go` 把失败归成几类——
 调用方取消、本地生命周期、endpoint、传输、目标与歧义。它在 SDK 扁平化错误链之前保留带类型的
 socket 观测。一次 SOCKS 拒绝只是目标侧证据，绝不能凭它把底层传输标记为不健康。读 SOCKS 响应
-时，裸 TCP EOF 属于歧义情形，UDP 情形则归为传输失败；请检查确切的分支，不要把所有权 EOF
-一视同仁。Mieru 的 inbound 与 outbound 把 close 注册到各自的 scope（`protocol/mieru/inbound.go`、
+时，裸 TCP EOF 属于歧义情形，UDP 情形则归为传输失败；具体判断应以对应分支为准，不能把所有 EOF 一视同仁。Mieru 的 inbound 与 outbound 把 close 注册到各自的 scope（`protocol/mieru/inbound.go`、
 `outbound.go`）；关闭或代次替换不能解释为传输失败。这并不证明对端互通性，也不覆盖每一种失败
 模式；请查阅 fallback 与早期失败测试以了解覆盖范围。
 

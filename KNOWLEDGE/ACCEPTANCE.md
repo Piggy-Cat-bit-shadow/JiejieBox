@@ -15,8 +15,8 @@
 | Apple beta fixture 套件 | 本地 Windows 运行：99 项通过，2 项因 `ditto` 不可用而失败 | 安装/复制断言 BLOCKED_BY_ENVIRONMENT；需在 macOS 上重跑 |
 | v0.1.34 目标 CI | [Verify 40819594893](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40819594893) 在 `0067b03` 处成功 | 运行级 CI 证据；不是设备行为 |
 
-每一行写一条**需求**、这条需求现有的证据、**证据级别**，以及一条**复检它的命令**。没有命令的行不算已验证；
-诚实的写法是 `UNVERIFIED`——下面确实有好几行就是这样。
+验收条目应写明需求、已有证据、证据级别和复查方法。缺少可复查的证据时，应标记为
+`UNVERIFIED`，不能只因为源码中声明了检查就认定它已经通过。
 
 ## 如何阅读本文件（How to read this file）
 

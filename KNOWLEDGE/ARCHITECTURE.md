@@ -33,16 +33,16 @@
 
 ## 4. 启动期校验只报告，不实际走路径（Start-time validation reports without exercising the path）
 
-出站校验在依赖排序**之后**、出站启动**之前**运行。别的 Box 初始化可能已经跑过了。
-它不拨号、不解析、不改变选择、不消耗轮换。物理路径解析器自己不持 dialer 或时钟；
-但仅凭这一点，证明不了每一层外围调用都没有副作用。叶子节点不可知时，它报 `Unknown`
-然后停下，所以只验证了一半的路径不会被当成已验证的路径。现在的
-`common/physicalpath/dryrun.go` 区分致命失败与能力警告：一个存在、但满足不了消费者的
-detour 可以发警告，受影响的流在运行时照样失败；缺失的引用和其他致命类别不能整体降级。
-精确分类见路径选择模块。
+出站校验在依赖排序之后、启动出站之前运行；此时 Box 的其他初始化可能已经执行。
+校验不会拨号、解析 DNS、改变组选择或消耗轮询槽位。遇到无法判断的叶子节点时，它会返回
+`Unknown`，不会把只检查了一部分的路径报告为已验证。
 
-**有两处附带副作用是有文档记载的**（一条弃用日志和一次记忆化的 tag→对象 解析）。
-禁令管的是网络解析、拨号、改变选择和消耗轮换，不管日志，也不管所有内部记忆化。
+`common/physicalpath/dryrun.go` 区分致命错误和能力警告。例如，detour 虽然存在却无法
+满足使用方要求时，可能只产生警告，但相关流量在运行时仍会失败；缺失引用等致命问题不能
+一概降级。具体分类见路径选择模块。
+
+物理路径解析器不持有 dialer 或时钟，但这不能证明所有外围调用都没有副作用。已记录的例外
+包括一条弃用日志和一次带缓存的 tag 到对象解析；它们不涉及网络解析或拨号。
 → `modules/path-selection-validation.md`
 
 ## 5. 平台事实是输入，由核心决定策略（Platform facts are inputs; the core decides policy）
@@ -64,10 +64,11 @@ detour 可以发警告，受影响的流在运行时照样失败；缺失的引�
 
 ## 7. 缓冲区所有权是正确性契约，不是优化面（Buffer ownership is a correctness contract, not an optimisation surface）
 
-借来的游标（cursor）不能超出它所属的那次调用；QUIC 的工作副本刻意不进池；批量发送
-按块算，是全有或全无，而更早被接受的块已经转移了所有权。替换上下文 ID 会
-**释放原始对象**，并且必须拒掉它的块。每条规则都有来由：违反它出过真的 bug —— 包括
-一次被拒绝的批次里，每个包都被悄悄丢掉。
+借用的 cursor 只能在所属调用期间使用；QUIC 的工作副本刻意不放入缓冲池。批量发送按
+chunk 转移所有权：已接受的 chunk 已经交给下游，未接受的部分仍由调用方负责。
+
+替换 context ID 的操作会**释放原始对象**，因此处理受影响的 chunk 时必须遵守对应的拒绝和
+更新规则。这些边界有实际故障记录，例如被拒绝批次中的数据包曾被静默丢弃。
 → `modules/buffer-ownership.md`
 
 ## 8. MTU 是三个量，而不是一个（MTU is three quantities, not one）
@@ -79,10 +80,11 @@ detour 可以发警告，受影响的流在运行时照样失败；缺失的引�
 
 ## 9. 上传调度器需显式开启，未设置时不产生作用（The upload scheduler is opt-in and inert when unset）
 
-`traffic_scheduler` 与 `traffic_class` 是分支独有的键。没有速率时，门禁照样观察每一个
-受管理的字节，全部放行，并且**不启动任何队列、任何锁、任何定时器**。但一个没激活的整形
-门禁，证明不了配置与另一种实现完全兼容，也证明不了端到端行为一致。配了速率时，整形会
-**持续**运行，不只是有争用的时候才跑。
+`traffic_scheduler` 和 `traffic_class` 是本项目扩展的配置项。未配置速率时，调度器仍会
+统计受管理的字节，但直接放行，不启动队列、锁或定时器。这个事实本身不能证明配置与其他
+实现完全兼容，也不能证明端到端行为一致。
+
+配置速率后，流量整形会持续生效，而不是等到发生竞争时才启动。
 → `modules/data-path-optimization.md`
 
 ## 10. Direct Offload 是语义等价，其数据面效果仅在 Linux 上（Direct Offload is semantic equivalence, and its data-plane effect is Linux-only）
@@ -96,10 +98,12 @@ detour 可以发警告，受影响的流在运行时照样失败；缺失的引�
 
 ## 11. 发布溯源是下载并重新校验，且范围有限（Release provenance is download-and-re-verify, and it is scoped）
 
-发布流程会**下载**某个产品工作流为精确提交产出的产物，再重新校验各平台的字节、哈希
-与记录的提交 —— 它不重新构建。这一描述只覆盖历史发布工作流；每个 release 都要
-重新核对当前计划与运行证据。声明不证明执行；一次具体的 Windows 守护进程 CI 运行记在
-`modules/windows-daemon-security.md` 里，它本身证明不了发布产物的流水线。
+历史发布流程会下载产品工作流针对指定提交生成的产物，重新校验产物字节、哈希和提交记录，
+而不是重新构建。这个结论仅适用于当时审阅的工作流；每次发布都应重新核对当前流程和运行
+证据。
+
+工作流声明不代表任务已执行。`modules/windows-daemon-security.md` 记录的一次 Windows
+守护进程 CI 运行，也不能单独证明完整的发布产物流程。
 → `modules/ci-release.md`
 
 ---

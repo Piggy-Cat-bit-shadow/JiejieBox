@@ -2,22 +2,23 @@
 
 ## v0.1.9 之后的 VLESS 加密边界（VLESS encryption boundary after v0.1.9）
 
-**VERIFIED_SOURCE**，测试目标 `011f3fdcd99`：`option/vless.go` 暴露可选的 VLESS
-`encryption`；空值或 `none` 表示关闭。`protocol/vless/outbound.go` 解析并初始化
-客户端加密层，并在 VLESS 使用之前包装一个已拨号的传输。
-`protocol/vless/encryption` 包实现 `mlkem768x25519plus` 客户端握手，
-与 TLS 无关；`client.go` 记录它经 Leadaxe 从 starifly 适配而来，并声明
-服务端/解密那一半并未被采纳。`protocol/vless/encryption.go` 为这个阻塞式握手加上上下文取消保护。
+**VERIFIED_SOURCE，审阅版本 `011f3fdcd99`。** `option/vless.go` 提供可选的 VLESS
+`encryption` 配置；空值或 `none` 表示关闭。`protocol/vless/outbound.go` 负责解析并初始化
+客户端加密层，再用它包装已经建立的传输连接，供 VLESS 使用。
+
+`protocol/vless/encryption` 实现了 `mlkem768x25519plus` 客户端握手，与 TLS 是独立的。
+`client.go` 记录了该实现经 Leadaxe 从 starifly 适配而来，并说明服务端解密部分没有被引入。
+`protocol/vless/encryption.go` 为阻塞式握手增加了 context 取消保护。
 测试包括 `protocol/vless/encryption_test.go`、
 `encryption_guard_test.go`，以及 `encryption` 包的测试。不要仅凭客户端解析或单元测试就推断服务端支持或
 线上互通性；部分 ABI 测试在 `-race` 下被排除。
 
-在 `cb71cf80d72` 处，`dialMode` 与 `normalizeXmux` 仍然实现下文所述的模式以及全有或全无的
-默认值。`CloseIdleConnections` 摘除空闲池条目；`RetireSuspect` 与
-`Close` 摘除所有条目，并推迟关闭仍在使用的那些。复用边界处的重拨仍然
-受已武装的 XMUX 熔断退避约束。选定的默认值、实时流关闭与
-packet-up 批量/尾部测试已在 Windows 上用 Go 1.26.10 通过；这些测试不是实时对端互通或
-性能测量。
+在 `cb71cf80d72`，`dialMode` 和 `normalizeXmux` 仍按下文描述选择模式及成组默认值。
+`CloseIdleConnections` 移除空闲池条目；`RetireSuspect` 和 `Close` 移除全部条目，但会延迟
+关闭仍在使用的连接。复用边界触发的重拨仍受已启用的 XMUX 熔断退避约束。
+
+校准时，部分默认值、活跃流关闭以及 packet-up 批处理和尾部测试在 Windows、Go 1.26.10
+下通过。这些结果不等于与真实对端的互操作测试或性能测量。
 
 > 状态：`VERIFIED_SOURCE`
 >

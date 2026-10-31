@@ -17,17 +17,17 @@ Linux、Go 1.25 和 `badlinkname` 构建条件限制的路径。它在返回应�
 
 **范围：** 横切。规则分布在 `common/sniff`、`common/bufgeom`、`transport/masque`、`route/conn*.go`、`route/splice.go`、`route/packet_destination_guard.go`、`common/trafficsched/gate.go`，以及 `route/reference.go` 中的退役路径。
 
-**来源：** `common/bufgeom` 由 **fork 创建**。所有权文档以及普查/有界拷贝测试都是 fork 的工作。许多单条规则本身来自上游结构，只是由 fork 新增的测试来防守。
+**来源：** `common/bufgeom` 由 **fork 创建**。所有权文档以及普查/有界拷贝测试都是 fork 的工作。许多具体规则沿用上游设计，由 fork 新增的测试验证。
 
-**出现任何零拷贝、分配、缓冲池、批次所有权或 splice 改动之前，先加载本模块。** 本模块的全部目的，就是拦住一次好意的优化。
+**修改零拷贝、内存分配、缓冲池、批次所有权或 splice 路径前，请先阅读本模块。** 这些优化可能改变缓冲区的生命周期，必须同时检查释放责任和失败路径。
 
 ---
 
-## 1. 规则，以及各自被违反时坏在哪里（The rules, each with what breaks）
+## 1. 所有权规则与违反后的风险（The rules, each with what breaks）
 
 ### 1.1 缓冲区获取与几何（Buffer acquisition and geometry）
 
-| # | 规则 | 锚点 | 坏在哪里 |
+| # | 规则 | 锚点 | 违反后的风险 |
 |---|---|---|---|
 | B1 | `buf.NewPacket()` = 从 **12 个 `sync.Pool`** 之一 `Get(UDPBufferSize)`；`MaxPooledBufferSize = 73728` | `common/buf/alloc.go:11,19-36`; `buffer_standard.go:7` | 见 B1a/B1b——失败形态是 **panic**，不是泄漏 |
 | B1a | `Put` 只接受 `cap == MaxPooledBufferSize` **或 [64, 65536] 内的 2 的幂** | `common/buf/alloc.go:89-97` | 受管理、未被引用但容量不可入池的缓冲区，一释放就 panic：`Buffer.Release()` 调用 `common.Must(Put(…))`；nil、非受管理或仍被引用的缓冲区会更早返回 |
@@ -41,7 +41,7 @@ Linux、Go 1.25 和 `badlinkname` 构建条件限制的路径。它在返回应�
 
 ### 1.2 借用视图与保留的内存（Borrowed views and retained memory）
 
-| # | 规则 | 锚点 | 坏在哪里 |
+| # | 规则 | 锚点 | 违反后的风险 |
 |---|---|---|---|
 | B6 | `payloadReader` 游标借用分段，**不得比创建它的 `PeekStream` 调用存活更久** | `common/sniff/sniff.go:88-91` | 保留该游标的嗅探器会观察到已被复用的池缓冲区 |
 | B7 | `takePacketBytes` 返回**调用方数据报内的一个视图**，只在该数据报存活期间有效 | `common/sniff/quic.go:23-35` | 被保留下来的 DCID/PN 采样会读到已被复用的内存 |
@@ -49,11 +49,11 @@ Linux、Go 1.25 和 `badlinkname` 构建条件限制的路径。它在返回应�
 | B9 | 被保留的 `qCryptoFragment.payload` 与**工作副本**互为别名，从不与调用方的数据报；重组缓冲区由 `defer` 释放 | `common/sniff/quic.go:306-307`, `:342-343`, `:477-481` | 保留的分段会在数据报 `Release` 之后仍然存活 |
 | B10 | 头部保护会**原地写入 4 个字节**；`Length` 覆盖不到这些字节的头部会被拒绝 | `common/sniff/quic.go:125-131`, `:186-189` | 向数据报尾部越界写入 |
 
-B6–B10 是证明出来的，不是断言出来的：一个**地址范围**测试（`quic_ownership_test.go:314-350`）、**数据报投毒**等价性测试（`:206-281`、`quic_boundary_test.go:427-456`），以及一个不随合并尾部增长的 `cap` 上界（`sniff_bounded_copy_internal_test.go:120-156`）。参见 `sniff.md` §2。
+B6–B10 的依据包括**地址范围测试**（`quic_ownership_test.go:314-350`）、**数据报投毒后的等价性测试**（`:206-281`、`quic_boundary_test.go:427-456`），以及验证 `cap` 上界不随合并尾部增长的测试（`sniff_bounded_copy_internal_test.go:120-156`）。另见 `sniff.md` §2。
 
 ### 1.3 所有权转移与批次（Ownership transfer and batch）
 
-| # | 规则 | 锚点 | 坏在哪里 |
+| # | 规则 | 锚点 | 违反后的风险 |
 |---|---|---|---|
 | B11 | 每个批次**块（chunk）**都是全有或全无：被接受的前缀已经转移，只有被拒绝的剩余部分留在调用方 | `transport/masque/session.go`, `writeBatchOwned` | 重放一个已被接受的前缀会导致重复发送，或释放已转移的缓冲区 |
 
@@ -70,7 +70,7 @@ B6–B10 是证明出来的，不是断言出来的：一个**地址范围**测�
 
 ### 1.4 生命周期、池与退役（Lifetime, pools and retirement）
 
-| # | 规则 | 锚点 | 坏在哪里 |
+| # | 规则 | 锚点 | 违反后的风险 |
 |---|---|---|---|
 | B20 | `IdleConnectionReleaser` 只能关闭**没有活跃用户流量**的资源，而且这次遍历**永远不能拨号** | `adapter/outbound.go:214-219`; `route/reference.go:420-440` | 一次裁剪会变成重连触发器——这正是内存路径绝不能有的形态（`route/reference.go:394-411`） |
 | B21 | `ReuseSuspect.RetireSuspect()` 在 `CloseIdleConnections` **之前**运行；一个只丢弃空闲连接的池会退回旧行为 | `route/reference.go:496-511`, `:547-556` | 新流会附着到一个无人信任的会话上 |
@@ -90,7 +90,7 @@ B6–B10 是证明出来的，不是断言出来的：一个**地址范围**测�
 * 在 pinned `sing` 修订版 `1729220c46c4` 中，`common/bufio/splice_linux.go` 在 `splicePipe2` 失败时返回 `handed=false`，只在管道存在之后才置 `handed=true`。`splice_actual_linux_test.go` 包含一个强制失败的回归测试。这一点已在该 pin 上通过源码验证；本次 Windows 刷新没有执行 Linux 运行。
 * splice 计数器衡量的是**接受**，而不是一次内核 splice（`c02d7cc8e` 把它们重命名为 `spliceReasonHandoverAccepted` / `Accepted` / `AcceptanceRatio()`）；另有一个源码级测试禁止旧的 `Successes` / `successes=` / `"splice success"` / `"splice ratio"` 名称。
 
-有两个事实决定内核 splice 究竟能否介入；每一条都经过检查，不是假定：
+决定内核 splice 能否介入的条件包括调用顺序、接口契约和失败后的回退行为：
 
 * **先尝试 `copyDirect`，再尝试 `copyExtended`。** `CopyWithCounters` 先调用 `copyDirect`，只有它返回 `handed == false` 时才回退，因此任一端的读等待者都不会抢占系统调用路径。
 * **`ktls.Conn` 是 `SyscallReader`/`SyscallWriter` 的唯一实现者**；该接口把 `SyscallConnForRead()` 与 `HandleSyscallReadError(err)` 耦合在**同一份**契约里。因此，一个类型无法只交出裸 fd，却不说明如何处理在它之上到达的非应用数据记录。这个接口没有部分实现的表达方式。
@@ -105,7 +105,7 @@ B6–B10 是证明出来的，不是断言出来的：一个**地址范围**测�
 | `ktls_read_wait.go:35` | `Input.Len() == 0 && Input.Len() > 0` —— 不可满足 | close-notify 清理从未运行，于是一次读取返回 `(n, nil)`，而不是 `(n, EOF)` |
 | `ktls_read_wait.go:22-27` | `readRecord` 之后没有做 `Hand` 排空 | 一次 TLS 1.3 KeyUpdate 从未被应用，于是内核保留旧的 RX 密钥，而对端已经前进 |
 
-**根本原因是缺少这次比较，而不是那两个笔误中的任何一个。** `Conn.Read` 与 `Conn.WaitReadBuffer` 是同一份契约的两个实现。历史审计建议做一次共享的记录序列比较；该包现在包含 `ktls_read_wait_test.go`，所以过去“零测试”的说法已经过期。测试存在本身并不能证明每种记录序列行为都相同；本次 Windows 刷新没有执行 Linux/带标签的运行时比较。
+`Conn.Read` 与 `Conn.WaitReadBuffer` 实现同一份契约，需要对照检查两条路径处理记录序列的行为。历史审计指出了缺少这种比较的问题；该包现在已有 `ktls_read_wait_test.go`，过去“零测试”的说法已经过期。但测试文件的存在不等于所有记录序列都已验证，本次 Windows 刷新也没有执行需要 Linux 和构建标签的运行时比较。
 
 ---
 

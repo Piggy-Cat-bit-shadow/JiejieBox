@@ -205,15 +205,13 @@ Fast Path 授权**按流**解析。它不存储在节点上，也不跨流共享
 节点A   <-  "🌍 普通国外流量"  group with no fast_path
 ```
 
-两条流分别独立评估；取决于各自的叶与链，它们可能得到相同的答案。授权属于该条流的链，不会永久属于某个节点。
-
-正是这一属性让该特性保持为策略而不是模式：没有它，一次选择就会永久改变系统对待某个节点的方式。
+两条流会根据各自经过的组链和最终出站分别评估，结果可能相同，也可能不同。授权只属于当前流，不会写回节点，也不会影响以后经过该节点的其他流。
 
 ---
 
 ## 8. 嵌套组：优先级（Nested groups: precedence）
 
-当组嵌套时，链会**从最外层组向内、朝向叶**扫描，且**第一个显式的 `fast_path` 说了算**。
+组嵌套时，解析从最外层向最终出站依次进行，**第一个显式设置的 `fast_path` 决定结果**。
 
 ```text
 outer group        fast_path: false   <-- decided here; inner values not consulted
@@ -223,10 +221,10 @@ outer group        fast_path: false   <-- decided here; inner values not consult
 
 三个推论：
 
-1. 第一个显式值胜出；链中后续的值不再查询。
-2. **`fast_path: false` 是一个显式决定**，因此它终止扫描并覆盖内在授予。
-3. 没有任何显式策略时，一条指向真实 direct 叶的全透明链会获得内在授予；其他链没有。先前的
-   AI-tag 回退已经移除（`c78edf21084`）；标签不作授权。
+1. 找到第一个显式值后，不再检查链中后续的设置。
+2. **`fast_path: false` 是显式禁止**：它会终止扫描，并覆盖默认授权。
+3. 全链均未显式设置时，只有最终到达真实 direct 出站的全透明链会获得默认授权。此前的
+   AI-tag 回退已移除（`c78edf21084`），标签本身不提供授权。
 
 ---
 
@@ -264,7 +262,7 @@ fast_path   decides whether the flow, having been selected, may ATTEMPT a Direct
 
 ## 11. 该行为在哪里被固定（Where the behaviour is pinned）
 
-这些测试让上述陈述可以被检查，而不只是愿望：
+以下测试覆盖了上述配置与策略行为：
 
 | 属性 | 测试 |
 |---|---|

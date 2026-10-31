@@ -2,12 +2,13 @@
 
 ## 2026-10-31 目标下的依赖固定（Dependency pins at the 2026-10-31 target）
 
-根 `go.mod` 与 `test/go.mod` 都把 `sing-tun` 替换为 fork 修订 `8b9a38008705`，把
-`metacubex/utls` 替换为 fork 修订 `b63a2e9a7b1e`。`release/JIEJIE_VERSION` 与源码锁
-记录 `0.1.34`；[v0.1.34](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.34)
-是经过独立验证的已发布版本，标签剥离（peel）到 `0067b03e377`。
-源码冻结清单、受控的原生 Cronet 策略以及仪表盘上报，见
-`ci-release.md`。锁与 gitlink 本身不能证明产物内容。
+根模块 `go.mod` 和 `test/go.mod` 均将 `sing-tun` 替换为 fork 版本 `8b9a38008705`，
+将 `metacubex/utls` 替换为 fork 版本 `b63a2e9a7b1e`。`release/JIEJIE_VERSION` 与源码
+锁文件记录的版本均为 `0.1.34`。[v0.1.34](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.34)
+是已发布版本，其附注标签指向提交 `0067b03e377`。
+
+源码冻结、受控 Cronet 原生模块及 Dashboard pin 的检查方式见 `ci-release.md`。
+锁文件和 gitlink 记录的是源码版本，不能单独证明构建产物的实际内容。
 
 ## 测试目标下的协议注册与构建门禁（Protocol registration and build gates at the testing target）
 
@@ -20,15 +21,14 @@ MASQUE 是一个 endpoint。`include/quic.go` 在 `with_quic` 下注册 Hysteria
 读当前的 profile 与 stub 文件：只有注册或 option 类型，并不能证明分发的二进制里有这个实现，
 也不能证明互操作。
 
-出站注册表还包含 `bridge`：它靠一个平台后端实现 L3 流转发，
-不走普通的 `DialContext` 或 `ListenPacket`（两者都返回错误）。它的
-预匹配会拒绝本地目标；平台后端与不支持平台的 stub 都在
-`protocol/bridge`。Linux 后端会读取出口接口的 MTU，但这并不是整条
-路径 MTU 的证明。OpenVPN 客户端/服务器与 OpenConnect endpoint 及其 DNS 传输分别通过
-`with_openvpn` 与 `with_openconnect` 注册；相反极性的 stub 返回一个
-可行动的构建错误。它们出现在注册表里，并不证明某个具体 profile 就包含
-它们。端点自有的 DNS 解析器退役在 `core-lifecycle-runtime.md` 里讨论。这些
-都是源码边界，不是实时 VPN 或 bridge 互操作证据。
+出站注册表还包含 `bridge`。它通过平台后端转发 L3 流量，不走普通的 `DialContext` 或
+`ListenPacket`；这两个方法会返回错误。预匹配会拒绝本地目标，平台后端和不支持的平台 stub
+均位于 `protocol/bridge`。Linux 后端会读取出口接口 MTU，但接口 MTU 不能代表整条路径的 MTU。
+
+OpenVPN 客户端、服务器以及 OpenConnect endpoint 和 DNS 传输分别受 `with_openvpn`、
+`with_openconnect` 构建标签控制；未启用时由相应 stub 返回构建错误。注册表中存在某项协议，
+不代表所有构建配置都包含它。端点私有 DNS 解析器的退役机制见 `core-lifecycle-runtime.md`；
+上述源码检查不能证明真实 VPN 或 bridge 的互操作性。
 
 ### TLS 引擎与 ECH 重试（TLS engines and ECH retry）
 
