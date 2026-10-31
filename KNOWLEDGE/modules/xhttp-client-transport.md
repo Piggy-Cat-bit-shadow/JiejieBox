@@ -145,13 +145,7 @@ transport.type      = xhttp
 }
 ```
 
-对于订阅/配置转换，可以遵循这样一条默认原则：
-
-```text
-preserve explicitly configured source fields;
-do not invent advanced XHTTP tuning;
-let omitted fields use the implementation defaults.
-```
+转换订阅或配置时，应保留来源中明确设置的字段；不要自行添加高级 XHTTP 调优参数，未设置的字段使用实现默认值。
 
 ---
 
@@ -166,13 +160,7 @@ let omitted fields use the implementation defaults.
 | `stream-up` | 一条流式 POST 上传 + 一条独立的 GET 下载流 |
 | `stream-one` | 一条双向 HTTP 流；请求体上传，响应体下载 |
 
-如果省略 `mode`，默认值为：
-
-```text
-auto
-```
-
-未知的模式值会被拒绝。
+省略 `mode` 时默认使用 `auto`；未知值会被拒绝。
 
 ### 4.1 `auto`（自动模式）
 

@@ -475,40 +475,12 @@ BUILD-INFO-LIBBOX.txt`）与按目标的各行并列（`:1381`），`die` 移到
 
 ### Apple 源码权威 —— 在此基线上被反转（The Apple source authority — INVERTED at this baseline）
 
-**本模块早先的修订写了与事实相反的内容，所以请把这里读作一次更正，
-而不是一次新增。** 它说 refs 文件*"declares the `clients/apple` gitlink as the sole
-authority"*（中文：把该 gitlink 声明为唯一权威），而且这个 refs 文件*"forbidden from recording a SHA"*
-（中文：被禁止记录 SHA）。那是更旧的模型。
-`release/apple-client-refs.env` 现在自己的说法是：
+本模块早期曾将 `clients/apple` gitlink 描述为构建的唯一权威，并称 refs 文件不得记录 SHA。该描述对应旧模型，不适用于此处审阅的工作流。
 
-> *"the authority is the client repository: its tip is resolved to an exact SHA at the start of a"*
-> build —— `apple-client-refs.env:31`
+`release/apple-client-refs.env:31,42-45` 和 `client-apple.yml:268` 说明了新的选择方式：构建开始时从 Apple 客户端仓库解析出一个确定的 SHA，再以该解析结果校验检出。父仓库中的 gitlink 仍用于本地默认检出，但已发布构建不再默认要求与它相等；设置 `APPLE_CLIENT_REQUIRE_GITLINK=1` 可恢复强制相等检查。
 
-（中文：权威是客户端仓库：构建开始时把它的顶端解析成一个确切的 SHA。）
-
-以及
-
-> *"The submodule and its gitlink still exist and still work: the local default checkout, the … [gitlink
-> is no longer the] authority, and a published build is no longer asserted to equal the gitlink — that
-> assertion is precisely what made the pin manual. Set `APPLE_CLIENT_REQUIRE_GITLINK=1` to get [the hard
-> equality back]"* —— `apple-client-refs.env:42-45`
-
-（中文：子模块及其 gitlink 还在，也仍然可用：本地默认检出，……[gitlink 已不再是]权威，已发布的
-构建也不再被断言等于该 gitlink —— 正是这条断言让固定变成手工操作。要恢复[硬性相等]，
-请设置该环境变量。）
-
-**为什么反转。** 在 gitlink 权威模型下，每次客户端发布都是
-**双仓库操作**：构建只能镜像别人已经手工提升的子模块，因此每个客户端提交都要在这里
-再有一次提交和一次推送。工作流直白地写明了替代模型：
-
-> *"The AUTHORITY is the Apple client repository, not this repository's gitlink, so this gate compares
-> the checkout against the RESOLVED source rather than against the gitlink. Requiring the gitlink made
-> every client release a two-repository operation."* —— `client-apple.yml:268`
-
-（中文：权威是 Apple 客户端仓库，不是本仓库的 gitlink，因此门禁比较的是检出
-与已解析的源码，而不是检出与 gitlink。要求 gitlink，曾让每次客户端发布都成为双仓库操作。）
-
-**现在的两个权威：**
+这一调整减少了双仓库手动同步：在旧模型中，每个客户端版本都要先推进父仓库 gitlink；新模型允许工作流在构建时解析客户端来源。具体发布仍需遵守当前冻结和精确 SHA 的要求。
+**构建来源与 gitlink 的职责：**
 
 | | 权威 | 如何使用 |
 |---|---|---|
