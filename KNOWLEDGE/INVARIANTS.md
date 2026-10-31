@@ -22,13 +22,12 @@
 每条都写清：规则本身、它为什么必须成立、违反后会怎样、由哪个提交或测试证明，以及
 怎么复检。
 
-### A1 — 作用域持有的清理逆序排空；迟到的清理在注册它的 goroutine 上运行（Scope-owned cleanups drain in reverse; late cleanup runs on the registering goroutine）
+### A1 — 作用域按注册逆序清理；关闭后的注册同步执行（Scope-owned cleanups drain in reverse; late cleanup runs on the registering goroutine）
 
-`Scope.Close` 会排空自己注册的函数，包括 `Scope.Start` 创建的子作用域；
-close 返回之后再注册的清理，会**在调用方的 goroutine 上同步运行**；`Close`
-**不会**等待还在进行中的 `Start`。清理函数一旦 panic，排空会中断，
-随后一次直接的 Scope close 可能卡在等待状态；`Box.Close` 会 recover 并记一个错误，
-而不是把清理做完。
+`Scope.Close` 按注册的相反顺序执行清理函数，包括 `Scope.Start` 创建的子作用域。
+关闭开始后注册的清理会**在调用方的 goroutine 中同步执行**；`Close` **不会**等待
+正在进行的 `Start`。如果清理函数 panic，后续清理会中断，之后直接调用 Scope 的
+`Close` 可能一直等待。`Box.Close` 会捕获并记录错误，但不会继续执行中断的清理。
 
 * **原因：** 每个由作用域持有的资源都需要由实际所有者负责清理。其他所有者也可能关闭同一资源，因此仅凭某处没有直接调用 `scope.Add`，不能断言发生了泄漏。将迟到的清理改为异步，还会改变资源释放时机。
 * **违反后果：** 已清理的 `*Inbound` 可能仍有 observer，或监听器在作用域排空之后才完成绑定。
