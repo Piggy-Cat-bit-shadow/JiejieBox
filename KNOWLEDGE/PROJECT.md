@@ -23,7 +23,7 @@
 作为独立类别相加。这组历史数据说明项目投入了较多测试和验证工作，但不能替代对具体改动的
 源码审查。
 
-## 它增加了什么——承重的增量（What it adds — the load-bearing deltas）
+## 主要改造（What it adds — the load-bearing deltas）
 
 | 领域 | 本分支做了什么 | 模块 |
 |---|---|---|
@@ -37,7 +37,7 @@
 | **HTTP 传输** | `transport/http` 是本分支最大的一项新增：`0067b03` 时有 97 个 `.go` 文件和 149 个提交（`a267e99` 时是 90 个文件 / 137 个提交） | `naive-http-transport.md` |
 | **负载均衡组 + 有界故障转移** | 分支独有的 `type: loadbalance`；故障转移要显式开启，**整个流跨嵌套只共享一份重试预算** | `data-path-optimization.md`, `path-selection-validation.md` |
 | **缓冲区几何** | `common/bufgeom`：可池化与分配上限规则，附带一个 `//go:build race` 拆分 | `mtu-and-geometry.md`, `buffer-ownership.md` |
-| **产品管线** | Apple 单一来源 pin + 品牌与身份拆分；Android AAR/ABI；Windows 核心产物；一个失败即拒绝的发布验收门禁，它重新校验字节而不是重新构建 | `libbox-platform-contract.md`, `build-pruning-release.md`, `ci-release.md` |
+| **产品管线** | Apple 客户端固定版本及品牌与身份拆分；Android AAR/ABI；Windows 核心产物。发布路径会核验已有产物；独立的严格验收检查器是否接入发布路径，须按 `ci-release.md` 区分 | `libbox-platform-contract.md`, `build-pruning-release.md`, `ci-release.md` |
 
 本分支创建的包（已验证其在上游祖先 `e4b7e692` 处不存在）：`common/physicalpath`、
 `common/routeflow`、`common/runtimecoord`、`common/power`、`common/trafficsched`、`common/trafficclass`、
@@ -69,8 +69,7 @@
 | `experimental/libbox.DeprecatedNote.Message()` / `MessageWithLink()` | 返回 `string` | 返回 `*StringBox` | `eef6bafff` | 裸 `string` 会把 Go 指针塞进 gomobile 的打包结果帧 → `fatal error: bulkBarrierPreWrite: unaligned arguments`，而且无法恢复。记录在 `docs/fork/libbox-abi-contract.tsv`。 |
 | `adapter.NewAdapterWithDialerOptions` | `(…)` | `(…, serverIsDomain ...bool)` | `ff0040079` | 服务器是不是域名这个事实，必须传到 adapter |
 
-> 别以为上游 libbox 可以直接替换（drop-in replacement）。这组历史配对不是后续 API 变更的
-> 完整清单；比如平台接口的 `UseProcFS` 方法后来就被移除了。改目标时，先看当前接口和客户端绑定。
+> 不要假设上游 libbox 可以直接替换本项目的版本。上述历史对照并未列出后续全部 API 变更，例如平台接口的 `UseProcFS` 后来已移除。更换目标版本前，应核对当前接口及客户端绑定。
 
 ## 历史来源普查（Historical provenance census）
 

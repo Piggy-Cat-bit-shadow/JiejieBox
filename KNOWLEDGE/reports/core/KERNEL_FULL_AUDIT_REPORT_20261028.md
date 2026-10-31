@@ -53,7 +53,7 @@
 | 生产 Go 文件变化 | **254 个非测试 `.go` 文件**，`+24820 / -3120`（子审查实测） |
 | 本次依赖审计 Pin | 见 §13；6 个核心 Fork 与 31 个 cronet-go 模块 Pin 均已核对 |
 
-**知识库不是 HEAD。** `KNOWLEDGE/BASELINE.md` 明确写着“baseline IS HEAD”，但当前真实 HEAD 比它多 783 个提交、254 个生产 Go 文件。所有旧模块的行号、行为结论、修复状态都不能直接当作当前事实；本报告以当前源码和当前 Pin 为准。
+**审计时的知识库基线落后于 HEAD。** 当时 `KNOWLEDGE/BASELINE.md` 写有“baseline IS HEAD”，而实际 HEAD 在该基线之后已有 783 个提交、254 个生产 Go 文件发生变化。旧模块的行号、行为和修复状态不能直接视为该审计版本的事实；本报告按当时源码和固定依赖版本核对。
 
 ### 1.2 完成度与覆盖
 
@@ -68,7 +68,7 @@
 |---|---:|---|
 | P0 | 0 | 未发现可可靠触发的系统性数据破坏/核心安全崩溃 |
 | P1 | 2 | 普通 TUN DNS 绕过；Linux kTLS splice panic |
-| P2 | 10 | 崩溃竞态、安全 Pin 失效、QUIC 所有权泄漏、组候选丢失、活跃停滞、入口家族锁存、销毁后投递、KeyUpdate 缺失、ECH 静默失效、Cronet Start 假成功 |
+| P2 | 10 | 崩溃竞态、安全 Pin 失效、QUIC 所有权泄漏、组候选丢失、活跃停滞、入口地址族锁存、销毁后投递、KeyUpdate 缺失、ECH 静默失效、Cronet Start 假成功 |
 | P3 | 3 | TUIC/MASQUE 证明上限未传播、Box.Close panic 后假成功、规则集刷新无超时 |
 
 **置信度：** `CONFIRMED` 1（活跃停滞，有现有单测断言）；`HIGH_CONFIDENCE` 14（源码可构造，缺设备/运行时执行）；`POSSIBLE` 0。  
@@ -905,7 +905,7 @@ downstream(kernel socket inbound) <- kTLS outbound (source)
    - 回归测试 `fragmented_quic_known_domain_test.go` 使用真实 FakeIP 形态、断言只读一次、首字节重放。
    - **未发现新回归。**
 
-2. **IPv4-mapped AsIS 家族分类**：
+2. **IPv4-mapped AsIS 地址族分类**：
    - `dual_stack_parallel_network.go` 的两个 `candidates[0].Is6()` 已改为 `classifyAddress(candidates[0]) == familyIPv6`。
    - `dual_stack_mapped_asis_test.go` 覆盖 TCP/UDP，修复前红、修复后绿。
    - **未发现新回归。**
@@ -1004,7 +1004,7 @@ go test ./route -run 'TestCachedDrain|TestNetworkEntryPoint|TestAsIS' -count=1 -
 | `sing` splice `Pipe2` 失败被报告为 handed=true | **已修复**；`splice_linux.go:44-50` 返回 false；有回归测试 | 不报告为现存 Bug |
 | kTLS WaitReadBuffer 数据后 EOF/错误丢弃 | **已修复**；`pendingReadErr`；有 Linux 测试 | 不报告为现存 Bug；但 splice 路径仍有 BUG-002/010 |
 | FakeIP 已知域名 + 分片 QUIC 嗅探绕过 | **已修复**；两个循环 + 测试 | 不报告为现存 Bug |
-| IPv4-mapped AsIS 家族错误 | **已修复**；`classifyAddress`；测试 | 不报告为现存 Bug |
+| IPv4-mapped AsIS 地址族错误 | **已修复**；`classifyAddress`；测试 | 不报告为现存 Bug |
 | macOS sleep/wake 去重旧时间窗口 | 已删除/修复 | 不重复报告 |
 | RULE_SET 字段竞态 | 已修字段访问；**但 post-close 投递仍在** | 只报告 BUG-009 的当前残余 |
 | `systemd-resolved` goroutine 泄漏 | 已修（知识库 acceptance 旧文仍说未修） | 不报告；记录知识库过期 |

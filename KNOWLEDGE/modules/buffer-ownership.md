@@ -78,7 +78,7 @@ B6–B10 的依据包括**地址范围测试**（`quic_ownership_test.go:314-350
 | B23 | `route/reusable_owner_inventory_test.go` 检查具名可复用所有者的能力，包括 XHTTP | 如所引 | 削弱或移除某个具名所有者的退役能力，可能静默绕过该遍历 |
 | B24 | 作用域清理从不在持有作用域锁时运行 | `adapter/lifecycle.go:124-125`, `:133-134` | 重入死锁 |
 | B25 | `RebindLease.Complete()` **总是取消**，即使对一个已被取代的租约也是如此 | `common/runtimecoord/coordinator.go:307-309` | 一个 cancel func 会一直注册在活动父级上 |
-| B26 | 池内省是 pinned 工具链 `sync.Pool` 布局的 **badlinkname** 镜像，并带一个在布局变化时大声失败的大小断言 | `experimental/libbox/internal/runtimeinfo/pool_badlinkname.go:14,44-47` | 会静默误读池内部结构 |
+| B26 | 池内省通过 **badlinkname** 镜像固定工具链的 `sync.Pool` 布局；大小断言会在布局变化时明确报错 | `experimental/libbox/internal/runtimeinfo/pool_badlinkname.go:14,44-47` | 会静默误读池内部结构 |
 
 ---
 
@@ -156,7 +156,7 @@ B6–B10 的依据包括**地址范围测试**（`quic_ownership_test.go:314-350
 7. **不要改自有数据报的释放语义。** 所有权已经转移；在那里再释放一次就是双重释放。
 8. **不要在原地“修复”一次 `PrependContextID` 替换。**
 9. **不要移除生产者侧的头空间预留。**
-10. **不要为了“避免” `io.ErrShortBuffer` 而提高嗅探缓冲区大小。** 那个错误本身就是那个上界。
+10. **不要为了消除 `io.ErrShortBuffer` 而扩大嗅探缓冲区。** 该错误用于表示已达到读取上限。
 11. **不要在只实现了 `IdleConnectionReleaser` 的地方断言 `IdleConnectionKeeper`。**
 12. **对任何新增的 `ReuseSuspect` 所有者，都要对照退役遍历及其测试做审查。**
 13. **不要让一次裁剪拨号、唤醒被挂起的工作、重置网络或终止活跃的流。**

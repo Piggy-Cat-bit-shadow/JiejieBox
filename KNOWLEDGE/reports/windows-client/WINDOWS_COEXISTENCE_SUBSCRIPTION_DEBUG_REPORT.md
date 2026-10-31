@@ -2,8 +2,9 @@
 
 指引来源：`C:\Users\Jie\Desktop\配置文件\02_WINDOWS_COEXISTENCE_AND_SUBSCRIPTION_DEBUG.md`
 
-**结论**：发现并修复 **1 个 BLOCKER**（升级路径遗留官方同名 service）、**1 个 HIGH**（uninstall 回落路径指向官方 AppData）、**2 个 MEDIUM**（body 保留规则与老库升级无测试）。第 61 节的 13 条 blocker 标准**全部不成立**。第 7–22、23–44 节逐项已过。第 59 节安全 checklist 全 **YES**。
-唯一 NOT RUN 仍是"产出安装包 + 真机双安装"，原因与第一阶段相同（本机无 Electron 二进制、无网络），但本轮把 installer 脚本的**编译**验证与老库升级的**运行**验证都补上了。
+**结论：** 本轮发现并修复 1 个 BLOCKER（升级后遗留官方同名 service）、1 个 HIGH（卸载回退路径指向官方 AppData）和 2 个 MEDIUM（缺少 body 保留规则及旧库升级测试）。第 61 节列出的 13 条 blocker 标准均未触发，第 7–44 节已逐项检查，第 59 节安全检查项均为 **YES**。
+
+安装包构建和真机双安装仍为 **NOT RUN**：当时主机缺少 Electron 二进制且无法联网。本轮补充了安装器脚本编译验证和旧库升级运行验证，但二者不能替代真机双安装验收。
 
 ---
 

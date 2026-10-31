@@ -42,18 +42,15 @@
 
 ## 阅读顺序（Reading order）
 
-```text
-1. BASELINE.md            what SHA this describes, and how to compute the delta since
-2. INDEX.md               route first: task / keyword / source path -> exact module section
-3. PROJECT.md             what the fork is and what it deliberately did not change
-4. ARCHITECTURE.md        the eleven boundaries worth preserving
-5. modules/README.md      the module registry and ownership map
-6. the 1-2 modules your task touches
-7. INVARIANTS.md          when you are about to change something that looks load-bearing
-8. ACCEPTANCE.md          the requirement -> evidence -> re-check index
-9. COMMIT-INDEX.md        when you need to find the SHAs behind a behaviour
-10. reports/README.md      what was audited, when, and against which tree — records, NOT current claims
-```
+1. [基线](BASELINE.md)：确认知识库描述的源码版本，并计算基线之后的改动。
+2. [索引](INDEX.md)：按任务、关键词或源码路径找到对应章节。
+3. [项目概览](PROJECT.md)：了解项目与上游的关系及改造范围。
+4. [架构](ARCHITECTURE.md)：了解需要保留的核心边界。
+5. [模块地图](modules/README.md)：按职责选择相关模块，再阅读当前任务涉及的文档。
+6. [不变量](INVARIANTS.md)：修改关键行为之前，检查必须保持的约束。
+7. [验收索引](ACCEPTANCE.md)：查找需求、证据和复检方法。
+8. [提交索引](COMMIT-INDEX.md)：追溯行为背后的提交。
+9. [历史报告](reports/README.md)：查看审计时间、对象和当时的结论。
 
 > `reports/` 保存各次审计和收尾报告。先读其中的 `README.md`：每份报告只描述其审阅时的源码版本。
 > 当前结论见 `BASELINE.md`、`INDEX.md` 和 `modules/`；报告与源码不一致时，以源码为准。
@@ -64,15 +61,13 @@
 
 ## 事实来源优先级（Source-of-truth order）
 
-```text
-current source and tests
-    > git history and diffs
-        > build and CI configuration
-            > this knowledge base
-                > any other document in the repository
-```
+1. 当前源码与测试。
+2. Git 历史和差异。
+3. 构建与 CI 配置。
+4. 本知识库。
+5. 仓库中的其他文档。
 
-本知识库和源码冲突时，**以源码为准**；冲突是要记录的缺陷，不是悄悄抹平的差异。
+本知识库和源码冲突时，**以源码为准**；发现冲突时应记录并核实原因，再更新知识库。
 
 ## 四种状态标签（The four status labels）
 

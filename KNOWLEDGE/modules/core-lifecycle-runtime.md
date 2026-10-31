@@ -17,10 +17,7 @@ generation、切换是否稳定，以及由 `NetworkTransitionSnapshotter` 提�
 静默停滞的通用探测器。设计空闲超时之前，请看看历史完整审计的 BUG-007 和当前源码；
 从这个观测器推不出任何设备级别的可用性结论。
 
-观测器只在一个前提下启动：半关闭干净地发生过，底层连接接受 keepalive 配置，**并且**之后的一次读取
-能给出终局裁决。`terminalReadObservable` 接受用户态的 `tun.GoConn` 与显式测试标记；普通内核
-`net.TCPConn` 即使能武装 keepalive 也会被跳过。EOF 和本地读取超时不会释放一条流；终局错误会
-一次性结算这个观测器，并调用共享的幂等拆除（teardown）。正常拆除或关闭会把挂起的观测结算为已停止。
+观测器只在同时满足以下条件时启动：连接已正常半关闭、底层连接接受 keepalive 配置，且后续读取能够给出最终判定。`terminalReadObservable` 接受用户态的 `tun.GoConn` 和显式测试标记；普通内核 `net.TCPConn` 即使支持 keepalive 也会被跳过。EOF 和本地读取超时不会释放流；遇到终止性错误时，观测器只处理一次，并调用共享的幂等清理流程。正常清理或关闭则会停止仍在等待的观测。
 生产设置要求 20 s 空闲、三次 10 s keepalive 探测，以及从 15 s 到最长 60 s 的观测器轮询；这些是
 配置与调度参数，不是实测的设备恢复保证。本次校准中，聚焦的对端消失（peer-gone）、存活对端
 （live-peer）、内核跳过（kernel-skip）、关闭（shutdown）与拆除竞态（teardown-race）单元测试
@@ -146,11 +143,7 @@ TLS 记录设定时限，随后把该截止时间清掉；`handshake_target_clea
 `s.network.EstablishInitialNetworkEnvironment()`。HTTP 客户端服务不在这两个组件列表里；
 不要推断每个组件都会走完每个阶段。
 
-> **在网络管理器观测到自己的网络之前，Box 都不算“已就绪”。** `Start` 会等
-> 这次调用**同步**执行完才返回。措辞要精确：只有当管理器已同步观测到自己的网络、
-> **或已确立没有任何东西可观测**之后，`Start` 才返回——这次调用受 `s.network != nil`
-> 保护，在切换不适用或没有任何变化（已经观测过，或没有默认接口）时是空操作。将来若有
-> 改动把它提前，第一条被路由的流就会跟它本该看到的网络状态发生竞态。
+> **`Start` 返回前会同步完成初始网络环境检查。** 该调用受 `s.network != nil` 保护；网络管理器会先观测网络，或者确认无需处理，例如已经观测过或没有默认接口。不要将返回时机提前，否则首条路由流可能与网络状态初始化发生竞态。
 
 有两处顺序看着随意，其实不是：
 
@@ -196,9 +189,7 @@ TLS 记录设定时限，随后把该截止时间清掉；`handshake_target_clea
 
 > **“一次只做一次逻辑恢复”是一种租约*身份*，不是一个布尔值。**
 
-`Registration.lease` 之所以是 `*RebindLease`，正是为了让一个*被取代的*租约无法完成或释放一个
-更新的租约。将来若有人用 `bool` 取代它，就会重新引入这个指针本来要防的那个缺陷。理由写在
-`coordinator.go:202-215`。
+`Registration.lease` 使用 `*RebindLease` 保存租约身份，防止已被取代的租约完成或释放更新的租约。若改用 `bool`，就无法区分两次租约，可能重新引入并发缺陷。详见 `coordinator.go:202-215`。
 
 ### `TrimMemory` 与 `ReleaseMemory` 不同（TrimMemory and ReleaseMemory are different）
 

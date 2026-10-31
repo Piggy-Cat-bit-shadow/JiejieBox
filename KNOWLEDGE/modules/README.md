@@ -32,22 +32,13 @@
 
 ## fork 自己的词汇，一览（The fork's own vocabulary, at a glance）
 
-整个 fork 用一段话概括 —— 然后按需去读对应模块。
+本项目保留上游的注册表、协议与构建档位，同时维护以下主要扩展：
 
-> 本 fork 保留上游的注册表、协议与构建档位，并新增：一套**启动期
-> 证明系统**（`common/physicalpath`、`common/routeflow`），它报告能力警告，并
-> 在不拨号、不解析、不选择的前提下拒绝致命的结构性失败或承诺失败；一个
-> **运行时协调器**（`common/runtimecoord`），带单一单调网络 generation 与
-> 基于身份的重建租约；一个**电源/设备调速器**（`common/power`），把平台
-> 事实转化为睡眠/唤醒/复用策略；一个**上传流量调度器**（`common/trafficsched`）与
-> **流量类别**（`common/trafficclass`）；一个 **Direct Offload** 模型，让可证明
-> 等价的直连流由操作系统承载；一套完整的 **MASQUE/CONNECT-IP 数据面**
-> （`transport/masque`），外加内层/引导解析器拆分；一个**原生 Naive** 入站，带 UoT、
-> 填充、伪装与预认证限制；一个重写的 **HTTP/2+HTTP/3 传输层**
-> （`transport/http`）；以及面向 Apple（每次构建解析出一份客户端源码，品牌与身份
-> 分离）、Android（AAR/ABI）与 Windows（仅核心产物）的**产品化管线**。独立的严格发布验收
-> 检查器会重新核验证据与字节，但它并不由发布路径调用；实际的发布路径门禁及其限制见
-> `ci-release.md`。
+- **启动期校验**：`common/physicalpath` 和 `common/routeflow` 报告能力警告，并在不拨号、不解析、不选择的前提下拒绝致命的结构性失败或承诺失败。
+- **运行时协调**：`common/runtimecoord` 维护单调递增的网络 generation 和基于身份的重建租约；`common/power` 将平台状态转为睡眠、唤醒和连接复用策略。
+- **流量优化**：`common/trafficsched` 和 `common/trafficclass` 管理上传调度与流量类别；**Direct Offload** 为可证明语义等价的直连流提供操作系统承载路径。
+- **协议与传输**：`transport/masque` 实现 MASQUE/CONNECT-IP 数据面并区分内层解析器和引导解析器；Native Naive 入站支持 UoT、填充、伪装和预认证限制；`transport/http` 提供 HTTP/2 和 HTTP/3 传输。
+- **客户端与发布**：构建管线覆盖 Apple 客户端源码解析及品牌身份、Android AAR/ABI 和 Windows 核心产物。独立的严格发布验收检查器会复核证据与字节，但发布路径不调用它；实际发布门禁及限制见 `ci-release.md`。
 
 ## fork 创建的包 —— fork 点之下并不存在的代码（Fork-created packages — the code that did not exist below the fork point）
 

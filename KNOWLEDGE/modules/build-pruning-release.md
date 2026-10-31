@@ -309,17 +309,11 @@ builds"*（中文：与 libbox 构建出来的内容不匹配），所以那些�
 | `clients/android` | `Piggy-Cat-bit-shadow/sing-box-for-android` |
 | `clients/desktop` | **`Piggy-Cat-bit-shadow/sing-box-for-desktop`**（fork 的） |
 
-它们在 `a267e99` 处的 gitlink 分别是：apple `d0524912…`、android `ec61030d…`、desktop `32f915ba…`。它们的
-内容**不**在干净工作树里，所以 `Makefile:94` 要 shell 进
-`../sing-box-for-android`，Android 客户端也因此无法从这个工作树构建。
+在 `a267e99`，三个 gitlink 分别为 apple `d0524912…`、android `ec61030d…` 和 desktop `32f915ba…`。父仓库的干净检出不自动包含子模块内容；当时 `Makefile:94` 还需要进入 `../sing-box-for-android`，因此无法仅凭该工作树构建 Android 客户端。
 
-**`cronet-go` 是一棵模块树，不是一个模块。** 一条 `replace` 只重写**一个模块
-路径**，所以只固定根，每个嵌套模块 —— `/all` 与 29 个按平台的 `lib/<os>_<arch>`
-路径 —— 都会解析到上游：一个没被任何东西构建或测试过的配对，在 linux/amd64 上还是一个无法
-链接的配对。因此 `scripts/ci/check-go-module-integrity.sh` 的平行规则是一条**前缀规则**，从
-根 `go.mod` 推导出来，不来自静态列表；所以新增一个平台路径会强制要求一个固定值，不会
-被漏掉。`REQUIRED_FORK_REPLACES`（`:105-115`）要求四个：`sing`、`sing-tun`、`quic-go`、
-`sing-quic`。
+**`cronet-go` 包含多个 Go 模块。** 一条 `replace` 只作用于一个模块路径；如果只固定根模块，`/all` 和 29 个平台 `lib/<os>_<arch>` 嵌套模块仍会解析到上游，造成未经验证的版本组合，甚至在 linux/amd64 上无法链接。
+
+为避免遗漏，`scripts/ci/check-go-module-integrity.sh` 从根 `go.mod` 推导前缀规则，而非依赖静态清单；新增平台路径时也会要求对应的固定版本。`REQUIRED_FORK_REPLACES`（`:105-115`）还要求固定 `sing`、`sing-tun`、`quic-go` 和 `sing-quic`。
 
 > **`docs/FORK-DIFF.md:27` 已在 2026-10-28 更正，列出全部五个被替换的模块路径以及
 > `cronet-go` 前缀树**；在此之前它只概括了三个。守卫仍然比概括更有权威：

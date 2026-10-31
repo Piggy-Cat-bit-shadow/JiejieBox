@@ -26,9 +26,9 @@
 
 ### 0.1 一句话结论
 
-**这个 fork 的双栈系统已经收敛。** 它不再是"若干地方各自读一次网络、各自判一次地址族"的实现，而是：**每流一个不可变准入值（`admissionPolicy`）**，由"运营商策略（配置）+ 本机能力快照及其网络代际（事实）"两项组成，在**同一个谓词**里合成；所有消费点（初始过滤、recovery 准入、late 候选、调度器结构守卫、叶子 socket 门、packet 四臂、bypass 判据）都问这**一个**值。上一轮报告的微信 literal + sniffed-domain 事故，在当前生产对象图上**已被结构性关闭**（不是"补了一个 if"，而是构造期拒绝缺少候选规划能力的链）。
+**在本次审计的版本上，双栈准入逻辑已经收敛。** 每条流持有一个不可变的 `admissionPolicy`，将配置策略与本机能力快照及其网络代际合并判断。初始过滤、recovery 准入、late 候选、调度器结构守卫、最终 socket 检查、四条 packet 路径和 bypass 判据均使用这一准入值。上一轮报告的微信 literal + sniffed-domain 问题，在当时的生产对象图中已通过构造期校验得到处理：缺少候选规划能力的链会被拒绝。
 
-然后，**唯一确认的实现缺陷是一处诊断信息丢失**（DS-01，不影响连通性），另有**两处高风险**（组 outbound 的接口降维；recovery 流生产者未 join）。没有发现需要大改的架构缺陷。
+审计确认 **一处诊断信息丢失**（DS-01，不影响连通性）和**两项高风险**（组 outbound 的接口能力降级、recovery 流生产者未 join），没有发现需要大规模调整的架构缺陷。上述结论只针对报告所列审计版本。
 
 ### 0.2 结论计数（严格按等级，不混计）
 
@@ -494,7 +494,7 @@ route fast-path 判定 → (*direct.Outbound).CanBypass   outbound.go:440-442
 ### 7.1 setup 所有权（已收敛）
 
 * `dialSetupGate.begin`（`dial_setup.go:89-128`）：每代一个 ctx，`context.AfterFunc(generation, cancelSetup)`。
-* `finishSetup`：先 `stopGenerationWatch()` 再 `cancelSetup()`；注释**诚实记录**了"这个 stop 并不阻止 transition 取消已建立的连接（连接不派生自 setup），它买的是有界簿记"（`:108-125`），并注明**用变异测试证明**了这一点。
+* `finishSetup`：先 `stopGenerationWatch()`，再 `cancelSetup()`。注释说明，前者不会阻止 transition 取消已建立的连接，因为连接不派生自 setup；它的作用是限制注册状态的累积（`:108-125`）。这一点也经过变异测试。
 * **建连成功即转交**：`NewConnection` 在两个 dial 调用之后立即 `finishSetup()`（`conn.go:344`），此后 transition 不再能通过任何本层创建的 context 触达该连接。
 
 ### 7.2 代际与提交（已收敛）
@@ -919,7 +919,7 @@ resolve.go:660-667
 | `familyHealth` 只做**软偏好** | 它能省一次 fallback delay，不能禁止候选；改成硬判定会把"一次失败"放大成"族被禁用"（`dual_stack_scheduler.go:903-923`） |
 | `netcap` 只允许**否定**为硬判定 | 探针/周期探测会引入常驻成本与误判；正例交由真实流量学习（`netcap.go:20-31`，`StateValidated`/`StateDegraded` 故意保留未用） |
 | entry presentment 的**锁存** | 实时重算会让 DNS 与 TUN 地址不一致（"DNS 说 IPv6 回来了，接口没有"），这是已付出过的代价（`network_family_entry.go:25-41`） |
-| `dialSetupGate` 的 `stopGenerationWatch` | 注释诚实说明它**不**阻止 transition 取消已建连接（连接不派生自 setup），买的是有界簿记；删掉不会改变行为但会积累注册（`dial_setup.go:108-125`） |
+| `dialSetupGate` 的 `stopGenerationWatch` | 注释说明它**不**阻止 transition 取消已建连接（连接不派生自 setup），而是限制注册状态累积；删掉后会积累注册（`dial_setup.go:108-125`） |
 | `direct.Outbound.DialChain()` 而非 `Upstream()` | `Upstream()` 被 `common.Cast` 全仓遍历，曾把 WireGuard 的 bind 从 `ClientBind` 改成 `StdNetBind` 并丢 netns（`outbound.go:161-168`） |
 | `route/failover.go` 不报告 dial chain | 它描述的成员不是实际拨号的成员（组每次重选），跨过它会读到错的 health（`failover.go:211-242`） |
 | 组 outbound 的**串行**（除 DS-02） | UDP/packet 的"首个 socket 成功即胜出"与组的"每次尝试重新选成员"都要求串行语义；改成并发会重复建连 |

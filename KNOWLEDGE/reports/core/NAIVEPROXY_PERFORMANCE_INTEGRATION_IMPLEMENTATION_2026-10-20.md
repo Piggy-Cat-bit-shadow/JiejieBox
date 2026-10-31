@@ -38,7 +38,7 @@
 | **P3 H3→H2 回退** | **DONE** | 在依赖 fork 补了 per-CONNECT 入口并从 pin 起分支；sing-box 侧实现 attempt 有序的判定核、窄分类、30 s 窗口与网络切换清零；**同 Engine** 真实 H3 失败 → H2 成功（§6） |
 | **P8 Engine/窗口默认** | **KEEP** | 无新的活跃负载数据；默认不动 |
 
-**本轮最重要的新发现**（审计没写、施工中实测出来的）：`Outbound.DialContext` 之前调用 `DialEarly` 后**从不读取 CONNECT 响应**，所以错误密码（407）在 sing-box 里**不是错误**——隧道"建立成功"，第一次 Read 得到 EOF。修完之后同一个测试从"空隧道"变成 `naive CONNECT handshake: unexpected response status: 407`（§3.2）。
+**实现过程中发现的关键问题：** 旧版 `Outbound.DialContext` 调用 `DialEarly` 后不会读取 CONNECT 响应，因此认证失败的 407 被误认为隧道建立成功，直到第一次 Read 才得到 EOF。修复后，同一测试能正确报告 `naive CONNECT handshake: unexpected response status: 407`（§3.2）。
 
 ---
 

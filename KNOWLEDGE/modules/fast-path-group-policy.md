@@ -106,7 +106,7 @@ box_fast_path_group_policy_test.go
 
 ### 以上一切生效前的两个前提（Two preconditions before any of this applies）
 
-有两种情形会让解析返回 `false`，并且不产生任何组授权。这两条先于一切，在检查链之前生效：
+解析组策略前，以下两种情况会直接返回 `false`，不产生组授权：
 
 ```text
 the chain has fewer than two elements
@@ -157,18 +157,17 @@ this logical group authorises this flow to ATTEMPT a Direct Fast Path
 
 它**不是**强制指令。获得授权之后，这条流仍然必须通过 `canFastBypass` / `BypassVerdict` 资格门禁，真正的决定在那里做出。
 
-只有当入口消费绕过裁决（bypass verdict）时，才会查询这个隐式门禁，也就是 nfqueue 自动重定向消费方。普通 TUN 不会用该裁决绕过用户态路径；这是入口模式层面的区分，不是笼统的操作系统层面区分。显式绕过动作是另一回事。参见 `route/fast_path.go`、`route/route.go` 与 `adapter/inbound.go`。
+只有会使用绕过裁决（bypass verdict）的入口才会应用这项资格判断，例如 nfqueue 自动重定向。普通 TUN 不会依据该裁决绕过用户态路径；显式绕过动作需要另行区分。具体行为取决于入口模式，参见 `route/fast_path.go`、`route/route.go` 和 `adapter/inbound.go`。
 
-**这个字段细化了门禁，而不是让门禁原地不动。** `canFastBypass` 接收一个
-`fastPathAuthorized bool` 参数，因此恰好有**一个**阻断条件被放宽：
+`canFastBypass` 接收 `fastPathAuthorized bool` 参数。获得授权时，只有以下一项阻断条件可能被放宽：
 
 ```text
 BypassRefusedOutboundChain
 ```
 
-而且只有同时满足两个条件才成立：叶之前的**每一个**元素都是透明的纯选择组（`fastPathChainReachesLeaf`），**并且**该叶仍然通过未改动的 `BypassableOutbound` / `CanBypass` 检查。没有这一个分支，该字段在每一种组配置上都会是惰性的，因为被路由进某个组的流必然有 `len(chain) >= 2`。所以，是这一细化让特性得以存在，而不是它额外授予了一项许可。
+放宽这一条件还需要同时满足两点：最终出站之前的每个元素都是透明选择组（`fastPathChainReachesLeaf`），且最终出站通过原有 `BypassableOutbound` / `CanBypass` 检查。进入组的流必然满足 `len(chain) >= 2`；如果没有这一例外，组上的授权就无法改变出站链拒绝结果。
 
-一条**未获授权**的组流仍然会得到 `BypassRefusedOutboundChain`，行为不变。`loadbalance` 仍然拒绝，因为它没有声明该能力（它可能掌握其选中流的拨号与重试，因此不是透明的）。
+**未获授权**的组流仍会得到 `BypassRefusedOutboundChain`。`loadbalance` 没有声明透明组能力，也会被拒绝；它可能负责所选流的拨号与重试。
 
 **这些阻断条件不受 `fast_path: true` 影响**，这份清单正是该字段可以安全暴露的原因：
 

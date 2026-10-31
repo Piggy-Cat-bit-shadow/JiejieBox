@@ -146,23 +146,17 @@ PHYSICAL PATH  the hops the bytes actually traverse, in PACKET order:
 
 ### 由代码陈述的只读契约（The read-only contract, stated by the code）
 
-`manager.go:267-268`：*“It is read-only: it dials nothing, resolves nothing, changes no
-selection and consumes no rotation.”*（中文：它是只读的：不拨号、不解析、不改变任何选择、
-不消耗任何轮换。）对象图可以证明这一点：`Resolver`（`physicalpath.go`）只持有一个注册表查询、
-一个 `Snapshot` 与一个网络名，解析器本身没有拨号器，也没有时钟。这个结构支撑“不拨号、不做
-选择”的契约；它不能证明整个校验调用没有日志或其他附带效应——下一节会讲。`Build` 不克隆报告
-出来的叶：`TestTheReportedLeafIsTheSelectedLeaf` 对注册表中的对象断言 `require.Same`。
+`manager.go:267-268` 将试运行定义为只读操作：不拨号、不解析、不改变选择，也不消耗轮换。`Resolver`（`physicalpath.go`）只持有注册表查询、`Snapshot` 和网络名，没有拨号器或时钟，其结构支持这一契约。这里的只读并不意味着整个校验过程没有日志或其他副作用，详见下一节。
 
-轮换由另一个测试固定：`TestTheDryRunConsumesNoRotationOnARealStart`
-（`adapter/outbound/manager_physicalpath_test.go:398-414`）断言 committed == 0 **并且**
-previewed == 0。如果调用方连一次预览都不接受，就设置 `Snapshot.Selections`，或传入 `""` 声明
-该成员**不可知（NOT KNOWABLE）**（`TestASnapshotCanSayTheLeafIsNotKnowable`）。
+`Build` 不会克隆报告中的最终出站；`TestTheReportedLeafIsTheSelectedLeaf` 通过 `require.Same` 验证结果与注册表中是同一个对象。
+
+`TestTheDryRunConsumesNoRotationOnARealStart`（`adapter/outbound/manager_physicalpath_test.go:398-414`）同时断言 committed 和 previewed 均为 0，验证试运行不会消耗轮换。如果调用方不希望进行预览，可以设置 `Snapshot.Selections`，或传入 `""` 表示成员不可知（`TestASnapshotCanSayTheLeafIsNotKnowable`）。
 
 叶不可知时，遍历会追加 `Unknown{Node, Position, Reason}` 然后**停止**。只要还有一个 unknown，
 `Path.Exit()` 就报告 `ok=false`，因此部分验证的路径不会被当成已验证的路径
 （`TestAnUnresolvableDependencyIsUnknownAndNotInvented`）。
 
-### 但校验并非无副作用——这次诚实的更正（But validation is not side-effect-free — the honest correction）
+### 校验仍有的副作用（But validation is not side-effect-free — the honest correction）
 
 校验路径上确实有两个副作用。两者都不拨号；之所以都记下来，是因为“只读”这个笼统说法超出了
 代码事实：
@@ -215,14 +209,9 @@ detour 标签仍然致命。
 
 ### 它取代的一处潜在 panic（A latent panic it replaced）
 
-启动顺序排序按**标签**标记节点已启动，并在已启动标签数等于**节点**数时停止。同一个标签下的两个
-对象即可满足这个计数，却仍有一个节点未被访问；随后报告依赖问题的代码解引用了那个 nil 结果
-——实测是 `invalid memory address or nil pointer dereference`（在 `lintOutbounds` 内），而不
-是一个错误。现在的 `lintOutbounds` 在排序之前检查重复的对象标识与重复的标签。先前被引用的
-`TestDuplicateMemberTagIsRefusedRatherThanCrashingTheSort` 在当前代码树中不存在；
-`adapter/outbound/tag_collision_test.go` 记录了命名空间冲突的设置，但本身并不证明 lint
-路径。除非找到并运行了真正匹配的测试，否则请把 lint 行为当作源码已核实
-（source-verified）。
+历史上的启动排序以**标签**标记已启动节点，并在标签计数达到**节点数**时停止。同一标签对应两个对象时，计数可能提前满足，留下未访问的节点；随后报告依赖问题的代码解引用 nil，在 `lintOutbounds` 中触发 `invalid memory address or nil pointer dereference`。当前 `lintOutbounds` 会在排序前检查重复的对象标识和标签。
+
+此前引用的 `TestDuplicateMemberTagIsRefusedRatherThanCrashingTheSort` 不在当前代码树中。`adapter/outbound/tag_collision_test.go` 描述了命名空间冲突的设置，但本身不能证明 lint 路径；找到并运行对应测试之前，该行为应标记为源码已核实。
 
 ### 唯一一处构造侧效应（The one construction side effect）
 

@@ -117,19 +117,9 @@ AI 可以或不可以声称“已验证”的内容。
 
 ### push 门禁受路径过滤，而过滤器就是契约（The push gate is path-filtered, and the filter is the contract）
 
-`release-contract-verify.yml` **只在发布工具链发生移动时**才在 push 上运行。它自己的
-注释说明了理由，这也是要保留的规则：*"product source, docs and reports are not its input, and
-a push that touches none of the paths below cannot change its verdict."*（中文：产品源码、文档与报告
-不是它的输入，一次没有触及下列任何路径的 push 改变不了它的裁决。）路径列表以 YAML anchor
-（`&release_tooling_paths`）声明**一次**，再以别名引入 `pull_request:`，*"so the push and
-`pull_request` triggers cannot drift into asserting different things about the same files."*
-（中文：因此 push 与 PR 触发器不会漂移，不会对同一批文件断言不同的事。）
+`release-contract-verify.yml` 的 push 触发器只关注发布工具链相关路径。产品源码、文档和报告不在该检查的输入范围内；如果一次 push 没有涉及列出的路径，就不会触发这项检查。
 
-即使 push 触发器已经存在，`workflow_dispatch` 也被**有意**保留：*"the final frozen SHA
-still has to be able to obtain this evidence ON DEMAND, because a `[skip ci]` dependency sync never
-triggers a push run."*（中文：最终冻结的 SHA 仍然必须能够按需取得这份证据，因为跳过 CI 的
-依赖同步永远不会触发 push 运行。）为“清理”触发器而删掉它，等于删掉冻结候选取得自身
-发布证据的唯一途径。
+路径列表通过 YAML anchor `&release_tooling_paths` 统一声明，再供 `pull_request:` 引用，避免 push 与 PR 的过滤范围不一致。`workflow_dispatch` 也需要保留：带 `[skip ci]` 的依赖同步不会触发 push 检查，冻结候选仍需要能够按需取得对应 SHA 的发布证据。
 
 > **两个路径过滤器，两种不同的陷阱。** `android-core-arm64.yml` 与
 > `release-contract-verify.yml` 都收窄了 push 触发器。因此新增一个顶层目录，
@@ -182,16 +172,7 @@ triggers a push run."*（中文：最终冻结的 SHA 仍然必须能够按需�
 
 ### 旧列表所混淆的那一区分，以及它为何仍然重要（The distinction the old list collapsed, and which still matters）
 
-`verify-release-acceptance.sh` 是最鲜明的例子：它现在*被调用*，但仍然
-*不是发布路径上的门禁*。`release-contract-verify.yml:311` 明说了这一点：迁到那里的
-那个步骤只是**自检**（*"it proves that the strict acceptance checker still refuses bad
-evidence across 18 API snapshots"*，中文：它证明严格的验收检查器在 18 个 API 快照上仍然拒绝
-坏证据），注释接着说明这个引擎
-
-> *"is unchanged and is still reachable from nothing in the release path; what changed is which workflow
-> claims to gate on it."*
-
-（中文：未改变，发布路径上仍然没有任何东西能到达它；改变的只是哪个工作流声称以它作为门禁。）
+`verify-release-acceptance.sh` 是一个容易误读的例子：它已被调用，但**不是发布路径上的门禁**。`release-contract-verify.yml:311` 中的步骤只是自检，验证严格验收检查器仍会拒绝 18 个 API 快照中的无效证据；发布路径本身没有调用该验收引擎。
 
 因此有**三种不同状态**，把任意两种混为一谈都会得出错误答案：
 
@@ -201,14 +182,7 @@ DECLARED     a workflow comments that it is a gate             -> a red run is N
 PRESENT      the script exists and nothing references it       -> nothing happens at all
 ```
 
-`verify-release-acceptance.sh` **作为自检已经接线，但它的引擎仍然不是发布路径
-上的门禁。** 工作流里记录的理由值得保留：`verify.yml` 运行那次自检时，
-`verify.yml` *"DECLARING the acceptance engine as a gate, although nothing on the release path
-called it"*（中文：把验收引擎声明为门禁，尽管发布路径上没有任何东西调用它）—— 而
-*"a second may-release authority that no release consults is exactly the drift the
-single-authority rule exists to prevent."*（中文：第二个没人咨询的“可发布”权威，正是
-单一权威规则要防止的漂移。）发布路径的权威是 `release.yml` 加
-`release-artifacts.sh`（§5），不是这个引擎。
+因此，`verify-release-acceptance.sh` **已接入自检，但验收引擎没有接入发布决策**。发布路径以 `release.yml` 和 `release-artifacts.sh` 为准（§5）。不要把工作流对门禁的文字声明当成发布时确实执行该检查的证据。
 
 ### 在此基线上仍确实未接线的（Still genuinely unwired at this baseline）
 
@@ -404,7 +378,7 @@ bash scripts/ci/check-libbox-abi.sh --pin-only  # wired in verify.yml; full gate
 **与主机相关的那一组复现不了。** 报告把 `common/windivert`、`common/tlsspoof` 与
 `common/tls` 称作“3 个既有的环境性失败”。此处实测：`common/windivert` → **25 PASS /
 0 SKIP / 0 FAIL**，`common/tlsspoof` → **9 PASS / 0 SKIP / 0 FAIL**，包括报告称为
-`windivert: open SCM: Access is denied` 的每一个 `TestIntegration*`。诚实的解读是：
+`windivert: open SCM: Access is denied` 的每一个 `TestIntegration*`。应这样理解：
 这条主张**与主机相关，与树无关** —— 它描述的是某台机器的 WinDivert/管理员
 状态，换一台主机就不成立。
 

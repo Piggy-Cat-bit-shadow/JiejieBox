@@ -1,36 +1,15 @@
 # sing-box v0.1.5 → v0.1.6 全链路升级与 Action / Release 优化总结
 
 > 仓库：`Piggy-Cat-bit-shadow/sing-box`  
-> 主题一：`v0.1.5 → v0.1.6` 各结构板块的硕大更新  
-> 主题二：`v0.1.5 → v0.1.10` GitHub Actions / Release 从攻坚到工业化收敛的优化  
->
-> 本文主要由前面已有分析整合、排序、去少量重复而成；重点不是重新发散，而是把现有结论完整收拢到一处。
+> 本文汇总两个历史阶段：`v0.1.5 → v0.1.6` 的网络链路改造，以及 `v0.1.5 → v0.1.10` 的 GitHub Actions / Release 优化。内容整理自当时已有分析；使用时应以对应版本的源码和证据为准。
 
 ---
 
 # 一、先给总判断
 
-`v0.1.5 → v0.1.6` 不是普通意义上的“加了很多功能”。
+`v0.1.5 → v0.1.6` 的主要工作覆盖了网络数据面与控制面：从 App/TUN 入口、DNS、FakeIP、嗅探和路由，到拨号、加密、协议传输、连接复用、内存管理以及网络切换后的恢复，多个关键阶段都经历了审计、修复或优化。并非所有代码都被重写；具体改动和证据见下文。
 
-更准确地说，它是一次：
-
-> **end-to-end network dataplane + control-plane overhaul**
-
-也可以直接说：
-
-> **从 App/TUN 收包开始，到 DNS、FakeIP、sniff、route、group、physical path、resolve、dial、failover、Direct/Proxy、TLS/REALITY、协议封装、XHTTP/MASQUE、连接池、调度、buffer、MTU，再到网络切换、休眠恢复、内存回收和最终 Close，几乎整条真实网络链路都重新审计、修复和优化了一遍。**
-
-严谨一点讲：
-
-> **不是每一行代码都重写了，但一条真实网络连接经过的每一个关键阶段，几乎都被碰过。**
-
-如果要用一句最像项目总结的话：
-
-> **我不是对 sing-box 做了很多零散优化，而是把一条网络流从进入内核、被识别、解析、路由、选路、拨号、加密、封装、传输，到网络变化后的恢复和最终资源释放，几乎逐段重新审计、修复和优化了一遍。**
-
-而 `v0.1.6` 的另外一条主线，是构建 / 发布系统也同时进入真正的多平台攻坚期。
-
-所以这个版本的特点其实是两条线一起爆发：
+同期另一条主线是多平台构建与发布流程的完善：
 
 ```text
 网络内核：从“能跑”走向“有证据、有所有权、有生命周期语义”
@@ -82,9 +61,7 @@ routeflow
 - ICMP fragmentation-needed
 - 4000-byte UDP datagram 通过 memory TUN 和真实协议栈
 
-这带来的不是“测试更多”这么简单，而是让很多以前藏在函数之间的生命周期问题被逼出来。
-
-最典型的就是：
+这些端到端测试也暴露了跨函数的生命周期问题，例如：
 
 ```text
 连接正在 dial
@@ -100,19 +77,11 @@ blackhole dial 可能继续活到 connect timeout
 甚至没有 timeout 时无限挂着
 ```
 
-所以这里暴露出的核心问题不是某个 socket API。
-
-而是：
-
-> **in-flight 连接也属于网络生命周期，不能因为它还没“正式建立”就逃出 generation / reset / close 的管理。**
-
-这就是 `v0.1.6` 的一个典型风格：
-
-> **把以前靠“状态碰巧一致”维持的行为，改成明确的生命周期契约。**
+因此，在途连接同样需要纳入 generation、reset 和 close 的管理，不能只清理已建立的连接。
 
 ### 2. IP / Fragment / ICMP：网络不再只等于“socket 能连上”
 
-以前很多实现层面的判断容易隐含一个假设：
+仅凭连接建立成功，不能判断整条网络路径是否可用：
 
 ```text
 TCP connect 成功
@@ -120,9 +89,7 @@ TCP connect 成功
 网络路径没问题
 ```
 
-但真实网络不是这样。
-
-`v0.1.6` 开始把这些东西明确拉进正确性范围：
+`v0.1.6` 的审计还将以下因素纳入网络正确性范围：
 
 - MTU
 - IPv4 fragmentation
@@ -131,19 +98,7 @@ TCP connect 成功
 - MSS
 - packet geometry
 
-于是网络正确性从：
-
-> “socket 连接建立了”
-
-变成：
-
-> **“这条真实物理路径能不能承载这种大小、这种协议、这种封装后的真实 packet。”**
-
-4000-byte UDP、ICMP fragmentation-needed 这些 E2E 不是装饰性测试。
-
-它们在验证：
-
-> **内核是否理解真实链路的物理约束。**
+因此，除了检查 socket 是否连接成功，还要检查实际路径能否承载指定大小、协议和封装的数据包。4000-byte UDP 与 ICMP fragmentation-needed 端到端测试用于验证这些链路约束。
 
 ### 3. DNS：从 cache 变成 network generation / policy ownership
 
@@ -181,17 +136,7 @@ epoch 变成 8
 旧请求继续把 epoch 7 的结果写回 cache
 ```
 
-这时候即使你“写之前再检查一次”，仍然可能存在 check 和 commit 之间的窗口。
-
-所以真正的修法不是：
-
-> “多 check 一遍。”
-
-而是：
-
-> **epoch 本身拥有 commit 权。**
-
-即：
+仅在写入前检查一次仍可能留下检查与提交之间的竞争窗口。处理方式是让 epoch 决定提交资格：
 
 ```text
 旧 generation / 旧 policy epoch
@@ -199,15 +144,11 @@ epoch 变成 8
 没有资格向新世界提交状态
 ```
 
-这是一种非常明显的架构升级：
-
-> **不是 cache 清不清，而是谁有资格提交 cache。**
-
-reverse mapping、background refresh 也必须遵守同样语义。
+reverse mapping 和 background refresh 也需要遵守相同的提交边界。
 
 ### 4. FakeIP：从简单映射变成 issuance ownership ledger
 
-以前你可以把 FakeIP 很粗糙地理解成：
+FakeIP 的基本映射关系可以表示为：
 
 ```text
 FakeIP
@@ -215,11 +156,7 @@ FakeIP
 domain
 ```
 
-但实际系统里不够。
-
-`v0.1.6` 开始把 FakeIP 更接近“发行记录 / ownership ledger”来管理。
-
-它需要知道：
+实际管理还需要发行与所有权记录。`v0.1.6` 涉及的边界包括：
 
 - 谁发行了这个 FakeIP
 - 在哪个 network environment 下发行
@@ -227,13 +164,7 @@ domain
 - 生命周期是否仍有效
 - TUN / proxy 路径上如何 map / unmap
 
-这也解释了为什么 Direct 不能简单说：
-
-> “既然最后是一个 IP，那就直接走 Direct。”
-
-因为 FakeIP 这个 IP 只是一个承载体。
-
-真正的语义仍然包含：
+FakeIP 地址是合成占位符，不能仅凭地址形式就决定 Direct 路径。相关语义还包括：
 
 - 原始 domain
 - DNS policy
@@ -241,9 +172,7 @@ domain
 - sniff / route metadata
 - 当前 generation
 
-所以：
-
-> **FakeIP 永远不能被粗暴当成普通 IP。**
+处理 FakeIP 时，需要同时考虑映射、所有权和路由元数据。
 
 ### 5. Sniff：从“做太多”改成“只做我真正需要的事”
 
@@ -260,15 +189,7 @@ TLS sniff 之前会走到近似 server handshake 的路径。
 - ML-KEM / X25519MLKEM768 key share
 - 然后因为没有证书失败
 
-但 sniff 本身根本不需要真的和客户端握手。
-
-这就像：
-
-> **“为了看身份证，先给人办了一套护照。”**
-
-所以这里不是微优化。
-
-而是直接删掉错误工作。
+嗅探只需要识别 ClientHello，不需要完成服务端握手。优化的重点是移除这些额外工作。
 
 已有 benchmark 里，大致出现过：
 
@@ -286,11 +207,7 @@ TLS sniff 之前会走到近似 server handshake 的路径。
 - fragmented sniff 更稳
 - 新增 WireGuard sniffer
 
-这里最重要的不是某个数字。
-
-而是设计原则：
-
-> **sniff 只做识别所需的最小工作，不偷偷执行协议本身。**
+设计原则是：嗅探只执行识别所需的工作，不继续执行完整协议握手。上面的性能数字属于历史测试结果，实际收益取决于环境和版本。
 
 ### 6. Route：从“配置里有规则”升级为“运行时真的能到达这个规则”
 

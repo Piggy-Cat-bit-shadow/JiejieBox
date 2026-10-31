@@ -26,14 +26,11 @@
 启动后的行为包含 `1ff0af39110`，该提交晚于 `v0.1.30`，但已进入后来的 v0.1.31 标签。
 这一提交关系不能证明真实设备上的网络切换行为。
 
-### IPv6 入口呈现（IPv6 entry presentment）
+### IPv6 入口地址族决策（IPv6 entry presentment）
 
-`route/network_family_entry.go` 只发布一次 box 级入口决策；TUN 在打开接口之前取用它
-（`protocol/tun/entry_ipv6.go`）。网络变化可以改变每次拨号的 capability，却不会悄悄改写已打开
-TUN 的寻址；要改入口决策，需要重启 box。box 的前置检查意在保证所有已配置的 TUN 都能施加抑制；
-如果最终归约仍然拒绝，inbound 会保留 IPv6 并记下一次不一致，不会回滚共享决策。注意
-`route/network.go` 里一条较旧的注释仍说之后会有一次纠正写入；定义行为的是当前的 store 与 inbound 代码，
-不是那条注释。这是针对当前源码的 `VERIFIED_SOURCE`，不是真机转换测试。
+`route/network_family_entry.go` 在 box 级别只发布一次入口地址族决策，TUN 打开接口之前读取该决策（`protocol/tun/entry_ipv6.go`）。网络变化可以改变后续拨号时的 capability，但不会改写已打开的 TUN 地址；要改变入口决策，需要重启 box。
+
+前置检查旨在确认所有已配置的 TUN 都能执行 IPv6 抑制。如果最终归约仍拒绝，inbound 会保留 IPv6 并记录不一致，不会回滚共享决策。`route/network.go` 中较旧的注释提到后续纠正写入，但应以当前 store 与 inbound 实现为准。本结论是针对审阅版本的 `VERIFIED_SOURCE`，没有经过真机网络切换验证。
 
 ### TUN DNS 劫持与快速路径顺序（TUN DNS hijack and fast-path ordering）
 
@@ -82,11 +79,7 @@ ABI 版本、平台事实（platform-facts）API，或 Apple/Android 固定值�
 
 ## 1. 不存在 `libbox.go`（There is no `libbox.go`）
 
-gomobile 表面分散在 `experimental/libbox/` 的 110 个 `.go` 文件里（90 个非测试）。
-这棵树在 `experimental/libbox/internal/**` 下还有 18 个文件 —— `oomprofile`、`runtimeinfo`
-（含 `linkname.go` / `goroutine_badlinkname.go`）与 `procfs`。它们是内部构建输入，
-不是导出的 ABI；不要把 ABI 问题路由到那边，但统计 gomobile 构建
-编译了什么时别漏掉它们。
+gomobile 接口分布在 `experimental/libbox/` 的 110 个 `.go` 文件中，其中 90 个不是测试文件。`experimental/libbox/internal/**` 下另有 18 个文件，涉及 `oomprofile`、`runtimeinfo`（包括 `linkname.go` / `goroutine_badlinkname.go`）和 `procfs`。这些文件是内部构建输入，不属于导出的 ABI；统计 gomobile 构建范围时仍需将其计入。
 
 ### 顶层入口（Top-level entry points）
 

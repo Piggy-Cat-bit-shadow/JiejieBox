@@ -639,12 +639,9 @@ one POST per max(round trip, sc_min_posts_interval_ms)
 流，也绝不能清除这条连接的连续失败计数。这个 POST 有自己受限的上下文。
 见 `transport/v2rayxhttp/conn.go`；这个源码契约并不构成实时对端结果。
 
-会话一旦打开，POST 大小就不再受延迟影响：`shouldGatherUpload` 有意跳过
-前两次写入的聚合（`conn.go:1115-1135`），这两次写入承载开场交换；从
-第三个 POST 起，聚合会把每个 POST 填满到 `sc_max_each_post_bytes`，所测的每一个往返时间下都是如此
-（0 到 200 ms 均为 1,000,000 字节）。不要把开场的那一对说成已经聚合。
+`shouldGatherUpload` 有意跳过前两次写入的聚合，以便完成开场交换（`conn.go:1115-1135`）。在所记录的测试中，从第三个 POST 开始，0 至 200 ms 各个往返时间下的 POST 都聚合到了 `sc_max_each_post_bytes`，即 1,000,000 字节。这是该测试条件下的结果，前两次写入不属于这一聚合结果。
 
-参考实现针对该设计采用了一个显而易见的替代方案：它在
+参考实现采用不同的发送方式：它在
 `httptrace.WroteRequest` 上启动下一个 POST，并在一个 goroutine 中排空响应，也就是把响应
 完成流水线化（`Xray v26.9.30`、`transport/internet/splithttp/dialer.go:495-534`）。因此可以直接
 对比两者（packet-up、HTTP/2、单流、同一参考服务器、每个点三次重复、
@@ -667,8 +664,8 @@ one POST per max(round trip, sc_min_posts_interval_ms)
 证据：不变量（同一时刻至多一个 POST 在途、序号连续递增、
 节奏不快于往返时间的一半 —— `TestPacketUpPostCadenceTracksTheRoundTrip`，位于
 `transport/v2rayxhttp/packetup_pipeline_probe_test.go`）为 `VERIFIED_UNIT`；往返
-扫描是 **历史记录**，来自单台主机上的手动测试台测量（loopback 加上一个延迟线损伤 shim，
-因此增加的延迟不消耗带宽），无法从 CI 重新运行。超过 200 ms 没有数据。
+扫描是 **历史记录**，来自单台主机的手动测试：通过 loopback 和延迟注入装置增加延迟，
+不消耗带宽。该测试无法从 CI 重跑，也没有超过 200 ms 的数据。
 
 溯源：探针提交 `58e3222558c` 紧随 `b5bc2a8de42`。两者都是所考察的
 `011f3fdcd99` 测试目标的祖先；这层 Git 关系不会把那次历史手动测量变成

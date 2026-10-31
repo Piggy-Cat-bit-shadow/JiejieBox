@@ -194,14 +194,14 @@ PTB 路径：数据报发送以 `datagramErrorTooLarge` 失败 → `mtu := maxPa
 
 有两处已记录的拆除修复值得了解：
 
-* `9235f90` —— 服务器端点的拆除交给 **关闭它的那个 `Scope`**。
+* `9235f90` —— 服务器端点由负责关闭它的 `Scope` 清理。
 * `c3b4f567` —— 释放 **`Scope.Close` 返回之后** 才获取的资源。
 * `a367bbe3` —— 关闭就绪窗口，把 **每一次** DNS 失效串行化，并修复三处
   平台测试缺陷。
 * `a00a2fe6` —— 把 HTTP/3 的获取纳入 **关闭决策**，因此 H3 环节正在拆除时，
   隧道不能被报告为就绪。
 
-`protocol/masque/server.go` 还有那个“排空之后再获取”的修复：`StartStateInitialize`
+`protocol/masque/server.go` 还修复了“排空之后再获取”的问题：`StartStateInitialize`
 在获取设备时注册 `s.Close`，但 `StartStateStart` 会 *稍后* 才绑定监听
 socket。`common/listener` 没有“关闭之后再启动”的防护，因此 `ServerEndpoint` 在
 `startAccess` 下公布 `closed`，随后释放，并在绑定之后再次检查（`acquiredStillOwned`）；
@@ -290,6 +290,6 @@ socket。`common/listener` 没有“关闭之后再启动”的防护，因此 `
 11. **不要用常数给外层 QUIC 数据包设上限。** 它由 *经证明的* detour 容量来限制。
 12. **不要重新启用 `MaxIncomingStreams = 1<<60`**，也不要把 QUIC 调优变成非 opt-in。
 13. **不要用任何弱于 `HandshakeComplete` 的条件来给 CONNECT 设门禁。**
-14. **不要引用已删除的 `assigned_dns_*` 测试文件** —— 那个模型已被 `e93e297aa` 取代。
+14. **不要引用已删除的 `assigned_dns_*` 测试文件。** 该模型已被 `e93e297aa` 取代。
 15. **不要在未加标签的情况下运行本包的测试并据此下结论。** 它们需要
     `DEFAULT_BUILD_TAGS_OTHERS`；未加标签会得到 19 个标签缺失失败。

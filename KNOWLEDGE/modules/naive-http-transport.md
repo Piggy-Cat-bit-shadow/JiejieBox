@@ -22,11 +22,7 @@
 **范围：** `protocol/naive/*`（入站 + 受 tag 门禁的出站）、`transport/http/*`（本 fork 最大的一处
 单点新增）、`common/httpclient/*`、`route/packet_destination_guard.go`。
 
-**溯源 —— 早先的知识库在这一点上错了。** 在上游祖先 `e4b7e692` 处，`protocol/naive` 有 **4 个文件**；
-到 `a267e99` 已是 **31 个**，跨 **64 个 fork 提交**。本 fork 自己的
-`docs/FORK-DIFF.md` 第 15 行说得很直白：*“**Native Naive** —— 一个 NaiveProxy 服务端入站，带有
-UoT、padding、masquerade 与预认证阶段的资源控制。”* 它是一个 **fork 子系统**，不是
-一次依赖升级。
+**溯源：** 上游祖先 `e4b7e692` 的 `protocol/naive` 有 **4 个文件**；到 `a267e99` 时增至 **31 个文件**，涉及 **64 个 fork 提交**。`docs/FORK-DIFF.md` 第 15 行将 Native Naive 描述为 NaiveProxy 服务端入站，支持 UoT、padding、masquerade 和预认证阶段的资源控制。这是 fork 中开发的子系统，不能归为一次简单的依赖升级。
 
 `go.mod` 为证书管理引入了 `caddyserver/certmagic` 与 `caddyserver/zerossl`；
 这不意味着 Naive 服务器是用 Caddy 实现的。HTTP 引擎是
@@ -57,8 +53,7 @@ Cronet 引擎，并限制并行的不安全握手数；`quic_congestion_control`
 > 需要 `with_purego`，而 Windows profile 会加上它。用精确 pin 的 Cronet
 > 源码与 purego 跑的一次本地测试通过了，但这不证明原生库加载或构建产物支持。
 
-参考实现这边有条边界：两个自定义 codec 相互独立，而两者彼此一致，替代不了与参考实现的对比。两个仓库共享的机器可读 padding 向量在
-`test/jiejie/reference/naive_padding_vectors.json`。
+验证时还要区分本项目的两个自定义 codec 和外部参考实现：即使两个 codec 的结果一致，也不能代替与参考实现的对比。两个仓库共享的机器可读 padding 测试向量位于 `test/jiejie/reference/naive_padding_vectors.json`。
 
 ---
 
@@ -233,11 +228,7 @@ QUIC 标签开启时由 `protocol/naive/quic/inbound_init.go:177` 安装，关�
 
 ### UoT 的按数据报目的地 guard（Per-datagram destination guard for UoT）
 
-非 Connect 的 UoT 会话里，**每个数据报各带自己的目的地**，所以一个过了
-会话级检查的会话，本来可以在后续数据报里把数据发到完全不同的地方。
-`route/packet_destination_guard.go` 检查从数据报解出的目的地，丢掉被拒绝的
-那些。和既定会话目的地完全相同的，复用会话决策；其他目的地在 guard 生命周期内
-记忆化，于是规则与 DNS 不会对发往该键的每个后续数据包重新评估。
+非 Connect 的 UoT 会话中，**每个数据报都携带自己的目的地**。因此，即使会话通过了检查，后续数据报仍可能发往其他地址。`route/packet_destination_guard.go` 会检查数据报中的目的地并丢弃被拒绝的数据报：与会话原目的地完全一致时复用会话决策；其他目的地的决策在 guard 生命周期内缓存，后续相同目的地不再重复评估规则和 DNS。
 
 | 属性 | 取值 |
 |---|---|

@@ -235,17 +235,11 @@ RFC 2308 指出 `NXDOMAIN` 是关于**名字**的陈述，而精确缓存以完�
 所以这里的状态是 `BLOCKED_BY_ENVIRONMENT`，不是通过。
 由这份契约引出的三条告诫是 §8 的第 13–15 项。
 
-**来源层面的矛盾 —— `rewrite_ttl` 与零 SOA 头部 TTL。** 守卫的意图是：重写不能把权威的零负 TTL
-变成名字级判定。源码顺序表明，对某一种形状，这个检查可能没有执行：`applyResponseOptions` 先
-重写报文的 TTL（`normalizeTTL`），**之后** `commitCacheState` 才调用 `storeNXDomain`，
-所以 `extractNegativeTTL` 看到的是 `min(rewritten header TTL, SOA MINIMUM)`。
-头部 TTL 为 `0` 而 MINIMUM `> 0` 时，原始的 `min` 是 `0`，但正的 `rewrite_ttl`
-会让重新读取的值 `> 0`。现有的 `TestNXDomain_ZeroSOATTLIsNotPromotedByNameWide` 用 `min(0,0)`，
-也没有设置 `RewriteTTL`，因此覆盖不到这种形状。
-**这是 `UNVERIFIED`，不是已经证明的保证。**
-在 `header=0, MINIMUM>0` fixture 上，针对 `adapter.DNSQueryOptions{RewriteTTL: ...}` 的测试可以定论；
-在那之前，不要依赖“重写提升”这一断言，
-也不要把运行时改动作为知识刷新的一部分。
+**待验证的边界：`rewrite_ttl` 与零 SOA 头部 TTL。** 守卫的设计意图是不让 TTL 重写把原本为零的权威负 TTL 提升为名字级缓存判定。但源码先由 `applyResponseOptions` 通过 `normalizeTTL` 重写报文，再由 `commitCacheState` 调用 `storeNXDomain`，因此 `extractNegativeTTL` 读到的是 `min(rewritten header TTL, SOA MINIMUM)`。
+
+如果原始头部 TTL 为 `0`、MINIMUM `> 0`，原始最小值为 `0`，正数 `rewrite_ttl` 却可能使重新读取的值大于 `0`。现有 `TestNXDomain_ZeroSOATTLIsNotPromotedByNameWide` 使用 `min(0,0)`，且未设置 `RewriteTTL`，不能覆盖这一情形。
+
+该边界仍为 **`UNVERIFIED`**。需要构造 `header=0, MINIMUM>0` fixture 并设置 `adapter.DNSQueryOptions{RewriteTTL: ...}` 才能确认行为；在此之前不要把它当作已验证的保证。
 
 ---
 

@@ -14,12 +14,9 @@
 当前仓库 API 识别为 `Piggy-Cat-bit-shadow/JiejieBox`；现有远端 URL 是旧地址的重定向。
 Upstream/testing `e5d91fa79f6319d5de940d6c81d81f0fe53b9476` 是目标的 merge-base，不是作者身份证明。
 
-变更归属：Apple 子仓 gitlink `16cf87b4` → `044e6d5`、ABI pin 与 source lock；版本与发布证据；
-Apple 共享 action 拓扑/构建/pack 测试和结构守卫。先前未消费的 Apple 候选现已合入 `main` 与父仓；
-过时的候选声明与历史混合目标的验收行已对齐。当前归属与跨模块边界见
-`modules/child-repositories.md`、`modules/libbox-platform-contract.md`、`modules/ci-release.md`
-和 `ACCEPTANCE.md`。这次增量中没有父仓的 Go 运行时源码变更。既有的 2026-10-29 与 2026-10-28 ledger
-仍属历史，保留各自的 SHA 与限制；无关的源码声明保留先前校准，没有被说成刚刚重新证明。
+本次增量包括 Apple 子仓库 gitlink 从 `16cf87b4` 更新到 `044e6d5`、ABI pin 和 source lock 变更、版本与发布证据，以及 Apple 共享 action 的拓扑、构建、打包测试和结构检查。此前尚未纳入的 Apple 候选已合入 `main` 和父仓库，相关候选说明与历史验收记录也已更新。
+
+涉及的职责和跨模块边界见 `modules/child-repositories.md`、`modules/libbox-platform-contract.md`、`modules/ci-release.md` 和 `ACCEPTANCE.md`。本次增量没有父仓库 Go 运行时源码变更；2026-10-29 与 2026-10-28 校准记录保留各自的 SHA 和限制，未受影响的源码结论沿用先前证据。
 
 ## 子仓与依赖审计（Child and dependency audit）
 

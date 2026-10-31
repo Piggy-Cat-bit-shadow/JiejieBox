@@ -30,16 +30,11 @@ backup 的 server 与 port 可以继承 primary；primary 只配置了端口范�
 backup 端口。凭据与其他协议设置由主备共享，不是第二个独立账号。`resolveFallbackOptions`
 在构建运行时之前完成校验。
 
-出站持有相互独立的 primary 与 secondary SDK 运行时。偏好变更会为 **新** 会话选择 transport，
-本身并不关闭既有会话。首次冷却为 30 秒；恢复探测不成功后冷却增长，上限五分钟。恢复按需
-触发，而不是后台轮询。selector 在 **每个冷却窗口内只允许一个并发恢复探测**，并丢弃
-stale-generation 报告；探测失败会清除 `probing`，因此同一代次内冷却翻倍后仍允许后续探测
-—— 每个代次没有探测次数上限（`fallback.go:485-503`、`:528-538`）。分类结果允许时，
-primary 可以重试 secondary 一次；目标端 SOCKS 拒绝、调用方取消或含义不明的 TCP EOF，
-都不能证明该 transport 不健康。端点地址准备失败可以成为尝试另一个 backup 端点的理由，
-不需要把 primary 网络路径标记为损坏。UDP 的 SOCKS 响应 EOF 有自己的分类。确切分支与
-带类型的 socket 观测见 `fallback.go` 与 `dial_observation.go`；不要从分类测试推断与对端的
-互通性。
+出站分别维护 primary 和 secondary SDK 运行时。偏好变化只影响 **新会话** 使用的 transport，不会因此关闭现有会话。首次冷却为 30 秒，恢复探测失败后冷却时间增长，最长五分钟；探测由需求触发，不会在后台轮询。
+
+每个冷却窗口内只允许一个并发恢复探测，过期 generation 的报告会被丢弃。探测失败后会清除 `probing`，后续冷却结束后仍可再次探测，同一代次没有探测次数上限（`fallback.go:485-503`、`:528-538`）。
+
+只有错误分类允许时，primary 才能重试 secondary 一次。目标端 SOCKS 拒绝、调用方取消和含义不明的 TCP EOF 都不足以证明 transport 不健康；端点地址准备失败则可能促使系统尝试另一个 backup 端点，但无需因此将 primary 网络路径标为损坏。UDP 的 SOCKS 响应 EOF 另有分类。详细分支与带类型的 socket 观测见 `fallback.go` 和 `dial_observation.go`；分类测试不能证明与外部对端互通。
 
 ## 生命周期与网络变更（Lifecycle and network change）
 

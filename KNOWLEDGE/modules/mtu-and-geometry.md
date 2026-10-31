@@ -15,7 +15,9 @@ Initial 最小值的结果。路径容量未知时，代码不会声称存在上
 该结果交给固定版本的 sing-quic 客户端使用；它是路径容量约束，不是对物理链路 MTU 的测量。
 将结论推广到其他协议前，应检查 TUIC 测试和对应的 fork 版本。
 
-对 MASQUE 来说，`protocol/masque/client.go` 已经会从 detour 算出 `outerPayloadCeiling`，并在容量已知时钳制 `HTTP3Options.InitialPacketSize`。所以 2026-10-28 历史审计里“没有计算任何外层上限”的陈述过于宽泛。那个构造函数没有用这个值给 `InitialPacketSizeCeiling` 赋值，也没有据此禁用路径 MTU 发现。因此，初始钳制不能当作“后续 QUIC 数据包存在硬性上界”的证明。这个区分在 `011f3fdcd99` 处是 `VERIFIED_SOURCE`；它不隐含任何真实底层网络或对端测量。
+对于 MASQUE，`protocol/masque/client.go` 会根据 detour 计算 `outerPayloadCeiling`，并在容量已知时限制 `HTTP3Options.InitialPacketSize`。因此，2026-10-28 历史审计中“没有计算任何外层上限”的表述过于宽泛。
+
+但该构造函数没有用这个值设置 `InitialPacketSizeCeiling`，也没有据此禁用路径 MTU 发现；初始大小受到限制，不代表后续 QUIC 数据包也有同样的硬上限。以上是对 `011f3fdcd99` 的 `VERIFIED_SOURCE`，并非对真实网络或对端的测量。
 
 **范围：** `common/bufgeom`（fork 创建）、MASQUE 的 MTU/PTB 路径、hysteria2 的硬上限、WireGuard 的隧道 MTU、`common/physicalpath/status.go` 的 MTU 块，以及低内存几何 profile。
 
@@ -65,7 +67,7 @@ inner tunnel MTU        what the tunnel promises the payload it carries
 4. **如果 `mtu >= minimumLinkMTU`（1280）**，代码用 `datagram.Advance(1)` 撤销 context ID，然后运行 `handlePacketTooBig(datagram, mtu)`（`transport/masque/session.go:516-525`）；否则就是**硬错误**——*"unable to carry 1280 byte packets"*（中文：无法承载 1280 字节的数据包）；
 5. 客户端在 `transport/masque/client.go:704-715` 处理它；服务端在 `transport/masque/server.go:579-592`，把错误定向到**所属对端**（`firstPeerAddress :596-605`）并在该会话上排队；ICMP 错误在 `icmp.go:73-85`、`:99-134` 中构建，目的地址重写会**重新计算校验和**。
 
-**这条不变量的精确表述是：** 一个过大的数据报**永远不会被静默丢弃，也永远不会被提升为 capsule**。PTB 通告 `MaxDatagramPayloadSize − VarintLen(StreamID/4) − 1`，**且仅当该值 ≥ 1280**；否则发送方会收到上面那个显式错误。MTU 还会被 `sing-tun/icmp_error.go:113`、`:155` 进一步钳制。
+**数据报过大时的约束：** 不得静默丢弃，也不得转换为 capsule。只有 `MaxDatagramPayloadSize − VarintLen(StreamID/4) − 1` 不小于 1280 时才发送包含该值的 PTB；否则向发送方返回上文所述的显式错误。`sing-tun/icmp_error.go:113`、`:155` 还会进一步限制 MTU。
 
 测试：`packet_too_big_test.go`（`:111`、`:175`、`:234`、`:271`、`:294`、`:374`）、`packet_too_big_session_test.go`（`:150`、`:212`、`:270`、`:295`）、`packet_size_bound_test.go:90-186`（`maxPacketSize = 40 + 65535`，`session.go:56-61`）。
 

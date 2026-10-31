@@ -4,7 +4,7 @@
 
 | 提交 | 变更行为 |
 |---|---|
-| 子仓库 Apple `aeccc75`, `16cf87b`；Android `c783710`；Desktop `6d4ccf8` | 已经消费的客户端变更 → `modules/child-repositories.md` |
+| 子仓库 Apple `aeccc75`, `16cf87b`；Android `c783710`；Desktop `6d4ccf8` | 已纳入父仓库的客户端变更 → `modules/child-repositories.md` |
 | 子仓库 sing-tun `f9d880f`, `8b9a380`；uTLS `3ab4752`, `2da328d` | 路由端口与 TLS 修复 → `modules/child-repositories.md` |
 | Apple `044e6d5`, 父仓库 `a741e3e916f` | 集成已合并，并在 v0.1.34 中被消费 → `modules/child-repositories.md` |
 | `e61f9d5160e`, `14e21140564`, `0067b03e377` | Apple 构建/打包/拓扑 fixture 与结构守卫修正 → `modules/ci-release.md` |
@@ -33,19 +33,14 @@
 | `a1b2174654a` | 通配监听器的地址族选择 → `modules/core-lifecycle-runtime.md` |
 | `7c0cc0bacaa` | Windows TUN 读取错误分类；显式接受的值比注释里写的更窄 → `modules/core-lifecycle-runtime.md` |
 
-**这是一份演进索引，不是变更日志（changelog）。** 条目按顺序列出在每个评审点上塑造了行为的
-提交，好让读者追查代码为什么是现在这个样子。在假定某个历史行为仍然成立之前，
-请先复检当前源码。
+这份演进索引用相关提交解释行为的由来，并非完整变更日志。每条记录对应当时的评审点；判断历史行为是否仍然有效时，应先核对当前源码。
 
 ## 如何使用（How to use it）
 
-1. 找到你即将变更的那个行为。
-2. 把 **最终行为（Final behaviour）** 一行读作该条目评审点当时的行为；把它当成当前行为之前，先对照当前
-   源码与 `BASELINE.md`。
-3. 只有需要推理过程时才按顺序读这些 SHA。逐个提交执行 `git show <sha>` 就够了；你不需要
-   该范围的完整 diff。
-4. 如果有 **被取代（Superseded）** 一行，那次早先的尝试恰恰因为它错了才值得一读——它就是
-   未来的变更最容易重复的形状。
+1. 找到准备修改的行为。
+2. 将 **最终行为（Final behaviour）** 理解为评审时的结论；使用前对照当前源码和 `BASELINE.md`。
+3. 需要了解决策过程时，按顺序用 `git show <sha>` 查看相关提交。
+4. 留意 **被取代（Superseded）** 的早期方案，了解它被替换的原因，避免重复相同问题。
 
 ## 阅读此处任何 SHA 之前需要知道的两件事（Two things to know before reading any SHA here）
 
@@ -59,7 +54,7 @@
 
 | 标签 | 含义 |
 |---|---|
-| `OWN` | 在 fork 自己的线上写的 |
+| `OWN` | 在 fork 分支中自行编写 |
 | `UPSTREAM-INHERITED` | 存在于 `e4b7e692` 之下的上游提交 |
 | `UPSTREAM-ABSORBED` | fork 重新应用的上游变更；**其内容已在基线中** |
 | `EXTERNAL-ADAPTED` | 派生自具名的外部来源，并在提交或模块中被引用 |

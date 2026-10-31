@@ -148,15 +148,15 @@ L0 只在它能起作用的地方测量：无路由集 → 0/4 形态；`route_a
 
 ### A.8 范围，以及刻意不在范围内的部分（Scope, and what is deliberately not in it）
 
-卸载适用于：TUN 入站、TCP 或 UDP、字面目标、叶子实现 `adapter.BypassableOutbound` 的**单出站链**，以及通过全部资格条件的流。
+卸载的候选流需要来自 TUN 入站，使用 TCP 或 UDP，目标为字面 IP，且最终出站实现 `adapter.BypassableOutbound`。除单出站链外，符合下述 `fast_path` 策略的透明组链也可能获得资格；所有流仍须通过其余资格检查。
 
 本轮不包含：原生路径上的 tracker 记账（有 tracker 就拒绝）；`UDPConnect`（它有自己的套接字与 NAT 语义）；traffic class（原生 direct 流按构造就在上传调度器的托管域之外）。
 
-> **在 `v0.1.9` 基线上已修正。** 本节过去把**出站链**列为超出范围，理由是*"a group introduces selection, lifecycle and accounting semantics of its own, and the selected leaf happens to be direct does not make those equivalent."*（中文：一个 group 会引入它自己的选择、生命周期与记账语义，被选中的叶子恰好是 direct 并不会使两者等价。）这条理由对一个**不透明** group 仍然成立——`loadbalance` 至今仍然拒绝，原因就在这里：拨号与重试可能归它管，所以它不透明。
+> **组链的适用范围已在 `v0.1.9` 基线上修正。** 组可能带来额外的选择、生命周期和记账语义，不能仅因最终选中 direct 就认为可以旁路。`loadbalance` 可能管理拨号与重试，因此仍被视为不透明组并遭到拒绝。
 >
-> 变的是 `fast_path` 特性加了一个**狭窄且显式**的例外：只要叶子之前的**每一个**元素都是透明的纯选择 group，**且**叶子仍然通过未改动的 `BypassableOutbound` / `CanBypass` 检查，`route/route.go` 现在就会放宽 `BypassRefusedOutboundChain` 阻断，并且只对声明了 `FastPathTransparent() bool` 的 group 生效。没有这个例外，该特性在所有 group 配置上都不起作用，因为被路由进 group 的流必然有 `len(chain) >= 2`。
+> `fast_path` 为符合条件的透明选择组提供了例外：最终出站之前的每个组都必须声明 `FastPathTransparent() bool`，且最终出站仍须通过原有的 `BypassableOutbound` / `CanBypass` 检查。满足条件时，`route/route.go` 可放宽 `BypassRefusedOutboundChain`；否则，进入组后的 `len(chain) >= 2` 会使链被拒绝。
 >
-> 在当前目标上，第一个显式的 group 策略获胜；没有显式策略时，通往真实 direct 叶子的透明链自带授权。显式 false 会抑制它。不透明 group 维持拒绝。授权仍然不能取代叶子与元数据的资格检查。归属方是 `fast-path-group-policy.md` §6，能力契约和按类型的表都在那里——本模块只记录 Direct Offload 的判定换了形态。
+> 对当前目标，从外向内遇到的第一个显式组策略决定授权。没有显式策略时，通往真实 direct 出站的透明链具有默认授权；显式 false 会取消它。不透明组仍被拒绝，获得授权也不能跳过最终出站和元数据的其他资格检查。完整契约及各组类型见 `fast-path-group-policy.md` §6。
 
 ### A.9 归因（Attribution）
 
@@ -183,7 +183,7 @@ classify the flow              bound the post-transition        pace the managed
 
 ### B.2 上传调度器（The upload scheduler）
 
-**托管域：** 只管用户态代理的上行流。只有内核 splice 拷贝路径对这条流不可用时（`route.ConnectionManager.uploadStreamGate`），流才会走到本包，所以这里没有任何东西会和 splice 或原生 direct 旁路竞争。它**不是**全机 QoS。
+**适用范围：** 调度器只处理用户态代理的上行流。`route.ConnectionManager.uploadStreamGate` 仅在当前流无法使用内核 splice 拷贝路径时介入；它不管理 splice 或原生 direct 旁路流量，也不是全机 QoS。
 
 **`upload_rate` 完全按写下的内容生效。** 这里**没有隐藏的安全系数**：配置 `8 MiB/s`，托管上传就放行 `8 MiB/s`。
 
@@ -215,23 +215,23 @@ classify the flow              bound the post-transition        pace the managed
 
 **3. 整形也必须覆盖高优先级通道。** 两条 HIGH 批量流加一个小的 HIGH 探测：无门禁 p99 114 ms；`ModePacedNormalOnly` @85% 73 ms；`ModePaced`（聚合）@85% **8 ms**。只整形 NORMAL 通道，队列深度和原来一模一样。实际交付的是聚合模式。
 
-**4. 大于桶容量的写入要记账，不能豁免。** 记账拆成两段：共享桶先承担这次写入必须看到的部分（至多一个突发，所以任何流都挟持不了另一条流），发出写入的流再在自己的未来里承担剩下的。一条每次写 256 KiB、桶只有 64 KiB 的流，配置 1.70 时被放行到 1.84 MB/s，未整形的对照组则达到 2.10。
+**4. 超过桶容量的写入也必须计入限速。** 系统分两段记账：共享桶先承担本次写入中最多一个突发容量的部分，避免单条流长期占用共享额度；剩余部分计入发起写入的流后续额度。实验中，每次写入 256 KiB、桶容量为 64 KiB、配置速率为 1.70 MB/s 时，实测放行 1.84 MB/s；未整形对照组达到 2.10 MB/s。
 
 ### B.4 学习型速率经过研究，但未交付（A learned rate is researched and NOT shipped）
 
 `adaptive_research_test.go` 由 `trafficresearch` 构建标签守护，**而没有任何东西引用这个标签**——没有工作流、没有 Makefile 目标、没有脚本、没有发布 profile。本包 51 个测试全部执行、**零跳过**；研究类测试根本没有编进来。
 
-**如果哪天研究控制器能从生产代码走到，会有一个测试失败。** 请一字一句地读这条主张，它比听起来窄：
+**生产代码有一项针对研究原型的静态守卫，但覆盖范围有限：**
 
 * 守卫本身（`common/trafficsched/adaptive_controller_guard_test.go:20-63`、`TestAdaptiveControllerIsNotInProduction`）**没有构建标签，所以每次发布运行都会执行**；
 * 它是对该目录里非 `_test.go` 文件做**源码文本 grep，找标识符 `adaptiveRate`**；
 * 它带一个阳性对照（标识符必须存在于 `adaptive_research_test.go` 中），把 `//go:build trafficresearch` 钉在研究文件上，也把 `scheduler.go` 的 `type RateSource interface` 钉住——所以它守护的**接缝**一样有守卫。
 
-它**抓不到**的：换个名字、放到别的包里的学习型控制器，或从 `box.go` 经 `SetRateSource` 接进来的控制器。它只是针对一个标识符的源码文本守卫，而这正是 `docs/UPSTREAM-SYNC.md:89-94` 反对的做法——诚实的解读是：它在这里是最*便宜*的可用控制手段，不是行为性控制。
+这个守卫**无法发现**换名或放在其他包里的学习型控制器，也无法发现从 `box.go` 经 `SetRateSource` 接入的控制器。它只检查一个源码标识符，并非行为测试；`docs/UPSTREAM-SYNC.md:89-94` 对此类文本守卫的局限也有说明。
 
 **这个标签为什么存在**（`bb21a854c`，*"test(traffic): stop the adaptive characterisation gating releases"*）：同一份源码下，`TestAdaptiveRatePrototype` **在 GitHub 的 Linux runner 上必然失败，在 macOS 上却通过**——85% 的判定阈值报出 1.7719296 MB/s，要求是 1.8605。把它打上标签排除之外，另一个选择是弱化断言，而那个提交明确拒绝了。
 
-**未来的 AI 不知道这件事会失去什么：** 它会重新推导 AIMD 控制器、重跑同一个实验、看到 `-tags trafficresearch` 在 Linux 上失败，然后靠放宽判定阈值来“修好”它。
+后续重新评估 AIMD 控制器时，应先阅读这些实验及跨平台差异，不要仅为消除 Linux 上的测试失败而放宽阈值。
 
 学习型速率为什么不交付：最直观的观测量——一次写入阻塞了多久——量到的是**竞争**造成的等待，不是路径的速率。一条 2.00 MB/s 的链路上，一条流时它报 1.29 MB/s，四条流时报 0.35 MB/s，两次都非常稳定：一个稳定、精确、却**错误**的数字。AIMD 控制器原型能跟住变化中的容量，但会**稳定在**容量处，而一到容量，队列就建立起来了：
 

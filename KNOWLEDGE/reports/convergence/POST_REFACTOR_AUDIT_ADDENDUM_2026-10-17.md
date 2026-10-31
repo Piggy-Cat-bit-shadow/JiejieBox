@@ -20,7 +20,7 @@
 | #4 recovery 跨 generation | **已决策并解释** | 代码里没有拒绝路径是设计：`admittedRecoveredCandidates` 在 ownership 过期时 fail-open（过期判决不能否认可拨地址），跨代连接由 hand-over 拒绝。安全半边由 #2 的真实 socket 测试覆盖；不再造一个 pin"机制"的测试，因为把 capture 穿过 recovery 是另一种合法修法，pin 住今天的形状会与之冲突 |
 | 测试侧影子模型（hit report / benchmarks） | **已修** | `productionDirectOutbound` 现在走 `direct.NewOutbound` 真实构造；三个结构体字面量调用点全部改走构造器（改完后字面量本身会 nil panic，正是它们被找出来的方式）。命中率数字未变（3/6 形状、85% 权重）——因为该拓扑无 ambient 策略且 fixture 机器无判决，这恰恰说明影子模型"在它出错之前都是对的" |
 
-**结论：本环境内可解决的项已清零。**剩余的只有两类：一类是**已决策并写进代码/测试**的取舍（见原报告 F1/F3），一类是**环境阻塞**（见第四节）。
+**结论：本轮在该环境中可处理的问题已完成。** 剩余事项包括已经落实到代码或测试中的设计取舍（见原报告 F1/F3），以及受环境限制而未完成的验证（见第四节）。
 
 ---
 

@@ -65,7 +65,7 @@ peek/read 行为、嗅探超时、分片 QUIC，或 sniff→routing 的元数据
 | S1 | `payloadReader` 借用 segments，且**不得比创建它的 `PeekStream` 调用活得更久** | `sniff.go:79-91` | 保留该游标的嗅探器会读到**被回收的池化缓冲区** |
 | S2 | `segments` 是**一次性**捕获的视图，每次 `ReadOnceFrom` 之后会重新读取最新的槽位 | `sniff.go:132-137`、`:162` | 按“每次读取一个 segment”的错误假设会读到陈旧的 segment |
 | S3 | 在轮次之间游标是**回绕（rewound）而不是重建**的 | `sniff.go:186` | 每轮一次分配，且嗅探器之间产生分歧 |
-| S4 | 读截止时间在**每次读取前后设置与清除** | `sniff.go:146-151` | 泄漏的截止时间会毒化该连接的后续读取 |
+| S4 | 读截止时间在**每次读取前后设置与清除** | `sniff.go:146-151` | 未清除的截止时间会影响该连接的后续读取 |
 | S5 | 缓冲区来自**调用方**（`buf.NewPacket()`，16 KiB），写满时 `ReadOnceFrom` 返回 `io.ErrShortBuffer` | `route/route.go:1401`（stream）/ `:1525`（packet） | 16 KiB 上限就是 PeekStream 的字节上限 —— 不要随意“提高”它 |
 | S6 | `takePacketBytes` 返回**调用方数据报内部的视图**，仅在数据报存活期间有效 | `quic.go:36-54` | 保留的 DCID / PN 样本会读到被回收的内存 |
 | S7 | QUIC 的工作副本 `newPacket` 是一次**全新的、按包大小的 `make`，有意不做池化**；解密后的缓冲区与 `newPacket` 重叠引用 | `quic.go:184`、`:227` | 池化它会使分片比其所有者活得更久；见 S8 |
@@ -73,11 +73,7 @@ peek/read 行为、嗅探超时、分片 QUIC，或 sniff→routing 的元数据
 | S9 | 头部保护在包内**原地写入 4 个字节**，因此无法容纳这些字节的 `Length` 会被拒绝 | `quic.go:125-131`（返回 `os.ErrInvalid`；`:186-189`） | 越界写入数据报尾部 |
 | S10 | `PeekPacket` 的成功路径零分配（两个局部错误槽位，仅在失败时才分配一个切片） | `sniff.go:205-236` | 数据包热路径上每个数据报一次分配 |
 
-S6–S8 的证明方式如下（证据异常强，这也是拷贝边界可以信任的原因）：
-`quic_ownership_test.go:314-350` 断言一个**地址范围**，
-`:206-281` 与 `quic_boundary_test.go:427-456` **毒化调用方的数据报**，并表明 `newPacket` 不受影响；
-`sniff_bounded_copy_internal_test.go:120-156` 表明保留的 `cap` 不会随
-合并尾部（coalesced tail）增长。
+S6–S8 有以下测试依据：`quic_ownership_test.go:314-350` 检查地址范围；同文件的 `:206-281` 和 `quic_boundary_test.go:427-456` 在修改调用方数据报后确认 `newPacket` 不受影响；`sniff_bounded_copy_internal_test.go:120-156` 则检查保留的 `cap` 不会随合并尾部（coalesced tail）增长。
 
 ---
 

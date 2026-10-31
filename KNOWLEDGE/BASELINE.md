@@ -42,7 +42,7 @@
 
 > **基线之后的生产增量**：**没有。** `v0.1.6..HEAD` 是 5 个提交，且**没有任何 `.go` 源码发生变化**。
 
-**那一行后来变成了假话，而且整整两个 release 都是假的。** 刷新时实测：
+这条静态描述在后续两个 release 期间已过期。刷新时重新核对的结果如下：
 
 ```sh
 git rev-list --count a267e99e0..5fc4f9366     # 181        (the row said 5)
@@ -60,16 +60,12 @@ experimental/boxdd/authenticode_windows.go
 protocol/group/selector.go           protocol/group/urltest.go
 ```
 
-这正是知识模型要防的失败模式，它被写在这里，而不是悄悄掩盖：**增量行是一句有保质期的
-声明，没有任何机制会自动复检它。** 在 `v0.1.7` 与 `v0.1.9` 之间信了那一行的读者，会以为
-“模块仍然描述着这棵树”，然后在已发布特性（`fast_path` 组策略）、根包（`box.go`）和
-Android/Apple 构建路径上判断出错。
+这次失效说明：**基线之后的增量必须在使用时重新计算**，静态描述不会自动更新。若在 `v0.1.7` 至 `v0.1.9` 期间沿用旧结论，就可能误判已发布的 `fast_path` 组策略、根包（`box.go`）以及 Android/Apple 构建路径。
 
 刷新把基线移到 `HEAD`，理由是变更的子系统已经对照当前源码审计过，而不是因为时间过去了。
 `REFRESH.md` §39 列出了基线**不得**移动的条件；这里没有一条适用。
 
-**这里说的“审计过”要讲精确，因为区别正在于此。** 各模块已经对照当前源码检查了本次增量
-改变的行为，其中两个模块被发现与之**矛盾**——两个都在同一次刷新里修改了：
+这次历史刷新针对增量涉及的行为核对了当时的源码；其中两个模块与源码不一致，并在同一轮刷新中修正：
 
 * `modules/fast-path-group-policy.md` §6 声称 `canFastBypass` 资格门禁 *“unchanged
   by this field”*（中文：未被该字段改变），并且 *“none of the existing blocking conditions is bypassed.”*（中文：现有阻断条件都没有被绕过。）这实际上不成立：

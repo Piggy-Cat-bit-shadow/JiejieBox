@@ -26,12 +26,11 @@
 
 ### 1.1 一句话结论
 
-**本轮最看好的四个方向里有三个被实测证伪**，真正的施工价值集中在两个"没人提过"的返回路径与 L4 隧道小缺口上；
-本轮同时发现 2 个确认缺陷（1 个当前不可达）与 1 个需要确定性复现的活性风险。
+本轮重点考察的四个方向中，有三个未得到实测支持。值得继续研究的工作集中在两处返回路径和 L4 隧道边界；审计还发现 2 个确认缺陷（其中 1 个在审计版本上不可达）以及 1 个需要确定性复现的活性风险。
 
 ### 1.2 五条最有价值的结论
 
-**结论一（强否定）：TCP `PacketTemplate` 在本仓库不成立，应明确否决。**
+**结论一：在本次测试条件下，不建议为 TCP 引入 `PacketTemplate`。**
 `sing-tun` 的分段发出路径每段重新编码 IPv4 头、重算 IPv4 首部校验和、重算伪首部校验和
 （`sing-tun@a7bd7fac:stack_go_tcp_output.go:822-884`）。看上去这正是 Anywhere
 `PacketTemplate`（`aw@89905e0e:Packages/AnywhereIP/Sources/AnywhereIP/TCP/PacketTemplate.swift:8-101`）

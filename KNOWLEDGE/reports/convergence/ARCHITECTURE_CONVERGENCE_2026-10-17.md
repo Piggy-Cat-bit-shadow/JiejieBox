@@ -31,18 +31,14 @@
 | D7 | 运行中的 power report 没有被算作"会计消费者"，bypass 会吞掉统计 | `3ff16b8047f` |
 | D8 | `httpclient` 把一个富 dialer 存成窄字段且从不读取 | `5999fe1804a` |
 | D9 | `dns.Client` 只认 lock-free getter；只有 snapshot 的 manager 被当作"永远稳定" | `68c7cf9229a` |
-| D10 | 家族判决无法穿过 outbound hop，probe 链静默拿到零策略 | `c4f363fbe56` |
+| D10 | 地址族判定无法穿过 outbound hop，probe 链静默拿到零策略 | `c4f363fbe56` |
 | D11 | failover shim 每漏一个能力就要手写一个转发（已发生两次） | `831749d3ae0` |
 
 ### D1/D2/D3 — 一次解析、一次 capture（`200f3b217d3`）
 
-`DefaultDialer` 独立保存四个可选能力，`captureEpoch` 与 `captureLocalFamilyPolicy` 各有一套优先级——
-同一个缺陷在两个文件里被修过两次，形状完全相同。现在 `networkObserver` 在构造期一次性解析最强接口
-（family 观测 → transition pair → 两个 getter → 单个 → 无），`captureEpoch` 就是同一个 capture 的
-所有权半边。
+原先 `DefaultDialer` 分别保存四种可选能力，`captureEpoch` 和 `captureLocalFamilyPolicy` 各自维护优先级，同类缺陷因而需要在两处修复。重构后，`networkObserver` 在构造时按 family 观测、transition pair、两个 getter、单个 getter、无接口的顺序选择可用能力；`captureEpoch` 使用同一次 capture 中的所有权信息。
 
-同时**删掉一个事实来源**而不是给它接线：调度器原先用两次读取组装健康命名空间；environment 的唯一用途
-就是那个 map key，generation 是同一命名空间、更省、并随 capture 到达。
+调度器原先通过两次读取拼出健康状态命名空间，其中 environment 仅用作 map key。重构后改用同一命名空间的 generation，并与 capture 一起传递，减少一个重复的事实来源。
 
 ### D4 — 构造期 dial surface（`f40ed4c6d92`）
 
@@ -250,7 +246,7 @@ environment generation 并入网络 epoch；不要为了"统一"在 `commitTrans
 | `3ff16b8047f` | 运行中的 power report 拒绝 fast path |
 | `5999fe1804a` | 删除 httpclient 的只写 dialer 字段 |
 | `68c7cf9229a` | DNS 也会读 snapshot；删除死接口 |
-| `c4f363fbe56` | 家族判决穿过 outbound hop（协议选择后被更正） |
+| `c4f363fbe56` | 地址族判定穿过 outbound hop（协议选择后被更正） |
 | `831749d3ae0` | failover shim 的能力可见性（结论后被更正为"不报告链"） |
 | `a61eb701c89` | ambient 策略覆盖 + 两处排除的决策记录 |
 

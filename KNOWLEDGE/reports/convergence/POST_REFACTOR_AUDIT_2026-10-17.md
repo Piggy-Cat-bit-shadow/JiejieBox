@@ -11,9 +11,9 @@
 
 ## A. 结论
 
-**架构收敛本身站得住，但本轮抓到一处由我引入的真实生产回归，和一处"修了却没用"的修复。两者都已修并各有可失败的回归测试。**
+**审计认可第一阶段的架构收敛方向，同时发现一处生产回归和一处未覆盖实际调用路径的修复。** 两项问题均已修复，并分别增加了能够检出回归的测试。
 
-一句话概括这一轮的判断：第一阶段把"同一事实一个来源"落实到了观测与能力层，但**我用一个仓库级协议（`Upstream()`）去表达一个包内需求**，这个决定让一个 outbound 的新方法改变了三个包之外一个 WireGuard 端点的 bind 实现；同时我把"家族健康 owner"的查找修了两处、漏了第三处，而被修的两处恰好不在生产探针的调用路径上。
+第一阶段统一了观测与能力事实的来源，但使用仓库级协议 `Upstream()` 表达包内需求，使一个 outbound 新增方法影响了其他包中的 WireGuard 端点 bind 实现。此外，family health owner 的查找虽然修正了两处，却遗漏了生产探针实际使用的第三处。
 
 ---
 
@@ -68,7 +68,7 @@ udpListener, isUDPListener := common.Cast[dialer.UDPListener](e.options.Dialer)
 
 ### B5. P1 —— `unwrapDialer` 会穿过 detour（本轮早段自捕并修复）
 
-`DetourDialer.Upstream()` 会触发惰性 outbound 解析，且 detour 之下是**对端**的拨号路径：家族判决套到目的地地址上会拒绝对端本可服务的连接。现在显式拒绝。回归测试 `TestTheCapabilityWalkDoesNotCrossADetour`（同时断言"提问没有触发解析"），mutation 已验证。
+`DetourDialer.Upstream()` 会触发惰性 outbound 解析，且 detour 之下是**对端**的拨号路径：地址族判定套到目的地地址上会拒绝对端本可服务的连接。现在显式拒绝。回归测试 `TestTheCapabilityWalkDoesNotCrossADetour`（同时断言"提问没有触发解析"），mutation 已验证。
 
 ---
 
@@ -77,8 +77,8 @@ udpListener, isUDPListener := common.Cast[dialer.UDPListener](e.options.Dialer)
 | 缺口 | 补的测试 | 说明了什么 |
 |---|---|---|
 | 三个 packet/stream 入口从未并排驱动 | `TestAStrictFamilyPolicyIsAppliedOnEveryPath` | 严格策略在 **stream TCP / connected UDP / 带候选 / 不带候选** 四条路径上给同一个答案，且每条都带"允许族仍可通过"的控制腿 |
-| 同上，家族能力行 | `TestALocalFamilyFastFailIsAppliedOnEveryPath` | 报告过的 Windows 停机矩阵化：全局 IPv6 拒绝 + LAN/链路本地/公网 IPv4 豁免 |
-| **connected UDP 从未被 matrix 驱动** | 上面两个测试的 `stream connected UDP` 列 | 发现并写明了家族判决在三条路径上由**三个不同层**执行（scheduler / leaf packet gate / leaf literal gate） |
+| 同上，地址族能力行 | `TestALocalFamilyFastFailIsAppliedOnEveryPath` | 报告过的 Windows 停机矩阵化：全局 IPv6 拒绝 + LAN/链路本地/公网 IPv4 豁免 |
+| **connected UDP 从未被 matrix 驱动** | 上面两个测试的 `stream connected UDP` 列 | 发现并写明了地址族判定在三条路径上由**三个不同层**执行（scheduler / leaf packet gate / leaf literal gate） |
 | **无候选列表 + domain** 这条臂无人驱动 | `TestADomainDestinationOnTheLiteralArmResolvesAndBinds` + 字面量不查 DNS 的控制 | `route/conn.go:601` 用 `len(DestinationAddresses) > 0` 选臂，domain 正是空列表的那一形状 |
 | DURING → commit 只有断言层测试 | `TestADialThatBeginsDuringATransitionIsRefusedAfterItCommits` | 用真实 Control hook 卡住 socket，transition 在窗口内提交且 **epoch 不动**；mutation 已验证它专抓"忽略开始状态"这一形状 |
 | 三个生产对象没有编译期 pin | `DefaultDialer` / `direct.Outbound` / `failoverDialer` 的 `var _` | 之前只有 `resolveParallelNetworkDialer` 有 pin，double 比生产对象管得更严 |

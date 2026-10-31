@@ -30,10 +30,8 @@ close 返回之后再注册的清理，会**在调用方的 goroutine 上同步�
 随后一次直接的 Scope close 可能卡在等待状态；`Box.Close` 会 recover 并记一个错误，
 而不是把清理做完。
 
-* **原因：** 作用域持有的每个资源，都要有一个注册到真实所有者名下的清理。别的
-  所有者也可能关掉资源；单看少了某次直接的 `scope.Add`，证明不了泄漏。把
-  迟到的清理改成异步，会改变那个迟到资源被释放的时机。
-* **违反后果：** 一个已被拆解的 `*Inbound` 还留着 observer；一次监听在排空之后才绑定。
+* **原因：** 每个由作用域持有的资源都需要由实际所有者负责清理。其他所有者也可能关闭同一资源，因此仅凭某处没有直接调用 `scope.Add`，不能断言发生了泄漏。将迟到的清理改为异步，还会改变资源释放时机。
+* **违反后果：** 已清理的 `*Inbound` 可能仍有 observer，或监听器在作用域排空之后才完成绑定。
 * **证明：** `adapter/lifecycle.go:112-138`、`:218-283`；`adapter/lifecycle_close_boundary_test.go`；
   提交 `53a3f97e8`、`f2c728d10`、`e3349044a` —— **这三个 SHA 在本克隆中无法解析**
   （重写前的历史，只出现在 `docs/fork/lifecycle-scope-*.md` 里）。当前的证明是源码锚点
@@ -59,9 +57,8 @@ close 返回之后再注册的清理，会**在调用方的 goroutine 上同步�
 只读历史，不回写；`LoadBalance.Selected` **仅**在 `commit` 为 true
 时推进轮询游标。
 
-* **原因：** 一次诊断或校验遍历如果移动了游标，下一次流就会交给另一个成员，
-  而不是它刚报告的那个。
-* **违反后果：** 报告的出口不是实际拨号的成员；两条流消耗了三个槽位。
+* **原因：** 诊断或校验如果推进游标，就会改变后续流的成员选择。
+* **违反后果：** 报告的出口与实际拨号成员不一致，或两条流消耗三个轮询槽位。
 * **证明：** `protocol/group/loadbalance.go:259-261`、`:337-341`；`route/physicalpath_route_test.go`
   （`TestPhysicalPathTakesNoSelectionPreviewThroughRealGroups`、
   `TestTwoFlowsAdvanceTheCursorExactlyTwiceWithAPreviewInBetween`），并用一个**变异（mutation）**验证过
@@ -74,9 +71,8 @@ close 返回之后再注册的清理，会**在调用方的 goroutine 上同步�
 `Hop.IsGroup` 从不被设置；组只对 `ControlPath` 有贡献。`Hops` 按报文顺序
 （离设备最近的在最前）；`ControlPath` 是下行顺序，**刻意不反转**。
 
-* **原因：** 把组报成跳、或把跳列表倒过来报，这样的诊断描述的是流量根本不走的
-  路径 —— 这比没有诊断更糟。
-* **违反后果：** 状态视图把健康的一跳指成坏掉的那一跳。
+* **原因：** 将组报告为物理跳，或颠倒物理跳的顺序，都会使诊断路径偏离实际流量路径。
+* **违反后果：** 状态视图可能将正常的节点误报为故障节点。
 * **证明：** `common/physicalpath/physicalpath.go:261-264`、`:564-600`；`leaves.go:305-310`；
   `physicalpath_test.go:462-482`；`dependency_on_group_test.go:148-155`；
   `route/physicalpath_route_test.go`。方向修正为 `524ea41e`；`ControlPath` 修正为
@@ -95,7 +91,7 @@ close 返回之后再注册的清理，会**在调用方的 goroutine 上同步�
   selector 挪了。
 * **可从对象图证明：** `Resolver` 只持有一个 registry 查找、一个 `Snapshot` 和一个 network
   名称——没有 dialer、没有 logger、没有 context、没有 clock。
-* **诚实的范围：** 确实存在、也允许有两个副作用：一条弃用日志
+* **适用范围：** 确实存在、也允许有两个副作用：一条弃用日志
   （`common/dialer/dialer.go:187`）和一次记忆化的 detour 标签→对象解析
   （`common/dialer/capability.go:100` → `detour.go:63`）。两者都不拨号。`Box.Status` 是
   另一个例外：它会为目的地取一次实时预览。
@@ -166,7 +162,7 @@ close 返回之后再注册的清理，会**在调用方的 goroutine 上同步�
 * **原因：** 一次会重连的裁剪，把应对内存压力变成了流量事件。
 * **违反后果：** 空闲期裁剪新建一个队列，耗掉射频时间；裁剪成了
   重连触发器——这正是内存路径绝不能有的形态。
-* **诚实的范围：** `service/oomkiller/timer.go` 的危急回收可以调用 `ReleaseMemory`，后者会重置
+* **适用范围：** `service/oomkiller/timer.go` 的危急回收可以调用 `ReleaseMemory`，后者会重置
   网络，这是有意为之（`route/conn_reclaim.go`）。该服务是否存在、危急处理
   是否只上报，取决于宿主配置与选项；光看 `json:"-"` 推不出这两点。
   **裁剪（Trim）≠ 释放（Release）。**
@@ -236,7 +232,7 @@ gitlink。显式覆盖是支持的，而且就源码选择而言，gitlink 相�
 
 * **原因：** 元数据来源不等于二进制来源。
 * **违反后果：** 发布里混进了没人构建过、也没人校验过的字节。
-* **诚实的范围：** 它覆盖的只是计划步骤挑出来的内容；要检查每个生产者的触发条件以及
+* **适用范围：** 它覆盖的只是计划步骤挑出来的内容；要检查每个生产者的触发条件以及
   被选中的运行，不要假定每个生产者都只能手动派发。另一个独立的
   `verify-release-acceptance.sh` 不包含 `client-apple.yml`，也不由
   发布路径调用。这条关于发布路径的具体陈述是
@@ -330,7 +326,7 @@ gitlink。显式覆盖是支持的，而且就源码选择而言，gitlink 相�
 * **原因：** 修复前的行为被测过：1,000 个精心构造的数据报留下了 1,000 个缓冲区
   （存活 +16.7 MB），每轮的 QUIC 缓冲区从 33 KB 长到 1.06 MB。
 * **违反后果：** 恶意对端就能驱动无界内存增长和池化缓冲区泄漏。
-* **诚实的证据：** 该上限与放弃时的释放都**仅为 `VERIFIED_SOURCE`**——树里没有测试，
+* **证据限制：** 该上限与放弃时的释放都**仅为 `VERIFIED_SOURCE`**——树里没有测试，
   也没有可复现的测量。
 * **证明：** `route/route.go:1211-1217`、`:1340-1347`；`common/sniff/sniff.go:182-199`；提交 `578663e0`。
 * **复检：** `go test -count=1 ./common/sniff/...`（**不**覆盖该上限）。
@@ -357,7 +353,7 @@ gitlink。显式覆盖是支持的，而且就源码选择而言，gitlink 相�
   `RELEASE_EXTRA_PLATFORMS=true` 之下。这是作业/产物层面的条件，不等于每个
   内部检查都跑过：v0.1.31 的 Apple 工作流就成功了，尽管 Swift ABI 探针
   被标成 SKIP、ABI 检查器报的是 PARTIAL。那次运行的具体情况见 `modules/libbox-platform-contract.md`。
-* **诚实的缺口：** 另一个独立的严格交接检查器 `verify-release-acceptance.sh`，并没有被
+* **尚未覆盖：** 另一个独立的严格交接检查器 `verify-release-acceptance.sh`，并没有被
   发布路径调用——只有它的自检在 `release-contract-verify.yml` 里跑。它的默认必需
   集合也偏窄（`verify.yml`、`interop-xray.yml`、`server-linux-amd64.yml`）。这是两套检查之间的
   工具/归属缺口，而**不是**发布路径没有保护的证据；

@@ -27,7 +27,7 @@
 
 **Q：相比官方 NaiveProxy 与 Caddy，我们更快、更慢还是相当？**
 
-**`NOT_COMPARABLE`。** 本机没有官方 naiveproxy 客户端二进制、没有 Caddy/forwardproxy 可执行文件、没有真实 WAN，也没有 macOS/iOS。按照任务书，正确做法是拒绝给数字，改用三类可审计证据：
+**`NOT_COMPARABLE`。** 审计主机没有官方 naiveproxy 客户端或 Caddy/forwardproxy 可执行文件，也没有真实 WAN、macOS 或 iOS 测试环境，因此无法给出可靠的跨实现性能比较。以下三类证据可供后续复核：
 
 1. **协议语义与参考实现逐字节一致**（padding 头、帧格式、8 帧窗口、每写 flush、错误传播），§11.2 有逐行对照。因此"服务端协议设计"这一维度**不存在**差异空间。
 2. **本机端到端上限与每字节 CPU 成本**（§4、§5），作为将来与参考二进制对接时的基线。

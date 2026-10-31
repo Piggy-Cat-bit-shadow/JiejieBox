@@ -20,30 +20,47 @@
 
 ## 如何阅读本文件（How to read this file）
 
-在 Windows 上，用本地缓存的 Go 1.26.10 工具链，在包含 `cb71cf80d72` 的较新分支状态下：`./adapter` 的 `TestScopeClose` 测试、
-`./protocol/tun` 的三个当前 FakeIP 范围 L0 测试，以及 `./experimental/cachefile` 的 `TestFakeIPSaveMetadataReportsAFailedFlush` 都通过。
-这些单元测试既证明不了已退役范围的 L0 防护，也证明不了物理设备上的行为。
-还是这套工具链，`go test -tags p2ios ./experimental/libbox -run TestPlatformMonitor -count=1` 借助测试替身，通过了监控顺序和刷新期间关闭的测试。
-`./common/trafficsched` 有三个聚焦测试也在 Go 1.26.10 下通过，分别针对惰性默认值、优先级下限和被拒绝数据包的所有权；
-它们是单元证据，不是吞吐基准。
-`./protocol/tun` 的 `TestInFlightCallbackUnderCloseIsOrdered` 也在 Go 1.26.10 下通过；它不跑 Linux 自动重定向会话，
-也证明不了关机时每个规则集观察者都会被汇合。
-同一分支状态下，`scripts/ci/check-libbox-abi.sh --pin-only` 在 MSYS2 bash 下通过：Android 和 Apple 的 gitlink 与脚本期望的修订一致。
-它没有跑完整的 ABI 或客户端调用点扫描，输出里 gomobile pin 报为 unknown。
-`TestTrackedSchemaMatchesTheGenerator` 在 Go 1.26.10 与 `DEFAULT_BUILD_TAGS_OTHERS` 下本地通过；它拿本代码树受跟踪的 schema 与生成器做比较。
-Go 1.26.10、MSYS2 bash 加 `GOPROXY=off` 下，`check-go-module-integrity.sh --require-checked test` 对全部三个发现的模块通过。
-它检查了 tidy/只读模块图和根包/测试 fork 替换的一致性（含 31 条 Cronet 路径）；没有跑 `--verify`，也没做原生产物完整性检查。
-`./route` 的三个数据包目的地守卫测试在 Go 1.26.10 下通过，分别针对 memo 增长、键规范化和无匹配行为。增长测试直接插入键，不是攻击测试。
-两个具名的可复用 owner 能力测试，加上针对真实 HTTP 管理器的退役遍历测试，也在 Go 1.26.10 下本地通过；它们并没有枚举所有可能的 owner。
-`./protocol/mieru` 选定的回退选项、冷却/探测、启动回滚和过期代次测试在 Go 1.26.10 下通过；这证明不了与外部 Mieru 的互操作。
-`./protocol/tailscale` 的 `TestTailnetDomainsMatch` 和三个具名的系统绑定 getter 清理测试在 Go 1.26.10 下带 `with_tailscale` 通过，
-用的是本地测试 fixture，不是 tailnet。
-`./route` 的三个 failover-shim 测试在 Go 1.26.10 下通过，分别针对并行能力转发、普通叶子拨号和数据包路径边界。
-匹配 `^TestQUICSniffContext` 的 `./common/sniff` 测试在 Go 1.26.10 下通过；旧的 `TestQUICOwnership` 过滤没匹配到任何测试，已在下方更正。
-`./service/oomkiller`、`./common/listener`、`./transport/device` 与 `./protocol/ssh` 的未过滤包测试在 Windows、Go 1.26.10 下通过。
-它们没跑仅限 Linux 的 namespace 或通配符冲突测试、Darwin 压力集成测试，也没用真实 TUN 设备。
-设备分类器里显式列出的 Windows errno 覆盖范围，比它注释所暗示的更窄；见 `modules/core-lifecycle-runtime.md`。
-在该主机上，聚焦的 HTTP/SSH 嗅探分片、半关闭生命周期和 XMUX 默认/退役测试也通过；它们证明不了真实设备上的恢复，也证明不了对端互操作。
+以下记录使用 Windows 上本地缓存的 Go 1.26.10 工具链，目标为包含 `cb71cf80d72` 的较新分支状态。各项结果及其适用范围如下：
+
+- `./adapter` 的 `TestScopeClose` 测试、
+  `./protocol/tun` 的三个当前 FakeIP 范围 L0 测试，以及 `./experimental/cachefile` 的 `TestFakeIPSaveMetadataReportsAFailedFlush` 都通过。
+  这些单元测试既证明不了已退役范围的 L0 防护，也证明不了物理设备上的行为。
+
+- 使用相同工具链时，`go test -tags p2ios ./experimental/libbox -run TestPlatformMonitor -count=1` 借助测试替身，通过了监控顺序和刷新期间关闭的测试。
+
+- `./common/trafficsched` 有三个聚焦测试也在 Go 1.26.10 下通过，分别针对惰性默认值、优先级下限和被拒绝数据包的所有权；
+  它们是单元证据，不是吞吐基准。
+
+- `./protocol/tun` 的 `TestInFlightCallbackUnderCloseIsOrdered` 也在 Go 1.26.10 下通过；该测试没有运行 Linux 自动重定向会话，
+  也证明不了关机时每个规则集观察者都会被汇合。
+
+- 同一分支状态下，`scripts/ci/check-libbox-abi.sh --pin-only` 在 MSYS2 bash 下通过：Android 和 Apple 的 gitlink 与脚本期望的修订一致。
+  它没有跑完整的 ABI 或客户端调用点扫描，输出里 gomobile pin 报为 unknown。
+
+- `TestTrackedSchemaMatchesTheGenerator` 在 Go 1.26.10 与 `DEFAULT_BUILD_TAGS_OTHERS` 下本地通过；该测试比较本代码树中受版本管理的 schema 与生成器输出。
+
+- Go 1.26.10、MSYS2 bash 加 `GOPROXY=off` 下，`check-go-module-integrity.sh --require-checked test` 对全部三个发现的模块通过。
+  它检查了 tidy/只读模块图和根包/测试 fork 替换的一致性（含 31 条 Cronet 路径）；没有跑 `--verify`，也没做原生产物完整性检查。
+
+- `./route` 的三个数据包目的地守卫测试在 Go 1.26.10 下通过，分别针对 memo 增长、键规范化和无匹配行为。增长测试直接插入键，不能视为攻击测试。
+
+- 两个具名的可复用 owner 能力测试，加上针对真实 HTTP 管理器的退役遍历测试，也在 Go 1.26.10 下本地通过；它们并没有枚举所有可能的 owner。
+
+- `./protocol/mieru` 选定的回退选项、冷却/探测、启动回滚和过期代次测试在 Go 1.26.10 下通过；这证明不了与外部 Mieru 的互操作。
+
+- `./protocol/tailscale` 的 `TestTailnetDomainsMatch` 和三个具名的系统绑定 getter 清理测试在 Go 1.26.10 下带 `with_tailscale` 通过，
+  用的是本地测试 fixture，不是 tailnet。
+
+- `./route` 的三个 failover-shim 测试在 Go 1.26.10 下通过，分别针对并行能力转发、普通叶子拨号和数据包路径边界。
+
+- 匹配 `^TestQUICSniffContext` 的 `./common/sniff` 测试在 Go 1.26.10 下通过；旧的 `TestQUICOwnership` 过滤没匹配到任何测试，已在下方更正。
+
+- `./service/oomkiller`、`./common/listener`、`./transport/device` 与 `./protocol/ssh` 的未过滤包测试在 Windows、Go 1.26.10 下通过。
+  它们没跑仅限 Linux 的 namespace 或通配符冲突测试、Darwin 压力集成测试，也没用真实 TUN 设备。
+
+- 设备分类器里显式列出的 Windows errno 覆盖范围，比它注释所暗示的更窄；见 `modules/core-lifecycle-runtime.md`。
+
+- 在该主机上，聚焦的 HTTP/SSH 嗅探分片、半关闭生命周期和 XMUX 默认/退役测试也通过；它们证明不了真实设备上的恢复，也证明不了对端互操作。
 
 基线后检查于 2026-10-28 在目标 `011f3fdcd99` 上本地运行（单元测试，不是设备或 CI 证据）：
 

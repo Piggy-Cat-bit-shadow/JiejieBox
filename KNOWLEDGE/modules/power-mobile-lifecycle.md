@@ -121,9 +121,9 @@ iPad 与 macOS 为 **`NOT_RUN` / `SIGNING_OUT_OF_SCOPE`**。这只是一台设�
 
 `route/reference.go:154-197` 的 `onReuseBoundary` 遵守它：它**不**重置网络、不终止流、不触碰按需隧道、不拨号。
 
-**还有一处诚实的纠正：** 这条不变量管的是**裁剪**路径，不是每一条路径。`service/oomkiller/timer.go` 的危机回收会调 `ReleaseMemory`，而它**确实**会重置网络——而且它*本该*如此。`route/conn_reclaim.go:18` 在代码里记下了意图：`ReleaseMemory (OOM killer) -> ResetNetwork + idle … aggressive, and deliberate`。单凭该选项的 `json:"-"` 标签，并不能确立 killer 本身的状态。守护进程是有条件地添加这个服务的；它内部的 `KillerDisabled` 标志还会选择仅报告的危机行为。在假定它已启用或已禁用之前，先看实际的主机设置与服务选项。所以：
+上述约束适用于 **Trim 裁剪路径**，不能推广到所有内存回收。`service/oomkiller/timer.go` 在危机回收时会调用 `ReleaseMemory`，后者按设计可以重置网络；`route/conn_reclaim.go:18` 记录了这一意图。
 
-**Trim ≠ Release。将来让裁剪路径去重置网络的改动就是那个 bug；让 Release 路径不再重置网络的改动同样是 bug。**
+是否实际启用 OOM killer 需要检查主机设置与服务选项：守护进程有条件地添加该服务，内部 `KillerDisabled` 标志还会选择仅报告的危机行为。不能仅凭选项的 `json:"-"` 标签判断服务状态。维护时应保持 Trim 和 Release 的区别，避免让普通裁剪重置网络，或无意改变 Release 的重置行为。
 
 ### v0.1.9 之后的 OOM 回收协调（OOM reclaim coordination after v0.1.9）
 
@@ -139,17 +139,17 @@ iPad 与 macOS 为 **`NOT_RUN` / `SIGNING_OUT_OF_SCOPE`**。这只是一台设�
 
 ## 5. 唤醒后的复用分带（Post-wake reuse bands）
 
-策略在 `common/power/governor.go`，判定结果恰好是三个值之一——`ReuseKeep`、`ReuseSuspect`、`ReuseRetire`（`governor.go:112-125`）——由 `DefaultPolicy` 的 `SuspectAfter: 5 * time.Second` 与 `RetireAfter: 15 * time.Second` 推出来（`governor.go:289-290`）：
+`common/power/governor.go` 根据休眠时长给出三种复用判定（`governor.go:112-125`）。`DefaultPolicy` 的两个阈值分别为 `SuspectAfter: 5 * time.Second` 和 `RetireAfter: 15 * time.Second`（`governor.go:289-290`）：
 
 | 休眠时长 | 判定 | 行为 |
 |---|---|---|
-| `< 5 s` | `ReuseKeep` | 什么也不做。**epoch 不前进，也没有观察者运行**——用户马上还要用的连接仍然留在池里。 |
-| `>= 5 s` | `ReuseSuspect` | epoch 前进，判定被**发布**，但按策略**保留**池。中间这一带是一个*被发布的状态，不是一个动作*：为一次短休眠通常都能承受的池翻动一遍，只会白白付出一次握手的代价，换不来任何正确性收益。 |
-| `>= 15 s` | `ReuseRetire` | epoch 前进，**空闲**的可复用资源被退役，于是下一次需求会拨向一条已知是新的路径。**活跃流不受影响，也没有任何东西拨号。** |
+| `< 5 s` | `ReuseKeep` | 保留连接池；**epoch 不推进，也不通知观察者**。 |
+| `>= 5 s` | `ReuseSuspect` | 推进 epoch 并发布判定，但按策略保留连接池，避免短暂休眠后不必要的连接重建。 |
+| `>= 15 s` | `ReuseRetire` | 推进 epoch 并退役**空闲**可复用资源，后续有需求时再建立新连接。**活跃流不受影响，退役本身也不拨号。** |
 
 **未知的休眠时长会取严格判定**（`TestTheBridgeUsesThePolicyBandsAndNothingElse`）。
 
-`adapter.ReuseSuspect` 之所以存在，是因为**一条打开的流并不等于它还活着**——它可以在整段休眠期间一直开着，却没有任何提示。它的契约是“不在你现在持有的东西上开新工作，保留已经在其上的工作，当最后一条流离开时将其拆除”。
+`adapter.ReuseSuspect` 用于处理状态可疑但仍有活跃流的资源：设备休眠后，连接即使仍显示打开，也未必仍然可用。它的契约是停止向该资源分配新工作、保留现有工作，并在最后一条流结束后清理资源。
 
 一个 keeper *"may only close a resource with no active user traffic, and can never dial"*（中文：只能关闭没有活跃用户流量的资源，而且永远不能拨号）。`naive` 刻意**不是** keeper；`sing-mux` 没有安全的“无新流”状态；Cronet 与 Naive 只提供破坏性关闭。所以断言的是 `IdleConnectionReleaser`，不是一个完整的 keeper。
 
@@ -173,9 +173,9 @@ iPad 与 macOS 为 **`NOT_RUN` / `SIGNING_OUT_OF_SCOPE`**。这只是一台设�
 | `dns_cache` | 1 h | 必须**不**被门控 |
 | `route` macOS 挂起看门狗 | 5 s | **一个看门狗，不是投机。** 它比较系统时钟（wall clock）与单调时钟（后者在休眠期间停走），一旦二者分歧就调用 `SystemResumed`。它存在，是因为无头 Mac 拿不到 NetworkExtension 的 sleep/wake 回调；NetworkExtension 路径改用 `CommandServer.Pause`/`Wake`。它必须**不**被休眠状态门控。 |
 
-**可推迟的周期定时器有三个，而这三个的第一次遍历无论如何都会跑。**“第一次遍历不推迟”这条规则，正是让推迟不至于拖慢初始正确性的那一条。
+表中三个可推迟的周期任务都会照常执行第一次遍历，避免初始状态因省电策略而延迟建立。
 
-本领域有两个 worker **不是定时器**，它们靠状态而不是靠等待来门控，所以不在上面的表里：
+另有两个后台工作路径需要单独说明，其触发方式和处理策略与上表不同：
 
 - `dns.client.backgroundRefreshDNS`——由一次缓存 HIT 调度，不由时钟。当调速器处于 `QUIESCENT`/`DEEP_IDLE` 或已关闭时直接拒绝，在 `WAKING` 带里经 `Allow().NetworkProbe` 放行。跳过它只损失新鲜度。
 - `transport/wireguard/recovery.go`——会轮询，但只在会话陈旧时；而且它**不**被门控：`runtimecoord` 已经把 rebind 限制到每个窗口一次，休眠期间取消它，只会用一次白费的 rebind 换来一条没恢复的隧道。已接受，不推迟。
@@ -209,7 +209,7 @@ iPad 与 macOS 为 **`NOT_RUN` / `SIGNING_OUT_OF_SCOPE`**。这只是一台设�
 | 真实 TUN、真实 NetworkExtension、网络转换 | **本次 Windows 刷新中为 `UNVERIFIED`**；设备与构建相关的证据必须单独检查 | 需要适当的平台与设备 |
 | 无竞态 | **`BLOCKED_BY_ENVIRONMENT`** | 需要 cgo |
 
-那个顺序测试是这组里设计最好的文件。它在暂停回调与复用观察者之间共享一个 `orderingSequence` 记录器，断言 `[]string{"level-paused","reuse-verdict","level-released"}`，然后用 `require.NotEqual(… ReuseKeep …)` 与 `require.Equal(uint64(1), governor.ReuseEpoch())` **防止这条断言变成空泛的**。sleep 测试通过一个 `probingAxis` 从 level 调用**内部**观察顺序，并用 `require.True(t, axis.probed, …)` 防止空泛。**照抄这个模式**——一个不能证明代码路径真被走到的顺序测试毫无价值。
+顺序测试在暂停回调与复用观察者之间共享 `orderingSequence`，断言 `[]string{"level-paused","reuse-verdict","level-released"}`；同时通过 `require.NotEqual(… ReuseKeep …)` 和 `require.Equal(uint64(1), governor.ReuseEpoch())` 确认相关分支确实执行。sleep 测试则用 `probingAxis` 在 level 调用内部观察顺序，再用 `require.True(t, axis.probed, …)` 确认探针被调用。维护类似测试时，应同时验证顺序和被测路径确实执行。
 
 ---
 

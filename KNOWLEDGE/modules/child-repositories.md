@@ -58,7 +58,7 @@ TUN MTU：请求值不大于零时使用 1500；启用 `includeAllNetworks` 后�
 注册表被移除。其他改动包括分享扩展、Tailscale 对端视图、更新授权，以及移除上游组件中重复
 的启动告警。平台条件以固定版本的源码为准。
 
-两个集成提交修正了 `Tests/SubscriptionQuotaCaption/Sources/Caption/` 的符号链接目标路径，然后从符号链接目标的 blob 中移除意外的 CRLF 字节。Git 树模式是 `120000`。在具备 POSIX 能力的检出中检查原始 blob 大小与目标字节；Windows 上看似成功的文本文件处理并不是符号链接解析。源码 diff 已经检视。
+两个集成提交修正了 `Tests/SubscriptionQuotaCaption/Sources/Caption/` 的符号链接目标路径，并移除了链接目标 blob 中意外出现的 CRLF 字节。Git 树模式为 `120000`。验证时应在支持 POSIX 符号链接的检出中检查原始 blob 大小和目标字节；Windows 上将链接作为文本文件处理，不能证明链接能够解析。本轮已检查源码 diff。
 [Run 40776674407](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40776674407) 用一个不同的
 父 SHA 为该 Apple SHA 构建了 macOS 目标；[run 40819615363](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40819615363)
 在 v0.1.34 父 SHA 上构建了 iOS 与 Libbox，macOS 则被跳过。两者都不证明设备行为。

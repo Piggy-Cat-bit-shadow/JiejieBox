@@ -225,11 +225,11 @@ CERT_E_VALIDITYPERIODNESTING 0x800B0102   tolerated
 > 无 Authenticode 签名），但 `clients/desktop/**`、`client-desktop-windows.yml`、
 > `client-desktop-windows-runtime-audit.yml` 与 `scripts/ci/release-artifacts.sh` 仍在构建、
 > 签名、门禁并暂存安装器。这是**产品所有权决策，不是读代码能得出的结论**。
-> 状态：`UNKNOWN`——不要靠挑你最先读到的那个文件来解决它。
+> 状态为 `UNKNOWN`。需要产品决策明确支持范围，不能只凭其中一处描述下结论。
 
 ## 10. 硬性不变量（Hard invariants）
 
-违反其中任何一条，都是配置再怎么写也开脱不掉的安全漏洞。
+以下约束共同保护守护进程的身份验证和信任边界；修改时应逐项核对。
 
 | 不变量 | 理由 | 证据 |
 |---|---|---|
@@ -321,7 +321,7 @@ CERT_E_VALIDITYPERIODNESTING 0x800B0102   tolerated
    `DEFAULT_BUILD_TAGS_WINDOWS`（`build_boxdd/main.go:214-220`）。§8。
 9. **不要把更新产品名允许列表当成安全边界。** 源码说了它不是。§11。
 10. **不要声称守护进程总是拒绝不安全的安装目录。** 这条逃生通道会传染到运行时。§7。
-11. **不要靠选边来解决 §9 的退役张力。** 这是产品决策；`UNKNOWN` 才是诚实的状态。
+11. **不要靠选边来解决 §9 的退役张力。** 需要产品决策；在此之前应标记为 `UNKNOWN`。
 12. **不要把本模块当成守护进程可用的证明。** 它记录的是源码验证了哪些东西，端到端运行并不存在。§15。
 
 ## 17. 后续工作（Follow-up）

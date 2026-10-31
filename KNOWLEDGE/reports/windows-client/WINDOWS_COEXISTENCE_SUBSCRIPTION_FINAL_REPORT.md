@@ -2,10 +2,9 @@
 
 指引来源：`C:\Users\Jie\Desktop\配置文件\01_WINDOWS_COEXISTENCE_AND_SUBSCRIPTION_CONSTRUCTION.md`
 
-结论概要：两个项目均在**新分支**上完成实现、测试、构建与提交，三个仓库的 submodule pin 链闭合可复现；
-**未 merge / 未 tag / 未 release / 未 push**。唯一的实质阻塞是**无法在本机产出 NSIS 安装包**
-（本机无 `electron.exe`，无网络），因此"真机双安装"验收矩阵全部留给第二阶段，但已用
-**makensis 真实编译**为 installer 脚本补上了打包前无法获得的静态证据。
+本轮在**新分支**上完成两个项目的实现、测试、构建和提交，并核对了三个仓库的 submodule pin 链。当时尚未合并、打标签、发布或推送。
+
+由于本机没有 `electron.exe` 且无法联网，本轮未能产出 NSIS 安装包，真机双安装验收留待第二阶段。安装器脚本已通过 **makensis 实际编译**；该结果不能代替完整打包和真机验收。
 
 ---
 

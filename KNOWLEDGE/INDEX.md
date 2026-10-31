@@ -1,4 +1,4 @@
-# 知识索引 —— 先路由，再窄读（Knowledge index — route first, read narrowly）
+# 知识索引：按任务查找文档（Knowledge index — route first, read narrowly）
 
 本索引用来查找资料：根据当前任务、关键词或源码路径，定位需要阅读的模块和章节。
 具体的技术结论及其证据在对应模块中。
@@ -12,7 +12,7 @@
 |---|---|---|
 | `../AGENTS.md` | **ALWAYS** | 这里最常出错的三件事 |
 | `README.md` | **ALWAYS** | 基线指针、状态标签、证据规则 |
-| `INDEX.md`（本文件） | **ALWAYS** | 路由 |
+| `INDEX.md`（本文件） | **ALWAYS** | 按任务查找相关文档 |
 | `BASELINE.md` | **ALWAYS**，在信任任何模块之前 | 模块描述的 SHA，以及此后的增量 |
 | `modules/README.md` | TASK_MATCH | 任务 → 模块映射、fork 术语表、覆盖缺口 |
 | `PROJECT.md` | TASK_MATCH | fork 是什么，刻意没有改动什么 |
@@ -29,7 +29,7 @@
 | `docs/archive/**` | **HISTORY_ONLY** | 我们怎么走到这里；绝不是当前事实 |
 | `sing-box_v0.1.5-v0.1.10_网络链路与Action-Release优化总结.md` | **HISTORY_ONLY** | v0.1.5→v0.1.10 的工程叙事（链路路径 + Action/Release）；一份时点总结，不是模块 |
 
-## 按任务路由（Route by task）
+## 按任务查找（Route by task）
 
 | 需要处理的问题 | 模块 | 精确章节 |
 |---|---|---|
@@ -37,7 +37,7 @@
 | TUN、系统代理 / Mixed、嗅探的路径与优化边界 | `modules/data-path-optimization.md`、`modules/sniff.md` | 入口、嗅探与系统代理路径；嗅探所有权 |
 | 端点本地流量、`JudgeHostFlow`、`HostPort` | `modules/masque-connectip.md` | 贯穿 TUN 栈的端点本地流量 |
 | 发布冻结、源码锁定、Apple 单运行器 | `modules/ci-release.md` | 发布冻结与 Apple 验收 |
-| 速度慢 / 吞吐上不去 / 判断瓶颈在哪一层 | `PERFORMANCE-FACTORS.md` | §1 三条第一原理 → §4 症状路由 → §5 测量方法 |
+| 速度慢 / 吞吐上不去 / 判断瓶颈在哪一层 | `PERFORMANCE-FACTORS.md` | §1 基本判断 → §4 根据症状定位 → §5 测量方法 |
 | XHTTP 上传慢 / 下载慢 / xmux 与连接数 | `PERFORMANCE-FACTORS.md` | §2 客户端参数（`xmux`）→ §3 服务端参数（h2 请求体缓冲） |
 | `Scope` 资源清理、`scope.Add` 清理 | `modules/core-lifecycle-runtime.md` | §1 `adapter.Scope` —— 所有权原语 |
 | Box 启动顺序 | `modules/core-lifecycle-runtime.md` | §2 → Start；在 `box.go` 中定位 `PreStart`、`Start`、`preStart` 与 `start` |
@@ -60,7 +60,7 @@
 | `fast_path: true` **不会**绕过什么 | `modules/fast-path-group-policy.md` | §6 |
 | 嵌套组的优先级 | `modules/fast-path-group-policy.md` | §8 |
 | 双栈 DNS、候选准入与网络切换所有权 | `modules/dns-demand.md`, `modules/core-lifecycle-runtime.md` | 基线之后新增的章节 |
-| local/site/global 族能力与 IPv6 入口呈现 | `modules/dns-demand.md`, `modules/libbox-platform-contract.md` | 双栈准入与入口相关章节 |
+| local/site/global 地址族能力与 IPv6 入口决策 | `modules/dns-demand.md`, `modules/libbox-platform-contract.md` | 双栈准入与入口相关章节 |
 | 栈启动前后的 TUN 重置 | `modules/libbox-platform-contract.md` | 基线之后的 TUN 重置交接 |
 | Naive 从 H3 回退到 H2 重试 | `modules/naive-http-transport.md` | 基线之后的回退 |
 | VLESS 加密层与取消 | `modules/xhttp-client-transport.md` | VLESS 加密边界 |
