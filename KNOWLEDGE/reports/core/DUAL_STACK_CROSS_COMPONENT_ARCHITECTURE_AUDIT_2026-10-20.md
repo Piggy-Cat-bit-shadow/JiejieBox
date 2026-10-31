@@ -617,7 +617,7 @@ route fast-path 判定 → (*direct.Outbound).CanBypass   outbound.go:440-442
 
 * 窗口 30s（`h3FallbackWindow`），单 outbound 私有状态，无 per-target 状态；
 * 用**尝试序号**保证"更早开始、更晚返回"的失败不能覆盖更晚的成功（`begin/claim/markBroken/clear`）；
-* 网络切换时 `reset()`（`outbound.go:314`），且 reset 通过 `f.outcome = f.attempt` 让在途尝试无法在 reset 后再武装窗口；
+* 网络切换时 `reset()`（`outbound.go:314`），且 reset 通过 `f.outcome = f.attempt` 防止旧的在途尝试在重置后重新启用窗口；
 * 失败分类用 Chromium `NetError` 码，**先判码再判 `Is(net.ErrClosed)`**（注释记录了"顺序反了会永久关掉重试"的陷阱）；
 * H3 尝试有自己的预算切分（`h3ProbeContext`，最多 10s，且把剩余预算对半分给 H2 重试），`98387b223d8` 的修复正是"让 H2 重试有机会成功"。
 

@@ -100,7 +100,7 @@ shim 内嵌 `adapter.Outbound`，对嵌入**接口**做断言只提升该接口�
 **审计后更正**：原方案让 shim 用 `Upstream` 报告叶子，**错了两处**。其一是语义：内嵌的成员是**首次尝试**
 的叶子，而 group 每次尝试重新解析成员，穿过去会读到"可能根本不拨号的那个成员"的能力与健康历史。其二
 是协议形状：`Upstream` 是仓库级协议（见 D10 的回归）。现在 shim **不报告任何链**，改为：把 `adapter.Outbound`
-之外真正被消费的能力手写转发并**编译期钉住**（`N.Dialer`、`ParallelNetworkDialer`、
+之外真正被消费的能力手写转发并以**编译期断言验证**（`N.Dialer`、`ParallelNetworkDialer`、
 `ConnectionCopyTuner`），文件末尾写下给下一位读者的规则——需要新能力时在这里转发并加 pin，不要重新引入
 链报告。
 
@@ -222,7 +222,7 @@ ambient       TestEveryAmbientPolicyConditionRefuses / TestAutomaticBindingIsDel
 
 | 项 | 状态 |
 |---|---|
-| `auto_detect_interface` / auto-redirect mark 与 bypass 的等价性 | **已决策并钉住**；反方向需要带 nftables 的 Linux 主机测量 |
+| `auto_detect_interface` / auto-redirect mark 与 bypass 的等价性 | **已决策并由测试验证**；反方向需要带 nftables 的 Linux 主机测量 |
 | 同一次 dial 内的重复 capture | **已论证安全**（hand-over 拒绝跨代连接），重构收益不抵风险 |
 | `NetworkManager` 是否拆分 | **已决策不拆**，理由见上 |
 | `protocol/tun` L0 bypass 独立生产者 | **产品决策**，本轮无证据推翻 |

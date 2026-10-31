@@ -105,10 +105,7 @@ Tailscale、OpenVPN 和 OpenConnect 的 DNS 传输可能持有私有解析器，
 | 完成待处理交换（finish a pending exchange） | `finishPendingExchange` `:1063` |
 | 异步 `evaluate` 动作 | `launchDNSEvaluate` `:637`、`dnsEvaluatedFuture` `:571` |
 
-**为什么是遍历而不是匹配：** `evaluate` 动作可能要先完成自己的交换，外层查询才能解析。
-挂起就是为了让外层交换可以被*恢复*（resumed），不必重新运行已经触发的规则。
-**把 evaluate 动作改成同步，要么死锁，要么重入规则集**，
-这正是 `Future` 机制存在的原因。
+`evaluate` 动作可能需要先完成自己的 DNS 交换，外层查询才能继续。显式遍历允许外层查询暂时挂起并在结果就绪后恢复，无须重新执行已经触发的规则。将 `evaluate` 改为同步执行可能造成死锁或规则集重入，因此实现使用 `Future` 协调。
 
 **传统/响应匹配模式（Legacy / response-matching mode）** 是独立的，启动时先做校验：
 `resolveLegacyDNSMode` `:2412`、`dnsRuleModeRequirements` `:2426`、
@@ -133,7 +130,7 @@ Tailscale、OpenVPN 和 OpenConnect 的 DNS 传输可能持有私有解析器，
 | DNS 环境代次（the DNS environment generation） | `dns/router.go` — `dnsGeneration` `:1397`、`dnsGenerationLocked` `:1408`、`observeDNSEnvironment` `:1418`、`observeDNSEnvironmentLocked` `:1449` |
 | 环境的身份（the environment's identity） | `dns/router.go` — `environmentHashEntry` `:1547`、`dnsEnvironmentFingerprintOnly` `:1585`、`dnsEnvironmentDescriptionFor` `:1627`、`dnsEnvironmentFingerprintNow` `:1665` |
 | 反向映射（FakeIP→domain） | `dns/router.go` — `reverseMappingAnswersFrom` `:1685`、`recordReverseMappingFrom` `:1741`、`commitReverseMappingAnswers` `:1780` —— **提交会做代次检查**；`LookupReverseMapping` `:2288` 在读取前重新观察环境。旧的 `reverseMappingGenerationCurrent` 谓词已不存在；不要引用它 |
-| 策略纪元（the policy epoch） | `dns/router.go` — `policyStoreGuard` `:2231`、`policyEpoch` `:2259` |
+| 策略 epoch（the policy epoch） | `dns/router.go` — `policyStoreGuard` `:2231`、`policyEpoch` `:2259` |
 | 缓存键（cache keys） | `dns/client.go` — `dnsCacheKey` `:230`、`dnsExchangeKey` `:237`、`rdrcNamespace(transportTag, environment)` `:260`、`newCacheKey` `:280` |
 | 检查（the checks） | `dns/client.go` — `captureGeneration` `:305`、`policyStillCurrent` `:327`、`generationStillCurrent` `:338`、`responseDeliverable` `:381`、`stateMutationAllowed` `:403` |
 | 切换状态（the transition state） | `dns/client.go` — `errNetworkTransitioning` `:425`、`networkTransitionStable` `:454` |
@@ -144,11 +141,11 @@ Tailscale、OpenVPN 和 OpenConnect 的 DNS 传输可能持有私有解析器，
 仿佛它属于新的蜂窝网络环境。在已稳定网络上已经开始的查询，是故意允许交付的；
 这和把这个答案记录为当前答案不是一回事。
 
-### 哪些子系统使用协调器纪元，哪些不使用（Which subsystems use the coordinator epoch, and which do not）
+### 哪些子系统使用协调器 epoch（Which subsystems use the coordinator epoch, and which do not）
 
 这一点很重要，因为早先的总结过度声称存在一个覆盖所有状态的单一全局“网络 epoch”。
 
-| 子系统 | 是否与纪元耦合？ | 证据 |
+| 子系统 | 与 epoch 的关系 | 证据 |
 |---|---|---|
 | DNS 缓存与反向映射 | **是** —— 除了协调器的代次外，还有**自己的**代次（`dnsGeneration`） | `dns/router.go:1397-1449` |
 | 仅 DNS 的环境变化 | **是，而且即使没有网络接口变化，它也会获得自己的代次** | `ffec0df1` |
@@ -158,7 +155,7 @@ Tailscale、OpenVPN 和 OpenConnect 的 DNS 传输可能持有私有解析器，
 | `ReleaseMemory` | **会推进** | 同上 |
 
 `common/runtimecoord/coordinator.go:72-79` 指出，两个计数器描述的是同一次切换 ——
-它们是两个视图，不是两个彼此独立的真相。**不要把纪元描述为“所有网络状态的唯一事实来源”。**
+它们是两个视图，不是两个彼此独立的真相。**不要把这个 epoch 描述为“所有网络状态的唯一事实来源”。**
 它只是选择加入的那些子系统共享的身份。
 
 ---
@@ -166,9 +163,7 @@ Tailscale、OpenVPN 和 OpenConnect 的 DNS 传输可能持有私有解析器，
 ## 覆盖整个 QNAME 的 NXDOMAIN 负缓存（The QNAME-wide NXDOMAIN negative cache, `dns/client_negative.go`）
 
 RFC 2308 指出 `NXDOMAIN` 是关于**名字**的陈述，而精确缓存以完整问题（包括 Qtype）为键。
-没有这个缓存，一个不存在的名字每记录类型（A、AAAA、HTTPS、SVCB）就要花一次上游查询；
-如果前面还有过滤解析器，每种类型还要各做一次规则求值。
-`nxdomainCache` 按名字记一次判定，后续类型在本地回答。
+没有这个缓存时，不存在的名称可能按 A、AAAA、HTTPS、SVCB 等记录类型分别查询上游；如果前面有过滤解析器，也会分别执行规则匹配。`nxdomainCache` 按名称记录判定，后续其他类型的查询可在本地回答。
 它和精确的 `dnsCacheKey` 缓存是分开的，也**不是** `adblock` 动作的存储
 （`dns-adblock-action.md` §7）。
 

@@ -170,7 +170,7 @@ $ git diff --stat 5fc4f936..HEAD -- '*.go' -> 343 files changed, 56389 insertion
 | B1 | `tun.PacketBufferPort` owned 路径 | `sing-tun@a7bd7fac:flow.go:79-87` 契约仍在；`flow_dispatch.go:711-733` 实现仍在；`protocol/masque/client.go:670-680` 消费仍在 | **仍生效** |
 | B2 | MASQUE owned batch ≤32 分块 | `transport/masque/session.go:545-599`：`maxOwnedDatagramBatch = 32`，`writeBatchOwned` 分块，`writeOwnedBatchChunk` 全有全无 | **仍生效** |
 | B3 | SRS 128 MiB 解压预算 + 1 字节探针 | `common/srs/binary.go:76` `decompressedSizeLimit = 128 << 20`；`:83-110` 预算 reader；`:85-86` 注释明确"探针是关键，否则预算耗尽 = 自然 EOF" | **仍生效** |
-| B4 | QUIC 小帧精确复制，避免大池缓冲被钉住 | **`quic-go@7e08ecab:frame_sorter.go:198`**：`return len(data) > 0 && cap(data) > 2*len(data)` 仍在，即"超过 2 倍才精确复制" | **仍生效** |
+| B4 | QUIC 小帧精确复制，避免长期占用大池缓冲 | **`quic-go@7e08ecab:frame_sorter.go:198`**：`return len(data) > 0 && cap(data) > 2*len(data)` 仍在，即"超过 2 倍才精确复制" | **仍生效** |
 | B5 | Hysteria2/TUIC 使用 `SendDatagramOwned` | `sing-quic:hysteria2/packet.go:288-291`、`tuic/packet.go:305-308` 单包路径确为 `sendOwnedDatagram` | **仍生效**，但见 §8.3 的批量前提修正 |
 | B6 | QUIC/H3 收包队列出队清槽 | **`quic-go@7e08ecab:datagram_queue.go:240-243`** 仍在（注释明确"reslice 会把指针留在底层数组里，GC 扫描整个数组"），并有专门测试 `datagram_queue_retention_test.go:17`；HTTP/3 侧另有 `http3/state_tracking_stream_retention_test.go` | **仍生效** |
 | B7 | `Conn.DroppedDatagrams()` | `quic-go@7e08ecab:connection.go:3227-3234` + `datagram_queue.go:227-230` | **仍生效** |
@@ -911,7 +911,7 @@ capsule 回退的流控写）由此从"链路上可能"变成"已测到"。
 小于 1 ms 的睡眠常量都不应被当作可实现的时间精度**。这条应写进知识库的
 `mtu-and-geometry` 或 `xhttp-client-transport` 模块（本轮不改模块，只在报告里记录）。
 
-### 10.8 没有找到的（诚实交代）
+### 10.8 未发现或未确认的事项
 本轮沿"一次 TUN UDP 数据报"、"一次 TCP 段发出"、"一次 XHTTP packet-up"、
 "一次规则集下载"、"一次域名裁决"五条路径各追了两层，**没有**发现：
 新的大块复制（B1/B5 已覆盖主要路径）、新的全局锁热点（MASQUE/route 的热路径都是

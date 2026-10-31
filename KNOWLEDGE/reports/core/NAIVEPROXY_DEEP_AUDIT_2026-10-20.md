@@ -595,7 +595,7 @@ RAW-H3: RESULT=ok headers=6ms status="200"      ← 带 -force-quic
 - 在本机 IPv6 不可达，所以每次都以 WARN/ERROR 结束；在双栈网络里它会成功，且用户无法配置。
 - `SetDNSServerOverride` 只覆盖明文 nameserver，这点 #3803 的分析与我们的实测一致。
 
-### 7.7 未测（诚实标注）
+### 7.7 未测试的内容
 
 - macOS/iOS 多 Engine 的真实 `footprint`、FD、初始化时间：`NOT_RUN`（无环境）。
 - 进程长期运行后网络切换的资源回收：`NOT_RUN`。

@@ -100,20 +100,18 @@ ID（`session.go:493`，`PrependContextID`）—— 而不是独立的、每包�
 地址池：`addressPool`、`usable`、`allocate`、`release`（`pool.go:10,30,37,59`）。
 路由匹配：`routeMatcher`、`compileRouteMatcher`、`contains`（`route_matcher.go:49,69,98`）。
 
-### 所有权规则 —— 全树中最严格的一套（The ownership rules）
+### 数据报所有权规则（The ownership rules）
 
 | # | 规则 | 锚点 | 破坏后果 |
 |---|---|---|---|
 | M1 | 单包成功会 **释放** 该数据报 —— **除非** 传输具备 owned-datagram 能力：此时 **所有权转移**，完全跳过释放 | `session.go:496-508`（owned 跳过 `:499-500`，释放 `:507`）；`transport/http/client_h3.go:511` | 重复释放 / use-after-free |
 | M2 | 每条失败路径都 **恰好释放仍然属于自己的剩余部分**：`datagram.Release()`、`buf.ReleaseMulti(capsules)`、`buf.ReleaseMulti(buffers[i+1:])` | `session.go:530-532` | 池化缓冲区泄漏 |
 | M3 | 每个分块在 **所有权** 上全有或全无；`writeBatchOwned` 返回已转移的前缀长度，调用方只回退剩余部分 | `session.go`、`writeBatchOwned` | 重放已转移的前缀会重复发送或重复释放；HTTP/3 拷贝回退中的部分入队见 `buffer-ownership.md` |
-| M4 | `PrependContextID` **替换时会释放原件**，因此替换在发送前拒绝受影响的分块，并就地更新调用方的切片 | `session.go`、`writeOwnedBatchChunk` | 陈旧指针、重复释放，或回退时的数据包丢失 |
+| M4 | `PrependContextID` **替换缓冲区时会释放原件**；因此发送前必须拒绝受影响的分块，并更新调用方切片 | `session.go`、`writeOwnedBatchChunk` | 陈旧指针、重复释放，或回退时的数据包丢失 |
 | M5 | 批次只有一个元素时，永远不走批量路径 | `session.go:472-477` | 一次经测量的性能退化（batch=1 更慢） |
 | M6 | 数据包 headroom 由 **生产者** 预留，以容纳 1 字节的 context ID | `session.go:584-588`；`protocol/masque/client.go:594 FrontHeadroom`；`transport/masque/server.go:428 receivedPacketHeadroom` | 每个数据包都走替换路径（M4） |
 
-**M4 是真实发生过的缺陷，代码注释记录了它（`session.go:562-573`）：** 一个批次被拒绝时仍保留了
-context ID，回退路径又前置了第二个，`packetAddresses` 因此读到错误的版本半字节，
-结果 **每个数据包都被静默丢弃 —— 没有报错，没有 PTB**。
+`session.go:562-573` 记录过相关缺陷：被拒绝的批次仍保留 context ID，回退时又添加一次，导致 `packetAddresses` 读到错误的版本字段。受影响的数据包被静默丢弃，没有错误或 PTB。
 
 ### H3 客户端连接池（The H3 client pool）
 
@@ -158,10 +156,7 @@ httpclient 的 5 分 / 48 小时（`9491008a9` —— 一次死配置修复）�
 | **Bootstrap（外层）** | **服务器主机名** | `option/masque.go:34-40` `DialerOptions.DomainResolver` | `protocol/masque/bootstrap_cache.go` —— `bootstrapResolution` `:65`、`bootstrapCache` `:89`、`newBootstrapCache` `:101`、`resolve` `:115`、`recordFresh` `:156`、`promote` `:187`、`hasRecovery` `:197`、`bootstrapDialer` `:213`、`resolveCandidates` `:233`、`DialContext` `:259`、`buildBootstrapResolution` `:311`、`bootstrapResolver` `:331`、`strategy` `:349`；外加 `bootstrap_race.go`（`handshakeRacer` `:52`、`dialWithWinner` `:123`、`awaitHandshake` `:334`、`splitByPreference` `:357`、`interleaveCandidates` `:398`、`masqueConnDialer` `:445`、`preferIPv6FromStrategy` `:481`） |
 | **Inner（内层）** | 在隧道 **内部** 承载的流量 | `option/masque.go:33-44` `InnerDomainResolver`，注释明确说明了这一点；未设置时行为不变（普通 DNS 路由规则，查询选项为空） | `protocol/masque/dns_resolver.go` + `dns_assignment.go`（`dnsAssignmentSnapshot` `:41`、`dnsConfigurationSnapshot` `:54`、`dnsResolverSnapshot` `:73`、`decide` `:266`、`hasUsableResolver` `:298`、`resolversByPriority` `:311`、`compileDNSAssignment` `:390`、`compileResolver` `:449`、`compileCapabilities` `:519`、`resolverCapability.sameH3OriginAvailable` `:370`、`reachableForProtocol` `:668`） |
 
-两者在结构上分离：bootstrap dialer 在 **任何隧道存在之前** 构建
-（`bootstrap_cache.go:311`），inner 路径只由 `lookupInner` 查询
-（`client.go:745`）。**调换两者，服务器自身主机名的解析就会走一条
-尚不存在的隧道**，或者把隧道内的名字泄露给外层解析器。
+两条路径在结构上分离：bootstrap dialer 在隧道建立之前构建（`bootstrap_cache.go:311`），inner 解析由 `lookupInner` 使用（`client.go:745`）。混淆两者可能让服务器主机名解析依赖尚未建立的隧道，或将隧道内的域名交给外层解析器。
 
 ---
 
@@ -192,7 +187,7 @@ PTB 路径：数据报发送以 `datagramErrorTooLarge` 失败 → `mtu := maxPa
 `protocol/masque/close_boundary_h3_test.go`、`readiness_boundary_test.go`、
 `lifecycle_generation_test.go`、`scope_ownership_test.go`。
 
-有两处已记录的拆除修复值得了解：
+以下提交记录了关闭与资源清理方面的修复：
 
 * `9235f90` —— 服务器端点由负责关闭它的 `Scope` 清理。
 * `c3b4f567` —— 释放 **`Scope.Close` 返回之后** 才获取的资源。

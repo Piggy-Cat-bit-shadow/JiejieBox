@@ -28,12 +28,12 @@
 | 2 | **B1：CONNECT-IP 入口对每个包复制两次** | `VERIFIED_SOURCE`：`sing-tun/flow_dispatch.go:653` 复制进 stage，`protocol/masque/client.go:649-651` 再 `buf.NewSize`+`Write` 复制一次 | 每包少 1 次分配 + 1 次 memcpy；需给 `Port` 增加携带所有权的批量接口 |
 | 3 | **B2：MASQUE 批量 >32 包必然退回逐包路径** | `VERIFIED_SOURCE`：`quic-go/datagram_queue.go:114-116` 直接拒绝 >32，`writeBatchOwned` 无分块 | 突发 >32 包时恢复批量路径，省 N 次队列锁与 N 次唤醒 |
 | 4 | **B3：规则集解压没有输出上限** | `MEASURED_LOCAL`：254.8 KiB 输入 → 256 MiB 解压 / 143.6 ms；合法规则数据 20.1 MiB → 217.7 MiB 分配 | 给 `srs.Read` 加解压字节预算，把 CPU DoS 变成有界失败，旧代际保持 |
-| 5 | **B4：QUIC 接收侧 128 B 帧钉住 1452 B 池缓冲** | `VERIFIED_SOURCE` + 算术：`wire/stream_frame.go:59-82`、`wire/pool.go:11-18`；窗口是信用不是预分配 | 一个 gap + 小帧可把接收内存放大到窗口的 ~11×；按 `cap/2` 降级复制即可 |
+| 5 | **B4：QUIC 接收侧 128 B 帧使 1452 B 池缓冲无法释放** | `VERIFIED_SOURCE` + 算术：`wire/stream_frame.go:59-82`、`wire/pool.go:11-18`；窗口是信用不是预分配 | 一个 gap + 小帧可把接收内存放大到窗口的 ~11×；按 `cap/2` 降级复制即可 |
 
 ### 1.3 最重要的 5 个被否决（或降级）的猜想
 
 1. **把内存 DNS 缓存改成 packed wire bytes** → **C**。实测：默认 1024 容量下只省约 0.31 MiB（含 freelru 开销 781→464 B/entry），而命中路径 CPU 变成 2.2–3.5×（`Copy` 238 ns/200 B/6 allocs vs `Unpack` 761 ns/328 B/12 allocs）。第一轮把它列为 B 是谨慎的；第二轮有数了，**默认容量下不值得**，只有 `cache_capacity` 上万时才重新评估。
-2. **去掉 DNS 读侧 `Copy()`** → **D**。缓存对象在交出后会被 `normalizeTTL`、`response.Id`、`Extra` 过滤、以及 transport 的 `restoreOriginalQuestion` 改写；`client_family_hint_test.go:190` 明确钉住"读方不得污染缓存条目"。
+2. **去掉 DNS 读侧 `Copy()`** → **D**。缓存对象在交出后会被 `normalizeTTL`、`response.Id`、`Extra` 过滤、以及 transport 的 `restoreOriginalQuestion` 改写；`client_family_hint_test.go:190` 明确验证“读方不得污染缓存条目”。
 3. **引入 `FlowBufferLedger` 式全局字节账本** → **D**。本仓库数据面没有受它支配的无界队列：`route` 生产代码没有 channel 队列（只有测试里有），背压靠阻塞写 + 停拉 TUN；强行加账本只会多一套生命周期。
 4. **自研调度器 / Arena / 第二复用池** → **D**。`common/trafficsched` 空闲时**不持有 timer**（`scheduler.go:849-861,869-892`），arena 的所有权契约与 `buf.Buffer` 重复，`route/reference.go` 是唯一复用/退休权威。
 5. **优化"新旧 matcher 共存"** → **D**。实测 500k 规模旧代只多占一个 live 代（4.23 MiB，约峰值的 20%），窗口 28 ms，默认更新周期 24 h，且每次更新后强制 `runtime.GC()`。
@@ -405,7 +405,7 @@ Anywhere 锚点：AWCore.swift:632-633 —— 路由负载是有界磁盘文件�
 判定理由：B —— 成本已实测，但"上限设多少"是产品决策，且不是性能收益。
 ```
 
-### 5.6 B4：QUIC 接收侧 128 B 的 STREAM 帧钉住 1452 B 池缓冲
+### 5.6 B4：QUIC 接收侧 128 B STREAM 帧使 1452 B 池缓冲无法释放
 
 ```
 Candidate ID: B4
@@ -580,12 +580,12 @@ Candidate ID: B9
 
 ### 6.3 负结果：`route/` 没有 FIFO 保留、没有无界队列
 
-按提示词 §8.2/§8.3 专门找了"逻辑出队 ≠ 对象解除引用"和"小 slice 钉住大数组"：
+按提示词 §8.2/§8.3 专门找了"逻辑出队 ≠ 对象解除引用"和"小 slice 持有大数组"：
 
 - `route/` 的生产代码没有 `make(chan ...)` 队列（grep 只命中 `_test.go`）；`trafficsched` 的 lane 队列只排 `*Flow`，不排 payload。
 - `route/reference.go:267-302` 的 `queue = queue[1:]` 是配置加载期的局部 BFS worklist，函数返回即死。
 - 真正的两处 reslice 保留都在依赖层：`quic-go/datagram_queue.go:223-225` 与 `http3/state_tracking_stream.go:191-193`（B6），以及 `udp_nat` 的静默丢弃（B8）。
-- 小 slice 钉大数组的确凿一例是 QUIC 的 1452 B 帧缓冲（B4）；`common/sniff/quic.go:184-209,307,362-365` 的 CRYPTO 分片会通过 `cap` 钉住整个 `newPacket`，但那是 `KNOWLEDGE/modules/buffer-ownership.md` 已登记的借用契约（HYPOTHESIS 量级，未测），本轮不判缺陷。
+- 小 slice 持有大数组的一个确凿例子是 QUIC 的 1452 B 帧缓冲（B4）；`common/sniff/quic.go:184-209,307,362-365` 的 CRYPTO 分片会因引用关系保留整个 `newPacket`，但那是 `KNOWLEDGE/modules/buffer-ownership.md` 已登记的借用契约（HYPOTHESIS 量级，未测），本轮不判缺陷。
 
 这条负结果本身有价值：它支持第一轮"不要造全局账本"的判断，并把"有界但不可观测"（B7/B8）与"真实保留"（B6）区分开。
 
@@ -689,7 +689,7 @@ Candidate ID: B9
 | DNS 旧网络结果污染新网络 | key 含 `environment`（`client.go:584-604`）；generation 是 store/deliver 守卫（`:304-316,402-415`）；`ResetNetwork` 不清 exact cache（`router.go:2286-2333`） | 网络切换后同一 name 的 A 记录必须按 `environment` 分开；TTL 到期前不得跨环境命中；`cache_generation_guard_test.go` 已覆盖 store 侧 |
 | 乐观刷新覆盖更新的结果 | 刷新绕过单飞（`:1606`），store 是最后写入者赢（`:1285/1287`） | 并发"普通交换 + 刷新"各写一次，断言最终条目来自更新的上游答案（需要 per-entry 序号；当前没有） |
 | 规则集部分发布 | `publishRules` 单点赋值（`:281-285`），失败分支全部在赋值前返回 | 已有 `TestRemoteRuleSetStreamDoesNotPublishATruncatedBody`；新增"cancel 发生在 drain 之后、publish 之前"的用例（当前会发布，属语义边界而非损坏） |
-| H3 verdict 乱序 | `claimHTTP3Outcome` CAS + `http3VerdictMu`（`client.go:339-449`）；`resetHTTP3Verdict` 同一临界区（`:379-385`，注释记录了 1758/200000 的实测复现率） | 并发 dial 与 `ResetConnections` 交错 20 万次，断言 verdict 不被旧尝试重新武装 |
+| H3 verdict 乱序 | `claimHTTP3Outcome` CAS + `http3VerdictMu`（`client.go:339-449`）；`resetHTTP3Verdict` 同一临界区（`:379-385`，注释记录了 1758/200000 的实测复现率） | 并发 dial 与 `ResetConnections` 交错 20 万次，断言旧尝试不会重新启用 verdict |
 
 ### 9.2 资源释放与批量失败
 
