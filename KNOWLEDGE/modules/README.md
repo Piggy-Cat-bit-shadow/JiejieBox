@@ -72,7 +72,7 @@
 
 MASQUE 与 Naive **不是 fork 的发明**：`MASQUE support` 由 `b83089ec`（即 "Add MASQUE support", 世界, 2026-09-21）
 引入，而 `transport/http`/`protocol/naive` 在 `e4b7e692` 时就已存在。
-fork 在它之上新增了什么，按模块记录，并附溯源。
+fork 后续新增的内容按模块记录，并附有来源。
 
 ## 其他所有权与覆盖限制（Additional ownership and coverage limits）
 

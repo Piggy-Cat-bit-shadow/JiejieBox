@@ -311,7 +311,7 @@ loopback 的 CONNECT 仍被拒绝。
 * 按 IP 限流只在单一 loopback 地址上演练过，包括它的 IPv4 映射
   形式；在真正分布式来源下的行为未经验证。
 * 生产拓扑有意地 **不配置** 任何 `server_limits`。
-* 限流器的 fail-closed 路径与摊还清扫只在单元测试层面被证明，不在负载之下。
+* 限流器的 fail-closed 路径与分摊清理目前只有单元测试证据，尚未进行负载验证。
 * 自托管 Web 的运行时测试需要第二个 loopback 地址，而 macOS 做不到，因此它们
   **在 macOS 上跳过**，只在 Linux 上执行。
 * `test/jiejie/jiejie_naive_ipv6_udp_test.go:141,169` 以 *"no usable IPv6 address; **NOT a

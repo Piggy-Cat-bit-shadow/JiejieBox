@@ -274,8 +274,8 @@ TLS 记录设定时限，随后把该截止时间清掉；`handshake_target_clea
 | `93823c3d` | MEMORY | OWN | 退役唤醒后不可达的连接池；能排空的就排空 |
 | `8735b1d` | MEMORY | OWN | 让退役遍历能到达 HTTP 客户端连接池（此前从未到达） |
 | `e4327dca` | LIFECYCLE | OWN | 接通 Apple 设备状态的事件发布，并在解锁时解除暂停 |
-| `ae197b92` | FIX | OWN | 给被取代的接口监视器加栅栏；在切换锁之外发布 |
-| `0ff90482` | FIX | OWN | 把设备恢复边沿用在边沿锁存上，不用在屏幕级别上 |
+| `ae197b92` | FIX | OWN | 限制已被取代的接口监视器继续生效；在切换锁之外发布 |
+| `0ff90482` | FIX | OWN | 将设备恢复事件用于事件锁存，不用于屏幕状态 |
 | `9dd91d51`, `482e4d3a` | HARDENING | OWN | scope 所有权加固 |
 | `7e13f461` | FIX | **OWN, not upstream** | 清除**其所有者注册的**进程级接口 getter。提交正文说明，fork 自己的重构把注册移进 `newSystemBinding` 后**把它丢了**；这是修 fork 引入的泄漏，不是上游吸收。 |
 | `27d8bb59`, `12ee55eef` | REPOSITORY-HYGIENE | OWN | 只为清掉 GitHub 上过时的“落后于 upstream”状态而做的祖先记录。**两者都是无树变更的合并**（`12ee55eef` 记录 `PRE_SYNC_TREE == post-merge tree`）。 |

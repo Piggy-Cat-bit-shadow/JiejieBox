@@ -454,7 +454,7 @@ a lookup through a PINNED resolver — see §9: the rule walk is not entered at 
 | `disable_cache` 不改变判定产生的位置 | `TestAdblockIsUnaffectedByDisableCache` | 同上 |
 | 2000 次被拦截查询保持在测试的保留堆与 goroutine 容差内 | `TestAdblockSteadyStateAllocatesNothing`（额外保留堆小于 128 KiB，且最多多出四个 goroutine；响应本身会分配） | 同上 |
 | 问题按原样返回，任意大小写拼写 | `TestAdblockAnswersCaseVariantsWithTheAskedSpelling` | 同上 |
-| 畸形请求在动作之上被拒绝，而不是在其内部 | `TestAdblockAgreesWithTheRouterOnMalformedRequests` | 同上 |
+| 畸形请求由动作外层拒绝，不进入动作内部 | `TestAdblockAgreesWithTheRouterOnMalformedRequests` | 同上 |
 | 响应格式、标志位、SOA、ID、问题 | `route/rule/rule_dns_adblock_test.go` `TestAdblockResponseShape`、`dns/router_adblock_test.go` `requireLocalNXDomain` | `go test ./route/rule/ -run Adblock -count=1` |
 | adblock 是终止型、无状态，且不需要 logger | `TestAdblockIsATerminalActionThatStopsTheWalk`、`TestAdblockResponseNeedsNoLogger`、`TestAdblockRuleSurvivesNilAuthorizedRules` | 同上 |
 | `adblock` 与 `predefined` 只在设计上声明的地方不同 | `TestAdblockDoesNotChangeThePredefinedAnswerForTheSameShape` | 同上 |

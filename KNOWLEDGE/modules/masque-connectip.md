@@ -30,8 +30,7 @@ TUN 的关闭逻辑。`transport/masque/client.go` 拥有客户端关闭路径�
 `protocol/http` 的 CONNECT 路径，以及 `option/masque.go` 这一层接口。
 
 **溯源 —— 在归因任何东西之前先读这里。** MASQUE 由 **上游** 的 `b83089ec` 引入
-（"Add MASQUE support"，世界，2026-09-21）。这个提交位于 fork 基线 *之下*，可以从
-上游引用到达。在上游祖先 `e4b7e692` 处，`protocol/masque` 有 **3 个文件**，
+（"Add MASQUE support"，世界，2026-09-21）。该提交是 fork 基线的祖先，也可从上游引用追溯到。在上游祖先 `e4b7e692` 处，`protocol/masque` 有 **3 个文件**，
 `transport/masque` 有 **7 个**；到 `a267e99` 处两者分别是 **29** 和 **57**。所以：
 
 ```text
@@ -236,7 +235,7 @@ socket。`common/listener` 没有“关闭之后再启动”的防护，因此 `
 
 | 提交 | 类型 | 做了什么 |
 |---|---|---|
-| `b83089ec` | — | **UPSTREAM-INHERITED。** "Add MASQUE support"，世界，2026-09-21。位于 `e4b7e692` 之下；可从上游引用到达。**不是 fork 特性。** |
+| `b83089ec` | — | **UPSTREAM-INHERITED。** "Add MASQUE support"，世界，2026-09-21。是 `e4b7e692` 的祖先，可从上游引用追溯到。**不是 fork 特性。** |
 | `d53c867b7` | FEATURE | 本 fork **第一个由 fork 编写的提交**：入站 masquerade handler —— 即 MASQUE/HTTP 入站中用于服务超限探测的那一个 |
 | `7e57fe8c7` | HARDENING | 限流器真正形成约束 |
 | `b83695603` → `1511c1c6a` | FEATURE/FIX | H3 连接池及其 tie-break |
