@@ -348,7 +348,7 @@ fixture 只断言 Start 成功，不声称任何证明。不要复活旧的“�
 
 环检测复用**既有的**图（声明的成员关系 ∪ `adapter.Referrer.References`），也就是
 `cross_kind_cycle.go` 在启动时校验的那组边。遍历自己的下降过程*就是*环记录，正是
-`route.resolveOutbound` 已经在用的形状。**没有引入第二张图**；请保持这样。
+`route.resolveOutbound` 已经采用的结构。实现没有引入第二张图；后续修改应保持这一设计。
 
 `default_domain_resolver` 被建模成一条图的边（`box.go:616-618`：`SetDefaultDomainResolver`
 安装一个**闭包**，所以答案始终实时）。无条件计入它，曾是一次**实测的误拒绝**

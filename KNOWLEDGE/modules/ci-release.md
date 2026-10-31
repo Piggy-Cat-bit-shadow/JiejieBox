@@ -460,7 +460,7 @@ BUILD-INFO-LIBBOX.txt`）与按目标的各行并列（`:1381`），`die` 移到
 `SHA256SUMS`（`test-release-artifacts.sh:1909-1930`），旧 fixture 只断言两行，根本捕获不到
 这个缺陷。
 
-**这里把缺陷记为已修复而不是删掉记录，因为这种形状会复发：** 允许列表与产者的
+**保留这条已修复缺陷的记录，便于识别同类问题：** 允许列表与产者的
 上传集合是对同一事实的两种陈述，它们的失败方式正是彼此一致
 却两者都错。
 
@@ -601,6 +601,4 @@ DEFAULT_BUILD_TAGS_OTHERS … the same list with with_naive_outbound removed
     在 `:465` 带有一节声明 *"HY2 ChromeParrot is BLOCKED on the pinned quic-go fork"*（中文：HY2 ChromeParrot 在固定的
     quic-go fork 上被 BLOCKED），而它自己的头部在 `:4-13` 恰好撤回了这一说法，声明
     `Config.InitialPacketSizeCeiling` 是在 ChromeParrot 覆盖**之后**应用的，因此一个被证实的 1232
-    会到达线缆，并指向 `protocol/hysteria2/hard_ceiling_wire_test.go`。跳到
-    这一小节的读者会重开一个已关闭的发现。这是这里每一份长账本的普遍形状：
-    **横幅是当前的，正文是记录。**
+    会在实际发送时生效，并指向 `protocol/hysteria2/hard_ceiling_wire_test.go`。如果只读这一小节，容易把已关闭的问题当成未解决。阅读这份台账时，应结合头部的更新说明理解正文中的历史记录。

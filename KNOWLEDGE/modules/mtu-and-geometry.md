@@ -55,7 +55,7 @@ inner tunnel MTU        what the tunnel promises the payload it carries
 
 **`sing-quic` 是这个上限的关键环节。** `scripts/ci/check-go-module-integrity.sh:105-115` 记录了它为什么是四个 `REQUIRED_FORK_REPLACES` 之一：
 
-> *"It became load-bearing when the hard packet-size ceiling was given its own field: the ceiling reaches the wire only if this layer forwards it, so a nested module resolving upstream sing-quic would build a product whose proven ceiling silently disappears."*（中文：硬性数据包大小上限有了自己的字段之后，它就成了关键环节：只有这一层把上限转发出去，上限才能到达线路上；因此，一个解析到上游 sing-quic 的嵌套模块，会构建出“已证明的上限静默消失”的产品。）
+> *"It became load-bearing when the hard packet-size ceiling was given its own field: the ceiling reaches the wire only if this layer forwards it, so a nested module resolving upstream sing-quic would build a product whose proven ceiling silently disappears."*（中文：硬性数据包大小上限有了自己的字段之后，它就成了关键环节：只有这一层继续传递上限，实际发送时才能遵守它。因此，如果嵌套模块解析到上游 sing-quic，构建出的产品可能悄然丢失已确认的上限。）
 
 ---
 
@@ -178,7 +178,7 @@ go run ./cmd/internal/appletags -mobile-only
 | 几何可入池性，以及 `Advance`/`Prepend` 上不重新分配 | `VERIFIED_UNIT` | `go test -count=1 ./common/bufgeom/...` |
 | 分配上限 | 仅在 **`!race`** 构建中为 `VERIFIED_UNIT` | 同上 |
 | MASQUE 的 PTB 纠正与初始大小钳制 | 对已测试的用例为 `VERIFIED_UNIT`；未确立对后续数据包的普遍硬上限 | `go test -count=1 -timeout 8m -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" ./transport/masque/... ./protocol/masque/...` |
-| hysteria2 的硬上限在 ChromeParrot 打开时到达线路上 | `VERIFIED_UNIT` | `go test -count=1 -run HardCeiling ./protocol/hysteria2/` |
+| 启用 ChromeParrot 时，hysteria2 发送的数据包仍遵守硬上限 | `VERIFIED_UNIT` | `go test -count=1 -run HardCeiling ./protocol/hysteria2/` |
 | 低内存几何只从一个来源读取 | `VERIFIED_SOURCE` | `go run ./cmd/internal/appletags -mobile-only` |
 | 状态值是拷贝，不是视图 | `VERIFIED_UNIT` | `go test -count=1 -run TestAgentFEveryHopScalarIsCopiedNotShared ./common/physicalpath/` |
 | 真实网卡的 MTU 行为 | **本次刷新中为 `UNVERIFIED`**——需要相关的真实 TUN 与环境 | `docs/fork/real-tun-validation.md` |
@@ -192,7 +192,7 @@ go run ./cmd/internal/appletags -mobile-only
 
 1. **不要把三个 MTU 量合并成一个。**
 2. **不要用一个常量给 MASQUE 外层 QUIC 数据包封顶。** 封顶它的是*已证明的* detour 容量。
-3. **不要取消 `sing-quic` 的 pin。** 只有这一层转发，已证明的上限才能到达线路上。
+3. **不要取消 `sing-quic` 的 pin。** 只有这一层继续传递上限，实际发送时才能遵守它。
 4. **不要静默丢弃一个过大的数据报。** 那是带修正后 MTU 的 PTB。
 5. **不要把 MTU 修正到 `minimumLinkMTU` 以下。**
 6. **不要在 ChromeParrot 覆盖之前应用 hysteria2 的上限。** 它必须在覆盖之后应用，否则指纹会赢，上限就是惰性的。

@@ -335,7 +335,7 @@ gitlink。显式覆盖是支持的，而且就源码选择而言，gitlink 相�
 
 * **原因：** `scripts/ci/apple-ci-job-gate.py` 的 docstring 把这类问题说得最清楚：一次带
   `build_ios: false` 的派发，**会在某个平台从未被构建的情况下得出成功结论**，而被跳过的
-  作业不算失败。`check-libbox-abi.sh` 会打印 `PARTIAL` 却以退出码 0 结束，原因正在这里。
+  作业不会因此失败。这也是 `check-libbox-abi.sh` 打印 `PARTIAL` 却以退出码 0 结束的原因。
 * **发布路径的权威是 `release-artifacts.sh`，由 `release.yml` 调用。** 它给
   每个目标工作流挑最新的运行，遇到已完成但非成功或被取消的运行就失败，要求每个
   产品都有产物和已记录的摘要，并把 `client-apple.yml` 纳入

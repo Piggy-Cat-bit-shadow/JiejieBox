@@ -247,7 +247,7 @@ adblock    = a dedicated advertising semantic whose response is FIXED:
 两者共享的是标志位约定，不是配置契约。
 `predefined` 配 `"rcode": "NXDOMAIN"` 且没有 `ns` 条目，是一种有效配置，
 产出的 NXDOMAIN 符合规范的客户端无法负缓存；
-`adblock` 存在，是为了让大型第三方广告规则集能挂到正确的否定答案上，不必每位运维者重新推导这个形状。
+`adblock` 为大型第三方广告规则集提供符合预期的否定响应，避免每位运维者自行配置响应格式。
 
 ---
 
@@ -283,7 +283,7 @@ adblock    = a dedicated advertising semantic whose response is FIXED:
 `client_negative.go` 的容器级不变量没有改变：只有真正的 `NXDOMAIN` 才扩大，
 仅限单个问题，必须有 SOA，权威负 TTL 非零，必须有空回答，
 NODATA/SERVFAIL/REFUSED/FORMERR/超时永不扩大。
-“`rewrite_ttl` 不能提升零负 TTL”这一断言，**在“头部 TTL 为零 / MINIMUM 为正”的形状上尚未得到证明**：
+“`rewrite_ttl` 不能提升零负 TTL”这一断言，**在“头部 TTL 为零 / MINIMUM 为正”的情况下尚未得到证明**：
 报文在存储时重新读取 SOA 之前已经被规范化。
 见 `dns-demand.md` NXDOMAIN 一节中的后续说明；
 不要把这个重写守卫当作已证明。缓存自身的键作用域、容量、剩余 TTL 与查询顺序契约，
@@ -455,10 +455,10 @@ a lookup through a PINNED resolver — see §9: the rule walk is not entered at 
 | 2000 次被拦截查询保持在测试的保留堆与 goroutine 容差内 | `TestAdblockSteadyStateAllocatesNothing`（额外保留堆小于 128 KiB，且最多多出四个 goroutine；响应本身会分配） | 同上 |
 | 问题按原样返回，任意大小写拼写 | `TestAdblockAnswersCaseVariantsWithTheAskedSpelling` | 同上 |
 | 畸形请求在动作之上被拒绝，而不是在其内部 | `TestAdblockAgreesWithTheRouterOnMalformedRequests` | 同上 |
-| 响应形状、标志位、SOA、ID、问题 | `route/rule/rule_dns_adblock_test.go` `TestAdblockResponseShape`、`dns/router_adblock_test.go` `requireLocalNXDomain` | `go test ./route/rule/ -run Adblock -count=1` |
+| 响应格式、标志位、SOA、ID、问题 | `route/rule/rule_dns_adblock_test.go` `TestAdblockResponseShape`、`dns/router_adblock_test.go` `requireLocalNXDomain` | `go test ./route/rule/ -run Adblock -count=1` |
 | adblock 是终止型、无状态，且不需要 logger | `TestAdblockIsATerminalActionThatStopsTheWalk`、`TestAdblockResponseNeedsNoLogger`、`TestAdblockRuleSurvivesNilAuthorizedRules` | 同上 |
 | `adblock` 与 `predefined` 只在设计上声明的地方不同 | `TestAdblockDoesNotChangeThePredefinedAnswerForTheSameShape` | 同上 |
-| `race` 被拒绝；DNS-only 边界；解码；往返；schema 形状 | `TestDNSRuleActionAdblockRejectsRace`、`option/rule_action_test.go` | `go test ./route/rule/ ./option/ -run Adblock -count=1` |
+| `race` 被拒绝；DNS-only 边界；解码；往返；schema 结构 | `TestDNSRuleActionAdblockRejectsRace`、`option/rule_action_test.go` | `go test ./route/rule/ ./option/ -run Adblock -count=1` |
 | 这个动作的分配量与本地的 `predefined` 答案处于同一数量级 | `BenchmarkAdblockResponseConstruction` 对 `BenchmarkPredefinedResponseConstruction`（每个答案 3 allocs / 136 B 对 1 / 144 B） | `go test ./route/rule/ -run XXX -bench ResponseConstruction -benchtime 200000x` |
 | 上游学到的 NXDOMAIN 行为未变 | 既有的 `dns/client_negative_test.go`、`dns/client_singleflight_test.go` | `go test ./dns/... -count=1` |
 

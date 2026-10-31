@@ -216,7 +216,7 @@ RFC 2308 指出 `NXDOMAIN` 是关于**名字**的陈述，而精确缓存以完�
 ### 与 adblock 的关系（Relationship to `adblock`）
 
 `adblock` DNS 动作返回本地的 `NXDOMAIN` + SOA，有意**不**写 `nxdomainCache`：
-运维者的规则不能证明上游服务器说过这个名字不存在。两者共享的是响应形状，不是状态。
+运维者的规则不能证明上游服务器说过这个名字不存在。两者的响应格式相同，状态彼此独立。
 参见 `dns-adblock-action.md` §7。
 
 ### 证据（Evidence）
@@ -272,7 +272,7 @@ FakeIP 元数据则专门传播这个错误，好让它的存储避免推进预�
 ## 4. 消费者需求（Consumer demand）
 
 `dns/transport/requirement.go` 为每种 DNS 类型给出传输需求（transport requirement），
-形状与 HTTP 客户端的相同（`common/httpclient/transport_requirement.go`）：
+结构与 HTTP 客户端相同（`common/httpclient/transport_requirement.go`）：
 
 ```text
 udp  ⇒  AllOf{udp}  +  Conditional{tcp}

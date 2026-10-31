@@ -287,7 +287,7 @@ TLS 记录设定时限，随后把该截止时间清掉；`handshake_target_clea
    返回之后继续活着的原因。
 2. **不要让 `Scope.Close` 等待在途的 `Start`。** 它按构造就是无界的；两个需要它的组件
    （`protocol/masque/server.go`、`protocol/tun/inbound.go`）改用非阻塞交接（`startupGate`、
-   `acquiredStillOwned`）。请照这个形状写。
+   `acquiredStillOwned`）。类似场景应沿用这种交接方式。
 3. **不要注册一个会关闭自己所在 scope 的清理。** 排空会等它自己；嵌套子 scope 是另一种所有权
    关系。
 4. **不要用布尔值替代 `Registration.lease *RebindLease`。** 这个指针的存在，就是为了让被取代的租约

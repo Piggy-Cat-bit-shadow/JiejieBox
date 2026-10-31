@@ -336,7 +336,7 @@ HTTP 客户端需要哪些传输：
 | 版本 3，无回退 | `AllOf{udp}` |
 
 > **带回退的 HTTP/3 要的是 `AnyOf{udp, tcp}`，不是两者都要。** 两者都要会拒绝一份本来
-> 可用的配置。这和 DNS 的 `udp ⇒ AllOf{udp} + Conditional{tcp}` 是同一形状
+> 可用的配置。这和 DNS 的 `udp ⇒ AllOf{udp} + Conditional{tcp}` 采用相同结构
 > （`dns/transport/requirement.go`），那里的 TCP 重试只在响应被截断时触发。
 
 在 `common/httpclient/transport_capability.go:30` 强制执行，由
