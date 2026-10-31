@@ -30,9 +30,9 @@ Linux、Go 1.25 和 `badlinkname` 构建条件限制的路径。它在返回应�
 | # | 规则 | 锚点 | 违反后的风险 |
 |---|---|---|---|
 | B1 | `buf.NewPacket()` = 从 **12 个 `sync.Pool`** 之一 `Get(UDPBufferSize)`；`MaxPooledBufferSize = 73728` | `common/buf/alloc.go:11,19-36`; `buffer_standard.go:7` | 见 B1a/B1b——失败形态是 **panic**，不是泄漏 |
-| B1a | `Put` 只接受 `cap == MaxPooledBufferSize` **或 [64, 65536] 内的 2 的幂** | `common/buf/alloc.go:89-97` | 受管理、未被引用但容量不可入池的缓冲区，一释放就 panic：`Buffer.Release()` 调用 `common.Must(Put(…))`；nil、非受管理或仍被引用的缓冲区会更早返回 |
+| B1a | `Put` 只接受 `cap == MaxPooledBufferSize` **或 [64, 65536] 内的 2 的幂** | `common/buf/alloc.go:89-97` | 受管理且没有引用的缓冲区如果容量不符合入池要求，释放时会 panic：`Buffer.Release()` 调用 `common.Must(Put(…))`；nil、非受管理或仍有引用的缓冲区会提前返回 |
 | B1b | 超过 `MaxPooledBufferSize` 时，`Get` 返回 **nil** | `common/buf/alloc.go:41-44` | `buffer.go:343-369` 内部的 nil slice panic |
-| B2 | `Buffer.Bytes()` 是底层数组上的一个**视图**；符合条件时 `Release()` 把它归还池中，并清零 **Buffer 结构体**，而不是清零底层字节 | `common/buf/buffer.go` `Bytes`, `Release` | 保留下来的 slice 可能读到已被复用的数据；通过已清零的结构体再做一次释放是空操作，因此不要依赖它发现每一次所有权错误 |
+| B2 | `Buffer.Bytes()` 是底层数组上的一个**视图**；符合条件时 `Release()` 把它归还池中，并清零 **Buffer 结构体**，而不是清零底层字节 | `common/buf/buffer.go` `Bytes`, `Release` | 保留的 slice 可能读到复用后的数据；再次释放已清零的结构体是空操作，因此不能依赖它发现所有权错误 |
 | B3 | `ReadOnceFrom` 在缓冲区满时返回 `io.ErrShortBuffer` | `common/buf/buffer.go:137-144` | 这是 `PeekStream` 的字节上限——把它当成错误、而不是上界来处理，会改变嗅探行为 |
 | B4 | 池化的缓冲区必须经过 `Advance`/`Prepend` 而**不重新分配 payload** | `common/bufgeom/geometry_test.go:99 TestBufferAcquireNeverReallocatesThePayload`, `:63 TestGeometryBuffersAreExactlyPoolable` | 热路径上每个数据包多一次分配 |
 | B5 | 分配**上限**断言是 `//go:build !race`；在 `-race` 下只运行结构性的一半 | `common/bufgeom/race_detector_test.go` (`//go:build race`) vs `race_detector_stub_test.go` (`//go:build !race`) | 在 `-race` 下，一次池化的 `buf.Get`/`Put` 循环**实测每次获取 8,251 字节，没有它时是 1.7**；为容纳这个数字而把 1024 字节上限放宽，会抹掉该断言要建立的“池化 vs 重新分配”区分 |
@@ -43,9 +43,9 @@ Linux、Go 1.25 和 `badlinkname` 构建条件限制的路径。它在返回应�
 
 | # | 规则 | 锚点 | 违反后的风险 |
 |---|---|---|---|
-| B6 | `payloadReader` 游标借用分段，**不得比创建它的 `PeekStream` 调用存活更久** | `common/sniff/sniff.go:88-91` | 保留该游标的嗅探器会观察到已被复用的池缓冲区 |
+| B6 | `payloadReader` 游标借用分段，**其生命周期不得超过创建它的 `PeekStream` 调用** | `common/sniff/sniff.go:88-91` | 保留该游标的嗅探器会观察到已被复用的池缓冲区 |
 | B7 | `takePacketBytes` 返回**调用方数据报内的一个视图**，只在该数据报存活期间有效 | `common/sniff/quic.go:23-35` | 被保留下来的 DCID/PN 采样会读到已被复用的内存 |
-| B8 | QUIC 的工作副本是一次**新的、数据包大小的 `make`，刻意不入池**；解密后的缓冲区与它互为别名 | `common/sniff/quic.go:184`, `:227` | 池化它，会让一个分段活得比它的所有者更久 |
+| B8 | QUIC 的工作副本是一次**新的、数据包大小的 `make`，刻意不入池**；解密后的缓冲区与它互为别名 | `common/sniff/quic.go:184`, `:227` | 如果将工作副本放入池，保留的分段可能超过其所有者的生命周期 |
 | B9 | 被保留的 `qCryptoFragment.payload` 与**工作副本**互为别名，从不与调用方的数据报；重组缓冲区由 `defer` 释放 | `common/sniff/quic.go:306-307`, `:342-343`, `:477-481` | 保留的分段会在数据报 `Release` 之后仍然存活 |
 | B10 | 头部保护会**原地写入 4 个字节**；`Length` 覆盖不到这些字节的头部会被拒绝 | `common/sniff/quic.go:125-131`, `:186-189` | 向数据报尾部越界写入 |
 
@@ -72,12 +72,12 @@ B6–B10 的依据包括**地址范围测试**（`quic_ownership_test.go:314-350
 
 | # | 规则 | 锚点 | 违反后的风险 |
 |---|---|---|---|
-| B20 | `IdleConnectionReleaser` 只能关闭**没有活跃用户流量**的资源，而且这次遍历**永远不能拨号** | `adapter/outbound.go:214-219`; `route/reference.go:420-440` | 一次裁剪会变成重连触发器——这正是内存路径绝不能有的形态（`route/reference.go:394-411`） |
-| B21 | `ReuseSuspect.RetireSuspect()` 在 `CloseIdleConnections` **之前**运行；一个只丢弃空闲连接的池会退回旧行为 | `route/reference.go:496-511`, `:547-556` | 新流会附着到一个无人信任的会话上 |
+| B20 | `IdleConnectionReleaser` 只能关闭**没有活跃用户流量**的资源，而且这次遍历**永远不能拨号** | `adapter/outbound.go:214-219`; `route/reference.go:420-440` | 裁剪可能触发重连，违反内存回收路径不得拨号的约束（`route/reference.go:394-411`） |
+| B21 | `ReuseSuspect.RetireSuspect()` 在 `CloseIdleConnections` **之前**运行；一个只丢弃空闲连接的池会退回旧行为 | `route/reference.go:496-511`, `:547-556` | 新流可能被分配到状态可疑的会话 |
 | B22 | 退役遍历断言的是 `IdleConnectionReleaser`，**而不是**捆绑的 `IdleConnectionKeeper` | `route/reference.go:479-484` | 若断言组合接口，遍历会静默跳过 HTTP 客户端池；该问题曾持续四轮评审（提交 `93823c3d`, `8735b1d`） |
 | B23 | `route/reusable_owner_inventory_test.go` 检查具名可复用所有者的能力，包括 XHTTP | 如所引 | 削弱或移除某个具名所有者的退役能力，可能静默绕过该遍历 |
 | B24 | 作用域清理从不在持有作用域锁时运行 | `adapter/lifecycle.go:124-125`, `:133-134` | 重入死锁 |
-| B25 | `RebindLease.Complete()` **总是取消**，即使对一个已被取代的租约也是如此 | `common/runtimecoord/coordinator.go:307-309` | 一个 cancel func 会一直注册在活动父级上 |
+| B25 | `RebindLease.Complete()` **总是取消**，即使对一个已被取代的租约也是如此 | `common/runtimecoord/coordinator.go:307-309` | 取消函数可能一直注册在仍然活动的父级上 |
 | B26 | 池内省通过 **badlinkname** 镜像固定工具链的 `sync.Pool` 布局；大小断言会在布局变化时明确报错 | `experimental/libbox/internal/runtimeinfo/pool_badlinkname.go:14,44-47` | 会静默误读池内部结构 |
 
 ---
@@ -147,7 +147,7 @@ B6–B10 的依据包括**地址范围测试**（`quic_ownership_test.go:314-350
 
 ## 5. AI 告诫（AI cautions）
 
-1. **借用的游标不得比 `PeekStream` 存活更久。** 不要缓存一个 `payloadReader`。
+1. **借用的游标不能在 `PeekStream` 调用结束后继续使用。** 不要缓存一个 `payloadReader`。
 2. **不要把 QUIC 工作副本入池。** 它是每次调用新建的 `make`，这是有原因的。
 3. **不要在调用方的数据报被释放之后仍保留对它的视图。**
 4. **不要丢掉 `Length < hdrLen+4` 防护。**

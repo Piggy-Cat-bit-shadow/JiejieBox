@@ -290,7 +290,7 @@ Naive 的 `TestH3Fallback` 各用例在 `with_naive_outbound,with_purego` 下通
 
 | # | 需求 | 证据 | 级别 | 复检 | 环境 |
 |---|---|---|---|---|---|
-| 11.1 | 导出的 libbox 表面与 `SetupOptions` 契约 | `experimental/libbox/*`；包测试通过 | VERIFIED_UNIT + VERIFIED_SOURCE | `go test -count=1 ./experimental/libbox/...` | Go |
+| 11.1 | 导出的 libbox 接口与 `SetupOptions` 契约 | `experimental/libbox/*`；包测试通过 | VERIFIED_UNIT + VERIFIED_SOURCE | `go test -count=1 ./experimental/libbox/...` | Go |
 | 11.2 | 平台级别的分类由核心负责，客户端只上报 | `common/runtimecoord/platform_events.go:152-220`；`experimental/libbox/platform_events.go` | VERIFIED_SOURCE | 读这两处 | — |
 | 11.3 | ABI 版本有提供方，也有消费方 | `daemon/started_service.go:39` `APIVersion = 4`；`experimental/libbox/command_client.go:760` | VERIFIED_SOURCE | `git grep -n APIVersion` | git |
 | 11.4 | Apple 客户端是 iOS 与 macOS 的同一份源码 | 两个作业中的 `assert-shared-source`；选择脚本的本地 fixture 在 MSYS2 与内置 Python 下通过 72 项检查 | VERIFIED_SOURCE + 本地 fixture 结果；不是发布产物检查 | `bash scripts/ci/check-apple-source-selection.sh` | bash + Python + git |

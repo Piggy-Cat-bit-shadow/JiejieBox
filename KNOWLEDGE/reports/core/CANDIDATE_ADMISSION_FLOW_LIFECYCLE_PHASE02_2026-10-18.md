@@ -796,7 +796,7 @@ and cannot build on Windows (`AGENTS.md`).
    original win, recovered win, setup cancel — and it now consumes the flow's policy rather than capturing
    its own. `VERIFIED_MUTATION` M12 and the four survivors in §I.
 
-7. **scheduler 是否不会自己刷新网络世界观?** **Yes.** Every field that makes up its worldview comes from the
+7. **scheduler 是否不会自行刷新网络状态快照?** **Yes.** Every field that makes up its worldview comes from the
    flow's capture; it never touches the manager. `VERIFIED_MUTATION` M9 (a fresh generation) and M4 (no
    local gate) and M13 (an empty policy).
 

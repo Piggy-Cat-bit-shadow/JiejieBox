@@ -310,12 +310,7 @@ failover 预算属于**用户流**，而不是组调用：一条 `outer → inne
 校验器**不**读它。它读 `HopCheck.Requirement`（`dryrun.go:71`），这个值由**函数参数**经
 `nodeRequirementFor`/`selfRequirementFor` 算出来。
 
-fork 自己的提交 `fc4bdd416` 就是这样说的：*“physicalpath.RequiredNetworks is still
-write-only. It is populated by leaves.go and read nowhere … should be wired or removed by
-the file's owner.”*（中文：physicalpath.RequiredNetworks 仍然只写。它由 leaves.go 填充，
-无人读取……应由文件所有者接线或删除。）`docs/fork/v016-correction-round-ledger.md:249-251`
-补充说，它的文档注释*“is actively wrong until the owner wires or deletes it.”*（中文：在
-所有者接线或删除它之前，这个注释是明显错误的。）
+提交 `fc4bdd416` 记录：`physicalpath.RequiredNetworks` 由 `leaves.go` 填充，但没有读取方，应由文件所有者接入实际用途或删除。`docs/fork/v016-correction-round-ledger.md:249-251` 还指出，在此之前不能依赖该字段的文档注释。
 
 **同一个包里共存着两种需求模型，而且互相矛盾。** `RequiredNetworks` 给**依赖**跳计入业务网络
 （`leaves.go:480` 原样下传 `required`）；校验器却**豁免**这些跳（除非 `businessEntry`，否则
@@ -332,10 +327,7 @@ STAYS”。可 `:384-387` 的代码在 `!requirementProven` 时**恰好**实现�
 （`effective = selfRequirementFor(node)`），而 `selfRequirementFor` 自己在 `:568-589` 的
 文档又和这条孤立注释正相反。
 
-提交顺序可以证明这一点：`d95e256b7`（2026-10-12 04:49:42）**删除**了 `selfRequirementFor` 并
-加入这条注释；`31f250ff1`（06:08:04）**重新加入**辅助函数，同时保留了注释
-（`git merge-base --is-ancestor d95e256b7 31f250ff1` → 是）。**这条注释已死，代码已定。绝不
-要恢复并集读法。**
+提交历史支持这一判断：`d95e256b7`（2026-10-12 04:49:42）删除 `selfRequirementFor` 并加入注释，`31f250ff1`（06:08:04）恢复辅助函数时保留了该注释（`git merge-base --is-ancestor d95e256b7 31f250ff1` 返回真）。该注释已过时；应以当前实现为准，不要据此恢复并集语义。
 
 ### 一条永远不会触发的诊断分支（A diagnostic branch that can never fire）
 

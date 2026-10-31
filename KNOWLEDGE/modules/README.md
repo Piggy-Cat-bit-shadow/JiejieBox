@@ -75,14 +75,32 @@ fork 在它之上新增了什么，按模块记录，并附溯源。
 
 ## 其他所有权与覆盖限制（Additional ownership and coverage limits）
 
+### Windows 守护进程
+
+`experimental/boxdd/**` 包含 55 个 `.go` 文件，其中 51 个不是测试文件，另有一个 `.proto`。它由 `windows-daemon-security.md` 负责，覆盖服务、worker、命名管道握手、可执行文件身份、签名者、Authenticode、安装和更新。
+
+相关职责分别位于：`daemon/**` 的进程内核心 API 见 `libbox-platform-contract.md`；`cmd/internal/build_boxdd` 和打包流程见 `build-pruning-release.md`、`ci-release.md` §5；`clients/desktop/**` 则是独立仓库。客户端 ABI 文档不能替代守护进程授权模型的说明。
+
+### 配置 schema
+
+`docs/schema.json` 是受版本管理的生成产物，生成链为：选项结构体和 `option/schema.go` → `schema.Generate`（`cmd/sing-box/cmd_schema.go:36`）→ `make schema`（`Makefile:35-36`）。
+
+历史上 schema 曾与 `User` 结构体不一致：产物声明 `Username`/`Password`，实际 JSON 键却是 `json:"username"` / `json:"password"`；当时 `fast_path` 则出现 83 次，并非这次漂移的位置。修复后，`cmd/sing-box/cmd_schema_artifact_test.go` 会比较生成结果和受跟踪文件，`verify.yml` 在相应标签下运行该测试。外部使用者包括 `docs/configuration/schema.md`、`docs/JIEJIE-SERVER.md` 和编辑器 schema URL，因此要验证生成产物本身。
+
+复检命令：
+
+```sh
+go test -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" -run TestTrackedSchemaMatchesTheGenerator ./cmd/sing-box
+```
+
+### 其他范围
+
 | 领域 | 覆盖与限制 |
 |---|---|
-| **`experimental/boxdd/**` —— Windows 守护进程**（55 个 `.go` 文件 —— 51 个非测试 —— 外加一个 `.proto`） | **OWNED —— `windows-daemon-security.md`。** 此前这里把它登记为“最大的缺口”。它覆盖守护进程/服务/worker/对端认证这一面：命名管道握手、可执行文件路径与同一文件解析、签名者字节相等固定、Authenticode 允许清单、服务安装与更新器。它**不是**上游代码，也**不会**被 `libbox-platform-contract.md` 顺带覆盖 —— 后者记录的是面向客户端的 ABI，不是守护进程的授权模型。**跨模块：** `daemon/**`（进程内核心 API）→ `libbox-platform-contract.md`；`cmd/internal/build_boxdd` 与打包 → `build-pruning-release.md` + `ci-release.md` §5；`clients/desktop/**` 是独立仓库。 |
-| `option/schema.go` → `docs/schema.json`（生成的产物） | 链条是：`option/schema.go` 与各选项结构体 → `schema.Generate`（`cmd/sing-box/cmd_schema.go:36`） → `make schema`（`Makefile:35-36`） → 受跟踪的 `docs/schema.json`。它漂移过一次 —— 不在 `fast_path` 上（该键出现 83 次），而在 `User` 上：产物宣告的是 `Username`/`Password`，选项结构体携带的却是 `json:"username"` / `json:"password"`，于是按已发布 schema 写配置的消费方，写进去的是解析器不接受的键。修复方式是重新生成该产物，并新增 `cmd/sing-box/cmd_schema_artifact_test.go`，它把 `schema.Generate` 的输出与受跟踪文件精确比对；`verify.yml` 在规范标签下运行它。生成契约现在可以执行了：某个选项结构体的改动一旦改变 schema，测试就会失败，不会一直留到有人手工执行 `make schema`。消费方仍在仓库之外（`docs/configuration/schema.md`、`docs/JIEJIE-SERVER.md`、一个编辑器 schema URL），这正是该门禁比对字节、而不是信任文档的原因。证据：`docs/schema.json`、`cmd/sing-box/cmd_schema_artifact_test.go`、`.github/workflows/verify.yml`；复检 `go test -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" -run TestTrackedSchemaMatchesTheGenerator ./cmd/sing-box`。 |
-| `protocol/vless/encryption` | 客户端边界已在 `xhttp-client-transport.md` 里覆盖；线级互操作仍单独取证。部分 ABI 检查带 `//go:build !race` 拆分。 |
-| 各协议的具体线格式（shadowsocks、trojan、tuic、hysteria2……） | 属于上游。fork 为特定行为打了补丁；这些补丁在负责该行为的模块内部标出，不按协议逐个记录。 |
-| Apple / Android / 桌面**客户端**源码 | 独立的 Git 子模块，初始化情况各不相同。本次校准期间 Apple 与 Android 都在各自的 gitlink 处存在，桌面端未初始化。`libbox-platform-contract.md` 界定了客户端相关发现的范围，以及 Windows 符号链接限制。 |
-| Clash API / V2Ray API 内部实现 | 属于上游，fork 特有的共存说明见 `build-pruning-release.md`。 |
+| `protocol/vless/encryption` | 客户端边界见 `xhttp-client-transport.md`；线级互操作需要独立证据。部分 ABI 检查受 `//go:build !race` 限制。 |
+| 各协议线格式 | shadowsocks、trojan、tuic、hysteria2 等主要沿用上游；fork 的特定补丁记在对应模块，不逐个复述完整协议。 |
+| Apple、Android、Desktop 客户端 | 客户端是独立 Git 子模块，父仓库 gitlink 与本地检出状态需要分别检查。客户端范围和 Windows 符号链接限制见 `libbox-platform-contract.md`，子仓库变更见 `child-repositories.md`。 |
+| Clash API / V2Ray API 内部实现 | 主要沿用上游；fork 的共存说明见 `build-pruning-release.md`。 |
 
 ## 如何判断一个模块是否仍然准确（How to decide whether a module is still accurate）
 

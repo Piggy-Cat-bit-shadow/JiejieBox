@@ -234,7 +234,7 @@ $ git diff --stat 5fc4f936..HEAD -- '*.go' -> 343 files changed, 56389 insertion
 | `SerialSender` 无界队列 | `AsyncStream.makeStream` 未给 `bufferingPolicy`（默认 unbounded），`submit` 从不挂起 | `Protocols/Core/SerialSender.swift:30-44` |
 | `removeFirst()` 出队 | O(n) 每元素；只有 `nextBatch` 是 O(1) | `AsyncInbox.swift:75` |
 | `FlowBufferLedger` 全局锁 + `max(by:)` 线性淘汰 | 在唯一全局 Mutex 下遍历所有 flow，`while` 调用 ⇒ O(N·victims) | `FlowBufferLedger.swift:81-125` |
-| H3 admission API 无调用者 + `isStreamBlocked` 永不清除 | 一次瞬时 `MAX_STREAMS` 命中会永久毒化该 session 的新建流 | `HTTP3Multiplexer.swift:131-202,168,419`；`QUICConnection+Streams.swift:16-19` |
+| H3 admission API 无调用者 + `isStreamBlocked` 永不清除 | 一次短暂的 `MAX_STREAMS` 限制会持续阻止该 session 创建新流 | `HTTP3Multiplexer.swift:131-202,168,419`；`QUICConnection+Streams.swift:16-19` |
 | AnyTLS "multiplexer" 实际一次一条流 | reserve 要求 `state.streams.isEmpty`，并发靠 128 条会话池 | `AnyTLSMultiplexer.swift:86-100` |
 | 无被动 QUIC 迁移 | 只认 active/pending/retired path，其余包直接丢弃计数 | `ConnectionCore+Receive.swift:40-43` |
 

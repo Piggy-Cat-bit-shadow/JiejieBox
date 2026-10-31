@@ -125,7 +125,7 @@ hysteria2 的这个区分值得说清楚，因为三个字段含义各不相同�
 
 | 规则 | 锚点 | 违反后的风险 |
 |---|---|---|
-| 缓冲区恰好可入池 | `geometry_test.go:63 TestGeometryBuffersAreExactlyPoolable` | 大小不是 2 的幂**会在首次释放时 panic**——`Buffer.Release()` 以 `common.Must(Put(…))` 结束（`buffer.go:307`, `cond.go:294-300`）；超过 `MaxPooledBufferSize = 73728`（`alloc.go:11`, `:41-44`）时，`Get` 返回 nil，失败形态是 nil slice panic |
+| 缓冲区恰好可入池 | `geometry_test.go:63 TestGeometryBuffersAreExactlyPoolable` | 受管理且没有引用的缓冲区，若容量既非允许范围内的 2 的幂，也不是 `MaxPooledBufferSize = 73728`，释放时会 panic：`Buffer.Release()` 会调用 `common.Must(Put(…))`（`buffer.go:307`, `cond.go:294-300`）。请求超过该最大值时，`Get` 返回 nil，后续使用可能触发 nil slice panic（`alloc.go:11`, `:41-44`） |
 | `Acquire` 在 `Advance`/`Prepend` 时从不重新分配 payload | `geometry_test.go:99 TestBufferAcquireNeverReallocatesThePayload` | 热路径上每个数据包多一次分配 |
 | **分配上限**由断言保证，不只靠基准测量 | `!race` 那一半 | 一次回归会以数字、而不是失败的形式到达评审 |
 | 该上限是 **`//go:build !race`**；在 `-race` 下只运行结构性的一半 | `race_detector_test.go:1`, `:25` vs `race_detector_stub_test.go:1`, `:7`; 消费方 `geometry_test.go:147-151` | 在 `-race` 下该上限没有意义：一次池化的 `Get`/`Put` 交接**在 `-race` 下实测 8,251 B/次获取，没有它时是 1.7**；为容纳这个数字而把 1024 字节上限放宽，会抹掉该断言原本要建立的“池化 vs 重新分配”区分 |
@@ -134,7 +134,7 @@ hysteria2 的这个区分值得说清楚，因为三个字段含义各不相同�
 
 > **过期的交叉引用：** `geometry_bench_test.go:732` 提到 `TestAllocsPerRunBufferAcquire`，但它**并不存在**。不要去找。
 
-> **后果：按设计，`-race` 在任何地方都不覆盖字节上限。** 在支持 `-race` 的主机上，这些上限也只在非 race 构建中运行。本次审计主机上 `-race` 完全 `BLOCKED_BY_ENVIRONMENT`，因此 `race` 那一半在任何地方都没有真正执行过。
+> **验证范围：** 按测试设计，字节分配上限只在非 race 构建中断言；race 构建运行结构性检查。本次审计主机无法运行 `-race`，因此该主机上的 race 检查为 `BLOCKED_BY_ENVIRONMENT`，不能据此推断其他环境的运行结果。
 
 MASQUE 批次路径另有自己的几何规则：数据包的**头空间由生产者预留**，以容纳 1 字节的 context ID（`transport/masque/session.go:561-565`）；否则每个数据包都会走替换路径——也就是带有已记录静默丢弃 bug 的那条路径（`masque-connectip.md` §1）。
 

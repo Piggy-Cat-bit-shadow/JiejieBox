@@ -127,7 +127,7 @@ v0.1.17..HEAD 的生产 .go 变更（按目录，节选）
 |---|---|---|---|
 | V.1 | 路由单独变化时发布"混合瞬时"快照（新路由 + 最多 1 个 debounce 的旧地址） | **仍存在**（采集侧窗口，方向 fail-open）。本审计未改变结论 | `network_environment.go:261-291`（compute 与 claim 同临界区，但输入仍是同一次抽取） |
 | V.2 | 无生产者侧静默期（dwell），路由抖动会让 `GlobalIPv6Egress` 在一个代际内翻转两次 | **仍存在**；本审计未发现 dwell 机制 | 同文件；`netcap.Evaluate` 无时间维度 |
-| V.3 | `DeadPath` 不在能力模型里，真正离线的设备报 `Unknown/Unknown`，会花掉不可能成功的尝试 | **仍存在**（设计取舍：把 path 事实编码进 addressing 事实会错得更远） | `netcap.go:130-168`（`StateValidated/StateDegraded` 预留未产出） |
+| V.3 | `DeadPath` 不在能力模型里，真正离线的设备报 `Unknown/Unknown`，仍会发起不可能成功的尝试 | **仍存在**（设计取舍：把 path 事实编码进 addressing 事实会错得更远） | `netcap.go:130-168`（`StateValidated/StateDegraded` 预留未产出） |
 | V.4 | Darwin 平台监控客户端无独立路由回调，同接口的 IPv6 路由变化可能到不了生产者 | **仍存在，需实机** | §14.3-5（跨平台运行未验证） |
 | V.5 | `-race` 未验证 | **已关闭（本轮）**：`CC=C:\msys64\mingw64\bin\gcc.exe` 后可跑，`common/dialer`（×3）、`common/netcap`、`dns`、`protocol/direct`、`route` 全绿 | §13.4 |
 | V.6 | 两个无生产调用者的 `invalidateGeneration/invalidateAll` 提供"第二条清除路径" | **已关闭（上一轮）**：本审计确认现在只有注释说明"故意不提供"，无该方法 | `common/dialer/dual_stack_scheduler.go:981-991` |
@@ -913,7 +913,7 @@ resolve.go:660-667
 
 | 机制 | 为什么不应该动 |
 |---|---|
-| `admissionPolicy` 作为**值**（而不是带行为的管理器） | 它存在的理由就是"每流一个世界观"；变成对象会引入生命周期与第二次读，正是本轮要消除的（`admission.go:30-43`） |
+| `admissionPolicy` 作为**值**（而不是带行为的管理器） | 它确保每条流使用独立且固定的策略快照；改成对象会引入生命周期与第二次读取，违背本轮的设计目标（`admission.go:30-43`） |
 | `localFamilyGate` 的**一次 ownership 读** | 逐候选读 ownership 会让一个 plan 由两个代际组成（`family_capability.go:162-184`）；测试 `TestOnePlanCostsOneOwnershipRead` |
 | `LocalFamilyBlocked` 的**反向极性**（不确定=不阻止） | bypass 是"优化开关"，fail-open 方向是放行；dial gate 相反。两者共用同一 policy 但极性不同，**这是设计**（`family_capability.go:99-118`） |
 | `familyHealth` 只做**软偏好** | 它能省一次 fallback delay，不能禁止候选；改成硬判定会把"一次失败"放大成"族被禁用"（`dual_stack_scheduler.go:903-923`） |

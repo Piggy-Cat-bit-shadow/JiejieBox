@@ -155,7 +155,7 @@ any other outbound that is not a FastPathAuthorizedGroup
 this logical group authorises this flow to ATTEMPT a Direct Fast Path
 ```
 
-它**不是**强制指令。获得授权之后，这条流仍然必须通过 `canFastBypass` / `BypassVerdict` 资格门禁，真正的决定在那里做出。
+这项授权不会强制启用快速路径：流仍须通过 `canFastBypass` / `BypassVerdict` 的资格检查。
 
 只有会使用绕过裁决（bypass verdict）的入口才会应用这项资格判断，例如 nfqueue 自动重定向。普通 TUN 不会依据该裁决绕过用户态路径；显式绕过动作需要另行区分。具体行为取决于入口模式，参见 `route/fast_path.go`、`route/route.go` 和 `adapter/inbound.go`。
 

@@ -210,11 +210,9 @@ TLS 记录设定时限，随后把该截止时间清掉；`handshake_target_clea
 
 ### 它按顺序做了什么（What it does, in order）
 
-`Start` 只在 `StartStateStarted` 阶段运行（`:98-101`）：创建 `observable.Subscriber`（`:102`），
-挂接 `urltest.HistoryStorage` 与 `clashmode.Manager`（`:104-111`），播种 `devicePaused`
-（`:112-114`），运行 `update()`，启动 `m.loop()`（`:115-116`），注册暂停回调（`:117-133`），
-注册 `powerGovernor.AddReuseObserver(m.onReuseBoundary)`（`:142-144`），**最后**设置
-`m.closed.Store(true)`，让它成为**第一个**运行的清理（`:145-150`）。
+`Start` 只在 `StartStateStarted` 阶段执行（`:98-101`）。它创建 `observable.Subscriber`（`:102`），接入 `urltest.HistoryStorage` 和 `clashmode.Manager`（`:104-111`），初始化 `devicePaused`（`:112-114`），调用 `update()`、启动 `m.loop()`（`:115-116`），并注册暂停及复用边界回调（`:117-133`、`:142-144`）。
+
+最后注册的清理函数会执行 `m.closed.Store(true)`（`:145-150`）。由于 scope 按注册的相反顺序清理，它会在其他资源清理之前运行；启动时只是注册该函数，不会立即将管理器标记为关闭。
 
 引用闭包（`update()`，`:211-361`）：
 

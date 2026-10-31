@@ -78,13 +78,11 @@ Electron application (per-user, interactive session)
 
 ## 3. 命名管道信任边界（Named Pipe trust boundary）
 
-**管道 ACL 不是门禁。** `server_windows.go:15` 给 `Authenticated Users` 授予 `GRGW`，所以任何已认证的本地
-用户都能*打开*这条管道。真正的保护有两层：管道名在 `ProtectedPrefix\Administrators` 之下（因此只有管理员
-才能创建同名竞争实例），以及由**握手**决定是否接受连接。在声称“只有 worker 能连接”之前，请先读这一节。
+**能够打开管道不等于通过认证。** `server_windows.go:15` 为 `Authenticated Users` 授予 `GRGW`，因此已认证的本地用户可以打开管道。管道名位于 `ProtectedPrefix\Administrators` 下，只有管理员才能创建同名竞争实例；连接是否被接受则由后续握手决定。
 
 ## 4. 可执行文件 / 对端认证——按顺序的握手（Executable / peer authentication — the handshake, in order）
 
-`peer_windows.go:83-237`。每一行都是一项真实检查，都带真实的失败字符串。
+下表按 `peer_windows.go:83-237` 的顺序列出检查及其作用。每项失败时都有对应错误信息。
 
 | # | 检查 | 证明 | 行号 |
 |---|---|---|---|
@@ -102,16 +100,16 @@ Electron application (per-user, interactive session)
 | 12 | `authenticodeSigner(application)` == `daemonSigner` | **再次签名者字节相等** | `:223` |
 | 13 | 两个进程在认证期间都没有退出 | 检查时已观测到退出的进程会被拒绝；这不证明消除了全部竞态 | `:235` |
 
-有两个特性让它稳健，而不是一份清单：
+此外，两项实现细节用于降低检查期间的竞态风险：
 
-* **`openLockedExecutable` 使用 `FILE_SHARE_READ`**（`:466`），因此写入者在映像被检查期间无法重写它——这是反 TOCTOU 措施，不是图方便的设计。
-* **`finalWindowsPath` 通过已打开的句柄解析路径**（`:482`）。所以被比较的路径，就是实际持有那把打开句柄的路径，而不是一个可能被竞态的字符串。
+* **`openLockedExecutable` 使用 `FILE_SHARE_READ`**（`:466`），阻止检查期间重写映像。
+* **`finalWindowsPath` 从已打开的句柄解析路径**（`:482`），使比较基于实际打开的文件，而不只依赖可能发生变化的路径字符串。
 
 **`expectedApplicationPath` 派生自守护进程自身的路径**（`peer_windows.go:303-304`），所以对端无法通过握手指定一个任意的预期应用路径。
 
 ## 5. Authenticode 语义（Authenticode semantics）
 
-`authenticode_windows.go`。§5 与 §6 要一起读：这里涉及**三种不同的属性**，混为一谈是最容易犯的错。
+以下流程位于 `authenticode_windows.go`。签名完整性、证书链信任和签名者身份是三个独立属性，应结合 §6 一起理解。
 
 ```text
 SIGNATURE INTEGRITY   WinVerifyTrustEx: does the signature match the bytes?     -> MUST hold

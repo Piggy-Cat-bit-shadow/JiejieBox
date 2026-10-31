@@ -143,7 +143,7 @@ AI 可以或不可以声称“已验证”的内容。
 | 构建矩阵 | 为 8 个包树交叉构建 linux/amd64、windows/amd64、freebsd/amd64、darwin/arm64 | 那些包按 GOOS 编译 | 什么都不运行 |
 | cronet 来源 | `verify-cronet-provenance.sh apple` | `replace` 指令解析到 fork 归档的字节 | — |
 | **race，fork 数据路径** | `go test -race … ./common/trafficclass/... ./common/trafficsched/... ./common/dialer/... ./protocol/direct/... ./protocol/mieru/... ./protocol/tun/... ./route/... ./adapter/...` | 该任务运行时指定树中的 race 检查 | **根包不在列表中**，`./protocol/masque` 也不在 |
-| race，配置表面 | `go test -race … ./option/...` | `option` 中的竞态 | — |
+| 配置接口的竞态检测 | `go test -race … ./option/...` | `option` 中的竞态 | — |
 
 > **历史 v0.1.9 观察：** 根验收套件只被编译，当时声明的源码门禁并没有执行它。
 > 当前 `verify.yml` 在 `cd test` 之后运行 `TestNetLogEventCount`：那属于独立的测试模块，
@@ -189,7 +189,7 @@ PRESENT      the script exists and nothing references it       -> nothing happen
 
 `check-libbox-abi.sh` 不属于未调用脚本：`verify.yml` 运行 `--pin-only`，通过 Git 比较 gitlink 与 `VERIFIED_*_SHA` 常量；`client-apple.yml` 则针对已检出的客户端源码运行完整检查。后者通过该脚本调用 `apple-abi-provenance.sh`、`apple-abi-probe.sh` 和 `probe-accessors.py`。声明调用不等于某次运行实际执行或通过，还需核对日志。
 
-**在 Windows 表面审计中被删除**（`refactor/windows-upstream-minimal-surface`）：
+**在 Windows 接口范围审计中被删除**（`refactor/windows-upstream-minimal-surface`）：
 `ci/windows/Test-DaemonServiceRegister.ps1` 与 `ci/windows/Test-InstallerLegacyAdoption.ps1`
 都处于 PRESENT 状态 —— 脚本存在，却没有任何东西引用 —— 因此被移除，而不是当成死代码
 留着。同一趟还检查了
