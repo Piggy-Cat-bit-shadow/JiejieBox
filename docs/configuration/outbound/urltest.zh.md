@@ -11,6 +11,7 @@
     "proxy-c"
   ],
   "url": "",
+  "expected_status": "",
   "interval": "",
   "tolerance": 50,
   "idle_timeout": "",

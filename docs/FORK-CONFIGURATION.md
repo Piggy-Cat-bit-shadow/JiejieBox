@@ -192,7 +192,7 @@
 }
 ```
 
-未写 expected_status 不限制 HTTP 响应码。
+`expected_status` 支持 Mihomo 风格的状态码表达式，例如 `204`、`200-299`、`200/204/301-399` 或 `200,204,301-399`；未设置时不限制 HTTP 响应码。`loadbalance` 的同名字段使用相同的写法。
 
 ## Fast Path 组策略
 
