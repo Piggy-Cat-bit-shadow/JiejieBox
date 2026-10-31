@@ -1,8 +1,8 @@
-# 主分支架构收敛施工报告（最终）
+# 主分支架构收敛实施报告（最终）
 
-> **本报告已在第二轮对抗审计后按最终树更正。** 收敛轮的 11 个提交是对象；对抗审计又落了 8 个提交，
-> 其中两个**推翻了本报告当初的两个决定**（D10 的协议选择、D11 的 shim 报告叶子），因为前者在三个包之外
-> 造成了一处静默的生产回归。下面 D10/D11 写的是**最终状态**，被推翻的写法以"审计后更正"标注保留，供追溯。
+> **本报告已根据第二轮审计后的代码更正。** 审计以收敛阶段的 11 个提交为对象，随后又产生 8 个提交。
+> 其中两项推翻了报告最初对 D10 协议选择和 D11 shim 报告叶子的决定：前者导致其他包中的生产行为发生回归，
+> 且没有明显报错。下文 D10、D11 描述最终状态；原有结论以“审计后更正”标注保留，供追溯。
 > 审计细节见 `POST_REFACTOR_AUDIT_2026-10-17.md` 与 `POST_REFACTOR_AUDIT_ADDENDUM_2026-10-17.md`。
 
 - **仓库**：`Piggy-Cat-bit-shadow/sing-box`（工作树 `C:\Deepseek\integration-release-next`）
@@ -18,20 +18,20 @@
 
 ---
 
-## 一、已确认并已修复的 defect（11 项）
+## 一、已确认并修复的 11 项缺陷
 
 | # | 缺陷 | 提交 |
 |---|---|---|
-| D1 | 同一个"当前网络"事实由两个 capture 函数推导，各自一套优先级 | `200f3b217d3` |
-| D2 | 候选调度器把同一瞬间读成两份（environment + verdict 分别读） | `200f3b217d3` |
-| D3 | 只有 settled 标志的 source 可把 DURING 的 dial 洗白 | `200f3b217d3` |
+| D1 | 两个 capture 函数分别推导当前网络状态，各自维护优先级 | `200f3b217d3` |
+| D2 | 候选调度器分两次读取同一时点的 environment 和 verdict | `200f3b217d3` |
+| D3 | 仅提供 settled 标志的数据源可能错误放行切换期间的拨号 | `200f3b217d3` |
 | D4 | DIRECT 的候选规划能力靠运行期断言发现，且带一条不可达的 fallback | `f40ed4c6d92` |
 | D5 | family strategy 在第三个 packet 入口点未执行，userspace 与 bypass 分歧 | `ecf8025f3b9` |
 | D6 | bypass profile 对"未分类且为零值"的字段静默放过（+ 两条 walk 与测试不一致） | `8889cedee33` |
-| D7 | 运行中的 power report 没有被算作"会计消费者"，bypass 会吞掉统计 | `3ff16b8047f` |
-| D8 | `httpclient` 把一个富 dialer 存成窄字段且从不读取 | `5999fe1804a` |
+| D7 | 未将运行中的 power report 计为统计信息使用方，bypass 会丢失统计 | `3ff16b8047f` |
+| D8 | `httpclient` 将 dialer 保存到窄类型字段，但从不读取 | `5999fe1804a` |
 | D9 | `dns.Client` 只认 lock-free getter；只有 snapshot 的 manager 被当作"永远稳定" | `68c7cf9229a` |
-| D10 | 地址族判定无法穿过 outbound hop，probe 链静默拿到零策略 | `c4f363fbe56` |
+| D10 | 地址族判定无法穿过 outbound hop，probe 链因此静默使用零值策略 | `c4f363fbe56` |
 | D11 | failover shim 每漏一个能力就要手写一个转发（已发生两次） | `831749d3ae0` |
 
 ### D1/D2/D3 — 一次解析、一次 capture（`200f3b217d3`）
@@ -59,10 +59,10 @@ wildcard 豁免。这是 packet 候选路径**已经执行且已经测试**的�
 - 嵌入式**指针** struct 现在会被走（nil 视作其元素类型的零值继续走），运行时与测试都走；
 - 覆盖测试不再自带第二套 walk 实现，改为按类型枚举 + 断言"两套 walk 看到完全相同的字段名"。
 
-### D7 — power report 也是会计消费者（`3ff16b8047f`）
+### D7 — power report 也需要流量统计（`3ff16b8047f`）
 
-`canFastBypass` 早已因 tracker 拒绝（"静默丢失会计不是可接受的优化"），但 power report 是**另一个**
-会计消费者且由 build 装在每个 userspace 连接上。新增 verdict `BypassRefusedPowerReport`，按 **recorder**
+`canFastBypass` 早已因 tracker 拒绝（"不能为优化而静默丢失统计信息"），但 power report 是**另一个**
+统计信息使用方，并由 build 安装到每个 userspace 连接上。新增 verdict `BypassRefusedPowerReport`，按 **recorder**
 （而非 manager）判定。`PowerReportEnabled` 由客户端显式开启，因此只在用户要求统计时让出 fast path——
 与 tracker 拒绝同一个取舍。
 
