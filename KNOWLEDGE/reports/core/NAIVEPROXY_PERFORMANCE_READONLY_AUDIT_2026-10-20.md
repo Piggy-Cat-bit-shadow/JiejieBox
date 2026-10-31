@@ -327,7 +327,7 @@ H3：`runtime.cgocall` 71.6%；quic-go 的 packer/framer/stream 累计约 **5%�
 | 8 engines | 8 | 537.5 | 20.375 | 1.17× |
 
 **结论（与前一轮"多 engine 更快"的说法相比更精确）**：
-- **2 个 engine 是本机甜点**：吞吐 665 MiB/s，是单 engine 单流的 1.45×，CPU 只升到 8.5 s/GiB。
+- **在本机测试中，2 个 engine 的吞吐量最高**：吞吐 665 MiB/s，是单 engine 单流的 1.45×，CPU 只升到 8.5 s/GiB。
 - **超过 2 个 engine 后吞吐下降**（4→568、8→537），而 CPU 线性上升（15.25、20.375）。原因是同进程里 Chromium 网络线程与本机 16 核调度竞争，新增 engine 不再带来并行收益。
 - **单 engine + 4 NIK** 的每字节效率最好（7.25 s/GiB），但 4 流吞吐只有 465（近似单流上限）——它省 CPU，不扩吞吐。
 - **默认（未设 `insecure_concurrency`）是 1 engine**，本表不改变默认；它只说明**用户显式设 >2 时，收益会反转**。
@@ -505,7 +505,7 @@ count("type":249) = 0     ← 测试在数不存在的 id
 | **A2** | `CONFIRMED`（基础设施） | `test/` 是独立 module，`TestNaiveSelf*` 不在任何 workflow 执行列表 | `test/go.mod`、`client-macos.yml:181-184`、`server-linux-amd64.yml:255-256` | A1 潜伏的原因 |
 | **A3** | `CONFIRMED`（文档） | `docs/naive.md:285-287` 的历史数字比现状乐观 26%–32% | §12.2 | 误导读者（"乱码"一项已自我纠正为控制台显示假象） |
 | **A4** | `OBSERVATION` | H3 的每 GiB CPU ≈ H2 的 3.1×（桌面）；移动端未测 | §7 | 默认关闭合理；文档应写明 |
-| **A5** | `OBSERVATION` | engine 甜点在 2：2 engine 665 MiB/s；4/8 engine 反而 568/537，CPU 线性上升 | §8.1 | 用户显式设 >2 时收益反转 |
+| **A5** | `OBSERVATION` | 本机测试中 2 个 engine 的吞吐量最高：2 engine 665 MiB/s；4/8 engine 反而 568/537，CPU 线性上升 | §8.1 | 用户显式设 >2 时收益反转 |
 | **A6** | `OBSERVATION` | 强制 H3 打不通的服务端时，冷连固定 ~4.0 s；fallback 打开后仅冷连 | §10 | 已接受的设计 |
 | **A7** | `NOT_A_BUG` | 每写必 flush | §6：1:1、64 KiB/次、与参考一致 | 不是瓶颈；改动伤延迟与错误传播 |
 | **A8** | `NOT_A_BUG` | `writeChunked` 4 alloc / 5 µs | 真实 bulk 调用 **0 次** | 优化死代码 |
@@ -540,7 +540,7 @@ NOT_RUN / NOT_COMPARABLE:
 1. **是否接受"本轮不给快/慢结论"？** 要回答 Q01–Q04，唯一路径是一台有参考二进制 + 真实 WAN 的实验环境，或允许在 CI 的 macOS runner 上跑 `bench-naive-cronet-engine.sh` / `bench-naive-receive-window.sh` 并接一台真实服务端。
 2. **A1/A2（测试 id 过期 + self-test 不进 CI）是否列入下一轮？** 它不影响用户速率，但影响你们对池隔离/端到端的信心——本轮唯一确认的功能性缺陷。
 3. **A3（文档历史数字过期）是否本轮之外顺手更新？** 只改文档，零风险。
-4. **A5（engine 甜点=2）是否需要一次 macOS 实测来确认？** 本轮的 2/4/8 数据只是 Windows loopback。
+4. **A5（本机测试中 2 个 engine 吞吐量最高）是否需要一次 macOS 实测来确认？** 本轮的 2/4/8 数据只是 Windows loopback。
 5. **是否同意"Naive 性能就此收工"？** 证据支持 `KEEP`：Go 服务端无可测热点、端到端 38× 余量、协议与参考逐字节一致、会话复用已由库完成。继续投入的边际收益极低。
 
 ---
@@ -610,7 +610,7 @@ artifacts/naive_self_test.go                被审的仓库自测（A1 现场）
 | Q03 | `NOT_RUN` | 2×2 缺一方即凑不出矩阵；任务书允许标注 | §11.1、§14 N1 |
 | Q04 | 未复现也未反证 | 但 Go 服务端仅占 ~11%，若现象存在更可能在客户端/入口 | §5、§11.1 |
 | Q05 | **MEASURED** | 快路径 100%、0 alloc、64 KiB/写、flush 1:1、handover 65 278 B | §3、§6 |
-| Q06 | **PARTIAL（Windows 1/2/4/8）** | 甜点=2 engine（665 MiB/s）；>2 吞吐反降、CPU 线性升；macOS `NOT_RUN` | §8.1、§14 N3 |
+| Q06 | **PARTIAL（Windows 1/2/4/8）** | 2 个 engine 的吞吐量最高（665 MiB/s）；>2 吞吐反降、CPU 线性升；macOS `NOT_RUN` | §8.1、§14 N3 |
 | Q07 | `PARTIAL` | box 冷启动 34.3–46.1 ms；代码段共享（上轮 idle 数据）；NIK 单次开销与多 Outbound 共享未测 | §8.3、§8.4 |
 | Q08 | **负对照 + BDP 定量** | 4 MiB vs 128 MiB 在 BDP≈46 KiB 下无差异；**WAN sweep `NOT_RUN`** | §8.2、§14 N4 |
 | Q09 | `MEASURED`（归因）+`SOURCE`（机制） | 72.6% 在 cgo 桥；Go 侧 11%；pin/lock 推导上界 ≈1.5%，未逐函数测 | §5、§5.3 |

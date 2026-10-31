@@ -228,7 +228,7 @@ keeper 只能关闭没有活跃用户流量的资源，不能拨号。`naive` �
 | `6ebb5799a` | FIX | 陈旧截止时间 |
 | `89b4b2c25` | FIX | `DEEP_IDLE` 曾不可达 |
 | `0ff90482` | FIX | 让设备 resume edge 使用 **edge 闩锁**，不影响屏幕 level |
-| `e4327dca` | LIFECYCLE | 给 Apple 设备轴一个真实的发布者与一次真实的释放 |
+| `e4327dca` | LIFECYCLE | 接通 Apple 设备状态的事件发布，并在解锁时解除暂停 |
 | `4c7d96c0` | FIX | 将 Apple 设备轴纳入**发布分支**，而非仅保留在单独分支上 |
 | `645d96b4` | FIX | 一次当前状态的屏幕读取只协调 level，不启动一次休眠 |
 | `60681f27` | FIX | 一次 resume 不会结束一个休眠时段，因此不得消耗掉自己的边界 |

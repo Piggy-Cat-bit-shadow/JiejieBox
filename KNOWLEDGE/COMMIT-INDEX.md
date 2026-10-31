@@ -287,8 +287,8 @@ sing-tun 锚点（`d769a7080ca2`）已落后两个 pin。
 | `aac340808` | LIFECYCLE | OWN | 睡眠权威（sleep authority） |
 | `d93b68560`, `89b4b2c25`, `6ebb5799a` | FIX | OWN | 在 `DEEP_IDLE` 时释放连接池；不可达的 `DEEP_IDLE` 分支；一个过期的截止时间 |
 | `0ff90482` | FIX | OWN | 把设备恢复边沿用在**边沿锁存（edge latch）**上，不用在屏幕级别上 |
-| `e4327dca` | LIFECYCLE | OWN | 给 Apple 设备轴配上真实的发布者与真实的释放 |
-| `4c7d96c0` | FIX | OWN | 让 Apple 设备轴落在**发布线（release line）**上，不只是在某个分支上 |
+| `e4327dca` | LIFECYCLE | OWN | 接通 Apple 设备状态的事件发布，并在解锁时解除暂停 |
+| `4c7d96c0` | FIX | OWN | 将 Apple 设备状态处理纳入**发布分支**，而非仅保留在单独分支上 |
 | `645d96b4` | FIX | OWN | 当前状态屏幕读取会**校准级别**，而不是启动一次睡眠 |
 | `60681f27` | FIX | OWN | 恢复不会结束一个睡眠片段（sleep episode），所以不得消耗它的边界 |
 | `e20875359` | FEATURE | **SUPERSEDED** | 把睡眠边沿门禁在 `IsDevicePaused()` 上 |
@@ -394,5 +394,5 @@ DNS 流式收集器；一个误留的 21 MB `masque.test` 二进制。
 | 哪个模块负责你的任务 | `modules/README.md` |
 | 某条规则是不变量还是约定 | `INVARIANTS.md` |
 | 如何复检某项需求 | `ACCEPTANCE.md` |
-| 代码为何是这个形状 | 该模块的**来源（Provenance）**表 |
+| 代码为何采用当前设计 | 该模块的**来源（Provenance）**表 |
 | 你即将做出的“合理但错误”的修改 | 该模块的 **AI 注意事项（AI cautions）** |
