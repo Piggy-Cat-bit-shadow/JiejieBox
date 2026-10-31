@@ -1,37 +1,37 @@
-# MASQUE / CONNECT-IP
+# MASQUE 与 CONNECT-IP（MASQUE / CONNECT-IP）
 
-## Endpoint-local flows through the TUN stack (2026-10-29)
+## 经由 TUN 栈的端点本地流量（Endpoint-local flows through the TUN stack, 2026-10-29）
 
-`protocol/masque/endpoint.go` tests whether the destination is an endpoint local address. In
-system mode it retains `ActionAccept`. In non-system mode it calls `adapter.JudgeHostFlow`; traffic
-for other destinations still calls `adapter.JudgeFlow`. WireGuard (`protocol/wireguard/endpoint.go`)
-and Tailscale (`protocol/tailscale/port.go`) apply the same system/non-system distinction, using
-their own local-address checks. This is source behavior, not proof of end-to-end packet delivery.
+`protocol/masque/endpoint.go` 判断目的地是否为端点本地地址。在
+system 模式下它保留 `ActionAccept`。在非 system 模式下它调用 `adapter.JudgeHostFlow`；发往
+其他目的地的流量仍然调用 `adapter.JudgeFlow`。WireGuard（`protocol/wireguard/endpoint.go`）
+与 Tailscale（`protocol/tailscale/port.go`）应用同样的 system/非 system 区分，各自使用
+自己的本地地址检查。这是源码行为，并不构成端到端数据包投递的证明。
 
-At TUN start, `protocol/tun/inbound.go` registers the stack only if it implements `tun.RoutedPort`.
-`route.NetworkManager` keeps the first non-nil registration under a mutex. `JudgeHostFlow` chooses
-the routed port's IPv4 or IPv6 address, preserves the destination port, and returns `ActionFlow`
-for TCP, UDP or ICMP. If the manager or port is absent, the matching address family is invalid, or
-the protocol is unsupported, it returns the prior `ActionAccept`. System and gVisor stacks that
-do not implement the routed port do not register it. `adapter.FlowLogger` is shared by host and
-ordinary route flows; the host tracker has no outbound. See `adapter/host_test.go` for the unit
-cases. No registration replacement/teardown guarantee beyond the first-registration code is implied.
+TUN 启动时，`protocol/tun/inbound.go` 仅在该栈实现了 `tun.RoutedPort` 时才注册它。
+`route.NetworkManager` 在互斥锁保护下保留第一个非 nil 的注册。`JudgeHostFlow` 选择
+被路由端口的 IPv4 或 IPv6 地址，保留目的地端口，并对 TCP、UDP 或 ICMP 返回 `ActionFlow`。
+如果管理器或端口不存在、匹配的地址族无效，或者
+协议不受支持，它就返回先前的 `ActionAccept`。未实现被路由端口的 system 栈与 gVisor 栈
+不会注册该端口。`adapter.FlowLogger` 由 host 流与
+普通路由流共享；host tracker 没有出站。单元用例见 `adapter/host_test.go`。
+除首次注册的代码之外，并未隐含任何注册替换/拆除的保证。
 
-## Client lifecycle after v0.1.9
+## v0.1.9 之后的客户端生命周期（Client lifecycle after v0.1.9）
 
-**VERIFIED_SOURCE**, testing target `011f3fdcd99`: `protocol/masque/client.go` registers both
-the tunnel device and client close functions with the lifecycle scope during startup. Scope cleanup
-therefore covers the tunnel client as well as the device; do not replace it with a close that handles
-only the TUN. `transport/masque/client.go` owns the client close path. This does not establish
-device, server interoperability or performance results.
+**VERIFIED_SOURCE**，测试目标 `011f3fdcd99`：`protocol/masque/client.go` 在启动期间把隧道设备
+与客户端两者的关闭函数都注册到生命周期 scope。因此 scope 清理同时覆盖
+隧道客户端与设备；不要把它替换为只处理
+TUN 的关闭逻辑。客户端关闭路径由 `transport/masque/client.go` 拥有。这并不构成
+设备、服务器互通或性能结果的结论。
 
-**Scope:** `transport/masque/*` (the fork's dataplane), `protocol/masque/*` (the endpoint),
-`protocol/http`'s CONNECT path, and the `option/masque.go` surface.
+**范围：** `transport/masque/*`（本 fork 的数据平面）、`protocol/masque/*`（端点）、
+`protocol/http` 的 CONNECT 路径，以及 `option/masque.go` 这一层接口。
 
-**Provenance — read this before attributing anything.** MASQUE arrived **upstream** in `b83089ec`
-("Add MASQUE support", 世界, 2026-09-21), which is present *below* the fork baseline and is reachable
-from upstream refs. At the upstream ancestor `e4b7e692`, `protocol/masque` had **3 files** and
-`transport/masque` had **7**. At `a267e99` they have **29** and **57**. So:
+**溯源 —— 在归因任何东西之前先读这里。** MASQUE 是在 **上游** 的 `b83089ec` 中引入的
+（"Add MASQUE support"，世界，2026-09-21），它位于 fork 基线 *之下*，并且可以从
+上游引用到达。在上游祖先 `e4b7e692` 处，`protocol/masque` 有 **3 个文件**，
+`transport/masque` 有 **7 个**。而在 `a267e99` 处它们分别是 **29** 和 **57**。所以：
 
 ```text
 upstream inherited base   protocol/masque's endpoint skeleton, the capsule concepts, DATAGRAM
@@ -40,256 +40,256 @@ fork-added feature        the whole transport/masque dataplane, DNS assignment, 
 fork fixes / hardening    52 commits under protocol/masque, 70 under transport/masque
 ```
 
-**There is no `protocol/connectip` package.** CONNECT-IP lives in `transport/masque` and
-`protocol/masque`. The fork uses **no** `quic-go/connect-ip-go` and **no** `quic-go/masque-go` in the
-main module: the `masque|connect-ip|connectip` comments in `go.mod:294,303-306` describe the pinned
-sing-quic line, not a dependency. `connect-ip-go` appears only inside the separate
-`test/jiejie/reference/go.mod` as a third-party **interop peer**
-(`test/jiejie/reference/connect_ip_go_interop_test.go:14,23`). **The fork implements CONNECT-IP
-itself.**
+**不存在 `protocol/connectip` 包。** CONNECT-IP 位于 `transport/masque` 与
+`protocol/masque` 之中。本 fork 在主模块中 **不使用** `quic-go/connect-ip-go`，也 **不使用** `quic-go/masque-go`：
+`go.mod:294,303-306` 中的 `masque|connect-ip|connectip` 注释描述的是被 pin 的
+sing-quic 模块行，而不是一个依赖项。`connect-ip-go` 只出现在独立的
+`test/jiejie/reference/go.mod` 中，作为第三方的 **互通对端（interop peer）**
+（`test/jiejie/reference/connect_ip_go_interop_test.go:14,23`）。**本 fork 自己实现了
+CONNECT-IP。**
 
-**Load this module when changing:** any capsule, session lifetime, MTU/PTB, DNS assignment, the
-inner/bootstrap resolver split, or the H3 client pool.
+**在改动以下内容时加载本模块：** 任何 capsule、会话生命周期、MTU/PTB、DNS 分配、
+inner/bootstrap 解析器划分，或 H3 客户端连接池。
 
 ---
 
-## 1. The dataplane — `transport/masque`
+## 1. 数据平面 —— `transport/masque`（The dataplane — `transport/masque`）
 
-### Capsules
+### Capsule 封装（Capsules）
 
-| Mechanism | Identifier | Anchor |
+| 机制 | 标识符 | 锚点 |
 |---|---|---|
-| Parse / serialise | `parseAddresses`, `parseVersion`, `parseRoutes`, `appendAddress`, `newCapsule`, `newAddressCapsule`, `newRouteCapsule`, `RangesFromPrefixes` | `capsule.go:45,80,109,211,220,228,239,249` |
-| Address / route types | `AssignedAddress`, `AddressRange`, `Contains`, `OverlapsProtocol`, `protocolConflicts` | `capsule.go:30,35,41,94,105` |
-| DNS capsules | `DNSConfiguration.validate`, `validateDomainName` | `capsule_dns.go:179,148` |
-| DoH path templating | `validateTemplateExpression` | `capsule_dohpath.go:290` |
-| SVCB parameters | `ValidateServiceParameters` | `capsule_svcb.go:150` |
-| Request routing template | `expression`, `Template`, `Scope`, `ParseTemplate`, `Expand`, `Match`, `parseTarget` | `template.go:15,20,28,34,121,143,230` |
+| 解析 / 序列化 | `parseAddresses`、`parseVersion`、`parseRoutes`、`appendAddress`、`newCapsule`、`newAddressCapsule`、`newRouteCapsule`、`RangesFromPrefixes` | `capsule.go:45,80,109,211,220,228,239,249` |
+| 地址 / 路由类型 | `AssignedAddress`、`AddressRange`、`Contains`、`OverlapsProtocol`、`protocolConflicts` | `capsule.go:30,35,41,94,105` |
+| DNS capsule | `DNSConfiguration.validate`、`validateDomainName` | `capsule_dns.go:179,148` |
+| DoH 路径模板化 | `validateTemplateExpression` | `capsule_dohpath.go:290` |
+| SVCB 参数 | `ValidateServiceParameters` | `capsule_svcb.go:150` |
+| 请求路由模板 | `expression`、`Template`、`Scope`、`ParseTemplate`、`Expand`、`Match`、`parseTarget` | `template.go:15,20,28,34,121,143,230` |
 
-**Capsule hardening, with the measurements behind it:**
+**Capsule 加固，以及其背后的测量数据：**
 
-* **Protocol `0` means ALL protocols**, so cross-protocol overlap is real and must be checked
-  (`protocolConflicts`). The overlap check is **linear** — the *correct* quadratic version measured
-  **13.5 s vs 16 ms baseline = 800× CPU DoS** (`b656b062f`, superseding `969909bc1`).
-* An **8192-entry capsule bound** (`a529b68c8`, an `EXTERNAL-ADAPTED` choice with a quoted source —
-  `quic-go/connect-ip-go` uses the same constant). Before it: 149,796 entries / **17.65 MiB heap**.
-* `Contains() == lookup()` on the server's own address (`e4d2f6c1a`).
+* **协议 `0` 表示所有协议**，因此跨协议重叠是真实存在的，必须检查
+  （`protocolConflicts`）。重叠检查是 **线性** 的 —— *正确的* 二次方版本实测为
+  **13.5 秒对 16 毫秒基线 = 800 倍 CPU DoS**（`b656b062f`，取代 `969909bc1`）。
+* 一个 **8192 条目的 capsule 上限**（`a529b68c8`，一个带引述来源的 `EXTERNAL-ADAPTED` 选择 ——
+  `quic-go/connect-ip-go` 使用同一常量）。在此之前：149,796 条目 / **17.65 MiB 堆**。
+* 在服务器自身地址上 `Contains() == lookup()`（`e4d2f6c1a`）。
 
-**MTU / PTB capsules:** `handlePacketTooBig` (client `transport/masque/client.go:704`, server
-`server.go:579`), `minimumLinkMTU` (`session.go:20`, compared at `:520`), ICMP generation in `icmp.go`
-(`packetAddresses`, `isControlProtocol`, `decrementHopLimit`, `buildICMPError`, `buildICMPErrorTo` at
-`:12,25,44,73,99`).
+**MTU / PTB capsule：** `handlePacketTooBig`（客户端 `transport/masque/client.go:704`，服务端
+`server.go:579`）、`minimumLinkMTU`（`session.go:20`，在 `:520` 处比较）、`icmp.go` 中的 ICMP 生成
+（`packetAddresses`、`isControlProtocol`、`decrementHopLimit`、`buildICMPError`、`buildICMPErrorTo` 位于
+`:12,25,44,73,99`）。
 
-### Session
+### 会话（Session）
 
-`session`, `newSession`, `run`, `loopDatagram`, `loopCapsule`, `readDatagramCapsule`,
-`readControlCapsule`, `writeCapsule` (`session.go:80,103,133,162,245,277,302,350`).
+`session`、`newSession`、`run`、`loopDatagram`、`loopCapsule`、`readDatagramCapsule`、
+`readControlCapsule`、`writeCapsule`（`session.go:80,103,133,162,245,277,302,350`）。
 
-**CONNECT-UDP is expressed as the RFC 9298/9297 datagram form** — `writePackets` prepends the context
-ID (`session.go:493`, `PrependContextID`) — not as a separate capsule-per-packet type.
+**CONNECT-UDP 以 RFC 9298/9297 的数据报形式表达** —— `writePackets` 前置 context
+ID（`session.go:493`，`PrependContextID`）—— 而不是作为一种独立的每包一个 capsule 的类型。
 
-Client: `Client`, `clientSession`, `NewClient`, `Start`, `Close`, `Start`/`Suspend`/`Resume`/
-`RestartSession`, `WritePacketBuffers`, `handleAddressAssign`, `handleDNSAssign`, `handlePREF64`,
-`handleRouteAdvertisement`, `handlePacket`, `handlePacketTooBig`, `loop`, `connect`, `activeSession`,
-`Ready`, `WaitReady` (`client.go:24,72,81,139,207,242,247,272,329,391,397,405,429,444,455,467,518,554,585,607,662,686`).
+客户端：`Client`、`clientSession`、`NewClient`、`Start`、`Close`、`Start`/`Suspend`/`Resume`/
+`RestartSession`、`WritePacketBuffers`、`handleAddressAssign`、`handleDNSAssign`、`handlePREF64`、
+`handleRouteAdvertisement`、`handlePacket`、`handlePacketTooBig`、`loop`、`connect`、`activeSession`、
+`Ready`、`WaitReady`（`client.go:24,72,81,139,207,242,247,272,329,391,397,405,429,444,455,467,518,554,585,607,662,686`）。
 
-Server: `ServerHandler`, `Server`, `serverSession`, `NewServer`, `NewTunnelRequest`, `releaseSession`,
-`lookup`, `route`, `RouteOutbound`, `Contains`, `WritePacketBuffers`, `receivedPacketHeadroom`,
-`assignedAddresses` (`server.go:24,30,53,74,85,161,298,321,339,347,372,386,428,449`).
+服务端：`ServerHandler`、`Server`、`serverSession`、`NewServer`、`NewTunnelRequest`、`releaseSession`、
+`lookup`、`route`、`RouteOutbound`、`Contains`、`WritePacketBuffers`、`receivedPacketHeadroom`、
+`assignedAddresses`（`server.go:24,30,53,74,85,161,298,321,339,347,372,386,428,449`）。
 
-Address pool: `addressPool`, `usable`, `allocate`, `release` (`pool.go:10,30,37,59`).
-Route matching: `routeMatcher`, `compileRouteMatcher`, `contains` (`route_matcher.go:49,69,98`).
+地址池：`addressPool`、`usable`、`allocate`、`release`（`pool.go:10,30,37,59`）。
+路由匹配：`routeMatcher`、`compileRouteMatcher`、`contains`（`route_matcher.go:49,69,98`）。
 
-### The ownership rules — the strictest in the tree
+### 所有权规则 —— 全树中最严格的一套（The ownership rules）
 
-| # | Rule | Anchor | What breaks |
+| # | 规则 | 锚点 | 破坏后果 |
 |---|---|---|---|
-| M1 | Single-packet success **releases** the datagram — **except** on the owned-datagram capability, where **ownership transfers** and the release is skipped entirely | `session.go:496-508` (owned skip `:499-500`, release `:507`); `transport/http/client_h3.go:511` | double release / use-after-free |
-| M2 | Every failure path releases **exactly the still-owned remainder**: `datagram.Release()`, `buf.ReleaseMulti(capsules)`, `buf.ReleaseMulti(buffers[i+1:])` | `session.go:530-532` | leak of pooled buffers |
-| M3 | Each chunk is all-or-nothing for **ownership**; `writeBatchOwned` returns the transferred prefix length and the caller falls back only on the remainder | `session.go`, `writeBatchOwned` | replaying a transferred prefix double-sends or releases it; see `buffer-ownership.md` for partial queueing in HTTP/3's copy fallback |
-| M4 | A `PrependContextID` **substitution releases the original**, so substitution refuses the affected chunk before send and updates the caller's slice in place | `session.go`, `writeOwnedBatchChunk` | stale pointers, double release or packet loss on fallback |
-| M5 | A batch of **one** never takes the batch path | `session.go:472-477` | a measured regression (batch=1 is slower) |
-| M6 | Packet headroom is reserved by the **producer** so the 1-byte context ID fits | `session.go:584-588`; `protocol/masque/client.go:594 FrontHeadroom`; `transport/masque/server.go:428 receivedPacketHeadroom` | every packet takes the substitution path (M4) |
+| M1 | 单包成功会 **释放** 该数据报 —— **除非** 在 owned-datagram 能力上，此时 **所有权转移**，释放被完全跳过 | `session.go:496-508`（owned 跳过 `:499-500`，释放 `:507`）；`transport/http/client_h3.go:511` | 重复释放 / use-after-free |
+| M2 | 每条失败路径都 **恰好释放仍然属于自己的剩余部分**：`datagram.Release()`、`buf.ReleaseMulti(capsules)`、`buf.ReleaseMulti(buffers[i+1:])` | `session.go:530-532` | 池化缓冲区泄漏 |
+| M3 | 每个分块在 **所有权** 上是全有或全无；`writeBatchOwned` 返回已转移的前缀长度，调用方只对剩余部分回退 | `session.go`、`writeBatchOwned` | 重放已转移的前缀会重复发送或重复释放；HTTP/3 拷贝回退中的部分入队见 `buffer-ownership.md` |
+| M4 | `PrependContextID` 的 **替换会释放原件**，因此替换会在发送前拒绝受影响的分块，并就地更新调用方的切片 | `session.go`、`writeOwnedBatchChunk` | 陈旧指针、重复释放，或回退时的数据包丢失 |
+| M5 | **单个** 的批次永远不会走批量路径 | `session.go:472-477` | 一次经测量的性能退化（batch=1 更慢） |
+| M6 | 数据包 headroom 由 **生产者** 预留，以容纳 1 字节的 context ID | `session.go:584-588`；`protocol/masque/client.go:594 FrontHeadroom`；`transport/masque/server.go:428 receivedPacketHeadroom` | 每个数据包都走替换路径（M4） |
 
-**M4 is a real past bug, and the comment records it (`session.go:562-573`):** a refused batch kept
-the context ID, the fallback prepended a second one, `packetAddresses` read the wrong version nibble,
-and **every packet was silently dropped — no error, no PTB**.
+**M4 是一个真实的既往缺陷，注释里记录了它（`session.go:562-573`）：** 一个被拒绝的批次保留了
+context ID，回退路径又前置了第二个，`packetAddresses` 读到了错误的版本半字节，
+结果 **每个数据包都被静默丢弃 —— 没有错误，没有 PTB**。
 
-### The H3 client pool
+### H3 客户端连接池（The H3 client pool）
 
-`transport/http/client_h3.go:105` builds `&http3.Transport{EnableDatagrams: true, DisableCompression: true}`;
-the batching API is `SendDatagramOwned(payload http3.OwnedDatagramPayload)` (`:511`).
+`transport/http/client_h3.go:105` 构建 `&http3.Transport{EnableDatagrams: true, DisableCompression: true}`；
+批量 API 是 `SendDatagramOwned(payload http3.OwnedDatagramPayload)`（`:511`）。
 
-Pool behaviour (`b83695603` → `1511c1c6a`): the pool now rotates **within the tied-minimum set**;
-before, **slot 0 served every tunnel**. CONNECT is gated on `HandshakeComplete` (`0271b145a`) to close
-a 0-RTT replay window. `http3_fallback` is consumed but its defaults were kept at **5 s / 5 m**, not
-the httpclient's 5 m / 48 h (`9491008a9` — a dead-config fix).
+连接池行为（`b83695603` → `1511c1c6a`）：连接池现在 **在并列最小值的集合内** 轮转；
+此前 **slot 0 服务了每一个隧道**。CONNECT 以 `HandshakeComplete` 为门禁（`0271b145a`），以关闭
+一个 0-RTT 重放窗口。`http3_fallback` 会被读取，但其默认值保持在 **5 秒 / 5 分**，而不是
+httpclient 的 5 分 / 48 小时（`9491008a9` —— 一个死配置修复）。
 
-At the current target, `option/http.go` and `transport/http/server_h3.go` leave the HTTP/3 server
-path manager enabled by default; disabling migration is the opt-in setting. The H3 client test also
-checks that its `DisablePathManager` is false by default. Congestion-control options are separate
-for client and server, and an unset client choice leaves the library default; do not infer BBR from
-an unset option. Verify the particular constructor and pinned QUIC version before generalizing.
-
----
-
-## 2. The endpoint — `protocol/masque`
-
-`ClientEndpoint` (`client.go:50`), `NewClientEndpoint` (`:118`), `Start` (`:322`),
-`UpdateConfiguration` (`:363`), `installAssignedDNS` (`:421`), `Pref64Prefixes` (`:473`),
-`resolverCapability` (`:491`), `h3ConnectionState` (`:528`), `UpdateTunnelTransport` (`:551`),
-`recompileAssignedDNS` (`:560`), `InterfaceUpdated` (`:598`), `OnDemand` (`:602`),
-`SetKeepIdleConnections` (`:606`), `PreMatchFlow` (`:627`), `PortAddresses` (`:631`),
-`PortMTU` (`:654`), `UpstreamPort` (`:658`), `AttachReturn`/`DetachReturn` (`:662,666`),
-`JudgeFlow` (`:670`), `NewDNSPacket` (`:674`), `WritePackets` (`:678`), `DialContext` (`:727`),
-`DialsDestinationLocally` (`:762`), `lookupInner` (`:801`), `dohExecutor` (`:863`),
-`dialResolved` (`:893`), `ListenPacketWithDestination` (`:938`).
-
-`PREF64` lives in `protocol/masque/pref64.go`, consumed via `ClientEndpoint.Pref64Prefixes()`
-(`client.go:473`) and `clientSession.handlePREF64` (`transport/masque/client.go:585`); the server
-answers at `transport/masque/server.go:495`.
+在当前目标上，`option/http.go` 与 `transport/http/server_h3.go` 默认让 HTTP/3 服务端
+路径管理器保持启用；禁用迁移才是需要显式选择的设置。H3 客户端测试还
+检查其 `DisablePathManager` 默认为 false。拥塞控制选项在客户端与服务端
+是分开的，客户端未设置的选择会保留库的默认值；不要从未设置的选项推断出 BBR。
+在推广之前，先核实具体的构造函数与被 pin 的 QUIC 版本。
 
 ---
 
-## 3. The two resolvers — not interchangeable
+## 2. 端点 —— `protocol/masque`（The endpoint — `protocol/masque`）
 
-| Role | What it resolves | Config field | Implementation |
+`ClientEndpoint`（`client.go:50`）、`NewClientEndpoint`（`:118`）、`Start`（`:322`）、
+`UpdateConfiguration`（`:363`）、`installAssignedDNS`（`:421`）、`Pref64Prefixes`（`:473`）、
+`resolverCapability`（`:491`）、`h3ConnectionState`（`:528`）、`UpdateTunnelTransport`（`:551`）、
+`recompileAssignedDNS`（`:560`）、`InterfaceUpdated`（`:598`）、`OnDemand`（`:602`）、
+`SetKeepIdleConnections`（`:606`）、`PreMatchFlow`（`:627`）、`PortAddresses`（`:631`）、
+`PortMTU`（`:654`）、`UpstreamPort`（`:658`）、`AttachReturn`/`DetachReturn`（`:662,666`）、
+`JudgeFlow`（`:670`）、`NewDNSPacket`（`:674`）、`WritePackets`（`:678`）、`DialContext`（`:727`）、
+`DialsDestinationLocally`（`:762`）、`lookupInner`（`:801`）、`dohExecutor`（`:863`）、
+`dialResolved`（`:893`）、`ListenPacketWithDestination`（`:938`）。
+
+`PREF64` 位于 `protocol/masque/pref64.go`，通过 `ClientEndpoint.Pref64Prefixes()`
+（`client.go:473`）以及 `clientSession.handlePREF64`（`transport/masque/client.go:585`）使用；服务端
+在 `transport/masque/server.go:495` 处应答。
+
+---
+
+## 3. 两个解析器 —— 不可互换（The two resolvers）
+
+| 角色 | 解析什么 | 配置字段 | 实现 |
 |---|---|---|---|
-| **Bootstrap (outer)** | the **server hostname** | `option/masque.go:34-40` `DialerOptions.DomainResolver` | `protocol/masque/bootstrap_cache.go` — `bootstrapResolution` `:65`, `bootstrapCache` `:89`, `newBootstrapCache` `:101`, `resolve` `:115`, `recordFresh` `:156`, `promote` `:187`, `hasRecovery` `:197`, `bootstrapDialer` `:213`, `resolveCandidates` `:233`, `DialContext` `:259`, `buildBootstrapResolution` `:311`, `bootstrapResolver` `:331`, `strategy` `:349`; plus `bootstrap_race.go` (`handshakeRacer` `:52`, `dialWithWinner` `:123`, `awaitHandshake` `:334`, `splitByPreference` `:357`, `interleaveCandidates` `:398`, `masqueConnDialer` `:445`, `preferIPv6FromStrategy` `:481`) |
-| **Inner** | the traffic carried **inside** the tunnel | `option/masque.go:33-44` `InnerDomainResolver`, whose comment says exactly that; unset preserves prior behaviour (normal DNS router rules with empty query options) | `protocol/masque/dns_resolver.go` + `dns_assignment.go` (`dnsAssignmentSnapshot` `:41`, `dnsConfigurationSnapshot` `:54`, `dnsResolverSnapshot` `:73`, `decide` `:266`, `hasUsableResolver` `:298`, `resolversByPriority` `:311`, `compileDNSAssignment` `:390`, `compileResolver` `:449`, `compileCapabilities` `:519`, `resolverCapability.sameH3OriginAvailable` `:370`, `reachableForProtocol` `:668`) |
+| **Bootstrap（外层）** | **服务器主机名** | `option/masque.go:34-40` `DialerOptions.DomainResolver` | `protocol/masque/bootstrap_cache.go` —— `bootstrapResolution` `:65`、`bootstrapCache` `:89`、`newBootstrapCache` `:101`、`resolve` `:115`、`recordFresh` `:156`、`promote` `:187`、`hasRecovery` `:197`、`bootstrapDialer` `:213`、`resolveCandidates` `:233`、`DialContext` `:259`、`buildBootstrapResolution` `:311`、`bootstrapResolver` `:331`、`strategy` `:349`；外加 `bootstrap_race.go`（`handshakeRacer` `:52`、`dialWithWinner` `:123`、`awaitHandshake` `:334`、`splitByPreference` `:357`、`interleaveCandidates` `:398`、`masqueConnDialer` `:445`、`preferIPv6FromStrategy` `:481`） |
+| **Inner（内层）** | 在隧道 **内部** 承载的流量 | `option/masque.go:33-44` `InnerDomainResolver`，其注释正是这个意思；未设置时保持原有行为（普通 DNS 路由规则，带空的查询选项） | `protocol/masque/dns_resolver.go` + `dns_assignment.go`（`dnsAssignmentSnapshot` `:41`、`dnsConfigurationSnapshot` `:54`、`dnsResolverSnapshot` `:73`、`decide` `:266`、`hasUsableResolver` `:298`、`resolversByPriority` `:311`、`compileDNSAssignment` `:390`、`compileResolver` `:449`、`compileCapabilities` `:519`、`resolverCapability.sameH3OriginAvailable` `:370`、`reachableForProtocol` `:668`） |
 
-The two are structurally separated: the bootstrap dialer is built **before any tunnel exists**
-(`bootstrap_cache.go:311`), while the inner path is only consulted from `lookupInner`
-(`client.go:745`). **Swapping them sends the server's own hostname resolution through a tunnel that
-does not exist yet**, or leaks the in-tunnel names to the outer resolver.
-
----
-
-## 4. MTU and PTB
-
-**Three separate quantities** — see `mtu-and-geometry.md` for the full treatment. In MASQUE:
-
-* **outer link MTU** — what the platform path carries;
-* **outer QUIC initial packet size** — clamped when detour capacity is known; the constructor does
-  not establish a hard ceiling on later packets (see `mtu-and-geometry.md`);
-* **inner tunnel MTU** — what the tunnel promises its payload.
-
-The PTB path: a datagram send fails with `datagramErrorTooLarge` → `mtu := maxPayloadSize - 1`; if
-`mtu >= minimumLinkMTU` the context ID is undone with `datagram.Advance(1)` and
-`handlePacketTooBig(datagram, mtu)` is invoked (`session.go:516-524`).
-
-Tests: `packet_too_big_test.go`, `packet_too_big_session_test.go`, `packet_size_bound_test.go`,
-`outer_quic_mtu_test.go`, `port_mtu_lifecycle_test.go`, plus
-`protocol/masque/outer_quic_mtu_test.go`.
+两者在结构上是分离的：bootstrap dialer 是在 **任何隧道存在之前** 构建的
+（`bootstrap_cache.go:311`），而 inner 路径只从 `lookupInner` 处被查询
+（`client.go:745`）。**把两者调换，会让服务器自身主机名的解析走一条
+尚不存在的隧道**，或者把隧道内的名字泄露给外层解析器。
 
 ---
 
-## 5. Teardown
+## 4. MTU 与 PTB（MTU and PTB）
 
-`Server.releaseSession` (`server.go:298`), `sessionErrorIsExpected` (`:613`).
-Contract tests: `transport/masque/shutdown_test.go`, `close_boundary_test.go`,
-`close_boundary_h3_test.go`, `session_datagram_error_test.go`, `session_error_class_test.go`;
-`protocol/masque/close_boundary_h3_test.go`, `readiness_boundary_test.go`,
-`lifecycle_generation_test.go`, `scope_ownership_test.go`.
+**三个彼此不同的量** —— 完整论述见 `mtu-and-geometry.md`。在 MASQUE 中：
 
-Two documented teardown fixes worth knowing:
+* **外层链路 MTU** —— 平台路径所承载的量；
+* **外层 QUIC 初始包大小** —— 在 detour 容量已知时被钳制；构造函数并
+  不对后续数据包建立硬上限（见 `mtu-and-geometry.md`）；
+* **内层隧道 MTU** —— 隧道向其载荷承诺的量。
 
-* `9235f90` — the server endpoint's teardown is given to **the `Scope` that closes it**.
-* `c3b4f567` — releases resources acquired **after `Scope.Close` returned**.
-* `a367bbe3` — closes the readiness window, serialises **every** DNS invalidation, and fixes three
-  platform test defects.
-* `a00a2fe6` — makes the HTTP/3 acquisition part of the **close decision**, so a tunnel cannot be
-  reported ready while its H3 leg is being torn down.
+PTB 路径：数据报发送以 `datagramErrorTooLarge` 失败 → `mtu := maxPayloadSize - 1`；如果
+`mtu >= minimumLinkMTU`，则用 `datagram.Advance(1)` 撤销 context ID，并
+调用 `handlePacketTooBig(datagram, mtu)`（`session.go:516-524`）。
 
-`protocol/masque/server.go` also has the "acquire after the drain" fix: `StartStateInitialize`
-registers `s.Close` at the device acquisition, but `StartStateStart` binds the listening socket
-*later*. `common/listener` has no start-after-close guard, so `ServerEndpoint` publishes `closed` under
-`startAccess` before releasing and re-checks it after the bind (`acquiredStillOwned`); if the endpoint
-was closed meanwhile, `Start` releases the socket it just bound itself.
+测试：`packet_too_big_test.go`、`packet_too_big_session_test.go`、`packet_size_bound_test.go`、
+`outer_quic_mtu_test.go`、`port_mtu_lifecycle_test.go`，再加上
+`protocol/masque/outer_quic_mtu_test.go`。
 
 ---
 
-## 6. MASQUE DNS roles and the DNS-lock work (commit family `8f1ba42a9`…`1d87f0cf7`)
+## 5. 拆除（Teardown）
 
-`e93e297aa` replaced the earlier mutable DNS model with **immutable snapshots** that reuse native DNS
-transports, deleting `assigned_dns_model_test.go`, `assigned_dns_transport_test.go`,
-`assigned_doh_test.go`, `dns_leak_cycle_test.go`, `resolver_precedence_test.go` and replacing them
-with `dns_assignment_test.go`, `dns_capability_test.go`, `dns_endpoint_test.go`,
-`dns_request_url_test.go`, `inner_resolver_test.go` — a refactor-with-retest, not a silent drop.
-Any document referencing the deleted files is describing the pre-`e93e297aa` model.
+`Server.releaseSession`（`server.go:298`）、`sessionErrorIsExpected`（`:613`）。
+契约测试：`transport/masque/shutdown_test.go`、`close_boundary_test.go`、
+`close_boundary_h3_test.go`、`session_datagram_error_test.go`、`session_error_class_test.go`；
+`protocol/masque/close_boundary_h3_test.go`、`readiness_boundary_test.go`、
+`lifecycle_generation_test.go`、`scope_ownership_test.go`。
+
+两处有记录的拆除修复值得了解：
+
+* `9235f90` —— 服务器端点的拆除被交给 **关闭它的那个 `Scope`**。
+* `c3b4f567` —— 释放在 **`Scope.Close` 返回之后** 获取的资源。
+* `a367bbe3` —— 关闭就绪窗口，把 **每一次** DNS 失效串行化，并修复三处
+  平台测试缺陷。
+* `a00a2fe6` —— 把 HTTP/3 的获取纳入 **关闭决策**，因此一条隧道不能在其 H3 环节正在
+  被拆除时被报告为就绪。
+
+`protocol/masque/server.go` 还有那个“排空之后再获取”的修复：`StartStateInitialize`
+在设备获取时注册 `s.Close`，但 `StartStateStart` 会 *稍后* 绑定监听
+socket。`common/listener` 没有“关闭之后再启动”的防护，因此 `ServerEndpoint` 在
+`startAccess` 下发布 `closed`，随后释放，并在绑定之后再次检查它（`acquiredStillOwned`）；如果该端点
+在此期间已被关闭，`Start` 会释放它自己刚刚绑定的 socket。
 
 ---
 
-## 7. Evidence
+## 6. MASQUE DNS 角色与 DNS 锁工作（MASQUE DNS roles and the DNS-lock work, commit family `8f1ba42a9`…`1d87f0cf7`）
 
-| Guarantee | Level | Re-check |
+`e93e297aa` 用 **不可变快照** 取代了早先可变的 DNS 模型，这些快照复用原生 DNS
+传输，删除了 `assigned_dns_model_test.go`、`assigned_dns_transport_test.go`、
+`assigned_doh_test.go`、`dns_leak_cycle_test.go`、`resolver_precedence_test.go`，并替换为
+`dns_assignment_test.go`、`dns_capability_test.go`、`dns_endpoint_test.go`、
+`dns_request_url_test.go`、`inner_resolver_test.go` —— 一次伴随重测的重构，而不是静默删除。
+任何引用这些被删文件的文档，描述的都是 `e93e297aa` 之前的模型。
+
+---
+
+## 7. 证据（Evidence）
+
+| 保证 | 级别 | 复检 |
 |---|---|---|
-| Capsule parse/serialise, address and route types | `VERIFIED_UNIT` | `go test -count=1 -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" ./transport/masque/...` |
-| Per-chunk atomicity, transferred prefix and refusal fallback | `VERIFIED_UNIT` | `batch_chunk_test.go`, `batch_order_test.go`, `session_datagram_error_test.go` |
-| Teardown ownership and close boundaries | `VERIFIED_UNIT` | `shutdown_test.go`, `close_boundary*.go`, `scope_ownership_test.go` |
-| MTU initial clamp / PTB | `VERIFIED_UNIT` for the cited test cases; MASQUE's later packets are not shown to have a hard outer ceiling | the MTU test files; `mtu-and-geometry.md` |
-| H3 pool rotation, 0-RTT gate, fallback schedule | `VERIFIED_UNIT` | `transport/http` pool tests |
-| Long-run allocation behaviour | `VERIFIED_UNIT` (slow) | `transport/masque/longrun_alloc_test.go` |
-| CONNECT-IP interoperability against an independent implementation | **unverified in this calibration** — `test/jiejie/reference/connect_ip_go_interop_test.go` is in the separate test module; Verify runs a selected test there, not this full reference suite | `run-jiejie-suite.sh` (needs bash) |
-| macOS/H3 device behaviour | **`UNVERIFIED`** | needs a device |
-| Race-freedom | `-race` is **blocked on this host**; inspect the exact package list and SHA in the CI run before claiming coverage of MASQUE | Linux runner |
-| `protocol/masque` suite | untagged tests passed locally during the 2026-10-28 refresh; that does not select QUIC-tagged cases. The historical tagged result is scoped to its recorded baseline. | use the appropriate profile and inspect which tests ran |
+| Capsule 解析/序列化、地址与路由类型 | `VERIFIED_UNIT` | `go test -count=1 -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" ./transport/masque/...` |
+| 每块原子性、已转移前缀与拒绝回退 | `VERIFIED_UNIT` | `batch_chunk_test.go`、`batch_order_test.go`、`session_datagram_error_test.go` |
+| 拆除所有权与关闭边界 | `VERIFIED_UNIT` | `shutdown_test.go`、`close_boundary*.go`、`scope_ownership_test.go` |
+| MTU 初始钳制 / PTB | 就所引用的测试用例而言是 `VERIFIED_UNIT`；MASQUE 的后续数据包并未被证明有硬性外层上限 | MTU 测试文件；`mtu-and-geometry.md` |
+| H3 连接池轮转、0-RTT 门禁、回退调度 | `VERIFIED_UNIT` | `transport/http` 的连接池测试 |
+| 长时间运行的分配行为 | `VERIFIED_UNIT`（慢） | `transport/masque/longrun_alloc_test.go` |
+| CONNECT-IP 与独立实现的互操作性 | **本次校准中未验证** —— `test/jiejie/reference/connect_ip_go_interop_test.go` 位于独立的测试模块；Verify 在那里运行的是选定的测试，而不是这套完整的参考套件 | `run-jiejie-suite.sh`（需要 bash） |
+| macOS/H3 设备行为 | **`UNVERIFIED`** | 需要设备 |
+| 无竞态 | `-race` **在本机上受阻**；在声称覆盖 MASQUE 之前，先检查 CI 运行中的确切包列表与 SHA | Linux runner |
+| `protocol/masque` 套件 | 2026-10-28 刷新期间未加标签的测试在本地通过；这并不会选中带 QUIC 标签的用例。历史上带标签的结果仅限定于其记录的基线。 | 使用相应的 profile，并检查实际运行了哪些测试 |
 
 ---
 
-## 8. Provenance
+## 8. 溯源（Provenance）
 
-| Commit | Type | What it did |
+| 提交 | 类型 | 做了什么 |
 |---|---|---|
-| `b83089ec` | — | **UPSTREAM-INHERITED.** "Add MASQUE support", 世界, 2026-09-21. Present below `e4b7e692`; reachable from upstream refs. **Not a fork feature.** |
-| `d53c867b7` | FEATURE | the fork's **first fork-authored commit**: inbound masquerade handler — which is what the MASQUE/HTTP inbound serves over-limit probes |
-| `7e57fe8c7` | HARDENING | the limiter actually bounds |
-| `b83695603` → `1511c1c6a` | FEATURE/FIX | H3 pool and its tie-break |
-| `0271b145a` | HARDENING | CONNECT gated on `HandshakeComplete` (0-RTT) |
-| `9491008a9` | FIX | `http3_fallback` was dead config |
-| `e4f847ecf` | COMPAT | **EXTERNAL-ADAPTED** QUIC defaults, from `quic-go/masque-go` + `connect-ip-go` |
-| `969909bc1` → `b656b062f` | HARDENING → PERF/SUPERSEDED | cross-protocol overlap; the quadratic version was an 800× CPU DoS |
-| `a529b68c8` | HARDENING | the 8192-entry capsule bound |
-| `e4d2f6c1a` | FIX | `Contains() == lookup()` on the server's own address |
-| `66f0e9436`, `db94a76b2`, `c0475793f` | HARDENING | further capsule bounds |
-| `6d94da584` → `b5a25edd8` | PERF/ZERO-COPY | no per-packet alloc; `errors.As(&tooLarge)` forced a heap escape **even when `err == nil`** |
-| `864c0048b` | PERF | binary search in the route matcher |
-| `1a7b3ebe5` | ZERO-COPY | owned DATAGRAM path |
-| `8870623cf` | FEATURE | bootstrap cache |
-| `8f1ba42a9` → `1d87f0cf7` | FEATURE/REFACTOR | DNS roles made explicit; immutable snapshots (`e93e297aa`) |
-| `05fa73391`, `b1961033d`, `a6164dead`, `b81244bdf`, `907dbfb99` | REFACTOR | dead-code removal, incl. the PREF64 clear path and a dead selection rule |
-| `2118ee40` | FEATURE | introduced detour-capacity handling; see the current initial-size qualification in §4 |
-| `0d28c26d` | FIX | makes the H3 fallback reachable; lets the tunnel leg fragment |
-| `a367bbe3` | FIX/HARDENING | readiness window, serialised DNS invalidation |
-| `a00a2fe6` | FIX | HTTP/3 acquisition is part of the close decision |
-| `9235f90` | FIX | server endpoint teardown goes to the `Scope` that closes it |
-| `c3b4f567` | FIX | releases resources acquired after `Scope.Close` returned |
+| `b83089ec` | — | **UPSTREAM-INHERITED。** "Add MASQUE support"，世界，2026-09-21。位于 `e4b7e692` 之下；可从上游引用到达。**不是 fork 特性。** |
+| `d53c867b7` | FEATURE | 本 fork **第一个由 fork 编写的提交**：入站 masquerade handler —— 即 MASQUE/HTTP 入站用于服务超限探测的那个 |
+| `7e57fe8c7` | HARDENING | 限流器真正形成约束 |
+| `b83695603` → `1511c1c6a` | FEATURE/FIX | H3 连接池及其 tie-break |
+| `0271b145a` | HARDENING | CONNECT 以 `HandshakeComplete` 为门禁（0-RTT） |
+| `9491008a9` | FIX | `http3_fallback` 曾是死配置 |
+| `e4f847ecf` | COMPAT | **EXTERNAL-ADAPTED** 的 QUIC 默认值，来自 `quic-go/masque-go` + `connect-ip-go` |
+| `969909bc1` → `b656b062f` | HARDENING → PERF/SUPERSEDED | 跨协议重叠；二次方版本是 800 倍 CPU DoS |
+| `a529b68c8` | HARDENING | 8192 条目的 capsule 上限 |
+| `e4d2f6c1a` | FIX | 在服务器自身地址上 `Contains() == lookup()` |
+| `66f0e9436`、`db94a76b2`、`c0475793f` | HARDENING | 进一步的 capsule 上限 |
+| `6d94da584` → `b5a25edd8` | PERF/ZERO-COPY | 无每包分配；`errors.As(&tooLarge)` 即使 **`err == nil`** 也强制堆逃逸 |
+| `864c0048b` | PERF | 路由匹配器中的二分查找 |
+| `1a7b3ebe5` | ZERO-COPY | owned DATAGRAM 路径 |
+| `8870623cf` | FEATURE | bootstrap 缓存 |
+| `8f1ba42a9` → `1d87f0cf7` | FEATURE/REFACTOR | 显式化 DNS 角色；不可变快照（`e93e297aa`） |
+| `05fa73391`、`b1961033d`、`a6164dead`、`b81244bdf`、`907dbfb99` | REFACTOR | 死代码清理，包括 PREF64 清除路径与一条死掉的选择规则 |
+| `2118ee40` | FEATURE | 引入 detour 容量处理；见 §4 中关于当前初始大小的限定 |
+| `0d28c26d` | FIX | 让 H3 回退可达；允许隧道环节分片 |
+| `a367bbe3` | FIX/HARDENING | 就绪窗口、串行化的 DNS 失效 |
+| `a00a2fe6` | FIX | HTTP/3 的获取是关闭决策的一部分 |
+| `9235f90` | FIX | 服务器端点拆除交给关闭它的 `Scope` |
+| `c3b4f567` | FIX | 释放 `Scope.Close` 返回之后获取的资源 |
 
-All except `b83089ec` are **OWN** or, where marked, `EXTERNAL-ADAPTED` with a quoted source.
+除 `b83089ec` 之外全部是 **OWN**，或在标注处为带引述来源的 `EXTERNAL-ADAPTED`。
 
 ---
 
-## 9. AI cautions
+## 9. AI 注意事项（AI cautions）
 
-1. **Do not call MASQUE a fork feature.** The endpoint skeleton and DATAGRAM concepts are upstream's;
-   the dataplane is the fork's. Say which half you mean.
-2. **Do not go looking for `protocol/connectip`.** It does not exist.
-3. **Do not add a `quic-go/masque-go` or `connect-ip-go` dependency** to the main module — the fork
-   implements this itself and uses `connect-ip-go` only as an interop peer in `test/`.
-4. **Do not make the batch path handle a single packet.** Batch=1 is a measured regression.
-5. **Do not release a datagram on the owned path.** Ownership transferred.
-6. **Do not fix a `PrependContextID` substitution in place.** It releases the original and must refuse
-   the affected chunk, updating the caller's slice; do not replay an already transferred prefix.
-7. **Do not remove the producer-side headroom reservation.** Every packet would take the substitution
-   path.
-8. **Do not "correct" the linear overlap check into the obvious quadratic one.** It was measured at
-   13.5 s vs 16 ms — an 800× CPU DoS.
-9. **Do not raise the 8192-entry capsule bound** without re-measuring; 149,796 entries held 17.65 MiB.
-10. **Do not swap the bootstrap and inner resolvers**, and do not give `InnerDomainResolver` a
-    default that routes through the outer path.
-11. **Do not cap the outer QUIC packet by a constant.** It is capped by a *proven* detour capacity.
-12. **Do not re-enable `MaxIncomingStreams = 1<<60`** or make QUIC tuning non-opt-in.
-13. **Do not gate CONNECT on anything weaker than `HandshakeComplete`.**
-14. **Do not cite the deleted `assigned_dns_*` test files** — that model was replaced by `e93e297aa`.
-15. **Do not run this package's tests untagged and conclude anything.** They need
-    `DEFAULT_BUILD_TAGS_OTHERS`; untagged gives 19 tag-absence failures.
+1. **不要把 MASQUE 称为 fork 特性。** 端点骨架与 DATAGRAM 概念是上游的；
+   数据平面是本 fork 的。说清楚你指哪一半。
+2. **不要去找 `protocol/connectip`。** 它不存在。
+3. **不要向主模块添加 `quic-go/masque-go` 或 `connect-ip-go` 依赖** —— 本 fork
+   自己实现了这一点，并且只在 `test/` 中把 `connect-ip-go` 作为互通对端使用。
+4. **不要让批量路径处理单个数据包。** batch=1 是一次经测量的性能退化。
+5. **不要在 owned 路径上释放数据报。** 所有权已经转移。
+6. **不要就地“修复” `PrependContextID` 的替换。** 它会释放原件，必须拒绝
+   受影响的分块并更新调用方的切片；不要重放已转移的前缀。
+7. **不要移除生产者侧的 headroom 预留。** 否则每个数据包都会走替换
+   路径。
+8. **不要把线性重叠检查“纠正”为显而易见的二次方版本。** 实测为
+   13.5 秒对 16 毫秒 —— 800 倍 CPU DoS。
+9. **不要在未重新测量的情况下提高 8192 条目的 capsule 上限**；149,796 条目曾占用 17.65 MiB。
+10. **不要调换 bootstrap 与 inner 解析器**，也不要给 `InnerDomainResolver` 一个
+    经由外层路径的默认值。
+11. **不要用常数给外层 QUIC 数据包设上限。** 它由 *经证明的* detour 容量来限制。
+12. **不要重新启用 `MaxIncomingStreams = 1<<60`**，也不要把 QUIC 调优变成非 opt-in。
+13. **不要用任何弱于 `HandshakeComplete` 的条件来给 CONNECT 设门禁。**
+14. **不要引用已删除的 `assigned_dns_*` 测试文件** —— 那个模型已被 `e93e297aa` 取代。
+15. **不要在未加标签的情况下运行本包的测试并据此下结论。** 它们需要
+    `DEFAULT_BUILD_TAGS_OTHERS`；未加标签会得到 19 个标签缺失失败。

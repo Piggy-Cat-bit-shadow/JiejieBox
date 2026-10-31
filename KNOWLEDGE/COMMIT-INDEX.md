@@ -1,405 +1,405 @@
-# Commit navigation
+# 提交导航（Commit navigation）
 
-## 2026-10-29 delta navigation
+## 2026-10-29 增量导航（delta navigation）
 
-| Commit | Changed behavior |
+| 提交 | 变更行为 |
 |---|---|
-| Child Apple `aeccc75`, `16cf87b`; Android `c783710`; Desktop `6d4ccf8` | consumed client changes → `modules/child-repositories.md` |
-| Child sing-tun `f9d880f`, `8b9a380`; uTLS `3ab4752`, `2da328d` | routed port and TLS fixes → `modules/child-repositories.md` |
-| Apple `044e6d5`, parent `a741e3e916f` | integration merged and consumed in v0.1.34 → `modules/child-repositories.md` |
-| `e61f9d5160e`, `14e21140564`, `0067b03e377` | Apple build/pack/topology fixture and structural guard corrections → `modules/ci-release.md` |
-| `93b2e4f5eec` | endpoint-local flows can use the TUN routed port → `modules/masque-connectip.md` |
-| `ab5fcb59abd` | share flow logger between regular and host flows → same module |
-| `8dac10c14c8`, `62f5ecefdf6`, `d0bccc9bf2a`, `3c6ca2ea336` | release freeze, pseudo-version, idempotency and committed ABI gate → `modules/ci-release.md` |
-| `23730fffed3`, `fc1567f4c4d`, `dbcfc1d359d` | Apple single-runner path, scratch directory and composite-action toolchain check → `modules/ci-release.md` |
+| 子仓库 Apple `aeccc75`, `16cf87b`；Android `c783710`；Desktop `6d4ccf8` | 已消费的客户端变更 → `modules/child-repositories.md` |
+| 子仓库 sing-tun `f9d880f`, `8b9a380`；uTLS `3ab4752`, `2da328d` | 路由端口与 TLS 修复 → `modules/child-repositories.md` |
+| Apple `044e6d5`, 父仓库 `a741e3e916f` | 集成已合并并在 v0.1.34 中消费 → `modules/child-repositories.md` |
+| `e61f9d5160e`, `14e21140564`, `0067b03e377` | Apple 构建/打包/拓扑夹具与结构守卫修正 → `modules/ci-release.md` |
+| `93b2e4f5eec` | 端点本地的流可以使用 TUN 路由端口 → `modules/masque-connectip.md` |
+| `ab5fcb59abd` | 在常规流与宿主流之间共享流日志器 → 同一模块 |
+| `8dac10c14c8`, `62f5ecefdf6`, `d0bccc9bf2a`, `3c6ca2ea336` | 发布冻结、伪版本（pseudo-version）、幂等性与已提交的 ABI 门禁 → `modules/ci-release.md` |
+| `23730fffed3`, `fc1567f4c4d`, `dbcfc1d359d` | Apple 单 runner 路径、scratch 目录与 composite-action 工具链检查 → `modules/ci-release.md` |
 
-## Post-v0.1.9 navigation anchors (testing target 011f3fdcd99)
+## v0.1.9 之后的导航锚点（Post-v0.1.9 navigation anchors，测试目标 011f3fdcd99）
 
-These commits are navigation aids, not substitutes for current source, and do not by themselves
-establish external provenance or test results.
+这些提交是导航辅助，不能替代当前源码，其本身也不确立
+外部来源或测试结果。
 
-| Commit | Subject and owner |
+| 提交 | 主题与归属 |
 |---|---|
-| `01be4b9d42d` | per-flow candidate admission → `modules/dns-demand.md` |
-| `c10ff9186cf` | empty DNS family logging → `modules/dns-demand.md` |
-| `c78edf21084` | remove ineffective AI tag fallback → `modules/fast-path-group-policy.md` |
-| `cd2316a704a` | consumer detour capability warnings → `modules/path-selection-validation.md` |
-| `0ef38b8ff91`, `98387b223d8` | Naive H3/H2 retry and budget → `modules/naive-http-transport.md` |
-| `20482fa067d` | FakeIP sniff, mapped address and kTLS boundaries → `modules/sniff.md` |
-| `3145d7dbdfc`, `1ff0af39110` | TUN handoff and post-start resets → `modules/libbox-platform-contract.md` |
-| `3f67490206d`, `e1efe4cafdc` | Mieru integration and opt-in TCP/UDP fallback → `modules/mieru.md` |
-| `5034c5ee046`, `08699fd2c40` | half-close observation and settlement → `modules/core-lifecycle-runtime.md` |
-| `3edcf4fa226`, `c8f3a740710`, `08ff473b5a5` | serialized OOM reclaim and reload intent → `modules/power-mobile-lifecycle.md` |
-| `a1b2174654a` | wildcard listener address-family selection → `modules/core-lifecycle-runtime.md` |
-| `7c0cc0bacaa` | Windows TUN read-error classification; explicit accepted values are narrower than its comments → `modules/core-lifecycle-runtime.md` |
+| `01be4b9d42d` | 按流的候选准入（candidate admission）→ `modules/dns-demand.md` |
+| `c10ff9186cf` | 空 DNS 地址族的日志记录 → `modules/dns-demand.md` |
+| `c78edf21084` | 移除无效的 AI 标签回退 → `modules/fast-path-group-policy.md` |
+| `cd2316a704a` | 消费者 detour 能力警告 → `modules/path-selection-validation.md` |
+| `0ef38b8ff91`, `98387b223d8` | Naive H3/H2 重试与预算 → `modules/naive-http-transport.md` |
+| `20482fa067d` | FakeIP 嗅探、映射地址与 kTLS 边界 → `modules/sniff.md` |
+| `3145d7dbdfc`, `1ff0af39110` | TUN 交接与启动后重置 → `modules/libbox-platform-contract.md` |
+| `3f67490206d`, `e1efe4cafdc` | Mieru 集成与按需启用的 TCP/UDP 回退 → `modules/mieru.md` |
+| `5034c5ee046`, `08699fd2c40` | 半关闭（half-close）观测与结算 → `modules/core-lifecycle-runtime.md` |
+| `3edcf4fa226`, `c8f3a740710`, `08ff473b5a5` | 串行化的 OOM 回收与重载意图 → `modules/power-mobile-lifecycle.md` |
+| `a1b2174654a` | 通配监听器的地址族选择 → `modules/core-lifecycle-runtime.md` |
+| `7c0cc0bacaa` | Windows TUN 读取错误分类；显式接受的值比其注释所写的更窄 → `modules/core-lifecycle-runtime.md` |
 
-**This is an evolution index, not a changelog.** Entries name commits that shaped behavior at their
-review points, in order, so a reader can investigate why the code looks the way it does. Recheck the
-current source before assuming a historical behavior still survives.
+**这是一份演进索引，而不是变更日志（changelog）。** 条目按顺序列出在其评审点上塑造了行为的
+提交，以便读者追查代码为何是现在这个样子。在假定某个历史行为仍然成立之前，
+请复检当前源码。
 
-## How to use it
+## 如何使用（How to use it）
 
-1. Find the behaviour you are about to change.
-2. Read the **Final behaviour** line as the behavior at that entry's review point; compare current
-   source and `BASELINE.md` before treating it as current.
-3. Read the SHAs in order only if you need the reasoning. `git show <sha>` on each is enough; you do not
-   need the full diff of the range.
-4. If a **Superseded** line is present, the earlier attempt is worth reading precisely because it is
-   wrong — it is the shape a future change is most likely to repeat.
+1. 找到你即将变更的行为。
+2. 把 **最终行为（Final behaviour）** 一行读作该条目评审点时的行为；在把它当作当前行为之前，先对照当前
+   源码与 `BASELINE.md`。
+3. 只在需要推理过程时才按顺序阅读这些 SHA。对每个提交执行 `git show <sha>` 就足够了；你不需要
+   该范围的完整 diff。
+4. 如果存在 **被取代（Superseded）** 一行，那么早先的尝试恰恰因为它是错的才值得一读——它正是
+   未来的变更最有可能重复的形状。
 
-## Two things to know before reading any SHA here
+## 阅读此处任何 SHA 之前需要知道的两件事（Two things to know before reading any SHA here）
 
-* Reachability from current upstream refs is an ancestry check, not proof of authorship. Upstream
-  history has been rewritten; compare patches, blobs and historical evidence before assigning an
-  origin, including for entries that carry an older provenance label.
-* **Do not count upstream work by SHA.** Upstream rebases `testing`, so one logical upstream change can
-  appear up to 11 times in this range under different SHAs. See `BASELINE.md` §provenance.
+* 从当前上游引用可达（reachability）只是祖先关系检查，不是作者身份的证明。上游
+  历史已被重写；在判定来源之前，请比较补丁、blob 与历史证据，
+  对带有更旧来源标签的条目也是如此。
+* **不要按 SHA 统计上游工作量。** 上游会 rebase `testing`，因此一个逻辑上的上游变更可能以不同 SHA
+  在该范围内出现多达 11 次。见 `BASELINE.md` §provenance。
 
-## Provenance vocabulary
+## 来源词汇表（Provenance vocabulary）
 
-| Label | Means |
+| 标签 | 含义 |
 |---|---|
-| `OWN` | authored on the fork's own line |
-| `UPSTREAM-INHERITED` | an upstream commit present below `e4b7e692` |
-| `UPSTREAM-ABSORBED` | an upstream change the fork re-applied; **its content is already in the baseline** |
-| `EXTERNAL-ADAPTED` | derived from a named external source, quoted in the commit or the module |
-| `SUPERSEDED` | the change is no longer in the tree; kept for the reasoning |
-| `ARCHIVE-ONLY` | a reverted change, deliberately preserved |
+| `OWN` | 在 fork 自己的线上创作 |
+| `UPSTREAM-INHERITED` | 存在于 `e4b7e692` 之下的上游提交 |
+| `UPSTREAM-ABSORBED` | fork 重新应用的上游变更；**其内容已在基线中** |
+| `EXTERNAL-ADAPTED` | 派生自具名的外部来源，并在提交或模块中被引用 |
+| `SUPERSEDED` | 该变更已不在代码树中；为保留推理而保留 |
+| `ARCHIVE-ONLY` | 被回退的变更，刻意保留 |
 
-Type vocabulary: `FEATURE`, `FIX`, `HARDENING`, `PERF`, `MEMORY`, `ZERO-COPY`, `COMPAT`, `LIFECYCLE`,
-`ROUTING`, `DNS`, `SNIFF`, `CHAIN-PROXY`, `MASQUE`, `NAIVE`, `PLATFORM`, `LIBBOX`, `REFACTOR`, `TEST`,
-`INTEROP`, `CI`, `BUILD`, `RELEASE`, `DOC`, `REPOSITORY-HYGIENE`.
+类型词汇：`FEATURE`、`FIX`、`HARDENING`、`PERF`、`MEMORY`、`ZERO-COPY`、`COMPAT`、`LIFECYCLE`、
+`ROUTING`、`DNS`、`SNIFF`、`CHAIN-PROXY`、`MASQUE`、`NAIVE`、`PLATFORM`、`LIBBOX`、`REFACTOR`、`TEST`、
+`INTEROP`、`CI`、`BUILD`、`RELEASE`、`DOC`、`REPOSITORY-HYGIENE`。
 
 ---
 
-## 1. Start-time proof and the path model → `path-selection-validation.md`
+## 1. 启动期证明与路径模型（Start-time proof and the path model）→ `path-selection-validation.md`
 
-**Initial problem:** a configuration could declare a chain that silently could not carry the traffic it
-routed to it. The failure surfaced at dial time, on a user's connection.
+**初始问题：** 配置可以声明一条链路，而这条链路静默地无法承载被路由到它上面的流量。
+故障会在拨号时、在用户的连接上暴露出来。
 
-| SHA | Type | Origin | What it did |
+| SHA | 类型 | 来源 | 它做了什么 |
 |---|---|---|---|
-| `01262510` | FEATURE | OWN | implements the `PhysicalPath`/`ControlPath` model and the start-time reachable-leaf dry run |
-| `524ea41e` | FIX | OWN | makes `Hops` **packet order**, derived from the dial edge. **Nine tests went red**; two were renamed because they asserted the opposite of their names. |
-| `d46717dbd` | FIX | OWN | `ControlPath` is the **decision order**, not the packet order — 51 minutes after `e201b5add` documented the opposite |
-| `e3399187` | FIX | OWN | per-walk resolver state; a diamond is validated per route |
-| `fc4bdd416` | FIX | OWN | the three requirement facts; records that `RequiredNetworks` is **write-only** |
-| `8299f30e` | FIX | OWN | the exported dry run refuses a truncated route instead of leaving it to a lint |
-| `8ae8f10d` | FIX | OWN | a truncated route cannot hide behind a sibling |
-| `91f595906` | FIX | OWN | `destination_dns_ownership` is vacuous for a local dialer |
-| `cf5a25bbe` | FIX | OWN | ownership parity for **every** proven local dialer |
-| `33eba5bf7` | FIX | OWN | validate capability against **reachable flow types**, not entry capability |
-| `0dfedb382` | FIX | OWN | consume a protocol only where the runtime router actually stops |
-| `04591f8` | FIX | OWN | one resolver source of truth, and the false deny it removes |
-| `4e228f53` | FIX | OWN | **the default-resolver edge is over-charged, not under-charged** — reverses an earlier decision |
-| `31f250ff` | FIX | OWN | settles the three contracts: provable-only demand, group union, graph edges |
-| `ff004007` | FIX | OWN | publish resolver facts on the adapters the graph actually walks |
-| `5ad4c032` | FIX | OWN | populate the server-domain fact at every constructor site |
-| `d95e256b7` | REFACTOR | OWN | drops two dead helpers — **and adds the orphan comment that contradicts the code** |
+| `01262510` | FEATURE | OWN | 实现 `PhysicalPath`/`ControlPath` 模型与启动期可达叶子（reachable-leaf）试运行 |
+| `524ea41e` | FIX | OWN | 让 `Hops` 成为**包顺序（packet order）**，由拨号边沿推导。**九个测试变红**；其中两个被重命名，因为它们断言的内容与其名称相反。 |
+| `d46717dbd` | FIX | OWN | `ControlPath` 是**决策顺序（decision order）**，而不是包顺序——在 `e201b5add` 记录了相反说法 51 分钟之后 |
+| `e3399187` | FIX | OWN | 按遍历（per-walk）保存的解析器状态；菱形（diamond）按路由分别校验 |
+| `fc4bdd416` | FIX | OWN | 三条需求事实；记录 `RequiredNetworks` 是**只写的（write-only）** |
+| `8299f30e` | FIX | OWN | 导出的试运行会拒绝被截断的路由，而不是把它留给 lint |
+| `8ae8f10d` | FIX | OWN | 被截断的路由不能躲在同级路由后面 |
+| `91f595906` | FIX | OWN | `destination_dns_ownership` 对本地拨号器而言是空洞的 |
+| `cf5a25bbe` | FIX | OWN | 为**每一个**已证明的本地拨号器补齐所有权一致性 |
+| `33eba5bf7` | FIX | OWN | 按**可达的流类型**校验能力，而不是按入口能力 |
+| `0dfedb382` | FIX | OWN | 只在运行时路由器真正停下的地方消费协议 |
+| `04591f8` | FIX | OWN | 单一的解析器事实来源，以及它消除的误拒（false deny） |
+| `4e228f53` | FIX | OWN | **默认解析器边沿是被多计（over-charged）的，而不是少计（under-charged）**——推翻先前的决定 |
+| `31f250ff` | FIX | OWN | 落定三条契约：只证明可证明的需求、组并集（group union）、图边（graph edges） |
+| `ff004007` | FIX | OWN | 在图实际遍历的适配器上发布解析器事实 |
+| `5ad4c032` | FIX | OWN | 在每个构造点填充服务器域（server-domain）事实 |
+| `d95e256b7` | REFACTOR | OWN | 删除两个死掉的辅助函数——**并新增了与代码相矛盾的孤儿注释** |
 
-**Final behaviour:** validation is read-only, consumer-first and provable-only; `Hops` is packet order,
-`ControlPath` is descent order; a control group is never a hop; `route.final` is charged the residual as
-proven; `RequiredNetworks` is write-only.
+**最终行为（Final behaviour）：** 校验是只读的、消费者优先的，并且只依据可证明者；`Hops` 是包顺序，
+`ControlPath` 是下降顺序（descent order）；控制组永远不是一个 hop；`route.final` 的残差按已证明计入；
+`RequiredNetworks` 是只写的。
 
-**Superseded:** `KNOWLEDGE/reports/release/ROUTE_AWARE_OUTBOUND_CAPABILITY_VALIDATION_FINAL.md` §B/§H (its
-`TestFinalProvesNothingAboutDelivery` no longer exists); `KNOWLEDGE/reports/release/GROUP_CROSSKIND_BRIDGE_CLOSURE.md` §4/§9 (all
-three `= NO` verdicts were later closed); two `docs/fork/v016-*` reports still declaring J-1/J-2/J-3
-"NOT IMPLEMENTED" when all three exist.
+**被取代（Superseded）：** `KNOWLEDGE/reports/release/ROUTE_AWARE_OUTBOUND_CAPABILITY_VALIDATION_FINAL.md` §B/§H（其
+`TestFinalProvesNothingAboutDelivery` 已不存在）；`KNOWLEDGE/reports/release/GROUP_CROSSKIND_BRIDGE_CLOSURE.md` §4/§9（三条 `= NO` 结论后来都已关闭）；
+两份 `docs/fork/v016-*` 报告在 J-1/J-2/J-3 三者都已存在时仍宣称
+“NOT IMPLEMENTED”。
 
-**Evidence:** 10 root `box_static_validation_*_test.go` files, 5 `box_physicalpath_*_test.go`,
-`box_cross_kind_cycle_test.go`, 16 `common/physicalpath` test files, and four recorded **mutation**
-controls.
+**证据：** 10 个根目录 `box_static_validation_*_test.go` 文件、5 个 `box_physicalpath_*_test.go`、
+`box_cross_kind_cycle_test.go`、16 个 `common/physicalpath` 测试文件，
+以及四项已记录的**变异（mutation）**对照。
 
 ---
 
-## 2. Core lifecycle and runtime coordination → `core-lifecycle-runtime.md`
+## 2. 核心生命周期与运行时协调（Core lifecycle and runtime coordination）→ `core-lifecycle-runtime.md`
 
-**Initial problem:** teardown was per-component and unreliable, and a network transition caused every
-resource to rebuild at once.
+**初始问题：** 拆除是按组件各自进行的且不可靠，而一次网络切换会导致
+所有资源同时重建。
 
-| SHA | Type | Origin | What it did |
+| SHA | 类型 | 来源 | 它做了什么 |
 |---|---|---|---|
-| `8c7b230d` | LIFECYCLE | OWN | adds the resource lifecycle coordinator |
-| `5f56f02c` | MEMORY | OWN | trim idle resources when memory is elevated but not critical |
-| `09964183` | FIX | OWN | stops the memory trim from building a second transport |
-| `379b21161` | FIX | OWN | the generation-based rebind budget |
-| `93823c3d` | MEMORY | OWN | retires the post-wake pools that were **unreachable**; drains the ones that can |
-| `8735b1d` | MEMORY | OWN | reaches the HTTP client pools from the retire walks, which never did |
-| `1331e8567` | FIX | OWN | `TrimMemory` does not advance the generation; `ReleaseMemory` does |
-| `1f85dbc94` | FIX | OWN | all **four** pools reachable from the boundary walk |
-| `7e13f461` | FIX | **OWN, not upstream** | clears the process-global interface getter **its owner registered** — the commit body says the fork's own refactor dropped it |
+| `8c7b230d` | LIFECYCLE | OWN | 新增资源生命周期协调器 |
+| `5f56f02c` | MEMORY | OWN | 在内存偏高但尚未危急时裁剪空闲资源 |
+| `09964183` | FIX | OWN | 阻止内存裁剪构建第二个传输 |
+| `379b21161` | FIX | OWN | 基于代次（generation）的重绑定预算 |
+| `93823c3d` | MEMORY | OWN | 退役唤醒后**不可达**的连接池；对能够排空的进行排空 |
+| `8735b1d` | MEMORY | OWN | 使退役遍历能够到达 HTTP 客户端连接池（此前从未到达） |
+| `1331e8567` | FIX | OWN | `TrimMemory` 不推进代次；`ReleaseMemory` 推进 |
+| `1f85dbc94` | FIX | OWN | 从边界遍历可达**全部四个**连接池 |
+| `7e13f461` | FIX | **OWN, not upstream** | 清除**其所有者注册的**进程级接口 getter——提交正文说明是 fork 自身的重构把它丢掉的 |
 
-**Final behaviour:** one monotonic epoch; a rebuild is a **lease identity**, not a flag; retirement
-asserts `IdleConnectionReleaser`, not `IdleConnectionKeeper`; a late `scope.Add` runs synchronously on
-the registering goroutine.
+**最终行为（Final behaviour）：** 单一单调 epoch；重建是一种**租约身份（lease identity）**，而不是一个标志位；
+退役断言的是 `IdleConnectionReleaser`，而不是 `IdleConnectionKeeper`；迟到的 `scope.Add` 在注册它的
+goroutine 上同步运行。
 
-**Superseded:** nothing. **The wording that was wrong:** "`7e13f461` absorbs an upstream
-interface-getter reset" — it fixes a fork-introduced leak.
+**被取代：** 无。**曾经写错的措辞是：**“`7e13f461` 吸收了一次上游的
+接口 getter 重置”——它修复的是 fork 引入的泄漏。
 
-**Evidence:** `adapter/lifecycle*_test.go`, `common/runtimecoord/*_test.go`,
-`route/reference_coverage_stress_test.go`, `route/reusable_owner_inventory_test.go`.
+**证据：** `adapter/lifecycle*_test.go`、`common/runtimecoord/*_test.go`、
+`route/reference_coverage_stress_test.go`、`route/reusable_owner_inventory_test.go`。
 
 ---
 
-## 3. Sniff → `sniff.md`
+## 3. 嗅探（Sniff）→ `sniff.md`
 
-**Initial problem:** sniffing copied whole datagrams and could be driven to unbounded memory growth.
+**初始问题：** 嗅探会复制整个数据报，并且可以被驱动到无界的内存增长。
 
-| SHA | Type | Origin | What it did |
+| SHA | 类型 | 来源 | 它做了什么 |
 |---|---|---|---|
-| `e053cc733` | PERF + REFACTOR | OWN | explicit plan lists; `payloadReader`; the TLS header gate and its sentinel; the packet-sniffer indirection |
-| `300b167b4` | PERF | OWN | retry driven by the previous round's failures |
-| `912778dd6` | FIX | OWN | adds the **WireGuard** sniffer and moves it before UTP (UTP was stealing handshakes) |
-| `91577eaa2` | PERF | OWN | the HTTP gate + replay reader |
-| `4dff25c90` | PERF | OWN | `takePacketBytes` returns **views** |
-| `9167595c7` | PERF | OWN | `frameSummary` replaces a frame-type slice |
-| `bfe721454` | PERF + HARDENING | OWN | packet-bounded copy **and** the `Length` lower-bound guard — a port of `1b0cedf40` |
-| `578663e0` | HARDENING + FIX | OWN | `maxSniffRounds = 64`, release-on-abandon, and the `matchRule` error-path buffer release |
-| `1292a85a5` | TEST | OWN | the `wireguard.go` comment block (0 non-comment lines) |
-| `a05a6954f` | **UPSTREAM-ABSORBED** | — | "Fix DNS sniffer matching non-DNS packets": `dns.go` is byte-identical at both ends |
-| `b93c30f2a` | **UPSTREAM-ABSORBED** | — | "Fix protocol input validation": the CRYPTO length guard is present at `e4b7e692` |
-| `dd4f62edc` | **UPSTREAM-ABSORBED** | — | "Rewrite HTTP proxy protocol": `http.go:14`, `:95` are present at `e4b7e692` |
+| `e053cc733` | PERF + REFACTOR | OWN | 显式的 plan 列表；`payloadReader`；TLS 头部字段门禁及其哨兵值；包嗅探器（packet-sniffer）的间接层 |
+| `300b167b4` | PERF | OWN | 由上一轮失败驱动的重试 |
+| `912778dd6` | FIX | OWN | 新增 **WireGuard** 嗅探器并将其移到 UTP 之前（UTP 此前会窃取握手） |
+| `91577eaa2` | PERF | OWN | HTTP 门禁 + 重放读取器（replay reader） |
+| `4dff25c90` | PERF | OWN | `takePacketBytes` 返回**视图（views）** |
+| `9167595c7` | PERF | OWN | `frameSummary` 取代了帧类型切片 |
+| `bfe721454` | PERF + HARDENING | OWN | 以包为边界的复制**以及** `Length` 下界守卫——移植自 `1b0cedf40` |
+| `578663e0` | HARDENING + FIX | OWN | `maxSniffRounds = 64`、放弃时释放（release-on-abandon），以及 `matchRule` 错误路径上的缓冲区释放 |
+| `1292a85a5` | TEST | OWN | `wireguard.go` 的注释块（0 行非注释代码） |
+| `a05a6954f` | **UPSTREAM-ABSORBED** | — | “Fix DNS sniffer matching non-DNS packets”：`dns.go` 在两端逐字节相同 |
+| `b93c30f2a` | **UPSTREAM-ABSORBED** | — | “Fix protocol input validation”：CRYPTO 长度守卫在 `e4b7e692` 处已存在 |
+| `dd4f62edc` | **UPSTREAM-ABSORBED** | — | “Rewrite HTTP proxy protocol”：`http.go:14`, `:95` 在 `e4b7e692` 处已存在 |
 
-**Final behaviour:** TLS sniffing runs no server handshake; QUIC is inspected as datagram views bounded
-to the current packet; the fragmented loop continues only on `ErrNeedMoreData` and is capped at 64.
+**最终行为（Final behaviour）：** TLS 嗅探不执行服务器握手；QUIC 以限定到当前包的数据报视图进行检视；
+分片循环只在 `ErrNeedMoreData` 时继续，且上限为 64。
 
-**Evidence:** 22 added test files, two fuzz targets, address-range and datagram-poisoning ownership
-proofs. **The cap and the release-on-abandon are `VERIFIED_SOURCE` only** — no test covers them.
+**证据：** 22 个新增测试文件、两个 fuzz 目标、地址范围与数据报投毒（datagram-poisoning）的所有权
+证明。**上限与放弃时释放仅属 `VERIFIED_SOURCE`**——没有测试覆盖它们。
 
 ---
 
 ## 4. DNS → `dns-demand.md`
 
-| SHA | Type | Origin | What it did |
+| SHA | 类型 | 来源 | 它做了什么 |
 |---|---|---|---|
-| `5b0a33c` | FEATURE | OWN | `dns/transport/group` — stable / fastest / parallel transport groups |
-| `a123864b` | FIX | OWN | the policy epoch owns the **cache commit**, not only the check |
-| `ffec0df1` | FIX | OWN | a DNS-only environment change gets its **own** generation |
-| `8fad3e9b` | FIX | OWN | a FakeIP server must not answer a destination lookup, and `domain_resolver` could name one |
-| `296bb6f94` → `3711437d4` | FIX/MEMORY | OWN | the DNS cache, pooling and generation family (17 commits) |
-| `1b405d865` → `c443a8df7` | FEATURE/REFACTOR | OWN | DNS family streaming; the collector was later dropped as dead (`721e6c4db`) |
+| `5b0a33c` | FEATURE | OWN | `dns/transport/group`——stable / fastest / parallel 传输组 |
+| `a123864b` | FIX | OWN | 策略 epoch 拥有**缓存提交**，而不仅仅是检查 |
+| `ffec0df1` | FIX | OWN | 仅 DNS 的环境变化获得**自己的**代次 |
+| `8fad3e9b` | FIX | OWN | FakeIP 服务器不得应答目的地查询，而 `domain_resolver` 可能指定这样一个服务器 |
+| `296bb6f94` → `3711437d4` | FIX/MEMORY | OWN | DNS 缓存、池化与代次这一族（17 个提交） |
+| `1b405d865` → `c443a8df7` | FEATURE/REFACTOR | OWN | DNS 族流式处理；收集器后来因已成为死代码而被移除（`721e6c4db`） |
 
-**Current behavior:** a settled-start DNS query may deliver its dated answer after a transition but
-must not commit it under the changed generation; a query started during transition is not delivered
-as a stable result. A FakeIP server cannot resolve a destination; the TCP leg of a DNS transport's
-requirement is `Conditional` because the retry only fires on truncation.
+**当前行为（Current behavior）：** 一次已安定启动（settled-start）的 DNS 查询可能在切换之后才交付其带日期的
+答案，但不得在已变化的代次下提交它；在切换期间启动的查询不会作为稳定结果交付。
+FakeIP 服务器不能解析目的地；DNS 传输需求的 TCP 段是 `Conditional`，
+因为重试只在截断时触发。
 
-**Known defect — FIXED, and the document that says otherwise is stale:** the
-`dns/transport/local.(*DBusResolvedResolver).loopUpdateStatus` goroutine leak recorded in
-`docs/RELEASE-CERTIFICATE.md:70-85` was fixed by **`6b495134c`** (`git log -S'signalLoopStop'
-e4b7e692..a267e99` returns exactly that commit). `VERIFIED_SOURCE`; execute needs Linux + systemd-resolved.
+**已知缺陷——已修复；称其尚未修复的文档已经过期：** 记录在
+`docs/RELEASE-CERTIFICATE.md:70-85` 的 `dns/transport/local.(*DBusResolvedResolver).loopUpdateStatus` goroutine 泄漏
+已由 **`6b495134c`** 修复（`git log -S'signalLoopStop' e4b7e692..a267e99` 恰好返回该提交）。
+`VERIFIED_SOURCE`；执行需要 Linux + systemd-resolved。
 
 ---
 
 ## 5. MASQUE / CONNECT-IP → `masque-connectip.md`
 
-| SHA | Type | Origin | What it did |
+| SHA | 类型 | 来源 | 它做了什么 |
 |---|---|---|---|
-| `b83089ec` | — | **UPSTREAM-INHERITED** | "Add MASQUE support", 世界, 2026-09-21 — **present below `e4b7e692`**, not a fork feature |
-| `d53c867b7` | FEATURE | OWN | **the fork's first fork-authored commit** — the inbound masquerade handler |
-| `7e57fe8c7` | HARDENING | OWN | historical limiter work; current connection-count refusals close at accept rather than returning a 429. See `modules/naive-http-transport.md` |
-| `b83695603` → `1511c1c6a` | FEATURE/FIX | OWN | the H3 pool rotates within the **tied-minimum** set (before, slot 0 served every tunnel) |
-| `0271b145a` | HARDENING | OWN | CONNECT gated on `HandshakeComplete` (0-RTT replay) |
-| `9491008a9` | FIX | OWN | `http3_fallback` was dead config |
-| `e4f847ecf` | COMPAT | **EXTERNAL-ADAPTED** | QUIC defaults taken from `quic-go/masque-go` + `connect-ip-go` |
-| `969909bc1` → `b656b062f` | HARDENING → PERF | OWN | cross-protocol overlap; the *correct* quadratic version was an **800× CPU DoS** (13.5 s vs 16 ms) |
-| `a529b68c8` | HARDENING | **EXTERNAL-ADAPTED** | the 8192-entry capsule bound (was 149,796 entries / 17.65 MiB); constant from `connect-ip-go` |
-| `e4d2f6c1a` | FIX | OWN | `Contains() == lookup()` on the server's own address |
-| `6d94da584` → `b5a25edd8` | PERF/ZERO-COPY | OWN | no per-packet alloc; `errors.As(&tooLarge)` escaped to the heap **even when `err == nil`** |
-| `8870623cf` | FEATURE | OWN | the bootstrap cache |
-| `8f1ba42a9` → `1d87f0cf7`, `e93e297aa` | FEATURE/REFACTOR | OWN | DNS roles made explicit; immutable snapshots replacing the deleted `assigned_dns_*` model |
-| `2118ee40` | FEATURE | OWN | introduced MASQUE detour-capacity handling; see the current initial-size qualification below |
-| `0d28c26d` | FIX | OWN | makes the H3 fallback reachable; lets the tunnel leg fragment |
-| `a367bbe3` | FIX/HARDENING | OWN | closes the readiness window; serialises every DNS invalidation |
-| `a00a2fe6` | FIX | OWN | the H3 acquisition is part of the **close decision** |
-| `9235f90` | FIX | OWN | the server endpoint's teardown goes to the `Scope` that closes it |
-| `c3b4f567` | FIX | OWN | releases resources acquired **after** `Scope.Close` returned |
+| `b83089ec` | — | **UPSTREAM-INHERITED** | “Add MASQUE support”，世界，2026-09-21——**存在于 `e4b7e692` 之下**，不是 fork 的功能 |
+| `d53c867b7` | FEATURE | OWN | **fork 的第一个由 fork 创作的提交**——入站伪装（masquerade）处理器 |
+| `7e57fe8c7` | HARDENING | OWN | 历史上的限流器工作；当前连接数拒绝会在 accept 时关闭，而不是返回 429。见 `modules/naive-http-transport.md` |
+| `b83695603` → `1511c1c6a` | FEATURE/FIX | OWN | H3 连接池在**并列最小值（tied-minimum）**集合内轮转（此前槽位 0 服务所有隧道） |
+| `0271b145a` | HARDENING | OWN | CONNECT 以 `HandshakeComplete` 为门禁（0-RTT 重放） |
+| `9491008a9` | FIX | OWN | `http3_fallback` 是死配置 |
+| `e4f847ecf` | COMPAT | **EXTERNAL-ADAPTED** | QUIC 默认值取自 `quic-go/masque-go` + `connect-ip-go` |
+| `969909bc1` → `b656b062f` | HARDENING → PERF | OWN | 跨协议重叠检查；*正确*的二次方版本曾是一次 **800× CPU DoS**（13.5 s 对 16 ms） |
+| `a529b68c8` | HARDENING | **EXTERNAL-ADAPTED** | 8192 条目的 capsule 上限（此前为 149,796 条目 / 17.65 MiB）；常量来自 `connect-ip-go` |
+| `e4d2f6c1a` | FIX | OWN | 在服务器自身地址上满足 `Contains() == lookup()` |
+| `6d94da584` → `b5a25edd8` | PERF/ZERO-COPY | OWN | 无逐包分配；`errors.As(&tooLarge)` **即便在 `err == nil` 时**也会逃逸到堆上 |
+| `8870623cf` | FEATURE | OWN | bootstrap 缓存 |
+| `8f1ba42a9` → `1d87f0cf7`, `e93e297aa` | FEATURE/REFACTOR | OWN | DNS 角色被显式化；不可变快照取代了被删除的 `assigned_dns_*` 模型 |
+| `2118ee40` | FEATURE | OWN | 引入 MASQUE detour 容量处理；见下文关于当前 initial size 的限定说明 |
+| `0d28c26d` | FIX | OWN | 使 H3 回退可达；允许隧道段分片 |
+| `a367bbe3` | FIX/HARDENING | OWN | 关闭就绪窗口；将每次 DNS 失效串行化 |
+| `a00a2fe6` | FIX | OWN | H3 获取是**关闭决策**的一部分 |
+| `9235f90` | FIX | OWN | 服务器端点的拆除交给关闭它的那个 `Scope` |
+| `c3b4f567` | FIX | OWN | 释放**在 `Scope.Close` 返回之后**获取的资源 |
 
-**Current behavior:** each batch chunk is all-or-nothing for ownership; an accepted prefix transfers ownership and
-only the remaining buffers may fall back. A context-ID substitution refuses the affected chunk.
-The HTTP/3 copy fallback can queue some copies before a later error, so this is not exactly-once delivery.
-The outer QUIC initial size is capped by a proven detour capacity, without proving a hard cap on
-later packets; see `modules/mtu-and-geometry.md`.
+**当前行为：** 每个批处理块（batch chunk）在所有权上都是全有或全无；被接受的前缀会转移所有权，
+只有剩余的缓冲区可以回退。上下文 ID 替换会拒绝受影响的块。
+HTTP/3 复制回退可能在后续错误之前排队若干副本，因此这不是恰好一次（exactly-once）交付。
+外层 QUIC 的 initial size 受已证明的 detour 容量限制，但并未证明后续包存在硬上限；
+见 `modules/mtu-and-geometry.md`。
 
 ---
 
-## 6. Native Naive → `naive-http-transport.md`
+## 6. 原生 Naive（Native Naive）→ `naive-http-transport.md`
 
-**Initial problem:** the fork needed a NaiveProxy **server** inbound with the fork's resource controls,
-and the padding/framing contract had to match a client it does not own.
+**初始问题：** fork 需要一个带 fork 资源控制的 NaiveProxy **服务端**入站，
+而填充/分帧契约必须匹配一个它并不拥有的客户端。
 
-| SHA | Type | Origin | What it did |
+| SHA | 类型 | 来源 | 它做了什么 |
 |---|---|---|---|
-| `45f6686a6` | FEATURE | **EXTERNAL-ADAPTED** | the native Naive inbound (reference: `klzgrad/forwardproxy@naive d62c80d3…`, quoted at lines 320/352) |
-| `23af897bf` | HARDENING | OWN | `-connect-authority` removed |
-| `593f634a1` | FIX | UPSTREAM-ABSORBED-style | hijack buffered bytes |
-| `fb90272a5` | FIX | OWN | an `io.Writer` short write caused **frame desync** |
-| `b16660ed1` | HARDENING | OWN | a timing signal was removed |
-| `3c6e0aad3` → `fe5789539` | FIX → FIX | OWN | a clamp was added and then **undone**; the full 0..255 padding range is correct. The "panic fix" **was itself a protocol change** — a test misused `buf.Resize(start, end)` where arg2 is a **length**. |
-| `e9d329380` | COMPAT | UPSTREAM-ABSORBED-style | the response `Padding` header became unconditional |
-| `d4ead1498` | HARDENING | OWN | `packetDestinationGuard` introduced |
-| `7029722bf` | HARDENING | OWN | the single conjunctive TCP-only self-SSH:2222 exception |
-| `1dc734f75`, `3bbf17907`, `10e1f2a95`, `d1f3798a6`, `2ec06e451` | HARDENING | OWN | guard order and IPv4-mapped normalisation |
-| `724035c76` | REFACTOR | OWN | `server_limits.idle_timeout` was resolved and **never read** — removed with the reasoning |
-| `bbfc31582` → `968395304` | REFACTOR | OWN | the Clash API removed (−1908) and then **restored** (+2254) |
+| `45f6686a6` | FEATURE | **EXTERNAL-ADAPTED** | 原生 Naive 入站（参考：`klzgrad/forwardproxy@naive d62c80d3…`，在第 320/352 行引用） |
+| `23af897bf` | HARDENING | OWN | 移除 `-connect-authority` |
+| `593f634a1` | FIX | UPSTREAM-ABSORBED-style | 劫持（hijack）已缓冲的字节 |
+| `fb90272a5` | FIX | OWN | 一次 `io.Writer` 的短写（short write）导致了**帧不同步** |
+| `b16660ed1` | HARDENING | OWN | 移除了一处时序信号 |
+| `3c6e0aad3` → `fe5789539` | FIX → FIX | OWN | 先加入了一个截断（clamp），随后又**撤销**；完整的 0..255 填充范围才是正确的。所谓“panic 修复”**本身就是一次协议变更**——有一个测试误用了 `buf.Resize(start, end)`，其中第二个参数是**长度**。 |
+| `e9d329380` | COMPAT | UPSTREAM-ABSORBED-style | 响应中的 `Padding` 头变为无条件发送 |
+| `d4ead1498` | HARDENING | OWN | 引入 `packetDestinationGuard` |
+| `7029722bf` | HARDENING | OWN | 唯一一个需合取条件（conjunctive）、仅限 TCP 的 self-SSH:2222 例外 |
+| `1dc734f75`, `3bbf17907`, `10e1f2a95`, `d1f3798a6`, `2ec06e451` | HARDENING | OWN | 守卫顺序与 IPv4 映射地址（IPv4-mapped）规范化 |
+| `724035c76` | REFACTOR | OWN | `server_limits.idle_timeout` 被解析却**从未读取**——连同推理一同移除 |
+| `bbfc31582` → `968395304` | REFACTOR | OWN | Clash API 先被移除（−1908），随后**恢复**（+2254） |
 
-**Final behaviour:** parse → authenticate → tunnel; padding negotiated and applied to the first 8
-frames; the target ACL resolves before it checks; the per-datagram UoT guard intercepts on the **read**
-side and permits when no rule matches.
+**最终行为：** 解析 → 认证 → 隧道；填充经协商并应用到前 8 个帧；
+目标 ACL 先解析再检查；逐数据报的 UoT 守卫在**读**侧拦截，
+并在无规则匹配时放行。
 
-**Test-integrity wart:** a previous conclusion that "v2 non-Connect is a P0 defect" was a
-**test-fixture error**.
+**测试完整性的瑕疵：** 先前那个“v2 非 Connect 是 P0 缺陷”的结论是一个
+**测试夹具错误**。
 
 ---
 
-## 7. Data path: offload, class, scheduler → `data-path-optimization.md`
+## 7. 数据路径：卸载、类别与调度器（Data path: offload, class, scheduler）→ `data-path-optimization.md`
 
-| SHA | Type | Origin | What it did |
+| SHA | 类型 | 来源 | 它做了什么 |
 |---|---|---|---|
-| `d2b34f1cf` | FEATURE | OWN | the bypass/socket-semantics profile |
-| `3dea03fd5` | FEATURE | OWN | **answer the bypass question for the flow, not the configuration** |
-| `8a6e5f3cc` | FEATURE | OWN | `BypassVerdict` + the cost benchmarks |
-| `143f869a9` | TEST | OWN | the `ActionBypass` trace |
-| `ff80ddea6` | FIX | OWN | a bypass carrying the ICMP `Port` was rewritten to `ActionFlow` |
-| `497d37727` | FIX | OWN | DNS hijack ordering before the route address sets (`8.8.8.8:53` had been leaving sing-box) |
-| `386e95a70` | DOC | OWN | records the TUN-mode limitation |
-| `e27d58711` | PERF | OWN | gates the debug line that cost 5 allocs / ~95 ns per eligible flow |
-| `544c1ab5e` | FEATURE | OWN | the traffic class |
-| `94df98f92` | FEATURE | OWN | the scheduler and the gate |
-| `4e34d0091` | FEATURE | OWN | `route.traffic_scheduler.upload_rate` |
-| `bd7b1ed19` | FIX | OWN | `writePeriod` saturates instead of converting `float64` ns to `Duration` |
-| `bb21a854c` | TEST | OWN | **the `trafficresearch` tag** — the prototype fails deterministically on Linux |
-| `4f999d461` | TEST | OWN | the HIGH-versus-HIGH gate rewritten off p99 onto the queue and the median |
-| `bcc715a72`, `5ab49bdcb` | FEATURE/FIX | OWN | the dial governor, then wait-instead-of-poll |
-| `58050da3c` | DOC | OWN | **quotes the bogus fixture benchmark** |
-| `22d46966c` | FIX | OWN | fixes the benchmark fixture two days later — the doc was never updated |
+| `d2b34f1cf` | FEATURE | OWN | bypass/socket 语义的 profile |
+| `3dea03fd5` | FEATURE | OWN | **针对流而非配置来回答 bypass 问题** |
+| `8a6e5f3cc` | FEATURE | OWN | `BypassVerdict` + 成本基准测试 |
+| `143f869a9` | TEST | OWN | `ActionBypass` 追踪 |
+| `ff80ddea6` | FIX | OWN | 携带 ICMP `Port` 的 bypass 被改写为 `ActionFlow` |
+| `497d37727` | FIX | OWN | 把 DNS 劫持排在路由地址集之前（`8.8.8.8:53` 此前会离开 sing-box） |
+| `386e95a70` | DOC | OWN | 记录 TUN 模式下的限制 |
+| `e27d58711` | PERF | OWN | 为那条每个合格流耗费 5 次分配 / 约 95 ns 的调试日志行加上门禁 |
+| `544c1ab5e` | FEATURE | OWN | 流量类别（traffic class） |
+| `94df98f92` | FEATURE | OWN | 调度器与门禁 |
+| `4e34d0091` | FEATURE | OWN | 新增 `route.traffic_scheduler.upload_rate` |
+| `bd7b1ed19` | FIX | OWN | `writePeriod` 采用饱和处理，而不是把 `float64` 纳秒转换为 `Duration` |
+| `bb21a854c` | TEST | OWN | **`trafficresearch` 构建标签**——该原型在 Linux 上确定性失败 |
+| `4f999d461` | TEST | OWN | HIGH 对 HIGH 的门禁从 p99 改为基于队列与中位数 |
+| `bcc715a72`, `5ab49bdcb` | FEATURE/FIX | OWN | 拨号调速器（dial governor），随后是以等待代替轮询 |
+| `58050da3c` | DOC | OWN | **引用了那个伪造的夹具基准测试** |
+| `22d46966c` | FIX | OWN | 两天后修复了该基准夹具——但文档从未更新 |
 
-**Final behaviour:** semantic equivalence, not config emptiness; an unclassified option refuses; the
-verdict is a real bypass **only** in Linux `auto_redirect`; the scheduler is inert when unset and
-continuous when configured.
+**最终行为：** 以语义等价判断，而不是看配置是否为空；未分类的选项会被拒绝；该裁决**仅**在 Linux
+`auto_redirect` 下才是真正的 bypass；调度器在未设置时保持惰性，
+在配置后连续工作。
 
-**Known-bogus:** `direct-offload.md:210`'s `2856 B / 26 allocs`. **Stale:** `direct-offload.md:106`'s
-sing-tun anchor (`d769a7080ca2`) is two pins out of date.
+**已知伪造：** `direct-offload.md:210` 的 `2856 B / 26 allocs`。**已过期：** `direct-offload.md:106` 的
+sing-tun 锚点（`d769a7080ca2`）已落后两个 pin。
 
 ---
 
-## 8. Power and mobile lifecycle → `power-mobile-lifecycle.md`
+## 8. 电源与移动生命周期（Power and mobile lifecycle）→ `power-mobile-lifecycle.md`
 
-**Initial problem:** the sleep duration was measured wrong, and a resume re-anchored it.
+**初始问题：** 睡眠时长被测量错了，而一次恢复（resume）又把它重新锚定。
 
-| SHA | Type | Origin | What it did |
+| SHA | 类型 | 来源 | 它做了什么 |
 |---|---|---|---|
-| `aac340808` | LIFECYCLE | OWN | the sleep authority |
-| `d93b68560`, `89b4b2c25`, `6ebb5799a` | FIX | OWN | pool release at `DEEP_IDLE`; the unreachable `DEEP_IDLE` branch; a stale deadline |
-| `0ff90482` | FIX | OWN | spends the device resume edge on an **edge latch**, not on the screen level |
-| `e4327dca` | LIFECYCLE | OWN | gives the Apple device axis a real publisher and a real release |
-| `4c7d96c0` | FIX | OWN | carries the Apple device axis on the **release line**, not only on a branch |
-| `645d96b4` | FIX | OWN | a current-state screen read **reconciles the level**, it does not start a sleep |
-| `60681f27` | FIX | OWN | a resume does not end a sleep episode, so it must not spend its boundary |
-| `e20875359` | FEATURE | **SUPERSEDED** | gated the sleep edge on `IsDevicePaused()` |
-| `e661258a6` | **REVERT** | **ARCHIVE-ONLY** | reverts `e20875359` on device evidence: **0 boundaries** over a ten-minute lock, strictly worse than the bug. Both are kept. |
-| `12aa6db064f` | FEATURE | OWN | the first **consumer**: the optimistic DNS refresh asks the authority instead of waking the radio — refused in `QUIESCENT`/`DEEP_IDLE`/closed, released through `Allow().NetworkProbe` in the `WAKING` band. Tests in `dns/optimistic_refresh_power_test.go` |
-| `dbf8de8b2a5` | FEATURE | OWN | the second consumer: the dashboard download **waits** on `WaitProviderRefresh` rather than fetching through a sleep, and its first pass is deliberately not deferred. Tests in `service/api/dashboard_power_test.go` |
-| `ff897d35772` | FIX | OWN | resolves the DNS governor at construction instead of in `Start`, so the field the refresh goroutine reads is immutable rather than ordered. See `reports/core/HAKO_SCALE_DEBUG_AUDIT_2026-10-17.md` |
+| `aac340808` | LIFECYCLE | OWN | 睡眠权威（sleep authority） |
+| `d93b68560`, `89b4b2c25`, `6ebb5799a` | FIX | OWN | 在 `DEEP_IDLE` 时释放连接池；不可达的 `DEEP_IDLE` 分支；一个过期的截止时间 |
+| `0ff90482` | FIX | OWN | 把设备恢复边沿用在**边沿锁存（edge latch）**上，而不是用在屏幕级别上 |
+| `e4327dca` | LIFECYCLE | OWN | 为 Apple 设备轴提供真实的发布者与真实的释放 |
+| `4c7d96c0` | FIX | OWN | 把 Apple 设备轴承载在**发布线（release line）**上，而不只是在某个分支上 |
+| `645d96b4` | FIX | OWN | 当前状态屏幕读取会**校准级别**，而不是启动一次睡眠 |
+| `60681f27` | FIX | OWN | 恢复不会结束一个睡眠片段（sleep episode），因此不得消耗其边界 |
+| `e20875359` | FEATURE | **SUPERSEDED** | 把睡眠边沿门禁在 `IsDevicePaused()` 上 |
+| `e661258a6` | **REVERT** | **ARCHIVE-ONLY** | 依据设备证据回退 `e20875359`：十分钟锁屏期间**0 个边界**，严格劣于原来的 bug。两者都保留。 |
+| `12aa6db064f` | FEATURE | OWN | 第一个**消费者**：乐观 DNS 刷新改为询问权威而不是唤醒无线电——在 `QUIESCENT`/`DEEP_IDLE`/已关闭状态下被拒绝，在 `WAKING` 频段通过 `Allow().NetworkProbe` 释放。测试在 `dns/optimistic_refresh_power_test.go` |
+| `dbf8de8b2a5` | FEATURE | OWN | 第二个消费者：仪表盘下载在 `WaitProviderRefresh` 上**等待**，而不是在整个睡眠期间去抓取，并且其第一轮被刻意设计为不延迟。测试在 `service/api/dashboard_power_test.go` |
+| `ff897d35772` | FIX | OWN | 在构造期而不是在 `Start` 中解析 DNS governor，因此刷新 goroutine 读取的字段是不可变的，而不是依赖顺序的。见 `reports/core/HAKO_SCALE_DEBUG_AUDIT_2026-10-17.md` |
 
-**Final behaviour:** level/edge/snapshot are three different things; a display-on publishes only a
-resume edge and the reuse epoch; **only an unlock releases the level**; three reuse bands at 5 s and
-15 s; the trim path never resets the network while the release path does. **Two scheduled outbound
-fetches now defer to the authority** (the DNS optimistic refresh and the dashboard download); the
-WireGuard recovery poll is deliberately left ungated, with the reason recorded in
-`power-mobile-lifecycle.md` §6 and `reports/core/HAKO_SCALE_ARCHITECTURE_AUDIT_2026-10-17.md` §6.
+**最终行为：** 级别/边沿/快照是三件不同的事；屏幕点亮只发布一个恢复边沿和复用 epoch；
+**只有解锁才释放级别**；在 5 s 与 15 s 处有三个复用频段（bands）；
+裁剪路径从不重置网络，而释放路径会。**两个定时的出站抓取现在服从权威**
+（DNS 乐观刷新和仪表盘下载）；WireGuard 恢复轮询被刻意保持不加门禁，
+原因记录在 `power-mobile-lifecycle.md` §6 和
+`reports/core/HAKO_SCALE_ARCHITECTURE_AUDIT_2026-10-17.md` §6。
 
-**Device evidence (the only physical-device run recorded here):** iPhone 17 Pro Max, iOS 26.4.2 —
-pre-fix 28 m 24 s → 12 boundaries → 28.29 s; post-fix 13 m 13 s → 1 boundary → 13 m 13.492448 s.
+**设备证据（此处记录的唯一一次物理设备运行）：** iPhone 17 Pro Max、iOS 26.4.2——
+修复前 28 m 24 s → 12 个边界 → 28.29 s；修复后 13 m 13 s → 1 个边界 → 13 m 13.492448 s。
 
 ---
 
-## 9. Build, pruning and release → `build-pruning-release.md`, `ci-release.md`
+## 9. 构建、裁剪与发布（Build, pruning and release）→ `build-pruning-release.md`, `ci-release.md`
 
-| SHA | Type | Origin | What it did |
+| SHA | 类型 | 来源 | 它做了什么 |
 |---|---|---|---|
-| `f857f0814`, `d535f106f` | BUILD | UPSTREAM-ABSORBED | dropped `with_gvisor` |
-| `0e0063530` | REFACTOR | OWN | dropped `with_clash_api` and the **whole LXD daemon** (−26,481 lines, the largest churn event, lifetime ~25 h) |
-| `76cd68eaf` | FIX | OWN | restored the Clash API, claiming byte-identity with upstream |
-| `379b21161` | BUILD | OWN | **added `with_xhttp` — the only fork-invented profile entry** |
-| `b0e93f894` | BUILD | OWN | removed `tfogo_checklinkname0` from all three profile files (the tag travels with the flag now) |
-| `3bab501db`, `dcd8b10cd`, `4c39a835b`, `b175f04dd`, `523db47e4` | REFACTOR | OWN | retired the whole **product-specific registry + capability allowlist** architecture |
-| `108439963`, `2937cb71e`, `6c5fa3a20` | CI | OWN | the upstream-assumption tripwire gate |
-| `e63ce659` | CI | OWN | the fail-closed release acceptance gate |
-| `9aef595e` | CI | OWN | runs the acceptance gate's self-test on every push |
-| `d660c979` | FIX | OWN | compares the release gate against the names the workflows declare |
-| `a267e99e0` | RELEASE | OWN | v0.1.6: include Windows and Android artifacts — **and did not extend the release-tree allowlist** |
-| `27d8bb599`, `12ee55eef` | REPOSITORY-HYGIENE | OWN | ancestry-only merges to clear GitHub's stale "behind upstream" state. **No tree change** (`12ee55eef` records `PRE_SYNC_TREE == post-merge tree`). |
-| `7f31bfd5e` | RELEASE | OWN | advances the `clients/apple` gitlink `d0524912` → `5cab4ec5` and **nothing else** — `1 file changed, 1 insertion(+)`. The pin, not the code: no workflow, refs file or build script moves with it. |
-| `ece0fb9d2` | FIX + CI | OWN | unblocks `release-apple.sh testflight`, twice over. The refs guard tested the caller's **environment** instead of the refs **file**, so `resolve -> export -> assert-shared-source` refused the values `resolve` had just printed; and `VERIFIED_APPLE_SHA` was a pin generation behind the gitlink, failing the ABI gate's layer 5. Cherry-picked from `24d55d64b`, with the constant re-derived to the *current* gitlink rather than the one the original named. |
+| `f857f0814`, `d535f106f` | BUILD | UPSTREAM-ABSORBED | 移除 `with_gvisor` |
+| `0e0063530` | REFACTOR | OWN | 移除 `with_clash_api` 和**整个 LXD 守护进程**（−26,481 行，最大的改动事件，存续约 25 小时） |
+| `76cd68eaf` | FIX | OWN | 恢复 Clash API，并声称与上游逐字节相同 |
+| `379b21161` | BUILD | OWN | **新增 `with_xhttp`——唯一由 fork 发明的 profile 条目** |
+| `b0e93f894` | BUILD | OWN | 从全部三个 profile 文件中移除 `tfogo_checklinkname0`（该标签现在随标志一起传递） |
+| `3bab501db`, `dcd8b10cd`, `4c39a835b`, `b175f04dd`, `523db47e4` | REFACTOR | OWN | 退役了整个**产品专用注册表 + 能力允许列表**架构 |
+| `108439963`, `2937cb71e`, `6c5fa3a20` | CI | OWN | 上游假设绊线（tripwire）门禁 |
+| `e63ce659` | CI | OWN | 失败即拒绝（fail-closed）的发布验收门禁 |
+| `9aef595e` | CI | OWN | 每次 push 都运行该验收门禁的自检 |
+| `d660c979` | FIX | OWN | 把发布门禁与各工作流声明的名字进行比对 |
+| `a267e99e0` | RELEASE | OWN | v0.1.6：包含 Windows 与 Android 产物——**却没有扩展发布树允许列表** |
+| `27d8bb599`, `12ee55eef` | REPOSITORY-HYGIENE | OWN | 仅为清除 GitHub 过时的“落后于 upstream”状态而做的祖先记录合并。**无树变更**（`12ee55eef` 记录 `PRE_SYNC_TREE == post-merge tree`）。 |
+| `7f31bfd5e` | RELEASE | OWN | 把 `clients/apple` gitlink 从 `d0524912` 推进到 `5cab4ec5`，**别无其他**——`1 file changed, 1 insertion(+)`。这是 pin 而非代码：没有任何 workflow、refs 文件或构建脚本随之移动。 |
+| `ece0fb9d2` | FIX + CI | OWN | 两处为 `release-apple.sh testflight` 解除阻塞。refs 守卫测试的是调用方的**环境**，而不是 refs **文件**，因此 `resolve -> export -> assert-shared-source` 拒绝了 `resolve` 刚刚打印出来的值；并且 `VERIFIED_APPLE_SHA` 比 gitlink 落后一个 pin 代次，导致 ABI 门禁的第 5 层失败。该提交从 `24d55d64b` cherry-pick 而来，常量按*当前* gitlink 重新推导，而不是按原提交所指的那个。 |
 
-**Final behaviour:** upstream's registries and profiles, one fork-invented tag, the version stamp and
-the Apple pin metadata; release downloads and re-verifies rather than rebuilding.
+**最终行为：** 上游的注册表与 profile、一个 fork 发明的标签、版本戳与
+Apple pin 元数据；发布流程下载并重新验证，而不是重新构建。
 
-**Historical defect, fixed at the v0.1.9 review:** the release-tree allowlist omitted extra producer
-files. The current allowlist and release workflow must be checked together; v0.1.31's release run
-reported successful verification. See `ci-release.md` §5 for the revision and evidence limits.
+**历史缺陷，已在 v0.1.9 评审时修复：** 发布树允许列表遗漏了额外的生产者文件。
+当前的允许列表与发布工作流必须一起检查；v0.1.31 的发布运行报告验证成功。
+关于该修订与证据局限，见 `ci-release.md` §5。
 
-**Superseded:** the environment-based refs guard (`ece0fb9d2` replaces it). It is the shape a future
-change is most likely to repeat, because testing a sourced file's variable names in the *environment*
-looks equivalent to reading the file and is not — `resolve` and `release-apple.sh` legitimately carry
-the same names. The original cherry-pick reference `24d55d64b` is not present in the current parent
-object database; inspect its original branch or patch before relying on it. Also superseded: two
-Apple-client `VERIFIED_APPLE_SHA` values, `90a0e9ae` and `d0524912`. Each was
-correct for its own gitlink and became wrong the moment the pin moved without it — which is the whole
-failure mode that constant has.
+**被取代：** 基于环境的 refs 守卫（`ece0fb9d2` 取代了它）。它正是未来的变更最有可能
+重复的形状，因为在*环境*中测试一个被 source 的文件的变量名，看起来等价于读取该文件，
+但实际上并不等价——`resolve` 与 `release-apple.sh` 合法地携带相同的名字。
+原始 cherry-pick 参考 `24d55d64b` 不在当前父仓库的对象数据库中；
+在依赖它之前，请检查它原本的分支或补丁。同样被取代的还有：两个 Apple 客户端
+`VERIFIED_APPLE_SHA` 值，`90a0e9ae` 与 `d0524912`。每个值对其各自的 gitlink 都是正确的，
+并且在 pin 未随之移动的那一刻就变错了——
+这正是该常量固有的失败模式。
 
 ---
 
-## 10. Superseded work, reverts and dead ends — the trap material
+## 10. 被取代的工作、回退与死胡同——陷阱素材（Superseded work, reverts and dead ends — the trap material）
 
-**Only three explicit reverts in 1,834 commits:**
+**在 1,834 个提交中只有三次显式回退：**
 
-| Revert | Reverts | Why |
+| 回退 | 被回退者 | 原因 |
 |---|---|---|
-| `e661258a6` | `e20875359` | **device evidence.** Gating the sleep edge on `IsDevicePaused()` produced 0 reuse boundaries over a 10-minute lock — strictly worse than the bug. Unfixable that round because the anchor and the per-sleep latch are the **same field**. |
-| `4b75589b1` | `f1ea985d2` + `e92dff18b` | *"The defect they fixed does not exist."* The fix's mutable lifecycle exposed an **unlocked reader on the connection path**, and the author's own comment was false. |
-| `eb3b09033` | `5096ac91a` | The nil-`SO_MARK` panic is unreachable (the build tags are exact complements), and the race had only been shown with an artificial concurrent `Register` loop. |
+| `e661258a6` | `e20875359` | **设备证据。** 把睡眠边沿门禁在 `IsDevicePaused()` 上，在十分钟锁屏期间产生了 0 个复用边界——严格劣于原来的 bug。那一轮无法修复，因为锚点与每次睡眠的锁存器是**同一个字段**。 |
+| `4b75589b1` | `f1ea985d2` + `e92dff18b` | *“The defect they fixed does not exist.”* 该修复引入的可变生命周期暴露了**连接路径上一个未加锁的读取者**，而作者自己的注释是假的。 |
+| `eb3b09033` | `5096ac91a` | nil-`SO_MARK` 的 panic 不可达（构建标签互为精确补集），而该竞态只在人为的并发 `Register` 循环下被展示过。 |
 
-`ARCHIVE-ONLY`: `e20875359`, `f1ea985d2`, `e92dff18b`, `5096ac91a`.
+`ARCHIVE-ONLY`：`e20875359`, `f1ea985d2`, `e92dff18b`, `5096ac91a`。
 
-**Removed then restored:** the Clash API; the MASQUE client transport; the Apple/Android/desktop client
-lines; the desktop installer (`43f4048ac` → `7a46125de` "recover verbatim").
+**移除后又恢复：** Clash API；MASQUE 客户端传输；Apple/Android/desktop 客户端线；
+桌面安装器（`43f4048ac` → `7a46125de` “recover verbatim”）。
 
-**Removed for good:** `lxd/`; the product registry and capability allowlist; `-connect-authority`;
-`server_limits.idle_timeout`; the MASQUE PREF64 clear path; a MASQUE dead selection rule; the DNS
-streaming collector; a stray 21 MB `masque.test` binary.
+**永久移除：** `lxd/`；产品注册表与能力允许列表；`-connect-authority`；
+`server_limits.idle_timeout`；MASQUE PREF64 清除路径；一条 MASQUE 的死选择规则；
+DNS 流式收集器；一个误留的 21 MB `masque.test` 二进制。
 
-**Superseded pairs:** `3c6e0aad3` → `fe5789539` (the clamp); `969909bc1` → `b656b062f` (the quadratic
-overlap check); `b51d3cbe5` ("set version 0.1.15") → `e70f3d2c8` ("correct version to v0.1.5");
-the `splice_diagnostics` `Successes`/`Ratio` rename, reverted in consolidation and now guarded by a
-source-level test.
+**被取代的成对提交：** `3c6e0aad3` → `fe5789539`（那个截断）；`969909bc1` → `b656b062f`（二次方重叠检查）；
+`b51d3cbe5`（“set version 0.1.15”）→ `e70f3d2c8`（“correct version to v0.1.5”）；
+`splice_diagnostics` 的 `Successes`/`Ratio` 重命名，在合并整理时被回退，
+现在由源码级测试守护。
 
-**Fix-of-fix chains, each of which introduced a false result at least once:** the path model (5 rounds,
-two of which introduced false denies); static validation (5 rounds); the power governor (7 steps ending
-in a revert); the Naive padding fix, where **the fix was the bug**.
+**修复之修复的链条，每条至少引入过一次错误结果：** 路径模型（5 轮，
+其中两轮引入了误拒）；静态校验（5 轮）；电源 governor（7 步，以一次回退结束）；Naive 填充修复，其中
+**修复本身就是那个 bug**。
 
-**Tests that could not fail** — a whole family, each later fixed: `48dd4469e`, `e5b0897f4`, `12c0a9e60`,
+**不可能失败的测试**——整整一族，每一个后来都被修复：`48dd4469e`, `e5b0897f4`, `12c0a9e60`,
 `3c3dd135b`, `f8b0af5f6`, `10f9e17d2`, `eac9cc83d`, `b5c0009d1`, `95159084c`, `666470cbe`,
-`4cdb250b0`, `c2d93396e`, `da14572a7`, `b5c39a11e`, `675d72bc5`, `6140afcc5`.
-The instructive one: a TUN test that called `inbound.Close()` **directly** — which the product never
-does — so it stayed green while the product leaked.
+`4cdb250b0`, `c2d93396e`, `da14572a7`, `b5c39a11e`, `675d72bc5`, `6140afcc5`。
+最有教育意义的一个：一个 TUN 测试**直接**调用了 `inbound.Close()`——产品从不这样做——
+因此产品泄漏时它仍然保持绿色。
 
-**Scope oscillation:** `5ce3c4d67` ("refactor!: narrow the fork to VPS-only") removed the iOS/client
-lines and the entire MASQUE client transport (−13,122 lines, +270). **All of it is back.** The narrowing
-was undone by the next upstream sync, not by a decision — `transport/masque/server.go` was added by an
-upstream commit, deleted an hour later, re-added by the next upstream commit, and absorbed. **A future
-AI reading that commit message will believe a deliberate scope decision was made. It was not.**
+**范围震荡：** `5ce3c4d67`（“refactor!: narrow the fork to VPS-only”）移除了 iOS/客户端线
+以及整个 MASQUE 客户端传输（−13,122 行，+270 行）。**这些现在全都回来了。** 这次收窄
+是被下一次上游同步撤销的，而不是被某个决策撤销的——`transport/masque/server.go` 由一个
+上游提交加入，一小时后被删除，又被下一个上游提交重新加入，然后被吸收。**未来读到那条提交
+信息的 AI 会相信曾做出过一次刻意的范围决策。事实并非如此。**
 
 ---
 
-## 11. Where to look next
+## 11. 接下来去哪里看（Where to look next）
 
-| You want | Go to |
+| 你想要 | 去哪里 |
 |---|---|
-| the release identity and the provenance test | `BASELINE.md` |
-| which module owns your task | `modules/README.md` |
-| whether a rule is an invariant or a convention | `INVARIANTS.md` |
-| how to re-check a requirement | `ACCEPTANCE.md` |
-| why the code is shaped this way | the module's **Provenance** table |
-| the "reasonable but wrong" edit you are about to make | the module's **AI cautions** |
+| 发布身份与来源检验 | `BASELINE.md` |
+| 哪个模块拥有你的任务 | `modules/README.md` |
+| 某条规则是不变量还是约定 | `INVARIANTS.md` |
+| 如何复检某项需求 | `ACCEPTANCE.md` |
+| 代码为何是这个形状 | 该模块的**来源（Provenance）**表 |
+| 你即将做出的“合理但错误”的修改 | 该模块的 **AI 注意事项（AI cautions）** |

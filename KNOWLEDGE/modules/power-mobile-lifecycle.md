@@ -1,114 +1,84 @@
-# Power and mobile lifecycle
+# 功耗与移动端生命周期（Power and mobile lifecycle）
 
-## Progressive memory release after v0.1.9
+## v0.1.9 之后的渐进式内存释放（Progressive memory release after v0.1.9）
 
-**VERIFIED_SOURCE**, testing target `011f3fdcd99`: `adapter/network.go` distinguishes optional
-`TrimCaches` (only entries the read path would refuse), `TrimMemory` (reusable pools without a
-network reset or touching live traffic) and aggressive `ReleaseMemory` (reset and release). Their
-implementations are in `route/network.go`. Do not substitute a full network reset for an ordinary
-progressive trim. `box_lifecycle.go` still separates a resume from `woke()`: the latter publishes a
-reuse boundary before releasing the paused level. These source observations are not device tests.
+**VERIFIED_SOURCE**，测试目标 `011f3fdcd99`：`adapter/network.go` 区分可选的 `TrimCaches`（只清理读路径会拒绝的条目）、`TrimMemory`（复用池，但不重置网络、不触碰活跃流量）以及激进的 `ReleaseMemory`（重置并释放）。它们的实现在 `route/network.go`。不要用一次完整的网络重置替代一次普通的渐进裁剪。`box_lifecycle.go` 仍然把 resume 与 `woke()` 区分开：后者在释放被暂停的 level 之前发布一次复用边界。这些源码观察不是设备测试。
 
-`common/power/governor.go` copies observer slices before invoking callbacks without the lock, then
-repeats notification passes when observers register during a pass; the loop is bounded to eight
-passes. This prevents a slice backing-array race and handles registration at a one-off reuse boundary
-without holding the governor lock around external callbacks. `governor_observer_race_test.go` is the
-regression anchor; this Windows refresh ran the package without `-race`, not a race-detector run.
+`common/power/governor.go` 在无锁情况下调用回调之前先拷贝观察者 slice，然后当观察者在一次遍历期间注册时重复通知遍历；该循环被限制为八次。这既防止了 slice 底层数组的竞态，也在一次性复用边界处处理了注册，同时不在外部回调周围持有调速器锁。`governor_observer_race_test.go` 是回归锚点；本次 Windows 刷新在没有 `-race` 的情况下运行了该包，并不是一次竞态检测器运行。
 
-**Scope:** `common/power/governor.go`, `common/runtimecoord/platform_events.go`, `box_lifecycle.go`,
-`experimental/libbox/platform_events.go`, `service/oomkiller`, `internal/memmetrics`, and the reuse
-policy in `route/reference.go`.
+**范围：** `common/power/governor.go`、`common/runtimecoord/platform_events.go`、`box_lifecycle.go`、`experimental/libbox/platform_events.go`、`service/oomkiller`、`internal/memmetrics`，以及 `route/reference.go` 中的复用策略。
 
-**Provenance:** `common/power` is a **fork-created package** (7 files, ~2,579 insertions, first commit
-`aac340808`); `internal/memmetrics` is fork-created. The Apple device axis, the Android trim mapping
-and the reuse-band policy are fork work.
+**来源：** `common/power` 是一个 **fork 创建的包**（7 个文件、约 2,579 行新增，首个提交 `aac340808`）；`internal/memmetrics` 也是 fork 创建的。Apple 设备轴、Android trim 映射以及复用分带策略都是 fork 的工作。
 
-**Load this module when changing:** screen state, lock state, sleep/resume, device wake, memory trim,
-`ReuseSuspect`, the pause/keepalive policy, or any timer that runs while the device may be idle.
+**在改动以下内容时加载本模块：** 屏幕状态、锁屏状态、休眠/恢复、设备唤醒、内存裁剪、`ReuseSuspect`、暂停/保活策略，或任何在设备可能空闲时运行的定时器。
 
 ---
 
-## 1. The boundary: the client reports facts, the core decides policy
+## 1. 边界：客户端报告事实，核心决定策略（The boundary: the client reports facts, the core decides policy）
 
-This is real, and it is enforced by where the classification lives rather than by convention.
+这是真实存在的，而且它由分类逻辑所在的位置来强制，而不是靠约定。
 
-| Concern | Owner | Anchor |
+| 关注点 | 归属 | 锚点 |
 |---|---|---|
-| What a platform *reports* | the platform, through `experimental/libbox/platform_events.go` — a **thin forwarder**: `MemoryTrim(level int32)` `:234`, `SetAppForeground(bool)` `:243`, `SetScreenOn(bool)` `:261`, `ReportDeviceWake()` `:269`, `Close()` `:277` | `:92` builds `boxPlatformTarget`; `:194 NewPlatformEvents` routes into `runtimecoord.PlatformEvents` |
-| What a level *means* | **the core** — `TrimLevel` constants and `TrimLevel.Action()` | `common/runtimecoord/platform_events.go:152-220` |
-| Coalescing windows | **the core** — `trimCoalesceWindow = time.Second` (`:223`), `releaseCoalesceWindow = adapter.RecoveryWindow` (`:231`) | as cited |
-| The device state machine | **the core** — `common/power.Governor` | `governor.go:53 State`, `:93 Allow`, `:109 ReuseAction`, `:141 ReuseBoundary`, `:168 Policy`, `:222 ReuseFreshness.Classify`, `:239 WakeStagger`, `:264 DefaultPolicy`, `:472 DevicePaused`, `:491 DeviceWake`, `:526 SleepStarted`, `:564 Resumed`, `:660 NetworkPaused`, `:672 NetworkWake`, `:708 ObserveTraffic`, `:917 ReuseEpoch`, `:939 AddReuseObserver`, `:950 WaitActive`, `:987 WaitProviderRefresh` |
+| 平台*报告*什么 | 平台，经由 `experimental/libbox/platform_events.go`——一个**薄转发器**：`MemoryTrim(level int32)` `:234`、`SetAppForeground(bool)` `:243`、`SetScreenOn(bool)` `:261`、`ReportDeviceWake()` `:269`、`Close()` `:277` | `:92` 构建 `boxPlatformTarget`；`:194 NewPlatformEvents` 路由进 `runtimecoord.PlatformEvents` |
+| 一个 level *意味着*什么 | **核心**——`TrimLevel` 常量与 `TrimLevel.Action()` | `common/runtimecoord/platform_events.go:152-220` |
+| 合并窗口 | **核心**——`trimCoalesceWindow = time.Second`（`:223`）、`releaseCoalesceWindow = adapter.RecoveryWindow`（`:231`） | 如所引 |
+| 设备状态机 | **核心**——`common/power.Governor` | `governor.go:53 State`, `:93 Allow`, `:109 ReuseAction`, `:141 ReuseBoundary`, `:168 Policy`, `:222 ReuseFreshness.Classify`, `:239 WakeStagger`, `:264 DefaultPolicy`, `:472 DevicePaused`, `:491 DeviceWake`, `:526 SleepStarted`, `:564 Resumed`, `:660 NetworkPaused`, `:672 NetworkWake`, `:708 ObserveTraffic`, `:917 ReuseEpoch`, `:939 AddReuseObserver`, `:950 WaitActive`, `:987 WaitProviderRefresh` |
 
-**The classification of a raw platform number lives in the core, not the client.** If a client sent
-"you should trim", policy would have moved into three client codebases; instead a client sends the
-number the OS gave it and the core decides.
+**对原始平台数值的分类住在核心里，而不是客户端里。** 如果客户端发送“你应该裁剪”，策略就搬进了三个客户端代码库；而实际上客户端发送操作系统给它的数值，由核心来决定。
 
 ---
 
-## 2. Level, edge, snapshot — four vocabularies that must not be merged
+## 2. level、edge、snapshot——四种不得合并的词汇（Level, edge, snapshot — four vocabularies that must not be merged）
 
-| Vocabulary | Level API | Edge API | Snapshot / reconcile API |
+| 词汇 | Level API | Edge API | 快照/协调 API |
 |---|---|---|---|
-| `common/power.Governor` (the state machine) | `DevicePaused` `:472`, `NetworkPaused` `:660` | `DeviceWake` `:491`, `SleepStarted` `:526`, `Resumed` `:564`, `NetworkWake` `:672` | `State` `:53`, `Policy` `:168`, `ReuseBoundary` `:141` |
-| `pause.Manager` (sing's level+edges) | its level getters | its edge callbacks | — |
-| `box_lifecycle.go` (the Apple mapping) | `screenState(on)` `:173-179`, `lockState(locked)` `:193-199` | `slept()` `:94-101` (edge-then-level), `resumed()` `:141` (**publishes nothing**), `woke()` `:156-163` (boundary-then-level) | `reconcileScreenState` / `reconcileLockState` `:228-252` — **level-only** |
-| `common/runtimecoord/platform_events.go` (Android/foreground) | the trim ladder below | the screen/foreground edges | the event snapshot |
+| `common/power.Governor`（状态机） | `DevicePaused` `:472`, `NetworkPaused` `:660` | `DeviceWake` `:491`, `SleepStarted` `:526`, `Resumed` `:564`, `NetworkWake` `:672` | `State` `:53`, `Policy` `:168`, `ReuseBoundary` `:141` |
+| `pause.Manager`（sing 的 level+edges） | 它的 level getter | 它的 edge 回调 | — |
+| `box_lifecycle.go`（Apple 映射） | `screenState(on)` `:173-179`, `lockState(locked)` `:193-199` | `slept()` `:94-101`（先 edge 再 level）、`resumed()` `:141`（**不发布任何东西**）、`woke()` `:156-163`（先边界再 level） | `reconcileScreenState` / `reconcileLockState` `:228-252`——**仅 level** |
+| `common/runtimecoord/platform_events.go`（Android/前台） | 下面的 trim 阶梯 | 屏幕/前台 edge | 事件快照 |
 
-### Why `reconcileScreenState` / `reconcileLockState` must be level-only
+### 为什么 `reconcileScreenState` / `reconcileLockState` 必须只处理 level（Why `reconcileScreenState` / `reconcileLockState` must be level-only）
 
-A **current-state read is not an edge**. If a re-read published an edge, every poll would look like a
-fresh transition. The pinned statement is the invariant:
+**当前状态读取不是 edge。** 如果一次重读发布了一个 edge，那么每次轮询都会看起来像一次新的转换。被固定的陈述就是这条不变量：
 
-> **Apple snapshot reconciliation is level-only. It must not fabricate sleep/wake edges, and it must
-> not release a pause based only on a screen read.**
+> **Apple 的快照协调只处理 level。它不得伪造 sleep/wake edge，也不得仅凭一次屏幕读取就释放一次暂停。**
 
-`645d96b4` is the commit: *"a current-state screen read reconciles the level, it does not start a
-sleep."* `60681f27` is its pair: *"a resume does not end a sleep episode, so it must not spend its
-boundary."*
+`645d96b4` 是那个提交：*"a current-state screen read reconciles the level, it does not start a sleep."*（中文：一次当前状态的屏幕读取只协调 level，它不启动一次休眠。）`60681f27` 是它的一对：*"a resume does not end a sleep episode, so it must not spend its boundary."*（中文：一次 resume 不会结束一个休眠时段，因此它不得消耗掉自己的边界。）
 
-### Why a display turning **on** is not an unlock
+### 为什么显示屏亮起**不算**解锁（Why a display turning **on** is not an unlock）
 
-`box_lifecycle.go` routes display-on to `resumed()`, which currently publishes nothing; unlock
-calls `woke()` and releases the level. Treating display-on as unlock would re-create the bug the
-split was made to fix.
+`box_lifecycle.go` 把 display-on 路由到 `resumed()`，而它目前不发布任何东西；解锁则调用 `woke()` 并释放 level。把 display-on 当作解锁，会重新造出这次拆分所要修掉的那个 bug。
 
-### `resumed()` deliberately publishes nothing
+### `resumed()` 刻意不发布任何东西（`resumed()` deliberately publishes nothing）
 
 ```go
 func (l lifecycle) resumed() {}
 ```
 
-`box_lifecycle.go:141`. The measured story is at `:109-137`: a **28 m 24 s** sleep with 13 extension
-resumes produced **13 anchors and a 28.29 s boundary** — the measurement was destroyed by the resumes
-themselves. The sleep edge starts the measurement; the reuse boundary is published when the device
-becomes usable via `woke()`, before the level is released. A mere extension resume does neither.
+`box_lifecycle.go:141`。测量到的完整经过在 `:109-137`：一次 **28 m 24 s** 的休眠、伴随 13 次扩展 resume，产出了 **13 个锚点和一个 28.29 s 的边界**——测量被 resume 本身毁掉了。sleep edge 启动测量；复用边界在设备经 `woke()` 变为可用时发布，且在 level 被释放之前。单纯一次扩展 resume 两件事都不做。
 
-**The anchor and the per-episode boundary latch are the same field.** That is the structural reason a
-later attempt to gate the sleep edge on `IsDevicePaused()` produced **zero** boundaries over a ten-minute
-lock (strictly worse than the bug it fixed) and was reverted (`e20875359` → `e661258a6`, both kept as
-`ARCHIVE-ONLY`). `docs/fork/p1c-iphone-device-closure.md:289-291` states it.
+**锚点与每时段边界闩锁（latch）是同一个字段。** 这就是那个结构性原因：后来一次尝试用 `IsDevicePaused()` 来门控 sleep edge，在十分钟锁屏期间产出**零**个边界（严格劣于它所修的那个 bug），并被回滚（`e20875359` → `e661258a6`，两者都作为 `ARCHIVE-ONLY` 保留）。`docs/fork/p1c-iphone-device-closure.md:289-291` 陈述了这一点。
 
-### Historical device evidence for the Apple sleep boundary
+### Apple 睡眠边界的历史设备证据（Historical device evidence for the Apple sleep boundary）
 
-Device: **"Jiejie" — iPhone 17 Pro Max (`iPhone18,2`), iOS 26.4.2 (23E261), physical, wired.**
+设备：**“Jiejie”——iPhone 17 Pro Max（`iPhone18,2`），iOS 26.4.2（23E261），实体机，有线连接。**
 
-| Build | Episode | Callbacks | Boundaries published | Measurement |
+| 构建 | 时段 | 回调 | 已发布的边界 | 测量 |
 |---|---|---|---|---|
-| pre-fix | one 28 m 24 s lock | 26 `ne-sleep`/`ne-wake` (13 cycles), 0 screen events | **12** | **28.29 s** (wrong duration) |
-| post-fix `60681f277` | one 13 m 13 s lock | 20 callbacks (10 cycles) | **1** | `reuse: epoch 1, sleep 13m13.492448s` — **exact to the second** |
-| **rejected** `e20875359` | ~10 min locked | — | **0** | strictly worse than the bug; reverted |
+| 修复前 | 一次 28 m 24 s 锁屏 | 26 次 `ne-sleep`/`ne-wake`（13 个循环），0 次屏幕事件 | **12** | **28.29 s**（错误的时长） |
+| 修复后 `60681f277` | 一次 13 m 13 s 锁屏 | 20 次回调（10 个循环） | **1** | `reuse: epoch 1, sleep 13m13.492448s`——**精确到秒** |
+| **被拒绝** `e20875359` | 锁屏约 10 分钟 | — | **0** | 严格劣于那个 bug；已回滚 |
 
-iPad and macOS were **`NOT_RUN` / `SIGNING_OUT_OF_SCOPE`**. This is one device, one OS build, one
-product and the recorded revisions. It is device evidence for that configuration and measured sleep
-episode, not proof of all current builds, other devices or other lifecycle paths.
+iPad 与 macOS 为 **`NOT_RUN` / `SIGNING_OUT_OF_SCOPE`**。这是一台设备、一个 OS 构建、一个产品以及所记录的修订版。它是针对该配置与所测休眠时段的设备证据，而不是对所有当前构建、其他设备或其他生命周期路径的证明。
 
 ---
 
-## 3. The Android trim ladder
+## 3. Android 的 trim 阶梯（The Android trim ladder）
 
-`common/runtimecoord/platform_events.go:152-220`.
+`common/runtimecoord/platform_events.go:152-220`。
 
-| Constant | Value | `Action()` |
+| 常量 | 值 | `Action()` |
 |---|---|---|
 | `TrimRunningModerate` | 5 | `TrimIgnore` |
 | `TrimRunningLow` | 10 | `TrimProgressive` |
@@ -117,223 +87,162 @@ episode, not proof of all current builds, other devices or other lifecycle paths
 | `TrimBackground` | 40 | `TrimProgressive` |
 | `TrimModerate` | 60 | `TrimProgressive` |
 | `TrimComplete` | 80 | `TrimProgressive` |
-| anything else | — | **`TrimIgnore`** |
+| 其他任何值 | — | **`TrimIgnore`** |
 
-The `TrimIgnore` default carries its own rationale: *"a trim issued for a level whose meaning we do not
-know is a cost paid for a guess."* **Only `TrimRunningCritical` earns the reset-shaped pass.**
+`TrimIgnore` 这一默认值自带理由：*"a trim issued for a level whose meaning we do not know is a cost paid for a guess."*（中文：为一个我们不知道其含义的 level 发起的裁剪，是为一次猜测付出的成本。）**只有 `TrimRunningCritical` 才配得到重置形态的那一趟。**
 
-**`TrimUIHidden` is explicitly not a memory signal** (`:171-178`). The UI being hidden says nothing
-about memory pressure, and treating it as pressure would trim every time a user switches apps.
+**`TrimUIHidden` 明确不是内存信号**（`:171-178`）。UI 被隐藏对内存压力什么也说明不了，而把它当作压力，会让用户每次切换应用都裁剪一次。
 
 ---
 
-## 4. Memory policy — three distinct actions, and the one that is forbidden
+## 4. 内存策略——三种不同动作，以及那个被禁止的动作（Memory policy — three distinct actions, and the one that is forbidden）
 
-| Action | May it reset the network? | What it is for |
+| 动作 | 它可否重置网络？ | 它的用途 |
 |---|---|---|
-| **Trim** (`TrimIdleResources`, `TrimProgressive`) | **NO** | idle-only reclamation |
-| **Release** (`ReleaseMemory`, `TrimRelease`) | **YES** | a real memory emergency |
-| **Reuse boundary** (`RetireSuspect`) | no reset, but a stronger reuse decision | a sleep/reuse boundary, **not a trim substitute** |
+| **Trim**（`TrimIdleResources`, `TrimProgressive`） | **否** | 仅空闲回收 |
+| **Release**（`ReleaseMemory`, `TrimRelease`） | **是** | 真实的内存紧急状态 |
+| **复用边界**（`RetireSuspect`） | 不重置，但是一个更强的复用决策 | 一个休眠/复用边界，**不是裁剪的替代品** |
 
-The invariant, and it is a hard one:
+这条不变量，而且它是硬性的：
 
-> **Memory trim is idle-only: it must not reset the network, dial, wake suspended work, or terminate
-> active flows.** `ReuseSuspect` is a stronger sleep/reuse-boundary action, not a trim substitute.
+> **内存裁剪只处理空闲：它不得重置网络、拨号、唤醒被挂起的工作，或终止活跃的流。** `ReuseSuspect` 是一个更强的休眠/复用边界动作，而不是裁剪的替代品。
 
-`route/reference.go:154-197` `onReuseBoundary` obeys it: it **does not** reset the network, does not
-terminate a stream, does not touch on-demand tunnels, does not dial.
+`route/reference.go:154-197` 的 `onReuseBoundary` 遵守它：它**不**重置网络、不终止流、不触碰按需隧道、不拨号。
 
-**And the honest correction:** the invariant is about the **trim** path, not about every path.
-`service/oomkiller/timer.go`'s crisis reclaim calls `ReleaseMemory`, which **does** reset the network — and it
-is *supposed* to. `route/conn_reclaim.go:18` records the intent in the code:
-`ReleaseMemory (OOM killer) -> ResetNetwork + idle … aggressive, and deliberate`. The killer itself is
-not established merely by the option's `json:"-"` tag: the daemon conditionally adds the service,
-and its internal `KillerDisabled` flag selects report-only crisis behavior. Inspect the actual host
-setup and service options before assuming it is enabled or disabled. So:
+**以及那个诚实的纠正：** 这条不变量关乎**裁剪**路径，而不是每一条路径。`service/oomkiller/timer.go` 的危机回收调用 `ReleaseMemory`，而它**确实**会重置网络——而且它*本应*如此。`route/conn_reclaim.go:18` 在代码中记录了意图：`ReleaseMemory (OOM killer) -> ResetNetwork + idle … aggressive, and deliberate`。killer 本身并不能仅凭该选项的 `json:"-"` 标签就确立：守护进程是有条件地添加该服务的，而其内部的 `KillerDisabled` 标志会选择仅报告的危机行为。在假定它已启用或已禁用之前，先检查实际的主机设置与服务选项。所以：
 
-**Trim ≠ Release. A future change that makes the trim path reset the network is the bug; a future
-change that makes the Release path stop resetting it is also a bug.**
+**Trim ≠ Release。让裁剪路径重置网络的未来改动就是那个 bug；让 Release 路径停止重置网络的未来改动同样是一个 bug。**
 
-### OOM reclaim coordination after v0.1.9
+### v0.1.9 之后的 OOM 回收协调（OOM reclaim coordination after v0.1.9）
 
-At `cb71cf80d72`, `service/oomkiller/timer.go` serializes idle, platform-pressure and crisis requests
-through one reclaim executor. Crisis outranks pending pressure and idle work, but does not interrupt
-an action already in progress; an idle pass yields at its layer boundaries if a crisis is queued.
-Idle reclaim tries expired caches, then idle pools, then forced GC only when the earlier gain is
-insufficient and runtime or armed-pressure conditions warrant it. Low-yield idle work cools down;
-crisis is not blocked by that idle cooldown. A Darwin pressure notification flushes caches and forces
-GC without a network reset. Crisis rechecks the current sample against the armed threshold before a
-destructive reset; report-only skips the network reset but still performs its reporting/release path.
+在 `cb71cf80d72` 处，`service/oomkiller/timer.go` 通过一个回收执行器串行化空闲、平台压力与危机请求。危机优先于待处理的压力与空闲工作，但不会中断一个已经在进行的动作；如果排队了危机，一次空闲遍历会在其层边界处让出。空闲回收先尝试过期缓存，然后尝试空闲池，只有当先前收益不足且运行时或已武装压力条件允许时，才强制 GC。低收益的空闲工作会冷却；危机不会被这个空闲冷却阻塞。Darwin 的压力通知会刷新缓存并强制 GC，但不重置网络。危机在破坏性重置之前，会把当前采样与已武装阈值重新核对；仅报告模式跳过网络重置，但仍执行其报告/释放路径。
 
-`stop` rejects new work, drops requests still queued, waits for accepted polls and actions already
-running, and joins the executor. Reload does not carry a pending pressure intent; a carried Triggered
-state becomes Armed so the next sample can decide whether a new crisis still exists. Triggered exits
-at the armed boundary, not the lower idle-resume threshold. `go test ./service/oomkiller -count=1`
-passed on Windows with Go 1.26.10 in this calibration; platform-specific Darwin callback/device
-behavior and race-detector execution were not established by that run.
+`stop` 拒绝新工作、丢弃仍在排队的请求、等待已接受的轮询与已在运行的动作，并 join 执行器。Reload 不携带待处理的压力意图；被携带的 Triggered 状态会变成 Armed，以便下一次采样决定新的危机是否仍然存在。Triggered 在已武装边界处退出，而不是在更低的空闲恢复阈值处退出。本次校准中 `go test ./service/oomkiller -count=1` 在 Windows 上以 Go 1.26.10 通过；那次运行没有确立 Darwin 平台相关的回调/设备行为，也没有确立竞态检测器执行。
 
-### The four pools
+### 四个池（The four pools）
 
-`runtimecoord`'s boundary walk must reach **all four**: outbounds, endpoints, DNS transports, and the
-HTTP client manager. The fourth was unreachable for four review passes because the walk asserted the
-bundled `IdleConnectionKeeper` instead of `IdleConnectionReleaser` — see `core-lifecycle-runtime.md` §4
-and `buffer-ownership.md` B22.
+`runtimecoord` 的边界遍历必须到达**全部四个**：出站、端点、DNS 传输，以及 HTTP 客户端管理器。第四个曾在四轮评审中都不可达，因为该遍历断言的是捆绑的 `IdleConnectionKeeper` 而不是 `IdleConnectionReleaser`——见 `core-lifecycle-runtime.md` §4 与 `buffer-ownership.md` B22。
 
 ---
 
-## 5. Post-wake reuse bands
+## 5. 唤醒后的复用分带（Post-wake reuse bands）
 
-The policy is `common/power/governor.go`'s, and the verdict is one of exactly three values —
-`ReuseKeep`, `ReuseSuspect`, `ReuseRetire` (`governor.go:112-125`) — derived from
-`DefaultPolicy`'s `SuspectAfter: 5 * time.Second` and `RetireAfter: 15 * time.Second`
-(`governor.go:289-290`):
+该策略属于 `common/power/governor.go`，判定结果恰好是三个值之一——`ReuseKeep`、`ReuseSuspect`、`ReuseRetire`（`governor.go:112-125`）——由 `DefaultPolicy` 的 `SuspectAfter: 5 * time.Second` 与 `RetireAfter: 15 * time.Second` 推导而来（`governor.go:289-290`）：
 
-| Sleep duration | Verdict | Behaviour |
+| 休眠时长 | 判定 | 行为 |
 |---|---|---|
-| `< 5 s` | `ReuseKeep` | nothing. **The epoch does not advance and no observer runs** — the connection a person is about to use again is still pooled. |
-| `>= 5 s` | `ReuseSuspect` | the epoch advances and the verdict is **published**, but pools are **kept by policy**. The middle band is a *published state, not an action*: churning a pool a short sleep usually survives costs a handshake for no correctness gain. |
-| `>= 15 s` | `ReuseRetire` | the epoch advances and **idle** reusable resources are retired, so the next demand dials a path known to be new. **Active flows are untouched and nothing dials.** |
+| `< 5 s` | `ReuseKeep` | 什么也不做。**epoch 不前进，也没有观察者运行**——一个人马上就要再次使用的连接仍然留在池中。 |
+| `>= 5 s` | `ReuseSuspect` | epoch 前进，判定被**发布**，但按策略**保留**池。中间那一带是一个*被发布的状态，而不是一个动作*：把一次短休眠通常都能挺过去的池翻搅一遍，只会白付一次握手而换不来任何正确性收益。 |
+| `>= 15 s` | `ReuseRetire` | epoch 前进，**空闲**的可复用资源被退役，因此下一次需求会拨向一条已知是新的路径。**活跃流不受影响，也没有任何东西拨号。** |
 
-**An unknown sleep duration takes the strict verdict** (`TestTheBridgeUsesThePolicyBandsAndNothingElse`).
+**未知的休眠时长会取严格判定**（`TestTheBridgeUsesThePolicyBandsAndNothingElse`）。
 
-`adapter.ReuseSuspect` exists because **an open stream is not proof of liveness** — it can be open and
-silent across a sleep. Its contract is "no new work on what you hold now, keep the work already on it,
-tear it down when the last stream leaves".
+`adapter.ReuseSuspect` 之所以存在，是因为**一条打开的流并不是存活的证明**——它可以整段休眠期间都保持打开而静默。它的契约是“不在你现在持有的东西上开新工作，保留已经在其上的工作，当最后一条流离开时把它拆掉”。
 
-A keeper *"may only close a resource with no active user traffic, and can never dial"*. `naive` is
-deliberately **not** a keeper; `sing-mux` has no safe no-new-stream state; Cronet and Naive offer only
-destructive close. That is why `IdleConnectionReleaser` is the assertion, not a full keeper.
+一个 keeper *"may only close a resource with no active user traffic, and can never dial"*（中文：只能关闭没有活跃用户流量的资源，且永远不能拨号）。`naive` 刻意**不是** keeper；`sing-mux` 没有安全的“无新流”状态；Cronet 与 Naive 只提供破坏性关闭。这就是为什么断言的是 `IdleConnectionReleaser`，而不是一个完整的 keeper。
 
-Pinned by `common/power.TestReuseKeepsEveryResourceForAShortSleep`,
-`common/power.TestReuseBandsAreThePolicy`, `box.TestTheBridgeUsesThePolicyBandsAndNothingElse`,
-`route.TestTheSuspectBandDrainsNothing`.
+由 `common/power.TestReuseKeepsEveryResourceForAShortSleep`、`common/power.TestReuseBandsAreThePolicy`、`box.TestTheBridgeUsesThePolicyBandsAndNothingElse`、`route.TestTheSuspectBandDrainsNothing` 固定。
 
-**Background work does not wake an idle resource** — demand is what wakes it
-(`docs/fork/runtime-lifecycle-phase1.5.md:30,64`). A background timer that wakes a suspended resource
-is a defect even when the timer's work is useful.
+**后台工作不会唤醒空闲资源**——唤醒它的是需求（`docs/fork/runtime-lifecycle-phase1.5.md:30,64`）。一个唤醒被挂起资源的后台定时器是缺陷，即使该定时器的工作有用。
 
 ---
 
-## 6. The timer census — which timers may be deferred and which must not
+## 6. 定时器普查——哪些定时器可以推迟，哪些不能（The timer census — which timers may be deferred and which must not）
 
-`docs/fork/power-timer-audit.md`. Getting this wrong in either direction is a defect: deferring a
-watchdog hides a leak; not deferring a poll burns radio time.
+`docs/fork/power-timer-audit.md`。任何方向搞错都是缺陷：推迟一个看门狗会掩盖泄漏；不推迟一次轮询会烧掉无线时间。
 
-| Timer | Cadence | Verdict |
+| 定时器 | 节奏 | 判定 |
 |---|---|---|
-| `service/oomkiller` poll | adaptive: default minimum 100 ms, maximum 10 s | A watchdog, not speculative wakeup. `intervalForState` ramps in stable conditions and returns to the minimum under pressure; options and platform policy can affect the effective bounds. |
-| `internal/memmetrics` sampling | 1 ms | **benchmark-only** |
-| `service/ssmapi/server.go` | 1 min | deferrable — **but the FIRST pass is deliberately not deferred** |
-| `route/rule/rule_set_updater.go` | — | deferrable — **first pass also not deferred** |
-| `service/api/dashboard.go` | 24 h (default) | deferrable — **first pass also not deferred**, and it WAITS rather than skipping: `WaitProviderRefresh` parks the loop, so the download lands on the wake instead of a whole interval later |
-| `dns_cache` | 1 h | must **not** be gated |
-| `route` macOS suspend watchdog | 5 s | **a watchdog, NOT speculation.** Compares the wall clock with the monotonic clock (which stops during sleep) and calls `SystemResumed` on divergence. It exists because a headless Mac has no NetworkExtension sleep/wake callback; the NetworkExtension path uses `CommandServer.Pause`/`Wake` instead. It must **not** be gated on sleep state. |
+| `service/oomkiller` 轮询 | 自适应：默认最小 100 ms，最大 10 s | 一个看门狗，不是投机性唤醒。`intervalForState` 在稳定条件下逐步拉长，在压力下回到最小值；选项与平台策略会影响有效边界。 |
+| `internal/memmetrics` 采样 | 1 ms | **仅基准** |
+| `service/ssmapi/server.go` | 1 min | 可推迟——**但第一次遍历刻意不推迟** |
+| `route/rule/rule_set_updater.go` | — | 可推迟——**第一次遍历也不推迟** |
+| `service/api/dashboard.go` | 24 h（默认） | 可推迟——**第一次遍历也不推迟**，而且它是等待而不是跳过：`WaitProviderRefresh` 让循环停驻，因此下载落在唤醒时，而不是再等一整个间隔 |
+| `dns_cache` | 1 h | 必须**不**被门控 |
+| `route` macOS 挂起看门狗 | 5 s | **一个看门狗，不是投机。** 它比较墙上时钟与单调时钟（后者在休眠期间停止），并在二者分歧时调用 `SystemResumed`。它存在是因为无头 Mac 没有 NetworkExtension 的 sleep/wake 回调；NetworkExtension 路径改用 `CommandServer.Pause`/`Wake`。它必须**不**被休眠状态门控。 |
 
-**Three periodic timers are deferrable, and for all three the first pass runs regardless.** The
-"first pass is not deferred" rule is the one that keeps a deferral from delaying initial correctness.
+**有三个周期定时器可推迟，而对这三个来说，第一次遍历无论如何都会运行。**“第一次遍历不推迟”这条规则，正是让推迟不会延迟初始正确性的那一条。
 
-Two workers in this area are **not timers**, and are gated by state rather than by waiting, so they do
-not belong in the table above:
+本领域有两个 worker **不是定时器**，它们由状态而不是由等待来门控，因此不属于上面的表：
 
-- `dns.client.backgroundRefreshDNS` — scheduled from a cache HIT, not by a clock. Refused outright
-  while the governor is `QUIESCENT`/`DEEP_IDLE` or closed, and released through
-  `Allow().NetworkProbe` in the `WAKING` band. Skipping costs freshness only.
-- `transport/wireguard/recovery.go` — polls, but only while a session is stale, and it is **not**
-  gated: a rebind is already limited to one per window by `runtimecoord`, and cancelling it during a
-  sleep would trade a wasted rebind for an unrecovered tunnel. Accepted, not deferred.
+- `dns.client.backgroundRefreshDNS`——由一次缓存 HIT 调度，而不是由时钟。当调速器处于 `QUIESCENT`/`DEEP_IDLE` 或已关闭时被直接拒绝，并在 `WAKING` 带中经 `Allow().NetworkProbe` 放行。跳过它只损失新鲜度。
+- `transport/wireguard/recovery.go`——会轮询，但只在一个会话陈旧时；而且它**不**被门控：`runtimecoord` 已经把 rebind 限制为每个窗口一次，在休眠期间取消它会用一次浪费的 rebind 换来一条未恢复的隧道。已接受，不推迟。
 
-`HAKO_SCALE_DEBUG_AUDIT_2026-10-17.md` carries the tests and mutations behind both gates.
+`HAKO_SCALE_DEBUG_AUDIT_2026-10-17.md` 载有两个门控背后的测试与变异。
 
 ---
 
-## 7. `ReuseSuspect`
+## 7. `ReuseSuspect`（复用可疑判定）
 
-| Property | Value |
+| 属性 | 值 |
 |---|---|
-| Order | `RetireSuspect()` **first**, then `CloseIdleConnections` (`route/reference.go:496-511`, `:547-556`) |
-| Pool inventory | `route/reusable_owner_inventory_test.go` checks named owners and capabilities; it does not forbid other implementations |
-| Trigger | a **sleep/reuse boundary**, via `powerGovernor.AddReuseObserver(m.onReuseBoundary)` (`:142-144`) |
-| Must not | reset the network, terminate a stream, touch on-demand tunnels, or dial |
+| 顺序 | `RetireSuspect()` **先**，然后 `CloseIdleConnections`（`route/reference.go:496-511`, `:547-556`） |
+| 池清单 | `route/reusable_owner_inventory_test.go` 检查具名所有者与能力；它并不禁止其他实现 |
+| 触发 | 一个**休眠/复用边界**，经由 `powerGovernor.AddReuseObserver(m.onReuseBoundary)`（`:142-144`） |
+| 不得 | 重置网络、终止流、触碰按需隧道，或拨号 |
 
 ---
 
-## 8. Evidence
+## 8. 证据（Evidence）
 
-| Guarantee | Level | Re-check |
+| 保证 | 等级 | 复检 |
 |---|---|---|
-| Trim ladder values and actions; unknown ⇒ ignore; `TrimUIHidden` is not memory pressure | `VERIFIED_SOURCE` + `VERIFIED_UNIT` | `go test -count=1 ./common/runtimecoord/...` |
-| Governor state machine and bands | `VERIFIED_SOURCE` + `VERIFIED_UNIT` | `go test -count=1 ./common/power/...` |
-| Reuse verdict published **before** the level is released | `VERIFIED_UNIT`, and the test proves the band was exercised | `-tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" -run TestTheReuseVerdict .` |
-| Sleep edge recorded **before** the level is paused | `VERIFIED_UNIT`, with a vacuity guard | `-run TestTheSleepEdge .` |
-| 100 sleep/wake cycles, 100 network transitions, no resurrection after Close | `VERIFIED_UNIT` (no `-race`) | `-run 'TestOneHundred\|TestNoResurrectionAfterClose' .` |
-| The Apple device axis | **`VERIFIED_DEVICE`** for one iPhone 17 Pro Max / iOS 26.4.2 run; **`UNVERIFIED`** for iPad, macOS, and any other OS | the device record above |
-| macOS sleep/wake repair | `VERIFIED_SOURCE` + `VERIFIED_UNIT` for the decision (wall-vs-monotonic detector, **episode-keyed** `SystemResumed`, **duration-aware** reset: medium below 30 s, dead-path at/above); **`UNVERIFIED` on a physical Mac** | `go test ./common/suspendwatch -count=1` and `go test ./route -run TestSystemResumed -count=1` (9 tests, including a second sleep immediately after the first, the short-sleep medium branch and the long-sleep `ReclaimDeadPath` branch); the device line is the `system resumed after …` log followed by one reset |
-| Real TUN, real NetworkExtension, network transitions | **`UNVERIFIED` in this Windows refresh**; device and build-specific evidence must be checked separately | needs appropriate platform and device |
-| Race-freedom | **`BLOCKED_BY_ENVIRONMENT`** | needs cgo |
+| trim 阶梯的取值与动作；未知 ⇒ 忽略；`TrimUIHidden` 不是内存压力 | `VERIFIED_SOURCE` + `VERIFIED_UNIT` | `go test -count=1 ./common/runtimecoord/...` |
+| 调速器状态机与分带 | `VERIFIED_SOURCE` + `VERIFIED_UNIT` | `go test -count=1 ./common/power/...` |
+| 复用判定在 level 被释放**之前**发布 | `VERIFIED_UNIT`，且测试证明该分带确实被演练过 | `-tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" -run TestTheReuseVerdict .` |
+| sleep edge 在 level 被暂停**之前**记录 | `VERIFIED_UNIT`，带一个空泛性防护 | `-run TestTheSleepEdge .` |
+| 100 次 sleep/wake 循环、100 次网络转换、Close 之后无复活 | `VERIFIED_UNIT`（无 `-race`） | `-run 'TestOneHundred\|TestNoResurrectionAfterClose' .` |
+| Apple 设备轴 | 对一次 iPhone 17 Pro Max / iOS 26.4.2 运行为 **`VERIFIED_DEVICE`**；对 iPad、macOS 及任何其他 OS 为 **`UNVERIFIED`** | 上面的设备记录 |
+| macOS 休眠/唤醒修复 | 对决策为 `VERIFIED_SOURCE` + `VERIFIED_UNIT`（墙上时钟对单调时钟的检测器、**以时段为键**的 `SystemResumed`、**感知时长**的重置：30 s 以下为 medium，达到或超过为 dead-path）；**在实体 Mac 上为 `UNVERIFIED`** | `go test ./common/suspendwatch -count=1` 与 `go test ./route -run TestSystemResumed -count=1`（9 个测试，包括第一次之后立刻第二次休眠、短休眠的 medium 分支与长休眠的 `ReclaimDeadPath` 分支）；设备侧那一行是 `system resumed after …` 日志之后跟一次重置 |
+| 真实 TUN、真实 NetworkExtension、网络转换 | **本次 Windows 刷新中为 `UNVERIFIED`**；设备与构建相关的证据必须单独检查 | 需要适当的平台与设备 |
+| 无竞态 | **`BLOCKED_BY_ENVIRONMENT`** | 需要 cgo |
 
-The ordering test is the strongest-designed file in the set: it shares an `orderingSequence` recorder
-between the pause callback and the reuse observer and asserts
-`[]string{"level-paused","reuse-verdict","level-released"}`, then **guards against the assertion being
-vacuous** with `require.NotEqual(… ReuseKeep …)` and `require.Equal(uint64(1), governor.ReuseEpoch())`.
-The sleep test observes the order from **inside** the level call via a `probingAxis` and guards
-vacuity with `require.True(t, axis.probed, …)`. **Copy that pattern** — an ordering test that does not
-prove the code path was exercised is worthless.
+那个顺序测试是这组里设计最强的文件：它在暂停回调与复用观察者之间共享一个 `orderingSequence` 记录器，并断言 `[]string{"level-paused","reuse-verdict","level-released"}`，然后用 `require.NotEqual(… ReuseKeep …)` 与 `require.Equal(uint64(1), governor.ReuseEpoch())` **防止该断言变成空泛的**。sleep 测试通过一个 `probingAxis` 从 level 调用**内部**观察顺序，并用 `require.True(t, axis.probed, …)` 防止空泛。**照抄这个模式**——一个不证明代码路径确实被走到的顺序测试毫无价值。
 
 ---
 
-## 9. Provenance
+## 9. 来源（Provenance）
 
-| Commit | Type | What it did |
+| 提交 | 类型 | 它做了什么 |
 |---|---|---|
-| `aac340808` | LIFECYCLE | the sleep authority |
-| `c62342717`, `540d7cb94`, `4a95e0aeb`, `e966daea2`, `a804916ef`, `d93b68560` | FIX | pool release at `DEEP_IDLE`; the unreachable `DEEP_IDLE` branch; a stale deadline |
-| `6ebb5799a` | FIX | stale deadline |
-| `89b4b2c25` | FIX | `DEEP_IDLE` was unreachable |
-| `0ff90482` | FIX | spends the device resume edge on an **edge latch**, not on the screen level |
-| `e4327dca` | LIFECYCLE | gives the Apple device axis a real publisher and a real release |
-| `4c7d96c0` | FIX | carries the Apple device axis on the **release line**, not only on a branch |
-| `645d96b4` | FIX | a current-state screen read reconciles the level, it does not start a sleep |
-| `60681f27` | FIX | a resume does not end a sleep episode, so it must not spend its boundary |
-| `e20875359` → `e661258a6` | FEATURE → **REVERT** | the `IsDevicePaused()` sleep-edge gate, reverted on device evidence. Both archives kept. |
-| `1331e8567`, `1f85dbc94` | FIX | generation-based rebind budget; `TrimMemory` does **not** advance the network generation while `ReleaseMemory` does |
-| `5f56f02c`, `09964183`, `93823c3d` | MEMORY | the trim path; all four pools reachable |
-| `3c6dd135b`, `f8b0af5f6`, `48dd4469e`, `10f9e17d2`, `eac9cc83d`, `b5c0009d1`, `95159084c`, `666470cbe`, `b5c39a11e`, `c2d93396e`, `da14572a7`, `1965bbf35` | TEST | the leak-census / test-integrity family — **several of these fixed tests that could not fail** |
-| `12aa6db064f`, `dbf8de8b2a5` | FEATURE | the first two **consumers** of the authority: the optimistic DNS refresh (refused by state) and the dashboard download (parks on `WaitProviderRefresh`). Tests and five mutations in `reports/core/HAKO_SCALE_DEBUG_AUDIT_2026-10-17.md` |
-| `ff897d35772` | FIX | resolves the DNS governor at construction instead of in `Start`: the field a background goroutine reads is made immutable rather than ordered |
+| `aac340808` | LIFECYCLE | 休眠权威 |
+| `c62342717`, `540d7cb94`, `4a95e0aeb`, `e966daea2`, `a804916ef`, `d93b68560` | FIX | `DEEP_IDLE` 处的池释放；不可达的 `DEEP_IDLE` 分支；一个陈旧截止时间 |
+| `6ebb5799a` | FIX | 陈旧截止时间 |
+| `89b4b2c25` | FIX | `DEEP_IDLE` 曾不可达 |
+| `0ff90482` | FIX | 把设备 resume edge 花在一个 **edge 闩锁**上，而不是花在屏幕 level 上 |
+| `e4327dca` | LIFECYCLE | 给 Apple 设备轴一个真实的发布者与一次真实的释放 |
+| `4c7d96c0` | FIX | 在**释放线**上承载 Apple 设备轴，而不只是在一个分支上 |
+| `645d96b4` | FIX | 一次当前状态的屏幕读取只协调 level，它不启动一次休眠 |
+| `60681f27` | FIX | 一次 resume 不会结束一个休眠时段，因此它不得消耗掉自己的边界 |
+| `e20875359` → `e661258a6` | FEATURE → **REVERT** | `IsDevicePaused()` 的 sleep-edge 门控，基于设备证据回滚。两份存档都保留。 |
+| `1331e8567`, `1f85dbc94` | FIX | 基于代次的 rebind 预算；`TrimMemory` **不**推进网络代次，而 `ReleaseMemory` 会 |
+| `5f56f02c`, `09964183`, `93823c3d` | MEMORY | 裁剪路径；四个池全部可达 |
+| `3c6dd135b`, `f8b0af5f6`, `48dd4469e`, `10f9e17d2`, `eac9cc83d`, `b5c0009d1`, `95159084c`, `666470cbe`, `b5c39a11e`, `c2d93396e`, `da14572a7`, `1965bbf35` | TEST | 泄漏普查/测试完整性家族——**其中多个修复的是根本无法失败的测试** |
+| `12aa6db064f`, `dbf8de8b2a5` | FEATURE | 权威的前两个**消费者**：乐观 DNS 刷新（按状态拒绝）与 dashboard 下载（停驻在 `WaitProviderRefresh` 上）。测试与五个变异在 `reports/core/HAKO_SCALE_DEBUG_AUDIT_2026-10-17.md` |
+| `ff897d35772` | FIX | 在构造期而不是在 `Start` 中解析 DNS 调速器：让后台 goroutine 读取的字段变为不可变，而不是给它定序 |
 
-The historical census row's `3c6dd135b` does not resolve in the current parent repository; inspect
-the original report or other repository before treating that prefix as a verified commit anchor.
+历史普查行中的 `3c6dd135b` 在当前父仓库中无法解析；在把那个前缀当作已验证的提交锚点之前，请检查原始报告或其他仓库。
 
-All **OWN**. The upstream family `Use screen state to end device pause on iOS` (×11 in this range) is
-`UPSTREAM-INHERITED`/orphaned — see `BASELINE.md` §provenance.
+全部为 **OWN**。上游家族 `Use screen state to end device pause on iOS`（本区间内出现 ×11）是 `UPSTREAM-INHERITED`/孤儿——见 `BASELINE.md` §provenance。
 
 ---
 
-## 10. AI cautions
+## 10. AI 告诫（AI cautions）
 
-1. **Do not merge level and edge.** A current-state read is not a transition; `resumed()` publishes
-   nothing on purpose.
-2. **Do not make a display-on an unlock.**
-3. **Do not "fix" the sleep boundary by gating on a paused state.** That was tried, measured at zero
-   boundaries on a real device, and reverted — the anchor and the latch are one field.
-4. **Do not make the trim path reset the network, dial, wake suspended work or kill active flows.**
-5. **Do not make `ReleaseMemory` stop resetting the network.**
-6. **Do not treat `TrimUIHidden` as memory pressure.**
-7. **Do not default an unknown trim level to a progressive action.** Unknown must be ignored.
-8. **Do not classify levels in the client.** The core owns the mapping.
-9. **Do not add a periodic timer without checking the census**; if it is a watchdog it must not be
-   gated on sleep state.
-10. **If a timer is deferrable, keep the FIRST pass undeferred.**
-11. **Do not assert `IdleConnectionKeeper` where only `IdleConnectionReleaser` is implemented.**
-12. **Review new `ReuseSuspect` owners against the retirement walk and lifecycle contracts.**
-13. **Do not let background work wake an idle resource.** Demand wakes it.
-14. **Do not write an ordering test without a vacuity guard.** The fork's own best test exists because
-    an ordering assertion can pass without the path ever running.
-15. **Do not generalise the one iPhone run to iPad, macOS or another OS build.** The record is one
-    device.
-16. **Do not cite `verify-evidence/` for any of this** — see `ci-release.md` §3.
-17. **Do not move the suspendwatch baseline to the first tick.** `Watcher.Start` primes the detector
-    synchronously, before the ticker exists. If the first reading happened on the first tick, a host
-    that suspends immediately after Start would wake with the baseline on the wrong side of the
-    sleep and that first suspend would never be reported. The regression is
-    `TestTheWatcherPrimesAtStartBeforeTheFirstTick`.
+1. **不要合并 level 与 edge。** 一次当前状态读取不是一次转换；`resumed()` 刻意不发布任何东西。
+2. **不要把 display-on 当作解锁。**
+3. **不要通过门控一个暂停状态来“修复”休眠边界。** 那被尝试过，在真实设备上测得零个边界，并被回滚——锚点与闩锁是同一个字段。
+4. **不要让裁剪路径重置网络、拨号、唤醒被挂起的工作或杀掉活跃的流。**
+5. **不要让 `ReleaseMemory` 停止重置网络。**
+6. **不要把 `TrimUIHidden` 当作内存压力。**
+7. **不要把未知的 trim level 默认成渐进动作。** 未知必须被忽略。
+8. **不要在客户端里分类 level。** 映射归核心所有。
+9. **不要在没有查过普查的情况下添加周期定时器**；如果它是一个看门狗，它就必须不被休眠状态门控。
+10. **如果一个定时器可推迟，就保持第一次遍历不推迟。**
+11. **不要在只实现了 `IdleConnectionReleaser` 的地方断言 `IdleConnectionKeeper`。**
+12. **对照退役遍历与生命周期契约审查新的 `ReuseSuspect` 所有者。**
+13. **不要让后台工作唤醒空闲资源。** 唤醒它的是需求。
+14. **不要写没有空泛性防护的顺序测试。** 本 fork 自己最好的那个测试存在，正是因为一个顺序断言可以在路径从未运行的情况下通过。
+15. **不要把那一次 iPhone 运行泛化到 iPad、macOS 或其他 OS 构建。** 记录只是一台设备。
+16. **不要为上述任何内容引用 `verify-evidence/`**——见 `ci-release.md` §3。
+17. **不要把 suspendwatch 的基线移到第一个 tick。** `Watcher.Start` 在 ticker 存在之前就同步地给检测器做了初值。如果第一次读数发生在第一个 tick 上，那么一个在 Start 之后立刻挂起的主机会在唤醒时带有一个落在休眠错误一侧的基线，而那次挂起将永远不会被报告。该回归是 `TestTheWatcherPrimesAtStartBeforeTheFirstTick`。

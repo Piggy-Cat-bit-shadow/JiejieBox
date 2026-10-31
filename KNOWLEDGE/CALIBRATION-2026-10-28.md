@@ -1,277 +1,277 @@
-# Knowledge calibration ledger — 2026-10-28
+# 知识校准台账 — 2026-10-28（Knowledge calibration ledger — 2026-10-28）
 
-**Status: COMPLETE for the source-level knowledge refresh.** This ledger records evidence and
-limitations; it does not turn an unrun device, interoperability, artifact-byte or complete client ABI
-check into a pass. The new production baseline is `cb71cf80d7224a51823b455f0be5959ad8556933`.
+**状态：源码级知识刷新已完成（COMPLETE）。** 本台账记录证据与
+局限；它不会把未运行的设备、互操作性、产物字节或完整客户端 ABI
+检查变成通过。新的生产基线为 `cb71cf80d7224a51823b455f0be5959ad8556933`。
 
-- Old production baseline: `5fc4f9366a60202fdc7c98cd6fa280cceace65ba` (v0.1.9).
-- Examined testing target: `011f3fdcd99173acd3e80483b50cb76b07bf6ff4`; 791 commits after baseline.
-- Published v0.1.30 resolves to `6112aa17052297ec9890e0e7f1541a06120b84b2` and is an ancestor of the target. No origin `main` was advertised when checked.
-- Concurrent branch advancement: `cb71cf80d7224a51823b455f0be5959ad8556933` updates the version file to 0.1.31 and the `cronet-go/all` pin. Its tag peels to that commit. An earlier check found no Release; a later GitHub API check found the [v0.1.31 Release](https://github.com/Piggy-Cat-bit-shadow/sing-box/releases/tag/v0.1.31) published 2026-10-28 00:38:59 UTC, non-draft and non-prerelease, with seven listed assets. Their bytes were not independently downloaded or verified. Tests at the prior dependency state do not automatically establish behavior at the new pin.
-- The final delta is 795 commits from v0.1.9 to the source target. It was coarse-classified by paths
-  and semantic clusters: protocol, dialer, routing, DNS, TUN, transport, platform, dependencies, CI,
-  release, tests and historical records. The 259 changed non-`_test.go` Go paths include test tools;
-  representative load-bearing implementations and related tests were examined, not every commit deep-read.
-- Source-checked corrections: TUN start/reset handoff, dual-stack admission and ownership, empty family logging, FakeIP/sniff translation, transparent-group fast path, capability warning severity, Naive fallback, VLESS client encryption, MASQUE close, progressive memory trim, TUIC path ceiling, Linux kTLS tail ownership, TLS selection and workflow declarations. See the relevant modules and `ACCEPTANCE.md` for anchors and tests. Old global no-delta and no-CI-workflow claims corrected.
-- Existing active modules, root navigation, invariants and acceptance entries were inventoried and
-  calibrated using changed-path review, source anchors and cross-file sampling. Historical reports
-  remain point-in-time archives; relevant findings were reconciled into their owners, not reasserted
-  as current. This is not a re-execution of every historical benchmark or a proof of every old line anchor.
-- Source and local tests do not establish device, interoperability, release artifact or CI-run behavior. No production code, dependency, build or release configuration was changed by this calibration.
-- Windows 10 Enterprise LTSC 2021 build 19044, Go 1.25.5: `go test -tags with_utls ./common/tls -count=1` failed three Windows TLS 1.3 handshake tests with `unexpected EOF`; a filtered rerun reproduced them. Cause unknown. Targeted uTLS/ECH tests passed. Linux kTLS tests cannot execute on this Windows host.
-- `go test -tags with_naive_outbound ./protocol/naive -run TestH3Fallback -count=1` remained at the Cronet fork download and was interrupted; it produced no test result. Retry with the required dependency available.
-- A later offline retry with `with_naive_outbound,with_purego` failed at setup because both pinned
-  Cronet modules were absent from this Go cache and `GOPROXY=off`; no Naive test executed.
-- A subsequent retry used a temporary modfile pointing both Cronet modules to the clean local
-  `cronet-fork` checkout at the exact pinned `c9c0e6ec8845`; the `TestH3Fallback` cases passed with
-  `with_naive_outbound,with_purego`. This tests the local source substitution and test doubles,
-  not downloaded module provenance, the native library or live interoperability.
-- Additional cross-checks corrected the DNS delivery-versus-cache contract, MASQUE per-chunk ownership,
-  the pinned sing splice fallback, fork provenance interpretation, current sing-tun replacement and
-  the historical MASQUE initial-size versus hard-ceiling claim. `go test ./route -count=1` failed
-  after a 120-second setup timeout in `TestTeardown_OneSidedCompletionNeverRunsOnClose`; an isolated
-  rerun passed. The failure remains recorded in `ACCEPTANCE.md`, not silently reclassified as a pass.
-- GitHub run records were independently queried for the release Windows daemon job and the later
-  Verify/Android jobs; each is scoped to its actual SHA in the corresponding module. Root DNS/HTTP
-  detour tests, Mieru classification, XHTTP package tests and `with_quic` MASQUE chunk tests passed
-  locally; see `ACCEPTANCE.md` for evidence scope.
-- A mechanical scan of backticked bare `name()` references in module documents found Go symbols
-  in the current tree; two remaining names were verified as shell functions. This is a limited
-  spelling check, not proof that each claim or historical line number is correct. Relative Markdown
-  links across the knowledge tree were checked after excluding fenced code; two broken archival
-  links were corrected. This does not validate prose path references or Markdown anchors.
-- Additional source review distinguished ShadowTLS's first-record deadline and target cleanup,
-  endpoint-owned DNS resolver retirement, power-observer notification copying, and Android's separate
-  procfs helper from the removed `UseProcFS` platform-interface method. Corresponding targeted
-  tests are recorded in `ACCEPTANCE.md`; client-device ABI behavior remains separately unverified.
-- Current FakeIP range protection at the TUN L0 decision was distinguished from the router's
-  issuance-ledger and retired-range checks; the former does not consult those latter records.
-  Metadata flush failure is now returned, superseding that particular historical oracle finding.
-  Scope panic behavior and Box start/close stage anchors were checked against source. Focused
-  Windows Go 1.26.10 unit results are recorded in `ACCEPTANCE.md`.
-- The current pinned Cronet fork has Linux and Windows platform files; the Windows files require
-  `with_purego`. Corrected obsolete Apple-only build claims and the contradictory uTLS profile
-  description. AnyTLS server-only IPv4 preference and per-call error naming were traced through
-  their dialer and outbound source; they do not prove peer interoperability or throughput.
-- Independent cross-reading corrected the project overview's old release and dependency statements,
-  the architecture overview's scope/validation and MASQUE size overclaims, and the corresponding
-  MASQUE acceptance and invariant rows. Historical counts are explicitly revision-scoped.
-- Dual-stack admission was checked against the observer, local-family gate and scheduler: a
-  stale local verdict cannot deny, strict configured strategy remains independent, and the
-  bounded, expiring family-health record changes race timing rather than blacklisting a family.
-- Libbox monitor refresh/publish ordering and the close-during-refresh fence were source-checked and
-  targeted tests passed with Go 1.26.10 and `p2ios` on Windows. The Apple lifecycle's sleep measurement
-  start and reuse-boundary publication were distinguished; neither test result is device validation.
-- The MTU module's claim that only Hysteria2 passes `InitialPacketSizeCeiling` was corrected: TUIC
-  does so too, while MASQUE's initial clamp alone does not prove a hard later-packet ceiling.
-  Focused scheduler default, arbitration and refusal-ownership tests passed locally.
-- Historical XHTTP benchmark provenance was checked by ancestry; the recorded measurements are not
-  current performance evidence and do not support the claim that the fork was never behind. The
-  performance index now scopes its dated values and avoids protocol-independent conclusions.
-- Removed a stale CI-module diagnosis claiming the Windows TLS 1.3 tests contact a remote host and
-  proving unsupported Schannel. Their local handshake failure was reproduced, but its cause remains
-  unknown; a historical failure does not rule out a later regression.
-- The direct-offload layer table now distinguishes route-prefix setup from auto-redirect flow
-  verdicts and no longer asserts that kernel-assisted copy is available on every OS or flow.
-- Windows daemon source review corrected the claim that Linux has no peer authentication: its local
-  socket path uses `SO_PEERCRED` and process-start identity. The Windows certificate-expiry policy is
-  documented as a scoped tradeoff rather than an unconditional security guarantee.
-- Full-audit BUG-009/015 were revisited: the current remote client has a five-minute HTTP timeout,
-  publication checks closure and TUN serializes redirect updates with close. Updater Close does not
-  join, and already-copied general callbacks are not globally recalled; the targeted TUN ordering
-  test passed, with no Linux integration claim.
-- Historical BUG-011/014 were rechecked against the uTLS guard and exact local Cronet pin: unsupported
-  ECH fingerprints are rejected at configuration, and Cronet's recovered start panic is assigned to
-  a named return. Native startup failure and every allowed ECH wire combination remain untested.
-- Historical BUG-002/010 were rechecked against `common/ktls/ktls.go` and the exact pinned sing
-  splice source: the successful hook path forwards returned bytes and resumes, and post-handshake
-  messages are drained. Linux kTLS splice/KeyUpdate execution remains unverified on this Windows host.
-- Historical BUG-005 was checked against exact quic-go pin `2daa76f5bd52`: successful no-headroom
-  copies release the payload; a batch failure retains caller ownership even if a copied prefix was
-  already queued. Chunk ownership atomicity therefore does not establish exactly-once transmission.
-- The historical audit's remaining indexed items were mapped to the TUN, Naive, group, lifecycle
-  and MTU sections. Active-stream silent stall and startup-fixed IPv6 entry presentment remain
-  documented limitations, rather than being labeled universally repaired.
-- Current workflow declarations were cross-checked: Android ARM64 has a path-filtered testing push
-  in addition to dispatch, and the strict release-acceptance self-test runs in the release-contract
-  workflow, while a mention in Verify is a comment rather than a direct invocation.
-- The local libbox ABI pin-only script passed for both client gitlinks using MSYS2 bash. It did not
-  execute the full client ABI sweep; its gomobile pin display was unknown in this environment.
-- The tracked schema comparison passed locally with Go 1.26.10 and `DEFAULT_BUILD_TAGS_OTHERS`.
-  The current Verify race declaration also includes `protocol/mieru`; the historical command list
-  and package count were corrected or marked as revision-scoped.
-- The UoT per-datagram guard caches by destination and forwards the original domain after checking
-  resolved addresses. Its check alone does not pin the forwarded address; the session-level
-  resolve/check/dial guarantee cannot be extended to this path without downstream evidence.
-  Focused memo/key/no-match tests passed locally; the memo-growth test inserts keys directly and
-  does not measure an end-to-end attack. The acceptance rows were narrowed accordingly.
-- A further acceptance/baseline pass corrected the Apple pin gate, root CI test scope, historical
-  release self-test attribution, ancestor-count diagram and the erroneous implication that an empty
-  delta proves old knowledge valid. Historical tests remain scoped to their own revisions.
-- The reusable-owner test checks named types rather than forbidding every second `ReuseSuspect`
-  implementation; its previously cited test command matched no test. Corrected the related
-  cautions and distinguished the sing fork's splice workflow declaration from an observed run.
-- A test-name scan found that the cited duplicate-member lint test is absent; the implementation is
-  source-verified, while nearby collision tests cover a different setup. Prefix regexes and explicit
-  historical names require manual interpretation rather than being counted as missing tests wholesale.
-- A limited source-path scan across module and main acceptance/architecture/invariant documents found
-  234 distinct `.go` path candidates: 223 exist in this repository, nine are present under the exact
-  pinned sing dependency, and two are explicitly attributed to external gomobile/Xray sources. This
-  checks path existence only, not historical line anchors, external source contents or claim accuracy.
-- The same scan found `TestQUICOwnership` matched no definition. The acceptance command now selects
-  the actual `TestQUICSniffContext` tests, which passed locally; other unmatched names were confirmed
-  to be historical references or non-test text, not automatically treated as current tests.
-- Correction to an earlier calibration statement: Verify runs `TestNetLogEventCount` after `cd test`,
-  in the separate test module. It is not a main-root-package test; the acceptance and CI entries have
-  been corrected after checking the workflow's working directory and test definitions.
-- Offline module-integrity script passed under Go 1.26.10 for all three discovered modules; root/test
-  replacement parity included 36 entries and all 31 Cronet paths. This did not run `go mod verify`
-  or establish native archive/artifact provenance.
-- Mieru, a sizeable post-baseline protocol addition, now has a dedicated integration module covering
-  configuration, underlays, fallback selection and lifecycle. Source and selected local tests support
-  these boundaries; real network recovery and independent peer behavior remain separate evidence.
-- DNS group selection, lazy bounded health records, cancellation and NXDOMAIN classification were
-  reviewed against source and the earlier local DNS-transport suite. The FakeIP overview was aligned
-  with the narrower current-range TUN guard and separate router issuance checks.
-- Tailscale domain matching, resolver-less versus forwarded suffix precedence, platform default-route
-  hook and shared getter cleanup were source-checked. Focused tagged tests passed on Windows; no
-  live tailnet or physical handover was exercised.
-- The post-baseline failover shim forwards parallel dial options through the group but deliberately
-  does not expose a misleading first-member dial chain; its packet method and production packet path
-  have different ownership. Three focused route tests passed locally.
-- The exact sing allocator and `Buffer.Release` were checked: release clears the Buffer struct after
-  returning managed storage, not its backing bytes. Historical geometry benchmarks are scoped to their
-  measured environment rather than claimed as exact or universal performance results.
-- Sniff parser verdicts were distinguished from packet-read fatal errors, and the continuation-round
-  cap from the preceding replay of captured packets. The documented HTTP request-line fragmentation
-  and SSH banner truncation tests passed locally with Go 1.26.10. Historical pacing measurements do
-  not establish a host-independent throughput ceiling. The module registry now distinguishes the
-  standalone release-acceptance checker from the actual release path.
-- Bridge L3 forwarding and optional OpenVPN/OpenConnect endpoint and DNS registration now have a
-  navigation entry. Focused bridge index-ownership and endpoint resolver-retirement tests passed on
-  Windows with Go 1.26.10; this is not a live bridge or VPN test. The MTU text now limits its
-  unknown-path claim to the MASQUE calculation; bridge backends do read interface MTUs.
-- The post-baseline OOM executor, layered idle/pressure/crisis reclaim, recheck, close barrier and
-  reload state were reviewed and documented in the power module. The unfiltered OOM package suite
-  passed on Windows Go 1.26.10. Corrected both the fixed-100-ms poll claim and the inference that an
-  internal JSON-excluded flag means the killer is disabled by default.
-- Half-close observation now describes the observable userspace-socket gate, kernel socket skip,
-  terminal versus local-deadline verdicts, shutdown settlement and configured timers. Selected route
-  unit tests passed on Windows; active streams and real-device recovery remain outside that evidence.
-- The Naive server limiter was checked against its accept path: connection-count refusal closes the
-  socket instead of returning the previously documented HTTP 429. Default-limit and refused-connection
-  tests passed locally; no inference about the service being unidentifiable is supported.
-- Fast Path authorization can change a verdict when a transparent chain was its sole blocker; it
-  still cannot override other blockers. Naive reference-client interoperability remains an explicit
-  evidence gap instead of a claim inferred from compatible protocol structure.
-- The systemd-resolved loop still has its stop/join, but the join alone does not establish that all
-  separately spawned asynchronous updates have finished. The DNS demand table's `\|` is Markdown
-  escaping for a rendered regex alternation, not a literal Go regex escape; the obsolete claim that
-  the kTLS package contains no tests was removed.
-- DNS adblock's heap/goroutine test asserts tolerances, not strict zero, and a downstream resolver's
-  actual retention cannot be guaranteed from the advertised TTL alone. The Windows certificate
-  caution now reflects the validity-policy tradeoff consistently with the security module's analysis.
-- A cross-module pass reconciled validator side-effect scope, the locally completed offline module
-  parity check, current Cronet platform support, and MASQUE initial-size versus later-packet claims.
-- Windows process creation-time ordering and the exited-process check are specific checks, not a
-  blanket proof of ancestry or absence of every TOCTOU race. The historical Apple device result is
-  scoped to its measured configuration, revisions and sleep episodes.
-- XHTTP mode selection, XMUX all-or-nothing defaults, pool retirement and packet-up batching were
-  cross-checked with source and focused local tests. Pool backoff also applies after suspect retirement;
-  these results do not establish live peer interoperability.
-- Listener wildcard family binding, TUN device read retry, SSH session retirement and the Linux
-  namespace holder were inspected. Listener, device and SSH packages passed on Windows; Linux-only
-  behavior was not run. A source/comment discrepancy remains: raw Winsock 10004/10008/10055 do not
-  match the recognized POSIX errors on Windows Go 1.26.10 and are not listed as explicit exceptions;
-  actual delivery by a device remains unverified. No runtime code was changed in this refresh.
-- The `service/resolved` short-name expansion removed after v0.1.9 is distinguished from Tailscale's
-  separate search-domain logic. Historical Cronet race/link observations are scoped to their pin and
-  profile, rather than asserted for every product or current dependency state.
-- The `common/netcap` scope and fail-open model were checked independently and its unfiltered unit
-  package passed on Windows Go 1.26.10. The AI entry point now also rejects the stale inference that an
-  empty Git delta proves old knowledge correct, and uses the baseline recorded at execution time.
-- Independent navigation and command review corrected the renamed module-registry section and an
-  acceptance filter (`TestGate`) that matched no tests. The replacement selected HTTP and TLS gate
-  tests, which passed locally. A Markdown link/anchor scan of 115 files found 23 relative links and
-  no missing target or detected anchor; most navigation uses backticked references and needs its own
-  checks, so this scan is not a blanket proof of the index.
-- Apple source selection was independently reconciled across the refs file, source script, workflow,
-  libbox module and invariants: the workflow freezes one resolved branch/override SHA, while the
-  gitlink/ABI constant check is separate and does not prove that the build used the gitlink. The old
-  contrary single-gitlink-authority and unwired-ABI statements were removed.
-- `check-apple-source-selection.sh` initially exited 1 (65 passed, 2 failed) when `python3` resolved
-  to the Windows app-execution stub (status 49). A rerun with a temporary PATH shim to the bundled
-  Python passed 72 checks with zero failures under MSYS2 bash. This is source/fixture verification,
-  not a device, native build or published-artifact check.
-- Cross-reading the two platform modules against `TrimLevel.Action` found and corrected two incorrect
-  rows: Android levels 5 (`TrimRunningModerate`) and 20 (`TrimUIHidden`) both map to `TrimIgnore`, not
-  `TrimProgressive`.
-- Exact-target v0.1.31 GitHub run logs were inspected: Verify's selected race packages and tagged
-  kTLS unit package reported `ok`; Apple resolved `3aedd7417488` but the ABI check reported PARTIAL
-  because the Swift accessor probe skipped, and signing preflight skipped in unsigned mode. Release
-  run steps report success, while independent asset-byte and device checks remain outside this audit.
-- The invariants pass aligned fragmented sniff parser verdicts with fatal read/cancellation paths and
-  distinguished release job/artifact success from skipped internal checks. This matters for the
-  observed v0.1.31 Apple ABI PARTIAL result; job success must not erase that skip.
-- A Git object check covered 279 distinct backticked hex-like references in the commit index, baseline
-  and modules. Most resolve in the parent; the exceptions include client/dependency SHAs, a numeric
-  value and a run ID. Two historical parent commit prefixes did not resolve and are labeled as such;
-  the desktop-restore anchor was corrected to the matching current commit `7a46125ded0`. The index's
-  stale "live" release allowlist defect was reconciled with the historical fix and current run.
-- Corrected a remaining power-module table that still claimed the named-owner test forbids a second
-  `ReuseSuspect` implementation. Real-device and platform validation remains scoped to the actual
-  target rather than treated as a universal release-blocker conclusion.
-- A separate navigation-path scan covered 320 backticked Markdown-file references in the root entry,
-  index, architecture, invariants and acceptance files. Forty bare module names were made explicit as
-  `modules/...` paths; the repeated scan found no missing file among that limited set. Numeric module
-  sections referenced by single-module index rows also matched headings in the mechanical check.
-- Correction to the earlier checkout assumption: Apple and Android submodules are initialized and
-  clean at `3aedd7417488` and `9d15717a85c5`; desktop is uninitialized. The Android Kotlin probe
-  scanned 309 files with zero reported violations. The Apple probe nominally returned zero violations
-  over 423 files, but Windows `core.symlinks=false` turns tracked links into text and a target is
-  missing, so that is not a complete Swift scan; the CI skip is not reversed by this local exit code.
-  Android's checked-in idle broadcast → queued pause/wake path was also read; no device race was run.
-- The upstream ancestry was remeasured: local `upstream/testing` and its merge-base with the later
-  target are `a6952ccf6907c18e18917fcb763a433e8e36937b`; the current local merge-base with v0.1.9
-  is `d630fa94c53b2e2bdf256fad8b9d1cff809146ed`. The former `e4b7e692` remains a historical comparison
-  anchor and is not an ancestor of `a6952ccf`. A later remote check returned upstream `testing` at
-  `e5d91fa79f6319d5de940d6c81d81f0fe53b9476`; its object was already local and has the same merge-base
-  `a6952ccf` with the target. Ancestry is not authorship proof and these refs may move.
-- The remaining changed Go paths were grouped by subsystem rather than inferred from commit titles.
-  Flow tracker attach/close serialization and lock-free counter boundary were source-checked and the
-  focused tests passed; Linux original-destination decoding, Android process lookup, DERP host handling
-  and generated trust-root changes remain platform/protocol-specific source paths, not blanket interop
-  or device evidence. The tagged DERP host-format unit test passed for its domain, IPv4 and IPv6
-  cases on Windows; it does not exercise a real DERP mesh.
-- After the clean client scans, `clients/apple/Library/Network/ExtensionPlatformInterface.swift` acquired
-  a concurrent uncommitted change. It is outside this refresh and was not modified or staged by it;
-  the earlier scan result describes the clean checkout observed before that change.
-- DNS search handling was checked across DHCP, local system configuration, resolved service and
-  Tailscale; they do not share one universal expansion rule. Cache flush failure was also narrowed:
-  the internal error is returned to the FakeIP metadata caller, but the general failed pending batch
-  is not automatically requeued and public `Flush()` is best effort.
+- 旧生产基线：`5fc4f9366a60202fdc7c98cd6fa280cceace65ba`（v0.1.9）。
+- 受检测试目标：`011f3fdcd99173acd3e80483b50cb76b07bf6ff4`；基线之后有 791 个提交。
+- 已发布的 v0.1.30 解析为 `6112aa17052297ec9890e0e7f1541a06120b84b2`，并且是该目标的祖先。检查时未通告 origin `main`。
+- 并发分支推进：`cb71cf80d7224a51823b455f0be5959ad8556933` 将版本文件更新为 0.1.31，并更新 `cronet-go/all` 固定点。其标签剥离后指向该提交。较早的一次检查未发现 Release；后来的一次 GitHub API 检查发现 [v0.1.31 Release](https://github.com/Piggy-Cat-bit-shadow/sing-box/releases/tag/v0.1.31) 发布于 2026-10-28 00:38:59 UTC，非草稿且非预发布，列出七个资产。其字节未被独立下载或验证。在先前的依赖状态下的测试不会自动证明新固定点下的行为。
+- 最终增量为从 v0.1.9 到源码目标的 795 个提交。它已按路径
+  和语义簇粗分类：协议、拨号器、路由、DNS、TUN、传输、平台、依赖、CI、
+  发布、测试和历史记录。259 个变更的非 `_test.go` Go 路径包含测试工具；
+  已检查代表性的承重实现及相关测试，而非深入阅读每个提交。
+- 源码核对后的更正：TUN 启动/重置交接、双栈准入与所有权、空地址族日志记录、FakeIP/sniff 转换、透明组快速路径、能力警告严重级别、Naive 回退、VLESS 客户端加密、MASQUE 关闭、渐进式内存裁剪、TUIC 路径上限、Linux kTLS 尾部所有权、TLS 选择与工作流声明。锚点和测试见相关模块及 `ACCEPTANCE.md`。旧的全局“无增量”和“无 CI 工作流”主张已更正。
+- 现有活动模块、根导航、不变量和验收条目已清点，并
+  使用变更路径审查、源码锚点和跨文件抽样进行校准。历史报告
+  仍是时点存档；相关发现已归并到其所有者，而不是作为
+  当前结论重申。这不是重新执行每个历史基准，也不是证明每个旧行锚点。
+- 源码测试和本地测试不能确立设备、互操作性、发布产物或 CI 运行行为。本次校准未更改任何生产代码、依赖、构建或发布配置。
+- Windows 10 Enterprise LTSC 2021 build 19044、Go 1.25.5：`go test -tags with_utls ./common/tls -count=1` 在三个 Windows TLS 1.3 握手测试中失败，报 `unexpected EOF`；一次过滤重跑复现了它们。原因未知。针对性的 uTLS/ECH 测试通过。Linux kTLS 测试无法在此 Windows 主机上执行。
+- `go test -tags with_naive_outbound ./protocol/naive -run TestH3Fallback -count=1` 停留在 Cronet fork 下载处并被中断；它未产生测试结果。在所需依赖可用时重试。
+- 后来一次带 `with_naive_outbound,with_purego` 的离线重试在设置阶段失败，因为两个固定版本的
+  Cronet 模块在此 Go 缓存中缺失且 `GOPROXY=off`；没有执行任何 Naive 测试。
+- 随后一次重试使用了临时 modfile，将两个 Cronet 模块指向位于精确固定版本 `c9c0e6ec8845` 的干净本地
+  `cronet-fork` 检出；`TestH3Fallback` 各用例在 `with_naive_outbound,with_purego` 下通过。
+  这测试的是本地源码替换和测试替身，
+  而非下载模块的来源、原生库或实时互操作性。
+- 额外的交叉检查更正了 DNS 投递与缓存契约、MASQUE 每块所有权、
+  固定的 sing splice 回退、fork 来源解释、当前 sing-tun 替换，以及
+  历史 MASQUE 初始大小与硬上限主张。`go test ./route -count=1` 在
+  `TestTeardown_OneSidedCompletionNeverRunsOnClose` 于 120 秒设置超时后失败；一次隔离的
+  重跑通过。该失败仍记录在 `ACCEPTANCE.md` 中，没有被静默重新归类为通过。
+- 已针对发布 Windows 守护进程作业和后续
+  Verify/Android 作业独立查询 GitHub 运行记录；每一项都限定到对应模块中的实际 SHA。根 DNS/HTTP
+  detour 测试、Mieru 分类、XHTTP 包测试和 `with_quic` MASQUE 块测试在
+  本地通过；证据范围见 `ACCEPTANCE.md`。
+- 对模块文档中反引号包裹的裸 `name()` 引用进行机械扫描，在当前树中发现了 Go 符号；
+  剩余两个名称经核实为 shell 函数。这只是有限的
+  拼写检查，不是证明每个主张或历史行号正确。知识树中的相对 Markdown
+  链接在排除围栏代码后已检查；两个损坏的存档
+  链接已更正。这不会验证正文路径引用或 Markdown 锚点。
+- 额外的源码审查区分了 ShadowTLS 的首记录截止时间和目标清理、
+  端点拥有的 DNS 解析器退役、电源观察器通知复制，以及 Android 独立的
+  procfs 辅助程序与已移除的 `UseProcFS` 平台接口方法。相应的针对性
+  测试记录在 `ACCEPTANCE.md` 中；客户端设备 ABI 行为仍单独未验证。
+- 当前在 TUN L0 决策处的 FakeIP 范围保护，已与路由器的
+  发放台账和退役范围检查区分开；前者不查询后两者记录。
+  元数据刷新失败现在会返回，取代了那条特定的历史 oracle 发现。
+  Scope panic 行为和 Box 启动/关闭阶段锚点已对照源码检查。针对性的
+  Windows Go 1.26.10 单元测试结果记录在 `ACCEPTANCE.md` 中。
+- 当前固定的 Cronet fork 具有 Linux 和 Windows 平台文件；Windows 文件需要
+  `with_purego`。更正了过时的仅 Apple 构建主张和矛盾的 uTLS profile
+  描述。AnyTLS 仅服务端 IPv4 偏好和每次调用错误命名已通过
+  其拨号器和出站源码追踪；它们不证明对端互操作性或吞吐量。
+- 独立的交叉阅读更正了项目概览中旧的发布和依赖陈述、
+  架构概览的范围/验证和 MASQUE 大小过度主张，以及相应的
+  MASQUE 验收和不变量行。历史计数明确限定于其修订版本。
+- 双栈准入已对照观察器、本地地址族门控和调度器检查：
+  过时的本地判定不能拒绝，严格配置的策略保持独立，且有界、
+  会过期的地址族健康记录改变的是竞争时序，而不是将某个地址族列入黑名单。
+- Libbox 监视器刷新/发布顺序和刷新期间关闭的围栏已对照源码检查，
+  针对性测试在 Windows 上使用 Go 1.26.10 和 `p2ios` 通过。Apple 生命周期的睡眠测量
+  起点和重用边界发布被区分；两个测试结果都不是设备验证。
+- MTU 模块关于只有 Hysteria2 通过 `InitialPacketSizeCeiling` 的主张已更正：TUIC
+  也会通过，而 MASQUE 仅初始钳制并不能证明后续数据包的硬上限。
+  针对性的调度器默认值、仲裁和拒绝所有权测试在本地通过。
+- 历史 XHTTP 基准来源已通过祖先关系检查；记录的测量值不是
+  当前性能证据，也不支持“该 fork 从未落后”的主张。
+  性能索引现在限定其带日期值，并避免与协议无关的结论。
+- 移除了一条过时的 CI 模块诊断，该诊断声称 Windows TLS 1.3 测试联系远程主机并
+  证明不支持 Schannel。它们的本地握手失败已复现，但原因仍
+  未知；历史失败不能排除后来的回归。
+- 直接卸载（direct-offload）层表现在区分路由前缀设置与自动重定向流
+  判定，并且不再断言内核辅助复制在每个操作系统或每条流上都可用。
+- Windows 守护进程源码审查更正了 Linux 没有对端认证的主张：其本地
+  套接字路径使用 `SO_PEERCRED` 和进程启动身份。Windows 证书过期策略
+  被记录为有范围的权衡，而不是无条件的安全保证。
+- 重新审视了完整审计 BUG-009/015：当前远程客户端有五分钟 HTTP 超时，
+  发布路径会检查关闭，TUN 将重定向更新与关闭串行化。Updater Close 不
+  join，且已经复制的通用回调不会被全局召回；针对性的 TUN 顺序
+  测试通过，未提出 Linux 集成主张。
+- 历史 BUG-011/014 已对照 uTLS 防护和精确的本地 Cronet 固定点复查：不支持的
+  ECH 指纹在配置阶段被拒绝，Cronet 恢复的启动 panic 被赋给
+  一个命名返回值。原生启动失败和所有允许的 ECH 线上格式组合仍未测试。
+- 历史 BUG-002/010 已对照 `common/ktls/ktls.go` 和精确固定的 sing
+  splice 源码复查：成功的钩子路径转发返回的字节并恢复，且握手后
+  消息被排空。Linux kTLS splice/KeyUpdate 执行在此 Windows 主机上仍未验证。
+- 历史 BUG-005 已对照精确的 quic-go 固定点 `2daa76f5bd52` 检查：成功的无 headroom
+  复制会释放载荷；批次失败保留调用方所有权，即使已复制的部分前缀
+  已入队。因此块所有权原子性不能确立恰好一次传输。
+- 历史审计其余已索引条目已映射到 TUN、Naive、组、生命周期
+  和 MTU 章节。活动流的静默停滞和启动时固定的 IPv6 入口呈现仍
+  是记录在案的局限，而不是被标记为普遍修复。
+- 当前工作流声明已交叉核对：Android ARM64 除 dispatch 外还有路径过滤的测试推送，
+  严格的发布验收自测在发布契约
+  工作流中运行，而在 Verify 中的提及是注释而非直接调用。
+- 本地 libbox ABI 仅固定点脚本使用 MSYS2 bash 对两个客户端 gitlink 均通过。它没有
+  执行完整的客户端 ABI 扫描；其 gomobile 固定点显示在此环境中未知。
+- 受跟踪的 schema 比较在本地使用 Go 1.26.10 和 `DEFAULT_BUILD_TAGS_OTHERS` 通过。
+  当前 Verify 竞争声明还包括 `protocol/mieru`；历史命令列表
+  和包计数已被更正或标记为限定于修订版本。
+- UoT 每数据报防护按目的地缓存，并在检查
+  解析后的地址后转发原始域名。仅其检查不能固定转发的地址；会话级
+  resolve/check/dial 保证不能在没有下游证据的情况下扩展到该路径。
+  针对性的 memo/key/no-match 测试在本地通过；memo 增长测试直接插入键，
+  并不衡量端到端攻击。验收行已相应收窄。
+- 进一步的一次验收/基线检查更正了 Apple 固定点门禁、根 CI 测试范围、历史
+  发布自测归因、祖先计数图和“空
+  增量证明旧知识有效”的错误含义。历史测试仍限定于其自身修订版本。
+- 可重用所有者测试检查命名类型，而不是禁止每一个第二个 `ReuseSuspect`
+  实现；其先前引用的测试命令没有匹配任何测试。更正了相关
+  注意事项，并区分了 sing fork 的 splice 工作流声明与一次实际观察到的运行。
+- 测试名称扫描发现所引用的重复成员 lint 测试不存在；实现已
+  通过源码验证，而附近的冲突测试覆盖的是不同设置。前缀正则和显式
+  历史名称需要人工解释，而不是被整体计为缺失测试。
+- 对模块及主验收/架构/不变量文档进行有限源码路径扫描，发现
+  234 个不同的 `.go` 路径候选：223 个存在于本仓库，九个存在于精确
+  固定的 sing 依赖下，两个明确归属于外部 gomobile/Xray 源码。这
+  仅检查路径存在性，不检查历史行锚点、外部源码内容或主张准确性。
+- 同一扫描发现 `TestQUICOwnership` 没有匹配到定义。验收命令现在选择
+  实际的 `TestQUICSniffContext` 测试，它们在本地通过；其他未匹配名称被确认
+  为历史引用或非测试文本，而不是自动视为当前测试。
+- 对较早校准陈述的更正：Verify 在 `cd test` 之后运行 `TestNetLogEventCount`，
+  位于单独的测试模块中。它不是主根包测试；在检查工作目录
+  和测试定义后，验收和 CI 条目已更正。
+- 离线模块完整性脚本在 Go 1.26.10 下对发现的所有三个模块通过；根/测试
+  替换对等性包含 36 个条目和全部 31 个 Cronet 路径。这没有运行 `go mod verify`，
+  也没有确立原生归档/产物来源。
+- Mieru 是基线后一个相当大的协议新增项，现在有专门的集成模块，覆盖
+  配置、底层、回退选择和生命周期。源码和选定的本地测试支持
+  这些边界；真实网络恢复和独立对端行为仍是单独的证据。
+- DNS 组选择、惰性有界健康记录、取消和 NXDOMAIN 分类已
+  对照源码和较早的本地 DNS 传输套件审查。FakeIP 概览已与
+  更窄的当前范围 TUN 防护及单独的路由器发放检查对齐。
+- Tailscale 域名匹配、无解析器与转发后缀优先级、平台默认路由
+  钩子和共享 getter 清理已对照源码检查。针对性的带标签测试在 Windows 上通过；未
+  演练真实 tailnet 或物理切换。
+- 基线后的故障转移 shim 通过组转发并行拨号选项，但有意
+  不暴露误导性的首成员拨号链；其数据包方法和生产数据包路径
+  具有不同的所有权。三个针对性路由测试在本地通过。
+- 已检查精确的 sing 分配器和 `Buffer.Release`：释放在
+  归还托管存储后清除 Buffer 结构体，而不是其底层字节。历史几何基准限定于其
+  测量环境，而不是被声称精确或通用的性能结果。
+- Sniff 解析器判定与数据包读取致命错误被区分，续读轮次
+  上限与先前捕获数据包的重放被区分。记录在案的 HTTP 请求行分片
+  和 SSH 横幅截断测试在本地使用 Go 1.26.10 通过。历史节奏测量
+  不能确立与主机无关的吞吐量上限。模块注册表现在区分
+  独立发布验收检查器与实际发布路径。
+- Bridge L3 转发和可选的 OpenVPN/OpenConnect 端点和 DNS 注册现在有
+  导航条目。针对性的 bridge 索引所有权和端点解析器退役测试在
+  Windows 上使用 Go 1.26.10 通过；这不是实时 bridge 或 VPN 测试。MTU 文本现在将其
+  未知路径主张限制为 MASQUE 计算；bridge 后端确实会读取接口 MTU。
+- 基线后的 OOM 执行器、分层空闲/压力/危机回收、复检、关闭屏障和
+  重载状态已在 power 模块中审查和记录。未过滤的 OOM 包套件
+  在 Windows Go 1.26.10 上通过。更正了固定 100 毫秒轮询主张，以及“
+  内部 JSON 排除标志意味着 killer 默认禁用”的推断。
+- 半关闭观察现在描述可观察的用户空间套接字门控、内核套接字跳过、
+  终止与本地截止时间判定、关闭结算和配置的定时器。选定的路由
+  单元测试在 Windows 上通过；活动流和真实设备恢复仍不在该证据范围内。
+- Naive 服务器限流器已对照其 accept 路径检查：连接数拒绝会关闭
+  套接字，而不是返回先前记录的 HTTP 429。默认限制和拒绝连接
+  测试在本地通过；不支持关于该服务不可识别的推断。
+- Fast Path 授权在透明链是其唯一阻断因素时可能改变判定；它
+  仍然不能覆盖其他阻断因素。Naive 参考客户端互操作性仍是明确的
+  证据缺口，而不是从兼容协议结构推断出的主张。
+- systemd-resolved 循环仍有其 stop/join，但仅 join 不能确立所有
+  单独生成的异步更新已完成。DNS 需求表中的 `\|` 是用于渲染正则交替的 Markdown
+  转义，而不是字面 Go 正则转义；kTLS 包
+  不包含测试的过时主张已被移除。
+- DNS adblock 的堆/goroutine 测试断言的是容差，而不是严格为零，且下游解析器的
+  实际保留量不能仅从通告的 TTL 保证。Windows 证书
+  注意事项现在反映有效性策略权衡，与安全模块的分析一致。
+- 一次跨模块检查调和了验证器副作用范围、本地完成的离线模块
+  对等性检查、当前 Cronet 平台支持，以及 MASQUE 初始大小与后续数据包主张。
+- Windows 进程创建时间排序和已退出进程检查是特定检查，不是对
+  祖先关系或不存在任何 TOCTOU 竞争的笼统证明。历史 Apple 设备结果
+  限定于其测量的配置、修订版本和睡眠事件。
+- XHTTP 模式选择、XMUX 全有或全无默认值、池退役和 packet-up 批处理已
+  对照源码和针对性本地测试交叉检查。池退避也在可疑退役之后适用；
+  这些结果不确立实时对端互操作性。
+- 检查了监听器通配地址族绑定、TUN 设备读取重试、SSH 会话退役和 Linux
+  命名空间持有者。监听器、设备和 SSH 包在 Windows 上通过；仅 Linux
+  行为未运行。仍存在源码/注释不一致：原始 Winsock 10004/10008/10055 在
+  Windows Go 1.26.10 上与识别的 POSIX 错误不匹配，且未列为显式异常；
+  设备的实际投递仍未验证。本次刷新未更改运行时代码。
+- v0.1.9 之后移除的 `service/resolved` 短名称扩展与 Tailscale 的
+  单独搜索域逻辑被区分开。历史 Cronet 竞争/链接观察限定于其固定点和
+  profile，而不是针对每个产品或当前依赖状态断言。
+- `common/netcap` 的范围和失败即放行模型已独立检查，其未过滤的单元
+  包在 Windows Go 1.26.10 上通过。AI 入口点现在还拒绝“
+  空 Git 增量证明旧知识正确”的过时推断，并使用执行时记录的基线。
+- 独立的导航和命令审查更正了重命名的模块注册表章节和一个
+  未匹配任何测试的验收过滤器（`TestGate`）。替换选择了 HTTP 和 TLS 门禁
+  测试，它们在本地通过。对 115 个文件的 Markdown 链接/锚点扫描发现 23 个相对链接，
+  没有缺失目标或检测到的锚点；大多数导航使用反引号引用，需要其自身
+  检查，因此此扫描不是索引的笼统证明。
+- Apple 源码选择已在 refs 文件、源码脚本、工作流、
+  libbox 模块和不变量之间独立调和：工作流冻结一个已解析分支/覆盖 SHA，而
+  gitlink/ABI 常量检查是单独的，且不证明构建使用了 gitlink。旧的
+  相反的单一 gitlink 权威和 ABI 未接线陈述已移除。
+- `check-apple-source-selection.sh` 最初在 `python3` 解析
+  到 Windows 应用执行存根（状态 49）时退出 1（65 通过，2 失败）。使用临时 PATH shim 指向捆绑
+  Python 的重跑在 MSYS2 bash 下通过 72 项检查，零失败。这是源码/fixture 验证，
+  不是设备、原生构建或已发布产物检查。
+- 对照 `TrimLevel.Action` 交叉阅读两个平台模块，发现并更正了两个错误的
+  行：Android 级别 5（`TrimRunningModerate`）和 20（`TrimUIHidden`）都映射到 `TrimIgnore`，而不是
+  `TrimProgressive`。
+- 检查了精确目标 v0.1.31 GitHub 运行日志：Verify 选定的竞争包和带标签的
+  kTLS 单元包报告 `ok`；Apple 解析出 `3aedd7417488`，但 ABI 检查报告 PARTIAL，
+  因为 Swift 访问器探测被跳过，且签名预检在未签名模式下被跳过。Release
+  运行步骤报告成功，而独立的资产字节和设备检查仍不在本次审计范围内。
+- 不变量检查使分片的 sniff 解析器判定与致命读取/取消路径对齐，并
+  区分了 release 作业/产物成功与被跳过的内部检查。这对
+  观察到的 v0.1.31 Apple ABI PARTIAL 结果很重要；作业成功不得抹去该跳过。
+- 一次 Git 对象检查覆盖了提交索引、基线和模块中 279 个不同的反引号十六进制样引用。
+  大多数在父仓库中可解析；例外包括客户端/依赖 SHA、一个数值
+  和一个运行 ID。两个历史父提交前缀未解析，并已如此标记；
+  桌面恢复锚点已更正为匹配的当前提交 `7a46125ded0`。索引中
+  过时的“live”发布允许列表缺陷已与历史修复和当前运行调和。
+- 更正了仍声称命名所有者测试禁止第二个 `ReuseSuspect` 实现的
+  剩余 power 模块表格。真实设备和平台验证仍限定于实际
+  目标，而不是被视为普遍的发布阻断结论。
+- 一次单独的导航路径扫描覆盖了根条目、
+  索引、架构、不变量和验收文件中 320 个反引号 Markdown 文件引用。四十个裸模块名被明确为
+  `modules/...` 路径；重复扫描在该有限集合中未发现缺失文件。单模块索引行引用的数字模块
+  章节在机械检查中也匹配标题。
+- 对较早检出假设的更正：Apple 和 Android 子模块已在
+  `3aedd7417488` 和 `9d15717a85c5` 初始化并保持干净；桌面未初始化。Android Kotlin 探测
+  扫描了 309 个文件，报告零违规。Apple 探测名义上在
+  423 个文件上返回零违规，但 Windows `core.symlinks=false` 会将受跟踪链接变为文本，且一个目标
+  缺失，因此这不是完整的 Swift 扫描；CI 跳过不会因这个本地退出码而被逆转。
+  Android 已检入的空闲广播 → 排队暂停/唤醒路径也已阅读；未运行设备竞争。
+- 上游祖先关系已重新测量：本地 `upstream/testing` 及其与后一
+  目标的合并基为 `a6952ccf6907c18e18917fcb763a433e8e36937b`；当前本地与 v0.1.9 的合并基
+  为 `d630fa94c53b2e2bdf256fad8b9d1cff809146ed`。先前的 `e4b7e692` 仍是历史比较
+  锚点，且不是 `a6952ccf` 的祖先。后来一次远程检查返回上游 `testing` 位于
+  `e5d91fa79f6319d5de940d6c81d81f0fe53b9476`；其对象已在本地，并与目标具有相同的合并基
+  `a6952ccf`。祖先关系不是作者身份证明，这些 ref 可能移动。
+- 其余变更的 Go 路径按子系统分组，而不是从提交标题推断。
+  Flow tracker 附加/关闭串行化和无锁计数器边界已对照源码检查，
+  针对性测试通过；Linux 原始目的地解码、Android 进程查找、DERP 主机处理
+  和生成的信任根变更仍是特定于平台/协议的源码路径，而不是笼统的互操作
+  或设备证据。带标签的 DERP 主机格式单元测试在 Windows 上通过了其域名、IPv4 和 IPv6
+  用例；它不演练真实 DERP 网格。
+- 在干净的客户端扫描之后，`clients/apple/Library/Network/ExtensionPlatformInterface.swift` 获得
+  了一个并发未提交变更。它不在本次刷新范围内，且未被本次刷新修改或暂存；
+  较早的扫描结果描述的是该变更之前观察到的干净检出。
+- DNS 搜索处理已在 DHCP、本地系统配置、resolved 服务和
+  Tailscale 中检查；它们不共享同一条通用扩展规则。缓存刷新失败也已收窄：
+  内部错误返回给 FakeIP 元数据调用方，但一般失败的待处理批次
+  不会自动重新入队，且公共 `Flush()` 是尽力而为。
 
-### Module dispositions
+### 模块处置（Module dispositions）
 
-The inventory records reviewed source boundaries and explicit evidence limits, not a claim that every
-historical line anchor or measurement was re-derived:
+清单记录的是已审查的源码边界和明确的证据限制，而不是声称每个
+历史行锚点或测量值都被重新推导：
 
-| Entry | Status | Evidence or remaining work |
+| 条目 | 状态 | 证据或剩余工作 |
 |---|---|---|
-| `buffer-ownership`, `mtu-and-geometry` | updated | exact sing/quic pins, pool release, MASQUE chunk ownership, kTLS and TUIC/MASQUE ceiling boundaries; real kernel splice and physical MTU unverified |
-| `build-pruning-release`, `ci-release` | updated | registry, profile gates, dependencies, workflow triggers, exact-SHA run records and release selection; no independent artifact-byte audit |
-| `core-lifecycle-runtime`, `power-mobile-lifecycle` | updated | Scope/Box, transition/half-close, listener/device/SSH, OOM reclaim, power and trim mappings; real device transitions unverified |
-| `dns-demand`, `dns-adblock-action` | updated | generations, family admission, FakeIP, search paths, endpoint resolvers, groups and negative answers; real DNS/TUN environment matrix unverified |
-| `fast-path-group-policy`, `data-path-optimization` | updated | explicit/intrinsic authorization, all listed blockers, entry consumption and scheduler; historical performance results remain environment-scoped |
-| `sniff` | updated | plans, ownership, QUIC/FakeIP, HTTP and SSH limitations and failure handling; arbitrary peer interop unverified |
-| `path-selection-validation` | updated | dry-run effects, capability-versus-structural severity, topology, group forwarding and rule-set closure; whole-graph soundness is not asserted |
-| `libbox-platform-contract` | updated | TUN, Android trim, monitor and Apple source authority; local Kotlin scan passed, Swift CI scan PARTIAL and local symlink caveat recorded |
-| `masque-connectip`, `naive-http-transport`, `xhttp-client-transport` | updated | ownership, fallback, UoT, client encryption and XMUX; independent peer interop remains unverified |
-| `mieru` | added | config, underlays, fallback and lifecycle source reviewed; selected tests and exact-target CI race package passed, independent-peer recovery unverified |
-| `windows-daemon-security` | updated | trust boundary, certificate policy and exact-target CI tests; no installed-service end-to-end run and local signing fixture skipped |
-| root architecture, invariants, acceptance, index and historical reports | updated / archival | contradictions, test filters, paths, version and evidence scope reconciled; old reports remain historical and old anchors are not universally re-derived |
+| `buffer-ownership`、`mtu-and-geometry` | updated | 精确的 sing/quic 固定点、池释放、MASQUE 块所有权、kTLS 和 TUIC/MASQUE 上限边界；真实内核 splice 和物理 MTU 未验证 |
+| `build-pruning-release`、`ci-release` | updated | 注册表、profile 门禁、依赖、工作流触发器、精确 SHA 运行记录和发布选择；无独立产物字节审计 |
+| `core-lifecycle-runtime`、`power-mobile-lifecycle` | updated | Scope/Box、转换/半关闭、监听器/设备/SSH、OOM 回收、电源和 trim 映射；真实设备转换未验证 |
+| `dns-demand`、`dns-adblock-action` | updated | 代次、地址族准入、FakeIP、搜索路径、端点解析器、组和否定应答；真实 DNS/TUN 环境矩阵未验证 |
+| `fast-path-group-policy`、`data-path-optimization` | updated | 显式/固有授权、所有列出的阻断因素、入口消耗和调度器；历史性能结果仍限定于环境 |
+| `sniff` | updated | 计划、所有权、QUIC/FakeIP、HTTP 和 SSH 局限及失败处理；任意对端互操作未验证 |
+| `path-selection-validation` | updated | dry-run 效果、能力与结构严重性、拓扑、组转发和规则集闭包；未断言全图健全性 |
+| `libbox-platform-contract` | updated | TUN、Android trim、监视器和 Apple 源码权威；本地 Kotlin 扫描通过，Swift CI 扫描为 PARTIAL，并记录本地符号链接注意事项 |
+| `masque-connectip`、`naive-http-transport`、`xhttp-client-transport` | updated | 所有权、回退、UoT、客户端加密和 XMUX；独立对端互操作仍未验证 |
+| `mieru` | added | 配置、底层、回退和生命周期源码已审查；选定测试和精确目标 CI 竞争包通过，独立对端恢复未验证 |
+| `windows-daemon-security` | updated | 信任边界、证书策略和精确目标 CI 测试；未运行已安装服务的端到端测试，本地签名 fixture 被跳过 |
+| 根架构、不变量、验收、索引和历史报告 | updated / archival | 矛盾、测试过滤器、路径、版本和证据范围已调和；旧报告仍为历史，旧锚点未被普遍重新推导 |
 
-### Refresh status
+### 刷新状态（Refresh status）
 
 ```text
 KNOWLEDGE_REFRESH = COMPLETE (source-level; limitations above remain)

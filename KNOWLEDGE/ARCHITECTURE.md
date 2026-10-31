@@ -1,126 +1,121 @@
-# Architecture boundaries worth preserving
+# 值得保留的架构边界（Architecture boundaries worth preserving）
 
-Eleven boundaries. Each one is a place where a reasonable-looking change would be wrong, and each is
-stated with the module that carries the detail.
+十一条边界。每一条都是那种“看起来合理、实际却是错的”改动所在之处，并且每一条都
+连同承载细节的模块一起陈述。
 
-## 1. Ownership: a Scope owns its registered reverse cleanups
+## 1. 所有权：Scope 拥有其注册的反向清理（Ownership: a Scope owns its registered reverse cleanups）
 
-`Scope.Close` drains its registered cleanup functions in reverse order, including the child-scope
-cleanup installed by `Scope.Start`; resource close functions must be registered with the appropriate
-owner. Other owners can also perform teardown, so absence of a direct `scope.Add` is not alone proof
-that a resource leaks. A cleanup registered after close returns runs **synchronously on the
-registering goroutine**, and `Close` does **not** wait for an in-flight `Start`. A cleanup panic
-interrupts the drain; `Box.Close` records the panic as an error rather than finishing that drain.
+`Scope.Close` 按相反顺序排空其注册的清理函数，包括 `Scope.Start` 安装的子作用域
+清理；资源关闭函数必须注册到合适的所有者。其他所有者也可以执行拆除，所以缺少直接的 `scope.Add`
+本身并不能证明资源泄漏。在 close 返回之后注册的清理会**在注册它的 goroutine 上同步运行**，
+而 `Close` **不会**等待正在进行的 `Start`。清理函数 panic 会中断排空；`Box.Close` 会把该 panic
+记录为错误，而不是完成那次排空。
 → `modules/core-lifecycle-runtime.md`
 
-## 2. One network generation, and a rebuild is a lease, not a flag
+## 2. 单一网络代次，重建是租约而不是标志位（One network generation, and a rebuild is a lease, not a flag）
 
-`common/runtimecoord` publishes one monotonic epoch. "One logical recovery at a time" is a **lease
-identity** (`*RebindLease`), not a boolean, so a superseded lease cannot release a newer one. `Stale()`
-and `Acknowledge()` separate "the epoch moved" from "the resource is current". **Publication is not a
-rebuild**, and stale resources retire lazily when demanded.
+`common/runtimecoord` 发布一个单调的纪元（epoch）。“一次只做一次逻辑恢复”是一个**租约
+身份**（`*RebindLease`），而不是布尔值，所以被取代的租约无法释放更新的租约。`Stale()`
+与 `Acknowledge()` 把“纪元移动了”和“资源是当前的”区分开。**发布不是重建**，
+过期资源在被需要时惰性退役。
 → `modules/core-lifecycle-runtime.md`
 
-## 3. Selection is a preview until it is committed
+## 3. 选择在被提交之前只是预览（Selection is a preview until it is committed）
 
-The routing rules choose an outbound **root**; groups then select. A group is a control-plane
-selection, **not a physical hop**. Some groups wrap the returned connection for interruption and
-lifecycle management (`protocol/group/selector.go`, `urltest.go`), so do not infer that selection
-means the group never wraps a connection. At run time the
-`commit` flag is this separation: a preview must not consume a rotation slot. Any diagnostic that
-reports a group as a hop, or reports the hop list backwards, describes a path the traffic does not
-take.
+路由规则选择一个出站**根**；随后由组进行选择。组是控制面的
+选择，**不是物理跳**。某些组会包装返回的连接以做中断与
+生命周期管理（`protocol/group/selector.go`、`urltest.go`），所以不要推断“选择”
+意味着组从不包装连接。在运行时，
+`commit` 标志正是这一区分：预览绝不能消耗轮换槽位。任何把组报告为
+一跳、或把跳列表报告为反序的诊断，描述的都是一条流量实际不会走的路径。
 → `modules/path-selection-validation.md`
 
-## 4. Start-time validation reports without exercising the path
+## 4. 启动期校验只报告，不实际走路径（Start-time validation reports without exercising the path）
 
-Outbound validation runs **after** the dependency sort and **before outbounds start**. Other Box
-initialization may already have run. It dials nothing,
-resolves nothing, changes no selection and consumes no rotation. The physical-path resolver itself
-holds no dialer or clock; that fact alone does not prove that every enclosing call is side-effect-free.
-Where the leaf is not knowable it reports
-`Unknown` and stops, so a partly-verified path cannot be mistaken for a verified one. The current
-`common/physicalpath/dryrun.go` distinguishes fatal failures from capability warnings: an existing
-detour that cannot satisfy a consumer can warn while an affected flow still fails at runtime;
-missing references and other fatal classes must not be demoted wholesale. See the path-selection
-module for the exact taxonomy.
+出站校验在依赖排序**之后**、出站启动**之前**运行。其他 Box
+初始化可能已经运行。它不拨号、不解析、不改变选择、不消耗轮换。物理路径解析器本身
+不持有 dialer 或时钟；仅凭这一事实并不能证明每一层外围调用都没有副作用。
+当叶子节点不可知时，它报告
+`Unknown` 并停止，因此部分验证的路径不会被误认为已验证的路径。当前的
+`common/physicalpath/dryrun.go` 区分致命失败与能力警告：一个存在但无法满足
+消费者的 detour 可以发出警告，而受影响的流在运行时仍然失败；
+缺失的引用和其他致命类别不能被整体降级。精确分类见
+路径选择模块。
 
-**Two documented incidental side effects exist** (a deprecation log and a memoised tag→object
-resolution). The prohibition is on network resolution, dialling, changing selection and consuming
-rotation, not on logging or all internal memoization.
+**存在两处有文档记载的附带副作用**（一条弃用日志和一次记忆化的 tag→对象
+解析）。禁令针对的是网络解析、拨号、改变选择和消耗
+轮换，而不是日志或所有内部记忆化。
 → `modules/path-selection-validation.md`
 
-## 5. Platform facts are inputs; the core decides policy
+## 5. 平台事实是输入，由核心决定策略（Platform facts are inputs; the core decides policy）
 
-A client reports the number its OS gave it (memory level, screen on/off, lock state, device wake).
-The **core** owns the trim ladder, the coalescing windows, the sleep/wake edges and the reuse policy.
-Level, edge and snapshot are three different things: a current-state re-read **reconciles the level**
-and must never fabricate an edge.
+客户端报告其操作系统给它的数字（内存级别、屏幕开/关、锁定状态、设备唤醒）。
+**核心**拥有裁剪阶梯（trim ladder）、合并窗口、睡眠/唤醒边沿事件以及复用策略。
+级别、边沿和快照是三件不同的事：重新读取当前状态会**校准级别**，
+且绝不能捏造一个边沿事件。
 → `modules/power-mobile-lifecycle.md`
 
-## 6. Sniff metadata informs planning; it does not rewrite the destination
+## 6. 嗅探元数据只用于规划，不改写目标地址（Sniff metadata informs planning; it does not rewrite the destination）
 
-A sniffed domain becomes DNS planning and dial candidates; sniffing alone does not rewrite
-`Destination` unless the explicit deprecated `override_destination` action is used. Separately,
-FakeIP reverse mapping in `route/route.go` saves `OriginDestination` and replaces `Destination` with
-the mapped FQDN. Do not conflate that translation with a sniff-driven override.
+嗅探出的域名成为 DNS 规划与拨号候选；除非使用显式且已弃用的 `override_destination`
+动作，嗅探本身不会改写 `Destination`。另外，
+`route/route.go` 中的 FakeIP 反向映射会保存 `OriginDestination`，并用映射后的 FQDN
+替换 `Destination`。不要把这种翻译与嗅探驱动的覆盖混为一谈。
 → `modules/sniff.md`
 
-## 7. Buffer ownership is a correctness contract, not an optimisation surface
+## 7. 缓冲区所有权是正确性契约，不是优化面（Buffer ownership is a correctness contract, not an optimisation surface）
 
-Borrowed cursors must not outlive their call; the QUIC working copy is deliberately unpooled; a batch
-send is all-or-nothing per chunk, and earlier accepted chunks have transferred ownership. A context-ID
-substitution **releases the original** and must refuse its chunk. Each rule exists because violating it produced a
-real bug — including one where every packet in a refused batch was silently dropped.
+借用的游标（cursor）不得存活于其调用之外；QUIC 工作副本刻意不进入池；批量
+发送按块是全部或全无的，并且更早被接受的块已经转移了所有权。上下文 ID
+替换会**释放原始对象**，并且必须拒绝其块。每条规则的存在都是因为违反它产生过
+真实的 bug —— 包括一次被拒绝批次中的每个包都被悄悄丢弃。
 → `modules/buffer-ownership.md`
 
-## 8. MTU is three quantities, not one
+## 8. MTU 是三个量，而不是一个（MTU is three quantities, not one）
 
-Outer link MTU, outer QUIC packet size and inner tunnel MTU are distinct quantities. For MASQUE,
-known detour capacity clamps the initial QUIC packet size; this alone does not prove a hard cap on
-later packets. TUIC has a separate hard-ceiling path. Unknown physical-path capacity is not a proof.
+外层链路 MTU、外层 QUIC 包大小和内层隧道 MTU 是不同的量。对 MASQUE，
+已知的 detour 容量会钳制初始 QUIC 包大小；仅此并不能证明对
+后续包存在硬上限。TUIC 有一条单独的硬上限路径。未知的物理路径容量不构成证明。
 → `modules/mtu-and-geometry.md`
 
-## 9. The upload scheduler is opt-in and inert when unset
+## 9. 上传调度器需显式开启，未设置时不产生作用（The upload scheduler is opt-in and inert when unset）
 
-`traffic_scheduler` and `traffic_class` are fork-only keys. Absent a rate, the gate observes every
-managed byte, admits all of them, and starts **no queue, no lock and no timer**. An inactive shaping
-gate alone does not prove full configuration compatibility or identical end-to-end behavior with
-another implementation. When a rate is configured, shaping runs **continuously**, not only under
-contention.
+`traffic_scheduler` 与 `traffic_class` 是分支独有的键。没有速率时，门禁会观察每一个
+受管理的字节，全部放行，并且**不启动任何队列、任何锁、任何定时器**。仅一个未激活的整形
+门禁并不能证明与另一种实现完全配置兼容或端到端行为一致。配置了速率时，整形会**持续**
+运行，而不仅仅在有争用时运行。
 → `modules/data-path-optimization.md`
 
-## 10. Direct Offload is semantic equivalence, and its data-plane effect is Linux-only
+## 10. Direct Offload 是语义等价，其数据面效果仅在 Linux 上（Direct Offload is semantic equivalence, and its data-plane effect is Linux-only）
 
-A dial option disqualifies a flow only if the userspace path would actually apply it **to that flow**.
-New `DialerOptions` fields must not be able to make a bypass *safe* by default: an unclassified option
-refuses. And the verdict is a real bypass **only** in Linux `auto_redirect` — no TUN stack honours it.
+一个拨号选项只有在用户态路径确实会把它**应用到该流上**时，才使该流不合格。
+新的 `DialerOptions` 字段不得能让绕过默认变得 *安全*：未分类的选项一律拒绝。
+而且该判定**仅**在 Linux `auto_redirect` 中才是真正的绕过 —— 没有任何 TUN 协议栈会遵守它。
 → `modules/data-path-optimization.md`
 
-## 11. Release provenance is download-and-re-verify, and it is scoped
+## 11. 发布溯源是下载并重新校验，且范围有限（Release provenance is download-and-re-verify, and it is scoped）
 
-Release **downloads** the artifacts a product workflow produced for the exact commit and re-verifies
-per-platform bytes, hashes and recorded commit — it does not rebuild. This description is scoped to
-the historical release workflow and requires rechecking the current plan and run evidence for each
-release. A declaration does not prove execution; a specific Windows daemon CI run is documented in
-`modules/windows-daemon-security.md`, and does not by itself prove the release artifact pipeline.
+发布流程会**下载**某个产品工作流为精确提交产生的产物，并重新校验
+各平台的字节、哈希与记录的提交 —— 它不重新构建。这一描述的范围限于
+历史性的发布工作流，每个 release 都需要重新核对当前计划与运行证据。
+声明不证明执行；一次具体的 Windows 守护进程 CI 运行记录在
+`modules/windows-daemon-security.md` 中，它本身并不证明发布产物的流水线。
 → `modules/ci-release.md`
 
 ---
 
-## The module map
+## 模块地图（The module map）
 
-`modules/README.md` maps a task to the module to read. Load only what your task touches.
+`modules/README.md` 把任务映射到要读的模块。只加载你的任务涉及的部分。
 
-## Two standing conventions
+## 两条长期约定（Two standing conventions）
 
-These are **conventions**, not invariants — they are mature practice here, and a future change may
-reasonably depart from them with a stated reason:
+这些是**约定**，不是不变量 —— 它们在这里是成熟的实践，未来的变更可以
+在给出理由的情况下合理地背离它们：
 
-1. **Keep source and its test artifact in the same change.** The fork's own history shows what happens
-   without it: a goroutine-census test that could not fail, a TUN test that called `inbound.Close()`
-   directly (which the product never does) and stayed green while the product leaked, and a splice test
-   that asserted the success path only.
-2. **Prefer a behavioural assertion to a source-text guard.** A grep for a string in a dependency fails
-   when the line moves and passes when the meaning changes — the wrong way round.
-   `docs/UPSTREAM-SYNC.md:89-94` states this and names where it was not possible.
+1. **把源码与其测试产物放在同一个变更里。** 本分支自己的历史展示了没有它会怎样：
+   一个不可能失败的 goroutine 普查测试、一个直接调用 `inbound.Close()`（产品从不这样做）
+   并在产品泄漏时仍然保持绿色的 TUN 测试，以及一个只断言成功路径的 splice 测试。
+2. **优先使用行为断言，而不是源文本守卫。** 在依赖中 grep 一个字符串，会在
+   行移动时失败、在含义改变时通过 —— 恰好反过来。
+   `docs/UPSTREAM-SYNC.md:89-94` 陈述了这一点，并指出了无法这样做的地方。

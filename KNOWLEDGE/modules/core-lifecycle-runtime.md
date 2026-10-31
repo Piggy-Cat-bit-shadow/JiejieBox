@@ -1,339 +1,319 @@
-# Core lifecycle and runtime coordination
+# 核心生命周期与运行时协调（Core lifecycle and runtime coordination）
 
-## Network transition ownership after v0.1.9
+## v0.1.9 之后的网络切换所有权（Network transition ownership after v0.1.9）
 
-**VERIFIED_SOURCE**, testing target `011f3fdcd99`: `adapter/network.go` distinguishes the
-reset generation, transition stability and an atomic `NetworkTransitionSnapshotter` observation.
-`route/network.go` implements the pair under `transitionAccess`: a newly published ownership epoch
-alone cannot prove a transition has settled, because DNS and transport reset may still be pending.
-Per-flow work must not treat a result captured in that window as a stable-network result. The reset
-generation advances when reset starts, not when it finishes; these related counters have different
-roles. Inspect `NetworkTransitionSnapshot`, `beginTransition` and `ResetNetwork` when changing the
-boundary. Tests include `common/dialer/transition_stability_test.go` and
-`common/dialer/reset_epoch_ownership_test.go`. This is not a device recovery measurement.
+**VERIFIED_SOURCE**，测试目标 `011f3fdcd99`：`adapter/network.go` 区分重置代次（reset generation）、
+切换稳定性与一次原子的 `NetworkTransitionSnapshotter` 观测。`route/network.go` 在
+`transitionAccess` 下实现这一对机制：仅有一个新发布的所有权纪元（ownership epoch）不足以证明
+一次切换已经落定，因为 DNS 与传输层重置可能仍然挂起。按流（per-flow）的工作不得把在该窗口内
+捕获的结果当作稳定网络结果。重置代次在重置开始时推进，而不是在重置完成时推进；这些相关计数器
+承担着不同的角色。改动该边界时，请检查 `NetworkTransitionSnapshot`、`beginTransition` 与
+`ResetNetwork`。测试包括 `common/dialer/transition_stability_test.go` 与
+`common/dialer/reset_epoch_ownership_test.go`。这不是设备恢复测量。
 
-`route/conn_halfclose.go` observes half-closed flows and releases when the peer is demonstrably
-gone; it deliberately does not treat healthy silence as failure. A flow that never half-closes is
-outside this observer, so this mechanism is not a general detector for an active TCP flow that
-silently stalls. See the historical full audit's BUG-007 and the current source before designing an
-idle timeout; no device-level availability claim follows from the observer.
+`route/conn_halfclose.go` 观测半关闭（half-closed）流，并在对端可证明已消失时释放；它有意不把
+健康的静默当作失败。一个从不发生半关闭的流在该观测器范围之外，因此该机制并不是一个能检测
+活跃 TCP 流静默停滞的通用探测器。在设计空闲超时之前，请查看历史完整审计的 BUG-007 与当前源码；
+从该观测器推不出任何设备级别的可用性结论。
 
-The observer starts after a clean half-close only if the underlying connection accepts keepalive
-configuration **and** a later read can expose a terminal verdict. `terminalReadObservable` accepts
-the userspace `tun.GoConn` and explicit test markers; an ordinary kernel `net.TCPConn` is skipped
-even if keepalive can be armed. EOF and local read deadlines do not release a flow; a terminal error
-settles the observer once and invokes the shared idempotent teardown. Normal teardown or shutdown
-settles pending observations as stopped. The production settings request 20 s idle, three 10 s
-keepalive probes and observer polling from 15 s up to 60 s; these are configuration and scheduling
-parameters, not an observed real-device recovery guarantee. Focused peer-gone, live-peer, kernel-skip,
-shutdown and teardown-race unit tests passed on Windows with Go 1.26.10 in this calibration.
+观测器仅在半关闭干净发生之后、且底层连接接受 keepalive 配置**并且**之后的一次读取能够给出
+终局裁决时才启动。`terminalReadObservable` 接受用户态的 `tun.GoConn` 与显式测试标记；普通内核
+`net.TCPConn` 即使可以武装 keepalive 也会被跳过。EOF 与本地读取超时不会释放一条流；终局错误会
+一次性结算该观测器，并调用共享的幂等拆除（teardown）。正常拆除或关闭会把挂起的观测结算为已停止。
+生产设置要求 20 s 空闲、三次 10 s keepalive 探测，以及从 15 s 到最长 60 s 的观测器轮询；这些是
+配置与调度参数，不是观测到的真实设备恢复保证。本次校准中，聚焦的对端消失（peer-gone）、存活对端
+（live-peer）、内核跳过（kernel-skip）、关闭（shutdown）与拆除竞态（teardown-race）单元测试在
+Windows 上以 Go 1.26.10 通过。
 
-`route/network.go` claims a transition token before dispatch and coalesces repeat notifications;
-newer ownership supersedes a pending token. It resets router DNS state independently of whether
-interface listeners are deferred while the network is paused. `route/conn_reclaim.go` distinguishes
-draining a transition from reclaiming a confirmed dead path or shutdown: the drain policy preserves
-recent or unobservable activity and sweeps old-generation flows, while the dead-path/shutdown policy
-closes all. The interface-update path also considers a changed interface when classifying recovery;
-do not replace this with a universal `CloseAll` or assume every brief gap is a dead path. See
-`route/handover_recovery_classification_test.go` and `android_handover_generation_test.go`.
+`route/network.go` 在派发（dispatch）之前认领一个切换令牌，并合并重复的通知；更新的所有权会取代
+一个挂起的令牌。它重置路由器的 DNS 状态，这一点独立于网络暂停期间接口监听器是否被推迟。
+`route/conn_reclaim.go` 区分两件事：排空（drain）一次切换，与回收一条已确认死亡的路径或关闭：
+排空策略保留近期或不可观测的活动，并清扫旧代次的流，而死路径/关闭策略则关闭全部。接口更新路径
+在分类恢复时还会考虑发生变化的接口；不要用统一的 `CloseAll` 取代它，也不要假设每一次短暂间隙
+都是死路径。参见 `route/handover_recovery_classification_test.go` 与
+`android_handover_generation_test.go`。
 
-Additional post-baseline entry and lifecycle boundaries at `cb71cf80d72`:
+基线之后新增的入口与生命周期边界，位于 `cb71cf80d72`：
 
-* `common/listener/NetworkWithAddressFamily` gives IPv4 and IPv6 **wildcard** binds explicit `4`
-  and `6` suffixes, while concrete or invalid addresses pass through. TCP and UDP listener factories
-  share the configured listen options, including the Mieru SDK factory path; do not infer that every
-  third-party listener uses these helpers. The local listener package suite passed on Windows, not
-  the Linux-only wildcard collision test.
-* `transport/device/system.go` retries classified transient read failures through `tun.ReadRetry`,
-  stopping on closed and unclassified errors. The Windows-specific additions explicitly recognize
-  raw 10035, 8 and 995. Although comments mention raw Winsock 10004, 10008 and 10055, the current
-  predicate does not explicitly include them, and on Windows Go 1.26.10 they do not match the POSIX
-  constants tested by the pinned `tun.IsRecoverableReadError`. A raw error of those values would be
-  classified fatal by this predicate; whether a real TUN delivers one on a given path is unverified.
-  `transport/device` unit tests passed locally; their Windows cases do not test those three values.
-* SSH `InterfaceUpdated` detaches the current client and connection under `clientAccess`, then
-  closes the detached connection outside the lock. This prevents an unlocked update from closing a
-  newly installed session; it does not establish seamless live-stream recovery. The SSH package
-  tests passed locally on Windows.
-* `route/flow_tracker.go` serializes `AttachFlow` and `CloseFlow` callbacks with one mutex while
-  leaving packet counters outside that lock. Serialization prevents overlap; it does not by itself
-  prove which callback wins if both begin concurrently. The focused serialization and counter tests
-  passed locally on Windows.
-* Linux network-namespace startup keeps the holder alive using its pipe and registers cleanup with
-  the scope. `ownsUserNamespace` chooses the logged `nsenter` command using euid and namespace-owner
-  inspection; it is not itself the operation that enters the namespace. Linux namespace execution
-  was not tested in this Windows calibration.
+* `common/listener/NetworkWithAddressFamily` 为 IPv4 与 IPv6 的**通配**（wildcard）绑定给出显式的
+  `4` 与 `6` 后缀，而具体地址或无效地址则原样通过。TCP 与 UDP 监听器工厂共享已配置的监听选项，
+  包括 Mieru SDK 工厂路径；不要推断每一个第三方监听器都使用这些辅助函数。本地 listener 包测试
+  套件在 Windows 上通过，但未运行仅限 Linux 的通配冲突测试。
+* `transport/device/system.go` 通过 `tun.ReadRetry` 重试已分类的瞬态读取失败，并在遇到已关闭与
+  未分类错误时停止。Windows 专有的新增部分显式识别原始值 10035、8 与 995。尽管注释提到原始
+  Winsock 10004、10008 与 10055，当前谓词并未显式包含它们，并且在 Windows Go 1.26.10 上，
+  它们不匹配由固定版本的 `tun.IsRecoverableReadError` 所测试的 POSIX 常量。这些取值的原始错误
+  会被该谓词判定为致命；真实 TUN 在给定路径上是否会投递其中之一尚未验证。`transport/device`
+  单元测试在本地通过；它们的 Windows 用例并未测试那三个取值。
+* SSH 的 `InterfaceUpdated` 在 `clientAccess` 下分离当前客户端与连接，然后在锁外关闭已分离的连接。
+  这可以避免一次未加锁的更新关闭新装入的会话；它并不确立无缝的在线流（live-stream）恢复。
+  SSH 包测试在 Windows 上本地通过。
+* `route/flow_tracker.go` 用一个互斥锁串行化 `AttachFlow` 与 `CloseFlow` 回调，同时把数据包计数器
+  留在该锁之外。串行化可防止重叠；但它本身并不证明当两个回调并发开始时会由哪一个胜出。
+  聚焦的串行化与计数器测试在 Windows 上本地通过。
+* Linux 网络命名空间（network-namespace）启动通过其管道让持有者保持存活，并向 scope 注册清理。
+  `ownsUserNamespace` 依据 euid 与命名空间所有者检查来选择被记录下来的 `nsenter` 命令；它本身
+  并不是进入命名空间的操作。本次 Windows 校准未测试 Linux 命名空间执行。
 
-Protocol ownership is not interchangeable: AnyTLS and Snell register their clients with the scope;
-VLESS registers its transport and multiplex dialer when present. Their outbounds also implement
-interface-update and idle-connection hooks (`protocol/anytls/outbound.go`, `protocol/snell/outbound.go`,
-`protocol/vless/outbound.go`). An interface update or idle trim should invoke the owner's intended
-hook; it is not permission to close every live connection. These are source-level contracts at the
-reviewed target; the Snell package reported no test files in this host's untagged run.
+协议所有权不可互换：AnyTLS 与 Snell 把各自的客户端注册到 scope；VLESS 在存在时会注册其传输与
+多路复用拨号器。它们的 outbound 还实现接口更新与空闲连接钩子（`protocol/anytls/outbound.go`、
+`protocol/snell/outbound.go`、`protocol/vless/outbound.go`）。接口更新或空闲裁剪应调用所有者
+预期的钩子；这并不是关闭所有活跃连接的许可。这些是评审目标上的源码级契约；在本主机未加构建标签
+的运行中，Snell 包报告没有任何测试文件。
 
-`Box.Close` (`box.go`) serializes repeated calls through `closeOnce` and records the final error. It
-recovers a cleanup panic as an error so a later Close cannot report success after a failed teardown.
-The panic unwinds past remaining cleanups: recovery does **not** prove the rest of teardown ran.
-The status view is detached before the governor and scope teardown. These are `VERIFIED_SOURCE`
-at the reviewed target; check `box_close_test.go` and the exact target before changing the boundary.
+`Box.Close`（`box.go`）通过 `closeOnce` 串行化重复调用，并记录最终错误。它把清理过程中的 panic
+恢复为一个错误，使后续的 Close 无法在一次失败的拆除之后报告成功。该 panic 会继续展开并越过
+剩余的清理：恢复并**不**证明拆除的其余部分已经执行。状态视图在 governor 与 scope 拆除之前被
+分离。这些在评审目标上是 `VERIFIED_SOURCE`；改动边界之前请检查 `box_close_test.go` 与确切的
+目标。
 
-ShadowTLS inbound has two distinct ownership boundaries: `protocol/shadowtls/pre_auth_timeout.go`
-bounds the first complete TLS record, then clears that deadline; `handshake_target_cleanup.go`
-tracks target connections for one handshake and closes leftovers after the SDK returns. Avoid applying
-the pre-auth deadline to the subsequent long-lived relay, or assuming the framework owns an SDK
-connection that was never registered. This is `VERIFIED_SOURCE` at `011f3fdcd99`, not a claim of
-interoperability with every fallback server.
+ShadowTLS 入站有两个不同的所有权边界：`protocol/shadowtls/pre_auth_timeout.go` 为第一条完整的
+TLS 记录设定时限，随后清除该截止时间；`handshake_target_cleanup.go` 为一次握手跟踪目标连接，
+并在 SDK 返回之后关闭遗留连接。避免把预认证（pre-auth）截止时间应用到随后的长期中继上，也不要
+假设框架拥有一个从未注册过的 SDK 连接。这在 `011f3fdcd99` 上是 `VERIFIED_SOURCE`，并不是与
+每一台 fallback 服务器互通的声明。
 
-**Scope:** `adapter.Scope`, `Box` start/close ordering, `common/runtimecoord`, `route.ReferenceManager`,
-`common/power`'s interaction with them.
+**范围（Scope）：** `adapter.Scope`、`Box` 的启动/关闭顺序、`common/runtimecoord`、
+`route.ReferenceManager`，以及 `common/power` 与它们的交互。
 
-**Provenance:** `common/runtimecoord` and `common/power` are **fork-created packages** (absent at
-`e4b7e692`). `adapter/lifecycle.go`, `box.go`, `box_lifecycle.go` and `route/reference.go` are
-heavily modified. Fork commits touching these paths: **85** (`adapter` 77, `common/runtimecoord` 8).
+**来源（Provenance）：** `common/runtimecoord` 与 `common/power` 是 **fork 创建的包**（在
+`e4b7e692` 处不存在）。`adapter/lifecycle.go`、`box.go`、`box_lifecycle.go` 与 `route/reference.go`
+被大幅修改。触及这些路径的 fork 提交：**85** 个（`adapter` 77 个，`common/runtimecoord` 8 个）。
 
-**Load this module when changing:** start/close ordering, teardown, network generations, rebuild
-leases, idle retirement, memory trim, or anything that reacts to a network transition.
+**在改动以下内容时加载本模块：** 启动/关闭顺序、拆除、网络代次、重建租约、空闲退役、内存裁剪，
+或任何会响应网络切换的东西。
 
 ---
 
-## 1. `adapter.Scope` — the ownership primitive
+## 1. `adapter.Scope` —— 所有权原语（the ownership primitive）
 
-`adapter/lifecycle.go` owns the cleanups registered with a scope and the child scopes created by
-`Scope.Start`. It does not imply that every resource or every close in the process belongs to that
-scope; follow the actual owner and registration path.
+`adapter/lifecycle.go` 拥有注册到某个 scope 的清理逻辑，以及由 `Scope.Start` 创建的子 scope。
+它并不意味着进程中的每一个资源或每一次关闭都属于该 scope；请遵循实际的所有者与注册路径。
 
-| Element | Anchor | Rule |
+| 元素 | 锚点 | 规则 |
 |---|---|---|
-| State ladder | `lifecycle.go:70-80` | `scopeOpen` → `scopeClosing` → `scopeClosed` |
-| `Scope.Add(cleanup)` | `lifecycle.go:112-138` | **If the scope is already closing, the cleanup runs synchronously on the *caller's* goroutine.** Registration is never silently dropped. |
-| `Scope.Start(name, component, stage)` | `lifecycle.go:147-183` | Creates a child scope keyed by the **component**, registers the child's `Close` as a cleanup, runs `component.Start` **outside the lock**, then re-reads the child context and returns `E.Cause(ctxErr, …)` so a start cancelled mid-flight **reports failure, not success**. |
-| `Scope.Close` | `lifecycle.go:218-283`, drain at `:251` | First caller takes the queue and drains in **reverse registration order** (`slices.Backward`); later callers **join** via `closeDone`; the result filters `E.IsClosed`/`E.IsCanceled` but logs them. **Not reentrant on the same Scope** (`:214-217`). |
-| Stages | `lifecycle.go:21-35` | `StartStateInitialize → StartStateStart → StartStatePostStart → StartStateStarted` |
+| 状态阶梯 | `lifecycle.go:70-80` | `scopeOpen` → `scopeClosing` → `scopeClosed` |
+| `Scope.Add(cleanup)` | `lifecycle.go:112-138` | **如果 scope 已在关闭中，清理会在*调用者*的 goroutine 上同步执行。** 注册绝不会被静默丢弃。 |
+| `Scope.Start(name, component, stage)` | `lifecycle.go:147-183` | 以**组件**（component）为键创建子 scope，把子对象的 `Close` 注册为清理，在**锁外**运行 `component.Start`，然后重新读取子上下文并返回 `E.Cause(ctxErr, …)`，使得中途被取消的启动**报告失败而不是成功**。 |
+| `Scope.Close` | `lifecycle.go:218-283`，排空在 `:251` | 首个调用者取得队列，并按**反注册顺序**（`slices.Backward`）排空；后来的调用者通过 `closeDone` **汇入**；结果会过滤 `E.IsClosed`/`E.IsCanceled`，但仍记录它们。**在同一个 Scope 上不可重入**（`:214-217`）。 |
+| 阶段（Stages） | `lifecycle.go:21-35` | `StartStateInitialize → StartStateStart → StartStatePostStart → StartStateStarted` |
 
-### The completion boundary — state it correctly
+### 完成边界 —— 要准确表述（The completion boundary — state it correctly）
 
-`Scope.Close()` returning means **exactly** this and nothing more:
+`Scope.Close()` 返回意味着**恰好**是以下这些，仅此而已：
 
-* on a normal return, every cleanup already in the queue has run and `closeErr` is final;
-* it does **not** wait for a `component.Start()` that is running and has not yet reached `Add()` —
-  nothing bounds how long a `Start` may take, so waiting would make `Close` unbounded;
-* a cleanup registered after that point runs synchronously inside `Add()`, on the registering
-  goroutine — a leak is prevented, but the late resource is **not** part of what `Close` reported;
-* an error from such a late cleanup is logged by `Add()` and folded into nothing; `closeErr` is
-  already final, so a later `Close` does not pick it up either.
+* 正常返回时，队列中已有的每一项清理都已执行，且 `closeErr` 已是最终值；
+* 它**不**等待一个正在运行、尚未到达 `Add()` 的 `component.Start()`——`Start` 的时长没有任何上界，
+  因此等待会让 `Close` 变成无界；
+* 在该时点之后注册的清理会在 `Add()` 内部、于注册方 goroutine 上同步执行——泄漏被避免，但该迟到
+  资源**不**是 `Close` 所报告内容的一部分；
+* 此类迟到清理产生的错误由 `Add()` 记录日志，且不会被归并到任何地方；`closeErr` 已是最终值，
+  因此后续的 `Close` 也不会把它收进去。
 
-Pinned by `adapter/lifecycle_close_boundary_test.go` (`TestScopeCloseDoesNotWaitForAnInFlightStart`,
-`TestScopeCloseDoesNotFoldInALateCleanupError`, `TestScopeCloseJoinsAnAlreadyStartedDrain`,
-`TestScopeCloseDoesNotWaitForAStartThatNeverRegistered`).
+由 `adapter/lifecycle_close_boundary_test.go` 固定（`TestScopeCloseDoesNotWaitForAnInFlightStart`、
+`TestScopeCloseDoesNotFoldInALateCleanupError`、`TestScopeCloseJoinsAnAlreadyStartedDrain`、
+`TestScopeCloseDoesNotWaitForAStartThatNeverRegistered`）。
 
-A cleanup that panics interrupts the drain before `scopeClosed` and `closeDone` are published;
-subsequent direct calls to that scope's `Close` can therefore wait indefinitely. `Box.Close` catches
-the panic and preserves an error for repeated Box calls, but does not resume the interrupted drain.
-Avoid same-scope reentrant cleanup, which would also deadlock. Nested child-scope cleanup is a
-different ownership relationship.
+发生 panic 的清理会在 `scopeClosed` 与 `closeDone` 发布之前中断排空；因此随后对该 scope 的
+`Close` 的直接调用可能无限等待。`Box.Close` 会捕获该 panic，并为重复的 Box 调用保留一个错误，
+但不会恢复被中断的排空。请避免同 scope 的重入清理，那也会造成死锁。嵌套子 scope 的清理是另一种
+所有权关系。
 
 ---
 
-## 2. `Box` start and close ordering
+## 2. `Box` 的启动与关闭顺序（Box start and close ordering）
 
-### Start (`box.go`, `preStart` and `start`)
+### 启动（Start）（`box.go`、`preStart` 与 `start`）
 
-At `011f3fdcd99`, the entry points are `PreStart` at line 1045, `Start` at 1055,
-`preStart` at 1090, `start` at 1160, `Close` at 1240 and `close` at 1264. Locate the
-functions again when the target changes; the old v0.1.9 line numbers were historical anchors.
+在 `011f3fdcd99` 上，入口点是第 1045 行的 `PreStart`、第 1055 行的 `Start`、第 1090 行的
+`preStart`、第 1160 行的 `start`、第 1240 行的 `Close` 与第 1264 行的 `close`。目标变化时请重新
+定位这些函数；旧的 v0.1.9 行号只是历史锚点。
 
-`preStart()`:
+`preStart()`：
 1. `logFactory.Start()`
-2. `scope.Add(runtimeCoordinator.Close)`, then `scope.Add(logFactory.Close)` —
-   **registered first ⇒ closed last**
-3. owned `HistoryStorage.Close` if `Box` created it
-4. `applyDebugOptions`, debug HTTP server, then initialize internal services
-5. `startComponents(Initialize)` — **httpClient → network → dns-transport → dns-router →
+2. 先 `scope.Add(runtimeCoordinator.Close)`，再 `scope.Add(logFactory.Close)`——
+   **先注册 ⇒ 最后关闭**
+3. `HistoryStorage.Close`——仅当该存储由 `Box` 创建时，该清理由创建者拥有
+4. `applyDebugOptions`、调试 HTTP 服务器，然后初始化内部服务
+5. `startComponents(Initialize)` —— **httpClient → network → dns-transport → dns-router →
    connection → router → outbound → endpoint → certificate-provider → inbound → service**
-6. `startComponents(Start)` — **outbound → dns-transport → network → connection → httpClient →
+6. `startComponents(Start)` —— **outbound → dns-transport → network → connection → httpClient →
    router → dns-router**
 
-`start()` then starts internal services, NTP, and **endpoint → cert-provider → inbound → service**;
-it runs `PostStart` and `Started` over the component lists in `start()` and their corresponding
-internal-service stages, then calls `s.network.EstablishInitialNetworkEnvironment()`. The HTTP client
-service is not in those two component lists; do not infer that every component receives every stage.
+随后 `start()` 启动内部服务、NTP 与 **endpoint → cert-provider → inbound → service**；它在
+`start()` 中的组件列表及其对应的内部服务阶段上运行 `PostStart` 与 `Started`，然后调用
+`s.network.EstablishInitialNetworkEnvironment()`。HTTP 客户端服务不在这两个组件列表之中；
+不要推断每个组件都会经历每个阶段。
 
-> **The Box is not "up" until the network manager has observed its network.** `Start` does not return
-> before that call has run **synchronously**. State it precisely: `Start` returns only after the manager
-> has synchronously observed its network **or established that there is nothing to observe** — the call
-> is guarded by `s.network != nil` and is a no-op when the transition does not apply or when nothing
-> changed (already observed, or no default interface). A future change that moves this earlier makes the
-> first routed flow race the network state it should have seen.
+> **在网络管理器观测到其网络之前，Box 都不算“已就绪”。** 在该调用**同步**执行之前，`Start` 不会
+> 返回。要精确表述：只有当管理器已同步观测到其网络、**或已确立没有任何东西可观测**之后，`Start`
+> 才返回——该调用受 `s.network != nil` 保护，并在切换不适用或没有任何变化（已观测过，或没有默认
+> 接口）时成为空操作。未来若有改动把它提前，就会让第一条被路由的流与其本该看到的网络状态发生
+> 竞态。
 
-Two orderings that look arbitrary and are not:
+有两种顺序看似任意，其实并非如此：
 
-* **Initialize and Start use different orders.** `httpClient` is initialized *first* and started
-  *fifth*; `outbound` is initialized *seventh* and started *first*. Validation needs the graph,
-  runtime needs the transports.
-* **`router.Initialize` only *compiles*.** A rule's `Start()` — the first point at which a rule may
-  open a rule-set file or start a process reader — happens at **PostStart** (`route/router.go:252-261`).
-  Every start-time validation therefore runs before any rule has been started.
+* **Initialize 与 Start 使用不同的顺序。** `httpClient` *最先*初始化、*第五*个启动；`outbound`
+  *第七*个初始化、*最先*启动。校验需要依赖图，运行时需要传输层。
+* **`router.Initialize` 只做*编译*。** 规则的 `Start()`——规则可能打开规则集文件或启动进程读取器
+  的第一个时点——发生在 **PostStart**（`route/router.go:252-261`）。因此每一项启动期校验都在任何
+  规则被启动之前运行。
 
-### Close (`box.go`, `Close` and `close`)
+### 关闭（Close）（`box.go`、`Close` 与 `close`）
 
-`closeOnce.Do` → `statusView.Disconnect()` → unregister pause callback →
-**close the power governor** → `scope.Close()`.
+`closeOnce.Do` → `statusView.Disconnect()` → 注销暂停回调 → **关闭电源 governor** →
+`scope.Close()`。
 
-> The governor is closed **before** the scope because `ReferenceManager` reads it. Reversing the two
-> closes a resource whose observer is already gone.
+> governor 在 scope **之前**关闭，因为 `ReferenceManager` 会读取它。颠倒这两者的顺序会关闭一个
+> 其观测者已经消失的资源。
 
 ---
 
-## 3. `common/runtimecoord` — one generation, identity-based leases
+## 3. `common/runtimecoord` —— 一个代次、基于身份的租约（one generation, identity-based leases）
 
-`common/runtimecoord/coordinator.go` (631 lines) plus `platform_events.go` (507 lines).
+`common/runtimecoord/coordinator.go`（631 行）加上 `platform_events.go`（507 行）。
 
-### The objects
+### 对象（The objects）
 
-| Object | Anchor | Meaning |
+| 对象 | 锚点 | 含义 |
 |---|---|---|
-| `Coordinator` | `coordinator.go:36-46` | `parent`, `access`, `epoch` (starts 0 = "no reset yet"), `changed chan struct{}`, `closed`, `registrated` |
-| `Advance(epoch)` | `:80-104` | **Monotone**: `epoch <= c.epoch` is a silent no-op (`:85`). Closes and *replaces* the change channel, snapshots registrations, then notifies **outside the lock** (`:98-103`). |
-| `GenerationChanged()` | `:142-149` | Returns `(epoch, channel)` under one lock, so a caller cannot miss a transition between reading the number and waiting on the channel. |
-| `Register(label)` | `:156-185` | A registration taken on an already-moved generation records the current epoch **and** `observed = true` (`:170-173`). |
-| `Registration` | `:191-223` | Holds `epoch`, `observed`, `lease *RebindLease`, `nextLease`, `lastRebind`, `rebindCount`, `window`. |
-| `RebindLease` | `:230-238` | `id`, `generation`, `reason`, `ctx`, `cancel`, `expired`. |
-| `Expired()` | `:282-289` | True if expired, **or the registration is closed, or the lease is no longer the current owner**. |
-| `Complete()` | `:295-310` | A **no-op for a superseded lease**, but it **always cancels**. |
-| `observeEpoch` | `:355-381` | Moves epoch, clears `observed`, supersedes + cancels the in-flight lease, and **clears `lastRebind`** so a new network gets an immediate retry (`:375`). |
-| `ScheduleRebind`/`BeginRebind` | `:409-465` | Coalescing window defaults to `adapter.RecoveryWindow` (`:437-440`), armed at **grant** time, not completion (`:444-446`). |
-| `Stale()` | `:499-518` | True when closed, when `!observed`, or when the coordinator epoch > this epoch. |
-| `Acknowledge()` | `:526-536` | The only thing that turns "epoch moved" into "this resource is current". |
-| Probe origin | `:583-631` | `ProbeForeground` vs `ProbeAutomatic`, and `MeasurementContext` — decides whether a measurement may **wake a suspended resource**. |
+| `Coordinator` | `coordinator.go:36-46` | `parent`、`access`、`epoch`（从 0 开始，表示“尚未重置”）、`changed chan struct{}`、`closed`、`registrated` |
+| `Advance(epoch)` | `:80-104` | **单调**：`epoch <= c.epoch` 是静默空操作（`:85`）。关闭并*替换*变更通道，快照注册项，然后在**锁外**通知（`:98-103`）。 |
+| `GenerationChanged()` | `:142-149` | 在同一把锁下返回 `(epoch, channel)`，因此调用者不会在读取编号与等待通道之间错过一次切换。 |
+| `Register(label)` | `:156-185` | 在已经推进过的代次上取得的注册会记录当前 epoch **并**记录 `observed = true`（`:170-173`）。 |
+| `Registration` | `:191-223` | 持有 `epoch`、`observed`、`lease *RebindLease`、`nextLease`、`lastRebind`、`rebindCount`、`window`。 |
+| `RebindLease` | `:230-238` | `id`、`generation`、`reason`、`ctx`、`cancel`、`expired`。 |
+| `Expired()` | `:282-289` | 若已过期、**或注册已关闭、或该租约不再是当前所有者**，则为真。 |
+| `Complete()` | `:295-310` | 对被取代的租约是**空操作**，但它**总是取消**。 |
+| `observeEpoch` | `:355-381` | 推进 epoch，清除 `observed`，取代并取消在途租约，并**清除 `lastRebind`**，使新网络立即获得一次重试（`:375`）。 |
+| `ScheduleRebind`/`BeginRebind` | `:409-465` | 合并窗口默认为 `adapter.RecoveryWindow`（`:437-440`），在**授予（grant）**时武装，而不是在完成时（`:444-446`）。 |
+| `Stale()` | `:499-518` | 当已关闭、当 `!observed` 为真，或当协调器 epoch 大于本 epoch 时为真。 |
+| `Acknowledge()` | `:526-536` | 唯一能把“epoch 已推进”转变为“该资源是当前的”的东西。 |
+| 探测来源（Probe origin） | `:583-631` | `ProbeForeground` 与 `ProbeAutomatic`，以及 `MeasurementContext`——决定一次测量是否可以**唤醒被挂起的资源**。 |
 
-### The invariant that the wording must not overstate
+### 措辞不得夸大的那条不变量（The invariant that the wording must not overstate）
 
-> **"One logical recovery at a time" is a lease *identity*, not a boolean.**
+> **“一次只做一次逻辑恢复”是一种租约*身份*，而不是一个布尔值。**
 
-`Registration.lease` is a `*RebindLease` precisely so that a *superseded* lease cannot complete or
-release a newer one. A future change that replaces it with a `bool` reintroduces the bug the pointer
-exists to prevent. Rationale is written at `coordinator.go:202-215`.
+`Registration.lease` 之所以是 `*RebindLease`，正是为了让一个*被取代的*租约无法完成或释放一个
+更新的租约。未来若有人用 `bool` 取代它，就会重新引入这个指针本来用于防止的缺陷。理由写在
+`coordinator.go:202-215`。
 
-### `TrimMemory` and `ReleaseMemory` are different
+### `TrimMemory` 与 `ReleaseMemory` 不同（TrimMemory and ReleaseMemory are different）
 
-`TrimMemory` does **not** advance the network generation. `ReleaseMemory` **does**. The coordinator's
-`Trim` path (`5f56f02c`, `09964183`, `93823c3d`) and the release/reset path are separate entry points
-by design.
+`TrimMemory` **不**推进网络代次。`ReleaseMemory` **会**。协调器的 `Trim` 路径（`5f56f02c`、
+`09964183`、`93823c3d`）与释放/重置路径在设计上就是彼此分离的入口点。
 
 ---
 
-## 4. `route.ReferenceManager` — the retirement inventory
+## 4. `route.ReferenceManager` —— 退役清单（the retirement inventory）
 
-`route/reference.go` (`ReferenceManager` at `:21-42`, built at `box.go:662`).
+`route/reference.go`（`ReferenceManager` 位于 `:21-42`，在 `box.go:662` 构建）。
 
-The retirement inventory is not the only host/local-flow surface. `adapter/network.go:37-38` adds
-`RegisterHostPort`/`HostPort`, and `route/network.go` serves endpoint-local flows from the TUN routed
-port (`93b2e4f5eec`); the flow logger moved to `adapter/flow_logger.go` and is now shared by route and
-host flows (`ab5fcb59abd`; `route/flow_tracker.go` was deleted). The endpoint-local **contract** is
-owned by `masque-connectip.md`; this module owns the network-manager registration and retirement side.
+退役清单并不是唯一的主机/本地流表面。`adapter/network.go:37-38` 增加了
+`RegisterHostPort`/`HostPort`，而 `route/network.go` 从 TUN 路由端口服务端点本地流
+（`93b2e4f5eec`）；流日志器移到了 `adapter/flow_logger.go`，现在由路由流与主机流共享
+（`ab5fcb59abd`；`route/flow_tracker.go` 已被删除）。端点本地的**契约**由
+`masque-connectip.md` 拥有；本模块拥有网络管理器注册与退役这一侧。
 
-### What it does, in order
+### 它按顺序做了什么（What it does, in order）
 
-`Start` runs only at `StartStateStarted` (`:98-101`): creates the `observable.Subscriber` (`:102`),
-hooks `urltest.HistoryStorage` and `clashmode.Manager` (`:104-111`), seeds `devicePaused` (`:112-114`),
-runs `update()`, starts `m.loop()` (`:115-116`), registers the pause callback (`:117-133`), registers
-`powerGovernor.AddReuseObserver(m.onReuseBoundary)` (`:142-144`), and **last** sets
-`m.closed.Store(true)` so it is the **first** cleanup to run (`:145-150`).
+`Start` 只在 `StartStateStarted` 阶段运行（`:98-101`）：创建 `observable.Subscriber`（`:102`），
+挂接 `urltest.HistoryStorage` 与 `clashmode.Manager`（`:104-111`），播种 `devicePaused`
+（`:112-114`），运行 `update()`，启动 `m.loop()`（`:115-116`），注册暂停回调（`:117-133`），
+注册 `powerGovernor.AddReuseObserver(m.onReuseBoundary)`（`:142-144`），并**最后**设置
+`m.closed.Store(true)`，使其成为**第一个**运行的清理（`:145-150`）。
 
-Reference closure (`update()`, `:211-361`):
+引用闭包（`update()`，`:211-361`）：
 
-* static seeds: NTP detour (`:49-51`), every outbound/endpoint `domain_resolver` (`:52-57`);
-* DNS-rule references (`collectDNSRuleReferences`, `route/reference_rule.go:140-168`); if **no rule is
-  terminal**, the manager's default transport is added (`:228-232`);
-* route-rule references (`collectRuleReferences`, `route/reference_rule.go:105-138`);
-* on-demand endpoints are separated and kept out of the outbound queue (`:240-248`);
-* `adapter.Referrer` is walked **transitively** for inbounds, services, the HTTP client manager, DNS
-  transports and outbounds (`:249-302`);
-* then the `IdleConnectionKeeper` decisions (`:306-358`) and the unreferenced-transport reset
-  (`:333-358`).
+* 静态种子：NTP detour（`:49-51`）、每个 outbound/endpoint 的 `domain_resolver`（`:52-57`）；
+* DNS 规则引用（`collectDNSRuleReferences`，`route/reference_rule.go:140-168`）；如果**没有任何
+  规则是终结的（terminal）**，则加入管理器的默认传输（`:228-232`）；
+* 路由规则引用（`collectRuleReferences`，`route/reference_rule.go:105-138`）；
+* 按需（on-demand）endpoint 被分离出来，并排除在 outbound 队列之外（`:240-248`）；
+* 对 inbound、service、HTTP 客户端管理器、DNS 传输与 outbound **传递地**遍历
+  `adapter.Referrer`（`:249-302`）；
+* 然后是 `IdleConnectionKeeper` 的决策（`:306-358`）与未被引用传输的重置（`:333-358`）。
 
-### The rule that cost four review passes
+### 花掉四轮评审的那条规则（The rule that cost four review passes）
 
-`retireIdleResources()` (`:440-494`) covers outbounds, endpoints, DNS transports **and the HTTP
-client manager**. The assertion is **`adapter.IdleConnectionReleaser`**, *not* the bundled
-`IdleConnectionKeeper`. The comment at `:479-484` records why: asserting the bundled interface
-silently failed at run time on **every** walk, so the HTTP client pools were unreachable through four
-passes of review. Commits `93823c3d` and `8735b1d` are the fix.
+`retireIdleResources()`（`:440-494`）覆盖 outbound、endpoint、DNS 传输**以及 HTTP 客户端
+管理器**。断言的类型是 **`adapter.IdleConnectionReleaser`**，*而不是*随附的
+`IdleConnectionKeeper`。`:479-484` 处的注释记录了个中原因：断言随附接口曾在运行时于**每一次**
+遍历中静默失败，导致 HTTP 客户端连接池在四轮评审中都不可达。提交 `93823c3d` 与 `8735b1d` 是
+修复。
 
-> **When adding a pool to the retirement walk, implement and assert `IdleConnectionReleaser` — a
-> full `IdleConnectionKeeper` is not required and its absence is not a defect.**
+> **在往退役遍历里新增一个连接池时，请实现并断言 `IdleConnectionReleaser`——并不要求完整的
+> `IdleConnectionKeeper`，而后者的缺失也不是缺陷。**
 
-That is deliberate, not a gap: some transports have no safe "no new stream" state, so they cannot be
-reuse-drained locally and only offer a destructive close.
+这是有意为之，不是缺口：某些传输不存在安全的“不再产生新流”状态，因此它们无法在本地被复用排空，
+只能提供破坏性关闭。
 
 ### `TrimIdleResources` vs `CloseIdleConnections` vs `RetireSuspect`
 
-| Entry point | Anchor | What it may do |
+| 入口点 | 锚点 | 它可以做什么 |
 |---|---|---|
-| `TrimIdleResources()` | `:412-414` | Identical body to `CloseIdleConnections()` today; the **distinction belongs to the caller** (`:394-411`) |
-| `CloseIdleConnections()` | `:416-418` | Same body |
-| `retireSuspectResources()` | `:512-537` | Calls `adapter.ReuseSuspect.RetireSuspect()` **first** (`:496-511`), then `CloseIdleConnections` (`:547-556`) |
-| `onReuseBoundary` | `:154-197` | **Does not reset the network, does not terminate a stream, does not touch on-demand tunnels, does not dial.** |
+| `TrimIdleResources()` | `:412-414` | 今天与 `CloseIdleConnections()` 的实现体完全相同；**区别属于调用方**（`:394-411`） |
+| `CloseIdleConnections()` | `:416-418` | 相同的实现体 |
+| `retireSuspectResources()` | `:512-537` | **先**调用 `adapter.ReuseSuspect.RetireSuspect()`（`:496-511`），然后调用 `CloseIdleConnections`（`:547-556`） |
+| `onReuseBoundary` | `:154-197` | **不重置网络、不终止流、不触碰按需隧道、不拨号。** |
 
-`route/reusable_owner_inventory_test.go` asserts that named owners, including XHTTP, retain the
-capabilities the walk expects. It does not enumerate and forbid every possible additional
-`ReuseSuspect` implementation; new owners still require an ownership and retirement review.
+`route/reusable_owner_inventory_test.go` 断言具名所有者（包括 XHTTP）保留了该遍历所期望的能力。
+它并没有枚举并禁止每一种可能新增的 `ReuseSuspect` 实现；新所有者仍然需要一次所有权与退役评审。
 
 ---
 
-## 5. Evidence, provenance, cautions
+## 5. 证据、来源与注意事项（Evidence, provenance, cautions）
 
-### Evidence
+### 证据（Evidence）
 
-| Guarantee | Level | Re-check |
+| 保证 | 级别 | 复检 |
 |---|---|---|
-| Scope cleanup-after-close runs on the caller's goroutine | `VERIFIED_SOURCE` + `VERIFIED_UNIT` | `go test -count=1 ./adapter/...` |
-| `Close` does not wait for an in-flight `Start` | `VERIFIED_UNIT` | `adapter/lifecycle_close_boundary_test.go` |
-| Epoch monotonicity, lease supersession, `Stale`/`Acknowledge` | `VERIFIED_UNIT` | `go test -count=1 ./common/runtimecoord/...` |
-| Retirement walk reaches all four pools | `VERIFIED_UNIT` | `route/reference_coverage_stress_test.go`, `route/reusable_owner_inventory_test.go` |
-| Ordering pins (reuse verdict before level release; sleep edge before level pause) | `VERIFIED_UNIT` | `go test -count=1 -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" -run 'TestTheReuseVerdict\|TestTheSleepEdge' .` |
-| 100 sleep/wake cycles, 100 network transitions, no resurrection after Close | `VERIFIED_UNIT` (no `-race`) | `-run 'TestOneHundred\|TestNoResurrectionAfterClose' .` |
-| Race-freedom | **`BLOCKED_BY_ENVIRONMENT`** — `-race` needs cgo and this host has no C compiler | Linux/macOS or Windows+gcc |
-| Device behaviour behind any of this | **`UNVERIFIED`** — no TUN, no real NetworkExtension | `docs/RELEASE-CERTIFICATE.md` §1 |
+| 关闭后注册的 scope 清理在调用者的 goroutine 上运行 | `VERIFIED_SOURCE` + `VERIFIED_UNIT` | `go test -count=1 ./adapter/...` |
+| `Close` 不等待在途的 `Start` | `VERIFIED_UNIT` | `adapter/lifecycle_close_boundary_test.go` |
+| Epoch 单调性、租约取代、`Stale`/`Acknowledge` | `VERIFIED_UNIT` | `go test -count=1 ./common/runtimecoord/...` |
+| 退役遍历到达全部四个连接池 | `VERIFIED_UNIT` | `route/reference_coverage_stress_test.go`, `route/reusable_owner_inventory_test.go` |
+| 顺序固定（复用裁决先于级别释放；睡眠边沿先于级别暂停） | `VERIFIED_UNIT` | `go test -count=1 -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" -run 'TestTheReuseVerdict\|TestTheSleepEdge' .` |
+| 100 次睡眠/唤醒循环、100 次网络切换、Close 之后无复活 | `VERIFIED_UNIT`（无 `-race`） | `-run 'TestOneHundred\|TestNoResurrectionAfterClose' .` |
+| 无竞态（race-freedom） | **`BLOCKED_BY_ENVIRONMENT`**——`-race` 需要 cgo，而本主机没有 C 编译器 | Linux/macOS 或 Windows+gcc |
+| 以上任何一项背后的设备行为 | **`UNVERIFIED`**——无 TUN、无真实 NetworkExtension | `docs/RELEASE-CERTIFICATE.md` §1 |
 
-### Provenance
+### 来源（Provenance）
 
-| Commit | Type | Origin | What it did |
+| 提交 | 类型 | 来源 | 它做了什么 |
 |---|---|---|---|
-| `8c7b230d` | LIFECYCLE | OWN | adds the resource lifecycle coordinator |
-| `5f56f02c` | MEMORY | OWN | trim idle resources when memory is elevated but not critical |
-| `09964183` | FIX | OWN | stops the memory trim from building a second transport |
-| `93823c3d` | MEMORY | OWN | retires the post-wake pools that were unreachable; drains the ones that can |
-| `8735b1d` | MEMORY | OWN | reaches the HTTP client pools from the retire walks, which never did |
-| `e4327dca` | LIFECYCLE | OWN | gives the Apple device axis a real publisher and a real release |
-| `ae197b92` | FIX | OWN | fences a superseded interface monitor; publishes outside the transition lock |
-| `0ff90482` | FIX | OWN | spends the device resume edge on an edge latch, not on the screen level |
-| `9dd91d51`, `482e4d3a` | HARDENING | OWN | scope ownership hardening |
-| `7e13f461` | FIX | **OWN, not upstream** | clears the process-global interface getter **its owner registered**. The commit body states the fork's own refactor moved the registration into `newSystemBinding` and **dropped it**; this is a fix to a fork-introduced leak, not an upstream absorption. |
-| `27d8bb59`, `12ee55eef` | REPOSITORY-HYGIENE | OWN | ancestry records made only to clear GitHub's stale "behind upstream" state. **Both are no-tree-change merges** (`12ee55eef` records `PRE_SYNC_TREE == post-merge tree`). |
-| `813ddfa98`, `03de88adb`, `0d91c4547`, `16c898a82` | — | UPSTREAM-INHERITED | upstream objects the fork carried (see `BASELINE.md` §provenance) |
+| `8c7b230d` | LIFECYCLE | OWN | 新增资源生命周期协调器 |
+| `5f56f02c` | MEMORY | OWN | 在内存偏高但尚未危急时裁剪空闲资源 |
+| `09964183` | FIX | OWN | 阻止内存裁剪构建第二个传输 |
+| `93823c3d` | MEMORY | OWN | 退役唤醒后不可达的连接池；对能够排空的进行排空 |
+| `8735b1d` | MEMORY | OWN | 使退役遍历能够到达 HTTP 客户端连接池（此前从未到达） |
+| `e4327dca` | LIFECYCLE | OWN | 为 Apple 设备轴提供真实的发布者与真实的释放 |
+| `ae197b92` | FIX | OWN | 为被取代的接口监视器加上栅栏；在切换锁之外发布 |
+| `0ff90482` | FIX | OWN | 把设备恢复边沿用在边沿锁存上，而不是用在屏幕级别上 |
+| `9dd91d51`, `482e4d3a` | HARDENING | OWN | scope 所有权加固 |
+| `7e13f461` | FIX | **OWN, not upstream** | 清除**其所有者注册的**进程级接口 getter。提交正文说明 fork 自身的重构把注册移入 `newSystemBinding` 并**丢弃了它**；这是对 fork 引入的泄漏的修复，而不是上游吸收。 |
+| `27d8bb59`, `12ee55eef` | REPOSITORY-HYGIENE | OWN | 仅为清除 GitHub 过时的“落后于 upstream”状态而做的祖先记录。**两者都是无树变更的合并**（`12ee55eef` 记录 `PRE_SYNC_TREE == post-merge tree`）。 |
+| `813ddfa98`, `03de88adb`, `0d91c4547`, `16c898a82` | — | UPSTREAM-INHERITED | fork 携带的上游对象（见 `BASELINE.md` §provenance） |
 
-### AI cautions
+### AI 注意事项（AI cautions）
 
-1. **Do not "fix" `Scope.Add` running a late cleanup synchronously.** Making it asynchronous is how a
-   resource ends up alive after `Close` returned with no error.
-2. **Do not make `Scope.Close` wait for in-flight `Start`s.** It is unbounded by construction; the
-   two components that needed it (`protocol/masque/server.go`, `protocol/tun/inbound.go`) got a
-   non-blocking handoff (`startupGate`, `acquiredStillOwned`) instead. Copy that shape.
-3. **Do not register a cleanup that closes the scope it was registered on.** The drain would wait
-   for itself; a nested child scope is a different ownership relationship.
-4. **Do not replace `Registration.lease *RebindLease` with a boolean.** The pointer exists so a
-   superseded lease cannot release a newer one.
-5. **Do not treat "epoch advanced" as "resource rebuilt"** — `Stale()` and `Acknowledge()` are two
-   different states.
-6. **Do not assert `IdleConnectionKeeper` where only `IdleConnectionReleaser` is implemented.** That
-   exact mistake silently disabled the whole retirement walk.
-7. **Do not move `EstablishInitialNetworkEnvironment()` earlier** in `Start`.
-8. **Do not reorder the close sequence** (status view → pause callback → governor → scope).
-9. **Do not make `TrimMemory` advance the network generation**, and do not make `ReleaseMemory` stop
-   doing so.
-10. **Review new `ReuseSuspect` owners against the retirement walk and lifecycle contracts.**
-11. **Do not treat `27d8bb59`/`12ee55eef` as code changes.** Both are ancestry-only merges; reading
-    them as features inverts their purpose.
-12. **Do not cite `verify-evidence/` for any of this.** Those logs name `cfc77dc5`, 101 commits behind
-    the release baseline, and are stale by their own `README.md` rule. See `ci-release.md`.
+1. **不要“修正”`Scope.Add` 同步运行迟到清理的行为。** 把它改成异步，正是资源在 `Close` 无错误
+   返回之后仍然存活的原因。
+2. **不要让 `Scope.Close` 等待在途的 `Start`。** 它在构造上就是无界的；两个需要它的组件
+   （`protocol/masque/server.go`、`protocol/tun/inbound.go`）改为采用非阻塞交接（`startupGate`、
+   `acquiredStillOwned`）。请照搬这种形状。
+3. **不要注册一个会关闭其所在 scope 的清理。** 排空会等待它自己；嵌套子 scope 是另一种所有权
+   关系。
+4. **不要用布尔值替代 `Registration.lease *RebindLease`。** 这个指针的存在是为了让被取代的租约
+   无法释放更新的租约。
+5. **不要把“epoch 已推进”当作“资源已重建”**——`Stale()` 与 `Acknowledge()` 是两种不同的状态。
+6. **在只实现了 `IdleConnectionReleaser` 的地方不要断言 `IdleConnectionKeeper`。** 正是这个错误
+   静默地使整个退役遍历失效。
+7. **不要在 `Start` 中把 `EstablishInitialNetworkEnvironment()` 提前。**
+8. **不要重排关闭顺序**（状态视图 → 暂停回调 → governor → scope）。
+9. **不要让 `TrimMemory` 推进网络代次**，也不要让 `ReleaseMemory` 停止推进。
+10. **针对退役遍历与生命周期契约评审新的 `ReuseSuspect` 所有者。**
+11. **不要把 `27d8bb59`/`12ee55eef` 当作代码变更。** 两者都是仅涉及祖先关系的合并；把它们读作
+    功能会颠倒其目的。
+12. **不要为上述任何内容引用 `verify-evidence/`。** 那些日志指向 `cfc77dc5`，比发布基线落后
+    101 个提交，并且按其自身 `README.md` 的规则已经过期。参见 `ci-release.md`。

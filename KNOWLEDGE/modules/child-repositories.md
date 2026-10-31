@@ -1,115 +1,102 @@
-# Child repositories and forked dependencies
+# 子仓库与分叉依赖（Child repositories and forked dependencies）
 
-## Scope and how to read the revisions
+## 范围与如何阅读修订（Scope and how to read the revisions）
 
-Client repositories and forked Go dependencies are part of the kernel knowledge scope. The parent
-source target is `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28`; the pins below are what that tree
-consumes, not a claim about every later child change or every release artifact. On 2026-10-31 the
-observed Apple, Android, Desktop, Dashboard and uTLS `main` tips matched the respective pins below.
-Record independent branch movement on every refresh even if the parent has no diff. `REFRESH.md` §25A
-specifies discovery, comparison, evidence and safe inspection. Exact historical parent tree entries:
-`git ls-tree <parent-sha> clients/apple clients/android clients/desktop`; Go pins are `replace`
-directives, not `require`; Dashboard is a gitlink in Desktop, not a parent gitlink.
+客户端仓库与分叉的 Go 依赖属于内核知识范围。父源目标是 `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28`；
+下面的 pin 是该树所消费的内容，不是对之后每个子仓库变更或每个发布产物的断言。2026-10-31，观测到的
+Apple、Android、Desktop、Dashboard 与 uTLS 的 `main` tip 与下面各自的 pin 相符。每次刷新都要记录
+独立的分支移动，即使父仓库没有 diff。`REFRESH.md` §25A 规定了发现、比较、证据与安全检视。
+确切的历史父树条目：`git ls-tree <parent-sha> clients/apple clients/android clients/desktop`；
+Go pin 是 `replace` 指令，不是 `require`；Dashboard 是 Desktop 中的 gitlink，不是父仓库的 gitlink。
 
-| Source | Previous pin at `cb71cf80d72` | Current parent/owner pin | Consumed as |
+| 来源 | 在 `cb71cf80d72` 的先前 pin | 当前父/所有者 pin | 消费方式 |
 |---|---|---|---|
-| [Apple](https://github.com/Piggy-Cat-bit-shadow/sing-box-for-apple) | `3aedd7417488e33a69fe2d46dc34539780d76157` | `044e6d5447eb1285c950bd12cee10effab641f5a` | parent client gitlink; manual Apple build resolves its own source once |
-| [Android](https://github.com/Piggy-Cat-bit-shadow/sing-box-for-android) | `9d15717a85c5d995f4179457b48213b5c73b511d` | `c7837107dc0126fb704fdf08cf203e10b30c8a22` | parent client gitlink; product branch now `main` |
-| [Desktop](https://github.com/Piggy-Cat-bit-shadow/sing-box-for-desktop) | `eb2dbf8ba7de0bb4f37e524dada0f30c38417282` | `6d4ccf8c5cc6dd0749cfee7822f8de45eab4f40b` | parent client gitlink |
-| [Dashboard](https://github.com/Piggy-Cat-bit-shadow/sing-box-dashboard) | `d452c24` | `5e9271e516e437b001dbb51c4258441490b82318` | nested Desktop gitlink, reported not rewritten by parent freeze |
-| [sing-tun](https://github.com/Piggy-Cat-bit-shadow/sing-tun) | `147ab164c5ae` | `8b9a380087059f759441c404e26061be218dfa64` | root and test Go replacements |
-| [uTLS](https://github.com/Piggy-Cat-bit-shadow/utls) | `1bcb8e4d74d2` | `b63a2e9a7b1eeba03cb7e2db2b92b5bb027894fc` | root and test Go replacements |
+| [Apple](https://github.com/Piggy-Cat-bit-shadow/sing-box-for-apple) | `3aedd7417488e33a69fe2d46dc34539780d76157` | `044e6d5447eb1285c950bd12cee10effab641f5a` | 父客户端 gitlink；手动 Apple 构建自行解析其源码一次 |
+| [Android](https://github.com/Piggy-Cat-bit-shadow/sing-box-for-android) | `9d15717a85c5d995f4179457b48213b5c73b511d` | `c7837107dc0126fb704fdf08cf203e10b30c8a22` | 父客户端 gitlink；产品分支现为 `main` |
+| [Desktop](https://github.com/Piggy-Cat-bit-shadow/sing-box-for-desktop) | `eb2dbf8ba7de0bb4f37e524dada0f30c38417282` | `6d4ccf8c5cc6dd0749cfee7822f8de45eab4f40b` | 父客户端 gitlink |
+| [Dashboard](https://github.com/Piggy-Cat-bit-shadow/sing-box-dashboard) | `d452c24` | `5e9271e516e437b001dbb51c4258441490b82318` | 嵌套的 Desktop gitlink，据报告未被父仓库冻结重写 |
+| [sing-tun](https://github.com/Piggy-Cat-bit-shadow/sing-tun) | `147ab164c5ae` | `8b9a380087059f759441c404e26061be218dfa64` | 根与测试的 Go replace 指令 |
+| [uTLS](https://github.com/Piggy-Cat-bit-shadow/utls) | `1bcb8e4d74d2` | `b63a2e9a7b1eeba03cb7e2db2b92b5bb027894fc` | 根与测试的 Go replace 指令 |
 
-The rest of the actual dependency inventory is `release/dependencies.json` and `release/source-lock.json`:
-`sing`, `sing-quic`, `quic-go`, Cronet root and aggregate plus 29 controlled native modules. A manifest
-expresses desired branch/policy; the lock projects actual pins. It is not evidence that an artifact
-contains those bytes. Look at Go modules and source lock rather than assuming every dependency is a
-Git submodule. See `ci-release.md` and `build-pruning-release.md`.
+其余实际依赖清单在 `release/dependencies.json` 与 `release/source-lock.json` 中：`sing`、`sing-quic`、
+`quic-go`、Cronet 根与聚合，外加 29 个受控原生模块。清单（manifest）表达期望的分支/策略；
+锁文件（lock）投射实际 pin。它不是某产物包含这些字节的证据。请查看 Go 模块与源锁，
+而不要假定每个依赖都是 Git 子模块。参见 `ci-release.md` 与 `build-pruning-release.md`。
 
-## Apple: hotspot MTU, subscription body and build source
+## Apple：热点 MTU、订阅 body 与构建来源（Apple: hotspot MTU, subscription body and build source）
 
-At `16cf87b4`, `Library/Network/ExtensionPlatformInterface.swift` sets TUN MTU only on the auto-route
-path: a non-positive requested value becomes 1500; when `includeAllNetworks` is enabled, values over
-1500 are clamped to 1500 for hotspot forwarding. After installing settings it logs the settings
-summary. This is source behavior, not a real iOS hotspot measurement. `Library/Network/HTTPClient.swift`,
-`RemoteProfileFetcher.swift` and `ApplicationLibrary/Views/Profile/NewProfileViewModel.swift` make
-subscription-body import/update use `sing-box/1.15.0`; the general application UA is separate, as
-are quota compatibility probes. Recheck actual call sites rather than replacing every UA.
+在 `16cf87b4`，`Library/Network/ExtensionPlatformInterface.swift` 只在自动路由路径上设置 TUN MTU：
+请求值为非正数时变为 1500；当 `includeAllNetworks` 启用时，超过 1500 的值会被钳制到 1500
+以用于热点转发。安装设置后它会记录设置摘要。这是源码行为，不是真实的 iOS 热点测量。
+`Library/Network/HTTPClient.swift`、`RemoteProfileFetcher.swift` 与
+`ApplicationLibrary/Views/Profile/NewProfileViewModel.swift` 让订阅 body 的导入/更新使用
+`sing-box/1.15.0`；通用应用 UA 是分开的，配额兼容性探测也是如此。请复核实际调用点，
+而不要替换每一个 UA。
 
-Manual Apple workflow selection can resolve a different commit from the gitlink; exact input and
-single-macOS-runner rules are in `ci-release.md`. The `16cf87b4` behavior above predates the
-current Apple pin `044e6d5`. A POSIX checkout and exact target blob bytes are needed to verify links;
-Windows text materialization is insufficient. No physical hotspot test was performed in this refresh.
+手动 Apple 工作流选择可能解析出与 gitlink 不同的提交；确切的输入与单一 macOS runner 规则在
+`ci-release.md` 中。上文 `16cf87b4` 的行为早于当前 Apple pin `044e6d5`。验证链接需要 POSIX 检出
+与确切的目标 blob 字节；Windows 的文本物化不够。本轮刷新没有进行物理热点测试。
 
-### Apple upstream integration — now consumed
+### Apple 上游集成——现已消费（Apple upstream integration — now consumed）
 
-The upstream integration is MERGED as of 2026-10-29: product `main`, the parent gitlink and
-`VERIFIED_APPLE_SHA` are all `044e6d5447eb1285c950bd12cee10effab641f5a`, the candidate branch
-`sync/upstream-2026-10-28` has been deleted, and the macOS client target compiled from that commit on
-a real arm64 macOS runner (run 40776674407). The paragraph below describes what that merge carried. The actual tree diff has 21
-paths. Its `CommandXPC.swift` routes endpoint registration into `UserServiceClient` and requests a
-Wi-Fi refresh when required; `UserServiceXPC.swift` swaps connections under a lock and invalidates the
-old connection, while its invalidation callback clears only the same connection. The publisher uses
-`systemExtensionMachServiceName`; the old endpoint registry is removed. Other integrated changes
-include the share extension, refreshed Tailscale peer views, update authorization and removal of a
-duplicate startup alert in the upstream component. Inspect the pinned tree for exact platform conditions.
+截至 2026-10-29，上游集成已 MERGED（合并）：产品 `main`、父 gitlink 与 `VERIFIED_APPLE_SHA` 全都是
+`044e6d5447eb1285c950bd12cee10effab641f5a`，候选分支 `sync/upstream-2026-10-28` 已被删除，
+并且 macOS 客户端目标已从该提交在一个真实的 arm64 macOS runner 上编译（run 40776674407）。
+下面这一段描述该次合并所携带的内容。实际树 diff 有 21 条路径。其 `CommandXPC.swift` 把端点注册
+路由到 `UserServiceClient`，并在需要时请求 Wi-Fi 刷新；`UserServiceXPC.swift` 在锁下替换连接
+并使旧连接失效，而其失效回调只清除同一个连接。发布者（publisher）使用
+`systemExtensionMachServiceName`；旧的端点注册表被移除。其他集成改动包括分享扩展、刷新后的
+Tailscale 对端视图、更新授权，以及移除上游组件中一条重复的启动告警。请检视已 pin 的树以获取
+确切的平台条件。
 
-Two integration commits correct `Tests/SubscriptionQuotaCaption/Sources/Caption/` symlink target
-paths and then remove unintended CRLF bytes from the target blobs. Git tree mode is `120000`.
-Check raw blob size and target bytes in a POSIX-capable checkout; an apparent Windows text-file
-success is not symlink resolution. The source diff was inspected. [Run 40776674407](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40776674407)
-built the macOS target for this Apple SHA with a different parent SHA; [run 40819615363](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40819615363)
-built iOS and Libbox at the v0.1.34 parent SHA while macOS was skipped. Neither proves device behavior.
+两个集成提交修正了 `Tests/SubscriptionQuotaCaption/Sources/Caption/` 的符号链接目标路径，
+然后从目标 blob 中移除意外的 CRLF 字节。Git 树模式是 `120000`。在具备 POSIX 能力的检出中检查原始
+blob 大小与目标字节；Windows 上看似成功的文本文件处理并不是符号链接解析。源码 diff 已被检视。
+[Run 40776674407](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40776674407) 用一个不同的
+父 SHA 为该 Apple SHA 构建了 macOS 目标；[run 40819615363](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40819615363)
+在 v0.1.34 父 SHA 上构建了 iOS 与 Libbox，而 macOS 被跳过。两者都不证明设备行为。
 
-## Android: service ordering, profile application and source convergence
+## Android：服务顺序、配置应用与源码收敛（Android: service ordering, profile application and source convergence）
 
-The direct tree diff `9d15717a..c7837107` spans 43 files and includes merged development history;
-ancestry is not an authorship count. In `app/src/main/java/io/nekohasekai/sfa/bg/BoxService.kt`,
-startup rebuilds service mode, awaits `Application.application.setupLibbox()` before starting the
-command server, and discards unfinished power-report drafts instead of promoting them. In
-`compose/screen/dashboard/DashboardViewModel.kt`, `applySelectedProfile` reloads when the detected
-service mode matches, otherwise stops, waits for stopped status with a bounded loop and requests a
-start; a changed selected remote profile uses the same path. Subscription-body requests use
-`HTTPClient.SUBSCRIPTION_USER_AGENT` (`sing-box/1.15.0`), separate from general app identity.
-`version.properties` in the pinned client records 747 / `1.15.0-alpha.13` / `go1.26.10`; these are
-client metadata, not the parent release version. Platform auto-redirect, package-list and network
-changes also occur in this range: inspect the affected source for a task that touches those paths.
-Pin-only ABI passed locally; no Android app build or device run was performed here.
+直接树 diff `9d15717a..c7837107` 跨 43 个文件，并包含已合并的开发历史；祖先关系不是作者身份计数。
+在 `app/src/main/java/io/nekohasekai/sfa/bg/BoxService.kt` 中，启动时重建服务模式，在启动命令服务器
+之前等待 `Application.application.setupLibbox()`，并丢弃未完成的电量报告草稿而不是把它们提升。
+在 `compose/screen/dashboard/DashboardViewModel.kt` 中，`applySelectedProfile` 在检测到的服务模式
+匹配时重新加载，否则先停止，用有界循环等待 stopped 状态并请求启动；被选中的远程配置变化时走
+同一条路径。订阅 body 请求使用 `HTTPClient.SUBSCRIPTION_USER_AGENT`（`sing-box/1.15.0`），
+与通用应用身份分开。已 pin 客户端中的 `version.properties` 记录 747 / `1.15.0-alpha.13` /
+`go1.26.10`；这些是客户端元数据，不是父发布版本。平台自动重定向、包列表与网络变更也发生在此范围内：
+涉及这些路径的任务请检视受影响的源码。仅基于 pin 的 ABI 检查在本地通过；此处未执行 Android 应用
+构建或设备运行。
 
-## Desktop and nested Dashboard
+## Desktop 与嵌套的 Dashboard（Desktop and nested Dashboard）
 
-Desktop `eb2dbf8..6d4ccf8` changes `src/main/profiles.ts`, `src/shared/subscription.ts`, the
-subscription fetch test, and its `dashboard` gitlink. `remoteProfileRequest` uses the same stable
-`sing-box/1.15.0` for subscription bodies; the separate app identity and quota probes remain
-separate. GitHub's compare for Dashboard `d452c24..5e9271e` lists only
-`.github/workflows/ci.yml` and `.github/workflows/deploy.yml`: this is a deployment workflow change,
-not a source diff in the embedded web UI. Correct dependency update order is Dashboard → Desktop →
-parent; changing a parent lock cannot write the nested gitlink. The Desktop checkout was absent;
-remote compare and patches were inspected, but no Electron build/test was performed here.
+Desktop `eb2dbf8..6d4ccf8` 改动了 `src/main/profiles.ts`、`src/shared/subscription.ts`、订阅抓取测试，
+以及它的 `dashboard` gitlink。`remoteProfileRequest` 对订阅 body 使用同一个稳定的 `sing-box/1.15.0`；
+独立的应用身份与配额探测仍然分开。GitHub 对 Dashboard `d452c24..5e9271e` 的比较只列出
+`.github/workflows/ci.yml` 与 `.github/workflows/deploy.yml`：这是部署工作流的改动，
+不是内嵌 Web UI 的源码 diff。正确的依赖更新顺序是 Dashboard → Desktop → 父仓库；更改父锁无法写入
+嵌套的 gitlink。Desktop 检出不存在；远程比较与补丁已被检视，但此处未执行 Electron 构建/测试。
 
-## sing-tun routed port and uTLS
+## sing-tun 路由端口与 uTLS（sing-tun routed port and uTLS）
 
-At `8b9a3800`, sing-tun `stack_go.go` implements `RoutedPort`: it captures the first configured
-IPv4/IPv6 addresses, attaches/detaches the dispatcher return path and feeds packets into its running
-Go stack. `stack_go_engine.go` invokes `ReturnParsed` after loopback hairpin, before the UDP socket
-path. The fork adapts upstream's routed-port capability to its existing return machinery rather
-than importing a second return implementation; `flow_dispatch_routed_port_test.go` is the child
-regression anchor. The parent `JudgeHostFlow` boundary is in `masque-connectip.md`. Parent adapter
-unit tests do not independently prove real device delivery or all child stack interleavings.
+在 `8b9a3800`，sing-tun 的 `stack_go.go` 实现 `RoutedPort`：它捕获最初配置的 IPv4/IPv6 地址，
+挂接/摘除 dispatcher 返回路径，并把数据包送入其运行中的 Go 栈。`stack_go_engine.go` 在回环
+hairpin 之后、UDP socket 路径之前调用 `ReturnParsed`。该分叉把上游的路由端口能力适配到其既有的
+返回机制，而不是引入第二套返回实现；`flow_dispatch_routed_port_test.go` 是子仓库的回归锚点。
+父仓库的 `JudgeHostFlow` 边界在 `masque-connectip.md` 中。父适配器单元测试不独立证明真实设备投递
+或所有子栈交错。
 
-uTLS `1bcb8e4d..b63a2e9a` integrates a QUIC handshake build-error cleanup path, hashes the ECH
-inner ClientHello for early-data transcript when ECH is active, and compresses ECH ALPN only for
-standard ClientHello order (`outerExts == nil`). The child contains regression tests
-`u_quic_build_error_test.go` and `u_ech_alpn_test.go`; this refresh inspected the child source diff,
-not a fresh child test run. These changes are relevant to the core's pinned TLS behavior but do not
-prove interoperability with every server or platform.
+uTLS `1bcb8e4d..b63a2e9a` 集成了 QUIC 握手构建错误的清理路径，在 ECH 活跃时对 ECH 内层 ClientHello
+做哈希以用于 early-data transcript，并且仅对标准 ClientHello 顺序（`outerExts == nil`）压缩 ECH ALPN。
+该子仓库包含回归测试 `u_quic_build_error_test.go` 与 `u_ech_alpn_test.go`；本轮刷新检视的是子仓库
+源码 diff，而不是一次新的子仓库测试运行。这些改动与 core 已 pin 的 TLS 行为相关，
+但不证明与每个服务器或平台可互操作。
 
-## Evidence and next refresh
+## 证据与下次刷新（Evidence and next refresh）
 
-Parent Gitlinks were read from the committed tree, not the older local Apple/Android checkouts; child
-objects were fetched without changing those worktrees. Desktop and Dashboard comparisons used the
-GitHub API; sing-tun and uTLS source patches were inspected there. Compare any new child source and
-branch tip against the last observed pin and tip; classify unconsumed branch work separately and do
-not move a parent baseline just because a child head moved. The previous calibration's platform and
-ABI limits remain applicable. A checkout, `SKIPPED` scan, commit message or reported historical test
-is not a current build or device result.
+父仓库 Gitlink 是从已提交的树中读取的，而不是从较旧的本地 Apple/Android 检出读取的；子仓库对象是
+在不改变那些工作树的情况下抓取的。Desktop 与 Dashboard 的比较使用了 GitHub API；sing-tun 与 uTLS
+的源码补丁也在那里检视。将任何新的子仓库源码与分支 tip 同最后观测到的 pin 与 tip 比较；
+单独归类未被消费的分支工作，不要仅仅因为某个子仓库 head 移动就移动父基线。上一轮校准的平台与
+ABI 限制仍然适用。一次检出、`SKIPPED` 扫描、提交信息或报告的历史测试，都不是当前的构建或设备结果。

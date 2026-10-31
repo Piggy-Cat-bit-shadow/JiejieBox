@@ -1,53 +1,53 @@
-# XHTTP client transport
+# XHTTP 客户端传输（XHTTP client transport）
 
-## VLESS encryption boundary after v0.1.9
+## v0.1.9 之后的 VLESS 加密边界（VLESS encryption boundary after v0.1.9）
 
-**VERIFIED_SOURCE**, testing target `011f3fdcd99`: `option/vless.go` exposes optional VLESS
-`encryption`; empty or `none` leaves it off. `protocol/vless/outbound.go` parses and initializes
-the client encryption layer and wraps a dialed transport before VLESS uses it. The
-`protocol/vless/encryption` package implements the `mlkem768x25519plus` client handshake,
-independently of TLS; `client.go` records adaptation from starifly via Leadaxe and states that the
-server/decryption half was not taken. `protocol/vless/encryption.go` guards the blocking handshake
-against context cancellation. Tests include `protocol/vless/encryption_test.go`,
-`encryption_guard_test.go` and package `encryption` tests. Do not infer server support or wire
-interoperability from client parsing or unit tests alone; some ABI tests are excluded under `-race`.
+**VERIFIED_SOURCE**，测试目标 `011f3fdcd99`：`option/vless.go` 暴露可选的 VLESS
+`encryption`；空值或 `none` 表示关闭。`protocol/vless/outbound.go` 解析并初始化
+客户端加密层，并在 VLESS 使用它之前包装一个已拨号的传输。
+`protocol/vless/encryption` 包实现 `mlkem768x25519plus` 客户端握手，
+与 TLS 无关；`client.go` 记录了经 Leadaxe 从 starifly 适配而来，并声明
+服务端/解密那一半并未被采纳。`protocol/vless/encryption.go` 针对上下文取消保护这个阻塞式握手。
+测试包括 `protocol/vless/encryption_test.go`、
+`encryption_guard_test.go`，以及 `encryption` 包的测试。不要仅凭客户端解析或单元测试就推断服务端支持或
+线上互通性；部分 ABI 测试在 `-race` 下被排除。
 
-At `cb71cf80d72`, `dialMode` and `normalizeXmux` still implement the mode and all-or-nothing
-defaults described below. `CloseIdleConnections` detaches idle pool entries; `RetireSuspect` and
-`Close` detach all entries and defer closing those still in use. A reuse-boundary redial remains
-subject to an already-armed XMUX breaker backoff. Selected defaulting, live-stream close and
-packet-up batching/tail tests passed on Windows with Go 1.26.10; they are not live peer interop or
-performance measurements.
+在 `cb71cf80d72` 处，`dialMode` 与 `normalizeXmux` 仍然实现下文所述的模式以及全有或全无的
+默认值。`CloseIdleConnections` 摘除空闲池条目；`RetireSuspect` 与
+`Close` 摘除所有条目，并推迟关闭仍在使用的那些。复用边界处的重拨仍然
+受已武装的 XMUX 熔断退避约束。选定的默认值、实时流关闭与
+packet-up 批量/尾部测试已在 Windows 上用 Go 1.26.10 通过；它们不是实时对端互通或
+性能测量。
 
-> Status: `VERIFIED_SOURCE`
+> 状态：`VERIFIED_SOURCE`
 >
-> Reviewed against repository `Piggy-Cat-bit-shadow/sing-box`, branch `testing`,
-> HEAD `db8814ced6edf7a266fd2a73b03711332473dad9` on 2026-10-13.
+> 对照仓库 `Piggy-Cat-bit-shadow/sing-box`、分支 `testing`、
+> HEAD `db8814ced6edf7a266fd2a73b03711332473dad9` 于 2026-10-13 复核。
 >
-> This module documents the fork's **client-side XHTTP / SplitHTTP transport configuration contract**.
-> It is intended to answer "how do I write an XHTTP node?" without requiring a source-code audit.
-> If this document conflicts with current source or tests, **source and tests win**.
+> 本模块记录本 fork 的 **客户端 XHTTP / SplitHTTP 传输配置契约**。
+> 它的目的是在无需审计源码的情况下回答“我怎么写一个 XHTTP 节点？”。
+> 如果本文档与当前源码或测试冲突，**以源码和测试为准**。
 
 ---
 
-## 1. Scope
+## 1. 范围（Scope）
 
-This module covers:
+本模块覆盖：
 
-- where XHTTP is configured in a VLESS outbound;
-- all currently exposed `V2RayXHTTPOptions` fields;
-- the four transport modes and their defaults;
-- session / sequence metadata placement;
-- packet-up uplink tuning;
-- X-Padding behaviour;
-- XMUX connection reuse and its non-obvious default rules;
-- HTTP/1.1 / HTTP/2 / HTTP/3 selection;
-- interaction with TLS, Reality, Host, path and VLESS XUDP;
-- accepted-but-ignored and server-only fields;
-- recommended configuration patterns and common failure modes;
-- fork-specific lifecycle integration for XHTTP connection reuse.
+- XHTTP 在 VLESS 出站中的配置位置；
+- 当前暴露的全部 `V2RayXHTTPOptions` 字段；
+- 四种传输模式及其默认值；
+- 会话 / 序号元数据的放置位置；
+- packet-up 上行调优；
+- X-Padding 行为；
+- XMUX 连接复用及其不显然的默认规则；
+- HTTP/1.1 / HTTP/2 / HTTP/3 的选择；
+- 与 TLS、Reality、Host、path 以及 VLESS XUDP 的相互作用；
+- 被接受但被忽略的字段，以及仅服务端的字段；
+- 推荐的配置模式与常见故障形态；
+- XHTTP 连接复用的 fork 特有生命周期集成。
 
-Primary source anchors:
+主要源码锚点：
 
 ```text
 option/v2ray_xhttp.go
@@ -60,17 +60,17 @@ option/v2ray_transport_xhttp_test.go
 protocol/vless/outbound.go
 ```
 
-The comments in `option/v2ray_xhttp.go` still reference old `SPECS/TASKS/...` paths.
-Those paths are not required to configure XHTTP and may not exist in this repository.
-This module is the knowledge-base replacement for that missing configuration guide.
+`option/v2ray_xhttp.go` 中的注释仍然引用旧的 `SPECS/TASKS/...` 路径。
+这些路径并非配置 XHTTP 所必需，而且在本仓库中可能并不存在。
+本模块就是那份缺失的配置指南在知识库中的替代品。
 
 ---
 
-## 2. Configuration model: XHTTP is a V2Ray transport
+## 2. 配置模型：XHTTP 是一种 V2Ray 传输（Configuration model: XHTTP is a V2Ray transport）
 
-XHTTP is **not** a standalone outbound type.
+XHTTP **不是** 一种独立出站类型。
 
-For VLESS, it is selected under the outbound's `transport` object:
+对于 VLESS，它在出站的 `transport` 对象下被选中：
 
 ```json
 {
@@ -89,14 +89,14 @@ For VLESS, it is selected under the outbound's `transport` object:
 }
 ```
 
-The important distinction is:
+重要的区别是：
 
 ```text
 outbound.type       = vless
 transport.type      = xhttp
 ```
 
-Do **not** write:
+**不要** 写：
 
 ```json
 {
@@ -104,7 +104,7 @@ Do **not** write:
 }
 ```
 
-and do **not** write:
+也 **不要** 写：
 
 ```json
 {
@@ -112,13 +112,13 @@ and do **not** write:
 }
 ```
 
-`network` is the normal sing-box TCP/UDP network selector. XHTTP belongs to the V2Ray transport layer.
+`network` 是 sing-box 常规的 TCP/UDP 网络选择器。XHTTP 属于 V2Ray 传输层。
 
 ---
 
-## 3. Smallest practical configuration
+## 3. 最小可用配置（Smallest practical configuration）
 
-A practical TLS XHTTP outbound can be written as:
+一个实用的 TLS XHTTP 出站可以写成：
 
 ```json
 {
@@ -144,7 +144,7 @@ A practical TLS XHTTP outbound can be written as:
 }
 ```
 
-For subscription/config conversion, this is a good default philosophy:
+对于订阅/配置转换，这是一个不错的默认哲学：
 
 ```text
 preserve explicitly configured source fields;
@@ -154,110 +154,110 @@ let omitted fields use the implementation defaults.
 
 ---
 
-## 4. Modes
+## 4. 模式（Modes）
 
-Supported `mode` values:
+受支持的 `mode` 值：
 
-| Value | Behaviour |
+| 取值 | 行为 |
 |---|---|
-| `auto` | Reality → `stream-one`; otherwise → `packet-up` |
-| `packet-up` | one GET download stream + sequential POST upload packets |
-| `stream-up` | one streamed POST upload + a separate GET download stream |
-| `stream-one` | one bidirectional HTTP stream; request body uploads, response body downloads |
+| `auto` | Reality → `stream-one`；否则 → `packet-up` |
+| `packet-up` | 一条 GET 下载流 + 顺序的 POST 上传数据包 |
+| `stream-up` | 一条流式 POST 上传 + 一条独立的 GET 下载流 |
+| `stream-one` | 一条双向 HTTP 流；请求体上传，响应体下载 |
 
-If `mode` is omitted, it defaults to:
+如果省略 `mode`，默认值为：
 
 ```text
 auto
 ```
 
-Unknown mode values are rejected.
+未知的模式值会被拒绝。
 
-### 4.1 `auto`
+### 4.1 `auto`（自动模式）
 
-Current implementation:
+当前实现：
 
 ```text
 Reality enabled     -> stream-one
 Reality not enabled -> packet-up
 ```
 
-The client does not currently implement Xray's asymmetric `downloadSettings` transport selection,
-so the decision is intentionally simpler than every possible Xray topology.
+客户端目前并未实现 Xray 那种非对称的 `downloadSettings` 传输选择，
+因此该决策有意地比任何可能的 Xray 拓扑都更简单。
 
-### 4.2 `packet-up`
+### 4.2 `packet-up`（按包上传）
 
-Characteristics:
+特征：
 
-- download is a long-lived GET response;
-- upload is split into sequential requests;
-- each upload packet receives a sequence number;
-- the packet size and inter-POST delay can be tuned;
-- header/cookie uplink payload placement is valid only here;
-- `uplink_http_method: "GET"` is meaningful only here.
+- 下载是一条长生命周期的 GET 响应；
+- 上传被拆分为顺序的请求；
+- 每个上传数据包都会获得一个序号；
+- 数据包大小与 POST 间延迟可以调优；
+- header/cookie 的上行载荷放置只在这里有效；
+- `uplink_http_method: "GET"` 只在这里有意义。
 
-### 4.3 `stream-up`
+### 4.3 `stream-up`（流式上传）
 
-Characteristics:
+特征：
 
-- upload uses one streamed request body;
-- download uses a separate GET;
-- streamed-body requests normally carry `Content-Type: application/grpc`.
+- 上传使用一个流式请求体；
+- 下载使用一条独立的 GET；
+- 流式请求体的请求通常携带 `Content-Type: application/grpc`。
 
-### 4.4 `stream-one`
+### 4.4 `stream-one`（单流双向）
 
-Characteristics:
+特征：
 
-- one request carries both directions;
-- closest transport shape to an HTTP-upgrade-style bidirectional stream;
-- streamed-body request normally carries `Content-Type: application/grpc`;
-- Reality + `mode: auto` resolves to this mode.
+- 一个请求同时承载两个方向；
+- 在传输形态上最接近 HTTP-upgrade 式双向流；
+- 流式请求体的请求通常携带 `Content-Type: application/grpc`；
+- Reality + `mode: auto` 会解析为此模式。
 
 ---
 
-## 5. Full field reference
+## 5. 完整字段参考（Full field reference）
 
-All JSON field names below are the actual current option-layer keys.
+下面所有 JSON 字段名都是当前 option 层实际使用的键。
 
-### 5.1 Basic fields
+### 5.1 基础字段（Basic fields）
 
-| Field | Type | Default | Meaning |
+| 字段 | 类型 | 默认值 | 含义 |
 |---|---|---|---|
-| `host` | string | TLS SNI, otherwise server address | HTTP Host override |
-| `path` | string | effectively `/` after normalization | XHTTP request base path |
-| `mode` | string | `auto` | `auto`, `packet-up`, `stream-up`, `stream-one` |
-| `headers` | object | none | extra HTTP request headers |
-| `x_padding_bytes` | range string | `100-1000` | inclusive random X-Padding byte-length range |
-| `xmux` | object | see XMUX section | HTTP connection reuse policy |
-| `no_grpc_header` | bool | `false` | suppress streamed-mode `Content-Type: application/grpc` |
+| `host` | string | TLS SNI，否则为服务器地址 | HTTP Host 覆盖 |
+| `path` | string | 规范化后实际上是 `/` | XHTTP 请求的基础路径 |
+| `mode` | string | `auto` | `auto`、`packet-up`、`stream-up`、`stream-one` |
+| `headers` | object | 无 | 额外的 HTTP 请求头 |
+| `x_padding_bytes` | range string | `100-1000` | 闭区间的随机 X-Padding 字节长度范围 |
+| `xmux` | object | 见 XMUX 一节 | HTTP 连接复用策略 |
+| `no_grpc_header` | bool | `false` | 抑制流式模式下的 `Content-Type: application/grpc` |
 
-Range strings accept either:
+范围字符串接受两种形式：
 
 ```text
 "100-1000"
 ```
 
-or a single value:
+或单个值：
 
 ```text
 "4000"
 ```
 
-which means:
+它的含义是：
 
 ```text
 4000-4000
 ```
 
-If a reversed range is supplied, the parser normalizes the endpoints.
+如果提供了顺序颠倒的范围，解析器会规范化两个端点。
 
 ---
 
-## 6. Host, SNI and path
+## 6. Host、SNI 与 path（Host, SNI and path）
 
-### 6.1 `host`
+### 6.1 `host`（主机字段）
 
-Host resolution order is:
+Host 的解析顺序是：
 
 ```text
 transport.host
@@ -265,16 +265,16 @@ transport.host
         -> server address
 ```
 
-Therefore these are related but are **not the same setting**:
+因此两者相关，但 **不是同一个设置**：
 
 ```text
 tls.server_name = TLS SNI / certificate-facing server name
 transport.host  = HTTP Host
 ```
 
-It is valid to explicitly keep both when converting a node even if their values are identical.
+转换节点时，即使两者取值完全相同，显式保留两者也是有效的。
 
-Example:
+示例：
 
 ```json
 "tls": {
@@ -287,25 +287,25 @@ Example:
 }
 ```
 
-### 6.2 `path`
+### 6.2 `path`（路径字段）
 
-The client guarantees a leading slash.
+客户端保证有一个前导斜杠。
 
-For example:
+例如：
 
 ```text
 abc
 ```
 
-is normalized to:
+会被规范化为：
 
 ```text
 /abc
 ```
 
-The configured trailing slash is otherwise preserved.
+除此之外，配置的尾部斜杠会被保留。
 
-This matters with reverse proxies. For example, an nginx location such as:
+这在反向代理场景下很重要。例如，一个如下的 nginx location：
 
 ```nginx
 location /upload/ {
@@ -313,40 +313,40 @@ location /upload/ {
 }
 ```
 
-may redirect:
+可能会重定向：
 
 ```text
 /upload -> /upload/
 ```
 
-The XHTTP download `RoundTrip` does not rely on ordinary browser-style redirect following.
-A 301/302 in front of the endpoint can therefore surface as a dial failure.
+XHTTP 下载的 `RoundTrip` 并不依赖浏览器式的普通重定向跟随。
+因此端点前面的一个 301/302 可能表现为拨号失败。
 
-If the server path is `/upload/`, configure `/upload/` exactly.
+如果服务端路径是 `/upload/`，就精确配置 `/upload/`。
 
 ---
 
-## 7. HTTP version selection
+## 7. HTTP 版本选择（HTTP version selection）
 
-There is **no** XHTTP JSON field such as:
+XHTTP **没有** 这样的 JSON 字段：
 
 ```json
 "http_version": 2
 ```
 
-The client decides the HTTP transport from TLS/ALPN/Reality.
+客户端根据 TLS/ALPN/Reality 决定 HTTP 传输。
 
-Current behaviour:
+当前行为：
 
-| Situation | HTTP transport |
+| 情形 | HTTP 传输 |
 |---|---|
-| no TLS | HTTP/1.1 |
-| TLS with `alpn: ["http/1.1"]` | HTTP/1.1 |
-| TLS with `alpn: ["h3"]` | HTTP/3 |
-| normal TLS with no explicit special ALPN | HTTP/2 |
-| Reality requiring H2 path | HTTP/2, with H2 ALPN enforced as needed |
+| 无 TLS | HTTP/1.1 |
+| TLS 且 `alpn: ["http/1.1"]` | HTTP/1.1 |
+| TLS 且 `alpn: ["h3"]` | HTTP/3 |
+| 普通 TLS，没有显式指定特殊 ALPN | HTTP/2 |
+| Reality 要求 H2 路径 | HTTP/2，并按需强制 H2 ALPN |
 
-Typical H2 configuration:
+典型的 H2 配置：
 
 ```json
 "tls": {
@@ -358,7 +358,7 @@ Typical H2 configuration:
 }
 ```
 
-Typical H3 selection:
+典型的 H3 选择：
 
 ```json
 "tls": {
@@ -370,25 +370,25 @@ Typical H3 selection:
 }
 ```
 
-Do not invent a `transport.http_version` key.
+不要发明 `transport.http_version` 键。
 
 ---
 
-## 8. Session and sequence placement
+## 8. 会话与序号放置（Session and sequence placement）
 
-The XHTTP client creates per-dial session metadata.
-`packet-up` additionally has a per-upload sequence number.
+XHTTP 客户端会为每次拨号创建会话元数据。
+`packet-up` 还额外带有一个按上传的序号。
 
-### 8.1 Session fields
+### 8.1 会话字段（Session fields）
 
-| Field | Accepted values | Default |
+| 字段 | 接受值 | 默认值 |
 |---|---|---|
-| `session_placement` | `path`, `query`, `header`, `cookie` | `path` |
-| `session_key` | arbitrary name | placement-dependent |
-| `session_table` | predefined table name or literal ASCII alphabet | dashed UUID when pair omitted |
-| `session_length` | range string | dashed UUID when pair omitted |
+| `session_placement` | `path`、`query`、`header`、`cookie` | `path` |
+| `session_key` | 任意名称 | 取决于放置位置 |
+| `session_table` | 预定义表名，或字面 ASCII 字母表 | 省略该对时使用带连字符的 UUID |
+| `session_length` | range string | 省略该对时使用带连字符的 UUID |
 
-Default key when `session_placement` is:
+当 `session_placement` 为以下值时，默认的 key 是：
 
 ```text
 path   -> no key
@@ -397,14 +397,14 @@ query  -> x_session
 cookie -> x_session
 ```
 
-### 8.2 Sequence fields
+### 8.2 序号字段（Sequence fields）
 
-| Field | Accepted values | Default |
+| 字段 | 接受值 | 默认值 |
 |---|---|---|
-| `seq_placement` | `path`, `query`, `header`, `cookie` | `path` |
-| `seq_key` | arbitrary name | placement-dependent |
+| `seq_placement` | `path`、`query`、`header`、`cookie` | `path` |
+| `seq_key` | 任意名称 | 取决于放置位置 |
 
-Default key:
+默认 key：
 
 ```text
 path   -> no key
@@ -413,15 +413,15 @@ query  -> x_seq
 cookie -> x_seq
 ```
 
-The sequence number is relevant to `packet-up`.
+序号与 `packet-up` 相关。
 
-### 8.3 Custom session IDs
+### 8.3 自定义会话 ID（Custom session IDs）
 
-`session_table` and `session_length` must be configured **together**.
+`session_table` 与 `session_length` 必须 **一起** 配置。
 
-Setting only one is rejected.
+只设置其中一个会被拒绝。
 
-Supported predefined `session_table` names are case-sensitive:
+受支持的预定义 `session_table` 名称是大小写敏感的：
 
 ```text
 hex
@@ -435,45 +435,45 @@ BASE36
 Base62
 ```
 
-A literal ASCII alphabet may also be supplied.
+也可以提供字面的 ASCII 字母表。
 
-Example:
+示例：
 
 ```json
 "session_table": "Base62",
 "session_length": "12-16"
 ```
 
-The implementation validates the resulting ID space. The minimum-length alphabet space must be large
-enough to avoid unsafe cross-client session collision risk.
+实现会校验由此产生的 ID 空间。最短长度的字母表空间必须足够大，
+以避免不安全的跨客户端会话碰撞风险。
 
-Unless compatibility or obfuscation requirements demand otherwise, leaving both fields omitted is the
-simplest and safest configuration.
+除非兼容性或混淆需求要求，否则两个字段都省略是最简单、
+也最安全的配置。
 
 ---
 
-## 9. Uplink data fields
+## 9. 上行数据字段（Uplink data fields）
 
-These options primarily affect `packet-up`.
+这些选项主要影响 `packet-up`。
 
-| Field | Values / format | Default |
+| 字段 | 取值 / 格式 | 默认值 |
 |---|---|---|
-| `uplink_data_placement` | `body`, `auto`, `header`, `cookie` | `auto` |
-| `uplink_data_key` | string | placement-dependent |
-| `uplink_chunk_size` | range string | placement-dependent |
+| `uplink_data_placement` | `body`、`auto`、`header`、`cookie` | `auto` |
+| `uplink_data_key` | string | 取决于放置位置 |
+| `uplink_chunk_size` | range string | 取决于放置位置 |
 | `uplink_http_method` | HTTP method | `POST` |
 
-### 9.1 `uplink_data_placement`
+### 9.1 `uplink_data_placement`（上行数据放置）
 
-`header` and `cookie` are valid only in:
+`header` 与 `cookie` 只在以下模式中有效：
 
 ```text
 packet-up
 ```
 
-Using them with stream modes is rejected.
+把它们用于流式模式会被拒绝。
 
-Default key:
+默认 key：
 
 ```text
 header -> X-Data
@@ -482,9 +482,9 @@ cookie -> x_data
 body   -> no key
 ```
 
-### 9.2 `uplink_chunk_size`
+### 9.2 `uplink_chunk_size`（上行分块大小）
 
-Default:
+默认值：
 
 ```text
 cookie -> 2048-3072
@@ -492,59 +492,59 @@ header -> 3000-4000
 other  -> sc_max_each_post_bytes
 ```
 
-The implementation enforces a minimum normalized chunk floor of 64 base64 characters.
+实现会强制一个最小规范化分块下限：64 个 base64 字符。
 
-### 9.3 `uplink_http_method`
+### 9.3 `uplink_http_method`（上行 HTTP 方法）
 
-Default:
-
-```text
-POST
-```
-
-`GET` is only valid for `packet-up`.
-
-If `GET` is configured on a non-`packet-up` mode, current code warns and falls back to:
+默认值：
 
 ```text
 POST
 ```
 
-instead of rejecting the entire configuration.
+`GET` 只对 `packet-up` 有效。
+
+如果在非 `packet-up` 模式上配置了 `GET`，当前代码会告警并回退到：
+
+```text
+POST
+```
+
+而不是拒绝整个配置。
 
 ---
 
-## 10. X-Padding
+## 10. X-Padding 填充（X-Padding）
 
-### 10.1 Legacy/default mode
+### 10.1 传统/默认模式（Legacy/default mode）
 
-With:
+当：
 
 ```json
 "x_padding_obfs_mode": false
 ```
 
-or with the field omitted, the client keeps the legacy Xray-compatible X-Padding behaviour.
+或者省略该字段时，客户端保持传统的、与 Xray 兼容的 X-Padding 行为。
 
-Default padding size:
+默认的 padding 大小：
 
 ```json
 "x_padding_bytes": "100-1000"
 ```
 
-### 10.2 Configurable obfuscation mode
+### 10.2 可配置的混淆模式（Configurable obfuscation mode）
 
-Fields:
+字段：
 
-| Field | Accepted values | Default |
+| 字段 | 接受值 | 默认值 |
 |---|---|---|
 | `x_padding_obfs_mode` | bool | `false` |
 | `x_padding_key` | string | `x_padding` |
 | `x_padding_header` | string | `X-Padding` |
-| `x_padding_placement` | `cookie`, `header`, `query`, `queryInHeader` | `queryInHeader` |
-| `x_padding_method` | `repeat-x`, `tokenish` | `repeat-x` |
+| `x_padding_placement` | `cookie`、`header`、`query`、`queryInHeader` | `queryInHeader` |
+| `x_padding_method` | `repeat-x`、`tokenish` | `repeat-x` |
 
-Example:
+示例：
 
 ```json
 {
@@ -556,135 +556,135 @@ Example:
 }
 ```
 
-Unless a peer/server profile explicitly requires these values, subscription conversion should generally
-preserve the source settings rather than inventing them.
+除非对端/服务端 profile 明确要求这些取值，订阅转换一般应
+保留来源设置，而不是发明它们。
 
 ---
 
-## 11. `no_grpc_header`
+## 11. `no_grpc_header`（禁用 gRPC 头）
 
-For streamed-body modes:
+对于流式请求体模式：
 
 ```text
 stream-one
 stream-up
 ```
 
-the client normally sets:
+客户端通常会设置：
 
 ```http
 Content-Type: application/grpc
 ```
 
-This header can be operationally important with CDNs/reverse proxies that use the content type to choose
-streaming/no-buffering behaviour.
+在那些用内容类型来决定流式/不缓冲行为的 CDN/反向代理上，这个头在运维上
+可能很重要。
 
-Therefore:
+因此：
 
 ```json
 "no_grpc_header": true
 ```
 
-is **not** a generic optimization.
+**不是** 一项通用优化。
 
-Do not enable it by default.
+不要默认启用它。
 
-In some reverse-proxy/CDN paths, suppressing the header can turn a working streamed XHTTP session into a
-connection that buffers or stalls until timeout.
+在某些反向代理/CDN 路径中，抑制这个头会把一个本来工作的流式 XHTTP 会话变成
+一条持续缓冲或停滞直至超时的连接。
 
 ---
 
-## 12. Packet-up tuning
+## 12. packet-up 调优（Packet-up tuning）
 
-| Field | Format | Default |
+| 字段 | 格式 | 默认值 |
 |---|---|---|
 | `sc_max_each_post_bytes` | range string | `1000000-1000000` |
 | `sc_min_posts_interval_ms` | range string | `30-30` |
 
-### 12.1 `sc_max_each_post_bytes`
+### 12.1 `sc_max_each_post_bytes`（每 POST 字节上限）
 
-Bounds the payload size of one packet-up upload POST before splitting.
+约束单个 packet-up 上传 POST 在被拆分之前的载荷大小。
 
-Example:
+示例：
 
 ```json
 "sc_max_each_post_bytes": "1000000-1000000"
 ```
 
-### 12.2 `sc_min_posts_interval_ms`
+### 12.2 `sc_min_posts_interval_ms`（POST 最小间隔）
 
-Minimum delay between successive packet-up upload POSTs.
+连续 packet-up 上传 POST 之间的最小延迟。
 
-Example:
+示例：
 
 ```json
 "sc_min_posts_interval_ms": "30-30"
 ```
 
-Do not tune these merely because they are exposed. They alter packet-up request behaviour and can affect
-latency, burstiness and peer compatibility.
+不要仅仅因为它们被暴露出来就去调优。它们会改变 packet-up 的请求行为，并可能影响
+延迟、突发性与对端兼容性。
 
-### 12.3 Post cadence, and why response completion is not pipelined
+### 12.3 POST 节奏，以及为什么响应完成没有被流水线化（Post cadence, and why response completion is not pipelined）
 
-A packet-up uplink keeps **one POST in flight**: the next POST starts after the previous POST's
-response has been fully drained, so with a queue that never empties the cadence is
+一个 packet-up 上行保持 **同一时刻只有一个 POST 在途**：下一个 POST 在上一个 POST 的
+响应被完全排空之后才开始，因此在一个永不排空的队列下，节奏是
 
 ```text
 one POST per max(round trip, sc_min_posts_interval_ms)
 ```
 
-At `011f3fdcd99`, `packetUplink.sendPacket` reports a read or close error from
-`drainPacketUpResponse`; an HTTP 200 whose body stalls or fails is not counted as successful data
-flow and must not clear the connection's failure streak. The POST has its own bounded context.
-See `transport/v2rayxhttp/conn.go`; this source contract does not establish a live-peer result.
+在 `011f3fdcd99` 处，`packetUplink.sendPacket` 会把来自
+`drainPacketUpResponse` 的读取或关闭错误报告出来；一个响应体停滞或失败的 HTTP 200 不会被计为成功的数据
+流，也绝不能清除该连接的失败连续计数。该 POST 有自己受限的上下文。
+见 `transport/v2rayxhttp/conn.go`；这个源码契约并不构成实时对端结果。
 
-Post size is unaffected by latency once the session is open: `shouldGatherUpload` deliberately skips
-gathering for the first two writes (`conn.go:1115-1135`), which carry the opening exchange; from the
-third POST, gathering fills every POST to `sc_max_each_post_bytes` at every round trip measured
-(1,000,000 bytes from 0 to 200 ms). Do not describe the opening pair as gathered.
+一旦会话打开，POST 大小就不再受延迟影响：`shouldGatherUpload` 有意地跳过
+前两次写入的聚合（`conn.go:1115-1135`），这两次写入承载了开场交换；从
+第三个 POST 起，在所测的每一个往返时间下，聚合都会把每个 POST 填满到 `sc_max_each_post_bytes`
+（0 到 200 ms 均为 1,000,000 字节）。不要把开场的那一对描述为已聚合。
 
-The reference implements the obvious objection to that design — it starts the next POST on
-`httptrace.WroteRequest` and drains the response in a goroutine, i.e. it pipelines response
-completion (`Xray v26.9.30`, `transport/internet/splithttp/dialer.go:495-534`) — so the two were
-compared directly (packet-up, HTTP/2, one stream, same reference server, three repetitions per
-point, 30 runs, 0 payload mismatches):
+参考实现实现了对该设计的那个显而易见的反对方案 —— 它在
+`httptrace.WroteRequest` 上启动下一个 POST，并在一个 goroutine 中排空响应，也就是说它把响应
+完成流水线化了（`Xray v26.9.30`、`transport/internet/splithttp/dialer.go:495-534`）—— 因此两者被
+直接对比（packet-up、HTTP/2、单流、同一参考服务器、每个点三次重复、
+30 次运行、0 次载荷不匹配）：
 
-| Round trip | 0 ms | 30 ms | 50 ms | 100 ms | 200 ms |
+| 往返时间 | 0 ms | 30 ms | 50 ms | 100 ms | 200 ms |
 |---|---|---|---|---|---|
-| fork upload | 26.93 MB/s | 24.25 MB/s | 15.57 MB/s | 7.88 MB/s | 3.92 MB/s |
-| reference upload | 22.84 MB/s | 19.67 MB/s | 14.53 MB/s | 7.80 MB/s | 4.04 MB/s |
-| ratio | 1.18x | 1.23x | 1.07x | 1.01x | 0.97x |
-| fork ping-pong p50, 512 B | 30.0 ms | 32.2 ms | 52.0 ms | 102.0 ms | 202.0 ms |
-| reference ping-pong p50 | 30.5 ms | 31.8 ms | 51.8 ms | 101.7 ms | 201.8 ms |
+| fork 上传 | 26.93 MB/s | 24.25 MB/s | 15.57 MB/s | 7.88 MB/s | 3.92 MB/s |
+| 参考上传 | 22.84 MB/s | 19.67 MB/s | 14.53 MB/s | 7.80 MB/s | 4.04 MB/s |
+| 比值 | 1.18x | 1.23x | 1.07x | 1.01x | 0.97x |
+| fork ping-pong p50，512 B | 30.0 ms | 32.2 ms | 52.0 ms | 102.0 ms | 202.0 ms |
+| 参考 ping-pong p50 | 30.5 ms | 31.8 ms | 51.8 ms | 101.7 ms | 201.8 ms |
 
-Both implementations fall in this particular sweep (about 27 → 4 MB/s); at 200 ms the listed fork
-result is slightly lower than the reference (3.92 versus 4.04 MB/s). These measurements do not prove
-equivalence or the absence of a response-wait penalty on other paths or workloads. Pipelining response
-completion would require bounded in-flight completions and alter failure semantics; assess it with a
-fresh, representative comparison if that tradeoff is revisited.
+两种实现都落在这一特定扫描区间内（约 27 → 4 MB/s）；在 200 ms 处，所列 fork
+结果略低于参考（3.92 对 4.04 MB/s）。这些测量并不证明
+等价，也不证明其他路径或工作负载上不存在响应等待代价。把响应
+完成流水线化会需要有界的在途完成数并改变失败语义；如果重新考虑这一权衡，请用
+新的、有代表性的对比来评估它。
 
-Evidence: `VERIFIED_UNIT` for the invariants (at most one POST in flight, contiguous ascending seq,
-cadence no faster than half the round trip — `TestPacketUpPostCadenceTracksTheRoundTrip` in
-`transport/v2rayxhttp/packetup_pipeline_probe_test.go`); **historical record** for the round-trip
-sweep, which is a manual harness measurement on one host (loopback plus a delay-line impairment shim,
-so added latency costs no bandwidth) and cannot be re-run from CI. Beyond 200 ms there is no data.
+证据：对不变量（同一时刻至多一个 POST 在途、序号连续递增、
+节奏不快于往返时间的一半 —— `TestPacketUpPostCadenceTracksTheRoundTrip`，位于
+`transport/v2rayxhttp/packetup_pipeline_probe_test.go`）为 `VERIFIED_UNIT`；对往返
+扫描为 **历史记录**，那是在单台主机上的手动测试台测量（loopback 加上一个延迟线损伤 shim，
+因此增加的延迟不消耗带宽），无法从 CI 重新运行。超过 200 ms 没有数据。
 
-Provenance: probe commit `58e3222558c` follows `b5bc2a8de42`. Both are ancestors of the examined
-`011f3fdcd99` testing target; that Git relationship does not make the historical manual measurement a
-new test run or establish current performance. Measure the target and deployment before tuning.
+溯源：探针提交 `58e3222558c` 紧随 `b5bc2a8de42`。两者都是所考察的
+`011f3fdcd99` 测试目标的祖先；这一 Git 关系并不会把那次历史手动测量变成
+一次新的测试运行，也不确立当前性能。调优之前先测量目标与部署。
 
 ---
 
-## 13. XMUX
+## 13. XMUX 连接复用（XMUX）
 
-XMUX is **HTTP connection reuse**, not a separate wire protocol.
+XMUX 是 **HTTP 连接复用**，不是一种独立的线上协议。
 
-The server identifies XHTTP sessions by session metadata, not by the specific pooled HTTP connection.
-Pooling therefore changes client-side connection reuse/rotation, not the logical XHTTP session format.
+服务器按会话元数据识别 XHTTP 会话，而不是按具体的池化 HTTP 连接。
+因此池化改变的是客户端侧的连接复用/轮转，而不是逻辑上的 XHTTP 会话格式。
 
-It avoids paying a completely fresh TCP+TLS(+Reality) setup for every stream.
+它避免为每一条流都付出一次全新的 TCP+TLS(+Reality) 建立成本。
 
-### 13.1 Fields
+### 13.1 字段（Fields）
 
 ```json
 "xmux": {
@@ -697,61 +697,61 @@ It avoids paying a completely fresh TCP+TLS(+Reality) setup for every stream.
 }
 ```
 
-| Field | Meaning |
+| 字段 | 含义 |
 |---|---|
-| `max_concurrency` | maximum live streams sharing one HTTP connection |
-| `max_connections` | pool connection-count bound |
-| `c_max_reuse_times` | number of stream handouts before a connection is retired |
-| `h_max_request_times` | number of HTTP requests before retirement |
-| `h_max_reusable_secs` | reusable lifetime in seconds |
-| `h_keep_alive_period` | HTTP/2 keep-alive/read-idle ping period |
+| `max_concurrency` | 共享一条 HTTP 连接的最大活跃流数 |
+| `max_connections` | 连接池的连接数上限 |
+| `c_max_reuse_times` | 一条连接被退役之前可被发放的次数 |
+| `h_max_request_times` | 退役之前允许的 HTTP 请求数 |
+| `h_max_reusable_secs` | 可复用的生命周期，单位为秒 |
+| `h_keep_alive_period` | HTTP/2 keep-alive/读空闲 ping 周期 |
 
-`h_max_request_times` counts **HTTP requests**, not logical XHTTP streams.
+`h_max_request_times` 统计的是 **HTTP 请求**，而不是逻辑 XHTTP 流。
 
-This distinction is important in `packet-up`, because one logical stream can produce many upload POSTs.
+这一区别在 `packet-up` 中很重要，因为一条逻辑流可以产生许多上传 POST。
 
-### 13.2 Range syntax
+### 13.2 范围语法（Range syntax）
 
-XMUX range fields accept the fork's normal XHTTP range form:
+XMUX 的范围字段接受本 fork 常规的 XHTTP 范围形式：
 
 ```json
 "max_concurrency": "16-32"
 ```
 
-A single integer string is also valid:
+单个整数字符串也是有效的：
 
 ```json
 "max_concurrency": "16"
 ```
 
-and represents:
+它表示：
 
 ```text
 16-16
 ```
 
-The option layer also accepts the compatible two-element array form where supported by the range type.
+option 层在范围类型支持的地方，也接受兼容的双元素数组形式。
 
-### 13.3 `max_concurrency` vs `max_connections`
+### 13.3 `max_concurrency` 与 `max_connections`（并发与连接数）
 
-They represent alternative pool bounding strategies and are documented as mutually exclusive.
+它们代表可互相替代的连接池限界策略，并被记录为互斥。
 
-For ordinary authored configuration, choose one strategy instead of setting both.
+对于普通的手写配置，选择其中一种策略，而不要两者都设置。
 
-A decoder/round-trip test may intentionally contain both merely to prove that fields survive parsing;
-that should not be copied as a recommendation.
+解码器/往返测试可能会故意同时包含两者，仅仅是为了证明字段能通过解析；
+那不应被当作推荐做法照抄。
 
-### 13.4 The important all-or-nothing default rule
+### 13.4 重要的全有或全无默认规则（The important all-or-nothing default rule）
 
-This rule is easy to miss.
+这条规则很容易被忽略。
 
-If the entire `xmux` section is:
+如果整个 `xmux` 段是：
 
 ```text
 absent
 ```
 
-or is effectively completely empty, Xray-compatible defaults are selected:
+或者实际上是彻底空的，就会选中与 Xray 兼容的默认值：
 
 ```text
 max_connections     = 3-3
@@ -759,13 +759,13 @@ h_max_request_times = 600-900
 h_max_reusable_secs = 1800-3000
 ```
 
-But if **any XMUX field is explicitly set**, then the section is treated as explicitly authored.
+但只要 **任何一个 XMUX 字段被显式设置**，该段就被视为显式编写。
 
-Other unspecified range fields remain zero, which means their normal explicit-section semantics
-(e.g. unlimited/no corresponding retirement bound), rather than silently inheriting the complete
-default set.
+其他未指定的范围字段保持为零，这意味着它们正常的“显式段”语义
+（例如无限制/没有相应的退役上限），而不是静默继承完整的
+默认值集合。
 
-Therefore:
+因此：
 
 ```json
 "xmux": {
@@ -773,15 +773,15 @@ Therefore:
 }
 ```
 
-is behaviourally different from omitting `xmux`.
+在行为上与省略 `xmux` 不同。
 
-This is intentional.
+这是有意为之。
 
-### 13.5 Keep-alive value
+### 13.5 keep-alive 取值（Keep-alive value）
 
-`h_keep_alive_period` is a plain integer rather than a range.
+`h_keep_alive_period` 是一个普通整数，而不是范围。
 
-Its option contract states:
+它的 option 契约声明：
 
 ```text
 0        -> implementation/default behaviour
@@ -791,113 +791,113 @@ positive -> configured HTTP/2 keep-alive period in seconds
 
 ---
 
-## 14. Fork-specific XMUX lifecycle behaviour
+## 14. fork 特有的 XMUX 生命周期行为（Fork-specific XMUX lifecycle behaviour）
 
-This fork integrates XHTTP connection reuse with the runtime lifecycle.
+本 fork 把 XHTTP 连接复用与运行时生命周期集成在一起。
 
-The XHTTP client implements:
+XHTTP 客户端实现了：
 
 ```text
 adapter.IdleConnectionKeeper
 adapter.ReuseSuspect
 ```
 
-Important consequences:
+重要的后果：
 
-### Memory trim
+### 内存裁剪（Memory trim）
 
-`CloseIdleConnections()` retires only pooled connections carrying no live stream.
+`CloseIdleConnections()` 只退役那些不承载活跃流的池化连接。
 
-A memory trim is deliberately not allowed to become an unnecessary reconnect trigger for active work.
+有意不允许内存裁剪变成对活跃工作的不必要重连触发。
 
-### Reuse boundary / suspect connections
+### 复用边界 / 可疑连接（Reuse boundary / suspect connections）
 
-`RetireSuspect()` stops old/suspect pooled connections from accepting new streams.
+`RetireSuspect()` 阻止旧的/可疑的池化连接接受新的流。
 
-A connection already carrying live traffic is drained rather than immediately destroyed.
+已经在承载实时流量的连接会被排空，而不是被立即销毁。
 
-### Full close / network change
+### 完全关闭 / 网络变更（Full close / network change）
 
-`Close()` retires the entire XHTTP pool.
+`Close()` 退役整个 XHTTP 池。
 
-Existing live-use teardown is deferred according to pool ownership rules rather than blindly killing a
-shared transport at an unsafe moment.
+既有的使用中拆除会按连接池所有权规则推迟，而不是在不安全的时刻
+盲目杀掉一条共享传输。
 
-### Failure breaker
+### 失败熔断（Failure breaker）
 
-A reuse-boundary redial is still subject to the XMUX failure breaker: three failures arm it
-(`xmuxBreakerThreshold = 3`) and the backoff grows from 100 ms to 3 s (`xmux.go:56-69`, `:140-156`).
-`noteBreakerTrip` (`:312`) records the trip; a successful reuse resets the backoff (`:327`). This is
-separate from the pool's trim/retire/close lifecycle above — a redial after `RetireSuspect` does not
-reset the breaker by itself.
+复用边界处的重拨仍然受 XMUX 失败熔断约束：三次失败就会武装它
+（`xmuxBreakerThreshold = 3`），退避从 100 ms 增长到 3 s（`xmux.go:56-69`、`:140-156`）。
+`noteBreakerTrip`（`:312`）记录这次跳闸；一次成功的复用会重置退避（`:327`）。这与上面
+连接池的裁剪/退役/关闭生命周期是分开的 —— `RetireSuspect` 之后的一次重拨
+本身并不会重置熔断。
 
-### No timer-driven prewarm
+### 没有定时器驱动的预热（No timer-driven prewarm）
 
-`SetKeepIdleConnections(true)` does not proactively dial/prewarm a connection.
+`SetKeepIdleConnections(true)` 不会主动拨号/预热一条连接。
 
-This is deliberate: lifecycle policy should not generate network dials just to keep a pool warm.
+这是有意为之：生命周期策略不应仅仅为了让连接池保持温暖就产生网络拨号。
 
-These behaviours are fork-specific operational context and should be preserved when changing
-`transport/v2rayxhttp`.
+这些行为是 fork 特有的运维上下文，在改动
+`transport/v2rayxhttp` 时应予以保留。
 
 ---
 
-## 15. Accepted but ignored / client-irrelevant fields
+## 15. 被接受但被忽略 / 与客户端无关的字段（Accepted but ignored / client-irrelevant fields）
 
-The option layer accepts several fields for compatibility even though the client does not use them.
+option 层为了兼容而接受若干字段，尽管客户端并不使用它们。
 
-| Field | Current client behaviour |
+| 字段 | 当前客户端行为 |
 |---|---|
-| `sc_max_concurrent_posts` | legacy compatibility field; accepted but ignored |
-| `server_max_header_bytes` | server-only; ignored by client |
-| `no_sse_header` | server-only; ignored by client |
-| `sc_max_buffered_posts` | server-only; ignored by client |
-| `sc_stream_up_server_secs` | server-side behaviour; client does not configure it |
+| `sc_max_concurrent_posts` | 历史兼容字段；被接受但被忽略 |
+| `server_max_header_bytes` | 仅服务端；客户端忽略 |
+| `no_sse_header` | 仅服务端；客户端忽略 |
+| `sc_max_buffered_posts` | 仅服务端；客户端忽略 |
+| `sc_stream_up_server_secs` | 服务端行为；客户端不配置它 |
 
-Their presence should not be interpreted as evidence that the client actively implements the
-corresponding server-side feature.
+它们的存在不应被解读为客户端真的实现了对应的
+服务端特性的证据。
 
 ---
 
-## 16. VLESS UDP / XUDP interaction
+## 16. VLESS UDP / XUDP 交互（VLESS UDP / XUDP interaction）
 
-XHTTP is the VLESS transport. VLESS packet handling is configured separately.
+XHTTP 是 VLESS 的传输。VLESS 的数据包处理是单独配置的。
 
-For this fork, an explicit subscription-style setting:
+对于本 fork，一个显式的订阅风格设置：
 
 ```json
 "packet_encoding": "xudp"
 ```
 
-maps cleanly to the VLESS XUDP path.
+会干净地映射到 VLESS 的 XUDP 路径。
 
-When translating a source subscription, preserving explicit `xudp` is useful because it records the
-source node's intended packet behaviour even where the fork may have a compatible default.
+转换来源订阅时，保留显式的 `xudp` 是有用的，因为它记录了
+来源节点预期的数据包行为，即使本 fork 可能有兼容的默认值。
 
-There is no Mihomo-style:
+不存在 Mihomo 那样的：
 
 ```json
 "udp": true
 ```
 
-boolean required in the sing-box outbound.
+这类在 sing-box 出站中必需的布尔值。
 
-Likewise, do not convert:
+同样，不要转换：
 
 ```yaml
 network: xhttp
 ```
 
-into sing-box `network`.
+为 sing-box 的 `network`。
 
-If normal TCP+UDP availability is desired, leaving the sing-box outbound network selector unset is
-normally appropriate.
+如果希望获得常规的 TCP+UDP 可用性，通常把 sing-box 出站的网络选择器
+保持未设置是合适的。
 
 ---
 
-## 17. Mihomo / Clash-style XHTTP mapping
+## 17. Mihomo / Clash 风格的 XHTTP 映射（Mihomo / Clash-style XHTTP mapping）
 
-A common source node:
+一个常见的来源节点：
 
 ```yaml
 - name: 🇺🇸 美国｜Vless XHTTP TLS
@@ -922,7 +922,7 @@ A common source node:
   packet-encoding: xudp
 ```
 
-maps conceptually to:
+在概念上映射为：
 
 ```json
 {
@@ -956,9 +956,9 @@ maps conceptually to:
 }
 ```
 
-Mapping:
+映射关系：
 
-| Source concept | sing-box fork |
+| 来源概念 | sing-box fork |
 |---|---|
 | `name` | `tag` |
 | `type: vless` | `type: vless` |
@@ -976,16 +976,16 @@ Mapping:
 | `xhttp-opts.mode` | `transport.mode` |
 | `reuse-settings.max-concurrency` | `transport.xmux.max_concurrency` |
 | `packet-encoding: xudp` | `packet_encoding: xudp` |
-| `udp: true` | no equivalent boolean required |
-| `ip-version: dual` | do not invent `ip_version`; resolver/network family policy is separate |
+| `udp: true` | 不需要等价的布尔值 |
+| `ip-version: dual` | 不要发明 `ip_version`；解析器/网络族策略是分开的 |
 
 ---
 
-## 18. Recommended profiles
+## 18. 推荐 profile（Recommended profiles）
 
-These are **configuration templates**, not requirements.
+这些是 **配置模板**，不是硬性要求。
 
-### 18.1 Normal TLS, explicit H2, stream-one
+### 18.1 普通 TLS、显式 H2、stream-one（Normal TLS, explicit H2, stream-one）
 
 ```json
 {
@@ -1017,7 +1017,7 @@ These are **configuration templates**, not requirements.
 }
 ```
 
-### 18.2 Reality with `auto`
+### 18.2 使用 `auto` 的 Reality（Reality with `auto`）
 
 ```json
 {
@@ -1049,13 +1049,13 @@ These are **configuration templates**, not requirements.
 }
 ```
 
-With current mode selection:
+在当前模式选择下：
 
 ```text
 Reality + auto -> stream-one
 ```
 
-### 18.3 Preserve an explicit source XMUX concurrency setting
+### 18.3 保留来源中显式的 XMUX 并发设置（Preserve an explicit source XMUX concurrency setting）
 
 ```json
 "transport": {
@@ -1068,22 +1068,22 @@ Reality + auto -> stream-one
 }
 ```
 
-Do not silently add other XMUX limits unless the source profile or an intentional tuning decision calls
-for them.
+不要静默地添加其他 XMUX 限制，除非来源 profile 或有意的调优决定
+需要它们。
 
 ---
 
-## 19. Common mistakes
+## 19. 常见错误（Common mistakes）
 
-### Mistake 1 — treating XHTTP as an outbound
+### 错误 1 —— 把 XHTTP 当作一种出站（Mistake 1 — treating XHTTP as an outbound）
 
-Wrong:
+错误：
 
 ```json
 "type": "xhttp"
 ```
 
-Correct:
+正确：
 
 ```json
 "type": "vless",
@@ -1092,15 +1092,15 @@ Correct:
 }
 ```
 
-### Mistake 2 — writing `network: "xhttp"`
+### 错误 2 —— 写 `network: "xhttp"`（Mistake 2）
 
-Wrong:
+错误：
 
 ```json
 "network": "xhttp"
 ```
 
-Correct:
+正确：
 
 ```json
 "transport": {
@@ -1108,9 +1108,9 @@ Correct:
 }
 ```
 
-### Mistake 3 — inventing `http_version`
+### 错误 3 —— 发明 `http_version`（Mistake 3）
 
-Wrong:
+错误：
 
 ```json
 "transport": {
@@ -1119,59 +1119,59 @@ Wrong:
 }
 ```
 
-Correct: select the intended HTTP path through TLS/ALPN.
+正确：通过 TLS/ALPN 选择想要的 HTTP 路径。
 
-### Mistake 4 — assuming Host and SNI are aliases
+### 错误 4 —— 假定 Host 与 SNI 是别名（Mistake 4 — assuming Host and SNI are aliases）
 
-They serve different layers.
+它们服务于不同的层。
 
 ```text
 transport.host  -> HTTP
 tls.server_name -> TLS
 ```
 
-### Mistake 5 — stripping a required trailing slash
+### 错误 5 —— 去掉必需的尾部斜杠（Mistake 5 — stripping a required trailing slash）
 
-If the reverse proxy is configured for `/upload/`, preserve `/upload/`.
+如果反向代理是为 `/upload/` 配置的，就保留 `/upload/`。
 
-### Mistake 6 — setting `no_grpc_header: true` as an optimization
+### 错误 6 —— 把 `no_grpc_header: true` 当作优化来设置（Mistake 6）
 
-This may break streaming behaviour in front of a buffering reverse proxy/CDN.
+这可能会破坏缓冲式反向代理/CDN 前面的流式行为。
 
-### Mistake 7 — setting one XMUX field and assuming all omitted XMUX defaults still apply
+### 错误 7 —— 设置一个 XMUX 字段，并假定所有被省略的 XMUX 默认值仍然生效（Mistake 7）
 
-They do not. Explicit XMUX follows the all-or-nothing rule described above.
+它们并不生效。显式的 XMUX 遵循上文所述的全有或全无规则。
 
-### Mistake 8 — tuning every exposed field
+### 错误 8 —— 调优每一个被暴露的字段（Mistake 8 — tuning every exposed field）
 
-Most XHTTP fields exist for compatibility and advanced transport shaping.
-A normal node does not need to specify every field.
+大多数 XHTTP 字段是为了兼容性与高级传输塑形而存在的。
+一个普通节点不需要指定每一个字段。
 
 ---
 
-## 20. Configuration decoder coverage
+## 20. 配置解码器覆盖（Configuration decoder coverage）
 
-XHTTP must remain reachable from a real JSON configuration file, not only from direct Go construction.
+XHTTP 必须仍然可以从真实的 JSON 配置文件到达，而不仅仅是从直接的 Go 构造。
 
-`option/v2ray_transport_xhttp_test.go` exists as a regression guard for this contract.
+`option/v2ray_transport_xhttp_test.go` 作为这一契约的回归防线而存在。
 
-The V2Ray transport option dispatcher must preserve:
+V2Ray 传输 option 分发器必须保留：
 
 ```text
 type = xhttp
 ```
 
-through JSON decode/encode and map it to `V2RayXHTTPOptions`.
+并通过 JSON 解码/编码把它映射到 `V2RayXHTTPOptions`。
 
-When changing option dispatch, schema generation, aliases or build tags, keep this regression category:
-an implementation that compiles but cannot be selected from a config file is not functional XHTTP
-support.
+当改动 option 分发、schema 生成、别名或构建标签时，请保留这个回归类别：
+一个能编译、但无法从配置文件被选中的实现，并不是可用的 XHTTP
+支持。
 
 ---
 
-## 21. Maintenance rules
+## 21. 维护规则（Maintenance rules）
 
-When XHTTP code changes, re-check at least:
+当 XHTTP 代码变化时，至少复检：
 
 ```text
 option/v2ray_xhttp.go
@@ -1183,22 +1183,22 @@ protocol/vless/outbound.go
 option/v2ray_transport_xhttp_test.go
 ```
 
-Update this module when any of the following changes:
+当以下任何一项变化时，更新本模块：
 
-- a JSON field is added, removed or renamed;
-- a default changes;
-- an accepted value changes;
-- mode resolution changes;
-- HTTP version selection changes;
-- metadata placement semantics change;
-- XMUX defaulting/rotation semantics change;
-- a compatibility field stops being ignored;
-- VLESS/XUDP integration changes;
-- lifecycle reuse/retirement semantics change.
+- 增加、删除或重命名了一个 JSON 字段；
+- 某个默认值改变；
+- 某个接受值改变；
+- 模式解析改变；
+- HTTP 版本选择改变；
+- 元数据放置语义改变；
+- XMUX 默认值/轮转语义改变；
+- 某个兼容字段不再被忽略；
+- VLESS/XUDP 集成改变；
+- 生命周期复用/退役语义改变。
 
-Do not copy stale Xray or sing-box-lx documentation over current source behaviour.
+不要把过时的 Xray 或 sing-box-lx 文档覆盖到当前源码行为之上。
 
-Source-of-truth order:
+事实来源的优先顺序：
 
 ```text
 current source and tests
@@ -1209,9 +1209,9 @@ current source and tests
 
 ---
 
-## 22. Quick reference
+## 22. 快速参考（Quick reference）
 
-For a normal converted XHTTP node, usually think in this order:
+对于一个普通转换后的 XHTTP 节点，通常按这个顺序思考：
 
 ```text
 1. VLESS server / UUID
@@ -1226,7 +1226,7 @@ For a normal converted XHTTP node, usually think in this order:
 10. leave advanced placement/padding/tuning fields alone unless required
 ```
 
-A compact normal form:
+一个紧凑的常规形式：
 
 ```json
 {
@@ -1250,5 +1250,5 @@ A compact normal form:
 }
 ```
 
-That is the starting point. Advanced XHTTP options should be added because a peer, proxy path or measured
-behaviour requires them — not merely because the fields exist.
+那就是起点。高级 XHTTP 选项应当在某条对端、代理路径或测得的行为
+需要它们时才添加 —— 而不是仅仅因为字段存在。

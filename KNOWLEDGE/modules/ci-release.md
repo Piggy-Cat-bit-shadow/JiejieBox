@@ -1,191 +1,193 @@
-# CI, evidence and release
+# CI、证据与发布（CI, evidence and release）
 
-## v0.1.34 Apple checks and evidence (2026-10-31)
+## v0.1.34 Apple 检查与证据（v0.1.34 Apple checks and evidence (2026-10-31)）
 
-The parent Apple gitlink, ABI constant and frozen lock now all identify `044e6d5447eb`; the former
-candidate was merged into Apple `main`. `check-apple-source-selection.sh` and
-`test-apple-beta-publish.sh` were corrected after the Libbox build and pack moved to the shared
-composite action: no inline build/pack in the workflow, one build/pack implementation in the action,
-and two workflow call sites. `check-release-workflows.py` now guards that structure as well. These
-are structural tests, not a proof of actual device operation.
+父级 Apple gitlink、ABI 常量与冻结锁现在都指向 `044e6d5447eb`；此前的
+候选已被并入 Apple `main`。在 Libbox 构建与打包迁移到共享复合 action 之后，
+`check-apple-source-selection.sh` 与 `test-apple-beta-publish.sh` 得到了更正：工作流中没有内联的构建/打包，action 中
+只有一份构建/打包实现，并且有两个工作流调用点。`check-release-workflows.py` 现在也守卫该结构。这些
+是结构性测试，不是实际设备运行的证明。
 
-At parent `0067b03`, [Verify 40819594893](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40819594893)
-and [iOS Apple run 40819615363](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40819615363)
-succeeded; the latter used Apple `044e6d5`, built Libbox and iOS, and skipped macOS. The separately
-successful [macOS run 40776674407](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40776674407)
-used parent `ed0f3dc`, not `0067b03`; its iOS job was skipped. [Release 40824078971](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40824078971)
-succeeded at `0067b03`. These are observed prior runs, not newly dispatched by this refresh.
+在父级 `0067b03` 处，[Verify 40819594893](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40819594893)
+与 [iOS Apple 运行 40819615363](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40819615363)
+成功；后者使用了 Apple `044e6d5`，构建了 Libbox 与 iOS，并跳过了 macOS。另行成功的
+[macOS 运行 40776674407](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40776674407)
+使用的是父级 `ed0f3dc`，而非 `0067b03`；其 iOS 任务被跳过。[Release 40824078971](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40824078971)
+在 `0067b03` 处成功。这些是观测到的先前运行，不是本次刷新新派发的。
 
-## Release freeze and Apple acceptance at the 2026-10-29 target
+## 2026-10-29 目标下的发布冻结与 Apple 验收（Release freeze and Apple acceptance at the 2026-10-29 target）
 
-`release/dependencies.json` declares source repository, branch and policy; actual Go replace pins
-and client gitlinks are separate. `scripts/ci/release-freeze.py` resolves once, compares, applies
-eligible updates, snapshots, and verifies `release/source-lock.json`. `update` pins may move only
-when comparable; divergence/missing sources fail closed. The 29 Cronet native archives are
-`controlled` and are not rewritten; Desktop's nested dashboard is `report` only, so repair order is
-Dashboard → Desktop → kernel. The lock projects build pins, not moving branch tips; root/test Go
-replacements, Cronet consistency and client gitlinks are verified. An unavailable desktop checkout
-makes the nested check SKIPPED; a version mismatch is a note rather than a verification failure.
+`release/dependencies.json` 声明来源仓库、分支与策略；实际的 Go replace 固定值
+与客户端 gitlink 是分开的。`scripts/ci/release-freeze.py` 一次性解析、比较、应用
+符合条件的更新、生成快照，并验证 `release/source-lock.json`。`update` 固定值只有在可比较时
+才可移动；分歧或缺失的来源会失败即拒绝（fail closed）。29 个 Cronet 原生归档是
+`controlled`，不会被重写；Desktop 的嵌套仪表盘只是 `report`，因此修复顺序是
+Dashboard → Desktop → 内核。该锁投射出的是构建固定值，而不是移动的分支顶端；根/test 的 Go
+替换、Cronet 一致性与客户端 gitlink 都会被验证。不可用的桌面端检出
+会使嵌套检查成为 SKIPPED；版本不匹配是一条备注，而不是验证失败。
 
-`.github/workflows/release-prepare.yml` is manual dispatch, not an automatic release. It resolves,
-checks, applies, tidies, snapshots and gates, commits/pushes only when changed, then requires
-successful evidence for the exact candidate SHA before tagging. A dry run does not create that
-candidate and is not evidence for it. The Apple ABI pin gate runs after the candidate commit because
-it reads `HEAD`. Inspect the workflow before any real preparation; do not infer publication from a
-version file or a prepared lock.
+`.github/workflows/release-prepare.yml` 是手动派发，不是自动发布。它会解析、
+检查、应用、整理、生成快照并设置门禁，仅在发生变化时提交/推送，然后要求该确切候选 SHA
+具备成功证据才打标签。一次试运行不会创建该候选，也不构成针对它的证据。Apple ABI 固定值门禁
+在候选提交之后运行，因为它读取 `HEAD`。在任何真实准备之前请检查该工作流；不要从
+一个版本文件或一份已准备的锁推断发布。
 
-`client-apple.yml` is manual: `apple_client_sha` accepts an exact 40-character lowercase SHA;
-contradictory repository overrides fail. Without an override it resolves the refs-file branch tip
-once for the run, which may differ from the parent gitlink; formal release must select the frozen
-revision. With iOS and macOS both selected, one Libbox artifact is built and shared. With macOS
-only, the same composite action builds Libbox inside the one macOS job; skipped Libbox dependency
-is explicitly allowed, failed dependency is not. The two paths converge on manifest validation and
-installation. Structure checks are not proof of successful macOS execution or device behavior.
+`client-apple.yml` 是手动的：`apple_client_sha` 接受一个确切的 40 字符小写 SHA；
+相互矛盾的仓库覆盖会失败。没有覆盖时，它在本次运行中一次性解析 refs 文件的分支顶端，
+这可能与父级 gitlink 不同；正式发布必须选择冻结的
+修订。在同时选中 iOS 与 macOS 时，只构建并共享一个 Libbox 产物。仅选中 macOS 时，
+同一个复合 action 在唯一的 macOS 任务内构建 Libbox；被跳过的 Libbox 依赖
+被显式允许，失败的依赖则不允许。两条路径最终都汇合到 manifest 验证与
+安装。结构检查不是 macOS 成功执行或设备行为的证明。
 
-The historical `dbcfc1d` target's existing [Verify run 40765511913](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40765511913)
-was cancelled, not passed. For the refresh itself use a documentation-only `[skip ci]` commit; never
-manually dispatch Actions merely to validate a knowledge update.
+历史 `dbcfc1d` 目标上已有的 [Verify 运行 40765511913](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40765511913)
+是被取消，而不是通过。刷新本身请使用仅文档的 `[skip ci]` 提交；绝不要
+仅仅为了验证一次知识更新而手动派发 Actions。
 
-> **Scope correction, 2026-10-28:** the v0.1.9 workflow census below is historical, not an
-> inventory of the current tree. In particular `.github/workflows/windows-boxdd-tests.yml`
-> declares a Windows runner and path-filtered push/PR plus manual dispatch for boxdd tests.
-> This is `VERIFIED_SOURCE`, not evidence that any particular run executed or passed. Re-read
-> the current workflows and run records before relying on other gate-coverage claims below.
+> **范围更正，2026-10-28：** 下面的 v0.1.9 工作流普查是历史性的，不是
+> 当前树的清单。特别是 `.github/workflows/windows-boxdd-tests.yml`
+> 声明了一个 Windows runner 以及受路径过滤的 push/PR 加上针对 boxdd 测试的手动派发。
+> 这是 `VERIFIED_SOURCE`，不是任何特定运行已执行或通过的证据。在依赖下文其他门禁覆盖主张之前，
+> 请重新阅读当前工作流与运行记录。
 >
-> The tree now has **19** workflow files. Five are not in the census and have no owning section:
-> `apple-tls-verify.yml`, `linux-dns-verify.yml`, `linux-masque-verify.yml`,
-> `linux-netns-verify.yml`, `linux-platform-verify.yml`. They are declared sources, not proof of
-> runs; inspect them directly before making a CI-coverage claim.
+> 该树现在有 **19** 个工作流文件。五个不在普查中且没有归属小节：
+> `apple-tls-verify.yml`、`linux-dns-verify.yml`、`linux-masque-verify.yml`、
+> `linux-netns-verify.yml`、`linux-platform-verify.yml`。它们是已声明的源码，不是
+> 运行的证明；在做出任何 CI 覆盖主张之前请直接检查它们。
 
-**Later run evidence:** GitHub Actions [Verify 40602193497](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40602193497)
-and [Android Core ARM64 40602193557](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40602193557)
-both report success at `1ff0af39110d4bd4044c817a0bf209ff01e21f7a`. These run-level results are
-`VERIFIED_CI` for that SHA and workflows only; they do not establish later Cronet pin behavior,
-individual test coverage, artifact publication or device behavior.
+**更晚的运行证据：** GitHub Actions [Verify 40602193497](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40602193497)
+与 [Android Core ARM64 40602193557](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40602193557)
+都报告在 `1ff0af39110d4bd4044c817a0bf209ff01e21f7a` 处成功。这些运行级结果对于该 SHA 与这些工作流
+是 `VERIFIED_CI`；它们并不确立后续的 Cronet 固定值行为、
+单个测试覆盖、产物发布或设备行为。
 
-**v0.1.31 run evidence:** [Verify 40605271219](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40605271219)
-completed successfully at `cb71cf80d72`. Its race job log reports `ok` for the declared route,
-dialer, scheduler, Mieru and adapter packages; the tagged `common/ktls` unit package also reports
-`ok`. These do not prove real kernel splice or all platforms. [Apple client 40606786576](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40606786576)
-reports success, but its ABI log says **PARTIAL**: the Swift accessor probe was skipped because a
-referenced source file was absent; it resolved Apple source `3aedd7417488`, and the binding and
-gitlink checks reported pass. Signing preflight was skipped in unsigned mode. The successful
+**v0.1.31 运行证据：** [Verify 40605271219](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40605271219)
+在 `cb71cf80d72` 处成功完成。其 race 任务日志对所声明的 route、
+dialer、scheduler、Mieru 与 adapter 包报告 `ok`；带标签的 `common/ktls` 单元包也报告
+`ok`。这些并不证明真实的内核 splice 或所有平台。[Apple client 40606786576](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40606786576)
+报告成功，但其 ABI 日志显示 **PARTIAL**：Swift 访问器探针因引用的源文件
+缺失而被跳过；它解析出 Apple 源码 `3aedd7417488`，且绑定与
+gitlink 检查报告通过。签名预检在未签名模式下被跳过。成功的
 [Release 40609827203](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40609827203)
-reports its download, verification and publication steps succeeded for this SHA. These are run
-records, not an independent local check of the downloaded asset bytes or device behavior.
+报告其下载、验证与发布步骤对该 SHA 均成功。这些是运行
+记录，不是对已下载资产字节或设备行为的独立本地检查。
 
-**Scope:** `.github/workflows/*`, `scripts/ci/*`, `verify-evidence/*`, `release/*`, and what a future
-AI may and may not claim as "verified".
+**范围：** `.github/workflows/*`、`scripts/ci/*`、`verify-evidence/*`、`release/*`，以及未来的
+AI 可以或不可以声称“已验证”的内容。
 
-**Load this module when** changing a workflow, a gate script, a release step, or **before citing any
-existing evidence at all**.
+**在修改工作流、门禁脚本、发布步骤时加载本模块，或**在引用任何
+既有证据之前**加载它。**
 
-**The single most important rule in this module:** *a CI job declaration is not evidence that the job
-ran, a unit test is not interop, a static audit is not device behaviour, and one platform's PASS is
-not all-platform PASS.* Every row below is graded on that basis.
+**本模块中唯一最重要的一条规则：***CI 任务的声明并不是该任务已运行的证据，
+单元测试不是互操作，静态审计不是设备行为，一个平台的 PASS 不是
+全平台 PASS。* 下文的每一行都按此标准分级。
 
 ---
 
-## 1. Historical workflow census at v0.1.9
+## 1. v0.1.9 处的历史工作流普查（Historical workflow census at v0.1.9）
 
-**Measured at the `v0.1.9` baseline. There were four automatic gates in that census.** The previous
-version of this section named `verify.yml` as "the only automatic gate" and listed nine workflows; the
-tree then had twelve, and three of them were entirely absent from that list. A reader who trusted the old
-table would have believed that a `push` which moved release tooling, or the mobile contract, or the
-Windows runtime audit, was unchecked.
+**在 `v0.1.9` 基线上实测。该普查中有四道自动门禁。** 本节此前的
+版本把 `verify.yml` 说成“唯一的自动门禁”并列出九个工作流；当时该树有十二个，
+其中三个完全不在那份列表中。相信旧表格的读者会以为一次移动了发布工具链、或移动端契约、
+或 Windows 运行时审计的 `push` 是未被检查的。
 
-| Workflow | push | PR | dispatch | `workflow_run` | Notes |
+| 工作流 | push | PR | dispatch | `workflow_run` | 备注 |
 |---|---|---|---|---|---|
-| **`verify.yml`** ("Verify") | `testing` | all | YES | — | the **source** gate |
-| **`release-contract-verify.yml`** ("Release contract verification") | `testing`, `release/**`, `fix/release-asset-contract` — **path-filtered** | path-filtered | YES | — | the **release-tooling** gate; see below |
-| **`mobile-contract.yml`** | YES | — | YES | — | mobile contract |
-| `android-core-arm64.yml` | `testing` — **`paths:` filtered** | — | YES | — | Android ABI |
-| `client-desktop-windows-runtime-audit.yml` | — | — | YES | **YES** | runs after the desktop producer, not on push |
-| `client-apple.yml` | — | — | YES | — | |
-| `client-desktop-windows.yml` | — | — | YES | — | |
-| `client-macos.yml` | — | — | YES | — | |
-| `interop-xray.yml` | — | — | YES | — | |
-| `release.yml` | — | — | YES | — | |
-| `server-linux-amd64.yml` | — | — | YES | — | |
-| `windows-core-amd64.yml` | — | — | YES | — | |
+| **`verify.yml`**（“Verify”） | `testing` | 全部 | 是 | — | **源码**门禁 |
+| **`release-contract-verify.yml`**（“Release contract verification”） | `testing`、`release/**`、`fix/release-asset-contract` —— **受路径过滤** | 受路径过滤 | 是 | — | **发布工具链**门禁；见下文 |
+| **`mobile-contract.yml`** | 是 | — | 是 | — | 移动端契约 |
+| `android-core-arm64.yml` | `testing` —— **受 `paths:` 过滤** | — | 是 | — | Android ABI |
+| `client-desktop-windows-runtime-audit.yml` | — | — | 是 | **是** | 在桌面产者之后运行，而非在 push 时 |
+| `client-apple.yml` | — | — | 是 | — | |
+| `client-desktop-windows.yml` | — | — | 是 | — | |
+| `client-macos.yml` | — | — | 是 | — | |
+| `interop-xray.yml` | — | — | 是 | — | |
+| `release.yml` | — | — | 是 | — | |
+| `server-linux-amd64.yml` | — | — | 是 | — | |
+| `windows-core-amd64.yml` | — | — | 是 | — | |
 
-Required-check / branch-protection configuration is **not in the repository**; do not guess at it. What
-*is* in the repository is the set of workflows that could contribute a check, and that set is the table
-above.
+必需检查 / 分支保护配置**不在仓库中**；不要猜测它。仓库中*确实*
+存在的是可能贡献一项检查的工作流集合，而该集合就是上表。
 
-### The push gate is path-filtered, and the filter is the contract
+### push 门禁受路径过滤，而过滤器就是契约（The push gate is path-filtered, and the filter is the contract）
 
-`release-contract-verify.yml` runs on a push **only when release tooling moved**. Its own comment gives
-the reasoning, and it is the rule to preserve: *"product source, docs and reports are not its input, and
-a push that touches none of the paths below cannot change its verdict."* The path list is declared
-**once** as a YAML anchor (`&release_tooling_paths`) and aliased into `pull_request:`, *"so the push and
+`release-contract-verify.yml` **仅在发布工具链发生移动时**才在 push 上运行。它自己的注释给出了
+理由，而这就是要保留的规则：*"product source, docs and reports are not its input, and
+a push that touches none of the paths below cannot change its verdict."*（中文：产品源码、文档与报告
+不是它的输入，一次未触及下列任何路径的 push 无法改变它的裁决。）路径列表作为 YAML anchor
+（`&release_tooling_paths`）被声明**一次**，并以别名引入 `pull_request:`，*"so the push and
 `pull_request` triggers cannot drift into asserting different things about the same files."*
+（中文：因此 push 与 PR 触发器不会漂移为对同一批文件断言不同的事。）
 
-`workflow_dispatch` is kept **on purpose** even though the push trigger exists: *"the final frozen SHA
+即使 push 触发器存在，`workflow_dispatch` 也被**有意**保留：*"the final frozen SHA
 still has to be able to obtain this evidence ON DEMAND, because a `[skip ci]` dependency sync never
-triggers a push run."* Removing it to "clean up" the triggers would remove the only way a frozen
-candidate can obtain its own release evidence.
+triggers a push run."*（中文：最终冻结的 SHA 仍然必须能够按需获取这份证据，因为一次跳过 CI 的依赖同步
+永远不会触发 push 运行。）为“清理”触发器而移除它，会移除一个冻结候选获取自身发布证据的
+唯一途径。
 
-> **Two path filters, two different traps.** `android-core-arm64.yml` and
-> `release-contract-verify.yml` both narrow their push trigger. Adding a new top-level directory can
-> therefore **silently drop** Android ABI verification or release-contract verification for a change
-> that genuinely affects it. Check the list before assuming either was checked — and if you add a file
-> that the release path depends on, add it to `release_tooling_paths` in the same change.
+> **两个路径过滤器，两种不同的陷阱。** `android-core-arm64.yml` 与
+> `release-contract-verify.yml` 都收窄了它们的 push 触发器。因此新增一个顶层目录
+> 可能**静默地丢掉**对一次确实影响它的改动的 Android ABI 验证或发布契约验证。
+> 在假设任一者已被检查之前请查看列表 —— 而如果你添加了发布路径依赖的文件，
+> 请在同一次改动中把它加入 `release_tooling_paths`。
 
-### `verify.yml` — the source gate, step by step
+### `verify.yml` —— 源码门禁，逐步（`verify.yml` — the source gate, step by step）
 
-| Step | What it runs | Proves | Cannot prove |
+| 步骤 | 运行什么 | 证明 | 无法证明 |
 |---|---|---|---|
-| release gate self-test | `scripts/ci/test-release-artifacts.sh` | the release selection logic refuses bad evidence — against a **mock `gh`** | that the real `gh`/API behaves so |
-| gofmt | `gofmt -l` on 10 dirs | formatting | anything semantic |
-| gomobile single-source | `test-gomobile-toolchain.sh` | no version literal outside one declaration | its network half is **opt-in** via `GOMOBILE_TOOLCHAIN_TEST_INSTALL=1` and not run here |
-| nested module integrity | `check-go-module-integrity.sh --require-checked test` | the `test` module resolves the same fork pins as root | runtime behaviour |
-| test module type-checks | `go vet` inside `test/` | the nested module compiles against **this** tree | that its tests pass |
-| build-tag policy + linkname | `go test -count=1 ./cmd/internal/...` | tag composition and the `-checklinkname=0` contract | — |
-| pinned-upstream assumptions | `scripts/ci/verify-upstream-assumptions.sh` | upstream revision changes that alter *meaning* | — |
-| **untagged build** | `go build ./...` **and `go test -run '^$' ./...`** | every package builds untagged, and **every test binary compiles and links** | **that any test PASSES** — `-run '^$'` runs zero tests |
-| tagged build | `go build -tags … ./...` | links under the server profile | — |
-| build matrix | cross-builds linux/amd64, windows/amd64, freebsd/amd64, darwin/arm64 for 8 package trees | those packages compile per-GOOS | nothing runs |
-| cronet provenance | `verify-cronet-provenance.sh apple` | the `replace` directives resolve to the fork archive bytes | — |
-| **race, fork data paths** | `go test -race … ./common/trafficclass/... ./common/trafficsched/... ./common/dialer/... ./protocol/direct/... ./protocol/mieru/... ./protocol/tun/... ./route/... ./adapter/...` | race checks in the named trees when the job runs | **the root package is not in the list**, and neither is `./protocol/masque` |
-| race, config surface | `go test -race … ./option/...` | races in `option` | — |
+| 发布门禁自检 | `scripts/ci/test-release-artifacts.sh` | 发布选择逻辑会拒绝坏证据 —— 针对一个 **mock `gh`** | 真实的 `gh`/API 也如此行为 |
+| gofmt | `gofmt -l` 作用于 10 个目录 | 格式 | 任何语义 |
+| gomobile 单一来源 | `test-gomobile-toolchain.sh` | 单一声明之外没有版本字面量 | 其网络部分通过 `GOMOBILE_TOOLCHAIN_TEST_INSTALL=1` **可选加入**，此处未运行 |
+| 嵌套模块完整性 | `check-go-module-integrity.sh --require-checked test` | `test` 模块解析到与根相同的 fork 固定值 | 运行时行为 |
+| test 模块类型检查 | 在 `test/` 内运行 `go vet` | 嵌套模块可针对**本**树编译 | 其测试通过 |
+| 构建标签策略 + linkname | `go test -count=1 ./cmd/internal/...` | 标签组合与 `-checklinkname=0` 契约 | — |
+| 固定上游假设 | `scripts/ci/verify-upstream-assumptions.sh` | 改变*含义*的上游修订变更 | — |
+| **无标签构建** | `go build ./...` **以及 `go test -run '^$' ./...`** | 每个包在无标签下都能构建，且**每个测试二进制都能编译并链接** | **任何测试会 PASS** —— `-run '^$'` 运行零个测试 |
+| 带标签构建 | `go build -tags … ./...` | 在服务器 profile 下可链接 | — |
+| 构建矩阵 | 为 8 个包树交叉构建 linux/amd64、windows/amd64、freebsd/amd64、darwin/arm64 | 那些包按 GOOS 编译 | 什么都不运行 |
+| cronet 来源 | `verify-cronet-provenance.sh apple` | `replace` 指令解析到 fork 归档的字节 | — |
+| **race，fork 数据路径** | `go test -race … ./common/trafficclass/... ./common/trafficsched/... ./common/dialer/... ./protocol/direct/... ./protocol/mieru/... ./protocol/tun/... ./route/... ./adapter/...` | 该任务运行时指定树中的 race 检查 | **根包不在列表中**，`./protocol/masque` 也不在 |
+| race，配置表面 | `go test -race … ./option/...` | `option` 中的竞态 | — |
 
-> **Historical v0.1.9 observation:** the root acceptance suite was compiled but not executed by the
-> then-declared source gate. Current `verify.yml` runs `TestNetLogEventCount` after `cd test`: that
-> is the separate test module, not this repository's main root package. Inspect current commands and
-> exact run records before attributing root acceptance coverage. See §4 for historical local commands.
+> **历史 v0.1.9 观察：** 根验收套件被编译，但未被当时声明的源码门禁
+> 执行。当前 `verify.yml` 在 `cd test` 之后运行 `TestNetLogEventCount`：那是独立的测试模块，
+> 不是本仓库的主根包。在归因根验收覆盖之前，请检查当前命令与
+> 确切运行记录。历史本地命令见 §4。
 
-The release path consumes evidence from explicitly selected runs. Do not say every artifact workflow
-is dispatch-only: `android-core-arm64.yml` also declares path-filtered pushes to `testing`, while its
-comment distinguishes a manual dispatch used to produce release evidence. Check each workflow's
-current trigger and the actual run rather than inferring execution from a merge.
+发布路径消费来自显式选定运行的证据。不要说每个产物工作流
+都是仅手动派发：`android-core-arm64.yml` 也声明了到 `testing` 的受路径过滤 push，而其
+注释区分出用于产生发布证据的手动派发。请检查每个工作流的
+当前触发器与实际运行，而不是从一次合并推断执行。
 
 ---
 
-## 2. Gate wiring — what runs, what is declared, and what is merely present
+## 2. 门禁接线 —— 什么在运行、什么被声明、什么仅仅是存在（Gate wiring — what runs, what is declared, and what is merely present）
 
-**Re-measured at the `v0.1.9` baseline.** The previous version of this section was titled *"Unwired
-gates — the largest systemic risk"* and listed twelve scripts as running from nothing. **Four of them
-are now genuinely wired**, so that list would send a reader to re-wire something that already runs:
+**在 `v0.1.9` 基线上重新实测。** 本节此前的版本标题为*“未接线的门禁 —— 最大的系统性风险”*，
+并把十二个脚本列为完全没有运行来源。**其中四个现在确实已接线**，因此那份列表会把读者
+送去重新接线某个已经在运行的东西：
 
-| Script | Previous claim | Measured now |
+| 脚本 | 先前的说法 | 现在实测 |
 |---|---|---|
-| `verify-release-acceptance.sh` | "mentioned in a comment, never invoked" | the separate self-test is invoked by `release-contract-verify.yml`; `verify.yml` currently mentions the checker in a comment, not as a direct invocation |
-| `verify-fork-handoff.sh` | "same — comment only" | **invoked** — `verify.yml` |
-| `check-macos-app-name.sh` | "comment only" | **invoked** — `client-apple.yml` |
-| `check-macos-client-config.sh` | "comment only" | **still comment only** — `client-macos.yml:46` is a comment, and no workflow or script invokes it |
+| `verify-release-acceptance.sh` | “在一条注释中被提及，从未被调用” | 独立的自检由 `release-contract-verify.yml` 调用；`verify.yml` 当前在注释中提到该检查器，而不是直接调用 |
+| `verify-fork-handoff.sh` | “同上 —— 只有注释” | **被调用** —— `verify.yml` |
+| `check-macos-app-name.sh` | “只有注释” | **被调用** —— `client-apple.yml` |
+| `check-macos-client-config.sh` | “只有注释” | **仍然只有注释** —— `client-macos.yml:46` 是一条注释，且没有工作流或脚本调用它 |
 
-### The distinction the old list collapsed, and which still matters
+### 旧列表所混淆的那一区分，以及它为何仍然重要（The distinction the old list collapsed, and which still matters）
 
-`verify-release-acceptance.sh` is the sharpest example, because it is now *invoked* while still being
-*not a gate on the release path*. `release-contract-verify.yml:311` states this explicitly: the step
-that moved there is the **self-test** (*"it proves that the strict acceptance checker still refuses bad
-evidence across 18 API snapshots"*), and the comment goes on to say the engine
+`verify-release-acceptance.sh` 是最鲜明的例子，因为它现在*被调用*，但仍然
+*不是发布路径上的门禁*。`release-contract-verify.yml:311` 明确说明了这一点：迁移到那里的那个步骤是
+**自检**（*"it proves that the strict acceptance checker still refuses bad
+evidence across 18 API snapshots"*，中文：它证明严格的验收检查器在 18 个 API 快照上仍然拒绝
+坏证据），而注释接着说该引擎
 
 > *"is unchanged and is still reachable from nothing in the release path; what changed is which workflow
 > claims to gate on it."*
 
-So there are **three distinct states**, and conflating any two of them produces a wrong answer:
+（中文：未改变，且仍然无法从发布路径中的任何东西到达；改变的是哪个工作流声称以它作为门禁。）
+
+因此存在**三种不同状态**，把其中任意两种混为一谈都会得出错误答案：
 
 ```text
 WIRED        something in a triggered workflow invokes it      -> a red run is possible
@@ -193,132 +195,135 @@ DECLARED     a workflow comments that it is a gate             -> a red run is N
 PRESENT      the script exists and nothing references it       -> nothing happens at all
 ```
 
-`verify-release-acceptance.sh` is **WIRED as a self-test, and its engine is still not a release-path
-gate.** The reason recorded in the workflow is worth keeping: while `verify.yml` ran that self-test,
-`verify.yml` was *"DECLARING the acceptance engine as a gate, although nothing on the release path
-called it"* — and *"a second may-release authority that no release consults is exactly the drift the
-single-authority rule exists to prevent."* The release path's authority is `release.yml` plus
-`release-artifacts.sh` (§5), not this engine.
+`verify-release-acceptance.sh` **作为自检已接线，而其引擎仍然不是发布路径
+上的门禁。** 记录在工作流中的理由值得保留：当 `verify.yml` 运行那次自检时，
+`verify.yml` *"DECLARING the acceptance engine as a gate, although nothing on the release path
+called it"*（中文：把验收引擎声明为门禁，尽管发布路径上没有任何东西调用它）—— 而
+*"a second may-release authority that no release consults is exactly the drift the
+single-authority rule exists to prevent."*（中文：第二个没有任何发布去咨询的“可发布”权威，正是
+单一权威规则存在所要防止的漂移。）发布路径的权威是 `release.yml` 加上
+`release-artifacts.sh`（§5），而不是这个引擎。
 
-### Still genuinely unwired at this baseline
+### 在此基线上仍确实未接线的（Still genuinely unwired at this baseline）
 
-`check-satelite-one-core-pin.py`, `test-apple-links.py`, `verify-cronet-ios-archive.sh`,
-`run-jiejie-suite.sh`.
+`check-satelite-one-core-pin.py`、`test-apple-links.py`、`verify-cronet-ios-archive.sh`、
+`run-jiejie-suite.sh`。
 
-`check-libbox-abi.sh` is **no longer in this list**, and it is split deliberately: its `--pin-only`
-half runs in `verify.yml` (cheap, git-only, catches a gitlink move that lands without the
-`VERIFIED_*_SHA` constant moving with it), and the full gate runs in `client-apple.yml` against the
-checked-out client source. The subtree scripts it owns (`apple-abi-provenance.sh`,
-`apple-abi-probe.sh`, `probe-accessors.py`) are reached only through it, so they are now reached
-through a wired gate when that gate runs.
+`check-libbox-abi.sh` **已不在该列表中**，它的拆分是有意的：其 `--pin-only`
+一半在 `verify.yml` 中运行（廉价、仅 git，能捕获一次 gitlink 移动落地而
+`VERIFIED_*_SHA` 常量未随之移动的情况），完整门禁在 `client-apple.yml` 中针对
+已检出的客户端源码运行。它拥有的子脚本（`apple-abi-provenance.sh`、
+`apple-abi-probe.sh`、`probe-accessors.py`）只能经由它到达，因此当该门禁运行时，
+它们现在是通过一道已接线的门禁到达的。
 
-**Deleted in the Windows surface audit** (`refactor/windows-upstream-minimal-surface`):
-`ci/windows/Test-DaemonServiceRegister.ps1` and `ci/windows/Test-InstallerLegacyAdoption.ps1` were
-both in the PRESENT state — the script exists and nothing references it — so they were removed
-rather than left as dead weight. The same pass checked
-`clients/desktop/scripts/test-legacy-service-ownership.ps1` and `test-install-directory.ps1` and
-**kept** both: the first is referenced by `verify-desktop-identity-consistency.py:348`, the second is
-the only regression cover for the install-directory macro. Neither is invoked by any workflow
-either, so they remain PRESENT and want wiring, not deletion.
+**在 Windows 表面审计中被删除**（`refactor/windows-upstream-minimal-surface`）：
+`ci/windows/Test-DaemonServiceRegister.ps1` 与 `ci/windows/Test-InstallerLegacyAdoption.ps1`
+都处于 PRESENT 状态 —— 脚本存在而没有任何东西引用它 —— 因此它们被移除，
+而不是留作死重。同一趟还检查了
+`clients/desktop/scripts/test-legacy-service-ownership.ps1` 与
+`test-install-directory.ps1`，并**保留**了两者：第一个被 `verify-desktop-identity-consistency.py:348` 引用，第二个是
+安装目录宏唯一的回归覆盖。两者也都未被任何工作流调用，因此它们仍为 PRESENT，需要接线
+而不是删除。
 
-**Historical v0.1.9 inventory; recheck current workflow references:** test tags referenced by nothing then — `trafficresearch` (`common/trafficsched/adaptive_research_test.go`),
-`p2ios` (three `experimental/libbox` files), `tlsfragment_integration`
-(`common/tlsfragment/integration_test.go`, also `t.Skipf`-gated), `force_stdio` (referenced only by a
-`Makefile` target that is itself dead). **Test functions in these files never run in any declared
-configuration at that historical review.**
+**历史 v0.1.9 清单；请复检当前工作流引用：** 当时没有任何东西引用的测试标签 —— `trafficresearch`（`common/trafficsched/adaptive_research_test.go`）、
+`p2ios`（三个 `experimental/libbox` 文件）、`tlsfragment_integration`
+（`common/tlsfragment/integration_test.go`，也受 `t.Skipf` 门控）、`force_stdio`（仅被一个
+本身已死的 `Makefile` 目标引用）。**在那次历史审查中，这些文件中的测试函数从未在任何已声明
+配置中运行。**
 
-**A dead `Makefile` target** — `make test` cannot pass: its first command is untagged, and `TAGS_TEST`
-(used on two lines) is **never defined anywhere in the repository**, so it expands empty.
+**一个已死的 `Makefile` 目标** —— `make test` 无法通过：它的第一条命令是无标签的，而 `TAGS_TEST`
+（用在两行上）**在仓库中任何地方都从未定义**，因此它展开为空。
 
-**Method note for anyone re-deriving this:** a naive extraction of `run:` blocks **under-detects**
-(it misses a script invoked from inside another step's multi-line shell block, e.g.
-`check-reference-coverage.sh` at `server-linux-amd64.yml:742`). The same naive extraction now also
-**over-detects unwiredness** for anything reached through `release-contract-verify.yml`, which the old
-list predates. Verify each candidate individually, against every workflow, including the two new ones.
+**给任何重新推导此事的人的方法说明：** 朴素地提取 `run:` 块会**漏检**
+（它会漏掉从另一个步骤的多行 shell 块内部调用的脚本，例如
+`server-linux-amd64.yml:742` 处的 `check-reference-coverage.sh`）。同样的朴素提取现在也会
+**过度检测未接线状态**，针对任何经由 `release-contract-verify.yml` 到达的东西，而旧
+列表早于它。请逐一验证每个候选，对照每个工作流，包括两个新的工作流。
 
 ---
 
-## 3. `verify-evidence/` — stale by its own written rule
+## 3. `verify-evidence/` —— 按其自己写下的规则已过期（`verify-evidence/` — stale by its own written rule）
 
-`verify-evidence/README.md:5-8` states the directory's integrity rule:
+`verify-evidence/README.md:5-8` 说明了该目录的完整性规则：
 
 > *"…A log whose header names a different `HEAD` than the branch tip is stale and must be regenerated
 > rather than trusted."*
 
-**Every one of the 13 logs names `### HEAD: cfc77dc51ab7322e993b8ae0b94b96db59e48f47`.** That is 101
-commits behind `a267e99` and 1,214 behind the current baseline, and it is a **strict ancestor** — old,
-not divergent.
+（中文：……一份头部所指的提交与分支顶端不同的日志已过期，必须重新生成
+而不能被信任。）
 
-Worse than old: `git diff --name-status cfc77dc5 HEAD -- scripts/ci .github/workflows release clients`
-returns **15 modified + 1 added** files, including `check-libbox-abi.sh`,
-`check-apple-source-selection.sh`, `test-apple-signing.sh`, `apple-client-source.sh`,
-`release-artifacts.sh`, `apply-desktop-branding-overlay.py` (retired since this transcript — the
-static branding now lives in the pinned desktop fork, and `inject-desktop-release-version.py`
-replaced it), `build-apple-libbox.sh`
-**and `clients/apple` itself**. The evidence therefore describes both an older tree **and** older
-versions of the gates it covers.
+**全部 13 份日志都写着 `### HEAD: cfc77dc51ab7322e993b8ae0b94b96db59e48f47`。** 那比 `a267e99` 落后
+101 个提交，比当前基线落后 1,214 个提交，并且它是一个**严格祖先** —— 旧，但
+不是分叉。
 
-`README.md:53-59` also records that pre-fix transcripts were **deliberately deleted** so the directory
-would not read as a mix of current and superseded results — which means a re-checker cannot see the
-failures, only the post-fix passes. And `check-libbox-abi.log` ends with
-`PARTIAL: … the call sites were NOT verified by this run` while `gates.tsv` records the row as exit 0
-— a gate that skips and reports success, which is exactly the failure mode
-`check-go-module-integrity.sh:165-167` names.
+比旧更糟：`git diff --name-status cfc77dc5 HEAD -- scripts/ci .github/workflows release clients`
+返回 **15 个修改 + 1 个新增**文件，包括 `check-libbox-abi.sh`、
+`check-apple-source-selection.sh`、`test-apple-signing.sh`、`apple-client-source.sh`、
+`release-artifacts.sh`、`apply-desktop-branding-overlay.py`（自这份记录以来已退役 —— 静态品牌现在
+位于固定的 desktop fork 中，且 `inject-desktop-release-version.py` 取代了它）、`build-apple-libbox.sh`
+**以及 `clients/apple` 本身**。因此这些证据既描述了一棵更旧的树，**也**描述了
+它所覆盖的门禁的旧版本。
 
-> **Evidence level: `VERIFIED_ARTIFACT` at `cfc77dc5`, and STALE. It is not evidence for `a267e99`.**
-> Anything at the production baseline that rests **only** on `verify-evidence/` is `UNVERIFIED` at the
-> production baseline.
+`README.md:53-59` 还记录：修复前的记录被**有意删除**，以免该目录
+读起来像是当前结果与被取代结果的混合 —— 这意味着复检者看不到
+失败，只能看到修复后的通过。而 `check-libbox-abi.log` 结尾是
+`PARTIAL: … the call sites were NOT verified by this run`，而 `gates.tsv` 却把该行记录为退出码 0
+—— 一道跳过却报告成功的门禁，这正是
+`check-go-module-integrity.sh:165-167` 所指出的失败模式。
 
-### Evidence absent from the historical v0.1.9 review
+> **证据级别：`cfc77dc5` 处的 `VERIFIED_ARTIFACT`，且已过期。它不是针对 `a267e99` 的证据。**
+> 在生产基线上**仅**依赖 `verify-evidence/` 的任何东西，在生产基线上都是 `UNVERIFIED`。
 
-This table records what that review found in the tree at the time. It is not a claim that later
-GitHub Actions runs or external evidence do not exist; see the scoped run records above and inspect
-the relevant run for the target under review.
+### 历史 v0.1.9 审查中缺失的证据（Evidence absent from the historical v0.1.9 review）
 
-| Claim | Where it is announced | What exists |
+本表记录那次审查在当时的树中发现的内容。它不是“后来的 GitHub Actions 运行或外部证据
+不存在”的主张；见上文按范围限定的运行记录，并检查
+受审目标的相关运行。
+
+| 主张 | 在何处被宣告 | 实际存在什么 |
 |---|---|---|
-| Stress results over the 30 packages several branch lines touched | `KNOWLEDGE/reports/release/BRANCH_CONSOLIDATION_TO_TESTING_FINAL.md:452-458` | **Nothing.** Line 451 is literally `<!--STRESS_RESULTS-->` and the next section begins at `:453`. This is the only HTML-comment placeholder in any root report. |
-| `-race` results for any package | all reports | None anywhere; consistently reported as not-run, and the CI step that would produce them leaves no record in the tree. |
-| Apple submodule reachability | `KNOWLEDGE/reports/release/CORE_0.1.6_FINAL_CLOSURE_REPORT.md:132-138` | Needs a host with the submodule and network. |
-| Device / emulator / iOS / Android runtime runs | the Apple reports | None. `KNOWLEDGE/reports/release/APPLE-PARENT-FINALIZE-REPORT.md:198-203` records the gate layers as `SKIP` and the overall verdict as **`PARTIAL`** because a layer was skipped, *"which is deliberately not reported as PASS"*. |
-| Live Xray / quic-go / masque-go interop | `interop-xray.yml`, `server-linux-amd64.yml` | Workflow declarations only. No artifact in `verify-evidence/`. The QUICHE live interop tests were **deleted** (`0a3993a8c`). |
-| Windows PE / MSI / Authenticode / driver-signature / service-lifecycle | nine `scripts/ci/windows/*.ps1`, `client-desktop-windows.yml` | Declarations only. `windows-core-amd64.yml` runs on **ubuntu-latest** and only inspects symbols; the desktop workflow is dispatch-only; no `.ps1` output is archived in the tree. |
-| Docker-backed fixtures | `test/docker_test.go`, `test/openvpn_test.go` | Not run — no daemon. Note `test/docker_test.go` **has no skip guard**. |
+| 对若干分支线触及的 30 个包的压力测试结果 | `KNOWLEDGE/reports/release/BRANCH_CONSOLIDATION_TO_TESTING_FINAL.md:452-458` | **什么都没有。** 第 451 行字面上就是 `<!--STRESS_RESULTS-->`，下一节从 `:453` 开始。这是任何根报告中唯一的 HTML 注释占位符。 |
+| 任何包的 `-race` 结果 | 所有报告 | 任何地方都没有；一致地报告为未运行，而本应产生它们的 CI 步骤在树中不留记录。 |
+| Apple 子模块可达性 | `KNOWLEDGE/reports/release/CORE_0.1.6_FINAL_CLOSURE_REPORT.md:132-138` | 需要一个带有该子模块与网络的主机。 |
+| 设备 / 模拟器 / iOS / Android 运行时运行 | 各 Apple 报告 | 没有。`KNOWLEDGE/reports/release/APPLE-PARENT-FINALIZE-REPORT.md:198-203` 把门禁层记录为 `SKIP`，把整体裁决记录为 **`PARTIAL`**，因为有一层被跳过，*"which is deliberately not reported as PASS"*（中文：它有意不被报告为 PASS）。 |
+| 实时 Xray / quic-go / masque-go 互操作 | `interop-xray.yml`、`server-linux-amd64.yml` | 仅工作流声明。`verify-evidence/` 中没有产物。QUICHE 实时互操作测试已被**删除**（`0a3993a8c`）。 |
+| Windows PE / MSI / Authenticode / 驱动签名 / 服务生命周期 | 九个 `scripts/ci/windows/*.ps1`、`client-desktop-windows.yml` | 仅声明。`windows-core-amd64.yml` 在 **ubuntu-latest** 上运行且只检查符号；桌面工作流是仅手动派发；树中没有归档任何 `.ps1` 输出。 |
+| Docker 支撑的 fixture | `test/docker_test.go`、`test/openvpn_test.go` | 未运行 —— 没有 daemon。注意 `test/docker_test.go` **没有跳过守卫**。 |
 
-### The repository's own release verdict
+### 仓库自己的发布裁决（The repository's own release verdict）
 
-At the historical review, `docs/RELEASE-CERTIFICATE.md` opened with:
+在历史审查时，`docs/RELEASE-CERTIFICATE.md` 开头是：
 
 ```text
 NOT READY FOR A STABLE MILESTONE
 ```
 
-and listed missing data-plane and Apple signing evidence for that review. Do not generalize those
-historical absence claims to later releases; obtain evidence for the exact target and platform.
+并列出那次审查缺失的数据面与 Apple 签名证据。不要把这些
+历史性的缺失主张推广到更晚的发布；请为确切的目标与平台获取证据。
 
-**A third claim in that document is now stale, and it is the one most likely to be repeated.** It
-records a *known, unfixed* goroutine leak in `dns/transport/local.(*DBusResolvedResolver).loopUpdateStatus`
-and justifies keeping the `test/` module's box-level tests out of push CI on the strength of it.
-**The leak is fixed** — by `6b495134c`, which added `signalLoopStop`/`signalLoopDone`/`signalLoopOnce`, a
-stop-channel `select`, `RemoveSignal`, and a **join** in `Close()`
-(`local_resolved_linux.go:60-62`, `:188-189`, `:221-223`, `:356`, `:367`). See `dns-demand.md` §6.
+**该文档中的第三条主张现在已过期，而它最有可能被重复。** 它
+记录 `dns/transport/local.(*DBusResolvedResolver).loopUpdateStatus` 中一处*已知、未修复的* goroutine 泄漏，
+并以此为据把 `test/` 模块的 box 级测试排除在 push CI 之外。
+**该泄漏已修复** —— 由 `6b495134c`，它添加了 `signalLoopStop`/`signalLoopDone`/`signalLoopOnce`、一个
+停止通道 `select`、`RemoveSignal`，以及在 `Close()` 中的一次**汇合（join）**
+（`local_resolved_linux.go:60-62`、`:188-189`、`:221-223`、`:356`、`:367`）。见 `dns-demand.md` §6。
 
-> **Two consequences:** do not re-report the leak, and **do not apply the fix that document proposes** —
-> closing the dbus signal channel would panic, because dbus is the sender. The CI exclusion it justified
-> can be revisited; that is a CI decision, not a knowledge one.
+> **两个后果：** 不要重新报告该泄漏，并且**不要应用该文档提出的修复** ——
+> 关闭 dbus 信号通道会导致 panic，因为 dbus 是发送方。它曾据此证明的 CI 排除
+> 可以重新考虑；那是 CI 决策，不是知识决策。
 
-This is also a good illustration of the general rule in this module: **a document in this repository is
-a claim with a date, not a fact.** The paths it cites (`:347-349`, `:216`) no longer resolve to the code
-it describes.
+这也是本模块中一般规则的一个好例证：**本仓库中的一份文档是一个带日期的
+主张，而不是事实。** 它引用的路径（`:347-349`、`:216`）已不再解析到它所描述的
+代码。
 
 ---
 
-## 4. The commands a re-checker must actually run
+## 4. 复检者必须实际运行的命令（The commands a re-checker must actually run）
 
-The following block records a historical Windows setup and test selection. Paths and tag choices
-are not portable defaults, and later workflows include `protocol/mieru` in the race list. Resolve
-the current Go toolchain, target profile and workflow commands before reusing it; the local 2026-10-28
-pin-only check used MSYS2 bash and is recorded in `ACCEPTANCE.md`.
+下面的块记录了一次历史性的 Windows 环境搭建与测试选择。路径与标签选择
+不是可移植的默认值，且更晚的工作流把 `protocol/mieru` 纳入 race 列表。在复用它之前，请解析
+当前的 Go 工具链、目标 profile 与工作流命令；本地 2026-10-28 的
+pin-only 检查使用了 MSYS2 bash，并记录在 `ACCEPTANCE.md` 中。
 
 ```powershell
 # --- environment (Windows amd64) ---
@@ -362,72 +367,72 @@ bash scripts/ci/check-apple-source-selection.sh
 bash scripts/ci/check-libbox-abi.sh --pin-only  # wired in verify.yml; full gate in client-apple.yml
 ```
 
-**Measured in this audit, so a re-checker knows what "expected" looks like:**
+**在本次审计中实测，以便复检者知道“预期”长什么样：**
 
-| Command | Result |
+| 命令 | 结果 |
 |---|---|
-| `go build ./...` | **exit 0** |
-| `go build -tags "$OTHERS" ./...` | **exit 0** |
-| `go build -tags "$ALL" ./...` | **exit 1** — cronet build constraints, as designed |
-| `go test -count=1 .` | **exit 1** — 12 tag-absence failures |
-| `go test -count=1 -tags "$ALL" .` | **setup failure** — the test binary does not build |
-| `go test -count=1 -tags "$OTHERS" .` | **exit 0**, `ok 5.459 s` |
-| `go test -count=1 ./...` (untagged, 168 pkgs) | **exit 1** — 78 ok / 3 FAIL (`root`, `protocol/masque`, `common/tls`) / 87 no-test-files |
-| `go test -count=1 ./common/sniff/...` | **exit 0**, `ok 5.83 s`; the documented flake did **not** reproduce |
-| `go test -count=1 ./experimental/libbox/...` | **exit 0**, `ok 0.708 s`; verbose 39 PASS / 0 FAIL / 0 SKIP |
-| `go test -count=1 -tags "$OTHERS" -v ./common/bufgeom/... ./transport/masque/... ./protocol/masque/...` | **exit 0**, 412 s, 1317 PASS / 0 FAIL / 0 SKIP |
-| `go test -count=1 ./common/trafficsched/... ./common/trafficclass/...` | **exit 0**, 106.4 s / 0.03 s; 51 tests, 0 skipped |
-| `go test -race …` | **BLOCKED** — `go: -race requires cgo` |
+| `go build ./...` | **退出 0** |
+| `go build -tags "$OTHERS" ./...` | **退出 0** |
+| `go build -tags "$ALL" ./...` | **退出 1** —— cronet 构建约束，符合设计 |
+| `go test -count=1 .` | **退出 1** —— 12 个标签缺失导致的失败 |
+| `go test -count=1 -tags "$ALL" .` | **环境搭建失败** —— 测试二进制无法构建 |
+| `go test -count=1 -tags "$OTHERS" .` | **退出 0**，`ok 5.459 s` |
+| `go test -count=1 ./...`（无标签，168 个包） | **退出 1** —— 78 ok / 3 FAIL（`root`、`protocol/masque`、`common/tls`）/ 87 个无测试文件 |
+| `go test -count=1 ./common/sniff/...` | **退出 0**，`ok 5.83 s`；文档记载的偶发失败**未**复现 |
+| `go test -count=1 ./experimental/libbox/...` | **退出 0**，`ok 0.708 s`；verbose 模式 39 PASS / 0 FAIL / 0 SKIP |
+| `go test -count=1 -tags "$OTHERS" -v ./common/bufgeom/... ./transport/masque/... ./protocol/masque/...` | **退出 0**，412 s，1317 PASS / 0 FAIL / 0 SKIP |
+| `go test -count=1 ./common/trafficsched/... ./common/trafficclass/...` | **退出 0**，106.4 s / 0.03 s；51 个测试，0 跳过 |
+| `go test -race …` | **BLOCKED** —— `go: -race requires cgo` |
 
-**Historical failures and flakes to investigate when they recur:** the prior observation does not
-prove the cause or rule out a new regression at a different target or host.
+**复发时需要调查的历史失败与偶发失败：** 先前的观测并不
+证明原因，也不能排除在不同目标或主机上出现新的回归。
 
-| Item | Historical observation | Scope and follow-up |
+| 项目 | 历史观测 | 范围与后续 |
 |---|---|---|
-| `common/tls` `TestWindowsClient*TLS13` | local handshake tests failed with `unexpected EOF` on this Windows host; isolated cases reproduced | cause unknown; do not infer lack of TLS 1.3 support or a remote-network failure from this observation |
-| `common/sniff` `TestAgentFFrameShape*`, `TestTheSniffCensusMovesForExactlyOneLeakedGoroutine` | **load-sensitive**; the failing test name differs run to run | documented 5/5 passes in isolation on both the fix and the untouched base. A single green run here does **not** prove non-flakiness. |
-| `protocol/group` `TestRecheckSingleFlightCollapsesABurst` | load-sensitive | 20 consecutive isolated runs clean on both trees |
-| `common/trafficsched` under `-count=10` | ~18 minutes of deliberate sleeps trips a timeout | every individual test passes |
-| `protocol/masque` `TestMasqueRestartCyclesDoNotLeakLoops` | **330 s alone** — slow, not hung | measured |
-| `common/trafficsched` wall clock | 106.2 s vs a 106.4 s baseline | measured |
+| `common/tls` `TestWindowsClient*TLS13` | 本地握手测试在这台 Windows 主机上以 `unexpected EOF` 失败；个别用例可复现 | 原因未知；不要从这一观测推断缺少 TLS 1.3 支持或远程网络故障 |
+| `common/sniff` `TestAgentFFrameShape*`、`TestTheSniffCensusMovesForExactlyOneLeakedGoroutine` | **对负载敏感**；失败测试的名称每次运行都不同 | 在修复版与未改动基线上各自隔离运行均有 5/5 通过的记载。此处一次绿色运行**并不**证明非偶发性。 |
+| `protocol/group` `TestRecheckSingleFlightCollapsesABurst` | 对负载敏感 | 在两棵树上连续 20 次隔离运行均干净 |
+| `common/trafficsched` 在 `-count=10` 下 | 约 18 分钟的人为 sleep 会触到超时 | 每个单独的测试都通过 |
+| `protocol/masque` `TestMasqueRestartCyclesDoNotLeakLoops` | **单独 330 s** —— 慢，但没有挂死 | 已实测 |
+| `common/trafficsched` 墙钟时间 | 106.2 s 对 106.4 s 基线 | 已实测 |
 
-**The host-specific set does NOT reproduce.** Reports name `common/windivert`, `common/tlsspoof` and
-`common/tls` as "3 pre-existing environmental failures". Measured here: `common/windivert` → **25 PASS /
-0 SKIP / 0 FAIL** and `common/tlsspoof` → **9 PASS / 0 SKIP / 0 FAIL**, including every
-`TestIntegration*` the reports call `windivert: open SCM: Access is denied`. The honest reading is that
-the claim was **host-specific, not tree-specific** — it describes a machine's WinDivert/Administrator
-state and does not survive a change of host.
+**主机相关的那一组并不会复现。** 报告把 `common/windivert`、`common/tlsspoof` 与
+`common/tls` 称为“3 个既有的环境性失败”。此处实测：`common/windivert` → **25 PASS /
+0 SKIP / 0 FAIL**，`common/tlsspoof` → **9 PASS / 0 SKIP / 0 FAIL**，包括报告称为
+`windivert: open SCM: Access is denied` 的每一个 `TestIntegration*`。诚实的解读是：
+该主张是**主机相关的，而不是树相关的** —— 它描述的是一台机器的 WinDivert/管理员
+状态，换一台主机就不再成立。
 
 ---
 
-## 5. Release provenance
+## 5. 发布来源（Release provenance）
 
-### The single authority for the asset list
+### 资产列表的单一权威（The single authority for the asset list）
 
-**`scripts/ci/release-artifacts.sh` owns the canonical public asset list, and it derives it in exactly
-one function.** This is the rule that the `v0.1.8` release defect bought:
+**`scripts/ci/release-artifacts.sh` 拥有规范的公开资产列表，并且它恰好在一个函数中推导它。**
+这就是 `v0.1.8` 发布缺陷所换来的规则：
 
-> **ONE FACT = ONE OWNER.** `public_asset_names()` (`release-artifacts.sh:1706`) iterates
-> `TARGET_WORKFLOWS` and emits each target's `tarball` name plus the two non-tarball artifacts. Four
-> subcommands consume it and none of them re-derives it: `expected-assets` (`:1723`), `check-upload`
-> (`:1830`), `publish-args` (`:1754`) and `verify-public-release` (`:1798`).
+> **一个事实 = 一个所有者（ONE FACT = ONE OWNER）。** `public_asset_names()`（`release-artifacts.sh:1706`）遍历
+> `TARGET_WORKFLOWS`，并为每个目标输出其 `tarball` 名称加上两个非 tarball 产物。四个
+> 子命令消费它，且没有一个重新推导它：`expected-assets`（`:1723`）、`check-upload`
+> （`:1830`）、`publish-args`（`:1754`）与 `verify-public-release`（`:1798`）。
 
-**What went wrong, because it is the failure mode to avoid repeating.** `v0.1.8` shipped with **six**
-assets where the contract required **seven** (`Libbox.xcframework.tar.gz` was missing). The cause was
-not a missing check — it was **three authorities over one fact**: `check-upload` derived its list from
-`TARGET_WORKFLOWS` and passed; `release.yml`'s `gh release create` carried a *hardcoded literal* of six
-filenames and uploaded six; and `release.yml`'s read-back carried *the same six literals*, so it
-compared six against six and the workflow went green. **Self-consistently wrong.** A count-only check
-cannot detect this, which is why the read-back compares **by name**.
+**出了什么问题，因为这是要避免重复的失败模式。** `v0.1.8` 发布时只有**六**个
+资产，而契约要求**七**个（缺 `Libbox.xcframework.tar.gz`）。原因
+不是缺少检查 —— 而是**对一个事实有三个权威**：`check-upload` 从
+`TARGET_WORKFLOWS` 推导其列表并通过；`release.yml` 的 `gh release create` 携带一个包含六个
+文件名的*硬编码字面量*并上传了六个；而 `release.yml` 的回读携带*同样的六个字面量*，因此它
+把六个与六个比较，工作流就变绿了。**自洽地错误。** 仅计数的检查
+无法发现这一点，这就是为什么回读是**按名称**比较。
 
-The workflow is now forbidden from holding a second copy: `check-release-workflows.py` asserts that the
-publish step *takes* its list from `publish-args` and that it contains **no** literal asset filename.
-Adding the literal back is a regression to the exact defect, and the checker fails.
+该工作流现在被禁止持有第二份副本：`check-release-workflows.py` 断言
+发布步骤*从* `publish-args` *获取*其列表，并且它包含**没有**任何字面资产文件名。
+把字面量加回来就是回归到那个确切的缺陷，检查器会失败。
 
-### `release.yml` — draft-first, and why the order is the safety property
+### `release.yml` —— 草案优先，以及为什么顺序就是安全属性（`release.yml` — draft-first, and why the order is the safety property）
 
-`workflow_dispatch` only, requiring `inputs.tag`; `dry_run` defaults to **false**. **Seventeen steps**,
-in this order, and the order is load-bearing:
+仅 `workflow_dispatch`，要求 `inputs.tag`；`dry_run` 默认为 **false**。**十七个步骤**，
+按此顺序，且该顺序是承重的：
 
 ```text
  1 check out the tagged commit                    (the SHA is the identity)
@@ -454,122 +459,130 @@ in this order, and the order is load-bearing:
                                                                     then verify-public-release AGAIN
 ```
 
-**`publish-args` is all-or-nothing.** It validates that every asset in the contract exists on disk and
-prints **nothing at all** on failure, so a partial list can never reach `gh release create`. That is a
-deliberate property, not an implementation detail: printing paths as they are validated would let the
-release be created with whatever happened to be checked before the failure.
+**`publish-args` 是全有或全无的。** 它验证契约中的每个资产都存在于磁盘上，并在失败时
+**什么都不打印**，因此部分列表永远无法到达 `gh release create`。那是一个
+有意的属性，而不是实现细节：在验证时逐步打印路径，会让发布
+带着失败之前恰好检查过的那些内容被创建出来。
 
-**Draft-first is what stops a defective release being publicised.** The release is created as a
-**draft**, the contract is verified **by name** against the draft, and only then is it published. A
-missing asset therefore stops at a draft the public cannot see. `v0.1.8` is the counter-example: it was
-not draft-first, so the six-asset defect was public before anything compared it to the contract.
+**草案优先正是阻止一个有缺陷的发布被公开的原因。** 发布被创建为
+**草案**，契约**按名称**针对该草案被验证，只有那时它才被发布。因此
+一个缺失的资产会停在一个公众看不到的草案上。`v0.1.8` 是反例：它
+不是草案优先，因此六资产缺陷在任何东西把它与契约比较之前就已公开。
 
-> **So the claim "product CI produces/proves artifacts; release downloads and re-verifies those exact
-> bytes rather than rebuilding them" is a source-level description scoped to the platforms `plan`
-> selects. Inspect each producer's triggers and the chosen run: Android also has a path-filtered
-> testing-push trigger, so not every producer is dispatch-only.
+> **因此，“产品 CI 生产/证明产物；发布下载并重新验证那些确切的
+> 字节而不是重新构建它们”这一主张，是一段限定于 `plan` 所选择平台的源码级描述。
+> 请检查每个产者的触发器与所选运行：Android 也有一个受路径过滤的
+> testing-push 触发器，因此并非每个产者都是仅手动派发。
 
-**Platform coverage.** `release.yml` sets `RELEASE_EXTRA_PLATFORMS: true`, and `release-artifacts.sh`
-accepts exactly the strings `true`/`false` (anything else dies). With it set, **Windows and Android
-artifacts ARE in the release set**; the Apple IPA/DMG is still excluded.
+**平台覆盖。** `release.yml` 设置 `RELEASE_EXTRA_PLATFORMS: true`，而 `release-artifacts.sh`
+只接受字符串 `true`/`false`（其他任何值都会终止）。设置它之后，**Windows 与 Android
+产物确实在发布集合中**；Apple IPA/DMG 仍被排除。
 
-### A defect this module documented — now FIXED
+### 本模块记录过的一个缺陷 —— 现已修复（A defect this module documented — now FIXED）
 
-An earlier revision of this section described a **live defect**: the release-tree allowlist was built
-as four names per target and never extended for the extra files the Windows and Android producers
-upload, so `verify` would die with `unexpected file(s) in the release tree` whenever
-`RELEASE_EXTRA_PLATFORMS=true` — which the release workflow itself sets.
+本节的一个更早修订描述了一个**活动缺陷**：发布树允许列表按每个目标构建为四个名称，
+且从未为 Windows 与 Android 产者上传的额外文件扩展，因此每当
+`RELEASE_EXTRA_PLATFORMS=true`（而发布工作流自己就会设置它）时，`verify` 会以
+`unexpected file(s) in the release tree` 终止。
 
-**That is fixed at the `v0.1.9` baseline.** The allowlist now carries an Apple branch
-(`release-artifacts.sh:1378`, `Libbox.xcframework.tar.gz SHA256SUMS-LIBBOX.txt manifest.json
-BUILD-INFO-LIBBOX.txt`) alongside the per-target rows (`:1381`), and the `die` moved to `:1396`. Two
-other stale statements in the same file were corrected at the same time: the header comment that said
-Windows/Android were *"deliberately NOT here"* now records that it used to say that (`:79`), and the
-loop that printed *"both platforms"* now explains why that was wrong (`:1403`). The gate's own
-self-test was extended to a **six-entry** canonical `SHA256SUMS` (`test-release-artifacts.sh:1909-1930`),
-where the old fixture asserted two rows and could not have caught the defect.
+**那在 `v0.1.9` 基线上已修复。** 允许列表现在带有一个 Apple 分支
+（`release-artifacts.sh:1378`、`Libbox.xcframework.tar.gz SHA256SUMS-LIBBOX.txt manifest.json
+BUILD-INFO-LIBBOX.txt`）与按目标的各行并列（`:1381`），而 `die` 移到了 `:1396`。同一文件中
+另外两处过期陈述也同时被更正：说 Windows/Android *"deliberately NOT here"*（中文：有意不在此处）
+的头部注释现在记录它曾这样说过（`:79`），而打印*"both platforms"*（中文：两个平台）的
+循环现在解释了为何那是错的（`:1403`）。该门禁自己的自检被扩展为一份**六条目**的规范
+`SHA256SUMS`（`test-release-artifacts.sh:1909-1930`），而旧 fixture 断言两行，根本无法捕获该缺陷。
 
-**This is recorded as a fixed defect rather than deleted, because the shape recurs:** an allowlist and a
-producer's upload set are two statements of one fact, and the way they fail is by agreeing with each
-other while both are wrong.
+**这被记录为一个已修复的缺陷而不是删除，因为这种形状会复发：** 一份允许列表与一个
+产者的上传集合是对同一事实的两种陈述，而它们的失败方式正是彼此一致
+却两者都错。
 
-### What is out of scope
+### 不在范围内的是什么（What is out of scope）
 
-`scripts/ci/verify-release-acceptance.sh` enforces a **default required-workflow set** of
-`verify.yml`, `interop-xray.yml` and `server-linux-amd64.yml`. **`client-apple.yml` is not in that
-set.** `verify.yml` now runs the **pin-only** half of the Apple ABI gate, and the full gate runs in
-`client-apple.yml`; both catch a gitlink/constant disagreement, but release acceptance itself is still
-**structurally incapable** of noticing Apple-pin drift because the engine is **not called by the
-release path at all**; the release path's authority is `release.yml` + `release-artifacts.sh`.
+`scripts/ci/verify-release-acceptance.sh` 强制一套**默认的必需工作流集合**，即
+`verify.yml`、`interop-xray.yml` 与 `server-linux-amd64.yml`。**`client-apple.yml` 不在该
+集合中。** `verify.yml` 现在运行 Apple ABI 门禁的 **pin-only** 一半，而完整门禁在
+`client-apple.yml` 中运行；两者都能捕获 gitlink/常量不一致，但发布验收本身仍在
+结构上无法注意到 Apple 固定值漂移，因为该引擎**根本不被
+发布路径调用**；发布路径的权威是 `release.yml` + `release-artifacts.sh`。
 
-### The Apple source authority — **INVERTED at this baseline**
+### Apple 源码权威 —— 在此基线上被反转（The Apple source authority — INVERTED at this baseline）
 
-**The previous revision of this module stated the opposite of the truth, so read this as a correction
-and not as an addition.** It said the refs file *"declares the `clients/apple` gitlink as the sole
-authority"* and that the refs file is *"forbidden from recording a SHA"*. That was the older model.
-`release/apple-client-refs.env` now says, in its own words:
+**本模块此前的修订陈述了与事实相反的内容，因此请把这读作一次更正，
+而不是一次新增。** 它说 refs 文件*"declares the `clients/apple` gitlink as the sole
+authority"*（中文：把该 gitlink 声明为唯一权威），且该 refs 文件*"forbidden from recording a SHA"*
+（中文：被禁止记录 SHA）。那是更旧的模型。
+`release/apple-client-refs.env` 现在用它自己的话说：
 
 > *"the authority is the client repository: its tip is resolved to an exact SHA at the start of a"*
-> build — `apple-client-refs.env:31`
+> build —— `apple-client-refs.env:31`
 
-and
+（中文：权威是客户端仓库：它的顶端在构建开始时被解析为一个确切的 SHA。）
+
+以及
 
 > *"The submodule and its gitlink still exist and still work: the local default checkout, the … [gitlink
 > is no longer the] authority, and a published build is no longer asserted to equal the gitlink — that
 > assertion is precisely what made the pin manual. Set `APPLE_CLIENT_REQUIRE_GITLINK=1` to get [the hard
-> equality back]"* — `apple-client-refs.env:42-45`
+> equality back]"* —— `apple-client-refs.env:42-45`
 
-**Why it was inverted.** Under the gitlink-authority model every client release was a
-**two-repository operation**: the build could only mirror a submodule someone had already bumped by
-hand, so each client commit needed a second commit here and a push. The workflow states the replacement
-model plainly:
+（中文：子模块及其 gitlink 仍然存在且仍然可用：本地默认检出，……[gitlink 已不再是]权威，且已发布的
+构建不再被断言等于该 gitlink —— 正是那条断言让固定变成了手工操作。要恢复[硬性相等]，
+请设置该环境变量。）
+
+**为什么它被反转。** 在 gitlink 权威模型下，每次客户端发布都是一次
+**双仓库操作**：构建只能镜像某个别人已经手工提升的子模块，因此每个客户端提交都需要在这里
+再有一次提交和一次推送。工作流直白地陈述了替代模型：
 
 > *"The AUTHORITY is the Apple client repository, not this repository's gitlink, so this gate compares
 > the checkout against the RESOLVED source rather than against the gitlink. Requiring the gitlink made
-> every client release a two-repository operation."* — `client-apple.yml:268`
+> every client release a two-repository operation."* —— `client-apple.yml:268`
 
-**The two authorities now:**
+（中文：权威是 Apple 客户端仓库，而不是本仓库的 gitlink，因此该门禁把检出与已解析的源码比较，
+而不是与 gitlink 比较。要求 gitlink 曾让每次客户端发布都成为一次双仓库操作。）
 
-| | Authority | How it is used |
+**现在的两个权威：**
+
+| | 权威 | 如何使用 |
 |---|---|---|
-| **Build selection** | the **client repository tip**, resolved to an exact SHA at the start of a build | what a published Apple artifact is actually built from |
-| **Gitlink** (`clients/apple`) | the local default checkout; **not** the build authority | equality with the resolved source is a **note**, not a failure |
-| `APPLE_CLIENT_REQUIRE_GITLINK=1` | opt-in | restores the **hard** gitlink equality (`client-apple.yml:319`, `:455`) |
+| **构建选择** | **客户端仓库顶端**，在构建开始时被解析为确切 SHA | 已发布的 Apple 产物实际由什么构建 |
+| **Gitlink**（`clients/apple`） | 本地默认检出；**不是**构建权威 | 与已解析源码相等只是一条**备注**，不是失败 |
+| `APPLE_CLIENT_REQUIRE_GITLINK=1` | 可选加入 | 恢复**硬性** gitlink 相等（`client-apple.yml:319`、`:455`） |
 
-**The measured pin.** `VERIFIED_APPLE_SHA="044e6d5447eb1285c950bd12cee10effab641f5a"` at
-`scripts/ci/check-libbox-abi.sh`, and `git ls-tree HEAD clients/apple` is **the same commit**. It was
-`6e559a4` until 2026-10-27, then `3aedd741` for the v0.1.28 path-monitor canary, and `044e6d5` with the
-v0.1.34 Apple integration; the constant and the gitlink moved together. But because the gitlink no
-longer *selects* the build, **that agreement is weaker evidence than this module previously claimed**
-— it is the two having been moved together by hand, not a proof the build used it.
+**实测的固定值。** `scripts/ci/check-libbox-abi.sh` 中
+`VERIFIED_APPLE_SHA="044e6d5447eb1285c950bd12cee10effab641f5a"`，而 `git ls-tree HEAD clients/apple` 是**同一个提交**。
+它在 2026-10-27 之前是 `6e559a4`，随后在 v0.1.28 路径监视器金丝雀中是 `3aedd741`，而在
+v0.1.34 Apple 集成中是 `044e6d5`；常量与 gitlink 一起移动。但由于 gitlink 不再
+*选择*构建，**这种一致性是比本模块此前所声称的更弱的证据**
+—— 它只是两者被人为地一起移动，而不是构建使用了它的证明。
 
-### `check-apple-source-selection.sh` was rewritten and IS wired
+### `check-apple-source-selection.sh` 已被重写并且确实已接线（`check-apple-source-selection.sh` was rewritten and IS wired）
 
-The previous revision said this script *"could not have caught [pin drift] **by design** — every one of
-its checks is self-referential to the gitlink"*, and that **nothing runs it**. Both halves are now
-wrong:
+此前的修订说该脚本*"could not have caught [pin drift] **by design** — every one of
+its checks is self-referential to the gitlink"*（中文：**按设计**无法捕获[固定值漂移] —— 它的每一项检查
+都自指于 gitlink），并且**没有任何东西运行它**。这两半现在都错了：
 
-* **It is wired** — `client-apple.yml:265` runs it (`./scripts/ci/check-apple-source-selection.sh`).
-* **It was rewritten** to assert the *opposite* of what the old text assumed. It keeps the single-copy
-  scheme checks (`:124-129` "the refs file records no SHA", `:209-210` "neither SHA may be hardcoded"),
-  because those still prevent a *duplicate* authority — but it now also asserts that **moving the
-  gitlink does not move the iOS source**, and that **dropping the gitlink does not change the resolved
-  source**. That is exactly the property the inverted-authority model depends on.
+* **它已接线** —— `client-apple.yml:265` 运行它（`./scripts/ci/check-apple-source-selection.sh`）。
+* **它被重写**为断言旧文本所假设内容的*反面*。它保留了单副本
+  方案检查（`:124-129`“refs 文件不记录 SHA”、`:209-210`“两个 SHA 都不得被硬编码”），
+  因为那些仍然能防止一个*重复*权威 —— 但它现在也断言**移动 gitlink 不会移动
+  iOS 源码**，以及**丢弃 gitlink 不会改变已解析的
+  源码**。这正是反转权威模型所依赖的属性。
 
-**Measured:** the audit ran it on this host — **72 passed, 0 failed**, exit 0. `VERIFIED_UNIT` for the
-script's own assertions; it does not prove the resolved revision is the *intended* one, which is the
-narrow residual gap.
+**实测：** 审计在本主机上运行了它 —— **72 通过，0 失败**，退出 0。对于该脚本
+自身的断言是 `VERIFIED_UNIT`；它并不证明已解析的修订是*意图中的*那个，而这正是
+狭窄的残余缺口。
 
-**The wording to keep:** *"the Apple pin has no wired verifier"* is **no longer the right sentence** — a
-selector and a suite are wired. What remains unwired is any check that the **resolved revision is the one
-someone intended**, as opposed to merely self-consistent.
+**要保留的措辞：** *"the Apple pin has no wired verifier"*（中文：Apple 固定值没有已接线的验证器）**不再是正确的句子** ——
+一个选择器与一套测试已接线。仍然未接线的是任何检查**已解析的修订是否就是某人
+意图的那个**，而非仅仅是自洽。
 
-### The refs guard: it read the caller's environment, not the file
+### refs 守卫：它读取的是调用方环境，而不是文件（The refs guard: it read the caller's environment, not the file）
 
-`scripts/ci/apple-client-source.sh` tested `MACOS_APPLE_SHA` / `MACOS_APPLE_BRANCH` **in the
-environment** after sourcing the refs file, to decide whether the file had been edited back to the
-two-source model. It cannot tell the file's assignments from the caller's, and the caller legitimately
-carries both names:
+`scripts/ci/apple-client-source.sh` 在 source refs 文件之后，**在环境中**测试
+`MACOS_APPLE_SHA` / `MACOS_APPLE_BRANCH`，以判断该文件是否被改回了
+双来源模型。它无法区分文件中的赋值与调用方的赋值，而调用方合法地
+同时携带这两个名称：
 
 ```text
 apple-client-source.sh resolve   emits MACOS_APPLE_SHA / MACOS_APPLE_BRANCH as historical aliases
@@ -577,38 +590,39 @@ apple-client-source.sh resolve   emits MACOS_APPLE_SHA / MACOS_APPLE_BRANCH as h
 release-apple.sh                 exports them on to the builders                (:181)
 ```
 
-So `resolve -> export -> assert-shared-source` refused the values `resolve` had printed moments
-earlier, and blamed a refs file containing no such line. **`release-apple.sh testflight` deadlocked on
-its own output** — a real release blocker, not a documentation defect. `ece0fb9d2` replaced the test
-with `refs_declares_platform_source()`, a text test on the **file** asked *before* sourcing, so the
-original intent ("every subcommand must refuse a two-source refs file") is kept while the answer no
-longer depends on who called. The refs file may still not declare a per-platform source; the `export
-NAME=` spelling is refused too.
+因此 `resolve -> export -> assert-shared-source` 拒绝了 `resolve` 片刻之前刚打印出的值，
+并把责任归给一个并不含该行的 refs 文件。**`release-apple.sh testflight` 在它自己的输出上死锁**
+—— 一个真实的发布阻塞，而不是文档缺陷。`ece0fb9d2` 把该测试替换为
+`refs_declares_platform_source()`，一个在 source **之前**先询问**文件**的文本测试，因此
+原始意图（“每个子命令都必须拒绝双来源的 refs 文件”）被保留，而答案不再
+取决于谁调用了它。refs 文件仍然不得声明按平台的来源；`export
+NAME=` 这种写法也被拒绝。
 
-Evidence: `VERIFIED_SOURCE` for the guard's text (`:88-105`); `VERIFIED_UNIT` for the behaviour — the
-guard was exercised directly against ten cases (three the pre-fix guard wrongly refused, four refusals
-it must keep, three fail-closed/comment near-misses), alongside three old-guard control cases that
-reproduce the deadlock. All thirteen passed. The shipped script itself needs `bash`, absent on that
-audit host, so running `apple-client-source.sh` end to end is `BLOCKED_BY_ENVIRONMENT`.
+证据：对守卫的文本是 `VERIFIED_SOURCE`（`:88-105`）；对行为是 `VERIFIED_UNIT` ——
+该守卫被直接对十个用例进行了检验（三个是修复前守卫错误拒绝的、四个是它必须保留的拒绝、
+三个是失败即拒绝/注释的近似命中），另有三个旧守卫对照用例
+复现那次死锁。全部十三个通过。已发布的脚本本身需要 `bash`，而该
+审计主机上没有，因此端到端运行 `apple-client-source.sh` 是 `BLOCKED_BY_ENVIRONMENT`。
 
 ---
 
-## 6. Build profiles (summary — full detail in `build-pruning-release.md`)
+## 6. 构建 profile（概要 —— 完整细节见 `build-pruning-release.md`）（Build profiles (summary — full detail in `build-pruning-release.md`)）
 
-| Profile | Contents |
+| profile | 内容 |
 |---|---|
-| `DEFAULT_BUILD_TAGS` | the **Darwin** profile. Includes `with_naive_outbound`; current Windows Cronet files additionally require `with_purego`. |
-| `DEFAULT_BUILD_TAGS_OTHERS` | the same **minus** `with_naive_outbound`. **This is the general/server set.** |
-| `DEFAULT_BUILD_TAGS_WINDOWS` | `DEFAULT_BUILD_TAGS` plus `with_purego` |
+| `DEFAULT_BUILD_TAGS` | **Darwin** profile。包含 `with_naive_outbound`；当前 Windows Cronet 文件还要求 `with_purego`。 |
+| `DEFAULT_BUILD_TAGS_OTHERS` | 同上**减去** `with_naive_outbound`。**这是通用/服务器集合。** |
+| `DEFAULT_BUILD_TAGS_WINDOWS` | `DEFAULT_BUILD_TAGS` 加上 `with_purego` |
 
-`verify.yml:337-338` states in-tree that `DEFAULT_BUILD_TAGS` is *"deliberately NOT used here: it
-carries with_naive_outbound, and no Linux product links cronet."* The names are misleading and the
-repository knows it. The Windows setup failure documented in the historical
-`KNOWLEDGE/reports/release/CORE_0.1.6_FINAL_CLOSURE_REPORT.md` is evidence for that environment and
-revision, not a claim that current Cronet lacks all non-Apple targets. See `build-pruning-release.md`
-for the current pinned fork's platform tags and the scope of the Windows purego test.
+`verify.yml:337-338` 在树内声明 `DEFAULT_BUILD_TAGS` *"deliberately NOT used here: it
+carries with_naive_outbound, and no Linux product links cronet."*（中文：有意不在此处使用：它
+携带 with_naive_outbound，而没有任何 Linux 产品链接 cronet。）这些名字具有误导性，而
+仓库知道这一点。历史
+`KNOWLEDGE/reports/release/CORE_0.1.6_FINAL_CLOSURE_REPORT.md` 中记录的 Windows 环境搭建失败，是对该环境与
+修订的证据，而不是“当前 Cronet 缺少所有非 Apple 目标”的主张。关于当前固定 fork 的平台标签
+与 Windows purego 测试的范围，见 `build-pruning-release.md`。
 
-**The two profiles differ in exactly one entry.** Measured, verbatim:
+**两个 profile 恰好只在一个条目上不同。** 实测，逐字：
 
 ```text
 DEFAULT_BUILD_TAGS        with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,
@@ -617,41 +631,41 @@ DEFAULT_BUILD_TAGS        with_quic,with_dhcp,with_wireguard,with_utls,with_acme
 DEFAULT_BUILD_TAGS_OTHERS … the same list with with_naive_outbound removed
 ```
 
-> **`docs/BUILD-PROFILES.md:43-44` says the *client* profile "adds `with_utls`". That is false:**
-> `with_utls` is in **both** files. `with_naive_outbound` is the only difference. A reader who trusts
-> that sentence will mis-scope a tag change.
+> **`docs/BUILD-PROFILES.md:43-44` 说*客户端* profile“添加了 `with_utls`”。那是错误的：**
+> `with_utls` 在**两个**文件中都有。`with_naive_outbound` 是唯一的差异。相信
+> 那句话的读者会把一次标签改动误定范围。
 
 ---
 
-## 7. AI cautions
+## 7. AI 注意事项（AI cautions）
 
-1. **Do not turn a declaration into `VERIFIED_CI`.** Cite the exact run, SHA and observed outcome;
-   the later runs linked above are scoped evidence, not proof of every workflow or artifact.
-2. **Do not cite `verify-evidence/` for the production baseline.** Its own README disqualifies it.
-3. **Do not infer that the root `box_*_test.go` suite ran from compile-only CI or from a different
-   filtered root test.** Check the current command and its run record.
-4. **Select the platform's actual tag profile.** `DEFAULT_BUILD_TAGS_OTHERS` omits Naive;
-   `DEFAULT_BUILD_TAGS_WINDOWS` includes it and adds `with_purego`. Dependency and native-library
-   availability remain separate build/runtime prerequisites.
-5. **Do not infer feature coverage from an untagged run.** Some MASQUE tests require `with_quic`;
-   root package checks use the appropriate profile. Diagnose actual failures rather than assuming
-   either a regression or a tag problem.
-6. **Do not treat a `SKIP` as a pass.** The fork's skip wording ("NOT a pass") is deliberate.
-7. **Do not treat one platform's PASS as all-platform PASS.**
-8. **Do not describe the Apple ABI situation as "a broken gate".** See §5.
-9. **Do not describe `release.yml` as covering all platforms.** It covers what the plan step selects,
-   after 4–5 manual dispatches.
-10. **Do not assume a script that exists is a gate that runs.** Check reachability first.
-11. **Investigate a recurrent failure at its actual target and environment.** A historical flake is
-    context, not proof that a new failure is harmless or has the same cause.
-12. **Do not add a top-level directory without checking `android-core-arm64.yml`'s path filter.**
-13. **Do not delete `<!--STRESS_RESULTS-->`-style placeholders silently.** An unfilled placeholder is a
-    record that the evidence was never produced; that is information.
-14. **Do not present the fork's `docs/changelog.md` as the fork's changelog.** It is upstream's.
-15. **Do not read a ledger's body without reading its banner.** `docs/fork/v016-final-closure-ledger.md`
-    carries a section at `:465` stating *"HY2 ChromeParrot is BLOCKED on the pinned quic-go fork"* while
-    its own header at `:4-13` retracts exactly that, states that
-    `Config.InitialPacketSizeCeiling` is applied **after** the ChromeParrot override so a proven 1232
-    reaches the wire, and points at `protocol/hysteria2/hard_ceiling_wire_test.go`. A reader who jumps
-    to the section re-opens a closed finding. This is the general shape of every long ledger here:
-    **the banner is current, the body is a record.**
+1. **不要把一项声明变成 `VERIFIED_CI`。** 引用确切的运行、SHA 与观测到的结果；
+   上面链接的更晚运行是按范围限定的证据，不是每个工作流或产物的证明。
+2. **不要为生产基线引用 `verify-evidence/`。** 它自己的 README 就取消了它的资格。
+3. **不要从仅编译的 CI 或另一个被过滤的根测试推断根 `box_*_test.go` 套件运行过。**
+   请检查当前命令及其运行记录。
+4. **选择平台的实际标签 profile。** `DEFAULT_BUILD_TAGS_OTHERS` 省略 Naive；
+   `DEFAULT_BUILD_TAGS_WINDOWS` 包含它并添加 `with_purego`。依赖与原生库
+   可用性仍是独立的构建/运行前提。
+5. **不要从无标签运行推断功能覆盖。** 部分 MASQUE 测试要求 `with_quic`；
+   根包检查使用相应的 profile。请诊断实际失败，而不是假设
+   是回归或标签问题。
+6. **不要把 `SKIP` 当作通过。** 本 fork 的跳过措辞（“NOT a pass”）是有意的。
+7. **不要把一个平台的 PASS 当作全平台 PASS。**
+8. **不要把 Apple ABI 状况描述为“一道坏掉的门禁”。** 见 §5。
+9. **不要把 `release.yml` 描述为覆盖所有平台。** 它覆盖的是 plan 步骤所选择的内容，
+   在 4–5 次手动派发之后。
+10. **不要假设存在的脚本就是会运行的门禁。** 请先检查可达性。
+11. **在实际目标与环境上调查复发的失败。** 历史偶发失败是
+    背景，不是“新失败无害或原因相同”的证明。
+12. **不要在未检查 `android-core-arm64.yml` 的路径过滤器的情况下添加顶层目录。**
+13. **不要静默删除 `<!--STRESS_RESULTS-->` 式的占位符。** 未填充的占位符是一条
+    “该证据从未被产生”的记录；那是信息。
+14. **不要把本 fork 的 `docs/changelog.md` 呈现为本 fork 的变更日志。** 它是上游的。
+15. **不要只读一份账本（ledger）的正文而不读它的横幅。** `docs/fork/v016-final-closure-ledger.md`
+    在 `:465` 带有一节声明 *"HY2 ChromeParrot is BLOCKED on the pinned quic-go fork"*（中文：HY2 ChromeParrot 在固定的
+    quic-go fork 上被 BLOCKED），而它自己的头部在 `:4-13` 恰好撤回了这一说法，声明
+    `Config.InitialPacketSizeCeiling` 是在 ChromeParrot 覆盖**之后**应用的，因此一个被证实的 1232
+    会到达线缆，并指向 `protocol/hysteria2/hard_ceiling_wire_test.go`。跳到
+    该小节的读者会重开一个已关闭的发现。这是这里每一份长账本的普遍形状：
+    **横幅是当前的，正文是记录。**

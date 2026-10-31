@@ -1,32 +1,31 @@
-# fast_path — logical group policy
+# fast_path —— 逻辑组策略（logical group policy）
 
-> Status: `VERIFIED_SOURCE`
+> 状态：`VERIFIED_SOURCE`
 >
-> Reviewed against repository `Piggy-Cat-bit-shadow/sing-box`, branch `testing`.
+> 审阅对象为仓库 `Piggy-Cat-bit-shadow/sing-box`，分支 `testing`。
 >
-> This module documents the fork's **`fast_path` configuration contract**: what the field means, where
-> it may be set, how it interacts with transparent direct chains and with the router's
-> eligibility gate, and which configurations are refused.
+> 本模块记录该 fork 的 **`fast_path` 配置契约**：该字段的含义、可以在哪里设置它、它如何与透明
+> 直连链以及路由器的资格门禁交互，以及哪些配置会被拒绝。
 >
-> If this document conflicts with current source or tests, **source and tests win**.
+> 如果本文档与当前源码或测试冲突，**以源码和测试为准**。
 
 ---
 
-## 1. Scope
+## 1. 范围（Scope）
 
-This module covers:
+本模块覆盖：
 
-- what `fast_path` is, and what it is not;
-- the exact JSON syntax, for `selector` and for `urltest`;
-- the three-state semantics of the field;
-- which outbound types may and may not carry it, and what happens when one that may not does;
-- what `fast_path: true` does and does not authorise;
-- precedence when groups are nested;
-- why the authorisation is per-flow and is never written back to a node;
-- how it relates to `urltest`'s node selection and transparent direct chains;
-- common misconfigurations.
+- `fast_path` 是什么，以及它不是什么；
+- 确切的 JSON 语法，分别针对 `selector` 与 `urltest`；
+- 该字段的三态语义；
+- 哪些 outbound 类型可以携带它、哪些不可以，以及当不允许携带它的类型携带它时会发生什么；
+- `fast_path: true` 授权了什么、没有授权什么；
+- 组嵌套时的优先级；
+- 为什么授权是按流（per-flow）的，且永不写回节点；
+- 它与 `urltest` 的节点选择以及透明直连链的关系；
+- 常见错误配置。
 
-Primary source anchors:
+主要源码锚点：
 
 ```text
 option/fast_path.go
@@ -46,23 +45,20 @@ box_fast_path_group_policy_test.go
 
 ---
 
-## 2. What `fast_path` is
+## 2. `fast_path` 是什么（What fast_path is）
 
-`fast_path` is a **logical group policy** this fork adds. It is a property of a **group**, and it
-answers one question:
+`fast_path` 是本 fork 新增的一项**逻辑组策略**。它是**组**的属性，回答一个问题：
 
-> For a flow that this group selects, is the group authorised to let the flow *attempt* a Direct Fast
-> Path?
+> 对于该组所选中的一条流，该组是否被授权让这条流*尝试*一次 Direct Fast Path？
 
-It is **not** a node capability. Setting it does not mark a node as "fast", and it does not travel
-with a node anywhere. A node that happens to be reachable through a `fast_path: true` group is not
-thereby a fast-path node — see §7.
+它**不是**节点能力。设置它并不会把某个节点标记为“fast”，也不会随节点在任何地方传递。一个
+碰巧可通过 `fast_path: true` 组到达的节点并不会因此成为 fast-path 节点——见 §7。
 
 ---
 
-## 3. Configuration syntax
+## 3. 配置语法（Configuration syntax）
 
-`fast_path` is a boolean field on the group's own object, beside `outbounds`.
+`fast_path` 是组自身对象上的一个布尔字段，与 `outbounds` 并列。
 
 ### selector
 
@@ -92,30 +88,28 @@ thereby a fast-path node — see §7.
 }
 ```
 
-The field is a sibling of `outbounds` and `type`, not a per-outbound or per-node entry.
+该字段与 `outbounds` 和 `type` 同级，而不是逐 outbound 或逐节点的条目。
 
 ---
 
-## 4. Three-state semantics
+## 4. 三态语义（Three-state semantics）
 
-The field is **three-state**, and the distinction between the three is the whole point of the design:
+该字段是**三态**的，而这三者之间的区分正是整个设计的意义所在：
 
-| value | meaning |
+| 取值 | 含义 |
 |---|---|
-| **not set** | No explicit decision. A chain of transparent selectors ending at a real `direct` leaf is intrinsically authorised to attempt bypass. |
-| `"fast_path": true` | **Explicitly authorises** flows this group selects to attempt a Direct Fast Path. |
-| `"fast_path": false` | **Explicitly forbids** the group authorisation, including the intrinsic direct-chain grant. |
+| **未设置** | 没有显式决定。一条以真实 `direct` 叶结尾的透明 selector 链本身就被授权尝试绕过。 |
+| `"fast_path": true` | **显式授权**该组所选中的流尝试一次 Direct Fast Path。 |
+| `"fast_path": false` | **显式禁止**组授权，包括那条内在的直连链授予。 |
 
-`false` is a **decision**, not an absence. It overrides the intrinsic grant — see §8.
+`false` 是一个**决定**，不是缺失。它会覆盖内在授予——见 §8。
 
-The three-state config type exists precisely so that "explicitly false" is *findable*: a plain
-boolean could not distinguish "the operator wrote false" from "the operator wrote nothing", and those
-two must behave differently.
+三态配置类型的存在，正是为了让“显式 false”*可被找到*：一个普通布尔值无法区分“操作者写了
+false”与“操作者什么都没写”，而这两者必须表现不同。
 
-### Two preconditions before any of this applies
+### 以上一切生效前的两个前提（Two preconditions before any of this applies）
 
-Resolution returns `false` — with no group authorisation — in two cases that come
-first, before the chain is examined at all:
+解析在两个情形下返回 `false`——且没有任何组授权——这两个情形先于一切，在检查链之前就生效：
 
 ```text
 the chain has fewer than two elements
@@ -125,27 +119,25 @@ the leaf cannot be bypassed at all
         -> the leaf must implement adapter.BypassableOutbound
 ```
 
-The second is the reason a proxy leaf can never be bypassed: authorisation is about the *group*, but
-the *leaf* still has to be something the platform could carry. When no explicit policy exists, a
-real direct leaf behind only transparent groups supplies the intrinsic grant.
+第二个情形正是一个代理叶永远无法被绕过的原因：授权针对的是*组*，但*叶*仍然必须是平台能够承载
+的东西。当不存在显式策略时，一个位于仅由透明组构成的链之后的真实 direct 叶会提供那份内在授予。
 
 ---
 
-## 5. Which outbound types may carry it
+## 5. 哪些 outbound 类型可以携带它（Which outbound types may carry it）
 
-Allowed:
+允许：
 
 ```text
 selector
 urltest
 ```
 
-Both are **transparent for the Fast Path chain check**: they select an outbound and are not a
-physical hop. This does not mean they have no other behavior: selector and urltest can wrap returned
-connections for interruption and lifecycle management. The bypass eligibility and entry-consumer
-checks still determine whether a particular flow may actually bypass.
+两者在 **Fast Path 链检查中都是透明的**：它们选择一个 outbound，而不构成一个物理跳。这并不
+意味着它们没有其他行为：selector 与 urltest 可以包装返回的连接，用于中断与生命周期管理。绕过
+资格与入口消费方检查仍然决定某条特定流是否真的可以绕过。
 
-Refused:
+拒绝：
 
 ```text
 loadbalance
@@ -153,54 +145,48 @@ leaf outbounds — VLESS, Trojan, Hysteria2, TUIC, Shadowsocks, and any other
 any other outbound that is not a FastPathAuthorizedGroup
 ```
 
-**`loadbalance` is refused on purpose.** It is not a transparent selector: it may own dial, retry and
-rebalance semantics, so a flow that skipped it through a Fast Path would skip those semantics too.
-Being "a group" is not sufficient; being a *transparent* group is.
+**`loadbalance` 被有意拒绝。** 它不是透明 selector：它可能拥有拨号、重试与再均衡语义，因此
+一条通过 Fast Path 跳过它的流也会跳过那些语义。仅仅“是一个组”并不够；必须是*透明*组。
 
-### Misconfiguration is an error, not a warning
+### 配置错误是错误，不是警告（Misconfiguration is an error, not a warning）
 
-Putting `fast_path` on an outbound that may not carry it makes **configuration loading fail**. It is
-not ignored and not logged-and-continued: a configuration that asks for something the runtime will
-not honour is refused, so the operator learns at load time rather than by observing behaviour that
-silently differs from the file.
+把 `fast_path` 放在不允许携带它的 outbound 上会使**配置加载失败**。它不会被忽略，也不会被
+记录后继续：一个要求运行时不会兑现之物的配置会被拒绝，这样操作者在加载时就能得知，而不是通过
+观察与文件静默不符的行为来发现。
 
 ---
 
-## 6. What `fast_path: true` authorises — and what it does not
+## 6. `fast_path: true` 授权了什么——以及没有授权什么（What fast_path: true authorises — and what it does not）
 
-It authorises **only** this:
+它**只**授权以下这一件事：
 
 ```text
 this logical group authorises this flow to ATTEMPT a Direct Fast Path
 ```
 
-It is **not** a forced directive. After authorisation the flow still has to pass the `canFastBypass` /
-`BypassVerdict` eligibility gate, which is where the real decision is made.
+它**不是**强制指令。获得授权之后，该流仍然必须通过 `canFastBypass` / `BypassVerdict` 资格
+门禁，真正的决定在那里做出。
 
-The implicit gate is consulted only where the entry consumes a bypass verdict: the nfqueue
-auto-redirect consumer. A plain TUN does not use the verdict to bypass the userspace path; this is
-an entry-mode distinction, not a blanket operating-system distinction. Explicit bypass actions are
-separate. See `route/fast_path.go`, `route/route.go`, and `adapter/inbound.go`.
+只有当入口消费绕过裁决（bypass verdict）时才会查询这个隐式门禁：即 nfqueue 自动重定向消费方。
+普通 TUN 不会用该裁决来绕过用户态路径；这是入口模式层面的区分，而不是笼统的操作系统层面区分。
+显式绕过动作是另一回事。参见 `route/fast_path.go`、`route/route.go` 与 `adapter/inbound.go`。
 
-**The gate is refined by this field, not left unchanged.** `canFastBypass` takes a
-`fastPathAuthorized bool` argument, and exactly **one** blocker is relaxed because of it:
+**该门禁因这个字段而被细化，而不是保持不变。** `canFastBypass` 接收一个
+`fastPathAuthorized bool` 参数，并且恰好有**一个**阻断条件因此被放宽：
 
 ```text
 BypassRefusedOutboundChain
 ```
 
-and only when **every** element in front of the leaf is a transparent pure-selection group
-(`fastPathChainReachesLeaf`) **and** the leaf still passes the unchanged `BypassableOutbound` /
-`CanBypass` check. Without that one branch the field would be inert on every group configuration,
-because a flow routed into a group necessarily has `len(chain) >= 2` — so the refinement is what makes
-the feature exist rather than an extra permission it grants.
+并且只有当叶之前的**每一个**元素都是透明的纯选择组（`fastPathChainReachesLeaf`），**并且**
+该叶仍然通过未改动的 `BypassableOutbound` / `CanBypass` 检查时才成立。如果没有这一个分支，
+该字段在每一种组配置上都会是惰性的，因为被路由进某个组的流必然有 `len(chain) >= 2`——因此是
+这一细化让该特性得以存在，而不是它额外授予了一项许可。
 
-An **unauthorised** group flow still gets `BypassRefusedOutboundChain`, unchanged. `loadbalance` still
-refuses, because it does not declare the capability (it may own the dial and retry of the flow it
-selected, so it is not transparent).
+一条**未获授权**的组流仍然会得到 `BypassRefusedOutboundChain`，没有变化。`loadbalance` 仍然
+拒绝，因为它没有声明该能力（它可能拥有其选中流的拨号与重试，因此它不是透明的）。
 
-**These blocking conditions are untouched by `fast_path: true`**, and this list is the reason the field
-is safe to expose:
+**这些阻断条件不受 `fast_path: true` 影响**，而这份清单正是该字段可以安全暴露的原因：
 
 ```text
 FakeIP destination
@@ -220,36 +206,32 @@ active power-report recorder
 unproven process metadata
 ```
 
-So the complete meaning is: a qualifying transparent group chain may cease to be a chain-based
-refusal, while every other eligibility check still applies. The authorization can therefore change
-the final verdict when that chain refusal was the only blocker; it cannot override the other blockers.
+因此完整含义是：一条符合条件的透明组链可以不再构成基于链的拒绝，而其他每一项资格检查仍然适用。
+所以，当那条链式拒绝是唯一阻断条件时，该授权可以改变最终裁决；它无法覆盖其他阻断条件。
 
 ---
 
-## 7. Per-flow, never written back
+## 7. 按流处理，永不写回（Per-flow, never written back）
 
-Fast Path authorisation is resolved **per flow**. It is not stored on the node, and it does not use
-shared mutable state across flows.
+Fast Path 授权是**按流**解析的。它不存储在节点上，也不跨流使用共享的可变状态。
 
-That matters concretely. One node may be referenced by several groups at once:
+这一点有具体影响。一个节点可能同时被多个组引用：
 
 ```text
 节点A   <-  "🤖 AI"          group with fast_path: true
 节点A   <-  "🌍 普通国外流量"  group with no fast_path
 ```
 
-The two flows are evaluated independently; depending on their leaf and chain they may have the same
-answer. Authorisation belongs to the chain for that flow, not to a node permanently.
+这两条流被独立评估；取决于它们各自的叶与链，它们可能得到相同的答案。授权属于该条流的链，而不是
+永久属于某个节点。
 
-This is the property that keeps the feature a policy rather than a mode: without it, a single
-selection would permanently change how a node is treated.
+正是这一属性让该特性保持为策略而非模式：没有它，一次选择就会永久改变某个节点被对待的方式。
 
 ---
 
-## 8. Nested groups: precedence
+## 8. 嵌套组：优先级（Nested groups: precedence）
 
-When groups are nested, the chain is scanned **from the outermost group inward, towards the leaf**,
-and the **first explicit `fast_path` decides**.
+当组嵌套时，链会**从最外层组向内、朝向叶**扫描，且**第一个显式的 `fast_path` 说了算**。
 
 ```text
 outer group        fast_path: false   <-- decided here; inner values not consulted
@@ -257,32 +239,30 @@ outer group        fast_path: false   <-- decided here; inner values not consult
        └─ leaf
 ```
 
-Three consequences:
+三个推论：
 
-1. The first explicit value wins; later ones in the chain are not consulted.
-2. **`fast_path: false` is an explicit decision**, so it stops the scan and overrides the intrinsic grant.
-3. With no explicit policy, an all-transparent chain to a real direct leaf gets the intrinsic grant;
-   other chains do not. The former AI-tag fallback was removed (`c78edf21084`); tags do not authorise.
+1. 第一个显式值胜出；链中后续的值不会被查询。
+2. **`fast_path: false` 是一个显式决定**，因此它终止扫描并覆盖内在授予。
+3. 在没有任何显式策略时，一条全透明链若指向真实 direct 叶则获得内在授予；其他链不会。先前的
+   AI-tag 回退已被移除（`c78edf21084`）；标签不作授权。
 
 ---
 
-## 9. `fast_path` and `urltest` are different questions
+## 9. `fast_path` 与 `urltest` 是两个不同的问题（fast_path and urltest are different questions）
 
-They are easy to conflate because both appear on the same kinds of group. They answer different
-questions:
+两者容易被混为一谈，因为它们都出现在同类组上。但它们回答的是不同问题：
 
 ```text
 urltest     decides WHICH NODE is selected
 fast_path   decides whether the flow, having been selected, may ATTEMPT a Direct Fast Path
 ```
 
-`urltest` measures and picks. `fast_path` does not pick anything and does not measure anything. A
-`urltest` group with no `fast_path` still picks nodes; a transparent chain to direct may receive the
-intrinsic authorisation described above.
+`urltest` 做测量与挑选。`fast_path` 不挑选任何东西，也不测量任何东西。没有 `fast_path` 的
+`urltest` 组仍然会挑选节点；一条通往 direct 的透明链仍可能获得上文所述的内在授权。
 
 ---
 
-## 10. Common misconfigurations
+## 10. 常见错误配置（Common misconfigurations）
 
 ```text
 1. Putting fast_path on a leaf outbound (VLESS / Trojan / ...).       -> load-time error
@@ -301,16 +281,16 @@ intrinsic authorisation described above.
 
 ---
 
-## 11. Where the behaviour is pinned
+## 11. 该行为在哪里被固定（Where the behaviour is pinned）
 
-The tests that make these statements checkable rather than aspirational:
+使这些陈述可被检查而非仅停留于愿望的测试：
 
-| property | test |
+| 属性 | 测试 |
 |---|---|
-| the field is three-state and group-only | `option/fast_path_test.go` |
-| group policy resolution and precedence | `route/fast_path_group_test.go` |
-| a non-carrier group setting `fast_path` is refused at load | `box_fast_path_group_policy_test.go` |
-| the debug/truth-table behaviour of the policy | `route/fast_path_debug_test.go` |
+| 该字段是三态且仅限组 | `option/fast_path_test.go` |
+| 组策略解析与优先级 | `route/fast_path_group_test.go` |
+| 不允许携带的组设置 `fast_path` 会在加载时被拒绝 | `box_fast_path_group_policy_test.go` |
+| 该策略的调试/真值表行为 | `route/fast_path_debug_test.go` |
 
-The implementing code lives in `route/fast_path.go` (policy resolution) and `route/route.go`
-(`canFastBypass`), with the marker interface in `adapter/experimental.go`.
+实现代码位于 `route/fast_path.go`（策略解析）与 `route/route.go`（`canFastBypass`），标记接口
+在 `adapter/experimental.go`。

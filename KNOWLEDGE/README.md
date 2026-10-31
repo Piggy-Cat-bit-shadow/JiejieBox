@@ -1,47 +1,44 @@
-# Fork knowledge base
+# 分支知识库（Fork knowledge base）
 
-**Knowledge Base + Git Delta = Current AI Context.** This is a fork-delta guide, not a sing-box
-encyclopedia. Upstream's own documentation answers "what is sing-box"; this answers *what this fork
-changed, why, and how to continue without re-reading 1,834 commits*.
+**知识库 + Git 增量 = 当前 AI 上下文。** 这是一份分支增量（fork-delta）指南，而不是 sing-box
+百科。上游自己的文档回答“sing-box 是什么”；本文回答的是 *这个分支改了什么、为什么改，以及如何在不重读 1,834 个提交的前提下继续*。
 
-## Baseline — read this before using anything else
+## 基线——使用其他任何内容之前先读这里（Baseline — read this before using anything else）
 
 | | |
 |---|---|
-| Repository | `Piggy-Cat-bit-shadow/JiejieBox` |
-| Product branch | `testing` |
-| **Production baseline** | `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28` — the source/CI revision calibrated on 2026-10-31 |
-| Release baseline | **`v0.1.34`**, tag peels to the production baseline |
-| **Historical upstream anchor** | `e4b7e692f4545890bfc9d43960328e1449fa803b` — used by the v0.1.9-era comparisons, not the current upstream merge-base |
-| Post-baseline production delta | compute `git diff --name-only 0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28..HEAD`; see `BASELINE.md` |
-| Knowledge reviewed at | 2026-10-31 |
-| Knowledge revision | resolve dynamically: `git log -1 --format=%H -- KNOWLEDGE/BASELINE.md` |
+| 仓库 | `Piggy-Cat-bit-shadow/JiejieBox` |
+| 产品分支 | `testing` |
+| **生产基线** | `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28` —— 2026-10-31 校准的源码/CI 修订 |
+| 发布基线 | **`v0.1.34`**，该标签剥离（peel）后指向生产基线 |
+| **历史上游锚点** | `e4b7e692f4545890bfc9d43960328e1449fa803b` —— 供 v0.1.9 时期的对比使用，而非当前的上游合并基（merge-base） |
+| 基线之后的生产增量 | 计算 `git diff --name-only 0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28..HEAD`；见 `BASELINE.md` |
+| 知识审阅时间 | 2026-10-31 |
+| 知识修订 | 动态解析：`git log -1 --format=%H -- KNOWLEDGE/BASELINE.md` |
 
-The knowledge describes the source baseline, not automatically the current `HEAD`. Full measurements,
-the release lineage, the provenance test, and the tag traps are in `BASELINE.md`.
+本知识描述的是源码基线，并不自动描述当前的 `HEAD`。完整测量、发布谱系、来源检验以及标签陷阱都在 `BASELINE.md` 中。
 
-**Historical 2026-10-28 calibration:** the first target was `011f3fdcd99173acd3e80483b50cb76b07bf6ff4`,
-791 commits beyond v0.1.9; the final production target is four commits later. `v0.1.30` is a published release and an ancestor of the first target; subsequent
-fixes are not in v0.1.30. A later [v0.1.31 Release](https://github.com/Piggy-Cat-bit-shadow/sing-box/releases/tag/v0.1.31)
-was published at the later `cb71cf80d72` target. See `BASELINE.md`, [the calibration ledger](CALIBRATION-2026-10-28.md)
-and the current source.
+**历史性的 2026-10-28 校准：** 最初的目标是 `011f3fdcd99173acd3e80483b50cb76b07bf6ff4`，
+比 v0.1.9 多 791 个提交；最终的生产目标比它晚四个提交。`v0.1.30` 是一个已发布的 release，也是
+最初目标的祖先；之后的修复不在 v0.1.30 中。稍后一个 [v0.1.31 Release](https://github.com/Piggy-Cat-bit-shadow/sing-box/releases/tag/v0.1.31)
+发布在更晚的 `cb71cf80d72` 目标上。见 `BASELINE.md`、[校准台账](CALIBRATION-2026-10-28.md)
+以及当前源码。
 
-At the historical v0.1.31 target, the merge-base with the checked remote `upstream/testing` tip
-`e5d91fa79f6319d5de940d6c81d81f0fe53b9476` is `a6952ccf6907c18e18917fcb763a433e8e36937b`.
-This is a point-in-time Git ancestry observation, not proof of authorship; remeasure when the refs move.
+在历史性的 v0.1.31 目标上，与被检出的远端 `upstream/testing` 顶端
+`e5d91fa79f6319d5de940d6c81d81f0fe53b9476` 之间的合并基是 `a6952ccf6907c18e18917fcb763a433e8e36937b`。
+这是一次时间点上的 Git 祖先关系观察，不是作者身份的证明；引用移动时需要重新测量。
 
-**The previous baseline (`a267e99e0`, `v0.1.6`) went stale invisibly for two releases** — its delta row
-claimed "no `.go` source changed" while 181 commits and 12 production files had landed. That failure is
-recorded in `BASELINE.md` rather than quietly corrected, because the lesson is about the model, not
-about one row.
+**上一个基线（`a267e99e0`、`v0.1.6`）曾无声地过期了两个 release** —— 它的增量行
+声称“没有任何 `.go` 源码发生变化”，而实际上已有 181 个提交和 12 个生产文件落地。这次失败记录在
+`BASELINE.md` 中，而不是被悄悄改正，因为教训关乎模型本身，而不关乎某一行。
 
-Child repositories and their independent branch tips are part of this knowledge scope; see
-`modules/child-repositories.md` and `REFRESH.md` §25A.
+子仓库及其各自独立的分支顶端也属于本知识的范围；见
+`modules/child-repositories.md` 和 `REFRESH.md` §25A。
 
-The current delta and limitations are recorded in [the 2026-10-31 calibration](CALIBRATION-2026-10-31.md)
-and the [comprehensive second pass](CALIBRATION-2026-10-31-REVIEW.md).
+当前的增量与局限记录在 [2026-10-31 校准](CALIBRATION-2026-10-31.md)
+和 [全面的第二轮审阅](CALIBRATION-2026-10-31-REVIEW.md) 中。
 
-## Reading order
+## 阅读顺序（Reading order）
 
 ```text
 1. BASELINE.md            what SHA this describes, and how to compute the delta since
@@ -56,19 +53,17 @@ and the [comprehensive second pass](CALIBRATION-2026-10-31-REVIEW.md).
 10. reports/README.md      what was audited, when, and against which tree — records, NOT current claims
 ```
 
-> `reports/` is an archive of point-in-time audit and close-out reports. Read its `README.md` first: a
-> report describes the tree at its own date, `BASELINE.md`/`INDEX.md`/`modules/` own the current claims, and
-> where a report and the source disagree the source wins. Adding a report is not a refresh and never moves
-> the baseline.
+> `reports/` 是时间点审计与收尾报告的存档。先读它的 `README.md`：一份报告描述的是
+> 它自己日期对应的代码树，`BASELINE.md`/`INDEX.md`/`modules/` 拥有当前的主张，并且
+> 当报告与源码不一致时以源码为准。新增一份报告不是一次刷新（refresh），也永远不会移动基线。
 
-**`INDEX.md` and `modules/README.md` are not interchangeable.** `modules/README.md` is the coarse
-registry (which module owns what). `INDEX.md` is the fine router: exact section anchors, aliases, and
-a reverse index by source path and symbol.
+**`INDEX.md` 与 `modules/README.md` 不可互换。** `modules/README.md` 是粗粒度的
+登记表（哪个模块拥有什么）。`INDEX.md` 是精细的路由器：精确的章节锚点、别名，以及
+按源码路径和符号组织的反向索引。
 
-**Do not read the modules you do not need.** Each is self-contained: it carries its own source
-anchors, provenance and evidence level.
+**不要阅读你不需要的模块。** 每个模块都是自包含的：它自带源码锚点、来源与证据级别。
 
-## Source-of-truth order
+## 事实来源优先级（Source-of-truth order）
 
 ```text
 current source and tests
@@ -78,79 +73,75 @@ current source and tests
                 > any other document in the repository
 ```
 
-When this knowledge base conflicts with the source, **the source wins** — and the conflict is a defect
-to record, not to reconcile silently.
+当本知识库与源码冲突时，**以源码为准**——而且冲突是一个需要记录的缺陷，不是要被悄悄调和的差异。
 
-## The four status labels
+## 四种状态标签（The four status labels）
 
-| Label | Means |
+| 标签 | 含义 |
 |---|---|
-| **VERIFIED** | direct source, history, test, CI-declaration or artifact evidence — and the specific level is always named |
-| **INFERRED** | a reasoned reading with no direct anchor |
-| **UNVERIFIED** | the project has no sufficient evidence |
-| **UNKNOWN** | cannot be established here at all |
+| **VERIFIED** | 直接的源码、历史、测试、CI 声明或产物证据——并且始终指明具体级别 |
+| **INFERRED** | 有推理依据的解读，但没有直接锚点 |
+| **UNVERIFIED** | 项目没有充分证据 |
+| **UNKNOWN** | 在这里根本无法确定 |
 
-Evidence levels are always qualified: `VERIFIED_SOURCE`, `VERIFIED_GIT`, `VERIFIED_UNIT`,
-`VERIFIED_INTEGRATION`, `VERIFIED_INTEROP`, `VERIFIED_CI`, `VERIFIED_ARTIFACT`, `VERIFIED_DEVICE`,
-`INFERRED`, `UNVERIFIED`, `UNKNOWN`, `BLOCKED_BY_ENVIRONMENT`.
+证据级别始终带限定：`VERIFIED_SOURCE`、`VERIFIED_GIT`、`VERIFIED_UNIT`、
+`VERIFIED_INTEGRATION`、`VERIFIED_INTEROP`、`VERIFIED_CI`、`VERIFIED_ARTIFACT`、`VERIFIED_DEVICE`、
+`INFERRED`、`UNVERIFIED`、`UNKNOWN`、`BLOCKED_BY_ENVIRONMENT`。
 
-Two rules that this repository punishes if ignored:
+有两条规则，一旦忽视，这个仓库会让你付出代价：
 
-* **A CI job declaration is not evidence that the job ran.** A `VERIFIED_CI` claim needs a specific
-  independently inspectable run and SHA; the Windows daemon module records one such release run.
-* **`SKIP` is not `PASS`.** The fork's own skips say so explicitly ("NOT a pass"), and one gate prints
-  `PARTIAL` with exit 0 by design.
+* **一个 CI 任务的声明，不是该任务运行过的证据。** 一个 `VERIFIED_CI` 主张需要一次具体、
+  可被独立检查的运行及其 SHA；Windows 守护进程模块记录了一次这样的发布运行。
+* **`SKIP` 不等于 `PASS`。** 本分支自己的跳过项明确说明了这一点（“NOT a pass”），并且有一个门禁
+  按设计以退出码 0 打印 `PARTIAL`。
 
-## Refresh policy
+## 刷新策略（Refresh policy）
 
-A refresh is an explicit maintenance operation: re-audit source, Git, tests and CI; update module
-provenance; then move the baseline. **Development commits do not require documentation edits.** Nothing
-in this directory needs to change when product code moves — only `BASELINE.md`'s "post-baseline
-delta" row tells a reader what to look at.
+刷新（refresh）是一次显式的维护操作：重新审计源码、Git、测试与 CI；更新模块
+来源；然后移动基线。**开发提交不需要修改文档。** 产品代码移动时，本目录中没有任何内容
+需要改变——只有 `BASELINE.md` 的“post-baseline delta”行告诉读者该看什么。
 
-The procedure to follow when a refresh *has* been explicitly requested is `REFRESH.md`. That file is
-the protocol; this section is only the policy, and normal development does not update `KNOWLEDGE/` at
-all.
+当刷新被 *显式* 请求时所要遵循的流程是 `REFRESH.md`。那份文件是协议；本节只是策略，正常开发
+根本不会更新 `KNOWLEDGE/`。
 
-## Modules
+## 模块（Modules）
 
-Route with `INDEX.md` first — it carries the exact section anchors and a reverse index by source path.
-This table is the coarse ownership map.
+先用 `INDEX.md` 路由——它带有精确的章节锚点和按源码路径组织的反向索引。
+这张表是粗粒度的所有权地图。
 
-| Module | Covers |
+| 模块 | 覆盖范围 |
 |---|---|
-| `modules/windows-daemon-security.md` | `experimental/boxdd/**`: the daemon/service/worker roles, the named-pipe peer handshake, executable and signer identity, Authenticode semantics, the signer pin, service installation, the update path |
-| `modules/core-lifecycle-runtime.md` | `adapter.Scope`, `Box` start/close order, `common/runtimecoord`, `route.ReferenceManager` |
-| `modules/path-selection-validation.md` | `common/physicalpath`, `common/routeflow`, start-time validation, `detour`, groups, cycles, failover |
-| `modules/dns-demand.md` | DNS transports, generations, cache commit, FakeIP, consumer demand |
-| `modules/dns-adblock-action.md` | the DNS-only `adblock` rule action: local NXDOMAIN + SOA, zero upstream, and why it is not `reject` or a negative-cache entry |
-| `modules/sniff.md` | sniffers, peek/read ownership, fragmented QUIC, the sniff→routing contract |
-| `modules/masque-connectip.md` | MASQUE endpoint and dataplane, capsules, sessions, DNS roles, MTU/PTB |
-| `modules/naive-http-transport.md` | Native Naive, `transport/http`, `http_clients`, the UoT target ACL |
-| `modules/xhttp-client-transport.md` | XHTTP / SplitHTTP client contract: `transport/v2rayxhttp`, modes, XMUX reuse, X-Padding |
-| `modules/fast-path-group-policy.md` | `fast_path`: the group-level policy field, its three states, and what it does not bypass |
-| `modules/data-path-optimization.md` | Direct Offload, traffic class, the upload scheduler, the dial governor |
-| `modules/buffer-ownership.md` | the buffer/zero-copy/splice rules that must not be optimised away |
-| `modules/power-mobile-lifecycle.md` | device axis, sleeps, screen/lock, trims, reuse bands, the timer census |
-| `modules/mtu-and-geometry.md` | the three MTU quantities, packet-size bounds, `common/bufgeom`, the low-memory profile |
-| `modules/libbox-platform-contract.md` | the client-facing ABI surface and the platform boundary |
-| `modules/child-repositories.md` | client gitlinks, nested dashboard, forked Go modules and controlled native pins, child branch heads |
-| `modules/mieru.md` | Mieru inbound/outbound, TCP/UDP underlays, opt-in fallback and session lifecycle |
-| `modules/build-pruning-release.md` | build tags, pruning, release profiles, generators, pins |
-| `modules/ci-release.md` | workflows, gates, evidence, and what may not be claimed |
+| `modules/windows-daemon-security.md` | `experimental/boxdd/**`：守护进程/服务/worker 角色、命名管道对端握手、可执行文件与签名者身份、Authenticode 语义、签名者 pin、服务安装、更新路径 |
+| `modules/core-lifecycle-runtime.md` | `adapter.Scope`、`Box` 启动/关闭顺序、`common/runtimecoord`、`route.ReferenceManager` |
+| `modules/path-selection-validation.md` | `common/physicalpath`、`common/routeflow`、启动期校验（start-time validation）、`detour`、组、环、故障转移 |
+| `modules/dns-demand.md` | DNS 传输、代次、缓存提交、FakeIP、消费者需求 |
+| `modules/dns-adblock-action.md` | 仅 DNS 的 `adblock` 规则动作：本地 NXDOMAIN + SOA、零上游，以及为什么它既不是 `reject` 也不是负缓存条目 |
+| `modules/sniff.md` | sniffer、peek/read 所有权、分片 QUIC、sniff→routing 契约 |
+| `modules/masque-connectip.md` | MASQUE 端点与数据面、capsule、会话、DNS 角色、MTU/PTB |
+| `modules/naive-http-transport.md` | Native Naive、`transport/http`、`http_clients`、UoT 目标 ACL |
+| `modules/xhttp-client-transport.md` | XHTTP / SplitHTTP 客户端契约：`transport/v2rayxhttp`、模式、XMUX 复用、X-Padding |
+| `modules/fast-path-group-policy.md` | `fast_path`：组级策略字段、它的三种状态，以及它不绕过什么 |
+| `modules/data-path-optimization.md` | Direct Offload、流量类别（traffic class）、上传调度器、拨号调速器（dial governor） |
+| `modules/buffer-ownership.md` | 不得被优化掉的缓冲区/零拷贝/splice 规则 |
+| `modules/power-mobile-lifecycle.md` | 设备轴、睡眠、屏幕/锁、裁剪、复用档位、定时器普查 |
+| `modules/mtu-and-geometry.md` | 三个 MTU 量、包大小边界、`common/bufgeom`、低内存配置档 |
+| `modules/libbox-platform-contract.md` | 面向客户端的 ABI 表面与平台边界 |
+| `modules/child-repositories.md` | 客户端 gitlink、嵌套 dashboard、分叉的 Go 模块与受控的原生 pin、子分支头 |
+| `modules/mieru.md` | Mieru 入站/出站、TCP/UDP 下层、需显式启用的回退与会话生命周期 |
+| `modules/build-pruning-release.md` | 构建标签、裁剪、发布配置档、生成器、pin |
+| `modules/ci-release.md` | 工作流、门禁、证据，以及不得主张的内容 |
 
-Fork-wide: `BASELINE.md`, `INDEX.md`, `PROJECT.md`, `ARCHITECTURE.md`, `INVARIANTS.md`,
-`ACCEPTANCE.md`, `PERFORMANCE-FACTORS.md`, `COMMIT-INDEX.md`, `REFRESH.md`.
+全分支范围：`BASELINE.md`、`INDEX.md`、`PROJECT.md`、`ARCHITECTURE.md`、`INVARIANTS.md`、
+`ACCEPTANCE.md`、`PERFORMANCE-FACTORS.md`、`COMMIT-INDEX.md`、`REFRESH.md`。
 
-## What this knowledge base does not cover
+## 本知识库不覆盖的内容（What this knowledge base does not cover）
 
-individual upstream protocol wire formats, the Clash/V2Ray API internals, and the Apple / Android /
-desktop **client** source — those are separate repositories, present as empty submodules in a clean
-worktree. `modules/README.md` says so explicitly rather than leaving silence to be mistaken for
-coverage.
+上游各协议自身的线格式（wire format）、Clash/V2Ray API 内部实现，以及 Apple / Android /
+桌面**客户端**源码——那些是独立的仓库，在干净工作树中表现为空的子模块（submodule）。`modules/README.md` 明确说明了这一点，
+而不是留下沉默让人误以为已有覆盖。
 
-**The Windows daemon (`experimental/boxdd/**`) is no longer in this list.** It was the last unowned
-changed subsystem and is now owned by `modules/windows-daemon-security.md` — with one honest limit that
-belongs here too: **its trust boundary has no documented end-to-end test.** A Windows test workflow
-is declared in `.github/workflows/windows-boxdd-tests.yml`; declaration alone does not prove a run. Owning
-the knowledge is not the same as proving the behaviour, and the module's §15 says which is which.
+**Windows 守护进程（`experimental/boxdd/**`）已不再在这个列表里。** 它曾是最后一个无主的
+变更子系统，现在由 `modules/windows-daemon-security.md` 拥有——同时还有一条同样属于此处的诚实限制：
+**它的信任边界没有文档化的端到端测试。** 一个 Windows 测试工作流
+在 `.github/workflows/windows-boxdd-tests.yml` 中声明；仅有声明并不证明运行过。拥有
+知识并不等于证明了行为，该模块的 §15 说明了二者的区别。

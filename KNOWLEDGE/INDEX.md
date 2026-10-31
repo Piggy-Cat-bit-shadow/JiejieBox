@@ -1,237 +1,237 @@
-# Knowledge index — route first, read narrowly
+# 知识索引 —— 先路由，再窄读（Knowledge index — route first, read narrowly）
 
-**This file answers one question: "I need to know X — where do I read?"** It is a router, not a
-second knowledge base. Entries are pointers; the truth lives in the module.
+**本文件只回答一个问题：“我需要了解 X —— 该去哪里读？”** 它是一张路由器，而不是第二个知识库。
+条目只是指针；事实真相存在于模块之中。
 
-> **Never bulk-read `KNOWLEDGE/`.** Route here first, then open the one or two sections the task
-> needs. Section names are navigation aids; historical line numbers and claims still require
-> verification at the target revision. See the calibration ledger for the current review scope.
+> **绝不要批量通读 `KNOWLEDGE/`。** 先在这里路由，然后只打开任务所需的那一两个章节。
+> 章节名称只是导航辅助；历史行号与论断仍需要在目标版本处验证。当前评审范围见校准台账
+> （calibration ledger）。
 
-## Entry points, by load level
+## 入口文件，按加载级别（Entry points, by load level）
 
-| File | Load when | Why |
+| 文件 | 加载时机 | 原因 |
 |---|---|---|
-| `../AGENTS.md` | **ALWAYS** | the three things that most often go wrong here |
-| `README.md` | **ALWAYS** | baseline pointer, status labels, evidence rules |
-| `INDEX.md` (this file) | **ALWAYS** | routing |
-| `BASELINE.md` | **ALWAYS** before trusting any module | the SHA the modules describe, and the delta since |
-| `modules/README.md` | TASK_MATCH | task → module map, fork vocabulary, coverage gaps |
-| `PROJECT.md` | TASK_MATCH | what the fork is and deliberately did not change |
-| `ARCHITECTURE.md` | TASK_MATCH | the eleven boundaries worth preserving |
-| `PERFORMANCE-FACTORS.md` | TASK_MATCH (speed) | 实测的速度关键参数与因素：三条第一原理、客户端/服务端参数表、症状路由、测量规则、已否决结论（无地址/凭据） |
-| `INVARIANTS.md` | **LOAD_BEARING_ONLY** | A1–A21 hard invariants vs conventions |
-| `ACCEPTANCE.md` | **VERIFICATION_ONLY** | requirement → evidence → re-check command |
-| `COMMIT-INDEX.md` | **PROVENANCE_ONLY** | the SHAs behind a behaviour, grouped by theme |
-| `REFRESH.md` | **REFRESH_ONLY** | the refresh protocol; not a task mode |
-| `CALIBRATION-2026-10-31.md` | **REFRESH_ONLY** | current delta, validation and inherited limits |
-| `CALIBRATION-2026-10-31-REVIEW.md` | **REFRESH_ONLY** | same-date comprehensive inventory, corrections and open findings |
-| `CALIBRATION-2026-10-29.md` | **REFRESH_ONLY** | preceding calibration and evidence |
-| `CALIBRATION-2026-10-28.md` | **REFRESH_ONLY** | completed calibration scope, evidence and remaining verification limits |
-| `docs/archive/**` | **HISTORY_ONLY** | how we got here; never current truth |
-| `sing-box_v0.1.5-v0.1.10_网络链路与Action-Release优化总结.md` | **HISTORY_ONLY** | the v0.1.5→v0.1.10 engineering narrative (link path + Action/Release); a point-in-time summary, not a module |
+| `../AGENTS.md` | **ALWAYS** | 这里最常出错的三件事 |
+| `README.md` | **ALWAYS** | 基线指针、状态标签、证据规则 |
+| `INDEX.md`（本文件） | **ALWAYS** | 路由 |
+| `BASELINE.md` | **ALWAYS**，在信任任何模块之前 | 模块所描述的 SHA，以及此后产生的增量 |
+| `modules/README.md` | TASK_MATCH | 任务 → 模块映射、fork 术语表、覆盖缺口 |
+| `PROJECT.md` | TASK_MATCH | fork 是什么，以及它刻意没有改动什么 |
+| `ARCHITECTURE.md` | TASK_MATCH | 值得保留的十一个边界 |
+| `PERFORMANCE-FACTORS.md` | TASK_MATCH（速度） | 实测的速度关键参数与因素：三条第一原理、客户端/服务端参数表、症状路由、测量规则、已否决结论（无地址/凭据） |
+| `INVARIANTS.md` | **LOAD_BEARING_ONLY** | A1–A21 硬性不变量与约定之别 |
+| `ACCEPTANCE.md` | **VERIFICATION_ONLY** | 需求 → 证据 → 复检命令 |
+| `COMMIT-INDEX.md` | **PROVENANCE_ONLY** | 某一行为背后的 SHA，按主题分组 |
+| `REFRESH.md` | **REFRESH_ONLY** | 刷新协议；不是一种任务模式 |
+| `CALIBRATION-2026-10-31.md` | **REFRESH_ONLY** | 当前增量、验证情况与继承下来的限制 |
+| `CALIBRATION-2026-10-31-REVIEW.md` | **REFRESH_ONLY** | 同日全面清单、更正与未决发现 |
+| `CALIBRATION-2026-10-29.md` | **REFRESH_ONLY** | 前一次校准及其证据 |
+| `CALIBRATION-2026-10-28.md` | **REFRESH_ONLY** | 已完成的校准范围、证据与剩余验证限制 |
+| `docs/archive/**` | **HISTORY_ONLY** | 我们如何走到这里；绝不是当前事实 |
+| `sing-box_v0.1.5-v0.1.10_网络链路与Action-Release优化总结.md` | **HISTORY_ONLY** | v0.1.5→v0.1.10 的工程叙事（链路路径 + Action/Release）；一份时点总结，而不是模块 |
 
-## Route by task
+## 按任务路由（Route by task）
 
-| If you are changing / asking about… | Module | Exact section |
+| 如果你正在修改/询问…… | 模块 | 精确章节 |
 |---|---|---|
-| 子仓库改造 / client gitlinks / 子仓库分支头 / 嵌套 dashboard / forked Go 模块 | `modules/child-repositories.md` | pinned sources, child changes and refresh rules |
-| Endpoint local flow, `JudgeHostFlow`, `HostPort` | `modules/masque-connectip.md` | endpoint-local flows through the TUN stack |
-| Release freeze, source lock, Apple single-runner | `modules/ci-release.md` | release freeze and Apple acceptance |
+| 子仓库改造 / client gitlinks / 子仓库分支头 / 嵌套 dashboard / forked Go 模块 | `modules/child-repositories.md` | 固定的源码、子仓库变更与刷新规则 |
+| 端点本地流程、`JudgeHostFlow`、`HostPort` | `modules/masque-connectip.md` | 贯穿 TUN 栈的端点本地流程 |
+| 发布冻结、源码锁定、Apple 单运行器 | `modules/ci-release.md` | 发布冻结与 Apple 验收 |
 | 速度慢 / 吞吐上不去 / 判断瓶颈在哪一层 | `PERFORMANCE-FACTORS.md` | §1 三条第一原理 → §4 症状路由 → §5 测量方法 |
 | XHTTP 上传慢 / 下载慢 / xmux 与连接数 | `PERFORMANCE-FACTORS.md` | §2 客户端参数（`xmux`）→ §3 服务端参数（h2 请求体缓冲） |
-| `Scope` teardown, `scope.Add` cleanup | `modules/core-lifecycle-runtime.md` | §1 `adapter.Scope` — the ownership primitive |
-| Box start order | `modules/core-lifecycle-runtime.md` | §2 → Start; locate `PreStart`, `Start`, `preStart` and `start` in `box.go` |
-| Box close order, teardown | `modules/core-lifecycle-runtime.md` | §2 → Close; locate `Close` and `close` in `box.go` |
-| network generation, rebuild lease, `runtimecoord` | `modules/core-lifecycle-runtime.md` | §3 one generation, identity-based leases |
-| TCP half-close liveness, observer limits and teardown | `modules/core-lifecycle-runtime.md` | network transition ownership; `route/conn_halfclose.go` |
-| Listener wildcard family, TUN read errors, SSH session retirement, Linux namespace holder | `modules/core-lifecycle-runtime.md` | additional entry and lifecycle boundaries |
-| `TrimMemory` vs `ReleaseMemory` | `modules/core-lifecycle-runtime.md` | §3 `TrimMemory` and `ReleaseMemory` are different |
-| idle retirement inventory, `route/reference.go` | `modules/core-lifecycle-runtime.md` | §4 `route.ReferenceManager` |
-| `TrimIdleResources` / `CloseIdleConnections` / `RetireSuspect` | `modules/core-lifecycle-runtime.md` | §4 that trio |
-| start-time validation, `PhysicalPath`, `ControlPath` | `modules/path-selection-validation.md` | §1 the three things that are not the same |
-| `ControlPath` direction | `modules/path-selection-validation.md` | §1 why `ControlPath` is NOT reversed |
-| what validation actually checks, in order | `modules/path-selection-validation.md` | §2 start-time validation |
-| `common/routeflow`, provable demand | `modules/path-selection-validation.md` | §3 |
-| selector/urltest groups, preview vs committed | `modules/path-selection-validation.md` | §4 selection is a preview until committed |
-| cycles, read-only guards | `modules/path-selection-validation.md` | §6 cycle detection |
-| `RequiredNetworks` — **not** a contract | `modules/path-selection-validation.md` | §5 an implementation detail, NOT a contract |
-| `fast_path` on a group | `modules/fast-path-group-policy.md` | §4 three-state semantics |
-| which outbound types may carry `fast_path` | `modules/fast-path-group-policy.md` | §5 |
-| what `fast_path: true` does **not** bypass | `modules/fast-path-group-policy.md` | §6 |
-| nested group precedence | `modules/fast-path-group-policy.md` | §8 |
-| dual-stack DNS, candidate admission and network transition ownership | `modules/dns-demand.md`, `modules/core-lifecycle-runtime.md` | post-baseline sections |
-| local/site/global family capability and IPv6 entry presentment | `modules/dns-demand.md`, `modules/libbox-platform-contract.md` | dual-stack admission and entry sections |
-| TUN reset before/after stack start | `modules/libbox-platform-contract.md` | post-baseline TUN reset handoff |
-| Naive H3 to H2 retry | `modules/naive-http-transport.md` | post-baseline fallback |
-| VLESS encryption layer and cancellation | `modules/xhttp-client-transport.md` | VLESS encryption boundary |
-| Mieru configuration, fallback and lifecycle | `modules/mieru.md`, `modules/path-selection-validation.md` | protocol integration and failure boundaries |
-| AnyTLS server address preference and error attribution | `modules/path-selection-validation.md` | AnyTLS server resolution and failure attribution |
-| ShadowTLS pre-auth timeout and handshake-target cleanup | `modules/core-lifecycle-runtime.md` | protocol ownership |
-| TLS engine selection, ECH retry and fork pins | `modules/build-pruning-release.md` | TLS engines and ECH retry |
-| Bridge L3 outbound, OpenVPN/OpenConnect registration and build tags | `modules/build-pruning-release.md` | protocol registration and build gates |
-| FakeIP known domain and fragmented QUIC sniff | `modules/sniff.md` | post-baseline FakeIP section |
-| DNS router, generations, cache commit | `modules/dns-demand.md` | §2 the cache-commit invariant |
+| `Scope` 拆卸、`scope.Add` 清理 | `modules/core-lifecycle-runtime.md` | §1 `adapter.Scope` —— 所有权原语 |
+| Box 启动顺序 | `modules/core-lifecycle-runtime.md` | §2 → Start；在 `box.go` 中定位 `PreStart`、`Start`、`preStart` 与 `start` |
+| Box 关闭顺序、拆卸 | `modules/core-lifecycle-runtime.md` | §2 → Close；在 `box.go` 中定位 `Close` 与 `close` |
+| 网络代次、重建租约、`runtimecoord` | `modules/core-lifecycle-runtime.md` | §3 一个代次、基于身份的租约 |
+| TCP 半关闭存活检测、观察者限制与拆卸 | `modules/core-lifecycle-runtime.md` | 网络切换所有权；`route/conn_halfclose.go` |
+| 监听器通配族、TUN 读取错误、SSH 会话退役、Linux namespace 持有者 | `modules/core-lifecycle-runtime.md` | 附加入口与生命周期边界 |
+| `TrimMemory` 与 `ReleaseMemory` 之别 | `modules/core-lifecycle-runtime.md` | §3 `TrimMemory` 与 `ReleaseMemory` 不是一回事 |
+| 空闲退役清单、`route/reference.go` | `modules/core-lifecycle-runtime.md` | §4 `route.ReferenceManager` |
+| `TrimIdleResources` / `CloseIdleConnections` / `RetireSuspect` | `modules/core-lifecycle-runtime.md` | §4 这三个方法 |
+| 启动期校验、`PhysicalPath`、`ControlPath` | `modules/path-selection-validation.md` | §1 三件并不相同的事 |
+| `ControlPath` 的方向 | `modules/path-selection-validation.md` | §1 为什么 `ControlPath` 不是反向的 |
+| 校验实际按什么顺序检查什么 | `modules/path-selection-validation.md` | §2 启动期校验 |
+| `common/routeflow`、可证明的需求 | `modules/path-selection-validation.md` | §3 |
+| selector/urltest 组、预览态与已提交态 | `modules/path-selection-validation.md` | §4 选择在提交之前只是预览 |
+| 环、只读守卫 | `modules/path-selection-validation.md` | §6 环检测 |
+| `RequiredNetworks` —— **不是**契约 | `modules/path-selection-validation.md` | §5 实现细节，**不是**契约 |
+| 某个组上的 `fast_path` | `modules/fast-path-group-policy.md` | §4 三态语义 |
+| 哪些出站类型可以携带 `fast_path` | `modules/fast-path-group-policy.md` | §5 |
+| `fast_path: true` **不会**绕过什么 | `modules/fast-path-group-policy.md` | §6 |
+| 嵌套组的优先级 | `modules/fast-path-group-policy.md` | §8 |
+| 双栈 DNS、候选准入与网络切换所有权 | `modules/dns-demand.md`, `modules/core-lifecycle-runtime.md` | 基线之后新增的章节 |
+| local/site/global 族能力与 IPv6 入口呈现 | `modules/dns-demand.md`, `modules/libbox-platform-contract.md` | 双栈准入与入口相关章节 |
+| 栈启动前后的 TUN 重置 | `modules/libbox-platform-contract.md` | 基线之后的 TUN 重置交接 |
+| Naive 从 H3 回退到 H2 重试 | `modules/naive-http-transport.md` | 基线之后的回退 |
+| VLESS 加密层与取消 | `modules/xhttp-client-transport.md` | VLESS 加密边界 |
+| Mieru 配置、回退与生命周期 | `modules/mieru.md`, `modules/path-selection-validation.md` | 协议集成与失败边界 |
+| AnyTLS 服务器地址偏好与错误归因 | `modules/path-selection-validation.md` | AnyTLS 服务器解析与失败归因 |
+| ShadowTLS 预认证超时与握手目标清理 | `modules/core-lifecycle-runtime.md` | 协议所有权 |
+| TLS 引擎选择、ECH 重试与 fork 固定版本 | `modules/build-pruning-release.md` | TLS 引擎与 ECH 重试 |
+| Bridge L3 出站、OpenVPN/OpenConnect 注册与构建标签 | `modules/build-pruning-release.md` | 协议注册与构建门禁 |
+| FakeIP 已知域名与分片 QUIC 嗅探 | `modules/sniff.md` | 基线之后的 FakeIP 章节 |
+| DNS 路由器、代次、缓存提交 | `modules/dns-demand.md` | §2 缓存提交不变量 |
 | FakeIP | `modules/dns-demand.md` | §3 |
-| consumer demand | `modules/dns-demand.md` | §4 |
-| the QNAME-wide NXDOMAIN negative cache: what may widen to a name, hit/TTL semantics, capacity, `disable_expire` | `modules/dns-demand.md` | "The QNAME-wide NXDOMAIN negative cache" section |
-| DNS leaks | `modules/dns-demand.md` | §5 DNS leaks and the reach of DNS |
-| the `adblock` DNS action, blocking ad names with a local NXDOMAIN | `modules/dns-adblock-action.md` | §2 syntax, §3 behaviour, §8 placement |
-| `systemd-resolved` goroutine leak | `modules/dns-demand.md` | §6 — fixed; the doc saying otherwise is stale |
-| any sniffer, peek/read ownership | `modules/sniff.md` | §2 ownership |
-| sniff loops, fragmented QUIC | `modules/sniff.md` | §3 the two loops → Packet |
-| sniff → routing metadata contract | `modules/sniff.md` | §4 |
-| sniff detection weaknesses **not** fixed | `modules/sniff.md` | §6 |
-| MASQUE dataplane, capsules, sessions | `modules/masque-connectip.md` | §1 `transport/masque` |
-| MASQUE endpoint | `modules/masque-connectip.md` | §2 `protocol/masque` |
-| the two MASQUE resolvers | `modules/masque-connectip.md` | §3 not interchangeable |
+| 消费方需求 | `modules/dns-demand.md` | §4 |
+| QNAME 级 NXDOMAIN 否定缓存：什么情况下可以放宽到名字层级、命中/TTL 语义、容量、`disable_expire` | `modules/dns-demand.md` | “The QNAME-wide NXDOMAIN negative cache”一节 |
+| DNS 泄漏 | `modules/dns-demand.md` | §5 DNS 泄漏与 DNS 的作用范围 |
+| `adblock` DNS 动作 —— 用本地 NXDOMAIN 拦截广告域名 | `modules/dns-adblock-action.md` | §2 语法、§3 行为、§8 放置位置 |
+| `systemd-resolved` goroutine 泄漏 | `modules/dns-demand.md` | §6 —— 已修复；说有问题的文档已过时 |
+| 任何嗅探器、peek/read 所有权 | `modules/sniff.md` | §2 所有权 |
+| 嗅探循环、分片 QUIC | `modules/sniff.md` | §3 两个循环 → Packet |
+| 嗅探 → 路由元数据契约 | `modules/sniff.md` | §4 |
+| 嗅探检测中**未**修复的薄弱点 | `modules/sniff.md` | §6 |
+| MASQUE 数据面、capsule、会话 | `modules/masque-connectip.md` | §1 `transport/masque` |
+| MASQUE 端点 | `modules/masque-connectip.md` | §2 `protocol/masque` |
+| 两个 MASQUE 解析器 | `modules/masque-connectip.md` | §3 两者不可互换 |
 | MASQUE MTU / PTB | `modules/masque-connectip.md` | §4 |
-| Native Naive inbound | `modules/naive-http-transport.md` | §2 server inbound behaviour |
-| UoT v1/v2 | `modules/naive-http-transport.md` | §2 → UoT v1/v2 — the distinction that matters |
-| Naive target ACL / SSRF | `modules/naive-http-transport.md` | §3 the highest-risk area |
-| `transport/http`, `common/httpclient` | `modules/naive-http-transport.md` | §4 |
-| XHTTP modes | `modules/xhttp-client-transport.md` | §4 modes |
-| XHTTP field reference | `modules/xhttp-client-transport.md` | §5 full field reference |
-| XMUX reuse, all-or-nothing default | `modules/xhttp-client-transport.md` | §13.4 the important all-or-nothing default rule |
-| XHTTP fork lifecycle / trim / reuse | `modules/xhttp-client-transport.md` | §14 fork-specific XMUX lifecycle behaviour |
-| packet-up POST cadence, high-RTT throughput, response pipeline | `modules/xhttp-client-transport.md` | §12.3 post cadence, and why response completion is not pipelined |
+| 原生 Naive 入站 | `modules/naive-http-transport.md` | §2 服务端入站行为 |
+| UoT v1/v2 | `modules/naive-http-transport.md` | §2 → UoT v1/v2 —— 真正重要的区别 |
+| Naive 目标 ACL / SSRF | `modules/naive-http-transport.md` | §3 风险最高的区域 |
+| `transport/http`、`common/httpclient` | `modules/naive-http-transport.md` | §4 |
+| XHTTP 模式 | `modules/xhttp-client-transport.md` | §4 模式 |
+| XHTTP 字段参考 | `modules/xhttp-client-transport.md` | §5 完整字段参考 |
+| XMUX 复用、全有或全无的默认设定 | `modules/xhttp-client-transport.md` | §13.4 重要的全有或全无语义默认规则 |
+| XHTTP fork 生命周期 / 裁剪 / 复用 | `modules/xhttp-client-transport.md` | §14 fork 特有的 XMUX 生命周期行为 |
+| packet-up POST 节奏、高 RTT 吞吐、响应流水线 | `modules/xhttp-client-transport.md` | §12.3 POST 节奏，以及响应完成为何不做流水线化 |
 | Direct Offload | `modules/data-path-optimization.md` | Part A |
-| traffic class + upload scheduler | `modules/data-path-optimization.md` | Part B |
-| dial governor | `modules/data-path-optimization.md` | Part C |
-| buffer rules, borrowed views, batches | `modules/buffer-ownership.md` | §1 the rules, each with what breaks |
-| splice setup handover and historical fallback defect | `modules/buffer-ownership.md` | §2 the splice path |
-| MTU quantities (three, not one) | `modules/mtu-and-geometry.md` | §1 |
+| 流量类别 + 上传调度器 | `modules/data-path-optimization.md` | Part B |
+| 拨号调速器（dial governor） | `modules/data-path-optimization.md` | Part C |
+| 缓冲区规则、借用视图、批处理 | `modules/buffer-ownership.md` | §1 这些规则，以及每条被违反时会坏什么 |
+| splice 建立交接与历史回退缺陷 | `modules/buffer-ownership.md` | §2 splice 路径 |
+| MTU 数量（三个，不是一个） | `modules/mtu-and-geometry.md` | §1 |
 | PTB | `modules/mtu-and-geometry.md` | §2 |
-| `common/bufgeom` geometry | `modules/mtu-and-geometry.md` | §4 |
-| low-memory geometry profile | `modules/mtu-and-geometry.md` | §5 |
-| sleep/wake/screen/lock | `modules/power-mobile-lifecycle.md` | §2 level/edge/snapshot vocabularies |
-| device axis, `ReuseSuspect` | `modules/power-mobile-lifecycle.md` | §7 |
-| timer census | `modules/power-mobile-lifecycle.md` | §6 |
-| OOM pressure, layered reclaim, reset and stop/reload barriers | `modules/power-mobile-lifecycle.md` | §4 OOM reclaim coordination |
-| Android trim ladder | `modules/power-mobile-lifecycle.md` | §3 |
-| libbox ABI, `SetupOptions` | `modules/libbox-platform-contract.md` | §1, §5 ABI versioning |
+| `common/bufgeom` 几何计算 | `modules/mtu-and-geometry.md` | §4 |
+| 低内存几何档位（geometry profile） | `modules/mtu-and-geometry.md` | §5 |
+| 睡眠/唤醒/息屏/锁屏 | `modules/power-mobile-lifecycle.md` | §2 级别/边沿/快照词汇表 |
+| 设备轴、`ReuseSuspect` | `modules/power-mobile-lifecycle.md` | §7 |
+| 定时器普查 | `modules/power-mobile-lifecycle.md` | §6 |
+| OOM 压力、分层回收、重置与停止/重载屏障 | `modules/power-mobile-lifecycle.md` | §4 OOM 回收协调 |
+| Android 裁剪阶梯 | `modules/power-mobile-lifecycle.md` | §3 |
+| libbox ABI、`SetupOptions` | `modules/libbox-platform-contract.md` | §1、§5 ABI 版本化 |
 | CommandServer / CommandClient | `modules/libbox-platform-contract.md` | §4 |
-| Apple pin and its gap | `modules/libbox-platform-contract.md` | §6 the Apple pin — and the gap |
-| the two deliberate upstream interface breaks | `modules/libbox-platform-contract.md` | §8 |
-| build tags, pruning, tag-polar pairs | `modules/build-pruning-release.md` | §2 tag-polar file pairs with `_stub` twins |
-| release profiles | `modules/build-pruning-release.md` | §3 |
-| pinned dependency prefix rule | `modules/build-pruning-release.md` | §5 a prefix problem, not a list problem |
-| generators, `cmd/internal/*` | `modules/build-pruning-release.md` | §4 |
-| what CI actually runs | `modules/ci-release.md` | §1 what actually runs |
-| **unwired gates — the systemic risk** | `modules/ci-release.md` | §2 |
-| `verify-evidence/` staleness | `modules/ci-release.md` | §3 |
-| re-check commands to run | `modules/ci-release.md` | §4 the commands a re-checker must actually run |
-| release provenance | `modules/ci-release.md` | §5 release provenance |
+| Apple 固定点及其缺口 | `modules/libbox-platform-contract.md` | §6 Apple 固定点 —— 以及那个缺口 |
+| 两处刻意的上游接口破坏 | `modules/libbox-platform-contract.md` | §8 |
+| 构建标签、裁剪、标签极性文件对 | `modules/build-pruning-release.md` | §2 带 `_stub` 孪生文件的标签极性文件对 |
+| 发布档位 | `modules/build-pruning-release.md` | §3 |
+| 固定依赖前缀规则 | `modules/build-pruning-release.md` | §5 是前缀问题，不是清单问题 |
+| 生成器、`cmd/internal/*` | `modules/build-pruning-release.md` | §4 |
+| CI 实际运行了什么 | `modules/ci-release.md` | §1 实际运行的内容 |
+| **未接线的门禁 —— 系统性风险** | `modules/ci-release.md` | §2 |
+| `verify-evidence/` 的陈旧问题 | `modules/ci-release.md` | §3 |
+| 需要运行的复检命令 | `modules/ci-release.md` | §4 复检者必须真正运行的命令 |
+| 发布溯源 | `modules/ci-release.md` | §5 发布溯源 |
 
-## Route by keyword / alias
+## 按关键词/别名路由（Route by keyword / alias）
 
-| Query or alias | Canonical topic | Where |
+| 查询或别名 | 规范主题 | 位置 |
 |---|---|---|
-| direct, direct offload, L0, native bypass, fast path, fast_path, bypass | fast_path has **two** meanings — check which | group policy → `modules/fast-path-group-policy.md` §2; per-flow offload → `modules/data-path-optimization.md` Part A |
-| sleep, screen off, lock, pause, wake, governor, reload window, device axis | power and mobile lifecycle | `modules/power-mobile-lifecycle.md` §2, §5 |
-| epoch, generation, lease, rebuild, reuse band | runtime coordination | `modules/core-lifecycle-runtime.md` §3 |
-| trim, low memory, memory pressure, ReleaseMemory | memory policy | `modules/core-lifecycle-runtime.md` §3; Android ladder `modules/power-mobile-lifecycle.md` §3 |
-| zero-copy, splice, splice defect, buffer pool, batch | buffer ownership | `modules/buffer-ownership.md` §1–2 |
+| direct, direct offload, L0, native bypass, fast path, fast_path, bypass | fast_path 有**两种**含义 —— 先确认是哪一种 | 组策略 → `modules/fast-path-group-policy.md` §2；按流转卸载 → `modules/data-path-optimization.md` Part A |
+| sleep, screen off, lock, pause, wake, governor, reload window, device axis | 电源与移动端生命周期 | `modules/power-mobile-lifecycle.md` §2, §5 |
+| epoch, generation, lease, rebuild, reuse band | 运行时协调 | `modules/core-lifecycle-runtime.md` §3 |
+| trim, low memory, memory pressure, ReleaseMemory | 内存策略 | `modules/core-lifecycle-runtime.md` §3；Android 阶梯 `modules/power-mobile-lifecycle.md` §3 |
+| zero-copy, splice, splice defect, buffer pool, batch | 缓冲区所有权 | `modules/buffer-ownership.md` §1–2 |
 | FakeIP, cache commit, DNS leak, domain_resolver | DNS | `modules/dns-demand.md` §2–5 |
-| nxdomain, negative cache, negative TTL, QNAME-wide verdict, `nxdomainCache` | the NXDOMAIN name cache | `modules/dns-demand.md` "The QNAME-wide NXDOMAIN negative cache"; invariant `INVARIANTS.md` A21 |
-| adblock, ad blocking, advertising rule-set, NXDOMAIN verdict, negative caching of a blocked name, "why not reject" | the adblock action | `modules/dns-adblock-action.md` §1, §5, §7 |
-| peek, read ownership, fragmented QUIC, unsniffable | sniff | `modules/sniff.md` §2–3 |
+| nxdomain, negative cache, negative TTL, QNAME-wide verdict, `nxdomainCache` | NXDOMAIN 域名缓存 | `modules/dns-demand.md` “The QNAME-wide NXDOMAIN negative cache”；不变量 `INVARIANTS.md` A21 |
+| adblock, ad blocking, advertising rule-set, NXDOMAIN verdict, negative caching of a blocked name, "why not reject" | adblock 动作 | `modules/dns-adblock-action.md` §1, §5, §7 |
+| peek, read ownership, fragmented QUIC, unsniffable | 嗅探 | `modules/sniff.md` §2–3 |
 | CONNECT-IP, capsule, DATAGRAM, PREF64, PTB | MASQUE | `modules/masque-connectip.md` |
 | UoT, masquerade, padding, `server_limits`, SSRF | Naive | `modules/naive-http-transport.md` §2–3 |
 | XMUX, stream-one, packet-up, splitHTTP, X-Padding, H2/H3 | XHTTP | `modules/xhttp-client-transport.md` |
-| traffic_class, traffic_scheduler, backpressure, pacing | data path | `modules/data-path-optimization.md` Part B |
-| tag stub, pruning, registry, DEFAULT_BUILD_TAGS | build | `modules/build-pruning-release.md` §1–3 |
-| schema, schema.json, option/schema.go, generated docs, stale generated artifact | the generated-schema chain and its re-check contract | `modules/build-pruning-release.md` §4; `modules/README.md` §Additional ownership and coverage limits (schema row) |
-| release authority, release contract, canonical asset list, asset allowlist, artifact provenance, exact-SHA provenance, checksum, read-back, draft-first, dry-run, `publish-args`, `expected-assets`, `verify-public-release`, single source of release truth | CI and release provenance | `modules/ci-release.md` §1, §5 |
-| pipeline DAG, unwired gate, duplicate gate, gate ownership, which workflow runs what | CI gate ownership | `modules/ci-release.md` §1–2 |
-| SIGPIPE, pipefail, exit-code false negative in a gate | shell-gate correctness | **history only**: `reports/core/_ci_reaudit.md`; no current module section owns it |
-| Apple source authority, Android AAR provenance, Windows artifact provenance, Unix/macOS release authority | per-platform artifact provenance | `modules/ci-release.md` §5; `modules/libbox-platform-contract.md` §6–7 |
-| Windows daemon, boxdd, Named Pipe, peer authentication, service install, worker, executable identity, signer trust, Authenticode, certificate validity, code-signing EKU, same-file check | the Windows daemon trust boundary | `modules/windows-daemon-security.md` |
-| unwired gate, stale evidence, VERIFIED_CI, SKIP | evidence discipline | `modules/ci-release.md` §2–3; `README.md` §the four status labels |
-| orphan, provenance, patch-id, upstream twin | Git provenance | `BASELINE.md` §the provenance test |
-| tag scheme, annotated tag, release identity | release identity | `BASELINE.md` §Fork release lineage; §The three traps this repository has already paid for |
-| baseline, delta, "is the KB current?" | baseline | `BASELINE.md` §post-baseline incremental reading |
+| traffic_class, traffic_scheduler, backpressure, pacing | 数据路径 | `modules/data-path-optimization.md` Part B |
+| tag stub, pruning, registry, DEFAULT_BUILD_TAGS | 构建 | `modules/build-pruning-release.md` §1–3 |
+| schema, schema.json, option/schema.go, generated docs, stale generated artifact | 生成式 schema 链条及其复检契约 | `modules/build-pruning-release.md` §4；`modules/README.md` §Additional ownership and coverage limits（schema 行） |
+| release authority, release contract, canonical asset list, asset allowlist, artifact provenance, exact-SHA provenance, checksum, read-back, draft-first, dry-run, `publish-args`, `expected-assets`, `verify-public-release`, single source of release truth | CI 与发布溯源 | `modules/ci-release.md` §1, §5 |
+| pipeline DAG, unwired gate, duplicate gate, gate ownership, which workflow runs what | CI 门禁所有权 | `modules/ci-release.md` §1–2 |
+| SIGPIPE, pipefail, exit-code false negative in a gate | shell 门禁正确性 | **仅历史**：`reports/core/_ci_reaudit.md`；当前没有模块章节负责它 |
+| Apple source authority, Android AAR provenance, Windows artifact provenance, Unix/macOS release authority | 各平台构建产物溯源 | `modules/ci-release.md` §5；`modules/libbox-platform-contract.md` §6–7 |
+| Windows daemon, boxdd, Named Pipe, peer authentication, service install, worker, executable identity, signer trust, Authenticode, certificate validity, code-signing EKU, same-file check | Windows 守护进程信任边界 | `modules/windows-daemon-security.md` |
+| unwired gate, stale evidence, VERIFIED_CI, SKIP | 证据纪律 | `modules/ci-release.md` §2–3；`README.md` §the four status labels |
+| orphan, provenance, patch-id, upstream twin | Git 溯源 | `BASELINE.md` §the provenance test |
+| tag scheme, annotated tag, release identity | 发布身份 | `BASELINE.md` §Fork release lineage; §The three traps this repository has already paid for |
+| baseline, delta, "is the KB current?" | 基线 | `BASELINE.md` §post-baseline incremental reading |
 
-## Route by source path
+## 按源码路径路由（Route by source path）
 
-| Path or symbol | Primary module | Section |
+| 路径或符号 | 主要模块 | 章节 |
 |---|---|---|
-| `box.go` | `modules/core-lifecycle-runtime.md` | §2 start/close ordering |
-| `adapter/lifecycle.go`, `adapter.Scope` | `modules/core-lifecycle-runtime.md` | §1 |
+| `box.go` | `modules/core-lifecycle-runtime.md` | §2 启动/关闭顺序 |
+| `adapter/lifecycle.go`、`adapter.Scope` | `modules/core-lifecycle-runtime.md` | §1 |
 | `common/runtimecoord` | `modules/core-lifecycle-runtime.md` | §3 |
-| `route/reference.go`, `ReferenceManager` | `modules/core-lifecycle-runtime.md` | §4 |
-| `common/physicalpath`, `common/routeflow` | `modules/path-selection-validation.md` | §2–3 |
-| `route/fast_path.go`, `option/fast_path.go` | `modules/fast-path-group-policy.md` | §2, §11 |
-| `protocol/group/selector.go`, `protocol/group/urltest.go` | `modules/path-selection-validation.md` + `modules/fast-path-group-policy.md` | §4 / §9 |
-| `common/trafficclass`, `common/trafficsched` | `modules/data-path-optimization.md` | Part B |
+| `route/reference.go`、`ReferenceManager` | `modules/core-lifecycle-runtime.md` | §4 |
+| `common/physicalpath`、`common/routeflow` | `modules/path-selection-validation.md` | §2–3 |
+| `route/fast_path.go`、`option/fast_path.go` | `modules/fast-path-group-policy.md` | §2, §11 |
+| `protocol/group/selector.go`、`protocol/group/urltest.go` | `modules/path-selection-validation.md` + `modules/fast-path-group-policy.md` | §4 / §9 |
+| `common/trafficclass`、`common/trafficsched` | `modules/data-path-optimization.md` | Part B |
 | `common/bufgeom` | `modules/mtu-and-geometry.md` §4 + `modules/buffer-ownership.md` §1.1 |
 | `common/power` | `modules/power-mobile-lifecycle.md` | §1–2 |
 | `internal/memmetrics` | `modules/power-mobile-lifecycle.md` | §4 |
 | `dns/transport/group` | `modules/dns-demand.md` | §1, §4 |
-| `dns/client_negative.go` — QNAME-wide NXDOMAIN verdicts | `modules/dns-demand.md` | "The QNAME-wide NXDOMAIN negative cache" |
-| `route/rule/rule_action.go` → `RuleActionAdblock`, `dns/router.go` → `walkDNSRules`, `constant/dns.go` → `DefaultDNSNegativeTTL` | `modules/dns-adblock-action.md` | §8 placement, §13 TTL choice |
-| `transport/masque`, `protocol/masque` | `modules/masque-connectip.md` | §1–2 |
-| `protocol/naive`, `transport/http`, `common/httpclient` | `modules/naive-http-transport.md` | §2, §4 |
+| `dns/client_negative.go` —— QNAME 级 NXDOMAIN 判定 | `modules/dns-demand.md` | “The QNAME-wide NXDOMAIN negative cache” |
+| `route/rule/rule_action.go` → `RuleActionAdblock`、`dns/router.go` → `walkDNSRules`、`constant/dns.go` → `DefaultDNSNegativeTTL` | `modules/dns-adblock-action.md` | §8 放置位置、§13 TTL 选择 |
+| `transport/masque`、`protocol/masque` | `modules/masque-connectip.md` | §1–2 |
+| `protocol/naive`、`transport/http`、`common/httpclient` | `modules/naive-http-transport.md` | §2, §4 |
 | `transport/v2rayxhttp` | `modules/xhttp-client-transport.md` | §1–22 |
-| `experimental/libbox`, `daemon/` | `modules/libbox-platform-contract.md` | §1, §4 |
-| `cmd/internal/*`, `release/*` | `modules/build-pruning-release.md` | §4, §6 |
-| `option/schema.go`, `docs/schema.json`, `schema/generate.go` — the generated schema artifact | `modules/build-pruning-release.md` §4 (the generator) + `modules/README.md` §Additional ownership and coverage limits (schema row) | §4 / the schema row |
-| `.github/workflows/*`, `scripts/ci/*` | `modules/ci-release.md` | §1–5 |
-| `protocol/vless/encryption` | `modules/xhttp-client-transport.md` | VLESS encryption boundary |
-| `experimental/boxdd/**` — the Windows daemon, service, worker, named pipe | `modules/windows-daemon-security.md` | §1 (roles), §4 (handshake), §5 (Authenticode), §6 (the pin) |
-| `clients/{apple,android,desktop}` | separate repositories; only the core side is recorded | `modules/libbox-platform-contract.md` §6–7 |
+| `experimental/libbox`、`daemon/` | `modules/libbox-platform-contract.md` | §1, §4 |
+| `cmd/internal/*`、`release/*` | `modules/build-pruning-release.md` | §4, §6 |
+| `option/schema.go`、`docs/schema.json`、`schema/generate.go` —— 生成的 schema 产物 | `modules/build-pruning-release.md` §4（生成器） + `modules/README.md` §Additional ownership and coverage limits（schema 行） | §4 / schema 行 |
+| `.github/workflows/*`、`scripts/ci/*` | `modules/ci-release.md` | §1–5 |
+| `protocol/vless/encryption` | `modules/xhttp-client-transport.md` | VLESS 加密边界 |
+| `experimental/boxdd/**` —— Windows 守护进程、服务、worker、命名管道 | `modules/windows-daemon-security.md` | §1（角色）、§4（握手）、§5（Authenticode）、§6（固定点） |
+| `clients/{apple,android,desktop}` | 独立仓库；只记录核心侧 | `modules/libbox-platform-contract.md` §6–7 |
 
-## Route by invariant / acceptance
+## 按不变量/验收路由（Route by invariant / acceptance）
 
-| Question | Where |
+| 问题 | 位置 |
 |---|---|
-| Is this rule load-bearing or just a convention? | `INVARIANTS.md` §A hard vs §B conventions vs §C strategies vs §D implementation details |
-| Which invariant owns `Scope` teardown? | `INVARIANTS.md` A1 |
-| Which owns leases / "one recovery at a time"? | `INVARIANTS.md` A2 |
-| Which owns buffer ownership? | `INVARIANTS.md` A6, A7 |
-| Which owns NXDOMAIN name-wide widening? | `INVARIANTS.md` A21 |
-| Which owns release re-verification? | `INVARIANTS.md` A12; `ACCEPTANCE.md` §12 |
-| Which owns fail-closed release acceptance? | `INVARIANTS.md` A20 |
-| Which owns the tag-stub rule? | `INVARIANTS.md` A16 |
-| Which owns upstream/fork ownership boundary? | `INVARIANTS.md` A15 |
-| How do I re-check a subsystem? | `ACCEPTANCE.md` — the numbered section matching the module |
-| Known flaky / known-failing? | `ACCEPTANCE.md` §Known-failing and known-flaky set |
-| Standing limits of the fork? | `ACCEPTANCE.md` §The fork's own standing limits |
+| 这条规则是承重的，还是仅仅是约定？ | `INVARIANTS.md` §A 硬性不变量 vs §B 约定 vs §C 策略 vs §D 实现细节 |
+| 哪条不变量负责 `Scope` 拆卸？ | `INVARIANTS.md` A1 |
+| 哪条负责租约 / “一次只做一次恢复”？ | `INVARIANTS.md` A2 |
+| 哪条负责缓冲区所有权？ | `INVARIANTS.md` A6, A7 |
+| 哪条负责 NXDOMAIN 的名字级放宽？ | `INVARIANTS.md` A21 |
+| 哪条负责发布复验？ | `INVARIANTS.md` A12；`ACCEPTANCE.md` §12 |
+| 哪条负责失败即拒绝的发布验收？ | `INVARIANTS.md` A20 |
+| 哪条负责标签 stub 规则？ | `INVARIANTS.md` A16 |
+| 哪条负责上游/fork 所有权边界？ | `INVARIANTS.md` A15 |
+| 我如何复检一个子系统？ | `ACCEPTANCE.md` —— 与模块对应的编号章节 |
+| 已知不稳定 / 已知失败？ | `ACCEPTANCE.md` §Known-failing and known-flaky set |
+| fork 的长期限制？ | `ACCEPTANCE.md` §The fork's own standing limits |
 
-## Historical topics → current truth
+## 历史主题 → 当前事实（Historical topics → current truth）
 
-Archive reports are **clues, not current truth** (`REFRESH.md` §2). For a topic that has an archived
-report, read the module first and the archive only for how the decision was reached.
+归档报告是**线索，而不是当前事实**（`REFRESH.md` §2）。对于一个已有归档报告的主题，
+先读模块，只在了解决策是如何形成时才去读归档。
 
-| Historical topic | Current truth lives in |
+| 历史主题 | 当前事实所在位置 |
 |---|---|
-| fast_path group policy | `modules/fast-path-group-policy.md` |
-| L0 / direct coverage | `modules/data-path-optimization.md` Part A |
-| physical path / route-aware capability validation | `modules/path-selection-validation.md` §1–3 |
-| DNS parity / consumer demand | `modules/dns-demand.md` §4 |
-| WireGuard lifecycle / census probes | `modules/core-lifecycle-runtime.md` §3; `COMMIT-INDEX.md` |
-| Apple source authority / exact-SHA resolution | `modules/libbox-platform-contract.md` §6 |
-| Android build / AAR pipeline | `modules/libbox-platform-contract.md` §7; `modules/build-pruning-release.md` |
-| Windows runtime / capability gates | `modules/windows-daemon-security.md` §1, §5; historical `modules/libbox-platform-contract.md` §8 |
-| CI DAG / duplicate gate removal | `modules/ci-release.md` §1–2 |
-| release artifact trust boundary | `modules/ci-release.md` §5; `INVARIANTS.md` A12, A20 |
-| tag handling security | `INVARIANTS.md` A16; `modules/ci-release.md` §5 |
-| SIGPIPE / pipefail false-negative fixes | `modules/ci-release.md` §5; `COMMIT-INDEX.md` §10 |
-| upstream absorbed changes | `BASELINE.md` §the provenance test; `COMMIT-INDEX.md` provenance vocabulary |
-| sing-tun absorbed/fork fixes | `modules/build-pruning-release.md` §5; `modules/mtu-and-geometry.md` |
-| release allowlist / checksum / dry-run / read-back | `modules/ci-release.md` §5; `ACCEPTANCE.md` §12 |
-| Anywhere round-two research, construction and DNS/rule-set/MASQUE/QUIC ownership work | `reports/anywhere-round2/README.md` (archive); current behaviour still owned by the modules |
+| fast_path 组策略 | `modules/fast-path-group-policy.md` |
+| L0 / direct 覆盖 | `modules/data-path-optimization.md` Part A |
+| 物理路径 / 路由感知的能力校验 | `modules/path-selection-validation.md` §1–3 |
+| DNS 对齐 / 消费方需求 | `modules/dns-demand.md` §4 |
+| WireGuard 生命周期 / 普查探针 | `modules/core-lifecycle-runtime.md` §3；`COMMIT-INDEX.md` |
+| Apple 源码权威 / 精确 SHA 解析 | `modules/libbox-platform-contract.md` §6 |
+| Android 构建 / AAR 流水线 | `modules/libbox-platform-contract.md` §7；`modules/build-pruning-release.md` |
+| Windows 运行时 / 能力门禁 | `modules/windows-daemon-security.md` §1, §5；历史位置 `modules/libbox-platform-contract.md` §8 |
+| CI DAG / 重复门禁的移除 | `modules/ci-release.md` §1–2 |
+| 发布产物信任边界 | `modules/ci-release.md` §5；`INVARIANTS.md` A12, A20 |
+| 标签处理安全性 | `INVARIANTS.md` A16；`modules/ci-release.md` §5 |
+| SIGPIPE / pipefail 假阴性修复 | `modules/ci-release.md` §5；`COMMIT-INDEX.md` §10 |
+| 上游被吸收的变更 | `BASELINE.md` §the provenance test；`COMMIT-INDEX.md` 的溯源词汇表 |
+| sing-tun 被吸收的修复 / fork 修复 | `modules/build-pruning-release.md` §5；`modules/mtu-and-geometry.md` |
+| 发布允许清单 / 校验和 / 试运行 / 回读 | `modules/ci-release.md` §5；`ACCEPTANCE.md` §12 |
+| Anywhere 第二轮研究、构建，以及 DNS/规则集/MASQUE/QUIC 所有权工作 | `reports/anywhere-round2/README.md`（归档）；当前行为仍由各模块负责 |
 
-## Maintenance
+## 维护（Maintenance）
 
-`modules/README.md` is the **module registry and ownership map** (coarse: task → module).
-This file is the **fine-grained router** (section anchors, aliases, reverse path/symbol index).
-Do not merge them.
+`modules/README.md` 是**模块登记表与所有权地图**（粗粒度：任务 → 模块）。
+本文件是**细粒度路由器**（章节锚点、别名、反向路径/符号索引）。
+不要把两者合并。
 
-When you add or rename a section in a module, update the anchor here in the same change — a broken
-anchor is a defect, not a missing document (`modules/README.md` §Task → module says the same about a
-link that does not resolve). An index that points at a section which no longer exists is worse than no
-index, because it reads as authoritative.
+当你在某个模块中新增或重命名章节时，请在同一次变更中同步更新这里的锚点 —— 断掉的
+锚点是一个缺陷，而不是缺失的文档（`modules/README.md` §Task → module 对无法解析的
+链接也这么说）。一张指向已不存在章节的索引，比没有索引更糟：
+因为它读起来像是权威的。
 
-The refresh-time obligations that keep this file honest are `REFRESH.md` §13 (module structure),
-§31 (cross-file consistency pass) and §33 (updating `BASELINE.md`). The numbering in that document
-stops at 42; there is no section about this file, so do not cite one.
+保持本文件诚实的刷新期义务是 `REFRESH.md` §13（模块结构）、
+§31（跨文件一致性检查）与 §33（更新 `BASELINE.md`）。那份文档的编号止于 42；
+其中没有关于本文件的章节，所以不要引用任何编号。
