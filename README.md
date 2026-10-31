@@ -18,13 +18,15 @@ JiejieBox 的改动覆盖一条网络流的完整处理过程：从 TUN / 入站
 - **网络与设备状态**：统一网络代次、连接重建和资源归属，使切网、休眠、恢复及内存回收具有一致的边界。
 - **客户端与工程验证**：维护 Libbox 接口、Windows 服务与安装隔离、订阅和 Dashboard 集成，以及跨仓库依赖与回归检查。
 
-## 客户端
+## 客户端与命令行内核
 
-| 平台 | 获取与构建方式 |
+| 平台 | 获取与运行方式 |
 | --- | --- |
 | **Windows** | 从 [Releases](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) 下载已发布的 Windows 客户端安装程序。 |
 | **Android** | 使用 [satelite-one](https://github.com/Piggy-Cat-bit-shadow/satelite-one) 仓库中的 Android 客户端。 |
-| **iOS / macOS** | 在 Mac 上使用本仓库的 [TestFlight 发布脚本](scripts/publish-apple-beta.sh) 构建、签名并上传。完整流程见 [Apple TestFlight 构建说明](docs/APPLE-BETA-RELEASE.md)。 |
+| **Linux（命令行内核）** | 从 [Releases](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) 下载 `linux-amd64` 压缩包，解压后使用配置文件运行；部署说明见 [Linux 服务端文档](docs/JIEJIE-SERVER.md)。 |
+| **macOS（命令行内核）** | 从 [Releases](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) 下载 `macos-arm64` 压缩包，解压后使用配置文件运行；参见 [macOS 命令行运行说明](docs/JIEJIE-MACOS-CLIENT.md)。 |
+| **iOS / macOS（Apple 客户端）** | 在 Mac 上使用本仓库的 [TestFlight 发布脚本](scripts/publish-apple-beta.sh) 构建、签名并上传。完整流程见 [Apple TestFlight 构建说明](docs/APPLE-BETA-RELEASE.md)。 |
 
 Apple 平台以 `./scripts/publish-apple-beta.sh` 为入口，使用对应提交的已验证 Libbox，再执行客户端归档、签名和 TestFlight 上传；本地需准备 Apple 签名及 App Store Connect 配置。
 
