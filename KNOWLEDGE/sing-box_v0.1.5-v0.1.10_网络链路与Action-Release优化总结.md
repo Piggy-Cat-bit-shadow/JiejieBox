@@ -24,7 +24,7 @@
 
 这一部分负责回答：
 
-> **“这到底是什么流量，它属于哪个网络世界，它原本想访问谁，它现在应该去哪？”**
+> 识别流量类型、原始目的地和路由目标。
 
 链路可以概括成：
 
@@ -624,13 +624,13 @@ MASQUE 的基础支持来自上游；本 fork 在 CONNECT-IP 数据面和生命�
 
 ## 5. Connection pool / mux：旧连接不是简单 close
 
-网络变化以后，连接池不能只做：
+网络变化后，连接池不能一律执行以下操作：
 
 ```text
 close all
 ```
 
-更合理的是：
+相关操作包括：
 
 - idle
 - suspect
@@ -638,13 +638,7 @@ close all
 - reset
 - drain
 
-其中一个很重要的设计：
-
-> **旧 session 可以继续 drain 已经存在的 stream，但不能再接收新的 stream。**
-
-这比“一刀切全关”高级很多。
-
-因为它区分：
+其中，可排空的旧 session 可以保留已有 stream，同时停止接收新 stream。这样分别处理：
 
 ```text
 已有业务连续性
@@ -658,9 +652,7 @@ close all
 
 ## 6. Traffic scheduler / backpressure
 
-你的 scheduler 并不是 v0.1.6 才第一次出现。
-
-但这一代明显继续把：
+上传调度器并非从 v0.1.6 才出现；这一阶段继续完善了：
 
 - accounting
 - ownership
@@ -669,13 +661,7 @@ close all
 - pacing
 - failure semantics
 
-往统一模型收。
-
-生产上仍然应该清楚：
-
-> 没配置 rate 时必须近似 inert。
-
-而 research-only adaptive learned rate 不应该污染正式 release gate。
+未配置 rate 时，调度器应保持惰性；仅用于研究的 adaptive learned rate 不应误作为正式发布门禁。
 
 ## 7. Buffer / ownership / copy：从“有没有 copy”变成“谁拥有这块内存”
 
@@ -691,11 +677,7 @@ low-memory:
 16 KiB / 8 KiB
 ```
 
-重点其实不是大小。
-
-而是 ownership。
-
-典型原则：
+除了容量本身，还必须明确缓冲区的所有权。典型交接原则如下，具体批次和回退路径仍需以对应接口契约为准：
 
 ```text
 handoff 成功
@@ -726,9 +708,7 @@ handoff 失败
 - low-memory geometry
 - bounded copy
 
-所以所谓 zero-copy 也开始被更严格地区分。
-
-不能把：
+报告中需要区分局部优化与全链路行为，不能把：
 
 ```text
 减少了一次 copy
@@ -777,9 +757,7 @@ handoff 失败
 
 # 五、第四部分：网络变化、休眠恢复和生命周期闭环
 
-这一部分是最容易在普通代理内核里被低估的。
-
-连接不是：
+移动设备的连接状态会随网络和系统事件变化，不是简单的：
 
 ```text
 Start
@@ -787,7 +765,7 @@ Start
 → Close
 ```
 
-移动设备真实世界是：
+实际场景可能包括：
 
 ```text
 Wi‑Fi
@@ -802,15 +780,11 @@ Wi‑Fi
 → 新 session 需要新网络
 ```
 
-所以这一代的核心之一，就是把“网络世界”做成真正的 generation / lease / epoch。
+这一阶段使用 generation、lease 和 epoch 表达网络切换及恢复期间的所有权。
 
 ## 1. runtimecoord：generation / epoch / lease
 
-核心思想：
-
-> **网络状态不能用几个 bool 拼起来。**
-
-它需要一个单调递增的身份：
+网络状态通过单调递增的 generation 标识：
 
 ```text
 generation 10
@@ -818,13 +792,7 @@ generation 11
 generation 12
 ```
 
-同时 lease 也有身份。
-
-一个非常重要的原则：
-
-> **被 supersede 的旧 lease 没资格完成新 generation 的状态。**
-
-否则会发生：
+lease 也有独立身份。已被替换的旧 lease 不能完成或释放新 lease；否则可能出现：
 
 ```text
 旧网络慢操作最后返回
@@ -832,11 +800,11 @@ generation 12
 覆盖新网络已经建立的正确状态
 ```
 
-这本质上也是 ownership。
+这也是恢复操作的所有权边界。
 
 ## 2. Network transition：不要 global close
 
-以前最粗暴的网络切换：
+一种简单但代价较高的切换方式是：
 
 ```text
 网络变化
@@ -844,9 +812,7 @@ generation 12
 → 全重建
 ```
 
-代价非常大。
-
-更成熟的行为是：
+当前设计区分以下状态或动作：
 
 - stale
 - suspect
@@ -866,15 +832,7 @@ generation 12
 新流
 ```
 
-分开对待。
-
-这就是从：
-
-> reset everything
-
-转向：
-
-> **stateful transition**
+分别处理，以控制切换对现有业务和后续连接的影响。
 
 ## 3. Sleep / Wake：休眠不是网络死亡
 
@@ -885,7 +843,7 @@ generation 12
 - path 可能失效
 - session 可能可以继续，也可能不能复用
 
-所以你的体系逐渐形成 sleep band：
+默认策略根据休眠时长区分复用档位：
 
 ```text
 <5s      KEEP
@@ -893,13 +851,7 @@ generation 12
 >=15s    RETIRE
 ```
 
-重点：
-
-> **active stream 不应该被无脑杀掉。**
-
-而是控制：
-
-> 旧 session 是否还能承载“新流”。
+策略应保留活跃 stream，同时判断旧 session 能否继续接收新流。
 
 ## 4. Power Governor / Reuse Epoch
 
@@ -926,7 +878,7 @@ generation 12
 
 ## 5. Trim / ReleaseMemory / Close
 
-这三个也不应该混。
+这三个操作分别对应不同的资源处理范围。
 
 ### Trim
 
@@ -954,15 +906,11 @@ generation 12
 - idempotent
 - concurrent-safe
 
-并且所有 Scope cleanup 最终都应该闭环。
+Scope cleanup 也需要检查所有权、顺序和失败路径；清理函数发生 panic 时不能假定后续清理已经完成。
 
 ## 6. E2E lifecycle 证明
 
-这一代的意义还在于：
-
-> 生命周期不再只凭“看代码应该没问题”。
-
-而是开始真实验证：
+该阶段增加了以下生命周期验证：
 
 - reset under traffic
 - active trim 后连接仍存活
@@ -970,9 +918,7 @@ generation 12
 - repeated Start / Close
 - goroutine count 不持续增长
 
-这就是所谓：
-
-> **evidence-driven runtime**
+这些测试的结论仍应限定在各自的环境和覆盖范围内。
 
 ---
 
@@ -1010,32 +956,20 @@ generation 12
 | 28 | MTU/headroom/geometry | path capacity、inner/outer MTU、protocol cost |
 | 29 | Network change → Sleep → Reclaim → Close | runtimecoord、generation/lease、Power/Reuse Epoch、Trim/Close |
 
-这张表基本解释了为什么：
-
-> **`v0.1.5 → v0.1.6` 可以称为一次 end-to-end network-stack audit + rewrite。**
+这张表概括了当时网络链路审计涉及的主要阶段；各项是否重写、如何验证，应分别查看相关模块和历史记录。
 
 ---
 
 # 七、v0.1.6 最核心的代际变化
 
-如果要把 `v0.1.5 → v0.1.6` 的变化再抽象一层：
-
-`v0.1.5` 还是更偏：
-
-> **mechanism-driven**
-
-也就是：
+这一阶段强化了能力、证据与生命周期边界：不只判断某项机制是否存在，还要判断当前流是否满足使用条件。简化来说，早期侧重：
 
 ```text
 有这个机制
 → 就尝试用
 ```
 
-`v0.1.6` 明显开始变成：
-
-> **evidence-driven runtime**
-
-也就是：
+后续更加关注：
 
 ```text
 我知道什么时候有资格做
@@ -1055,7 +989,7 @@ v0.1.5 → v0.1.6
 ≈ 我知道什么时候有资格做、为什么做、依据什么做、什么时候停止相信之前的判断
 ```
 
-这是比“新增了几个协议”更大的变化。
+这反映了架构关注点的变化，不代表每条路径都经过相同程度的实测。
 
 ---
 
@@ -1079,25 +1013,19 @@ v0.1.5 → v0.1.6
 
 这是因为这个跨度里确实包含上游 replay。
 
-所以：
-
-> **602 commits 是跨度背景，不是“602 个原创改动”。**
-
-但这不影响另一个结论：
-
-> **从最终运行时覆盖面看，v0.1.6 确实几乎把整条网络链重新摸了一遍。**
+因此，602 个提交是版本跨度的统计背景，不能等同于 602 个 fork 原创改动。该阶段的审查覆盖多个网络路径，具体归属仍需结合源码、补丁和历史证据判断。
 
 ---
 
-# 九、现在进入第二大主题：Action / Release 到底优化了什么
+# 九、Action / Release 的优化范围
 
-Action / Release 这条线，也不能只看：
+分析 Action / Release 时，不能只看：
 
 ```text
 “跑了多少分钟”
 ```
 
-真正要看的是：
+还需要考察：
 
 - 工作总量
 - 并行程度
@@ -1114,7 +1042,7 @@ Action / Release 这条线，也不能只看：
 - publish boundary
 - 取消和失败是否被正确区分
 
-最理想的职责拆分其实是：
+职责可以按以下方式划分：
 
 ```text
 Verify
@@ -1186,7 +1114,7 @@ Release 更应该聚焦：
 
 > **“我要发布的，是不是刚才那些已经验证过的 exact SHA 产物，而且没有多、没有少、没有串版本？”**
 
-这才是 Release gate 真正应该干的事。
+发布门禁应围绕这些身份和完整性检查设计。
 
 ---
 
@@ -1221,7 +1149,7 @@ Android 也有与 Verify 重复的内部测试。
 
 ---
 
-# 十二、v0.1.6：Action / Release 真正的“构建系统大爆炸”
+# 十二、v0.1.6：并行构建与发布耗时
 
 `v0.1.6` 的 exact-SHA producer 基本是同时起跑的。
 
@@ -1238,11 +1166,7 @@ Android 也有与 Verify 重复的内部测试。
 | Windows Core | 4m15s |
 | Windows Desktop | 22m48s |
 
-这些任务如果串行加起来，大约是：
-
-> **110 分钟 runner 工作量**
-
-但因为并行：
+这些任务的耗时合计约为 **110 分钟 runner 工作量**。由于任务并行执行，时间线为：
 
 ```text
 03:54:53 左右开始
@@ -1250,23 +1174,13 @@ Android 也有与 Verify 重复的内部测试。
 04:23:17 最慢 Apple Client 完成
 ```
 
-producer critical path 大约只有：
-
-> **28m24s**
-
-也就是说，单纯依靠并行：
-
-> **约 1 小时 50 分钟总工作量，被压成了约 28 分钟墙钟时间。**
-
-墙钟压缩大约：
-
-> **74%**
+producer 的 critical path 约为 **28m24s**：约 1 小时 50 分钟的累计工作量在约 28 分钟墙钟时间内完成，降幅约 **74%**。这是该次运行的历史记录。
 
 ---
 
-# 十三、v0.1.6 真正的 Release 时间线
+# 十三、v0.1.6 的 Release 时间线
 
-这一段非常关键。
+当时记录的关键时间如下：
 
 ```text
 03:54:53
@@ -1314,7 +1228,7 @@ published_at: 04:35:34
 
 ---
 
-# 十四、v0.1.6 为什么体感甚至接近 1 小时 20 分钟
+# 十四、v0.1.6 的补充产物耗时
 
 因为 04:35 的时候：
 
@@ -1332,27 +1246,13 @@ published_at: 04:35:34
 
 才全部补齐。
 
-所以如果使用者的心理标准是：
-
-> **“所有这次该出的东西真的都齐了。”**
-
-那么从第一轮候选开始到资产全部齐，大约：
-
-> **1 小时 19 分钟**
-
-所以 v0.1.6 是一个非常典型的攻坚版本：
-
-> **≈110 分钟并行 CI 工作量 + 28 分钟 producer critical path + Release gate 现场爆雷 + 多平台资产后补。**
+从首轮候选开始，到这些补充产物全部齐备，约为 **1 小时 19 分钟**。这次发布的耗时包括约 110 分钟累计 CI 工作量、约 28 分钟 producer critical path、发布门禁失败后的修复，以及多平台产物补发。
 
 ---
 
-# 十五、v0.1.7：不是普通 Release，而是拿一个版本号狠狠干发布系统
+# 十五、v0.1.7：发布流程候选
 
-`v0.1.7` 很特殊。
-
-它有 annotated tag。
-
-tag 最终指向：
+`v0.1.7` 有 annotated tag，最终指向：
 
 ```text
 6f0d5519c74816f0a4c255f46a08fe0f298b3cd7
@@ -1370,11 +1270,7 @@ tag 最终指向：
 一定有 GitHub Release
 ```
 
-`v0.1.7` 就是反例。
-
-它更像：
-
-> **Release pipeline 攻坚候选。**
+该版本是发布流程候选，不能仅凭 tag 推断正式发布。
 
 ---
 
@@ -1406,11 +1302,7 @@ SHA256SUMS.txt
 libbox.provenance
 ```
 
-不是产品坏了。
-
-而是 staging layout 认错。
-
-真实问题：
+失败原因是 staging 目录布局与脚本假设不一致：
 
 ```text
 gh run download
@@ -1427,26 +1319,20 @@ rm -f 还不会报错
 dry-run allowlist 最终把多余文件抓出来
 ```
 
-这恰好说明：
-
-> **dry-run 不是形式主义。**
-
-它真的挡住了一次错误发布。
+这次 dry-run 在正式发布前发现了意外文件，避免了错误的产物集合进入发布流程。
 
 ---
 
 # 十七、为什么不能简单把 allowlist 放宽
 
-一种最简单但很差的修法是：
+一种表面上可行的处理方式是：
 
 ```text
 既然多了 SHA256SUMS.txt / libbox.provenance
 那就把它们加到 allowlist
 ```
 
-但这会破坏 release boundary。
-
-因为以后真的混进一个意外文件：
+但直接放宽 allowlist 会削弱发布边界，使以下意外文件也可能被允许：
 
 ```text
 malformed
@@ -1456,13 +1342,7 @@ debug artifact
 unexpected evidence
 ```
 
-也可能一起被允许。
-
-所以正确思路是：
-
-> **修 staging cleanup / artifact classification，而不是扩大“什么都能发”的边界。**
-
-这也是 release engineering 开始成熟的标志。
+因此应修复 staging cleanup 和 artifact classification，并保留明确的发布文件范围。
 
 ---
 
@@ -1487,19 +1367,7 @@ Windows runtime audit
 PASS
 ```
 
-如果只看这一轮能观察到的 exact-SHA runtime audit 收口：
-
-> **大约 22m51s**
-
-但它没有进入正式 Release publish。
-
-所以这个版本不能写成：
-
-> “等 XX 分钟就发成功。”
-
-更准确的定位是：
-
-> **tag + evidence/gate 攻坚版本。**
+这一轮可观察到的 exact-SHA runtime audit 收尾约为 **22m51s**，但没有进入正式 Release publish。因此不能把这个时长当作成功发布的耗时。
 
 ---
 
@@ -1509,17 +1377,17 @@ PASS
 
 ### v0.1.6
 
-> **我把所有平台和所有东西塞进 CI，终于让它们都开始跑。**
+> 多平台 producer 并行运行，发布流程开始整合各平台产物。
 
 ### v0.1.7
 
-> **我发现“能跑完”不等于“可以安全发布”，于是狠狠干 Release contract、artifact staging、allowlist、dry-run 和 runtime audit。**
+> 围绕发布契约、artifact staging、allowlist、dry-run 和 runtime audit 加强发布前验证。
 
 然后：
 
 ### v0.1.8 以后
 
-> **这套东西才真正开始工业化收敛。**
+> 供应链与发布流程逐步收敛。
 
 ---
 
@@ -1530,7 +1398,7 @@ PASS
 | 版本 | 构建 / 发布角色 |
 |---|---|
 | v0.1.5 | 旧式多平台成熟期，仍有较多历史结构 |
-| v0.1.6 | 多平台 producer 大爆炸 + Release 第一次大规模硬仗 |
+| v0.1.6 | 多平台 producer 并行，以及发布门禁的集中修复 |
 | v0.1.7 | Release contract / dry-run / artifact staging / runtime audit 攻坚 |
 | v0.1.8 | supply-chain / release engineering 开始稳定 |
 | v0.1.9 | Libbox release artifact correctness 热修 |
@@ -1540,7 +1408,7 @@ PASS
 
 # 二十一、墙钟时间的核心变化
 
-前面分析里有一个非常直观的对比：
+历史记录给出了以下两个发布耗时：
 
 ```text
 v0.1.6
@@ -1552,38 +1420,15 @@ v0.1.10
 ≈ 23m52s
 ```
 
-少了：
+两者相差 **16m49s**，按前者计算约 **41%**。这只是两次历史记录的算术比较；运行范围、环境和补充产物时点可能不同，不能仅凭这两个数字认定性能稳定提升 41%。后续发布还增加或完善了 evidence、identity、平台产物、checksum 和 release contract 等检查。
 
-> **16m49s**
-
-墙钟下降约：
-
-> **41%**
-
-重点还不是单纯“快 41%”。
-
-而是：
-
-> **后面的 evidence、identity、Windows Desktop、Android、Libbox、checksum、release contract 比 v0.1.6 更完整。**
-
-也就是：
-
-```text
-证明更多
-边界更严
-平台更多
-但反而更快
-```
-
-这才是真正有价值的优化。
+评估当前发布性能时，应在相同范围和条件下重新测量。
 
 ---
 
 # 二十二、为什么这不是“删测试换速度”
 
-如果只是删掉 gate，当然谁都能快。
-
-真正的优化是：
+设计目标是减少重复验证，同时保留必要的发布证据和门禁：
 
 ```text
 Verify
@@ -1620,9 +1465,7 @@ publish
 read-back
 ```
 
-这叫：
-
-> **减少重复证明，而不是减少证明。**
+各阶段的实际覆盖范围和证据传递方式仍须按目标工作流核对。
 
 ---
 
@@ -1664,7 +1507,7 @@ Release 应该：
 
 > **消费 Verify 的 evidence。**
 
-否则你会得到：
+重复执行可能形成：
 
 ```text
 Verify 花 10 分钟证明一次
@@ -1672,11 +1515,7 @@ Release contract 再证明一次
 Release 又证明一次
 ```
 
-这不是更安全。
-
-只是：
-
-> **重复烧 runner 和墙钟。**
+是否需要重复执行应结合风险和证据范围评估；无必要的重复会增加 runner 工作量和墙钟时间。
 
 ---
 
@@ -1860,17 +1699,15 @@ Release 必须先证明 exact-SHA eligibility
 
 所以从系统设计角度看：
 
-> **你后期真正统一起来的，不只是网络生命周期，而是“所有状态都必须有身份、所有优化都必须有证据、所有复用都必须有资格、所有提交都必须属于当前世界”。**
+> 网络和发布流程都强调明确的状态身份、证据范围、复用资格和版本归属。
 
-这是整个项目后期最明显的架构风格。
+具体保证仍应以各模块的源码和验证记录为准。
 
 ---
 
 # 二十八、最终总结
 
-如果只看 v0.1.6 的“功能列表”，很容易低估这个版本。
-
-它不是：
+v0.1.6 的工作不止以下功能条目：
 
 ```text
 新增 XHTTP
@@ -1881,25 +1718,9 @@ Release 必须先证明 exact-SHA eligibility
 加几个 workflow
 ```
 
-这么简单。
+这一阶段还梳理了路径语义、所有权、网络 generation 和生命周期契约；v0.1.7 则重点完善了产物身份、工作流证据和发布边界。v0.1.6 与 v0.1.10 的历史耗时见前文，不能仅凭两个运行数字比较所有构建场景。
 
-更准确的总结是：
-
-> **v0.1.6 把一个拥有大量新能力的 fork，开始重新整理成一个有路径语义、有 ownership、有 network generation、有 evidence、有 lifecycle contract 的网络系统。**
-
-而 v0.1.7 的意义，是把同样的思路延伸到 Release：
-
-> **产物也必须有身份，workflow 也必须有证据，发布也必须有严格边界。**
-
-从 v0.1.6 到 v0.1.10 的 Action / Release 优化也不是单纯：
-
-> “把构建从 40 分钟优化到 24 分钟。”
-
-而是：
-
-> **在平台更多、证据更多、发布边界更严格的前提下，把总墙钟继续压低。**
-
-所以这段版本历史最准确的主线可以写成：
+主要演进如下：
 
 ```text
 v0.1.5
@@ -1910,12 +1731,12 @@ v0.1.5
 v0.1.6
 整条网络链从 mechanism-driven
 转向 evidence-driven runtime
-同时多平台 CI / Release 全面爆发
+同时扩展多平台 CI / Release
 
 ↓
 
 v0.1.7
-狠狠干 release contract / staging / dry-run / evidence
+完善 release contract / staging / dry-run / evidence
 
 ↓
 
@@ -1931,9 +1752,7 @@ v0.1.9
 
 v0.1.10
 网络语义、Windows 安全、CI 和知识库进一步收口
-发布墙钟进入约 24 分钟成熟区间
+所记录的正式发布墙钟约 24 分钟
 ```
 
-最后一句：
-
-> **0.1.6 是“把整条网络链犁了一遍”；0.1.7 是“把发布链也犁了一遍”；后面的版本则是在这两块大地基上不断收敛、提速和封口。**
+上述内容是针对各历史版本的归纳。当前实现、发布状态和验证范围应分别参考基线、相关模块及其证据。
