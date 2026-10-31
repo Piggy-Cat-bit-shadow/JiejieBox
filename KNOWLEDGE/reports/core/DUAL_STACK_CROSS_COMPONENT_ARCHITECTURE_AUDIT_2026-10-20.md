@@ -1,4 +1,4 @@
-# 双栈系统 + 全内核跨组件架构一致性：只读深度审计报告
+# 双栈系统与内核跨组件架构：只读深度审计报告
 
 > **归档记录（2026-10-20）**：本文正文在"先不提交、不推送"的只读指令下完成；随后按用户的显式指令归档进 `KNOWLEDGE/reports/core/` 并推送。正文里"未 commit / 未 push / 仅未跟踪文件"的描述记录的是**审计当时**的工作树状态，不是归档状态；归档提交见 `git log -- KNOWLEDGE/reports/core/DUAL_STACK_CROSS_COMPONENT_ARCHITECTURE_AUDIT_2026-10-20.md`。
 
@@ -42,7 +42,7 @@
 | `NOT_A_BUG`（推测被反证） | **4** | §10.5 |
 | `EXPECTED_BEHAVIOR` | **2** | 广告 NXDOMAIN；IPv4-only 机器直连 AAAA-only 目标失败 |
 
-### 0.3 对"是否已经收敛"的明确评价（分层）
+### 0.3 各层架构的审计结论
 
 | 层级 | 判定 | 依据（源码） |
 |---|---|---|
@@ -50,11 +50,11 @@
 | **本机能力观测（谁是事实源）** | **已统一** | `route/network_family_capability.go:91-116` 一次观测 → `common/netcap/netcap.go:428-483` → `adapter/network.go:192-197` 一个快照三元组（epoch/settled/capability）→ `common/dialer/network_observation.go:103-163` 构造期解析出唯一来源 |
 | **候选规划/调度（谁决定顺序与胜负）** | **已统一（Direct 路径）** | `common/dialer/dual_stack.go:128-189`、`dual_stack_scheduler.go:151-612`；`resolve.go:219-505` 与 `dual_stack_parallel_network.go:193-228` 都走同一 scheduler |
 | **代理出口（谁决定远端目标）** | **分层正确，非统一** | 本地 family 判定只作用于"本机创建的 socket"：`family_capability.go:57-68` 说明 detour 结构上到不了 `DefaultDialer.DialContext`；代理 outbound 不实现 `ParallelNetworkDialer`（§08 census），目标名交给对端 |
-| **组 outbound（能力转发）** | **存在降维断层** | DS-02：`selector`/`urltest`/`loadbalance` 只委托 `DialContext`，`dialer.DialSerialNetwork` 因此退化到逐地址串行 |
+| **组 outbound（能力转发）** | **能力转发不完整** | DS-02：`selector`/`urltest`/`loadbalance` 只委托 `DialContext`，`dialer.DialSerialNetwork` 因此退化到逐地址串行 |
 | **生命周期（代际/取消/关闭）** | **已统一** | `route/dial_setup.go:89-198`、`route/network.go:1069-1173`、`family_capability.go:29-52`（ownership 三态） |
-| **诊断（失败原因保真）** | **仍有一处断层** | DS-01：流式 hostname 路径把"本机拒绝"退化为 `no dial candidates` |
+| **诊断（失败原因保真）** | **仍有一处信息丢失** | DS-01：流式 hostname 路径把"本机拒绝"退化为 `no dial candidates` |
 
-### 0.4 任务书 §2 十个核心问题的直答
+### 0.4 任务书 §2 的十个核心问题
 
 | # | 问题 | 答案 | 证据 |
 |---|---|---|---|
@@ -114,7 +114,7 @@ v0.1.17..HEAD 的生产 .go 变更（按目录，节选）
 **`hif-dliq.deepseek.com:443`（AAAA 两个地址、A 空、Direct 报 `no dial candidates`）**
 
 * 现象本身**完全合理**：IPv4-only/无公网 IPv6 出口的本机，直连一个只有 AAAA 的目标，没有任何 NAT64/代理路径时**不可能**建立连接。这是网络约束，不是缺几个 `if`（任务书 §10 的原则）。
-* **真正的缺陷是诊断**：这一形状在当前 HEAD 上仍然输出 `no dial candidates`（DS-01，已用探针复现），而不是"本机没有公网 IPv6 出口"。所以用户看到的是"没有候选"，而事实是"候选有，但被本机能力拒绝"。这正是任务书 §D3 要求区分六种 `no dial candidates` 成因的落点，见 §05.4。
+* **真正的缺陷是诊断**：这种情况在审计时的 HEAD 上仍然输出 `no dial candidates`（DS-01，已用探针复现），而不是"本机没有公网 IPv6 出口"。所以用户看到的是"没有候选"，而事实是"候选有，但被本机能力拒绝"。这正是任务书 §D3 要求区分六种 `no dial candidates` 成因的落点，见 §05.4。
 * **DNS 泄漏不成立**：该查询走的是配置的 `adapter.DNSRouter`（`dual_stack_recovery.go:27-32` 明确"永不使用系统解析器"），没有证据表明域名被发到隧道外。仅凭"看到一次域名查询"不能判定泄漏，本报告也不这么判定。
 
 **广告拦截的 `NXDOMAIN` 是预期行为**：未计入任何问题数量，也不建议关闭过滤（任务书明令）。
@@ -185,7 +185,7 @@ inbound
      finishSetup()；releaseDial()                         conn.go:344-345
 ```
 
-### 2.3 图 2：Direct TCP，literal 目标 + sniffed domain（微信事故形状）
+### 2.3 图 2：Direct TCP，literal 目标 + sniffed domain（微信问题场景）
 
 ```text
         原字面地址 ──── 立即开始拨号 ───────────────────────────────┐
@@ -541,7 +541,7 @@ route fast-path 判定 → (*direct.Outbound).CanBypass   outbound.go:440-442
 |---|---|---|
 | Windows service / Apple NE / Android VPN 的生命周期通知 | 各平台 stub/实现存在（`network_environment_*.go`） | 事件丢失、重启后状态、VPN 重连时的 RA/DHCPv6 时序 |
 | TUN 重绑 | entry presentment 明确"固定到重启"（`network_family_entry.go:25-41`） | 重绑后的用户可见行为 |
-| 路由表"假默认路由" | predicate 已排除 host route / multicast / own interface | 真实 CPE 的路由形状 |
+| 路由表"假默认路由" | predicate 已排除 host route / multicast / own interface | 真实 CPE 的路由情况 |
 
 ---
 
@@ -666,7 +666,7 @@ route fast-path 判定 → (*direct.Outbound).CanBypass   outbound.go:440-442
 
 * **Xray 的 `MaxConcurrentTry`**：为"候选极多"的目标给并发尝试一个显式上限。fork 目前以"每 `fallbackDelay` 启一个"自然有界，但在 `fallbackDelay` 很小、候选很多时会同时在途较多。**仅作为可选优化**，且必须保留"快速失败即刻推进"语义。
 * **Xray 的 RFC8305 排序细节**（interleave 计数、`PrioritizeIpv6`）：fork 的 `interleaveCandidates` 是 1:1 交错，Xray 支持 `Interleave` 比例。差异仅在多地址同族时的启动顺序，**当前证据不足以证明需要**。
-* **Mihomo 的"fallback 成功先持有、到 ticker 才返回"**：fork 用 `preferredFamilyGrace`（DNS 层）与调度器 cadence 表达同一意图，语义更清晰，**不建议改成 Mihomo 的形状**。
+* **Mihomo 的"fallback 成功先持有、到 ticker 才返回"**：fork 用 `preferredFamilyGrace`（DNS 层）与调度器 cadence 表达同一意图，语义更清晰，**不建议改为 Mihomo 的实现方式**。
 
 ### 9.4 不值得复制 / 不能复制的实现
 
@@ -698,7 +698,7 @@ route fast-path 判定 → (*direct.Outbound).CanBypass   outbound.go:440-442
 
 **证据等级**：`CONFIRMED_BUG`（`VERIFIED_SOURCE` + `VERIFIED_REPRO`）
 **严重性**：低（诊断/可观测性；**不改变连通性行为**，不误驱动 retry/health）
-**用户可感知影响**：IPv4-only 或"有 IPv6 地址但无公网 IPv6 出口"的机器上，访问 AAAA-only 域名（`hif-dliq.deepseek.com` 形状）时，日志写 `open connection to …: no dial candidates`，而事实是"本机没有公网 IPv6 路径"。运维会去查 DNS 和节点，而真正原因是本机网络能力。
+**用户可感知影响**：IPv4-only 或"有 IPv6 地址但无公网 IPv6 出口"的机器上，访问 AAAA-only 域名（例如 `hif-dliq.deepseek.com`）时，日志写 `open connection to …: no dial candidates`，而事实是"本机没有公网 IPv6 路径"。运维会去查 DNS 和节点，而真正原因是本机网络能力。
 
 **生产调用链**
 
@@ -865,7 +865,7 @@ resolve.go:660-667
 
 **证据等级**：`UNVERIFIED_HYPOTHESIS`（结构确定，放大倍数未实测）
 **严重性**：低-中（延迟、流量；无正确性错误）
-**内容**：§9.5 的六层都**独立**决定"再试一次"，没有全局预算。最坏形状：组内 M 个成员 × 每成员 2 种传输（H3→H2）× 每传输 2 族 × 每族 N 个候选。现有约束：scheduler 每 `fallbackDelay` 才启一个候选；naive 的 H3 窗口 30s 且 per-outbound；MASQUE 的 H3 窗口在 `transport/http`（5 分钟级，源码注释引用了该窗口）；`dialGovernor` 只在 transition 后 3s 内限流 24 个并发。
+**内容**：§9.5 的六层都**独立**决定"再试一次"，没有全局预算。最坏情况：组内 M 个成员 × 每成员 2 种传输（H3→H2）× 每传输 2 族 × 每族 N 个候选。现有约束：scheduler 每 `fallbackDelay` 才启一个候选；naive 的 H3 窗口 30s 且 per-outbound；MASQUE 的 H3 窗口在 `transport/http`（5 分钟级，源码注释引用了该窗口）；`dialGovernor` 只在 transition 后 3s 内限流 24 个并发。
 
 **为什么不定为风险以上**：没有任何日志/实测显示放大发生；`urltest`/`loadbalance` 的成员切换本身有预算；naive 的 `h3ProbeContext` 已把 H3 尝试预算切成一半，保证 H2 有机会成功。
 
@@ -941,7 +941,7 @@ resolve.go:660-667
 
 ### 12.2 必须实机验证的项
 
-1. Windows/Android 上"有 IPv6 地址、无公网 IPv6 出口"的真实形状（本报告只用单测模拟）。
+1. Windows/Android 上"有 IPv6 地址、无公网 IPv6 出口"的真实情况（本报告只用单测模拟）。
 2. entry presentment 锁存导致"切网后 IPv6 需重启"的用户可接受度。
 3. 组 outbound 转发能力面后，多成员场景的实际 P50/P95 连接时延。
 4. PMTU / ICMPv6 PTB 被阻断时的握手成功但数据失败（§6.3 未验证）。
@@ -1018,7 +1018,7 @@ go test -tags $TAGS -run 'TestAuditProbe' -v -count=1 ./common/dialer/
     AUDIT_PROBE packet names-the-machine = true (egress)
 ```
 
-该探针**不修改任何生产代码**，只构造对象并读取错误串；`PASS` 表示"观测到了预期形状"，不是"系统正确"。
+该探针**不修改任何生产代码**，只构造对象并读取错误串；`PASS` 表示"观测到了预期结果"，不是"系统正确"。
 
 ### 13.4 `-race`：**上一轮的 BLOCKED 在本环境已解除**
 
