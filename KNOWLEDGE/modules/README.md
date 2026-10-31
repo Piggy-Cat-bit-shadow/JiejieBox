@@ -35,7 +35,7 @@
 
 本项目保留上游的注册表、协议与构建档位，同时维护以下主要扩展：
 
-- **启动期校验**：`common/physicalpath` 和 `common/routeflow` 报告能力警告，并在不拨号、不解析、不选择的前提下拒绝致命的结构性失败或承诺失败。
+- **启动期校验**：`common/physicalpath` 和 `common/routeflow` 报告能力警告，并在不拨号、不解析、不选择的前提下拒绝致命的结构性错误或无法满足的要求。
 - **运行时协调**：`common/runtimecoord` 维护单调递增的网络 generation 和基于身份的重建租约；`common/power` 将平台状态转为睡眠、唤醒和连接复用策略。
 - **流量优化**：`common/trafficsched` 和 `common/trafficclass` 管理上传调度与流量类别；**Direct Offload** 为可证明语义等价的直连流提供操作系统承载路径。
 - **协议与传输**：`transport/masque` 实现 MASQUE/CONNECT-IP 数据面并区分内层解析器和引导解析器；Native Naive 入站支持 UoT、填充、伪装和预认证限制；`transport/http` 提供 HTTP/2 和 HTTP/3 传输。

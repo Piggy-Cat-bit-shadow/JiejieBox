@@ -2,7 +2,7 @@
 
 本文列出 11 条需要维护的架构边界。每条边界都附有对应模块，说明设计原因、源码和验证范围。
 
-## 1. 所有权：Scope 拥有其注册的反向清理（Ownership: a Scope owns its registered reverse cleanups）
+## 1. 所有权：Scope 负责按注册逆序清理（Ownership: a Scope owns its registered reverse cleanups）
 
 `Scope.Close` 按注册的相反顺序执行清理函数，也会清理 `Scope.Start` 注册的子 scope。
 资源的关闭函数必须由合适的所有者负责，但资源也可能由其他所有者关闭，因此不能只凭缺少
@@ -13,7 +13,7 @@
 被中断的清理。
 → `modules/core-lifecycle-runtime.md`
 
-## 2. 单一网络代次，重建是租约而不是标志位（One network generation, and a rebuild is a lease, not a flag）
+## 2. 网络代次与重建租约（Network generation and rebuild leases）
 
 `common/runtimecoord` 使用单调递增的 epoch 标识网络变化。它用 `*RebindLease` 的身份保证
 同一资源同时只有一个有效的恢复操作：旧租约被替换后，不能释放新租约。
@@ -21,7 +21,7 @@
 发布新的 epoch 并不等于立即重建所有资源；过期资源会在需要时按相应策略退役。
 → `modules/core-lifecycle-runtime.md`
 
-## 3. 选择在被提交之前只是预览（Selection is a preview until it is committed）
+## 3. 选择提交之前只是预览（Selection is a preview until it is committed）
 
 路由规则先选出出站入口；如果入口是代理组，再由组选择成员。组的选择属于控制面，
 **组本身不是物理网络跳点**。不过有些组会包装返回的连接，以管理中断和生命周期
@@ -62,7 +62,7 @@
 不要把 FakeIP 映射和嗅探改写目的地址混为一谈。
 → `modules/sniff.md`
 
-## 7. 缓冲区所有权是正确性契约，不是优化面（Buffer ownership is a correctness contract, not an optimisation surface）
+## 7. 缓冲区所有权是正确性约束（Buffer ownership is a correctness contract）
 
 借用的 cursor 只能在所属调用期间使用；QUIC 的工作副本刻意不放入缓冲池。批量发送按
 chunk 转移所有权：已接受的 chunk 已经交给下游，未接受的部分仍由调用方负责。
@@ -71,7 +71,7 @@ chunk 转移所有权：已接受的 chunk 已经交给下游，未接受的部�
 更新规则。这些边界有实际故障记录，例如被拒绝批次中的数据包曾被静默丢弃。
 → `modules/buffer-ownership.md`
 
-## 8. MTU 是三个量，而不是一个（MTU is three quantities, not one）
+## 8. 区分三个 MTU 相关量（Three MTU quantities）
 
 外层链路 MTU、外层 QUIC 包大小和内层隧道 MTU 是不同的量。MASQUE 的初始 QUIC 包大小
 受已知的 detour 容量限制；仅此证明不了后续包存在硬上限。TUIC 有一条单独的硬上限路径。

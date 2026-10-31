@@ -27,14 +27,14 @@
 
 | 领域 | 本分支做了什么 | 模块 |
 |---|---|---|
-| **启动期证明** | `common/physicalpath` + `common/routeflow`：报告能力警告；遇到致命的结构性/承诺失败直接拒绝，过程里不拨号、不解析、不改变选择、不消耗轮换 | `path-selection-validation.md` |
+| **启动期证明** | `common/physicalpath` + `common/routeflow`：报告能力警告；遇到致命的结构性错误或无法满足的要求时直接拒绝，过程里不拨号、不解析、不改变选择、不消耗轮换 | `path-selection-validation.md` |
 | **运行时协调** | `common/runtimecoord`：一个单调的网络 generation、基于身份的重建租约、一个合并窗口，以及前台/自动探测的区分 | `core-lifecycle-runtime.md` |
 | **电源 / 设备轴** | `common/power`：平台**事实**输入，策略输出；跨越暂停/恢复边界的三档唤醒后复用区间 | `power-mobile-lifecycle.md` |
 | **上传调度器 + 流量类别** | `common/trafficsched`、`common/trafficclass`、`route/dial_governor.go`。`traffic_scheduler` 与 `traffic_class` **上游没有** —— 配置里用了其中任何一个，官方 sing-box 都加载不了 | `data-path-optimization.md` |
 | **Direct Offload** | 可证明等价的直连流可以离开用户态 —— 但有一条要说明的限制：这个判定**仅**在 Linux `auto_redirect` 中才构成数据面绕过 | `data-path-optimization.md` |
 | **MASQUE / CONNECT-IP** | 在上游基础上做了大量数据面工作：DNS 分配、bootstrap/inner resolver 拆分与 PREF64；注意初始大小与硬上限的区别 | `masque-connectip.md`, `mtu-and-geometry.md` |
 | **Native Naive** | 一个 NaiveProxy 服务端入站，带 UoT、padding、masquerade、预认证限制和目标 ACL；受构建标签门控的客户端出站也集成在这里，用的是分叉的 `cronet-go` | `naive-http-transport.md` |
-| **HTTP 传输** | `transport/http` 是本分支最大的一项新增：`0067b03` 时有 97 个 `.go` 文件和 149 个提交（`a267e99` 时是 90 个文件 / 137 个提交） | `naive-http-transport.md` |
+| **HTTP 传输** | `transport/http` 是本分支改动较多的模块之一：`0067b03` 时有 97 个 `.go` 文件和 149 个提交（`a267e99` 时是 90 个文件 / 137 个提交） | `naive-http-transport.md` |
 | **负载均衡组 + 有界故障转移** | 分支独有的 `type: loadbalance`；故障转移要显式开启，**整个流跨嵌套只共享一份重试预算** | `data-path-optimization.md`, `path-selection-validation.md` |
 | **缓冲区几何** | `common/bufgeom`：可池化与分配上限规则，附带一个 `//go:build race` 拆分 | `mtu-and-geometry.md`, `buffer-ownership.md` |
 | **产品管线** | Apple 客户端固定版本及品牌与身份拆分；Android AAR/ABI；Windows 核心产物。发布路径会核验已有产物；独立的严格验收检查器是否接入发布路径，须按 `ci-release.md` 区分 | `libbox-platform-contract.md`, `build-pruning-release.md`, `ci-release.md` |
