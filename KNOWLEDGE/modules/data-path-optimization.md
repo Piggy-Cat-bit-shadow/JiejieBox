@@ -94,7 +94,7 @@ SEMANTIC EQUIVALENCE, NOT CONFIG EMPTINESS
 >
 > **所以对 TUN 客户端来说，这个资格决策没有数据面影响。** 被它标为可旁路的流，仍然在用户态被代理。这项决策只在 Linux redirect 模式里才有真实效果。
 
-这些结论靠针对 pinned sing-tun 修订版的行为绊线固定，不是靠读代码：`TestANewTrackerOnABypassIsNeverCreated`、`TestABypassFlowIsNeverCounted`（`protocol/tun`），以及 `native_bypass_dispatcher_test.go`、`native_bypass_trace_test.go`。
+这些结论靠针对固定版本 sing-tun 的行为测试保证，不是靠读代码：`TestANewTrackerOnABypassIsNeverCreated`、`TestABypassFlowIsNeverCounted`（`protocol/tun`），以及 `native_bypass_dispatcher_test.go`、`native_bypass_trace_test.go`。
 
 **L0 不是“先路由器、再旁路”。** 它在路由器*之前*运行，所以决策时手里只有一个地址，别的什么都没有。它表达不了域名、进程或协议条件；也不该用它把一条 `DIRECT` 规则编译进路由集，除非该规则本身已经权威且只涉及 IP。
 

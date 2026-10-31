@@ -309,7 +309,7 @@ Naive 的 `TestH3Fallback` 各用例在 `with_naive_outbound,with_purego` 下通
 | 12.4 | 根包设计保证套件**在正确标签下**通过 | 本次审计中运行过：`ok 5.459s` | **VERIFIED_UNIT** | `go test -count=1 -tags "$OTHERS" .` | Go + 构建标签 |
 | 12.5 | Verify 所声明的主根包测试覆盖 | 未加标签的仅编译命令跑零个测试；`TestNetLogEventCount` 在 `cd test` 之后、在独立模块中运行 | 声明的 VERIFIED_SOURCE；证明不了主根包套件运行过 | 检查 `.github/workflows/verify.yml` 与确切的运行 | — |
 | 12.6 | 标签组合与 `-checklinkname=0` 契约 | CI 步骤 `:168` | VERIFIED_UNIT | `go test -count=1 ./cmd/internal/...` | Go |
-| 12.7 | 上游 pin 假设的绊线 | [Verify 40605271219](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40605271219) 报告该步骤在 `cb71cf80d72` 处成功 | 对该次运行为 VERIFIED_CI；证明不了后续 pin | `bash scripts/ci/verify-upstream-assumptions.sh` | bash + 网络 |
+| 12.7 | 上游固定版本假设检查 | [Verify 40605271219](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40605271219) 报告该步骤在 `cb71cf80d72` 处成功 | 对该次运行为 VERIFIED_CI；证明不了后续 pin | `bash scripts/ci/verify-upstream-assumptions.sh` | bash + 网络 |
 | 12.8 | 必需的根包/测试 fork 替换一致 | 本地离线完整性脚本检查了全部三个模块图与 36 条根包/测试替换条目 | 本地脚本 PASS；不是归档字节校验 | `bash scripts/ci/check-go-module-integrity.sh --require-checked test` | Go + bash |
 | 12.9 | 发布是对选定产物重新校验，而不是重新构建 | [Release 40609827203](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40609827203) 报告下载、校验与发布步骤在 `cb71cf80d72` 处成功 | 对该次运行为 VERIFIED_CI；无独立的本地资产字节校验 | 阅读工作流与运行记录 | — |
 | 12.10 | 发布验收拒绝劣质证据 | `release-contract-verify.yml` 声明了针对 mock `gh` 的自测；发布路径使用其独立的产物/证据门禁 | 声明的 VERIFIED_SOURCE，证明不了当前运行 | `bash scripts/ci/verify-release-acceptance-test.sh` | bash |

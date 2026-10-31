@@ -485,7 +485,7 @@ route fast-path 判定 → (*direct.Outbound).CanBypass   outbound.go:440-442
 
 ### 6.6 Native bypass（快速路径的等价性）
 
-`BypassBlockers` 的四个组成部分见 §2.7。审计确认：bypass 只在"literal 无候选、无 sniffed domain、无 rewrite"时被咨询（`outbound.go:461-465` 注释），且策略/能力/自地址三项与 userspace 同源。测试：`TestProductionDirectOutboundBecomesBypassableForLiteralFlows`、`TestNoAmbientPolicyStillAllowsTheBypass`、`TestEveryAmbientPolicyConditionRefuses`、`TestBlockersNameEveryBit`。
+`BypassBlockers` 的四个组成部分见 §2.7。审计确认：bypass 只在"literal 无候选、无 sniffed domain、无 rewrite"时才会执行相关判定（`outbound.go:461-465` 注释），且策略/能力/自地址三项与 userspace 同源。测试：`TestProductionDirectOutboundBecomesBypassableForLiteralFlows`、`TestNoAmbientPolicyStillAllowsTheBypass`、`TestEveryAmbientPolicyConditionRefuses`、`TestBlockersNameEveryBit`。
 
 ---
 

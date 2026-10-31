@@ -319,7 +319,7 @@ sing-tun 锚点（`d769a7080ca2`）已落后两个 pin。
 | `379b21161` | BUILD | OWN | **新增 `with_xhttp`——唯一由 fork 发明的 profile 条目** |
 | `b0e93f894` | BUILD | OWN | 从全部三个 profile 文件中移除 `tfogo_checklinkname0`（该标签现在随标志一起传递） |
 | `3bab501db`, `dcd8b10cd`, `4c39a835b`, `b175f04dd`, `523db47e4` | REFACTOR | OWN | 整个**产品专用注册表 + 能力允许列表**架构退役 |
-| `108439963`, `2937cb71e`, `6c5fa3a20` | CI | OWN | 上游假设绊线（tripwire）门禁 |
+| `108439963`, `2937cb71e`, `6c5fa3a20` | CI | OWN | 检测上游假设变化的门禁（tripwire） |
 | `e63ce659` | CI | OWN | 失败即拒绝（fail-closed）的发布验收门禁 |
 | `9aef595e` | CI | OWN | 每次 push 都运行该验收门禁的自检 |
 | `d660c979` | FIX | OWN | 拿发布门禁跟各工作流声明的名字比对 |
