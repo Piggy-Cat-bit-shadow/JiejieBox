@@ -86,7 +86,7 @@
 | 两个 MASQUE 解析器 | `modules/masque-connectip.md` | §3 两者不可互换 |
 | MASQUE MTU / PTB | `modules/masque-connectip.md` | §4 |
 | 原生 Naive 入站 | `modules/naive-http-transport.md` | §2 服务端入站行为 |
-| UoT v1/v2 | `modules/naive-http-transport.md` | §2 → UoT v1/v2 —— 真正重要的区别 |
+| UoT v1/v2 | `modules/naive-http-transport.md` | §2 → UoT v1/v2 的目的地语义 |
 | Naive 目标 ACL / SSRF | `modules/naive-http-transport.md` | §3 风险最高的区域 |
 | `transport/http`、`common/httpclient` | `modules/naive-http-transport.md` | §4 |
 | XHTTP 模式 | `modules/xhttp-client-transport.md` | §4 模式 |

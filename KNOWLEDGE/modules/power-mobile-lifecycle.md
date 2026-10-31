@@ -107,7 +107,7 @@ iPad 与 macOS 为 **`NOT_RUN` / `SIGNING_OUT_OF_SCOPE`**。这只是一台设�
 
 ---
 
-## 4. 内存策略——三种不同动作，以及那个被禁止的动作（Memory policy — three distinct actions, and the one that is forbidden）
+## 4. 内存策略：三种动作与禁止的行为（Memory policy — three distinct actions, and the one that is forbidden）
 
 | 动作 | 它可否重置网络？ | 它的用途 |
 |---|---|---|

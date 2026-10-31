@@ -101,7 +101,7 @@ Tailscale、OpenVPN 和 OpenConnect 的 DNS 传输可能持有私有解析器，
 | 遍历（the walk） | `walkDNSRules` `:709` |
 | 带规则交换（exchange with rules） | `exchangeWithRules` `:923` |
 | 挂起后恢复（resume after suspension） | `resumeExchangeWithRules` `:933` |
-| 清扫已武装规则（sweep armed rules） | `sweepArmedDNSRules` `:965` |
+| 处理已启动的规则（sweep armed rules） | `sweepArmedDNSRules` `:965` |
 | 完成待处理交换（finish a pending exchange） | `finishPendingExchange` `:1063` |
 | 异步 `evaluate` 动作 | `launchDNSEvaluate` `:637`、`dnsEvaluatedFuture` `:571` |
 
@@ -284,8 +284,7 @@ FakeIP 元数据则专门传播这个错误，好让它的存储避免推进预�
 udp  ⇒  AllOf{udp}  +  Conditional{tcp}
 ```
 
-**为什么 TCP 这条腿是 `Conditional` 而不是 `AllOf`：** TCP 重试只在响应被**截断**时发生。
-把两者都定为必需，会拒绝一个本来完全可用的配置。
+**为什么 TCP 是 `Conditional` 而不是 `AllOf`：** 只有 UDP 响应被截断时才需要 TCP 重试。如果把 UDP 和 TCP 都列为必需能力，就会拒绝原本可用的配置。
 
 这些需求通过 `dns/transport/capability.go` 报告；按类型的断言在
 `dns/transport/{tcp,tls,udp,https}.go` 与 `dns/transport/quic/{quic,http3}.go`。断言在启动时

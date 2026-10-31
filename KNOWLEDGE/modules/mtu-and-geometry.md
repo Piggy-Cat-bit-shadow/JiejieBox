@@ -47,7 +47,9 @@ inner tunnel MTU        what the tunnel promises the payload it carries
 
 **这些是不等式断言，不是注释：** outer > inner（`outer_quic_mtu_test.go:73-77`、`:172-176`），并且 `1280 + 51 − 1232 = 99` 恰好成立（`:181-185`）。
 
-**这套 MASQUE 计算为何无法确立外层链路 MTU：** `client.go:146-147` 自己就是这样说的。`PathCapacity` **根本没有链路 MTU 字段**（`path_mtu.go:127-155`）；它*确实*携带的上限是一个 **UDP payload** 数字（`path_mtu.go:111-120` = 内层 − 20/40 − 8 − 封装），比链路 MTU *低*一层。`outer_quic_mtu_test.go:222-237` 固定了该选项面没有第三个旋钮。其他组件可以读取接口 MTU，例如 `protocol/bridge/backend_linux.go`；但接口 MTU 本身并不构成端到端 MASQUE 路径 MTU 的证明。
+**为什么不能由此确定外层链路 MTU：** `PathCapacity` 没有链路 MTU 字段（`path_mtu.go:127-155`）。它携带的是 **UDP payload** 上限，即内层大小减去 20/40 字节 IP 头、8 字节 UDP 头及封装开销（`path_mtu.go:111-120`）；这与链路 MTU 处于不同层次。`outer_quic_mtu_test.go:222-237` 检查相关选项没有第三个配置项。
+
+其他组件可以读取接口 MTU，例如 `protocol/bridge/backend_linux.go`，但接口 MTU 本身不能证明端到端 MASQUE 路径的 MTU。
 
 **上限来自路径模型，不是一个常量。** 提交 `feat(mtu): cap the MASQUE outer QUIC packet by a proven detour capacity`（`2118ee40`）恰好只动两个文件：`client.go` +51 行，`outer_quic_mtu_test.go` +237。WireGuard 的 `validateTunnelMTU`（`transport/wireguard/endpoint.go:523-569`）只拒绝 IPv6-on-sub-1280：一个 1210 字节的 detour 会得出 1130 的嵌套值，而该 detour 自身需要 1360（`:550-552`）。
 

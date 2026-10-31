@@ -480,13 +480,7 @@ Wi‑Fi generation 10
 
 ## 7. Direct：不是“绕过越多越快”
 
-Direct 这一块必须非常严谨。
-
-`v0.1.6` 能明确说的是：
-
-> **Direct eligibility、路径证明、FakeIP / sniff / destination ownership / tracker guard 等周围语义发生了明显变化。**
-
-不应该无证据说“最底层 byte mover 全重写了”。
+`v0.1.6` 对 Direct 资格、路径检查，以及 FakeIP、嗅探、目的地所有权和 tracker 防护等语义做了调整；这些改动不意味着最底层的字节搬运路径全部重写。
 
 Direct 要满足的不是：
 
@@ -518,23 +512,11 @@ L2：splice / kernel socket path
 L3：buffered copy
 ```
 
-但不论哪层：
+选择 Direct 不等于可以跳过该流原本需要的 DNS 解析或广告过滤；是否需要解析仍取决于目的地和配置。
 
-> **DNS 仍然必须保留，因为 DNS 本身承担广告过滤和策略语义。**
+## 第二部分小结
 
-这也是为什么：
-
-> **Direct ≠ 不经过 DNS。**
-
-## 第二部分一句话
-
-第一部分是：
-
-> **认人 + 认路**
-
-第二部分就是：
-
-> **选路 + 走路 + 路坏了以后怎么办**
+上述机制分别处理成员选择、物理路径、连接建立以及失败后的有限恢复。
 
 ---
 
@@ -577,9 +559,7 @@ wire bytes
 
 ## 1. TLS / uTLS / REALITY：握手本身也进入统一语义
 
-这一层不只是“支持 REALITY”。
-
-而是包括：
+这一层涉及以下握手与兼容性功能：
 
 - REALITY client / server
 - Xray hybrid compatibility
@@ -592,9 +572,7 @@ wire bytes
 - auth fallback
 - minimum client version
 
-也就是说：
-
-> **握手不是某个 outbound 私有的小黑盒，而是整个路径生命周期的一部分。**
+握手需要与连接建立、失败处理和生命周期管理共同考虑。
 
 ## 2. VLESS：开始引入 PQ encryption 路线
 
@@ -607,17 +585,11 @@ wire bytes
 - BLAKE3 DeriveKey
 - AES-GCM / ChaCha20
 
-这里的意义不只是“多了一种加密”。
-
-而是：
-
-> **协议层开始承载真正新增的 wire capability。**
+这些能力扩展了协议层支持的加密方式。
 
 ## 3. XHTTP：这是 v0.1.6 真正的大型新能力
 
-XHTTP 在这一代不是小补丁。
-
-它包括：
+这一代 XHTTP 传输涉及：
 
 - `packet-up`
 - `stream-up`
@@ -633,15 +605,11 @@ XHTTP 在这一代不是小补丁。
 - idle trim
 - `with_xhttp` compile gate
 
-这已经是一套完整 transport 子系统。
+这些功能共同构成 XHTTP 客户端传输子系统。
 
 ## 4. MASQUE：从“能 CONNECT-IP”到真实 packet 生命周期
 
-MASQUE CONNECT-IP 是 fork-native 的重要能力之一。
-
-关注点不只是建 tunnel。
-
-而是：
+MASQUE 的基础支持来自上游；本 fork 在 CONNECT-IP 数据面和生命周期上进行了扩展，涉及：
 
 - capsule bound
 - overlap handling
@@ -652,9 +620,7 @@ MASQUE CONNECT-IP 是 fork-native 的重要能力之一。
 - MTU
 - lifecycle
 
-这就再次体现 v0.1.6 的特点：
-
-> **不是协议接口跑通，而是协议在真实网络生命周期里跑通。**
+这些路径还需要分别验证所有权、错误处理及连接生命周期；源码或单元测试不能代替真实网络和对端互操作测试。
 
 ## 5. Connection pool / mux：旧连接不是简单 close
 

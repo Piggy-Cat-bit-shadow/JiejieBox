@@ -140,7 +140,7 @@
 | A5b 代理复制环 `[V]` | `route/conn.go:414` `uploadStreamGate` → `common/trafficsched/gate.go:74-86`；循环 `route/conn.go:901-948` → `sing/common/bufio/copy.go:27` → `copy_direct.go:25-68` → `stack_go_conn.go:501-541` | GoConn chain | `*buf.Buffer`（`network/direct.go:53-82`，≤32 KiB） | 1 次 chain→buffer 复制；稳态 0 分配（池） | 每个 buffer 一次 `WriteBuffer`；`GoConn` 没有 `CreateVectorisedReadWaiter`，writev 升级**不可达**（`copy_direct.go:56-58`） | gate `flow.wait` 阻塞复制 goroutine → TUN 窗口关闭 → socket 写阻塞 | 写入方 `defer buffer.Release()`（`sing/common/bufio/conn.go:158-161`）；错误时 `common.Close` 双向关闭 |
 | A6 socket `[V]` | 出站 `net.Conn.Write` / `writeVector` | — | — | — | 代理路径每 MTU 一次写 syscall | socket send buffer | 取消 → `Scheduler.ReleaseAll`（`conn.go:153-155`） |
 
-**结论：** TUN 入口在 Apple 上已是 0 复制 + 批量 `recvmsg_x`；Windows 受 wintun API 限制只能是 1 次复制 + 0 批量 syscall；Linux 每包 1 次 read（GSO 聚合在下面补）。**这条链路没有值得施工的重复复制**，A5b 的单次复制是所有权转移的必要代价。
+**当时的结论：** Apple TUN 入口使用零复制和批量 `recvmsg_x`；Windows 受 wintun API 限制，需要一次复制且没有批量 syscall；Linux 每包一次 read（GSO 聚合见下文）。审计认为这条路径没有值得进一步消除的重复复制，A5b 的一次复制用于转移所有权。此结论限定于本报告的代码快照。
 
 ### 4.2 路径 B：TUN → UDP → CONNECT-IP（MASQUE）→ HTTP/3 → QUIC → socket
 
@@ -155,7 +155,7 @@
 | B7 序列化 `[V]` | `quic-go/internal/wire/datagram_frame.go:99-120`：`:108` `append(b, f.Data...)`、`:120` `f.Release()` | frame | 发包 buffer | 1 次复制（帧头+payload 连续，GSO 要求） | packetizer 组包 | 拥塞/pace | 最后一个读者释放 |
 | B8 socket `[V]` | `quic-go/send_queue.go:91` → `send_conn.go:73-98`（GSO `:111-112`） | packet buffer | 内核 | 0 | 每个聚合 ≤64 KiB 一次 syscall | socket send buffer | GSO 失败 → 关 GSO 重试单包 |
 
-**结论：** 这条链路有一处**明确可去**的复制（B3，第二轮 B1）和一处**明确可恢复**的批量退化（B6 的 32 上限，第二轮 B2）。B7 的一次复制不可去（QUIC 帧连续性 + GSO）。
+**当时的结论：** B3 的第二次复制和 B6 超过 32 个数据包时的批量退化，分别列为第二轮 B1、B2 候选；审计认为 B7 的复制因 QUIC 帧连续性及 GSO 要求不能省略。后续是否实施，应查看对应构建和收尾报告。
 
 ### 4.3 DNS 控制面所有权图（`VERIFIED_SOURCE`）
 
@@ -223,7 +223,7 @@ HTTP body (net/http)
 
 ## 5. 第二轮新审计发现
 
-候选条目统一按提示词要求的字段给出。**A0 是本轮最重要的发现：它不是一个性能猜想，而是一个与函数自身注释直接矛盾的缓冲区生命周期缺陷。** 所有"A 级"条目都只给施工建议，不施工。
+以下候选按任务要求的字段记录。A0 是本轮发现的缓冲区生命周期缺陷，与函数注释描述不一致；所有 A 级条目仅提出实现建议，本次审计没有修改代码。
 
 ### 5.1 A0（新 BUG，最高优先）：被劫持的 UDP DNS 被解析两次，第二次读的是已可能被回收的 TUN 读缓冲
 

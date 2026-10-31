@@ -68,7 +68,7 @@ Cronet 引擎，并限制并行的不安全握手数；`quic_congestion_control`
 原版 NaiveProxy 走 TCP；UoT 是单独的扩展。与原版
 客户端的实际互通性，本次校准的本地 codec 测试并没有建立；见证据表。
 
-### UoT v1/v2 —— 关键的那个区别（UoT v1/v2 — the distinction that matters）
+### UoT v1/v2 的目的地语义（UoT v1/v2 — the distinction that matters）
 
 | 模式 | 目的地如何承载 |
 |---|---|

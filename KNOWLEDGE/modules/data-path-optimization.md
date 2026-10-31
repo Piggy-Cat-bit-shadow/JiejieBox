@@ -98,7 +98,9 @@ SEMANTIC EQUIVALENCE, NOT CONFIG EMPTINESS
 
 **L0 不是“先路由器、再旁路”。** 它在路由器*之前*运行，所以决策时手里只有一个地址，别的什么都没有。它表达不了域名、进程或协议条件；也不该用它把一条 `DIRECT` 规则编译进路由集，除非该规则本身已经权威且只涉及 IP。
 
-**L0 的唯一边界——FakeIP。** L0 先运行，所以一个 FakeIP 地址会被交给操作系统并黑洞（black-holed）——它是本进程铸造的占位符，在平台路由表里没有路由，只有路由器能还原它的域名。两种常见配置会走到这一步：配置了 `route_address_set`（集合之外的一切都被旁路），以及一个恰好覆盖 `198.18.0.0/15` 的 `route_exclude_address_set`。因此地址只要落在当前 FakeIP 存储范围内，`JudgeFlow` 就会下落到路由器。这个 L0 防护只查 `fakeIPStore.Contains`，不查路由器的签发台账或退役范围历史：当前范围之外的地址，仍可能在路由器做那些检查之前就被路由集旁路。没配置 FakeIP 传输时跳过该防护。路由器侧的不同检查见 `dns-demand.md` §3。
+**L0 的 FakeIP 边界。** L0 路由集先于用户态路由器执行。FakeIP 是本进程分配的占位地址；如果直接交给操作系统，平台路由表通常无法将它还原为域名，流量可能进入黑洞。`route_address_set` 将集合之外的流量旁路，或者 `route_exclude_address_set` 覆盖 `198.18.0.0/15`，都可能遇到这一问题。
+
+因此，地址落在当前 FakeIP 存储范围内时，`JudgeFlow` 会将其交给路由器。该 L0 防护只检查 `fakeIPStore.Contains`，不读取发放台账或退役范围：当前范围之外的地址仍可能在路由器检查之前被路由集旁路。未配置 FakeIP 传输时，此防护不运行。路由器侧的检查见 `dns-demand.md` §3。
 
 **DNS 始终优先。** `JudgeFlow` 的顺序是：已配置的 DNS 地址 → 按端口识别 DNS → 路由集 → 路由器。正是这个顺序让基于 DNS 的广告过滤继续生效。它**不**声称能检测 DoH/DoT/DoQ，也不会拦下 UDP/443 去拦 QUIC。
 
