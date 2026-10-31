@@ -1,66 +1,93 @@
 # JiejieBox
 
-基于 [sing-box](https://github.com/SagerNet/sing-box) 的代理内核，面向服务端和多平台客户端。JiejieBox 在上游的协议、路由与 DNS 基础上，增加传输、选路和生命周期管理能力，并维护配套客户端与构建流程。
+**多协议代理内核，专注复杂网络下的连接恢复、智能选路与移动端资源管理。**
 
-[下载与版本](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) · [更新日志](CHANGELOG.md) · [配置文档](docs/configuration) · [Fork 差异](docs/FORK-DIFF.md) · [知识库](KNOWLEDGE/README.md)
+JiejieBox 基于 [sing-box](https://github.com/SagerNet/sing-box) 持续开发。在上游协议与路由能力之上，扩展 XHTTP、Mieru、VLESS 加密、DNS 分组和流量调度，并围绕网络切换、休眠唤醒、嵌套代理与低内存场景深入改进。支持服务端部署，也为桌面端和移动端提供共享内核。
 
-## 获取与使用
+[下载与更新日志](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) · [Android 客户端](https://github.com/Piggy-Cat-bit-shadow/satelite-one) · [配置文档](docs/configuration) · [反馈问题](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/issues)
 
-前往 [GitHub Releases](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) 选择适合平台的版本。以 v0.1.34 为例，发布页包含 Linux amd64、Windows amd64、macOS arm64、Android arm64 内核、Apple Libbox、Windows 客户端安装程序及 `SHA256SUMS`。各版本的实际文件以对应发布页为准。
+## 项目特点
 
-Android 图形客户端：[satelite-one](https://github.com/Piggy-Cat-bit-shadow/satelite-one)。Apple、Android 和桌面端源码的版本由本仓库的 [子模块](.gitmodules) 固定；客户端和 Libbox 应使用配套版本。
+### 丰富的协议与传输能力
 
-内核使用 JSON 配置。准备好配置文件后，可先检查再运行：
+在 sing-box 原有协议基础上，持续扩展现代代理协议与组合场景：
 
-```sh
-sing-box check -c config.json
-sing-box run -c config.json
-```
+| 能力 | 特点 |
+| --- | --- |
+| **XHTTP 客户端** | 支持 `packet-up`、`stream-up`、`stream-one`、`auto`，覆盖 HTTP/1.1、HTTP/2、HTTP/3，并接入连接复用与网络恢复。 |
+| **Mieru 客户端与服务端** | 基于官方 SDK，支持 TCP / UDP 传输及可选的传输故障回退，接入统一 DNS、拨号和连接生命周期。 |
+| **REALITY 与 VLESS** | 支持混合密钥交换、可配置的 `key_share`、首包分片，以及 VLESS 客户端应用层后量子加密。 |
+| **Native Naive** | 提供原生服务端、填充、UoT、伪装与认证前资源控制；客户端使用对应平台的 Cronet 能力。 |
+| **MASQUE / CONNECT-IP** | 支持隧道地址与路由管理，完善 H3 / H2 回退、DNS 分配及数据报处理。 |
 
-Windows 下将 `sing-box` 换成实际的 `sing-box.exe` 路径。配置格式和基础概念可参考 [sing-box 官方文档](https://sing-box.sagernet.org/)，本仓库额外能力请查看下方文档。配置中的服务器地址、凭据与路由策略需要根据自己的环境填写。
+协议扩展与内核的路由、DNS、网络切换和关闭流程共同工作，减少多种协议叠加时各自管理状态产生的问题。具体能力由平台和构建标签决定。
 
-## 主要能力
+### 按连接选路，故障时有边界地恢复
 
-- **协议与传输**：在上游功能基础上，提供 XHTTP 客户端传输、Mieru 客户端及服务端、Native Naive 入站和 MASQUE 相关能力。Naive 出站等功能受目标平台和构建标签影响。参见 [Mieru](docs/fork/mieru-integration.md)、[Naive](docs/naive.md)、[MASQUE](docs/masque.md) 和 [XHTTP](docs/configuration/shared/v2ray-transport.md)。
-- **选路与代理组**：提供 `loadbalance` 组、可选的有限故障切换和启动时路径校验；负载均衡按连接或 UDP 会话选取成员。参见 [负载均衡](docs/fork/load-balance.md)。
-- **DNS 与网络切换**：维护 DNS 分组、缓存与网络代次隔离，以及休眠、唤醒和接口切换时的资源管理。实现细节见 [DNS 知识库](KNOWLEDGE/modules/dns-demand.md) 和 [移动端生命周期](KNOWLEDGE/modules/power-mobile-lifecycle.md)。
-- **数据路径**：支持按需启用的上传整形与流量分类，并对缓冲区及直连路径进行优化。Direct Offload 的实际数据路径绕行仅适用于 Linux `auto_redirect`；TUN 模式不会因此绕过用户态。参见 [流量调度](docs/fork/traffic-scheduler.md) 和 [Direct Offload](docs/fork/direct-offload.md)。
-- **客户端集成**：通过 Libbox 与移动端、桌面端集成，提供平台构建配置及发布校验流程。参见 [构建配置](docs/BUILD-PROFILES.md) 和 [客户端接口](KNOWLEDGE/modules/libbox-platform-contract.md)。
+- **三种负载均衡策略**：轮询、一致性哈希和粘性会话，适合分散新连接、保持目标亲和或维持会话习惯。
+- **共享健康证据**：负载均衡与 URLTest 复用节点测速记录，减少各自维护一套判断带来的不一致。
+- **有限故障切换**：可选启用备用节点重试，多层代理组共享逐流预算，避免一次连接失败触发层层重试。
+- **区分故障来源**：结合已确认的连接失败信息，区分本地网络、代理线路、目标拒绝和主动取消，减少健康节点被误判。
+- **保留双栈候选**：完整地址候选和网络策略可经过嵌套代理组传递，让另一地址族仍有机会参与连接。
 
-能力是否包含在某个二进制文件中取决于其平台、版本和构建标签。上游文档不能代替本 fork 的配置说明：例如 `loadbalance`、`traffic_scheduler` 和 `traffic_class` 是 fork 扩展，使用这些字段的配置不能直接交给官方 sing-box 加载。
+选路以一条 TCP 连接或 UDP 会话为单位，既保持连接稳定，也让新连接能够使用当前可用的线路。
 
-## 从源码构建
+### DNS 可选择稳定、速度或并发
 
-当前 `go.mod` 要求 Go 1.25.5 或更新的兼容工具链。先克隆仓库并进入目录：
+DNS 分组提供 `stable`、`fastest`、`parallel` 三种模式：复用稳定上游、依据近期胜出记录选取上游，或并发查询可用成员。
 
-```sh
-git clone https://github.com/Piggy-Cat-bit-shadow/JiejieBox.git
-cd JiejieBox
-```
+- 并发冷启动合并竞选，减少重复向全组服务器发送查询。
+- 全成员异常时收敛为一次生存尝试，避免断网期间不断放大无效请求。
+- 缓存、反向映射和查询结果按网络代次管理，减少 Wi-Fi / 蜂窝切换后旧结果污染新网络。
+- DNS 连接复用、记录容量限制和按需刷新共同控制后台连接与内存占用。
 
-在 Linux 上构建项目的 amd64 服务端配置：
+### 面向网络切换和休眠唤醒设计
 
-```sh
-./scripts/ci/build-server.sh linux amd64 dist/sing-box-linux-amd64
-```
+网络变化不只是重新拨号。JiejieBox 对在途请求、旧连接、连接池和新网络状态进行统一协调：
 
-在 macOS 上构建 arm64 内核配置：
+- 切换网络时撤销旧操作的归属，避免迟到的连接与解析结果重新进入新网络。
+- 根据切换类型和流量状态排空或回收旧路径，及时处理已失效的数据报会话。
+- 为 WireGuard、MASQUE、HTTP 和 XHTTP 等资源接入恢复与回收机制，处理“网络已恢复，旧连接仍不可用”的情况。
+- 唤醒时分批恢复后台任务，减少测速、刷新和重连同时启动造成的压力。
 
-```sh
-./scripts/ci/build-macos-client.sh arm64 dist/sing-box-darwin-arm64
-```
+### 为移动端减少无效后台工作
 
-两个脚本分别读取对应的构建标签。Windows 和移动端构建需要各自的平台工具链及标签；其中 `release/DEFAULT_BUILD_TAGS` 是 Darwin 配置，不应直接用作 Windows 构建配方。构建客户端时还需初始化所需子模块，并遵循对应客户端的构建说明。更多细节见 [构建配置](docs/BUILD-PROFILES.md)、[源码构建](docs/installation/build-from-source.md) 和 [关联仓库](FORK_REPOSITORIES.md)。
+核心统一处理设备休眠、屏幕、前后台和内存压力事件，配套客户端负责上报平台状态。
 
-## 文档与开发
+- 休眠期间延后非必要 DNS 刷新、远程规则集刷新和统计写入。
+- 后台测速不主动唤醒已经暂停的昂贵网络资源。
+- 区分短时休眠、长时间空闲和内存压力，按条件保留可复用连接或释放空闲资源。
+- 低内存配置调整缓冲区尺寸和内存管理策略，减少常驻与临时内存开销。
 
-- [配置参考](docs/configuration) · [上游迁移说明](docs/migration.md) · [上游更新日志](docs/changelog.md)
-- [服务端](docs/JIEJIE-SERVER.md) · [macOS 客户端](docs/JIEJIE-MACOS-CLIENT.md) · [Windows 状态](docs/WINDOWS-STATUS.md)
-- [Fork 差异](docs/FORK-DIFF.md) · [工程笔记](docs/ENGINEERING-NOTES.md) · [知识库索引](KNOWLEDGE/INDEX.md)
-- [提交问题](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/issues)：请提供版本、平台、复现步骤和脱敏后的配置或日志。
+这些机制旨在减少无业务时的网络活动和资源驻留；实际功耗与内存表现取决于设备、配置及业务流量。
 
-知识库记录了特定源码基线及其证据范围，阅读前请先查看 [基线说明](KNOWLEDGE/BASELINE.md)，并以当前源码和构建配置为准。[旧版首页资料](docs/archive/jiejiebox-original-readme.md) 已存档，其中性能测试结果取决于测试环境与场景，不代表所有设备或网络的实际表现。
+### 优化实际数据路径
+
+- **上传流量调度**：按业务类别管理用户态上传，可配置速率整形，减少大流量上传对交互请求的影响。
+- **嗅探开销控制**：TLS 识别避免执行完整服务端握手，QUIC 分片读取有界，HTTP 提前排除不匹配输入。
+- **减少复制与分配**：改进 MASQUE、QUIC、TUN 等路径的数据包所有权与缓冲区复用。
+- **大型规则集加载**：优化扩容和无缓存场景下的流式读取，减少加载期临时分配，并检查截断、校验和及解压边界。
+- **Direct Offload**：Linux `auto_redirect` 下，满足语义等价条件的直连流可交给系统路由处理；保留逐流资格检查。
+
+### 复杂代理链更容易检查和定位
+
+- **启动前路径检查**：识别循环依赖、无效引用、截断路径和部分无法满足的能力要求。
+- **区分数据路径与控制路径**：为嵌套代理、代理组和 detour 建立统一的逐跳视图。
+- **嵌套隧道 MTU 约束**：根据已知封装开销和下层容量，约束上层 QUIC 数据包，减少包过大导致的连接黑洞。
+- **明确错误位置**：改进地址族、嗅探、路径拒绝和连接关闭的诊断，帮助定位“配置能加载但实际不通”的问题。
+
+## 持续验证
+
+项目维护协议互通、真实载荷回环、网络切换、取消与关闭交错、资源所有权和配置边界等测试，并在内核、客户端及依赖 fork 之间固定配套版本。各版本完成的工作与验证范围见 [Release 更新日志](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases)。
+
+## 客户端与文档
+
+- **客户端**：[Android](https://github.com/Piggy-Cat-bit-shadow/satelite-one) · [Apple](https://github.com/Piggy-Cat-bit-shadow/sing-box-for-apple) · [桌面端](https://github.com/Piggy-Cat-bit-shadow/sing-box-for-desktop)
+- **使用文档**：[配置参考](docs/configuration) · [服务端说明](docs/JIEJIE-SERVER.md) · [Naive](docs/naive.md) · [MASQUE](docs/masque.md)
+- **开发文档**：[构建配置](docs/BUILD-PROFILES.md) · [Fork 差异](docs/FORK-DIFF.md) · [关联仓库](FORK_REPOSITORIES.md) · [知识库](KNOWLEDGE/README.md)
+
+`loadbalance`、`traffic_scheduler`、`traffic_class` 等为本 fork 扩展配置，需使用配套内核与客户端。
 
 ## 致谢与许可
 
-感谢 [SagerNet/sing-box](https://github.com/SagerNet/sing-box) 及所有上游项目和贡献者。JiejieBox 基于 [GNU General Public License v3.0 或更新版本](LICENSE) 发布；依赖及配套项目的许可请参阅各自仓库。
+感谢 [SagerNet/sing-box](https://github.com/SagerNet/sing-box) 以及相关上游项目和贡献者。JiejieBox 基于 [GNU GPL v3.0 或更新版本](LICENSE) 发布。
