@@ -160,10 +160,9 @@ Go 指针正是 `bulkBarrierPreWrite` 崩溃（§8）。
 pool the next request then has to rebuild, so a trim issued for a level whose meaning we do not know is
 a cost paid for a guess. Ignoring it is the safe direction — the consequence is only that a genuinely
 tight process keeps its pools until the next level we do understand, while the alternative would make
-every future platform level a silent behavioural change."*（中文：trim 并非无代价：它会丢弃一个 DNS 或
-HTTP 池，下一个请求必须重建，因此对一个含义未知的级别施加 trim 是为一次猜测付出的成本。忽略它是更安全的
-方向 —— 后果仅仅是一个内存确实紧张的进程会保留其连接池，直到我们确实理解的下一个级别；而另一种做法会让每一个
-未来的平台级别都变成一次静默的行为变更。）
+every future platform level a silent behavioural change."*（中文：内存清理并非没有代价：丢弃 DNS 或 HTTP 连接池后，下一个请求必须重新创建它。因此，
+对含义未知的级别执行清理只是为猜测付出代价。忽略未知级别更安全：内存紧张时，进程会暂时保留连接池，
+直到收到已知的压力级别；否则，未来每新增一种平台级别都可能悄然改变行为。）
 
 **为什么 `TrimUIHidden` 不是内存信号**（`:165-170`）：*"This is a LIFECYCLE fact, not a memory
 reading, and it is deliberately NOT mapped to a trim… the trim callback is not a reliable delivery
@@ -173,7 +172,7 @@ channel for it."*（中文：这是一个生命周期事实，不是一次内存
 
 **合并：** `trimCoalesceWindow = time.Second`（`:223`）、`releaseCoalesceWindow =
 adapter.RecoveryWindow = **90 s**`（`:231`、`adapter/runtime.go:153`）。一个**不同的**级别会立即生效
-—— *"an escalation is a new fact"*（`:222`）（中文：升级是一个新事实）。trim 回调必须在**主线程之外**
+—— *"an escalation is a new fact"*（`:222`）（中文：压力级别升高时，需要按新状态处理）。trim 回调必须在**主线程之外**
 上报（`experimental/libbox/platform_events.go:239-244`）。
 
 ### 三个结构性证明：决策者是核心而非平台（Three structural proofs that the core, not the platform, decides）
@@ -314,7 +313,7 @@ libbox 符号存在，取决于标签集合**。这也是为什么有三个没�
 （`verify.yml:380-389`）。文档注释说明了它为什么存在：低内存门禁
 与内存基准此前读 `DEFAULT_BUILD_TAGS_OTHERS`，而它*"does not match what
 libbox builds"*（中文：与 libbox 构建的内容不匹配），于是那些检查*"were testing a configuration no Apple binary ships"*
-（中文：在测试一个没有任何 Apple 二进制会发布的配置）。
+（中文：测试的配置并未用于任何发布的 Apple 二进制）。
 
 **仅移动端（mobile-only）**标签绝不能进共享集合：`-tags` 对每个目标都生效，所以放进去的
 移动端专用标签会在混合构建里到达 macOS。`applebuildtags/tags.go:63` 与

@@ -497,10 +497,10 @@ v0.1.34 Apple 集成中是 `044e6d5`；常量与 gitlink 一起移动。但 gitl
 
 早先的修订说这个脚本*"could not have caught [pin drift] **by design** — every one of
 its checks is self-referential to the gitlink"*（中文：**按设计**无法捕获[固定值漂移] —— 它的每一项检查
-都自指于 gitlink），而且**没有任何东西运行它**。这两半现在都错了：
+都以 gitlink 自身为依据），而且**没有任何东西运行它**。这两半现在都错了：
 
-* **它已接线** —— `client-apple.yml:265` 运行它（`./scripts/ci/check-apple-source-selection.sh`）。
-* **它被重写**，断言的恰恰是旧文本所假设内容的*反面*。单副本
+* **工作流已调用该脚本** —— `client-apple.yml:265` 运行它（`./scripts/ci/check-apple-source-selection.sh`）。
+* **脚本已重写**，现在会验证与旧说明相反的行为。单副本
   方案检查保留了下来（`:124-129`“refs 文件不记录 SHA”、`:209-210`“两个 SHA 都不得被硬编码”），
   因为这些检查仍能防止*重复*权威 —— 但它现在还断言**移动 gitlink 不会移动
   iOS 源码**，以及**丢弃 gitlink 不会改变已解析的
