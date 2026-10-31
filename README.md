@@ -6,6 +6,16 @@ JiejieBox 基于 [sing-box](https://github.com/SagerNet/sing-box) 持续开发�
 
 [下载与更新日志](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) · [Android 客户端](https://github.com/Piggy-Cat-bit-shadow/satelite-one) · [配置文档](docs/configuration) · [反馈问题](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/issues)
 
+## 这个项目具体做了什么
+
+JiejieBox 的改动覆盖一条网络流的完整处理过程：从 TUN / 入站收包、DNS 与 FakeIP、协议嗅探、规则匹配和代理组选路，到双栈拨号、加密与传输，再到网络切换后的恢复和资源释放。协议扩展、性能改进和生命周期修复共同维护，相关行为也延伸到配套客户端和底层依赖。
+
+- **协议与服务端**：扩展 XHTTP、Mieru、REALITY / VLESS 客户端兼容，完善 Native Naive、MASQUE 和 HTTP/2 / HTTP/3 服务端。
+- **解析与选路**：实现 DNS 分组、本地广告拦截、流级负载均衡、有限故障切换，以及贯穿解析和拨号的双栈策略。
+- **数据路径与内存**：减少嗅探、数据报和回包路径的复制与分配，优化规则集加载、缓冲区配置和上传排队。
+- **网络与设备状态**：统一网络代次、连接重建和资源归属，使切网、休眠、恢复及内存回收具有一致的边界。
+- **客户端与工程验证**：维护 Libbox 接口、Windows 服务与安装隔离、订阅和 Dashboard 集成，以及跨仓库依赖与回归检查。
+
 ## 客户端
 
 | 平台 | 获取与构建方式 |
@@ -32,6 +42,45 @@ Apple 平台以 `./scripts/publish-apple-beta.sh` 为入口，使用对应提交
 
 协议扩展与内核的路由、DNS、网络切换和关闭流程共同工作，减少多种协议叠加时各自管理状态产生的问题。具体能力由平台和构建标签决定。
 
+#### XHTTP：模式、复用与生命周期一起接入
+
+- 四种模式配合 HTTP 版本选择、上传分块、会话 / 序号和 X-Padding 处理，覆盖不同服务端配置。
+- XMUX 管理连接复用与轮换，拨号取消和 deadline 传递到连接建立过程。
+- 连接池纳入休眠恢复、空闲清理与网络切换；处理旧池继续接收新流、关闭时任务残留等问题。
+- 对 URI 查询参数、HTTP 版本规则、packet-up 复用、H3 故障和真实载荷完整性维护回归测试。
+
+#### Mieru：协议 SDK 与共享内核衔接
+
+- 通过官方 SDK 提供入站与出站，支持 TCP、UDP 和双传输配置，并适配端口范围、凭据与协议参数。
+- 服务器解析、拨号选项和入站监听接入共享内核，保留 IPv4 / IPv6、接口与路由策略。
+- 可选 TCP / UDP 回退用于新会话，包含冷却、退避、按需恢复探测和跨网络代次隔离；已有会话不会仅因偏好改变而迁移。
+- 为 SDK 的监听器、在途连接和会话补充释放责任，处理部分启动失败、接口更新、关闭与迟到结果。
+
+#### REALITY / VLESS：握手兼容与数据路径
+
+- REALITY 兼容混合密钥份额与相应客户端版本要求，提供 `key_share` 策略，避免指纹无法满足要求时静默降级。
+- 将 TLS TCP 分片和 record 分片接入实际 REALITY 握手，修复“配置存在但未作用到连接”的路径。
+- 提供 VLESS 客户端应用层后量子加密，并处理握手取消、帧边界和重密钥；对 Vision 依赖的私有接口增加检查。
+- 上述 XHTTP 与 VLESS 加密扩展以客户端为主，不包含对应的 XHTTP 服务端或 VLESS 加密服务端实现。
+
+#### MASQUE：传输、解析与隧道状态分开管理
+
+- 完善 CONNECT / CONNECT-UDP 与 CONNECT-IP 数据通道，处理地址分配、路由通告、DNS_ASSIGN 和 PREF64 状态。
+- 将连接服务器的 Bootstrap DNS 与隧道内部目标解析分开，处理下发 DNS 优先级、已有 H3 连接上的 DoH 和解析状态快照。
+- 在 QUIC 握手完成阶段竞争 Bootstrap 候选，回收未胜出的连接；重连使用与当前网络相符的解析结果。
+- 为 H3 建连保留独立尝试窗口，使 UDP 黑洞场景下的 H2 回退有机会执行；取消与真实传输故障分别判断。
+- 改进 Capsule 解析、地址重叠检查及条目上限，避免异常通告造成过量 CPU 或内存消耗。
+
+#### Native Naive 与 HTTP 服务端
+
+- Native Naive 提供认证 CONNECT、填充与 UoT v1/v2；普通请求或认证失败可进入配置的伪装响应路径。
+- 区分固定目标会话与逐数据报携带目标的 UoT，保留认证身份并接入内核规则。
+- 提供总连接、单来源连接、请求头超时和来源记录容量等可选资源控制，覆盖认证前连接。
+- HTTP/2 / HTTP/3 的流与窗口参数有独立配置和校验；处理短写、刷新失败、关闭和数据帧边界。
+- Naive 客户端可选 H3 → H2 故障回退，保留 CONNECT 握手与剩余时间预算，避免把普通 HTTP 响应或调用者取消当作 H3 线路失效。
+
+其他协议相关工作包括 AnyTLS 默认及 ALPN 回落、ShadowTLS 认证前读取与握手目标释放、SOCKS 可选预连接 / 复制调优，以及 SOCKS / HTTP CONNECT 的目标解析归属。
+
 ### 从解析到拨号贯通的 IPv4 / IPv6 双栈设计
 
 双栈能力贯穿 DNS、地址候选、连接竞争、代理组和 TUN 入口，重点处理“一种地址族慢、不可用或切换后失效，拖住整个连接”的问题。
@@ -53,6 +102,8 @@ Apple 平台以 `./scripts/publish-apple-beta.sh` 为入口，使用对应提交
 
 选路以一条 TCP 连接或 UDP 会话为单位，既保持连接稳定，也让新连接能够使用当前可用的线路。
 
+代理组的 `fast_path` 是逐流快速路径策略，与 `traffic_class` 的业务分类分别控制。显式禁止快速路径不能被直连能力覆盖；预览、诊断和启动校验也不会消耗实际轮询位置或提交一次流选择。
+
 ### DNS 可选择稳定、速度或并发
 
 DNS 分组提供 `stable`、`fastest`、`parallel` 三种模式：复用稳定上游、依据近期胜出记录选取上游，或并发查询可用成员。
@@ -62,6 +113,20 @@ DNS 分组提供 `stable`、`fastest`、`parallel` 三种模式：复用稳定�
 - 缓存、反向映射和查询结果按网络代次管理，减少 Wi-Fi / 蜂窝切换后旧结果污染新网络。
 - DNS 连接复用、记录容量限制和按需刷新共同控制后台连接与内存占用。
 
+#### 本地 DNS 广告拦截
+
+本 fork 增加 DNS `adblock` 规则动作。规则按域名条件或规则集命中后，直接返回带 SOA 的本地 NXDOMAIN，不再向上游查询，并让客户端能够按负 TTL 缓存结果。
+
+本地拦截结果与上游解析失败分别标记；双栈汇总错误时，某个地址族被本地拦截不能掩盖另一地址族的真实失败。规则集仍由用户配置，内核不会仅凭动作名称自动识别所有广告域名。
+
+#### FakeIP、缓存与异步查询正确性
+
+- 记录 FakeIP 签发归属、代次和退役地址范围，防止旧占位地址被误当成真实目标发送给代理。
+- 处理重启后的旧记录、持久化游标异常和写入失败，避免一条损坏状态影响整个缓存文件。
+- DNS 缓存读写、反向映射和持久化结果与网络环境保持一致；地址族过滤按调用者应用，不裁剪共享缓存中的完整结果。
+- 异步 DNS 劫持传递已解析消息的所有权，避免后台任务读取已被收包循环复用的原始缓冲区，同时减少重复解析。
+- Tailscale、OpenVPN、OpenConnect 等 endpoint 的专用解析器按所属生命周期接入，避免套用不适合的默认 DNS 归属。
+
 ### 面向网络切换和休眠唤醒设计
 
 网络变化不只是重新拨号。JiejieBox 对在途请求、旧连接、连接池和新网络状态进行统一协调：
@@ -70,6 +135,14 @@ DNS 分组提供 `stable`、`fastest`、`parallel` 三种模式：复用稳定�
 - 根据切换类型和流量状态排空或回收旧路径，及时处理已失效的数据报会话。
 - 为 WireGuard、MASQUE、HTTP 和 XHTTP 等资源接入恢复与回收机制，处理“网络已恢复，旧连接仍不可用”的情况。
 - 唤醒时分批恢复后台任务，减少测速、刷新和重连同时启动造成的压力。
+
+#### 恢复与关闭的共同边界
+
+- 每次网络重置有单调代次，重建操作持有明确的所有权；旧重建完成后不能覆盖新网络。
+- 资源从构造、启动到关闭由作用域管理，启动失败和关闭期间新取得的资源也要有清理责任。
+- 对尚未建立的拨号同样执行取消，覆盖黑洞连接和迟到成功，而不仅管理已经登记的活动连接。
+- 区分空闲清理、可复用缓存回收和激进网络重置，避免普通内存整理触发全量断线与重连。
+- 对 TCP 半关闭和交接给下层的连接补充存活观察，减少对端已离开后长时间残留的流。
 
 ### 为移动端减少无效后台工作
 
@@ -82,6 +155,8 @@ DNS 分组提供 `stable`、`fastest`、`parallel` 三种模式：复用稳定�
 
 这些机制旨在减少无业务时的网络活动和资源驻留；实际功耗与内存表现取决于设备、配置及业务流量。
 
+内存清理进一步区分过期缓存、空闲连接池和紧急回收：普通整理不应主动拨号、唤醒暂停资源或重置网络；紧急回收使用更强的释放策略。多个来源的请求由同一执行器协调，低收益空闲整理会冷却，关闭时等待已接纳工作结束。Android 的界面隐藏也不会自动被当作内存告急。
+
 ### 优化实际数据路径
 
 - **上传流量调度**：按业务类别管理用户态上传，可配置速率整形，减少大流量上传对交互请求的影响。
@@ -92,6 +167,21 @@ DNS 分组提供 `stable`、`fastest`、`parallel` 三种模式：复用稳定�
 
 优化也包括容易被忽略的边界：数据包交给下一层后由谁释放、批量发送部分成功时哪些数据不能重发、异步 DNS 查询是否仍引用可复用缓冲区，以及网络重置时尚未建立的连接是否能够取消。项目对这些路径分别维护所有权规则和回归测试，降低性能改动带来的丢包、重复发送与资源泄漏风险。
 
+#### 数据包与缓冲区优化
+
+- MASQUE / QUIC 数据报优先走可转移所有权的路径，批量处理时只对仍归调用方所有的剩余部分执行回退与释放。
+- QUIC 已取出的接收队列槽位及时清空；小型排序帧按条件缩小保留缓冲区，减少小载荷长期钉住大数组。
+- TUN 回包的常见单写回路径复用调用方切片，减少为分组和临时数据结构分配内存；保留多写回情况下的处理语义。
+- 缓冲区预留 headroom 与容量满足池化要求，避免前置协议头时重新分配；低内存构建使用更小的缓冲区配置。
+- UDP 队列满、会话关闭后的丢弃和 QUIC DATAGRAM 丢弃增加可观察计数。
+
+#### TCP 复制、splice 与 kTLS
+
+- 已缓存首包满足条件时直接交给支持所有权的写入路径，减少再次复制与分配。
+- splice 建立失败时正确返回用户态复制，避免已经声明接管却没有移动数据。
+- 区分“接受交接”的诊断与真正发生的内核复制，不将交接计数当作吞吐结果。
+- Linux kTLS 读取处理握手后控制消息；若错误或 TLS 关闭发生在已有数据之后，先交付数据，再报告错误，避免尾部字节丢失。
+
 ### 已记录的优化效果
 
 以下为项目历史基准与受控实验记录，展示具体优化解决的问题；并非所有设备和真实网络的统一成绩。
@@ -101,9 +191,11 @@ DNS 分组提供 `stable`、`fastest`、`parallel` 三种模式：复用稳定�
 | 上传拥塞下高优先级小消息的 p99 延迟 | 146 ms | 9 ms | 4 条普通流竞争 2 MB/s FIFO，聚合整形配置为容量的 85%。 |
 | 持续大流量上传后，首条高优先级消息的 p50 延迟 | 127 ms | 2 ms | 同组实验中的持续整形路径，观察接收端交付延迟。 |
 | 每流活跃缓冲区驻留 Heap | 64.1 KiB | 32.1 KiB | 默认与 `with_low_memory` 编译配置的缓冲区基准。 |
+| 百万域名规则集加载累计分配 | 42.5 MiB | 20.6 MiB | 同机同样例，几何扩容优化；加载期 GC 次数由 10 次降至 5 次。 |
+| TUN 单包、单写回路径的临时分配 | 72 B / 2 次 | 0 B / 0 次 | 真实 dispatcher 与 portNAT 的回包基准。 |
 | 非 HTTP 流量经过 HTTP 嗅探的分配量 / 次数 | 4,889 B / 9 次 | 205 B / 3 次 | DNS-over-stream 样例，比较启用提前排除逻辑前后。 |
 
-原始条件及限制见 [上传调度实验](KNOWLEDGE/modules/data-path-optimization.md#b3-the-four-measurements-that-settled-the-design)、[低内存缓冲区](KNOWLEDGE/modules/mtu-and-geometry.md#4-commonbufgeom--the-geometry-contract) 和 [嗅探测量](KNOWLEDGE/modules/sniff.md#7-evidence)。上传调度需要显式配置速率；低内存配置由构建选择。
+规则集和回包数据分别见 [规则集加载记录](KNOWLEDGE/reports/anywhere-round2/anywhere-round2-final-summary.md) 与 [回包路径记录](KNOWLEDGE/reports/anywhere-round3/anywhere-round3-construction.md)。其他原始条件及限制见 [上传调度实验](KNOWLEDGE/modules/data-path-optimization.md#b3-the-four-measurements-that-settled-the-design)、[低内存缓冲区](KNOWLEDGE/modules/mtu-and-geometry.md#4-commonbufgeom--the-geometry-contract) 和 [嗅探测量](KNOWLEDGE/modules/sniff.md#7-evidence)。上传调度需要显式配置速率；低内存配置由构建选择。
 
 ### 复杂代理链更容易检查和定位
 
@@ -112,9 +204,57 @@ DNS 分组提供 `stable`、`fastest`、`parallel` 三种模式：复用稳定�
 - **嵌套隧道 MTU 约束**：根据已知封装开销和下层容量，约束上层 QUIC 数据包，减少包过大导致的连接黑洞。
 - **明确错误位置**：改进地址族、嗅探、路径拒绝和连接关闭的诊断，帮助定位“配置能加载但实际不通”的问题。
 
+路径检查区分结构错误、明确配置承诺和能力警告：缺失引用、依赖环或无法兑现的明确承诺会被拒绝；部分能力不匹配只提示受影响的流，避免一个不适用成员阻止整个配置启动。
+
+MTU 管理也区分内层隧道 MTU、外层 QUIC 初始包与后续硬上限。Hysteria2 / TUIC 在已知下层容量时传递相应约束；MASQUE 的初始包限制不等于对所有后续数据包的硬上限。CONNECT-IP 包过大时处理 ICMP Packet Too Big / 明确错误，而不是无声丢弃后让连接持续等待。
+
+### 服务端部署与访问控制
+
+- Naive、HTTP 与 MASQUE 的伪装响应、认证和隧道建立保持独立边界；伪装配置不授予代理权限。
+- 通过配置的解析与路由规则约束客户端请求目标；针对 UoT 非固定目标会话，对逐数据报目标增加允许 / 拒绝检查。
+- HTTP 请求头、连接数、并发流和流控窗口等限制用于管理公开监听端口上的资源消耗。
+- 区分握手超时、请求阶段超时与已建立隧道的空闲状态，避免一个限制误伤所有长连接。
+- 入站访问控制依赖具体规则顺序和配置；逐包目标检查只决定是否允许，并不重新选择该会话的出站。
+
+### Windows 服务、安装与订阅集成
+
+- Windows 守护进程校验连接进程、安装位置、用户身份及签名者，结合命名管道和角色检查管理本地服务调用。
+- 签名内容完整性与签名者身份分别验证；对部分证书链 / 时间错误的兼容处理不会代替其他检查。
+- 客户端安装身份、应用数据、服务状态和旧服务清理按所属安装处理，减少与其他安装互相影响。
+- 服务无法停止时卸载应明确报错，静默安装避免被交互提示阻塞。
+- 配套订阅请求区分正文与用量信息，支持 `Subscription-Userinfo`；Dashboard 接入本项目界面，增加归档解压、静态资源和品牌回归检查。
+
+### 客户端与底层依赖共同维护
+
+项目同时维护 Libbox 的移动端绑定、平台事件传递、连接列表同步与客户端调用点。Android 平台事实、Apple 休眠周期和服务启动顺序都需要与共享内核保持一致。
+
+性能与正确性改动也进入配套的 sing、sing-tun、quic-go、sing-quic、uTLS 和 Cronet fork。主模块、独立测试模块、客户端引用与源码锁共同约束使用版本，避免只更新主仓库后仍实际运行旧的数据路径。Apple 使用本仓库 TestFlight 脚本，Android 使用 satelite-one，Windows 直接提供已发布客户端。
+
 ## 持续验证
 
 项目维护协议互通、真实载荷回环、网络切换、取消与关闭交错、资源所有权和配置边界等测试，并在内核、客户端及依赖 fork 之间固定配套版本。各版本完成的工作与验证范围见 [Release 更新日志](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases)。
+
+验证既覆盖正常流程，也覆盖丢包、延迟、黑洞、服务端终止、网络代次变化、缓冲区复用和部分启动失败。针对关键修复保留能在旧实现上失败的回归用例；测试工具自身的 deadline、并发断言和测量对象也会核对，避免把测试挂起误写成协议故障。
+
+### 实现与工程记录
+
+| 领域 | 详细说明 |
+| --- | --- |
+| 双栈解析、地址族策略与 DNS 归属 | [DNS 模块](KNOWLEDGE/modules/dns-demand.md) |
+| DNS 本地广告拦截 | [adblock 行为与配置](KNOWLEDGE/modules/dns-adblock-action.md) |
+| XHTTP 模式、XMUX 与 VLESS 加密 | [客户端传输说明](KNOWLEDGE/modules/xhttp-client-transport.md) |
+| Mieru 适配、回退及关闭 | [Mieru 集成](KNOWLEDGE/modules/mieru.md) |
+| Native Naive、HTTP 资源限制与目标检查 | [服务端及传输栈](KNOWLEDGE/modules/naive-http-transport.md) |
+| MASQUE 数据面、DNS 与 PTB | [CONNECT-IP 实现](KNOWLEDGE/modules/masque-connectip.md) |
+| 路径检查、代理组与依赖图 | [选路与校验](KNOWLEDGE/modules/path-selection-validation.md) |
+| 流量调度与 Direct Offload | [数据路径优化](KNOWLEDGE/modules/data-path-optimization.md) |
+| 缓冲区、复制与 splice | [所有权规则](KNOWLEDGE/modules/buffer-ownership.md) |
+| 嵌套 MTU 与低内存配置 | [MTU 与缓冲区](KNOWLEDGE/modules/mtu-and-geometry.md) |
+| 网络恢复与设备省电 | [运行时协调](KNOWLEDGE/modules/core-lifecycle-runtime.md) · [移动端生命周期](KNOWLEDGE/modules/power-mobile-lifecycle.md) |
+| Windows 服务与本地信任边界 | [守护进程检查](KNOWLEDGE/modules/windows-daemon-security.md) |
+| 客户端和依赖的配套修改 | [关联源码说明](KNOWLEDGE/modules/child-repositories.md) |
+
+工程记录各自注明基线和验证范围，历史审计结论需结合当前源码阅读。
 
 ## 文档
 
