@@ -95,7 +95,7 @@
 
 > 注意一处版本不一致（记录，不推断原因）：**测试 harness 用 Caddy v2.10.0，而 forwardproxy 该 commit 的 `go.mod` 写的是 v2.8.4**。differential 测试会校验参考二进制的版本头（`jiejie_naive_caddy_differential_test.go:381-400`），所以真实对照时以 harness 为准；本轮没有跑该测试，故不裁定哪个是"正确"的。
 
-**必须区分（本轮核实）**：cronet-go 的 *代码 HEAD*（`8c68ce8`）、*Go pin 字符串*（`143.0.7499.109-2.0...`）、*打包 Native 二进制版本*（`154.0.8037.49`）是三个不同的东西。仓库内没有任何测试断言这三者一致；`protocol/naive/dependency_pin_test.go` 只断言 API 形状与几何，不断言版本号。
+**必须区分（本轮核实）**：cronet-go 的 *代码 HEAD*（`8c68ce8`）、*Go pin 字符串*（`143.0.7499.109-2.0...`）、*打包 Native 二进制版本*（`154.0.8037.49`）是三个不同的东西。仓库内没有任何测试断言这三者一致；`protocol/naive/dependency_pin_test.go` 只断言 API 结构与缓冲区大小关系，不断言版本号。
 
 ---
 
@@ -332,8 +332,8 @@ QUIC 侧：`protocol/naive/quic/inbound_init.go` 的 `init()` 安装 `naive.Conf
 | 目前状态 | 已实现于参考 forwardproxy；本 fork 的实现与之逐条一致 |
 | 对我们适用性 | `KEEP`。`inbound.go:539-548`（请求头决定 framing）与 `:596-610`（响应头无条件）正是 #76 的原文语义，**不是**随手写的怪癖 |
 | 额外发现之一（**本轮已直接核对 Caddy forwardproxy 源码**，`VERIFIED_SOURCE`） | padding 头的长度与字母表有**三个不同实现**，而我们与服务端参考逐字节一致：<br>• **Caddy forwardproxy**（我们的服务端参考，`forwardproxy.go:308-320`）：`paddingLen := rand.Intn(32) + 30` → **30..61**；前 16 字符取自一个 16 字符常量（`!`、`#`、`$`、`(`、`)`、`+`、`<`、`>`、`?`、`@`、`[`、`]`、`^`、反引号、`{`、`}`），其余填 `'~'`。**这与本仓 `inbound_conn.go:32-44` 的实现逐字节相同**（同一常量、同一长度公式、同一填充字符）。<br>• **naiveproxy 的官方客户端**（`naive_proxy_delegate.cc:64-67`）：`RandIntInclusive(16,32)` → **16..32**，字母表取自 HPACK 表"编码长度 ≥ 8 bit"的字符，第 17 个字符做填充。<br>• **naiveproxy 的内置服务端**（`http_proxy_server_socket.cc:41-42,451-462`）：`RandIntInclusive(30,62)` → **30..62**，同样的 HPACK 字母表。<br>• README 的 non-formal spec 原文："The length of the padding sequence is randomly distributed in **[16, 32] (request) or [30, 62] (response)**"（`README.md:122`）。<br>**结论**：服务端（我们 vs Caddy）**一致**；客户端（`cronet-go` 生成 30..61 + Caddy 字母表）与官方客户端 **不一致**（长度区间与字母表都不同）。互操作不受影响（接收方只读声明长度），但"客户端 wire 外观与官方一致"**不成立**，不能写成已验证 |
-| 额外发现之二（服务端形状，`VERIFIED_SOURCE`） | naiveproxy 的**内置**服务端在 `naive_padding_socket.cc:198-210` 对**服务端方向且 payload < 100 B** 的帧把 padding 从 `[max-padding−len, max-padding]` 里抽，使帧长趋于恒定；并在 `:257-262` 对 `200 < len < 1024` 的上行按 100..200 字节再切分。**Caddy forwardproxy 不做这两件事**（它就是我们注释里引用的 `paddingSize := rand.Intn(256)` + `maxRead := 65536-3-paddingSize`）。我们的服务端**与 Caddy 一致、与 naiveproxy 内置服务端不同**——这符合本项目"Caddy 语义优先"的定位，但必须写清，否则下一轮会把"小包 padding 不偏向定长"当成缺陷 |
-| 额外发现之三（`VERIFIED_SOURCE`） | README 还描述了一项**客户端**行为：为掩盖"每个会话发出过多 RST_STREAM"这一非常见模式，在 RST_STREAM 之前先发一个带 padding、总长 `[48,72]` 的 END_STREAM DATA 帧。实现位于 `src/net/spdy/spdy_session.cc:1925-1942`（`RandIntInclusive(48,72)`）。**这在 Chromium 里，所以我们的 Cronet 客户端自动拥有**；我们的 Go 服务端**不**做——与 Caddy 相同，仅作为形状差异记录 |
+| 额外发现之二（服务端行为，`VERIFIED_SOURCE`） | naiveproxy 的**内置**服务端在 `naive_padding_socket.cc:198-210` 对**服务端方向且 payload < 100 B** 的帧把 padding 从 `[max-padding−len, max-padding]` 里抽，使帧长趋于恒定；并在 `:257-262` 对 `200 < len < 1024` 的上行按 100..200 字节再切分。**Caddy forwardproxy 不做这两件事**（它就是我们注释里引用的 `paddingSize := rand.Intn(256)` + `maxRead := 65536-3-paddingSize`）。我们的服务端**与 Caddy 一致、与 naiveproxy 内置服务端不同**——这符合本项目"Caddy 语义优先"的定位，但必须写清，否则下一轮会把"小包 padding 不偏向定长"当成缺陷 |
+| 额外发现之三（`VERIFIED_SOURCE`） | README 还描述了一项**客户端**行为：为掩盖"每个会话发出过多 RST_STREAM"这一非常见模式，在 RST_STREAM 之前先发一个带 padding、总长 `[48,72]` 的 END_STREAM DATA 帧。实现位于 `src/net/spdy/spdy_session.cc:1925-1942`（`RandIntInclusive(48,72)`）。**这在 Chromium 里，所以我们的 Cronet 客户端自动拥有**；我们的 Go 服务端**不**做——与 Caddy 相同，仅作为行为差异记录 |
 
 ### 5.6 naiveproxy #507 / #793 — 替代服务端与 preamble（**前瞻兼容**）
 
@@ -688,7 +688,7 @@ RAW-H3: RESULT=ok headers=6ms status="200"      ← 带 -force-quic
 |---|---|
 | 已有能力 | `adapter/failure.go`：`FailureStage{Dial,Handshake,Target,Data}` × `FailureOrigin{...}`；`WrapFailure`/`FailureFactsOf`；消费方：`protocol/group/loadbalance_failover.go:160,287`、`urltest.go:1181` |
 | Naive 接线 | **无**。`Outbound.DialContext` 直接返回 `client.DialEarly` 的错误原样（`outbound.go:267-281`），`uotClient` 同理 |
-| 真实风险 | 分组层只能按 errno/字符串启发式判断：`quic protocol error`（`cronet.NetError`）与目标拒绝、认证 407（`unexpected response status: 407`）在 Naive 边界上**没有被标注 stage/origin**。按 §9.3 的实测错误形状，可实现但不实现 |
+| 真实风险 | 分组层只能按 errno/字符串启发式判断：`quic protocol error`（`cronet.NetError`）与目标拒绝、认证 407（`unexpected response status: 407`）在 Naive 边界上**没有被标注 stage/origin**。根据 §9.3 实测到的错误类型，可实现但不实现 |
 | 建议 | `IMPROVE`（候选 P1）。先例：`protocol/mieru/fallback.go:419-430`；测试先例：`protocol/mieru/early_failure_test.go` |
 
 ### 9.5 统计
@@ -947,7 +947,7 @@ Engine: 1→15.9MiB/17thr/235fd ; 4→16.4MiB/23thr/279fd ; 1+4NIK→15.9MiB/16t
 - **当前实际情况**：`protocol/naive/outbound.go:267-281` 原样返回 `DialEarly` 的错误；`protocol/naive/` 内 `grep WrapFailure` = 0。
 - **外部最佳实践**：`protocol/mieru/fallback.go:419-430` 的 `wrapFailureFacts`（target/socket/transport/caller/local 五类，明确"soft evidence 不借确定性"）；消费方 `protocol/group/loadbalance_failover.go:160,287`。
 - **需要改什么**：只动 `protocol/naive/outbound.go`（+ 一个内部分类函数 + 测试）。不改 cronet-go，不改协议。
-- **证据强度**：`VERIFIED_SOURCE`（消费者存在）+ `MEASURED_LOCAL`（错误形状：`cronet.NetError` / `unexpected response status: 407` / `context.Canceled`）。
+- **证据强度**：`VERIFIED_SOURCE`（消费者存在）+ `MEASURED_LOCAL`（错误类型：`cronet.NetError` / `unexpected response status: 407` / `context.Canceled`）。
 - **兼容影响**：无。facts 只是 err 上的附加类型，`errors.Is/As` 语义不变。
 - **生命周期/安全风险**：低。必须**不**把 407/取消标成 path 故障（否则分组会重试认证失败）。
 - **维护风险**：低。
@@ -1235,7 +1235,7 @@ sing-box @ testing
 | naiveproxy #756 | 作者确认 QUIC 未特别优化、拒绝激进 CC | — | 不改默认；H3 不是吞吐优化 |
 | sing-box #3837 | 无结论（未复现关闭） | — | `MEASUREMENT_FIRST` |
 | sing-box #3803 / #4620 | DoH bootstrap 绕过 DNS 策略 | **否** | P2；`SetHostResolverRules` 已可用但未接 |
-| naiveproxy #72 / #76 | padding 头随机化 + 自动协商语义 | **是**（逐条照做） | `KEEP`；wire 形状与参考不同（P6，归档） |
+| naiveproxy #72 / #76 | padding 头随机化 + 自动协商语义 | **是**（逐条照做） | `KEEP`；协议传输格式与参考实现不同（P6，归档） |
 | naiveproxy #507 / #793 | 未来 variant 协商；preamble 修复 | 当前兼容 | `KEEP` + 记录前向风险 |
 
 ### C.4 性能 A/B 矩阵（本轮未执行，交给下一轮）

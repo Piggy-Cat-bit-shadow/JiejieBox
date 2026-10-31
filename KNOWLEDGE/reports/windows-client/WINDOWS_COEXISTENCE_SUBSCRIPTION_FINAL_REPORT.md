@@ -114,7 +114,7 @@ d452c24ec959d1e30159b6cd5cce1fa48e7dc353 clients/desktop/dashboard (heads/feat/w
 8. **`removeProfile` 与 quota 的孤儿行。** 删除 profile 必须在**同一事务**里删 quota 行，
    否则新表会永久累积无人读取的行。
 
-9. **overlay 与真实文件形状耦合。** `apply-desktop-branding-overlay.py` 是**逐字匹配**规则引擎，
+9. **overlay 与实际文件内容耦合。** `apply-desktop-branding-overlay.py` 是**逐字匹配**规则引擎，
    而 desktop 现在钉在 fork 上（品牌已提交）。我第一版把说明性注释放在 `win:` 与 `appId:` 之间，
    导致 overlay 的 block 规则**匹配失败并 fail-closed**——即 workflow 的 gate 2 会直接红。
    已把注释移到 `win:` 之上，并在 overlay 与 `electron-builder.yml` 双方都写明

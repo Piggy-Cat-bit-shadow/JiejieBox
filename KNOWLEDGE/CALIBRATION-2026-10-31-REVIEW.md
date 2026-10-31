@@ -105,7 +105,7 @@
    `extractNegativeTTL` 重新读到的是 `min(rewritten header TTL, SOA MINIMUM)`。当 header TTL 为
    `0`、MINIMUM `> 0` 时，正向 rewrite 看起来能把结论提升。现有的
    `TestNXDomain_ZeroSOATTLIsNotPromotedByNameWide` 使用 `min(0,0)`，且没有设置 `RewriteTTL`，
-   因此没有覆盖这种形状。已记录在 `dns-demand.md` 与 `INVARIANTS.md` A21；**未改运行时代码**。
+   因此没有覆盖这种情况。已记录在 `dns-demand.md` 与 `INVARIANTS.md` A21；**未改运行时代码**。
    一个聚焦测试即可定论。
 2. **没有执行测试。** 审查主机没有 Go 工具链，也没有 WSL。本遍所有 `go test` 复检都是
    `BLOCKED_BY_ENVIRONMENT`，不是通过。先前校准结果仍限定在各自的 SHA 与主机内。

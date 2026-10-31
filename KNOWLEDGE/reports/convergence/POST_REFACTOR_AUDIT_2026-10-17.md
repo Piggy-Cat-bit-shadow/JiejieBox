@@ -1,4 +1,4 @@
-# 架构收敛后深度 Debug / 对抗审计报告（第二阶段）
+# 架构收敛后的深度排查与审计（第二阶段）
 
 - **仓库**：`Piggy-Cat-bit-shadow/sing-box`，工作树 `C:\Deepseek\integration-release-next`
 - **分支**：`testing`（主分支）
@@ -17,9 +17,9 @@
 
 ---
 
-## B. 本轮发现（按形态分类）
+## B. 本轮发现
 
-### B1. P0 —— 我引入的生产回归：仓库级能力协议被一个 hop 回答
+### B1. P0：仓库级能力协议导致生产回归
 
 **症状**：`protocol/direct.Outbound` 增加 `Upstream() any` 后，`common.Cast`（仓库内通用的解包协议）会穿过 outbound 继续向下走。
 
@@ -32,9 +32,9 @@ udpListener, isUDPListener := common.Cast[dialer.UDPListener](e.options.Dialer)
 - 改前：`Cast` 走到 `*DetourDialer` 后停在被 detour 的 outbound —— `*direct.Outbound` 没有 `Upstream()` —— `isUDPListener = false` → `NewClientBind`，包通过 outbound 的 dialer 发出。
 - 改后：`Cast` 一路走到 `*DefaultDialer`（它实现 `UDPListener`）→ `isUDPListener = true` → `NewStdNetBind` + egress pool，**`netns` 丢失**（`netns` 在 `DefaultDialer.ListenPacket` 里应用，不在 listener control 里）。
 
-**触发形状**：WireGuard endpoint 的 `detour:` 指向一个**非空** direct outbound（`DetourDialer.init` 只拒绝 `IsEmpty()`）。
+**触发条件**：WireGuard endpoint 的 `detour:` 指向一个**非空** direct outbound（`DetourDialer.init` 只拒绝 `IsEmpty()`）。
 
-**为什么测试看不见**：改动是"一个 outbound 多了一个方法"，行为变化在三个包之外的消费者里，通过一个泛型协议到达；`protocol/direct` 的任何测试都不可能观察到。
+**为什么原有测试没有发现**：改动只是为 outbound 增加方法，行为变化却通过泛型协议影响了其他包中的调用方；仅测试 `protocol/direct` 无法观察到这一变化。
 
 **修复**：新增包内协议 `dialChainReporter`（`DialChain() N.Dialer`），名字只有 `common/dialer` 知道。
 
@@ -44,7 +44,7 @@ udpListener, isUDPListener := common.Cast[dialer.UDPListener](e.options.Dialer)
 
 **回归测试**：`TestUDPListenerDiscoveryDoesNotCrossAHop`（在 `common/dialer` 里，因为协议住在那里），加正控制 `TestUDPListenerDiscoveryStillWorksWithoutAHop`。**mutation 已验证**：把 `Upstream()` 加回 hop，测试立刻失败。
 
-### B2. P1 —— 我的 D10 修复对它所声称的两条链无效
+### B2. P1：D10 修复未覆盖两条预期调用链
 
 `newScheduler`（`resolve.go:801`）是第三个问"family health owner 在哪"的地方，也是**唯一**仍然直接断言 `d.dialer` 的地方。而它正是 daemon 探针链（`NewResolveDialer(outbound, parallel=true)`）唯一会走到的构造点：那条链拿到的是 `*resolveDialer`，`newScheduler` 返回一个没有 health、并且通过 `newDualStackScheduler` 也**没有 `localFamily`** 的裸 scheduler —— 于是同一个对象上，"gate 知道这台机器不能拨 IPv6"而"计划层完全不知道"，候选照旧被 race、然后在 socket 处被拒。
 
@@ -72,7 +72,7 @@ udpListener, isUDPListener := common.Cast[dialer.UDPListener](e.options.Dialer)
 
 ---
 
-## C. 覆盖缺口（按故障形状补的测试）
+## C. 针对覆盖缺口补充的测试
 
 | 缺口 | 补的测试 | 说明了什么 |
 |---|---|---|
@@ -129,7 +129,7 @@ udpListener, isUDPListener := common.Cast[dialer.UDPListener](e.options.Dialer)
 1. **family-health 命名空间 = generation**（review R2）。每次 reset 开新桶，包括不换网的 reset 与内存释放。代价：一次 fallback delay 的 soft bias 被遗忘；收益：最后一次跨代读取消失。方向安全（只影响快慢，不影响连接与否），桶上限 256 会整体清空。已写在 `familyHealth` 的 Scope 段。
 2. **`ListenPacket` 的 literal 策略检查影响面比提交信息宽**（review R4）。它作用于任何 `resolveDialer.ListenPacket` 的 literal 目的地，包括 IPv6 STUN 服务器：`dns.strategy: ipv4_only` 下这类探针会快速失败而不是建 socket。这是与 stream 路径**一致的**拒绝，且比 connect 超时更快给出原因——是想要的行为，不是副作用。
 3. **power-report 拒绝的判定顺序**（review R5）。它插在 tracker 拒绝之后、process-metadata 之前，所以 recorder 开着时那些形状的 verdict 会报 `BypassRefusedPowerReport`。只影响归因文字，决定不变。
-4. **`route/router.go:103` 现在有接线测试**；但 `dns` 的 snapshot 兜底在当前生产 manager 上仍是死路径（生产 manager 实现了 `NetworkTransitionState`）——它保护的是一种 manager 形状，不是一条生产分支。
+4. **`route/router.go:103` 现在有接线测试**；但 `dns` 的 snapshot 兜底在当前生产 manager 上仍是死路径（生产 manager 实现了 `NetworkTransitionState`）——它保护的是一种 manager 的接口组合，并非当前生产路径。
 
 ### F2. 必须继续修（下一轮）
 

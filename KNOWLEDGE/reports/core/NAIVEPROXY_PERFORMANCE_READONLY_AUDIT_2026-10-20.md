@@ -247,7 +247,7 @@ github.com/sagernet/sing                   => Piggy-Cat-bit-shadow/sing v0.9.6-0
 | 100 次总墙钟 | 0.123 s |
 | 速率 | **814 requests/s** |
 
-**解读**：短请求形状的成本几乎全是"CONNECT 200 + 一次往返"，与 64 KiB 的搬运无关；p99 的 7.96 ms 是尾部（GC/调度）。**这说明 P1 的 CONNECT 握手在 loopback 上是 1 ms 级**，与上一轮 +0.519 ms 的量级一致。真实 RTT 下这部分会线性增加（§Q17，`NOT_RUN`）。
+**解读**：短请求的成本几乎全是"CONNECT 200 + 一次往返"，与 64 KiB 的搬运无关；p99 的 7.96 ms 是尾部（GC/调度）。**这说明 P1 的 CONNECT 握手在 loopback 上是 1 ms 级**，与上一轮 +0.519 ms 的量级一致。真实 RTT 下这部分会线性增加（§Q17，`NOT_RUN`）。
 
 ---
 
