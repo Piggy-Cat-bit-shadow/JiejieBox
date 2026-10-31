@@ -248,7 +248,19 @@ VERIFIED_ANDROID_SHA="c7837107dc0126fb704fdf08cf203e10b30c8a22"
 # VERIFIED on run 40776674407: the macOS client target compiled and packaged on a real
 # macOS runner, from this exact source, with the Libbox framework the run built and the
 # layer 1-5 ABI gate green against the same tree.
-VERIFIED_APPLE_SHA="044e6d5447eb1285c950bd12cee10effab641f5a"
+#
+# Moved to 72136e5 on 2026-10-31, when the About page's Source Code link was repointed from
+# SagerNet/sing-box to the fork's kernel homepage. The range 044e6d5..72136e5 is three files -
+# SettingView.swift, HakoSettingView.swift and Localizable.xcstrings - and touches no file this
+# contract names and no libbox method: the only Swift changes are two URL literals and one
+# localized subtitle key. Layer 4 was re-run against the moved tree rather than assumed:
+#
+#   python3 scripts/ci/probe-accessors.py --contract docs/fork/libbox-abi-contract.tsv \
+#     --lang swift --root <sing-box-for-apple @ 72136e5>
+#   {"scanned": 422, "violations": [], "interface_methods": 3, "error": ""}
+#
+# The compile half is the Apple client workflow, which is what the release path consumes.
+VERIFIED_APPLE_SHA="72136e5c71bb64eb597cc95e740ad12cfd14b290"
 
 client_root=""
 skip_client=0

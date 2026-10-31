@@ -2,7 +2,7 @@
   "clients": [
     {
       "path": "clients/apple",
-      "pinned": "044e6d5447eb1285c950bd12cee10effab641f5a"
+      "pinned": "72136e5c71bb64eb597cc95e740ad12cfd14b290"
     },
     {
       "path": "clients/android",
@@ -10,7 +10,7 @@
     },
     {
       "path": "clients/desktop",
-      "pinned": "6d4ccf8c5cc6dd0749cfee7822f8de45eab4f40b"
+      "pinned": "41722b030ea481523290d932a1d81177f8c13f32"
     }
   ],
   "cronet_native": {
@@ -68,7 +68,7 @@
     {
       "parent": "clients/desktop",
       "path": "dashboard",
-      "pinned": "5e9271e516e437b001dbb51c4258441490b82318"
+      "pinned": "0da341722a8a0046fa5f5b602a19f9b4e1efccc8"
     }
   ],
   "release_version": "0.1.34",
