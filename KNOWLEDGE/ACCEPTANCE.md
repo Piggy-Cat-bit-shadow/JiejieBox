@@ -2,16 +2,18 @@
 
 ## 2026-10-29 delta evidence
 
-| Requirement | Evidence at target `dbcfc1d359d` | Limit / re-check |
+| Requirement | Evidence at the stated target | Limit / re-check |
 |---|---|---|
 | Endpoint-local verdict and fallbacks | `adapter/host_test.go`; local `go test ./adapter` passed | Unit verdicts only; `go test ./adapter -run TestJudgeHostFlow -count=1` |
 | Frozen pins match the tree | local `release-freeze.py verify --lock release/source-lock.json` passed | Desktop nested dashboard SKIPPED because its checkout was absent; version mismatch is only a note |
 | Freeze behavior | `scripts/ci/test-release-freeze.py`: 35 passed locally | Fixtures use recorded sources; no live release performed |
 | Release/Apple workflow structure | `scripts/ci/check-release-workflows.py`: 159 passed locally | Structural check, not execution or artifact evidence |
 | Apple input conflict rules | `scripts/ci/test-apple-client-input.sh`: 13 passed locally | Does not build an Apple app |
-| Client ABI gitlinks | `check-libbox-abi.sh --pin-only` passed for Apple `044e6d5` and Android `c7837107` | Pin comparison only; the full scan ran in CI |
-| Apple client build | `client-apple.yml` run 40776674407: macOS job success on an arm64 runner - Libbox built in-job, layer 1-5 ABI gate, xcodebuild, signed DMG, artifact identity verified | CI evidence for the macOS target; the iOS target last built on 40698718663 |
-| Target CI | existing Verify run 40765511913 cancelled | NOT a passing CI result; check exact SHA and workflow before release |
+| Client ABI gitlinks | `check-libbox-abi.sh --pin-only` passed locally at `0067b03` for Apple `044e6d5` and Android `c7837107` | Pin comparison only; the full scan is a separate CI result |
+| Apple client build | [macOS run 40776674407](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40776674407) succeeded at parent `ed0f3dc`; [iOS run 40819615363](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40819615363) succeeded at parent `0067b03` with Apple `044e6d5` | Each run skipped the other platform job; not device evidence |
+| Historical target CI | Verify run 40765511913 at `dbcfc1d` cancelled | Not a pass for that SHA |
+| Apple beta fixture suite | local Windows run: 99 passed, 2 failed because `ditto` is unavailable | install/copy assertions BLOCKED_BY_ENVIRONMENT; re-run on macOS |
+| v0.1.34 target CI | [Verify 40819594893](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40819594893) succeeded at `0067b03` | Run-level CI evidence; not device behavior |
 
 Every row is a **requirement**, the evidence that exists for it, its **evidence level**, and a
 **command that re-checks it**. A row with no command is not verified; the honest entry is

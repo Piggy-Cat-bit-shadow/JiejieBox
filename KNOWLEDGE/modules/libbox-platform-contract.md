@@ -1,10 +1,10 @@
 # libbox and the platform contract
 
-## Apple source and single-runner delta (2026-10-29)
+## Apple source and single-runner delta (updated 2026-10-31)
 
 At the current source target the Apple gitlink and ABI check constant both identify
 `044e6d5447eb1285c950bd12cee10effab641f5a`; Android is `c7837107dc0126fb704fdf08cf203e10b30c8a22`.
-`check-libbox-abi.sh --pin-only` passed locally for those parent gitlinks. It is not a full ABI or
+`check-libbox-abi.sh --pin-only` passed locally at `0067b03` for those parent gitlinks. It is not a full ABI or
 Swift call-site scan. The two local client checkouts were older than those gitlinks and were not
 altered. Windows symlink materialization and a missing desktop checkout still limit local client
 inspection. For source selection, optional dispatch SHA, single-runner mode, and frozen release

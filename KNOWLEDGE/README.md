@@ -8,13 +8,13 @@ changed, why, and how to continue without re-reading 1,834 commits*.
 
 | | |
 |---|---|
-| Repository | `Piggy-Cat-bit-shadow/sing-box` |
+| Repository | `Piggy-Cat-bit-shadow/JiejieBox` |
 | Product branch | `testing` |
-| **Production baseline** | `dbcfc1d359d6ed818dfaaefb6d4e637b6e785f07` — the source/CI revision calibrated on 2026-10-29 |
-| Release baseline | **`v0.1.33`**, tag peels to `a0bbf666dec` (an ancestor, not the production baseline) |
+| **Production baseline** | `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28` — the source/CI revision calibrated on 2026-10-31 |
+| Release baseline | **`v0.1.34`**, tag peels to the production baseline |
 | **Historical upstream anchor** | `e4b7e692f4545890bfc9d43960328e1449fa803b` — used by the v0.1.9-era comparisons, not the current upstream merge-base |
-| Post-baseline production delta | compute `git diff --name-only dbcfc1d359d6ed818dfaaefb6d4e637b6e785f07..HEAD`; see `BASELINE.md` |
-| Knowledge reviewed at | 2026-10-29 |
+| Post-baseline production delta | compute `git diff --name-only 0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28..HEAD`; see `BASELINE.md` |
+| Knowledge reviewed at | 2026-10-31 |
 | Knowledge revision | resolve dynamically: `git log -1 --format=%H -- KNOWLEDGE/BASELINE.md` |
 
 The knowledge describes the source baseline, not automatically the current `HEAD`. Full measurements,
@@ -38,7 +38,7 @@ about one row.
 Child repositories and their independent branch tips are part of this knowledge scope; see
 `modules/child-repositories.md` and `REFRESH.md` §25A.
 
-The current delta and limitations are recorded in [the 2026-10-29 calibration](CALIBRATION-2026-10-29.md).
+The current delta and limitations are recorded in [the 2026-10-31 calibration](CALIBRATION-2026-10-31.md).
 
 ## Reading order
 

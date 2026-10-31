@@ -1,22 +1,20 @@
 # Baseline
 
-## Current calibrated baseline — 2026-10-29
+## Current calibrated baseline — 2026-10-31
 
 | Field | Value and scope |
 |---|---|
-| Repository / branch | `Piggy-Cat-bit-shadow/sing-box` / `testing` |
-| Production baseline | `dbcfc1d359d6ed818dfaaefb6d4e637b6e785f07` — latest source/CI change reviewed; later branch-tip commits at review were documentation only |
-| Release baseline | [v0.1.33](https://github.com/Piggy-Cat-bit-shadow/sing-box/releases/tag/v0.1.33), non-draft and non-prerelease, published 2026-10-28 11:47:59 UTC; annotated tag peels to `a0bbf666dec8693450c0e8363ed42db3294ac64a`, an ancestor of the production target |
-| Upstream ancestry | observed `upstream/testing` `e5d91fa79f6319d5de940d6c81d81f0fe53b9476` is the merge-base with the production target; ancestry alone does not establish authorship |
-| Previous production baseline | `cb71cf80d7224a51823b455f0be5959ad8556933` (v0.1.31); 125 reachable commits in the baseline-to-target range |
+| Repository / branch | `Piggy-Cat-bit-shadow/JiejieBox` / `testing`; the previous `sing-box` remote URL redirects to this repository |
+| Production baseline | `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28` — last source/release/CI change reviewed; later commits at review changed documentation |
+| Release baseline | [v0.1.34](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.34), published 2026-10-29 05:34:42 UTC, non-draft and non-prerelease; annotated tag peels to the production baseline |
+| Upstream ancestry | observed `upstream/testing` `e5d91fa79f6319d5de940d6c81d81f0fe53b9476` is the merge-base; ancestry does not prove authorship |
+| Previous production baseline | `dbcfc1d359d6ed818dfaaefb6d4e637b6e785f07`; 12 reachable commits in the baseline-to-target range, including knowledge/docs |
 | Knowledge revision | `git log -1 --format=%H -- KNOWLEDGE/BASELINE.md` |
-| Post-baseline delta | `git diff --name-only dbcfc1d359d6ed818dfaaefb6d4e637b6e785f07..HEAD` |
+| Post-baseline delta | `git diff --name-only 0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28..HEAD` |
 
-See [the 2026-10-29 calibration](CALIBRATION-2026-10-29.md), and the previous
-[calibration ledger](CALIBRATION-2026-10-28.md) for inherited limits. Source review and local unit
-checks do not establish device, artifact, interop or all-platform behavior. The target's existing
-Verify run was cancelled; it is not a passing CI result. Client gitlinks identify revisions, not
-contents of an uninspected checkout. Always inspect the actual delta before relying on this snapshot.
+See [the 2026-10-31 calibration](CALIBRATION-2026-10-31.md) and prior ledgers for scope and
+inherited limits. Run evidence is SHA- and job-specific; source review or CI does not prove real-device
+behavior. Child source pins and independently observed branch heads are separate facts.
 
 ## Historical v0.1.9 baseline
 

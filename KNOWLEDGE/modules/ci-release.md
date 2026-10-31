@@ -1,5 +1,21 @@
 # CI, evidence and release
 
+## v0.1.34 Apple checks and evidence (2026-10-31)
+
+The parent Apple gitlink, ABI constant and frozen lock now all identify `044e6d5447eb`; the former
+candidate was merged into Apple `main`. `check-apple-source-selection.sh` and
+`test-apple-beta-publish.sh` were corrected after the Libbox build and pack moved to the shared
+composite action: no inline build/pack in the workflow, one build/pack implementation in the action,
+and two workflow call sites. `check-release-workflows.py` now guards that structure as well. These
+are structural tests, not a proof of actual device operation.
+
+At parent `0067b03`, [Verify 40819594893](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40819594893)
+and [iOS Apple run 40819615363](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40819615363)
+succeeded; the latter used Apple `044e6d5`, built Libbox and iOS, and skipped macOS. The separately
+successful [macOS run 40776674407](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40776674407)
+used parent `ed0f3dc`, not `0067b03`; its iOS job was skipped. [Release 40824078971](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40824078971)
+succeeded at `0067b03`. These are observed prior runs, not newly dispatched by this refresh.
+
 ## Release freeze and Apple acceptance at the 2026-10-29 target
 
 `release/dependencies.json` declares source repository, branch and policy; actual Go replace pins
@@ -26,7 +42,7 @@ only, the same composite action builds Libbox inside the one macOS job; skipped 
 is explicitly allowed, failed dependency is not. The two paths converge on manifest validation and
 installation. Structure checks are not proof of successful macOS execution or device behavior.
 
-The target's existing [Verify run 40765511913](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40765511913)
+The historical `dbcfc1d` target's existing [Verify run 40765511913](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40765511913)
 was cancelled, not passed. For the refresh itself use a documentation-only `[skip ci]` commit; never
 manually dispatch Actions merely to validate a knowledge update.
 

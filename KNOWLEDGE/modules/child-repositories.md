@@ -3,8 +3,8 @@
 ## Scope and how to read the revisions
 
 Client repositories and forked Go dependencies are part of the kernel knowledge scope. The parent
-source target is `dbcfc1d359d6ed818dfaaefb6d4e637b6e785f07`; the pins below are what that tree
-consumes, not a claim about every later child change or every release artifact. On 2026-10-29 the
+source target is `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28`; the pins below are what that tree
+consumes, not a claim about every later child change or every release artifact. On 2026-10-31 the
 observed Apple, Android, Desktop, Dashboard and uTLS `main` tips matched the respective pins below.
 Record independent branch movement on every refresh even if the parent has no diff. `REFRESH.md` §25A
 specifies discovery, comparison, evidence and safe inspection. Exact historical parent tree entries:
@@ -37,12 +37,11 @@ subscription-body import/update use `sing-box/1.15.0`; the general application U
 are quota compatibility probes. Recheck actual call sites rather than replacing every UA.
 
 Manual Apple workflow selection can resolve a different commit from the gitlink; exact input and
-single-macOS-runner rules are in `ci-release.md`. Historical candidate fixes for symlink targets are
-not evidence that the pinned `16cf87b4` tree includes them. A POSIX checkout and exact target blob
-bytes are needed to verify links; Windows text materialization is insufficient. No Apple build or
-physical hotspot test was performed in this refresh.
+single-macOS-runner rules are in `ci-release.md`. The `16cf87b4` behavior above predates the
+current Apple pin `044e6d5`. A POSIX checkout and exact target blob bytes are needed to verify links;
+Windows text materialization is insufficient. No physical hotspot test was performed in this refresh.
 
-### Unconsumed Apple candidate — independent branch snapshot
+### Apple upstream integration — now consumed
 
 The upstream integration is MERGED as of 2026-10-29: product `main`, the parent gitlink and
 `VERIFIED_APPLE_SHA` are all `044e6d5447eb1285c950bd12cee10effab641f5a`, the candidate branch
@@ -51,17 +50,16 @@ a real arm64 macOS runner (run 40776674407). The paragraph below describes what 
 paths. Its `CommandXPC.swift` routes endpoint registration into `UserServiceClient` and requests a
 Wi-Fi refresh when required; `UserServiceXPC.swift` swaps connections under a lock and invalidates the
 old connection, while its invalidation callback clears only the same connection. The publisher uses
-`systemExtensionMachServiceName`; the old endpoint registry is removed. Other candidate changes
+`systemExtensionMachServiceName`; the old endpoint registry is removed. Other integrated changes
 include the share extension, refreshed Tailscale peer views, update authorization and removal of a
-duplicate startup alert in the upstream component. Inspect the candidate tree for exact platform
-conditions; do not generalize those changes to the pinned client.
+duplicate startup alert in the upstream component. Inspect the pinned tree for exact platform conditions.
 
-Two candidate commits correct `Tests/SubscriptionQuotaCaption/Sources/Caption/` symlink target
+Two integration commits correct `Tests/SubscriptionQuotaCaption/Sources/Caption/` symlink target
 paths and then remove unintended CRLF bytes from the target blobs. Git tree mode is `120000`.
 Check raw blob size and target bytes in a POSIX-capable checkout; an apparent Windows text-file
-success is not symlink resolution. The candidate's source diff was inspected; its macOS build,
-full ABI scan and device behavior were not verified here. Re-check its branch and parent gitlink
-before calling any candidate change consumed or released.
+success is not symlink resolution. The source diff was inspected. [Run 40776674407](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40776674407)
+built the macOS target for this Apple SHA with a different parent SHA; [run 40819615363](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40819615363)
+built iOS and Libbox at the v0.1.34 parent SHA while macOS was skipped. Neither proves device behavior.
 
 ## Android: service ordering, profile application and source convergence
 
