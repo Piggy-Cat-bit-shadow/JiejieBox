@@ -275,11 +275,7 @@ profile 里。
 | **构建驱动** | `build`、`build_boxdd`、`build_libbox`、`merge_aar`、`merge_apple_xcframework`、`app_store_connect` |
 | **标签定义 —— 共享的单一事实来源，无 `main.go`** | `applebuildtags`、`mobilebuildtags`、`modlayout`、`build_shared` |
 
-`appletags` **确实**有一个 `main.go`，文档注释说明了原因：低内存 CI 门禁与
-内存基准此前读 `DEFAULT_BUILD_TAGS_OTHERS`，而它*"does not match what libbox
-builds"*（中文：与 libbox 构建出来的内容不匹配），所以那些检查*"were testing a configuration no Apple binary ships"*
-（中文：在测试一个没有任何 Apple 二进制会发布的配置）。几何标签
-现在只从一个地方读：`go run ./cmd/internal/appletags -mobile-only`。
+`appletags` 有自己的 `main.go`。此前低内存 CI 和内存基准读取 `DEFAULT_BUILD_TAGS_OTHERS`，但该标签集与 libbox 实际构建不一致，导致测试对象并非 Apple 产物使用的配置。现在几何标签统一由 `go run ./cmd/internal/appletags -mobile-only` 提供。
 
 `applebuildtags/tags.go:177` 保留了一个未使用的 `bindTarget` 参数，“for signature stability”
 （中文：为了签名稳定性）。

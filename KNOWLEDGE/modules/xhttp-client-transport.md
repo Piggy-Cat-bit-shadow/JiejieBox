@@ -413,13 +413,7 @@ Base62
 
 ### 9.1 `uplink_data_placement`（上行数据放置）
 
-`header` 与 `cookie` 只在以下模式中有效：
-
-```text
-packet-up
-```
-
-流式模式不接受这两个取值。
+`header` 和 `cookie` 仅适用于 `packet-up`；流式模式不接受这两个取值。
 
 默认 key：
 
@@ -444,21 +438,7 @@ other  -> sc_max_each_post_bytes
 
 ### 9.3 `uplink_http_method`（上行 HTTP 方法）
 
-默认值：
-
-```text
-POST
-```
-
-`GET` 只对 `packet-up` 有效。
-
-如果在非 `packet-up` 模式上配置了 `GET`，当前代码会告警并回退到：
-
-```text
-POST
-```
-
-而不是拒绝整个配置。
+默认使用 `POST`。`GET` 仅适用于 `packet-up`；在其他模式中设置 `GET` 时，当前代码会发出警告并回退到 `POST`，不会拒绝整个配置。
 
 ---
 
@@ -627,7 +607,7 @@ XMUX 是 **HTTP 连接复用**，不是一种独立的线上协议。
 服务器按会话元数据识别 XHTTP 会话，而不是按具体的池化 HTTP 连接。
 因此池化改变的是客户端侧的连接复用/轮转，而不是逻辑上的 XHTTP 会话格式。
 
-它避免为每条流都付出一次全新的 TCP+TLS(+Reality) 建立成本。
+连接能够复用时，可以减少为每条流重新建立 TCP、TLS 或 Reality 连接的开销。
 
 ### 13.1 字段（Fields）
 
