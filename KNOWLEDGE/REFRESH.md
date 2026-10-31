@@ -699,6 +699,18 @@ TEST ONLY
 
 ---
 
+# 18A. TUN 与系统代理路径（TUN and system-proxy paths）
+
+当 TUN、Mixed 入站或它们使用的路由与拷贝路径发生变化时，应分别追踪 TCP 和 UDP：
+
+1. 确认流量从哪个入口进入，以及协议识别、认证、首包缓存和路由元数据在哪里处理。
+2. 检查 TUN 栈启动与网络重置的交接、本地目的地址处理、FakeIP 和 DNS 劫持的先后顺序。
+3. 区分普通 TUN、Linux auto-redirect 和系统代理入口：逐一核对是否消费旁路裁决、能否接管 splice、失败后如何回退，不能把某条路径的优化推广到所有入口。
+4. 检查嗅探读取的超时、分片、首包重放和缓冲区所有权；根据 §18 区分性能优化与行为变化。
+5. 更新 `modules/data-path-optimization.md`、`modules/sniff.md` 及相关索引和验收条目。分别记录源码、测试替身、真实设备和端到端验证的范围；没有实测时不要给出吞吐提升数字。
+
+---
+
 # 19. 链式代理 / 路径选择刷新规则（Chain proxy / path-selection refresh rules）
 
 路由 / selector / detour / 链式逻辑变更时，要显式评估：

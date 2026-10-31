@@ -9,7 +9,7 @@
 | TUN 与 endpoint 本地目的地址 | `protocol/tun/inbound.go` 在栈实现 `tun.RoutedPort` 时注册端口；MASQUE、WireGuard、Tailscale 非 system 模式的本地流量由 `adapter.JudgeHostFlow` 交给同地址族的栈地址，保留目标端口。 | 无端口、缺地址族或不支持的协议回退 `ActionAccept`；system 模式保留原路径。见 `adapter/host.go`、`adapter/host_test.go`、`masque-connectip.md`。 |
 | TUN 网络变化 | 启动前的网络更新通过 pending 标记与启动后的复查交接；栈启动后每次接受的更新各自触发重置。 | 见 `protocol/tun/inbound.go`、`protocol/tun/reset_before_start_test.go`；这不是设备网络切换验证。 |
 | TUN 回包与直连 | 单包单写回复用调用方切片；受条件约束的 TCP 接管失败后回退复制。 | TUN 普通栈的 `ActionBypass` 不实现隐式系统绕行；Linux nfqueue / auto-redirect 的执行边界见本模块 A.5。接管不等于已发生内核 splice。 |
-| 系统代理 / Mixed | `protocol/mixed/inbound.go` 以一个 reader 分辨 SOCKS 与 HTTP；`GuardSOCKS5Address` 在缓冲前安装，`NewFirstPayloadConn` 在握手之后交出缓存的首包；没有配置用户时跳过认证上下文读取。TCP / UDP 分别送入 `RouteConnectionEx` / `RoutePacketConnectionEx`。 | 保留已配置用户的认证、连接所有权、首包与路由元数据；系统代理入口不走 TUN `PreMatch` / TUN 专用 splice 接管。见 `e2e/system_proxy_chain_test.go` 与 `e2e/tun_splice_dataplane_test.go`。 |
+| 系统代理 / Mixed | `protocol/mixed/inbound.go` 使用同一个 reader 区分 SOCKS 和 HTTP；在缓冲前安装 `GuardSOCKS5Address`，握手后通过 `NewFirstPayloadConn` 提供已缓存的首包。未配置用户时跳过认证上下文读取。TCP / UDP 分别交给 `RouteConnectionEx` / `RoutePacketConnectionEx`。 | 保留已配置用户的认证、连接所有权、首包和路由元数据；该入口不使用 TUN `PreMatch` 或 TUN 专用 splice 接管。见 `e2e/system_proxy_chain_test.go` 和 `e2e/tun_splice_dataplane_test.go`。 |
 | HTTP / TLS / QUIC 嗅探 | `common/sniff/http.go` 用有界头部先排除确定不是 HTTP 的输入并重放已读内容；`common/sniff/tls.go` 只对完整可判定的首记录快速拒绝，取到 ClientHello 后停止多余握手；分片续读只重跑 QUIC，新增读取最多 64 轮。 | 已有 FakeIP 域名仅在 `packetSniffUsesKnownFakeIPDomain` 条件成立时提前结束等待。保留超时、部分头部和缓存所有权；详见 `sniff.md`。 |
 
 `e2e/system_proxy_chain_test.go` 用 loopback 上真实 mixed、DNS 与目的端验证路径、选择及元数据；

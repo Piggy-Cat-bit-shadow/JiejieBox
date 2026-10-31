@@ -7,6 +7,7 @@
 | 如果你正在修改…… | 阅读 |
 |---|---|
 | 子仓库、客户端 gitlink、嵌套 dashboard 与 fork 依赖变更 | `child-repositories.md` |
+| TUN、Mixed 系统代理和嗅探的数据路径及优化 | `data-path-optimization.md`、`sniff.md`；刷新流程见 `REFRESH.md` §18A |
 | 端点本地流量、`JudgeHostFlow`、`HostPort` | `masque-connectip.md` |
 | 发布源码冻结、源码锁定、Apple 单运行器 | `ci-release.md` |
 | `experimental/boxdd/**` 中的任何内容、Windows 服务、每用户 worker、命名管道对端握手、对端/可执行文件认证、Authenticode 或签名者信任、更新路径 | `windows-daemon-security.md` |
