@@ -16,9 +16,8 @@ TLS 与 QUIC 的 SNI 也先经过 `ParseSocksaddrHostPort(...).Fqdn`，之后才
 
 **来源（Provenance）：** fork 修改了 `sniff.go`、`quic.go`、`http.go`、`tls.go`，并新增 `wireguard.go`。
 `dns.go`、`bittorrent.go`、`dtls.go`、`ntp.go`、`rdp.go`、`ssh.go`、`stun.go` 与 `internal/qtls/qtls.go`
-在 `e4b7e692` 与 `a267e99` 上**逐字节相同**；无论 fork 的提交列表暗示了什么，
-这些内容都属于上游。共有 25 个 fork 提交触及 `common/sniff`，
-**新增 22 个测试文件**。
+在 `e4b7e692` 和 `a267e99` 两个版本中**逐字节相同**，属于上游内容。共有 25 个 fork 提交涉及
+`common/sniff`，并**新增 22 个测试文件**。
 
 **在改动以下内容时加载本模块（Load this module when changing）：** 任何嗅探器、
 peek/read 行为、嗅探超时、分片 QUIC，或 sniff→routing 的元数据契约。
@@ -52,13 +51,13 @@ peek/read 行为、嗅探超时、分片 QUIC，或 sniff→routing 的元数据
 `sniff.Skip(metadata)` 会跳过 SMTP 25/465/587、IMAP 143/993 和 POP3 110/995 端口的
 嗅探（`sniff.go:23-37`）。
 
-### 嗅探器可以写入什么（What sniffers may write）
+### 嗅探器可以写入的元数据（What sniffers may write）
 
-恰好四个元数据字段：`Client`、`Domain`、`Protocol`、`SniffContext`。
+嗅探器可以写入四个字段：`Client`、`Domain`、`Protocol`、`SniffContext`。
 
 ---
 
-## 2. 所有权 —— “零拷贝改进”会破坏的规则（Ownership — the rules that a "zero-copy improvement" breaks）
+## 2. 缓冲区所有权与零拷贝约束（Ownership and zero-copy constraints）
 
 | # | 规则 | 锚点 | 违反后会破坏什么 |
 |---|---|---|---|

@@ -40,7 +40,7 @@ Windows 校准没有启用 `-race`，因此不能算一次竞态检测。
 
 ---
 
-## 2. level、edge、snapshot——四种不得合并的词汇（Level, edge, snapshot — four vocabularies that must not be merged）
+## 2. level、edge 和 snapshot：需要区分的三类接口（Level, edge and snapshot）
 
 | 词汇 | Level API | Edge API | 快照/协调 API |
 |---|---|---|---|
@@ -62,7 +62,7 @@ Windows 校准没有启用 `-race`，因此不能算一次竞态检测。
 
 在 `box_lifecycle.go` 中，display-on 进入 `resumed()`，目前不会发布事件；解锁则进入 `woke()`，并释放暂停状态。两者不能混为一谈，否则会重新引入此次拆分所修复的缺陷。
 
-### `resumed()` 刻意不发布任何东西（`resumed()` deliberately publishes nothing）
+### `resumed()` 不发布事件（`resumed()` deliberately publishes nothing）
 
 ```go
 func (l lifecycle) resumed() {}
