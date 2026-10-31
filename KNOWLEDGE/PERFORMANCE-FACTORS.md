@@ -12,17 +12,17 @@
 
 ---
 
-## 1. 三条第一原理
+## 1. 排查时先看连接与链路
 
 排查时先确认路径容量和连接数，再结合 RTT、丢包及复用方式分析，最后调整参数。
 
 1. **聚合吞吐 ≈ min(路径容量, 活跃 TCP 连接数 × 单连接能力)。**
 2. **RTT、丢包和拥塞窗口是单连接能力的重要因素。** 协议栈、拥塞控制、代理、流控、CPU 和实现也可能改变结果；不能只凭 RTT 与丢包认定不同协议的上限相同。
-3. **任何"把 N 条逻辑连接收进 M 条 TCP"的层，都会把 N× 变成 M×。** 这些层包括：`xmux` 多路复用、HTTP/2 连接复用、链式 SOCKS 出口、以及把流量再套一层隧道的入站。
+3. **逻辑连接的数量不一定等于底层 TCP 连接数。** `xmux`、HTTP/2 连接复用以及链式代理可能让多条逻辑连接共享较少的 TCP 连接；实际数量和吞吐还取决于具体配置与实现。
 
 在记录的测试场景中，如果只有一两个协议速度较慢，而其他协议能接近路径容量，可先核对实际 TCP 连接数，再排查其他原因。
 
-`VERIFIED`（2026-10-26，本机 CLI + 生产服务端，同一时段交错）：同一出站同一目标，2 条 TCP 跑 2–7 Mbps、8 条跑 42–50 Mbps、21–35 条跑 57–98 Mbps；把连接数写死成 1–2 的配置就是塌陷的那一侧。
+`VERIFIED`（2026-10-26，本机 CLI + 生产服务端，同一时段交错）：同一出站同一目标，2 条 TCP 跑 2–7 Mbps、8 条跑 42–50 Mbps、21–35 条跑 57–98 Mbps；该样本中，底层连接数固定在 1–2 条的配置吞吐较低。
 
 ---
 
@@ -30,13 +30,13 @@
 
 | 参数 | 位置 | 常见值 | 对本链路的作用 | 证据 |
 |---|---|---|---|---|
-| `transport.xmux.max_concurrency`（XHTTP） | `outbounds[].transport.xmux` | `"16-32"` | 决定一条 HTTP/2 连接里塞几条逻辑连接。`16-32` 会把 8 条逻辑连接压进 1–2 条 TCP，8 流下载 **41.12 → 97.98 Mbps**（改 `"1"`） | `VERIFIED` 2026-10-26，3 轮交错；独立时段复测 44.06 → 86.65 |
+| `transport.xmux.max_concurrency`（XHTTP） | `outbounds[].transport.xmux` | `"16-32"` | 控制一条 HTTP/2 连接允许承载的逻辑连接数量。`16-32` 会把 8 条逻辑连接压进 1–2 条 TCP，8 流下载 **41.12 → 97.98 Mbps**（改 `"1"`） | `VERIFIED` 2026-10-26，3 轮交错；独立时段复测 44.06 → 86.65 |
 | `insecure_concurrency`（Naive） | `outbounds[]` | `2` | 每个引擎 = 一条独立 TCP + 一整套 Cronet 网络栈。**高峰**每流能力低时提高它有量级收益；**好链路**上没有可测差异 | `PRIOR`（高峰 2→4 曾测到 3.2/7.2 → 16.7/26.2）；本轮好链路 `UNVERIFIED` |
 | `inbounds[].stack`（TUN） | `inbounds[]` | 空 = fork 的 Go 栈 | 历史样本记录下载 42.21 vs 49.58、上传 28.91 vs 47.04；daemon 端到端 15.98 vs CLI 15.96。样本本身不足以证明普遍无差异 | `PRIOR` 2026-10-26，需同条件复测 |
-| `route.auto_detect_interface` | `route` | `true` | 出站 socket 必须绑到物理网卡，否则被自己的 TUN 再捕获一层（双代理），所有 CLI 数字失真 | `VERIFIED`（机制；源地址判定） |
+| `route.auto_detect_interface` | `route` | `true` | 测试时用于将出站 socket 绑定到物理网卡，避免再次被本机 TUN 捕获；具体行为仍取决于平台和配置 | `VERIFIED`（机制；源地址判定） |
 | `dns.strategy` | `dns` | `prefer_ipv6` | 与 `prefer_ipv4` 的 TLS 建连差约 **10 ms**（0.723/0.732 vs 0.712/0.723 s），不构成性能问题 | `VERIFIED` 2026-10-26 |
 | 选择器指向的出站 | `outbounds[]` | — | 链式（住宅）出口恒定约 **16 Mbps**、RTT +400–800 ms，与入站和协议无关；直连出口在同链路能跑 40–130 Mbps | `VERIFIED` 2026-10-26（16 Mbps 三路复现）/ `PRIOR`（RTT） |
-| `route.rules` 的 `resolve` / 链式覆盖 | `route` | — | 任何把大流量导进链式 SOCKS 的规则都会引入第 1 节第 3 条的上限 | `INFERRED` |
+| `route.rules` 的 `resolve` / 链式覆盖 | `route` | — | 将流量导入链式 SOCKS 后，应检查出口的实际连接数和路径容量 | `INFERRED` |
 
 **实现位置**：`transport/v2rayxhttp/`（含 `http_version.go` 的 HTTP 版本决策）、`protocol/naive/`、`protocol/tun/`；TUN 数据面在 `sing-tun` fork 的 `stack_go*.go`。
 
@@ -48,7 +48,7 @@
 |---|---|---|---|---|
 | `client_body_buffer_size` | nginx 的 HTTP/2 vhost，XHTTP location | 默认 16k | **上传总闸门**。16k 时每条上传流在 168 ms RTT 下只有约 2.7 Mbps；1m 后单流 **2.88 → 13.55 Mbps**、4 流 **10.5–11.2 → 42.87 Mbps**（追平同链路 REALITY 单流 14.95–15.5） | `VERIFIED` 2026-10-26，生产 443 同分钟对照 + 隔离 nginx 变量 |
 | `http2_body_preread_size` | 同上 | 64k | 单独调大收益有限（4m/16k 仍只有约 7.7 Mbps 单流中位）；与上一行同改才稳 | `VERIFIED` 2026-10-26 |
-| `proxy_request_buffering off` + `proxy_http_version 2` | XHTTP location | 生产现状 | 请求体流式转发到 h2c 上游；缺了它上传会退化成"先收完再转发" | `VERIFIED`（结构） |
+| `proxy_request_buffering off` + `proxy_http_version 2` | XHTTP location | 生产现状 | 请求体流式转发到 h2c 上游；是否缓冲取决于反向代理及上游配置，需检查实际生效的设置 | `VERIFIED`（结构） |
 | `proxy_buffering off` | XHTTP location | 生产现状 | 下行流式，避免反代攒包 | `VERIFIED`（结构） |
 | Xray XHTTP `mode` | XHTTP inbound | `stream-one` | 上行是一条长 POST、下行是响应体；也是 h2 请求体流控能成为闸门的原因 | `VERIFIED`（配置） |
 | 链式 SOCKS 出口 | 服务端 route | 生产现状 | 恒定约 16 Mbps、RTT +400–800 ms；属架构选择，不是 bug | `VERIFIED` 2026-10-26 / `PRIOR` |
@@ -66,10 +66,10 @@
 | 只有 1–2 个协议慢，其它接近路径容量 | 该协议的 **TCP 连接数**（mux / 连接池 / 并发参数） | 服务端按源地址数 socket、做 `bytes_sent` 差分，证明物理连接数 |
 | 所有协议一起慢 | 路径/时段 | 独立多流 TCP 或 iperf3 测该窗口的可用容量，带时间戳 |
 | 下载快、上传慢 | 接收端流控 / 反代缓冲 | 查 h2 请求体缓冲、`proxy_request_buffering`、上游 h2c |
-| 多流快、单流慢 | 正常现象（cwnd/RTT） | 不要当 bug；只在"单流也远低于 cwnd/RTT 理论上限"时深挖 |
+| 多流快、单流慢 | 可能受拥塞窗口、RTT 或其他瓶颈影响 | 检查单流拥塞窗口、丢包、CPU 与流控，再结合多流结果定位 |
 | CLI 快、经客户端 TUN 慢 | 先怀疑测量串了层 | 确认 CLI 出站没被 TUN 捕获（`auto_detect_interface`、socket 源地址） |
 | 某节点恒定在某个数值 | 链式代理 / 上游家宽 / 带宽包 | 换上游或减跳数，不改协议参数 |
-| 日志里每连接一条 ERROR | 日志分类缺陷，不是性能 | 按证据等级记录；本轮已修 `c10ff9186` |
+| 日志里每连接一条 ERROR | 可能是日志分类或实际连接错误 | 核对错误原因、频率及资源消耗；历史分类问题见 `c10ff9186` |
 
 ---
 
@@ -78,7 +78,7 @@
 1. **交错 A/B/A/B，多轮取中位。** 不做"先跑完 A 再跑 B"。
 2. **单流与多流分开报。** 二者不能互相代替。
 3. **NQ 的 16 条逻辑连接会被 mux 收敛成 1–2 条 TCP。** 因此 NQ 结果不能跨协议横比，只能当"此刻该出站能提供多少"的用户体感值。
-4. **不要用任何待测协议当带宽基准**（包括 MASQUE）；基准只能是无代理的多流 TCP/UDP。
+4. **不要用任何待测协议当带宽基准**（包括 MASQUE）；可使用独立的无代理多流 TCP/UDP 测量作为路径容量参考。
 5. **每个数字带时间戳。** 同一链路一小时内可从 51 Mbps 变到 136 Mbps。
 6. **结构证据优先于吞吐数字。** 服务端逐 socket 字节差分能证明"到底开了几条 TCP"，比任何单次测速更能定性。
 7. **变更前后同构建、同出站、同目标、同并发。** 跨时段的"前后对比"一律作废。
