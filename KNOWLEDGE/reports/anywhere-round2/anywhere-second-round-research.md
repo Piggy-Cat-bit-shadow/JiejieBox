@@ -516,7 +516,7 @@ Candidate ID: B9
 判定理由：B —— 收益方向明确，但平台证据缺失。
 ```
 
-### 5.12 C / D 级发现（不再展开为施工候选）
+### 5.12 C / D 级发现（不再列为实施候选）
 
 | ID | 发现 | 证据 | 判定 |
 |---|---|---|---|
@@ -529,7 +529,7 @@ Candidate ID: B9
 | C7 | `writeBatchOwned` 每批一个 `prepared` slice | `session.go:567` | **C**（每批一次，量级 ≤几百 B） |
 | C8 | gate 的 headroom 双计 | `gate.go:25-35,97-103` | **C**（有界、已文档化、测试钉住） |
 | C9 | 旧/新规则集共存 | 500k reload-peak 21.45 MiB vs load 21.43 MiB；旧代 4.23 MiB（20%），窗口 28 ms，周期 24 h，每次更新强制 GC | **D** |
-| C10 | `initial_path` 仍整份缓冲 | `rule_set_remote.go:139-149`；500k 时约 0.9 MiB live / 5.0 MiB alloc，仅启动一次 | **C**（可顺手改成流式，但不构成施工理由） |
+| C10 | `initial_path` 仍整份缓冲 | `rule_set_remote.go:139-149`；500k 时约 0.9 MiB live / 5.0 MiB alloc，仅启动一次 | **C**（可顺手改成流式，但不构成实施理由） |
 | C11 | source/JSON 格式的结构性开销 | `loadBytes` JSON + `NewMatcher` 字符串树；生产远端集合实际发 `.srs` | **C**（运维上"发 .srs"即可） |
 | C12 | QUIC sent history / 重传是否重复持有 payload | `OnLost` 只把同一个 `*StreamFrame` 指针移入 retransmissionQueue；ACK 时 `PutBack` | **C**（没有重复 payload；50k 包数上限比 Anywhere 更强） |
 | C13 | masque server 的 `OutboundQueue` 是否双缓冲 | 同一 `*buf.Buffer` 只入队一次，再移交给 quic-go；满时释放丢弃 | **C**（队列深度，不是重复字节） |
@@ -664,7 +664,7 @@ Candidate ID: B9
 6. **B6**：一行、低风险，可作为任何一次触碰 quic-go fork 时的顺手项。
 7. **C/D**：不投入。
 
-### 8.3 若未来施工，安全回滚与验收策略
+### 8.3 若未来实施，安全回滚与验收策略
 
 | ID | 回滚 | 验收 |
 |---|---|---|
@@ -680,7 +680,7 @@ Candidate ID: B9
 
 ## 9. 跨组件风险与攻击性反证计划
 
-本节列出"如果未来施工，必须增加的测试"以及本轮已经识别的隐藏失败成本。它们不是施工项，而是施工前置条件。
+本节列出"如果未来实施，必须增加的测试"以及本轮已经识别的隐藏失败成本。它们不是实施项目，而是实施前的必要条件。
 
 ### 9.1 缓存与代际
 
@@ -714,7 +714,7 @@ Candidate ID: B9
 - quic-go 的 `send_queue.go:90-101` 对 `EMSGSIZE`（以及 `ENOBUFS`、`DatagramTooLargeError`）**只释放 buffer 并吞掉错误**；该分支之后的 `mtuFinder` 只在探测 ACK 时增长（`mtu_discoverer.go:198-233`），没有看到基于这个错误的回退路径。在 fork 中 grep 不到 `IP_RECVERR`/`MSG_ERRQUEUE` 的 PTB 读取路径（只有 `IP_MTU_DISCOVER`，`sys_conn_df_linux.go:13-19`），因此过大的包会留在 sent history 里，之后按 PTO 以同样大小重传。这是源码级观察（`VERIFIED_SOURCE`），真实链路下的后果需要弱网仿真才能确认。
 - 该 fork 增加了 `Config.InitialPacketSizeCeiling`（`config.go:171-199`），hysteria2 已使用（`protocol/hysteria2/outbound.go:216-225`）——这是目前对"PMTUD 越过真实链路"的唯一硬约束。
 - MASQUE 的 PTB 由应用层 `classifyDatagramError` 处理（`session.go:504-517`），与 QUIC 层是两条独立路径。
-- **施工前置测试**：MTU 从 1500 降到 1280 时，CONNECT-IP 与 hysteria2 都必须在不重建连接的情况下恢复；注入 ICMP PTB 的仿真环境目前没有（`NOT_RUN`）。
+- **实施前需要补充的测试**：MTU 从 1500 降到 1280 时，CONNECT-IP 与 hysteria2 都必须在不重建连接的情况下恢复；注入 ICMP PTB 的仿真环境目前没有（`NOT_RUN`）。
 
 ### 9.5 隐藏失败成本（本轮新注意到的）
 
@@ -724,7 +724,7 @@ Candidate ID: B9
 4. **`fetch` 每次非首次刷新后 `CloseIdleConnections()`**（`rule_set_remote.go:312-314`）：更新不能复用 keep-alive，每个规则集每次更新一次新握手。量级小，但"多个规则集同一时刻更新"会形成握手小高峰。
 5. **`updateOnce` 在 `refs.Load()==0` 时清空 rules**（`rule_set_remote.go:292-301`）：这不是失败路径，但如果未来出现"先 DecRef 再重新引用"的用法，规则集会短暂为空。当前调用方没有这种模式，记录为语义边界。
 
-### 9.6 弱网与内存高水位（未运行，施工前必须补）
+### 9.6 弱网与内存高水位（未运行，实施前必须补充）
 
 - 0/1/3/5% 丢包、1% 重复、乱序、RTT 抖动、PMTU 从 1500 降到 1280：测 QUIC 接收 `frameSorter` 的实际高水位（B4 的算术需要真实数字）。
 - 对端缓慢读取 + 应用层批量发送：测 `datagram_queue` 32 槽阻塞时的端到端尾延迟（B2 的收益需要用尾延迟而不是吞吐证明）。
@@ -789,5 +789,5 @@ Candidate ID: B9
 | 本报告精确路径 | `C:\Deepseek\integration-release-next\docs\fork\anywhere-second-round-research.md` |
 | 报告状态 | 本地新增、未 `git add`、未提交、未推送 |
 
-**审计结束。** 本报告只提供研究结论、源码锚点、实测数据与施工建议；是否进入第三轮施工由用户决定。
+**审计结束。** 本报告只提供研究结论、源码锚点、实测数据与实施建议；是否进入第三轮实施由用户决定。
 

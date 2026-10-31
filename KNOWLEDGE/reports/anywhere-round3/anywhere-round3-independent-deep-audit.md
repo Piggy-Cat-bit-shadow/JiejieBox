@@ -511,7 +511,7 @@ K=1 时 **2.7 ns/包**，K=8 时 5.1，K=64 时 25.7，**K=256 时仍是 25.7**�
 线性模型约为"每包每多一个条目 +0.36 ns"，与 §12.3 的纯扫描复刻（K=64 → 31.5 ns）吻合。
 
 **现在缺的证据**　生产里"一次突发到底跨几个 outbound"的分布。
-获取方式（不施工即可做）：在一次性工作副本里把每批实际触及的条目数打到 `Trace` 日志，跑一天真实流量。
+获取方式（无须改动生产代码）：在一次性工作副本里把每批实际触及的条目数打到 `Trace` 日志，跑一天真实流量。
 **在拿到这个分布之前本项只能是 B；而上面的真机数据已经说明它的收益上限很小。**
 
 **顺带一个更小、更确定的点**　`Flush` 结束后若某条目两个切片都为空，可以把它从 `s.ports` 删除
@@ -933,7 +933,7 @@ capsule 回退的流控写）由此从"链路上可能"变成"已测到"。
 | `-race` | 无 cgo（`CGO_ENABLED=0`） | §14 的所有并发用例**只能**在 CI 跑；本地只能跑非 race 形态 |
 | Apple `cronet-go` native archive | 本轮未触及 | 不适用 |
 
-**依赖 pin 的维护成本必须写进下一轮的施工单**：任何 `sing-tun` 改动都要同时更新
+**依赖 pin 的维护成本必须写进下一轮的实施计划**：任何 `sing-tun` 改动都要同时更新
 `go.mod`、`test/go.mod` 与 `KNOWLEDGE/modules/*` 的 provenance 行；
 round2 的 `5c88bad` 提交就是为了修这个同步问题，不能重犯。
 
@@ -1141,16 +1141,16 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench \
 |---|---|
 | 真实 TUN 上的 K 分布与每批包数 | 需要真实流量 + instrumented 构建；本轮禁止改生产源 |
 | 真实 QUIC 拥塞下 `WritePacketBuffers` 的阻塞**时长分布** | 夹具只能证明"耦合"（§12.8 第 1 项，301 ms）；打满真实 32 帧队列需要可注入的拥塞对端 |
-| L4 CONNECT-UDP owned 前后的 `payloadcopies/op` | 需要改代码才能 A/B；本轮不施工 |
+| L4 CONNECT-UDP owned 前后的 `payloadcopies/op` | 需要改代码才能 A/B；本轮不实施 |
 | 真机内存/能耗/`phys_footprint` | 无设备 |
 | 真实 WAN 吞吐/p99 | 无受控对端与网络 |
 | `-race` | 无 cgo 工具链 |
-| `with_quic` / `with_low_memory` 下的完整套件 | 本轮候选尚未施工，无需跑 |
+| `with_quic` / `with_low_memory` 下的完整套件 | 本轮候选尚未实施，无需跑 |
 | AnyTLS 单流慢读者的 HOL **影响** | 已用 `net.Pipe` + 真 `sing-anytls` 搭两流 stand，但**对照组**（持续 drain 第一条流）本身无法让第二条流回显，说明夹具没有建立可用基线；按规则记为 `NOT_TESTED`，不把红灯当结论。机制本身由 `sing-anytls:stream.go:59-84` 确认 |
 
 ---
 
-## 13. 有待正式施工的设计蓝图
+## 13. 有待正式实施的设计蓝图
 
 > 本轮**不修改任何代码**。以下只是"如果下一轮批准，改哪里、改什么、怎么验"。
 
@@ -1173,8 +1173,8 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench \
   错误**必须**在失败之后分类（避免 typed pointer 逃逸）。
 - **最小实现**：单包走 `SendDatagramOwned`；批路径按能力预分组，datagram 组
   `SendDatagramsOwned`（≤32/块，全有全无，拒绝则整块回退逐包），capsule 组保持顺序写。
-- **测试**：现有 `connect_udp_batch_test.go` / `early_datagram_ownership_test.go` /
-  `http3_ingress_zerocopy_test.go` 的形状可直接扩展：
+- **测试**：可扩展现有的 `connect_udp_batch_test.go`、`early_datagram_ownership_test.go` 和
+  `http3_ingress_zerocopy_test.go`，覆盖：
   (a) 成功转移后不释放，(b) 拒绝后原样回退且不重复发送，(c) 混合批次顺序，
   (d) headroom 不足时的替换-拒绝路径（`session.go:574-617` 的教训）。
 - **回滚**：`FrontHeadroom` 改回 6 + 恢复 `SendDatagram`。
@@ -1226,7 +1226,7 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench \
 | U-5 | headroom 只有 6 | 走复制路径，结果正确但慢 | 替换缓冲被释放后仍被使用 |
 | U-6 | `FrontHeadroom()` = 9 后 relay 侧分配 | 所有生产者按 9 预留 | 有硬编码 6 的地方 |
 
-### 14.3 连接池/退役差异测试（不施工，只测）
+### 14.3 连接池/退役差异测试（只测试，不实施改动）
 
 | 编号 | 用例 | 期望 |
 |---|---|---|
@@ -1292,8 +1292,8 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench \
 
 | 排名 | 编号 | 候选 | 收益潜力 | 证据强度 | 正确性影响 | 复杂度 | 判决 |
 |---:|---|---|---|---|---|---|---|
-| 1 | A3-1 | `ReturnPackets` 去分配 | 中（GC/分配） | **高（实测）** | 无（纯容器） | 低 | **A / 施工** |
-| 2 | A3-2 | L4 CONNECT-UDP owned | 中高（每包一拷贝+一锁） | 中高（源码对称性 + 已验证的 owned 契约） | 中（所有权） | 中 | **A / 试验后施工** |
+| 1 | A3-1 | `ReturnPackets` 去分配 | 中（GC/分配） | **高（实测）** | 无（纯容器） | 低 | **A / 实施** |
+| 2 | A3-2 | L4 CONNECT-UDP owned | 中高（每包一拷贝+一锁） | 中高（源码对称性 + 已验证的 owned 契约） | 中（所有权） | 中 | **A / 试验后实施** |
 | 3 | R3-1 | `equalFoldASCII` `'B'` | 无（当前不可达，fork 自有代码） | 高（源码） | 低 | 极低 | **R / 顺手修** |
 | 4 | R3-2 | `domain_keyword` 大写关键词 | 低（可用性） | 高（源码，**与上游逐字节相同**） | 中（行为变更 + 与上游分叉） | 极低 | **记账 / 不建议 fork 单方面修** |
 | 5 | B3-1 | `s.ports` 累计 K | 低–中 | 中（实测曲线，缺 K 分布） | 无 | 低 | **B / 先测 K** |
@@ -1323,7 +1323,7 @@ GOFLAGS=-mod=readonly go test -run '^$' -bench \
 | 设备 | Android 规则集 mmap（round2 B9） | `NOT_RUN`（无设备，结论不变） |
 | 网络 | 真实 WAN 吞吐、p95/p99、丢包/重排/PMTU | `NOT_RUN`（无受控对端） |
 | 并发 | `-race` 全量 | `BLOCKED_BY_ENVIRONMENT`（`CGO_ENABLED=0`，无 cgo 工具链） |
-| 构建 | `with_quic`/`with_low_memory`/iOS tags 的完整套件 | `NOT_RUN`（候选未施工，无需跑） |
+| 构建 | `with_quic`/`with_low_memory`/iOS tags 的完整套件 | `NOT_RUN`（候选改动尚未实施，无需跑） |
 | 测量 | 生产 K 分布、规则评估频率 | `NOT_RUN`（需 instrumented 构建或 profile） |
 | 测量 | 启用 `store_fakeip` 时的真实连接速率 | `NOT_RUN`（守卫成本已实测：~1.2 µs + 14 allocs/连接，只缺速率） |
 | 测量 | 真实 QUIC 拥塞下的阻塞时长分布 | `NOT_RUN`（耦合已用夹具复现，时长分布未测） |
