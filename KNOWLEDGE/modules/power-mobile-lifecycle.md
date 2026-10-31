@@ -157,7 +157,7 @@ iPad 与 macOS 为 **`NOT_RUN` / `SIGNING_OUT_OF_SCOPE`**。这只是一台设�
 
 `adapter.ReuseSuspect` 用于处理状态可疑但仍有活跃流的资源：设备休眠后，连接即使仍显示打开，也未必仍然可用。它的契约是停止向该资源分配新工作、保留现有工作，并在最后一条流结束后清理资源。
 
-一个 keeper *"may only close a resource with no active user traffic, and can never dial"*（中文：只能关闭没有活跃用户流量的资源，而且永远不能拨号）。`naive` 刻意**不是** keeper；`sing-mux` 没有安全的“无新流”状态；Cronet 与 Naive 只提供破坏性关闭。所以断言的是 `IdleConnectionReleaser`，不是一个完整的 keeper。
+keeper 只能关闭没有活跃用户流量的资源，不能拨号。`naive` 有意不实现 keeper：`sing-mux` 没有安全的“禁止新流”状态，Cronet 和 Naive 只提供破坏性关闭。因此退役遍历使用 `IdleConnectionReleaser`，不要求完整的 keeper 接口。
 
 由 `common/power.TestReuseKeepsEveryResourceForAShortSleep`、`common/power.TestReuseBandsAreThePolicy`、`box.TestTheBridgeUsesThePolicyBandsAndNothingElse`、`route.TestTheSuspectBandDrainsNothing` 固定。
 

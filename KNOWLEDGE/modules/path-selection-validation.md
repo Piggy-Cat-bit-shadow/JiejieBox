@@ -228,11 +228,7 @@ fallback 对象。这是这条路径上唯一的构造。
 `Possible`、`Unclaimed`、`Reached`。`Demand.NetworksFor` 只返回 **`Proven`**
 （`:302-307`），从不返回 `Possible`。
 
-**UNKNOWN 策略**陈述在 `:47-70`，是一条关键规则：
-
-> 未知规则在**两个方向上都是透明的**——既不给某个标签计费，也不移除它的网络。
-
-值得了解的推论：
+`:47-70` 定义了 **UNKNOWN 策略**：遇到未知规则时，既不将需求归给某个标签，也不从后续分析中移除相应网络。由此需要注意：
 
 * **`route.final` 确实以 PROVEN 需求计入残余**（`:72-89`、`:177-183`）。较早的版本把
   final 当成“什么都不证明”，还固定了一个测试，要求“仅 TCP 的 final 必须能启动”；那是一次
@@ -266,14 +262,9 @@ fallback 对象。这是这条路径上唯一的构造。
 | `URLTest` | 按网络过滤，读取历史存储，**不写回任何东西** | `protocol/group/urltest.go:222-239`（`Selected`；`Select` 在 `:745+`） |
 | `LoadBalance` | 文档描述为“a pure preview”（纯预览）；委托给 `SelectForFlow(…, commit=false)`；轮询（round-robin）分支用 `Load()` 取得游标，只有在 `commit` 为 true 时才用 `Add(1)` 推进 | `protocol/group/loadbalance.go:255-261`（文档）、`:262-264`（`Selected`）、`:339-344`（游标） |
 
-**`commit` 标志就是运行时控制面与物理面的分离**（`route/route.go:218-246`）。预览不得消耗
-槽位：诊断一旦消耗了槽位，下一条流分到的成员就与它刚报告过的成员不同。
+`commit` 标志区分选择预览和正式提交（`route/route.go:218-246`）。预览不能推进轮询游标，否则一次诊断可能改变下一条流实际选中的成员。
 
-这些行为固定于**真实**组（而非 fixture）：`route/physicalpath_route_test.go`
-（`TestPhysicalPathTakesNoSelectionPreviewThroughRealGroups`、
-`TestTwoFlowsAdvanceTheCursorExactlyTwiceWithAPreviewInBetween`），并用一次反向破坏
-（reverse-break）验证——把 `loadbalance.go` 的 `Selected` 改成传入 `commit=true`，观察
-`CommittedSelections()` 发生变化。
+`route/physicalpath_route_test.go` 使用真实组验证该行为，包括 `TestPhysicalPathTakesNoSelectionPreviewThroughRealGroups` 和 `TestTwoFlowsAdvanceTheCursorExactlyTwiceWithAPreviewInBetween`。反向验证时，将 `loadbalance.go` 的 `Selected` 改为传入 `commit=true`，可以观察到 `CommittedSelections()` 变化。
 
 `TestControlGroupIsNotAPhysicalHopThroughRealGroups` 断言：两个控制节点对应一跳。
 
