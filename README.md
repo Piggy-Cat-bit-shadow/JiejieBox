@@ -113,11 +113,25 @@ DNS 分组提供 `stable`、`fastest`、`parallel` 三种模式：复用稳定�
 - 缓存、反向映射和查询结果按网络代次管理，减少 Wi-Fi / 蜂窝切换后旧结果污染新网络。
 - DNS 连接复用、记录容量限制和按需刷新共同控制后台连接与内存占用。
 
+#### NXDOMAIN：跨记录类型复用的负缓存
+
+客户端可能先后查询同一域名的 A、AAAA、HTTPS、SVCB。普通缓存按问题类型区分，导致相同的“不存在”被反复询问；本 fork 对符合条件的上游 NXDOMAIN 保存域名级结论，后续其他类型的问题可以在本地回答。
+
+- **只扩大真正的名字不存在**：要求单问题、空 Answer、有效 SOA 和非零负 TTL。NODATA、SERVFAIL、REFUSED、超时和带 CNAME 的结果不会被错误扩大到整个域名。
+- **保持 DNS 回答正确**：按当前请求重建 ID 与问题类型，保留权威记录并返回剩余 TTL，避免直接重放旧问题或每次命中延长缓存寿命。
+- **隔离范围**：域名规范化后仍保留 QCLASS、DNS transport、客户端子网和网络环境，减少不同解析策略与网络之间的交叉污染。
+- **控制内存和到期行为**：有界内存 LRU，最多 2048 条并受 DNS 缓存容量约束；普通到期模式下不乐观复用过期负结论，清缓存同时清负缓存。
+- **配合现有设置**：普通缓存启用且响应符合条件时自动生效，无需新增 NXDOMAIN 开关；`disable_cache`、`disable_expire` 和 `cache_capacity` 会影响它。普通缓存使用持久化后端时，也会独立初始化这份内存热点缓存。
+
+这与下面的本地广告拦截分别工作：上游负缓存复用上游已经给出的结论，`adblock` 则由本地规则直接生成响应。完整条件、TTL 和配置见 [NXDOMAIN 与扩展配置指南](docs/FORK-CONFIGURATION.md#nxdomain-到底优化了什么)。
+
 #### 本地 DNS 广告拦截
 
 本 fork 增加 DNS `adblock` 规则动作。规则按域名条件或规则集命中后，直接返回带 SOA 的本地 NXDOMAIN，不再向上游查询，并让客户端能够按负 TTL 缓存结果。
 
 本地拦截结果与上游解析失败分别标记；双栈汇总错误时，某个地址族被本地拦截不能掩盖另一地址族的真实失败。规则集仍由用户配置，内核不会仅凭动作名称自动识别所有广告域名。
+
+`adblock` 写在 `dns.rules[].action`，响应 SOA TTL / MINIMUM 为 600 秒；它不把规则结果塞进上游负缓存。移除规则后内核按新规则处理，但 OS / 应用可能继续持有此前的负缓存。该动作没有可自定义的 `ttl` 子字段。
 
 #### FakeIP、缓存与异步查询正确性
 
@@ -256,9 +270,48 @@ MTU 管理也区分内层隧道 MTU、外层 QUIC 初始包与后续硬上限。
 
 工程记录各自注明基线和验证范围，历史审计结论需结合当前源码阅读。
 
+## 扩展字段怎么配置
+
+[扩展配置指南](docs/FORK-CONFIGURATION.md) 按对象列出默认值、生效条件、放置位置与示例，包括接受但忽略的兼容字段。
+
+| 要配置的能力 | 写在哪里 | 什么时候生效 |
+| --- | --- | --- |
+| DNS group | `dns.servers[]` | DNS 规则或 `dns.final` 引用该组后。 |
+| DNS 本地拦截 | `dns.rules[].action: "adblock"` | 命中该条域名 / 规则集条件时。 |
+| 上传速率 | `route.traffic_scheduler.upload_rate` | 非零速率，对受管理的用户态上传路径。 |
+| 业务分类 | `outbounds[].traffic_class` | 路由选择对应出站后，用于该流的分类。 |
+| 负载均衡与重试 | `loadbalance` 出站中的 `strategy` / `failover` | 路由选择该组；重试默认关闭。 |
+| 快速路径策略 | selector / urltest 的 `fast_path` | 逐流检查通过，且入口支持实际 bypass。 |
+| XHTTP / XMUX | 节点的 `transport` / `transport.xmux` | 使用该传输的客户端连接。 |
+| REALITY 份额 | `tls.reality.key_share` | 该节点实际进行 REALITY 握手时。 |
+| Mieru 备用传输 | Mieru 出站的 `fallback` | 显式启用且故障分类允许为新会话回退时。 |
+| Naive H3 回退 | Naive 出站的 `quic_fallback_to_h2` | 同时 `quic: true`，且满足传输故障条件。 |
+| 请求与连接限制 | 对应入站的 `server_limits` / `unauthenticated_limits` | 按协议和认证阶段执行，两套语义不同。 |
+
+例如，本地拦截写在 DNS 规则中：
+
+```json
+{
+  "dns": {
+    "rules": [{"domain_suffix": ["ads.example"], "action": "adblock"}]
+  }
+}
+```
+
+上传速率写在 route 内，流量分类写在出站对象上；这些片段需合并到实际配置：
+
+```json
+{
+  "route": {"traffic_scheduler": {"upload_rate": "8 MiB/s"}},
+  "outbounds": [{"type": "direct", "tag": "interactive-out", "traffic_class": "interactive"}]
+}
+```
+
+仅增加代理组、DNS group 或 HTTP client 定义，不会自动改变所有流量；必须有相应路由或消费者引用。自动负缓存、网络代次、候选准入和低内存构建机制，也不能随意编造成同名 JSON 开关。
+
 ## 文档
 
-- **使用文档**：[配置参考](docs/configuration) · [服务端说明](docs/JIEJIE-SERVER.md) · [Naive](docs/naive.md) · [MASQUE](docs/masque.md)
+- **使用文档**：[扩展字段与 NXDOMAIN](docs/FORK-CONFIGURATION.md) · [配置参考](docs/configuration) · [服务端说明](docs/JIEJIE-SERVER.md) · [Naive](docs/naive.md) · [MASQUE](docs/masque.md)
 - **开发文档**：[构建配置](docs/BUILD-PROFILES.md) · [Fork 差异](docs/FORK-DIFF.md) · [关联仓库](FORK_REPOSITORIES.md) · [知识库](KNOWLEDGE/README.md)
 
 `loadbalance`、`traffic_scheduler`、`traffic_class` 等为本 fork 扩展配置，需使用配套内核与客户端。

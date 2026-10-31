@@ -250,6 +250,14 @@
 - 区分能力不匹配警告与致命结构错误；已存在 detour 的能力问题不再一律阻止启动。
 - 警告不承诺尚未发生的启动结果，修复校验日志与状态快照的并发访问。
 
+### Naive 回退字段
+
+在 Naive 出站本层同时设置 `"quic": true` 与 `"quic_fallback_to_h2": true`。后者默认 false，缺少前者会拒绝该组合；需要包含 Naive 出站与对应 Cronet 支持的构建。
+
+此开关只在适用的 H3 传输故障和数据交付边界内尝试 H2，不是 H3 / H2 同时测速择优。
+
+[当前扩展字段、默认值与配置示例](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FORK-CONFIGURATION.md)；历史版本以对应标签的实现为准。
+
 ## [v0.1.21](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.21) — 2026-10-20
 
 本次更新重点引入 **Mieru 协议及 TCP/UDP 自动回退**，新增自适应 IPv6 入口机制，优化跨协议故障识别，并针对 MASQUE、DNS、规则集、QUIC、Hysteria2、TUIC 和 TUN 数据路径完成多项修复与性能优化。
@@ -364,6 +372,15 @@
 - 增加 MASQUE HTTP/3 建连、回退及真实数据传输测试。
 - 增加 DNS 缓冲区复用、数据所有权及并发处理回归测试。
 - 完成核心 Verify、Race 检查、Android ARM64 Core 和移动端构建合约相关 CI 验证。
+
+
+### Mieru 回退字段
+
+`fallback` 写在 Mieru 出站对象内，默认关闭。启用示例为 `"transport":"tcp", "fallback":{"enabled":true,"transport":"udp","server_port":8444}`；服务端须真实提供对应 UDP 端口。
+
+主备必须是不同的单传输，不能以 both 或 no_wait 握手组合启用回退。`mtu` 作用于 Mieru UDP underlay，不能直接当作 TUN MTU；回退偏好变化作用于新会话。
+
+[当前扩展字段、默认值与配置示例](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FORK-CONFIGURATION.md)；历史版本以对应标签的实现为准。
 
 ### 已知限制
 
@@ -546,6 +563,14 @@
 - 通过安装与卸载状态探针定位静默提示阻塞、服务未停止却返回成功等问题，并将错误反馈接入产品流程。
 - 修复 Darwin 测试依赖宿主机网络环境、Linux 断言和跨平台构建假设，减少环境差异掩盖产品问题。
 
+### adblock 配置与 TTL
+
+在 `dns.rules[]` 中使用 `{"rule_set":"anti-ad","action":"adblock"}`，其中 anti-ad 须为自己已定义的规则集，也可以直接使用域名条件。该动作只用于 DNS 规则，不用于普通路由规则。
+
+命中后直接本地返回 NXDOMAIN + SOA，SOA TTL / MINIMUM 为 600 秒，不请求上游，也不把规则结论存入上游 NXDOMAIN 热缓存。没有 `adblock.ttl`、`drop` 或 `cache_size` 等子字段。移除拦截后内核立即按新规则处理，但下游应用可能仍持有原负缓存。
+
+[当前扩展字段、默认值与配置示例](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FORK-CONFIGURATION.md)；历史版本以对应标签的实现为准。
+
 ## [v0.1.10](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.10) — 2026-10-15
 
 修复透明代理组的直连授权传递，并完善 Windows 守护进程信任检查。
@@ -586,6 +611,12 @@
 - 修复源码选择、客户端构建和发布脚本中的路径、换行及依赖引用问题。
 - 改进 Windows 服务启动时对证书时间错误的处理，以及 Android 和桌面客户端的构建集成。
 - 完善构建结果与对应源码版本的关联检查，减少版本与构建内容不一致的风险。
+
+### fast_path 的放置位置
+
+`fast_path` 写在 selector / urltest 出站对象上，不写在 direct 或代理叶子上。它表达逐流快速路径意图，不是节点选择策略，也不保证普通 TUN 绕过用户态。后续版本调整过未配置时的推断行为，旧版本与当前版本应分别对照对应实现。
+
+[当前扩展字段、默认值与配置示例](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FORK-CONFIGURATION.md)；历史版本以对应标签的实现为准。
 
 ## [v0.1.6](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.6) — 2026-10-12
 
@@ -701,6 +732,22 @@
 - 对 QUIC 分片、HTTP 误识别、缓冲区所有权和任务泄漏增加边界测试，并修正若干原本不能有效捕获缺陷的测试断言。
 - 各阶段报告记录了不同层级的验证结果；不把尚未完成的真实互通或设备验证表述为通过。
 
+### 新增字段的配置入口
+
+| 配置 | 位置与作用 |
+| --- | --- |
+| `type: group`、`servers`、`mode` | `dns.servers[]`，再由 DNS 规则或 `dns.final` 引用；默认 stable。 |
+| `error_ttl` / `win_ttl` | DNS group 的成员记录有效期，默认 2m / 5m；后者仅 fastest 使用，不是 DNS 应答 TTL。 |
+| `failover` | loadbalance 组，默认关闭；打开后逐流最多一次备用重试。 |
+| `type: xhttp`、`mode`、`xmux` | 出站的 `transport` 对象；需要客户端构建包含 XHTTP。 |
+| `key_share` | `tls.reality` 对象，空 / classical / hybrid；不是 VLESS encryption 参数。 |
+| `encryption` | VLESS 出站本层，使用配套服务端生成的客户端参数串。 |
+| `destination_dns_ownership` | 支持该能力的出站本层，默认 false；约束最终目标解析，区别于服务器的 `domain_resolver`。 |
+
+仅定义组不会自动替换路由或 DNS；新配置必须被实际消费者引用。
+
+[当前扩展字段、默认值与配置示例](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FORK-CONFIGURATION.md)；历史版本以对应标签的实现为准。
+
 ## [v0.1.5](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.5) — 2026-10-07
 
 引入由设备状态与真实流量驱动的低功耗管理，减少锁屏和后台运行时的周期性工作。
@@ -794,6 +841,25 @@
 - 调度器关闭、网络变化和速率替换时释放对应等待工作，避免队列状态跨越生命周期。
 - 一致性哈希按目标域名或规范化地址建立亲和，粘性会话使用有界记录；节点变化和健康筛选不等同于迁移活动连接。
 - 嵌套 URLTest 以所属目标测量实际叶子节点，强制重检合并并受组自身生命周期控制。
+
+### NXDOMAIN 跨查询类型负缓存
+
+- 符合条件的 NXDOMAIN 以域名为单位复用，A 查询确认名字不存在后，AAAA、HTTPS、SVCB 等查询可直接本地回答，减少重复上游往返。
+- 仅单问题、空 Answer、带有效 SOA 和非零负 TTL 的响应建立域名级结论；NODATA、临时错误和经 CNAME 的结果不扩大到整个域名。
+- 命中时使用当前问题与请求 ID 重建响应，并返回剩余 TTL，避免错误重放旧 QTYPE 或延长负缓存周期。
+- 缓存键保留解析 transport、客户端子网和网络环境；容量有界，并与禁用缓存、禁用到期和清缓存操作保持一致。
+- 这是普通 DNS 缓存启用后的自动行为，没有新增 `nxdomain_cache` 或 `nxdomain_ttl` 开关，也不依赖特定广告 DNS 产品。
+
+### 本版本扩展字段位置
+
+| 字段 | 放置位置 | 默认与生效条件 |
+| --- | --- | --- |
+| `upload_rate` | `route.traffic_scheduler` | 未写 / 零不整形；设置后影响受管理的用户态上传。 |
+| `traffic_class` | 出站对象 | `default` / `interactive` / `realtime` / `bulk`；出站需被路由选中。 |
+| `type: loadbalance`、`strategy` | `outbounds[]` | 默认轮询，其他策略显式指定；需被路由引用。 |
+| `expected_status` | URLTest / loadbalance 组 | 空不限制响应状态码，严格要求例如 `"204"`。 |
+
+[当前扩展字段、默认值与配置示例](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FORK-CONFIGURATION.md)；历史版本以对应标签的实现为准。
 
 ## [v0.1](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1) — 2026-09-30
 
