@@ -97,7 +97,7 @@ gomobile 接口分布在 `experimental/libbox/` 的 110 个 `.go` 文件中，�
 
 ### `SetupOptions` —— 平台握手（`SetupOptions` — the platform handshake）
 
-`setup.go:49-66`。**十六个字段**，全是字符串或整数，所以这个调用在构造上就是 ABI 稳定的：
+`setup.go:49-66` 定义了 **16 个字段**，类型包括字符串、整数和布尔值。字段类型本身不能证明跨版本 ABI 稳定；修改时仍需核对生成绑定和客户端调用：
 
 `BasePath`、`WorkingPath`、`TempPath`、`FixAndroidStack`、`CommandServerListenPort`、
 `CommandServerSecret`、`LogMaxLines`、`Debug`、`CrashReportSource`、`AppVersion`、

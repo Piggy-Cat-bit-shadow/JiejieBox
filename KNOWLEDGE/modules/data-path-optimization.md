@@ -225,11 +225,11 @@ classify the flow              bound the post-transition        pace the managed
 
 * 守卫本身（`common/trafficsched/adaptive_controller_guard_test.go:20-63`、`TestAdaptiveControllerIsNotInProduction`）**没有构建标签，所以每次发布运行都会执行**；
 * 它是对该目录里非 `_test.go` 文件做**源码文本 grep，找标识符 `adaptiveRate`**；
-* 它带一个阳性对照（标识符必须存在于 `adaptive_research_test.go` 中），把 `//go:build trafficresearch` 钉在研究文件上，也把 `scheduler.go` 的 `type RateSource interface` 钉住——所以它守护的**接缝**一样有守卫。
+* 守卫含阳性对照：要求 `adaptive_research_test.go` 中存在该标识符，并检查研究文件的 `//go:build trafficresearch` 和 `scheduler.go` 的 `type RateSource interface`。
 
 这个守卫**无法发现**换名或放在其他包里的学习型控制器，也无法发现从 `box.go` 经 `SetRateSource` 接入的控制器。它只检查一个源码标识符，并非行为测试；`docs/UPSTREAM-SYNC.md:89-94` 对此类文本守卫的局限也有说明。
 
-**这个标签为什么存在**（`bb21a854c`，*"test(traffic): stop the adaptive characterisation gating releases"*）：同一份源码下，`TestAdaptiveRatePrototype` **在 GitHub 的 Linux runner 上必然失败，在 macOS 上却通过**——85% 的判定阈值报出 1.7719296 MB/s，要求是 1.8605。把它打上标签排除之外，另一个选择是弱化断言，而那个提交明确拒绝了。
+**构建标签的由来：** 提交 `bb21a854c` 记录，同一份源码的 `TestAdaptiveRatePrototype` 在 GitHub Linux runner 上失败、在 macOS 上通过：85% 阈值要求 1.8605 MB/s，Linux 实测为 1.7719296 MB/s。该提交将研究测试移到标签后，而没有放宽断言。
 
 后续重新评估 AIMD 控制器时，应先阅读这些实验及跨平台差异，不要仅为消除 Linux 上的测试失败而放宽阈值。
 
