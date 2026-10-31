@@ -1,4 +1,4 @@
-# Candidate Admission + Flow Lifecycle — Phase 03专项 Debug report
+# 候选准入与流生命周期：第三阶段专项排查报告
 
 **Round:** `03 / 04`, Candidate Admission + Flow Lifecycle Debug.
 **Branch:** `testing`.
@@ -35,7 +35,7 @@ a test that could only fail under `-race` is a test this environment cannot run.
 
 ---
 
-## A. 本轮定位
+## A. 本轮范围
 
 Phase 01 built the producer. Phase 02 made the consumer use one immutable snapshot per flow. **Phase 03
 attacks the consumer's internal consistency**: one flow, one policy, one generation, one setup, one
@@ -49,7 +49,7 @@ real cancellation path.
 
 ---
 
-## B. 测量方法：为什么计数点放在 owner
+## B. 测量方法：为什么在所有者处计数
 
 Phase 02 refused to measure "one capture per flow" by counting manager reads, and the reason stands: the
 ownership predicate re-reads the snapshot on **every** check, deliberately, so a manager-side count mixes
@@ -114,9 +114,9 @@ except the one this phase exists to add.
 
 ---
 
-## D. 四条攻击轴
+## D. 四类边界场景
 
-### D.1 Policy：一条 flow 是否真的只有一个 worldview？
+### D.1 策略：一条流是否只使用一个状态快照？
 
 | attack | result | evidence |
 |---|---|---|
@@ -125,7 +125,7 @@ except the one this phase exists to add.
 | change the manager's **capability** mid-flow under an unchanged epoch (a route flap) | the flow keeps refusing; the new flow sees the new capability | `VERIFIED_UNIT`, `TestACapabilityChangeUnderALiveFlowCannotReachIt` |
 | change the manager's **generation** mid-flow | structurally impossible (§E) | `VERIFIED_SOURCE` + the corrected test |
 
-### D.2 Generation：policy / scheduler / familyHealth 是否同一个 generation？
+### D.2 代次：policy、scheduler 与 familyHealth 是否使用同一代次？
 
 | attack | result | evidence |
 |---|---|---|
@@ -133,7 +133,7 @@ except the one this phase exists to add.
 | take the scheduler's generation from a fresh read | **caught** (02) | `VERIFIED_MUTATION` M9 |
 | (setup gate and connection stamp use the other counter) | unchanged, never compared | `VERIFIED_SOURCE`, Phase 02 §F |
 
-### D.3 Setup / Ownership：transition 是否只取消 stale setup？
+### D.3 建立过程与所有权：切换是否只取消过期的建立过程？
 
 | attack | result | evidence |
 |---|---|---|
@@ -141,7 +141,7 @@ except the one this phase exists to add.
 | keep a setup's generation watch after establishment | behaviourally equivalent; the comment was corrected (02) | `VERIFIED_MUTATION` M11 |
 | a late candidate arriving after the setup is cancelled | see §F.3 — launched, but its attempt carries the cancelled context | `VERIFIED_SOURCE` |
 
-### D.4 Cross-stage consistency：各 stage 是否同答案？
+### D.4 阶段间一致性：各阶段是否给出相同判断？
 
 `TestTheAdmissionMatrixIsOnePolicyAcrossEveryStage` enumerates **5 strategies × 4 capability shapes × 10
 destinations = 200 pairs**, and for each compares six stage answers:
@@ -168,7 +168,7 @@ produces.
 
 ---
 
-## E. 一个被我自己的测试推翻的前提，和它揭示的结构事实
+## E. 测试推翻的前提及其揭示的结构问题
 
 **The premise.** Phase 03's brief asks: freeze the world at generation N, change the provider mid-flow
 *without* a lifecycle cancel, and prove the flow ignores the new answer; then really transition and prove a
@@ -226,7 +226,7 @@ letter and is `VERIFIED_UNIT` in the part that matters.
 
 ---
 
-## F. 变异
+## F. 变异测试
 
 Three new mutations were run for 03, plus the Phase 02 set re-verified at the 03 tree.
 
@@ -249,7 +249,7 @@ already pinned, which is why the round does not claim credit for them (§G).
 
 ---
 
-## G. 已有覆盖的核查（不冒充本轮功绩）
+## G. 既有测试覆盖情况
 
 Several of the brief's attack surfaces were already covered before this phase. They were **verified by
 reading the test and its assertion**, not re-derived, and are listed so the next round knows where the
@@ -272,7 +272,7 @@ the brief reserves the dynamic versions for 04.
 
 ---
 
-## H. 奇妙点
+## H. 其他发现
 
 ### H.1 Two identical readings are indistinguishable from one — except by a count
 
@@ -306,7 +306,7 @@ data race in the new value would not be detected by this round — it would have
 
 ---
 
-## I. 留给 04 的风险
+## I. 第四阶段需要关注的风险
 
 | # | risk | why it matters for 04 |
 |---|---|---|
@@ -345,7 +345,7 @@ go test -race ...                                  BLOCKED_BY_ENVIRONMENT
 
 ---
 
-## K. 终态回答
+## K. 最终结论
 
 1. **一条 flow 是否只有一个 policy snapshot?** **Yes, now provably.** Seven flow shapes each capture
    exactly once, counted at the owner seam; one shape did not, and the count is what found it (§C).
