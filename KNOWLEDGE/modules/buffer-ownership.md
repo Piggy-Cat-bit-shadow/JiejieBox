@@ -1,10 +1,17 @@
 # 缓冲区所有权与内存（Buffer ownership and memory）
 
-**依赖路径范围：** 本模块引用的 `common/buf/*`、`common/bufio/*` 与 `common/cond.go` 都属于 pinned `github.com/sagernet/sing` 替换里的路径，不在本仓库根目录。请从 `go.mod` 解析当前生效的 fork 与版本；使用旧行号与池几何之前，需要针对该 pinned 源码重新核对。
+**依赖路径范围：** 本模块提到的 `common/buf/*`、`common/bufio/*` 和 `common/cond.go`
+属于 `github.com/sagernet/sing` 的固定替代版本，不在本仓库根目录。使用历史行号或缓冲池
+参数前，应通过 `go.mod` 确定实际使用的 fork 和版本，再核对对应源码。
 
 ## v0.1.9 之后 kTLS 读等待的尾部所有权（kTLS read-wait tail ownership after v0.1.9）
 
-**VERIFIED_SOURCE**，测试目标 `011f3fdcd99`：受 Linux/Go 1.25/`badlinkname` 门控的 `common/ktls/ktls_read_wait.go` 会在返回数据之前排空握手后消息。如果已经读到数据之后又出现 alert 或 record 错误，`deferReadErrorAfterData` 会先归还缓冲区，再把该错误排队给下一次读取；在这个分支上释放缓冲区，就会丢失真实的尾部字节。参见 `common/ktls/ktls_read_wait_test.go`。这些仅限 Linux 的路径没有在 Windows 校准中执行；Windows 上的 Go 测试无法验证内核 TLS 行为。
+**VERIFIED_SOURCE，审阅版本 `011f3fdcd99`。** `common/ktls/ktls_read_wait.go` 属于受
+Linux、Go 1.25 和 `badlinkname` 构建条件限制的路径。它在返回应用数据前处理握手后消息；
+如果读到数据后又遇到 alert 或 record 错误，`deferReadErrorAfterData` 会先返回数据缓冲区，
+把错误留到下一次读取时报告。若在此分支提前释放缓冲区，会丢失尾部数据。参见
+`common/ktls/ktls_read_wait_test.go`。Windows 校准没有执行 Linux kTLS 路径，不能据此
+验证内核 TLS 行为。
 
 在 splice 钩子路径上，当前的 `common/ktls/ktls.go` 会排空握手后消息；确切的 pinned sing 修订版 `1729220c46c4` 则转发钩子返回的任何字节并继续 splice，而不是把 nil 错误传给 `E.Cause`。这取代了历史上完整审计中报告为 BUG-002/010 的控制流。这是源码证据，不是一次已执行的 Linux kTLS splice 或 KeyUpdate 互操作测试。
 

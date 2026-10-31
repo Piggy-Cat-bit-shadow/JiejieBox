@@ -1,15 +1,14 @@
 # Mieru 协议集成（Mieru protocol integration）
 
-**范围与证据。** 测试源码目标为 `011f3fdcd99`。在这个目标上，`include/registry.go` 注册了 Mieru 入站
-与出站；`protocol/mieru` 把 `github.com/enfein/mieru/v3` SDK 适配到 sing-box 的路由、
-生命周期与 dialer 接口。SDK 自带协议与多路复用器；适配层负责配置、
-listener/dialer 桥接以及它们的生命周期。这是源码级的集成覆盖，并不断言所有链路都能互通。
-本次校准中，选定的 fallback、分类、option 与生命周期测试已在本地通过；覆盖范围见
-`ACCEPTANCE.md`。
+**范围与证据。** 以下描述针对源码版本 `011f3fdcd99`。该版本的 `include/registry.go` 注册了
+Mieru 入站和出站；`protocol/mieru` 将 `github.com/enfein/mieru/v3` SDK 接入 sing-box 的
+路由和生命周期。协议及多路复用由 SDK 提供，适配层负责配置、listener、dialer 和资源管理。
+这些源码只能说明集成方式，不能证明所有网络环境都可互通。校准时，本地运行了部分 fallback、
+错误分类、配置和生命周期测试；具体范围见 `ACCEPTANCE.md`。
 
-记录的上游祖先 `e4b7e692` 处没有 `protocol/mieru`；本仓库的集成由 `3f67490206d` 引入，
-opt-in fallback 由 `e1efe4cafdc` 引入。底层 Mieru SDK 是外部依赖，因此不能把适配层的
-加入说成发明了该协议本身。上游引用可能移动；在下更宽泛的结论之前，请复检 blob 历史。
+记录的上游祖先 `e4b7e692` 不包含 `protocol/mieru`。本项目在 `3f67490206d` 引入适配层，
+又在 `e1efe4cafdc` 增加了需要显式开启的 fallback。Mieru SDK 是外部依赖，本项目新增的是
+集成代码，而非协议本身。上游引用可能变化，扩大归因范围前应重新检查源码历史。
 
 ## 配置与数据路径（Configuration and data path）
 
@@ -18,10 +17,10 @@ opt-in fallback 由 `e1efe4cafdc` 引入。底层 Mieru SDK 是外部依赖，�
 Mieru 的多路复用由 SDK 自身提供。入站可以同时监听两种 underlay。省略 UDP MTU 时取
 SDK 默认值；校验规则与确切范围在 `config.go` 中，不属于外层 TUN 的 MTU。
 
-出站用 sing-box 的 dialer option 构建 server dialer 与 resolver 桥接，因此代理服务器路径
-与经该协议承载的目标分属不同的所有权。TCP 目标连接走 SDK dial；UDP 目标则经 UoT 适配层
-使用 Mieru 流（`outbound.go`、`uot.go`、`packetconn.go`）。在假定已连接的 UDP 流与按数据报
-给出的目标语义相同之前，请先检查 `DialContext` 与 `ListenPacket` 的确切路径。
+出站根据 sing-box 的 dialer 选项构建到代理服务器的 dialer，并接入 resolver；代理服务器的
+连接路径与通过 Mieru 访问的目标需要分别考虑。TCP 目标通过 SDK 拨号，UDP 目标则通过 UoT
+适配层使用 Mieru 流（`outbound.go`、`uot.go`、`packetconn.go`）。已连接的 UDP 流和逐数据报
+指定目标的语义不一定相同，修改前应分别检查 `DialContext` 与 `ListenPacket`。
 
 ## 可选启用的 fallback（Opt-in fallback）
 
@@ -44,18 +43,20 @@ primary 可以重试 secondary 一次；目标端 SOCKS 拒绝、调用方取消
 
 ## 生命周期与网络变更（Lifecycle and network change）
 
-两侧都向各自的 scope 注册清理，并在 `scope.Add` 之前释放生命周期锁，因为正在关闭的 scope
-会同步调用延迟清理。入站启动时先启动 accept 循环，再注册 close；服务器只完成部分启动时，
-会关闭桥接创建的 listener。入站关闭会取消、关闭自己拥有的 listener、停止 SDK、关闭被跟踪
-的会话，并等待 accept 循环与 handler —— 但只在声明的界限之内（`inbound.go`）。超时告警
-不能证明每个 handler 都已结束。
+入站和出站分别向各自的 scope 注册清理函数，并在调用 `scope.Add` 前释放生命周期锁：
+如果 scope 已开始关闭，清理函数可能立即在调用方同步执行。入站先启动 accept 循环，再注册
+关闭函数；部分启动失败时会关闭桥接层创建的 listener。关闭入站时会取消相关工作、关闭其
+listener 和已跟踪会话、停止 SDK，并在规定时限内等待 accept 循环和 handler（`inbound.go`）。
+出现等待超时告警时，不能认为所有 handler 都已退出。
 
-出站关闭会阻断新的 dial，最多等五秒让在途建立完成，然后停止 SDK 运行时；超时会被记录，
-但不能证明其余建立过程已经完成。`InterfaceUpdated` 在首次需求之前什么都不做；否则它先
-构建并启动替换运行时，再切换代次、重置 fallback 状态，并停止旧运行时。替换失败时，旧代次
-继续在位。fallback 路径在交出结果连接之前检查代次；非 fallback 的独立路径需要另行检查，
-不要假定每条代码路径都有相同的交付检查（`outbound.go`）。网络切换可以终结既有的 Mieru
-会话；只改 fallback 偏好则是另一种操作。
+出站关闭后不再接受新的拨号，最多等待五秒让正在建立的连接完成，然后停止 SDK 运行时。
+等待超时会被记录，但不能说明剩余连接已经建立或退出。首次使用之前，`InterfaceUpdated`
+不会重建运行时；使用之后收到更新时，它先构建并启动新运行时，再切换 generation、重置
+fallback 状态并停止旧运行时。如果构建失败，继续使用旧 generation。
+
+fallback 路径在返回连接前会检查 generation；不经过 fallback 的路径需要单独核对，不能假定
+它们都有相同检查（`outbound.go`）。网络切换可能终止现有 Mieru 会话；单纯更改 fallback 偏好
+则不会因为这一操作主动关闭既有会话。
 
 ## 验证与维护（Verification and maintenance）
 

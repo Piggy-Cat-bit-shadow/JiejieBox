@@ -3,14 +3,16 @@
 ## 基线后复核与运行证据（Post-baseline review and run evidence）(2026-10-28)
 
 在 `cb71cf80d72`，[Windows 守护进程测试 40605271303](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40605271303)
-报告 33 个测试、无跳过，日志中包含 `TestTamperedSignedPEIsRejectedByTheFirstLayer`。
-这只是针对该修订与这套具名测试的 CI 证据，不是端到端的已安装服务握手，
-也不为其他二进制文件和平台提供保证。
+报告 33 个测试通过、没有跳过，其中包括 `TestTamperedSignedPEIsRejectedByTheFirstLayer`。
+这份 CI 证据只适用于该提交和运行中列出的测试；它不等同于已安装服务的端到端握手测试，也
+不能推广到其他二进制文件或平台。
 
-在 `011f3fdcd99`，`peer_windows.go` 仍然校验 worker 与应用的身份；`authenticode_windows.go` 只放行枚举出的
-链错误与时间错误，随后分别检查签名者与证书约束。`server.go` 先规范化 gRPC 服务方法里的一个前导斜杠，
-再做所有者授权；`owner_gate_spelling_test.go` 覆盖两种拼写。卸载必须先停止服务，再删除服务
-（`cmd_service_windows.go` 与 `cmd_service_uninstall_contract_test.go`）。以上在目标处均为 `VERIFIED_SOURCE`。
+在 `011f3fdcd99`，`peer_windows.go` 校验 worker 和应用身份；
+`authenticode_windows.go` 只允许列出的证书链错误和时间错误，随后仍会检查签名者与证书
+约束。`server.go` 在所有者授权前，先统一 gRPC 服务方法的前导斜杠；
+`owner_gate_spelling_test.go` 覆盖两种写法。卸载流程先停止服务，再删除服务，见
+`cmd_service_windows.go` 和 `cmd_service_uninstall_contract_test.go`。这些结论的证据级别
+是目标版本上的 `VERIFIED_SOURCE`。
 
 GitHub Actions 的 [run 40535897659](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40535897659)
 跑在已发布的提交 `6112aa17052297ec9890e0e7f1541a06120b84b2` 上；其中 Windows daemon 作业成功，
@@ -19,10 +21,10 @@ GitHub Actions 的 [run 40535897659](https://github.com/Piggy-Cat-bit-shadow/sin
 也不能证明端到端服务握手。在本地 Windows 10 build 19044 上，`go test ./experimental/boxdd -count=1 -v`
 成功退出，但被篡改 PE 测试因 Cert 驱动器不可用而跳过：跳过不是通过。
 
-**范围：** `experimental/boxdd/**`（55 个 `.go` 文件——其中 51 个不是测试——外加 `desktop_service.proto`），
-它定义的进程角色，以及这些角色之间的本地信任边界。覆盖 Windows 服务、每用户 worker、命名管道对端握手、
-可执行文件/对端认证、Authenticode 语义与更新路径。`daemon/**` 由 `libbox-platform-contract.md` 覆盖；
-本模块只负责**边界**。
+**范围：** `experimental/boxdd/**` 中定义的进程角色及其本地信任边界，包括 Windows 服务、
+每用户 worker、命名管道握手、对端和可执行文件认证、Authenticode 语义及更新路径。
+审阅时该目录有 55 个 `.go` 文件，其中 51 个不是测试文件，另有 `desktop_service.proto`。
+`daemon/**` 的职责见 `libbox-platform-contract.md`；本模块重点记录两侧的信任边界。
 
 **遇到以下情况时加载本模块：** 改动 `experimental/boxdd/**` 中的任何内容、Windows 服务或安装器路径、
 对端认证、签名者处理，或者在断言 Windows 守护进程验证了什么、没验证什么之前。

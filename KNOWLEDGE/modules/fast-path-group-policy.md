@@ -93,17 +93,16 @@ box_fast_path_group_policy_test.go
 
 ## 4. 三态语义（Three-state semantics）
 
-这个字段是**三态**的，三个取值之间的区分正是整个设计的要点：
+`fast_path` 有三种状态：未设置、显式开启和显式关闭。三者的区别如下：
 
 | 取值 | 含义 |
 |---|---|
-| **未设置** | 没有显式决定。以真实 `direct` 叶结尾的透明 selector 链本身就有权尝试绕过。 |
-| `"fast_path": true` | **显式授权**该组选中的流尝试一次 Direct Fast Path。 |
-| `"fast_path": false` | **显式禁止**组授权，包括那条内在的直连链授予。 |
+| **未设置** | 没有显式策略。如果链路只经过透明 selector，并以实际的 `direct` 出站结束，仍可尝试绕行。 |
+| `"fast_path": true` | 显式允许该组选中的流尝试 Direct Fast Path。 |
+| `"fast_path": false` | 显式禁止组授权，即使透明直连链原本具有尝试资格也不能覆盖它。 |
 
-`false` 是一个**决定**，不是缺失。它会覆盖内在授予——见 §8。
-
-之所以要有三态配置类型，就是为了让“显式 false”*可以被找到*：普通布尔值无法区分“操作者写了 false”与“操作者什么都没写”，而这两者必须表现不同。
+这里的 `false` 表示明确禁止，不等同于没有设置。普通布尔值无法区分两者，因此配置使用
+三态表示；嵌套组的优先级见 §8。
 
 ### 以上一切生效前的两个前提（Two preconditions before any of this applies）
 
@@ -117,7 +116,7 @@ the leaf cannot be bypassed at all
         -> the leaf must implement adapter.BypassableOutbound
 ```
 
-第二种情形，正是代理叶永远无法绕过自身的原因：授权针对的是*组*，而*叶*仍然必须是平台能够承载的东西。不存在显式策略时，一个真实 direct 叶只要位于仅由透明组构成的链之后，就会提供那份内在授予。
+第二个前提意味着，组的授权不能让不具备绕行能力的出站绕过自身。没有显式策略时，只有由透明组组成、最终到达实际 direct 出站的链，才具有内在的尝试资格。
 
 ---
 
@@ -144,7 +143,7 @@ any other outbound that is not a FastPathAuthorizedGroup
 
 ### 配置错误是错误，不是警告（Misconfiguration is an error, not a warning）
 
-把 `fast_path` 放在不允许携带它的 outbound 上，会让**配置加载失败**。它不会被忽略，也不会记录后继续：配置若要求运行时兑不了的东西，就会被拒绝。这样操作者在加载时就能知道，不必靠观察行为与文件静默不符才发现。
+如果在不支持的 outbound 上设置 `fast_path`，配置会直接加载失败，不会忽略该字段后继续运行。这样可以在启动时发现配置错误，避免运行行为与配置不一致。
 
 ---
 

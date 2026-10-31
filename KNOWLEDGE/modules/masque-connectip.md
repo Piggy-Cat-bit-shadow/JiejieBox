@@ -2,19 +2,21 @@
 
 ## 经由 TUN 栈的端点本地流量（Endpoint-local flows through the TUN stack, 2026-10-29）
 
-`protocol/masque/endpoint.go` 判断目的地是否为端点本地地址。在
-system 模式下它保留 `ActionAccept`。在非 system 模式下，它调用 `adapter.JudgeHostFlow`；发往
-其他目的地的流量仍走 `adapter.JudgeFlow`。WireGuard（`protocol/wireguard/endpoint.go`）
-与 Tailscale（`protocol/tailscale/port.go`）也区分 system 与非 system，各自实现自己的本地
-地址检查。这是源码行为，并不构成端到端数据包送达的证明。
+`protocol/masque/endpoint.go` 会判断流量是否发往端点自身的本地地址。在 system 模式下，
+此类流量仍返回 `ActionAccept`；在非 system 模式下，则调用 `adapter.JudgeHostFlow`。
+发往其他地址的流量仍通过 `adapter.JudgeFlow` 处理。WireGuard（`protocol/wireguard/endpoint.go`）
+和 Tailscale（`protocol/tailscale/port.go`）也有各自的本地地址检查，并区分这两种模式。
+这是源码观察，不能单独证明端到端数据包送达。
 
-TUN 启动时，只有当栈实现了 `tun.RoutedPort`，`protocol/tun/inbound.go` 才注册它。
-`route.NetworkManager` 在互斥锁保护下只保留第一个非 nil 的注册。`JudgeHostFlow` 选中
-该 routed port 对应的 IPv4 或 IPv6 地址，保留原来的目的地端口，对 TCP、UDP 或 ICMP 返回 `ActionFlow`。
-管理器或端口不存在、匹配到的地址族无效，或者协议不受支持时，它返回先前的 `ActionAccept`。
-没有实现被路由端口的 system 栈与 gVisor 栈，不会注册该端口。`adapter.FlowLogger` 由 host 流
-与普通路由流共用；host tracker 没有出站。单元用例见 `adapter/host_test.go`。
-除首次注册那段代码之外，代码并不隐含任何关于注册替换或拆除的保证。
+TUN 启动时，`protocol/tun/inbound.go` 只会注册实现了 `tun.RoutedPort` 的协议栈。
+`route.NetworkManager` 在互斥锁保护下保留首次注册的非 nil 端口。`JudgeHostFlow` 根据
+目标地址族选择该端口的 IPv4 或 IPv6 地址，保留目的端口，并对 TCP、UDP、ICMP 返回
+`ActionFlow`。如果管理器或端口不存在、对应地址无效，或协议不受支持，则沿用原来的
+`ActionAccept`。
+
+未实现 routed port 的 system 栈和 gVisor 栈不会注册该端口。host 流量与普通路由流量共用
+`adapter.FlowLogger`；host tracker 没有关联的出站。单元用例见 `adapter/host_test.go`。
+首次注册之后能否替换或移除端口，应以代码为准，不能从首次注册的逻辑推断。
 
 ## v0.1.9 之后的客户端生命周期（Client lifecycle after v0.1.9）
 

@@ -2,9 +2,18 @@
 
 ## v0.1.9 之后的渐进式内存释放（Progressive memory release after v0.1.9）
 
-**VERIFIED_SOURCE**，测试目标 `011f3fdcd99`：`adapter/network.go` 区分三种动作。可选的 `TrimCaches` 只清读路径会拒绝的条目；`TrimMemory` 复用池，但不重置网络、不碰活跃流量；`ReleaseMemory` 则是激进的重置并释放。实现在 `route/network.go`。不要拿一次完整的网络重置去替代一次普通的渐进裁剪。`box_lifecycle.go` 仍然把 resume 与 `woke()` 分开：后者在释放被暂停的 level 之前，先发布一次复用边界。这些源码观察不是设备测试。
+**VERIFIED_SOURCE，审阅版本 `011f3fdcd99`。** `adapter/network.go` 区分三种内存处理：
+可选的 `TrimCaches` 清理读路径本来就会拒绝的条目；`TrimMemory` 复用池，不重置网络，也不
+影响活跃流量；`ReleaseMemory` 则执行更激进的重置与释放。实现见 `route/network.go`，不能用
+完整网络重置替代普通的渐进式清理。
 
-`common/power/governor.go` 在调用回调之前，先在无锁状态下复制一份观察者 slice；如果遍历期间有观察者注册，就重新执行一次通知，循环上限是八次。这样既避免了 slice 底层数组的竞态，也能在同一个复用边界内处理注册，同时不在外部回调周围持有调速器锁。`governor_observer_race_test.go` 是回归锚点；本次 Windows 刷新运行这个包时没有开 `-race`，所以不算一次竞态检测器运行。
+`box_lifecycle.go` 同样区分 resume 和 `woke()`：后者在释放暂停状态前先发布一次复用边界。
+这些是源码观察，不是设备测试结果。
+
+`common/power/governor.go` 会先复制观察者 slice，再在不持 governor 锁的情况下调用回调。
+如果通知期间有新观察者注册，它会重新通知，最多循环八次。这样既避免并发修改 slice 的底层
+数组，也不需要在调用外部代码时持锁。回归测试见 `governor_observer_race_test.go`；本次
+Windows 校准没有启用 `-race`，因此不能算一次竞态检测。
 
 **范围：** `common/power/governor.go`、`common/runtimecoord/platform_events.go`、`box_lifecycle.go`、`experimental/libbox/platform_events.go`、`service/oomkiller`、`internal/memmetrics`，以及 `route/reference.go` 中的复用策略。
 
@@ -16,7 +25,8 @@
 
 ## 1. 边界：客户端报告事实，核心决定策略（The boundary: the client reports facts, the core decides policy）
 
-这条边界是真实存在的，而且靠分类逻辑所在的位置来保证，不靠约定。
+客户端只报告平台提供的原始状态；这些状态如何影响内存、暂停和连接复用，由核心代码决定。
+下表列出各部分的归属：
 
 | 关注点 | 归属 | 锚点 |
 |---|---|---|
@@ -25,7 +35,8 @@
 | 合并窗口 | **核心**——`trimCoalesceWindow = time.Second`（`:223`）、`releaseCoalesceWindow = adapter.RecoveryWindow`（`:231`） | 如所引 |
 | 设备状态机 | **核心**——`common/power.Governor` | `governor.go:53 State`, `:93 Allow`, `:109 ReuseAction`, `:141 ReuseBoundary`, `:168 Policy`, `:222 ReuseFreshness.Classify`, `:239 WakeStagger`, `:264 DefaultPolicy`, `:472 DevicePaused`, `:491 DeviceWake`, `:526 SleepStarted`, `:564 Resumed`, `:660 NetworkPaused`, `:672 NetworkWake`, `:708 ObserveTraffic`, `:917 ReuseEpoch`, `:939 AddReuseObserver`, `:950 WaitActive`, `:987 WaitProviderRefresh` |
 
-**对平台原始数值的分类放在核心里，不放在客户端里。** 如果客户端发的是“你应该裁剪”，策略就搬进了三个客户端代码库；而实际上客户端发的是操作系统给它的数值，由核心来判定。
+对平台原始数值的分类在核心中完成。客户端上报操作系统给出的数值，不直接向核心发送
+“应该采取哪种内存清理策略”的结论；否则同一策略就需要在多个客户端中重复实现。
 
 ---
 
@@ -40,7 +51,8 @@
 
 ### 为什么 `reconcileScreenState` / `reconcileLockState` 必须只处理 level（Why `reconcileScreenState` / `reconcileLockState` must be level-only）
 
-**读当前状态不是 edge。** 如果一次重读就发布一个 edge，那每次轮询看起来都像一次新的转换。被钉死的说法就是这条不变量：
+读取当前状态不等于发生了一次状态变化。如果每次读取都发布 edge，轮询就会被误认为新的
+睡眠或唤醒事件。这里要保持的不变量是：
 
 > **Apple 的快照协调只处理 level。它不得伪造 sleep/wake edge，也不得仅凭一次屏幕读取就释放一次暂停。**
 

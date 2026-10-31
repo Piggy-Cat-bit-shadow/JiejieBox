@@ -2,12 +2,10 @@
 
 ## v0.1.9 之后的 FakeIP 与分片 QUIC（FakeIP and fragmented QUIC after v0.1.9）
 
-**VERIFIED_SOURCE**，测试目标 `011f3fdcd99`：`route/route.go` 的 `packetSniffUsesKnownFakeIPDomain`
-处理已经给出域名的 FakeIP 反向映射。
-在这条合格路径上，路由器不再等待分片 QUIC ClientHello 的其余部分；
-但这不足以证明可以对每一个分片数据包都跳过嗅探。
-见 `route/fragmented_quic_known_domain_test.go` 与该辅助函数的条件。
-源码检查不能证明与任意 QUIC 客户端互通。
+**VERIFIED_SOURCE，审阅版本 `011f3fdcd99`。** 如果 FakeIP 反向映射已经提供域名，
+`route/route.go` 的 `packetSniffUsesKnownFakeIPDomain` 会在满足条件时停止等待剩余的分片
+QUIC ClientHello。这不意味着所有分片数据包都可以跳过嗅探。具体条件与测试见
+`route/fragmented_quic_known_domain_test.go`；源码检查也不能证明与所有 QUIC 客户端互通。
 
 TLS 与 QUIC 的 SNI 也先经过 `ParseSocksaddrHostPort(...).Fqdn`，之后才写入
 `metadata.Domain`（`common/sniff/tls.go`、`common/sniff/quic.go`）。

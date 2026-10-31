@@ -2,24 +2,29 @@
 
 ## Apple 来源与单运行器差异（Apple source and single-runner delta (updated 2026-10-31)）
 
-在当前源码目标下，Apple 的 gitlink 与 ABI 检查常量都指向
-`044e6d5447eb1285c950bd12cee10effab641f5a`；Android 为 `c7837107dc0126fb704fdf08cf203e10b30c8a22`。
-`check-libbox-abi.sh --pin-only` 在 `0067b03` 上已针对这些父级 gitlink 本地通过。它不是完整的 ABI 扫描，也不是
-Swift 调用点扫描。两个本地客户端检出比这些 gitlink 更旧，且没有改动过。Windows 的符号链接物化
-（symlink materialization）和缺失的桌面端检出，仍然限制着本地客户端检查。源码选择、可选的 dispatch SHA、
-单运行器模式与冻结发布要求，见 `ci-release.md` 的 2026-10-29 小节；下文历史 v0.1.31 观察
-仍只限定于该修订。
+在当前源码目标中，Apple 的 gitlink 和 ABI 检查常量都指向
+`044e6d5447eb1285c950bd12cee10effab641f5a`；Android 对应
+`c7837107dc0126fb704fdf08cf203e10b30c8a22`。在父仓库 `0067b03` 上，本地运行的
+`check-libbox-abi.sh --pin-only` 检查通过，但它只比较固定版本，不是完整 ABI 扫描，也没有
+扫描 Swift 调用点。
+
+当时的两个本地客户端检出都早于父仓库记录的 gitlink，且未被重置。Windows 的符号链接检出
+方式以及未初始化的 Desktop 子模块也限制了本地检查。源码选择、dispatch SHA、单 runner 模式
+和发布冻结要求见 `ci-release.md` 的 2026-10-29 小节；下文 v0.1.31 的观察只适用于该版本。
 
 ## 基线后 TUN 重置交接（Post-baseline TUN reset handoff (testing, 2026-10-28)）
 
-在 `011f3fdcd99173acd3e80483b50cb76b07bf6ff4` 处为 **VERIFIED_SOURCE**：
-`protocol/tun/inbound.go` 实现了 `InterfaceUpdated`、`stackDidStart`、
-`consumePendingReset` 与 `resetNetwork`。栈启动之前，一次更新会设置 pending 标志；
-store 之后的启动复检与原子 pending 交换，把启动与更新的交接闭合起来。多个启动前事件可以合并。一旦启动，
-每个被接受的更新各自独立重置，待处理的启动期重置则单独消费。已关闭的 inbound 不会重置。回归用例在
-`protocol/tun/reset_before_start_test.go`；它们存在，不等于跑过一次测试。
-启动后的行为含 `1ff0af39110`，它晚于 `v0.1.30`；不要把它说成 v0.1.30 已发布的内容。稍后的 v0.1.31 发布标签
-指向包含该变更的后代提交；这个祖先关系并不确立设备上的网络切换行为。
+**VERIFIED_SOURCE，审阅版本 `011f3fdcd99173acd3e80483b50cb76b07bf6ff4`。**
+`protocol/tun/inbound.go` 使用 `InterfaceUpdated`、`stackDidStart`、`consumePendingReset`
+和 `resetNetwork` 协调网络更新与协议栈启动。
+
+协议栈启动前收到更新时，代码会设置 pending 标志；启动过程在保存协议栈后再次检查，并通过
+原子操作取走待处理标志，避免启动与更新交错时漏掉重置。多次启动前更新可以合并；启动后，
+每次被接受的更新分别触发重置，启动期间积累的待处理重置也会单独执行。已关闭的 inbound
+不会重置。回归用例见 `protocol/tun/reset_before_start_test.go`；测试文件存在不等于已运行。
+
+启动后的行为包含 `1ff0af39110`，该提交晚于 `v0.1.30`，但已进入后来的 v0.1.31 标签。
+这一提交关系不能证明真实设备上的网络切换行为。
 
 ### IPv6 入口呈现（IPv6 entry presentment）
 
@@ -48,15 +53,15 @@ UDP 与 TCP 得到的动作并不相同，所以请保留确切的分支。
 
 ### 平台默认接口监视器顺序（Platform default-interface monitor ordering）
 
-在测试目标下，管理器支持 `RefreshInterfaces` 时，`experimental/libbox/monitor.go` 会先刷新接口列表，
-再发布默认接口与 pause 变更。
-默认接口没变，就在可用时调用 `UpdateNetworkEnvironment`，好让
-网关或其他环境变化仍被观测到一次。没有这个拆分接口的较旧实现改用
-`UpdateInterfaces`。刷新可能很慢，监视器会在刷新之后、默认接口锁下复检 closed 标志，
-从而避免关闭已经在这次刷新期间落地、更新却仍写进
-默认接口。`monitor_ordering_test.go` 与
-`monitor_close_fence_test.go` 用测试替身检验这些边界；它们不证明
-一次真实的 Android 或 Apple 网络转换。
+在审阅版本中，如果管理器支持 `RefreshInterfaces`，`experimental/libbox/monitor.go` 会先
+刷新接口列表，再发布默认接口和 pause 状态变化。默认接口没有变化时，它会在接口可用的情况下
+调用 `UpdateNetworkEnvironment`，以便观察网关等环境变化；不支持拆分接口的旧实现则调用
+`UpdateInterfaces`。
+
+刷新可能耗时。为避免刷新期间监视器已关闭、刷新完成后仍写入默认接口，代码会在刷新后持有
+默认接口锁并再次检查 closed 标志。`monitor_ordering_test.go` 和
+`monitor_close_fence_test.go` 用测试替身验证这些边界，并不证明真实 Android 或 Apple 设备
+上的网络切换。
 
 **范围：** `experimental/libbox/*`、`daemon/*`、`include/*`（就它们定义面向客户端的表面而言）、
 `cmd/internal/{mobilebuildtags,applebuildtags,appletags}`、`release/apple-client-refs.env`，以及

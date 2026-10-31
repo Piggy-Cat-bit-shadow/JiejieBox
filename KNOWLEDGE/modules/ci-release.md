@@ -2,12 +2,13 @@
 
 ## v0.1.34 Apple 检查与证据（v0.1.34 Apple checks and evidence (2026-10-31)）
 
-父级 Apple gitlink、ABI 常量与冻结锁现在都指向 `044e6d5447eb`；此前的候选已并入
-Apple `main`。Libbox 构建与打包迁移到共享复合 action 之后，
-`check-apple-source-selection.sh` 与 `test-apple-beta-publish.sh` 也已更正：工作流里
-没有内联的构建/打包，构建/打包的实现只在 action 中有一份，并由两个工作流调用。
-`check-release-workflows.py` 现在也守着这个结构。这些都是结构性测试，不能证明真实
-设备上运行过。
+父仓库中的 Apple gitlink、ABI 检查常量和冻结锁文件现在都指向 `044e6d5447eb`；
+此前的候选版本已合入 Apple `main`。
+
+Libbox 的构建和打包迁移到共享 composite action 后，`check-apple-source-selection.sh` 和
+`test-apple-beta-publish.sh` 的断言也随之更新：工作流不再内联构建或打包命令；action 中各有
+一份实现，工作流从两个位置调用它。`check-release-workflows.py` 会检查这一结构。结构检查
+通过不能证明应用已在设备上运行。
 
 在父级 `0067b03` 上，[Verify 40819594893](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40819594893)
 与 [iOS Apple 运行 40819615363](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/40819615363)
@@ -18,27 +19,33 @@ Apple `main`。Libbox 构建与打包迁移到共享复合 action 之后，
 
 ## 2026-10-29 目标下的发布冻结与 Apple 验收（Release freeze and Apple acceptance at the 2026-10-29 target）
 
-`release/dependencies.json` 声明来源仓库、分支与策略；实际的 Go replace 固定值与
-客户端 gitlink 是分开的。`scripts/ci/release-freeze.py` 一次性解析、比较、应用符合
-条件的更新、生成快照，并验证 `release/source-lock.json`。`update` 固定值只有在可比较时
-才能移动；分歧或缺失的来源会失败即拒绝（fail closed）。29 个 Cronet 原生归档标记为
-`controlled`，不会被重写；Desktop 的嵌套仪表盘只做 `report`，因此修复顺序是
-Dashboard → Desktop → 内核。锁反映的是构建固定值，不是移动的分支顶端；根/test 的 Go
-替换、Cronet 一致性与客户端 gitlink 都会被验证。桌面端检出不可用时，嵌套检查会变成
-SKIPPED；版本不匹配只是一条备注，不算验证失败。
+`release/dependencies.json` 声明各依赖的来源仓库、分支和更新策略；实际使用的版本则记录在
+Go replace 指令和客户端 gitlink 中。`scripts/ci/release-freeze.py` 负责解析分支头、比较固定
+版本、应用符合条件的更新，生成并验证 `release/source-lock.json`。只有来源可比较时才能
+更新 `update` 类依赖；分支缺失或发生分歧会导致检查失败。
 
-`.github/workflows/release-prepare.yml` 是手动派发，不是自动发布。它依次解析、检查、
-应用、整理、生成快照并设置门禁，只在发生变化时提交/推送，然后要求这个确切的候选 SHA
-具备成功证据，才允许打标签。试运行不会创建候选，也不能作为针对它的证据。Apple ABI
-固定值门禁在候选提交之后才运行，因为它读取 `HEAD`。做任何真实准备之前先检查这个
-工作流；不要凭一个版本文件或一份已准备的锁推断发布。
+29 个 Cronet 原生归档的策略是 `controlled`，不会由该流程自动更新。Desktop 内的 Dashboard
+只作 `report`，因此需要按 Dashboard → Desktop → 内核的顺序修复。锁文件记录构建使用的
+固定版本，不记录不断变化的分支头；验证覆盖根模块和 test 模块的 Go replace、Cronet 一致性
+及客户端 gitlink。如果 Desktop 未检出，嵌套 Dashboard 检查会标记为 SKIPPED；版本号不一致
+只产生备注，不使验证失败。
 
-`client-apple.yml` 是手动的：`apple_client_sha` 接受一个确切的 40 字符小写 SHA；
-相互矛盾的仓库覆盖会失败。没有覆盖时，它在本次运行中一次性解析 refs 文件的分支顶端，
-结果可能不同于父级 gitlink；正式发布必须选冻结的修订。同时选中 iOS 与 macOS 时，只构建
-一个 Libbox 产物，两边共用。仅选中 macOS 时，同一个复合 action 在唯一的 macOS 任务内
-构建 Libbox；跳过的 Libbox 依赖被显式允许，失败的依赖不允许。两条路径最后都汇合到
-manifest 验证与安装。结构检查不能证明 macOS 成功执行过，也不能证明设备行为。
+`.github/workflows/release-prepare.yml` 只能手动触发，并不自动发布。它解析并检查来源、应用
+允许的更新、整理依赖、生成快照并执行门禁；只有内容发生变化时才提交和推送。打标签之前，
+流程要求候选提交的精确 SHA 已有成功的验证证据。dry run 不会创建候选提交，不能当作候选
+提交的验证证据。
+
+Apple ABI pin 检查在候选提交之后执行，因为它读取 `HEAD`。准备实际发布前应重新检查工作流；
+不能仅凭版本文件或 lock 文件判断发布已经完成。
+
+`client-apple.yml` 只支持手动触发。输入 `apple_client_sha` 要求完整的 40 位小写 SHA；
+如果它与仓库变量冲突，工作流会拒绝执行。没有覆盖值时，工作流在本次运行中解析一次 refs
+文件指定的分支头，其结果可能与父仓库 gitlink 不同；正式发布需要选择冻结的版本。
+
+同时构建 iOS 和 macOS 时，两者共用一次构建的 Libbox 产物。只构建 macOS 时，同一个 composite
+action 会在 macOS 任务内构建 Libbox，省去额外的 macOS runner。此模式允许上游 Libbox 任务
+被跳过，但不允许它失败后继续。两条路径最终都验证 manifest 并安装产物。结构检查不能证明
+macOS 工作流已执行，更不能证明设备行为。
 
 历史 `dbcfc1d` 目标上已有的 [Verify 运行 40765511913](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40765511913)
 是取消，不是通过。刷新本身请用只改文档的 `[skip ci]` 提交；绝不要只为验证一次知识更新

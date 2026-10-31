@@ -2,14 +2,17 @@
 
 ## v0.1.9 之后的 Naive 出站 H3 回退（Naive outbound H3 fallback after v0.1.9）
 
-**VERIFIED_SOURCE**，测试目标 `011f3fdcd99`：`protocol/naive/outbound.go` 由
-`with_naive_outbound` 门禁。它的 `quic_fallback_to_h2` 选项是 opt-in，并要求 `quic: true`；
-否则构造时直接拒绝这个组合。`protocol/naive/h3_fallback.go` 会把符合条件的
-H3 传输失败放到 H2 上重试，并保留一个按出站计、可被网络重置的 30 秒失败窗口；
-尝试次序能防止旧失败覆盖新结果。HTTP 状态响应和调用方取消都不算 H3 传输失败。重试包含 CONNECT
-握手，并预留重试预算。内部有界但已超时的探测含义不明：那条流可以在 H2 上重试，却不会武装失败
-窗口。Cronet 出站会拒绝证书 pin 选项与 uTLS，而不是悄悄把它们当成受支持。见
-`option/naive.go` 以及回退相关测试。这并不表示与每一个服务器都能互通。
+**VERIFIED_SOURCE，审阅版本 `011f3fdcd99`。** `protocol/naive/outbound.go` 由构建标签
+`with_naive_outbound` 控制。`quic_fallback_to_h2` 需要显式启用，而且必须同时设置
+`quic: true`；不符合条件的配置会在构造时被拒绝。
+
+`protocol/naive/h3_fallback.go` 可将符合条件的 H3 传输失败重试到 H2。失败窗口按出站
+维护，时长为 30 秒，可由网络重置；尝试顺序用于防止旧失败覆盖新结果。HTTP 状态响应和
+调用方取消不计为 H3 传输失败。重试包括 CONNECT 握手，并预留重试预算。
+
+内部限时探测超时的原因不明确：该流可以在 H2 上重试，但不会因此启用失败窗口。Cronet
+出站不支持的证书 pin 和 uTLS 选项会被明确拒绝。参见 `option/naive.go` 和相关回退测试；
+这些源码与测试不能证明与所有服务器互通。
 
 在 pin `cb71cf80d72` 处，本地干净的 Cronet fork 源码 `c9c0e6ec8845` 声明了
 `NaiveClient.Start() (err error)`，并在清理路径上把恢复到的启动期 panic 赋给这个返回值。

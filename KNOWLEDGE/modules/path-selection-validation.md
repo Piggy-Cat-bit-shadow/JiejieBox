@@ -2,10 +2,10 @@
 
 ## v0.1.9 之后的 AnyTLS 服务器解析与失败归因（AnyTLS server resolution and failure attribution after v0.1.9）
 
-在 `011f3fdcd99` 上，`protocol/anytls/outbound.go` 让拨号器在解析器策略为 `AsIS` 时优先对代理
-服务器名使用 IPv4。显式解析器或旧式策略仍然优先。这个偏好只在 `NewWithOptions` 构造本地解析
-拨号器的地方生效，不会普遍作用于经 detour 的查询或目标目的地。它只是一个偏好，不能证明“IPv4
-是唯一可行路径”，也不能证明“在每个网络上吞吐都会提升”。
+在 `011f3fdcd99`，当解析器策略为 `AsIS` 时，`protocol/anytls/outbound.go` 会让拨号器
+优先使用 IPv4 解析代理服务器名。显式解析器或旧式策略仍然优先。这个偏好只作用于
+`NewWithOptions` 构建本地解析拨号器的路径，不能推广到所有 detour 查询或目标地址。
+它也不代表 IPv4 是唯一可用路径，更不能证明所有网络上的吞吐都会提高。
 
 对 TCP 与 UoT 的 `DialContext`，AnyTLS 客户端错误会带上 outbound 标签与服务器名，同时保留
 原始成因。这样能看出某个代理报告了远端解析错误，却不会修复那个解析器。`ListenPacket` 直接

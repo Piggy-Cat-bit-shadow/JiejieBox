@@ -2,51 +2,54 @@
 
 ## 基线之后的地址族探测日志（Post-baseline family-probe logging, testing, 2026-10-28）
 
-**VERIFIED_SOURCE** 位于 `011f3fdcd99173acd3e80483b50cb76b07bf6ff4`：`dns/router.go` 用
-`QuietEmptyFamilyResult` 以 debug 级别记录空的地址族探测，不把它记为查询错误；
-独立的 unquiet 情形仍保持区别。正例与反例见 `dns/empty_family_log_test.go`。
-这只是日志层面的区别，不能证明所有双栈恢复（dual-stack recovery）或设备行为。
-请针对确切的目标修订，检查当前实现与测试结果。
+**VERIFIED_SOURCE，审阅版本 `011f3fdcd99173acd3e80483b50cb76b07bf6ff4`。**
+`dns/router.go` 使用 `QuietEmptyFamilyResult` 将特定地址族探测的空结果记为 debug 日志，而非
+查询错误；其他未启用 quiet 行为的情况仍按原有方式处理。正反用例见
+`dns/empty_family_log_test.go`。这是日志行为，不代表所有双栈恢复或设备场景都经过验证；
+使用前请核对目标版本的源码和测试。
 
 ### 双栈查询与候选所有权（Dual-stack lookup and candidate ownership）
 
-`dns/router_dual_stack.go` 的 `LookupFamilies` 复用 `Router.Lookup`，保留路由、传输、
-缓存与响应检查。生效的严格 IPv4/IPv6 策略只发出自己选中的地址族；
-其他策略在某个地址族完成时就发布结果。`common/dialer` 为每条流捕获一份不可变的
-`admissionPolicy`，把配置的策略与本地能力快照、以及快照的所有权 epoch 组合在一起。
-未知能力本身不会拒绝某个地址族。候选调度器对尝试做错峰安排，在快速失败时推进，
-并关闭落败的连接，包括迟到的成功（`dual_stack_scheduler.go`）。套接字建好
-不等于 QUIC 握手完成。测试包括
-`dns/cross_generation_family_test.go`、`common/dialer/admission_policy_test.go` 和
-`common/dialer/dual_stack_scheduler_test.go`。以上是测试目标上的 `VERIFIED_SOURCE` 观察结果；
-运行时与具体网络的结果需要各自的证据。
+`dns/router_dual_stack.go` 的 `LookupFamilies` 复用 `Router.Lookup`，继续执行原有的
+路由、传输、缓存和响应检查。严格指定 IPv4 或 IPv6 的策略只查询选定的地址族；其他策略
+可以在某个地址族的查询完成时先发布该结果。
 
-本地地址族门禁（local-family gate）只约束在此处拨出的套接字，包括代理服务器自身的地址，
-不约束交给远程代理的目标。过期或切换时点的能力快照不能硬性拒绝某个候选；
-缺少能力信息就不作判断。配置的严格地址族策略是独立的，仍可把这个候选排除。
-观察者优先用合并的地址族/代次/稳定性快照；回退到各自独立的可选 getter 可能得到
-两种不同的读数。批量门禁对候选列表只评估一次所有权
-（`network_observation.go`、`family_capability.go`）。
+`common/dialer` 为每条流保存不可变的 `admissionPolicy`，其中结合了配置策略、本地能力
+快照及其所有权 epoch。能力未知本身不会导致某个地址族被拒绝。候选调度器错开连接尝试，
+遇到快速失败时提前推进，并关闭落败连接，包括晚到的成功连接（`dual_stack_scheduler.go`）。
+创建 socket 成功并不等于 QUIC 握手完成。
 
-`common/netcap` 还把目的地范围分成 local、site、global 或 unknown，并评估观察到的接口
-与出站证据。不能仅因为全局 IPv6 出站不可用，就拒绝 site 和 local 地址；
-证据未知时按失败即放行（fail-open）处理。IPv4-mapped IPv6 在分类前会先解映射。
-这是地址/观察模型，不是实际连通性探测；`global` 类别并不证明
-目的地位于公共互联网上。本次校准中，未加过滤的 `./common/netcap` 单元测试
-在 Windows 上用 Go 1.26.10 通过。
+相关测试包括 `dns/cross_generation_family_test.go`、
+`common/dialer/admission_policy_test.go` 和 `common/dialer/dual_stack_scheduler_test.go`。
+这些是目标版本的 `VERIFIED_SOURCE` 观察；具体网络上的行为需要单独验证。
 
-调度器按代次维护的地址族健康度比硬性能力拒绝更柔和：一次符合条件的路径失败，
-或者对面地址族一次足够长的落败尝试，都可能让两个地址族的首个候选在下一次竞速中一起启动。
-条目在 15 秒后过期，或者这个地址族成功时清除，映射表有界。
-它不会把地址族列入黑名单，也不证明 QUIC 握手已经成功。
-参见 `dual_stack_scheduler.go` 与它的地址族健康度测试。
+本地地址族检查只约束本机实际拨出的 socket，包括连接代理服务器的 socket；它不约束交由远程
+代理解析或连接的目标。能力快照已过期、正处于网络切换中或缺少信息时，不能仅凭该快照硬性
+拒绝候选地址；但显式配置的严格地址族策略仍可独立排除候选。
 
-盒子已经提交仅 IPv4 的入口呈现（entry presentment）时，`dns/entry_ipv6.go` 会在规则、缓存、
-FakeIP 或上游处理之前抑制应用侧的 TUN AAAA 问题，用无数据的 NOERROR 作答。
-它不会把这道门禁施加到拨号器的 `Lookup`，也不会施加到由远程端点转发的 DNS：
-即使本地入口没有 IPv6，远程代理仍可能有 IPv6。
-这与每次尝试的地址族准入是分开的。参见 `dns/entry_ipv6_test.go`
-以及 `libbox-platform-contract.md` 中的 TUN 呈现契约。
+代码优先读取包含地址族、generation 和稳定性的组合快照；回退到多个独立 getter 时，读数
+可能来自不同时间点。批量检查对候选列表只评估一次所有权，见 `network_observation.go` 和
+`family_capability.go`。
+
+`common/netcap` 将目标地址分为 local、site、global 或 unknown，并结合观察到的接口和
+出站信息判断能力。不能只因为全局 IPv6 出站不可用，就拒绝 site 或 local 地址；证据不足时
+采用 fail-open，即不凭未知状态直接拒绝。IPv4-mapped IPv6 地址会在分类前转换为 IPv4。
+
+这是地址分类和能力观察模型，不是实际连通性探测；`global` 也不代表目标一定在公网。
+校准时，未加过滤的 `./common/netcap` 单元测试在 Windows、Go 1.26.10 下通过。
+
+调度器还会按 generation 维护地址族健康状态，这比硬性能力检查更宽松：符合条件的路径失败，
+或另一地址族的连接尝试耗时足够长却最终落败，都可能让两种地址族的首个候选在下一次竞速时
+同时启动。记录在 15 秒后过期，或者在对应地址族成功时清除；记录表有容量限制。
+
+这个机制不会把整个地址族加入黑名单，也不证明 QUIC 握手成功。实现与测试见
+`dual_stack_scheduler.go`。
+
+当 Box 已确定 TUN 入口只呈现 IPv4 时，`dns/entry_ipv6.go` 会在规则、缓存、FakeIP 和
+上游查询之前拦截应用侧 TUN AAAA 查询，并返回无记录的 NOERROR 响应。这个处理不作用于
+拨号器的 `Lookup` 或远程端点转发的 DNS：本地入口没有 IPv6，不代表远程代理也没有。
+入口呈现与每次拨号的地址族准入是两套独立机制，见 `dns/entry_ipv6_test.go` 和
+`libbox-platform-contract.md` 的 TUN 入口说明。
 
 IPv4-mapped IPv6 目的地必须按 IPv4 分类：TUN 会在 DNS、FakeIP 与 route-set 比较之前
 把它规范化（`protocol/tun/inbound.go`），准入检查的则是解映射后的地址族（`common/dialer/admission.go`）。
@@ -55,12 +58,12 @@ IPv4-mapped IPv6 目的地必须按 IPv4 分类：TUN 会在 DNS、FakeIP 与 ro
 
 ### 由端点拥有的私有解析器（Private resolvers owned by endpoints）
 
-Tailscale、OpenVPN 与 OpenConnect 的 DNS 传输可以拥有解析器，这些解析器本身
-不是全局 DNS 管理器中的条目。它们的 `CloseIdleConnections` 在读锁下对解析器引用做快照，
-释放锁，再转发空闲释放动作；`Reset` 单独转发重置。
-参见三个 `protocol/*/dns_transport.go` 实现。如果要求更宽泛的 `IdleConnectionKeeper` 接口，
-或者只遍历全局传输，就可能漏掉这些私有池。
-这是 `VERIFIED_SOURCE`，位于 `011f3fdcd99`；既不是设备证据，也不是外部网络证据。
+Tailscale、OpenVPN 和 OpenConnect 的 DNS 传输可能持有私有解析器，它们不是全局 DNS
+管理器中的条目。`CloseIdleConnections` 会在读锁下取得解析器引用，释放锁后再调用其空闲
+连接清理；`Reset` 则单独转发重置。实现见三个 `protocol/*/dns_transport.go`。
+
+如果只遍历全局传输，或要求解析器实现更宽泛的 `IdleConnectionKeeper` 接口，可能遗漏这些
+私有连接池。上述结论为 `011f3fdcd99` 的 `VERIFIED_SOURCE`，不是设备或外部网络测试。
 
 对 Tailscale 来说，`tailnetDomains`（位于 `protocol/tailscale/dns_transport.go`）在同一份
 快照中规范化主机、搜索域与路由后缀。匹配且无解析器的本地后缀优先于转发后缀；

@@ -2,14 +2,15 @@
 
 ## v0.1.9 之后的网络切换所有权（Network transition ownership after v0.1.9）
 
-**VERIFIED_SOURCE**，测试目标 `011f3fdcd99`：`adapter/network.go` 区分重置 generation、
-切换稳定性，以及一次原子的 `NetworkTransitionSnapshotter` 观测。`route/network.go` 在
-`transitionAccess` 下实现这一对机制：只凭一个新发布的所有权 epoch，不足以证明
-一次切换已经落定，因为 DNS 与传输层重置可能还挂着。按流（per-flow）的工作不能把在这个窗口里
-捕获的结果当成稳定网络结果。重置 generation 在重置开始时推进，不在重置完成时推进；这几个相关计数器
-各有各的角色。改这条边界时，请检查 `NetworkTransitionSnapshot`、`beginTransition` 与
-`ResetNetwork`。相关测试是 `common/dialer/transition_stability_test.go` 与
-`common/dialer/reset_epoch_ownership_test.go`。这不是设备恢复测量。
+**VERIFIED_SOURCE，审阅版本 `011f3fdcd99`。** `adapter/network.go` 区分网络重置的
+generation、切换是否稳定，以及由 `NetworkTransitionSnapshotter` 提供的原子快照。
+`route/network.go` 在 `transitionAccess` 的保护下协调这些状态。
+
+新的所有权 epoch 已发布，不代表网络切换已经完成：DNS 和传输层可能仍在重置。因此，不能把
+切换窗口内捕获的逐流结果直接视为稳定网络的结果。重置 generation 在重置开始时递增，而非
+完成时递增；这些计数器各有不同职责。修改时应检查 `NetworkTransitionSnapshot`、
+`beginTransition`、`ResetNetwork`，以及 `common/dialer/transition_stability_test.go` 和
+`common/dialer/reset_epoch_ownership_test.go`。这些源码与测试不能代替真实设备恢复测试。
 
 `route/conn_halfclose.go` 观测半关闭（half-closed）流，只在对端可证明已消失时释放；它有意不把
 健康的静默当成失败。从不发生半关闭的流不在这个观测器的范围内，所以它不是能检测活跃 TCP 流

@@ -1,10 +1,19 @@
 # MTU、数据包大小与缓冲区几何（MTU, packet size and buffer geometry）
 
-**依赖路径范围：** 下文引用的 `common/buf/buffer_standard.go`、`common/buf/buffer_low_memory.go` 与 `common/low_memory*.go` 都位于 pinned `github.com/sagernet/sing` 替换中，不在本仓库根目录。依赖旧几何或旧行号之前，请先对照该 pin 的 `go.mod` 与源码重新核对。下文的具体 MTU 数值属于历史值；除非针对目标配置重新确认，否则不要沿用。
+**依赖路径范围：** `common/buf/buffer_standard.go`、`common/buf/buffer_low_memory.go` 和
+`common/low_memory*.go` 属于固定版本的 `github.com/sagernet/sing`，不在本仓库根目录。
+引用历史缓冲区参数或行号前，请先根据 `go.mod` 确认依赖版本并核对源码。本文列出的 MTU
+数值也有版本和配置范围，不能直接当作当前配置的测量结果。
 
 ## v0.1.9 之后 TUIC 下层隧道的上限（TUIC lower-tunnel ceiling after v0.1.9）
 
-**VERIFIED_SOURCE**，测试目标 `011f3fdcd99`：只要下层隧道能证明一个上限，`protocol/tuic/outbound.go` 就会从 `dialer.DetourPathCapacity` 推出一个 QUIC payload 上限。它提供或钳制初始数据包大小，对已证明的上限禁用路径 MTU 发现，并拒绝低于 QUIC Initial 最小值的上限。对未知路径，代码不主张任何上限。代码把结果交给 pinned sing-quic 客户端；这是路径容量约束，并不测量物理链路 MTU。推广到其他协议之前，请先看 TUIC 测试与 pinned fork。
+**VERIFIED_SOURCE，审阅版本 `011f3fdcd99`。** 当下层隧道能提供可证明的容量上限时，
+`protocol/tuic/outbound.go` 会通过 `dialer.DetourPathCapacity` 推导 QUIC payload 上限，
+用于设置或限制初始包大小；对于这个已知上限，还会禁用路径 MTU 发现，并拒绝低于 QUIC
+Initial 最小值的结果。路径容量未知时，代码不会声称存在上限。
+
+该结果交给固定版本的 sing-quic 客户端使用；它是路径容量约束，不是对物理链路 MTU 的测量。
+将结论推广到其他协议前，应检查 TUIC 测试和对应的 fork 版本。
 
 对 MASQUE 来说，`protocol/masque/client.go` 已经会从 detour 算出 `outerPayloadCeiling`，并在容量已知时钳制 `HTTP3Options.InitialPacketSize`。所以 2026-10-28 历史审计里“没有计算任何外层上限”的陈述过于宽泛。那个构造函数没有用这个值给 `InitialPacketSizeCeiling` 赋值，也没有据此禁用路径 MTU 发现。因此，初始钳制不能当作“后续 QUIC 数据包存在硬性上界”的证明。这个区分在 `011f3fdcd99` 处是 `VERIFIED_SOURCE`；它不隐含任何真实底层网络或对端测量。
 

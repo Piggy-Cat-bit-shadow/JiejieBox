@@ -1,32 +1,34 @@
 # 值得保留的架构边界（Architecture boundaries worth preserving）
 
-十一条边界。每一条都对应一处“看着合理、实际是错的”改动，而且每一条都连同承载细节的
-模块一起给出。
+本文列出 11 条需要维护的架构边界。每条边界都附有对应模块，说明设计原因、源码和验证范围。
 
 ## 1. 所有权：Scope 拥有其注册的反向清理（Ownership: a Scope owns its registered reverse cleanups）
 
-`Scope.Close` 按相反顺序排空它注册的清理函数，包括 `Scope.Start` 装上的子作用域
-清理；资源关闭函数必须注册到合适的所有者。拆除也可以由别的所有者执行，所以单看有没有
-直接的 `scope.Add`，证明不了资源泄漏。close 返回之后注册的清理会
-**在注册它的 goroutine 上同步运行**，而 `Close` **不会**等正在进行的 `Start`。清理函数
-panic 会中断排空；`Box.Close` 把这个 panic 记为错误，而不是把那轮排空做完。
+`Scope.Close` 按注册的相反顺序执行清理函数，也会清理 `Scope.Start` 注册的子 scope。
+资源的关闭函数必须由合适的所有者负责，但资源也可能由其他所有者关闭，因此不能只凭缺少
+一次直接的 `scope.Add` 就断定发生泄漏。
+
+关闭后才注册的清理函数会**在注册它的 goroutine 中同步执行**；`Close` 不等待正在进行的
+`Start`。如果清理函数 panic，本轮清理会中断；`Box.Close` 会捕获并记录错误，不会继续完成
+被中断的清理。
 → `modules/core-lifecycle-runtime.md`
 
 ## 2. 单一网络代次，重建是租约而不是标志位（One network generation, and a rebuild is a lease, not a flag）
 
-`common/runtimecoord` 发布单调的纪元（epoch）。“同一时刻只做一次逻辑恢复”靠的是
-**租约身份**（`*RebindLease`），不是布尔值，所以被取代的租约释放不了更新的租约。
-`Stale()` 与 `Acknowledge()` 区分开“纪元移动了”和“资源是当前的”。**发布不是重建**：
-过期的资源等到被需要时才惰性退役。
+`common/runtimecoord` 使用单调递增的 epoch 标识网络变化。它用 `*RebindLease` 的身份保证
+同一资源同时只有一个有效的恢复操作：旧租约被替换后，不能释放新租约。
+`Stale()` 和 `Acknowledge()` 分别用于判断资源是否过期、确认资源已跟上当前 epoch。
+发布新的 epoch 并不等于立即重建所有资源；过期资源会在需要时按相应策略退役。
 → `modules/core-lifecycle-runtime.md`
 
 ## 3. 选择在被提交之前只是预览（Selection is a preview until it is committed）
 
-路由规则选出一个出站**根**，之后由组来选择。组的选择属于控制面，**不是物理跳**。
-有些组会包装返回的连接，用来做中断与生命周期管理（`protocol/group/selector.go`、
-`urltest.go`），所以别推断“选择”意味着组从不包装连接。运行时这个区分落在
-`commit` 标志上：预览绝不能消耗轮换槽位。任何把组报成一跳、或把跳列表报成反序的诊断，
-描述的都是一条流量实际上不会走的路径。
+路由规则先选出出站入口；如果入口是代理组，再由组选择成员。组的选择属于控制面，
+**组本身不是物理网络跳点**。不过有些组会包装返回的连接，以管理中断和生命周期
+（`protocol/group/selector.go`、`urltest.go`），不能因此认为组从不包装连接。
+
+运行时通过 `commit` 标志区分预览与正式选择：预览不能推进轮询游标。诊断结果也必须保持
+物理跳点的实际顺序，不能把代理组当作一跳或反转跳点列表。
 → `modules/path-selection-validation.md`
 
 ## 4. 启动期校验只报告，不实际走路径（Start-time validation reports without exercising the path）
@@ -45,18 +47,19 @@ detour 可以发警告，受影响的流在运行时照样失败；缺失的引�
 
 ## 5. 平台事实是输入，由核心决定策略（Platform facts are inputs; the core decides policy）
 
-客户端报告操作系统给它的数字（内存级别、屏幕开/关、锁定状态、设备唤醒）。
-**核心**掌握裁剪阶梯（trim ladder）、合并窗口、睡眠/唤醒边沿事件以及复用策略。
-级别、边沿和快照是三件不同的事：重新读取当前状态会**校准级别**，
-绝不能凭空造出一个边沿事件。
+客户端向核心报告操作系统提供的状态和事件，例如内存压力、屏幕状态、锁定状态与设备唤醒。
+核心据此决定内存回收、事件合并和连接复用策略。
+
+当前状态（level）、状态变化事件（edge）和快照是不同概念：重新读取状态可以校准当前值，
+但不能因此凭空产生一次睡眠或唤醒事件。
 → `modules/power-mobile-lifecycle.md`
 
 ## 6. 嗅探元数据只用于规划，不改写目标地址（Sniff metadata informs planning; it does not rewrite the destination）
 
-嗅探出的域名会成为 DNS 规划与拨号候选；嗅探本身不改写 `Destination`，除非用了显式
-且已弃用的 `override_destination` 动作。另外，
-`route/route.go` 里的 FakeIP 反向映射会保存 `OriginDestination`，再用映射后的 FQDN
-替换 `Destination`。别把这种翻译与嗅探驱动的覆盖混为一谈。
+嗅探出的域名可用于 DNS 规划和选择拨号候选；嗅探本身不会改写 `Destination`，显式使用
+已弃用的 `override_destination` 动作除外。FakeIP 反向映射是另一条路径：
+`route/route.go` 会保存 `OriginDestination`，并将 `Destination` 替换为映射出的 FQDN。
+不要把 FakeIP 映射和嗅探改写目的地址混为一谈。
 → `modules/sniff.md`
 
 ## 7. 缓冲区所有权是正确性契约，不是优化面（Buffer ownership is a correctness contract, not an optimisation surface）
@@ -84,9 +87,11 @@ detour 可以发警告，受影响的流在运行时照样失败；缺失的引�
 
 ## 10. Direct Offload 是语义等价，其数据面效果仅在 Linux 上（Direct Offload is semantic equivalence, and its data-plane effect is Linux-only）
 
-只有用户态路径确实会把某个拨号选项**应用到该流上**，这个选项才让该流不合格。
-新增的 `DialerOptions` 字段不能把绕过默认做成 *安全*：没有分类的选项一律拒绝。
-而且这个判定**仅**在 Linux `auto_redirect` 中才是真正的绕过 —— 没有任何 TUN 协议栈会遵守它。
+只有拨号选项确实影响当前流时，它才应影响该流的绕行资格。新增 `DialerOptions` 字段时，
+未分类的选项默认拒绝绕行，不能假定其安全。
+
+获得绕行资格不等于实际绕行：当前只有 Linux `auto_redirect` 路径会执行这里的隐式绕行；
+普通 TUN 协议栈不会执行该判定。
 → `modules/data-path-optimization.md`
 
 ## 11. 发布溯源是下载并重新校验，且范围有限（Release provenance is download-and-re-verify, and it is scoped）

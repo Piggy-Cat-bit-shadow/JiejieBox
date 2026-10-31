@@ -1,8 +1,7 @@
 # 分支知识库（Fork knowledge base）
 
-**知识库 + Git 增量 = 当前 AI 上下文。** 这是一份分支增量（fork-delta）指南，不是 sing-box
-百科。上游文档自己就回答了“sing-box 是什么”；本文回答的是 *这个分支改了什么、为什么改，
-以及怎么在不重读 1,834 个提交的前提下继续*。
+**知识库 + Git 增量 = 当前 AI 上下文。** 本知识库重点记录本项目相对于上游 sing-box 的改动、
+设计原因和维护时容易踩的坑。它不代替上游文档，也不要求每次接手任务都重新梳理历史提交。
 
 ## 基线——使用其他任何内容之前先读这里（Baseline — read this before using anything else）
 
@@ -17,8 +16,8 @@
 | 知识审阅时间 | 2026-10-31 |
 | 知识修订 | 动态解析：`git log -1 --format=%H -- KNOWLEDGE/BASELINE.md` |
 
-这份知识库描述的是已校准的源码基线，不一定与当前 `HEAD` 一致。完整的测量、发布谱系、来源检验和
-标签陷阱都在 `BASELINE.md` 里。
+知识库描述的是上表中的源码基线，不一定与当前 `HEAD` 一致。使用前请先检查基线之后的 Git 增量。
+发布历史、上游来源的核对方法和标签注意事项见 `BASELINE.md`。
 
 **历史 2026-10-28 校准：** 最初的目标是 `011f3fdcd99173acd3e80483b50cb76b07bf6ff4`，
 比 v0.1.9 多 791 个提交；最终的生产目标比它晚四个提交。`v0.1.30` 已经发布过，也是最初目标的
@@ -27,16 +26,16 @@
 落在更晚的 `cb71cf80d72` 目标上。见 `BASELINE.md`、[校准台账](CALIBRATION-2026-10-28.md)
 以及当前源码。
 
-拿历史 v0.1.31 目标和检出的远端 `upstream/testing` 顶端
-`e5d91fa79f6319d5de940d6c81d81f0fe53b9476` 求合并基，得到 `a6952ccf6907c18e18917fcb763a433e8e36937b`。
-这只是某个时间点上的 Git 祖先关系观察，不能证明作者身份；引用一移动，就得重新测量。
+在当时的 v0.1.31 校准中，目标提交与远端 `upstream/testing` 的观察值
+`e5d91fa79f6319d5de940d6c81d81f0fe53b9476` 的 merge-base 是 `a6952ccf6907c18e18917fcb763a433e8e36937b`。
+这只反映当时的 Git 祖先关系，不能据此判断作者；分支更新后应重新计算。
 
-**上一个基线（`a267e99e0`、`v0.1.6`）曾经悄无声息地过期了两个 release** —— 它的增量行
-写着“没有任何 `.go` 源码发生变化”，实际上已经有 181 个提交、12 个生产文件落地。这次失败
-记在 `BASELINE.md` 里，没有悄悄掩盖：教训在模型本身，不在某一行。
+此前的 `a267e99e0`（`v0.1.6`）基线曾连续两个版本没有更新。当时文档仍写着没有 `.go` 源码变更，
+实际却已新增 181 个提交并修改了 12 个生产文件。`BASELINE.md` 保留了这次失效记录：
+静态的增量描述会过期，使用时必须重新计算。
 
-子仓库和它们各自独立的分支顶端也在范围内；见 `modules/child-repositories.md` 和
-`REFRESH.md` §25A。
+客户端和依赖子仓库及其独立分支也在维护范围内。如何区分父仓库固定版本与子仓库分支头，
+见 `modules/child-repositories.md` 和 `REFRESH.md` §25A。
 
 当前的增量和局限记录在 [2026-10-31 校准](CALIBRATION-2026-10-31.md)
 和 [全面的第二轮审阅](CALIBRATION-2026-10-31-REVIEW.md) 里。
@@ -60,11 +59,8 @@
 > 当前结论见 `BASELINE.md`、`INDEX.md` 和 `modules/`；报告与源码不一致时，以源码为准。
 > 新增报告不等于刷新知识库，也不会改变生产基线。
 
-**`INDEX.md` 与 `modules/README.md` 不可互换。** `modules/README.md` 是粗粒度的
-登记表（哪个模块拥有什么）。`INDEX.md` 则是细粒度的路由器：精确的章节锚点、别名，以及
-按源码路径和符号组织的反向索引。
-
-**用不到的模块不要读。** 每个模块都自包含：源码锚点、来源、证据级别都在里面。
+`modules/README.md` 是模块总览，说明每个模块负责什么；`INDEX.md` 是详细索引，
+可以按任务、源码路径或符号找到具体章节。根据当前任务选择需要的模块即可。
 
 ## 事实来源优先级（Source-of-truth order）
 
@@ -91,21 +87,16 @@ current source and tests
 `VERIFIED_INTEGRATION`、`VERIFIED_INTEROP`、`VERIFIED_CI`、`VERIFIED_ARTIFACT`、`VERIFIED_DEVICE`、
 `INFERRED`、`UNVERIFIED`、`UNKNOWN`、`BLOCKED_BY_ENVIRONMENT`。
 
-有两条规则，一旦忽视，就得在这个仓库里付出代价：
+使用证据时要注意两点：
 
-* **CI 任务被声明过，不等于它跑过。** 一条 `VERIFIED_CI` 主张需要一次具体、可被独立
-  检查的运行及其 SHA；Windows 守护进程模块记录了这样一次发布运行。
-* **`SKIP` 不等于 `PASS`。** 本分支自己的跳过项就写明了这一点（“NOT a pass”），还有个门禁
-  按设计以退出码 0 打印 `PARTIAL`。
+* 工作流中声明了 CI 任务，不代表任务实际运行或通过。标记 `VERIFIED_CI` 时，应给出可核查的运行记录和 SHA。
+* `SKIP` 不等于 `PASS`。部分检查即使退出码为 0，也可能输出 `PARTIAL`；应查看具体检查结果。
 
 ## 刷新策略（Refresh policy）
 
-刷新（refresh）是一次显式的维护操作：重新审计源码、Git、测试和 CI，更新模块来源，然后移动
-基线。**开发提交不需要修改文档。** 产品代码怎么动，本目录里都没有东西需要改——唯一告诉
-读者该看什么的是 `BASELINE.md` 的“post-baseline delta”行。
-
-刷新被 *显式* 请求时，流程走 `REFRESH.md`。那份文件是协议，本节只是策略；正常开发根本不会
-动 `KNOWLEDGE/`。
+知识刷新是明确发起的维护工作：检查源码、Git、测试和 CI，更新受影响的知识，并在满足条件时
+推进基线。普通开发提交不要求同步修改知识库；使用者应根据 `BASELINE.md` 计算基线后的增量。
+需要刷新时，按 `REFRESH.md` 执行。
 
 **语言约定：** 正文使用简体中文；`file:line`、符号、测试名、命令、JSON 字段、SHA 和
 `VERIFIED_*` 等证据标签保持英文。标题写成“中文（English original）”，既方便中文阅读，也保留
@@ -115,8 +106,7 @@ current source and tests
 
 ## 模块（Modules）
 
-先用 `INDEX.md` 路由——它带精确的章节锚点和按源码路径组织的反向索引。
-下面这张表是粗粒度的所有权地图。
+先在 `INDEX.md` 中按任务或源码路径查找具体章节。下表列出各模块的大致范围。
 
 | 模块 | 覆盖范围 |
 |---|---|
@@ -150,8 +140,6 @@ Apple、Android、桌面客户端及其他关联仓库的关键改动属于维�
 `modules/child-repositories.md`；它们各自的完整源码仍以对应仓库为准。子模块可能尚未初始化，
 检查时应区分本地检出、父仓库固定的 gitlink 和子仓库分支头。
 
-**Windows 守护进程（`experimental/boxdd/**`）已经不在这个列表里。** 它曾是最后一个无主的
-变更子系统，现在归 `modules/windows-daemon-security.md` 所有——同时还要记下一条同样属于
-此处的限制：**它的信任边界没有文档化的端到端测试。** 一个 Windows 测试工作流
-在 `.github/workflows/windows-boxdd-tests.yml` 中声明；只有声明并不证明运行过。拥有知识
-不等于证明了行为，该模块的 §15 讲了两者的区别。
+Windows 守护进程 `experimental/boxdd/**` 由 `modules/windows-daemon-security.md` 覆盖。
+该模块记录的限制仍然适用：其信任边界没有文档化的端到端测试。仓库声明了
+`.github/workflows/windows-boxdd-tests.yml`，但工作流存在不代表它已经运行；详见模块 §15。
