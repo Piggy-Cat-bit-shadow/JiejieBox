@@ -638,8 +638,10 @@ At `011f3fdcd99`, `packetUplink.sendPacket` reports a read or close error from
 flow and must not clear the connection's failure streak. The POST has its own bounded context.
 See `transport/v2rayxhttp/conn.go`; this source contract does not establish a live-peer result.
 
-Post size is unaffected by latency: gathering still fills every POST to `sc_max_each_post_bytes` at
-every round trip measured (1,000,000 bytes from 0 to 200 ms).
+Post size is unaffected by latency once the session is open: `shouldGatherUpload` deliberately skips
+gathering for the first two writes (`conn.go:1115-1135`), which carry the opening exchange; from the
+third POST, gathering fills every POST to `sc_max_each_post_bytes` at every round trip measured
+(1,000,000 bytes from 0 to 200 ms). Do not describe the opening pair as gathered.
 
 The reference implements the obvious objection to that design — it starts the next POST on
 `httptrace.WroteRequest` and drains the response in a goroutine, i.e. it pipelines response
@@ -820,6 +822,14 @@ A connection already carrying live traffic is drained rather than immediately de
 
 Existing live-use teardown is deferred according to pool ownership rules rather than blindly killing a
 shared transport at an unsafe moment.
+
+### Failure breaker
+
+A reuse-boundary redial is still subject to the XMUX failure breaker: three failures arm it
+(`xmuxBreakerThreshold = 3`) and the backoff grows from 100 ms to 3 s (`xmux.go:56-69`, `:140-156`).
+`noteBreakerTrip` (`:312`) records the trip; a successful reuse resets the backoff (`:327`). This is
+separate from the pool's trim/retire/close lifecycle above — a redial after `RetireSuspect` does not
+reset the breaker by itself.
 
 ### No timer-driven prewarm
 

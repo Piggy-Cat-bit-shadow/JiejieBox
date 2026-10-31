@@ -34,7 +34,12 @@ that does not mean the Naive server is implemented with Caddy. The HTTP engines 
 (`protocol/naive/inbound.go:32-33`) and the fork's `github.com/sagernet/quic-go` (replaced at
 `go.mod` replacements). The client integration is in `protocol/naive/outbound.go`, while its
 Cronet engine lives in the separate `cronet-go` dependency. A server-side codec test passing proves
-nothing by itself about the client.
+nothing by itself about the client. Fork-specific engine controls are part of the client contract:
+`insecure_concurrency` / `insecure_concurrency_single_engine` (`option/naive.go:100-118,134`;
+`protocol/naive/outbound.go:239,256`) choose a shared versus per-network Cronet engine and bound
+parallel insecure handshakes, and `quic_congestion_control` / `quic_session_receive_window`
+(`option/naive.go:152-153`) are passed to the QUIC engine. These are client-engine knobs, not server
+semantics.
 
 **Load this module when changing:** the Naive inbound/outbound, HTTP/2 or HTTP/3 flow-control bounds,
 `transport/http`, `http_clients`, the UoT data path, or the packet-destination guard.
@@ -45,8 +50,8 @@ nothing by itself about the client.
 
 | Side | Where | Notes |
 |---|---|---|
-| **Server inbound** | `protocol/naive/` in this repository | registered in the **minimal server registry** as a production protocol (`include/registry.go:70 naive.RegisterInbound`) — the inbound is **always** registered |
-| **Client outbound** | the fork's `cronet-go` | selected by `//go:build with_naive_outbound` (`include/naive_outbound.go:1`) vs a stub (`include/naive_outbound_stub.go`) wired at `include/registry.go:101` |
+| **Server inbound** | `protocol/naive/` in this repository | registered in the **minimal server registry** as a production protocol (`include/registry.go:71 naive.RegisterInbound`) — the inbound is **always** registered |
+| **Client outbound** | the fork's `cronet-go` | selected by `//go:build with_naive_outbound` (`include/naive_outbound.go:1`) vs a stub (`include/naive_outbound_stub.go`) wired at `include/registry.go:103` |
 
 > **`DEFAULT_BUILD_TAGS_OTHERS` deliberately omits `with_naive_outbound`.** The Linux server therefore
 > profile includes a Naive **inbound and no Naive outbound**. At the current Cronet fork pin,
@@ -209,7 +214,7 @@ That polarity is the whole point: it lets `decideHTTP3Availability(constructorPr
 ### Reserved headers and ALPN
 
 `:scheme` and `:path` are refused on HTTP/2 and HTTP/3 CONNECT (`inbound.go:507-521`). Reserved extra
-headers are refused at `protocol/naive/outbound.go:367`. ALPN is built from `http2.NextProtoTLS` plus
+headers are refused at `protocol/naive/outbound.go:418`. ALPN is built from `http2.NextProtoTLS` plus
 an optional `"h3"` (`inbound.go:256-294`, `http3ALPN = "h3"` at `:245`).
 
 ---

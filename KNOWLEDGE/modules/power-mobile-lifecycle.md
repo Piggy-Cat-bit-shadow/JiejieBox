@@ -37,7 +37,7 @@ This is real, and it is enforced by where the classification lives rather than b
 | What a platform *reports* | the platform, through `experimental/libbox/platform_events.go` — a **thin forwarder**: `MemoryTrim(level int32)` `:234`, `SetAppForeground(bool)` `:243`, `SetScreenOn(bool)` `:261`, `ReportDeviceWake()` `:269`, `Close()` `:277` | `:92` builds `boxPlatformTarget`; `:194 NewPlatformEvents` routes into `runtimecoord.PlatformEvents` |
 | What a level *means* | **the core** — `TrimLevel` constants and `TrimLevel.Action()` | `common/runtimecoord/platform_events.go:152-220` |
 | Coalescing windows | **the core** — `trimCoalesceWindow = time.Second` (`:223`), `releaseCoalesceWindow = adapter.RecoveryWindow` (`:231`) | as cited |
-| The device state machine | **the core** — `common/power.Governor` | `governor.go:53 State`, `:93 Allow`, `:109 ReuseAction`, `:141 ReuseBoundary`, `:168 Policy`, `:201 ReuseFreshness.Classify`, `:239 WakeStagger`, `:263 DefaultPolicy`, `:471 DevicePaused`, `:490 DeviceWake`, `:525 SleepStarted`, `:563 Resumed`, `:659 NetworkPaused`, `:671 NetworkWake`, `:707 ObserveTraffic`, `:861 ReuseEpoch`, `:883 AddReuseObserver`, `:894 WaitActive`, `:931 WaitProviderRefresh` |
+| The device state machine | **the core** — `common/power.Governor` | `governor.go:53 State`, `:93 Allow`, `:109 ReuseAction`, `:141 ReuseBoundary`, `:168 Policy`, `:222 ReuseFreshness.Classify`, `:239 WakeStagger`, `:264 DefaultPolicy`, `:472 DevicePaused`, `:491 DeviceWake`, `:526 SleepStarted`, `:564 Resumed`, `:660 NetworkPaused`, `:672 NetworkWake`, `:708 ObserveTraffic`, `:917 ReuseEpoch`, `:939 AddReuseObserver`, `:950 WaitActive`, `:987 WaitProviderRefresh` |
 
 **The classification of a raw platform number lives in the core, not the client.** If a client sent
 "you should trim", policy would have moved into three client codebases; instead a client sends the
@@ -49,7 +49,7 @@ number the OS gave it and the core decides.
 
 | Vocabulary | Level API | Edge API | Snapshot / reconcile API |
 |---|---|---|---|
-| `common/power.Governor` (the state machine) | `DevicePaused` `:471`, `NetworkPaused` `:659` | `DeviceWake` `:490`, `SleepStarted` `:525`, `Resumed` `:563`, `NetworkWake` `:671` | `State` `:53`, `Policy` `:168`, `ReuseBoundary` `:141` |
+| `common/power.Governor` (the state machine) | `DevicePaused` `:472`, `NetworkPaused` `:660` | `DeviceWake` `:491`, `SleepStarted` `:526`, `Resumed` `:564`, `NetworkWake` `:672` | `State` `:53`, `Policy` `:168`, `ReuseBoundary` `:141` |
 | `pause.Manager` (sing's level+edges) | its level getters | its edge callbacks | — |
 | `box_lifecycle.go` (the Apple mapping) | `screenState(on)` `:173-179`, `lockState(locked)` `:193-199` | `slept()` `:94-101` (edge-then-level), `resumed()` `:141` (**publishes nothing**), `woke()` `:156-163` (boundary-then-level) | `reconcileScreenState` / `reconcileLockState` `:228-252` — **level-only** |
 | `common/runtimecoord/platform_events.go` (Android/foreground) | the trim ladder below | the screen/foreground edges | the event snapshot |
@@ -184,7 +184,7 @@ and `buffer-ownership.md` B22.
 ## 5. Post-wake reuse bands
 
 The policy is `common/power/governor.go`'s, and the verdict is one of exactly three values —
-`ReuseKeep`, `ReuseSuspect`, `ReuseRetire` (`governor.go:111-124`) — derived from
+`ReuseKeep`, `ReuseSuspect`, `ReuseRetire` (`governor.go:112-125`) — derived from
 `DefaultPolicy`'s `SuspectAfter: 5 * time.Second` and `RetireAfter: 15 * time.Second`
 (`governor.go:289-290`):
 

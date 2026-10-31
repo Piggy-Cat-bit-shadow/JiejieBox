@@ -12,17 +12,18 @@ classification of every commit's authorship or effect:
 
 | | Count | Share |
 |---|---|---|
-| `fix` commits | 433 | 24% |
-| `test` commits | 316 | 17% |
-| `docs` commits | 282 | 16% |
-| `ci` + `build` + `chore` + `style` + `bench` | 209 | 12% |
-| **process/evidence total** | **807** | **44.7%** |
-| `feat` commits | 76 | **4.2%** |
-| `perf` commits | 37 | 2% |
-| untagged subjects | 365 | 20% |
+| `fix` commits | 538 | 29.3% |
+| `test` commits | 316 | 17.2% |
+| `docs` commits | 282 | 15.4% |
+| `ci` + `build` + `chore` + `style` + `bench` | 204 | 11.1% |
+| **process/evidence subtotal** (`test` + `docs` + `ci`-group) | **802** | **43.7%** |
+| `feat` commits | 76 | 4.1% |
+| `perf` commits | 37 | 2.0% |
+| other / untagged subjects | 381 | 20.8% |
 
-Four and a half percent features against forty-five percent evidence is the shape of the project: the
-work went into making existing behaviour provable, bounded and reversible.
+The rows partition the 1,834 subjects; the process/evidence row is a subtotal of three rows, not a
+fourth disjoint row. Four percent features against forty-four percent evidence and verification is the
+shape of the project: the work went into making existing behaviour provable, bounded and reversible.
 
 ## What it adds — the load-bearing deltas
 
@@ -35,7 +36,7 @@ work went into making existing behaviour provable, bounded and reversible.
 | **Direct Offload** | a provably-equivalent direct flow may leave userspace — with the honest limit that the verdict is a data-path bypass **only** in Linux `auto_redirect` | `data-path-optimization.md` |
 | **MASQUE / CONNECT-IP** | substantial dataplane work, DNS assignment, bootstrap/inner resolver split and PREF64 on an upstream base; see the initial-size versus hard-ceiling distinction | `masque-connectip.md`, `mtu-and-geometry.md` |
 | **Native Naive** | a NaiveProxy server inbound with UoT, padding, masquerade, pre-authentication limits and a target ACL; the tag-gated client outbound is integrated here and uses forked `cronet-go` | `naive-http-transport.md` |
-| **HTTP transport** | `transport/http` is the fork's largest single addition: 90 files, 137 commits | `naive-http-transport.md` |
+| **HTTP transport** | `transport/http` is the fork's largest single addition: 97 `.go` files and 149 commits at `0067b03` (90 files / 137 commits at `a267e99`) | `naive-http-transport.md` |
 | **Load-balance group + bounded failover** | fork-only `type: loadbalance`; failover is opt-in, with **one retry budget for the whole flow across nesting** | `data-path-optimization.md`, `path-selection-validation.md` |
 | **Buffer geometry** | `common/bufgeom`: poolability and allocation-ceiling rules with a `//go:build race` split | `mtu-and-geometry.md`, `buffer-ownership.md` |
 | **Product plumbing** | Apple single-source pin + brand-vs-identity split; Android AAR/ABI; Windows core artifact; a fail-closed release-acceptance gate that re-verifies bytes rather than rebuilding | `libbox-platform-contract.md`, `build-pruning-release.md`, `ci-release.md` |
@@ -82,9 +83,10 @@ the actual blobs and patch history, with confidence scoped to the evidence.
 
 ## Current release identity
 
-The latest examined testing production state is `cb71cf80d7224a51823b455f0be5959ad8556933`,
-whose version file says `0.1.31` and whose tag resolves to that commit. The non-draft, non-prerelease
-[v0.1.31 GitHub Release](https://github.com/Piggy-Cat-bit-shadow/sing-box/releases/tag/v0.1.31)
-was published at 2026-10-28 00:38:59 UTC; v0.1.30 is an ancestor. Recheck the branch, tag and Release
-independently before making a current release claim. The knowledge baseline is this source revision;
-the calibration ledger records the checks and evidence limitations.
+The knowledge baseline is `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28`, whose
+`release/JIEJIE_VERSION` says `0.1.34` and whose annotated tag `v0.1.34` peels to it (tag object
+`e2dad0bf040`; the tag was fetched from `origin` and verified for this review). The non-draft,
+non-prerelease [v0.1.34 GitHub Release](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.34)
+was published at 2026-10-29 05:34:42 UTC; v0.1.33 (`a0bbf666d`) is an ancestor. Recheck the branch,
+tag and Release independently before making a current release claim; `release/JIEJIE_VERSION` alone is
+not a release claim. The calibration ledger records the checks and evidence limitations.

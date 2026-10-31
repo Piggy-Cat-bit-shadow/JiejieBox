@@ -1,5 +1,9 @@
 # Knowledge calibration — 2026-10-31
 
+> A second, comprehensive inventory pass on the same date is recorded in
+> [`CALIBRATION-2026-10-31-REVIEW.md`](CALIBRATION-2026-10-31-REVIEW.md). It does not move the
+> baseline; it corrects stale anchors/counts and records one open NXDOMAIN/`rewrite_ttl` question.
+
 ## Scope
 
 Previous production baseline `dbcfc1d359d6ed818dfaaefb6d4e637b6e785f07` to target

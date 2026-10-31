@@ -51,6 +51,11 @@ manually dispatch Actions merely to validate a knowledge update.
 > declares a Windows runner and path-filtered push/PR plus manual dispatch for boxdd tests.
 > This is `VERIFIED_SOURCE`, not evidence that any particular run executed or passed. Re-read
 > the current workflows and run records before relying on other gate-coverage claims below.
+>
+> The tree now has **19** workflow files. Five are not in the census and have no owning section:
+> `apple-tls-verify.yml`, `linux-dns-verify.yml`, `linux-masque-verify.yml`,
+> `linux-netns-verify.yml`, `linux-platform-verify.yml`. They are declared sources, not proof of
+> runs; inspect them directly before making a CI-coverage claim.
 
 **Later run evidence:** GitHub Actions [Verify 40602193497](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40602193497)
 and [Android Core ARM64 40602193557](https://github.com/Piggy-Cat-bit-shadow/sing-box/actions/runs/40602193557)
@@ -168,12 +173,12 @@ are now genuinely wired**, so that list would send a reader to re-wire something
 | `verify-release-acceptance.sh` | "mentioned in a comment, never invoked" | the separate self-test is invoked by `release-contract-verify.yml`; `verify.yml` currently mentions the checker in a comment, not as a direct invocation |
 | `verify-fork-handoff.sh` | "same — comment only" | **invoked** — `verify.yml` |
 | `check-macos-app-name.sh` | "comment only" | **invoked** — `client-apple.yml` |
-| `check-macos-client-config.sh` | "comment only" | **invoked** — `client-macos.yml` |
+| `check-macos-client-config.sh` | "comment only" | **still comment only** — `client-macos.yml:46` is a comment, and no workflow or script invokes it |
 
 ### The distinction the old list collapsed, and which still matters
 
 `verify-release-acceptance.sh` is the sharpest example, because it is now *invoked* while still being
-*not a gate on the release path*. `release-contract-verify.yml:210-222` states this explicitly: the step
+*not a gate on the release path*. `release-contract-verify.yml:311` states this explicitly: the step
 that moved there is the **self-test** (*"it proves that the strict acceptance checker still refuses bad
 evidence across 18 API snapshots"*), and the comment goes on to say the engine
 
@@ -240,8 +245,8 @@ list predates. Verify each candidate individually, against every workflow, inclu
 > *"…A log whose header names a different `HEAD` than the branch tip is stale and must be regenerated
 > rather than trusted."*
 
-**Every one of the 14 logs names `### HEAD: cfc77dc51ab7322e993b8ae0b94b96db59e48f47`.** That is 101
-commits behind `a267e99` and 102 behind the knowledge revision, and it is a **strict ancestor** — old,
+**Every one of the 13 logs names `### HEAD: cfc77dc51ab7322e993b8ae0b94b96db59e48f47`.** That is 101
+commits behind `a267e99` and 1,214 behind the current baseline, and it is a **strict ancestor** — old,
 not divergent.
 
 Worse than old: `git diff --name-status cfc77dc5 HEAD -- scripts/ci .github/workflows release clients`
@@ -296,7 +301,7 @@ records a *known, unfixed* goroutine leak in `dns/transport/local.(*DBusResolved
 and justifies keeping the `test/` module's box-level tests out of push CI on the strength of it.
 **The leak is fixed** — by `6b495134c`, which added `signalLoopStop`/`signalLoopDone`/`signalLoopOnce`, a
 stop-channel `select`, `RemoveSignal`, and a **join** in `Close()`
-(`local_resolved_linux.go:80-82`, `:206-207`, `:239-241`, `:374`, `:385`). See `dns-demand.md` §6.
+(`local_resolved_linux.go:60-62`, `:188-189`, `:221-223`, `:356`, `:367`). See `dns-demand.md` §6.
 
 > **Two consequences:** do not re-report the leak, and **do not apply the fix that document proposes** —
 > closing the dbus signal channel would panic, because dbus is the sender. The CI exclusion it justified
@@ -402,10 +407,10 @@ state and does not survive a change of host.
 **`scripts/ci/release-artifacts.sh` owns the canonical public asset list, and it derives it in exactly
 one function.** This is the rule that the `v0.1.8` release defect bought:
 
-> **ONE FACT = ONE OWNER.** `public_asset_names()` (`release-artifacts.sh:1671`) iterates
+> **ONE FACT = ONE OWNER.** `public_asset_names()` (`release-artifacts.sh:1706`) iterates
 > `TARGET_WORKFLOWS` and emits each target's `tarball` name plus the two non-tarball artifacts. Four
-> subcommands consume it and none of them re-derives it: `expected-assets` (`:1706`), `check-upload`
-> (`:1744`), `publish-args` (`:1821`) and `verify-public-release` (`:1778`).
+> subcommands consume it and none of them re-derives it: `expected-assets` (`:1723`), `check-upload`
+> (`:1830`), `publish-args` (`:1754`) and `verify-public-release` (`:1798`).
 
 **What went wrong, because it is the failure mode to avoid repeating.** `v0.1.8` shipped with **six**
 assets where the contract required **seven** (`Libbox.xcframework.tar.gz` was missing). The cause was
@@ -481,7 +486,7 @@ BUILD-INFO-LIBBOX.txt`) alongside the per-target rows (`:1381`), and the `die` m
 other stale statements in the same file were corrected at the same time: the header comment that said
 Windows/Android were *"deliberately NOT here"* now records that it used to say that (`:79`), and the
 loop that printed *"both platforms"* now explains why that was wrong (`:1403`). The gate's own
-self-test was extended to a **six-entry** canonical `SHA256SUMS` (`test-release-artifacts.sh:1884`),
+self-test was extended to a **six-entry** canonical `SHA256SUMS` (`test-release-artifacts.sh:1909-1930`),
 where the old fixture asserted two rows and could not have caught the defect.
 
 **This is recorded as a fixed defect rather than deleted, because the shape recurs:** an allowlist and a
@@ -521,7 +526,7 @@ model plainly:
 
 > *"The AUTHORITY is the Apple client repository, not this repository's gitlink, so this gate compares
 > the checkout against the RESOLVED source rather than against the gitlink. Requiring the gitlink made
-> every client release a two-repository operation."* — `client-apple.yml:234-237`
+> every client release a two-repository operation."* — `client-apple.yml:268`
 
 **The two authorities now:**
 
@@ -529,14 +534,14 @@ model plainly:
 |---|---|---|
 | **Build selection** | the **client repository tip**, resolved to an exact SHA at the start of a build | what a published Apple artifact is actually built from |
 | **Gitlink** (`clients/apple`) | the local default checkout; **not** the build authority | equality with the resolved source is a **note**, not a failure |
-| `APPLE_CLIENT_REQUIRE_GITLINK=1` | opt-in | restores the **hard** gitlink equality (`client-apple.yml:285`, `:442`) |
+| `APPLE_CLIENT_REQUIRE_GITLINK=1` | opt-in | restores the **hard** gitlink equality (`client-apple.yml:319`, `:455`) |
 
-**The measured pin.** `VERIFIED_APPLE_SHA="3aedd7417488e33a69fe2d46dc34539780d76157"` at
+**The measured pin.** `VERIFIED_APPLE_SHA="044e6d5447eb1285c950bd12cee10effab641f5a"` at
 `scripts/ci/check-libbox-abi.sh`, and `git ls-tree HEAD clients/apple` is **the same commit**. It was
-`6e559a4` until 2026-10-27: the gitlink advanced for the v0.1.28 path-monitor canary and the constant
-did not, which the new `--pin-only` push gate now fails. But because the gitlink no longer *selects*
-the build, **that agreement is weaker evidence than this module previously claimed** — it is the two
-having been moved together by hand, not a proof the build used it.
+`6e559a4` until 2026-10-27, then `3aedd741` for the v0.1.28 path-monitor canary, and `044e6d5` with the
+v0.1.34 Apple integration; the constant and the gitlink moved together. But because the gitlink no
+longer *selects* the build, **that agreement is weaker evidence than this module previously claimed**
+— it is the two having been moved together by hand, not a proof the build used it.
 
 ### `check-apple-source-selection.sh` was rewritten and IS wired
 
@@ -544,7 +549,7 @@ The previous revision said this script *"could not have caught [pin drift] **by 
 its checks is self-referential to the gitlink"*, and that **nothing runs it**. Both halves are now
 wrong:
 
-* **It is wired** — `client-apple.yml:231` runs it (`./scripts/ci/check-apple-source-selection.sh`).
+* **It is wired** — `client-apple.yml:265` runs it (`./scripts/ci/check-apple-source-selection.sh`).
 * **It was rewritten** to assert the *opposite* of what the old text assumed. It keeps the single-copy
   scheme checks (`:124-129` "the refs file records no SHA", `:209-210` "neither SHA may be hardcoded"),
   because those still prevent a *duplicate* authority — but it now also asserts that **moving the
@@ -568,7 +573,7 @@ carries both names:
 
 ```text
 apple-client-source.sh resolve   emits MACOS_APPLE_SHA / MACOS_APPLE_BRANCH as historical aliases
-                                 (:386-388, so an eval'ing caller survives `set -u`)
+                                 (:547-548, so an eval'ing caller survives `set -u`)
 release-apple.sh                 exports them on to the builders                (:181)
 ```
 
@@ -596,7 +601,7 @@ audit host, so running `apple-client-source.sh` end to end is `BLOCKED_BY_ENVIRO
 | `DEFAULT_BUILD_TAGS_OTHERS` | the same **minus** `with_naive_outbound`. **This is the general/server set.** |
 | `DEFAULT_BUILD_TAGS_WINDOWS` | `DEFAULT_BUILD_TAGS` plus `with_purego` |
 
-`verify.yml:214-215` states in-tree that `DEFAULT_BUILD_TAGS` is *"deliberately NOT used here: it
+`verify.yml:337-338` states in-tree that `DEFAULT_BUILD_TAGS` is *"deliberately NOT used here: it
 carries with_naive_outbound, and no Linux product links cronet."* The names are misleading and the
 repository knows it. The Windows setup failure documented in the historical
 `KNOWLEDGE/reports/release/CORE_0.1.6_FINAL_CLOSURE_REPORT.md` is evidence for that environment and

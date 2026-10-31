@@ -88,19 +88,20 @@ edits for every protocol (for example, a new source root or tag is conditional):
 | ① | `include/registry.go` | the right positional block, **plus** a tagged file **and** its matching stub if the capability is optional |
 | ② | `constant/` | the type string |
 | ③ | `option/` | the option struct |
-| ④ | `.github/workflows/server-linux-amd64.yml:469-509` | **30 hard-coded required import paths** |
+| ④ | `.github/workflows/server-linux-amd64.yml:518-559` | **31 hard-coded required import paths** |
 | ⑤ | `scripts/ci/verify-full-capabilities.sh:105-243` | **~55 capability cases** |
 | ⑥ | `cmd/internal/build_libbox/tag_golden_test.go:43-99` | frozen resolved-tag strings for **8 platforms** |
 | ⑦ | `cmd/internal/modlayout/layout.go:54-74` | `SourceRoots`, for a new top-level directory |
 | ⑧ | `cmd/internal/{mobilebuildtags,applebuildtags}` + the profile files | if it is tag-gated |
-| ⑨ | `include/registry.go:177/183` | a **removal** goes in the tombstone list, not a deletion |
+| ⑨ | `include/registry.go:180-193` | a **removal** goes in the tombstone list, not a deletion |
 
-`include/registry.go:75,108,141,157` calls the registry symbols **unconditionally**, which is the
-structural reason both polarities must define them.
+`include/registry.go:77-80,111-113` calls the registry symbols **unconditionally**, which is the
+structural reason both polarities must define them. Endpoint, DNS-transport and service registries
+carry their own lists at `:118+`, `:130+` and `:153+`.
 
 ### The deliberate tombstones
 
-`include/registry.go:177-190`, called at `:78` and `:110` **last**, so nothing shadows them:
+`include/registry.go:180-193`, called at `:80` and `:113` **last**, so nothing shadows them:
 
 | Tombstone | Message | Origin |
 |---|---|---|
@@ -153,8 +154,10 @@ For `quic_stub.go` specifically, there are three reasons, and they generalise:
 | `with_wireguard` | `wireguard.go:1` | `wireguard_stub.go:1` |
 | `with_xhttp` | `v2rayxhttp.go:1` | *(no stub — the symbol is simply absent)* |
 
-Three files carry no build tag and are always compiled: `include/oom_killer.go`, `include/registry.go`,
-`include/tz_ios.go`. `include/tz_android.go` is a vendored Go stdlib file with the Go copyright header.
+Three files carry no explicit `//go:build` line: `include/oom_killer.go`, `include/registry.go` and
+`include/tz_ios.go`. The first two are always compiled; `tz_ios.go` is **not** — its `_ios.go` filename
+constrains it to iOS (and it cgo-imports Foundation). `include/tz_android.go` is a vendored Go stdlib
+file with the Go copyright header, similarly constrained by its filename.
 
 ### The polarity rule that matters — `quic_stub.go`
 
@@ -277,12 +280,14 @@ now read from one place: `go run ./cmd/internal/appletags -mobile-only`.
 
 `applebuildtags/tags.go:177` keeps an unused `bindTarget` parameter "for signature stability".
 
-`cmd/internal/build_libbox/main.go:145-146,303` emits a capability manifest so CI can assert
+`cmd/internal/build_libbox/main.go:175-176` emits a capability manifest so CI can assert
 "capability implies matching tag"; `TestNoShippedVariantShipsGVisor` refuses a gVisor-carrying variant.
 
 **Regeneration commands:** `Makefile:57 proto` (daemon protobuf) and `Makefile:35 schema`
-(`docs/schema.json`). `//go:generate` directives are rare — only five across the tree, of which the
-material one is `constant/goos/goos.go:12` (`go run gengoos.go` → `constant/goos/zgoos_*.go`, 20 files).
+(`docs/schema.json`). `//go:generate` directives are rare — only three real directives in the tree
+(`common/schannel/syscall_windows.go:8`, `constant/goos/goos.go:12`,
+`service/powerreport/syscall_windows.go:3`; a fourth textual hit is quoted prose in a test), of which the
+material one is `constant/goos/goos.go:12` (`go run gengoos.go` → `constant/goos/zgoos_*.go`, 16 files).
 
 `build_libbox` must set `Dir` explicitly: `gomobile` writes relative to the process CWD with **no flag
 and no environment override** (`gomobile@v0.1.12 cmd/gomobile/bind_iosapp.go:106`,
@@ -298,14 +303,14 @@ and no environment override** (`gomobile@v0.1.12 cmd/gomobile/bind_iosapp.go:106
 |---|---|
 | `clients/apple` | `Piggy-Cat-bit-shadow/sing-box-for-apple` |
 | `clients/android` | `Piggy-Cat-bit-shadow/sing-box-for-android` |
-| `clients/desktop` | **`SagerNet/sing-box-for-desktop`** (upstream's) |
+| `clients/desktop` | **`Piggy-Cat-bit-shadow/sing-box-for-desktop`** (the fork's) |
 
 Their gitlinks at `a267e99`: apple `d0524912…`, android `ec61030d…`, desktop `32f915ba…`. Their
 contents are **not** in a clean worktree, which is why `Makefile:94` shells into
 `../sing-box-for-android` and the Android client is not buildable from this worktree.
 
 **`cronet-go` is a tree of modules, not one module.** A `replace` directive rewrites **one module
-path**, so pinning the root leaves every nested module — `/all` and 30 per-platform `lib/<os>_<arch>`
+path**, so pinning the root leaves every nested module — `/all` and 29 per-platform `lib/<os>_<arch>`
 paths — resolving to upstream: a pairing nothing built or tested, and on linux/amd64 one that does not
 link. `scripts/ci/check-go-module-integrity.sh`'s parity rule is therefore a **PREFIX rule** derived
 from the root `go.mod` rather than from a static list, so a new platform path demands a pin instead of
@@ -331,7 +336,7 @@ tags.
 
 > **"gVisor retired" means the Go TUN stack is the default and forced-gVisor Android was removed — NOT
 > that gVisor left the module graph.** The old `replace` is a comment **on purpose**
-> (`go.mod:337-356`).
+> (`go.mod:367-389`).
 
 ---
 

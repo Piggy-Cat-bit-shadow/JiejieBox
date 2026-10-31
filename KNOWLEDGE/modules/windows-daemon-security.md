@@ -23,7 +23,7 @@ end-to-end service handshake. Locally on
 Windows 10 build 19044 `go test ./experimental/boxdd -count=1 -v` exited successfully, but the
 tampered PE test skipped because the Cert drive was unavailable: the skip is not a pass.
 
-**Scope:** `experimental/boxdd/**` (52 `.go` files + `desktop_service.proto`), the process roles it
+**Scope:** `experimental/boxdd/**` (55 `.go` files — 51 non-test — plus `desktop_service.proto`), the process roles it
 defines, and the local trust boundary between them. Covers the Windows service, the per-user worker,
 the named-pipe peer handshake, executable/peer authentication, Authenticode semantics, and the update
 path. `daemon/**` is covered by `libbox-platform-contract.md`; this module owns only the **boundary**.
@@ -40,14 +40,14 @@ runtime test was run for this module; see `## Known limitations`.
 
 ## 1. Current design
 
-`sing-box-daemon` is one binary with four commands (`main.go:20`, `:25`, `cmd_run.go:24`,
+`sing-box-daemon` is one binary with four commands (`main.go:17`, `:22`, `cmd_run.go:24`,
 `cmd_service.go:15`, `cmd_worker.go:30`):
 
 ```text
 sing-box-daemon run                    the daemon itself (foreground, or as a service)
 sing-box-daemon service start|stop|status        cmd_service.go:64-66
-sing-box-daemon service install|uninstall        cmd_service_windows.go:71-72   Windows only
-sing-box-daemon service set-insecure-mode <b>    cmd_service_windows.go:73 / cmd_service_linux.go:48
+sing-box-daemon service install|uninstall        cmd_service_windows.go:77-78   Windows only
+sing-box-daemon service set-insecure-mode <b>    cmd_service_windows.go:59 / cmd_service_linux.go:35
 sing-box-daemon worker                 the per-user relay              cmd_worker.go:45
 sing-box-daemon version                main.go:35
 ```
@@ -173,7 +173,7 @@ gate either: a nil logger returns early (`:168`) and a parse failure only warns 
 
 ### Unsigned binaries can never pass — and the reason is structural
 
-`authenticodeSigner` has **seven** `return nil, err` paths and exactly **one** success path,
+`authenticodeSigner` has **six** `return nil, err`-class failure paths and exactly **one** success path,
 `return signer, nil` (`:159`), which is reachable only after `verifiedSignerCertificate` succeeded —
 and that function refuses a nil/empty certificate context (`:222-225`). So a nil signer **cannot**
 accompany a nil error.
@@ -198,11 +198,11 @@ executable.** `authenticodeSigner` has nine call sites:
 | `cmd_worker_windows.go:396` | relayed peer == parent signer |
 | `security_windows.go:48` | daemon (install-time) |
 | `security_windows.go:56` | application (install-time) |
-| `update_windows.go:104` | installer == daemon signer |
+| `update_windows.go:103` | installer == daemon signer |
 
 `peer_windows.go:305` propagates through `:63` → `platform_windows.go:63` →
 `cmd_worker_windows.go:177`. Comparisons: `peer_windows.go:139`, `:223`,
-`cmd_worker_windows.go:151`, `:400`, `security_windows.go:60`, `update_windows.go:108`.
+`cmd_worker_windows.go:151`, `:400`, `security_windows.go:60`, `update_windows.go:107`.
 
 **Measured:** two binaries signed by two genuinely valid, distinct self-signed code-signing
 certificates produce signer payloads of **800** and **798** bytes, and `bytes.Equal` is **false** — so
@@ -210,7 +210,7 @@ the pin distinguishes them. The same certificate compares equal, so the pin is n
 
 ## 7. Service installation
 
-`secureWindowsInstallation` (`security_windows.go:29`), reached from `cmd_service_windows.go:140`. It
+`secureWindowsInstallation` (`security_windows.go:29`), reached from `cmd_service_windows.go:146`. It
 checks the installed path's layout and ancestors (owner must be SYSTEM, Administrators or
 TrustedInstaller), which is why installing under a user-owned directory fails with `code 1`
 (`docs/fork/WINDOWS-SFW-BUILD-RECORD.md` §P0-2).
@@ -266,7 +266,7 @@ Violating any of these is a security hole that no configuration justifies.
 |---|---|---|
 | Certificate validity period is **not** a gate | **deliberate non-gate** | byte-pinned identity and a self-signed certificate are used on the tolerated-error path; expiry previously broke startup. Reconsidering this requires evaluating the deployment and trust model |
 | Certificate chain trust is **not** required | deliberate | a CI test certificate is self-signed by construction |
-| Code-signing EKU is required | design rule | but `ExtKeyUsageAny` is **also accepted** (`:236`) — a known weakening |
+| Code-signing EKU is required | design rule | but `ExtKeyUsageAny` is **also accepted** (`:237`) — a known weakening |
 | Self-signed check | required on tolerated-error branch | validates that the signer is self-signed and its self-signature is valid; it complements signer equality and the other checks |
 | Worker pipe ACL | convention, **not** the gate | `Authenticated Users` can open it; the handshake decides |
 | Update product-name allowlist | convention | the source says explicitly it is **not** a security boundary |

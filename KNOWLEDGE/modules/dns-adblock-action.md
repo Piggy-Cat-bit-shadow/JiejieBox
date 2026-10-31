@@ -271,9 +271,12 @@ Concretely:
 | | upstream-learned NXDOMAIN (`dns/client_negative.go`) | `adblock` |
 |---|---|---|
 | Who produced the verdict | an authoritative server, proved by a response | the operator's rule |
-| Where it is stored | `nxdomainCache` (`dnsCacheKey` minus Qtype, in-memory LRU) | nowhere — re-matched per query |
+| Where it is stored | `nxdomainKeyFrom` (`nxdomainCacheKey`: canonical lowercase name + QCLASS + transport tag + client subnet + environment, in-memory LRU) | nowhere — re-matched per query |
 | Lifetime | the SOA's negative TTL, counted down on each hit | the rule's lifetime; only the downstream client caches |
-| Namespace | transport tag + client subnet + environment | the rule itself |
+| Namespace | canonical name, QCLASS, transport tag, client subnet and environment | the rule itself |
+| Capacity / init | `min(dns.cache_capacity, 2048)`; no-op under `disable_cache`; idempotent re-init (`dns/client_negative.go:89-120`) | not applicable |
+| Trim / purge | lapsed verdicts are trimmed (`Client.TrimExpiredCaches`, `dns/client.go:1277-1283`) and cleared by `ClearCache` (`:1287-1293`) | not applicable |
+| Lookup order | exact cache first, then the name cache, then upstream (`dns/client.go:834-866`); transition refusal happens before any cache read (`:814-820`) | the DNS rule walk, before the client |
 | Survives `ClearCache` semantics | yes, it is purged by them | not applicable |
 | `disable_cache` / `disable_expire` | govern it | do not apply |
 
@@ -284,8 +287,12 @@ after a rule-set update — the exact failure the placement below avoids.
 
 Container-scoped invariants of `client_negative.go` are unchanged: only genuine `NXDOMAIN` widens,
 single question only, SOA required, authoritative negative TTL non-zero, empty answer required,
-NODATA/SERVFAIL/REFUSED/FORMERR/timeouts never widen, `rewrite_ttl` cannot promote a zero negative
-TTL into a widening verdict.
+NODATA/SERVFAIL/REFUSED/FORMERR/timeouts never widen. The claim that `rewrite_ttl` cannot promote a
+zero negative TTL is **unproven for the header-TTL-zero / MINIMUM-positive shape**: the message is
+normalized before the store-time SOA re-read. See the follow-up in `dns-demand.md`'s NXDOMAIN
+section; do not treat the rewrite guard as proven. The cache's own key scoping, capacity,
+remaining-TTL and lookup-order contract is owned by the "QNAME-wide NXDOMAIN negative cache" section
+of `dns-demand.md`.
 
 ---
 

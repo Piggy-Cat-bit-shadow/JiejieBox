@@ -107,7 +107,7 @@ scope; follow the actual owner and registration path.
 | State ladder | `lifecycle.go:70-80` | `scopeOpen` → `scopeClosing` → `scopeClosed` |
 | `Scope.Add(cleanup)` | `lifecycle.go:112-138` | **If the scope is already closing, the cleanup runs synchronously on the *caller's* goroutine.** Registration is never silently dropped. |
 | `Scope.Start(name, component, stage)` | `lifecycle.go:147-183` | Creates a child scope keyed by the **component**, registers the child's `Close` as a cleanup, runs `component.Start` **outside the lock**, then re-reads the child context and returns `E.Cause(ctxErr, …)` so a start cancelled mid-flight **reports failure, not success**. |
-| `Scope.Close` | `lifecycle.go:186-217`, drain at `:251` | First caller takes the queue and drains in **reverse registration order** (`slices.Backward`); later callers **join** via `closeDone`; the result filters `E.IsClosed`/`E.IsCanceled` but logs them. **Not reentrant on the same Scope** (`:214-217`). |
+| `Scope.Close` | `lifecycle.go:218-283`, drain at `:251` | First caller takes the queue and drains in **reverse registration order** (`slices.Backward`); later callers **join** via `closeDone`; the result filters `E.IsClosed`/`E.IsCanceled` but logs them. **Not reentrant on the same Scope** (`:214-217`). |
 | Stages | `lifecycle.go:21-35` | `StartStateInitialize → StartStateStart → StartStatePostStart → StartStateStarted` |
 
 ### The completion boundary — state it correctly
@@ -171,7 +171,7 @@ Two orderings that look arbitrary and are not:
   *fifth*; `outbound` is initialized *seventh* and started *first*. Validation needs the graph,
   runtime needs the transports.
 * **`router.Initialize` only *compiles*.** A rule's `Start()` — the first point at which a rule may
-  open a rule-set file or start a process reader — happens at **PostStart** (`route/router.go:237-250`).
+  open a rule-set file or start a process reader — happens at **PostStart** (`route/router.go:252-261`).
   Every start-time validation therefore runs before any rule has been started.
 
 ### Close (`box.go`, `Close` and `close`)
@@ -224,7 +224,13 @@ by design.
 
 ## 4. `route.ReferenceManager` — the retirement inventory
 
-`route/reference.go` (`ReferenceManager` at `:21-42`, built at `box.go:641`).
+`route/reference.go` (`ReferenceManager` at `:21-42`, built at `box.go:662`).
+
+The retirement inventory is not the only host/local-flow surface. `adapter/network.go:37-38` adds
+`RegisterHostPort`/`HostPort`, and `route/network.go` serves endpoint-local flows from the TUN routed
+port (`93b2e4f5eec`); the flow logger moved to `adapter/flow_logger.go` and is now shared by route and
+host flows (`ab5fcb59abd`; `route/flow_tracker.go` was deleted). The endpoint-local **contract** is
+owned by `masque-connectip.md`; this module owns the network-manager registration and retirement side.
 
 ### What it does, in order
 

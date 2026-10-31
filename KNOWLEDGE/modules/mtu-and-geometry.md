@@ -44,7 +44,7 @@ correct answer for another. Conflating them is the failure mode this section exi
 
 | # | Quantity | Computed at | Bounded at | At the shipped config |
 |---|---|---|---|---|
-| 3 | **inner tunnel MTU** | `protocol/masque/client.go:617-619` (`c.mtu`), seeded `:119-121` | `DefaultMTU = 1280` (`transport/masque/session.go:18`); device `protocol/masque/endpoint.go:83` | **1280** — and it is **configured, not measured** (`client.go:612-616`) |
+| 3 | **inner tunnel MTU** | `protocol/masque/client.go:105` (`c.mtu`), published by `PortMTU()` `:654-655`, seeded `:119-121` | `DefaultMTU = 1280` (`transport/masque/session.go:18`); device `protocol/masque/endpoint.go:88`/`:91` | **1280** — and it is **configured, not measured** (`client.go:635-653`) |
 | 2 | **outer QUIC initial packet setting** | `client.go` → `min(mtu + 51, MaxUint16)`; server mirror `protocol/masque/server.go` | detour capacity clamps the initial setting; values below 1200 are refused. This is not a hard ceiling for all later packets | **1331** before a lower detour cap |
 | 1 | **outer link MTU** | not established by this MASQUE calculation | not established by this calculation | **NOT KNOWN** for the path from these inputs |
 
@@ -65,8 +65,8 @@ an interface MTU is not by itself proof of the end-to-end MASQUE path MTU.
 **The ceiling comes from the path model, not from a constant.** `feat(mtu): cap the MASQUE outer QUIC
 packet by a proven detour capacity` (`2118ee40`) is exactly two files: `client.go` +51 lines and
 `outer_quic_mtu_test.go` +237. WireGuard's `validateTunnelMTU`
-(`transport/wireguard/endpoint.go:442-488`) refuses only IPv6-on-sub-1280 — a 1210-byte detour yields
-1130 nested while the detour itself needs 1360 (`:469-471`).
+(`transport/wireguard/endpoint.go:523-569`) refuses only IPv6-on-sub-1280 — a 1210-byte detour yields
+1130 nested while the detour itself needs 1360 (`:550-552`).
 
 **`sing-quic` is load-bearing for that cap.** `scripts/ci/check-go-module-integrity.sh:105-115`
 records why it is one of the four `REQUIRED_FORK_REPLACES`:
@@ -83,7 +83,7 @@ The exact path, from `transport/masque/session.go`:
 
 1. a send fails too-large, and the available size is
    `MaxPayloadSize = MaxDatagramPayloadSize − VarintLen(StreamID/4)` — **the context ID is still
-   counted at this point** (`transport/http/client_h3.go:481-483`);
+   counted at this point** (`transport/http/client_h3.go:486-489`);
 2. the error is classified (`session.go:401-411`): **nil-check first, then a direct type assertion**,
    and `errors.As` only as the fallback at `:417-426` — because `errors.As` **hoists its target to the
    heap at function entry**, which would cost one allocation per *successful* packet
@@ -91,9 +91,9 @@ The exact path, from `transport/masque/session.go`:
    **exactly 1** allocation per single-packet write);
 3. `mtu := maxPayloadSize − 1`;
 4. **if `mtu >= minimumLinkMTU` (1280)** the context ID is undone with `datagram.Advance(1)` and
-   `handlePacketTooBig(datagram, mtu)` runs (`:504-517`); otherwise it is a **hard error** —
+   `handlePacketTooBig(datagram, mtu)` runs (`transport/masque/session.go:516-525`); otherwise it is a **hard error** —
    *"unable to carry 1280 byte packets"*;
-5. the client handles it at `protocol/masque/client.go:686-697`; the server at
+5. the client handles it at `transport/masque/client.go:704-715`; the server at
    `transport/masque/server.go:579-592`, addressed to the **owning peer** (`firstPeerAddress :596-605`)
    and queued on that session; ICMP errors are built in `icmp.go:73-85`, `:99-134`, and the destination
    rewrite **recomputes checksums**.
@@ -146,11 +146,11 @@ The hysteria2 distinction is worth stating precisely, because the three fields h
 |---|---|---|
 | `InitialPacketSize` | **preference** | first, and overwritten by the fingerprint |
 | `InitialPacketSizeCeiling` | **constraint** | **last** (`quic-go config.go:127-140`), so it survives the override and also caps PMTUD growth (1232 → 1438 measured, `config.go:184-198`) |
-| `DisablePathMTUDiscovery` | **policy** | `hysteria2/outbound.go:148-156`, `:208-217`; `quicPathSizing :233-273` |
+| `DisablePathMTUDiscovery` | **policy** | `hysteria2/outbound.go:148-156`, `:224`; `quicPathSizing :241-280` |
 
 `config.go:109-125` is why the order matters: ChromeParrot **overwrites the size with 1250 and never
 reads a ceiling**, so an early ceiling is discarded for the default configuration (Parrot is on by
-default, `outbound.go:220`).
+default, `outbound.go:228`).
 
 ---
 
@@ -167,7 +167,7 @@ rule that a buffer acquired for a packet path is **exactly poolable** and surviv
 | default | `common/buf/buffer_standard.go:5-8` (`//go:build !with_low_memory`) | **32 KiB / 16 KiB** |
 | low memory | `common/buf/buffer_low_memory.go:5-8` (`with_low_memory`) | **16 KiB / 8 KiB** |
 
-plus `common/low_memory_stub.go:7` / `low_memory.go:7` (`LowMemory` false/true).
+plus `common/low_memory_stub.go:5` / `low_memory.go:5` (`LowMemory` false/true).
 
 **Historical measurement, both profiles** (recorded runs, exit 0; not re-benchmarked in this calibration):
 
@@ -219,7 +219,7 @@ go run ./cmd/internal/appletags -mobile-only
 * The tag reaches gomobile through **`-tags-not-macos`**, not `-tags`: `-tags` applies to every target,
   so a mobile-only tag placed there would reach macOS in a mixed build
   (`applebuildtags/tags.go:63`, `mobilebuildtags/tags.go:42`).
-* `verify.yml:252-258` reads it and **fails rather than falling back** if the string is empty:
+* `verify.yml:385-391` reads it and **fails rather than falling back** if the string is empty:
   *"Refusing to fall back to a guess: this step would compile the default geometry while claiming to
   exercise the low-memory one."*
 * `client-macos.yml` asserts the tag set in **both directions** — required tags present, retired tags
@@ -300,12 +300,12 @@ branch, while hysteria2's QUIC socket goes through `stack_go_udp_socket.go`'s `G
 16. **Do not add a fingerprint or any post-construction size override to the MASQUE client** without
     first adding a test that catches the voided ceiling. See §3.
 17. **Do not clamp a sub-1200 ceiling.** It is refused, not clamped (`path_mtu.go:36-41`,
-    `client.go:168-179`, `hysteria2/outbound.go:181-190`).
+    `client.go:168-179`, `hysteria2/outbound.go:189-199`).
 18. **Do not size an upper protocol from `PortMTU()` alone** — that overstates the budget by
     WireGuard's 32 bytes (`path_mtu.go:169-193`; `mtu_budget_test.go:234-267`).
 19. **Do not assign an inner MTU to `initial_packet_size` in either direction.** The 99-byte gap
     (`1280 + 51 − 1232`) is asserted at `outer_quic_mtu_test.go:181-185`.
 20. **Do not read `PortMTU()` through `c.device` again.** The nil-device panic window is exactly when
-    it is asked (`client.go:598-619`; `port_mtu_lifecycle_test.go:26-40`, `:78-108`).
+    it is asked (`client.go:635-653`; `port_mtu_lifecycle_test.go:26-40`, `:78-108`).
 21. **Do not advertise a PTB MTU below 1280**, and do not lower `maxPacketSize` below 65575
     (`session.go:56-61`; `packet_size_bound_test.go:80-150`).

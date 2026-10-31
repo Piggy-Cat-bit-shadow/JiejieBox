@@ -42,10 +42,11 @@ fork fixes / hardening    52 commits under protocol/masque, 70 under transport/m
 
 **There is no `protocol/connectip` package.** CONNECT-IP lives in `transport/masque` and
 `protocol/masque`. The fork uses **no** `quic-go/connect-ip-go` and **no** `quic-go/masque-go` in the
-main module — `grep` for `masque|connect-ip|connectip` over `go.mod`/`go.sum` returns exactly one
-hit, a comment at `go.mod:288`. `connect-ip-go` appears only inside the separate `test/go.mod` as a
-third-party **interop peer** (`test/jiejie/reference/connect_ip_go_interop_test.go:14,23`).
-**The fork implements CONNECT-IP itself.**
+main module: the `masque|connect-ip|connectip` comments in `go.mod:294,303-306` describe the pinned
+sing-quic line, not a dependency. `connect-ip-go` appears only inside the separate
+`test/jiejie/reference/go.mod` as a third-party **interop peer**
+(`test/jiejie/reference/connect_ip_go_interop_test.go:14,23`). **The fork implements CONNECT-IP
+itself.**
 
 **Load this module when changing:** any capsule, session lifetime, MTU/PTB, DNS assignment, the
 inner/bootstrap resolver split, or the H3 client pool.
@@ -60,7 +61,7 @@ inner/bootstrap resolver split, or the H3 client pool.
 |---|---|---|
 | Parse / serialise | `parseAddresses`, `parseVersion`, `parseRoutes`, `appendAddress`, `newCapsule`, `newAddressCapsule`, `newRouteCapsule`, `RangesFromPrefixes` | `capsule.go:45,80,109,211,220,228,239,249` |
 | Address / route types | `AssignedAddress`, `AddressRange`, `Contains`, `OverlapsProtocol`, `protocolConflicts` | `capsule.go:30,35,41,94,105` |
-| DNS capsules | `DNSConfiguration.validate`, `validateDomainName` | `capsule_dns.go:148,179` |
+| DNS capsules | `DNSConfiguration.validate`, `validateDomainName` | `capsule_dns.go:179,148` |
 | DoH path templating | `validateTemplateExpression` | `capsule_dohpath.go:290` |
 | SVCB parameters | `ValidateServiceParameters` | `capsule_svcb.go:150` |
 | Request routing template | `expression`, `Template`, `Scope`, `ParseTemplate`, `Expand`, `Match`, `parseTarget` | `template.go:15,20,28,34,121,143,230` |
@@ -74,8 +75,8 @@ inner/bootstrap resolver split, or the H3 client pool.
   `quic-go/connect-ip-go` uses the same constant). Before it: 149,796 entries / **17.65 MiB heap**.
 * `Contains() == lookup()` on the server's own address (`e4d2f6c1a`).
 
-**MTU / PTB capsules:** `handlePacketTooBig` (client `client.go:686`, server `server.go:579`),
-`minimumLinkMTU` (`session.go:508-513`), ICMP generation in `icmp.go`
+**MTU / PTB capsules:** `handlePacketTooBig` (client `transport/masque/client.go:704`, server
+`server.go:579`), `minimumLinkMTU` (`session.go:20`, compared at `:520`), ICMP generation in `icmp.go`
 (`packetAddresses`, `isControlProtocol`, `decrementHopLimit`, `buildICMPError`, `buildICMPErrorTo` at
 `:12,25,44,73,99`).
 
@@ -85,7 +86,7 @@ inner/bootstrap resolver split, or the H3 client pool.
 `readControlCapsule`, `writeCapsule` (`session.go:80,103,133,162,245,277,302,350`).
 
 **CONNECT-UDP is expressed as the RFC 9298/9297 datagram form** — `writePackets` prepends the context
-ID (`session.go:481`, `PrependContextID`) — not as a separate capsule-per-packet type.
+ID (`session.go:493`, `PrependContextID`) — not as a separate capsule-per-packet type.
 
 Client: `Client`, `clientSession`, `NewClient`, `Start`, `Close`, `Start`/`Suspend`/`Resume`/
 `RestartSession`, `WritePacketBuffers`, `handleAddressAssign`, `handleDNSAssign`, `handlePREF64`,
@@ -103,21 +104,21 @@ Route matching: `routeMatcher`, `compileRouteMatcher`, `contains` (`route_matche
 
 | # | Rule | Anchor | What breaks |
 |---|---|---|---|
-| M1 | Single-packet success **releases** the datagram — **except** on the owned-datagram capability, where **ownership transfers** and the release is skipped entirely | `session.go:485-489`, `:495`; `transport/http/client_h3.go:506` | double release / use-after-free |
-| M2 | Every failure path releases **exactly the still-owned remainder**: `datagram.Release()`, `buf.ReleaseMulti(capsules)`, `buf.ReleaseMulti(buffers[i+1:])` | `session.go:518-520` | leak of pooled buffers |
+| M1 | Single-packet success **releases** the datagram — **except** on the owned-datagram capability, where **ownership transfers** and the release is skipped entirely | `session.go:496-508` (owned skip `:499-500`, release `:507`); `transport/http/client_h3.go:511` | double release / use-after-free |
+| M2 | Every failure path releases **exactly the still-owned remainder**: `datagram.Release()`, `buf.ReleaseMulti(capsules)`, `buf.ReleaseMulti(buffers[i+1:])` | `session.go:530-532` | leak of pooled buffers |
 | M3 | Each chunk is all-or-nothing for **ownership**; `writeBatchOwned` returns the transferred prefix length and the caller falls back only on the remainder | `session.go`, `writeBatchOwned` | replaying a transferred prefix double-sends or releases it; see `buffer-ownership.md` for partial queueing in HTTP/3's copy fallback |
 | M4 | A `PrependContextID` **substitution releases the original**, so substitution refuses the affected chunk before send and updates the caller's slice in place | `session.go`, `writeOwnedBatchChunk` | stale pointers, double release or packet loss on fallback |
-| M5 | A batch of **one** never takes the batch path | `session.go:467-472` | a measured regression (batch=1 is slower) |
-| M6 | Packet headroom is reserved by the **producer** so the 1-byte context ID fits | `session.go:561-565`; `protocol/masque/client.go:557 FrontHeadroom`; `transport/masque/server.go:428 receivedPacketHeadroom` | every packet takes the substitution path (M4) |
+| M5 | A batch of **one** never takes the batch path | `session.go:472-477` | a measured regression (batch=1 is slower) |
+| M6 | Packet headroom is reserved by the **producer** so the 1-byte context ID fits | `session.go:584-588`; `protocol/masque/client.go:594 FrontHeadroom`; `transport/masque/server.go:428 receivedPacketHeadroom` | every packet takes the substitution path (M4) |
 
-**M4 is a real past bug, and the comment records it (`session.go:539-549`):** a refused batch kept
+**M4 is a real past bug, and the comment records it (`session.go:562-573`):** a refused batch kept
 the context ID, the fallback prepended a second one, `packetAddresses` read the wrong version nibble,
 and **every packet was silently dropped — no error, no PTB**.
 
 ### The H3 client pool
 
 `transport/http/client_h3.go:105` builds `&http3.Transport{EnableDatagrams: true, DisableCompression: true}`;
-the batching API is `SendDatagramOwned(payload http3.OwnedDatagramPayload)` (`:506`).
+the batching API is `SendDatagramOwned(payload http3.OwnedDatagramPayload)` (`:511`).
 
 Pool behaviour (`b83695603` → `1511c1c6a`): the pool now rotates **within the tied-minimum set**;
 before, **slot 0 served every tunnel**. CONNECT is gated on `HandshakeComplete` (`0271b145a`) to close
@@ -134,18 +135,18 @@ an unset option. Verify the particular constructor and pinned QUIC version befor
 
 ## 2. The endpoint — `protocol/masque`
 
-`ClientEndpoint` (`client.go:50`), `NewClientEndpoint` (`:118`), `Start` (`:319`),
-`UpdateConfiguration` (`:339`), `installAssignedDNS` (`:397`), `Pref64Prefixes` (`:449`),
-`resolverCapability` (`:467`), `h3ConnectionState` (`:504`), `UpdateTunnelTransport` (`:527`),
-`recompileAssignedDNS` (`:536`), `InterfaceUpdated` (`:561`), `OnDemand` (`:565`),
-`SetKeepIdleConnections` (`:569`), `PreMatchFlow` (`:590`), `PortAddresses` (`:594`),
-`PortMTU` (`:617`), `UpstreamPort` (`:621`), `AttachReturn`/`DetachReturn` (`:625,629`),
-`JudgeFlow` (`:633`), `NewDNSPacket` (`:637`), `WritePackets` (`:641`), `DialContext` (`:671`),
-`DialsDestinationLocally` (`:706`), `lookupInner` (`:745`), `dohExecutor` (`:807`),
-`dialResolved` (`:837`), `ListenPacketWithDestination` (`:882`).
+`ClientEndpoint` (`client.go:50`), `NewClientEndpoint` (`:118`), `Start` (`:322`),
+`UpdateConfiguration` (`:363`), `installAssignedDNS` (`:421`), `Pref64Prefixes` (`:473`),
+`resolverCapability` (`:491`), `h3ConnectionState` (`:528`), `UpdateTunnelTransport` (`:551`),
+`recompileAssignedDNS` (`:560`), `InterfaceUpdated` (`:598`), `OnDemand` (`:602`),
+`SetKeepIdleConnections` (`:606`), `PreMatchFlow` (`:627`), `PortAddresses` (`:631`),
+`PortMTU` (`:654`), `UpstreamPort` (`:658`), `AttachReturn`/`DetachReturn` (`:662,666`),
+`JudgeFlow` (`:670`), `NewDNSPacket` (`:674`), `WritePackets` (`:678`), `DialContext` (`:727`),
+`DialsDestinationLocally` (`:762`), `lookupInner` (`:801`), `dohExecutor` (`:863`),
+`dialResolved` (`:893`), `ListenPacketWithDestination` (`:938`).
 
 `PREF64` lives in `protocol/masque/pref64.go`, consumed via `ClientEndpoint.Pref64Prefixes()`
-(`client.go:449`) and `clientSession.handlePREF64` (`transport/masque/client.go:585`); the server
+(`client.go:473`) and `clientSession.handlePREF64` (`transport/masque/client.go:585`); the server
 answers at `transport/masque/server.go:495`.
 
 ---
@@ -175,7 +176,7 @@ does not exist yet**, or leaks the in-tunnel names to the outer resolver.
 
 The PTB path: a datagram send fails with `datagramErrorTooLarge` → `mtu := maxPayloadSize - 1`; if
 `mtu >= minimumLinkMTU` the context ID is undone with `datagram.Advance(1)` and
-`handlePacketTooBig(datagram, mtu)` is invoked (`session.go:505-513`).
+`handlePacketTooBig(datagram, mtu)` is invoked (`session.go:516-524`).
 
 Tests: `packet_too_big_test.go`, `packet_too_big_session_test.go`, `packet_size_bound_test.go`,
 `outer_quic_mtu_test.go`, `port_mtu_lifecycle_test.go`, plus

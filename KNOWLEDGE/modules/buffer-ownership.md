@@ -56,9 +56,9 @@ More detail on the geometry, including the measured 2× difference between the t
 |---|---|---|---|
 | B6 | A `payloadReader` cursor borrows segments and **must not outlive the `PeekStream` call that created it** | `common/sniff/sniff.go:88-91` | a sniffer retaining the cursor observes a recycled pool buffer |
 | B7 | `takePacketBytes` returns a **view into the caller's datagram**, valid only while the datagram lives | `common/sniff/quic.go:23-35` | a retained DCID/PN sample reads recycled memory |
-| B8 | QUIC's working copy is a **fresh packet-sized `make`, deliberately not pooled**; the decrypted buffer aliases it | `common/sniff/quic.go:183-184`, `:226` | pooling it makes a fragment outlive its owner |
-| B9 | Retained `qCryptoFragment.payload` aliases the **working copy**, never the caller's datagram; the reassembly buffer is released by `defer` | `common/sniff/quic.go:305-306`, `:341-342`, `:472-476` | a retained fragment survives the datagram's `Release` |
-| B10 | Header protection writes **4 bytes in place**, so a `Length` that cannot reach them is rejected | `common/sniff/quic.go:125-131`, `:190-192` | out-of-bounds write into the datagram tail |
+| B8 | QUIC's working copy is a **fresh packet-sized `make`, deliberately not pooled**; the decrypted buffer aliases it | `common/sniff/quic.go:184`, `:227` | pooling it makes a fragment outlive its owner |
+| B9 | Retained `qCryptoFragment.payload` aliases the **working copy**, never the caller's datagram; the reassembly buffer is released by `defer` | `common/sniff/quic.go:306-307`, `:342-343`, `:477-481` | a retained fragment survives the datagram's `Release` |
+| B10 | Header protection writes **4 bytes in place**, so a `Length` that cannot reach them is rejected | `common/sniff/quic.go:125-131`, `:186-189` | out-of-bounds write into the datagram tail |
 
 B6–B10 are proved, not asserted: an **address-range** test (`quic_ownership_test.go:314-350`),
 **datagram-poisoning** equivalence tests (`:206-281`, `quic_boundary_test.go:427-456`), and a `cap`
@@ -71,11 +71,11 @@ bound that does not grow with a coalesced tail (`sniff_bounded_copy_internal_tes
 |---|---|---|---|
 | B11 | Each batch **chunk** is all-or-nothing; the accepted prefix is transferred and only the refused remainder stays with the caller | `transport/masque/session.go`, `writeBatchOwned` | replaying an accepted prefix double-sends or releases transferred buffers |
 
-| B12 | On the **owned-datagram** path, ownership **transfers on success**, so the release is skipped entirely | `transport/masque/session.go:484-489`, `:495`; `transport/http/client_h3.go:506` | **double release / use-after-free** |
+| B12 | On the **owned-datagram** path, ownership **transfers on success**, so the release is skipped entirely | `transport/masque/session.go:496-500`; `transport/http/client_h3.go:507` | **double release / use-after-free** |
 | B13 | A `PrependContextID` **substitution releases the original**, so it must refuse the affected chunk before it is attempted and update the caller's slice in place | `transport/masque/session.go`, `writeOwnedBatchChunk` | stale pointers, double release or packet loss on fallback |
-| B14 | Every failure path in `writePackets` releases **exactly the still-owned remainder** | `transport/masque/session.go:518-520` | a leak of pooled buffers |
-| B15 | A batch of **one** never takes the batch path | `transport/masque/session.go:467-472` | a measured regression |
-| B16 | Packet headroom is reserved by the **producer** so the 1-byte context ID fits | `transport/masque/session.go:561-565`; `protocol/masque/client.go:557 FrontHeadroom`; `transport/masque/server.go:428 receivedPacketHeadroom` | every packet takes the B13 substitution path |
+| B14 | Every failure path in `writePackets` releases **exactly the still-owned remainder** | `transport/masque/session.go:530-533` | a leak of pooled buffers |
+| B15 | A batch of **one** never takes the batch path | `transport/masque/session.go:472-477` | a measured regression |
+| B16 | Packet headroom is reserved by the **producer** so the 1-byte context ID fits | `transport/masque/session.go:584-588`; `protocol/masque/client.go:594 FrontHeadroom`; `transport/masque/server.go:428 receivedPacketHeadroom` | every packet takes the B13 substitution path |
 | B17 | `matchRule`'s packet buffers belong to the caller and must be released on **all five** error paths | `route/route.go:394-400`, `:412`, `:422`, `:426`, `:440`; comment `:396-399` records the measurement: **1,817 bytes released vs 18,255 unreleased** | a 16 KiB pooled allocation never recycled |
 | B18 | Release sites are explicit, not inferred: `buf.ReleaseMulti` (`route/route.go:146,156,160,184`), `N.ReleaseMultiPacketBuffer` (`route/route.go:400,412,422,426,440`; `route/dns.go:44`), `route/fakeip_conn.go:205`, `protocol/masque/{client,server}.go`, `transport/masque/client.go`, `common/listener/listener_udp.go`, `common/iponly/conn.go`, `common/trafficsched/gate.go:135,353,376`, `transport/device/*`, `transport/wireguard/device_peer_router.go` | as cited | leaks |
 | B19 | Double-release guards exist and must be preserved: `route/conn_reclaim.go` (`managedConnState`, `markKernelOwned:114`, `reclaimState:118`, `touch:125`, `countBytes:136`) and `route/splice.go` (`spliceSource.takeCached:145`) | as cited | a spliced connection's cached packets released twice |

@@ -68,10 +68,12 @@ physical Android or Apple network transition.
 Apple/Android artifact pins.
 
 **This module primarily records the core side of the contract.** The clients are separate Git
-submodules and their availability depends on the checkout. In this calibration, Apple and Android
-are initialized at `3aedd7417488` and `9d15717a85c5`; desktop is uninitialized. Local Windows Git
-has `core.symlinks=false` for Apple, so link entries are materialized as text files, not followed as
-real links. Client-source findings below are scoped to those revisions and this checkout.
+submodules and their availability depends on the checkout. At the 2026-10-31 calibration the parent
+pins are Apple `044e6d5447eb` and Android `c7837107dc01`; local client worktrees were not reset and may
+sit at other revisions (Apple `aeccc754`, Android `9d15717a` observed). Desktop is uninitialized.
+Local Windows Git has `core.symlinks=false` for Apple, so link entries are materialized as text files,
+not followed as real links. Client-source findings below are scoped to those revisions and this
+checkout.
 
 **Load this module when changing:** any exported libbox symbol, `SetupOptions`, the CommandServer API,
 the ABI version, a platform-facts API, or the Apple/Android pin.
@@ -80,7 +82,11 @@ the ABI version, a platform-facts API, or the Apple/Android pin.
 
 ## 1. There is no `libbox.go`
 
-The gomobile surface is spread across ~85 files in `experimental/libbox/`.
+The gomobile surface is spread across 110 `.go` files (90 non-test) in `experimental/libbox/`. The
+tree also contains 18 files under `experimental/libbox/internal/**` — `oomprofile`, `runtimeinfo`
+(including `linkname.go` / `goroutine_badlinkname.go`) and `procfs`. Those are internal build inputs,
+not exported ABI; do not route ABI questions to them, but do not omit them when counting what the
+gomobile build compiles.
 
 ### Top-level entry points
 
@@ -93,7 +99,7 @@ The gomobile surface is spread across ~85 files in `experimental/libbox/`.
 | `FormatBytes` / `FormatMemoryBytes` / `FormatDuration` / `FormatBitrate` / `FormatNATMapping` / `FormatNATFiltering` / `FormatFQDN` / `ProxyDisplayType` | `setup.go:186-252` |
 | `CheckConfig(string) error` | `config.go:51` |
 | `GenerateConfigSchema()`, `FormatConfig`, `HasTunInbound` | `config.go:259`, `:267`, `:282` |
-| `AvailablePort(int32)`, `RandomHex(int32)` | `service.go:476`, `:496` |
+| `AvailablePort(int32)`, `RandomHex(int32)` | `service.go:447`, `:467` |
 | `ReadAndroidVPNType` | `build_info.go:32`, android-only |
 
 ### `SetupOptions` — the platform handshake
@@ -126,7 +132,7 @@ pointer in gomobile's packed result frame is the `bulkBarrierPreWrite` crash (§
 
 | Concern | Owner | Anchor |
 |---|---|---|
-| Reporting a platform observation | **the platform**, through `experimental/libbox/platform_events.go` — a **thin forwarder**: `MemoryTrim(level int32)` `:234`, `SetAppForeground(bool)` `:243`, `SetScreenOn(bool)` `:261`, `ReportDeviceWake()` `:269`, `Close()` `:277` | `:92` builds `boxPlatformTarget`; `:194 NewPlatformEvents` routes into `runtimecoord.PlatformEvents` |
+| Reporting a platform observation | **the platform**, through `experimental/libbox/platform_events.go` — a **thin forwarder**: `MemoryTrim(level int32)` `:251`, `SetAppForeground(bool)` `:260`, `SetScreenOn(bool)` `:278`, `ReportDeviceWake()` `:286`, `Close()` `:294` | `:220` builds `boxPlatformTarget`; `:211 NewPlatformEvents` routes into `runtimecoord.PlatformEvents` |
 | Deciding what a level **means** | **the core** — `TrimLevel` constants and `TrimLevel.Action()` | `common/runtimecoord/platform_events.go:152-220` |
 | Coalescing windows | **the core** — `trimCoalesceWindow = time.Second` (`:223`), `releaseCoalesceWindow = adapter.RecoveryWindow` (`:231`) | as cited |
 | The device state machine | **the core** — `common/power.Governor` | `power-mobile-lifecycle.md` |
@@ -165,13 +171,13 @@ every future platform level a silent behavioural change."*
 
 **Why `TrimUIHidden` is not a memory signal** (`:165-170`): *"This is a LIFECYCLE fact, not a memory
 reading, and it is deliberately NOT mapped to a trim… the trim callback is not a reliable delivery
-channel for it."* Repeated on the client side at `experimental/libbox/platform_events.go:229-233`:
+channel for it."* Repeated on the client side at `experimental/libbox/platform_events.go:246-250`:
 *"Do not map `TRIM_MEMORY_UI_HIDDEN` to a lifecycle fact here."*
 
 **Coalescing:** `trimCoalesceWindow = time.Second` (`:223`), `releaseCoalesceWindow =
 adapter.RecoveryWindow = **90 s**` (`:231`, `adapter/runtime.go:153`). A **different** level acts at once
 — *"an escalation is a new fact"* (`:222`). The trim callback must be reported **off the main thread**
-(`experimental/libbox/platform_events.go:222-227`).
+(`experimental/libbox/platform_events.go:239-244`).
 
 ### Three structural proofs that the core, not the platform, decides
 
@@ -212,7 +218,7 @@ Two of the platform's judgements are **reconciled** rather than trusted:
 `:276` (a metering change alone must not claim a network generation).
 
 **One core-side admission of a *client-side* double-driver, quoted and `UNVERIFIED` here:**
-`experimental/libbox/platform_events.go:253-260` records that Android also drives `Pause`/`Wake` from
+`experimental/libbox/platform_events.go:272-277` records that Android also drives `Pause`/`Wake` from
 `ACTION_DEVICE_IDLE_MODE_CHANGED`, and that mixing the two *"would let a Doze wake lift a pause the
 screen fact still asserts, with neither path knowing."* At Android client revision `9d15717a85c5`,
 `BoxService.kt` receives `ACTION_DEVICE_IDLE_MODE_CHANGED`, queues `isDeviceIdleMode`, and calls
@@ -243,29 +249,29 @@ publishes only a resume *edge*; only an **unlock** releases the level.
 
 | Side | Anchor |
 |---|---|
-| `CommandServerHandler` | `command_server.go:51` |
-| `NewCommandServer(handler, platformInterface)` | `:61` |
-| gRPC auth interceptors | `:111`, `:129` |
-| `Start` / `Close` | `:147`, `:201` |
-| `StartOrReloadService(configContent, *OverrideOptions)` / `CloseService` | `:217`, `:236` |
+| `CommandServerHandler` | `command_server.go:54` |
+| `NewCommandServer(handler, platformInterface)` | `:80` |
+| gRPC auth interceptors | `:129`, `:147` |
+| `Start` / `Close` | `:165`, `:210` |
+| `StartOrReloadService(configContent, *OverrideOptions)` / `CloseService` | `:232`, `:251` |
 
 **Lifecycle and control (the platform→core surface):**
 
 | Call | Anchor | Kind |
 |---|---|---|
-| `Pause()` | `:390` | edge |
-| `Wake()` / `WakeNow()` | `:448`, `:476` | edge |
-| `RecordScreenState(on bool)` | `:504` | edge |
-| `RecordLockState(locked bool)` | `:533` | edge |
-| `ReconcileScreenState` / `ReconcileLockState` | `:564`, `:584` | **snapshot (level)** |
-| `ResetNetwork` | `:599` | action |
-| `UpdateWIFIState` | `:607` | fact |
-| `rememberDeviceLevel` / `restoreDeviceLevel` | `:295`, `:353` | internal level bookkeeping |
-| `NeedWIFIState` / `NeedFindProcess` | `:248`, `:256` | capability query |
+| `Pause()` | `:422` | edge |
+| `Wake()` / `WakeNow()` | `:502`, `:555` | edge |
+| `RecordScreenState(on bool)` | `:583` | edge |
+| `RecordLockState(locked bool)` | `:612` | edge |
+| `ReconcileScreenState` / `ReconcileLockState` | `:643`, `:663` | **snapshot (level)** |
+| `ResetNetwork` | `:678` | action |
+| `UpdateWIFIState` | `:686` | fact |
+| `rememberDeviceLevel` / `restoreDeviceLevel` | `:310`, `:368` | internal level bookkeeping |
+| `NeedWIFIState` / `NeedFindProcess` | `:263`, `:271` | capability query |
 
 `platformHandler` implements `ServiceStop` / `ServiceReload` / `SystemProxyStatus` /
 `SetSystemProxyEnabled` / `TriggerNativeCrash` / `WriteDebugMessage` / `ConnectSSHAgent`
-(`:617-648`).
+(`:694-727`).
 
 **Client side:** `CommandClient` (`command_client.go:25`), `NewCommandClient` (`:92`),
 `NewStandaloneCommandClient` (`:83`), `SetXPCDialer` (`:79`), `Connect` (`:260`),
@@ -308,7 +314,7 @@ libbox symbols exist depends on the tag set**. That is why three `cmd/internal` 
 
 **The Apple geometry tag** is selected by exactly one command, `go run ./cmd/internal/appletags
 -mobile-only` (`appletags/main.go:33`), and the low-memory CI gate **fails rather than falling back**
-if it returns empty (`verify.yml:252-258`). The doc comment states why it exists: the low-memory gate
+if it returns empty (`verify.yml:380-389`). The doc comment states why it exists: the low-memory gate
 and the memory benchmark previously read `DEFAULT_BUILD_TAGS_OTHERS`, which *"does not match what
 libbox builds"*, so those checks *"were testing a configuration no Apple binary ships"*.
 
@@ -358,19 +364,19 @@ the file's declarations previously broke the release helper (`ece0fb9d2`).
 
 ### What IS wired for Apple
 
-Packaging/install validity (`apple-libbox-artifact.sh validate`/`install`, `client-apple.yml:282-284`,
-`:577-579`), the signing environment (`check-apple-signing-environment.sh` `:160`, `:300`, `:562`),
+Packaging/install validity (`apple-libbox-artifact.sh validate`/`install`, `client-apple.yml:483-486`,
+`:845-848`), the signing environment (`check-apple-signing-environment.sh` `:335`, `:502`, `:803`),
 branding, macOS naming, and source selection. **Signing assertions skip unless
 `APPLE_SIGNING_MODE=development`**, and `runtime_validation: NOT EXECUTED` is written unconditionally
-(`:378`).
+(`:588`).
 
 ---
 
 ## 7. Android
 
 `android-core-arm64.yml` builds the AAR and asserts, in CI: provenance `commit=` == `GITHUB_SHA`
-(`:269-273`); `jni/arm64-v8a/libbox.so` present, **> 1 MB**, and `file` reports aarch64 (`:286-301`);
-`go version -m` shows no gVisor (soft-fails to a NOTE if unreadable, `:313-315`); the NDK and gomobile
+(`:275-279`); `jni/arm64-v8a/libbox.so` present, **> 1 MB**, and `file` reports aarch64 (`:292-307`);
+`go version -m` shows no gVisor (soft-fails to a NOTE if unreadable, `:308-321`); the NDK and gomobile
 pins are **derived, never copied** (`:167-171`, `:209-242`); the resolved tags are asserted
 (`:127-138`). It runs on `push` to `testing` **with a path filter** — so a new top-level directory
 can silently drop Android ABI verification.
@@ -439,7 +445,7 @@ External repositories
   - clients/apple   Piggy-Cat-bit-shadow/sing-box-for-apple   (build source is resolved separately)
   - clients/android Piggy-Cat-bit-shadow/sing-box-for-android (fork-located because the ABI
                     migration moves the generated Java signatures)
-  - clients/desktop SagerNet/sing-box-for-desktop             (upstream's)
+  - clients/desktop Piggy-Cat-bit-shadow/sing-box-for-desktop       (the fork's)
   Checkout status varies; see the scope note and record the actual submodule revision.
 ```
 
@@ -464,7 +470,7 @@ External repositories
 
 ## 11. AI cautions
 
-1. **Do not look for `libbox.go`.** The surface is ~85 files.
+1. **Do not look for `libbox.go`.** The surface is 110 `.go` files (90 non-test).
 2. **Do not move level classification into a client.** The core owns the trim ladder, the coalescing
    windows and the edge/level distinction.
 3. **Do not default an unknown trim level to a progressive action.** Unknown is ignored.

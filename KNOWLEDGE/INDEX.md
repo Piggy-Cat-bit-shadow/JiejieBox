@@ -19,11 +19,12 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | `PROJECT.md` | TASK_MATCH | what the fork is and deliberately did not change |
 | `ARCHITECTURE.md` | TASK_MATCH | the eleven boundaries worth preserving |
 | `PERFORMANCE-FACTORS.md` | TASK_MATCH (speed) | 实测的速度关键参数与因素：三条第一原理、客户端/服务端参数表、症状路由、测量规则、已否决结论（无地址/凭据） |
-| `INVARIANTS.md` | **LOAD_BEARING_ONLY** | A1–A20 hard invariants vs conventions |
+| `INVARIANTS.md` | **LOAD_BEARING_ONLY** | A1–A21 hard invariants vs conventions |
 | `ACCEPTANCE.md` | **VERIFICATION_ONLY** | requirement → evidence → re-check command |
 | `COMMIT-INDEX.md` | **PROVENANCE_ONLY** | the SHAs behind a behaviour, grouped by theme |
 | `REFRESH.md` | **REFRESH_ONLY** | the refresh protocol; not a task mode |
 | `CALIBRATION-2026-10-31.md` | **REFRESH_ONLY** | current delta, validation and inherited limits |
+| `CALIBRATION-2026-10-31-REVIEW.md` | **REFRESH_ONLY** | same-date comprehensive inventory, corrections and open findings |
 | `CALIBRATION-2026-10-29.md` | **REFRESH_ONLY** | preceding calibration and evidence |
 | `CALIBRATION-2026-10-28.md` | **REFRESH_ONLY** | completed calibration scope, evidence and remaining verification limits |
 | `docs/archive/**` | **HISTORY_ONLY** | how we got here; never current truth |
@@ -72,6 +73,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | DNS router, generations, cache commit | `modules/dns-demand.md` | §2 the cache-commit invariant |
 | FakeIP | `modules/dns-demand.md` | §3 |
 | consumer demand | `modules/dns-demand.md` | §4 |
+| the QNAME-wide NXDOMAIN negative cache: what may widen to a name, hit/TTL semantics, capacity, `disable_expire` | `modules/dns-demand.md` | "The QNAME-wide NXDOMAIN negative cache" section |
 | DNS leaks | `modules/dns-demand.md` | §5 DNS leaks and the reach of DNS |
 | the `adblock` DNS action, blocking ad names with a local NXDOMAIN | `modules/dns-adblock-action.md` | §2 syntax, §3 behaviour, §8 placement |
 | `systemd-resolved` goroutine leak | `modules/dns-demand.md` | §6 — fixed; the doc saying otherwise is stale |
@@ -130,6 +132,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | trim, low memory, memory pressure, ReleaseMemory | memory policy | `modules/core-lifecycle-runtime.md` §3; Android ladder `modules/power-mobile-lifecycle.md` §3 |
 | zero-copy, splice, splice defect, buffer pool, batch | buffer ownership | `modules/buffer-ownership.md` §1–2 |
 | FakeIP, cache commit, DNS leak, domain_resolver | DNS | `modules/dns-demand.md` §2–5 |
+| nxdomain, negative cache, negative TTL, QNAME-wide verdict, `nxdomainCache` | the NXDOMAIN name cache | `modules/dns-demand.md` "The QNAME-wide NXDOMAIN negative cache"; invariant `INVARIANTS.md` A21 |
 | adblock, ad blocking, advertising rule-set, NXDOMAIN verdict, negative caching of a blocked name, "why not reject" | the adblock action | `modules/dns-adblock-action.md` §1, §5, §7 |
 | peek, read ownership, fragmented QUIC, unsniffable | sniff | `modules/sniff.md` §2–3 |
 | CONNECT-IP, capsule, DATAGRAM, PREF64, PTB | MASQUE | `modules/masque-connectip.md` |
@@ -140,12 +143,12 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | schema, schema.json, option/schema.go, generated docs, stale generated artifact | the generated-schema chain and its re-check contract | `modules/build-pruning-release.md` §4; `modules/README.md` §Additional ownership and coverage limits (schema row) |
 | release authority, release contract, canonical asset list, asset allowlist, artifact provenance, exact-SHA provenance, checksum, read-back, draft-first, dry-run, `publish-args`, `expected-assets`, `verify-public-release`, single source of release truth | CI and release provenance | `modules/ci-release.md` §1, §5 |
 | pipeline DAG, unwired gate, duplicate gate, gate ownership, which workflow runs what | CI gate ownership | `modules/ci-release.md` §1–2 |
-| SIGPIPE, pipefail, exit-code false negative in a gate | shell-gate correctness | `modules/ci-release.md` §5 |
+| SIGPIPE, pipefail, exit-code false negative in a gate | shell-gate correctness | **history only**: `reports/core/_ci_reaudit.md`; no current module section owns it |
 | Apple source authority, Android AAR provenance, Windows artifact provenance, Unix/macOS release authority | per-platform artifact provenance | `modules/ci-release.md` §5; `modules/libbox-platform-contract.md` §6–7 |
 | Windows daemon, boxdd, Named Pipe, peer authentication, service install, worker, executable identity, signer trust, Authenticode, certificate validity, code-signing EKU, same-file check | the Windows daemon trust boundary | `modules/windows-daemon-security.md` |
 | unwired gate, stale evidence, VERIFIED_CI, SKIP | evidence discipline | `modules/ci-release.md` §2–3; `README.md` §the four status labels |
 | orphan, provenance, patch-id, upstream twin | Git provenance | `BASELINE.md` §the provenance test |
-| tag scheme, annotated tag, release identity | release identity | `BASELINE.md` §release-identity trap |
+| tag scheme, annotated tag, release identity | release identity | `BASELINE.md` §Fork release lineage; §The three traps this repository has already paid for |
 | baseline, delta, "is the KB current?" | baseline | `BASELINE.md` §post-baseline incremental reading |
 
 ## Route by source path
@@ -164,6 +167,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | `common/power` | `modules/power-mobile-lifecycle.md` | §1–2 |
 | `internal/memmetrics` | `modules/power-mobile-lifecycle.md` | §4 |
 | `dns/transport/group` | `modules/dns-demand.md` | §1, §4 |
+| `dns/client_negative.go` — QNAME-wide NXDOMAIN verdicts | `modules/dns-demand.md` | "The QNAME-wide NXDOMAIN negative cache" |
 | `route/rule/rule_action.go` → `RuleActionAdblock`, `dns/router.go` → `walkDNSRules`, `constant/dns.go` → `DefaultDNSNegativeTTL` | `modules/dns-adblock-action.md` | §8 placement, §13 TTL choice |
 | `transport/masque`, `protocol/masque` | `modules/masque-connectip.md` | §1–2 |
 | `protocol/naive`, `transport/http`, `common/httpclient` | `modules/naive-http-transport.md` | §2, §4 |
@@ -184,6 +188,7 @@ second knowledge base. Entries are pointers; the truth lives in the module.
 | Which invariant owns `Scope` teardown? | `INVARIANTS.md` A1 |
 | Which owns leases / "one recovery at a time"? | `INVARIANTS.md` A2 |
 | Which owns buffer ownership? | `INVARIANTS.md` A6, A7 |
+| Which owns NXDOMAIN name-wide widening? | `INVARIANTS.md` A21 |
 | Which owns release re-verification? | `INVARIANTS.md` A12; `ACCEPTANCE.md` §12 |
 | Which owns fail-closed release acceptance? | `INVARIANTS.md` A20 |
 | Which owns the tag-stub rule? | `INVARIANTS.md` A16 |
@@ -206,7 +211,7 @@ report, read the module first and the archive only for how the decision was reac
 | WireGuard lifecycle / census probes | `modules/core-lifecycle-runtime.md` §3; `COMMIT-INDEX.md` |
 | Apple source authority / exact-SHA resolution | `modules/libbox-platform-contract.md` §6 |
 | Android build / AAR pipeline | `modules/libbox-platform-contract.md` §7; `modules/build-pruning-release.md` |
-| Windows runtime / capability gates | `modules/libbox-platform-contract.md` §8; `modules/ci-release.md` |
+| Windows runtime / capability gates | `modules/windows-daemon-security.md` §1, §5; historical `modules/libbox-platform-contract.md` §8 |
 | CI DAG / duplicate gate removal | `modules/ci-release.md` §1–2 |
 | release artifact trust boundary | `modules/ci-release.md` §5; `INVARIANTS.md` A12, A20 |
 | tag handling security | `INVARIANTS.md` A16; `modules/ci-release.md` §5 |

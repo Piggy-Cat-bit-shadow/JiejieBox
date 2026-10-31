@@ -38,7 +38,8 @@ about one row.
 Child repositories and their independent branch tips are part of this knowledge scope; see
 `modules/child-repositories.md` and `REFRESH.md` §25A.
 
-The current delta and limitations are recorded in [the 2026-10-31 calibration](CALIBRATION-2026-10-31.md).
+The current delta and limitations are recorded in [the 2026-10-31 calibration](CALIBRATION-2026-10-31.md)
+and the [comprehensive second pass](CALIBRATION-2026-10-31-REVIEW.md).
 
 ## Reading order
 
@@ -133,11 +134,13 @@ This table is the coarse ownership map.
 | `modules/power-mobile-lifecycle.md` | device axis, sleeps, screen/lock, trims, reuse bands, the timer census |
 | `modules/mtu-and-geometry.md` | the three MTU quantities, packet-size bounds, `common/bufgeom`, the low-memory profile |
 | `modules/libbox-platform-contract.md` | the client-facing ABI surface and the platform boundary |
+| `modules/child-repositories.md` | client gitlinks, nested dashboard, forked Go modules and controlled native pins, child branch heads |
+| `modules/mieru.md` | Mieru inbound/outbound, TCP/UDP underlays, opt-in fallback and session lifecycle |
 | `modules/build-pruning-release.md` | build tags, pruning, release profiles, generators, pins |
 | `modules/ci-release.md` | workflows, gates, evidence, and what may not be claimed |
 
 Fork-wide: `BASELINE.md`, `INDEX.md`, `PROJECT.md`, `ARCHITECTURE.md`, `INVARIANTS.md`,
-`ACCEPTANCE.md`, `COMMIT-INDEX.md`, `REFRESH.md`.
+`ACCEPTANCE.md`, `PERFORMANCE-FACTORS.md`, `COMMIT-INDEX.md`, `REFRESH.md`.
 
 ## What this knowledge base does not cover
 

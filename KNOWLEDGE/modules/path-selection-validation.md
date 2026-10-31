@@ -61,8 +61,9 @@ Linux auto-redirect integration test or a proof for every observer.
 
 **Provenance:** `common/physicalpath` and `common/routeflow` are **fork-created** (absent at
 `e4b7e692`); `protocol/group/loadbalance*.go` and `route/failover.go` are fork additions.
-`common/physicalpath` is the largest fork-original subsystem: **35 commits, 8,543 Go lines
-including 16 test files**.
+`common/physicalpath` is the largest fork-original subsystem: at the v0.1.9 census **35 commits,
+8,543 Go lines including 16 test files**; at `0067b03` it is 37 commits, 9,407 Go lines across 21
+`.go` files (17 test files).
 
 **Load this module when changing:** start-time validation, `detour`, selectors/urltest/loadbalance,
 `destination_dns_ownership`, `PathNode.RequiredNetworks`, or failover.
@@ -143,18 +144,18 @@ dependency names, and it cannot see a route the configuration did not declare.
 
 ## 2. Start-time validation — what is actually checked, and in what order
 
-`adapter/outbound/manager.go` `Start` (`:153-231`) runs, in this order:
+`adapter/outbound/manager.go` `Start` (`:168-263`) runs, in this order:
 
-1. `lintOutbounds` (`:191`) — the dependency-exists check and the acyclic sort.
-2. `validatePhysicalPaths` (`:211-216`) — the reachable-leaf dry run.
-3. `startOutbounds` (`:217`).
+1. `lintOutbounds` (`:210`; definition `:417`) — the dependency-exists check and the acyclic sort.
+2. `validatePhysicalPaths` (`:231`) — the reachable-leaf dry run.
+3. `startOutbounds` (`:249`).
 
 The order matters: the dry run runs **after** the sort so it cannot replace the sort's more precise
 message, and the sort's computed order is passed to `startOutbounds` rather than recomputed.
 
 ### The read-only contract, stated by the code
 
-`manager.go:235-237`: *"It is read-only: it dials nothing, resolves nothing, changes no selection and
+`manager.go:267-268`: *"It is read-only: it dials nothing, resolves nothing, changes no selection and
 consumes no rotation."* Provable from the object graph: `Resolver` (`physicalpath.go`) holds a
 registry lookup, a `Snapshot` and a network name — no dialer or clock on the resolver itself.
 That structure supports the no-dial/no-selection contract; it does not prove the entire validation
@@ -163,7 +164,7 @@ the reported leaf: `TestTheReportedLeafIsTheSelectedLeaf`
 asserts `require.Same` on the registry's object.
 
 Rotation is pinned separately: `TestTheDryRunConsumesNoRotationOnARealStart`
-(`adapter/outbound/manager_physicalpath_test.go:357-373`) asserts committed == 0 **and** previewed == 0.
+(`adapter/outbound/manager_physicalpath_test.go:398-414`) asserts committed == 0 **and** previewed == 0.
 A caller that will not accept even a preview sets `Snapshot.Selections`, or passes `""` to declare the
 member **NOT KNOWABLE** (`TestASnapshotCanSayTheLeafIsNotKnowable`).
 
@@ -176,14 +177,14 @@ mistaken for a verified one (`TestAnUnresolvableDependencyIsUnknownAndNotInvente
 Two real side effects exist on the validation path. Neither dials; both are recorded because the
 blanket claim "read-only" is stronger than the code:
 
-1. `common/dialer/dialer.go:187` calls `deprecated.Report(ctx, OptionMissingDomainResolver)` — a
-   **deprecation log** emitted during start-time validation (reachable: `box.go:555` passes
+1. `common/dialer/dialer.go:217` calls `deprecated.Report(ctx, OptionMissingDomainResolver)` — a
+   **deprecation log** emitted during start-time validation (reachable: `box.go:558` passes
    `newDialer=false`).
 2. `common/dialer/capability.go:100` calls `detourDialer.Dialer()`, which **commits a memoised detour
    resolution** into a `sync.Once` (`common/dialer/detour.go:63`). It resolves a tag → object; it does
    not dial.
 
-Separately, `Box.Status` (`box.go:1318`) **deliberately** takes a live `Selected()` preview. That is a
+Separately, `Box.Status` (`box.go:1396`) **deliberately** takes a live `Selected()` preview. That is a
 status read, not validation.
 
 ### What each check catches
@@ -239,14 +240,14 @@ test is located and run.
 
 ### The one construction side effect
 
-`adapter/outbound/manager.go:156-173`: if `route.final` is empty, a `direct` fallback object is
+`adapter/outbound/manager.go:170-188`: if `route.final` is empty, a `direct` fallback object is
 **created**. That is the only construction on this path.
 
 ---
 
 ## 3. `common/routeflow` — provable demand
 
-`common/routeflow/reach.go` (340 lines, **no test files**).
+`common/routeflow/reach.go` (352 lines, **no test files**).
 
 `Reach(rules, finalOutbound) Demand` (`:95`). `Demand` (`:278-302`) carries `Proven`, `Possible`,
 `Unclaimed`, `Reached`. `Demand.NetworksFor` returns only **`Proven`** (`:302-307`) — never
@@ -265,7 +266,7 @@ Consequences worth knowing:
   (`TestFinalProvesNothingAboutDelivery`) **no longer exists** — if you find it cited in
   `KNOWLEDGE/reports/release/ROUTE_AWARE_OUTBOUND_CAPABILITY_VALIDATION_FINAL.md` §B/§H, that document is superseded there.
 * Provability means scope `Always` **and** `terminates()` (`:214-228`), which mirrors `matchRule`
-  (`route/route.go:1191-1206`).
+  (`route/route.go:1279`).
 * **ICMP is deliberately out** (`:338-347`).
 
 ### The three per-class capability checks
@@ -286,9 +287,9 @@ construction order** (`route/route.go:248`, `:267`), not the validation model.
 
 | Group | `Selected(network)` behaviour | Anchor |
 |---|---|---|
-| `Selector` | Returns the loaded atomic; **ignores the network argument**; `Network()` reports `{tcp,udp}` while unselected (the "blanket") | `protocol/group/selector.go:216-218`, `:159-161` |
-| `URLTest` | Filters per network, reads the history store, **writes nothing back** | `protocol/group/urltest.go:207-224` |
-| `LoadBalance` | Documented as "a pure preview"; delegates to `SelectForFlow(…, commit=false)`; the round-robin branch takes the cursor with `Load()` and only advances with `Add(1)` when `commit` is true | `protocol/group/loadbalance.go:259-261`, `:337-341` |
+| `Selector` | Returns the loaded atomic; **ignores the network argument**; `Network()` reports `{tcp,udp}` while unselected (the "blanket") | `protocol/group/selector.go:232-234` (`Selected`), `:173-179` (`Network`) |
+| `URLTest` | Filters per network, reads the history store, **writes nothing back** | `protocol/group/urltest.go:222-239` (`Selected`; `Select` at `:745+`) |
+| `LoadBalance` | Documented as "a pure preview"; delegates to `SelectForFlow(…, commit=false)`; the round-robin branch takes the cursor with `Load()` and only advances with `Add(1)` when `commit` is true | `protocol/group/loadbalance.go:255-261` (doc), `:262-264` (`Selected`), `:339-344` (cursor) |
 
 **The `commit` flag is the control-plane / physical-plane separation at run time**
 (`route/route.go:218-246`). A preview must not consume a slot: a diagnostic that spent one would
@@ -306,11 +307,11 @@ mutated `loadbalance.go`'s `Selected` to pass `commit=true` and watched
 
 `route/failover.go`:
 
-* `routeDialOwner` (`:45-54`) requires `FailoverEnabled()`.
-* `routeDialDecision` (`:74-93`): **more than one destination address ⇒ no owner** (`:76-78`); a
-  `ConnectionHandler` leaf ⇒ re-resolve with `commit=true` (`:83-91`).
-* `failoverDialer` (`:117-141`) embeds the leaf for tag/network/copy tuning but dials through
-  `group.DialWithFailover` (`:124-126`).
+* `routeDialOwner` (`:49-58`) requires `FailoverEnabled()`.
+* `routeDialDecision` (`:78-97`): **more than one destination address ⇒ no owner** (`:80-82`); a
+  `ConnectionHandler` leaf ⇒ re-resolve with `commit=true` (`:87-95`).
+* `failoverDialer` (type `:121-125`) embeds the leaf for tag/network/copy tuning but dials through
+  `group.DialWithFailover` (`DialContext`/`DialWithFailover` `:141-143`).
 
 At the testing target, the shim explicitly implements `ParallelNetworkDialer`: it carries the
 candidate list, network strategy, interface preferences and fallback delay in the failover context so
@@ -344,18 +345,18 @@ until the owner wires or deletes it."*
 **Two requirement models coexist in the package, and they disagree.** `RequiredNetworks` charges
 **dependency** hops the business network (`leaves.go:480` passes `required` down unchanged); the
 validator **exempts** them (`nodeRequirementFor` returns nil unless `businessEntry`,
-`dryrun.go:460-468`, `:623-625`).
+`dryrun.go:533-539`).
 
 Treat this as a **FOLLOW-UP for the file's owner**, never as a contract. Do not cite it as evidence
 that dependency hops are charged a network.
 
 ### A second, dated contradiction inside `dryrun.go`
 
-`dryrun.go:470-493` is an **orphan comment block** — a blank line at `:469` separates it from
-`nodeRequirementFor`'s closing brace at `:468` — stating that the narrow reading was "tried and
-REVERSED … The union therefore STAYS". The code at `:313-317` implements **exactly** that narrowing
+`dryrun.go:543-556` is an **orphan comment block** — a blank line at `:542` separates it from
+`nodeRequirementFor`'s closing brace at `:541` — stating that the narrow reading was "tried and
+REVERSED … The union therefore STAYS". The code at `:384-387` implements **exactly** that narrowing
 when `!requirementProven` (`effective = selfRequirementFor(node)`), and `selfRequirementFor`'s own doc
-at `:511-516` says the opposite of the orphan comment.
+at `:568-589` says the opposite of the orphan comment.
 
 Proved by commit ordering: `d95e256b7` (2026-10-12 04:49:42) **deletes** `selfRequirementFor` and adds
 the comment; `31f250ff1` (06:08:04) **re-adds** the helper and keeps the comment
@@ -364,14 +365,18 @@ settled. Never re-instate the union.**
 
 ### A diagnostic branch that can never fire
 
-`requirementClause`'s advertised branch (`dryrun.go:947-948`) is **unreachable**:
-`selfRequirementFor` = `decidedNetworks(networksOf(node.Outbound))` (`:517-519`) and
-`decidedNetworks` returns a **subset** (`:765-777`), so when `!requirementProven` the requirement is a
-subset of the node's own `Network()`, and `validateNode`'s step-2 failure (`:814-845`) — the only
-caller (`:819`, `:844`) — cannot fire. Corollary: `HopCheck.RequirementProven` is always true wherever
-a message is built. `box_physicalpath_route_aware_test.go:766` therefore asserts `NotContains` on a
-string that can never appear, and that file's comment at `:733-738` contradicts its own fixture at
-`:749-754` and its own assertions at `:763-768`.
+`requirementClause`'s advertised branch (`dryrun.go:1016-1023`) is **unreachable**:
+`selfRequirementFor` = `decidedNetworks(networksOf(node.Outbound))` (`:590-592`) and
+`decidedNetworks` returns a **subset** (`:838-850`), so when `!requirementProven` the requirement is a
+subset of the node's own `Network()`, and `validateNode`'s step-2 failure (`:862-920`) — the only
+caller (`:893`, `:918`) — cannot fire. Corollary: `HopCheck.RequirementProven` is always true wherever
+a message is built.
+
+The current test file tells this story accurately and **no longer asserts the unreachable string**:
+`box_physicalpath_route_aware_test.go` puts `NotContains` at `:738-740`, and its comment at `:743-753`
+explicitly says the objects-only wording "is therefore unreachable through this shape". The fixture at
+`:757-768` only asserts that Start succeeds and no proof is claimed. Do not revive the old
+"comment contradicts its own fixture/assertions" description — that contradiction is gone.
 
 ---
 
@@ -401,13 +406,13 @@ deny** (`cross_kind_cycle.go:288-294`); omitting it accepted a cycle that hangs 
 
 | Seam | Consumer | Anchor |
 |---|---|---|
-| `EnablePhysicalPathValidation` | `box.New` | `manager.go:86` ← `box.go:504` |
-| `SetResolverAuthority` | `box.New` | `manager.go:112` ← `box.go:541` |
-| `EnablePhysicalPathDelivery` | **only** after `router.Initialize` succeeds | `manager.go:134` ← `box.go:601` |
-| `SetDefaultDomainResolver` | `box.New` | `manager.go:50` ← `box.go:616` |
-| `ValidateRoots` | `Manager.Start` | `dryrun.go:186` ← `manager.go:333` |
+| `EnablePhysicalPathValidation` | `box.New` | `manager.go:101` ← `box.go:507` |
+| `SetResolverAuthority` | `box.New` | `manager.go:127` ← `box.go:544` |
+| `EnablePhysicalPathDelivery` | **only** after `router.Initialize` succeeds | `manager.go:149` ← `box.go:622` |
+| `SetDefaultDomainResolver` | `box.New` | `manager.go:54` ← `box.go:637` |
+| `ValidateRoots` | `Manager.Start` | `dryrun.go:256` ← `manager.go:365` |
 
-`box.go:593-601` states that `EnablePhysicalPathDelivery` is called only after `router.Initialize`
+`box.go:616-622` states that `EnablePhysicalPathDelivery` is called only after `router.Initialize`
 succeeds, because that is the only point where route-proved delivery is derivable from the
 **compiled** rules.
 

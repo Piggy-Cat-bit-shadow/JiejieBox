@@ -67,11 +67,11 @@ Exactly four metadata fields: `Client`, `Domain`, `Protocol`, `SniffContext`.
 | S2 | `segments` are views captured **once**, with the newest slot re-read after each `ReadOnceFrom` | `sniff.go:132-137`, `:162` | a one-segment-per-read assumption reads a stale segment |
 | S3 | The cursor is **rewound, not rebuilt**, between rounds | `sniff.go:186` | an allocation per round, and divergence between sniffers |
 | S4 | The read deadline is **set and cleared around each read** | `sniff.go:146-151` | a leaked deadline poisons the connection for later reads |
-| S5 | The buffer comes from the **caller** (`buf.NewPacket()`, 16 KiB), and `ReadOnceFrom` returns `io.ErrShortBuffer` when full | `route/route.go:1241`; `buffer.go:137-144` | the 16 KiB ceiling is PeekStream's byte ceiling — do not "raise" it casually |
+| S5 | The buffer comes from the **caller** (`buf.NewPacket()`, 16 KiB), and `ReadOnceFrom` returns `io.ErrShortBuffer` when full | `route/route.go:1401` (stream) / `:1525` (packet) | the 16 KiB ceiling is PeekStream's byte ceiling — do not "raise" it casually |
 | S6 | `takePacketBytes` returns a **view into the caller's datagram**, valid only while the datagram lives | `quic.go:36-54` | a retained DCID / PN sample reads recycled memory |
-| S7 | QUIC's working copy `newPacket` is a **fresh packet-sized `make`, deliberately not pooled**; the decrypted buffer aliases `newPacket` | `quic.go:183-184`, `:226` | pooling it makes a fragment outlive its owner; see S8 |
-| S8 | Retained `qCryptoFragment.payload` **aliases `newPacket`, never the caller's datagram**; the reassembly buffer is released by `defer` | `quic.go:305-306`, `:341-342`, `:472-476` | a retained fragment survives `Release` of the datagram |
-| S9 | Header protection writes **4 bytes in place** inside the packet, so a `Length` that cannot reach them is rejected | `quic.go:125-131` (returns `os.ErrInvalid`; `:190-192`) | out-of-bounds write into the datagram tail |
+| S7 | QUIC's working copy `newPacket` is a **fresh packet-sized `make`, deliberately not pooled**; the decrypted buffer aliases `newPacket` | `quic.go:184`, `:227` | pooling it makes a fragment outlive its owner; see S8 |
+| S8 | Retained `qCryptoFragment.payload` **aliases `newPacket`, never the caller's datagram**; the reassembly buffer is released by `defer` | `quic.go:306-307`, `:342-343`, `:477-481` | a retained fragment survives `Release` of the datagram |
+| S9 | Header protection writes **4 bytes in place** inside the packet, so a `Length` that cannot reach them is rejected | `quic.go:125-131` (returns `os.ErrInvalid`; `:186-189`) | out-of-bounds write into the datagram tail |
 | S10 | `PeekPacket`'s success path is allocation-free (two local error slots, then a slice only on failure) | `sniff.go:205-236` | an allocation per datagram in the packet hot path |
 
 How S6–S8 are proved (this is unusually strong evidence, and it is why the copy boundary can be
@@ -92,22 +92,22 @@ coalesced tail.
   `io.ErrShortBuffer` on the 16 KiB buffer;
 * the aggregate is built only on the **terminating** round (`:154-163`, `:191`).
 
-### Packet, and fragmented QUIC (`route/route.go:1274-1421`)
+### Packet, and fragmented QUIC (`route/route.go:1372-1650`)
 
-1. The first round replays the already-captured `inputPacketBuffers` (`:1292-1315`).
+1. The first round replays the already-captured `inputPacketBuffers` (`:1488-1522`).
 2. Continuation is `errors.Is(err, ErrNeedMoreData)` (`:1309`, `:1394`).
-3. **Once "need more", later rounds run `sniff.QUICClientHello` ONLY** (`quicMoreData()` `:1281-1283`;
-   branches `:1293-1299`, `:1372-1378`). This is why a fragmented QUIC ClientHello does not re-run the
+3. **Once "need more", later rounds run `sniff.QUICClientHello` ONLY** (`quicMoreData()` `:1477-1479`;
+   branches `:1489-1502`, `:1579-1592`). This is why a fragmented QUIC ClientHello does not re-run the
    whole packet plan on every continuation datagram.
 4. Each round reads a fresh 16 KiB `buf.NewPacket()` in a goroutine with its own deadline
-   (`:1316-1357`).
+   (`:1523-1564`).
 5. **Bound: `maxSniffRounds = 64`** (`route/route.go`, `actionSniff`). This bounds newly read
    continuation rounds, not the preceding replay of `inputPacketBuffers`. On hitting the cap the
    just-taken buffer is **released** and the flow is treated as unsniffable.
 6. Other exits: per-round deadline (`:1349-1355`), context cancel (`:1358-1364`), a non-timeout read
    error (`:1365-1370`), any non-need-more verdict (`:1394-1400`).
 
-The comment at `:1322-1339` records the **measured** pre-fix growth: 1,000 crafted datagrams retained
+The comment at `:1529-1546` records the **measured** pre-fix growth: 1,000 crafted datagrams retained
 1,000 buffers (+16.7 MB live), and per-round QUIC buffer grew from 33 KB to 1.06 MB — 541,710,584
 bytes allocated for 1,083,915 bytes of input.
 
@@ -126,16 +126,16 @@ Do not generalize a parser failure's handling to all I/O failures (`route/route.
 
 ## 4. The sniff → routing contract
 
-* A sniffed domain reaches routing through `resolveLookupName` (`route/route.go:1503-1535`), with UoT
-  sentinels excluded (`:1530-1533`) and strict validation via `validSniffedDomain` (`:1544-1565`).
-* `metadata.DestinationAddresses` (`:1493`) is consumed as **dial candidates**
+* A sniffed domain reaches routing through `resolveLookupName` (`route/route.go:1725-1762`), with UoT
+  sentinels excluded (`:1757-1760`) and strict validation via `validSniffedDomain` (`:1764-1802`).
+* `metadata.DestinationAddresses` (`:1720`) is consumed as **dial candidates**
   (`route/conn.go:284-285`, `:523-531`, `:562-563`; `common/dialer/default_parallel_network.go:15-35`).
 * Sniffing alone does not rewrite `Destination`; an explicit, deprecated per-action
   `OverrideDestination` is the sniff-related exception, with port preserved.
 * Separately, FakeIP reverse mapping in `route/route.go` saves `OriginDestination`, sets
   `Destination.Fqdn` to the mapped name and marks `FakeIP`. This translation is not a sniff override.
 * A sniffed domain **disqualifies the Direct Offload fast path**:
-  `BypassRefusedSniffedDomain` (`route/route.go:791-796`, `route/bypass_verdict.go:29`, `:54`).
+  `BypassRefusedSniffedDomain` (`route/route.go:832-833`, `route/bypass_verdict.go:23`, `:49`).
 * `metadata.Domain` is not the only representation of a known domain: the current FakeIP path can
   leave it empty while setting `FakeIP` and `Destination.Fqdn`. See
   `packetSniffUsesKnownFakeIPDomain` for the exact accepted cases.
@@ -191,7 +191,7 @@ is exactly why the memory-amplification fix needed a different test than behavio
   classified as SSH with a truncated client string. The fragmentation baseline test documents this
   limitation; do not treat the recorded `Client` as necessarily complete.
 * **QUIC** — cryptographic: the ClientHello must **authenticate** (`quic.go:159-229`).
-  **Known unfixed false positive:** `frames.count == 1 ⇒ ClientFirefox` (`quic.go:368-371`), so a
+  **Known unfixed false positive:** `frames.count == 1 ⇒ ClientFirefox` (`quic.go:373-375`), so a
   three-fragment Chrome ClientHello is reported as Firefox. `quic_ownership_test.go:271-280` logs it
   as MEASURED and says the fix was out of scope. **Do not report this as a fork regression and do not
   "fix" it without an interop story.**
@@ -233,9 +233,9 @@ Historical audit benchmarks (not re-measured by the 2026-10-28 calibration): `Pe
 | `912778dd6` | FIX | adds the WireGuard sniffer; reorders WireGuard before UTP (`sniff.go:59-67`, `route/rule/rule_action.go:537-540`, `:547`) |
 | `91577eaa2` | PERF | HTTP gate + replay reader (`http.go:28-241`) |
 | `4dff25c90` | PERF | `takePacketBytes` returns views (`quic.go:36-54`) |
-| `9167595c7` | PERF | `frameSummary` replaces a frame-type slice (`quic.go:407-470`) |
+| `9167595c7` | PERF | `frameSummary` replaces a frame-type slice (`quic.go:422-475`) |
 | `bfe721454` | PERF + HARDENING | packet-bounded copy (`quic.go:118-124`, `:183-188`) **and** the `Length` lower-bound guard (`:125-131`); a port of `1b0cedf40` |
-| `578663e0` | HARDENING + FIX | `maxSniffRounds = 64` and release-on-abandon (`route/route.go:1211-1217`, `:1340-1347`); releases the pooled 16 KiB buffer on `matchRule`'s error path (`:390-403`) |
+| `578663e0` | HARDENING + FIX | `maxSniffRounds = 64` and release-on-abandon (`route/route.go:1347-1353`, `:1547-1553`); releases the pooled 16 KiB buffer on `matchRule`'s error path (`:390-403`) |
 | `1292a85a5` | TEST | the `wireguard.go` comment block — **0 non-comment added lines**, verified |
 | `a05a6954f` | UPSTREAM-ABSORBED | "Fix DNS sniffer matching non-DNS packets" — `dns.go` is byte-identical at both ends; **do not attribute `verifyDNSQueryHeader` to the fork** |
 | `b93c30f2a` | UPSTREAM-ABSORBED | "Fix protocol input validation" — `quic.go:302-304`'s CRYPTO length guard and `:351` are present at `e4b7e692` |
@@ -250,7 +250,7 @@ reachability: the fork re-applied upstream patches that its own baseline already
 
 1. **Never make the QUIC working copy (`newPacket`) pooled or cross-call.** It is a fresh per-call
    `make` precisely so a retained fragment cannot outlive a released datagram (`quic.go:183-184`,
-   `:472-476`).
+   `:477-481`).
 2. **Never drop the `currentPacketEnd < hdrLen+4` guard.** The header-protection unmask writes 4 bytes
    in place (`quic.go:125-131`).
 3. **Never unmask inside the caller's datagram.** Every boundary test asserts the input is
@@ -268,8 +268,8 @@ reachability: the fork re-applied upstream patches that its own baseline already
 10. **Never tighten the UTP check or start inspecting WireGuard bytes 4–147**
     (`wireguard.go:54-71`). The ambiguity is documented and structural.
 11. **Never rewrite `Destination` from a sniffed domain** outside the deprecated
-    `OverrideDestination` (`route/route.go:1437-1444`), and never resolve a sniffed name without
-    `validSniffedDomain` (`:1544-1565`).
+    `OverrideDestination` (`route/route.go:1421-1425`), and never resolve a sniffed name without
+    `validSniffedDomain` (`:1764-1802`).
 12. **Do not infer the entire FakeIP state from `metadata.Domain`.** Current reverse mapping can
     carry the known domain in `Destination.Fqdn` instead.
 13. **Never use `runtime.NumGoroutine` for the leak census** (`sniff_stream_test.go:21-47`, `:89-126`);

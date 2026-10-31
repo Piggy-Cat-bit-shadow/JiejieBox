@@ -8,12 +8,12 @@ the two. Both decisions are per flow, but they answer different questions.
 **Scope:** `common/dialer/profile.go`, `protocol/direct/outbound.go`, `route/bypass_verdict.go`,
 `common/trafficclass`, `common/trafficsched`, `route/dial_governor.go`, `route/traffic_class.go`.
 
-**Provenance:** `common/trafficsched` (30 commits, 18 files) and `common/trafficclass` are
+**Provenance:** `common/trafficsched` (31 commits, 18 files at `0067b03`) and `common/trafficclass` are
 **fork-created**; `traffic_scheduler` and `traffic_class` **do not exist in official sing-box**, so a
 configuration using either is not loadable upstream. Direct Offload is a fork extension whose
 eligibility rules are *stricter* than upstream's.
 
-**This subsystem is CI-critical:** `verify.yml:310` runs a dedicated `-race` step over
+**This subsystem is CI-critical:** `verify.yml:486` runs a dedicated `-race` step over
 `./common/trafficclass/... ./common/trafficsched/... ./common/dialer/... ./protocol/direct/...`, and
 `scripts/ci/verify-upstream-assumptions.sh` carries a tripwire inventory for it
 (`docs/UPSTREAM-SYNC.md`).
@@ -66,6 +66,10 @@ applied**, not off the field names.
 | Resolution only | `domain_resolver`, `domain_strategy` | Consulted only when a name is resolved — see the exception |
 | Ignored | `udp_fragment_default` | The direct constructor sets it; treating it as an operator statement would refuse every direct outbound in this fork |
 
+**Scope refusals are not option classifications.** `BlockerNetworkUnsupported` and
+`BlockerDestinationInvalid` come from the flow's target (`common/dialer/profile.go:152-153`), and
+`BlockerLocalFamilyUnavailable` from the machine; they are attributed in A.8/A.9, not in this table.
+
 **The exception that is easy to get wrong:** a **hard single-family** strategy (`ipv4_only`,
 `ipv6_only`) filters the **literal** destination too — the dial path applies it to the original
 attempt, not only to resolved candidates. A profile that stopped at "a literal needs no resolver"
@@ -93,14 +97,14 @@ permits everything.
 
 > **L1 does not bypass in TUN mode.** `tun.ActionBypass` is honoured by the Linux nfqueue handler,
 > where it maps to `NfRepeat` with the output mark and the packet leaves by its original path. In every
-> TUN stack the pinned sing-tun fork provides, `flow_dispatch.go:398-438` sends `ActionBypass` to its
-> `default:` arm → `installAccept` (`:435-437`, `:449`), and all three stacks use that one dispatcher
-> (`stack_system.go:267`, `stack_go.go:190`, `stack_gvisor.go:103`). Only `nfqueue_linux.go:284-285`
+> TUN stack the pinned sing-tun fork provides, `flow_dispatch.go:575-615` sends `ActionBypass` to its
+> `default:` arm → `installAccept` (`:612-613`, `:625`), and all three stacks use that one dispatcher
+> (`stack_system.go:274`, `stack_go.go:202`, `stack_gvisor.go:103`). Only `nfqueue_linux.go:334-335`
 > honours it.
 >
 > Two caveats a reader should carry: **the gVisor stack is retired by build tag**
-> (`cmd/internal/build_libbox/tag_policy_test.go:16-83`; `go.mod:337-359`), and
-> `stack_gvisor_icmp.go:124`, `:186` groups `ActionBypass` with `ActionFlow` — but a **Port-less**
+> (`cmd/internal/build_libbox/tag_policy_test.go:16-83`; `go.mod:367-386`), and
+> `stack_gvisor_icmp.go:126`, `:188` groups `ActionBypass` with `ActionFlow` — but a **Port-less**
 > verdict, which is what `adapter/router.go:131` emits, falls through identically to accept.
 >
 > **So for a TUN client, the eligibility decision has no data-plane effect.** A flow it marks
@@ -132,7 +136,7 @@ about detecting DoH/DoT/DoQ and does not block UDP/443 to intercept QUIC.
 ### A.6 Two silent no-ops that were fixed — trap material
 
 * A bypass carrying the direct outbound's **ICMP `Port`** was rewritten to `ActionFlow` by the pinned
-  sing-tun's `judgeAndInstall` (`ff80ddea6`). The ruling: `ActionBypass` carrying a `Port` is
+  sing-tun's `ForwardStage.judge` (`flow_dispatch.go:432-434`). The ruling: `ActionBypass` carrying a `Port` is
   rewritten to `ActionFlow`; a bypass silently becoming a userspace flow is how the bug reached
   production once already. Guarded by `TestBypassWithAPortBecomesAFlow` (`protocol/tun`) and
   `fast_bypass_verdict_test.go` (`route`).
@@ -177,15 +181,15 @@ Cost, from `route/direct_offload_bench_test.go` on an Apple M1:
 | UDP per datagram (1400 B) | ~66 ns, 1 alloc |
 
 > **The "userspace flow setup" row is a known-bogus number and is quoted here only to be retired.**
-> `route/direct_offload_bench_test.go:135-138` names it: the old benchmark measured its own `net.Pipe`
+> `route/direct_offload_bench_test.go:139-141` names it: the old benchmark measured its own `net.Pipe`
 > fixture, *"reported 26 allocations and 2856 B per operation, and the code under test was none of
 > them. A benchmark whose number describes its own fixture is worse than no benchmark, **because it is
 > quoted**."* It was fixed by `22d46966c` two days **after** the document quoted it, and
-> `docs/fork/direct-offload.md:210` still carries it. Re-measured: **104 B, 2 allocs**. The other rows
+> `docs/fork/direct-offload.md:225` still carries it. Re-measured: **104 B, 2 allocs**. The other rows
 > are historical M1 figures and reproduce only loosely on other hardware — re-measure before quoting.
 >
 > **The one cost claim with real suite enforcement is a `TEST`**, not a benchmark:
-> `TestBypassDecisionUsesNoAllocations` (`direct_offload_bench_test.go:351`) uses four
+> `TestBypassDecisionUsesNoAllocations` (`direct_offload_bench_test.go:354`) uses four
 > `testing.AllocsPerRun` + `require.Zero` calls covering `canFastBypass`, `CanBypass`, a FakeIP
 > **refusal**, and the profile lookup.
 
@@ -229,7 +233,10 @@ managed domain by construction).
 
 * `route.BypassVerdict` names the router condition that refused.
 * `(*direct.Outbound).BypassBlockers` names the socket-level reason set behind `CanBypass`, including
-  the ambient network policy and the self-address guard.
+  the ambient network policy and the self-address guard. It also carries
+  `BlockerLocalFamilyUnavailable`: the **host has no interface for the destination family**
+  (`common/dialer/profile.go:106-119`). That is a property of the machine, not of the outbound's
+  options, and is distinct from the configured `BlockerFamilyStrategy` — do not fold the two together.
 
 Both are diagnostics. **Nothing logs per flow**, and the decision builds no strings.
 
@@ -368,7 +375,7 @@ mistake.**
 ### B.4b The mode ladder — and the only mode that ships
 
 Four modes exist (`common/trafficsched/scheduler.go:29-51`). **The only production reference to any
-mode is `route/conn.go:102` = `ModePaced`.** The other three exist only in tests and the manual
+mode is `route/conn.go:147` = `ModePaced`.** The other three exist only in tests and the manual
 harness, as measured control groups. `option/traffic_scheduler.go` has **exactly one field**
 (`UploadRate`, `:50`) — **there is no `mode` key, and adding one would expose a mode that was measured
 as indistinguishable from doing nothing.**
@@ -420,7 +427,7 @@ the same moment and is re-dialled at the same moment — a thundering herd of TC
 handshakes landing while the radio is already busy re-establishing.
 
 **The constants:** window **3 s**, slot limit **24**, budget **500 ms**. The window is opened **only
-by a draining transition** (`route/conn_reclaim.go:313-317`) and applied at `route/conn.go:274`, `:518`.
+by a draining transition** (`route/conn_reclaim.go:348-352`) and applied at `route/conn.go:384`, `:632`.
 
 **Outside the window there is nothing to bound.** The zero value is inert, and this is provable rather
 than asserted: `open := time.Now().Before(g.windowEnd)` is **false for the zero `time.Time`**, so

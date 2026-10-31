@@ -38,8 +38,10 @@ subsequent direct Scope close waiting; `Box.Close` recovers and records an error
   owners can also close resources; missing a direct `scope.Add` alone does not prove a leak. Making
   late cleanup asynchronous changes when that late resource is released.
 * **Breaks if violated:** a torn-down `*Inbound` keeps an observer; a listener binds after the drain.
-* **Proof:** `adapter/lifecycle.go:112-138`, `:186-217`; `adapter/lifecycle_close_boundary_test.go`;
-  commits `53a3f97e8`, `f2c728d10`, `e3349044a`.
+* **Proof:** `adapter/lifecycle.go:112-138`, `:218-283`; `adapter/lifecycle_close_boundary_test.go`;
+  commits `53a3f97e8`, `f2c728d10`, `e3349044a` — **these three SHAs are not resolvable in this clone**
+  (pre-rewrite history; they appear only in `docs/fork/lifecycle-scope-*.md`). The source anchors and
+  tests are the current proof.
 * **Re-check:** `go test -count=1 ./adapter/...`
 * **Kind:** lifecycle bug guard. **Owner:** `modules/core-lifecycle-runtime.md`
 
@@ -368,6 +370,26 @@ job or step also must not be reported as proving a layer that it explicitly skip
   `verify-release-acceptance.sh`; `release-contract-verify.yml` self-test; `check-libbox-abi.sh
   --pin-only` + `client-apple.yml` for the ABI pin.
 * **Kind:** release-artifact integrity. **Owner:** `modules/ci-release.md`
+
+### A21 — NXDOMAIN widens to the QNAME only when the response proves the name does not exist
+
+Only a single-question, empty-answer `NXDOMAIN` carrying a non-zero `min(SOA TTL, SOA MINIMUM)` may
+enter `nxdomainCache`. NODATA, `SERVFAIL`/`REFUSED`/`FORMERR`, timeouts, transport errors and
+CNAME-terminal answers never widen. A hit is rebuilt for the **current** question and reports the
+remaining TTL; the key keeps transport, client-subnet and environment scoping, and the verdicts are
+never persisted. The `rewrite_ttl`-versus-zero-header-TTL interaction is an **open source question**
+(see `modules/dns-demand.md`), not part of this invariant's proof.
+
+* **Why:** RFC 2308 makes `NXDOMAIN` a statement about the name. Widening anything weaker turns a
+  transient upstream fault or a type-specific absence into a name-wide outage, and a CNAME target's
+  absence into the alias's.
+* **Breaks if violated:** A/AAAA/HTTPS queries for an existing name fail locally; one resolver fault is
+  amplified to every QTYPE; an answer about one question is replayed as another.
+* **Proof:** `dns/client_negative.go:139` (`storeNXDomain` guards), `:205` (`loadNXDomain`), `:254`
+  (`nxdomainResponseFor`); `dns/client_negative_test.go` (23 `TestNXDomain_*` tests).
+* **Re-check:** `go test -count=1 -run TestNXDomain ./dns/` — **not run** in the 2026-10-31 review
+  (no Go toolchain): `BLOCKED_BY_ENVIRONMENT`, not a pass.
+* **Kind:** protocol correctness. **Owner:** `modules/dns-demand.md`
 
 ---
 

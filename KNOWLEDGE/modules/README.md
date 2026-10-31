@@ -25,7 +25,8 @@ carries its own source anchors, provenance and evidence level.
 | Any zero-copy, allocation, buffer pool, batch ownership, splice question | `buffer-ownership.md` |
 | Sleep/wake/screen/lock, memory trim, device axis, `ReuseSuspect`, power policy | `power-mobile-lifecycle.md` |
 | A libbox export, `SetupOptions`, CommandServer API, ABI version, Apple/Android tag set | `libbox-platform-contract.md` |
-| Build tags, protocol pruning, release profiles, generators, CI gates, release artifacts | `build-pruning-release.md` |
+| Build tags, protocol pruning, release profiles, generators, pins | `build-pruning-release.md` |
+| CI gates, workflow ownership, release artifacts and provenance | `ci-release.md` |
 | MTU, packet size bounds, buffer geometry, low-memory profile | `mtu-and-geometry.md` |
 
 All files in this map exist at the knowledge revision; the map and the modules are committed
@@ -88,7 +89,7 @@ What the fork added on top is documented per module with provenance.
 
 | Area | Coverage and limits |
 |---|---|
-| **`experimental/boxdd/**` — the Windows daemon** (52 `.go` files + a `.proto`) | **OWNED — `windows-daemon-security.md`.** Previously registered here as "the largest gap". It is the daemon/service/worker/peer-authentication surface: the named-pipe handshake, executable path and same-file resolution, the signer-byte-equality pin, the Authenticode allowlist, service installation and the updater. It is **not** upstream code and **not** covered incidentally by `libbox-platform-contract.md`, which records the client-facing ABI rather than the daemon's authorisation model. **CROSS-MODULE:** `daemon/**` (the in-process core API) → `libbox-platform-contract.md`; `cmd/internal/build_boxdd` and packaging → `build-pruning-release.md` + `ci-release.md` §5; `clients/desktop/**` is a separate repository. |
+| **`experimental/boxdd/**` — the Windows daemon** (55 `.go` files — 51 non-test — plus one `.proto`) | **OWNED — `windows-daemon-security.md`.** Previously registered here as "the largest gap". It is the daemon/service/worker/peer-authentication surface: the named-pipe handshake, executable path and same-file resolution, the signer-byte-equality pin, the Authenticode allowlist, service installation and the updater. It is **not** upstream code and **not** covered incidentally by `libbox-platform-contract.md`, which records the client-facing ABI rather than the daemon's authorisation model. **CROSS-MODULE:** `daemon/**` (the in-process core API) → `libbox-platform-contract.md`; `cmd/internal/build_boxdd` and packaging → `build-pruning-release.md` + `ci-release.md` §5; `clients/desktop/**` is a separate repository. |
 | `option/schema.go` → `docs/schema.json` (the generated artifact) | The chain is: `option/schema.go` and the option structs → `schema.Generate` (`cmd/sing-box/cmd_schema.go:36`) → `make schema` (`Makefile:35-36`) → the tracked `docs/schema.json`. It had drifted - not on `fast_path` (that key is present 83 times), but on `User`: the artifact advertised `Username`/`Password` while the option structs carry `json:"username"` / `json:"password"`, so a consumer following the published schema wrote keys the parser does not accept. Fixed by regenerating the artifact and adding `cmd/sing-box/cmd_schema_artifact_test.go`, which compares `schema.Generate` output with the tracked file exactly; `verify.yml` runs it under the canonical tags. The generation contract is now executable: a change to an option struct that changes the schema fails the test instead of surviving until a manual `make schema`. The consumers are still outside the tree (`docs/configuration/schema.md`, `docs/JIEJIE-SERVER.md`, an editor-schema URL), which is why the gate compares bytes rather than trusting the docs. Evidence: `docs/schema.json`, `cmd/sing-box/cmd_schema_artifact_test.go`, `.github/workflows/verify.yml`; re-check `go test -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" -run TestTrackedSchemaMatchesTheGenerator ./cmd/sing-box`. |
 | `protocol/vless/encryption` | Client boundary covered in `xhttp-client-transport.md`; wire-level interop remains separately evidenced. Some ABI checks carry a `//go:build !race` split. |
 | Individual protocol wire formats (shadowsocks, trojan, tuic, hysteria2, …) | Upstream's. The fork patches specific behaviours; those are called out inside the module that owns the behaviour, not per protocol. |
@@ -105,6 +106,13 @@ If that is empty, it only means those paths have not changed in that range; it d
 the original statements were correct or that dependency pins and cross-module behavior are unchanged.
 Inspect the current source and tests for the claim. If the delta is nonempty, also read the module's
 `AI cautions` and map the changed paths before relying on the old description.
+
+**Line numbers are advisory; symbol names are the locator.** Re-resolve a `file:line` before trusting
+it (locate the symbol's definition with `git grep -n`, rather than searching for the old number).
+The 2026-10-31 review found whole tables
+whose line numbers had drifted while every symbol name stayed valid — the symbols were still a correct
+map, the numbers were not. Do not "fix" a line number by applying a uniform offset: the drift varies
+by file and by insertion point.
 
 Do **not** copy an older tag into this command from memory or from a report. The tag belongs to the
 current production baseline, which is recorded in `BASELINE.md` and **moves**; a stale tag here turns

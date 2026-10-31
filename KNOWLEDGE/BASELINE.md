@@ -12,7 +12,8 @@
 | Knowledge revision | `git log -1 --format=%H -- KNOWLEDGE/BASELINE.md` |
 | Post-baseline delta | `git diff --name-only 0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28..HEAD` |
 
-See [the 2026-10-31 calibration](CALIBRATION-2026-10-31.md) and prior ledgers for scope and
+See [the 2026-10-31 calibration](CALIBRATION-2026-10-31.md), its
+[comprehensive second pass](CALIBRATION-2026-10-31-REVIEW.md), and prior ledgers for scope and
 inherited limits. Run evidence is SHA- and job-specific; source review or CI does not prove real-device
 behavior. Child source pins and independently observed branch heads are separate facts.
 

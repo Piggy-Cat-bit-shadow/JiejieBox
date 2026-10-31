@@ -106,7 +106,7 @@ proven; `RequiredNetworks` is write-only.
 three `= NO` verdicts were later closed); two `docs/fork/v016-*` reports still declaring J-1/J-2/J-3
 "NOT IMPLEMENTED" when all three exist.
 
-**Evidence:** 10 root `box_static_validation_*_test.go` files, 6 `box_physicalpath_*_test.go`,
+**Evidence:** 10 root `box_static_validation_*_test.go` files, 5 `box_physicalpath_*_test.go`,
 `box_cross_kind_cycle_test.go`, 16 `common/physicalpath` test files, and four recorded **mutation**
 controls.
 

@@ -38,8 +38,10 @@ independent second account. `resolveFallbackOptions` validates this before build
 The outbound holds independent primary and secondary SDK runtimes. Preference changes select a
 transport for **new** sessions and do not themselves close existing sessions. The first cooldown is
 30 seconds, increases after unsuccessful recovery probes, and is bounded at five minutes; recovery is
-demand-driven, not a background polling loop. The selector permits one recovery probe for a generation
-and discards stale-generation reports. The primary can retry the secondary once when the classified
+demand-driven, not a background polling loop. The selector permits **one concurrent recovery probe
+per cooldown window** and discards stale-generation reports; a failed probe clears `probing`, so a
+later probe is allowed after the doubled cooldown in the same generation — there is no per-generation
+probe cap (`fallback.go:485-503`, `:528-538`). The primary can retry the secondary once when the classified
 failure permits it; a target SOCKS rejection, caller cancellation or ambiguous TCP EOF is not proof
 that the transport is unhealthy. Endpoint address preparation failure can justify trying a distinct
 backup endpoint without labeling the primary network path broken. UDP SOCKS-response EOF has its own
