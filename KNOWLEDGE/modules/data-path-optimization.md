@@ -25,13 +25,13 @@
 
 **来源（Provenance）：** `common/trafficsched`（31 个提交、`0067b03` 处 18 个文件）与 `common/trafficclass` 均为 **fork 创建**；`traffic_scheduler` 与 `traffic_class` **在官方 sing-box 中不存在**，所以只要配置用了其中任何一个，上游就加载不了。Direct Offload 是 fork 扩展，资格规则比上游*更严格*。
 
-**本子系统对 CI 至关重要：** `verify.yml:486` 对 `./common/trafficclass/... ./common/trafficsched/... ./common/dialer/... ./protocol/direct/...` 运行一个专用的 `-race` 步骤；`scripts/ci/verify-upstream-assumptions.sh` 还为其维护一份绊线（tripwire）清单（`docs/UPSTREAM-SYNC.md`）。
+**本子系统对 CI 至关重要：** `verify.yml:486` 对 `./common/trafficclass/... ./common/trafficsched/... ./common/dialer/... ./protocol/direct/...` 运行一个专用的 `-race` 步骤；`scripts/ci/verify-upstream-assumptions.sh` 还维护一份用于检测上游变动的检查清单（tripwire）（`docs/UPSTREAM-SYNC.md`）。
 
-**在改动以下内容时加载本模块：** `traffic_scheduler.upload_rate`、`traffic_class`、旁路（bypass）决策、TUN `ActionBypass` 处理，或任何“让操作系统来路由这个”的优化。
+**在改动以下内容时加载本模块：** `traffic_scheduler.upload_rate`、`traffic_class`、旁路（bypass）决策、TUN `ActionBypass` 处理，或任何将流量处理交给操作系统的优化。
 
 ---
 
-## Part A — 直接卸载（Direct Offload）
+## Part A — Direct Offload
 
 ### A.1 规则（The rule）
 
@@ -67,21 +67,21 @@ SEMANTIC EQUIVALENCE, NOT CONFIG EMPTINESS
 | 始终 | `detour`, `bind_interface`, `inet4/6_bind_address`, `bind_address_no_port`, `protect_path`, `routing_mark`, `netns`, `connect_timeout`, `network_strategy`, `network_type`, `fallback_network_type`, `fallback_delay` | 一次绑定、一个 mark、一个命名空间、一个拨号截止时间或接口选择——平台自行执行 connect 时都无法复现 |
 | 仅 TCP | `tcp_fast_open`, `tcp_multi_path`, `disable_tcp_keep_alive`, `tcp_keep_alive`, `tcp_keep_alive_interval` | 作用于 TCP 拨号器；经同一出站的 **UDP** 流仍然只是一次普通 connect |
 | 仅 UDP | `reuse_addr`, udp source port, `udp_fragment` | `reuse_addr` 会到达 `listenConfig`，从不进入 `dialer.Control`；`udp_fragment` 是数据报套接字选项 |
-| 仅解析 | `domain_resolver`, `domain_strategy` | 只在解析名称时被咨询——见例外 |
+| 仅解析 | `domain_resolver`, `domain_strategy` | 只在解析名称时使用——见下方例外 |
 | 忽略 | `udp_fragment_default` | direct 构造函数会设置它；若把它当作运维者的显式声明，本 fork 中每个 direct 出站都会被拒绝 |
 
 **作用域拒绝不属于选项分类。** `BlockerNetworkUnsupported` 与 `BlockerDestinationInvalid` 来自这条流的目标（`common/dialer/profile.go:152-153`），`BlockerLocalFamilyUnavailable` 来自机器本身；它们归在 A.8/A.9，不在这张表里。
 
 **容易误解的例外：** **硬性单族**策略（`ipv4_only`、`ipv6_only`）也会过滤**字面**目标——拨号路径把它用在最初的尝试上，不只是已解析的候选。profile 若停在“字面地址不需要解析器”，就会放过一条用户态路径本该拒绝拨号的连接。所以有效策略要向**活动拨号器**询问，而且只有*限制性*策略才算数：`prefer_ipv4` 只是偏好，什么都允许。
 
-### A.4 两次失败即拒绝（Failing closed, twice）
+### A.4 运行与评审阶段均默认拒绝（Failing closed, twice）
 
 1. **运行时。** 字段已设置却不在分类表里，就会产生 `BlockerUnclassified`；这种遗漏的代价是错过一次优化，而不是丢掉一条套接字语义。
 2. **评审时。** `TestEveryDialerOptionIsClassified` 对选项结构体做反射，每个字段都分类后才会通过，失败消息里会打印各作用域的含义。表里也不得出现已不存在的字段，于是一次重命名不会留下陈旧条目。
 
 ### A.5 存在哪些层，以及旁路实际发生在哪里（Which layers exist, and where a bypass actually happens）
 
-| 层 | 谁承载字节 | 对本进程的每字节成本 | 在何处被兑现 |
+| 层 | 谁承载字节 | 对本进程的每字节成本 | 何处生效 |
 |---|---|---|---|
 | **L0** | 路由集地址策略（`route_address_set` / `route_exclude_address_set`） | 旁路掉的流量不经过用户态路由器 | 非 auto-redirect 的设置可以把前缀传给 TUN 选项；auto-redirect 在路由器预匹配之前评估路由集。实际的路由安装与判定如何生效取决于入口与平台 |
 | **L1** | 路由器的语义旁路——本节 | 零成本，**仅在 redirect 模式**下 | Linux `auto_redirect`（nfqueue） |
