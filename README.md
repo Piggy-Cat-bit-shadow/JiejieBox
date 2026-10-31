@@ -6,6 +6,16 @@ JiejieBox 基于 [sing-box](https://github.com/SagerNet/sing-box) 持续开发�
 
 [下载与更新日志](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) · [Android 客户端](https://github.com/Piggy-Cat-bit-shadow/satelite-one) · [配置文档](docs/configuration) · [反馈问题](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/issues)
 
+## 客户端
+
+| 平台 | 获取与构建方式 |
+| --- | --- |
+| **Windows** | 从 [Releases](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) 下载已发布的 Windows 客户端安装程序。 |
+| **Android** | 使用 [satelite-one](https://github.com/Piggy-Cat-bit-shadow/satelite-one) 仓库中的 Android 客户端。 |
+| **iOS / macOS** | 在 Mac 上使用本仓库的 [TestFlight 发布脚本](scripts/publish-apple-beta.sh) 构建、签名并上传。完整流程见 [Apple TestFlight 构建说明](docs/APPLE-BETA-RELEASE.md)。 |
+
+Apple 平台以 `./scripts/publish-apple-beta.sh` 为入口，使用对应提交的已验证 Libbox，再执行客户端归档、签名和 TestFlight 上传；本地需准备 Apple 签名及 App Store Connect 配置。
+
 ## 项目特点
 
 ### 丰富的协议与传输能力
@@ -69,6 +79,21 @@ DNS 分组提供 `stable`、`fastest`、`parallel` 三种模式：复用稳定�
 - **大型规则集加载**：优化扩容和无缓存场景下的流式读取，减少加载期临时分配，并检查截断、校验和及解压边界。
 - **Direct Offload**：Linux `auto_redirect` 下，满足语义等价条件的直连流可交给系统路由处理；保留逐流资格检查。
 
+优化也包括容易被忽略的边界：数据包交给下一层后由谁释放、批量发送部分成功时哪些数据不能重发、异步 DNS 查询是否仍引用可复用缓冲区，以及网络重置时尚未建立的连接是否能够取消。项目对这些路径分别维护所有权规则和回归测试，降低性能改动带来的丢包、重复发送与资源泄漏风险。
+
+### 已记录的优化效果
+
+以下为项目历史基准与受控实验记录，展示具体优化解决的问题；并非所有设备和真实网络的统一成绩。
+
+| 场景 | 优化前 | 优化后 | 测量范围 |
+| --- | --- | --- | --- |
+| 上传拥塞下高优先级小消息的 p99 延迟 | 146 ms | 9 ms | 4 条普通流竞争 2 MB/s FIFO，聚合整形配置为容量的 85%。 |
+| 持续大流量上传后，首条高优先级消息的 p50 延迟 | 127 ms | 2 ms | 同组实验中的持续整形路径，观察接收端交付延迟。 |
+| 每流活跃缓冲区驻留 Heap | 64.1 KiB | 32.1 KiB | 默认与 `with_low_memory` 编译配置的缓冲区基准。 |
+| 非 HTTP 流量经过 HTTP 嗅探的分配量 / 次数 | 4,889 B / 9 次 | 205 B / 3 次 | DNS-over-stream 样例，比较启用提前排除逻辑前后。 |
+
+原始条件及限制见 [上传调度实验](KNOWLEDGE/modules/data-path-optimization.md#b3-the-four-measurements-that-settled-the-design)、[低内存缓冲区](KNOWLEDGE/modules/mtu-and-geometry.md#4-commonbufgeom--the-geometry-contract) 和 [嗅探测量](KNOWLEDGE/modules/sniff.md#7-evidence)。上传调度需要显式配置速率；低内存配置由构建选择。
+
 ### 复杂代理链更容易检查和定位
 
 - **启动前路径检查**：识别循环依赖、无效引用、截断路径和部分无法满足的能力要求。
@@ -80,9 +105,8 @@ DNS 分组提供 `stable`、`fastest`、`parallel` 三种模式：复用稳定�
 
 项目维护协议互通、真实载荷回环、网络切换、取消与关闭交错、资源所有权和配置边界等测试，并在内核、客户端及依赖 fork 之间固定配套版本。各版本完成的工作与验证范围见 [Release 更新日志](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases)。
 
-## 客户端与文档
+## 文档
 
-- **客户端**：[Android](https://github.com/Piggy-Cat-bit-shadow/satelite-one) · [Apple](https://github.com/Piggy-Cat-bit-shadow/sing-box-for-apple) · [桌面端](https://github.com/Piggy-Cat-bit-shadow/sing-box-for-desktop)
 - **使用文档**：[配置参考](docs/configuration) · [服务端说明](docs/JIEJIE-SERVER.md) · [Naive](docs/naive.md) · [MASQUE](docs/masque.md)
 - **开发文档**：[构建配置](docs/BUILD-PROFILES.md) · [Fork 差异](docs/FORK-DIFF.md) · [关联仓库](FORK_REPOSITORIES.md) · [知识库](KNOWLEDGE/README.md)
 
