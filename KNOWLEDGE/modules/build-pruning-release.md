@@ -214,8 +214,7 @@ with_xhttp, badlinkname`。
 > *"The single deviation from upstream's tag file is the removal of `with_clash_api`, which no longer
 > names any file: the Clash API was deleted from this fork as a control-plane decision."*
 
-（中文：与上游标签文件的唯一偏离是移除该标签，它不再指向任何文件：Clash API 作为一项控制面决策
-已从这个 fork 中删除。）
+（中文：与上游构建标签文件相比，唯一变化是移除了该标签，因为它不再对应任何文件：本 fork 出于控制面设计决定删除了 Clash API。）
 
 **在发布基线上，这三个子句全都是假的。** 该脚本逐字读取
 `release/DEFAULT_BUILD_TAGS`（`:44`、`:49`），而 `with_clash_api` **确实**就在这个文件里；

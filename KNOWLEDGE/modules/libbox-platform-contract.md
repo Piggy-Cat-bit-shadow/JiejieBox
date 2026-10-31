@@ -143,11 +143,11 @@ Go 指针正是 `bulkBarrierPreWrite` 崩溃（§8）。
 | `TrimLevelUnspecified` | 0 | **`TrimIgnore`** —— *"the zero value: no trim was reported. It is **not** Android's level 0."*（`:155-156`）（中文：零值：未上报任何 trim。它**不是** Android 的级别 0。） |
 | `TrimRunningModerate` | 5 | **`TrimIgnore`** —— 建议性（`:158-159`, `:212-213`） |
 | `TrimRunningLow` | 10 | `TrimProgressive`（`:160-161`） |
-| `TrimRunningCritical` | 15 | **`TrimRelease`** —— *"the documented meaning is that a currently-running process will be killed if memory is not released. That is the only Android fact that justifies the reset-shaped pass"*（`:162-164`, `:148-151`）（中文：其文档化含义是，如果不释放内存，当前正在运行的进程将被杀死。这是唯一能证明“重置形态的一趟处理”合理的 Android 事实。） |
+| `TrimRunningCritical` | 15 | **`TrimRelease`** —— *"the documented meaning is that a currently-running process will be killed if memory is not released. That is the only Android fact that justifies the reset-shaped pass"*（`:162-164`, `:148-151`）（中文：其文档化含义是，如果不释放内存，当前正在运行的进程将被杀死。这是唯一能支持执行重置式释放的 Android 状态。） |
 | `TrimUIHidden` | 20 | **`TrimIgnore`**（`:165-170`） |
 | `TrimBackground` | 40 | `TrimProgressive`（`:171-172`） |
 | `TrimModerate` | 60 | `TrimProgressive`（`:173-174`） |
-| `TrimComplete` | 80 | `TrimProgressive` —— *"A reset here would shed the transports of a process that is already going away"*（`:175-178`）（中文：在这里重置会丢弃一个已在退场的进程的传输。） |
+| `TrimComplete` | 80 | `TrimProgressive` —— *"A reset here would shed the transports of a process that is already going away"*（`:175-178`）（中文：此时重置会丢弃正在退出的进程所持有的传输资源。） |
 | 其他任何值 | — | **`TrimIgnore`**（`:211-215` 处的 `default:`） |
 
 **Progressive = 10、40、60、80。Release = 15。Ignore = 0、5、20 以及所有未知值。**
@@ -167,8 +167,7 @@ HTTP 池，下一个请求必须重建，因此对一个含义未知的级别施
 
 **为什么 `TrimUIHidden` 不是内存信号**（`:165-170`）：*"This is a LIFECYCLE fact, not a memory
 reading, and it is deliberately NOT mapped to a trim… the trim callback is not a reliable delivery
-channel for it."*（中文：这是一个生命周期事实，不是一次内存读数，且有意地不映射到 trim……trim 回调并不是
-它的可靠投递通道。）在客户端侧于 `experimental/libbox/platform_events.go:246-250` 重复：
+channel for it."*（中文：这是一个生命周期事实，不是一次内存读数，且有意地不映射到 trim……trim 回调并不能可靠地传递这一状态。）在客户端侧于 `experimental/libbox/platform_events.go:246-250` 重复：
 *"Do not map `TRIM_MEMORY_UI_HIDDEN` to a lifecycle fact here."*（中文：不要在这里把它
 映射为生命周期事实。）
 
@@ -218,8 +217,7 @@ adapter.RecoveryWindow = **90 s**`（`:231`、`adapter/runtime.go:153`）。一�
 **核心侧还承认*客户端侧*存在双驱动，这里引用并标记为 `UNVERIFIED`：**
 `experimental/libbox/platform_events.go:272-277` 记下 Android 也会从
 `ACTION_DEVICE_IDLE_MODE_CHANGED` 驱动 `Pause`/`Wake`，并说明混用两者*"would let a Doze wake lift a pause the
-screen fact still asserts, with neither path knowing."*（中文：会让一次 Doze wake 解除屏幕事实仍然主张的
-pause，而两条路径都不知情。）在 Android 客户端修订 `9d15717a85c5` 上，
+screen fact still asserts, with neither path knowing."*（中文：Doze 唤醒可能解除屏幕状态仍要求保持的暂停，而两条路径都无法察觉这一冲突。）在 Android 客户端修订 `9d15717a85c5` 上，
 `BoxService.kt` 接收 `ACTION_DEVICE_IDLE_MODE_CHANGED`，把 `isDeviceIdleMode` 入队，再在消费者里调用
 `commandServer.pause()` 或 `.wake()`。这确认了那条具体的客户端源码
 路径；它本身并不确立所报告的设备级竞态，也不覆盖所有客户端配置。

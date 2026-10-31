@@ -292,7 +292,7 @@ classify the flow              bound the post-transition        pace the managed
 
 `enter` 返回一个 release 函数，调用方**必须**在包括错误在内的每一条路径上恰好调用它一次。
 
-> **调速器自己的注释有两处不准确，记在这里免得被误“修正”。** `dial_governor.go:23-24` 说*"one atomic-free time comparison takes it out of the dial path entirely"*（中文：一次无原子的时间比较就把它完全移出拨号路径）。这对**优先级**路径成立——`isPriority` 在 `:106-108` 先返回，此时什么都还没取——但**窗口之外的受限类别拨号仍要取两把互斥锁**（`:112` → `settings()` 在 `:183-190` 加锁，然后 `:113`），还会**在第一次这类拨号时分配一个 channel**（`:120-122`）。那条注释描述的是常见的交互路径，不是每一条路径。
+> **调速器自己的注释有两处不准确，记在这里免得被误“修正”。** `dial_governor.go:23-24` 说*"one atomic-free time comparison takes it out of the dial path entirely"*（中文：一次无需原子操作的时间比较就能让它完全退出拨号路径）。这对**优先级**路径成立——`isPriority` 在 `:106-108` 先返回，此时什么都还没取——但**窗口之外的受限类别拨号仍要取两把互斥锁**（`:112` → `settings()` 在 `:183-190` 加锁，然后 `:113`），还会**在第一次这类拨号时分配一个 channel**（`:120-122`）。那条注释描述的是常见的交互路径，不是每一条路径。
 >
 > 另外，`route.isPriority`（`:89`）重复了 `trafficclass.Class.IsHighPriority()`（`common/trafficclass/class.go:88`）——**同一个映射有两份实现**，一份给调速器用，一份给调度器用（`scheduler.go:300`）。只改其中一份是真实的陷阱。
 
