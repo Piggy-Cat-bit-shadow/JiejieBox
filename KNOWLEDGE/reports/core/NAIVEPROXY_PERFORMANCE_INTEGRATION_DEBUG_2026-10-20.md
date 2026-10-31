@@ -41,7 +41,8 @@ BASELINE:                  第一轮报告 §5/§7/§10 + 审计报告 §7/§12
 | 提交 | 内容 |
 |---|---|
 | 本报告之前的 `0ef38b8ff` | 第一轮 P3（被审对象） |
-| `98387b223` | 本轮修复：`h3ProbeContext` 预算切分 + 5 组对抗测试 + fake conn 写入计数 |\n| 本报告所在提交 | 补跑 `-race`（含 64 并发 verdict）、重新生成 `docs/schema.json`、本报告 |
+| `98387b223` | 本轮修复：`h3ProbeContext` 预算切分 + 5 组对抗测试 + fake conn 写入计数 |
+| 本报告所在提交 | 补跑 `-race`（含 64 并发 verdict）、重新生成 `docs/schema.json`、本报告 |
 
 ---
 
@@ -150,7 +151,8 @@ BASELINE:                  第一轮报告 §5/§7/§10 + 审计报告 §7/§12
 | 包 | 命令 | 结果 |
 |---|---|---|
 | `protocol/naive` | `go test -tags OTHERS ./protocol/naive/...` | PASS |
-| `protocol/naive`（Windows profile） | `go test -tags WINDOWS ./protocol/naive/` | PASS |\n| `protocol/naive`（**race**） | `CGO_ENABLED=1 go test -race -tags WINDOWS ./protocol/naive/` | **PASS**（含 16×200 次混合并发 verdict 访问） |
+| `protocol/naive`（Windows profile） | `go test -tags WINDOWS ./protocol/naive/` | PASS |
+| `protocol/naive`（**race**） | `CGO_ENABLED=1 go test -race -tags WINDOWS ./protocol/naive/` | **PASS**（含 16×200 次混合并发 verdict 访问） |
 | `option` | `go test -tags OTHERS ./option/` | PASS |
 | `protocol/group` | `go test -tags OTHERS ./protocol/group/` | PASS（含 facts 消费者 fixture） |
 | `transport/http` | `go test -tags OTHERS ./transport/http/` | PASS（未改，仅回归） |

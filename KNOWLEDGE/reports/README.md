@@ -1,52 +1,36 @@
-# Reports — audit, verification and close-out archive
+# 历史报告：审计、验证与发布记录
 
-This directory holds the point-in-time reports produced for this fork: architecture audits, adversarial
-verification rounds, release close-outs and client-platform investigations. They are kept here — and not at
-the repository root where most of them used to live — so that one index answers "what has been audited, when,
-and against which tree".
+本目录保存项目在各个时间点形成的架构审计、专项验证、发布收尾和客户端调查报告。它们集中归档于此，方便按时间、审阅对象和主题追溯。
 
-## The rule that keeps this directory honest
+## 如何使用历史报告
 
-> **A report is a RECORD of what was checked at a moment, not a claim about the current tree.**
+> **报告记录的是当时检查过的事实，不能直接当作当前源码的结论。**
 
-- `BASELINE.md` owns "which SHA the knowledge base describes"; `INDEX.md` and `modules/` own the current
-  claims. A report never overrides source, and it never overrides those files.
-- When a report and the source disagree, **the source wins** and the disagreement is a defect to record —
-  usually by committing a correction into the report itself (see `convergence/POST_REFACTOR_AUDIT_2026-10-17.md`,
-  whose first line records that it corrected a construction report after finding a regression that report
-  had introduced).
-- Adding a report **does not move the baseline** and is **not** a knowledge-base refresh. It is an archive
-  entry, nothing more.
-- Each report states its own evidence level where it has one. **Where a report does not state one, treat it as
-  no stronger than `VERIFIED_SOURCE`.** A workflow declaration is not evidence of execution. Later
-  independently inspected CI runs are linked in the current CI and Windows daemon modules and are
-  scoped to their actual commits; they do not upgrade every archived report or release artifact.
+- 知识库描述的源码版本由 `BASELINE.md` 确定；当前知识的入口是 `INDEX.md` 和 `modules/`。报告不能覆盖源码或这些入口文档。
+- 报告与源码不一致时，以源码为准，并记录差异及其原因。例如，`convergence/POST_REFACTOR_AUDIT_2026-10-17.md` 记录了后续审计发现的回归和对先前报告的更正。
+- 新增报告不等于刷新知识库，也不会移动生产基线。
+- 引用报告时使用其中标明的证据等级；未注明等级的内容，最多按 `VERIFIED_SOURCE` 对待。工作流声明不代表实际运行。后续独立核实的 CI 运行记录只适用于其对应提交和作业。
+- `-race`、设备行为与跨平台验证的范围以各报告为准；因环境限制未运行的检查应记为 `BLOCKED_BY_ENVIRONMENT`，不能当作通过。
 
-`-race`, device behaviour and cross-platform guarantees are recorded per report. Where a report says they were
-not run, that is `BLOCKED_BY_ENVIRONMENT`, not `PASS`.
+## 目录结构
 
-## Layout
-
-| directory | what belongs there |
+| 目录 | 内容 |
 |---|---|
-| `convergence/` | this branch's own work: architecture convergence, the adversarial audit of it, and the narrow-scope audits that followed |
-| `core/` | audits of the core packages (root test hygiene, `experimental/boxdd`, CI/release configuration, knowledge-base delta mapping). Files are prefixed `_` where they are working notes rather than formal deliverables |
-| `release/` | release phases, branch consolidation, handoffs and close-outs, in chronological order of the phase names |
-| `windows-client/` | the Windows client's installer / uninstaller / diagnostic-channel and coexistence investigations |
-| `anywhere-round2/` | the second Anywhere research round: audit, construction, adversarial debug and final verification for the DNS/rule-set/MASQUE/QUIC ownership work |
-| `anywhere-round3/` | the third Anywhere round: an independent deep audit of four previously-favoured candidates (three falsified by local measurement), two new A-class candidates, two confirmed defects and the next-round blueprint, followed by the construction record and the debug handoff that turned the A-class items into code |
-| `tun-fast-path/` | the TUN fast path round: the D0 value review and the adversarial acceptance, archived as produced |
+| `convergence/` | 架构收敛、后续对抗审计及专项审计 |
+| `core/` | 核心包、构建发布配置及知识库增量审计；以 `_` 开头的文件是工作笔记 |
+| `release/` | 发布阶段、分支收敛、交接与收尾记录 |
+| `windows-client/` | Windows 客户端安装、卸载、诊断和共存调查 |
+| `anywhere-round2/` | Anywhere 第二轮研究及 DNS、规则集、MASQUE、QUIC 所有权相关记录 |
+| `anywhere-round3/` | Anywhere 第三轮审计、实现和调试交接 |
+| `tun-fast-path/` | TUN Fast Path 的价值评估与验收记录 |
 
-## Index
+## 报告索引
 
-Dates are the commit date for a report that was already tracked, and the file's own date for one archived
-later. The table's historical "current" status refers to the report's own review point, not today's
-tree. Later changes may supersede individual claims even where that status was never rewritten; consult
-the current modules and source. Explicit superseded labels preserve known historical relationships.
+已纳入版本控制的报告使用提交日期，后来归档的报告使用文件记载日期。表中历史状态 `current` 指报告审阅时的状态，不表示今天仍然有效；后续改动可能已经取代其中的结论。已知替代关系会保留在索引中，使用时请对照当前模块和源码。
 
 ### convergence/
 
-| report | date | covers | status |
+| 报告 | 日期 | 内容 | 当时状态 |
 |---|---|---|---|
 | `ARCHITECTURE_CONVERGENCE_2026-10-17.md` | 2026-10-17 | the 11-commit convergence round: dialer capability surfaces at construction time, one network observation per operation, bypass/userspace parity, L3 production-graph tests, bounded `NetworkManager` growth. **Corrected** after the audit: D10/D11 describe the final design, with the superseded approach kept for traceability | current, as corrected |
 | `POST_REFACTOR_AUDIT_2026-10-17.md` | 2026-10-17 | adversarial audit of that round: one production regression the round introduced (a repo-wide capability protocol answered by an outbound, which moved a WireGuard bind), one repair that did not repair what it claimed, one guard tested only by setting a field | current |
@@ -55,7 +39,7 @@ the current modules and source. Explicit superseded labels preserve known histor
 
 ### core/
 
-| report | date | covers | status |
+| 报告 | 日期 | 内容 | 当时状态 |
 |---|---|---|---|
 | `_root_test_audit.md` | 2026-10-14 | root-package test hygiene, read-only | historical |
 | `_boxdd_audit.md` | 2026-10-14 | `experimental/boxdd` at `8a008c5d02d2` | historical |
@@ -79,7 +63,7 @@ the current modules and source. Explicit superseded labels preserve known histor
 
 ### release/
 
-| report | date | covers | status |
+| 报告 | 日期 | 内容 | 当时状态 |
 |---|---|---|---|
 | `APPLE-PARENT-FINALIZE-REPORT.md` | 2026-10-11 | Apple parent finalization | historical |
 | `B_GIT_EVOLUTION_REPORT.md` | 2026-10-12 | git evolution / provenance of the Android fork | historical |
@@ -107,7 +91,7 @@ the current modules and source. Explicit superseded labels preserve known histor
 
 ### windows-client/
 
-| report | date | covers | status |
+| 报告 | 日期 | 内容 | 当时状态 |
 |---|---|---|---|
 | `WINDOWS_AUDIT_STATUS.md` | 2026-10-16 | Windows client audit, status at handoff | historical |
 | `WINDOWS_AUDIT_P0_STATUS.md` | 2026-10-16 | P0-1 … P0-4 status, one confirmed real bug | historical |
@@ -123,7 +107,7 @@ the current modules and source. Explicit superseded labels preserve known histor
 
 ### anywhere-round2/
 
-| report | date | covers | status |
+| 报告 | 日期 | 内容 | 当时状态 |
 |---|---|---|---|
 | `README.md` | 2026-10-19 | the round's executive index, dependency pins and what was delivered | current |
 | `anywhere-second-round-research.md` | 2026-10-19 | independent audit: DNS cache ownership, TUN→QUIC data paths, QUIC ACK/retransmission, queues/budgets, large rule-set loading, A/B/C/D matrix | historical (describes `ccc2812e45d`) |
@@ -133,7 +117,7 @@ the current modules and source. Explicit superseded labels preserve known histor
 
 ### anywhere-round3/
 
-| report | date | covers | status |
+| 报告 | 日期 | 内容 | 当时状态 |
 |---|---|---|---|
 | `README.md` | 2026-10-20 | the round's executive index: what was falsified, what is worth building, and what was not run | current |
 | `anywhere-round3-independent-deep-audit.md` | 2026-10-20 | independent audit at `5064f20a9`: the four brief candidates measured (TCP `PacketTemplate`, XHTTP gather polling, HY2/TUIC batching and the TUN batch grouping), the two rejected premises, the two new A-class candidates (`portReturn.ReturnPackets` per-call allocation, L4 CONNECT-UDP missing the owned DATAGRAM path), two confirmed defects (`equalFoldASCII` fold base, `domain_keyword` not lowercased), the `ForwardStage.Flush` lock-across-blocking-enqueue liveness risk, seven autonomous findings, the measured microbenchmark log and the next-round blueprint | current for `5064f20a9` — **not** a claim about later HEADs |
@@ -144,7 +128,7 @@ the current modules and source. Explicit superseded labels preserve known histor
 
 ### tun-fast-path/
 
-| report | date | covers | status |
+| 报告 | 日期 | 内容 | 当时状态 |
 |---|---|---|---|
 | `README.md` | 2026-10-24 | the round's index: snapshot, files, verdict and limits | current for `32c37219c59` |
 | `tun-fast-path-value-review.md` | 2026-10-24 | D0 value review, path matrix, `fast_path` precedence and decision | current for `32c37219c59` |

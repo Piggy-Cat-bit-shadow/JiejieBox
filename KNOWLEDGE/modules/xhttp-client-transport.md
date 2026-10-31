@@ -822,11 +822,7 @@ adapter.ReuseSuspect
 
 ### 失败熔断（Failure breaker）
 
-复用边界处的重拨仍然受 XMUX 失败熔断约束：三次失败就会武装它
-（`xmuxBreakerThreshold = 3`），退避从 100 ms 增长到 3 s（`xmux.go:56-69`、`:140-156`）。
-`noteBreakerTrip`（`:312`）记录这次跳闸；一次成功的复用会重置退避（`:327`）。这与上面
-连接池的裁剪/退役/关闭生命周期相互独立 —— `RetireSuspect` 之后的一次重拨
-本身不会重置熔断。
+复用边界后的重拨仍受 XMUX 失败熔断约束：连续三次失败触发熔断（`xmuxBreakerThreshold = 3`），退避时间从 100 ms 增长到 3 s（`xmux.go:56-69`、`:140-156`）。`noteBreakerTrip`（`:312`）记录熔断，一次成功复用会重置退避（`:327`）。熔断与连接池的裁剪、退役和关闭生命周期独立；`RetireSuspect` 之后的重拨本身不会重置熔断。
 
 ### 没有定时器驱动的预热（No timer-driven prewarm）
 

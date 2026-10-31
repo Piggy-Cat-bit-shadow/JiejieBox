@@ -22,14 +22,11 @@
 
 ## 审查了什么
 
-9 个提交的增量只有文档，所以单靠协议里的增量审查无法发现缺陷。`REFRESH.md` §3 因而适用：
-盘点每个现有条目，抽样检查锚点与跨模块声明，抽样发现漂移就扩大范围。
+这 9 个增量提交只修改文档，仅检查增量不足以发现既有知识的错误。因此按 `REFRESH.md` §3 盘点现有条目，抽查源码锚点和跨模块结论；发现漂移后再扩大审查范围。
 
 * 对全部 117 个 `KNOWLEDGE/**/*.md` 做机械扫描：相对链接与锚点、反引号路径/`file:line` 锚点、
   Go 符号、提交 SHA，以及声明的文件/行/提交计数。
-* 六路独立、只读的源码审计：core/routing、DNS/sniff、transports、data-path/memory、
-  platform/build/CI，以及根文档。每个代理都被明确告知：源码和测试高于模块文档，`reports/**`
-  属于历史，不得编辑任何文件。
+* 六路独立的只读审计分别覆盖 core/routing、DNS/sniff、transports、data-path/memory、platform/build/CI 和根文档。审计以源码和测试为准，将 `reports/**` 视为历史记录，且不修改文件。
 * 对 `AGENTS.md`、`README.md`、`BASELINE.md`、`PROJECT.md`、`ARCHITECTURE.md`、
   `INVARIANTS.md`、`ACCEPTANCE.md`、`COMMIT-INDEX.md`、`INDEX.md`、`modules/README.md`
   做跨文件一致性检查。

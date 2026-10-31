@@ -211,9 +211,7 @@ TLS sniff 之前会走到近似 server handshake 的路径。
 
 ### 6. Route：从“配置里有规则”升级为“运行时真的能到达这个规则”
 
-这一层是 `common/routeflow` 出现的意义。
-
-旧式思维容易做：
+`common/routeflow` 用于分析路由规则的可达性。只扫描配置可能得出过于宽泛的结论：
 
 ```text
 扫描配置文件
@@ -223,7 +221,7 @@ TLS sniff 之前会走到近似 server handshake 的路径。
 认为这条 flow 有可能走到这里
 ```
 
-但真实 route walk 受很多东西影响：
+实际路由遍历还受以下因素影响：
 
 - 规则顺序
 - first-match
@@ -236,19 +234,7 @@ TLS sniff 之前会走到近似 server handshake 的路径。
 - detour
 - 前面规则是否已经终止
 
-所以：
-
-> **配置里存在一条规则**
->
-> 不等于
->
-> **运行时这条流真的能走到这条规则。**
-
-`routeflow` 解决的就是：
-
-> **按真实 runtime semantics 证明 reachability。**
-
-也就是从：
+因此，配置中存在规则，并不代表某条流在运行时一定能到达该规则。`routeflow` 根据路由语义分析可证明的需求和可达性，对无法确定的情况应保留不确定性。推理方式从：
 
 ```text
 配置文本推理
@@ -286,17 +272,13 @@ TLS sniff 之前会走到近似 server handshake 的路径。
 → 得出可信路径决策
 ```
 
-所以第一部分本质上可以叫：
-
-> **认人 + 认路**
+上述变化共同改善了流量识别和路由决策。
 
 ---
 
 # 三、第二部分：选路、建连、失败以后怎么办
 
-这一部分负责回答：
-
-> **“已经知道应该去哪以后，系统怎么选择一条真实可走的物理路径，并把连接真正建立起来？”**
+这一部分介绍系统如何选择路径、建立连接，并处理连接失败。
 
 链路：
 
@@ -328,9 +310,7 @@ Direct / Proxy 真正开始传数据
 
 ## 1. Group / URLTest / Load Balance：选择机制和路径证据分开
 
-这一代的一个明显变化，是“组选择”不再被当成封闭的小模块。
-
-以前容易把 selector / urltest / load-balance 看成：
+组选择、路径健康和重试决策之间需要共享适当的失败信息。selector / urltest / load-balance 原本容易被视为只负责：
 
 ```text
 自己测
@@ -352,11 +332,7 @@ Direct / Proxy 真正开始传数据
 group / path health / retry decision
 ```
 
-也就是说：
-
-> **选择机制负责选，真实网络失败负责提供证据。**
-
-二者不能混成一个东西。
+选择机制负责选择成员，真实连接失败提供判断路径健康的证据；两者的职责需要区分。
 
 ## 2. ControlPath 与 PhysicalPath 正式分开
 
@@ -372,9 +348,7 @@ group / path health / retry decision
 → leaf
 ```
 
-它描述的是：
-
-> **“决策经过了谁。”**
+它描述选择决策经过的组。
 
 ### PhysicalPath
 
@@ -386,23 +360,9 @@ device-nearest hop
 → exit hop
 ```
 
-它描述的是：
+它描述数据实际经过的物理跳。group 是选择节点，本身不是物理跳；detour 则可能引入多个物理跳。`common/physicalpath` 将两种路径分别建模。
 
-> **“数据真正经过了谁。”**
-
-所以 group 不一定是物理 hop。
-
-group 很多时候只是：
-
-> **决策节点。**
-
-而 detour 才可能真正引入多个 physical hop。
-
-`common/physicalpath` 的意义就是：
-
-> **不再通过“读配置猜路径”，而是正式建模真实物理路径。**
-
-## 3. Static validation：先证明路径成立，再启动
+## 3. Static validation：启动前检查路径
 
 v0.1.6 逐渐形成的顺序是：
 
@@ -414,19 +374,7 @@ physical-path dry-run
 start
 ```
 
-也就是：
-
-> **在运行前先证明这条控制链最终能落到真实可用的物理链。**
-
-同时还有一个非常重要的约束：
-
-> diagnostics 不应该消耗 round-robin / selector 的运行时状态。
-
-否则你只是“检查一下配置”，就可能把下一个真实用户流量的选路结果改掉。
-
-这就是典型的：
-
-> **diagnostics 不能有业务副作用。**
+启动前的试运行检查可证明的结构和能力需求：致命的结构问题会阻止启动，能力不足在当前契约下可能只发出警告，不能据此保证真实网络可达。诊断也不得消耗 round-robin 或 selector 的运行时选择状态，否则检查本身会改变后续流的选路。
 
 ## 4. Destination resolve：谁拥有 destination
 
@@ -441,11 +389,7 @@ sniffed domain
 rewritten destination
 ```
 
-如果没有 ownership 概念，很容易变成：
-
-> A 模块偷偷改一次 destination，B 模块又偷偷改一次，最后没人知道“当前这个地址到底是谁决定的”。
-
-所以 v0.1.6 的 resolve / dial 架构越来越强调：
+如果没有明确的所有权，多个模块可能重复改写 destination，难以追溯最终地址的来源。v0.1.6 的 resolve / dial 架构因此关注：
 
 - unresolved domain
 - resolved IP
@@ -455,13 +399,11 @@ rewritten destination
 - detour DNS semantics
 - destination ownership
 
-也就是：
-
-> **一个阶段不能悄悄重写另一个阶段拥有的语义。**
+各阶段应保持明确的目的地解析和改写责任。
 
 ## 5. Dial：不只是调用 `DialContext`
 
-真正的 Dial 现在受这些约束：
+拨号决策需要考虑以下条件：
 
 - 当前 network generation 是否仍有效
 - destination 是谁解析的
@@ -470,15 +412,7 @@ rewritten destination
 - 当前 physical path 是否仍有效
 - half-open dial 是否受生命周期管理
 
-所以 dial 从：
-
-```text
-拨号函数
-```
-
-变成：
-
-> **网络状态、路径、destination ownership 和 capability 的交汇点。**
+因此，拨号不仅要调用连接函数，还要遵守网络状态、路径、目的地所有权和能力约束。
 
 ## 6. Adaptive routing / resilience：失败是证据，不是命令
 
@@ -498,11 +432,11 @@ generation-scoped penalty
 清除 / 修正旧 penalty
 ```
 
-其中几个原则非常重要。
+主要约束如下。
 
 ### 第一：最多一次 alternate retry
 
-即使 group 有很多成员，也不是：
+即使 group 有多个成员，也不能无限重试：
 
 ```text
 A 失败
@@ -512,19 +446,11 @@ A 失败
 → 无限试
 ```
 
-而是 bounded retry。
-
-否则在网络真正离线时，会出现：
-
-> 自己制造 retry storm。
+限制重试次数可以避免离线时产生重试风暴。
 
 ### 第二：failure 是 evidence
 
-不能看到错误就说：
-
-> “这个节点死了。”
-
-要看：
+不能将所有错误都视为节点失效，需要结合以下信息分类：
 
 - 错误类型
 - 当前 generation
@@ -534,15 +460,7 @@ A 失败
 
 ### 第三：不能用 teardown 污染 health
 
-比如网络切换时系统主动 cancel 旧连接。
-
-这种错误不能反过来写成：
-
-> 节点坏了。
-
-否则系统自己杀掉旧连接，又把这个“被自己杀掉”的事实当成节点故障。
-
-这属于典型 self-poisoning。
+例如，网络切换时主动取消旧连接，不应将这次取消记为节点故障。否则系统自身的清理行为会污染健康状态。
 
 ### 第四：penalty 必须属于 generation
 
@@ -558,7 +476,7 @@ Wi‑Fi generation 10
 5G generation 11
 ```
 
-否则你会用旧世界的失败处罚新世界。
+旧网络上的失败证据不能直接用于惩罚新网络上的路径。
 
 ## 7. Direct：不是“绕过越多越快”
 
@@ -591,7 +509,7 @@ DNS / 广告过滤要求没有被绕掉
 
 才能进入更快路径。
 
-你的体系里 Direct 的总体思想已经逐渐形成：
+Direct 相关路径可以按以下层次理解：
 
 ```text
 L0：OS / TUN route-set bypass

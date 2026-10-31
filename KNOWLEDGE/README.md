@@ -119,7 +119,7 @@
 | `modules/buffer-ownership.md` | 不能被优化掉的缓冲区/零拷贝/splice 规则 |
 | `modules/power-mobile-lifecycle.md` | 设备轴、睡眠、屏幕/锁、裁剪、复用档位、定时器普查 |
 | `modules/mtu-and-geometry.md` | 三个 MTU 量、包大小边界、`common/bufgeom`、低内存配置档 |
-| `modules/libbox-platform-contract.md` | 面向客户端的 ABI 表面与平台边界 |
+| `modules/libbox-platform-contract.md` | 面向客户端的 ABI 接口与平台边界 |
 | `modules/child-repositories.md` | 客户端 gitlink、嵌套 dashboard、分叉的 Go 模块与受控的原生 pin、子分支头 |
 | `modules/mieru.md` | Mieru 入站/出站、TCP/UDP 下层、需显式启用的回退与会话生命周期 |
 | `modules/build-pruning-release.md` | 构建标签、裁剪、发布配置档、生成器、pin |

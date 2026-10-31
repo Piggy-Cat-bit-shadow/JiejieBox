@@ -127,9 +127,15 @@ iPad 与 macOS 为 **`NOT_RUN` / `SIGNING_OUT_OF_SCOPE`**。这只是一台设�
 
 ### v0.1.9 之后的 OOM 回收协调（OOM reclaim coordination after v0.1.9）
 
-在 `cb71cf80d72` 处，`service/oomkiller/timer.go` 用一个回收执行器把空闲、平台压力与危机请求串行化。危机优先于排队中的压力与空闲工作，但不会打断一个已经在做的动作；如果危机已经排队，一次空闲遍历会在层边界处让出。空闲回收先试过期缓存，再试空闲池，只有当先前收益不足、且运行时条件或已武装的压力条件允许时才强制 GC。收益低的空闲工作会冷却，危机则不受这个空闲冷却阻拦。Darwin 的压力通知会刷新缓存并强制 GC，但不重置网络。危机在破坏性重置之前，会把当前采样与已武装阈值重新核对一遍；仅报告模式跳过网络重置，但仍走它的报告/释放路径。
+在 `cb71cf80d72`，`service/oomkiller/timer.go` 通过回收执行器串行处理空闲回收、平台压力和危机请求：
 
-`stop` 拒绝新工作、丢掉还在排队的请求、等已接受的轮询与已在运行的动作结束，然后 join 执行器。Reload 不带待处理的压力意图；被带过来的 Triggered 状态会变成 Armed，好让下一次采样决定新的危机是否仍然存在。Triggered 在已武装边界处退出，不在更低的空闲恢复阈值处退出。本次校准中 `go test ./service/oomkiller -count=1` 在 Windows 上以 Go 1.26.10 通过；那次运行没有确立 Darwin 平台相关的回调/设备行为，也没有确立竞态检测器执行。
+- 危机请求优先于队列中的压力和空闲工作，但不会中断正在执行的动作；若危机已排队，空闲遍历会在层边界让出。
+- 空闲回收依次尝试过期缓存和空闲池；只有收益不足且运行时条件或处于 Armed 状态的压力条件允许时，才强制 GC。收益较低的空闲工作会进入冷却，危机请求不受该冷却限制。
+- Darwin 压力通知会刷新缓存并强制 GC，不会重置网络。危机回收在破坏性重置前会重新核对采样值与已启用阈值；仅报告模式跳过网络重置，但仍执行报告与释放路径。
+
+`stop` 会拒绝新工作、丢弃排队请求，等待已接受的轮询和正在执行的动作结束，再等待执行器退出。Reload 不继承待处理的压力请求；继承的 Triggered 状态会变为 Armed，由下一次采样重新判断危机是否存在。Triggered 在 Armed 对应的阈值处退出，不使用更低的空闲恢复阈值。
+
+本次校准中，`go test ./service/oomkiller -count=1` 在 Windows、Go 1.26.10 下通过；该结果不证明 Darwin 回调或设备行为，也不代表运行了竞态检测。
 
 ### 四个池（The four pools）
 
@@ -221,7 +227,7 @@ iPad 与 macOS 为 **`NOT_RUN` / `SIGNING_OUT_OF_SCOPE`**。这只是一台设�
 | `c62342717`, `540d7cb94`, `4a95e0aeb`, `e966daea2`, `a804916ef`, `d93b68560` | FIX | `DEEP_IDLE` 处的池释放；不可达的 `DEEP_IDLE` 分支；一个陈旧截止时间 |
 | `6ebb5799a` | FIX | 陈旧截止时间 |
 | `89b4b2c25` | FIX | `DEEP_IDLE` 曾不可达 |
-| `0ff90482` | FIX | 把设备 resume edge 花在一个 **edge 闩锁**上，不花在屏幕 level 上 |
+| `0ff90482` | FIX | 让设备 resume edge 使用 **edge 闩锁**，不影响屏幕 level |
 | `e4327dca` | LIFECYCLE | 给 Apple 设备轴一个真实的发布者与一次真实的释放 |
 | `4c7d96c0` | FIX | 在**释放线**上承载 Apple 设备轴，不只在一个分支上 |
 | `645d96b4` | FIX | 一次当前状态的屏幕读取只协调 level，不启动一次休眠 |
@@ -229,13 +235,13 @@ iPad 与 macOS 为 **`NOT_RUN` / `SIGNING_OUT_OF_SCOPE`**。这只是一台设�
 | `e20875359` → `e661258a6` | FEATURE → **REVERT** | `IsDevicePaused()` 的 sleep-edge 门控，基于设备证据回滚。两份存档都保留。 |
 | `1331e8567`, `1f85dbc94` | FIX | 基于 generation 的 rebind 预算；`TrimMemory` **不**推进网络 generation，而 `ReleaseMemory` 会 |
 | `5f56f02c`, `09964183`, `93823c3d` | MEMORY | 裁剪路径；四个池全部可达 |
-| `3c6dd135b`, `f8b0af5f6`, `48dd4469e`, `10f9e17d2`, `eac9cc83d`, `b5c0009d1`, `95159084c`, `666470cbe`, `b5c39a11e`, `c2d93396e`, `da14572a7`, `1965bbf35` | TEST | 泄漏普查/测试完整性家族——**其中多项修的是根本无法失败的测试** |
+| `3c6dd135b`, `f8b0af5f6`, `48dd4469e`, `10f9e17d2`, `eac9cc83d`, `b5c0009d1`, `95159084c`, `666470cbe`, `b5c39a11e`, `c2d93396e`, `da14572a7`, `1965bbf35` | TEST | 泄漏普查与测试完整性相关提交——**其中多项修复了无法失败的测试** |
 | `12aa6db064f`, `dbf8de8b2a5` | FEATURE | 权威的前两个**消费者**：乐观 DNS 刷新（按状态拒绝）与 dashboard 下载（停驻在 `WaitProviderRefresh` 上）。测试与五个变异在 `reports/core/HAKO_SCALE_DEBUG_AUDIT_2026-10-17.md` |
 | `ff897d35772` | FIX | 在构造期而不是在 `Start` 里解析 DNS 调速器：让后台 goroutine 读到的字段变成不可变，而不是给它排定顺序 |
 
 历史普查行里的 `3c6dd135b` 在当前父仓库中解析不出来；在把那个前缀当作已验证的提交锚点之前，请先查原始报告或其他仓库。
 
-全部为 **OWN**。上游家族 `Use screen state to end device pause on iOS`（本区间内出现 ×11）属于 `UPSTREAM-INHERITED`/孤儿——见 `BASELINE.md` §provenance。
+全部为 **OWN**。上游提交系列 `Use screen state to end device pause on iOS`（本区间内出现 ×11）属于 `UPSTREAM-INHERITED`/孤儿——见 `BASELINE.md` §provenance。
 
 ---
 
@@ -254,7 +260,7 @@ iPad 与 macOS 为 **`NOT_RUN` / `SIGNING_OUT_OF_SCOPE`**。这只是一台设�
 11. **不要在只实现了 `IdleConnectionReleaser` 的地方断言 `IdleConnectionKeeper`。**
 12. **新的 `ReuseSuspect` 所有者，要对照退役遍历与生命周期契约审一遍。**
 13. **不要让后台工作唤醒空闲资源。** 唤醒它的是需求。
-14. **不要写没有空泛性防护的顺序测试。** 本 fork 最好的那个测试之所以存在，就是因为顺序断言完全可以在路径从未跑过时通过。
+14. **顺序测试还要确认被测路径确实执行。** 否则相关回调没有运行时，顺序断言也可能通过。
 15. **不要把那一次 iPhone 运行泛化到 iPad、macOS 或其他 OS 构建。** 记录里只有一台设备。
 16. **不要为上述任何内容引用 `verify-evidence/`**——见 `ci-release.md` §3。
-17. **不要把 suspendwatch 的基线挪到第一个 tick。** `Watcher.Start` 在 ticker 存在之前，就已经同步地给检测器设好初值。如果第一次读数落在第一个 tick 上，一台在 Start 之后立刻挂起的主机，唤醒时就会带一个落在休眠错误一侧的基线。那次挂起将永远不会被报告。该回归是 `TestTheWatcherPrimesAtStartBeforeTheFirstTick`。
+17. **不要把 suspendwatch 的基线推迟到第一个 tick。** `Watcher.Start` 会在创建 ticker 之前同步设置检测器初值。如果第一次读数等到第一个 tick，主机在启动后立即休眠时，基线可能落在唤醒之后，导致漏报这次休眠。回归测试为 `TestTheWatcherPrimesAtStartBeforeTheFirstTick`。

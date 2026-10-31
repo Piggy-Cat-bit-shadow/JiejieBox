@@ -159,9 +159,7 @@ AI 可以或不可以声称“已验证”的内容。
 
 ## 2. 门禁接线 —— 什么在运行、什么被声明、什么仅仅是存在（Gate wiring — what runs, what is declared, and what is merely present）
 
-**在 `v0.1.9` 基线上重新实测。** 本节早先的版本标题是*“未接线的门禁 —— 最大的系统性
-风险”*，并把十二个脚本列为完全没有运行来源。**其中四个现在确实已接线**，所以照那份
-列表做，读者会去重新接线一个已经在运行的东西：
+**以下核对针对 `v0.1.9` 基线。** 旧版曾将十二个脚本列为没有运行入口，但其中四个在该基线上已有调用方。下表列出几项更正；工作流有可能继续变化，使用前应重新核对目标版本。
 
 | 脚本 | 先前的说法 | 现在实测 |
 |---|---|---|
@@ -189,12 +187,7 @@ PRESENT      the script exists and nothing references it       -> nothing happen
 `check-satelite-one-core-pin.py`、`test-apple-links.py`、`verify-cronet-ios-archive.sh`、
 `run-jiejie-suite.sh`。
 
-`check-libbox-abi.sh` **已不在这份列表中**，拆分是有意的：`--pin-only`
-那一半在 `verify.yml` 中运行（廉价、只碰 git，能捕获 gitlink 已移动而
-`VERIFIED_*_SHA` 常量没跟着移动的情况），完整门禁在 `client-apple.yml` 中针对
-已检出的客户端源码运行。它下面的子脚本（`apple-abi-provenance.sh`、
-`apple-abi-probe.sh`、`probe-accessors.py`）只能经由它到达，因此门禁一运行，
-这些子脚本现在就是通过一道已接线的门禁到达的。
+`check-libbox-abi.sh` 不属于未调用脚本：`verify.yml` 运行 `--pin-only`，通过 Git 比较 gitlink 与 `VERIFIED_*_SHA` 常量；`client-apple.yml` 则针对已检出的客户端源码运行完整检查。后者通过该脚本调用 `apple-abi-provenance.sh`、`apple-abi-probe.sh` 和 `probe-accessors.py`。声明调用不等于某次运行实际执行或通过，还需核对日志。
 
 **在 Windows 表面审计中被删除**（`refactor/windows-upstream-minimal-surface`）：
 `ci/windows/Test-DaemonServiceRegister.ps1` 与 `ci/windows/Test-InstallerLegacyAdoption.ps1`
@@ -215,11 +208,7 @@ PRESENT      the script exists and nothing references it       -> nothing happen
 **一个已死的 `Makefile` 目标** —— `make test` 跑不通：第一条命令不带标签，而 `TAGS_TEST`
 （用在两行上）**在仓库里任何地方都没有定义过**，展开后为空。
 
-**给任何重新推导此事的人的方法说明：** 朴素地提取 `run:` 块会**漏检**
-（会漏掉从另一个步骤的多行 shell 块内部调用的脚本，例如
-`server-linux-amd64.yml:742` 处的 `check-reference-coverage.sh`）。同样的朴素提取现在
-还会**过度检测未接线状态**：任何经由 `release-contract-verify.yml` 到达的东西都会被报成
-未接线，而旧列表早于这个工作流。请逐一对照每个工作流验证每个候选，包括那两个新工作流。
+重新检查时，不要只提取简单的 `run:` 行：多行 shell 步骤中调用的脚本可能被漏掉，例如 `server-linux-amd64.yml:742` 处的 `check-reference-coverage.sh`。旧列表也早于 `release-contract-verify.yml`，不能用于判断该工作流中的调用。应逐项检查目标版本的工作流和调用链。
 
 ---
 
@@ -233,11 +222,9 @@ PRESENT      the script exists and nothing references it       -> nothing happen
 （中文：……头部所指的提交与分支顶端不同的日志已经过期，必须重新生成，
 不能直接信任。）
 
-**13 份日志全部写着 `### HEAD: cfc77dc51ab7322e993b8ae0b94b96db59e48f47`。** 那个提交比
-`a267e99` 落后 101 个提交，比当前基线落后 1,214 个提交，而且是**严格祖先** —— 旧，
-但没有分叉。
+**13 份日志都记录 `### HEAD: cfc77dc51ab7322e993b8ae0b94b96db59e48f47`。** 该提交比 `a267e99` 落后 101 个提交，比当前基线落后 1,214 个提交；它是严格祖先，没有发生分叉。
 
-比旧更糟的是：`git diff --name-status cfc77dc5 HEAD -- scripts/ci .github/workflows release clients`
+不仅源码版本较旧，相关门禁文件也发生了变化：`git diff --name-status cfc77dc5 HEAD -- scripts/ci .github/workflows release clients`
 返回 **15 个修改 + 1 个新增**文件，包括 `check-libbox-abi.sh`、
 `check-apple-source-selection.sh`、`test-apple-signing.sh`、`apple-client-source.sh`、
 `release-artifacts.sh`、`apply-desktop-branding-overlay.py`（自这份记录以来已退役 —— 静态
@@ -549,13 +536,9 @@ its checks is self-referential to the gitlink"*（中文：**按设计**无法�
   iOS 源码**，以及**丢弃 gitlink 不会改变已解析的
   源码**。这正是反转后的权威模型所依赖的属性。
 
-**实测：** 审计在本主机上运行过 —— **72 通过，0 失败**，退出 0。脚本
-自身的断言属于 `VERIFIED_UNIT`；它不证明已解析的修订就是*意图中的*那个，而这正是
-那个狭窄的残余缺口。
+**实测：** 审计时在本机运行了脚本，结果为 **72 通过、0 失败**，退出码 0。这些断言属于 `VERIFIED_UNIT`，但只能证明脚本检查到的关系，不能证明解析出的修订就是使用者实际期望的版本。
 
-**要保留的措辞：** *"the Apple pin has no wired verifier"*（中文：Apple 固定值没有已接线的验证器）**已不再是正确的句子** ——
-一个选择器与一套测试都已接线。仍然未接线的是：没有任何东西检查**已解析的修订是否就是某人
-意图的那个**，而不只是自洽。
+因此，不能再说 Apple 固定值完全没有验证器：源码选择器及其测试已有调用方。剩余的限制是，这些检查不能独立证明解析出的修订就是使用者预期的版本。
 
 ### refs 守卫：它读取的是调用方环境，而不是文件（The refs guard: it read the caller's environment, not the file）
 

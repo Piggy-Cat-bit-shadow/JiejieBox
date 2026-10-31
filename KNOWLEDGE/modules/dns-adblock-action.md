@@ -156,17 +156,13 @@ option/rule_action_test.go           decode / round-trip / schema shape
 `ttl`、`method`、`drop`、`reply`、`ip_mode`、`cache_size`、`fake_soa` 与 `strategy` 对本动作**不存在**，
 解析时按未知字段拒绝，不会静默忽略。
 
-`race` 不一样，读配置错误时值得知道这个区别：
-它是动作*信封*（envelope）的字段（`_DNSRuleAction.Race`），不是某个变体的字段，
-所以 JSON 解码器确实能看到并接受它。它是在上一层被拒绝的：
-构建 DNS 规则时由 `validateDNSRuleAction` 拒绝，给出的信息是：
+`race` 属于动作的公共外层字段（`_DNSRuleAction.Race`），而不是 `adblock` 变体专属字段。因此 JSON 解码可以接受该字段，但构建 DNS 规则时 `validateDNSRuleAction` 会拒绝这一组合并报告：
 
 ```text
 `race` is not supported by the adblock action: it never consults an upstream lookup
 ```
 
-两种方式下配置都加载不了；另外已发布的 schema 里 `adblock` 变体只声明了 `action`，
-所以按它做校验的编辑器会在运行时看到 `race` 之前就把它标出来。
+两类错误都会导致配置加载失败。已发布 schema 中的 `adblock` 变体只声明 `action`，因此按 schema 校验的编辑器可以在运行前标出 `race`。
 
 ---
 
@@ -233,8 +229,7 @@ adblock:
   Goal: never enter upstream, and let the client negative-cache the result.
 ```
 
-`reject` 回答的是“我不会处理这个”。`adblock` 回答的是“这个名字不存在”，
-这是唯一能让客户端停止询问的答案。
+`reject` 表示拒绝处理当前请求；`adblock` 返回本地 NXDOMAIN，表示名称不存在，并提供负缓存信息。客户端是否缓存以及保留多久，仍取决于客户端行为。
 
 ---
 
@@ -261,7 +256,7 @@ adblock    = a dedicated advertising semantic whose response is FIXED:
 这部分最容易被说错，所以在这里精确表述：
 
 > `adblock` 复用本 fork 的 NXDOMAIN **负缓存设计原则与响应语义** ——
-> 一个关于这个名字的 NXDOMAIN，带真实 SOA 与非零负 TTL —— 但它是
+> 一个关于这个名字的 NXDOMAIN，包含 SOA 记录与非零负 TTL —— 但它是
 > 一个**本地策略判定**，在 DNS 规则层终止。
 > `dns/client_negative.go` 继续拥有**从上游学到的真实 NXDOMAIN**，
 > 它的契约没有任何改变。
@@ -401,10 +396,7 @@ a lookup through a PINNED resolver — see §9: the rule walk is not entered at 
 
 ## 11. race 会被拒绝（`race` is refused）
 
-`race` 的意思是“在这条响应绑定规则作出决定之前就开始真实查询”。
-`adblock` 从不咨询查询 —— 它的判定来自选中它的那次匹配 ——
-所以这个组合兑现不了，
-接受它就等于静默发起这个动作本来就是要阻止的那次上游查询。
+`race` 会在响应绑定规则完成判定之前发起真实查询。`adblock` 的判定来自规则匹配，本身不需要查询上游；如果允许两者组合，就可能发起本应被拦截的查询。因此配置会被拒绝。
 
 两个层面都强制了：
 
@@ -416,23 +408,13 @@ a lookup through a PINNED resolver — see §9: the rule walk is not entered at 
 这与 DNS-only 边界另一侧的处理相同：`adblock` 不出现在非 DNS 的规则动作联合中，
 指名它的路由规则会解码失败。
 
-有一个后果属于刻意设计，很容易被误读成泄漏：规则列表里，如果 `race` 规则出现在
-adblock 规则之前，它仍然会发出那条 `race` 规则的查询，因为到达 adblock 时
-这个查询已经被武装，而被武装的规则必须根据它等待的响应来判定。
-那次查询归写 `race` 的人。绝不能发生的是相反情况，而它确实没有发生：
-排在已匹配 adblock 规则之后的规则不会启动任何东西，
-连一个稍后会被取消的查询都不会启动（`TestAdblockCannotBeMadeToLaunchAResolverByANeighbouringRule`
-对两个方向都做了测量，并以不含 adblock 的列表作对照）。
+规则顺序仍会影响查询：如果 `race` 规则排在 adblock 之前，该规则可能已经发起查询，需要等待响应才能完成自己的判定；这不表示 adblock 发起了查询。反过来，已匹配 adblock 之后的规则不会启动查询，即使查询随后可以取消也不例外。`TestAdblockCannotBeMadeToLaunchAResolverByANeighbouringRule` 覆盖了两种顺序，并使用不含 adblock 的规则列表作为对照。
 
 ---
 
 ## 12. 日志（Logging）
 
-`adblock` 自身不输出任何按查询的日志行。它就是一次普通匹配：
-现有的 DNS 规则命中调试日志会打印匹配到的规则与动作（`String()` 为 `adblock`），
-开调试日志时可见，不开就没有任何开销。
-如果为每次被拦截的查询加一行 `INFO`/`WARN`，日志 I/O 就会成为
-新成本中心，而这正是本特性要让这类流量变便宜的地方。
+`adblock` 不为每次查询单独输出日志。启用调试日志时，现有 DNS 规则命中日志会显示匹配规则和动作（`String()` 为 `adblock`）；未启用时不会输出该调试日志。逐条添加 `INFO`/`WARN` 会增加日志 I/O，应在修改前评估成本。
 
 ---
 
@@ -441,9 +423,7 @@ adblock 规则之前，它仍然会发出那条 `race` 规则的查询，因为�
 `constant.DefaultDNSNegativeTTL` 是 `600` 秒，别名指向仓库里已有的 `DefaultDNSTTL`。
 理由有两方面：
 
-- **太短**会把成本推回解析器：客户端会更早再来问，而每次询问都是一次规则匹配（廉价），
-  本 fork 接受这个成本，
-  但本特性的意义就在于让客户端停止询问。
+- **太短**会把成本推回解析器：客户端会更早重新查询，每次查询都需要再次匹配规则。单次匹配开销较低，但本特性的目的之一是减少重复查询。
 - **太长**意味着运维者移除规则之后，下游操作系统或应用仍可能持有这个 NXDOMAIN。
   响应会告知一个 TTL，但本代码无法保证下游客户端怎么缓存、是否遵循。
   动作自身不写任何 sing-box 缓存条目。

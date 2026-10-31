@@ -60,7 +60,7 @@ UDP 与 TCP 得到的动作并不相同，所以请保留确切的分支。
 `monitor_close_fence_test.go` 用测试替身验证这些边界，并不证明真实 Android 或 Apple 设备
 上的网络切换。
 
-**范围：** `experimental/libbox/*`、`daemon/*`、`include/*`（就它们定义面向客户端的表面而言）、
+**范围：** `experimental/libbox/*`、`daemon/*`、`include/*`（限于其中定义的客户端接口）、
 `cmd/internal/{mobilebuildtags,applebuildtags,appletags}`、`release/apple-client-refs.env`，以及
 Apple/Android 产物固定值（pin）。
 
@@ -104,7 +104,7 @@ gomobile 接口分布在 `experimental/libbox/` 的 110 个 `.go` 文件中，�
 `AppMarketingVersion`、`OomKillerEnabled`、`OomKillerDisabled`、`OomMemoryLimit`、
 `PowerReportEnabled`、`PlatformMetadata`。
 
-**这个握手有三点客户端必须知道：**
+**客户端使用这些配置时需要注意：**
 
 * **`CommandServerListenPort` 是 `int32`，被收窄为 `uint16` 且没有范围检查**（`setup.go:80`）。
   大于 65535 的值会静默回绕。
@@ -113,7 +113,7 @@ gomobile 接口分布在 `experimental/libbox/` 的 110 个 `.go` 文件中，�
 * **`ReloadSetupOptions`（`:90`）只覆盖 16 个字段中的 5 个。** 启动之后请用它 —— 绝不要再次调用
   `Setup`。
 
-声明出来的表面很大：`gomobile_surface_test.go:348 TestGomobileMethodResultSurface` 数出
+导出的绑定范围较大：`gomobile_surface_test.go:348 TestGomobileMethodResultSurface` 数出
 **452 个绑定声明，其中 23 个带指针结果** —— 这是一笔已登记的债务，因为 gomobile 打包结果帧里的
 Go 指针正是 `bulkBarrierPreWrite` 崩溃（§8）。
 
@@ -254,7 +254,7 @@ pause，而两条路径都不知情。）在 Android 客户端修订 `9d15717a85
 | `Start` / `Close` | `:165`, `:210` |
 | `StartOrReloadService(configContent, *OverrideOptions)` / `CloseService` | `:232`, `:251` |
 
-**生命周期与控制（平台→核心表面）：**
+**生命周期与控制（平台到核心的接口）：**
 
 | 调用 | 锚点 | 类别 |
 |---|---|---|
@@ -304,7 +304,7 @@ Taildrop（`:1354`、`:1367`、`:1441`、`:1543`、`:1556`）的按端点订阅�
 生成代码**；`cmd/internal/protogen` 负责重新生成（`Makefile:57 proto`）。**`protogen` 会去执行一个
 `Makefile` 从未安装的 `protoc`**，所以 `make proto` 需要 `PATH` 上另有一个 `protoc`。
 
-### ABI 表面随构建标签集合变化（The ABI surface varies with the build tag set）
+### ABI 接口随构建标签变化（The ABI surface varies with the build tag set）
 
 `include/registry.go` 对每项能力都是标签极性的（见 `build-pruning-release.md` §2），所以**哪些
 libbox 符号存在，取决于标签集合**。这也是为什么有三个没有
@@ -453,7 +453,7 @@ External repositories
 
 | 保证 | 级别 | 复检 |
 |---|---|---|
-| 导出的表面与 `SetupOptions` | VERIFIED_SOURCE + VERIFIED_UNIT | `go test -count=1 ./experimental/libbox/...`（实测：ok，20.3 s） |
+| 导出接口与 `SetupOptions` | VERIFIED_SOURCE + VERIFIED_UNIT | `go test -count=1 ./experimental/libbox/...`（实测：ok，20.3 s） |
 | 核心拥有 trim 分类与合并 | VERIFIED_SOURCE | `common/runtimecoord/platform_events.go:152-231` |
 | trim 阶梯完整且未知级别被忽略 | VERIFIED_SOURCE + VERIFIED_UNIT | `go test -count=1 ./common/runtimecoord/...` |
 | `APIVersion = 4` 由提供方暴露并由调用方使用 | VERIFIED_SOURCE | `git grep -n APIVersion` |
@@ -468,7 +468,7 @@ External repositories
 
 ## 11. AI 注意事项（AI cautions）
 
-1. **不要去找 `libbox.go`。** 这个表面是 110 个 `.go` 文件（90 个非测试）。
+1. **不要去找 `libbox.go`。** 接口分布在 110 个 `.go` 文件中（90 个不是测试文件）。
 2. **不要把级别分类移进客户端。** 核心拥有 trim 阶梯、合并
    窗口以及边沿/级别区分。
 3. **不要把未知的 trim 级别默认为渐进动作。** 未知即忽略。
@@ -488,7 +488,7 @@ External repositories
 13. **不要假设 `make proto` 可用。** `protogen` 需要一个 `Makefile` 从未安装的 `protoc`。
 14. **把客户端侧主张限定到已检出的客户端 SHA 与实际检查过的文件。** 仅凭
     父项目 gitlink 并不证明客户端构建或设备行为。
-15. **不要忘记 `include/*` 零测试文件。** 注册表与墓志铭（tombstones）是
+15. **不要忘记 `include/*` 零测试文件。** 注册表与 tombstone 条目是
     无守卫的；那里的改动只能被一次构建捕获。
 16. **如果你移动了 Apple 固定值，常量必须随之移动。** `clients/apple` 的 gitlink 是
     记录的检出，而 `scripts/ci/check-libbox-abi.sh` 中的 `VERIFIED_APPLE_SHA` 是交叉校验。

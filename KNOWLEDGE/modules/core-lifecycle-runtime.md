@@ -180,7 +180,7 @@ TLS 记录设定时限，随后把该截止时间清掉；`handshake_target_clea
 | `Expired()` | `:282-289` | 以下任一成立即为真：已过期、**注册已关闭，或这个租约不再是当前所有者**。 |
 | `Complete()` | `:295-310` | 对被取代的租约是**空操作**，但它**总是会取消**。 |
 | `observeEpoch` | `:355-381` | 推进 epoch，清除 `observed`，取代并取消在途租约，并**清除 `lastRebind`**，好让新网络立刻得到一次重试（`:375`）。 |
-| `ScheduleRebind`/`BeginRebind` | `:409-465` | 合并窗口默认是 `adapter.RecoveryWindow`（`:437-440`），在**授予（grant）**时武装，不在完成时武装（`:444-446`）。 |
+| `ScheduleRebind`/`BeginRebind` | `:409-465` | 合并窗口默认为 `adapter.RecoveryWindow`（`:437-440`），从**授予租约时**开始计时，而不是等租约完成后开始（`:444-446`）。 |
 | `Stale()` | `:499-518` | 以下任一成立即为真：已关闭、`!observed`，或协调器 epoch 大于本 epoch。 |
 | `Acknowledge()` | `:526-536` | 唯一能把“epoch 已推进”变为“该资源是当前的”的机制。 |
 | 探测来源（Probe origin） | `:583-631` | `ProbeForeground` 与 `ProbeAutomatic`，以及 `MeasurementContext`——决定一次测量能否**唤醒被挂起的资源**。 |
@@ -202,7 +202,7 @@ TLS 记录设定时限，随后把该截止时间清掉；`handshake_target_clea
 
 `route/reference.go`（`ReferenceManager` 在 `:21-42`，于 `box.go:662` 构建）。
 
-退役清单并不是唯一的主机/本地流表面。`adapter/network.go:37-38` 增加了
+退役清单并未涵盖所有主机和本地流接口。`adapter/network.go:37-38` 增加了
 `RegisterHostPort`/`HostPort`，`route/network.go` 则从 TUN 路由端口服务端点本地流
 （`93b2e4f5eec`）；流日志器搬到了 `adapter/flow_logger.go`，现在由路由流与主机流共享
 （`ab5fcb59abd`；`route/flow_tracker.go` 已被删除）。端点本地的**契约**归

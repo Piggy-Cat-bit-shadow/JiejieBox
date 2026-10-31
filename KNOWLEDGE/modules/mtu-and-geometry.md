@@ -123,7 +123,7 @@ hysteria2 的这个区分值得说清楚，因为三个字段含义各不相同�
 
 就所报告的活跃堆数值而言，差距约为 2×。记录的批量分配值是 6.01 对 5.48 B/KiB；这两个数字无法证明几何对每个工作负载或目标都独立。历史上的解释指向 `copyExtended` 在约 512 KiB 之后的增长（`geometry_bench_test.go:656-724`）。
 
-| 规则 | 锚点 | 坏在哪里 |
+| 规则 | 锚点 | 违反后的风险 |
 |---|---|---|
 | 缓冲区恰好可入池 | `geometry_test.go:63 TestGeometryBuffersAreExactlyPoolable` | 大小不是 2 的幂**会在首次释放时 panic**——`Buffer.Release()` 以 `common.Must(Put(…))` 结束（`buffer.go:307`, `cond.go:294-300`）；超过 `MaxPooledBufferSize = 73728`（`alloc.go:11`, `:41-44`）时，`Get` 返回 nil，失败形态是 nil slice panic |
 | `Acquire` 在 `Advance`/`Prepend` 时从不重新分配 payload | `geometry_test.go:99 TestBufferAcquireNeverReallocatesThePayload` | 热路径上每个数据包多一次分配 |

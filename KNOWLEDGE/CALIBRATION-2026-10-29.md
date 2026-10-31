@@ -9,13 +9,13 @@
 已发布的 v0.1.33 peel 到 `a0bbf666dec8693450c0e8363ed42db3294ac64a`，是该目标的祖先。
 远端 upstream/testing `e5d91fa79f6319d5de940d6c81d81f0fe53b9476` 是目标的 merge-base。
 
-生产增量：MASQUE/WireGuard/Tailscale 的 endpoint-local 路由、TUN routed-port 发布、共享 flow logger；
-测试增量：host verdict 与构造函数覆盖；依赖增量：sing-tun 与 uTLS 替换；构建/发布增量：源码冻结清单、
-lock、工作流与测试；平台与 CI 增量：三个客户端 gitlink、ABI pin、Apple input/composite/single-runner
-工作流与发布门禁。历史 v0.1.31 校准仍覆盖未变模块的范围；它的缺口与限制不会因为这次增量审查而消失。
-注册表/索引、不变量、发布、MASQUE、构建、libbox、验收与提交导航已按受影响的边界更新。子仓库与 Go fork
-变更已按固定对象和观测到的分支头单独复核；见 `modules/child-repositories.md`。模块映射已盘点，
-未受影响模块的声明保留先前的校准，没有被说成刚刚重新证明。
+本轮增量包括：
+
+- **运行时代码：** MASQUE、WireGuard 和 Tailscale 的 endpoint-local 路由，TUN routed-port 发布，以及共享 flow logger。
+- **测试与依赖：** host verdict 和构造函数覆盖，sing-tun 与 uTLS 替换。
+- **构建、发布与平台：** 源码冻结清单、lock、工作流和测试，三个客户端 gitlink、ABI pin，以及 Apple input、composite 和 single-runner 工作流。
+
+注册表、索引、不变量、相关模块、验收和提交导航已按受影响边界更新。子仓库与 Go fork 的固定对象和观测分支头分别复核，见 `modules/child-repositories.md`。未受影响模块沿用 v0.1.31 的校准及其限制，不能视为本轮重新验证。
 
 ## 检查与限制（Checks and limits）
 

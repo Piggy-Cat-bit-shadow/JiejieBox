@@ -2,7 +2,7 @@
 
 指引来源：`C:\Users\Jie\Desktop\配置文件\WINDOWS_COEXISTENCE_FINAL_CLOSEOUT.md`
 
-两个确认的剩余问题都**已解决并有可执行证据**。上一轮报告中两条结论按 §12 要求**已删除并更正**。
+本轮解决了两个已确认的剩余问题，并提供了可执行验证；上一轮报告中的两条错误结论已按 §12 更正。以下结果均对应报告所列的历史版本与环境。
 
 ---
 
@@ -28,7 +28,7 @@
 C:\Program Files\sing-box
 ```
 
-**为什么不能从配置改。** `APP_FILENAME` 是 makensis **命令行**参数，而 NSIS 中重复 `!define` 是**致命错误**而非覆盖 —— 在 include 里写 `!define APP_FILENAME` 不会赢，会**直接编译失败**。这条是用 makensis 实测出来的（见"新发现"第 2 条），不是推断。
+**为什么不能直接覆盖配置：** `APP_FILENAME` 通过 makensis 命令行传入；NSIS 遇到重复 `!define` 会报致命错误，不会覆盖原值。因此在 include 文件里再次定义 `APP_FILENAME` 会导致编译失败。这一点经过 makensis 实测，见“新发现”第 2 条。
 
 **实际做法。** 二者必须解耦，而只有目录能移动（`executableName` 是安全链）。改 `$INSTDIR`：`initMultiUser` 在 `.onInit` 里把它设为 `<program files>\${APP_FILENAME}`，`customInit` 紧随其后且在任何页面之前 —— 新宏 `chooseForkInstallationDirectory` 就在这里替换派生默认值，其他来源一律不动：
 
@@ -42,7 +42,7 @@ electron-builder 派生的默认值              替换为 <program files>\Jieji
 
 ### 任务 B —— legacy service cleanup 的 ownership proof 重做
 
-**上一轮的 guard 是错的。** 用 `HKLM\SOFTWARE\SagerNet\sing-box` 当"只有旧 fork 会写"的证明 —— 但上游自带 `build/installer.nsh` 且本 fork 的 installer.nsh 由它派生，**上游写同一个 key**。而这一步删的是名为 `sing-box-daemon` 的 service，**正是上游 daemon 用的名字**。所以在同时装了官方与 fork 的机器上，它可能删掉官方的 service。
+**上一轮的所有权判断有误。** 旧 guard 把 `HKLM\SOFTWARE\SagerNet\sing-box` 当作旧 fork 专有的证明，但上游 `build/installer.nsh` 也会写入同一个键。该步骤要删除的 `sing-box-daemon` 又与上游服务同名，因此官方版和 fork 共存时，旧判断可能误删官方服务。
 
 **重新找证据（按 §6 要求从历史 commit 与旧版本行为里找，不机械采用第一项）。**
 
@@ -54,7 +54,7 @@ electron-builder 派生的默认值              替换为 <program files>\Jieji
 %APPDATA%\sing-box\.access-control 存在
 ```
 
-**Fail-closed，四项全过才删。** 判定逻辑抽到 `installer-legacy-service-ownership.ps1`，所有来自机器的信号都作为参数传入（因此可测）：
+**Fail-closed：以下条件全部满足才执行删除。** 判定逻辑抽到 `installer-legacy-service-ownership.ps1`，所有来自机器的信号都作为参数传入（因此可测）：
 
 ```text
 service 存在

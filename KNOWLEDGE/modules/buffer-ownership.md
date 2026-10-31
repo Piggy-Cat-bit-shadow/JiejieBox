@@ -74,7 +74,7 @@ B6–B10 的依据包括**地址范围测试**（`quic_ownership_test.go:314-350
 |---|---|---|---|
 | B20 | `IdleConnectionReleaser` 只能关闭**没有活跃用户流量**的资源，而且这次遍历**永远不能拨号** | `adapter/outbound.go:214-219`; `route/reference.go:420-440` | 一次裁剪会变成重连触发器——这正是内存路径绝不能有的形态（`route/reference.go:394-411`） |
 | B21 | `ReuseSuspect.RetireSuspect()` 在 `CloseIdleConnections` **之前**运行；一个只丢弃空闲连接的池会退回旧行为 | `route/reference.go:496-511`, `:547-556` | 新流会附着到一个无人信任的会话上 |
-| B22 | 退役遍历断言的是 `IdleConnectionReleaser`，**而不是**捆绑的 `IdleConnectionKeeper` | `route/reference.go:479-484` | 断言那个捆绑接口，会在**每一次**遍历上静默失败，导致 HTTP 客户端池在四轮评审中都不可达（提交 `93823c3d`, `8735b1d`） |
+| B22 | 退役遍历断言的是 `IdleConnectionReleaser`，**而不是**捆绑的 `IdleConnectionKeeper` | `route/reference.go:479-484` | 若断言组合接口，遍历会静默跳过 HTTP 客户端池；该问题曾持续四轮评审（提交 `93823c3d`, `8735b1d`） |
 | B23 | `route/reusable_owner_inventory_test.go` 检查具名可复用所有者的能力，包括 XHTTP | 如所引 | 削弱或移除某个具名所有者的退役能力，可能静默绕过该遍历 |
 | B24 | 作用域清理从不在持有作用域锁时运行 | `adapter/lifecycle.go:124-125`, `:133-134` | 重入死锁 |
 | B25 | `RebindLease.Complete()` **总是取消**，即使对一个已被取代的租约也是如此 | `common/runtimecoord/coordinator.go:307-309` | 一个 cancel func 会一直注册在活动父级上 |
@@ -93,7 +93,7 @@ B6–B10 的依据包括**地址范围测试**（`quic_ownership_test.go:314-350
 决定内核 splice 能否介入的条件包括调用顺序、接口契约和失败后的回退行为：
 
 * **先尝试 `copyDirect`，再尝试 `copyExtended`。** `CopyWithCounters` 先调用 `copyDirect`，只有它返回 `handed == false` 时才回退，因此任一端的读等待者都不会抢占系统调用路径。
-* **`ktls.Conn` 是 `SyscallReader`/`SyscallWriter` 的唯一实现者**；该接口把 `SyscallConnForRead()` 与 `HandleSyscallReadError(err)` 耦合在**同一份**契约里。因此，一个类型无法只交出裸 fd，却不说明如何处理在它之上到达的非应用数据记录。这个接口没有部分实现的表达方式。
+* **`ktls.Conn` 是 `SyscallReader`/`SyscallWriter` 的唯一实现者。** 接口将 `SyscallConnForRead()` 和 `HandleSyscallReadError(err)` 作为同一契约，要求实现者在提供 fd 的同时处理读取时遇到的非应用数据记录，不能只实现其中一部分。
 * 一条没有 kTLS 的裸连接会**显式回退**：`splice` 会走到 `else if !notFirstTime && E.IsMulti(err, unix.EINVAL, unix.ENOSYS) { handed = false; return }`（`splice_linux.go:68-70`），因此一个只有 `syscall.Conn`、无法 splice 的源，会在**第一次**尝试时让位给用户态拷贝。
 
 `common/ktls` 由 `linux && go1.25 && badlinkname` 门控。这个包现在有回归测试，包括 `common/ktls/ktls_read_wait_test.go`；这些测试需要 Linux/带标签的环境，本次 Windows 刷新没有执行。

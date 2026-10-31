@@ -17,7 +17,7 @@
 
 ### 审计范围与已覆盖的路径
 
-七个**不可互换**的数据面对象（不是六个），全部按客户端出站 / 服务端入站 / 上行 / 下行 / 冷 / 热分开：
+报告名称沿用“六协议”，实际审计区分了七个数据面对象，并分别考察客户端出站、服务端入站、上下行及冷、热路径：
 
 1. XHTTP（`packet-up` / `stream-up` / `stream-one` / `auto`，H1/H2/H3，XMUX）
 2. VLESS + REALITY + Vision（含 `encryption` 变体）
@@ -27,9 +27,7 @@
 6. MASQUE **CONNECT-IP**：Endpoint / Tunnel / IP 包 / DATAGRAM+Capsule
 7. Mieru（官方 SDK + fork 适配层 + 条件性 TCP↔UDP fallback）
 
-**已确认可达**（`VERIFIED_SOURCE` + Registry/构建标签）：1/2/3/4-Inbound/5/6/7 均在默认或
-`with_quic` 构建中可达；4-Outbound（Cronet）仅 Apple 平台且 `with_naive_outbound`；
-Mieru 的 fallback 默认关闭。没有任何一侧被本文写成"存在"而实际不可达。
+**本次审计的可达性结论**（`VERIFIED_SOURCE`，依据 registry 与构建标签）：1、2、3、4-Inbound、5、6、7 在默认或 `with_quic` 构建中可达；4-Outbound（Cronet）在当时记录为仅 Apple 平台且需要 `with_naive_outbound`；Mieru fallback 默认关闭。此处只反映当时的审计版本，当前平台支持应重新核对依赖和构建配置。
 
 ### 最重要的八条发现
 

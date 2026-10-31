@@ -45,7 +45,7 @@ TUN MTU：请求值不大于零时使用 1500；启用 `includeAllNetworks` 后�
 验证符号链接时需要检查 POSIX 检出及目标 blob 的原始字节；Windows 将链接检出为文本文件，
 不能据此证明链接有效。本轮没有执行真实设备上的热点测试。
 
-### Apple 上游集成——现已消费（Apple upstream integration — now consumed）
+### Apple 上游集成已纳入父仓库（Apple upstream integration — now consumed）
 
 截至 2026-10-29，Apple 上游集成已合并：产品 `main`、父仓库 gitlink 和
 `VERIFIED_APPLE_SHA` 均为 `044e6d5447eb1285c950bd12cee10effab641f5a`，候选分支

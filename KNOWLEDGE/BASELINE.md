@@ -159,7 +159,7 @@ git rev-list --count <sha> --not --remotes=upstream
 
 ### 本仓库已经付过代价的三个陷阱（The three traps this repository has already paid for）
 
-1. **`git describe` 在这里会说谎。** 有个提交并不携带那个标签，它却报告
+1. **`git describe` 的结果不能直接证明来源。** 有个提交并不携带该标签，命令却报告
    `v1.14.3-38-ge4b7e692f`，原因是本分支的历史里有重写前的上游孤儿提交。来源判断永远
    不要用它。
 2. **上游历史会被重写。** `refs/remotes/upstream/testing` 从 `e4b7e692` 移到了

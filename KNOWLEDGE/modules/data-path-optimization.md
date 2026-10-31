@@ -121,7 +121,7 @@ SEMANTIC EQUIVALENCE, NOT CONFIG EMPTINESS
 | connected UDP | 2 | 拒绝：UDPConnect | 拒绝：UDPConnect |
 | **合计** | **100** | **6 种形态中 3 种，占 85% 权重** | **6 种形态中 0 种** |
 
-**dashboard 那一列的数字就是结论。** tracker 防护是绝对的：它只看 tracker 的*存在*就拒绝，不看 tracker 会记录什么——所以接上 Clash API 或 dashboard，就等于对所有流禁用 L1。这是正确的第一轮选择（静默丢掉连接统计不是可接受的优化），但它意味着**L1 的收益只对没有 API 的设置成立**。
+在该测试拓扑中，tracker 的存在本身就会阻止 L1 旁路，代码不判断它实际记录哪些数据。因此启用 Clash API 或 dashboard 后，表中的流均不能使用 L1；这是为了保留连接统计。该结果适用于所测配置，不应不加核对地推广到所有部署。
 
 L0 只在它能起作用的地方测量：无路由集 → 0/4 形态；`route_address_set: 10/8` → 2/4；`route_exclude_address_set: 198.16/12` → 1/4；落在当前 FakeIP 存储范围内的地址会下落到路由器，而不是走这条 L0 路由集旁路。
 
@@ -130,7 +130,7 @@ L0 只在它能起作用的地方测量：无路由集 → 0/4 形态；`route_a
 | | 成本 |
 |---|---|
 | 决策，所有条件通过 | 14–41 ns，**0 次分配** |
-| 决策，被一个廉价条件拒绝 | ~5–11 ns，0 次分配 |
+| 决策，被低成本条件拒绝 | ~5–11 ns，0 次分配 |
 | 仅出站 profile | 5.3 ns，0 次分配 |
 | **流建立，已旁路** | **119 ns，0 次分配** |
 | **流建立，用户态** | **1461 ns、2856 B、26 次分配** |
@@ -138,7 +138,7 @@ L0 只在它能起作用的地方测量：无路由集 → 0/4 形态；`route_a
 | TCP 拷贝，用户态缓冲区（L3） | 4 / 32 MiB 时为 3952 / 5567 MB/s |
 | UDP 每数据报（1400 B） | ~66 ns，1 次分配 |
 
-> **“用户态流建立”那一行是个已知有问题的数字，这里引用它只是为了把它退役。** `route/direct_offload_bench_test.go:139-141` 已点明：旧基准量的是它自己的 `net.Pipe` fixture，*"reported 26 allocations and 2856 B per operation, and the code under test was none of them. A benchmark whose number describes its own fixture is worse than no benchmark, **because it is quoted**."*（中文：每次操作报告 26 次分配和 2856 B，而被测代码与其中任何一项都无关。一个数字描述的是自身 fixture 的基准，比没有基准更糟，**因为它会被引用**。）本文档引用它两天**之后**，`22d46966c` 才修好；而 `docs/fork/direct-offload.md:225` 至今还带着它。重新测量：**104 B、2 次分配**。其余各行是历史的 M1 数字，换到别的硬件只能大致复现——引用前请重新测量。
+> **表中“用户态流建立”的旧数字无效，仅为追溯保留。** `route/direct_offload_bench_test.go:139-141` 指出，26 次分配和 2856 B 来自 `net.Pipe` 测试 fixture，而非被测代码。`22d46966c` 修正基准后重新测得 **104 B、2 次分配**；`docs/fork/direct-offload.md:225` 仍保留旧值。其他行同样是历史 M1 测量，引用到其他环境前应重新测试。
 >
 > **唯一被真实测试套件强制的成本主张是一个 `TEST`**，不是基准：`TestBypassDecisionUsesNoAllocations`（`direct_offload_bench_test.go:354`）使用四次 `testing.AllocsPerRun` + `require.Zero` 调用，覆盖 `canFastBypass`、`CanBypass`、一次 FakeIP **拒绝**，以及 profile 查找。
 
@@ -211,7 +211,7 @@ classify the flow              bound the post-transition        pace the managed
 
 前四行和什么都不做分不出来，也不可能更好：拖住高优先级消息的那些字节已经在发送方的接受窗口之内，用户态够不着。
 
-**2. 等交互流量到了才启动的 pacer，保护的是第二次请求。** 测量对象是一秒不间断批量上传之后的第一次 256 字节高优先级写入：无门禁 p50 127 ms；`ModeAdmission`（已武装）128 ms；`ModePacedNormalOnly`（持续运行）**2 ms**；`ModePaced`（聚合、持续运行）**2 ms**。所以，两种 paced 模式根本不需要武装。
+**2. 等交互流量到来才启动 pacer，无法保护首次请求。** 测量对象是持续一秒批量上传后的首次 256 字节高优先级写入：无门禁 p50 为 127 ms，`ModeAdmission`（已启用）为 128 ms，持续运行的 `ModePacedNormalOnly` 和聚合 `ModePaced` 均为 **2 ms**。
 
 **3. 整形也必须覆盖高优先级通道。** 两条 HIGH 批量流加一个小的 HIGH 探测：无门禁 p99 114 ms；`ModePacedNormalOnly` @85% 73 ms；`ModePaced`（聚合）@85% **8 ms**。只整形 NORMAL 通道，队列深度和原来一模一样。实际交付的是聚合模式。
 
@@ -261,7 +261,7 @@ classify the flow              bound the post-transition        pace the managed
 
 两个后果，两者都重要：
 
-1. **那个基准观察到了分配**，4 KiB 及以上每次写入约 3 次——而 `bench_test.go:81-83` 声明整形写入绝不能分配（*"a shaped write that allocated would turn a rate limit into a garbage source"*，中文：一次发生分配的整形写入会把速率限制变成垃圾来源），并且 `doc.go:99-106` 的“无竞争路径上不分配”**只对惰性路径成立**。没有任何 CI 测试覆盖 paced 路径的分配。
+1. 该基准在 4 KiB 及以上写入中观察到每次约 3 次分配，与 `bench_test.go:81-83` 对整形写入不分配的描述不一致。`doc.go:99-106` 中无竞争路径不分配的说法，在这次测量里只对惰性路径成立；当时没有 CI 测试覆盖 paced 路径的分配。
 2. **那次运行在宽松的配置速率下，4 KiB 与 64 KiB 用例都观察到每次写入约 1.40 ms**，≈1.4 × `paceTick`（`scheduler.go:78`，1 ms 的 tick）。推断的机制是：`chargeLocked` 把 `f.owedUntil` 设到提前几纳秒（`:662-677`），随后 `flowTimeReadyLocked` 报告未就绪（`:701-710`），唤醒路径又包含 1 ms 的 `paceWakeLoop` tick（`:869-892`）。由此粗算出的 47 MB/s 描述的是那一次具体测量，不是可移植的吞吐上限：主机的唤醒延迟、调度、写入大小、配置与实现变更都会影响结果。
 
 那次历史运行即使在宽松速率下，每次写入的成本也明显高于惰性对照。要作出当前的性能主张，请重新测量目标构建与环境。
@@ -282,7 +282,7 @@ classify the flow              bound the post-transition        pace the managed
 
 **窗口之外没有什么需要限制。** 零值就是惰性，这可以证明而不只是断言：`open := time.Now().Before(g.windowEnd)` 对**零值 `time.Time` 为 false**，所以 `enter` 返回 `noopRelease`（`dial_governor.go:114`、`:126-128`）。由 `dial_governor_test.go:40` 固定。
 
-**交互流量永远不会被延迟。** 类别表明有人在等的拨号——`interactive` 或 `realtime`——永远不排队，不管调速器正在做什么（`:89-91`）。需要等的只有对延迟没有期望的类别：`default` 与 `bulk`。**`ClassDefault` 被刻意放在受限一侧**（`:85-88`），因为没配置的流解析到的就是它（大多数流量）；豁免它，调速器就只覆盖运维者碰巧标注过的流量——而惊群并不来自那里。
+拨号调速器不会让 `interactive` 和 `realtime` 类别排队（`:89-91`）；`default` 和 `bulk` 则可能等待。**`ClassDefault` 有意纳入限制**（`:85-88`），因为未配置类别的流会使用它；如果将其豁免，调速器就只能约束显式标注过的流量。
 
 **这个限制是软的。** 500 ms 预算用尽后，拨号不再等待，无限制地继续，所以调速器最多只能抹平一次突发的开端——永远不会无限期推迟恢复，也不会把恢复全局串行化。
 
@@ -343,7 +343,7 @@ classify the flow              bound the post-transition        pace the managed
 7. **不要移除 `JudgeFlow` 中的 FakeIP 下落处理**——FakeIP 目标会被操作系统黑洞。
 8. **不要重排 DNS 与路由集的先后。** DNS 必须到达 DNS 路由器。
 9. **不要给 `upload_rate` 加“安全系数”。** 那个数字就是速率；藏一个系数，配置就成了谎言。
-10. **不要让整形器在竞争发生时才武装。** 测量表明，等交互流量到了才启动的 pacer 保护的是第二次请求，不是第一次。
+10. **不要等到竞争发生才启动整形器。** 历史测量显示，等交互流量到来再启动 pacer，无法保护首次请求。
 11. **不要只整形 NORMAL 通道。**
 12. **不要豁免大于桶容量的写入。**
 13. **不要让研究控制器变成可达的。** 一旦这样做，会有一个测试失败——原因是它的观测量衡量的是竞争，不是容量。

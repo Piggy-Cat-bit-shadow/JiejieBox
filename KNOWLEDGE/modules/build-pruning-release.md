@@ -53,8 +53,8 @@ Go 模块的 `replace` 指令 —— 而不是 `require` 里写的版本 —— 
 在 `cb71cf80d72` 处，根与 `test/go.mod` 都把 `github.com/metacubex/utls` 替换为同一
 fork 修订，也都把 `cronet-go/all` 替换为 `c9c0e6ec8845`。独立的
 `scripts/ci/check-go-module-integrity.sh` 里的 `REQUIRED_FORK_REPLACES` 列表列出四个模块加
-Cronet 前缀；uTLS 不在那个特定的必需列表里。不要推断这个列表就是
-每个 fork 替换的完整清单，也不要推断文本匹配能证明构建产物内容。
+Cronet 前缀；uTLS 不在这份必需列表里。不要将该列表当作
+所有 fork 替换的完整清单，也不要认为文本匹配可以证明构建产物的内容。
 
 **范围：** `include/*`（注册表与标签极性的裁剪对）、`release/*`（profile、版本、
 固定值）、`cmd/internal/*`（构建器与生成器）、`Makefile`、`.gitmodules`。
@@ -93,17 +93,17 @@ Cronet 前缀；uTLS 不在那个特定的必需列表里。不要推断这个�
 | ⑥ | `cmd/internal/build_libbox/tag_golden_test.go:43-99` | 冻结的已解析标签字符串，针对 **8 个平台** |
 | ⑦ | `cmd/internal/modlayout/layout.go:54-74` | `SourceRoots`，用于新的顶层目录 |
 | ⑧ | `cmd/internal/{mobilebuildtags,applebuildtags}` + profile 文件 | 如果它受标签门控 |
-| ⑨ | `include/registry.go:180-193` | **移除**一项要写进墓志铭（tombstone）列表，而不是直接删掉 |
+| ⑨ | `include/registry.go:180-193` | **移除**一项时保留 tombstone 条目，而不是直接删除 |
 
 `include/registry.go:77-80,111-113` **无条件**调用这些注册表符号，两种极性因此都必须
 定义它们。Endpoint、DNS 传输与服务注册表
 在 `:118+`、`:130+` 与 `:153+` 各自带着自己的列表。
 
-### 有意保留的墓志铭（The deliberate tombstones）
+### 有意保留的 tombstone 条目（The deliberate tombstones）
 
 `include/registry.go:180-193`，在 `:80` 与 `:113` 处**最后**调用，所以不会被任何东西遮蔽：
 
-| 墓志铭 | 消息 | 来源 |
+| tombstone 条目 | 消息 | 来源 |
 |---|---|---|
 | ShadowsocksR（inbound + outbound） | *"deprecated and removed in sing-box 1.6.0"*（中文：已在 sing-box 1.6.0 中弃用并移除） | 上游 |
 | `C.TypeWireGuard` + `option.StubOptions` | *"WireGuard outbound is deprecated in sing-box 1.11.0 and removed in sing-box 1.13.0, use WireGuard endpoint instead"*（中文：WireGuard 出站已在 sing-box 1.11.0 中弃用、在 sing-box 1.13.0 中移除，请改用 WireGuard endpoint） | **fork 新增**（在 `e4b7e692` 处不存在） |
@@ -247,7 +247,7 @@ profile 里。
   退役标签不在。
 
 `with_clash_api` 在两个 profile 里都启用。Clash API 与原生 `api` 服务是**同一个**实例上的两个
-管理表面：它们共享流量管理器与路由模式管理器，
+管理接口：它们共享流量管理器与路由模式管理器，
 所以通过原生 API 的 `SetClashMode` 设的模式，就是 Clash API 报告的模式。
 
 ### 注册表变更与上游同步（Registry changes and upstream synchronization）
@@ -335,7 +335,7 @@ builds"*（中文：与 libbox 构建出来的内容不匹配），所以那些�
 
 ---
 
-## 6. 打包表面（Packaging surfaces）
+## 6. 打包相关接口与文件（Packaging surfaces）
 
 `Dockerfile`、`Dockerfile.binary`、`.fpm_systemd`、`.fpm_openwrt`、`.fpm_pacman`、
 `.github/build_{alpine_apk,openwrt_apk}.sh`、`.github/deb2ipk.sh`、`.github/detect_track.sh`。
@@ -385,7 +385,7 @@ Windows 签名是一道**硬性安装门禁**：`WinVerifyTrustEx` 加上 `secur
 ### AI 注意事项（AI cautions）
 
 1. **不要靠编辑 map 来添加协议。** 没有 map；请改注册表函数。
-2. **不要删掉注册表墓志铭。** 它们承载着具体的弃用消息。
+2. **不要删掉注册表中的 tombstone 条目。** 它们承载着具体的弃用消息。
 3. **在“缺失”与“损坏”必须区分的地方，不要让 stub 把某项能力留成 nil。**
 4. **不要把 `tfogo_checklinkname0` 放回 profile 标签文件。** 它会破坏裸 `go build`。
 5. **不要假设 Darwin 标签文件能为另一个平台选对 profile。**
