@@ -8,11 +8,11 @@
 
 ## 修改摘要
 
-只说明本轮收口改了什么。
+以下列出本轮完成的修改与验证。
 
-### 任务 A —— 安装目录 identity 隔离
+### 任务 A：隔离安装目录
 
-**先验证前提，不盲信。** 两条都用 GitHub 只读检索核实过：
+**前提核查：** 以下事实均通过 GitHub 只读检索确认：
 
 ```text
 上游 SagerNet/sing-box-for-desktop  electron-builder.yml → nsis.perMachine: true   ← 确认
@@ -20,9 +20,9 @@
 上游同样使用 Software\SagerNet\sing-box 作为 installation layout key           ← 确认
 ```
 
-所以上一轮的两条结论都不成立，必须处理。
+因此，上一轮的两条结论不成立，需要修正。
 
-**collision 的机制。** electron-builder 的 NSIS `APP_FILENAME` 在 per-machine assisted 安装下取 `appInfo.productFilename`，而 `productFilename = platformSpecificOptions?.executableName ?? info.config.executableName ?? productName`（已读 `app-builder-lib/out/appInfo.js` 构造函数确认）。它跟随**可执行文件名**，不是 productName —— 所以 fork 必要的 `win.executableName: sing-box` 让两个产品同时落到：
+**冲突原因。** electron-builder 的 NSIS `APP_FILENAME` 在 per-machine assisted 安装下取 `appInfo.productFilename`，而 `productFilename = platformSpecificOptions?.executableName ?? info.config.executableName ?? productName`（已读 `app-builder-lib/out/appInfo.js` 构造函数确认）。它跟随**可执行文件名**，不是 productName —— 所以 fork 必要的 `win.executableName: sing-box` 让两个产品同时落到：
 
 ```text
 C:\Program Files\sing-box
@@ -40,15 +40,15 @@ electron-builder 派生的默认值              替换为 <program files>\Jieji
 
 新宏**不做任何路径解析**，用与 multiUser.nsh 相同的 `$PROGRAMFILES` / `$PROGRAMFILES64` / `APP_64` / `RunningX64` 条件重建默认值。
 
-### 任务 B —— legacy service cleanup 的 ownership proof 重做
+### 任务 B：重新验证旧服务清理的归属
 
 **上一轮的所有权判断有误。** 旧 guard 把 `HKLM\SOFTWARE\SagerNet\sing-box` 当作旧 fork 专有的证明，但上游 `build/installer.nsh` 也会写入同一个键。该步骤要删除的 `sing-box-daemon` 又与上游服务同名，因此官方版和 fork 共存时，旧判断可能误删官方服务。
 
-**重新找证据（按 §6 要求从历史 commit 与旧版本行为里找，不机械采用第一项）。**
+**重新核查依据：** 按 §6 的要求检查历史提交与旧版本行为。
 
 从历史 commit 核实：pre-identity fork（`917d2a4`）的 `applicationPaths.ts` 用 `%APPDATA%\sing-box`，`userDataSecurity.ts` 在 **每个 packaged Windows 启动**写 `<userData>\.access-control`（`app.isPackaged` 判断之后，非测试专用）。上游任何版本都不写这个文件 —— 它属于本 fork，目录是旧 fork 用的那个，且**升级替换的是应用树、不是用户数据**，所以升级后仍然存在。
 
-因此 ownership proof 是：
+因此，判断归属时使用以下标记：
 
 ```text
 %APPDATA%\sing-box\.access-control 存在
@@ -64,11 +64,11 @@ root 在固定卷上
 marker 存在            ← ownership proof
 ```
 
-任一项无法评估即 skip，并把 reason 打印出来。**升级/安装不会因为 cleanup 失败而不可用**（只 DetailPrint，不 Abort）。
+任一条件无法判断时，跳过清理并打印原因。**清理失败不会中断升级或安装**（只调用 `DetailPrint`，不调用 `Abort`）。
 
 **§7 的两道 guard 重新评估。** 旧的"binary 必须在本次安装树内"已**删除**：历史 fork 装在旧目录、新版本装在自己的目录，要求它在**新**树内会恰好拒绝本功能存在的理由。现在用的是"形状 + 固定卷 + marker"三者，能够区分 old fork tree / new fork tree / official tree。
 
-**卸载方向也补上。** 升级会清掉旧 service，但"装过 0.1.5、之后直接卸载本版本"这条路径下 `service uninstall` 只删 `jiejiebox-daemon`，旧 service 会留下 —— `customUnInstall` 现在跑同一个 cleanup（同一份证据，非我方一律不动）。
+**卸载时也执行清理。** 升级会清掉旧 service，但"装过 0.1.5、之后直接卸载本版本"这条路径下 `service uninstall` 只删 `jiejiebox-daemon`，旧服务会残留 —— `customUnInstall` 现在执行同一套清理逻辑，使用相同的归属依据，不删除不属于本项目的服务。
 
 ### 未触碰（§8）
 
