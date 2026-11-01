@@ -2,7 +2,7 @@
 
 | field | value |
 |---|---|
-| Stage | 01A/01B, 02A/02B, 03A/03B, 04A/04B, **05A** complete |
+| Stage | 01A/01B, 02A/02B, 03A/03B, 04A/04B, 05A, **06A** complete |
 | Date | 2026-11-02 |
 | Branch | `testing` (default branch; repository has no `main`) |
 | Phase 01 | Mieru SDK `v3.39.0`: `fac646ca`, 01B coverage `bc349d83`; see `phase-01.md` |
@@ -11,9 +11,10 @@
 | Phase 03 code | `e8ec5c67` — H2/H3 CONNECT pseudo-header rejection now answers 400 (03B) |
 | Phase 04 code | `96bd665d` stream-up refusal; `b5c12db3` refusal precedence; `669fa275` status-matrix tests |
 | Phase 05 | audit-only; bounded-async pipeline rejected on evidence (`phase-05.md`, ledger X-09) |
+| Phase 06 code | `7f322a90` — `sing-vmess` `a0c58542` for the Vision close fix; ABI tripwire re-audited |
 | CI on `f15d4473` | Verify, Android Core ARM64, Mobile contract, Release contract: success |
 | Handoff docs | `git log -1 -- docs/audits/protocol-upstream-sync/` (this directory) |
-| Next | **06 — remaining protocols / convergence** |
+| Next | **06B — debug / close the cycle** |
 
 ## Completed
 
@@ -115,17 +116,35 @@
 - Verification: cadence probe `PASS` 9.247 s with `maxInflight=1`; package/`-race` numbers from the
   04B run are the current-code gate (no code changed in 05).
 
+### Phase 06 (other protocols / convergence)
+
+- Found one real upstream delta: `sing-vmess` `a0c58542` "Fix vision close after direct write"
+  (atomic `directWrite`, `Close` uses the raw conn after a direct write). Bumped root and test
+  modules to `v0.2.9-0.20261019223527-a0c58542bd9d` (`7f322a90`).
+- The Vision ABI tripwire failed as designed; re-audited `tlsRegistry` shape, callback signature and
+  `CommonConn` input/rawInput ABI against the new module — all pass — then deliberately updated
+  `expectedSingVMessVersion`.
+- Resolved the remaining candidate tables by ancestry/HEAD checks: H-02, S-02, SN-02 are ancestors
+  of `HEAD`; AnyTLS/Snell pins equal remote HEAD; H-01/T-02/S-01/A-02/Q-02 are `NO CHANGE` with
+  reasons; Q-01 stays deferred (upstream MASQUE is dev-only).
+- Recorded a new deployment risk, not patched globally: Go 1.25.5 enables MPTCP on Linux listeners
+  by default (`defaultMPTCPEnabledListen=true`); Xray disabled it in v26.10.31. The listener owner
+  must decide; it is not a VLESS wire change.
+- Convergence: `go mod tidy` clean in both modules; `release-freeze.py verify` PASS; no gitlink or
+  native-archive change; no release/tag/deploy. Tests: tagged protocol packages all `ok`.
+- `FINAL_INTEGRATION_REPORT.md` summarises the cycle; `phase-06.md` records the decisions.
+
 ## Not completed / deferred (with owner phase)
 
 | Item | Why deferred | Owner |
 |---|---|---|
 | Naive native `-3`/`-4`/`-5` (sleep/resume, QUIC window/cleanup, eMudhra block) | requires rebuilding the controlled Chromium archives; no toolchain here | later native pass |
 | Apple/Windows native runtime for the new resolution path | no device / Apple build on this host | CI/device pass |
-| Mieru server `tcp_idle_timeout` config surface | new opt-in feature (option/schema/docs/tests) | 06 |
-| Mieru post-release UDP-associate fixes | not in `v3.39.0`; own UoT codec | 06 |
-| XHTTP xhttp-box tree diff | independent oracle; not needed for the serial-vs-pipeline decision | 06 (optional) |
-| Hysteria2/TUIC/AnyTLS/VLESS/SS/Snell patch-id checks | candidate rows only | 06 |
-| MASQUE upstream `dev` shared-layer diff | upstream not stable; premise corrected | 06 |
+| MPTCP listener default on Linux (Go 1.25.5 enables it; Xray disables it) | socket-layer policy affecting every listener, not a VLESS wire change; needs an owner decision | listener owner |
+| Mieru server `tcp_idle_timeout` config surface | new opt-in feature (option/schema/docs/tests) | post-cycle |
+| Mieru post-release UDP-associate fixes | not in `v3.39.0`; own UoT codec | post-cycle |
+| XHTTP xhttp-box tree diff | independent oracle; not needed for the serial-vs-pipeline decision | optional |
+| MASQUE upstream `dev` shared-layer diff / endpoint alignment | upstream dev-only, no stable tag; local data plane independent | post-cycle |
 
 ## Residual limitations
 
@@ -149,12 +168,10 @@
 
 ## Next-phase inputs
 
-1. `UPSTREAM_LEDGER.md` §4–6 (Hysteria2, TUIC, AnyTLS, VLESS, SS, Snell, MASQUE) and
-   `phase-05.md` §5.
-2. `protocol/hysteria2/`, `protocol/tuic/`, `protocol/anytls/`, `protocol/vless/`,
-   `protocol/shadowsocks/`, `protocol/snell/`, `protocol/masque/`, `transport/masque/`; route
-   through `KNOWLEDGE/INDEX.md` and the corresponding modules before reading source.
-3. Do not re-open X-04 (stream-up refusal), X-09 (packet-up pipeline), the Naive server S-rows or
-   the client resolution pin (`bd2b705`) without new upstream or measurement evidence.
-4. The native Naive `-3`/`-4`/`-5` gap and the Apple runtime verification remain open; they are not
-   protocol-sync work.
+1. `phase-06.md`, `FINAL_INTEGRATION_REPORT.md` and `UPSTREAM_LEDGER.md` §7 (the resolution table).
+2. The 06 delta is narrow: `sing-vmess` pin `a0c58542` + `expectedSingVMessVersion`; attack the
+   Vision ABI tripwires and the VLESS build, not the whole protocol set again.
+3. Do not re-open X-04 (stream-up refusal), X-09 (packet-up pipeline), the Naive server S-rows, the
+   client resolution pin (`bd2b705`) or any §7 `NO CHANGE` row without new upstream evidence.
+4. The native Naive `-3`/`-4`/`-5` gap, Apple runtime verification and the MPTCP listener policy
+   remain open; they are not protocol-sync work. No release/tag/deploy in 06B.

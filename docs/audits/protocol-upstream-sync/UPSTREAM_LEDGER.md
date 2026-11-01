@@ -176,19 +176,29 @@ MASQUE project, and still not a reason to replace JiejieBox's much larger endpoi
 
 ---
 
-## 7. Cross-cutting queue for later phases
+## 7. Phase 06 resolution (closing the candidate tables)
 
-1. **Phase 02 first**: read the cronet fork's source pins + native archive manifest, not version
-   numbers; decide whether any 154-series native change must be rebuilt (controlled archives).
-2. **Phase 03 first**: the authenticated-CONNECT idle semantic (N-03) and the local CONNECT
-   deadline handling.
-3. **Phase 04 first**: X-04 (`dialStreamUp` non-200), then X-06's independent implementation diff.
-4. **Phase 05**: X-05 equivalence, plus local allocation measurements if the bufpool change needs
-   a number.
-5. **Phase 06**: H-02 / A-02 / S-02 / SN-02 patch-id comparisons; MASQUE Q-01/Q-02 only after the
-   shared-layer diff.
-6. **Do not** treat any row as "the fork is behind" — the rows are hypotheses with a named file and
-   a named upstream revision, to be re-verified before code is touched.
+This section supersedes the `DEFERRED` markers in §4–6; the earlier rows remain for provenance.
+
+| ID | Final verdict | Evidence |
+|---|---|---|
+| H-01 | `NO CHANGE` | reference-tree changes live in `HyNetworks/hysteria`, not in the `sing-quic` module compiled here |
+| H-02 | `ALREADY_COVERED` | `d41e1745` and `a691a440` are ancestors of the checkout's `HEAD` |
+| T-01 | `ALREADY_COVERED` | fork base `7e0a5869` postdates both sing-quic fixes |
+| T-02 | `NO CHANGE` | upstream TUIC repository dormant; spec unchanged |
+| A-01 | `ALREADY_COVERED` | `sing-anytls` pin `580984e4` equals remote HEAD |
+| A-02 | `NO CHANGE` | both sides import the same `sing-anytls` library; local adapter adds only timeouts/logging |
+| V-01 | `NO CHANGE` (risk recorded) | Go 1.25.5 `defaultMPTCPEnabledListen = true` on Linux, dialer default false; JiejieBox does not disable it on listeners. Xray's change is a socket-layer default, not a VLESS wire fix |
+| V-02 | `MERGED` | `sing-vmess` `a0c58542`; commit `7f322a90`; Vision ABI tripwires re-audited and updated |
+| S-01 | `NO CHANGE` | Rust SIP003 fd/idle fix has no Go counterpart gap; local copy/MTU tests cover the path |
+| S-02 | `ALREADY_COVERED` | `07130365` and `52f9bad0` are ancestors of `HEAD` |
+| SN-01 | `ALREADY_COVERED` | `sing-snell` pin `bc5a12ac` equals remote HEAD |
+| SN-02 | `ALREADY_COVERED` | `0164ce7b` and `33e63afb` are ancestors of `HEAD`; the wrapper already disables domain unmapping |
+| Q-01 | `DEFERRED` | upstream MASQUE is dev-only; no stable tag; the local data plane is independent |
+| Q-02 | `NO CHANGE` | local close-boundary tests exist; the no-op-deadline detour wedge was not reproduced |
+
+Remaining work is outside these candidate tables: native Naive `-3/-4/-5`, real interop runs, Apple
+runtime verification, and the MPTCP listener decision for the listener owner.
 
 ## 8. Reproduce this audit
 
