@@ -86,12 +86,16 @@ Environment: `go1.25.5 windows/amd64`; `-race` required `CGO_ENABLED=1` with
 | `go list -mod=readonly -m all` (root and `test/`) | exit 0 |
 | `go mod verify` (root and `test/`) | `all modules verified` |
 | `go build ./protocol/mieru/ ./include/` | exit 0 |
+| `python scripts/ci/release-freeze.py verify --lock release/source-lock.json` | `PASS: every pin in the tree is the pin the lock records.` |
+| CI `Verify` on `c231dd51` (run 41329115810) | success — gofmt, dependency-pin, nested-module, tagged/untagged build and race jobs |
+| CI `Android Core ARM64` on `c231dd51` (run 41329115850) | success |
+| CI `Mobile contract verification` on `c231dd51` (run 41329115828) | success on attempt 2; attempt 1 failed the unrelated `transport/http` timing assertion (`2.903s` vs `>3s`) |
 
-Not run, and why: no real WAN/production traffic (out of scope by contract); no Windows/Apple
-device run (no build artifacts produced in this phase); no CI run is claimed as evidence — the
-local suite above is the evidence. The push to `testing` triggers `verify.yml` (no path filter) and
-`android-core-arm64.yml` (`go.mod` / `protocol/**`) by their declared triggers; this handoff does
-not claim their result.
+Not run, and why: no real WAN/production traffic (out of scope by contract); no Windows/Apple device
+run (no build artifacts produced in this phase). The CI rows above are build/gate evidence, not
+protocol-behaviour evidence. The `Mobile contract` first-attempt failure is recorded rather than
+hidden: it is a scheduler-timing assertion in `transport/http/close_liveness_mechanism_test.go`, a
+package this phase did not touch, and the identical commit passes on rerun.
 
 ## 6. Risks and open decisions
 

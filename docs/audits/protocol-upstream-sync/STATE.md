@@ -7,7 +7,8 @@
 | Branch | `testing` (default branch; repository has no `main`) |
 | Start base | `7e6cc9cc` local → fast-forwarded to `0ab035904de5536273f6070a766b4fc657d7d77c` |
 | Code commit | `fac646ca20eca25a0129c5580df3d0497b44963c` — Mieru SDK v3.39.0 + regression test |
-| Handoff commit | the commit containing this directory (`docs/audits/protocol-upstream-sync/`) |
+| Handoff docs | `git log -1 -- docs/audits/protocol-upstream-sync/` (this directory) |
+| CI on `c231dd51` | Verify: success; Android Core ARM64: success; Mobile contract: success on rerun (attempt 1 failed an unrelated timing assertion) |
 | Next | **02 — Naive client / Cronet** |
 
 ## Completed
@@ -23,7 +24,13 @@
 - Added `TestMieruClientReadSurvivesLongUnidirectionalUpload`; red on `v3.38.1`, green on
   `v3.39.0`.
 - Verified: full package suite, `-race` suite, module tidiness, read-only graph resolution,
-  `go mod verify` in both modules, build of `protocol/mieru` + `include`.
+  `go mod verify` in both modules, build of `protocol/mieru` + `include`, and
+  `release-freeze.py verify` against `release/source-lock.json` (PASS — Mieru is an upstream module,
+  not one of the seven locked fork modules, so the lock correctly did not move).
+- Pushed and observed the push CI: `Verify` success (including gofmt, dependency-pin, nested-module,
+  tagged/untagged build and race jobs) and `Android Core ARM64` success. `Mobile contract
+  verification` failed once on an unrelated `transport/http` scheduler-timing assertion
+  (`2.903s` vs `>3s`) and passed on a rerun of the same commit; no code was changed for it.
 - Wrote `UPSTREAM_LEDGER.md`, `FORK_CANDIDATES.md`, `phase-01.md`.
 
 ## Not completed / deferred (with owner phase)
@@ -46,10 +53,11 @@
 - `api.github.com` / `raw.githubusercontent.com` / `github.com` are not reachable through
   `web_fetch` in this environment; GitHub evidence was gathered through the GitHub API (MCP).
 - No WAN, production endpoint, VPS, subscription or real-traffic test was used.
-- No release was published and no workflow was dispatched by hand. The two commits are pushed to
-  `origin/testing` as a normal code push; `verify.yml` (no path filter) and `android-core-arm64.yml`
-  (`go.mod` / `protocol/**` path filter) run by their declared triggers. Their results are not
-  claimed as evidence in this handoff.
+- No release was published and no workflow was dispatched by hand. The commits are pushed to
+  `origin/testing` as a normal code push; `verify.yml` (no path filter), `android-core-arm64.yml`
+  (`go.mod` / `protocol/**`) and `mobile-contract.yml` ran by their declared triggers. `Verify` and
+  `Android Core ARM64` passed; `Mobile contract` passed on rerun after the unrelated timing flake
+  described above.
 
 ## Next-phase inputs
 
