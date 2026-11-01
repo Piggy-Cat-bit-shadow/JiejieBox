@@ -2,11 +2,12 @@
 
 | field | value |
 |---|---|
-| Stage | 01A construction |
+| Stage | 01A construction + 01B debug |
 | Date | 2026-11-02 |
 | Branch | `testing` (default branch; repository has no `main`) |
 | Start base | `7e6cc9cc` local → fast-forwarded to `0ab035904de5536273f6070a766b4fc657d7d77c` |
 | Code commit | `fac646ca20eca25a0129c5580df3d0497b44963c` — Mieru SDK v3.39.0 + regression test |
+| 01B commit | `bc349d83b2b8fdbd9ebb16b9bc3c5c7437effbdd` — empty-datagram and idle-underlay attack tests |
 | Handoff docs | `git log -1 -- docs/audits/protocol-upstream-sync/` (this directory) |
 | CI on `c231dd51` | Verify: success; Android Core ARM64: success; Mobile contract: success on rerun (attempt 1 failed an unrelated timing assertion) |
 | Next | **02 — Naive client / Cronet** |
@@ -32,6 +33,16 @@
   verification` failed once on an unrelated `transport/http` scheduler-timing assertion
   (`2.903s` vs `>3s`) and passed on a rerun of the same commit; no code was changed for it.
 - Wrote `UPSTREAM_LEDGER.md`, `FORK_CANDIDATES.md`, `phase-01.md`.
+- **01B hostile review**: re-verified pins, `go.sum`, `test/` module, replaces and the release lock;
+  re-checked the ledger's AnyTLS/Snell/MASQUE/forkop/X-04 claims at source; audited the removed
+  read deadline's ownership consequences (`Decrypt` allocates plaintext via `aead.Open(nil, …)`, so
+  the bufpool release is safe); confirmed CI's tagged race step actually runs `./protocol/mieru/...`.
+  No production-code defect found.
+- Added two attack tests and a recorded limitation: `TestMieruEmptyUDPDatagramRoundTrip` (RFC 8085
+  zero-length datagram + frame alignment) and
+  `TestMieruClientObservesServerClosingAnIdleUnderlay` (underlay closed after 900 ms idle, blocked
+  read fails before its deadline, new dial rebuilds). Both pass, including under `-race`
+  (full suite 96.286 s; race 101.161 s).
 
 ## Not completed / deferred (with owner phase)
 
@@ -45,6 +56,16 @@
 | forwardproxy authenticated-CONNECT idle semantic | server-side, local code not yet read | 03 |
 | Hysteria2/TUIC/AnyTLS/VLESS/SS/Snell patch-id checks | candidate rows only | 06 |
 | MASQUE upstream `dev` shared-layer diff | upstream not stable; premise corrected | 06 |
+
+## Residual limitations
+
+- **Half-close**: the v3.39.0 Mieru `Session`/client expose no `CloseWrite`, so a TCP write-half-close
+  cannot be propagated through the adapter. This predates the upgrade and has no adapter-only fix;
+  it is recorded rather than silently ignored.
+- **Server `tcp_idle_timeout`**: not exposed as a JiejieBox option (row M-03); the inbound keeps its
+  previous default behaviour.
+- **No device/WAN evidence**: the results above are unit, loopback and CI build/race evidence, not
+  interoperability with an external Mieru server or real network conditions.
 
 ## Blockers / environment facts
 

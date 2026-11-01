@@ -86,6 +86,9 @@ Environment: `go1.25.5 windows/amd64`; `-race` required `CGO_ENABLED=1` with
 | `go list -mod=readonly -m all` (root and `test/`) | exit 0 |
 | `go mod verify` (root and `test/`) | `all modules verified` |
 | `go build ./protocol/mieru/ ./include/` | exit 0 |
+| `go test ./protocol/mieru/ -count=1` (after the 01B coverage tests) | `ok … 96.286s` |
+| `go test -race ./protocol/mieru/ -count=1` (after the 01B coverage tests, CGO on) | `ok … 101.161s` |
+| new 01B tests (run individually with `-v`) | both `PASS` (0.00 s / 2.46 s) |
 | `python scripts/ci/release-freeze.py verify --lock release/source-lock.json` | `PASS: every pin in the tree is the pin the lock records.` |
 | CI `Verify` on `c231dd51` (run 41329115810) | success — gofmt, dependency-pin, nested-module, tagged/untagged build and race jobs |
 | CI `Android Core ARM64` on `c231dd51` (run 41329115850) | success |
@@ -109,8 +112,95 @@ package this phase did not touch, and the identical commit passes on rerun.
    name a hypothesis and the file to check.
 4. **Controlled Cronet archives were not touched.** Any Naive upgrade must move source pins and
    native archives together, per `release/dependencies.json` and `release/source-lock.json`.
+5. **Half-close is not representable by this SDK.** The Mieru `Session`/client expose no
+   `CloseWrite` (searched the v3.39.0 source), so the adapter cannot propagate a TCP write-half
+   close; a caller that half-closes waits for a full close. This predates v3.39.0, is not caused by
+   the read-deadline removal, and cannot be fixed in the adapter without an SDK API. It is recorded
+   as a residual limitation, not a phase-01 defect.
 
-## 7. Handoff to phase 02
+## 7. 01B hostile review (2026-11-02)
+
+The review was run against the 01A result and the real SDK pin; it added no production code. The
+two tests it adds are committed in `bc349d83b2b8fdbd9ebb16b9bc3c5c7437effbdd`.
+
+### 7.1 Pin, lock and consumer consistency
+
+| Check | Result |
+|---|---|
+| root `go list -m github.com/enfein/mieru/v3` | `v3.39.0`, no `replace` |
+| `test/go list -m` | `v3.39.0` (not left behind on v3.38.1) |
+| diff of both module files against `0ab03590` | only the two Mieru lines changed; no Cronet replace moved |
+| all consumers | `protocol/mieru/*` (client, server, config, tests); no other pin site |
+| `release/source-lock.json` | Mieru is not one of the seven locked fork modules; `release-freeze.py verify` = `PASS: every pin in the tree is the pin the lock records.` |
+| controlled Cronet native archives | untouched (`cronet_native` still `8c68ce89873c`) |
+| `go mod verify` (root and `test/`) | `all modules verified` |
+
+### 7.2 Ledger re-verification (not title matching)
+
+* **AnyTLS**: `SagerNet/sing-anytls` HEAD is `580984e4…`, exactly the JiejieBox pin; the module has
+  no tags. No newer stable exists (re-checked 2026-11-02).
+* **Snell**: `SagerNet/sing-snell` HEAD is `bc5a12ac…`, exactly the pin; no tags.
+* **MASQUE**: `protocol/masque` does not exist at `SagerNet/sing-box` tag `v1.14.4` (contents API
+  returns "does not exist"), so the "dev-only, not in stable" statement is source-verified; the
+  earlier plan's assumption that upstream has no MASQUE at all was the outdated part.
+* **forkop Mieru**: the clone pins `mieru v3.33.0` and its adapter has no fallback/generation
+  lifecycle, so it cannot supply a patch for this adapter.
+* **X-04**: the `dialStreamUp` upload goroutine at `transport/v2rayxhttp/conn.go:224-231` still
+  ignores a non-200 upload response; the row stays a real phase-04 candidate.
+* **Mieru rows**: every accepted change (`66f54e2`, `18ca10d`, `a2711f6`, `2b7d62b`, `f7c2c81`,
+  `773d774`) is reachable from tag `v3.39.0`; none is an orphan or a rewritten duplicate, so no
+  patch-id reconstruction was needed for this module.
+
+### 7.3 Cancellation, ownership and the new SDK semantics
+
+* The dial handshake is still bounded by `PostDialHandshake`'s own 10 s read timeout
+  (`apis/internal/handshake.go:47-50`); the removed `serverRespTimeout` was a second, steady-state
+  deadline. `dialDrainTimeout` (5 s) therefore still has its stated meaning.
+* The new `bufpool` releases the encrypted buffer immediately after `recv.Decrypt`. The SDK's
+  `aeadBlockCipher.Decrypt` uses `c.aead.Open(nil, …)` (`pkg/cipher/cipher.go:184`), i.e. it
+  returns independently owned plaintext, so releasing the input is safe. JiejieBox does not use the
+  SDK's `PacketOverStreamTunnel`/`UDPAssociateWrapper` on its UoT path, so there is no duplicate
+  codec or double buffering.
+* No adapter rule was removed or re-implemented: the 01A diff contains only the module files/sums,
+  the regression test and the phase docs. Fallback selection, generation checks, `Close` drain and
+  `InterfaceUpdated` swap are unchanged and covered by the existing suite.
+* `Close`, double `Close`, close-before-start, close-during-dial and stale-generation delivery are
+  covered by existing tests (`outbound_test.go`, `fallback_test.go`, `fallback_e2e_test.go`), which
+  the 01B run re-executed.
+
+### 7.4 New attack tests
+
+1. `TestMieruEmptyUDPDatagramRoundTrip` (`udp_edge_test.go`) — sends a zero-length datagram through
+   the real client/server loopback and then a normal one. It would fail (EOF/hang) if the codec
+   turned an empty datagram into EOF or lost frame alignment. This is the JiejieBox equivalent of
+   the post-v3.39.0 `UDPAssociateWrapper` fix, and it closes the "check separately" note in
+   `UPSTREAM_LEDGER.md` M-04.
+2. `TestMieruClientObservesServerClosingAnIdleUnderlay` (`idle_underlay_test.go`) — a TCP proxy
+   closes the underlay after 900 ms of silence (the SDK's server-side timeout has a 1-minute
+   minimum, so the proxy reproduces the event). The blocked read must fail before its own 8 s
+   deadline, and a new dial must build a new underlay. It would fail if the client lost the closure
+   or left the session stranded.
+
+Both pass; neither required a code change. The existing `TestMieruOutboundCloseTerminatesSessions`
+already covers an explicit close, and `TestOutboundLifecycle` already covers double `Close`.
+
+### 7.5 Did the tests really run?
+
+`verify.yml`'s "race on the fork's own data paths" step runs
+`go test -race -count=1 -tags "$(cat release/DEFAULT_BUILD_TAGS)" ./protocol/mieru/...` (line 486);
+the 01A regression test ran there on `c231dd51`, so CI has already executed the v3.39.0 contract
+test rather than only compiling it. The 01B test files carry no build tag and the step has no
+`-short`, so the same gate runs them on the 01B head; this handoff records their local result
+(§5) and does not claim a CI result that has not happened at commit time. `SKIP` was never reported
+as `PASS`.
+
+### 7.6 Conclusion
+
+No production-code defect was found in the 01A Mieru work. The review produced two coverage pins
+and one recorded SDK limitation (half-close); all pin/lock/consumer checks pass, and the ledger's
+Mieru claims were re-verified against the tag rather than against commit titles.
+
+## 8. Handoff to phase 02
 
 Phase 02 (Naive client / Cronet) starts from:
 
