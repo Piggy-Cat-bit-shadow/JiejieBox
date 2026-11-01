@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| Cycle | 01A/01B, 02A/02B, 03A/03B, 04A/04B, 05A, 06A |
+| Cycle | 01A/01B, 02A/02B, 03A/03B, 04A/04B, 05A, 06A/06B |
 | Branch | `testing` (default; repository has no `main`) |
 | Date | 2026-11-02 |
-| Head at report time | `7f322a90` + the phase-06 docs commit |
-| Release / deploy | none created, none dispatched |
+| Head at report time | `6d4164f8` (cycle head; this report and the `status=completed` STATE are the final docs commit) |
+| Status | **completed** — residuals listed in §4, no release/deploy |
 
 ## 1. What was absorbed
 
@@ -23,6 +23,7 @@
 | 05A | `d6beda62` (docs) | packet-up pipeline evaluated and **rejected**: `maxInflight=1` at 0–200 ms, post construction 1.8 µs/15 allocs vs a 1 MiB batch; historical RTT ratios 1.18/1.23/1.07/1.01/0.97x | cadence probe 9.247 s; benchmarks; package/race from 04B |
 | 06A | `7f322a90` | `sing-vmess` -> `a0c58542` ("Fix vision close after direct write"); Vision ABI tripwire re-audited and deliberately updated | VLESS/Vision tests; `go mod tidy`; release freeze PASS |
 | 06A docs | phase-06 commit | convergence report; no release/deploy | this report |
+| 06B | `6d4164f8` + final docs | hostile review of the 06 delta only; no new defect; cycle closed | Vision tripwires; `go mod verify`; cross-phase Naive/XHTTP `-race`; CI |
 
 ## 2. Accepted / rejected decisions
 
@@ -60,6 +61,15 @@ Rejected / no change (with evidence):
 * CI: each pushed head's declared workflows were run; final head results are recorded in
   `STATE.md`/`phase-06.md`. The one unrelated route flake on a docs-only head was rerun and passed;
   it is recorded rather than hidden.
+
+### 3.1 Final 06B checks
+
+* Vision ABI tripwires and `go test ./protocol/vless/...` pass against `sing-vmess a0c58542`.
+* `go mod verify` passes in both modules; `release-freeze.py verify` PASS (`0.1.36`).
+* Cross-phase `-race` on the two previous protocol surfaces still passes with the new dependency
+  graph: Naive `ok 1.951s`, XHTTP `ok 19.060s` (`with_quic`).
+* Git: branch `testing`, HEAD == remote, clean tree, no tag at HEAD, no gitlink change.
+* CI on `6d4164f8`: Verify, Android Core ARM64 and Mobile contract all success.
 
 ## 4. Known residual risks
 

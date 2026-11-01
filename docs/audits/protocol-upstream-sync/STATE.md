@@ -2,7 +2,8 @@
 
 | field | value |
 |---|---|
-| Stage | 01A/01B, 02A/02B, 03A/03B, 04A/04B, 05A, **06A** complete |
+| Status | **completed** (cycle closed; residuals below) |
+| Stage | 01A/01B, 02A/02B, 03A/03B, 04A/04B, 05A, **06A/06B** complete |
 | Date | 2026-11-02 |
 | Branch | `testing` (default branch; repository has no `main`) |
 | Phase 01 | Mieru SDK `v3.39.0`: `fac646ca`, 01B coverage `bc349d83`; see `phase-01.md` |
@@ -12,9 +13,10 @@
 | Phase 04 code | `96bd665d` stream-up refusal; `b5c12db3` refusal precedence; `669fa275` status-matrix tests |
 | Phase 05 | audit-only; bounded-async pipeline rejected on evidence (`phase-05.md`, ledger X-09) |
 | Phase 06 code | `7f322a90` — `sing-vmess` `a0c58542` for the Vision close fix; ABI tripwire re-audited |
+| Phase 06 docs | `6d4164f8` + the final docs commit; `FINAL_INTEGRATION_REPORT.md` |
 | CI on `f15d4473` | Verify, Android Core ARM64, Mobile contract, Release contract: success |
 | Handoff docs | `git log -1 -- docs/audits/protocol-upstream-sync/` (this directory) |
-| Next | **06B — debug / close the cycle** |
+| Next | **cycle closed** — only the residuals below remain |
 
 ## Completed
 
@@ -133,6 +135,10 @@
 - Convergence: `go mod tidy` clean in both modules; `release-freeze.py verify` PASS; no gitlink or
   native-archive change; no release/tag/deploy. Tests: tagged protocol packages all `ok`.
 - `FINAL_INTEGRATION_REPORT.md` summarises the cycle; `phase-06.md` records the decisions.
+- **06B debug**: re-ran the Vision ABI tripwires and VLESS tests against `a0c58542`, `go mod verify`
+  in both modules, release-freeze, and cross-phase Naive/XHTTP `-race`; git state clean, HEAD ==
+  remote, no tag, no gitlink change. CI on `6d4164f8` green (Verify, Android, Mobile). No new defect;
+  no further code change. Cycle closed as `completed`.
 
 ## Not completed / deferred (with owner phase)
 
@@ -168,10 +174,8 @@
 
 ## Next-phase inputs
 
-1. `phase-06.md`, `FINAL_INTEGRATION_REPORT.md` and `UPSTREAM_LEDGER.md` §7 (the resolution table).
-2. The 06 delta is narrow: `sing-vmess` pin `a0c58542` + `expectedSingVMessVersion`; attack the
-   Vision ABI tripwires and the VLESS build, not the whole protocol set again.
-3. Do not re-open X-04 (stream-up refusal), X-09 (packet-up pipeline), the Naive server S-rows, the
-   client resolution pin (`bd2b705`) or any §7 `NO CHANGE` row without new upstream evidence.
-4. The native Naive `-3`/`-4`/`-5` gap, Apple runtime verification and the MPTCP listener policy
-   remain open; they are not protocol-sync work. No release/tag/deploy in 06B.
+**Cycle closed.** This directory is the final handoff: `FINAL_INTEGRATION_REPORT.md` (cycle summary),
+`phase-01.md` … `phase-06.md` (per-stage detail), `UPSTREAM_LEDGER.md` (§7 is the closing table).
+Do not start a new protocol rewrite from this state without a named upstream revision and a local
+counterexample. The residuals table above is the actual remaining work; none of it is in the 01–06
+scope. No release/tag/deploy was created.

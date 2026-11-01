@@ -88,6 +88,24 @@ adds `Close`; it does not touch the reflected ABI.
 
 ## 6. Handoff
 
-`FINAL_INTEGRATION_REPORT.md` is the cycle summary. `STATE.md` moves to `next=06-debug`; 06B should
-attack this delta (the Vision bump and the resolution table) and then close the cycle. Do not add a
-new protocol rewrite at this point without a named upstream revision and a local counterexample.
+`FINAL_INTEGRATION_REPORT.md` is the cycle summary; 06B closes the cycle below.
+
+## 7. 06B debug / cycle close (2026-11-02)
+
+Scope was the 06 delta only: the `sing-vmess` bump, `expectedSingVMessVersion`, and the module pins.
+No other protocol was re-audited.
+
+| Check | Result |
+|---|---|
+| Vision ABI tripwires (`TestVisionTripwire*`, alias/e2e, registry shape, CommonConn ABI) | `ok` against `a0c58542` |
+| `go test ./protocol/vless/...` | `ok` |
+| `go mod verify` in root and `test` | `all modules verified` |
+| `release-freeze.py verify --lock release/source-lock.json` | PASS (`0.1.36`) |
+| Cross-phase `-race` on Naive + XHTTP (`with_quic`) | Naive `ok 1.951s`, XHTTP `ok 19.060s` |
+| Git state | branch `testing`, HEAD == remote, clean tree, no tags at HEAD, no gitlink change |
+| CI on `6d4164f8` | Verify, Android Core ARM64, Mobile contract: **success** |
+
+No new defect was found in the 06 change; no further code change was made. The cycle is closed in
+`STATE.md` (`status=completed`). Residuals (native Naive `-3/-4/-5`, real interop, Apple runtime,
+MPTCP listener policy, MASQUE dev-only, Mieru post-release work) remain as recorded and are not
+defects introduced by this cycle.
