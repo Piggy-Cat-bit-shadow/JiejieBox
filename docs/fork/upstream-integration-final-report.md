@@ -109,8 +109,8 @@ worktree changes. The authoritative machine-readable ledger is
 
 ```sh
 # 1. sing-tun: merge the pinned sync branch into dev, preserving both sides
-git -C C:/Deepseek/sing-tun-fork switch -c merge-sync-into-dev origin/dev
-git -C C:/Deepseek/sing-tun-fork merge --no-ff origin/sync/upstream-fixes-2026-10-24
+git -C <WORKSPACE_ROOT>/sing-tun-fork switch -c merge-sync-into-dev origin/dev
+git -C <WORKSPACE_ROOT>/sing-tun-fork merge --no-ff origin/sync/upstream-fixes-2026-10-24
 # resolve the go-stack add/add conflicts, flow_dispatch (handled,remove), udp_nat, redirect_iptables
 # 2. push dev, move the main replace to the dev merge SHA, sync test/go.mod
 # 3. then 84e75a6 -> 7980862 -> 09dd03d -> MASQUE live backpressure -> remaining 22 rows

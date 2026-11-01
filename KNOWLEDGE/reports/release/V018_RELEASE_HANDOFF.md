@@ -21,7 +21,7 @@ It refuses to publish on any failure, so a red result in §5 below is a *stop*, 
 If that process is gone, the equivalent command is:
 
 ```powershell
-& 'C:\Deepseek\_drive_release.ps1'
+& '<WORKSPACE_ROOT>\_drive_release.ps1'
 ```
 
 The script is idempotent in the sense that it re-dispatches rather than reusing stale runs, and it
@@ -109,11 +109,11 @@ The Windows host has no Unix toolchain. Everything below was assembled for this 
 
 | tool | path | note |
 |---|---|---|
-| git | `C:\Deepseek\IOS客户端\_tools\mingit\cmd\git.exe` | needs `GIT_EXEC_PATH`, `GIT_TEMPLATE_DIR` |
-| bash | `C:\Deepseek\_shim\bash.exe` | a copied `sh.exe`; Git Bash tolerates CRLF, **Ubuntu bash does not** |
-| Go | `C:\Deepseek\_gotool\go\bin\go.exe` | 1.25.5, downloaded for `go mod tidy`; use `GOTOOLCHAIN=local` or `auto` deliberately |
-| Python | `C:\Users\Jie\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\python\python.exe` | 3.12 |
-| stubs | `C:\Deepseek\_stubs` | `jq`, `chmod`, `sha256sum`, `python3` — `sha256sum` is a **stub**, not real |
+| git | `<WORKSPACE_ROOT>\IOS客户端\_tools\mingit\cmd\git.exe` | needs `GIT_EXEC_PATH`, `GIT_TEMPLATE_DIR` |
+| bash | `<WORKSPACE_ROOT>\_shim\bash.exe` | a copied `sh.exe`; Git Bash tolerates CRLF, **Ubuntu bash does not** |
+| Go | `<WORKSPACE_ROOT>\_gotool\go\bin\go.exe` | 1.25.5, downloaded for `go mod tidy`; use `GOTOOLCHAIN=local` or `auto` deliberately |
+| Python | `<LOCAL_HOME>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\python\python.exe` | 3.12 |
+| stubs | `<WORKSPACE_ROOT>\_stubs` | `jq`, `chmod`, `sha256sum`, `python3` — `sha256sum` is a **stub**, not real |
 
 **Missing and not worth fighting**: `od` (breaks every ELF-magic check), real `sha256sum`, `gcc`
 (so no `-race`), `unzip` on PATH, `gh`.
@@ -281,7 +281,7 @@ release workflow structure: 124 passed, 0 failed
 ## 8. What to do next, in order
 
 1. **Collect the driver's result.** `job_output` for `pwsh-1879`, or re-run
-   `C:\Deepseek\_drive_release.ps1`.
+   `<WORKSPACE_ROOT>\_drive_release.ps1`.
 2. **If the dry run failed**, read the failing step. The dry run got to step 11 (download) before
    this round, and each fix moved it forward; the remaining steps — `verify`, `flatten`,
    `check-upload`, `create the release` — **have still never executed**, so expect surprises there
@@ -323,8 +323,8 @@ Stated plainly so it is not mistaken for done:
 
 | what | path |
 |---|---|
-| release driver | `C:\Deepseek\_drive_release.ps1` |
-| macOS retry loop | `C:\Deepseek\_macos_until_green.ps1` |
+| release driver | `<WORKSPACE_ROOT>\_drive_release.ps1` |
+| macOS retry loop | `<WORKSPACE_ROOT>\_macos_until_green.ps1` |
 | the gate | `scripts/ci/release-artifacts.sh` |
 | its suite + mock `gh` | `scripts/ci/test-release-artifacts.sh` |
 | the release workflow | `.github/workflows/release.yml` |
@@ -334,5 +334,5 @@ Stated plainly so it is not mistaken for done:
 | its tests | `experimental/boxdd/authenticode_windows_test.go` |
 | the gh-token guard | `scripts/ci/check-release-workflows.py` → `check_gh_token` |
 
-Repository: `C:\Deepseek\singbox-consolidation`, branch `release/v6-unix-authority`, remote
+Repository: `<WORKSPACE_ROOT>\singbox-consolidation`, branch `release/v6-unix-authority`, remote
 `Piggy-Cat-bit-shadow/sing-box`.

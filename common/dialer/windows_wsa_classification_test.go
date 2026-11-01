@@ -162,7 +162,7 @@ func TestWindowsWSAErrorChainIsClassified(t *testing.T) {
 				"through the production Windows wrap: %s", testCase.why)
 
 			// And through the layers this repo adds on top.
-			require.Truef(t, testCase.isPathFail == isFamilyPathFailure(E.Cause(chain, "dial 2409:8a00::1:443")),
+			require.Truef(t, testCase.isPathFail == isFamilyPathFailure(E.Cause(chain, "dial 2001:db8::1:443")),
 				"through E.Cause: %s", testCase.why)
 			require.Truef(t, testCase.isPathFail == isFamilyPathFailure(E.Errors(chain)),
 				"through E.Errors: %s", testCase.why)
@@ -185,7 +185,7 @@ func TestCallerTeardownIsNeverAFamilyFailure(t *testing.T) {
 	} {
 		chain := &net.OpError{Op: "dial", Net: "tcp", Err: &os.SyscallError{Syscall: "connect", Err: err}}
 		require.Falsef(t, isFamilyPathFailure(chain), "%s must not be recorded as a path failure", name)
-		require.Falsef(t, isFamilyPathFailure(E.Cause(chain, "dial 2409:8a00::1")),
+		require.Falsef(t, isFamilyPathFailure(E.Cause(chain, "dial 2001:db8::1")),
 			"%s must not be recorded through E.Cause either", name)
 
 		// And a sentinel teardown error is still matchable by the caller, which is what makes the

@@ -74,8 +74,8 @@ func newInvertedRecoveryHarness(t *testing.T, ipv4, ipv6 netcap.FamilyState, und
 // Recovery must return the IPv4 address. Returning nothing is the bug, and it is invisible to every
 // existing test because they all delay the AAAA half.
 func TestRecoverySkipsAnUndialableAnswerToReachAUsableOne(t *testing.T) {
-	original := netip.MustParseAddr("2409:8c54:871:1007::2c")
-	healthyIPv4 := netip.MustParseAddr("112.53.55.92")
+	original := netip.MustParseAddr("2001:db8::2c")
+	healthyIPv4 := netip.MustParseAddr("192.0.2.92")
 
 	harness, secondFamilyDelay := newInvertedRecoveryHarness(t,
 		netcap.StateProvisioned, netcap.StateUnavailable,
@@ -107,8 +107,8 @@ func TestRecoverySkipsAnUndialableAnswerToReachAUsableOne(t *testing.T) {
 // not wait for the slow family when the first answer can already carry the flow. The fix must not turn
 // "usable first" into "wait for everything".
 func TestRecoveryReturnsAtOnceWhenTheFirstFamilyIsUsable(t *testing.T) {
-	original := netip.MustParseAddr("2409:8c54:871:1007::2c")
-	healthyIPv4 := netip.MustParseAddr("112.53.55.92")
+	original := netip.MustParseAddr("2001:db8::2c")
+	healthyIPv4 := netip.MustParseAddr("192.0.2.92")
 
 	leaf := newCapabilityLeaf(netcap.StateProvisioned, netcap.StateUnavailable)
 	leaf.inner.stall = nil
@@ -143,7 +143,7 @@ func TestRecoveryReturnsAtOnceWhenTheFirstFamilyIsUsable(t *testing.T) {
 // Both families answer, both are refused by the machine, and the stream then closes. Recovery must end
 // with nothing rather than hanging or returning a refused address.
 func TestRecoveryReportsNothingWhenEveryFamilyIsUndialable(t *testing.T) {
-	original := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	original := netip.MustParseAddr("2001:db8::2c")
 	otherIPv6 := netip.MustParseAddr("2409:8c54:871:2007::10d")
 
 	leaf := newCapabilityLeaf(netcap.StateProvisioned, netcap.StateUnavailable)

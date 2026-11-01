@@ -35,8 +35,8 @@ import (
 // Measured with the check replaced by `if true`: the excluded IPv6 literal is attempted under ipv4_only.
 func TestAStrategyExcludedOriginalIsNeverPromotedBack(t *testing.T) {
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyIPv4Only)
-	originalIPv6 := netip.MustParseAddr("2409:8c54:871:2003::15")
-	providedIPv4 := netip.MustParseAddr("112.53.55.92")
+	originalIPv6 := netip.MustParseAddr("2001:db8::15")
+	providedIPv4 := netip.MustParseAddr("192.0.2.92")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -90,7 +90,7 @@ func (r *fixedAnswerRouter) Lookup(ctx context.Context, domain string, options a
 // socket that cannot work.
 func TestAResolvedNameIsAdmittedByTheFlowsOwnCapture(t *testing.T) {
 	resolver, leaf, _ := newChangingNetworkChain(t, capWith(netcap.StateProvisioned, netcap.StateUnavailable))
-	ipv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	ipv6 := netip.MustParseAddr("2001:db8::2c")
 
 	router := &fixedAnswerRouter{answers: []netip.Addr{ipv6}}
 	resolver.router = router

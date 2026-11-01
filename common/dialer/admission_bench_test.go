@@ -32,7 +32,7 @@ func dualStackAdmission() admissionPolicy {
 
 func BenchmarkAdmissionPolicyAdmits(b *testing.B) {
 	globalIPv4 := netip.MustParseAddr("93.184.216.34")
-	globalIPv6 := netip.MustParseAddr("2409:8a00::1")
+	globalIPv6 := netip.MustParseAddr("2001:db8::1")
 	cases := []struct {
 		name   string
 		policy admissionPolicy
@@ -63,7 +63,7 @@ func BenchmarkAdmissionPolicyAdmits(b *testing.B) {
 }
 
 func BenchmarkAdmissionPolicyVerdict(b *testing.B) {
-	globalIPv6 := netip.MustParseAddr("2409:8a00::1")
+	globalIPv6 := netip.MustParseAddr("2001:db8::1")
 	policy := newAdmissionPolicyForTest(C.DomainStrategyIPv4Only, newLocalFamilyPolicy(netcap.FamilyCapability{
 		IPv4: netcap.StateProvisioned,
 		IPv6: netcap.StateProvisioned,
@@ -78,7 +78,7 @@ func BenchmarkAdmissionPolicyVerdict(b *testing.B) {
 
 func BenchmarkAdmissionPolicyAdmitCandidates(b *testing.B) {
 	globalIPv4 := netip.MustParseAddr("93.184.216.34")
-	globalIPv6 := netip.MustParseAddr("2409:8a00::1")
+	globalIPv6 := netip.MustParseAddr("2001:db8::1")
 	both := []netip.Addr{globalIPv4, globalIPv6}
 	ipv6Only := []netip.Addr{globalIPv6}
 

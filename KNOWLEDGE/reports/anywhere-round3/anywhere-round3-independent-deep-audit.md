@@ -9,7 +9,7 @@
 | 模块 | 实际生效版本 | 本地对照源码 |
 |---|---|---|
 | `github.com/sagernet/sing` | `v0.9.6-0.20261019051552-baed8c3b4a34` | module cache |
-| `github.com/sagernet/sing-tun` | `v0.0.0-20261019070836-a7bd7facc7cc` | module cache + `C:\Deepseek\sing-tun-fork@a7bd7fac` |
+| `github.com/sagernet/sing-tun` | `v0.0.0-20261019070836-a7bd7facc7cc` | module cache + `<WORKSPACE_ROOT>\sing-tun-fork@a7bd7fac` |
 | `github.com/sagernet/quic-go` | `v0.61.1-0.20261019061042-7e08ecaba383` | module cache |
 | `github.com/sagernet/sing-quic` | `v0.7.2-0.20261019060901-d0deb0359c06` | module cache |
 | `github.com/sagernet/cronet-go` | `v0.0.1-143.0.7499.109-2.0.20260929202119-8c68ce89873c` | module cache |
@@ -145,7 +145,7 @@ $ git diff --stat 5fc4f936..HEAD -- '*.go' -> 343 files changed, 56389 insertion
 | OS | Windows 10 Pro 19044，`GOOS=windows GOARCH=amd64` |
 | CPU | AMD Ryzen 7 4800H（8C/16T），`GOMAXPROCS=16` |
 | RAM | 15.4 GiB |
-| Go | `go1.25.5 windows/amd64`（`C:\Deepseek\_gotool\go`），`CGO_ENABLED=0` |
+| Go | `go1.25.5 windows/amd64`（`<WORKSPACE_ROOT>\_gotool\go`），`CGO_ENABLED=0` |
 | 构建模式 | `GOFLAGS=-mod=readonly` 跑仓库内命令；临时 harness 在 `C:\tmp\r3probe`（仓库外，独立模块，replace 指向锁定版本） |
 | 未执行 | `-race`（无 cgo 工具链）、任何 iOS/Android/macOS 目标、任何真机、任何真实 WAN |
 

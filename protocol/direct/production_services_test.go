@@ -116,8 +116,8 @@ func TestTheAmbientPolicyDoesNotChangeTheDialSurface(t *testing.T) {
 // factory built (`domain_strategy` reaches `dnsQueryOptions.Strategy`), which is exactly the case that
 // used to be inferred from "did this outbound configure a resolver" and got the answer wrong.
 func TestAStrictStrategyRefusesTheBypassOnTheRealOutbound(t *testing.T) {
-	ipv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
-	ipv4 := netip.MustParseAddr("112.53.55.92")
+	ipv6 := netip.MustParseAddr("2001:db8::2c")
+	ipv4 := netip.MustParseAddr("192.0.2.92")
 
 	//nolint:staticcheck
 	options := option.DirectOutboundOptions{DialerOptions: option.DialerOptions{

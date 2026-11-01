@@ -40,7 +40,7 @@ func TestAULAOnlyNetworkIsRefusedForGlobalButNeverForLocal(t *testing.T) {
 
 	capability := currentFamilyCapability(t, h).Capability
 	require.Equal(t, netcap.StateUnavailable, capability.GlobalIPv6Egress)
-	require.True(t, capability.HardUndialable(netip.MustParseAddr("2409:8a00::1")),
+	require.True(t, capability.HardUndialable(netip.MustParseAddr("2001:db8::1")),
 		"a global IPv6 destination is unreachable from a ULA-only machine")
 	require.False(t, capability.HardUndialable(netip.MustParseAddr("fd00:1234::99")),
 		"and the ULA peer inside the site is untouched - this is the enterprise LAN the fix must not kill")
@@ -68,7 +68,7 @@ func TestNAT66KeepsGlobalIPv6Usable(t *testing.T) {
 	capability := currentFamilyCapability(t, h).Capability
 	require.Equal(t, netcap.StateProvisioned, capability.GlobalIPv6Egress,
 		"a ::/0 route through a translating router is a public path, whatever the host's own prefix is")
-	require.False(t, capability.HardUndialable(netip.MustParseAddr("2409:8a00::1")),
+	require.False(t, capability.HardUndialable(netip.MustParseAddr("2001:db8::1")),
 		"so global IPv6 must keep working on an NPTv6/NAT66 network")
 	require.False(t, capability.HardUndialable(netip.MustParseAddr("fd00:1234::99")))
 }
@@ -82,11 +82,11 @@ func TestTheEgressVerdictIsNeverDerivedFromAddressType(t *testing.T) {
 	addressing := map[string][]string{
 		"link-local only":     {"fe80::1/64"},
 		"ula only":            {"fd00::1/64"},
-		"global only":         {"2409:8a00::1/64"},
+		"global only":         {"2001:db8::1/64"},
 		"link-local + ula":    {"fe80::1/64", "fd00::1/64"},
-		"link-local + global": {"fe80::1/64", "2409:8a00::1/64"},
-		"ula + global":        {"fd00::1/64", "2409:8a00::1/64"},
-		"all three":           {"fe80::1/64", "fd00::1/64", "2409:8a00::1/64"},
+		"link-local + global": {"fe80::1/64", "2001:db8::1/64"},
+		"ula + global":        {"fd00::1/64", "2001:db8::1/64"},
+		"all three":           {"fe80::1/64", "fd00::1/64", "2001:db8::1/64"},
 		"ipv4 + link-local":   {"192.0.2.10/24", "fe80::1/64"},
 	}
 	for name, prefixes := range addressing {
@@ -160,7 +160,7 @@ func TestAVirtualAdapterAloneNeverCreatesEgress(t *testing.T) {
 	capability := currentFamilyCapability(t, h).Capability
 	require.Equal(t, netcap.StateUnavailable, capability.GlobalIPv6Egress,
 		"a global address on an adapter with no route is not egress")
-	require.True(t, capability.HardUndialable(netip.MustParseAddr("2409:8a00::1")))
+	require.True(t, capability.HardUndialable(netip.MustParseAddr("2001:db8::1")))
 	require.False(t, capability.HardUndialable(netip.MustParseAddr("172.28.0.5")),
 		"while the adapter's own IPv4 segment still works")
 }
@@ -220,7 +220,7 @@ func TestARouteOnlyChangeSurvivesAFailedObservationWithoutLaundering(t *testing.
 	// Wi-Fi: IPv4 and IPv6 addressing, no global IPv6 route.
 	harness.manager.routeObservation = func() netcap.RouteObservation { return netcap.RouteAbsent }
 	harness.observe(t, []adapter.NetworkInterface{
-		interfaceOn(1, "wlan0", C.InterfaceTypeWIFI, true, "192.168.1.10/24", "2409:8a00::10/64"),
+		interfaceOn(1, "wlan0", C.InterfaceTypeWIFI, true, "192.168.1.10/24", "2001:db8::10/64"),
 	}, "192.0.2.1")
 	harness.settleOn(t, "wifi-with-ipv6-no-route")
 
@@ -271,15 +271,15 @@ func TestARouteAppearingOnTheSameNetworkIsNotSticky(t *testing.T) {
 	h := &transitionWindowHarness{manager: manager}
 
 	setInterfaces(h, "192.0.2.1", interfaceOn(1, "eth0", C.InterfaceTypeEthernet, true,
-		"192.168.1.10/24", "2409:8a00::10/64"))
+		"192.168.1.10/24", "2001:db8::10/64"))
 	h.settle(t, "same-network")
-	require.True(t, currentFamilyCapability(t, h).Capability.HardUndialable(netip.MustParseAddr("2409:8a00::1")))
+	require.True(t, currentFamilyCapability(t, h).Capability.HardUndialable(netip.MustParseAddr("2001:db8::1")))
 
 	// The route comes back. Nothing else moves: no address, no gateway, no interface, no reset.
 	observation = netcap.RoutePresent
 	require.NoError(t, manager.UpdateInterfaces())
 
-	require.False(t, currentFamilyCapability(t, h).Capability.HardUndialable(netip.MustParseAddr("2409:8a00::1")),
+	require.False(t, currentFamilyCapability(t, h).Capability.HardUndialable(netip.MustParseAddr("2001:db8::1")),
 		"a restored route must restore global IPv6 immediately: a capability that stayed refused "+
 			"until the next network change would be a permanent outage on a recovery the machine "+
 			"already made")
@@ -296,7 +296,7 @@ func TestTheRouteObservationFailureOfOneGenerationDoesNotOutliveIt(t *testing.T)
 	h := &transitionWindowHarness{manager: manager}
 
 	setInterfaces(h, "192.0.2.1", interfaceOn(1, "eth0", C.InterfaceTypeEthernet, true,
-		"192.168.1.10/24", "2409:8a00::10/64"))
+		"192.168.1.10/24", "2001:db8::10/64"))
 	h.settle(t, "readable-route-table")
 	require.Equal(t, netcap.StateUnavailable, currentFamilyCapability(t, h).Capability.GlobalIPv6Egress)
 
@@ -306,7 +306,7 @@ func TestTheRouteObservationFailureOfOneGenerationDoesNotOutliveIt(t *testing.T)
 
 	require.Equal(t, netcap.StateUnknown, currentFamilyCapability(t, h).Capability.GlobalIPv6Egress,
 		"a read that failed must produce no opinion, not the previous generation's opinion")
-	require.False(t, currentFamilyCapability(t, h).Capability.HardUndialable(netip.MustParseAddr("2409:8a00::1")),
+	require.False(t, currentFamilyCapability(t, h).Capability.HardUndialable(netip.MustParseAddr("2001:db8::1")),
 		"and an unproven absence must not refuse a destination")
 }
 
@@ -331,7 +331,7 @@ func TestRepeatedRefusalsDoNotGrowGoroutinesOrFileDescriptors(t *testing.T) {
 	before := runtime.NumGoroutine()
 	beforeFDs := openFileDescriptorCount(t)
 
-	target := netip.MustParseAddr("2409:8a00::1")
+	target := netip.MustParseAddr("2001:db8::1")
 	for i := 0; i < 2000; i++ {
 		_, _, capability := manager.NetworkFamilyCapabilitySnapshot()
 		require.True(t, capability.Capability.HardUndialable(target))
@@ -381,7 +381,7 @@ func TestEveryRefusalReasonIsDistinguishable(t *testing.T) {
 	noFamily.IPv6 = netcap.StateUnavailable
 
 	for name, capability := range map[string]netcap.FamilyCapability{"a": noRoute, "b": noFamily} {
-		require.Truef(t, capability.HardUndialable(netip.MustParseAddr("2409:8a00::1")),
+		require.Truef(t, capability.HardUndialable(netip.MustParseAddr("2001:db8::1")),
 			"%s must refuse a global IPv6 destination", name)
 		require.Falsef(t, capability.HardUndialable(netip.MustParseAddr("fe80::1")),
 			"%s must not refuse a link-local one", name)
@@ -419,10 +419,10 @@ func TestARouteOnlyChangeArrivesThroughTheProductionEventPath(t *testing.T) {
 	h := &transitionWindowHarness{manager: manager}
 
 	setInterfaces(h, "192.0.2.1", interfaceOn(1, "eth0", C.InterfaceTypeEthernet, true,
-		"192.168.1.10/24", "2409:8a00::10/64"))
+		"192.168.1.10/24", "2001:db8::10/64"))
 	h.settle(t, "route-event-path")
 	epochBefore := manager.NetworkResetGeneration()
-	require.True(t, currentFamilyCapability(t, h).Capability.HardUndialable(netip.MustParseAddr("2409:8a00::1")))
+	require.True(t, currentFamilyCapability(t, h).Capability.HardUndialable(netip.MustParseAddr("2001:db8::1")))
 
 	// The route comes back. Nothing else moves: the address list, the gateway, the default interface
 	// and the fingerprint are all identical, which is exactly the case DefaultInterfaceMonitor's dedup
@@ -430,7 +430,7 @@ func TestARouteOnlyChangeArrivesThroughTheProductionEventPath(t *testing.T) {
 	observation = netcap.RoutePresent
 	manager.postUpdateNetworkEnvironment()
 
-	require.False(t, currentFamilyCapability(t, h).Capability.HardUndialable(netip.MustParseAddr("2409:8a00::1")),
+	require.False(t, currentFamilyCapability(t, h).Capability.HardUndialable(netip.MustParseAddr("2001:db8::1")),
 		"the registered network-monitor callback must republish the verdict on a route-only change")
 	require.Equal(t, epochBefore, manager.NetworkResetGeneration(),
 		"and it must do so WITHOUT claiming a new generation: the route moved, the network did not, and "+

@@ -34,7 +34,7 @@ import (
 
 // TestListenPacketRefusesALiteralTheStrategyExcludes is the regression.
 func TestListenPacketRefusesALiteralTheStrategyExcludes(t *testing.T) {
-	originalIPv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	originalIPv6 := netip.MustParseAddr("2001:db8::2c")
 
 	// The machine is dual-stack, so nothing about capability is in play: only the policy excludes this
 	// destination, and the policy is exactly what must be honoured.
@@ -60,7 +60,7 @@ func TestListenPacketRefusesALiteralTheStrategyExcludes(t *testing.T) {
 // TestListenPacketAdmitsALiteralTheStrategyAllows is the control: without it, a fix that refused every
 // packet flow would pass the regression above.
 func TestListenPacketAdmitsALiteralTheStrategyAllows(t *testing.T) {
-	originalIPv4 := netip.MustParseAddr("112.53.55.92")
+	originalIPv4 := netip.MustParseAddr("192.0.2.92")
 
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyIPv4Only)
 	chain.inner.packetConn = &countingPacketConn{}

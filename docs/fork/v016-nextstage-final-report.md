@@ -133,8 +133,8 @@ The order asks for the report to live in `docs/fork/` **and not only** at a Wind
 was given as a file on the Desktop, so two copies exist and are verified byte-identical:
 
 ```text
-C:\Users\Jie\Desktop\JiejieBox_v016_686c937c_NextStage_Closure_ReleaseCandidate_Final_Report.md
-C:\Users\Jie\Desktop\JiejieBox_v016_686c937c_NextStage_G0_Baseline_Ledger.md
+<LOCAL_HOME>\Desktop\JiejieBox_v016_686c937c_NextStage_Closure_ReleaseCandidate_Final_Report.md
+<LOCAL_HOME>\Desktop\JiejieBox_v016_686c937c_NextStage_G0_Baseline_Ledger.md
 ```
 
 The check that matters, and how to repeat it: `git status --porcelain` is empty at the tip, so the
@@ -706,7 +706,7 @@ COMMAND             = go test -count=1 -tags "$TAGS" -json -timeout 3600s ./...
                       go's and not a pipeline's
 GO_EXIT             = 1
 RAW LOG             = docs/fork/v016-nextstage-final-scan.jsonl   (0 bytes on stderr)
-                      C:\Deepseek\内核\final_scan_meta3.txt        (SHA + tags + timestamp)
+                      <WORKSPACE_ROOT>\内核\final_scan_meta3.txt        (SHA + tags + timestamp)
 PACKAGES_TOTAL      = 171 reporting packages
 PACKAGES_WITH_TESTS = 84   (81 ok + 3 FAIL)
 DISTINCT_TESTS      = 7071
@@ -872,7 +872,7 @@ carries with_naive_outbound, and no Linux product links cronet."* So it is `BLOC
 regression, and it is the seventh entry in §M.
 
 **libbox ABI: 383 exported symbols, 0 added, 0 removed.** The artifact pair at
-`C:\Deepseek\内核\abi_*.txt` was found to be a **same-run snapshot** (byte-identical, written 182 ms
+`<WORKSPACE_ROOT>\内核\abi_*.txt` was found to be a **same-run snapshot** (byte-identical, written 182 ms
 apart) and therefore cannot by itself establish cross-round stability; it is attributed to
 `017fac4e9900e9b6c7e84b6aa9b5a822f7841858` with corroboration. This round supplies the missing
 cross-SHA leg (`017fac4e → 686c937`), and `box.go`'s new method cannot move the surface because no

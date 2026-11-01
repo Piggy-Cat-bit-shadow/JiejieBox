@@ -345,7 +345,7 @@ func (c *Client) SetKeepIdleConnections(keep bool) {
 //
 // XHTTP deployments routinely put a query in the configured path:
 //
-//	"path": "/?proxyip=149.56.109.62"    the Cloudflare Worker / edgetunnel / relay shape
+//	"path": "/?proxyip=192.0.2.62"    the Cloudflare Worker / edgetunnel / relay shape
 //	"path": "/base?x=1"
 //
 // The worker reads that query to pick an upstream, so losing it is losing the relay.
@@ -353,8 +353,8 @@ func (c *Client) SetKeepIdleConnections(keep bool) {
 // `URLSetPath` is `net/url.(*URL).setPath`, which percent-encodes everything handed to it AS A PATH.
 // A `?` is not a legal path character, so a configured query used to arrive as a literal path segment:
 //
-//	configured   /?proxyip=149.56.109.62
-//	URL.Path     /%3Fproxyip=149.56.109.62     (request line: GET /%3Fproxyip=149.56.109.62 HTTP/1.1)
+//	configured   /?proxyip=192.0.2.62
+//	URL.Path     /%3Fproxyip=192.0.2.62     (request line: GET /%3Fproxyip=192.0.2.62 HTTP/1.1)
 //	URL.RawQuery ""                            an EMPTY query, so the worker sees no `proxyip`
 //
 // Nothing errors: the request is well formed and the origin answers. That is why the split happens

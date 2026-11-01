@@ -32,9 +32,9 @@
 
 | item | path |
 |---|---|
-| mirror | `C:\Deepseek\_quic_migration_20261025\old-quic-go.git` |
+| mirror | `<WORKSPACE_ROOT>\_quic_migration_20261025\old-quic-go.git` |
 | bundle | `...\quic-go-all.bundle` (SHA256 `A877932FC37A59A699E1CD482CB0913DC9A044C8F2D0A8991A7513106513AE36`) |
-| second copy | `C:\Deepseek\_quic_migration_backup2_20261025` |
+| second copy | `<WORKSPACE_ROOT>\_quic_migration_backup2_20261025` |
 | refs / remote before | `old-refs.txt`, `origin-ls-remote-before.txt`, `tags-remote-before.txt` |
 | API metadata | `api-*.json` (repo, branches, tags, releases, issues, pulls, workflows, rulesets, hooks, keys, environments, variables, secrets names, actions permissions, runs) |
 | consumer pins | `pin-singbox-root.json`, `pin-singbox-test.json`, `pin-singquic.json`; all resolve to the same `f0f7ab2` pseudo-version |

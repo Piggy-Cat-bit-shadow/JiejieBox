@@ -72,7 +72,7 @@
     }
   },
   "user_tree_protection": {
-    "path": "/Users/jie/Desktop/其他文件/sing-box",
+    "path": "<WORKSPACE_ROOT>/sing-box",
     "head_before": "ef83b86819c97cbe58b0397dc74af6aca5f1859d",
     "head_after": "ef83b86819c97cbe58b0397dc74af6aca5f1859d",
     "branch": "testing",

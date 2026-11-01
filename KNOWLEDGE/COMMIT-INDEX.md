@@ -233,7 +233,7 @@ HTTP/3 复制回退可能在后续错误之前先排入若干副本，所以这�
 | `3c6e0aad3` → `fe5789539` | FIX → FIX | OWN | 先加了个截断（clamp），随后又**撤销**；完整的 0..255 填充范围才对。所谓“panic 修复”**本身就是一次协议变更**——有个测试误用了 `buf.Resize(start, end)`，第二个参数其实是**长度**。 |
 | `e9d329380` | COMPAT | UPSTREAM-ABSORBED-style | 响应中的 `Padding` 头变为无条件发送 |
 | `d4ead1498` | HARDENING | OWN | 引入 `packetDestinationGuard` |
-| `7029722bf` | HARDENING | OWN | 唯一一个需要合取条件（conjunctive）、仅限 TCP 的 self-SSH:2222 例外 |
+| `7029722bf` | HARDENING | OWN | 唯一一个需要合取条件（conjunctive）、仅限 TCP 的 self-SSH (port elided) 例外 |
 | `1dc734f75`, `3bbf17907`, `10e1f2a95`, `d1f3798a6`, `2ec06e451` | HARDENING | OWN | 守卫顺序与 IPv4 映射地址（IPv4-mapped）规范化 |
 | `724035c76` | REFACTOR | OWN | `server_limits.idle_timeout` 被解析却**从没被读取**——连同推理一起删了 |
 | `bbfc31582` → `968395304` | REFACTOR | OWN | Clash API 先被移除（−1908），随后**恢复**（+2254） |

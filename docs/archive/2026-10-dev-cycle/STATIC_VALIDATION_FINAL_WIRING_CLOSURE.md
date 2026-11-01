@@ -16,7 +16,7 @@ REMOTE_BRANCH_TIP_AT_VERIFICATION = 9f4e0778e2990e715a20ef154dd192e152204916
 # read from `git rev-parse origin/closure/0.1.6-static-validation-final-wire`
 
 WORK_BRANCH    = closure/0.1.6-static-validation-final-wire
-WORKTREE_NAME  = C:\Deepseek\内核\tf
+WORKTREE_NAME  = <WORKSPACE_ROOT>\内核\tf
 WORKTREE_CLEAN = YES
 GO_VERSION / GOOS / GOARCH = go1.26.8 / windows / amd64
 ```

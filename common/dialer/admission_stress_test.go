@@ -48,8 +48,8 @@ type stressChain struct {
 
 func newStressChain(t *testing.T) *stressChain {
 	t.Helper()
-	ipv4 := netip.MustParseAddr("112.53.55.92")
-	ipv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	ipv4 := netip.MustParseAddr("192.0.2.92")
+	ipv6 := netip.MustParseAddr("2001:db8::2c")
 
 	// The machine never has IPv6 for the whole run. Only the EPOCH moves.
 	manager := &scriptedObservationManager{
@@ -81,7 +81,7 @@ func newStressChain(t *testing.T) *stressChain {
 // IPv6 on a machine that has none: not one of them may attempt it. This is the assertion the first version
 // of this file tried to make under flips, and it is the one that has no fail-open escape.
 func TestNoFlowInTheOwnedWindowDialsAFamilyTheMachineLacks(t *testing.T) {
-	ipv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	ipv6 := netip.MustParseAddr("2001:db8::2c")
 	chain := newStressChain(t)
 
 	before := runtime.NumGoroutine()
@@ -209,7 +209,7 @@ func TestASupersededCaptureCostsAnAttemptNotAConnection(t *testing.T) {
 // moved many times, the verdict read at the end must be the machine's current one and not a value that
 // drifted. A capability that is a value cannot drift, and this is the cheap check that it did not.
 func TestAFlippedEpochNeverLeavesAVerdictBehind(t *testing.T) {
-	ipv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	ipv6 := netip.MustParseAddr("2001:db8::2c")
 
 	manager := &scriptedObservationManager{
 		verdicts: []adapter.NetworkFamilyCapability{capWith(netcap.StateProvisioned, netcap.StateUnavailable)},

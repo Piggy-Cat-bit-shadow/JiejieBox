@@ -3,8 +3,8 @@
 Unmodified `git@v3.38.1` `cmd/mita`, built for Windows:
 
 ```powershell
-cd C:\Users\Jie\go\pkg\mod\github.com\enfein\mieru\v3@v3.38.1
-go build -o C:\Deepseek\_mieru_refs\mita.exe ./cmd/mita
+cd <LOCAL_HOME>\go\pkg\mod\github.com\enfein\mieru\v3@v3.38.1
+go build -o <WORKSPACE_ROOT>\_mieru_refs\mita.exe ./cmd/mita
 New-Item -ItemType Directory -Force -Path C:\var\run\mita
 $env:MITA_CONFIG_JSON_FILE = '...\server.json'
 $env:MITA_INSECURE_UDS = '1'

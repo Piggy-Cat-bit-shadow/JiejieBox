@@ -1169,10 +1169,10 @@ Engine: 1→15.9MiB/17thr/235fd ; 4→16.4MiB/23thr/279fd ; 1+4NIK→15.9MiB/16t
 
 | 文件 | 用途 |
 |---|---|
-| `C:\Deepseek\_np_audit\probe\main.go` | 原生 engine/raw/hold/origin/blackhole 探针（仅用 cronet-go 公开 API） |
-| `C:\Deepseek\_np_audit\bin\server-*.json` | 四个 loopback 服务端配置（tcp+udp / tcp-only / 黑洞 / 错误密码） |
-| `C:\Deepseek\_np_audit\hpackcheck\main.go` | HPACK 每字符编码长度复算（§5.5） |
-| `C:\Deepseek\_np_audit\naiveproxy\` | SagerNet/naiveproxy@97ae698 sparse 检出，只读 |
+| `<WORKSPACE_ROOT>\_np_audit\probe\main.go` | 原生 engine/raw/hold/origin/blackhole 探针（仅用 cronet-go 公开 API） |
+| `<WORKSPACE_ROOT>\_np_audit\bin\server-*.json` | 四个 loopback 服务端配置（tcp+udp / tcp-only / 黑洞 / 错误密码） |
+| `<WORKSPACE_ROOT>\_np_audit\hpackcheck\main.go` | HPACK 每字符编码长度复算（§5.5） |
+| `<WORKSPACE_ROOT>\_np_audit\naiveproxy\` | SagerNet/naiveproxy@97ae698 sparse 检出，只读 |
 
 ---
 

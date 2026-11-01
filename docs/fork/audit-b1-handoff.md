@@ -67,7 +67,7 @@ Each entry: why not fixed = an explicit architectural/semantic red line, not mis
 
 | item | precondition to resume |
 | --- | --- |
-| **sing-tun `d092c64`** IPv6-only TCP accept-loop self-heal: rebase onto the real current pin `6937951` and bump the pseudo-version. | `d092c64` is **NOT an ancestor of pin `6937951`**. The fix + its production-path test (`stack_system_listenconfig_test.go`, 196 lines, the seam the pin lacks) already exist in `C:\Deepseek\sing-tun-fork` @ `fix/listenconfig-ipv6-only-selfheal`. **Explicitly not a second implementation.** Requires a cross-repo commit + `go.mod` pin bump. |
+| **sing-tun `d092c64`** IPv6-only TCP accept-loop self-heal: rebase onto the real current pin `6937951` and bump the pseudo-version. | `d092c64` is **NOT an ancestor of pin `6937951`**. The fix + its production-path test (`stack_system_listenconfig_test.go`, 196 lines, the seam the pin lacks) already exist in `<WORKSPACE_ROOT>\sing-tun-fork` @ `fix/listenconfig-ipv6-only-selfheal`. **Explicitly not a second implementation.** Requires a cross-repo commit + `go.mod` pin bump. |
 | **`sing` pause primitive root fix** | `sing` is a **separate repo with no local checkout**. Root cause located: `service/pause/default.go` `emit` (134-137) calls foreign callbacks **inline under `d.access`**. Target shape: *snapshot under lock → unlock → synchronous invoke* (contract: callback completes synchronously before `DevicePause`/`DeviceWake` returns — asserted at the boundary with **no grace period**). Fix belongs in `sing`, then a pin bump. Commit #1 works around it **only** on the registration side. |
 | **URLTest lock order** — `protocol/group/urltest.go:1528-1567` `performUpdateCheck` holds `updateAccess` across `Interrupt()` @1563 and `history.NotifyUpdated()` @1566. | Needs a **real cycle or reentrancy** or a provable blocking risk first. No formalism unlocking without one. The correct pattern already exists in-tree at `common/urltest/urltest.go:294-310`. |
 | **VLESS half-close** — `protocol/vless/encryption` `CommonConn`/`XorConn` under `mlkem768x25519plus`. | Needs a **runtime reproducer** first: is half-close upgraded to full close? If confirmed, fix by the same invariant as commit #5 (`WriterReplaceable`/`ReaderReplaceable`). No reproducer yet. |
@@ -78,10 +78,10 @@ Each entry: why not fixed = an explicit architectural/semantic red line, not mis
 
 ## 4. Out-of-repo probes — minimal archive
 
-Directories are **not** in the repository and are not part of the diff. They live under `C:\Deepseek\`.
-Environment for all three: `GOPATH=C:\Deepseek\_gotool\gopath`, `go` at `C:\Deepseek\_gotool\go\bin`, `GOPROXY` reachable.
+Directories are **not** in the repository and are not part of the diff. They live under `<WORKSPACE_ROOT>\`.
+Environment for all three: `GOPATH=<WORKSPACE_ROOT>\_gotool\gopath`, `go` at `<WORKSPACE_ROOT>\_gotool\go\bin`, `GOPROXY` reachable.
 
-### 4.1 `C:\Deepseek\utls-lifetime-probe` — SPEC 122 measurement
+### 4.1 `<WORKSPACE_ROOT>\utls-lifetime-probe` — SPEC 122 measurement
 
 Module `utlslifetime`; `replace github.com/metacubex/utls => github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261009084700-6c3e08ed4c4d`. Real handshake over `net.Pipe` against a stdlib TLS1.3 server, then READ the state on the live conn.
 
@@ -116,7 +116,7 @@ func measureRetained(uConn *utls.UConn) retainedHandshake {
 
 `handshakePair` builds a real handshake: `net.Pipe()`, `tls.Server` with a generated self-signed cert, `utls.UClient(...).HandshakeContext(ctx)`, then asserts `ConnectionState().HandshakeComplete`. Measured: 1750 B chrome / 1814 B / 1883 B firefox; 7808 B ML-KEM; 32 B ECDHE + 32 B MlkemEcdhe; TLS1.2 keeps greeting, `keyShareReachable=false`.
 
-### 4.2 `C:\Deepseek\grpc-path-probe` — the `:path` bypass, measured
+### 4.2 `<WORKSPACE_ROOT>\grpc-path-probe` — the `:path` bypass, measured
 
 A grpc **client** cannot produce this request: `golang.org/x/net/http2` rejects it with `http2: invalid request :path "probe.Service/Echo"`. So the request is written as **raw frames**. `UnknownServiceHandler` is the discriminator (grpc calls it only AFTER dispatch), so `HANDLER_RAN false` means "rejected before dispatch".
 
@@ -153,7 +153,7 @@ Server side: `grpc.NewServer(grpc.UnknownServiceHandler(func(_ any, _ grpc.Serve
 
 Only `server.go` differs between the two versions (`rbac_engine.go`, `grpcutil/method.go`, `authz/*`, `http2_server.go` byte-identical).
 
-### 4.3 `C:\Deepseek\jose-verify-probe` — JWS path under both go-jose versions
+### 4.3 `<WORKSPACE_ROOT>\jose-verify-probe` — JWS path under both go-jose versions
 
 Module `joseverifyprobe`; JWKS served by `httptest`, verified through go-oidc's own entry point (the only place the fork's chain touches go-jose). **Passes identically on 4.1.3 and 4.1.6**, which is the point — and why it is not a repo test.
 
@@ -186,10 +186,10 @@ payload, err := keySet.VerifySignature(context.Background(), raw) // must succee
 ## 5. Reproduce
 
 ```powershell
-$env:PATH = "C:\Deepseek\xhttp-outperform\tools\mingw\mingw64\bin;C:\Deepseek\_gotool\go\bin;C:\src\MinGit\cmd;" + $env:PATH
-$env:GOPATH = "C:\Deepseek\_gotool\gopath"
+$env:PATH = "<WORKSPACE_ROOT>\xhttp-outperform\tools\mingw\mingw64\bin;<WORKSPACE_ROOT>\_gotool\go\bin;C:\src\MinGit\cmd;" + $env:PATH
+$env:GOPATH = "<WORKSPACE_ROOT>\_gotool\gopath"
 $env:CGO_ENABLED = "1"
-$env:CC = "C:\Deepseek\xhttp-outperform\tools\mingw\mingw64\bin\gcc.exe"   # cgo/MinGW, required for -race
+$env:CC = "<WORKSPACE_ROOT>\xhttp-outperform\tools\mingw\mingw64\bin\gcc.exe"   # cgo/MinGW, required for -race
 $tags = (Get-Content release\DEFAULT_BUILD_TAGS_OTHERS -Raw).Trim()
 
 go build -tags "$tags" ./...

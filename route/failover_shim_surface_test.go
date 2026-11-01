@@ -137,7 +137,7 @@ func TestTheFailoverShimDoesNotHideTheParallelDialSurface(t *testing.T) {
 	strategy := C.NetworkStrategyDefault
 	networkType := []C.InterfaceType{C.InterfaceTypeWIFI}
 	fallbackType := []C.InterfaceType{C.InterfaceTypeCellular}
-	addresses := []netip.Addr{netip.MustParseAddr("112.53.55.92")}
+	addresses := []netip.Addr{netip.MustParseAddr("192.0.2.92")}
 
 	_, err := parallel.DialParallelNetwork(context.Background(), N.NetworkTCP, M.ParseSocksaddrHostPort("example.com", 443), addresses, &strategy, networkType, fallbackType, 250*time.Millisecond)
 	require.NoError(t, err)

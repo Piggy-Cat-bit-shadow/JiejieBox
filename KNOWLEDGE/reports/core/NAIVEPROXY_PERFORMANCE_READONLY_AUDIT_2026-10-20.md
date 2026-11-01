@@ -1,6 +1,6 @@
 # NaiveProxy 性能专项：只读深度审计与原生栈实测报告（收尾定稿）
 
-> **归档记录（2026-10-20）**：本文原为仓库外独立报告（桌面），按用户指令归档进 `KNOWLEDGE/reports/core/`。测量 harness、临时插桩与全部日志**不在仓库内**，仍在 `C:\Deepseek\_naive_audit_20261020\`（见附录 B）；因此本文里的绝对路径只在这台机器上可复现，报告结论不依赖这些路径长期存在。
+> **归档记录（2026-10-20）**：本文原为仓库外独立报告（桌面），按用户指令归档进 `KNOWLEDGE/reports/core/`。测量 harness、临时插桩与全部日志**不在仓库内**，仍在 `<WORKSPACE_ROOT>\_naive_audit_20261020\`（见附录 B）；因此本文里的绝对路径只在这台机器上可复现，报告结论不依赖这些路径长期存在。
 
 - **日期**：2026-10-20
 - **类型**：只读审计 + 受控本机原生实测 + 参考源码核对 + 缺陷定位（**未修改主仓任何生产代码**）
@@ -13,7 +13,7 @@
 | 分支 | `testing` | `git branch --show-current` |
 | **审计基线 SHA** | **`5b46c36d3d96456caccc9cc8bdb3ebc3dfbeafb3`**（`origin/testing`，本轮 `git fetch` 时点） | `git rev-parse origin/testing` |
 | 本地工作树 SHA | `b721b988fef`（落后 45 个提交，**未用于本轮任何结论**） | `git rev-parse HEAD` |
-| 审计方式 | `git archive` 导出到仓库外 `C:\Deepseek\_naive_audit_20261020\tip` | 附录 A |
+| 审计方式 | `git archive` 导出到仓库外 `<WORKSPACE_ROOT>\_naive_audit_20261020\tip` | 附录 A |
 | cronet-go（Go pin） | `Piggy-Cat-bit-shadow/cronet-go v0.0.1-143.0.7499.109-2.0.20261020055023-fd2f25825e4f` | `go.mod` replace |
 | Native Chromium（运行时） | **`154.0.8037.49`** | §1.3 |
 | 工具链 | `go1.25.5 windows/amd64`，`CGO_ENABLED=0`，`with_purego`，Windows 11 x64 / 16 逻辑核 | `go version` |
@@ -549,7 +549,7 @@ NOT_RUN / NOT_COMPARABLE:
 
 ```text
 # 0) 导出基线（仓库外，不改主仓）
-git -C <repo> archive --format=zip -o C:\Deepseek\_naive_audit_20261020\tip.zip origin/testing
+git -C <repo> archive --format=zip -o <WORKSPACE_ROOT>\_naive_audit_20261020\tip.zip origin/testing
 Expand-Archive -Path ...\tip.zip -DestinationPath ...\tip
 
 # 1) 原生端到端自测（libcronet.dll 必须在 PATH）
@@ -575,7 +575,7 @@ git clone --depth 1 --filter=blob:none https://github.com/klzgrad/forwardproxy
 # 读 forwardproxy.go:309-320 / 658 / 693-761
 ```
 
-日志（`C:\Deepseek\_naive_audit_20261020\`）：`self_naive_h2.log`（PASS）、`self_insecure_concurrency.log`（A1 现场）、`tp_final.log`（本轮全部测量）、`bench_codec.log`、`cpu_h2.prof` / `cpu_h3.prof`、`tp_matrix*.log`（早期轮次）、`tp_fallback_tcponly.log`、`tp_reuse.log`。
+日志（`<WORKSPACE_ROOT>\_naive_audit_20261020\`）：`self_naive_h2.log`（PASS）、`self_insecure_concurrency.log`（A1 现场）、`tp_final.log`（本轮全部测量）、`bench_codec.log`、`cpu_h2.prof` / `cpu_h3.prof`、`tp_matrix*.log`（早期轮次）、`tp_fallback_tcponly.log`、`tp_reuse.log`。
 
 ## 附录 B：插桩与 harness 的所有权声明
 
@@ -587,7 +587,7 @@ git clone --depth 1 --filter=blob:none https://github.com/klzgrad/forwardproxy
 
 插桩影响是"每 64 KiB 一次 atomic add"，在本轮噪声内（插桩前后 H2 单流：434.9–450.6 → 457.7，差异与轮次波动同量级）。
 
-测量结束后，临时导出树（176.8 MB）与构建产物（112.5 MB）已删除；源文件保留在仓库外 `C:\Deepseek\_naive_audit_20261020\artifacts\`：
+测量结束后，临时导出树（176.8 MB）与构建产物（112.5 MB）已删除；源文件保留在仓库外 `<WORKSPACE_ROOT>\_naive_audit_20261020\artifacts\`：
 
 ```text
 artifacts/naive_perf_audit_test.go          矩阵/基线/回退/复用

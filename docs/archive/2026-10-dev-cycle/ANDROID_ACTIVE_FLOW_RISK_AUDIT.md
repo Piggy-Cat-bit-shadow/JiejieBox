@@ -8,8 +8,8 @@ ANDROID_RISK = SHARED_CORE_BUG
 ```
 
 Repository audited: `Piggy-Cat-bit-shadow/satelite-one`
-(local working copy `C:\Deepseek\安卓客户端\src\satelite-one-main`, KB at
-`C:\Deepseek\安卓客户端\work\satelite-one\KNOWLEDGE`).
+(local working copy `<WORKSPACE_ROOT>\安卓客户端\src\satelite-one-main`, KB at
+`<WORKSPACE_ROOT>\安卓客户端\work\satelite-one\KNOWLEDGE`).
 
 ---
 

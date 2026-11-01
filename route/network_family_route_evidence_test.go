@@ -47,7 +47,7 @@ func TestAGenerationWithoutAGlobalIPv6RoutePublishesTheEgressVerdict(t *testing.
 	require.Equal(t, netcap.StateUnavailable, capability.GlobalIPv6Egress,
 		"and no global IPv6 destination is reachable, which is what the log showed on every attempt")
 
-	require.True(t, capability.HardUndialable(netip.MustParseAddr("2409:8a00::1")))
+	require.True(t, capability.HardUndialable(netip.MustParseAddr("2001:db8::1")))
 	require.False(t, capability.HardUndialable(netip.MustParseAddr("fe80::1")),
 		"the link-local destination the fe80:: address exists for is still reachable")
 	require.False(t, capability.HardUndialable(netip.MustParseAddr("192.0.2.1")))
@@ -61,12 +61,12 @@ func TestAGenerationWithAGlobalIPv6RouteKeepsIPv6Dialable(t *testing.T) {
 	h := &transitionWindowHarness{manager: manager}
 
 	setInterfaces(h, "192.0.2.1", interfaceOn(1, "Ethernet", C.InterfaceTypeEthernet, true,
-		"192.168.1.10/24", "2409:8a00::10/64"))
+		"192.168.1.10/24", "2001:db8::10/64"))
 	h.settle(t, "ethernet-dual-stack")
 
 	capability := currentFamilyCapability(t, h).Capability
 	require.Equal(t, netcap.StateProvisioned, capability.GlobalIPv6Egress)
-	require.False(t, capability.HardUndialable(netip.MustParseAddr("2409:8a00::1")),
+	require.False(t, capability.HardUndialable(netip.MustParseAddr("2001:db8::1")),
 		"a machine with a global IPv6 route must keep dialling global IPv6")
 }
 
@@ -90,7 +90,7 @@ func TestAnUnreadableRouteTablePublishesNoEgressVerdict(t *testing.T) {
 			capability := currentFamilyCapability(t, h).Capability
 			require.Equal(t, netcap.StateUnknown, capability.GlobalIPv6Egress,
 				"nothing was read, so nothing may be claimed")
-			require.False(t, capability.HardUndialable(netip.MustParseAddr("2409:8a00::1")),
+			require.False(t, capability.HardUndialable(netip.MustParseAddr("2001:db8::1")),
 				"an unproven absence must not refuse a destination: this is the behaviour the tree "+
 					"had before the egress term existed, and it is what every platform without a "+
 					"route reader must keep")
@@ -113,7 +113,7 @@ func TestTheEgressVerdictMovesOnlyWithItsGeneration(t *testing.T) {
 	h := &transitionWindowHarness{manager: manager}
 
 	setInterfaces(h, "192.0.2.1", interfaceOn(1, "Ethernet", C.InterfaceTypeEthernet, true,
-		"192.168.1.10/24", "2409:8a00::10/64"))
+		"192.168.1.10/24", "2001:db8::10/64"))
 	h.settle(t, "ethernet-dual-stack")
 
 	before := currentFamilyCapability(t, h)
@@ -165,7 +165,7 @@ func TestTheRouteReaderIsNotConsultedPerDial(t *testing.T) {
 	// value that was derived on the event.
 	for i := 0; i < 1000; i++ {
 		_, _, capability := manager.NetworkFamilyCapabilitySnapshot()
-		require.True(t, capability.Capability.HardUndialable(netip.MustParseAddr("2409:8a00::1")))
+		require.True(t, capability.Capability.HardUndialable(netip.MustParseAddr("2001:db8::1")))
 	}
 	require.Equal(t, afterSettle, reads,
 		"reading the verdict must not re-read the route table: the observation belongs to the "+

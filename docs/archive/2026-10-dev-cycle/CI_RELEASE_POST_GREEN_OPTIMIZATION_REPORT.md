@@ -158,7 +158,7 @@ Measured availability of the tools that suite and its workflow need:
 | `git` | present (MinGit 2.50.1, portable) |
 | `python3` | present (3.12.14, bundled) |
 | `mktemp`, `sed`, `awk`, `grep`, `cut`, `tr`, `sort` | present |
-| **`jq`** | **MISSING** — searched all of `C:\Deepseek`, `C:\Users\Jie`, `C:\Program Files`, `C:\ProgramData` |
+| **`jq`** | **MISSING** — searched all of `<WORKSPACE_ROOT>`, `<LOCAL_HOME>`, `C:\Program Files`, `C:\ProgramData` |
 | **`chmod`** | **MISSING** — same search |
 | **`sha256sum`** | **MISSING** (the suite has a fallback at line 445, so not fatal) |
 | `tar` | resolves to `C:\Windows\system32\tar.exe` (bsdtar, not GNU tar) |
@@ -641,7 +641,7 @@ P0-C, P0-D, P1-D, P1-E-core, P1-F-behaviour
 
 Measured, not inferred: `test-release-artifacts.sh` stops at
 `line 377: chmod: command not found`, and the suite's mock `gh` output is parsed with real `jq`.
-Both were searched for across `C:\Deepseek`, `C:\Users\Jie`, `C:\Program Files` and
+Both were searched for across `<WORKSPACE_ROOT>`, `<LOCAL_HOME>`, `C:\Program Files` and
 `C:\ProgramData` and are absent. `sha256sum` is also missing but is **not** a blocker — the suite
 has a fallback at line 445. `tar` resolves to `C:\Windows\system32\tar.exe` (bsdtar), untested
 against the suite.
@@ -734,7 +734,7 @@ The §2 tool list, as actually found:
 
 | TOOL | PATH | VERSION |
 |---|---|---|
-| `bash` | **absent from PATH**; `C:\Deepseek\IOS客户端\_tools\mingit\usr\bin\sh.exe` satisfies it (reports `bash 5.2.37(1)-release`) | 5.2.37 |
+| `bash` | **absent from PATH**; `<WORKSPACE_ROOT>\IOS客户端\_tools\mingit\usr\bin\sh.exe` satisfies it (reports `bash 5.2.37(1)-release`) | 5.2.37 |
 | `git` | **absent from PATH**; MinGit portable `…\mingit\cmd\git.exe` | 2.50.1.windows.1 |
 | `jq` | **ABSENT** | — |
 | `chmod` | **ABSENT** | — |
@@ -757,7 +757,7 @@ docker / podman / nerdctl / vagrant / busybox   absent
 ssh                     present (no local target)
 ```
 
-`jq` and `chmod` were also searched for by name across `C:\Deepseek`, `C:\Users\Jie`,
+`jq` and `chmod` were also searched for by name across `<WORKSPACE_ROOT>`, `<LOCAL_HOME>`,
 `C:\Program Files` and `C:\ProgramData` in the previous round and are absent there too.
 
 ## A2. Baseline gates

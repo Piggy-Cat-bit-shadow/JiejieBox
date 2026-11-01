@@ -1,7 +1,7 @@
 # Fallback test matrix
 
 Code SHA: `e1efe4cafdc`. All commands from
-`C:\Deepseek\integration-release-next`; Go 1.26.8, Windows 10, loopback.
+`<WORKSPACE_ROOT>\integration-release-next`; Go 1.26.8, Windows 10, loopback.
 
 | Area | Coverage | Result | Evidence |
 | --- | --- | --- | --- |
@@ -52,7 +52,7 @@ Code SHA: `e1efe4cafdc`. All commands from
 
 ```powershell
 $env:PATH = 'C:\src\_toolchain\goroot\bin;' + $env:PATH
-Set-Location C:\Deepseek\integration-release-next
+Set-Location <WORKSPACE_ROOT>\integration-release-next
 go test ./protocol/mieru ./option ./include -count=1
 CGO_ENABLED=1 go test -race ./protocol/mieru -count=1
 go vet ./protocol/mieru ./option

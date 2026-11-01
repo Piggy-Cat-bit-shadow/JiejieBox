@@ -23,11 +23,11 @@ import (
 // The policy being pinned is a default-deny on the host's own addresses with one
 // minimal, fully-qualified exception:
 //
-//	ALLOW  naive-in + tcp + <self IP> + port 2222
+//	ALLOW  naive-in + tcp + <self IP> + port 2200
 //	REJECT naive-in + <self IP> + every other port  (443 especially)
-//	REJECT naive-in + loopback + 2222               (the exception is not a port rule)
-//	REJECT naive-in + private  + 2222
-//	REJECT naive-in + <self IP> + UDP/2222          (the exception is tcp only)
+//	REJECT naive-in + loopback + 2200               (the exception is not a port rule)
+//	REJECT naive-in + private  + 2200
+//	REJECT naive-in + <self IP> + UDP/2200          (the exception is tcp only)
 //
 // Every case asserts on what the ORIGIN actually observed, not on what the
 // router decided. A route-level assertion cannot distinguish "allowed but the
@@ -46,7 +46,7 @@ type selfACLEnv struct {
 }
 
 // startSelfACLInstance starts a Naive inbound with the production rule SHAPE:
-// resolve, then a self-IP TCP/2222 exception, then the restricted-address reject.
+// resolve, then a self-IP TCP/2200 exception, then the restricted-address reject.
 //
 // selfAddress is the address that stands in for the VPS's own address. It must
 // be an address this machine can actually bind, so the "allowed" case can be
@@ -126,8 +126,8 @@ func selfAddressForDNS(t *testing.T) net.IP {
 // address in these tests.
 //
 // What the tests actually need is an address that is:
-//   - NOT loopback, so "loopback:2222 is still denied" is a meaningful contrast
-//     against "self:2222 is allowed"; and
+//   - NOT loopback, so "loopback:2200 is still denied" is a meaningful contrast
+//     against "self:2200 is allowed"; and
 //   - bindable, so the allowed case can be proven by a real connection rather
 //     than inferred from a route verdict.
 //
@@ -195,7 +195,7 @@ func selfTestAddress(t *testing.T) net.IP {
 func TestJiejieTargetACLSelfIPSSHException(t *testing.T) {
 	selfAddress := selfTestAddress(t)
 
-	// Origins on the self address. Port 2222 stands in for the SSH exception.
+	// Origins on the self address. Port 2200 stands in for the SSH exception.
 	// One port is reserved and named in the rule, then reused for each origin.
 	// The kernel normally honours the rebind, but if it hands the port away the
 	// origin listener fails and the case reports a real error rather than a
@@ -204,7 +204,7 @@ func TestJiejieTargetACLSelfIPSSHException(t *testing.T) {
 
 	env := startSelfACLInstance(t, selfAddress, sshPort, 0)
 
-	t.Run("CASE 1: self IP + TCP/2222 is ALLOWED and connects", func(t *testing.T) {
+	t.Run("CASE 1: self IP + TCP/2200 is ALLOWED and connects", func(t *testing.T) {
 		// The origin is bound FIRST and the tunnel dials the port it actually
 		// got. Reserving a port, closing the listener and rebinding the same
 		// number is racy: the kernel can hand it to something else in between,
@@ -294,9 +294,9 @@ func TestJiejieTargetACLSelfIPSSHException(t *testing.T) {
 			"a denied self port must never receive a connection")
 	})
 
-	t.Run("CASE 4: loopback + TCP/2222 is REJECTED", func(t *testing.T) {
-		// This is the case that catches a "port 2222 -> direct" rule. A broad
-		// port rule would allow loopback:2222, which is exactly the escalation
+	t.Run("CASE 4: loopback + TCP/2200 is REJECTED", func(t *testing.T) {
+		// This is the case that catches a "port 2200 -> direct" rule. A broad
+		// port rule would allow loopback:2200, which is exactly the escalation
 		// the exception must not introduce.
 		loopbackOrigin := startTCPOriginOn(t, "127.0.0.1:"+strconv.Itoa(int(sshPort)))
 
@@ -313,7 +313,7 @@ func TestJiejieTargetACLSelfIPSSHException(t *testing.T) {
 			"loopback must not be reached even on the exception port")
 	})
 
-	t.Run("CASE 5: private IP + TCP/2222 is REJECTED", func(t *testing.T) {
+	t.Run("CASE 5: private IP + TCP/2200 is REJECTED", func(t *testing.T) {
 		privateTarget := net.JoinHostPort("10.255.255.1", strconv.Itoa(int(sshPort)))
 		conn := naiveTLSConn(t, env.port)
 		response, connectErr := naiveWriteConnect(t, conn, privateTarget, map[string]string{
@@ -420,7 +420,7 @@ func TestJiejieTargetACLSelfIPDomainTargets(t *testing.T) {
 // UDP to the host's own address.
 //
 // The exception carries network=tcp. If it were written without that clause, a
-// UoT datagram to the self address on 2222 would be permitted, which would
+// UoT datagram to the self address on 2200 would be permitted, which would
 // expose UDP services the operator never intended to expose.
 func TestJiejieTargetACLSelfIPUoTIsRejected(t *testing.T) {
 	selfAddress := selfTestAddress(t)
@@ -480,7 +480,7 @@ func TestJiejieTargetACLSelfIPUoTIsRejected(t *testing.T) {
 // normal public destination has to keep working through the same instance.
 func TestJiejieTargetACLSelfIPPublicTrafficStillWorks(t *testing.T) {
 	selfAddress := selfTestAddress(t)
-	env := startSelfACLInstance(t, selfAddress, 2222, 0)
+	env := startSelfACLInstance(t, selfAddress, 2200, 0)
 
 	// A public-looking origin that the ACL permits. It is served on loopback,
 	// so it is reached through an explicit allow for the test rather than by

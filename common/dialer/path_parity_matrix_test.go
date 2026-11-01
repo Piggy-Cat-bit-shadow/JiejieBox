@@ -73,8 +73,8 @@ func pathEntryPoints(chain *parallelProductionChain, port uint16) map[string]fun
 
 // TestAStrictFamilyPolicyIsAppliedOnEveryPath is the policy row of the matrix, all three columns.
 func TestAStrictFamilyPolicyIsAppliedOnEveryPath(t *testing.T) {
-	excluded := netip.MustParseAddr("2409:8c54:871:1007::2c")
-	admitted := netip.MustParseAddr("112.53.55.92")
+	excluded := netip.MustParseAddr("2001:db8::2c")
+	admitted := netip.MustParseAddr("192.0.2.92")
 	const port uint16 = 443
 
 	// The machine is dual-stack, so only the POLICY can exclude anything: a capability explanation would

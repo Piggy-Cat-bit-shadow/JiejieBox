@@ -15,7 +15,7 @@
 | `GO_VERSION` | go1.26.8 |
 | `GOOS` / `GOARCH` | windows / amd64 |
 
-Worktree `C:\Deepseek\内核\int1`. Build tags from `release/DEFAULT_BUILD_TAGS_OTHERS`.
+Worktree `<WORKSPACE_ROOT>\内核\int1`. Build tags from `release/DEFAULT_BUILD_TAGS_OTHERS`.
 
 ## 1. Branch ancestry — what was merged and what must not be
 

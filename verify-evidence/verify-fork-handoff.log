@@ -2,7 +2,7 @@
 ### HEAD: cfc77dc51ab7322e993b8ae0b94b96db59e48f47
 ### DATE: 2026-10-12 05:31:45 +0800
 
-verify-fork-handoff: /Users/jie/Desktop/其他文件/sing-box-verify-016/docs/fork/upstream-sync-handoff.json
+verify-fork-handoff: <WORKSPACE_ROOT>/sing-box-verify-016/docs/fork/upstream-sync-handoff.json
 verify-fork-handoff: remote origin branch testing
 
 ok    no final_*_sha / integration_final_sha field is null while integration_status=complete

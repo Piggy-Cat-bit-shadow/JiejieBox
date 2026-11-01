@@ -204,13 +204,13 @@ func TestTheRefusalNamesTheRightFact(t *testing.T) {
 	noIPv6 := &machineManager{}
 	noIPv6.stable.Store(true)
 	noIPv6.setStates(netcap.StateProvisioned, netcap.StateUnavailable, netcap.StateUnavailable)
-	errA := outageDialer(noIPv6).captureLocalFamilyPolicy().hardUndialableError(netip.MustParseAddr("2409:8a00::1"))
+	errA := outageDialer(noIPv6).captureLocalFamilyPolicy().hardUndialableError(netip.MustParseAddr("2001:db8::1"))
 	require.ErrorIs(t, errA, errLocalIPv6Unavailable)
 	require.NotErrorIs(t, errA, errLocalIPv6EgressUnavailable)
 	require.Contains(t, errA.Error(), "no interface on this machine carries an ipv6 address")
 
 	// (b) IPv6 addressing present, no public route -> the egress verdict.
-	errB := outageDialer(windowsLinkLocalOnly()).captureLocalFamilyPolicy().hardUndialableError(netip.MustParseAddr("2409:8a00::1"))
+	errB := outageDialer(windowsLinkLocalOnly()).captureLocalFamilyPolicy().hardUndialableError(netip.MustParseAddr("2001:db8::1"))
 	require.ErrorIs(t, errB, errLocalIPv6EgressUnavailable)
 	require.NotErrorIs(t, errB, errLocalIPv6Unavailable)
 	require.Contains(t, errB.Error(), "no route to a global ipv6 destination")
@@ -255,7 +255,7 @@ func TestOwnershipStillGatesTheEgressVerdict(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			policy := outageDialer(manager).captureLocalFamilyPolicy()
-			target := netip.MustParseAddr("2409:8a00::1")
+			target := netip.MustParseAddr("2001:db8::1")
 
 			if !manager.stable.Load() {
 				require.False(t, policy.hardUndialable(target),

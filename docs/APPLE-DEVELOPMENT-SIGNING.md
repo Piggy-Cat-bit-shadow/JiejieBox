@@ -203,7 +203,7 @@ for t in SFI Extension ActionExtension FileProviderExtension IntentsExtension \
   printf '%-24s ' "$t"
   xcodebuild -project clients/apple/sing-box.xcodeproj -target "$t" \
     -configuration Release -showBuildSettings -skipPackagePluginValidation \
-    BASE_PACKAGE_IDENTIFIER=top.jiejie12131.jiejiebox 2>/dev/null \
+    BASE_PACKAGE_IDENTIFIER=top.example.jiejiebox 2>/dev/null \
     | grep -E '^ +PRODUCT_BUNDLE_IDENTIFIER = ' | head -1 | sed 's/.*= //'
 done
 ```
@@ -457,7 +457,7 @@ The product ships as a **single** App Store Connect record:
 
 ```text
 App:        JiejieBox
-Bundle ID:  top.jiejie12131.jiejiebox
+Bundle ID:  top.example.jiejiebox
 Platforms:  iOS, macOS
 ```
 

@@ -219,7 +219,7 @@ func TestTheHealthyDualStackPathAddsNoWork(t *testing.T) {
 	require.True(t, policy.restrictsNothing(),
 		"a machine with both families and a working route must take the no-filter fast path")
 	for _, target := range []string{
-		"2409:8a00::1", "2001:4860:4860::8888", "8.8.8.8", "fe80::1", "fd00::1", "::1",
+		"2001:db8::1", "2001:4860:4860::8888", "8.8.8.8", "fe80::1", "fd00::1", "::1",
 	} {
 		require.Falsef(t, policy.hardUndialable(netip.MustParseAddr(target)), "%s must not be refused", target)
 	}
@@ -264,7 +264,7 @@ func TestTheCapabilityCaptureTakesNoLockAndNoSyscall(t *testing.T) {
 		policy := dialer.captureLocalFamilyPolicy()
 		// Whatever it captured, it must answer consistently with the ownership it recorded.
 		_ = policy.restrictsNothing()
-		_ = policy.hardUndialable(netip.MustParseAddr("2409:8a00::1"))
+		_ = policy.hardUndialable(netip.MustParseAddr("2001:db8::1"))
 		select {
 		case <-done:
 			return

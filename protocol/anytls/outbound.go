@@ -187,7 +187,7 @@ func (h *Outbound) dialThroughProxy(ctx context.Context, destination M.Socksaddr
 // It cannot be: `remote:` means the lookup happened on the proxy's side, against the proxy's own resolver
 // configuration, and the destination is demonstrably valid elsewhere. Wrapping the failure at the outbound
 // boundary is the most this repository can do - turn "some proxy could not resolve this" into "the AI
-// outbound at 95.169.1.53 could not resolve this". Anything more would mean inventing a second resolution
+// outbound at 192.0.2.53 could not resolve this". Anything more would mean inventing a second resolution
 // path this side of the wire, which is precisely the `destination_dns_ownership` promise the AnyTLS
 // outbound makes instead.
 //

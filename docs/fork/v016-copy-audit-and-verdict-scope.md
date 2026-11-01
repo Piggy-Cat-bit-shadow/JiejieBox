@@ -1,6 +1,6 @@
 # v0.1.6 — COPY-01 copy/ownership audit, layer state, and exit-verdict scope
 
-Base `524ea41e`. Worktree `C:\Deepseek\内核\wD`, detached, local commits only.
+Base `524ea41e`. Worktree `<WORKSPACE_ROOT>\内核\wD`, detached, local commits only.
 Environment: Go `go1.26.8 windows/amd64`, `CGO_ENABLED=1`, MinGW gcc, tags read from
 `release/DEFAULT_BUILD_TAGS_OTHERS` (never hard-coded). No `gh`, no network, no remote run.
 

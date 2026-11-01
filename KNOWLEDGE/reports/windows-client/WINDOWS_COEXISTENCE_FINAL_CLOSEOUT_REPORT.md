@@ -1,6 +1,6 @@
 # Windows 共存最终收尾报告
 
-指引来源：`C:\Users\Jie\Desktop\配置文件\WINDOWS_COEXISTENCE_FINAL_CLOSEOUT.md`
+指引来源：`<LOCAL_HOME>\Desktop\配置文件\WINDOWS_COEXISTENCE_FINAL_CLOSEOUT.md`
 
 本轮解决了两个已确认的剩余问题，并提供了可执行验证；上一轮报告中的两条错误结论已按 §12 更正。以下结果均对应报告所列的历史版本与环境。
 

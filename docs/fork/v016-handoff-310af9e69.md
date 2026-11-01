@@ -12,13 +12,13 @@ TAG_REFS         = 636            (unchanged; none created)
 REMOTE_HEADS     = 1              (only `testing`; no branch, PR or Release)
 ORIGINAL_TREE    = C:\src\sing-box at 8d78dcdd, clients/desktop dirty — NEVER written to
 GITHUB_ACTIONS   = NOT_RUN / NOT_DISPATCHED (no `gh`, no API access -> REMOTE_ACTIONS_NOT_QUERYABLE)
-MY WORKTREE      = C:\Deepseek\内核\work    (detached at the FINAL_SHA, clean)
+MY WORKTREE      = <WORKSPACE_ROOT>\内核\work    (detached at the FINAL_SHA, clean)
 ```
 
 ## 0. How to reproduce this environment
 
 ```powershell
-$env:PATH = "C:\Users\Jie\AppData\Local\Temp\jiejie-tools\mingw\mingw64\bin;C:\src\_toolchain\goroot\bin;C:\src\MinGit\cmd;" + $env:PATH
+$env:PATH = "<LOCAL_HOME>\AppData\Local\Temp\jiejie-tools\mingw\mingw64\bin;C:\src\_toolchain\goroot\bin;C:\src\MinGit\cmd;" + $env:PATH
 $env:CGO_ENABLED = "1"                                                     # needed for -race
 $TAGS = (Get-Content release/DEFAULT_BUILD_TAGS_OTHERS -Raw).Trim()        # NEVER hard-code tags
 ```
@@ -27,7 +27,7 @@ the GitHub API is not reachable, so remote Actions can only ever be reported as 
 
 Push gate, run before every push:
 ```powershell
-& "C:\Users\Jie\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\python\python.exe" "C:\Deepseek\内核\push_preflight.py"
+& "<LOCAL_HOME>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\python\python.exe" "<WORKSPACE_ROOT>\内核\push_preflight.py"
 ```
 It checks: every commit in `origin/testing..HEAD` carries the literal `[skip ci]`, the tip carries it,
 the remote is an ancestor of HEAD (fast-forward), no `go.mod`/`go.sum` change. **The GitHub trigger
@@ -101,7 +101,7 @@ Reverse-break, raw:
 
 **Two earlier reverse-break attempts were discarded** because their RED came from a compile error (a
 literal `\n` written into the source; then an orphaned `strconv` import). The driver
-`C:\Deepseek\内核\s0_reversebreak3.py` builds first and refuses to report a compile failure as a
+`<WORKSPACE_ROOT>\内核\s0_reversebreak3.py` builds first and refuses to report a compile failure as a
 falsification. **Keep that discipline** — a RED that is a build error proves nothing about a test.
 
 ### Fixture gotcha worth knowing
@@ -272,7 +272,7 @@ Also fix while you are there (`P5`, low risk, currently wrong and misleading):
 Both were launched against `4c56ed86f` and had not committed when this was written. Their worktrees
 still exist; check them first, and do not duplicate the work.
 
-**`C:\Deepseek\内核\wD2` — D / StatusView (P3).** Owns `common/physicalpath/status.go` only.
+**`<WORKSPACE_ROOT>\内核\wD2` — D / StatusView (P3).** Owns `common/physicalpath/status.go` only.
 - `P3.1` a `nil` receiver is dereferenced: the shape is an explicit `if v != nil && ...` followed by an
   unconditional `v.walk.Lock()`, which is worse than no check because it tells a reader the case is
   handled.
@@ -283,7 +283,7 @@ still exist; check them first, and do not duplicate the work.
 - `P3.3` `Disconnect()` versus an in-flight snapshot: needs an explicit linearisation rule.
 - Also: a panicking reporter must not become a silent `READY`, and error strings must stay redacted.
 
-**`C:\Deepseek\内核\wC2` — C / Group (P2 + P4).** **P2 HAS LANDED** as `35246a212`, cherry-picked onto the tip as `96e6dc41`:
+**`<WORKSPACE_ROOT>\内核\wC2` — C / Group (P2 + P4).** **P2 HAS LANDED** as `35246a212`, cherry-picked onto the tip as `96e6dc41`:
 872 insertions across `protocol/group/selector.go` and
 `protocol/group/selector_selection_state_test.go`. `protocol/group`, `route` and the root package are
 all green. **`physicalpath_edge_test.go` (P4) is still UNCOMMITTED in `wC2`** — it is a new untracked
@@ -396,7 +396,7 @@ RELEASE                        = NOT_READY
 
 ## 7.1 What I would do first in the new window
 
-1. Check `C:\Deepseek\内核\wC2` and `C:\Deepseek\内核\wD2` for commits, rebase them onto `310af9e69`,
+1. Check `<WORKSPACE_ROOT>\内核\wC2` and `<WORKSPACE_ROOT>\内核\wD2` for commits, rebase them onto `310af9e69`,
    run their tests, integrate. Two of the prompt's five P-items may already be done.
 2. PATH-01, using §2.3: keep the chain device-first, take `Position` from it directly, and make `Exit`
    the node whose chain is not a prefix of any longer chain on the same route. The 13 red tests in §2.5

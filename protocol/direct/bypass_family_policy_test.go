@@ -36,8 +36,8 @@ import (
 
 // TestABypassUsesTheEffectiveFamilyPolicyNotTheOutboundConfig is the regression.
 func TestABypassUsesTheEffectiveFamilyPolicyNotTheOutboundConfig(t *testing.T) {
-	ipv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
-	ipv4 := netip.MustParseAddr("112.53.55.92")
+	ipv6 := netip.MustParseAddr("2001:db8::2c")
+	ipv4 := netip.MustParseAddr("192.0.2.92")
 
 	// The production shape: no dial options at all, so this outbound configures no resolver and
 	// `resolutionOnly` is zero.
@@ -84,8 +84,8 @@ func TestABypassUsesTheEffectiveFamilyPolicyNotTheOutboundConfig(t *testing.T) {
 // Both halves are asserted separately because the packages cannot import each other's internals, and the
 // property under test is that the two answers agree, not which file the assertion is in.
 func TestTheUDPArmAppliesTheSamePolicy(t *testing.T) {
-	ipv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
-	ipv4 := netip.MustParseAddr("112.53.55.92")
+	ipv6 := netip.MustParseAddr("2001:db8::2c")
+	ipv4 := netip.MustParseAddr("192.0.2.92")
 
 	outbound := bypassable(option.DialerOptions{})
 	outbound.surface.Resolve = stubResolveDialer{strategy: func() C.DomainStrategy { return C.DomainStrategyIPv4Only }}
@@ -110,7 +110,7 @@ func TestTheUDPArmAppliesTheSamePolicy(t *testing.T) {
 // is AsIS: nothing is excluded. The uncertainty is about the machine's configuration, not about a
 // dangerous operation, so the bypass stays available - the opposite polarity from the dial gate.
 func TestABypassWithoutAnEffectivePolicyStillWorks(t *testing.T) {
-	ipv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	ipv6 := netip.MustParseAddr("2001:db8::2c")
 	outbound := bypassable(option.DialerOptions{})
 	require.Nil(t, outbound.surface.Resolve, "the fixture must not report a strategy")
 

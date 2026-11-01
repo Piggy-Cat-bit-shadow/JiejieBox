@@ -281,10 +281,10 @@ func wechatFlow(original netip.Addr, port uint16, domain string) context.Context
 //
 // From the log, repeatedly:
 //
-//	inbound connection to [2409:8c54:871:2003::15]:80
+//	inbound connection to [2001:db8::15]:80
 //	sniffed protocol: http, domain: szminorshort.weixin.qq.com
 //	route(direct)
-//	outbound/direct: outbound connection to [2409:8c54:871:2003::15]:80
+//	outbound/direct: outbound connection to [2001:db8::15]:80
 //	ERROR: local network has no usable ipv6 path: no interface on this machine carries an ipv6 address
 //
 // and, in the same log, IPv4 flows to the same application succeeding in 31ms. The name had an A
@@ -295,8 +295,8 @@ func wechatFlow(original netip.Addr, port uint16, domain string) context.Context
 func TestNetworkEntryPointRecoversTheWeChatLiteral(t *testing.T) {
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateUnavailable, C.DomainStrategyAsIS)
 
-	originalIPv6 := netip.MustParseAddr("2409:8c54:871:2003::15")
-	healthyIPv4 := netip.MustParseAddr("112.53.55.92")
+	originalIPv6 := netip.MustParseAddr("2001:db8::15")
+	healthyIPv4 := netip.MustParseAddr("192.0.2.92")
 
 	// The resolver answers A with the healthy address and AAAA with the original literal, which is
 	// what the real name does on this machine.
@@ -327,8 +327,8 @@ func TestNetworkEntryPointRecoversTheWeChatLiteral(t *testing.T) {
 // substitute an address; this pins the discovery step itself.
 func TestNetworkEntryPointConsultsTheSniffedDomain(t *testing.T) {
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateUnavailable, C.DomainStrategyAsIS)
-	originalIPv6 := netip.MustParseAddr("2409:8c54:871:2003::15")
-	chain.router.addressesA = []netip.Addr{netip.MustParseAddr("112.53.55.92")}
+	originalIPv6 := netip.MustParseAddr("2001:db8::15")
+	chain.router.addressesA = []netip.Addr{netip.MustParseAddr("192.0.2.92")}
 	chain.router.addressesAAAA = []netip.Addr{originalIPv6}
 
 	require.Zero(t, chain.lookupCalls(), "the fixture starts with the resolver untouched")
@@ -352,8 +352,8 @@ func TestNetworkEntryPointConsultsTheSniffedDomain(t *testing.T) {
 // it must be dialled first.
 func TestNetworkEntryPointPreservesTheOriginalWithinItsFamily(t *testing.T) {
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyAsIS)
-	originalIPv4 := netip.MustParseAddr("112.53.55.92")
-	otherIPv4 := netip.MustParseAddr("112.53.55.99")
+	originalIPv4 := netip.MustParseAddr("192.0.2.92")
+	otherIPv4 := netip.MustParseAddr("192.0.2.99")
 	chain.router.addressesA = []netip.Addr{otherIPv4}
 	chain.router.addressesAAAA = nil
 
@@ -374,8 +374,8 @@ func TestNetworkEntryPointPreservesTheOriginalWithinItsFamily(t *testing.T) {
 // preference from the caller's first candidate overrode that too.
 func TestNetworkEntryPointAsISKeepsTheOriginalFamily(t *testing.T) {
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyAsIS)
-	otherIPv4 := netip.MustParseAddr("112.53.55.92")
-	originalIPv6 := netip.MustParseAddr("2409:8c54:871:2003::15")
+	otherIPv4 := netip.MustParseAddr("192.0.2.92")
+	originalIPv6 := netip.MustParseAddr("2001:db8::15")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -396,8 +396,8 @@ func TestNetworkEntryPointAsISKeepsTheOriginalFamily(t *testing.T) {
 func TestNetworkPacketEntryPointHonorsPreferIPv4(t *testing.T) {
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyPreferIPv4)
 	chain.inner.packetConn = &countingPacketConn{}
-	originalIPv4 := netip.MustParseAddr("112.53.55.92")
-	otherIPv6 := netip.MustParseAddr("2409:8c54:871:2003::15")
+	originalIPv4 := netip.MustParseAddr("192.0.2.92")
+	otherIPv6 := netip.MustParseAddr("2001:db8::15")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -419,8 +419,8 @@ func TestNetworkPacketEntryPointHonorsPreferIPv4(t *testing.T) {
 // the first candidate instead silently overrules the configured policy.
 func TestNetworkEntryPointHonorsPreferIPv4OverTheListOrder(t *testing.T) {
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyPreferIPv4)
-	originalIPv4 := netip.MustParseAddr("112.53.55.92")
-	otherIPv6 := netip.MustParseAddr("2409:8c54:871:2003::15")
+	originalIPv4 := netip.MustParseAddr("192.0.2.92")
+	otherIPv6 := netip.MustParseAddr("2001:db8::15")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -439,8 +439,8 @@ func TestNetworkEntryPointHonorsPreferIPv4OverTheListOrder(t *testing.T) {
 // turn `prefer_ipv6` into an IPv4-first race.
 func TestNetworkEntryPointHonorsPreferIPv6OverTheListOrder(t *testing.T) {
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyPreferIPv6)
-	originalIPv4 := netip.MustParseAddr("112.53.55.92")
-	otherIPv6 := netip.MustParseAddr("2409:8c54:871:2003::15")
+	originalIPv4 := netip.MustParseAddr("192.0.2.92")
+	otherIPv6 := netip.MustParseAddr("2001:db8::15")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -474,7 +474,7 @@ func TestNetworkEntryPointDoesNotWaitForDiscovery(t *testing.T) {
 	defer chain.releaseLookup(t)
 	chain.stallLookup(t)
 
-	originalIPv4 := netip.MustParseAddr("112.53.55.92")
+	originalIPv4 := netip.MustParseAddr("192.0.2.92")
 
 	ctx, cancel := context.WithTimeout(wechatFlow(originalIPv4, 80, "szextshort.weixin.qq.com"), 5*time.Second)
 	defer cancel()
@@ -505,11 +505,11 @@ func TestNetworkEntryPointDoesNotWaitForDiscovery(t *testing.T) {
 // it must not invent an address, consult the resolver, or spend a connect timeout.
 func TestNetworkEntryPointFailsFastWithoutEvidence(t *testing.T) {
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateUnavailable, C.DomainStrategyAsIS)
-	originalIPv6 := netip.MustParseAddr("2409:8c54:871:2003::15")
+	originalIPv6 := netip.MustParseAddr("2001:db8::15")
 
 	// The control that makes the assertion meaningful: the resolver has an IPv4 answer available, so a
 	// path that looked the name up without a name to look up - or that guessed one - would connect.
-	chain.router.addressesA = []netip.Addr{netip.MustParseAddr("112.53.55.92")}
+	chain.router.addressesA = []netip.Addr{netip.MustParseAddr("192.0.2.92")}
 
 	ctx, cancel := context.WithTimeout(wechatFlow(originalIPv6, 80, ""), 3*time.Second)
 	defer cancel()
@@ -539,8 +539,8 @@ func TestNetworkEntryPointFailsFastWithoutEvidence(t *testing.T) {
 // it could drift to a different CDN endpoint than the one the routing decision was made against.
 func TestNetworkEntryPointConsumesExistingCandidatesWithoutResolving(t *testing.T) {
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateUnavailable, C.DomainStrategyAsIS)
-	originalIPv6 := netip.MustParseAddr("2409:8c54:871:2003::15")
-	providedIPv4 := netip.MustParseAddr("112.53.55.92")
+	originalIPv6 := netip.MustParseAddr("2001:db8::15")
+	providedIPv4 := netip.MustParseAddr("192.0.2.92")
 	chain.router.addressesA = []netip.Addr{netip.MustParseAddr("10.0.0.1")}
 
 	ctx, cancel := context.WithTimeout(wechatFlow(originalIPv6, 80, "szminorshort.weixin.qq.com"), 3*time.Second)
@@ -576,9 +576,9 @@ func TestNetworkEntryPointConsumesExistingCandidatesWithoutResolving(t *testing.
 // run, which is why the resolver's AAAA answer does not appear among the attempts.
 func TestNetworkEntryPointDoesNotWidenAStrictStrategy(t *testing.T) {
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyIPv6Only)
-	originalIPv6 := netip.MustParseAddr("2409:8c54:871:2003::15")
+	originalIPv6 := netip.MustParseAddr("2001:db8::15")
 	resolverIPv6 := netip.MustParseAddr("2409:8c54:1050:fc::87")
-	excludedIPv4 := netip.MustParseAddr("112.53.55.92")
+	excludedIPv4 := netip.MustParseAddr("192.0.2.92")
 
 	chain.router.addressesA = []netip.Addr{excludedIPv4}
 	chain.router.addressesAAAA = []netip.Addr{resolverIPv6}
@@ -614,7 +614,7 @@ func TestNetworkEntryPointDoesNotWidenAStrictStrategy(t *testing.T) {
 // fails is the policy, and the error has to say so rather than blaming the machine.
 func TestNetworkEntryPointReportsAStrategyExclusionAsOne(t *testing.T) {
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyIPv4Only)
-	originalIPv6 := netip.MustParseAddr("2409:8c54:871:2003::15")
+	originalIPv6 := netip.MustParseAddr("2001:db8::15")
 
 	ctx, cancel := context.WithTimeout(wechatFlow(originalIPv6, 80, "szminorshort.weixin.qq.com"), 3*time.Second)
 	defer cancel()
@@ -703,7 +703,7 @@ func TestTheRecoveryPathKeepsTheMachinesOwnRefusalReason(t *testing.T) {
 	linkLocalOnly.leaf.inner.stall = nil
 	linkLocalOnly.resolver.dialer = &policyOverride{capabilityLeaf: linkLocalOnly.leaf, policy: egressRefusingPolicy()}
 
-	_, _, errEgress := linkLocalOnly.dialWithSniffedDomain(t, "2409:8c54:871:2003::15:80")
+	_, _, errEgress := linkLocalOnly.dialWithSniffedDomain(t, "2001:db8::15:80")
 	require.Error(t, errEgress)
 	require.ErrorIs(t, errEgress, errLocalIPv6EgressUnavailable,
 		"the egress half of the verdict must survive the literal-recovery path")
@@ -714,7 +714,7 @@ func TestTheRecoveryPathKeepsTheMachinesOwnRefusalReason(t *testing.T) {
 	noIPv6 := newRecoveryHarness(t, netcap.StateProvisioned, netcap.StateUnavailable, nil)
 	noIPv6.leaf.inner.stall = nil
 
-	_, _, errFamily := noIPv6.dialWithSniffedDomain(t, "2409:8c54:871:2003::15:80")
+	_, _, errFamily := noIPv6.dialWithSniffedDomain(t, "2001:db8::15:80")
 	require.ErrorIs(t, errFamily, errLocalIPv6Unavailable,
 		"an absent family keeps its own message")
 	require.NotErrorIs(t, errFamily, errLocalIPv6EgressUnavailable)
@@ -732,8 +732,8 @@ func TestTheRecoveryPathKeepsTheMachinesOwnRefusalReason(t *testing.T) {
 // lookup precisely so this cannot happen, and it has to hold on the entry point too.
 func TestNetworkEntryPointRefusesToRecurse(t *testing.T) {
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateUnavailable, C.DomainStrategyAsIS)
-	originalIPv6 := netip.MustParseAddr("2409:8c54:871:2003::15")
-	chain.router.addressesA = []netip.Addr{netip.MustParseAddr("112.53.55.92")}
+	originalIPv6 := netip.MustParseAddr("2001:db8::15")
+	chain.router.addressesA = []netip.Addr{netip.MustParseAddr("192.0.2.92")}
 
 	ctx := withoutAddressRecovery(wechatFlow(originalIPv6, 80, "szminorshort.weixin.qq.com"))
 	dialCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
@@ -786,8 +786,8 @@ func TestNetworkPacketEntryPointRecoversTheSniffedDomain(t *testing.T) {
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateUnavailable, C.DomainStrategyAsIS)
 	chain.inner.packetConn = &countingPacketConn{}
 
-	originalIPv6 := netip.MustParseAddr("2409:8c54:871:2003::15")
-	healthyIPv4 := netip.MustParseAddr("112.53.55.92")
+	originalIPv6 := netip.MustParseAddr("2001:db8::15")
+	healthyIPv4 := netip.MustParseAddr("192.0.2.92")
 	chain.router.addressesA = []netip.Addr{healthyIPv4}
 	chain.router.addressesAAAA = []netip.Addr{originalIPv6}
 
@@ -835,8 +835,8 @@ func TestNetworkPacketEntryPointRecoversTheSniffedDomain(t *testing.T) {
 func TestDirectOutboundGraphRecoversTheWeChatLiteral(t *testing.T) {
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateUnavailable, C.DomainStrategyAsIS)
 
-	originalIPv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
-	healthyIPv4 := netip.MustParseAddr("112.53.55.92")
+	originalIPv6 := netip.MustParseAddr("2001:db8::2c")
+	healthyIPv4 := netip.MustParseAddr("192.0.2.92")
 	chain.router.addressesA = []netip.Addr{healthyIPv4}
 	chain.router.addressesAAAA = []netip.Addr{originalIPv6}
 
@@ -871,8 +871,8 @@ func TestDirectOutboundPacketGraphRecoversTheSniffedDomain(t *testing.T) {
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateUnavailable, C.DomainStrategyAsIS)
 	chain.inner.packetConn = &countingPacketConn{}
 
-	originalIPv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
-	healthyIPv4 := netip.MustParseAddr("112.53.55.92")
+	originalIPv6 := netip.MustParseAddr("2001:db8::2c")
+	healthyIPv4 := netip.MustParseAddr("192.0.2.92")
 	chain.router.addressesA = []netip.Addr{healthyIPv4}
 	chain.router.addressesAAAA = []netip.Addr{originalIPv6}
 

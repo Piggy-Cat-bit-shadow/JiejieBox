@@ -11,7 +11,7 @@ regression and cleanup of the absorbed remote branches.
 ```text
 TESTING_BEFORE              = 6cc45d3f49a3908ff150045d3a113f98920eaaea
 REMOTE_BRANCH_COUNT_BEFORE  = 14   (13 feature/closure branches + testing)
-WORKTREE_CLEAN              = YES  (clean clone at C:\Deepseek\singbox-consolidation)
+WORKTREE_CLEAN              = YES  (clean clone at <WORKSPACE_ROOT>\singbox-consolidation)
 ```
 
 The remote branch list matched the task brief exactly, tip for tip, and
@@ -504,7 +504,7 @@ Publication was blocked for four goal rounds by an environment failure, and is
 recorded here because it affected how the work was verified:
 
 ```text
-spawn C:\Users\Jie\AppData\Local\Programs\DeepSeek Harness\DeepSeek Harness.exe EACCES
+spawn <LOCAL_HOME>\AppData\Local\Programs\DeepSeek Harness\DeepSeek Harness.exe EACCES
 ```
 
 The harness could not create **any** child process: `pwsh` failed on spawn and

@@ -4,9 +4,9 @@
 
 ```powershell
 $env:PATH = 'C:\src\_toolchain\goroot\bin;' + $env:PATH
-Set-Location C:\Deepseek\integration-release-next
+Set-Location <WORKSPACE_ROOT>\integration-release-next
 $tags = (Get-Content release\DEFAULT_BUILD_TAGS_OTHERS -Raw).Trim()
-go build -tags $tags -o C:\Deepseek\_mieru_fallback.exe ./cmd/sing-box
+go build -tags $tags -o <WORKSPACE_ROOT>\_mieru_fallback.exe ./cmd/sing-box
 go test ./protocol/mieru ./option ./include -count=1
 $env:PATH = 'C:\src\_toolchain\goroot\bin;C:\msys64\mingw64\bin;' + $env:PATH
 $env:CGO_ENABLED = '1'

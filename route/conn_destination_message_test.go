@@ -36,7 +36,7 @@ import (
 // discriminates, which is why it is in every form including the list.
 func TestDestinationForErrorNamesTheDestination(t *testing.T) {
 	ipv6 := netip.MustParseAddr("2409:8c50:a00:40a3::1a")
-	ipv4 := netip.MustParseAddr("112.53.55.92")
+	ipv4 := netip.MustParseAddr("192.0.2.92")
 
 	for _, testCase := range []struct {
 		name     string
@@ -52,7 +52,7 @@ func TestDestinationForErrorNamesTheDestination(t *testing.T) {
 		{
 			name:     "literal IPv4 with its port",
 			metadata: adapter.InboundContext{Destination: M.SocksaddrFrom(ipv4, 80)},
-			expected: "112.53.55.92:80",
+			expected: "192.0.2.92:80",
 		},
 		{
 			// A resolved name: the candidates carry the answer, and the port comes from the
@@ -62,7 +62,7 @@ func TestDestinationForErrorNamesTheDestination(t *testing.T) {
 				Destination:          M.SocksaddrFrom(ipv6, 443),
 				DestinationAddresses: []netip.Addr{ipv6, ipv4},
 			},
-			expected: "[2409:8c50:a00:40a3::1a,112.53.55.92]:443",
+			expected: "[2409:8c50:a00:40a3::1a,192.0.2.92]:443",
 		},
 		{
 			// A caller with candidates and no port: report what is known and do not invent the rest.
@@ -71,7 +71,7 @@ func TestDestinationForErrorNamesTheDestination(t *testing.T) {
 			metadata: adapter.InboundContext{
 				DestinationAddresses: []netip.Addr{ipv4},
 			},
-			expected: "[112.53.55.92]",
+			expected: "[192.0.2.92]",
 		},
 		{
 			name:     "domain destination is rendered as the name",

@@ -44,7 +44,7 @@ func TestADomainDestinationOnTheLiteralArmResolvesAndBinds(t *testing.T) {
 	chain.inner.stall = nil
 	chain.inner.connectDelay = 0
 
-	resolved := netip.MustParseAddr("112.53.55.92")
+	resolved := netip.MustParseAddr("192.0.2.92")
 	chain.router.addressesA = []netip.Addr{resolved}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -73,7 +73,7 @@ func TestADomainDestinationOnTheLiteralArmDoesNotReachTheResolverForALiteral(t *
 	chain.inner.stall = nil
 	chain.inner.connectDelay = 0
 
-	literal := netip.MustParseAddr("112.53.55.92")
+	literal := netip.MustParseAddr("192.0.2.92")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()

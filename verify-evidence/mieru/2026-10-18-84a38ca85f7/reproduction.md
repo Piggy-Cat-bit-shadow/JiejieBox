@@ -6,10 +6,10 @@ PowerShell 5.1. No WSL, no Docker.
 ## Build the target
 
 ```powershell
-$repo = "C:\Deepseek\integration-release-next"
+$repo = "<WORKSPACE_ROOT>\integration-release-next"
 $tags = (Get-Content "$repo\release\DEFAULT_BUILD_TAGS_OTHERS" -Raw).Trim()
 Push-Location $repo
-go build -tags $tags -o C:\Deepseek\_mieru_bench_after.exe ./cmd/sing-box
+go build -tags $tags -o <WORKSPACE_ROOT>\_mieru_bench_after.exe ./cmd/sing-box
 Pop-Location
 ```
 
@@ -18,15 +18,15 @@ Pop-Location
 
 ## Official client
 
-`C:\Deepseek\_mieru_interop\bin\mieru.exe`, version `3.38.1`, SHA-256:
+`<WORKSPACE_ROOT>\_mieru_interop\bin\mieru.exe`, version `3.38.1`, SHA-256:
 `37ADD82895EB6B5D5289F82173D334A5AA697567E21937CC104E23DB0C380C31`.
 
 ## Full matrix
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\mieru-bench\run.ps1 `
-  -TargetBinary C:\Deepseek\_mieru_bench_after.exe `
-  -OfficialMieru C:\Deepseek\_mieru_interop\bin\mieru.exe `
+  -TargetBinary <WORKSPACE_ROOT>\_mieru_bench_after.exe `
+  -OfficialMieru <WORKSPACE_ROOT>\_mieru_interop\bin\mieru.exe `
   -OutDir .\verify-evidence\mieru\2026-10-18-84a38ca85f7 `
   -Rounds 4 -Connections 4 -Bytes 67108864 -Packets 5000 -Requests 1000
 ```
@@ -53,14 +53,14 @@ use the same server process for the whole run; scenarios are:
 ```powershell
 # baseline binary: the b2d9ff5 tree, no dialed guard
 powershell -ExecutionPolicy Bypass -File .\scripts\mieru-bench\run.ps1 `
-  -TargetBinary C:\Deepseek\_mieru_interop\sing-box-mieru.exe `
-  -OutDir C:\Deepseek\_mieru_ab_baseline `
+  -TargetBinary <WORKSPACE_ROOT>\_mieru_interop\sing-box-mieru.exe `
+  -OutDir <WORKSPACE_ROOT>\_mieru_ab_baseline `
   -Rounds 4 -Connections 1 -Bytes 1048576 -Packets 100 -Requests 100 -SkipOfficial
 
 # after binary: the 84a38ca working tree
 powershell -ExecutionPolicy Bypass -File .\scripts\mieru-bench\run.ps1 `
-  -TargetBinary C:\Deepseek\_mieru_bench_after.exe `
-  -OutDir C:\Deepseek\_mieru_ab_after `
+  -TargetBinary <WORKSPACE_ROOT>\_mieru_bench_after.exe `
+  -OutDir <WORKSPACE_ROOT>\_mieru_ab_after `
   -Rounds 4 -Connections 1 -Bytes 1048576 -Packets 100 -Requests 100 -SkipOfficial
 ```
 
@@ -97,7 +97,7 @@ Download `mihomo-windows-amd64-compatible-v1.19.32.zip` from
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\mieru-bench\run-mihomo.ps1 `
-  -MihomoExe C:\Deepseek\_mieru_refs\mihomo\mihomo-windows-amd64-compatible.exe `
+  -MihomoExe <WORKSPACE_ROOT>\_mieru_refs\mihomo\mihomo-windows-amd64-compatible.exe `
   -OutDir .\verify-evidence\mieru\2026-10-18-84a38ca85f7\references\mihomo `
   -Rounds 4 -Connections 4 -Bytes 67108864 -Packets 5000 -Requests 1000
 ```

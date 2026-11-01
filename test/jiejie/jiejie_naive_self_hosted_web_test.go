@@ -23,7 +23,7 @@ import (
 // The problem this solves: the Naive target ACL denies the host's own address,
 // which is correct - allowing it would let a client re-enter the public TCP/443
 // front door and recurse through the proxy. But the operator's own web services
-// (`*.zhuzhu.jiejie12131.top`) resolve to that same address, so they became
+// (`*.example.com`) resolve to that same address, so they became
 // unreachable through the proxy.
 //
 // The fix is NOT a self-IP:443 exception. It is a destination REWRITE: those
@@ -32,7 +32,7 @@ import (
 // dial target is the loopback ingress and never the resolved public address.
 //
 // Consequence, and the reason this is safe: a client can CONNECT
-// push.zhuzhu...:443 and then present an unrelated TLS SNI inside the tunnel, and
+// push.example...:443 and then present an unrelated TLS SNI inside the tunnel, and
 // the connection still terminates at 127.0.0.1:28439. The public front door is
 // not reachable this way at all.
 //
@@ -41,7 +41,7 @@ import (
 
 const (
 	// selfHostedSuffix is the operator's own zone.
-	selfHostedSuffix = "zhuzhu.jiejie12131.top"
+	selfHostedSuffix = "example.com"
 	// proxyIngressNames are used as TLS server_name by the proxy inbounds
 	// (masque-h2, masque-h3, naive-in and anytls-in). They must never be treated
 	// as ordinary self-hosted web.
@@ -401,7 +401,7 @@ func TestJiejieNaiveSelfHostedWebRoute(t *testing.T) {
 //
 // A client can CONNECT a self-hosted name (which the rule rewrites to the isolated
 // ingress) and then present a DIFFERENT TLS SNI inside the tunnel - here the proxy
-// ingress name. If the design had instead been "allow *.zhuzhu... to reach
+// ingress name. If the design had instead been "allow *.example... to reach
 // self-IP:443", that connection would land on the public front door and could be
 // dispatched back into the proxy, which is the recursion this must prevent.
 //

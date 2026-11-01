@@ -46,7 +46,7 @@ func egressRefusingPolicy() localFamilyPolicy {
 // stay different, and the gate must not be what removes the candidate, because then the operator's
 // own setting would no longer be the stated cause.
 func TestAStrictStrategyIsNotRelaxedByTheEgressVerdict(t *testing.T) {
-	globalIPv6 := netip.MustParseAddr("2409:8a00::1")
+	globalIPv6 := netip.MustParseAddr("2001:db8::1")
 	publicIPv4 := netip.MustParseAddr("93.184.216.34")
 	policy := egressRefusingPolicy()
 
@@ -69,7 +69,7 @@ func TestAStrictStrategyIsNotRelaxedByTheEgressVerdict(t *testing.T) {
 // the operator's configuration, and the refusal must be attributed to the machine so the log says why
 // the configured family could not be used.
 func TestAnIPv6OnlyStrategyOnAMachineWithNoPublicIPv6StillRefuses(t *testing.T) {
-	globalIPv6 := netip.MustParseAddr("2409:8a00::1")
+	globalIPv6 := netip.MustParseAddr("2001:db8::1")
 
 	// The strategy admits only the IPv6 candidate...
 	require.True(t, AddressAllowedByStrategy(globalIPv6, C.DomainStrategyIPv6Only))
@@ -89,7 +89,7 @@ func TestAnIPv6OnlyStrategyOnAMachineWithNoPublicIPv6StillRefuses(t *testing.T) 
 // thing standing between a global IPv6 candidate and a guaranteed kernel failure. This is the exact
 // configuration that produced the reported outage.
 func TestAPermissiveStrategyIsStillSubjectToTheEgressVerdict(t *testing.T) {
-	globalIPv6 := netip.MustParseAddr("2409:8a00::1")
+	globalIPv6 := netip.MustParseAddr("2001:db8::1")
 	publicIPv4 := netip.MustParseAddr("93.184.216.34")
 
 	for _, strategy := range []C.DomainStrategy{
@@ -111,7 +111,7 @@ func TestAPermissiveStrategyIsStillSubjectToTheEgressVerdict(t *testing.T) {
 // An operator reading the log has to be able to tell "my configuration excludes this" from "this
 // machine cannot reach it", because the two are fixed in completely different places.
 func TestTheTwoRulesStayAttributable(t *testing.T) {
-	globalIPv6 := netip.MustParseAddr("2409:8a00::1")
+	globalIPv6 := netip.MustParseAddr("2001:db8::1")
 
 	// The machine's reason names the machine and the public path, and says nothing about configuration.
 	machineReason := egressRefusingPolicy().hardUndialableError(globalIPv6)

@@ -167,9 +167,9 @@ Until then the mechanism stays labelled as it is.
 ## 12. Reproduce
 
 ```powershell
-$env:GOROOT='C:\Deepseek\_gotool\go'; $env:GOPATH='C:\Deepseek\_gotool\gopath'
+$env:GOROOT='<WORKSPACE_ROOT>\_gotool\go'; $env:GOPATH='<WORKSPACE_ROOT>\_gotool\gopath'
 $env:PATH="$env:GOROOT\bin;$env:PATH"; $env:GOTOOLCHAIN='local'
-cd C:\Deepseek\integration-release-next
+cd <WORKSPACE_ROOT>\integration-release-next
 $tags = (Get-Content .\release\DEFAULT_BUILD_TAGS_OTHERS -Raw).Trim()
 
 go test -count=10 -tags $tags ./route -run 'TestEveryBypassConditionRefuses|TestBypassChainAndLeafConditions|TestTheBypassConditionsAreOrdered|TestSharedDirectLeaf|TestFastPathFalseSurvivesASelectorSwitch|TestAnExplicitBypassRuleIgnores'

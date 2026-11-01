@@ -267,7 +267,7 @@ Naive -> <VPS_SELF_IP>:443 -> Nginx -> Naive -> <VPS_SELF_IP>:443 -> ...
 再在隧道里切换 SNI。拨号前重写到受限的内部 ingress，是
 所选拓扑文档给出的缓解措施；它是否安全取决于实际的 ingress 与路由配置。
 
-恰好只有 **一个合取的、仅限 TCP 的 self-SSH:2222 例外**（`7029722bf`）。
+恰好只有 **一个合取的、仅限 TCP 的 self-SSH (port elided) 例外**（`7029722bf`）。
 
 ### 自托管 Web：重写目标，不要开放公网端口（Self-hosted web: rewrite the target, do not open the public port）
 
@@ -388,7 +388,7 @@ HTTP 客户端需要哪些传输：
 | `3c6e0aad3` → `fe5789539` | FIX → FIX | 钳制被加入、随后被 **撤销**；完整的 0..255 padding 范围才是正确的 |
 | `e9d329380` | COMPAT | `Padding` 头在响应上变为无条件发送 |
 | `d4ead1498` | HARDENING | 引入 `packetDestinationGuard` |
-| `7029722bf` | HARDENING | 唯一的、仅限 TCP 的 self-SSH:2222 例外 |
+| `7029722bf` | HARDENING | 唯一的、仅限 TCP 的 self-SSH (port elided) 例外 |
 | `1dc734f75`、`3bbf17907`、`10e1f2a95`、`d1f3798a6`、`2ec06e451` | HARDENING | guard 的顺序与规范化 |
 | `58985a375` … `f64638a98` | INTEROP | Naive 互通系列（Caddy、官方客户端、H3 对 Caddy） |
 | `724035c76` | REFACTOR | 移除死配置（`server_limits.idle_timeout`） |

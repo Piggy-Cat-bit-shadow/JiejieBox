@@ -1,14 +1,14 @@
 # Phase 3 reproduction
 
 Host: Windows 10 LTSC 19044, Go 1.26.8 windows/amd64, AMD Ryzen 7 4800H.
-All paths below are relative to `C:\Deepseek\integration-release-next`.
+All paths below are relative to `<WORKSPACE_ROOT>\integration-release-next`.
 
 ## Build
 
 ```powershell
 $env:PATH = 'C:\src\_toolchain\goroot\bin;' + $env:PATH
 $tags = (Get-Content release\DEFAULT_BUILD_TAGS_OTHERS -Raw).Trim()
-go build -tags $tags -o C:\Deepseek\_mieru_phase3.exe ./cmd/sing-box
+go build -tags $tags -o <WORKSPACE_ROOT>\_mieru_phase3.exe ./cmd/sing-box
 ```
 
 ## Tests
@@ -28,18 +28,18 @@ SDK's 10 s handshake timeout; this is the SDK's `serverRespTimeout`, not a hang.
 
 ## Performance A/B
 
-Old binary: `C:\Deepseek\_mieru_bench_after.exe` (phase 2, before these fixes).
-New binary: `C:\Deepseek\_mieru_phase3.exe` (this tree).
+Old binary: `<WORKSPACE_ROOT>\_mieru_bench_after.exe` (phase 2, before these fixes).
+New binary: `<WORKSPACE_ROOT>\_mieru_phase3.exe` (this tree).
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\mieru-bench\run.ps1 `
-  -TargetBinary C:\Deepseek\_mieru_bench_after.exe `
-  -OutDir C:\Deepseek\_p3_old4 `
+  -TargetBinary <WORKSPACE_ROOT>\_mieru_bench_after.exe `
+  -OutDir <WORKSPACE_ROOT>\_p3_old4 `
   -Rounds 4 -Connections 4 -Bytes 67108864 -Packets 2000 -Requests 500 -SkipOfficial
 
 powershell -ExecutionPolicy Bypass -File .\scripts\mieru-bench\run.ps1 `
-  -TargetBinary C:\Deepseek\_mieru_phase3.exe `
-  -OutDir C:\Deepseek\_p3_new4 `
+  -TargetBinary <WORKSPACE_ROOT>\_mieru_phase3.exe `
+  -OutDir <WORKSPACE_ROOT>\_p3_new4 `
   -Rounds 4 -Connections 4 -Bytes 67108864 -Packets 2000 -Requests 500 -SkipOfficial
 ```
 
@@ -51,23 +51,23 @@ SDK server harness and local echo targets.
 
 ```powershell
 # official mieru.exe -> this inbound
-C:\Deepseek\_mieru_phase3.exe run -c C:\Deepseek\_mieru_interop\server-our-inbound.json
-$env:MIERU_CONFIG_JSON_FILE = C:\Deepseek\_mieru_interop\client-official.json
-C:\Deepseek\_mieru_interop\bin\mieru.exe run
-C:\Deepseek\_mieru_interop\tester.exe -socks 127.0.0.1:11082
+<WORKSPACE_ROOT>\_mieru_phase3.exe run -c <WORKSPACE_ROOT>\_mieru_interop\server-our-inbound.json
+$env:MIERU_CONFIG_JSON_FILE = <WORKSPACE_ROOT>\_mieru_interop\client-official.json
+<WORKSPACE_ROOT>\_mieru_interop\bin\mieru.exe run
+<WORKSPACE_ROOT>\_mieru_interop\tester.exe -socks 127.0.0.1:11082
 
 # this outbound -> official apis/server harness
-C:\Deepseek\_mieru_interop\official-server.exe -port 18665
-C:\Deepseek\_mieru_phase3.exe run -c C:\Deepseek\_mieru_interop\client-our-outbound.json
-C:\Deepseek\_mieru_interop\tester.exe -socks 127.0.0.1:11083
+<WORKSPACE_ROOT>\_mieru_interop\official-server.exe -port 18665
+<WORKSPACE_ROOT>\_mieru_phase3.exe run -c <WORKSPACE_ROOT>\_mieru_interop\client-our-outbound.json
+<WORKSPACE_ROOT>\_mieru_interop\tester.exe -socks 127.0.0.1:11083
 ```
 
 ## Real mita
 
 ```powershell
 # official source, unmodified
-cd C:\Users\Jie\go\pkg\mod\github.com\enfein\mieru\v3@v3.38.1
-go build -o C:\Deepseek\_mieru_refs\mita.exe ./cmd/mita
+cd <LOCAL_HOME>\go\pkg\mod\github.com\enfein\mieru\v3@v3.38.1
+go build -o <WORKSPACE_ROOT>\_mieru_refs\mita.exe ./cmd/mita
 New-Item -ItemType Directory -Force -Path C:\var\run\mita
 $env:MITA_CONFIG_JSON_FILE = '...\phase3-debug\mita\server.json'
 $env:MITA_INSECURE_UDS = '1'
@@ -79,9 +79,9 @@ protocol are unmodified. Then run the matrix against the real server instead of 
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\mieru-bench\run.ps1 `
-  -TargetBinary C:\Deepseek\_mieru_phase3.exe `
-  -OfficialMieru C:\Deepseek\_mieru_interop\bin\mieru.exe `
-  -OutDir C:\Deepseek\_mita_matrix2 `
+  -TargetBinary <WORKSPACE_ROOT>\_mieru_phase3.exe `
+  -OfficialMieru <WORKSPACE_ROOT>\_mieru_interop\bin\mieru.exe `
+  -OutDir <WORKSPACE_ROOT>\_mita_matrix2 `
   -Rounds 4 -Connections 4 -Bytes 67108864 -Packets 2000 -Requests 500 `
   -ServerPort 18666 -ExternalServer -UserName baozi -Password manlianpenfen
 ```

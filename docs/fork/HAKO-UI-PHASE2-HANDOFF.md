@@ -9,9 +9,9 @@ marked as not.
 ## 1. Where the work lives
 
 ```text
-parent repo   /Users/jie/Desktop/其他文件/JiejieBox-0.1.2-release
+parent repo   <WORKSPACE_ROOT>/JiejieBox-0.1.2-release
               branch testing, remote origin https://github.com/Piggy-Cat-bit-shadow/sing-box.git
-              NOTE: the session workspace is /Users/jie/Desktop/其他文件/sing-box, which is EMPTY.
+              NOTE: the session workspace is <WORKSPACE_ROOT>/sing-box, which is EMPTY.
               The checkout that exists is the one above.
 
 apple client  clients/apple  (submodule, remote .../sing-box-for-apple.git)
@@ -176,7 +176,7 @@ catalogue's `fa` and `ru` slots are untouched (no translations invented for them
 
 ```bash
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
-cd /Users/jie/Desktop/其他文件/JiejieBox-0.1.2-release/clients/apple
+cd <WORKSPACE_ROOT>/JiejieBox-0.1.2-release/clients/apple
 ```
 
 Xcode 27.0 (27A266a). Only iOS 27.0 runtime. `iPhone 18 Pro Max`
@@ -218,7 +218,7 @@ with the parent's own tooling and merged into `clients/apple/Libbox.xcframework`
 untracked so nothing was committed:
 
 ```bash
-cd /Users/jie/Desktop/其他文件/JiejieBox-0.1.2-release
+cd <WORKSPACE_ROOT>/JiejieBox-0.1.2-release
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 export PATH="$(go env GOPATH)/bin:$PATH"
 gomobile init                      # first time only

@@ -1,6 +1,6 @@
 # Agent B — Git Evolution / Provenance (Android) · `satelite-one`
 
-Repo `C:\Deepseek\jiejiebox-work\satelite-one`, branch `main`, read-only audit.
+Repo `<WORKSPACE_ROOT>\jiejiebox-work\satelite-one`, branch `main`, read-only audit.
 All SHAs below are abbreviated in prose but were resolved to full 40-hex with `git rev-parse`; the
 full values are in §B5 and in the commit inventory.
 
@@ -1581,7 +1581,7 @@ reading of the brief; the "matches?" column is my verdict after reading the diff
    content but the wrong authorship story; anyone reconstructing it from `fsck` alone misses them
    entirely. **INFERRED** from reflog + `patch-id`.
 
-5. **A second worktree exists on disk**: `C:/Deepseek/jiejiebox-work/baseline-r5` at detached
+5. **A second worktree exists on disk**: `<WORKSPACE_ROOT>/jiejiebox-work/baseline-r5` at detached
    `2171167`. It is a local comparison worktree; `docs/android-screen-power-parity-final-report.md`
    states it was "本地 detached 对照, **未推送、未提交**". I did not modify or inspect its
    contents beyond `git worktree list` (read-only constraint).

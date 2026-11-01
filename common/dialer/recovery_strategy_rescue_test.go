@@ -44,14 +44,14 @@ import (
 func TestRecoveryRescuesALiteralTheStrategyExcludes(t *testing.T) {
 	// The application connected to an IPv4 literal; the policy admits only IPv6. The sniffed name has
 	// an AAAA, which the policy admits.
-	originalIPv4 := netip.MustParseAddr("112.53.55.92")
-	recoveredIPv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	originalIPv4 := netip.MustParseAddr("192.0.2.92")
+	recoveredIPv6 := netip.MustParseAddr("2001:db8::2c")
 
 	// Both families are usable, so nothing about the machine is in play: the literal is excluded by
 	// POLICY alone, and the recovered address is admitted by the same policy.
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyIPv6Only)
 	chain.router.addressesAAAA = []netip.Addr{recoveredIPv6}
-	chain.router.addressesA = []netip.Addr{netip.MustParseAddr("112.53.55.93")}
+	chain.router.addressesA = []netip.Addr{netip.MustParseAddr("192.0.2.93")}
 
 	ctx, cancel := context.WithTimeout(wechatFlow(originalIPv4, 80, "szminorshort.weixin.qq.com"), 5*time.Second)
 	defer cancel()
@@ -73,8 +73,8 @@ func TestRecoveryRescuesALiteralTheStrategyExcludes(t *testing.T) {
 
 // TestRecoveryRescuesALiteralTheStrategyExcludesIPv4Only is the same attack in the other direction.
 func TestRecoveryRescuesALiteralTheStrategyExcludesIPv4Only(t *testing.T) {
-	originalIPv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
-	recoveredIPv4 := netip.MustParseAddr("112.53.55.92")
+	originalIPv6 := netip.MustParseAddr("2001:db8::2c")
+	recoveredIPv4 := netip.MustParseAddr("192.0.2.92")
 
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyIPv4Only)
 	chain.router.addressesA = []netip.Addr{recoveredIPv4}
@@ -102,12 +102,12 @@ func TestRecoveryRescuesALiteralTheStrategyExcludesIPv4Only(t *testing.T) {
 // Recovery running is not recovery succeeding. When it comes up empty, the operator still has to be told
 // that a strategy - not the network - is what left nothing to dial.
 func TestAStrategyExcludedLiteralStillNamesTheStrategyWhenRecoveryFindsNothing(t *testing.T) {
-	originalIPv4 := netip.MustParseAddr("112.53.55.92")
+	originalIPv4 := netip.MustParseAddr("192.0.2.92")
 
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyIPv6Only)
 	// The resolver answers only in the family the policy forbids, so recovery cannot rescue the flow.
 	chain.router.addressesAAAA = nil
-	chain.router.addressesA = []netip.Addr{netip.MustParseAddr("112.53.55.93")}
+	chain.router.addressesA = []netip.Addr{netip.MustParseAddr("192.0.2.93")}
 
 	ctx, cancel := context.WithTimeout(wechatFlow(originalIPv4, 80, "szminorshort.weixin.qq.com"), 5*time.Second)
 	defer cancel()

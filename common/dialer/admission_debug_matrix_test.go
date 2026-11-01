@@ -63,7 +63,7 @@ func admissionMatrixAddresses() []netip.Addr {
 		netip.MustParseAddr("10.0.0.1"),
 		netip.MustParseAddr("fd00::1"),
 		netip.MustParseAddr("93.184.216.34"),
-		netip.MustParseAddr("2409:8a00::1"),
+		netip.MustParseAddr("2001:db8::1"),
 		netip.MustParseAddr("::ffff:93.184.216.34"),
 	}
 }

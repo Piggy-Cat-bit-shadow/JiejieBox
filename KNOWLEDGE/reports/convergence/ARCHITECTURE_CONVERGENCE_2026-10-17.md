@@ -5,7 +5,7 @@
 > 且没有明显报错。下文 D10、D11 描述最终状态；原有结论以“审计后更正”标注保留，供追溯。
 > 审计细节见 `POST_REFACTOR_AUDIT_2026-10-17.md` 与 `POST_REFACTOR_AUDIT_ADDENDUM_2026-10-17.md`。
 
-- **仓库**：`Piggy-Cat-bit-shadow/sing-box`（工作树 `C:\Deepseek\integration-release-next`）
+- **仓库**：`Piggy-Cat-bit-shadow/sing-box`（工作树 `<WORKSPACE_ROOT>\integration-release-next`）
 - **分支**：`testing`（该 fork 的主分支，`origin/HEAD -> origin/testing`）
 - **起点**：`396f2ae9826`（与 `origin/testing` 完全一致，工作区干净）
 - **收敛轮终点**：`a61eb701c89`（11 个提交）

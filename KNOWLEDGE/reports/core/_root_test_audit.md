@@ -2,11 +2,11 @@
 
 ## Method
 
-Read-only. No file in `C:\Deepseek\singbox-consolidation` was created, modified, moved, renamed or
+Read-only. No file in `<WORKSPACE_ROOT>\singbox-consolidation` was created, modified, moved, renamed or
 deleted. The protected branch `pending/device-axis-reload-window-tests` was **not** read, checked out
 or diffed (it appeared only as a name in `git branch -a` output).
 
-Ran, with `PATH` prefixed by mingit + `C:\Deepseek\_gotool\go\bin` (go1.25.5 windows/amd64):
+Ran, with `PATH` prefixed by mingit + `<WORKSPACE_ROOT>\_gotool\go\bin` (go1.25.5 windows/amd64):
 
 - `git ls-files '*.go'` (no slash) → the real root package is `box.go`, `box_lifecycle.go`,
   `debug.go`, `debug_http.go`, `debug_stub.go`, `debug_unix.go`. **`box_status.go` and

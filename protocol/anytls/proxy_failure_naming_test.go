@@ -32,7 +32,7 @@ import (
 func TestProxyFailuresNameTheProxy(t *testing.T) {
 	outbound := &Outbound{
 		Adapter: outbound.NewAdapter(C.TypeAnyTLS, "🇺🇸 美国｜住宅 AnyTLS", []string{N.NetworkTCP, N.NetworkUDP}, nil),
-		server:  M.ParseSocksaddrHostPort("95.169.1.53", 443),
+		server:  M.ParseSocksaddrHostPort("192.0.2.53", 443),
 	}
 
 	remoteFailure := errors.New("anytls: remote: lookup analytics.immersivetranslate.com: NXDOMAIN")
@@ -45,7 +45,7 @@ func TestProxyFailuresNameTheProxy(t *testing.T) {
 		// The outbound, by the operator's own label.
 		"🇺🇸 美国｜住宅 AnyTLS",
 		// And the far end, which is the fact the label does not carry.
-		"95.169.1.53",
+		"192.0.2.53",
 		// The original cause survives, so the KIND of failure is still visible.
 		"NXDOMAIN",
 		"lookup analytics.immersivetranslate.com",

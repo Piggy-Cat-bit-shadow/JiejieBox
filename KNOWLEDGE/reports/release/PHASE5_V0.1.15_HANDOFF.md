@@ -89,7 +89,7 @@ Three of four `v0.1.15` attempts died on **my** errors, not the product's, and e
    expands to a comparison and splits the argument. Markers interpolating `${ACTION}`,
    `${OPERATION}` or `${1}` are fine — those are single tokens.
 
-Guards for all three now exist as scripts rather than as memory, in `C:\Deepseek\_p12_scratch\`
+Guards for all three now exist as scripts rather than as memory, in `<WORKSPACE_ROOT>\_p12_scratch\`
 (`mark4.ps1`, `strip_illegal.ps1`, `repoint_0115.ps1`).
 
 ## Version-number ledger (nothing published)

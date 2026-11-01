@@ -4,8 +4,8 @@ This supersedes the phase-2 statement "mita has no Windows build". The official 
 does build for Windows; the earlier assumption was wrong. The binary is unmodified:
 
 ```powershell
-cd C:\Users\Jie\go\pkg\mod\github.com\enfein\mieru\v3@v3.38.1
-go build -o C:\Deepseek\_mieru_refs\mita.exe ./cmd/mita
+cd <LOCAL_HOME>\go\pkg\mod\github.com\enfein\mieru\v3@v3.38.1
+go build -o <WORKSPACE_ROOT>\_mieru_refs\mita.exe ./cmd/mita
 ```
 
 | Fact | Value |

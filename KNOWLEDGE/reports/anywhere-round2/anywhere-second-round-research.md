@@ -3,9 +3,9 @@
 **审计类型：** 只读架构/性能审计（零生产代码改动、零提交、零推送）
 **审计窗口：** 2026-10-19 12:15–13:05（Asia/Shanghai）
 **审计主机：** Windows 10 19044 LTSC，AMD Ryzen 7 4800H（8C/16T），15.4 GiB，Go 1.25.5 windows/amd64，`CGO_ENABLED=0`
-**目标仓库：** `C:\Deepseek\integration-release-next`（`github.com/Piggy-Cat-bit-shadow/sing-box`，分支 `testing`）
+**目标仓库：** `<WORKSPACE_ROOT>\integration-release-next`（`github.com/Piggy-Cat-bit-shadow/sing-box`，分支 `testing`）
 **审计起点 HEAD：** `ccc2812e45d8f5fbbca3bc7af14b91bc0ba92a36`（2026-10-19 12:14:40 +0800，`v0.1.20-96-gccc2812e45d`）
-**外部参照：** `C:\Deepseek\_anywhere_src`（`github.com/NodePassProject/Anywhere`，`main` @ `89905e0e3641bcbd958a66fcb6f027a2bdecec90`）
+**外部参照：** `<WORKSPACE_ROOT>\_anywhere_src`（`github.com/NodePassProject/Anywhere`，`main` @ `89905e0e3641bcbd958a66fcb6f027a2bdecec90`）
 **报告路径：** `docs/fork/anywhere-second-round-research.md`（本地新增，未 `git add`、未提交、未推送）
 
 > 证据等级用词固定为：`VERIFIED_SOURCE`（逐行源码核实）、`MEASURED_LOCAL`（本机实测，附环境与命令）、`VERIFIED_CI`（核对到同一 SHA 的真实远端 CI 记录）、`REPORTED_PREVIOUSLY`（历史报告声称，本轮未复测）、`HYPOTHESIS`（有源码依据但未测量）、`BLOCKED_BY_ENVIRONMENT`、`NOT_RUN`。本报告没有把任何 `NOT_RUN` 写成 PASS。
@@ -50,7 +50,7 @@
 
 | 项 | 审计开始时 | 审计结束时 |
 |---|---|---|
-| 仓库 | `C:\Deepseek\integration-release-next` | 同 |
+| 仓库 | `<WORKSPACE_ROOT>\integration-release-next` | 同 |
 | 分支 | `testing`（与 `origin/testing` 同步） | 同 |
 | HEAD | `ccc2812e45d8f5fbbca3bc7af14b91bc0ba92a36` | `45078a78b1d49c2536d71b2847310fd95a8fb8a1`（**外部提交**，见 2.3） |
 | 工作树 | 有 1 个**既有**修改：`docs/fork/mieru-masque-final-acceptance.md`（非本审计产生） | 干净；唯一的未跟踪文件是本报告 |
@@ -597,9 +597,9 @@ Candidate ID: B9
 |---|---|
 | OS | Windows 10 19044 LTSC（`go test` 报 `goos: windows`） |
 | CPU / RAM | AMD Ryzen 7 4800H（8C/16T）/ 15.4 GiB |
-| Go | `go1.25.5 windows/amd64`（`C:\Deepseek\_gotool\go\bin\go.exe`） |
+| Go | `go1.25.5 windows/amd64`（`<WORKSPACE_ROOT>\_gotool\go\bin\go.exe`） |
 | CGO | `CGO_ENABLED=0` |
-| 模块缓存 | `C:\Users\Jie\go\pkg\mod`；`GOFLAGS=-mod=mod`（环境预置） |
+| 模块缓存 | `<LOCAL_HOME>\go\pkg\mod`；`GOFLAGS=-mod=mod`（环境预置） |
 | 目标 SHA | `ccc2812e45d8f5fbbca3bc7af14b91bc0ba92a36`（`testing`） |
 | 外部探针 | `%TEMP%\anywhere2_dnsprobe`、`%TEMP%\anywhere2_srsprobe`（均在仓库外，`GOPROXY=file:///.../cache/download`，无外网） |
 
@@ -786,7 +786,7 @@ Candidate ID: B9
 | 报告之外的实验产物 | 全部在 `%TEMP%\anywhere2_dnsprobe`、`%TEMP%\anywhere2_srsprobe`（仓库外），未加入 Git |
 | 审计期间仓库 HEAD 变化 | 由外部 docs-only 提交 `896915952ab`、`45078a78b1d` 引起；`git diff ccc2812e..HEAD -- '*.go'` 为空；本审计未产生提交 |
 | 起点工作树既有修改 | `docs/fork/mieru-masque-final-acceptance.md`（非本审计产生，未触碰；后由外部提交） |
-| 本报告精确路径 | `C:\Deepseek\integration-release-next\docs\fork\anywhere-second-round-research.md` |
+| 本报告精确路径 | `<WORKSPACE_ROOT>\integration-release-next\docs\fork\anywhere-second-round-research.md` |
 | 报告状态 | 本地新增、未 `git add`、未提交、未推送 |
 
 **审计结束。** 本报告只提供研究结论、源码锚点、实测数据与实施建议；是否进入第三轮实施由用户决定。

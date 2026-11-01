@@ -293,8 +293,8 @@ pins the replacement.
 
 ## Reverse-break evidence
 
-Driver: `C:\Deepseek\内核\mutate_physicalpath.py`, run as
-`python mutate_physicalpath.py C:\Deepseek\内核\wC C:\Deepseek\内核\_scratch_physicalpath`. Every
+Driver: `<WORKSPACE_ROOT>\内核\mutate_physicalpath.py`, run as
+`python mutate_physicalpath.py <WORKSPACE_ROOT>\内核\wC <WORKSPACE_ROOT>\内核\_scratch_physicalpath`. Every
 mutation is applied to a FRESH copy of the tree and the original bytes are restored and verified
 afterwards. The real worktree was never mutated.
 

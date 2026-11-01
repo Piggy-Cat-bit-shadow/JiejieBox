@@ -1,10 +1,10 @@
 _mieru_fallback.exe : [36mINFO[0m[0000] outbound/mieru[m]: mieru client started (fallback tcp enabled)
 所在位置 行:3 字符: 108
-+ ... ($false))); & C:\Deepseek\_mieru_fallback.exe run -c (Join-Path $dir  ...
++ ... ($false))); & <WORKSPACE_ROOT>\_mieru_fallback.exe run -c (Join-Path $dir  ...
 +                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     + CategoryInfo          : NotSpecified: ([36mINFO[0m[0...ck tcp enabled):String) [], RemoteException
     + FullyQualifiedErrorId : NativeCommandError
- 
+
 [36mINFO[0m[0000] inbound/mixed[in]: tcp server started at 127.0.0.1:11096
 [36mINFO[0m[0000] network: updated default interface WLAN, index 12
 [36mINFO[0m[0000] network: updated network environment: gateway 172.29.0.1, gateway_mac 80:05:88:ce:39:ec

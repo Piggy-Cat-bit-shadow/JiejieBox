@@ -50,8 +50,8 @@ import (
 // say that is to assert the consequence (a new flow's attempts come only from its own lookup) and to name
 // the reason instead of implying a filter was tested.
 func TestAnAnswerResolvedForTheOldGenerationCannotReachANewFlowsScheduler(t *testing.T) {
-	ipv4 := netip.MustParseAddr("112.53.55.92")
-	ipv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	ipv4 := netip.MustParseAddr("192.0.2.92")
+	ipv6 := netip.MustParseAddr("2001:db8::2c")
 
 	// newWorld builds a real leaf over a phase manager, and returns the pieces the barriers need.
 	newWorld := func(t *testing.T) (*resolveDialer, *scriptedLeaf, *strategyCountingRouter, *scriptedObservationManager) {

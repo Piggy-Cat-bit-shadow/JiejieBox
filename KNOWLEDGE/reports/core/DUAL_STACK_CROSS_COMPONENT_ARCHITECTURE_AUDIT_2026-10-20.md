@@ -12,7 +12,7 @@
 | 上一个 release tag | `v0.1.21`（即本 HEAD）；`v0.1.20` … `v0.1.17` 为历史 | `git tag --sort=-creatordate` |
 | 工作树状态（审计开始） | clean（`git status --porcelain` 空） | `git status --short --branch` |
 | 工作树状态（审计结束） | 仅新增本报告一个未跟踪文件；**未 stage、未 commit、未 push**（按用户本轮指示） | `git status --porcelain` |
-| Go 工具链 | `go1.25.5 windows/amd64`，`C:\Deepseek\_gotool\go` | `go version` |
+| Go 工具链 | `go1.25.5 windows/amd64`，`<WORKSPACE_ROOT>\_gotool\go` | `go version` |
 | 构建 tags | `release/DEFAULT_BUILD_TAGS_OTHERS` | `Get-Content release/DEFAULT_BUILD_TAGS_OTHERS` |
 | 外部对照 SHA | Mihomo `94b13aed49b8dc41973e4bb3f721c5fa2c5c5c1f`（Alpha, 2026-10-13）<br>Xray-core `92ccc939aaf4f8965f369cf0b142e005aeaa11d5`（v26.10.17）<br>上游 sing-box `dfb80349bf5779ec0a3f834c9ec2794345bff8f0`（2026-10-13） | `git log -1`（各自的浅克隆） |
 | 证据等级用语 | `VERIFIED_SOURCE`（读源码）/ `VERIFIED_UNIT`（本次实际运行测试）/ `VERIFIED_REPRO`（本次实际运行探针）/ `VERIFIED_GIT` / `BLOCKED_BY_ENVIRONMENT` | 见 §13 |
@@ -101,7 +101,7 @@ v0.1.17..HEAD 的生产 .go 变更（按目录，节选）
 
 ### 1.3 A3 用户日志的独立诊断（含证据缺口）
 
-**原始日志文件不可得。** 我在仓库（`KNOWLEDGE/`、`test/`、根目录）与 `C:\Deepseek`、桌面目录做了定向检索（`hif-dliq` / `szminorshort` / `no dial candidates`），命中全部是源码注释与测试 fixture，没有完整运行日志。因此：
+**原始日志文件不可得。** 我在仓库（`KNOWLEDGE/`、`test/`、根目录）与 `<WORKSPACE_ROOT>`、桌面目录做了定向检索（`hif-dliq` / `szminorshort` / `no dial candidates`），命中全部是源码注释与测试 fixture，没有完整运行日志。因此：
 
 * 对日志的"逐 ID 精确关联"（任务书 §A3 的要求）**`BLOCKED_BY_ENVIRONMENT`**：没有原始文件就无法排除图片识别引入的 `0ms`/空格/大小写误差，也无法证明同域名多次出现属于同一连接。
 * 替代证据：用**同构对象图**复现（§13.3 探针 + 仓库内 `wechatFlow` fixture）。结论不依赖对日志的时间戳解读，只依赖"这条代码路径给出什么错误串"。
@@ -730,7 +730,7 @@ inbound → ConnectionManager.NewConnection            route/conn.go:316
 
 **日志/测试/实验依据**（本次实跑，`VERIFIED_REPRO`）
 
-在外置临时副本 `C:\Deepseek\_audit_copy_20261020`（仓库外，未进入审计工作树）中加入探针 `common/dialer/zz_audit_probe_test.go`，用它构造报告的机器（`outageDialer(windowsLinkLocalOnly())`：IPv6 provisioned + egress unavailable）与只在 AAAA 应答的 `fakeDomainRouter`：
+在外置临时副本 `<WORKSPACE_ROOT>\_audit_copy_20261020`（仓库外，未进入审计工作树）中加入探针 `common/dialer/zz_audit_probe_test.go`，用它构造报告的机器（`outageDialer(windowsLinkLocalOnly())`：IPv6 provisioned + egress unavailable）与只在 AAAA 应答的 `fakeDomainRouter`：
 
 ```text
 AUDIT_PROBE hostname error = "no dial candidates"
@@ -974,11 +974,11 @@ resolve.go:660-667
 
 ## 13 测试与实验实际执行记录
 
-**环境**：Windows x64，`go1.25.5 windows/amd64`，`GOPATH=C:\Deepseek\_gotool\gopath`，`GOFLAGS=-mod=readonly`，tags = `release/DEFAULT_BUILD_TAGS_OTHERS`（`with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_ccm,with_ocm,with_cloudflared,with_usbip,with_openvpn,with_openconnect,with_xhttp,badlinkname`）。
+**环境**：Windows x64，`go1.25.5 windows/amd64`，`GOPATH=<WORKSPACE_ROOT>\_gotool\gopath`，`GOFLAGS=-mod=readonly`，tags = `release/DEFAULT_BUILD_TAGS_OTHERS`（`with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_ccm,with_ocm,with_cloudflared,with_usbip,with_openvpn,with_openconnect,with_xhttp,badlinkname`）。
 
 **对工作树的写入**：本审计只做了两类写入——(1) 用 `git fetch --all --prune` 更新远端跟踪引用（不改工作树、不改 `testing` 分支、不产生对象之外的副作用）；(2) 新增本报告。**结束时 `git status --porcelain` 仅显示本报告一个未跟踪文件**，无 staged、无 commit、无 push。
 
-**一次性环境清理**：探针用的仓库副本 `C:\Deepseek\_audit_copy_20261020`（212 MB，24 144 个文件）与远端 tip 的导出目录 `C:\Deepseek\_audit_tip_20261020`（约 13.7 MB zip 展开）都在结果入库后删除；探针源文件保留在仓库外的 `C:\Deepseek\_audit_20261020\zz_audit_probe_test.go`（2 773 字节），全部运行日志（含 `tip_build.log`、`tip_test.log`、`race_count20.log`、`e2e_fip.log`、`build_linux.log`、`build_darwin.log`）也保留在同一目录，以便复现而不污染仓库。
+**一次性环境清理**：探针用的仓库副本 `<WORKSPACE_ROOT>\_audit_copy_20261020`（212 MB，24 144 个文件）与远端 tip 的导出目录 `<WORKSPACE_ROOT>\_audit_tip_20261020`（约 13.7 MB zip 展开）都在结果入库后删除；探针源文件保留在仓库外的 `<WORKSPACE_ROOT>\_audit_20261020\zz_audit_probe_test.go`（2 773 字节），全部运行日志（含 `tip_build.log`、`tip_test.log`、`race_count20.log`、`e2e_fip.log`、`build_linux.log`、`build_darwin.log`）也保留在同一目录，以便复现而不污染仓库。
 
 ### 13.1 构建与静态检查
 
@@ -1002,7 +1002,7 @@ resolve.go:660-667
 
 ### 13.3 外置复现探针（`VERIFIED_REPRO`）
 
-位置：`C:\Deepseek\_audit_copy_20261020`（**仓库之外**的副本，`robocopy /XD .git`，24 144 个文件）。新增文件：`common/dialer/zz_audit_probe_test.go`（仅存在于副本，**未进入审计工作树**）。
+位置：`<WORKSPACE_ROOT>\_audit_copy_20261020`（**仓库之外**的副本，`robocopy /XD .git`，24 144 个文件）。新增文件：`common/dialer/zz_audit_probe_test.go`（仅存在于副本，**未进入审计工作树**）。
 
 ```text
 go test -tags $TAGS -run 'TestAuditProbe' -v -count=1 ./common/dialer/

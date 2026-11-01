@@ -52,7 +52,7 @@ func TestDeviceCapabilityProbe(t *testing.T) {
 	// must be hard-undialable - and a link-local one must still be dialable, because "no way out to the
 	// Internet" says nothing about the link.
 	if routeObservation == netcap.RouteAbsent {
-		globalIPv6 := mustAddr(t, "2409:8a00::1")
+		globalIPv6 := mustAddr(t, "2001:db8::1")
 		linkLocalIPv6 := mustAddr(t, "fe80::1")
 		require.False(t, capability.HardUndialable(globalIPv6),
 			"the route reader reported RouteAbsent but a global IPv6 destination is still undialable - "+

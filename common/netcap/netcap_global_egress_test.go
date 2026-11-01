@@ -49,7 +49,7 @@ func TestLinkLocalOnlyIPv6CannotReachAGlobalIPv6Destination(t *testing.T) {
 		"and no global IPv6 destination is, which is what the kernel was saying in the log")
 
 	// The decision, per destination.
-	require.True(t, capability.HardUndialable(netip.MustParseAddr("2409:8a00::1")),
+	require.True(t, capability.HardUndialable(netip.MustParseAddr("2001:db8::1")),
 		"a global IPv6 destination must not be attempted")
 	require.True(t, capability.HardUndialable(netip.MustParseAddr("2001:4860:4860::8888")),
 		"the exact destination from the log")
@@ -98,7 +98,7 @@ func TestGlobalEgressGateAppliesToIPv6Only(t *testing.T) {
 		Name: "eth0", Up: true, Addresses: mustPrefixes("192.168.1.10/24"),
 	}})
 	require.Equal(t, StateUnavailable, noIPv6.IPv6)
-	require.True(t, noIPv6.HardUndialable(netip.MustParseAddr("2409:8a00::1")))
+	require.True(t, noIPv6.HardUndialable(netip.MustParseAddr("2001:db8::1")))
 	require.False(t, noIPv6.HardUndialable(netip.MustParseAddr("192.0.2.1")))
 }
 
@@ -114,16 +114,16 @@ func TestUnknownEgressFailsOpen(t *testing.T) {
 	}})
 	require.Equal(t, StateUnknown, unobserved.GlobalIPv6Egress,
 		"nothing was read, so nothing may be claimed")
-	require.False(t, unobserved.HardUndialable(netip.MustParseAddr("2409:8a00::1")),
+	require.False(t, unobserved.HardUndialable(netip.MustParseAddr("2001:db8::1")),
 		"and an unproven absence must not refuse a destination")
 
 	// The zero value - a manager that never computed a capability - is the same shape.
 	zero := FamilyCapability{}
-	require.False(t, zero.HardUndialable(netip.MustParseAddr("2409:8a00::1")))
+	require.False(t, zero.HardUndialable(netip.MustParseAddr("2001:db8::1")))
 	require.False(t, zero.HardUndialable(netip.MustParseAddr("192.0.2.1")))
 
 	// And a machine where nothing could be observed at all.
-	require.False(t, Evaluate(nil).HardUndialable(netip.MustParseAddr("2409:8a00::1")))
+	require.False(t, Evaluate(nil).HardUndialable(netip.MustParseAddr("2001:db8::1")))
 }
 
 // TestAnyInterfaceWithAGlobalRouteKeepsIPv6Usable is the other half of the OR, and the anti-regression
@@ -185,7 +185,7 @@ func TestAGlobalAddressOnAnAdapterWithoutARouteIsNotEgress(t *testing.T) {
 	require.Equal(t, StateUnavailable, capability.GlobalIPv6Egress,
 		"a global ADDRESS is not a global ROUTE, and no interface here has one")
 
-	require.True(t, capability.HardUndialable(netip.MustParseAddr("2409:8a00::1")))
+	require.True(t, capability.HardUndialable(netip.MustParseAddr("2001:db8::1")))
 	require.False(t, capability.HardUndialable(netip.MustParseAddr("fd00:1234::5")),
 		"while the ULA the adapter actually serves is still dialable")
 	require.False(t, capability.HardUndialable(netip.MustParseAddr("172.28.0.5")))
@@ -199,13 +199,13 @@ func TestRouteOnlyChangeIsVisibleToTheCapability(t *testing.T) {
 	withRoute := []InterfaceObservation{{
 		Name:            "Ethernet",
 		Up:              true,
-		Addresses:       mustPrefixes("192.168.1.10/24", "2409:8a00::10/64"),
+		Addresses:       mustPrefixes("192.168.1.10/24", "2001:db8::10/64"),
 		GlobalIPv6Route: RoutePresent,
 	}}
 	withoutRoute := []InterfaceObservation{{
 		Name:            "Ethernet",
 		Up:              true,
-		Addresses:       mustPrefixes("192.168.1.10/24", "2409:8a00::10/64"),
+		Addresses:       mustPrefixes("192.168.1.10/24", "2001:db8::10/64"),
 		GlobalIPv6Route: RouteAbsent,
 	}}
 
@@ -224,7 +224,7 @@ func TestRouteOnlyChangeIsVisibleToTheCapability(t *testing.T) {
 // TestClassifyScopeSeparatesTheThreeQuestions pins the scope table the decision is built on.
 func TestClassifyScopeSeparatesTheThreeQuestions(t *testing.T) {
 	testCases := map[string]DestinationScope{
-		"2409:8a00::1":         ScopeGlobal,
+		"2001:db8::1":         ScopeGlobal,
 		"2001:4860:4860::8888": ScopeGlobal,
 		"2606:4700::1":         ScopeGlobal,
 		"8.8.8.8":              ScopeGlobal,

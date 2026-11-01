@@ -27,7 +27,7 @@ import (
 // MEASURED before the fix, with `ipv4_only` and a name whose A answer was empty while AAAA answered:
 //
 //	err   = <nil>
-//	tried = [2409:8c54:871:1007::2c]
+//	tried = [2001:db8::2c]
 //
 // A UDP socket, created for the family the operator had forbidden, reported as a success. Nothing in the
 // suite could see it, because every strategy test was written for the stream path or for a candidate list.
@@ -41,7 +41,7 @@ import (
 
 // TestPacketDomainPathAppliesTheStrategy is the regression.
 func TestPacketDomainPathAppliesTheStrategy(t *testing.T) {
-	originalIPv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	originalIPv6 := netip.MustParseAddr("2001:db8::2c")
 
 	// The machine is dual-stack, so nothing about capability is in play: only the operator's policy
 	// excludes the IPv6 answer, and the A answer is empty so the resolver offers nothing else.
@@ -72,7 +72,7 @@ func TestPacketDomainPathAppliesTheStrategy(t *testing.T) {
 // say which, because "excluded by strategy" would send an operator to change a configuration that is not
 // the problem.
 func TestPacketDomainPathAppliesTheMachineVerdict(t *testing.T) {
-	originalIPv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	originalIPv6 := netip.MustParseAddr("2001:db8::2c")
 
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateUnavailable, C.DomainStrategyAsIS)
 	chain.inner.packetConn = &countingPacketConn{}
@@ -98,8 +98,8 @@ func TestPacketDomainPathAppliesTheMachineVerdict(t *testing.T) {
 // Without it, a fix that refused every packet flow to a name would pass both regressions above, and the
 // arm would be "fixed" by being deleted.
 func TestPacketDomainPathAdmitsAUsableFamily(t *testing.T) {
-	originalIPv4 := netip.MustParseAddr("112.53.55.92")
-	originalIPv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	originalIPv4 := netip.MustParseAddr("192.0.2.92")
+	originalIPv6 := netip.MustParseAddr("2001:db8::2c")
 
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyIPv4Only)
 	chain.inner.packetConn = &countingPacketConn{}
@@ -124,13 +124,13 @@ func TestPacketDomainPathAdmitsAUsableFamily(t *testing.T) {
 // contract of the serial path is "the resolver's order, one at a time". A filter that compacted or sorted
 // would silently turn the operator's resolver preference into this package's opinion.
 func TestPacketDomainPathKeepsTheResolverOrderWithinTheAdmittedFamily(t *testing.T) {
-	first := netip.MustParseAddr("112.53.55.92")
+	first := netip.MustParseAddr("192.0.2.92")
 	second := netip.MustParseAddr("203.0.113.7")
 
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyIPv4Only)
 	chain.inner.packetConn = &countingPacketConn{}
 	chain.router.addressesA = []netip.Addr{first, second}
-	chain.router.addressesAAAA = []netip.Addr{netip.MustParseAddr("2409:8c54:871:1007::2c")}
+	chain.router.addressesAAAA = []netip.Addr{netip.MustParseAddr("2001:db8::2c")}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()

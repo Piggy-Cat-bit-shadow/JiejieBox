@@ -17,7 +17,7 @@ import (
 //
 // XHTTP deployments routinely need a query on the configured path:
 //
-//	"path": "/?proxyip=149.56.109.62"
+//	"path": "/?proxyip=192.0.2.62"
 //	"path": "/base?x=1"
 //
 // The first is the Cloudflare Worker / edgetunnel / relay shape, where the worker reads the query to
@@ -29,11 +29,11 @@ import (
 // `sHTTP.URLSetPath`, which is `net/url.(*URL).setPath` - a function that percent-encodes everything it
 // is given as a PATH. `?` is not a legal path character, so it becomes `%3F`:
 //
-//	configured   /?proxyip=149.56.109.62
-//	URL.Path     /%3Fproxyip=149.56.109.62
-//	request line GET /%3Fproxyip=149.56.109.62 HTTP/1.1
+//	configured   /?proxyip=192.0.2.62
+//	URL.Path     /%3Fproxyip=192.0.2.62
+//	request line GET /%3Fproxyip=192.0.2.62 HTTP/1.1
 //
-// The origin sees a path segment literally named `%3Fproxyip=149.56.109.62` and an EMPTY query. No
+// The origin sees a path segment literally named `%3Fproxyip=192.0.2.62` and an EMPTY query. No
 // error is produced anywhere: the request is well formed, the server answers, and the relay silently
 // does the wrong thing. That is why the assertion below is on the request LINE and not on
 // `URL.RawQuery` - a test that only checked `RawQuery` would pass for an implementation that dropped
@@ -62,8 +62,8 @@ func TestConfiguredQuerySurvivesToTheRequestURI(t *testing.T) {
 	}{
 		{
 			"the worker/relay shape",
-			"/?proxyip=149.56.109.62",
-			"/?proxyip=149.56.109.62",
+			"/?proxyip=192.0.2.62",
+			"/?proxyip=192.0.2.62",
 		},
 		{
 			"a path with a query",
@@ -77,8 +77,8 @@ func TestConfiguredQuerySurvivesToTheRequestURI(t *testing.T) {
 		},
 		{
 			"a bare query with no path",
-			"?proxyip=149.56.109.62",
-			"/?proxyip=149.56.109.62",
+			"?proxyip=192.0.2.62",
+			"/?proxyip=192.0.2.62",
 		},
 		{
 			"no query at all: the previous behaviour, unchanged",
@@ -179,7 +179,7 @@ func TestConfiguredQueryCoexistsWithPlacementQuery(t *testing.T) {
 		scheme:       "https",
 		host:         "example.com",
 		serverAddr:   M.ParseSocksaddr("example.com:443"),
-		path:         "/base?proxyip=149.56.109.62",
+		path:         "/base?proxyip=192.0.2.62",
 		paddingRange: intRange{0, 0},
 		meta:         meta,
 	}
@@ -190,7 +190,7 @@ func TestConfiguredQueryCoexistsWithPlacementQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RawQuery %q does not parse: %v", u.RawQuery, err)
 	}
-	if query.Get("proxyip") != "149.56.109.62" {
+	if query.Get("proxyip") != "192.0.2.62" {
 		t.Fatalf("the configured parameter was lost: RawQuery=%q (request line %q). A query-placement "+
 			"session id must be MERGED into the configured query, not replace it", u.RawQuery, requestURI)
 	}
@@ -219,7 +219,7 @@ func TestConfiguredQuerySurvivesPadding(t *testing.T) {
 		scheme:       "https",
 		host:         "example.com",
 		serverAddr:   M.ParseSocksaddr("example.com:443"),
-		path:         "/?proxyip=149.56.109.62",
+		path:         "/?proxyip=192.0.2.62",
 		paddingRange: intRange{16, 16},
 		meta:         meta,
 	}
@@ -228,7 +228,7 @@ func TestConfiguredQuerySurvivesPadding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newRequest: %v", err)
 	}
-	if request.URL.RequestURI() != "/?proxyip=149.56.109.62" {
+	if request.URL.RequestURI() != "/?proxyip=192.0.2.62" {
 		t.Fatalf("padding changed the request line target to %q", request.URL.RequestURI())
 	}
 	// The padding really did fire, so the assertion above is about coexistence rather than about a

@@ -101,7 +101,7 @@ func TestDialParallelNetworkReachesTheRicherSurface(t *testing.T) {
 	spy := &networkSurfaceSpy{}
 	outbound := surfaceOutbound(spy)
 
-	address := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	address := netip.MustParseAddr("2001:db8::2c")
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
@@ -119,7 +119,7 @@ func TestDialParallelReachesTheRicherSurface(t *testing.T) {
 	spy := &networkSurfaceSpy{}
 	outbound := surfaceOutbound(spy)
 
-	address := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	address := netip.MustParseAddr("2001:db8::2c")
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
@@ -136,7 +136,7 @@ func TestListenSerialNetworkPacketReachesTheRicherSurface(t *testing.T) {
 	spy := &networkSurfaceSpy{}
 	outbound := surfaceOutbound(spy)
 
-	address := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	address := netip.MustParseAddr("2001:db8::2c")
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 

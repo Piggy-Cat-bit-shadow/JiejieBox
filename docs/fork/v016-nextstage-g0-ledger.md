@@ -6,7 +6,7 @@ Integrator-owned. One section per phase. Every number here is a command output, 
 
 ```text
 START_SHA                    = 686c937cbb13aafdfe6276c8813993dfcb51d9ac
-WORKTREE (integration)       = C:\Deepseek\内核\work   (detached, clean at G0)
+WORKTREE (integration)       = <WORKSPACE_ROOT>\内核\work   (detached, clean at G0)
 LIVE_ORIGIN_SHA (origin/testing) = 686c937cbb13aafdfe6276c8813993dfcb51d9ac
 MERGE_BASE HEAD origin/testing   = 686c937cbb13aafdfe6276c8813993dfcb51d9ac
 BASE_DIFF_STATUS             = origin/testing == HEAD; nothing to reconcile, no upstream drift
@@ -19,7 +19,7 @@ REMOTE_TAGS                  = 636 refs/tags (and the local set is identical to 
                                pushed. The misreading is left visible rather than overwritten.
 GO                           = go1.26.8 windows/amd64
 GO_ENV                       = GOOS=windows GOARCH=amd64 CGO_ENABLED=1
-                               GOROOT=C:\src\_toolchain\goroot  GOPATH=C:\Users\Jie\go
+                               GOROOT=C:\src\_toolchain\goroot  GOPATH=<LOCAL_HOME>\go
 TAGS (release/DEFAULT_BUILD_TAGS_OTHERS) =
   with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,
   with_ccm,with_ocm,with_cloudflared,with_usbip,with_openvpn,with_openconnect,with_xhttp,badlinkname
@@ -42,7 +42,7 @@ ORIGINAL_DIRTY_TREE_GITLINK     = 160000 32f915ba595601dbc2dd346c33fe9fedd3e7297
 ```
 
 Nothing was written, checked out, stashed, reset, cleaned, added, committed or built there. All work
-happened in detached worktrees carved out of `C:\Deepseek\内核\`.
+happened in detached worktrees carved out of `<WORKSPACE_ROOT>\内核\`.
 
 ### 1.2 WORKTREE_OWNERSHIP
 
@@ -50,13 +50,13 @@ All worktrees are detached at `686c937cbb13aafdfe6276c8813993dfcb51d9ac` unless 
 
 | Worktree | Owner | Purpose |
 |---|---|---|
-| `C:\Deepseek\内核\work` | Integrator | integration tree, `docs/fork/` ledger, serial cherry-pick, push |
-| `C:\Deepseek\内核\wA` | Agent A | FIP-01: `route/route.go`, `dns/transport/fakeip/*` |
-| `C:\Deepseek\内核\wB` | Agent B | D7-02: `transport/wireguard/*`, `common/runtimecoord/*` |
-| `C:\Deepseek\内核\wC` | Agent C | RNET-03: `route`/`transport/http`/`common/httpclient` tests |
-| `C:\Deepseek\内核\wD` | Agent D | STATUS-04: `box.go` + new `box_*test.go` |
-| `C:\Deepseek\内核\wE` | Agent E | platform/test matrix (principally read-only) |
-| `C:\Deepseek\内核\wF` | Agent F | independent adversary, attack tests only |
+| `<WORKSPACE_ROOT>\内核\work` | Integrator | integration tree, `docs/fork/` ledger, serial cherry-pick, push |
+| `<WORKSPACE_ROOT>\内核\wA` | Agent A | FIP-01: `route/route.go`, `dns/transport/fakeip/*` |
+| `<WORKSPACE_ROOT>\内核\wB` | Agent B | D7-02: `transport/wireguard/*`, `common/runtimecoord/*` |
+| `<WORKSPACE_ROOT>\内核\wC` | Agent C | RNET-03: `route`/`transport/http`/`common/httpclient` tests |
+| `<WORKSPACE_ROOT>\内核\wD` | Agent D | STATUS-04: `box.go` + new `box_*test.go` |
+| `<WORKSPACE_ROOT>\内核\wE` | Agent E | platform/test matrix (principally read-only) |
+| `<WORKSPACE_ROOT>\内核\wF` | Agent F | independent adversary, attack tests only |
 
 Leftovers from the previous round, read and left untouched: `wB2`, `wC2`, `wD2`, `wD4`/`wD7` (each
 carrying a deleted `transport/http/zz_capsule_probe_test.go`), `wDL` (a `common/dialer/resolve.go`
@@ -77,10 +77,10 @@ The full 83-package scan is owned by Agent E and is re-run by the integrator on 
 ### 1.4 External conditions available (measured, not assumed)
 
 ```text
-MINGW            = C:\Users\Jie\AppData\Local\Temp\jiejie-tools\mingw\mingw64\bin   (present)
+MINGW            = <LOCAL_HOME>\AppData\Local\Temp\jiejie-tools\mingw\mingw64\bin   (present)
 GOROOT           = C:\src\_toolchain\goroot\bin                                    (present)
 GIT              = C:\src\MinGit\cmd\git.exe                                       (present)
-push_preflight   = C:\Deepseek\内核\push_preflight.py                              (present, read)
+push_preflight   = <WORKSPACE_ROOT>\内核\push_preflight.py                              (present, read)
 ADMIN / DRIVER   = see Agent E's attribution of common/windivert
 APPLE DEVICE     = NOT AVAILABLE (no Apple hardware on this host)
 WARP             = NOT AVAILABLE

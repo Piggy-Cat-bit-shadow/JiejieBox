@@ -36,10 +36,10 @@ SKIP: no gobind on PATH, so the generated binding was not inspected directly.
       Java result type purely from that. Install gomobile to have it checked end to end.
 
 -- layer 4: client call sites --
-SKIP: no Android client checkout found (looked in: /Users/jie/Desktop/其他文件/sing-box-verify-016/clients/android).
+SKIP: no Android client checkout found (looked in: <WORKSPACE_ROOT>/sing-box-verify-016/clients/android).
       An uninitialised submodule is NOT evidence that the call sites are migrated.
       Run: git submodule update --init clients/android
-     Apple client: /Users/jie/Desktop/其他文件/sing-box-verify-016/clients/apple
+     Apple client: <WORKSPACE_ROOT>/sing-box-verify-016/clients/apple
      swift sources scanned: 670 files
      3 of the contract's methods are declared on a bound Go interface, so the
      platform implements them as well; those declarations are scanned for the boxed result.

@@ -26,7 +26,7 @@
 
 ### A.2 用户原工作树保护
 
-开工与收工两次核对，`/Users/jie/Desktop/其他文件/sing-box` 的未提交状态**完全一致**：
+开工与收工两次核对，`<WORKSPACE_ROOT>/sing-box` 的未提交状态**完全一致**：
 
 ```
  M clients/android

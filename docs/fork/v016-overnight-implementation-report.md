@@ -18,7 +18,7 @@ local == origin           YES
 final SHA tested          YES (the test runs below were performed at this commit's tree)
 original worktree         UNTOUCHED. C:\src\sing-box stayed at 8d78dcdd with its dirty
                           clients/desktop submodule pointer; every write happened in a
-                          detached worktree at C:\Deepseek\内核\work
+                          detached worktree at <WORKSPACE_ROOT>\内核\work
 tags                      636 (unchanged; none created)
 force push / reset        never used
 other repos               never written: satelite-one, Apple, Windows Delphi, quic-go,
@@ -37,7 +37,7 @@ adf5d286  feat(path): let a declared downstream hop own destination DNS
 
 Toolchain: `go1.26.8 windows/amd64` from `C:\src\_toolchain\goroot`, `git 2.56.0.windows.2` from
 `C:\src\MinGit`. The race detector was enabled with `CGO_ENABLED=1` and the MinGW gcc found at
-`C:\Users\Jie\AppData\Local\Temp\jiejie-tools\mingw\mingw64\bin` (gcc 16.2.0). Build tags always read
+`<LOCAL_HOME>\AppData\Local\Temp\jiejie-tools\mingw\mingw64\bin` (gcc 16.2.0). Build tags always read
 from `release/DEFAULT_BUILD_TAGS_OTHERS`, never hard-coded.
 
 ---
@@ -269,7 +269,7 @@ Node DNS vs destination DNS: only the destination is owned. The proxy server's h
 All reverse-breaks were run in a disposable copy of the tree, and the driver verifies the tree is
 re-synced before every mutation and restored byte-identically after (a stale scratch tree produced one
 false NOT-RED during development, which is why the driver now re-syncs). Nothing mutated was ever
-committed. The driver is `C:\Deepseek\内核\mutate.py`; module-level mutations copy the dependency with a
+committed. The driver is `<WORKSPACE_ROOT>\内核\mutate.py`; module-level mutations copy the dependency with a
 temporary `replace` in a copy of go.mod and verify the module cache entry was not modified.
 
 ### Clash mode (`experimental/clashmode`)
@@ -584,7 +584,7 @@ ChromeParrot         a product decision: accept a local fingerprint change on a 
 
 ### J-10 One note on the mutation driver
 
-`C:\Deepseek\内核\mutate.py` re-syncs a fresh copy of the tree before every mutation. This matters: the
+`<WORKSPACE_ROOT>\内核\mutate.py` re-syncs a fresh copy of the tree before every mutation. This matters: the
 first version reused one scratch tree, and a mutation reported NOT-RED because the tests in the scratch
 tree were the previous mutation's. Any continuation should keep that behaviour, and should keep the
 rule that a mutation is never applied to the real worktree.

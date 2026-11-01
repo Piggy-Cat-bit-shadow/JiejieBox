@@ -203,8 +203,8 @@ runtime verification, and the MPTCP listener decision for the listener owner.
 ## 8. Reproduce this audit
 
 ```sh
-git -C C:\Deepseek\jiejiebox-docs log -1 --format='%H %ci %s'
-git -C C:\Deepseek\jiejiebox-docs status --porcelain
+git -C <WORKSPACE_ROOT>\jiejiebox-docs log -1 --format='%H %ci %s'
+git -C <WORKSPACE_ROOT>\jiejiebox-docs status --porcelain
 go version   # go1.25.5
 ```
 

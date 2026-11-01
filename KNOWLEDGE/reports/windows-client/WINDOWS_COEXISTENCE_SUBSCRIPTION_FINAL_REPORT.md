@@ -1,6 +1,6 @@
 # Windows 共存与订阅剩余流量：实施交付报告
 
-指引来源：`C:\Users\Jie\Desktop\配置文件\01_WINDOWS_COEXISTENCE_AND_SUBSCRIPTION_CONSTRUCTION.md`
+指引来源：`<LOCAL_HOME>\Desktop\配置文件\01_WINDOWS_COEXISTENCE_AND_SUBSCRIPTION_CONSTRUCTION.md`
 
 本轮在**新分支**上完成两个项目的实现、测试、构建和提交，并核对了三个仓库的 submodule pin 链。当时尚未合并、打标签、发布或推送。
 

@@ -10,7 +10,7 @@ WORK_HEAD                  = 4a7e43d1f  (pushed)
 CONSUMER_DNS_SOURCE_SHA    = ba3cab01bd20d03f1d0248e4f563f4156dd1cfb6
 GROUP_CROSSKIND_SOURCE_SHA = d95e256b7626e25b44df10faa70c25aa59efacb3
 GO_VERSION / GOOS / GOARCH = go1.26.8 / windows / amd64
-WORKTREE_NAME              = C:\Deepseek\内核\fin
+WORKTREE_NAME              = <WORKSPACE_ROOT>\内核\fin
 WORKTREE_CLEAN             = YES (before and after)
 ```
 

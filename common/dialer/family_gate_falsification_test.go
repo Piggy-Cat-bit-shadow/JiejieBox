@@ -81,7 +81,7 @@ func falsificationDestinations() []netip.Addr {
 		netip.MustParseAddr("192.168.1.1"),
 		netip.MustParseAddr("fd00::1"),
 		netip.MustParseAddr("93.184.216.34"),
-		netip.MustParseAddr("2409:8a00::1"),
+		netip.MustParseAddr("2001:db8::1"),
 		netip.MustParseAddr("::ffff:93.184.216.34"),
 		netip.MustParseAddr("::ffff:192.168.1.1"),
 		netip.MustParseAddr("0.0.0.0"),
@@ -130,7 +130,7 @@ func TestOwnershipIsTheOnlyThingThatDisablesTheGate(t *testing.T) {
 		GlobalIPv6Egress: netcap.StateUnavailable,
 	}
 	globalIPv4 := netip.MustParseAddr("93.184.216.34")
-	globalIPv6 := netip.MustParseAddr("2409:8a00::1")
+	globalIPv6 := netip.MustParseAddr("2001:db8::1")
 
 	owned := newLocalFamilyPolicy(unavailable)
 	if !owned.hardUndialable(globalIPv4) || !owned.hardUndialable(globalIPv6) {
@@ -163,7 +163,7 @@ func TestTheFamilyOnlyQuestionAgreesWithTheDestinationQuestion(t *testing.T) {
 	checked := 0
 	for _, policy := range policySpace() {
 		globalIPv4 := netip.MustParseAddr("93.184.216.34")
-		globalIPv6 := netip.MustParseAddr("2409:8a00::1")
+		globalIPv6 := netip.MustParseAddr("2001:db8::1")
 
 		if policy.hardUndialableFamily(familyIPv4) && !policy.hardUndialable(globalIPv4) {
 			t.Fatalf("the family question refuses IPv4 but the destination gate allows a global IPv4 "+
@@ -230,7 +230,7 @@ func TestTheEgressTermOnlyEverTouchesGlobalIPv6(t *testing.T) {
 	}
 
 	// And the one destination it MUST change: a global IPv6 address.
-	global := netip.MustParseAddr("2409:8a00::1")
+	global := netip.MustParseAddr("2001:db8::1")
 	if newLocalFamilyPolicy(withEgress).hardUndialable(global) {
 		t.Fatal("precondition: with a global route, a global IPv6 destination must be dialable")
 	}

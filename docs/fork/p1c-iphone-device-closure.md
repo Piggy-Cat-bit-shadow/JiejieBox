@@ -199,7 +199,7 @@ Device: **Jiejie** — iPhone 17 Pro Max (`iPhone18,2`), iOS 26.4.2 (23E261), ph
 
 ```text
 IPHONE_BUILD   = PASS   (all builds BUILD SUCCEEDED)
-IPHONE_INSTALL = PASS   (top.jiejie12131.jiejiebox, Packet Tunnel Extension.appex embedded)
+IPHONE_INSTALL = PASS   (top.example.jiejiebox, Packet Tunnel Extension.appex embedded)
 IPHONE_TUNNEL  = PASS   (tunnel connected; the Extension process produced every report below)
 IPHONE_SLEEP_RESUME = PASS
 SECOND_REAL_SLEEP_TEST = PASS
@@ -207,7 +207,7 @@ SECOND_REAL_SLEEP_TEST = PASS
 
 Signing was resolved the way the repository sanctions rather than by editing the project: the
 project's own `DEVELOPMENT_TEAM` (`P8XK3KHB48`) has no certificate on this host, so the build used the
-local team and identifier from `.env.apple.local` (`TAFD7BAGYZ` / `top.jiejie12131.jiejiebox`), whose
+local team and identifier from `.env.apple.local` (`TAFD7BAGYZ` / `top.example.jiejiebox`), whose
 profile covers the tunnel and includes this device. `com.apple.developer.networking.multicast` was
 removed from `Extension/Extension.entitlements` **in the working tree only** — exactly what
 `APPLE_ENABLE_MULTICAST=false` does in `scripts/ci/prepare-apple-client.sh` — because Apple grants that

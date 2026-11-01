@@ -138,7 +138,7 @@ func TestOnePolicyServesThePacketGateAndThePacketHandOver(t *testing.T) {
 		GlobalIPv6Egress: netcap.StateUnavailable,
 	})
 	unowned.ownership.predicate = func() bool { return false }
-	globalIPv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	globalIPv6 := netip.MustParseAddr("2001:db8::2c")
 
 	// The capability alone would refuse it...
 	require.True(t, unowned.capability.HardUndialable(globalIPv6),

@@ -155,7 +155,7 @@ func newChangingNetworkChain(t *testing.T, first adapter.NetworkFamilyCapability
 // dropped or wrongly kept.
 func TestTheSchedulerUsesTheFlowsCapturedVerdict(t *testing.T) {
 	resolver, leaf, manager := newChangingNetworkChain(t, capWith(netcap.StateProvisioned, netcap.StateUnavailable))
-	ipv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	ipv6 := netip.MustParseAddr("2001:db8::2c")
 
 	admission := resolver.captureAdmissionPolicy()
 	require.Equal(t, admissionNoLocalFamily, admission.verdict(ipv6),
@@ -193,8 +193,8 @@ func TestTheSchedulerUsesTheFlowsCapturedVerdict(t *testing.T) {
 // the policy admitted while the other answer is still in flight.
 func TestRecoveryUsesTheFlowsCapturedVerdict(t *testing.T) {
 	resolver, _, _ := newChangingNetworkChain(t, capWith(netcap.StateProvisioned, netcap.StateUnavailable))
-	ipv4 := netip.MustParseAddr("112.53.55.92")
-	ipv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	ipv4 := netip.MustParseAddr("192.0.2.92")
+	ipv6 := netip.MustParseAddr("2001:db8::2c")
 
 	admission := resolver.captureAdmissionPolicy()
 
@@ -212,7 +212,7 @@ func TestRecoveryUsesTheFlowsCapturedVerdict(t *testing.T) {
 // refuse the IPv6 answer.
 func TestAPacketFlowUsesItsCapturedVerdict(t *testing.T) {
 	resolver, leaf, _ := newChangingNetworkChain(t, capWith(netcap.StateProvisioned, netcap.StateUnavailable))
-	ipv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	ipv6 := netip.MustParseAddr("2001:db8::2c")
 
 	router := newScriptedFamilyRouter()
 	router.addressesA = nil

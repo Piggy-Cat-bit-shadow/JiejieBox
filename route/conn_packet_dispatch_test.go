@@ -142,7 +142,7 @@ func TestConnectedUDPReachesTheNetworkSchedulingSurface(t *testing.T) {
 
 	strategy := C.NetworkStrategyDefault
 	fallbackDelay := 40 * time.Millisecond
-	target := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	target := netip.MustParseAddr("2001:db8::2c")
 
 	recorder := &dialDispatchRecorder{}
 	metadata := adapter.InboundContext{
@@ -184,8 +184,8 @@ func TestConnectedUDPWithCandidatesReachesTheNetworkSchedulingSurface(t *testing
 	manager := NewConnectionManager(log.NewNOPFactory().Logger())
 	t.Cleanup(func() { _ = manager.Close() })
 
-	ipv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
-	ipv4 := netip.MustParseAddr("112.53.55.92")
+	ipv6 := netip.MustParseAddr("2001:db8::2c")
+	ipv4 := netip.MustParseAddr("192.0.2.92")
 	strategy := C.NetworkStrategyDefault
 
 	recorder := &dialDispatchRecorder{}

@@ -58,9 +58,9 @@ type recoveryCase struct {
 // TestRecoveryMatrixIsFollowedByTheTransport drives every resolver shape the reported machine can
 // produce through the production graph.
 func TestRecoveryMatrixIsFollowedByTheTransport(t *testing.T) {
-	originalIPv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
-	healthyIPv4 := netip.MustParseAddr("112.53.55.92")
-	otherIPv4 := netip.MustParseAddr("112.53.55.93")
+	originalIPv6 := netip.MustParseAddr("2001:db8::2c")
+	healthyIPv4 := netip.MustParseAddr("192.0.2.92")
+	otherIPv4 := netip.MustParseAddr("192.0.2.93")
 	otherIPv6 := netip.MustParseAddr("2409:8c54:871:2007::10d")
 
 	nxdomain := errors.New("NXDOMAIN")
@@ -201,8 +201,8 @@ func TestRecoveryMatrixIsFollowedByTheTransport(t *testing.T) {
 // implementation that ran the lookup before scheduling would pass every functional assertion above and
 // fail only here.
 func TestHealthyLiteralIsNotDelayedByDiscovery(t *testing.T) {
-	originalIPv4 := netip.MustParseAddr("112.53.55.92")
-	otherIPv4 := netip.MustParseAddr("112.53.55.93")
+	originalIPv4 := netip.MustParseAddr("192.0.2.92")
+	otherIPv4 := netip.MustParseAddr("192.0.2.93")
 
 	for _, testCase := range []struct {
 		name      string

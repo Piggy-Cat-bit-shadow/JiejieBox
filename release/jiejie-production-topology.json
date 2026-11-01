@@ -29,7 +29,7 @@
       ],
       "tls": {
         "enabled": true,
-        "server_name": "riri.zhuzhu.jiejie12131.top",
+        "server_name": "riri.example.com",
         "certificate_path": "/tmp/jiejie-fixture/cert.pem",
         "key_path": "/tmp/jiejie-fixture/key.pem"
       },
@@ -62,7 +62,7 @@
       ],
       "tls": {
         "enabled": true,
-        "server_name": "riri.zhuzhu.jiejie12131.top",
+        "server_name": "riri.example.com",
         "certificate_path": "/tmp/jiejie-fixture/cert.pem",
         "key_path": "/tmp/jiejie-fixture/key.pem"
       },
@@ -97,7 +97,7 @@
       ],
       "tls": {
         "enabled": true,
-        "server_name": "api.zhuzhu.jiejie12131.top",
+        "server_name": "api.example.com",
         "certificate_path": "/tmp/jiejie-fixture/cert.pem",
         "key_path": "/tmp/jiejie-fixture/key.pem"
       },
@@ -122,7 +122,7 @@
       ],
       "tls": {
         "enabled": true,
-        "server_name": "riri.zhuzhu.jiejie12131.top",
+        "server_name": "riri.example.com",
         "certificate_path": "/tmp/jiejie-fixture/cert.pem",
         "key_path": "/tmp/jiejie-fixture/key.pem"
       },
@@ -219,8 +219,8 @@
           "tcp"
         ],
         "domain": [
-          "riri.zhuzhu.jiejie12131.top",
-          "api.zhuzhu.jiejie12131.top"
+          "riri.example.com",
+          "api.example.com"
         ],
         "port": [
           443
@@ -245,7 +245,7 @@
           "2001:db8::10/128"
         ],
         "port": [
-          2222
+          2200
         ],
         "action": "route",
         "outbound": "direct"

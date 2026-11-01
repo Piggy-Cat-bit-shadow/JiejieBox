@@ -26,7 +26,7 @@ other repositories        never written: satelite-one, Apple, Windows Delphi, qu
 
 Toolchain: `go1.26.8 windows/amd64` from `C:\src\_toolchain\goroot`; git 2.56.0 from `C:\src\MinGit`.
 Race runs used `CGO_ENABLED=1` with the MinGW gcc at
-`C:\Users\Jie\AppData\Local\Temp\jiejie-tools\mingw\mingw64\bin` (gcc 16.2.0). Build tags are always
+`<LOCAL_HOME>\AppData\Local\Temp\jiejie-tools\mingw\mingw64\bin` (gcc 16.2.0). Build tags are always
 read from `release/DEFAULT_BUILD_TAGS_OTHERS`, never hard-coded.
 
 ---
@@ -53,7 +53,7 @@ Re-read from the live tree at session start — not taken from the prompt:
 So a plain push to `testing` WOULD have started Verify (all paths) and the Android core build for the
 paths this session touched. `[skip ci]` is the compliance mechanism.
 
-Preflight actually run before every push (`C:\Deepseek\内核\push_preflight.py`, exercised and working):
+Preflight actually run before every push (`<WORKSPACE_ROOT>\内核\push_preflight.py`, exercised and working):
 
 1. `origin/testing` unchanged since the batch began (no remote drift, fast-forward still possible);
 2. every commit in the batch carries the literal `[skip ci]`;
@@ -304,13 +304,13 @@ adoption disposition       = derived independently, see below
 character, so:
 
 ```text
-configured   /?proxyip=149.56.109.62
-URL.Path     /%3Fproxyip=149.56.109.62
+configured   /?proxyip=192.0.2.62
+URL.Path     /%3Fproxyip=192.0.2.62
 URL.RawQuery ""
-request line GET /%3Fproxyip=149.56.109.62 HTTP/1.1
+request line GET /%3Fproxyip=192.0.2.62 HTTP/1.1
 ```
 
-The origin sees a path segment named `%3Fproxyip=149.56.109.62` and an EMPTY query. Nothing errors — the
+The origin sees a path segment named `%3Fproxyip=192.0.2.62` and an EMPTY query. Nothing errors — the
 request is well formed and the server answers — so a worker reading `proxyip` to select an upstream
 silently relays the wrong way. `transport/v2rayxhttp/configured_query_test.go`: 7 of 7 sub-cases RED
 before, all GREEN after, plus path-placement, query-placement merging, `%xx` not double-encoded, a `?`

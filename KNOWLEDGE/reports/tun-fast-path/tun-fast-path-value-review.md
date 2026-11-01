@@ -499,9 +499,9 @@ Compatibility and migration:
 ## 9. Reproduce
 
 ```powershell
-$env:GOROOT='C:\Deepseek\_gotool\go'; $env:GOPATH='C:\Deepseek\_gotool\gopath'
+$env:GOROOT='<WORKSPACE_ROOT>\_gotool\go'; $env:GOPATH='<WORKSPACE_ROOT>\_gotool\gopath'
 $env:PATH="$env:GOROOT\bin;$env:PATH"; $env:GOTOOLCHAIN='local'
-cd C:\Deepseek\integration-release-next
+cd <WORKSPACE_ROOT>\integration-release-next
 $tags = (Get-Content .\release\DEFAULT_BUILD_TAGS_OTHERS -Raw).Trim()
 
 go list -m -json github.com/sagernet/sing-tun        # Replace.Dir must be the fork

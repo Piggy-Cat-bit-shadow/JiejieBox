@@ -1,6 +1,6 @@
 # Windows 共存与订阅剩余流量：专项排查报告
 
-指引来源：`C:\Users\Jie\Desktop\配置文件\02_WINDOWS_COEXISTENCE_AND_SUBSCRIPTION_DEBUG.md`
+指引来源：`<LOCAL_HOME>\Desktop\配置文件\02_WINDOWS_COEXISTENCE_AND_SUBSCRIPTION_DEBUG.md`
 
 **结论：** 本轮发现并修复 1 个 BLOCKER（升级后遗留官方同名 service）、1 个 HIGH（卸载回退路径指向官方 AppData）和 2 个 MEDIUM（缺少 body 保留规则及旧库升级测试）。第 61 节列出的 13 条 blocker 标准均未触发，第 7–44 节已逐项检查，第 59 节安全检查项均为 **YES**。
 

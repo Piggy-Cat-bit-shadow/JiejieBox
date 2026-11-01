@@ -46,8 +46,8 @@ import (
 // "returns an error": an implementation that dials and then discards the socket also returns an error, and
 // it has done the work - and on a mobile device it has woken the radio for a request nobody wants.
 func TestACancelledBeforeItStartsFlowReachesNoTransport(t *testing.T) {
-	ipv4 := netip.MustParseAddr("112.53.55.92")
-	ipv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	ipv4 := netip.MustParseAddr("192.0.2.92")
+	ipv6 := netip.MustParseAddr("2001:db8::2c")
 
 	flow := newCountingFlow(t, netcap.StateProvisioned, netcap.StateProvisioned, true)
 	flow.router.addressesA = []netip.Addr{ipv4}
@@ -74,7 +74,7 @@ func TestACancelledBeforeItStartsFlowReachesNoTransport(t *testing.T) {
 // next connection on a perfectly good network - and the damage would outlive the flow that caused it by
 // the full fifteen-second health window.
 func TestACancelledMidDialFlowRecordsNoFamilyVerdict(t *testing.T) {
-	ipv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	ipv6 := netip.MustParseAddr("2001:db8::2c")
 
 	manager := &scriptedObservationManager{
 		verdicts: []adapter.NetworkFamilyCapability{capWith(netcap.StateProvisioned, netcap.StateProvisioned)},
@@ -192,8 +192,8 @@ func TestACancelledRaceJoinsItsAttempts(t *testing.T) {
 // if it is read as "every arm refuses at the same layer". The table below encodes the difference, and the
 // asymmetry is the documentation.
 func TestEveryPacketArmAnswersTheSamePolicy(t *testing.T) {
-	ipv4 := netip.MustParseAddr("112.53.55.92")
-	ipv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	ipv4 := netip.MustParseAddr("192.0.2.92")
+	ipv6 := netip.MustParseAddr("2001:db8::2c")
 
 	type armResult struct {
 		refused bool
@@ -302,7 +302,7 @@ func TestEveryPacketArmAnswersTheSamePolicy(t *testing.T) {
 // distinguishable, not merely that each message is non-empty.
 func TestTheRefusalReasonsAreMutuallyDistinguishable(t *testing.T) {
 	globalIPv4 := netip.MustParseAddr("93.184.216.34")
-	globalIPv6 := netip.MustParseAddr("2409:8a00::1")
+	globalIPv6 := netip.MustParseAddr("2001:db8::1")
 
 	// Four admission refusals, one per verdict that can fire.
 	noIPv6 := newAdmissionPolicyForTest(C.DomainStrategyAsIS, localFamilyPolicyForTest("provisioned", "unavailable"))

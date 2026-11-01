@@ -136,8 +136,8 @@ func (f *countingFlow) assertOneCapture(t *testing.T, what string) {
 // family ends the lookup, and the scheduler captured to build its gate. The assertion is one number, and
 // it is the only measurement that can tell "one reading" from "three mutually consistent readings".
 func TestOneFlowCapturesThePolicyExactlyOnce(t *testing.T) {
-	ipv4 := netip.MustParseAddr("112.53.55.92")
-	ipv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	ipv4 := netip.MustParseAddr("192.0.2.92")
+	ipv6 := netip.MustParseAddr("2001:db8::2c")
 
 	t.Run("resolved hostname, streaming router", func(t *testing.T) {
 		flow := newCountingFlow(t, netcap.StateProvisioned, netcap.StateProvisioned, true)
@@ -224,8 +224,8 @@ func TestOneFlowCapturesThePolicyExactlyOnce(t *testing.T) {
 // there is nothing to resolve. A flow that asked anyway would be reading the world twice for a value it
 // was given.
 func TestAStrictFlowResolvesTheStrategyFromConfiguration(t *testing.T) {
-	ipv4 := netip.MustParseAddr("112.53.55.92")
-	ipv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	ipv4 := netip.MustParseAddr("192.0.2.92")
+	ipv6 := netip.MustParseAddr("2001:db8::2c")
 
 	flow := newCountingFlow(t, netcap.StateProvisioned, netcap.StateProvisioned, false)
 	flow.resolver.queryOptions.Strategy = C.DomainStrategyIPv4Only
@@ -262,8 +262,8 @@ func TestAStrictFlowResolvesTheStrategyFromConfiguration(t *testing.T) {
 // detect that - the epoch is unchanged, so the capture is still current - and the only thing standing
 // between the flow and a mid-dial verdict change is the snapshot itself. That is the case attacked here.
 func TestACapabilityChangeUnderALiveFlowCannotReachIt(t *testing.T) {
-	ipv4 := netip.MustParseAddr("112.53.55.92")
-	ipv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	ipv4 := netip.MustParseAddr("192.0.2.92")
+	ipv6 := netip.MustParseAddr("2001:db8::2c")
 
 	// ONE epoch throughout: this is a capability-only change, which is what a route flap produces.
 	manager := &scriptedObservationManager{

@@ -76,7 +76,7 @@ func TestZeroAdmissionPolicyAdmitsEverything(t *testing.T) {
 // device facts - no address at all versus an address with no route out - must not be collapsed.
 func TestAdmissionSeparatesTheFourVerdicts(t *testing.T) {
 	globalIPv4 := netip.MustParseAddr("93.184.216.34")
-	globalIPv6 := netip.MustParseAddr("2409:8a00::1")
+	globalIPv6 := netip.MustParseAddr("2001:db8::1")
 	siteIPv6 := netip.MustParseAddr("fd00::1")
 	linkIPv6 := netip.MustParseAddr("fe80::1")
 
@@ -191,7 +191,7 @@ func TestAdmissionSeparatesTheFourVerdicts(t *testing.T) {
 // policy nor the destination.
 func TestAdmitCandidatesReportsTheThreeOutcomes(t *testing.T) {
 	globalIPv4 := netip.MustParseAddr("93.184.216.34")
-	globalIPv6 := netip.MustParseAddr("2409:8a00::1")
+	globalIPv6 := netip.MustParseAddr("2001:db8::1")
 	dualStack := localFamilyPolicyForTest("provisioned", "provisioned")
 	noIPv6 := localFamilyPolicyForTest("provisioned", "unavailable")
 

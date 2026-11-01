@@ -164,8 +164,8 @@ func (r *transitionRun) dialHostname(t *testing.T, ipv4, ipv6 netip.Addr) []neti
 
 // TestTheTransitionRunKeepsProducerAndConsumerInStep is the A→B acceptance this phase exists for.
 func TestTheTransitionRunKeepsProducerAndConsumerInStep(t *testing.T) {
-	ipv4 := netip.MustParseAddr("112.53.55.92")
-	ipv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	ipv4 := netip.MustParseAddr("192.0.2.92")
+	ipv6 := netip.MustParseAddr("2001:db8::2c")
 	dualStack := capWith(netcap.StateProvisioned, netcap.StateProvisioned)
 	noIPv6 := capWith(netcap.StateProvisioned, netcap.StateUnavailable)
 
@@ -244,8 +244,8 @@ func TestTheTransitionRunKeepsProducerAndConsumerInStep(t *testing.T) {
 // A flow that starts in that window must not turn the transitional verdict into a hard refusal - that is
 // the "Settling 期间被固化成 hard unavailable" failure the brief ranks first.
 func TestASettlingGenerationCannotHardDenyANewFlow(t *testing.T) {
-	ipv4 := netip.MustParseAddr("112.53.55.92")
-	ipv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	ipv4 := netip.MustParseAddr("192.0.2.92")
+	ipv6 := netip.MustParseAddr("2001:db8::2c")
 
 	manager := newPhaseManager(1, capWith(netcap.StateProvisioned, netcap.StateUnavailable))
 	run := newTransitionRun(t, manager)
@@ -315,8 +315,8 @@ func TestFamilyHealthDoesNotSurviveTheTransition(t *testing.T) {
 	manager.publish(3, true, adapter.NetworkFamilyCapability{})
 	recovered := run.resolver.captureAdmissionPolicy()
 	require.EqualValues(t, 3, recovered.generation())
-	require.Equal(t, admissionAllowed, recovered.verdict(netip.MustParseAddr("112.53.55.92")))
-	require.Equal(t, admissionAllowed, recovered.verdict(netip.MustParseAddr("2409:8c54:871:1007::2c")))
+	require.Equal(t, admissionAllowed, recovered.verdict(netip.MustParseAddr("192.0.2.92")))
+	require.Equal(t, admissionAllowed, recovered.verdict(netip.MustParseAddr("2001:db8::2c")))
 	require.False(t, run.owner.familyHealth.fallbackImmediately(recovered.generation(), familyIPv6, familyIPv4),
 		"a generation that has learned nothing must start with no bias")
 }
@@ -328,8 +328,8 @@ func TestFamilyHealthDoesNotSurviveTheTransition(t *testing.T) {
 // flow; a recovery producer per flow is joined by the flow. What must NOT appear is a permanent worker per
 // transition - and the only way to show that is to cross the transition many times and look.
 func TestARouteFlapLeavesNoGoroutineOrTimerBehind(t *testing.T) {
-	ipv4 := netip.MustParseAddr("112.53.55.92")
-	ipv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	ipv4 := netip.MustParseAddr("192.0.2.92")
+	ipv6 := netip.MustParseAddr("2001:db8::2c")
 
 	manager := newPhaseManager(1, capWith(netcap.StateProvisioned, netcap.StateProvisioned))
 	run := newTransitionRun(t, manager)

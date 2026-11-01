@@ -21,7 +21,8 @@ $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 if (-not $RepoRoot) { $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path }
 if (-not $WorkDir) { $WorkDir = Join-Path $env:TEMP "mieru-bench-work" }
 if (-not $OutDir) { $OutDir = Join-Path $RepoRoot "verify-evidence\mieru\2026-10-18-84a38ca85f7\references\mihomo" }
-if (-not $MihomoExe) { $MihomoExe = "C:\Deepseek\_mieru_refs\mihomo\mihomo-windows-amd64-compatible.exe" }
+if (-not $MihomoExe) { $MihomoExe = $env:MIHOMO_EXE }
+if (-not $MihomoExe) { throw "MihomoExe is required: pass -MihomoExe or set MIHOMO_EXE" }
 $RawDir = Join-Path $OutDir "raw"
 New-Item -ItemType Directory -Force -Path $RawDir | Out-Null
 $ClientExe = Join-Path $WorkDir "mieru-bench-client.exe"

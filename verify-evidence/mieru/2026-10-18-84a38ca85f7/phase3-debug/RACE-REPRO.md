@@ -5,7 +5,7 @@ Command before the read mutex:
 ```powershell
 $env:PATH = 'C:\src\_toolchain\goroot\bin;C:\msys64\mingw64\bin;' + $env:PATH
 $env:CGO_ENABLED = '1'
-Set-Location C:\Deepseek\integration-release-next
+Set-Location <WORKSPACE_ROOT>\integration-release-next
 go test -race ./protocol/mieru -run TestUOTPacketConnConcurrentReads -count=1 -v
 ```
 

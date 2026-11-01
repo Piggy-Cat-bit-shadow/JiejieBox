@@ -45,7 +45,7 @@ The fix was to stop looking for one on the machine and fetch one:
 
 ```text
 llvm-mingw 20261006 (LLVM 23.1.3), ucrt-x86_64, 182 MB, self-contained ~700 MB extracted
-  -> C:\Deepseek\_p3_toolchain\llvm-mingw-20261006-ucrt-x86_64\
+  -> <WORKSPACE_ROOT>\_p3_toolchain\llvm-mingw-20261006-ucrt-x86_64\
 
   CC=x86_64-w64-mingw32-clang.exe  CGO_ENABLED=1  go build -race   -> OK, runs
 ```
@@ -308,7 +308,7 @@ Instead of another example table, the whole **space** was enumerated — 5 × 5 
 
 **Result: the four implementations agree everywhere.** Mutating the fast path to drop the egress term
 — the exact disagreement the comment warns about — fails immediately and names the pair:
-`restrictsNothing() is true but hardUndialable(2409:8a00::1) refused it`.
+`restrictsNothing() is true but hardUndialable(2001:db8::1) refused it`.
 
 ---
 

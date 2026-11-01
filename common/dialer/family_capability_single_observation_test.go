@@ -373,9 +373,9 @@ func TestOnePlanCostsOneOwnershipRead(t *testing.T) {
 	// A plan long enough that a per-candidate read would be obvious, with both families in it.
 	plan := candidatePlan{candidates: []dualStackCandidate{
 		{address: netip.MustParseAddr("2001:4860:4860::8888"), family: familyIPv6},
-		{address: netip.MustParseAddr("112.53.55.92"), family: familyIPv4},
+		{address: netip.MustParseAddr("192.0.2.92"), family: familyIPv4},
 		{address: netip.MustParseAddr("2001:4860:4860::8844"), family: familyIPv6},
-		{address: netip.MustParseAddr("112.53.55.93"), family: familyIPv4},
+		{address: netip.MustParseAddr("192.0.2.93"), family: familyIPv4},
 	}}
 
 	// The scheduler's own capture is read #1, and it is the dial's authoritative observation: the filter

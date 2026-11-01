@@ -1,6 +1,6 @@
 # 架构收敛后的深度排查与审计（第二阶段）
 
-- **仓库**：`Piggy-Cat-bit-shadow/sing-box`，工作树 `C:\Deepseek\integration-release-next`
+- **仓库**：`Piggy-Cat-bit-shadow/sing-box`，工作树 `<WORKSPACE_ROOT>\integration-release-next`
 - **分支**：`testing`（主分支）
 - **起点**：`a61eb701c89`（第一阶段 11 个提交的终点，工作区干净）
 - **终点 HEAD**：`06fb3ebc46a`

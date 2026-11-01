@@ -50,10 +50,10 @@ import (
 // If the literal path waited for the lookup to FINISH, this test would block until the test's own
 // cleanup opened the gate, which is exactly the failure it is written to catch.
 func TestLiteralRecoveryDoesNotWaitForTheLookupToFinish(t *testing.T) {
-	original := netip.MustParseAddr("112.53.55.92")
+	original := netip.MustParseAddr("192.0.2.92")
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyAsIS)
-	chain.router.addressesA = []netip.Addr{netip.MustParseAddr("112.53.55.93")}
-	chain.router.addressesAAAA = []netip.Addr{netip.MustParseAddr("2409:8c54:871:1007::2c")}
+	chain.router.addressesA = []netip.Addr{netip.MustParseAddr("192.0.2.93")}
+	chain.router.addressesAAAA = []netip.Addr{netip.MustParseAddr("2001:db8::2c")}
 
 	ctx := wechatFlowLongLived(original, 80, "szminorshort.weixin.qq.com")
 	admission := chain.resolver.captureAdmissionPolicy()
@@ -104,10 +104,10 @@ func TestLiteralRecoveryDoesNotWaitForTheLookupToFinish(t *testing.T) {
 // performs reaches the inner lookup as well. This is the exit half; the non-cooperative test below is
 // the half that shows the join is not there.
 func TestParallelNetworkRecoveryInnerLookupExitsWithTheFeed(t *testing.T) {
-	original := netip.MustParseAddr("112.53.55.92")
+	original := netip.MustParseAddr("192.0.2.92")
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyAsIS)
-	chain.router.addressesA = []netip.Addr{netip.MustParseAddr("112.53.55.93")}
-	chain.router.addressesAAAA = []netip.Addr{netip.MustParseAddr("2409:8c54:871:1007::2c")}
+	chain.router.addressesA = []netip.Addr{netip.MustParseAddr("192.0.2.93")}
+	chain.router.addressesAAAA = []netip.Addr{netip.MustParseAddr("2001:db8::2c")}
 
 	ctx := wechatFlowLongLived(original, 80, "szminorshort.weixin.qq.com")
 	chain.router.stallLookup(t)
@@ -133,9 +133,9 @@ func TestParallelNetworkRecoveryInnerLookupExitsWithTheFeed(t *testing.T) {
 // for: a fast family that the machine refuses must not end the lookup when the slow family is
 // usable.
 func TestSlowCooperatingResolverStillFallsBack(t *testing.T) {
-	original := netip.MustParseAddr("112.53.55.92")
+	original := netip.MustParseAddr("192.0.2.92")
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateUnavailable, C.DomainStrategyAsIS)
-	usableIPv4 := netip.MustParseAddr("112.53.55.94")
+	usableIPv4 := netip.MustParseAddr("192.0.2.94")
 	chain.router.addressesA = []netip.Addr{usableIPv4}
 	chain.router.addressesAAAA = []netip.Addr{netip.MustParseAddr("2001:4860:4860::8888")}
 	// The refused family answers first; the usable one is slow but cooperative.
@@ -188,7 +188,7 @@ func (r *ignoringCancelRouter) LookupFamilies(ctx context.Context, domain string
 // returns. That is a boundary of the interface, not something this code can force, and the test
 // releases the resolver before it ends so no goroutine is left behind.
 func TestResolverThatIgnoresCancellationStatesTheBoundary(t *testing.T) {
-	original := netip.MustParseAddr("112.53.55.92")
+	original := netip.MustParseAddr("192.0.2.92")
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyAsIS)
 	ignoring := newIgnoringCancelRouter()
 	chain.resolver.router = ignoring

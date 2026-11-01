@@ -360,7 +360,7 @@ is an environment fact, traced to three separate causes, none of them the client
 
 - The container belongs to a different signing identity than the certificate on this machine. The
   installed provisioning profiles are for team `TAFD7BAGYZ` and App Group
-  `group.top.jiejie12131.jiejiebox`; the app is built for `io.nekohasekai.sfamt` and
+  `group.top.example.jiejiebox`; the app is built for `io.nekohasekai.sfamt` and
   `group.io.nekohasekai.sfamt`, for which no profile exists here. Writing to the group container is
   refused for any process without that entitlement, including the shell (`touch` inside
   `~/Library/Group Containers/group.io.nekohasekai.sfamt/...` returns "Operation not permitted").
@@ -374,9 +374,9 @@ is an environment fact, traced to three separate causes, none of them the client
 To run the table, build and sign the way the publish flow does - a real team, a profile carrying the
 App Group, and matching bundle identifiers. That was tried, and it does not close the gap here:
 
-- Building with `BASE_PACKAGE_IDENTIFIER=top.jiejie12131.jiejiebox` and
-  `APP_GROUP_IDENTIFIER=group.top.jiejie12131.jiejiebox` succeeds, and macOS does create
-  `~/Library/Group Containers/group.top.jiejie12131.jiejiebox` on first launch - so the identifiers
+- Building with `BASE_PACKAGE_IDENTIFIER=top.example.jiejiebox` and
+  `APP_GROUP_IDENTIFIER=group.top.example.jiejiebox` succeeds, and macOS does create
+  `~/Library/Group Containers/group.top.example.jiejiebox` on first launch - so the identifiers
   are not what is missing.
 - The container it creates is nonetheless unwritable, to the app and to the shell
   (`mkdir .../Library/Caches/Working` -> "Operation not permitted", for a directory owned by `jie`).

@@ -7,7 +7,7 @@
 | `BASE_BRANCH` | `integration/0.1.6-final-freeze` |
 | `BASE_SHA` | `96a94f584d30691cadd44dab83b64d56fc7a1fec` |
 | `WORK_BRANCH` | `closure/0.1.6-group-crosskind` |
-| `WORKTREE_NAME` | `C:\Deepseek\内核\clB` |
+| `WORKTREE_NAME` | `<WORKSPACE_ROOT>\内核\clB` |
 | `GO_VERSION` / `GOOS` / `GOARCH` | go1.26.8 / windows / amd64 |
 | branches merged | none (forbidden) |
 | `MAIN_TESTING` | untouched |

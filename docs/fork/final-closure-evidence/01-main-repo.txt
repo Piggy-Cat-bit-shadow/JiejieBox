@@ -1,5 +1,5 @@
 === MAIN REPO ===
-pwd: /Users/jie/Desktop/其他文件/sing-box
+pwd: <WORKSPACE_ROOT>/sing-box
 origin	https://github.com/Piggy-Cat-bit-shadow/sing-box.git (fetch)
 origin	https://github.com/Piggy-Cat-bit-shadow/sing-box.git (push)
 upstream	https://github.com/SagerNet/sing-box.git (fetch)
@@ -25,7 +25,7 @@ origin/testing: c35faabf402a4da93b8c31cdfad941b8b1528ffc
  9c498355c9973187b04c09991e2aca8100fd00ec clients/desktop/dashboard (9c49835)
  8c84dd1a859f36ec8601b082bd97b4ec888f0f4d clients/desktop/dashboard/vendor/iterm2-color-schemes (release-20251002-142451-4a5043e-108-g8c84dd1a8)
 --- worktrees ---
-"/Users/jie/Desktop/\345\205\266\344\273\226\346\226\207\344\273\266/sing-box" c35faabf4 [testing]
+"<LOCAL_HOME>/Desktop/\345\205\266\344\273\226\346\226\207\344\273\266/sing-box" c35faabf4 [testing]
 --- log ---
 c35faabf4 (HEAD -> testing, origin/testing, origin/HEAD) docs(fork): keep the Apple and Android ABI call-site patches in the repository
 e2d7ac1be docs(fork): record the overnight hardening run

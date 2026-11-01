@@ -125,7 +125,7 @@ func TestTheInterfaceBoundGateAgreesWithTheConnectedOneAcrossEveryScopeClass(t *
 
 	for _, destination := range []netip.Addr{
 		netip.MustParseAddr("2001:db8::1"), // global IPv6
-		netip.MustParseAddr("2409:8a00::1"),
+		netip.MustParseAddr("2001:db8::1"),
 		netip.MustParseAddr("fe80::1"),     // link-local
 		netip.MustParseAddr("fd00::1"),     // unique-local
 		netip.MustParseAddr("::1"),         // loopback

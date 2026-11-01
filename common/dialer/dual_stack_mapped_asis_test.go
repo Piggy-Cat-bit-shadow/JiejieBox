@@ -20,8 +20,8 @@ import (
 // netip.Addr.Is6() alone turns that mapped address into "IPv6" and flips the whole list to
 // prefer_ipv6 - the stream and the packet walk then start on the wrong family.
 func TestAsISLeadingMappedIPv4KeepsTheIPv4Family(t *testing.T) {
-	mappedIPv4 := netip.MustParseAddr("::ffff:112.53.55.92")
-	nativeIPv6 := netip.MustParseAddr("2409:8c54:871:2003::15")
+	mappedIPv4 := netip.MustParseAddr("::ffff:192.0.2.92")
+	nativeIPv6 := netip.MustParseAddr("2001:db8::15")
 	destination := M.ParseSocksaddrHostPort("rr1---sn-a5meknsy.googlevideo.com", 443)
 
 	assertIPv4 := func(t *testing.T, address netip.Addr, what string) {

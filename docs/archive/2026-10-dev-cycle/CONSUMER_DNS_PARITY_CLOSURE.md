@@ -9,7 +9,7 @@
 | `WORK_BRANCH` | `closure/0.1.6-consumer-dns-parity` |
 | `WORK_HEAD` | `cf5a25bbe` (pushed) |
 | `WORKTREE` | clean before and after; `gofmt` clean; `git diff --check` clean |
-| `WORKTREE_NAME` | `C:\Deepseek\内核\clA` |
+| `WORKTREE_NAME` | `<WORKSPACE_ROOT>\内核\clA` |
 | `GO_VERSION` / `GOOS` / `GOARCH` | go1.26.8 / windows / amd64 |
 | branches merged | none (forbidden by the prompt) |
 | `MAIN_TESTING` | untouched |

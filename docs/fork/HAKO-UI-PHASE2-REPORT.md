@@ -517,7 +517,7 @@ untouched — no translations were invented for languages I cannot read.
 
 ```bash
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer     # or rely on xcode-select
-cd /Users/jie/Desktop/其他文件/JiejieBox-0.1.2-release/clients/apple
+cd <WORKSPACE_ROOT>/JiejieBox-0.1.2-release/clients/apple
 
 # iOS device
 DISABLE_SWIFTLINT=1 xcodebuild -project sing-box.xcodeproj -scheme SFI -configuration Debug \

@@ -13,7 +13,7 @@ any package.
 Reproduce the differential (both runs use the same assertions, so a line that changes verdict between
 them is the whole result):
 
-    cd C:\Deepseek\内核\wG
+    cd <WORKSPACE_ROOT>\内核\wG
     $TAGS = (Get-Content release\DEFAULT_BUILD_TAGS_OTHERS -Raw).Trim()
 
     # post-change (the tree as it is)

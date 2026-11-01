@@ -417,7 +417,7 @@ Four packet arms, and this phase found that one of them applied **no policy at a
 | parallel interface packet path | both terms | unchanged, threaded |
 
 **The hole, measured.** With `ipv4_only` and a name whose A answer was empty while AAAA answered, the
-flow returned `err = nil` and dialled `2409:8c54:871:1007::2c` — a UDP socket for the family the operator
+flow returned `err = nil` and dialled `2001:db8::2c` — a UDP socket for the family the operator
 had forbidden, reported as a success. `route/conn.go:606` is the call site
 (`this.ListenPacket(ctx, metadata.Destination)` for a domain with no `DestinationAddresses`), and
 `resolveDialer.ListenPacket`'s domain branch went from `router.Lookup` straight to `N.ListenSerial`. No
@@ -652,7 +652,7 @@ Measured before the fix, `ipv4_only`, name with no A answer and an AAAA answer:
 
 ```text
 err   = <nil>
-tried = [2409:8c54:871:1007::2c]
+tried = [2001:db8::2c]
 ```
 
 A UDP socket for the forbidden family, reported as a success. §N has the details; `489b4511e9a` is the fix

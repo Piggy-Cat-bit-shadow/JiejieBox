@@ -44,7 +44,7 @@ import (
 
 // TestPacketPathNeverDialsAFamilyTheStrategyExcluded is the regression.
 func TestPacketPathNeverDialsAFamilyTheStrategyExcluded(t *testing.T) {
-	originalIPv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	originalIPv6 := netip.MustParseAddr("2001:db8::2c")
 
 	// The machine is dual-stack, so nothing about capability is in play: only the policy excludes this
 	// destination, and the policy is exactly what must be honoured.
@@ -76,13 +76,13 @@ func TestPacketPathNeverDialsAFamilyTheStrategyExcluded(t *testing.T) {
 // This is the packet path's version of TestRecoveryRescuesALiteralTheStrategyExcludes. It covers the same
 // admission question - which family gets to END the lookup - on the path that has no scheduler.
 func TestPacketPathIsRescuedByRecoveryWhenTheStrategyExcludesTheLiteral(t *testing.T) {
-	originalIPv4 := netip.MustParseAddr("112.53.55.92")
-	recoveredIPv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	originalIPv4 := netip.MustParseAddr("192.0.2.92")
+	recoveredIPv6 := netip.MustParseAddr("2001:db8::2c")
 
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyIPv6Only)
 	chain.inner.packetConn = &countingPacketConn{}
 	chain.router.addressesAAAA = []netip.Addr{recoveredIPv6}
-	chain.router.addressesA = []netip.Addr{netip.MustParseAddr("112.53.55.93")}
+	chain.router.addressesA = []netip.Addr{netip.MustParseAddr("192.0.2.93")}
 
 	ctx, cancel := context.WithTimeout(wechatFlow(originalIPv4, 443, "szminorshort.weixin.qq.com"), 5*time.Second)
 	defer cancel()
@@ -102,7 +102,7 @@ func TestPacketPathIsRescuedByRecoveryWhenTheStrategyExcludesTheLiteral(t *testi
 // TestPacketPathAdmitsALiteralTheStrategyAllows is the control: without it, a fix that refused every packet
 // flow would pass both tests above.
 func TestPacketPathAdmitsALiteralTheStrategyAllows(t *testing.T) {
-	originalIPv4 := netip.MustParseAddr("112.53.55.92")
+	originalIPv4 := netip.MustParseAddr("192.0.2.92")
 
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyIPv4Only)
 	chain.inner.packetConn = &countingPacketConn{}

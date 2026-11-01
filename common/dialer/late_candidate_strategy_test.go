@@ -77,8 +77,8 @@ func newCapabilityScheduler(t *testing.T) *candidateScheduler {
 
 // TestALateCandidateTheStrategyExcludesIsNotAttempted is the regression.
 func TestALateCandidateTheStrategyExcludesIsNotAttempted(t *testing.T) {
-	admittedIPv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
-	forbiddenIPv4 := netip.MustParseAddr("112.53.55.92")
+	admittedIPv6 := netip.MustParseAddr("2001:db8::2c")
+	forbiddenIPv4 := netip.MustParseAddr("192.0.2.92")
 
 	scheduler := newCapabilityScheduler(t)
 	late := make(chan dualStackCandidate, 1)
@@ -110,7 +110,7 @@ func TestALateCandidateTheStrategyExcludesIsNotAttempted(t *testing.T) {
 // Without it, a guard that dropped EVERY late candidate would pass the regression - and late candidates are
 // the entire reason the scheduler accepts mid-race arrivals.
 func TestALateCandidateTheStrategyAdmitsIsAttempted(t *testing.T) {
-	plannedIPv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	plannedIPv6 := netip.MustParseAddr("2001:db8::2c")
 	lateIPv6 := netip.MustParseAddr("2409:8c54:871:2007::10d")
 
 	scheduler := newCapabilityScheduler(t)
@@ -147,9 +147,9 @@ func TestAPreferenceAdmitsEveryLateCandidate(t *testing.T) {
 		C.DomainStrategyPreferIPv4,
 		C.DomainStrategyPreferIPv6,
 	} {
-		require.True(t, AddressAllowedByStrategy(netip.MustParseAddr("112.53.55.92"), strategy),
+		require.True(t, AddressAllowedByStrategy(netip.MustParseAddr("192.0.2.92"), strategy),
 			"strategy %v is a preference and must admit IPv4", strategy)
-		require.True(t, AddressAllowedByStrategy(netip.MustParseAddr("2409:8c54:871:1007::2c"), strategy),
+		require.True(t, AddressAllowedByStrategy(netip.MustParseAddr("2001:db8::2c"), strategy),
 			"strategy %v is a preference and must admit IPv6", strategy)
 	}
 }

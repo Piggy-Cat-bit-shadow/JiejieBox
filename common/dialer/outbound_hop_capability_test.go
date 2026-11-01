@@ -72,7 +72,7 @@ func TestAFamilyVerdictIsReachedThroughAnOutboundHop(t *testing.T) {
 	chain := newChainOverHop(t)
 
 	address6 := netip.MustParseAddr("2001:4860:4860::8888")
-	address4 := netip.MustParseAddr("112.53.55.92")
+	address4 := netip.MustParseAddr("192.0.2.92")
 
 	require.True(t, chain.(LocalFamilyDialer).LocalFamilyBlocked(address6),
 		"the verdict belongs to the leaf, and a hop in between must not hide it: a chain that answers "+

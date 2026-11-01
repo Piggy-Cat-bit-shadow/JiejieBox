@@ -117,8 +117,8 @@ type transitionRow struct {
 // still contains only v4 is a row where the transition changed the verdict in a way the dial does not
 // show, and each of those carries a `note` saying what it does prove (usually the generation).
 func TestTheTransitionMatrix(t *testing.T) {
-	ipv4 := netip.MustParseAddr("112.53.55.92")
-	ipv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	ipv4 := netip.MustParseAddr("192.0.2.92")
+	ipv6 := netip.MustParseAddr("2001:db8::2c")
 
 	const (
 		v4 = "v4"
@@ -222,8 +222,8 @@ func firstFamily(reached []netip.Addr, ipv4, ipv6 netip.Addr) netip.Addr {
 // which has two halves: a phase that has not seen IPv6 yet must not hard-deny it (Unknown refuses
 // nothing), and the phase that HAS seen it must be reflected in the next flow.
 func TestAddressLagPhases(t *testing.T) {
-	ipv4 := netip.MustParseAddr("112.53.55.92")
-	ipv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	ipv4 := netip.MustParseAddr("192.0.2.92")
+	ipv6 := netip.MustParseAddr("2001:db8::2c")
 
 	world := newMatrixWorld(t, C.DomainStrategyPreferIPv6, 1,
 		// Phase 0: the new network has IPv4 and has not said anything about IPv6 yet.
@@ -264,8 +264,8 @@ func TestAddressLagPhases(t *testing.T) {
 // The two claims are opposite in direction and both matter: the EARLY flow must not falsely succeed on a
 // global IPv6 address it has no route to, and the LATER flow must not inherit the no-egress verdict.
 func TestRouteLagPhases(t *testing.T) {
-	ipv4 := netip.MustParseAddr("112.53.55.92")
-	ipv6 := netip.MustParseAddr("2409:8a00::1")
+	ipv4 := netip.MustParseAddr("192.0.2.92")
+	ipv6 := netip.MustParseAddr("2001:db8::1")
 
 	// Phase 0: the address exists, the global route has been observed ABSENT.
 	world := newMatrixWorld(t, C.DomainStrategyPreferIPv6, 1,
@@ -306,8 +306,8 @@ func TestRouteLagPhases(t *testing.T) {
 // What this test DOES prove is that the IPv4 term is honoured in both directions with the same force as the
 // IPv6 one, which is the part §7 can actually require.
 func TestTheIPv4RouteTransitionIsNotModelledTheSameWayAsIPv6(t *testing.T) {
-	ipv4 := netip.MustParseAddr("112.53.55.92")
-	ipv6 := netip.MustParseAddr("2409:8a00::1")
+	ipv4 := netip.MustParseAddr("192.0.2.92")
+	ipv6 := netip.MustParseAddr("2001:db8::1")
 
 	world := newMatrixWorld(t, C.DomainStrategyPreferIPv4, 1,
 		matrixCapability(netcap.StateProvisioned, netcap.StateProvisioned, netcap.StateProvisioned))

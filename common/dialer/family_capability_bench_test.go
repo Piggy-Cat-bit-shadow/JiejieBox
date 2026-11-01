@@ -20,7 +20,7 @@ import (
 // the connection pays on every dial and a source of GC pressure the process would not otherwise have.
 func BenchmarkLocalFamilyGate(b *testing.B) {
 	globalIPv4 := netip.MustParseAddr("93.184.216.34")
-	globalIPv6 := netip.MustParseAddr("2409:8a00::1")
+	globalIPv6 := netip.MustParseAddr("2001:db8::1")
 	linkLocal := netip.MustParseAddr("fe80::1")
 
 	capability := netcap.FamilyCapability{

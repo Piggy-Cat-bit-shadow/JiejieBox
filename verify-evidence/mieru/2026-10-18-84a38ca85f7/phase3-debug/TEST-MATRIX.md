@@ -1,7 +1,7 @@
 # Mieru phase 3 — test matrix
 
 Tree after code fix: `3f9303286e0` (the evidence/test-only commit follows it).
-All commands were run from `C:\Deepseek\integration-release-next`.
+All commands were run from `<WORKSPACE_ROOT>\integration-release-next`.
 Build tags for global work: `release/DEFAULT_BUILD_TAGS_OTHERS`.
 `PASS` means the command was executed on this tree; `NOT_TESTED` and `BLOCKED` are not PASS.
 
@@ -65,7 +65,7 @@ slower; UDP-transport upload 0.739x. Details in `mita/README.md` and `mita/compa
 
 ```powershell
 $env:PATH = 'C:\src\_toolchain\goroot\bin;' + $env:PATH
-Set-Location C:\Deepseek\integration-release-next
+Set-Location <WORKSPACE_ROOT>\integration-release-next
 go test ./protocol/mieru ./option ./include -count=1
 CGO_ENABLED=1 go test -race ./protocol/mieru -count=1
 go vet ./protocol/mieru

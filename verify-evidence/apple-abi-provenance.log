@@ -2,14 +2,14 @@
 ### HEAD: cfc77dc51ab7322e993b8ae0b94b96db59e48f47
 ### DATE: 2026-10-12 05:30:57 +0800
 
-core:         /Users/jie/Desktop/其他文件/sing-box-verify-016
+core:         <WORKSPACE_ROOT>/sing-box-verify-016
 core rev:     HEAD (cfc77dc51)
-apple clone:  /Users/jie/Desktop/其他文件/sing-box-verify-016/clients/apple
-witnesses:    /Users/jie/Desktop/其他文件/sing-box-verify-016/scripts/ci/apple-abi-probe
+apple clone:  <WORKSPACE_ROOT>/sing-box-verify-016/clients/apple
+witnesses:    <WORKSPACE_ROOT>/sing-box-verify-016/scripts/ci/apple-abi-probe
 
 == 1. the clients/apple gitlink
 INFO GITLINK      core HEAD pins clients/apple = 90a0e9aef4c03df6cbc4cf170fe4bdef50bf1e07
-PASS GITLINK      the pin resolves to a commit object in /Users/jie/Desktop/其他文件/sing-box-verify-016/clients/apple
+PASS GITLINK      the pin resolves to a commit object in <WORKSPACE_ROOT>/sing-box-verify-016/clients/apple
           subject:  Merge branch 'jiejiebox/p1c-iphone-device-closure' into main
           date:     2026-10-12 03:14:24 +0800
      refs carrying it:

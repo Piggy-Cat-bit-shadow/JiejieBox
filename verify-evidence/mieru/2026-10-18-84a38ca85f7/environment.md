@@ -3,7 +3,7 @@
 | Fact | Value |
 | --- | --- |
 | Date | 2026-10-18 |
-| Tree | `C:\Deepseek\integration-release-next`, branch `testing` |
+| Tree | `<WORKSPACE_ROOT>\integration-release-next`, branch `testing` |
 | HEAD | `84a38ca85f7a46b3910147148dd349da20bb5c17` |
 | SDK | `github.com/enfein/mieru/v3 v3.38.1` |
 | Go | `go1.26.8 windows/amd64` |
@@ -37,7 +37,7 @@
 
 ## Provenance
 
-`git -C C:\Deepseek\integration-release-next rev-parse HEAD` is recorded in `manifest.json` and
+`git -C <WORKSPACE_ROOT>\integration-release-next rev-parse HEAD` is recorded in `manifest.json` and
 `variants.json`; binary hashes are in both files. The A/B baseline binary was built from the
 `b2d9ff5` tree before the `dialed` guard; the after binary is the `84a38ca` working tree. Both hashes
 are recorded in the respective `ab-interface-update/*/manifest.json`.

@@ -26,7 +26,7 @@ upstream  https://github.com/SagerNet/sing-box.git (fetch)
 upstream  https://github.com/SagerNet/sing-box.git (push)
 
 ### git worktree list
-/Users/jie/Desktop/其他文件/sing-box   17b176a18 [testing]
+<WORKSPACE_ROOT>/sing-box   17b176a18 [testing]
 /private/tmp/v16-apple                 17b176a18 [fix/apple-screen-state]
 /private/tmp/v16-arch                  17b176a18 [fix/arch-closure]      <- this round
 /private/tmp/v16-resid                 17b176a18 [fix/residual-sweep]

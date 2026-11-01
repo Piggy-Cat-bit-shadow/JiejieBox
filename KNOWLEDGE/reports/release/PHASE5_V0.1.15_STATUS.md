@@ -104,7 +104,7 @@ Three of the four `v0.1.15` attempts failed on **my** errors, not the product's:
   and `${1}`, which are single tokens, and those are fine.
 
 Each is now guarded by a check rather than by memory, and the guards live in
-`C:\Deepseek\_p12_scratch\` (`mark4.ps1`, `strip_illegal.ps1`, `repoint_0115.ps1`).
+`<WORKSPACE_ROOT>\_p12_scratch\` (`mark4.ps1`, `strip_illegal.ps1`, `repoint_0115.ps1`).
 
 ## State
 

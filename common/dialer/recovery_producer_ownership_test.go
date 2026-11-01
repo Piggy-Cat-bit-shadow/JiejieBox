@@ -57,8 +57,8 @@ func parkRecoveryFeed(t *testing.T, ctx context.Context, original netip.Addr) (*
 	t.Helper()
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateUnavailable, C.DomainStrategyAsIS)
 	chain.router.addressesA = []netip.Addr{
-		netip.MustParseAddr("112.53.55.92"),
-		netip.MustParseAddr("112.53.55.93"),
+		netip.MustParseAddr("192.0.2.92"),
+		netip.MustParseAddr("192.0.2.93"),
 	}
 	chain.router.addressesAAAA = []netip.Addr{original}
 
@@ -69,7 +69,7 @@ func parkRecoveryFeed(t *testing.T, ctx context.Context, original netip.Addr) (*
 // TestRecoveryProducerStopsOnRequest is the baseline: the stop does terminate the producer, and the
 // caller's live context cannot be credited for it.
 func TestRecoveryProducerStopsOnRequest(t *testing.T) {
-	originalIPv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	originalIPv6 := netip.MustParseAddr("2001:db8::2c")
 	callerCtx, cancelCaller := context.WithCancel(wechatFlowLongLived(originalIPv6, 80, "szminorshort.weixin.qq.com"))
 	defer cancelCaller()
 
@@ -108,7 +108,7 @@ func TestRecoveryProducerStopsOnRequest(t *testing.T) {
 // Measuring it across iterations is what makes that a fact rather than a timing coincidence - the producer
 // is parked in a select, and waking it costs at least one scheduler hand-off.
 func TestRecoveryProducerIsJoined(t *testing.T) {
-	originalIPv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	originalIPv6 := netip.MustParseAddr("2001:db8::2c")
 
 	const attempts = 10
 	for i := 0; i < attempts; i++ {
@@ -165,10 +165,10 @@ func TestRecoveryProducerIsJoined(t *testing.T) {
 // no sniffed domain on exactly its previous path, with no goroutine, no channel and no timer.
 func TestDialDoesNotGainAProducerOnTheNoRecoveryPath(t *testing.T) {
 	chain := newParallelProductionChain(t, netcap.StateProvisioned, netcap.StateProvisioned, C.DomainStrategyAsIS)
-	originalIPv4 := netip.MustParseAddr("112.53.55.92")
+	originalIPv4 := netip.MustParseAddr("192.0.2.92")
 
 	// An answer IS available, so a path that looked the name up without a name to look up would use it.
-	chain.router.addressesA = []netip.Addr{netip.MustParseAddr("112.53.55.93")}
+	chain.router.addressesA = []netip.Addr{netip.MustParseAddr("192.0.2.93")}
 	chain.router.addressesAAAA = nil
 
 	callerCtx, cancelCaller := context.WithCancel(wechatFlowLongLived(originalIPv4, 80, "" /* no sniffed domain */))

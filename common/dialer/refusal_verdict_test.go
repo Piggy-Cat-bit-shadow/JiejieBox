@@ -30,7 +30,7 @@ import (
 //
 // In one log window the same machine produced both messages for the same family:
 //
-//	stream:  open connection to [2409:8c54:871:1007::2c]:80 ... no interface on this machine carries
+//	stream:  open connection to [2001:db8::2c]:80 ... no interface on this machine carries
 //	         an ipv6 address
 //	packet:  listen packet connection ... no route to a global ipv6 destination (link-local and
 //	         unique-local destinations are unaffected)
@@ -61,7 +61,7 @@ func refusingAttempt(t *testing.T) dialAttemptFunc {
 func TestSchedulerReportsTheMachinesOwnVerdict(t *testing.T) {
 	// The reported machine: IPv6 present on the link, provisioned, with no global route.
 	policy := outageDialer(windowsLinkLocalOnly()).captureLocalFamilyPolicy()
-	original := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	original := netip.MustParseAddr("2001:db8::2c")
 	require.True(t, policy.hardUndialable(original),
 		"the fixture must actually refuse this destination, or the test proves nothing")
 
@@ -91,7 +91,7 @@ func TestSchedulerReportsTheMachinesOwnVerdict(t *testing.T) {
 // recovery producing nothing does not change why.
 func TestEmptyRecoveryReportsTheMachinesOwnVerdict(t *testing.T) {
 	policy := outageDialer(windowsLinkLocalOnly()).captureLocalFamilyPolicy()
-	original := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	original := netip.MustParseAddr("2001:db8::2c")
 	require.True(t, policy.hardUndialable(original))
 
 	scheduler := &candidateScheduler{localFamily: policy}
@@ -142,7 +142,7 @@ func TestARefusalThatDroppedNothingKeepsItsOwnMessage(t *testing.T) {
 // message is the only thing an operator has to tell the two states apart.
 func TestStreamAndPacketReportTheSameVerdict(t *testing.T) {
 	policy := outageDialer(windowsLinkLocalOnly()).captureLocalFamilyPolicy()
-	original := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	original := netip.MustParseAddr("2001:db8::2c")
 
 	packetErr := policy.hardUndialableError(original)
 	require.ErrorIs(t, packetErr, errLocalIPv6EgressUnavailable,

@@ -62,7 +62,7 @@ $ APPLE_CLIENT_DIR=/tmp/v16-apple-install PATH="$HOME/go/bin:$PATH" \
     bash scripts/ci/build-apple-libbox.sh both
 building Libbox.xcframework for: ios,macos
 source commit: 0fbca85462689c1ea72f7f1af511540ff873aeba
-  module proxy: local cache first (file:///Users/jie/go/pkg/mod/cache/download)
+  module proxy: local cache first (file://<LOCAL_HOME>/go/pkg/mod/cache/download)
 ...
 xcframework successfully written out to: /private/tmp/v16-applebuild/Libbox.xcframework
 INFO[1018] wrote libbox.provenance (commit=0fbca85462689c1ea72f7f1af511540ff873aeba version=0.0.0-v0.1-0fbca8546)

@@ -56,7 +56,7 @@ func (r *serialNameRouter) Lookup(ctx context.Context, domain string, options ad
 
 // TestSerialHostnameBranchHonoursTheFamilyStrategy is the regression.
 func TestSerialHostnameBranchHonoursTheFamilyStrategy(t *testing.T) {
-	forbiddenIPv6 := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	forbiddenIPv6 := netip.MustParseAddr("2001:db8::2c")
 
 	leaf := newCapabilityLeaf(0, 0)
 	leaf.inner.packetConn = &countingPacketConn{}
@@ -90,7 +90,7 @@ func TestSerialHostnameBranchHonoursTheFamilyStrategy(t *testing.T) {
 //
 // Without it, a fix that refused every serial hostname lookup would pass the regression.
 func TestSerialHostnameBranchAdmitsTheAllowedFamily(t *testing.T) {
-	allowedIPv4 := netip.MustParseAddr("112.53.55.92")
+	allowedIPv4 := netip.MustParseAddr("192.0.2.92")
 
 	leaf := newCapabilityLeaf(0, 0)
 	leaf.inner.packetConn = &countingPacketConn{}
@@ -119,9 +119,9 @@ func TestSerialHostnameBranchAdmitsTheAllowedFamily(t *testing.T) {
 // TestSerialHostnameBranchStillReportsTheResolverOrder keeps the serial contract: the filter removes
 // addresses, it does not reorder the ones that survive.
 func TestSerialHostnameBranchStillReportsTheResolverOrder(t *testing.T) {
-	first := netip.MustParseAddr("112.53.55.92")
-	second := netip.MustParseAddr("112.53.55.93")
-	forbidden := netip.MustParseAddr("2409:8c54:871:1007::2c")
+	first := netip.MustParseAddr("192.0.2.92")
+	second := netip.MustParseAddr("192.0.2.93")
+	forbidden := netip.MustParseAddr("2001:db8::2c")
 
 	leaf := newCapabilityLeaf(0, 0)
 	leaf.inner.packetConn = &countingPacketConn{}
