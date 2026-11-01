@@ -105,8 +105,68 @@ verification remains `BLOCKED_BY_ENVIRONMENT`.
 4. **Phase 03 owns the server side**: `a349a0d76`, `3c4a5a6ed`, forwardproxy `e747854` and the
    authenticated-CONNECT idle semantic are not part of this phase.
 
-## 6. Handoff to phase 03
+## 6. 02B hostile review (2026-11-02)
 
-Start from `UPSTREAM_LEDGER.md` §3 rows N-01…N-08, especially N-03 (authenticated CONNECT idle
-semantic), N-04 (server-side QUIC BBR) and the new N-07/N-08. Do not re-open the client resolution
-port unless an Apple runtime failure is observed.
+Scope: only the 02 diff — the JiejieBox comment, the cronet module pins, the fork commit and the
+loading path. No inbound, XHTTP or other protocol was audited.
+
+### 6.1 Did the change reach the code that actually runs?
+
+The port is in the Go binding, not in the native library. `NaiveClient.Start` installs the DNS
+wrapper and the TCP/UDP dialer callbacks; Chromium calls those callbacks for every connection. The
+two changed behaviours — the synthetic A answer and the fake→real mapping — therefore execute on
+the path that builds the native socket, with the existing `8c68ce8` archives. No native symbol was
+added or removed.
+
+### 6.2 Did it lose the fork's capabilities?
+
+`DialEarly`, `DialEarlyWithQUIC`, the `-force-quic` header, `extra_headers` and its reserved-header
+guard, `CloseAllConnections`, the per-dial transport choice and the H3 fallback are untouched by the
+port diff. `git diff HEAD~1..HEAD` in the fork touches only `naive_client.go` (resolver selection,
+two callbacks, one pure helper), `naive_dns.go` (wrapper replacement) and tests. The fork's DNS
+bridge keepers (`minimalSERVFAIL`, `writeFullDNS`) remain.
+
+### 6.3 Cancellation / destruction / buffers
+
+The port adds no goroutine, channel, finalizer or buffer. The helper `dialDestination` is a pure
+`M.Socksaddr` transformation. The existing lifecycle tests (`naive_lifecycle_test.go`,
+`naive_per_dial_test.go`, `pinned_buffer_test.go`) pass under `-tags with_purego`; pinned-buffer
+ownership is unchanged because the diff does not touch the read/write callback path.
+
+### 6.4 DNS semantics and double resolution
+
+* A/AAAA for the configured server name are answered locally with `192.0.2.1`; the upstream
+  resolver is not called for them (unit test asserts the counter stays zero).
+* All other names, including HTTPS/SVCB used by ECH, still go through the sing-box DNS bridge.
+* The dialer receives the name and resolves it once through its own `ResolveDialer` policy. There is
+  no second lookup of the synthetic address: `dialDestination` replaces it before dialing.
+* The dialer chain is checked at construction to be a `ResolveDialer`; the existing check remains.
+
+### 6.5 H3→H2 fallback
+
+The fallback decision is made in JiejieBox before/around the CONNECT and is not modified. Both the
+H3 probe and the H2 retry now go through the same fake-address mapping, so neither can leak the
+synthetic address to a socket. An HTTP status rejection (407) is still not a transport failure and
+is not retried; the existing `h3_fallback_test.go` matrix is unchanged and still passes.
+
+### 6.6 Pins, lock, platform
+
+* root and `test/` require/replace both cronet modules at `bd2b70516b92`; `all` equals root.
+* the 29 `lib/<os>_<arch>` replacements remain at `8c68ce8`; `cronet_native.shas` is still
+  `["8c68ce89873c"]`.
+* `release-freeze.py verify` PASS; CI `Verify` on `e78720d3` (which includes the cronet-provenance
+  and dependency-pin gates) passed.
+* Apple runtime remains unverified; the change is platform-neutral Go, but that is not a substitute
+  for an Apple build/run (`BLOCKED_BY_ENVIRONMENT`).
+
+### 6.7 Result
+
+No defect was found in the 02 diff; no code change was made in 02B. The one real gap found in 02A
+(the missing upstream resolution fix) is already landed, and the unabsorbable part (native
+`-3`/`-4`/`-5`) is recorded with proof rather than imitated.
+
+## 7. Handoff to phase 03
+
+Start from `UPSTREAM_LEDGER.md` §3 rows N-01…N-07, especially N-03 (authenticated CONNECT idle
+semantic), N-04 (server-side QUIC BBR) and N-07 (the merged client port). Do not re-open the client
+resolution port unless an Apple runtime failure is observed.

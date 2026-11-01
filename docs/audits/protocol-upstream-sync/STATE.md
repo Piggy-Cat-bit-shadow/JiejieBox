@@ -2,11 +2,13 @@
 
 | field | value |
 |---|---|
-| Stage | 01A + 01B complete; **02A construction complete** |
+| Stage | 01A + 01B complete; **02A + 02B complete** |
 | Date | 2026-11-02 |
 | Branch | `testing` (default branch; repository has no `main`) |
 | Phase 01 | Mieru SDK `v3.39.0`: `fac646ca`, 01B coverage `bc349d83`; see `phase-01.md` |
 | Phase 02 code | `f13f46e43dcd09dea17dcdfe3bcc08ac31aba949` — cronet pin bump; dependency commit `bd2b70516b92` |
+| Phase 02 docs | `e78720d3` (02A map) + the 02B review commit |
+| CI on `e78720d3` | Verify (incl. cronet provenance, dependency pins, tagged `-race`): success; Android Core ARM64: success; Mobile contract: success; Release contract: success |
 | Handoff docs | `git log -1 -- docs/audits/protocol-upstream-sync/` (this directory) |
 | Next | **03 — Naive server / shared HTTP** |
 
@@ -41,6 +43,12 @@
 - Established the exact native gap: the `naiveproxy` submodule is `97ae698` (Chromium
   `154.0.8037.49`, 2026-09-25), which predates the official `-3`/`-4`/`-5` tags; the `-5` eMudhra
   blocklist entry is proven absent from `cert_verify_proc_blocklist.inc`.
+- **02B hostile review**: confirmed the port lives in the Go binding path Chromium actually calls;
+  the fork's `DialEarlyWithQUIC`/force-H3/`extra_headers`/`CloseAllConnections` and the H3 fallback
+  are untouched; the helper adds no goroutine/buffer; A/AAAA for the server name never reaches the
+  upstream resolver and the dialer resolves the name once; the 29 native libs and
+  `cronet_native.shas` are unchanged; CI's cronet-provenance and dependency-pin gates passed. No
+  defect found, so no 02B code change was made.
 
 ## Not completed / deferred (with owner phase)
 
