@@ -53,7 +53,7 @@ import (
 // and fails far from here). TestVisionTripwireSingVMessVersion compares this
 // constant against the version go.mod requires, so a dependency bump fails CI
 // until the bridge is re-audited and this constant is deliberately updated.
-const expectedSingVMessVersion = "v0.2.9-0.20260929152519-9b95ab8c9478"
+const expectedSingVMessVersion = "v0.2.9-0.20261019223527-a0c58542bd9d"
 
 // Importing vless above runs its init first, so the entry lands after the
 // built-in crypto/tls and utls ones.
