@@ -2,13 +2,13 @@
 
 | field | value |
 |---|---|
-| Stage | 01A/01B, 02A/02B, 03A, 04A/04B, **05A** complete |
+| Stage | 01A/01B, 02A/02B, 03A/03B, 04A/04B, **05A** complete |
 | Date | 2026-11-02 |
 | Branch | `testing` (default branch; repository has no `main`) |
 | Phase 01 | Mieru SDK `v3.39.0`: `fac646ca`, 01B coverage `bc349d83`; see `phase-01.md` |
 | Phase 02 code | `f13f46e43dcd09dea17dcdfe3bcc08ac31aba949` — cronet pin bump; dependency commit `bd2b70516b92` |
 | Phase 02 docs | `e78720d3` (02A map) + the 02B review commit |
-| Phase 03 | audit-only; no code change. Candidate verdicts in `phase-03.md` and ledger S-rows |
+| Phase 03 code | `e8ec5c67` — H2/H3 CONNECT pseudo-header rejection now answers 400 (03B) |
 | Phase 04 code | `96bd665d` stream-up refusal; `b5c12db3` refusal precedence; `669fa275` status-matrix tests |
 | Phase 05 | audit-only; bounded-async pipeline rejected on evidence (`phase-05.md`, ledger X-09) |
 | CI on `f15d4473` | Verify, Android Core ARM64, Mobile contract, Release contract: success |
@@ -67,8 +67,14 @@
   reference full-closes on target EOF too. H1 preserves `CloseWrite` through `hijackedConn`.
 - Verification: `-race -tags with_quic` package run passed (1.923 s); 20 s padding fuzz (477k execs)
   and 15 s authority fuzz (892k execs) passed; CI on `f15d4473` was fully green.
-- **No production code change was made**: every candidate is either covered or a deliberate,
+- **03A made no production change**: every candidate is either covered or a deliberate,
   documented divergence; forcing a patch would have changed reference behaviour without evidence.
+- **03B found and fixed one real rejection-path defect**: the H2/H3 CONNECT branch rejecting
+  `:scheme`/`:path` only logged, so net/http sent its implicit 200; it now writes 400 first
+  (`e8ec5c67`). Tests cover H2/H3 400 and the 407 control for a well-formed unauthenticated
+  CONNECT. Other 03B attacks (framing, flush/half-close, limits, authority/forwarded headers,
+  build tags) map to existing tests; no second defect. Package `ok 0.373s`, tagged `-race`
+  `ok 1.908s`; real H2/H3 interop remains `BLOCKED_BY_ENVIRONMENT`.
 
 ### Phase 04 (XHTTP correctness)
 

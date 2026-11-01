@@ -55,10 +55,51 @@
 | `go test -tags "$(DEFAULT_BUILD_TAGS_WINDOWS)" ./protocol/naive/` (phase 02 client build) | `ok … 0.471s` |
 | CI on `f15d4473` | Verify, Android Core ARM64, Mobile contract, Release contract: success |
 
-No production file was modified in 03A. The candidate audit found no defect that a patch would fix without inventing a behaviour the reference does not have.
+No production file was modified in 03A. 03B then found one real rejection-path defect (§6) and fixed it.
 
 ## 5. Handoff to phase 04
 
 * The server candidate table is closed; do not re-open `e747854`, `c096d6a`, `3c4a5a6ed`, `2f139af2d`, `d9b435fb6` or `627912a78` without a new upstream revision.
 * `UPSTREAM_LEDGER.md` S-rows carry the exact paths; `STATE.md` points at 04.
 * Phase 04 owns XHTTP correctness, starting with X-04 (`dialStreamUp` non-200 upload status).
+
+## 6. 03B hostile review (2026-11-02)
+
+Scope: the Naive inbound, the shared HTTP framing it uses, and the direct tests. No 04/05 code
+was touched.
+
+### 6.1 Attacks and existing coverage
+
+| Attack | Evidence |
+|---|---|
+| padding 0/255, exact/over-budget payload, 8-bit pad, consecutive frames, short read/write, writer failure after header | `audit_padding_test.go`, `audit_write_contract_test.go`, `padding_test.go`, `padding_zero_frame_test.go`; 20 s padding fuzz and 15 s authority fuzz passed in 03A |
+| H1 without negotiated padding passes bytes through | `TestAuditUnpaddedNeverInsertsFrames`, `TestPaddingIsOptional` |
+| H2/H3 CONNECT response flush failure, stream close, half-close | `inbound_conn_flush_test.go`, `audit_flush_contract_test.go`, `hijacked_conn_halfclose_test.go`; H2/H3 have no response-half-close API (documented) |
+| unauth headers, many short connections, global/per-IP bounds, IPv4-mapped sharing | `auth_test.go`, `server_limiter_test.go`, `http2_options_test.go` |
+| authority fallback, `X-Forwarded-For`, forged `-connect-authority` | handler uses `URL.Host` then `Host`; source is `RemoteAddr` (`inbound.go:629-650`); comments record the removed forged-header path |
+| build tags / ALPN | `audit_alpn_isolation_test.go`; TCP-only and `with_quic` builds pass |
+
+### 6.2 The defect found and fixed
+
+The H2/H3 CONNECT branch that rejects `:scheme`/`:path` called only `n.badRequest` (a log
+function) and returned. `net/http` then sent its **implicit 200**, so a request the server meant to
+reject looked accepted to the client while no tunnel existed. The reference
+(`klzgrad/forwardproxy`) returns 400 before authentication.
+
+Commit `e8ec5c67` writes `http.StatusBadRequest` before the log. New tests:
+`TestAuditHTTP2ConnectPseudoHeadersAreRejected` (red 200, green 400, H2 and H3) and
+`TestAuditHTTP2ConnectWithoutPseudoHeadersStillChallenges` (control: well-formed unauth CONNECT
+still gets 407, not 400).
+
+### 6.3 Verification
+
+| Command | Result |
+|---|---|
+| new tests before the fix | `FAIL … status = 200, want 400` |
+| `go test ./protocol/naive/ -count=1` | `ok … 0.373s` |
+| `go test -race -tags with_quic ./protocol/naive/ -count=1` | `ok … 1.908s` |
+| `go build ./protocol/naive/` / `-tags with_quic` | exit 0 |
+
+Remaining limitation: this is an `httptest` handler test, not a real H2/H3 server/peer; real
+interop stays `BLOCKED_BY_ENVIRONMENT`. No other defect was found; the other attacks map to the
+existing tests above.
