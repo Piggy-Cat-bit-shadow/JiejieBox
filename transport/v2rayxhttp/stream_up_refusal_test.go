@@ -3,6 +3,7 @@ package v2rayxhttp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -34,14 +35,16 @@ func (b *contextBody) Read([]byte) (int, error) {
 
 func (b *contextBody) Close() error { return nil }
 
-// closeTrackingBody records whether the refusal path closed the response body.
-type closeTrackingBody struct {
+// blockingReadBody blocks forever if Read is called. The refusal path must
+// close it without draining it, so a drain shows up as a parked dial instead
+// of a test that passes because the body happened to return EOF.
+type blockingReadBody struct {
 	closed atomic.Bool
 }
 
-func (b *closeTrackingBody) Read([]byte) (int, error) { return 0, io.EOF }
+func (b *blockingReadBody) Read([]byte) (int, error) { select {} }
 
-func (b *closeTrackingBody) Close() error {
+func (b *blockingReadBody) Close() error {
 	b.closed.Store(true)
 	return nil
 }
@@ -50,33 +53,44 @@ func (b *closeTrackingBody) Close() error {
 // the paired download GET is still pending when the upload POST comes back
 // non-200. The server has refused the stream, so the dial must end with that
 // status instead of parking until the caller's context and leaving the
-// download RoundTrip alive.
+// download RoundTrip alive. The body blocks on Read, so a drain would hang.
 func TestStreamUpDialFailsOnUploadBadStatus(t *testing.T) {
 	t.Parallel()
-	hang := &hangRoundTripper{}
-	refusalBody := &closeTrackingBody{}
-	client := stubClient(t, modeStreamUp, methodRoundTripper{
-		get: hang,
-		post: roundTripperFunc(func(*http.Request) (*http.Response, error) {
-			return &http.Response{
-				StatusCode: http.StatusBadRequest,
-				Status:     "400 Bad Request",
-				Body:       refusalBody,
-				Header:     make(http.Header),
-			}, nil
-		}),
-	})
+	for _, status := range []int{
+		http.StatusBadRequest,
+		http.StatusNotFound,
+		http.StatusRequestEntityTooLarge,
+		http.StatusInternalServerError,
+	} {
+		status := status
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			t.Parallel()
+			hang := &hangRoundTripper{}
+			refusalBody := &blockingReadBody{}
+			client := stubClient(t, modeStreamUp, methodRoundTripper{
+				get: hang,
+				post: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+					return &http.Response{
+						StatusCode: status,
+						Status:     fmt.Sprintf("%d %s", status, http.StatusText(status)),
+						Body:       refusalBody,
+						Header:     make(http.Header),
+					}, nil
+				}),
+			})
 
-	err := expectDialFailure(t, dialUnderTest(context.Background(), client), http.StatusText(http.StatusBadRequest))
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-		t.Fatalf("DialContext error %q is a context error, want the upload status", err)
-	}
-	if !refusalBody.closed.Load() {
-		t.Fatal("the refused upload response body was not closed")
-	}
-	waitObserved(t, hang, 1, "pending download RoundTrip not aborted by the failed dial")
-	if got := openUsageOf(client); got != 0 {
-		t.Fatalf("openUsage = %d after a failed dial, want 0", got)
+			err := expectDialFailure(t, dialUnderTest(context.Background(), client), http.StatusText(status))
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				t.Fatalf("DialContext error %q is a context error, want the upload status", err)
+			}
+			if !refusalBody.closed.Load() {
+				t.Fatal("the refused upload response body was not closed")
+			}
+			waitObserved(t, hang, 1, "pending download RoundTrip not aborted by the failed dial")
+			if got := openUsageOf(client); got != 0 {
+				t.Fatalf("openUsage = %d after a failed dial, want 0", got)
+			}
+		})
 	}
 }
 
