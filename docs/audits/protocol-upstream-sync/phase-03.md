@@ -38,7 +38,11 @@
 ## 3. Deliberate divergences (not defects)
 
 * **BBR default.** The reference's Caddy patch installs BBRv1 unconditionally. JiejieBox keeps the library default unless the operator names `bbr`; this is recorded in `quic/inbound_init.go` and its tests. No wire behaviour changes either way; the choice is visible in config.
-* **H3 idle timeout.** `nativeNaiveQUICConfig` leaves `MaxIdleTimeout` to quic-go, as the prior reference study recorded for Caddy's `quic.Config`. No local option overrides it. This is recorded as `UNVERIFIED` rather than silently changed: a long-idle H3 tunnel is not exercised by this environment.
+* **H3 idle timeout.** `nativeNaiveQUICConfig` leaves `MaxIdleTimeout` to quic-go. Checked against
+  Caddy v2.11.7 `NetworkAddress.ListenQUIC`: its `&quic.Config` sets `InitialPacketSize`, `Allow0RTT`
+  and `Tracer` only, so the library default applies there too. The local setting is therefore
+  reference-like, not a missing knob; no option overrides it. (`Allow0RTT` deliberately differs:
+  local is false because an early-data CONNECT is replayable against an authenticating proxy.)
 * **No Caddy.** The server remains `x/net/http2` + the fork's quic-go; the upstream Caddy patches are behaviour oracles only.
 
 ## 4. Verification actually run

@@ -104,7 +104,6 @@
 | Mieru server `tcp_idle_timeout` config surface | new opt-in feature (option/schema/docs/tests) | 06 |
 | Mieru post-release UDP-associate fixes | not in `v3.39.0`; own UoT codec | 06 |
 | XHTTP xhttp-box tree diff | independent oracle not diffed yet | 05 |
-| Naive H3 long-idle tunnel / QUIC `MaxIdleTimeout` | left to quic-go default; no offline evidence either way | 06 |
 | Hysteria2/TUIC/AnyTLS/VLESS/SS/Snell patch-id checks | candidate rows only | 06 |
 | MASQUE upstream `dev` shared-layer diff | upstream not stable; premise corrected | 06 |
 
