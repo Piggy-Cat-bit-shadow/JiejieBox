@@ -2,14 +2,14 @@
 
 | field | value |
 |---|---|
-| Stage | 01A/01B, 02A/02B, 03A, **04A** complete |
+| Stage | 01A/01B, 02A/02B, 03A, **04A + 04B** complete |
 | Date | 2026-11-02 |
 | Branch | `testing` (default branch; repository has no `main`) |
 | Phase 01 | Mieru SDK `v3.39.0`: `fac646ca`, 01B coverage `bc349d83`; see `phase-01.md` |
 | Phase 02 code | `f13f46e43dcd09dea17dcdfe3bcc08ac31aba949` — cronet pin bump; dependency commit `bd2b70516b92` |
 | Phase 02 docs | `e78720d3` (02A map) + the 02B review commit |
 | Phase 03 | audit-only; no code change. Candidate verdicts in `phase-03.md` and ledger S-rows |
-| Phase 04 code | `96bd665d` stream-up refusal; `b5c12db3` refusal precedence |
+| Phase 04 code | `96bd665d` stream-up refusal; `b5c12db3` refusal precedence; `669fa275` status-matrix tests |
 | CI on `f15d4473` | Verify, Android Core ARM64, Mobile contract, Release contract: success |
 | Handoff docs | `git log -1 -- docs/audits/protocol-upstream-sync/` (this directory) |
 | Next | **05 — XHTTP data path / XMUX performance** |
@@ -88,6 +88,12 @@
   the client method path.
 - Verified: package suite `ok 17.823s`, `-race` `ok 19.043s`, `go vet` clean; no local Xray
   server binary was used (fake RoundTripper contract tests only).
+- **04B hostile review**: status matrix 400/404/413/500 with a body whose `Read` blocks forever
+  (proves the refusal path closes without draining), post-raise refusal, and the cancellation tie.
+  The tie exposed a real precedence defect in the first 04 revision (the cancellation could replace
+  the server status / mask a download failure); `b5c12db3` separates the refusal channel. The matrix
+  hardening is tests-only (`669fa275`). Final runs: package `ok 17.791s`, `-race` `ok 18.948s`.
+  No other defect; real Xray interop remains `BLOCKED_BY_ENVIRONMENT`.
 
 ## Not completed / deferred (with owner phase)
 

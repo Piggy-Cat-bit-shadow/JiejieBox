@@ -72,14 +72,46 @@ The `packet-up` POST path was checked separately: it already rejects non-200 and
 | new tests before the patch | `FAIL … DialContext still parked after the raise failed` (3.00 s) |
 | new tests after the patch | `PASS` (0.00–0.01 s) |
 | `go test ./transport/v2rayxhttp/ -run TestStreamUp -count=10` | `ok` (repeated for the tie-break race) |
-| `go test ./transport/v2rayxhttp/ -count=1` | `ok … 17.815s` |
-| `go test -race ./transport/v2rayxhttp/ -count=1` | `ok … 18.995s` |
+| `go test ./transport/v2rayxhttp/ -run 'TestStreamUp\|TestSplitConnWrite' -count=1` (04B matrix) | all 400/404/413/500 subtests `PASS` |
+| `go test ./transport/v2rayxhttp/ -count=1` | `ok … 17.791s` (04B run) |
+| `go test -race ./transport/v2rayxhttp/ -count=1` | `ok … 18.948s` (04B run) |
 | `go vet ./transport/v2rayxhttp/` | exit 0 |
 
 No loopback Xray server binary was used; the fake `RoundTripper` exercises the same HTTP contract
 without a network. Real-interop remains `UNVERIFIED` (no local Xray server in this environment).
 
-## 4. Handoff to phase 05
+## 4. 04B hostile review (2026-11-02)
+
+Scope: only the 04 diff (`dialStreamUp`, `awaitRaise`, `splitConn.uploadFailed`) and its direct
+tests. No 05 data-path work was touched.
+
+### 4.1 Attacks run
+
+* **Refusal status matrix** — upload POST answers 400, 404, 413 and 500 while the download GET is
+  pending. Each response body's `Read` blocks forever, so a drain would park the dial instead of
+  passing on an EOF body. All four subtests get the real status, close the body, abort the download
+  and return `openUsage` to 0.
+* **Post-raise refusal** — the download already answered 200 and a reader is parked on it when the
+  upload is refused; `Write` returns the status and `Read` ends with an error rather than its
+  deadline.
+* **The cancellation tie** — the first revision queued the refusal on the transport-error channel
+  and then cancelled the context. The existing `TestStreamUpDialFailsOnDownloadError` caught the
+  consequence: the cancellation could win and replace the real status, and it could mask a genuine
+  download failure. `b5c12db3` separates `uploadRefused`, queues it before the cancel, and lets only
+  that channel win when `created` closes simultaneously.
+* **Race/close** — the package `-race` suite (including the pre-existing close-aborts-pending-
+  download and per-dial tests) passes; the new tests add no goroutine of their own.
+
+### 4.2 Result
+
+One defect was found by the debug pass and fixed in the 04 scope (the refusal/cancellation
+precedence, `b5c12db3`). The status-matrix hardening is tests-only (`669fa275`). No other defect was
+found; no 05 throughput work was pulled in.
+
+Remaining limitation: these are fake-`RoundTripper` contract tests, not real Xray interop over
+H1/H2/H3. A real handler matrix stays `BLOCKED_BY_ENVIRONMENT` (no local Xray server).
+
+## 5. Handoff to phase 05
 
 * The correctness gap that phase 04 was created for (X-04) is closed.
 * Phase 05 owns the data path: packet-up batching, XMUX flow control, and the `xhttp-box` tree diff
