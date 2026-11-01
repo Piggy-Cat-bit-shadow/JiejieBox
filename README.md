@@ -77,6 +77,10 @@ Apple 平台以 `./scripts/publish-apple-beta.sh` 为入口。本项目支持 Wi
 - 可选 TCP / UDP 回退用于新会话，包含冷却、退避、按需恢复探测和跨网络代次隔离；已有会话不会仅因偏好改变而迁移。
 - 为 SDK 的监听器、在途连接和会话补充释放责任，处理部分启动失败、接口更新、关闭与迟到结果。
 
+Mieru 回退和代理组切换解决的是不同问题：前者在同一协议的 TCP / UDP 传输之间选择，后者在不同出站成员之间选择。启用 Mieru 回退时，两种传输各自拥有 SDK Client、配置和会话；恢复探测由后续业务连接按条件触发，不为每个会话额外启动一个常驻探测循环。网络切换后，旧网络的迟到结果不能再改写新网络的传输偏好。
+
+SDK 适配过程中，项目也把可确认的拨号错误整理成跨协议的 `FailureFacts`，供代理组判断：目标拒绝、本地接口不可用、用户取消与代理服务器连接失败不应一律算作节点失效。未知来源的 EOF 仍保持未知，不凭错误字符串强行定性。该机制改善的是故障归因，不保证每一种协议错误都能被准确分类。
+
 #### REALITY / VLESS：握手兼容与数据路径
 
 - REALITY 兼容混合密钥份额与相应客户端版本要求，提供 `key_share` 策略，避免指纹无法满足要求时静默降级。
@@ -91,6 +95,8 @@ Apple 平台以 `./scripts/publish-apple-beta.sh` 为入口。本项目支持 Wi
 - 在 QUIC 握手完成阶段竞争 Bootstrap 候选，回收未胜出的连接；重连使用与当前网络相符的解析结果。
 - 为 H3 建连保留独立尝试窗口，使 UDP 黑洞场景下的 H2 回退有机会执行；取消与真实传输故障分别判断。
 - 改进 Capsule 解析、地址重叠检查及条目上限，避免异常通告造成过量 CPU 或内存消耗。
+
+CONNECT-IP 还需要协调隧道地址、可达路由和包大小：下层容量已知时，传输可以使用相应约束；遇到过大的 IP 包时，根据条件返回 ICMP Packet Too Big 或明确错误。初始 QUIC 包大小与整个连接后续所有包的硬上限是不同的概念，不能相互替代。真实网络中的 PMTU、NAT64 / DNS64 和迁移行为仍应按平台与对端分别验证。
 
 #### Native Naive 与 HTTP 服务端
 
@@ -154,6 +160,8 @@ DNS 传输、缓存和 endpoint 私有解析器也纳入连接复用及空闲资
 - **自适应 IPv6 入口**：在平台支持且能够确认条件的场景下，调整 TUN 的 IPv6 呈现；确认使用 IPv4-only 入口时，对应用侧相应 AAAA 查询返回 NODATA，减少应用反复尝试不可用路径。
 - **切换时清理旧结果**：跨网络的 DNS 结果与候选连接按代次管理，关闭竞争中落败或迟到的连接，避免旧网络状态污染新网络。
 
+这些行为经过多轮分层改造：先明确平台报告的网络能力，再统一候选准入及拨号策略，随后将同一策略贯通 DNS、代理组和 TUN 等调用路径。一次查询或连接竞争可以把已经完成的结果交给原调用者，但能否继续写入当前共享缓存、能否影响新网络的状态，是另外的判断。历史设计与跨组件验收分别见[双栈跨组件审计](KNOWLEDGE/reports/core/DUAL_STACK_CROSS_COMPONENT_ARCHITECTURE_AUDIT_2026-10-20.md)和[收尾记录](KNOWLEDGE/reports/core/DUAL_STACK_CROSS_COMPONENT_CLOSURE_2026-10-20.md)。
+
 ### 链式代理：从组合、拨号到故障恢复
 
 通过 `detour` 将多个出站组合成代理链，也可以在链中使用 selector、URLTest 或负载均衡组。链式场景的优化不只检查配置，还覆盖域名解析、双栈候选、成员选择、故障恢复和隧道容量。
@@ -168,6 +176,10 @@ DNS 传输、缓存和 endpoint 私有解析器也纳入连接复用及空闲资
 - **嵌套隧道的 MTU**：在下层容量已知时，Hysteria2 / TUIC 可传递对应的 QUIC 包大小约束；MASQUE 会限制初始包大小，但这不代表后续包都有相同硬上限。容量未知时不把它当作已测得的物理链路 MTU。CONNECT-IP 遇到过大的包时，会按条件返回 ICMP Packet Too Big 或明确错误。
 
 链路中的实际解析、重试和传输能力取决于协议、配置与所选成员；更多实现边界见[路径选择与启动校验](KNOWLEDGE/modules/path-selection-validation.md)、[MTU 与缓冲区](KNOWLEDGE/modules/mtu-and-geometry.md)，配置示例见[扩展配置说明](docs/FORK-CONFIGURATION.md)。
+
+例如，`exit.detour = entry` 表示流量先经过 `entry`，再到达 `exit`；配置引用的读取方向与实际物理跳点顺序并不相同。selector、URLTest 和 loadbalance 是控制选择的组成部分，但不一定各自对应一个物理网络跳点。启动期检查可以发现缺失引用、循环或明确不满足的能力要求，却不会代替真实 DNS、拨号和端到端流量测试。
+
+链式包装还要尽量保留底层连接实际提供的能力，例如半关闭、`syscall.Conn`、`ReaderFrom` / `WriterTo` 和数据包批处理；只有读写能跑通，不能证明复制路径和资源交接没有退化。项目的[真实代理链调试记录](docs/fork/traffic-path-chain-debug-report.md)覆盖了配置解码、实际代理服务器、目标归属和载荷交付；其中的模拟环境不能等同于所有物理设备上的 TUN 验证。
 
 ### 自动测速与负载均衡
 
@@ -348,11 +360,25 @@ DNS 传输、缓存和 endpoint 私有解析器也纳入连接复用及空闲资
 
 性能与正确性改动也进入配套的 sing、sing-tun、quic-go、sing-quic、uTLS 和 Cronet fork。主模块、独立测试模块、客户端引用与源码锁共同约束使用版本，避免只更新主仓库后仍实际运行旧的数据路径。Apple 使用本仓库 TestFlight 脚本，Android 使用 satelite-one，Windows 直接提供已发布客户端。
 
+| 关联依赖 | 与内核协作的主要范围 |
+| --- | --- |
+| **sing** | socket、缓冲区、复制、SOCKS、暂停与并行拨号等基础能力。 |
+| **sing-tun** | TUN 栈、Host Flow、NAT / Listener 生命周期和回包路径。 |
+| **sing-quic / quic-go** | Hysteria2、TUIC、MASQUE 所用的 QUIC / HTTP/3、数据报、包大小约束和缓冲区所有权。 |
+| **uTLS** | TLS 指纹、混合密钥交换、ECH / REALITY 相关兼容边界。 |
+| **cronet-go** | Native Naive 客户端涉及的 Go / Native 绑定、异步缓冲区与平台原生资产。 |
+
+维护这些 fork 不只是更新版本号：主模块和测试模块可能使用不同引用，Native 库还有独立的 ABI 与归档资产；子仓库分支头也不等于父仓库当前固定的提交。实际升级需要分别核对来源、补丁、固定点及其验证范围，见[关联仓库](FORK_REPOSITORIES.md)和[依赖整合说明](docs/fork/UPSTREAM-DEPENDENCY-INTEGRATION.md)。
+
 ## 持续验证
 
 项目维护协议互通、真实载荷回环、网络切换、取消与关闭交错、资源所有权和配置边界等测试，并在内核、客户端及依赖 fork 之间固定配套版本。各版本完成的工作与验证范围见 [Release 更新日志](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases)。
 
 验证既覆盖正常流程，也覆盖丢包、延迟、黑洞、服务端终止、网络代次变化、缓冲区复用和部分启动失败。针对关键修复保留能在旧实现上失败的回归用例；测试工具自身的 deadline、并发断言和测量对象也会核对，避免把测试挂起误写成协议故障。
+
+项目也会将外部缺陷经验用于约束后续设计。例如，LX 相关工作经历过稳定性修复、协议兼容、跨层对抗检查和后续残余排查；不同阶段有重叠，不能简单把各阶段条目数相加成独立 Bug 数。XHTTP 配置实际接线、WireGuard 恢复、网络代次交接和嵌套重试预算等问题，说明单个组件的测试通过后，仍需要检查它在真实调用链中的组合行为。对应历史过程见 [LX 稳定性审计](docs/fork/lx-stability-audit-phase1.md)、[协议兼容报告](docs/fork/protocol-compatibility-phase2-report.md)和 [Phase 3.5 对抗检查](docs/fork/phase3.5-consolidation-debug-report.md)。
+
+源码检查、单元测试、CI 构建、第三方互通、受控性能实验和真机测试各自回答不同的问题。具体结论以记录中的提交、平台、对端与测试条件为准；工作流存在或测试被跳过，都不能自动算作对应场景已经通过。
 
 ### 实现与工程记录
 

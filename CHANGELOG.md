@@ -277,6 +277,8 @@ Libbox 的 manifest 记录内核提交、发布版本和文件哈希，并附带
 
 这次整合覆盖 sing、sing-tun、sing-quic、quic-go、uTLS 和 Cronet 等维护线。除了更新固定版本，还需核对模块路径、主模块与测试模块、Go / Native ABI、客户端引用和内核中的实际调用。上游历史发生重写时，也要比较补丁和行为，不能仅凭 SHA 不同认定某项修复缺失。见[依赖整合说明](docs/fork/UPSTREAM-DEPENDENCY-INTEGRATION.md)与[子仓库记录](KNOWLEDGE/modules/child-repositories.md)。
 
+各依赖影响的路径也不同：sing 提供拨号、socket、缓冲区和复制等基础能力；sing-tun 涉及 TUN 栈、NAT 和回包；sing-quic 与 quic-go 影响 QUIC、HTTP/3、数据报和包大小；uTLS 涉及指纹与握手兼容；Cronet 则有 Go / Native ABI 和平台原生库。某一处编译通过，不能替代其他模块、原生资产或客户端调用点的核对。
+
 ## [v0.1.24](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.24) — 2026-10-22
 
 本版改善 Direct TCP 接管和半关闭后的存活观察，让对端离开后的资源可以回收，同时保留连接交接的原有职责。
@@ -515,6 +517,10 @@ MASQUE CONNECT-UDP 接入已在 CONNECT-IP 数据面使用的拥有数据包所�
 
 Mieru 的错误包装也推动了 `FailureFacts` 的接线：在拥有类型化错误的拨号边界记录事实，再供代理组判断是否需要重试或降低成员权重。历史互通与微基准的环境、对照和未覆盖项见 [Mieru 集成报告](docs/fork/mieru-integration.md)和[最终专项验收](docs/fork/mieru-masque-final-acceptance.md)。
 
+故障归因直接影响回退是否合理：代理服务器的 socket 被确认拒绝，可以作为路径故障证据；代理已经连通但最终目标拒绝，并不等于代理节点失效。本地接口不可用、DNS 解析失败、用户取消和缺少上下文的 EOF 也各有不同处理边界。遇到无法确认的原因，应保留未知状态，而不是根据 SDK 的错误文字猜测来源。
+
+历史 Windows / Ryzen 4800H 环境中的 1200 字节 UDP 帧微基准，记录了适配层写入约 118.8 ns、64 B 分配；对应官方 SDK 包装路径约 666.1 ns、1,280 B 分配。后续并发审计又为同一 Association 的读取暂存增加互斥，接受少量微基准成本以保证正确性。这些是指定帧处理路径的测量，不是完整 Mieru 网络吞吐对比。
+
 ## [v0.1.20](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.20) — 2026-10-18
 
 本版整理单条流从路由、解析到拨号的地址族准入：为一次执行捕获一致的策略，并让流与数据包路径遵守同一网络事实。
@@ -726,6 +732,8 @@ anti-ad 须为已定义规则集，也可直接写 domain_suffix。命中返回 
 ### XHTTP 性能记录的时间边界
 
 v0.1.6 已包含 XHTTP 客户端的初始集成；之后的 packet-up 聚合、对抗测试和长时间负载验证发生在更晚阶段，不能全部归入 v0.1.6。历史 TLS / HTTP/2 受控测试中的单流上传由 2.12 MB/s 提升至 26.8 MB/s；该数字只反映当时的参考服务端、环境和负载。背景及反证见[工程评估的 XHTTP 章节](KNOWLEDGE/reports/core/JiejieBox_工程架构与改造最终评估报告_2026-11-01.md#九xhttp移植跨层修复与专项性能重构)。
+
+这次优化定位到的成本并非单纯的系统调用次数：旧的 packet-up 写入可能分别提交 POST 并等待响应，使首包和连续小写入反复承担往返及间隔。改造后的有界队列与单个 flusher 聚合有序数据，同时保留背压和失败后的中止语义。历史收尾记录还包括约 70 分钟、681 轮混合负载，以及参考服务端中断、H3 延迟和丢包等检查；这些结果不能代替当前版本在真实设备和公网中的长期验证。
 
 ## [v0.1.10](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.10) — 2026-10-15
 
@@ -985,6 +993,8 @@ dns-a / dns-b 须为已有 DNS。XHTTP 放在节点 transport，REALITY 策略�
 
 报告中对 v0.1.5 到 v0.1.6 的历史比较约有 602 个可见提交，这一数量包含不同类型的工作和可能吸收的上游内容，不能解释成 602 项独立原创功能。后续 XHTTP 性能重构和长测发生在本版之后。背景见[工程评估的版本演变](KNOWLEDGE/reports/core/JiejieBox_工程架构与改造最终评估报告_2026-11-01.md#十八版本里程碑与-v015--v016)。
 
+把这些改动放在一起看，可以看到几条相互依赖的工作线：TUN、嗅探和路由决定流量如何进入内核；PhysicalPath / ControlPath 与 DNS 归属约束多跳执行；双栈 Dialer、协议传输和 MTU 约束影响连接能否建立并交付数据；Scope、网络代次和恢复租约负责网络变化与关闭时的资源交接。它们的作用不是让所有协议共享同一个状态机，而是让各自的状态机遵守共同的执行边界。
+
 ## [v0.1.5](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.5) — 2026-10-07
 
 本版引入结合设备状态与真实业务流量的低功耗管理，减少锁屏和后台阶段不必要的周期性工作，并区分活跃连接与可回收资源。
@@ -1145,6 +1155,8 @@ node-a / node-b 使用自己的已有节点，并由路由选择相应出站。[
 ### 受控实验如何阅读
 
 历史上传调度实验中，4 条普通流竞争 2 MB/s FIFO，聚合整形设置为容量的 85% 时，高优先级小消息接收端 p99 从 146 ms 降至 9 ms。这个结果依赖该实验的瓶颈、流量和速率设置，不表示所有网络都会获得同一比例的改善。完整测试与配置边界见[数据路径优化](KNOWLEDGE/modules/data-path-optimization.md)。
+
+本版的负载均衡、测速和上传调度分别承担不同职责：代理组为连接或会话选择成员，URLTest 提供健康测量，`traffic_class` 表达业务类别，而上传调度器在显式配置速率后管理共享上传预算。它们可以配合使用，但测速状态码兼容并不意味着可以直接加载 Mihomo YAML；未设置上传速率也不会自动建立整形队列。
 
 ## [v0.1](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1) — 2026-09-30
 
