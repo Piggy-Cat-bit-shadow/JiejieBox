@@ -81,6 +81,12 @@ func ListenTCPWithOptions(ctx context.Context, listenOptions option.ListenOption
 	}
 	if listenOptions.TCPMultiPath {
 		listenConfig.SetMultipathTCP(true)
+	} else {
+		// Go 1.24+ enables MPTCP for listeners on Linux by default. The kernel
+		// MPTCP listener is the attack surface Xray disabled in v26.10.31
+		// (remote root on a vulnerable Linux kernel), so "unset" must mean
+		// plain TCP here; tcp_multi_path remains the explicit opt-in above.
+		listenConfig.SetMultipathTCP(false)
 	}
 	if tproxy {
 		listenConfig.Control = control.Append(listenConfig.Control, func(network, address string, conn syscall.RawConn) error {
