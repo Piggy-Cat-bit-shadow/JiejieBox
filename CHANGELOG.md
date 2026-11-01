@@ -2,6 +2,30 @@
 
 按正式发布版本记录主要功能、修复、优化与验证工作。日期使用北京时间；各版本在线说明见 [GitHub Releases](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases)。
 
+## [v0.1.35](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.35) — 2026-11-01
+
+本版本主要更新 Apple 与桌面客户端的源码链接，修复 Apple 构建时的链接处理，并整理内核文档。相对 v0.1.34，内核没有 Go 源码改动；版本号、客户端引用和构建脚本有更新。
+
+### 客户端
+
+- Apple 客户端“Source Code”入口指向 JiejieBox 内核仓库；Hako Source Code 的副标题保持原样。
+- 桌面客户端更新内嵌 Dashboard，同步源码链接。Android 客户端的固定版本不变。
+
+### Apple 构建与发布
+
+- 修复 Apple 客户端构建时的链接处理：同时识别仓库旧名 `sing-box` 与现名 `JiejieBox`，避免正确的源码链接导致构建检查失败。
+- 同步 Apple、桌面客户端和 Dashboard 的源码固定值，并更新 Apple ABI 校验基准。
+
+### 文档
+
+- 重新整理首页，介绍协议与网络能力、链式代理、DNS、低内存优化和生命周期管理，并补充 Linux / macOS 命令行内核入口。
+- 更新配置示例、NXDOMAIN、Fast Path 与内存管理说明；整理知识库的中文表述、索引和历史记录。
+
+### 发布与验证
+
+- 本版本提供 Linux amd64、macOS arm64 和 Windows amd64 命令行内核，Android arm64 与 Apple Libbox，以及 Windows 客户端安装包。
+- 对发布提交完成 Verify、发布契约、各平台内核、Apple 客户端和 Windows 安装包相关工作流验证。具体产物及校验信息见 GitHub Release 附件。
+
 ## [v0.1.34](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.34) — 2026-10-29
 
 更新订阅请求行为，并完成 Apple 客户端源码、构建与发布流程的整合。
