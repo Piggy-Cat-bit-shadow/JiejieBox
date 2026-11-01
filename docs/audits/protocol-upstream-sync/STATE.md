@@ -2,15 +2,16 @@
 
 | field | value |
 |---|---|
-| Stage | 01A + 01B complete; **02A + 02B complete** |
+| Stage | 01A/01B, 02A/02B, **03A** complete |
 | Date | 2026-11-02 |
 | Branch | `testing` (default branch; repository has no `main`) |
 | Phase 01 | Mieru SDK `v3.39.0`: `fac646ca`, 01B coverage `bc349d83`; see `phase-01.md` |
 | Phase 02 code | `f13f46e43dcd09dea17dcdfe3bcc08ac31aba949` — cronet pin bump; dependency commit `bd2b70516b92` |
 | Phase 02 docs | `e78720d3` (02A map) + the 02B review commit |
-| CI on `e78720d3` | Verify (incl. cronet provenance, dependency pins, tagged `-race`): success; Android Core ARM64: success; Mobile contract: success; Release contract: success |
+| Phase 03 | audit-only; no code change. Candidate verdicts in `phase-03.md` and ledger S-rows |
+| CI on `f15d4473` | Verify, Android Core ARM64, Mobile contract, Release contract: success |
 | Handoff docs | `git log -1 -- docs/audits/protocol-upstream-sync/` (this directory) |
-| Next | **03 — Naive server / shared HTTP** |
+| Next | **04 — XHTTP correctness** |
 
 ## Completed
 
@@ -50,6 +51,23 @@
   `cronet_native.shas` are unchanged; CI's cronet-provenance and dependency-pin gates passed. No
   defect found, so no 02B code change was made.
 
+### Phase 03 (Naive server / shared HTTP)
+
+- Audited every candidate against the current source: `forwardproxy e747854` (authenticated-CONNECT
+  idle), `c096d6a` (H3 BBRv1), `sing-box 3c4a5a6ed` (H2 wrapper), `2f139af2d` (inbound close),
+  `d9b435fb6` (padding bytes), `627912a78` (QUIC ALPN race). All are already covered — most with
+  tests that pin the exact behaviour; the BBR capability exists as the opt-in
+  `quic_congestion_control: bbr` while the default deliberately stays library Cubic.
+- Verified no Caddy timer was transplanted: header waiting is `net/http.ReadHeaderTimeout` (request
+  phase only); H1 CONNECT is hijacked and H2/H3 CONNECT is a handler-held stream, so an established
+  tunnel is not subject to it.
+- Recorded the protocol-inherent limitation: HTTP/2 and HTTP/3 expose no response-half-close; the
+  reference full-closes on target EOF too. H1 preserves `CloseWrite` through `hijackedConn`.
+- Verification: `-race -tags with_quic` package run passed (1.923 s); 20 s padding fuzz (477k execs)
+  and 15 s authority fuzz (892k execs) passed; CI on `f15d4473` was fully green.
+- **No production code change was made**: every candidate is either covered or a deliberate,
+  documented divergence; forcing a patch would have changed reference behaviour without evidence.
+
 ## Not completed / deferred (with owner phase)
 
 | Item | Why deferred | Owner |
@@ -60,8 +78,7 @@
 | Mieru post-release UDP-associate fixes | not in `v3.39.0`; own UoT codec | 06 |
 | XHTTP `dialStreamUp` non-200 upload status | real candidate, needs design + test (X-04) | 04 |
 | XHTTP xhttp-box tree diff | independent oracle not diffed yet | 04/05 |
-| forwardproxy authenticated-CONNECT idle semantic | server-side, local code not yet read (N-03) | 03 |
-| Naive server QUIC BBR / HTTP/2 inbound commits | server-side (N-04, `a349a0d76`, `3c4a5a6ed`) | 03 |
+| Naive H3 long-idle tunnel / QUIC `MaxIdleTimeout` | left to quic-go default; no offline evidence either way | 06 |
 | Hysteria2/TUIC/AnyTLS/VLESS/SS/Snell patch-id checks | candidate rows only | 06 |
 | MASQUE upstream `dev` shared-layer diff | upstream not stable; premise corrected | 06 |
 
@@ -72,8 +89,8 @@
   block was added to imitate it.
 - **Apple runtime is unverified.** The resolution port is Go-only and the tagged Windows tests pass,
   but only an Apple build/run can prove the engine path there.
-- **Naive `Session` half-close** (from phase 01's Mieru analogue; separate protocol) is not part of
-  this state.
+- **HTTP/2 and HTTP/3 response half-close is not available** in `net/http`; the tunnel is fully
+  closed on target EOF, which matches the reference (ledger S-07).
 - **No device/WAN evidence**: unit, loopback and build/race evidence only, by contract.
 
 ## Blockers / environment facts
@@ -87,8 +104,9 @@
 
 ## Next-phase inputs
 
-1. `UPSTREAM_LEDGER.md` §3 rows N-01…N-07; N-03/N-04 and the sing-box inbound commits are phase 03.
-2. `protocol/naive/inbound.go`, `inbound_conn.go`, `protocol/naive/quic/`, `transport/http`; read
-   `KNOWLEDGE/modules/naive-http-transport.md` §2 first.
-3. `klzgrad/forwardproxy` `e747854` (authenticated CONNECT idle) and `c096d6a` (server QUIC BBRv1).
-4. Do not re-open the client resolution port (`bd2b705`) without an Apple runtime failure.
+1. `UPSTREAM_LEDGER.md` §2 (X-01…X-08); X-04 (`dialStreamUp` non-200 upload status) is the first
+   phase-04 item.
+2. `transport/v2rayxhttp/{conn.go,client.go,meta.go}` and the packet-up/XMUX tests; read
+   `KNOWLEDGE/modules/xhttp-client-transport.md` first.
+3. Phase 04 must not re-open the Naive server table (ledger S-rows) or the client resolution port
+   (`bd2b705`) without new upstream evidence.
