@@ -5,8 +5,8 @@
 | Cycle | 01A/01B, 02A/02B, 03A/03B, 04A/04B, 05A, 06A/06B |
 | Branch | `testing` (default; repository has no `main`) |
 | Date | 2026-11-02 |
-| Head at report time | `10d61856` (cycle head; MPTCP hardening `b218345e`, CI gate `2195ddc7`/`10d61856`; `STATE status=completed`) |
-| Status | **completed** — residuals listed in §4, no release/deploy |
+| Head at report time | `d3f38495` (listener hardening) + the final close-out docs commit |
+| Status | **not fully closed** — protocol/listener work is complete, but the native Naive `-5` eMudhra blocklist gap remains `BLOCKED_BY_ENVIRONMENT` (see §6) |
 
 ## 1. What was absorbed
 
@@ -39,8 +39,10 @@ Accepted:
 
 Rejected / no change (with evidence):
 
-* packet-up bounded-async pipeline (X-09): no measured net win for this deployment; adds
-  reorder/close/error semantics to every POST.
+* packet-up bounded-async pipeline (X-09): no measured evidence that the gain outweighs the
+  reorder/backpressure/close complexity. The historical RTT ratios are a cross-implementation
+  comparison, not an upper bound on another pipeline's gain; the decision is `NO CHANGE`, not a
+  "3% ceiling".
 * Naive server `forwardproxy` idle/BBR/H2/close/padding/ALPN candidates: already covered; BBR is an
   explicit opt-in; H3 idle timeout matches the reference (Caddy's `quic.Config` leaves it unset).
 * Xray `WaitReadCloser`/race/`GetBody`/trailing-slash/`h2Params`/`OPTIONS`: no surviving gap in the
@@ -79,15 +81,15 @@ Rejected / no change (with evidence):
 
 ## 4. Known residual risks
 
-1. **MPTCP listener default — fixed for managed listeners (`b218345e`).** Go 1.25.5 enables MPTCP
-   for Linux listeners by default; Xray v26.10.31 disabled it as an urgent security default because
-   a vulnerable kernel's MPTCP listener is remotely exploitable. `common/listener` now calls
-   `SetMultipathTCP(false)` when `tcp_multi_path` is unset, while `tcp_multi_path: true` remains the
-   explicit opt-in. Not every direct `net.Listen` endpoint (debug/pprof, Clash API, libbox command,
-   v2ray API, proxy bridge, boxdd) goes through that helper yet; most are loopback-only and are left
-   to their owners if exposed.
-2. **Native Naive gap**: Chromium `154.0.8037.49` predates the official `-3/-4/-5` fixes; the eMudhra
-   blocklist entry is proven absent. Rebuilding the controlled archives is required.
+1. **MPTCP listener default — fixed for managed listeners (`b218345e`) and the API/debug listeners
+   (`d3f38495`).** Go 1.25.5 enables MPTCP for Linux listeners by default; Xray v26.10.31 disabled it
+   as an urgent security default because a vulnerable kernel's MPTCP listener is remotely
+   exploitable. `common/listener` covers product inbounds (`tcp_multi_path` remains the explicit
+   opt-in), and the debug HTTP, Clash API, v2ray API, libbox pprof and boxdd TCP listeners now use
+   `common/netx.ListenTCP`. Loopback-only and Unix/UDP endpoints are unchanged with source evidence.
+2. **Native Naive gap — not closed**: Chromium `154.0.8037.49` predates the official `-3/-4/-5`
+   fixes; the `-5` eMudhra blocklist commit is not in the current native branch and the local
+   toolchain cannot rebuild the archives. This is a security gap, not a done item; see §6.1.
 3. **No device/WAN/interop evidence**: all evidence is unit, loopback, race, fuzz, build and CI.
    Real Xray/H2/H3/Naive interop is `BLOCKED_BY_ENVIRONMENT`.
 4. **Apple runtime** for the cronet resolution port is unverified.
@@ -102,3 +104,71 @@ Rejected / no change (with evidence):
 * `KNOWLEDGE/` — intentionally **not** refreshed; this cycle did not move the baseline
 
 No release, tag, VPS action, production traffic test or credential was used.
+
+## 6. Final close-out (2026-11-02)
+
+### 6.1 Native Naive gap: precise, still blocked
+
+Current pins are unchanged: root/all Go binding `bd2b70516b92`, 29 native `lib/*` modules
+`8c68ce8` (submodule `naiveproxy` `97ae698`). The newer native build branch
+`cronet-go-dev-v154` is `be1be963`, but it does **not** contain the official `-5` security fix:
+
+* official `-5` blocklist commit `23953c90e3b9f08f8d0c6ede92ae35f357af6f73` ("Block compromised
+  eMudhra intermediates") is not an ancestor of `be1be963`; `git grep -i eMudhra` over its
+  `src/net/cert` is empty.
+* official `-3`/`-4` commits `2655ebc3`, `dad448f3`, `e78d109a`, `20954520`, `367dae72`,
+  `77144595` are also not ancestors of that branch. The branch has its own custom Cronet APIs and
+  overlapping QUIC/tunneling work, but equivalence is not proven; a rebuild is required to verify.
+* the newer prebuilt `d5437a0` ("Build from fa319c4f", submodule `be1be963`) only changes
+  Apple/tvOS archives; the Linux, Windows and Android `libcronet` bytes are identical to `8c68ce8`,
+  so pinning it would not close the blocklist gap and would not be a native upgrade.
+* local toolchain check: `gn`, `ninja`, `gclient` and `depot_tools` are missing; the `naiveproxy`
+  submodule is not initialized; the available Swift `clang` is not the Chromium toolchain. A
+  controlled Chromium rebuild (and the 29-module/provenance refresh) cannot run here.
+
+**Status: `BLOCKED_BY_ENVIRONMENT`; the cycle is not fully closed.** The concrete next step is to
+cherry-pick `23953c90` (and audit `-3`/`-4` individually) onto `cronet-go-dev-v154`, run the fork's
+`naive-build.yml` on the supported platforms, then refresh the 29 `lib/*` pins,
+`release/source-lock.json`, `release/cronet-provenance.txt` and `cronet_native.shas` from that
+build. No pin or checksum was fabricated.
+
+### 6.2 Direct TCP listeners: remaining entry points closed
+
+`common/netx.ListenTCP` pins `net.ListenConfig.SetMultipathTCP(false)` and is now used by every
+direct TCP listener that can be configured to bind beyond loopback:
+
+| Endpoint | Change |
+|---|---|
+| debug HTTP (`debug_http.go`, `options.Listen`) | `netx.ListenTCP` |
+| Clash API (`experimental/clashapi/server.go`, external controller) | `netx.ListenTCP` |
+| v2ray API (`experimental/v2rayapi/server.go`, configured listen) | `netx.ListenTCP` |
+| libbox pprof (`experimental/libbox/pprof.go`, `:port`) | `netx.ListenTCP` |
+| boxdd dev TCP listener (`experimental/boxdd/server.go`, `listenAddress`) | `netx.ListenTCP` |
+
+Verified `NO CHANGE` with source evidence: libbox command server (Unix socket, or TCP on
+`127.0.0.1` when a port is set), libbox service port finder (`127.0.0.1`), proxy bridge
+(`127.0.0.1`), OpenConnect auth callback (`127.0.0.1`), boxdd Unix worker, and the Tailscale binding
+(UDP `ListenPacket`, not TCP).
+
+Linux test `TestListenTCPDoesNotUseMPTCP` passes on the Ubuntu runner
+(`--- PASS: TestListenTCPDoesNotUseMPTCP`); the existing listener test
+`TestListenTCPMultiPathIsOptIn` also PASS. CI step now runs both packages:
+`go test -v -count=1 ./common/listener/ ./common/netx/`.
+
+### 6.3 Corrected phase-05 wording
+
+The 3% figure in the historical RTT sweep is a **relative cross-implementation gap**, not an upper
+bound on another pipeline's gain. `phase-05.md` and ledger X-09 now say the rejection is based on
+insufficient evidence that the gain outweighs reorder/backpressure/close complexity, not on a 3%
+ceiling. No pipeline was added.
+
+### 6.4 Verification for this close-out
+
+| Command / evidence | Result |
+|---|---|
+| `go test ./common/netx ./experimental/clashapi ./experimental/v2rayapi ./experimental/libbox ./experimental/boxdd` | `ok` (netx/v2rayapi no test files on Windows) |
+| `go test -race` same packages with cgo | `ok` |
+| `GOOS=linux GOARCH=amd64 go test -c ./common/netx` | compiled |
+| Ubuntu CI `TestListenTCPDoesNotUseMPTCP` / `TestListenTCPMultiPathIsOptIn` | PASS |
+| `go mod tidy -diff` (root + test) | no diff |
+| CI on `d3f38495` | Verify, Android Core ARM64, Windows daemon, Release contract, Mobile contract: **success** |

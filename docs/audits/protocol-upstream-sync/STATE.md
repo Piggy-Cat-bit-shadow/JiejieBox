@@ -2,8 +2,8 @@
 
 | field | value |
 |---|---|
-| Status | **completed** (cycle closed; residuals below) |
-| Stage | 01A/01B, 02A/02B, 03A/03B, 04A/04B, 05A/05B, 06A/06B + security hardening complete |
+| Status | **not fully closed** — protocol/listener work complete; native Naive `-5` eMudhra blocklist gap remains `BLOCKED_BY_ENVIRONMENT` |
+| Stage | 01A/01B, 02A/02B, 03A/03B, 04A/04B, 05A/05B, 06A/06B, security hardening, final listener/native close-out |
 | Date | 2026-11-02 |
 | Branch | `testing` (default branch; repository has no `main`) |
 | Phase 01 | Mieru SDK `v3.39.0`: `fac646ca`, 01B coverage `bc349d83`; see `phase-01.md` |
@@ -14,9 +14,10 @@
 | Phase 05 | audit-only; bounded-async pipeline rejected on evidence (`phase-05.md`, ledger X-09) |
 | Phase 06 code | `7f322a90` — `sing-vmess` `a0c58542` for the Vision close fix; ABI tripwire re-audited. `b218345e` — MPTCP disabled by default on `common/listener` (security); CI gate `2195ddc7`/`10d61856` |
 | Phase 06 docs | `6d4164f8` + the final docs commit; `FINAL_INTEGRATION_REPORT.md` |
+| Final close-out | `d3f38495` — API/debug listeners use `common/netx` (plain TCP); native `-5` gap remains blocked (see §Final close-out) |
 | CI on `f15d4473` | Verify, Android Core ARM64, Mobile contract, Release contract: success |
 | Handoff docs | `git log -1 -- docs/audits/protocol-upstream-sync/` (this directory) |
-| Next | **cycle closed** — only the residuals below remain |
+| Next | **native rebuild** — cherry-pick `-5` blocklist, run `naive-build.yml`, refresh 29 libs/lock/provenance |
 
 ## Completed
 
@@ -150,14 +151,26 @@
   package test, Linux cross-compile and `go vet` pass. On the Ubuntu runner
   `TestListenTCPMultiPathIsOptIn` recorded **PASS** (not skipped). Direct `net.Listen` endpoints
   remain a residual owner audit.
+- **Final close-out (`d3f38495`)**: the five externally bindable API/debug TCP listeners (debug HTTP,
+  Clash API, v2ray API, libbox pprof, boxdd TCP) now use `common/netx.ListenTCP`, which pins plain
+  TCP; loopback-only/Unix/UDP endpoints are unchanged with source evidence. Linux
+  `TestListenTCPDoesNotUseMPTCP` recorded **PASS** on Ubuntu.
+- **Native Naive `-5` remains open**: official blocklist commit
+  `23953c90e3b9f08f8d0c6ede92ae35f357af6f73` is not an ancestor of the
+  `cronet-go-dev-v154` branch (`be1be963`), `git grep -i eMudhra` is empty, and `gn`/`ninja`/
+  `gclient`/`depot_tools` are absent. The newer prebuilt `d5437a0` changes only Apple/tvOS archives
+  and contains no blocklist; pinning it would not be a security upgrade. No pin/checksum was
+  fabricated. The cycle is therefore **not fully closed**.
+- **05A wording corrected**: the 3% RTT ratio is a relative cross-implementation gap, not an upper
+  bound on a different pipeline's gain; X-09/phase-05 now state the evidence-based reason.
 
 ## Not completed / deferred (with owner phase)
 
 | Item | Why deferred | Owner |
 |---|---|---|
-| Naive native `-3`/`-4`/`-5` (sleep/resume, QUIC window/cleanup, eMudhra block) | requires rebuilding the controlled Chromium archives; no toolchain here | later native pass |
+| Naive native `-5` eMudhra blocklist (and audit of official `-3`/`-4`) | `23953c90` is not in `cronet-go-dev-v154` (`be1be963`); `gn`/`ninja`/`gclient`/`depot_tools` absent; prebuilt `d5437a0` has no blocklist and only Apple archive deltas | native rebuild: cherry-pick, run `naive-build.yml`, refresh 29 libs/lock/provenance |
 | Apple/Windows native runtime for the new resolution path | no device / Apple build on this host | CI/device pass |
-| Direct `net.Listen` endpoints (debug/pprof, Clash API, libbox command, v2ray API, proxy bridge, boxdd) | not routed through `common/listener`; most are loopback-only, owners should disable MPTCP if exposed | listener owners |
+| Loopback-only/Unix direct listeners (libbox command/service, proxy bridge, OpenConnect callback, boxdd Unix, Tailscale UDP) | source-verified not externally bindable; no MPTCP change needed | listener owners if exposure changes |
 | Mieru server `tcp_idle_timeout` config surface | new opt-in feature (option/schema/docs/tests) | post-cycle |
 | Mieru post-release UDP-associate fixes | not in `v3.39.0`; own UoT codec | post-cycle |
 | XHTTP xhttp-box tree diff | independent oracle; not needed for the serial-vs-pipeline decision | optional |
@@ -165,9 +178,11 @@
 
 ## Residual limitations
 
-- **Native gap is real.** The current archive is Chromium `154.0.8037.49` before the official
-  `-3`/`-4`/`-5` fixes. The `-5` certificate blocklist is proven absent; no Go-level certificate-name
-  block was added to imitate it.
+- **Native gap is real and not closed.** The current archive is Chromium `154.0.8037.49` before the
+  official `-3`/`-4`/`-5` fixes. The `-5` blocklist commit `23953c90` is not in the build branch;
+  `git grep -i eMudhra` is empty; no Go-level certificate-name block was added to imitate it.
+  Official `-3`/`-4` commits are not ancestors either and equivalence is unproven. The cycle is
+  therefore **not fully closed**; see the native rebuild entry in the deferred table.
 - **Apple runtime is unverified.** The resolution port is Go-only and the tagged Windows tests pass,
   but only an Apple build/run can prove the engine path there.
 - **HTTP/2 and HTTP/3 response half-close is not available** in `net/http`; the tunnel is fully
@@ -177,16 +192,23 @@
 ## Blockers / environment facts
 
 - `-race` needs `CGO_ENABLED=1`; mingw64 gcc is at `C:\msys64\mingw64\bin`.
+- **Native rebuild is blocked locally**: `gn`, `ninja`, `gclient`, `depot_tools` are absent; the
+  `naiveproxy` submodule is not initialized; the installed Swift `clang` is not the Chromium
+  toolchain. The fork's `naive-build.yml` is the trusted build path, but it needs a source branch
+  carrying the blocklist patch and a full multi-platform build.
 - `web_fetch` cannot reach GitHub hosts from this environment; GitHub facts came through the GitHub
-  API (MCP). The cronet fork and the naiveproxy submodule were inspected by clone.
+  API (MCP). The cronet fork and the naiveproxy branches were inspected by clone.
 - No WAN, production endpoint, VPS, subscription or real-traffic test was used.
-- No release was published and no workflow was dispatched by hand. Pushes run the declared
-  workflows; results are recorded from the runs themselves.
+- No release was published and no deployment workflow was dispatched. One `mobile-contract.yml`
+  workflow was dispatched by hand on the privacy head to rerun an unrelated transport/http flake;
+  its result is recorded, not treated as a release gate.
 
 ## Next-phase inputs
 
-**Cycle closed.** This directory is the final handoff: `FINAL_INTEGRATION_REPORT.md` (cycle summary),
-`phase-01.md` … `phase-06.md` (per-stage detail), `UPSTREAM_LEDGER.md` (§7 is the closing table).
-Do not start a new protocol rewrite from this state without a named upstream revision and a local
-counterexample. The residuals table above is the actual remaining work; none of it is in the 01–06
-scope. No release/tag/deploy was created.
+**Not fully closed: native rebuild remains.** This directory is the handoff:
+`FINAL_INTEGRATION_REPORT.md` §6, `phase-01.md` … `phase-06.md`, and `UPSTREAM_LEDGER.md` (§7).
+The next concrete step is the native task in the deferred table: cherry-pick `23953c90` (and audit
+`-3`/`-4`) onto `cronet-go-dev-v154`, run `naive-build.yml`, then refresh the 29 `lib/*` pins,
+`release/source-lock.json`, `release/cronet-provenance.txt` and `cronet_native.shas`. No new
+protocol rewrite should start before that security decision is made. No release/tag/deploy was
+created.

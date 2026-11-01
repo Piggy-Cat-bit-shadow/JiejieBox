@@ -51,8 +51,10 @@ the response in the background, bounded at 16 in flight. It requires:
 
 The evidence in `KNOWLEDGE/modules/xhttp-client-transport.md` §12.3 is a controlled RTT sweep
 against the reference: fork/reference upload ratios were 1.18x, 1.23x, 1.07x, 1.01x and 0.97x at
-0/30/50/100/200 ms. That is not a clear win; the only point where the reference is ahead is 3%, and
-pipelining changes failure and close semantics for every POST. The project's own probe shows the
+0/30/50/100/200 ms. That is a **relative cross-implementation gap, not a bound on what a different
+pipeline could gain**; it only shows there is no clear win at these RTTs. The decision is `NO
+CHANGE` because there is not enough evidence that the gain would outweigh the reorder/backpressure/
+close complexity, not because the maximum possible gain is 3%. The project's own probe shows the
 current design already aggregates to `sc_max_each_post_bytes` and is RTT-bound, not
 response-processing-bound.
 
