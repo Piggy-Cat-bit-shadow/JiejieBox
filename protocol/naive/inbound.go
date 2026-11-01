@@ -518,6 +518,11 @@ func (n *Inbound) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	// same rule there would break standard H1 proxy clients.
 	if request.ProtoMajor == 2 || request.ProtoMajor == 3 {
 		if len(request.URL.Scheme) > 0 || len(request.URL.Path) > 0 {
+			// This is an actual rejection, not just a log line: returning
+			// without a status lets net/http send its implicit 200, which
+			// would tell the client the tunnel was accepted while no tunnel
+			// exists. The reference (forwardproxy) answers 400 here too.
+			writer.WriteHeader(http.StatusBadRequest)
 			n.badRequest(ctx, request, E.New("CONNECT request has :scheme and/or :path pseudo-header fields"))
 			return
 		}
