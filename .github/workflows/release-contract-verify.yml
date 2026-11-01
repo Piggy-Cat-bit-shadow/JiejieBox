@@ -60,6 +60,13 @@ on:
       - ".github/actions/apple-libbox-build/action.yml"
       - "scripts/ci/apple-client-input.sh"
       - "scripts/ci/test-apple-client-input.sh"
+      - "scripts/ci/apple-release.py"
+      - "scripts/ci/test-apple-release.py"
+      - "scripts/publish-apple-beta.sh"
+      - "scripts/release-apple.sh"
+      - "scripts/ci/apple-client-source.sh"
+      - "scripts/ci/build-ios-testflight.sh"
+      - "scripts/ci/build-macos-testflight.sh"
       - "release/dependencies.json"
       - "release/source-lock.json"
       - "scripts/ci/release-artifacts.sh"
@@ -284,6 +291,14 @@ jobs:
           echo "$rc" > verify-logs/apple-client-input.exit
           exit "$rc"
 
+      - name: Apple early TestFlight release contract tests
+        if: always()
+        run: |
+          set -uo pipefail
+          mkdir -p verify-logs
+          python3 scripts/ci/test-apple-release.py 2>&1 | tee verify-logs/apple-release.log
+          exit "${PIPESTATUS[0]}"
+
       - name: desktop release-version contract tests
         if: always()
         run: |
@@ -346,6 +361,9 @@ jobs:
           set -euo pipefail
           mkdir -p verify-logs
           for f in scripts/ci/release-artifacts.sh scripts/ci/lib.sh \
+                   scripts/publish-apple-beta.sh scripts/release-apple.sh \
+                   scripts/ci/apple-client-source.sh \
+                   scripts/ci/build-ios-testflight.sh scripts/ci/build-macos-testflight.sh \
                    scripts/ci/prepare-desktop-client.sh scripts/ci/test-release-artifacts.sh \
                    scripts/ci/check-desktop-source-identity.sh \
                    scripts/ci/test-desktop-source-identity.sh \

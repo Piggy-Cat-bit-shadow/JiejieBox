@@ -57,6 +57,14 @@ on:
         description: 'Validate only: resolve, wait for CI, download and verify artifacts, but do NOT publish'
         type: boolean
         default: false
+      apple_run_id:
+        description: 'Apple client run used by the Mac TestFlight publish (required for new Apple artifacts)'
+        type: string
+        default: ''
+      apple_run_attempt:
+        description: 'Attempt of that Apple run; must match the Mac publish'
+        type: string
+        default: '1'
 
 permissions:
   contents: write
@@ -89,6 +97,8 @@ jobs:
     timeout-minutes: 180
     env:
       RELEASE_EXTRA_PLATFORMS: true
+      RELEASE_APPLE_RUN_ID: ${{ inputs.apple_run_id }}
+      RELEASE_APPLE_RUN_ATTEMPT: ${{ inputs.apple_run_attempt }}
     steps:
       # The gate's own tests first. They need no network and take seconds, and they
       # are the only way a defect in the selection logic can be caught before the
@@ -313,10 +323,15 @@ jobs:
           # Published to later steps through the environment so the publish step
           # names the same commit this step verified.
           echo "RELEASE_SHA=$sha" >> "$GITHUB_ENV"
+          apple_args=()
+          if [ -n "$RELEASE_APPLE_RUN_ID" ]; then
+            apple_args=(--apple-run-id "$RELEASE_APPLE_RUN_ID" --apple-run-attempt "$RELEASE_APPLE_RUN_ATTEMPT")
+          fi
           ./tooling/scripts/ci/release-artifacts.sh plan \
             --repo "$GITHUB_REPOSITORY" \
             --sha "$sha" \
             --out release-plan/runs.tsv \
+            "${apple_args[@]}" \
             --interval 30 \
             --timeout 5400
 
@@ -482,7 +497,7 @@ jobs:
             --draft \
             --title "$tag" \
             --target "$sha" \
-            --notes "" \
+            --notes-file .github/RELEASE_NOTES.md \
             "${assets[@]}"
 
           echo "PASS: draft release $tag created with ${#assets[@]} asset(s)"

@@ -342,9 +342,6 @@ checkout_ios() {
   # packages from, so it is part of "the Apple source", not an optional extra. It is
   # initialised from the RECORDED revision, so a pinned client cannot pull a nested
   # dependency from wherever that dependency's default branch happens to be.
-  git -C "$dir" submodule update --init --recursive >/dev/null 2>&1 || fail \
-    "could not initialise the nested submodules of $dir"
-
   local actual; actual="$(git -C "$dir" rev-parse HEAD)"
   if [ "$actual" != "$want" ]; then
     # The submodule may simply be behind the resolved SHA - that is the normal case now that
@@ -352,11 +349,14 @@ checkout_ios() {
     fetch_one_commit "$dir" "$want" "$(platform_branch ios)"
     git -C "$dir" checkout --detach "$want" >/dev/null 2>&1 || fail \
       "could not check out $want in $dir"
-    git -C "$dir" submodule update --init --recursive >/dev/null 2>&1 || fail \
-      "could not initialise the nested submodules of $dir"
     actual="$(git -C "$dir" rev-parse HEAD)"
     [ "$actual" = "$want" ] || fail "$dir is at $actual after checkout, expected $want"
   fi
+
+  # Initialise once, after selecting the final client revision. Fetching the old
+  # gitlink's nested dependencies first only downloads work the build discards.
+  git -C "$dir" submodule update --init --recursive >/dev/null 2>&1 || fail \
+    "could not initialise the nested submodules of $dir"
 
   printf '%s\n' "$actual"
 }

@@ -42,6 +42,13 @@ case "$target" in
     ;;
 esac
 
+build_ios=1
+build_macos=1
+case "$target" in
+  *-ios) build_macos=0 ;;
+  *-macos) build_ios=0 ;;
+esac
+
 case "$target" in
   unsigned)                             _default_mode=unsigned ;;
   testflight|testflight-ios|testflight-macos) _default_mode=testflight ;;
@@ -184,9 +191,13 @@ echo "  iOS:   $IOS_APPLE_BRANCH @ $IOS_APPLE_SHA -> $ios_client_dir"
 echo "  macOS: $MACOS_APPLE_BRANCH @ $MACOS_APPLE_SHA -> $macos_client_dir  (same source)"
 
 # The iOS source is the submodule the parent records; this asserts the checkout matches.
-./scripts/ci/apple-client-source.sh checkout ios >/dev/null
+if [ "$build_ios" = "1" ] || [ "${APPLE_USE_PREBUILT_LIBBOX:-0}" != "1" ]; then
+  ./scripts/ci/apple-client-source.sh checkout ios >/dev/null
+fi
 # The macOS source is an ephemeral checkout of the pinned commit, created on demand.
-./scripts/ci/apple-client-source.sh checkout macos >/dev/null
+if [ "$build_macos" = "1" ]; then
+  ./scripts/ci/apple-client-source.sh checkout macos >/dev/null
+fi
 
 step "signing environment"
 # In unsigned mode this prints SKIP; otherwise it fails with an actionable message
@@ -223,6 +234,7 @@ fi
   if [ "${APPLE_USE_PREBUILT_LIBBOX:-0}" = "1" ]; then
     step "use the prebuilt Libbox"
     libbox="$ios_client_dir/Libbox.xcframework"
+    [ "$build_ios" = "1" ] || libbox="$macos_client_dir/Libbox.xcframework"
     if [ ! -d "$libbox" ]; then
       echo "FAIL: APPLE_USE_PREBUILT_LIBBOX=1 but $libbox is not installed." >&2
       echo "  Install a verified artifact first, then re-run with this variable set." >&2
@@ -235,26 +247,36 @@ fi
     # The macOS checkout is a different source tree, so the framework is placed there
     # explicitly rather than assumed to be present - and the SOURCE is named, because an
     # artifact install unpacks into the iOS client and never writes the repository root.
-    ./scripts/ci/build-apple-libbox.sh install "$macos_client_dir" "$libbox"
+    if [ "$build_ios" = "1" ] && [ "$build_macos" = "1" ]; then
+      ./scripts/ci/build-apple-libbox.sh install "$macos_client_dir" "$libbox"
+    fi
   else
     step "build Libbox once from this fork"
     APPLE_CLIENT_DIR="$ios_client_dir" ./scripts/ci/build-apple-libbox.sh both
     # The build above left the framework at the repository root, which is this call's default
     # source.
-    ./scripts/ci/build-apple-libbox.sh install "$macos_client_dir"
+    if [ "$build_macos" = "1" ]; then
+      ./scripts/ci/build-apple-libbox.sh install "$macos_client_dir"
+    fi
   fi
 
 # The two checkouts must link the identical framework. Checked rather than assumed: the
 # whole point of building once is that iOS and macOS ship one core, and installing is
 # where that could quietly stop being true.
-step "verify both clients link the same Libbox"
-./scripts/ci/check-apple-shared-libbox.sh "$ios_client_dir" "$macos_client_dir"
+if [ "$build_ios" = "1" ] && [ "$build_macos" = "1" ]; then
+  step "verify both clients link the same Libbox"
+  ./scripts/ci/check-apple-shared-libbox.sh "$ios_client_dir" "$macos_client_dir"
+fi
 
-step "prepare the iOS Apple client"
-APPLE_CLIENT_DIR="$ios_client_dir" APPLE_CLIENT_PLATFORM=ios ./scripts/ci/prepare-apple-client.sh
+if [ "$build_ios" = "1" ]; then
+  step "prepare the iOS Apple client"
+  APPLE_CLIENT_DIR="$ios_client_dir" APPLE_CLIENT_PLATFORM=ios ./scripts/ci/prepare-apple-client.sh
+fi
 
-step "prepare the macOS Apple client"
-APPLE_CLIENT_DIR="$macos_client_dir" APPLE_CLIENT_PLATFORM=macos ./scripts/ci/prepare-apple-client.sh
+if [ "$build_macos" = "1" ]; then
+  step "prepare the macOS Apple client"
+  APPLE_CLIENT_DIR="$macos_client_dir" APPLE_CLIENT_PLATFORM=macos ./scripts/ci/prepare-apple-client.sh
+fi
 
 # ---------------------------------------------------------------------------
 # Targets

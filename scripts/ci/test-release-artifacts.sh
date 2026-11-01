@@ -231,6 +231,15 @@ def api(args):
     # repos/<owner>/<repo>/actions/workflows/<key>[/runs?...]
     # repos/<owner>/<repo>/actions/runs/<id>/artifacts[?...]
     if len(parts) >= 6 and parts[3] == "actions" and parts[4] == "runs":
+        if len(parts) == 6:
+            for name, wf in workflows().items():
+                for entry in wf.get("runs", []):
+                    if str(entry["id"]) == parts[5]:
+                        document = dict(materialise_run(name, wf, entry))
+                        document.setdefault("run_attempt", 1)
+                        sys.stdout.write(jq_filter(document, filt) if filt else json.dumps(document))
+                        return 0
+            fail("api: no run %s" % parts[5])
         # The gate lists a run's artifacts before downloading one by name, because a run may
         # upload more than one and only the installer is a deliverable.
         if len(parts) >= 7 and parts[6].startswith("artifacts"):
@@ -1771,6 +1780,36 @@ full_expect_fail() {
 full_plan="$work/full-plan.tsv"
 full_expect_ok "full contract: plan sees all five products" \
   plan --repo o/r --sha "$SHA" --out "$full_plan" --interval 1 --timeout 10
+
+# A later Apple run for the same core may use another UI/library. The formal
+# Release must retain the producer the Mac followed, including its attempt.
+python3 - "$work/state/scenario.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+doc = json.load(open(p))
+runs = doc["workflows"]["client-apple.yml"]["runs"]
+newer = dict(runs[0], id=runs[0]["id"] + 1, run_number=99)
+runs.append(newer)
+with open(p, "w") as out:
+    json.dump(doc, out)
+PY
+full_expect_ok "Apple pin retains the Mac producer despite a newer run" \
+  plan --repo o/r --sha "$SHA" --out "$work/pinned-plan.tsv" \
+  --apple-run-id "$FULL_APPLE_ID" --apple-run-attempt 1 --interval 1 --timeout 10
+pinned_id="$(awk -F '\t' '$1 == ".github/workflows/client-apple.yml" {print $3}' "$work/pinned-plan.tsv")"
+if [ "$pinned_id" = "$FULL_APPLE_ID" ]; then
+  report "Apple plan names the pinned run, not the newer one" 0 0 "$pinned_id"
+else
+  fail_case "Apple plan names the pinned run, not the newer one" "got $pinned_id"
+fi
+full_expect_fail "Apple pin refuses another attempt" "was re-run" -- \
+  plan --repo o/r --sha "$SHA" --out "$work/pinned-plan.tsv" \
+  --apple-run-id "$FULL_APPLE_ID" --apple-run-attempt 2 --interval 1 --timeout 10
+full_expect_fail "Apple pin refuses a different workflow" "workflow_id" -- \
+  plan --repo o/r --sha "$SHA" --out "$work/pinned-plan.tsv" \
+  --apple-run-id "$FULL_DESKTOP_ID" --apple-run-attempt 1 --interval 1 --timeout 10
+write_full_scenario
+
 # What `desktop` actually stages: the installer inside its artifact directory, and the build
 # record in a tree beside it. Derived from the same names the scenario declares, so a rename
 # in one place cannot silently disagree with the other.

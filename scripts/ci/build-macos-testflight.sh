@@ -199,6 +199,8 @@ gate "bundle id is ours (not upstream)" bash -c "case '$built_bundle' in io.neko
 gate "bundle id matches the iOS app id" test "$built_bundle" = "$APPLE_IOS_APP_BUNDLE_ID"
 gate "team id is not upstream" test "$APPLE_TEAM_ID" != "P8XK3KHB48"
 gate "build number is set" test "$built_build" != "?" -a -n "$built_build"
+gate "App version matches the release" test "$built_version" = "$marketing_version"
+gate "App build number matches this publish" test "$built_build" = "$build_number"
 # The name the user sees, as its own script so the check can be run against a fixture
 # bundle without archiving anything. It is a hard gate: an app uploaded as sing-box.app
 # installs under the official client's name and cannot be corrected without another build.
@@ -240,11 +242,19 @@ gate "no System Extension embedded" bash -c "! test -d '$app/Contents/Library/Sy
   exit 1
 }
 
+python3 scripts/ci/apple-release.py archive-version \
+  --app "$app" --version "$marketing_version" --build-number "$build_number"
+
 echo "archive: $archive_path"
 
 if [ "$archive_only" = "true" ]; then
   echo "build-macos-testflight: ARCHIVE ONLY (not uploaded)"
   exit 0
+fi
+
+if [ -n "${APPLE_RELEASE_CONTEXT:-}" ]; then
+  python3 scripts/ci/apple-release.py upload-gate \
+    --context "$APPLE_RELEASE_CONTEXT" --platform macos
 fi
 
 # --- export options -----------------------------------------------------------

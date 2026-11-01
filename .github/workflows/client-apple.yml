@@ -25,21 +25,19 @@ name: Apple client
 #
 # # Two products, ONE Apple source, one Libbox
 #
-# The iOS and macOS clients build the SAME Apple source at the SAME commit: the parent's
-# `clients/apple` gitlink. There is no per-platform revision and no per-platform branch,
+# The iOS and macOS clients build the SAME Apple source at the SAME commit, resolved
+# once by resolve-apple-source. There is no per-platform revision or source branch,
 # because which UI a device shows is a runtime decision of the Apple source itself:
 #
-#     iOS / SFI     clients/apple @ gitlink   scheme SFI   iPhone -> Hako, iPad -> upstream
-#     macOS / SFM   clients/apple @ gitlink   scheme SFM   upstream
+#     iOS / SFI     resolved Apple SHA   scheme SFI   iPhone -> Hako, iPad -> upstream
+#     macOS / SFM   resolved Apple SHA   scheme SFM   upstream
 #
 # Libbox is built ONCE from this repository's commit and that same artifact is installed
 # into both checkouts, so the core is identical and so is the client source; only the
 # scheme, the destination and the platform-specific overlays differ.
 #
-# The two jobs resolve their source independently and then prove they agree -
-# `apple-client-source.sh assert-shared-source` in both, and the macOS job re-checks its
-# checkout against `sha ios`. A future edit that reintroduces a per-platform pin fails
-# there rather than shipping two different UIs under one version.
+# The jobs consume the same resolver output and verify their actual checkouts.
+# The early release identity and Libbox manifest preserve that selection for the Mac.
 #
 # # Trigger
 #
@@ -202,14 +200,38 @@ jobs:
             echo "Every other job in this run is pinned to the SHA above and must not re-resolve."
           } >> "$GITHUB_STEP_SUMMARY"
 
+          python3 scripts/ci/apple-release.py candidate \
+            --apple-sha "$sha" \
+            --apple-repository "$APPLE_CLIENT_REPOSITORY" \
+            --apple-branch "$APPLE_CLIENT_BRANCH" \
+            --build-ios '${{ inputs.build_ios }}' \
+            --build-macos '${{ inputs.build_macos }}' \
+            --out build/apple-release.json
+          {
+            echo
+            echo '### Start TestFlight on your Mac now'
+            echo 'The Mac waits for Libbox, archives early, then waits for the tag and platform CI before uploading.'
+            echo '```sh'
+            echo "./scripts/publish-apple-beta.sh --follow-run $GITHUB_RUN_ID --platform ios"
+            echo '```'
+            echo "For the formal Release use apple_run_id=$GITHUB_RUN_ID and apple_run_attempt=$GITHUB_RUN_ATTEMPT."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: publish the frozen Apple release identity immediately
+        uses: actions/upload-artifact@v4
+        with:
+          name: jiejiebox-apple-release-${{ github.sha }}
+          path: build/apple-release.json
+          if-no-files-found: error
+          retention-days: 30
+
   # Libbox is compiled ONCE per commit and shared by both GUI jobs and by the local publish.
   #
   # It is the most expensive step in the Apple pipeline and depends only on the source commit - no
   # Apple secrets - so building it per platform was duplicated work. The artifact carries a manifest
   # naming the parent commit it was built from, because the consumers must be able to prove the
-  # framework matches the commit being released, not merely trust an artifact name. It records no
-  # Apple client revision: the core does not depend on which UI branch links it, and the two
-  # platforms deliberately use two different ones.
+  # framework matches the commit being released, not merely trust an artifact name. The manifest's
+  # apple_release field additionally records the shared UI selection for local TestFlight publishing.
   libbox:
     needs: resolve-apple-source
     # RUNS ONLY FOR iOS. The iOS product cannot build the framework itself without extending its
@@ -825,6 +847,15 @@ jobs:
           # Installed into a scratch directory so the product tree receives the framework through
           # the validated install step below, exactly as it does when the artifact was downloaded.
           install-dir: build/apple-libbox-build
+
+      - name: upload Libbox before building the macOS app (single-runner mode)
+        if: ${{ needs.libbox.result == 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: jiejiebox-libbox-${{ github.sha }}
+          path: build/apple-libbox
+          if-no-files-found: error
+          retention-days: 30
 
       - name: download the verified Libbox artifact (dual-platform mode)
         if: ${{ needs.libbox.result == 'success' }}

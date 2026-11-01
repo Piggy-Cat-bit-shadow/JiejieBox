@@ -228,6 +228,8 @@ gate "bundle id is ours (not upstream)" bash -c "case '$built_bundle' in io.neko
 gate "bundle id matches the configured base" test "$built_bundle" = "$APPLE_IOS_APP_BUNDLE_ID"
 gate "team id is not upstream" test "$APPLE_TEAM_ID" != "P8XK3KHB48"
 gate "build number is set" test "$built_build" != "?" -a -n "$built_build"
+gate "App version matches the release" test "$built_version" = "$marketing_version"
+gate "App build number matches this publish" test "$built_build" = "$build_number"
 # The archive must be signed: entitlements only exist on a signed bundle, and Apple
 # validates them from the archive rather than from the export.
 gate "the archive is signed" codesign --verify --strict "$app"
@@ -258,12 +260,22 @@ fi
   exit 1
 }
 
+python3 scripts/ci/apple-release.py archive-version \
+  --app "$app" --version "$marketing_version" --build-number "$build_number"
+
 echo "archive: $archive_path"
 echo "archive-sha256: $(shasum -a 256 "$archive_path/Products/Applications/$(basename "$app")"/* 2>/dev/null | head -1 | awk '{print $1}')"
 
 if [ "$archive_only" = "true" ]; then
   echo "build-ios-testflight: ARCHIVE ONLY (not uploaded)"
   exit 0
+fi
+
+# Archiving can overlap CI. The frozen tag and this platform's CI must agree
+# before exportArchive is allowed to upload anything to App Store Connect.
+if [ -n "${APPLE_RELEASE_CONTEXT:-}" ]; then
+  python3 scripts/ci/apple-release.py upload-gate \
+    --context "$APPLE_RELEASE_CONTEXT" --platform ios
 fi
 
 # --- export options -----------------------------------------------------------

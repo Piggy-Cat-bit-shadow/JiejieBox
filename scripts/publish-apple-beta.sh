@@ -16,6 +16,7 @@
 #
 # Usage:
 #   ./scripts/publish-apple-beta.sh [--run-id <id>] [--no-dispatch]
+#   ./scripts/publish-apple-beta.sh --follow-run <id> [--platform ios|macos|both]
 #
 #   --run-id       publish from a specific run instead of looking one up for this commit
 #   --no-dispatch  fail when no run exists for this commit instead of dispatching one
@@ -26,6 +27,14 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
+
+# The Windows-started run owns the version and sources. This mode checks out that
+# identity in a separate worktree and starts archiving before the whole run ends.
+for argument in "$@"; do
+  if [ "$argument" = "--follow-run" ]; then
+    exec python3 "$root/scripts/ci/apple-release.py" follow "$@"
+  fi
+done
 
 workflow="client-apple.yml"
 input_dir="build/apple-publish/input"
@@ -222,7 +231,7 @@ command -v gh >/dev/null 2>&1 || fail "the GitHub CLI (gh) is required but was n
 gh auth status >/dev/null 2>&1 || fail "gh is not authenticated. Run: gh auth login"
 
 # Resolved rather than hardcoded, so a fork or a rename does not silently query the wrong repository.
-repo="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)" \
+repo="$(gh repo view "$(git remote get-url origin)" --json nameWithOwner -q .nameWithOwner 2>/dev/null)" \
   || fail "could not determine the repository. Run this from inside a checkout with a GitHub remote."
 echo "  repository: $repo"
 
@@ -462,9 +471,9 @@ step "Apple CI for $local_sha"
 if [ -z "$run_id" ]; then
   # The SHA is matched exactly. Taking the most recent successful run would happily publish the
   # previous commit's Libbox, which is the failure this whole check exists to prevent.
-  run_id="$(gh run list --repo "$repo" --workflow "$workflow" --branch "$dispatch_ref" \
-    --limit 100 --json databaseId,headSha,conclusion \
-    -q "[.[] | select(.headSha == \"$local_sha\" and .conclusion == \"success\")][0].databaseId" \
+  run_id="$(gh run list --repo "$repo" --workflow "$workflow" --commit "$local_sha" \
+    --limit 100 --json databaseId,headSha,conclusion,status \
+    -q "[.[] | select(.headSha == \"$local_sha\" and (.conclusion == \"success\" or .status == \"queued\" or .status == \"in_progress\" or .status == \"waiting\" or .status == \"pending\" or .status == \"requested\"))][0].databaseId" \
     2>/dev/null || true)"
 fi
 
@@ -517,6 +526,23 @@ if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
     "no completed $workflow run for $local_sha appeared within 90 minutes.
   Check: gh run list --workflow $workflow --branch $dispatch_ref"
 fi
+
+# A matching run already in progress is reused, not dispatched a second time.
+# --run-id also waits here; the early, per-platform path is --follow-run.
+deadline=$(( $(date +%s) + 5400 ))
+while :; do
+  selected_sha="$(gh run view "$run_id" --repo "$repo" --json headSha -q .headSha)"
+  [ "$selected_sha" = "$local_sha" ] || fail "run $run_id builds $selected_sha, not $local_sha."
+  selected_status="$(gh run view "$run_id" --repo "$repo" --json status -q .status)"
+  [ "$selected_status" = "completed" ] && break
+  case "$selected_status" in
+    queued|in_progress|waiting|pending|requested) ;;
+    *) fail "run $run_id has unexpected status '$selected_status'." ;;
+  esac
+  [ "$(date +%s)" -lt "$deadline" ] || fail "timed out waiting for run $run_id."
+  echo "  reusing run $run_id ($selected_status); waiting 30s"
+  sleep 30
+done
 
 # Re-verify the run even when the id was supplied: --run-id is an escape hatch for re-publishing a
 # known run, not a way to publish an arbitrary one.
@@ -591,6 +617,20 @@ fi
 ./scripts/ci/apple-libbox-artifact.sh validate "$validated" \
   --parent-sha "$local_sha" \
   --jj-version "$local_jj"
+
+# New artifacts bind the UI selection as well as the core. Keep the legacy
+# canonical/Actions entry points reproducible instead of resolving today's tip
+# for yesterday's Release. Old manifests retain their existing behaviour.
+if python3 -c 'import json,sys; sys.exit(0 if "apple_release" in json.load(open(sys.argv[1])) else 1)' "$validated/manifest.json"; then
+  frozen_apple_sha="$(python3 scripts/ci/apple-release.py client-sha \
+    --manifest "$validated/manifest.json" --sha "$local_sha" --version "$local_jj" \
+    --repo "$repo" --apple-repository "$APPLE_CLIENT_REPOSITORY")"
+  export APPLE_CLIENT_REF="$frozen_apple_sha" APPLE_CLIENT_SHA="$frozen_apple_sha"
+  rm -f "$apple_state"
+  eval "$(./scripts/ci/apple-client-source.sh resolve)"
+  export APPLE_CLIENT_REPOSITORY IOS_APPLE_SHA IOS_APPLE_BRANCH MACOS_APPLE_SHA MACOS_APPLE_BRANCH
+  ./scripts/ci/apple-client-source.sh assert-shared-source
+fi
 
 artifact_sha="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["artifact_sha256"])' \
   "$validated/manifest.json")"

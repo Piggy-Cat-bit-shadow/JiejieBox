@@ -99,3 +99,19 @@ runs:
           "$install_dir/Libbox.xcframework" "$OUTPUT_DIR"
         echo "Libbox artifact contents:"
         ls -la "$OUTPUT_DIR"
+
+    - name: download the run's frozen release identity
+      uses: actions/download-artifact@v4
+      with:
+        name: jiejiebox-apple-release-${{ github.sha }}
+        path: build/apple-release-metadata
+
+    - name: bind Libbox to the same Apple release identity
+      shell: bash
+      env:
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+      run: |
+        set -euo pipefail
+        python3 scripts/ci/apple-release.py bind \
+          --candidate build/apple-release-metadata/apple-release.json \
+          --manifest "$OUTPUT_DIR/manifest.json"

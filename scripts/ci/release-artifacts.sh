@@ -429,6 +429,7 @@ cmd_release_version() {
 
 cmd_plan() {
   local repo="" sha="" out="" interval=30 timeout=5400
+  local apple_run_id="" apple_run_attempt=1
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --repo) repo="${2:-}"; shift 2 ;;
@@ -436,6 +437,8 @@ cmd_plan() {
       --out) out="${2:-}"; shift 2 ;;
       --interval) interval="${2:-}"; shift 2 ;;
       --timeout) timeout="${2:-}"; shift 2 ;;
+      --apple-run-id) apple_run_id="${2:-}"; shift 2 ;;
+      --apple-run-attempt) apple_run_attempt="${2:-}"; shift 2 ;;
       *) die "plan: unknown argument '$1'" ;;
     esac
   done
@@ -444,18 +447,33 @@ cmd_plan() {
   [ -n "$out" ] || die "plan: --out is required"
   case "$interval" in ''|*[!0-9]*) die "plan: --interval must be a whole number of seconds" ;; esac
   case "$timeout" in ''|*[!0-9]*) die "plan: --timeout must be a whole number of seconds" ;; esac
+  if [ -n "$apple_run_id" ]; then
+    [[ "$apple_run_id" =~ ^[1-9][0-9]*$ && "$apple_run_attempt" =~ ^[1-9][0-9]*$ ]] || die "plan: invalid Apple run ID/attempt"
+    [[ " ${TARGET_WORKFLOWS[*]} " == *" .github/workflows/client-apple.yml "* ]] || die "plan: pinning Apple requires RELEASE_EXTRA_PLATFORMS=true"
+  fi
 
   mkdir -p "$(dirname "$out")"
   : > "$out"
 
   local deadline=$(( $(date +%s) + timeout ))
-  local wf wfid newest pending
+  local wf wfid newest pending actual_attempt
   while :; do
     : > "$out"
     pending=0
     for wf in "${TARGET_WORKFLOWS[@]}"; do
       wfid="$(resolve_workflow_id "$repo" "$wf")"
-      newest="$(newest_run "$repo" "$wfid" "$sha")"
+      if [ "$wf" = ".github/workflows/client-apple.yml" ] && [ -n "$apple_run_id" ]; then
+        # Pin the producer the signing Mac used. A newer run for the same core
+        # SHA may resolve a different Apple UI or produce different library bytes.
+        newest="$(gh api "repos/$repo/actions/runs/$apple_run_id" \
+          --jq '[.id, .run_number, .status, (if (.conclusion // "") == "" then "-" else .conclusion end), .created_at, .html_url, .head_sha, .workflow_id] | @tsv')" \
+          || die "could not read pinned Apple run $apple_run_id"
+        actual_attempt="$(gh api "repos/$repo/actions/runs/$apple_run_id" --jq .run_attempt)" \
+          || die "could not read pinned Apple run attempt"
+        [ "$actual_attempt" = "$apple_run_attempt" ] || die "Apple run $apple_run_id was re-run (attempt $actual_attempt, expected $apple_run_attempt). Start a new TF publish; do not silently replace its Libbox."
+      else
+        newest="$(newest_run "$repo" "$wfid" "$sha")"
+      fi
 
       if [ -z "$newest" ]; then
         # Fail fast with something to DO. The old workflow waited 90 minutes for
@@ -469,6 +487,9 @@ $(for f in "${TARGET_WORKFLOWS[@]}"; do printf '        gh workflow run %s --rep
 
       local rid rnum status conclusion created url rsha rwfid
       IFS=$'\t' read -r rid rnum status conclusion created url rsha rwfid <<<"$newest"
+      if [ "$wf" = ".github/workflows/client-apple.yml" ] && [ -n "$apple_run_id" ]; then
+        [ "$rid" = "$apple_run_id" ] || die "the API returned a different Apple run ($rid, expected $apple_run_id)"
+      fi
 
       # Defence in depth: the query filtered by SHA server-side, and every row is
       # checked again here, so a wrong artifact source cannot reach the release.
@@ -1232,6 +1253,12 @@ $(printf '        %s\n' $actual)"
       The release is refusing to publish it. Do not weaken this check to make a release pass;
       re-run the Apple producer for $sha."
   fi
+  python3 ./scripts/ci/apple-release.py verify-release \
+    --manifest "$dir/manifest.json" \
+    --repo "${GITHUB_REPOSITORY:-${RELEASE_REPOSITORY:-}}" \
+    --run-id "${RELEASE_APPLE_RUN_ID:-}" \
+    --attempt "${RELEASE_APPLE_RUN_ATTEMPT:-}" \
+    || die "Apple release identity does not match the TestFlight producer"
   note "    Libbox.xcframework  $(wc -c < "$tarball" | tr -d ' ') bytes  verified by the producer's validator"
 }
 
