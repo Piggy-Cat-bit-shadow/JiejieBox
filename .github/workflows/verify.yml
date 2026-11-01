@@ -369,6 +369,12 @@ jobs:
           go test -count=1 -tags "$tags" ./common/ktls
           echo "PASS: kTLS wait-path tests"
 
+      - name: listener MPTCP default
+        # The socket-level MPTCP assertion is Linux-only: the Windows host checks
+        # cannot run it and the compile-only gate does not execute tests. Run it on
+        # the same Ubuntu runner that builds the server profile.
+        run: go test -count=1 ./common/listener/
+
       - name: build matrix
         # A signature change upstream is a build failure here rather than a silent behaviour change
         # later. The main binary is not built for every target: only the packages this fork changes,
