@@ -221,6 +221,15 @@ func (c *Client) dialStreamUp(ctx context.Context, sessionID string, xmuxClient 
 	// report to (the pipe is broken by uploadFailed, but nobody holds the conn
 	// yet), so the dial listens for it directly.
 	uploadFailed := make(chan error, 1)
+	// The upload response is the server's verdict on the stream-up POST. A
+	// non-200 means the server refused the stream: the download GET may still be
+	// pending, so waiting for it would park the dial until the caller's context
+	// and leak that request. Break the upload pipe with the status (so a writer
+	// that arrives after the raise sees it too) and let the dial fail now.
+	//
+	// A 200 response body, by contrast, is drained and closed: it carries no
+	// protocol bytes and closing it early can reset the paired download stream
+	// before the first response byte is read.
 	go func() {
 		upResp, err := xmuxClient.roundTrip(upReq)
 		if err != nil {
@@ -228,7 +237,25 @@ func (c *Client) dialStreamUp(ctx context.Context, sessionID string, xmuxClient 
 			uploadFailed <- err
 			return
 		}
-		drainAndClose(upResp.Body)
+		if upResp.StatusCode != http.StatusOK {
+			if upResp.Body != nil {
+				_ = upResp.Body.Close()
+			}
+			statusErr := E.New("v2ray-xhttp: unexpected upload status: ", upResp.Status)
+			conn.uploadFailed(statusErr)
+			// The stream is refused by the server, so its download half cannot
+			// become usable either. Cancel the conn-scoped context so a pending
+			// download RoundTrip ends and a reader blocked on an already-bound
+			// body stops, instead of waiting for the caller to Close.
+			if conn.cancel != nil {
+				conn.cancel()
+			}
+			uploadFailed <- statusErr
+			return
+		}
+		if upResp.Body != nil {
+			drainAndClose(upResp.Body)
+		}
 	}()
 	// lx: SPEC 077 — the raise this dial waits for is the UPLOAD body's
 	// adoption; the download GET is not awaited (SPEC 061).
