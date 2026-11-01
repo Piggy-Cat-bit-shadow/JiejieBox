@@ -154,16 +154,17 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	// Chromium's DNS goes through this bridge rather than the system resolver, so a Naive
 	// connection cannot leak a query past sing-box's DNS policy.
 	//
-	// # There is no second lookup on the socket path
+	// # The server name is resolved once, by the dialer
 	//
-	// The obvious worry is a double resolution: Chromium resolves the server name here, and then
-	// the custom socket factory dials it again. That does not happen, and the socket callback's
-	// contract is what settles it -- cronet-go documents the address it receives as an
-	// "IP address string (e.g. \"1.2.3.4\" or \"::1\")" for BOTH the TCP and UDP factories. Chromium
-	// resolves once through this bridge and hands the dialer an address, not a name.
+	// cronet-go answers the A/AAAA query for the configured server name with the synthetic
+	// address 192.0.2.1 and maps that address back to the configured server address in its
+	// TCP/UDP socket callbacks. The custom dialer below therefore receives a name (or the
+	// literal address the operator configured) and performs the only real resolution,
+	// through the policy below. Chromium's answer is a routing marker, not a DNS result, so
+	// the two layers are not two authorities and the host's dual-stack scheduling is kept.
 	//
-	// So the resolution happens exactly once, through the policy below, and the dial layer receives
-	// the result. The two layers are not two authorities.
+	// This is also why the dialer chain must be a ResolveDialer: the policy that resolves
+	// the server is the fork's, not Chromium's.
 	// Checked at construction rather than inside the resolver closure below, where an unchecked assertion
 	// would panic during a DNS exchange instead of failing the configuration load, and where returning an
 	// error is not even possible. Same defect class as the direct outbound's, fixed there first.

@@ -36,8 +36,8 @@ require (
 	github.com/sagernet/asc-go v0.0.0-20260914163356-9e3d45a797c1
 	github.com/sagernet/bbolt v0.0.0-20260915102804-500ee1e84832
 	github.com/sagernet/cors v1.2.1
-	github.com/sagernet/cronet-go v0.0.1-143.0.7499.109-2.0.20261020055023-fd2f25825e4f
-	github.com/sagernet/cronet-go/all v0.0.0-20260929213745-4d18a60dc3a8
+	github.com/sagernet/cronet-go v0.0.1-143.0.7499.109-2.0.20261101181843-bd2b70516b92
+	github.com/sagernet/cronet-go/all v0.0.0-20261101181843-bd2b70516b92
 	github.com/sagernet/fswatch v0.1.2
 	github.com/sagernet/gliderssh v0.3.4-0.20260531100337-2194faca5648
 	github.com/sagernet/gomobile v0.1.12
@@ -221,16 +221,17 @@ replace github.com/sagernet/sing => github.com/Piggy-Cat-bit-shadow/sing v0.9.6-
 // that was never built or tested anywhere, and on linux/amd64 upstream's archive does not
 // even link. Every path the repository publishes is therefore pinned here.
 //
-// Root and `all` are pinned to 8aa139e: the per-CONNECT naive transport change on top of
-// 8c68ce8. Every native `lib/<os>_<arch>` stays at 8c68ce8, the commit whose archives were
-// built from df0c319. That split is deliberate and ABI-checked: the libcronet blobs at
-// df0c319 and 8c68ce8 are byte-identical, and nothing under cgo or include/ changed between
-// them (only naive_client.go and its tests), so 8aa139e's Go-only binding is compatible with
-// the 8c68ce8 native generation. Rebuilding archives is not reproducible from a Windows
-// host; see docs/fork/phase-04-cronet-apple-platform.md for the matrix.
-replace github.com/sagernet/cronet-go => github.com/Piggy-Cat-bit-shadow/cronet-go v0.0.1-143.0.7499.109-2.0.20261027185739-c9c0e6ec8845
+// Root and `all` are pinned to bd2b705: the per-CONNECT naive transport change and the port of
+// upstream's "let the dialer resolve the server address" on top of 8c68ce8. Every native
+// `lib/<os>_<arch>` stays at 8c68ce8, the commit whose archives were built from df0c319. That
+// split is deliberate and ABI-checked: the libcronet blobs at df0c319 and 8c68ce8 are
+// byte-identical, and nothing under cgo or include/ changed between them (only naive_client.go,
+// naive_dns.go and their tests), so bd2b705's Go-only binding is compatible with the 8c68ce8
+// native generation. Rebuilding archives is not reproducible from a Windows host; see
+// docs/fork/phase-04-cronet-apple-platform.md for the matrix.
+replace github.com/sagernet/cronet-go => github.com/Piggy-Cat-bit-shadow/cronet-go v0.0.1-143.0.7499.109-2.0.20261101181843-bd2b70516b92
 
-replace github.com/sagernet/cronet-go/all => github.com/Piggy-Cat-bit-shadow/cronet-go/all v0.0.0-20261027185739-c9c0e6ec8845
+replace github.com/sagernet/cronet-go/all => github.com/Piggy-Cat-bit-shadow/cronet-go/all v0.0.0-20261101181843-bd2b70516b92
 
 replace github.com/sagernet/cronet-go/lib/android_386 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/android_386 v0.0.0-20260929202119-8c68ce89873c
 
