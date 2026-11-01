@@ -2,16 +2,17 @@
 
 | field | value |
 |---|---|
-| Stage | 01A/01B, 02A/02B, **03A** complete |
+| Stage | 01A/01B, 02A/02B, 03A, **04A** complete |
 | Date | 2026-11-02 |
 | Branch | `testing` (default branch; repository has no `main`) |
 | Phase 01 | Mieru SDK `v3.39.0`: `fac646ca`, 01B coverage `bc349d83`; see `phase-01.md` |
 | Phase 02 code | `f13f46e43dcd09dea17dcdfe3bcc08ac31aba949` — cronet pin bump; dependency commit `bd2b70516b92` |
 | Phase 02 docs | `e78720d3` (02A map) + the 02B review commit |
 | Phase 03 | audit-only; no code change. Candidate verdicts in `phase-03.md` and ledger S-rows |
+| Phase 04 code | `96bd665d106222d43e4339011286e833bf432060` — stream-up upload refusal |
 | CI on `f15d4473` | Verify, Android Core ARM64, Mobile contract, Release contract: success |
 | Handoff docs | `git log -1 -- docs/audits/protocol-upstream-sync/` (this directory) |
-| Next | **04 — XHTTP correctness** |
+| Next | **05 — XHTTP data path / XMUX performance** |
 
 ## Completed
 
@@ -68,6 +69,22 @@
 - **No production code change was made**: every candidate is either covered or a deliberate,
   documented divergence; forcing a patch would have changed reference behaviour without evidence.
 
+### Phase 04 (XHTTP correctness)
+
+- Fixed the concrete gap: `dialStreamUp` ignored a non-200 upload response, so a refused stream-up
+  parked the dial until its context (red test measured 3.00 s) and left writes without an error.
+- The fix closes the refusal body without draining, breaks the upload pipe with the status, cancels
+  the conn context so the pending download ends, and fails a not-yet-returned dial immediately.
+  A 200 body is still drained as before.
+- Added `stream_up_refusal_test.go`: failed dial on upload 400 (body closed, XMUX usage 0, download
+  aborted), post-raise write/read both see the refusal, and the pipe-level write error.
+- Audited the other client-side candidates: `dffc7ada5` `GetBody` already present; `eef6e63bc`
+  `WaitReadCloser` has no local equivalent; `77f98eba0` state is atomically guarded; the trailing
+  slash rule is already conditional; `h2Params` is server-only and `OPTIONS` is not rejected by
+  the client method path.
+- Verified: package suite `ok 17.823s`, `-race` `ok 19.043s`, `go vet` clean; no local Xray
+  server binary was used (fake RoundTripper contract tests only).
+
 ## Not completed / deferred (with owner phase)
 
 | Item | Why deferred | Owner |
@@ -76,8 +93,7 @@
 | Apple/Windows native runtime for the new resolution path | no device / Apple build on this host | CI/device pass |
 | Mieru server `tcp_idle_timeout` config surface | new opt-in feature (option/schema/docs/tests) | 06 |
 | Mieru post-release UDP-associate fixes | not in `v3.39.0`; own UoT codec | 06 |
-| XHTTP `dialStreamUp` non-200 upload status | real candidate, needs design + test (X-04) | 04 |
-| XHTTP xhttp-box tree diff | independent oracle not diffed yet | 04/05 |
+| XHTTP xhttp-box tree diff | independent oracle not diffed yet | 05 |
 | Naive H3 long-idle tunnel / QUIC `MaxIdleTimeout` | left to quic-go default; no offline evidence either way | 06 |
 | Hysteria2/TUIC/AnyTLS/VLESS/SS/Snell patch-id checks | candidate rows only | 06 |
 | MASQUE upstream `dev` shared-layer diff | upstream not stable; premise corrected | 06 |
@@ -104,9 +120,10 @@
 
 ## Next-phase inputs
 
-1. `UPSTREAM_LEDGER.md` §2 (X-01…X-08); X-04 (`dialStreamUp` non-200 upload status) is the first
-   phase-04 item.
-2. `transport/v2rayxhttp/{conn.go,client.go,meta.go}` and the packet-up/XMUX tests; read
-   `KNOWLEDGE/modules/xhttp-client-transport.md` first.
-3. Phase 04 must not re-open the Naive server table (ledger S-rows) or the client resolution port
-   (`bd2b705`) without new upstream evidence.
+1. `UPSTREAM_LEDGER.md` §2 (X-04 is closed; X-05/X-06 remain) and `phase-04.md` §4.
+2. `transport/v2rayxhttp/{conn.go,client.go,meta.go}` packet-up/XMUX paths; read
+   `KNOWLEDGE/modules/xhttp-client-transport.md` §12–14 first.
+3. Phase 05 must not re-open the stream-up refusal path (X-04), the Naive server table (S-rows) or
+   the client resolution port (`bd2b705`) without new upstream evidence.
+4. `xhttp-box` (`2e7e53d`) is the comparison oracle for the packet-up/XMUX diff; do not import its
+   group/log code.
