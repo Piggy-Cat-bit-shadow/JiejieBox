@@ -373,7 +373,7 @@ jobs:
         # The socket-level MPTCP assertion is Linux-only: the Windows host checks
         # cannot run it and the compile-only gate does not execute tests. Run it on
         # the same Ubuntu runner that builds the server profile.
-        run: go test -v -count=1 ./common/listener/
+        run: go test -v -count=1 ./common/listener/ ./common/netx/
 
       - name: build matrix
         # A signature change upstream is a build failure here rather than a silent behaviour change

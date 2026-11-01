@@ -1,13 +1,13 @@
 package box
 
 import (
-	"net"
 	"net/http"
 	"net/http/pprof"
 	"runtime"
 	"runtime/debug"
 	"strings"
 
+	"github.com/sagernet/sing-box/common/netx"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/byteformats"
@@ -64,7 +64,7 @@ func startDebugHTTPServer(options option.DebugOptions) (*http.Server, error) {
 		Addr:    options.Listen,
 		Handler: r,
 	}
-	listener, err := net.Listen(M.NetworkFromNetAddr(N.NetworkTCP, M.ParseSocksaddr(options.Listen).Addr), options.Listen)
+	listener, err := netx.ListenTCP(M.NetworkFromNetAddr(N.NetworkTCP, M.ParseSocksaddr(options.Listen).Addr), options.Listen)
 	if err != nil {
 		return nil, E.Cause(err, "listen debug HTTP server")
 	}

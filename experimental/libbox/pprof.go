@@ -1,10 +1,11 @@
 package libbox
 
 import (
-	"net"
 	"net/http"
 	_ "net/http/pprof"
 	"strconv"
+
+	"github.com/sagernet/sing-box/common/netx"
 )
 
 type PProfServer struct {
@@ -20,7 +21,7 @@ func NewPProfServer(port int) *PProfServer {
 }
 
 func (s *PProfServer) Start() error {
-	ln, err := net.Listen("tcp", s.server.Addr)
+	ln, err := netx.ListenTCP("tcp", s.server.Addr)
 	if err != nil {
 		return err
 	}

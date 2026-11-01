@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/netx"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/daemon"
 	"github.com/sagernet/sing-box/experimental/libbox"
@@ -102,7 +103,7 @@ func newDaemon() (*Daemon, error) {
 func (d *Daemon) listen() (net.Listener, error) {
 	if listenAddress != "" {
 		d.logger.Warn("listening on TCP address ", listenAddress, ": development only, no access control")
-		return net.Listen("tcp", listenAddress)
+		return netx.ListenTCP("tcp", listenAddress)
 	}
 	return listenEndpoint()
 }

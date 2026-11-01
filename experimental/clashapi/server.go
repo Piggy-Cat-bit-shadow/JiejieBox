@@ -14,6 +14,7 @@ import (
 
 	"github.com/sagernet/cors"
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/netx"
 	"github.com/sagernet/sing-box/common/trafficcontrol"
 	"github.com/sagernet/sing-box/common/urltest"
 	C "github.com/sagernet/sing-box/constant"
@@ -159,7 +160,7 @@ func (s *Server) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 			err      error
 		)
 		for range 3 {
-			listener, err = net.Listen(M.NetworkFromNetAddr(N.NetworkTCP, M.ParseSocksaddr(s.httpServer.Addr).Addr), s.httpServer.Addr)
+			listener, err = netx.ListenTCP(M.NetworkFromNetAddr(N.NetworkTCP, M.ParseSocksaddr(s.httpServer.Addr).Addr), s.httpServer.Addr)
 			if runtime.GOOS == "android" && errors.Is(err, syscall.EADDRINUSE) {
 				time.Sleep(100 * time.Millisecond)
 				continue
