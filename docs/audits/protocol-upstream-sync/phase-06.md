@@ -143,4 +143,4 @@ The central inbound path is covered.
 | `go test ./common/listener/` (Windows) | `ok 2.070s` |
 | `GOOS=linux GOARCH=amd64 go test -c ./common/listener/` | compiled |
 | `GOOS=linux go vet ./common/listener/` | exit 0 |
-| Linux runtime test | in CI (local host has no Linux runtime) |
+| Linux runtime test | PASS on the Ubuntu runner (`TestListenTCPMultiPathIsOptIn --- PASS`; kernel MPTCP available, assertion not skipped) |

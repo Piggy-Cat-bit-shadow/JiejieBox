@@ -5,7 +5,7 @@
 | Cycle | 01A/01B, 02A/02B, 03A/03B, 04A/04B, 05A, 06A/06B |
 | Branch | `testing` (default; repository has no `main`) |
 | Date | 2026-11-02 |
-| Head at report time | `b218345e` (cycle head; the MPTCP listener hardening is the last code commit; `STATE status=completed`) |
+| Head at report time | `10d61856` (cycle head; MPTCP hardening `b218345e`, CI gate `2195ddc7`/`10d61856`; `STATE status=completed`) |
 | Status | **completed** — residuals listed in §4, no release/deploy |
 
 ## 1. What was absorbed
@@ -25,7 +25,7 @@
 | 06A | `7f322a90` | `sing-vmess` -> `a0c58542` ("Fix vision close after direct write"); Vision ABI tripwire re-audited and deliberately updated | VLESS/Vision tests; `go mod tidy`; release freeze PASS |
 | 06A docs | phase-06 commit | convergence report; no release/deploy | this report |
 | 06B | `6d4164f8` + final docs | hostile review of the 06 delta only; no new defect; cycle closed | Vision tripwires; `go mod verify`; cross-phase Naive/XHTTP `-race`; CI |
-| 06C | `b218345e` | **security**: MPTCP disabled by default on every listener using `common/listener`; `tcp_multi_path: true` remains the explicit opt-in | Linux `getsockopt` test; Windows package test; cross-compile/vet; CI |
+| 06C | `b218345e` (+ `2195ddc7`, `10d61856` CI) | **security**: MPTCP disabled by default on every listener using `common/listener`; `tcp_multi_path: true` remains the explicit opt-in | Ubuntu runner `TestListenTCPMultiPathIsOptIn --- PASS` (not skipped); Windows package test; cross-compile/vet |
 
 ## 2. Accepted / rejected decisions
 
@@ -72,8 +72,9 @@ Rejected / no change (with evidence):
 * `go mod verify` passes in both modules; `release-freeze.py verify` PASS (`0.1.36`).
 * Cross-phase `-race` on the two previous protocol surfaces still passes with the new dependency
   graph: Naive `ok 1.951s`, XHTTP `ok 19.060s` (`with_quic`).
-* 06C: `go test ./common/listener/` (Windows) `ok`; Linux test cross-compiles and `go vet` passes;
-  the Linux runtime assertion runs in CI.
+* 06C: `go test ./common/listener/` (Windows) `ok`; Linux cross-compiles and `go vet` passes; the
+  Ubuntu runner executes `TestListenTCPMultiPathIsOptIn` and records `--- PASS` (the kernel supports
+  MPTCP, so the assertion ran rather than skipped).
 * Git: branch `testing`, HEAD == remote, clean tree, no tag at HEAD, no gitlink change.
 
 ## 4. Known residual risks

@@ -12,7 +12,7 @@
 | Phase 03 code | `e8ec5c67` — H2/H3 CONNECT pseudo-header rejection now answers 400 (03B) |
 | Phase 04 code | `96bd665d` stream-up refusal; `b5c12db3` refusal precedence; `669fa275` status-matrix tests |
 | Phase 05 | audit-only; bounded-async pipeline rejected on evidence (`phase-05.md`, ledger X-09) |
-| Phase 06 code | `7f322a90` — `sing-vmess` `a0c58542` for the Vision close fix; ABI tripwire re-audited. `b218345e` — MPTCP disabled by default on `common/listener` (security) |
+| Phase 06 code | `7f322a90` — `sing-vmess` `a0c58542` for the Vision close fix; ABI tripwire re-audited. `b218345e` — MPTCP disabled by default on `common/listener` (security); CI gate `2195ddc7`/`10d61856` |
 | Phase 06 docs | `6d4164f8` + the final docs commit; `FINAL_INTEGRATION_REPORT.md` |
 | CI on `f15d4473` | Verify, Android Core ARM64, Mobile contract, Release contract: success |
 | Handoff docs | `git log -1 -- docs/audits/protocol-upstream-sync/` (this directory) |
@@ -147,8 +147,9 @@
   kernel's MPTCP listener is remotely exploitable and Go 1.24+ enables MPTCP on listeners by
   default. `common/listener` now calls `SetMultipathTCP(false)` unless `tcp_multi_path: true`.
   Linux test asserts plain-TCP default and explicit opt-in (skips without kernel MPTCP); Windows
-  package test, Linux cross-compile and `go vet` pass. Direct `net.Listen` endpoints remain a
-  residual owner audit.
+  package test, Linux cross-compile and `go vet` pass. On the Ubuntu runner
+  `TestListenTCPMultiPathIsOptIn` recorded **PASS** (not skipped). Direct `net.Listen` endpoints
+  remain a residual owner audit.
 
 ## Not completed / deferred (with owner phase)
 
