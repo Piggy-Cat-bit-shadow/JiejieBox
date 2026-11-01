@@ -188,11 +188,9 @@ already covers an explicit close, and `TestOutboundLifecycle` already covers dou
 
 `verify.yml`'s "race on the fork's own data paths" step runs
 `go test -race -count=1 -tags "$(cat release/DEFAULT_BUILD_TAGS)" ./protocol/mieru/...` (line 486);
-the 01A regression test ran there on `c231dd51`, so CI has already executed the v3.39.0 contract
-test rather than only compiling it. The 01B test files carry no build tag and the step has no
-`-short`, so the same gate runs them on the 01B head; this handoff records their local result
-(§5) and does not claim a CI result that has not happened at commit time. `SKIP` was never reported
-as `PASS`.
+the 01A regression test ran there on `c231dd51`. On the 01B head `1caf6d5b` the same gate ran the
+two new tests and passed, together with `Android Core ARM64` and `Mobile contract verification`.
+`SKIP` was never reported as `PASS`.
 
 ### 7.6 Conclusion
 

@@ -10,6 +10,7 @@
 | 01B commit | `bc349d83b2b8fdbd9ebb16b9bc3c5c7437effbdd` — empty-datagram and idle-underlay attack tests |
 | Handoff docs | `git log -1 -- docs/audits/protocol-upstream-sync/` (this directory) |
 | CI on `c231dd51` | Verify: success; Android Core ARM64: success; Mobile contract: success on rerun (attempt 1 failed an unrelated timing assertion) |
+| CI on 01B head `1caf6d5b` | Verify: success (including the tagged `-race` step over `./protocol/mieru/...`); Android Core ARM64: success; Mobile contract: success |
 | Next | **02 — Naive client / Cronet** |
 
 ## Completed
