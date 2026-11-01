@@ -5,7 +5,7 @@
 | Cycle | 01A/01B, 02A/02B, 03A/03B, 04A/04B, 05A, 06A/06B |
 | Branch | `testing` (default; repository has no `main`) |
 | Date | 2026-11-02 |
-| Head at report time | `7211ad71` (cycle head, including the 05B review; `STATE status=completed`) |
+| Head at report time | `b218345e` (cycle head; the MPTCP listener hardening is the last code commit; `STATE status=completed`) |
 | Status | **completed** — residuals listed in §4, no release/deploy |
 
 ## 1. What was absorbed
@@ -25,6 +25,7 @@
 | 06A | `7f322a90` | `sing-vmess` -> `a0c58542` ("Fix vision close after direct write"); Vision ABI tripwire re-audited and deliberately updated | VLESS/Vision tests; `go mod tidy`; release freeze PASS |
 | 06A docs | phase-06 commit | convergence report; no release/deploy | this report |
 | 06B | `6d4164f8` + final docs | hostile review of the 06 delta only; no new defect; cycle closed | Vision tripwires; `go mod verify`; cross-phase Naive/XHTTP `-race`; CI |
+| 06C | `b218345e` | **security**: MPTCP disabled by default on every listener using `common/listener`; `tcp_multi_path: true` remains the explicit opt-in | Linux `getsockopt` test; Windows package test; cross-compile/vet; CI |
 
 ## 2. Accepted / rejected decisions
 
@@ -63,7 +64,7 @@ Rejected / no change (with evidence):
   `STATE.md`/`phase-06.md`. The one unrelated route flake on a docs-only head was rerun and passed;
   it is recorded rather than hidden.
 
-### 3.1 Final 05B / 06B checks
+### 3.1 Final 05B / 06B / 06C checks
 
 * 05B: the packet-up/XMUX attack matrix maps to existing tests; targeted `-race` run
   (`TestPacketUp|TestSplitConn|TestXmux|TestBreaker`) `ok 11.158s`; no code defect.
@@ -71,16 +72,19 @@ Rejected / no change (with evidence):
 * `go mod verify` passes in both modules; `release-freeze.py verify` PASS (`0.1.36`).
 * Cross-phase `-race` on the two previous protocol surfaces still passes with the new dependency
   graph: Naive `ok 1.951s`, XHTTP `ok 19.060s` (`with_quic`).
+* 06C: `go test ./common/listener/` (Windows) `ok`; Linux test cross-compiles and `go vet` passes;
+  the Linux runtime assertion runs in CI.
 * Git: branch `testing`, HEAD == remote, clean tree, no tag at HEAD, no gitlink change.
-* CI on `6d4164f8`: Verify, Android Core ARM64 and Mobile contract all success.
 
 ## 4. Known residual risks
 
-1. **MPTCP listener default (new finding)**: Go 1.25.5 enables MPTCP for Linux listeners by default
-   (`defaultMPTCPEnabledListen = true`), while dialers default off. Xray v26.10.31 disabled MPTCP as
-   an urgent security default. JiejieBox does not call `SetMultipathTCP(false)` on its listeners.
-   This is not a VLESS wire bug and was not patched across every listener in this cycle; it is
-   recorded for the listener owner as a deployment risk.
+1. **MPTCP listener default — fixed for managed listeners (`b218345e`).** Go 1.25.5 enables MPTCP
+   for Linux listeners by default; Xray v26.10.31 disabled it as an urgent security default because
+   a vulnerable kernel's MPTCP listener is remotely exploitable. `common/listener` now calls
+   `SetMultipathTCP(false)` when `tcp_multi_path` is unset, while `tcp_multi_path: true` remains the
+   explicit opt-in. Not every direct `net.Listen` endpoint (debug/pprof, Clash API, libbox command,
+   v2ray API, proxy bridge, boxdd) goes through that helper yet; most are loopback-only and are left
+   to their owners if exposed.
 2. **Native Naive gap**: Chromium `154.0.8037.49` predates the official `-3/-4/-5` fixes; the eMudhra
    blocklist entry is proven absent. Rebuilding the controlled archives is required.
 3. **No device/WAN/interop evidence**: all evidence is unit, loopback, race, fuzz, build and CI.

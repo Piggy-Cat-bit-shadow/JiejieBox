@@ -188,7 +188,7 @@ This section supersedes the `DEFERRED` markers in §4–6; the earlier rows rema
 | T-02 | `NO CHANGE` | upstream TUIC repository dormant; spec unchanged |
 | A-01 | `ALREADY_COVERED` | `sing-anytls` pin `580984e4` equals remote HEAD |
 | A-02 | `NO CHANGE` | both sides import the same `sing-anytls` library; local adapter adds only timeouts/logging |
-| V-01 | `NO CHANGE` (risk recorded) | Go 1.25.5 `defaultMPTCPEnabledListen = true` on Linux, dialer default false; JiejieBox does not disable it on listeners. Xray's change is a socket-layer default, not a VLESS wire fix |
+| V-01 | `MERGED` (security) | Xray v26.10.31 confirms a vulnerable Linux kernel's MPTCP listener is remotely exploitable and Go 1.24+ enables it on listeners by default. `common/listener` now sets `SetMultipathTCP(false)` unless `tcp_multi_path: true`; commit `b218345e`, Linux getsockopt test. Direct `net.Listen` endpoints remain a residual owner audit |
 | V-02 | `MERGED` | `sing-vmess` `a0c58542`; commit `7f322a90`; Vision ABI tripwires re-audited and updated |
 | S-01 | `NO CHANGE` | Rust SIP003 fd/idle fix has no Go counterpart gap; local copy/MTU tests cover the path |
 | S-02 | `ALREADY_COVERED` | `07130365` and `52f9bad0` are ancestors of `HEAD` |

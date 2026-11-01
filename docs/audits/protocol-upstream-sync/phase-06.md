@@ -105,7 +105,42 @@ No other protocol was re-audited.
 | Git state | branch `testing`, HEAD == remote, clean tree, no tags at HEAD, no gitlink change |
 | CI on `6d4164f8` | Verify, Android Core ARM64, Mobile contract: **success** |
 
-No new defect was found in the 06 change; no further code change was made. The cycle is closed in
-`STATE.md` (`status=completed`). Residuals (native Naive `-3/-4/-5`, real interop, Apple runtime,
-MPTCP listener policy, MASQUE dev-only, Mieru post-release work) remain as recorded and are not
-defects introduced by this cycle.
+No new defect was found in the 06 change; no further code change was needed for 06B. The cycle is
+closed in `STATE.md` (`status=completed`). Residuals (native Naive `-3/-4/-5`, real interop, Apple
+runtime, direct `net.Listen` endpoints, MASQUE dev-only, Mieru post-release work) remain as recorded
+and are not defects introduced by this cycle.
+
+## 8. Post-close security hardening: MPTCP listeners
+
+The 06A table left `V-01` as `NO CHANGE` with a recorded risk because it was treated as a
+listener-owner policy. The upstream evidence is stronger than that: Xray v26.10.31 is an **urgent
+security release** whose body says a vulnerable Linux kernel's MPTCP listener is remotely
+exploitable for root, that Go 1.24+ enables MPTCP on listeners by default, and that Android
+Socks/HTTP inbounds with LAN access are also exposed.
+
+Source check: `common/listener/listener_tcp.go` only called `SetMultipathTCP(true)` when
+`tcp_multi_path` was set; with the option unset it left Go's Linux default (MPTCP on). That is the
+vulnerable shape on every inbound using `common/listener`, including the client-local Socks/HTTP
+inbounds.
+
+Fix `b218345e`:
+
+* `tcp_multi_path: true` still calls `SetMultipathTCP(true)` (explicit opt-in);
+* otherwise the listener now calls `SetMultipathTCP(false)`, overriding Go's default and
+  `GODEBUG=multipathtcp=...` for that listener;
+* the Linux test checks the default listener is plain TCP via
+  `getsockopt(SOL_MPTCP, MPTCP_INFO)` and that the explicit option still creates MPTCP, skipping if
+  the kernel lacks MPTCP support.
+
+Residual: not every socket in the tree goes through `ListenTCPWithOptions`. The debug/pprof HTTP
+server, Clash API, libbox command/pprof servers, v2ray API, proxy bridge and boxdd still call
+`net.Listen` directly; most are loopback-only, but they should be audited by their owners if exposed.
+The central inbound path is covered.
+
+| Command | Result |
+|---|---|
+| `go build ./common/listener/` | exit 0 |
+| `go test ./common/listener/` (Windows) | `ok 2.070s` |
+| `GOOS=linux GOARCH=amd64 go test -c ./common/listener/` | compiled |
+| `GOOS=linux go vet ./common/listener/` | exit 0 |
+| Linux runtime test | in CI (local host has no Linux runtime) |

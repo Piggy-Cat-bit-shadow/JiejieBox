@@ -3,7 +3,7 @@
 | field | value |
 |---|---|
 | Status | **completed** (cycle closed; residuals below) |
-| Stage | 01A/01B, 02A/02B, 03A/03B, 04A/04B, 05A/05B, 06A/06B complete |
+| Stage | 01A/01B, 02A/02B, 03A/03B, 04A/04B, 05A/05B, 06A/06B + security hardening complete |
 | Date | 2026-11-02 |
 | Branch | `testing` (default branch; repository has no `main`) |
 | Phase 01 | Mieru SDK `v3.39.0`: `fac646ca`, 01B coverage `bc349d83`; see `phase-01.md` |
@@ -12,7 +12,7 @@
 | Phase 03 code | `e8ec5c67` — H2/H3 CONNECT pseudo-header rejection now answers 400 (03B) |
 | Phase 04 code | `96bd665d` stream-up refusal; `b5c12db3` refusal precedence; `669fa275` status-matrix tests |
 | Phase 05 | audit-only; bounded-async pipeline rejected on evidence (`phase-05.md`, ledger X-09) |
-| Phase 06 code | `7f322a90` — `sing-vmess` `a0c58542` for the Vision close fix; ABI tripwire re-audited |
+| Phase 06 code | `7f322a90` — `sing-vmess` `a0c58542` for the Vision close fix; ABI tripwire re-audited. `b218345e` — MPTCP disabled by default on `common/listener` (security) |
 | Phase 06 docs | `6d4164f8` + the final docs commit; `FINAL_INTEGRATION_REPORT.md` |
 | CI on `f15d4473` | Verify, Android Core ARM64, Mobile contract, Release contract: success |
 | Handoff docs | `git log -1 -- docs/audits/protocol-upstream-sync/` (this directory) |
@@ -143,6 +143,12 @@
   in both modules, release-freeze, and cross-phase Naive/XHTTP `-race`; git state clean, HEAD ==
   remote, no tag, no gitlink change. CI on `6d4164f8` green (Verify, Android, Mobile). No new defect;
   no further code change. Cycle closed as `completed`.
+- **Post-close security hardening (`b218345e`)**: Xray v26.10.31 confirms a vulnerable Linux
+  kernel's MPTCP listener is remotely exploitable and Go 1.24+ enables MPTCP on listeners by
+  default. `common/listener` now calls `SetMultipathTCP(false)` unless `tcp_multi_path: true`.
+  Linux test asserts plain-TCP default and explicit opt-in (skips without kernel MPTCP); Windows
+  package test, Linux cross-compile and `go vet` pass. Direct `net.Listen` endpoints remain a
+  residual owner audit.
 
 ## Not completed / deferred (with owner phase)
 
@@ -150,7 +156,7 @@
 |---|---|---|
 | Naive native `-3`/`-4`/`-5` (sleep/resume, QUIC window/cleanup, eMudhra block) | requires rebuilding the controlled Chromium archives; no toolchain here | later native pass |
 | Apple/Windows native runtime for the new resolution path | no device / Apple build on this host | CI/device pass |
-| MPTCP listener default on Linux (Go 1.25.5 enables it; Xray disables it) | socket-layer policy affecting every listener, not a VLESS wire change; needs an owner decision | listener owner |
+| Direct `net.Listen` endpoints (debug/pprof, Clash API, libbox command, v2ray API, proxy bridge, boxdd) | not routed through `common/listener`; most are loopback-only, owners should disable MPTCP if exposed | listener owners |
 | Mieru server `tcp_idle_timeout` config surface | new opt-in feature (option/schema/docs/tests) | post-cycle |
 | Mieru post-release UDP-associate fixes | not in `v3.39.0`; own UoT codec | post-cycle |
 | XHTTP xhttp-box tree diff | independent oracle; not needed for the serial-vs-pipeline decision | optional |
