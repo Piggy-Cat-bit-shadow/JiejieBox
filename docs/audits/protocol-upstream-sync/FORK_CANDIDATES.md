@@ -13,9 +13,9 @@ an import list — nothing here is approved for a mechanical cherry-pick.
 | `flyzstu/xhttp-box` | `2e7e53d49333999767f1343aa76e5f4b2cc3217a` (2026-10-31) | replanted onto sing-box v1.14.4 (`597f5303`, 2026-10-30) | GPL-3.0 | independent `transport/v2rayxhttp`, weighted group, log rotation | second XHTTP oracle; compare trees, not history |
 | `ushan0v/sing-box-forkop` | `d8b41b1d4073555ac2e59df6b553f970d31c7220` (2026-10-31) | sing-box `testing` + group/subscription work | GPL-3.0 | `protocol/mieru` adapter pinned to `mieru v3.33.0`; no fallback/generation lifecycle | read-only comparison; no patch to reuse |
 | `uskg8/sing-box-extended` | `ff27faa0b756b6a646e5e98057296a3137b8c75f` (2025-10-12) | stale ≈12.7 months | GPL-3.0 | none (no `protocol/mieru`; pre-dates the current forks) | **not a candidate** |
-| `Piggy-Cat-bit-shadow/cronet-go` (this project's fork) | `c9c0e6ec884588e72c7970341e2de65b0c307e59` (2026-10-28) | Chromium 143 base + JiejieBox Naive patches; four Go modules + controlled native archives | GPL-3.0 (SagerNet wrapper; Chromium parts keep their own notices) | the actual Naive client engine; upstream `SagerNet/cronet-go` fixes `f2dd023`/`172bb4e`/`049f290` are ancestors | **must not be "upgraded" by version number** |
-| `SagerNet/cronet-go` (upstream) | latest tag `v150.0.7871.63-3` = `049f2909701ca088c9569f6b303bba5376a2b2ff` (2026-09-12) | upstream of the fork | GPL-3.0 | the three Sept lifecycle fixes are already in the fork | no newer upstream commit since 2026-09-12 |
-| `klzgrad/naiveproxy` | `6acbded5dc48d0c5abcb08364c6bcdbf451329b1` (2026-11-01, docs) | Chromium client patches; 154 series | BSD-3-Clause | QUIC window/heartbeat, tunnel cleanup, cert block list | phase 02 source comparison only |
+| `Piggy-Cat-bit-shadow/cronet-go` (this project's fork) | `bd2b70516b927e788b2dab91c17984d3d3a2d052` (2026-11-01) | Chromium `154.0.8037.49` submodule `97ae698` + JiejieBox Naive patches; four Go modules + controlled native archives | GPL-3.0 (SagerNet wrapper; Chromium parts keep their own notices) | the actual Naive client engine; now also carries the port of upstream `fa319c4` (dialer-side server resolution) | **must not be "upgraded" by version number** |
+| `SagerNet/cronet-go` (upstream) | `dev` head `fa319c4f3b554bd7c647c6e0f18a7195ac1497a6` (2026-10-23); latest tag `v150.0.7871.63-3` = `049f290970…` (2026-09-12) | upstream of the fork | GPL-3.0 | the Sept lifecycle fixes are ancestors of the fork; `fa319c4` was ported | main tag line is older than the fork's Chromium base |
+| `klzgrad/naiveproxy` | `6acbded5dc48d0c5abcb08364c6bcdbf451329b1` (2026-11-01, docs) | Chromium client patches; 154 series | BSD-3-Clause | QUIC window/heartbeat, tunnel cleanup, cert block list | phase 02 source comparison; the fork's submodule is pre `-3`/`-4`/`-5` |
 | `klzgrad/forwardproxy` | `e747854e78743dba85c039b38ed185fb11d93667` (2026-10-22) | Caddy plugin | Apache-2.0 | authenticated-CONNECT idle semantic (`e747854`), sing-quic BBRv1 (`c096d6a`) | phase 03 semantic reference |
 | `XTLS/Xray-core` | `a4a3dff5b20c2faae567b742c172c7b95e75c083` (2026-10-31, `v26.10.31`) | protocol authority | MPL-2.0 | XHTTP `h2Params`/`OPTIONS`/`WaitReadCloser`; VLESS/REALITY; MASQUE client | protocol semantics, not a code base to merge |
 | `HyNetworks/hysteria` | `fb25dc852ebbc70658e67889f411887a82b7c281` (2026-10-27); stable `app/v2.13.0` | reference implementation (Rust) | MIT (`UNVERIFIED` this run) | sniffing/port-hopping/ECH semantics | wire reference only |
@@ -65,8 +65,11 @@ an import list — nothing here is approved for a mechanical cherry-pick.
   native archive SHA `8c68ce89873c` and `release/dependencies.json` marks `cronet_native` as
   `controlled` (29 modules). Moving the Go module without rebuilding and re-verifying the archive
   would ship new bindings against old binaries — explicitly forbidden.
-* The upstream September fixes are already ancestors of the fork head; the next phase must compare
-  **source pins and patch content**, not Chromium version numbers.
+* The Sept fixes are ancestors; the fork now also carries a port of upstream `fa319c4`, and the
+  native submodule (`97ae698`, Chromium `154.0.8037.49`) predates the official `-3`/`-4`/`-5`
+  tags. Compare **source pins, submodule and patch content**, not Chromium version numbers.
+* Do not add a Go-level certificate-name block to imitate upstream `-5`; the verification happens in
+  the native chain.
 
 ## 3. Licensing rules for reuse
 
