@@ -89,19 +89,35 @@ func (b *adoptedBody) Read(p []byte) (int, error) {
 // tells which), an upload-side failure is reported, or the dial context ends.
 // A raise that lands together with the cancel still wins: the conn is usable,
 // and failing it would only make the caller redial the same node.
-func awaitRaise(ctx context.Context, adopted, created <-chan struct{}, uploadFailed <-chan error, raiseErr func() error) error {
+func awaitRaise(ctx context.Context, adopted, created <-chan struct{}, uploadFailed, uploadRefused <-chan error, raiseErr func() error) error {
 	select {
 	case <-adopted:
 		return nil
 	case <-created:
+		// A refused upload can close `created` through the cancellation it
+		// causes. The refusal is the specific verdict and must win that tie;
+		// an ordinary upload transport error caused by the same cancellation
+		// must not, which is why only refusals have their own channel.
+		select {
+		case err := <-uploadRefused:
+			return err
+		default:
+		}
 		return raiseErr()
 	case err := <-uploadFailed:
+		return err
+	case err := <-uploadRefused:
 		return err
 	case <-ctx.Done():
 		select {
 		case <-adopted:
 			return nil
 		case <-created:
+			select {
+			case err := <-uploadRefused:
+				return err
+			default:
+			}
 			return raiseErr()
 		default:
 			return ctx.Err()
@@ -169,7 +185,7 @@ func (c *Client) dialStreamOne(ctx context.Context, sessionID string, xmuxClient
 		conn.setupReader(response.Body, nil)
 	}()
 	// lx: SPEC 077 — the conn leaves the dial raised or not at all.
-	if err := awaitRaise(ctx, body.adopted, conn.created, nil, func() error { return conn.readerErr }); err != nil {
+	if err := awaitRaise(ctx, body.adopted, conn.created, nil, nil, func() error { return conn.readerErr }); err != nil {
 		abortRaise(pipeReader, connCancel, release, err)
 		return nil, err
 	}
@@ -221,6 +237,10 @@ func (c *Client) dialStreamUp(ctx context.Context, sessionID string, xmuxClient 
 	// report to (the pipe is broken by uploadFailed, but nobody holds the conn
 	// yet), so the dial listens for it directly.
 	uploadFailed := make(chan error, 1)
+	// uploadRefused is separate from uploadFailed on purpose: a refusal is a
+	// server verdict and must outrank the cancellation it causes, while an
+	// upload transport error caused by that same cancellation must not.
+	uploadRefused := make(chan error, 1)
 	// The upload response is the server's verdict on the stream-up POST. A
 	// non-200 means the server refused the stream: the download GET may still be
 	// pending, so waiting for it would park the dial until the caller's context
@@ -243,6 +263,11 @@ func (c *Client) dialStreamUp(ctx context.Context, sessionID string, xmuxClient 
 			}
 			statusErr := E.New("v2ray-xhttp: unexpected upload status: ", upResp.Status)
 			conn.uploadFailed(statusErr)
+			// Queue the refusal BEFORE cancelling: cancelling makes the download
+			// goroutine fail and close `created`, and awaitRaise checks this
+			// channel first so the dial reports the server's refusal rather
+			// than the cancellation it caused.
+			uploadRefused <- statusErr
 			// The stream is refused by the server, so its download half cannot
 			// become usable either. Cancel the conn-scoped context so a pending
 			// download RoundTrip ends and a reader blocked on an already-bound
@@ -250,7 +275,6 @@ func (c *Client) dialStreamUp(ctx context.Context, sessionID string, xmuxClient 
 			if conn.cancel != nil {
 				conn.cancel()
 			}
-			uploadFailed <- statusErr
 			return
 		}
 		if upResp.Body != nil {
@@ -259,7 +283,9 @@ func (c *Client) dialStreamUp(ctx context.Context, sessionID string, xmuxClient 
 	}()
 	// lx: SPEC 077 — the raise this dial waits for is the UPLOAD body's
 	// adoption; the download GET is not awaited (SPEC 061).
-	if err := awaitRaise(ctx, body.adopted, conn.created, uploadFailed, func() error { return conn.readerErr }); err != nil {
+	// lx: SPEC 077 — the raise this dial waits for is the UPLOAD body's
+	// adoption; the download GET is not awaited (SPEC 061).
+	if err := awaitRaise(ctx, body.adopted, conn.created, uploadFailed, uploadRefused, func() error { return conn.readerErr }); err != nil {
 		abortRaise(pipeReader, connCancel, release, err)
 		return nil, err
 	}
