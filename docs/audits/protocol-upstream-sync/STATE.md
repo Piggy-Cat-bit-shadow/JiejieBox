@@ -9,7 +9,7 @@
 | Phase 02 code | `f13f46e43dcd09dea17dcdfe3bcc08ac31aba949` — cronet pin bump; dependency commit `bd2b70516b92` |
 | Phase 02 docs | `e78720d3` (02A map) + the 02B review commit |
 | Phase 03 | audit-only; no code change. Candidate verdicts in `phase-03.md` and ledger S-rows |
-| Phase 04 code | `96bd665d106222d43e4339011286e833bf432060` — stream-up upload refusal |
+| Phase 04 code | `96bd665d` stream-up refusal; `b5c12db3` refusal precedence |
 | CI on `f15d4473` | Verify, Android Core ARM64, Mobile contract, Release contract: success |
 | Handoff docs | `git log -1 -- docs/audits/protocol-upstream-sync/` (this directory) |
 | Next | **05 — XHTTP data path / XMUX performance** |
@@ -75,6 +75,10 @@
   parked the dial until its context (red test measured 3.00 s) and left writes without an error.
 - The fix closes the refusal body without draining, breaks the upload pipe with the status, cancels
   the conn context so the pending download ends, and fails a not-yet-returned dial immediately.
+  The refusal has a dedicated channel queued before the cancel; `awaitRaise` lets only that channel
+  win when the cancellation closes `created` at the same time. The first revision shared the
+  transport-error channel and could report `context canceled` instead of the status (caught by the
+  existing download-failure test); `b5c12db3` fixes the precedence.
   A 200 body is still drained as before.
 - Added `stream_up_refusal_test.go`: failed dial on upload 400 (body closed, XMUX usage 0, download
   aborted), post-raise write/read both see the refusal, and the pipe-level write error.

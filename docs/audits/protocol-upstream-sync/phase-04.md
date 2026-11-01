@@ -6,7 +6,7 @@
 | Date | 2026-11-02 |
 | Branch | `testing` (default; no `main`) |
 | Start base | `e684354f` (clean, synced) |
-| Code commit | `96bd665d106222d43e4339011286e833bf432060` — stream-up upload refusal |
+| Code commit | `96bd665d106222d43e4339011286e833bf432060` — stream-up upload refusal; `b5c12db3a8bd48cf6807dc880ab2b2ea6f561a26` — refusal precedence |
 | Next | `05` — XHTTP data path / XMUX performance |
 
 ## 1. The fix: a refused stream-up upload now fails the stream
@@ -24,7 +24,16 @@ The fix in `transport/v2rayxhttp/conn.go`:
    arrives after the conn was raised sees the server's verdict;
 3. cancels the conn-scoped context, which ends the pending download `RoundTrip` and stops a reader
    already bound to the download body;
-4. sends the status to the raise channel so a dial that has not returned fails immediately.
+4. sends the status to a **dedicated** refusal channel so a dial that has not returned fails with the
+   server's status.
+
+The dedicated channel matters: the first revision queued the refusal on the transport-error channel
+and then cancelled the context. Cancelling ends the download, the hung upload `RoundTrip` returns
+`context canceled`, and that cancellation could reach the dial first; the existing
+`TestStreamUpDialFailsOnDownloadError` also showed the shared channel masking a genuine download
+failure. `awaitRaise` now prefers only `uploadRefused` when `created` closes at the same time, so a
+refusal wins its own cancellation while an ordinary upload transport error never hides the download
+cause.
 
 A `200` body is still drained and closed as before; closing it early can reset the paired download
 stream before the first response byte is read.
@@ -62,8 +71,9 @@ The `packet-up` POST path was checked separately: it already rejects non-200 and
 |---|---|
 | new tests before the patch | `FAIL … DialContext still parked after the raise failed` (3.00 s) |
 | new tests after the patch | `PASS` (0.00–0.01 s) |
-| `go test ./transport/v2rayxhttp/ -count=1` | `ok … 17.823s` |
-| `go test -race ./transport/v2rayxhttp/ -count=1` | `ok … 19.043s` |
+| `go test ./transport/v2rayxhttp/ -run TestStreamUp -count=10` | `ok` (repeated for the tie-break race) |
+| `go test ./transport/v2rayxhttp/ -count=1` | `ok … 17.815s` |
+| `go test -race ./transport/v2rayxhttp/ -count=1` | `ok … 18.995s` |
 | `go vet ./transport/v2rayxhttp/` | exit 0 |
 
 No loopback Xray server binary was used; the fake `RoundTripper` exercises the same HTTP contract
