@@ -16,6 +16,7 @@
 | `BASELINE.md` | **ALWAYS**，在信任任何模块之前 | 模块描述的 SHA，以及此后的增量 |
 | `modules/README.md` | TASK_MATCH | 任务 → 模块映射、fork 术语表、覆盖缺口 |
 | `PROJECT.md` | TASK_MATCH | fork 是什么，刻意没有改动什么 |
+| `reports/core/JiejieBox_工程架构与改造最终评估报告_2026-11-01.md` | HISTORY_ONLY | 工程架构、协议协作、历史改造与证据边界的综合评估；对应报告所列的源码与时间，不替代当前源码 |
 | `ARCHITECTURE.md` | TASK_MATCH | 值得保留的十一个边界 |
 | `PERFORMANCE-FACTORS.md` | TASK_MATCH（速度） | 实测出来的速度关键参数与因素：三条第一原理、客户端/服务端参数表、症状路由、测量规则、已否决结论（无地址/凭据） |
 | `INVARIANTS.md` | **LOAD_BEARING_ONLY** | A1–A21 硬性不变量，以及它与约定的区别 |

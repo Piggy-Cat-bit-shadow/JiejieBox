@@ -1,8 +1,8 @@
 # JiejieBox
 
-**多协议代理内核，专注 IPv4 / IPv6 双栈选路、复杂网络恢复与移动端资源管理。**
+**围绕共享核心、跨协议协作和多平台交付持续演进的网络代理项目。**
 
-JiejieBox 基于 [sing-box](https://github.com/SagerNet/sing-box) 持续开发。在上游协议与路由能力之上，扩展 XHTTP、Mieru、VLESS 加密、DNS 分组和流量调度，并将双栈解析、候选拨号、代理链选路与网络切换协同设计。支持服务端部署，也为桌面端和移动端提供共享内核。
+JiejieBox 基于 [sing-box](https://github.com/SagerNet/sing-box) 及其依赖生态持续开发。在上游协议和路由能力的基础上，项目一方面扩展 XHTTP、Mieru、VLESS 加密等能力，另一方面改进 DNS、拨号、代理链、网络恢复和资源管理，让它们能在同一套内核中协调工作。它既可用于服务端，也为桌面端和移动端提供共享内核。
 
 [下载与更新日志](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) · [Android 客户端](https://github.com/Piggy-Cat-bit-shadow/satelite-one) · [配置文档](docs/configuration) · [反馈问题](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/issues)
 
@@ -10,7 +10,9 @@ JiejieBox 基于 [sing-box](https://github.com/SagerNet/sing-box) 持续开发�
 
 ## 这个项目具体做了什么
 
-JiejieBox 的改动覆盖一条网络流的完整处理过程：从 TUN / 入站收包、DNS 与 FakeIP、协议嗅探、规则匹配和代理组选路，到双栈拨号、加密与传输，再到网络切换后的恢复和资源释放。协议扩展、性能改进和生命周期修复共同维护，相关行为也延伸到配套客户端和底层依赖。
+JiejieBox 的改造贯穿网络流的多个阶段：TUN 和其他入站、DNS 与 FakeIP、协议嗅探、规则和代理组选路、双栈拨号与协议传输，以及网络切换后的恢复和资源释放。不同流量不一定经过所有阶段；关键是让各阶段对网络状态、资源所有权和错误来源有一致的理解。
+
+项目共享 DNS、拨号、路由和生命周期等公共能力，同时保留各协议自己的连接池与会话语义。例如，Mieru 的 SDK Runtime、XHTTP 的 XMUX 和 MASQUE 的连接状态各有边界，不会为了统一而强行合并。架构演变、历史实验和证据范围可从[工程评估报告](KNOWLEDGE/reports/core/JiejieBox_工程架构与改造最终评估报告_2026-11-01.md)了解，再结合当前源码与[知识库索引](KNOWLEDGE/INDEX.md)阅读。
 
 - **协议与服务端**：扩展 XHTTP、Mieru、REALITY / VLESS 客户端兼容，完善 Native Naive、MASQUE 和 HTTP/2 / HTTP/3 服务端。
 - **DNS 解析优化**：支持多上游分组、双栈增量解析、负缓存和本地广告拦截，并协调缓存刷新与网络切换。

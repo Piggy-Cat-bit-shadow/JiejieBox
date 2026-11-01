@@ -1,5 +1,17 @@
 # JiejieBox 更新日志
 
+## [v0.1.36](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.36) — 2026-11-01
+
+这次更新围绕 Windows 开发、Mac 发布 TestFlight 的工作方式，调整 Apple 构建与正式发布流程。
+
+- Apple Actions 先固定核心版本、客户端源码和构建来源，Libbox 就绪后即可供 Mac 下载，客户端验证继续并行。
+- Mac 可以跟随指定的 Actions 运行，在独立工作目录准备源码和签名归档；上传前核对版本标签与对应平台的验证结果。
+- 正式 Release 使用指定运行及其重跑次数，复用同一份 Libbox；归档后的主应用和扩展也会检查版本号与构建号。
+- 单平台发布跳过另一平台的准备工作，已有的同提交构建可以复用；Apple 嵌套依赖在确定客户端提交后再初始化。
+- 修正仓库识别：同时配置 origin 和 upstream 时，发布脚本明确使用 origin 对应的仓库。
+
+本版的改动集中在构建、发布和文档，没有修改代理内核的数据处理逻辑。操作步骤见 [Apple TestFlight 发布说明](docs/APPLE-BETA-RELEASE.md)。
+
 按正式发布版本记录主要功能、修复、优化与验证工作。日期使用北京时间；各版本在线说明见 [GitHub Releases](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases)。
 
 ## [v0.1.35](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.35) — 2026-11-01
