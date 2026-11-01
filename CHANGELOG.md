@@ -1,6 +1,15 @@
 # JiejieBox 更新日志
 
+按正式发布版本倒序整理。每个版本先说明主要变化，展开后可查看原有的配置边界、测试条件和详细修复记录。历史实验只适用于其注明的环境；版本日期沿用项目原记录。
+
+[正式发布与下载](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) · [架构与改造评估](KNOWLEDGE/reports/core/JiejieBox_工程架构与改造最终评估报告_2026-11-01.md)
+
 ## [v0.1.36](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.36) — 2026-11-01
+
+Windows 启动 Apple 构建后，Mac 可以跟随同一次运行提前获取 Libbox、开始 TestFlight 归档。版本、核心提交、客户端源码与正式 Release 的产物一起固定，上传前再检查标签和相应平台的验证结果。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 这次更新围绕 Windows 开发、Mac 发布 TestFlight 的工作方式，调整 Apple 构建与正式发布流程。
 
@@ -14,7 +23,14 @@
 
 按正式发布版本记录主要功能、修复、优化与验证工作。日期使用北京时间；各版本在线说明见 [GitHub Releases](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases)。
 
+</details>
+
 ## [v0.1.35](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.35) — 2026-11-01
+
+本版整理 Apple 和桌面客户端的源码入口，修复 Apple 构建中的链接处理，并更新项目文档。相对 v0.1.34，内核没有 Go 源码改动。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 本版本主要更新 Apple 与桌面客户端的源码链接，修复 Apple 构建时的链接处理，并整理内核文档。相对 v0.1.34，内核没有 Go 源码改动；版本号、客户端引用和构建脚本有更新。
 
@@ -38,7 +54,14 @@
 - 本版本提供 Linux amd64、macOS arm64 和 Windows amd64 命令行内核，Android arm64 与 Apple Libbox，以及 Windows 客户端安装包。
 - 对发布提交完成 Verify、发布契约、各平台内核、Apple 客户端和 Windows 安装包相关工作流验证。具体产物及校验信息见 GitHub Release 附件。
 
+</details>
+
 ## [v0.1.34](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.34) — 2026-10-29
+
+本版统一配套客户端的订阅请求行为，并整合 Apple 客户端的源码选择、构建和发布流程。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 更新订阅请求行为，并完成 Apple 客户端源码、构建与发布流程的整合。
 
@@ -66,7 +89,14 @@
 - Apple 端点注册经对应服务客户端转发，更新连接时在锁内切换并使旧连接失效，避免旧失效回调清掉新连接。
 - 订阅正文统一稳定 UA，用量兼容探测与一般应用身份继续分开，避免一个 UA 修改影响所有 HTTP 请求。
 
+</details>
+
 ## [v0.1.33](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.33) — 2026-10-28
+
+这是与 satelite-one v0.1.33 配套发布的内核版本，主要完成版本标识与客户端配套。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 与 satelite-one v0.1.33 配套发布的内核版本。
 
@@ -74,7 +104,14 @@
 
 - 内核版本标识更新至 v0.1.33。
 
+</details>
+
 ## [v0.1.32](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.32) — 2026-10-28
+
+本版让 endpoint 本地产生的流量通过 TUN 栈处理，并更新配套客户端，便于沿用内核的流量处理和日志上下文。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 将 endpoint 的本地流量接入 TUN 栈，并更新配套客户端。
 
@@ -84,7 +121,14 @@
 - 更新 Apple 客户端引用，纳入 TUN MTU 限制相关修改。
 - 整理更新后的模块依赖。
 
+</details>
+
 ## [v0.1.31](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.31) — 2026-10-28
+
+本版集中处理内核审计发现的问题，覆盖网络接口变化、TUN 与 FakeIP、代理组、TLS / QUIC、嗅探和连接生命周期。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 本版本集中处理内核审计发现的问题，覆盖 TUN 重置、FakeIP、TLS / QUIC、代理组和资源生命周期。
 
@@ -124,7 +168,14 @@
 - 对 selector、URLTest、负载均衡组及远程规则集的资源释放和状态更新补充边界保护。
 - 将 Linux 专用 kTLS 等待路径纳入检查，并完善 TLS 关闭时尾部数据的处理。
 
+</details>
+
 ## [v0.1.30](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.30) — 2026-10-28
+
+本版修复双栈选路、macOS 网络恢复和连接关闭中的数据保留问题，也补充了相应回归检查。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 本次修复双栈选路、macOS 网络恢复和关闭过程的数据保留问题。
 
@@ -145,7 +196,14 @@
 - macOS 按休眠周期去重恢复事件，主机唤醒时重置网络。
 - 更新配置 schema 和 ABI 检查，修复相关审查边界问题。
 
+</details>
+
 ## [v0.1.28](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.28) — 2026-10-27
+
+本版调整网络交接的状态发布顺序，并完善旧连接的清理，减少切网时新旧状态交错。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 完善网络交接顺序与旧连接清理。
 
@@ -156,7 +214,14 @@
 - UDP 收到返回数据才形成有效存活证据，避免仅凭持续发送将失效会话判为可用。
 - 更新 Apple 路径监控，跟随当前活动接口。
 
+</details>
+
 ## [v0.1.27](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.27) — 2026-10-26
+
+本版修复双栈 DNS 对空结果与查询失败的区分，避免一个地址族没有记录就掩盖另一地址族的结果。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 修复双栈 DNS 解析中空结果与查询失败混淆的问题。
 
@@ -165,7 +230,14 @@
 - 某个地址族没有记录时，不再将其直接视为整个解析失败。
 - 保留另一地址族的有效结果，并补充相关回归测试。
 
+</details>
+
 ## [v0.1.26](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.26) — 2026-10-25
+
+本版更新默认 Dashboard 的来源和品牌界面，并加入来源回归检查，防止后续合并时无意恢复旧界面。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 ### 本次更新
 
@@ -175,7 +247,14 @@
 - 同步 sing、uTLS 和 Apple 客户端引用，保持主模块与测试模块的依赖版本一致。
 - 更新关联仓库目录，明确各客户端和依赖 fork 的入口。
 
+</details>
+
 ## [v0.1.25](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.25) — 2026-10-25
+
+本版结合上游修复和六个底层依赖 fork 的整合，处理 DNS、Tailscale、TUN、路由、低内存与资源回收之间的兼容和生命周期问题。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 这是一次覆盖上游修复、底层依赖、TUN、DNS、Tailscale 和内存生命周期的综合更新。除了同步依赖，也对与本 fork 架构相交的行为进行了适配和回归检查。
 
@@ -257,7 +336,14 @@
 
 [Fast Path 与内存管理的当前设计、源码和配置边界](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FAST-PATH-AND-MEMORY.md)。
 
+</details>
+
 ## [v0.1.24](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.24) — 2026-10-22
+
+本版改善 Direct TCP 接管和半关闭后的存活观察，让对端离开后的资源可以回收，同时保留连接交接的原有职责。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 改善 TCP 半关闭后的存活观察与资源回收。
 
@@ -275,7 +361,14 @@
 
 [Fast Path 与内存管理的当前设计、源码和配置边界](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FAST-PATH-AND-MEMORY.md)。
 
+</details>
+
 ## [v0.1.23](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.23) — 2026-10-21
+
+本版收紧 ShadowTLS 认证前连接和握手目标的资源边界，避免异常连接长期占用资源。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 集中修复 ShadowTLS 公开监听端口与握手目标的资源边界。
 
@@ -286,7 +379,14 @@
 - 释放异常握手路径中 SDK 遗留的目标连接。
 - 保留已接受连接的能力接口，避免包装后丢失后续处理所需的信息。
 
+</details>
+
 ## [v0.1.22](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.22) — 2026-10-21
+
+本版增加可选的 Naive H3 到 H2 回退，并改进 MASQUE 数据报、TUN 回包、启动校验和协议关闭路径。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 增加 Naive 可选传输回退，改善启动校验、MASQUE 数据路径和协议关闭。
 
@@ -339,7 +439,14 @@
 
 回退要求 quic: true 及对应平台的 Naive / Cronet 构建。[更多配置示例](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FORK-CONFIGURATION.md)。
 
+</details>
+
 ## [v0.1.21](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.21) — 2026-10-20
+
+本版引入 Mieru 入站和出站及可选的 TCP / UDP 回退，同时推进 IPv6 入口、跨协议故障识别、MASQUE、DNS、规则集和数据路径修复。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 本次更新重点引入 **Mieru 协议及 TCP/UDP 自动回退**，新增自适应 IPv6 入口机制，优化跨协议故障识别，并针对 MASQUE、DNS、规则集、QUIC、Hysteria2、TUIC 和 TUN 数据路径完成多项修复与性能优化。
 
@@ -485,7 +592,14 @@
 - Apple/Android 真实设备的内存占用与功耗改善尚未形成完整对比数据。
 - Android 规则集 mmap 优化未在本版本启用。
 
+</details>
+
 ## [v0.1.20](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.20) — 2026-10-18
+
+本版整理单条流从路由、解析到拨号的地址族准入：为一次执行捕获一致的策略，并让流与数据包路径遵守同一网络事实。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 本次重点整理单条连接从路由、解析到拨号的地址族准入规则，确保同一条流使用一致的网络事实和策略。
 
@@ -520,7 +634,14 @@
 - 对 DNS 结果发布、候选接纳、实际启动和连接交付分别检查边界，避免旧结果被新网络接收。
 - 补充跨阶段矩阵与确定性交错测试，检查流在网络 A → B 变化中不会前半段遵循旧策略、后半段又重新捕获新策略。
 
+</details>
+
 ## [v0.1.19](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.19) — 2026-10-17
+
+本版减少设备休眠期间不必要的 DNS 和 Dashboard 网络活动，让后台工作遵守设备状态。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 减少设备休眠期间非必要的网络请求。
 
@@ -530,7 +651,14 @@
 - Dashboard 后台下载按设备状态延后。
 - 修复 DNS 休眠状态来源的初始化顺序，确保构造阶段取得正确管理对象。
 
+</details>
+
 ## [v0.1.18](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.18) — 2026-10-17
+
+本版处理复杂代理链和网络切换中的能力传递、双栈候选、路由与资源归属，避免一层的状态被误用于另一层。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 本版本集中修复复杂代理链和网络切换条件下的双栈候选选择、流量路由及状态一致性问题。
 
@@ -584,7 +712,14 @@
 
 [Fast Path 与内存管理的当前设计、源码和配置边界](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FAST-PATH-AND-MEMORY.md)。
 
+</details>
+
 ## [v0.1.17](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.17) — 2026-10-17
+
+本版保存和识别退役 FakeIP 地址范围，并修复 Windows 客户端安装与旧服务清理中的问题。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 本次修复 FakeIP 退役地址处理，以及 Windows 客户端安装和旧服务清理。
 
@@ -601,7 +736,14 @@
 - 修复守护进程工作目录和旧服务清理。
 - 修正 Apple 发布时的客户端源码选择。
 
+</details>
+
 ## [v0.1.16](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.16) — 2026-10-17
+
+本版汇总 v0.1.10 后的多项改造：本地 DNS 广告拦截、双栈与网络状态修复、XHTTP 性能和故障验证，以及 Windows 安装与共存处理。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 本版本汇总 v0.1.10 之后多个候选版本的内核、平台和安装程序修复。重点是双栈与网络切换时的状态一致性，以及 Windows 服务安装卸载的可靠性。
 
@@ -685,7 +827,14 @@
 
 anti-ad 须为已定义规则集，也可直接写 domain_suffix。命中返回 NXDOMAIN + SOA，TTL / MINIMUM 为 600 秒，不查询上游；没有 adblock.ttl 子字段。[更多配置示例](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FORK-CONFIGURATION.md)。
 
+</details>
+
 ## [v0.1.10](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.10) — 2026-10-15
+
+本版修复透明代理组对 Direct Fast Path 授权的传递，并完善 Windows 守护进程的信任检查。授权传递后仍需逐流判断。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 修复透明代理组的直连授权传递，并完善 Windows 守护进程信任检查。
 
@@ -706,7 +855,14 @@ anti-ad 须为已定义规则集，也可直接写 domain_suffix。命中返回 
 
 [Fast Path 与内存管理的当前设计、源码和配置边界](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FAST-PATH-AND-MEMORY.md)。
 
+</details>
+
 ## [v0.1.9](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.9) — 2026-10-14
+
+本版将发布资产清单、草稿发布和完整性检查的顺序收拢，减少正式页面出现缺失或错误资产的机会。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 本次完善发布前的完整性检查和发布顺序。
 
@@ -715,7 +871,14 @@ anti-ad 须为已定义规则集，也可直接写 domain_suffix。命中返回 
 - 以统一清单约束公开内容，在输出发布参数前检查完整集合。
 - 先创建草稿、完成上传，再进入公开发布流程，减少不完整版本被提前公开的情况。
 
+</details>
+
 ## [v0.1.8](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.8) — 2026-10-14
+
+本版为 selector 和 URLTest 增加可选的 `fast_path` 策略，并完善 Apple 客户端源码选择和多平台构建。策略允许尝试不等于流量已经发生内核绕行。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 本次更新引入代理组快速路径策略，并完善 Apple 客户端源码选择与多平台构建流程。
 
@@ -759,7 +922,14 @@ direct 须为已有出站。后续版本调整过默认授权与 false 优先级
 
 [Fast Path 与内存管理的当前设计、源码和配置边界](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FAST-PATH-AND-MEMORY.md)。
 
+</details>
+
 ## [v0.1.6](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.6) — 2026-10-12
+
+这是一次贯穿入站、路径证明、代理链、协议传输和客户端的综合改造。XHTTP、REALITY、DNS、MTU、网络恢复与资源生命周期共同纳入验证。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 这是一次涉及内核架构、嵌套代理路径、嗅探、移动端生命周期和客户端构建的综合更新。重点是让复杂路径在启动、网络切换和关闭时有更明确的校验与资源归属，同时修复多个实际边界问题。
 
@@ -933,7 +1103,14 @@ dns-a / dns-b 须为已有 DNS。XHTTP 放在节点 transport，REALITY 策略�
 
 [Fast Path 与内存管理的当前设计、源码和配置边界](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FAST-PATH-AND-MEMORY.md)。
 
+</details>
+
 ## [v0.1.5](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.5) — 2026-10-07
+
+本版引入结合设备状态与真实业务流量的低功耗管理，减少锁屏和后台阶段不必要的周期性工作，并区分活跃连接与可回收资源。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 引入由设备状态与真实流量驱动的低功耗管理，减少锁屏和后台运行时的周期性工作。
 
@@ -953,7 +1130,14 @@ dns-a / dns-b 须为已有 DNS。XHTTP 放在节点 transport，REALITY 策略�
 
 [Fast Path 与内存管理的当前设计、源码和配置边界](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FAST-PATH-AND-MEMORY.md)。
 
+</details>
+
 ## [v0.1.4](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.4) — 2026-10-07
+
+本版改进网络切换后的分级排空、重连和 DNS 复用，分别处理较轻的路径变化与持续的网络中断。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 本次集中改善网络切换后的连接排空、重连和 DNS 复用。
 
@@ -969,7 +1153,14 @@ dns-a / dns-b 须为已有 DNS。XHTTP 放在节点 transport，REALITY 策略�
 - 限制 DNS 串行传输的并发建连，避免切换网络后重复建立连接。
 - 同步 TUN Forward NAT 的映射、分片和相关选项。
 
+</details>
+
 ## [v0.1.3](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.3) — 2026-10-07
+
+本版围绕上传调度、业务分类、负载均衡、URLTest、双栈 DNS 与拨号和 Direct Offload 展开，同时完善移动端低内存配置。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 本次更新围绕流量调度、代理组选路、双栈拨号和网络切换展开，同时完善移动端低内存处理。以下内容覆盖上一正式版本 v0.1 至本版本的主要变化。
 
@@ -1086,7 +1277,14 @@ node-a / node-b 使用自己的已有节点，并由路由选择相应出站。[
 
 [Fast Path 与内存管理的当前设计、源码和配置边界](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/FAST-PATH-AND-MEMORY.md)。
 
+</details>
+
 ## [v0.1](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1) — 2026-09-30
+
+首个正式版本以 Native Naive、MASQUE / CONNECT-IP、共享 HTTP/3 与数据包路径、SOCKS 代理链为重点，同时恢复上游协议注册、CLI 和 Clash API 能力。
+
+<details>
+<summary>查看本版详细变更与验证记录</summary>
 
 JiejieBox 首个正式版本。工作覆盖 Native Naive 服务端、MASQUE 隧道与 DNS、HTTP/3 生命周期、SOCKS 链式代理及共享数据路径，并恢复完整上游注册与 Clash API 能力。
 
@@ -1129,3 +1327,5 @@ JiejieBox 首个正式版本。工作覆盖 Native Naive 服务端、MASQUE 隧�
 - 修复 HTTP/3 CONNECT 隧道生命周期、旧连接驱逐与替代连接的隔离。
 - 恢复完整上游协议注册和 CLI，并启用 Clash API；移除阶段性产品裁剪设计。
 - 补充实际服务器隧道报告、DNS 下发、资源释放和协议数据矩阵测试。
+
+</details>
