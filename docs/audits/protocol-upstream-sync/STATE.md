@@ -2,7 +2,7 @@
 
 | field | value |
 |---|---|
-| Stage | 01A/01B, 02A/02B, 03A, **04A + 04B** complete |
+| Stage | 01A/01B, 02A/02B, 03A, 04A/04B, **05A** complete |
 | Date | 2026-11-02 |
 | Branch | `testing` (default branch; repository has no `main`) |
 | Phase 01 | Mieru SDK `v3.39.0`: `fac646ca`, 01B coverage `bc349d83`; see `phase-01.md` |
@@ -10,9 +10,10 @@
 | Phase 02 docs | `e78720d3` (02A map) + the 02B review commit |
 | Phase 03 | audit-only; no code change. Candidate verdicts in `phase-03.md` and ledger S-rows |
 | Phase 04 code | `96bd665d` stream-up refusal; `b5c12db3` refusal precedence; `669fa275` status-matrix tests |
+| Phase 05 | audit-only; bounded-async pipeline rejected on evidence (`phase-05.md`, ledger X-09) |
 | CI on `f15d4473` | Verify, Android Core ARM64, Mobile contract, Release contract: success |
 | Handoff docs | `git log -1 -- docs/audits/protocol-upstream-sync/` (this directory) |
-| Next | **05 — XHTTP data path / XMUX performance** |
+| Next | **06 — remaining protocols / convergence** |
 
 ## Completed
 
@@ -95,6 +96,19 @@
   hardening is tests-only (`669fa275`). Final runs: package `ok 17.791s`, `-race` `ok 18.948s`.
   No other defect; real Xray interop remains `BLOCKED_BY_ENVIRONMENT`.
 
+### Phase 05 (XHTTP data path / XMUX)
+
+- Re-read the write path and measured the current invariant: `maxInflight=1` at every controlled
+  RTT (0/30/50/100/200 ms), batches at `sc_max_each_post_bytes`; per-POST construction is
+  `1789 ns/op`, `2203 B/op`, 15 allocs, against a 1 MiB batch.
+- Evaluated the lx.25 bounded-async pipeline (16 in flight) against the current serial design:
+  the historical RTT sweep is 1.18x/1.23x/1.07x/1.01x/0.97x fork/reference, so there is no clear
+  win; pipelining would add reorder, close-drain and error-priority semantics to every POST.
+- **Decision: `NO CHANGE`** for the pipeline; no independent defect found in `sc_*` handling,
+  backpressure, pending-memory release, H1 serialisation or XMUX breaker/slot accounting.
+- Verification: cadence probe `PASS` 9.247 s with `maxInflight=1`; package/`-race` numbers from the
+  04B run are the current-code gate (no code changed in 05).
+
 ## Not completed / deferred (with owner phase)
 
 | Item | Why deferred | Owner |
@@ -103,7 +117,7 @@
 | Apple/Windows native runtime for the new resolution path | no device / Apple build on this host | CI/device pass |
 | Mieru server `tcp_idle_timeout` config surface | new opt-in feature (option/schema/docs/tests) | 06 |
 | Mieru post-release UDP-associate fixes | not in `v3.39.0`; own UoT codec | 06 |
-| XHTTP xhttp-box tree diff | independent oracle not diffed yet | 05 |
+| XHTTP xhttp-box tree diff | independent oracle; not needed for the serial-vs-pipeline decision | 06 (optional) |
 | Hysteria2/TUIC/AnyTLS/VLESS/SS/Snell patch-id checks | candidate rows only | 06 |
 | MASQUE upstream `dev` shared-layer diff | upstream not stable; premise corrected | 06 |
 
@@ -129,10 +143,12 @@
 
 ## Next-phase inputs
 
-1. `UPSTREAM_LEDGER.md` §2 (X-04 is closed; X-05/X-06 remain) and `phase-04.md` §4.
-2. `transport/v2rayxhttp/{conn.go,client.go,meta.go}` packet-up/XMUX paths; read
-   `KNOWLEDGE/modules/xhttp-client-transport.md` §12–14 first.
-3. Phase 05 must not re-open the stream-up refusal path (X-04), the Naive server table (S-rows) or
-   the client resolution port (`bd2b705`) without new upstream evidence.
-4. `xhttp-box` (`2e7e53d`) is the comparison oracle for the packet-up/XMUX diff; do not import its
-   group/log code.
+1. `UPSTREAM_LEDGER.md` §4–6 (Hysteria2, TUIC, AnyTLS, VLESS, SS, Snell, MASQUE) and
+   `phase-05.md` §5.
+2. `protocol/hysteria2/`, `protocol/tuic/`, `protocol/anytls/`, `protocol/vless/`,
+   `protocol/shadowsocks/`, `protocol/snell/`, `protocol/masque/`, `transport/masque/`; route
+   through `KNOWLEDGE/INDEX.md` and the corresponding modules before reading source.
+3. Do not re-open X-04 (stream-up refusal), X-09 (packet-up pipeline), the Naive server S-rows or
+   the client resolution pin (`bd2b705`) without new upstream or measurement evidence.
+4. The native Naive `-3`/`-4`/`-5` gap and the Apple runtime verification remain open; they are not
+   protocol-sync work.
