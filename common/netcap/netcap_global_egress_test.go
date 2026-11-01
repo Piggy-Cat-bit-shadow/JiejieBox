@@ -224,7 +224,7 @@ func TestRouteOnlyChangeIsVisibleToTheCapability(t *testing.T) {
 // TestClassifyScopeSeparatesTheThreeQuestions pins the scope table the decision is built on.
 func TestClassifyScopeSeparatesTheThreeQuestions(t *testing.T) {
 	testCases := map[string]DestinationScope{
-		"2001:db8::1":         ScopeGlobal,
+		"2001:db8::1":          ScopeGlobal,
 		"2001:4860:4860::8888": ScopeGlobal,
 		"2606:4700::1":         ScopeGlobal,
 		"8.8.8.8":              ScopeGlobal,
