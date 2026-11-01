@@ -91,3 +91,21 @@ No VPS/WAN test was used; the probe is loopback with a controlled fake round tri
 * Phase 06 owns Hysteria2/TUIC/AnyTLS/VLESS/SS/Snell and MASQUE convergence. The `xhttp-box`
   independent tree (X-06) stays a comparison oracle; no behavioural delta was needed here.
 * The `transport/v2rayxhttp` suite and `-race` remain the regression gate for any future change.
+
+## 6. 05B queue-state review (2026-11-02)
+
+Scope was the existing packet-up/XMUX data path (05 made no code change), not a protocol re-audit.
+The attack list maps to tests that already exist and pin the same ownership rules:
+
+| 05B attack | Existing evidence |
+|---|---|
+| concurrent writes, coalescing, max split, Close during write, fail after header | `TestUplinkConcurrentWritersLoseNothing`, `TestUplinkOrderingAndSeqContinuity`, `TestUplinkCloseAtEveryStage`, `TestPacketUpCoalescesWritesQueuedBehindAPost`, `TestPacketUpBatchRespectsMaxEachPostBytes` |
+| out-of-order/early reply, 400/500/no body, late reply after Close | `TestUplinkNon200StopsTheStream`, `TestUplinkPostFailureSurfacesAndStopsAtTheFailure`, `TestUplinkFirstWriteAfterIdleIsPostedPromptly`; one POST in flight, so there is no reply reorder path |
+| bounded backpressure / memory / goroutines | `TestUplinkBackpressureIsBoundedAndEndsInAnError`, `TestUplinkReleasesItsQueueOnClose`, `TestUplinkNoGoroutineLeakAcrossManySessions`, `TestPacketUpQueueAppliesBackpressure` |
+| one stream's error vs shared XMUX | `TestTransportRedialIsInvisibleToXMUX`, `TestUplinkHidesAnRSTStreamError`; breaker tests; `xmux.roundTrip` ignores `context.Canceled` for the failure streak |
+| H1 serial, H2/H3 behaviour | `TestHTTP1PacketUp`; H2/H3 use the same serial `packetUplink`, no pipeline was enabled |
+| payload ownership / exactly-once cleanup | `TestUplinkPayloadIsNotAliasedByLaterWrites`, `TestUplinkTinyWritesArriveExactlyOnce`, `TestUplinkHandlesAGoawayWithoutConflictingReplay` |
+
+Fresh run: `go test -race ./transport/v2rayxhttp/ -run 'TestPacketUp|TestSplitConn|TestXmux|TestXMUX|TestBreaker'`
+→ **ok 11.158s**. No defect and no code change in 05B; the serial design's failure and close
+semantics remain pinned by the tests above.

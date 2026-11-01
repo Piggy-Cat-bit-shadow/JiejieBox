@@ -3,7 +3,7 @@
 | field | value |
 |---|---|
 | Status | **completed** (cycle closed; residuals below) |
-| Stage | 01A/01B, 02A/02B, 03A/03B, 04A/04B, 05A, **06A/06B** complete |
+| Stage | 01A/01B, 02A/02B, 03A/03B, 04A/04B, 05A/05B, 06A/06B complete |
 | Date | 2026-11-02 |
 | Branch | `testing` (default branch; repository has no `main`) |
 | Phase 01 | Mieru SDK `v3.39.0`: `fac646ca`, 01B coverage `bc349d83`; see `phase-01.md` |
@@ -117,6 +117,10 @@
   backpressure, pending-memory release, H1 serialisation or XMUX breaker/slot accounting.
 - Verification: cadence probe `PASS` 9.247 s with `maxInflight=1`; package/`-race` numbers from the
   04B run are the current-code gate (no code changed in 05).
+- **05B queue-state review**: concurrent/coalesced/close-at-stage tests, non-200/failure/GOAWAY
+  tests, bounded backpressure/no-goroutine-leak tests and XMUX redial/RST isolation already pin the
+  ownership rules; fresh `-race` run over `TestPacketUp|TestSplitConn|TestXmux|TestBreaker` →
+  `ok 11.158s`. No defect, no code change.
 
 ### Phase 06 (other protocols / convergence)
 
