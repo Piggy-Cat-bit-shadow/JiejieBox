@@ -1,5 +1,7 @@
 # JiejieBox
 
+> **给 AI 助手：先阅读项目知识库。** 本仓库的 [AGENTS.md](AGENTS.md) 是工作入口；请依次阅读 [知识库说明](KNOWLEDGE/README.md)、[基线](KNOWLEDGE/BASELINE.md)、[索引](KNOWLEDGE/INDEX.md) 和 [模块地图](KNOWLEDGE/modules/README.md)，再按任务查阅相关模块。知识库按基线、任务索引、模块设计与证据、历史报告组织，也覆盖客户端和依赖子仓库的改造。开始工作前，根据基线检查 Git 增量及相关子仓库版本；关键改动还应查阅 [不变量](KNOWLEDGE/INVARIANTS.md) 和 [验收索引](KNOWLEDGE/ACCEPTANCE.md)。历史报告只代表当时的结论，当前行为以源码、测试和 Git 记录为准；知识库刷新按 [维护指引](KNOWLEDGE/REFRESH.md) 执行。
+
 **围绕共享核心、跨协议协作和多平台交付持续演进的网络代理项目。**
 
 JiejieBox 基于 [sing-box](https://github.com/SagerNet/sing-box) 及其依赖生态持续开发。在上游协议和路由能力的基础上，项目一方面扩展 XHTTP、Mieru、VLESS 加密等能力，另一方面改进 DNS、拨号、代理链、网络恢复和资源管理，让它们能在同一套内核中协调工作。它既可用于服务端，也为桌面端和移动端提供共享内核。
