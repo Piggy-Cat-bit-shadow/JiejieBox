@@ -1,18 +1,22 @@
-本版主要改进 Apple 构建和 TestFlight 发布流程，适合在 Windows 开发、由 Mac 完成签名与上传的使用方式。
+# JiejieBox 0.1.37
 
-- **Mac 可以提前开始 TF 打包**：Windows 启动 Apple client Actions 后，Mac 可立即跟随指定运行。Libbox 就绪后即可开始归档，无需等待所有平台或正式 Release 页面。
-- **TF 与正式 Release 使用相同版本和核心**：固定核心提交、Apple 客户端提交、版本号和 Libbox 产物；正式发布通过运行 ID 与重跑次数选择同一份库，避免相同核心提交的其他构建被误选。
-- **上传前再次核对**：对应平台的 CI 通过、远端标签指向正确提交后才上传 TF；同时检查归档后的主应用和扩展的版本号、构建号。
-- **减少重复工作**：旧入口复用同一提交正在运行的构建；单平台发布跳过另一平台的准备；Apple 嵌套依赖在选定最终提交后只初始化一次。
-- **macOS 单运行器也先提供库**：Libbox 完成后先上传产物，随后继续构建客户端，供签名 Mac 提前准备。
-- **修复仓库识别**：从 origin 明确解析发布仓库，避免同时存在 upstream 远端时 GitHub CLI 默认指向上游项目。
+本版汇总这一轮协议升级与上游同步：以可验证的成熟修复为主，并完成对应的 Debug、回归测试和安全加固。
 
-Mac 命令示例（将运行 ID 换成本次 Apple client 运行）：
+## 协议与传输
 
-```sh
-./scripts/publish-apple-beta.sh --follow-run 123456789 --platform ios
-```
+- **Mieru `v3.39.0`**：升级到当前稳定 SDK，恢复长单向上传的读超时行为，并补齐空 UDP 与空闲 underlay 覆盖。
+- **Naive / Cronet**：服务器名改由 sing-box dialer 解析，恢复 DNS 策略与双栈调度；保留 H3 → H2 回退、`extra_headers` 限制和单/多引擎行为。
+- **Naive 服务端**：非法 HTTP/2、HTTP/3 CONNECT 现在返回真实 `400`，不再让客户端把拒绝误读为已接受的隧道。
+- **XHTTP**：`stream-up` 上传被服务端拒绝时立即失败，关闭响应体、打断上传管道并终止挂起的下载；补齐拒绝状态矩阵与关闭竞态测试。
+- **VLESS Vision**：升级 `sing-vmess`，修复 direct write 后关闭错误连接层的问题；Vision ABI tripwire 已按新版本重新核对。
+- **MPTCP 监听安全**：默认关闭 listener 的 MPTCP（`tcp_multi_path` 仍是显式 opt-in），并将 debug/Clash/v2ray/pprof/boxdd 的 TCP 监听统一改为普通 TCP。
 
-正式 Release 的 `apple_run_id`、`apple_run_attempt` 应与 Mac 跟随的运行一致。完整步骤见 [Apple / TestFlight 发布说明](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/v0.1.36/docs/APPLE-BETA-RELEASE.md)。
+## Android 客户端
 
-本版未更改代理内核的配置语法或数据处理逻辑。TestFlight 签名和上传仍在用户自己的 Mac 上进行。
+Android 客户端与本版内核使用同一个版本号 `0.1.37`，并在 `version.properties` 中固定本版内核提交；APK 构建时会重新编译并校验该内核，不使用未固定的 `testing` HEAD。
+
+## 原生说明
+
+NaiveProxy `-3/-4/-5` 的原生 Chromium 归档更新**不在本版内**。其中 `-5` 的 eMudhra 受损中间证书屏蔽仍未进入当前原生库，已明确安排到下一次 Chromium 升级，并保留强制检查清单。Linux 内核侧的 MPTCP 监听风险已由本版的默认关闭处理。
+
+本版没有发布新的原生归档，也没有修改任何已冻结的依赖 pin 或校验和。
