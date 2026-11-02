@@ -43,7 +43,7 @@ The fork's own material was kept:
 | `SagerNet/sing-box` `310206a88` ("Fix naive performance") | `ALREADY_COVERED` | its only source change is a cronet-go version bump; the dependency is now newer than that pin |
 | `SagerNet/sing-box` `37da1712e` (receive window options published) | `ALREADY_PRESENT` | `buildCronetNaiveClientOptions` maps `ReceiveWindow` and `QUICSessionReceiveWindow`; `outbound_option_plumbing_test.go` and `receive_window_bounds_test.go` pin the mapping |
 | `SagerNet/sing-box` `a349a0d76` (QUIC congestion), `3c4a5a6ed` (HTTP/2 inbound) | `INAPPLICABLE` here | both change `protocol/naive/inbound.go` / server options; they belong to phase 03, not the client |
-| naiveproxy `v154.0.8037.49-3/-4/-5` (sleep/resume, QUIC window/BBR/cleanup, eMudhra block) | `BLOCKED_BY_ENVIRONMENT` (native) | see §3 |
+| naiveproxy `v154.0.8037.49-3/-4/-5` (sleep/resume, QUIC window/BBR/cleanup, eMudhra block) | `DEFERRED` to the next Chromium upgrade | see §3 and the final closeout report |
 | `ushan0v/sing-box-forkop`, `uskg8/sing-box-extended`, `flyzstu/xhttp-box` | no client improvement found in the checked window | fork commits reviewed in `FORK_CANDIDATES.md` |
 
 No adapter code was re-implemented: H3 fallback, per-CONNECT transport selection, failure facts,

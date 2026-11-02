@@ -2,7 +2,7 @@
 
 | field | value |
 |---|---|
-| Status | **not fully closed** — protocol/listener work complete; native Naive `-5` eMudhra blocklist gap remains `BLOCKED_BY_ENVIRONMENT` |
+| Status | **CLOSED — Native Naive security updates explicitly deferred to the next Chromium upgrade** |
 | Stage | 01A/01B, 02A/02B, 03A/03B, 04A/04B, 05A/05B, 06A/06B, security hardening, final listener/native close-out |
 | Date | 2026-11-02 |
 | Branch | `testing` (default branch; repository has no `main`) |
@@ -14,10 +14,10 @@
 | Phase 05 | audit-only; bounded-async pipeline rejected on evidence (`phase-05.md`, ledger X-09) |
 | Phase 06 code | `7f322a90` — `sing-vmess` `a0c58542` for the Vision close fix; ABI tripwire re-audited. `b218345e` — MPTCP disabled by default on `common/listener` (security); CI gate `2195ddc7`/`10d61856` |
 | Phase 06 docs | `6d4164f8` + the final docs commit; `FINAL_INTEGRATION_REPORT.md` |
-| Final close-out | `d3f38495` — API/debug listeners use `common/netx` (plain TCP); native `-5` gap remains blocked (see §Final close-out) |
+| Final close-out | `d3f38495` — API/debug listeners use `common/netx` (plain TCP); native `-5` explicitly deferred to the next Chromium upgrade (`KNOWLEDGE/reports/protocol-upgrade/FINAL_CLOSEOUT_2026-11-02.md`) |
 | CI on `f15d4473` | Verify, Android Core ARM64, Mobile contract, Release contract: success |
 | Handoff docs | `git log -1 -- docs/audits/protocol-upstream-sync/` (this directory) |
-| Next | **native rebuild** — cherry-pick `-5` blocklist, run `naive-build.yml`, refresh 29 libs/lock/provenance |
+| Next | **closed** — native Naive refresh is a separate task for the next Chromium upgrade, with a mandatory eMudhra/`-3`/`-4` check |
 
 ## Completed
 
@@ -160,7 +160,9 @@
   `cronet-go-dev-v154` branch (`be1be963`), `git grep -i eMudhra` is empty, and `gn`/`ninja`/
   `gclient`/`depot_tools` are absent. The newer prebuilt `d5437a0` changes only Apple/tvOS archives
   and contains no blocklist; pinning it would not be a security upgrade. No pin/checksum was
-  fabricated. The cycle is therefore **not fully closed**.
+  fabricated. **Decision: defer the native `-3`/`-4`/`-5` refresh to the next Chromium upgrade**
+  (engineering cost/benefit), with the mandatory eMudhra/`-3`/`-4` checks recorded in the closeout
+  report; the project is closed with that explicitly deferred item.
 - **05A wording corrected**: the 3% RTT ratio is a relative cross-implementation gap, not an upper
   bound on a different pipeline's gain; X-09/phase-05 now state the evidence-based reason.
 
@@ -168,7 +170,7 @@
 
 | Item | Why deferred | Owner |
 |---|---|---|
-| Naive native `-5` eMudhra blocklist (and audit of official `-3`/`-4`) | `23953c90` is not in `cronet-go-dev-v154` (`be1be963`); `gn`/`ninja`/`gclient`/`depot_tools` absent; prebuilt `d5437a0` has no blocklist and only Apple archive deltas | native rebuild: cherry-pick, run `naive-build.yml`, refresh 29 libs/lock/provenance |
+| Naive native `-5` eMudhra blocklist (and audit of official `-3`/`-4`) | **explicitly deferred by decision to the next Chromium upgrade**; `23953c90` is not in `cronet-go-dev-v154` (`be1be963`), `gn`/`ninja`/`gclient`/`depot_tools` absent, and prebuilt `d5437a0` has no blocklist | next Chromium upgrade: mandatory blocklist check, `-3`/`-4` audit, rebuild, refresh 29 libs/lock/provenance |
 | Apple/Windows native runtime for the new resolution path | no device / Apple build on this host | CI/device pass |
 | Loopback-only/Unix direct listeners (libbox command/service, proxy bridge, OpenConnect callback, boxdd Unix, Tailscale UDP) | source-verified not externally bindable; no MPTCP change needed | listener owners if exposure changes |
 | Mieru server `tcp_idle_timeout` config surface | new opt-in feature (option/schema/docs/tests) | post-cycle |
@@ -178,11 +180,13 @@
 
 ## Residual limitations
 
-- **Native gap is real and not closed.** The current archive is Chromium `154.0.8037.49` before the
-  official `-3`/`-4`/`-5` fixes. The `-5` blocklist commit `23953c90` is not in the build branch;
-  `git grep -i eMudhra` is empty; no Go-level certificate-name block was added to imitate it.
-  Official `-3`/`-4` commits are not ancestors either and equivalence is unproven. The cycle is
-  therefore **not fully closed**; see the native rebuild entry in the deferred table.
+- **Native gap is real but explicitly deferred.** The current archive is Chromium `154.0.8037.49`
+  before the official `-3`/`-4`/`-5` fixes. The `-5` blocklist commit `23953c90` is not in the build
+  branch; `git grep -i eMudhra` is empty; no Go-level certificate-name block was added to imitate
+  it. The next Chromium upgrade must verify the blocklist commit (or a reviewed equivalent) and audit
+  `-3`/`-4` separately — a version bump alone is not evidence. This is an accepted, recorded risk,
+  not a claim that the libraries are current; see
+  `KNOWLEDGE/reports/protocol-upgrade/FINAL_CLOSEOUT_2026-11-02.md`.
 - **Apple runtime is unverified.** The resolution port is Go-only and the tagged Windows tests pass,
   but only an Apple build/run can prove the engine path there.
 - **HTTP/2 and HTTP/3 response half-close is not available** in `net/http`; the tunnel is fully
@@ -205,10 +209,9 @@
 
 ## Next-phase inputs
 
-**Not fully closed: native rebuild remains.** This directory is the handoff:
-`FINAL_INTEGRATION_REPORT.md` §6, `phase-01.md` … `phase-06.md`, and `UPSTREAM_LEDGER.md` (§7).
-The next concrete step is the native task in the deferred table: cherry-pick `23953c90` (and audit
-`-3`/`-4`) onto `cronet-go-dev-v154`, run `naive-build.yml`, then refresh the 29 `lib/*` pins,
-`release/source-lock.json`, `release/cronet-provenance.txt` and `cronet_native.shas`. No new
-protocol rewrite should start before that security decision is made. No release/tag/deploy was
-created.
+**Closed.** This directory is the handoff: `FINAL_INTEGRATION_REPORT.md` §6, `phase-01.md` …
+`phase-06.md`, and `UPSTREAM_LEDGER.md` (§7). The native Naive `-3`/`-4`/`-5` refresh is a separate
+task for the next Chromium upgrade; its mandatory checks are in
+`KNOWLEDGE/reports/protocol-upgrade/FINAL_CLOSEOUT_2026-11-02.md`. Do not start a new protocol
+rewrite from this state without a named upstream revision and a local counterexample. No
+release/tag/deploy was created.

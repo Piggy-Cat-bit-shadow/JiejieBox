@@ -5,8 +5,8 @@
 | Cycle | 01A/01B, 02A/02B, 03A/03B, 04A/04B, 05A, 06A/06B |
 | Branch | `testing` (default; repository has no `main`) |
 | Date | 2026-11-02 |
-| Head at report time | `d3f38495` (listener hardening) + the final close-out docs commit |
-| Status | **not fully closed** — protocol/listener work is complete, but the native Naive `-5` eMudhra blocklist gap remains `BLOCKED_BY_ENVIRONMENT` (see §6) |
+| Head at report time | `decdcef4` + this final closeout docs commit |
+| Status | **CLOSED — Native Naive security updates explicitly deferred to the next Chromium upgrade** (see §6; the current-tree risk is recorded, not claimed fixed) |
 
 ## 1. What was absorbed
 
@@ -87,9 +87,10 @@ Rejected / no change (with evidence):
    exploitable. `common/listener` covers product inbounds (`tcp_multi_path` remains the explicit
    opt-in), and the debug HTTP, Clash API, v2ray API, libbox pprof and boxdd TCP listeners now use
    `common/netx.ListenTCP`. Loopback-only and Unix/UDP endpoints are unchanged with source evidence.
-2. **Native Naive gap — not closed**: Chromium `154.0.8037.49` predates the official `-3/-4/-5`
-   fixes; the `-5` eMudhra blocklist commit is not in the current native branch and the local
-   toolchain cannot rebuild the archives. This is a security gap, not a done item; see §6.1.
+2. **Native Naive gap — explicitly deferred**: Chromium `154.0.8037.49` predates the official
+   `-3/-4/-5` fixes; the `-5` eMudhra blocklist commit is not in the current native branch and the
+   local toolchain cannot rebuild the archives. This is an accepted, recorded security risk, not a
+   done item; the next Chromium upgrade must verify it (see §6.1).
 3. **No device/WAN/interop evidence**: all evidence is unit, loopback, race, fuzz, build and CI.
    Real Xray/H2/H3/Naive interop is `BLOCKED_BY_ENVIRONMENT`.
 4. **Apple runtime** for the cronet resolution port is unverified.
@@ -107,7 +108,7 @@ No release, tag, VPS action, production traffic test or credential was used.
 
 ## 6. Final close-out (2026-11-02)
 
-### 6.1 Native Naive gap: precise, still blocked
+### 6.1 Native Naive gap: deferred to the next Chromium upgrade
 
 Current pins are unchanged: root/all Go binding `bd2b70516b92`, 29 native `lib/*` modules
 `8c68ce8` (submodule `naiveproxy` `97ae698`). The newer native build branch
@@ -126,11 +127,11 @@ Current pins are unchanged: root/all Go binding `bd2b70516b92`, 29 native `lib/*
   submodule is not initialized; the available Swift `clang` is not the Chromium toolchain. A
   controlled Chromium rebuild (and the 29-module/provenance refresh) cannot run here.
 
-**Status: `BLOCKED_BY_ENVIRONMENT`; the cycle is not fully closed.** The concrete next step is to
-cherry-pick `23953c90` (and audit `-3`/`-4` individually) onto `cronet-go-dev-v154`, run the fork's
-`naive-build.yml` on the supported platforms, then refresh the 29 `lib/*` pins,
-`release/source-lock.json`, `release/cronet-provenance.txt` and `cronet_native.shas` from that
-build. No pin or checksum was fabricated.
+**Status: `DEFERRED` by decision to the next Chromium upgrade; the project is closed with this
+explicitly recorded boundary.** The native `-3`/`-4`/`-5` refresh is a separate task. Its mandatory
+checks (blocklist actually present, `-3`/`-4` audited separately, 29 archives rebuilt, pins/locks/
+provenance refreshed) are in
+`KNOWLEDGE/reports/protocol-upgrade/FINAL_CLOSEOUT_2026-11-02.md`. No pin or checksum was fabricated.
 
 ### 6.2 Direct TCP listeners: remaining entry points closed
 
