@@ -159,6 +159,13 @@ into a burst that is still arriving. The `critical` wait is a fixed 100 ms rathe
 fraction: at critical, a caller either gets a slot within a round trip or is refused — parking it
 for the normal budget is the behaviour the level exists to stop.
 
+`ClassInteractive` may use up to `InteractiveReserve` (4) slots beyond the limit, so a background
+burst cannot occupy the last few seats. The reserve is enforced in the GRANT path, not only in the
+admission check: a slot that frees while the gate is at the limit is left empty rather than handed
+to a queued background caller, because the alternative moves the gate to `limit+1` for background
+work and the reserve disappears one handoff at a time. Nothing uses `ClassInteractive` yet; the
+AnyTLS path asks for `ClassNormal`.
+
 ### 4.3 Why the permit sits at the AnyTLS dial seam
 
 It is the last point before the client chooses between "reuse" and "create", it is reached by

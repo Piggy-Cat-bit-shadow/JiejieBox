@@ -117,6 +117,7 @@ const (
 
 type waiter struct {
 	channel chan struct{}
+	class   Class
 	state   waiterState
 	element *list.Element
 }
@@ -196,7 +197,7 @@ func (g *Gate) Acquire(ctx context.Context, class Class) (*Permit, error) {
 		g.access.Unlock()
 		return nil, ErrQueueFull
 	}
-	created := &waiter{channel: make(chan struct{}, 1)}
+	created := &waiter{channel: make(chan struct{}, 1), class: class}
 	created.element = g.waiters.PushBack(created)
 	g.pending++
 	g.queued++
@@ -266,23 +267,31 @@ func (g *Gate) release() {
 	g.access.Unlock()
 }
 
-// grantLocked hands one free slot to the oldest pending waiter, or does nothing.
+// grantLocked hands one free slot to the oldest pending waiter that can still use it.
 //
 // It must be called with the lock held and after inflight has been decremented. Skipping
 // abandoned waiters here is what lets a waiter give up without paying for a list removal under
 // contention.
+//
+// # Why the waiter's class is checked here
+//
+// Without the check, a NORMAL waiter would be granted a slot that an interactive caller is
+// supposed to keep: after a release leaves inflight at plan.limit, a normal waiter does not fit
+// (`inflight >= limitFor(normal)`), but granting it anyway would move inflight to limit+1 and
+// hand the reserve to background work. The reserve would then be consumed by exactly the flood
+// it exists to protect against. So a slot that frees at the limit is left EMPTY until an
+// interactive caller takes it or the limit rises - which is the reserve working, not a stall.
 func (g *Gate) grantLocked() {
-	for {
-		element := g.waiters.Front()
-		if element == nil {
-			return
-		}
+	for element := g.waiters.Front(); element != nil; element = element.Next() {
 		created := element.Value.(*waiter)
-		g.waiters.Remove(element)
-		created.element = nil
 		if created.state != waiterPending {
 			continue
 		}
+		if g.inflight >= g.limitFor(created.class) {
+			continue
+		}
+		g.waiters.Remove(element)
+		created.element = nil
 		g.pending--
 		created.state = waiterGranted
 		g.inflight++
