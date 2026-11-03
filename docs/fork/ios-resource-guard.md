@@ -337,6 +337,44 @@ anytls outbound dial (TCP and UoT share it)
    defer permit.Release()
 ```
 
+### 11.1.1 Lifecycle: NetworkExtension start to stop, and what is left behind
+
+```text
+extension start
+  libbox CommandServer.Start
+    registers *oomkiller.Recorder in the service registry
+  Box.Start
+    serviceManager.Create   (box.go:747)
+      oomkiller.NewService
+        mode == networkExtension  ->  NewGuard
+                                       service.MustRegister[*resourceguard.Guard]
+                                       recorder.SetExtraMetadata("resourceGuard", ...)
+    outboundManager.Create  (box.go:784)   <- AFTER services, so the guard is already registered
+      anytls.NewOutbound  ->  FromContext[*Guard] captured
+    outbound.Start(Initialize)
+      anytls.Start  ->  RegisterShed(client.CloseIdleConnections)
+    service.Start
+      oomkiller.startTimer  ->  pressure begins to move
+steady state
+    dial -> Acquire -> expensive work -> Release      (no long-lived guard state per flow)
+tunnel stop / Box close
+    outbound Close -> anytls client.Close
+    service.stopTimer -> pressure := None
+    the Guard is dropped with the Box
+```
+
+Nothing has to be torn down for the guard itself: it owns no goroutine, no timer, no file
+descriptor and no listener, so there is no shutdown ordering to get wrong. The things to check
+when a future change touches this:
+
+| question | answer for this system |
+|---|---|
+| lingering goroutine after stop | none: the gate parks callers on their own channels, and the caller cancels them |
+| lingering timer | none: the only timer is the per-waiter wait budget, stopped by `defer` |
+| callback into a dead instance | the shed hook closes idle sessions on a client whose `Close` is idempotent; after stop the hook is unreachable because the guard is |
+| global singleton retaining an old policy | the guard lives in the per-Box service registry; a reload registers a NEW guard over the old key, and the old outbounds keep the old guard until they are closed |
+| duplicate registration | `Outbound.Start` returns early unless the stage is Initialize, so one hook per outbound instance |
+| reload accumulation | the metadata provider is overwritten per reload (same key), so the recorder retains one guard, not one per reload |
 What the system does NOT own, and must not be read as owning:
 
 | resource | owner | guarded here? |
