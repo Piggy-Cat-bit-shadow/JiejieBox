@@ -1,0 +1,167 @@
+name: Experiment - iOS self-sign compatibility
+
+# PHASE 1 EXPERIMENT. Not part of the release line and not to be merged as-is.
+#
+# This workflow exists so the self-sign experiments are reproducible without touching any
+# official workflow, release gate, TestFlight entry point or key:
+#
+#   * it runs only on the experiment branch (and on manual dispatch), never on testing/main;
+#   * it builds Libbox and the iOS IPA from SOURCE at the experiment's own Apple client SHA,
+#     pinned below, so the artifact can be rebuilt from this commit alone;
+#   * it produces two artifacts: the full app, and a diagnostic build that keeps only the
+#     Packet Tunnel extension, so a launch failure can be attributed rather than guessed at;
+#   * it verifies both against a static contract before uploading anything.
+#
+# `workflow_dispatch` cannot be used against a branch other than the default one in this
+# repository's current configuration, so the push trigger below is the real entry point.
+
+on:
+  push:
+    branches:
+      - experiment/ios-selfsign-compat
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # The Apple client experiment commit. It carries the launch-path fixes this phase tests:
+  #   71ea780  survive a missing App Group instead of terminating at launch
+  #   1fa26ca  ask for the embedded packet-tunnel identifier, not the baked base
+  APPLE_EXPERIMENT_SHA: 1fa26ca42efda2a06d64c49a8a9cf4f92a3eb8a4
+  APPLE_CLIENT_DIR: clients/apple
+  APPLE_CLIENT_PLATFORM: ios
+  # Identity the experiment builds with. Both are passed through one build setting each, and
+  # the Xcode project derives every target's identifier from them, which is what keeps the
+  # family consistent when a signing tool remaps it.
+  APPLE_EXPERIMENT_BASE_BUNDLE_ID: io.jiejiebox.app
+  APPLE_EXPERIMENT_APP_GROUP_ID: group.io.jiejiebox.app
+
+jobs:
+  ios-selfsign:
+    runs-on: macos-latest
+    timeout-minutes: 150
+    steps:
+      - name: check out with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: set up Xcode
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)/Contents/Developer" 2>/dev/null || true
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+
+      - name: select the Apple client experiment source
+        # The resolver's documented override: APPLE_CLIENT_SHA materialises an exact commit and
+        # records it in the run's frozen state file, which the overlay script then asserts
+        # against. That is what makes this artifact reproducible from this commit.
+        run: |
+          set -euo pipefail
+          APPLE_CLIENT_SHA="$APPLE_EXPERIMENT_SHA" ./scripts/ci/apple-client-source.sh checkout ios
+          actual="$(git -C "$APPLE_CLIENT_DIR" rev-parse HEAD)"
+          echo "apple client: $actual"
+          test "$actual" = "$APPLE_EXPERIMENT_SHA"
+          git -C "$APPLE_CLIENT_DIR" log --oneline -3
+
+      - name: build Libbox for iOS from this repository
+        # Same commands the official libbox action runs, without its artifact packing and
+        # release-identity binding: this job compiles the framework it will link, in place.
+        run: |
+          set -euo pipefail
+          ./scripts/ci/gomobile-toolchain.sh install apple
+          go mod download all
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          APPLE_CLIENT_DIR="$APPLE_CLIENT_DIR" ./scripts/ci/build-apple-libbox.sh ios
+
+      - name: apply the personal-test overlays
+        # The same overlays the official iOS job applies: the libbox API compatibility patch,
+        # the multicast entitlement removal, and the JiejieBox display-name branding.
+        run: ./scripts/ci/prepare-apple-client.sh
+
+      - name: build the full experimental IPA
+        run: ./scripts/experiment/build-ios-selfsign-ipa.sh dist/apple/experiment/jiejiebox-selfsign-full.ipa
+
+      - name: build the diagnostic IPA (packet tunnel only)
+        run: ./scripts/experiment/build-ios-selfsign-ipa.sh --diagnostic dist/apple/experiment/jiejiebox-selfsign-diagnostic.ipa
+
+      - name: verify both artifacts against the self-sign contract
+        # Fails the job rather than shipping an artifact whose version, identity or layout is
+        # not what this experiment claims. Every assertion there has a failure it prevents.
+        run: |
+          set -euo pipefail
+          version="$(cat release/JIEJIE_VERSION)"
+          build="$(printf '%s' "$version" | tr -cd '0-9' | sed -E 's/^0+//')"
+          python3 scripts/experiment/verify-selfsign-ipa.py \
+            --version "$version" --build "$build" \
+            --base "$APPLE_EXPERIMENT_BASE_BUNDLE_ID" --group "$APPLE_EXPERIMENT_APP_GROUP_ID" \
+            dist/apple/experiment/jiejiebox-selfsign-full.ipa
+          python3 scripts/experiment/verify-selfsign-ipa.py \
+            --version "$version" --build "$build" \
+            --base "$APPLE_EXPERIMENT_BASE_BUNDLE_ID" --group "$APPLE_EXPERIMENT_APP_GROUP_ID" \
+            --diagnostic \
+            dist/apple/experiment/jiejiebox-selfsign-diagnostic.ipa
+
+      - name: audit the artifacts
+        run: |
+          set -euo pipefail
+          python3 scripts/experiment/audit-ipa.py dist/apple/experiment/*.ipa \
+            | tee dist/apple/experiment/AUDIT.txt
+
+      - name: BUILD-INFO and SHA256
+        run: |
+          set -euo pipefail
+          out="dist/apple/experiment"
+          {
+            echo "JiejieBox iOS self-sign experiment (phase 1)"
+            echo "==========================================="
+            echo "version:            $(cat release/JIEJIE_VERSION)"
+            echo "configuration:      Release, iphoneos, arm64, UNSIGNED"
+            echo "base bundle id:     $APPLE_EXPERIMENT_BASE_BUNDLE_ID"
+            echo "app group:          $APPLE_EXPERIMENT_APP_GROUP_ID"
+            echo ""
+            echo "parent_repo:        https://github.com/Piggy-Cat-bit-shadow/sing-box"
+            echo "parent_sha:         $(git rev-parse HEAD)"
+            echo "apple_repo:         https://github.com/Piggy-Cat-bit-shadow/sing-box-for-apple"
+            echo "apple_sha:          $APPLE_EXPERIMENT_SHA"
+            echo ""
+            echo "This IPA is NOT signed. It carries no provisioning profile and cannot be"
+            echo "installed as-is. It exists to be re-signed with a certificate and profile."
+            echo ""
+            for ipa in "$out"/*.ipa; do
+              echo "artifact:           $(basename "$ipa")"
+              echo "  size:             $(wc -c < "$ipa") bytes"
+              echo "  sha256:           $(shasum -a 256 "$ipa" | cut -d' ' -f1)"
+            done
+          } > "$out/BUILD-INFO.txt"
+          cat "$out/BUILD-INFO.txt"
+
+      - name: upload the experiment artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: jiejiebox-ios-selfsign-experiment-${{ github.sha }}
+          path: dist/apple/experiment
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: summary
+        run: |
+          {
+            echo "### iOS self-sign experiment"
+            echo ""
+            echo "- version: \`$(cat release/JIEJIE_VERSION)\`"
+            echo "- parent: \`$(git rev-parse --short HEAD)\`"
+            echo "- apple: \`$APPLE_EXPERIMENT_SHA\`"
+            echo "- artifact: \`jiejiebox-ios-selfsign-experiment-${GITHUB_SHA}\`"
+            echo ""
+            echo "Unsigned: re-sign it with the certificate and profile before installing."
+          } >> "$GITHUB_STEP_SUMMARY"
