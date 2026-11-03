@@ -239,6 +239,11 @@ Integration coverage, all on loopback with the real `sing-anytls` client:
 | `TestSessionBurstGuardDoesNotChangeObservableBehaviour` | 16 admitted streams remain distinct and close cleanly |
 | `TestSessionCreationCostCensus` | 7,414 B per live session (§2.5) |
 | `TestTLSHandshakeBurstAmplificationIsBounded` | the same burst with a REAL TLS handshake blocked on a silent server: concurrent handshakes and marginal peak heap, with and without the guard |
+| `TestAdmissionMatrix` | 50 / 200 / 500 / 1000 concurrent callers: ceiling holds, every caller is admitted or refused exactly once, at 1000 the QUEUE bound decides who is refused |
+| `TestAdmissionCancelStorm` | 500 queued callers cancelled at once: all return, no slot leaked, gate reusable |
+| `TestDialFailuresNeverLeakPermits` | refused port, server hanging up mid-handshake, deadline expiry — every path returns its permit |
+| `TestGuardRepeatedPressureCycles` | five normal→armed→critical→normal cycles: one shed per entry, the limit reopens every time |
+| `FuzzGateSlotAccounting` | `go test -fuzz -fuzztime 25s`: 21,756 executions, slot invariant `inflight == admitted - released` held |
 
 The last test is the local version of the device event: 200 dials whose `DialOut` performs a real
 `crypto/tls` handshake against a listener that sends nothing, which is the state the profile
