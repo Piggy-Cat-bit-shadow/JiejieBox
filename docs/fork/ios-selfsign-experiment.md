@@ -21,8 +21,15 @@ Measured with `scripts/experiment/audit-ipa.py` (stdlib only, no macOS needed):
 
 Two things follow directly, and both matter more than the signature itself.
 
-**The identity is upstream's.** The artifact's file name and `release/JIEJIE_VERSION` say
-0.1.37, while the app says 1.14.8 (10) and `io.nekohasekai.sfamt`. The cause is in the
+**The identity is upstream's, and the build's own metadata says so.** The artifact's file name
+and `release/JIEJIE_VERSION` say 0.1.37, while the app says 1.14.8 (10) and
+`io.nekohasekai.sfamt`. The package's own `BUILD-INFO-IOS.txt` records both facts side by
+side: `version: 0.1.37`, `base_bundle_id: io.nekohasekai.sfamt`,
+`app_group: group.io.nekohasekai.sfamt`, `xcode: Xcode 26.6`, `signing_mode: unsigned`.
+
+The intermediate `-LC` package is structurally identical to the original: same identifiers,
+same versions, same five extensions, same framework, still unsigned. Whatever that step did,
+it did not change the identity or the version. The cause is in the
 unsigned build path: `scripts/ci/build-ios-ipa.sh` passes neither `MARKETING_VERSION` nor
 `BASE_PACKAGE_IDENTIFIER` nor `CURRENT_PROJECT_VERSION` in unsigned mode, so Xcode's
 project defaults win. The TestFlight path does pass them. Every extension also carries its
