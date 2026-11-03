@@ -76,8 +76,6 @@ github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261027185736-1729220c46c4 h1:BgQ
 github.com/Piggy-Cat-bit-shadow/sing v0.9.6-0.20261027185736-1729220c46c4/go.mod h1:K3Owt3xPhHugvlnlPPxZJ/exXdaJfEPOTNorGk4AXjo=
 github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261024181351-1ef2597cc129 h1:WrP9ZKKBMU2BvEB85T95vyI2wxICQx6EB7k1vpYm4Zo=
 github.com/Piggy-Cat-bit-shadow/sing-quic v0.7.2-0.20261024181351-1ef2597cc129/go.mod h1:GeOfu2884pUacFYBnjUsYzUa7gU8iunJ2gMVXwvssRo=
-github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261028061444-8b9a38008705 h1:CCNDhXqV6W+WXw7Dg7AX8UyaiT9nok5zbh0V4oN9yUI=
-github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261028061444-8b9a38008705/go.mod h1:liMb9HPIWcFWqF6VJ/ttIY8fTSRPdRltBeSeEcXt1Dk=
 github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261103132138-32134c2c3188 h1:1wfaHFbM1rzn+FGgYQT04IDhQg9pUxbFw3uizD71ivc=
 github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261103132138-32134c2c3188/go.mod h1:liMb9HPIWcFWqF6VJ/ttIY8fTSRPdRltBeSeEcXt1Dk=
 github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261028133436-b63a2e9a7b1e h1:DgpW394na8NdYOSo/q10/w27bY3mKHb2y89uLNdrQbI=
@@ -347,8 +345,7 @@ github.com/sagernet/sing-cloudflared v0.1.4-0.20261021152903-2d40d788fcf6 h1:ced
 github.com/sagernet/sing-cloudflared v0.1.4-0.20261021152903-2d40d788fcf6/go.mod h1:XEqEDYRCAYLaoPjZ1ifVWJg5iWAJHL2gOAXe/PM28Cg=
 github.com/sagernet/sing-mux v0.3.10-0.20260929204512-caf09fe32475 h1:aG0DqHEOjax7DyfE1GTAXZotOg3QGVCz3/8rCSua2kg=
 github.com/sagernet/sing-mux v0.3.10-0.20260929204512-caf09fe32475/go.mod h1:jricpwCOndDsTEM1TM3piJvhL/2Mm7OhLkm+JadJJ1Q=
-github.com/sagernet/sing-openconnect v0.1.1-0.20260929151226-29757281a247 h1:Ui4XtxNgQiEquK+ch4dYhthKsVlGQpdCdKIpOuJVyog=
-github.com/sagernet/sing-openconnect v0.1.1-0.20260929151226-29757281a247/go.mod h1:4AKZLVcvY3r54UaK2Gbnm7aN8pOwdLz+y4EP0QFZ5Eg=
+github.com/sagernet/sing-openconnect v0.1.1-0.20261103042440-6c98622bada6 h1:6YFI4lkNVQ6CG0tWmG+YTnhgQ4GtvoMx/1wg/4HshAE=
 github.com/sagernet/sing-openconnect v0.1.1-0.20261103042440-6c98622bada6/go.mod h1:4AKZLVcvY3r54UaK2Gbnm7aN8pOwdLz+y4EP0QFZ5Eg=
 github.com/sagernet/sing-openvpn v0.1.1-0.20261020061844-7d24ecd92837 h1:ifG3togKTHEGaGVTzPWKURazrda/C/acQn48VKhozCg=
 github.com/sagernet/sing-openvpn v0.1.1-0.20261020061844-7d24ecd92837/go.mod h1:PWX7WygD8jpwfqfaGNySXpJYTn0SOwjBI1BKHHC2+Bw=
