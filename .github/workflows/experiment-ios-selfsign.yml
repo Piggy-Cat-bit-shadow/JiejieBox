@@ -12,17 +12,26 @@ name: Experiment - iOS self-sign compatibility
 #     Packet Tunnel extension, so a launch failure can be attributed rather than guessed at;
 #   * it verifies both against a static contract before uploading anything.
 #
-# `workflow_dispatch` cannot be used against a branch other than the default one in this
-# repository's current configuration, so the push trigger below is the real entry point.
+# Both entry points work: a push to this branch, and `workflow_dispatch` against this ref
+# through the API (`gh api .../dispatches -f ref=experiment/ios-selfsign-compat`). The UI's
+# dispatch selector only lists the default branch, which is why the push trigger exists.
 
 on:
   push:
     branches:
       - experiment/ios-selfsign-compat
   workflow_dispatch:
+    inputs:
+      libbox:
+        description: 'auto = reuse an existing validated Libbox for this commit, else build one; required = fail when none exists'
+        type: choice
+        options: [auto, required]
+        default: auto
 
 permissions:
   contents: read
+  # Reading the Libbox artifact this commit already produced, instead of compiling it again.
+  actions: read
 
 env:
   # The Apple client experiment commit. It carries the launch-path fixes this phase tests:
@@ -77,9 +86,54 @@ jobs:
           test "$actual" = "$APPLE_EXPERIMENT_SHA"
           git -C "$APPLE_CLIENT_DIR" log --oneline -3
 
+      - name: reuse this commit's Libbox if one was already produced
+        id: libbox_artifact
+        # The single-producer rule: `client-apple.yml` compiles Libbox for a commit and uploads
+        # it under `jiejiebox-libbox-<core sha>`. This job consumes that artifact when it exists
+        # instead of compiling the same Go bytes a second time.
+        #
+        # The artifact NAME only decides what to download. Whether it may be used is decided by
+        # `apple-libbox-artifact.sh validate`, against the parent-sha and the release version
+        # recorded in the manifest - a name is a label, the manifest is evidence.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LIBBOX_POLICY: ${{ inputs.libbox || 'auto' }}
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          version="$(tr -d '[:space:]' < release/JIEJIE_VERSION)"
+          reused=false
+          for id in $(gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts?name=jiejiebox-libbox-$sha&per_page=10" \
+                        --jq '.artifacts[] | select(.expired == false) | .id'); do
+            echo "candidate Libbox artifact: $id"
+            rm -rf build/apple-libbox build/libbox-artifact.zip
+            mkdir -p build/apple-libbox
+            gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > build/libbox-artifact.zip
+            unzip -q build/libbox-artifact.zip -d build/apple-libbox
+            if ./scripts/ci/apple-libbox-artifact.sh validate build/apple-libbox \
+                 --parent-sha "$sha" --jj-version "$version"; then
+              ./scripts/ci/apple-libbox-artifact.sh install build/apple-libbox "$APPLE_CLIENT_DIR"
+              echo "LIBBOX_ARTIFACT_ID=$id" >> "$GITHUB_ENV"
+              reused=true
+              break
+            fi
+            echo "artifact $id does not validate for $sha; ignoring it"
+          done
+          echo "reused=$reused" >> "$GITHUB_OUTPUT"
+          if [ "$reused" = true ]; then
+            echo "Libbox for $sha came from the artifact this commit already built"
+            exit 0
+          fi
+          if [ "$LIBBOX_POLICY" = required ]; then
+            echo "FAIL: no validated Libbox artifact exists for $sha, and the run requires reuse" >&2
+            exit 1
+          fi
+          echo "no validated Libbox artifact for $sha; this run will build one"
+
       - name: build Libbox for iOS from this repository
-        # Same commands the official libbox action runs, without its artifact packing and
-        # release-identity binding: this job compiles the framework it will link, in place.
+        if: steps.libbox_artifact.outputs.reused != 'true'
+        # The fallback producer. Same commands as the official libbox action, without its pack
+        # and release-identity steps: this job links the framework in place.
         run: |
           set -euo pipefail
           ./scripts/ci/gomobile-toolchain.sh install apple
@@ -176,6 +230,7 @@ jobs:
             echo "- version: \`$(cat release/JIEJIE_VERSION)\`"
             echo "- parent: \`$(git rev-parse --short HEAD)\`"
             echo "- apple: \`$APPLE_EXPERIMENT_SHA\`"
+            echo "- libbox: \`${{ steps.libbox_artifact.outputs.reused == 'true' && format('reused artifact {0}', env.LIBBOX_ARTIFACT_ID) || 'built in this run' }}\`"
             echo "- artifact: \`jiejiebox-ios-selfsign-experiment-${GITHUB_SHA}\`"
             echo ""
             echo "Unsigned: re-sign it with the certificate and profile before installing."
