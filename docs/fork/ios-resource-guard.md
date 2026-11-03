@@ -238,6 +238,21 @@ Integration coverage, all on loopback with the real `sing-anytls` client:
 | `TestSessionBurstWithGuardBoundsConcurrentCreation` | 200 flows → peak ≤ 8 concurrent creations, all 200 admitted, no refusals |
 | `TestSessionBurstGuardDoesNotChangeObservableBehaviour` | 16 admitted streams remain distinct and close cleanly |
 | `TestSessionCreationCostCensus` | 7,414 B per live session (§2.5) |
+| `TestTLSHandshakeBurstAmplificationIsBounded` | the same burst with a REAL TLS handshake blocked on a silent server: concurrent handshakes and marginal peak heap, with and without the guard |
+
+The last test is the local version of the device event: 200 dials whose `DialOut` performs a real
+`crypto/tls` handshake against a listener that sends nothing, which is the state the profile
+showed (`utls.(*Conn).HandshakeContext`, blocked in `readHandshakeBytes`). Measured on the
+development host, three consecutive runs of the same binary:
+
+| | concurrent handshakes | marginal peak heap |
+|---|---|---|
+| no guard | 200 | 3.32 – 3.77 MiB |
+| limit 8 | 8 | 0.32 – 0.40 MiB |
+
+That is ~17.5 kB of transient heap per in-flight handshake, which is consistent with the pprof
+attribution in §2.4 (`UClient` 7.6 kB + ML-KEM key 5.1 kB + record buffers). The peak is what
+jetsam sees; the steady state after the burst is not changed by this gate (§6.1).
 
 ## 9. What is NOT verified
 
