@@ -130,7 +130,7 @@ jobs:
           fi
           echo "no validated Libbox artifact for $sha; this run will build one"
 
-      - name: build Libbox for iOS from this repository
+      - name: build Libbox for this commit
         if: steps.libbox_artifact.outputs.reused != 'true'
         # The fallback producer. Same commands as the official libbox action, without its pack
         # and release-identity steps: this job links the framework in place.
@@ -150,7 +150,33 @@ jobs:
           done
           go mod download all
           export PATH="$(go env GOPATH)/bin:$PATH"
-          APPLE_CLIENT_DIR="$APPLE_CLIENT_DIR" ./scripts/ci/build-apple-libbox.sh ios
+          # Both slices, not just iOS: the canonical artifact is defined as ios-arm64 +
+          # macos-arm64, so a producer that emits only one is not an artifact any consumer can
+          # validate. The extra slice is the price of being a producer rather than a private
+          # compile, and it is paid once per commit.
+          APPLE_CLIENT_DIR="$APPLE_CLIENT_DIR" ./scripts/ci/build-apple-libbox.sh both
+
+      - name: publish the Libbox artifact for this commit
+        # A second consumer of the same commit must not compile the same Go bytes again, so the
+        # producer path publishes the canonical artifact under the same name the official
+        # pipeline uses. On the experiment branch this is the only producer there is: the
+        # official libbox job refuses the branch because its Apple gitlink is an experiment
+        # revision, which is the ABI gate doing its job rather than a reason to weaken it.
+        if: steps.libbox_artifact.outputs.reused != 'true'
+        run: |
+          set -euo pipefail
+          ./scripts/ci/apple-libbox-artifact.sh pack \
+            "$APPLE_CLIENT_DIR/Libbox.xcframework" dist/apple/libbox
+          cat dist/apple/libbox/manifest.json
+
+      - name: upload the Libbox artifact
+        if: steps.libbox_artifact.outputs.reused != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: jiejiebox-libbox-${{ github.sha }}
+          path: dist/apple/libbox
+          if-no-files-found: error
+          retention-days: 14
 
       - name: apply the personal-test overlays
         # The same overlays the official iOS job applies: the libbox API compatibility patch,
