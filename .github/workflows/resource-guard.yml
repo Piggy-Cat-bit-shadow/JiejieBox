@@ -1,0 +1,93 @@
+name: iOS resource guard
+
+# The gate for the admission guard the iOS Network Extension uses to bound expensive session
+# creation (common/resourceguard, and the AnyTLS seam that consumes it).
+#
+# # Why this is its own workflow
+#
+# The two things that must be executable for this change are the ones the ordinary Verify push
+# gate does not run: the RACE detector, which needs cgo and therefore a Linux/macOS runner, and the
+# burst matrix at the sizes the device actually produced. Neither is a property of the whole
+# product, so neither belongs in the 40-minute structural gate.
+#
+# # What this proves, and what it does not
+#
+# It proves the gate's accounting is race-free, that a 200-flow burst stays under the admission
+# ceiling against the REAL sing-anytls client, and that the counters balance. It does NOT prove
+# jetsam survival on a device, and a green run here must never be read as that: the process budget
+# belongs to the platform, and the device is the only place it can be tested. See
+# docs/fork/ios-resource-guard.md §9 for the exact list of what is not covered.
+#
+# # Cost
+#
+# The packages are small and the burst tests use a loopback listener; there is no network access
+# beyond the module download and no long-running suite. The stress job repeats the same tests with
+# -count to shake out scheduling-dependent flakes rather than to add load.
+
+on:
+  push:
+    paths:
+      - "common/resourceguard/**"
+      - "protocol/anytls/**"
+      - "service/oomkiller/**"
+      - ".github/workflows/resource-guard.yml"
+  pull_request:
+    paths:
+      - "common/resourceguard/**"
+      - "protocol/anytls/**"
+      - "service/oomkiller/**"
+      - ".github/workflows/resource-guard.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: resource-guard-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+jobs:
+  race:
+    name: race and unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l ./common/resourceguard ./protocol/anytls ./service/oomkiller)"
+          if [ -n "${unformatted}" ]; then
+            echo "unformatted files:"
+            echo "${unformatted}"
+            exit 1
+          fi
+      - name: unit tests under the race detector
+        run: go test -count=1 -race -timeout 300s ./common/resourceguard ./protocol/anytls
+      - name: build the core
+        run: go build ./...
+
+  burst:
+    name: burst matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - name: admission burst and session burst, repeated
+        # -count=5 turns a scheduling-dependent pass into a failure. The tests themselves assert
+        # the ceiling and the counter balance on every run, so a repeat is five independent
+        # chances to break the invariant rather than five times the same load.
+        run: go test -count=5 -timeout 600s -run 'TestGuard|TestGate|TestDialWithAdmission|TestSessionBurst' -v ./common/resourceguard ./protocol/anytls
+      - name: refusal behaviour at critical
+        run: go test -count=1 -timeout 300s -run 'TestGuardCriticalRefusesTheExcess|TestDialWithAdmissionRefusesAtCritical' -v ./common/resourceguard ./protocol/anytls
+      - name: admission overhead
+        run: go test -run '^$' -bench 'BenchmarkDialWithAdmission' -benchtime 5000x ./protocol/anytls
