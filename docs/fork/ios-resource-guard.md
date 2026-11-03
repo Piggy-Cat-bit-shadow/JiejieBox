@@ -229,8 +229,8 @@ Local (Windows, `go1.25.5 windows/amd64`):
 ```
 go build ./...                                                # pass
 go vet ./common/resourceguard ./protocol/anytls ./service/oomkiller   # pass
-go test ./common/resourceguard                                # 37 tests, pass
-go test ./protocol/anytls                                     # 37 tests, pass
+go test ./common/resourceguard                                # pass
+go test ./protocol/anytls                                     # pass
 go test -run '^$' -bench BenchmarkDialWithAdmission -benchtime 3000x
 ```
 
