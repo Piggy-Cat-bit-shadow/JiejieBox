@@ -39,7 +39,10 @@ env:
 
 jobs:
   ios-selfsign:
-    runs-on: macos-latest
+    # macos-latest is the macos-15 arm64 pool, which has been repeatedly failing to hand out a
+    # runner for this experiment ('not acquired by Runner of type hosted'). macos-14 is a
+    # separate pool with the same Xcode-satisfying toolchain for an iOS arm64 build.
+    runs-on: macos-14
     timeout-minutes: 150
     steps:
       - name: check out with submodules
