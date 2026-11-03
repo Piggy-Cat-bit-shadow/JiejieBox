@@ -371,6 +371,7 @@ Attacks that found nothing, and the test that now holds them:
 | cancelled while queued | no dial, the caller sees its own context error (`TestDialWithAdmissionCancelDuringQueueDoesNotDial`, `TestAttackContextErrorIsNotSwallowed`) |
 | a panicking dial | the permit is still returned and the gate stays usable (`TestDialAdmittedSeesNoPermitLeakOnPanic`) |
 | 200 stalled TLS handshakes with every caller timing out | ceiling holds at 4-8, every permit returns, no goroutine left behind (`TestStalledHandshakesLeakNothing`, `TestStallWithQueueExhaustedRefusesFast`) |
+| 3 cycles of idle -> critical -> recovery on the real seam | normal admits 40/40 at peak 4, critical admits 5 and refuses 35 at peak 1, recovery reopens the limit every cycle (TestSoakCyclesReopenAdmission) |
 | 0 / 1 / cap-1 / cap / cap+1 / 100 callers | ceiling holds, nobody is lost (`TestAttackQueueBoundaries`, `TestDialWithAdmissionBoundarySizes`) |
 
 ### 11.3 Anti-reclaim-loop evidence, with numbers
