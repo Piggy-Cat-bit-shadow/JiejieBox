@@ -154,17 +154,21 @@ not exist, and every consumer sees a nil guard that admits everything.
 | armed | 16 | 128 | 2.5 s | — | first pressure line, still admits a burst |
 | critical | 8 | 32 | 100 ms | close idle AnyTLS sessions | fail fast; do not park |
 
-Rises are immediate. Falls wait `DemoteAfter` (2 s) so one quiet sample cannot re-open admission
-into a burst that is still arriving. The `critical` wait is a fixed 100 ms rather than a derived
-fraction: at critical, a caller either gets a slot within a round trip or is refused — parking it
-for the normal budget is the behaviour the level exists to stop.
+Rises are immediate. Falls require the pressure to be **continuously** lower for `DemoteAfter`
+(2 s): the stamp is reset by any observation at or above the current level, so a jittering signal
+can never accumulate its way to a demotion. That distinction is not cosmetic - measuring "time
+since the level last changed" lets an alternating signal demote once per dwell, and every
+re-entry into critical runs the shed hooks again (see §11.2 defect 3). The `critical` wait is a
+fixed 100 ms rather than a derived fraction: at critical, a caller either gets a slot within a
+round trip or is refused — parking it for the normal budget is the behaviour the level exists to
+stop.
 
 `ClassInteractive` may use up to `InteractiveReserve` (4) slots beyond the limit, so a background
 burst cannot occupy the last few seats. The reserve is enforced in the GRANT path, not only in the
 admission check: a slot that frees while the gate is at the limit is left empty rather than handed
-to a queued background caller, because the alternative moves the gate to `limit+1` for background
-work and the reserve disappears one handoff at a time. Nothing uses `ClassInteractive` yet; the
-AnyTLS path asks for `ClassNormal`.
+to a queued background caller. A waiter that has been passed over for `StarvationAfter` (1 s) may
+claim the reserve, which is what stops the priority from becoming a permanent lockout (§11.2
+defect 2). Nothing uses `ClassInteractive` yet; the AnyTLS path asks for `ClassNormal`.
 
 ### 4.3 Why the permit sits at the AnyTLS dial seam
 
@@ -225,8 +229,8 @@ Local (Windows, `go1.25.5 windows/amd64`):
 ```
 go build ./...                                                # pass
 go vet ./common/resourceguard ./protocol/anytls ./service/oomkiller   # pass
-go test ./common/resourceguard                                # 16 tests, pass
-go test ./protocol/anytls                                     # 29 tests (8 added), pass
+go test ./common/resourceguard                                # 37 tests, pass
+go test ./protocol/anytls                                     # 37 tests, pass
 go test -run '^$' -bench BenchmarkDialWithAdmission -benchtime 3000x
 ```
 
@@ -307,3 +311,113 @@ jetsam sees; the steady state after the burst is not changed by this gate (§6.1
    class reserve already in the API (`ClassInteractive`) used for latency-sensitive flows.
 3. ~~Put `GuardStats` into the OOM report metadata~~ — done: `Recorder.SetExtraMetadata` writes the
    counters under the top-level `resourceGuard` key (§8.1).
+
+## 11. Round 02 — adversarial review (state machine, defects, bounds)
+
+This section is written by the review, not by the author of §1-§10. It attacks the system with
+wrong input, wrong timing and wrong state, and records what had to be fixed.
+
+### 11.1 The real call graph (not the file names)
+
+```text
+oomkiller timer (1 s adaptive cadence, darwin dispatch source also drives it)
+   sample = memory.Total()  ->  nextPressureState()  ->  threshold ladder
+        │
+        ├─ stores Service.pressure  (atomic uint32, tun.MemoryPressure)
+        └─ on Triggered: releaseMemory() [pre-existing path, unchanged]
+
+anytls outbound dial (TCP and UoT share it)
+   dialAdmitted -> guard.Acquire
+        observe():  pressure() = Service.guardLevel()  <- the SAME atomic
+                     rise: immediate; fall: only after DemoteAfter of CONTINUOUSLY lower
+        apply():    plan -> gate (edge-triggered; runs shed hooks on entry to critical)
+        gate.Acquire: already-canceled ctx? refuse | under limit? admit | queue full? refuse
+                      | else park on a private channel with a deadline
+   expensive work (session creation: TCP + TLS + ML-KEM)
+   defer permit.Release()
+```
+
+What the system does NOT own, and must not be read as owning:
+
+| resource | owner | guarded here? |
+|---|---|---|
+| goroutine + 32 KiB stack per UDP flow | `sing-tun.UDPNat.getOrCreate` | **no** — created before any outbound exists (§6.2) |
+| route connection goroutines | `route.ConnectionManager.NewConnection` | no |
+| TLS handshake state per session | `sing-anytls` inside the dial | **yes** — the permit is held across it |
+| session/stream buffers after the dial | `sing-anytls` | no — steady state is uncapped (§6.1) |
+| the decision "how much pressure are we under" | `service/oomkiller` timer | no — read, never re-measured |
+
+### 11.2 Defects found and fixed this round
+
+Each one was reproduced as a failing test before the fix, and the test stays as the regression.
+
+| # | severity | condition | failure evidence | fix |
+|---|---|---|---|---|
+| 1 | **high** | any operator config with `Limit < 4` or `Queue < 16` | `planFor(Armed).limit` = 2 while `planFor(Normal).limit` = 1: arming the guard ADMITS MORE than normal. The floors designed to avoid a deadlock could cross the level above them. | derived plans are clamped to the level above (`TestAttackDerivedPlansNeverExceedTheBasePlan`) |
+| 2 | **high** | a saturated interactive class | with the gate held at its limit and the reserve continuously re-taken, a queued background caller was passed over 60 times in a row: the reserve was a permanent lockout, not a priority | aged waiters may claim the reserve after `StarvationAfter`, bounded by the absolute cap (`TestAttackInteractiveTrafficCannotStarveBackgroundForever`, `TestAgingUsesTheInjectedClock`) |
+| 3 | **high** | a jittering pressure source | the dwell was measured from the last transition, so an alternating signal satisfied "2 s elapsed" after enough toggles and demoted once per dwell — every re-entry ran the shed hooks again. A 5 ms toggle under a 50 ms dwell produced repeated reclaim. | demotion requires the pressure to be CONTINUOUSLY lower; any observation at or above the level resets the stamp (`TestAttackOscillatingPressureDoesNotAmplifyReclaim`, `TestReclaimRateUnderJitterIsZero`) |
+| 4 | medium | a waiter granted at the instant it gave up | the caller was counted in BOTH `admitted` and `canceled/timedOut`, and `released` was incremented for a slot nobody used, so `admitted + refused + canceled + timedOut != requested` and the reported "admitted" was a grant count, not a caller count | the phantom grant is undone (`admitted--`, no `released++`) and the slot is passed on (`TestAttackMixedOutcomesKeepTheAccountingExact`) |
+| 5 | medium | a context already dead before the call | `Acquire` admitted first and checked nothing, spending a permit on a dial that could not succeed | cancellation is checked before the limit (`TestAttackCancelledCallerNeverTakesASlot`) |
+| 6 | low | contended hot path | `apply` took the policy lock on every dial to compare an unchanged level | the check is an atomic load; the lock is only taken when the level actually changed |
+
+Attacks that found nothing, and the test that now holds them:
+
+| attack | result |
+|---|---|
+| 500 queued waiters, each with a goroutine of its own | the gate spawns none; it costs one channel and one struct per waiter (`TestAttackQueuedWaitersDoNotOwnGoroutines`) |
+| 200 dials under steady critical | one shed, not 200 (`TestAttackShedDoesNotRunPerDial`) |
+| 1000 metric polls under critical | one shed (`TestAttackShedIsEdgeTriggeredFromTheMetricsPath`) |
+| refused dial | the expensive work never starts (`TestDialWithAdmissionNeverDialsWhenRefused`) |
+| cancelled while queued | no dial, the caller sees its own context error (`TestDialWithAdmissionCancelDuringQueueDoesNotDial`, `TestAttackContextErrorIsNotSwallowed`) |
+| a panicking dial | the permit is still returned and the gate stays usable (`TestDialAdmittedSeesNoPermitLeakOnPanic`) |
+| 0 / 1 / cap-1 / cap / cap+1 / 100 callers | ceiling holds, nobody is lost (`TestAttackQueueBoundaries`, `TestDialWithAdmissionBoundarySizes`) |
+
+### 11.3 Anti-reclaim-loop evidence, with numbers
+
+The concern is the loop "pressure → reclaim → no real decrease → reclaim again". For this system
+the reclaim action is one hook (close idle AnyTLS sessions), and the structural bound is:
+
+> a reclaim runs once per ENTRY into critical, and entries are separated by at least
+> `DemoteAfter` of continuously lower pressure. Maximum rate = one per `DemoteAfter`.
+
+Measured with the production constants (2 s dwell, 1 s sampling) on an injected clock, so a
+simulated minute costs milliseconds:
+
+| signal (60 simulated seconds) | reclaims | bound |
+|---|---|---|
+| sustained critical, sampled every 250 ms (240 samples) | **1** | 1 |
+| jitter: 1.9 s below / 0.1 s above, 30 cycles | **1** | 1 |
+| full-band square wave: 3 s below / 3 s above | **10** | 31 (= 60/2 + 1) |
+
+Sustained pressure is therefore not a loop at all — it is a single action. The only way to get
+another is for the process to genuinely leave the critical band for longer than the dwell and
+come back, and even then the rate is capped at 1/dwell. There is no "no-progress" counter because
+there is nothing to retry: the hook closes idle sessions, it does not attempt to move a memory
+reading, so "it ran but the number did not move" cannot cause it to run again.
+
+### 11.4 Hot path under contention
+
+`BenchmarkDialWithAdmissionParallel`, 16 goroutines, Ryzen 7 4800H:
+
+| path | ns/op | allocs |
+|---|---|---|
+| no guard (any non-NE build) | 46-59 | 0 |
+| guard, normal level | 291-335 | 48 B / 1 |
+
+The 1 allocation is the permit itself. Against a session creation (TCP + TLS + ML-KEM, measured
+in milliseconds) this is under 0.1% of the operation it guards, and it is what bounds the peak.
+
+### 11.5 Residual risks this review could NOT remove
+
+1. **A permit's hold time is bounded only by the caller's context** (§6.1, §6.4). A peer that
+   completes the TCP connection and then never answers the handshake pins one permit until the
+   flow dies. At critical (8 slots) that closes admission for AnyTLS. The degradation is bounded
+   and fast — refused in 100 ms, queue capped at 32, no memory growth
+   (`TestAttackPinnedGateRefusesFastRatherThanQueueing`) — but it is a real availability trade,
+   and fixing it means giving the outbound a session-creation deadline, which is a configuration
+   surface this round is not allowed to add.
+2. **Goroutine stacks and steady-state sessions remain upstream of the gate** (§6.1, §6.2). The
+   guard cannot make the 200-flow burst cheaper than "200 flows"; it removes the handshake storm
+   on top of them.
+3. **The shed hook runs on the dial path**, synchronously, once per transition. It is bounded and
+   idempotent, but a pathological `CloseIdleConnections` would delay exactly one dial.
