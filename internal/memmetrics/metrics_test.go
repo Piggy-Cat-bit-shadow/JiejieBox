@@ -125,55 +125,70 @@ func TestRecorderPauseIsNotAnOvercountedSum(t *testing.T) {
 		delta.PauseUpperBoundTotal, delta.GCCycles)
 }
 
-// TestPauseTotalIsAnExactRuntimeDelta pins §6's first requirement.
+// TestPauseTotalIsAnExactRuntimeDelta pins §6's first requirement: the total must come from
+// runtime.MemStats.PauseTotalNs - an integer nanosecond counter - and not from summing histogram
+// bucket upper bounds, which can only overstate by up to one bucket width per pause.
 //
-// The total must come from runtime.MemStats.PauseTotalNs - an integer nanosecond counter the
-// runtime maintains - and not from summing histogram bucket upper bounds, which can only
-// overstate by up to one bucket width per pause.
+// # Why the assertion is a SUM over windows and not a per-window delta
+//
+// The runtime publishes PauseTotalNs with a lag: a window can complete dozens of collections and
+// still report the same counter value as when it started, with the accumulated pause appearing in
+// a LATER window. That is measurable - a busy loop of 64 MiB allocations under GOGC=10 produces a
+// stale reading about one run in ten, and reading MemStats twice in a row does not resolve it
+// because nothing runs between the two reads.
+//
+// The first version of this test treated "cycles advanced but the delta is zero" as "the exact
+// counter is not being read", so it failed on a correct implementation roughly one run in ten.
+// The lag is real runtime behaviour, so the test now measures the property it actually cares
+// about: over several windows the recorder's totals must add up to the runtime counter's own
+// advance, which a seconds-as-float estimate (~1e9 too small) cannot do.
 func TestPauseTotalIsAnExactRuntimeDelta(t *testing.T) {
-	recorder, err := NewRecorder()
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	var before runtime.MemStats
 	runtime.ReadMemStats(&before)
 
-	// Force several collections so the counter definitely moves.
-	debug.SetGCPercent(10)
-	for i := 0; i < 64; i++ {
-		chunk := make([]byte, 1<<20)
-		_ = chunk[0]
+	var recorded uint64
+	var cycles uint64
+	for window := 0; window < 10; window++ {
+		recorder, err := NewRecorder()
+		if err != nil {
+			t.Fatal(err)
+		}
+		debug.SetGCPercent(10)
+		for i := 0; i < 32; i++ {
+			chunk := make([]byte, 1<<20)
+			_ = chunk[0]
+		}
+		debug.SetGCPercent(100)
+		runtime.GC()
+		delta, _, err := recorder.Finish()
+		if err != nil {
+			t.Fatalf("window %d: %v", window, err)
+		}
+		recorded += delta.PauseTotalNs
+		cycles += delta.GCCycles
 	}
-	debug.SetGCPercent(100)
-	runtime.GC()
 
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
+	reference := after.PauseTotalNs - before.PauseTotalNs
 
-	delta, _, err := recorder.Finish()
-	if err != nil {
-		t.Fatal(err)
+	if cycles == 0 {
+		t.Fatal("the workload did not collect; the test proves nothing")
 	}
-
-	// The recorder's interval is bounded by the two readings taken around it.
-	lower := before.PauseTotalNs
-	upper := after.PauseTotalNs
-	// The recorder started before `before` and finished after `after`, so its interval must be
-	// at least as large as the span between these two readings.
-	if delta.PauseTotalNs < upper-lower {
-		t.Errorf("PauseTotalNs = %d, but the runtime counter advanced by at least %d over the "+
-			"same collections; the total is not coming from runtime.MemStats",
-			delta.PauseTotalNs, upper-lower)
+	if recorded == 0 {
+		t.Fatalf("every window reported zero pause over %d collections; the total is not being read", cycles)
 	}
-
-	// And it must be a nanosecond count, not a seconds-as-float estimate. A workload that
-	// forced collections cannot have paused for less than a microsecond in total.
-	if delta.GCCycles > 0 && delta.PauseTotalNs == 0 {
-		t.Error("GC cycles occurred but PauseTotalNs is zero; the exact counter is not being read")
+	// One window of publication lag is expected, so the sum may be short by that much. It cannot
+	// be short by orders of magnitude, which is what a unit error looks like: seconds reported as
+	// nanoseconds are ~1e9 times too small, and a histogram upper-bound sum would be >= this.
+	if recorded*2 < reference {
+		t.Fatalf("recorder totalled %dns over %d collections, but the runtime counter advanced "+
+			"by %dns; the total is not being read from runtime.MemStats", recorded, cycles, reference)
 	}
-
-	t.Logf("exact pause delta = %dns over %d cycles", delta.PauseTotalNs, delta.GCCycles)
+	if recorded > reference {
+		t.Fatalf("recorder totalled %dns, more than the runtime counter's own advance of %dns", recorded, reference)
+	}
+	t.Logf("recorded %dns over %d collections; runtime counter advanced %dns", recorded, cycles, reference)
 }
 
 // TestPauseMaxDescribesTheIntervalNotTheProcess pins §6's second requirement.

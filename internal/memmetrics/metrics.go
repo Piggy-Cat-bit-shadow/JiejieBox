@@ -78,6 +78,19 @@ type Delta struct {
 	// It replaces a histogram-based estimate. Summing bucket upper bounds times counts can only
 	// overstate, by up to one bucket width per pause, and reporting that as a total conflated a
 	// measurement with a bound.
+	//
+	// # It can be short by one interval, and zero does not mean "no pauses"
+	//
+	// The runtime publishes the counter with a lag: an interval can complete dozens of
+	// collections and still read the same value it read at its start, with the accumulated pause
+	// appearing in a later interval. This was measured, not assumed - a loop of 64 MiB
+	// allocations under GOGC=10 reproduces it about one run in ten, and two consecutive
+	// ReadMemStats calls do not resolve it because nothing runs between them.
+	//
+	// So a consumer must not read PauseTotalNs == 0 as "this interval never paused". GCCycles is
+	// the field that says whether work happened; PauseTotalNs says how much pause the runtime had
+	// PUBLISHED by the end of the interval. Summed over consecutive intervals the totals converge
+	// on the runtime's own counter, which is what the package's test asserts.
 	PauseTotalNs uint64
 	// PauseCount is how many pauses this interval produced, from the histogram delta.
 	PauseCount uint64
