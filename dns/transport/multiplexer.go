@@ -204,7 +204,19 @@ func (m *queryMultiplexer) dispatch(ctx context.Context, message *mDNS.Msg, call
 	// probe is gone and the serial path is unconditional: one connection at a time, held across
 	// sequential queries by the serial pool. Only intra-connection pipelining is given up.
 	_ = retryReadError
-	m.exchangeSingle(ctx, message, callback)
+	// The asynchronous entry point must not run CONNECTION SETUP on the caller's goroutine.
+	//
+	// exchangeSingle acquires a connection from the serial pool, and acquiring may dial: that
+	// is a TCP/TLS setup with a network round trip in it. Dispatch is reached from the DNS
+	// hijack path of the packet tunnel, so doing it inline made the first query to a cold
+	// server block packet processing for the whole dial - the upstream defect fixed by
+	// 04b42a81231 ("Fix DNS connection setup blocking TUN packet processing"). This fork has
+	// no async transport path to fix instead (the capability probe was removed, see below), so
+	// the fix belongs at the one funnel every caller goes through.
+	//
+	// The connection pool is concurrency-safe and holds at most one connection out at a time,
+	// so moving this off the caller's goroutine cannot put two queries on one socket.
+	go m.exchangeSingle(ctx, message, callback)
 }
 
 // exchangeSingle answers one query on a connection that is NOT used concurrently.
