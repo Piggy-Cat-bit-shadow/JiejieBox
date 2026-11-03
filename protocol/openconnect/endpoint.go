@@ -28,8 +28,9 @@ func RegisterEndpoint(registry *endpoint.Registry) {
 
 type endpointBase struct {
 	endpoint.Adapter
-	router adapter.Router
-	logger log.ContextLogger
+	router  adapter.Router
+	logger  log.ContextLogger
+	network adapter.NetworkManager
 }
 
 func (e *endpointBase) newConnection(ctx context.Context, endpoint adapter.Endpoint, localAddresses []netip.Prefix, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
@@ -91,13 +92,16 @@ func loopbackAddressFor(address netip.Addr) netip.Addr {
 	return netip.IPv6Loopback()
 }
 
-func judgeOpenConnectFlow(router adapter.Router, tag string, endpointType string, localAddresses []netip.Prefix, network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
-	for _, localPrefix := range localAddresses {
-		if destination.Addr() == localPrefix.Addr() {
+// judgeFlow decides a flow that arrived at this endpoint; see the OpenVPN twin for why a flow to
+// the endpoint's own address is not simply accepted in system mode.
+func (e *endpointBase) judgeFlow(ctx context.Context, system bool, endpoint adapter.Endpoint, localAddresses []netip.Prefix, network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
+	if isEndpointLocalAddress(localAddresses, destination.Addr()) {
+		if system {
 			return tun.FlowVerdict{Action: tun.ActionAccept}
 		}
+		return adapter.JudgeHostFlow(ctx, e.network, e.logger, network, source, destination)
 	}
-	return adapter.JudgeFlow(router, adapter.InboundContext{Inbound: tag, InboundType: endpointType}, network, source, destination, firstPacket)
+	return adapter.JudgeFlow(e.router, adapter.InboundContext{Inbound: endpoint.Tag(), InboundType: endpoint.Type()}, network, source, destination, firstPacket)
 }
 
 func materialSource(name string, inlineValues []string, path string) (openconnect.Material, error) {

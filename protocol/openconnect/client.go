@@ -112,8 +112,9 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 			// address is a DOMAIN - the fact the cross-kind graph needs to know whether a
 			// ResolveDialer is built and therefore whether `route.default_domain_resolver` is ever
 			// read on this object's behalf.
-			router: router,
-			logger: logger,
+			router:  router,
+			logger:  logger,
+			network: service.FromContext[adapter.NetworkManager](ctx),
 		},
 		loopContext:   loopContext,
 		cancelLoop:    cancelLoop,
@@ -580,7 +581,7 @@ func (e *Endpoint) DetachReturn(returnPath tun.Return) error {
 }
 
 func (e *Endpoint) JudgeFlow(network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
-	return judgeOpenConnectFlow(e.router, e.Tag(), e.Type(), e.state.Load().localAddresses, network, source, destination, firstPacket)
+	return e.judgeFlow(e.loopContext, e.deviceOptions.System, e, e.state.Load().localAddresses, network, source, destination, firstPacket)
 }
 
 func (e *Endpoint) NewDNSPacket(payload []byte, source M.Socksaddr, destination M.Socksaddr, writer N.PacketWriter) {

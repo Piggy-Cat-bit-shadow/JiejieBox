@@ -34,8 +34,9 @@ func RegisterEndpoint(registry *endpoint.Registry) {
 
 type endpointBase struct {
 	endpoint.Adapter
-	router adapter.Router
-	logger log.ContextLogger
+	router  adapter.Router
+	logger  log.ContextLogger
+	network adapter.NetworkManager
 }
 
 func (e *endpointBase) newConnection(ctx context.Context, endpoint adapter.Endpoint, localAddresses []netip.Prefix, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
@@ -97,13 +98,28 @@ func loopbackAddressFor(address netip.Addr) netip.Addr {
 	return netip.IPv6Loopback()
 }
 
-func judgeOpenVPNFlow(router adapter.Router, tag string, endpointType string, localAddresses []netip.Prefix, network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
-	for _, localPrefix := range localAddresses {
-		if destination.Addr() == localPrefix.Addr() {
+// judgeFlow decides a flow that arrived at this endpoint.
+//
+// # Why a flow to the endpoint's own address is not simply accepted
+//
+// The endpoint device holds the configured addresses. In a normal (non-system) endpoint those
+// addresses are served by the endpoint's own stack, so accepting the flow is right. In SYSTEM
+// mode the same addresses belong to the host, and a flow to them must be judged against the
+// host's routed port instead - otherwise the endpoint accepts traffic that was addressed to a
+// service the host runs.
+//
+// This fork had the unconditional accept for OpenVPN while MASQUE already had the distinction
+// (upstream 1a55e9ed23e, "Forward endpoint local flows to tun"); the two now agree. When no
+// host port is registered JudgeHostFlow answers ActionAccept, so the non-system behaviour is
+// unchanged in every configuration that does not have a TUN stack behind it.
+func (e *endpointBase) judgeFlow(ctx context.Context, system bool, endpoint adapter.Endpoint, localAddresses []netip.Prefix, network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
+	if isEndpointLocalAddress(localAddresses, destination.Addr()) {
+		if system {
 			return tun.FlowVerdict{Action: tun.ActionAccept}
 		}
+		return adapter.JudgeHostFlow(ctx, e.network, e.logger, network, source, destination)
 	}
-	return adapter.JudgeFlow(router, adapter.InboundContext{Inbound: tag, InboundType: endpointType}, network, source, destination, firstPacket)
+	return adapter.JudgeFlow(e.router, adapter.InboundContext{Inbound: endpoint.Tag(), InboundType: endpoint.Type()}, network, source, destination, firstPacket)
 }
 
 func keyDirectionValue(direction string) (int, error) {
