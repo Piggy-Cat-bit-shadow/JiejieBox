@@ -83,6 +83,17 @@ jobs:
         run: |
           set -euo pipefail
           ./scripts/ci/gomobile-toolchain.sh install apple
+          # The forked cronet-go module is large and is fetched over VCS, so a cold cache can
+          # hit a transient 'RPC failed; curl 56 ... early EOF'. One such timeout cancelled an
+          # otherwise healthy run 16 minutes in. Retrying is the whole fix; the module graph is
+          # identical every time.
+          for attempt in 1 2 3; do
+            if go mod download all; then
+              break
+            fi
+            echo "go mod download failed (attempt $attempt); retrying"
+            sleep $((attempt * 15))
+          done
           go mod download all
           export PATH="$(go env GOPATH)/bin:$PATH"
           APPLE_CLIENT_DIR="$APPLE_CLIENT_DIR" ./scripts/ci/build-apple-libbox.sh ios
