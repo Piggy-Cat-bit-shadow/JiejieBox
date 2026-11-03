@@ -3,6 +3,7 @@ package resourceguard
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/sing/service"
@@ -56,6 +57,12 @@ type Config struct {
 	// already has its own hysteresis; this is a second, much shorter dwell that exists purely
 	// to debounce the level the ADMISSION path sees.
 	DemoteAfter time.Duration
+	// StarvationAfter bounds how long a queued caller may be passed over because its class does
+	// not fit: after this long it may use the interactive reserve, up to the absolute cap. It is
+	// the guarantee that turns the reserve into a priority rather than a permanent lockout for
+	// the other class. Zero disables the guarantee, which is only correct for tests that drive
+	// the gate by hand.
+	StarvationAfter time.Duration
 }
 
 // DefaultNetworkExtensionConfig is the admission policy for an iOS Network Extension.
@@ -87,36 +94,46 @@ func DefaultNetworkExtensionConfig() Config {
 		Wait:               5 * time.Second,
 		InteractiveReserve: 4,
 		DemoteAfter:        2 * time.Second,
+		StarvationAfter:    time.Second,
 	}
 }
 
 // planFor derives the admission shape for one level.
 //
-// The ratios are deliberately simple and monotonic: half the limit and half the wait at Armed,
-// a quarter of the limit at Critical. The floors matter more than the ratios - a limit that
-// reaches zero would deadlock admission, and a wait that reaches zero would turn every queued
-// caller into an immediate refusal, which is the behaviour of a gate that has forgotten the
-// difference between "busy" and "closed".
+// # Why every derived value is clamped to the level above it
+//
+// The ratios are deliberately simple and monotonic: half the limit at Armed, a quarter at
+// Critical. The FLOORS exist so a degenerate config still has an admittable shape, and they are
+// what makes the derivation unsafe unless it is clamped: with Limit=1 the Armed floor of 2 is
+// larger than the Normal limit, so arming the guard would admit MORE work than normal. That is
+// the policy inverting exactly when it is supposed to tighten, and it is reachable by any
+// operator who sets a small limit. Clamping to the previous level makes "higher pressure never
+// admits more" a property of the function rather than a property of the defaults.
 func (c Config) planFor(level Level) plan {
+	normal := plan{limit: max(c.Limit, 1), queue: max(c.Queue, 0), wait: c.Wait}
+	if normal.wait <= 0 {
+		normal.wait = time.Second
+	}
 	switch level {
 	case LevelCritical:
+		armed := c.planFor(LevelArmed)
 		return plan{
-			limit: max(c.Limit/4, 1),
-			queue: max(c.Queue/8, 2),
+			limit: min(max(c.Limit/4, 1), armed.limit),
+			queue: min(max(c.Queue/8, 2), armed.queue),
 			// Fixed rather than derived: at critical the guard admits within one round trip or
 			// not at all. Parking a caller for a fraction of the normal budget is the
 			// behaviour this level exists to stop - by the time that wait expired the process
 			// would have grown by whatever the caller was going to create.
-			wait: 100 * time.Millisecond,
+			wait: min(100*time.Millisecond, armed.wait),
 		}
 	case LevelArmed:
 		return plan{
-			limit: max(c.Limit/2, 2),
-			queue: max(c.Queue/2, 8),
-			wait:  max(c.Wait/2, 100*time.Millisecond),
+			limit: min(max(c.Limit/2, 2), normal.limit),
+			queue: min(max(c.Queue/2, 8), normal.queue),
+			wait:  min(max(c.Wait/2, 100*time.Millisecond), normal.wait),
 		}
 	default:
-		return plan{limit: c.Limit, queue: c.Queue, wait: c.Wait}
+		return normal
 	}
 }
 
@@ -143,8 +160,21 @@ type Guard struct {
 	access      sync.Mutex
 	level       Level
 	levelSince  time.Time
-	applied     Level
+	applied     atomic.Uint32
 	transitions uint64
+	// now is the clock the dwell reads. A field rather than a direct time.Now call so the
+	// hysteresis bounds can be proven over simulated time.
+	now func() time.Time
+	// lowSince is when the observed level became CONTINUOUSLY lower than the current one.
+	//
+	// It exists because a dwell measured from the last transition is not a debounce: a signal
+	// alternating every few milliseconds would still satisfy "50 ms since the level changed"
+	// after enough toggles, so the guard would demote on a signal that never actually stayed
+	// low - and every re-entry into critical runs the shed hooks again. That is the reclaim
+	// loop this system must not have. Resetting the stamp on every observation at or above the
+	// current level makes the dwell mean what it says: pressure must STAY lower for the full
+	// period.
+	lowSince time.Time
 
 	shedAccess sync.Mutex
 	shedHooks  []func()
@@ -175,14 +205,36 @@ func NewGuard(config Config, pressure func() Level) *Guard {
 		pressure = func() Level { return LevelNormal }
 	}
 	created := &Guard{
-		config:     config,
-		pressure:   pressure,
-		level:      LevelNormal,
-		applied:    LevelNormal,
+		config:   config,
+		pressure: pressure,
+		level:    LevelNormal,
+
 		levelSince: time.Now(),
+		now:        time.Now,
 	}
 	created.gate = NewGate(config.planFor(LevelNormal), config.InteractiveReserve)
+	created.gate.aging = config.StarvationAfter
+	created.gate.now = time.Now
 	return created
+}
+
+// useClock replaces the clock the hysteresis and the aging guarantee read.
+//
+// It exists so the dwell and starvation bounds can be PROVEN over a simulated minute instead of
+// slept through, which is the only way a test can assert "at most one shed per dwell" for a
+// realistic 2 s dwell without a two-minute CI step. Only time-of-day reads go through it; the
+// per-waiter wait budget keeps a real timer, because that one bounds a caller's patience rather
+// than the policy's memory.
+func (g *Guard) useClock(now func() time.Time) {
+	if now == nil {
+		return
+	}
+	g.access.Lock()
+	g.now = now
+	g.levelSince = now()
+	g.lowSince = time.Time{}
+	g.access.Unlock()
+	g.gate.now = now
 }
 
 // RegisterShed adds a callback that runs when the guard enters LevelCritical.
@@ -240,7 +292,7 @@ func (g *Guard) observe() (Level, bool, []func()) {
 	if observed > LevelCritical {
 		observed = LevelCritical
 	}
-	now := time.Now()
+	now := g.clockNow()
 
 	g.access.Lock()
 	enteredCritical := false
@@ -248,12 +300,23 @@ func (g *Guard) observe() (Level, bool, []func()) {
 	case observed > g.level:
 		g.level = observed
 		g.levelSince = now
+		g.lowSince = time.Time{}
 		g.transitions++
 		enteredCritical = observed == LevelCritical
-	case observed < g.level && now.Sub(g.levelSince) >= g.config.DemoteAfter:
-		g.level = observed
-		g.levelSince = now
-		g.transitions++
+	case observed < g.level:
+		if g.lowSince.IsZero() {
+			g.lowSince = now
+		}
+		if now.Sub(g.lowSince) >= g.config.DemoteAfter {
+			g.level = observed
+			g.levelSince = now
+			g.lowSince = time.Time{}
+			g.transitions++
+		}
+	default:
+		// At the current level: the pressure has not been lower, so any accumulated
+		// low-pressure time is void.
+		g.lowSince = time.Time{}
 	}
 	current := g.level
 	g.access.Unlock()
@@ -274,13 +337,19 @@ func (g *Guard) observe() (Level, bool, []func()) {
 // of every expensive connection and re-taking the gate's lock to store an unchanged plan would
 // be paid for on every dial to save nothing.
 func (g *Guard) apply(level Level) {
-	g.access.Lock()
-	changed := g.applied != level
-	g.applied = level
-	g.access.Unlock()
-	if !changed {
+	// Fast path: the overwhelmingly common case is a dial at an unchanged level, and this check
+	// must not take the policy lock. It is an atomic load instead, which is what keeps the hot
+	// path to one mutex acquisition (observe) plus the gate's own.
+	if Level(g.applied.Load()) == level {
 		return
 	}
+	g.access.Lock()
+	if Level(g.applied.Load()) == level {
+		g.access.Unlock()
+		return
+	}
+	g.applied.Store(uint32(level))
+	g.access.Unlock()
 	g.gate.setPlan(g.config.planFor(level))
 	if level == LevelCritical {
 		g.runShed()
@@ -347,4 +416,15 @@ func FromContext(ctx context.Context) *Guard {
 // hand.
 func NewContext(ctx context.Context, guard *Guard) context.Context {
 	return service.ContextWith(ctx, guard)
+}
+
+// clockNow reads the guard's clock, defaulting to the wall clock when the field is unset.
+//
+// It exists so the dwell and the aging rule can be driven by a simulated clock in tests without
+// every production read paying for an interface or a nil check that the compiler cannot fold.
+func (g *Guard) clockNow() time.Time {
+	if g.now == nil {
+		return time.Now()
+	}
+	return g.now()
 }

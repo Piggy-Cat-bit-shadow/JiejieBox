@@ -93,6 +93,13 @@ type Gate struct {
 	// the list reaches it, so no removal is needed under contention.
 	waiters *list.List
 	pending int
+	// aging is how long a waiter may be passed over for its class before it is allowed to use
+	// the reserve. Zero means "never", which is only correct for tests that drive the gate by
+	// hand; every production guard sets it (see Config.StarvationAfter).
+	aging time.Duration
+	// now is the clock the aging rule reads. It is a field, not a direct time.Now call, so a
+	// test can prove the guarantee over a simulated minute instead of sleeping for one.
+	now func() time.Time
 
 	maxInflight int
 
@@ -120,6 +127,9 @@ type waiter struct {
 	class   Class
 	state   waiterState
 	element *list.Element
+	// enqueued is when the waiter joined the queue. It is the input to the aging rule, which is
+	// the only thing that stops a busy priority class from passing the other one over forever.
+	enqueued time.Time
 }
 
 // NewGate builds a gate at the given plan. Limits are clamped to a usable shape rather than
@@ -142,6 +152,7 @@ func NewGate(initial plan, reserve int) *Gate {
 		plan:    initial,
 		reserve: reserve,
 		waiters: list.New(),
+		now:     time.Now,
 	}
 }
 
@@ -181,6 +192,18 @@ func (g *Gate) setPlan(next plan) {
 func (g *Gate) Acquire(ctx context.Context, class Class) (*Permit, error) {
 	started := time.Now()
 
+	// A caller whose context is already dead must not take a slot: admitting it would spend the
+	// permit on a dial that cannot succeed, and under pressure the whole point of the gate is
+	// that only useful work holds one. Cancellation is checked before the limit, not after, so a
+	// dead caller can never be the reason a live one waits.
+	if err := ctx.Err(); err != nil {
+		g.access.Lock()
+		g.requested++
+		g.canceled++
+		g.access.Unlock()
+		return nil, err
+	}
+
 	g.access.Lock()
 	g.requested++
 	if g.inflight < g.limitFor(class) {
@@ -197,7 +220,7 @@ func (g *Gate) Acquire(ctx context.Context, class Class) (*Permit, error) {
 		g.access.Unlock()
 		return nil, ErrQueueFull
 	}
-	created := &waiter{channel: make(chan struct{}, 1), class: class}
+	created := &waiter{channel: make(chan struct{}, 1), class: class, enqueued: g.now()}
 	created.element = g.waiters.PushBack(created)
 	g.pending++
 	g.queued++
@@ -227,8 +250,13 @@ func (g *Gate) withdraw(created *waiter, err error, timedOut bool) error {
 	g.access.Lock()
 	switch created.state {
 	case waiterGranted:
+		// The slot was granted but the waiter had already given up, so this caller was never
+		// admitted. Both counters are undone rather than papered over: counting the grant as an
+		// admission AND the withdrawal as a cancellation would put one caller in two outcome
+		// buckets, and an operator reading "admitted 168" would be reading grants instead of
+		// callers. released is deliberately NOT incremented - nothing was used and returned.
 		g.inflight--
-		g.released++
+		g.admitted--
 		if timedOut {
 			g.timedOut++
 		} else {
@@ -236,7 +264,7 @@ func (g *Gate) withdraw(created *waiter, err error, timedOut bool) error {
 		}
 		g.grantLocked()
 		g.access.Unlock()
-		// The slot was granted and has been passed on; the caller still missed it.
+		// The slot has been passed on; the caller still missed it.
 		return err
 	case waiterPending:
 		created.state = waiterAbandoned
@@ -281,6 +309,14 @@ func (g *Gate) release() {
 // hand the reserve to background work. The reserve would then be consumed by exactly the flood
 // it exists to protect against. So a slot that frees at the limit is left EMPTY until an
 // interactive caller takes it or the limit rises - which is the reserve working, not a stall.
+//
+// # Why an aged waiter is allowed to break that rule
+//
+// The class check alone makes the reserve a permanent lockout: as long as the interactive class
+// keeps taking the reserve slot, a queued background caller never sees a moment when it fits.
+// A waiter that has been passed over for `aging` may therefore use the reserve, up to the
+// absolute cap of limit+reserve. That bounds the starvation instead of eliminating the priority:
+// the interactive class still goes first, it just cannot go first forever.
 func (g *Gate) grantLocked() {
 	for element := g.waiters.Front(); element != nil; element = element.Next() {
 		created := element.Value.(*waiter)
@@ -288,7 +324,12 @@ func (g *Gate) grantLocked() {
 			continue
 		}
 		if g.inflight >= g.limitFor(created.class) {
-			continue
+			if !g.agedFor(created) {
+				continue
+			}
+			if g.inflight >= g.plan.limit+g.reserve {
+				continue
+			}
 		}
 		g.waiters.Remove(element)
 		created.element = nil
@@ -302,6 +343,15 @@ func (g *Gate) grantLocked() {
 		created.channel <- struct{}{}
 		return
 	}
+}
+
+// agedFor reports whether a waiter has been passed over long enough to claim the reserve.
+//
+// It reads the clock through time.Since on the waiter's own enqueue stamp, so the rule costs one
+// timestamp read per candidate rather than a timer per waiter - the queue holds hundreds of them
+// and must stay allocation- and goroutine-free.
+func (g *Gate) agedFor(created *waiter) bool {
+	return g.aging > 0 && g.now().Sub(created.enqueued) >= g.aging
 }
 
 // compactLocked drops abandoned waiters once they outnumber the live ones.
