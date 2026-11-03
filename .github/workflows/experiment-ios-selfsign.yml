@@ -229,6 +229,14 @@ jobs:
             echo "apple_repo:         https://github.com/Piggy-Cat-bit-shadow/sing-box-for-apple"
             echo "apple_sha:          $APPLE_EXPERIMENT_SHA"
             echo ""
+            # Where the core bytes came from. One Libbox per commit is the point of phase 2, so
+            # an artifact that does not say which Libbox it linked is not attributable.
+            if [ "${{ steps.libbox_artifact.outputs.reused }}" = "true" ]; then
+              echo "libbox_source:      reused artifact ${LIBBOX_ARTIFACT_ID} (validated against manifest)"
+            else
+              echo "libbox_source:      built in this run (no validated artifact existed)"
+            fi
+            echo ""
             echo "This IPA is NOT signed. It carries no provisioning profile and cannot be"
             echo "installed as-is. It exists to be re-signed with a certificate and profile."
             echo ""
