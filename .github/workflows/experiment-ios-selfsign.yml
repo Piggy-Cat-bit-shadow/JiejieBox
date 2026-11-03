@@ -39,11 +39,11 @@ env:
 
 jobs:
   ios-selfsign:
-    # macos-latest, not macos-14: the client's SwiftPM graph requires tools 6.2, which only the
-    # newer image's Xcode provides. macos-14 resolves packages and then fails with
-    # "'libghostty-spm' ... contains incompatible tools version (6.2.0)". The newer pool's
-    # capacity failures are a queue problem, retried rather than worked around.
-    runs-on: macos-latest
+    # The client's SwiftPM graph requires Swift tools 6.2, so the image must be one whose Xcode
+    # provides it (macos-14 fails at package resolution). `macos-latest` has been queueing this
+    # experiment out for hours - "The job was not acquired by Runner of type hosted" - so the
+    # build targets the newer image label directly; it is a separate pool from macos-latest.
+    runs-on: macos-26
     timeout-minutes: 150
     steps:
       - name: check out with submodules
