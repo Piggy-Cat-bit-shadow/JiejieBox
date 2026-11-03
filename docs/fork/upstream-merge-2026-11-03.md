@@ -33,7 +33,7 @@ ancestor.
 | # | upstream | subject | decision | evidence |
 |---|---|---|---|---|
 | 1 | `9f1cd1ef75b` | Close UDP sockets when device addresses change | **absorbed** — `4d865d1a77f` | `transport/device/stack.go` now keeps one `interrupt.Group` per family, interrupts the changed one before publishing the new address; `TestDeviceAddressChangeInterruptsUDPSockets` covers changed / unchanged / no-op |
-| 2 | `1a55e9ed23e` | Forward endpoint local flows to tun | **partial** — see §3 | `adapter.JudgeHostFlow`, `NetworkManager.RegisterHostPort/HostPort` and tests are already in this tree, but no endpoint calls them: `JudgeFlow` does not consult `JudgeHostFlow`, and the MASQUE/OpenVPN/OpenConnect `judgeFlow` entry points still have the pre-commit signature |
+| 2 | `1a55e9ed23e` | Forward endpoint local flows to tun | **absorbed (completed)** — `0a4cd167de7` | MASQUE, Tailscale and WireGuard already consulted `adapter.JudgeHostFlow`; OpenVPN and OpenConnect returned an unconditional `ActionAccept` for their own addresses, which is wrong in system mode. Both now use the MASQUE shape: system mode accepts, otherwise the host port judges the flow |
 | 3 | `ed6c781b2d3` | Fix protocol input validation | **contained** | all three sites already had the fix: `common/srs/binary.go` returns errors instead of panicking and rejects empty domain items; `protocol/tailscale/tailcat_derp.go` is byte-identical to the commit's post-image; `transport/http/server_h2.go` already rejects any 1xx other than 101 |
 | 4 | `a9dfdf4279d` | Fix AnyTLS splitting UDP packets | **contained by pin** | the commit is a `sing-anytls` bump to `20260924`; this tree requires `20260928`, the same version upstream reaches four commits later |
 | 5 | `3c5862c6b0c` | Remove dependency on gVisor | **contained** | the core has **zero** `github.com/sagernet/gvisor` imports and **49** `sing-tun/gtcpip` uses; `adapter/host.go` already imports `gtcpip/header`. The 11 files the commit touches that do not exist here are the VPN device stacks, which this fork carries in the `sing-openconnect`/`sing-openvpn`/`sing-wireguard` modules instead |
@@ -51,23 +51,27 @@ ancestor.
 | 17 | `a9c21da539d` | Close UDP sockets when endpoint addresses change | **obsolete** | the file it patches, `transport/openconnect/device_stack.go`, was deleted upstream by `3ddbc045045` ("Add MASQUE support") and by the same change in this fork (`3d0eb3d762b`); the endpoint device stacks now live in the `sing-openconnect`/`sing-openvpn` modules |
 | 18 | `447cb47a374` | Reauthenticate when GPST returns HTTP 200 | **absorbed by pin** — `81548759f93` | `sing-openconnect` |
 
-Net: **5 absorbed by source change, 4 by dependency pin, 2 obsolete-or-moved, 6 already
-contained, 2 deliberately not absorbed, 1 partial.** No upstream commit is unaccounted for.
+Net: **4 absorbed by source change, 5 by dependency pin, 1 obsolete, 6 already contained,
+2 deliberately not absorbed.** No upstream commit is unaccounted for.
 
 ## 3. The three decisions that are not "done"
 
-### 3.1 Endpoint host flows (`1a55e9ed23e`) — partial, and the gap is real
+### 3.1 Endpoint host flows (`1a55e9ed23e`) — completed here
 
-Three of the four pieces are already in this tree: `adapter.JudgeHostFlow` with its own tests,
-`NetworkManager.RegisterHostPort`/`HostPort`, and the `tun.RoutedPort` plumbing behind them. What
-is missing is the wiring: `adapter.JudgeFlow` never consults `JudgeHostFlow`, and the MASQUE,
-OpenVPN and OpenConnect endpoints still call their `judgeFlow` without the context the helper
-needs.
+`adapter.JudgeHostFlow` with its own tests, `NetworkManager.RegisterHostPort`/`HostPort` and the
+`tun.RoutedPort` plumbing were already here, and MASQUE, Tailscale and WireGuard already consulted
+them. The gap was narrower than "nothing calls it": **OpenVPN and OpenConnect** returned an
+unconditional `ActionAccept` for a flow addressed to one of their own local addresses.
 
-So the helper is currently reachable only from its own test. That is not a behavioural regression
-— nothing regressed, the feature was never finished here — but it is dead production code, and
-finishing it changes which flows an endpoint accepts locally. That decision belongs to round 04,
-which audits the endpoint data path with the same tests.
+That is right for a normal endpoint, whose stack serves those addresses. It is wrong in SYSTEM
+mode, where the same addresses belong to the host and a flow to them is aimed at a service the
+host runs. Both endpoints now use the MASQUE shape: accept in system mode, otherwise let the host
+port judge. When no host port is registered `JudgeHostFlow` answers `ActionAccept`, so every
+configuration without a TUN stack behind it behaves exactly as before.
+
+The branch is covered by the shared helper's own tests (`adapter/host_test.go`) and by the four
+protocol suites; there is no new endpoint-level test, because both interface halves here are
+34-method stubs and the added decision is four lines that mirror an already-tested sibling.
 
 ### 3.2 Android auto redirect (`b7eb47b3089`) — not absorbed
 
@@ -118,8 +122,9 @@ See the round report for the full gate output. In this document's scope:
 
 ## 6. Handoff to round 04
 
-1. **Finish or delete `adapter/host.go`.** The helper and the `NetworkManager` API exist and the
-   endpoints do not call them; decide with the endpoint data path in front of you.
+1. **`adapter/host.go` is now wired for every endpoint family.** What remains is proving the
+   system-mode path on a device: the branch is exercised by the shared helper and by MASQUE, not
+   by an OpenVPN/OpenConnect integration test.
 2. **The DNS change is on the packet path.** `dispatch` now spawns a goroutine per async query and
    the DNS client's operation context owns its lifetime. Watch for a goroutine leak if a caller
    ever cancels the context before the callback (round 03 verified `dns.Client` does not).
