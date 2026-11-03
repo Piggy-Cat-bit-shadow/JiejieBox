@@ -251,7 +251,15 @@ func TestActiveInboundStopsBecauseThePeerIsStarved(t *testing.T) {
 	// The idle timer was refreshed: the connection lived past the last inbound packet by about one
 	// idle timeout, not from the start of the experiment.
 	gap := firstErrAt - lastInboundAt
-	require.Greater(t, lastInboundAt, idleTimeout, "inbound traffic must have refreshed the idle timer")
+	// A tolerance here, not a weaker property. The scenario under test is a peer being STARVED of
+	// acknowledgements, so where the last accepted packet lands relative to the idle boundary
+	// depends on when that budget ran out, and a loaded runner moves it by tens of milliseconds:
+	// this exact assertion misfired at 2.9858s and again at 2.9387s on CI and passed on rerun.
+	// Ten percent of the idle timeout is far above that jitter, and what proves the timer was
+	// refreshed is the pair below it - the close follows the last packet by about one idle
+	// timeout instead of happening at the start.
+	require.Greater(t, lastInboundAt, idleTimeout-idleTimeout/10,
+		"inbound traffic must have refreshed the idle timer")
 	require.Greater(t, gap, idleTimeout/2, "the close must follow the last inbound packet, not the start")
 	// Same reasoning as the silent path: the bound is what matters, and scheduler delay under load
 	// must not read as a protocol failure. Six idle timeouts still distinguishes "bounded" from
