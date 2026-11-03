@@ -185,7 +185,7 @@ silently downgrade the copy path. That trade was rejected; see §6.
 
 | candidate | why not |
 |---|---|
-| **Reuse sessions with capacity** (`sing-anytls` fork: allow a stream on a non-idle session up to N streams) | The structural fix — 200 flows would share ~4 sessions. Rejected *this round* because it needs a new forked module, a new pseudo-version pin, and a re-validation of the Apple/Android build graph, and round 3 has to merge upstream through that pin. Recorded as the highest-value follow-up, with the measurement in §2.5 that quantifies what it would save. |
+| **Reuse sessions with capacity** (`sing-anytls` fork: allow a stream on a non-idle session up to N streams) | The structural fix — 200 flows would share ~4 sessions. Rejected *this round*, and after reading the module the reason is sharper than "it is a dependency change": `session.armOpenTimeout` arms a 3 s watchdog on every stream opened from the **second** onwards, and the watchdog closes the **whole session** when no frame arrives. That is safe today because the client only ever reuses a session with zero streams; enabling multi-stream reuse arms it on every multiplexed session, and a quiet UDP/UoT flow — precisely the STUN shape measured here — can trip it and take every stream sharing that session down with it. So the fork would need a second, protocol-visible deviation (disable or re-scope the watchdog for datagram streams) that can only be validated on a device. Recorded as the highest-value follow-up with that hazard attached, plus the per-session measurement in §2.5. |
 | Gate inside `sing-tun` `UDPNat.getOrCreate` | Bounds the 32 KiB stack, but requires changing and re-pinning `sing-tun`, and the flow's identity has already been created. The stack is ~6.5 MiB at 200 flows; the handshake state is the larger and cheaper-to-bound term. |
 | Global GC tuning (`GOGC`, `GOMEMLIMIT`, periodic `FreeOSMemory`) | Does not free live sessions, does not stop the storm, and `GOMEMLIMIT=40 MiB` was already in force when the process reached 49.97 MiB. |
 | Token-bucket pacing instead of a concurrency limit | The reference implementation (Hako/ProjectClash `memory_shed_pacer.go`) paces at 8/s with burst 8 and never refuses. A pure rate limit still allows an arbitrarily large number of *simultaneous* creations when the arrival rate exceeds the rate for a short window; a concurrency bound is what caps the transient. The two compose, and the gate's queue is where a rate limiter would sit later. |
@@ -251,6 +251,23 @@ Integration coverage, all on loopback with the real `sing-anytls` client:
 | `TestDialFailuresNeverLeakPermits` | refused port, server hanging up mid-handshake, deadline expiry — every path returns its permit |
 | `TestGuardRepeatedPressureCycles` | five normal→armed→critical→normal cycles: one shed per entry, the limit reopens every time |
 | `FuzzGateSlotAccounting` | `go test -fuzz -fuzztime 25s`: 21,756 executions, slot invariant `inflight == admitted - released` held |
+| `TestGuardStatsReportsThePlanTheLevelImplies` | the snapshot cannot say "critical" while advertising the normal limit |
+| `TestMergeExtraMetadata*` | the OOM metadata document keeps every existing key, and an unparsable document is left untouched |
+
+### 8.1 The report carries the counters
+
+An OOM report is written by the client, whose metadata schema this package must not extend, so
+the guard contributes one **top-level sibling key**, `resourceGuard`:
+
+```json
+{"appVersion": "...", "memoryUsage": "47 MB",
+ "resourceGuard": {"level": "critical", "limit": 8, "inflight": 8, "refused": 0, "timedOut": 32, ...}}
+```
+
+`Recorder.SetExtraMetadata` splices it in at write time; an existing reader ignores the key, and a
+process with no guard writes exactly the document it wrote before (the provider returns nil). That
+is what turns the next device diagnostic into an answer to "what did the governor actually do"
+instead of only "how big did it get".
 
 The last test is the local version of the device event: 200 dials whose `DialOut` performs a real
 `crypto/tls` handshake against a listener that sends nothing, which is the state the profile
@@ -284,8 +301,9 @@ jetsam sees; the steady state after the burst is not changed by this gate (§6.1
 
 ## 10. Follow-ups (not this round)
 
-1. Fork `sing-anytls` for capacity-based session reuse (§5); re-measure §2.5 afterwards.
+1. Fork `sing-anytls` for capacity-based session reuse (§5, including the 3 s stream-open watchdog
+   that makes it a protocol change rather than a pool tweak); re-measure §2.5 afterwards.
 2. Wire the same guard into the other packet-oriented outbounds as separate classes, with the
    class reserve already in the API (`ClassInteractive`) used for latency-sensitive flows.
-3. Put `GuardStats` into the OOM report metadata so a device report answers "what did the
-   governor do" without a rebuild.
+3. ~~Put `GuardStats` into the OOM report metadata~~ — done: `Recorder.SetExtraMetadata` writes the
+   counters under the top-level `resourceGuard` key (§8.1).

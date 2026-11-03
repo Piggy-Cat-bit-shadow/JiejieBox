@@ -60,6 +60,9 @@ func NewService(ctx context.Context, logger log.ContextLogger, tag string, optio
 	if mode == policyModeNetworkExtension {
 		s.guard = resourceguard.NewGuard(resourceguard.DefaultNetworkExtensionConfig(), s.guardLevel)
 		service.MustRegister[*resourceguard.Guard](ctx, s.guard)
+		if s.recorder != nil {
+			s.recorder.SetExtraMetadata("resourceGuard", s.guardMetadata)
+		}
 	}
 	return s, nil
 }
@@ -92,6 +95,41 @@ func (s *Service) GuardStats() resourceguard.GuardStats {
 		return resourceguard.GuardStats{}
 	}
 	return s.guard.Stats()
+}
+
+// guardMetadata renders the guard's counters for the OOM report's metadata document.
+//
+// # Why it is a map and not a struct
+//
+// The report schema belongs to the client, and this package must not extend it. A key the client
+// does not know is ignored by every existing reader, which is what makes the addition safe; a
+// struct with tags would be a second schema to keep in step with the first.
+//
+// It returns nil when there is no guard, so a platform without a NetworkExtension budget writes
+// exactly the document it wrote before.
+func (s *Service) guardMetadata() any {
+	if s.guard == nil {
+		return nil
+	}
+	stats := s.guard.Stats()
+	gate := stats.Gate
+	return map[string]any{
+		"level":        stats.Level.String(),
+		"transitions":  stats.Transitions,
+		"limit":        gate.Limit,
+		"queueLimit":   gate.QueueLimit,
+		"waitBudgetMs": gate.WaitBudget.Milliseconds(),
+		"inflight":     gate.Inflight,
+		"waiters":      gate.Waiters,
+		"maxInflight":  gate.MaxInflight,
+		"requested":    gate.Requested,
+		"admitted":     gate.Admitted,
+		"queued":       gate.Queued,
+		"refused":      gate.Refused,
+		"timedOut":     gate.TimedOut,
+		"canceled":     gate.Canceled,
+		"released":     gate.Released,
+	}
 }
 
 func MemoryPressure(ctx context.Context) func() tun.MemoryPressure {

@@ -155,6 +155,9 @@ type Recorder struct {
 	denseUntil       time.Time
 	previousGCCycles uint64
 	metricsSamples   []metrics.Sample
+	// extraMetadata holds top-level keys this package contributes to the metadata document, so
+	// a subsystem owned here can report without the client's schema having to learn about it.
+	extraMetadata map[string]func() any
 
 	snapshotAccess     sync.Mutex
 	snapshotSequence   int
@@ -698,7 +701,69 @@ func (r *Recorder) writeMetadataLocked() {
 	if err != nil {
 		return
 	}
+	content = r.mergeExtraMetadata(content)
 	r.writeFile(filepath.Join(r.draftPath, metadataFileName), content)
+}
+
+// SetExtraMetadata adds one top-level object to the written metadata, produced lazily.
+//
+// # Why this exists instead of another field in the callback
+//
+// The metadata document is built by the client (experimental/libbox), which does not and should
+// not know about the admission guard: its contract is the report schema the app reads. The
+// guard's counters are owned by this package, so this package contributes them, and the client's
+// schema is left alone. A consumer that does not know the key ignores it, which is what makes
+// this additive rather than a schema change.
+//
+// The value is produced at write time, not at registration time, so the numbers describe the
+// state at the moment the report snapshot was taken rather than at service construction.
+func (r *Recorder) SetExtraMetadata(key string, value func() any) {
+	if r == nil || key == "" || value == nil {
+		return
+	}
+	r.access.Lock()
+	if r.extraMetadata == nil {
+		r.extraMetadata = make(map[string]func() any)
+	}
+	r.extraMetadata[key] = value
+	r.access.Unlock()
+}
+
+// mergeExtraMetadata splices the registered keys into a JSON object.
+//
+// # Why it re-encodes instead of wrapping
+//
+// Wrapping would change the document's shape - every existing key would move one level down -
+// and the app and acceptOOMDraft() both read that shape. Splicing keeps every existing key where
+// it was and adds siblings, so an older reader sees exactly the document it saw before.
+//
+// A callback document that is not a JSON object (or does not parse) is returned unchanged: a
+// reporting extra must never be able to destroy the report it was added to.
+func (r *Recorder) mergeExtraMetadata(content []byte) []byte {
+	if len(r.extraMetadata) == 0 {
+		return content
+	}
+	var document map[string]any
+	if err := json.Unmarshal(content, &document); err != nil || document == nil {
+		return content
+	}
+	added := false
+	for key, value := range r.extraMetadata {
+		produced := value()
+		if produced == nil {
+			continue
+		}
+		document[key] = produced
+		added = true
+	}
+	if !added {
+		return content
+	}
+	merged, err := json.Marshal(document)
+	if err != nil {
+		return content
+	}
+	return merged
 }
 
 func (r *Recorder) writeLogLocked() {

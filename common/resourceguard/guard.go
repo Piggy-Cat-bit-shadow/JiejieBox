@@ -312,13 +312,23 @@ type GuardStats struct {
 	Gate        Stats
 }
 
-// Stats reports a consistent snapshot without advancing the state machine.
+// Stats reports a consistent snapshot: the level, how often it moved, and the gate's counters.
+//
+// # Why reading applies the level
+//
+// The reported limit has to describe the SAME state as the reported level. If Stats only read
+// the stored level, a caller could be told "critical, limit 32" purely because no admission had
+// happened since the pressure changed - a snapshot that contradicts itself and is exactly what a
+// red-team report is written from. So Stats observes and applies, like Level: an observation can
+// complete a transition and run the shed hooks for it. That is one behaviour with one rule, not a
+// read-only path that quietly reports a stale plan.
 func (g *Guard) Stats() GuardStats {
 	if g == nil {
 		return GuardStats{}
 	}
+	level, _, _ := g.observe()
+	g.apply(level)
 	g.access.Lock()
-	level := g.level
 	transitions := g.transitions
 	g.access.Unlock()
 	return GuardStats{Level: level, Transitions: transitions, Gate: g.gate.Stats()}
