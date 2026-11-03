@@ -10,6 +10,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/resourceguard"
 	"github.com/sagernet/sing-box/common/tls"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
@@ -40,6 +41,10 @@ type Outbound struct {
 	client        *anytls.Client
 	uotClient     *uot.Client
 	logger        log.ContextLogger
+	// guard is the process admission policy, or nil when this process has no budget to
+	// protect. A nil guard admits everything, so every platform that is not an iOS Network
+	// Extension keeps its previous behaviour without a branch in the dial path.
+	guard *resourceguard.Guard
 }
 
 func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.AnyTLSOutboundOptions) (adapter.Outbound, error) {
@@ -47,6 +52,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		Adapter: outbound.NewAdapterWithDialerOptions(C.TypeAnyTLS, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.DialerOptions, options.ServerIsDomain()),
 		server:  options.ServerOptions.Build(),
 		logger:  logger,
+		guard:   resourceguard.FromContext(ctx),
 	}
 	if options.TLS == nil || !options.TLS.Enabled {
 		return nil, C.ErrTLSRequired
@@ -99,8 +105,14 @@ func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	}
 	h.client = client
 	scope.Add(client.Close)
+	// The only resource this outbound can give back under pressure is a session with no
+	// streams on it. Registering that as the shed action is what keeps the reclaim honest: it
+	// releases what is provably idle and never closes a session that is carrying a flow.
+	if h.guard != nil {
+		h.guard.RegisterShed(client.CloseIdleConnections)
+	}
 	h.uotClient = &uot.Client{
-		Dialer:  anytlsDialer(client.DialContext),
+		Dialer:  anytlsDialer(h.dialAdmitted),
 		Version: uot.Version,
 	}
 	return nil
@@ -116,6 +128,14 @@ func (d anytlsDialer) ListenPacket(ctx context.Context, destination M.Socksaddr)
 	return nil, os.ErrInvalid
 }
 
+// dialAdmitted runs one AnyTLS dial under the process admission policy. See admission.go for
+// why the permit is taken here rather than inside the session pool, and for what exactly the
+// bound covers.
+func (h *Outbound) dialAdmitted(ctx context.Context, destination M.Socksaddr) (net.Conn, error) {
+	return dialWithAdmission(ctx, h.guard, h.client.DialContext, destination)
+}
+
+// dialOut opens the tunnel connection the AnyTLS session runs over.
 func (h *Outbound) dialOut(ctx context.Context) (net.Conn, error) {
 	conn, err := h.dialer.DialTLSContext(adapter.ContextForMultiplexSession(ctx), h.server)
 	if err == nil {
@@ -164,7 +184,7 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination 
 
 // dialThroughProxy dials the destination through this outbound's AnyTLS session.
 func (h *Outbound) dialThroughProxy(ctx context.Context, destination M.Socksaddr) (net.Conn, error) {
-	conn, err := h.client.DialContext(ctx, destination)
+	conn, err := h.dialAdmitted(ctx, destination)
 	if err != nil {
 		return nil, h.nameTheProxy(err)
 	}
