@@ -48,7 +48,7 @@ require (
 	github.com/sagernet/sing-anytls v0.0.0-20260928104022-580984e4d8cb
 	github.com/sagernet/sing-cloudflared v0.1.4-0.20261021152903-2d40d788fcf6
 	github.com/sagernet/sing-mux v0.3.10-0.20260929204512-caf09fe32475
-	github.com/sagernet/sing-openconnect v0.1.1-0.20260929151226-29757281a247
+	github.com/sagernet/sing-openconnect v0.1.1-0.20261103042440-6c98622bada6
 	github.com/sagernet/sing-openvpn v0.1.1-0.20261020061844-7d24ecd92837
 	github.com/sagernet/sing-quic v0.7.2-0.20260929152029-258509488380
 	github.com/sagernet/sing-shadowsocks v0.2.9-0.20260929152116-0a3456819ce7
@@ -363,7 +363,7 @@ replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-qu
 // working, between a stop landing on a starting stack and a reported data race (a nil-engine panic on
 // the unpinned revision), and between an IPv6-only stack and a TCP path that can never self-heal.
 // See docs/fork/lx-stability-audit-phase1.md (040) and FORK.md in the fork.
-replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261028061444-8b9a38008705
+replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261103132138-32134c2c3188
 
 // gVisor is RETIRED, and this is deliberately a comment rather than a replace directive.
 //
