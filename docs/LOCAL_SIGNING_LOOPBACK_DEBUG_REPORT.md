@@ -41,9 +41,10 @@ reflection → off/reload/platform isolation chain. Nothing outside it was modif
 | sing-tun full `go test ./...` | many `TestGoKernel*` FAIL - **pre-existing and environmental**: the same test fails identically at the feature base `32134c2` in 0.00 s (it needs a real TUN/privileges this host does not have) |
 | core `go test ./daemon/ ./experimental/libbox/ ./protocol/tun/` | PASS (8 + 6 + 3 feature tests included) |
 | core `go build -tags <windows profile> ./...` | PASS |
+| full core suite on the debug pin, `-tags <windows profile>` | 96 packages ok; the same three environment failures as the baseline (`common/tls` TLS 1.3 prerequisites, `common/tlsspoof`, `common/windivert` driver) |
 | `release-freeze.py verify` | PASS (sing-tun `2bc6adb`, clients/apple `36f36e7`) |
 | `check-libbox-abi.sh --pin-only` | PASS |
-| iOS client build (Swift compile + full ABI gate) | PASS — run `41754387032` at Apple `49be241`; the `#if os(iOS)` change in `36f36e7` is compiled by the CI run of the debug head (see §7) |
+| iOS client build (Swift compile + full ABI gate) | PASS twice: run `41754387032` at Apple `49be241` (the feature), and run `41762575779` at Apple `36f36e7` (the debug head, including the `#if os(iOS)` route gate) |
 | device behaviour | **NOT RUN — NEEDS_DEVICE** |
 
 ## 4. Hako comparison

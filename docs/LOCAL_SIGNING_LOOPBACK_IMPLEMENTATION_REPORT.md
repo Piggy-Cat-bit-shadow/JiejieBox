@@ -3,6 +3,10 @@
 Feature branch: `feat/ios-local-signing-loopback` (core), `feat/ios-local-signing-loopback`
 (Apple client, `49be24188141276a3711ea411212e42e79663672`). Not merged, not released.
 
+> The directed debug pass that followed this implementation is recorded in
+> docs/LOCAL_SIGNING_LOOPBACK_DEBUG_REPORT.md. It changed two things described below: the
+> destination match now normalises spellings, and the NE host routes are gated to iOS.
+
 ## 1. What was built, and what is not proven
 
 The iOS/iPadOS client has one new switch — **More → Connection Behavior → Profile Override →
