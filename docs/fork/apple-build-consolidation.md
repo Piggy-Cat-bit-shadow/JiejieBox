@@ -88,5 +88,18 @@ source of truth.
 
 ## 6. Evidence
 
-See the phase-2 report for the run IDs, the artifact IDs, and the before/after timing of the
-runs that actually executed. Static checks (`check-release-workflows.py`) pass locally and in CI.
+Runs that actually executed (branch `experiment/ios-selfsign-compat`):
+
+| run | what it proves | wall clock | Libbox job |
+|---|---|---|---|
+| `41733637543` (a2a91621) | producer: builds both slices, packs, uploads `jiejiebox-libbox-<sha>` | 23.4 min | **4.4 min** (warm Go cache) |
+| `41738314328` (a2a91621) | consumer with `libbox=required`: build/publish/upload all **skipped**, IPA still produced | 18.1 min | **0 min** |
+| `41740879398` (0e27832) | producer with the provenance line in `BUILD-INFO.txt` | 22 min | built |
+
+The 5.3-minute difference is the duplicated gomobile build the experiment used to pay on every
+run; it is now paid once per commit. A cold module cache makes the producer's Libbox step much
+longer than 4.4 minutes (the first phase-1 build with an empty cache took over 12), so the ratio
+matters more than the absolute number.
+
+`check-release-workflows.py` passes (164 checks) locally and in CI. TestFlight was **not** run:
+no upload, no notarisation, no App Store Connect call.
