@@ -28,12 +28,14 @@ on:
   push:
     paths:
       - "common/resourceguard/**"
+      - "common/tls/**"
       - "protocol/anytls/**"
       - "service/oomkiller/**"
       - ".github/workflows/resource-guard.yml"
   pull_request:
     paths:
       - "common/resourceguard/**"
+      - "common/tls/**"
       - "protocol/anytls/**"
       - "service/oomkiller/**"
       - ".github/workflows/resource-guard.yml"
@@ -60,16 +62,21 @@ jobs:
           cache-dependency-path: go.sum
       - name: gofmt
         run: |
-          unformatted="$(gofmt -l ./common/resourceguard ./protocol/anytls ./service/oomkiller)"
+          unformatted="$(gofmt -l ./common/resourceguard ./common/tls ./protocol/anytls ./service/oomkiller)"
           if [ -n "${unformatted}" ]; then
             echo "unformatted files:"
             echo "${unformatted}"
             exit 1
           fi
       - name: unit tests under the race detector
-        run: go test -count=1 -race -timeout 300s ./common/resourceguard ./protocol/anytls
-      - name: build the core
-        run: go build ./...
+        # common/tls is in the list because admission now sits at the TLS handshake seam: the
+        # double-charge guard, the chained-dial marker and the cancellation path are all properties
+        # of that package, and a change there can break the gate without touching
+        # common/resourceguard at all.
+        run: go test -count=1 -race -timeout 300s ./common/resourceguard ./common/tls ./protocol/anytls
+      # The full-tree compile is Verify's job (it builds the whole module for the release tag set).
+      # Repeating it here added a second answer to the same question; this workflow answers the two
+      # questions Verify cannot: the race detector, and the burst matrix at device sizes.
 
   burst:
     name: burst matrix

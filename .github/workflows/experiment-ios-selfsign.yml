@@ -1,16 +1,18 @@
 name: Experiment - iOS self-sign compatibility
 
-# PHASE 1 EXPERIMENT. Not part of the release line and not to be merged as-is.
+# Self-sign packing entry: the unsigned IPA that a third-party signing service turns into an
+# installable build.
 #
-# This workflow exists so the self-sign experiments are reproducible without touching any
-# official workflow, release gate, TestFlight entry point or key:
+# It is an entry of the product line now, not a phase-1 experiment: the self-sign work is merged
+# and this is the only workflow that produces a re-signable IPA.
 #
-#   * it runs only on the experiment branch (and on manual dispatch), never on testing/main;
-#   * it builds Libbox and the iOS IPA from SOURCE at the experiment's own Apple client SHA,
-#     pinned below, so the artifact can be rebuilt from this commit alone;
-#   * it produces two artifacts: the full app, and a diagnostic build that keeps only the
-#     Packet Tunnel extension, so a launch failure can be attributed rather than guessed at;
-#   * it verifies both against a static contract before uploading anything.
+#   * the Apple source is THIS COMMIT'S GITLINK by default, so the artifact is reproducible from
+#     the commit alone. `apple_sha` overrides it to reproduce an older build, and the value is
+#     recorded in BUILD-INFO either way;
+#   * the full app is always built. The diagnostic build (Packet Tunnel only) and the macOS
+#     compile are optional, because both exist for a specific investigation rather than for
+#     every signing test;
+#   * everything is verified against a static contract before it is uploaded.
 #
 # The entry point is `workflow_dispatch` against this ref
 # (`gh workflow run ... --ref testing`). The push trigger on experiment/ios-selfsign-compat is
@@ -25,6 +27,21 @@ on:
         type: choice
         options: [auto, required]
         default: auto
+      apple_sha:
+        description: 'Optional Apple client revision to build instead of this commit''s gitlink (40-hex SHA)'
+        type: string
+        required: false
+        default: ''
+      diagnostic:
+        description: 'Also build the Packet Tunnel-only diagnostic IPA (for a launch investigation)'
+        type: choice
+        options: ['false', 'true']
+        default: 'false'
+      macos:
+        description: 'Also compile the macOS app from the same sources (a compile check, not a launch check)'
+        type: choice
+        options: ['false', 'true']
+        default: 'false'
 
 permissions:
   contents: read
@@ -32,10 +49,9 @@ permissions:
   actions: read
 
 env:
-  # The Apple client commit this experiment builds. Since the self-sign work was merged into the
-  # product line it is the integrated client: the launch-path fixes, the loopback feature and
-  # upstream's four commits, all at one revision (see the parent repository's pin).
-  APPLE_EXPERIMENT_SHA: ab575dace8190a48a9d7cf666ef009f803e6ca62
+  # There is no second copy of the pin. The revision is this commit's gitlink unless `apple_sha`
+  # says otherwise; a constant here used to drift from the gitlink and shipped the wrong client
+  # once, which is why the drift assertion existed. Removing the constant removes the drift.
   APPLE_CLIENT_DIR: clients/apple
   APPLE_CLIENT_PLATFORM: ios
   # Identity the experiment builds with. Both are passed through one build setting each, and
@@ -72,36 +88,55 @@ jobs:
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-path
 
-      - name: select the Apple client experiment source
+      - name: resolve the Apple client revision
+        id: apple_source
+        # This commit's gitlink is the revision. `apple_sha` exists only to reproduce an older
+        # build; either way the exact SHA is written to the environment and recorded in
+        # BUILD-INFO, so no artifact can claim a revision it was not built from.
+        run: |
+          set -euo pipefail
+          sha="${{ inputs.apple_sha }}"
+          if [ -z "$sha" ]; then
+            sha="$(git ls-tree HEAD "$APPLE_CLIENT_DIR" | awk '{print $3}')"
+          fi
+          case "$sha" in
+            *[!0-9a-f]*|'') echo "FAIL: not a 40-hex Apple revision: '$sha'" >&2; exit 1 ;;
+          esac
+          if [ "${#sha}" != 40 ]; then
+            echo "FAIL: not a 40-hex Apple revision: '$sha'" >&2
+            exit 1
+          fi
+          echo "APPLE_SIGN_SHA=$sha" >> "$GITHUB_ENV"
+          echo "apple revision: $sha"
+
+      - name: select the Apple client source
         # The resolver's documented override: APPLE_CLIENT_SHA materialises an exact commit and
         # records it in the run's frozen state file, which the overlay script then asserts
         # against. That is what makes this artifact reproducible from this commit.
         run: |
           set -euo pipefail
-          APPLE_CLIENT_SHA="$APPLE_EXPERIMENT_SHA" ./scripts/ci/apple-client-source.sh checkout ios
+          APPLE_CLIENT_SHA="$APPLE_SIGN_SHA" ./scripts/ci/apple-client-source.sh checkout ios
           actual="$(git -C "$APPLE_CLIENT_DIR" rev-parse HEAD)"
           echo "apple client: $actual"
-          test "$actual" = "$APPLE_EXPERIMENT_SHA"
+          test "$actual" = "$APPLE_SIGN_SHA"
           git -C "$APPLE_CLIENT_DIR" log --oneline -3
 
+      - name: write the source manifest
+        # One file that answers "what was this built from": core SHA, client SHA, version, toolchain
+        # and every dependency pin the build will use. Later stages read this instead of resolving
+        # anything of their own, so one run cannot end up with two different clients.
+        run: |
+          set -euo pipefail
+          mkdir -p dist/apple/experiment
+          ./scripts/ci/source-manifest.sh dist/apple/experiment/SOURCE-MANIFEST.json \
+            --apple-sha "$APPLE_SIGN_SHA" --platform ios
+          cat dist/apple/experiment/SOURCE-MANIFEST.json
       # The socket path limit is the kernel's, and only a Darwin host can ask it. These tests
       # build a container as deep as the one on the device, bind the resolved path for real, and
       # check that a 104-byte name is refused - the arithmetic is unit-tested on every platform,
       # the syscall is proven here.
       - name: prove the socket path on Darwin
         run: go test ./experimental/libbox/ -run 'TestDarwin' -count=1 -v
-      # The experiment must build the client this commit pins. It has its own constant because the
-      # workflow needs a revision before the parent source is checked out; without this assertion
-      # that constant can drift from the gitlink and a build silently ships the wrong client - which
-      # is exactly what happened once, when a fix was committed to the client but the experiment
-      # still built the previous one.
-      - name: the experiment builds the client this commit pins
-        run: |
-          pinned="$(git ls-tree HEAD clients/apple | awk '{print $3}')"
-          if [ "$pinned" != "$APPLE_EXPERIMENT_SHA" ]; then
-            echo "FAIL: APPLE_EXPERIMENT_SHA is $APPLE_EXPERIMENT_SHA but this commit pins $pinned" >&2
-            exit 1
-          fi
 
       - name: reuse this commit's Libbox if one was already produced
         id: libbox_artifact
@@ -204,6 +239,8 @@ jobs:
         run: ./scripts/experiment/build-ios-selfsign-ipa.sh dist/apple/experiment/jiejiebox-selfsign-full.ipa
 
       - name: build the diagnostic IPA (packet tunnel only)
+        # Only when a launch failure has to be attributed; it is not part of a normal signing run.
+        if: inputs.diagnostic == 'true'
         run: ./scripts/experiment/build-ios-selfsign-ipa.sh --diagnostic dist/apple/experiment/jiejiebox-selfsign-diagnostic.ipa
 
       - name: verify both artifacts against the self-sign contract
@@ -217,11 +254,13 @@ jobs:
             --version "$version" --build "$build" \
             --base "$APPLE_EXPERIMENT_BASE_BUNDLE_ID" --group "$APPLE_EXPERIMENT_APP_GROUP_ID" \
             dist/apple/experiment/jiejiebox-selfsign-full.ipa
-          python3 scripts/experiment/verify-selfsign-ipa.py \
-            --version "$version" --build "$build" \
-            --base "$APPLE_EXPERIMENT_BASE_BUNDLE_ID" --group "$APPLE_EXPERIMENT_APP_GROUP_ID" \
-            --diagnostic \
-            dist/apple/experiment/jiejiebox-selfsign-diagnostic.ipa
+          if [ "${{ inputs.diagnostic }}" = "true" ]; then
+            python3 scripts/experiment/verify-selfsign-ipa.py \
+              --version "$version" --build "$build" \
+              --base "$APPLE_EXPERIMENT_BASE_BUNDLE_ID" --group "$APPLE_EXPERIMENT_APP_GROUP_ID" \
+              --diagnostic \
+              dist/apple/experiment/jiejiebox-selfsign-diagnostic.ipa
+          fi
 
       - name: audit the artifacts
         run: |
@@ -234,7 +273,7 @@ jobs:
           set -euo pipefail
           out="dist/apple/experiment"
           {
-            echo "JiejieBox iOS self-sign experiment (phase 1)"
+            echo "JiejieBox iOS self-sign IPA"
             echo "==========================================="
             echo "version:            $(cat release/JIEJIE_VERSION)"
             echo "configuration:      Release, iphoneos, arm64, UNSIGNED"
@@ -244,7 +283,8 @@ jobs:
             echo "parent_repo:        https://github.com/Piggy-Cat-bit-shadow/sing-box"
             echo "parent_sha:         $(git rev-parse HEAD)"
             echo "apple_repo:         https://github.com/Piggy-Cat-bit-shadow/sing-box-for-apple"
-            echo "apple_sha:          $APPLE_EXPERIMENT_SHA"
+            echo "apple_sha:          $APPLE_SIGN_SHA"
+            echo "source_manifest:    SOURCE-MANIFEST.json"
             echo ""
             # Where the core bytes came from. One Libbox per commit is the point of phase 2, so
             # an artifact that does not say which Libbox it linked is not attributable.
@@ -280,7 +320,7 @@ jobs:
             echo ""
             echo "- version: \`$(cat release/JIEJIE_VERSION)\`"
             echo "- parent: \`$(git rev-parse --short HEAD)\`"
-            echo "- apple: \`$APPLE_EXPERIMENT_SHA\`"
+            echo "- apple: \`$APPLE_SIGN_SHA\`"
             echo "- libbox: \`${{ steps.libbox_artifact.outputs.reused == 'true' && format('reused artifact {0}', env.LIBBOX_ARTIFACT_ID) || 'built in this run' }}\`"
             echo "- artifact: \`jiejiebox-ios-selfsign-experiment-${GITHUB_SHA}\`"
             echo ""
@@ -288,11 +328,13 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   macos-compile:
-    # Phase 1 changed code shared by both Apple products (FilePath, AppConfiguration), and a
-    # change that only ever compiles for iOS is not verified for macOS - the branch would break
-    # the moment the macOS app is built from it. This job compiles the macOS app from the same
-    # Apple commit and the same Libbox artifact, unsigned, and asserts the result. It is a
-    # COMPILE check with an artifact, not a launch check: no device or Mac has run it.
+    # A change shared by both Apple products compiles for iOS long before anyone tries macOS, so a
+    # change that only ever builds for iOS is not verified. This job compiles the macOS app from the
+    # same client revision and the same Libbox artifact, unsigned, and asserts the result. It is a
+    # COMPILE check with an artifact, not a launch check: no Mac has run it.
+    #
+    # Opt-in: it doubles the run's cost and most signing rounds do not touch macOS-only code.
+    if: inputs.macos == 'true'
     needs: ios-selfsign
     runs-on: macos-26
     timeout-minutes: 120
@@ -309,19 +351,31 @@ jobs:
           sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)/Contents/Developer" 2>/dev/null || true
           xcodebuild -version
 
-      - name: check out the macOS Apple source at the experiment commit
+      - name: resolve the Apple client revision
+        # GITHUB_ENV does not cross jobs, so the macOS job resolves it again from the same two
+        # inputs. One function, two callers, one answer.
+        run: |
+          set -euo pipefail
+          sha="${{ inputs.apple_sha }}"
+          if [ -z "$sha" ]; then
+            sha="$(git ls-tree HEAD clients/apple | awk '{print $3}')"
+          fi
+          echo "APPLE_SIGN_SHA=$sha" >> "$GITHUB_ENV"
+          echo "apple revision: $sha"
+
+      - name: check out the macOS Apple source at that revision
         run: |
           set -euo pipefail
           dir="build/apple-client-macos"
           rm -rf "$dir"
           git clone --quiet --no-checkout \
             https://github.com/Piggy-Cat-bit-shadow/sing-box-for-apple "$dir"
-          git -C "$dir" checkout --quiet "$APPLE_EXPERIMENT_SHA"
+          git -C "$dir" checkout --quiet "$APPLE_SIGN_SHA"
           git -C "$dir" submodule update --init --recursive --quiet
           # The overlay and the resolver agree through this file, exactly as in the official
           # macOS job; without it the overlay cannot tell which revision it is looking at.
           {
-            echo "APPLE_CLIENT_SHA=$APPLE_EXPERIMENT_SHA"
+            echo "APPLE_CLIENT_SHA=$APPLE_SIGN_SHA"
             echo "APPLE_CLIENT_REPOSITORY=https://github.com/Piggy-Cat-bit-shadow/sing-box-for-apple"
             echo "APPLE_CLIENT_BRANCH=experiment/selfsign-compat"
           } > build/apple-client-source.env
