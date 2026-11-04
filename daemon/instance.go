@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"net/netip"
 
 	"github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/adapter"
@@ -18,6 +19,7 @@ import (
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json"
+	"github.com/sagernet/sing/common/json/badoption"
 	"github.com/sagernet/sing/common/x/list"
 	"github.com/sagernet/sing/service"
 	"github.com/sagernet/sing/service/pause"
@@ -80,6 +82,78 @@ type OverrideOptions struct {
 	AutoRedirect   bool
 	IncludePackage []string
 	ExcludePackage []string
+	// LoopbackAddress is what the platform asks the effective TUN to answer for locally.
+	//
+	// It exists because the address is not in the user's configuration and must never be written
+	// into it: the Apple client's "Local Signing Loopback" switch travels down the start options,
+	// and this is where it becomes configuration for this run only. Every other platform leaves
+	// this nil, which makes the merge below a no-op - same code path, no new behaviour.
+	LoopbackAddress []netip.Addr
+}
+
+// applyTUNOverrides applies the platform's overrides to the ONE TUN inbound this service drives.
+//
+// # Why the first TUN, and only the first
+//
+// These overrides describe how the *packet tunnel this process runs inside* should behave, and
+// there is exactly one of those. A configuration with no TUN is legal (a plain proxy) and gets
+// nothing; a configuration with several is a shape the Apple client does not produce, and the
+// established behaviour of these overrides is to patch the first. Silently editing a second TUN
+// would be worse than leaving it alone: it would change an inbound the platform never asked
+// about.
+//
+// # What the loopback merge is careful about
+//
+// The user may already list loopback addresses in their own configuration. Those are preserved
+// verbatim, in order, and are never removed here - this function only appends what the platform
+// asked for and the configuration does not already contain. Comparisons use the same
+// normalisation the core uses when it matches a packet destination (IPv4-mapped IPv6 unmapped,
+// zone stripped), so "::ffff:10.7.0.1" and "10.7.0.1" are one address and a duplicate entry
+// cannot exist.
+func applyTUNOverrides(options *option.Options, overrideOptions *OverrideOptions) {
+	for _, inbound := range options.Inbounds {
+		tunInboundOptions, isTUN := inbound.Options.(*option.TunInboundOptions)
+		if !isTUN {
+			continue
+		}
+		tunInboundOptions.AutoRedirect = overrideOptions.AutoRedirect && tunInboundOptions.AutoRoute
+		tunInboundOptions.IncludePackage = append(tunInboundOptions.IncludePackage, overrideOptions.IncludePackage...)
+		tunInboundOptions.ExcludePackage = append(tunInboundOptions.ExcludePackage, overrideOptions.ExcludePackage...)
+		tunInboundOptions.LoopbackAddress = mergeLoopbackAddresses(tunInboundOptions.LoopbackAddress, overrideOptions.LoopbackAddress)
+		break
+	}
+}
+
+// mergeLoopbackAddresses returns the configuration's own addresses followed by the ones the
+// platform added, normalised and de-duplicated, or the configuration unchanged when the platform
+// added nothing.
+//
+// The early return on an empty addition is deliberate: with the feature off, the slice the user's
+// configuration produced must come out byte-identical, not merely equivalent.
+func mergeLoopbackAddresses(existing badoption.Listable[netip.Addr], addition []netip.Addr) badoption.Listable[netip.Addr] {
+	if len(addition) == 0 {
+		return existing
+	}
+	merged := make(badoption.Listable[netip.Addr], 0, len(existing)+len(addition))
+	seen := make(map[netip.Addr]struct{}, len(existing)+len(addition))
+	appendAddress := func(address netip.Addr) {
+		address = address.Unmap().WithZone("")
+		if !address.IsValid() {
+			return
+		}
+		if _, loaded := seen[address]; loaded {
+			return
+		}
+		seen[address] = struct{}{}
+		merged = append(merged, address)
+	}
+	for _, address := range existing {
+		appendAddress(address)
+	}
+	for _, address := range addition {
+		appendAddress(address)
+	}
+	return merged
 }
 
 func (s *StartedService) newInstance(ctx context.Context, profileContent string, overrideOptions *OverrideOptions, reloading bool) (*Instance, error) {
@@ -94,14 +168,7 @@ func (s *StartedService) newInstance(ctx context.Context, profileContent string,
 		return nil, err
 	}
 	if overrideOptions != nil {
-		for _, inbound := range options.Inbounds {
-			if tunInboundOptions, isTUN := inbound.Options.(*option.TunInboundOptions); isTUN {
-				tunInboundOptions.AutoRedirect = overrideOptions.AutoRedirect && tunInboundOptions.AutoRoute
-				tunInboundOptions.IncludePackage = append(tunInboundOptions.IncludePackage, overrideOptions.IncludePackage...)
-				tunInboundOptions.ExcludePackage = append(tunInboundOptions.ExcludePackage, overrideOptions.ExcludePackage...)
-				break
-			}
-		}
+		applyTUNOverrides(&options, overrideOptions)
 	}
 	if s.oomKillerEnabled {
 		if !common.Any(options.Services, func(it option.Service) bool {

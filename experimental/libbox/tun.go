@@ -18,6 +18,14 @@ const (
 type TunOptions interface {
 	GetInet4Address() RoutePrefixIterator
 	GetInet6Address() RoutePrefixIterator
+	// GetInet4LoopbackAddress and GetInet6LoopbackAddress are the addresses this TUN answers for
+	// locally (option `loopback_address`). The Apple client needs them as strings to add host
+	// routes to NEIPv4Settings/NEIPv6Settings.includedRoutes: the route is what makes the system
+	// deliver such a packet to the TUN at all, and the core's loopback handling is what answers
+	// it. Without the getters the client cannot see the addresses the core will honour, and the
+	// two halves could disagree.
+	GetInet4LoopbackAddress() StringIterator
+	GetInet6LoopbackAddress() StringIterator
 	GetDNSMode() *StringBox
 	GetDNSServerAddress() (StringIterator, error)
 	GetMTU() int32
@@ -107,6 +115,26 @@ func (o *tunOptions) GetInet4Address() RoutePrefixIterator {
 
 func (o *tunOptions) GetInet6Address() RoutePrefixIterator {
 	return mapRoutePrefix(o.Inet6Address)
+}
+
+func (o *tunOptions) GetInet4LoopbackAddress() StringIterator {
+	return mapLoopbackAddress(o.Inet4LoopbackAddress)
+}
+
+func (o *tunOptions) GetInet6LoopbackAddress() StringIterator {
+	return mapLoopbackAddress(o.Inet6LoopbackAddress)
+}
+
+// mapLoopbackAddress renders the core's addresses the way the clients compare them: IPv4-mapped
+// IPv6 unmapped and any zone stripped, so "::ffff:10.7.0.1" and "10.7.0.1" are one string and a
+// host route is never installed twice for the same address. Invalid entries are dropped rather
+// than rendered as "<nil>", which would reach the system as a garbage route.
+func mapLoopbackAddress(addresses []netip.Addr) StringIterator {
+	return newIterator(common.Map(common.Filter(addresses, func(address netip.Addr) bool {
+		return address.IsValid()
+	}), func(address netip.Addr) string {
+		return address.Unmap().WithZone("").String()
+	}))
 }
 
 func (o *tunOptions) GetDNSMode() *StringBox {
