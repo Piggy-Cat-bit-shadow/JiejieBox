@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// commandSocketName is the file name the command server binds inside its base path.
+// commandSocketName is the documented socket name, used in the base path.
 const commandSocketName = "command.sock"
 
 // maxUnixSocketPath is the usable length of sockaddr_un.sun_path.
@@ -19,37 +19,36 @@ const commandSocketName = "command.sock"
 // "your directory name is too deep".
 const maxUnixSocketPath = 103
 
-// socketNameSuffix is what a fallback name ends with; the leading "h" plus hex characters is the
-// instance hash.
-const socketNameSuffix = ".sock"
-
-// minHashDigits is the shortest hash worth generating: 4 hex digits is 65536 distinct names, and
-// the number of command servers in one container is one per extension instance.
-const minHashDigits = 4
-
-// maxHashDigits caps the hash so a path budget cannot produce a pointlessly long name.
-const maxHashDigits = 8
+// minHashDigits and maxHashDigits bound the generated name.
+//
+// The name carries no suffix on purpose. Every byte of the name is a byte the directory does not
+// have: inside an iOS Packet Tunnel the temporary directory leaves ten bytes for a name, and
+// ".sock" would consume five of them for a string nobody reads.
+const (
+	minHashDigits = 4
+	maxHashDigits = 8
+)
 
 // commandSocketCandidates lists the directories a command socket may live in, best first.
 //
-// # Why the ladder exists
+// # What the device taught, three times
 //
-// The first fix for this problem assumed the process temporary directory is short. On a
-// re-signed iOS build without its App Group that assumption is false: the Packet Tunnel runs in
+// The first version joined `command.sock` onto the base path: 138 bytes, EINVAL.
 //
-//	/private/var/mobile/Containers/Data/PluginKitPlugin/<UUID>/tmp
+// The second moved the socket to the platform's temp path *instead*. The extension passes
+// `FilePath.cacheDirectory`, which is `<shared>/Library/Caches` - deeper than the base path, and
+// not the temporary directory at all. That produced a 110-byte fallback name.
 //
-// which is 92 bytes before a file name is appended, so even an eight-character hashed name does
-// not fit and the tunnel died with "socket path is 110 bytes, the kernel allows 103".
+// The third added the temp path and its parent to the candidate list, but used the temp path the
+// caller passed: still `<shared>/Library/Caches` and its parent, both too deep. `os.TempDir()` -
+// the one directory that is actually short inside the container, because TMPDIR points at
+// `<container>/tmp` - was consulted only when the caller passed nothing, which the extension never
+// does. The tunnel then failed with "no bindable socket path within 103 bytes".
 //
-// A length limit cannot be satisfied by choosing one alternative directory and hoping. The
-// directories this process can write to have a known order from shortest to longest, and the NAME
-// must be sized to whatever budget the directory leaves. So both are inputs to one decision.
-//
-// The base path comes first and keeps its original file name: a correctly signed build never
-// leaves the first rung, and its socket address does not change.
-func commandSocketCandidates(basePath, tempDir string) []string {
-	candidates := make([]string, 0, 4)
+// So the system temporary directory is a candidate ALWAYS, not as a fallback for a missing
+// argument, and the container root is derived from it rather than from whatever the caller passed.
+func commandSocketCandidates(basePath, tempDir, sysTemp string) []string {
+	candidates := make([]string, 0, 6)
 	add := func(dir string) {
 		if dir == "" {
 			return
@@ -63,28 +62,29 @@ func commandSocketCandidates(basePath, tempDir string) []string {
 		candidates = append(candidates, clean)
 	}
 	add(basePath)
-	if tempDir != "" {
-		add(tempDir)
-	} else {
-		add(os.TempDir())
+	// The system temporary directory first among the alternatives: inside an iOS Packet Tunnel it
+	// is `<container>/tmp`, the shortest sanctioned writable place this process has.
+	add(sysTemp)
+	// Its parent is the container root, four bytes shorter.
+	if sysTemp != "" {
+		add(filepath.Dir(filepath.Clean(sysTemp)))
 	}
-	// The container root: four bytes shorter than its tmp directory on iOS, and still inside the
-	// sandbox. It is what makes the real 92-byte tmp path survivable.
-	if len(candidates) > 1 {
-		add(filepath.Dir(candidates[1]))
+	// Whatever the platform passed is still worth trying: on macOS it is a real temporary
+	// directory, and on a correctly signed iOS build the base path wins before this matters.
+	add(tempDir)
+	if tempDir != "" {
+		add(filepath.Dir(filepath.Clean(tempDir)))
 	}
 	return candidates
 }
 
 // hashedSocketName returns a socket file name that fits in budget bytes.
 //
-// budget is what the directory leaves after its trailing separator. The hash is derived from the
-// logical socket path so two instances in the same directory choose different names, and it is
-// shortened only as far as the budget requires - a shorter hash is a worse name, never a better
-// one. ok is false when not even the minimum name fits.
-func hashedSocketName(logicalPath string, budget int) (name string, ok bool) {
-	nameOverhead := len("h") + len(socketNameSuffix)
-	digits := budget - nameOverhead
+// budget is what the directory leaves after its trailing separator. The hash comes from the
+// logical socket path, so two instances in one directory choose different names, and it is
+// shortened only as far as the budget requires.
+func hashedSocketName(logicalPath string, budget int) (string, bool) {
+	digits := budget - 1 // the leading "h"
 	if digits < minHashDigits {
 		return "", false
 	}
@@ -92,9 +92,9 @@ func hashedSocketName(logicalPath string, budget int) (name string, ok bool) {
 		digits = maxHashDigits
 	}
 	full := fmt.Sprintf("%08x", crc32.ChecksumIEEE([]byte(logicalPath)))
-	// A fixed-width hex string, so the truncated suffix keeps the low bits - the part that
-	// differs between container paths that differ at all.
-	return "h" + full[len(full)-digits:] + socketNameSuffix, true
+	// Fixed-width hex, so the kept suffix is the low bits - the part that differs between
+	// container paths that differ at all.
+	return "h" + full[len(full)-digits:], true
 }
 
 // pathFits reports whether path can be bound as a unix socket.
@@ -105,10 +105,16 @@ func pathFits(path string) bool {
 // resolveCommandSocketPath returns the socket path the command server binds and the command
 // client connects to.
 //
-// The two sides run this same function with the same two inputs, which is what keeps them in
+// The two sides run this same function with the same inputs, which is what keeps them in
 // agreement without a second channel to agree over.
 func resolveCommandSocketPath(basePath, tempDir string) (string, error) {
-	candidates := commandSocketCandidates(basePath, tempDir)
+	return resolveCommandSocketPathIn(basePath, tempDir, os.TempDir())
+}
+
+// resolveCommandSocketPathIn is the testable form: the system temporary directory is an input, so
+// a test can model a device whose TMPDIR is 92 bytes deep instead of asserting about the host's.
+func resolveCommandSocketPathIn(basePath, tempDir, sysTemp string) (string, error) {
+	candidates := commandSocketCandidates(basePath, tempDir, sysTemp)
 	if len(candidates) == 0 {
 		return "", fmt.Errorf("command server: no directory to bind a socket in")
 	}
@@ -119,7 +125,7 @@ func resolveCommandSocketPath(basePath, tempDir string) (string, error) {
 			continue
 		}
 		if index == 0 && budget >= len(commandSocketName) {
-			// The normal case, and the only one that keeps the documented address.
+			// The documented address, unchanged for a correctly signed build.
 			path := filepath.Join(dir, commandSocketName)
 			if pathFits(path) {
 				return path, nil
@@ -135,12 +141,21 @@ func resolveCommandSocketPath(basePath, tempDir string) (string, error) {
 			return path, nil
 		}
 	}
-	// Nothing fit. Report sizes, not the private container path: the full path identifies the
-	// container and ends up in logs the user pastes into issues.
-	shortest := candidates[len(candidates)-1]
+	// Nothing fit. Report the real budget of the shortest candidate - not of the last one - and
+	// no container path, which is what ends up pasted into issue reports.
+	shortest := candidates[0]
+	for _, dir := range candidates[1:] {
+		if len(dir) < len(shortest) {
+			shortest = dir
+		}
+	}
+	bestBudget := maxUnixSocketPath - len(shortest) - 1
+	if bestBudget < 0 {
+		bestBudget = 0
+	}
 	return "", fmt.Errorf(
 		"command server: no bindable socket path within %d bytes; %d candidate directories, the shortest leaves %d bytes for a name",
-		maxUnixSocketPath, len(candidates), maxUnixSocketPath-len(shortest)-1,
+		maxUnixSocketPath, len(candidates), bestBudget,
 	)
 }
 
@@ -154,13 +169,12 @@ func socketPathDiagnostics(path string) string {
 }
 
 // isGeneratedSocketName reports whether a name is one this package allocates, as opposed to the
-// documented command.sock. Used by cleanup to decide whether removing a stale file is safe: only
-// a name this package could have created is removed.
+// documented command.sock. Cleanup removes only a name this package could have created.
 func isGeneratedSocketName(name string) bool {
-	if !strings.HasPrefix(name, "h") || !strings.HasSuffix(name, socketNameSuffix) {
+	if !strings.HasPrefix(name, "h") {
 		return false
 	}
-	digits := strings.TrimSuffix(strings.TrimPrefix(name, "h"), socketNameSuffix)
+	digits := name[1:]
 	if len(digits) < minHashDigits || len(digits) > maxHashDigits {
 		return false
 	}

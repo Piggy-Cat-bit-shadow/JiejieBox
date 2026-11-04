@@ -1,101 +1,142 @@
 package libbox
 
 import (
-	"os"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// The line these tests exist for, reported from a device on 2026-11-04:
+// The three device reports, as inputs.
 //
-//	start command server error: listen command server: socket path is 110 bytes, the kernel
-//	allows 103: /private/var/mobile/Containers/Data/PluginKitPlugin/<UUID>/tmp/jjb-13de0c06.sock
+// # Why the tests are shaped this way
 //
-// The first fix moved the socket to os.TempDir() on the assumption that it is short. On a
-// re-signed iOS build the Packet Tunnel's temporary directory is inside its PluginKit container
-// and is 92 bytes before a name is appended, so the fallback itself was 110 bytes.
+// Two earlier rounds of tests passed while the tunnel failed, because they fed the resolver a
+// short directory of their own choosing. On a device the extension is a Packet Tunnel with no App
+// Group: its base path is `<PluginKit container>/Library/Application Support/JiejieBox-Shared`
+// (133 bytes with this UUID), the tempPath it passes is `<shared>/Library/Caches` (148), and the
+// only short directory it owns is TMPDIR, `<container>/tmp` (92). A test that does not model
+// those three together is not testing the product.
 const (
-	reportedContainerRoot = "/private/var/mobile/Containers/Data/PluginKitPlugin/5B6182FE-3CD7-4330-A11D-6336B908C07A"
-	reportedTempDir       = reportedContainerRoot + "/tmp"
-	reportedBasePath      = reportedContainerRoot + "/Library/Application Support/JiejieBox-Shared"
+	deviceUUID    = "5B6182FE-3CD7-4330-A11D-6336B908C07A"
+	devicePlugin  = "/private/var/mobile/Containers/Data/PluginKitPlugin/" + deviceUUID
+	deviceShared  = devicePlugin + "/Library/Application Support/JiejieBox-Shared"
+	deviceCaches  = deviceShared + "/Library/Caches"
+	deviceTempDir = devicePlugin + "/tmp"
 )
 
-func TestTheReportedPathsReproduceTheFailure(t *testing.T) {
+func TestTheDeviceLayoutResolvesInTheContainerTemporaryDirectory(t *testing.T) {
 	t.Parallel()
-	// The inputs, not a copy of the screenshot's output: these lengths are what the device
-	// reported, and the old implementation's fallback is what produced 110.
-	oldFallback := filepath.Join(reportedTempDir, "jjb-13de0c06.sock")
-	if len(oldFallback) != 110 {
-		t.Fatalf("the reported fallback is %d bytes, expected 110: %s", len(oldFallback), oldFallback)
-	}
-	if len(reportedBasePath+"/command.sock") <= maxUnixSocketPath {
-		t.Fatal("the reported base path is short enough to bind; it is not the failing case")
-	}
-}
-
-func TestTheReportedFailureResolvesToABindablePath(t *testing.T) {
-	t.Parallel()
-	resolved, err := resolveCommandSocketPath(reportedBasePath, reportedTempDir)
+	resolved, err := resolveCommandSocketPathIn(deviceShared, deviceCaches, deviceTempDir)
 	if err != nil {
-		t.Fatalf("the reported layout has no bindable path: %v", err)
+		t.Fatalf("the device layout has no bindable path: %v", err)
 	}
 	if !pathFits(resolved) {
-		t.Fatalf("resolved path is %d bytes: %s", len(resolved), resolved)
+		t.Fatalf("resolved %d bytes: %s", len(resolved), resolved)
 	}
-	// The name must be one this package generates. Which directory wins depends on the host's
-	// separator rules (Windows treats these POSIX strings differently), so the container-root
-	// expectation lives in the Darwin test, where the kernel limit is the one being satisfied.
+	if dir := filepath.Dir(resolved); dir != filepath.Clean(deviceTempDir) {
+		t.Fatalf("resolved into %q, want the container temporary directory", dir)
+	}
 	if !isGeneratedSocketName(filepath.Base(resolved)) {
-		t.Fatalf("resolved name is not a generated one: %s", filepath.Base(resolved))
+		t.Fatalf("resolved name is not generated: %s", filepath.Base(resolved))
+	}
+	// 92-byte directory, separator, and a nine-byte name: the ten bytes the directory leaves.
+	if len(resolved) != 102 {
+		t.Fatalf("resolved %d bytes, expected 102", len(resolved))
 	}
 }
 
-func TestABindableBasePathIsUsedVerbatim(t *testing.T) {
+// The same layout with the temp path the extension actually passes and the temp path it does not:
+// the answer must not depend on which of the two the caller happens to hand over.
+func TestTheAnswerDoesNotDependOnThePlatformTempArgument(t *testing.T) {
+	t.Parallel()
+	for _, tempArgument := range []string{deviceCaches, deviceTempDir, "", devicePlugin} {
+		resolved, err := resolveCommandSocketPathIn(deviceShared, tempArgument, deviceTempDir)
+		if err != nil {
+			t.Fatalf("temp argument %q: %v", tempArgument, err)
+		}
+		if !pathFits(resolved) {
+			t.Fatalf("temp argument %q resolved %d bytes", tempArgument, len(resolved))
+		}
+	}
+}
+
+func TestTheSystemTemporaryDirectoryIsAlwaysACandidate(t *testing.T) {
+	t.Parallel()
+	// This is the defect that survived two rounds: os.TempDir() was consulted only when the
+	// caller passed no temp path, and the extension always passes one.
+	candidates := commandSocketCandidates(deviceShared, deviceCaches, deviceTempDir)
+	found := false
+	for _, dir := range candidates {
+		if dir == filepath.Clean(deviceTempDir) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the system temporary directory is not a candidate: %v", candidates)
+	}
+}
+
+func TestAShortBasePathKeepsTheDocumentedName(t *testing.T) {
 	t.Parallel()
 	base := "/var/mobile/Containers/Data/Application/ABC/Library/Shared"
-	resolved, err := resolveCommandSocketPath(base, "/tmp")
+	resolved, err := resolveCommandSocketPathIn(base, "", "/tmp")
 	if err != nil {
 		t.Fatalf("a short base path failed: %v", err)
 	}
-	want := filepath.Join(base, commandSocketName)
-	if resolved != want {
+	if want := filepath.Join(base, commandSocketName); resolved != want {
 		t.Fatalf("a short base path was changed: got %s, want %s", resolved, want)
 	}
 }
 
-func TestTheByteBoundaryIsExact(t *testing.T) {
+func TestTheResultNeverExceedsTheLimit(t *testing.T) {
 	t.Parallel()
-	// 103 fits; 104 does not. The boundary is the kernel's, not a guess: Darwin's sun_path[104]
-	// holds 103 bytes plus the terminating NUL.
+	// Depths from tiny to hopeless, all three inputs moving together.
+	uuid := strings.Repeat("a", 36)
+	for _, rootLen := range []int{4, 40, 70, 92, 100, 110, 130, 160} {
+		root := "/" + strings.Repeat("r", rootLen-1)
+		base := root + "/Library/Application Support/JiejieBox-Shared"
+		temp := base + "/Library/Caches"
+		sysTemp := root + "/" + uuid + "/tmp"
+		resolved, err := resolveCommandSocketPathIn(base, temp, sysTemp)
+		if err != nil {
+			continue // a layout that cannot fit must say so, not emit a long path
+		}
+		if !pathFits(resolved) {
+			t.Fatalf("root %d resolved %d bytes", rootLen, len(resolved))
+		}
+	}
+}
+
+func TestABindableBasePathAtTheLimitIsUsedVerbatim(t *testing.T) {
+	t.Parallel()
+	// base + "/command.sock" is exactly 103: the documented name must still be chosen.
 	base := "/" + strings.Repeat("a", maxUnixSocketPath-len("/"+commandSocketName)-1)
-	resolved, err := resolveCommandSocketPath(base, reportedTempDir)
+	resolved, err := resolveCommandSocketPathIn(base, "", deviceTempDir)
 	if err != nil {
 		t.Fatalf("a base path at the limit failed: %v", err)
 	}
-	if !pathFits(resolved) {
-		t.Fatalf("at the limit, resolved %d bytes", len(resolved))
+	if want := filepath.Join(base, commandSocketName); resolved != want {
+		t.Fatalf("at the limit: got %s, want %s (%d bytes)", resolved, want, len(want))
 	}
-	over, err := resolveCommandSocketPath(base+"a", reportedTempDir)
+	// One byte more and the documented name no longer fits; the answer must be a shorter path,
+	// never the 104-byte one.
+	over, err := resolveCommandSocketPathIn(base+"a", "", deviceTempDir)
 	if err != nil {
 		t.Fatalf("one byte over produced no path: %v", err)
 	}
 	if !pathFits(over) {
-		t.Fatalf("one byte over resolved to %d bytes", len(over))
+		t.Fatalf("one byte over resolved %d bytes", len(over))
 	}
-	// "Verbatim" would be <over>/command.sock, which is 104 bytes. Using the same DIRECTORY with a
-	// generated short name is the correct answer, so the invariant is about the path, not the dir.
 	if over == filepath.Join(base+"a", commandSocketName) {
-		t.Fatal("a base path over the limit was used verbatim")
+		t.Fatal("the over-limit path was returned verbatim")
 	}
 }
 
 func TestMultibyteDirectoriesAreMeasuredInBytes(t *testing.T) {
 	t.Parallel()
-	// The kernel counts bytes, not runes. A path of three-byte characters must be measured the
-	// same way, or the budget is wrong by a factor of three.
-	base := "/" + strings.Repeat("文", 30) // 90 bytes plus the separator
-	resolved, err := resolveCommandSocketPath(base, reportedTempDir)
+	base := "/" + strings.Repeat("文", 30) // 90 bytes
+	resolved, err := resolveCommandSocketPathIn(base, "", deviceTempDir)
 	if err != nil {
 		t.Fatalf("multibyte base failed: %v", err)
 	}
@@ -104,12 +145,13 @@ func TestMultibyteDirectoriesAreMeasuredInBytes(t *testing.T) {
 	}
 }
 
-func TestAnImpossibleLayoutFailsWithSizesNotPaths(t *testing.T) {
+func TestAnImpossibleLayoutReportsTheTrueShortestBudget(t *testing.T) {
 	t.Parallel()
-	// Deep enough that no candidate leaves room for even a minimum name: the failure must be a
-	// returned error that reports sizes, never an EINVAL from bind and never the private path.
-	deep := "/" + strings.Repeat("x", 120)
-	_, err := resolveCommandSocketPath(deep+"/a/b", deep+"/a/b/tmp")
+	// Every candidate is over the limit. The message must report the budget of the SHORTEST
+	// candidate, not of the last one in the list - the earlier implementation reported whichever
+	// came last, so a helpful directory could be hidden by an unhelpful one.
+	deep := "/" + strings.Repeat("x", 110)
+	_, err := resolveCommandSocketPathIn(deep+"/base", deep+"/base/caches", deep+"/tmp")
 	if err == nil {
 		t.Fatal("an impossible layout resolved successfully")
 	}
@@ -120,19 +162,36 @@ func TestAnImpossibleLayoutFailsWithSizesNotPaths(t *testing.T) {
 	if !strings.Contains(message, "103") {
 		t.Fatalf("the error does not name the limit: %s", message)
 	}
+	if !strings.Contains(message, "0 bytes for a name") {
+		t.Fatalf("the error does not report a clamped budget: %s", message)
+	}
+}
+
+func TestOneViableCandidateInTheMiddleIsFound(t *testing.T) {
+	t.Parallel()
+	// Base path and platform temp are hopeless; the system temp fits. The resolver must not stop
+	// at the first two.
+	deep := "/" + strings.Repeat("x", 120)
+	resolved, err := resolveCommandSocketPathIn(deep+"/base", deep+"/base/caches", "/tmp")
+	if err != nil {
+		t.Fatalf("the viable candidate was not found: %v", err)
+	}
+	if !strings.HasPrefix(filepath.ToSlash(resolved), "/tmp/") {
+		t.Fatalf("resolved %s, want a path under /tmp", resolved)
+	}
 }
 
 func TestTheFallbackNameIsStableAndDistinct(t *testing.T) {
 	t.Parallel()
-	first, err := resolveCommandSocketPath(reportedBasePath, reportedTempDir)
+	first, err := resolveCommandSocketPathIn(deviceShared, deviceCaches, deviceTempDir)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	second, err := resolveCommandSocketPath(reportedBasePath, reportedTempDir)
+	second, err := resolveCommandSocketPathIn(deviceShared, deviceCaches, deviceTempDir)
 	if err != nil || second != first {
-		t.Fatalf("the rule is not deterministic: %s vs %s (%v)", first, second, err)
+		t.Fatalf("not deterministic: %s vs %s (%v)", first, second, err)
 	}
-	other, err := resolveCommandSocketPath(reportedBasePath+"-other", reportedTempDir)
+	other, err := resolveCommandSocketPathIn(deviceShared+"-other", deviceCaches, deviceTempDir)
 	if err != nil {
 		t.Fatalf("resolve other: %v", err)
 	}
@@ -143,15 +202,15 @@ func TestTheFallbackNameIsStableAndDistinct(t *testing.T) {
 
 func TestOnlyGeneratedNamesAreEverRemoved(t *testing.T) {
 	t.Parallel()
-	// Cleanup may remove a stale socket only when this package could have created the name.
 	for name, want := range map[string]bool{
-		"command.sock":   false,
-		"h13de0c06.sock": true,
-		"h1234.sock":     true,
-		"h12.sock":       false,
-		"hzzzz.sock":     false,
-		"socket":         false,
-		"h1234":          false,
+		"command.sock": false,
+		"h13de0c06":    true,
+		"h1a2b":        true,
+		"h123":         false,
+		"h123456789":   false,
+		"hzzzz":        false,
+		"socket":       false,
+		"h":            false,
 	} {
 		if got := isGeneratedSocketName(name); got != want {
 			t.Fatalf("isGeneratedSocketName(%q) = %v, want %v", name, got, want)
@@ -159,16 +218,29 @@ func TestOnlyGeneratedNamesAreEverRemoved(t *testing.T) {
 	}
 }
 
-func TestTheDirectoryDefaultIsUsedWhenNoTempIsGiven(t *testing.T) {
+func TestTheGeneratedNameFitsTheBudgetItWasGiven(t *testing.T) {
 	t.Parallel()
-	resolved, err := resolveCommandSocketPath(reportedBasePath, "")
-	if err != nil {
-		t.Fatalf("the default temp directory produced no path: %v", err)
+	for budget := 0; budget <= 20; budget++ {
+		name, ok := hashedSocketName("/some/base/command.sock", budget)
+		if !ok {
+			continue
+		}
+		if len(name) > budget {
+			t.Fatalf("budget %d produced a %d-byte name: %s", budget, len(name), name)
+		}
+		if !isGeneratedSocketName(name) {
+			t.Fatalf("budget %d produced a name the cleanup rule would not recognise: %s", budget, name)
+		}
 	}
-	if !pathFits(resolved) {
-		t.Fatalf("resolved path is %d bytes", len(resolved))
+}
+
+func TestTheDiagnosticWithholdsTheContainer(t *testing.T) {
+	t.Parallel()
+	got := socketPathDiagnostics(deviceTempDir + "/h91d35256")
+	if strings.Contains(got, "PluginKitPlugin") {
+		t.Fatalf("the diagnostic discloses the container: %s", got)
 	}
-	if dir := filepath.Dir(resolved); dir != filepath.Clean(os.TempDir()) && dir != reportedContainerRoot {
-		t.Fatalf("resolved into an unexpected directory: %s", dir)
+	if !strings.Contains(got, "h91d35256") || !strings.Contains(got, fmt.Sprintf("%d-byte", len(deviceTempDir))) {
+		t.Fatalf("the diagnostic lost the useful parts: %s", got)
 	}
 }

@@ -3,48 +3,54 @@
 package libbox
 
 import (
-	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-// These tests run the kernel's own check. The unit tests prove the resolver's arithmetic; only
-// bind(2) can prove the path is acceptable to Darwin, and only on a Darwin host.
+// These tests run the kernel's own check on the shape the device reported: a Packet Tunnel with no
+// App Group, its base path under Application Support, the platform temp path it passes being that
+// same tree's Library/Caches, and the only short directory being its TMPDIR.
 //
-// They use /tmp, not t.TempDir(): Go's test temp directory is itself deep enough on macOS that a
-// container-shaped fixture built under it cannot fit in 103 bytes, which would test the fixture
-// rather than the resolver. The depth being modelled is the device's, not the host's.
-func darwinFixtureRoot(t *testing.T) string {
+// The fixture root is padded so the base path exceeds the limit; otherwise the resolver would
+// (correctly) keep the documented name and the test would never reach the fallback.
+func darwinContainerFixture(t *testing.T) (basePath, platformTemp, systemTemp string) {
 	t.Helper()
-	root, err := os.MkdirTemp("/tmp", "jjb")
+	root, err := os.MkdirTemp("/tmp", strings.Repeat("j", 40))
 	if err != nil {
 		t.Skipf("no writable /tmp: %v", err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
-	return root
-}
-
-func TestDarwinBindsTheResolvedPathInADeepContainer(t *testing.T) {
-	root := darwinFixtureRoot(t)
-	// The shape reported by the device: <root>/Data/PluginKitPlugin/<UUID>/{tmp, Library/...}.
-	plugin := filepath.Join(root, "Data", "PluginKitPlugin", "5B6182FE-3CD7-4330-A11D-6336B908C07A")
-	tempDir := filepath.Join(plugin, "tmp")
-	basePath := filepath.Join(plugin, "Library", "Application Support", "JiejieBox-Shared")
-	for _, dir := range []string{tempDir, basePath} {
+	basePath = filepath.Join(root, "Library", "Application Support", "JiejieBox-Shared")
+	platformTemp = filepath.Join(basePath, "Library", "Caches")
+	systemTemp = filepath.Join(root, "tmp")
+	for _, dir := range []string{basePath, platformTemp, systemTemp} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", dir, err)
 		}
 	}
-	if len(basePath)+len("/command.sock") <= maxUnixSocketPath {
-		t.Skipf("the fixture base path is already short enough (%d bytes); it does not model the device", len(basePath))
+	if len(basePath)+len("/"+commandSocketName) <= maxUnixSocketPath {
+		t.Skipf("fixture base path is %d bytes; too short to model the device", len(basePath))
 	}
+	return basePath, platformTemp, systemTemp
+}
 
-	resolved, err := resolveCommandSocketPath(basePath, tempDir)
+func TestDarwinBindsTheResolvedPathInADeepContainer(t *testing.T) {
+	basePath, platformTemp, systemTemp := darwinContainerFixture(t)
+
+	resolved, err := resolveCommandSocketPathIn(basePath, platformTemp, systemTemp)
 	if err != nil {
 		t.Fatalf("resolver: %v", err)
 	}
+	if !pathFits(resolved) {
+		t.Fatalf("resolved %d bytes: %s", len(resolved), resolved)
+	}
+	if dir := filepath.Dir(resolved); dir != filepath.Clean(systemTemp) {
+		t.Fatalf("resolved into %q, want the container temporary directory %q", dir, systemTemp)
+	}
+
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: resolved, Net: "unix"})
 	if err != nil {
 		t.Fatalf("bind of the resolved path (%d bytes) failed: %v", len(resolved), err)
@@ -59,22 +65,39 @@ func TestDarwinBindsTheResolvedPathInADeepContainer(t *testing.T) {
 	_ = conn.Close()
 }
 
+// The same container, with the platform temp argument absent: the answer must still be bindable,
+// because the system temporary directory is a candidate unconditionally.
+func TestDarwinBindsWithoutThePlatformTempArgument(t *testing.T) {
+	basePath, _, systemTemp := darwinContainerFixture(t)
+	resolved, err := resolveCommandSocketPathIn(basePath, "", systemTemp)
+	if err != nil {
+		t.Fatalf("resolver: %v", err)
+	}
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: resolved, Net: "unix"})
+	if err != nil {
+		t.Fatalf("bind failed (%d bytes): %v", len(resolved), err)
+	}
+	listener.Close()
+	_ = os.Remove(resolved)
+}
+
+// The control: a 104-byte name is refused by the kernel, which is what "allows 103" means.
 func TestDarwinRejectsAPathOverTheLimit(t *testing.T) {
-	// The control: a 104-byte name must fail at bind, and the resolver must never produce one.
-	root := darwinFixtureRoot(t)
+	root, err := os.MkdirTemp("/tmp", "jjb")
+	if err != nil {
+		t.Skipf("no writable /tmp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	deep := filepath.Join(root, "d")
 	if err := os.MkdirAll(deep, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	pad := maxUnixSocketPath + 1 - len(deep) - 1
 	if pad <= 0 {
-		t.Skipf("the fixture root is %d bytes; too deep to build a %d-byte path", len(deep), maxUnixSocketPath+1)
+		t.Skipf("fixture root is %d bytes; too deep", len(deep))
 	}
-	name := make([]byte, pad)
-	for index := range name {
-		name[index] = 'a'
-	}
-	over := filepath.Join(deep, string(name))
+	name := strings.Repeat("a", pad)
+	over := filepath.Join(deep, name)
 	if len(over) != maxUnixSocketPath+1 {
 		t.Fatalf("fixture is %d bytes, wanted %d", len(over), maxUnixSocketPath+1)
 	}
@@ -82,24 +105,12 @@ func TestDarwinRejectsAPathOverTheLimit(t *testing.T) {
 		_ = os.Remove(over)
 		t.Fatalf("the kernel accepted a %d-byte path", len(over))
 	}
-
-	// And the resolver, asked for a socket in a directory that leaves no room, chooses a shorter
-	// ancestor rather than emitting the over-long path.
-	longDir := fmt.Sprintf("%s/%s", deep, string(name[:40]))
-	if err := os.MkdirAll(longDir, 0o755); err != nil {
-		t.Fatalf("mkdir longDir: %v", err)
-	}
-	resolved, err := resolveCommandSocketPath(longDir, longDir)
+	// And the resolver never emits such a path for that directory.
+	resolved, err := resolveCommandSocketPathIn(deep, deep, deep)
 	if err != nil {
 		t.Fatalf("resolver refused a layout it can satisfy: %v", err)
 	}
 	if !pathFits(resolved) {
 		t.Fatalf("resolver produced %d bytes", len(resolved))
 	}
-	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: resolved, Net: "unix"})
-	if err != nil {
-		t.Fatalf("the resolver answer does not bind (%d bytes): %v", len(resolved), err)
-	}
-	listener.Close()
-	_ = os.Remove(resolved)
 }

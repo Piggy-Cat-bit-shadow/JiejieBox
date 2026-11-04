@@ -141,3 +141,65 @@ kernel refuses a 104-byte name. That is the check the unit tests cannot make.
 
 Whether the tunnel then connects, whether the app's statistics reach it (no App Group means they
 cannot), and whether the local signing loopback answers. All device-side.
+
+---
+
+# Third device report: the system temporary directory was never a candidate
+
+Reported 2026-11-04, after the second fix shipped:
+
+```text
+command server: no bindable socket path within 103 bytes;
+3 candidate directories, the shortest leaves -31 bytes for a name
+```
+
+## What the second fix got wrong
+
+It added "the platform temp path and its parent" to the candidate list, and consulted
+`os.TempDir()` only when the caller passed no temp path. The extension always passes one:
+
+```swift
+options.tempPath = FilePath.cacheDirectory.relativePath   // <shared>/Library/Caches
+```
+
+so the three candidates were the base path (133 bytes), `Library/Caches` under it (148), and that
+directory's parent - `/shared` (133) - which was already candidate one and was deduplicated away.
+The one directory that is short inside the container, `TMPDIR` = `<container>/tmp` (92 bytes), was
+never considered. Every candidate was hopeless, and the resolver correctly said so.
+
+The second defect was in that message: it reported the budget of the **last** candidate, not of the
+shortest one, so the number it printed was not the best the process could do.
+
+The third defect was in the tests: they passed the host's `/tmp` as the platform temp argument, so
+they exercised a layout that never occurs on a device. Two rounds of green tests, two failures.
+
+## What the resolver does now
+
+* `os.TempDir()` is a candidate **always**: inside a Packet Tunnel it is `<container>/tmp`, the
+  shortest sanctioned writable directory the process has.
+* The container root is derived from **that** directory, not from whatever the caller passed.
+* The platform's own temp path is still tried, and so is its parent: on macOS it is a real
+  temporary directory, and on a correctly signed iOS build the base path wins before any of this.
+* Generated names carry **no suffix**: inside a container there are ten bytes for a name, and
+  `.sock` would spend five of them on a string nobody reads. `h` plus four to eight hex digits.
+* When nothing fits, the error reports the budget of the **shortest** candidate.
+
+For the reported layout: `<container>/tmp` (92) + `/` + `h` + eight hex digits = **102 bytes**.
+
+## Why this round's evidence is different
+
+The tests now take the device's three paths as constants - base path, the `Library/Caches` the
+extension actually passes, and the 92-byte `TMPDIR` - and assert that resolution lands in the
+container temporary directory at exactly 102 bytes. The resolver's system-temp input is an
+argument (`resolveCommandSocketPathIn`), so a test can model a device instead of asserting about
+the host.
+
+On Darwin the tests build that container shape under `/tmp`, padded so the base path really does
+exceed the limit, then call `net.ListenUnix` on the resolved path and dial it. A 104-byte control
+proves the kernel's boundary is the one being satisfied.
+
+## Still not claimed
+
+That the tunnel connects, and that the app can reach the command channel. The second needs the App
+Group: without it the extension's socket is in the extension's container and the app's is in the
+app's, which no path arithmetic can change.
