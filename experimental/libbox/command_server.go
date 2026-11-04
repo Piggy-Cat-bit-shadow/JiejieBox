@@ -3,6 +3,7 @@ package libbox
 import (
 	"context"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -227,6 +228,33 @@ type OverrideOptions struct {
 	AutoRedirect   bool
 	IncludePackage StringIterator
 	ExcludePackage StringIterator
+	// LoopbackAddress carries the addresses the platform wants the effective TUN to answer for
+	// locally, e.g. the Apple client's "Local Signing Loopback" address. It is a list rather than
+	// a flag so the core stays generic: the platform decides which address, this only transports
+	// it. Empty (the default everywhere) leaves the parsed configuration exactly as it was.
+	LoopbackAddress StringIterator
+}
+
+// parseLoopbackAddresses converts the platform's list into addresses the core can merge.
+//
+// An entry that does not parse is dropped rather than failing the start: the list is a platform
+// hint about one optional feature, and refusing to start the tunnel because a hint was malformed
+// would turn a cosmetic problem into "the VPN does not work". The drop is visible to the platform
+// in that the address it asked for is simply not in the TUN, which is what it would get anyway if
+// it had not asked.
+func parseLoopbackAddresses(iterator StringIterator) []netip.Addr {
+	if iterator == nil {
+		return nil
+	}
+	var addresses []netip.Addr
+	for iterator.HasNext() {
+		address, err := netip.ParseAddr(iterator.Next())
+		if err != nil {
+			continue
+		}
+		addresses = append(addresses, address)
+	}
+	return addresses
 }
 
 func (s *CommandServer) StartOrReloadService(configContent string, options *OverrideOptions) error {
@@ -235,9 +263,10 @@ func (s *CommandServer) StartOrReloadService(configContent string, options *Over
 		copyConfigSnapshot(filepath.Join(sWorkingPath, powerreport.DraftDirectoryName))
 	}
 	err := s.StartedService.StartOrReloadService(s.ctx, configContent, &daemon.OverrideOptions{
-		AutoRedirect:   options.AutoRedirect,
-		IncludePackage: iteratorToArray(options.IncludePackage),
-		ExcludePackage: iteratorToArray(options.ExcludePackage),
+		AutoRedirect:    options.AutoRedirect,
+		IncludePackage:  iteratorToArray(options.IncludePackage),
+		ExcludePackage:  iteratorToArray(options.ExcludePackage),
+		LoopbackAddress: parseLoopbackAddresses(options.LoopbackAddress),
 	})
 	if err != nil {
 		return E.Cause(err, "start or reload service")
