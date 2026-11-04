@@ -95,6 +95,7 @@ Runs that actually executed (branch `experiment/ios-selfsign-compat`):
 | `41733637543` (a2a91621) | producer: builds both slices, packs, uploads `jiejiebox-libbox-<sha>` | 23.4 min | **4.4 min** (warm Go cache) |
 | `41738314328` (a2a91621) | consumer with `libbox=required`: build/publish/upload all **skipped**, IPA still produced | 18.1 min | **0 min** |
 | `41740879398` (0e27832) | producer with the provenance line in `BUILD-INFO.txt` | 22 min | built |
+| `41746464813` (5b561e7) | two products, one Libbox: the iOS job produced it (3.4 min) and the **macOS** job fetched, validated and installed the same artifact, then compiled `JiejieBox.app` | 20.4 + 11.1 min | **0 min in the macOS job** |
 
 The 5.3-minute difference is the duplicated gomobile build the experiment used to pay on every
 run; it is now paid once per commit. A cold module cache makes the producer's Libbox step much
