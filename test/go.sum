@@ -10,8 +10,8 @@ github.com/Microsoft/go-winio v0.6.1 h1:9/kr64B9VUZrLm5YYwbGtUJnMgqWVOdUAXu6Migc
 github.com/Microsoft/go-winio v0.6.1/go.mod h1:LRdKpFKfdobln8UmuiYcKPot9D2v6svN5+sAH+4kjUM=
 github.com/Piggy-Cat-bit-shadow/cronet-go v0.0.1-143.0.7499.109-2.0.20261104222944-d841c37b3437 h1:NRquhq3zQViWKU2JXVu4311nj08lfIpWlfEiwIRS3hE=
 github.com/Piggy-Cat-bit-shadow/cronet-go v0.0.1-143.0.7499.109-2.0.20261104222944-d841c37b3437/go.mod h1:T/mwtrpC4JlWfScw73CmSBvHzIvc7BatQ1MhRr+cYNw=
-github.com/Piggy-Cat-bit-shadow/cronet-go/all v0.0.0-20261101181843-bd2b70516b92 h1:s8C1aDLg+tNPTdt2atnGWs1Jhh2+JXfG5W+SGm6aGZc=
-github.com/Piggy-Cat-bit-shadow/cronet-go/all v0.0.0-20261101181843-bd2b70516b92/go.mod h1:u1fA2BCgpk5fauriCVKMod2jxnM6Zw/Zyz/fDaW1mls=
+github.com/Piggy-Cat-bit-shadow/cronet-go/all v0.0.0-20261104222944-d841c37b3437 h1:wWrAAdJ0ywLiOQiy6go5W8/3vIkwV3x99uiWLjASbco=
+github.com/Piggy-Cat-bit-shadow/cronet-go/all v0.0.0-20261104222944-d841c37b3437/go.mod h1:u1fA2BCgpk5fauriCVKMod2jxnM6Zw/Zyz/fDaW1mls=
 github.com/Piggy-Cat-bit-shadow/cronet-go/lib/android_386 v0.0.0-20261104222944-d841c37b3437 h1:C1EwiniBER691UXN+bSOxX6V9z4BxQBFyWOuFAmBXBM=
 github.com/Piggy-Cat-bit-shadow/cronet-go/lib/android_386 v0.0.0-20261104222944-d841c37b3437/go.mod h1:YLUWv8Ry0KjBV7AlYaP0eEEIZipF3bBDczQ9Tq/d0Uw=
 github.com/Piggy-Cat-bit-shadow/cronet-go/lib/android_amd64 v0.0.0-20261104222944-d841c37b3437 h1:bOOhzwFLFhgILTfXcUH+MmM88ojbYNYE8wHbDOm4feo=
