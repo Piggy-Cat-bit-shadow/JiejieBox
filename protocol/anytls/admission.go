@@ -5,6 +5,7 @@ import (
 	"net"
 
 	"github.com/sagernet/sing-box/common/resourceguard"
+	"github.com/sagernet/sing-box/common/trafficclass"
 	M "github.com/sagernet/sing/common/metadata"
 )
 
@@ -38,7 +39,13 @@ type streamDialFunc func(ctx context.Context, destination M.Socksaddr) (net.Conn
 // place that knows about admission, and on every platform without a process budget it costs one
 // nil check.
 func dialWithAdmission(ctx context.Context, guard *resourceguard.Guard, dial streamDialFunc, destination M.Socksaddr) (net.Conn, error) {
-	permit, err := guard.Acquire(ctx, resourceguard.ClassNormal)
+	// A flow whose class says a person is waiting on it may use the interactive reserve; that is
+	// what makes the reserve a priority rather than dead capacity. Everything else is normal.
+	class := resourceguard.ClassNormal
+	if flowClass, loaded := trafficclass.ClassFromContext(ctx); loaded && flowClass.IsHighPriority() {
+		class = resourceguard.ClassInteractive
+	}
+	permit, err := guard.Acquire(ctx, class)
 	if err != nil {
 		return nil, err
 	}

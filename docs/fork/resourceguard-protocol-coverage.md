@@ -69,7 +69,7 @@ an unmarked dial takes a permit and a failed handshake leaks none; a marked dial
 for nothing; no guard means no refusal; a full gate (limit 1, queue 0) refuses the second
 handshake in constant time and does not run it.
 
-Existing suites: `protocol/anytls` and `common/resourceguard` pass unchanged; the full tagged
+Existing suites: `protocol/anytls`, `common/resourceguard` and `common/trafficclass` pass; the full tagged
 suite keeps its three known environment failures (`common/tls` TLS 1.3 on this host,
 `common/tlsspoof`, `common/windivert`).
 
@@ -81,12 +81,18 @@ suite keeps its three known environment failures (`common/tls` TLS 1.3 on this h
    session available" before the dial — `sing-anytls` has `takeIdleSession` but no exported
    predicate. That is a dependency change with its own pin/freeze cycle, and shipping it without
    a device test would trade a measured queue for an unmeasured one.
-2. **`ClassInteractive` has no producer.** The gate reserves four slots beyond the limit
-   (`InteractiveReserve`), and no caller ever passes `ClassInteractive`; only `ClassNormal` is
-   used. The reserve is therefore inert — it neither protects nor harms — and the starvation
-   aging it enables is untested in production. Wiring it needs a trustworthy per-flow class at
-   the dial point; the traffic scheduler classifies dials for its own queue, but it does not
-   travel to the outbound in the context.
+2. **`ClassInteractive` was inert, and is now wired.** The gate reserves four slots beyond the
+   limit (`InteractiveReserve`) for interactive traffic, but no caller passed `ClassInteractive`:
+   the class was resolved at the route layer for the scheduler only and never reached the
+   admission seam.
+
+   Fixed this round: `route/conn.go` attaches the resolved class to the dial context
+   (`trafficclass.WithClass`) at both the stream and the UDP dial sites; `protocol/anytls`'s
+   admission maps a high-priority class (`interactive`, `realtime`) to
+   `resourceguard.ClassInteractive` and everything else to `ClassNormal`. Tests: the class
+   survives the context round-trip and "unclassified" is distinguishable from "classified
+   default"; an interactive flow is admitted through the reserve while the normal pool is full,
+   and a bulk flow is refused instead of borrowing it.
 3. **UDP NAT is already bounded.** The diagnostic's ~200 UDP entries were not an unbounded map:
    `sing-tun`'s UDP NAT is an LRU with a lifetime and a size cap (4096 on iOS, 16384 elsewhere,
    `udp_nat.go` `MaxSize`). The 200 goroutines seen in the snapshot are the per-flow packet

@@ -381,6 +381,9 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 	)
 	// The dial gate. Inert unless a transition opened its window in the last few seconds, and it
 	// never delays a flow whose class says a person is waiting on it; see dial_governor.go.
+	// The class has to reach the admission seam inside the outbound, which only receives a
+	// context. Attached here, once, at the point the flow's class is already resolved.
+	ctx = trafficclass.WithClass(ctx, metadata.TrafficClass)
 	releaseDial := m.enterDialGate(ctx, metadata.TrafficClass)
 	// The setup context, and nothing else, owns the dial.
 	//
@@ -629,6 +632,9 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 	if metadata.UDPConnect {
 		// The dial gate, as for a stream. Establishing a UDP session is a dial too, and an app
 		// opening a burst of them after a transition is the same herd.
+		// The class has to reach the admission seam inside the outbound, which only receives a
+		// context. Attached here, once, at the point the flow's class is already resolved.
+		ctx = trafficclass.WithClass(ctx, metadata.TrafficClass)
 		releaseDial := m.enterDialGate(ctx, metadata.TrafficClass)
 		// The setup context, for the same reason as in NewConnection: a UDP "connect" to a peer
 		// that never answers is a dial the connection list cannot reach until it returns.
