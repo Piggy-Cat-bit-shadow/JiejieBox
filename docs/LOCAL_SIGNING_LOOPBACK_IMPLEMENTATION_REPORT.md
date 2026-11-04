@@ -128,7 +128,9 @@ their own profile still gets exactly what they wrote, on every platform.
 |---|---|
 | `go test ./daemon/` | ok (includes the 8 new override tests) |
 | `go test ./experimental/libbox/` | ok (includes the 6 new getter tests) |
-| `go test ./protocol/tun/ ./option/` | ok |
+| `go test ./protocol/tun/` | ok — includes the 3 stack-warning tests |
+| `go test ./option/` | ok |
+| full suite, `-tags <windows profile>` | 96 packages ok; the 3 failures are the known environment ones (`common/tls` TLS 1.3 prerequisites, `common/tlsspoof`, `common/windivert` driver), identical at the pre-feature baseline |
 | `go build -tags <windows profile> ./...` | ok |
 | `python scripts/ci/release-freeze.py verify` | PASS — every pin matches the lock |
 | `check-libbox-abi.sh --pin-only` | passes with the updated verified SHA (see §8) |
