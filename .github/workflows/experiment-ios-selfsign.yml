@@ -35,7 +35,7 @@ env:
   # The Apple client commit this experiment builds. Since the self-sign work was merged into the
   # product line it is the integrated client: the launch-path fixes, the loopback feature and
   # upstream's four commits, all at one revision (see the parent repository's pin).
-  APPLE_EXPERIMENT_SHA: 4773b5fb9802f8d7c91f4af2962d35879399b56f
+  APPLE_EXPERIMENT_SHA: 46f7f5f0e675ec9bf7152f5fed87ab121c71a18a
   APPLE_CLIENT_DIR: clients/apple
   APPLE_CLIENT_PLATFORM: ios
   # Identity the experiment builds with. Both are passed through one build setting each, and
@@ -90,6 +90,19 @@ jobs:
       # the syscall is proven here.
       - name: prove the socket path on Darwin
         run: go test ./experimental/libbox/ -run 'TestDarwin' -count=1 -v
+      # The experiment must build the client this commit pins. It has its own constant because the
+      # workflow needs a revision before the parent source is checked out; without this assertion
+      # that constant can drift from the gitlink and a build silently ships the wrong client - which
+      # is exactly what happened once, when a fix was committed to the client but the experiment
+      # still built the previous one.
+      - name: the experiment builds the client this commit pins
+        run: |
+          pinned="$(git ls-tree HEAD clients/apple | awk '{print $3}')"
+          if [ "$pinned" != "$APPLE_EXPERIMENT_SHA" ]; then
+            echo "FAIL: APPLE_EXPERIMENT_SHA is $APPLE_EXPERIMENT_SHA but this commit pins $pinned" >&2
+            exit 1
+          fi
+
       - name: reuse this commit's Libbox if one was already produced
         id: libbox_artifact
         # The single-producer rule: `client-apple.yml` compiles Libbox for a commit and uploads
