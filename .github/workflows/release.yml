@@ -97,6 +97,9 @@ jobs:
     timeout-minutes: 180
     env:
       RELEASE_EXTRA_PLATFORMS: true
+      # The unsigned IPA the self-sign path ships. It becomes a release asset from this revision
+      # on: the only other place it existed was a fourteen-day Actions artifact of a manual run.
+      RELEASE_SELF_SIGN_IPA: true
       RELEASE_APPLE_RUN_ID: ${{ inputs.apple_run_id }}
       RELEASE_APPLE_RUN_ATTEMPT: ${{ inputs.apple_run_attempt }}
     steps:
@@ -413,6 +416,37 @@ jobs:
             --desktop-records release-desktop.records \
             --version "$RELEASE_VERSION"
 
+      # The unsigned self-sign IPA is produced by the self-sign entry, which is a manual workflow:
+      # a release therefore requires that this commit was dispatched through it. Failing here with
+      # that sentence is the point - the alternative is a release that silently omits an asset the
+      # contract says it carries.
+      - name: stage the self-sign IPA
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-selfsign
+          run_id="$(
+            gh api "repos/$GITHUB_REPOSITORY/actions/workflows/experiment-ios-selfsign.yml/runs?head_sha=$RELEASE_SHA&per_page=50" \
+              --jq '[.workflow_runs[] | select(.conclusion == "success")] | sort_by(.created_at) | last | .id // empty'
+          )"
+          if [ -z "$run_id" ]; then
+            echo "FAIL: no successful self-sign run for $RELEASE_SHA." >&2
+            echo "      The release contract carries the unsigned IPA, so dispatch it first:" >&2
+            echo "        gh workflow run experiment-ios-selfsign.yml -R $GITHUB_REPOSITORY --ref testing" >&2
+            exit 1
+          fi
+          echo "self-sign run: $run_id"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+            --name "jiejiebox-ios-selfsign-experiment-$RELEASE_SHA" --dir release-selfsign
+          # The producer's own contract, re-run on the bytes that are about to be published.
+          build="$(printf '%s' "$RELEASE_VERSION" | tr -cd '0-9' | sed -E 's/^0+//')"
+          python3 tooling/scripts/experiment/verify-selfsign-ipa.py \
+            --version "$RELEASE_VERSION" --build "$build" \
+            --base io.jiejiebox.app --group group.io.jiejiebox.app \
+            release-selfsign/jiejiebox-selfsign-full.ipa
+
       - name: flatten the release assets
         env:
           # check-tag already proved this is a validated release tag and the previous step
@@ -433,6 +467,7 @@ jobs:
             --out upload \
             --tag "$RELEASE_TAG" \
             --desktop "$installer" \
+            --self-sign release-selfsign/jiejiebox-selfsign-full.ipa \
             --version "$RELEASE_VERSION"
 
       # The public contract is checked against the WORKSPACE, not against the command that

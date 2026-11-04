@@ -1442,7 +1442,7 @@ $(printf '      %s\n' $unexpected)
 # ---------------------------------------------------------------------------
 
 cmd_flatten() {
-  local plan="" dir="" out="" tag="" desktop="" version=""
+  local plan="" dir="" out="" tag="" desktop="" self_sign="" version=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --plan) plan="${2:-}"; shift 2 ;;
@@ -1450,6 +1450,7 @@ cmd_flatten() {
       --out) out="${2:-}"; shift 2 ;;
       --tag) tag="${2:-}"; shift 2 ;;
       --desktop) desktop="${2:-}"; shift 2 ;;
+      --self-sign) self_sign="${2:-}"; shift 2 ;;
       --version) version="${2:-}"; shift 2 ;;
       *) die "flatten: unknown argument '$1'" ;;
     esac
@@ -1563,6 +1564,19 @@ $(printf '      %s\n' $actual)"
   local installer="Jiejiebox-v${version}-windows-x64.exe"
   cp "$desktop" "$out/$installer"
   note "staged $installer"
+
+  # The unsigned self-sign IPA, when the contract carries it. Required exactly when the flag that
+  # adds it to the asset set is on: a release that promised the file and staged nothing would fail
+  # `check-upload` anyway, but the message there would name the upload directory rather than the
+  # missing input.
+  if [ "$RELEASE_SELF_SIGN_IPA" = true ]; then
+    [ -n "$self_sign" ] || die "flatten: RELEASE_SELF_SIGN_IPA is true but --self-sign was not given"
+    [ -f "$self_sign" ] || die "flatten: no self-sign IPA at '$self_sign'"
+    local self_sign_name
+    self_sign_name="$(self_sign_asset_name "$version")"
+    cp "$self_sign" "$out/$self_sign_name"
+    note "staged $self_sign_name"
+  fi
 
   # ---- the public asset contract -------------------------------------------
   #
@@ -1730,6 +1744,26 @@ cmd_publish_flag() {
 # `publish-apple-beta.sh`. It is no longer a fixed unversioned name: an unversioned name cannot say
 # which release it belongs to, and the consumer derives its expected name from the version, so the two
 # sides agree only if the version is in the name. See `flatten` for why the bundle is built here.
+# The unsigned IPA a re-signing service turns into an installable build.
+#
+# It is a release asset because the self-sign path is a supported way to run this product, and until
+# now the only place that artifact existed was a 14-day Actions artifact of a manual run. A release
+# asset is the one distribution point that outlives the run.
+#
+# RELEASE_SELF_SIGN_IPA gates it exactly like RELEASE_EXTRA_PLATFORMS gates the extra products: the
+# unit fixtures and the default target set do not carry it, and `release.yml` turns it on together
+# with the check that proves the file before it is uploaded.
+RELEASE_SELF_SIGN_IPA="${RELEASE_SELF_SIGN_IPA:-false}"
+case "$RELEASE_SELF_SIGN_IPA" in
+  false|true) ;;
+  *) die "RELEASE_SELF_SIGN_IPA must be exactly true or false" ;;
+esac
+
+# self_sign_asset_name <version>
+self_sign_asset_name() {
+  printf 'jiejie-ios-selfsign-unsigned-%s.ipa\n' "$1"
+}
+
 public_asset_names() {
   local tag="$1" version="$2" wf
   for wf in "${TARGET_WORKFLOWS[@]}"; do
@@ -1740,6 +1774,9 @@ public_asset_names() {
     printf '%s\n' "$(target_field "$wf" tarball)-${tag}.tar.gz"
   done
   printf '%s\n' "Jiejiebox-v${version}-windows-x64.exe" SHA256SUMS
+  if [ "$RELEASE_SELF_SIGN_IPA" = true ]; then
+    self_sign_asset_name "$version"
+  fi
 }
 
 # expected-assets --tag <tag> --version <version>
@@ -1941,7 +1978,7 @@ $(printf '      %s\n' $named)"
 # ---------------------------------------------------------------------------
 
 main() {
-  [ "$#" -gt 0 ] || die "usage: release-artifacts.sh <check-tag|release-version|plan|evidence|download|desktop|verify|flatten|check-upload|publish-flag|expected-assets|publish-args|verify-public-release> [args]"
+  [ "$#" -gt 0 ] || die "usage: release-artifacts.sh <check-tag|release-version|plan|evidence|download|desktop|verify|flatten|check-upload|publish-flag|expected-assets|self-sign-asset-name|publish-args|verify-public-release> [args]"
   local sub="$1"
   shift
   case "$sub" in
@@ -1956,6 +1993,11 @@ main() {
     check-upload) cmd_check_upload "$@" ;;
     publish-flag) cmd_publish_flag "$@" ;;
     expected-assets) cmd_expected_assets "$@" ;;
+    self-sign-asset-name)
+      [ "$#" -eq 2 ] && [ "$1" = "--version" ] || die "self-sign-asset-name: --version is required"
+      case "$2" in ''|*[!0-9A-Za-z._+-]*) die "self-sign-asset-name: unsafe version" ;; esac
+      self_sign_asset_name "$2"
+      ;;
     publish-args) cmd_publish_args "$@" ;;
     verify-public-release) cmd_verify_public_release "$@" ;;
     *) die "unknown subcommand '$sub'" ;;
