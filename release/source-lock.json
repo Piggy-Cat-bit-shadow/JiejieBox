@@ -17,7 +17,7 @@
     "modules": 29,
     "policy": "controlled",
     "shas": [
-      "8c68ce89873c"
+      "d841c37b3437"
     ]
   },
   "go_modules": [
@@ -53,15 +53,15 @@
     },
     {
       "module": "github.com/sagernet/cronet-go",
-      "pinned": "bd2b70516b92",
+      "pinned": "d841c37b3437",
       "target": "github.com/Piggy-Cat-bit-shadow/cronet-go",
-      "version": "v0.0.1-143.0.7499.109-2.0.20261101181843-bd2b70516b92"
+      "version": "v0.0.1-143.0.7499.109-2.0.20261104222944-d841c37b3437"
     },
     {
       "module": "github.com/sagernet/cronet-go/all",
-      "pinned": "bd2b70516b92",
+      "pinned": "d841c37b3437",
       "target": "github.com/Piggy-Cat-bit-shadow/cronet-go/all",
-      "version": "v0.0.0-20261101181843-bd2b70516b92"
+      "version": "v0.0.0-20261104222944-d841c37b3437"
     }
   ],
   "nested": [
