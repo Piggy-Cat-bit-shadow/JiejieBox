@@ -12,14 +12,12 @@ name: Experiment - iOS self-sign compatibility
 #     Packet Tunnel extension, so a launch failure can be attributed rather than guessed at;
 #   * it verifies both against a static contract before uploading anything.
 #
-# Both entry points work: a push to this branch, and `workflow_dispatch` against this ref
-# through the API (`gh api .../dispatches -f ref=experiment/ios-selfsign-compat`). The UI's
-# dispatch selector only lists the default branch, which is why the push trigger exists.
+# The entry point is `workflow_dispatch` against this ref
+# (`gh workflow run ... --ref testing`). The push trigger on experiment/ios-selfsign-compat is
+# gone because that branch was merged into the product line and deleted; a trigger naming a
+# branch nobody can push to is a workflow that looks armed and is not.
 
 on:
-  push:
-    branches:
-      - experiment/ios-selfsign-compat
   workflow_dispatch:
     inputs:
       libbox:
@@ -34,10 +32,10 @@ permissions:
   actions: read
 
 env:
-  # The Apple client experiment commit. It carries the launch-path fixes this phase tests:
-  #   71ea780  survive a missing App Group instead of terminating at launch
-  #   9036dec  ask for the embedded packet-tunnel identifier, not the baked base
-  APPLE_EXPERIMENT_SHA: ceffc5b743c08de222f869abf918df198c602a8c
+  # The Apple client commit this experiment builds. Since the self-sign work was merged into the
+  # product line it is the integrated client: the launch-path fixes, the loopback feature and
+  # upstream's four commits, all at one revision (see the parent repository's pin).
+  APPLE_EXPERIMENT_SHA: 4773b5fb9802f8d7c91f4af2962d35879399b56f
   APPLE_CLIENT_DIR: clients/apple
   APPLE_CLIENT_PLATFORM: ios
   # Identity the experiment builds with. Both are passed through one build setting each, and
