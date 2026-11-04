@@ -23,6 +23,7 @@
 | `anywhere-round2/` | Anywhere 第二轮研究及 DNS、规则集、MASQUE、QUIC 所有权相关记录 |
 | `anywhere-round3/` | Anywhere 第三轮审计、实现和调试交接 |
 | `tun-fast-path/` | TUN Fast Path 的价值评估与验收记录 |
+| `fork-audit-2026-11-04/` | 依赖 fork 审计整改、十仓实测、iOS command socket 路径二次修复 |
 
 ## 报告索引
 
