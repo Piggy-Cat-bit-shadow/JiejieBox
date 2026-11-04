@@ -149,8 +149,8 @@ func (d *defaultDialer) ListenPacket(ctx context.Context, destination M.Socksadd
 }
 
 func (d *defaultDialer) DialTLSContext(ctx context.Context, destination M.Socksaddr) (Conn, error) {
-	return handshakeWithAdmission(ctx, func() (Conn, error) {
-		return d.dialContext(ctx, destination, true)
+	return handshakeWithAdmission(ctx, func(dialCtx context.Context) (Conn, error) {
+		return d.dialContext(dialCtx, destination, true)
 	})
 }
 
@@ -173,16 +173,22 @@ func (d *defaultDialer) DialTLSContext(ctx context.Context, destination M.Socksa
 //
 // On a process with no budget the guard is nil and Acquire returns (nil, nil): one nil check and
 // the old behaviour.
-func handshakeWithAdmission(ctx context.Context, dial func() (Conn, error)) (Conn, error) {
+func handshakeWithAdmission(ctx context.Context, dial func(ctx context.Context) (Conn, error)) (Conn, error) {
 	if resourceguard.HasHeldPermit(ctx) {
-		return dial()
+		return dial(ctx)
 	}
 	permit, err := resourceguard.FromContext(ctx).Acquire(ctx, resourceguard.ClassNormal)
 	if err != nil {
 		return nil, err
 	}
 	defer permit.Release()
-	return dial()
+	// The marker goes into the context the dial runs with, not just the one this function
+	// returns. A detour, chain or fallback makes one logical dial re-enter this seam: the outer
+	// outbound's handshake dials through another outbound, which performs its own handshake.
+	// Without the marker the outer would hold the only slot while waiting for the inner, and the
+	// inner would wait for the outer to finish - a stall that ends in a queue timeout with
+	// nothing wrong on the network. One logical dial may hold at most one handshake permit.
+	return dial(resourceguard.WithHeldPermit(ctx))
 }
 
 func (d *defaultDialer) dialContext(ctx context.Context, destination M.Socksaddr, echRetry bool) (Conn, error) {

@@ -21,7 +21,7 @@ func TestHandshakeWithAdmissionAdmitsAnUnmarkedDial(t *testing.T) {
 	guard := newAdmissionGuard(t, resourceguard.LevelNormal)
 	ctx := resourceguard.NewContext(context.Background(), guard)
 	var dialed bool
-	conn, err := handshakeWithAdmission(ctx, func() (Conn, error) {
+	conn, err := handshakeWithAdmission(ctx, func(context.Context) (Conn, error) {
 		dialed = true
 		return nil, errors.New("handshake refused")
 	})
@@ -44,7 +44,7 @@ func TestHandshakeWithAdmissionSkipsAMarkedDial(t *testing.T) {
 	guard := newAdmissionGuard(t, resourceguard.LevelNormal)
 	ctx := resourceguard.WithHeldPermit(resourceguard.NewContext(context.Background(), guard))
 	var dialed bool
-	_, err := handshakeWithAdmission(ctx, func() (Conn, error) {
+	_, err := handshakeWithAdmission(ctx, func(context.Context) (Conn, error) {
 		dialed = true
 		return nil, errors.New("handshake refused")
 	})
@@ -61,7 +61,7 @@ func TestHandshakeWithAdmissionWithoutAGuardIsUnbounded(t *testing.T) {
 	// Every platform without a process budget runs this path: it must never refuse.
 	for index := 0; index < 64; index++ {
 		dialed := false
-		_, err := handshakeWithAdmission(context.Background(), func() (Conn, error) {
+		_, err := handshakeWithAdmission(context.Background(), func(context.Context) (Conn, error) {
 			dialed = true
 			return nil, errors.New("handshake refused")
 		})
@@ -87,7 +87,7 @@ func TestHandshakeWithAdmissionRefusesWhenTheGateIsFull(t *testing.T) {
 	release := make(chan struct{})
 	firstDone := make(chan error, 1)
 	go func() {
-		_, err := handshakeWithAdmission(ctx, func() (Conn, error) {
+		_, err := handshakeWithAdmission(ctx, func(context.Context) (Conn, error) {
 			close(started)
 			<-release
 			return nil, nil
@@ -96,7 +96,7 @@ func TestHandshakeWithAdmissionRefusesWhenTheGateIsFull(t *testing.T) {
 	}()
 	<-started
 	dialed := false
-	_, err := handshakeWithAdmission(ctx, func() (Conn, error) {
+	_, err := handshakeWithAdmission(ctx, func(context.Context) (Conn, error) {
 		dialed = true
 		return nil, nil
 	})
@@ -109,5 +109,38 @@ func TestHandshakeWithAdmissionRefusesWhenTheGateIsFull(t *testing.T) {
 	close(release)
 	if err := <-firstDone; err != nil {
 		t.Fatalf("the admitted handshake failed: %v", err)
+	}
+}
+// A detour, a chain or a fallback makes one logical dial re-enter this seam: the outer
+// outbound's handshake dials through a detour, which performs its own TLS handshake. If both take
+// a permit, the outer holds the only slot while waiting for the inner, and the inner waits for the
+// outer to finish: a chain of two fails after the queue budget with nothing wrong on the network.
+func TestAChainedDialTakesOnePermit(t *testing.T) {
+	t.Parallel()
+	guard := resourceguard.NewGuard(resourceguard.Config{
+		Limit:           1,
+		Queue:           0,
+		Wait:            50 * time.Millisecond,
+		DemoteAfter:     time.Second,
+		StarvationAfter: time.Second,
+	}, func() resourceguard.Level { return resourceguard.LevelNormal })
+	ctx := resourceguard.NewContext(context.Background(), guard)
+	var innerRan bool
+	// The outer dial "dials through a detour": the inner call runs with the outer dial's context.
+	_, err := handshakeWithAdmission(ctx, func(dialCtx context.Context) (Conn, error) {
+		_, innerErr := handshakeWithAdmission(dialCtx, func(context.Context) (Conn, error) {
+			innerRan = true
+			return nil, nil
+		})
+		return nil, innerErr
+	})
+	if err != nil {
+		t.Fatalf("a chained dial was refused by its own outer permit: %v", err)
+	}
+	if !innerRan {
+		t.Fatal("the inner handshake never ran")
+	}
+	if stats := guard.Stats(); stats.Gate.Requested != 1 {
+		t.Fatalf("a chain of two handshakes took %d permits, want 1: %+v", stats.Gate.Requested, stats.Gate)
 	}
 }
