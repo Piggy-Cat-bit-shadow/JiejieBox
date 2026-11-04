@@ -35,7 +35,7 @@ env:
   # The Apple client commit this experiment builds. Since the self-sign work was merged into the
   # product line it is the integrated client: the launch-path fixes, the loopback feature and
   # upstream's four commits, all at one revision (see the parent repository's pin).
-  APPLE_EXPERIMENT_SHA: 46f7f5f0e675ec9bf7152f5fed87ab121c71a18a
+  APPLE_EXPERIMENT_SHA: ab575dace8190a48a9d7cf666ef009f803e6ca62
   APPLE_CLIENT_DIR: clients/apple
   APPLE_CLIENT_PLATFORM: ios
   # Identity the experiment builds with. Both are passed through one build setting each, and
