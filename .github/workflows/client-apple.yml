@@ -530,6 +530,21 @@ jobs:
           set -euo pipefail
           ./scripts/ci/prepare-apple-client.sh
 
+      - name: write the source manifest
+        # The same file the self-sign entry writes: core SHA, client SHA, version, toolchain and the
+        # dependency pins this artifact was built from. It ships inside the artifact directory, so a
+        # consumer reads one machine-readable answer instead of six lines of BUILD-INFO prose.
+        #
+        # It is written here, not in each product's packaging step, because both products take their
+        # sources from the same two commits and the manifest is a property of the build.
+        env:
+          RESOLVED_SHA: ${{ needs.resolve-apple-source.outputs.apple_client_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/apple/out
+          ./scripts/ci/source-manifest.sh dist/apple/out/SOURCE-MANIFEST.json \
+            --apple-sha "$RESOLVED_SHA" --platform ios
+          cat dist/apple/out/SOURCE-MANIFEST.json
       - name: build unsigned IPA
         run: |
           set -euo pipefail
@@ -939,6 +954,21 @@ jobs:
           fi
           echo "PASS: the prepared macOS SFM app is JiejieBox.app displaying JiejieBox, with identity unchanged"
 
+      - name: write the source manifest
+        # The same file the self-sign entry writes: core SHA, client SHA, version, toolchain and the
+        # dependency pins this artifact was built from. It ships inside the artifact directory, so a
+        # consumer reads one machine-readable answer instead of six lines of BUILD-INFO prose.
+        #
+        # It is written here, not in each product's packaging step, because both products take their
+        # sources from the same two commits and the manifest is a property of the build.
+        env:
+          RESOLVED_SHA: ${{ needs.resolve-apple-source.outputs.apple_client_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/apple/out
+          ./scripts/ci/source-manifest.sh dist/apple/out/SOURCE-MANIFEST.json \
+            --apple-sha "$RESOLVED_SHA" --platform macos
+          cat dist/apple/out/SOURCE-MANIFEST.json
       - name: build unsigned DMG
         run: |
           set -euo pipefail
