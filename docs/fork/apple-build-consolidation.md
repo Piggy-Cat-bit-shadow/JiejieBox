@@ -104,3 +104,35 @@ matters more than the absolute number.
 
 `check-release-workflows.py` passes (164 checks) locally and in CI. TestFlight was **not** run:
 no upload, no notarisation, no App Store Connect call.
+
+---
+
+## Where this stands after the branch merge (2026-11-04)
+
+The consolidation ran on a branch that has since been merged into the product line and deleted, so
+two things had to change for it to remain true rather than merely documented:
+
+* **The push trigger is gone.** It named `experiment/ios-selfsign-compat`; a trigger on a branch
+  nobody can push to is a workflow that looks armed and is not. `workflow_dispatch` is the entry
+  point (`gh workflow run experiment-ios-selfsign.yml -R … --ref testing`).
+* **The Apple pin is the integrated client**, `4773b5f`, which is also the parent repository's
+  gitlink: launch-path fixes, the loopback feature and upstream's four commits at one revision. The
+  experiment now builds the client the product line ships.
+
+### The reuse rule, measured end to end
+
+Two dispatches against the same core commit (`bd722f8`):
+
+| run | input | what the build did | BUILD-INFO |
+|---|---|---|---|
+| `41798935420` | `libbox=auto` | no validated artifact existed → built one and uploaded it as `jiejiebox-libbox-bd722f8…` | `libbox_source: built in this run (no validated artifact existed)` |
+| `41803033272` | `libbox=required` | refused to build; consumed the previous run's artifact | `libbox_source: reused artifact 13307156543 (validated against manifest)` |
+
+`required` is what makes this a test rather than a hope: had the artifact been missing or its
+manifest not matched `--parent-sha`, the second run would have failed before compiling anything.
+
+### What is still not claimed
+
+`TestFlight` and the release path are untouched by this; no signed artifact was produced or
+uploaded. The reuse rule is proven for the experiment build, which is the one that duplicated
+Libbox work.
