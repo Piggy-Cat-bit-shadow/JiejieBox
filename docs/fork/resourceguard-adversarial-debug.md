@@ -55,6 +55,8 @@ inside a chain is bounded by that.
 | No guard (every non-NE platform) must never refuse | `TestHandshakeWithAdmissionWithoutAGuardIsUnbounded` | PASS, 64 iterations |
 | Interactive flows reach the reserve; bulk do not | `TestAnInteractiveFlowMayUseTheReserve`, `TestABackgroundFlowDoesNotUseTheReserve` | PASS |
 | Unclassified is distinguishable from classified-default | `TestNoClassIsDistinguishableFromDefault` | PASS |
+| A waiter cancelled while queued must not run the handshake, and must leave the queue | `TestHandshakeWithAdmissionCancelWhileQueuedDoesNotDial` | PASS — `Waiters == 0`, `Canceled > 0`, `Inflight == 0` |
+| The chained fix must hold under contention, not just two dials | `TestChainedDialsUnderPressureStayBounded` | PASS — 16 chains, `Requested == 16`, `MaxInflight == 1`, `Inflight == 0` |
 
 Not attacked, and therefore not claimed: real QUIC/Cronet/SDK reconnect storms (no local server
 fixtures), NAT entry churn under a 2000-flow storm, `phys_footprint` behaviour, device jetsam,
@@ -68,7 +70,7 @@ cross-protocol shared-budget fairness under a live pressure source.
 | `go test ./common/tls/ -run 'TestHandshakeWithAdmission\|TestAChainedDial'` | 5 PASS |
 | `go test ./protocol/anytls/ ./common/resourceguard/ ./common/trafficclass/` | PASS |
 | full suite, `-tags <windows profile>` | same three environment failures as the baseline (`common/tls` TLS 1.3 on this host, `common/tlsspoof`, `common/windivert`); no new failure |
-| `Verify` on `testing` | see the commit's run |
+| `Verify` on `testing` | run `41773661716`, green |
 
 ## 4. Classification
 
