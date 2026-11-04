@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/sagernet/sing-box/common/badtls"
+	"github.com/sagernet/sing-box/common/resourceguard"
 	"github.com/sagernet/sing-box/common/tlsspoof"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
@@ -148,7 +149,40 @@ func (d *defaultDialer) ListenPacket(ctx context.Context, destination M.Socksadd
 }
 
 func (d *defaultDialer) DialTLSContext(ctx context.Context, destination M.Socksaddr) (Conn, error) {
-	return d.dialContext(ctx, destination, true)
+	return handshakeWithAdmission(ctx, func() (Conn, error) {
+		return d.dialContext(ctx, destination, true)
+	})
+}
+
+// handshakeWithAdmission runs one TLS dial under the process admission policy.
+//
+// # Why the shared TLS dialer, and not each outbound
+//
+// Every TLS-based outbound - Trojan, VLESS, VMess, the HTTP transports, DoT/DoH - builds this
+// dialer, and each logical stream they open is a TCP connect plus a full TLS handshake. Before
+// this, only AnyTLS was admitted, so a memory storm driven by any of the others was unbounded
+// even though the cost per stream is the same. One seam here covers all of them instead of
+// copying an admission call into a dozen outbounds, and it sits before the handshake - the point
+// where the buffers, the key exchange and the per-connection goroutines begin.
+//
+// # Why it can be skipped
+//
+// An outbound that already admits at its own seam (AnyTLS) marks the context, and this function
+// then runs the dial without taking a second permit: one handshake, one slot. Without that, the
+// two gates would halve the effective limit and queue the same dial twice.
+//
+// On a process with no budget the guard is nil and Acquire returns (nil, nil): one nil check and
+// the old behaviour.
+func handshakeWithAdmission(ctx context.Context, dial func() (Conn, error)) (Conn, error) {
+	if resourceguard.HasHeldPermit(ctx) {
+		return dial()
+	}
+	permit, err := resourceguard.FromContext(ctx).Acquire(ctx, resourceguard.ClassNormal)
+	if err != nil {
+		return nil, err
+	}
+	defer permit.Release()
+	return dial()
 }
 
 func (d *defaultDialer) dialContext(ctx context.Context, destination M.Socksaddr, echRetry bool) (Conn, error) {

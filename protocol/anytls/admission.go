@@ -43,5 +43,7 @@ func dialWithAdmission(ctx context.Context, guard *resourceguard.Guard, dial str
 		return nil, err
 	}
 	defer permit.Release()
-	return dial(ctx, destination)
+	// The TLS handshake this dial may perform is admitted again at the shared TLS layer. Marking
+	// the context is what stops one handshake being charged twice; see resourceguard.HeldPermit.
+	return dial(resourceguard.WithHeldPermit(ctx), destination)
 }
