@@ -119,3 +119,18 @@ suite keeps its three known environment failures (`common/tls` TLS 1.3 on this h
 3. **Pressure harness**: a deterministic local harness (mock TLS/QUIC servers, injected memory
    levels) that measures per-protocol in-flight handshakes, queue depth and refusals — the
    evidence this round could not produce.
+
+---
+
+## After the audit: the shared TLS seam honours the class
+
+The audit found the last asymmetry on this seam: `common/tls` acquired with `ClassNormal`
+unconditionally, so a Trojan or VLESS flow a person was waiting on queued behind background work
+exactly like a bulk transfer, while AnyTLS had mapped the class since the reserve existed. The seam
+now maps `trafficclass` the same way AnyTLS does, and three tests state the property at the shared
+entry: an interactive handshake may use the reserve while the normal pool is full, bulk and default
+traffic may not, and both seams answer the same for the same class.
+
+An earlier revision of this document said the interactive reserve applied to AnyTLS only. That was
+true when written and is false now; the sentence above is kept rather than deleted so the change is
+visible.

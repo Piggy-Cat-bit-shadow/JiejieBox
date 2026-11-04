@@ -81,3 +81,14 @@ round-trip.
 classifies); the reuse-before-admission issue from round 05 is unchanged (it needs a
 `HasIdleSession` predicate in `sing-anytls`, which is an unforked upstream module).
 **NEEDS_DEVICE**: everything about the iOS NE footprint, jetsam and real network switching.
+
+---
+
+## Follow-up: the shared TLS seam ignored the traffic class
+
+The audit of this round found that `handshakeWithAdmission` acquired `ClassNormal` regardless of the
+flow's class, so the interactive reserve was unreachable for every TLS outbound except AnyTLS. The
+mapping is now the same at both seams and is tested at both: interactive and realtime may use the
+reserve; bulk and default may not; and a table test asserts the two seams agree for the same class,
+because they are two consumers of one policy and a divergence is exactly the defect this file exists
+to record.

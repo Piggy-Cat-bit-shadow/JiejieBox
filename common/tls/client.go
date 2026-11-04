@@ -11,6 +11,7 @@ import (
 	"github.com/sagernet/sing-box/common/badtls"
 	"github.com/sagernet/sing-box/common/resourceguard"
 	"github.com/sagernet/sing-box/common/tlsspoof"
+	"github.com/sagernet/sing-box/common/trafficclass"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -177,7 +178,15 @@ func handshakeWithAdmission(ctx context.Context, dial func(ctx context.Context) 
 	if resourceguard.HasHeldPermit(ctx) {
 		return dial(ctx)
 	}
-	permit, err := resourceguard.FromContext(ctx).Acquire(ctx, resourceguard.ClassNormal)
+	// The class travels in the context (route/conn.go attaches it at the dial site). A flow a person
+	// is waiting on may use the interactive reserve, exactly as the AnyTLS seam allows; without this
+	// mapping every TLS outbound would ignore the reserve and the priority would exist on one
+	// protocol only.
+	class := resourceguard.ClassNormal
+	if flowClass, loaded := trafficclass.ClassFromContext(ctx); loaded && flowClass.IsHighPriority() {
+		class = resourceguard.ClassInteractive
+	}
+	permit, err := resourceguard.FromContext(ctx).Acquire(ctx, class)
 	if err != nil {
 		return nil, err
 	}
