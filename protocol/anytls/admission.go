@@ -39,6 +39,15 @@ type streamDialFunc func(ctx context.Context, destination M.Socksaddr) (net.Conn
 // place that knows about admission, and on every platform without a process budget it costs one
 // nil check.
 func dialWithAdmission(ctx context.Context, guard *resourceguard.Guard, dial streamDialFunc, destination M.Socksaddr) (net.Conn, error) {
+	// One logical dial holds one permit, however many seams it crosses. A detour, a chain or a
+	// fallback re-enters the dial path under the caller's context: an outbound dialling through
+	// another outbound, or the TLS handshake of a session this dial is creating. The outer seam
+	// already admitted this work, so asking the gate again would queue a dial behind a permit its
+	// own cohort is holding - the defect the TLS seam had, and the reason this check exists on
+	// both seams rather than only one.
+	if resourceguard.HasHeldPermit(ctx) {
+		return dial(ctx, destination)
+	}
 	// A flow whose class says a person is waiting on it may use the interactive reserve; that is
 	// what makes the reserve a priority rather than dead capacity. Everything else is normal.
 	class := resourceguard.ClassNormal
