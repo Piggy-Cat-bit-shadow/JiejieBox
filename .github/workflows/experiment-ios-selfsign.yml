@@ -84,6 +84,12 @@ jobs:
           test "$actual" = "$APPLE_EXPERIMENT_SHA"
           git -C "$APPLE_CLIENT_DIR" log --oneline -3
 
+      # The socket path limit is the kernel's, and only a Darwin host can ask it. These tests
+      # build a container as deep as the one on the device, bind the resolved path for real, and
+      # check that a 104-byte name is refused - the arithmetic is unit-tested on every platform,
+      # the syscall is proven here.
+      - name: prove the socket path on Darwin
+        run: go test ./experimental/libbox/ -run 'TestDarwin' -count=1 -v
       - name: reuse this commit's Libbox if one was already produced
         id: libbox_artifact
         # The single-producer rule: `client-apple.yml` compiles Libbox for a commit and uploads

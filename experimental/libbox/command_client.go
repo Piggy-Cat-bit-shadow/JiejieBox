@@ -134,7 +134,14 @@ func dialTarget() (string, func(context.Context, string) (net.Conn, error)) {
 		}
 	}
 	if sCommandServerListenPort == 0 {
-		socketPath := resolveCommandSocketPath(sBasePath)
+		socketPath, sockErr := resolveCommandSocketPath(sBasePath, sTempPath)
+		if sockErr != nil {
+			// The address is computed here but used lazily; keep this function's shape and
+			// report the failure when a dial actually asks for it.
+			return "passthrough:///command-socket", func(context.Context, string) (net.Conn, error) {
+				return nil, sockErr
+			}
+		}
 		return "passthrough:///command-socket", func(ctx context.Context, _ string) (net.Conn, error) {
 			var networkDialer net.Dialer
 			return networkDialer.DialContext(ctx, "unix", socketPath)

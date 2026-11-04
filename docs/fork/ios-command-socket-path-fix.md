@@ -81,3 +81,63 @@ has no shared container" rather than as a mystery.
 | `go test ./experimental/libbox/ -run 'TestTheReportedContainerPath\|TestALongBasePath\|TestAShortBasePath\|TestTheFallback'` | 5 tests PASS |
 | `go build -tags <windows profile> ./...` | PASS |
 | New IPA build | the experiment workflow run on the fixed commit, artifact `jiejiebox-ios-selfsign-experiment-*` |
+
+---
+
+# Second device report: the fallback itself was 110 bytes
+
+Reported 2026-11-04, after the fix above shipped:
+
+```text
+Failed to start service (packet-tunnel): start command server error:
+listen command server: socket path is 110 bytes, the kernel allows 103:
+/private/var/mobile/Containers/Data/PluginKitPlugin/<UUID>/tmp/jjb-13de0c06.sock
+```
+
+## Why the first fix was not enough
+
+It chose `os.TempDir()` as the alternative on the assumption that a temporary directory is short.
+Inside an iOS Packet Tunnel the temporary directory **is** the container's: 92 bytes before a file
+name. The eight-hex-digit fallback name pushed it to 110. The five tests passed because they ran
+on a host whose temp directory is short, so the arithmetic they exercised was never the failing
+one.
+
+The lesson is not "pick a different directory": any single alternative is another assumption about
+length. What the limit needs is a decision that takes the directory's actual length as input.
+
+## The resolver now
+
+`experimental/libbox/command_socket.go`:
+
+* **Candidates in order**: the base path, then the platform temp directory (`sTempPath`, else
+  `os.TempDir()`), then the container root (four bytes shorter than its `tmp`).
+* **The name is sized to the budget**, not fixed: the base path keeps `command.sock` untouched;
+  any other directory gets `h<hex>.sock`, with the hash shortened as the budget requires (4 to 8
+  hex digits, derived from the logical socket path so two instances differ). A name that cannot
+  fit makes the candidate fail rather than produce an over-long path.
+* **Both sides share it**: `command_server.go` and `command_client.go` call the same function with
+  the same inputs, so they cannot disagree.
+* **Failure is a sentence, not an EINVAL**: if no candidate fits, the error reports the limit, the
+  number of candidates and the bytes the shortest one leaves - no container path, because those
+  end up pasted into issues.
+* **Cleanup only touches its own names**: `command.sock` or a generated `h…sock`; anything else in
+  those directories is left alone.
+
+For the reported device layout the answer is the container root with a four-digit name:
+88 + 1 + 10 = 99 bytes.
+
+## Tests
+
+Unit (every platform): the reported layout reproduces the old 110-byte fallback; the resolver
+returns a bindable generated name for it; 103 fits and 104 does not; multibyte directories are
+measured in bytes; an impossible layout returns an error that names sizes and no paths; the rule is
+deterministic and distinct per base path; only generated names are removable.
+
+Darwin (`command_socket_darwin_test.go`, run by the experiment workflow on a macOS runner): builds
+a container of the device's shape, **binds** the resolved path, dials it, and separately asserts the
+kernel refuses a 104-byte name. That is the check the unit tests cannot make.
+
+## What is still not known
+
+Whether the tunnel then connects, whether the app's statistics reach it (no App Group means they
+cannot), and whether the local signing loopback answers. All device-side.

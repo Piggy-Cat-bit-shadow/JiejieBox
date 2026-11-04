@@ -169,11 +169,17 @@ func (s *CommandServer) Start() error {
 		err      error
 	)
 	if sCommandServerListenPort == 0 {
-		sockPath := resolveCommandSocketPath(sBasePath)
-		if commandSocketPathTooLong(sockPath) {
-			return E.New("listen command server: socket path is ", len(sockPath), " bytes, the kernel allows ", maxUnixSocketPath, ": ", sockPath)
+		sockPath, sockErr := resolveCommandSocketPath(sBasePath, sTempPath)
+		if sockErr != nil {
+			return E.Cause(sockErr, "listen command server")
 		}
-		os.Remove(sockPath)
+		// Only a name this package could have created is cleared. The base path's command.sock is
+		// ours by convention; a fallback name carries our hash. Anything else in these
+		// directories belongs to somebody else and is left alone: an unconditional remove here
+		// would delete a file the command server has no claim on.
+		if base := filepath.Base(sockPath); base == commandSocketName || isGeneratedSocketName(base) {
+			os.Remove(sockPath)
+		}
 		listener, err = net.ListenUnix("unix", &net.UnixAddr{
 			Name: sockPath,
 			Net:  "unix",
