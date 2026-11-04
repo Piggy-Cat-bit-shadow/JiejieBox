@@ -261,7 +261,7 @@ VERIFIED_ANDROID_SHA="c7837107dc0126fb704fdf08cf203e10b30c8a22"
 #   {"scanned": 422, "violations": [], "interface_methods": 3, "error": ""}
 #
 # The compile half is the Apple client workflow, which is what the release path consumes.
-VERIFIED_APPLE_SHA="4773b5fb9802f8d7c91f4af2962d35879399b56f"
+VERIFIED_APPLE_SHA="46f7f5f0e675ec9bf7152f5fed87ab121c71a18a"
 
 client_root=""
 skip_client=0
