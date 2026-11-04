@@ -11,10 +11,10 @@ Local Signing Loopback** — off by default. When on, the tunnel answers for `10
 | Layer | State |
 |---|---|
 | Preference, reset, persistence | implemented, unit-covered by construction |
-| Start options → extension → libbox override | implemented; the Go half is tested, the Swift half is **not compiled here** (no Xcode) |
+| Start options → extension → libbox override | implemented; Go half unit-tested, Swift half **compiled by CI** (run `41754387032`, iOS job, green) |
 | In-memory merge into the effective TUN | implemented, **8 Go tests** |
 | libbox getters for the Apple bridge | implemented, **6 Go tests** |
-| NE `includedRoutes` `/32` + `/128` | implemented, not compiled |
+| NE `includedRoutes` `/32` + `/128` | implemented and compiled by the same run; not observed on a device |
 | Data plane: loopback reflection | the fork already reflected **TCP**; extended to **UDP and ICMP**, **4 fork tests** |
 | SideStore end-to-end refresh | **NEEDS_DEVICE** |
 | macOS/Windows/Android/tvOS | no switch, nothing injected, no behaviour change |
@@ -133,7 +133,7 @@ their own profile still gets exactly what they wrote, on every platform.
 | `python scripts/ci/release-freeze.py verify` | PASS — every pin matches the lock |
 | `check-libbox-abi.sh --pin-only` | passes with the updated verified SHA (see §8) |
 | sing-tun fork `go test -run 'TestIsLoopbackProtocol|TestSwapLoopback'` | ok (4 tests) |
-| **Swift compilation** | **NOT RUN — no Xcode in this environment** |
+| iOS client build (Swift compile + unsigned IPA) | **PASS** — [run 41754387032](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/41754387032), artifact `jiejiebox-ios-arm64-0.1.37-73cf43e84-unsigned.ipa`, apple `49be241` |
 | **UI tests / simulator** | **NOT RUN** |
 
 ## 7. Prompt requirements this design deliberately does not satisfy (honest gaps)
@@ -144,7 +144,7 @@ their own profile still gets exactly what they wrote, on every platform.
    UDP/ICMP handling. The `system` stack has no loopback handling at all. A configuration that
    selects `stack: gvisor` or `system` will not reflect. Closing that needs a hook in each
    stack and cannot be validated without a device; it is not done here rather than done blind.
-2. **Swift is uncompiled.** Every Apple-side claim above is a reading of the code, not a build.
+2. **The Swift is compiled, not exercised.** CI built the client at `49be241` (both UIs, the overlay, the ABI gate), which proves it compiles and links against the new libbox; no screen of it has been shown and no switch of it has been thrown.
 3. **No device run.** The SideStore refresh scenario, the NE route actually appearing in
    `scutil`/`ifconfig` on iOS, and the reflection actually satisfying the local service are all
    `NEEDS_DEVICE`.
