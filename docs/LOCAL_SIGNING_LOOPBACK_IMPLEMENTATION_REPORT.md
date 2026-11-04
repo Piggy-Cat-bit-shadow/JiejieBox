@@ -138,12 +138,14 @@ their own profile still gets exactly what they wrote, on every platform.
 
 ## 7. Prompt requirements this design deliberately does not satisfy (honest gaps)
 
-1. **The data plane covers the default `go` stack only.** `mixed` still routes TCP through the
-   `go` engine and ICMP through gVisor; the gVisor path (`stack_gvisor_filter.go`) sends
-   TCP to a loopback destination into the gVisor stack instead of reflecting it, and has no
-   UDP/ICMP handling. The `system` stack has no loopback handling at all. A configuration that
-   selects `stack: gvisor` or `system` will not reflect. Closing that needs a hook in each
-   stack and cannot be validated without a device; it is not done here rather than done blind.
+1. **The data plane covers the default `go` stack only.** `mixed` routes TCP through the `go`
+   engine and ICMP through gVisor; the gVisor path (`stack_gvisor_filter.go`) sends TCP to a
+   loopback destination into the gVisor stack instead of reflecting it, and has no UDP/ICMP
+   handling. The `system` stack has no loopback handling at all. A configuration that selects
+   `stack: gvisor` or `system` will not reflect, so on iOS `protocol/tun` now logs a warning
+   naming the stack when the address is configured on one of them - the alternative is a switch
+   that looks enabled and does nothing. Closing the gap itself needs a hook in each stack and
+   cannot be validated without a device, so it is not done blind here.
 2. **The Swift is compiled, not exercised.** CI built the client at `49be241` (both UIs, the overlay, the ABI gate), which proves it compiles and links against the new libbox; no screen of it has been shown and no switch of it has been thrown.
 3. **No device run.** The SideStore refresh scenario, the NE route actually appearing in
    `scutil`/`ifconfig` on iOS, and the reflection actually satisfying the local service are all

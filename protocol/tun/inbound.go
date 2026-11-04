@@ -2,6 +2,7 @@ package tun
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/netip"
 	"os"
@@ -289,6 +290,9 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	}
 	if options.Stack != "" {
 		deprecated.Report(ctx, deprecated.OptionTunStack)
+	}
+	if warning := loopbackStackWarning(options.Stack, len(options.LoopbackAddress), C.IsIos); warning != "" {
+		logger.Warn(warning)
 	}
 
 	address := options.Address
@@ -1374,3 +1378,27 @@ func (t *autoRedirectHandler) NewConnectionEx(ctx context.Context, conn net.Conn
 }
 
 var _ tun.AutoRedirectHandler = (*autoRedirectHandler)(nil)
+
+// loopbackStackWarning reports the one combination where a configured loopback address cannot
+// work, instead of leaving it to be discovered as "the switch does nothing".
+//
+// The address is answered by the `go` stack's hairpin: packets the device addressed to it are
+// handed back to the platform with the two ends exchanged. The `gvisor`, `mixed` and `system`
+// stacks have no equivalent (gvisor only routes TCP to that destination into its own stack), so
+// on iOS - where the Apple client's switch injects the address - a profile that selects one of
+// them would silently get no loopback.
+//
+// It is a warning rather than an error, and it is iOS-only, because the same configuration field
+// means something else on Linux: auto-redirect installs rules for those addresses itself, and
+// refusing or warning there would be wrong.
+func loopbackStackWarning(stack string, addresses int, isIos bool) string {
+	if !isIos || addresses == 0 {
+		return ""
+	}
+	switch stack {
+	case "", "go":
+		return ""
+	default:
+		return fmt.Sprintf("`loopback_address` is configured but the `%s` stack does not reflect loopback traffic; only the `go` stack does, so the address will not be answered", stack)
+	}
+}
