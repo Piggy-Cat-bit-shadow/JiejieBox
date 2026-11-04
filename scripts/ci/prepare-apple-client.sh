@@ -276,7 +276,16 @@ fi
 # under any App Group convention this project uses ("group" or "TEAMIDio"), so
 # those requirements could never be satisfied and every XPC connection would be
 # rejected at runtime. The build's real team is carried in the bundle instead.
-python3 "$root/scripts/ci/fix-apple-team-id.py" "$submodule_path"
+  # The fix may already live in the client. It does on this fork's own branch, because the
+  # app-group fallback and the team identifier are the same subject and were implemented
+  # together there. Running the overlay against such a client would rewrite code that is
+  # already correct, and its anchor (the original fatalError implementation) no longer exists.
+  # The invariant is what matters: the client must read the injected value.
+  if grep -qF 'object(forInfoDictionaryKey: "TeamIdentifier")' "$submodule_path/Library/Shared/AppConfiguration.swift"; then
+    echo "  [team-id] the client reads the injected identifier; nothing to overlay"
+  else
+    python3 "$root/scripts/ci/fix-apple-team-id.py" "$submodule_path"
+  fi
 
 # ---------------------------------------------------------------------------
 # 1c. [branding] Present the platform's app product under the fork's name.
