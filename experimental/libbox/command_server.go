@@ -168,7 +168,10 @@ func (s *CommandServer) Start() error {
 		err      error
 	)
 	if sCommandServerListenPort == 0 {
-		sockPath := filepath.Join(sBasePath, "command.sock")
+		sockPath := resolveCommandSocketPath(sBasePath)
+		if commandSocketPathTooLong(sockPath) {
+			return E.New("listen command server: socket path is ", len(sockPath), " bytes, the kernel allows ", maxUnixSocketPath, ": ", sockPath)
+		}
 		os.Remove(sockPath)
 		listener, err = net.ListenUnix("unix", &net.UnixAddr{
 			Name: sockPath,
