@@ -112,7 +112,17 @@ build_settings=(
   DEVELOPMENT_TEAM=""
 )
 
-xcodebuild build "${build_settings[@]}" 2>&1 | tail -40
+# The build's diagnostics go to a file and only the tail is printed on success. On failure the
+# compiler errors are printed too: `| tail -40` alone kept the "BUILD FAILED" summary and threw
+# away every `error:` line, which is exactly the output a failing build needs.
+if ! xcodebuild build "${build_settings[@]}" > "$work/xcodebuild.log" 2>&1; then
+  echo "xcodebuild failed; errors:" >&2
+  grep -E "error:|BUILD FAILED" "$work/xcodebuild.log" | head -40 >&2 || true
+  echo "last lines:" >&2
+  tail -20 "$work/xcodebuild.log" >&2
+  exit 1
+fi
+tail -20 "$work/xcodebuild.log"
 
 product_name="$(grep -oE 'BuildableName = "[^"]*\.app"' "$client/sing-box.xcodeproj/xcshareddata/xcschemes/$scheme.xcscheme" | head -1 | sed -E 's/.*"([^"]*)".*/\1/')"
 [ -n "$product_name" ] || {
