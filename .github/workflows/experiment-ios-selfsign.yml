@@ -37,7 +37,7 @@ env:
   # The Apple client experiment commit. It carries the launch-path fixes this phase tests:
   #   71ea780  survive a missing App Group instead of terminating at launch
   #   9036dec  ask for the embedded packet-tunnel identifier, not the baked base
-  APPLE_EXPERIMENT_SHA: eb8286a9326eaa5db2272fd8401c270529b6b316
+  APPLE_EXPERIMENT_SHA: ceffc5b743c08de222f869abf918df198c602a8c
   APPLE_CLIENT_DIR: clients/apple
   APPLE_CLIENT_PLATFORM: ios
   # Identity the experiment builds with. Both are passed through one build setting each, and
