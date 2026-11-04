@@ -98,6 +98,23 @@ xcodebuild -resolvePackageDependencies \
   -scheme "$scheme" \
   -derivedDataPath "$work/dd" >/dev/null 2>&1 || true
 
+# The version this artifact is, in one place.
+#
+# The unsigned path used to pass no version at all, so Xcode's project defaults won - the app
+# reported the upstream client's 1.14.8 (10) while its file name and release/JIEJIE_VERSION said
+# 0.1.37. That is not cosmetic: a package whose name and contents disagree cannot be matched
+# against a release, and it is exactly what the phase-1 audit found in the shipped IPA. The
+# TestFlight path already passes both values; this makes the two paths agree.
+marketing_version="$(tr -d '[:space:]' < release/JIEJIE_VERSION)"
+if [ -z "$marketing_version" ]; then
+  echo "FAIL: release/JIEJIE_VERSION is empty" >&2
+  exit 1
+fi
+# CFBundleVersion must be a monotonic integer with no second place to drift out of step, so it is
+# derived from the marketing version (0.1.37 -> 137) rather than maintained separately.
+build_number="$(printf '%s' "$marketing_version" | tr -cd '0-9' | sed -E 's/^0+//')"
+[ -n "$build_number" ] || build_number="1"
+
 build_settings=(
   -project "$client/sing-box.xcodeproj"
   -scheme "$scheme"
@@ -107,6 +124,8 @@ build_settings=(
   ARCHS=arm64
   ONLY_ACTIVE_ARCH=NO
   -skipPackagePluginValidation
+  MARKETING_VERSION="$marketing_version"
+  CURRENT_PROJECT_VERSION="$build_number"
   # APP_GROUP_IDENTIFIER is passed for BOTH modes, because the project defines it
   # inconsistently: the iOS targets use "group.$(BASE_PACKAGE_IDENTIFIER)" while
   # ten macOS configuration blocks use
@@ -201,7 +220,20 @@ else
   echo "  keeping signature and embedded provisioning profiles"
 fi
 
-# --- 6. Assert the bundle is complete and iPhoneOS/arm64. ----------------------
+# --- 6. Assert the bundle is the version it claims to be. ----------------------
+# The file name, release/JIEJIE_VERSION and the bundle's own version have to be one fact.
+# They were not: an unsigned build shipped as 0.1.37 while CFBundleShortVersionString said
+# 1.14.8, because no version was passed. The settings above fix the cause; this makes a
+# regression of it fail the build instead of reaching a user.
+bundle_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$stage/Payload/$product_name/Info.plist" 2>/dev/null || true)"
+bundle_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$stage/Payload/$product_name/Info.plist" 2>/dev/null || true)"
+echo "version: $marketing_version ($build_number), bundle: $bundle_version ($bundle_build)"
+if [ "$bundle_version" != "$marketing_version" ] || [ "$bundle_build" != "$build_number" ]; then
+  echo "FAIL: the packed app reports $bundle_version ($bundle_build) but this build is $marketing_version ($build_number)" >&2
+  exit 1
+fi
+
+# --- 7. Assert the bundle is complete and iPhoneOS/arm64. ----------------------
 fail=0
 
 main_bin="$stage/Payload/$product_name/${product_name%.app}"
