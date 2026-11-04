@@ -111,6 +111,7 @@ func TestHandshakeWithAdmissionRefusesWhenTheGateIsFull(t *testing.T) {
 		t.Fatalf("the admitted handshake failed: %v", err)
 	}
 }
+
 // A detour, a chain or a fallback makes one logical dial re-enter this seam: the outer
 // outbound's handshake dials through a detour, which performs its own TLS handshake. If both take
 // a permit, the outer holds the only slot while waiting for the inner, and the inner waits for the
