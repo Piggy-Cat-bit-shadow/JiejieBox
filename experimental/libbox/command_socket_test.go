@@ -83,7 +83,9 @@ func TestTheByteBoundaryIsExact(t *testing.T) {
 	if !pathFits(over) {
 		t.Fatalf("one byte over resolved to %d bytes", len(over))
 	}
-	if dir := filepath.Dir(over); dir == base+"a" {
+	// "Verbatim" would be <over>/command.sock, which is 104 bytes. Using the same DIRECTORY with a
+	// generated short name is the correct answer, so the invariant is about the path, not the dir.
+	if over == filepath.Join(base+"a", commandSocketName) {
 		t.Fatal("a base path over the limit was used verbatim")
 	}
 }
