@@ -617,6 +617,36 @@ def case_verify_catches_drift():
         fixture.cleanup()
 
 
+def case_verify_catches_version_drift():
+    # The audit found a lock whose commit was right and whose pseudo-version carried the PREVIOUS
+    # timestamp. The commit-only comparison reported PASS, because the two records agreed on
+    # everything it looked at. A pseudo-version names a commit through its timestamp AND its suffix,
+    # so a lock that disagrees with go.mod on either half is a record that contradicts itself.
+    fixture = Fixture()
+    try:
+        resolve = fixture.write_resolution()
+        lock = os.path.join(fixture.dir, "lock.json")
+        fixture.run("snapshot", "--resolve", resolve, "--out", lock, expect=0)
+        fixture.run("verify", "--lock", lock, expect=0)
+
+        # Only the timestamp changes; the commit stays exactly what the tree pins.
+        with open(lock, encoding="utf-8") as handle:
+            frozen = handle.read()
+        drifted = frozen.replace("v0.0.0-20261028000000-222222222222",
+                                 "v0.0.0-20250101000000-222222222222")
+        check("version-drift: the fixture actually changed the timestamp",
+              drifted != frozen, "the lock did not contain the expected pseudo-version")
+        with open(lock, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(drifted)
+
+        result = fixture.run("verify", "--lock", lock, expect=1)
+        check("version-drift: verify fails when the timestamp disagrees but the commit matches",
+              "github.com/sagernet/sing-tun" in result.stdout and "FAIL" in result.stdout,
+              result.stdout[-500:])
+    finally:
+        fixture.cleanup()
+
+
 def case_verify_catches_client_drift():
     fixture = Fixture()
     try:
@@ -820,6 +850,7 @@ def main():
         case_missing_branch_fails,
         case_nested_lag_is_reported_not_fatal,
         case_verify_catches_drift,
+        case_verify_catches_version_drift,
         case_verify_catches_client_drift,
         case_verify_catches_root_test_mismatch,
         case_verify_catches_cronet_native_split,

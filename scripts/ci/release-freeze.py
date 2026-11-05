@@ -851,6 +851,18 @@ def cmd_verify(repo, args):
         if row.get("pinned") != pin["sha"]:
             problems.append("%s: lock says %s, go.mod says %s"
                             % (module, row.get("pinned"), pin["sha"]))
+        # The commit and the pseudo-version must agree. Comparing only the commit let a lock carry
+        # the right SHA with the WRONG timestamp - not a cosmetic difference: the pseudo-version is
+        # what a reader resolves, and a record whose version names a different commit than its own
+        # sha field contradicts itself.
+        locked_version = row.get("version")
+        tree_version = pin.get("version")
+        if locked_version and tree_version and locked_version != tree_version:
+            problems.append("%s: lock records version %s but go.mod uses %s (same commit %s)"
+                            % (module, locked_version, tree_version, pin["sha"]))
+        if pin.get("in_test") and pin.get("test_version") not in (None, tree_version):
+            problems.append("%s: the root module uses %s but test/go.mod uses %s"
+                            % (module, tree_version, pin.get("test_version")))
         if pin.get("in_test") and pin.get("test_sha") != pin["sha"]:
             problems.append("%s: the root module pins %s but test/go.mod pins %s"
                             % (module, pin["sha"], pin["test_sha"]))
