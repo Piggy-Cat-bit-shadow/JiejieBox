@@ -2002,6 +2002,67 @@ else
   report "full contract: sha256sum -c passes over the six files" 0 1 "manifest does not verify"
 fi
 
+# --- the self-sign IPA is part of the contract exactly when its flag is on ---
+#
+# This is the combination a release actually runs: `release.yml` sets
+# RELEASE_SELF_SIGN_IPA=true and passes --self-sign. It was also the combination nothing here
+# covered, and the gap was real rather than hypothetical - `flatten` staged the IPA and then
+# rejected its own staging directory as "not the public asset contract", because its allowlist
+# was a second copy of the contract that had never learned about the file, while `check-upload`
+# (derived from the contract) accepted the same directory. A release carrying the IPA could not
+# pass `flatten` at all.
+run_gate_full_selfsign() {
+  PATH="$work/bin:$PATH" MOCK_STATE="$work/state" MOCK_FIXTURES="$work/fixtures" \
+    RELEASE_EXTRA_PLATFORMS=true RELEASE_SELF_SIGN_IPA=true "$gate" "$@"
+}
+
+selfsign_ipa="$work/full/selfsign/jiejiebox-selfsign-full.ipa"
+mkdir -p "$(dirname "$selfsign_ipa")"
+printf 'self-sign ipa fixture\n' > "$selfsign_ipa"
+rm -rf "$work/full/upload-selfsign"
+selfsign_ipa_name="jiejie-ios-selfsign-unsigned-${FULL_VERSION}.ipa"
+
+selfsign_rc=0
+run_gate_full_selfsign flatten \
+  --plan "$full_plan" --dir "$work/full/assets" --out "$work/full/upload-selfsign" \
+  --tag "$FULL_TAG" --desktop "$DESKTOP_INSTALLER" --self-sign "$selfsign_ipa" \
+  --version "$FULL_VERSION" >"$work/full/flatten-selfsign.out" 2>&1 || selfsign_rc=$?
+if [ "$selfsign_rc" -eq 0 ]; then
+  report "full contract: flatten stages the self-sign IPA when the flag is on" 0 0
+else
+  report "full contract: flatten stages the self-sign IPA when the flag is on" 0 "$selfsign_rc" \
+    "$(tail -n 4 "$work/full/flatten-selfsign.out" 2>/dev/null | tr '\n' ' ')"
+fi
+
+selfsign_count="$(find "$work/full/upload-selfsign" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
+if [ -f "$work/full/upload-selfsign/$selfsign_ipa_name" ] && [ "$selfsign_count" = "8" ]; then
+  report "full contract: the self-sign release publishes eight files including the IPA" 0 0
+else
+  report "full contract: the self-sign release publishes eight files including the IPA" 0 1 \
+    "got $selfsign_count: $(find "$work/full/upload-selfsign" -mindepth 1 -maxdepth 1 -type f -exec basename {} \; 2>/dev/null | sort | tr '\n' ' ')"
+fi
+
+# The manifest must cover the IPA too: a published file with no checksum is the one an
+# uploader could replace unnoticed.
+selfsign_entries="$(grep -c . "$work/full/upload-selfsign/SHA256SUMS" 2>/dev/null || echo 0)"
+if [ "$selfsign_entries" = "7" ] \
+   && grep -qF -- "$selfsign_ipa_name" "$work/full/upload-selfsign/SHA256SUMS" \
+   && ( cd "$work/full/upload-selfsign" && sha256sum -c SHA256SUMS >/dev/null 2>&1 ); then
+  report "full contract: SHA256SUMS covers the self-sign IPA" 0 0
+else
+  report "full contract: SHA256SUMS covers the self-sign IPA" 0 1 \
+    "entries=$selfsign_entries"
+fi
+
+# `check-upload` reads the derived contract, so it must accept the same directory - the two
+# sides of the contract now agree by construction rather than by two copies matching.
+selfsign_rc=0
+run_gate_full_selfsign check-upload --out "$work/full/upload-selfsign" \
+  --tag "$FULL_TAG" --version "$FULL_VERSION" >"$work/full/check-upload-selfsign.out" 2>&1 || selfsign_rc=$?
+report "full contract: check-upload accepts the self-sign asset set" 0 "$selfsign_rc" \
+  "$(tail -n 2 "$work/full/check-upload-selfsign.out" 2>/dev/null | tr '\n' ' ')"
+
+
 # --- negative: a missing product must not publish --------------------------
 #
 # The release-tree check is rebuilt with Android's whole payload directory removed. A release

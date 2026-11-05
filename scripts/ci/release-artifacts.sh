@@ -1585,25 +1585,24 @@ $(printf '      %s\n' $actual)"
   # added a file - the CI records the desktop workflow also uploads, a stray .sha256, a
   # log - fails here rather than shipping it to the download page.
   #
-  # The expected set is derived from TARGET_WORKFLOWS plus the installer, so a product
-  # cannot be added to one and forgotten in the other.
+  # The expected set is DERIVED from `public_asset_names`, never restated here: that function
+  # already carries the whole contract (the tarballs, the canonical Apple bundle name, the
+  # installer, SHA256SUMS, and the self-sign IPA when its flag is on), and `release.yml` runs
+  # `check-upload` against it.
   #
-  # Apple contributes the canonical bundle name, derived from the same `version` as every other
-  # asset rather than from a prefix. Its name is spelled ONCE here, in `expected_assets`, and once in
-  # the promotion above; `test-release-artifacts.sh` and `test-apple-canonical-source.sh` both assert
-  # the two agree with `publish-apple-beta.sh`, because the failure this shape exists to prevent is
-  # the producer and the consumer each being self-consistently wrong about one filename.
-  local expected_assets=() wf2 kind2
-  for wf2 in "${TARGET_WORKFLOWS[@]}"; do
-    kind2="$(target_field "$wf2" kind)"
-    if [ "$kind2" = "xcframework-manifest" ]; then
-      expected_assets+=( "jiejie-libbox-apple-${version}.tar.gz" )
-      continue
-    fi
-    expected_assets+=( "$(target_field "$wf2" tarball)-${tag}.tar.gz" )
-  done
-  expected_assets+=( "$installer" )
-  expected_assets+=( SHA256SUMS )
+  # It used to be a second copy, and it drifted exactly where a copy does. With
+  # RELEASE_SELF_SIGN_IPA=true - which `release.yml` sets - `flatten` staged the IPA and then
+  # rejected its own staging directory as "not the public asset contract", while `check-upload`
+  # would have accepted the same directory. The release could not publish the IPA at all.
+  local expected_assets=() asset_line
+  while IFS= read -r asset_line; do
+    expected_assets+=( "$asset_line" )
+  done < <(public_asset_names "$tag" "$version")
+
+  # A staged file whose name the contract does not know cannot be published. Say that here,
+  # naming the file, rather than leaving it to surface as a sorted-listing difference.
+  printf '%s\n' "${expected_assets[@]}" | grep -qxF -- "$(basename "$installer")" || die \
+    "flatten: the staged installer '$(basename "$installer")' is not one of the public asset names"
 
   # ---- one manifest over every public binary --------------------------------
   #
