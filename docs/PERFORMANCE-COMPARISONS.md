@@ -26,6 +26,54 @@
 
 缓冲区与嗅探的原始基准入口分别见 [MTU/bufgeom 模块](../KNOWLEDGE/modules/mtu-and-geometry.md) 和 [sniff 模块](../KNOWLEDGE/modules/sniff.md)。
 
+### 嗅探：首包解析与分片处理
+
+TLS 对照来自 2026-10-09 的 [`e053cc733`](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/commit/e053cc73335e56a4ffe1a1f0a9c1e9aa86ada624)，九次交错采样，经 benchstat 比较。提交明确记录主机有共享负载，时间比例只代表该轮测量；分配数据较稳定。改造停止在取得 ClientHello 后继续生成 ECDHE / ML-KEM 密钥，并将反复构造的 reader 链改成可重置游标。
+
+| 场景 | 历史 A/B 结果 | 测量对象 |
+| --- | --- | --- |
+| `PeekStreamTLS` | 耗时 −96.2%，B/op −32.6%，allocs/op −35.3% | 完整 TLS ClientHello 的流嗅探 |
+| `PeekStreamTLSFragmented` | 耗时 −91.9%，allocs/op −64.5% | 同一 TLS ClientHello 分为 8 次读取 |
+| 被移除的无效握手工作 | 每 TLS 流约 127 µs、13 KiB | 旧 profile 中生成并丢弃的密钥等工作；不是修复后整个调用的耗时 |
+| HTTP 前置检查：DNS-over-stream | 4,889 → 205 B/op；9 → 3 allocs/op | 仅 HTTP 嗅探器的有 / 无前置检查对照 |
+
+**分片 TLS 的 91.9% 不能归给 QUIC。** QUIC 另有包边界拷贝、视图读取、帧摘要和最多 64 轮的续读边界；它们有各自的正确性、容量和异常输入测试，没有在这里构成同一组速度 A/B。也不把曾出现的异常分配量当作当前每流固定节省量。
+
+来源：[阶段报告](fork/overnight-hardening-report.md)、[HTTP 前置检查配对基准](../common/sniff/http_gate_bench_test.go)、[流嗅探基准](../common/sniff/sniff_bench_test.go)、[当前机制与限制](../KNOWLEDGE/modules/sniff.md)。该阶段报告中的其他未完成事项保留其历史范围，不作为当前产品状态。
+
+### 低内存构建：并发流与规则加载
+
+[Android 移动端对照报告](fork/mobile-parity-android-report.md#the-measured-case-host-benchmark--apple-m1-loopback-in-process-never-device-or-battery)记录 Apple M1、主机进程内和 loopback 条件。每流持有两个缓冲区，GC 后观察活跃 heap；默认 / 低内存档分别使用 32/16 KiB 与 16/8 KiB 的流 / 包缓冲区参数。
+
+| 并发流数 | 默认档总驻留 | 低内存档总驻留 | 每流默认 / 低内存 |
+| --- | ---: | ---: | ---: |
+| 32 | 2,052 KiB | 1,028 KiB | 65,664 / 32,896 B |
+| 128 | 8,208 KiB | 4,112 KiB | 65,664 / 32,896 B |
+| 512 | 32.06 MiB | 16.07 MiB | 65,664 / 32,907 B |
+
+512 流的该工作集减少约 16 MiB。普通 socket 的 TCP/UDP、延迟与并发对照区间重叠，未测出明确差异；特定 Shadowsocks MTU 上传路径的代价为：`ShadowRealCopyLoop/writer-mtu` 耗时 +4.1%、allocs +80%；`ShadowMTUWrappedPath` 耗时 +19.4%、allocs +71%。较小档位下，单流初期每 256 KiB 的写入次数从 8 增至 16，分配次数从 15 增至 22。
+
+报告中的 `copyExtended` 长流测试在越过约 512 KiB 后，两种档位都会增长到相同的大缓冲区；这项结果只适用于对应复制路径。报告同时记录了先后运行时 TIME_WAIT 累积污染结果的问题，最终采用连接清理与顺序交替控制。上述 heap、吞吐与分配结果均不能代替手机 footprint 或电池测试。
+
+规则加载对照见本页首表：[第二轮施工记录](../KNOWLEDGE/reports/anywhere-round2/anywhere-round2-construction.md)包含 Windows / Ryzen 4800H 的 10 万与百万域名样例；[SRS 交付记录](fork/anywhere-delivery-summary.md)包含流式解析及完整性修复。分别报告累计分配、稳态存活内存与 GC 次数，不能将累计分配的降幅称作设备峰值内存降幅。
+
+### 受限内存下的 GC 策略
+
+2026-10-03 的 SS2022 内存压力基准固定 `GOMEMLIMIT=40 MiB`，比较 `GOGC=50` 与 `100`。每组 10 次配对交替运行，每次新进程，`benchtime=6x`。数据采用修正采样和中位数口径后的 [`710351ba2`](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/commit/710351ba2340fc23bb412f6033a3d655a68ac81a) 记录；不混用更早报告的数字。
+
+| 指标，中位数 | GOGC 50 | GOGC 100 | 变化 |
+| --- | ---: | ---: | ---: |
+| GC 次数 | 29 | 13.5 | −53.448% |
+| GC 累计暂停，`MemStats.PauseTotalNs` 差值 | 861,564 ns | 415,604 ns | −51.762% |
+| 基准吞吐 | 5,706.39 MB/s | 5,776.48 MB/s | +1.228% |
+| Go runtime 管理内存的连续采样峰值 | 39,323,912 B | 40,745,224 B | 约 37.5 → 38.9 MiB |
+
+GC 次数的 13.5 是十次样本中央两值的平均数，单次实际计数仍为整数。连续峰值按 `/memory/classes/total:bytes − /memory/classes/heap/released:bytes` 在工作负载全程每 1 ms 采样；累计暂停来自精确计数器，不是暂停直方图桶的上界相加。此处软限制针对 Go runtime 管理内存，不能据此给整个进程或 iOS Jetsam 作保证。
+
+[汇总 JSON](fork/bench/gogc-40mib-50-vs-100.json)由[原始样本](fork/bench/gogc-40mib-50-vs-100-raw.json)生成；前后对照体现减少 GC 与保留更多内存的取舍。吞吐是进程内压力负载的数据处理速率，不能视为 Shadowsocks 公网代理吞吐。
+
+### CONNECT-UDP：包装与真实连接
+
 CONNECT-UDP owned 路径还有两层不同的对照，不能把其中较大的倍数写成网络端到端收益：
 
 | 2026-10-20 测量层 | 复制路径 | owned 路径 |
