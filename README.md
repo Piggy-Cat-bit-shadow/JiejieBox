@@ -6,18 +6,24 @@
 
 ## 客户端与命令行内核
 
-| 平台 | 获取方式 |
+| 平台 | 下载与使用 |
 | --- | --- |
-| **Windows x64** | Release 提供桌面客户端安装包和独立 `windows-amd64` 命令行核心。 |
-| **Android arm64** | 使用 [satelite-one 客户端](https://github.com/Piggy-Cat-bit-shadow/satelite-one)。本仓库的 `android-arm64` 附件为 AAR 开发集成包。 |
-| **Linux amd64** | Release 提供命令行核心；部署见 [Linux 服务端文档](docs/JIEJIE-SERVER.md)。 |
-| **macOS arm64** | Release 提供命令行核心；参见 [macOS 运行说明](docs/JIEJIE-MACOS-CLIENT.md)。GUI 与 TestFlight 构建见 [Apple 发布说明](docs/APPLE-BETA-RELEASE.md)。 |
-| **iOS / iPadOS arm64** | Release 提供完整未签名 IPA，支持自行签名安装；TestFlight 见 [Windows 构建 → Mac 签名与上传指南](docs/APPLE-BETA-RELEASE.md)。 |
-| **Apple 开发集成** | Release 提供 Libbox；iOS 与 macOS 客户端使用固定源码和经过来源校验的库。 |
+| **Windows x64** | 桌面安装包、独立命令行内核 |
+| **Android arm64** | [satelite-one 客户端](https://github.com/Piggy-Cat-bit-shadow/satelite-one)；本仓附件为开发集成用 AAR |
+| **Linux amd64** | 命令行内核 · [服务端部署](docs/JIEJIE-SERVER.md) |
+| **macOS arm64** | 命令行内核 · [运行说明](docs/JIEJIE-MACOS-CLIENT.md) |
+| **iOS / iPadOS arm64** | 未签名 IPA，支持自行签名安装 · [安装指南](docs/IOS-SELFSIGN-AND-LOOPBACK.md) |
+| **Apple 开发集成** | Libbox |
 
-按 Release 附件选择平台与架构，并核对 `SHA256SUMS`。Android AAR 不可直接作为 APK 安装，iOS 未签名 IPA 需自行签名；macOS DMG 是否提供以相应版本附件为准。
+附件与校验和见 [Releases](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases)。**TestFlight / Apple GUI 构建**：Windows 发起 Actions，Mac 获取同次 Libbox 后完成签名、归档与上传；支持 iOS、macOS 或同时构建，见 [构建步骤与签名配置](docs/APPLE-BETA-RELEASE.md)。
 
-**Apple TestFlight 构建**：在 Windows 发起 Apple Actions，Mac 通过 [`scripts/publish-apple-beta.sh`](scripts/publish-apple-beta.sh) 跟随指定运行，获取同次 Libbox 并完成签名、归档与上传。支持 iOS、macOS 或同时构建；Mac 需配置 Apple 签名与 App Store Connect。具体参数和操作步骤见 [TestFlight 构建说明](docs/APPLE-BETA-RELEASE.md)。
+## 配置与使用
+
+[常规配置](docs/configuration) · [本项目扩展配置与示例](docs/FORK-CONFIGURATION.md) · [Naive](docs/naive.md) · [MASQUE](docs/masque.md) · [DNS 广告拦截](KNOWLEDGE/modules/dns-adblock-action.md) · [本地回环](#ios-本地回环)
+
+常规配置参考已纳入的 sing-box **v1.15.0-alpha.13**；XHTTP、Mieru、负载均衡、上传调度等扩展按本项目文档配置。协议可用性取决于平台与[构建档位](docs/BUILD-PROFILES.md)。当前 Naive 引擎为 **Chromium 154.0.8037.49 + NaiveProxy patch5 相关修复**，Mieru SDK 为 **v3.39.0**。
+
+下文结合具体实现与历史对照介绍功能；性能数字保留测试场景，完整方法与原始记录见 [性能专页](docs/PERFORMANCE-COMPARISONS.md)。
 
 ## 协议与网络能力
 
@@ -28,7 +34,7 @@
 - packet-up 使用有界队列与单一 flusher 聚合写入，保留首包低延迟、顺序、背压及尾部数据完整性。
 - 连接池接入网络切换、休眠恢复和空闲清理，处理上传拒绝、H3 故障与关闭边界。
 
-VLESS 将空闲清理和复用退役请求传递给 XHTTP，再由 XMUX 区分空闲物理连接与活跃逻辑流：内存整理只释放空闲项，唤醒后的可疑连接停止承接新流，已有流按契约排空。单流重置保留其错误范围，避免误将其他复用流一并关闭。上传聚合与 HTTP 传输的连接数、取消和响应消费共同维护有界背压。
+VLESS/XHTTP 的旧连接池退役后停止承接新流，已有流排空后释放；单个逻辑流重置不会被直接当作整条共享连接损坏。
 
 历史 TLS/H2 受控测试，服务端为 Xray v26.9.30：
 
@@ -47,7 +53,7 @@ VLESS 将空闲清理和复用退役请求传递给 XHTTP，再由 XMUX 区分�
 - 统一监听器、在途连接与 SDK Runtime 的清理责任，处理部分启动失败和切网后的迟到结果。
 - 通过类型化失败信息区分目标拒绝、本地错误、调用方取消与代理通路故障，供代理组决定重试和健康状态。
 
-SDK 的 listener/dialer 桥接保留内核的 socket 策略，适配层在自己拥有的拨号边界记录错误，避免 SDK 文本包装丢失类型后无法判断失败来源。启用回退时，TCP 与 UDP 分别持有运行时和会话，选择器管理偏好与探测；接口变化通过新运行时启动、代次交接和旧资源清理完成重建，防止迟到拨号修改新网络状态。
+TCP/UDP 回退分别维护会话，切换偏好只影响新连接；切网重建隔离旧拨号结果，目标拒绝、用户取消与节点故障分别处理。
 
 历史实现对照：
 
@@ -65,7 +71,7 @@ SDK 的 listener/dialer 桥接保留内核的 socket 策略，适配层在自己
 - 提供 VLESS 客户端应用层后量子加密，处理握手取消、帧边界与重密钥。
 - 对不支持的指纹与 ECH 组合明确报错，校验 Vision 依赖的接口契约。
 
-REALITY 的密钥份额、Verifier 与 uTLS 配置克隆需要贯通真实握手；VLESS 应用层加密、Vision 与 TLS 则分别维护自己的帧和数据状态。项目核对连接包装后的缓冲区交接、半关闭及专用写入能力，并对 Vision 使用的依赖内部布局设置兼容检查，避免升级后编译通过却破坏数据路径。
+连接包装保留 Vision 专用写入、缓冲区交接和半关闭能力，并检查依赖内部布局兼容性，防止依赖升级破坏传输路径。
 
 XHTTP 和 VLESS 加密扩展以客户端为主，不包含对应服务端实现。参见 [配置示例](docs/FORK-CONFIGURATION.md)及 [传输模块](KNOWLEDGE/modules/xhttp-client-transport.md)。
 
@@ -77,7 +83,7 @@ XHTTP 和 VLESS 加密扩展以客户端为主，不包含对应服务端实现�
 - 客户端使用自定义 Cronet fork，保留 host dialer、可配置窗口及可选 H3→H2 回退。
 - Chromium 154.0.8037.49 已吸收 NaiveProxy patch5 相关证书封锁、QUIC 窗口与自动调节修复，并修复 Linux DNS 桥的匿名 socketpair 回复。
 
-Cronet 通过 host dialer 接入本项目的服务器解析和双栈策略，Go 与原生侧共同处理连接、异步缓冲区及回调生命周期。出站完成 CONNECT 握手后再返回连接，并将可确定的认证或拨号失败传给代理组；H3→H2 回退区分传输故障、HTTP 响应与调用方取消。服务端 padding 的就地构造与 UoT 目标检查分别遵守帧容量和逐包目标语义。
+Cronet 的连接创建接入 Go 侧解析与双栈拨号，完成 CONNECT 后才交付连接。Linux DNS 桥修复后，自定义拨号测试由约 274 秒超时恢复为约 0.79 秒通过；这是故障修复的用例结果。
 
 能力由实际构建标签决定：Linux 默认服务端档包含 Naive 入站，未启用 Cronet 出站；Windows 使用 `with_purego` 加载原生库。参见 [Naive 说明](docs/naive.md)、[HTTP 传输模块](KNOWLEDGE/modules/naive-http-transport.md)和 [Cronet 修复记录](KNOWLEDGE/reports/release/cronet-patch5-linux-dns-2026-11-05.md)。
 
@@ -88,7 +94,7 @@ Cronet 通过 host dialer 接入本项目的服务器解析和双栈策略，Go 
 - 在 QUIC 握手阶段竞争候选，回收落败连接；H3 建连保留独立尝试窗口，为 UDP 黑洞下的 H2 回退预留时间。
 - 优化 DATAGRAM 所有权与批处理，限制 Capsule 长度和条目数量；按已知下层容量处理包大小与 ICMP Packet Too Big。
 
-CONNECT-IP 将远端分配的地址、路由与内部 DNS 同本地 endpoint/TUN 状态衔接；Bootstrap DNS 始终负责建立外层连接。数据报在 HTTP/3、QUIC 和 TUN 边界明确转移所有权，部分发送成功后仅回退或释放仍由调用方持有的部分。H3 故障判断区分 QUIC 建连失败和 CONNECT 响应缓慢，避免一次应用层延迟影响后续传输选择。
+CONNECT-IP 同步远端地址、路由与隧道内 DNS；H3 故障判断区分 QUIC 建连失败与 CONNECT 响应缓慢，避免应用层慢响应导致后续连接误选传输。
 
 详见 [MASQUE 使用说明](docs/masque.md)和 [CONNECT-IP 模块](KNOWLEDGE/modules/masque-connectip.md)。
 
@@ -177,11 +183,29 @@ TLS 数据来自 2026-10-09 的九次交错采样，时间数据受共享主机�
 - **Direct Offload**：Linux `auto_redirect` / nfqueue 可将符合条件的直连流交还系统转发，省去后续用户态代理开销；逐流核对 FakeIP、目标改写、统计和 socket 语义，条件不符则保留原路径。普通 TUN 和系统代理分别使用自身数据路径。
 - **透明组与复制路径**：selector/URLTest 的透明选择可保留底层快速路径资格，显式 `fast_path: false` 关闭该资格；连接建立后的内核辅助复制另按平台和连接能力选择，建立失败回退用户态复制。
 
+在 4 条普通流争用约 2 MB/s FIFO 的历史实验中，按容量 85% 持续整形，交互消息 p99 **146 → 9 ms**、平均积压 **257 → 15 KiB**，持续上传后首条交互消息 p50 **127 → 2 ms**。配置速率按实际填写值执行，85% 是该次实验条件。见 [调度对照](docs/PERFORMANCE-COMPARISONS.md#1-代表性的优化前后)。
+
 配置见 [上传调度与 Fast Path](docs/FORK-CONFIGURATION.md)，实现范围见 [数据路径优化](KNOWLEDGE/modules/data-path-optimization.md)和 [Fast Path 设计](docs/FAST-PATH-AND-MEMORY.md)。
+
+### 零拷贝与缓冲区交接
+
+- **TCP 内核辅助复制**：连接能力与平台允许时使用 splice，减少数据经 Go 缓冲区中转；建立管道失败立即回退普通复制。TLS 路径保留控制消息与尾部数据处理，接管成功和实际执行 splice 分别观察。
+- **QUIC / HTTP/3 数据报**：MASQUE、Hysteria2、TUIC 的适用发送路径将已有缓冲区交给下层，省去再次复制载荷；成功后由接收方释放，失败时由原持有方处理。CONNECT-IP 批量按下层容量分块，避免大批次整体退回逐包发送。
+- **Naive 首包与 padding**：缓存首包直接交接，padding 利用预留空间就地构帧；异步 Cronet 回调完成前保持缓冲区有效，防止复用后读到错误数据。
+- **保留必要复制**：加密、QUIC 嗅探的独立工作副本和不支持交接的接口仍使用相应复制路径，具体节省发生在支持该能力的边界。
+
+| 实际优化位置 | 原路径 | 优化路径 | 历史测试条件 |
+| --- | ---: | ---: | --- |
+| CONNECT-UDP 包装 | 409–428 ns，1,345 B，2 次分配 | **83–85 ns，64 B，1 次分配** | 1,200 B 载荷，少一次 payload copy |
+| CONNECT-UDP 真实连接发送 | 10.6 µs/包 | **9.5 µs/包** | quic-go，1,000 B，5,000 次发送 |
+| Naive 64 B 缓存首包 | 612–637 ns，1 次分配 | **282–290 ns，0 次分配** | 2026-10-20，Go 层内存 sink |
+| Naive 16 KiB 缓存首包 | 868–943 ns，1 次分配 | **271–278 ns，0 次分配** | 同组 buffer / copying 对照 |
+
+包装边界的收益与实际传输分别测量；表中零分配仅对应指定路径。来源见 [CONNECT-UDP 对照](docs/PERFORMANCE-COMPARISONS.md#connect-udp包装与真实连接)、[Naive 分层审计](KNOWLEDGE/reports/core/NAIVEPROXY_PERFORMANCE_READONLY_AUDIT_2026-10-20.md)和 [缓冲区交接约束](KNOWLEDGE/modules/buffer-ownership.md)。
 
 ### 回包、复制与连接关闭
 
-- **TUN 回写**：常见单包写回复用调用方切片，减少临时切片与对象；批量数据报按下层容量分块提交，仅对尚未交接的部分回退和释放。
+- **TUN 回写**：常见单包写回复用调用方切片，减少临时切片与对象。dispatcher + portNAT 单包微基准由 **236–238 ns、72 B、2 次分配** 降至 **约 156 ns、0 B、0 次分配**；批量数据报按下层容量分块提交，仅对尚未交接的部分回退和释放。
 - **包大小控制**：嵌套隧道按已知下层容量扣除封装开销，向支持硬上限的 QUIC 路径传递约束；CONNECT-IP 包过大时按条件返回 ICMP Packet Too Big，避免静默丢包。
 - **TCP 与 TLS 尾部**：先交付缓存首包和有效尾部数据，再报告后续错误；链式包装保留半关闭与复制能力，连接接管后沿原有跟踪、释放链清理资源，避免提前关闭或重复释放。
 
@@ -285,20 +309,6 @@ Network Extension 模式使用 OOMKiller 已有压力状态，限制 AnyTLS TCP/
 
 上述结果仅对应已反馈的设备与使用场景。默认 `go` 栈支持 TCP、UDP、ICMPv4/v6 反射；其他显式栈尚无完整同等实现。配置与排障见 [本地回环说明](docs/IOS-SELFSIGN-AND-LOOPBACK.md#打开本地签名回环)。
 
-## 性能与内存对照
-
-以下为历史基准与受控实验。表中分别标明负载和测量层级，完整日期、基线、对照及复测方法见 [性能专页](docs/PERFORMANCE-COMPARISONS.md)。
-
-| 场景 | 优化前 | 优化后 | 条件 |
-| --- | ---: | ---: | --- |
-| 上传拥塞下交互消息 p99 | 146 ms | 9 ms | 4 条普通流竞争约 2 MB/s FIFO，按容量 85% 持续整形 |
-| 持续上传后首条交互消息 p50 | 127 ms | 2 ms | 同组整形实验 |
-| TUN 单包回写 | 约 236–238 ns、72 B、2 次分配 | 约 156 ns、0 B、0 次分配 | dispatcher + portNAT 微基准 |
-| CONNECT-UDP 包装边界 | 409–428 ns、1345 B、2 次分配 | 83–85 ns、64 B、1 次分配 | 1200 B 载荷，owned 路径微基准 |
-| CONNECT-UDP 实际 quic-go 连接 | 10.6 µs/包 | 9.5 µs/包 | 1000 B、5000 次发送 |
-
-XHTTP、Mieru、sniff 及低内存数据见各自章节。各项数据不构成所有网络或当前版本的统一性能保证；吞吐、累计分配、稳态内存与设备 footprint 应分别测量。
-
 ## 安全与部署
 
 ### TCP 监听默认安全
@@ -316,13 +326,11 @@ Linux 普通入站在未显式启用 `tcp_multi_path` 时使用普通 TCP；Clas
 
 部署与本地服务边界见 [服务端说明](docs/JIEJIE-SERVER.md)和 [Windows 守护进程模块](KNOWLEDGE/modules/windows-daemon-security.md)。
 
-## 配置、依赖与验证
+## 依赖与验证
 
-常规配置以已纳入的 sing-box `v1.15.0-alpha.13` 为参考，后续修复按补丁语义选择性适配。当前 Naive 引擎为 Chromium `154.0.8037.49`，包含 NaiveProxy patch5 相关修复；Mieru SDK 为 `v3.39.0`。扩展字段和实际协议能力受平台、构建标签及客户端版本约束。
+项目维护 sing、sing-tun、sing-quic、quic-go、uTLS、cronet-go 等依赖 fork，将协议改动延伸到 socket、TUN、QUIC 和原生引擎。构建固定 Go 模块、客户端及原生库来源，测试覆盖真实载荷、协议互通、网络切换、取消关闭、缓冲区交接与故障注入。
 
-项目维护 sing、sing-tun、sing-quic、quic-go、uTLS 和 cronet-go 等依赖 fork。根模块、独立测试模块、客户端 gitlink、原生库 provenance 与 source-lock 共同固定构建来源；源码版本、构建成功和已发布附件分别记录。
-
-测试覆盖协议互通、真实载荷、网络切换、取消与关闭、缓冲区所有权、配置校验及故障注入。测试结果按提交、平台和场景记录，设备行为与性能实验保留各自验证范围。参见 [验收索引](KNOWLEDGE/ACCEPTANCE.md)、[关联仓库](FORK_REPOSITORIES.md)和 [依赖整合](docs/fork/UPSTREAM-DEPENDENCY-INTEGRATION.md)。
+[关联仓库](FORK_REPOSITORIES.md) · [依赖整合](docs/fork/UPSTREAM-DEPENDENCY-INTEGRATION.md) · [测试范围与验收记录](KNOWLEDGE/ACCEPTANCE.md)
 
 ## 文档
 

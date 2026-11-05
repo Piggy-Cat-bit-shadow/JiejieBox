@@ -1,63 +1,43 @@
-本版新增 iOS 自签安装包与本地签名回环，完善移动端资源准入和 Apple 客户端兼容性，同步 NaiveProxy patch5 相关修复，并集中处理 DNS、设备地址变化及构建发布中的问题。
+本版增加 iOS 自签安装与本地回环，改善突发建连时的内存保护，同步 NaiveProxy patch5，并修复 Linux 自定义 DNS、设备切网及 Apple 客户端连接问题。
 
-## iOS 与 iPadOS
+## 自签安装与客户端连接
 
-- 新增完整未签名 IPA 发布附件，支持用户自行签名安装。
-- 适配重签后的 App Group、团队身份与 Packet Tunnel 扩展标识，修复共享容器不可用时的启动问题。
-- 根据实际签名授权选择可访问的共享容器，改善隧道已连接但日志、统计无法读取的问题。
-- 新增“本地签名回环”开关，位于“更多 → 连接行为 → 配置覆盖”，用于 SideStore、LiveContainer 等本机回环场景。
-- 开启后通过运行时覆盖加入 `10.7.0.1`，同步配置 TUN 与 iOS 主机路由；保留用户已有地址，不改写订阅文件。
-- 默认 `go` 栈补全 UDP、ICMPv4/v6 回环反射，修复 IPv4-mapped 地址匹配和非 iOS 路由隔离；不支持的显式栈会给出提示。
-- 对 VPN 显示已连接、TUN 却未完成接管的情况增加诊断。
+- 新增完整未签名 IPA，可自行签名安装；应用与 Packet Tunnel 扩展同步写入版本。
+- 适配重签后的团队身份、App Group 与扩展标识，按实际授权选择共享容器，修复自签后启动失败、隧道已连接但日志和统计不可读的问题。
+- 缩短 libbox 命令 socket 路径，统一客户端与服务端的路径选择，修复容器路径过深导致连接失败的问题。
+- 增加 VPN 已连接但 TUN 未完成接管的诊断，便于区分界面状态与实际网络接管。
 
-## 资源管理与稳定性
+## 本地回环
 
-- 新增压力感知的创建准入机制，在 iOS Network Extension 中限制 AnyTLS TCP/UoT 与共享 TLS 握手的并发、队列和等待时间。
-- 复用 OOMKiller 既有压力状态，按 Normal、Armed、Critical 分级调整额度，避免额外采样器和后台监控任务。
-- 将 `traffic_class` 从路由层传递到准入入口，为交互与实时流量保留创建额度，并处理等待老化和取消。
-- 修复 TLS、AnyTLS 和多跳 detour 重复领取许可导致的阻塞，一次逻辑拨号共用一份许可。
-- 修复陈旧压力观察覆盖新计划、重复触发回收的竞态，按状态版本发布准入策略。
-- OOM 诊断增加在途、排队、获准、拒绝和取消计数；完善慢握手、突发连接、压力恢复及许可归还测试。
-- 更新 sing-tun，纳入 200/2000 流 UDP NAT 压力测试。
+- 新增“更多 → 连接行为 → 配置覆盖 → 本地签名回环”开关，默认关闭；开启后注入 `10.7.0.1` 并配置 iOS 主机路由，保留已有地址和订阅文件。
+- 默认 `go` 栈补全 UDP、ICMPv4/v6 反射，修复 IPv4-mapped 地址匹配；其他显式栈提供不支持提示。
+- 当前真机反馈：WLOC 开发者模式虚拟定位可用，SideStore 续签仍有兼容问题，续签请使用 LocalDevVPN。详见 [回环说明](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/IOS-SELFSIGN-AND-LOOPBACK.md)。
 
-## NaiveProxy / Cronet
+## 突发建连与低内存保护
 
-- 同步 NaiveProxy v154.0.8037.49-5 相关补丁，原生引擎仍为 **Chromium 154.0.8037.49**。
-- 证书封锁列表补齐上游新增的 8 个 SPKI 哈希。
-- QUIC 流级、连接级接收窗口上限调整为 64 MiB、128 MiB，吸收窗口下限检查与自动调节修复，保留自定义窗口配置。
-- 修复 Linux 匿名数据报 socketpair 的 DNS 回复路径：无对端地址时使用已连接端点写入，有地址时保持原有回复方式，并记录失败计数。
-- 修复后 Linux 自定义拨号恢复预期目标，原约 274 秒超时用例在修复验证中约 0.79 秒通过；purego 与 cgo 同场景均通过。
-- 重建 Linux amd64、Windows amd64、Android arm64、macOS arm64、iOS arm64 原生库，成套更新 Go 封装、原生模块和聚合模块引用。
+- 为 iOS Network Extension 的 AnyTLS TCP/UoT 和共享 TLS 握手增加创建准入，限制并发、排队数量与等待时间，降低集中握手的资源压力。
+- 按内存压力逐级收紧普通创建并发（默认 32 / 16 / 8），为交互与实时流量预留额度；排队支持取消、超时和等待老化。
+- TLS、AnyTLS 与多跳代理共用一次拨号许可，修复嵌套申请造成的阻塞；成功、失败及取消均归还许可。
+- 修复旧压力状态覆盖新策略、重复触发回收的竞态；复用已有 OOM 采样，补充排队、拒绝、取消与在途计数。
+- 修复 runtime 内存指标发布滞后导致的误判，更新 sing-tun 并补充 UDP NAT 压力验证。
 
-## DNS、TUN 与设备变化
+## NaiveProxy 安全与传输
 
-- DNS 冷连接建立移出调用方 goroutine，避免 TCP/TLS 建连阻塞 TUN 收包处理；补充异步任务退出测试。
-- DNS 请求打包前复制消息，修复并发打包修改共享对象的问题。
-- 设备地址变化时中断对应地址族的旧 UDP socket，同步更新地址与中断状态。
-- 完善 OpenVPN、OpenConnect 的 endpoint 本地流量裁决，与 HostPort/TUN 路径对齐。
-- 吸收严格路由与内核 IPv6 支持、Windows RAS 默认路由，以及 OpenConnect CSD/F5/GPST 兼容性修复。
-- 修复内存指标的 runtime 发布滞后处理，减少错误的不可读判定。
+- 同步 **NaiveProxy v154.0.8037.49-5** 相关修复，Chromium 基线保持 **154.0.8037.49**；证书封锁列表新增 8 个 SPKI 哈希。
+- QUIC 流级 / 连接级接收窗口上限调整为 **64 / 128 MiB**，修复窗口下限检查并启用自动调节，保留自定义窗口配置。
+- 修复 Linux 匿名 socketpair 无对端地址时 DNS 回复失败的问题，恢复自定义解析与拨号目标。原约 **274 秒超时**用例修复后约 **0.79 秒通过**，Linux purego / cgo 均完成同场景验证。
+- 更新 Go 封装和原生依赖，重建 Linux amd64、Windows amd64、Android arm64、macOS arm64、iOS arm64 库。
 
-## Apple 命令通道与构建
+## DNS、切网与隧道兼容
 
-- 修复自签容器路径过深导致 Unix socket 绑定失败的问题，按目录实际字节预算生成短名称，始终将系统临时目录纳入候选。
-- 服务端与客户端共用路径解析规则，增加真实设备路径样例和 Darwin bind 回归测试。
-- iOS、macOS 与自签构建复用经过校验的同提交 Libbox，记录核心、客户端、库哈希及构建来源。
-- 固定单次构建的 Apple 客户端来源，修复 gitlink 与工作流常量不一致的问题。
-- 无签名构建同步注入应用和扩展版本，修复附件版本与包内版本不一致。
+- DNS 冷连接异步建立，避免 TCP/TLS 握手阻塞收包；打包前复制 DNS 消息，修复并发修改共享请求的问题。
+- 设备地址变化时中断对应地址族的旧 UDP socket，使后续连接使用更新后的地址状态。
+- 完善 OpenVPN、OpenConnect 端点本地流量处理；吸收严格路由、内核 IPv6、Windows RAS 默认路由和 OpenConnect CSD/F5/GPST 兼容修复。
 
-## 发布与验证
+## 构建与发布
 
-- 将 iOS 自签 IPA 纳入正式附件校验，统一发布资产清单与上传检查。
-- 源码锁核对完整 pseudo-version，避免仅提交短 SHA 一致而版本记录不一致。
-- 完成发布提交的 Verify、发布契约、各平台核心、Apple、自签包及 Windows 安装包与 runtime audit 验证。
-- 完善资源准入、链式拨号、DNS 回复、命令 socket 和设备变化的回归覆盖。
-
-## 兼容性说明
-
-- 本地签名回环默认关闭；完整反射当前适用于默认 `go` 栈。自签包仍需具备相应系统权限的签名配置，详见 [自签与回环指南](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/IOS-SELFSIGN-AND-LOOPBACK.md)。
-- Naive 窗口、QUIC 和 UDP-over-TCP 的既有配置语义保留；Linux 默认服务端档未启用 Cronet 出站。
-- Apple darwin_amd64 与两个模拟器原生分片沿用已有字节；实际来源记录在 provenance 中。
-- Windows、Linux、macOS 核心、Android AAR、Apple Libbox、Windows 安装包和 iOS 自签 IPA 已发布；macOS DMG 不在本版正式附件内。
+- iOS、macOS 和自签构建复用同次校验的 Libbox，统一客户端来源、应用版本和原生库来源记录。
+- 将未签名 IPA 纳入正式附件，完善 Go 模块版本与发布清单校验；完成各平台核心、Apple 包及 Windows 安装包验证。
+- Linux 默认服务端档提供 Naive 入站，未启用 Cronet 出站；Apple Intel / 模拟器原生分片沿用已有库，macOS DMG 不在本版正式附件中。
 
 [完整更新日志](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/CHANGELOG.md) · [配置文档](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/tree/testing/docs/configuration)
