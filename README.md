@@ -12,10 +12,12 @@
 | **Android arm64** | 使用 [satelite-one 客户端](https://github.com/Piggy-Cat-bit-shadow/satelite-one)。本仓库的 `android-arm64` 附件为 AAR 开发集成包。 |
 | **Linux amd64** | Release 提供命令行核心；部署见 [Linux 服务端文档](docs/JIEJIE-SERVER.md)。 |
 | **macOS arm64** | Release 提供命令行核心；参见 [macOS 运行说明](docs/JIEJIE-MACOS-CLIENT.md)。GUI 与 TestFlight 构建见 [Apple 发布说明](docs/APPLE-BETA-RELEASE.md)。 |
-| **iOS / iPadOS arm64** | Release 提供完整未签名 IPA，支持自行签名安装；也可使用 TestFlight 构建与上传流程。详见 [自签安装指南](docs/IOS-SELFSIGN-AND-LOOPBACK.md)。 |
+| **iOS / iPadOS arm64** | Release 提供完整未签名 IPA，支持自行签名安装；TestFlight 见 [Windows 构建 → Mac 签名与上传指南](docs/APPLE-BETA-RELEASE.md)。 |
 | **Apple 开发集成** | Release 提供 Libbox；iOS 与 macOS 客户端使用固定源码和经过来源校验的库。 |
 
 按 Release 附件选择平台与架构，并核对 `SHA256SUMS`。Android AAR 不可直接作为 APK 安装，iOS 未签名 IPA 需自行签名；macOS DMG 是否提供以相应版本附件为准。
+
+**Apple TestFlight 构建**：在 Windows 发起 Apple Actions，Mac 通过 [`scripts/publish-apple-beta.sh`](scripts/publish-apple-beta.sh) 跟随指定运行，获取同次 Libbox 并完成签名、归档与上传。支持 iOS、macOS 或同时构建；Mac 需配置 Apple 签名与 App Store Connect。具体参数和操作步骤见 [TestFlight 构建说明](docs/APPLE-BETA-RELEASE.md)。
 
 ## 协议与网络能力
 
@@ -112,13 +114,13 @@ XHTTP 和 VLESS 加密扩展以客户端为主，不包含对应服务端实现�
 
 详见 [负载均衡与故障重试](docs/FORK-CONFIGURATION.md#负载均衡与故障重试)和 [Fast Path 策略](KNOWLEDGE/modules/fast-path-group-policy.md)。
 
-## iOS 自签与本地签名回环
+## iOS 本地回环
 
-配套客户端适配重签后的 App Group、团队身份和 Packet Tunnel 标识；共享容器不可用时提供启动容错及诊断。命令通道按 Darwin 的实际路径预算选择 Unix socket，处理自签容器路径过深导致的启动失败。
+**开启路径：更多 → 连接行为 → 配置覆盖 → 本地签名回环。** iPad 在“配置覆盖”中查找同名开关。默认关闭，开启并重载后向本次 TUN 注入 `10.7.0.1`，用于本机回环连接。
 
-**本地签名回环开启路径：更多 → 连接行为 → 配置覆盖 → 本地签名回环。** iPad 在“配置覆盖”中查找同名开关。默认关闭，开启并重载后向本次 TUN 注入 `10.7.0.1`，面向 SideStore、LiveContainer 等本机回环需求。
+**当前仍存在兼容性问题**：根据现有真机反馈，WLOC 的开发者模式虚拟定位可正常使用，但使用本项目回环进行 **SideStore 续签仍有问题**。续签时请切换至 **LocalDevVPN** 建立本地隧道，再回到 SideStore 刷新应用，操作参见 [SideStore 官方指南](https://docs.sidestore.io/docs/installation/install)。
 
-运行时覆盖保留用户配置，不改写订阅。默认 `go` 栈支持 TCP、UDP、ICMPv4/v6 反射；其他显式栈尚无完整同等实现，核心会提示不支持的组合。签名所需权限、设备验证与排障见 [使用指南](docs/IOS-SELFSIGN-AND-LOOPBACK.md)。
+上述结果仅对应已反馈的设备与使用场景。默认 `go` 栈支持 TCP、UDP、ICMPv4/v6 反射；其他显式栈尚无完整同等实现。配置与排障见 [本地回环说明](docs/IOS-SELFSIGN-AND-LOOPBACK.md#打开本地签名回环)。
 
 ## 生命周期与资源优化
 
@@ -197,7 +199,7 @@ Linux 普通入站在未显式启用 `tcp_multi_path` 时使用普通 TCP；Clas
 
 ## 文档
 
-- **配置与使用**：[配置参考](docs/configuration) · [扩展配置示例](docs/FORK-CONFIGURATION.md) · [NXDOMAIN](docs/DNS-NXDOMAIN.md) · [iOS 自签与回环](docs/IOS-SELFSIGN-AND-LOOPBACK.md)
+- **配置与使用**：[配置参考](docs/configuration) · [扩展配置示例](docs/FORK-CONFIGURATION.md) · [NXDOMAIN](docs/DNS-NXDOMAIN.md) · [本地回环](docs/IOS-SELFSIGN-AND-LOOPBACK.md#打开本地签名回环)
 - **构建与发布**：[构建档位](docs/BUILD-PROFILES.md) · [Apple TestFlight](docs/APPLE-BETA-RELEASE.md) · [更新日志](CHANGELOG.md)
 - **性能与设计**：[性能对照](docs/PERFORMANCE-COMPARISONS.md) · [性能参数](KNOWLEDGE/PERFORMANCE-FACTORS.md) · [Fast Path 与内存管理](docs/FAST-PATH-AND-MEMORY.md) · [工程架构评估](KNOWLEDGE/reports/core/JiejieBox_工程架构与改造最终评估报告_2026-11-01.md)
 - **开发维护**：[Fork 差异](docs/FORK-DIFF.md) · [知识库](KNOWLEDGE/README.md) · [任务索引](KNOWLEDGE/INDEX.md) · [维护指引](KNOWLEDGE/REFRESH.md)
