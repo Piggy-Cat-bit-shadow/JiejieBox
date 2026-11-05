@@ -19,37 +19,6 @@
 
 **Apple TestFlight 构建**：在 Windows 发起 Apple Actions，Mac 通过 [`scripts/publish-apple-beta.sh`](scripts/publish-apple-beta.sh) 跟随指定运行，获取同次 Libbox 并完成签名、归档与上传。支持 iOS、macOS 或同时构建；Mac 需配置 Apple 签名与 App Store Connect。具体参数和操作步骤见 [TestFlight 构建说明](docs/APPLE-BETA-RELEASE.md)。
 
-## 架构与协议协作
-
-JiejieBox 的协议实现接入共同的 DNS、拨号、路由、平台状态和资源管理接口。规则选择、物理连接、协议会话与系统隧道各自保留明确职责，使双栈、代理链、复用和网络恢复能够跨组件协作。
-
-```mermaid
-flowchart LR
-    I["TUN / 系统代理 / 协议入站"] --> R["目标与流量上下文"]
-    R --> S["FakeIP / 按需嗅探"]
-    S --> P["规则 / 代理组 / detour"]
-    P --> D["候选地址 / 拨号策略"]
-    N["DNS / 缓存 / 地址族策略"] --> P
-    N --> D
-    D --> T["协议传输 / 连接池 / 隧道"]
-    T --> O["目标服务"]
-```
-
-图中表示主要协作关系，实际解析位置与数据路径由入口、DNS 归属和所选协议决定。
-
-| 公共机制 | 跨协议作用 |
-| --- | --- |
-| **DNS 与 Dialer** | 统一解析策略、地址族候选、接口绑定、路由标记、namespace、取消和超时；协议适配层将这些条件传到实际 socket。 |
-| **Router 与路径校验** | 区分代理组的控制选择与真实网络跳点，检查依赖、循环和能力要求；逐流传递目标、候选及业务类别。 |
-| **Scope 与 RuntimeCoordinator** | 明确启动、关闭和异步任务所有权，利用网络代次与重建租约隔离迟到结果，协调切网及恢复。 |
-| **ReferenceManager 与 Power Governor** | 按资源能力清理空闲连接、退役可疑旧池和处理内存压力；平台报告网络、休眠与内存事实，由核心执行相应策略。 |
-| **FailureFacts 与流量类别** | 协议上报错误阶段和来源，代理组据此决定重试与健康状态；`traffic_class` 同时服务于上传调度和 NE 创建准入。 |
-| **Buffer、MTU 与数据交接** | 将缓冲区容量、所有权、半关闭及下层隧道容量贯通传输包装和 TUN 回包，减少复制并保持失败回退与释放责任。 |
-
-公共管理通过协议提供的能力接口执行。XHTTP 的 XMUX、Mieru 的 SDK Runtime、AnyTLS Session、Cronet Engine 和 MASQUE 隧道保留各自的复用与失败状态；普通空闲清理、唤醒后停止接收新流和网络重建分别处理。
-
-完整的调用关系、协议适配与链路案例见 [架构与网络链路优化](docs/ARCHITECTURE-AND-NETWORK-PATH.md)。
-
 ## 协议与网络能力
 
 ### XHTTP
@@ -142,6 +111,17 @@ CONNECT-IP 将远端分配的地址、路由与内部 DNS 同本地 endpoint/TUN
 
 隧道包大小、重建时机和平台接口分别按协议处理。详见 [MTU 与缓冲区几何](KNOWLEDGE/modules/mtu-and-geometry.md)、[endpoint 数据面](KNOWLEDGE/modules/masque-connectip.md)和 [生命周期](KNOWLEDGE/modules/core-lifecycle-runtime.md)。
 
+## 网络链路优化
+
+### 入口与首包处理
+
+- **TUN 收包**：DNS 地址与端口劫持先于路由地址集判断，避免 DNS 查询提前绕出；当前 FakeIP 范围内的地址交回路由器恢复域名，保留后续规则判断。
+- **系统代理 / Mixed**：复用同一个读取器识别 HTTP 与 SOCKS，握手缓存的首包直接交给后续连接；保留用户认证和原目标，减少重复读取与包装。
+- **HTTP / TLS 嗅探**：通过有界头部检查提前排除不匹配输入，TLS 取到 ClientHello 后停止额外握手处理；已读字节继续用于后续转发。
+- **QUIC 分片嗅探**：补充读取只重试需要更多分片的 QUIC 解析，限制轮数和工作副本范围；可信 FakeIP 域名满足条件时提前结束等待，错误或放弃时归还缓冲区。
+
+详见 [入口与数据路径](KNOWLEDGE/modules/data-path-optimization.md#入口嗅探与系统代理路径)及 [嗅探实现](KNOWLEDGE/modules/sniff.md)。
+
 ### DNS 与 FakeIP
 
 - **多上游分组**：`stable`、`fastest`、`parallel` 支持不同选择策略，协调冷启动竞选和失败恢复，控制请求放大。
@@ -153,26 +133,101 @@ CONNECT-IP 将远端分配的地址、路由与内部 DNS 同本地 endpoint/TUN
 
 配置和边界见 [NXDOMAIN](docs/DNS-NXDOMAIN.md)、[adblock](KNOWLEDGE/modules/dns-adblock-action.md)与 [DNS 模块](KNOWLEDGE/modules/dns-demand.md)。
 
+### 规则匹配、自动测速与负载均衡
+
+- **规则匹配**：使用紧凑域名 / IP 匹配结构；更新时先构建并校验新规则，再发布切换，失败保留旧代规则。大规则集的加载优化见下方低内存设计。
+- **路径预检**：启动时检查出站引用、跨类型循环和能力要求，尽早发现无效代理链；检查过程不发起网络访问，也不推进组的轮询位置。
+- `urltest` 先预热再测后续请求延迟，支持 `expected_status` 表达式，如 `204`、`200-299`、`200/204/301-399`。
+- `loadbalance` 支持 `round_robin`、`consistent_hashing` 和 `sticky_sessions`，按 TCP 连接或 UDP 会话选择成员。
+- 相同测试条件可共享健康记录，手动测速显示与自动选路状态分别管理。
+
+详见 [负载均衡与故障重试](docs/FORK-CONFIGURATION.md#负载均衡与故障重试)、[规则加载与内存测量](docs/PERFORMANCE-COMPARISONS.md#1-代表性的优化前后)及 [路径校验](KNOWLEDGE/modules/path-selection-validation.md)。
+
 ### 双栈拨号与链式代理
 
 - A/AAAA 增量结果可直接进入连接竞争；候选按地址族交错启动，快速失败时推进其他候选，严格单地址族策略同样约束字面地址。
 - selector、URLTest 和 loadbalance 传递完整候选列表与网络策略，避免代理组包装丢失双栈能力。
 - 区分本机出口能力与远端代理的目标可达性；网络切换后的旧查询、落败连接和迟到结果按代次处理。
-- `detour` 组合多跳出站，启动时检查缺失引用、循环及能力要求；路径预览不拨号、不解析，也不消耗轮询位置。
 - 代理服务器与最终目标的 DNS 分别归属；支持的 SOCKS/HTTP 出站可显式设置 `destination_dns_ownership`，保持默认远端解析语义。
 - 显式开启组故障切换后，嵌套代理组共享逐流重试预算，按错误来源决定是否尝试备选节点。
-- 链式包装保留半关闭、批处理和复制能力；已知下层隧道容量时传递相应包大小约束。
 
 例如 `exit.detour = entry` 表示流量先经过 `entry`，再到达 `exit`。配置、解析归属与失败边界见 [扩展配置](docs/FORK-CONFIGURATION.md)、[路径选择](KNOWLEDGE/modules/path-selection-validation.md)和 [双栈审计](KNOWLEDGE/reports/core/DUAL_STACK_CROSS_COMPONENT_ARCHITECTURE_AUDIT_2026-10-20.md)。
 
-### 自动测速与负载均衡
+### 传输、上传调度与快速路径
 
-- `urltest` 先预热再测后续请求延迟，支持 `expected_status` 表达式，如 `204`、`200-299`、`200/204/301-399`。
-- `loadbalance` 支持 `round_robin`、`consistent_hashing` 和 `sticky_sessions`，按 TCP 连接或 UDP 会话选择成员。
-- 相同测试条件可共享健康记录，手动测速显示与自动选路状态分别管理。
-- 透明 selector/URLTest 可保留底层快速路径资格；组级 `fast_path: false` 优先拒绝，具有重试职责的组不作为透明包装。
+- **实际 socket 策略**：将接口绑定、路由标记、namespace、超时和取消传到协议 SDK、TLS 与原生拨号边界；回收候选竞争中落败或取消后才建立的连接。
+- **协议传输**：XHTTP 聚合小写入并以有界队列维持背压；AnyTLS、Naive padding 等按帧容量利用预留头部空间；MASQUE、Hysteria2、TUIC 在支持的路径交接数据报所有权，减少中间载荷复制。各协议细节见上方对应章节。
+- **上传拥塞控制**：显式配置 `traffic_scheduler.upload_rate` 后持续整形受管理的用户态上行流，并结合 `traffic_class` 保护交互请求，减少批量上传先占满共享发送队列的影响。未配置速率时走惰性路径；内核 splice 和原生直连旁路不进入该调度器。
+- **Direct Offload**：Linux `auto_redirect` / nfqueue 可将符合条件的直连流交还系统转发，省去后续用户态代理开销；逐流核对 FakeIP、目标改写、统计和 socket 语义，条件不符则保留原路径。普通 TUN 和系统代理分别使用自身数据路径。
+- **透明组与复制路径**：selector/URLTest 的透明选择可保留底层快速路径资格，显式 `fast_path: false` 关闭该资格；连接建立后的内核辅助复制另按平台和连接能力选择，建立失败回退用户态复制。
 
-详见 [负载均衡与故障重试](docs/FORK-CONFIGURATION.md#负载均衡与故障重试)和 [Fast Path 策略](KNOWLEDGE/modules/fast-path-group-policy.md)。
+配置见 [上传调度与 Fast Path](docs/FORK-CONFIGURATION.md)，实现范围见 [数据路径优化](KNOWLEDGE/modules/data-path-optimization.md)和 [Fast Path 设计](docs/FAST-PATH-AND-MEMORY.md)。
+
+### 回包、复制与连接关闭
+
+- **TUN 回写**：常见单包写回复用调用方切片，减少临时切片与对象；批量数据报按下层容量分块提交，仅对尚未交接的部分回退和释放。
+- **包大小控制**：嵌套隧道按已知下层容量扣除封装开销，向支持硬上限的 QUIC 路径传递约束；CONNECT-IP 包过大时按条件返回 ICMP Packet Too Big，避免静默丢包。
+- **TCP 与 TLS 尾部**：先交付缓存首包和有效尾部数据，再报告后续错误；链式包装保留半关闭与复制能力，连接接管后沿原有跟踪、释放链清理资源，避免提前关闭或重复释放。
+
+详见 [缓冲区所有权](KNOWLEDGE/modules/buffer-ownership.md)、[MTU 与包大小](KNOWLEDGE/modules/mtu-and-geometry.md)及 [链路实现说明](docs/ARCHITECTURE-AND-NETWORK-PATH.md)。
+
+### 网络切换与休眠恢复
+
+- **隔离旧结果**：DNS 查询、缓存提交、拨号和隧道重建携带网络代次，避免旧网络的迟到结果覆盖当前状态；重建租约合并同一窗口内的重复恢复。
+- **按状态处理复用**：短暂休眠保留可用池；需要退役时，支持排空的协议池停止承接新流，已有流按协议约定结束，空闲资源随后释放。网络变化与普通空闲清理使用不同动作。
+- **缓解集中重连**：路径退役后的短窗口对普通与批量拨号实施有等待预算的软限制，交互 / 实时流优先；槽位释放通过事件通知等待者，减少轮询唤醒。
+- **启动与关闭交接**：合并 TUN 启动前的待处理网络更新，在启动后复查；关闭及重载时取消旧任务、结清资源所有权，防止迟到回调继续操作新实例。
+
+详见 [运行时与生命周期](KNOWLEDGE/modules/core-lifecycle-runtime.md)和 [拨号调速器](KNOWLEDGE/modules/data-path-optimization.md#part-c--拨号调速器the-dial-governor)。
+
+## 低内存与低功耗设计
+
+### 移动端缓冲区档位
+
+Android 与 iOS/tvOS 的 Libbox 构建启用 `with_low_memory`，macOS 保留默认档位。各平台从共享构建定义读取低内存标签，Apple 混合目标构建将该标签单独传给移动端。
+
+| 构建档位 | 流缓冲区 | 包缓冲区 |
+| --- | ---: | ---: |
+| 默认 | 32 KiB | 16 KiB |
+| `with_low_memory` | 16 KiB | 8 KiB |
+
+较小档位降低并发流的工作集，同时改变单次读取容量和加密构帧边界。协议按实际头尾预留空间计算载荷，确保缓冲区可归还池中，避免边界溢出或逐包重新分配；这是编译期选择，不能通过运行配置切换。历史每流驻留对照见下方性能表。
+
+### 减少分配与长期驻留
+
+- **大规则集**：受限扩容减少一次性大数组和反复增长；无 `cache_file` 的远程二进制 SRS 直接解析下载流，省去整份下载副本，并保留截断、解压预算和发布前完整性检查。iOS 还使用规则集 mmap 路径，其他平台按自身实现处理。
+- **QUIC 接收内存**：乱序小帧在底层数组容量明显大于有效数据时收缩复制，尽早归还大池缓冲；QUIC / HTTP/3 数据报出队时清空原槽位，避免队列已空却继续引用已交付载荷。
+- **在途数据**：嗅探续读、XHTTP 上传队列、Capsule 解析和批量数据报均按各自上界处理；首包与数据报只在生命周期允许时借用或转移，失败、取消和关闭时释放仍由本层持有的部分。
+- **按需运行**：轻量出站避免仅因配置存在就建立完整网络会话，复用连接按需创建；Mieru 未使用前不因接口通知重建 SDK Runtime。重型 endpoint 的启动成本按协议分别处理。
+
+### 分层回收与平台预算
+
+- **先清缓存，再清空闲池**：依次尝试过期条目、空闲连接资源，收益足够即停止；不足时才根据压力和 runtime 可回收页面决定强制 GC / 归还页面。低收益整理进入冷却，减少反复 GC。
+- **共用回收执行器**：空闲整理、系统压力与危机回收串行协调，紧急请求优先；真正重置网络前重新检查当前压力，避免已过期的危机请求打断恢复后的连接。
+- **普通整理保留业务**：`TrimMemory` 清理空闲项，不重置网络或主动拨号；严重压力下的 `ReleaseMemory` 可执行更强释放与网络重置。回收遍历覆盖出站、endpoint、DNS 传输和 HTTP 客户端池。
+- **平台分别治理**：Apple 同时观察进程 footprint 与 Go runtime 软限制，计入原生侧内存的差异；Android 按系统 trim 等级处理，界面隐藏本身不触发内存回收。关闭与重载等待已接受的回收结束，丢弃旧实例待执行请求。
+
+### iOS 高成本创建准入
+
+Network Extension 模式使用 OOMKiller 已有压力状态，限制 AnyTLS TCP/UoT 与共享 TLS 握手的创建并发、等待队列和等待时长，缓解突发建连阶段的内存压力。压力升高时逐级收紧额度：
+
+| 默认压力状态 | 普通创建并发 | 等待队列 | 最大等待 |
+| --- | ---: | ---: | ---: |
+| Normal | 32 | 256 | 5 s |
+| Armed | 16 | 128 | 2.5 s |
+| Critical | 8 | 32 | 100 ms |
+
+交互流量另有 4 个预留额度；流量类别沿拨号上下文传递，TLS、AnyTLS 与多跳 detour 共用已持许可，避免嵌套调用重复排队。许可在创建返回后释放，不占用整个连接生命周期；压力更新带版本校验，诊断记录排队、拒绝、取消和在途计数。
+
+该准入默认不作用于非 NE 平台，也尚未为所有 QUIC、Cronet、Mieru 创建路径提供统一预算；实际 iOS footprint 与 Jetsam 改善仍需对应设备验证。
+
+### 后台任务与设备唤醒
+
+- 暂停或深度空闲时抑制非必要 DNS 乐观刷新；规则集与 Dashboard 周期更新等待适当工作窗口，首次必要初始化照常执行。
+- 屏幕亮起、解锁、扩展 resume 与真实睡眠边界分别处理，避免重复退役连接或错误计算休眠时长。
+- 内存看门狗按压力自适应采样；必要的恢复观察继续运行，非必要后台任务不主动唤醒按需隧道或重新拨号。
+
+设计与适用范围见 [低内存缓冲区](KNOWLEDGE/modules/mtu-and-geometry.md#5-低内存几何-profilethe-low-memory-geometry-profile)、[分层内存管理](docs/FAST-PATH-AND-MEMORY.md#内存管理的分层设计)、[创建准入](KNOWLEDGE/modules/resource-admission.md)和 [移动端电源策略](KNOWLEDGE/modules/power-mobile-lifecycle.md)。
 
 ## iOS 本地回环
 
@@ -181,44 +236,6 @@ CONNECT-IP 将远端分配的地址、路由与内部 DNS 同本地 endpoint/TUN
 **当前仍存在兼容性问题**：根据现有真机反馈，WLOC 的开发者模式虚拟定位可正常使用，但使用本项目回环进行 **SideStore 续签仍有问题**。续签时请切换至 **LocalDevVPN** 建立本地隧道，再回到 SideStore 刷新应用，操作参见 [SideStore 官方指南](https://docs.sidestore.io/docs/installation/install)。
 
 上述结果仅对应已反馈的设备与使用场景。默认 `go` 栈支持 TCP、UDP、ICMPv4/v6 反射；其他显式栈尚无完整同等实现。配置与排障见 [本地回环说明](docs/IOS-SELFSIGN-AND-LOOPBACK.md#打开本地签名回环)。
-
-## 生命周期与资源优化
-
-### 网络恢复与后台管理
-
-- 切网时按资源契约退役旧状态；休眠唤醒后区分 Keep、Suspect、Retire，停止向可疑旧池分配新流，并允许已有工作排空。
-- 暂停非必要 DNS、规则集和 Dashboard 后台刷新，保留首次初始化及必要恢复工作。
-- 空闲清理、系统压力与紧急回收共用协调路径，按过期缓存、空闲池、runtime 回收逐级处理，并根据收益提前停止。
-- 区分 Apple 进程 footprint 与 Go 内存软限制，Android 分级 trim 不将界面隐藏直接视为内存危机。
-
-详见 [生命周期](KNOWLEDGE/modules/core-lifecycle-runtime.md)、[移动端电源管理](KNOWLEDGE/modules/power-mobile-lifecycle.md)及 [内存回收设计](docs/FAST-PATH-AND-MEMORY.md)。
-
-### iOS 高成本创建准入
-
-`resourceguard` 在 Network Extension 模式复用 OOMKiller 的压力状态，为 AnyTLS TCP/UoT 和共享 TLS 握手限制创建并发、队列和等待时间。正常态默认并发 32、队列 256，交互流量另有 4 个预留额度；Armed/Critical 状态逐级收紧。
-
-流量类别沿拨号 Context 传递；嵌套 TLS、AnyTLS 和 detour 共用已持许可标记，避免重复领取。压力计划按版本发布，防止陈旧观察覆盖新状态或重复触发回收。诊断记录请求、排队、拒绝、取消与在途计数。
-
-该机制限制创建阶段，默认不作用于非 NE 平台。实现与已知限制见 [资源准入模块](KNOWLEDGE/modules/resource-admission.md)。
-
-## 端到端网络链路优化
-
-| 链路阶段 | 主要改造 |
-| --- | --- |
-| **入口与收包** | TUN 将 DNS 劫持、FakeIP 和流量预判按明确顺序处理，合并栈启动前的重置并衔接启动后事件；Mixed 复用读取器区分 HTTP/SOCKS，保持认证与首包数据。 |
-| **目标识别与嗅探** | HTTP/TLS 提前排除不匹配输入；TLS 只提取所需 ClientHello，QUIC 后续分片读取有界。可信 FakeIP 域名满足条件时减少额外等待，保留首包重放和借用缓冲区的生命周期。 |
-| **解析与候选构造** | 协调并发 DNS 查询、缓存和增量 A/AAAA；按流捕获有效地址族策略，区分本地出口能力与代理端目标能力，将迟到候选和结果限定在所属网络代次。 |
-| **规则与代理组** | 使用紧凑规则结构和有界扩容，流式加载远程规则；组选择传递完整候选，预览不消耗轮询，同一条流共享嵌套重试预算。 |
-| **物理拨号与握手** | 将接口、mark、namespace、截止时间和取消传到实际 socket；回收竞争落败或迟到的连接。TLS/AnyTLS 在 NE 模式复用创建许可，代理拒绝与路径错误分别归因。 |
-| **协议传输与上传** | 按协议选择 XMUX、SDK Runtime、TLS/QUIC 会话或 CONNECT；聚合小写入、复用帧头空间、按能力转移数据报。显式上传整形持续控制共享队列，保护交互请求。 |
-| **回包、复制与关闭** | TUN 常见回写复用切片，批量发送按已完成部分结算；缓存首包交接、splice 失败回退和 kTLS 尾部交付保持数据完整，半关闭与连接接管沿原资源释放链退出。 |
-| **切网与资源回收** | 网络代次隔离旧查询与连接，重建租约限制重复恢复；休眠后的复用退役与普通内存清理分别执行，按收益逐级回收缓存、空闲池和 runtime 页面。 |
-
-**快速路径分层执行。** Linux `auto_redirect` 的 Direct Offload 只有在路由、目标和 socket 选项可保持原有语义时才尝试系统绕行；普通 TUN、系统代理和连接建立后的 splice 各有独立路径。FakeIP、认证、跟踪、业务调度及显式 `fast_path: false` 等要求参与资格判断，不能以旁路授权替代实际数据交付。
-
-**控制面成本与逐包成本分别优化。** 拨号选项和引用关系尽量在构造或启动阶段整理，逐流处理地址候选、选路和握手，逐包路径集中于必要的帧处理、复制和所有权转移。规则加载累计分配、连接创建峰值、稳态数据吞吐与后台活动分别测量。
-
-设计与调用链见 [架构与网络链路优化](docs/ARCHITECTURE-AND-NETWORK-PATH.md)、[数据路径模块](KNOWLEDGE/modules/data-path-optimization.md)和 [Fast Path 设计](docs/FAST-PATH-AND-MEMORY.md)，配置见 [扩展配置示例](docs/FORK-CONFIGURATION.md)。
 
 ## 性能与内存对照
 
@@ -268,7 +285,7 @@ Linux 普通入站在未显式启用 `tcp_multi_path` 时使用普通 TCP；Clas
 
 - **配置与使用**：[配置参考](docs/configuration) · [扩展配置示例](docs/FORK-CONFIGURATION.md) · [NXDOMAIN](docs/DNS-NXDOMAIN.md) · [本地回环](docs/IOS-SELFSIGN-AND-LOOPBACK.md#打开本地签名回环)
 - **构建与发布**：[构建档位](docs/BUILD-PROFILES.md) · [Apple TestFlight](docs/APPLE-BETA-RELEASE.md) · [更新日志](CHANGELOG.md)
-- **性能与设计**：[架构与网络链路](docs/ARCHITECTURE-AND-NETWORK-PATH.md) · [性能对照](docs/PERFORMANCE-COMPARISONS.md) · [性能参数](KNOWLEDGE/PERFORMANCE-FACTORS.md) · [Fast Path 与内存管理](docs/FAST-PATH-AND-MEMORY.md) · [工程架构评估](KNOWLEDGE/reports/core/JiejieBox_工程架构与改造最终评估报告_2026-11-01.md)
+- **性能与设计**：[链路实现说明](docs/ARCHITECTURE-AND-NETWORK-PATH.md) · [性能对照](docs/PERFORMANCE-COMPARISONS.md) · [性能参数](KNOWLEDGE/PERFORMANCE-FACTORS.md) · [Fast Path 与内存管理](docs/FAST-PATH-AND-MEMORY.md) · [工程架构评估](KNOWLEDGE/reports/core/JiejieBox_工程架构与改造最终评估报告_2026-11-01.md)
 - **开发维护**：[Fork 差异](docs/FORK-DIFF.md) · [知识库](KNOWLEDGE/README.md) · [任务索引](KNOWLEDGE/INDEX.md) · [维护指引](KNOWLEDGE/REFRESH.md)
 
 开发及 AI 助手从 [AGENTS.md](AGENTS.md) 进入，先确认知识库基线与 Git 增量，再按任务查阅模块。
