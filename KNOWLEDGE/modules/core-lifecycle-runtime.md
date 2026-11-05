@@ -1,5 +1,11 @@
 # 核心生命周期与运行时协调（Core lifecycle and runtime coordination）
 
+## v0.1.39：设备变化与创建边界（Current lifecycle delta）
+
+`transport/device/stack.go` 在地址变化时中断对应地址族的 UDP sockets，再发布新地址/interrupt group；地址与组受同一锁保护。OpenVPN/OpenConnect 的 endpoint 本地流量与 HostPort 裁决对齐，来源与限制见 [上游逐项核对](../../docs/fork/upstream-merge-2026-11-03.md)。
+NE 昂贵创建的许可与压力发布属于 [resource-admission](resource-admission.md)，平台回环覆盖和 command socket 属于 [apple-selfsign-loopback](apple-selfsign-loopback.md)。常规 trim、network epoch 与新的创建准入不是同一事件，不能把普通内存整理变成网络重置。
+下文较早的生命周期设计仍保留其审阅范围。
+
 ## v0.1.9 之后的网络切换所有权（Network transition ownership after v0.1.9）
 
 **VERIFIED_SOURCE，审阅版本 `011f3fdcd99`。** `adapter/network.go` 区分网络重置的

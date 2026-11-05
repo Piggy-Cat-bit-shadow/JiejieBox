@@ -1,5 +1,19 @@
 # 知识索引：按任务查找文档（Knowledge index — route first, read narrowly）
 
+## 2026-11-05 新增导航（New routes）
+
+| 任务 / 路径 / 关键符号 | 直接入口 |
+| --- | --- |
+| 当前 Release、旧基线后的生产增量、历史材料状态 | [CALIBRATION-2026-11-05](CALIBRATION-2026-11-05.md) |
+| OOM、resourceguard、Acquire、WithHeldPermit、observe/apply、traffic_class | [高成本创建准入](modules/resource-admission.md) |
+| 自签、App Group、TMPDIR、command.sock、LoopbackAddress、10.7.0.1 | [Apple 自签与回环](modules/apple-selfsign-loopback.md) |
+| MPTCP、tcp_multi_path、SetMultipathTCP、CVE-2026-98432、netx | [监听安全](modules/listener-security.md) |
+| Cronet 31 模块、patch5、socketpair、WriteTo(nil)、dnsReplyFailures | [修复与消费记录](reports/release/cronet-patch5-linux-dns-2026-11-05.md) |
+| XHTTP/Xray、Mieru/Mihomo/mita、规则内存、ns/op、MB/s、优化前后 | [性能对照专页](../docs/PERFORMANCE-COMPARISONS.md) |
+| iOS 自签下载、本地回环打开方式与栈限制 | [用户指南](../docs/IOS-SELFSIGN-AND-LOOPBACK.md) |
+
+下列旧校准入口仍保留各自日期与范围，不能替代上表的新目标章节。
+
 本索引用来查找资料：根据当前任务、关键词或源码路径，定位需要阅读的模块和章节。
 具体的技术结论及其证据在对应模块中。
 

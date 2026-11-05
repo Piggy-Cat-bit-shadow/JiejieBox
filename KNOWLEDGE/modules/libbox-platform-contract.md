@@ -1,5 +1,11 @@
 # libbox 与平台契约（libbox and the platform contract）
 
+## v0.1.39：回环接口、自签与短 socket（Current platform delta）
+
+新增 TUN loopback getters 与 OverrideOptions.loopbackAddress，经 daemon 在内存中合并首个 TUN，Apple iOS 客户端为同一列表加 host routes。command server/client 共同使用有预算的 Unix socket 路径解析，始终考虑系统 temp，不能以改目录代替 Darwin bind 证明。
+Apple pin 为 ab575dace8190a48a9d7cf666ef009f803e6ca62；完整跨仓契约和使用限制见 [apple-selfsign-loopback](apple-selfsign-loopback.md)。当前来源和 CI 见 [增量校准](../CALIBRATION-2026-11-05.md)，下面旧 Apple pin 与 ABI 结论只适用于其快照。
+本轮文档没有改变 ABI；描述的是此前已发布实现。
+
 ## Apple 来源与单运行器差异（Apple source and single-runner delta (updated 2026-10-31)）
 
 在当前源码目标中，Apple 的 gitlink 和 ABI 检查常量都指向

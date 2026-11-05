@@ -1,5 +1,15 @@
 # 模块地图 —— 哪个任务该读哪个文件（Module map — which file to read for which task）
 
+## v0.1.39 新的所有权域（New ownership domains）
+
+| 模块 | 主责与原模块的关系 |
+| --- | --- |
+| [resource-admission.md](resource-admission.md) | common/resourceguard、TLS/AnyTLS 准入、压力版本发布、许可与 OOM 账本；power/mobile 仍拥有其他生命周期和回收策略 |
+| [apple-selfsign-loopback.md](apple-selfsign-loopback.md) | 签名授权、共享容器、短 command socket、覆盖→TUN→NE route；libbox-platform-contract 保留通用 ABI 责任 |
+| [listener-security.md](listener-security.md) | 普通入站及 netx API/debug 的 MPTCP 默认值、显式 opt-in 与 Linux socket 测试 |
+
+固定目标与历史模块适用范围见 [增量校准](../CALIBRATION-2026-11-05.md)。这些领域的约束、测试环境和失败演进各自独立，因此单列模块，不将所有移动端内容塞进一份平台说明。
+
 本表将常见任务映射到对应模块。按需阅读即可；各模块记录了相关源码位置、来源和证据范围。
 
 ## 任务 → 模块（Task → module）

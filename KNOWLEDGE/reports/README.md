@@ -1,5 +1,17 @@
 # 历史报告：审计、验证与发布记录
 
+## 当前阅读路线与状态更正（Current routes and supersession）
+
+先看 [2026-11-05 增量校准](../CALIBRATION-2026-11-05.md) 的历史材料处置表；其中区分 KEEP、ABSORB 与被取代的阶段状态。
+
+- **产品功能**：[自签与本地回环指南](../../docs/IOS-SELFSIGN-AND-LOOPBACK.md)，当前设计归 Apple 模块。
+- **资源治理**：[资源准入模块](../modules/resource-admission.md)，初次报告的“仅 AnyTLS”已扩展到共享 TLS，版本发布竞态已有后续修复。
+- **Cronet**：[patch5、Linux DNS及正式消费](release/cronet-patch5-linux-dns-2026-11-05.md)，取代旧四平台重建和旧 publisher 阻塞状态。
+- **数字与实现对照**：[性能专页](../../docs/PERFORMANCE-COMPARISONS.md)，按条件收录 XHTTP/Mieru、规则集、TUN、调度与 Naive 数据。
+- **版本历史**：[v0.1.39详述](../../docs/releases/v0.1.39.md)、[v0.1.33补写](../../docs/releases/v0.1.33.md)；原始发布说明归档继续保留。
+
+下方报告原文不因索引更新而变为当前全量认证。
+
 本目录保存项目在各个时间点形成的架构审计、专项验证、发布收尾和客户端调查报告。它们集中归档于此，方便按时间、审阅对象和主题追溯。
 
 ## 如何使用历史报告

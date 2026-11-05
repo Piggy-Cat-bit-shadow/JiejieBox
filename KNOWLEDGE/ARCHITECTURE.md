@@ -1,5 +1,13 @@
 # 值得保留的架构边界（Architecture boundaries worth preserving）
 
+## v0.1.39 新的跨层边界（Current cross-layer boundaries）
+
+- 创建准入由进程压力所有者提供；TLS/AnyTLS 是消费者，一次逻辑拨号最多一份许可，不新增第二采样器或破坏性回收执行器。
+- Apple 平台上报签名事实、安装本机路由；核心只对明确请求合并回环覆盖，数据面与路由必须消费同一地址集合。
+- manifest、源码 pin、实际签名授权与二进制字节是四类证据，不能互相代替。
+
+设计原因与来源分别在 [资源准入](modules/resource-admission.md)、[Apple 自签与回环](modules/apple-selfsign-loopback.md) 和 [当前增量](CALIBRATION-2026-11-05.md)。
+
 本文列出 11 条需要维护的架构边界。每条边界都附有对应模块，说明设计原因、源码和验证范围。
 
 ## 1. 所有权：Scope 负责按注册逆序清理（Ownership: a Scope owns its registered reverse cleanups）

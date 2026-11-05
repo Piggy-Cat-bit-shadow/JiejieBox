@@ -1,5 +1,12 @@
 # 原生 Naive 与 HTTP 传输栈（Native Naive and the HTTP transport stack）
 
+## v0.1.39：patch5、解析归属与 Linux DNS（Current delta）
+
+目标 `fc7e40024` 的 31 模块成套消费 root/libs `362e63b14ce2`、all `7ce9c49b464a`，保留 fork replace；Chromium 为 154.0.8037.49。新增 8 SPKI、QUIC 64/128 MiB 与调节修复；原生五目标重建不代表全部 29 模块重建。
+Cronet 用 192.0.2.1 作服务器地址路由标记，再由 host dialer 对配置服务器执行真实解析；Linux 匿名 socketpair 回复修复已在消费 pin 中。有 reply address 保留 WriteTo，无地址才使用已连接端点 Write，失败计数且不逐查询刷日志。
+具体源码、红/绿运行、purego/cgo 与证据边界见 [Cronet 专项记录](../reports/release/cronet-patch5-linux-dns-2026-11-05.md)。不能据此声称 Chromium 所有 DNS/DoH 流量都受同一策略约束。
+v0.1.37 已吸收非法 CONNECT 请求校验等修复；下面较早版本的 pin、接口与限制按各自日期阅读。
+
 ## v0.1.9 之后的 Naive 出站 H3 回退（Naive outbound H3 fallback after v0.1.9）
 
 **VERIFIED_SOURCE，审阅版本 `011f3fdcd99`。** `protocol/naive/outbound.go` 由构建标签

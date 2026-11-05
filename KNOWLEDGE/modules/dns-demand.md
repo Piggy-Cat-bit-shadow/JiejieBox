@@ -1,5 +1,11 @@
 # DNS（域名系统）
 
+## v0.1.39：异步建连与消息所有权（Current DNS delta）
+
+`dns/transport/multiplexer.go:dispatch` 将串行池 exchangeSingle 移到调用方 goroutine 之外，避免冷 TCP/TLS 建连阻塞 TUN 收包；池仍约束同一连接的查询使用。TCP/UDP/HTTPS/H3 和 libbox DNS 的打包使用 message.Copy，不用浅复制共享可变消息。
+依据 `8360bb2a9`、`bbaff7bc3` 和当前测试（async_dispatch、async_dispatch_leak），属于 `UPSTREAM-ABSORBED` 的适配修复，不是新增另一套 DNS 权威。Naive 依赖侧的匿名 socketpair 回复另见 [Cronet 记录](../reports/release/cronet-patch5-linux-dns-2026-11-05.md)。
+下文旧快照中的缓存与代次不变量继续按其源码锚点核对，不把 goroutine 调度改动泛化成解除所有 DNS 并发限制。
+
 ## 基线之后的地址族探测日志（Post-baseline family-probe logging, testing, 2026-10-28）
 
 **VERIFIED_SOURCE，审阅版本 `011f3fdcd99173acd3e80483b50cb76b07bf6ff4`。**

@@ -1,5 +1,9 @@
 # 速度关键参数与因素（实测基线）
 
+## 全部对照数据入口（Comparison catalogue）
+
+[性能与内存对照](../docs/PERFORMANCE-COMPARISONS.md) 汇总优化前后、XHTTP/Xray、Mieru官方/Mihomo/mita以及Naive回环，保留日期、条件、正负结果和未复测范围。本文件继续承担参数和瓶颈定位职责，不在多个文档维护互相漂移的完整测量表。
+
 本文整理性能排查的检查顺序和一组历史基线数据。代码层的数据面优化及其约束见 `modules/data-path-optimization.md`。
 
 **证据等级**沿用仓库四标签（`VERIFIED` / `INFERRED` / `UNVERIFIED` / `UNKNOWN`）。每条 `VERIFIED` 都写明测量日期与条件；`PRIOR` 表示"上一轮测过、本轮未复测"。

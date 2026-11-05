@@ -1,5 +1,12 @@
 # 分支知识库（Fork knowledge base）
 
+## v0.1.39 增量入口（Current release delta）
+
+**先读 [2026-11-05 增量校准](CALIBRATION-2026-11-05.md)。** 当前产品目标为已发布的 v0.1.39；下表的 v0.1.34 是保留的广泛知识快照，不能把它当作当前产品版本。
+本轮补齐 [资源准入](modules/resource-admission.md)、[Apple 自签/回环](modules/apple-selfsign-loopback.md)、[监听安全](modules/listener-security.md) 与 Cronet patch5 消费状态，并更新相关模块入口与验收规则。
+历史性能统一从 [测量对照](../docs/PERFORMANCE-COMPARISONS.md) 进入；保留测试条件、落后结果和旧 SDK 范围。
+旧基线后的增量包含生产、平台、依赖与发布改动，绝非只有文档。
+
 **知识库 + Git 增量 = 当前 AI 上下文。** 本知识库重点记录本项目相对于上游 sing-box 的改动、
 设计原因和维护时容易踩的坑。它不代替上游文档，也不要求每次接手任务都重新梳理历史提交。
 

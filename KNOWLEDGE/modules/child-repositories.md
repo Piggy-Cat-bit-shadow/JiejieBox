@@ -1,5 +1,11 @@
 # 子仓库与分叉依赖（Child repositories and forked dependencies）
 
+## v0.1.39 已消费状态（Current consumed revisions）
+
+当前父仓 pin：Apple ab575dace8190a48a9d7cf666ef009f803e6ca62，Android c7837107dc0126fb704fdf08cf203e10b30c8a22，Desktop 41722b030ea481523290d932a1d81177f8c13f32；Dashboard 0da341722a8a0046fa5f5b602a19f9b4e1efccc8。sing-tun 为 8f65451175c0；Cronet root/libs 362e63b14ce2、all 7ce9c49b464a。
+本次独立观察 Apple main、sing-tun dev 与其 pin 相同，读取重要固定源码；cronet-go 的 main/go 两分支分别是源码与发布树。完整观察值与限制见 [增量校准](../CALIBRATION-2026-11-05.md)。下表保留的是 2026-10-31 固定值，不是 v0.1.39 pin 表。
+不要从历史十仓 behind=0 推断运行时已经测试，也不要从已归档构建镜像取新的发布版本。
+
 ## 范围与如何阅读修订（Scope and how to read the revisions）
 
 客户端仓库和 fork 的 Go 依赖都属于内核知识库的维护范围。本文以父仓库

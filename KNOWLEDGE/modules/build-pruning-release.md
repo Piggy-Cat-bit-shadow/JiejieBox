@@ -1,5 +1,11 @@
 # 构建、裁剪与发布配置（Build, pruning and release profiles）
 
+## v0.1.39 的实际平台与依赖（Current product delta）
+
+源码平台、构建档位与正式附件分开判断。[首页平台表](../../README.md#客户端与命令行内核) 对照公开附件；Android AAR 不是 APK，iOS 自签 IPA 需签名，macOS DMG 不在本版正式附件中。
+Windows 档包含 with_naive_outbound/with_purego，Darwin 档有 Cronet 出站，OTHERS 缺少该出站标签但保留 Naive 入站；with_utls 在三份当前标签文件中都有。不要把旧的“两产品/与上游完全一致”叙述当作当前完整标签普查。
+Cronet 31 路径成套锁定，root/libs 与 all 分属发布流水的连续提交，实际 Chromium154，不根据 pseudo-version 的历史143前缀判断。Mieru 已到 v3.39.0。见 [构建档位](../../docs/BUILD-PROFILES.md) 与 [Cronet 记录](../reports/release/cronet-patch5-linux-dns-2026-11-05.md)。
+
 ## 2026-10-31 目标下的依赖固定（Dependency pins at the 2026-10-31 target）
 
 根模块 `go.mod` 和 `test/go.mod` 均将 `sing-tun` 替换为 fork 版本 `8b9a38008705`，

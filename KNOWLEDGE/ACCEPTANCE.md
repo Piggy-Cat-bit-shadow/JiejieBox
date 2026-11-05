@@ -1,5 +1,20 @@
 # 验收索引（Acceptance index）
 
+## v0.1.39 增量验收（Current delta acceptance）
+
+| 需求 | 层级与已有依据 | 复查 / 环境 |
+| --- | --- | --- |
+| 单许可、类别、取消和状态版本 | VERIFIED_SOURCE；源码与回归测试已核对 | 见 resource-admission 模块；本地 Go，race 需可用工具链 |
+| iOS 回环覆盖与读取接口 | VERIFIED_SOURCE；daemon/libbox/tun 测试位置 | `go test ./daemon ./experimental/libbox ./protocol/tun -run 'Loopback|DeviceLayout|TemporaryDirectory|Bindable'` |
+| 深路径确实可 bind | 既有 Darwin CI 与测试记录，非本次新测 | Darwin 真 bind，Windows 路径算术不能替代 |
+| 默认 TCP / 显式 MPTCP | VERIFIED_SOURCE；Linux getsockopt 测试 | `go test ./common/listener ./common/netx -run 'MPTCP|Multipath' -v`，区分 SKIP |
+| Cronet Linux 匿名 socketpair 修复 | API 核对旧红、新 purego/cgo 绿的运行；当前消费源码含修复 | [证据与 SHA](reports/release/cronet-patch5-linux-dns-2026-11-05.md) |
+| 最终标签的发布与公开资产 | VERIFIED_CI（运行结论）；API资产元数据，不是本次字节复验 | [校准记录](CALIBRATION-2026-11-05.md)，Verify attempt2 与 Release 链接 |
+| SideStore、NE route/reload、不同重签环境 | 既有部分用户反馈；完整场景 NEEDS_DEVICE | 按 [用户指南](../docs/IOS-SELFSIGN-AND-LOOPBACK.md) 在对应设备验收 |
+| 历史性能 | 已归档对应主机、SDK、负载条件；本轮未新测 | [性能专页](../docs/PERFORMANCE-COMPARISONS.md)，不提升到当前设备结果 |
+
+旧条目的 PASS/SKIP 仍保留其日期与提交，不能因本表新增就追认全部历史项目通过。
+
 ## 2026-10-29 增量证据（delta evidence）
 
 | 需求 | 所述目标上的证据 | 限制 / 复检 |

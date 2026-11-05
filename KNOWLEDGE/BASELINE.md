@@ -1,11 +1,18 @@
 # 基线（Baseline）
 
+## v0.1.39 的固定目标与增量覆盖（Release target and delta coverage）
+
+2026-11-05 独立核对的正式发布目标为 **`fc7e400243d46a451b2dffbe68cb5a3147c66289` / v0.1.39**，与文档所在提交分开。已发布状态、子仓 pin、CI、模块覆盖和报告取代关系见 [增量校准](CALIBRATION-2026-11-05.md)。
+
+下文 v0.1.34 仍是最后一次广泛知识基线，本轮不把未逐条重审的旧模块冒充当前版本全量认证。旧基线到 v0.1.39 有 **275 个提交**；当前使用模型是“广泛快照 + 本轮明确覆盖的增量 + 目标之后的 Git 变化”。
+按本轮目标检查新增改动可用 `git diff --name-only fc7e400243d46a451b2dffbe68cb5a3147c66289..HEAD`；对未覆盖领域仍从旧基线计算，不能跳过中间增量。
+
 ## 当前校准基线——2026-10-31（Current calibrated baseline — 2026-10-31）
 
 | 字段 | 取值与范围 |
 |---|---|
 | 仓库 / 分支 | `Piggy-Cat-bit-shadow/JiejieBox` / `testing`；先前的 `sing-box` 远端 URL 会重定向到本仓库 |
-| 生产基线 | `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28` —— 最后审阅的源码/发布/CI 变更；此后审阅到的提交只修改了文档 |
+| 生产基线 | `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28` —— 2026-10-31 广泛快照；此后已有生产变更，另见上方 v0.1.39 增量入口 |
 | 发布基线 | [v0.1.34](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.34)，发布于 2026-10-29 05:34:42 UTC，既不是 draft 也不是 prerelease；附注标签（annotated tag）剥离后指向生产基线 |
 | 上游祖先 | 观察到的 `upstream/testing` `e5d91fa79f6319d5de940d6c81d81f0fe53b9476` 是合并基；祖先关系证明不了作者身份 |
 | 上一个生产基线 | `dbcfc1d359d6ed818dfaaefb6d4e637b6e785f07`；基线到目标区间内有 12 个可达提交，包含知识库/文档 |

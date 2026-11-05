@@ -1,5 +1,11 @@
 # XHTTP 客户端传输（XHTTP client transport）
 
+## v0.1.39 目标的新增修复与性能入口（Current delta）
+
+v0.1.37 已纳入 stream-up 上传被非 200 拒绝时的状态传递、pending 下载取消和管道关闭修复，v0.1.39 继承这些行为；`transport/v2rayxhttp/client.go`/`conn.go` 的 uploadRefused 与 awaitRaise 是当前锚点。成功 200 的响应体仍需按契约 drain/close，不能为统一错误路径过早 reset 配对下载。
+四模式与 VLESS 加密仍是客户端侧能力；没有新增对应 XHTTP 服务端或 VLESS 加密服务端。Xray 实现速度对照与 RTT 扫描见 [性能专页](../../docs/PERFORMANCE-COMPARISONS.md)，其中数字是 2026-10-15 历史实验，不是 v0.1.39 重测。
+共享 TLS 入口现在涉及 NE 创建准入，许可/类别的跨层约束见 [resource-admission](resource-admission.md)。下文旧设计仍按注明的版本使用。
+
 ## v0.1.9 之后的 VLESS 加密边界（VLESS encryption boundary after v0.1.9）
 
 **VERIFIED_SOURCE，审阅版本 `011f3fdcd99`。** `option/vless.go` 提供可选的 VLESS

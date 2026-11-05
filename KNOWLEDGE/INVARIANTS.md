@@ -1,5 +1,17 @@
 # 不变量（Invariants）
 
+## v0.1.39 增量约束（Delta invariants）
+
+| 约束 | 故障 / 正确性依据 | 源码与复查 |
+| --- | --- | --- |
+| 一条逻辑拨号最多持有一份创建许可 | 嵌套 detour/TLS/AnyTLS 会等待自身持有的许可 | held.go、TLS/AnyTLS admission；[准入模块](modules/resource-admission.md) |
+| 陈旧压力观察不能覆盖新计划或重复 shed | 已有确定性交错复现与版本发布修复 | guard.observe/apply、guard_publish_race_test.go |
+| iOS 覆盖与 NE 路由消费同一回环地址，非 iOS 不被偷加路由 | 数据面与平台路由配对、平台隔离 | [Apple 模块](modules/apple-selfsign-loopback.md) |
+| 普通 listener 未显式 opt-in 时不意外启用 MPTCP | 安全默认与用户配置语义 | [监听模块](modules/listener-security.md) |
+| PacketConn 回复按实际地址语义区分 | 匿名 Unix socketpair 的 WriteTo(nil) 与普通 UDP Write 各自会失败 | [Cronet 记录](reports/release/cronet-patch5-linux-dns-2026-11-05.md) |
+
+Darwin 的 103 字节路径预算是平台限制；默认 32 并发、候选目录顺序、队列大小和等待时间属于当前策略，不应冻结为永久协议常量。下文旧不变量保留原审阅范围。
+
 ## 当前跨模块边界（Current cross-module boundaries, 2026-10-29）
 
 * 端点本地流量在 system 模式下保留 `ActionAccept`；没有 routed port、协议不支持或缺少

@@ -1,5 +1,12 @@
 # CI、证据与发布（CI, evidence and release）
 
+## v0.1.39 的发布契约（Current release contract）
+
+正式 release.yml 已将 iOS 自签完整 IPA 纳入统一资产契约；公开 API 核对共 8 项。Windows 安装包仍为必需产物，Release 选择既有成功运行，缺少安装包不能靠命令行 core 替代。Mac DMG 虽有构建路径，不在该版正式附件内。
+自签工作流手动 dispatch，名称有 experiment 不表示产物不被正式发布；复用 Libbox 前验证父 SHA/版本/hash。source-lock 核对实际 pseudo-version，flatten 依据同一附件契约，不维护第二份易过期的数量清单。
+最终标签 fc7e40024 的 Verify、发布契约、各平台、Apple、自签、Windows installer/runtime audit 与 Release 运行已按 API 核对 success；具体链接及范围见 [v0.1.39 说明](../../docs/releases/v0.1.39.md) 与 [增量校准](../CALIBRATION-2026-11-05.md)。这不是独立设备验收。
+以下旧门禁清单与缺失证据只适用于各自注明版本，不能据旧 pin 宣称当前发布尚未接入自签。
+
 ## v0.1.34 Apple 检查与证据（v0.1.34 Apple checks and evidence (2026-10-31)）
 
 父仓库中的 Apple gitlink、ABI 检查常量和冻结锁文件现在都指向 `044e6d5447eb`；
@@ -564,7 +571,7 @@ DEFAULT_BUILD_TAGS        with_quic,with_dhcp,with_wireguard,with_utls,with_acme
 DEFAULT_BUILD_TAGS_OTHERS … the same list with with_naive_outbound removed
 ```
 
-> **`docs/BUILD-PROFILES.md:43-44` 说*客户端* profile“添加了 `with_utls`”。那是错的：**
+> **历史校准发现（本次文档已修正）：`docs/BUILD-PROFILES.md` 曾说客户端 profile“添加了 `with_utls`”，当时该说法错误。**
 > `with_utls` 在**两个**文件里都有。`with_naive_outbound` 是唯一的差异。相信
 > 那句话的读者会把一次标签改动的作用范围定错。
 

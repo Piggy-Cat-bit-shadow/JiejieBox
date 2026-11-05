@@ -1,5 +1,21 @@
 # 提交导航（Commit navigation）
 
+## v0.1.39 演进主题（Current thematic navigation）
+
+| 主题 | 关键提交 / 导航 |
+| --- | --- |
+| 进程准入 → AnyTLS → OOM所有权 → 共享TLS | 45af5b39c、e58a1c9fc、e501b8068、ab24a1086；resource-admission |
+| 交互类别 → 单许可 → 陈旧发布修复 | 72e566305、688184eb8、3c0c780c2、3ca4e23b7、882f6047d |
+| DNS异步建立与复制 | 8360bb2a9、bbaff7bc3 |
+| 设备UDP中断与endpoint裁决 | 4d865d1a7、0a4cd167d |
+| 本地回环与平台隔离 | 3aef9b341、4730e819b；apple-selfsign-loopback |
+| command socket预算与系统temp | 1f8cbba58、a840a016f、62a78be5a |
+| Apple最终授权组发现与pin | 90246a280；Apple ab575da |
+| 自签正式附件与同源manifest | d26a3b4ee、f1e2778c6、5b0577695 |
+| Cronet成套接入与版本发布 | c11723e32、c7df0cf01、fc7e40024；Cronet专题记录 |
+
+完整语义与证据在各模块；这里不逐个收录重试、合并或文档提交。
+
 ## 2026-10-29 增量导航（delta navigation）
 
 | 提交 | 变更行为 |

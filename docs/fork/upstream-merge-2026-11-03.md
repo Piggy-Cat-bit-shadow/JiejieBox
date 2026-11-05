@@ -1,5 +1,7 @@
 # Upstream merge, 2026-11-03 (round 03)
 
+> **历史阶段记录。** 本文的分支、pin、未合并/未发布或构建阻塞描述只适用于写作时版本。v0.1.39 已集成本地回环、自签修复与后续 Cronet 五目标发布；当前固定版本、已知限制和取代关系见 [2026-11-05 增量校准](../../KNOWLEDGE/CALIBRATION-2026-11-05.md)。保留原文中的设备未验项和失败过程，不把构建通过外推为真机通过。
+
 This is the record of the first upstream integration after the iOS resource governor landed. It
 is written so round 04 can audit the shared paths that changed, and so nobody has to re-derive
 which upstream commits are still outstanding.

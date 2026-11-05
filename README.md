@@ -8,7 +8,24 @@ JiejieBox 基于 [sing-box](https://github.com/SagerNet/sing-box) 及其依赖�
 
 [下载与更新日志](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) · [Android 客户端](https://github.com/Piggy-Cat-bit-shadow/satelite-one) · [配置文档](docs/configuration) · [反馈问题](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/issues)
 
-**配置兼容：** 当前内核的上游基线已包含 sing-box `v1.15.0-alpha.13`；常规配置语法以该版本为参考，原有入站、出站、DNS 和路由配置可按 sing-box 文档编写。具体能力仍受平台、构建标签和上游弃用规则影响；本项目新增的字段需要配套内核。详见[配置参考](docs/configuration)与[扩展配置示例](docs/FORK-CONFIGURATION.md)。
+**当前正式版：[v0.1.39](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.39)。** 这一轮将 iOS 自签、本地签名回环、压力感知资源准入、Cronet patch5 与 Linux DNS 修复一起纳入产品交付。相对 v0.1.37 的 Git 区间为 **157 个提交、108 个文件、+10,574 / −421 行**，包含实现、测试、发布与文档；这些是变更规模，不是独立 Bug 数或作者贡献计数。详见[完整更新说明](docs/releases/v0.1.39.md)。
+
+**配置与版本基线：** 常规配置以已纳入的 sing-box `v1.15.0-alpha.13` 为参考，后续包含 2026-11-03 逐项核对、选择性适配的上游修复；不将移动中的上游 `testing` 或某个新标签直接视为完全兼容基线。Naive 的 Chromium 内核为 **154.0.8037.49**，已吸收 NaiveProxy **v154.0.8037.49-5 相关补丁**；Mieru SDK 为 **v3.39.0**。实际能力由平台、构建标签、客户端契约及上游弃用规则共同决定。参见[配置示例](docs/FORK-CONFIGURATION.md)、[构建档位](docs/BUILD-PROFILES.md)与[来源及增量记录](KNOWLEDGE/CALIBRATION-2026-11-05.md)。
+
+## 先看这些能直接感知的能力
+
+| 你关心的场景 | JiejieBox 提供什么 | 使用与细节 |
+| --- | --- | --- |
+| **iPhone / iPad 自行签名安装** | Release 直接提供完整未签名 IPA；适配重签后的 App Group、隧道标识与启动容错，并修复长路径命令通道 | [自签安装与排障](docs/IOS-SELFSIGN-AND-LOOPBACK.md) |
+| **SideStore / LiveContainer 本机连接** | “本地签名回环”开关自动把 `10.7.0.1` 接入本次 TUN；保留订阅原文，默认关闭 | **更多 → 连接行为 → 配置覆盖 → 本地签名回环**；[栈限制与开启方法](docs/IOS-SELFSIGN-AND-LOOPBACK.md#打开本地签名回环) |
+| **更多节点协议与传输组合** | XHTTP 四模式、Mieru TCP/UDP 入站与出站、VLESS 客户端加密、REALITY 握手扩展，连接到同一套 DNS、路由与生命周期 | [协议与网络能力](#协议与网络能力) |
+| **大流量上传时仍要及时交互** | 显式配置上传整形与业务类别，控制共享瓶颈队列；历史台架交互 p99 从 146 ms 降至 9 ms | [配置示例](docs/FORK-CONFIGURATION.md) · [测量条件](docs/PERFORMANCE-COMPARISONS.md) |
+| **iOS 小内存隧道承受连接突发** | OOMKiller 与 AnyTLS／共享 TLS 握手联动，在昂贵创建开始前限制并发，给交互流量保留额度 | [资源准入设计](KNOWLEDGE/modules/resource-admission.md) |
+| **断网、双栈黑洞与切网恢复** | 增量 DNS、完整候选传递、分层重试与过期结果隔离；Mieru 和 Naive 提供各自显式开启的回退 | [双栈](#从解析到拨号贯通的-ipv4--ipv6-双栈设计) · [代理链](#链式代理从组合拨号到故障恢复) |
+| **百万域名规则与长期后台运行** | 规则集有界扩容、流式加载、空闲池分层回收，减少瞬时分配与非必要后台活动 | [性能与内存对照](docs/PERFORMANCE-COMPARISONS.md) |
+| **减少监听入口的意外攻击面** | 普通入站及 API／调试入口默认选择普通 TCP，避免意外启用 MPTCP，缓解已公开 TCP 漏洞利用路径的暴露 | [MPTCP 安全加固及系统补丁边界](docs/SECURITY-MPTCP.md) |
+
+[下载与平台](#客户端与命令行内核) · [XHTTP 与 Mieru 速度对照](docs/PERFORMANCE-COMPARISONS.md) · [低内存与恢复](#生命周期与资源优化) · [详细更新日志](CHANGELOG.md) · [开发知识库](KNOWLEDGE/README.md)
 
 ## 这个项目具体做了什么
 
@@ -37,13 +54,16 @@ JiejieBox 的改造贯穿网络流的多个阶段：从 TUN、系统代理或其
 
 | 平台 | 获取与运行方式 |
 | --- | --- |
-| **Windows** | 从 [Releases](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) 下载已发布的 Windows 客户端安装程序。 |
-| **Android** | 使用 [satelite-one](https://github.com/Piggy-Cat-bit-shadow/satelite-one) 仓库中的 Android 客户端。 |
+| **Windows x64** | Release 提供 `Jiejiebox-v0.1.39-windows-x64.exe` 桌面安装包，以及独立 `windows-amd64` 核心压缩包。安装包与命令行核心是两种交付形式。 |
+| **Android arm64** | 使用 [satelite-one 客户端](https://github.com/Piggy-Cat-bit-shadow/satelite-one)；本核心仓库的 `android-arm64` Release 压缩包交付 AAR，**不是可直接安装的 APK**。 |
 | **Linux（命令行内核）** | 从 [Releases](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) 下载 `linux-amd64` 压缩包，解压后使用配置文件运行；部署说明见 [Linux 服务端文档](docs/JIEJIE-SERVER.md)。 |
 | **macOS（命令行内核）** | 从 [Releases](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) 下载 `macos-arm64` 压缩包，解压后使用配置文件运行；参见 [macOS 命令行运行说明](docs/JIEJIE-MACOS-CLIENT.md)。 |
-| **iOS / macOS（Apple 客户端）** | 在 Mac 上使用本仓库的 [TestFlight 发布脚本](scripts/publish-apple-beta.sh) 构建、签名并上传。完整流程见 [Apple TestFlight 构建说明](docs/APPLE-BETA-RELEASE.md)。 |
+| **iOS / iPadOS arm64** | v0.1.39 正式附件提供 `jiejie-ios-selfsign-unsigned-0.1.39.ipa`，自行签名后安装；也支持现有 TestFlight 构建与上传流程。[自签与回环说明](docs/IOS-SELFSIGN-AND-LOOPBACK.md)。 |
+| **macOS GUI / Apple 开发集成** | 维护配套 Apple 客户端、macOS GUI 构建与 TestFlight 路径；Release 提供 Apple Libbox，**v0.1.39 的正式附件不含 DMG**。源码构建及签名见 [Apple 发布说明](docs/APPLE-BETA-RELEASE.md)。 |
 
-Apple 平台以 `./scripts/publish-apple-beta.sh` 为入口。本项目支持 Windows 启动 Apple Actions 后，Mac 跟随指定运行提前获取 Libbox 并开始归档；版本、核心提交、Apple 客户端提交和正式 Release 产物会一起核对，上传前还要检查对应平台的 CI 与标签。本地需准备 Apple 签名及 App Store Connect 配置。
+下载时按当前 Release 的附件选择架构，并核对 `SHA256SUMS`。源码支持的平台、CI 能编译的平台与某一版实际发布的平台分别以源码、构建记录和附件为准；不能把 29 个原生模块理解成每次都重建 29 个架构。
+
+Apple 的 TestFlight 路径以 `./scripts/publish-apple-beta.sh` 为入口，需准备签名与 App Store Connect 配置。Windows 可启动 Apple Actions，Mac 跟随指定运行提前获取 Libbox 并归档；版本、核心提交、客户端提交和原生库来源一起核对。**自行签名的 IPA 不要求用户先搭建 TestFlight 上传环境**，具体签名权限仍由自己的证书与描述文件决定。
 
 ## 协议与网络能力
 
@@ -72,6 +92,13 @@ Apple 平台以 `./scripts/publish-apple-beta.sh` 为入口。本项目支持 Wi
 
 在与 Xray v26.9.30 参考服务端进行的历史 TLS / HTTP/2 受控测试中，packet-up 单流上传从 2.12 MB/s 提高到 26.8 MB/s；这是该组测试的测量结果，不代表所有公网环境的提升比例。测试条件、对照结果与后续长测见[评估报告的 XHTTP 章节](KNOWLEDGE/reports/core/JiejieBox_工程架构与改造最终评估报告_2026-11-01.md#九xhttp移植跨层修复与专项性能重构)。
 
+| 同一受控场景 | 早期实现 | 优化后 JiejieBox | Xray 参考客户端 |
+| --- | ---: | ---: | ---: |
+| packet-up 单流上传 | 2.12 MB/s | **26.8 MB/s** | 22.9 MB/s |
+| 建连 p99 | 31.7 ms | **约 4.3 ms** | 约 4.35 ms |
+
+这一组上传约为早期实现的 **12.6 倍**，比参考客户端约高 **17%**。高 RTT 的另一轮扫描中，30 ms 为 24.25 对 19.67 MB/s，100 ms 为 7.88 对 7.80 MB/s，200 ms 则为 3.92 对 4.04 MB/s；收益依赖网络，不能只取胜出的行概括全部场景。完整条件、反例与 70 分钟混合负载记录见 [XHTTP 实现速度对照](docs/PERFORMANCE-COMPARISONS.md#2-xhttp与-xray-的实现速度对比)。
+
 #### Mieru：协议 SDK 与共享内核衔接
 
 - 通过官方 SDK 提供入站与出站，支持 TCP、UDP 和双传输配置，并适配端口范围、凭据与协议参数。
@@ -82,6 +109,16 @@ Apple 平台以 `./scripts/publish-apple-beta.sh` 为入口。本项目支持 Wi
 Mieru 回退和代理组切换解决的是不同问题：前者在同一协议的 TCP / UDP 传输之间选择，后者在不同出站成员之间选择。启用 Mieru 回退时，两种传输各自拥有 SDK Client、配置和会话；恢复探测由后续业务连接按条件触发，不为每个会话额外启动一个常驻探测循环。网络切换后，旧网络的迟到结果不能再改写新网络的传输偏好。
 
 SDK 适配过程中，项目也把可确认的拨号错误整理成跨协议的 `FailureFacts`，供代理组判断：目标拒绝、本地接口不可用、用户取消与代理服务器连接失败不应一律算作节点失效。未知来源的 EOF 仍保持未知，不凭错误字符串强行定性。该机制改善的是故障归因，不保证每一种协议错误都能被准确分类。
+
+**实现速度也有可查的对照。** 2026-10-18 Windows/Ryzen 4800H、1200 字节 UoT 帧微基准中，写入为 118.8 对官方包装路径 666.1 ns/op，写入分配 64 对 1280 B/op，读取从 2 次分配降为 0 次。它衡量适配层帧处理，不是网络吞吐快 5.6 倍；后续并发读锁的成本另有记录。
+
+| 历史端到端场景 | 对官方同版本客户端 | 对 Mihomo 产品 |
+| --- | ---: | ---: |
+| 低复用 TCP 下载 | +10.2% | 1.07× |
+| 低复用 TCP 上传 | **−6.1%** | **0.95×** |
+| UDP underlay 上传 | +16.0% | 1.27× |
+
+官方对照使用 SDK v3.38.1，Mihomo v1.19.32 使用 SDK v3.38.0；后者不是统一 SDK 测试。真实 mita 后续对照中，部分下载和 UDP echo 有收益，首字节与部分上传则落后。当前 SDK 已升至 v3.39.0，以上历史矩阵尚未按新 SDK 全量重跑。完整的正负结果与条件见 [Mieru 实现对照](docs/PERFORMANCE-COMPARISONS.md#3-mieru官方-sdk官方客户端与-mihomo-对照)。
 
 #### REALITY / VLESS：握手兼容与数据路径
 
@@ -109,6 +146,8 @@ CONNECT-IP 还需要协调隧道地址、可达路由和包大小：下层容量
 - Naive 客户端可选 H3 → H2 故障回退，保留 CONNECT 握手与剩余时间预算，避免把普通 HTTP 响应或调用者取消当作 H3 线路失效。
 
 其他协议相关工作包括 AnyTLS 默认及 ALPN 回落、ShadowTLS 认证前读取与握手目标释放、SOCKS 可选预连接 / 复制调优，以及 SOCKS / HTTP CONNECT 的目标解析归属。
+
+Naive 当前使用保留自定义增强的 Cronet fork：吸收 patch5 的证书封锁条目、QUIC 64/128 MiB 窗口上限及自动调节修复，同时修复 Linux 匿名 socketpair 上 DNS 回复丢失。五个平台目标原生库重建与 Go 封装修复成套接入，保留可配置窗口和自定义拨号；**Chromium 仍是 154.0.8037.49**。Linux 默认服务端档包含 Naive 入站，未启用 Cronet 出站；其他平台按实际构建档位使用。详见 [Cronet 证据与模块版本](KNOWLEDGE/reports/release/cronet-patch5-linux-dns-2026-11-05.md)。
 
 ### DNS：更快解析、更少重复查询
 
@@ -195,6 +234,18 @@ DNS 传输、缓存和 endpoint 私有解析器也纳入连接复用及空闲资
 代理组的 `fast_path` 是逐流快速路径策略，与 `traffic_class` 的业务分类分别控制。显式禁止快速路径不能被直连能力覆盖；预览、诊断和启动校验也不会消耗实际轮询位置或提交一次流选择。
 
 ## 生命周期与资源优化
+
+### iOS：从压力发生后回收，推进到创建前准入
+
+移动端隧道既需要回收已有资源，也需要控制同时启动多少个昂贵握手。v0.1.39 的 `resourceguard` 由现有 OOMKiller 提供压力状态，不增加第二套内存采样器、常驻监控协程或定时器。在 iOS Network Extension 模式，AnyTLS TCP/UoT 与共享 TLS 握手入口按 Normal / Armed / Critical 分级限制并发、队列和等待时间。
+
+- 默认正常态创建并发额度为 32、等待队列 256，交互流量另有 4 个预留额度；压力升高时逐级收紧。它限制创建阶段，不把所有已建立连接数量硬封顶。
+- `traffic_class` 沿路由和拨号 Context 到达准入入口，让交互预留真正生效。
+- TLS、AnyTLS 和多跳 detour 共享“本次逻辑拨号已持许可”的标记，避免自己排队等待自己的许可。
+- 状态发布带版本，陈旧压力观察不能重新打开危机态闸门，也不能重复触发同一轮回收。
+- OOM 诊断增加请求、排队、拒绝、取消和在途计数；有界资源账本和故障路径有回归测试。
+
+这项机制来自真实突发诊断与后续本地／CI 测试，但不能承诺 iOS 永不 Jetsam，也不是给所有 QUIC、Cronet 或 SDK 流一律套用同一闸门。非 NE 默认不创建这个 guard。详见[资源准入模块](KNOWLEDGE/modules/resource-admission.md)与[完整专项报告](docs/fork/ios-resource-guard.md)。
 
 ### 统一生命周期与协议复用
 
@@ -335,10 +386,23 @@ DNS 传输、缓存和 endpoint 私有解析器也纳入连接复用及空闲资
 | 百万域名规则集加载累计分配 | 42.5 MiB | 20.6 MiB | 同机同样例，几何扩容优化；加载期 GC 次数由 10 次降至 5 次。 |
 | TUN 单包、单写回路径的临时分配 | 72 B / 2 次 | 0 B / 0 次 | 真实 dispatcher 与 portNAT 的回包基准。 |
 | 非 HTTP 流量经过 HTTP 嗅探的分配量 / 次数 | 4,889 B / 9 次 | 205 B / 3 次 | DNS-over-stream 样例，比较启用提前排除逻辑前后。 |
+| XHTTP packet-up 单流上传 | 2.12 MB/s | 26.8 MB/s | 历史 TLS/H2、同一 Xray v26.9.30 服务端；不是公网承诺。 |
+| 10 万域名加载累计分配 | 4.1 MiB | 2.9 MiB | 几何扩容；该规模稳态内存有小幅增长，详细表保留代价。 |
+| 远程 SRS 无缓存加载累计分配 | 21,229,120 B | 完整性修复后约 125 KB | 有效 SRS + 4 MiB 非压缩尾部构造样例。 |
+| CONNECT-UDP 包装边界，1200 B 载荷 | 409–428 ns、1345 B、2 次分配 | 83–85 ns、64 B、1 次分配 | 2026-10-20 owned 路径微基准，无 WAN 对端；消除一份载荷复制。 |
+| 同项实际 quic-go 连接，1000 B、5000 次发送 | 10.6 µs/包 | 9.5 µs/包 | 历史队列约束试验，不能用上一行倍数代替本行。 |
 
-规则集和回包数据分别见 [规则集加载记录](KNOWLEDGE/reports/anywhere-round2/anywhere-round2-final-summary.md) 与 [回包路径记录](KNOWLEDGE/reports/anywhere-round3/anywhere-round3-construction.md)。其他原始条件及限制见 [上传调度实验](KNOWLEDGE/modules/data-path-optimization.md#b3-the-four-measurements-that-settled-the-design)、[低内存缓冲区](KNOWLEDGE/modules/mtu-and-geometry.md#4-commonbufgeom--the-geometry-contract) 和 [嗅探测量](KNOWLEDGE/modules/sniff.md#7-evidence)。上传调度需要显式配置速率；低内存配置由构建选择。
+规则集和回包数据分别见 [规则集加载记录](KNOWLEDGE/reports/anywhere-round2/anywhere-round2-final-summary.md) 与 [回包路径记录](KNOWLEDGE/reports/anywhere-round3/anywhere-round3-construction.md)。其他原始条件及限制见 [上传调度实验](KNOWLEDGE/modules/data-path-optimization.md)、[低内存缓冲区](KNOWLEDGE/modules/mtu-and-geometry.md) 和 [嗅探测量](KNOWLEDGE/modules/sniff.md)。上传调度需要显式配置速率；低内存配置由构建选择。
+
+完整条件、XHTTP RTT 扫描、Mieru 官方／Mihomo／真实 mita 对照，以及 Naive H2/H3 和多 engine 的正负结果，统一见 [性能与内存对照专页](docs/PERFORMANCE-COMPARISONS.md)。CONNECT-UDP 的原始台架见 [六协议效率施工报告](KNOWLEDGE/reports/core/SIX_PROTOCOL_EFFICIENCY_IMPLEMENTATION_2026-10-20.md)。
 
 ## 部署与配套客户端
+
+### 默认安全：避免意外开启 MPTCP
+
+Linux 普通入站在未显式开启 `tcp_multi_path` 时使用普通 TCP；Clash API、V2Ray API、Debug HTTP 和 libbox pprof 等旁路入口也明确关闭默认 MPTCP。这减少了因 Go 默认设置而意外暴露 MPTCP listener 的机会，是针对公开 TCP 漏洞利用路径的主动缓解。该加固自 v0.1.37 已有，v0.1.39 继续保留。
+
+已公开的 CVE-2026-98432 根因是 Linux IPv4 TCP 的内核缺陷，不能把应用层关闭 MPTCP 表述为修好了系统内核。仍应安装系统安全补丁；主动配置 `tcp_multi_path: true` 会重新启用该能力。源码、Linux socket 测试与一手公告见 [MPTCP 安全说明](docs/SECURITY-MPTCP.md)。
 
 ### 服务端部署与访问控制
 
@@ -405,6 +469,8 @@ DNS 传输、缓存和 endpoint 私有解析器也纳入连接复用及空闲资
 
 ## 文档
 
+- **新功能与下载选择**：[iOS 自签与本地签名回环](docs/IOS-SELFSIGN-AND-LOOPBACK.md) · [v0.1.39 详细更新](docs/releases/v0.1.39.md) · [v0.1.33 补充说明](docs/releases/v0.1.33.md)
+- **测量与安全**：[优化前后和实现速度对照](docs/PERFORMANCE-COMPARISONS.md) · [性能参数与瓶颈](KNOWLEDGE/PERFORMANCE-FACTORS.md) · [MPTCP 默认安全](docs/SECURITY-MPTCP.md)
 - **使用文档**：[扩展配置示例](docs/FORK-CONFIGURATION.md) · [NXDOMAIN 说明](docs/DNS-NXDOMAIN.md) · [配置参考](docs/configuration) · [服务端说明](docs/JIEJIE-SERVER.md) · [Naive](docs/naive.md) · [MASQUE](docs/masque.md)
 - **开发文档**：[构建配置](docs/BUILD-PROFILES.md) · [Fork 差异](docs/FORK-DIFF.md) · [关联仓库](FORK_REPOSITORIES.md) · [知识库](KNOWLEDGE/README.md)
 

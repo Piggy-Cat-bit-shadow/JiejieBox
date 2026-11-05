@@ -1,8 +1,13 @@
 # Build profiles
 
-One `testing` source tree produces two product binaries. Both are built from
-**upstream's own feature profiles**: there is no fork-specific protocol registry and
-no allowlist of permitted capabilities.
+One `testing` source tree produces platform-specific core binaries, mobile libraries and
+client packages. The two CLI profiles below are part of that product matrix, not its complete
+list. Features are selected by the actual tag files and constructors in `include/registry.go`;
+the fork adds protocols and integration code as well as inheriting upstream capabilities.
+
+For the v0.1.39 asset list, see the [platform table](../README.md#客户端与命令行内核).
+Windows has a separate `release/DEFAULT_BUILD_TAGS_WINDOWS` profile, including
+`with_naive_outbound,with_purego`. Mobile builds use the tags assembled by their builders.
 
 | | Linux Server | macOS Client |
 | --- | --- | --- |
@@ -12,9 +17,10 @@ no allowlist of permitted capabilities.
 | Registry | `include/registry.go` | `include/registry.go` |
 | Workflow | `.github/workflows/server-linux-amd64.yml` | `.github/workflows/client-macos.yml` |
 
-Both tag files carry upstream's capability set exactly. The platform split is upstream's
-own - its CI uses `DEFAULT_BUILD_TAGS` for CGO/naive builds and
-`DEFAULT_BUILD_TAGS_OTHERS` otherwise.
+The files follow the upstream profile convention, with this fork's current additions and
+platform requirements. `DEFAULT_BUILD_TAGS` is the Darwin profile despite its generic name;
+do not use it as a Windows recipe. Both current CLI tag files include `with_utls` and
+`with_xhttp`; the Darwin one additionally includes `with_naive_outbound`.
 
 One entry is deliberately missing from both, and it is not a capability:
 `tfogo_checklinkname0`, which records that the build passes `-checklinkname=0`. The products do
@@ -23,7 +29,7 @@ tags, where cmd/go cannot apply `-ldflags` to one package - and with the tag set
 `experimental/libbox`'s `//go:linkname` pulls of runtime internals stop linking. The tag lives
 where the flag does: `cmd/internal/mobilebuildtags` for the libbox artifacts and
 `cmd/internal/build_boxdd` for the daemon. See
-[build from source](installation/build-from-source.md#build-tags).
+[build from source](installation/build-from-source.md).
 
 ## Capability boundary
 
@@ -34,22 +40,22 @@ chosen for this product. That includes `hysteria`, `hysteria2`, `tuic`, `vmess`,
 `tailscale` endpoints, the full DNS transport set and the `resolved` / `ssmapi` /
 `origin_ca` services, alongside the capabilities this fork actually serves.
 
-The practical difference between the two profiles is therefore upstream's tag
-difference, not a capability boundary this fork maintains:
+The practical differences must be read from the current files:
 
 - The **server** profile omits `with_naive_outbound`, because the Cronet outbound
   is a client capability. The Naive **inbound** is present in both — the live
   production configuration declares one.
-- The **client** profile adds `with_naive_outbound` and `with_utls`, because
-  upstream's `DEFAULT_BUILD_TAGS` carries them. It does NOT add `with_gvisor`:
+- The **Darwin client** profile adds `with_naive_outbound`; `with_utls` is present in
+  both current profiles. It does NOT add `with_gvisor`:
   upstream retired that tag when it removed the gVisor dependency in favour of the
   in-process Go TUN stack, and both profiles follow. `scripts/ci/build-macos-client.sh`
   asserts this in both directions - the required tags must be present, and retired
   tags must not reappear.
 
-Because the registry is upstream's, a protocol, endpoint, DNS transport, service or
-certificate provider that upstream adds is inherited automatically. There is no
-fork-side list to update, and no CI step that has to be told about it.
+An upstream protocol or dependency update still needs integration and verification of the
+registry, tags and platform contracts. Sharing the registry design does not automatically
+consume a moving upstream branch. Source support, a successful build and a published asset
+are separate facts.
 
 ## Clash API
 

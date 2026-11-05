@@ -1,5 +1,11 @@
 # Mieru 协议集成（Mieru protocol integration）
 
+## v0.1.39 依赖与测量边界（Current dependency and evidence）
+
+当前 SDK 为 **v3.39.0**，自 v0.1.37 纳入；修复持续单向上传的读 deadline 及相关空数据报/空闲 underlay 边界。下文集成机制的历史审阅目标与当时 SDK 应分别阅读。
+[实现速度对照](../../docs/PERFORMANCE-COMPARISONS.md) 汇总官方客户端、Mihomo 与真实 mita 的正负结果；主要来自 v3.38.1，Mihomo 使用 v3.38.0，尚未在 v3.39.0 全矩阵重跑。1200B UoT 的 118.8/666.1 ns 是帧处理微基准，不是全协议 5.6 倍吞吐。
+后续边界验收仍记录官方握手固定 10 s 等限制；见 [专项验收](../../docs/fork/mieru-masque-final-acceptance.md)。不要将错误归因改善写成取消延迟已消除。
+
 **范围与证据。** 以下描述针对源码版本 `011f3fdcd99`。该版本的 `include/registry.go` 注册了
 Mieru 入站和出站；`protocol/mieru` 将 `github.com/enfein/mieru/v3` SDK 接入 sing-box 的
 路由和生命周期。协议及多路复用由 SDK 提供，适配层负责配置、listener、dialer 和资源管理。

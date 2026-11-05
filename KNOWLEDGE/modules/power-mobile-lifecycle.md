@@ -1,5 +1,11 @@
 # 功耗与移动端生命周期（Power and mobile lifecycle）
 
+## v0.1.39：准入与既有 OOMKiller 协作（Current admission delta）
+
+NE 的 OOMKiller 现在提供 resourceguard，并把同一压力观察交给昂贵创建准入；回收执行器、内存采样与准入不是三套重复实现。当前许可、类别、压力版本与已知设备边界见 [resource-admission](resource-admission.md)。
+`internal/memmetrics/metrics.go` 处理 runtime 指标发布滞后，不能把短暂的计数差异一律视为不可读。诊断增加准入计数，不把 Go heap 或单元测试的回落等同设备 phys_footprint/Jetsam 改善。
+以下旧章节记录既有 power 与 reclaim 契约，未被本轮改成全协议创建预算。
+
 ## v0.1.9 之后的渐进式内存释放（Progressive memory release after v0.1.9）
 
 **VERIFIED_SOURCE，审阅版本 `011f3fdcd99`。** `adapter/network.go` 区分三种内存处理：

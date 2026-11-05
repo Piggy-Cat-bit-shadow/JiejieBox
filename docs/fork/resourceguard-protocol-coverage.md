@@ -1,5 +1,7 @@
 # Resource governance — protocol coverage audit
 
+> **阶段矩阵说明。** §1 的“exactly one consumer”描述共享 TLS 接入前；§3 已记录扩展，后续又修复类别和多跳许可。当前行为以 [资源准入模块](../../KNOWLEDGE/modules/resource-admission.md) 为入口，不把这份阶段矩阵当作最新覆盖结论。
+
 Round 05. Work done on the product line `testing` at `d45fa8a4404`. This report covers what was
 inspected, what was changed, and what remains; it is not a claim that every protocol was
 measured under pressure.
