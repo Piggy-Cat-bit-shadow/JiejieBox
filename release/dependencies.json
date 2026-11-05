@@ -79,7 +79,7 @@
       "slug": "Piggy-Cat-bit-shadow/cronet-go",
       "branch": "main",
       "policy": "update",
-      "note": "The aggregate module. Must equal the root pin; verify enforces it."
+      "note": "The aggregate module. Its publish commit is one ahead of the root: the first publish commit carries the natives, the second regenerates this module and the lib requires. release-freeze.py verify compares both."
     }
   ],
   "cronet_native": {
