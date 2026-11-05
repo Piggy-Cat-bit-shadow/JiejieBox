@@ -1,10 +1,10 @@
-# JiejieBox 更新日志
+﻿# JiejieBox 更新日志
 
 按正式版本倒序记录改动。每版先概述目的，再保留协议、配置、修复与当时的验证细节；历史实验只适用于标注的提交、平台和测试条件。当前配置用法见[扩展配置示例](docs/FORK-CONFIGURATION.md)。
 
 [正式发布与下载](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) · [原始详细日志归档](docs/archive/2026-10-dev-cycle/CHANGELOG-DETAIL-2026-11-01.md) · [工程架构与改造评估](KNOWLEDGE/reports/core/JiejieBox_工程架构与改造最终评估报告_2026-11-01.md)
 
-## [v0.1.38](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.38) — 2026-11-05
+## [v0.1.39](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.39) — 2026-11-05
 
 本次更新把 NaiveProxy 原生侧同步到上游 v154.0.8037.49-5，并修复 Linux 上自定义拨号被系统 DNS 拖垮的问题；同时合入资源准入、libbox 命令套接字、DNS 与设备回调等一批稳定性修复。
 
