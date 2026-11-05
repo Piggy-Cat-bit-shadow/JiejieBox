@@ -19,6 +19,37 @@
 
 **Apple TestFlight 构建**：在 Windows 发起 Apple Actions，Mac 通过 [`scripts/publish-apple-beta.sh`](scripts/publish-apple-beta.sh) 跟随指定运行，获取同次 Libbox 并完成签名、归档与上传。支持 iOS、macOS 或同时构建；Mac 需配置 Apple 签名与 App Store Connect。具体参数和操作步骤见 [TestFlight 构建说明](docs/APPLE-BETA-RELEASE.md)。
 
+## 架构与协议协作
+
+JiejieBox 的协议实现接入共同的 DNS、拨号、路由、平台状态和资源管理接口。规则选择、物理连接、协议会话与系统隧道各自保留明确职责，使双栈、代理链、复用和网络恢复能够跨组件协作。
+
+```mermaid
+flowchart LR
+    I["TUN / 系统代理 / 协议入站"] --> R["目标与流量上下文"]
+    R --> S["FakeIP / 按需嗅探"]
+    S --> P["规则 / 代理组 / detour"]
+    P --> D["候选地址 / 拨号策略"]
+    N["DNS / 缓存 / 地址族策略"] --> P
+    N --> D
+    D --> T["协议传输 / 连接池 / 隧道"]
+    T --> O["目标服务"]
+```
+
+图中表示主要协作关系，实际解析位置与数据路径由入口、DNS 归属和所选协议决定。
+
+| 公共机制 | 跨协议作用 |
+| --- | --- |
+| **DNS 与 Dialer** | 统一解析策略、地址族候选、接口绑定、路由标记、namespace、取消和超时；协议适配层将这些条件传到实际 socket。 |
+| **Router 与路径校验** | 区分代理组的控制选择与真实网络跳点，检查依赖、循环和能力要求；逐流传递目标、候选及业务类别。 |
+| **Scope 与 RuntimeCoordinator** | 明确启动、关闭和异步任务所有权，利用网络代次与重建租约隔离迟到结果，协调切网及恢复。 |
+| **ReferenceManager 与 Power Governor** | 按资源能力清理空闲连接、退役可疑旧池和处理内存压力；平台报告网络、休眠与内存事实，由核心执行相应策略。 |
+| **FailureFacts 与流量类别** | 协议上报错误阶段和来源，代理组据此决定重试与健康状态；`traffic_class` 同时服务于上传调度和 NE 创建准入。 |
+| **Buffer、MTU 与数据交接** | 将缓冲区容量、所有权、半关闭及下层隧道容量贯通传输包装和 TUN 回包，减少复制并保持失败回退与释放责任。 |
+
+公共管理通过协议提供的能力接口执行。XHTTP 的 XMUX、Mieru 的 SDK Runtime、AnyTLS Session、Cronet Engine 和 MASQUE 隧道保留各自的复用与失败状态；普通空闲清理、唤醒后停止接收新流和网络重建分别处理。
+
+完整的调用关系、协议适配与链路案例见 [架构与网络链路优化](docs/ARCHITECTURE-AND-NETWORK-PATH.md)。
+
 ## 协议与网络能力
 
 ### XHTTP
@@ -27,6 +58,8 @@
 - 支持 X-Padding、上传分块与 XMUX 连接复用，传递拨号取消和 deadline。
 - packet-up 使用有界队列与单一 flusher 聚合写入，保留首包低延迟、顺序、背压及尾部数据完整性。
 - 连接池接入网络切换、休眠恢复和空闲清理，处理上传拒绝、H3 故障与关闭边界。
+
+VLESS 将空闲清理和复用退役请求传递给 XHTTP，再由 XMUX 区分空闲物理连接与活跃逻辑流：内存整理只释放空闲项，唤醒后的可疑连接停止承接新流，已有流按契约排空。单流重置保留其错误范围，避免误将其他复用流一并关闭。上传聚合与 HTTP 传输的连接数、取消和响应消费共同维护有界背压。
 
 历史 TLS/H2 受控测试，服务端为 Xray v26.9.30：
 
@@ -45,6 +78,8 @@
 - 统一监听器、在途连接与 SDK Runtime 的清理责任，处理部分启动失败和切网后的迟到结果。
 - 通过类型化失败信息区分目标拒绝、本地错误、调用方取消与代理通路故障，供代理组决定重试和健康状态。
 
+SDK 的 listener/dialer 桥接保留内核的 socket 策略，适配层在自己拥有的拨号边界记录错误，避免 SDK 文本包装丢失类型后无法判断失败来源。启用回退时，TCP 与 UDP 分别持有运行时和会话，选择器管理偏好与探测；接口变化通过新运行时启动、代次交接和旧资源清理完成重建，防止迟到拨号修改新网络状态。
+
 历史实现对照：
 
 | 场景 | 对官方同版本客户端 | 对 Mihomo 产品 |
@@ -61,6 +96,8 @@
 - 提供 VLESS 客户端应用层后量子加密，处理握手取消、帧边界与重密钥。
 - 对不支持的指纹与 ECH 组合明确报错，校验 Vision 依赖的接口契约。
 
+REALITY 的密钥份额、Verifier 与 uTLS 配置克隆需要贯通真实握手；VLESS 应用层加密、Vision 与 TLS 则分别维护自己的帧和数据状态。项目核对连接包装后的缓冲区交接、半关闭及专用写入能力，并对 Vision 使用的依赖内部布局设置兼容检查，避免升级后编译通过却破坏数据路径。
+
 XHTTP 和 VLESS 加密扩展以客户端为主，不包含对应服务端实现。参见 [配置示例](docs/FORK-CONFIGURATION.md)及 [传输模块](KNOWLEDGE/modules/xhttp-client-transport.md)。
 
 ### Native Naive 与 HTTP 服务端
@@ -71,6 +108,8 @@ XHTTP 和 VLESS 加密扩展以客户端为主，不包含对应服务端实现�
 - 客户端使用自定义 Cronet fork，保留 host dialer、可配置窗口及可选 H3→H2 回退。
 - Chromium 154.0.8037.49 已吸收 NaiveProxy patch5 相关证书封锁、QUIC 窗口与自动调节修复，并修复 Linux DNS 桥的匿名 socketpair 回复。
 
+Cronet 通过 host dialer 接入本项目的服务器解析和双栈策略，Go 与原生侧共同处理连接、异步缓冲区及回调生命周期。出站完成 CONNECT 握手后再返回连接，并将可确定的认证或拨号失败传给代理组；H3→H2 回退区分传输故障、HTTP 响应与调用方取消。服务端 padding 的就地构造与 UoT 目标检查分别遵守帧容量和逐包目标语义。
+
 能力由实际构建标签决定：Linux 默认服务端档包含 Naive 入站，未启用 Cronet 出站；Windows 使用 `with_purego` 加载原生库。参见 [Naive 说明](docs/naive.md)、[HTTP 传输模块](KNOWLEDGE/modules/naive-http-transport.md)和 [Cronet 修复记录](KNOWLEDGE/reports/release/cronet-patch5-linux-dns-2026-11-05.md)。
 
 ### MASQUE / CONNECT-IP
@@ -80,7 +119,28 @@ XHTTP 和 VLESS 加密扩展以客户端为主，不包含对应服务端实现�
 - 在 QUIC 握手阶段竞争候选，回收落败连接；H3 建连保留独立尝试窗口，为 UDP 黑洞下的 H2 回退预留时间。
 - 优化 DATAGRAM 所有权与批处理，限制 Capsule 长度和条目数量；按已知下层容量处理包大小与 ICMP Packet Too Big。
 
+CONNECT-IP 将远端分配的地址、路由与内部 DNS 同本地 endpoint/TUN 状态衔接；Bootstrap DNS 始终负责建立外层连接。数据报在 HTTP/3、QUIC 和 TUN 边界明确转移所有权，部分发送成功后仅回退或释放仍由调用方持有的部分。H3 故障判断区分 QUIC 建连失败和 CONNECT 响应缓慢，避免一次应用层延迟影响后续传输选择。
+
 详见 [MASQUE 使用说明](docs/masque.md)和 [CONNECT-IP 模块](KNOWLEDGE/modules/masque-connectip.md)。
+
+### AnyTLS、TLS 与传统代理
+
+- AnyTLS 将 session 复用、开流、空闲退役与网络变化接入共享生命周期；帧头使用缓冲区预留空间，session 级写入保持协议顺序。
+- 共享 TLS dialer 统一传递握手取消、错误和流量类别；在 NE 模式与 AnyTLS 共用创建许可，使 Trojan、VLESS/VMess 及相关 HTTP/DNS 传输使用一致的准入策略。
+- ShadowTLS 限制认证前读取，清理失败的握手目标连接，并保留包装后所需的复制与关闭能力。
+- SOCKS/HTTP CONNECT 保留目标解析归属、首包缓存和半关闭；SOCKS5 可选 TCP 预连接池有界运行，UDP ASSOCIATE 与 UoT 使用各自路径。
+- Shadowsocks、Snell 等既有数据面结合 MTU、加密帧和缓冲区容量优化复制；协议需要保留的读写隔离按实际所有权处理。
+
+公共 TLS 的创建治理见 [资源准入模块](KNOWLEDGE/modules/resource-admission.md)，协议包装和复制约束见 [缓冲区所有权](KNOWLEDGE/modules/buffer-ownership.md)。
+
+### Hysteria2、TUIC 与网络端点
+
+- Hysteria2/TUIC 通过 sing-quic 与 quic-go fork 衔接数据报所有权、UDP socket、会话复用和网络变化，减少载荷复制及接收队列对大缓冲区的长期引用。
+- 嵌套代理时，将已知下层容量传到 QUIC 包大小约束；Hysteria2 的硬上限在 ChromeParrot 指纹覆盖后应用，TUIC 同样区分初始包偏好与持续约束。
+- WireGuard 协调暂停、重新绑定与关闭，设备发布时继承已经生效的暂停状态；避免在睡眠或停止后残留底层 bind。
+- MASQUE、WireGuard、Tailscale、OpenVPN 和 OpenConnect 等 endpoint 按自身能力与 HostPort/TUN 协作，使端点本地流量使用相应地址族和路由上下文。
+
+隧道包大小、重建时机和平台接口分别按协议处理。详见 [MTU 与缓冲区几何](KNOWLEDGE/modules/mtu-and-geometry.md)、[endpoint 数据面](KNOWLEDGE/modules/masque-connectip.md)和 [生命周期](KNOWLEDGE/modules/core-lifecycle-runtime.md)。
 
 ### DNS 与 FakeIP
 
@@ -126,8 +186,6 @@ XHTTP 和 VLESS 加密扩展以客户端为主，不包含对应服务端实现�
 
 ### 网络恢复与后台管理
 
-共享核心协调 DNS、拨号、路由、网络代次和资源释放，各协议保留自己的连接池与会话语义。Scope 明确关闭责任，网络 generation 隔离旧结果，重建租约限制重复恢复。
-
 - 切网时按资源契约退役旧状态；休眠唤醒后区分 Keep、Suspect、Retire，停止向可疑旧池分配新流，并允许已有工作排空。
 - 暂停非必要 DNS、规则集和 Dashboard 后台刷新，保留首次初始化及必要恢复工作。
 - 空闲清理、系统压力与紧急回收共用协调路径，按过期缓存、空闲池、runtime 回收逐级处理，并根据收益提前停止。
@@ -143,15 +201,24 @@ XHTTP 和 VLESS 加密扩展以客户端为主，不包含对应服务端实现�
 
 该机制限制创建阶段，默认不作用于非 NE 平台。实现与已知限制见 [资源准入模块](KNOWLEDGE/modules/resource-admission.md)。
 
-### 数据路径与内存
+## 端到端网络链路优化
 
-- **规则集加载**：有界几何扩容减少大数组复制；无 `cache_file` 时直接解析响应体，检查截断、校验和与解压工作量。
-- **数据报所有权**：MASQUE/QUIC 支持所有权转移与批处理；TUN 常见回包路径复用切片，及时清理接收队列槽位和过大暂存缓冲区。
-- **TCP 复制**：支持缓存首包交接、splice 失败回退与 kTLS 尾部数据保留，按实际连接能力选择路径。
-- **Direct Offload**：Linux `auto_redirect` 对语义等价的直连流进行系统绕行，保留规则、DNS、接口及观察要求的逐流检查；普通 TUN 与系统代理使用各自数据路径。
-- **上传调度**：通过 `traffic_scheduler` 和 `traffic_class` 配置聚合整形，控制共享上行队列，减少批量上传对交互流量的影响。
+| 链路阶段 | 主要改造 |
+| --- | --- |
+| **入口与收包** | TUN 将 DNS 劫持、FakeIP 和流量预判按明确顺序处理，合并栈启动前的重置并衔接启动后事件；Mixed 复用读取器区分 HTTP/SOCKS，保持认证与首包数据。 |
+| **目标识别与嗅探** | HTTP/TLS 提前排除不匹配输入；TLS 只提取所需 ClientHello，QUIC 后续分片读取有界。可信 FakeIP 域名满足条件时减少额外等待，保留首包重放和借用缓冲区的生命周期。 |
+| **解析与候选构造** | 协调并发 DNS 查询、缓存和增量 A/AAAA；按流捕获有效地址族策略，区分本地出口能力与代理端目标能力，将迟到候选和结果限定在所属网络代次。 |
+| **规则与代理组** | 使用紧凑规则结构和有界扩容，流式加载远程规则；组选择传递完整候选，预览不消耗轮询，同一条流共享嵌套重试预算。 |
+| **物理拨号与握手** | 将接口、mark、namespace、截止时间和取消传到实际 socket；回收竞争落败或迟到的连接。TLS/AnyTLS 在 NE 模式复用创建许可，代理拒绝与路径错误分别归因。 |
+| **协议传输与上传** | 按协议选择 XMUX、SDK Runtime、TLS/QUIC 会话或 CONNECT；聚合小写入、复用帧头空间、按能力转移数据报。显式上传整形持续控制共享队列，保护交互请求。 |
+| **回包、复制与关闭** | TUN 常见回写复用切片，批量发送按已完成部分结算；缓存首包交接、splice 失败回退和 kTLS 尾部交付保持数据完整，半关闭与连接接管沿原资源释放链退出。 |
+| **切网与资源回收** | 网络代次隔离旧查询与连接，重建租约限制重复恢复；休眠后的复用退役与普通内存清理分别执行，按收益逐级回收缓存、空闲池和 runtime 页面。 |
 
-设计及参数见 [数据路径优化](KNOWLEDGE/modules/data-path-optimization.md)、[缓冲区所有权](KNOWLEDGE/modules/buffer-ownership.md)与 [扩展配置](docs/FORK-CONFIGURATION.md)。
+**快速路径分层执行。** Linux `auto_redirect` 的 Direct Offload 只有在路由、目标和 socket 选项可保持原有语义时才尝试系统绕行；普通 TUN、系统代理和连接建立后的 splice 各有独立路径。FakeIP、认证、跟踪、业务调度及显式 `fast_path: false` 等要求参与资格判断，不能以旁路授权替代实际数据交付。
+
+**控制面成本与逐包成本分别优化。** 拨号选项和引用关系尽量在构造或启动阶段整理，逐流处理地址候选、选路和握手，逐包路径集中于必要的帧处理、复制和所有权转移。规则加载累计分配、连接创建峰值、稳态数据吞吐与后台活动分别测量。
+
+设计与调用链见 [架构与网络链路优化](docs/ARCHITECTURE-AND-NETWORK-PATH.md)、[数据路径模块](KNOWLEDGE/modules/data-path-optimization.md)和 [Fast Path 设计](docs/FAST-PATH-AND-MEMORY.md)，配置见 [扩展配置示例](docs/FORK-CONFIGURATION.md)。
 
 ## 性能与内存对照
 
@@ -201,7 +268,7 @@ Linux 普通入站在未显式启用 `tcp_multi_path` 时使用普通 TCP；Clas
 
 - **配置与使用**：[配置参考](docs/configuration) · [扩展配置示例](docs/FORK-CONFIGURATION.md) · [NXDOMAIN](docs/DNS-NXDOMAIN.md) · [本地回环](docs/IOS-SELFSIGN-AND-LOOPBACK.md#打开本地签名回环)
 - **构建与发布**：[构建档位](docs/BUILD-PROFILES.md) · [Apple TestFlight](docs/APPLE-BETA-RELEASE.md) · [更新日志](CHANGELOG.md)
-- **性能与设计**：[性能对照](docs/PERFORMANCE-COMPARISONS.md) · [性能参数](KNOWLEDGE/PERFORMANCE-FACTORS.md) · [Fast Path 与内存管理](docs/FAST-PATH-AND-MEMORY.md) · [工程架构评估](KNOWLEDGE/reports/core/JiejieBox_工程架构与改造最终评估报告_2026-11-01.md)
+- **性能与设计**：[架构与网络链路](docs/ARCHITECTURE-AND-NETWORK-PATH.md) · [性能对照](docs/PERFORMANCE-COMPARISONS.md) · [性能参数](KNOWLEDGE/PERFORMANCE-FACTORS.md) · [Fast Path 与内存管理](docs/FAST-PATH-AND-MEMORY.md) · [工程架构评估](KNOWLEDGE/reports/core/JiejieBox_工程架构与改造最终评估报告_2026-11-01.md)
 - **开发维护**：[Fork 差异](docs/FORK-DIFF.md) · [知识库](KNOWLEDGE/README.md) · [任务索引](KNOWLEDGE/INDEX.md) · [维护指引](KNOWLEDGE/REFRESH.md)
 
 开发及 AI 助手从 [AGENTS.md](AGENTS.md) 进入，先确认知识库基线与 Git 增量，再按任务查阅模块。
