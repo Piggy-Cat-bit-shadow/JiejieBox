@@ -157,11 +157,17 @@ type Guard struct {
 	gate     *Gate
 	pressure func() Level
 
-	access      sync.Mutex
-	level       Level
-	levelSince  time.Time
-	applied     atomic.Uint32
-	transitions uint64
+	access     sync.Mutex
+	level      Level
+	levelSince time.Time
+	applied    atomic.Uint32
+	// appliedVersion is the transition this guard has PUBLISHED to the gate. It exists because
+	// observing and applying are two steps: a caller can read a level, be descheduled, and publish
+	// it after a newer transition has already been applied - reopening a gate that critical pressure
+	// had just closed, or closing one that a demote had just opened. `transitions` is the sequence
+	// number and this is the high-water mark of what reached the gate.
+	appliedVersion atomic.Uint64
+	transitions    uint64
 	// now is the clock the dwell reads. A field rather than a direct time.Now call so the
 	// hysteresis bounds can be proven over simulated time.
 	now func() time.Time
@@ -261,8 +267,8 @@ func (g *Guard) Level() Level {
 	if g == nil {
 		return LevelNormal
 	}
-	level, _, _ := g.observe()
-	g.apply(level)
+	level, version := g.observe()
+	g.apply(level, version)
 	return level
 }
 
@@ -275,8 +281,8 @@ func (g *Guard) Acquire(ctx context.Context, class Class) (*Permit, error) {
 	if g == nil {
 		return nil, nil
 	}
-	level, _, _ := g.observe()
-	g.apply(level)
+	level, version := g.observe()
+	g.apply(level, version)
 	return g.gate.Acquire(ctx, class)
 }
 
@@ -285,9 +291,12 @@ func (g *Guard) Acquire(ctx context.Context, class Class) (*Permit, error) {
 // The rule: a rise is immediate, a fall waits DemoteAfter. A rise is immediate because the cost
 // of trusting a stale low level is an admission decision made under pressure; a fall is delayed
 // because one quiet sample in the middle of a burst must not re-open the gate that the burst is
-// still filling. The second return value says whether this call completed a transition INTO
-// critical; the third is the hook set to run for it.
-func (g *Guard) observe() (Level, bool, []func()) {
+// still filling.
+//
+// The second return value is the transition sequence number this observation belongs to. `apply`
+// needs it: observing and publishing are two steps, and a caller that is descheduled between them
+// must not overwrite a newer transition's plan.
+func (g *Guard) observe() (Level, uint64) {
 	observed := g.pressure()
 	if observed > LevelCritical {
 		observed = LevelCritical
@@ -295,14 +304,12 @@ func (g *Guard) observe() (Level, bool, []func()) {
 	now := g.clockNow()
 
 	g.access.Lock()
-	enteredCritical := false
 	switch {
 	case observed > g.level:
 		g.level = observed
 		g.levelSince = now
 		g.lowSince = time.Time{}
 		g.transitions++
-		enteredCritical = observed == LevelCritical
 	case observed < g.level:
 		if g.lowSince.IsZero() {
 			g.lowSince = now
@@ -319,38 +326,37 @@ func (g *Guard) observe() (Level, bool, []func()) {
 		g.lowSince = time.Time{}
 	}
 	current := g.level
+	version := g.transitions
 	g.access.Unlock()
-
-	if !enteredCritical {
-		return current, false, nil
-	}
-	g.shedAccess.Lock()
-	hooks := make([]func(), len(g.shedHooks))
-	copy(hooks, g.shedHooks)
-	g.shedAccess.Unlock()
-	return current, true, hooks
+	return current, version
 }
 
 // apply pushes the level's plan into the gate and runs shed hooks once per transition.
 //
-// The plan is only written when the level actually changed, because Acquire is on the dial path
-// of every expensive connection and re-taking the gate's lock to store an unchanged plan would
-// be paid for on every dial to save nothing.
-func (g *Guard) apply(level Level) {
-	// Fast path: the overwhelmingly common case is a dial at an unchanged level, and this check
-	// must not take the policy lock. It is an atomic load instead, which is what keeps the hot
-	// path to one mutex acquisition (observe) plus the gate's own.
-	if Level(g.applied.Load()) == level {
+// The plan is only written when this observation is the newest one published, because Acquire is on
+// the dial path of every expensive connection and re-taking the gate's lock to store an unchanged
+// plan would be paid for on every dial to save nothing.
+func (g *Guard) apply(level Level, version uint64) {
+	// Fast path: a caller at an unchanged level carries the version that is already published, and
+	// this check must not take the policy lock. It is an atomic load instead, which is what keeps
+	// the hot path to one mutex acquisition (observe) plus the gate's own.
+	if g.appliedVersion.Load() >= version {
 		return
 	}
 	g.access.Lock()
-	if Level(g.applied.Load()) == level {
+	if g.appliedVersion.Load() >= version || g.transitions != version {
+		// Either this transition was already published, or the state machine moved on after this
+		// caller observed it - in which case THAT transition's observer publishes it, and a stale
+		// plan must not be written over the newer one.
 		g.access.Unlock()
 		return
 	}
+	g.appliedVersion.Store(version)
 	g.applied.Store(uint32(level))
-	g.access.Unlock()
+	// The plan is written while the same lock is held, so no reader can see the version advanced
+	// with the previous level's plan still in place.
 	g.gate.setPlan(g.config.planFor(level))
+	g.access.Unlock()
 	if level == LevelCritical {
 		g.runShed()
 	}
@@ -395,8 +401,8 @@ func (g *Guard) Stats() GuardStats {
 	if g == nil {
 		return GuardStats{}
 	}
-	level, _, _ := g.observe()
-	g.apply(level)
+	level, version := g.observe()
+	g.apply(level, version)
 	g.access.Lock()
 	transitions := g.transitions
 	g.access.Unlock()
