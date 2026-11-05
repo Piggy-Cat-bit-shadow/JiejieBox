@@ -92,3 +92,50 @@ mapping is now the same at both seams and is tested at both: interactive and rea
 reserve; bulk and default may not; and a table test asserts the two seams agree for the same class,
 because they are two consumers of one policy and a divergence is exactly the defect this file exists
 to record.
+
+---
+
+## Round V2: the stale-publication race (P1-A), and what was excluded
+
+### FIXED — a stale observation could overwrite a newer level
+
+`Guard.Level`, `Acquire` and `Stats` each call `observe()` and then `apply()`, and `apply` used to
+decide with `applied != level`. Two steps, one comparison: a caller descheduled between them
+published a plan that was already out of date.
+
+* A observes ARMED and stops; pressure rises; B publishes CRITICAL; A resumes and publishes ARMED -
+  the gate re-opens to the normal limit while the guard reports critical pressure.
+* The mirror image is the dangerous one: a stale CRITICAL published after a demote re-throttles a
+  healthy gate **and runs the shed hooks a second time** for one critical episode, which is the
+  reclaim loop this system exists to prevent.
+
+`observe()` now returns the transition sequence number; `apply(level, version)` publishes only if
+that version is both newer than what was published and still the current one, re-checked under the
+same lock that writes the plan - so a reader cannot see a new version with the old plan.
+
+Written before the fix, verified by restoring the old comparison:
+
+```
+--- FAIL: TestAStaleCriticalObservationCannotShedAgain
+    expected: 1  actual: 2
+```
+
+Four tests now pin it: the stale ARMED cannot re-open, the stale CRITICAL cannot shed again, a
+sixteen-goroutine publication storm leaves the gate and the reported level in agreement, and
+publication is idempotent and ordered.
+
+### EXCLUDED — two reclaim executors (P1-B)
+
+The guard's only production shed hook is `client.CloseIdleConnections` (`protocol/anytls/outbound.go`),
+a cheap close of idle sessions that the client already serialises internally. The destructive
+reclaim pass remains the OOMKiller's, and its two passes cannot overlap - `reclaim_overlap_test.go`
+forces that interleaving and asserts the ordering. With the version gate above, one critical episode
+can no longer produce a second shed from a stale observation either.
+
+### Not done here
+
+AnyTLS's permit-before-reuse question needs a `HasIdleSession()` predicate in `sing-anytls`, an
+unforked upstream module; taking over a dependency is a maintenance decision, not a fix to land in a
+closeout. The TUN UDP NAT and multi-node QUIC stress scenarios need either an injection point in
+`sing-tun` or a runner with a real `/dev/net/tun`, and neither exists in this tree today. Both are
+recorded rather than half-built.
