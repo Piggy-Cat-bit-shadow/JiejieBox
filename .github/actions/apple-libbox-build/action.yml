@@ -64,6 +64,12 @@ runs:
         set -euo pipefail
         ./scripts/ci/check-libbox-abi.sh --client-root "$CLIENT_ROOT"
 
+    - name: download the run's frozen release identity
+      uses: actions/download-artifact@v4
+      with:
+        name: jiejiebox-apple-release-${{ github.sha }}
+        path: build/apple-release-metadata
+
     - name: build Libbox from this fork
       # The app links THIS repository at THIS commit: the framework is compiled here and never
       # downloaded from an upstream release. `both` is ios + macos only - upstream's full matrix
@@ -76,13 +82,21 @@ runs:
       run: |
         set -euo pipefail
         export PATH="$(go env GOPATH)/bin:$PATH"
+        # The release tag may not exist yet. Stamp the version the resolver froze for this run.
+        version="$(python3 scripts/ci/apple-release.py build-version \
+          --candidate build/apple-release-metadata/apple-release.json)"
         install_dir="${INSTALL_DIR:-$CLIENT_ROOT}"
         # `build-apple-libbox.sh` installs into an existing Apple client checkout and refuses a
         # missing directory rather than creating a tree that is not an Apple source. The dual
         # platform path installs into the checkout it was given; the macOS-only path installs into
         # a scratch directory, which therefore has to exist first.
         mkdir -p "$install_dir"
-        APPLE_CLIENT_DIR="$install_dir" ./scripts/ci/build-apple-libbox.sh both
+        rm -f libbox.provenance
+        SING_BOX_BUILD_VERSION="$version" APPLE_CLIENT_DIR="$install_dir" ./scripts/ci/build-apple-libbox.sh both
+        if ! grep -Fxq "version=$version" libbox.provenance; then
+          echo "FAIL: Libbox did not record the expected linker version $version" >&2
+          exit 1
+        fi
 
     - name: pack the Libbox artifact
       # The manifest is what makes the artifact attributable to a commit; the artifact name is
@@ -99,12 +113,6 @@ runs:
           "$install_dir/Libbox.xcframework" "$OUTPUT_DIR"
         echo "Libbox artifact contents:"
         ls -la "$OUTPUT_DIR"
-
-    - name: download the run's frozen release identity
-      uses: actions/download-artifact@v4
-      with:
-        name: jiejiebox-apple-release-${{ github.sha }}
-        path: build/apple-release-metadata
 
     - name: bind Libbox to the same Apple release identity
       shell: bash

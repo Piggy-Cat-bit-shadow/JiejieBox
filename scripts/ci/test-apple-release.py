@@ -124,6 +124,34 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(ar.read_json(mp)["artifact_sha256"], "unchanged")
             self.assertEqual(ar.read_json(mp)["apple_release"], candidate())
 
+    def test_build_version_uses_frozen_release_without_a_tag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "candidate.json"
+            c = candidate()
+            ar.write_json(path, c)
+            args = argparse.Namespace(candidate=path)
+            read_text = Path.read_text
+
+            def read_file(file, *args, **kwargs):
+                if file == Path("release/JIEJIE_VERSION"):
+                    return "0.1.36\n"
+                return read_text(file, *args, **kwargs)
+
+            with patch.object(Path, "read_text", read_file), \
+                 patch.object(ar, "run", return_value=c["parent_sha"]) as git, \
+                 patch("sys.stdout", new_callable=io.StringIO) as output:
+                ar.build_version(args)
+                self.assertEqual(output.getvalue(), "0.1.36\n")
+                git.assert_called_once_with("git", "rev-parse", "HEAD")
+
+                ar.write_json(path, dict(c, jj_version="0.1.35", release_tag="v0.1.35"))
+                with self.assertRaisesRegex(ValueError, "checkout's release version"):
+                    ar.build_version(args)
+
+                ar.write_json(path, dict(c, parent_sha="c" * 40))
+                with self.assertRaisesRegex(ValueError, "different core commit"):
+                    ar.build_version(args)
+
     def test_release_rejects_newest_run_substitution_and_requires_pin(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "manifest.json"

@@ -175,6 +175,15 @@ def bind(args):
     write_json(args.manifest, m)
 
 
+def build_version(args):
+    c = validate_candidate(read_json(args.candidate))
+    require(c["parent_sha"] == run("git", "rev-parse", "HEAD"),
+            "frozen Libbox version belongs to a different core commit")
+    require(c["jj_version"] == Path("release/JIEJIE_VERSION").read_text().strip(),
+            "frozen Libbox version differs from the checkout's release version")
+    print(c["jj_version"])
+
+
 def verify_release(args):
     m = read_json(args.manifest)
     c = m.get("apple_release")
@@ -388,6 +397,9 @@ def main():
     b.add_argument("--candidate", required=True)
     b.add_argument("--manifest", required=True)
     b.set_defaults(func=bind)
+    bv = sub.add_parser("build-version")
+    bv.add_argument("--candidate", required=True)
+    bv.set_defaults(func=build_version)
     v = sub.add_parser("verify-release")
     v.add_argument("--manifest", required=True)
     v.add_argument("--repo", required=True)
