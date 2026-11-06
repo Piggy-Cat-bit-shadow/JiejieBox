@@ -36,9 +36,15 @@ v0.1.39 的配套修复包括：
 
 ### 当前兼容性与续签方式
 
-截至 2026-11-05，根据当前用户真机反馈，**WLOC 的开发者模式虚拟定位可正常使用，使用本项目回环进行 SideStore 续签仍有问题**。这些是对应设备与场景的反馈，不代表所有同名 WLOC 实现或系统版本均已验证。
+2026-11-06 真机反馈显示，SideStore 续签可通过 JiejieBox 的本地签名回环完成。另有真机反馈，WLOC 的开发者模式虚拟定位可正常使用。
 
-SideStore 续签请暂时切换至 **LocalDevVPN**：连接其本地隧道后，打开 SideStore，在“My Apps”中点击应用右侧的剩余天数进行刷新。名称和标准操作已按 [SideStore 安装与刷新指南](https://docs.sidestore.io/docs/installation/install)核对；该指南不构成 JiejieBox 回环兼容性已通过的证据。
+1. 在 JiejieBox 开启**本地签名回环**，等待服务重载。
+2. 如果 TUN 配置为 **IPv4/IPv6 双栈**，在 SideStore 的 **Developer Options → Connection Config** 中启用 **Accept IPv6 Config**。纯 IPv4 的 TUN 配置在本次验证中只需开启回环。
+3. 在 SideStore 打开 **My Apps**，点击应用右侧的剩余天数进行刷新。双栈配置可保留 TUN IPv6。此前出现的 `DeviceEndpointNotInitialized` 在同一设备上启用该选项后得到解决。
+
+`Accept IPv6 Config` 允许 SideStore 的连接配置使用 IPv6 地址，例如 **Device IP**。它控制的是 SideStore 对地址的校验，TUN 的 IPv6 仍由 JiejieBox 配置。续签结果来自上述真机反馈。[SideStore 连接配置源码](https://github.com/SideStore/SideStore/blob/cd260851ae99bf1fc946b123db24e89c8cd21dc6/SideStore/Views/Settings/Advanced/Connection/ConnectionConfigView.swift#L268-L296)
+
+如果使用的 SideStore 版本没有这个开关，或按上述步骤操作后仍无法续签，可切换到 **LocalDevVPN** 再刷新。[SideStore 安装与刷新指南](https://docs.sidestore.io/docs/installation/install)
 
 **完整反射实现当前仅覆盖默认 `go` 栈。** 不建议为了开启功能额外设置已弃用的 `stack` 字段；若旧配置显式选择 `system`、`mixed` 或 `gvisor`，应先核对适用性。核心会对 iOS 上相关不支持组合发出警告，开关亮起本身不构成数据面已经工作的证据。
 
@@ -47,7 +53,7 @@ SideStore 续签请暂时切换至 **LocalDevVPN**：连接其本地隧道后，
 - 服务应能完成启动／重载，不能仅观察开关状态。
 - 如工具仍提示本地连接失败，先检查有效配置的 TUN、回环地址和所选栈，再检查签名权限与系统路由。
 - 用连接记录或出口 IP 验证代理是否接管；“网站可以打开”本身不能证明经由代理。
-- SideStore 续签问题仍待修复；iPad UI 和 NE 路由安装应按对应设备分别验收，不能把源码测试写成真机通用承诺。
+- 如果双栈下出现 `DeviceEndpointNotInitialized`，先确认 JiejieBox 回环已生效，并检查 SideStore 的 **Accept IPv6 Config** 是否开启。
 
 ## 自签与 TestFlight 的关系
 

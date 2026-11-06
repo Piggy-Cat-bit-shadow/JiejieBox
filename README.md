@@ -305,7 +305,9 @@ Network Extension 模式使用 OOMKiller 已有压力状态，限制 AnyTLS TCP/
 
 **开启路径：更多 → 连接行为 → 配置覆盖 → 本地签名回环。** iPad 在“配置覆盖”中查找同名开关。默认关闭，开启并重载后向本次 TUN 注入 `10.7.0.1`，用于本机回环连接。
 
-**当前仍存在兼容性问题**：根据现有真机反馈，WLOC 的开发者模式虚拟定位可正常使用，但使用本项目回环进行 **SideStore 续签仍有问题**。续签时请切换至 **LocalDevVPN** 建立本地隧道，再回到 SideStore 刷新应用，操作参见 [SideStore 官方指南](https://docs.sidestore.io/docs/installation/install)。
+**SideStore 续签（真机反馈）**。纯 IPv4 的 TUN 配置下，开启本地签名回环即可续签。IPv4/IPv6 双栈下，保持回环开启，再到 **SideStore → Developer Options → Accept IPv6 Config** 打开该选项，即可保留 TUN IPv6 并完成续签。此前遇到的 `DeviceEndpointNotInitialized` 在该设备上也通过这一设置解决。[续签步骤与排障](docs/IOS-SELFSIGN-AND-LOOPBACK.md#当前兼容性与续签方式)
+
+另有真机反馈，WLOC 的开发者模式虚拟定位可正常使用。
 
 上述结果仅对应已反馈的设备与使用场景。默认 `go` 栈支持 TCP、UDP、ICMPv4/v6 反射；其他显式栈尚无完整同等实现。配置与排障见 [本地回环说明](docs/IOS-SELFSIGN-AND-LOOPBACK.md#打开本地签名回环)。
 
