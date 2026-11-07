@@ -107,8 +107,14 @@ that outbound instead. If the path reaches only a group fed by this provider and
 member, the first download waits on its own nodes: the provider refuses the start with an error
 naming the group and the path, instead of leaving a group that stays empty forever and fails every
 refresh in the log. A static member, another provider's nodes, or a restored cache/`initial_path`
-removes the loop. A bootstrap closed only through DNS resolution (the provider's hostname resolved by
-a DNS server whose detour enters that group) is not detected yet.
+removes the loop.
+
+DNS resolution is part of the download path too. When the provider URL has a domain host, the dialer
+resolves it through `http_client.domain_resolver` (if set) or `route.default_domain_resolver` (if
+set) before dialling anything. If that DNS server's own `detour` chain enters a group fed only by
+this provider and currently empty, the first download blocks in DNS. The provider refuses the start
+with `cannot resolve the download host through outbound group ...` and names the resolver. With no
+resolver configured (system DNS) or an IP-literal URL, the check does not apply.
 
 The download is asynchronous: `sing-box` never blocks the start of the Box on a subscription URL.
 One request is bounded by a 30 second timeout (including reading the body) and a 10 MiB document
@@ -213,13 +219,29 @@ connections; a changed node is prepared and started before the previous object i
 whose replacement fails keeps the previous object in service. A subscription refresh that only
 reorders or reformats entries does not disturb traffic.
 
-A replaced node's previous object is closed after the swap, so connections that were using it are
-interrupted; only unchanged nodes keep their connections across a refresh. A node dropped from the
-document is closed when it is removed, for the same reason: there is no object left for a new
-connection to resolve. If a group still publishes that node as a member, it stays alive until the
-group's membership rebuild completes and is closed only then - never under a group that can still
-dial it. When the membership rebuild is refused by the graph validation, the node stays alive and
-keeps serving the previous valid selection.
+A replaced node's previous object is NOT closed at the swap: groups rebuild their membership only
+after the provider notifies them, and a new dial in between can still obtain the old object. The
+lifecycle rule is:
+
+1. the tag points at the replacement immediately, so tag-based resolution (routes, rules,
+   `route.final`) sees the new version;
+2. the previous object stays USABLE until every subscribed group rebuilt its membership in a
+   publication round that returned nil; a dial through a group in that window uses the still-working
+   previous object, never a closed one;
+3. a FAILED round does not end the wait: a refused membership or callback error leaves the previous
+   object serving the previous selection, and the tags stay pending for the next successful round;
+4. a live object OUTSIDE the provider that names the tag directly (a static or DNS-transport
+   `detour`) may have cached the previous object, so the previous object is retained until that
+   reference disappears or the Box is torn down. This conservative edge is deliberate; such direct
+   references are documented as not redirected by a refresh, and the cost is one retained object per
+   refresh for that configuration.
+
+When the previous object is finally closed, connections using it are interrupted; only unchanged
+nodes keep their connections across a refresh. A node dropped from the document is closed when
+removed, for the same reason: there is no object left for a new connection to resolve. If a group
+still publishes that node as a member, it stays alive until the group's membership rebuild completes
+and is closed only then. On teardown, objects still waiting for retirement are closed by the
+lifecycle scope exactly once.
 
 `update_interval` is the minimum spacing between downloads. A manual refresh is not exposed through
 the Clash API in this version; the provider refreshes on its own schedule.
@@ -227,10 +249,19 @@ the Clash API in this version; the provider refreshes on its own schedule.
 ### Group integration
 
 - A group may name several providers. Group filters match the published `provider/node` tag and leave static `outbounds` alone.
-- `use_all_providers` includes every configured provider; the set is resolved at start.
+- `use_all_providers` includes every configured provider; the set is resolved at start. With no provider
+  configured and no static member the group can never have a member, so the start is refused with
+  `use_all_providers is set but no outbound providers are configured`.
 - A provider node is addressed by its rendered tag, so `default` and the Clash API see
   `airport/hk-01` exactly as the configuration does.
 - A selector tries a valid saved selection, a surviving current selection on refresh, the explicit default, then the first member. A missing explicit default is an error. For a provider-only group that starts empty, omit the default or add a static default member.
+- When the group's include/exclude filters exclude every published provider node, the dial error says
+  the provider published N node(s) and the filters excluded them all, so "not downloaded yet" and
+  "filtered everything out" are distinguishable.
+- A provider member is graph-validated on publication but the start-time TCP/UDP capability dry run is
+  not repeated. A member that cannot carry a delivered network fails that flow at runtime (the same
+  runtime behaviour as a static member) but produces no start-time capability warning; only static
+  members get that warning.
 - A group with no members yet and no missing explicit default starts successfully - including when it
   is another outbound's `detour` target: the start-time physical-path validation reports the route as
   pending rather than as a route that never reaches its far end. The dial fails with a message naming

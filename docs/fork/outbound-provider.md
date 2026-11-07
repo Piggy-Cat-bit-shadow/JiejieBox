@@ -163,8 +163,8 @@ v0.1.43 正式内核上复现并修复了两个跨模块缺陷，并补齐了它
 
 上面两段“未覆盖/环境阻塞”的描述在该轮已更新：Box 内的 HTTP 订阅下载现在由 `httptest` 集成测试
 覆盖（本机回环，不触外网）；race 检测在 Windows 上使用 MSYS2 mingw gcc 运行通过（Swift clang
-不支持 race 需要的 `-mthreads`）。仍未覆盖：DNS 解析形成的引导环、Provider 成员发布时的 TCP/UDP
-能力试运行、真实设备/真实订阅。
+不支持 race 需要的 `-mthreads`）。DNS 解析形成的引导环在第二轮修复；仍未覆盖：Provider 成员发布时的
+TCP/UDP 能力试运行、真实设备/真实订阅。
 
 ## Known limits
 
@@ -175,12 +175,28 @@ v0.1.43 正式内核上复现并修复了两个跨模块缺陷，并补齐了它
   provider-specific `/providers/proxies` endpoints are not part of this stage.
 - A local provider is reloaded by the file watcher; a remote provider is refreshed on its interval.
   There is no manual refresh command.
-- A changed node's previous object is closed after the swap, so its live connections are
-  interrupted. Only unchanged nodes keep connections across a refresh. Deferring the close until
-  connections drain would need per-node reference tracking; the reference implementations close
-  immediately as well.
+- A changed node's previous object stays USABLE until the provider's publication round completed and
+  every subscribed group rebuilt its membership; a failed round keeps the old object serving the
+  previous selection. It is closed after that barrier, so connections using it are interrupted at
+  that point; unchanged nodes keep their connections. See the second 2026-11-07 record below.
+- A static outbound or DNS transport whose `detour` names a provider node directly may cache the
+  previous object; the replacement is retained until that reference disappears or teardown, because
+  closing it would break the cached holder. Such direct references are not redirected by a refresh.
 - An empty or unrecognised document is a failed refresh, never "remove all nodes". The safe default
   means a provider that legitimately becomes empty keeps its previous nodes until it is removed from
   the configuration.
 - The download limits (30 s, 10 MiB) are constants, not options: they are safety bounds for
   untrusted input, not a tuning surface.
+
+## 2026-11-07 第二轮：同标签替换的所有权（same-tag replacement ownership）
+
+上一轮修复了“移除仍被组引用的节点”，但同标签替换仍在 swap 时关闭旧对象，而组要等回调才重建成员。确定性测试显示窗口内每次拨号都拿到 `net.ErrClosed`（并发用例修复前 0.03 秒内命中 54 万次）。
+
+现行规则（详见 [KNOWLEDGE/modules/outbound-provider.md](../../KNOWLEDGE/modules/outbound-provider.md) 2026-11-07 第二轮）：
+
+- 标签立即指向新对象；旧对象进入 manager 的 retired 集合，不关闭。
+- Provider 在 `UpdateGroups()` 的所有回调成功后调用 `CompletePublication`，才允许回收；失败轮次不调用，旧对象继续服务上一份选择。
+- 仍有 owner 之外的非组对象直接命名该标签（静态/DNS transport detour）时保留旧对象，直到引用消失或拆除——这是为不破坏其 detour 缓存的保守选择，也是明确的设计限制。
+- 拆除时由生命周期 scope 关闭所有未回收对象，恰好一次。
+
+本轮同时收尾了 DNS 解析下载引导环、`use_all_providers` 零 Provider、过滤器排除全部节点的诊断；fast_path 与静态 detour 引用验证无问题；Provider 成员的 TCP/UDP 能力与 DNS transport 直接引用保留为明确的设计限制。daemon/libbox 不引用 Provider 管理接口。原配置形状（具名 http_client + remote airport + 纯 Provider selector + SOCKS detour 链）已有本地端到端用例。

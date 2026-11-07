@@ -212,6 +212,33 @@ type DynamicOutboundManager interface {
 	Remove(tag string) error
 }
 
+// OwnedDynamicOutboundManager is the OPTIONAL half of the dynamic namespace used by an owner-managed
+// publisher such as an outbound provider.
+//
+// # The ownership rule it exposes
+//
+// A plain Replace closes the object it replaced at the swap. That is wrong for an owner whose
+// subscribers (groups) learn about the replacement later, in a separate callback round: a new dial
+// between the two can still obtain the previous object from the group, and closing it first hands
+// that dial a closed object. MEASURED: every dial in that window failed with net.ErrClosed.
+//
+// So an owner-managed replacement parks the previous object as RETIRED instead of closing it.
+// CompletePublication(owner, tags) is the barrier that ends the wait: the owner calls it only after
+// every subscribed group was notified and every callback succeeded. At that point the retired object
+// is closed unless a live object OUTSIDE the owner still names the tag (a cached direct detour or a
+// DNS transport), in which case it stays open because that holder may still resolve it.
+//
+// A failed publication calls nothing: the retired object keeps serving the previous selection, which
+// is the documented "a failed update keeps the old state" contract. The next successful round
+// completes both that round's tags and any still-pending ones.
+type OwnedDynamicOutboundManager interface {
+	DynamicOutboundManager
+	// ReplaceOwned is Replace with an owner label. owner must be non-empty.
+	ReplaceOwned(ctx context.Context, router Router, logger log.ContextLogger, tag string, outboundType string, options any, owner string) error
+	// CompletePublication ends the retirement wait for tags published by owner.
+	CompletePublication(owner string, tags []string) error
+}
+
 // GroupMembershipPublisher is the OPTIONAL capability a dynamic outbound manager provides so a
 // group can publish a new member list through the SAME graph validation as every other mutation.
 //
@@ -239,8 +266,7 @@ type GroupMembershipPublisher interface {
 	UpdateGroupMembership(groupTag string, members []string, commit func()) error
 }
 
-// DynamicOutboundReleaser is the OPTIONAL capability a dynamic outbound manager provides for
-// TEARDOWN, where the dependent guard must not run.
+// DynamicOutboundReleaser is the OPTIONAL capability a dynamic outbound manager provides for// TEARDOWN, where the dependent guard must not run.
 //
 // # Why plain Remove is wrong at close time
 //

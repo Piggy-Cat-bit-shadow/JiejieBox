@@ -54,6 +54,39 @@
 - **未覆盖**：仅由 DNS 解析形成的下载引导环（Provider 域名由某个 detour 到该组的 DNS 服务器解析）；Provider 节点在发布时不重跑完整能力 dry run，因此 TCP/UDP 不匹配的 Provider 成员不会产生启动期 capability 警告（静态成员会）；provider 节点作为 `fast_path` 组成员的行为未变。以上均未在真实设备或真实订阅上验证。
 - Clash API 的 `/providers/proxies` 仍是桩实现（GET 返回空 map，具名一律 404）；普通 `/proxies` 能列出 Provider 节点并切换 selector，`box_clashapi_provider_test.go` 固定这一点。不能把前者当作手动刷新入口。
 
+## 2026-11-07 第二轮：同标签替换的对象生命周期（Same-tag replacement ownership）
+
+**VERIFIED_SOURCE / VERIFIED_UNIT / VERIFIED_INTEGRATION。** 上一轮把“移除仍被组引用的节点”修成了“延迟到成员重建后”，但**同标签替换**仍由 `Manager.Replace` 在 swap 时立刻关闭旧对象，而 Provider 随后才调用 `UpdateGroups`。确定性测试证明：`UpdateNodes(A v2)` 返回后、`UpdateGroups` 之前，selector 仍持有 v1，v1 已被关闭；该窗口内的每次拨号都拿到 `net.ErrClosed`（并发用例修复前 0.03s 内命中 54 万次）。urltest 的探测代、多 Provider 组、关闭过程同理。
+
+### 所有权规则（现行实现）
+
+1. **命名空间先行**：`ReplaceOwned` 让标签立即指向新对象；按标签解析的新路径（路由、规则、`route.final`）看到新版本。
+2. **旧对象只进入 retired，不关闭**：manager 按 `{object, tag, owner}` 记录；`owner` 是 Provider 标签。
+3. **公布屏障**：Provider 的 `UpdateGroups()` 只有在**所有**订阅组回调返回 nil 之后才调用 `Manager.CompletePublication(owner, tags)`。每一轮成功都会把该轮替换的标签以及此前失败轮次积压的标签一起完成。
+4. **失败不结束等待**：任何回调报错（例如图校验拒绝成环）都不调用屏障；旧对象继续服务上一份选择，标签留到下一次成功轮次。
+5. **外部直接引用延长保留**：若仍有“owner 之外、非组”的活对象（静态 outbound、endpoint、DNS transport）在 `Dependencies()`/`References()` 里命名该标签，旧对象仍不关闭——这些对象可能在首次拨号时把旧对象缓存进 detour 的 `sync.Once`。引用消失（删除对象）时由 sweep 释放；否则保留到 Box 拆除。
+6. **组按标签解析**：provider-fed 组在成功回调里从 Provider 当前列表重建成员，因此不把组的 `All()` 当作外部引用；这也是规则 3 成立的前提。
+7. **拆除**：Provider 关闭走 `Release` 释放已发布对象；仍在 retired 的旧对象由生命周期 scope 关闭，恰好一次。
+
+测试锚点：`adapter/provider/replacement_window_test.go`（顺序窗口、并发拨号、urltest、多 Provider、关闭、失败轮次保留）、`adapter/outbound/graph_test.go`（直接 detour / DNS transport 引用保留与释放）。
+
+### 本轮收尾的边界（结论与证据）
+
+| 边界 | 结论 | 证据 |
+| --- | --- | --- |
+| 同标签替换窗口 | **复现并修复**：旧对象在公布屏障前保持可用；失败轮次保留旧选择 | 修复前窗口用例失败（closes=1 / 544895 次 ErrClosed），修复后通过 + `-race` |
+| DNS 解析形成的订阅下载引导环 | **复现并修复**：URL 是域名且经 `http_client.domain_resolver` 或 `route.default_domain_resolver` 解析时，沿 DNS transport 的 `detour` 链检查“仅由本 Provider 供应且为空”的组，启动拒绝并点名解析器 | Box 用例修复前 `Start=nil`，修复后 `cannot resolve the download host through outbound group …` |
+| `use_all_providers` 为零 | **复现并修复**：无 Provider 且无静态成员时启动报错，不再留下永久空组 | `TestUseAllProvidersWithNoProvidersIsRefused` |
+| 过滤器排除全部节点 | **复现并修复**：拨号错误区分“未发布”与“已发布 N 个但被过滤器排除” | `TestProviderGroupFiltersExcludeEverythingIsDiagnosed` |
+| fast_path + Provider 成员 | **验证无问题**：`fast_path` 仍只接受纯选择组，Provider-only selector 启动、成员发布、选择正常；绕过决策需要 TUN transport，未在本环境执行 | `TestFastPathOnProviderOnlyGroupKeepsWorking`（启动/选择层） |
+| 静态 detour 直指 Provider 节点 | **验证无问题**：remote/local 节点在 outbound Start 时尚不存在，lint 以 `dependency[...] not found` 拒绝启动；inline 节点无刷新，不受替换影响 | `TestStaticDetourToARemoteProviderNodeIsRefused` |
+| DNS transport detour 直指 Provider 节点 | **明确的设计限制**：该引用可启动，但无法在替换时重定向；为不关闭其缓存对象，旧版本保留到拆除（每轮刷新可能多保留一份）。用户可见行为：刷新后 DNS 仍走旧节点，直到重启/删除该 transport | `TestRetiredObjectSurvivesADNSTransportReference` |
+| Provider 成员的 TCP/UDP 能力 | **明确的设计限制**：发布时只做图校验，不重跑能力 dry run；成员不承载组投递网络时该流运行时失败，启动期无 capability 警告 | `TestProviderTCPOnlyMemberInUDPLiveGroupIsARuntimeFailure` |
+| daemon / libbox 调用路径 | **验证无问题**：两处均不引用 `ProviderManager`/`DynamicOutboundManager`/`Replace`；Provider 节点只通过 Box 的 outbound 命名空间、状态视图与 Clash `/proxies` 可见 | 源码普查（`git grep ProviderManager daemon/ experimental/libbox/` 仅命中 USB local provider，无关） |
+| 原配置形状端到端 | **通过**：本地 HTTP 服务 + 具名 `http_client` + remote airport + 纯 Provider selector + SOCKS detour 链，下载前空组等待并给出等待错误（无旧“断链”错误），下载后链实际收发字节 | `TestProviderChainEndToEndWithNamedHTTPClient` |
+
+仍然未覆盖：真实订阅/真实设备、Linux/macOS、daemon 实机；fast_path 的 TUN 绕过决策；DNS transport 直接引用的运行时重定向（见上）。
+
 ## 来源与演进（Provenance and evolution）
 
 | 提交 | 分类 | 留下的行为 |

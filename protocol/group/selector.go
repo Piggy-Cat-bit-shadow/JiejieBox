@@ -284,6 +284,12 @@ func (s *Selector) resolveProviders() error {
 			providerTags = append(providerTags, provider.Tag())
 			s.providers[provider.Tag()] = provider
 		}
+		if len(providerTags) == 0 && len(s.Dependencies()) == 0 {
+			// use_all_providers with no provider and no static member is a configuration that can
+			// never have a member. Starting it would leave a permanently empty group whose dial error
+			// says it is "waiting for providers" that do not exist.
+			return E.New(s.Tag(), ": use_all_providers is set but no outbound providers are configured")
+		}
 		// The resolved list is what ProviderMembership publishes, and that getter must be safe to
 		// call from a diagnostic path while the Box is running: it takes stateAccess, so the write
 		// is published under the same lock.
@@ -596,17 +602,45 @@ func (s *Selector) SelectOutbound(tag string) bool {
 func (s *Selector) currentMember() (adapter.Outbound, error) {
 	member := s.selected.Load()
 	if member == nil {
-		providerTags, usesAllProviders := s.ProviderMembership()
-		switch {
-		case len(providerTags) > 0:
-			return nil, E.New("outbound group ", s.Tag(), " has no available member yet: it is waiting for outbound provider ",
-				strings.Join(providerTags, ", "), " to publish nodes")
-		case usesAllProviders:
-			return nil, E.New("outbound group ", s.Tag(), " has no available member yet: it is waiting for the configured outbound providers to publish nodes")
-		}
-		return nil, E.New("outbound group ", s.Tag(), " has no available member yet")
+		return nil, s.emptyMembershipError()
 	}
 	return member, nil
+}
+
+// emptyMembershipError explains why the group has no member, distinguishing the three states an
+// operator has to tell apart: nothing published yet, provider published but the group's filters
+// excluded everything, and a group with no member source at all.
+func (s *Selector) emptyMembershipError() error {
+	providerTags, usesAllProviders := s.ProviderMembership()
+	switch {
+	case len(providerTags) > 0:
+		published := s.publishedNodeCount(providerTags)
+		if published > 0 {
+			return E.New("outbound group ", s.Tag(), " has no available member yet: outbound provider ",
+				strings.Join(providerTags, ", "), " has published ", published, " node(s), but this group's ",
+				"include/exclude filters exclude all of them")
+		}
+		return E.New("outbound group ", s.Tag(), " has no available member yet: it is waiting for outbound provider ",
+			strings.Join(providerTags, ", "), " to publish nodes")
+	case usesAllProviders:
+		return E.New("outbound group ", s.Tag(), " has no available member yet: it is waiting for the configured outbound providers to publish nodes")
+	}
+	return E.New("outbound group ", s.Tag(), " has no available member yet")
+}
+
+// publishedNodeCount is a diagnostic read of how many nodes the named providers currently publish.
+// It takes providerAccess because two rebuilds may swap the provider list concurrently; the dial
+// path only pays for it when the group has no member at all.
+func (s *Selector) publishedNodeCount(providerTags []string) int {
+	s.providerAccess.Lock()
+	defer s.providerAccess.Unlock()
+	count := 0
+	for _, tag := range providerTags {
+		if provider := s.providers[tag]; provider != nil {
+			count += len(provider.Outbounds())
+		}
+	}
+	return count
 }
 
 func (s *Selector) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {

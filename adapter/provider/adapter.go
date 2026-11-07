@@ -61,6 +61,11 @@ type Adapter struct {
 	// longer contains it by then, and re-resolving the tag would either miss it or find a stranger.
 	retiredAccess sync.Mutex
 	retired       []adapter.Outbound
+	// pendingTags are the tags this provider replaced since the last completed publication round.
+	// They are handed to the manager's CompletePublication barrier only after UpdateGroups notified
+	// every subscribed group successfully; a failed round keeps them for the next success.
+	pendingAccess sync.Mutex
+	pendingTags   map[string]bool
 
 	link     string
 	enabled  bool
@@ -85,6 +90,7 @@ func NewAdapter(ctx context.Context, router adapter.Router, outbound adapter.Out
 	return Adapter{
 		cancel:           cancel,
 		appliedOutbounds: make(map[string]option.Outbound),
+		pendingTags:      make(map[string]bool),
 		ctx:              ctx,
 		outbound:         dynamicOutbound,
 		router:           router,
@@ -197,6 +203,12 @@ func (a *Adapter) UnregisterCallback(element *list.Element[adapter.ProviderUpdat
 // same graph would produce; an asynchronous refresh logs it and keeps the previous members and
 // selection. Swallowing it would make the invalid update look applied.
 func (a *Adapter) UpdateGroups() error {
+	// Serialise the whole notification round with applies. Without this, a callback could observe
+	// the manager mid-apply (new nodes installed) while this provider's published list is still the
+	// previous document, rebuild a membership from mixed state, and let CompletePublication end the
+	// retirement wait for objects that round did not actually replace.
+	a.updateAccess.Lock()
+	defer a.updateAccess.Unlock()
 	a.callbackAccess.Lock()
 	callbacks := make([]adapter.ProviderUpdateCallback, 0, a.callbacks.Len())
 	for element := a.callbacks.Front(); element != nil; element = element.Next() {
@@ -214,7 +226,65 @@ func (a *Adapter) UpdateGroups() error {
 	// rebuilt. Running it before the callbacks is what closed a node a selector still held: the
 	// group's new member list did not exist yet, so nothing had dropped the reference.
 	a.retryRetired()
+	if updateErr == nil {
+		// Only a round in which every group rebuilt its membership may end the retirement wait for
+		// the objects this provider replaced. On failure the old objects keep serving the previous
+		// selection, and the tags stay pending for the next successful round.
+		a.completePublication()
+	}
 	return updateErr
+}
+
+// replaceOutbound uses the owner-aware replacement when the manager provides it, so the replaced
+// object is parked instead of closed before the groups are notified.
+func (a *Adapter) replaceOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, outboundType string, options any) error {
+	if owned, isOwned := a.outbound.(adapter.OwnedDynamicOutboundManager); isOwned {
+		return owned.ReplaceOwned(ctx, router, logger, tag, outboundType, options, a.providerTag)
+	}
+	return a.outbound.Replace(ctx, router, logger, tag, outboundType, options)
+}
+
+// markPendingReplacement records a same-tag replacement for the next publication barrier.
+func (a *Adapter) markPendingReplacement(tag string) {
+	a.pendingAccess.Lock()
+	a.pendingTags[tag] = true
+	a.pendingAccess.Unlock()
+}
+
+// completePublication ends the retirement wait for every tag replaced since the last successful
+// round. Tags are only cleared once the manager accepted the completion.
+func (a *Adapter) completePublication() {
+	publisher, isPublisher := a.outbound.(adapter.OwnedDynamicOutboundManager)
+	if !isPublisher {
+		return
+	}
+	a.pendingAccess.Lock()
+	if len(a.pendingTags) == 0 {
+		a.pendingAccess.Unlock()
+		return
+	}
+	tags := make([]string, 0, len(a.pendingTags))
+	for tag := range a.pendingTags {
+		tags = append(tags, tag)
+	}
+	a.pendingTags = make(map[string]bool, len(tags))
+	a.pendingAccess.Unlock()
+	if err := publisher.CompletePublication(a.providerTag, tags); err != nil {
+		a.logger.Error(err, "complete outbound publication")
+		a.pendingAccess.Lock()
+		for _, tag := range tags {
+			a.pendingTags[tag] = true
+		}
+		a.pendingAccess.Unlock()
+	}
+}
+
+// hasUpdateCallbacks reports whether any group subscribed to this provider. With no subscribers
+// there is no callback phase to wait for, so an apply may complete its replacements immediately.
+func (a *Adapter) hasUpdateCallbacks() bool {
+	a.callbackAccess.Lock()
+	defer a.callbackAccess.Unlock()
+	return a.callbacks.Len() > 0
 }
 
 // retryRetired attempts the removals an earlier apply deferred, and keeps the rest for the next
@@ -319,7 +389,7 @@ func (a *Adapter) CheckDownloadPath(detour string, followsDefaultOutbound bool) 
 			// validation; naming it here as a bootstrap loop would mislead.
 			return nil
 		}
-		return a.checkDownloadChain(start, "detour "+detour)
+		return a.checkDownloadChain(start, "detour "+detour, "download through")
 	}
 	if !followsDefaultOutbound {
 		// An explicit http_client without a detour dials directly: the download does not depend on
@@ -330,12 +400,70 @@ func (a *Adapter) CheckDownloadPath(detour string, followsDefaultOutbound bool) 
 	if start == nil {
 		return nil
 	}
-	return a.checkDownloadChain(start, "route.final")
+	return a.checkDownloadChain(start, "route.final", "download through")
+}
+
+// CheckDownloadResolver refuses a DNS-mediated bootstrap: the provider's download host is a domain,
+// its dialer resolves it through resolverTag, and that DNS transport detours into a group only this
+// provider can populate.
+//
+// # Why this is a separate check from CheckDownloadPath
+//
+// The outbound dial chain is only half of a download. The HTTP client must first resolve its server
+// name, and that resolution runs through route.default_domain_resolver (or the http_client's own
+// domain_resolver) BEFORE any outbound is dialled. When the resolver's transport detours into the
+// provider's own empty group, the first download blocks in DNS: no outbound ever gets a chance to
+// report the loop, and the Box starts with a group that can never be populated.
+func (a *Adapter) CheckDownloadResolver(resolverTag string) error {
+	if resolverTag == "" || a.outbound == nil {
+		return nil
+	}
+	dnsManager := service.FromContext[adapter.DNSTransportManager](a.ctx)
+	if dnsManager == nil {
+		return nil
+	}
+	transport, loaded := dnsManager.Transport(resolverTag)
+	if !loaded {
+		// A missing resolver tag is reported by the DNS transport manager at start; naming it here
+		// as a bootstrap loop would mislead.
+		return nil
+	}
+	visited := make(map[string]bool)
+	queue := []adapter.DNSTransport{transport}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		if current == nil || visited[current.Tag()] {
+			continue
+		}
+		visited[current.Tag()] = true
+		// A DNS resolver chain: a transport's own domain_resolver is another DNS transport.
+		for _, dependency := range current.Dependencies() {
+			if next, isTransport := dnsManager.Transport(dependency); isTransport {
+				queue = append(queue, next)
+			}
+		}
+		referrer, isReferrer := current.(adapter.Referrer)
+		if !isReferrer {
+			continue
+		}
+		for _, reference := range referrer.References() {
+			object, isOutbound := a.outbound.Outbound(reference)
+			if !isOutbound {
+				continue
+			}
+			path := "dns/" + current.Tag() + " detour " + reference
+			if err := a.checkDownloadChain(object, path, "resolve the download host through"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // checkDownloadChain walks the dial chain the download would traverse and refuses the first
 // provider-fed empty group this provider alone feeds.
-func (a *Adapter) checkDownloadChain(start adapter.Outbound, path string) error {
+func (a *Adapter) checkDownloadChain(start adapter.Outbound, path string, verb string) error {
 	providerManager := service.FromContext[adapter.ProviderManager](a.ctx)
 	visited := make(map[string]bool)
 	queue := []adapter.Outbound{start}
@@ -361,8 +489,8 @@ func (a *Adapter) checkDownloadChain(start adapter.Outbound, path string) error 
 			providerTags, usesAllProviders = backed.ProviderMembership()
 		}
 		if len(group.All()) == 0 && fedOnlyByThisProvider(providerTags, usesAllProviders, a.providerTag, providerManager) {
-			return E.New("provider ", a.providerTag, " cannot download through outbound group ", group.Tag(),
-				" (the download path is ", path, "): the group is fed only by this provider and has no ",
+			return E.New("provider ", a.providerTag, " cannot ", verb, " outbound group ", group.Tag(),
+				" (the path is ", path, "): the group is fed only by this provider and has no ",
 				"member until this provider's first download succeeds, so the download is waiting on ",
 				"itself. Route the download through an http_client whose dialer does not depend on ",
 				"this group, give the group a static member, or take it out of the download path")

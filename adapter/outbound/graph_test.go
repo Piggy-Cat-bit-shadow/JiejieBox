@@ -319,6 +319,55 @@ func TestOutboundsSnapshotsSurviveConcurrentMutations(t *testing.T) {
 	waitGroup.Wait()
 }
 
+// replaceOwnedNode publishes a node through the owner-aware replacement path.
+func replaceOwnedNode(t *testing.T, manager *Manager, tag string, owner string, dependencies ...string) error {
+	t.Helper()
+	return manager.ReplaceOwned(context.Background(), nil, log.NewNOPFactory().NewLogger("test"),
+		tag, "test", &graphNodeOptions{Dependencies: dependencies}, owner)
+}
+
+// TestRetiredObjectSurvivesACachedDirectDetourUntilTheReferenceGoes is the direct-detour ownership
+// edge.
+//
+// A live object whose detour names the replaced tag may have resolved the previous object into a
+// one-shot detour cache. Closing it at the publication barrier would make that holder fail on its
+// next use, so the object is retained until the naming object is gone. The retention is released by
+// the removal that deletes the last external reference.
+func TestRetiredObjectSurvivesACachedDirectDetourUntilTheReferenceGoes(t *testing.T) {
+	manager := newGraphManager(t)
+	require.NoError(t, replaceOwnedNode(t, manager, "p/X", "p"))
+	first, loaded := manager.Outbound("p/X")
+	require.True(t, loaded)
+	anchor := &graphNode{tag: "anchor", dependencies: []string{"p/X"}}
+	installOutbound(t, manager, anchor)
+
+	require.NoError(t, replaceOwnedNode(t, manager, "p/X", "p"))
+	require.NoError(t, manager.CompletePublication("p", []string{"p/X"}))
+	require.Zero(t, first.(*graphNode).closed.Load(),
+		"a live direct detour may still resolve the retired object; it must stay open")
+
+	require.NoError(t, manager.Remove("anchor"))
+	require.EqualValues(t, 1, first.(*graphNode).closed.Load(),
+		"removing the last external reference releases the retired object")
+}
+
+// TestRetiredObjectSurvivesADNSTransportReference is the cross-kind version: a DNS transport's
+// detour names the replaced tag and has no removal API, so the retired object is retained for the
+// lifetime of the manager (a documented conservative edge, see the module notes).
+func TestRetiredObjectSurvivesADNSTransportReference(t *testing.T) {
+	manager := newGraphManager(t)
+	require.NoError(t, replaceOwnedNode(t, manager, "p/X", "p"))
+	first, loaded := manager.Outbound("p/X")
+	require.True(t, loaded)
+	require.NoError(t, manager.ValidateCrossKindCycles([]adapter.DNSTransport{
+		&crossKindTestTransport{tag: "remote", detoursTo: []string{"p/X"}},
+	}))
+	require.NoError(t, replaceOwnedNode(t, manager, "p/X", "p"))
+	require.NoError(t, manager.CompletePublication("p", []string{"p/X"}))
+	require.Zero(t, first.(*graphNode).closed.Load(),
+		"a DNS transport may hold the retired object in its detour cache; it must stay open")
+}
+
 // TestConcurrentMembershipPublicationsCannotBothCloseACycle serialises the graph decision.
 //
 // Two groups each publish a member whose node detours into the OTHER group. Each publication alone

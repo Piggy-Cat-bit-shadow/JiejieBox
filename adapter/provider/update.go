@@ -136,13 +136,18 @@ func (a *Adapter) UpdateNodes(outOpts []option.Outbound) error {
 			outByTag[node.tag] = current
 			continue
 		}
-		err := a.outbound.Replace(ctx, a.router, a.logFactory.NewLogger("outbound/"+node.kind+"["+node.tag+"]"), node.tag, node.kind, node.options)
+		err := a.replaceOutbound(ctx, a.router, a.logFactory.NewLogger("outbound/"+node.kind+"["+node.tag+"]"), node.tag, node.kind, node.options)
 		if err != nil {
 			updateErr = E.Errors(updateErr, E.Cause(err, node.tag))
 			if exists && active[node.tag] {
 				outByTag[node.tag] = current
 			}
 			continue
+		}
+		if exists {
+			// Same-tag replacement: the manager parked the previous object. It may only be closed
+			// after the group callbacks below rebuilt their memberships from this provider's list.
+			a.markPendingReplacement(node.tag)
 		}
 		replaced[node.tag] = true
 		current, _ = a.outbound.Outbound(node.tag)
@@ -180,6 +185,12 @@ func (a *Adapter) UpdateNodes(outOpts []option.Outbound) error {
 	}
 	if a.enabled && a.history != nil {
 		a.run(func() { a.HealthCheck(a.ctx) })
+	}
+	if !a.hasUpdateCallbacks() {
+		// No group subscribed to this provider, so there is no callback phase to wait for: nothing
+		// can still resolve a retired object. Completing here keeps the historical UpdateNodes-only
+		// behaviour for an embedder that drives the adapter directly.
+		a.completePublication()
 	}
 	return updateErr
 }

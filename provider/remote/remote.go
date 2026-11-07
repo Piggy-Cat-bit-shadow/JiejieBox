@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -73,6 +74,7 @@ type ProviderRemote struct {
 	// logURL is the subscription URL with its credentials, query and fragment removed, so a token
 	// in a query parameter never reaches the log. The raw s.url is used only for the request.
 	logURL         string
+	hostIsDomain   bool
 	urlHash        [32]byte
 	path           string
 	initialPath    string
@@ -171,6 +173,7 @@ func NewProviderRemote(ctx context.Context, router adapter.Router, logFactory lo
 		httpClientOptions: options.HTTPClient,
 		url:               providerURL,
 		logURL:            redactedURL(parsedURL),
+		hostIsDomain:      parsedURL.Hostname() != "" && net.ParseIP(parsedURL.Hostname()) == nil,
 		urlHash:           sha256.Sum256([]byte(providerURL)),
 		path:              path,
 		initialPath:       initialPath,
@@ -220,6 +223,16 @@ func (s *ProviderRemote) StartContext(ctx context.Context, startContext *adapter
 		if err = s.Adapter.CheckDownloadPath(detour, followsDefaultOutbound); err != nil {
 			return err
 		}
+		// The HTTP client cannot dial before it resolved its own server name. When that resolution
+		// goes through an explicitly configured or route-default DNS server, that server's detour
+		// chain is part of the download path too.
+		if s.hostIsDomain {
+			if resolverTag := s.downloadResolverTag(); resolverTag != "" {
+				if err = s.Adapter.CheckDownloadResolver(resolverTag); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	transport, err := s.resolveTransport()
 	if err != nil {
@@ -252,6 +265,21 @@ func (s *ProviderRemote) StartContext(ctx context.Context, startContext *adapter
 	// provider-only group has no members and its dials fail with a clear error rather than the
 	// whole Box failing to start.
 	return nil
+}
+
+// downloadResolverTag reports the DNS server the dialer would use to resolve the provider's own
+// hostname: the explicit http_client resolver when one is configured, otherwise
+// route.default_domain_resolver. An empty answer means the system resolver is used, which cannot
+// depend on the provider's outbound nodes.
+func (s *ProviderRemote) downloadResolverTag() string {
+	if s.httpClientOptions != nil && !s.httpClientOptions.IsEmpty() &&
+		s.httpClientOptions.DialerOptions.DomainResolver != nil {
+		return s.httpClientOptions.DialerOptions.DomainResolver.Server
+	}
+	if reader, isReader := s.outbound.(interface{ DefaultDomainResolverTag() string }); isReader {
+		return reader.DefaultDomainResolverTag()
+	}
+	return ""
 }
 
 // downloadDetourTag reports the outbound the download's dialer is configured to detour through.

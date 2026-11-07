@@ -37,6 +37,12 @@ type Manager struct {
 	// closed by a late node - dns transport -> outbound -> dns transport - would otherwise be
 	// invisible to every check that ran before the node existed.
 	dnsTransports []adapter.DNSTransport
+	// ownedTags records which owner (a provider tag) published a tag. A retired version of a tag
+	// may only be closed after its owner completed a publication round; see ReplaceOwned.
+	ownedTags map[string]string
+	// retired holds replaced objects whose closure is deferred until the ownership rule below says
+	// no new dial can obtain them. See CompletePublication.
+	retired []retiredOutbound
 
 	registry                adapter.OutboundRegistry
 	endpoint                adapter.EndpointManager
@@ -76,6 +82,21 @@ func (m *Manager) SetDefaultDomainResolver(defaultResolver func() string) {
 	m.access.Lock()
 	m.defaultDomainResolver = defaultResolver
 	m.access.Unlock()
+}
+
+// DefaultDomainResolverTag reports the tag `route.default_domain_resolver` names, or "".
+//
+// It exists for the provider bootstrap diagnosis: whether a download's own hostname resolution can
+// close a loop through the provider's nodes depends on which resolver the dialer falls back to. The
+// answer is live (the Box installs a closure), so a provider started later sees the current value.
+func (m *Manager) DefaultDomainResolverTag() string {
+	m.access.RLock()
+	resolver := m.defaultDomainResolver
+	m.access.RUnlock()
+	if resolver == nil {
+		return ""
+	}
+	return resolver()
 }
 
 // physicalPathValidation is everything the reachable-leaf dry run needs that is not readable from
@@ -179,6 +200,7 @@ func NewManager(registry adapter.OutboundRegistry, endpoint adapter.EndpointMana
 		endpoint:      endpoint,
 		defaultTag:    defaultTag,
 		outboundByTag: make(map[string]adapter.Outbound),
+		ownedTags:     make(map[string]string),
 	}
 }
 
@@ -710,6 +732,32 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 // the Box finished starting must not receive a stage the Box has already left, and one created
 // during the start must receive every stage the manager has reached.
 func (m *Manager) Replace(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, outboundType string, options any) error {
+	return m.replace(ctx, router, logger, tag, outboundType, options, "")
+}
+
+// ReplaceOwned is Replace for an owner-managed namespace (an outbound provider).
+//
+// # The ownership rule it starts
+//
+// The replacement becomes addressable by tag immediately, but the object it replaced is NOT closed
+// here. A provider-fed group still holds the previous object until its callback rebuilds the member
+// list, and closing it now would hand a new dial a closed object while a valid replacement is
+// already published. MEASURED on the unfixed manager: a selector kept dialling the old object and
+// every dial in that window failed with net.ErrClosed.
+//
+// The old object is parked as RETIRED with its owner. It becomes eligible for closure only when
+// `CompletePublication(owner, tags)` says the owner notified every group that names it and every
+// callback succeeded, AND no live object outside the owner still names the tag (a cached direct
+// detour or DNS transport would otherwise keep resolving the retired object). Until then it stays
+// open: a dial in the window gets a working object, never a closed one.
+func (m *Manager) ReplaceOwned(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, outboundType string, options any, owner string) error {
+	if owner == "" {
+		return os.ErrInvalid
+	}
+	return m.replace(ctx, router, logger, tag, outboundType, options, owner)
+}
+
+func (m *Manager) replace(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, outboundType string, options any, owner string) error {
 	if tag == "" {
 		return os.ErrInvalid
 	}
@@ -759,17 +807,151 @@ func (m *Manager) Replace(ctx context.Context, router adapter.Router, logger log
 		m.outbounds = replaceOutbound(m.outbounds, old, outbound)
 	}
 	m.outboundByTag[tag] = outbound
+	if owner != "" {
+		m.ownedTags[tag] = owner
+	}
 	if old != nil && m.defaultOutbound == old {
 		m.defaultOutbound = outbound
 	} else if tag == m.defaultTag || (m.defaultTag == "" && m.defaultOutbound == nil) {
 		m.defaultOutbound = outbound
 	}
+	var closeNow, sweep []adapter.Outbound
+	if old != nil {
+		if owner == "" {
+			// A caller that is not an owner-managed publisher keeps the historical behaviour: the
+			// previous object is closed at the swap. Such a caller has no group-callback phase.
+			closeNow = append(closeNow, old)
+		} else {
+			m.retired = append(m.retired, retiredOutbound{outbound: old, tag: tag, owner: owner})
+		}
+	}
+	sweep = m.takeSweepableRetiredLocked()
 	m.access.Unlock()
 	m.graphAccess.Unlock()
-	if old != nil {
-		m.release(old)
+	for _, object := range closeNow {
+		m.release(object)
+	}
+	for _, object := range sweep {
+		m.release(object)
 	}
 	return nil
+}
+
+// retiredOutbound is a replaced object parked until no new dial can obtain it.
+type retiredOutbound struct {
+	outbound adapter.Outbound
+	tag      string
+	owner    string
+	// ready is set by CompletePublication: the owner has notified every group that names it, and
+	// every callback succeeded. Only external references (a live non-group object naming the tag)
+	// can still keep the object open after that.
+	ready bool
+}
+
+// CompletePublication is the owner's publication barrier: it releases the retired objects this
+// owner parked for the named tags, and retries older READY entries whose external references have
+// since disappeared.
+//
+// The provider calls it only after UpdateGroups returned nil, i.e. after every callback subscribed
+// to that provider rebuilt its membership from the provider's current list. A failed round calls
+// nothing, so the previous objects stay open and keep serving the previous selection - the failed
+// update preserves the old state instead of breaking it.
+//
+// An entry is NOT closed while a live object outside the owner still names its tag. A direct
+// `detour` or a DNS transport that was resolved before the swap may hold the old object in a
+// one-shot cache; releasing it would make that holder fail on its next use. Those are retained (and
+// released later by Remove/Replace or at teardown), which is the deliberate conservative edge: a
+// configuration that references provider nodes directly is documented as not redirected by a
+// refresh.
+func (m *Manager) CompletePublication(owner string, tags []string) error {
+	if m == nil || owner == "" {
+		return nil
+	}
+	wanted := make(map[string]bool, len(tags))
+	for _, tag := range tags {
+		wanted[tag] = true
+	}
+	m.mutation.Lock()
+	m.graphAccess.Lock()
+	m.access.Lock()
+	var release []adapter.Outbound
+	kept := make([]retiredOutbound, 0, len(m.retired))
+	for _, entry := range m.retired {
+		if entry.owner != owner {
+			kept = append(kept, entry)
+			continue
+		}
+		if wanted[entry.tag] {
+			entry.ready = true
+		}
+		if entry.ready && !m.externalReferenceLocked(entry.tag, owner) {
+			release = append(release, entry.outbound)
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	m.retired = kept
+	m.access.Unlock()
+	m.graphAccess.Unlock()
+	m.mutation.Unlock()
+	for _, object := range release {
+		m.release(object)
+	}
+	return nil
+}
+
+// externalReferenceLocked reports whether a live object OUTSIDE owner still names tag in a way that
+// can resolve to an object rather than to the tag's current publisher.
+//
+// Groups are excluded on purpose: a provider-fed group lists member TAGS, and after a successful
+// publication round it resolves them through this manager again, so its stale listing is not a
+// reference to the retired object. Every other live object (a static outbound, an endpoint, a DNS
+// transport) may have built a detour dialer and cached the object, so it is treated as one.
+func (m *Manager) externalReferenceLocked(tag string, owner string) bool {
+	for _, other := range m.outbounds {
+		if m.ownedTags[other.Tag()] == owner {
+			continue
+		}
+		if _, isGroup := other.(adapter.OutboundGroup); isGroup {
+			continue
+		}
+		if objectReferencesTag(other, tag) {
+			return true
+		}
+	}
+	if m.endpoint != nil {
+		for _, endpoint := range m.endpoint.Endpoints() {
+			if objectReferencesTag(endpoint, tag) {
+				return true
+			}
+		}
+	}
+	for _, transport := range m.dnsTransports {
+		if transportReferencesTag(transport, tag) {
+			return true
+		}
+	}
+	return false
+}
+
+// takeSweepableRetiredLocked removes READY retired entries that no longer have an external
+// reference and returns them for closure outside the locks. It is called after a namespace mutation
+// (Replace/Remove/Create) because that mutation may have been the last holder of a tag.
+func (m *Manager) takeSweepableRetiredLocked() []adapter.Outbound {
+	if len(m.retired) == 0 {
+		return nil
+	}
+	var release []adapter.Outbound
+	kept := make([]retiredOutbound, 0, len(m.retired))
+	for _, entry := range m.retired {
+		if entry.ready && !m.externalReferenceLocked(entry.tag, entry.owner) {
+			release = append(release, entry.outbound)
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	m.retired = kept
+	return release
 }
 
 // Remove unlinks a runtime outbound and releases what it owns.
@@ -802,12 +984,16 @@ func (m *Manager) Remove(tag string) error {
 	}
 	wasDefault := m.unlinkLocked(tag, outbound)
 	fallback := m.defaultAfterRemovalLocked(wasDefault)
+	sweep := m.takeSweepableRetiredLocked()
 	m.access.Unlock()
 	m.graphAccess.Unlock()
 	if fallback != nil && m.logger != nil {
 		m.logger.Info("updated default outbound to ", fallback.Tag())
 	}
 	m.release(outbound)
+	for _, object := range sweep {
+		m.release(object)
+	}
 	return nil
 }
 
@@ -917,6 +1103,7 @@ func objectReferencesTag(object adapter.Outbound, tag string) bool {
 // to log the change outside the lock.
 func (m *Manager) unlinkLocked(tag string, outbound adapter.Outbound) bool {
 	delete(m.outboundByTag, tag)
+	delete(m.ownedTags, tag)
 	m.outbounds = removeOutbound(m.outbounds, outbound)
 	if m.defaultOutbound == outbound {
 		m.defaultOutbound = nil

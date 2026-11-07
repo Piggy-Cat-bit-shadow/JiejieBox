@@ -237,6 +237,9 @@ func (s *URLTest) resolveProviders() error {
 			providerTags = append(providerTags, provider.Tag())
 			s.providers[provider.Tag()] = provider
 		}
+		if len(providerTags) == 0 && len(s.Dependencies()) == 0 {
+			return E.New(s.Tag(), ": use_all_providers is set but no outbound providers are configured")
+		}
 		// The resolved list is what ProviderMembership publishes; the write goes under stateAccess
 		// so a diagnostics read cannot race it. See the matching comment in selector.go.
 		s.stateAccess.Lock()
@@ -390,12 +393,30 @@ func (s *URLTest) noGroupError() error {
 	providerTags, usesAllProviders := s.ProviderMembership()
 	switch {
 	case len(providerTags) > 0:
+		if published := s.publishedNodeCount(providerTags); published > 0 {
+			return E.New("outbound group ", s.Tag(), " has no available member yet: outbound provider ",
+				strings.Join(providerTags, ", "), " has published ", published, " node(s), but this group's ",
+				"include/exclude filters exclude all of them")
+		}
 		return E.New("outbound group ", s.Tag(), " has no available member yet: it is waiting for outbound provider ",
 			strings.Join(providerTags, ", "), " to publish nodes")
 	case usesAllProviders:
 		return E.New("outbound group ", s.Tag(), " has no available member yet: it is waiting for the configured outbound providers to publish nodes")
 	}
 	return E.New("outbound group ", s.Tag(), " has no available member yet")
+}
+
+// publishedNodeCount is the diagnostic read described on Selector.publishedNodeCount.
+func (s *URLTest) publishedNodeCount(providerTags []string) int {
+	s.providerAccess.Lock()
+	defer s.providerAccess.Unlock()
+	count := 0
+	for _, tag := range providerTags {
+		if provider := s.providers[tag]; provider != nil {
+			count += len(provider.Outbounds())
+		}
+	}
+	return count
 }
 
 // currentGroup returns the live group, or nil when the wrapper has none.
