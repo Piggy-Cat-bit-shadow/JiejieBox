@@ -88,18 +88,18 @@ type ProviderRemoteOptions struct {
 	DownloadDetour string `json:"download_detour,omitempty" reference:"outbound" schema:"omit"`
 }
 
+// providerRemoteOptionsSchema is the schema-only alias of ProviderRemoteOptions; it exists so the
+// generated schema can describe the three path/initial_path variants without the runtime type
+// growing a custom UnmarshalJSON.
 type providerRemoteOptionsSchema ProviderRemoteOptions
 
-func (o *ProviderRemoteOptions) UnmarshalJSON(content []byte) error {
-	err := json.Unmarshal(content, (*providerRemoteOptionsSchema)(o))
-	if err != nil {
-		return err
-	}
-	if o.Path != "" && o.InitialPath != "" {
-		return E.New("provider path and initial_path are mutually exclusive")
-	}
-	return nil
-}
+// NOTE: ProviderRemoteOptions deliberately has NO custom UnmarshalJSON.
+//
+// The envelope decodes per-type options with UnmarshallExcludedContext, which rejects unknown
+// fields. A custom UnmarshalJSON on the options type is invoked instead of that decoder, so it
+// would silently accept any typo (`update_intervall`, `inceude`) - the exact class of configuration
+// error this project refuses at decode time. The path/initial_path exclusivity is checked in
+// checkProviders and again in the constructor, where the error still names the provider.
 
 func (o ProviderRemoteOptions) DescribeSchema(builder schema.Builder) (*schema.Node, error) {
 	buildVariant := func(pathField string) (*schema.Node, error) {

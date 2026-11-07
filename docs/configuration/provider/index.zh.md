@@ -37,8 +37,9 @@ Provider 只提供**出站**。它不会替换配置中的 DNS、路由、入站
 | `type` | `remote`、`local` 或 `inline`   |
 | `tag`  | Provider 标签                   |
 
-Provider 标签在 Provider 之间必须唯一，同时是节点标签的前缀：`airport` 中名为 `hk-01` 的节点会以
-`airport/hk-01` 发布。策略组写 `providers: ["airport"]` 即可包含该 Provider 的全部节点。
+Provider 标签在 Provider 之间必须唯一，且不能包含 `/`（斜杠保留为 Provider 与节点的分隔符）。标签同时是
+节点标签的前缀：`airport` 中名为 `hk-01` 的节点会以 `airport/hk-01` 发布。策略组写
+`providers: ["airport"]` 即可包含该 Provider 的全部节点。
 
 ### Remote
 
@@ -61,7 +62,7 @@ Provider 标签在 Provider 之间必须唯一，同时是节点标签的前缀�
 
 | 字段              | 说明                                                                     |
 |-------------------|--------------------------------------------------------------------------|
-| `url`             | 必填。订阅 URL。                                                          |
+| `url`             | 必填。必须是绝对的 `http`/`https` URL。                                   |
 | `path`            | 下载文档的缓存文件，与 `initial_path` 互斥。                              |
 | `initial_path`    | 仅在无缓存且首次下载失败时使用的文档。                                     |
 | `user_agent`      | 请求的 `User-Agent`，与 `http_client.headers` 冲突。                      |
@@ -72,11 +73,18 @@ Provider 标签在 Provider 之间必须唯一，同时是节点标签的前缀�
 | `exclude`         | 正则：跳过**渲染后标签**匹配的节点，优先于 `include`。                     |
 | `health_check`    | 见下文。                                                                   |
 
-未配置 `path` 时，缓存写入 [cache file](/zh/configuration/experimental/cache-file/) 对应的记录；
-关闭 cache file 后缓存也随之消失。既无缓存、启动时又无法访问 URL 的 Provider 会以零节点启动：引用它
-的策略组在拨号时报告 “no available member”，并会在更新间隔到达后重试首次下载。
+URL 在配置加载时就会解析并检查 scheme：`ftp://` 或相对路径会以指明 Provider 的错误拒绝启动，而不是等后台
+下载时才暴露。查询参数按凭据处理：日志中的 URL 会去掉 query、userinfo 和 fragment。
 
-下载是异步的：`sing-box` 不会阻塞 Box 的启动去等待订阅 URL。
+未配置 `path` 时，缓存写入 [cache file](/zh/configuration/experimental/cache-file/) 对应的记录；
+关闭 cache file 后缓存也随之消失。配置 `path` 时，缓存先写入同目录的临时文件再重命名，写入中断不会破坏
+上一份有效文档。
+
+既无缓存、启动时又无法访问 URL 的 Provider 会以零节点启动：引用它的策略组在拨号时报告
+“no available member”，并会在更新间隔到达后重试首次下载。
+
+下载是异步的：`sing-box` 不会阻塞 Box 的启动去等待订阅 URL。单次请求有 30 秒超时（含读取 body）和
+10 MiB 文档上限；服务器卡住或返回无限长度的 body 只会让这一次刷新失败，不会拖垮 Provider。
 
 ### Local
 
@@ -89,6 +97,10 @@ Provider 标签在 Provider 之间必须唯一，同时是节点标签的前缀�
   "path": "provider/local.json"
 }
 ```
+
+文件必须在 Box 启动时存在且可读；与 remote 不同，local 没有缓存可回退，文件缺失会以指明 Provider 的错误
+拒绝启动。路径在安装监视前会解析为绝对路径，这也是 Windows 上使用正斜杠书写的路径能够生效的原因。无法解析
+的编辑和文件删除都会保留上一次发布的节点集，下一次有效编辑会替换它。
 
 ### Inline
 
@@ -146,10 +158,22 @@ Provider 标签在 Provider 之间必须唯一，同时是节点标签的前缀�
 指向同级节点的 `detour` 会被改写为该节点的渲染后标签；指向其他对象的 `detour` 会被清空——Provider
 无法确认主配置里是否还有那个标签，保留悬空依赖会让该节点创建失败。
 
+### 失败处理
+
+- 无法解析的文档（空 body、HTML 登录页、没有可用节点的 JSON）都算**刷新失败**，已发布的节点集保持不变。
+  空文档绝不会被理解为“该 Provider 现在没有节点”；要移除节点请从配置中删除 Provider。
+- 单个节点创建失败（本构建不支持的选项、非法服务器地址）会被跳过，文档其余部分仍然生效；若该标签原本已有
+  节点，则该标签继续使用旧对象。
+- 下载失败、非 2xx、重定向循环、超时、超大 body 都走同一条路径：本次刷新失败，保留最后一次有效集合，下个
+  周期再试。
+
 ### 更新
 
 更新是增量 diff：选项未变化的节点保留原有对象（因此保留现有连接）；变化的节点先准备并启动，再摘除旧
 对象；替换失败的节点继续使用旧对象。只调整顺序或格式的订阅刷新不会打扰现有流量。
+
+被替换节点的旧对象在切换后关闭，因此正在使用它的连接会中断；只有未变化的节点能跨刷新保留连接。从文档中
+删除的节点在移除时关闭，原因相同：已经没有对象可供新连接解析。
 
 `update_interval` 是两次下载之间的最小间隔。本版本没有通过 Clash API 暴露手动刷新，Provider 按自己的
 周期刷新。

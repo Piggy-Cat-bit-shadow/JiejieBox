@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"reflect"
+	"strconv"
+	"strings"
 
 	"github.com/sagernet/sing-box/schema"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -107,12 +109,25 @@ func checkProviders(providers []Provider) error {
 		if provider.Type == "" {
 			return E.New("missing provider type at index ", i)
 		}
+		if provider.Options == nil {
+			return E.New("provider[", i, "] ", provider.Type, " has no options")
+		}
 		tag := provider.Tag
 		if tag == "" {
 			tag = F.ToString(i)
 		}
 		if seen[tag] {
 			return E.New("duplicate provider tag: ", tag)
+		}
+		// The tag is the prefix of every rendered node tag (tag/node), so a slash inside it would
+		// make the boundary between provider and node ambiguous for every reader of the namespace.
+		if strings.Contains(tag, "/") {
+			return E.New("provider tag must not contain '/': ", strconv.Quote(tag))
+		}
+		if remoteOptions, isRemote := provider.Options.(*ProviderRemoteOptions); isRemote {
+			if remoteOptions.Path != "" && remoteOptions.InitialPath != "" {
+				return E.New("provider ", tag, ": path and initial_path are mutually exclusive")
+			}
 		}
 		seen[tag] = true
 	}

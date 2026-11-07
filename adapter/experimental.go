@@ -140,6 +140,14 @@ func (s *SavedBinary) UnmarshalBinary(data []byte) error {
 	if err != nil {
 		return err
 	}
+	// The version byte is load-bearing, not decoration: this layout is version 2, and a record
+	// written by a different version has a different field order. Parsing it as v2 would either
+	// fail halfway or, when the lengths happen to fit, produce a silently wrong document. A cache
+	// that cannot be read is refused and refetched; a cache that is read incorrectly is a bug that
+	// surfaces as the wrong nodes.
+	if version != 2 {
+		return E.New("unsupported cache record version: ", version)
+	}
 	contentLength, err := binary.ReadUvarint(reader)
 	if err != nil {
 		return err

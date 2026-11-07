@@ -85,6 +85,9 @@ func (m *Manager) Close() error {
 	m.started = false
 	providers := m.providers
 	m.providers = nil
+	// The tag map must be cleared with the slice. Leaving closed providers resolvable by tag would
+	// make a late group update - or a second Close - hand out an object whose lifecycle has ended.
+	m.providerByTag = make(map[string]adapter.Provider)
 	m.access.Unlock()
 	var err error
 	for _, provider := range providers {

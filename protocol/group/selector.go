@@ -190,11 +190,10 @@ func NewSelector(ctx context.Context, router adapter.Router, logger log.ContextL
 		include:         (*regexp.Regexp)(options.Include),
 		useAllProviders: options.UseAllProviders,
 	}
-	for i, tag := range outbound.tags {
-		if slices.Contains(outbound.tags[:i], tag) {
-			return nil, E.New("duplicate tag: ", tag)
-		}
-	}
+	// A member may be declared more than once. That is one edge, not a configuration error: route
+	// resolution and loadbalance both define what it means (one path, a proportional share), and the
+	// route package's nested-chain test pins it. Rejecting it here made an existing configuration
+	// unloadable, so the duplicate stays legal and the member map below collapses it to one object.
 	if len(outbound.tags) == 0 && len(outbound.providerTags) == 0 && !outbound.useAllProviders {
 		return nil, E.New("missing outbound and provider tags")
 	}

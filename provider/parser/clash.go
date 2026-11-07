@@ -120,7 +120,10 @@ func (c *ClashProxy) BuildEndpoint() option.Endpoint {
 }
 
 func ParseClashSubscription(_ context.Context, content string) ([]option.Outbound, []option.Endpoint, error) {
-	config := &ClashConfig{}
+	// Unmarshal into a VALUE, not a pointer-to-pointer: a body of "null" makes yaml set a
+	// **ClashConfig to nil, and the field reads below would then dereference a nil config. A zero
+	// config has no proxies, which is the honest reading of "null" and keeps the reader panic-free.
+	var config ClashConfig
 	err := yaml.Unmarshal([]byte(content), &config)
 	if err != nil {
 		return nil, nil, E.Cause(err, "parse clash config")

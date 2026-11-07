@@ -32,6 +32,13 @@ func (a *Adapter) UpdateNodes(outOpts []option.Outbound) error {
 	if a.outbound == nil {
 		return E.New("outbound manager does not support dynamic outbounds")
 	}
+	if len(outOpts) == 0 {
+		// An empty apply is never how a provider becomes empty: the document readers report "no
+		// servers found" instead of returning zero nodes, precisely so a garbage or empty body
+		// cannot be read as "remove every node". A caller that really wants to empty a provider
+		// removes it from the configuration.
+		return E.New("refusing an empty node set: an unrecognised or empty document must not wipe the published nodes")
+	}
 	outTags := a.resolveOutboundTags(outOpts)
 	nodes := make(map[string]updateNode, len(outOpts))
 	for i := range outOpts {

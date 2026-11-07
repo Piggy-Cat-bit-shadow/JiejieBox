@@ -2,7 +2,9 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"io"
+	"io/fs"
 	"path/filepath"
 	"sync"
 	"time"
@@ -83,8 +85,17 @@ func NewProviderLocal(ctx context.Context, router adapter.Router, logFactory log
 	}
 	filePath := filemanager.BasePath(ctx, options.Path)
 	provider.path, _ = filepath.Abs(filePath)
+	// Watch the RESOLVED path, not the configured string. fsnotify reports event names in the host's
+	// native form (a backslash path on Windows) and fswatch matches them against the configured
+	// value byte for byte. A configuration written with forward slashes - the ordinary form in JSON -
+	// would otherwise never fire: the watch would be syntactically installed and permanently silent.
+	if info, statErr := filemanager.Stat(ctx, provider.path); statErr == nil && info.IsDir() {
+		return nil, E.New("provider path is a directory: ", provider.path)
+	} else if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
+		return nil, E.Cause(statErr, "check provider path")
+	}
 	watcher, err := fswatch.NewWatcher(fswatch.Options{
-		Path: []string{filePath},
+		Path: []string{provider.path},
 		Callback: func(path string) {
 			uErr := provider.reloadFile(path)
 			if uErr != nil {

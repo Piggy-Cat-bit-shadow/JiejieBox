@@ -39,9 +39,10 @@ experimental settings: a subscription that also contains those keys has them ign
 | `type`      | `remote`, `local` or `inline` |
 | `tag`       | Provider tag            |
 
-The provider tag is required to be unique among providers. It is also the prefix of every node tag:
-a node named `hk-01` inside provider `airport` is published as `airport/hk-01`. Use
-`providers: ["airport"]` on a group to include every node of that provider.
+The provider tag is required to be unique among providers, and it must not contain `/` (the slash is
+reserved as the provider/node separator). It is also the prefix of every node tag: a node named
+`hk-01` inside provider `airport` is published as `airport/hk-01`. Use `providers: ["airport"]` on a
+group to include every node of that provider.
 
 ### Remote
 
@@ -65,7 +66,7 @@ Downloads the document from `url`, caches the last known good copy, and refreshe
 
 | Field             | Description                                                                    |
 |-------------------|--------------------------------------------------------------------------------|
-| `url`             | Required. Subscription URL.                                                    |
+| `url`             | Required. Absolute `http` or `https` URL.                                     |
 | `path`            | Cache file for the downloaded document. Mutually exclusive with `initial_path`. |
 | `initial_path`    | Document used only when there is no cache and the first download fails.         |
 | `user_agent`      | `User-Agent` sent with the request. Conflicts with `http_client.headers`.       |
@@ -76,12 +77,22 @@ Downloads the document from `url`, caches the last known good copy, and refreshe
 | `exclude`         | Regexp: nodes whose **rendered tag** matches are skipped. `exclude` wins.       |
 | `health_check`    | See below.                                                                      |
 
+The URL is parsed and its scheme checked while the configuration is loaded: a typo such as `ftp://`
+or a relative path fails the start with a message naming the provider instead of being discovered by
+a background worker later. Query parameters are treated as credentials: the URL in logs is printed
+without its query string, userinfo or fragment.
+
 Without `path`, the cache lives in the configured [cache file](/configuration/experimental/cache-file/)
-and disappears when that is disabled. A provider that has no cache and cannot reach its URL at start
-starts with zero nodes; its groups report "no available member" on the dial path until a download
-succeeds, and the first download is retried on the update interval.
+and disappears when that is disabled. With `path`, the cache is replaced by writing a temporary file
+in the same directory and renaming it, so an interrupted write leaves the previous document intact.
+
+A provider that has no cache and cannot reach its URL at start starts with zero nodes; its groups
+report "no available member" on the dial path until a download succeeds, and the first download is
+retried on the update interval.
 
 The download is asynchronous: `sing-box` never blocks the start of the Box on a subscription URL.
+One request is bounded by a 30 second timeout (including reading the body) and a 10 MiB document
+limit; a server that stalls or an endless body fails that refresh without stopping the provider.
 
 ### Local
 
@@ -94,6 +105,12 @@ Reads the same document shape from a local file and reloads it when the file cha
   "path": "provider/local.json"
 }
 ```
+
+The file must exist and be readable when the Box starts; unlike a remote provider there is no cache
+to fall back to, so a missing file fails the start with a message naming the provider. The path is
+resolved to an absolute path before the watch is installed, which is also what makes a path written
+with forward slashes work on Windows. An edit that cannot be parsed, and a deleted file, leave the
+last published node set in place; the next valid edit replaces it.
 
 ### Inline
 
@@ -158,12 +175,29 @@ A `detour` that names a sibling node is rewritten to that sibling's rendered tag
 names anything else is cleared: the provider cannot know whether the main configuration still has
 that tag, and a node with a dangling dependency would fail to create.
 
+### Failure handling
+
+- A document that cannot be parsed - including an empty body, an HTML login page, or a JSON document
+  with no usable nodes - is a **failed refresh**. The published node set is left untouched. An empty
+  document is never read as "this provider now has no nodes"; remove the provider from the
+  configuration to remove its nodes.
+- A single node that fails to construct (an option the build does not support, an invalid server
+  address) is skipped; the rest of the document is still applied. If that tag already had a node, the
+  previous object stays in service for that tag.
+- A failed download, a non-2xx status, a redirect loop, a timeout and an oversized body all take the
+  same path: the refresh fails, the last known good set remains, and the next interval tries again.
+
 ### Updates
 
 An update is a diff. A node whose options are unchanged keeps its live object and therefore its
 connections; a changed node is prepared and started before the previous object is unlinked; a node
 whose replacement fails keeps the previous object in service. A subscription refresh that only
 reorders or reformats entries does not disturb traffic.
+
+A replaced node's previous object is closed after the swap, so connections that were using it are
+interrupted; only unchanged nodes keep their connections across a refresh. A node dropped from the
+document is closed when it is removed, for the same reason: there is no object left for a new
+connection to resolve.
 
 `update_interval` is the minimum spacing between downloads. A manual refresh is not exposed through
 the Clash API in this version; the provider refreshes on its own schedule.

@@ -128,11 +128,8 @@ func NewURLTest(ctx context.Context, router adapter.Router, logger log.ContextLo
 		include:         (*regexp.Regexp)(options.Include),
 		useAllProviders: options.UseAllProviders,
 	}
-	for i, tag := range outbound.tags {
-		if slices.Contains(outbound.tags[:i], tag) {
-			return nil, E.New("duplicate tag: ", tag)
-		}
-	}
+	// See the matching comment in NewSelector: a repeated member is legal, and the group's member
+	// list keeps it while selection treats the tag as one member.
 	if len(outbound.tags) == 0 && len(outbound.providerTags) == 0 && !outbound.useAllProviders {
 		return nil, E.New("missing outbound and provider tags")
 	}

@@ -46,6 +46,13 @@ func ParseSubscription(ctx context.Context, content string, overrideDialerOption
 			parseErr = E.Errors(parseErr, err)
 		}
 	}
+	// A document none of the readers recognised is an ERROR, never an empty success. The caller
+	// applies a successful parse as the provider's new node set, so returning (nil, nil) here would
+	// turn a garbage body - "null", an HTML login page, an unsupported format - into "this provider
+	// now has zero nodes" and wipe the last known good set.
+	if parseErr == nil {
+		return nil, E.New("no servers found: the document is not a recognised subscription format")
+	}
 	return nil, E.Cause(parseErr, "no servers found")
 }
 

@@ -101,18 +101,37 @@ and the repository layout gate (`cmd/internal/modlayout`) after adding `provider
 Test coverage added or adapted:
 
 - `provider/parser`: the full format matrix (Clash, link, SIP008, raw/base64, sing-box JSON) with the
-  upstream fixtures;
-- `provider/remote`: URL-hash cache identity;
+  upstream fixtures; a hostile-document suite (null/non-object nodes, wrong types, invalid UTF-8,
+  deep nesting) and `FuzzParseSubscription`, which must never return nodes together with an error;
+- `provider/remote`: URL validation and redaction, request timeout, body-size bound, non-2xx handling,
+  last-known-good preservation across parse/status failures, cache round-trip through the same
+  pipeline as a download (filters, tag rename), corrupt-cache refusal, close during an in-flight
+  download, and idempotent close;
+- `provider/local`: reload on file change (including a forward-slash path on Windows), invalid edit
+  and deleted file keep the published set, constructor validation;
 - `adapter/provider`: the hot-update contract - unchanged node and its live connection survive,
   changed node is replaced, failed replacement keeps the old node, removed node is unlinked, chain
-  ordering and cycle rejection;
+  ordering and cycle rejection, deterministic duplicate-tag renaming, empty-apply refusal, static-tag
+  collision refusal, a 1500-node apply bound, and provider-manager lifecycle;
+- `protocol/group`: selector/urltest membership follows provider updates, selection survives a
+  refresh that keeps the member and falls back when it disappears, include/exclude on rendered tags,
+  provider-only groups start empty, and a repeated member declaration stays legal (route resolution
+  and loadbalance define what it means; a group constructor must not refuse it);
 - `box_provider_test.go`: end-to-end - an inline provider publishes nodes, a selector and a urltest
-  see them, the selector's configured default wins, and a group naming an undeclared provider refuses
-  the start.
+  see them, the selector's configured default wins, a group naming an undeclared provider refuses the
+  start, a subscription's `dns`/`route`/`inbounds` never reach the main configuration, and two
+  providers with a colliding node tag stay distinct;
+- `box_clashapi_provider_test.go`: `/proxies` lists provider nodes and group members and
+  `PUT /proxies/{selector}` selects a provider node;
+- `experimental/cachefile`: the subscription bucket round-trips nodes, ETag and URL hash across a
+  reopen; `adapter.SavedBinary` refuses unknown record versions.
 
 Not covered by a test: a live HTTP subscription download inside a Box (the remote provider is unit
 tested, and the proxy manager path it uses is covered by the dynamic-update suite). Real device
-traffic through a provider node is `BLOCKED_BY_ENVIRONMENT` here.
+traffic through a provider node is `BLOCKED_BY_ENVIRONMENT` here. The race detector is also
+`BLOCKED_BY_ENVIRONMENT`: this host has no C toolchain, so `go test -race` cannot run; concurrency is
+covered by targeted interleaving tests (close during download, repeated close, update versus close)
+and by the absence of shared mutable state between providers.
 
 ## Known limits
 
@@ -123,3 +142,12 @@ traffic through a provider node is `BLOCKED_BY_ENVIRONMENT` here.
   provider-specific `/providers/proxies` endpoints are not part of this stage.
 - A local provider is reloaded by the file watcher; a remote provider is refreshed on its interval.
   There is no manual refresh command.
+- A changed node's previous object is closed after the swap, so its live connections are
+  interrupted. Only unchanged nodes keep connections across a refresh. Deferring the close until
+  connections drain would need per-node reference tracking; the reference implementations close
+  immediately as well.
+- An empty or unrecognised document is a failed refresh, never "remove all nodes". The safe default
+  means a provider that legitimately becomes empty keeps its previous nodes until it is removed from
+  the configuration.
+- The download limits (30 s, 10 MiB) are constants, not options: they are safety bounds for
+  untrusted input, not a tuning surface.

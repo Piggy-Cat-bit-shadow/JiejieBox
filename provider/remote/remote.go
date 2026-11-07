@@ -9,9 +9,11 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -34,6 +36,15 @@ import (
 func RegisterProvider(registry *provider.Registry) {
 	provider.Register[option.ProviderRemoteOptions](registry, C.ProviderTypeRemote, NewProviderRemote)
 }
+
+const (
+	// defaultFetchTimeout bounds one subscription download, including reading the body. It is the
+	// difference between "this airport is slow" and "this provider silently stopped updating".
+	defaultFetchTimeout = 30 * time.Second
+	// defaultMaxDocumentSize is a safety limit for an untrusted document, not a product limit: a
+	// few thousand nodes fit well below it, while an endless or decompression-bomb body does not.
+	defaultMaxDocumentSize = 10 << 20
+)
 
 var _ adapter.Provider = (*ProviderRemote)(nil)
 
@@ -59,13 +70,23 @@ type ProviderRemote struct {
 	httpClientOptions *option.HTTPClientOptions
 	downloadDetour    string
 	url               string
-	urlHash           [32]byte
-	path              string
-	initialPath       string
-	userAgent         string
-	updateInterval    time.Duration
-	exclude           *regexp.Regexp
-	include           *regexp.Regexp
+	// logURL is the subscription URL with its credentials, query and fragment removed, so a token
+	// in a query parameter never reaches the log. The raw s.url is used only for the request.
+	logURL         string
+	urlHash        [32]byte
+	path           string
+	initialPath    string
+	userAgent      string
+	updateInterval time.Duration
+	// fetchTimeout bounds one download INCLUDING reading the body. Without it a server that accepts
+	// the connection and then stalls would block the refresh worker forever: no later refresh could
+	// run (the updating flag stays set) and the provider would silently stop updating.
+	fetchTimeout time.Duration
+	// maxDocumentSize bounds the policy document read into memory. It is a safety limit for
+	// untrusted input, not a product limit; a real node list is far below it.
+	maxDocumentSize int64
+	exclude         *regexp.Regexp
+	include         *regexp.Regexp
 
 	overrideDialer *option.OverrideDialerOptions
 }
@@ -73,6 +94,18 @@ type ProviderRemote struct {
 func NewProviderRemote(ctx context.Context, router adapter.Router, logFactory log.Factory, tag string, options option.ProviderRemoteOptions) (adapter.Provider, error) {
 	if options.URL == "" {
 		return nil, E.New("provider URL is required")
+	}
+	parsedURL, err := url.Parse(options.URL)
+	if err != nil {
+		return nil, E.Cause(err, "provider URL is not a valid URL")
+	}
+	switch parsedURL.Scheme {
+	case "http", "https":
+	default:
+		return nil, E.New("provider URL must use http or https, got ", strconv.Quote(parsedURL.Scheme))
+	}
+	if parsedURL.Host == "" {
+		return nil, E.New("provider URL has no host: ", redactedURL(parsedURL))
 	}
 	if options.Path != "" && options.InitialPath != "" {
 		return nil, E.New("provider path and initial_path are mutually exclusive")
@@ -126,7 +159,7 @@ func NewProviderRemote(ctx context.Context, router adapter.Router, logFactory lo
 	ctx, cancel := context.WithCancel(ctx)
 	outbound := service.FromContext[adapter.OutboundManager](ctx)
 	logger := logFactory.NewLogger(F.ToString("provider/remote", "[", tag, "]"))
-	url := options.URL
+	providerURL := options.URL
 	return &ProviderRemote{
 		Adapter:  provider.NewAdapter(ctx, router, outbound, logFactory, logger, tag, C.ProviderTypeRemote, options.HealthCheck),
 		ctx:      ctx,
@@ -136,12 +169,15 @@ func NewProviderRemote(ctx context.Context, router adapter.Router, logFactory lo
 		provider: service.FromContext[adapter.ProviderManager](ctx),
 
 		httpClientOptions: options.HTTPClient,
-		url:               url,
-		urlHash:           sha256.Sum256([]byte(url)),
+		url:               providerURL,
+		logURL:            redactedURL(parsedURL),
+		urlHash:           sha256.Sum256([]byte(providerURL)),
 		path:              path,
 		initialPath:       initialPath,
 		userAgent:         userAgent,
 		updateInterval:    updateInterval,
+		fetchTimeout:      defaultFetchTimeout,
+		maxDocumentSize:   defaultMaxDocumentSize,
 		exclude:           (*regexp.Regexp)(options.Exclude),
 		include:           (*regexp.Regexp)(options.Include),
 
@@ -169,7 +205,7 @@ func (s *ProviderRemote) StartContext(ctx context.Context, startContext *adapter
 		return E.Cause(err, "create provider http client")
 	}
 	startContext.Register(transport)
-	s.httpClient = &http.Client{Transport: transport}
+	s.httpClient = &http.Client{Transport: transport, Timeout: s.fetchTimeout}
 	if err = s.Adapter.Start(); err != nil {
 		return err
 	}
@@ -251,6 +287,12 @@ func (s *ProviderRemote) updateOnce() {
 }
 
 func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
+	if s.httpClient == nil {
+		// StartContext installs the client. A fetch before that (a manual Update from an embedder,
+		// or a start that failed before the transport was resolved) has nothing to send through,
+		// and must say so instead of dereferencing nil.
+		return E.New("provider is not started")
+	}
 	if s.updating.Swap(true) {
 		return E.New("provider is updating")
 	}
@@ -260,10 +302,10 @@ func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 	if err := s.ctx.Err(); err != nil {
 		return err
 	}
-	s.logger.Debug("updating outbound provider ", s.Tag(), " from URL: ", s.url)
+	s.logger.Debug("updating outbound provider ", s.Tag(), " from URL: ", s.logURL)
 	req, err := http.NewRequest(http.MethodGet, s.url, nil)
 	if err != nil {
-		return err
+		return E.New("create provider request: ", s.redact(err.Error()))
 	}
 	if s.lastEtag != "" {
 		req.Header.Set("If-None-Match", s.lastEtag)
@@ -274,7 +316,9 @@ func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 	}
 	resp, err := s.httpClient.Do(req.WithContext(ctx))
 	if err != nil {
-		return err
+		// The transport error embeds the request URL, query string and all. It is redacted here
+		// rather than at every log site, so a token cannot leak through a wrapped error.
+		return E.New("download provider document: ", s.redact(err.Error()))
 	}
 	defer resp.Body.Close()
 	infoStr := resp.Header.Get("subscription-userinfo")
@@ -315,9 +359,12 @@ func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 	default:
 		return E.New("unexpected status: ", resp.Status)
 	}
-	contentRaw, err := io.ReadAll(resp.Body)
+	contentRaw, err := io.ReadAll(io.LimitReader(resp.Body, s.maxDocumentSize+1))
 	if err != nil {
-		return err
+		return E.New("read provider document: ", s.redact(err.Error()))
+	}
+	if int64(len(contentRaw)) > s.maxDocumentSize {
+		return E.New("provider document is larger than the ", s.maxDocumentSize, " byte limit")
 	}
 	content, _ := parser.DecodeBase64URLSafe(string(contentRaw))
 	if !hasInfo {
@@ -419,7 +466,6 @@ func (s *ProviderRemote) loadCacheFile() (bool, error) {
 	if err := s.loadFromContent(content); err != nil {
 		return false, err
 	}
-	s.UpdateGroups()
 	s.lastUpdated, s.lastEtag = lastUpdated, lastEtag
 	return true, nil
 }
@@ -430,27 +476,16 @@ func (s *ProviderRemote) loadInitialPath() error {
 		return err
 	}
 	content := s.decodeContent(contentRaw)
-	err = s.updateProviderFromContent(content)
-	if err != nil {
-		return err
-	}
-	s.UpdateGroups()
-	return nil
+	return s.updateProviderFromContent(content)
 }
 
 func (s *ProviderRemote) loadFromContent(contentRaw []byte) error {
 	content := s.decodeContent(contentRaw)
-	outboundOpts, _, err := parser.ParseBoxSubscription(s.ctx, content)
-	if err != nil {
-		return err
-	}
-	updateErr := s.UpdateNodes(outboundOpts)
-	s.UpdateGroups()
-	if updateErr != nil {
-		return updateErr
-	}
-	s.lastOutOpts = outboundOpts
-	return nil
+	// The cached document MUST go through the same reader as a fresh download. Parsing it with the
+	// native reader only would silently drop the format detection, the include/exclude filters and
+	// the dialer override on every restart: the running provider would then differ from a provider
+	// that had just downloaded the same bytes.
+	return s.updateProviderFromContent(content)
 }
 
 func (s *ProviderRemote) decodeContent(contentRaw []byte) string {
@@ -523,8 +558,17 @@ func (s *ProviderRemote) saveCacheFile(hasInfo bool, info adapter.SubscriptionIn
 	if err != nil {
 		return err
 	}
-	err = filemanager.WriteFile(s.ctx, s.path, content, 0o666)
+	// Write-then-rename in the same directory: a crash between the two leaves the previous cache
+	// intact instead of a half-written document that the next start would have to reject. The temp
+	// name is fixed, so a leftover from an interrupted write is overwritten rather than accumulating.
+	tempPath := s.path + ".tmp"
+	err = filemanager.WriteFile(s.ctx, tempPath, content, 0o666)
 	if err != nil {
+		return err
+	}
+	err = filemanager.Rename(s.ctx, tempPath, s.path)
+	if err != nil {
+		_ = filemanager.Remove(s.ctx, tempPath)
 		return err
 	}
 	return nil
@@ -545,6 +589,41 @@ func (s *ProviderRemote) updateProviderFromContent(content string) error {
 	}
 	s.lastOutOpts = outboundOpts
 	return nil
+}
+
+// redactedURL keeps the address of a subscription URL and removes what makes it a credential: the
+// userinfo, the query string and the fragment. Logs and errors use this form, never the raw URL.
+func redactedURL(parsed *url.URL) string {
+	if parsed == nil {
+		return "<nil>"
+	}
+	redacted := *parsed
+	redacted.User = nil
+	redacted.RawQuery = ""
+	redacted.Fragment = ""
+	return redacted.String()
+}
+
+// redact removes the raw subscription URL from text that is about to be logged. Transport errors
+// embed the request URL, so redacting at the error boundary is what keeps a token out of the log
+// even when the message is produced by a package that has never seen this configuration.
+func (s *ProviderRemote) redact(text string) string {
+	if s.url == "" {
+		return text
+	}
+	logURL := s.logURL
+	if logURL == "" {
+		if parsed, err := url.Parse(s.url); err == nil {
+			logURL = redactedURL(parsed)
+		} else {
+			logURL = "<redacted provider url>"
+		}
+	}
+	text = strings.ReplaceAll(text, s.url, logURL)
+	if escaped := url.QueryEscape(s.url); escaped != s.url {
+		text = strings.ReplaceAll(text, escaped, logURL)
+	}
+	return text
 }
 
 func getFirstLine(content string) (string, string) {
