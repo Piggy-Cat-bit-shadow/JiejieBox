@@ -1,6 +1,6 @@
 # Release 构建指引
 
-本任务从 Windows 发起 GitHub Actions，完成内核仓库正式 Release 并回读后交接。Satelite 和 Mac TF 都在主仓发布后各自处理，互不等待。
+从 Windows 执行整轮 Release。先发布并回读内核仓库正式版，再启动、发布并回读 Satelite 安卓客户端。两个仓库各自发布资产，整轮 Release 须两边都验收通过。用户明确要求仅发内核时才跳过 Satelite，并在交接中注明。Mac TF 可在内核正式版验收后独立开始，与 Satelite 互不等待。
 
 ## 1. 锁定本轮候选
 
@@ -10,6 +10,8 @@
 - **更新日志留空。** 本轮 `.github/RELEASE_NOTES.md` 保持空文件，GitHub Release 正文留空。发布前清除模板中的旧版内容，并在发布回读时确认正文为空。
 - 对照 `release/dependencies.json`、根和 test 模块、Apple/Android/Desktop gitlink、嵌套 dashboard 及 Cronet native provenance。检查跟踪分支 tip，记录采用或保留理由。dashboard 变更先进入 Desktop 再冻结主仓。Cronet 原生库按受控流程验证字节。
 - 若需刷新 pins，先运行 Release preparation，显式用 `create_tag=false`，检查最后产生的提交和锁文件。编排入口核对已提交的快照并复查分支 tip。落后的 update pin 或分叉会提前失败。
+- **在最终候选提交上复核锁和 gitlink。** 执行 `python scripts/ci/release-freeze.py verify --lock release/source-lock.json`，并用 `git ls-tree HEAD clients/apple clients/android clients/desktop` 对照锁文件。v0.1.42 的 preparation 曾用 `git add -A` 把已暂存的新 gitlink 覆盖成旧 checkout。发现不一致时先修候选，确认根仓提交和子模块实际检出与锁文件一致，再启动正式构建。参见 [v0.1.42 交接记录](releases/RELEASE-0.1.42-HANDOFF.md)。
+- 客户端 gitlink 变化时，发版前跑 `scripts/ci/check-libbox-abi.sh --pin-only`。如果核验过的 ABI pin 需要更新，先针对新客户端版本按 ABI 检查要求复验，再更新常量。改动 Apple workflow、Libbox 消费者或 TF 参数时，在正式构建前跑 `scripts/ci/test-apple-beta-publish.sh`，确认回归断言跟上实现。
 - 重新枚举本轮公开附件。当前是 Linux amd64、macOS arm64 CLI、Windows amd64 core、Android ARM64 AAR、Apple Libbox、Windows x64 安装器、自签 unsigned IPA 和 SHA256SUMS。新增或移除产物时同时更新编排、产物契约和验收。Android AAR 与独立仓 Satelite APK 分别记录。
 
 ## 2. 从 Windows 启动
@@ -29,9 +31,17 @@ gh workflow run kernel-release.yml -R $repo --ref testing -f dry_run=false
 
 冻结检查通过后，源码与契约检查、Linux、macOS CLI、Windows core、Windows 安装器、Android AAR、Apple workflow 并行启动。Windows 安装器在候选模式绑定版本、源码、工具和桌面客户端来源。Apple 先固定客户端并构建一份 Libbox，然后 iOS 验证、macOS GUI 验证和自签 IPA 分别消费同一次运行的库。Apple 的单平台手动入口用于诊断。正式编排要求两平台和自签 IPA 完成。
 
-## 3. 验收、恢复和交接
+## 3. 内核正式版验收、恢复和交接
 
 - 检查全部必需 job 与 staging 结果。stage 固定本次 run 的 artifact ID、归档摘要和实际字节。正式运行下载同一份 staging bundle，复核 SHA256SUMS，创建或回读 tag，再通过 draft 上传、逐项核验摘要、公开并回读。公开状态、目标 SHA 和实际附件清单必须一致。
 - 暂时故障优先在同一 run 重跑失败 job。发布步骤中断时优先重跑 publish，使用已验证的 bundle。现有 draft 只补缺失的文件，若已有文件摘要不一致则停下调查。记录 queue、实际 job 时间和阶段间等待，按冻结至公开回读的墙钟时间衡量优化。
 - 需要改代码、pin 或工具时重新冻结并构建。若正式 tag 已指向不同提交，使用新版本。旧 tag 的历史恢复入口为 Release (tagged recovery)，按对应提交的工作流契约和产物来源恢复。
-- 交接记录应包含版本、tag 剥离后的完整 SHA、Release URL、公开资产和校验和、Apple SHA、Libbox 摘要、run ID/attempt、回读时间。主仓完成后把交接交给独立的 [Mac TF 任务](TESTFLIGHT-MAC.md)。Satelite 后续按已发布 core SHA 对齐自身依赖、`versionName`、递增 `versionCode`、`coreCommit`，核对双 ABI APK、签名和校验和。
+- 交接记录应包含版本、tag 剥离后的完整 SHA、Release URL、公开资产和校验和、Apple SHA、Libbox 摘要、run ID/attempt、回读时间。内核验收后可把这份记录交给独立的 [TF 构建指引](TESTFLIGHT-MAC.md) 执行者，同时继续第 4 节的 Satelite 发布。
+
+## 4. 发布并验收 Satelite 安卓客户端
+
+1. 打开 `Piggy-Cat-bit-shadow/satelite-one`，核对远端 `main`、最新客户端发布和已有 tag。以本轮**已公开并验收**的内核版本及其 tag 剥离后的完整 SHA 为输入。在 Satelite 的 `version.properties` 中令 `versionName` 等于内核版本，`coreCommit` 等于上述完整 SHA，`versionCode` 大于此前已分发的最高构建号。核对该仓依赖与内核兼容性，记录 Satelite 自己的候选提交。
+2. 将对齐后的 Satelite 提交推到 `main`，确认 `v<versionName>` 尚未被占用，再把 Satelite 自己的正式 tag 打到**该客户端提交**并推送至 Satelite 的 `origin`。这是 `.github/workflows/release-apk.yml` 的正式签名构建和发布入口。手动 dry run 只能用于预检。正式发版提交和 tag 推送应允许 Actions 运行，避免在发版提交消息中加入 `[skip ci]`。
+3. 确认 `Release APK` 是本轮 Satelite tag push 触发，run 的 `head_sha` 等于该客户端提交。等待构建、签名与发布完成。若 tag 已存在，先核对目标 SHA、已有运行和 Release 状态。相同提交的暂时故障优先在原运行重跑失败任务，已有 tag 指向其他提交时停止并查明原因。
+4. 回读 Satelite 仓库的指定公开 Release，下载 `arm64-v8a` 和 `x86_64` 两个签名 APK、`SHA256SUMS.txt`、`build-info.json` 与 `apksigner-verify.txt`。逐个核对 APK 的 SHA256、ABI 和签名，核对 `build-info.json` 的 `app_commit`、`app_version`、`app_version_code`、`core_commit` 与本轮记录一致。
+5. 把 Satelite Release 链接、tag、客户端 SHA、内核 SHA、`versionCode`、run ID、APK 校验结果与内核记录汇总。只完成内核时，状态写「内核已发布，Satelite 待完成」，直到两个仓库的资产都验收通过才记录整轮完成。主仓 Android ARM64 AAR 和 Satelite 的两个 APK 分别在各自仓库验收。

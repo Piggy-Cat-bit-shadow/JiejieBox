@@ -4,8 +4,9 @@
 
 Use [Release 构建指引](docs/RELEASE-WINDOWS.md) for the Kernel release workflow,
 candidate artifacts, publication and handoff. Use [TF 构建指引](docs/TESTFLIGHT-MAC.md)
-after the specified kernel Release is public and verified. Satelite publishes separately
-after that same Release, with its own version and core pin checks.
+after the specified kernel Release is public and verified. A full Release also requires
+starting and verifying the Satelite APK release in its own repository after kernel verification.
+Satelite and TF can proceed independently once the kernel Release has been verified.
 Use [release investigation](docs/RELEASE-PLAYBOOK.md) for dated evidence and past failures.
 Recheck the target's workflows and asset contract each time.
 

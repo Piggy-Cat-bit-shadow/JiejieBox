@@ -343,7 +343,7 @@ Linux 普通入站在未显式启用 `tcp_multi_path` 时使用普通 TCP；Clas
 
 开发及 AI 助手从 [AGENTS.md](AGENTS.md) 进入，先确认知识库基线与 Git 增量，再按任务查阅模块。
 
-- [Release 构建指引](docs/RELEASE-WINDOWS.md)：在 Windows 发起内核正式版构建、发布和验收。
+- [Release 构建指引](docs/RELEASE-WINDOWS.md)：在 Windows 发布并验收内核正式版，随后构建、发布并验收 Satelite 安卓客户端。
 - [TF 构建指引](docs/TESTFLIGHT-MAC.md)：内核正式版发布并验收后，在 Mac 构建并上传 TestFlight。
 
 ## 致谢与许可
