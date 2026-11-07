@@ -33,7 +33,7 @@ gh workflow run kernel-release.yml -R $repo --ref testing -f dry_run=false
 
 ## 3. 内核正式版验收、恢复和交接
 
-- 检查全部必需 job 与 staging 结果。stage 固定本次 run 的 artifact ID、归档摘要和实际字节。正式运行下载同一份 staging bundle，复核 SHA256SUMS，创建或回读 tag，再通过 draft 上传、逐项核验摘要、公开并回读。公开状态、目标 SHA 和实际附件清单必须一致。
+- 确认本次 run 的必需作业、stage 和 publish 均通过。产物与摘要校验由 Actions 完成。发布者只需在 GitHub 回读公开状态、tag 对应的提交、附件清单和发布正文。无需再次下载附件或在本地复算校验和。
 - 暂时故障优先在同一 run 重跑失败 job。发布步骤中断时优先重跑 publish，使用已验证的 bundle。现有 draft 只补缺失的文件，若已有文件摘要不一致则停下调查。记录 queue、实际 job 时间和阶段间等待，按冻结至公开回读的墙钟时间衡量优化。
 - 需要改代码、pin 或工具时重新冻结并构建。若正式 tag 已指向不同提交，使用新版本。旧 tag 的历史恢复入口为 Release (tagged recovery)，按对应提交的工作流契约和产物来源恢复。
 - 交接记录应包含版本、tag 剥离后的完整 SHA、Release URL、公开资产和校验和、Apple SHA、Libbox 摘要、run ID/attempt、回读时间。内核验收后可把这份记录交给独立的 [TF 构建指引](TESTFLIGHT-MAC.md) 执行者，同时继续第 4 节的 Satelite 发布。
@@ -43,5 +43,5 @@ gh workflow run kernel-release.yml -R $repo --ref testing -f dry_run=false
 1. 内核的 `Kernel release` 运行完成后，从 `publish` 作业摘要取 Satelite 交接信息。打开 `Piggy-Cat-bit-shadow/satelite-one`，核对远端 `main`、最新客户端发布和已有 tag。以本轮**已公开并验收**的内核版本及其 tag 剥离后的完整 SHA 为输入。在 Satelite 的 `version.properties` 中令 `versionName` 等于内核版本，`coreCommit` 等于上述完整 SHA，`versionCode` 大于此前已分发的最高构建号。核对该仓依赖与内核兼容性，记录 Satelite 自己的候选提交。
 2. 将对齐后的 Satelite 提交推到 `main`，确认 `v<versionName>` 尚未被占用，再把 Satelite 自己的正式 tag 打到**该客户端提交**并推送至 Satelite 的 `origin`。这是 `.github/workflows/release-apk.yml` 的正式签名构建和发布入口。手动 dry run 只能用于预检。正式发版提交和 tag 推送应允许 Actions 运行，避免在发版提交消息中加入 `[skip ci]`。
 3. 确认 `Release APK` 是本轮 Satelite tag push 触发，run 的 `head_sha` 等于该客户端提交。等待构建、签名与发布完成。若 tag 已存在，先核对目标 SHA、已有运行和 Release 状态。相同提交的暂时故障优先在原运行重跑失败任务，已有 tag 指向其他提交时停止并查明原因。
-4. 回读 Satelite 仓库的指定公开 Release，下载 `arm64-v8a` 和 `x86_64` 两个签名 APK、`SHA256SUMS.txt`、`build-info.json` 与 `apksigner-verify.txt`。逐个核对 APK 的 SHA256、ABI 和签名，核对 `build-info.json` 的 `app_commit`、`app_version`、`app_version_code`、`core_commit` 与本轮记录一致。
+4. 确认本次 `Release APK` 运行的构建、产物校验、签名检查和发布均通过。回读 Satelite 的指定公开 Release，核对 tag、客户端提交和附件清单。清单应包含 `arm64-v8a` 和 `x86_64` 两个签名 APK、`SHA256SUMS.txt`、`build-info.json` 与 `apksigner-verify.txt`。版本和内核来源以本次运行记录及已核对的客户端提交为准，无需下载附件重复验包。
 5. 把 Satelite Release 链接、tag、客户端 SHA、内核 SHA、`versionCode`、run ID、APK 校验结果与内核记录汇总。只完成内核时，状态写「内核已发布，Satelite 待完成」，直到两个仓库的资产都验收通过才记录整轮完成。主仓 Android ARM64 AAR 和 Satelite 的两个 APK 分别在各自仓库验收。
