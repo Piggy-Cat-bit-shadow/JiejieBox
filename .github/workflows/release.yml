@@ -1,4 +1,4 @@
-name: Release
+name: Release (tagged recovery)
 
 # Publishes a GitHub Release for a version tag, attaching the binaries that CI
 # already BUILT AND VERIFIED for that commit.
@@ -427,19 +427,25 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-selfsign
-          run_id="$(
+          artifact="jiejiebox-ios-selfsign-$RELEASE_SHA"
+          run_id="$RELEASE_APPLE_RUN_ID"
+          if [ -z "$run_id" ] || ! gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100" \
+            | jq -e --arg name "$artifact" 'any(.artifacts[]; .name == $name and .expired == false)' >/dev/null; then
+            artifact="jiejiebox-ios-selfsign-experiment-$RELEASE_SHA"
+            run_id="$(
             gh api "repos/$GITHUB_REPOSITORY/actions/workflows/experiment-ios-selfsign.yml/runs?head_sha=$RELEASE_SHA&per_page=50" \
               --jq '[.workflow_runs[] | select(.conclusion == "success")] | sort_by(.created_at) | last | .id // empty'
-          )"
+            )"
+          fi
           if [ -z "$run_id" ]; then
             echo "FAIL: no successful self-sign run for $RELEASE_SHA." >&2
             echo "      The release contract carries the unsigned IPA, so dispatch it first:" >&2
-            echo "        gh workflow run experiment-ios-selfsign.yml -R $GITHUB_REPOSITORY --ref testing" >&2
+            echo "        Build the self-sign IPA through the Apple client workflow for this commit." >&2
             exit 1
           fi
           echo "self-sign run: $run_id"
           gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
-            --name "jiejiebox-ios-selfsign-experiment-$RELEASE_SHA" --dir release-selfsign
+            --name "$artifact" --dir release-selfsign
           # The producer's own contract, re-run on the bytes that are about to be published.
           build="$(printf '%s' "$RELEASE_VERSION" | tr -cd '0-9' | sed -E 's/^0+//')"
           python3 tooling/scripts/experiment/verify-selfsign-ipa.py \

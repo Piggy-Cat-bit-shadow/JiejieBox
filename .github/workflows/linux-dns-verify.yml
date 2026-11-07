@@ -5,7 +5,7 @@ name: linux-dns-verify
 # with_tailscale, so this gate supplies the tag and the Linux-only files.
 
 on:
-  workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read

@@ -1,0 +1,32 @@
+name: Specialist verification
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Specialist test suite
+        type: choice
+        required: true
+        options:
+          - linux-dns
+          - linux-platform
+          - linux-netns
+          - linux-masque
+          - apple-tls
+permissions:
+  contents: read
+jobs:
+  linux-dns:
+    if: inputs.suite == 'linux-dns'
+    uses: ./.github/workflows/linux-dns-verify.yml
+  linux-platform:
+    if: inputs.suite == 'linux-platform'
+    uses: ./.github/workflows/linux-platform-verify.yml
+  linux-netns:
+    if: inputs.suite == 'linux-netns'
+    uses: ./.github/workflows/linux-netns-verify.yml
+  linux-masque:
+    if: inputs.suite == 'linux-masque'
+    uses: ./.github/workflows/linux-masque-verify.yml
+  apple-tls:
+    if: inputs.suite == 'apple-tls'
+    uses: ./.github/workflows/apple-tls-verify.yml

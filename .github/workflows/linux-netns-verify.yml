@@ -6,7 +6,7 @@ name: linux-netns-verify
 # running on every push.
 
 on:
-  workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read

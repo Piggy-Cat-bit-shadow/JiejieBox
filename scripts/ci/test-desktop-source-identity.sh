@@ -189,6 +189,9 @@ printf '0.1.7\n' > "$CORE/release/JIEJIE_VERSION"
 # `git describe --tags` is what stamps the daemon, so it must name the version.
 g "$CORE" tag -d "v0.1.7"
 report_expect_fail "no tag at HEAD, so describe cannot name the version" chk
+report_expect_rc 0 "candidate builds before the tag exists" chk --candidate
+report_expect_fail "candidate still rejects mismatched tooling" chk --candidate --tooling-sha "$OTHER_SHA"
+report_expect_fail "candidate still rejects mismatched version" chk --candidate --version 0.1.8
 g "$CORE" tag "v0.1.7" "$CORE_SHA"
 
 # --- AUDIT mode: the tag is a release requirement, not an audit precondition --

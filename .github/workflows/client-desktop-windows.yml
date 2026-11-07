@@ -97,6 +97,23 @@ name: Windows desktop installer
 # product is.
 
 on:
+  workflow_call:
+    inputs:
+      core_sha:
+        type: string
+        required: true
+      tooling_sha:
+        type: string
+        required: true
+      core_version:
+        type: string
+        required: true
+      release_kind:
+        type: string
+        default: release
+      candidate:
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       core_sha:
@@ -214,6 +231,11 @@ jobs:
           # labelled. Everything else the checker asserts still holds in audit mode, and the
           # mode is announced in the record below rather than being quiet.
           audit_flag=""
+          if [ "${{ inputs.candidate }}" = "true" ]; then
+            test "${{ inputs.release_kind }}" = release
+            test "$CORE_SHA" = "$GITHUB_SHA"
+            audit_flag=--candidate
+          fi
           if [ "${{ inputs.release_kind }}" = "audit" ]; then audit_flag="--audit-only"; fi
           core/scripts/ci/check-desktop-source-identity.sh \
             --core-dir core \
@@ -572,6 +594,8 @@ jobs:
               echo "  release-artifacts.sh check-tag binds a release to the commit refs/tags/v<version>"
               echo "  names, and this commit is not that commit, so this artifact cannot be published"
               echo "  without moving a tag - which is an explicit release decision, not an accident."
+            elif [ "${{ inputs.candidate }}" = "true" ]; then
+              echo "RELEASE_ELIGIBLE=AFTER_PROMOTION"
             else
               echo "RELEASE_ELIGIBLE=YES (release_kind=release; gate 1 proved refs/tags/v$CORE_VERSION names CORE_SHA)"
             fi
@@ -604,7 +628,10 @@ jobs:
       - name: "[gate 3] verify the packaged daemon is the release core daemon"
         shell: bash
         run: |
+          candidate_flag=""
+          if [ "${{ inputs.candidate }}" = "true" ]; then candidate_flag=--candidate; fi
           python tooling/scripts/ci/verify-desktop-daemon-provenance.py \
+            $candidate_flag \
             "$CLIENT_DIR/release/win-unpacked/resources/daemon/sing-box-daemon.exe" \
             --core-dir core \
             --expect-core-sha "$CORE_SHA" \
@@ -726,6 +753,7 @@ jobs:
           {
             echo "Jiejiebox Windows installer build record"
             echo
+            echo "release mode      ${{ inputs.candidate && 'candidate' || inputs.release_kind }}"
             echo "core SHA          $CORE_SHA"
             echo "core version      $CORE_VERSION"
             echo "desktop client    $(git -C core rev-parse HEAD:clients/desktop)"
@@ -779,6 +807,7 @@ jobs:
       - name: "[gate 8] upload the installer"
         uses: actions/upload-artifact@v4
         with:
+          overwrite: true
           name: jiejiebox-windows-x64-${{ env.CORE_VERSION }}-signed-test
           path: ${{ env.CLIENT_DIR }}/release/Jiejiebox-v${{ env.CORE_VERSION }}-windows-x64.exe
           if-no-files-found: error
@@ -787,13 +816,16 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
+          overwrite: true
           name: jiejiebox-windows-build-records
           path: ${{ env.RECORDS_DIR }}
           if-no-files-found: warn
 
       - name: "[gate 8] upload the unpacked application for the runtime audit"
+        if: ${{ !inputs.candidate }}
         uses: actions/upload-artifact@v4
         with:
+          overwrite: true
           # The runtime audit needs the PACKAGED tree, not the installer: gate 5 runs the signed
           # daemon directly, gate 5b stages the whole application into a Program Files probe
           # directory, and gate 7 reads the driver signatures out of the packaged daemon directory.

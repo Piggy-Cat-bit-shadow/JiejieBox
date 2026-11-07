@@ -63,6 +63,7 @@ remote="origin"
 fetch=1
 shallow=""
 audit_only=0
+candidate=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -74,6 +75,7 @@ while [ "$#" -gt 0 ]; do
     --remote)       [ "$#" -ge 2 ] || { echo "FAIL: --remote needs a value. $usage" >&2; exit 2; }; remote="$2"; shift 2 ;;
     --no-fetch)     fetch=0; shift ;;
     --shallow)      shallow="--depth 1"; shift ;;
+    --candidate)    candidate=1; shift ;;
     --audit-only)   audit_only=1; shift ;;
     -h|--help)      echo "$usage" >&2; exit 0 ;;
     *)              echo "FAIL: unknown argument '$1'. $usage" >&2; exit 2 ;;
@@ -146,7 +148,7 @@ describe="$(git -C "$core_dir" describe --tags 2>/dev/null || true)"
 # audit's `--expect-version`. What this check still refuses is a checkout that belongs to a
 # DIFFERENT release, in either mode.
 describe_ok=0
-if [ "$describe" = "v$version" ]; then
+if [ "$candidate" -eq 1 ] || [ "$describe" = "v$version" ]; then
   describe_ok=1
 elif [ "$audit_only" -eq 1 ]; then
   case "$describe" in
@@ -195,7 +197,9 @@ echo "tooling HEAD:    $tooling_head"
 # The release path is unchanged and still requires the tag: without `--audit-only`, a tag that is
 # missing, or that names another commit, fails exactly as before.
 tag_ref="refs/tags/v$version"
-if [ "$audit_only" -eq 1 ]; then
+if [ "$candidate" -eq 1 ]; then
+  echo "Candidate source verified before tagging. Promotion must verify the release tag."
+elif [ "$audit_only" -eq 1 ]; then
   echo "AUDIT_ONLY:       yes - this run is a DIAGNOSTIC AUDIT of $core_sha."
   echo "                  The v$version tag is NOT required to name this commit, and this"
   echo "                  result must never be cited as a release acceptance result."
@@ -237,7 +241,9 @@ echo "JIEJIE_VERSION:  $declared"
   echo "      release/JIEJIE_VERSION is the single authority for the fork's version;" >&2
   echo "      a caller that disagrees with it is releasing something else." >&2; exit 1; }
 
-if [ "$audit_only" -eq 1 ]; then
+if [ "$candidate" -eq 1 ]; then
+  echo "PASS: candidate source identity holds at $core_sha (tooling = core, version agrees)"
+elif [ "$audit_only" -eq 1 ]; then
   echo "PASS: source identity holds at $core_sha (tooling = core, version agrees; AUDIT-ONLY, tag not required)"
 else
   echo "PASS: source identity holds at $core_sha (tooling = core, tag names the commit, version agrees)"

@@ -28,6 +28,7 @@ name: Release contract verification
 # asserts that mock is still wired.
 
 on:
+  workflow_call:
   push:
     branches:
       - testing
@@ -48,6 +49,8 @@ on:
       # The structure checker also owns the mobile/Android candidate concurrency and trigger
       # declarations, so those files are tooling inputs too.
       - ".github/workflows/release.yml"
+      - ".github/workflows/kernel-release.yml"
+      - "scripts/ci/publish-kernel-candidate.sh"
       - ".github/workflows/release-contract-verify.yml"
       - ".github/workflows/release-prepare.yml"
       - ".github/workflows/client-desktop-windows.yml"

@@ -1,0 +1,158 @@
+name: Kernel release
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and verify only, without creating a tag or Release
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: kernel-release
+  cancel-in-progress: false
+
+jobs:
+  freeze:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.freeze.outputs.version }}
+      apple_sha: ${{ steps.freeze.outputs.apple_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - id: freeze
+        name: Verify the committed release snapshot and compare dependency branch tips
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/testing
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          version="$(cat release/JIEJIE_VERSION)"
+          [[ "$version" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]]
+          refs="$(git ls-remote origin "refs/tags/v$version" "refs/tags/v$version^{}")"
+          if [ -n "$refs" ]; then
+            remote_sha="$(awk '$2 ~ /\^\{\}$/ { peeled=$1 } NR==1 { first=$1 } END { print peeled ? peeled : first }' <<<"$refs")"
+            test "$remote_sha" = "$GITHUB_SHA"
+          fi
+          test "$(jq -er '.release_version' release/source-lock.json)" = "$version"
+          python3 scripts/ci/release-freeze.py verify --lock release/source-lock.json
+          python3 scripts/ci/release-freeze.py resolve --out release-resolve.tsv
+          python3 scripts/ci/release-freeze.py check --resolve release-resolve.tsv --json release-pin-report.json
+          jq -e '[.go_modules[], .clients[]] | all(.policy != "update" or .relation != "behind")' release-pin-report.json
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "apple_sha=$(git rev-parse HEAD:clients/apple)" >> "$GITHUB_OUTPUT"
+      - name: Save dependency observations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-pin-report
+          path: |
+            release-resolve.tsv
+            release-pin-report.json
+          overwrite: true
+
+  verify:
+    needs: freeze
+    uses: ./.github/workflows/verify.yml
+  contract:
+    needs: freeze
+    uses: ./.github/workflows/release-contract-verify.yml
+  linux:
+    needs: freeze
+    uses: ./.github/workflows/server-linux-amd64.yml
+  macos:
+    needs: freeze
+    uses: ./.github/workflows/client-macos.yml
+  windows:
+    needs: freeze
+    uses: ./.github/workflows/windows-core-amd64.yml
+  desktop:
+    needs: freeze
+    uses: ./.github/workflows/client-desktop-windows.yml
+    with:
+      core_sha: ${{ github.sha }}
+      tooling_sha: ${{ github.sha }}
+      core_version: ${{ needs.freeze.outputs.version }}
+      candidate: true
+  android:
+    needs: freeze
+    uses: ./.github/workflows/android-core-arm64.yml
+  apple:
+    needs: freeze
+    uses: ./.github/workflows/client-apple.yml
+    with:
+      apple_client_sha: ${{ needs.freeze.outputs.apple_sha }}
+
+  stage:
+    needs: [freeze, verify, contract, linux, macos, windows, desktop, android, apple]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.freeze.outputs.version }}
+      RELEASE_EXTRA_PLATFORMS: 'true'
+      RELEASE_SELF_SIGN_IPA: 'true'
+    outputs:
+      artifact_id: ${{ steps.bundle.outputs.artifact-id }}
+      artifact_digest: ${{ steps.bundle.outputs.artifact-digest }}
+      bundle_hashes: ${{ steps.hashes.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify and package the complete candidate
+        run: |
+          scripts/ci/release-artifacts.sh stage-candidate "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_SHA" "$VERSION"
+          {
+            echo '### Selected release artifacts'
+            echo '| Artifact | ID | SHA256 |'
+            echo '| --- | --- | --- |'
+            awk -F '\t' '{print "| " $1 " | " $2 " | " $3 " |"}' release-plan/artifacts.tsv
+            echo
+            echo '### Apple handoff'
+            jq -r '.apple_release | "- Apple SHA: \(.apple_client_sha)\n- Libbox build: \(.run_id), attempt \(.run_attempt)"' \
+              "release-assets/Libbox.xcframework/jiejiebox-libbox-$GITHUB_SHA/manifest.json"
+            grep '  jiejie-libbox-apple-' upload/SHA256SUMS
+          } >> "$GITHUB_STEP_SUMMARY"
+      - id: hashes
+        run: echo "sha256=$(sha256sum upload/SHA256SUMS | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      - id: bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: staged-release-${{ github.sha }}
+          path: upload/
+          overwrite: true
+          if-no-files-found: error
+
+  publish:
+    if: ${{ !inputs.dry_run }}
+    needs: [freeze, stage]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.freeze.outputs.version }}
+      BUNDLE_HASHES: ${{ needs.stage.outputs.bundle_hashes }}
+      RELEASE_EXTRA_PLATFORMS: 'true'
+      RELEASE_SELF_SIGN_IPA: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the staged bundle by artifact ID
+        env:
+          ARTIFACT_ID: ${{ needs.stage.outputs.artifact_id }}
+          ARTIFACT_DIGEST: ${{ needs.stage.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" > bundle.zip
+          printf '%s  bundle.zip\n' "${ARTIFACT_DIGEST#sha256:}" | sha256sum -c -
+          unzip -q bundle.zip -d upload
+      - name: Promote the verified bundle to a stable Release
+        run: bash scripts/ci/publish-kernel-candidate.sh

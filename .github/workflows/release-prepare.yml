@@ -403,7 +403,7 @@ jobs:
             echo "Tag \`$PREP_TAG\` points at \`$sha\`, and \`release/source-lock.json\` there is the"
             echo "source set that passed the gates above."
             echo ""
-            echo "Next, and only when you want to publish:"
+            echo "For tagged recovery only. Start Kernel release for new candidates."
             echo ""
             echo '```'
             echo "gh workflow run release.yml --ref testing -f tag=$PREP_TAG"

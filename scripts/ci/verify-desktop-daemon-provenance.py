@@ -137,6 +137,7 @@ def main():
     parser.add_argument("--core-dir", default=".")
     parser.add_argument("--expect-core-sha", required=True)
     parser.add_argument("--expect-version", required=True)
+    parser.add_argument("--candidate", action="store_true")
     parser.add_argument("--require-execution", action="store_true")
     parser.add_argument("--record")
     arguments = parser.parse_args()
@@ -172,33 +173,36 @@ def main():
     # a tag the repository does not carry. What this still proves is that the checkout the
     # daemon was built in descends from the release tag; that the daemon really reports the
     # release version is asserted directly in step 3 below, and is the stronger check.
-    described = run(["git", "-C", str(core), "describe", "--tags"]).strip()
-    base_version = f"v{arguments.expect_version}"
-    if base_version not in described:
-        tag_matches = False
+    if arguments.candidate:
+        record.append("release candidate: tag verification deferred to promotion")
     else:
-        # normalize e.g. 'tooling-v0.1.5-237-g<sha>' -> '-237-g<sha>'
-        remainder = described.split(base_version, 1)[-1]
-        tag_matches = remainder == "" or remainder.startswith("-")
-    if not tag_matches:
-        fail(
-            f"`git describe --tags` in {core} reports {described!r}, which does not descend "
-            f"from the {base_version} release tag",
-            [
-                "cmd/internal/build_boxdd stamps constant.Version from this value unless",
-                "SING_BOX_BUILD_VERSION is injected, so the source must still descend from",
-                "the release tag for the daemon to be the release daemon.",
-            ],
-        )
-    descends_from_release_tag = described != base_version
-    if descends_from_release_tag:
-        record.append(
-            f"core describe          {described} "
-            f"(descends from {base_version}; a descendant means constant.Version was "
-            f"stamped from SING_BOX_BUILD_VERSION, asserted in step 3)"
-        )
-    else:
-        record.append(f"core describe          {described}")
+        described = run(["git", "-C", str(core), "describe", "--tags"]).strip()
+        base_version = f"v{arguments.expect_version}"
+        if base_version not in described:
+            tag_matches = False
+        else:
+            # normalize e.g. 'tooling-v0.1.5-237-g<sha>' -> '-237-g<sha>'
+            remainder = described.split(base_version, 1)[-1]
+            tag_matches = remainder == "" or remainder.startswith("-")
+        if not tag_matches:
+            fail(
+                f"`git describe --tags` in {core} reports {described!r}, which does not descend "
+                f"from the {base_version} release tag",
+                [
+                    "cmd/internal/build_boxdd stamps constant.Version from this value unless",
+                    "SING_BOX_BUILD_VERSION is injected, so the source must still descend from",
+                    "the release tag for the daemon to be the release daemon.",
+                ],
+            )
+        descends_from_release_tag = described != base_version
+        if descends_from_release_tag:
+            record.append(
+                f"core describe          {described} "
+                f"(descends from {base_version}; a descendant means constant.Version was "
+                f"stamped from SING_BOX_BUILD_VERSION, asserted in step 3)"
+            )
+        else:
+            record.append(f"core describe          {described}")
 
     # --- 2. the artifact ------------------------------------------------------
     machine = pe_machine(daemon)

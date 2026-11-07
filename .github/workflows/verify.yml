@@ -33,6 +33,7 @@ name: Verify
 # release candidate". The deep race and interop work belongs to a final-candidate gate, which
 # does not exist yet.
 on:
+  workflow_call:
   push:
     branches: [testing]
     # A docs-only push must not start an expensive Verify. This is not about concurrency: a

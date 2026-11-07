@@ -76,6 +76,7 @@ name: Linux amd64
 # Actions runner time. Run this workflow explicitly after a batch of development
 # changes is ready for validation.
 on:
+  workflow_call:
   workflow_dispatch:
     inputs:
       deep_checks:
@@ -607,6 +608,7 @@ jobs:
       - name: upload artifact
         uses: actions/upload-artifact@v4
         with:
+          overwrite: true
           name: ${{ env.ARTIFACT_NAME }}
           path: ${{ env.ARTIFACT_DIR }}
           if-no-files-found: error

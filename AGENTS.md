@@ -1,5 +1,14 @@
 # AI entry point
 
+## Release / TestFlight tasks
+
+Use [Release 构建指引](docs/RELEASE-WINDOWS.md) for the Kernel release workflow,
+candidate artifacts, publication and handoff. Use [TF 构建指引](docs/TESTFLIGHT-MAC.md)
+after the specified kernel Release is public and verified. Satelite publishes separately
+after that same Release, with its own version and core pin checks.
+Use [release investigation](docs/RELEASE-PLAYBOOK.md) for dated evidence and past failures.
+Recheck the target's workflows and asset contract each time.
+
 ## Read this in order
 
 1. **`KNOWLEDGE/README.md`** — the baseline, the reading order, the status labels.

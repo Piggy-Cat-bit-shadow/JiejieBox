@@ -1,5 +1,12 @@
 # 从 Windows 构建，到 Mac 发布 TestFlight
 
+> **发布顺序更新（2026-11-07）：** 每次发布先读 [Release 与 TF 发布指南](RELEASE-PLAYBOOK.md)，
+> 核对其基线后的变化。用户要求内核仓库正式 Release 全部契约资产发布完成并回读验收后，才开始 TF 发布。
+> 下文的提前 `--follow-run` 路径描述工具能力，不是当前默认发布顺序；不得因为脚本允许提前上传就提前执行。
+> 正式版完成后的默认入口见本页“已发布版本的原有入口”，并核对其平台范围。
+> 两台电脑分别执行独立任务：[Release 构建指引](RELEASE-WINDOWS.md) 完成后输出交接记录并结束；
+> [TF 构建指引](TESTFLIGHT-MAC.md) 另行读取和核验记录。本页保留工具技术说明，不作为跨电脑连续操作清单。
+
 开发和发起 Actions 在 Windows 上完成；证书、签名、归档和 TestFlight 上传留在 Mac。
 Mac 跟随指定的 Apple client 运行，自动使用那次运行的版本、核心提交、Apple 客户端提交和 Libbox。
 它不读取“最新 Release”来猜版本，也不要求本机分支恰好同步到发布提交。

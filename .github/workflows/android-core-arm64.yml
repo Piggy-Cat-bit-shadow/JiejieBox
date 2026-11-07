@@ -27,6 +27,7 @@ name: Android Core ARM64
 #     set and no gvisor module in its Go build info. "The aar exists" is not the assertion.
 
 on:
+  workflow_call:
   workflow_dispatch:
   push:
     branches: [testing]
@@ -433,6 +434,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
+          overwrite: true
           name: android-core-arm64-${{ github.sha }}
           path: |
             release-android/libbox.aar
@@ -445,6 +447,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
+          overwrite: true
           name: android-core-arm64-records-${{ github.sha }}
           path: |
             libbox.provenance

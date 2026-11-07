@@ -1385,7 +1385,7 @@ def _apple_plan(workflow):
         text = text.replace("&&", " and ").replace("||", " or ")
         text = text.replace("!=", " <> ").replace("==", " == ")
         text = text.replace("!", " not ").replace(" <> ", " != ")
-        for name in ("build_ios", "build_macos"):
+        for name in ("build_ios", "build_macos", "build_selfsign"):
             text = text.replace("inputs.%s" % name, "inputs[%r]" % name)
         for job in jobs:
             text = text.replace("needs.%s.result" % job, "results[%r]" % job)
@@ -1404,7 +1404,7 @@ def _apple_plan(workflow):
         mac_jobs = []
         for name in order:
             job = jobs[name]
-            if evaluate(job.get("if", "always()"), inputs, results):
+            if evaluate(job.get("if", "always()"), dict(inputs, build_selfsign=True), results):
                 results[name] = "success"
                 planned.append(name)
                 if str(job.get("runs-on", "")).startswith("macos"):
@@ -1504,10 +1504,10 @@ def check_apple_single_runner_mode():
            and plans["macos-only"]["macos_jobs"] == ["macos"],
            detail)
     report("apple single-runner: dual-platform keeps its single shared framework build",
-           plans["dual"]["macos_jobs"] == ["libbox", "ios", "macos"],
+           plans["dual"]["macos_jobs"] == ["libbox", "ios", "macos", "ios-selfsign"],
            detail)
     report("apple single-runner: iOS-only never runs the macOS job",
-           plans["ios-only"]["macos_jobs"] == ["libbox", "ios"],
+           plans["ios-only"]["macos_jobs"] == ["libbox", "ios", "ios-selfsign"],
            detail)
     report("apple single-runner: with neither product selected nothing runs on a macOS runner",
            plans["neither"]["macos_jobs"] == [],
@@ -1515,6 +1515,30 @@ def check_apple_single_runner_mode():
     report("apple single-runner: the macOS job's timeout is bounded",
            (macos.get("timeout-minutes") or 0) > 0 and macos.get("timeout-minutes") <= 120,
            "timeout-minutes=%s" % macos.get("timeout-minutes"))
+
+
+def check_kernel_release_graph():
+    with open(os.path.join(WF, "kernel-release.yml"), encoding="utf-8") as handle:
+        workflow = yaml.safe_load(handle)
+    jobs = workflow["jobs"]
+    producers = {"linux", "macos", "windows", "desktop", "android", "apple"}
+    checks = {"verify", "contract"}
+    report("kernel release: producers and checks start from the same frozen candidate",
+           all(jobs.get(name, {}).get("needs") == "freeze" for name in producers | checks),
+           ", ".join(sorted(producers | checks)))
+    report("kernel release: staging waits for every producer and check",
+           set(jobs["stage"]["needs"]) == producers | checks | {"freeze"},
+           str(jobs["stage"]["needs"]))
+    report("kernel release: only promotion can write after staging",
+           set(jobs["publish"]["needs"]) == {"freeze", "stage"}
+           and jobs["publish"].get("if") == "${{ !inputs.dry_run }}"
+           and workflow["permissions"]["contents"] == "read"
+           and all(job.get("permissions", {}).get("contents") != "write"
+                   for name, job in jobs.items() if name != "publish"),
+           str(jobs["publish"]["needs"]))
+    report("kernel release: desktop builds in candidate mode before tagging",
+           jobs["desktop"]["with"].get("candidate") is True,
+           str(jobs["desktop"]["with"]))
 
 
 def check_apple_libbox_single_implementation():
@@ -1623,6 +1647,7 @@ def main(argv=None):
     check_release_prepare()
     print()
     check_apple_single_runner_mode()
+    check_kernel_release_graph()
     print()
     check_apple_libbox_single_implementation()
     print()

@@ -28,6 +28,7 @@ name: Windows amd64 core
 # verified bytes. See .github/workflows/release.yml.
 
 on:
+  workflow_call:
   workflow_dispatch:
     inputs:
       source_ref:
@@ -95,7 +96,7 @@ jobs:
         with:
           # An explicit source_ref wins; otherwise this is the ref that was dispatched.
           # Everything compiled below comes from this checkout and nothing else.
-          ref: ${{ github.event.inputs.source_ref || github.ref }}
+          ref: ${{ github.event.inputs.source_ref || github.sha }}
           fetch-depth: 0
 
       # The pinned toolchain is installed BEFORE the step that records it. version.sh
@@ -544,6 +545,7 @@ jobs:
       - name: Upload the core and its records
         uses: actions/upload-artifact@v4
         with:
+          overwrite: true
           name: ${{ env.UPLOAD_NAME }}
           # EXACTLY the four files the release contract names for this platform, and nothing
           # else. The gate's allowlist is derived from its own product table - for Windows that

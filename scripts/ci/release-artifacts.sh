@@ -1294,6 +1294,12 @@ verify_desktop() {
   [ -n "$record" ] || die \
     "no BUILD-INFO-WINDOWS-DESKTOP-*.txt under '$records'. Without the build record the installer's core cannot be proven, and a name is not provenance."
 
+  if grep -Eq '^release mode +(candidate|audit)$' "$record"; then
+    [ "${ALLOW_DESKTOP_CANDIDATE:-false}" = true ] &&
+      grep -Fxq 'release mode      candidate' "$record" ||
+      die "desktop artifact requires the candidate promotion path"
+  fi
+
   field() { sed -n "s/^$1[[:space:]]\{1,\}//p" "$record" | head -1; }
 
   expected_name="Jiejiebox-v${version}-windows-x64.exe"
@@ -1976,11 +1982,81 @@ $(printf '      %s\n' $named)"
 
 # ---------------------------------------------------------------------------
 
+# All producers have completed in this orchestration run. Select once from
+# its artifact inventory and pin each download to the ID and archive digest.
+cmd_stage_candidate() {
+  local repo="$1" run="$2" sha="$3" version="$4"
+  local wf artifact binary installer build apple_attempt
+  [[ "$sha" =~ ^[0-9a-f]{40}$ && "$version" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]] ||
+    die "invalid candidate SHA or version"
+  [ "$RELEASE_SELF_SIGN_IPA" = true ] || die "the candidate requires the self-sign IPA"
+  mkdir -p release-plan
+  : > release-plan/runs.tsv
+  : > release-plan/artifacts.tsv
+  gh api --paginate --slurp "repos/$repo/actions/runs/$run/artifacts?per_page=100" |
+    jq '[.[].artifacts[]]' > release-plan/artifacts.json
+
+  download_candidate_artifact() {
+    local name="$1" destination="$2" row id digest
+    row="$(jq -er --arg name "$name" '
+      map(select(.name == $name and .expired == false)) |
+      if length == 1 then .[0] | [.id, .digest] | @tsv else error($name) end
+    ' release-plan/artifacts.json)" || die "expected one live artifact named $name in run $run"
+    IFS=$'\t' read -r id digest <<<"$row"
+    [[ "$id" =~ ^[0-9]+$ && "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] ||
+      die "artifact $name has no immutable ID or SHA256 digest"
+    gh api "repos/$repo/actions/artifacts/$id/zip" > release-plan/payload.zip
+    printf '%s  %s\n' "${digest#sha256:}" release-plan/payload.zip | sha256sum -c -
+    mkdir -p "$destination"
+    unzip -q release-plan/payload.zip -d "$destination"
+    rm release-plan/payload.zip
+    printf '%s\t%s\t%s\n' "$name" "$id" "$digest" >> release-plan/artifacts.tsv
+  }
+
+  for wf in "${TARGET_WORKFLOWS[@]}"; do
+    artifact="$(payload_artifact "$wf" "$sha")"
+    binary="$(target_field "$wf" binary)"
+    download_candidate_artifact "$artifact" "release-assets/$binary/$artifact"
+    printf '%s\t-\t%s\t-\tcompleted\tsuccess\t%s\t-\t%s\n' \
+      "$wf" "$run" "$sha" "$artifact" >> release-plan/runs.tsv
+    artifact="$(evidence_artifact "$wf" "$sha")"
+    if [ -n "$artifact" ]; then
+      download_candidate_artifact "$artifact" "release-records/$artifact"
+    fi
+  done
+  download_candidate_artifact "jiejiebox-windows-x64-$version-signed-test" release-desktop
+  download_candidate_artifact jiejiebox-windows-build-records release-desktop.records
+  download_candidate_artifact "jiejiebox-ios-selfsign-$sha" release-selfsign
+  grep -Fxq 'release mode      candidate' "release-desktop.records/BUILD-INFO-WINDOWS-DESKTOP-$version.txt" ||
+    die "Windows installer was not built in candidate mode"
+
+  local manifest="release-assets/Libbox.xcframework/jiejiebox-libbox-$sha/manifest.json"
+  apple_attempt="$(jq -er '.apple_release.run_attempt' "$manifest")"
+  test "$(jq -er '.apple_release.apple_client_sha' "$manifest")" = "$(git rev-parse HEAD:clients/apple)"
+  local ipa=release-selfsign/jiejiebox-selfsign-full.ipa
+  grep -Fxq "apple_sha:          $(git rev-parse HEAD:clients/apple)" release-selfsign/BUILD-INFO.txt
+  grep -Fxq "libbox_sha256:      $(jq -er '.artifact_sha256' "$manifest")" release-selfsign/BUILD-INFO.txt
+  grep -Fxq "  sha256:           $(sha256_of "$ipa")" release-selfsign/BUILD-INFO.txt
+  build="$(printf '%s' "$version" | tr -cd '0-9' | sed -E 's/^0+//')"
+  python3 scripts/experiment/verify-selfsign-ipa.py \
+    --version "$version" --build "$build" --base io.jiejiebox.app \
+    --group group.io.jiejiebox.app "$ipa"
+
+  ALLOW_DESKTOP_CANDIDATE=true RELEASE_APPLE_RUN_ID="$run" RELEASE_APPLE_RUN_ATTEMPT="$apple_attempt" \
+    cmd_verify --dir release-assets --sha "$sha" --desktop-dir release-desktop \
+      --desktop-records release-desktop.records --version "$version"
+  installer="release-desktop/Jiejiebox-v$version-windows-x64.exe"
+  cmd_flatten --plan release-plan/runs.tsv --dir release-assets --out upload \
+    --tag "v$version" --desktop "$installer" --self-sign "$ipa" --version "$version"
+  cmd_check_upload --out upload --tag "v$version" --version "$version"
+}
+
 main() {
   [ "$#" -gt 0 ] || die "usage: release-artifacts.sh <check-tag|release-version|plan|evidence|download|desktop|verify|flatten|check-upload|publish-flag|expected-assets|self-sign-asset-name|publish-args|verify-public-release> [args]"
   local sub="$1"
   shift
   case "$sub" in
+    stage-candidate) cmd_stage_candidate "$@" ;;
     check-tag) cmd_check_tag "$@" ;;
     release-version) cmd_release_version "$@" ;;
     plan) cmd_plan "$@" ;;

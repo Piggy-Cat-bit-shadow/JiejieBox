@@ -15,7 +15,7 @@
 # export and upload are not reimplemented here.
 #
 # Usage:
-#   ./scripts/publish-apple-beta.sh [--run-id <id>] [--no-dispatch]
+#   ./scripts/publish-apple-beta.sh [--libbox-source release|actions|auto] [--platform ios|macos|both]
 #   ./scripts/publish-apple-beta.sh --follow-run <id> [--platform ios|macos|both]
 #
 #   --run-id       publish from a specific run instead of looking one up for this commit
@@ -43,9 +43,11 @@ no_dispatch=0
 # Where the Libbox for this release comes from. `auto` is the default and prefers the canonical
 # Release asset, falling back to the exact-SHA Actions artifact ONLY when the asset is absent.
 libbox_source="auto"
+platform="both"
 
 while [ $# -gt 0 ]; do
   case "$1" in
+    --platform) platform="${2:?--platform needs a value}"; shift 2 ;;
     --run-id) run_id="${2:?--run-id needs a value}"; shift 2 ;;
     --no-dispatch) no_dispatch=1; shift ;;
     --libbox-source) libbox_source="${2:?--libbox-source needs a value}"; shift 2 ;;
@@ -57,6 +59,18 @@ done
 case "$libbox_source" in
   auto|release|actions) ;;
   *) echo "publish-apple-beta: --libbox-source must be auto, release or actions (got '$libbox_source')" >&2; exit 2 ;;
+esac
+
+case "$platform" in
+  both) testflight_mode=testflight ;;
+  ios|macos)
+    [ "$libbox_source" = release ] || {
+      echo "publish-apple-beta: --platform requires --libbox-source release" >&2
+      exit 2
+    }
+    testflight_mode="testflight-$platform"
+    ;;
+  *) echo "publish-apple-beta: --platform must be ios, macos or both" >&2; exit 2 ;;
 esac
 
 fail() { echo; echo "FAIL: $*" >&2; exit 1; }
@@ -383,6 +397,11 @@ echo "  dispatch ref:           $dispatch_ref  ($dispatch_reason)"
 canonical_state="ABSENT"
 if [ "$libbox_source" != "actions" ] && [ -n "$tag_sha" ]; then
   step "canonical Libbox asset"
+  if [ "$libbox_source" = release ]; then
+    state="$(gh release view "$release_tag" --repo "$repo" --json isDraft,isPrerelease \
+      --jq '[.isDraft, .isPrerelease] | @tsv')" || fail "could not verify the published Release $release_tag"
+    [ "$state" = $'false\tfalse' ] || fail "$release_tag must be a public stable Release"
+  fi
   if ! asset_names="$(gh release view "$release_tag" --repo "$repo" --json assets -q '.assets[].name' 2>/dev/null)"; then
     # The release may simply not exist yet. Under `release` that is fatal; under `auto` it is
     # genuinely ABSENT, because a release with no such asset and no release at all are the same
@@ -674,7 +693,7 @@ fi
 
 # APPLE_USE_PREBUILT_LIBBOX is what keeps the local run from compiling a fourth copy. release-apple.sh
 # owns signing, the overlays, archiving, export and upload; nothing about that path is duplicated here.
-APPLE_USE_PREBUILT_LIBBOX=1 ./scripts/release-apple.sh testflight
+APPLE_USE_PREBUILT_LIBBOX=1 ./scripts/release-apple.sh "$testflight_mode"
 
 step "APPLE BETA RELEASE"
 # The summary states the ACTUAL source. It is computed from `use_canonical` - the same variable
