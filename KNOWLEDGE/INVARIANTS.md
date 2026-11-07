@@ -12,6 +12,10 @@
 
 当前标签、探测及缓存边界见[出站 Provider 模块](modules/outbound-provider.md)，复验见[验收索引](ACCEPTANCE.md#出站-provider)。
 
+## v0.1.44 Apple/TUN 边界（Apple/TUN boundaries）
+
+配置的 IPv4-mapped 回环地址必须在 TUN 有效选项边界 `Unmap` 后按实际地址族分配；数据面匹配和 Libbox getter 要消费同一族，不能把 IPv4 字面量送给 Apple 的 IPv6 路由构建。iOS 新隧道会话必须清除上一会话的接管成功标志，最多三秒的接管等待不能持有 `serviceLifecycleLock`；stop 或下一次 start 要使旧等待失效，reload 则保留运行中的 TUN。前者见 `protocol/tun/loopback_family_test.go`、`experimental/libbox/tun_loopback_config_test.go`，后者见 Apple `e3283104` 的 `ExtensionProvider.swift` 与 `InterfaceMonitorStartupTests.swift`。构建通过不能取代真机验证。
+
 ## v0.1.39 增量约束（Delta invariants）
 
 | 约束 | 故障 / 正确性依据 | 源码与复查 |

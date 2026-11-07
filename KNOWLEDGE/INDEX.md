@@ -1,5 +1,14 @@
 # 知识索引：按任务查找文档（Knowledge index — route first, read narrowly）
 
+## v0.1.44 专题入口（Released delta）
+
+| 任务 / 路径 / 关键符号 | 直接入口 |
+| --- | --- |
+| v0.1.44 公开来源、门禁与未覆盖范围 | [2026-11-08 专题刷新](CALIBRATION-2026-11-08.md) |
+| Provider 图发布、空组、订阅下载引导环、同标签替换、拨号租约 | [出站 Provider](modules/outbound-provider.md) 与 [路径选择](modules/path-selection-validation.md) |
+| Apple 接管等待、IPv4-mapped 回环、固定客户端来源 | [Apple 自签与回环](modules/apple-selfsign-loopback.md) 与 [子仓库](modules/child-repositories.md) |
+| preparation、精确 SHA 门禁、契约检查误判、正式运行 | [CI 与发布](modules/ci-release.md) 与 [Release 指引](../docs/RELEASE-WINDOWS.md) |
+
 ## 2026-11-05 新增导航（New routes）
 
 | 任务 / 路径 / 关键符号 | 直接入口 |

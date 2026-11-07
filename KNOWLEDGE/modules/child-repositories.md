@@ -1,6 +1,10 @@
 # 子仓库与分叉依赖（Child repositories and forked dependencies）
 
-## 2026-11-07 观察（Current observed revisions）
+## v0.1.44 固定消费（Released pins, 2026-11-08）
+
+父仓 `v0.1.44^{commit}` = `3b6ec64f7145a2add99656d47caaa4f22a1cc478`。`git ls-tree` 与 `release/source-lock.json` 核对的客户端 gitlink 为 Apple `e3283104c984d60cdf2a0250b47b7fc446e71ba6`、Android `c7837107dc0126fb704fdf08cf203e10b30c8a22`、Desktop `41722b030ea481523290d932a1d81177f8c13f32`；`release-freeze.py verify` 通过。Apple 从上一固定值 `0c7b10be` 前移到 `e3283104`，主要改动是 iOS 隧道接管等待从服务生命周期锁内移出，并为新会话重置接管标志。父仓的 Apple ABI 已验证 SHA 与此 pin 一致，正式运行构建了 Libbox、iOS、macOS 和自签 IPA。上述是固定源码与 CI 构建证据，不是 iPhone/iPad 上的 NE route/reload 验证。Satelite APK 在独立仓库通过自己的 `coreCommit` 和 tag 发布，不由父仓 `clients/android` gitlink 或内核 AAR 发布自动完成。
+
+## 2026-11-07 观察（Historical observed revisions）
 
 Provider 专题目标与 v0.1.42 发布目标的客户端 gitlink 和 `release/source-lock.json` 相同。Apple pin 已在 v0.1.42 前移到 `0c7b10be05811cdd3f31a48a7cbe49f061852084`。Android、Desktop、嵌套 Dashboard 仍沿用下方记录的 pin。四个跟踪分支的远端头与这些 pin 相符。Cronet 的源码分支头与内核绑定包发布 pin 属于不同来源，不能直接替换。详见[专题刷新](../CALIBRATION-2026-11-07.md)。
 

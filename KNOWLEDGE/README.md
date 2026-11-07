@@ -2,7 +2,7 @@
 
 ## 当前增量入口（Current delta）
 
-公开正式版是 v0.1.42。出站 Provider 是其后的 `testing` 增量，见[专题刷新](CALIBRATION-2026-11-07.md)和[出站 Provider 模块](modules/outbound-provider.md)。各自的固定目标见 [BASELINE.md](BASELINE.md)。
+最近回读的公开正式版是 v0.1.44。出站 Provider 的初始专题目标与此后的发布修复分开记录，见[2026-11-07 专题刷新](CALIBRATION-2026-11-07.md)、[v0.1.44 专题增量](CALIBRATION-2026-11-08.md)和[出站 Provider 模块](modules/outbound-provider.md)。各自的固定目标见 [BASELINE.md](BASELINE.md)。
 
 ### v0.1.39 历史校准
 

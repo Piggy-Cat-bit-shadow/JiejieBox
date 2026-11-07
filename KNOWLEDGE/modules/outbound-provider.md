@@ -1,6 +1,6 @@
 # 出站 Provider（Outbound provider）
 
-本模块覆盖 `BASELINE.md` 中 2026-11-07 的 Provider 专题目标。用户字段见[配置参考](../../docs/configuration/provider/index.zh.md)，最小可用配置见[扩展示例](../../docs/FORK-CONFIGURATION.md#出站-provider)。v0.1.42 正式版早于该实现。
+本模块覆盖 `BASELINE.md` 中 2026-11-07 的 Provider 初始专题目标，以及 2026-11-08 的 v0.1.44 发布后专题目标。用户字段见[配置参考](../../docs/configuration/provider/index.zh.md)，最小可用配置见[扩展示例](../../docs/FORK-CONFIGURATION.md#出站-provider)。v0.1.43 首次发布 Provider；v0.1.44 包含本模块后述的图校验、替换窗口和拨号租约修复。
 
 ## 范围与当前设计（Scope and current design）
 
@@ -114,10 +114,13 @@
 | `10296629c` | EXTERNAL-ADAPTED | 提交记录标明移植自 reF1nd/testing 的 `17397d0` 设计，参考 nekolsd 等实现。复用本 fork 的 Scope、动态出站管理、选择状态与配置注册表。具体外部来源见[移植记录](../../docs/fork/outbound-provider.md)。 |
 | `3d8c33580` | OWN / hardening | 修补畸形文档 panic、未识别输入的空成功、下载无界、URL 凭据暴露、缓存恢复和 Windows 路径监视。恢复允许静态组重复成员的原行为。 |
 | `08bb7d67d` | OWN / hardening | 移除未实现的字段，修正 304、ETag 与缓存写入的顺序，序列化更新，保留被拒移除节点的所有权。 |
+| `3a2e5f54c` | OWN / correctness | 允许等待 Provider 发布的空组，发布前验证动态成员图和跨 DNS/出站的环；拒绝订阅下载引导环。 |
+| `d38bfc3e5` | OWN / lifecycle | 同标签替换时旧节点等组重建完成再退役；失败轮次保留旧对象。 |
+| `15814e7d1`、`5291924af` | OWN / lifecycle | 拨号交接期间加租约；取得租约与发布检查在同一临界区，移除仍被使用的对象延后关闭。 |
 
 ## 复验、限制与 AI 注意事项（Verification, limitations and AI cautions）
 
-- `VERIFIED_SOURCE` 范围为本专题 SHA，复验命令见[验收索引](../ACCEPTANCE.md#出站-provider)。Box 集成和 schema 生成检查不证明设备行为或线上订阅的互操作性。
+- `VERIFIED_SOURCE` 范围为 v0.1.44 的固定提交 `3b6ec64f7145a2add99656d47caaa4f22a1cc478`，复验命令见[验收索引](../ACCEPTANCE.md#出站-provider)。[正式运行 42391992312](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42391992312) 的 Verify、race、contract、stage 与 publish 均成功；这是 `VERIFIED_CI` 与公开资产证据，不是设备行为或真实订阅互操作性证明。
 - `override_tls`、`override_anytls` 与 inline `endpoints` 曾声明但不生效，已删除。带有效值的旧键会被严格解码拒绝。deprecated `download_detour` 保留运行时兼容，schema 不再列出。
 - Clash API 的普通 `/proxies` 可列出 Provider 节点并选择。独立 `/providers/proxies` 仍无 Provider 管理能力，不能用其当作手动刷新入口。
 - Provider 健康检查调用兼容的 `StoreURLTestHistory`，把自定义 URL 的结果也记进默认目标的健康历史。失败使用按标签清理的兼容接口，范围包括该标签的其他探测目标。不能把普通 URLTest 的目标隔离结论套给 Provider，后续若修应测自定义 URL 和失败后的历史隔离。

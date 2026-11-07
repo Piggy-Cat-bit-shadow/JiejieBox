@@ -1,5 +1,15 @@
 # 提交导航（Commit navigation）
 
+## v0.1.44 的关键修复（Released fixes, 2026-11-08）
+
+| 主题 | 关键提交 / 导航 |
+| --- | --- |
+| Provider 空组等待、动态与跨 DNS/出站图校验、下载引导环 | `3a2e5f54c`；[出站 Provider](modules/outbound-provider.md) 与 [路径选择](modules/path-selection-validation.md) |
+| 同标签替换窗口、旧对象持有至组重建 | `d38bfc3e5`；[出站 Provider](modules/outbound-provider.md) |
+| 拨号租约及取得租约的原子检查 | `15814e7d1`、`5291924af`；[出站 Provider](modules/outbound-provider.md) |
+| IPv4-mapped 回环地址分族、Apple 新会话接管等待 | 父仓 `8c1e804ea`、Apple `e3283104`；[Apple 自签与回环](modules/apple-selfsign-loopback.md) |
+| 发布门禁的 SIGPIPE 误判修复 | `3b6ec64f7`；[CI 与发布](modules/ci-release.md) |
+
 ## 出站 Provider 与发布编排（2026-11-07）
 
 | 主题 | 关键提交 / 导航 |

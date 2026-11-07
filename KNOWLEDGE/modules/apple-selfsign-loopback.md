@@ -1,8 +1,12 @@
 # Apple 自签、命令通道与本地回环（Apple self-signing, command channel and loopback）
 
+## v0.1.44 发布增量（Released delta, 2026-11-08）
+
+父仓 `3b6ec64f7145a2add99656d47caaa4f22a1cc478` 固定 Apple `e3283104c984d60cdf2a0250b47b7fc446e71ba6`、sing-tun `8f65451175c085a055a552898758f8594f988239`。内核 `8c1e804ea` 在 TUN 边界对配置中的 IPv4-mapped 回环地址执行 `Unmap` 后按真实地址族拆分，避免开关关闭时原样保留的 `::ffff:10.7.0.1` 被误放进 IPv6 列表；`protocol/tun/loopback_family_test.go` 和 `experimental/libbox/tun_loopback_config_test.go` 覆盖有效选项与 Libbox getter。Apple `e3283104` 将等待 `setTunnelNetworkSettings` 的最多三秒移出 `serviceLifecycleLock`，新启动重置成功标志，停止或后续启动通过 generation 使旧等待失效；reload 保留当前 TUN，不重复检查。正式 [Kernel release 42391992312](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42391992312) 的 Libbox、iOS、macOS 和自签 IPA 构建成功。以上为源码、测试与 CI 构建证据，不是真机 NE route/reload、SideStore 或签名后运行证明。
+
 ## 范围与修订（Scope and revisions）
 
-源码目标：父仓 `v0.1.39` / `fc7e400243d46a451b2dffbe68cb5a3147c66289`；Apple gitlink `ab575dace8190a48a9d7cf666ef009f803e6ca62`；sing-tun pin `8f65451175c085a055a552898758f8594f988239`。2026-11-05 独立观察的 Apple `main` 和 sing-tun `dev` 与 pin 相同；观察值不是永久的分支承诺。Android、Desktop 与嵌套 dashboard 不因这次功能发生移动。
+以下原始专题的源码目标为父仓 `v0.1.39` / `fc7e400243d46a451b2dffbe68cb5a3147c66289`；Apple gitlink `ab575dace8190a48a9d7cf666ef009f803e6ca62`；sing-tun pin `8f65451175c085a055a552898758f8594f988239`。2026-11-05 独立观察的 Apple `main` 和 sing-tun `dev` 与当时 pin 相同；观察值不是永久的分支承诺。Android、Desktop 与嵌套 dashboard 不因该次功能发生移动。当前发布消费值见上方 v0.1.44 增量。
 
 ## 三条不同契约（Three distinct contracts）
 

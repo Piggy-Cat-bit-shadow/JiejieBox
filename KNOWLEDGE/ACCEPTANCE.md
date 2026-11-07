@@ -2,7 +2,7 @@
 
 ## 出站 Provider
 
-目标见 [BASELINE.md](BASELINE.md) 的 2026-11-07 专题 SHA。以下命令在 Windows amd64、Go 1.25.5、`CGO_ENABLED=0` 复验通过，证据为 `VERIFIED_UNIT` 及本地配置检查。
+初始目标见 [BASELINE.md](BASELINE.md) 的 2026-11-07 专题 SHA；v0.1.44 的发布目标和证据见下方。以下本地命令来自该专题及后续修复的复验记录，证据范围为相应源码与测试，并不自动覆盖所有平台。
 
 | 验收范围 | 复验命令 |
 | --- | --- |
@@ -19,11 +19,21 @@
 | 生成 schema 与跟踪文件一致 | `go test -count=1 -tags "$server_tags" -run TestTrackedSchemaMatchesTheGenerator ./cmd/sing-box` |
 | 根级示例可加载 | 用 `$server_tags` 构建 `./cmd/sing-box`，对配置参考和扩展示例中的完整根级 JSON 运行 `sing-box check -c <file>` |
 
-`windows_tags` 和 `server_tags` 分别读取 `release/DEFAULT_BUILD_TAGS_WINDOWS` 与 `release/DEFAULT_BUILD_TAGS_OTHERS`。结果覆盖测试用例和示例加载，不代表线上下载、设备行为或 race 检验。
+`windows_tags` 和 `server_tags` 分别读取 `release/DEFAULT_BUILD_TAGS_WINDOWS` 与 `release/DEFAULT_BUILD_TAGS_OTHERS`。不带 `-race` 的结果只覆盖列出的测试和示例加载，不代表线上下载或设备行为。
 
-本次修复的局限（未检测 DNS 解析形成的下载引导环、Provider 成员发布时不重跑 TCP/UDP 能力试运行、Clash `/providers/proxies` 仍是桩）见[出站 Provider 模块](modules/outbound-provider.md) 的 2026-11-07 一节。
+DNS 解析形成的下载引导环已在后续修复中纳入检查。仍有限制：Provider 成员发布时不重跑 TCP/UDP 能力试运行，Clash `/providers/proxies` 仍是桩；见[出站 Provider 模块](modules/outbound-provider.md)。
 
-## v0.1.39 增量验收（Current delta acceptance）
+## v0.1.44 发布验收（Release acceptance）
+
+| 需求 | 证据与边界 |
+| --- | --- |
+| 最终候选门禁 | `VERIFIED_CI`：[Verify 42391024793](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42391024793)、[Release contract 42391024692](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42391024692) 和 [preparation 42391062041](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42391062041) 均成功，`head_sha` 为 `3b6ec64f7145a2add99656d47caaa4f22a1cc478`。 |
+| 正式构建、race、stage、publish | `VERIFIED_CI`：[Kernel release 42391992312](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42391992312) 全部必需作业成功；公开 tag 剥离到同一 SHA。 |
+| 公开附件 | `VERIFIED_CI` 加 API 回读：8 项附件、非 draft、非 prerelease、正文为空；工作流内部验证摘要，未在本机下载复算字节。 |
+| iOS 隧道接管、本地回环在设备上运行 | `NEEDS_DEVICE`：构建和源码测试不能证明签名后真机 NE route/reload 或 SideStore 续签。 |
+| Satelite Android APK | 独立仓库的 tag push、签名构建和公开附件需单独核对；内核 AAR 不能替代该证据。 |
+
+## v0.1.39 增量验收（Historical delta acceptance）
 
 | 需求 | 层级与已有依据 | 复查 / 环境 |
 | --- | --- | --- |

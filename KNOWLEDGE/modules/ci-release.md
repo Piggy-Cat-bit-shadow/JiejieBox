@@ -1,5 +1,11 @@
 # CI、证据与发布（CI, evidence and release）
 
+## v0.1.44 的已执行发布与阻塞（Observed release and gates）
+
+`VERIFIED_CI`：[Release preparation 42391062041](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42391062041) 在最终候选 `3b6ec64f7145a2add99656d47caaa4f22a1cc478` 上通过；[Verify 42391024793](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42391024793) 和 [Release contract 42391024692](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42391024692) 同 SHA 成功。[Kernel release 42391992312](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42391992312) 的全部生产、Verify、race、stage、publish 作业成功。公开 [v0.1.44 Release](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.44) 非 draft、非 prerelease，tag 剥离到该 SHA，8 项附件与空正文经 API 回读。附件元数据及工作流内部校验不等于本地重新下载逐字节验包；也不证明设备行为。Satelite APK 属于另一个仓库，不能由此推断已发布。
+
+本版 preparation 首次尝试在自动前移 Apple gitlink 后被旧的 `VERIFIED_APPLE_SHA` 阻断；对新 Apple 源码运行 ABI 访问器探针并核对差异后，更新已验证 SHA，再重跑 preparation。一次新候选推送由 Actions `GITHUB_TOKEN` 发出，未自动生成 Verify/Release contract；对最终 SHA 手动派发门禁后重新运行 preparation。早期 Verify 的 `route/active_stall_teardown_test.go` 丢失非阻塞通道信号，修成容量 1 后在新 SHA 通过。首轮 Kernel release 的 contract 检查使用 `grep -v | grep -q`，在 `pipefail` 下因 SIGPIPE 偶发误报 workflow 未调用 `evidence`；`3b6ec64f7` 改为单进程 `awk` 检查，重新冻结并完整构建后发布。需要改源码或工具时不能复用旧 run 的构建资产；流程见 [Release 指引](../../docs/RELEASE-WINDOWS.md)。
+
 ## v0.1.42 与后续发布工具增量（Release workflow delta）
 
 新发版由 `kernel-release.yml` 编排，冻结后并行启动各产者，Windows 安装器可先以候选身份构建，自签 IPA 与 Apple GUI 验证消费同次 Libbox。stage 按 run 内的 artifact ID 和摘要取包，publish 复核同一批字节后才晋升。旧 `release.yml` 用于有 tag 的恢复。v0.1.42 的运行与八个资产回读见[交接记录](../../docs/releases/RELEASE-0.1.42-HANDOFF.md)。

@@ -4,6 +4,29 @@
 
 [正式发布与下载](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) · [原始详细日志归档](docs/archive/2026-10-dev-cycle/CHANGELOG-DETAIL-2026-11-01.md) · [工程架构与改造评估](KNOWLEDGE/reports/core/JiejieBox_工程架构与改造最终评估报告_2026-11-01.md)
 
+## [v0.1.44](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.44) — 2026-11-08
+
+本版修复出站 Provider 与链式代理、策略组配合时的启动和热更新问题，并收紧动态节点的环路校验与连接生命周期。iOS 同步修复隧道接管等待与本地回环的边界情况。
+
+### Provider、链式代理与热更新
+
+- 仅由 Provider 供给成员的空组，在节点尚未发布时可作为 `detour` 目标等待；没有 Provider 供给的断链仍会报错。远程订阅下载路径若反过来依赖自己尚未加载的节点，会在启动时给出明确错误，避免下载引导环。
+- Provider 发布节点或 selector、URLTest 更新成员前，校验动态出站图及跨 DNS、出站的环路。无效更新不会把正在使用的节点替换为不可拨号路径；发布后的组成员和链式代理会重新参与校验。
+- 同标签节点替换时，旧对象保留到策略组重建完成；连接拨号期间为选中的节点持有租约。已移除或关闭的对象不再被新连接误用，仍在使用的对象等最后一个租约释放后再关闭。
+- selector 和 URLTest 遇到租约拒绝会重读当前成员；无法取得有效节点时返回明确错误。补齐并发替换、启动顺序、环路和租约交错测试。
+
+### iOS 隧道与本地回环
+
+- Apple 客户端把隧道接管等待移出服务生命周期锁，停止或新一次启动可中断旧等待；新会话重置接管成功标记，避免复用上次启动结果。
+- 本地签名回环按 IPv4-mapped 地址的实际地址族判断，修复这类地址绕过回环识别的问题。
+
+### 构建与验证
+
+- Apple 客户端固定到 `e3283104`，重新核对 Libbox ABI。修复发布契约检查在 `pipefail` 下偶发的 SIGPIPE 误判，以及一项会丢失对端读取信号的并发测试。
+- [正式发布运行](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42391992312)中的构建、契约、Verify、race、stage 与 publish 全部通过；8 项公开附件已回读，包含各平台内核、Android ARM64 AAR、Apple Libbox、Windows 安装器、未签名 IPA 和校验清单。真机 Network Extension 行为不由这些构建结果证明。
+
+[完整更新日志](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/CHANGELOG.md) · [出站 Provider 配置](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/v0.1.44/docs/configuration/provider/index.zh.md) · [本地回环说明](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/v0.1.44/docs/IOS-SELFSIGN-AND-LOOPBACK.md)
+
 ## [v0.1.43](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.43) — 2026-11-07
 
 本版新增出站 Provider。可从远程订阅、本地文件或内联配置导入代理节点，让 selector 和 URLTest 随节点更新调整成员，无需手工复制节点列表或重启内核。
