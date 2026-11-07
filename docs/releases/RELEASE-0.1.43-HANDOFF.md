@@ -1,7 +1,7 @@
 # v0.1.43 内核正式发布交接记录（2026-11-07）
 
-本记录由 Windows 正式版任务生成，供 [TF 构建指引](../TESTFLIGHT-MAC.md) 与 Satelite 后续任务消费。
-表中的摘要来自公开 Release 实际字节的本地回读，不是构建日志的转述。
+本记录由 Windows 正式版任务生成，供 [TF 构建指引](../TESTFLIGHT-MAC.md) 消费；Satelite 安卓客户端
+已于本轮完成，记录见下文。表中的摘要来自公开 Release 实际字节的本地回读，不是构建日志的转述。
 
 ## 发布身份
 
@@ -61,6 +61,34 @@ Release preparation；`release/source-lock.json` 仅更新 `release_version`。
 `artifact_sha256`。TF 任务按 [TF 构建指引](../TESTFLIGHT-MAC.md) §1 用该 tag、完整 SHA 和已发布
 Libbox；Apple 源从 Manifest 读取，不要在 Mac 重新解析 `main`。
 
+## Satelite 安卓客户端（整轮 Release 完成）
+
+| 项 | 值 |
+| --- | --- |
+| 版本 | `0.1.43`（`versionCode=54`，上一发布为 53） |
+| tag | `v0.1.43`（附注标签对象 `b09508141698ddfa200f7d68b63fb74d1c890eff`） |
+| tag 剥离后的客户端 SHA | `b52c438a8ba2d6b7c58367d61e2ff16f36391346` |
+| 内核固定点 | `0d63a7a16dd488d952b4d899ebc1a2542cfb7532`（`Piggy-Cat-bit-shadow/sing-box` 的 `v0.1.43`） |
+| Release | https://github.com/Piggy-Cat-bit-shadow/satelite-one/releases/tag/v0.1.43 |
+| 运行 | Release APK `42346052629` attempt 1，`2026-11-07T06:13:26Z` → `2026-11-07T06:40:29Z`（build 26 分 27 秒，publish 18 秒） |
+| 状态 | 公开、非 draft、非 prerelease；正文 298 字节（工作流按提交生成的更新摘要） |
+| 公开时间 | `2026-11-07T06:40:29Z`（14:40:29 Asia/Shanghai） |
+
+| 资产 | 字节 | SHA256 |
+| --- | --- | --- |
+| `satelite-one-0.1.43-arm64-v8a-signed-v0.1.43.apk` | 30,587,343 | `32e6e4921a0bd08446171ae9101a38dc59e8fd5247ed47b10c4103dd84e7ce17` |
+| `satelite-one-0.1.43-x86_64-signed-v0.1.43.apk` | 32,560,906 | `915f4a844b9a72fe985178a3a2e9961fc9d779dd456f78b4449ecde650252c69` |
+| `SHA256SUMS.txt` | 227 | `55f64515f8813dcecdc70f9b26f6cb7bfabad34921254f691ec1d87dab99a353` |
+| `build-info.json` | 1,352 | `6030f909544d921e857cd68327826477b28fc82313901ddc63fe8ff80409488e` |
+| `apksigner-verify.txt` | 2,844 | `3394627b1680feb43d5ce6f6ba163850d8a558b0977996ead2504dbefd0aba7d` |
+
+验收结果：
+
+- 两个 APK 的本地 SHA256 与 `SHA256SUMS.txt`、`build-info.json` 的 `apk_*_sha256` 全部一致。
+- `build-info.json`：`app_version=0.1.43`、`app_version_code=54`、`app_commit=b52c438a8`、`core_commit=0d63a7a16dd488d952b4d899ebc1a2542cfb7532`、`core_aar_sha256=382333b3fcb95e06fe4c9560c9b0121f2700d21e45db753f80b0224682e17122`（121,842,246 字节）、`run_id=42346052629`、`signature_state=signed-by-user`。
+- ABI：arm64 APK 仅含 `lib/arm64-v8a/*`，x86_64 APK 仅含 `lib/x86_64/*`；两者 `libbox.so` 的本地摘要分别等于 `core_engine_sha256.arm64-v8a=77e7ed01…` 与 `.x86_64=7cb19d57…`。
+- 签名：流水线 `apksigner verify` 实测两个 APK 均 `Verifies`，APK Signature Scheme v2 为 true，单签名者，证书 `CN=satelite-one, OU=Release Signing, O=satelite-one`（非 debug），RSA 4096，证书 SHA-256 `dfebfb1d07cce60c7f64d277f985f9485823f32286388be40760d60409d8718d`。本机无 Android SDK/apksigner，签名复核采用流水线实测记录（`VERIFIED_CI`）；SHA256、ABI 与引擎摘要为本地实测（`VERIFIED_STATIC`）。
+
 ## 验收结果
 
 - 运行 `42343308769` 全部 16 个 job 均为 `success`：freeze、verify（含 race）、contract、Linux、
@@ -78,7 +106,5 @@ Libbox；Apple 源从 Manifest 读取，不要在 Mac 重新解析 `main`。
 
 - **Mac TF**：按 [TF 构建指引](../TESTFLIGHT-MAC.md) 独立执行；开始条件是本记录及上面的
   回读结果。
-- **Satelite**：本轮用户明确只发内核，Satelite 待完成。后续在
-  `Piggy-Cat-bit-shadow/satelite-one` 以 `versionName=0.1.43`、`coreCommit=0d63a7a16...`、
-  递增的 `versionCode` 对齐依赖并发布签名 APK；双 ABI APK、签名与校验和验收前，本轮
-  Release 状态记为「内核已发布，Satelite 待完成」。
+- **Satelite**：已完成。双 ABI APK、签名与校验和均已验收（见上一节），整轮 Release 状态为
+  「内核与 Satelite 均完成」。
