@@ -322,15 +322,44 @@ Network Extension 模式使用 OOMKiller 已有压力状态，限制 AnyTLS TCP/
 
 设计与适用范围见 [低内存缓冲区](KNOWLEDGE/modules/mtu-and-geometry.md#5-低内存几何-profilethe-low-memory-geometry-profile)、[分层内存管理](docs/FAST-PATH-AND-MEMORY.md#内存管理的分层设计)、[创建准入](KNOWLEDGE/modules/resource-admission.md)和 [移动端电源策略](KNOWLEDGE/modules/power-mobile-lifecycle.md)。
 
-## iOS 本地回环
+<a id="ios-本地回环"></a>
 
-**开启路径：更多 → 连接行为 → 配置覆盖 → 本地签名回环。** iPad 在“配置覆盖”中查找同名开关。默认关闭，开启并重载后向本次 TUN 注入 `10.7.0.1`，用于本机回环连接。
+## iOS 本地回环续签（SideStore / LiveContainer）
 
-**SideStore 续签（真机反馈）**。纯 IPv4 的 TUN 配置下，开启本地签名回环即可续签。IPv4/IPv6 双栈下，保持回环开启，再到 **SideStore → Developer Options → Accept IPv6 Config** 打开该选项，即可保留 TUN IPv6 并完成续签。此前遇到的 `DeviceEndpointNotInitialized` 在该设备上也通过这一设置解决。[续签步骤与排障](docs/IOS-SELFSIGN-AND-LOOPBACK.md#当前兼容性与续签方式)
+本项目通过 sing-box TUN 入站的 `loopback_address` 实现 iOS 本地回环，可配合 SideStore / LiveContainer 完成应用续签，无需额外启用 LocalDevVPN。
 
-另有真机反馈，WLOC 的开发者模式虚拟定位可正常使用。
+### 1. 开启本地回环
 
-上述结果仅对应已反馈的设备与使用场景。默认 `go` 栈支持 TCP、UDP、ICMPv4/v6 反射；其他显式栈尚无完整同等实现。配置与排障见 [本地回环说明](docs/IOS-SELFSIGN-AND-LOOPBACK.md#打开本地签名回环)。
+在 JiejieBox 中进入 **更多 → 连接行为 → 配置覆盖 → 本地签名回环**，打开开关后等待 VPN 重载；尚未连接时，在下一次启动 VPN 时生效。iPad 在“配置覆盖”中查找同名开关。
+
+该开关默认关闭，开启后会在本次运行的 TUN 中加入 `10.7.0.1`，并配置对应的 iOS 主机路由，不会改写订阅或原始配置文件。也可以在现有 TUN 入站中手动加入 `"loopback_address": ["10.7.0.1"]`；已有该字段时，将地址追加到列表中即可。
+
+[`loopback_address`](docs/configuration/inbound/tun.zh.md#loopback_address) 自 sing-box 1.12.0 起提供，可将指向指定地址的 TCP 连接重定向回本机。本项目默认 `go` 栈还支持 UDP、ICMPv4/v6 反射；旧配置若显式选择其他栈，请参阅[适用范围](docs/IOS-SELFSIGN-AND-LOOPBACK.md#当前兼容性与续签方式)。
+
+### 2. 设置 SideStore / LiveContainer
+
+进入续签工具的 **Settings → Connection Config**，选择 **Remote Endpoint** 连接方式，按下表配置。不同版本的设置入口可能位于 **Developer Options** 中。
+
+| 设置项 | 推荐值 |
+| --- | --- |
+| Use Local VPN | **关闭（OFF）** |
+| Device IP | `10.7.0.1`，与 TUN 的 `loopback_address` 保持一致 |
+| RemotePair Port | 留空，使用自动发现 |
+| Reachable | 应显示 `Yes` |
+
+使用本项目的回环时，**必须关闭 Use Local VPN**，避免进入 Local VPN 自动检测模式。RemotePair 端口优先使用自动发现，不建议固定为 `49152`，实际端口可能变化。
+
+设置完成后，在 SideStore 的 **My Apps** 中刷新应用，或在 LiveContainer 中执行相应的续签操作。**Reachable 显示 `Yes` 只表示连接可达，仍需实际完成一次刷新，确认续签成功。**
+
+### 3. 续签失败时检查
+
+1. 确认 JiejieBox VPN 已连接，本地签名回环已生效，有效 TUN 配置包含 `"loopback_address": ["10.7.0.1"]`。
+2. 确认续签工具的 **Use Local VPN** 已关闭，**Device IP** 与回环地址一致。
+3. 在 **Settings → Experimental Features → Network Discovery** 中查询 `_remotepairing._tcp.`，核对实际 RemotePair 端口。自动发现失败时，可手动填写查询到的端口。
+4. 检查配对文件是否有效，并确认与当前设备、系统及 SideStore 版本匹配。
+5. 使用 IPv4/IPv6 双栈配置时，检查 SideStore / LiveContainer 的 IPv6 连接设置。SideStore 版本若提供 **Developer Options → Connection Config → Accept IPv6 Config**，可开启后保留 TUN IPv6 再重试；出现 `DeviceEndpointNotInitialized` 时也应检查这一项。
+
+本地回环负责续签工具与设备之间的连接路径，不会替代所需的配对文件、签名和续签流程。更多设置见[本地签名回环说明](docs/IOS-SELFSIGN-AND-LOOPBACK.md#打开本地签名回环)。
 
 ## 安全与部署
 
