@@ -7,7 +7,7 @@
 从 [调查基线](RELEASE-PLAYBOOK.md) 查旧事故和证据。每次记录本轮 Git SHA、对照基线和观察时间。检查基线到目标提交的 workflow、发布脚本、依赖声明、客户端 gitlink 与产物差异。当前构建入口见 [Kernel release](../.github/workflows/kernel-release.yml)，公开资产契约见 [release-artifacts.sh](../scripts/ci/release-artifacts.sh)。以候选源码为准。
 
 - 核对主仓 `testing`、目标版本、远端 tag 与正式 Release。选择尚未使用的版本，更新 `release/JIEJIE_VERSION`，提交并推到 `testing`；Release preparation 会根据实际固定的依赖生成 `release/source-lock.json`。工作区应干净，不要从仍指向旧版本或旧 pin 的快照启动正式构建。
-- **区分两份文字。** `.github/RELEASE_NOTES.md` 和 GitHub Release 正文按当前发布契约保持为空；面向读者的版本更新记录写在根目录 `CHANGELOG.md`，沿用其既有排版。发布后补写 `CHANGELOG.md` 不改变已冻结 tag 的源码或空白 Release 正文。
+- **提前准备面向读者的版本说明。** `.github/RELEASE_NOTES.md` 按现有自动发布契约保持空文件，但这不代表公开 Release 页面应一直空白。按根目录 `CHANGELOG.md` 的既有排版起草本版内容；正式构建通过、附件公开并回读后，把同一版说明写入 `CHANGELOG.md` 和 GitHub Release 正文。发布后的文档提交不移动已冻结 tag。
 - 对照 `release/dependencies.json`、根和 test 模块、Apple/Android/Desktop gitlink、嵌套 dashboard 及 Cronet native provenance。检查跟踪分支 tip，记录采用或保留理由。dashboard 变更先进入 Desktop 再冻结主仓。Cronet 原生库按受控流程验证字节。
 - 在正式构建前运行 Release preparation，**同时指定 `dry_run=false` 和 `create_tag=false`**，取得最终候选提交。该运行会前移仅落后的 update pin、重新生成锁文件、在有变更时提交推送，并等待最终 SHA 的门禁。默认 `dry_run=true` 只生成报告，不会更新 pin 或锁文件；不能把它的起始 SHA 当成最终候选。分叉的 pin 会提前失败，须先查明并处理。若 Apple 客户端修复尚未进入父仓 `clients/apple` gitlink，此步不可跳过。
 
@@ -41,6 +41,7 @@ gh workflow run kernel-release.yml -R $repo --ref testing -f dry_run=false
 ## 3. 内核正式版验收、恢复和交接
 
 - 确认本次 run 的必需作业、stage 和 publish 均通过。产物与摘要校验由 Actions 完成。发布者只需在 GitHub 回读公开状态、tag 对应的提交、附件清单和发布正文。无需再次下载附件或在本地复算校验和。
+- **公开页面必须有本版更新说明。** 当前 `Kernel release` 自动创建的 Release 正文为空；附件验收后，从 `CHANGELOG.md` 取当前版本的概述和各节内容，去掉日志自身的版本标题，将相对文档链接改为可在 GitHub 页面打开的绝对链接，保存为 UTF-8 正文文件，再执行 `gh release edit v<version> -R $repo --notes-file <正文文件>`。随后用 `gh release view v<version> -R $repo --json body,isDraft,isPrerelease,assets` 回读正文非空、版本与附件不变，并在交接记录中区分初次公开和正文补写的时间。不能只提交 `CHANGELOG.md` 就宣称 Release 页面已有说明。v0.1.44 曾因遗漏此步留下空白页面，现已补写。
 - 暂时故障优先在同一 run 重跑失败 job。发布步骤中断时优先重跑 publish，使用已验证的 bundle。现有 draft 只补缺失的文件，若已有文件摘要不一致则停下调查。记录 queue、实际 job 时间和阶段间等待，按冻结至公开回读的墙钟时间衡量优化。
 - 需要改代码、pin 或工具时重新冻结并构建。若正式 tag 已指向不同提交，使用新版本。旧 tag 的历史恢复入口为 Release (tagged recovery)，按对应提交的工作流契约和产物来源恢复；该恢复入口不重新构建，要求同一提交已有成功的 self-sign 产物。缺少时先从同一 SHA 的 Apple client self-sign 入口取得产物，再运行恢复流程。这是历史恢复的前置条件，不是正常 `Kernel release` 的额外步骤。
 - v0.1.44 的首轮正式构建在 `contract / release helper tests` 被误判阻断：测试用 `grep -v | grep -q` 查找 workflow 调用，`set -o pipefail` 下前一个进程偶发收到 SIGPIPE，虽然 `release.yml` 确实调用了 `evidence`。遇到类似失败，先核对失败用例、实际 workflow 文本与同 SHA 的独立契约运行；修复检查器后必须提交、重新运行门禁和 preparation，再启动新的正式构建。v0.1.44 还遇到 Verify 的并发测试丢失对端读取信号：确认是测试同步缺陷后修复，不能把测试失败直接当作可忽略的偶发错误。

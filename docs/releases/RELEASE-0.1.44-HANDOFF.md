@@ -9,12 +9,14 @@
 | 版本 / tag | `0.1.44` / `v0.1.44`（附注标签对象 `e6a718553ca10b907478bc7457d618505c1bad4d`） |
 | tag 剥离后的完整 SHA | `3b6ec64f7145a2add99656d47caaa4f22a1cc478` |
 | Release | https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.44 |
-| 状态 | 公开、非 draft、非 prerelease；正文为空 |
+| 状态 | 公开、非 draft、非 prerelease；初次公开时正文为空，`2026-11-07T17:32:59Z`（2026-11-08 01:32:59 Asia/Shanghai）补写本版说明，当前正文非空 |
 | 运行 | [Kernel release 42391992312](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42391992312)，attempt 1，`2026-11-07T16:34:41Z` → `2026-11-07T16:54:39Z` |
 | 公开时间 | `2026-11-07T16:54:35Z`（2026-11-08 00:54:35 Asia/Shanghai） |
 | 发布前门禁 | [Verify 42391024793](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42391024793)、[Release contract 42391024692](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42391024692)、[preparation 42391062041](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42391062041) 均在最终 SHA 成功 |
 
 正式运行的 freeze、contract、各平台构建、Verify（含 race）、stage 和 publish 全部成功。首轮在旧提交 `58fb5d293` 上的正式运行 `42390257395` 因契约测试 SIGPIPE 误报而取消，未进入 stage/publish，也未创建本版 tag；修复检查器后重新冻结和完整构建。另见 [CI/Release 模块](../../KNOWLEDGE/modules/ci-release.md)。
+
+发布后的独立文档提交将本版内容写入 `CHANGELOG.md`，但自动创建的 GitHub Release 正文仍为空。收到用户反馈后，使用同版日志内容补写 [公开 Release 页面](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.44)；API 回读正文为 1,518 字符，8 项附件、tag 目标及公开状态未变。这是发布后文字编辑，不是重新构建或重发资产。
 
 ## 公开资产（8 项）
 
