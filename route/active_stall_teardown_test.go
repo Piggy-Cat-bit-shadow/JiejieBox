@@ -48,10 +48,10 @@ type oneSidedFixture struct {
 // teardownSetupTimeout bounds the SETUP of the one-sided teardown test, not its thesis.
 //
 // The former 10-second deadlines failed under the race detector on loaded CI, and the 30-second
-// ceiling still expired once during a full 440-second route-suite run (the peer read never saw the
-// request). Neither is the property under test - the property is the settled state "one copy alive,
-// onClose unrun" - so a slow scheduler or suite load must not fail the premise. A genuine breakdown
-// still fails, after a longer ceiling; the assertions themselves are unchanged.
+// ceiling still expired once during a full 440-second route-suite run. A later CI failure showed
+// that the unbuffered, non-blocking peerRead notification could be discarded even after the peer
+// received the request; that notification is now buffered. The settled state "one copy alive,
+// onClose unrun" is the property under test. This ceiling still bounds a genuine setup failure.
 const teardownSetupTimeout = 2 * time.Minute
 
 func TestTeardown_OneSidedCompletionNeverRunsOnClose(t *testing.T) {
@@ -61,7 +61,9 @@ func TestTeardown_OneSidedCompletionNeverRunsOnClose(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = peer.Close() })
-	peerRead := make(chan struct{})
+	// The peer may read the request before the test starts waiting below. Buffer the one-shot
+	// observation so the non-blocking send cannot discard a real read and cause a false timeout.
+	peerRead := make(chan struct{}, 1)
 	// peerEOF is closed when the peer's read returns EOF, which is the moment the client's
 	// half-close has been carried all the way through the proxy to the peer. It is an ORDERING
 	// fact rather than a timing one, and the test waits on it instead of on a sleep: "the upload
