@@ -6,7 +6,8 @@
 
 从 [调查基线](RELEASE-PLAYBOOK.md) 查旧事故和证据。每次记录本轮 Git SHA、对照基线和观察时间。检查基线到目标提交的 workflow、发布脚本、依赖声明、客户端 gitlink 与产物差异。当前构建入口见 [Kernel release](../.github/workflows/kernel-release.yml)，公开资产契约见 [release-artifacts.sh](../scripts/ci/release-artifacts.sh)。以候选源码为准。
 
-- 核对主仓 `testing`、目标版本、远端 tag 与正式 Release，更新 `release/JIEJIE_VERSION`、`release/source-lock.json` 和本轮 `.github/RELEASE_NOTES.md`。工作区应干净，目标必须已推到 `testing`。
+- 核对主仓 `testing`、目标版本、远端 tag 与正式 Release，更新 `release/JIEJIE_VERSION` 和 `release/source-lock.json`。工作区应干净，目标必须已推到 `testing`。
+- **更新日志留空。** 本轮 `.github/RELEASE_NOTES.md` 保持空文件，GitHub Release 正文留空。发布前清除模板中的旧版内容，并在发布回读时确认正文为空。
 - 对照 `release/dependencies.json`、根和 test 模块、Apple/Android/Desktop gitlink、嵌套 dashboard 及 Cronet native provenance。检查跟踪分支 tip，记录采用或保留理由。dashboard 变更先进入 Desktop 再冻结主仓。Cronet 原生库按受控流程验证字节。
 - 若需刷新 pins，先运行 Release preparation，显式用 `create_tag=false`，检查最后产生的提交和锁文件。编排入口核对已提交的快照并复查分支 tip。落后的 update pin 或分叉会提前失败。
 - 重新枚举本轮公开附件。当前是 Linux amd64、macOS arm64 CLI、Windows amd64 core、Android ARM64 AAR、Apple Libbox、Windows x64 安装器、自签 unsigned IPA 和 SHA256SUMS。新增或移除产物时同时更新编排、产物契约和验收。Android AAR 与独立仓 Satelite APK 分别记录。
