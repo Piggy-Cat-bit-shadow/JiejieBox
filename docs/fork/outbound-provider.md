@@ -1,6 +1,8 @@
 # Outbound Provider
 
-Status: implemented on `testing`, first stage. Local commit only; not pushed.
+The first implementation and its hardening are on `testing` after v0.1.42. For the current
+contract and verification, see [the provider knowledge module](../../KNOWLEDGE/modules/outbound-provider.md).
+This page retains the original design and port history.
 
 An outbound provider publishes nodes from a document outside the configuration - a subscription URL, a
 local file, or the configuration itself - into the same outbound namespace the static `outbounds`

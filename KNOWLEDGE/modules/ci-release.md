@@ -1,6 +1,12 @@
 # CI、证据与发布（CI, evidence and release）
 
-## v0.1.39 的发布契约（Current release contract）
+## v0.1.42 与后续发布工具增量（Release workflow delta）
+
+新发版由 `kernel-release.yml` 编排，冻结后并行启动各产者，Windows 安装器可先以候选身份构建，自签 IPA 与 Apple GUI 验证消费同次 Libbox。stage 按 run 内的 artifact ID 和摘要取包，publish 复核同一批字节后才晋升。旧 `release.yml` 用于有 tag 的恢复。v0.1.42 的运行与八个资产回读见[交接记录](../../docs/releases/RELEASE-0.1.42-HANDOFF.md)。
+
+`ead08b043` 修正 preparation 暂存覆盖 gitlink 的问题，并输出 Satelite 后续交接。Satelite 从其仓库推送自身 tag 触发签名构建，须验收双 ABI 才完成整轮 Release。TF 在内核正式版验收后独立进行。执行步骤见 [Release 构建指引](../../docs/RELEASE-WINDOWS.md)。
+
+## v0.1.39 的历史发布契约（Historical release contract）
 
 正式 release.yml 已将 iOS 自签完整 IPA 纳入统一资产契约；公开 API 核对共 8 项。Windows 安装包仍为必需产物，Release 选择既有成功运行，缺少安装包不能靠命令行 core 替代。Mac DMG 虽有构建路径，不在该版正式附件内。
 自签工作流手动 dispatch，名称有 experiment 不表示产物不被正式发布；复用 Libbox 前验证父 SHA/版本/hash。source-lock 核对实际 pseudo-version，flatten 依据同一附件契约，不维护第二份易过期的数量清单。

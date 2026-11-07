@@ -1,5 +1,13 @@
 # 提交导航（Commit navigation）
 
+## 出站 Provider 与发布编排（2026-11-07）
+
+| 主题 | 关键提交 / 导航 |
+| --- | --- |
+| 外部 Provider 设计移植、动态出站与组集成 | `10296629c`；[出站 Provider](modules/outbound-provider.md) |
+| 不可信订阅、下载、缓存、生命周期加固 | `3d8c33580`、`08bb7d67d`；[出站 Provider](modules/outbound-provider.md) |
+| 统一内核发布、Apple 自签并入、冻结 gitlink 修复 | `89a16b578`、`9856b0496`、`ead08b043`；[CI 与发布](modules/ci-release.md) |
+
 ## v0.1.39 演进主题（Current thematic navigation）
 
 | 主题 | 关键提交 / 导航 |

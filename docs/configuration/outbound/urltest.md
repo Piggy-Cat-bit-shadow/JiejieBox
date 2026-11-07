@@ -37,7 +37,7 @@ List of outbound provider tags whose nodes join this group. See [Provider](/conf
 
 #### use_all_providers
 
-Include every configured provider. The set is resolved at start.
+When true, use every provider configured at startup in place of the explicit `providers` list.
 
 #### include
 
@@ -45,7 +45,7 @@ Regexp: only provider nodes whose rendered tag matches are included.
 
 #### exclude
 
-Regexp: provider nodes whose rendered tag matches are skipped. `exclude` wins over `include`.
+Regexp: provider nodes whose rendered tag matches are skipped. `exclude` wins over `include`. Neither filter affects static `outbounds`.
 
 A provider refresh recreates the probe group: the new member set is measured from scratch, while the
 shared URL-test history keeps the results that are still relevant.

@@ -54,6 +54,7 @@
 | Windows 构建与发布内核正式版 | [Release 构建指引](../docs/RELEASE-WINDOWS.md) | 冻结、统一编排、重跑与交接 |
 | Mac 签名、归档并上传 TestFlight | [TF 构建指引](../docs/TESTFLIGHT-MAC.md) | 已发布内核版本、Libbox、签名和测试组 |
 | 发布冻结、源码锁定、Apple 单运行器 | `modules/ci-release.md` | 发布冻结与 Apple 验收 |
+| 出站 Provider、订阅、动态出站、`providers`、`use_all_providers`、组过滤 | [出站 Provider](modules/outbound-provider.md) | 配置、刷新、缓存与组集成 |
 | 速度慢 / 吞吐上不去 / 判断瓶颈在哪一层 | `PERFORMANCE-FACTORS.md` | §1 基本判断 → §4 根据症状定位 → §5 测量方法 |
 | XHTTP 上传慢 / 下载慢 / xmux 与连接数 | `PERFORMANCE-FACTORS.md` | §2 客户端参数（`xmux`）→ §3 服务端参数（h2 请求体缓冲） |
 | `Scope` 资源清理、`scope.Add` 清理 | `modules/core-lifecycle-runtime.md` | §1 `adapter.Scope` —— 所有权原语 |
@@ -193,6 +194,7 @@
 | `cmd/internal/*`、`release/*` | `modules/build-pruning-release.md` | §4, §6 |
 | `option/schema.go`、`docs/schema.json`、`schema/generate.go` —— 生成的 schema 产物 | `modules/build-pruning-release.md` §4（生成器） + `modules/README.md` §Additional ownership and coverage limits（schema 行） | §4 / schema 行 |
 | `.github/workflows/*`、`scripts/ci/*` | `modules/ci-release.md` | §1–5 |
+| `option/provider.go`、`provider/*`、`adapter/provider/*`、`protocol/group/provider_members.go` | [出站 Provider](modules/outbound-provider.md) | 所有权与验收 |
 | `protocol/vless/encryption` | `modules/xhttp-client-transport.md` | VLESS 加密边界 |
 | `experimental/boxdd/**` —— Windows 守护进程、服务、worker、命名管道 | `modules/windows-daemon-security.md` | §1（角色）、§4（握手）、§5（Authenticode）、§6（固定点） |
 | `clients/{apple,android,desktop}` | 独立仓库；只记录核心侧 | `modules/libbox-platform-contract.md` §6–7 |

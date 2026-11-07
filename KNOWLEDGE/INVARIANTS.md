@@ -1,5 +1,9 @@
 # 不变量（Invariants）
 
+## 出站 Provider 约束（Outbound provider invariants）
+
+订阅只能影响其出站命名空间。无有效节点的文档不能清空已发布节点，Provider 不能夺取静态出站标签。动态替换必须先启动新对象，依赖仍被引用的对象保留其所有权记录。单节点应用失败允许部分更新，不能把整批刷新描述为原子事务。当前标签、探测及缓存边界见[出站 Provider 模块](modules/outbound-provider.md)，复验见[验收索引](ACCEPTANCE.md#出站-provider)。
+
 ## v0.1.39 增量约束（Delta invariants）
 
 | 约束 | 故障 / 正确性依据 | 源码与复查 |

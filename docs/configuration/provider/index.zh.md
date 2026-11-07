@@ -1,6 +1,8 @@
 # 出站 Provider
 
-出站 Provider 从一个配置之外的文档发布节点：订阅 URL、本地文件，或配置本身。发布的节点进入与静态
+此功能已进入 JiejieBox 的 `testing`，需要包含出站 Provider 实现的构建。已发布的 v0.1.42 尚不支持这些字段。
+
+出站 Provider 从订阅 URL、本地文件或内联配置发布节点。发布的节点进入与静态
 `outbounds` 相同的出站命名空间，[selector](/zh/configuration/outbound/selector/) 或
 [urltest](/zh/configuration/outbound/urltest/) 通过 `providers` 引用它们。
 
@@ -23,7 +25,7 @@ Provider 只提供**出站**。它不会替换配置中的 DNS、路由、入站
     {
       "type": "selector",
       "tag": "proxy",
-      "outbounds": ["self-hosted"],
+      "outbounds": [],
       "providers": ["airport"]
     }
   ]
@@ -51,9 +53,7 @@ Provider 标签在 Provider 之间必须唯一，且不能包含 `/`（斜杠保
   "tag": "airport",
   "url": "https://example.com/sing-box-subscription",
   "path": "provider/airport.json",
-  "initial_path": "provider/airport-initial.json",
   "user_agent": "sing-box",
-  "http_client": "download",
   "update_interval": "6h",
   "include": "hk|sg|jp",
   "exclude": "expired"
@@ -64,15 +64,17 @@ Provider 标签在 Provider 之间必须唯一，且不能包含 `/`（斜杠保
 |-------------------|--------------------------------------------------------------------------|
 | `url`             | 必填。必须是绝对的 `http`/`https` URL。                                   |
 | `path`            | 下载文档的缓存文件，与 `initial_path` 互斥。                              |
-| `initial_path`    | 仅在无缓存且首次下载失败时使用的文档。                                     |
-| `user_agent`      | 请求的 `User-Agent`，与 `http_client.headers` 冲突。                      |
+| `initial_path`    | 启动时无可用缓存便先加载的种子文档，与 `path` 互斥。                                     |
+| `user_agent`      | 请求的 `User-Agent`，与非空 `http_client` 冲突。使用 HTTP 客户端时把 User-Agent 配在其 `headers` 中。                      |
 | `http_client`     | 下载使用的 [HTTP 客户端](/zh/configuration/shared/http-client/)。         |
 | `download_detour` | 已弃用。下载使用的出站标签，请改用 `http_client`。                         |
 | `update_interval` | 刷新间隔，最小 `1h`，默认 `24h`。                                          |
-| `include`         | 正则：只发布**渲染后标签**匹配的节点。                                     |
-| `exclude`         | 正则：跳过**渲染后标签**匹配的节点，优先于 `include`。                     |
+| `include`         | 正则：只发布**文档内原始标签**匹配的节点。                                     |
+| `exclude`         | 正则：跳过**文档内原始标签**匹配的节点，优先于 `include`。                     |
 | `override_dialer` | 应用到每个已发布节点的拨号字段：`detour`、绑定、超时、域名解析器。          |
 | `health_check`    | 见下文。                                                                   |
+
+`http_client` 也可使用顶层 `http_clients` 的标签或内联对象，与旧的 `download_detour` 二选一。
 
 本阶段不实现 Provider 的**端点**、`override_tls` 与 `override_anytls`，这些键不在 schema 中：文档里
 设置它们会以指明键名的 unknown-field 错误被拒绝，而不是接受后静默忽略。`override_dialer` 在 remote 与
@@ -85,7 +87,7 @@ URL 在配置加载时就会解析并检查 scheme：`ftp://` 或相对路径会
 关闭 cache file 后缓存也随之消失。配置 `path` 时，缓存先写入同目录的临时文件再重命名，写入中断不会破坏
 上一份有效文档。
 
-既无缓存、启动时又无法访问 URL 的 Provider 会以零节点启动：引用它的策略组在拨号时报告
+没有可用缓存或种子文件、启动时又无法访问 URL 的 Provider 会以零节点启动：引用它的策略组在拨号时报告
 “no available member”，并会在更新间隔到达后重试首次下载。
 
 下载是异步的：`sing-box` 不会阻塞 Box 的启动去等待订阅 URL。单次请求有 30 秒超时（含读取 body）和
@@ -128,8 +130,7 @@ URL 在配置加载时就会解析并检查 scheme：`ftp://` 或相对路径会
 
 ### 健康检查
 
-可选的健康检查会测量每个已发布节点，并把结果写入共享的 URLTest 历史（与 urltest 组读取的是同一份
-存储）。它本身不选择节点，如何使用这些结果由策略组决定。
+三种 Provider 都支持可选健康检查，默认关闭。它探测已发布节点并写入共享 URLTest 历史，本身不选择节点。当前写入接口按默认目标记录结果；自定义 Provider 探测 URL 不保证与 URLTest 组自己的目标隔离，依赖精确选路证据时建议由 URLTest 组自行探测。
 
 ```json
 {
@@ -145,23 +146,21 @@ URL 在配置加载时就会解析并检查 scheme：`ftp://` 或相对路径会
 | 字段       | 说明                                  |
 |------------|---------------------------------------|
 | `enabled`  | 是否启用周期检查。                     |
-| `url`      | 请求的 URL。                           |
+| `url`      | 请求的 URL，默认 `https://www.gstatic.com/generate_204`。                           |
 | `interval` | 检查间隔，最小 `1m`，默认 `10m`。       |
 | `timeout`  | 单节点超时，默认 `3s`。                 |
 
 ### 节点文档
 
-文档可以是完整的 sing-box 配置，也可以是只含 `outbounds` 的对象；其余顶层键全部忽略。节点使用与
-静态出站相同的选项类型和 outbound registry 解码，因此本构建支持的协议无需第二套解析器。
+支持 sing-box JSON（只导入 `outbounds`）、Clash YAML、SIP008，以及原始或 Base64 分享链接列表。Clash 和链接格式只转换解析器支持的协议与选项，最终节点还需要当前构建的出站 registry 支持。
 
 节点按以下顺序处理：
 
-1. 文档中的 `selector`/`urltest`/`loadbalance`、`direct`、`block`、`dns` 条目被跳过。
-2. 应用 Provider 的 `exclude` 与 `include`（按渲染后的标签匹配）。
+1. 原生 sing-box JSON 文档会跳过 `selector`、`urltest`、`direct`、`block` 和 `dns`。
+2. 应用 Provider 的 `exclude` 与 `include`（仅 remote，按文档内原始标签匹配）。
 3. 同一文档内重复的标签会被确定性地重命名：第一次出现保留原名，之后依次为 `name (2)`、`name (3)`。
 
-指向同级节点的 `detour` 会被改写为该节点的渲染后标签；指向其他对象的 `detour` 会被清空——Provider
-无法确认主配置里是否还有那个标签，保留悬空依赖会让该节点创建失败。
+remote/local 文档中的同级 `detour` 会加 Provider 前缀，外部 `detour` 会被清空。若要为这些节点指定主配置中的出站，使用 `override_dialer.detour`，它只填补没有有效同级 detour 的节点。inline 会重写同级引用并保留主配置引用。
 
 ### 失败处理
 
@@ -185,10 +184,9 @@ URL 在配置加载时就会解析并检查 scheme：`ftp://` 或相对路径会
 
 ### 与策略组配合
 
-- 一个组可以引用多个 Provider。
+- 一个组可以引用多个 Provider。组的 `include`/`exclude` 匹配最终发布的 `provider/node` 标签，不影响静态 `outbounds`。
 - `use_all_providers` 表示包含全部已配置的 Provider，集合在启动时确定。
 - Provider 节点通过渲染后的标签寻址，`default` 和 Clash API 看到的都是 `airport/hk-01`。
-- 刷新删除了组当前选中的成员时，组按既有顺序回退（已保存的选择、default、第一个成员）；成员仍存在时
-  保留选择。
-- 尚无任何成员的组（Provider 还没有发布节点）可以正常启动，拨号时以指明组名的错误失败，而不是悄悄选择
+- selector 依次使用可用的已保存选择、刷新前仍存在的选中成员、显式 `default`、第一个成员。显式 `default` 不存在时会报错。纯 Provider 组可能在首次下载前无节点，建议省略 `default` 或选静态成员。
+- 尚无任何成员且未指定缺失默认节点的组可以正常启动，拨号时以指明组名的错误失败，而不是悄悄选择
   一个用户没有配置的节点。

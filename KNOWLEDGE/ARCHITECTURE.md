@@ -1,5 +1,7 @@
 # 值得保留的架构边界（Architecture boundaries worth preserving）
 
+出站 Provider 只负责发布节点。动态出站管理器拥有节点的启动、替换与移除，策略组消费已发布节点并独立维护选择或探测状态。配置、缓存与生命周期边界见[出站 Provider](modules/outbound-provider.md)。
+
 ## v0.1.39 新的跨层边界（Current cross-layer boundaries）
 
 - 创建准入由进程压力所有者提供；TLS/AnyTLS 是消费者，一次逻辑拨号最多一份许可，不新增第二采样器或破坏性回收执行器。

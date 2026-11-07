@@ -81,9 +81,11 @@
 历史普查在 `e4b7e692..a267e99` 中统计了 1,834 个提交。Git 可达性不能单独证明补丁的
 作者，尤其是在上游重写历史后。需要确定来源时，应结合实际 blob、补丁和可信的历史记录。
 
-## 当前发布身份（Current release identity）
+## 发布身份（Release identity）
 
-知识基线是 `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28`，它的
+最近公开版本与当前源码专题目标见 [BASELINE.md](BASELINE.md)。出站 Provider 从 v0.1.42 后的源码开始提供，详见[出站 Provider](modules/outbound-provider.md)。
+
+2026-10-31 广泛快照是 `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28`，它的
 `release/JIEJIE_VERSION` 是 `0.1.34`，附注标签 `v0.1.34` 剥离后指向它（标签对象
 `e2dad0bf040`；这个标签从 `origin` 取回，并为本次审阅核对过）。非 draft、
 非 prerelease 的 [v0.1.34 GitHub Release](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.34)

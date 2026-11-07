@@ -37,7 +37,7 @@
 
 #### use_all_providers
 
-包含全部已配置的 Provider，在启动时确定。
+为 `true` 时使用启动时已配置的全部 Provider，覆盖显式 `providers` 列表。
 
 #### include
 
@@ -45,11 +45,11 @@
 
 #### exclude
 
-正则：跳过**渲染后标签**匹配的 Provider 节点，优先于 `include`。
+正则：跳过**渲染后标签**匹配的 Provider 节点，优先于 `include`。两个过滤字段均不影响静态 `outbounds`。
 
 #### default
 
-默认的出站标签。默认使用第一个出站。
+默认出站标签。Provider 节点用 `provider/node`。没有可用的已保存选择时，缺失的显式默认标签会报错。Provider 尚未加载时，建议省略此字段或使用静态成员。
 
 #### interrupt_exist_connections
 

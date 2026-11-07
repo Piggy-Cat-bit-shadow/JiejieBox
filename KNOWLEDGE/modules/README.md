@@ -32,6 +32,7 @@
 | Mieru 入站/出站、TCP/UDP 承载、按需启用的回退与网络重建 | `mieru.md` |
 | Direct Offload / native bypass、`traffic_class`、`traffic_scheduler`、拨号调速器 | `data-path-optimization.md` |
 | selector 或 urltest 组上的 `fast_path` —— 授权某个组的流尝试 Direct Fast Path，或拒绝该请求 | `fast-path-group-policy.md` |
+| 出站 Provider 的订阅解析、缓存、热更新与 selector / URLTest 成员接入 | [outbound-provider.md](outbound-provider.md) |
 | 任何零拷贝、内存分配、缓冲区池、批处理所有权、splice 问题 | `buffer-ownership.md` |
 | 睡眠/唤醒/息屏/锁屏、内存裁剪、设备轴、`ReuseSuspect`、电源策略 | `power-mobile-lifecycle.md` |
 | 某个 libbox 导出、`SetupOptions`、CommandServer API、ABI 版本、Apple/Android 标签集 | `libbox-platform-contract.md` |

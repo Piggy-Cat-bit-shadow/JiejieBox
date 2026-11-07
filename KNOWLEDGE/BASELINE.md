@@ -1,5 +1,15 @@
 # 基线（Baseline）
 
+## 2026-11-07 专题增量（Scoped refresh）
+
+| 范围 | 固定目标 |
+| --- | --- |
+| 最近回读的公开正式版 | [v0.1.42](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.42)，剥离后的提交 `9856b04964b5b137e83bfed4d4a3ebcadb934ac0) |
+| 出站 Provider 源码、配置与组集成 | `08bb7d67d3cefc0793058227b69e0481c30ae333`（`testing`，在 v0.1.42 之后） |
+| 全局广泛知识基线 | 保留 2026-10-31 的 v0.1.34 快照，旧模块按各自覆盖范围计算增量 |
+
+Provider 后续增量从专题 SHA 算起。发布操作按 [Release 构建指引](../docs/RELEASE-WINDOWS.md)，产物证据见 [v0.1.42 交接](../docs/releases/RELEASE-0.1.42-HANDOFF.md)。本轮覆盖与未核验事项见 [2026-11-07 专题刷新](CALIBRATION-2026-11-07.md)。
+
 ## v0.1.39 的固定目标与增量覆盖（Release target and delta coverage）
 
 2026-11-05 独立核对的正式发布目标为 **`fc7e400243d46a451b2dffbe68cb5a3147c66289` / v0.1.39**，与文档所在提交分开。已发布状态、子仓 pin、CI、模块覆盖和报告取代关系见 [增量校准](CALIBRATION-2026-11-05.md)。

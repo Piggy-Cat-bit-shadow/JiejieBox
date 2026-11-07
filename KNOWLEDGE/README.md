@@ -1,8 +1,12 @@
 # 分支知识库（Fork knowledge base）
 
-## v0.1.39 增量入口（Current release delta）
+## 当前增量入口（Current delta）
 
-**先读 [2026-11-05 增量校准](CALIBRATION-2026-11-05.md)。** 当前产品目标为已发布的 v0.1.39；下表的 v0.1.34 是保留的广泛知识快照，不能把它当作当前产品版本。
+公开正式版是 v0.1.42。出站 Provider 是其后的 `testing` 增量，见[专题刷新](CALIBRATION-2026-11-07.md)和[出站 Provider 模块](modules/outbound-provider.md)。各自的固定目标见 [BASELINE.md](BASELINE.md)。
+
+### v0.1.39 历史校准
+
+早期覆盖见 [2026-11-05 增量校准](CALIBRATION-2026-11-05.md)。下表的 v0.1.34 是保留的广泛知识快照。
 本轮补齐 [资源准入](modules/resource-admission.md)、[Apple 自签/回环](modules/apple-selfsign-loopback.md)、[监听安全](modules/listener-security.md) 与 Cronet patch5 消费状态，并更新相关模块入口与验收规则。
 历史性能统一从 [测量对照](../docs/PERFORMANCE-COMPARISONS.md) 进入；保留测试条件、落后结果和旧 SDK 范围。
 旧基线后的增量包含生产、平台、依赖与发布改动，绝非只有文档。

@@ -1,5 +1,18 @@
 # 验收索引（Acceptance index）
 
+## 出站 Provider
+
+目标见 [BASELINE.md](BASELINE.md) 的 2026-11-07 专题 SHA。以下命令在 Windows amd64、Go 1.25.5、`CGO_ENABLED=0` 复验通过，证据为 `VERIFIED_UNIT` 及本地配置检查。
+
+| 验收范围 | 复验命令 |
+| --- | --- |
+| 配置、订阅解析、缓存、更新及组成员 | `go test -count=1 -tags "$windows_tags" ./adapter/provider/... ./provider/... ./protocol/group ./option ./experimental/cachefile` |
+| Box 和 Clash API 集成 | `go test -count=1 -tags "$windows_tags" -run Provider .` |
+| 生成 schema 与跟踪文件一致 | `go test -count=1 -tags "$server_tags" -run TestTrackedSchemaMatchesTheGenerator ./cmd/sing-box` |
+| 根级示例可加载 | 用 `$server_tags` 构建 `./cmd/sing-box`，对配置参考和扩展示例中的完整根级 JSON 运行 `sing-box check -c <file>` |
+
+`windows_tags` 和 `server_tags` 分别读取 `release/DEFAULT_BUILD_TAGS_WINDOWS` 与 `release/DEFAULT_BUILD_TAGS_OTHERS`。结果覆盖测试用例和示例加载，不代表线上下载、设备行为或 race 检验。
+
 ## v0.1.39 增量验收（Current delta acceptance）
 
 | 需求 | 层级与已有依据 | 复查 / 环境 |

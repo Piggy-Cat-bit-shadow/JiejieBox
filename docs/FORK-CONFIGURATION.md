@@ -2,6 +2,39 @@
 
 按需要复制对应片段，合并到自己的配置。替换示例节点、UUID、密钥、密码、证书路径和文件地址；不要用示例覆盖已有列表。
 
+## 出站 Provider
+
+需要包含出站 Provider 的 JiejieBox `testing` 构建。v0.1.42 正式版早于此功能。
+在根级 `providers` 声明来源，在 `selector` 或 `urltest` 引用。下面的内联示例无需订阅文件，使用前需把 SOCKS 地址换成自己的服务。
+
+```json
+{
+  "providers": [
+    {
+      "type": "inline",
+      "tag": "lab",
+      "outbounds": [
+        {"type": "socks", "tag": "hk", "server": "127.0.0.1", "server_port": 1080}
+      ]
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "selector",
+      "tag": "select",
+      "outbounds": [],
+      "providers": ["lab"],
+      "include": "^lab/",
+      "exclude": "expired"
+    }
+  ]
+}
+```
+
+组看到的节点名是 `lab/hk`。组过滤器匹配这个完整标签，remote Provider 自己的过滤器匹配原始标签 `hk`。`use_all_providers: true` 可代替显式 Provider 列表。异步订阅尚未加载时，可以用静态成员提供兜底。若组只有订阅节点，先省略 `default`。
+
+远程订阅、本地文件、缓存、健康检查与拨号覆盖字段见[出站 Provider 配置参考](configuration/provider/index.zh.md)。
+
 ## DNS 广告拦截
 
 放在根配置的 `dns.rules`。

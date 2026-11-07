@@ -37,7 +37,7 @@ List of outbound provider tags whose nodes join this selector. See [Provider](/c
 
 #### use_all_providers
 
-Include every configured provider. The set is resolved at start.
+When true, use every provider configured at startup in place of the explicit `providers` list.
 
 #### include
 
@@ -45,11 +45,13 @@ Regexp: only provider nodes whose rendered tag matches are included.
 
 #### exclude
 
-Regexp: provider nodes whose rendered tag matches are skipped. `exclude` wins over `include`.
+Regexp: provider nodes whose rendered tag matches are skipped. `exclude` wins over `include`. Neither filter affects static `outbounds`.
 
 #### default
 
-The default outbound tag. The first outbound will be used if empty.
+The default outbound tag. Use `provider/node` for a published provider member. With no usable saved
+selection, an explicit default must exist. For a provider-only group that starts empty, omit
+the default or add a static member as the default.
 
 #### interrupt_exist_connections
 

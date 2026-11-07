@@ -1,6 +1,10 @@
 # 子仓库与分叉依赖（Child repositories and forked dependencies）
 
-## v0.1.39 已消费状态（Current consumed revisions）
+## 2026-11-07 观察（Current observed revisions）
+
+Provider 专题目标与 v0.1.42 发布目标的客户端 gitlink 和 `release/source-lock.json` 相同。Apple pin 已在 v0.1.42 前移到 `0c7b10be05811cdd3f31a48a7cbe49f061852084`。Android、Desktop、嵌套 Dashboard 仍沿用下方记录的 pin。四个跟踪分支的远端头与这些 pin 相符。Cronet 的源码分支头与内核绑定包发布 pin 属于不同来源，不能直接替换。详见[专题刷新](../CALIBRATION-2026-11-07.md)。
+
+## v0.1.39 已消费状态（Historical consumed revisions）
 
 当前父仓 pin：Apple ab575dace8190a48a9d7cf666ef009f803e6ca62，Android c7837107dc0126fb704fdf08cf203e10b30c8a22，Desktop 41722b030ea481523290d932a1d81177f8c13f32；Dashboard 0da341722a8a0046fa5f5b602a19f9b4e1efccc8。sing-tun 为 8f65451175c0；Cronet root/libs 362e63b14ce2、all 7ce9c49b464a。
 本次独立观察 Apple main、sing-tun dev 与其 pin 相同，读取重要固定源码；cronet-go 的 main/go 两分支分别是源码与发布树。完整观察值与限制见 [增量校准](../CALIBRATION-2026-11-05.md)。下表保留的是 2026-10-31 固定值，不是 v0.1.39 pin 表。
