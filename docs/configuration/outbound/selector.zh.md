@@ -35,6 +35,8 @@
 
 要加入本组的出站 Provider 标签列表，见 [出站 Provider](/zh/configuration/provider/)。
 
+纯 Provider 组可在首次订阅下载前以空成员启动，作为其他出站的 `detour` 目标时也会等待节点；这段时间的拨号会返回点名所等 Provider 的错误。下载路径若反过来依赖此组，则会形成引导环，参见[远程订阅与链式代理示例](../../FORK-CONFIGURATION.md#远程订阅与链式代理)。
+
 #### use_all_providers
 
 为 `true` 时使用启动时已配置的全部 Provider，覆盖显式 `providers` 列表。

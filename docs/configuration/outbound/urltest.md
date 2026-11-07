@@ -35,6 +35,11 @@ List of outbound tags to test. It may be empty when `providers` or `use_all_prov
 
 List of outbound provider tags whose nodes join this group. See [Provider](/configuration/provider/).
 
+A provider-only group can wait for its first download before any member is available to probe.
+During that wait, dials through the group return an error naming the provider. If the download
+path depends on this group, give the download and subscription host's DNS lookup an independent
+outbound path; see the [proxy chain example](../../FORK-CONFIGURATION.md#远程订阅与链式代理).
+
 #### use_all_providers
 
 When true, use every provider configured at startup in place of the explicit `providers` list.

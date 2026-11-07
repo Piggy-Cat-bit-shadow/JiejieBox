@@ -1,6 +1,6 @@
 # Provider
 
-This feature is available on JiejieBox `testing`. It requires a build containing the outbound-provider implementation. The published v0.1.42 predates it.
+Outbound providers are available in JiejieBox v0.1.43 and later. v0.1.44 fixes startup and refresh boundaries when providers feed proxy chains and groups. The [configuration examples](../../FORK-CONFIGURATION.md#出站-provider) include ready-to-adapt snippets.
 
 Outbound providers publish nodes from a document that is external to the configuration: a
 subscription URL, a local file, or the configuration itself. The nodes join the same outbound
@@ -80,6 +80,10 @@ Downloads the document from `url`, caches the last known good copy, and refreshe
 
 `http_client` accepts a top-level `http_clients` tag or an inline HTTP client object. It is
 mutually exclusive with the deprecated `download_detour`.
+If `route.final` eventually depends on this provider and the first download has no cache or seed,
+use a named `http_client` whose path does not go through that provider's group. See the
+[remote subscription and proxy chain example](../../FORK-CONFIGURATION.md#远程订阅与链式代理).
+Check the subscription host's DNS resolution path as well: it must not depend on the same empty group.
 
 This stage does not implement provider **endpoints**, `override_tls` or `override_anytls`, and those
 keys are not part of the schema: a document that sets one fails with an unknown-field error naming
@@ -95,10 +99,10 @@ Without `path`, the cache lives in the configured [cache file](/configuration/ex
 and disappears when that is disabled. With `path`, the cache is replaced by writing a temporary file
 in the same directory and renaming it, so an interrupted write leaves the previous document intact.
 
-A provider that has no cache and cannot reach its URL at start starts with zero nodes; its groups
-report a wait that names the provider on the dial path
-(`... has no available member yet: it is waiting for outbound provider <tag> to publish nodes`) until
-a download succeeds, and the first download is retried on the update interval.
+Without a usable cache or seed, a remote provider can start with zero nodes without waiting for the
+first download. Its groups report a wait naming the provider on the dial path
+(`... has no available member yet: it is waiting for outbound provider <tag> to publish nodes`).
+If the first download fails, the node set stays empty and another attempt runs on the update interval.
 
 The download path itself must not depend on nodes that cannot exist before it. With no
 `http_client`, the provider uses the implicit default HTTP client the Box creates, whose dialer

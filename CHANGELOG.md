@@ -6,7 +6,9 @@
 
 ## [v0.1.44](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.44) — 2026-11-08
 
-本版修复出站 Provider 与链式代理、策略组配合时的启动和热更新问题，并收紧动态节点的环路校验与连接生命周期。iOS 同步修复隧道接管等待与本地回环的边界情况。
+本版重点解决远程订阅节点尚未下载时，纯 Provider 策略组作为链式代理的 `detour` 被误判为断链、导致内核无法启动的问题；同时修复节点热更新期间的环路与在途拨号交接。iOS 同步修复隧道接管等待与本地回环的边界情况。
+
+使用远程订阅并将 Provider 节点放入多跳链时，先检查订阅下载和域名解析是否能独立到达网络；[远程订阅与链式代理示例](docs/FORK-CONFIGURATION.md#远程订阅与链式代理)展示了具名 `http_client` 与纯 Provider 组的配合。
 
 ### Provider、链式代理与热更新
 

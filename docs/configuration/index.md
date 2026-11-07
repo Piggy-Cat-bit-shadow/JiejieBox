@@ -43,6 +43,10 @@ sing-box uses JSON for configuration files.
 | `services`     | [Service](./service/)           |
 | `experimental` | [Experimental](./experimental/) |
 
+`providers` is a JiejieBox outbound-node extension available since v0.1.43. It publishes only
+outbound nodes, which `selector` and `urltest` groups can include. See the
+[remote subscription and proxy chain example](../FORK-CONFIGURATION.md#远程订阅与链式代理).
+
 ### Check
 
 ```bash

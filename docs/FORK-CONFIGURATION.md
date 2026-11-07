@@ -4,7 +4,7 @@
 
 ## 出站 Provider
 
-需要包含出站 Provider 的 JiejieBox `testing` 构建。v0.1.42 正式版早于此功能。
+出站 Provider 已包含在 JiejieBox v0.1.43 及之后的正式版中；v0.1.44 补齐了链式代理的启动校验与热更新保护。
 在根级 `providers` 声明来源，在 `selector` 或 `urltest` 引用。下面的内联示例无需订阅文件，使用前需把 SOCKS 地址换成自己的服务。
 
 ```json
@@ -34,6 +34,41 @@
 组看到的节点名是 `lab/hk`。组过滤器匹配这个完整标签，remote Provider 自己的过滤器匹配原始标签 `hk`。`use_all_providers: true` 可代替显式 Provider 列表。异步订阅尚未加载时，可以用静态成员提供兜底。若组只有订阅节点，先省略 `default`。
 
 远程订阅、本地文件、缓存、健康检查与拨号覆盖字段见[出站 Provider 配置参考](configuration/provider/index.zh.md)。
+
+### 远程订阅与链式代理
+
+下面的完整片段让 `second-hop` 经由订阅中的节点连接其 SOCKS 服务端。把订阅 URL 和 SOCKS 服务端换成自己的地址；订阅里须有当前构建支持的出站节点。
+
+```json
+{
+  "http_clients": [
+    {"tag": "subscription-download", "engine": "go"}
+  ],
+  "providers": [
+    {
+      "type": "remote",
+      "tag": "airport",
+      "url": "https://example.com/subscription",
+      "http_client": "subscription-download",
+      "update_interval": "6h"
+    }
+  ],
+  "outbounds": [
+    {"type": "selector", "tag": "nodes", "outbounds": [], "providers": ["airport"]},
+    {
+      "type": "socks",
+      "tag": "second-hop",
+      "server": "second-hop.example.com",
+      "server_port": 1080,
+      "version": "5",
+      "detour": "nodes"
+    }
+  ],
+  "route": {"final": "second-hop"}
+}
+```
+
+这里的具名 `http_client` 没有 `detour`，订阅下载不跟随 `route.final` 回到尚为空的 `nodes`。首次下载前，链会等待 Provider 发布节点，期间发起的连接会收到点名 Provider 的错误；下载成功后，组成员更新并校验整条链。若订阅域名使用的 DNS 服务器本身也经 `nodes` 出站，仍会形成下载引导环，需给解析路径安排独立出口。不要把 `second-hop` 写进该 Provider 节点的 `detour`，那会与 `second-hop.detour = nodes` 构成环并被拒绝。详见[下载与 DNS 路径](configuration/provider/index.zh.md#remote)以及[组更新语义](configuration/provider/index.zh.md#与策略组配合)。
 
 ## DNS 广告拦截
 

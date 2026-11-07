@@ -1,6 +1,6 @@
 # JiejieBox
 
-基于 [sing-box](https://github.com/SagerNet/sing-box) 持续开发的跨平台代理内核，扩展 XHTTP、Mieru、VLESS 加密与 Native Naive，优化 DNS、双栈拨号、链式代理、网络恢复及资源管理，并提供配套桌面端和移动端集成。
+基于 [sing-box](https://github.com/SagerNet/sing-box) 持续开发的跨平台代理内核，扩展出站 Provider、XHTTP、Mieru、VLESS 加密与 Native Naive，优化 DNS、双栈拨号、链式代理、网络恢复及资源管理，并提供配套桌面端和移动端集成。
 
 [下载](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) · [更新日志](CHANGELOG.md) · [Android 客户端](https://github.com/Piggy-Cat-bit-shadow/satelite-one) · [配置文档](docs/configuration) · [问题反馈](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/issues)
 
@@ -19,7 +19,7 @@
 
 ## 配置与使用
 
-[常规配置](docs/configuration) · [本项目扩展配置与示例](docs/FORK-CONFIGURATION.md) · [Naive](docs/naive.md) · [MASQUE](docs/masque.md) · [DNS 广告拦截](KNOWLEDGE/modules/dns-adblock-action.md) · [本地回环](#ios-本地回环)
+[常规配置](docs/configuration) · [出站 Provider](docs/configuration/provider/index.zh.md) · [本项目扩展配置与示例](docs/FORK-CONFIGURATION.md) · [Naive](docs/naive.md) · [MASQUE](docs/masque.md) · [DNS 广告拦截](KNOWLEDGE/modules/dns-adblock-action.md) · [本地回环](#ios-本地回环)
 
 常规配置参考已纳入的 sing-box **v1.15.0-alpha.13**；XHTTP、Mieru、负载均衡、上传调度等扩展按本项目文档配置。协议可用性取决于平台与[构建档位](docs/BUILD-PROFILES.md)。当前 Naive 引擎为 **Chromium 154.0.8037.49 + NaiveProxy patch5 相关修复**，Mieru SDK 为 **v3.39.0**。
 
@@ -164,6 +164,14 @@ TLS 数据来自 2026-10-09 的九次交错采样，时间数据受共享主机�
 - 相同测试条件可共享健康记录，手动测速显示与自动选路状态分别管理。
 
 详见 [负载均衡与故障重试](docs/FORK-CONFIGURATION.md#负载均衡与故障重试)、[规则加载与内存测量](docs/PERFORMANCE-COMPARISONS.md#1-代表性的优化前后)及 [路径校验](KNOWLEDGE/modules/path-selection-validation.md)。
+
+### 出站 Provider 与动态策略组
+
+- 从远程订阅、本地文件或内联配置导入出站节点；支持 sing-box JSON、Clash YAML、SIP008 和分享链接等输入。节点以 `provider/node` 命名，订阅中的 DNS、路由及入站设置不会覆盖主配置。
+- selector 和 URLTest 可以同时使用静态节点与 Provider 节点。远程订阅异步下载、缓存并定期刷新；节点变化后更新组成员，无需重新启动内核。未变化的节点保留现有连接。
+- 纯 Provider 组在首次下载前可以等待节点，也可以作为其他出站的 `detour` 目标。动态发布会检查出站与 DNS 依赖环；替换时旧节点至少保留到组成员切换和在途拨号交接完成，仍被其他对象直接引用的节点会继续保留。
+
+若订阅下载需要经过本次订阅才会出现的节点，首次下载会形成引导环。可为下载配置独立的 `http_client`，并检查订阅域名的 DNS 解析路径。见 [Provider 配置参考](docs/configuration/provider/index.zh.md)、[远程订阅与链式代理示例](docs/FORK-CONFIGURATION.md#远程订阅与链式代理)和 [v0.1.44 更新记录](CHANGELOG.md)。
 
 ### 双栈拨号与链式代理
 
@@ -336,7 +344,7 @@ Linux 普通入站在未显式启用 `tcp_multi_path` 时使用普通 TCP；Clas
 
 ## 文档
 
-- **配置与使用**：[配置参考](docs/configuration) · [扩展配置示例](docs/FORK-CONFIGURATION.md) · [出站 Provider（testing）](docs/configuration/provider/index.zh.md) · [NXDOMAIN](docs/DNS-NXDOMAIN.md) · [本地回环](docs/IOS-SELFSIGN-AND-LOOPBACK.md#打开本地签名回环)
+- **配置与使用**：[配置参考](docs/configuration) · [扩展配置示例](docs/FORK-CONFIGURATION.md) · [出站 Provider](docs/configuration/provider/index.zh.md) · [NXDOMAIN](docs/DNS-NXDOMAIN.md) · [本地回环](docs/IOS-SELFSIGN-AND-LOOPBACK.md#打开本地签名回环)
 - **构建与发布**：[构建档位](docs/BUILD-PROFILES.md) · [Apple TestFlight](docs/APPLE-BETA-RELEASE.md) · [更新日志](CHANGELOG.md)
 - **性能与设计**：[链路实现说明](docs/ARCHITECTURE-AND-NETWORK-PATH.md) · [性能对照](docs/PERFORMANCE-COMPARISONS.md) · [性能参数](KNOWLEDGE/PERFORMANCE-FACTORS.md) · [Fast Path 与内存管理](docs/FAST-PATH-AND-MEMORY.md) · [工程架构评估](KNOWLEDGE/reports/core/JiejieBox_工程架构与改造最终评估报告_2026-11-01.md)
 - **开发维护**：[Fork 差异](docs/FORK-DIFF.md) · [知识库](KNOWLEDGE/README.md) · [任务索引](KNOWLEDGE/INDEX.md) · [维护指引](KNOWLEDGE/REFRESH.md)

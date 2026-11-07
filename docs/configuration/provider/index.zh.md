@@ -1,6 +1,6 @@
 # 出站 Provider
 
-此功能已进入 JiejieBox 的 `testing`，需要包含出站 Provider 实现的构建。已发布的 v0.1.42 尚不支持这些字段。
+出站 Provider 自 JiejieBox v0.1.43 起提供；v0.1.44 修复了它与链式代理、策略组配合时的启动和热更新边界。[扩展示例](../../FORK-CONFIGURATION.md#出站-provider)包含可复制的配置片段。
 
 出站 Provider 从订阅 URL、本地文件或内联配置发布节点。发布的节点进入与静态
 `outbounds` 相同的出站命名空间，[selector](/zh/configuration/outbound/selector/) 或
@@ -75,6 +75,7 @@ Provider 标签在 Provider 之间必须唯一，且不能包含 `/`（斜杠保
 | `health_check`    | 见下文。                                                                   |
 
 `http_client` 也可使用顶层 `http_clients` 的标签或内联对象，与旧的 `download_detour` 二选一。
+如果 `route.final` 最终依赖本 Provider，而订阅首次下载尚无缓存或种子文件，应为下载设置一个不经过该 Provider 组的具名 `http_client`；完整配置见[远程订阅与链式代理](../../FORK-CONFIGURATION.md#远程订阅与链式代理)。同时检查订阅域名的 DNS 解析链，避免它经过同一空组。
 
 本阶段不实现 Provider 的**端点**、`override_tls` 与 `override_anytls`，这些键不在 schema 中：文档里
 设置它们会以指明键名的 unknown-field 错误被拒绝，而不是接受后静默忽略。`override_dialer` 在 remote 与
@@ -87,9 +88,9 @@ URL 在配置加载时就会解析并检查 scheme：`ftp://` 或相对路径会
 关闭 cache file 后缓存也随之消失。配置 `path` 时，缓存先写入同目录的临时文件再重命名，写入中断不会破坏
 上一份有效文档。
 
-没有可用缓存或种子文件、启动时又无法访问 URL 的 Provider 会以零节点启动：引用它的策略组在拨号时报告
-指明 Provider 的等待错误（`... has no available member yet: it is waiting for outbound provider <tag> to publish nodes`），
-并会在更新间隔到达后重试首次下载。
+没有可用缓存或种子文件时，远程 Provider 不等待首次下载完成，可以先以零节点启动：引用它的策略组在拨号时报告
+指明 Provider 的等待错误（`... has no available member yet: it is waiting for outbound provider <tag> to publish nodes`）。
+若首次下载失败，已发布节点仍为空，并会在更新间隔到达后重试。
 
 下载路径本身不能依赖尚未出现的节点。未配置 `http_client` 时，Provider 使用 Box 创建的隐式默认 HTTP 客户端，
 它的拨号器跟随 `route.final`；显式 `http_client.detour` 或已弃用的 `download_detour` 则跟随该出站。若这条路径

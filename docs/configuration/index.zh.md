@@ -43,6 +43,8 @@ sing-box 使用 JSON 作为配置文件格式。
 | `services`     | [服务](./service/)       |
 | `experimental` | [实验性](./experimental/) |
 
+`providers` 是 JiejieBox 的出站节点来源扩展，自 v0.1.43 起可用。它只发布出站节点；通过 `selector` 或 `urltest` 把节点加入策略组。远程订阅与链式代理的完整写法见[扩展配置示例](../FORK-CONFIGURATION.md#远程订阅与链式代理)。
+
 ### 检查
 
 ```bash

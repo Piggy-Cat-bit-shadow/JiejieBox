@@ -35,6 +35,8 @@
 
 要加入本组的出站 Provider 标签列表，见 [出站 Provider](/zh/configuration/provider/)。
 
+纯 Provider 组可等待首次下载后再加入节点；等待期间没有可测速的成员，使用该组拨号会返回点名所等 Provider 的错误。若下载路径依赖本组，请先为下载和订阅域名解析安排独立出口，见[远程订阅与链式代理示例](../../FORK-CONFIGURATION.md#远程订阅与链式代理)。
+
 #### use_all_providers
 
 为 `true` 时使用启动时已配置的全部 Provider，覆盖显式 `providers` 列表。

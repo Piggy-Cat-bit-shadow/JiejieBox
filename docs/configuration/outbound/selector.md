@@ -35,6 +35,11 @@ List of outbound tags to select. It may be empty when `providers` or `use_all_pr
 
 List of outbound provider tags whose nodes join this selector. See [Provider](/configuration/provider/).
 
+A provider-only selector may start empty while the first subscription download is pending, including
+when another outbound uses it as a `detour`. Dials during that wait return an error naming the
+provider. The download path must not depend on the same empty group; see the
+[remote subscription and proxy chain example](../../FORK-CONFIGURATION.md#远程订阅与链式代理).
+
 #### use_all_providers
 
 When true, use every provider configured at startup in place of the explicit `providers` list.
