@@ -144,7 +144,7 @@ func TestConcurrentProviderUpdatesAreSerialised(t *testing.T) {
 	require.Len(t, published, 1, "one whole document must win, not a mixture")
 	require.Contains(t, []string{"p/A", "p/B"}, published[0].Tag())
 }
-//
+
 // The provider retires `p/x` while the selector still publishes it as a member. Before the fix the
 // manager unlinked and closed `p/x` immediately - the group's published membership was not part of
 // the dependent scan - and the selector kept handing flows to a closed object until its own
