@@ -71,7 +71,12 @@ Provider 标签在 Provider 之间必须唯一，且不能包含 `/`（斜杠保
 | `update_interval` | 刷新间隔，最小 `1h`，默认 `24h`。                                          |
 | `include`         | 正则：只发布**渲染后标签**匹配的节点。                                     |
 | `exclude`         | 正则：跳过**渲染后标签**匹配的节点，优先于 `include`。                     |
+| `override_dialer` | 应用到每个已发布节点的拨号字段：`detour`、绑定、超时、域名解析器。          |
 | `health_check`    | 见下文。                                                                   |
+
+本阶段不实现 Provider 的**端点**、`override_tls` 与 `override_anytls`，这些键不在 schema 中：文档里
+设置它们会以指明键名的 unknown-field 错误被拒绝，而不是接受后静默忽略。`override_dialer` 在 remote 与
+local Provider 上均可用。
 
 URL 在配置加载时就会解析并检查 scheme：`ftp://` 或相对路径会以指明 Provider 的错误拒绝启动，而不是等后台
 下载时才暴露。查询参数按凭据处理：日志中的 URL 会去掉 query、userinfo 和 fragment。

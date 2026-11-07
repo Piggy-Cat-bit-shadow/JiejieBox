@@ -346,7 +346,11 @@ func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 				}
 			}
 		}
-		if s.path != "" {
+		if s.path != "" && s.lastOutOpts != nil {
+			// Rewriting the path cache refreshes its mtime, which a start without a cachefile record
+			// uses as LastUpdated. It is only safe when this provider actually has a document: a
+			// spurious 304 before any content was loaded would otherwise replace a valid cache file
+			// with `{"outbounds":null}`.
 			content, _ := json.Marshal(option.Options{
 				Outbounds: s.lastOutOpts,
 			})
@@ -377,12 +381,12 @@ func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 	if err := s.updateProviderFromContent(content); err != nil {
 		return err
 	}
-	s.UpdateGroups()
-	s.infoMu.Lock()
-	s.lastEtag = resp.Header.Get("Etag")
-	s.subscriptionInfo = info
-	s.lastUpdated = time.Now()
-	s.infoMu.Unlock()
+	// The ETag is evidence that the SERVER's document is in the cache. Advancing it before the
+	// cache write succeeds would make the next conditional request answer 304 for a document the
+	// cache never received, pinning the provider to stale nodes forever. When the cache write
+	// fails, the tag stays behind so the next refresh downloads the body again.
+	newEtag := resp.Header.Get("Etag")
+	cacheSaved := true
 	if s.path != "" || s.cacheFile != nil {
 		content, _ := json.Marshal(option.Options{
 			Outbounds: s.lastOutOpts,
@@ -396,8 +400,8 @@ func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 		}
 		if s.cacheFile != nil {
 			saveSub := &adapter.SavedBinary{
-				LastUpdated: s.lastUpdated,
-				LastEtag:    s.lastEtag,
+				LastUpdated: time.Now(),
+				LastEtag:    newEtag,
 				URLHash:     s.urlHash[:],
 			}
 			if s.path == "" {
@@ -405,8 +409,19 @@ func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 			}
 			if err = s.cacheFile.SaveSubscription(s.Tag(), saveSub); err != nil {
 				s.logger.Error("save outbound provider cache file: ", err)
+				cacheSaved = false
 			}
 		}
+	}
+	s.infoMu.Lock()
+	s.subscriptionInfo = info
+	s.lastUpdated = time.Now()
+	if cacheSaved {
+		s.lastEtag = newEtag
+	}
+	s.infoMu.Unlock()
+	if !cacheSaved {
+		s.logger.Warn("outbound provider cache was not saved; the next refresh will download the document again")
 	}
 	s.logger.Info("updated outbound provider ", s.Tag())
 	return nil
@@ -584,10 +599,13 @@ func (s *ProviderRemote) updateProviderFromContent(content string) error {
 	})
 	updateErr := s.UpdateNodes(outboundOpts)
 	s.UpdateGroups()
+	// Record the applied document even when a node failed to construct: the published set already
+	// reflects this document (the failed tag keeps its previous object), and a later 304 must not
+	// rewrite the cache from the PREVIOUS document.
+	s.lastOutOpts = outboundOpts
 	if updateErr != nil {
 		return updateErr
 	}
-	s.lastOutOpts = outboundOpts
 	return nil
 }
 

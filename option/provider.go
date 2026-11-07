@@ -64,8 +64,6 @@ type ProviderLocalOptions struct {
 	HealthCheck ProviderHealthCheckOptions `json:"health_check,omitempty"`
 
 	OverrideDialer *OverrideDialerOptions `json:"override_dialer,omitempty"`
-	OverrideTLS    *OverrideTLSOptions    `json:"override_tls,omitempty"`
-	OverrideAnyTLS *OverrideAnyTLSOptions `json:"override_anytls,omitempty"`
 }
 
 type ProviderRemoteOptions struct {
@@ -81,8 +79,6 @@ type ProviderRemoteOptions struct {
 	HealthCheck ProviderHealthCheckOptions `json:"health_check,omitempty"`
 
 	OverrideDialer *OverrideDialerOptions `json:"override_dialer,omitempty"`
-	OverrideTLS    *OverrideTLSOptions    `json:"override_tls,omitempty"`
-	OverrideAnyTLS *OverrideAnyTLSOptions `json:"override_anytls,omitempty"`
 
 	// Deprecated: use http_client instead
 	DownloadDetour string `json:"download_detour,omitempty" reference:"outbound" schema:"omit"`
@@ -138,7 +134,6 @@ func (o ProviderRemoteOptions) DescribeSchema(builder schema.Builder) (*schema.N
 
 type ProviderInlineOptions struct {
 	Outbounds   []Outbound                 `json:"outbounds,omitempty"`
-	Endpoints   []Endpoint                 `json:"endpoints,omitempty"`
 	HealthCheck ProviderHealthCheckOptions `json:"health_check,omitempty"`
 }
 
@@ -147,10 +142,6 @@ type ProviderHealthCheckOptions struct {
 	URL      string             `json:"url,omitempty"`
 	Interval badoption.Duration `json:"interval,omitempty"`
 	Timeout  badoption.Duration `json:"timeout,omitempty"`
-}
-
-type OverrideAnyTLSOptions struct {
-	ClientMetadata *string `json:"client_metadata,omitempty"`
 }
 
 type OverrideDialerOptions struct {
@@ -177,19 +168,4 @@ type OverrideDialerOptions struct {
 
 	// Deprecated: migrated to domain resolver
 	DomainStrategy *DomainStrategy `json:"domain_strategy,omitempty" schema:"omit"`
-}
-
-type OverrideTLSOptions struct {
-	Enabled               *bool                       `json:"enabled,omitempty"`
-	DisableSNI            *bool                       `json:"disable_sni,omitempty"`
-	ServerName            *string                     `json:"server_name,omitempty"`
-	Insecure              *bool                       `json:"insecure,omitempty"`
-	ALPN                  *badoption.Listable[string] `json:"alpn,omitempty"`
-	MinVersion            *string                     `json:"min_version,omitempty"`
-	MaxVersion            *string                     `json:"max_version,omitempty"`
-	Fragment              *bool                       `json:"fragment,omitempty"`
-	FragmentFallbackDelay *badoption.Duration         `json:"fragment_fallback_delay,omitempty"`
-	RecordFragment        *bool                       `json:"record_fragment,omitempty"`
-	KernelTx              *bool                       `json:"kernel_tx,omitempty"`
-	KernelRx              *bool                       `json:"kernel_rx,omitempty"`
 }

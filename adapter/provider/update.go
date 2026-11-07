@@ -29,6 +29,8 @@ type updateNode struct {
 // matters: the published map only ever contains nodes that exist in the manager, and a dependency
 // is never removed while a surviving node still names it.
 func (a *Adapter) UpdateNodes(outOpts []option.Outbound) error {
+	a.updateAccess.Lock()
+	defer a.updateAccess.Unlock()
 	if a.outbound == nil {
 		return E.New("outbound manager does not support dynamic outbounds")
 	}
@@ -158,9 +160,17 @@ func (a *Adapter) UpdateNodes(outOpts []option.Outbound) error {
 	a.outbounds, a.outboundsByTag = outbounds, outByTag
 	a.outboundsAccess.Unlock()
 	for tag := range a.appliedOutbounds {
-		if _, stillPublished := outByTag[tag]; !stillPublished {
-			delete(a.appliedOutbounds, tag)
+		if _, stillPublished := outByTag[tag]; stillPublished {
+			continue
 		}
+		if _, stillExists := a.outbound.Outbound(tag); stillExists {
+			// The removal was refused because a LIVE node outside this provider still names the tag
+			// as a dependency. The node stays in the manager for that dependency, and ownership must
+			// stay with it too: without the entry, a later document that names the tag again is
+			// mistaken for a foreign outbound and refused, permanently losing the node.
+			continue
+		}
+		delete(a.appliedOutbounds, tag)
 	}
 	if a.enabled && a.history != nil {
 		a.run(func() { a.HealthCheck(a.ctx) })

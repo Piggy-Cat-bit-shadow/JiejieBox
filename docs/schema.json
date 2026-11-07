@@ -16936,15 +16936,6 @@
       },
       "additionalProperties": false
     },
-    "OverrideAnyTLSOptions": {
-      "type": "object",
-      "properties": {
-        "client_metadata": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false
-    },
     "OverrideDialerOptions": {
       "type": "object",
       "properties": {
@@ -17043,58 +17034,6 @@
       },
       "additionalProperties": false
     },
-    "OverrideTLSOptions": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
-        "disable_sni": {
-          "type": "boolean"
-        },
-        "server_name": {
-          "type": "string"
-        },
-        "insecure": {
-          "type": "boolean"
-        },
-        "alpn": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          ]
-        },
-        "min_version": {
-          "type": "string"
-        },
-        "max_version": {
-          "type": "string"
-        },
-        "fragment": {
-          "type": "boolean"
-        },
-        "fragment_fallback_delay": {
-          "$ref": "#/$defs/Duration"
-        },
-        "record_fragment": {
-          "type": "boolean"
-        },
-        "kernel_tx": {
-          "type": "boolean"
-        },
-        "kernel_rx": {
-          "type": "boolean"
-        }
-      },
-      "additionalProperties": false
-    },
     "Provider": {
       "oneOf": [
         {
@@ -17122,12 +17061,6 @@
               "type": "array",
               "items": {
                 "$ref": "#/$defs/Outbound"
-              }
-            },
-            "endpoints": {
-              "type": "array",
-              "items": {
-                "$ref": "#/$defs/Endpoint"
               }
             },
             "health_check": {
@@ -17168,12 +17101,6 @@
             },
             "override_dialer": {
               "$ref": "#/$defs/OverrideDialerOptions"
-            },
-            "override_tls": {
-              "$ref": "#/$defs/OverrideTLSOptions"
-            },
-            "override_anytls": {
-              "$ref": "#/$defs/OverrideAnyTLSOptions"
             }
           },
           "required": [
@@ -17227,12 +17154,6 @@
                 },
                 "override_dialer": {
                   "$ref": "#/$defs/OverrideDialerOptions"
-                },
-                "override_tls": {
-                  "$ref": "#/$defs/OverrideTLSOptions"
-                },
-                "override_anytls": {
-                  "$ref": "#/$defs/OverrideAnyTLSOptions"
                 }
               },
               "required": [
@@ -17287,12 +17208,6 @@
                 },
                 "override_dialer": {
                   "$ref": "#/$defs/OverrideDialerOptions"
-                },
-                "override_tls": {
-                  "$ref": "#/$defs/OverrideTLSOptions"
-                },
-                "override_anytls": {
-                  "$ref": "#/$defs/OverrideAnyTLSOptions"
                 }
               },
               "required": [
@@ -17348,12 +17263,6 @@
                 },
                 "override_dialer": {
                   "$ref": "#/$defs/OverrideDialerOptions"
-                },
-                "override_tls": {
-                  "$ref": "#/$defs/OverrideTLSOptions"
-                },
-                "override_anytls": {
-                  "$ref": "#/$defs/OverrideAnyTLSOptions"
                 }
               },
               "required": [

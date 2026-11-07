@@ -207,7 +207,11 @@ func newProviderFixture(t *testing.T) *providerFixture {
 	registry := outbound.NewRegistry()
 	var candidates []*testNode
 	outbound.Register[nodeOptions](registry, "test", func(_ context.Context, _ adapter.Router, _ log.ContextLogger, tag string, options nodeOptions) (adapter.Outbound, error) {
-		n := &testNode{Adapter: outbound.NewAdapter("test", tag, []string{"tcp"}, nil), options: options}
+		var dependencies []string
+		if options.DialerOptions.Detour != "" {
+			dependencies = []string{options.DialerOptions.Detour}
+		}
+		n := &testNode{Adapter: outbound.NewAdapter("test", tag, []string{"tcp"}, dependencies), options: options}
 		candidates = append(candidates, n)
 		return n, nil
 	})
@@ -296,6 +300,40 @@ func TestProviderRemovesAChainDependentFirst(t *testing.T) {
 	require.False(t, found)
 	_, found = fixture.outbound.Outbound("p/back")
 	require.False(t, found)
+}
+
+// TestProviderKeepsOwnershipOfANodeWhoseRemovalWasRefused pins the interaction between the
+// manager's dependency guard and the diff. A node outside the provider may still name a provider
+// node; the removal is then refused, and the provider must keep ownership of the object it left
+// behind. Losing ownership would make a later document that names the tag again look like a
+// collision with a foreign outbound.
+func TestProviderKeepsOwnershipOfANodeWhoseRemovalWasRefused(t *testing.T) {
+	t.Parallel()
+	fixture := newProviderFixture(t)
+	require.NoError(t, fixture.outbound.Create(nil, nil, log.NewNOPFactory().Logger(), "anchor", "test",
+		&nodeOptions{DialerOptions: option.DialerOptions{Detour: "p/x"}}))
+	require.NoError(t, fixture.provider.UpdateNodes([]option.Outbound{
+		{Type: "test", Tag: "x", Options: &nodeOptions{Revision: 1}},
+		{Type: "test", Tag: "y", Options: &nodeOptions{}},
+	}))
+
+	// Dropping x is refused because anchor names it; x stays live for anchor.
+	require.NoError(t, fixture.provider.UpdateNodes([]option.Outbound{
+		{Type: "test", Tag: "y", Options: &nodeOptions{}},
+	}))
+	require.Equal(t, []string{"p/y"}, tagsOf(fixture.provider.Outbounds()))
+	_, stillPresent := fixture.outbound.Outbound("p/x")
+	require.True(t, stillPresent, "the refused node must remain addressable by its dependent")
+
+	// A later document that brings x back must replace it, not call it foreign.
+	require.NoError(t, fixture.provider.UpdateNodes([]option.Outbound{
+		{Type: "test", Tag: "x", Options: &nodeOptions{Revision: 2}},
+		{Type: "test", Tag: "y", Options: &nodeOptions{}},
+	}))
+	require.Equal(t, []string{"p/x", "p/y"}, tagsOf(fixture.provider.Outbounds()))
+	revived, found := fixture.outbound.Outbound("p/x")
+	require.True(t, found)
+	require.Equal(t, 2, revived.(*testNode).options.Revision)
 }
 
 func TestProviderPartiallyFailedUpdateKeepsOldNodesForFailedTags(t *testing.T) {

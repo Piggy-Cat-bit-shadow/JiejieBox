@@ -2,11 +2,15 @@ package remote
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"regexp"
+	"sync/atomic"
 	"testing"
+
+	"github.com/sagernet/sing-box/adapter"
 
 	"github.com/stretchr/testify/require"
 )
@@ -83,4 +87,64 @@ func TestProviderRemoteCacheKeepsSubscriptionInfo(t *testing.T) {
 	require.True(t, loaded)
 	require.Equal(t, []string{"p/a"}, providerTagsOf(restored))
 	require.Equal(t, int64(33), restored.SubscriptionInfo().Total)
+}
+
+// TestProviderRemoteNotModifiedWithoutContentLeavesCacheAlone covers a spurious 304 before any
+// document was loaded (a broken server can answer one even without If-None-Match). Rewriting the
+// path cache in that state used to replace the valid file with an empty outbound list.
+func TestProviderRemoteNotModifiedWithoutContentLeavesCacheAlone(t *testing.T) {
+	t.Parallel()
+	path := t.TempDir() + "/provider.json"
+	original := `{"outbounds": [{"type": "test", "tag": "a"}]}`
+	require.NoError(t, os.WriteFile(path, []byte(original), 0o644))
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Etag", `"v1"`)
+		writer.WriteHeader(http.StatusNotModified)
+	}))
+	t.Cleanup(server.Close)
+	provider, _ := newRemoteHarness(t, server.URL)
+	provider.httpClient = server.Client()
+	provider.path = path
+	require.NoError(t, provider.fetch(context.Background(), true))
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, original, string(after))
+}
+
+type failingSubscriptionCache struct {
+	adapter.CacheFile
+	saves int
+}
+
+func (c *failingSubscriptionCache) LoadSubscription(string) *adapter.SavedBinary { return nil }
+
+func (c *failingSubscriptionCache) SaveSubscription(string, *adapter.SavedBinary) error {
+	c.saves++
+	return errors.New("disk full")
+}
+
+// TestProviderRemoteKeepsEtagWhenTheCacheWriteFails pins the other half of the cache contract: the
+// ETag is a promise that the cached body matches it. If the body could not be stored, the promise
+// must not be made, or every later conditional request answers 304 for content the cache lacks.
+func TestProviderRemoteKeepsEtagWhenTheCacheWriteFails(t *testing.T) {
+	t.Parallel()
+	var conditionalRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("If-None-Match") != "" {
+			conditionalRequests.Add(1)
+		}
+		writer.Header().Set("Etag", `"v1"`)
+		_, _ = writer.Write([]byte(`{"outbounds": [{"type": "test", "tag": "a"}]}`))
+	}))
+	t.Cleanup(server.Close)
+	provider, _ := newRemoteHarness(t, server.URL)
+	provider.httpClient = server.Client()
+	failing := &failingSubscriptionCache{}
+	provider.cacheFile = failing
+	require.NoError(t, provider.fetch(context.Background(), true))
+	require.Equal(t, 1, failing.saves)
+	require.Empty(t, provider.lastEtag, "the tag must not advance past a cache that was not written")
+
+	require.NoError(t, provider.fetch(context.Background(), false))
+	require.Equal(t, 0, int(conditionalRequests.Load()), "a retry must download the body, not revalidate")
 }

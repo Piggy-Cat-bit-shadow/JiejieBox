@@ -11,6 +11,7 @@ import (
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/json/badoption"
+	M "github.com/sagernet/sing/common/metadata"
 	"github.com/sagernet/sing/common/x/list"
 	"github.com/sagernet/sing/service"
 
@@ -169,6 +170,42 @@ func TestGroupsAllowARepeatedMemberDeclaration(t *testing.T) {
 	require.NoError(t, urlTest.Start(adapter.StartStateStarted, &adapter.Scope{}))
 	t.Cleanup(func() { _ = urlTest.Close() })
 	require.Contains(t, urlTest.All(), "leaf-a")
+}
+
+// TestEmptyProviderGroupFailsTheDialWithoutPanicking covers the zero-member state on the data path:
+// the group exists, has no member, and a dial must come back as a named error - not a nil
+// dereference and not a silent hang.
+func TestEmptyProviderGroupFailsTheDialWithoutPanicking(t *testing.T) {
+	t.Parallel()
+	provider := &stubProvider{tag: "prov"}
+	world := newGroupWorld(t)
+	world.ctx = service.ContextWith[adapter.ProviderManager](world.ctx, newStubProviderManager(provider))
+	createdSelector, err := NewSelector(world.ctx, nil, log.NewNOPFactory().NewLogger("selector"), "proxy", option.SelectorOutboundOptions{
+		Providers: []string{"prov"},
+	})
+	require.NoError(t, err)
+	selector := createdSelector.(*Selector)
+	world.add(selector)
+	world.start(selector)
+	require.Empty(t, selector.All())
+	require.Nil(t, selector.Selected("tcp"))
+	_, err = selector.DialContext(context.Background(), "tcp", M.ParseSocksaddr("127.0.0.1:1"))
+	require.Error(t, err)
+
+	createdURLTest, err := NewURLTest(world.ctx, nil, log.NewNOPFactory().NewLogger("auto"), "auto", option.URLTestOutboundOptions{
+		Providers:   []string{"prov"},
+		URL:         "http://127.0.0.1:1/",
+		Interval:    badoption.Duration(time.Hour),
+		IdleTimeout: badoption.Duration(2 * time.Hour),
+	})
+	require.NoError(t, err)
+	urlTest := createdURLTest.(*URLTest)
+	world.add(urlTest)
+	world.start(urlTest)
+	t.Cleanup(func() { _ = urlTest.Close() })
+	require.Empty(t, urlTest.All())
+	_, err = urlTest.DialContext(context.Background(), "tcp", M.ParseSocksaddr("127.0.0.1:1"))
+	require.Error(t, err)
 }
 
 // TestSelectorProviderMembershipFollowsUpdates is the selector half of the group integration: the

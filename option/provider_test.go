@@ -70,6 +70,24 @@ func TestProviderConfigurationValidation(t *testing.T) {
 			content: `{"providers": [{"type": "inline", "tag": "a/b", "outbounds": []}]}`,
 			message: "must not contain '/'",
 		},
+		// TLS/AnyTLS overrides and inline endpoints are NOT implemented in this stage. Their fields
+		// do not exist, so a document using them is refused with an unknown-field error instead of
+		// being accepted and silently ignored.
+		{
+			name:    "unimplemented override_tls",
+			content: `{"providers": [{"type": "remote", "tag": "air", "url": "https://example.com/sub", "override_tls": {"server_name": "x"}}]}`,
+			message: "override_tls",
+		},
+		{
+			name:    "unimplemented override_anytls",
+			content: `{"providers": [{"type": "remote", "tag": "air", "url": "https://example.com/sub", "override_anytls": {"client_metadata": "x"}}]}`,
+			message: "override_anytls",
+		},
+		{
+			name:    "unimplemented inline endpoints",
+			content: `{"providers": [{"type": "inline", "tag": "air", "endpoints": [{"type": "wireguard", "tag": "wg"}]}]}`,
+			message: "endpoints",
+		},
 		// Missing URL, an unsupported URL scheme and a local provider without a path are refused by
 		// the provider constructors (see provider/remote and provider/local), which is where the
 		// concrete type is known. They are covered there instead of here.

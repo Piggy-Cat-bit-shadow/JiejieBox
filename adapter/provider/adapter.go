@@ -45,11 +45,15 @@ type Adapter struct {
 	// update a diff: an entry whose options are unchanged is not reconstructed, so a subscription
 	// refresh that only reorders or reformats does not drop live connections.
 	appliedOutbounds map[string]option.Outbound
-	ticker           *time.Ticker
-	checking         atomic.Bool
-	history          *urltest.HistoryStorage
-	callbackAccess   sync.Mutex
-	callbacks        list.List[adapter.ProviderUpdateCallback]
+	// updateAccess serialises applies. The concrete providers already serialise their own refresh
+	// cycles (remote through its updating flag, local through its file mutex), but UpdateNodes is an
+	// exported entry point and two callers that interleave would publish a map assembled from both.
+	updateAccess   sync.Mutex
+	ticker         *time.Ticker
+	checking       atomic.Bool
+	history        *urltest.HistoryStorage
+	callbackAccess sync.Mutex
+	callbacks      list.List[adapter.ProviderUpdateCallback]
 
 	link     string
 	enabled  bool
@@ -256,7 +260,7 @@ func (a *Adapter) healthcheck(ctx context.Context) (map[string]uint16, error) {
 		}
 		checked[tag] = true
 		b.Go(tag, func() (any, error) {
-			probeCtx, cancel := context.WithTimeout(a.ctx, a.timeout)
+			probeCtx, cancel := context.WithTimeout(ctx, a.timeout)
 			defer cancel()
 			delay, err := urltest.URLTest(probeCtx, a.link, detour)
 			if err != nil {

@@ -75,7 +75,13 @@ Downloads the document from `url`, caches the last known good copy, and refreshe
 | `update_interval` | Refresh interval, minimum `1h`. Defaults to `24h`.                              |
 | `include`         | Regexp: only nodes whose **rendered tag** matches are published.                |
 | `exclude`         | Regexp: nodes whose **rendered tag** matches are skipped. `exclude` wins.       |
+| `override_dialer` | Dialer fields applied to every published node: `detour`, bind, timeouts, resolver. |
 | `health_check`    | See below.                                                                      |
+
+This stage does not implement provider **endpoints**, `override_tls` or `override_anytls`, and those
+keys are not part of the schema: a document that sets one fails with an unknown-field error naming
+the key, instead of accepting it and ignoring it. `override_dialer` is supported on remote and local
+providers.
 
 The URL is parsed and its scheme checked while the configuration is loaded: a typo such as `ftp://`
 or a relative path fails the start with a message naming the provider instead of being discovered by
