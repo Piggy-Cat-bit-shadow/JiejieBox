@@ -99,6 +99,10 @@ func newReplacementWorld(t *testing.T, selectorTag string) *replacementWorld {
 	manager.Initialize(func() (adapter.Outbound, error) {
 		return &testNode{Adapter: outbound.NewAdapter("test", "direct", []string{"tcp", "udp"}, nil)}, nil
 	})
+	// The production selector resolves this service from the box context and therefore sees the
+	// lease capability. Without it the fixture's group dials the member directly, which is not the
+	// path under test and made the concurrent test flaky for the very window the lease closes.
+	ctx = service.ContextWith[adapter.OutboundManager](ctx, manager)
 	scope := adapter.NewScope(ctx, logger)
 	t.Cleanup(func() { _ = scope.Close() })
 	for _, stage := range adapter.ListStartStages {

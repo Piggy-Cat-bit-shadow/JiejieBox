@@ -46,6 +46,10 @@ type Manager struct {
 	// users counts in-flight hand-offs per object, including objects that are still published. It is
 	// keyed by identity because a tag can move to a replacement while a dial still holds the old object.
 	users map[adapter.Outbound]int
+	// testAcquireAfterRead parks a test between AcquireOutbound's read-only fast-path check and the
+	// exclusive check-and-increment. Production leaves it nil; it exists so the publication window
+	// can be hit deterministically instead of by scheduler luck.
+	testAcquireAfterRead func()
 
 	registry                adapter.OutboundRegistry
 	endpoint                adapter.EndpointManager
@@ -874,33 +878,45 @@ func (m *Manager) AcquireOutbound(object adapter.Outbound) (release func(), ok b
 	if m == nil || object == nil {
 		return func() {}, false
 	}
-	// Fast path for the overwhelmingly common case: a non-provider object has no retirement
-	// lifecycle, so a read lock and two map lookups are enough and the hot dial path never takes the
-	// exclusive manager lock. Only objects published by a provider need a user count.
+	tag := object.Tag()
+	// Fast path for the overwhelmingly common case: a PUBLISHED non-provider object has no
+	// retirement lifecycle, so a read lock and two map lookups are enough and the hot dial path
+	// never takes the exclusive manager lock. A provider object (owned tag) never takes this path,
+	// and neither does an object whose tag is absent: the latter may be a removed provider node
+	// whose ownedTags entry unlinkLocked has already deleted.
 	m.access.RLock()
-	_, owned := m.ownedTags[object.Tag()]
-	current := m.outboundByTag[object.Tag()]
+	current, published := m.outboundByTag[tag]
+	_, owned := m.ownedTags[tag]
 	m.access.RUnlock()
-	if !owned {
+	if published && current == object && !owned {
 		return func() {}, true
 	}
-	if current == object {
-		// Still published: the lease is what carries the user count across a later retirement.
-		m.access.Lock()
+	if hook := m.testAcquireAfterRead; hook != nil {
+		hook()
+	}
+	// EVERYTHING below is one exclusive critical section. The read above is only a fast path; the
+	// publication that this call must be correct against can land between that read and this lock,
+	// so the decision and the user count are made together here. No network operation happens while
+	// this lock is held.
+	m.access.Lock()
+	defer m.access.Unlock()
+	current, published = m.outboundByTag[tag]
+	if published && current == object {
+		if _, stillOwned := m.ownedTags[tag]; !stillOwned {
+			// A non-provider object published under this tag: no lease needed.
+			return func() {}, true
+		}
+		// Still published by a provider: the lease carries the count across a later retirement.
 		m.users[object]++
-		m.access.Unlock()
 		return m.leaseRelease(object), true
 	}
-	m.access.Lock()
 	entry := m.retiredEntryLocked(object)
 	if entry != nil && !entry.released {
 		m.users[object]++
-		m.access.Unlock()
 		return m.leaseRelease(object), true
 	}
-	m.access.Unlock()
-	// The tag is owned by a provider but this object is neither published nor retired: it was
-	// already closed, and a dial must not use it.
+	// Neither published nor retired. That includes a removed provider tag (ownedTags deleted by
+	// unlinkLocked) and an object whose retirement already released; a dial must not use it.
 	return func() {}, false
 }
 
@@ -1094,15 +1110,32 @@ func (m *Manager) Remove(tag string) error {
 		m.graphAccess.Unlock()
 		return E.New("outbound[", tag, "] is depended by ", strings.Join(dependents, ", "))
 	}
+	owner := m.ownedTags[tag]
 	wasDefault := m.unlinkLocked(tag, outbound)
 	fallback := m.defaultAfterRemovalLocked(wasDefault)
+	// A dial that obtained this object before the unlink may still hold a lease. The tag is gone, so
+	// there is no publication barrier to wait for, but closing now would hand that dial a closed
+	// object. Park it as READY with the user count as the only gate; releaseLease closes it when the
+	// last hand-off ends. The count is checked under the same lock that made the unlink, so a caller
+	// cannot slip between "not leased yet" and "closed".
+	closeNow := m.users[outbound] == 0
+	if !closeNow {
+		m.retired = append(m.retired, &retiredOutbound{
+			outbound: outbound,
+			tag:      tag,
+			owner:    owner,
+			ready:    true,
+		})
+	}
 	sweep := m.takeSweepableRetiredLocked()
 	m.access.Unlock()
 	m.graphAccess.Unlock()
 	if fallback != nil && m.logger != nil {
 		m.logger.Info("updated default outbound to ", fallback.Tag())
 	}
-	m.release(outbound)
+	if closeNow {
+		m.release(outbound)
+	}
 	for _, object := range sweep {
 		m.release(object)
 	}

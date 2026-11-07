@@ -33,6 +33,13 @@ func init() {
 			return nil, C.ErrQUICNotIncluded
 		},
 	)
+	// A process-wide seam, installed once during package initialisation. It used to be assigned
+	// from registerQUICInbounds, which runs on every InboundRegistry() call; two Boxes built
+	// concurrently (as the root tests do) then wrote the same function variable and the race
+	// detector reported include.registerQUICInbounds against itself.
+	naive.ConfigureHTTP3ListenerFunc = func(ctx context.Context, logger logger.Logger, listener *listener.Listener, handler http.Handler, tlsConfig tls.ServerConfig, options option.NaiveInboundOptions) (io.Closer, error) {
+		return nil, C.ErrQUICNotIncluded
+	}
 }
 
 func registerQUICInbounds(registry *inbound.Registry) {
@@ -45,9 +52,6 @@ func registerQUICInbounds(registry *inbound.Registry) {
 	inbound.Register[option.Hysteria2InboundOptions](registry, C.TypeHysteria2, func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.Hysteria2InboundOptions) (adapter.Inbound, error) {
 		return nil, C.ErrQUICNotIncluded
 	})
-	naive.ConfigureHTTP3ListenerFunc = func(ctx context.Context, logger logger.Logger, listener *listener.Listener, handler http.Handler, tlsConfig tls.ServerConfig, options option.NaiveInboundOptions) (io.Closer, error) {
-		return nil, C.ErrQUICNotIncluded
-	}
 }
 
 func registerQUICOutbounds(registry *outbound.Registry) {

@@ -95,14 +95,15 @@
 
 | 规则 | 实现 |
 | --- | --- |
-| 取得对象后、交接完成前不得关闭 | `Manager.AcquireOutbound(object) (release, ok)`：对已发布或已退休对象按**对象身份**计数（`users[object]`）；`CompletePublication` 与 sweep 仅在 `users==0` 时关闭 |
-| 取得与加租约之间不能有“已关闭”的缝 | selector 的 `currentMemberLeased`、urltest 的 `leaseSelected` 在 `ok=false` 时重读当前选择（回调先于屏障换好新成员）再试；仍失败则拒绝该流，不拨已关闭对象 |
+| 取得对象后、交接完成前不得关闭 | `Manager.AcquireOutbound(object) (release, ok)`：读快路径只用于**已发布的非 Provider 对象**；Provider 对象的“仍可租用”判断与 `users[object]++` 在同一个 `m.access` 临界区完成；`CompletePublication` 与 sweep 仅在 `users==0` 时关闭 |
+| 取得与加租约之间不能有“已关闭”的缝 | 读锁之后、写锁之前是测试钩子可钉住的真实窗口；修复后写锁内重新检查 `outboundByTag`/`retired`，`ok=false` 覆盖已关闭、已移除和已释放对象。selector 重读选择最多 4 次后拒绝；urltest 重读 LIVE generation；route 直接以明确错误拒绝该流 |
+| 标签移除（不是同标签替换） | `Remove` 在同一个 `access` 临界区检查 `users`；仍有租约时把对象以 `ready=true` 停入 retired，标签立即消失，最后一个使用者释放后关闭一次。无租约时保持原行为立即关闭 |
 | 交接结束点 | 组的 `DialContext`/`ListenPacket`/并行/串行方法在成员调用返回后释放租约（连接已建立或已失败）；route 在 `NewConnection`/`NewPacketConnection` 返回后释放链尾叶子的租约 |
 | 不阻塞 Provider 更新 | 计数只在短锁内更新；网络拨号在锁外；不存在“拨号期间持有 manager 全局锁” |
 | 最后一个使用者退出后恰好关闭一次 | 释放时若 `ready && users==0 && 无外部引用` 则移出 retired 并关闭；`released` 标志与 `sync.Once` 防重复 |
 | 公开 `Selected()` 契约 | 返回快照，可立即读 `Tag()`/`Network()`；不得跨更新持有后拨号。要拨号必须走组的 Dial/Listen（内部加租约）或显式取得租约 |
 
-测试锚点：`adapter/provider/dial_lease_test.go`（单用户、三用户、连续两轮替换只关闭未使用版本、ListenPacket、并行拨号；修复前阻塞拨号测试 `closes=1`，修复后为 0，最后一个用户退出后为 1）。route 的叶子租约由 `Router.acquireOutbound` 接入 TCP 与 packet 两条路径。
+测试锚点：`adapter/provider/dial_lease_test.go`（单用户、三用户、连续两轮替换只关闭未使用版本、ListenPacket、并行拨号；修复前阻塞拨号测试 `closes=1`，修复后为 0，最后一个用户退出后为 1）；`adapter/outbound/acquire_race_test.go`（读后写前交错、移除标签后的快速路径、Remove 在租约中延后关闭；修复前三种情况均失败）；`protocol/group/lease_rejection_test.go`（selector 拒绝后重试一次、连续拒绝有界失败）。route 的叶子租约由 `Router.acquireOutbound` 接入 TCP 与 packet 两条路径。
 
 仍保留的边界：route 在 chain 解析后、取得叶租约前若对象已被关闭，会以明确错误拒绝该流（不拨已关闭对象），该瞬时失败属于刷新竞态；`Selected()` 的外部长期持有不在租约保护内，按接口契约应当避免。
 

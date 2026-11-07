@@ -251,12 +251,15 @@ type OwnedDynamicOutboundManager interface {
 // with net.ErrClosed although a valid replacement was published.
 //
 // A caller that is about to use an object it obtained (a group dial, the route handing a leaf to the
-// connection manager) calls AcquireOutbound and releases it when the hand-off finishes. ok=false
-// means the object was already retired AND closed before the caller pinned it; the caller must
-// re-read its selection (or refuse the flow) rather than dial a closed object. A published object
-// and a non-provider object return a no-op release with ok=true. The lease is not held by a global
-// lock and never covers the network operation itself; it only prevents the publication barrier from
-// closing an object that is still in use.
+// connection manager) calls AcquireOutbound and releases it when the hand-off finishes. The check
+// that the object is still published or retired and the increment of its user count are ONE
+// critical section: a publication that lands after a read-only fast-path peek is re-checked under
+// the exclusive lock, so an object closed in that window yields ok=false. ok=false also covers a
+// provider tag that was removed (its tag entry is gone from both maps) and an object whose
+// retirement already released; the caller must re-read its selection or refuse the flow rather than
+// dial a closed object. A PUBLISHED non-provider object returns a no-op release with ok=true. The
+// lease is not held by a global lock and never covers the network operation itself; it only prevents
+// the publication barrier (or a guarded removal) from closing an object that is still in use.
 type OutboundLeaseManager interface {
 	AcquireOutbound(object Outbound) (release func(), ok bool)
 }
