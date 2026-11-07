@@ -167,9 +167,22 @@ TLS 数据来自 2026-10-09 的九次交错采样，时间数据受共享主机�
 
 ### 出站 Provider 与动态策略组
 
-- 从远程订阅、本地文件或内联配置导入出站节点；支持 sing-box JSON、Clash YAML、SIP008 和分享链接等输入。节点以 `provider/node` 命名，订阅中的 DNS、路由及入站设置不会覆盖主配置。
+- 从远程订阅、本地文件或内联配置导入出站节点。节点以 `provider/node` 命名，订阅中的 DNS、路由及入站设置不会覆盖主配置。
 - selector 和 URLTest 可以同时使用静态节点与 Provider 节点。远程订阅异步下载、缓存并定期刷新；节点变化后更新组成员，无需重新启动内核。未变化的节点保留现有连接。
 - 纯 Provider 组在首次下载前可以等待节点，也可以作为其他出站的 `detour` 目标。动态发布会检查出站与 DNS 依赖环；替换时旧节点至少保留到组成员切换和在途拨号交接完成，仍被其他对象直接引用的节点会继续保留。
+
+Provider 支持解析的客户端配置与订阅格式：
+
+| 客户端 / 格式 | 可读取的内容 |
+| --- | --- |
+| sing-box / JiejieBox JSON | `outbounds` 中的代理节点 |
+| Clash / Mihomo（Clash Meta）YAML | `proxies` 中解析器支持的代理节点；不导入 `proxy-groups`、规则和 DNS 设置，也不递归拉取其中的 `proxy-providers` |
+| Shadowsocks SIP008 JSON | `servers` 节点列表 |
+| 通用分享链接列表（包括 v2rayN 等客户端导出的对应链接） | 明文或 Base64 编码的 `ss://`、`vmess://`、`vless://`、`trojan://`、`tuic://`、`hysteria://`、`hy2://` / `hysteria2://`、`anytls://` 链接 |
+
+上述兼容范围是 **Provider 提取节点**，不代表客户端可以把这些文件直接作为完整主配置运行，也不代表兼容所有客户端扩展字段。V2Ray / Xray 原生 JSON、Surge、Quantumult X 的完整配置未接入解析；请改用上表支持的订阅格式。WireGuard / Tailscale endpoint 暂不由 Provider 发布，节点协议的实际可用性还取决于平台与构建档位。
+
+**机场节点未拉取到时**：若首次导入本地配置并启动后，机场节点分组仍为空，请先停止 VPN，在 **设置 → 核心 → 清理工作目录** 后，重启 VPN 再重试。
 
 若订阅下载需要经过本次订阅才会出现的节点，首次下载会形成引导环。可为下载配置独立的 `http_client`，并检查订阅域名的 DNS 解析路径。见 [Provider 配置参考](docs/configuration/provider/index.zh.md)、[远程订阅与链式代理示例](docs/FORK-CONFIGURATION.md#远程订阅与链式代理)和 [v0.1.44 更新记录](CHANGELOG.md)。
 

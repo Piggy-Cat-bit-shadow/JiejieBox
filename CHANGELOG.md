@@ -12,6 +12,9 @@
 
 ### Provider、链式代理与热更新
 
+- **机场节点未拉取到时**：若首次导入本地配置并启动后，机场节点分组仍为空，请先停止 VPN，在 **设置 → 核心 → 清理工作目录** 后，重启 VPN 再重试。
+- **Provider 配置解析范围**：支持 sing-box / JiejieBox JSON 的 `outbounds`、Clash / Mihomo（Clash Meta）YAML 的 `proxies`、Shadowsocks SIP008 JSON 的 `servers`，以及明文或 Base64 分享链接列表（包括 v2rayN 等客户端导出的对应链接）。链接协议支持 `ss://`、`vmess://`、`vless://`、`trojan://`、`tuic://`、`hysteria://`、`hy2://` / `hysteria2://`、`anytls://`。
+- 上述格式仅用于 Provider 提取代理节点，不导入原客户端的策略组、规则、DNS、入站设置，也不递归拉取 Clash `proxy-providers`；不代表可直接作为完整主配置运行或兼容全部扩展字段。V2Ray / Xray 原生 JSON、Surge、Quantumult X 完整配置未接入解析，WireGuard / Tailscale endpoint 暂不由 Provider 发布；协议可用性仍取决于平台与构建档位。
 - 仅由 Provider 供给成员的空组，在节点尚未发布时可作为 `detour` 目标等待；没有 Provider 供给的断链仍会报错。远程订阅下载路径若反过来依赖自己尚未加载的节点，会在启动时给出明确错误，避免下载引导环。
 - Provider 发布节点或 selector、URLTest 更新成员前，校验动态出站图及跨 DNS、出站的环路。无效更新不会把正在使用的节点替换为不可拨号路径；发布后的组成员和链式代理会重新参与校验。
 - 同标签节点替换时，旧对象保留到策略组重建完成；连接拨号期间为选中的节点持有租约。已移除或关闭的对象不再被新连接误用，仍在使用的对象等最后一个租约释放后再关闭。
