@@ -1350,7 +1350,8 @@ for _wf in "$repo_root/.github/workflows"/*.yml; do
   case "$(basename "$_wf")" in
     release-contract-verify.yml) continue ;;
   esac
-  if grep -vE '^[[:space:]]*#' "$_wf" | grep -q 'test-release-artifacts\.sh'; then
+  # Use one process: grep -q can close a pipe early and make pipefail report SIGPIPE.
+  if awk '!/^[[:space:]]*#/ && /test-release-artifacts[.]sh/ { found = 1 } END { exit !found }' "$_wf"; then
     _extra_suite_owners="$_extra_suite_owners $(basename "$_wf")"
   fi
 done
@@ -1361,7 +1362,7 @@ else
 fi
 
 # And the release path must REQUIRE the evidence rather than re-derive it.
-if grep -vE '^[[:space:]]*#' "$wf" | grep -q 'release-artifacts\.sh evidence'; then
+if awk '!/^[[:space:]]*#/ && /release-artifacts[.]sh evidence/ { found = 1 } END { exit !found }' "$wf"; then
   report "Formal Release requires the exact-SHA evidence gates" 0 0
 else
   report "Formal Release requires the exact-SHA evidence gates" 0 1 "release.yml never calls 'evidence'"
