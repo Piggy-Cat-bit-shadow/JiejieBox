@@ -212,6 +212,51 @@ type DynamicOutboundManager interface {
 	Remove(tag string) error
 }
 
+// GroupMembershipPublisher is the OPTIONAL capability a dynamic outbound manager provides so a
+// group can publish a new member list through the SAME graph validation as every other mutation.
+//
+// # Why the manager mediates this instead of the group validating on its own
+//
+// A group's members are dependency edges of the outbound graph, exactly like a `detour`. A provider
+// update that replaces a node and a group update that starts naming it are two halves of ONE graph
+// change, and the edge that closes a recursion can be in either half. MEASURED: a selector fed by a
+// provider, plus a provider node whose `detour` is that selector, starts successfully today and
+// recurses on the first dial - the node is a legal detour target when it is installed, and becomes a
+// cycle the moment the selector selects it.
+//
+// So the group hands the manager the member list it is ABOUT to publish together with the commit
+// that publishes it. The manager validates the resulting graph and, only when it is acyclic, runs
+// the commit while holding the graph lock. Two groups publishing concurrently therefore cannot each
+// validate against the other's stale membership and then both publish - the second one validates
+// after the first committed.
+//
+// A manager that does not implement it (a test double, an embedder with no dynamic namespace) keeps
+// the previous behaviour: the group commits unchanged.
+type GroupMembershipPublisher interface {
+	// UpdateGroupMembership validates the graph as it would be with groupTag's membership replaced
+	// by members, and runs commit when the graph is acyclic. It returns the refusal and does NOT
+	// run commit otherwise, so the caller keeps its previous members and selection.
+	UpdateGroupMembership(groupTag string, members []string, commit func()) error
+}
+
+// DynamicOutboundReleaser is the OPTIONAL capability a dynamic outbound manager provides for
+// TEARDOWN, where the dependent guard must not run.
+//
+// # Why plain Remove is wrong at close time
+//
+// A provider is closed BEFORE the outbound manager and its groups: the Box registers component
+// cleanups in start order and drains them in reverse, and providers start after the outbound manager.
+// A provider's Close unlinks its nodes, but the groups that name them are still registered and still
+// list them as members - so a membership-aware Remove refuses every one of them, and a normal
+// shutdown reports an error for a configuration that was valid.
+//
+// Release is the ordering-aware verb for that moment: the whole object graph is being torn down, no
+// dial can start, and the provider owns the nodes it is unlinking. It must never be used as a way
+// around the guard while traffic can still be routed.
+type DynamicOutboundReleaser interface {
+	Release(tag string) error
+}
+
 // IdleConnectionReleaser is the half of IdleConnectionKeeper that a RETIRE walk actually needs:
 // drop the resources nobody is using.
 //

@@ -162,6 +162,11 @@ type enumeration struct {
 	hops     []PathNode
 	visited  int
 	budget   int
+	// deferredBy is the group that ended a route because its members have not been published yet
+	// (a provider-fed group before its provider's first publish). It is what lets the report say
+	// "waiting" instead of inventing a structural failure; it is per-enumeration because Hops walks
+	// one root per call.
+	deferredBy string
 }
 
 func newEnumeration(resolver *Resolver) *enumeration {
@@ -213,12 +218,28 @@ func errNodeBudgetExceeded(rootTag string, budget int) error {
 // a diagnostic that crashes on the configuration it is describing is worse than one that reports
 // it, and the enumeration is discarded rather than partially reported.
 func (r *Resolver) Hops(root adapter.Outbound) (nodes []PathNode, err error) {
+	nodes, _, err = r.hopsWithPending(root)
+	return nodes, err
+}
+
+// hopsWithPending is Hops plus the group that deferred the route, if any.
+//
+// # What "deferred" means, exactly
+//
+// The route ended at a group that names an outbound provider and has published no member yet. That
+// state is not decidable at start: a remote provider downloads asynchronously and a local one reads
+// its file in its own start stage, both AFTER the outbound manager's dry run. The members are
+// validated when the provider publishes them (the provider's callbacks run the same graph checks),
+// so the dry run must not report the route as structurally broken - while a group with the same
+// empty member list and NO provider feed keeps the old, fatal verdict.
+func (r *Resolver) hopsWithPending(root adapter.Outbound) (nodes []PathNode, deferredBy string, err error) {
 	if root == nil {
-		return nil, nil
+		return nil, "", nil
 	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			nodes = nil
+			deferredBy = ""
 			err = E.New("reachable leaf enumeration panicked: ", recovered)
 		}
 	}()
@@ -232,20 +253,24 @@ func (r *Resolver) Hops(root adapter.Outbound) (nodes []PathNode, err error) {
 	outcome, err := scope.enumerateHops(root, root.Tag(), nil, nil, networksOf(root), true, 0)
 	if err != nil {
 		// The enumeration is discarded rather than partially reported: see DefaultNodeBudget.
-		return nil, err
+		return nil, "", err
 	}
 	// A route that reached its far end is numbered WITH an exit; a route truncated by a missing
-	// dependency is numbered without one. Both are numbered in packet order, because the order of the
-	// hops that ARE known does not depend on what is missing below them - and `Build` reverses its own
-	// walk in both cases, so numbering only the complete route would leave the two APIs describing one
-	// topology in two orders, which is the defect this change exists to remove.
+	// dependency is numbered without one. A DEFERRED route is not numbered at all: its far end is
+	// unknown, and claiming a packet order for hops whose route has no end would describe a path the
+	// device does not take.
+	//
+	// Both numbered forms are numbered in packet order, because the order of the hops that ARE known
+	// does not depend on what is missing below them - and `Build` reverses its own walk in both
+	// cases, so numbering only the complete route would leave the two APIs describing one topology
+	// in two orders, which is the defect this change exists to remove.
 	switch outcome {
 	case routeComplete:
 		scope.numberRoute(0, true)
 	case routeTruncated:
 		scope.numberRoute(0, false)
 	}
-	return scope.hops, nil
+	return scope.hops, scope.deferredBy, nil
 }
 
 // Leaves is Hops filtered to the exits, which is the list a caller that wants "what can carry this
@@ -280,12 +305,18 @@ func (r *Resolver) Leaves(root adapter.Outbound) ([]PathNode, error) {
 //	                reached its far end, so no node of it may claim an exit - but its KNOWN hops are
 //	                numbered in packet order all the same, because their order does not depend on what
 //	                is missing below them, and `Build` reverses such a path like any other.
+//	routeDeferred   the descent ended at a provider-fed group that has published no member YET. The
+//	                route is not broken and not complete: its members arrive later, and the provider
+//	                validates them when it publishes. It must not be reported as a structural
+//	                failure (that is what refused a legal configuration), and it must not claim an
+//	                exit either (nothing was proven usable).
 type routeOutcome int
 
 const (
 	routeContinues routeOutcome = iota
 	routeComplete
 	routeTruncated
+	routeDeferred
 )
 
 // enumerateHops visits one node of the selection graph and reports how it left the route it was
@@ -338,8 +369,31 @@ func (e *enumeration) enumerateHops(node adapter.Outbound, rootTag string, chain
 			prefix = append([]PathNode(nil), e.hops[routeStart:]...)
 			e.hops = e.hops[:routeStart]
 		}
+		candidates := e.resolver.candidatesOf(group)
+		// A group that can be populated LATER is a wait, not an empty declaration.
+		//
+		// # Why this is decided here and not by the caller
+		//
+		// The start-time dry run runs before any provider component starts, so a group whose only
+		// member source is a provider has published nothing yet. A route dialled through that group
+		// is NOT broken: the members arrive on the provider's callback, and the provider validates
+		// the graph they create before publishing them. Reporting it as "never reached its far end"
+		// refused a legal configuration. A group with no provider feed and no member keeps that
+		// fatal verdict - it will never have one.
+		deferredHere := false
+		if len(candidates) == 0 {
+			if _, providerBacked := node.(adapter.ProviderBackedGroup); providerBacked {
+				deferredHere = true
+				if e.deferredBy == "" {
+					e.deferredBy = node.Tag()
+				}
+			}
+		}
 		echoed := false
-		for _, memberTag := range e.resolver.candidatesOf(group) {
+		anyComplete := false
+		anyTruncated := false
+		anyDeferred := deferredHere
+		for _, memberTag := range candidates {
 			member, reason := e.resolver.lookupDependency(memberTag)
 			if member == nil {
 				// A member that does not resolve becomes a hop-shaped fact, so the report names it
@@ -408,10 +462,14 @@ func (e *enumeration) enumerateHops(node adapter.Outbound, rootTag string, chain
 			switch outcome {
 			case routeComplete:
 				e.numberRoute(memberStart, true)
+				anyComplete = true
 			case routeTruncated:
 				// Numbered in packet order but with no exit: the route never reached its far end, so
 				// nothing in it may claim to be where the flow arrives - see PathNode.Exit.
 				e.numberRoute(memberStart, false)
+				anyTruncated = true
+			case routeDeferred:
+				anyDeferred = true
 			}
 			// A member route that stopped at a dependency which does not resolve is numbered too, and
 			// without an exit. Its declared order is not a packet order, so leaving it alone would
@@ -422,6 +480,12 @@ func (e *enumeration) enumerateHops(node adapter.Outbound, rootTag string, chain
 			// route this enumeration reaches no end of - so its own hops are kept rather than
 			// dropped.
 			e.hops = append(e.hops, prefix...)
+		}
+		if anyDeferred && !anyComplete && !anyTruncated {
+			// Every way this group could reach its far end is waiting on a provider, so the route
+			// as a whole is pending. A group with a completed member is NOT pending: it has a far
+			// end, and the provider-fed part is validated when it is published.
+			return routeDeferred, nil
 		}
 		// A group is a control node: it never terminates a physical route by itself, so how the route
 		// it extends ended is answered below it, not here.

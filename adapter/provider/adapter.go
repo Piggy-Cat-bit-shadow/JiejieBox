@@ -54,6 +54,13 @@ type Adapter struct {
 	history        *urltest.HistoryStorage
 	callbackAccess sync.Mutex
 	callbacks      list.List[adapter.ProviderUpdateCallback]
+	// retired is what a previous apply asked the manager to unlink but could not, because a group
+	// still named it in its published membership. UpdateGroups retries after the callbacks, when the
+	// memberships have been rebuilt; until then the node stays LIVE rather than closed under a
+	// selector that still holds it. The OBJECT is kept, not the tag: the provider's own tag map no
+	// longer contains it by then, and re-resolving the tag would either miss it or find a stranger.
+	retiredAccess sync.Mutex
+	retired       []adapter.Outbound
 
 	link     string
 	enabled  bool
@@ -183,18 +190,50 @@ func (a *Adapter) UnregisterCallback(element *list.Element[adapter.ProviderUpdat
 // and invoked outside it: a callback rebuilds the group's membership and may read the provider's
 // outbounds, which is an RLock on the same provider, and holding the callback list lock while a
 // callback runs would serialise unrelated providers for no reason.
-func (a *Adapter) UpdateGroups() {
+//
+// It returns the callbacks' errors. A group REFUSES a membership that would close a cycle in the
+// published graph, and that refusal is a fact the apply path has to see: a synchronous provider
+// (a local file read at start) turns it into a start failure, exactly like the static cycle the
+// same graph would produce; an asynchronous refresh logs it and keeps the previous members and
+// selection. Swallowing it would make the invalid update look applied.
+func (a *Adapter) UpdateGroups() error {
 	a.callbackAccess.Lock()
 	callbacks := make([]adapter.ProviderUpdateCallback, 0, a.callbacks.Len())
 	for element := a.callbacks.Front(); element != nil; element = element.Next() {
 		callbacks = append(callbacks, element.Value)
 	}
 	a.callbackAccess.Unlock()
+	var updateErr error
 	for _, callback := range callbacks {
 		if err := callback(a.providerTag); err != nil {
 			a.logger.Error("update group: ", err)
+			updateErr = E.Errors(updateErr, err)
 		}
 	}
+	// A removal the previous apply could not finish is retried HERE, after the memberships were
+	// rebuilt. Running it before the callbacks is what closed a node a selector still held: the
+	// group's new member list did not exist yet, so nothing had dropped the reference.
+	a.retryRetired()
+	return updateErr
+}
+
+// retryRetired attempts the removals an earlier apply deferred, and keeps the rest for the next
+// one. It is called with no provider locks held.
+func (a *Adapter) retryRetired() {
+	a.retiredAccess.Lock()
+	retired := a.retired
+	a.retired = nil
+	a.retiredAccess.Unlock()
+	if len(retired) == 0 {
+		return
+	}
+	remaining := a.removeRetiredObjects(retired)
+	if len(remaining) == 0 {
+		return
+	}
+	a.retiredAccess.Lock()
+	a.retired = append(a.retired, remaining...)
+	a.retiredAccess.Unlock()
 }
 
 func (a *Adapter) Close() error {
@@ -218,13 +257,152 @@ func (a *Adapter) Close() error {
 	}
 	var err error
 	for _, ob := range outbounds {
-		if err2 := a.outbound.Remove(ob.Tag()); err2 != nil {
-			err = E.Append(err, err2, func(err error) error {
+		var removeErr error
+		// Teardown ordering: this provider is closed BEFORE the outbound manager and its groups, so
+		// a membership-aware Remove would refuse every node this provider still feeds. Release is
+		// the ordering-aware verb for exactly that moment; see adapter.DynamicOutboundReleaser.
+		if releaser, isReleaser := a.outbound.(adapter.DynamicOutboundReleaser); isReleaser {
+			removeErr = releaser.Release(ob.Tag())
+		} else {
+			removeErr = a.outbound.Remove(ob.Tag())
+		}
+		if removeErr != nil {
+			err = E.Append(err, removeErr, func(err error) error {
 				return E.Cause(err, "close outbound [", ob.Tag(), "]")
 			})
 		}
 	}
 	return err
+}
+
+// CheckDownloadPath refuses a download path that can only be completed by THIS provider's own
+// nodes.
+//
+// # The two shapes the download path can take
+//
+// A remote provider fetches through an HTTP transport that is either
+//
+//  1. an explicit `http_client` (or a deprecated `download_detour`), whose dialer may carry a
+//     `detour`; or
+//  2. the implicit default transport created by the Box, which is built with
+//     `dialer.Options.DefaultOutbound = true` - so its dialer follows `route.final` (the outbound
+//     manager's default). That is the COMMON case, and it is the one that hides the loop best: a
+//     configuration whose `route.final` is the subscription's own selector downloads the
+//     subscription THROUGH that selector, which has no member until the download succeeds.
+//
+// Both are checked here. The loop is not a crash: it is a group that stays empty forever, with a UI
+// that lists it as a configured proxy and a dial path that always refuses. MEASURED through
+// `box.New` + `Start` with `route.final` naming the provider-fed selector:
+//
+//	provider/remote[p]: update outbound provider: download provider document: Get "...": outbound
+//	group g has no available member yet: it is waiting for outbound provider p to publish nodes
+//
+// repeated every refresh interval. The message is a runtime error with no start-time verdict; this
+// check turns it into one.
+//
+// # Why it is conservative
+//
+// Only a group that is EXCLUSIVELY fed by this provider and currently has no member is refused. A
+// group fed by another provider, or holding a static member, may be populated without this
+// provider's first download and is left alone - refusing it would be the false deny this check
+// exists to avoid. A DNS-mediated bootstrap (the provider's own hostname resolved through a DNS
+// server that detours into the same group) is NOT covered: it depends on runtime resolution and is
+// recorded as a known limitation rather than guessed at here.
+func (a *Adapter) CheckDownloadPath(detour string, followsDefaultOutbound bool) error {
+	if a.outbound == nil {
+		return nil
+	}
+	if detour != "" {
+		start, loaded := a.outbound.Outbound(detour)
+		if !loaded {
+			// A missing detour tag is the configuration's own error, reported by the start-time
+			// validation; naming it here as a bootstrap loop would mislead.
+			return nil
+		}
+		return a.checkDownloadChain(start, "detour "+detour)
+	}
+	if !followsDefaultOutbound {
+		// An explicit http_client without a detour dials directly: the download does not depend on
+		// any outbound, so no outbound graph can close a loop through it.
+		return nil
+	}
+	start := a.outbound.Default()
+	if start == nil {
+		return nil
+	}
+	return a.checkDownloadChain(start, "route.final")
+}
+
+// checkDownloadChain walks the dial chain the download would traverse and refuses the first
+// provider-fed empty group this provider alone feeds.
+func (a *Adapter) checkDownloadChain(start adapter.Outbound, path string) error {
+	providerManager := service.FromContext[adapter.ProviderManager](a.ctx)
+	visited := make(map[string]bool)
+	queue := []adapter.Outbound{start}
+	for len(queue) > 0 {
+		object := queue[0]
+		queue = queue[1:]
+		if object == nil || visited[object.Tag()] {
+			continue
+		}
+		visited[object.Tag()] = true
+		group, isGroup := object.(adapter.OutboundGroup)
+		if !isGroup {
+			for _, dependency := range object.Dependencies() {
+				if resolved, loaded := a.outbound.Outbound(dependency); loaded {
+					queue = append(queue, resolved)
+				}
+			}
+			continue
+		}
+		var providerTags []string
+		usesAllProviders := false
+		if backed, isBacked := object.(adapter.ProviderBackedGroup); isBacked {
+			providerTags, usesAllProviders = backed.ProviderMembership()
+		}
+		if len(group.All()) == 0 && fedOnlyByThisProvider(providerTags, usesAllProviders, a.providerTag, providerManager) {
+			return E.New("provider ", a.providerTag, " cannot download through outbound group ", group.Tag(),
+				" (the download path is ", path, "): the group is fed only by this provider and has no ",
+				"member until this provider's first download succeeds, so the download is waiting on ",
+				"itself. Route the download through an http_client whose dialer does not depend on ",
+				"this group, give the group a static member, or take it out of the download path")
+		}
+		// Follow the member the group would actually dial. References() names the committed
+		// selection for a selector/urltest; a group that reports none (a balancing group, or one
+		// before its first publish) is walked across its members, which over-approximates the dial
+		// path rather than missing it.
+		references := []string(nil)
+		if referrer, isReferrer := object.(adapter.Referrer); isReferrer {
+			references = referrer.References()
+		}
+		members := references
+		if len(members) != 1 {
+			members = group.All()
+		}
+		for _, member := range members {
+			if resolved, loaded := a.outbound.Outbound(member); loaded {
+				queue = append(queue, resolved)
+			}
+		}
+	}
+	return nil
+}
+
+// fedOnlyByThisProvider reports whether a provider-fed group can only be populated by self.
+func fedOnlyByThisProvider(providerTags []string, usesAllProviders bool, self string, manager adapter.ProviderManager) bool {
+	if usesAllProviders {
+		// use_all_providers: another configured provider could publish the member this download
+		// needs, so the loop is only certain when this provider is the only one.
+		if manager == nil {
+			return true
+		}
+		count := 0
+		for range manager.Providers() {
+			count++
+		}
+		return count <= 1
+	}
+	return len(providerTags) == 1 && providerTags[0] == self
 }
 
 func (a *Adapter) loopCheck() {
@@ -306,11 +484,15 @@ func (a *Adapter) RewriteDetourForProvider(opts []option.Outbound) {
 
 // removeUseless unlinks the nodes a new subscription no longer names. It runs after the new set is
 // published, so a removal failure cannot affect the nodes that are still serving.
-func (a *Adapter) removeUseless(newTags []string) {
+//
+// It returns the objects it could NOT remove. Those are the ones a group still names in its
+// published membership; UpdateGroups retries them after the group callbacks, which is the only point
+// at which the membership is known to have been rebuilt.
+func (a *Adapter) removeUseless(newTags []string) []adapter.Outbound {
 	a.outboundsAccess.RLock()
 	if len(a.outbounds) == 0 {
 		a.outboundsAccess.RUnlock()
-		return
+		return nil
 	}
 	exists := make(map[string]bool, len(newTags))
 	for _, tag := range newTags {
@@ -330,6 +512,11 @@ func (a *Adapter) removeUseless(newTags []string) {
 			pending = append(pending, ob)
 		}
 	}
+	return a.removeRetiredObjects(pending)
+}
+
+// removeRetiredObjects attempts removals in dependency-safe passes and returns what stayed.
+func (a *Adapter) removeRetiredObjects(pending []adapter.Outbound) []adapter.Outbound {
 	var lastErr error
 	for len(pending) > 0 {
 		var remaining []adapter.Outbound
@@ -342,11 +529,14 @@ func (a *Adapter) removeUseless(newTags []string) {
 			}
 		}
 		if len(remaining) == len(pending) {
-			a.logger.Error(lastErr, "close outbound [", remaining[0].Tag(), "]")
-			return
+			if a.logger != nil && lastErr != nil {
+				a.logger.Error(lastErr, "close outbound [", remaining[0].Tag(), "]")
+			}
+			return remaining
 		}
 		pending = remaining
 	}
+	return nil
 }
 
 // run starts a background worker that is joined by Close. A worker started after Close returns

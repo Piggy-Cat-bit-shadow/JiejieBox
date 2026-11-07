@@ -8,10 +8,16 @@
 | --- | --- |
 | 配置、订阅解析、缓存、更新及组成员 | `go test -count=1 -tags "$windows_tags" ./adapter/provider/... ./provider/... ./protocol/group ./option ./experimental/cachefile` |
 | Box 和 Clash API 集成 | `go test -count=1 -tags "$windows_tags" -run Provider .` |
+| 出站图动态校验（Replace / 组成员发布 / Remove） | `go test -count=1 -tags "$windows_tags" ./adapter/outbound/... ./adapter/provider/... ./protocol/group/...` |
+| 纯 Provider 组作为根与 detour、异步发布、A→B 替换、刷新拒绝、下载引导环 | `go test -count=1 -tags "$windows_tags" -run 'Provider' .` |
+| 启动期 pending 语义（试运行） | `go test -count=1 -tags "$windows_tags" ./common/physicalpath/...` |
+| race（需要 cgo；Windows 用 mingw gcc，Swift clang 不支持 race 需要的 `-mthreads`） | `CGO_ENABLED=1 CC=<mingw-gcc> go test -count=1 -race -tags "$windows_tags" ./common/physicalpath/... ./adapter/outbound/... ./adapter/provider/... ./protocol/group/...` |
 | 生成 schema 与跟踪文件一致 | `go test -count=1 -tags "$server_tags" -run TestTrackedSchemaMatchesTheGenerator ./cmd/sing-box` |
 | 根级示例可加载 | 用 `$server_tags` 构建 `./cmd/sing-box`，对配置参考和扩展示例中的完整根级 JSON 运行 `sing-box check -c <file>` |
 
 `windows_tags` 和 `server_tags` 分别读取 `release/DEFAULT_BUILD_TAGS_WINDOWS` 与 `release/DEFAULT_BUILD_TAGS_OTHERS`。结果覆盖测试用例和示例加载，不代表线上下载、设备行为或 race 检验。
+
+本次修复的局限（未检测 DNS 解析形成的下载引导环、Provider 成员发布时不重跑 TCP/UDP 能力试运行、Clash `/providers/proxies` 仍是桩）见[出站 Provider 模块](modules/outbound-provider.md) 的 2026-11-07 一节。
 
 ## v0.1.39 增量验收（Current delta acceptance）
 

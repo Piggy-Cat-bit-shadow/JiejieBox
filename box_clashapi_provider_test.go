@@ -116,4 +116,22 @@ func TestClashAPIListsProviderNodesAndSelectsThem(t *testing.T) {
 	var selected proxyEntry
 	require.NoError(t, json.Unmarshal(bodyBytes, &selected))
 	require.Equal(t, "air/sg", selected.Now)
+
+	// The provider-management endpoints are STUBS, and the test pins that so a dashboard cannot be
+	// built on an interface the core does not implement. `/proxies` lists provider nodes and selects
+	// them; `/providers/proxies` reports no providers and answers 404 for a named one.
+	response, getErr = client.Get(baseURL + "/providers/proxies")
+	require.NoError(t, getErr)
+	providersBody, readErr := io.ReadAll(response.Body)
+	response.Body.Close()
+	require.NoError(t, readErr)
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	require.JSONEq(t, `{"providers":{}}`, string(providersBody),
+		"the provider-management API is not implemented; it must report an empty set, not our providers")
+
+	response, getErr = client.Get(baseURL + "/providers/proxies/air")
+	require.NoError(t, getErr)
+	response.Body.Close()
+	require.Equal(t, http.StatusNotFound, response.StatusCode,
+		"a named outbound provider must not be addressable through the Clash provider API")
 }

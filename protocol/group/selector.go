@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"regexp"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,6 +35,9 @@ func RegisterSelector(registry *outbound.Registry) {
 var (
 	_ adapter.OutboundGroup = (*Selector)(nil)
 	_ adapter.Referrer      = (*Selector)(nil)
+	// A selector may be fed by outbound providers, so an empty member list before the provider has
+	// published is a WAIT rather than an empty declaration. See adapter.ProviderBackedGroup.
+	_ adapter.ProviderBackedGroup = (*Selector)(nil)
 	// A selector only chooses which member serves a flow: it does not own the dial and adds no
 	// per-flow behaviour of its own, so a chain through it is transparent and it may carry the
 	// fast_path group policy. See adapter.FastPathAuthorizedGroup.
@@ -229,9 +233,23 @@ func (s *Selector) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if err != nil {
 		return err
 	}
-	s.stateAccess.Lock()
-	s.tags, s.outbounds, s.outboundsCache = tags, outboundByTag, cache
-	s.stateAccess.Unlock()
+	// The initial membership is published through the SAME graph validation as a provider update.
+	//
+	// # Why Start is not exempt
+	//
+	// An INLINE provider publishes its nodes during box.New, before the outbound manager starts, so
+	// a selector that names it has a non-empty `All()` at Start. MEASURED: an inline node with
+	// `detour: <this selector>` was accepted - the start-time dry run ran BEFORE this method, when
+	// the member list was still empty, and nothing validated the graph the group was about to
+	// publish. Handing the list to the manager closes that window.
+	err = publishProviderMembership(s.outbound, s.Tag(), tags, func() {
+		s.stateAccess.Lock()
+		s.tags, s.outbounds, s.outboundsCache = tags, outboundByTag, cache
+		s.stateAccess.Unlock()
+	})
+	if err != nil {
+		return err
+	}
 	// The preference evidence is recorded against the FULL member set, provider nodes included:
 	// a stored member that names a provider node is legal the moment the provider publishes it.
 	if preference := s.preferenceRecord(tags); preference != nil {
@@ -266,7 +284,12 @@ func (s *Selector) resolveProviders() error {
 			providerTags = append(providerTags, provider.Tag())
 			s.providers[provider.Tag()] = provider
 		}
+		// The resolved list is what ProviderMembership publishes, and that getter must be safe to
+		// call from a diagnostic path while the Box is running: it takes stateAccess, so the write
+		// is published under the same lock.
+		s.stateAccess.Lock()
 		s.providerTags = providerTags
+		s.stateAccess.Unlock()
 		return nil
 	}
 	for i, tag := range s.providerTags {
@@ -354,12 +377,22 @@ func (s *Selector) onProviderUpdated(tag string) error {
 		s.providerAccess.Unlock()
 		return err
 	}
-	s.stateAccess.Lock()
-	previous := s.selected.Swap(selected)
-	s.tags, s.outbounds, s.outboundsCache = tags, outboundByTag, cache
-	s.stateAccess.Unlock()
+	// The prospective membership is validated before it is published: a provider update that would
+	// close a recursion is refused here, and the previous members AND selection stay in place.
+	var changed bool
+	publishErr := publishProviderMembership(s.outbound, s.Tag(), tags, func() {
+		s.stateAccess.Lock()
+		previous := s.selected.Swap(selected)
+		s.tags, s.outbounds, s.outboundsCache = tags, outboundByTag, cache
+		s.stateAccess.Unlock()
+		changed = previous != selected
+	})
+	if publishErr != nil {
+		s.providerAccess.Unlock()
+		return publishErr
+	}
 	s.providerAccess.Unlock()
-	if previous != selected {
+	if changed {
 		s.interruptGroup.Interrupt(s.interruptExternalConnections)
 		if s.history != nil {
 			s.history.NotifyUpdated()
@@ -433,6 +466,18 @@ func (s *Selector) References() []string {
 		return nil
 	}
 	return []string{selected.Tag()}
+}
+
+// ProviderMembership implements adapter.ProviderBackedGroup.
+//
+// It reports the provider feed as a fact about the GROUP, which is what the read-only walk needs to
+// tell "waiting for a provider" apart from "declared empty". It reads configuration state only: no
+// member is selected, no callback is registered, and the answer does not change once Start has
+// resolved `use_all_providers`.
+func (s *Selector) ProviderMembership() ([]string, bool) {
+	s.stateAccess.RLock()
+	defer s.stateAccess.RUnlock()
+	return slices.Clone(s.providerTags), s.useAllProviders
 }
 
 // SelectionStatus reports which of the four states this selector is in, with the evidence for the
@@ -544,9 +589,21 @@ func (s *Selector) SelectOutbound(tag string) bool {
 // currentMember returns the committed member, or an error naming the group when nothing has been
 // committed yet. A provider-only selector starts empty when its provider has no cache, and that
 // state must fail the dial with an explanation rather than a nil dereference.
+//
+// The message names the provider feed when there is one: "has no available member yet" alone reads
+// like a broken group, while the real state may be "the subscription has not been downloaded yet".
+// The two need different actions from the operator, and the group knows which it is.
 func (s *Selector) currentMember() (adapter.Outbound, error) {
 	member := s.selected.Load()
 	if member == nil {
+		providerTags, usesAllProviders := s.ProviderMembership()
+		switch {
+		case len(providerTags) > 0:
+			return nil, E.New("outbound group ", s.Tag(), " has no available member yet: it is waiting for outbound provider ",
+				strings.Join(providerTags, ", "), " to publish nodes")
+		case usesAllProviders:
+			return nil, E.New("outbound group ", s.Tag(), " has no available member yet: it is waiting for the configured outbound providers to publish nodes")
+		}
 		return nil, E.New("outbound group ", s.Tag(), " has no available member yet")
 	}
 	return member, nil

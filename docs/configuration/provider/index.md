@@ -96,8 +96,19 @@ and disappears when that is disabled. With `path`, the cache is replaced by writ
 in the same directory and renaming it, so an interrupted write leaves the previous document intact.
 
 A provider that has no cache and cannot reach its URL at start starts with zero nodes; its groups
-report "no available member" on the dial path until a download succeeds, and the first download is
-retried on the update interval.
+report a wait that names the provider on the dial path
+(`... has no available member yet: it is waiting for outbound provider <tag> to publish nodes`) until
+a download succeeds, and the first download is retried on the update interval.
+
+The download path itself must not depend on nodes that cannot exist before it. With no
+`http_client`, the provider uses the implicit default HTTP client the Box creates, whose dialer
+follows `route.final`; an explicit `http_client.detour` or the deprecated `download_detour` follows
+that outbound instead. If the path reaches only a group fed by this provider and that group has no
+member, the first download waits on its own nodes: the provider refuses the start with an error
+naming the group and the path, instead of leaving a group that stays empty forever and fails every
+refresh in the log. A static member, another provider's nodes, or a restored cache/`initial_path`
+removes the loop. A bootstrap closed only through DNS resolution (the provider's hostname resolved by
+a DNS server whose detour enters that group) is not detected yet.
 
 The download is asynchronous: `sing-box` never blocks the start of the Box on a subscription URL.
 One request is bounded by a 30 second timeout (including reading the body) and a 10 MiB document
@@ -205,7 +216,10 @@ reorders or reformats entries does not disturb traffic.
 A replaced node's previous object is closed after the swap, so connections that were using it are
 interrupted; only unchanged nodes keep their connections across a refresh. A node dropped from the
 document is closed when it is removed, for the same reason: there is no object left for a new
-connection to resolve.
+connection to resolve. If a group still publishes that node as a member, it stays alive until the
+group's membership rebuild completes and is closed only then - never under a group that can still
+dial it. When the membership rebuild is refused by the graph validation, the node stays alive and
+keeps serving the previous valid selection.
 
 `update_interval` is the minimum spacing between downloads. A manual refresh is not exposed through
 the Clash API in this version; the provider refreshes on its own schedule.
@@ -217,5 +231,10 @@ the Clash API in this version; the provider refreshes on its own schedule.
 - A provider node is addressed by its rendered tag, so `default` and the Clash API see
   `airport/hk-01` exactly as the configuration does.
 - A selector tries a valid saved selection, a surviving current selection on refresh, the explicit default, then the first member. A missing explicit default is an error. For a provider-only group that starts empty, omit the default or add a static default member.
-- A group with no members yet and no missing explicit default starts successfully and fails
-  the dial with a message naming the group, rather than silently selecting an unconfigured node.
+- A group with no members yet and no missing explicit default starts successfully - including when it
+  is another outbound's `detour` target: the start-time physical-path validation reports the route as
+  pending rather than as a route that never reaches its far end. The dial fails with a message naming
+  the group and the provider it waits for, rather than silently selecting an unconfigured node.
+- A dynamic node publication or a group membership change is validated against the final graph
+  before anything becomes selectable. An update that would close a cycle is refused, and the previous
+  members and selection stay in place.

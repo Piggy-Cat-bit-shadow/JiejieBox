@@ -204,6 +204,43 @@ type OutboundGroup interface {
 	AttachConnection(closer io.Closer) (detach func())
 }
 
+// ProviderBackedGroup is a group whose membership can be extended AFTER Start by outbound providers.
+//
+// # Why an empty group is not always a broken group
+//
+// A provider that downloads its document (remote) or reads its file in its own start stage (local)
+// has published nothing at the moment the outbound manager runs its start-time dry run: providers
+// start after the outbound manager, and a remote download must never block a Box start. So a group
+// whose only member source is a provider is legitimately EMPTY during that dry run, and the nodes
+// arrive later through the provider's callback.
+//
+// Without this capability the dry run cannot tell that state apart from a permanent one: a static
+// outbound dialling through a group that materialises no member is a route that never reaches its
+// far end, and that is fatal. The distinction is a property of the GROUP - whether a later publish
+// can populate it - so it is published by the group rather than guessed from options by the walk.
+//
+// # What it does NOT say
+//
+// It does not promise that members will arrive, and it is not read by the dependency sort: the
+// declared `outbounds` edges stay the sort's business. It only tells a read-only walk that "no
+// member yet" is a WAIT rather than an empty declaration, so the walk reports the route as pending
+// instead of fabricating a structural failure. The dial path still refuses a flow with a named
+// error until a member exists.
+//
+// The provider feed is also what makes the group part of a BOOTSTRAP question: a provider whose own
+// download is routed through a group this provider feeds can never perform its first download. The
+// tags published here are what lets that be diagnosed instead of silently dead.
+type ProviderBackedGroup interface {
+	OutboundGroup
+
+	// ProviderMembership reports which providers may add members to this group: the explicitly
+	// named provider tags, and whether `use_all_providers` was set.
+	//
+	// It is a read of configuration state and must be safe to call while the Box is running: a
+	// diagnostics path may read it concurrently with a provider update.
+	ProviderMembership() (providerTags []string, usesAllProviders bool)
+}
+
 type URLTestGroup interface {
 	OutboundGroup
 	URLTest(ctx context.Context) (map[string]uint16, error)

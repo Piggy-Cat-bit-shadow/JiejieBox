@@ -126,8 +126,10 @@ func (s *ProviderLocal) StartContext(ctx context.Context, startContext *adapter.
 			}
 		}
 	}
-	s.UpdateGroups()
-	return nil
+	// A membership the graph validator refused is a START failure for a synchronous provider: the
+	// same final graph written statically is refused at start, and letting it through here would
+	// make the verdict depend on where the node was declared.
+	return s.UpdateGroups()
 }
 
 func (s *ProviderLocal) UpdatedAt() time.Time {
@@ -164,9 +166,15 @@ func (s *ProviderLocal) reloadFile(path string) error {
 		return err
 	}
 	updateErr := s.UpdateNodes(outboundOpts)
-	s.UpdateGroups()
+	groupErr := s.UpdateGroups()
 	if updateErr != nil {
 		return updateErr
+	}
+	if groupErr != nil {
+		// The document was parsed and its nodes were installed, but a group refused the membership
+		// the update would have created. The group kept its previous members and selection; the
+		// caller still needs the refusal, because it is the reason the update did not take effect.
+		return groupErr
 	}
 	s.lastUpdated = fileInfo.ModTime()
 	s.lastOutOpts = outboundOpts

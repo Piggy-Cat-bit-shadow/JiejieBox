@@ -190,14 +190,35 @@ func NewProviderRemote(ctx context.Context, router adapter.Router, logFactory lo
 
 func (s *ProviderRemote) StartContext(ctx context.Context, startContext *adapter.HTTPStartContext) error {
 	s.cacheFile = service.FromContext[adapter.CacheFile](s.ctx)
+	restored := false
 	loadedFromCache, err := s.loadCacheFile()
 	if err != nil {
 		s.logger.Warn(E.Cause(err, "restore cached outbound provider, will refetch"))
+	}
+	if loadedFromCache {
+		restored = true
 	}
 	if !loadedFromCache && s.initialPath != "" {
 		err = s.loadInitialPath()
 		if err != nil {
 			s.logger.Warn(E.Cause(err, "load initial outbound provider from ", s.initialPath))
+		} else {
+			restored = true
+		}
+	}
+	// A download routed through a group this provider itself feeds can never complete its first
+	// fetch: the group has no member until the fetch publishes one. Refuse the configuration with a
+	// message naming the loop, instead of leaving a group that is permanently empty. A restored
+	// document already populated the group, so the check is only about the bootstrap case.
+	//
+	// The implicit default transport follows `route.final` (dialer.Options.DefaultOutbound), so it
+	// is part of the download path even when the provider configures no http_client at all - the
+	// common shape where `route.final` is the subscription's own group.
+	if !restored {
+		detour := s.downloadDetourTag()
+		followsDefaultOutbound := detour == "" && (s.httpClientOptions == nil || s.httpClientOptions.IsEmpty())
+		if err = s.Adapter.CheckDownloadPath(detour, followsDefaultOutbound); err != nil {
+			return err
 		}
 	}
 	transport, err := s.resolveTransport()
@@ -218,13 +239,31 @@ func (s *ProviderRemote) StartContext(ctx context.Context, startContext *adapter
 	// Publish the nodes the cache produced. Groups registered their callbacks at their own Start,
 	// which runs BEFORE this provider start (the outbound manager starts first), so this is the
 	// notification that gives them their initial provider membership.
-	s.UpdateGroups()
+	//
+	// The returned error is the graph validator refusing a membership. A cached document is
+	// untrusted input, and a refusal here is the same defect a fresh download would hit; the Box
+	// must not start with a group the validator has already proven recursive.
+	if err = s.UpdateGroups(); err != nil {
+		return err
+	}
 	// A provider with no cache performs its first download inside loopUpdate on its own goroutine:
 	// a Box start must not block on a subscription URL, because the device may be offline, the
 	// airport behind a captive portal, or the URL slow. Until that download completes, a
 	// provider-only group has no members and its dials fail with a clear error rather than the
 	// whole Box failing to start.
 	return nil
+}
+
+// downloadDetourTag reports the outbound the download's dialer is configured to detour through.
+//
+// The two sources are mutually exclusive at resolveTransport time (a deprecated `download_detour`
+// alongside an explicit http_client is refused there), so reading the effective one here cannot
+// disagree with the transport that will be built.
+func (s *ProviderRemote) downloadDetourTag() string {
+	if s.httpClientOptions != nil && !s.httpClientOptions.IsEmpty() {
+		return s.httpClientOptions.DialerOptions.Detour
+	}
+	return s.downloadDetour
 }
 
 func (s *ProviderRemote) Update() error {
@@ -598,7 +637,10 @@ func (s *ProviderRemote) updateProviderFromContent(content string) error {
 		return (s.exclude == nil || !s.exclude.MatchString(it.Tag)) && (s.include == nil || s.include.MatchString(it.Tag))
 	})
 	updateErr := s.UpdateNodes(outboundOpts)
-	s.UpdateGroups()
+	// The callbacks may refuse the membership the update would create (a cycle in the published
+	// graph). Reporting that is what keeps a refresh honest: the nodes are installed, but the
+	// group kept its previous members and selection, so the document was NOT applied as written.
+	groupErr := s.UpdateGroups()
 	// Record the applied document even when a node failed to construct: the published set already
 	// reflects this document (the failed tag keeps its previous object), and a later 304 must not
 	// rewrite the cache from the PREVIOUS document.
@@ -606,7 +648,7 @@ func (s *ProviderRemote) updateProviderFromContent(content string) error {
 	if updateErr != nil {
 		return updateErr
 	}
-	return nil
+	return groupErr
 }
 
 // redactedURL keeps the address of a subscription URL and removes what makes it a credential: the

@@ -52,6 +52,28 @@ func (c *providerUpdateCheckScheduler) Schedule(check func()) {
 	}()
 }
 
+// publishProviderMembership hands a prospective member list to the outbound manager's graph
+// validation and runs commit only when the resulting graph is acyclic.
+//
+// # Why the group does not commit first
+//
+// A group's membership IS a set of dependency edges. Publishing it before the graph is validated is
+// what let a provider node with `detour: <this group>` become selectable and recurse on the first
+// dial: the node existed, the membership was published, and no check ever walked the union. The
+// manager owns that union (and the DNS transports that can close a cross-kind loop), so the group
+// asks it to validate the prospective graph and to run the swap while no other publication can
+// interleave.
+//
+// A manager that does not implement adapter.GroupMembershipPublisher - a test double, an embedder
+// without a dynamic namespace - keeps the previous behaviour exactly: the group commits unchanged.
+func publishProviderMembership(manager adapter.OutboundManager, groupTag string, members []string, commit func()) error {
+	if publisher, isPublisher := manager.(adapter.GroupMembershipPublisher); isPublisher {
+		return publisher.UpdateGroupMembership(groupTag, members, commit)
+	}
+	commit()
+	return nil
+}
+
 // collectProviderOutbounds rebuilds a group's member list: the declared static tags first, then the
 // nodes of every provider the group names, filtered by include/exclude.
 //

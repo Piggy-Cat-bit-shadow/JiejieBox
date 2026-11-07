@@ -2,7 +2,11 @@
 
 ## 出站 Provider 约束（Outbound provider invariants）
 
-订阅只能影响其出站命名空间。无有效节点的文档不能清空已发布节点，Provider 不能夺取静态出站标签。动态替换必须先启动新对象，依赖仍被引用的对象保留其所有权记录。单节点应用失败允许部分更新，不能把整批刷新描述为原子事务。当前标签、探测及缓存边界见[出站 Provider 模块](modules/outbound-provider.md)，复验见[验收索引](ACCEPTANCE.md#出站-provider)。
+订阅只能影响其出站命名空间。无有效节点的文档不能清空已发布节点，Provider 不能夺取静态出站标签。动态替换必须先启动新对象，依赖仍被引用的对象保留其所有权记录。单节点应用失败允许部分更新，不能把整批刷新描述为原子事务。
+
+动态发布必须在对外可选之前校验最终图：节点替换、组的成员发布和移除共用同一套环检查（声明依赖 ∪ 已发布成员 ∪ references），无效更新保留上一份有效节点与选择，且不得形成递归拨号。移除只在没有对象仍引用该标签时发生（声明依赖、组已发布成员、DNS transport 的 detour/resolver）；组件拆除期走单独的 `Release`，因为 provider 先于组关闭。Provider 的下载路径如果只能经其自身尚未发布的节点完成，无缓存时必须在启动拒绝并给出点名该组与路径的诊断。
+
+当前标签、探测及缓存边界见[出站 Provider 模块](modules/outbound-provider.md)，复验见[验收索引](ACCEPTANCE.md#出站-provider)。
 
 ## v0.1.39 增量约束（Delta invariants）
 

@@ -146,6 +146,16 @@ func (m *Manager) ValidateCrossKindCycles(transports []adapter.DNSTransport) err
 	for _, transport := range transports {
 		transportsByTag[transport.Tag()] = transport
 	}
+	// Record the DNS half of the graph BEFORE the early return: a provider that publishes a node
+	// after this call still has to be validated against these transports. Without the record a
+	// late node can close dns -> outbound -> dns and no later check can see the DNS end of it.
+	if m != nil {
+		stored := make([]adapter.DNSTransport, len(transports))
+		copy(stored, transports)
+		m.access.Lock()
+		m.dnsTransports = stored
+		m.access.Unlock()
+	}
 	if len(transportsByTag) == 0 {
 		return nil
 	}
@@ -213,6 +223,10 @@ type crossKindGraph struct {
 	// readsDefaultResolver reports whether this tag would actually consult the network-wide default.
 	// An object whose server is a literal builds no ResolveDialer and therefore never reads it.
 	readsDefaultResolver func(tag string) bool
+	// memberOverrides carries the membership a group is ABOUT to publish. A validation that runs
+	// before the publication must describe the prospective graph, or the closing edge is invisible:
+	// that is exactly the provider-node cycle this file and graph.go exist to refuse.
+	memberOverrides map[string][]string
 }
 
 // known reports whether the edge target exists. A missing tag is not this check's business: the
@@ -255,6 +269,28 @@ func (g *crossKindGraph) edges(node crossKindNode) []crossKindNode {
 		// nested selector is exactly this edge, which is why a cycle through one is found here.
 		for _, dependency := range dependencies {
 			edges = append(edges, crossKindNode{kind: crossKindOutbound, tag: dependency})
+		}
+		// The PUBLISHED half of a group's edges. `Dependencies()` is only the tags the group
+		// declared in its options; a selector fed by an outbound provider lists the provider's
+		// nodes in All() without declaring them, and a provider node detouring back into that
+		// selector closes a cycle the declared edge set cannot show.
+		//
+		// An override REPLACES All() and References(): it is the membership the group is about to
+		// publish, together with the selection that goes with it, so the old selection is not an
+		// edge of the graph that commit will create.
+		if override, overridden := g.memberOverrides[node.tag]; overridden {
+			for _, member := range override {
+				edges = append(edges, crossKindNode{kind: crossKindOutbound, tag: member})
+			}
+		} else if group, isGroup := outbound.(adapter.OutboundGroup); isGroup {
+			for _, member := range group.All() {
+				edges = append(edges, crossKindNode{kind: crossKindOutbound, tag: member})
+			}
+			if referrer, isReferrer := outbound.(adapter.Referrer); isReferrer {
+				for _, reference := range referrer.References() {
+					edges = append(edges, crossKindNode{kind: crossKindOutbound, tag: reference})
+				}
+			}
 		}
 		// The object's OWN resolver, read from the ADAPTER it is.
 		//

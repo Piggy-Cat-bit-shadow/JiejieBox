@@ -217,6 +217,25 @@ detour 标签仍然致命。
 `adapter/outbound/manager.go:170-188`：如果 `route.final` 为空，就会**创建**一个 `direct`
 fallback 对象。这是这条路径上唯一的构造。
 
+### Provider 供应的空组：pending，而不是结构失败（2026-11-07）
+
+**VERIFIED_SOURCE / VERIFIED_UNIT。** 试运行早于 provider 组件的 Start，因此 local/remote
+Provider 的节点在试运行期间还没有发布。一个组如果实现了 `adapter.ProviderBackedGroup`
+（`ProviderMembership() (tags, usesAll)`，selector/urltest 都实现），并且当前没有任何成员，
+那么它作为依赖时**不再**被当成“永远到不了远端”：
+
+* `leaves.go` 的组分支返回新的 `routeDeferred`，`Hops` 不为这条路由编号（不声称 packet order，
+  也不设 `Exit`）。
+* `Report` 新增 `Pending []PendingRoute`；`ValidateRoots` 在“没有 exit 且没有其它 truncation”
+  时记录 pending。`Report.Err()` 仍是启动裁决，**不**因 pending 而失败；`Report.Reachable()`
+  变成“没有 failure 且没有 pending”，因为 pending 路由没有任何已验证的叶子。
+* 没有 provider 供应、且没有成员的空组保持原来的致命判定。带 provider 但存在真实缺失成员的组，
+  仍然先报成员存在性失败——deferral 只覆盖“还没有发布”，不覆盖“永远解析不了”。
+
+等待期的拨号仍必须给出可理解的错误：selector/urltest 的空组错误会点名所等的 Provider
+（`... waiting for outbound provider <tag> to publish nodes`）。Provider 发布成员后，成员会在
+对外可选之前接受图校验（见 §6），因此“先 pending、后可用”的两段行为都有测试。
+
 ---
 
 ## 3. `common/routeflow` —— 可证明的需求（provable demand）
@@ -348,6 +367,23 @@ fixture 只断言 Start 成功，不声称任何证明。不要复活旧的“�
 环检测复用**既有的**图（声明的成员关系 ∪ `adapter.Referrer.References`），也就是
 `cross_kind_cycle.go` 在启动时校验的那组边。遍历自己的下降过程*就是*环记录，正是
 `route.resolveOutbound` 已经采用的结构。实现没有引入第二张图；后续修改应保持这一设计。
+
+### 动态发布的图校验（Dynamic publication, 2026-11-07）
+
+**VERIFIED_SOURCE / VERIFIED_UNIT / VERIFIED_INTEGRATION。** 启动期的两张校验都看不到 Provider
+在 Start 之后才发布的边，因此运行期的三条发布路径现在共用 `adapter/outbound/graph.go` 的校验：
+
+| 发布路径 | 校验内容 | 拒绝后的状态 |
+| --- | --- | --- |
+| `Manager.Replace`（provider 节点安装/替换） | 当前图 + 候选对象，边 = `Dependencies() ∪ All() ∪ References()`，再加跨 DNS/出站图 | 释放新对象，旧节点保持发布且不关闭 |
+| `GroupMembershipPublisher.UpdateGroupMembership`（selector/urltest Start 与 provider 回调） | 把该组的成员替换为**即将发布**的列表后的图；提交在同一把 `graphAccess` 内完成 | 组保留上一份成员与选择，错误返回给 apply 路径 |
+| `Manager.Remove` | 依赖扫描含声明依赖、组已发布成员、DNS transport 的 detour/resolver | 拒绝移除；provider 记录并在组成员重建后重试 |
+
+`crossKindGraph` 的出站侧边集现在也读组已发布成员，`ValidateCrossKindCycles` 会把 transports
+保存在 outbound manager 上，供后续动态发布复用。静态配置的判定仍由 `lintOutbounds` 拥有；动态
+拒绝沿用同样的 `circular outbound dependency` 措辞。选择不是边：一个组的成员列表就是它可以被
+切换到的全部对象，所以“当前选中成员不参与环”不能作为接受理由——这与静态排序对所有声明成员
+一致。
 
 `default_domain_resolver` 被建模成一条图的边（`box.go:616-618`：`SetDefaultDomainResolver`
 安装一个**闭包**，所以答案始终实时）。无条件计入它，曾是一次**实测的误拒绝**

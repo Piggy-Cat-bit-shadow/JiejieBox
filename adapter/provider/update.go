@@ -149,7 +149,13 @@ func (a *Adapter) UpdateNodes(outOpts []option.Outbound) error {
 		a.appliedOutbounds[node.tag] = *node.outbound
 		outByTag[node.tag] = current
 	}
-	a.removeUseless(outTags)
+	// Remember what could not be unlinked. A group that still names a retired node keeps it LIVE:
+	// closing it under the selector that may still dial it is the defect this hand-off removes.
+	// UpdateGroups retries after the callbacks have rebuilt the memberships.
+	retired := a.removeUseless(outTags)
+	a.retiredAccess.Lock()
+	a.retired = retired
+	a.retiredAccess.Unlock()
 	var outbounds []adapter.Outbound
 	for _, tag := range outTags {
 		if node := outByTag[tag]; node != nil {

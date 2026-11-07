@@ -58,11 +58,12 @@ func (o *stubOutbound) Close() error {
 	return nil
 }
 
-// installOutbound puts an outbound into the manager the way startup does.
+// installOutbound puts an outbound into the manager the way startup does. It publishes a NEW slice,
+// like every runtime mutation, so a reader holding the previous header never sees this write.
 func installOutbound(t *testing.T, manager *Manager, outbound adapter.Outbound) {
 	t.Helper()
 	manager.access.Lock()
-	manager.outbounds = append(manager.outbounds, outbound)
+	manager.outbounds = appendOutbound(manager.outbounds, outbound)
 	manager.outboundByTag[outbound.Tag()] = outbound
 	manager.access.Unlock()
 }

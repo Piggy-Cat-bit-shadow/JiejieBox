@@ -8,6 +8,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -40,6 +41,9 @@ var (
 	_ adapter.InterfaceUpdateListener = (*URLTest)(nil)
 	_ adapter.Referrer                = (*URLTest)(nil)
 	_ D.ParallelNetworkDialer         = (*URLTest)(nil)
+	// A urltest may be fed by outbound providers: an empty member list before the provider has
+	// published is a WAIT, not an empty declaration. See adapter.ProviderBackedGroup.
+	_ adapter.ProviderBackedGroup = (*URLTest)(nil)
 	// Like a selector, a urltest only chooses which member serves a flow - the delay probes it runs
 	// in the background dial the members directly and never pass through the router, so they cannot
 	// inherit a business flow's policy. See adapter.FastPathAuthorizedGroup.
@@ -152,20 +156,42 @@ func (s *URLTest) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		if err != nil {
 			return err
 		}
-		s.lifecycleAccess.Lock()
-		if s.closed {
+		// Publish the initial membership through the manager's graph validation, exactly like a
+		// provider update: an inline provider has already published nodes by the time this Start
+		// runs, and a node detouring back into this group would otherwise be selected here without
+		// the cycle ever being walked. See publishProviderMembership.
+		var (
+			previous  *URLTestGroup
+			commitErr error
+		)
+		publishErr := publishProviderMembership(s.outbound, s.Tag(), tags, func() {
+			s.lifecycleAccess.Lock()
+			if s.closed {
+				s.lifecycleAccess.Unlock()
+				commitErr = os.ErrClosed
+				return
+			}
+			// Detach the previous group before replacing it, and close it OUTSIDE the lock (below):
+			// Close runs an arbitrary lifecycle callback (unregister pause callbacks, stop the
+			// ticker), so holding the lock across it would risk a deadlock.
+			previous = s.group.Swap(group)
+			s.lifecycleScope = scope
 			s.lifecycleAccess.Unlock()
+			s.stateAccess.Lock()
+			s.tags, s.outboundsCache = tags, cache
+			s.stateAccess.Unlock()
+		})
+		if publishErr == nil {
+			publishErr = commitErr
+		}
+		if publishErr != nil {
+			// The prospective membership was refused (or the wrapper is closing): release the group
+			// that was built for it and leave the previous state exactly as it was.
 			if group != nil {
 				_ = group.Close()
 			}
-			return os.ErrClosed
+			return publishErr
 		}
-		// Detach the previous group before replacing it, and close it OUTSIDE the lock: Close runs
-		// an arbitrary lifecycle callback (unregister pause callbacks, stop the ticker), so holding
-		// the lock across it would risk a deadlock.
-		previous := s.group.Swap(group)
-		s.lifecycleScope = scope
-		s.lifecycleAccess.Unlock()
 		if previous != nil {
 			_ = previous.Close()
 		}
@@ -180,9 +206,6 @@ func (s *URLTest) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 				return nil
 			})
 		}
-		s.stateAccess.Lock()
-		s.tags, s.outboundsCache = tags, cache
-		s.stateAccess.Unlock()
 		for _, providerTag := range s.providerTags {
 			provider := s.providers[providerTag]
 			element := provider.RegisterCallback(s.onProviderUpdated)
@@ -214,7 +237,11 @@ func (s *URLTest) resolveProviders() error {
 			providerTags = append(providerTags, provider.Tag())
 			s.providers[provider.Tag()] = provider
 		}
+		// The resolved list is what ProviderMembership publishes; the write goes under stateAccess
+		// so a diagnostics read cannot race it. See the matching comment in selector.go.
+		s.stateAccess.Lock()
 		s.providerTags = providerTags
+		s.stateAccess.Unlock()
 		return nil
 	}
 	for i, tag := range s.providerTags {
@@ -255,18 +282,40 @@ func (s *URLTest) onProviderUpdated(tag string) error {
 		s.providerAccess.Unlock()
 		return err
 	}
-	s.lifecycleAccess.Lock()
-	if s.closed {
+	// Validate the prospective membership BEFORE the generation is swapped. A provider update whose
+	// node detours back into this group closes a recursion; refusing it here keeps the previous
+	// members, the previous probe generation and its selection exactly as they were.
+	var (
+		previous  *URLTestGroup
+		started   bool
+		scope     *adapter.Scope
+		commitErr error
+	)
+	publishErr := publishProviderMembership(s.outbound, s.Tag(), tags, func() {
+		s.lifecycleAccess.Lock()
+		if s.closed {
+			s.lifecycleAccess.Unlock()
+			commitErr = os.ErrClosed
+			return
+		}
+		previous = s.group.Swap(group)
+		started = s.started
+		scope = s.lifecycleScope
 		s.lifecycleAccess.Unlock()
+		s.stateAccess.Lock()
+		s.tags, s.outboundsCache = tags, cache
+		s.stateAccess.Unlock()
+	})
+	if publishErr == nil {
+		publishErr = commitErr
+	}
+	if publishErr != nil {
 		if group != nil {
 			_ = group.Close()
 		}
-		return os.ErrClosed
+		s.providerAccess.Unlock()
+		return publishErr
 	}
-	previous := s.group.Swap(group)
-	started := s.started
-	scope := s.lifecycleScope
-	s.lifecycleAccess.Unlock()
 	if scope != nil && group != nil {
 		scope.Add(group.Close)
 	}
@@ -276,9 +325,6 @@ func (s *URLTest) onProviderUpdated(tag string) error {
 	if group != nil && started {
 		group.PostStart()
 	}
-	s.stateAccess.Lock()
-	s.tags, s.outboundsCache = tags, cache
-	s.stateAccess.Unlock()
 	s.providerAccess.Unlock()
 	return nil
 }
@@ -325,6 +371,13 @@ func (s *URLTest) All() []string {
 	return slices.Clone(s.tags)
 }
 
+// ProviderMembership implements adapter.ProviderBackedGroup; see the matching method in selector.go.
+func (s *URLTest) ProviderMembership() ([]string, bool) {
+	s.stateAccess.RLock()
+	defer s.stateAccess.RUnlock()
+	return slices.Clone(s.providerTags), s.useAllProviders
+}
+
 // noGroupError explains a dial that has no group to send through. It distinguishes a closed wrapper
 // from a group whose provider has not published a node yet, because the two need different actions.
 func (s *URLTest) noGroupError() error {
@@ -333,6 +386,14 @@ func (s *URLTest) noGroupError() error {
 	s.lifecycleAccess.Unlock()
 	if closed {
 		return os.ErrClosed
+	}
+	providerTags, usesAllProviders := s.ProviderMembership()
+	switch {
+	case len(providerTags) > 0:
+		return E.New("outbound group ", s.Tag(), " has no available member yet: it is waiting for outbound provider ",
+			strings.Join(providerTags, ", "), " to publish nodes")
+	case usesAllProviders:
+		return E.New("outbound group ", s.Tag(), " has no available member yet: it is waiting for the configured outbound providers to publish nodes")
 	}
 	return E.New("outbound group ", s.Tag(), " has no available member yet")
 }

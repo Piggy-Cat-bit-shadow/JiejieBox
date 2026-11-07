@@ -128,12 +128,43 @@ Test coverage added or adapted:
 - `experimental/cachefile`: the subscription bucket round-trips nodes, ETag and URL hash across a
   reopen; `adapter.SavedBinary` refuses unknown record versions.
 
-Not covered by a test: a live HTTP subscription download inside a Box (the remote provider is unit
-tested, and the proxy manager path it uses is covered by the dynamic-update suite). Real device
-traffic through a provider node is `BLOCKED_BY_ENVIRONMENT` here. The race detector is also
-`BLOCKED_BY_ENVIRONMENT`: this host has no C toolchain, so `go test -race` cannot run; concurrency is
-covered by targeted interleaving tests (close during download, repeated close, update versus close)
-and by the absence of shared mutable state between providers.
+At the time of the port: not covered by a test was a live HTTP subscription download inside a Box
+(the remote provider is unit tested, and the proxy manager path it uses is covered by the
+dynamic-update suite). Real device traffic through a provider node is `BLOCKED_BY_ENVIRONMENT` here.
+The race detector was also `BLOCKED_BY_ENVIRONMENT`: this host had no C toolchain, so `go test
+-race` could not run; concurrency was covered by targeted interleaving tests (close during download,
+repeated close, update versus close) and by the absence of shared mutable state between providers.
+The 2026-11-07 record below supersedes both statements.
+
+## 2026-11-07 修复记录（graph readiness and dynamic validation）
+
+v0.1.43 正式内核上复现并修复了两个跨模块缺陷，并补齐了它们暴露的发布顺序问题。详细语义、证据级别
+与限制以 [KNOWLEDGE/modules/outbound-provider.md](../../KNOWLEDGE/modules/outbound-provider.md)
+的 2026-11-07 一节为准；这里只记录改了什么。
+
+- **纯 Provider 组作为 detour 目标不再被判成断链。** `common/physicalpath` 新增
+  `ProviderBackedGroup` 能力与 `routeDeferred`/`Report.Pending`：试运行早于 Provider Start，
+  因此“Provider 还没发布”是 pending，不是 `FailureStructure`；没有 Provider 供应的空组仍然致命。
+  等待期拨号点名所等的 Provider。
+- **动态发布/组成员变更先校验最终图。** `adapter/outbound` 新增 `graph.go`：`Replace`、
+  组发布的 `UpdateGroupMembership`、`Remove` 共用同一套环检查（声明依赖 ∪ 已发布成员 ∪
+  references，外加跨 DNS/出站图）。拒绝时保留上一份有效成员与选择；并发发布由 `graphAccess`
+  串行化。
+- **移除不再关闭组仍在使用的节点。** `Remove` 的依赖扫描包含组已发布成员和 DNS transport 引用；
+  provider 记住被拒的移除，在组成员重建后重试。组件拆除期走 `DynamicOutboundReleaser.Release`，
+  因为 provider 先于组关闭。顺带修复了 `Outbounds()` 暴露可变切片导致的 teardown 数据竞争
+  （改为 copy-on-write 发布）。
+- **下载引导环给出诊断。** 未配置 `http_client` 时，隐式默认 HTTP 客户端跟随 `route.final`；
+  显式 detour 跟随该出站。无缓存/`initial_path` 且路径只经过“仅由本 Provider 供应且无成员”的组时，
+  启动拒绝并点名组与路径。
+- **修正一处误导性测试。** `TestGroupWithProviderOnlyStartsWithoutMembers` 更名为
+  `TestGroupNamingAnUndeclaredProviderIsRefused`（它断言的是未声明 Provider 的启动失败）；合法
+  空组的用例移到 `box_provider_lifecycle_test.go`。
+
+上面两段“未覆盖/环境阻塞”的描述在该轮已更新：Box 内的 HTTP 订阅下载现在由 `httptest` 集成测试
+覆盖（本机回环，不触外网）；race 检测在 Windows 上使用 MSYS2 mingw gcc 运行通过（Swift clang
+不支持 race 需要的 `-mthreads`）。仍未覆盖：DNS 解析形成的引导环、Provider 成员发布时的 TCP/UDP
+能力试运行、真实设备/真实订阅。
 
 ## Known limits
 

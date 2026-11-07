@@ -154,14 +154,45 @@ type Report struct {
 	// Failures is every node that is not usable. A report with no failures is the only one that
 	// means "every reachable leaf was validated".
 	Failures []Failure
+	// Pending is every route whose far end is not known YET: the route ended at a group fed by an
+	// outbound provider that has not published a member at the time of the walk.
+	//
+	// # Why this is neither a failure nor silence
+	//
+	// It is not a failure: the members arrive after Start (a remote provider downloads
+	// asynchronously, a local one reads its file in its own start stage), and the provider validates
+	// the graph they create before publishing them. Reporting it as a structural failure refused a
+	// legal configuration - that was the reported defect.
+	//
+	// It is not silence either: a report with no failures is documented as "every reachable leaf was
+	// validated", and a pending route has no validated leaf at all. Keeping the two apart is what
+	// lets `Reachable()` stay the stronger question it is documented to be, while `Err()` - the
+	// start verdict - still accepts the configuration.
+	Pending []PendingRoute
+}
+
+// PendingRoute is one route that is waiting for an outbound provider to publish a member.
+type PendingRoute struct {
+	// Root is the tag the walk started from.
+	Root string
+	// Group is the provider-fed group that ended the route without a member.
+	Group string
+	// Reason says why the route is pending, in terms the operator can act on.
+	Reason string
+}
+
+func (p PendingRoute) String() string {
+	return "outbound/" + p.Root + " -> " + p.Group + ": " + p.Reason
 }
 
 // Reachable reports whether every reachable node under every root was validated and usable.
 //
 // A node the dry run could not determine - an unknown hop - does NOT count as reachable: the
-// question this answers is "was every leaf PROVEN usable", and an unproven leaf is not.
+// question this answers is "was every leaf PROVEN usable", and an unproven leaf is not. A pending
+// route (see Report.Pending) has not been validated either, so it makes this false as well - while
+// `Err()` stays the question "must the start be refused".
 func (r Report) Reachable() bool {
-	return len(r.Failures) == 0
+	return len(r.Failures) == 0 && len(r.Pending) == 0
 }
 
 // Leaves returns the checks for the nodes where each route ends.
@@ -263,7 +294,7 @@ func ValidateRoots(resolver *Resolver, roots []adapter.Outbound, endpoints Endpo
 		}
 		seenRoot[root] = true
 		report.Roots = append(report.Roots, root.Tag())
-		nodes, err := resolver.Hops(root)
+		nodes, deferredBy, err := resolver.hopsWithPending(root)
 		if err != nil {
 			return Report{}, E.Cause(err, "enumerate reachable leaves of outbound/", root.Tag())
 		}
@@ -283,8 +314,19 @@ func ValidateRoots(resolver *Resolver, roots []adapter.Outbound, endpoints Endpo
 		// so a caller that gates on it is told a route with no far end was proven. That is a false
 		// READY produced by this API, and it is fixed here rather than left to whichever caller
 		// happens to run a lint first.
-		if failures, truncated := truncatedRouteFailure(resolver, root, nodes); truncated {
-			report.Failures = append(report.Failures, failures...)
+		//
+		// A route deferred by a provider-fed group is NOT truncation: see hopsWithPending and
+		// Report.Pending. It is reported there and does not refuse the start.
+		truncatedFailures, truncated := truncatedRouteFailure(resolver, root, nodes, deferredBy != "")
+		report.Failures = append(report.Failures, truncatedFailures...)
+		if deferredBy != "" && !routeReachesAnExit(nodes) && !truncated {
+			report.Pending = append(report.Pending, PendingRoute{
+				Root:  root.Tag(),
+				Group: deferredBy,
+				Reason: "this group is fed by an outbound provider and has published no member yet, so " +
+					"the route has no far end to validate; the members are validated when the " +
+					"provider publishes them, and a dial fails with a named error until then",
+			})
 		}
 		requirement := proven
 		// requirementProven is carried to the message as well as to the check, because the two
@@ -437,7 +479,7 @@ func ValidateRoots(resolver *Resolver, roots []adapter.Outbound, endpoints Endpo
 // "the route is truncated" tells an operator nothing about which line of the configuration to fix.
 // The declaration is right there on the object, and it is read through the same `lookupDependency`
 // the enumeration used, so the name in the report cannot disagree with the edge that produced it.
-func truncatedRouteFailure(resolver *Resolver, root adapter.Outbound, nodes []PathNode) ([]Failure, bool) {
+func truncatedRouteFailure(resolver *Resolver, root adapter.Outbound, nodes []PathNode, deferred bool) ([]Failure, bool) {
 	if len(nodes) == 0 {
 		// An empty root is deliberately left alone: it materialised no node, so there is nothing to
 		// prove about it. This is the case the "a group that is empty is left alone" comment means,
@@ -488,6 +530,12 @@ func truncatedRouteFailure(resolver *Resolver, root adapter.Outbound, nodes []Pa
 	if len(failures) > 0 {
 		return failures, true
 	}
+	if deferred {
+		// The route stopped at a provider-fed group that has published nothing yet. That is not a
+		// structural defect: the members arrive later and are validated on publication. The caller
+		// records it as pending (Report.Pending) rather than as a refusal.
+		return nil, false
+	}
 	for _, node := range nodes {
 		if node.Exit {
 			return nil, false
@@ -504,6 +552,20 @@ func truncatedRouteFailure(resolver *Resolver, root adapter.Outbound, nodes []Pa
 		Reason: "this route never reached its far end: no node of it is where the flow arrives, so " +
 			"nothing in it was proven usable",
 	}}, true
+}
+
+// routeReachesAnExit reports whether any node of one root claims to be where a flow arrives.
+//
+// A deferred route never has one: the enumeration refuses to number a route whose far end is not
+// known, so no node of it is marked Exit. A group with a completed member AND a deferred provider
+// branch does have one, and such a root is usable rather than pending.
+func routeReachesAnExit(nodes []PathNode) bool {
+	for _, node := range nodes {
+		if node.Exit {
+			return true
+		}
+	}
+	return false
 }
 
 // nodeRequirementFor reports the networks THIS node has to be able to carry, and nil when nothing

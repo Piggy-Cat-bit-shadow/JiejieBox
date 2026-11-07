@@ -23,9 +23,20 @@ type Manager struct {
 	// mutation serialises the runtime verbs - Start, Replace and Remove - so a provider update
 	// cannot interleave with another update or with the start itself. access still guards the
 	// maps and the slice; mutation is the coarser lock around "decide, construct, publish".
-	mutation  sync.Mutex
-	lifecycle *adapter.LifecycleGroup
-	stage     adapter.StartStage
+	mutation sync.Mutex
+	// graphAccess serialises every publication that can ADD an edge to the outbound graph: a node
+	// replacement, a removal's dependent scan, and a group's membership publication. It is
+	// deliberately narrower than mutation - Start holds mutation for its whole body, and a group's
+	// Start runs inside it, so a membership publication that took mutation would deadlock against
+	// the start that is publishing it. See graph.go.
+	graphAccess sync.Mutex
+	lifecycle   *adapter.LifecycleGroup
+	stage       adapter.StartStage
+	// dnsTransports is the DNS half of the cross-kind graph, recorded when ValidateCrossKindCycles
+	// runs so a provider published AFTER that point can still be validated against it. A cycle
+	// closed by a late node - dns transport -> outbound -> dns transport - would otherwise be
+	// invisible to every check that ran before the node existed.
+	dnsTransports []adapter.DNSTransport
 
 	registry                adapter.OutboundRegistry
 	endpoint                adapter.EndpointManager
@@ -198,7 +209,7 @@ func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 				m.access.Unlock()
 				return E.Cause(err, "create direct outbound for fallback")
 			}
-			m.outbounds = append(m.outbounds, directOutbound)
+			m.outbounds = appendOutbound(m.outbounds, directOutbound)
 			m.outboundByTag[directOutbound.Tag()] = directOutbound
 			m.defaultOutbound = directOutbound
 		}
@@ -609,17 +620,36 @@ func (m *Manager) startOutbounds(outbounds []adapter.Outbound, order []adapter.O
 func (m *Manager) Outbounds() []adapter.Outbound {
 	m.access.RLock()
 	defer m.access.RUnlock()
+	// The slice header is returned WITHOUT copying, and every mutation below publishes a NEW slice
+	// instead of writing this one.
+	//
+	// # Why that is the contract, not a micro-optimisation
+	//
+	// A reader (route.ReferenceManager's walk is one) takes the header under the lock and then
+	// iterates it after releasing it. Mutating the backing array in place - replacing one element,
+	// or shifting after a removal - therefore writes memory a reader is walking. MEASURED by `-race`
+	// during provider teardown: `Manager.unlinkLocked`'s append-shift raced with
+	// `ReferenceManager.update` reading the same array, in a test that only called Close. Copy-on-
+	// write makes the published slice immutable, so a reader's snapshot stays valid for as long as
+	// it holds it.
 	return m.outbounds
 }
 
 func (m *Manager) Outbound(tag string) (adapter.Outbound, bool) {
 	m.access.RLock()
 	outbound, found := m.outboundByTag[tag]
+	endpoint := m.endpoint
 	m.access.RUnlock()
 	if found {
 		return outbound, true
 	}
-	return m.endpoint.Get(tag)
+	// An embedder may build a manager without an endpoint namespace (NewManager accepts a nil
+	// endpoint, and the graph tests do exactly that). Treating it as "no fallback" is the only
+	// answer that keeps the lookup total; dereferencing it turns a missing tag into a panic.
+	if endpoint == nil {
+		return nil, false
+	}
+	return endpoint.Get(tag)
 }
 
 func (m *Manager) Default() adapter.Outbound {
@@ -657,7 +687,7 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 		_ = common.Close(outbound)
 		return E.New("outbound ", tag, " already exists")
 	}
-	m.outbounds = append(m.outbounds, outbound)
+	m.outbounds = appendOutbound(m.outbounds, outbound)
 	m.outboundByTag[tag] = outbound
 	if tag == m.defaultTag || (m.defaultTag == "" && m.defaultOutbound == nil) {
 		m.defaultOutbound = outbound
@@ -703,17 +733,30 @@ func (m *Manager) Replace(ctx context.Context, router adapter.Router, logger log
 			}
 		}
 	}
+	// The prospective graph is validated BEFORE the swap, under the graph lock, so an invalid
+	// replacement leaves the previous node published and serving.
+	//
+	// # Why this check exists in addition to the start-order sort
+	//
+	// The sort only sees `Dependencies()` - the tags an object declared. A provider node's edge to a
+	// group is declared here, but the group's edge BACK to this node lives in the group's published
+	// membership, which the sort never walked because the provider had not published when it ran.
+	// MEASURED: that pair starts successfully and recurses on the first dial. See graph.go.
+	m.graphAccess.Lock()
+	if err = m.validateGraphLocked(graphProposal{
+		replace: map[string]adapter.Outbound{tag: outbound},
+	}); err != nil {
+		m.graphAccess.Unlock()
+		// The new object was constructed and started; it must not leak, and the old node must stay.
+		m.release(outbound)
+		return err
+	}
 	m.access.Lock()
 	old := m.outboundByTag[tag]
 	if old == nil {
-		m.outbounds = append(m.outbounds, outbound)
+		m.outbounds = appendOutbound(m.outbounds, outbound)
 	} else {
-		for i, item := range m.outbounds {
-			if item == old {
-				m.outbounds[i] = outbound
-				break
-			}
-		}
+		m.outbounds = replaceOutbound(m.outbounds, old, outbound)
 	}
 	m.outboundByTag[tag] = outbound
 	if old != nil && m.defaultOutbound == old {
@@ -722,6 +765,7 @@ func (m *Manager) Replace(ctx context.Context, router adapter.Router, logger log
 		m.defaultOutbound = outbound
 	}
 	m.access.Unlock()
+	m.graphAccess.Unlock()
 	if old != nil {
 		m.release(old)
 	}
@@ -730,50 +774,202 @@ func (m *Manager) Replace(ctx context.Context, router adapter.Router, logger log
 
 // Remove unlinks a runtime outbound and releases what it owns.
 //
-// It refuses while a remaining outbound still names the tag as a dependency. A provider removes a
-// node only after the nodes that depend on it, and the refusal is what makes a mistake there a
-// visible error instead of a dangling reference discovered by a later dial.
+// It refuses while a remaining object still names the tag as a dependency. "Names" includes the
+// DECLARED dependencies (a detour, a group's configured members) AND the membership a group has
+// PUBLISHED: a selector fed by a provider lists the provider's nodes in `All()` without naming them
+// in its options, and that is exactly the reference a provider update replaces. MEASURED before the
+// membership was read: the provider removed a node the selector had just selected, closed it, and
+// the selector kept handing flows to the closed object until its own callback landed.
+//
+// It refuses while a DNS transport's detour or resolver still names the tag for the same reason:
+// the transport is not in this manager's list, but it holds a live reference.
 func (m *Manager) Remove(tag string) error {
 	m.mutation.Lock()
 	defer m.mutation.Unlock()
+	m.graphAccess.Lock()
 	m.access.Lock()
 	outbound, found := m.outboundByTag[tag]
 	if !found {
 		m.access.Unlock()
+		m.graphAccess.Unlock()
 		return os.ErrInvalid
 	}
+	dependents := m.dependentsLocked(outbound, tag)
+	if len(dependents) > 0 {
+		m.access.Unlock()
+		m.graphAccess.Unlock()
+		return E.New("outbound[", tag, "] is depended by ", strings.Join(dependents, ", "))
+	}
+	wasDefault := m.unlinkLocked(tag, outbound)
+	fallback := m.defaultAfterRemovalLocked(wasDefault)
+	m.access.Unlock()
+	m.graphAccess.Unlock()
+	if fallback != nil && m.logger != nil {
+		m.logger.Info("updated default outbound to ", fallback.Tag())
+	}
+	m.release(outbound)
+	return nil
+}
+
+// Release unlinks a runtime outbound WITHOUT the dependent guard, for teardown only.
+//
+// # Why this exists rather than a Remove that happens to succeed
+//
+// The Box closes components in reverse registration order, and a provider starts AFTER the outbound
+// manager, so the provider is closed while the groups that name its nodes are still registered and
+// still list them. A membership-aware Remove would refuse every unlink, and a perfectly valid
+// configuration would report an error on every normal shutdown.
+//
+// The safety argument is the teardown ordering itself: the whole object graph is being dismantled,
+// no flow can be routed into a group that is about to be closed, and the provider owns the nodes it
+// unlinks. It must never be used as a way around the guard while traffic is possible - Remove is
+// the guarded verb, and this is not exported through adapter.DynamicOutboundManager.
+func (m *Manager) Release(tag string) error {
+	m.mutation.Lock()
+	defer m.mutation.Unlock()
+	m.graphAccess.Lock()
+	m.access.Lock()
+	outbound, found := m.outboundByTag[tag]
+	if !found {
+		m.access.Unlock()
+		m.graphAccess.Unlock()
+		return os.ErrInvalid
+	}
+	wasDefault := m.unlinkLocked(tag, outbound)
+	m.defaultAfterRemovalLocked(wasDefault)
+	m.access.Unlock()
+	m.graphAccess.Unlock()
+	m.release(outbound)
+	return nil
+}
+
+// dependentsLocked lists every live object that would still name tag after outbound is unlinked.
+// The caller holds m.access.
+func (m *Manager) dependentsLocked(outbound adapter.Outbound, tag string) []string {
 	var dependents []string
 	for _, other := range m.outbounds {
 		if other == outbound {
 			continue
 		}
-		if common.Contains(other.Dependencies(), tag) {
+		if objectReferencesTag(other, tag) {
 			dependents = append(dependents, other.Tag())
 		}
 	}
-	if len(dependents) > 0 {
-		m.access.Unlock()
-		return E.New("outbound[", tag, "] is depended by ", strings.Join(dependents, ", "))
+	if m.endpoint != nil {
+		for _, endpoint := range m.endpoint.Endpoints() {
+			if objectReferencesTag(endpoint, tag) {
+				dependents = append(dependents, endpoint.Tag())
+			}
+		}
 	}
+	for _, transport := range m.dnsTransports {
+		if transportReferencesTag(transport, tag) {
+			dependents = append(dependents, "dns/"+transport.Tag())
+		}
+	}
+	return dependents
+}
+
+// transportReferencesTag reports whether a DNS transport would still resolve tag at request time:
+// its own resolver chain `Dependencies()`, or the outbound its `detour` names through References().
+func transportReferencesTag(transport adapter.DNSTransport, tag string) bool {
+	if transport == nil {
+		return false
+	}
+	if common.Contains(transport.Dependencies(), tag) {
+		return true
+	}
+	if referrer, isReferrer := transport.(adapter.Referrer); isReferrer {
+		if common.Contains(referrer.References(), tag) {
+			return true
+		}
+	}
+	return false
+}
+
+// objectReferencesTag reports whether an object would still resolve tag at dial time.
+//
+// All three publications are read: the declared dependencies (what the sort validated), the group
+// membership (what the group can select), and the references (what a DNS transport detours to or a
+// group currently selected). A tag is only removable when NONE of them names it.
+func objectReferencesTag(object adapter.Outbound, tag string) bool {
+	if object == nil {
+		return false
+	}
+	if common.Contains(object.Dependencies(), tag) {
+		return true
+	}
+	if group, isGroup := object.(adapter.OutboundGroup); isGroup {
+		if common.Contains(group.All(), tag) {
+			return true
+		}
+	}
+	if referrer, isReferrer := object.(adapter.Referrer); isReferrer {
+		if common.Contains(referrer.References(), tag) {
+			return true
+		}
+	}
+	return false
+}
+
+// unlinkLocked removes the tag and its object from the published maps. The caller holds m.access.
+// It reports whether the object was the default, which the caller uses to publish the fallback and
+// to log the change outside the lock.
+func (m *Manager) unlinkLocked(tag string, outbound adapter.Outbound) bool {
 	delete(m.outboundByTag, tag)
-	for i, item := range m.outbounds {
-		if item == outbound {
-			m.outbounds = append(m.outbounds[:i], m.outbounds[i+1:]...)
+	m.outbounds = removeOutbound(m.outbounds, outbound)
+	if m.defaultOutbound == outbound {
+		m.defaultOutbound = nil
+		return true
+	}
+	return false
+}
+
+// appendOutbound publishes a new slice with the object appended, so a reader holding the previous
+// header keeps walking an array nobody writes. See Outbounds.
+func appendOutbound(outbounds []adapter.Outbound, outbound adapter.Outbound) []adapter.Outbound {
+	next := make([]adapter.Outbound, len(outbounds), len(outbounds)+1)
+	copy(next, outbounds)
+	return append(next, outbound)
+}
+
+// replaceOutbound publishes a new slice with old replaced by replacement.
+func replaceOutbound(outbounds []adapter.Outbound, old adapter.Outbound, replacement adapter.Outbound) []adapter.Outbound {
+	next := make([]adapter.Outbound, len(outbounds))
+	copy(next, outbounds)
+	for i, item := range next {
+		if item == old {
+			next[i] = replacement
 			break
 		}
 	}
-	if m.defaultOutbound == outbound {
-		if len(m.outbounds) > 0 {
-			m.defaultOutbound = m.outbounds[0]
-			if m.logger != nil {
-				m.logger.Info("updated default outbound to ", m.defaultOutbound.Tag())
-			}
-		} else {
-			m.defaultOutbound = nil
+	return next
+}
+
+// removeOutbound publishes a new slice without the object.
+func removeOutbound(outbounds []adapter.Outbound, outbound adapter.Outbound) []adapter.Outbound {
+	next := make([]adapter.Outbound, 0, len(outbounds)-1)
+	for _, item := range outbounds {
+		if item == outbound {
+			continue
 		}
+		next = append(next, item)
 	}
-	m.access.Unlock()
-	m.release(outbound)
+	return next
+}
+
+// defaultAfterRemovalLocked republishes a default when the removed object was it. The caller holds
+// m.access. It returns the new default (nil when there is none) so the caller can log outside the
+// lock.
+func (m *Manager) defaultAfterRemovalLocked(wasDefault bool) adapter.Outbound {
+	if !wasDefault {
+		return nil
+	}
+	if len(m.outbounds) > 0 {
+		m.defaultOutbound = m.outbounds[0]
+		return m.defaultOutbound
+	}
+	m.defaultOutbound = nil
 	return nil
 }
 

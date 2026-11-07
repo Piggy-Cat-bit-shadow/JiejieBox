@@ -154,10 +154,13 @@ func TestTwoProvidersShareTheNamespaceWithoutColliding(t *testing.T) {
 	require.Equal(t, []string{"beta/shared"}, betaOutbound.(adapter.OutboundGroup).All())
 }
 
-// TestGroupWithProviderOnlyStartsWithoutMembers proves the documented first-run behaviour: a group
-// whose only member source has not published anything yet still starts, and the failure is reported
-// when a dial is attempted rather than by refusing the whole configuration.
-func TestGroupWithProviderOnlyStartsWithoutMembers(t *testing.T) {
+// TestGroupNamingAnUndeclaredProviderIsRefused pins what this test actually asserts, which its
+// former name and comment contradicted: the configuration names provider "missing", no such
+// provider is declared, and that is a CONFIGURATION ERROR - not the legal "provider exists but has
+// not published yet" state. The legal empty state is covered by
+// TestProviderOnlyGroupStartsBeforeItsProviderPublishes in box_provider_lifecycle_test.go, which
+// declares a reachable (offline) provider and requires the Box to start.
+func TestGroupNamingAnUndeclaredProviderIsRefused(t *testing.T) {
 	const config = `{
   "log": {"disabled": true},
   "outbounds": [
