@@ -275,7 +275,13 @@ check "publish validates the manifest before installing" \
   grep -q 'apple-libbox-artifact.sh validate' "$publish"
 
 check "publish delegates signing to release-apple.sh" \
-  grep -q 'release-apple.sh testflight' "$publish"
+  grep -q 'release-apple.sh "\$testflight_mode"' "$publish"
+
+# The mode is per-platform now (`testflight`, `testflight-ios`, `testflight-macos`), because a
+# phone-only or Mac-only publish must not build and upload the other product. The delegation check
+# above follows the variable; this one keeps the variable's value inside release-apple's contract.
+check "publish derives the mode from --platform, not from a hard-coded target" \
+  grep -q 'testflight_mode="testflight-\$platform"' "$publish"
 
 # The publish script must not grow its own archive or upload logic; that is release-apple's job.
 check "publish does not call xcodebuild directly" \
@@ -477,12 +483,15 @@ fi
 check "the workflow uploads the Libbox artifact" \
   grep -q 'name: jiejiebox-libbox-\${{ github.sha }}' .github/workflows/client-apple.yml
 
+# Three consumers download this run's Libbox: the iOS GUI job, the macOS GUI job, and the
+# self-sign job that turns the same framework into the unsigned IPA. They are the complete set
+# of products built from the shared artifact, so the count is asserted exactly.
 downloads="$(grep -c 'actions/download-artifact@v4' .github/workflows/client-apple.yml)"
-if [ "$downloads" = "2" ]; then
-  echo "  PASS: both GUI jobs download the shared artifact"
+if [ "$downloads" = "3" ]; then
+  echo "  PASS: both GUI jobs and the self-sign job download the shared artifact"
   pass=$((pass + 1))
 else
-  echo "  FAIL: expected 2 download-artifact steps, found $downloads" >&2
+  echo "  FAIL: expected 3 download-artifact steps, found $downloads" >&2
   fail=$((fail + 1))
 fi
 
