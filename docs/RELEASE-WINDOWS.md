@@ -40,7 +40,7 @@ gh workflow run kernel-release.yml -R $repo --ref testing -f dry_run=false
 
 ## 4. 发布并验收 Satelite 安卓客户端
 
-1. 打开 `Piggy-Cat-bit-shadow/satelite-one`，核对远端 `main`、最新客户端发布和已有 tag。以本轮**已公开并验收**的内核版本及其 tag 剥离后的完整 SHA 为输入。在 Satelite 的 `version.properties` 中令 `versionName` 等于内核版本，`coreCommit` 等于上述完整 SHA，`versionCode` 大于此前已分发的最高构建号。核对该仓依赖与内核兼容性，记录 Satelite 自己的候选提交。
+1. 内核的 `Kernel release` 运行完成后，从 `publish` 作业摘要取 Satelite 交接信息。打开 `Piggy-Cat-bit-shadow/satelite-one`，核对远端 `main`、最新客户端发布和已有 tag。以本轮**已公开并验收**的内核版本及其 tag 剥离后的完整 SHA 为输入。在 Satelite 的 `version.properties` 中令 `versionName` 等于内核版本，`coreCommit` 等于上述完整 SHA，`versionCode` 大于此前已分发的最高构建号。核对该仓依赖与内核兼容性，记录 Satelite 自己的候选提交。
 2. 将对齐后的 Satelite 提交推到 `main`，确认 `v<versionName>` 尚未被占用，再把 Satelite 自己的正式 tag 打到**该客户端提交**并推送至 Satelite 的 `origin`。这是 `.github/workflows/release-apk.yml` 的正式签名构建和发布入口。手动 dry run 只能用于预检。正式发版提交和 tag 推送应允许 Actions 运行，避免在发版提交消息中加入 `[skip ci]`。
 3. 确认 `Release APK` 是本轮 Satelite tag push 触发，run 的 `head_sha` 等于该客户端提交。等待构建、签名与发布完成。若 tag 已存在，先核对目标 SHA、已有运行和 Release 状态。相同提交的暂时故障优先在原运行重跑失败任务，已有 tag 指向其他提交时停止并查明原因。
 4. 回读 Satelite 仓库的指定公开 Release，下载 `arm64-v8a` 和 `x86_64` 两个签名 APK、`SHA256SUMS.txt`、`build-info.json` 与 `apksigner-verify.txt`。逐个核对 APK 的 SHA256、ABI 和签名，核对 `build-info.json` 的 `app_commit`、`app_version`、`app_version_code`、`core_commit` 与本轮记录一致。

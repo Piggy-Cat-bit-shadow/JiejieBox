@@ -156,3 +156,16 @@ jobs:
           unzip -q bundle.zip -d upload
       - name: Promote the verified bundle to a stable Release
         run: bash scripts/ci/publish-kernel-candidate.sh
+      - name: Record the Satelite release handoff
+        run: |
+          {
+            echo '### Satelite Android release is pending'
+            echo "- Published kernel: $(cat release-url)"
+            echo "- Satelite versionName: $VERSION"
+            echo "- Satelite coreCommit: $GITHUB_SHA"
+            echo '- Update version.properties and increment versionCode in Satelite.'
+            echo '- Push the Satelite version tag to start the signed APK build.'
+            echo '- Verify the public Satelite release and both APKs before closing the release round.'
+            echo '- Mac TestFlight may proceed independently.'
+            echo "- [Release guide](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_SHA/docs/RELEASE-WINDOWS.md#4-发布并验收-satelite-安卓客户端)"
+          } >> "$GITHUB_STEP_SUMMARY"

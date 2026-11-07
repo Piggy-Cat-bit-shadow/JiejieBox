@@ -1319,6 +1319,22 @@ def check_release_prepare():
            "gh release" not in text and "release-artifacts.sh publish" not in text,
            "no `gh release` and no publish subcommand in this workflow")
 
+    # v0.1.42: re-staging the worktree after apply reverted the staged gitlinks.
+    commit_step = next((step for step in steps if step.get("id") == "push"), {})
+    stage_lines = re.findall(r"^\s*(git add .+)$", commit_step.get("run", ""), re.M)
+    report("release preparation: staging preserves the client gitlinks",
+           stage_lines == ["git add -- go.mod go.sum test/go.mod test/go.sum release/source-lock.json"],
+           str(stage_lines))
+    commit_index = next((index for index, step in enumerate(steps) if step is commit_step), -1)
+    push_index = next((index for index, step in enumerate(steps)
+                       if 'git push origin "HEAD:testing"' in (step.get("run") or "")), -1)
+    report("release preparation: committed pins are rechecked before push",
+           0 <= commit_index < push_index and any(
+               "release-freeze.py verify --lock release/source-lock.json" in (step.get("run") or "")
+               and "check-libbox-abi.sh --pin-only" in (step.get("run") or "")
+               for step in steps[commit_index + 1:push_index]),
+           "commit step %d, push step %d" % (commit_index + 1, push_index + 1))
+
     evidence = [step for step in steps
                 if "release-artifacts.sh evidence" in (step.get("run") or "")]
     report("release preparation: the evidence step exists and authenticates gh", len(evidence) == 1,

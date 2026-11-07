@@ -182,6 +182,9 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/ci/release-freeze.py apply --resolve build/resolve.tsv
+          # snapshot reads nested gitlinks from the parent submodule checkout.
+          # Bring those worktrees to the staged pins before inspecting them.
+          git submodule update --init --recursive
           if [ -n "$(git status --porcelain)" ]; then
             # A replace directive that names a version must be accompanied by that version's
             # hashes, and a nested module does not inherit the root's go.sum.
@@ -261,7 +264,9 @@ jobs:
           fi
           git config user.name "jiejie release preparation"
           git config user.email "release-prepare@users.noreply.github.com"
-          git add -A
+          # apply already staged client gitlinks. Staging their worktrees here
+          # would replace the new pins with the previous checkouts.
+          git add -- go.mod go.sum test/go.mod test/go.sum release/source-lock.json
           git commit -m "release: freeze the dependency sources for $PREP_TAG"
           git rev-parse HEAD > build/candidate-sha
           echo "committed $(cat build/candidate-sha) locally"
@@ -275,6 +280,7 @@ jobs:
             echo "dry run: the candidate was not committed, so the ABI pin gate is not evidence"
             exit 0
           fi
+          python3 scripts/ci/release-freeze.py verify --lock release/source-lock.json
           ./scripts/ci/check-libbox-abi.sh --pin-only
 
       - name: push the frozen candidate
