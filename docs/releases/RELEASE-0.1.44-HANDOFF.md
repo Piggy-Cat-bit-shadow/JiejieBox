@@ -1,6 +1,6 @@
 # v0.1.44 正式发布交接记录（2026-11-08）
 
-按 [Release 指引](../RELEASE-WINDOWS.md) 分别验收内核与 Satelite。下列内核摘要来自公开 GitHub Release API；工作流已校验产物与清单，本机未重复下载附件复算。此记录可供独立的 [TF 指引](../TESTFLIGHT-MAC.md) 使用，真机行为仍需设备验收。
+按 [Release 指引](../RELEASE-WINDOWS.md) 分别验收内核与 Satelite，整轮均已公开。下列附件摘要来自各自公开 GitHub Release API；工作流已校验产物与清单，本机未重复下载附件复算。此记录可供独立的 [TF 指引](../TESTFLIGHT-MAC.md) 使用，真机行为仍需设备验收。
 
 ## 内核发布身份
 
@@ -44,4 +44,22 @@ TF 按内核 tag、完整 SHA 与公开 Apple Libbox 获取固定来源；不在
 
 ## Satelite 安卓客户端
 
-客户端 `version.properties` 已设置 `versionName=0.1.44`、`versionCode=55`、`coreCommit=3b6ec64f7145a2add99656d47caaa4f22a1cc478`；客户端提交 `22ba907d62c23f09272117134a04e3bc96962520` 与 `v0.1.44` tag 已推送。[Release APK 42393794665](https://github.com/Piggy-Cat-bit-shadow/satelite-one/actions/runs/42393794665) 是该 tag push 触发。签名 APK、公开附件及整轮完成状态须在该运行结束后回读。
+| 项 | 值 |
+| --- | --- |
+| 版本 | `0.1.44`；`versionCode=55`（上一公开版为 54） |
+| tag | `v0.1.44`（附注标签对象 `6f0e93d23f8d5df5c1e6c52318ab4e2abb8bfc61`） |
+| tag 剥离后的客户端 SHA | `22ba907d62c23f09272117134a04e3bc96962520`，与 `main` 一致 |
+| 固定内核 SHA | `3b6ec64f7145a2add99656d47caaa4f22a1cc478`，与内核正式 tag 一致 |
+| Release | https://github.com/Piggy-Cat-bit-shadow/satelite-one/releases/tag/v0.1.44 |
+| 运行 | [Release APK 42393794665](https://github.com/Piggy-Cat-bit-shadow/satelite-one/actions/runs/42393794665)，tag push 触发，attempt 1；构建与发布作业均成功 |
+| 公开时间与状态 | `2026-11-07T17:16:03Z`（2026-11-08 01:16:03 Asia/Shanghai）；非 draft、非 prerelease |
+
+| 资产 | 字节 | GitHub API 的 SHA256 |
+| --- | ---: | --- |
+| `satelite-one-0.1.44-arm64-v8a-signed-v0.1.44.apk` | 30,618,603 | `8eb20edb44080cb8eb05d611a065cad3ad8840fefc930a1669c51e73da9b38ee` |
+| `satelite-one-0.1.44-x86_64-signed-v0.1.44.apk` | 32,594,522 | `fc4af6aef71319c6dc10acd69c7457e9698d4beb6d8592e955fa36c31bdb7047` |
+| `SHA256SUMS.txt` | 227 | `b83357f4a7400d533f64948d478a2fafd9657d0f6f0b7302802ed35e0029e6dd` |
+| `build-info.json` | 1,352 | `066b346ae441a0fb08bfce3099af06112f2324a5a78ad03d316044ace0fbe54a` |
+| `apksigner-verify.txt` | 2,844 | `3394627b1680feb43d5ce6f6ba163850d8a558b0977996ead2504dbefd0aba7d` |
+
+构建日志显示 `core_commit=3b6ec64f...`、`signature_state=signed-by-user`，`bundle OK: 2 APK(s)`；两个 APK 的清单校验均为 `OK`，各自打包的 ABI 引擎摘要与构建记录一致。签名和身份验证属于该 CI 运行的证据，本机未再次下载附件或调用 `apksigner`。至此内核与 Satelite 的正式附件都已验收；Mac TestFlight 仍是独立流程，真机行为仍未在本轮验证。

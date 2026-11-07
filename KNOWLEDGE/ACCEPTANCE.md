@@ -31,7 +31,7 @@ DNS 解析形成的下载引导环已在后续修复中纳入检查。仍有限�
 | 正式构建、race、stage、publish | `VERIFIED_CI`：[Kernel release 42391992312](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42391992312) 全部必需作业成功；公开 tag 剥离到同一 SHA。 |
 | 公开附件 | `VERIFIED_CI` 加 API 回读：8 项附件、非 draft、非 prerelease、正文为空；工作流内部验证摘要，未在本机下载复算字节。 |
 | iOS 隧道接管、本地回环在设备上运行 | `NEEDS_DEVICE`：构建和源码测试不能证明签名后真机 NE route/reload 或 SideStore 续签。 |
-| Satelite Android APK | 独立仓库的 tag push、签名构建和公开附件需单独核对；内核 AAR 不能替代该证据。 |
+| Satelite Android APK | `VERIFIED_CI`：[Release APK 42393794665](https://github.com/Piggy-Cat-bit-shadow/satelite-one/actions/runs/42393794665) 为客户端 `v0.1.44` tag push，构建与 publish 成功；日志 `signed-by-user`、双 ABI bundle OK；公开 [Release](https://github.com/Piggy-Cat-bit-shadow/satelite-one/releases/tag/v0.1.44) 5 项附件经 API 回读。没有本机重新下载复算或设备安装证据。 |
 
 ## v0.1.39 增量验收（Historical delta acceptance）
 

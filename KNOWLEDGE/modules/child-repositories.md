@@ -2,7 +2,7 @@
 
 ## v0.1.44 固定消费（Released pins, 2026-11-08）
 
-父仓 `v0.1.44^{commit}` = `3b6ec64f7145a2add99656d47caaa4f22a1cc478`。`git ls-tree` 与 `release/source-lock.json` 核对的客户端 gitlink 为 Apple `e3283104c984d60cdf2a0250b47b7fc446e71ba6`、Android `c7837107dc0126fb704fdf08cf203e10b30c8a22`、Desktop `41722b030ea481523290d932a1d81177f8c13f32`；`release-freeze.py verify` 通过。Apple 从上一固定值 `0c7b10be` 前移到 `e3283104`，主要改动是 iOS 隧道接管等待从服务生命周期锁内移出，并为新会话重置接管标志。父仓的 Apple ABI 已验证 SHA 与此 pin 一致，正式运行构建了 Libbox、iOS、macOS 和自签 IPA。上述是固定源码与 CI 构建证据，不是 iPhone/iPad 上的 NE route/reload 验证。Satelite APK 在独立仓库通过自己的 `coreCommit` 和 tag 发布，不由父仓 `clients/android` gitlink 或内核 AAR 发布自动完成。
+父仓 `v0.1.44^{commit}` = `3b6ec64f7145a2add99656d47caaa4f22a1cc478`。`git ls-tree` 与 `release/source-lock.json` 核对的客户端 gitlink 为 Apple `e3283104c984d60cdf2a0250b47b7fc446e71ba6`、Android `c7837107dc0126fb704fdf08cf203e10b30c8a22`、Desktop `41722b030ea481523290d932a1d81177f8c13f32`；`release-freeze.py verify` 通过。Apple 从上一固定值 `0c7b10be` 前移到 `e3283104`，主要改动是 iOS 隧道接管等待从服务生命周期锁内移出，并为新会话重置接管标志。父仓的 Apple ABI 已验证 SHA 与此 pin 一致，正式运行构建了 Libbox、iOS、macOS 和自签 IPA。上述是固定源码与 CI 构建证据，不是 iPhone/iPad 上的 NE route/reload 验证。Satelite APK 在独立仓库通过自己的 `coreCommit` 和 tag 发布，不由父仓 `clients/android` gitlink 或内核 AAR 发布自动完成。本版另行回读其客户端 `v0.1.44` tag（`22ba907d62c23f09272117134a04e3bc96962520`）与 [公开 Release](https://github.com/Piggy-Cat-bit-shadow/satelite-one/releases/tag/v0.1.44)；双 ABI 签名构建见 [Release APK 42393794665](https://github.com/Piggy-Cat-bit-shadow/satelite-one/actions/runs/42393794665)。
 
 ## 2026-11-07 观察（Historical observed revisions）
 

@@ -4,11 +4,11 @@
 
 | 范围 | 固定目标 |
 | --- | --- |
-| 最近回读的公开正式版 | [v0.1.44](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.44)，附注标签剥离后的提交 `3b6ec64f7145a2add99656d47caaa4f22a1cc478`；[正式运行 42391992312](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42391992312) 成功，8 项公开附件已回读。 |
+| 最近回读的公开正式版 | [内核 v0.1.44](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.44)，附注标签剥离后的提交 `3b6ec64f7145a2add99656d47caaa4f22a1cc478`；[正式运行 42391992312](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42391992312) 成功，8 项公开附件已回读。[Satelite v0.1.44](https://github.com/Piggy-Cat-bit-shadow/satelite-one/releases/tag/v0.1.44) 独立签名构建与 5 项公开附件亦已回读。 |
 | Provider、路径图、租约、Apple 回环与发布工具的专题目标 | 同一 `3b6ec64f7145a2add99656d47caaa4f22a1cc478`；覆盖与证据边界见 [2026-11-08 专题刷新](CALIBRATION-2026-11-08.md)。 |
 | 全局广泛知识基线 | 仍保留 `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28` 的 v0.1.34 快照；未逐条重审的旧模块继续从该基线计算增量。 |
 
-本次发布后的 `CHANGELOG.md`、Release 指引和知识文档是文档增量，不改变 v0.1.44 tag 的生产源码。Android 客户端在另一仓库独立验收，不能从内核 Release 成功推断 APK 已发布。
+本次发布后的 `CHANGELOG.md`、Release 指引和知识文档是文档增量，不改变 v0.1.44 tag 的生产源码。Android 客户端在另一仓库独立验收；其已发布结论来自该仓 [Release APK 42393794665](https://github.com/Piggy-Cat-bit-shadow/satelite-one/actions/runs/42393794665)，不能从内核 Release 成功推断。
 
 ## 2026-11-07 专题增量（Historical scoped refresh）
 
