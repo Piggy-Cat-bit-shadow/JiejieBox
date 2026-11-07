@@ -14,9 +14,19 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
-var _ adapter.OutboundManager = (*Manager)(nil)
+var (
+	_ adapter.OutboundManager        = (*Manager)(nil)
+	_ adapter.DynamicOutboundManager = (*Manager)(nil)
+)
 
 type Manager struct {
+	// mutation serialises the runtime verbs - Start, Replace and Remove - so a provider update
+	// cannot interleave with another update or with the start itself. access still guards the
+	// maps and the slice; mutation is the coarser lock around "decide, construct, publish".
+	mutation  sync.Mutex
+	lifecycle *adapter.LifecycleGroup
+	stage     adapter.StartStage
+
 	registry                adapter.OutboundRegistry
 	endpoint                adapter.EndpointManager
 	defaultTag              string
@@ -166,6 +176,12 @@ func (m *Manager) Initialize(defaultOutboundFallback func() (adapter.Outbound, e
 }
 
 func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	m.mutation.Lock()
+	defer m.mutation.Unlock()
+	m.stage = stage
+	if m.lifecycle == nil {
+		m.lifecycle = adapter.NewLifecycleGroup(scope)
+	}
 	m.access.Lock()
 	if stage == adapter.StartStateInitialize {
 		if m.defaultTag != "" && m.defaultOutbound == nil {
@@ -246,7 +262,7 @@ func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 				loggerForStart.Warn(warningErr)
 			}
 		}
-		return m.startOutbounds(scope, append(outbounds, common.Map(m.endpoint.Endpoints(), func(it adapter.Endpoint) adapter.Outbound { return it })...), startable)
+		return m.startOutbounds(append(outbounds, common.Map(m.endpoint.Endpoints(), func(it adapter.Endpoint) adapter.Outbound { return it })...), startable)
 	}
 	for _, outbound := range outbounds {
 		lifecycle, isLifecycle := outbound.(adapter.Lifecycle)
@@ -254,7 +270,7 @@ func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 			continue
 		}
 		name := "outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
-		err := scope.Start(name, lifecycle, stage)
+		err := m.lifecycle.Start(name, lifecycle, stage)
 		if err != nil {
 			return err
 		}
@@ -550,7 +566,7 @@ func describeOutbound(outbound adapter.Outbound, kind string) string {
 // The order is passed in rather than recomputed: a second sort could disagree with the one the
 // validation saw, and the whole point of moving the validation in front of the start is that both
 // describe the same graph.
-func (m *Manager) startOutbounds(scope *adapter.Scope, outbounds []adapter.Outbound, order []adapter.Outbound) error {
+func (m *Manager) startOutbounds(outbounds []adapter.Outbound, order []adapter.Outbound) error {
 	started := make(map[string]bool, len(outbounds))
 	for _, outboundToStart := range order {
 		outboundTag := outboundToStart.Tag()
@@ -567,7 +583,7 @@ func (m *Manager) startOutbounds(scope *adapter.Scope, outbounds []adapter.Outbo
 			continue
 		}
 		name := "outbound/" + outboundToStart.Type() + "[" + outboundTag + "]"
-		err := scope.Start(name, lifecycle, adapter.StartStateStart)
+		err := m.lifecycle.Start(name, lifecycle, adapter.StartStateStart)
 		if err != nil {
 			return err
 		}
@@ -647,4 +663,133 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 		m.defaultOutbound = outbound
 	}
 	return nil
+}
+
+// Replace publishes a runtime replacement for one tag: prepare, start, swap, then release the old
+// object. It is the only mutation that may target an existing tag, because that is what a provider
+// update is - the same node, redefined.
+//
+// # Why prepare-then-swap rather than remove-then-create
+//
+// A constructor or Start that fails must leave the working node in place. Removing first would turn
+// a bad subscription entry into an outage for a node that had been serving traffic, and the
+// provider would then have to decide whether to restore it. Here the old object is unlinked only
+// after the new one is fully started, and the caller receives the error with the old node intact.
+//
+// The stages the new object is started through are bounded by m.stage: a replacement created after
+// the Box finished starting must not receive a stage the Box has already left, and one created
+// during the start must receive every stage the manager has reached.
+func (m *Manager) Replace(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, outboundType string, options any) error {
+	if tag == "" {
+		return os.ErrInvalid
+	}
+	m.mutation.Lock()
+	defer m.mutation.Unlock()
+	outbound, err := m.registry.CreateOutbound(ctx, router, logger, tag, outboundType, options)
+	if err != nil {
+		return err
+	}
+	if m.lifecycle != nil {
+		if lifecycle, isLifecycle := outbound.(adapter.Lifecycle); isLifecycle {
+			name := "outbound/" + outbound.Type() + "[" + tag + "]"
+			for _, stage := range adapter.ListStartStages {
+				if stage > m.stage {
+					break
+				}
+				if err = m.lifecycle.Start(name, lifecycle, stage); err != nil {
+					// Release the partial start, then leave the old object untouched.
+					return E.Errors(err, m.lifecycle.Remove(lifecycle))
+				}
+			}
+		}
+	}
+	m.access.Lock()
+	old := m.outboundByTag[tag]
+	if old == nil {
+		m.outbounds = append(m.outbounds, outbound)
+	} else {
+		for i, item := range m.outbounds {
+			if item == old {
+				m.outbounds[i] = outbound
+				break
+			}
+		}
+	}
+	m.outboundByTag[tag] = outbound
+	if old != nil && m.defaultOutbound == old {
+		m.defaultOutbound = outbound
+	} else if tag == m.defaultTag || (m.defaultTag == "" && m.defaultOutbound == nil) {
+		m.defaultOutbound = outbound
+	}
+	m.access.Unlock()
+	if old != nil {
+		m.release(old)
+	}
+	return nil
+}
+
+// Remove unlinks a runtime outbound and releases what it owns.
+//
+// It refuses while a remaining outbound still names the tag as a dependency. A provider removes a
+// node only after the nodes that depend on it, and the refusal is what makes a mistake there a
+// visible error instead of a dangling reference discovered by a later dial.
+func (m *Manager) Remove(tag string) error {
+	m.mutation.Lock()
+	defer m.mutation.Unlock()
+	m.access.Lock()
+	outbound, found := m.outboundByTag[tag]
+	if !found {
+		m.access.Unlock()
+		return os.ErrInvalid
+	}
+	var dependents []string
+	for _, other := range m.outbounds {
+		if other == outbound {
+			continue
+		}
+		if common.Contains(other.Dependencies(), tag) {
+			dependents = append(dependents, other.Tag())
+		}
+	}
+	if len(dependents) > 0 {
+		m.access.Unlock()
+		return E.New("outbound[", tag, "] is depended by ", strings.Join(dependents, ", "))
+	}
+	delete(m.outboundByTag, tag)
+	for i, item := range m.outbounds {
+		if item == outbound {
+			m.outbounds = append(m.outbounds[:i], m.outbounds[i+1:]...)
+			break
+		}
+	}
+	if m.defaultOutbound == outbound {
+		if len(m.outbounds) > 0 {
+			m.defaultOutbound = m.outbounds[0]
+			if m.logger != nil {
+				m.logger.Info("updated default outbound to ", m.defaultOutbound.Tag())
+			}
+		} else {
+			m.defaultOutbound = nil
+		}
+	}
+	m.access.Unlock()
+	m.release(outbound)
+	return nil
+}
+
+// release closes an outbound that is no longer published. A component started through the
+// LifecycleGroup is released through its own scope, which is what keeps the parent's cleanup list
+// from retaining a component that has already gone.
+func (m *Manager) release(outbound adapter.Outbound) {
+	if m.lifecycle != nil {
+		if lifecycle, isLifecycle := outbound.(adapter.Lifecycle); isLifecycle {
+			if err := m.lifecycle.Remove(lifecycle); err != nil && m.logger != nil {
+				m.logger.Error(err, "close outbound [", outbound.Tag(), "]")
+			}
+			return
+		}
+	}
+	if err := common.Close(outbound); err != nil && m.logger != nil {
+		m.logger.Error(err, "close outbound [", outbound.Tag(), "]")
+	}
 }

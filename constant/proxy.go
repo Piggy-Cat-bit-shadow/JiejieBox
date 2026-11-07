@@ -55,6 +55,14 @@ const (
 	TypeLoadBalance = "loadbalance"
 )
 
+// The provider types. They live beside the outbound types because a provider is the other way an
+// outbound can enter the runtime: a configured node, or a node published by a provider.
+const (
+	ProviderTypeRemote = "remote"
+	ProviderTypeLocal  = "local"
+	ProviderTypeInline = "inline"
+)
+
 func ProxyDisplayName(proxyType string) string {
 	switch proxyType {
 	case TypeTun:

@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"regexp"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -88,6 +90,20 @@ type URLTest struct {
 	closed                       bool
 	checkAccess                  sync.Mutex
 	interruptExternalConnections bool
+
+	// Provider membership. stateAccess guards tags; providerAccess serialises rebuilds;
+	// lifecycleAccess (above) guards the published group pointer, started and scope.
+	stateAccess     sync.RWMutex
+	providerAccess  sync.Mutex
+	provider        adapter.ProviderManager
+	providers       map[string]adapter.Provider
+	outboundsCache  map[string][]adapter.Outbound
+	providerTags    []string
+	exclude         *regexp.Regexp
+	include         *regexp.Regexp
+	useAllProviders bool
+	started         bool
+	lifecycleScope  *adapter.Scope
 }
 
 func NewURLTest(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.URLTestOutboundOptions) (adapter.Outbound, error) {
@@ -103,9 +119,22 @@ func NewURLTest(ctx context.Context, router adapter.Router, logger log.ContextLo
 		tolerance:                    options.Tolerance,
 		idleTimeout:                  time.Duration(options.IdleTimeout),
 		interruptExternalConnections: options.InterruptExistConnections,
+
+		provider:        service.FromContext[adapter.ProviderManager](ctx),
+		providers:       make(map[string]adapter.Provider),
+		outboundsCache:  make(map[string][]adapter.Outbound),
+		providerTags:    options.Providers,
+		exclude:         (*regexp.Regexp)(options.Exclude),
+		include:         (*regexp.Regexp)(options.Include),
+		useAllProviders: options.UseAllProviders,
 	}
-	if len(outbound.tags) == 0 {
-		return nil, E.New("missing tags")
+	for i, tag := range outbound.tags {
+		if slices.Contains(outbound.tags[:i], tag) {
+			return nil, E.New("duplicate tag: ", tag)
+		}
+	}
+	if len(outbound.tags) == 0 && len(outbound.providerTags) == 0 && !outbound.useAllProviders {
+		return nil, E.New("missing outbound and provider tags")
 	}
 	return outbound, nil
 }
@@ -113,77 +142,163 @@ func NewURLTest(ctx context.Context, router adapter.Router, logger log.ContextLo
 func (s *URLTest) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	switch stage {
 	case adapter.StartStateStart:
-		// Dispose of any group from an earlier Start before replacing it.
-		//
-		// Assigning a new group over the old one stranded everything the old group owned: its
-		// ticker, its pause callback and its background context, none of which anything referenced
-		// afterwards. A health check already running kept running, for a group nothing could reach.
-		//
-		// Start is called once in the normal lifecycle, so this is about not leaking when it is not.
-		// Detach the previous group, then close it OUTSIDE any lock.
-		//
-		// Close runs an arbitrary lifecycle callback - the group unregisters pause callbacks and
-		// stops a ticker - so holding a lock across it would risk a deadlock. The lock is held only
-		// to decide and to detach.
-		s.lifecycleAccess.Lock()
-		if s.closed {
-			s.lifecycleAccess.Unlock()
-			return os.ErrClosed
+		s.providerAccess.Lock()
+		defer s.providerAccess.Unlock()
+		if err := s.resolveProviders(); err != nil {
+			return err
 		}
-		previous := s.group.Swap(nil)
-		s.lifecycleAccess.Unlock()
-
-		if previous != nil {
-			_ = previous.Close()
-		}
-
-		outbounds := make([]adapter.Outbound, 0, len(s.tags))
-		for i, tag := range s.tags {
-			detour, loaded := s.outbound.Outbound(tag)
-			if !loaded {
-				return E.New("outbound ", i, " not found: ", tag)
-			}
-			outbounds = append(outbounds, detour)
-		}
-		group, err := NewURLTestGroupWithExpected(s.ctx, s.outbound, s.logger, outbounds, s.link, s.expectedStatus, s.interval, s.tolerance, s.idleTimeout, s.interruptExternalConnections)
+		tags, outbounds, cache, err := collectProviderOutbounds("", s.Dependencies(), s.outbound, s.providers, s.providerTags, s.outboundsCache, s.exclude, s.include)
 		if err != nil {
 			return err
 		}
-
-		// Publish ONLY if the wrapper is still live.
-		//
-		// Construction runs outside the lock, so a Close can complete while it is in progress.
-		// Without this re-check, Close returned success and was then undone by this store: the
-		// wrapper owned a live group, with its own ticker and background context, after it had been
-		// closed - and nothing would ever close that group.
-		//
-		// A loser disposes of what it built rather than leaving it to run unreferenced.
+		group, err := s.buildGroup(outbounds)
+		if err != nil {
+			return err
+		}
 		s.lifecycleAccess.Lock()
 		if s.closed {
 			s.lifecycleAccess.Unlock()
-			_ = group.Close()
+			if group != nil {
+				_ = group.Close()
+			}
 			return os.ErrClosed
 		}
-		s.group.Store(group)
+		// Detach the previous group before replacing it, and close it OUTSIDE the lock: Close runs
+		// an arbitrary lifecycle callback (unregister pause callbacks, stop the ticker), so holding
+		// the lock across it would risk a deadlock.
+		previous := s.group.Swap(group)
+		s.lifecycleScope = scope
 		s.lifecycleAccess.Unlock()
-		// The scope owns the group's teardown, registered against the group this Start installed,
-		// so a teardown that races Start cannot leave it running unreferenced.
-		scope.Add(group.Close)
+		if previous != nil {
+			_ = previous.Close()
+		}
+		// The scope owns each generation's teardown, so a teardown that races Start cannot leave a
+		// group running unreferenced. A group that is replaced later is closed at that point; its
+		// cleanup remains registered and closing an already-closed group is a no-op.
+		if scope != nil {
+			scope.Add(func() error {
+				if group != nil {
+					return group.Close()
+				}
+				return nil
+			})
+		}
+		s.stateAccess.Lock()
+		s.tags, s.outboundsCache = tags, cache
+		s.stateAccess.Unlock()
+		for _, providerTag := range s.providerTags {
+			provider := s.providers[providerTag]
+			element := provider.RegisterCallback(s.onProviderUpdated)
+			if scope != nil {
+				scope.Add(func() error {
+					provider.UnregisterCallback(element)
+					return nil
+				})
+			}
+		}
 	case adapter.StartStateStarted:
-		// PostStart goes through the wrapper's guarded form: no group means closed or never
-		// started, which is reported rather than silently treated as success.
 		return s.PostStart()
 	}
 	return nil
 }
 
-func (s *URLTest) PostStart() error {
-	// No group means the wrapper is closed or was never started. Reporting that as an error rather
-	// than returning nil keeps "PostStart succeeded" meaningful: a caller that ignores this would
-	// otherwise believe background work had been started.
-	group := s.currentGroup()
-	if group == nil {
+// resolveProviders binds the provider tags this group names. UseAllProviders snapshots the
+// configured providers at start.
+func (s *URLTest) resolveProviders() error {
+	if len(s.providerTags) == 0 && !s.useAllProviders {
+		return nil
+	}
+	if s.provider == nil {
+		return E.New(s.Tag(), ": providers are configured but the provider manager is not available")
+	}
+	if s.useAllProviders {
+		var providerTags []string
+		for _, provider := range s.provider.Providers() {
+			providerTags = append(providerTags, provider.Tag())
+			s.providers[provider.Tag()] = provider
+		}
+		s.providerTags = providerTags
+		return nil
+	}
+	for i, tag := range s.providerTags {
+		provider, loaded := s.provider.Get(tag)
+		if !loaded {
+			return E.New("outbound provider ", i, " not found: ", tag)
+		}
+		s.providers[tag] = provider
+	}
+	return nil
+}
+
+// buildGroup constructs a probe group over the current member set. No members is a legal state: a
+// provider may not have published anything yet, and the wrapper reports "no member" on the dial
+// path instead of inventing one.
+func (s *URLTest) buildGroup(outbounds []adapter.Outbound) (*URLTestGroup, error) {
+	if len(outbounds) == 0 {
+		return nil, nil
+	}
+	return NewURLTestGroupWithExpected(s.ctx, s.outbound, s.logger, outbounds, s.link, s.expectedStatus, s.interval, s.tolerance, s.idleTimeout, s.interruptExternalConnections)
+}
+
+// onProviderUpdated rebuilds the probe group after a provider published a new node set.
+//
+// The group is RECREATED rather than mutated: its health loop, ticker and per-target state are
+// owned by the group, and a membership change invalidates the selection it made. The measurement
+// history lives in the shared URL-test storage, so the new generation starts with the results that
+// are still relevant.
+func (s *URLTest) onProviderUpdated(tag string) error {
+	s.providerAccess.Lock()
+	tags, outbounds, cache, err := collectProviderOutbounds(tag, s.Dependencies(), s.outbound, s.providers, s.providerTags, s.outboundsCache, s.exclude, s.include)
+	if err != nil {
+		s.providerAccess.Unlock()
+		return E.Cause(err, s.Tag())
+	}
+	group, err := s.buildGroup(outbounds)
+	if err != nil {
+		s.providerAccess.Unlock()
+		return err
+	}
+	s.lifecycleAccess.Lock()
+	if s.closed {
+		s.lifecycleAccess.Unlock()
+		if group != nil {
+			_ = group.Close()
+		}
 		return os.ErrClosed
+	}
+	previous := s.group.Swap(group)
+	started := s.started
+	scope := s.lifecycleScope
+	s.lifecycleAccess.Unlock()
+	if scope != nil && group != nil {
+		scope.Add(group.Close)
+	}
+	if previous != nil {
+		_ = previous.Close()
+	}
+	if group != nil && started {
+		group.PostStart()
+	}
+	s.stateAccess.Lock()
+	s.tags, s.outboundsCache = tags, cache
+	s.stateAccess.Unlock()
+	s.providerAccess.Unlock()
+	return nil
+}
+
+func (s *URLTest) PostStart() error {
+	s.lifecycleAccess.Lock()
+	if s.closed {
+		s.lifecycleAccess.Unlock()
+		return os.ErrClosed
+	}
+	s.started = true
+	group := s.currentGroup()
+	s.lifecycleAccess.Unlock()
+	if group == nil {
+		// No members yet (a provider has not published anything). That is not a closed wrapper and
+		// not a failure: there is simply no background work to start until the first node arrives.
+		return nil
 	}
 	group.PostStart()
 	return nil
@@ -208,7 +323,21 @@ func (s *URLTest) Close() error {
 }
 
 func (s *URLTest) All() []string {
-	return s.tags
+	s.stateAccess.RLock()
+	defer s.stateAccess.RUnlock()
+	return slices.Clone(s.tags)
+}
+
+// noGroupError explains a dial that has no group to send through. It distinguishes a closed wrapper
+// from a group whose provider has not published a node yet, because the two need different actions.
+func (s *URLTest) noGroupError() error {
+	s.lifecycleAccess.Lock()
+	closed := s.closed
+	s.lifecycleAccess.Unlock()
+	if closed {
+		return os.ErrClosed
+	}
+	return E.New("outbound group ", s.Tag(), " has no available member yet")
 }
 
 // currentGroup returns the live group, or nil when the wrapper has none.
@@ -271,7 +400,7 @@ func (s *URLTest) URLTest(ctx context.Context) (map[string]uint16, error) {
 	if group == nil {
 		// A closed wrapper has no measurement to run. Reporting success with no results would tell
 		// the caller the test ran and found nothing, which is a different statement.
-		return nil, os.ErrClosed
+		return nil, s.noGroupError()
 	}
 	return group.URLTest(ctx)
 }
@@ -329,7 +458,7 @@ func (s *URLTest) InterfaceUpdated(ctx context.Context) {
 func (s *URLTest) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	current := s.currentGroup()
 	if current == nil {
-		return nil, os.ErrClosed
+		return nil, s.noGroupError()
 	}
 	current.Touch()
 	var outbound adapter.Outbound
@@ -366,7 +495,7 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 func (s *URLTest) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	current := s.currentGroup()
 	if current == nil {
-		return nil, os.ErrClosed
+		return nil, s.noGroupError()
 	}
 	current.Touch()
 	var outbound adapter.Outbound
@@ -391,7 +520,7 @@ func (s *URLTest) ListenPacket(ctx context.Context, destination M.Socksaddr) (ne
 func (s *URLTest) DialParallelNetwork(ctx context.Context, network string, destination M.Socksaddr, destinationAddresses []netip.Addr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.Conn, error) {
 	current := s.currentGroup()
 	if current == nil {
-		return nil, os.ErrClosed
+		return nil, s.noGroupError()
 	}
 	current.Touch()
 	var outbound adapter.Outbound

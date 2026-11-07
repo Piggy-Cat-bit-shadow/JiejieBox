@@ -20,16 +20,18 @@ import (
 )
 
 var (
-	bucketSelected = []byte("selected")
-	bucketExpand   = []byte("group_expand")
-	bucketMode     = []byte("clash_mode")
-	bucketRuleSet  = []byte("rule_set")
+	bucketSelected     = []byte("selected")
+	bucketExpand       = []byte("group_expand")
+	bucketMode         = []byte("clash_mode")
+	bucketRuleSet      = []byte("rule_set")
+	bucketSubscription = []byte("subscription")
 
 	bucketNameList = []string{
 		string(bucketSelected),
 		string(bucketExpand),
 		string(bucketMode),
 		string(bucketRuleSet),
+		string(bucketSubscription),
 		string(bucketRDRC),
 		string(bucketDNSCache),
 	}
@@ -483,5 +485,43 @@ func (c *CacheFile) SaveRuleSet(tag string, set *adapter.SavedBinary) error {
 			return err
 		}
 		return bucket.Put([]byte(tag), setBinary)
+	})
+}
+
+// LoadSubscription returns the last-known-good document of a remote provider.
+//
+// The record is stored in its own bucket rather than beside rule sets: a provider's document is a
+// node list, and the two have different sizes, lifetimes and invalidation rules. Sharing a bucket
+// is how the sing-box-y implementation lost provider caches to a rule-set cleanup.
+func (c *CacheFile) LoadSubscription(tag string) *adapter.SavedBinary {
+	var savedSubscription adapter.SavedBinary
+	err := c.view(func(t *bbolt.Tx) error {
+		bucket := c.bucket(t, bucketSubscription)
+		if bucket == nil {
+			return os.ErrNotExist
+		}
+		binaryContent := bucket.Get([]byte(tag))
+		if len(binaryContent) == 0 {
+			return os.ErrInvalid
+		}
+		return savedSubscription.UnmarshalBinary(binaryContent)
+	})
+	if err != nil {
+		return nil
+	}
+	return &savedSubscription
+}
+
+func (c *CacheFile) SaveSubscription(tag string, subscription *adapter.SavedBinary) error {
+	return c.batch(func(t *bbolt.Tx) error {
+		bucket, err := c.createBucket(t, bucketSubscription)
+		if err != nil {
+			return err
+		}
+		binaryContent, err := subscription.MarshalBinary()
+		if err != nil {
+			return err
+		}
+		return bucket.Put([]byte(tag), binaryContent)
 	})
 }

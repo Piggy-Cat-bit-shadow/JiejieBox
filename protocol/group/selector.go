@@ -5,7 +5,9 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"regexp"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -65,6 +67,22 @@ type Selector struct {
 	// immutable value so a reader never sees half of an update and never races Start. It is nil
 	// until Start has looked.
 	preference atomic.Pointer[selectionPreference]
+
+	// stateAccess guards tags/outbounds/outboundsCache. The traffic path reads `selected` (an
+	// atomic), not these maps, so a provider update never puts a lock in front of a dial.
+	stateAccess sync.RWMutex
+	// providerAccess serialises membership rebuilds: a rebuild reads every provider's published
+	// list and then publishes one map, and two rebuilds interleaving would let the older map win.
+	providerAccess sync.Mutex
+
+	provider          adapter.ProviderManager
+	providers         map[string]adapter.Provider
+	outboundsCache    map[string][]adapter.Outbound
+	providerTags      []string
+	exclude           *regexp.Regexp
+	include           *regexp.Regexp
+	useAllProviders   bool
+	providerScheduler providerUpdateCheckScheduler
 }
 
 // selectionPreference is what the cachefile said, recorded by Start.
@@ -160,12 +178,25 @@ func NewSelector(ctx context.Context, router adapter.Router, logger log.ContextL
 		tags:                         options.Outbounds,
 		defaultTag:                   options.Default,
 		outbounds:                    make(map[string]adapter.Outbound),
+		outboundsCache:               make(map[string][]adapter.Outbound),
 		history:                      service.PtrFromContext[urltest.HistoryStorage](ctx),
 		interruptGroup:               interrupt.NewGroup(),
 		interruptExternalConnections: options.InterruptExistConnections,
+
+		provider:        service.FromContext[adapter.ProviderManager](ctx),
+		providers:       make(map[string]adapter.Provider),
+		providerTags:    options.Providers,
+		exclude:         (*regexp.Regexp)(options.Exclude),
+		include:         (*regexp.Regexp)(options.Include),
+		useAllProviders: options.UseAllProviders,
 	}
-	if len(outbound.tags) == 0 {
-		return nil, E.New("missing tags")
+	for i, tag := range outbound.tags {
+		if slices.Contains(outbound.tags[:i], tag) {
+			return nil, E.New("duplicate tag: ", tag)
+		}
+	}
+	if len(outbound.tags) == 0 && len(outbound.providerTags) == 0 && !outbound.useAllProviders {
+		return nil, E.New("missing outbound and provider tags")
 	}
 	return outbound, nil
 }
@@ -182,51 +213,166 @@ func (s *Selector) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateStart {
 		return nil
 	}
-	for i, tag := range s.tags {
-		detour, loaded := s.outbound.Outbound(tag)
-		if !loaded {
-			return E.New("outbound ", i, " not found: ", tag)
-		}
-		s.outbounds[tag] = detour
+	s.providerAccess.Lock()
+	defer s.providerAccess.Unlock()
+	if err := s.resolveProviders(); err != nil {
+		return err
 	}
+	tags, outbounds, cache, err := collectProviderOutbounds("", s.Dependencies(), s.outbound, s.providers, s.providerTags, s.outboundsCache, s.exclude, s.include)
+	if err != nil {
+		return err
+	}
+	outboundByTag := make(map[string]adapter.Outbound, len(outbounds))
+	for _, detour := range outbounds {
+		outboundByTag[detour.Tag()] = detour
+	}
+	selected, err := s.selectMember(outboundByTag, tags, false)
+	if err != nil {
+		return err
+	}
+	s.stateAccess.Lock()
+	s.tags, s.outbounds, s.outboundsCache = tags, outboundByTag, cache
+	s.stateAccess.Unlock()
+	// The preference evidence is recorded against the FULL member set, provider nodes included:
+	// a stored member that names a provider node is legal the moment the provider publishes it.
+	if preference := s.preferenceRecord(tags); preference != nil {
+		s.preference.Store(preference)
+	}
+	if selected != nil {
+		s.selected.Store(selected)
+	}
+	for _, providerTag := range s.providerTags {
+		provider := s.providers[providerTag]
+		element := provider.RegisterCallback(s.onProviderUpdated)
+		scope.Add(func() error {
+			provider.UnregisterCallback(element)
+			return nil
+		})
+	}
+	return nil
+}
 
+// resolveProviders binds the provider tags this selector names. UseAllProviders snapshots the
+// configured providers at start, so a provider added later needs a restart to be picked up.
+func (s *Selector) resolveProviders() error {
+	if len(s.providerTags) == 0 && !s.useAllProviders {
+		return nil
+	}
+	if s.provider == nil {
+		return E.New(s.Tag(), ": providers are configured but the provider manager is not available")
+	}
+	if s.useAllProviders {
+		var providerTags []string
+		for _, provider := range s.provider.Providers() {
+			providerTags = append(providerTags, provider.Tag())
+			s.providers[provider.Tag()] = provider
+		}
+		s.providerTags = providerTags
+		return nil
+	}
+	for i, tag := range s.providerTags {
+		provider, loaded := s.provider.Get(tag)
+		if !loaded {
+			return E.New("outbound provider ", i, " not found: ", tag)
+		}
+		s.providers[tag] = provider
+	}
+	return nil
+}
+
+// preferenceRecord is the cachefile evidence Start reports about a member it did NOT have to use.
+func (s *Selector) preferenceRecord(tags []string) *selectionPreference {
+	if s.Tag() == "" {
+		return nil
+	}
+	cacheFile := service.FromContext[adapter.CacheFile](s.ctx)
+	if cacheFile == nil {
+		return nil
+	}
+	stored := cacheFile.LoadSelected(s.Tag())
+	if stored == "" {
+		return nil
+	}
+	if slices.Contains(tags, stored) {
+		return &selectionPreference{persisted: stored}
+	}
+	return &selectionPreference{rejected: stored}
+}
+
+// selectMember applies the documented precedence: the stored selection, the previously committed
+// member (during a provider update), the configured default, then the first declared member. An
+// empty group selects nothing; the dial path reports that instead of inheriting a node the user did
+// not configure.
+func (s *Selector) selectMember(outbounds map[string]adapter.Outbound, tags []string, preserve bool) (adapter.Outbound, error) {
 	if s.Tag() != "" {
 		cacheFile := service.FromContext[adapter.CacheFile](s.ctx)
 		if cacheFile != nil {
-			selected := cacheFile.LoadSelected(s.Tag())
-			if selected != "" {
-				detour, loaded := s.outbounds[selected]
-				if loaded {
-					// The stored preference is legal, so it is the one committed - AND it is
-					// recorded as the preference it was, which is what SelectionStatus reports
-					// when a reader wants to know where the commitment came from.
-					s.preference.Store(&selectionPreference{persisted: selected})
-					s.selected.Store(detour)
-					return nil
+			if stored := cacheFile.LoadSelected(s.Tag()); stored != "" {
+				if detour, loaded := outbounds[stored]; loaded {
+					return detour, nil
 				}
-				// A stored member this selector does not declare. It is recorded rather than
-				// dropped, because "your stored selection was refused" is a different fact from
-				// "you have no stored selection", and only one of them is a configuration mistake.
-				s.preference.Store(&selectionPreference{rejected: selected})
 			}
 		}
 	}
-
-	if s.defaultTag != "" {
-		detour, loaded := s.outbounds[s.defaultTag]
-		if !loaded {
-			return E.New("default outbound not found: ", s.defaultTag)
+	if preserve {
+		if previous := s.selected.Load(); previous != nil {
+			if current, loaded := outbounds[previous.Tag()]; loaded {
+				return current, nil
+			}
 		}
-		s.selected.Store(detour)
-		return nil
 	}
+	if s.defaultTag != "" {
+		detour, loaded := outbounds[s.defaultTag]
+		if !loaded {
+			return nil, E.New("default outbound not found: ", s.defaultTag)
+		}
+		return detour, nil
+	}
+	if len(tags) == 0 {
+		return nil, nil
+	}
+	return outbounds[tags[0]], nil
+}
 
-	s.selected.Store(s.outbounds[s.tags[0]])
+// onProviderUpdated rebuilds this selector's membership after one provider published a new node set.
+//
+// The committed member is preserved when its tag still exists (that is what a user expects from a
+// subscription refresh); when it does not, the same precedence Start uses picks a replacement. The
+// interrupt is fired only when the published member actually changed.
+func (s *Selector) onProviderUpdated(tag string) error {
+	s.providerAccess.Lock()
+	tags, outbounds, cache, err := collectProviderOutbounds(tag, s.Dependencies(), s.outbound, s.providers, s.providerTags, s.outboundsCache, s.exclude, s.include)
+	if err != nil {
+		s.providerAccess.Unlock()
+		return E.Cause(err, s.Tag())
+	}
+	outboundByTag := make(map[string]adapter.Outbound, len(outbounds))
+	for _, detour := range outbounds {
+		outboundByTag[detour.Tag()] = detour
+	}
+	selected, err := s.selectMember(outboundByTag, tags, true)
+	if err != nil {
+		s.providerAccess.Unlock()
+		return err
+	}
+	s.stateAccess.Lock()
+	previous := s.selected.Swap(selected)
+	s.tags, s.outbounds, s.outboundsCache = tags, outboundByTag, cache
+	s.stateAccess.Unlock()
+	s.providerAccess.Unlock()
+	if previous != selected {
+		s.interruptGroup.Interrupt(s.interruptExternalConnections)
+		if s.history != nil {
+			s.history.NotifyUpdated()
+		}
+	}
 	return nil
 }
 
 func (s *Selector) All() []string {
-	return s.tags
+	s.stateAccess.RLock()
+	defer s.stateAccess.RUnlock()
+	return slices.Clone(s.tags)
 }
 
 func (s *Selector) Selected(network string) adapter.Outbound {
@@ -357,18 +503,26 @@ func (s *Selector) readPersistedPreference() (persisted string, rejected string)
 	if stored == "" {
 		return "", ""
 	}
-	if slices.Contains(s.tags, stored) {
+	s.stateAccess.RLock()
+	declared := slices.Contains(s.tags, stored)
+	s.stateAccess.RUnlock()
+	if declared {
 		return stored, ""
 	}
 	return "", stored
 }
 
 func (s *Selector) SelectOutbound(tag string) bool {
+	s.providerAccess.Lock()
+	s.stateAccess.RLock()
 	detour, loaded := s.outbounds[tag]
+	s.stateAccess.RUnlock()
 	if !loaded {
+		s.providerAccess.Unlock()
 		return false
 	}
 	if s.selected.Swap(detour) == detour {
+		s.providerAccess.Unlock()
 		return true
 	}
 	if s.Tag() != "" {
@@ -380,6 +534,7 @@ func (s *Selector) SelectOutbound(tag string) bool {
 			}
 		}
 	}
+	s.providerAccess.Unlock()
 	s.interruptGroup.Interrupt(s.interruptExternalConnections)
 	if s.history != nil {
 		s.history.NotifyUpdated()
@@ -387,8 +542,23 @@ func (s *Selector) SelectOutbound(tag string) bool {
 	return true
 }
 
+// currentMember returns the committed member, or an error naming the group when nothing has been
+// committed yet. A provider-only selector starts empty when its provider has no cache, and that
+// state must fail the dial with an explanation rather than a nil dereference.
+func (s *Selector) currentMember() (adapter.Outbound, error) {
+	member := s.selected.Load()
+	if member == nil {
+		return nil, E.New("outbound group ", s.Tag(), " has no available member yet")
+	}
+	return member, nil
+}
+
 func (s *Selector) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
-	conn, err := s.selected.Load().DialContext(ctx, network, destination)
+	member, err := s.currentMember()
+	if err != nil {
+		return nil, err
+	}
+	conn, err := member.DialContext(ctx, network, destination)
 	if err != nil {
 		return nil, err
 	}
@@ -401,7 +571,10 @@ func (s *Selector) DialContext(ctx context.Context, network string, destination 
 // remaining family is never tried. The selected member may itself be a group; the same method
 // forwards the list again.
 func (s *Selector) DialParallelNetwork(ctx context.Context, network string, destination M.Socksaddr, destinationAddresses []netip.Addr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.Conn, error) {
-	member := s.selected.Load()
+	member, err := s.currentMember()
+	if err != nil {
+		return nil, err
+	}
 	if parallel, isParallel := member.(D.ParallelNetworkDialer); isParallel {
 		conn, err := parallel.DialParallelNetwork(ctx, network, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
 		if err != nil {
@@ -417,7 +590,10 @@ func (s *Selector) DialParallelNetwork(ctx context.Context, network string, dest
 }
 
 func (s *Selector) ListenSerialNetworkPacket(ctx context.Context, destination M.Socksaddr, destinationAddresses []netip.Addr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, netip.Addr, error) {
-	member := s.selected.Load()
+	member, err := s.currentMember()
+	if err != nil {
+		return nil, netip.Addr{}, err
+	}
 	if parallel, isParallel := member.(D.ParallelNetworkDialer); isParallel {
 		conn, address, err := parallel.ListenSerialNetworkPacket(ctx, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
 		if err != nil {
@@ -433,7 +609,11 @@ func (s *Selector) ListenSerialNetworkPacket(ctx context.Context, destination M.
 }
 
 func (s *Selector) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
-	conn, err := s.selected.Load().ListenPacket(ctx, destination)
+	member, err := s.currentMember()
+	if err != nil {
+		return nil, err
+	}
+	conn, err := member.ListenPacket(ctx, destination)
 	if err != nil {
 		return nil, err
 	}

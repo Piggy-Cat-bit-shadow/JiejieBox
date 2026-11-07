@@ -12,6 +12,7 @@ import (
 	"github.com/sagernet/sing-box/adapter/endpoint"
 	"github.com/sagernet/sing-box/adapter/inbound"
 	"github.com/sagernet/sing-box/adapter/outbound"
+	boxprovider "github.com/sagernet/sing-box/adapter/provider"
 	boxservice "github.com/sagernet/sing-box/adapter/service"
 	"github.com/sagernet/sing-box/common/power"
 	"github.com/sagernet/sing-box/dns"
@@ -70,6 +71,7 @@ func libboxContext(t *testing.T) context.Context {
 	ctx := box.Context(context.Background(),
 		inbound.NewRegistry(),
 		outbound.NewRegistry(),
+		boxprovider.NewRegistry(),
 		endpoint.NewRegistry(),
 		dnsRegistry,
 		boxservice.NewRegistry(),

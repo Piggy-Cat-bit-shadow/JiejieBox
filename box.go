@@ -13,6 +13,7 @@ import (
 	"github.com/sagernet/sing-box/adapter/endpoint"
 	"github.com/sagernet/sing-box/adapter/inbound"
 	"github.com/sagernet/sing-box/adapter/outbound"
+	boxProvider "github.com/sagernet/sing-box/adapter/provider"
 	boxService "github.com/sagernet/sing-box/adapter/service"
 	"github.com/sagernet/sing-box/common/certificate"
 	"github.com/sagernet/sing-box/common/dialer"
@@ -119,6 +120,7 @@ type Box struct {
 	endpoint            *endpoint.Manager
 	inbound             *inbound.Manager
 	outbound            *outbound.Manager
+	provider            *boxProvider.Manager
 	service             *boxService.Manager
 	certificateProvider *boxCertificate.Manager
 	dnsTransport        *dns.TransportManager
@@ -159,6 +161,7 @@ func Context(
 	ctx context.Context,
 	inboundRegistry adapter.InboundRegistry,
 	outboundRegistry adapter.OutboundRegistry,
+	providerRegistry adapter.ProviderRegistry,
 	endpointRegistry adapter.EndpointRegistry,
 	dnsTransportRegistry adapter.DNSTransportRegistry,
 	serviceRegistry adapter.ServiceRegistry,
@@ -173,6 +176,11 @@ func Context(
 		service.FromContext[adapter.OutboundRegistry](ctx) == nil {
 		ctx = service.ContextWith[option.OutboundOptionsRegistry](ctx, outboundRegistry)
 		ctx = service.ContextWith[adapter.OutboundRegistry](ctx, outboundRegistry)
+	}
+	if service.FromContext[option.ProviderOptionsRegistry](ctx) == nil ||
+		service.FromContext[adapter.ProviderRegistry](ctx) == nil {
+		ctx = service.ContextWith[option.ProviderOptionsRegistry](ctx, providerRegistry)
+		ctx = service.ContextWith[adapter.ProviderRegistry](ctx, providerRegistry)
 	}
 	if service.FromContext[option.EndpointOptionsRegistry](ctx) == nil ||
 		service.FromContext[adapter.EndpointRegistry](ctx) == nil {
@@ -315,6 +323,7 @@ func New(options Options) (*Box, error) {
 	endpointRegistry := service.FromContext[adapter.EndpointRegistry](ctx)
 	inboundRegistry := service.FromContext[adapter.InboundRegistry](ctx)
 	outboundRegistry := service.FromContext[adapter.OutboundRegistry](ctx)
+	providerRegistry := service.FromContext[adapter.ProviderRegistry](ctx)
 	dnsTransportRegistry := service.FromContext[adapter.DNSTransportRegistry](ctx)
 	serviceRegistry := service.FromContext[adapter.ServiceRegistry](ctx)
 	certificateProviderRegistry := service.FromContext[adapter.CertificateProviderRegistry](ctx)
@@ -327,6 +336,9 @@ func New(options Options) (*Box, error) {
 	}
 	if outboundRegistry == nil {
 		return nil, E.New("missing outbound registry in context")
+	}
+	if providerRegistry == nil {
+		return nil, E.New("missing provider registry in context")
 	}
 	if dnsTransportRegistry == nil {
 		return nil, E.New("missing DNS transport registry in context")
@@ -563,9 +575,11 @@ func New(options Options) (*Box, error) {
 	})
 	serviceManager := boxService.NewManager(serviceRegistry)
 	certificateProviderManager := boxCertificate.NewManager(certificateProviderRegistry)
+	providerManager := boxProvider.NewManager(ctx, logFactory.NewLogger("provider"), providerRegistry)
 	service.MustRegister[adapter.EndpointManager](ctx, endpointManager)
 	service.MustRegister[adapter.InboundManager](ctx, inboundManager)
 	service.MustRegister[adapter.OutboundManager](ctx, outboundManager)
+	service.MustRegister[adapter.ProviderManager](ctx, providerManager)
 	service.MustRegister[adapter.DNSTransportManager](ctx, dnsTransportManager)
 	service.MustRegister[adapter.ServiceManager](ctx, serviceManager)
 	service.MustRegister[adapter.CertificateProviderManager](ctx, certificateProviderManager)
@@ -818,6 +832,30 @@ func New(options Options) (*Box, error) {
 		}
 	}
 
+	// Providers are constructed after the static outbounds. An inline provider publishes its nodes
+	// during this call (through the outbound manager's prepare-then-swap path), and those nodes must
+	// be in the manager's list before the outbound manager's Start sorts and starts the graph. A
+	// remote/local provider only records its options here; its nodes arrive when it starts.
+	for i, providerOptions := range options.Providers {
+		var tag string
+		if providerOptions.Tag != "" {
+			tag = providerOptions.Tag
+		} else {
+			tag = F.ToString(i)
+		}
+		err = providerManager.Create(
+			ctx,
+			router,
+			logFactory,
+			tag,
+			providerOptions.Type,
+			providerOptions.Options,
+		)
+		if err != nil {
+			return nil, E.Cause(err, "initialize provider[", i, "] ", providerOptions.Type, "[", tag, "]")
+		}
+	}
+
 	// Collect the explicit traffic classes before any flow is routed.
 	//
 	// The class is declared on the outbound envelope, where every outbound type shares it, so it is
@@ -987,6 +1025,7 @@ func New(options Options) (*Box, error) {
 		endpoint:            endpointManager,
 		inbound:             inboundManager,
 		outbound:            outboundManager,
+		provider:            providerManager,
 		dnsTransport:        dnsTransportManager,
 		service:             serviceManager,
 		certificateProvider: certificateProviderManager,
@@ -1135,6 +1174,7 @@ func (s *Box) preStart() error {
 		boxComponent{"router", s.router},
 		boxComponent{"outbound", s.outbound},
 		boxComponent{"endpoint", s.endpoint},
+		boxComponent{"provider", s.provider},
 		boxComponent{"certificate-provider", s.certificateProvider},
 		boxComponent{"inbound", s.inbound},
 		boxComponent{"service", s.service},
@@ -1148,6 +1188,7 @@ func (s *Box) preStart() error {
 		boxComponent{"network", s.network},
 		boxComponent{"connection", s.connection},
 		boxComponent{s.httpClientService.Name(), s.httpClientService},
+		boxComponent{"provider", s.provider},
 		boxComponent{"router", s.router},
 		boxComponent{"dns-router", s.dnsRouter},
 	)
@@ -1186,6 +1227,7 @@ func (s *Box) start() error {
 	}
 	err = s.startComponents(adapter.StartStatePostStart,
 		boxComponent{"outbound", s.outbound},
+		boxComponent{"provider", s.provider},
 		boxComponent{"network", s.network},
 		boxComponent{"dns-transport", s.dnsTransport},
 		boxComponent{"dns-router", s.dnsRouter},
@@ -1211,6 +1253,7 @@ func (s *Box) start() error {
 		boxComponent{"router", s.router},
 		boxComponent{"outbound", s.outbound},
 		boxComponent{"endpoint", s.endpoint},
+		boxComponent{"provider", s.provider},
 		boxComponent{"certificate-provider", s.certificateProvider},
 		boxComponent{"inbound", s.inbound},
 		boxComponent{"service", s.service},

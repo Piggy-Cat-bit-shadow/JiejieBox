@@ -66,6 +66,7 @@ var SourceRoots = []string{
 	"log",
 	"option",
 	"protocol",
+	"provider",
 	"release",
 	"route",
 	"schema",

@@ -3,14 +3,29 @@ package option
 import "github.com/sagernet/sing/common/json/badoption"
 
 type SelectorOutboundOptions struct {
-	Outbounds                 []string `json:"outbounds" reference:"outbound"`
-	Default                   string   `json:"default,omitempty" reference:"outbound"`
-	InterruptExistConnections bool     `json:"interrupt_exist_connections,omitempty"`
+	Outbounds []string `json:"outbounds" reference:"outbound"`
+	// Providers names the outbound providers whose nodes join this selector in addition to
+	// `outbounds`. The provider renders each node as "<provider tag>/<node tag>", and that rendered
+	// tag is what `outbounds` and the Clash API see.
+	Providers []string `json:"providers,omitempty"`
+	// UseAllProviders is a shortcut for naming every configured provider. It is resolved at start,
+	// so a provider added to the configuration later is not picked up without a restart.
+	UseAllProviders bool `json:"use_all_providers,omitempty"`
+	// Include and Exclude filter provider nodes by their rendered tag. Exclude wins when both match.
+	Include                   *badoption.Regexp `json:"include,omitempty"`
+	Exclude                   *badoption.Regexp `json:"exclude,omitempty"`
+	Default                   string            `json:"default,omitempty" reference:"outbound"`
+	InterruptExistConnections bool              `json:"interrupt_exist_connections,omitempty"`
 }
 
 type URLTestOutboundOptions struct {
 	Outbounds []string `json:"outbounds" reference:"outbound"`
-	URL       string   `json:"url,omitempty"`
+	// Providers names the outbound providers whose nodes join this group; see SelectorOutboundOptions.
+	Providers       []string          `json:"providers,omitempty"`
+	UseAllProviders bool              `json:"use_all_providers,omitempty"`
+	Include         *badoption.Regexp `json:"include,omitempty"`
+	Exclude         *badoption.Regexp `json:"exclude,omitempty"`
+	URL             string            `json:"url,omitempty"`
 	// ExpectedStatus restricts which HTTP statuses count as reachable.
 	//
 	// Empty means no constraint, which is the historical behaviour: any response counts. A

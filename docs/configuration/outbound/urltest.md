@@ -10,6 +10,10 @@
     "proxy-b",
     "proxy-c"
   ],
+  "providers": ["airport"],
+  "use_all_providers": false,
+  "include": "",
+  "exclude": "",
   "url": "",
   "expected_status": "",
   "interval": "",
@@ -25,7 +29,26 @@
 
 ==Required==
 
-List of outbound tags to test.
+List of outbound tags to test. It may be empty when `providers` or `use_all_providers` is set.
+
+#### providers
+
+List of outbound provider tags whose nodes join this group. See [Provider](/configuration/provider/).
+
+#### use_all_providers
+
+Include every configured provider. The set is resolved at start.
+
+#### include
+
+Regexp: only provider nodes whose rendered tag matches are included.
+
+#### exclude
+
+Regexp: provider nodes whose rendered tag matches are skipped. `exclude` wins over `include`.
+
+A provider refresh recreates the probe group: the new member set is measured from scratch, while the
+shared URL-test history keeps the results that are still relevant.
 
 #### url
 

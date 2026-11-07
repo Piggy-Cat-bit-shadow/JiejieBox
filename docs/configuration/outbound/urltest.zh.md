@@ -10,6 +10,10 @@
     "proxy-b",
     "proxy-c"
   ],
+  "providers": ["airport"],
+  "use_all_providers": false,
+  "include": "",
+  "exclude": "",
   "url": "",
   "expected_status": "",
   "interval": "",
@@ -25,7 +29,25 @@
 
 ==必填==
 
-用于测试的出站标签列表。
+用于测试的出站标签列表。若已配置 `providers` 或 `use_all_providers`，可以留空。
+
+#### providers
+
+要加入本组的出站 Provider 标签列表，见 [出站 Provider](/zh/configuration/provider/)。
+
+#### use_all_providers
+
+包含全部已配置的 Provider，在启动时确定。
+
+#### include
+
+正则：只加入**渲染后标签**匹配的 Provider 节点。
+
+#### exclude
+
+正则：跳过**渲染后标签**匹配的 Provider 节点，优先于 `include`。
+
+Provider 刷新会重建测速组：新成员集合会重新测量，共享的 URLTest 历史保留仍然适用的结果。
 
 #### url
 

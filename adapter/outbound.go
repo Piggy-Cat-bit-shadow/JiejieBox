@@ -190,6 +190,28 @@ type OutboundManager interface {
 	Create(ctx context.Context, router Router, logger log.ContextLogger, tag string, outboundType string, options any) error
 }
 
+// DynamicOutboundManager is the half of the outbound namespace a component needs to change it
+// while the Box is running.
+//
+// # Why it is a separate interface
+//
+// The static manager is the configuration's namespace: Create refuses a duplicate, and nothing is
+// ever removed because the configuration does not change. A provider owns a DISJOINT part of the
+// same namespace (its tags are prefixed with the provider's), and it must be able to replace a node
+// whose definition changed and remove one the subscription dropped. Making those two verbs part of
+// OutboundManager would publish them to every caller that only ever reads the configuration, and
+// every test double of the interface would have to grow methods it does not implement.
+//
+// Replace is prepare-then-swap: the replacement is constructed and started BEFORE the old object is
+// unlinked, so a constructor failure leaves the working node in place. Remove refuses while a
+// remaining outbound still declares the tag as a dependency, so a provider update cannot leave a
+// dangling reference behind.
+type DynamicOutboundManager interface {
+	OutboundManager
+	Replace(ctx context.Context, router Router, logger log.ContextLogger, tag string, outboundType string, options any) error
+	Remove(tag string) error
+}
+
 // IdleConnectionReleaser is the half of IdleConnectionKeeper that a RETIRE walk actually needs:
 // drop the resources nobody is using.
 //
