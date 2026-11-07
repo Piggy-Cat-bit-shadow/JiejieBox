@@ -260,8 +260,19 @@ VERIFIED_ANDROID_SHA="c7837107dc0126fb704fdf08cf203e10b30c8a22"
 #     --lang swift --root <sing-box-for-apple @ 9f445fb6>
 #   {"scanned": 422, "violations": [], "interface_methods": 3, "error": ""}
 #
+# Moved to 0c7b10be on 2026-11-07, when the release freeze advanced the gitlink from ab575dac to
+# the Apple repository's product main: seventeen commits of iPhone configuration/UI fixes, the
+# localisation gate and its catalog repair, and the merge of the self-sign line into that UI line.
+# The kernel-side surface in experimental/libbox is untouched by the move; what has to be
+# re-proved is the layer-4 caller sweep, so it was re-run against the moved tree instead of
+# inherited from ab575dac:
+#
+#   python3 scripts/ci/probe-accessors.py --contract docs/fork/libbox-abi-contract.tsv \
+#     --lang swift --root <sing-box-for-apple @ 0c7b10be>
+#   {"scanned": 424, "violations": [], "interface_methods": 3, "error": ""}
+#
 # The compile half is the Apple client workflow, which is what the release path consumes.
-VERIFIED_APPLE_SHA="ab575dace8190a48a9d7cf666ef009f803e6ca62"
+VERIFIED_APPLE_SHA="0c7b10be05811cdd3f31a48a7cbe49f061852084"
 
 client_root=""
 skip_client=0
