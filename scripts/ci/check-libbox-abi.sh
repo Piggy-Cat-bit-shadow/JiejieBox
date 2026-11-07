@@ -272,7 +272,16 @@ VERIFIED_ANDROID_SHA="c7837107dc0126fb704fdf08cf203e10b30c8a22"
 #   {"scanned": 424, "violations": [], "interface_methods": 3, "error": ""}
 #
 # The compile half is the Apple client workflow, which is what the release path consumes.
-VERIFIED_APPLE_SHA="0c7b10be05811cdd3f31a48a7cbe49f061852084"
+# Moved to e3283104 on 2026-11-07: the net range from 0c7b10be changes only the iOS Network
+# Extension lifecycle implementation and its test. Re-run layer 4 against the exact new tree:
+#
+#   python scripts/ci/probe-accessors.py --contract docs/fork/libbox-abi-contract.tsv \
+#     --lang swift --root <sing-box-for-apple @ e3283104>
+#   {"scanned": 424, "violations": [], "interface_methods": 3, "error": ""}
+#
+# Apple client runs 42378674288 (iOS) and 42380110079 (macOS) selected e3283104 explicitly
+# and compiled the unsigned apps. The release candidate must still pass its own pinned-source gate.
+VERIFIED_APPLE_SHA="e3283104c984d60cdf2a0250b47b7fc446e71ba6"
 
 client_root=""
 skip_client=0
