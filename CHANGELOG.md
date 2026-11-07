@@ -4,6 +4,51 @@
 
 [正式发布与下载](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases) · [原始详细日志归档](docs/archive/2026-10-dev-cycle/CHANGELOG-DETAIL-2026-11-01.md) · [工程架构与改造评估](KNOWLEDGE/reports/core/JiejieBox_工程架构与改造最终评估报告_2026-11-01.md)
 
+## [v0.1.43](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.43) — 2026-11-07
+
+本版新增出站 Provider。可从远程订阅、本地文件或内联配置导入代理节点，让 selector 和 URLTest 随节点更新调整成员，无需手工复制节点列表或重启内核。
+
+### 出站 Provider 与配置
+
+- 新增根级 `providers`，支持 `remote`、`local` 和 `inline`。远程与本地订阅支持 sing-box JSON、Clash YAML、SIP008 及原始或 Base64 分享链接，导入范围限于出站节点。
+- selector 和 URLTest 新增 `providers`、`use_all_providers`、`include` 和 `exclude`。节点以 `provider/node` 命名，可与静态出站一起加入策略组。组过滤匹配完整标签，远程 Provider 自己的过滤匹配文档内的原始标签。
+- 远程订阅异步下载，支持定期刷新、缓存和 ETag 条件请求。本地文件变更后重新加载，也可配置节点健康检查和拨号参数覆盖。
+
+### 热更新与稳定性
+
+- 未改变的节点及其现有连接可以继续使用。需要替换时先启动新节点，单节点替换失败则保留原对象。selector 优先保留仍可用的选择，URLTest 按新成员重建探测组。
+- 修复畸形订阅导致的崩溃与无效文档清空节点的问题。下载设有 30 秒超时和 10 MiB 正文上限，并对日志中的订阅 URL 凭据做脱敏。
+- 修复缓存写入失败后仍更新 ETag、无已加载文档时收到 304 可能覆盖有效缓存的问题。Windows 本地文件监视改用解析后的绝对路径。
+
+### 构建与验证
+
+- Provider、策略组、配置解码、缓存及 Box 集成测试通过。生成的配置 schema 与源码一致，配置示例通过 `sing-box check`。
+- 本版内核发布编排通过，包含各平台内核、Android ARM64 AAR、Apple Libbox、Windows 安装器、未签名 IPA 和校验清单。[发布构建](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42343308769)
+
+[完整更新日志](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/CHANGELOG.md) · [出站 Provider 配置](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/v0.1.43/docs/configuration/provider/index.zh.md) · [扩展配置示例](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/v0.1.43/docs/FORK-CONFIGURATION.md#出站-provider)
+
+## [v0.1.42](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.42) — 2026-11-07
+
+本版更新 Apple 客户端，修复配置切换、隧道设置和页面错误提示，同时整合正式版构建流程，减少手动派发时漏掉 Windows 安装器或 iOS 自签 IPA 的情况。
+
+### Apple 客户端
+
+- 修复切换配置时界面与实际使用的配置不同步，按可用空间调整模式选择栏。
+- 将 Packet Tunnel 和按需连接设置写入系统，补全日志、崩溃报告和内存报告页面的命令失败提示。
+- 补齐界面本地化，修复工具页部分服务入口的显示问题。更新 Apple 客户端到 `0c7b10be` 并复核 Libbox 调用接口。
+
+### 构建与发布
+
+- 新增统一的 Kernel release 入口。各平台构建并行启动，Windows 安装器可在正式 tag 创建前参与候选构建。
+- 将自签 IPA 并入 Apple 工作流，与 iOS、macOS 构建共用同次 Libbox。TF 可从指定正式 Release 获取 Libbox，并按需只发布 iOS 或 macOS。
+- 发布前核对产物来源、版本和摘要，逐项检查草稿及公开附件。恢复中断的发布时，可保留已上传且摘要一致的附件。
+
+### 验证
+
+- 正式发布运行通过，8 项公开附件全部回读。7 个二进制文件逐项与 `SHA256SUMS` 一致，Apple Libbox 的归档摘要及 iOS、macOS arm64 分片也已核对。[发布交接记录](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/docs/releases/RELEASE-0.1.42-HANDOFF.md)
+
+[完整更新日志](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/blob/testing/CHANGELOG.md) · [配置文档](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/tree/testing/docs/configuration)
+
 ## [v0.1.39](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.39) — 2026-11-05
 
 本版增加 iOS 自签安装与本地回环，改善突发建连时的内存保护，同步 NaiveProxy patch5，并修复 Linux 自定义 DNS、设备切网及 Apple 客户端连接问题。
