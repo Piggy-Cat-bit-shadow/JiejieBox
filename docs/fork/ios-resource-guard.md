@@ -245,8 +245,8 @@ Integration coverage, all on loopback with the real `sing-anytls` client:
 
 | test | asserts |
 |---|---|
-| `TestSessionBurstWithoutGuardReproducesTheAmplification` | 200 flows → 200 concurrent `DialOut` calls, 200 server connections (the baseline the guard is measured against) |
-| `TestSessionBurstWithGuardBoundsConcurrentCreation` | 200 flows → peak ≤ 8 concurrent creations, all 200 admitted, no refusals |
+| `TestSessionBurstWithoutGuardReproducesTheAmplification` | 200 flows arrive at a deterministic barrier: all 200 concurrent `DialOut` calls, 200 server connections (the baseline the guard is measured against) |
+| `TestSessionBurstWithGuardBoundsConcurrentCreation` | 200 flows parked at the limit: gate `Inflight`/`MaxInflight` and `DialOut` peak are exactly 8, all 200 admitted, no refusals |
 | `TestSessionBurstGuardDoesNotChangeObservableBehaviour` | 16 admitted streams remain distinct and close cleanly |
 | `TestSessionCreationCostCensus` | 7,414 B per live session (§2.5) |
 | `TestTLSHandshakeBurstAmplificationIsBounded` | the same burst with a REAL TLS handshake blocked on a silent server: concurrent handshakes and marginal peak heap, with and without the guard |

@@ -437,6 +437,10 @@ Loopback addresses make TCP connections to the specified address connect to the 
 
 Setting option value to `10.7.0.1` achieves the same behavior as SideStore/StosVPN.
 
+An IPv4-mapped IPv6 spelling such as `::ffff:10.7.0.1` is canonicalised to its IPv4 form at the TUN
+boundary: the stack compares an unmapped packet destination against the IPv4 list, and the platform
+host route is built from the same family. Normal IPv4 and IPv6 entries keep their family and order.
+
 When `auto_redirect` is enabled, the same behavior can be achieved for LAN devices (not just local) as a gateway.
 
 #### strict_route

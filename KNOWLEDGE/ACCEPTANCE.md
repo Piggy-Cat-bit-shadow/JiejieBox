@@ -28,6 +28,8 @@
 | --- | --- | --- |
 | 单许可、类别、取消和状态版本 | VERIFIED_SOURCE；源码与回归测试已核对 | 见 resource-admission 模块；本地 Go，race 需可用工具链 |
 | iOS 回环覆盖与读取接口 | VERIFIED_SOURCE；daemon/libbox/tun 测试位置 | `go test ./daemon ./experimental/libbox ./protocol/tun -run 'Loopback|DeviceLayout|TemporaryDirectory|Bindable'` |
+| IPv4-mapped 回环地址分族（配置→有效 TUN 选项→libbox getter） | VERIFIED_UNIT：修复前有效 IPv4 列表为空、不可复现通过；修复后两段测试通过 | `go test -count=1 ./protocol/tun ./experimental/libbox -run 'TestConfiguredIPv4MappedLoopbackAddress|TestConfiguredMappedLoopbackReachesTheCorrectGetter'` |
+| AnyTLS 无 guard 放大与有 guard 并发上限 | VERIFIED_UNIT：修复前 2 ms 竞态在 CPU 负载下实际 180/183/199；确定性 barrier 版本在同样负载下 30 次 `-race` 通过 | `go test -count=1 -race -run 'TestSessionBurstWithoutGuardReproducesTheAmplification|TestSessionBurstWithGuardBoundsConcurrentCreation' ./protocol/anytls/` |
 | 深路径确实可 bind | 既有 Darwin CI 与测试记录，非本次新测 | Darwin 真 bind，Windows 路径算术不能替代 |
 | 默认 TCP / 显式 MPTCP | VERIFIED_SOURCE；Linux getsockopt 测试 | `go test ./common/listener ./common/netx -run 'MPTCP|Multipath' -v`，区分 SKIP |
 | Cronet Linux 匿名 socketpair 修复 | API 核对旧红、新 purego/cgo 绿的运行；当前消费源码含修复 | [证据与 SHA](reports/release/cronet-patch5-linux-dns-2026-11-05.md) |

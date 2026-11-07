@@ -41,6 +41,19 @@ func TestLoopbackOverrideIsInertWhenThePlatformAsksForNothing(t *testing.T) {
 	}
 }
 
+func TestLoopbackOverrideOffLeavesTheConfigSpellingForTheTunBoundary(t *testing.T) {
+	t.Parallel()
+	// The switch being off must not edit the profile, including a mapped spelling. Normalising it
+	// here would be invisible in the config but would change the early-return contract; the TUN
+	// boundary canonicalises for the stack's matcher, which is where the family is decided.
+	options := option.Options{Inbounds: []option.Inbound{tunInbound("::ffff:10.7.0.1")}}
+	applyTUNOverrides(&options, &OverrideOptions{})
+	addresses := loopbackOf(t, options.Inbounds[0])
+	if len(addresses) != 1 || addresses[0] != netip.MustParseAddr("::ffff:10.7.0.1") {
+		t.Fatalf("the config spelling changed while the switch was off: %v", addresses)
+	}
+}
+
 func TestLoopbackOverrideAppendsThePlatformAddress(t *testing.T) {
 	t.Parallel()
 	options := option.Options{Inbounds: []option.Inbound{tunInbound()}}

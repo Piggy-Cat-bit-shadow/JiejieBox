@@ -14,7 +14,7 @@
 
 入口为“更多 → 连接行为 → 配置覆盖 → 本地签名回环”，英文 `Local Signing Loopback`；默认 false，注入 `10.7.0.1`。iPad 设置布局不同，使用相同 preference。关闭时无新增覆盖，用户自己的回环地址不被删除；开关不改订阅文件。
 
-`daemon.applyTUNOverrides` 只处理首个 TUN，`mergeLoopbackAddresses` 规范化 Unmap/WithZone、去重并保留顺序。Apple `ExtensionProvider.localSigningLoopbackAddress` 是客户端常量；`#if os(iOS)` 限制注入和 NE 路由，macOS 不因同一平台接口被额外加入路由。
+`daemon.applyTUNOverrides` 只处理首个 TUN；开关打开时 `mergeLoopbackAddresses` 对“用户地址 + 注入地址”做 Unmap/WithZone、去重并保留顺序。开关关闭时该 merge 保持配置原样（包括用户写下的 IPv4-mapped 拼写），家庭拆分在 TUN 边界完成：`protocol/tun.SplitLoopbackAddresses` 先 Unmap/去 zone，再按 `Is4` 分到 IPv4/IPv6 有效列表。这样 `::ffff:10.7.0.1` 不会进入 IPv6 列表，libbox getter 也不会把 IPv4 字符串交给 Apple 的 IPv6 路由构建器；sing-tun 的 `isLoopbackDestination` 同样先 Unmap 目的地，因此有效列表与匹配谓词使用同一族。普通 IPv4/IPv6、用户原有顺序保持不变。Apple `ExtensionProvider.localSigningLoopbackAddress` 是客户端常量；`#if os(iOS)` 限制注入和 NE 路由，macOS 不因同一平台接口被额外加入路由。
 
 数据面由 sing-tun 默认 `go` 栈的 hairpin 处理 TCP/UDP/ICMPv4/v6。**其他显式栈没有完整的同等反射**，主仓 `loopbackStackWarning` 给出 iOS 警告。地址交换保持相关校验和性质，不需要盲目新增 checksum 改写；邻接地址不应被捕获。
 

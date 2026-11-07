@@ -432,6 +432,9 @@ TUN 接口上 DNS 的处理方式。
 
 将选项值设置为 `10.7.0.1` 可实现与 SideStore/StosVPN 相同的行为。
 
+IPv4-mapped IPv6 写法（如 `::ffff:10.7.0.1`）会在 TUN 边界规范化为 IPv4：栈会把数据包目的地
+Unmap 后与 IPv4 列表比较，平台主机路由也使用同一族。普通 IPv4/IPv6 条目保持原族与顺序。
+
 当启用 `auto_redirect` 时，可以作为网关为局域网设备（而不仅仅是本地）实现相同的行为。
 
 #### strict_route

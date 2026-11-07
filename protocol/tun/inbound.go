@@ -402,6 +402,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		excludeMACAddress = append(excludeMACAddress, mac)
 	}
 	networkManager := service.FromContext[adapter.NetworkManager](ctx)
+	inet4LoopbackAddress, inet6LoopbackAddress := SplitLoopbackAddresses(options.LoopbackAddress)
 	inbound := &Inbound{
 		tag:            tag,
 		ctx:            ctx,
@@ -428,8 +429,8 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 			AutoRedirectTProxyMark:                uint32(options.AutoRedirectTProxyMark),
 			AutoRedirectNFQueue:                   nfQueue,
 			ExcludeMPTCP:                          options.ExcludeMPTCP,
-			Inet4LoopbackAddress:                  common.Filter(options.LoopbackAddress, netip.Addr.Is4),
-			Inet6LoopbackAddress:                  common.Filter(options.LoopbackAddress, netip.Addr.Is6),
+			Inet4LoopbackAddress:                  inet4LoopbackAddress,
+			Inet6LoopbackAddress:                  inet6LoopbackAddress,
 			StrictRoute:                           options.StrictRoute,
 			IncludeInterface:                      options.IncludeInterface,
 			ExcludeInterface:                      options.ExcludeInterface,
