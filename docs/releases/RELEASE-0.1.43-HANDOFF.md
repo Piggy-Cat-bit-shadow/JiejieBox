@@ -11,7 +11,7 @@
 | tag | `v0.1.43`（附注标签对象 `67aad85adb90c38956c5d8097b3e46ed76b61839`） |
 | tag 剥离后的完整 SHA | `0d63a7a16dd488d952b4d899ebc1a2542cfb7532` |
 | Release | https://github.com/Piggy-Cat-bit-shadow/JiejieBox/releases/tag/v0.1.43 |
-| 状态 | 公开、非 draft、非 prerelease；正文为空（0 字节） |
+| 状态 | 公开、非 draft、非 prerelease；发布时正文为空（0 字节）；`2026-11-07T06:06:38Z` 由独立更新日志任务补充发布说明（见下） |
 | 运行 | Kernel release `42343308769` attempt 1，`2026-11-07T05:34:32Z` → `2026-11-07T05:59:26Z`（24 分 54 秒） |
 | 公开时间 | `2026-11-07T05:59:22Z`（13:59:22 Asia/Shanghai） |
 | 回读时间 | `2026-11-07T06:05:20Z`（14:05:20 Asia/Shanghai） |
@@ -67,7 +67,12 @@ Libbox；Apple 源从 Manifest 读取，不要在 Mac 重新解析 `main`。
   macOS CLI、Windows core、Windows 安装器、Android AAR、Apple（resolve、libbox、macOS、iOS、
   自签 IPA）、stage、publish。
 - tag 剥离后 SHA 等于本轮候选 `0d63a7a16`，tag 内 `release/JIEJIE_VERSION` 为 `0.1.43`。
-- Release 正文 0 字节；附件 8 项与 `SHA256SUMS` 的 7 条二进制逐条一致，无缺失或多余条目。
+- Release 在发布回读时正文为 0 字节；附件 8 项与 `SHA256SUMS` 的 7 条二进制逐条一致，无缺失或
+  多余条目。
+- 发布回读后，独立更新日志任务 `b8b37650c`（`docs: add v0.1.43 and v0.1.42 release notes
+  [skip ci]`）在 `CHANGELOG.md` 增加本版说明，并在 `2026-11-07T06:06:38Z` 把同等内容写入
+  Release 正文（现为 1,263 字节，作者为发布机器人账号）。这是发布后的编辑行为，不影响 tag、
+  附件与校验和。
 
 ## 后续任务
 
