@@ -239,6 +239,28 @@ type OwnedDynamicOutboundManager interface {
 	CompletePublication(owner string, tags []string) error
 }
 
+// OutboundLeaseManager is the OPTIONAL capability a dynamic outbound manager provides so a caller
+// that obtained a member object can hand it off safely across a concurrent publication.
+//
+// # The gap it closes
+//
+// The publication barrier proves that every GROUP rebuilt its membership; it does not prove that a
+// dial which already read the old selection has finished with that object. MEASURED deterministically:
+// a dial was blocked inside the previous member's DialContext, the provider replaced the tag and
+// completed the publication round, and the old object was closed under the dial - which then failed
+// with net.ErrClosed although a valid replacement was published.
+//
+// A caller that is about to use an object it obtained (a group dial, the route handing a leaf to the
+// connection manager) calls AcquireOutbound and releases it when the hand-off finishes. ok=false
+// means the object was already retired AND closed before the caller pinned it; the caller must
+// re-read its selection (or refuse the flow) rather than dial a closed object. A published object
+// and a non-provider object return a no-op release with ok=true. The lease is not held by a global
+// lock and never covers the network operation itself; it only prevents the publication barrier from
+// closing an object that is still in use.
+type OutboundLeaseManager interface {
+	AcquireOutbound(object Outbound) (release func(), ok bool)
+}
+
 // GroupMembershipPublisher is the OPTIONAL capability a dynamic outbound manager provides so a
 // group can publish a new member list through the SAME graph validation as every other mutation.
 //

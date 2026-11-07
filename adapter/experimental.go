@@ -200,6 +200,14 @@ func (s *SavedBinary) UnmarshalBinary(data []byte) error {
 type OutboundGroup interface {
 	Outbound
 	All() []string
+	// Selected returns the member a flow of this network would use, or nil when the group has none.
+	//
+	// CONTRACT: the result is a SNAPSHOT for immediate inspection or a hand-off the caller protects.
+	// A provider refresh may replace the member's tag and, after the publication barrier, close the
+	// object this call returned. A caller that intends to DIAL it must either use the group's
+	// DialContext/ListenPacket (which lease the member for the hand-off) or acquire a lease through
+	// adapter.OutboundLeaseManager; retaining it across a publication and dialling it later can
+	// observe a closed object. Tag()/Network()/Type() remain readable as plain data.
 	Selected(network string) Outbound
 	AttachConnection(closer io.Closer) (detach func())
 }

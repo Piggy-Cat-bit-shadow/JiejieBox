@@ -42,7 +42,10 @@ type Manager struct {
 	ownedTags map[string]string
 	// retired holds replaced objects whose closure is deferred until the ownership rule below says
 	// no new dial can obtain them. See CompletePublication.
-	retired []retiredOutbound
+	retired []*retiredOutbound
+	// users counts in-flight hand-offs per object, including objects that are still published. It is
+	// keyed by identity because a tag can move to a replacement while a dial still holds the old object.
+	users map[adapter.Outbound]int
 
 	registry                adapter.OutboundRegistry
 	endpoint                adapter.EndpointManager
@@ -201,6 +204,7 @@ func NewManager(registry adapter.OutboundRegistry, endpoint adapter.EndpointMana
 		defaultTag:    defaultTag,
 		outboundByTag: make(map[string]adapter.Outbound),
 		ownedTags:     make(map[string]string),
+		users:         make(map[adapter.Outbound]int),
 	}
 }
 
@@ -822,7 +826,7 @@ func (m *Manager) replace(ctx context.Context, router adapter.Router, logger log
 			// previous object is closed at the swap. Such a caller has no group-callback phase.
 			closeNow = append(closeNow, old)
 		} else {
-			m.retired = append(m.retired, retiredOutbound{outbound: old, tag: tag, owner: owner})
+			m.retired = append(m.retired, &retiredOutbound{outbound: old, tag: tag, owner: owner})
 		}
 	}
 	sweep = m.takeSweepableRetiredLocked()
@@ -843,9 +847,115 @@ type retiredOutbound struct {
 	tag      string
 	owner    string
 	// ready is set by CompletePublication: the owner has notified every group that names it, and
-	// every callback succeeded. Only external references (a live non-group object naming the tag)
-	// can still keep the object open after that.
+	// every callback succeeded. Only external references and in-flight users can still keep the
+	// object open after that.
 	ready bool
+	// released is set exactly once when this entry is handed to Close, so a late lease release or a
+	// second sweep cannot close the object twice.
+	released bool
+}
+
+// AcquireOutbound pins a retired object for one hand-off: from the moment a caller obtained it to
+// the moment its dial/listen call returns a connection (or fails).
+//
+// # Why this is needed on top of the publication barrier
+//
+// CompletePublication proves that every GROUP rebuilt its membership, not that a dial which already
+// read the old selection has finished with it. MEASURED deterministically: a member's DialContext
+// was blocked at entry, the provider replaced the tag and completed the publication round, and the
+// old object was closed while that dial was still inside it - the dial then failed with
+// net.ErrClosed although a valid replacement was published.
+//
+// The lease is per object and non-blocking: it takes m.access only for the counter update, never
+// holds a lock across the network dial, and a release closes the object only when the publication
+// barrier already passed and the count reaches zero. Callers that do not implement the manager (test
+// doubles) get a no-op.
+func (m *Manager) AcquireOutbound(object adapter.Outbound) (release func(), ok bool) {
+	if m == nil || object == nil {
+		return func() {}, false
+	}
+	// Fast path for the overwhelmingly common case: a non-provider object has no retirement
+	// lifecycle, so a read lock and two map lookups are enough and the hot dial path never takes the
+	// exclusive manager lock. Only objects published by a provider need a user count.
+	m.access.RLock()
+	_, owned := m.ownedTags[object.Tag()]
+	current := m.outboundByTag[object.Tag()]
+	m.access.RUnlock()
+	if !owned {
+		return func() {}, true
+	}
+	if current == object {
+		// Still published: the lease is what carries the user count across a later retirement.
+		m.access.Lock()
+		m.users[object]++
+		m.access.Unlock()
+		return m.leaseRelease(object), true
+	}
+	m.access.Lock()
+	entry := m.retiredEntryLocked(object)
+	if entry != nil && !entry.released {
+		m.users[object]++
+		m.access.Unlock()
+		return m.leaseRelease(object), true
+	}
+	m.access.Unlock()
+	// The tag is owned by a provider but this object is neither published nor retired: it was
+	// already closed, and a dial must not use it.
+	return func() {}, false
+}
+
+// leaseRelease makes the release idempotent: a caller that defers it and a retry path cannot double
+// count one hand-off.
+func (m *Manager) leaseRelease(object adapter.Outbound) func() {
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			m.releaseLease(object)
+		})
+	}
+}
+
+// releaseLease drops one in-flight user and closes the entry if it became closable.
+func (m *Manager) releaseLease(object adapter.Outbound) {
+	if m == nil || object == nil {
+		return
+	}
+	m.mutation.Lock()
+	m.graphAccess.Lock()
+	m.access.Lock()
+	if count := m.users[object]; count > 1 {
+		m.users[object] = count - 1
+	} else {
+		delete(m.users, object)
+	}
+	entry := m.retiredEntryLocked(object)
+	if entry == nil || entry.released || m.users[object] != 0 || !entry.ready || m.externalReferenceLocked(entry.tag, entry.owner) {
+		m.access.Unlock()
+		m.graphAccess.Unlock()
+		m.mutation.Unlock()
+		return
+	}
+	entry.released = true
+	for index, candidate := range m.retired {
+		if candidate == entry {
+			m.retired = append(m.retired[:index], m.retired[index+1:]...)
+			break
+		}
+	}
+	m.access.Unlock()
+	m.graphAccess.Unlock()
+	m.mutation.Unlock()
+	m.release(object)
+}
+
+// retiredEntryLocked finds the retirement record for an object identity. The caller holds m.access.
+func (m *Manager) retiredEntryLocked(object adapter.Outbound) *retiredOutbound {
+	for _, candidate := range m.retired {
+		if candidate.outbound == object {
+			return candidate
+		}
+	}
+	return nil
 }
 
 // CompletePublication is the owner's publication barrier: it releases the retired objects this
@@ -875,7 +985,7 @@ func (m *Manager) CompletePublication(owner string, tags []string) error {
 	m.graphAccess.Lock()
 	m.access.Lock()
 	var release []adapter.Outbound
-	kept := make([]retiredOutbound, 0, len(m.retired))
+	kept := make([]*retiredOutbound, 0, len(m.retired))
 	for _, entry := range m.retired {
 		if entry.owner != owner {
 			kept = append(kept, entry)
@@ -884,7 +994,8 @@ func (m *Manager) CompletePublication(owner string, tags []string) error {
 		if wanted[entry.tag] {
 			entry.ready = true
 		}
-		if entry.ready && !m.externalReferenceLocked(entry.tag, owner) {
+		if entry.ready && m.users[entry.outbound] == 0 && !m.externalReferenceLocked(entry.tag, owner) {
+			entry.released = true
 			release = append(release, entry.outbound)
 			continue
 		}
@@ -942,9 +1053,10 @@ func (m *Manager) takeSweepableRetiredLocked() []adapter.Outbound {
 		return nil
 	}
 	var release []adapter.Outbound
-	kept := make([]retiredOutbound, 0, len(m.retired))
+	kept := make([]*retiredOutbound, 0, len(m.retired))
 	for _, entry := range m.retired {
-		if entry.ready && !m.externalReferenceLocked(entry.tag, entry.owner) {
+		if entry.ready && m.users[entry.outbound] == 0 && !m.externalReferenceLocked(entry.tag, entry.owner) {
+			entry.released = true
 			release = append(release, entry.outbound)
 			continue
 		}

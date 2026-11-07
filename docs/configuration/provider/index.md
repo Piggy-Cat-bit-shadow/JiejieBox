@@ -226,8 +226,10 @@ lifecycle rule is:
 1. the tag points at the replacement immediately, so tag-based resolution (routes, rules,
    `route.final`) sees the new version;
 2. the previous object stays USABLE until every subscribed group rebuilt its membership in a
-   publication round that returned nil; a dial through a group in that window uses the still-working
-   previous object, never a closed one;
+   publication round that returned nil. Before dialling, a group takes a hand-off lease on the
+   member it obtained: from that point until DialContext/ListenPacket returns (connection
+   established or failed) the previous object cannot be closed, so a dial through a group in the
+   window uses the still-working previous version, never a closed one;
 3. a FAILED round does not end the wait: a refused membership or callback error leaves the previous
    object serving the previous selection, and the tags stay pending for the next successful round;
 4. a live object OUTSIDE the provider that names the tag directly (a static or DNS-transport
@@ -235,6 +237,15 @@ lifecycle rule is:
    reference disappears or the Box is torn down. This conservative edge is deliberate; such direct
    references are documented as not redirected by a refresh, and the cost is one retained object per
    refresh for that configuration.
+
+The lease covers only "obtained member to completed hand-off". It does not cover established
+connections, and it never holds a global lock across the network dial: the counter update is a short
+lock, the dial itself runs unlocked. When the last user leaves and the publication barrier already
+passed, the previous object is closed exactly once.
+
+`Selected()` and similar public accessors return a SNAPSHOT: reading `Tag()`/`Network()` immediately
+is safe, but do not keep the object and dial it after an update. Dial through the group's
+DialContext/ListenPacket, which take the lease internally.
 
 When the previous object is finally closed, connections using it are interrupted; only unchanged
 nodes keep their connections across a refresh. A node dropped from the document is closed when

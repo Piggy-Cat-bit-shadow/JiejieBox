@@ -427,6 +427,12 @@ func (s *URLTest) currentGroup() *URLTestGroup {
 	return s.group.Load()
 }
 
+// Selected returns the member the current probe generation chose, or nil.
+//
+// It is a snapshot for immediate inspection: a provider refresh rebuilds the probe generation and
+// may eventually close this object after the publication barrier. Dial through
+// DialContext/ListenPacket (which lease the member for the hand-off) or hold an explicit lease; do
+// not keep the object and dial it after an update. See adapter.OutboundGroup.Selected.
 func (s *URLTest) Selected(network string) adapter.Outbound {
 	current := s.currentGroup()
 	if current == nil {
@@ -534,6 +540,48 @@ func (s *URLTest) InterfaceUpdated(ctx context.Context) {
 	}()
 }
 
+// acquireMember pins the selected member for the hand-off about to happen. See the matching helper
+// in selector.go and adapter.OutboundLeaseManager: the publication barrier must not close an object
+// a dial already obtained.
+func (s *URLTest) acquireMember(member adapter.Outbound) (func(), bool) {
+	if manager, isManager := s.outbound.(adapter.OutboundLeaseManager); isManager {
+		return manager.AcquireOutbound(member)
+	}
+	return func() {}, true
+}
+
+// leaseSelected pins outbound for the hand-off. If a publication closed it before the pin was taken,
+// it re-reads the generation's selection (the callback already moved it to the replacement) and pins
+// that instead; ok=false means even the re-read member was closed, so the caller refuses the flow
+// instead of dialling a closed object.
+func (s *URLTest) leaseSelected(current *URLTestGroup, network string, outbound adapter.Outbound) (adapter.Outbound, func(), bool) {
+	if release, ok := s.acquireMember(outbound); ok {
+		return outbound, release, true
+	}
+	// The generation this call started with holds a member that the publication barrier already
+	// closed. Re-read the LIVE generation: Start/onProviderUpdated swap the pointer before the
+	// barrier runs, so the replacement is already visible there.
+	reselectGroup := current
+	if latest := s.currentGroup(); latest != nil {
+		reselectGroup = latest
+	}
+	var next adapter.Outbound
+	if state := reselectGroup.selected.Load(); state != nil {
+		if network == N.NetworkUDP {
+			next = state.udp
+		} else {
+			next = state.tcp
+		}
+	}
+	if next == nil {
+		next, _ = reselectGroup.Select(network)
+	}
+	if next == nil {
+		return nil, func() {}, false
+	}
+	release, ok := s.acquireMember(next)
+	return next, release, ok
+}
 func (s *URLTest) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	current := s.currentGroup()
 	if current == nil {
@@ -559,6 +607,11 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 	if outbound == nil {
 		return nil, E.New("missing supported outbound")
 	}
+	outbound, release, ok := s.leaseSelected(current, network, outbound)
+	if !ok {
+		return nil, E.New("outbound group ", s.Tag(), ": the selected member was replaced during connection setup")
+	}
+	defer release()
 	conn, err := outbound.DialContext(ctx, network, destination)
 	if err == nil {
 		return current.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
@@ -587,6 +640,11 @@ func (s *URLTest) ListenPacket(ctx context.Context, destination M.Socksaddr) (ne
 	if outbound == nil {
 		return nil, E.New("missing supported outbound")
 	}
+	outbound, release, ok := s.leaseSelected(current, N.NetworkUDP, outbound)
+	if !ok {
+		return nil, E.New("outbound group ", s.Tag(), ": the selected member was replaced during connection setup")
+	}
+	defer release()
 	conn, err := outbound.ListenPacket(ctx, destination)
 	if err == nil {
 		return current.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
@@ -621,6 +679,11 @@ func (s *URLTest) DialParallelNetwork(ctx context.Context, network string, desti
 	if outbound == nil {
 		return nil, E.New("missing supported outbound")
 	}
+	outbound, release, ok := s.leaseSelected(current, network, outbound)
+	if !ok {
+		return nil, E.New("outbound group ", s.Tag(), ": the selected member was replaced during connection setup")
+	}
+	defer release()
 	var (
 		conn net.Conn
 		err  error
@@ -654,6 +717,11 @@ func (s *URLTest) ListenSerialNetworkPacket(ctx context.Context, destination M.S
 	if outbound == nil {
 		return nil, netip.Addr{}, E.New("missing supported outbound")
 	}
+	outbound, release, ok := s.leaseSelected(current, N.NetworkUDP, outbound)
+	if !ok {
+		return nil, netip.Addr{}, E.New("outbound group ", s.Tag(), ": the selected member was replaced during connection setup")
+	}
+	defer release()
 	var (
 		conn    net.PacketConn
 		address netip.Addr

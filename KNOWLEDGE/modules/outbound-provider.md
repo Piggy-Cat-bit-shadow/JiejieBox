@@ -87,6 +87,25 @@
 
 仍然未覆盖：真实订阅/真实设备、Linux/macOS、daemon 实机；fast_path 的 TUN 绕过决策；DNS transport 直接引用的运行时重定向（见上）。
 
+### 第三轮补洞：取得成员到拨号交接之间的租约（In-flight lease）
+
+**VERIFIED_SOURCE / VERIFIED_UNIT / VERIFIED_INTEGRATION。** 上一轮的公布屏障只证明“所有组都重建了成员”，并不证明“已经取得旧对象、正在拨号的那条流已经用完”。确定性交错证明风险成立：让旧成员的 `DialContext` 在入口阻塞，主线程完成同标签替换 + `UpdateGroups` + `CompletePublication`，旧对象在拨号进行中被关闭（`closes=1`），恢复后该拨号拿到 `net.ErrClosed`。
+
+现行规则：
+
+| 规则 | 实现 |
+| --- | --- |
+| 取得对象后、交接完成前不得关闭 | `Manager.AcquireOutbound(object) (release, ok)`：对已发布或已退休对象按**对象身份**计数（`users[object]`）；`CompletePublication` 与 sweep 仅在 `users==0` 时关闭 |
+| 取得与加租约之间不能有“已关闭”的缝 | selector 的 `currentMemberLeased`、urltest 的 `leaseSelected` 在 `ok=false` 时重读当前选择（回调先于屏障换好新成员）再试；仍失败则拒绝该流，不拨已关闭对象 |
+| 交接结束点 | 组的 `DialContext`/`ListenPacket`/并行/串行方法在成员调用返回后释放租约（连接已建立或已失败）；route 在 `NewConnection`/`NewPacketConnection` 返回后释放链尾叶子的租约 |
+| 不阻塞 Provider 更新 | 计数只在短锁内更新；网络拨号在锁外；不存在“拨号期间持有 manager 全局锁” |
+| 最后一个使用者退出后恰好关闭一次 | 释放时若 `ready && users==0 && 无外部引用` 则移出 retired 并关闭；`released` 标志与 `sync.Once` 防重复 |
+| 公开 `Selected()` 契约 | 返回快照，可立即读 `Tag()`/`Network()`；不得跨更新持有后拨号。要拨号必须走组的 Dial/Listen（内部加租约）或显式取得租约 |
+
+测试锚点：`adapter/provider/dial_lease_test.go`（单用户、三用户、连续两轮替换只关闭未使用版本、ListenPacket、并行拨号；修复前阻塞拨号测试 `closes=1`，修复后为 0，最后一个用户退出后为 1）。route 的叶子租约由 `Router.acquireOutbound` 接入 TCP 与 packet 两条路径。
+
+仍保留的边界：route 在 chain 解析后、取得叶租约前若对象已被关闭，会以明确错误拒绝该流（不拨已关闭对象），该瞬时失败属于刷新竞态；`Selected()` 的外部长期持有不在租约保护内，按接口契约应当避免。
+
 ## 来源与演进（Provenance and evolution）
 
 | 提交 | 分类 | 留下的行为 |

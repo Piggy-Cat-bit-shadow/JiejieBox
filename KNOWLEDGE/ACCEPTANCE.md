@@ -13,6 +13,7 @@
 | 启动期 pending 语义（试运行） | `go test -count=1 -tags "$windows_tags" ./common/physicalpath/...` |
 | race（需要 cgo；Windows 用 mingw gcc，Swift clang 不支持 race 需要的 `-mthreads`） | `CGO_ENABLED=1 CC=<mingw-gcc> go test -count=1 -race -tags "$windows_tags" ./common/physicalpath/... ./adapter/outbound/... ./adapter/provider/... ./protocol/group/...` |
 | 同标签替换窗口、失败轮次保留、urltest/多 Provider/关闭、直接与 DNS 引用保留 | `go test -count=1 -tags "$windows_tags" -run 'TestSameTag|TestConcurrentDials|TestURLTestSameTag|TestMultiProviderSameTag|TestCloseWithARetired|TestFailedPublication|TestRetiredObject' ./adapter/provider/... ./adapter/outbound/...` |
+| 取得成员到拨号交接的租约（单/多用户、连续替换、ListenPacket、并行拨号） | `go test -count=1 -tags "$windows_tags" -run 'TestDialHoldingTheOldSelection|TestMultipleDialUsers|TestRepeatedReplacementClosesOnlyUnused|TestListenPacketHolding|TestParallelDialHolding' ./adapter/provider/...` |
 | DNS 下载引导环、use_all 诊断、过滤空组、fast_path、静态 detour、Provider 成员能力、原配置端到端 | `go test -count=1 -tags "$windows_tags" -run 'TestProviderDownloadDNS|TestUseAllProviders|TestProviderGroupFilters|TestFastPathOnProviderOnly|TestStaticDetourToARemoteProviderNode|TestProviderTCPOnly|TestProviderChainEndToEnd' .` |
 | 生成 schema 与跟踪文件一致 | `go test -count=1 -tags "$server_tags" -run TestTrackedSchemaMatchesTheGenerator ./cmd/sing-box` |
 | 根级示例可加载 | 用 `$server_tags` 构建 `./cmd/sing-box`，对配置参考和扩展示例中的完整根级 JSON 运行 `sing-box check -c <file>` |

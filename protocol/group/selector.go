@@ -413,6 +413,12 @@ func (s *Selector) All() []string {
 	return slices.Clone(s.tags)
 }
 
+// Selected returns the member the selector committed to, or nil.
+//
+// It is a snapshot for immediate inspection: a provider refresh may replace the tag and eventually
+// close this object after the publication barrier. Dial through DialContext/ListenPacket (which
+// lease the member for the hand-off) or hold an explicit lease; do not keep the object and dial it
+// after an update. See adapter.OutboundGroup.Selected for the full contract.
 func (s *Selector) Selected(network string) adapter.Outbound {
 	return s.selected.Load()
 }
@@ -643,11 +649,41 @@ func (s *Selector) publishedNodeCount(providerTags []string) int {
 	return count
 }
 
+// acquireMember pins the member for the hand-off about to happen. A provider refresh may replace
+// and eventually close this object; the lease keeps it open until the dial/listen call returns, so a
+// connection is never established through an object that was closed under it. The manager releases
+// the lease when the publication barrier already passed and this was the last user.
+func (s *Selector) acquireMember(member adapter.Outbound) (func(), bool) {
+	if manager, isManager := s.outbound.(adapter.OutboundLeaseManager); isManager {
+		return manager.AcquireOutbound(member)
+	}
+	return func() {}, true
+}
+
+// currentMemberLeased returns the committed member together with a lease for the hand-off.
+//
+// The lease is acquired immediately after the atomic load, and a publication that closed the object
+// in that gap makes AcquireOutbound report ok=false; the loop then re-reads the selection, which the
+// publication callback has already moved to the replacement (the barrier runs after the callback).
+func (s *Selector) currentMemberLeased() (adapter.Outbound, func(), error) {
+	for attempt := 0; attempt < 4; attempt++ {
+		member, err := s.currentMember()
+		if err != nil {
+			return nil, nil, err
+		}
+		release, ok := s.acquireMember(member)
+		if ok {
+			return member, release, nil
+		}
+	}
+	return nil, nil, E.New("outbound group ", s.Tag(), ": the selected member was replaced during connection setup")
+}
 func (s *Selector) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
-	member, err := s.currentMember()
+	member, release, err := s.currentMemberLeased()
 	if err != nil {
 		return nil, err
 	}
+	defer release()
 	conn, err := member.DialContext(ctx, network, destination)
 	if err != nil {
 		return nil, err
@@ -661,10 +697,11 @@ func (s *Selector) DialContext(ctx context.Context, network string, destination 
 // remaining family is never tried. The selected member may itself be a group; the same method
 // forwards the list again.
 func (s *Selector) DialParallelNetwork(ctx context.Context, network string, destination M.Socksaddr, destinationAddresses []netip.Addr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.Conn, error) {
-	member, err := s.currentMember()
+	member, release, err := s.currentMemberLeased()
 	if err != nil {
 		return nil, err
 	}
+	defer release()
 	if parallel, isParallel := member.(D.ParallelNetworkDialer); isParallel {
 		conn, err := parallel.DialParallelNetwork(ctx, network, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
 		if err != nil {
@@ -680,10 +717,11 @@ func (s *Selector) DialParallelNetwork(ctx context.Context, network string, dest
 }
 
 func (s *Selector) ListenSerialNetworkPacket(ctx context.Context, destination M.Socksaddr, destinationAddresses []netip.Addr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, netip.Addr, error) {
-	member, err := s.currentMember()
+	member, release, err := s.currentMemberLeased()
 	if err != nil {
 		return nil, netip.Addr{}, err
 	}
+	defer release()
 	if parallel, isParallel := member.(D.ParallelNetworkDialer); isParallel {
 		conn, address, err := parallel.ListenSerialNetworkPacket(ctx, destination, destinationAddresses, strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
 		if err != nil {
@@ -699,10 +737,11 @@ func (s *Selector) ListenSerialNetworkPacket(ctx context.Context, destination M.
 }
 
 func (s *Selector) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
-	member, err := s.currentMember()
+	member, release, err := s.currentMemberLeased()
 	if err != nil {
 		return nil, err
 	}
+	defer release()
 	conn, err := member.ListenPacket(ctx, destination)
 	if err != nil {
 		return nil, err

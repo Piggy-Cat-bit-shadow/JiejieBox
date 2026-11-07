@@ -204,6 +204,16 @@ func (r *Router) routeConnection(ctx context.Context, conn net.Conn, metadata ad
 	ctx = interrupt.ContextWithIsExternalConnection(ctx, true)
 	onClose = registerInterrupt(chain, conn, onClose)
 	outbound := chain[len(chain)-1]
+	// Pin the leaf for the whole hand-off. The chain was resolved BEFORE this point, so a provider
+	// refresh may already have replaced the tag and completed its publication round; without the
+	// lease the object could be closed while the connection manager is still dialling through it.
+	// The release runs after NewConnection/NewPacketConnection returned, which is the point where
+	// setup authority ends: a connection that exists from then on no longer needs the object.
+	releaseOutbound, leased := r.acquireOutbound(outbound)
+	if !leased {
+		return E.New("outbound ", outbound.Tag(), " was replaced while the connection was being set up; refusing to dial a closed object")
+	}
+	defer releaseOutbound()
 	if outboundHandler, isHandler := outbound.(adapter.ConnectionHandler); isHandler {
 		// A member that owns the whole connection never returns one to this layer, so there
 		// is no attempt to replace and the capability does not apply. Falling through keeps
@@ -479,12 +489,30 @@ func (r *Router) routePacketConnection(ctx context.Context, conn N.PacketConn, m
 	ctx = interrupt.ContextWithIsExternalConnection(ctx, true)
 	onClose = registerInterrupt(chain, conn, onClose)
 	outbound := chain[len(chain)-1]
+	releaseOutbound, leased := r.acquireOutbound(outbound)
+	if !leased {
+		return E.New("outbound ", outbound.Tag(), " was replaced while the packet session was being set up; refusing to dial a closed object")
+	}
+	defer releaseOutbound()
 	if outboundHandler, isHandler := outbound.(adapter.PacketConnectionHandler); isHandler {
 		outboundHandler.NewPacketConnection(ctx, conn, metadata, onClose)
 	} else {
 		r.connection.NewPacketConnection(ctx, outbound, conn, metadata, onClose)
 	}
 	return nil
+}
+
+// acquireOutbound pins a leaf for the hand-off that is about to dial through it. It is a no-op when
+// the outbound manager does not implement leases (test doubles) or when the object is still the
+// published one; a RETIRED object that a provider refresh replaced is kept open until the release.
+func (r *Router) acquireOutbound(object adapter.Outbound) (func(), bool) {
+	if object == nil || r.outbound == nil {
+		return func() {}, true
+	}
+	if manager, isManager := r.outbound.(adapter.OutboundLeaseManager); isManager {
+		return manager.AcquireOutbound(object)
+	}
+	return func() {}, true
 }
 
 func (r *Router) PreMatch(metadata adapter.InboundContext, firstPacket []byte) adapter.PreMatchResult {

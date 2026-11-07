@@ -200,3 +200,17 @@ TCP/UDP 能力试运行、真实设备/真实订阅。
 - 拆除时由生命周期 scope 关闭所有未回收对象，恰好一次。
 
 本轮同时收尾了 DNS 解析下载引导环、`use_all_providers` 零 Provider、过滤器排除全部节点的诊断；fast_path 与静态 detour 引用验证无问题；Provider 成员的 TCP/UDP 能力与 DNS transport 直接引用保留为明确的设计限制。daemon/libbox 不引用 Provider 管理接口。原配置形状（具名 http_client + remote airport + 纯 Provider selector + SOCKS detour 链）已有本地端到端用例。
+
+## 2026-11-07 第三轮：取得成员到拨号交接的租约（in-flight lease）
+
+第二轮让旧对象在组重建完之前保持可用，但没有覆盖“已经取得旧对象、正在拨号”的流。确定性交错（旧成员 `DialContext` 入口阻塞 → 完成替换与公布 → 恢复）在修复前显示旧对象在拨号进行中被关闭（`closes=1`），恢复后的拨号得到 `net.ErrClosed`。
+
+现行规则：
+
+- `Manager.AcquireOutbound` 按对象身份计数；公布屏障只在 `users==0` 时关闭。组在取得成员后、调用成员的 Dial/Listen 前加租约，调用返回后释放。
+- `ok=false`（对象在加租约前已被关闭）时，selector/urltest 重读当前选择再试；仍失败则拒绝该流，不拨已关闭对象。
+- route 在把链尾叶子交给连接管理器前取得租约，`NewConnection`/`NewPacketConnection` 返回后释放；TCP 与 packet 两条路径都已接入。
+- 租约只做短锁计数，网络拨号期间不持锁；最后一个使用者退出后对象恰好关闭一次。
+- `Selected()` 公开契约明确为快照：可立即读 `Tag()`/`Network()`，不得跨更新持有后拨号。
+
+测试：`adapter/provider/dial_lease_test.go` 覆盖单用户、多用户、连续两轮替换、ListenPacket、并行拨号；`-race` 通过。
