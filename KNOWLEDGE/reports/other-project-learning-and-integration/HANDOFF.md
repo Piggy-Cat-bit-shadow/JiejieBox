@@ -238,3 +238,10 @@ go test ./service/oomkiller ./common/resourceguard -count=1
 | 06 | F01 预置：编译匹配 + 阈值/越界回退，差分/bench/契约（E25，`26296c3`）；F02 `NOT_ADOPTED_WITH_EVIDENCE`（E26） | F01 真实 corpus 阈值、构建预算、并发更新、SRS/headless；F03 构建瞬时预算；F04 版本化产物；F05 应用预编译 → 未实施 |
 | 07 | C01 首批：parse-only `AnalyzeConfig` + 分层证明（E27，`b11cd19`，CI 绿） | C01 余项（ConfigDocument/检查层级）、C02 能力事实、C03 ApplyReport、C04 计划/epoch、C05 last-good、C06 Operations → 未实施 |
 | 判断 | 两阶段均为“部分落地”，不标 COMPLETED，也不做无证据的 NOT_ADOPTED | 进入 08 或恢复 06/07，入口 `stages/06.md`、`stages/07.md`、本文件 §13/§14 |
+
+## 17. 08 收尾快照（上下文受限，2026-11-08）
+
+| 阶段 | 已有 | 未闭环 |
+|---|---|---|
+| 08 | O01 首批：`ExplainPath`；O06 首批：桥接 UTF-8/错误边界测试 | O01 余项；O02–O05；O06 的 ABI/旧客户端与 proto stub |
+| 判断 | 部分落地，不标 COMPLETED | 09 可启动；恢复入口 `stages/08.md` |

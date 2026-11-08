@@ -6,7 +6,7 @@
 
 | 项 | 值 |
 |---|---|
-| 阶段 | 08（O01–O06）——**IN_PROGRESS**（O01 被动 Explain 首批已落地；O01 余项与 O02–O06 未开始，见 `stages/08.md`）。05/06/07 未完成项保留，不阻塞本阶段 |
+| 阶段 | 08（O01–O06）——**IN_PROGRESS**（O01 首批已落地；O01 余项与 O02–O06 未开始）。05/06/07 未完成项保留；09 可启动；收尾快照见 HANDOFF §17 |
 | 02 结束 revision | `afdd3b3cf7c` |
 | 04 进入时 HEAD | `a6f1ca55f5455fdaf88d41b030579ac1b41119df`（= `origin/testing`，无需同步） |
 | 03 代码提交 | `cd1d8160e3c` |
@@ -67,7 +67,7 @@
 | O03 | DNS 结构化事件、订阅门控与实际路径归因 | 08 | I | `PENDING` | — |
 | O04 | 有预算历史、top-K/分页/指标、敏感维度与能力发现 | 08 | I | `PENDING` | — |
 | O05 | 复用原生连接事件、reset/closed/掉事件重同步和兼容适配 | 08 | I | `PENDING` | — |
-| O06 | UTF-8/typed-nil 错误桥接、错误链与 ABI 版本兼容 | 08 | I | `PENDING` | — |
+| O06 | UTF-8/typed-nil 错误桥接、错误链与 ABI 版本兼容 | 08 | I | `PENDING` | 首批：libbox 桥接 UTF-8/错误边界测试（非法输入不 panic、输出合法 UTF-8、错误带可检查 cause）；ABI/旧客户端/proto stub 未验 |
 | X01 | QUIC 流式 detour 超长 datagram 与内核截断语义契约 | 09 | I | `PENDING` | — |
 | X02 | QUIC 关闭真实中断底层读、deadline 和建连锁契约 | 09 | I | `PENDING` | — |
 | X03 | MTU 三种量、协议承载能力与现有多跳/路径图协调 | 09 | I | `PENDING` | — |
