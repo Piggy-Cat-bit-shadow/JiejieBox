@@ -71,8 +71,47 @@ type xmuxClient struct {
 	// reachable by the stream that is on it.
 	draining atomic.Bool
 
+	// generation is the pool boundary this connection was opened under. It is a POOL-LOCAL counter
+	// (see xmuxManager.generation), not runtimecoord's network generation: it exists so the inventory
+	// can say whether a connection that is still draining predates the last reuse boundary or was
+	// opened after it. Those are the "old generation" and "current generation" of this pool.
+	generation uint64
+
+	// released records that the underlying connection's Close has actually run. It is the pool's
+	// RELEASE CONFIRMATION, and it is deliberately separate from closed: closed only says the pool
+	// stopped handing the connection out, while a connection with a live stream keeps its transport
+	// until that stream releases it. A snapshot that reported closed as released would claim a
+	// teardown that has not happened.
+	released bool
+
 	closed bool
 	access sync.Mutex
+}
+
+// releaseConn tears the underlying connection down and records the release exactly once. Caller must
+// hold c.access.
+//
+// The once-guard is not only about the counter: our conns are closed twice in real paths (an expired
+// deadline closing the read half plus the caller's Close, see SPECS/TASKS/050), and a connection that
+// was retired empty can still be handed to a racing acquire. The underlying Close is idempotent, and
+// this guard makes "one connection, one confirmed release" true regardless.
+func (c *xmuxClient) releaseConn() {
+	if c.released {
+		return
+	}
+	c.released = true
+	c.conn.Close()
+	if c.manager != nil {
+		c.manager.released.Add(1)
+	}
+}
+
+// isReleased reports whether this connection's teardown has completed. It is read by the inventory,
+// which holds the pool lock and therefore takes the client lock in the same order get() does.
+func (c *xmuxClient) isReleased() bool {
+	c.access.Lock()
+	defer c.access.Unlock()
+	return c.released
 }
 
 // close marks the connection retired, tearing it down immediately only if no
@@ -82,7 +121,7 @@ func (c *xmuxClient) close() {
 	defer c.access.Unlock()
 	c.closed = true
 	if c.openUsage <= 0 {
-		c.conn.Close()
+		c.releaseConn()
 	}
 }
 
@@ -93,7 +132,7 @@ func (c *xmuxClient) addOpenUsage(delta int) {
 	defer c.access.Unlock()
 	c.openUsage += delta
 	if c.closed && c.openUsage <= 0 {
-		c.conn.Close()
+		c.releaseConn()
 	}
 }
 
@@ -297,6 +336,23 @@ type xmuxManager struct {
 	// the transitions, not the gauge. See SPECS/TASKS/059 §8.2.
 	onEvent func(format string, args ...any)
 
+	// detached holds connections the pool has retired while they still carry streams. Their teardown
+	// is deferred until the last stream releases them, which is exactly the state no logical counter
+	// can see: they are no longer pooled, not yet closed, and still holding a transport. Every
+	// boundary and every snapshot prunes the entries whose release has completed, so the slice is
+	// bounded by the number of connections actually draining, not by the number ever retired.
+	detached []*xmuxClient
+	// generation is the pool's own reuse-boundary counter (NOT runtimecoord's network generation).
+	// It increments when RetireSuspect retires the pool; a connection records the value current at its
+	// open, so the inventory can separate draining connections that predate the boundary ("old
+	// generation") from connections opened after it.
+	generation uint64
+	// opened and released are the pool's life counters: connections created, and connections whose
+	// underlying Close actually ran. Their difference against the live inventory is what proves the
+	// release confirmation comes from the real end point rather than from the retire call.
+	opened   atomic.Uint64
+	released atomic.Uint64
+
 	// lx: SPEC 076 — new-transport backoff, armed by breaker trips. backoffDelay
 	// doubles per trip within [xmuxBackoffInitial, xmuxBackoffCap]; blockedUntil
 	// is the moment before which get() refuses to OPEN a transport (an existing
@@ -306,6 +362,84 @@ type xmuxManager struct {
 	backoffDelay time.Duration
 	blockedUntil time.Time
 	backoffArmed atomic.Bool
+}
+
+// xmuxPoolStats is a consistent snapshot of the pool's OWN inventory: connections it created, holds,
+// is draining, and has confirmed closed.
+//
+// # What it can and cannot prove
+//
+// These are the pool's facts, at the pool's state points: a connection is open once newClientLocked
+// created it, pooled while get() may hand it out, draining once it was detached while still carrying
+// a stream, and released once the underlying Close actually ran. The last one is the release
+// confirmation the OS/transport can give; a retire call is not.
+//
+// The HTTP/2 library's internal connection pool is a DIFFERENT owner. Its own idle-connection cache is
+// not visible here and is not counted: nothing in this package can prove when the library closes a
+// connection the pool already dropped. That is NOT_VERIFIABLE_HERE by construction, and no field here
+// may be read as covering it.
+type xmuxPoolStats struct {
+	// Generation is the current pool boundary counter (see xmuxManager.generation).
+	Generation uint64
+	// Pooled is the number of connections the pool currently holds (Active + Idle).
+	Pooled int
+	// Active is pooled connections carrying at least one stream.
+	Active int
+	// Idle is pooled connections carrying none. These are what CloseIdleConnections may retire.
+	Idle int
+	// Draining is detached connections whose teardown is deferred until their last stream releases.
+	Draining int
+	// DrainingOldGeneration is the subset of Draining opened before the current generation.
+	DrainingOldGeneration int
+	// Opened is how many connections the pool created over its life.
+	Opened uint64
+	// Released is how many underlying connections were actually closed over the pool's life.
+	Released uint64
+}
+
+// stats returns the pool inventory plus its life counters.
+//
+// It takes the pool lock and each client's lock in the same order get() does (pool, then client), so
+// it cannot deadlock against an acquire or a release. The life counters are atomics read under the
+// pool lock; a concurrent release is a single connection's bookkeeping and may land just after the
+// snapshot, which is why the caller pairs the snapshot with the invariant (see the test) rather than
+// demanding a frozen instant.
+func (m *xmuxManager) stats() xmuxPoolStats {
+	m.access.Lock()
+	defer m.access.Unlock()
+	m.pruneDetachedLocked()
+	stats := xmuxPoolStats{
+		Generation: m.generation,
+		Pooled:     len(m.clients),
+		Draining:   len(m.detached),
+		Opened:     m.opened.Load(),
+		Released:   m.released.Load(),
+	}
+	for _, client := range m.clients {
+		if client.getOpenUsage() > 0 {
+			stats.Active++
+		} else {
+			stats.Idle++
+		}
+	}
+	for _, client := range m.detached {
+		if client.generation < m.generation {
+			stats.DrainingOldGeneration++
+		}
+	}
+	return stats
+}
+
+// pruneDetachedLocked drops detached connections whose release has completed. Caller must hold
+// m.access; the client lock is taken inside, in the pool-then-client order.
+func (m *xmuxManager) pruneDetachedLocked() {
+	kept := m.detached[:0]
+	for _, client := range m.detached {
+		if !client.isReleased() {
+			kept = append(kept, client)
+		}
+	}
+	m.detached = kept
 }
 
 // noteBreakerTrip doubles the new-transport backoff window. lx: SPEC 076.
@@ -375,6 +509,7 @@ func (m *xmuxManager) CloseIdleConnections() {
 		kept = append(kept, client)
 	}
 	m.clients = kept
+	m.pruneDetachedLocked()
 	m.access.Unlock()
 	for _, client := range idle {
 		client.close()
@@ -387,6 +522,12 @@ func (m *xmuxManager) Close() {
 	m.access.Lock()
 	clients := m.clients
 	m.clients = nil
+	for _, client := range clients {
+		if client.getOpenUsage() > 0 {
+			m.detached = append(m.detached, client)
+		}
+	}
+	m.pruneDetachedLocked()
 	m.access.Unlock()
 	for _, client := range clients {
 		client.close()
@@ -439,6 +580,10 @@ func (m *xmuxManager) RetireSuspect() {
 	m.access.Lock()
 	clients := m.clients
 	m.clients = nil
+	// The boundary starts a new pool generation. Any connection opened after this point is what a new
+	// stream may use; everything still alive from before it is old-generation, including the busy
+	// connections this call leaves draining.
+	m.generation++
 	idle := 0
 	draining := 0
 	for _, client := range clients {
@@ -447,8 +592,10 @@ func (m *xmuxManager) RetireSuspect() {
 			continue
 		}
 		client.draining.Store(true)
+		m.detached = append(m.detached, client)
 		draining++
 	}
+	m.pruneDetachedLocked()
 	m.access.Unlock()
 	for _, client := range clients {
 		client.close()
@@ -462,9 +609,10 @@ func (m *xmuxManager) RetireSuspect() {
 // Caller must hold m.access.
 func (m *xmuxManager) newClientLocked() *xmuxClient {
 	client := &xmuxClient{
-		conn:      m.newConn(),
-		manager:   m,
-		leftUsage: -1,
+		conn:       m.newConn(),
+		manager:    m,
+		leftUsage:  -1,
+		generation: m.generation,
 	}
 	if x := m.config.cMaxReuseTimes.rand(); x > 0 {
 		client.leftUsage = x - 1
@@ -477,8 +625,9 @@ func (m *xmuxManager) newClientLocked() *xmuxClient {
 		client.unreusableAt = timeNow().Add(time.Duration(x) * time.Second)
 	}
 	m.clients = append(m.clients, client)
-	m.logf("xmux: opened connection (pool=%d, left_usage=%d, left_requests=%d)",
-		len(m.clients), client.leftUsage, atomic.LoadInt32(&client.leftRequests))
+	m.opened.Add(1)
+	m.logf("xmux: opened connection (pool=%d, left_usage=%d, left_requests=%d, generation=%d)",
+		len(m.clients), client.leftUsage, atomic.LoadInt32(&client.leftRequests), client.generation)
 	return client
 }
 
@@ -552,10 +701,15 @@ func (m *xmuxManager) get() (*xmuxClient, time.Duration) {
 		}
 	}
 	// Deferred close: an evicted connection with live streams stays up until they
-	// finish, so rotation never cuts traffic mid-flight.
+	// finish, so rotation never cuts traffic mid-flight. A busy eviction is the same "detached but
+	// not yet released" state a boundary leaves behind, so it joins the same inventory.
 	for _, client := range evicted {
+		if client.getOpenUsage() > 0 {
+			m.detached = append(m.detached, client)
+		}
 		client.close()
 	}
+	m.pruneDetachedLocked()
 
 	if len(m.clients) == 0 {
 		// lx: SPEC 076 — the only backoff-gated branch: an empty pool during the
