@@ -1,4 +1,4 @@
-# MASTER_PLAN —— 覆盖矩阵与本轮状态
+﻿# MASTER_PLAN —— 覆盖矩阵与本轮状态
 
 本表是 `00_完整覆盖矩阵.md` 55 项在目标仓库内的执行账。**所有方向都要有结论，只有已采纳方案要求生产代码闭环。** 状态取值：`PENDING`、`IMPLEMENTED_VERIFIED`、`ALREADY_PRESENT_VERIFIED`、`NOT_ADOPTED_WITH_EVIDENCE`、`BLOCKED_EXTERNAL`。证据等级见 `EVIDENCE.md`。
 
@@ -6,9 +6,9 @@
 
 | 项 | 值 |
 |---|---|
-| 阶段 | 03（B01–B06）——已完成；04 未开始 |
+| 阶段 | 04（R01–R08）——**IN_PROGRESS**（上下文交接，见 `stages/04.md`）；05 未开始 |
 | 02 结束 revision | `afdd3b3cf7c` |
-| 03 进入时 HEAD | `afdd3b3cf7c`（= `origin/testing`，无需同步） |
+| 04 进入时 HEAD | `a6f1ca55f5455fdaf88d41b030579ac1b41119df`（= `origin/testing`，无需同步） |
 | 03 代码提交 | `cd1d8160e3c` |
 | 03 阶段结束 HEAD | 以 `git log -1` 与 `stages/03.md` 为准 |
 | 知识库覆盖目标 | v0.1.44 专题目标 `3b6ec64f7145a2add99656d47caaa4f22a1cc478`；广泛基线 `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28`（v0.1.34），本轮不移动 |
@@ -93,3 +93,4 @@
 01（现状与观测）→ 02（创建与预算合同）→ 03（可积压字节与能力）→ 04（驻留、惰性、共享、关闭）→ 05（探测/选路/进程/DNS）→ 06（构建/规则/产物）→ 07（配置应用/恢复）→ 08（诊断/事件/桥接）→ 09（协议边界与全范围收口）→ 10–12（Debug 与真机验收）。
 
 后阶段可以回修前阶段；回修时必须同步更新本表、`CONTRACTS.md`、`DECISIONS.md` 与相关模块，不允许绕开错误另加全局单例。
+
