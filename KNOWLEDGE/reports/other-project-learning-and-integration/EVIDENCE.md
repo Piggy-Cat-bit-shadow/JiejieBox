@@ -276,8 +276,11 @@ CGO_ENABLED=1 go test -race ./route -run 'TestResidencySnapshot|TestTheReleaseCa
 - **知识冲突修正**：本机存在 mingw gcc（`<toolchain>`），`CGO_ENABLED=1` 的 `-race` 可用；
   `modules/core-lifecycle-runtime.md` §5 原先“本主机没有 C 编译器，race 为 BLOCKED_BY_ENVIRONMENT”
   的记录对当前环境已不成立，已做定向更新。
-- 等级：`VERIFIED_UNIT`（主机 + race）。不证明 Darwin/NE 设备行为；不证明 H2/QUIC/AnyTLS/Cronet/
-  Mieru/WG 的驻留账；报告开销未在真实压力下测量。
+- **CI**：首个 head `91c0c292db6` 的 `Verify` 只败在 `gofmt`（新增测试文件以 CRLF 提交）；修复提交
+  `205412ba498` 的 `Verify` run 42484328424 的 `verify` 与 `race checks` 均 **success**（`VERIFIED_CI`，
+  仅对该 SHA 的树；其后的 CI 记录回填提交只改文档）。
+- 等级：`VERIFIED_UNIT`（主机 + race）+ `VERIFIED_CI`（限上述 SHA 的主机运行）。不证明 Darwin/NE
+  设备行为；不证明 H2/QUIC/AnyTLS/Cronet/Mieru/WG 的驻留账；报告开销未在真实压力下测量。
 
 ## E13 未验证 / 边界
 

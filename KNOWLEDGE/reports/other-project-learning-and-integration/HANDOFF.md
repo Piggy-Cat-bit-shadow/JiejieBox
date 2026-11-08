@@ -173,7 +173,7 @@ go test ./service/oomkiller ./common/resourceguard -count=1
 | 报告 | `service/oomkiller` 顶层 `residency`：`measure=owner-reach`，四类 owner 各 `reachableOwners`/`releasableOwners`；无 reporter 时不写键 |
 | XHTTP | 池内 `Generation/Pooled/Active/Idle/Draining/DrainingOldGeneration/Opened/Released`；`Opened == Pooled+Draining+Released`；HTTP/2 库内缓存 `NOT_VERIFIABLE_HERE` |
 | 关闭诊断 | Scope 一次性 watchdog（`C.StopTimeout`、4 KiB 栈、defer 停表、panic 路径同样停）；Box 5 个 raw cleanup 命名；Box 顶层阶段只写 debug 耗时 |
-| 证据 | `EVIDENCE.md` E21；`go build ./...`、route/oomkiller/xhttp/adapter 全套测试、`-race`（`CGO_ENABLED=1` + `<toolchain>` gcc）均通过 |
+| 证据 | `EVIDENCE.md` E21；`go build ./...`、route/oomkiller/xhttp/adapter 全套测试、`-race`（`CGO_ENABLED=1` + `<toolchain>` gcc）均通过；CI head `205412ba498` 的 `Verify` run 42484328424 `verify`+`race checks` success |
 | 未完成 | R01 其余 owner 与真实终结数；R02–R06、R08 全部；R07 协议级慢关闭/挂起注入与 08 交接；进程级驻留/字节聚合 |
 | 唯一下一动作 | 04 批 2：R05 共享任务的独立 waiter、迟到成功与预算归还；复用 02 对 `sing-quic` `completeOffer`/`discarded` 的核实，不新建共享任务框架 |
 

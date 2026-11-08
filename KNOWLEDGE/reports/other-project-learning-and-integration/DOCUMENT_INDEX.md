@@ -42,6 +42,7 @@
 | 04 批 1 | `6c10b42df3718f86e4b6d92d02599ebe8b269eb4` | `feat(route,oomkiller): report the retirement walk's owner inventory`（residency owner 盘点、单一 owner 枚举、metadata 加性键） |
 | 04 批 1 | `f523e49ece3ba422a8ba6cd24c23cdfd27a491da` | `feat(xhttp): inventory the xmux pool's draining connections`（池内库存、真实 Close 完成计数、代次） |
 | 04 批 1 | `9a04cc1c1e829b9c1e77a5aaac7b360d7deeeabf` | `feat(adapter): bound the close diagnostic to one report per drain`（Scope 一次性 watchdog、4 KiB 栈、AddNamed、Box 阶段耗时） |
+| 04 批 1 | `205412ba498426696fea2473415e0f582ad1cae3` | `style(adapter): gofmt the close-watchdog test`（CRLF → LF；内容不变） |
 
 ## 脱敏检查
 
@@ -70,6 +71,7 @@
 | 04 批 1 推送结果 | `8022cdf8153..91c0c292db6  testing -> testing`（3 个代码提交 + 文档提交 `91c0c292db6`；远端提示仓库已迁移为 `Piggy-Cat-bit-shadow/JiejieBox`） |
 | 04 批 1 远端 refs | `git ls-remote origin refs/heads/testing` → `91c0c292db6b6024bb1a83f619ee7e15d2850665` |
 | 04 批 1 远端回读 | raw HTTP 200：`https://raw.githubusercontent.com/Piggy-Cat-bit-shadow/JiejieBox/91c0c292db6…/KNOWLEDGE/reports/other-project-learning-and-integration/stages/04.md`，内容与本地一致 |
-| 04 批 1 CI | 推送触发 `Verify` run [42483227952](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42483227952)（head `91c0c292db6`）；推送时 in_progress，结论见本条之后的回填记录 |
+| 04 批 1 CI | 首个 head `91c0c292db6` 的 `Verify` run [42483227952](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42483227952) 在 `gofmt` 失败（新增测试文件以 CRLF 提交）；修复提交 `205412ba498` 的 `Verify` run [42484328424](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42484328424) **success**（`verify` 与 `race checks` 均 success；`VERIFIED_CI`，仅对该 SHA 的树） |
+| 04 批 1 修复推送 | `4f275b66b6c..205412ba498  testing -> testing`；`git ls-remote origin refs/heads/testing` → `205412ba498426696fea2473415e0f582ad1cae3` |
 | 工作树收尾（01/02） | 01 收尾后干净；02 收尾把外部 Apple pin 改动恢复后再次干净：`git status --porcelain` 为空、三个子模块无 `+`、专题链接检查 0 处失效 |
 | 状态 | `REMOTE_VERIFIED`（`SANITIZED` / `LOCAL_COMMITTED` / `REMOTE_VERIFIED`） |
