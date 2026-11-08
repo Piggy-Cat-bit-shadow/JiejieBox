@@ -3,6 +3,7 @@ package oomkiller
 import (
 	"context"
 	"sync/atomic"
+	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	boxService "github.com/sagernet/sing-box/adapter/service"
@@ -32,6 +33,9 @@ type Service struct {
 	// guard is the admission policy for expensive creations, or nil when this build has no
 	// process budget to protect. See NewService for the only condition that installs one.
 	guard *resourceguard.Guard
+	// reclaim observes what the memory-reclaim executor actually did. It owns no policy and cannot
+	// start a pass; it is the bounded record the report reads. See reclaim_observation.go.
+	reclaim *reclaimObserver
 }
 
 func NewService(ctx context.Context, logger log.ContextLogger, tag string, options option.OOMKillerServiceOptions) (adapter.Service, error) {
@@ -48,8 +52,16 @@ func NewService(ctx context.Context, logger log.ContextLogger, tag string, optio
 		connections: service.FromContext[adapter.ConnectionManager](ctx),
 		recorder:    service.FromContext[*Recorder](ctx),
 		timerConfig: config,
+		reclaim:     newReclaimObserver(),
 	}
 	service.MustRegister[*Service](ctx, s)
+	// The reclaim record is contributed under its own top-level key, next to the client's document
+	// and next to the admission guard's. Registration is unconditional on a recorder existing, for
+	// the same reason the report itself is: a build without a recorder has nowhere to write, and one
+	// with a recorder gets the same additive key whether or not this process has a strict budget.
+	if s.recorder != nil {
+		s.recorder.SetExtraMetadata("memoryReclaim", s.reclaimMetadata)
+	}
 	// The admission guard is installed ONLY for a Network Extension with a process budget.
 	//
 	// That condition, and not "a memory limit was configured", is what makes this safe to
@@ -132,6 +144,26 @@ func (s *Service) guardMetadata() any {
 	}
 }
 
+// reclaimMetadata renders the reclaim executor's bounded record for the OOM report's metadata
+// document.
+//
+// # Why this is separate from the events stream
+//
+// events.jsonl records the events that CHANGE what the report reader must explain: start, stop,
+// state transitions, resets and snapshots. A reclaim pass can run many times without changing any of
+// those, so writing each one there would grow the report with rows nobody asked for. The metadata
+// key answers the other question - "what has the executor been doing lately, and did it pay" - with
+// a fixed-size recent ring plus totals, and it is only as fresh as the document's rewrite cadence.
+//
+// It returns nil when there is no observer, so a platform without a reclaim executor writes exactly
+// the document it wrote before.
+func (s *Service) reclaimMetadata() any {
+	if s.reclaim == nil {
+		return nil
+	}
+	return s.reclaim.metadata(time.Now())
+}
+
 func MemoryPressure(ctx context.Context) func() tun.MemoryPressure {
 	oomKiller := service.FromContext[*Service](ctx)
 	if oomKiller == nil {
@@ -149,6 +181,9 @@ func (s *Service) startTimer() error {
 		return E.New("memory pressure monitoring is not available on this platform without memory_limit")
 	}
 	s.adaptiveTimer = newAdaptiveTimer(s.logger, s.network, s.connections, service.FromContext[adapter.CacheFile](s.ctx), s.recorder, &s.pressure, s.timerConfig)
+	// The observer is attached before the timer is started: start() may schedule a poll immediately,
+	// and a pass that ran before the field was set would be missing from the report.
+	s.adaptiveTimer.reclaim = s.reclaim
 	var carriedState *timerState
 	if s.recorder != nil {
 		carriedState = s.recorder.instanceStarted(s.timerConfig, s.adaptiveTimer.limitThresholds)

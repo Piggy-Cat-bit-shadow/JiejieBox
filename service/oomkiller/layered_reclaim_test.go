@@ -28,8 +28,9 @@ func newLayeredTimer(t *testing.T, lastUsageMiB uint64) *layeredTimer {
 	fixture.adaptiveTimer.lastUsage = lastUsageMiB * 1024 * 1024
 	fixture.usage.Store(33 * 1024 * 1024)
 	fixture.adaptiveTimer.readUsage = fixture.usage.Load
-	fixture.adaptiveTimer.trimCaches = func(context.Context) {
+	fixture.adaptiveTimer.trimCaches = func(context.Context) int {
 		fixture.note("cache")
+		return 0
 	}
 	fixture.adaptiveTimer.trimMemory = func(context.Context) {
 		fixture.note("pools")
@@ -80,9 +81,10 @@ func (f *layeredTimer) releaseAt(mib uint64) {
 func TestIdleReclaimStopsAtTheCacheLayer(t *testing.T) {
 	fixture := newLayeredTimer(t, 35)
 	fixture.setUsage(33)
-	fixture.adaptiveTimer.trimCaches = func(context.Context) {
+	fixture.adaptiveTimer.trimCaches = func(context.Context) int {
 		fixture.note("cache")
 		fixture.setUsage(31)
+		return 0
 	}
 
 	fixture.release()
@@ -97,9 +99,10 @@ func TestIdleReclaimStopsAtTheCacheLayer(t *testing.T) {
 func TestIdleReclaimEscalatesToPoolsWhenCacheGainIsSmall(t *testing.T) {
 	fixture := newLayeredTimer(t, 35)
 	fixture.setUsage(33)
-	fixture.adaptiveTimer.trimCaches = func(context.Context) {
+	fixture.adaptiveTimer.trimCaches = func(context.Context) int {
 		fixture.note("cache")
 		fixture.setUsage(33*1024*1024 - 100*1024)
+		return 0
 	}
 	fixture.adaptiveTimer.trimMemory = func(context.Context) {
 		fixture.note("pools")
@@ -118,9 +121,10 @@ func TestIdleReclaimEscalatesToPoolsWhenCacheGainIsSmall(t *testing.T) {
 func TestIdleReclaimForcesGCOnlyWhenEarlierLayersAreInsufficient(t *testing.T) {
 	fixture := newLayeredTimer(t, 35)
 	fixture.setUsage(33)
-	fixture.adaptiveTimer.trimCaches = func(context.Context) {
+	fixture.adaptiveTimer.trimCaches = func(context.Context) int {
 		fixture.note("cache")
 		fixture.setUsage(33*1024*1024 - 100*1024)
+		return 0
 	}
 	fixture.adaptiveTimer.trimMemory = func(context.Context) {
 		fixture.note("pools")

@@ -195,10 +195,16 @@ type adaptiveTimer struct {
 	idleCooldownUntil time.Time
 	trimMemory        func(context.Context)
 	// trimCaches is the L1 executor: it drops expired cache entries and nothing that carries
-	// traffic. Nil means the network manager has no cache-trimming capability, in which case the
-	// idle pass starts at L2. It is separate from trimMemory so the pass can measure what the
-	// cheap layer actually returned before deciding to close idle pools at all.
-	trimCaches   func(context.Context)
+	// traffic, and returns how many entries it removed. Nil means the network manager has no
+	// cache-trimming capability, in which case the idle pass starts at L2. It is separate from
+	// trimMemory so the pass can measure what the cheap layer actually returned before deciding to
+	// close idle pools at all.
+	//
+	// The count is the one reclaim number that is a real object count rather than a footprint
+	// delta: adapter.CacheMemoryReleaser.TrimCaches already reported it and the executor used to
+	// discard it. It is recorded with the action (see reclaimActionRecord) so a report can say
+	// whether a cache pass was empty, not only that it was cheap.
+	trimCaches   func(context.Context) int
 	freeOSMemory func()
 	// releaseNetwork is the crisis executor (L4). Nil means t.network.ReleaseMemory. A test
 	// supplies it to observe the destructive reset without building a full network manager.
@@ -211,6 +217,14 @@ type adaptiveTimer struct {
 	// means the /memory/classes/heap/free metric. It gates L3 below the armed line: a forced GC
 	// is not free, and it must have a reason other than "the previous layers were quiet".
 	runtimeReclaimable func() uint64
+	// reclaim is the observation sink for completed actions. It is nil in fixtures that do not
+	// care, and nil-safe on the recording side, so no production path branches on it.
+	reclaim *reclaimObserver
+	// now is the clock the idle cadence and the recorded timestamps read. Nil means time.Now. It is
+	// the same seam guard.useClock provides for admission, and it exists for the same reason: a
+	// cooldown of 30 s must be provable over a simulated minute rather than slept through. Tests
+	// install it before the timer starts, which is why it is read without the lock.
+	now func() time.Time
 
 	// pressureCallbacks tracks every accepted poll, pressure callback and queued/in-flight reclaim
 	// action.
@@ -300,8 +314,8 @@ func newAdaptiveTimer(logger log.ContextLogger, network adapter.NetworkManager, 
 	// every release, which also means a fixture manager without the capability costs nothing.
 	if network != nil {
 		if cacheReleaser, isReleaser := any(network).(adapter.CacheMemoryReleaser); isReleaser {
-			t.trimCaches = func(ctx context.Context) {
-				cacheReleaser.TrimCaches(ctx)
+			t.trimCaches = func(ctx context.Context) int {
+				return cacheReleaser.TrimCaches(ctx)
 			}
 		}
 	}
@@ -587,7 +601,7 @@ func (t *adaptiveTimer) idleOpportunityLocked(sample memorySample, connections i
 	t.lastConnections = connections
 	t.lastUsage = sample.usage
 
-	now := time.Now()
+	now := t.clockNow()
 	if t.belowResume(sample) ||
 		now.Sub(t.lastRelease) < defaultReleaseInterval ||
 		now.Before(t.idleCooldownUntil) ||
@@ -757,7 +771,7 @@ func (t *adaptiveTimer) finishReclaimLocked(kind reclaimKind) {
 		t.pressureInFlight = false
 	case reclaimCrisis:
 		t.crisisInFlight = false
-		now := time.Now()
+		now := t.clockNow()
 		t.lastRelease = now
 		t.idleCooldownUntil = now.Add(defaultIdleCooldown)
 	}
@@ -797,13 +811,16 @@ func (t *adaptiveTimer) runIdleReclaim(request *reclaimRequest) {
 func (t *adaptiveTimer) runIdleReclaimLocked(request *reclaimRequest) {
 	before := t.currentUsage()
 	ctx := context.Background()
+	// cacheEntries stays -1 unless L1 actually ran and reported: "this pass has no cache count" and
+	// "the cache pass removed nothing" are different facts, and the recorder preserves the difference.
+	cacheEntries := -1
 
 	// L1: expired cache entries. This is deliberately first: it has no connection ownership at all.
 	if t.trimCaches != nil {
-		t.trimCaches(ctx)
+		cacheEntries = t.trimCaches(ctx)
 		afterCache := t.currentUsage()
 		if gain := droppedBytes(before, afterCache); gain >= defaultIdleBenefitFloor {
-			t.finishIdleReclaim(before, afterCache, "cache", gain)
+			t.finishIdleReclaim(before, afterCache, "cache", gain, cacheEntries)
 			return
 		}
 	}
@@ -813,7 +830,7 @@ func (t *adaptiveTimer) runIdleReclaimLocked(request *reclaimRequest) {
 	// here loses nothing and lets the destructive pass take the executor immediately.
 	if t.crisisQueued() {
 		afterCache := t.currentUsage()
-		t.finishIdleReclaim(before, afterCache, "cache (crisis pending)", droppedBytes(before, afterCache))
+		t.finishIdleReclaim(before, afterCache, "cache (crisis pending)", droppedBytes(before, afterCache), cacheEntries)
 		return
 	}
 
@@ -826,7 +843,7 @@ func (t *adaptiveTimer) runIdleReclaimLocked(request *reclaimRequest) {
 	}
 	afterPools := t.currentUsage()
 	if gain := droppedBytes(before, afterPools); gain >= defaultIdleBenefitFloor {
-		t.finishIdleReclaim(before, afterPools, "pools", gain)
+		t.finishIdleReclaim(before, afterPools, "pools", gain, cacheEntries)
 		return
 	}
 
@@ -834,7 +851,7 @@ func (t *adaptiveTimer) runIdleReclaimLocked(request *reclaimRequest) {
 	// pass will do the runtime work itself.
 	if t.crisisQueued() {
 		afterPools = t.currentUsage()
-		t.finishIdleReclaim(before, afterPools, "pools (crisis pending)", droppedBytes(before, afterPools))
+		t.finishIdleReclaim(before, afterPools, "pools (crisis pending)", droppedBytes(before, afterPools), cacheEntries)
 		return
 	}
 
@@ -849,19 +866,49 @@ func (t *adaptiveTimer) runIdleReclaimLocked(request *reclaimRequest) {
 		}
 	}
 	after := t.currentUsage()
-	t.finishIdleReclaim(before, after, "runtime", droppedBytes(before, after))
+	t.finishIdleReclaim(before, after, "runtime", droppedBytes(before, after), cacheEntries)
 }
 
-func (t *adaptiveTimer) finishIdleReclaim(before uint64, after uint64, stage string, gain uint64) {
+// finishIdleReclaim applies the low-yield rule and records the action.
+//
+// # The recorded numbers are the ones the decision used
+//
+// lowYield is computed from the same before/after pair the record carries, so a reader can re-derive
+// the cooldown decision instead of taking a boolean on trust. The cooldown itself is unchanged: it is
+// still what makes a footprint at its floor stop costing a trim per sample, and the record exists so
+// a report can explain why a pass did not run rather than only that it did not.
+//
+// cacheEntries is the L1 count for this PASS, or -1 when L1 did not run. A later layer finishing the
+// pass does not erase it: "the cache pass removed 12 entries and the pools then returned the floor" is
+// one action with two measured facts, and dropping the first would make the cheap layer invisible
+// whenever it was insufficient.
+func (t *adaptiveTimer) finishIdleReclaim(before uint64, after uint64, stage string, gain uint64, cacheEntries int) {
 	lowYield := after+defaultIdleBenefitFloor >= before
+	now := t.clockNow()
+	var cooldownUntil time.Time
 	t.access.Lock()
 	t.lastGCCycles = readGCCycles()
 	if lowYield {
 		// The footprint is at its floor for this layer set. Back off instead of repeating the same
 		// work on the next sample; a crisis path does not consult this cooldown.
-		t.idleCooldownUntil = time.Now().Add(defaultIdleCooldown)
+		cooldownUntil = now.Add(defaultIdleCooldown)
+		t.idleCooldownUntil = cooldownUntil
 	}
 	t.access.Unlock()
+
+	t.reclaim.record(reclaimActionRecord{
+		Kind:                "idle",
+		Stage:               stage,
+		At:                  now,
+		BeforeBytes:         before,
+		AfterBytes:          after,
+		GainBytes:           gain,
+		CacheEntriesRemoved: cacheEntries,
+		CacheEntriesKnown:   cacheEntries >= 0,
+		LowYield:            lowYield,
+		CooldownUntil:       cooldownUntil,
+		Mode:                t.policyMode.String(),
+	})
 
 	switch {
 	case gain >= defaultIdleBenefitFloor:
@@ -882,7 +929,18 @@ func (t *adaptiveTimer) finishIdleReclaim(before uint64, after uint64, stage str
 func (t *adaptiveTimer) runPressureReclaim() {
 	t.releaseAccess.Lock()
 	defer t.releaseAccess.Unlock()
+	before := t.currentUsage()
 	t.releaseMemory()
+	after := t.currentUsage()
+	t.reclaim.record(reclaimActionRecord{
+		Kind:        "pressure",
+		Stage:       "cache+gc",
+		At:          t.clockNow(),
+		BeforeBytes: before,
+		AfterBytes:  after,
+		GainBytes:   droppedBytes(before, after),
+		Mode:        t.policyMode.String(),
+	})
 }
 
 // runCrisisReclaim is the destructive reset: ReleaseMemory (which retires the network) followed by
@@ -926,11 +984,29 @@ func (t *adaptiveTimer) runCrisisReclaim(request *reclaimRequest) {
 		t.releaseNetworkMemory(context.Background())
 	}
 	t.releaseMemory()
+	after := t.readSample()
+	t.reclaim.record(reclaimActionRecord{
+		Kind:        "crisis",
+		Stage:       crisisStage(request),
+		At:          t.clockNow(),
+		BeforeBytes: current.usage,
+		AfterBytes:  after.usage,
+		GainBytes:   droppedBytes(current.usage, after.usage),
+		Mode:        t.policyMode.String(),
+	})
 	if t.recorder != nil {
-		after := t.readSample()
 		t.recorder.recordReset(request.reason, current, after, request.connections, request.reportOnly)
 		t.recorder.snapshot(SnapshotReasonReset, current, t.belowTrigger(after), false)
 	}
+}
+
+// crisisStage names the destructive branch that actually ran, so a report cannot mistake a
+// report-only pass for a network reset that terminated live paths.
+func crisisStage(request *reclaimRequest) string {
+	if request.reportOnly {
+		return "report-only"
+	}
+	return "network-reset"
 }
 
 func (t *adaptiveTimer) releaseNetworkMemory(ctx context.Context) {
@@ -950,6 +1026,19 @@ func (t *adaptiveTimer) readSample() memorySample {
 		return t.sampleFunc()
 	}
 	return readMemorySample(t.policyMode)
+}
+
+// clockNow reads the timer's clock, defaulting to the wall clock when the field is unset.
+//
+// The cadence rules (release interval, cooldown) and the recorded timestamps all go through here, so
+// a test can prove a 30 s cooldown over simulated time instead of sleeping. It is deliberately not an
+// interface: the hot paths that need a monotonic read already keep their own timers, and this seam
+// exists for the policy clock only.
+func (t *adaptiveTimer) clockNow() time.Time {
+	if t.now == nil {
+		return time.Now()
+	}
+	return t.now()
 }
 
 func (t *adaptiveTimer) currentUsage() uint64 {

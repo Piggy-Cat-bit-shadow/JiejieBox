@@ -120,9 +120,10 @@ func TestCrisisAbortsAnIdlePassBetweenLayers(t *testing.T) {
 
 	cacheEntered := make(chan struct{})
 	cacheRelease := make(chan struct{})
-	timer.trimCaches = func(context.Context) {
+	timer.trimCaches = func(context.Context) int {
 		close(cacheEntered)
 		<-cacheRelease
+		return 0
 	}
 	var resets atomic.Int32
 	timer.releaseNetwork = func(context.Context) { resets.Add(1) }
