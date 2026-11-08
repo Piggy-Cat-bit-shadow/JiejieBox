@@ -6,7 +6,7 @@
 
 | 项 | 值 |
 |---|---|
-| 阶段 | 11（V02）——**IN_PROGRESS**（仅计划，见 `stages/11.md`）；12 未开始。08–11 均未完成；下一窗口先做 10-A，12 需设备/互通环境。快照见 HANDOFF §19 |
+| 阶段 | 12（V03）——**IN_PROGRESS**（本窗口完成本地微基准与 12-B 外部边界清点；X04 四行因 09 无实现全部 `BLOCKED_EXTERNAL`，见 `stages/12.md`） |
 | 02 结束 revision | `afdd3b3cf7c` |
 | 04 进入时 HEAD | `a6f1ca55f5455fdaf88d41b030579ac1b41119df`（= `origin/testing`，无需同步） |
 | 03 代码提交 | `cd1d8160e3c` |
@@ -78,7 +78,7 @@
 | M03 | 必要客户端/桥接/配置入口实际接通及发行档位验证 | 09 | I | `PENDING` | — |
 | V01 | 账本边界、输入放大、失败注入与测试检出能力 | 10 | I | `PENDING` | 10-A 入口选定 XHTTP packet-up 字节账（pending 上界/大 Write/POST 失败/写入中 Close/幂等关闭），先做反例证明检出力；09 的 TrustTunnel/AWG 攻击面因无实现 `BLOCKED_EXTERNAL` |
 | V02 | 跨机制状态交错、资源身份和整系统协调攻击 | 11 | I | `PENDING` | 复用 E20（XHTTP 并发写+Close）；计划 v2rayquic 共享 offer 的并发 attach/cancel/Close/迟到成功交错（50 轮 + race），本轮未落代码；09 四角色 V02 待实现 |
-| V03 | 协议互通、性能/内存价值、真机证据与最终全项闭环 | 12 | I | `PENDING` | 12 专项；真机/互通仍须独立证据 |
+| V03 | 协议互通、性能/内存价值、真机证据与最终全项闭环 | 12 | I | `PENDING` | 本地微基准：domain_keyword 1024 miss 12.8µs→187ns、late hit 14.9µs→193ns；SnapshotStatus 3.76µs/1200B。四行官方互通均 `BLOCKED_EXTERNAL`（09 无实现 + Linux/对端）；RSS/p95/p99/真机未测 |
 
 ## G01 范围拆分（为什么不是“所有观测都已导出”）
 
