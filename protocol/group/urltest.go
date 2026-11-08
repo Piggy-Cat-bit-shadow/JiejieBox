@@ -1544,7 +1544,30 @@ func (b *urlTestBatch) measure(ctx context.Context, link string, detour adapter.
 	return urltest.Measure(ctx, urltest.MeasureOptions{
 		Link:           link,
 		ExpectedStatus: b.expected,
+		Key:            b.measurementKey(ctx, link, detour),
 	}, detour)
+}
+
+// measurementKey names the question this probe asks, so P02B can share one measurement between
+// equivalent health probes.
+//
+// The network epoch is the one fact a group cannot invent and must not omit: an answer measured
+// on the previous network is still fresh by its timestamps but answers a different question, so
+// a key without the epoch would let a probe after a network change be served by one from before
+// it. A context without a network manager yields epoch zero, which simply means no sharing
+// across generations rather than a wrong share.
+func (b *urlTestBatch) measurementKey(ctx context.Context, link string, detour adapter.Outbound) *urltest.MeasurementKey {
+	var epoch uint64
+	if manager := service.FromContext[adapter.NetworkManager](ctx); manager != nil {
+		epoch = manager.NetworkEnvironment()
+	}
+	return &urltest.MeasurementKey{
+		NetworkEpoch:   epoch,
+		Node:           detour.Tag(),
+		Target:         link,
+		ExpectedStatus: b.expected.Key(),
+		Purpose:        urltest.PurposeHealth,
+	}
 }
 
 func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval time.Duration, force bool) {

@@ -231,6 +231,19 @@ type StatusRange struct {
 	End   uint16
 }
 
+// Key renders the expected set in a stable form for measurement identity (P02B): two probes
+// that accept different statuses are asking different questions and must not share one answer.
+func (e ExpectedStatus) Key() string {
+	if len(e) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(e))
+	for _, statusRange := range e {
+		parts = append(parts, strconv.Itoa(int(statusRange.Start))+"-"+strconv.Itoa(int(statusRange.End)))
+	}
+	return strings.Join(parts, ",")
+}
+
 // ExpectedStatus is the set of HTTP status codes a measurement accepts.
 //
 // An empty set accepts anything, which the Canonical form reports as "*".
