@@ -318,3 +318,34 @@ func (c *Client) Close() error {
 	}
 	return nil
 }
+
+// Reset aborts the CURRENT connection and any creation in flight, but keeps the client usable:
+// a later offer may establish a fresh connection from the client's still-live context.
+//
+// # Why this is not Close
+//
+// The outbounds call InterfaceUpdated on every physical network change. Close is the final action:
+// it cancels the client context, so every offer derived from it fails forever. Calling Close from
+// the network hook therefore left a VLESS/VMess/Trojan transport.type=quic instance unable to dial
+// again after the first change. Reset performs the same discard-and-close of the current object
+// without ending the client's lifetime; Scope.Close (or the explicit Close call) still does that.
+func (c *Client) Reset() error {
+	c.connAccess.Lock()
+	conn := c.conn.Swap(nil)
+	pending := c.pending
+	if pending != nil {
+		pending.discarded = true
+		if pending.cause == nil {
+			pending.cause = net.ErrClosed
+		}
+	}
+	c.connAccess.Unlock()
+
+	if pending != nil && pending.cancel != nil {
+		pending.cancel(net.ErrClosed)
+	}
+	if conn != nil {
+		conn.closeConn()
+	}
+	return nil
+}
