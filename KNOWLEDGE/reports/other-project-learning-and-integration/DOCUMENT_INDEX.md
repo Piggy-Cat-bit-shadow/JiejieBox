@@ -6,7 +6,7 @@
 
 | 文档 | 内容 | 覆盖 revision | 脱敏 | 本地提交 | 远端 |
 |---|---|---|---|---|---|
-| `README.md` | 专题入口、阅读顺序、阶段状态 | 25f5c9a / 3b6ec64 | `SANITIZED` | 本目录文档提交 | 见文末 |
+| `README.md` | 专题入口、阅读顺序、阶段状态 | 25f5c9a / 3b6ec64 | `SANITIZED` | `dd6fd606bcf9` | 见文末 |
 | `MASTER_PLAN.md` | 55 项覆盖账、G01 范围拆分、阶段顺序 | 25f5c9a / 3b6ec64 | `SANITIZED` | 同上 | 见文末 |
 | `SOURCES.md` | 参考项目/依赖/客户端锁/闭源边界来源核验 | 25f5c9a；远端 refs 2026-11-08 | `SANITIZED` | 同上 | 见文末 |
 | `CONTRACTS.md` | 三种账、观测键、回收反馈、后续阶段接点、测试接缝 | 25f5c9a + 503a18b | `SANITIZED` | 同上 | 见文末 |
@@ -40,8 +40,9 @@
 
 | 项 | 值 |
 |---|---|
-| 本地文档提交 | 见本文件所在提交（`git log -1 --format=%H -- KNOWLEDGE/reports/other-project-learning-and-integration/DOCUMENT_INDEX.md`） |
-| 推送目标 | `origin` / `testing`（`https://github.com/Piggy-Cat-bit-shadow/sing-box.git`） |
-| 推送结果 | 待推送后回填 |
-| 远端回读 | 待推送后回填（`git ls-remote` + 远端文件内容/提交页核对） |
-| 状态 | `LOCAL_COMMITTED`（推送与回读完成后改为 `REMOTE_VERIFIED`） |
+| 本地文档提交 | `dd6fd606bcf903c645377534a35dbc91d9eed7bd`（本文件所在提交；本表的核验回填为其后一次小提交） |
+| 推送目标 | `origin` / `testing`（`https://github.com/Piggy-Cat-bit-shadow/sing-box.git`，远端提示仓库已迁移为 `Piggy-Cat-bit-shadow/JiejieBox`） |
+| 推送结果 | `25f5c9a638b..dd6fd606bcf  testing -> testing`（`git push` exit 0） |
+| 远端 refs | `git ls-remote origin refs/heads/testing` → `dd6fd606bcf903c645377534a35dbc91d9eed7bd` |
+| 远端回读 | raw 文件 HTTP 200：`https://raw.githubusercontent.com/Piggy-Cat-bit-shadow/JiejieBox/dd6fd606bc…/KNOWLEDGE/reports/other-project-learning-and-integration/README.md`，内容与本地一致；GitHub API commit `503a18b5…` 存在（parent `25f5c9a6…`，stats +904/−22） |
+| 状态 | `REMOTE_VERIFIED`（`SANITIZED` / `LOCAL_COMMITTED` / `REMOTE_VERIFIED`） |
