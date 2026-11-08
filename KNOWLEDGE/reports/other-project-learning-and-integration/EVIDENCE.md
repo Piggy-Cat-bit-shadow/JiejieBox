@@ -234,7 +234,10 @@ go build ./...                                          # exit 0
 
 ## E19 03 阶段：CI
 
-- 代码提交 `cd1d8160e3c` 后触发 `Verify`；run 号与结论在 `DOCUMENT_INDEX.md` 记录（本地结果不冒称 CI）。
+- 代码提交 `cd1d8160e3c` 的 `Verify` run 42475816951 被随后的记录推送按并发策略取消；
+  最终 head `5bcded4` 的 run 42476106354 为 **success**（`VERIFIED_CI`，仅对该 SHA 的树）。
+- 本地：`go test ./transport/v2rayxhttp`（全套）、`-race` 子集、`go build ./...` 均通过。
+- 等级：`VERIFIED_UNIT` + 以 `DOCUMENT_INDEX` 的 CI 记录为准（本地结果不冒称 CI）。
 
 ## E13 未验证 / 边界
 

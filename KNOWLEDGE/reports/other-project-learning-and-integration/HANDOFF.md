@@ -1,6 +1,6 @@
-# HANDOFF —— 阶段交接（当前：02 → 03）
+# HANDOFF —— 阶段交接（当前：03 → 04）
 
-本文件给下一阶段可直接使用的 API/owner/调用点、阅读缓存与未确认事项。**新上下文先读本文件与 `stages/02.md`，再按 `KNOWLEDGE/INDEX.md` 的导航补本阶段源码增量。**
+本文件给下一阶段可直接使用的 API/owner/调用点、阅读缓存与未确认事项。**新上下文先读本文件与 `stages/03.md`，再按 `KNOWLEDGE/INDEX.md` 的导航补本阶段源码增量。**
 
 ## 1. 阅读缓存（不要重复全文读入）
 
@@ -141,7 +141,7 @@ go test ./service/oomkiller ./common/resourceguard -count=1
 
 02 读了：`modules/resource-admission.md`、`modules/mieru.md`（按导航核对）、`protocol/anytls/{admission,outbound}.go`、`common/tls/client.go`、`common/resourceguard/{gate,guard,held}.go`、`service/oomkiller/{service,timer,recorder}.go`、`protocol/mieru/{dialer,fallback,dial_observation,outbound}.go`、pinned `sing-quic@{hysteria2,tuic}/client.go` 的 `completeOffer/offerNew`、pinned `sing-anytls/client.go` 的 ctx 使用、`protocol/naive/outbound.go` 的 Cronet 接点、`release/{dependencies.json,source-lock.json}` 与 `scripts/ci/release-freeze.py` 接口。03 只需补字节路径（XHTTP pending、TUN/UDP 队列、relay）的源码增量，不重读上述文件。
 
-## 7. 03 起点（已验证的定位，不替代 03 自己的导航）
+## 7. 03 起点（历史保留；04 用 §8）
 
 | 03 关注点 | 已验证锚点 | 说明 |
 |---|---|---|

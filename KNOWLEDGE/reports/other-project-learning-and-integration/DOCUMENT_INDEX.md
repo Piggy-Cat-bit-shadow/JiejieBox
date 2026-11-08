@@ -61,6 +61,6 @@
 | 02 CI 核验 | `Verify` run [42474314237](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42474314237)，head `d14933eada2`，`verify` 与 `race checks` 均 success（`VERIFIED_CI`，仅对该 SHA 的树；其后的记录回填提交只改文档） |
 | 03 推送结果 | `afdd3b3cf7c..21f383b1fe7  testing -> testing`（含代码 `cd1d8160e3c` 与文档提交 `21f383b1fe7`） |
 | 03 远端 refs | `git ls-remote origin refs/heads/testing` → `21f383b1fe7b1d6d7efde2d0e570116e18954b94` |
-| 03 CI 核验 | `Verify` run [42475816951](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42475816951)，head `21f383b1fe7`：交接时仍 `in_progress`，**未记 PASS**；本地 `go test ./transport/v2rayxhttp`、`-race` 子集与 `go build ./...` 均通过 |
+| 03 CI 核验 | 前一 run 42475816951（head `21f383b`）被记录推送取消；最终 head `5bcded4` 的 `Verify` run [42476106354](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42476106354) **success**（`VERIFIED_CI`，仅对该 SHA 的树；其后的记录回填提交只改文档） |
 | 工作树收尾（01/02） | 01 收尾后干净；02 收尾把外部 Apple pin 改动恢复后再次干净：`git status --porcelain` 为空、三个子模块无 `+`、专题链接检查 0 处失效 |
 | 状态 | `REMOTE_VERIFIED`（`SANITIZED` / `LOCAL_COMMITTED` / `REMOTE_VERIFIED`） |
