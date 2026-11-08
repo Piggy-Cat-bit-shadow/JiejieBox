@@ -147,6 +147,18 @@ func (a *Adapter) Outbound(tag string) (adapter.Outbound, bool) {
 // tag is broken but still has usable nodes, and dropping the whole provider over one entry would
 // punish the working nodes. The rename is deterministic (first occurrence keeps the tag, later ones
 // get " (2)", " (3)" ...), so a refresh produces the same names and the diff stays stable.
+// ResolvedTags returns the published tags a document would produce, in document order.
+//
+// It is the same rendering the apply uses (provider tag, "/", document tag, with a numeric
+// suffix for a duplicate), exposed so a caller can compare a document with what is published
+// without duplicating the naming rules.
+func (a *Adapter) ResolvedTags(newOpts []option.Outbound) []string {
+	if len(newOpts) == 0 {
+		return nil
+	}
+	return a.resolveOutboundTags(newOpts)
+}
+
 func (a *Adapter) resolveOutboundTags(newOpts []option.Outbound) []string {
 	tags := make([]string, len(newOpts))
 	seen := make(map[string]bool)

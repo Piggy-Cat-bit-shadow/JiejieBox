@@ -69,6 +69,13 @@ type ProviderRemote struct {
 	ticker           *time.Ticker
 	updating         atomic.Bool
 
+	// Application report state (C03). The revision counters are separate so an attempt can be
+	// counted without claiming a document was applied.
+	requestedRevision atomic.Uint64
+	appliedRevision   atomic.Uint64
+	reportAccess      sync.Mutex
+	lastReport        *ApplyReport
+
 	httpClientOptions *option.HTTPClientOptions
 	downloadDetour    string
 	url               string
@@ -296,10 +303,20 @@ func (s *ProviderRemote) downloadDetourTag() string {
 }
 
 func (s *ProviderRemote) Update() error {
+	_, err := s.UpdateWithReport()
+	return err
+}
+
+// UpdateWithReport refreshes the provider and returns what the attempt actually did.
+//
+// Update() keeps its error-only contract for existing callers; the report is additional and
+// describes the same attempt.
+func (s *ProviderRemote) UpdateWithReport() (*ApplyReport, error) {
 	if s.ticker != nil {
 		s.ticker.Reset(s.updateInterval)
 	}
-	return s.fetch(s.ctx, false)
+	err := s.fetch(s.ctx, false)
+	return s.LastApplyReport(), err
 }
 
 func (s *ProviderRemote) UpdatedAt() time.Time {
@@ -389,6 +406,14 @@ func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 				" inflight=", stats.Inflight, " admitted=", stats.AdmittedBuilds, " deferred=", stats.Deferred)
 		}
 	}()
+	// The report is created before anything is requested and recorded on EVERY exit path: a
+	// path that did not classify itself is honestly "unknown" rather than silently committed.
+	report := &ApplyReport{
+		Tag:               s.Tag(),
+		RequestedRevision: s.requestedRevision.Add(1),
+		Status:            ApplyStatusUnknown,
+	}
+	defer func() { s.recordApply(report) }()
 	s.logger.Debug("updating outbound provider ", s.Tag(), " from URL: ", s.logURL)
 	req, err := http.NewRequest(http.MethodGet, s.url, nil)
 	if err != nil {
@@ -442,9 +467,11 @@ func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 				Outbounds: s.lastOutOpts,
 			})
 			if err := s.saveCacheFile(hasInfo, info, content); err != nil {
+				report.AncillaryError = s.redact(err.Error())
 				return E.Cause(err, "save outbound provider cache file")
 			}
 		}
+		report.Status = ApplyStatusUnchanged
 		s.logger.Info("update outbound provider ", s.Tag(), ": not modified")
 		return nil
 	default:
@@ -457,6 +484,7 @@ func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 	if int64(len(contentRaw)) > s.maxDocumentSize {
 		return E.New("provider document is larger than the ", s.maxDocumentSize, " byte limit")
 	}
+	report.Downloaded = true
 	content, _ := parser.DecodeBase64URLSafe(string(contentRaw))
 	if !hasInfo {
 		firstLine, others := getFirstLine(content)
@@ -465,8 +493,31 @@ func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 			content, _ = parser.DecodeBase64URLSafe(others)
 		}
 	}
-	if err := s.updateProviderFromContent(content); err != nil {
-		return err
+	nodeErr, groupErr := s.applyContent(content)
+	after := s.publishedTags()
+	report.RequestedTags = s.ResolvedTags(s.lastOutOpts)
+	report.AppliedTags, report.PendingTags = diffTags(report.RequestedTags, after)
+	report.RetainedTags = retainedTags(report.RequestedTags, after)
+	report.GroupRejected = groupErr != nil
+	// A retry re-reads the same document and its callbacks refuse it again; only a restart
+	// rebuilds the groups from configuration. That is why this is not just another partial.
+	report.RestartRequired = groupErr != nil
+	report.Diagnostics = dedupeDiagnostics([]string{s.redact(errorText(nodeErr)), s.redact(errorText(groupErr))})
+	switch {
+	case nodeErr != nil || groupErr != nil:
+		if len(report.AppliedTags) > 0 {
+			report.Status = ApplyStatusPartial
+		} else {
+			report.Status = ApplyStatusUnknown
+		}
+	default:
+		report.Status = ApplyStatusCommitted
+	}
+	if nodeErr != nil {
+		return nodeErr
+	}
+	if groupErr != nil {
+		return groupErr
 	}
 	// The ETag is evidence that the SERVER's document is in the cache. Advancing it before the
 	// cache write succeeds would make the next conditional request answer 304 for a document the
@@ -480,6 +531,7 @@ func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 		})
 		if s.path != "" {
 			if err = s.saveCacheFile(hasInfo, info, content); err != nil {
+				report.AncillaryError = s.redact(err.Error())
 				return E.Cause(err, "save outbound provider cache file")
 			}
 		} else if hasInfo {
@@ -677,9 +729,20 @@ func (s *ProviderRemote) saveCacheFile(hasInfo bool, info adapter.SubscriptionIn
 }
 
 func (s *ProviderRemote) updateProviderFromContent(content string) error {
+	nodeErr, groupErr := s.applyContent(content)
+	if nodeErr != nil {
+		return nodeErr
+	}
+	return groupErr
+}
+
+// applyContent parses the document and applies it, returning the node round's failure and the
+// group round's failure SEPARATELY: they mean different things to the report (a node failure
+// leaves members pending, a group refusal leaves the published graph differ from the document).
+func (s *ProviderRemote) applyContent(content string) (nodeErr error, groupErr error) {
 	outboundOpts, err := parser.ParseSubscription(s.ctx, content, s.overrideDialer, s.Tag())
 	if err != nil {
-		return err
+		return err, nil
 	}
 	outboundOpts = common.Filter(outboundOpts, func(it option.Outbound) bool {
 		return (s.exclude == nil || !s.exclude.MatchString(it.Tag)) && (s.include == nil || s.include.MatchString(it.Tag))
@@ -688,15 +751,12 @@ func (s *ProviderRemote) updateProviderFromContent(content string) error {
 	// The callbacks may refuse the membership the update would create (a cycle in the published
 	// graph). Reporting that is what keeps a refresh honest: the nodes are installed, but the
 	// group kept its previous members and selection, so the document was NOT applied as written.
-	groupErr := s.UpdateGroups()
+	groupErr = s.UpdateGroups()
 	// Record the applied document even when a node failed to construct: the published set already
 	// reflects this document (the failed tag keeps its previous object), and a later 304 must not
 	// rewrite the cache from the PREVIOUS document.
 	s.lastOutOpts = outboundOpts
-	if updateErr != nil {
-		return updateErr
-	}
-	return groupErr
+	return updateErr, groupErr
 }
 
 // redactedURL keeps the address of a subscription URL and removes what makes it a credential: the
