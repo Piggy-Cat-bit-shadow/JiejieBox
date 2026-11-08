@@ -78,3 +78,10 @@ func TestADifferentQuestionIsNotShared(t *testing.T) {
 	require.True(t, isLeader)
 	require.Equal(t, 2, share.InFlight())
 }
+
+func TestTheRegistryTravelsOnTheBoxContext(t *testing.T) {
+	share := NewMeasurementShare()
+	ctx := ContextWithMeasurementShare(context.Background(), share)
+	require.Same(t, share, MeasurementShareFromContext(ctx))
+	require.Nil(t, MeasurementShareFromContext(context.Background()), "no Box means no sharing, not a package-level registry")
+}

@@ -18,6 +18,8 @@ package urltest
 //     a channel a NEW leader is already serving.
 
 import (
+	"github.com/sagernet/sing/service"
+
 	"context"
 	"sync"
 )
@@ -99,4 +101,21 @@ func (s *MeasurementShare) InFlight() int {
 	s.access.Lock()
 	defer s.access.Unlock()
 	return len(s.inflight)
+}
+
+// ContextWithMeasurementShare attaches the Box's in-flight registry.
+//
+// It travels on the context for the same reason the coordinator does: the sharing belongs to
+// the Box that is measuring, and a temporary validation Box must not share answers with the
+// live one.
+func ContextWithMeasurementShare(ctx context.Context, share *MeasurementShare) context.Context {
+	return service.ContextWithPtr(ctx, share)
+}
+
+// MeasurementShareFromContext returns the Box's registry, or nil when there is none.
+//
+// Nil means "do not share", which is the correct behaviour for an isolated unit test or a
+// library caller: without a Box there is no owner for the shared evidence.
+func MeasurementShareFromContext(ctx context.Context) *MeasurementShare {
+	return service.PtrFromContext[MeasurementShare](ctx)
 }
