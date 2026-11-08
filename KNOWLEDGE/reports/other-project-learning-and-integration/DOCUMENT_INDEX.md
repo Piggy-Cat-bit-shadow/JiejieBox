@@ -85,5 +85,6 @@
 | 04 批 3 远端 refs | `git ls-remote origin refs/heads/testing` → `b8590d75cc8f143f3c5cf0f25ae0243693422926` |
 | 04 批 3 远端回读 | raw HTTP 200：`https://raw.githubusercontent.com/Piggy-Cat-bit-shadow/JiejieBox/b8590d75cc8…/KNOWLEDGE/reports/other-project-learning-and-integration/stages/04.md`，内容与本地一致 |
 | 04 批 3 CI | `Verify` run [42487268576](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42487268576)（head `b8590d75cc8`）：`verify` 与 `race checks` 均 **success**（`VERIFIED_CI`，仅对该 SHA 的树；其后的回填提交只改文档） |
+| 04 收尾推送/CI | `5e967504e40..af8c7f15e01  testing -> testing`；`Verify` run [42488445431](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42488445431)（head `af8c7f15e01`，含命名组件 watchdog 测试与 owner 边界表）：`verify` 与 `race checks` 均 **success**（`VERIFIED_CI`，仅对该 SHA 的树） |
 | 工作树收尾（01/02） | 01 收尾后干净；02 收尾把外部 Apple pin 改动恢复后再次干净：`git status --porcelain` 为空、三个子模块无 `+`、专题链接检查 0 处失效 |
 | 状态 | `REMOTE_VERIFIED`（`SANITIZED` / `LOCAL_COMMITTED` / `REMOTE_VERIFIED`） |
