@@ -56,3 +56,45 @@
 - **依据**：`Recorder.mergeExtraMetadata` 的既有合同：非 object 文档原样返回、客户端键不移动、未知键被旧读者忽略。schema 的权威在客户端侧，核心不应复制。
 - **代价**：键形状一旦发布就应稳定；变化需新键。
 - **删除条件**：不删。
+
+## D-02-01 快速失败速率策略放进 `Guard`，不新建 limiter
+
+- **决定**：`common/resourceguard/rate.go` 在既有 `Guard` 内实现 fast-fail 窗口/退避/抖动/上限；提供 `ObserveOutcome`。
+- **依据**：`Guard` 已是进程创建政策 owner，压力和容量都在这里；另起 limiter 会成为第二个“是否允许开始”的真相源，并需要自己的生命周期与观测接线。
+- **代价**：`Acquire` 增加一次原子读（无窗口时）；A/B 基准未测到回归。
+- **重开条件**：若 03/04 需要按字节/驻留维度联合限速，先扩展本 owner，不并行。
+
+## D-02-02 本地拒绝用类型判定，不用错误字符串
+
+- **决定**：`IsLocalRejection` 识别四个本地错误与两类 ctx 错误；Mieru 在 SDK 扁平化文本后，用 `dialObservation` 保存的类型化错误恢复分类。
+- **依据**：本仓已因 Windows 本地化错误文本吃过亏；字符串匹配在跨平台/跨语言下不可靠。
+- **代价**：Mieru seam 多写一次 `observeSocketDial`；分类器多一个早返回。
+- **删除条件**：不删。
+
+## D-02-03 Mieru 许可放在 `serverDialer`（SDK newUnderlay 接点）
+
+- **决定**：在 `serverDialer.DialContext/ListenPacket` 取许可，返回即释放；Mux/加密 session 在其上，不覆盖。
+- **依据**：这是 SDK 真实打开 underlay socket 的唯一仓侧接点；Mux/session 属 SDK 内部，无回调。
+- **代价**：只覆盖 socket 打开，不覆盖其后的 Mieru 加密握手；已在 CONTRACTS 注明，不虚报。
+- **重开条件**：若 SDK 暴露 session 建立完成回调，再覆盖握手阶段。
+
+## D-02-04 QUIC 共享 offer 的跨仓 hook 本轮不实施
+
+- **决定**：Hysteria2/TUIC/Hysteria 的共享 `completeOffer` 准入留待 fork hook + pin + release freeze，状态 `NOT_ADOPTED_WITH_EVIDENCE`。
+- **依据**：仓侧包装（调用方/dialer）都不能覆盖共享任务生命期，是错误形状；正确 hook 需要 fork 提交、`source-lock` 重建，并依赖 TUIC 异步认证/0-RTT 的完成语义，本环境无互通/真机证据。
+- **代价**：QUIC 创建风暴仍无准入；已用探索报告记录设计、证据与重开条件，不把接口当完成。
+- **重开条件**：`sing-quic` 有新 pin 可用、TUIC 认证完成点可证明、有互通环境。
+
+## D-02-05 Cronet 原生连接不加 per-stream 伪 gate
+
+- **决定**：不因为“要有个接点”就在 `DialEarly` 外包 gate；记录为 `BLOCKED_EXTERNAL`。
+- **依据**：Naive 流在共享引擎上复用原生连接，per-stream gate 限的是调用并发而非 native 创建，可能削减健康吞吐并制造错误覆盖的印象。
+- **代价**：Cronet 原生创建仍不受 `Guard` 约束；边界报告明确写了控制/不控制。
+- **重开条件**：`cronet-go` 暴露原生连接创建/关闭回调，且 native 归档可重建复验。
+
+## D-02-06 速率窗口默认等待、预算不足才拒绝
+
+- **决定**：普通类别等待窗口（可取消），窗口长于调用方 deadline 时返回 `ErrRateLimited`。
+- **依据**：立即拒绝会把失败风暴变成调用方的重试风暴；固定 sleep 又会拖慢所有请求。等待 + 预算判断让“慢下来”与“别让调用方白等”同时成立。
+- **代价**：窗口期内普通创建有最多 2s 的额外等待；交互类别不受影响。
+- **重开条件**：若真实负载显示等待伤害大于收益，改为按比例抽样拒绝，并保留同一计数与分类。

@@ -15,6 +15,9 @@
 | `EVIDENCE.md` | 命令、revision、环境、结果、证据等级、未验证边界 | 0de1c13→25f5c9a；503a18b | `SANITIZED` | 同上 | 见文末 |
 | `HANDOFF.md` | 阅读缓存、接口、02 清单、阻断、恢复方式 | 25f5c9a + 503a18b | `SANITIZED` | 同上 | 见文末 |
 | `stages/01.md` | 阶段 01 改动、验证、终态 | 同上 | `SANITIZED` | 同上 | 见文末 |
+| `stages/02.md` | 阶段 02 改动（G02–G06）、验证、终态 | 11933a6 + 99fd6ee | `SANITIZED` | 收尾提交 | 见文末 |
+| `explorations/quic-shared-offer-admission-2026-11-08.md` | QUIC 共享 offer 准入的跨仓 hook：不实施证据 | 11933a6 + pin 1ef2597 | `SANITIZED` | 收尾提交 | 见文末 |
+| `explorations/cronet-native-creation-coverage-2026-11-08.md` | Cronet 原生创建覆盖的边界与阻断 | 11933a6 + pin 362e63b | `SANITIZED` | 收尾提交 | 见文末 |
 | `explorations/README.md` | 探索结案规范；01 无条目 | — | `SANITIZED` | 同上 | 见文末 |
 | `DOCUMENT_INDEX.md`（本文件） | 文档清单与核验 | — | `SANITIZED` | 同上 | 见文末 |
 
@@ -28,7 +31,10 @@
 
 ## 代码提交
 
-`503a18b55a7cb53ca8aade3b90e69d5683832552` —— `feat(oomkiller): record what each memory-reclaim pass actually returned`（8 files, +904/−22）。
+| 阶段 | 提交 | 内容 |
+|---|---|---|
+| 01 | `503a18b55a7cb53ca8aade3b90e69d5683832552` | `feat(oomkiller): record what each memory-reclaim pass actually returned`（8 files, +904/−22） |
+| 02 | `99fd6ee23d986617afa3ef4d5e776eb1a874bcc3` | `feat(resourceguard): slow creation after a fast-fail streak…`（fast-fail 速率/退避、本地拒绝分类、Mieru underlay 准入、marker 生命周期测试） |
 
 ## 脱敏检查
 

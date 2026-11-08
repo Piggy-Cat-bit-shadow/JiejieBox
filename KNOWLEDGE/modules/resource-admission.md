@@ -42,6 +42,29 @@
 5. guard 不新建第二套压力采样和重型回收执行器；昂贵回收保持已有 OOMKiller 所有权。
 6. 限制创建不能靠隐藏返回连接的能力接口来限制存量；非 NE 不能无意进入移动端严格配额。
 
+## 快速失败速率与本地拒绝分类（2026-11-08，阶段 02）
+
+`common/resourceguard/rate.go` 在既有 `Guard` 内增加第二条、独立的创建政策：连续快速失败后对
+**新普通创建**施加有界退避，避免“释放后立刻重试”的高速循环绕过并发上限。
+
+- 触发：同一 seam 连续 `RateLimitAfter`（默认 4）次失败且耗时 `< FastFailWindow`（默认 250ms）。
+- 退避：`RateLimitBase` 100ms 指数增长到 `RateLimitMax` 2s，每窗口 ±20% 抖动；成功清零并重置级别。
+- 交互类别（`ClassInteractive`）不等待窗口；等待可被 ctx 取消；窗口超过调用方剩余预算时返回
+  `ErrRateLimited`，不制造注定超时的等待。
+- 无窗口热路径只做一次原子读（`rateUntil`），主机 A/B 基准未测到回归。
+- 观测：`GuardStats.Rate` 与报告 `resourceGuard` 的 `rate*` 字段；与容量计数分开。
+
+`resourceguard.IsLocalRejection` 覆盖 `ErrQueueFull`/`ErrWaitTimeout`/`ErrRateLimited`/
+`context.Canceled`/`context.DeadlineExceeded`。Mieru 的 fallback 分类在 SDK 把 underlay 错误扁平化成
+文本后，靠 `dialObservation` 里保存的带类型错误恢复为 Local，不判节点死亡、不切换传输。
+
+Mieru 的真实 `newUnderlay` 接点（`serverDialer.DialContext/ListenPacket`）现在接同一 `Guard`：
+许可在 socket 创建前取得、返回即释放；`HeldPermit` 只标记本 seam 准入的 dial。Mieru 的 Mux/加密
+session 在 underlay 之上，尚未覆盖。
+
+TLS/AnyTLS 的 `HeldPermit` 作用域有测试固定（`common/tls/marker_scope_test.go`、
+`protocol/anytls/marker_scope_test.go`）：调用方 ctx 不残留标记、第二次 dial 重新领取、嵌套只领一份。
+
 ## 验证与重查（Verification）
 
 ```sh

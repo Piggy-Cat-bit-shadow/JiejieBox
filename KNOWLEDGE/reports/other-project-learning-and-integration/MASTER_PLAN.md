@@ -6,12 +6,13 @@
 
 | 项 | 值 |
 |---|---|
-| 阶段 | 01（S01、G01）——已完成；02 未开始 |
-| 进入阶段时实际 HEAD | `0de1c13dcb355773981c89a13158e532c75f61c3`（testing，落后 `origin/testing` 39 个提交） |
-| 同步后施工基线 | `25f5c9a638bdae4a1e2bb460641795f10b169bb2`（`origin/testing`，2026-11-08 02:08:39 +0800，v0.1.44 后 6 个纯文档提交） |
-| 阶段结束 revision | 见 `stages/01.md` 的“阶段结束 HEAD”（代码 `503a18b`、文档 `dd6fd60`、核验回填 `fbb339e`） |
+| 阶段 | 02（G02–G06）——已完成；03 未开始 |
+| 01 结束 revision | `11933a682398005a079669499b0e4cb51652a2e8` |
+| 02 进入时 HEAD | `11933a682398005a079669499b0e4cb51652a2e8`（= `origin/testing`，无需同步） |
+| 02 代码提交 | `99fd6ee23d98` |
+| 02 阶段结束 HEAD | 以 `git log -1` 与 `stages/02.md` 为准（其后为文档/CI 记录提交） |
 | 知识库覆盖目标 | v0.1.44 专题目标 `3b6ec64f7145a2add99656d47caaa4f22a1cc478`；广泛基线 `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28`（v0.1.34），本轮不移动 |
-| 本轮直接触及区域的知识增量 | `fc7e400243d46a451b2dffbe68cb5a3147c66289`（v0.1.39）→施工基线 `25f5c9a638bdae4a1e2bb460641795f10b169bb2` 之间，`common/resourceguard`、`service/oomkiller`、`common/tls`、`protocol/anytls` 只有 `protocol/anytls/session_burst_test.go` 一个测试文件变化，无生产代码变更；生产变更集中在 provider/outbound/route/TUN/生成器与文档 |
+| 02 触及区域的知识增量 | `common/resourceguard`、`common/tls`、`protocol/anytls`、`protocol/mieru`、`service/oomkiller`；v0.1.39→当前基线无生产代码变更（02 之前） |
 
 ## 55 项覆盖矩阵
 
@@ -19,11 +20,11 @@
 |---|---|---:|---|---|---|
 | S01 | 参考项目、关联依赖、客户端锁文件与闭源边界的来源核验 | 01 | I | `IMPLEMENTED_VERIFIED` | `SOURCES.md`：remote-verified HEAD、目标 pin/source-lock/子仓锁、oixCloud 闭源边界；`VERIFIED_GIT` |
 | G01 | 唯一压力来源、资源观测、实际回收收益反馈与平台内存口径 | 01 | I | `IMPLEMENTED_VERIFIED` | 见下节“G01 范围拆分”；调用图/锁序见 `ANALYSIS.md`；代码 + 单测 + race + 负载定义，`VERIFIED_SOURCE`/`VERIFIED_UNIT` |
-| G02 | 预算三类所有权、层级守恒、公平性与本地资源错误分类 | 02 | I | `PENDING` | 01 已交 `CONTRACTS.md` 三种账；02 接 |
-| G03 | TLS/AnyTLS 与 QUIC 真实共享创建、异步认证和 0-RTT 阶段准入 | 02 | I | `PENDING` | 01 核实：现有许可仅覆盖 `dialWithAdmission`/`handshakeWithAdmission`；QUIC/0-RTT 未纳入 |
-| G04 | Cronet 引擎初始化、原生连接创建和复用的真实覆盖 | 02 | I | `PENDING` | 01 记录：cronet-go 29 个 native 模块属 `controlled` pin，引擎启动/驻留/新连接是不同事实 |
-| G05 | Mieru Runtime、Mux 新 underlay 与重建路径的真实准入 | 02 | I | `PENDING` | 01 未改动；接点仍是 `NewService`/`newUnderlay` |
-| G06 | 快速失败的创建速率、退避、嵌套许可和请求类别继承 | 02 | I | `PENDING` | 现有 `resourceguard.HeldPermit` 已防重复领取；速率/退避未做 |
+| G02 | 预算三类所有权、层级守恒、公平性与本地资源错误分类 | 02 | I | `IMPLEMENTED_VERIFIED` | `resourceguard.IsLocalRejection` + Mieru `FailureFacts` 接点（预算拒绝不判节点）；公平/预留/老化/队列/等待上限沿用并复核；`CONTRACTS.md` §1.1 三账协作 |
+| G03 | TLS/AnyTLS 与 QUIC 真实共享创建、异步认证和 0-RTT 阶段准入 | 02 | I | `IMPLEMENTED_VERIFIED`（TLS/AnyTLS）；QUIC 子项见右 | TLS/AnyTLS 许可生命周期与 `HeldPermit` 作用域已审计并加 `marker_scope_test.go`；QUIC 共享 offer 的跨仓 hook 本轮 `NOT_ADOPTED_WITH_EVIDENCE`→[探索报告](explorations/quic-shared-offer-admission-2026-11-08.md) |
+| G04 | Cronet 引擎初始化、原生连接创建和复用的真实覆盖 | 02 | I | `BLOCKED_EXTERNAL` | 引擎/原生连接在 `cronet-go` 内，29 个 native 模块 `controlled`、本仓无 Chromium 工具链；不把 Start gate 冒充 native 覆盖→[边界报告](explorations/cronet-native-creation-coverage-2026-11-08.md) |
+| G05 | Mieru Runtime、Mux 新 underlay 与重建路径的真实准入 | 02 | I | `IMPLEMENTED_VERIFIED` | `serverDialer` 在 SDK 的真实 newUnderlay 接点接 `Guard`（TCP/UDP），`HeldPermit` 防嵌套重复；`admission_test.go` 证明并发上限与标记 |
+| G06 | 快速失败的创建速率、退避、嵌套许可和请求类别继承 | 02 | I | `IMPLEMENTED_VERIFIED` | `Guard` 内 fast-fail 窗口 + 指数退避/抖动/上限 + 交互豁免；三处 seam 回报结果；`rate_test.go` + `resourceGuard` metadata 新增 rate 字段 |
 | B01 | XHTTP pending/in-flight/大 Write/共享数组容量的有界记账 | 03 | I | `PENDING` | 01 核实：`transport/v2rayxhttp/conn.go` 有 `pending []byte` + `maxPending`，无导出账本 |
 | B02 | TUN、UDP 解析嗅探转发、控制队列与跨 Flow 聚合边界 | 03 | I | `PENDING` | 局部有界、无跨流聚合 |
 | B03 | relay 按需扩容共享预算、回落及压力联动 | 03 | I | `PENDING` | — |

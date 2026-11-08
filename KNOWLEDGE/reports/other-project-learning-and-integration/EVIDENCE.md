@@ -177,6 +177,42 @@ jobs:     verify = success；race checks = success
 - 等级：`VERIFIED_CI`，只适用于该 run 与该 SHA 的树。**其后的提交若只改文档，不复用这条 CI 结论去证明代码变化**；代码在本 run 的树里已包含 01 的全部源码改动。
 - 限制：CI 是 Linux `ubuntu-latest`；不证明 Darwin/iOS/Android 设备行为。
 
+## E15 02 阶段：速率策略与本地分类
+
+```sh
+go test ./common/resourceguard -count=1                     # ok 0.83s
+go test -race ./common/resourceguard ./service/oomkiller ./protocol/anytls -count=1   # ok
+go test ./common/tls -run 'TestHeldPermitMarker|TestNestedHandshake' -count=1 -v       # ok
+go test ./protocol/anytls -run 'TestDialAdmissionMarkerIsScoped' -count=1 -v           # ok
+go test ./protocol/mieru -count=1                           # ok 98.8s（含 e2e）
+go test -race ./protocol/mieru -run 'TestServerDialer' -count=1                        # ok
+go build ./...                                              # exit 0
+```
+
+- 覆盖：fast-fail 窗口/退避/上限/抖动、交互豁免、本地拒绝不入账、成功清零、预算不足拒绝；
+  AnyTLS/TLS 标记生命周期与嵌套一份许可；Mieru underlay 并发上限、标记传递、Fallback 分类为 Local。
+- 等级：`VERIFIED_UNIT`（主机；`-race` 子集）。
+
+## E16 02 阶段：热路径 A/B 基准
+
+```text
+基线 worktree（11933a6，独立 worktree）：
+  BenchmarkGateAcquireRelease-16           259.1 / 259.6 / 262.7 / 267.4 / 271.3 ns/op   48 B/op 1 alloc
+  BenchmarkGateAcquireReleaseContended-16  2110 / 2130 / 2293 / 2329 / 2451 ns/op         503–504 B/op 6–7 alloc
+本阶段（同一主机、同一命令）：
+  BenchmarkGateAcquireRelease-16           251.4 / 251.6 / 263.8 / 267.6 / 283.5 ns/op    48 B/op 1 alloc
+  BenchmarkGateAcquireReleaseContended-16  2130 / 2226 / 2297 / 2625 / 2772 / 2837 / 2916 / 3349 ns/op
+```
+
+- 结论：无窗口时只增加一次原子读；uncontended 区间重叠（本阶段低端更低），contended 区间也重叠但
+  方差较大，**不能据此声称有/无性能回归**。真正结论是“没有可测的固定开销”；需要更严格比较时用
+  同一 worktree 交替 A/B。
+- 等级：主机微基准（`VERIFIED_UNIT` 级），非生产吞吐。
+
+## E17 02 阶段：CI
+
+- 代码树提交后触发 `Verify`；结果与 run 号在 `DOCUMENT_INDEX.md` 记录（本地结果不冒称 CI）。
+
 ## E13 未验证 / 边界
 
 | 项 | 状态 | 说明 |

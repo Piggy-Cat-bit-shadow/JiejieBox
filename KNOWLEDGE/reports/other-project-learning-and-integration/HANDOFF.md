@@ -33,7 +33,9 @@
 | 本轮施工基线 | `25f5c9a638bdae4a1e2bb460641795f10b169bb2`（origin/testing） |
 | 01 代码提交 | `503a18b55a7cb53ca8aade3b90e69d5683832552` |
 | 01 文档/收尾提交 | `dd6fd606bcf9`、`fbb339e6212`、`37b666f7a6b`（含一处代码注释修正）、`b8116e0ac4e`、`99095e05d4e`，以及其后的收尾提交（均不改运行时行为） |
-| 增量范围 | `fc7e400…(v0.1.39)..HEAD` 内 `resourceguard`/`oomkiller`/`tls`/`anytls` 无生产代码变更 |
+| 02 进入时 HEAD | `11933a682398005a079669499b0e4cb51652a2e8`（= `origin/testing`） |
+| 02 代码提交 | 见 `stages/02.md`（提交后回填）；随后是 02 文档提交 |
+| 增量范围 | 02 触及 `common/resourceguard`、`common/tls`、`protocol/anytls`、`protocol/mieru`、`service/oomkiller`；这些路径在 v0.1.39→02 前无生产代码变更 |
 
 ### 已确认事实
 
@@ -103,6 +105,37 @@ go test ./service/oomkiller ./common/resourceguard -count=1
 
 ## 5. 恢复执行方式
 
-- 新上下文：读本文件 → `stages/01.md` → `MASTER_PLAN.md` → 本阶段对应源码符号；不要重新读全部历史报告。
-- 若上下文在 02 中途耗尽：先把实际改动、已跑命令、未决问题写入 `stages/02.md` 与 `EVIDENCE.md`，再从同一份 02 提示词继续，不要跳到 03。
+- 新上下文：读本文件 → `stages/02.md`（或当前阶段）→ `MASTER_PLAN.md` → 本阶段对应源码符号；不要重新读全部历史报告。
+- 若上下文在阶段中途耗尽：先把实际改动、已跑命令、未决问题写入 `stages/NN.md` 与 `EVIDENCE.md`，再从同一份提示词继续，不要跳到下一阶段。
 - 任何契约变化：先改 `CONTRACTS.md` 与 `DECISIONS.md`，再改代码和全部消费者。
+
+## 6. 02 → 03 交接
+
+### 新增/变化的可执行接口
+
+| 接口 | 位置 | 03 如何使用 |
+|---|---|---|
+| `Guard.ObserveOutcome(started, err)` | `common/resourceguard/rate.go` | 新的创建 seam 在真实工作返回后调用；03 的字节路径不调用它（字节不是创建） |
+| `GuardStats.Rate` / `resourceGuard.rate*` | `guard.go` / `service/oomkiller/service.go` | 报告读取；03 不得把字节数与速率账相加 |
+| `IsLocalRejection(err)` / `ErrRateLimited` | `common/resourceguard/rate.go` | 03 的队列/字节拒绝也应归为 Local，并复用这个判定；新错误类型加入同一集合 |
+| `HeldPermit` 生命周期测试 | `common/tls/marker_scope_test.go`、`protocol/anytls/marker_scope_test.go` | 03 若新增共享任务，必须证明“一个逻辑任务一份许可、上下文不残留” |
+| Mieru underlay 准入 | `protocol/mieru/dialer.go` `serverDialer.admit` | 03 的字节反压不得绕过它；Mux/session 在其上仍未覆盖 |
+
+### 03 的边界提醒
+
+- 字节账本按 `CONTRACTS.md` §1.1：在真实排队边界记账，真实消费/丢弃销账；键建议 `byteLedger`，形状由 03 定稿后回写 CONTRACTS。
+- 不要把 `len(pending)` 当字节数；XHTTP 的在途切片/共享数组仍会计入容量（01 已记录）。
+- 速率账与容量账是两回事：03 的拒绝也必须是本地分类，且不能把速率窗口当成字节背压。
+
+### 未关闭项
+
+| 项 | 状态 | 交接 |
+|---|---|---|
+| QUIC 共享 offer 准入 | `NOT_ADOPTED_WITH_EVIDENCE` | 设计、成本、重开条件在 `explorations/quic-shared-offer-admission-2026-11-08.md`；03 不依赖它 |
+| Cronet 原生连接 | `BLOCKED_EXTERNAL` | 边界在 `explorations/cronet-native-creation-coverage-2026-11-08.md` |
+| Mieru 加密握手阶段 | 未覆盖 | 许可只到 socket 打开；若 03 需要按 session 字节计费，先确认该阶段归属 |
+| 外部进程改 Apple pin/source-lock | 非本阶段改动 | 工作树里 `clients/apple`=97b35d1、`release/source-lock.json`、`scripts/ci/check-libbox-abi.sh` 被外部改动且未提交；不要回滚，交 release freeze 处理 |
+
+### 阅读缓存增量（02）
+
+02 读了：`modules/resource-admission.md`、`modules/mieru.md`（按导航核对）、`protocol/anytls/{admission,outbound}.go`、`common/tls/client.go`、`common/resourceguard/{gate,guard,held}.go`、`service/oomkiller/{service,timer,recorder}.go`、`protocol/mieru/{dialer,fallback,dial_observation,outbound}.go`、pinned `sing-quic@{hysteria2,tuic}/client.go` 的 `completeOffer/offerNew`、pinned `sing-anytls/client.go` 的 ctx 使用、`protocol/naive/outbound.go` 的 Cronet 接点、`release/{dependencies.json,source-lock.json}` 与 `scripts/ci/release-freeze.py` 接口。03 只需补字节路径（XHTTP pending、TUN/UDP 队列、relay）的源码增量，不重读上述文件。

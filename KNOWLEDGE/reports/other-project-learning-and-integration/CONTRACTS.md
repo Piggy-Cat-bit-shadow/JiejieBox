@@ -17,9 +17,9 @@
 - C 的驻留从“对象被发布/被租用”起算，到“最后一个引用释放且资源真实关闭”为止；从候选列表移除 ≠ 释放，`draining` 与 `idle` 是不同状态。
 - 同一个字节/对象只能进一种账；跨层可以统计但不能重复计入（例如 cache entry 数与 footprint 是两种事实，见 §3）。
 
-### 1.1 三种账的协作草案（`DRAFT_FOR_02`，02 定稿）
+### 1.1 三种账的协作草案（`ADOPTED_IN_02`，顺序未改）
 
-02 的第一个交付就是“三种账的协作接口”；这里先给 01 能确认的最小形状，避免 02 重新发明：
+02 的第一个交付就是“三种账的协作接口”；下面这版是 01 提出、02 确认可执行的最小形状（02 未修改顺序，只补了本地拒绝分类与快速失败速率）：
 
 | 阶段 | A（创建许可） | B（排队字节） | C（驻留库存） |
 |---|---|---|---|
@@ -85,13 +85,62 @@
 
 现有键：`resourceGuard`（准入）、`memoryReclaim`（回收）。**键名稳定，不改形状**；形状需要变化时新增兄弟键并在本文件登记。
 
+## 3.1 快速失败与本地拒绝分类（02 落地）
+
+### 数据形状
+
+`resourceguard.Guard` 在容量账之外新增一条**独立**的速率账（`RateStats`）：
+
+| 字段 | 含义 |
+|---|---|
+| `Delay` | 当前对新普通创建施加的等待（窗口未激活时为 0） |
+| `Windows` | 连续快速失败触发退避窗口的次数 |
+| `Delayed` | 真正等待过窗口的创建数 |
+| `Refused` | 窗口超过调用方剩余预算而被本地拒绝的数 |
+| `FastFailures` | 达到“快速失败”证据门槛的失败数 |
+| `Recovered` | 清除 streak/窗口的成功数 |
+
+`GuardStats.Rate` 与 `GuardStats.Gate` 并列，报告 `resourceGuard` 增加
+`rateDelayMs`、`rateWindows`、`rateDelayed`、`rateRefused`、`rateFastFailures`、`rateRecovered`。
+**速率拒绝与容量拒绝分开计数**：报告必须能区分“limit 挡住了”与“现在开始也是浪费”。
+
+### 规则
+
+1. **只在连续快速失败后启用**：同一 seam 上连续 `RateLimitAfter`（默认 4）次失败且每次耗时
+   `< FastFailWindow`（默认 250ms）才开窗；成功清零并重置退避级别。
+2. **退避有界、带抖动**：从 `RateLimitBase`（默认 100ms）指数增长到 `RateLimitMax`（默认 2s），
+   每窗口 ±`RateLimitJitter`（默认 20%）随机；不会无限增长，也不会让所有重试同步。
+3. **交互类别豁免**：`ClassInteractive` 不等待速率窗口（但仍受容量 gate 约束），保证有人等待的
+   流不被后台节点的失败风暴拖慢。
+4. **等待可取消、有预算**：窗口短于调用方 deadline 时按窗口等待（受 ctx 取消）；窗口长于剩余
+   预算时立即返回 `ErrRateLimited`，不制造一个注定超时的等待。
+5. **本地拒绝 = Caller/Local**：`resourceguard.IsLocalRejection(err)` 覆盖
+   `ErrQueueFull`/`ErrWaitTimeout`/`ErrRateLimited`/`context.Canceled`/`context.DeadlineExceeded`。
+   消费方（当前是 Mieru 的 `classifyDialError`）必须把它归为 Local/Caller，**不得**据此判节点死亡、
+   切换传输或触发重连风暴。SDK 把 underlay 错误扁平化成文本时，靠 `dialObservation` 里保存的
+   带类型错误恢复分类，不做字符串匹配。
+
+### 接线点（生产调用方）
+
+| seam | 取许可后回报结果 |
+|---|---|
+| `protocol/anytls/admission.go` `dialWithAdmission` | `guard.ObserveOutcome(started, dialErr)` |
+| `common/tls/client.go` `handshakeWithAdmission` | `resourceguard.FromContext(ctx).ObserveOutcome(started, dialErr)` |
+| `protocol/mieru/dialer.go` `serverDialer.DialContext/ListenPacket` | `d.guard.ObserveOutcome(started, dialErr)`，并把拒绝错误写入 `observeSocketDial` |
+
+**未接线的真实创建**（QUIC 共享 offer、Cronet 原生连接）见 `MASTER_PLAN.md` 的 G03/G04 与
+`explorations/` 的两份报告；不得在没有 hook 时用调用方包装冒充覆盖。
+
 ## 4. 后续阶段的接口草案
 
-### 02（预算与真实高成本创建）
+### 02（预算与真实高成本创建）—— 已完成
 
-- 复用 `Guard`/`Gate`/`HeldPermit`；新增真实阶段（QUIC/0-RTT、Cronet 引擎、Mieru underlay）时，准入必须发生在**创建前**、许可随创建返回释放。
-- 观测扩展：只向 `Gate.Stats`/`GuardStats` 加字段，并同步 `guardMetadata`；不得在协议包内自建计数器作为第二真相源。
-- 若引入“创建速率/退避”，必须复用同一 owner（`Guard`）并说明与 `limit`/`queue`/`wait` 的关系。
+- 复用 `Guard`/`Gate`/`HeldPermit`；TLS/AnyTLS 的许可生命周期与嵌套去重已加测试。
+- 观测扩展：`RateStats` + `resourceGuard` 的 rate 字段；未另建计数器。
+- 速率/退避由 `Guard` 自己拥有（`rate.go`），协议 seam 只回报结果，不实现策略。
+- Mieru 在 SDK 的 `newUnderlay` 接点接入同一 `Guard`；QUIC 共享 offer 与 Cronet 原生连接按
+  `explorations/` 的报告处理（前者证据性不实施，后者外部阻断）。
+- 03/04 接手时：字节账本/驻留账本仍按本节 §1.1 的顺序与 key 约定，不得与速率账相加成单一预算。
 
 ### 03（字节预算与反压）
 
