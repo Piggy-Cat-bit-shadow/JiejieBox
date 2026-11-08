@@ -6,13 +6,13 @@
 
 | 项 | 值 |
 |---|---|
-| 阶段 | 02（G02–G06）——已完成；03 未开始 |
-| 01 结束 revision | `11933a682398005a079669499b0e4cb51652a2e8` |
-| 02 进入时 HEAD | `11933a682398005a079669499b0e4cb51652a2e8`（= `origin/testing`，无需同步） |
-| 02 代码提交 | `99fd6ee23d98` |
-| 02 阶段结束 HEAD | 以 `git log -1` 与 `stages/02.md` 为准（其后为文档/CI 记录提交） |
+| 阶段 | 03（B01–B06）——已完成；04 未开始 |
+| 02 结束 revision | `afdd3b3cf7c` |
+| 03 进入时 HEAD | `afdd3b3cf7c`（= `origin/testing`，无需同步） |
+| 03 代码提交 | `cd1d8160e3c` |
+| 03 阶段结束 HEAD | 以 `git log -1` 与 `stages/03.md` 为准 |
 | 知识库覆盖目标 | v0.1.44 专题目标 `3b6ec64f7145a2add99656d47caaa4f22a1cc478`；广泛基线 `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28`（v0.1.34），本轮不移动 |
-| 02 触及区域的知识增量 | `common/resourceguard`、`common/tls`、`protocol/anytls`、`protocol/mieru`、`service/oomkiller`；v0.1.39→当前基线无生产代码变更（02 之前） |
+| 03 触及区域的知识增量 | `transport/v2rayxhttp`（packet-up 预算）；其余 B 项见 `explorations/data-plane-byte-budgets-2026-11-08.md` |
 
 ## 55 项覆盖矩阵
 
@@ -25,12 +25,12 @@
 | G04 | Cronet 引擎初始化、原生连接创建和复用的真实覆盖 | 02 | I | `BLOCKED_EXTERNAL` | 引擎/原生连接在 `cronet-go` 内，29 个 native 模块 `controlled`、本仓无 Chromium 工具链；不把 Start gate 冒充 native 覆盖→[边界报告](explorations/cronet-native-creation-coverage-2026-11-08.md) |
 | G05 | Mieru Runtime、Mux 新 underlay 与重建路径的真实准入 | 02 | I | `IMPLEMENTED_VERIFIED` | `serverDialer` 在 SDK 的真实 newUnderlay 接点接 `Guard`（TCP/UDP），`HeldPermit` 防嵌套重复；`admission_test.go` 证明并发上限与标记 |
 | G06 | 快速失败的创建速率、退避、嵌套许可和请求类别继承 | 02 | I | `IMPLEMENTED_VERIFIED` | `Guard` 内 fast-fail 窗口 + 指数退避/抖动/上限 + 交互豁免；三处 seam 回报结果；`rate_test.go` + `resourceGuard` metadata 新增 rate 字段 |
-| B01 | XHTTP pending/in-flight/大 Write/共享数组容量的有界记账 | 03 | I | `PENDING` | 01 核实：`transport/v2rayxhttp/conn.go` 有 `pending []byte` + `maxPending`，无导出账本 |
-| B02 | TUN、UDP 解析嗅探转发、控制队列与跨 Flow 聚合边界 | 03 | I | `PENDING` | 局部有界、无跨流聚合 |
-| B03 | relay 按需扩容共享预算、回落及压力联动 | 03 | I | `PENDING` | — |
-| B04 | 真实消费才返窗口额度、慢流反压与共享控制帧进展 | 03 | I | `PENDING` | — |
-| B05 | reF1nd 缓存首包 read waiter/batch 适配及完整包装链 | 03 | I | `PENDING` | 包内 experiments 只是历史原型，未生产集成 |
-| B06 | 传输抽象的半关闭、部分写、datagram 与所有权能力契约 | 03 | I | `PENDING` | — |
+| B01 | XHTTP pending/in-flight/大 Write/共享数组容量的有界记账 | 03 | I | `IMPLEMENTED_VERIFIED` | 超大 Write 分块入队不越界；pending/in-flight/retained/高水位/accepted/posted 快照 + 测试；进程级 `byteLedger` 聚合留 04 |
+| B02 | TUN、UDP 解析嗅探转发、控制队列与跨 Flow 聚合边界 | 03 | I | `NOT_ADOPTED_WITH_EVIDENCE` | TUN 栈在 `sing-tun` pin、MASQUE 队列矩阵需 04 生命周期；见探索报告 |
+| B03 | relay 按需扩容共享预算、回落及压力联动 | 03 | I | `NOT_ADOPTED_WITH_EVIDENCE` | `route/conn.go` copy loop 的按 flow 阈值保留；共享额度需 04 反馈与长流基准 |
+| B04 | 真实消费才返窗口额度、慢流反压与共享控制帧进展 | 03 | I | `ALREADY_PRESENT_VERIFIED`（XHTTP） | `packetConn.Read` 无预取/提前返 window；H2/QUIC 库内缓存标 `NOT_VERIFIABLE_HERE` |
+| B05 | reF1nd 缓存首包 read waiter/batch 适配及完整包装链 | 03 | I | `NOT_ADOPTED_WITH_EVIDENCE` | 跨 sing fork pin + 包装矩阵；保留 experiments 数据与重开条件 |
+| B06 | 传输抽象的半关闭、部分写、datagram 与所有权能力契约 | 03 | I | `IMPLEMENTED_VERIFIED` | 未新增 wrapper；XHTTP packetConn 能力矩阵逐项列于探索报告 |
 | R01 | 跨节点跨代 active/idle/draining 驻留计费与真实终结 | 04 | I | `PENDING` | **G01 的驻留计数部分由本项承接**：现有 `retireIdleResources` 只返回“访问到的 keeper 数”，不是真实终结 |
 | R02 | 纯探测会话短驻留、业务升级与实际路径资源归属 | 04 | I | `PENDING` | — |
 | R03 | 稳定节点描述符、重型协议惰性 Runtime 与可回收目录 | 04 | I | `PENDING` | — |

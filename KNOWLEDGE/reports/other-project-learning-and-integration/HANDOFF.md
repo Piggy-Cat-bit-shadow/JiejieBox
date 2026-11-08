@@ -152,3 +152,14 @@ go test ./service/oomkiller ./common/resourceguard -count=1
 | 03 导航 | `modules/buffer-ownership.md`、`modules/data-path-optimization.md`（+ `mtu-and-geometry.md`） | 先读 AI cautions/Provenance，再沿符号读实现 |
 
 03 不要重建创建/速率账：`Guard`/`RateStats`/`ObserveOutcome` 已就绪，字节路径只接自己的账本与本地拒绝分类。
+
+## 8. 03 → 04 交接
+
+| 事项 | 结果 |
+|---|---|
+| XHTTP 字节预算 | `packetUplink` 队列任意时刻 ≤ `maxPending`（超大 Write 分块）；`stats()` 暴露 pending/in-flight/retained/高水位/accepted/posted，04 可直接复用为驻留观测的输入 |
+| 进程级 `byteLedger` | 未接；04 建驻留账本时定义跨 outbound 聚合入口，XHTTP 作为被聚合者接入（不得把单 flow stats 说成全进程预算） |
+| B02/B03/B05 | 证据关闭，重开条件在 `explorations/data-plane-byte-budgets-2026-11-08.md`；04 若先落地驻留/回收反馈，B03 的共享增长额度具备重开条件 |
+| B04 | XHTTP 无提前返 window；H2/QUIC 库内缓存不可证，04 若要按 stream 计费需先确认库的窗口所有权 |
+| B06 | 能力矩阵在探索报告末节；04 新增 wrapper 时必须补同一矩阵（half-close/partial write/datagram/headroom/关闭 owner） |
+| 03 代码提交 | `cd1d8160e3c`（其后为文档提交） |

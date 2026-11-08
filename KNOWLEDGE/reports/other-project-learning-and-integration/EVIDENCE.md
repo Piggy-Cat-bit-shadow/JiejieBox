@@ -220,6 +220,22 @@ result:   success；jobs: verify = success, race checks = success
 
 - 等级：`VERIFIED_CI`（仅对该 SHA 的树）；其后的记录回填提交只改文档，不复用该结论证明代码变化。
 
+## E18 03 阶段：XHTTP 字节预算
+
+```sh
+go test ./transport/v2rayxhttp -count=1                 # ok 17.8s（全套，含原 amortize 测试）
+go test -race ./transport/v2rayxhttp -run 'TestPacketUp|TestGather' -count=1   # ok
+go build ./...                                          # exit 0
+```
+
+- 新增 `packetup_budget_test.go`：超大 Write 不越界（高水位 ≤ maxPending）、队列满时写阻塞、
+  in-flight 与 pending 分开计数、posted==accepted。
+- 等级：`VERIFIED_UNIT`（主机 + race 子集）。
+
+## E19 03 阶段：CI
+
+- 代码提交 `cd1d8160e3c` 后触发 `Verify`；run 号与结论在 `DOCUMENT_INDEX.md` 记录（本地结果不冒称 CI）。
+
 ## E13 未验证 / 边界
 
 | 项 | 状态 | 说明 |

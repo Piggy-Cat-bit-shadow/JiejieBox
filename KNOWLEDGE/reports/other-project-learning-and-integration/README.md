@@ -2,7 +2,7 @@
 
 本目录是本轮工程的规范归档位置。工程目标：以性能为指向，从既有参考项目（Anywhere、ProjectClash/Clash 系列、reF1nd、sing-box-lx、Ghostlane 等）中吸收适合本内核的机制，先建立可执行的覆盖账与最小观测基础，再按 01→12 施工；不照抄形状，不建立第二套压力源或生命周期权威。
 
-**当前阶段：01、02 已完成，03 尚未开始。** 本目录随每阶段追加 `stages/NN.md` 并更新 `MASTER_PLAN.md`、`CONTRACTS.md`、`DECISIONS.md`、`EVIDENCE.md`、`HANDOFF.md`、`DOCUMENT_INDEX.md`。
+**当前阶段：01–03 已完成，04 尚未开始。** 本目录随每阶段追加 `stages/NN.md` 并更新 `MASTER_PLAN.md`、`CONTRACTS.md`、`DECISIONS.md`、`EVIDENCE.md`、`HANDOFF.md`、`DOCUMENT_INDEX.md`。
 
 ## 阅读顺序
 
@@ -30,8 +30,8 @@
 | 阶段 | 范围 | 状态 |
 |---|---|---|
 | 01 | S01 来源核验；G01 唯一压力源、资源观测、回收收益反馈、平台内存口径 | 已完成（本目录） |
-| 02 | 统一预算与真实高成本创建（G02–G06） | 已完成（本目录 `stages/02.md`；QUIC 共享 offer 与 Cronet 原生见 `explorations/`） |
-| 03 | 数据面字节预算反压与能力保真（B01–B06） | 未开始 |
+| 02 | 统一预算与真实高成本创建（G02–G06） | 已完成（`stages/02.md`；QUIC/Cronet 见 `explorations/`） |
+| 03 | 数据面字节预算反压与能力保真（B01–B06） | 已完成（`stages/03.md`；其余积压点见 `explorations/data-plane-byte-budgets-2026-11-08.md`） |
 | 04 | 驻留资源惰性实例与生命周期（R01–R08） | 未开始 |
 | 05 | 探测选路进程查询与 DNS 并发（P01–P04、D01–D02） | 未开始 |
 | 06 | 规则编译构建预算与版本化产物（F01–F05） | 未开始 |
@@ -39,3 +39,4 @@
 | 08 | 决策解释诊断树事件与跨语言接口（O01–O06） | 未开始 |
 | 09 | 协议兼容平台集成与全范围收口（X01–X05、M01–M03） | 未开始 |
 | 10–12 | 资源守恒、并发生命周期、互通性能真机验收 | 未开始 |
+

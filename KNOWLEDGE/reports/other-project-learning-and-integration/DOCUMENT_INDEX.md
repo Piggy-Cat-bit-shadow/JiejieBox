@@ -16,6 +16,8 @@
 | `HANDOFF.md` | 阅读缓存、接口、02 清单、阻断、恢复方式 | 25f5c9a + 503a18b | `SANITIZED` | 同上 | 见文末 |
 | `stages/01.md` | 阶段 01 改动、验证、终态 | 同上 | `SANITIZED` | 同上 | 见文末 |
 | `stages/02.md` | 阶段 02 改动（G02–G06）、验证、终态 | 11933a6 + 99fd6ee | `SANITIZED` | 收尾提交 | 见文末 |
+| `stages/03.md` | 阶段 03 改动（B01–B06）、验证、终态 | afdd3b3 + cd1d816 | `SANITIZED` | 收尾提交 | 见文末 |
+| `explorations/data-plane-byte-budgets-2026-11-08.md` | 字节预算：XHTTP 落地、其余积压点边界与重开条件 | afdd3b3 + cd1d816 | `SANITIZED` | 收尾提交 | 见文末 |
 | `explorations/quic-shared-offer-admission-2026-11-08.md` | QUIC 共享 offer 准入的跨仓 hook：不实施证据 | 11933a6 + pin 1ef2597 | `SANITIZED` | 收尾提交 | 见文末 |
 | `explorations/cronet-native-creation-coverage-2026-11-08.md` | Cronet 原生创建覆盖的边界与阻断 | 11933a6 + pin 362e63b | `SANITIZED` | 收尾提交 | 见文末 |
 | `explorations/README.md` | 探索结案规范；01 无条目 | — | `SANITIZED` | 同上 | 见文末 |

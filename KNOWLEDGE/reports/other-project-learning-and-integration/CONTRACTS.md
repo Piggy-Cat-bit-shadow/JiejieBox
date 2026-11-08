@@ -131,6 +131,31 @@
 **未接线的真实创建**（QUIC 共享 offer、Cronet 原生连接）见 `MASTER_PLAN.md` 的 G03/G04 与
 `explorations/` 的两份报告；不得在没有 hook 时用调用方包装冒充覆盖。
 
+## 3.2 字节账（03 落地，XHTTP）
+
+### 容量定义（`transport/v2rayxhttp` packet-up）
+
+| 量 | 定义 | 备注 |
+|---|---|---|
+| `maxPending` | `clamp(2 × sc_max_each_post_bytes, 64 KiB, 8 MiB)` | 每 flow 的排队预算 |
+| `PendingBytes` | 已接受、未交给 POST 的逻辑字节 | 队列长度，非数组容量 |
+| `InFlightBytes` | 已出队、仍被一个 POST 持有的切片 | 与 Pending 相加才是真实保留 |
+| `RetainedCapacity` | `cap(pending)` | 数组保留容量，单独报告，**不是 footprint** |
+| `AcceptedBytes` / `PostedBytes` | 接受/成功 POST 的累计 | 失败字节不记 posted |
+| 高水位 | pending/in-flight 的最大值 | 回答“最坏时刻” |
+
+### 转移与释放时序
+
+`Write`（可多次分块，任何时刻 pending ≤ maxPending）→ `AcceptedBytes += n` → flusher 取走
+`payload`（`InFlightBytes = len`，pending 减少）→ POST 成功（`PostedBytes += len`，in-flight 归零）
+或失败（字节随失败丢失、不记 posted，`fail(err)` 唤醒所有写者）。
+
+### 尚未做的
+
+进程级 `byteLedger` 聚合未接：当前没有跨 outbound 的 owner 入口，04 建驻留账本时一起定；
+在此之前不得把单 flow 的 stats 说成全进程字节预算。其余积压点（TUN/UDP、MASQUE、relay 增长）
+见 `explorations/data-plane-byte-budgets-2026-11-08.md` 的重开条件。
+
 ## 4. 后续阶段的接口草案
 
 ### 02（预算与真实高成本创建）—— 已完成
