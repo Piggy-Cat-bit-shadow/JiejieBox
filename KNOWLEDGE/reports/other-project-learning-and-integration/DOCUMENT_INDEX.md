@@ -74,5 +74,9 @@
 | 04 批 1 远端回读 | raw HTTP 200：`https://raw.githubusercontent.com/Piggy-Cat-bit-shadow/JiejieBox/91c0c292db6…/KNOWLEDGE/reports/other-project-learning-and-integration/stages/04.md`，内容与本地一致 |
 | 04 批 1 CI | 首个 head `91c0c292db6` 的 `Verify` run [42483227952](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42483227952) 在 `gofmt` 失败（新增测试文件以 CRLF 提交）；修复提交 `205412ba498` 的 `Verify` run [42484328424](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42484328424) **success**（`verify` 与 `race checks` 均 success；`VERIFIED_CI`，仅对该 SHA 的树） |
 | 04 批 1 修复推送 | `4f275b66b6c..205412ba498  testing -> testing`；`git ls-remote origin refs/heads/testing` → `205412ba498426696fea2473415e0f582ad1cae3` |
+| 04 批 2 推送结果 | `2d9b8487cd6..5a3add01bca  testing -> testing`（代码 `64cfa9a8630` + 文档 `5a3add01bca`） |
+| 04 批 2 远端 refs | `git ls-remote origin refs/heads/testing` → `5a3add01bcaff0586bcf6be5d69f4c3e4741dfda` |
+| 04 批 2 远端回读 | raw HTTP 200：`https://raw.githubusercontent.com/Piggy-Cat-bit-shadow/JiejieBox/5a3add01bca…/KNOWLEDGE/reports/other-project-learning-and-integration/stages/04.md`，内容与本地一致 |
+| 04 批 2 CI | `Verify` run [42485997186](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42485997186)（head `5a3add01bca`）：`verify` 与 `race checks` 均 **success**（`VERIFIED_CI`，仅对该 SHA 的树；其后的回填提交只改文档） |
 | 工作树收尾（01/02） | 01 收尾后干净；02 收尾把外部 Apple pin 改动恢复后再次干净：`git status --porcelain` 为空、三个子模块无 `+`、专题链接检查 0 处失效 |
 | 状态 | `REMOTE_VERIFIED`（`SANITIZED` / `LOCAL_COMMITTED` / `REMOTE_VERIFIED`） |

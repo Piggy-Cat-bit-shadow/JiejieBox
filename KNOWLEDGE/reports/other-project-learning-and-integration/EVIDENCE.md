@@ -298,11 +298,13 @@ go vet -tags "…" ./transport/v2rayquic                                        
   测试覆盖并发单次 dial、取消隔离、deadline、Close 丢弃、失败发布、最后 waiter 离开后接纳。
 - R06：XHTTP 每 flow 的 ctx/slot 行为由既有 `packetup_dial_ctx_test.go`、`deadline_test.go` 覆盖；
   v2rayquic 新增 `TestKeepSessionIsPerFlowNotPerUnderlay`；MASQUE 存储 ctx 的源审计结论为 endpoint 生命周期，
-  未做运行测试；Mieru 在 SDK 内。
+  未做运行测试；Mieru 在 SDK 内。`external` 标记由 route 每 flow 设置、group 按 caller ctx 读取，共享 conn
+  不保存（源审计，`common/interrupt/context.go` 与 `protocol/group/*.go`）。
 - R02：`ALREADY_PRESENT_VERIFIED`。既有 `protocol/group/urltest_background_probe_test.go` 与
   `transport/wireguard/recovery_test.go` 的 4 个探测/业务 gate 测试复跑通过；本轮无新代码。
-- 等级：`VERIFIED_UNIT`（新路径 + race）+ `VERIFIED_SOURCE`（MASQUE/R02 源审计）。不证明 sing-quic 库内
-  pending 的运行行为、Mieru 或 Darwin/NE 设备行为。
+- 等级：`VERIFIED_UNIT`（新路径 + race）+ `VERIFIED_SOURCE`（MASQUE/R02 源审计）。CI：head
+  `5a3add01bca` 的 `Verify` run 42485997186 `verify` 与 `race checks` 均 **success**（`VERIFIED_CI`，仅对
+  该 SHA 的树；其后的回填提交只改文档）。不证明 sing-quic 库内 pending 的运行行为、Mieru 或 Darwin/NE 设备行为。
 
 ## E13 未验证 / 边界
 
