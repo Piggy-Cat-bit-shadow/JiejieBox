@@ -182,6 +182,6 @@ jobs:     verify = success；race checks = success
 |---|---|---|
 | iOS NetworkExtension 真机 | `BLOCKED_BY_ENVIRONMENT` | 需设备；本轮没有运行 NE，`memoryReclaim` 在 NE 下的实际内容未设备验证 |
 | CI 对本提交的运行 | `VERIFIED_CI`（37b666f） | 见 E14：run 42471833521 的 `verify` 与 `race checks` 均 success；其后的文档提交不复用该结论 |
-| 带平台标签的构建（`with_purego`/`with_utls`/Darwin/Android） | `NOT_RUN` | 默认 `go build ./...` 通过，不代表发行档位 |
+| 平台发行档位 / 产物 | `NOT_RUN` | CI 的 tagged build 使用 `DEFAULT_BUILD_TAGS_OTHERS`（server profile）；Darwin 档位（`DEFAULT_BUILD_TAGS`/`with_naive_outbound`）、`with_purego`、Cronet 原生库、Android AAR 与 Windows 产物不在本轮构建。本地只跑了默认 `go build ./...`。 |
 | 回收收益的真实量级 | `UNMEASURED` | 主机测试用模拟 footprint；真实 `GainBytes` 取决于进程与平台 |
 | 常驻/关闭/构建占用观测 | `NOT_IMPLEMENTED` | 归 04/06，见 `MASTER_PLAN.md` 的 G01 拆分 |
