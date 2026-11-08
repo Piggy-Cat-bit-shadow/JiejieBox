@@ -134,8 +134,20 @@ go test ./service/oomkiller ./common/resourceguard -count=1
 | QUIC 共享 offer 准入 | `NOT_ADOPTED_WITH_EVIDENCE` | 设计、成本、重开条件在 `explorations/quic-shared-offer-admission-2026-11-08.md`；03 不依赖它 |
 | Cronet 原生连接 | `BLOCKED_EXTERNAL` | 边界在 `explorations/cronet-native-creation-coverage-2026-11-08.md` |
 | Mieru 加密握手阶段 | 未覆盖 | 许可只到 socket 打开；若 03 需要按 session 字节计费，先确认该阶段归属 |
-| 外部进程改 Apple pin/source-lock | 非本阶段改动 | 工作树里 `clients/apple`=97b35d1、`release/source-lock.json`、`scripts/ci/check-libbox-abi.sh` 被外部改动且未提交；不要回滚，交 release freeze 处理 |
+| 外部进程改 Apple pin/source-lock | 已收尾 | 外部曾把 `clients/apple` 指到 `97b35d1`（`origin/main` 头）并改 source-lock/ABI 脚本；本阶段未提交，工作树已恢复到父仓 pin `e328310` 且干净。release freeze 若跟进，用 `scripts/ci/release-freeze.py` 重建，不要在未跑 Apple 门禁时直接提交 `VERIFIED_APPLE_SHA` |
 
 ### 阅读缓存增量（02）
 
 02 读了：`modules/resource-admission.md`、`modules/mieru.md`（按导航核对）、`protocol/anytls/{admission,outbound}.go`、`common/tls/client.go`、`common/resourceguard/{gate,guard,held}.go`、`service/oomkiller/{service,timer,recorder}.go`、`protocol/mieru/{dialer,fallback,dial_observation,outbound}.go`、pinned `sing-quic@{hysteria2,tuic}/client.go` 的 `completeOffer/offerNew`、pinned `sing-anytls/client.go` 的 ctx 使用、`protocol/naive/outbound.go` 的 Cronet 接点、`release/{dependencies.json,source-lock.json}` 与 `scripts/ci/release-freeze.py` 接口。03 只需补字节路径（XHTTP pending、TUN/UDP 队列、relay）的源码增量，不重读上述文件。
+
+## 7. 03 起点（已验证的定位，不替代 03 自己的导航）
+
+| 03 关注点 | 已验证锚点 | 说明 |
+|---|---|---|
+| XHTTP pending/在途 | `transport/v2rayxhttp/conn.go`：`pending []byte`、`maxPending`、`Write` 的等待路径 | 只读 `len(pending)` 会漏记在途切片；03 需同时记账“容量/已接受未交付” |
+| relay/按需扩容 | `transport/v2rayxhttp/client.go`、`protocol/socks` 的 UDP relay 测试 | 具体扩容路径由 03 沿调用链确认，不要按名字猜 |
+| 调度/类别 | `common/trafficsched`、`common/trafficclass`；`route/conn.go` 两处 `WithClass` | 字节反压不得与类别/优先级脱节 |
+| TUN/UDP 队列 | `protocol/tun`（真实栈在 pinned `sing-tun` 模块） | 局部有界，跨流聚合尚无账本 |
+| 03 导航 | `modules/buffer-ownership.md`、`modules/data-path-optimization.md`（+ `mtu-and-geometry.md`） | 先读 AI cautions/Provenance，再沿符号读实现 |
+
+03 不要重建创建/速率账：`Guard`/`RateStats`/`ObserveOutcome` 已就绪，字节路径只接自己的账本与本地拒绝分类。

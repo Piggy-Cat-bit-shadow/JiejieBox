@@ -40,7 +40,7 @@
 
 - **范围**：上述新文档全文、被修改段落的 diff、命令块、表格与链接；不含原始日志附件、截图或配置全文。
 - **方法**：模式扫描 + 人工语义复核。扫描类别：凭据/token/API key/私钥/认证头/cookie、私有 IP 段与内部域名、设备/账号标识、用户名绝对路径。主机绝对路径统一改写为 `<workspace>`/`<toolchain>`；公开仓库 URL、公开提交 SHA、公开 Release 编号与主机性能数字保留（必要且有复现价值）。
-- **结果**：未发现需要移除的秘密值；未删除任何真实值（因此无可披露的删除项）。01 收尾后父仓工作树干净且子模块对齐 pin；02 施工期间检测到**外部进程**把 `clients/apple`、`release/source-lock.json`、`scripts/ci/check-libbox-abi.sh` 改到 Apple pin `97b35d1` 并暂存，本阶段未创作、未提交、未回滚这三处，02 的提交只含本阶段路径。
+- **结果**：未发现需要移除的秘密值；未删除任何真实值（因此无可披露的删除项）。01 收尾后父仓工作树干净；02 期间检测到外部进程把 `clients/apple` 改到 `97b35d1`（Apple `origin/main` 头）并改写 source-lock 与 ABI 脚本，本阶段未提交该更新，收尾时已恢复父仓 pin `e328310`，工作树与子模块重新干净。
 - **限制**：模式扫描不等于取证审计；本轮没有对历史提交做泄露扫描，也没有把整个仓库重新认证。
 
 ## 远端核验记录
@@ -57,5 +57,5 @@
 | 02 远端 refs | `git ls-remote origin refs/heads/testing` → `d14933eada21a958c36a4490fa8b34bd930af945` |
 | 02 远端回读 | raw 文件 HTTP 200：`.../d14933eada2…/KNOWLEDGE/reports/other-project-learning-and-integration/stages/02.md`，内容与本地一致 |
 | 02 CI 核验 | `Verify` run [42474314237](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42474314237)，head `d14933eada2`，`verify` 与 `race checks` 均 success（`VERIFIED_CI`，仅对该 SHA 的树；其后的记录回填提交只改文档） |
-| 工作树收尾（01） | `git status --porcelain` 为空；`git submodule status` 三个客户端均无 `+` 前缀；专题文档相对链接检查 0 处失效 |
+| 工作树收尾（01/02） | 01 收尾后干净；02 收尾把外部 Apple pin 改动恢复后再次干净：`git status --porcelain` 为空、三个子模块无 `+`、专题链接检查 0 处失效 |
 | 状态 | `REMOTE_VERIFIED`（`SANITIZED` / `LOCAL_COMMITTED` / `REMOTE_VERIFIED`） |
