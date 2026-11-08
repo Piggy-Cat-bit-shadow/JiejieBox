@@ -223,6 +223,7 @@
 | 积压预算 | 排队等待不计入探测 timeout；deadline 只从拿到槽位后开始 |
 | 取消 | waiter 用自身 ctx 退出，锁内移除；授予与取消同时发生时槽位归还；释放闭包幂等 |
 | 优先级来源 | 只读 04 的 `adapter.IsBackgroundProbe(ctx)`（`runtimecoord` probe origin），不新增第二来源 |
+| 每轮生产 | `protocol/group/probe_batch.go`：固定 10 worker + 容量 20 交接队列；队列满时遍历阻塞，任务在被接受前受界；`Wait` 幂等、首错取消本轮 |
 
 ## 4. 后续阶段的接口草案
 

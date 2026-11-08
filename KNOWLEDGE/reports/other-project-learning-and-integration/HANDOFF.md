@@ -202,13 +202,13 @@ go test ./service/oomkiller ./common/resourceguard -count=1
 | 边界 | H2/QUIC 库内缓存、Cronet/Mieru SDK 内部驻留不可观测；Darwin/NE 未验；R08 只有合成测量；WG 冷/热设备成本未测 |
 | 唯一下一动作 | 05-A（P01）：探测队列入口与有界 worker；读 `参考/02_施工队列_04-06.md` 的 05-A 段与 05 提示词 |
 
-## 12. 05 P01 批 1 → 批 2 交接
+## 12. 05 P01 → P02/P03 交接
 
 | 事项 | 结果 |
 |---|---|
-| 已落地代码 | `f59f339ab396df4839a11f32536e9e308e3b81b8`：`common/urltest.Coordinator` 队列改为交互优先 + 后台老化（`priorityAgingEvery=3`），取消清理与幂等释放；`Measure` 按 `adapter.IsBackgroundProbe` 选队列 |
+| 已落地代码 | `f59f339ab39`：Coordinator 交互优先 + 后台老化；`ae185aca196`：每轮固定 10 worker + 有界交接队列，任务在被接受前受界 |
 | 容量现状 | Box 级上限沿用 `C.URLTestConcurrency`（box.go 注册）；排队时间不计入探测 timeout（基线已有，回归通过） |
-| 证据 | E24；`go test ./common/urltest`、`-race` 子集、`./protocol/group`、`go build ./...` 均通过 |
-| 未完成 | P01 的 2000/10000 饱和回放与各触发入口逐一核对；P02–P04、D01–D02 未开始 |
+| 证据 | E24；`go test ./common/urltest`、`./protocol/group`（含 2000/10000 饱和与取消测试）、`-race` 子集、`go build ./...` 均通过 |
+| 未完成 | P02–P04、D01–D02 |
 | 不要重做 | Box 级 Coordinator、探测 timeout 与槽位的顺序、`IsBackgroundProbe` 优先级来源 |
-| 唯一下一动作 | P01 剩余：用现有 group 夹具做 2000/10000 饱和回放并记录峰值/取消排空，再转 05-B |
+| 唯一下一动作 | 05-B（P02/P03）：选中/故障候选优先 + 分轮全覆盖 + 去重键，再做显式省电/稳定槽位 |

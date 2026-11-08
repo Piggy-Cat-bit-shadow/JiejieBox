@@ -18,7 +18,7 @@
 | `stages/02.md` | 阶段 02 改动（G02–G06）、验证、终态 | 11933a6 + 99fd6ee | `SANITIZED` | 收尾提交 | 见文末 |
 | `stages/03.md` | 阶段 03 改动（B01–B06）、验证、终态 | afdd3b3 + cd1d816 | `SANITIZED` | 收尾提交 | 见文末 |
 | `stages/04.md` | 阶段 04 批 1–3：residency owner 盘点、XMUX 库存、关闭诊断、共享 offer、R03/R04/R08 结案 | 2d9b848 + 64cfa9a + 文档 | `SANITIZED` | 批 1 `91c0c292db6`；批 2–3 见下 | 见文末 |
-| `stages/05.md` | 阶段 05 P01 批 1：探测队列交互优先与后台老化 | 0dfb5e4 + f59f339 | `SANITIZED` | 收尾提交 | 见文末 |
+| `stages/05.md` | 阶段 05 P01：探测队列交互优先/后台老化 + 每轮有界生产 | 0dfb5e4 + f59f339/ae185ac | `SANITIZED` | 收尾提交 | 见文末 |
 | `explorations/lazy-heavy-runtime-2026-11-08.md` | R03 descriptor/runtime 拆分与 R04 never-built 惰性 device 的不采纳评估 | c77671b + WG 复跑 | `SANITIZED` | 收尾提交 | 见文末 |
 | `explorations/endpoint-close-parallel-2026-11-08.md` | R08 endpoint 子 scope 并行关闭：合成测量、依赖与不采纳条件 | c77671b | `SANITIZED` | 收尾提交 | 见文末 |
 | `explorations/data-plane-byte-budgets-2026-11-08.md` | 字节预算：XHTTP 落地、其余积压点边界与重开条件 | afdd3b3 + cd1d816 | `SANITIZED` | 收尾提交 | 见文末 |
@@ -49,6 +49,7 @@
 | 04 批 2 | `64cfa9a86304f0951313d845d94052294d6eefbf` | `feat(v2rayquic): share one QUIC creation between waiters`（pending offer、每 waiter ctx、迟到成功接纳/丢弃一次、keep_session 每 flow） |
 | 04 收尾 | `80fe4bafe1b268f280ef57d7ac522cebc9e1cf02` | `test(adapter): cover the named component path of the close watchdog`（Start 注册组件的名字进入关闭报告；嵌套 scope 各自一次性） |
 | 05 P01 批 1 | `f59f339ab396df4839a11f32536e9e308e3b81b8` | `feat(urltest): order the probe queue by origin with background aging`（交互优先、每 3 次交互老化一个后台、取消清理、幂等释放） |
+| 05 P01 有界生产 | `ae185aca19618101c940312691d8ce762eeeb428` | `fix(urltest): bound probe production before spawning work`（每轮 10 worker + 有界交接队列；10,000 节点峰值 goroutines 9,650 → 14，全部测量） |
 
 ## 脱敏检查
 

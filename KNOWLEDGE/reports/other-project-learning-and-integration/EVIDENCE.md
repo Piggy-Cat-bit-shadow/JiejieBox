@@ -342,6 +342,17 @@ go build ./...                                         # exit 0
   deadline 测试全部仍通过。
 - 等级：`VERIFIED_UNIT`（主机 + race）。CI：head `3d8c5f998cd` 的 `Verify` run 42489837757 `verify`+`race checks` success（`VERIFIED_CI`，仅对该 SHA）。未做 2000/10000 饱和回放；P01 未结案。
 
+### 追加（P01 生产有界，代码 `ae185aca196`）
+
+- 饱和回放发现并修复真正缺口：通用 `batch.Batch` 先为每个任务起 goroutine 再等令牌，2,000/10,000 节点
+  峰值 1,903/9,650 goroutines。`protocol/group/probe_batch.go` 改为每轮 10 个固定 worker + 容量 20 的
+  交接队列，任务在被接受前受界。
+- 修复后：2,000/10,000 节点峰值均 **14** goroutines、queue 2、in-flight 8、dials 等于成员数
+  （2,000/2,000、10,000/10,000）、耗时 146ms/747ms；2,000 个阻塞成员取消后 104ms 排空、
+  Coordinator 0/0、goroutines 回到基线。
+- 入口核对：`urltest.Measure` 三个调用方（daemon 原生、Clash 单节点、组测）均经同一 Coordinator。
+- P01 结案为 `IMPLEMENTED_VERIFIED`。等级：`VERIFIED_UNIT`（主机 + race）；未验真实 NE 栈内存与多组叠加。
+
 ## E13 未验证 / 边界
 
 | 项 | 状态 | 说明 |
