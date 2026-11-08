@@ -6,7 +6,7 @@
 
 | 项 | 值 |
 |---|---|
-| 阶段 | 10（V01）——**IN_PROGRESS**（仅 10-A 入口/攻击矩阵，见 `stages/10.md`）；09 仅 X04 评估。两者未完成；11 未开始。快照见 HANDOFF §18 |
+| 阶段 | 11（V02）——**IN_PROGRESS**（复用 E20；首个 owner 计划为 v2rayquic 共享 offer 交错；无 11 代码，见 `stages/11.md`）。09/10 未完成项保留 |
 | 02 结束 revision | `afdd3b3cf7c` |
 | 04 进入时 HEAD | `a6f1ca55f5455fdaf88d41b030579ac1b41119df`（= `origin/testing`，无需同步） |
 | 03 代码提交 | `cd1d8160e3c` |
@@ -77,7 +77,7 @@
 | M02 | hotfix 退役条件、上游同步、平台 tag/schema/依赖来源锁 | 09 | I | `PENDING` | 01 核实 `release/source-lock.json` 与 `dependencies.json` 的 intent/derived 分工 |
 | M03 | 必要客户端/桥接/配置入口实际接通及发行档位验证 | 09 | I | `PENDING` | — |
 | V01 | 账本边界、输入放大、失败注入与测试检出能力 | 10 | I | `PENDING` | 10-A 入口选定 XHTTP packet-up 字节账（pending 上界/大 Write/POST 失败/写入中 Close/幂等关闭），先做反例证明检出力；09 的 TrustTunnel/AWG 攻击面因无实现 `BLOCKED_EXTERNAL` |
-| V02 | 跨机制状态交错、资源身份和整系统协调攻击 | 11 | I | `PENDING` | 11 专项 |
+| V02 | 跨机制状态交错、资源身份和整系统协调攻击 | 11 | I | `PENDING` | 复用 E20（XHTTP 并发写+Close）；计划 v2rayquic 共享 offer 的并发 attach/cancel/Close/迟到成功交错（50 轮 + race），本轮未落代码；09 四角色 V02 待实现 |
 | V03 | 协议互通、性能/内存价值、真机证据与最终全项闭环 | 12 | I | `PENDING` | 12 专项；真机/互通仍须独立证据 |
 
 ## G01 范围拆分（为什么不是“所有观测都已导出”）
