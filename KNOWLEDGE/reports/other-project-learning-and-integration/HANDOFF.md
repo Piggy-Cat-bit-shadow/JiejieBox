@@ -245,3 +245,11 @@ go test ./service/oomkiller ./common/resourceguard -count=1
 |---|---|---|
 | 08 | O01 首批：`ExplainPath`；O06 首批：桥接 UTF-8/错误边界测试 | O01 余项；O02–O05；O06 的 ABI/旧客户端与 proto stub |
 | 判断 | 部分落地，不标 COMPLETED | 09 可启动；恢复入口 `stages/08.md` |
+
+## 18. 09/10 收尾快照（上下文受限）
+
+| 阶段 | 已有 | 未闭环 |
+|---|---|---|
+| 09 | X04 四角色评估：仓库无 trusttunnel，WG 未接 AWG fork；角色 A（TrustTunnel 出站 H2）可本机开始 | X01–X03/X05/M01–M03；X04 角色 A–D 全部未实现 |
+| 10 | 10-A 入口与攻击矩阵（XHTTP packet-up 账）；10-B 的 TrustTunnel/AWG 攻击面因 09 无实现标 `BLOCKED_EXTERNAL` | 10-A 测试未写、03 B02/B03/B05 复核未做 |
+| 判断 | 两阶段均未完成，不标 COMPLETED | 下一步可先做 10-A（本机可完成），或按队列进入 11；入口 `stages/09.md`、`stages/10.md` |

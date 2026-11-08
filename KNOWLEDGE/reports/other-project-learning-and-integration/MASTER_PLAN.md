@@ -6,7 +6,7 @@
 
 | 项 | 值 |
 |---|---|
-| 阶段 | 10（V01）——**IN_PROGRESS**（本窗口只完成 10-A 入口与攻击矩阵，见 `stages/10.md`；09 的 TrustTunnel/AWG 未实现，其攻击面标 `BLOCKED_EXTERNAL`） |
+| 阶段 | 10（V01）——**IN_PROGRESS**（仅 10-A 入口/攻击矩阵，见 `stages/10.md`）；09 仅 X04 评估。两者未完成；11 未开始。快照见 HANDOFF §18 |
 | 02 结束 revision | `afdd3b3cf7c` |
 | 04 进入时 HEAD | `a6f1ca55f5455fdaf88d41b030579ac1b41119df`（= `origin/testing`，无需同步） |
 | 03 代码提交 | `cd1d8160e3c` |
