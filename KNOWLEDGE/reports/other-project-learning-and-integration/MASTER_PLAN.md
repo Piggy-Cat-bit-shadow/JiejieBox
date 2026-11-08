@@ -6,7 +6,7 @@
 
 | 项 | 值 |
 |---|---|
-| 阶段 | 07（C01–C06）——**IN_PROGRESS**（C01 首批已落地，C02–C06 未开始）；06 为**部分**（F01 预置、F02 不采纳；F03–F05 未开始）；05 部分（P01 完成）。08 未开始；收尾快照见 HANDOFF §15 |
+| 阶段 | 08（O01–O06）——**IN_PROGRESS**（O01 被动 Explain 首批已落地；O01 余项与 O02–O06 未开始，见 `stages/08.md`）。05/06/07 未完成项保留，不阻塞本阶段 |
 | 02 结束 revision | `afdd3b3cf7c` |
 | 04 进入时 HEAD | `a6f1ca55f5455fdaf88d41b030579ac1b41119df`（= `origin/testing`，无需同步） |
 | 03 代码提交 | `cd1d8160e3c` |
@@ -62,7 +62,7 @@
 | C04 | ChangePlan 按域执行、依赖闭包和多种 revision/epoch | 07 | I | `PENDING` | 01 核实 epoch 与资源身份分离已存在于 runtimecoord |
 | C05 | 常驻管理面、候选验证、last-good、恢复与依赖文件快照 | 07 | I | `PENDING` | — |
 | C06 | 配置 Operations、模块依赖包和有限 IR 组织方式 | 07 | E | `PENDING` | — |
-| O01 | 基于真实 evaluator 的无副作用 DNS/Route Explain | 08 | I | `PENDING` | 01 交付的 `memoryReclaim`/`resourceGuard` 是 08 的事实来源之一 |
+| O01 | 基于真实 evaluator 的无副作用 DNS/Route Explain | 08 | I | `PENDING` | 首批：`CommandServer.ExplainPath` 投影既有 `Box.Status`（control/hops/failure/unknowns），无拨号/DNS/session/健康/cache；rule/action/dependency facts 与 determined 分类未做 |
 | O02 | 主动分阶段诊断、根因/no_ack/reused/findings 与有界队列 | 08 | I | `PENDING` | — |
 | O03 | DNS 结构化事件、订阅门控与实际路径归因 | 08 | I | `PENDING` | — |
 | O04 | 有预算历史、top-K/分页/指标、敏感维度与能力发现 | 08 | I | `PENDING` | — |
