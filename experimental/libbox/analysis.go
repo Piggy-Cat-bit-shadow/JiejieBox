@@ -44,11 +44,20 @@ type ConfigAnalysis struct {
 //
 // It never builds a Box. A malformed document returns the parser's error, exactly as CheckConfig
 // would report it.
-func AnalyzeConfig(configContent string) (string, error) {
+//
+// # Why the result is a *StringBox
+//
+// AnalyzeConfig is a package-level function bound by gomobile, so its result crosses cmd/cgo's
+// packed result frame. A bare string puts the string's pointer in that frame, which is the
+// `bulkBarrierPreWrite: unaligned arguments` shape gomobile_surface_test.go exists to catch (the
+// pinned toolchain does not align the frame; Go 1.26 does). StringBox keeps the pointer in a heap
+// object and leaves only a refnum in the frame, the same workaround GetDNSMode and FormatConfig
+// already use. Clients read `analyzeConfig(...)!.value`.
+func AnalyzeConfig(configContent string) (*StringBox, error) {
 	ctx := baseContext(nil)
 	options, err := parseConfig(ctx, configContent)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	analysis := ConfigAnalysis{
 		Parsed:    true,
@@ -72,7 +81,7 @@ func AnalyzeConfig(configContent string) (string, error) {
 	}
 	encoded, err := stdjson.Marshal(analysis)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return string(encoded), nil
+	return wrapString(string(encoded)), nil
 }

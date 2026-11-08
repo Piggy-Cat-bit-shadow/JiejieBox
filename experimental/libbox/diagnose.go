@@ -21,24 +21,33 @@ import (
 // It does not explain which route RULE matched, and it does not run a connection test; those are
 // separate slices (O01 remainder / O02). A missing hop is reported as unknown with its reason rather
 // than being omitted.
-func (s *CommandServer) ExplainPath(root string, network string) (string, error) {
+//
+// # Why the result is a *StringBox
+//
+// CommandServer is bound by gomobile, so this method's result crosses cmd/cgo's packed result
+// frame. A bare string puts the string's pointer in that frame, which is the
+// `bulkBarrierPreWrite: unaligned arguments` shape gomobile_surface_test.go exists to catch (the
+// pinned toolchain does not align the frame; Go 1.26 does). StringBox keeps the pointer in a heap
+// object and leaves only a refnum in the frame, the same workaround GetDNSMode and FormatConfig
+// already use. Clients read `server.explainPath(...)!.value`.
+func (s *CommandServer) ExplainPath(root string, network string) (*StringBox, error) {
 	if s == nil || s.StartedService == nil {
-		return "", E.New("command server is not started")
+		return nil, E.New("command server is not started")
 	}
 	instance := s.Instance()
 	if instance == nil {
-		return "", E.New("service is not running")
+		return nil, E.New("service is not running")
 	}
 	boxInstance := instance.Box()
 	if boxInstance == nil {
-		return "", E.New("box is not running")
+		return nil, E.New("box is not running")
 	}
 	explanation := newPathExplanation(boxInstance.Status(root, network))
 	encoded, err := stdjson.Marshal(explanation)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return string(encoded), nil
+	return wrapString(string(encoded)), nil
 }
 
 type pathExplanation struct {

@@ -36,12 +36,13 @@ func TestAnalyzeConfigInvalidUTF8StaysInsideTheBridge(t *testing.T) {
 	input := "{\"outbounds\":[{\"type\":\"direct\",\"tag\":\"bad-\xff\"}]}"
 	encoded, err := AnalyzeConfig(input)
 	if err != nil {
-		require.Empty(t, encoded)
+		require.Nil(t, encoded, "an error must not carry a partial result (nil-success semantics)")
 		return
 	}
-	require.True(t, utf8.ValidString(encoded))
+	require.NotNil(t, encoded)
+	require.True(t, utf8.ValidString(encoded.Value))
 	var document map[string]any
-	require.NoError(t, json.Unmarshal([]byte(encoded), &document))
+	require.NoError(t, json.Unmarshal([]byte(encoded.Value), &document))
 }
 
 func TestAnalyzeConfigErrorKeepsAMachineInspectableCause(t *testing.T) {

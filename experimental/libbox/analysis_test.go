@@ -24,9 +24,10 @@ func TestAnalyzeConfigReportsDeclaredShape(t *testing.T) {
 }`
 	encoded, err := AnalyzeConfig(config)
 	require.NoError(t, err)
+	require.NotNil(t, encoded)
 
 	var analysis ConfigAnalysis
-	require.NoError(t, json.Unmarshal([]byte(encoded), &analysis))
+	require.NoError(t, json.Unmarshal([]byte(encoded.Value), &analysis))
 	require.True(t, analysis.Parsed)
 	require.NotEmpty(t, analysis.Platform)
 	require.Equal(t, 1, analysis.Inbounds)
@@ -50,7 +51,7 @@ func TestAnalyzeConfigDoesNotConstructTheBox(t *testing.T) {
 	config := `{"endpoints": [{"type": "wireguard", "tag": "wg", "address": ["10.0.0.1/24"]}]}`
 	encoded, err := AnalyzeConfig(config)
 	require.NoError(t, err, "the lightweight path must not reject a document the constructor would")
-	require.Contains(t, encoded, `"parsed":true`)
+	require.Contains(t, encoded.Value, `"parsed":true`)
 	require.Error(t, CheckConfig(config),
 		"the full check must still reject the dangling reference; if it ever accepts it, this test no longer proves the split")
 }
