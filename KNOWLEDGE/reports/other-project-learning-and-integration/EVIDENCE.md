@@ -239,6 +239,19 @@ go build ./...                                          # exit 0
 - 本地：`go test ./transport/v2rayxhttp`（全套）、`-race` 子集、`go build ./...` 均通过。
 - 等级：`VERIFIED_UNIT` + 以 `DOCUMENT_INDEX` 的 CI 记录为准（本地结果不冒称 CI）。
 
+## E20 11 阶段（部分范围）：已实现路径的并发审计
+
+```sh
+CGO_ENABLED=1 go test -race ./transport/v2rayxhttp -run 'TestPacketUpConcurrentWritersAndClose' -count=1
+# ok（race 通过）
+```
+
+- 内容：8 个写者并发争用 XHTTP packet-up 队列，期间 `Close`；断言无死锁、pending 不越界、
+  高水位 ≤ 上限、关闭后队列排空且 `posted==accepted`。
+- **范围限定**：只覆盖 03 已实现的字节预算路径。V02 的完整并发/生命周期审计需要 04–09 的
+  驻留账本、共享任务、关闭屏障与协调机制，本阶段未执行、未记完成。
+- 等级：`VERIFIED_UNIT`（主机 + race），不代表 V02 通过。
+
 ## E13 未验证 / 边界
 
 | 项 | 状态 | 说明 |
