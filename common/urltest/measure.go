@@ -196,7 +196,16 @@ func measureWithTimeout(ctx context.Context, options MeasureOptions, detour N.Di
 	//
 	// It waits on the CALLER's context, so a caller deadline still bounds the wait.
 	if coordinator := CoordinatorFromContext(ctx); coordinator != nil {
-		release, acquireErr := coordinator.Acquire(ctx)
+		// The probe origin the caller already declared decides the queue position. A foreground
+		// measurement (user test, native command, diagnostic) is admitted ahead of queued background
+		// work when a slot frees; the coordinator ages background in so it cannot starve. A context
+		// with no marker is treated as foreground, which is the correct default for an explicit
+		// caller of Measure.
+		acquire := coordinator.Acquire
+		if !adapter.IsBackgroundProbe(ctx) {
+			acquire = coordinator.AcquirePriority
+		}
+		release, acquireErr := acquire(ctx)
 		if acquireErr != nil {
 			return Measurement{}, acquireErr
 		}
