@@ -6,7 +6,7 @@
 
 | 项 | 值 |
 |---|---|
-| 阶段 | 05（P01–P04、D01–D02）——**IN_PROGRESS**（P01 首批：交互优先 + 后台老化队列；其余未开始，见 `stages/05.md`） |
+| 阶段 | 05（P01–P04、D01–D02）——**IN_PROGRESS**（P01 已完成；P02–P04、D01–D02 未开始）。06 仅预置 F01 首批切片（`stages/06.md`），未正式开工；最早未闭环阶段仍是 05 |
 | 02 结束 revision | `afdd3b3cf7c` |
 | 04 进入时 HEAD | `a6f1ca55f5455fdaf88d41b030579ac1b41119df`（= `origin/testing`，无需同步） |
 | 03 代码提交 | `cd1d8160e3c` |
@@ -51,7 +51,7 @@
 | P04 | procfs 同 UID 合并、按需路径、多 owner 与缓存提交代次 | 05 | I | `PENDING` | — |
 | D01 | DNS 组请求预算、选举 token、输家取消与 survival 协调 | 05 | I | `PENDING` | — |
 | D02 | DNS 共享查询 key、响应条件、旧结果与解析所有权保护 | 05 | I | `PENDING` | — |
-| F01 | 大 domain_keyword 编译自动机、小集合回退与规则语义 | 06 | I | `PENDING` | 包内原型 50,000 次差分通过；生产未接 |
+| F01 | 大 domain_keyword 编译自动机、小集合回退与规则语义 | 06 | I | `PENDING` | 预置切片已落地：≥64 keyword 编译为冻结自动机、<64/超界回退循环、随机差分与 bench（1024 miss 14.1µs→199ns）；真实 corpus 阈值与构建预算未验 |
 | F02 | 纯规则子结果的版本化缓存评估及正确 key | 06 | E | `PENDING` | — |
 | F03 | Provider/规则下载解析构建的瞬时预算、延期与旧结果 | 06 | I | `PENDING` | **G01 的“构建占用”字段由本项承接** |
 | F04 | 流式文件产物、兼容 manifest、mmap 租约与崩溃恢复 | 06 | I | `PENDING` | — |
