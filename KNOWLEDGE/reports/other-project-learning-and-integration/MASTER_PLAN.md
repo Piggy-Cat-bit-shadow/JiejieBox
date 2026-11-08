@@ -6,7 +6,7 @@
 
 | 项 | 值 |
 |---|---|
-| 阶段 | 04（R01–R08）——**已完成**（`COMPLETED_WITH_BOUNDARIES`，见 `stages/04.md`）；R03/R04 重构部分、R08 为 `NOT_ADOPTED_WITH_EVIDENCE`；05 未开始 |
+| 阶段 | 05（P01–P04、D01–D02）——**IN_PROGRESS**（P01 首批：交互优先 + 后台老化队列；其余未开始，见 `stages/05.md`） |
 | 02 结束 revision | `afdd3b3cf7c` |
 | 04 进入时 HEAD | `a6f1ca55f5455fdaf88d41b030579ac1b41119df`（= `origin/testing`，无需同步） |
 | 03 代码提交 | `cd1d8160e3c` |
@@ -15,6 +15,8 @@
 | 04 批 1 HEAD | 以 `git log -1` 与 `stages/04.md` 为准（文档提交后回填 `DOCUMENT_INDEX`） |
 | 04 批 2 代码提交 | `64cfa9a8630`（v2rayquic 共享 offer + 测试） |
 | 04 批 2 HEAD | 以 `git log -1` 与 `stages/04.md` 为准 |
+| 05 阶段基线 | `0dfb5e41734`（04 收尾 = `origin/testing`，工作树干净） |
+| 05 P01 首批代码提交 | `f59f339ab396df4839a11f32536e9e308e3b81b8`（Coordinator 交互优先/老化 + 测试） |
 | 知识库覆盖目标 | v0.1.44 专题目标 `3b6ec64f7145a2add99656d47caaa4f22a1cc478`；广泛基线 `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28`（v0.1.34），本轮不移动 |
 | 03 触及区域的知识增量 | `transport/v2rayxhttp`（packet-up 预算）；其余 B 项见 `explorations/data-plane-byte-budgets-2026-11-08.md` |
 
@@ -43,7 +45,7 @@
 | R06 | 共享隧道内部 underlay 身份与首个业务流上下文隔离 | 04 | I | `IMPLEMENTED_VERIFIED` | XHTTP 每 flow 上下文/槽位（既有测试）、v2rayquic `keep_session` 每 flow、external 标记按 caller ctx 读取；MASQUE/Mieru 库内部分未加运行测试 |
 | R07 | 关闭 pending/阶段耗时/有预算堆栈 watchdog | 04 | I | `IMPLEMENTED_VERIFIED` | `adapter.Scope` 一次性有界诊断（completed/pending/current、耗时、4 KiB 栈、defer 停表）+ Box 阶段耗时 + AddNamed；协议级慢关闭注入留 08 |
 | R08 | 独立 endpoint 子 scope 有界并行关闭的收益与依赖验证 | 04 | E | `NOT_ADOPTED_WITH_EVIDENCE` | 合成上界 8×10ms serial 84ms vs parallel 10ms；Scope 无独立性元数据、跨 endpoint 依赖不可推断。见 `explorations/endpoint-close-parallel-2026-11-08.md` |
-| P01 | 全 Box 有界探测生产/队列/worker 与交互公平调度 | 05 | I | `PENDING` | — |
+| P01 | 全 Box 有界探测生产/队列/worker 与交互公平调度 | 05 | I | `PENDING` | 批 1：`common/urltest.Coordinator` 补交互优先 + 每 3 次交互授予老化一个后台 waiter + 取消清理，`Measure` 按 probe origin 选队列；剩余 2000/10000 饱和回放与各触发入口逐一核对 |
 | P02 | 选中/故障候选优先、分轮全覆盖、精确去重与新鲜度 | 05 | I | `PENDING` | — |
 | P03 | 显式省电 failover/稳定槽位、退化确认与健康作用域 | 05 | I | `PENDING` | — |
 | P04 | procfs 同 UID 合并、按需路径、多 owner 与缓存提交代次 | 05 | I | `PENDING` | — |

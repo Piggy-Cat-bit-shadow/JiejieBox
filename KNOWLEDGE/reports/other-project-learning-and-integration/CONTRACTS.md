@@ -212,6 +212,18 @@
 | 会话元数据 | `adapter.KeepSessionFromContext` 在 `DialContext` 内按 flow 读取，保存在该 flow 的 stream 闭包，不写入共享 conn |
 | 边界 | sing-quic HY2/TUIC 的 pending 是库内实现（02 源审计）；Mieru 在 SDK 内；两者不属于本仓合同 |
 
+## 3.5 探测队列与交互公平（05 P01 首批）
+
+| 项 | 值 |
+|---|---|
+| owner | `common/urltest.Coordinator`（per-Box，box.go 以 `C.URLTestConcurrency` 注册到 ctx） |
+| 入口 | `Measure` 在解析 target 之后、启动探测 deadline 之前取一个槽位；所有真实测量都经此入口 |
+| 上限 | `Acquire`/`AcquirePriority` 共享同一 limit；`<=0` 表示不协调 |
+| 次序 | 交互 waiter 优先于已排队后台；连续 3 次交互授予后强制服务最早的后台 waiter（`priorityAgingEvery`） |
+| 积压预算 | 排队等待不计入探测 timeout；deadline 只从拿到槽位后开始 |
+| 取消 | waiter 用自身 ctx 退出，锁内移除；授予与取消同时发生时槽位归还；释放闭包幂等 |
+| 优先级来源 | 只读 04 的 `adapter.IsBackgroundProbe(ctx)`（`runtimecoord` probe origin），不新增第二来源 |
+
 ## 4. 后续阶段的接口草案
 
 ### 02（预算与真实高成本创建）—— 已完成

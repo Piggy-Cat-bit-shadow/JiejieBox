@@ -41,6 +41,7 @@
 | 03 数据面字节预算：XHTTP 落地与其余积压点的重开条件 | [stages/03](reports/other-project-learning-and-integration/stages/03.md)、[字节预算报告](reports/other-project-learning-and-integration/explorations/data-plane-byte-budgets-2026-11-08.md) |
 | 04 批 1：`residency` owner 盘点、XMUX 池库存与有界关闭诊断 | [stages/04](reports/other-project-learning-and-integration/stages/04.md)、[CONTRACTS](reports/other-project-learning-and-integration/CONTRACTS.md) §3.3 |
 | 04 批 2–3：v2rayquic 共享 offer、惰性重构与并行关闭不采纳评估 | [stages/04](reports/other-project-learning-and-integration/stages/04.md)、[惰性重构](reports/other-project-learning-and-integration/explorations/lazy-heavy-runtime-2026-11-08.md)、[并行关闭](reports/other-project-learning-and-integration/explorations/endpoint-close-parallel-2026-11-08.md) |
+| 05 P01：探测队列交互优先与后台老化 | [stages/05](reports/other-project-learning-and-integration/stages/05.md)、[CONTRACTS](reports/other-project-learning-and-integration/CONTRACTS.md) §3.5 |
 | 01 完成内容与 02 可直接使用的接口/调用点 | [stages/01](reports/other-project-learning-and-integration/stages/01.md)、[HANDOFF](reports/other-project-learning-and-integration/HANDOFF.md) |
 | 回收动作的报告反馈（`memoryReclaim`、低收益冷却、cache 条目数） | [power-mobile-lifecycle](modules/power-mobile-lifecycle.md) §4 “回收动作的报告反馈” |
 | 高成本创建准入与既有 OOM 协作 | [resource-admission](modules/resource-admission.md) |

@@ -326,6 +326,22 @@ go test -tags "with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash
   CI：head `b8590d75cc8` 的 `Verify` run 42487268576 `verify`+`race checks` success（`VERIFIED_CI`，仅对该 SHA）。
 - 未验证：Darwin/NE 真机；真实大配置中 Provider 构造与 endpoint 关闭占比。
 
+## E24 05 P01 首批：交互优先与后台老化的探测队列
+
+```sh
+go test ./common/urltest -count=1                      # ok 7.991s
+CGO_ENABLED=1 go test -race ./common/urltest -run 'TestForegroundAcquisition|TestBackgroundIsAged|TestCanceledPriority|TestSlotReleaseIsIdempotent|TestCoordinator' -count=1   # ok 5.597s
+go test ./protocol/group -count=1                      # ok 3.939s
+go build ./...                                         # exit 0
+```
+
+- 代码提交：`f59f339ab396df4839a11f32536e9e308e3b81b8`（`common/urltest` Coordinator 队列排序）。
+- 变化：Box 级测量上限沿用；队列从 FIFO 改为“交互优先 + 每 3 次交互授予服务一个最早后台 waiter”；
+  waiter 取消在锁内移除，授予/取消同时发生时归还槽位；释放闭包 `sync.Once`。
+- 测试：交互越过已排队后台、后台老化、取消不泄漏槽位、重复释放幂等；既有 coordinator 容量/取消/
+  deadline 测试全部仍通过。
+- 等级：`VERIFIED_UNIT`（主机 + race）。未做 2000/10000 饱和回放；P01 未结案。
+
 ## E13 未验证 / 边界
 
 | 项 | 状态 | 说明 |
