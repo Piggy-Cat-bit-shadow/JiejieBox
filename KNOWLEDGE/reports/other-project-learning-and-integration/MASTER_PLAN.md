@@ -52,7 +52,7 @@
 | D01 | DNS 组请求预算、选举 token、输家取消与 survival 协调 | 05 | I | `PENDING` | — |
 | D02 | DNS 共享查询 key、响应条件、旧结果与解析所有权保护 | 05 | I | `PENDING` | — |
 | F01 | 大 domain_keyword 编译自动机、小集合回退与规则语义 | 06 | I | `PENDING` | 预置切片已落地：≥64 keyword 编译为冻结自动机、<64/超界回退循环、随机差分与 bench（1024 miss 14.1µs→199ns）；真实 corpus 阈值与构建预算未验 |
-| F02 | 纯规则子结果的版本化缓存评估及正确 key | 06 | E | `PENDING` | — |
+| F02 | 纯规则子结果的版本化缓存评估及正确 key | 06 | E | `NOT_ADOPTED_WITH_EVIDENCE` | 无真实 corpus 命中率；key 完整性/代次风险高。实测 256 谓词匹配 356ns、key+查表 55ns；见 `explorations/rule-subresult-cache-2026-11-08.md` |
 | F03 | Provider/规则下载解析构建的瞬时预算、延期与旧结果 | 06 | I | `PENDING` | **G01 的“构建占用”字段由本项承接** |
 | F04 | 流式文件产物、兼容 manifest、mmap 租约与崩溃恢复 | 06 | I | `PENDING` | — |
 | F05 | 应用侧预编译与扩展加载兼容协议的落地评估 | 06 | E | `PENDING` | — |

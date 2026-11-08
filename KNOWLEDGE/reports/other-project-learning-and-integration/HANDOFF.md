@@ -220,4 +220,4 @@ go test ./service/oomkiller ./common/resourceguard -count=1
 | 代码 | `26296c328f3`：`route/rule` 大 domain_keyword 编译为冻结自动机；<64/超界回退循环 |
 | 证据 | E25；差分 + race + bench（1024 miss 14.1µs→199ns，late hit 18.5µs→184ns）；`go build ./...` |
 | 边界 | F01 未结案：真实 corpus 阈值、构建预算、并发更新、SRS/headless 未验 |
-| 顺序 | **最早未闭环仍是 05**；下一轮先做 05-B，05 闭环后再回 06（F01 余项 → F02 → 06-B/C） |
+| F02 | 评估不采纳：`explorations/rule-subresult-cache-2026-11-08.md`（无 corpus 命中率；356ns vs 55ns） |
