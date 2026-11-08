@@ -6,7 +6,7 @@
 
 | 项 | 值 |
 |---|---|
-| 阶段 | 08（O01–O06）——**IN_PROGRESS**（O01 首批已落地；O01 余项与 O02–O06 未开始）。05/06/07 未完成项保留；09 可启动；收尾快照见 HANDOFF §17 |
+| 阶段 | 09（X01–X05、M01–M03）——**IN_PROGRESS**（X04 四角色评估已更新，无代码；X01–X03/X05/M01–M03 未开始，见 `stages/09.md`）。08 未完成项保留 |
 | 02 结束 revision | `afdd3b3cf7c` |
 | 04 进入时 HEAD | `a6f1ca55f5455fdaf88d41b030579ac1b41119df`（= `origin/testing`，无需同步） |
 | 03 代码提交 | `cd1d8160e3c` |
@@ -71,7 +71,7 @@
 | X01 | QUIC 流式 detour 超长 datagram 与内核截断语义契约 | 09 | I | `PENDING` | — |
 | X02 | QUIC 关闭真实中断底层读、deadline 和建连锁契约 | 09 | I | `PENDING` | — |
 | X03 | MTU 三种量、协议承载能力与现有多跳/路径图协调 | 09 | I | `PENDING` | — |
-| X04 | TrustTunnel/AWG3/REALITY/XHTTP/VLESS/路由器嗅探等剩余扩展逐项评估 | 09 | E | `PENDING` | — |
+| X04 | TrustTunnel/AWG3/REALITY/XHTTP/VLESS/路由器嗅探等剩余扩展逐项评估 | 09 | E | `PENDING` | 新增四角色：仓库无 trusttunnel 包/依赖，WG 仍是上游 wireguard-go（无 AWG 字段）；角色 A 可本机移植，B/D 需 Linux，C/D 需 AWG fork replace。评估见 `stages/09.md` |
 | X05 | MITM/脚本/整栈重写与 Ghostlane 单 Go Runtime 经验的取舍 | 09 | E | `PENDING` | 01 已记录 Ghostlane 只作边界证据，不作实测数字 |
 | M01 | 闲置维护 timer 合并、生命周期普查和回收反馈 | 09 | E | `PENDING` | 01 的回收反馈是 M01 的输入 |
 | M02 | hotfix 退役条件、上游同步、平台 tag/schema/依赖来源锁 | 09 | I | `PENDING` | 01 核实 `release/source-lock.json` 与 `dependencies.json` 的 intent/derived 分工 |
