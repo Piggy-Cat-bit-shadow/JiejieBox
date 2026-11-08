@@ -22,18 +22,32 @@ import (
 // The values are DECLARED facts, not effective ones. Turning them into a declared/default/effective
 // report with per-field reasons is the next slice (C02); this type must not pretend to have it.
 type ConfigAnalysis struct {
-	Parsed     bool   `json:"parsed"`
-	Platform   string `json:"platform"`
-	BuildQUIC  bool   `json:"buildQuic"`
-	Inbounds   int    `json:"inbounds"`
-	Outbounds  int    `json:"outbounds"`
-	Endpoints  int    `json:"endpoints"`
-	Services   int    `json:"services"`
-	Providers  int    `json:"providers"`
-	RouteRules int    `json:"routeRules"`
-	RuleSets   int    `json:"ruleSets"`
-	DNSRules   int    `json:"dnsRules"`
-	DNSServers int    `json:"dnsServers"`
+	Parsed    bool   `json:"parsed"`
+	Platform  string `json:"platform"`
+	BuildQUIC bool   `json:"buildQuic"`
+	// BuildID identifies the capability set this analysis was produced by, so a report can be
+	// tied to the exact binary instead of to a repackaged version string.
+	BuildID string `json:"buildId"`
+	// ConfigRevision identifies the DOCUMENT, not the parse: the same bytes analysed twice
+	// produce the same revision, and any edit produces another.
+	ConfigRevision string `json:"configRevision"`
+	Schema         string `json:"schema,omitempty"`
+	// Checks says how far the analysis actually got. AnalyzeConfig never sets RuntimeChecked:
+	// it does not build a box, construct a DNS client, fetch a provider or probe anything.
+	Checks ConfigChecks `json:"checks"`
+	// Findings are declaration problems (duplicate tags, dangling references).
+	Findings []ConfigFinding `json:"findings,omitempty"`
+	// PendingProviders are remote providers whose nodes do not exist until they are fetched.
+	PendingProviders []ConfigPendingProvider `json:"pendingProviders,omitempty"`
+	Inbounds         int                     `json:"inbounds"`
+	Outbounds        int                     `json:"outbounds"`
+	Endpoints        int                     `json:"endpoints"`
+	Services         int                     `json:"services"`
+	Providers        int                     `json:"providers"`
+	RouteRules       int                     `json:"routeRules"`
+	RuleSets         int                     `json:"ruleSets"`
+	DNSRules         int                     `json:"dnsRules"`
+	DNSServers       int                     `json:"dnsServers"`
 	// FindProcess and AutoDetectInterface are configuration intents, not a claim that the platform
 	// granted the capability.
 	FindProcess         bool `json:"findProcess"`
@@ -60,15 +74,20 @@ func AnalyzeConfig(configContent string) (*StringBox, error) {
 		return nil, err
 	}
 	analysis := ConfigAnalysis{
-		Parsed:    true,
-		Platform:  runtime.GOOS + "/" + runtime.GOARCH,
-		BuildQUIC: C.WithQUIC,
-		Inbounds:  len(options.Inbounds),
-		Outbounds: len(options.Outbounds),
-		Endpoints: len(options.Endpoints),
-		Services:  len(options.Services),
-		Providers: len(options.Providers),
+		Parsed:         true,
+		Platform:       runtime.GOOS + "/" + runtime.GOARCH,
+		BuildQUIC:      C.WithQUIC,
+		BuildID:        analysisBuildID(),
+		ConfigRevision: analysisRevision(configContent),
+		Schema:         options.Schema,
+		Inbounds:       len(options.Inbounds),
+		Outbounds:      len(options.Outbounds),
+		Endpoints:      len(options.Endpoints),
+		Services:       len(options.Services),
+		Providers:      len(options.Providers),
 	}
+	analysis.Findings, analysis.PendingProviders = analyseDeclarations(&options)
+	analysis.Checks = ConfigChecks{Parsed: true, DeclarationsChecked: true}
 	if options.Route != nil {
 		analysis.RouteRules = len(options.Route.Rules)
 		analysis.RuleSets = len(options.Route.RuleSet)
