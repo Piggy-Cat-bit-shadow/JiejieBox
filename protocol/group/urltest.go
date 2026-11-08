@@ -819,7 +819,12 @@ type URLTestGroup struct {
 	// real traffic. That is a data race, and reading them separately could yield two different
 	// generations within one operation. Publishing them together means a reader loads once and
 	// sees a consistent pair.
-	selected                     atomic.Pointer[selectedState]
+	selected atomic.Pointer[selectedState]
+	// probeCursorTag is the tag the previous health round started its stale tail AFTER, so the order a
+	// large provider is walked in rotates instead of always beginning with the same member. It is
+	// anchored on a tag rather than an index because members are added, removed and reordered between
+	// rounds; see orderProbeMembers.
+	probeCursorTag               atomic.Pointer[string]
 	interruptGroup               *interrupt.Group
 	interruptExternalConnections bool
 	access                       sync.Mutex
@@ -1254,9 +1259,108 @@ func (g *URLTestGroup) runHealthRound(ctx context.Context, force bool) (result m
 		}
 	}()
 
-	result = URLTestOutboundsWithTarget(ctx, g.outbound, g.history, g.logger, g.outbounds, g.link, g.expected, g.interval, force, TestHistoryHealth)
+	members, nextCursorTag := g.orderHealthRoundMembers()
+	if nextCursorTag != "" {
+		g.probeCursorTag.Store(&nextCursorTag)
+	}
+	result = URLTestOutboundsWithTarget(ctx, g.outbound, g.history, g.logger, members, g.link, g.expected, g.interval, force, TestHistoryHealth)
 	g.performUpdateCheck()
 	return result, nil
+}
+
+// orderHealthRoundMembers returns this round's member order and the cursor anchor for
+// the next round.
+func (g *URLTestGroup) orderHealthRoundMembers() ([]adapter.Outbound, string) {
+	selectedTag := ""
+	if state := g.selected.Load(); state != nil {
+		switch {
+		case state.tcp != nil:
+			selectedTag = state.tcp.Tag()
+		case state.udp != nil:
+			selectedTag = state.udp.Tag()
+		}
+	}
+	afterTag := ""
+	if cursor := g.probeCursorTag.Load(); cursor != nil {
+		afterTag = *cursor
+	}
+	var hasEvidence func(tag string) bool
+	if g.history != nil {
+		hasEvidence = func(tag string) bool {
+			return g.history.LoadURLTestHistoryFor(tag, g.scope) != nil
+		}
+	}
+	return orderProbeMembers(g.outbounds, selectedTag, hasEvidence, afterTag)
+}
+
+// orderProbeMembers puts the members a health round should submit first, first.
+//
+// The automatic round used to walk the member list in configuration order: stable, but
+// arbitrary, and identical every round. With a provider of thousands of members the
+// same head was always measured before the same tail, and the member live traffic was
+// actually using had no special place. The order below serves what is load-bearing
+// first and still rotates the rest:
+//
+//  1. the SELECTED member - live traffic depends on its evidence being current;
+//  2. members with NO health evidence for this target - untested, or a failed check
+//     deleted their entry; they need a measurement more than a fresh one does;
+//  3. everybody else (evidence that is stale), starting AFTER the tag the previous
+//     round started with, so successive rounds do not always begin at the same member.
+//
+// The rotation anchor is a TAG, not an index: a member added or removed between rounds
+// would shift every index silently. When the anchor is gone the tail simply starts at
+// the top of the remaining order, which is a stable re-anchor rather than a random one.
+//
+// The order is only a submission order. Coverage does not depend on it: every member
+// whose evidence is stale is still submitted (the probe batch bounds concurrency, not
+// membership), and a forced round skips the freshness check entirely.
+func orderProbeMembers(members []adapter.Outbound, selectedTag string, hasEvidence func(tag string) bool, afterTag string) (ordered []adapter.Outbound, nextAfter string) {
+	if len(members) < 2 {
+		return members, ""
+	}
+	ordered = make([]adapter.Outbound, 0, len(members))
+	var untested, stale []adapter.Outbound
+	if selectedTag != "" {
+		for _, member := range members {
+			if member != nil && member.Tag() == selectedTag {
+				ordered = append(ordered, member)
+				break
+			}
+		}
+	}
+	for _, member := range members {
+		if member == nil {
+			continue
+		}
+		tag := member.Tag()
+		if tag == selectedTag {
+			continue
+		}
+		if hasEvidence != nil && hasEvidence(tag) {
+			stale = append(stale, member)
+		} else {
+			untested = append(untested, member)
+		}
+	}
+	ordered = append(ordered, untested...)
+	if len(stale) == 0 {
+		return ordered, ""
+	}
+	start := 0
+	if afterTag != "" {
+		for index, member := range stale {
+			if member.Tag() == afterTag {
+				start = (index + 1) % len(stale)
+				break
+			}
+		}
+	}
+	// The anchor for the next round is the member this round starts the tail with, so
+	// successive rounds advance one member at a time and wrap at the end.
+	nextAfter = stale[start].Tag()
+	ordered = append(ordered, stale[start:]...)
+	ordered = append(ordered, stale[:start]...)
+	return ordered, nextAfter
 }
 
 // queueForcedRecheck records that a forced round is owed and ensures a worker will run it.
