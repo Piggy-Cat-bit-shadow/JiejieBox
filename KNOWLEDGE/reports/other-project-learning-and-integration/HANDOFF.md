@@ -1,6 +1,6 @@
-# HANDOFF —— 01 交接给 02
+# HANDOFF —— 阶段交接（当前：02 → 03）
 
-本文件给下一阶段可直接使用的 API/owner/调用点、阅读缓存与未确认事项。**新上下文先读本文件与 `stages/01.md`，再按 `KNOWLEDGE/INDEX.md` 的导航补本阶段源码增量。**
+本文件给下一阶段可直接使用的 API/owner/调用点、阅读缓存与未确认事项。**新上下文先读本文件与 `stages/02.md`，再按 `KNOWLEDGE/INDEX.md` 的导航补本阶段源码增量。**
 
 ## 1. 阅读缓存（不要重复全文读入）
 
@@ -34,7 +34,8 @@
 | 01 代码提交 | `503a18b55a7cb53ca8aade3b90e69d5683832552` |
 | 01 文档/收尾提交 | `dd6fd606bcf9`、`fbb339e6212`、`37b666f7a6b`（含一处代码注释修正）、`b8116e0ac4e`、`99095e05d4e`，以及其后的收尾提交（均不改运行时行为） |
 | 02 进入时 HEAD | `11933a682398005a079669499b0e4cb51652a2e8`（= `origin/testing`） |
-| 02 代码提交 | 见 `stages/02.md`（提交后回填）；随后是 02 文档提交 |
+| 02 代码提交 | `99fd6ee23d98` |
+| 02 文档/记录提交 | `d14933eada2`、`b004a87c983`、`247496c4872`（均不改运行时） |
 | 增量范围 | 02 触及 `common/resourceguard`、`common/tls`、`protocol/anytls`、`protocol/mieru`、`service/oomkiller`；这些路径在 v0.1.39→02 前无生产代码变更 |
 
 ### 已确认事实
@@ -51,11 +52,11 @@
 - `KNOWLEDGE/README.md` 顶部仍写“当前产品目标为 v0.1.39”，而 `CALIBRATION-2026-11-08.md` 与 `BASELINE.md` 顶部已到 v0.1.44。属文档漂移，本轮不改写历史段落；使用基线以 `BASELINE.md` 顶部为准。
 - `power-mobile-lifecycle.md` 的旧句记录“Go 1.26.10 下通过”，本机是 Go 1.25.5；旧句保留，本轮新增小节单独标注当前环境。
 
-## 2. 01 交付给 02 的接口（可直接使用）
+## 2. 01 交付给 02 的接口（对 03 仍有效）
 
 | 事项 | 位置 | 约定 |
 |---|---|---|
-| 进程压力 | `Service.pressure` / `Service.MemoryPressure()` / `oomkiller.MemoryPressure(ctx)` | 02 不得新增采样器；需要新信号时先改 owner |
+| 进程压力 | `Service.pressure` / `Service.MemoryPressure()` / `oomkiller.MemoryPressure(ctx)` | 03/04 不得新增采样器；需要新信号时先改 owner |
 | 准入 | `resourceguard.FromContext(ctx)`、`Guard.Acquire(ctx, class)`、`Permit.Release/Wait` | 许可必须在创建返回时释放；不得包装返回连接 |
 | 嵌套标记 | `resourceguard.WithHeldPermit/WithHeldPermit(ctx)` | 跨 detour/代理链只持一份 |
 | 类别 | `common/trafficclass.WithClass` / `FromContext` | interactive/realtime 才用预留；02 若扩展类别需同步两入口 |
@@ -74,7 +75,7 @@
 | Cronet / Naive | `protocol/naive`、`transport/http`；`cronet-go` pin（29 个 native 模块 controlled） | 引擎初始化、引擎驻留、native 连接创建是三类事实；`Start` gate 不等于 native 覆盖 |
 | 类别绑定 | `route/conn.go` 的 `NewConnection` / `NewPacketConnection`，各一处 `trafficclass.WithClass` | 不要在每个协议里重新判断类别 |
 
-## 3. 02 开工清单（建议顺序）
+## 3. 02 开工清单（历史保留；03 用 §6/§7）
 
 先做一次启动自检，确认从干净状态开始：
 
@@ -98,7 +99,7 @@ go test ./service/oomkiller ./common/resourceguard -count=1
 | 项 | 状态 | 说明 |
 |---|---|---|
 | iOS NE 真机观测 | `BLOCKED_BY_ENVIRONMENT` | 无设备；`memoryReclaim` 在 NE 的真实内容未设备验证 |
-| 本提交的 CI | `NOT_RUN` | 本地结果不等于 CI；如需 `VERIFIED_CI` 必须给运行号与 SHA |
+| 本提交的 CI（02） | `VERIFIED_CI` | `Verify` run 42474314237，head `d14933e`，`verify` + `race checks` 均 success；其后的记录提交只改文档 |
 | 平台标签构建 | `NOT_RUN` | 只跑了默认 `go build ./...` |
 | 客户端消费 `memoryReclaim` | `UNKNOWN` | 客户端 schema 不需要它；是否有 UI/诊断消费由 08/客户端决定，核心不假设 |
 | 客户端 `clients/android` 本地分支 | 已收尾 | 工作树已恢复到父仓 pin `c783710`（`git status` 干净）。原先检出的本地分支 `fix/libbox-stringbox-callsites`（tip `9d15717`，含 2 个仅本地提交）**未被删除**；需要时 `git -C clients/android checkout fix/libbox-stringbox-callsites` 恢复。02 不需要该分支的代码 |
