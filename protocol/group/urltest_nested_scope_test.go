@@ -8,7 +8,6 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	C "github.com/sagernet/sing-box/constant"
-	"github.com/sagernet/sing/common/batch"
 	N "github.com/sagernet/sing/common/network"
 
 	"github.com/stretchr/testify/require"
@@ -67,7 +66,7 @@ func TestNestedGroupIsMeasuredAgainstTheParentTarget(t *testing.T) {
 		"the test is only meaningful while the parent and child targets differ")
 
 	// Run one batch directly so the set of leaves it considered can be inspected.
-	runner, _ := batch.New(context.Background(), batch.WithConcurrencyNum[any](10))
+	runner := newProbeBatch(nil, 10, 20)
 
 	testBatch := &urlTestBatch{
 		batch:    runner,
@@ -161,7 +160,8 @@ func TestNestedGroupCycleTerminates(t *testing.T) {
 	loop.group.Store(selfReferential)
 	manager.byTag = map[string]adapter.Outbound{"loop": loop}
 
-	runner, _ := batch.New(context.Background(), batch.WithConcurrencyNum[any](10))
+	runner := newProbeBatch(nil, 10, 20)
+	defer runner.Wait()
 	testBatch := &urlTestBatch{
 		ctx:      context.Background(),
 		outbound: manager,

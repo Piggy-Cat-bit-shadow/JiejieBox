@@ -23,7 +23,6 @@ import (
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
-	"github.com/sagernet/sing/common/batch"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -1285,7 +1284,7 @@ type urlTestBatch struct {
 	// scope is the target every measurement in this batch shares, so results are stored and
 	// freshness is judged against the right key.
 	scope   urltest.MeasurementScope
-	batch   *batch.Batch[any]
+	batch   *probeBatch
 	checked map[string]bool
 	groups  []adapter.OutboundGroup
 	// mode decides which evidence layer this round may write.
@@ -1351,7 +1350,7 @@ func URLTestOutboundsWithTarget(ctx context.Context, outboundManager adapter.Out
 	// Cancelling and joining in a defer makes the guarantee independent of how the function exits.
 	// A panic still propagates; what changes is that it propagates with nothing left behind.
 	roundCtx, cancelRound := context.WithCancel(ctx)
-	b, _ := batch.New(roundCtx, batch.WithConcurrencyNum[any](10))
+	b := newProbeBatch(cancelRound, 10, 20)
 
 	// The defer is the ABORT guarantee, not the normal path.
 	//
