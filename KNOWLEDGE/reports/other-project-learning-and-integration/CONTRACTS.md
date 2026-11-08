@@ -235,7 +235,7 @@
 | 语义 | host 只 `ToLower` 一次；keyword 字节精确（不再小写）；空 host=false；空 keyword=任意非空 host；不复制 Anywhere tier/最长后缀 |
 | 消费方 | route/DNS/headless 的 `NewDomainKeywordItem` 不变；`String()` 不变 |
 
-## 4. 后续阶段的接口草案
+## 3.7 配置轻量分析（07 C01 首批）
 
 ### 02（预算与真实高成本创建）—— 已完成
 

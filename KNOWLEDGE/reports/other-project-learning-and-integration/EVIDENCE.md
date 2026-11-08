@@ -374,7 +374,7 @@ go build ./...                                        # exit 0
 
 ## E26 06 F02：纯规则子结果缓存评估（不采纳）
 
-| 项 | 状态 | 说明 |
+## E13 未验证 / 边界
 |---|---|---|
 | iOS NetworkExtension 真机 | `BLOCKED_BY_ENVIRONMENT` | 需设备；本轮没有运行 NE，`memoryReclaim` 在 NE 下的实际内容未设备验证 |
 | CI 对本提交的运行 | `VERIFIED_CI`（37b666f） | 见 E14：run 42471833521 的 `verify` 与 `race checks` 均 success；其后的文档提交不复用该结论 |

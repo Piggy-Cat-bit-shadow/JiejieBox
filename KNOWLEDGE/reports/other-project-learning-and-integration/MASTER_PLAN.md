@@ -6,7 +6,7 @@
 
 | 项 | 值 |
 |---|---|
-| 阶段 | 05（P01–P04、D01–D02）——**IN_PROGRESS**（P01 已完成；P02–P04、D01–D02 未开始）。06 仅预置 F01 首批切片（`stages/06.md`），未正式开工；最早未闭环阶段仍是 05 |
+| 阶段 | 07（C01–C06）——**IN_PROGRESS**（C01 轻量分析入口已落地；C02–C06 未开始，见 `stages/07.md`）。05/06 的未完成项保留，不阻塞本阶段 |
 | 02 结束 revision | `afdd3b3cf7c` |
 | 04 进入时 HEAD | `a6f1ca55f5455fdaf88d41b030579ac1b41119df`（= `origin/testing`，无需同步） |
 | 03 代码提交 | `cd1d8160e3c` |
@@ -56,7 +56,7 @@
 | F03 | Provider/规则下载解析构建的瞬时预算、延期与旧结果 | 06 | I | `PENDING` | **G01 的“构建占用”字段由本项承接** |
 | F04 | 流式文件产物、兼容 manifest、mmap 租约与崩溃恢复 | 06 | I | `PENDING` | — |
 | F05 | 应用侧预编译与扩展加载兼容协议的落地评估 | 06 | E | `PENDING` | — |
-| C01 | 轻量 ConfigDocument/Analysis 与完整校验分层 | 07 | I | `PENDING` | — |
+| C01 | 轻量 ConfigDocument/Analysis 与完整校验分层 | 07 | I | `PENDING` | 首批：`libbox.AnalyzeConfig` 解析-only projection（计数/平台/QUIC 能力），不构造 Box；分层测试（可解析但构造失败）通过。C02 能力事实与 declared/default/effective 未做 |
 | C02 | 复用 schema/registry/平台事实生成生效与能力报告 | 07 | I | `PENDING` | — |
 | C03 | Provider 部分更新与提交状态 ApplyReport | 07 | I | `PENDING` | — |
 | C04 | ChangePlan 按域执行、依赖闭包和多种 revision/epoch | 07 | I | `PENDING` | 01 核实 epoch 与资源身份分离已存在于 runtimecoord |

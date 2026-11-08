@@ -221,3 +221,12 @@ go test ./service/oomkiller ./common/resourceguard -count=1
 | 证据 | E25；差分 + race + bench（1024 miss 14.1µs→199ns，late hit 18.5µs→184ns）；`go build ./...` |
 | 边界 | F01 未结案：真实 corpus 阈值、构建预算、并发更新、SRS/headless 未验 |
 | F02 | 评估不采纳：`explorations/rule-subresult-cache-2026-11-08.md`（无 corpus 命中率；356ns vs 55ns） |
+
+## 14. 07 C01 首批交接
+
+| 事项 | 结果 |
+|---|---|
+| 代码 | `b11cd191c24`：`libbox.AnalyzeConfig`（parse-only JSON projection，不构造 Box） |
+| 证据 | E27；分析/格式测试 + `-race` + `go build ./...` |
+| 边界 | 只有声明事实；C02 能力/默认/生效与原因、完整 CheckConfig 分层未做 |
+| 唯一下一动作 | 07 C01 余项+C02：能力事实与 declared/default/effective 报告；随后 07-B（C03 ApplyReport） |
