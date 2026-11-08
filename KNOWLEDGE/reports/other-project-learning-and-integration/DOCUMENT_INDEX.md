@@ -17,7 +17,7 @@
 | `stages/01.md` | 阶段 01 改动、验证、终态 | 同上 | `SANITIZED` | 同上 | 见文末 |
 | `stages/02.md` | 阶段 02 改动（G02–G06）、验证、终态 | 11933a6 + 99fd6ee | `SANITIZED` | 收尾提交 | 见文末 |
 | `stages/03.md` | 阶段 03 改动（B01–B06）、验证、终态 | afdd3b3 + cd1d816 | `SANITIZED` | 收尾提交 | 见文末 |
-| `stages/04.md` | 阶段 04 批 1：residency owner 盘点、XHTTP XMUX 库存、有界关闭诊断 | 8022cdf + 6c10b42/f523e49/9a04cc1 | `SANITIZED` | 收尾提交 | 见文末 |
+| `stages/04.md` | 阶段 04 批 1：residency owner 盘点、XHTTP XMUX 库存、有界关闭诊断 | 8022cdf + 6c10b42/f523e49/9a04cc1 | `SANITIZED` | `91c0c292db6` | 见文末 |
 | `explorations/data-plane-byte-budgets-2026-11-08.md` | 字节预算：XHTTP 落地、其余积压点边界与重开条件 | afdd3b3 + cd1d816 | `SANITIZED` | 收尾提交 | 见文末 |
 | `explorations/quic-shared-offer-admission-2026-11-08.md` | QUIC 共享 offer 准入的跨仓 hook：不实施证据 | 11933a6 + pin 1ef2597 | `SANITIZED` | 收尾提交 | 见文末 |
 | `explorations/cronet-native-creation-coverage-2026-11-08.md` | Cronet 原生创建覆盖的边界与阻断 | 11933a6 + pin 362e63b | `SANITIZED` | 收尾提交 | 见文末 |
@@ -67,5 +67,9 @@
 | 03 推送结果 | `afdd3b3cf7c..21f383b1fe7  testing -> testing`（含代码 `cd1d8160e3c` 与文档提交 `21f383b1fe7`） |
 | 03 远端 refs | `git ls-remote origin refs/heads/testing` → `21f383b1fe7b1d6d7efde2d0e570116e18954b94` |
 | 03 CI 核验 | 前一 run 42475816951（head `21f383b`）被记录推送取消；最终 head `5bcded4` 的 `Verify` run [42476106354](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42476106354) **success**（`VERIFIED_CI`，仅对该 SHA 的树；其后的记录回填提交只改文档） |
+| 04 批 1 推送结果 | `8022cdf8153..91c0c292db6  testing -> testing`（3 个代码提交 + 文档提交 `91c0c292db6`；远端提示仓库已迁移为 `Piggy-Cat-bit-shadow/JiejieBox`） |
+| 04 批 1 远端 refs | `git ls-remote origin refs/heads/testing` → `91c0c292db6b6024bb1a83f619ee7e15d2850665` |
+| 04 批 1 远端回读 | raw HTTP 200：`https://raw.githubusercontent.com/Piggy-Cat-bit-shadow/JiejieBox/91c0c292db6…/KNOWLEDGE/reports/other-project-learning-and-integration/stages/04.md`，内容与本地一致 |
+| 04 批 1 CI | 推送触发 `Verify` run [42483227952](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42483227952)（head `91c0c292db6`）；推送时 in_progress，结论见本条之后的回填记录 |
 | 工作树收尾（01/02） | 01 收尾后干净；02 收尾把外部 Apple pin 改动恢复后再次干净：`git status --porcelain` 为空、三个子模块无 `+`、专题链接检查 0 处失效 |
 | 状态 | `REMOTE_VERIFIED`（`SANITIZED` / `LOCAL_COMMITTED` / `REMOTE_VERIFIED`） |
