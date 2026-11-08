@@ -19,6 +19,7 @@
 | `stages/03.md` | 阶段 03 改动（B01–B06）、验证、终态 | afdd3b3 + cd1d816 | `SANITIZED` | 收尾提交 | 见文末 |
 | `stages/04.md` | 阶段 04 批 1–3：residency owner 盘点、XMUX 库存、关闭诊断、共享 offer、R03/R04/R08 结案 | 2d9b848 + 64cfa9a + 文档 | `SANITIZED` | 批 1 `91c0c292db6`；批 2–3 见下 | 见文末 |
 | `stages/05.md` | 阶段 05 P01：探测队列交互优先/后台老化 + 每轮有界生产 | 0dfb5e4 + f59f339/ae185ac | `SANITIZED` | 收尾提交 | 见文末 |
+| `stages/06.md` | 阶段 06 F01 预置：domain_keyword 编译匹配 + 阈值/回退 | b804292 + 26296c3 | `SANITIZED` | 见下 | 见文末 |
 | `explorations/lazy-heavy-runtime-2026-11-08.md` | R03 descriptor/runtime 拆分与 R04 never-built 惰性 device 的不采纳评估 | c77671b + WG 复跑 | `SANITIZED` | 收尾提交 | 见文末 |
 | `explorations/endpoint-close-parallel-2026-11-08.md` | R08 endpoint 子 scope 并行关闭：合成测量、依赖与不采纳条件 | c77671b | `SANITIZED` | 收尾提交 | 见文末 |
 | `explorations/data-plane-byte-budgets-2026-11-08.md` | 字节预算：XHTTP 落地、其余积压点边界与重开条件 | afdd3b3 + cd1d816 | `SANITIZED` | 收尾提交 | 见文末 |
@@ -50,6 +51,7 @@
 | 04 收尾 | `80fe4bafe1b268f280ef57d7ac522cebc9e1cf02` | `test(adapter): cover the named component path of the close watchdog`（Start 注册组件的名字进入关闭报告；嵌套 scope 各自一次性） |
 | 05 P01 批 1 | `f59f339ab396df4839a11f32536e9e308e3b81b8` | `feat(urltest): order the probe queue by origin with background aging`（交互优先、每 3 次交互老化一个后台、取消清理、幂等释放） |
 | 05 P01 有界生产 | `ae185aca19618101c940312691d8ce762eeeb428` | `fix(urltest): bound probe production before spawning work`（每轮 10 worker + 有界交接队列；10,000 节点峰值 goroutines 9,650 → 14，全部测量） |
+| 06 F01 预置 | `26296c328f32a2a488e1ab21814b1f536e77eca3` | `feat(rule): compile large domain_keyword sets into a frozen automaton`（≥64 编译、越界回退、随机差分、0 alloc） |
 
 ## 脱敏检查
 
@@ -93,5 +95,7 @@
 | 05 P01 远端 refs | `git ls-remote origin refs/heads/testing` → `3d8c5f998cd22ce0df3e2871b7ef529237b19f62` |
 | 05 P01 CI | `Verify` run [42489837757](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42489837757)（head `3d8c5f998cd`）：`verify` 与 `race checks` 均 **success**（`VERIFIED_CI`，仅对该 SHA 的树；其后的回填提交只改文档） |
 | 05 P01 收尾推送/CI | `cde1c8d9e84..52bf2958f72  testing -> testing`；首个结案 head `cde1c8d9e84` 的 race 因 adapter 测试读取 watchdog 两行之间而失败（已修 `52bf2958f72`）；`Verify` run [42492077283](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42492077283)（head `52bf2958f72`）：`verify` 与 `race checks` 均 **success** |
+| 06 F01 预置推送 | `b804292572e..40916bf4f7a  testing -> testing`（代码 `26296c328f3` + 文档 `40916bf4f7a`） |
+| 06 F01 CI | `Verify` run [42493390111](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42493390111)（head `40916bf4f7a`）；结论见后续回填 |
 | 工作树收尾（01/02） | 01 收尾后干净；02 收尾把外部 Apple pin 改动恢复后再次干净：`git status --porcelain` 为空、三个子模块无 `+`、专题链接检查 0 处失效 |
 | 状态 | `REMOTE_VERIFIED`（`SANITIZED` / `LOCAL_COMMITTED` / `REMOTE_VERIFIED`） |

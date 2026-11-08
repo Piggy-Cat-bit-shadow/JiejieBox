@@ -355,6 +355,23 @@ go build ./...                                         # exit 0
 - CI：head `52bf2958f72` 的 `Verify` run 42492077283 `verify`+`race checks` success（`VERIFIED_CI`，仅对该 SHA）。
   前一 head `cde1c8d9e84` 的 race 失败是 04 批 1 watchdog 测试的读取时序（已修，20 次 `-race` 通过），不是产品缺陷。
 
+## E25 06 F01 预置切片：domain_keyword 编译匹配
+
+```sh
+go test ./route/rule -count=1                         # ok
+CGO_ENABLED=1 go test -race ./route/rule -run 'TestDomainKeywordMatcher' -count=1   # ok
+go test ./route/rule -run '^$' -bench 'BenchmarkDomainKeyword' -benchtime 100ms -count 1
+# Miss/compiled 199.4ns 0 alloc; Miss/loop 14055ns
+# LateHit/compiled 183.9ns; LateHit/loop 18546ns
+go build ./...                                        # exit 0
+```
+
+- 代码提交 `26296c328f3`。≥64 keyword 编译为冻结 Aho–Corasick 自动机；<64、超 4096 pattern、超 1 MiB
+  输入或超 65,536 node 回退原循环。语义差分覆盖空/大写/非 ASCII/非法 UTF-8、空 keyword、node 预算回退、
+  Destination.Fqdn 回退。
+- 等级：`VERIFIED_UNIT`。未验：真实规则 corpus 阈值、构建内存、并发 rule 更新、SRS/headless 路径；F01 未结案。
+- 该切片在 05 尚未闭环时预置；恢复顺序仍以 05-B 为先（见 `stages/05.md`/`stages/06.md`）。
+
 ## E13 未验证 / 边界
 
 | 项 | 状态 | 说明 |

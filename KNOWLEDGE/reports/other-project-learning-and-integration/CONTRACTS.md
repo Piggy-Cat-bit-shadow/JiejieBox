@@ -225,6 +225,16 @@
 | 优先级来源 | 只读 04 的 `adapter.IsBackgroundProbe(ctx)`（`runtimecoord` probe origin），不新增第二来源 |
 | 每轮生产 | `protocol/group/probe_batch.go`：固定 10 worker + 容量 20 交接队列；队列满时遍历阻塞，任务在被接受前受界；`Wait` 幂等、首错取消本轮 |
 
+## 3.6 domain_keyword 编译匹配（06 F01 预置）
+
+| 项 | 值 |
+|---|---|
+| 触发 | `NewDomainKeywordItem` 在 len(keywords) ≥ `domainKeywordCompileThreshold`（64）时尝试编译 |
+| 结构 | Aho–Corasick，构建后冻结为平坦 `nodes`/`edges` 列；只读，无锁 |
+| 回退 | <64、>4096 pattern、总字节 >1 MiB、节点 >65,536：`matcher=nil`，走原 `strings.Contains` 循环；回退不丢规则 |
+| 语义 | host 只 `ToLower` 一次；keyword 字节精确（不再小写）；空 host=false；空 keyword=任意非空 host；不复制 Anywhere tier/最长后缀 |
+| 消费方 | route/DNS/headless 的 `NewDomainKeywordItem` 不变；`String()` 不变 |
+
 ## 4. 后续阶段的接口草案
 
 ### 02（预算与真实高成本创建）—— 已完成

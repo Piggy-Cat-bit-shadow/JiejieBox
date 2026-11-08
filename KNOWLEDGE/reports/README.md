@@ -36,7 +36,7 @@
 | `anywhere-round3/` | Anywhere 第三轮审计、实现和调试交接 |
 | `tun-fast-path/` | TUN Fast Path 的价值评估与验收记录 |
 | `fork-audit-2026-11-04/` | 依赖 fork 审计整改、十仓实测、iOS command socket 路径二次修复 |
-| `other-project-learning-and-integration/` | 本轮“其他项目的学习和缝合”工程：55 项覆盖账、三种账合同、来源核验、证据、阶段交接与未采纳探索（01–04 已完成） |
+| `other-project-learning-and-integration/` | 本轮“其他项目的学习和缝合”工程：55 项覆盖账、三种账合同、来源核验、证据、阶段交接与未采纳探索（01–04 已完成，05 进行中，06 预置 F01） |
 | `ios-selfsign-compat-2026-11-04.md` | 自签兼容全过程：样本分析、五次真机失败、三次 socket 修复、App Group 组名发现与最终打通；含经验与残余风险 |
 
 ## 报告索引

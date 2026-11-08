@@ -212,3 +212,12 @@ go test ./service/oomkiller ./common/resourceguard -count=1
 | 未完成 | P02–P04、D01–D02 |
 | 不要重做 | Box 级 Coordinator、探测 timeout 与槽位的顺序、`IsBackgroundProbe` 优先级来源 |
 | 唯一下一动作 | 05-B（P02/P03）：选中/故障候选优先 + 分轮全覆盖 + 去重键，再做显式省电/稳定槽位 |
+
+## 13. 06 F01 预置（05 仍优先）
+
+| 事项 | 结果 |
+|---|---|
+| 代码 | `26296c328f3`：`route/rule` 大 domain_keyword 编译为冻结自动机；<64/超界回退循环 |
+| 证据 | E25；差分 + race + bench（1024 miss 14.1µs→199ns，late hit 18.5µs→184ns）；`go build ./...` |
+| 边界 | F01 未结案：真实 corpus 阈值、构建预算、并发更新、SRS/headless 未验 |
+| 顺序 | **最早未闭环仍是 05**；下一轮先做 05-B，05 闭环后再回 06（F01 余项 → F02 → 06-B/C） |
