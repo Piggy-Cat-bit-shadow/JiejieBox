@@ -58,8 +58,8 @@ type reclaimActionRecord struct {
 	LowYield bool `json:"lowYield"`
 	// CooldownUntil is set only when this action triggered the low-yield cooldown.
 	CooldownUntil time.Time `json:"cooldownUntil,omitempty"`
-	// Mode records the policy mode the sample was taken under ("network-extension",
-	// "memory-limit", "available" or "none"), because the same bytes mean different things under
+	// Mode records the policy mode the sample was taken under ("network_extension",
+	// "memory_limit", "available" or "none"), because the same bytes mean different things under
 	// a fixed limit and under an available-memory policy.
 	Mode string `json:"mode"`
 }

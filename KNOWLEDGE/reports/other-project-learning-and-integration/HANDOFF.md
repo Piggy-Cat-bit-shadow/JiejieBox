@@ -32,7 +32,7 @@
 | 知识覆盖（广泛） | `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28`（v0.1.34，未移动） |
 | 本轮施工基线 | `25f5c9a638bdae4a1e2bb460641795f10b169bb2`（origin/testing） |
 | 01 代码提交 | `503a18b55a7cb53ca8aade3b90e69d5683832552` |
-| 01 文档提交 | 见 `DOCUMENT_INDEX.md`（本文件所在提交） |
+| 01 文档提交 | `dd6fd606bcf903c645377534a35dbc91d9eed7bd`；核验回填 `fbb339e6212f86f7f1a85998632826f1c76f949e` |
 | 增量范围 | `fc7e400…(v0.1.39)..HEAD` 内 `resourceguard`/`oomkiller`/`tls`/`anytls` 无生产代码变更 |
 
 ### 已确认事实

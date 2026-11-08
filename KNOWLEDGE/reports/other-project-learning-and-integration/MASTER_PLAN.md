@@ -9,9 +9,9 @@
 | 阶段 | 01（S01、G01）——已完成；02 未开始 |
 | 进入阶段时实际 HEAD | `0de1c13dcb355773981c89a13158e532c75f61c3`（testing，落后 `origin/testing` 39 个提交） |
 | 同步后施工基线 | `25f5c9a638bdae4a1e2bb460641795f10b169bb2`（`origin/testing`，2026-11-08 02:08:39 +0800，v0.1.44 后 6 个纯文档提交） |
-| 阶段结束 revision | 见 `stages/01.md` 的 `END_REVISION`（提交后回填） |
+| 阶段结束 revision | 见 `stages/01.md` 的“阶段结束 HEAD”（代码 `503a18b`、文档 `dd6fd60`、核验回填 `fbb339e`） |
 | 知识库覆盖目标 | v0.1.44 专题目标 `3b6ec64f7145a2add99656d47caaa4f22a1cc478`；广泛基线 `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28`（v0.1.34），本轮不移动 |
-| 本轮直接触及区域的知识增量 | `fc7e400243d46a451b2dffbe68cb5a3147c66289..HEAD`（v0.1.39→HEAD）中 `common/resourceguard`、`service/oomkiller`、`common/tls`、`protocol/anytls` 无生产代码变更；变更集中在 provider/outbound/route/TUN/文档 |
+| 本轮直接触及区域的知识增量 | `fc7e400243d46a451b2dffbe68cb5a3147c66289`（v0.1.39）→施工基线 `25f5c9a638bdae4a1e2bb460641795f10b169bb2` 之间，`common/resourceguard`、`service/oomkiller`、`common/tls`、`protocol/anytls` 只有 `protocol/anytls/session_burst_test.go` 一个测试文件变化，无生产代码变更；生产变更集中在 provider/outbound/route/TUN/生成器与文档 |
 
 ## 55 项覆盖矩阵
 

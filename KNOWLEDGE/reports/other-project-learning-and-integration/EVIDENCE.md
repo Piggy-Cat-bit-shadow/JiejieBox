@@ -30,13 +30,13 @@ git submodule update --init clients/apple → e3283104c98c（父仓 pin）
 ## E02 本阶段触及区域的知识增量
 
 ```sh
-git rev-list --count fc7e400243d46a451b2dffbe68cb5a3147c66289..HEAD          # 49
-git diff --name-only fc7e400243d46a451b2dffbe68cb5a3147c66289..HEAD -- '*.go' ':(exclude)*_test.go'
-git log --oneline 3b6ec64f7145a2add99656d47caaa4f22a1cc478..HEAD              # 6 个纯文档提交
+git rev-list --count fc7e400243d46a451b2dffbe68cb5a3147c66289..25f5c9a638bdae4a1e2bb460641795f10b169bb2   # 49
+git diff --name-only fc7e400243d46a451b2dffbe68cb5a3147c66289..25f5c9a638bdae4a1e2bb460641795f10b169bb2 -- '*.go' ':(exclude)*_test.go'
+git log --oneline 3b6ec64f7145a2add99656d47caaa4f22a1cc478..25f5c9a638bdae4a1e2bb460641795f10b169bb2   # 6 个纯文档提交
 ```
 
-- `common/resourceguard`、`service/oomkiller`、`common/tls`、`protocol/anytls` 在 v0.1.39→HEAD 区间**没有生产代码变更**；变更集中在 provider/outbound/route/TUN/生成器与文档。
-- 结果：01 依据的 gate/guard/recorder/timer 代码与当前 HEAD 一致；知识库 `modules/resource-admission.md`（v0.1.39 校准）仍适用。
+- `common/resourceguard`、`service/oomkiller`、`common/tls`、`protocol/anytls` 在 v0.1.39→施工基线区间**没有生产代码变更**；唯一变化是 `protocol/anytls/session_burst_test.go`（测试）。生产变更集中在 provider/outbound/route/TUN/生成器与文档。
+- 结果：01 依据的 gate/guard/recorder/timer 代码与施工基线一致；知识库 `modules/resource-admission.md`（v0.1.39 校准）仍适用。
 - 等级：`VERIFIED_GIT`。
 
 ## E03 参考项目远端 refs（S01）
