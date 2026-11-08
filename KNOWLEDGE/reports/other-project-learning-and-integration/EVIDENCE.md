@@ -306,6 +306,24 @@ go vet -tags "…" ./transport/v2rayquic                                        
   `5a3add01bca` 的 `Verify` run 42485997186 `verify` 与 `race checks` 均 **success**（`VERIFIED_CI`，仅对
   该 SHA 的树；其后的回填提交只改文档）。不证明 sing-quic 库内 pending 的运行行为、Mieru 或 Darwin/NE 设备行为。
 
+## E23 04 批 3：WG 生命周期、惰性重构与并行关闭评估
+
+```sh
+go test -tags "with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_ccm,with_ocm,with_cloudflared,with_usbip,with_openvpn,with_openconnect,with_xhttp,badlinkname" ./transport/wireguard -count=1
+# ok 9.331s（全套）
+# R08 合成测量（临时测试，运行后删除）：8 个独立 scope，每个 cleanup 10ms
+# serial=84ms  parallel=10ms  workers=8  delay=10ms
+```
+
+- 无代码提交：批 3 交付两份探索结案与 R01–R08 终态复核。
+- R04：WG 现有 suspend/wake、rebind、listen_port、teardown、并发关闭测试全部通过；never-built 惰性 device
+  `NOT_ADOPTED_WITH_EVIDENCE`（`explorations/lazy-heavy-runtime-2026-11-08.md`）。
+- R03：descriptor/runtime 拆分 `NOT_ADOPTED_WITH_EVIDENCE`（`DISPROPORTIONATE_REFACTOR`，同报告）。
+- R08：独立 endpoint 子 scope 并行关闭 `NOT_ADOPTED_WITH_EVIDENCE`；合成上界收益只在多个慢 endpoint 时成立，
+  Scope 无独立性元数据（`explorations/endpoint-close-parallel-2026-11-08.md`）。
+- 等级：`VERIFIED_UNIT`（WG 全套）+ `VERIFIED_SOURCE`（结构/依赖分析）；R08 为合成测量，不代表真实分布。
+- 未验证：Darwin/NE 真机；真实大配置中 Provider 构造与 endpoint 关闭占比。
+
 ## E13 未验证 / 边界
 
 | 项 | 状态 | 说明 |

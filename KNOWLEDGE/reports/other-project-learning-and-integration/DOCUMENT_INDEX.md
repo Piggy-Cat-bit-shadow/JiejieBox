@@ -17,7 +17,9 @@
 | `stages/01.md` | 阶段 01 改动、验证、终态 | 同上 | `SANITIZED` | 同上 | 见文末 |
 | `stages/02.md` | 阶段 02 改动（G02–G06）、验证、终态 | 11933a6 + 99fd6ee | `SANITIZED` | 收尾提交 | 见文末 |
 | `stages/03.md` | 阶段 03 改动（B01–B06）、验证、终态 | afdd3b3 + cd1d816 | `SANITIZED` | 收尾提交 | 见文末 |
-| `stages/04.md` | 阶段 04 批 1–2：residency owner 盘点、XHTTP XMUX 库存、有界关闭诊断、v2rayquic 共享 offer、R02/R06 核实 | 2d9b848 + 64cfa9a | `SANITIZED` | 批 1 `91c0c292db6`；批 2 见下 | 见文末 |
+| `stages/04.md` | 阶段 04 批 1–3：residency owner 盘点、XMUX 库存、关闭诊断、共享 offer、R03/R04/R08 结案 | 2d9b848 + 64cfa9a + 文档 | `SANITIZED` | 批 1 `91c0c292db6`；批 2–3 见下 | 见文末 |
+| `explorations/lazy-heavy-runtime-2026-11-08.md` | R03 descriptor/runtime 拆分与 R04 never-built 惰性 device 的不采纳评估 | c77671b + WG 复跑 | `SANITIZED` | 收尾提交 | 见文末 |
+| `explorations/endpoint-close-parallel-2026-11-08.md` | R08 endpoint 子 scope 并行关闭：合成测量、依赖与不采纳条件 | c77671b | `SANITIZED` | 收尾提交 | 见文末 |
 | `explorations/data-plane-byte-budgets-2026-11-08.md` | 字节预算：XHTTP 落地、其余积压点边界与重开条件 | afdd3b3 + cd1d816 | `SANITIZED` | 收尾提交 | 见文末 |
 | `explorations/quic-shared-offer-admission-2026-11-08.md` | QUIC 共享 offer 准入的跨仓 hook：不实施证据 | 11933a6 + pin 1ef2597 | `SANITIZED` | 收尾提交 | 见文末 |
 | `explorations/cronet-native-creation-coverage-2026-11-08.md` | Cronet 原生创建覆盖的边界与阻断 | 11933a6 + pin 362e63b | `SANITIZED` | 收尾提交 | 见文末 |

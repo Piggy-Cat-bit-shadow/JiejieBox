@@ -1,4 +1,4 @@
-# HANDOFF —— 阶段交接（当前：04 批 2 → 批 3）
+# HANDOFF —— 阶段交接（当前：04 → 05）
 
 本文件给下一阶段可直接使用的 API/owner/调用点、阅读缓存与未确认事项。**新上下文先读本文件与 `stages/03.md`，再按 `KNOWLEDGE/INDEX.md` 的导航补本阶段源码增量。**
 
@@ -190,3 +190,14 @@ go test ./service/oomkiller ./common/resourceguard -count=1
 | 证据 | `EVIDENCE.md` E22；`go build -tags DEFAULT_BUILD_TAGS_OTHERS ./...`、`-tags with_quic` 测试与 `-race` 通过 |
 | 未完成 | R03/R04、R01 剩余 owner 与真实终结数、R08、R07 协议级注入；sing-quic/Mieru SDK 共享任务 |
 | 唯一下一动作 | 04 批 3：R03/R04（WG 冷启动、并发首用、teardown/重建）与 R01 剩余 owner 盘点，最后 R08 |
+
+## 11. 04 → 05 交接
+
+| 事项 | 结果 |
+|---|---|
+| 04 终态 | R01–R08 均有终态：4×`IMPLEMENTED_VERIFIED`（R01/R05/R06/R07）、2×`ALREADY_PRESENT_VERIFIED`（R02/R04）、2×`NOT_ADOPTED_WITH_EVIDENCE`（R03/R08）；详见 `MASTER_PLAN.md` 与 `stages/04.md` |
+| 批 3 交付 | 无代码：两份探索结案（`lazy-heavy-runtime`、`endpoint-close-parallel`）+ WG 全套测试复跑 + R01–R08 复核 |
+| 05 可直接用 | `adapter.ResidencyReporter`/`residency`（owner-reach）、XHTTP XMUX 池库存、`adapter.Scope` 有界关闭诊断、v2rayquic 共享 offer、`adapter.IsBackgroundProbe` |
+| 不要重做 | owner 枚举与两个 retire walk 的单一来源；R02 的探测标记；R05 的共享创建形状；R03/R04/R08 已评估（复开条件在探索报告） |
+| 边界 | H2/QUIC 库内缓存、Cronet/Mieru SDK 内部驻留不可观测；Darwin/NE 未验；R08 只有合成测量；WG 冷/热设备成本未测 |
+| 唯一下一动作 | 05-A（P01）：探测队列入口与有界 worker；读 `参考/02_施工队列_04-06.md` 的 05-A 段与 05 提示词 |

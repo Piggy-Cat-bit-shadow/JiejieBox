@@ -170,3 +170,23 @@
 - **代价**：无法在资源上查询“这是探测还是业务”，只能从调用上下文判断；对 SDK 内部探测（Mieru）不可见。
 - **重开条件**：若出现探测建立的长寿命资源（如 SDK 内部 session）需要跨调用复用，才在对应 owner 增加显式
   用途与升级点，并复用同一 context 标记。
+
+## D-04-06 R03/R04 的惰性重型 Runtime 重构不实施，保留现有 suspend/wake
+
+- **决定**：不做 outbound descriptor/runtime 拆分，也不把 WG device 改成 never-built；保留 WG 的
+  `SetIdle/resume`、rebind、listen_port 与 teardown。
+- **依据**：descriptor 化要改写 `adapter.Outbound`、Provider 创建/替换、group 与 route 遍历；WG never-built
+  要重排 TUN/端口/路由/inbound 的启动与失败语义。两者都属跨 owner 对象模型重写，未测到显著收益；现有空闲
+  数据面已由 suspend 停下。WG 全套测试通过。
+- **代价**：未使用 endpoint 的静态构造成本仍在；大 Provider 库的启动成本未优化。
+- **重开条件**：真实大配置测得构造占启动时间/峰值内存显著比例，或大量未用 WG endpoint 的设备构建内存显著；
+  届时有界实施并保留现有启动/失败语义。
+
+## D-04-07 R08 不并行关闭 endpoint 子 scope
+
+- **决定**：保留 `Scope.Close` 的串行逆序与错误聚合；不新增并行组。
+- **依据**：合成上界（8×10ms：serial 84ms vs parallel 10ms）只在多个慢 endpoint 时成立；`Scope` 没有独立性
+  元数据，跨 endpoint 的端口/tun/runtimecoord/全局次序依赖不可从子 scope 推断。强行并行会改完成边界。
+- **代价**：多 endpoint 的关闭时间仍线性累加。
+- **重开条件**：真实 `Box.Close` 的显著耗时被 endpoint 子 scope 支配，且能为可并行组提供显式依赖声明；
+  届时只在已证明独立的组内并行并聚合错误。
