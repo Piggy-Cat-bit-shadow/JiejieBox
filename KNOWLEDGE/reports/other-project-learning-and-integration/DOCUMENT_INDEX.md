@@ -45,4 +45,5 @@
 | 推送结果 | `25f5c9a638b..dd6fd606bcf  testing -> testing`（`git push` exit 0） |
 | 远端 refs | `git ls-remote origin refs/heads/testing` → `dd6fd606bcf903c645377534a35dbc91d9eed7bd`（随后核验回填提交 `fbb339e6212f86f7f1a85998632826f1c76f949e` 亦已推送并回读本文件） |
 | 远端回读 | raw 文件 HTTP 200：`https://raw.githubusercontent.com/Piggy-Cat-bit-shadow/JiejieBox/dd6fd606bc…/KNOWLEDGE/reports/other-project-learning-and-integration/README.md`，内容与本地一致；GitHub API commit `503a18b5…` 存在（parent `25f5c9a6…`，stats +904/−22） |
+| CI 核验 | `Verify` run [42471833521](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42471833521)，head `37b666f7a6b`，`verify` 与 `race checks` 均 success（`VERIFIED_CI`，仅对该 SHA 的树） |
 | 状态 | `REMOTE_VERIFIED`（`SANITIZED` / `LOCAL_COMMITTED` / `REMOTE_VERIFIED`） |

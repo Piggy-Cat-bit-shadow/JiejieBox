@@ -160,12 +160,28 @@ ok  	github.com/sagernet/sing-box/protocol/anytls	5.960s
 - 测试：`TestReportMetadataCarriesTheReclaimRecordNextToTheClientDocument` 用真实 `Recorder` 建 draft、写 `metadata.json`，断言 `memoryReclaim` 与客户端键（`schema`、`peakMemory`）同时存在，且 `actions=1`。
 - 等级：`VERIFIED_UNIT`（真实文件写出）。
 
+## E14 CI（VERIFIED_CI）
+
+```text
+workflow: Verify
+run:      42471833521
+head_sha: 37b666f7a6bb713c3025ce527820a442b899c797
+event:    push (testing)
+result:   success（2026-11-08T10:32Z 启动，约 19 分钟完成）
+jobs:     verify = success；race checks = success
+```
+
+`verify` job 的成功步骤包括：executed-coverage guard 自检、gofmt、client gitlinks 与 ABI pin、ABI pin 失败闭合、依赖 pin 与 release freeze 一致、gomobile 单一来源、嵌套 Go module 完整性、嵌套 test module 类型检查、NetLog parser 测试、build-tag/linkname 门禁、schema 与源一致、pinned-upstream 假设、untagged/tagged 全包构建、kTLS、监听器 MPTCP 默认、build matrix、Cronet provenance。
+
+- 等级：`VERIFIED_CI`，只适用于该 run 与该 SHA 的树。**其后的提交若只改文档，不复用这条 CI 结论去证明代码变化**；代码在本 run 的树里已包含 01 的全部源码改动。
+- 限制：CI 是 Linux `ubuntu-latest`；不证明 Darwin/iOS/Android 设备行为。
+
 ## E13 未验证 / 边界
 
 | 项 | 状态 | 说明 |
 |---|---|---|
 | iOS NetworkExtension 真机 | `BLOCKED_BY_ENVIRONMENT` | 需设备；本轮没有运行 NE，`memoryReclaim` 在 NE 下的实际内容未设备验证 |
-| CI 对本提交的运行 | `NOT_RUN` | 提交后在远端 CI 可能运行；本轮不以本地结果冒称 `VERIFIED_CI` |
+| CI 对本提交的运行 | `VERIFIED_CI`（37b666f） | 见 E14：run 42471833521 的 `verify` 与 `race checks` 均 success；其后的文档提交不复用该结论 |
 | 带平台标签的构建（`with_purego`/`with_utls`/Darwin/Android） | `NOT_RUN` | 默认 `go build ./...` 通过，不代表发行档位 |
 | 回收收益的真实量级 | `UNMEASURED` | 主机测试用模拟 footprint；真实 `GainBytes` 取决于进程与平台 |
 | 常驻/关闭/构建占用观测 | `NOT_IMPLEMENTED` | 归 04/06，见 `MASTER_PLAN.md` 的 G01 拆分 |
