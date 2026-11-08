@@ -79,9 +79,14 @@ func shrinkCloseWatchdog(t *testing.T, timeout time.Duration) {
 // waitForCloseReport blocks until the watchdog has written its report, or fails the test.
 func waitForCloseReport(t *testing.T, logger *lateCleanupLogger) string {
 	t.Helper()
+	// The watchdog writes two lines: the summary and the bounded stack. Wait for BOTH, because under
+	// -race the stack capture can land a little after the summary, and a caller that read the log
+	// between them would see a report with no stack and call it a defect.
 	require.Eventually(t, func() bool {
-		return strings.Contains(logger.captured(), "close is still running")
-	}, 5*time.Second, 5*time.Millisecond, "the watchdog never reported a drain that was still running")
+		captured := logger.captured()
+		return strings.Contains(captured, "close is still running") &&
+			strings.Contains(captured, "close stack, bounded to")
+	}, 5*time.Second, 5*time.Millisecond, "the watchdog never wrote a complete report for a drain that was still running")
 	return logger.captured()
 }
 
