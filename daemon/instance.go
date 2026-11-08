@@ -38,7 +38,10 @@ type Instance struct {
 	urlTestHistoryStorage *urltest.HistoryStorage
 	outboundManager       adapter.OutboundManager
 	endpointManager       adapter.EndpointManager
-	logFactory            log.Factory
+	// providerManager is the box's provider set. It is a narrow interface so a manual refresh
+	// can be tested without a live box, and so this holds only what the refresh needs.
+	providerManager providerSource
+	logFactory      log.Factory
 }
 
 func (s *StartedService) CheckConfig(ctx context.Context, configContent string) error {
@@ -214,6 +217,7 @@ func (s *StartedService) newInstance(ctx context.Context, profileContent string,
 	i.cacheFile = service.FromContext[adapter.CacheFile](ctx)
 	i.outboundManager = service.FromContext[adapter.OutboundManager](ctx)
 	i.endpointManager = service.FromContext[adapter.EndpointManager](ctx)
+	i.providerManager = service.FromContext[adapter.ProviderManager](ctx)
 	i.logFactory = boxInstance.LogFactory()
 	log.SetStdLogger(boxInstance.LogFactory().Logger())
 	return i, nil
@@ -230,6 +234,7 @@ func attachInstance(ctx context.Context) *Instance {
 		urlTestHistoryStorage: service.PtrFromContext[urltest.HistoryStorage](ctx),
 		outboundManager:       service.FromContext[adapter.OutboundManager](ctx),
 		endpointManager:       service.FromContext[adapter.EndpointManager](ctx),
+		providerManager:       service.FromContext[adapter.ProviderManager](ctx),
 		logFactory:            service.FromContext[log.Factory](ctx),
 	}
 }
