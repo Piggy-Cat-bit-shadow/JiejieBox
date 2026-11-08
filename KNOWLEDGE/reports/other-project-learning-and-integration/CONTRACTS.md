@@ -289,3 +289,13 @@
 - **A1/A2（Scope 与 epoch）**：未改；回收仍走既有 executor 与 `releaseAccess`。
 - **A6/A7（缓冲区所有权）**：未触及数据面。
 - **本阶段新增约定**：报告 metadata 只加顶层键；回收记录不改变执行顺序/冷却判定；`trimCaches` 的返回值来自既有 `CacheMemoryReleaser` 合同，不改变其实现。
+
+## 3.8 被动路径解释（08 O01 首批）
+
+| 项 | 值 |
+|---|---|
+| 入口 | `(*libbox.CommandServer).ExplainPath(root, network) (string, error)`，返回 JSON |
+| 数据源 | 既有 `Box.Status(root, network) physicalpath.PathStatus`，唯一来源 |
+| 字段 | root/network、ready、entry/exit、controlPath、controls、hops、failure、unknowns |
+| 副作用 | 无拨号/DNS/session/健康/cache/selection rotation；缺失即 unknown |
+| 未覆盖 | 规则/动作/依赖/cache facts、determined/needs_facts/provider_pending 分类（O01 余项） |
