@@ -340,7 +340,7 @@ go build ./...                                         # exit 0
   waiter 取消在锁内移除，授予/取消同时发生时归还槽位；释放闭包 `sync.Once`。
 - 测试：交互越过已排队后台、后台老化、取消不泄漏槽位、重复释放幂等；既有 coordinator 容量/取消/
   deadline 测试全部仍通过。
-- 等级：`VERIFIED_UNIT`（主机 + race）。未做 2000/10000 饱和回放；P01 未结案。
+- 等级：`VERIFIED_UNIT`（主机 + race）。CI：head `3d8c5f998cd` 的 `Verify` run 42489837757 `verify`+`race checks` success（`VERIFIED_CI`，仅对该 SHA）。未做 2000/10000 饱和回放；P01 未结案。
 
 ## E13 未验证 / 边界
 
