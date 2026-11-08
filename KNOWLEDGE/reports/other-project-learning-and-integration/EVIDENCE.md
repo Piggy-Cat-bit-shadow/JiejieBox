@@ -322,6 +322,7 @@ go test -tags "with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash
 - R08：独立 endpoint 子 scope 并行关闭 `NOT_ADOPTED_WITH_EVIDENCE`；合成上界收益只在多个慢 endpoint 时成立，
   Scope 无独立性元数据（`explorations/endpoint-close-parallel-2026-11-08.md`）。
 - 等级：`VERIFIED_UNIT`（WG 全套）+ `VERIFIED_SOURCE`（结构/依赖分析）；R08 为合成测量，不代表真实分布。
+  CI：head `b8590d75cc8` 的 `Verify` run 42487268576 `verify`+`race checks` success（`VERIFIED_CI`，仅对该 SHA）。
 - 未验证：Darwin/NE 真机；真实大配置中 Provider 构造与 endpoint 关闭占比。
 
 ## E13 未验证 / 边界
