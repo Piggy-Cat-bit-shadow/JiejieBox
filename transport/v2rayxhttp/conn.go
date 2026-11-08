@@ -994,10 +994,13 @@ func (c *packetConn) Write(b []byte) (int, error) {
 // a failed post stops the flusher and is reported by every later Write (the
 // bytes it carried are lost with it — a stream cannot pretend otherwise, and
 // the reference behaves the same way, interrupting its upload pipe and stopping
-// the posts). It does NOT close the session by itself: the download half may be
-// perfectly healthy, so teardown stays with the caller, whose Close releases the
-// pooled slot exactly once. A post failure is therefore never silent, and never
-// leaves a sequence that continues past the hole.
+// the posts). Those bytes, and the queue behind them, are booked as
+// AbandonedBytes and released in the same step, so the ledger zeroes to
+// "delivered + lost" rather than holding a queue nothing will post. It does NOT
+// close the session by itself: the download half may be perfectly healthy, so
+// teardown stays with the caller, whose Close releases the pooled slot exactly
+// once. A post failure is therefore never silent, and never leaves a sequence
+// that continues past the hole.
 type packetUplink struct {
 	conn *packetConn
 
@@ -1036,9 +1039,26 @@ type packetUplink struct {
 	inFlightHighWater int
 	acceptedBytes     uint64
 	postedBytes       uint64
+	// abandonedBytes is the third bucket of the ledger: accepted bytes that a
+	// POST will never deliver — the slice a failed post carried, plus whatever
+	// was still queued when the uplink failed or was aborted. Without it
+	// accepted > posted + pending + in-flight is an unexplained remainder: the
+	// bytes the failure destroyed would be invisible to diagnosis, and the
+	// queue the failure stranded would still be reported as pending although
+	// nothing will ever post it.
+	abandonedBytes uint64
 }
 
 // packetUplinkStats is a consistent snapshot of the uplink's byte accounting.
+//
+// Every snapshot satisfies
+//
+//	AcceptedBytes == PostedBytes + AbandonedBytes + PendingBytes + InFlightBytes
+//
+// That identity is the whole point of the struct: a bucket missing from it is a
+// place where bytes can be silently lost (abandoned) or double counted, and
+// only the sum can tell "this stream delivered its bytes" from "this stream
+// accepted bytes nothing will ever deliver".
 type packetUplinkStats struct {
 	MaxPending        int
 	PendingBytes      int
@@ -1048,6 +1068,7 @@ type packetUplinkStats struct {
 	InFlightHighWater int
 	AcceptedBytes     uint64
 	PostedBytes       uint64
+	AbandonedBytes    uint64
 }
 
 // stats reads the accounting under the queue lock.
@@ -1064,6 +1085,7 @@ func (u *packetUplink) stats() packetUplinkStats {
 		InFlightHighWater: u.inFlightHighWater,
 		AcceptedBytes:     u.acceptedBytes,
 		PostedBytes:       u.postedBytes,
+		AbandonedBytes:    u.abandonedBytes,
 	}
 }
 
@@ -1304,6 +1326,12 @@ func (u *packetUplink) run() {
 		u.inFlightBytes = 0
 		if postErr == nil {
 			u.postedBytes += uint64(len(payload))
+		} else {
+			// The slice left the queue and the server will never see it, so the
+			// bytes are lost with the failure. Moving them to the abandoned
+			// counter is what keeps the ledger closed: they cannot stay pending
+			// (a post owned them) and must not be posted (a seq hole follows).
+			u.abandonedBytes += uint64(len(payload))
 		}
 		u.access.Unlock()
 		if postErr != nil {
@@ -1448,6 +1476,7 @@ func (u *packetUplink) abort(err error) {
 		u.err = err
 	}
 	u.closed = true
+	u.abandonPendingLocked()
 	u.notEmpty.Broadcast()
 	u.notFull.Broadcast()
 	u.access.Unlock()
@@ -1461,9 +1490,29 @@ func (u *packetUplink) fail(err error) {
 	if u.err == nil {
 		u.err = err
 	}
+	u.abandonPendingLocked()
 	u.notEmpty.Broadcast()
 	u.notFull.Broadcast()
 	u.access.Unlock()
+}
+
+// abandonPendingLocked drops the queued bytes of a dead uplink and books them as
+// abandoned, in one step under the queue lock.
+//
+// A failed or aborted uplink will never issue another post: a failure leaves a
+// hole in the seq the server's reorder buffer cannot fill, and an abort means
+// the session is gone. Keeping the bytes would therefore retain up to maxPending
+// of memory for a queue nothing drains, AND report them as PendingBytes — a
+// snapshot claiming deliverable work that does not exist. Releasing the array
+// and counting the bytes is what makes the ledger's zeroing honest instead of
+// just tidy. Caller must hold u.access.
+func (u *packetUplink) abandonPendingLocked() {
+	if len(u.pending) == 0 {
+		u.pending = nil
+		return
+	}
+	u.abandonedBytes += uint64(len(u.pending))
+	u.pending = nil
 }
 
 func (c *packetConn) Close() error {
