@@ -96,6 +96,6 @@
 | 05 P01 CI | `Verify` run [42489837757](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42489837757)（head `3d8c5f998cd`）：`verify` 与 `race checks` 均 **success**（`VERIFIED_CI`，仅对该 SHA 的树；其后的回填提交只改文档） |
 | 05 P01 收尾推送/CI | `cde1c8d9e84..52bf2958f72  testing -> testing`；首个结案 head `cde1c8d9e84` 的 race 因 adapter 测试读取 watchdog 两行之间而失败（已修 `52bf2958f72`）；`Verify` run [42492077283](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42492077283)（head `52bf2958f72`）：`verify` 与 `race checks` 均 **success** |
 | 06 F01 预置推送 | `b804292572e..40916bf4f7a  testing -> testing`（代码 `26296c328f3` + 文档 `40916bf4f7a`） |
-| 06 F01 CI | `Verify` run [42493390111](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42493390111)（head `40916bf4f7a`）；结论见后续回填 |
+| 06 F01 CI | `Verify` run [42493390111](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42493390111)（head `40916bf4f7a`）被后续文档推送取消；最终 head `c6324ac2cb2` 的 run [42493478151](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42493478151) `verify`+`race checks` success |
 | 工作树收尾（01/02） | 01 收尾后干净；02 收尾把外部 Apple pin 改动恢复后再次干净：`git status --porcelain` 为空、三个子模块无 `+`、专题链接检查 0 处失效 |
 | 状态 | `REMOTE_VERIFIED`（`SANITIZED` / `LOCAL_COMMITTED` / `REMOTE_VERIFIED`） |
