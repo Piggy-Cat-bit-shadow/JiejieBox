@@ -6,7 +6,7 @@
 
 | 项 | 值 |
 |---|---|
-| 阶段 | 11（V02）——**IN_PROGRESS**（复用 E20；首个 owner 计划为 v2rayquic 共享 offer 交错；无 11 代码，见 `stages/11.md`）。09/10 未完成项保留 |
+| 阶段 | 11（V02）——**IN_PROGRESS**（仅计划，见 `stages/11.md`）；12 未开始。08–11 均未完成；下一窗口先做 10-A，12 需设备/互通环境。快照见 HANDOFF §19 |
 | 02 结束 revision | `afdd3b3cf7c` |
 | 04 进入时 HEAD | `a6f1ca55f5455fdaf88d41b030579ac1b41119df`（= `origin/testing`，无需同步） |
 | 03 代码提交 | `cd1d8160e3c` |
