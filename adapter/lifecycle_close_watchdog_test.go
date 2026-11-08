@@ -25,6 +25,41 @@ import (
 // The shipping timeout is constant.StopTimeout (five seconds). These tests drive the same code with a
 // short value; nothing else about the path changes.
 
+// TestScopeCloseWatchdogNamesAComponentRegisteredThroughStart covers the production registration
+// path: Scope.Start registers the child close under the component's name, so a component that wedges
+// during Close is reported by that name rather than as a generic cleanup. The Box-level owners that
+// are not started through Start are covered by AddNamed in box.go.
+func TestScopeCloseWatchdogNamesAComponentRegisteredThroughStart(t *testing.T) {
+	shrinkCloseWatchdog(t, 100*time.Millisecond)
+	logger := &lateCleanupLogger{}
+	scope := NewScope(context.Background(), logger)
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	component := &lifecycleFunc{name: "wireguard", start: func(stage StartStage, child *Scope) error {
+		child.Add(func() error {
+			close(entered)
+			<-release
+			return nil
+		})
+		return nil
+	}}
+	require.NoError(t, scope.Start("wireguard", component, StartStateStart))
+
+	closed := make(chan error, 1)
+	go func() { closed <- scope.Close() }()
+	<-entered
+	// The child scope has its own watchdog and may report its inner cleanup first; the assertion is
+	// that the PARENT's report names the component it is stuck in. Both fire at most once.
+	require.Eventually(t, func() bool {
+		return strings.Contains(logger.captured(), "current: close wireguard")
+	}, 2*time.Second, 5*time.Millisecond,
+		"a component registered through Start must be reported by its name")
+
+	close(release)
+	require.NoError(t, <-closed)
+}
+
 // closeDiagnosticsOf reads the diagnostic record under the lock the watchdog uses, so the assertion
 // cannot race a callback that is still in flight.
 func closeDiagnosticsOf(scope *Scope) *closeDiagnostics {
