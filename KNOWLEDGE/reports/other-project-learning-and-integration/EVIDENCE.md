@@ -352,6 +352,8 @@ go build ./...                                         # exit 0
   Coordinator 0/0、goroutines 回到基线。
 - 入口核对：`urltest.Measure` 三个调用方（daemon 原生、Clash 单节点、组测）均经同一 Coordinator。
 - P01 结案为 `IMPLEMENTED_VERIFIED`。等级：`VERIFIED_UNIT`（主机 + race）；未验真实 NE 栈内存与多组叠加。
+- CI：head `52bf2958f72` 的 `Verify` run 42492077283 `verify`+`race checks` success（`VERIFIED_CI`，仅对该 SHA）。
+  前一 head `cde1c8d9e84` 的 race 失败是 04 批 1 watchdog 测试的读取时序（已修，20 次 `-race` 通过），不是产品缺陷。
 
 ## E13 未验证 / 边界
 

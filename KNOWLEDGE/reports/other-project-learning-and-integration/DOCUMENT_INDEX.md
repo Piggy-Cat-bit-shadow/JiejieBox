@@ -92,5 +92,6 @@
 | 05 P01 推送结果 | `0dfb5e41734..3d8c5f998cd  testing -> testing`（代码 `f59f339ab39` + 文档 `3d8c5f998cd`） |
 | 05 P01 远端 refs | `git ls-remote origin refs/heads/testing` → `3d8c5f998cd22ce0df3e2871b7ef529237b19f62` |
 | 05 P01 CI | `Verify` run [42489837757](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42489837757)（head `3d8c5f998cd`）：`verify` 与 `race checks` 均 **success**（`VERIFIED_CI`，仅对该 SHA 的树；其后的回填提交只改文档） |
+| 05 P01 收尾推送/CI | `cde1c8d9e84..52bf2958f72  testing -> testing`；首个结案 head `cde1c8d9e84` 的 race 因 adapter 测试读取 watchdog 两行之间而失败（已修 `52bf2958f72`）；`Verify` run [42492077283](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42492077283)（head `52bf2958f72`）：`verify` 与 `race checks` 均 **success** |
 | 工作树收尾（01/02） | 01 收尾后干净；02 收尾把外部 Apple pin 改动恢复后再次干净：`git status --porcelain` 为空、三个子模块无 `+`、专题链接检查 0 处失效 |
 | 状态 | `REMOTE_VERIFIED`（`SANITIZED` / `LOCAL_COMMITTED` / `REMOTE_VERIFIED`） |
