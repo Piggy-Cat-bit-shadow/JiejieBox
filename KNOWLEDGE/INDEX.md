@@ -23,6 +23,21 @@
 
 下列旧校准入口仍保留各自日期与范围，不能替代上表的新目标章节。
 
+## 2026-11-08 本轮工程导航（Other-project learning and integration）
+
+| 任务 / 关键词 / 符号 | 直接入口 |
+| --- | --- |
+| 本轮 55 项覆盖账、当前阶段、每项终态 | [MASTER_PLAN](../reports/other-project-learning-and-integration/MASTER_PLAN.md) |
+| 三种账（创建许可/排队字节/资源驻留）、owner、计费边界、`resourceGuard`、`memoryReclaim`、`residency` 合同 | [CONTRACTS](../reports/other-project-learning-and-integration/CONTRACTS.md) |
+| 参考项目/依赖 pin/客户端锁文件/闭源边界的来源核验 | [SOURCES](../reports/other-project-learning-and-integration/SOURCES.md) |
+| 本轮采纳/否决依据与删除条件 | [DECISIONS](../reports/other-project-learning-and-integration/DECISIONS.md) |
+| 命令、revision、环境、结果、证据等级 | [EVIDENCE](../reports/other-project-learning-and-integration/EVIDENCE.md) |
+| 01 完成内容与 02 可直接使用的接口/调用点 | [stages/01](../reports/other-project-learning-and-integration/stages/01.md)、[HANDOFF](../reports/other-project-learning-and-integration/HANDOFF.md) |
+| 回收动作的报告反馈（`memoryReclaim`、低收益冷却、cache 条目数） | [power-mobile-lifecycle](modules/power-mobile-lifecycle.md) §4 “回收动作的报告反馈” |
+| 高成本创建准入与既有 OOM 协作 | [resource-admission](modules/resource-admission.md) |
+
+本轮报告与来源核验只描述 01 的实测范围，不是全仓认证，也不移动 `BASELINE.md`。
+
 本索引用来查找资料：根据当前任务、关键词或源码路径，定位需要阅读的模块和章节。
 具体的技术结论及其证据在对应模块中。
 

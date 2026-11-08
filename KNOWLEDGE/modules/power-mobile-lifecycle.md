@@ -143,6 +143,30 @@ iPad 与 macOS 为 **`NOT_RUN` / `SIGNING_OUT_OF_SCOPE`**。这只是一台设�
 
 本次校准中，`go test ./service/oomkiller -count=1` 在 Windows、Go 1.26.10 下通过；该结果不证明 Darwin 回调或设备行为，也不代表运行了竞态检测。
 
+### 回收动作的报告反馈（Reclaim feedback in the OOM report, 2026-11-08）
+
+`service/oomkiller/timer.go` 现在把每次完成的回收动作记入 `reclaimObserver`（`service/oomkiller/reclaim_observation.go`）：
+动作种类（`idle`/`pressure`/`crisis`）、停止层（cache/pools/runtime/cache+gc/network-reset/report-only）、动作前后 footprint
+与收益、L1 真实删除的 cache 条目数（`-1` 表示该 pass 没有这个计数）、低收益判定与冷却到期时间、策略模式。
+报告通过 `Recorder.SetExtraMetadata("memoryReclaim", …)` 把它写成 `metadata.json` 的顶层加性键，**既有客户端键不变**；
+明细只保留最近 8 条，累计值不截断，不逐 pass 追加 `events.jsonl`。
+
+边界：`GainBytes` 是归因给该动作的 footprint 差值，不是 malloc/RSS 精确归因；observer 不参与调度，
+冷却仍由既有 `lowYield` 规则决定。`active/idle/draining`、真实终结与关闭完成仍归驻留账本（后续阶段），
+本模块不声称已有这些计数。
+
+复检：
+
+```sh
+go test ./service/oomkiller -count=1
+go test -race ./service/oomkiller -count=1
+go test ./service/oomkiller -run 'TestReclaimCycleLoadDefinition' -v -count=1
+```
+
+本轮结果（Windows 10 build 19044、Go 1.25.5、主机）：两项包测试与 `-race` 通过；负载回放输出
+`actions=100 suppressed=100 recent=8`。主机结果不证明 Darwin 回调、NE 真机或真实回收量。
+
+
 ### 四个池（The four pools）
 
 `runtimecoord` 的边界遍历必须到达**全部四个**：出站、端点、DNS 传输，以及 HTTP 客户端管理器。第四个曾经连续四轮评审都不可达，因为遍历断言的是捆绑的 `IdleConnectionKeeper`，而不是 `IdleConnectionReleaser`——见 `core-lifecycle-runtime.md` §4 与 `buffer-ownership.md` B22。
