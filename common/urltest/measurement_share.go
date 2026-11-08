@@ -24,42 +24,65 @@ import (
 	"sync"
 )
 
-// sharedMeasurement is one in-flight question. done is closed exactly once.
-type sharedMeasurement struct {
-	done    chan struct{}
-	closed  bool
-	waiters int
+// SharedWait is one in-flight question. The leader publishes the outcome and closes done; a
+// waiter reads the outcome AFTER observing the close, which is the happens-before edge that
+// makes the read safe without a lock.
+type SharedWait struct {
+	done        chan struct{}
+	measurement Measurement
+	err         error
 }
+
+// Done is closed when the leader published the outcome.
+func (w *SharedWait) Done() <-chan struct{} { return w.done }
+
+// Outcome returns the leader's answer. It is valid only after Done is closed.
+func (w *SharedWait) Outcome() (Measurement, error) { return w.measurement, w.err }
 
 // MeasurementShare tracks equivalent in-flight measurements.
 type MeasurementShare struct {
 	access   sync.Mutex
-	inflight map[MeasurementKey]*sharedMeasurement
+	inflight map[MeasurementKey]*SharedWait
 }
 
 // NewMeasurementShare returns an empty share registry.
 func NewMeasurementShare() *MeasurementShare {
-	return &MeasurementShare{inflight: make(map[MeasurementKey]*sharedMeasurement)}
+	return &MeasurementShare{inflight: make(map[MeasurementKey]*SharedWait)}
 }
 
-// Join registers the caller for key.
+// Join registers the caller for key and returns the channel the leader closes.
 //
 // It returns (nil, true) when the caller must perform the measurement itself - either it is the
 // leader, or the key is not a health question and therefore never shared. Otherwise it returns
-// the channel the leader closes when the answer exists.
+// the channel the leader closes when the answer exists; use JoinQuestion to read the outcome.
 func (s *MeasurementShare) Join(key MeasurementKey) (<-chan struct{}, bool) {
+	wait, isLeader := s.JoinQuestion(key)
+	if isLeader {
+		return wait.Done(), true
+	}
+	return wait.Done(), false
+}
+
+// JoinQuestion is Join with the answer handle, for a caller that wants the leader's outcome.
+func (s *MeasurementShare) JoinQuestion(key MeasurementKey) (*SharedWait, bool) {
 	if s == nil || key.Purpose != PurposeHealth {
-		return nil, true
+		return &SharedWait{done: closedChannel()}, true
 	}
 	s.access.Lock()
 	defer s.access.Unlock()
 	if existing, loaded := s.inflight[key]; loaded {
-		existing.waiters++
-		return existing.done, false
+		return existing, false
 	}
-	measurement := &sharedMeasurement{done: make(chan struct{})}
+	measurement := &SharedWait{done: make(chan struct{})}
 	s.inflight[key] = measurement
-	return measurement.done, true
+	return measurement, true
+}
+
+// closedChannel is already-closed, so a non-shared caller's Done never blocks.
+func closedChannel() chan struct{} {
+	done := make(chan struct{})
+	close(done)
+	return done
 }
 
 // Wait blocks until the shared measurement finishes, returning true, or until ctx ends,
@@ -76,21 +99,27 @@ func (s *MeasurementShare) Wait(ctx context.Context, done <-chan struct{}) bool 
 	}
 }
 
-// Finish publishes the answer: it closes the shared channel and removes the entry. It is
-// idempotent, and finishing a key this registry is not serving is a no-op.
-func (s *MeasurementShare) Finish(key MeasurementKey) {
+// Publish stores the leader's outcome, removes the entry and closes the wait. It is idempotent:
+// a late leader cannot close a wait a new leader is already serving.
+func (s *MeasurementShare) Publish(key MeasurementKey, measurement Measurement, err error) {
 	if s == nil {
 		return
 	}
 	s.access.Lock()
 	defer s.access.Unlock()
-	measurement, loaded := s.inflight[key]
-	if !loaded || measurement.closed {
+	wait, loaded := s.inflight[key]
+	if !loaded {
 		return
 	}
-	measurement.closed = true
 	delete(s.inflight, key)
-	close(measurement.done)
+	wait.measurement = measurement
+	wait.err = err
+	close(wait.done)
+}
+
+// Finish publishes an empty outcome; it exists for callers that share the EVENT only.
+func (s *MeasurementShare) Finish(key MeasurementKey) {
+	s.Publish(key, Measurement{}, nil)
 }
 
 // InFlight reports how many questions are being measured right now.

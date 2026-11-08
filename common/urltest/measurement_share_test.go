@@ -4,6 +4,7 @@ package urltest
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -36,7 +37,11 @@ func TestDisplayAndDiagnosticProbesAreNeverShared(t *testing.T) {
 		key.Purpose = purpose
 		done, isLeader := share.Join(key)
 		require.True(t, isLeader)
-		require.Nil(t, done, "a non-health probe always measures for itself")
+		select {
+		case <-done:
+		default:
+			t.Fatal("a non-health probe always measures for itself, and its Done must not block")
+		}
 	}
 	require.Zero(t, share.InFlight())
 }
@@ -84,4 +89,19 @@ func TestTheRegistryTravelsOnTheBoxContext(t *testing.T) {
 	ctx := ContextWithMeasurementShare(context.Background(), share)
 	require.Same(t, share, MeasurementShareFromContext(ctx))
 	require.Nil(t, MeasurementShareFromContext(context.Background()), "no Box means no sharing, not a package-level registry")
+}
+
+func TestAWaitersOutcomeIsTheLeadersAnswer(t *testing.T) {
+	share := NewMeasurementShare()
+	leaderWait, isLeader := share.JoinQuestion(healthKey())
+	require.True(t, isLeader)
+	followerWait, isLeader := share.JoinQuestion(healthKey())
+	require.False(t, isLeader)
+	require.Same(t, leaderWait, followerWait, "equivalent callers share one wait")
+
+	probeErr := errors.New("probe failed")
+	share.Publish(healthKey(), Measurement{}, probeErr)
+	require.True(t, share.Wait(context.Background(), followerWait.Done()))
+	_, err := followerWait.Outcome()
+	require.ErrorIs(t, err, probeErr, "the waiter reads the leader's answer, not its own")
 }
