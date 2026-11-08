@@ -226,5 +226,12 @@
 - **决定**：不新增规则子结果缓存；保留现有匹配路径。
 - **依据**：无真实 corpus 命中率；256 谓词匹配 356ns，模拟 key+查表 55ns，但未计失效/版本/插入/锁竞争，
   且 key 完整性风险高。
-+
+- **重开条件**：真实 trace 显示完整 tuple 重复率 >30% 且规则匹配占路由 CPU 显著比例；先做只读、完整 key、
   显式版本的小缓存。
+
+## D-08-01 被动 Explain 复用 Box.Status，不在桥接层重算
+
+- **决定**：`CommandServer.ExplainPath` 只投影既有 `physicalpath.PathStatus` 为稳定 JSON；不新建 matcher/observer，也不在桥接层重新走路由。
+- **依据**：`Box.Status` 已是值读取且有无副作用测试；桥接层重算会产生第二条真相源并可能触发 preview/拨号。
+- **代价**：当前解释只有路径/状态/unknown，没有规则命中与依赖事实；这些需要 route evaluator 的可选 observer（O01 余项）。
+- **重开条件**：若 08/09 需要规则级解释，在 route evaluator 增加一次性的可选 observer，输出仍回到同一 DTO，不复制决策逻辑。
