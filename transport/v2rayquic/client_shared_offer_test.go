@@ -47,6 +47,13 @@ type fakeDial struct {
 	result    *clientConnection
 	err       error
 	ignoreCtx bool
+	// results, when set, gives each call its own answer by call index (the last
+	// entry repeats). The single result/err pair above stays the default the
+	// existing tests use.
+	results []offerResult
+	// probe runs inside dial, after the call is recorded and before it waits: it
+	// is how a test asserts what the constructor must not be holding.
+	probe func()
 }
 
 func newFakeDial() *fakeDial {
@@ -56,11 +63,16 @@ func newFakeDial() *fakeDial {
 func (d *fakeDial) dial(ctx context.Context) (*clientConnection, error) {
 	d.access.Lock()
 	d.calls++
+	index := d.calls - 1
 	d.dialCtx = append(d.dialCtx, ctx)
 	if d.calls == 1 {
 		close(d.started)
 	}
 	d.access.Unlock()
+
+	if d.probe != nil {
+		d.probe()
+	}
 
 	if d.ignoreCtx {
 		<-d.release
@@ -74,6 +86,9 @@ func (d *fakeDial) dial(ctx context.Context) (*clientConnection, error) {
 
 	d.access.Lock()
 	defer d.access.Unlock()
+	if index < len(d.results) {
+		return d.results[index].conn, d.results[index].err
+	}
 	return d.result, d.err
 }
 

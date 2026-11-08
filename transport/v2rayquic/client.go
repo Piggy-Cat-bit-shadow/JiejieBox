@@ -338,6 +338,19 @@ func (c *Client) Reset() error {
 		if pending.cause == nil {
 			pending.cause = net.ErrClosed
 		}
+		if c.pending == pending {
+			// Hand the slot back: this creation is doomed, and a demand that arrives
+			// after the reset must start a NEW one instead of joining it. The offer
+			// goroutine still owns its own result (its waiters get the cause above and
+			// its late success is closed there), so clearing the slot only stops new
+			// waiters from attaching.
+			//
+			// Leaving it set made the first demand after a network change wait for a
+			// dial that could only ever publish net.ErrClosed — the "cannot dial again
+			// after the change" failure Reset exists to prevent, one connection to the
+			// left of where Close used to cause it.
+			c.pending = nil
+		}
 	}
 	c.connAccess.Unlock()
 
