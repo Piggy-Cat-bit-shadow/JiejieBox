@@ -209,15 +209,15 @@ type transitionCase struct {
 
 func transitionOutboundOptions(server M.Socksaddr) (option.ServerOptions, option.OutboundTLSOptionsContainer, *option.V2RayTransportOptions) {
 	return option.ServerOptions{
-		Server:     server.AddrString(),
-		ServerPort: server.Port,
-	}, option.OutboundTLSOptionsContainer{
-		TLS: &option.OutboundTLSOptions{
-			Enabled:    true,
-			ServerName: transitionServerName,
-			Insecure:   true,
-		},
-	}, &option.V2RayTransportOptions{Type: C.V2RayTransportTypeQUIC}
+			Server:     server.AddrString(),
+			ServerPort: server.Port,
+		}, option.OutboundTLSOptionsContainer{
+			TLS: &option.OutboundTLSOptions{
+				Enabled:    true,
+				ServerName: transitionServerName,
+				Insecure:   true,
+			},
+		}, &option.V2RayTransportOptions{Type: C.V2RayTransportTypeQUIC}
 }
 
 func transitionCases() []transitionCase {
