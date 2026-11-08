@@ -135,6 +135,17 @@ type waiter struct {
 // NewGate builds a gate at the given plan. Limits are clamped to a usable shape rather than
 // accepted as-is: a zero limit would make every acquisition wait forever, which is a
 // configuration error, not a policy.
+// NewBoundedGate is NewGate for a caller that owns one kind of expensive work and has only
+// numbers, not a Config.
+//
+// It exists so a build path (a provider fetch, a remote rule-set compile) can share this
+// package's queue, fair hand-off, bounded wait and per-waiter cancellation instead of growing
+// a second semaphore with its own bugs. The resourceguard policy derived from Config is
+// untouched: this gate is not the dial admission gate and is never resized by pressure.
+func NewBoundedGate(limit int, queue int, wait time.Duration) *Gate {
+	return NewGate(plan{limit: limit, queue: queue, wait: wait}, 0)
+}
+
 func NewGate(initial plan, reserve int) *Gate {
 	if initial.limit < 1 {
 		initial.limit = 1

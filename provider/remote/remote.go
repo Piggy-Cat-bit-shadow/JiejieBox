@@ -22,6 +22,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/provider"
+	"github.com/sagernet/sing-box/common/buildgate"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -369,6 +370,25 @@ func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 	if err := s.ctx.Err(); err != nil {
 		return err
 	}
+	// The build reservation is taken AFTER this provider's own fetch lock, so a provider that
+	// is already mid-fetch cannot consume a reservation it will not use, and two DIFFERENT
+	// providers contend on the shared gate. A refusal is a retryable deferral: the version
+	// currently serving traffic is untouched, which is the whole point of charging the build
+	// rather than the download.
+	buildRelease, buildErr := buildgate.AcquireFromContext(ctx)
+	if buildErr != nil {
+		s.logger.Debug("outbound provider ", s.Tag(), " build deferred: ", buildErr)
+		return buildErr
+	}
+	buildStarted := time.Now()
+	defer func() {
+		buildRelease()
+		if gate := buildgate.FromContext(ctx); gate != nil {
+			stats := gate.Stats()
+			s.logger.Debug("outbound provider ", s.Tag(), " build finished in ", time.Since(buildStarted),
+				" inflight=", stats.Inflight, " admitted=", stats.AdmittedBuilds, " deferred=", stats.Deferred)
+		}
+	}()
 	s.logger.Debug("updating outbound provider ", s.Tag(), " from URL: ", s.logURL)
 	req, err := http.NewRequest(http.MethodGet, s.url, nil)
 	if err != nil {
