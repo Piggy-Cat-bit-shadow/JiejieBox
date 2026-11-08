@@ -13,6 +13,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/resourceguard"
 	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 	N "github.com/sagernet/sing/common/network"
@@ -145,6 +146,12 @@ func classifyDialError(ctx context.Context, err error, transport mieruTransport,
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return dialCallerFailure
 	}
+	if resourceguard.IsLocalRejection(err) {
+		// This process's admission policy refused the underlay, or the requester withdrew while it
+		// waited. Neither is evidence about the far side, so it must not become a transport switch
+		// or a node penalty.
+		return dialLocalFailure
+	}
 	if errors.Is(err, mieruclient.ErrClientIsNotRunning) {
 		// This process's lifecycle, not the requester's: the client was
 		// stopped while this dial was pending.
@@ -166,6 +173,11 @@ func classifyDialError(ctx context.Context, err error, transport mieruTransport,
 	// replaced the chain with a string.
 	if observed != nil {
 		if setupErr := observed.setupFailure(); setupErr != nil {
+			if resourceguard.IsLocalRejection(setupErr) {
+				// The admission refusal was recorded while it still had its type; see
+				// serverDialer.admit. It is this process's decision, not the path's.
+				return dialLocalFailure
+			}
 			if class, classified := classifySocketError(setupErr); classified {
 				return class
 			}
@@ -670,7 +682,7 @@ func newTransportRuntime(spec *transportSpec) (*transportRuntime, error) {
 	if err != nil {
 		return nil, err
 	}
-	serverDialer, err := newServerDialer(spec.dialer, spec.options.Server)
+	serverDialer, err := newServerDialer(spec.dialer, spec.options.Server, spec.guard)
 	if err != nil {
 		return nil, err
 	}
@@ -759,4 +771,7 @@ type transportSpec struct {
 	options  option.MieruOutboundOptions
 	dialer   N.Dialer
 	resolver *resolverBridge
+	// guard is the process admission policy for the underlay's real socket creation. Nil on a
+	// build without a budget.
+	guard *resourceguard.Guard
 }

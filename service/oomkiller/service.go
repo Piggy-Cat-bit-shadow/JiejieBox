@@ -141,6 +141,15 @@ func (s *Service) guardMetadata() any {
 		"timedOut":     gate.TimedOut,
 		"canceled":     gate.Canceled,
 		"released":     gate.Released,
+		// The fast-fail policy is reported separately from the capacity counters: "the limit
+		// refused 3" and "starting 12 more would have been wasted" are different events, and a
+		// reader must not have to infer one from the other.
+		"rateDelayMs":      stats.Rate.Delay.Milliseconds(),
+		"rateWindows":      stats.Rate.Windows,
+		"rateDelayed":      stats.Rate.Delayed,
+		"rateRefused":      stats.Rate.Refused,
+		"rateFastFailures": stats.Rate.FastFailures,
+		"rateRecovered":    stats.Rate.Recovered,
 	}
 }
 

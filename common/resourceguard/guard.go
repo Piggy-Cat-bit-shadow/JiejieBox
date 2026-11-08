@@ -182,6 +182,19 @@ type Guard struct {
 	// period.
 	lowSince time.Time
 
+	// rateConfig is the fast-fail policy's constants, and rate is its state. They are kept in the
+	// guard - not in a second limiter - because this is already the process's creation-policy owner;
+	// a separate type would be a second place that decides whether new work may start.
+	rateConfig rateConfig
+	rate       rateState
+	// rateUntil is the atomic mirror of rate.until. It exists so the common case - no window - is
+	// one atomic load instead of a mutex acquisition on every dial: the rate policy must not add
+	// measurable cost to the path it is supposed to protect.
+	rateUntil atomic.Int64
+	// wait is the cancellable wait the rate policy uses. Nil means a timer. A test installs its own
+	// so the delay can be observed without sleeping through it.
+	wait func(context.Context, time.Duration) error
+
 	shedAccess sync.Mutex
 	shedHooks  []func()
 }
@@ -217,6 +230,8 @@ func NewGuard(config Config, pressure func() Level) *Guard {
 
 		levelSince: time.Now(),
 		now:        time.Now,
+
+		rateConfig: defaultRateConfig().normalized(),
 	}
 	created.gate = NewGate(config.planFor(LevelNormal), config.InteractiveReserve)
 	created.gate.aging = config.StarvationAfter
@@ -283,6 +298,15 @@ func (g *Guard) Acquire(ctx context.Context, class Class) (*Permit, error) {
 	}
 	level, version := g.observe()
 	g.apply(level, version)
+	// The fast-fail policy is deliberately applied AFTER the level is published and BEFORE the
+	// gate is consulted. It is not a capacity decision: a window says the far side has been failing
+	// instantaneously, so starting more work now is waste. The interactive class is exempt, because
+	// a person waiting on this flow must not inherit a background node's failure storm.
+	if class != ClassInteractive {
+		if err := g.rateGate(ctx); err != nil {
+			return nil, err
+		}
+	}
 	return g.gate.Acquire(ctx, class)
 }
 
@@ -385,6 +409,9 @@ type GuardStats struct {
 	Level       Level
 	Transitions uint64
 	Gate        Stats
+	// Rate is the fast-fail policy's view: separate from the gate's capacity counters, so a report
+	// can tell "the limit refused it" from "starting it would have been wasted".
+	Rate RateStats
 }
 
 // Stats reports a consistent snapshot: the level, how often it moved, and the gate's counters.
@@ -406,7 +433,7 @@ func (g *Guard) Stats() GuardStats {
 	g.access.Lock()
 	transitions := g.transitions
 	g.access.Unlock()
-	return GuardStats{Level: level, Transitions: transitions, Gate: g.gate.Stats()}
+	return GuardStats{Level: level, Transitions: transitions, Gate: g.gate.Stats(), Rate: g.rateStats(g.clockNow())}
 }
 
 // FromContext returns the guard registered for this process, or nil.

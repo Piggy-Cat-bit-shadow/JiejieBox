@@ -175,7 +175,7 @@ func TestServerDialerStreamPassesDomainThrough(t *testing.T) {
 	clientConn, serverConn := net.Pipe()
 	defer serverConn.Close()
 	recorder := &recordingDialer{conn: clientConn}
-	serverDialer, err := newServerDialer(recorder, "example.com.")
+	serverDialer, err := newServerDialer(recorder, "example.com.", nil)
 	require.NoError(t, err)
 	conn, err := serverDialer.DialContext(context.Background(), N.NetworkTCP, "example.com:443")
 	require.NoError(t, err)
@@ -195,7 +195,7 @@ func TestServerDialerUDPKeepsTheForkInChargeOfResolution(t *testing.T) {
 	clientConn, serverConn := net.Pipe()
 	defer serverConn.Close()
 	recorder := &recordingDialer{conn: clientConn}
-	serverDialer, err := newServerDialer(recorder, "example.com")
+	serverDialer, err := newServerDialer(recorder, "example.com", nil)
 	require.NoError(t, err)
 
 	packetConn, err := serverDialer.ListenPacket(context.Background(), "udp", "", "192.0.2.5:8966")

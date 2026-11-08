@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/sagernet/sing-box/common/badtls"
 	"github.com/sagernet/sing-box/common/resourceguard"
@@ -186,6 +187,7 @@ func handshakeWithAdmission(ctx context.Context, dial func(ctx context.Context) 
 	if flowClass, loaded := trafficclass.ClassFromContext(ctx); loaded && flowClass.IsHighPriority() {
 		class = resourceguard.ClassInteractive
 	}
+	started := time.Now()
 	permit, err := resourceguard.FromContext(ctx).Acquire(ctx, class)
 	if err != nil {
 		return nil, err
@@ -197,7 +199,9 @@ func handshakeWithAdmission(ctx context.Context, dial func(ctx context.Context) 
 	// Without the marker the outer would hold the only slot while waiting for the inner, and the
 	// inner would wait for the outer to finish - a stall that ends in a queue timeout with
 	// nothing wrong on the network. One logical dial may hold at most one handshake permit.
-	return dial(resourceguard.WithHeldPermit(ctx))
+	conn, dialErr := dial(resourceguard.WithHeldPermit(ctx))
+	resourceguard.FromContext(ctx).ObserveOutcome(started, dialErr)
+	return conn, dialErr
 }
 
 func (d *defaultDialer) dialContext(ctx context.Context, destination M.Socksaddr, echRetry bool) (Conn, error) {

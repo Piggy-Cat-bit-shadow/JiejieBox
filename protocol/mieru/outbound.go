@@ -11,6 +11,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/resourceguard"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -194,7 +195,16 @@ func newTransportSpec(ctx context.Context, label string, options option.MieruOut
 	if err != nil {
 		return nil, err
 	}
-	return &transportSpec{label: label, options: options, dialer: rawDialer, resolver: resolver}, nil
+	return &transportSpec{
+		label:    label,
+		options:  options,
+		dialer:   rawDialer,
+		resolver: resolver,
+		// The process admission policy travels with the spec so the underlay adapter - the seam
+		// where the SDK's newUnderlay becomes a real socket - can bound its creation. It is nil on
+		// every platform without a budget, which keeps the old path.
+		guard: resourceguard.FromContext(ctx),
+	}, nil
 }
 
 // setAliasesLocked keeps the legacy single-client fields pointing at the

@@ -7,9 +7,11 @@ import (
 	"net/netip"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/resourceguard"
 	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
@@ -29,6 +31,11 @@ import (
 type serverDialer struct {
 	dialer N.Dialer
 	server M.Socksaddr
+	// guard is the process admission policy for this underlay's real socket
+	// creation. The SDK's newUnderlay arrives here; the Mux and the encrypted
+	// session live above it, so this is the seam where a creation storm is
+	// still visible as socket work. Nil on a build without a budget.
+	guard *resourceguard.Guard
 
 	// PacketUnderlay.Close only interrupts its read loop with a deadline; it
 	// does not close the PacketConn. The SDK's read loop can then overwrite
@@ -44,7 +51,7 @@ var (
 	_ apicommon.PacketDialer = (*serverDialer)(nil)
 )
 
-func newServerDialer(outboundDialer N.Dialer, server string) (*serverDialer, error) {
+func newServerDialer(outboundDialer N.Dialer, server string, guard *resourceguard.Guard) (*serverDialer, error) {
 	if server == "" {
 		return nil, fmt.Errorf("mieru: server is empty")
 	}
@@ -52,6 +59,7 @@ func newServerDialer(outboundDialer N.Dialer, server string) (*serverDialer, err
 		return &serverDialer{
 			dialer: outboundDialer,
 			server: M.Socksaddr{Fqdn: apicommon.NormalizeDomainName(server)},
+			guard:  guard,
 		}, nil
 	}
 	addr, err := netip.ParseAddr(server)
@@ -61,7 +69,28 @@ func newServerDialer(outboundDialer N.Dialer, server string) (*serverDialer, err
 	return &serverDialer{
 		dialer: outboundDialer,
 		server: M.SocksaddrFrom(addr, 0),
+		guard:  guard,
 	}, nil
+}
+
+// admit bounds one real underlay creation and reports whether a permit is held.
+//
+// The SDK calls this adapter for every newUnderlay; the Mux and the encrypted
+// session are built above it. Bounding here is what caps concurrent socket
+// creation for a transport that has to open a new underlay on fallback or on a
+// full mux, while a reused underlay never reaches this seam at all.
+//
+// The marker is set only on the context of a dial this adapter admitted, so an
+// outer seam that already admitted the logical dial cannot be charged twice.
+func (d *serverDialer) admit(ctx context.Context) (release func(), held bool, err error) {
+	if d.guard == nil || resourceguard.HasHeldPermit(ctx) {
+		return func() {}, false, nil
+	}
+	permit, permitErr := d.guard.Acquire(ctx, resourceguard.ClassNormal)
+	if permitErr != nil {
+		return nil, false, permitErr
+	}
+	return permit.Release, true, nil
 }
 
 func (d *serverDialer) DialContext(ctx context.Context, network string, address string) (net.Conn, error) {
@@ -69,9 +98,25 @@ func (d *serverDialer) DialContext(ctx context.Context, network string, address 
 	if !destination.IsValid() {
 		return nil, fmt.Errorf("mieru: invalid server address %q", address)
 	}
-	conn, err := d.dialer.DialContext(ctx, network, destination)
-	observeSocketDial(ctx, err)
-	return conn, err
+	started := time.Now()
+	release, held, err := d.admit(ctx)
+	if err != nil {
+		// Record the typed admission error for the fallback classifier: the SDK flattens underlay
+		// errors into text, and this ledger is the only place the type survives. Without it a local
+		// budget refusal would read as an unclassified transport failure and could switch
+		// transports or blame the node for this process's own backpressure.
+		observeSocketDial(ctx, err)
+		return nil, err
+	}
+	defer release()
+	dialCtx := ctx
+	if held {
+		dialCtx = resourceguard.WithHeldPermit(ctx)
+	}
+	conn, dialErr := d.dialer.DialContext(dialCtx, network, destination)
+	d.guard.ObserveOutcome(started, dialErr)
+	observeSocketDial(ctx, dialErr)
+	return conn, dialErr
 }
 
 // ListenPacket opens the UDP transport socket.
@@ -92,10 +137,22 @@ func (d *serverDialer) ListenPacket(ctx context.Context, network string, laddr s
 	}
 	destination := d.server
 	destination.Port = expected.Port
-	conn, err := d.dialer.DialContext(ctx, N.NetworkUDP, destination)
+	started := time.Now()
+	release, held, err := d.admit(ctx)
 	if err != nil {
 		observeSocketDial(ctx, err)
 		return nil, err
+	}
+	defer release()
+	dialCtx := ctx
+	if held {
+		dialCtx = resourceguard.WithHeldPermit(ctx)
+	}
+	conn, dialErr := d.dialer.DialContext(dialCtx, N.NetworkUDP, destination)
+	d.guard.ObserveOutcome(started, dialErr)
+	if dialErr != nil {
+		observeSocketDial(ctx, dialErr)
+		return nil, dialErr
 	}
 	observeSocketDial(ctx, nil)
 	tracked := &dialPacketConn{

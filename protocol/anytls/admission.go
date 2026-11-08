@@ -3,6 +3,7 @@ package anytls
 import (
 	"context"
 	"net"
+	"time"
 
 	"github.com/sagernet/sing-box/common/resourceguard"
 	"github.com/sagernet/sing-box/common/trafficclass"
@@ -54,6 +55,7 @@ func dialWithAdmission(ctx context.Context, guard *resourceguard.Guard, dial str
 	if flowClass, loaded := trafficclass.ClassFromContext(ctx); loaded && flowClass.IsHighPriority() {
 		class = resourceguard.ClassInteractive
 	}
+	started := time.Now()
 	permit, err := guard.Acquire(ctx, class)
 	if err != nil {
 		return nil, err
@@ -61,5 +63,10 @@ func dialWithAdmission(ctx context.Context, guard *resourceguard.Guard, dial str
 	defer permit.Release()
 	// The TLS handshake this dial may perform is admitted again at the shared TLS layer. Marking
 	// the context is what stops one handshake being charged twice; see resourceguard.HeldPermit.
-	return dial(resourceguard.WithHeldPermit(ctx), destination)
+	conn, dialErr := dial(resourceguard.WithHeldPermit(ctx), destination)
+	// Report the outcome to the fast-fail policy. A queue refusal never reaches here (Acquire
+	// returned it), so what is reported is a real creation result - which is exactly what the
+	// policy needs to distinguish a failing far side from this process's own backpressure.
+	guard.ObserveOutcome(started, dialErr)
+	return conn, dialErr
 }
