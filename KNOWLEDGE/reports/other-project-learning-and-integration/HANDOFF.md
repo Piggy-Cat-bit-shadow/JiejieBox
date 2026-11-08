@@ -32,7 +32,7 @@
 | 知识覆盖（广泛） | `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28`（v0.1.34，未移动） |
 | 本轮施工基线 | `25f5c9a638bdae4a1e2bb460641795f10b169bb2`（origin/testing） |
 | 01 代码提交 | `503a18b55a7cb53ca8aade3b90e69d5683832552` |
-| 01 文档提交 | `dd6fd606bcf903c645377534a35dbc91d9eed7bd`；核验回填 `fbb339e6212f86f7f1a85998632826f1c76f949e` |
+| 01 文档/收尾提交 | `dd6fd606bcf9`、`fbb339e6212`、`37b666f7a6b`（含一处代码注释修正）、`b8116e0ac4e`、`99095e05d4e`，以及其后的收尾提交（均不改运行时行为） |
 | 增量范围 | `fc7e400…(v0.1.39)..HEAD` 内 `resourceguard`/`oomkiller`/`tls`/`anytls` 无生产代码变更 |
 
 ### 已确认事实
@@ -63,6 +63,17 @@
 
 ## 3. 02 开工清单（建议顺序）
 
+先做一次启动自检，确认从干净状态开始：
+
+```sh
+git status --porcelain=v1          # 应为空（clients/android 已恢复到父仓 pin）
+git submodule status               # clients/* 不应有 '+' 前缀
+git rev-parse HEAD; git ls-remote origin refs/heads/testing   # 需要时先 ff-only 同步
+go test ./service/oomkiller ./common/resourceguard -count=1
+```
+
+然后：
+
 1. 读 `CONTRACTS.md` §1/§4、`MASTER_PLAN.md` 的 G02–G06 行、`KNOWLEDGE/modules/resource-admission.md` 的 AI cautions。
 2. 用 `git log --oneline 25f5c9a..HEAD` 补 02 开始前的源码增量（若远端又前进，先快进同步，记录新 HEAD）。
 3. 真实阶段盘点：QUIC/0-RTT、Cronet 引擎/原生连接、Mieru underlay 目前不在许可覆盖内；按“创建前领取、返回释放”接入，不要包装连接。
@@ -77,7 +88,7 @@
 | 本提交的 CI | `NOT_RUN` | 本地结果不等于 CI；如需 `VERIFIED_CI` 必须给运行号与 SHA |
 | 平台标签构建 | `NOT_RUN` | 只跑了默认 `go build ./...` |
 | 客户端消费 `memoryReclaim` | `UNKNOWN` | 客户端 schema 不需要它；是否有 UI/诊断消费由 08/客户端决定，核心不假设 |
-| `clients/android` 本地回退 | 既有状态 | 本轮未触碰；提交前确认不带入 |
+| 客户端 `clients/android` 本地分支 | 已收尾 | 工作树已恢复到父仓 pin `c783710`（`git status` 干净）。原先检出的本地分支 `fix/libbox-stringbox-callsites`（tip `9d15717`，含 2 个仅本地提交）**未被删除**；需要时 `git -C clients/android checkout fix/libbox-stringbox-callsites` 恢复。02 不需要该分支的代码 |
 
 ## 5. 恢复执行方式
 

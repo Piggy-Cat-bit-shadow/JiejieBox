@@ -18,7 +18,7 @@
 | ID | 范围 | 主责 | 类型 | 状态 | 证据 / 备注 |
 |---|---|---:|---|---|---|
 | S01 | 参考项目、关联依赖、客户端锁文件与闭源边界的来源核验 | 01 | I | `IMPLEMENTED_VERIFIED` | `SOURCES.md`：remote-verified HEAD、目标 pin/source-lock/子仓锁、oixCloud 闭源边界；`VERIFIED_GIT` |
-| G01 | 唯一压力来源、资源观测、实际回收收益反馈与平台内存口径 | 01 | I | `IMPLEMENTED_VERIFIED` | 见下节“G01 范围拆分”；代码 + 单测 + race + 负载定义，`VERIFIED_SOURCE`/`VERIFIED_UNIT` |
+| G01 | 唯一压力来源、资源观测、实际回收收益反馈与平台内存口径 | 01 | I | `IMPLEMENTED_VERIFIED` | 见下节“G01 范围拆分”；调用图/锁序见 `ANALYSIS.md`；代码 + 单测 + race + 负载定义，`VERIFIED_SOURCE`/`VERIFIED_UNIT` |
 | G02 | 预算三类所有权、层级守恒、公平性与本地资源错误分类 | 02 | I | `PENDING` | 01 已交 `CONTRACTS.md` 三种账；02 接 |
 | G03 | TLS/AnyTLS 与 QUIC 真实共享创建、异步认证和 0-RTT 阶段准入 | 02 | I | `PENDING` | 01 核实：现有许可仅覆盖 `dialWithAdmission`/`handshakeWithAdmission`；QUIC/0-RTT 未纳入 |
 | G04 | Cronet 引擎初始化、原生连接创建和复用的真实覆盖 | 02 | I | `PENDING` | 01 记录：cronet-go 29 个 native 模块属 `controlled` pin，引擎启动/驻留/新连接是不同事实 |

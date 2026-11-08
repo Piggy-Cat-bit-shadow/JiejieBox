@@ -24,7 +24,8 @@ git merge --ff-only origin/testing → 快进；HEAD=25f5c9a638b（2026-11-08 02
 git submodule update --init clients/apple → e3283104c98c（父仓 pin）
 ```
 
-- 结果：`testing` = `25f5c9a638bdae4a1e2bb460641795f10b169bb2`，与远端一致；工作树唯一改动是**进入前已存在**的 `clients/android` 子模块回退（`9d15717a85c5`），本轮未触碰。
+- 结果：`testing` = `25f5c9a638bdae4a1e2bb460641795f10b169bb2`，与远端一致。
+- 收尾：阶段结束时 `clients/android` 已从进入前检出的本地分支 `fix/libbox-stringbox-callsites`（tip `9d15717`，2 个仅本地提交）恢复到父仓 pin `c7837107dc01`；子模块工作树干净，分支与提交保留，可 `git -C clients/android checkout fix/libbox-stringbox-callsites` 恢复。该操作没有删除任何提交，也没有进入父仓提交。
 - 等级：`VERIFIED_GIT`。
 
 ## E02 本阶段触及区域的知识增量

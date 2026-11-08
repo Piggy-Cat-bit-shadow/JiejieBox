@@ -8,6 +8,7 @@
 |---|---|---|---|---|---|
 | `README.md` | 专题入口、阅读顺序、阶段状态 | 25f5c9a / 3b6ec64 | `SANITIZED` | `dd6fd606bcf9` | 见文末 |
 | `MASTER_PLAN.md` | 55 项覆盖账、G01 范围拆分、阶段顺序 | 25f5c9a / 3b6ec64 | `SANITIZED` | 同上 | 见文末 |
+| `ANALYSIS.md` | 三类资源调用图、锁序、生命周期、作用域、未审计区域 | 25f5c9a + 503a18b | `SANITIZED` | 收尾提交 | 见文末 |
 | `SOURCES.md` | 参考项目/依赖/客户端锁/闭源边界来源核验 | 25f5c9a；远端 refs 2026-11-08 | `SANITIZED` | 同上 | 见文末 |
 | `CONTRACTS.md` | 三种账、观测键、回收反馈、后续阶段接点、测试接缝 | 25f5c9a + 503a18b | `SANITIZED` | 同上 | 见文末 |
 | `DECISIONS.md` | 8 条采纳/调整/否决与重开条件 | 25f5c9a + 503a18b | `SANITIZED` | 同上 | 见文末 |
@@ -33,7 +34,7 @@
 
 - **范围**：上述新文档全文、被修改段落的 diff、命令块、表格与链接；不含原始日志附件、截图或配置全文。
 - **方法**：模式扫描 + 人工语义复核。扫描类别：凭据/token/API key/私钥/认证头/cookie、私有 IP 段与内部域名、设备/账号标识、用户名绝对路径。主机绝对路径统一改写为 `<workspace>`/`<toolchain>`；公开仓库 URL、公开提交 SHA、公开 Release 编号与主机性能数字保留（必要且有复现价值）。
-- **结果**：未发现需要移除的秘密值；未删除任何真实值（因此无可披露的删除项）。本地 `git status` 显示的 `clients/android` 子模块回退不属于本轮文档，未提交。
+- **结果**：未发现需要移除的秘密值；未删除任何真实值（因此无可披露的删除项）。阶段收尾后父仓工作树不含未提交改动，`clients/apple`、`clients/android`、`clients/desktop` 均与父仓 gitlink 一致（android 的本地分支保留在子模块内，不在父仓提交中）。
 - **限制**：模式扫描不等于取证审计；本轮没有对历史提交做泄露扫描，也没有把整个仓库重新认证。
 
 ## 远端核验记录
@@ -46,4 +47,5 @@
 | 远端 refs | `git ls-remote origin refs/heads/testing` → `dd6fd606bcf903c645377534a35dbc91d9eed7bd`（随后核验回填提交 `fbb339e6212f86f7f1a85998632826f1c76f949e` 亦已推送并回读本文件） |
 | 远端回读 | raw 文件 HTTP 200：`https://raw.githubusercontent.com/Piggy-Cat-bit-shadow/JiejieBox/dd6fd606bc…/KNOWLEDGE/reports/other-project-learning-and-integration/README.md`，内容与本地一致；GitHub API commit `503a18b5…` 存在（parent `25f5c9a6…`，stats +904/−22） |
 | CI 核验 | `Verify` run [42471833521](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42471833521)，head `37b666f7a6b`，`verify` 与 `race checks` 均 success（`VERIFIED_CI`，仅对该 SHA 的树） |
+| 工作树收尾 | `git status --porcelain` 为空；`git submodule status` 三个客户端均无 `+` 前缀；专题文档相对链接检查 0 处失效 |
 | 状态 | `REMOTE_VERIFIED`（`SANITIZED` / `LOCAL_COMMITTED` / `REMOTE_VERIFIED`） |
