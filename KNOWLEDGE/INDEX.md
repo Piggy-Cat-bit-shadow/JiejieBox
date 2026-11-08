@@ -39,6 +39,7 @@
 | QUIC 共享 offer 准入为何不实施（跨仓 hook 的成本与重开条件） | [探索报告](reports/other-project-learning-and-integration/explorations/quic-shared-offer-admission-2026-11-08.md) |
 | Cronet 原生连接创建覆盖的边界与阻断 | [边界报告](reports/other-project-learning-and-integration/explorations/cronet-native-creation-coverage-2026-11-08.md) |
 | 03 数据面字节预算：XHTTP 落地与其余积压点的重开条件 | [stages/03](reports/other-project-learning-and-integration/stages/03.md)、[字节预算报告](reports/other-project-learning-and-integration/explorations/data-plane-byte-budgets-2026-11-08.md) |
+| 04 批 1：`residency` owner 盘点、XMUX 池库存与有界关闭诊断 | [stages/04](reports/other-project-learning-and-integration/stages/04.md)、[CONTRACTS](reports/other-project-learning-and-integration/CONTRACTS.md) §3.3 |
 | 01 完成内容与 02 可直接使用的接口/调用点 | [stages/01](reports/other-project-learning-and-integration/stages/01.md)、[HANDOFF](reports/other-project-learning-and-integration/HANDOFF.md) |
 | 回收动作的报告反馈（`memoryReclaim`、低收益冷却、cache 条目数） | [power-mobile-lifecycle](modules/power-mobile-lifecycle.md) §4 “回收动作的报告反馈” |
 | 高成本创建准入与既有 OOM 协作 | [resource-admission](modules/resource-admission.md) |

@@ -252,6 +252,33 @@ CGO_ENABLED=1 go test -race ./transport/v2rayxhttp -run 'TestPacketUpConcurrentW
   驻留账本、共享任务、关闭屏障与协调机制，本阶段未执行、未记完成。
 - 等级：`VERIFIED_UNIT`（主机 + race），不代表 V02 通过。
 
+## E21 04 批 1：residency owner 盘点、XMUX 库存与有界关闭诊断
+
+```sh
+go build ./...                                                                        # exit 0
+go test ./route ./service/oomkiller ./transport/v2rayxhttp ./adapter -count=1          # 全 ok
+go test . -run 'TestBoxClose|TestNoResurrectionAfterClose|TestCloseDisconnectsTheStatusView|TestOwnedHistoryStorageClose|TestAWarnedStartClosesCleanly|TestRepeatedStartAndCloseOnARefusedBox' -count=1   # ok
+CGO_ENABLED=1 go test -race ./adapter ./service/oomkiller -count=1                     # ok
+CGO_ENABLED=1 go test -race ./transport/v2rayxhttp -count=1                            # ok（全套）
+CGO_ENABLED=1 go test -race ./route -run 'TestResidencySnapshot|TestTheReleaseCapabilityIsWhatMakesAnOwnerReleasable' -count=1   # ok
+```
+
+- 代码提交：`6c10b42df37`（residency owner 盘点）、`f523e49ece3`（XMUX 池库存）、`9a04cc1c1e8`
+  （有界关闭诊断）。
+- `residency`：四类 owner（outbounds/endpoints/dnsTransports/httpClients）的 `reachableOwners` /
+  `releasableOwners`，顶层 `measure=owner-reach`；快照是纯读（不关闭、不拨号、不动 owner 计数）；
+  无 reporter 时不写键；真实 `metadata.json` 写入且客户端键保留。
+- XMUX：`Pooled/Active/Idle/Draining/DrainingOldGeneration/Opened/Released`；每个状态点断言
+  `Opened == Pooled + Draining + Released`；`Released` 只在底层 Close 真正执行时 +1；deferred close
+  期间活跃流的 transport 不被切断；retire 调用本身不算释放。
+- 关闭诊断：drain 记录 completed/pending/current；watchdog 一次性、超时报告 owner/阶段/耗时/4 KiB
+  有界栈；`defer` 停表（panic 路径同样停）；并发 Close 仍汇合、结果与错误过滤不变。
+- **知识冲突修正**：本机存在 mingw gcc（`<toolchain>`），`CGO_ENABLED=1` 的 `-race` 可用；
+  `modules/core-lifecycle-runtime.md` §5 原先“本主机没有 C 编译器，race 为 BLOCKED_BY_ENVIRONMENT”
+  的记录对当前环境已不成立，已做定向更新。
+- 等级：`VERIFIED_UNIT`（主机 + race）。不证明 Darwin/NE 设备行为；不证明 H2/QUIC/AnyTLS/Cronet/
+  Mieru/WG 的驻留账；报告开销未在真实压力下测量。
+
 ## E13 未验证 / 边界
 
 | 项 | 状态 | 说明 |

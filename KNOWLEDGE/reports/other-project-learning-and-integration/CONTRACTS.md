@@ -156,6 +156,37 @@
 在此之前不得把单 flow 的 stats 说成全进程字节预算。其余积压点（TUN/UDP、MASQUE、relay 增长）
 见 `explorations/data-plane-byte-budgets-2026-11-08.md` 的重开条件。
 
+## 3.3 驻留账（04 批 1 落地）
+
+### `residency` metadata：owner 可达数
+
+| 项 | 值 |
+|---|---|
+| 写入通道 | `Recorder.SetExtraMetadata("residency", …)` 顶层加性键；无 reporter 时不写；客户端既有键不变 |
+| 生产者 | `adapter.ResidencyReporter`，唯一实现 `route.ReferenceManager`（`Start` 中按接口键注册） |
+| 形状 | `measure: "owner-reach"`；`outbounds`/`endpoints`/`dnsTransports`/`httpClients` 各含 `reachableOwners`、`releasableOwners` |
+| 语义 | **owner 可达/可释放数**。不是 active/idle/draining，不是连接/stream/session/字节数，也不是终结数；retire 调用成功不证明资源已释放 |
+| owner 枚举 | `route.ReferenceManager.eachReusableOwner`：两个 retire walk 与快照共用；新增 kind 未映射到报告字段时 panic，而不是静默消失 |
+
+### XHTTP XMUX 池库存（包内，未导出）
+
+| 量 | 定义 |
+|---|---|
+| `Generation` | **池本地**复用边界计数（`RetireSuspect` +1），不是 runtimecoord 的网络代次 |
+| `Pooled` / `Active` / `Idle` | 池内连接；Active = 有 stream，Idle = 无 stream（trim 可回收） |
+| `Draining` / `DrainingOldGeneration` | 已 detach、仍有 stream、teardown 延迟到最后一个 stream 释放的连接；旧代子集 |
+| `Opened` / `Released` | 生命周期计数；`Released` 只在底层 `conn.Close()` 真正执行时 +1，一次连接最多一次 |
+| 不变量 | 每个状态点 `Opened == Pooled + Draining + Released` |
+| 边界 | HTTP/2 库内部 idle 缓存 `NOT_VERIFIABLE_HERE`；不覆盖 H2/QUIC/AnyTLS/Cronet/Mieru/WG |
+
+### 关闭诊断（`adapter.Scope`）
+
+- drain 记录 total/completed/current；watchdog 默认 `constant.StopTimeout`，每 drain **一次性**，超时输出
+  owner/阶段、已用时、pending 与 4 KiB 预算的 all-goroutine 栈；`defer` 停表（panic 路径同样停）。
+- 纯诊断：不改 `Close` 结果、错误过滤、清理顺序或并发 `Close` 汇合；不新建生命周期控制器。
+- `Scope.AddNamed` 为 raw cleanup 命名，`Scope.Start` 自动命名 component close；`Box` 顶层阶段只写一条
+  debug 耗时，不参与决策。
+
 ## 4. 后续阶段的接口草案
 
 ### 02（预算与真实高成本创建）—— 已完成
@@ -173,11 +204,14 @@
 - 观测：低频有界聚合，复用 metadata 通道（建议键名 `byteLedger`，形状在 03 开工时定稿并回写本文件）；不得逐包采样。
 - 只读 `len(pending)` 会漏记在途切片/共享数组，03 必须同时记“容量”和“已接受未交付”。
 
-### 04（驻留与生命周期）
+### 04（驻留与生命周期）—— 批 1 已落地，其余待做
 
-- `residency` 观测必须由**能真实关闭资源的 owner** 产出：每个 generation 的 active/idle/draining、本次 walk 真实终结数、关闭完成与耗时。
-- 现有 `route.ReferenceManager.retireIdleResources` 只返回 keeper 数，不能直接当资源数；04 需要新增能力接口（例如让 keeper 返回释放计数）并在 `CONTRACTS.md` 更新。
-- 关闭 watchdog 的“pending/阶段/耗时”必须复用既有 `Scope`/`reclaim` 屏障，不得新开第二关闭控制器。
+- 已落地合同见 §3.3（`residency` owner-reach、XMUX 池库存、Scope 关闭诊断）。
+- 仍待建：每个真实 owner（H2/QUIC/AnyTLS/Cronet/Mieru/WG、TUN/UDP）的 active/idle/draining、
+  generation、在途 dial、stream/业务引用与**真实终结数**；进程级驻留/字节聚合入口（B03 重开条件）；
+  真实终结计数须由 owner 的关闭完成点产出，而不是由 retire walk 计数。
+- `route.ReferenceManager.retireIdleResources` 的返回值继续只是 keeper 可达数；不得改读为资源数。
+- 关闭诊断已有 Scope 一处；后续 owner 的关闭完成字段接同一记录，不新开第二关闭控制器。
 
 ### 08（诊断/解释/桥接）
 

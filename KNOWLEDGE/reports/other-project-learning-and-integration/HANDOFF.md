@@ -1,4 +1,4 @@
-# HANDOFF —— 阶段交接（当前：03 → 04）
+# HANDOFF —— 阶段交接（当前：04 批 1 → 批 2）
 
 本文件给下一阶段可直接使用的 API/owner/调用点、阅读缓存与未确认事项。**新上下文先读本文件与 `stages/03.md`，再按 `KNOWLEDGE/INDEX.md` 的导航补本阶段源码增量。**
 
@@ -163,3 +163,18 @@ go test ./service/oomkiller ./common/resourceguard -count=1
 | B04 | XHTTP 无提前返 window；H2/QUIC 库内缓存不可证，04 若要按 stream 计费需先确认库的窗口所有权 |
 | B06 | 能力矩阵在探索报告末节；04 新增 wrapper 时必须补同一矩阵（half-close/partial write/datagram/headroom/关闭 owner） |
 | 03 代码提交 | `cd1d8160e3c`（其后为文档提交） |
+
+## 9. 04 批 1 → 批 2 交接
+
+| 事项 | 结果 |
+|---|---|
+| 已落地代码 | `6c10b42df37` residency owner 盘点；`f523e49ece3` XMUX 池库存；`9a04cc1c1e8` 有界关闭诊断 |
+| 新接口 | `adapter.ResidencyReporter`/`ResidencySnapshot`/`ResidencyOwnerCount`；`route.ReferenceManager.ResidencySnapshot()`、`eachReusableOwner`；`adapter.Scope.AddNamed` |
+| 报告 | `service/oomkiller` 顶层 `residency`：`measure=owner-reach`，四类 owner 各 `reachableOwners`/`releasableOwners`；无 reporter 时不写键 |
+| XHTTP | 池内 `Generation/Pooled/Active/Idle/Draining/DrainingOldGeneration/Opened/Released`；`Opened == Pooled+Draining+Released`；HTTP/2 库内缓存 `NOT_VERIFIABLE_HERE` |
+| 关闭诊断 | Scope 一次性 watchdog（`C.StopTimeout`、4 KiB 栈、defer 停表、panic 路径同样停）；Box 5 个 raw cleanup 命名；Box 顶层阶段只写 debug 耗时 |
+| 证据 | `EVIDENCE.md` E21；`go build ./...`、route/oomkiller/xhttp/adapter 全套测试、`-race`（`CGO_ENABLED=1` + `<toolchain>` gcc）均通过 |
+| 未完成 | R01 其余 owner 与真实终结数；R02–R06、R08 全部；R07 协议级慢关闭/挂起注入与 08 交接；进程级驻留/字节聚合 |
+| 唯一下一动作 | 04 批 2：R05 共享任务的独立 waiter、迟到成功与预算归还；复用 02 对 `sing-quic` `completeOffer`/`discarded` 的核实，不新建共享任务框架 |
+
+03 的接口仍有效：`packetUplink.stats()` 是驻留观测输入，`Guard`/`RateStats` 不变；不要重做 04-A 的 owner 枚举。

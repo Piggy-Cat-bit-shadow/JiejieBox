@@ -117,3 +117,35 @@
 - **决定**：TUN/UDP（子仓 pin）、relay 共享增长额度（需 04 反馈与长流基准）、reF1nd cached 首包（跨 fork pin + 包装矩阵）本轮不实施。
 - **依据**：仓侧没有可验证接点/基准；错误形状（调用方包装、短写假设）会带来比不改更大的风险。
 - **重开条件**：见 `explorations/data-plane-byte-budgets-2026-11-08.md` 每项。
+
+## D-04-01 `residency` 报告 owner 可达数，资源账留在各 owner
+
+- **决定**：顶层 `residency` metadata 只报四类 owner 的 `reachableOwners`/`releasableOwners`，并带
+  `measure: "owner-reach"`。真实 active/idle/draining、generation 与终结数由各 owner 自己产出，后续批次
+  逐 owner 接入。
+- **依据**：旧 walk 的单个整数被读成资源数；在还没有 owner 级账本时先造“半指标”会重演同一错误。
+  纯读快照无副作用，能先回答“谁可被问”，且不改变任何关闭行为。
+- **代价**：报告暂不能回答“现在有多少驻留资源”，只能回答“哪些 owner 可被回收”。
+- **重开条件**：某 owner 提供真实关闭完成计数后，可在同一键下增加该 owner 的资源字段；不得把可达数改义。
+
+## D-04-02 XHTTP XMUX 用池本地库存与“真实 Close 完成”作为释放确认
+
+- **决定**：池内新增 `Generation/Pooled/Active/Idle/Draining/DrainingOldGeneration/Opened/Released`；
+  `Released` 只在底层 `conn.Close()` 真正执行时 +1；`Generation` 是池本地边界计数，不复用
+  runtimecoord 的网络代次。
+- **依据**：deferred close 让“已退役”与“已释放”分离；把 `closed` 当 released 会谎报终结。该池是
+  R01 首个可完全观测的真实 owner，先在此证明计数/不变量，再谈其它协议。
+- **代价**：增加一个 `atomic.Uint64` 计数与 detached 列表（按真实 draining 连接数有界，统计/边界时清理）；
+  不覆盖 HTTP/2 库内部缓存。
+- **重开条件**：若库提供可观测的连接关闭回调，可把库内缓存纳入同一 owner；否则维持
+  `NOT_VERIFIABLE_HERE`。若 detached 列表在极端压力下增长，改为带上限的环形记录并保留计数。
+
+## D-04-03 关闭诊断放在 `adapter.Scope`，一次性、有预算、只观察
+
+- **决定**：`Scope.Close` 记录 completed/pending/current 并在超过 `constant.StopTimeout` 时报告一次；
+  栈用 4 KiB 缓冲截断；`defer` 停表（含 panic）；不取消/跳过/重排 cleanup，不新建关闭控制器。
+  Box 顶层阶段只写 debug 耗时。
+- **依据**：drain 是关闭链中唯一无界段，诊断必须与它同层；让 watchdog 改变关闭行为会制造“报告成功
+  但没关完”的谎报。`Close` 的完成边界是已测试契约，不能被诊断改义。
+- **代价**：all-goroutine 栈在超时瞬间有一次性开销；慢 cleanup 会多一条 debug 行。
+- **重开条件**：若 08 需要结构化关闭报告，可把同一记录导出为字段；不得因此让诊断成为调度输入。

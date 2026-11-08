@@ -17,6 +17,7 @@
 | `stages/01.md` | 阶段 01 改动、验证、终态 | 同上 | `SANITIZED` | 同上 | 见文末 |
 | `stages/02.md` | 阶段 02 改动（G02–G06）、验证、终态 | 11933a6 + 99fd6ee | `SANITIZED` | 收尾提交 | 见文末 |
 | `stages/03.md` | 阶段 03 改动（B01–B06）、验证、终态 | afdd3b3 + cd1d816 | `SANITIZED` | 收尾提交 | 见文末 |
+| `stages/04.md` | 阶段 04 批 1：residency owner 盘点、XHTTP XMUX 库存、有界关闭诊断 | 8022cdf + 6c10b42/f523e49/9a04cc1 | `SANITIZED` | 收尾提交 | 见文末 |
 | `explorations/data-plane-byte-budgets-2026-11-08.md` | 字节预算：XHTTP 落地、其余积压点边界与重开条件 | afdd3b3 + cd1d816 | `SANITIZED` | 收尾提交 | 见文末 |
 | `explorations/quic-shared-offer-admission-2026-11-08.md` | QUIC 共享 offer 准入的跨仓 hook：不实施证据 | 11933a6 + pin 1ef2597 | `SANITIZED` | 收尾提交 | 见文末 |
 | `explorations/cronet-native-creation-coverage-2026-11-08.md` | Cronet 原生创建覆盖的边界与阻断 | 11933a6 + pin 362e63b | `SANITIZED` | 收尾提交 | 见文末 |
@@ -28,7 +29,8 @@
 | 文档 | 修改 | 脱敏 |
 |---|---|---|
 | `KNOWLEDGE/modules/power-mobile-lifecycle.md` | §4 新增“回收动作的报告反馈（2026-11-08）” | `SANITIZED` |
-| `KNOWLEDGE/INDEX.md` | 新增“2026-11-08 本轮工程导航”表 | `SANITIZED` |
+| `KNOWLEDGE/modules/core-lifecycle-runtime.md` | §5 race 证据行：本机已有 gcc，`BLOCKED_BY_ENVIRONMENT` 的旧前提不再成立（04 批 1 实测） | `SANITIZED` |
+| `KNOWLEDGE/INDEX.md` | 新增“2026-11-08 本轮工程导航”表；04 批 1 行 | `SANITIZED` |
 | `KNOWLEDGE/reports/README.md` | 目录结构表新增本专题一行 | `SANITIZED` |
 
 ## 代码提交
@@ -37,6 +39,9 @@
 |---|---|---|
 | 01 | `503a18b55a7cb53ca8aade3b90e69d5683832552` | `feat(oomkiller): record what each memory-reclaim pass actually returned`（8 files, +904/−22） |
 | 02 | `99fd6ee23d986617afa3ef4d5e776eb1a874bcc3` | `feat(resourceguard): slow creation after a fast-fail streak…`（fast-fail 速率/退避、本地拒绝分类、Mieru underlay 准入、marker 生命周期测试） |
+| 04 批 1 | `6c10b42df3718f86e4b6d92d02599ebe8b269eb4` | `feat(route,oomkiller): report the retirement walk's owner inventory`（residency owner 盘点、单一 owner 枚举、metadata 加性键） |
+| 04 批 1 | `f523e49ece3ba422a8ba6cd24c23cdfd27a491da` | `feat(xhttp): inventory the xmux pool's draining connections`（池内库存、真实 Close 完成计数、代次） |
+| 04 批 1 | `9a04cc1c1e829b9c1e77a5aaac7b360d7deeeabf` | `feat(adapter): bound the close diagnostic to one report per drain`（Scope 一次性 watchdog、4 KiB 栈、AddNamed、Box 阶段耗时） |
 
 ## 脱敏检查
 

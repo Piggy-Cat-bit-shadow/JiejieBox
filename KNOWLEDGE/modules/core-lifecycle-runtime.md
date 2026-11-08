@@ -267,7 +267,7 @@ TLS 记录设定时限，随后把该截止时间清掉；`handshake_target_clea
 | 退役遍历到达全部四个连接池 | `VERIFIED_UNIT` | `route/reference_coverage_stress_test.go`, `route/reusable_owner_inventory_test.go` |
 | 顺序固定（复用裁决先于级别释放；睡眠边沿先于级别暂停） | `VERIFIED_UNIT` | `go test -count=1 -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" -run 'TestTheReuseVerdict\|TestTheSleepEdge' .` |
 | 100 次睡眠/唤醒循环、100 次网络切换、Close 之后无复活 | `VERIFIED_UNIT`（无 `-race`） | `-run 'TestOneHundred\|TestNoResurrectionAfterClose' .` |
-| 无竞态（race-freedom） | **`BLOCKED_BY_ENVIRONMENT`**——`-race` 需要 cgo，本主机没有 C 编译器 | Linux/macOS 或 Windows+gcc |
+| 无竞态（race-freedom） | `VERIFIED_UNIT`（2026-11-08；仅覆盖被跑的包） | `CGO_ENABLED=1 go test -race ./adapter ./service/oomkiller ./transport/v2rayxhttp -count=1`；本机 gcc 来自 `<toolchain>`。**此前的“本主机没有 C 编译器，race 为 `BLOCKED_BY_ENVIRONMENT`”对当前环境已不成立**（04 批 1 实测；仍不覆盖 Darwin/NE 真机） |
 | 以上任何一项背后的设备行为 | **`UNVERIFIED`**——无 TUN、无真实 NetworkExtension | `docs/RELEASE-CERTIFICATE.md` §1 |
 
 ### 来源（Provenance）
