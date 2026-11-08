@@ -315,7 +315,8 @@ go test -tags "with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash
 # serial=84ms  parallel=10ms  workers=8  delay=10ms
 ```
 
-- 无代码提交：批 3 交付两份探索结案与 R01–R08 终态复核。
+- 无产品代码：批 3 交付两份探索结案与 R01–R08 终态复核；收尾补 `80fe4bafe1b`（`Scope.Start` 命名组件的
+  关闭 watchdog 测试，`CGO_ENABLED=1 go test -race ./adapter -run TestScopeCloseWatchdog` 通过）。
 - R04：WG 现有 suspend/wake、rebind、listen_port、teardown、并发关闭测试全部通过；never-built 惰性 device
   `NOT_ADOPTED_WITH_EVIDENCE`（`explorations/lazy-heavy-runtime-2026-11-08.md`）。
 - R03：descriptor/runtime 拆分 `NOT_ADOPTED_WITH_EVIDENCE`（`DISPROPORTIONATE_REFACTOR`，同报告）。
@@ -333,4 +334,4 @@ go test -tags "with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash
 | CI 对本提交的运行 | `VERIFIED_CI`（37b666f） | 见 E14：run 42471833521 的 `verify` 与 `race checks` 均 success；其后的文档提交不复用该结论 |
 | 平台发行档位 / 产物 | `NOT_RUN` | CI 的 tagged build 使用 `DEFAULT_BUILD_TAGS_OTHERS`（server profile）；Darwin 档位（`DEFAULT_BUILD_TAGS`/`with_naive_outbound`）、`with_purego`、Cronet 原生库、Android AAR 与 Windows 产物不在本轮构建。本地只跑了默认 `go build ./...`。 |
 | 回收收益的真实量级 | `UNMEASURED` | 主机测试用模拟 footprint；真实 `GainBytes` 取决于进程与平台 |
-| 常驻/关闭/构建占用观测 | `NOT_IMPLEMENTED` | 归 04/06，见 `MASTER_PLAN.md` 的 G01 拆分 |
+| 常驻/关闭/构建占用观测 | 驻留与关闭已实现（04） | `residency` owner-reach、XHTTP 池库存/真实 Close、`Scope` 关闭诊断见 `CONTRACTS.md` §3.3；构建占用归 06 |

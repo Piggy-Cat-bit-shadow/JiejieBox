@@ -46,6 +46,7 @@
 | 04 批 1 | `9a04cc1c1e829b9c1e77a5aaac7b360d7deeeabf` | `feat(adapter): bound the close diagnostic to one report per drain`（Scope 一次性 watchdog、4 KiB 栈、AddNamed、Box 阶段耗时） |
 | 04 批 1 | `205412ba498426696fea2473415e0f582ad1cae3` | `style(adapter): gofmt the close-watchdog test`（CRLF → LF；内容不变） |
 | 04 批 2 | `64cfa9a86304f0951313d845d94052294d6eefbf` | `feat(v2rayquic): share one QUIC creation between waiters`（pending offer、每 waiter ctx、迟到成功接纳/丢弃一次、keep_session 每 flow） |
+| 04 收尾 | `80fe4bafe1b268f280ef57d7ac522cebc9e1cf02` | `test(adapter): cover the named component path of the close watchdog`（Start 注册组件的名字进入关闭报告；嵌套 scope 各自一次性） |
 
 ## 脱敏检查
 

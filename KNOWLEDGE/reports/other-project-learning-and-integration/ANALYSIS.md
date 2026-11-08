@@ -98,7 +98,7 @@ releaseAccess ──(先)──▶ access          # 代码注释固定：order 
 
 - 三种动作：idle（可失败、有低收益冷却）、pressure（Darwin 通知，不重置网络）、crisis（重置网络 + 释放，report-only 时跳过重置）。
 - 冷却只抑制 idle；crisis/pressure 不受它限制。
-- 收益是 footprint 差值（信用值），cache 条目数是唯一真实对象计数；没有“真实终结数”（归 04）。
+- 收益是 footprint 差值（信用值），cache 条目数是唯一真实对象计数；01 无“真实终结数”；04 已补 owner-reach 与 XHTTP 真实 Close 账（`CONTRACTS.md` §3.3）。
 
 ## 3. 平台内存口径（Platform memory accounting）
 

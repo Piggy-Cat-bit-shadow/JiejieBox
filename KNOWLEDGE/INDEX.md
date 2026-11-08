@@ -45,7 +45,7 @@
 | 回收动作的报告反馈（`memoryReclaim`、低收益冷却、cache 条目数） | [power-mobile-lifecycle](modules/power-mobile-lifecycle.md) §4 “回收动作的报告反馈” |
 | 高成本创建准入与既有 OOM 协作 | [resource-admission](modules/resource-admission.md) |
 
-本轮报告与来源核验只描述 01 的实测范围，不是全仓认证，也不移动 `BASELINE.md`。
+本轮报告与来源核验只描述 01–04 的实测范围，不是全仓认证，也不移动 `BASELINE.md`。
 
 本索引用来查找资料：根据当前任务、关键词或源码路径，定位需要阅读的模块和章节。
 具体的技术结论及其证据在对应模块中。

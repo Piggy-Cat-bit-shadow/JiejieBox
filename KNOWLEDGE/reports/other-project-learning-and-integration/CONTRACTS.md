@@ -179,6 +179,18 @@
 | 不变量 | 每个状态点 `Opened == Pooled + Draining + Released` |
 | 边界 | HTTP/2 库内部 idle 缓存 `NOT_VERIFIABLE_HERE`；不覆盖 H2/QUIC/AnyTLS/Cronet/Mieru/WG |
 
+### 每类真实 owner 的驻留观测边界（04 结案）
+
+| owner | 可观测事实 | 边界 |
+|---|---|---|
+| XHTTP XMUX | 池库存/代次/真实 `Close` 完成（`transport/v2rayxhttp` 的 `stats()`） | HTTP/2 库内 idle 缓存 `NOT_VERIFIABLE_HERE` |
+| v2rayquic | 共享 conn 的 streams/一次 close；waiter 独立 | 无 idle 池账，连接级即可 |
+| WireGuard | device suspend/wake、rebind、listen_port、Close（R04） | 冷/热设备成本未测（`BLOCKED_BY_ENVIRONMENT`） |
+| AnyTLS | 每次连接/marker scope；关闭由 `Scope` | 无复用池，无需 resident 计数 |
+| Mieru | SDK runtime/mux | `BLOCKED_EXTERNAL`（SDK 内） |
+| Cronet/Naive | 引擎/原生连接 | `BLOCKED_EXTERNAL`（G04） |
+| H2（v2rayhttp 等） | 连接生命周期由库管理 | `NOT_VERIFIABLE_HERE` |
+
 ### 关闭诊断（`adapter.Scope`）
 
 - drain 记录 total/completed/current；watchdog 默认 `constant.StopTimeout`，每 drain **一次性**，超时输出
