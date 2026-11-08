@@ -1021,6 +1021,50 @@ type packetUplink struct {
 	// lastAppend is when bytes last entered the queue; the flusher uses it to
 	// tell "the burst is over" from "more is coming".
 	lastAppend time.Time
+
+	// Accounting for the byte budget. These are read only under access, so a
+	// snapshot is one consistent moment rather than a set of separately current
+	// reads. PendingBytes is the LOGICAL queued count; RetainedCapacity is the
+	// array the queue is using, which can be larger after a burst and is
+	// reported separately rather than presented as footprint. InFlightBytes is
+	// the slice a POST currently owns: it has left the queue but the allocation
+	// is still alive, so a reader must add it to know what the stream retains.
+	inFlightBytes int
+	// High-water marks are for tests and diagnosis: they answer "what was the
+	// worst moment", which a snapshot after the burst cannot.
+	pendingHighWater  int
+	inFlightHighWater int
+	acceptedBytes     uint64
+	postedBytes       uint64
+}
+
+// packetUplinkStats is a consistent snapshot of the uplink's byte accounting.
+type packetUplinkStats struct {
+	MaxPending        int
+	PendingBytes      int
+	InFlightBytes     int
+	RetainedCapacity  int
+	PendingHighWater  int
+	InFlightHighWater int
+	AcceptedBytes     uint64
+	PostedBytes       uint64
+}
+
+// stats reads the accounting under the queue lock.
+func (u *packetUplink) stats() packetUplinkStats {
+	u.access.Lock()
+	defer u.access.Unlock()
+	retained := cap(u.pending)
+	return packetUplinkStats{
+		MaxPending:        u.maxPending,
+		PendingBytes:      len(u.pending),
+		InFlightBytes:     u.inFlightBytes,
+		RetainedCapacity:  retained,
+		PendingHighWater:  u.pendingHighWater,
+		InFlightHighWater: u.inFlightHighWater,
+		AcceptedBytes:     u.acceptedBytes,
+		PostedBytes:       u.postedBytes,
+	}
 }
 
 const (
@@ -1083,33 +1127,63 @@ func newPacketUplink(conn *packetConn) *packetUplink {
 }
 
 // write appends b to the queue, waiting while the queue is full.
+//
+// # Why the bound is inside ONE write, not only between writes
+//
+// The queue is a byte budget, not a slice of caller-sized writes. A Write larger
+// than the whole budget is appended IN CHUNKS: the loop accepts what fits,
+// signals the flusher, and waits for room before taking the next chunk. The
+// queue therefore never holds more than maxPending, and the call still returns
+// the full length once every byte has been accepted - so callers that treat a
+// short write as an error keep working.
+//
+// The old shape accepted a whole oversized write whenever the queue happened to
+// be empty, which meant a single large Write could sit in memory regardless of
+// maxPending: the bound was real for many small writes and fictional for one
+// large one.
 func (u *packetUplink) write(b []byte) (int, error) {
 	if len(b) == 0 {
 		return 0, nil
 	}
 	u.access.Lock()
+	written := 0
 	for {
 		if u.err != nil {
 			err := u.err
 			u.access.Unlock()
-			return 0, err
+			return written, err
 		}
 		if u.closed {
 			u.access.Unlock()
-			return 0, net.ErrClosed
+			return written, net.ErrClosed
 		}
-		// An empty queue always accepts, so a single write larger than the bound
-		// is queued (and split into posts) rather than deadlocking the writer.
-		if len(u.pending) == 0 || len(u.pending)+len(b) <= u.maxPending {
-			break
+		available := u.maxPending - len(u.pending)
+		if available > 0 {
+			accepted := len(b) - written
+			if accepted > available {
+				accepted = available
+			}
+			u.pending = append(u.pending, b[written:written+accepted]...)
+			written += accepted
+			u.acceptedBytes += uint64(accepted)
+			if len(u.pending) > u.pendingHighWater {
+				u.pendingHighWater = len(u.pending)
+			}
+			u.lastAppend = timeNow()
+			u.notEmpty.Signal()
+			if written == len(b) {
+				u.access.Unlock()
+				return written, nil
+			}
+			// More to append than the queue can hold: give the flusher the chunk
+			// just accepted and wait for it to make room. Waiting under this lock
+			// is what the existing full-queue path already does; the flusher never
+			// needs u.access while it is posting.
+			u.notFull.Wait()
+			continue
 		}
 		u.notFull.Wait()
 	}
-	u.pending = append(u.pending, b...)
-	u.lastAppend = timeNow()
-	u.access.Unlock()
-	u.notEmpty.Signal()
-	return len(b), nil
 }
 
 // gather waits for the writer to pause before the batch is taken: the burst is
@@ -1213,11 +1287,27 @@ func (u *packetUplink) run() {
 			// instead of carrying a growing offset.
 			u.pending = nil
 		}
+		// The payload has left the queue but still owns its bytes: a POST is
+		// building the request over this slice, so the allocation is alive until
+		// the post returns. It is accounted separately from pending for exactly
+		// that reason - summing only pending would understate what the stream
+		// retains during a post.
+		u.inFlightBytes = len(payload)
+		if u.inFlightBytes > u.inFlightHighWater {
+			u.inFlightHighWater = u.inFlightBytes
+		}
 		u.access.Unlock()
 		u.notFull.Broadcast()
 
-		if err := u.sendPacket(payload); err != nil {
-			u.fail(err)
+		postErr := u.sendPacket(payload)
+		u.access.Lock()
+		u.inFlightBytes = 0
+		if postErr == nil {
+			u.postedBytes += uint64(len(payload))
+		}
+		u.access.Unlock()
+		if postErr != nil {
+			u.fail(postErr)
 			return
 		}
 	}
