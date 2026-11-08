@@ -657,9 +657,35 @@ func (lifetime requestLifetime) local() bool {
 	return lifetime.run != nil && lifetime.run.Err() != nil
 }
 
+// groupRequestBudget bounds ONE parent query when the caller brings no deadline of
+// its own.
+//
+// It exists because the target/rescue split below reserves half of the REMAINING
+// budget for the rescue fan, and "the remaining budget" is only meaningful when the
+// request has a deadline at all. A caller that passes none - the common case inside
+// the box, where the DNS client attaches one only sometimes - otherwise lets the
+// target eat half of DNSTimeout and leaves the rescue fan running with no deadline:
+// the group would answer whenever the LAST hung member gave up, which is not a
+// budget.
+//
+// It is a variable only so tests can shrink it; production uses the DNS client
+// timeout, which is what the split was calibrated against.
+var groupRequestBudget = C.DNSTimeout
+
 func (t *Transport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
 	requestCtx, lifetime, cancel := t.mergedContext(ctx)
 	defer cancel()
+
+	// The whole parent request gets a budget when the caller did not supply one.
+	// The caller's own deadline is preserved unchanged: it is shorter evidence
+	// about how long the caller is prepared to wait, and its expiry is classified
+	// as LOCAL (see requestLifetime), while this budget's expiry is the group's
+	// own deadline and is classified like the target sub-deadline it feeds.
+	if _, loaded := requestCtx.Deadline(); !loaded {
+		budgetCtx, cancelBudget := context.WithTimeout(requestCtx, groupRequestBudget)
+		defer cancelBudget()
+		requestCtx = budgetCtx
+	}
 
 	sel, err := t.selectTarget()
 	if err != nil {
