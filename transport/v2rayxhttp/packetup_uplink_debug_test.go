@@ -157,6 +157,33 @@ func (transport *probeTransport) waitForPosts(t *testing.T, want int) {
 	}
 }
 
+// waitForPostOrUplinkFailure waits until `want` upload posts have been recorded,
+// reporting false if the uplink failed before the next post existed.
+//
+// A packet-up queue issues no post after a failed one, so a test that paces one
+// write per post has to stop pacing when the failure lands: the write path and
+// the flusher race for that write, and waiting for a post that will never be
+// sent can only time out.
+func waitForPostOrUplinkFailure(t *testing.T, transport *probeTransport, uplink *packetUplink, want int) bool {
+	t.Helper()
+	deadline := time.Now().Add(writeFreeBudget)
+	for {
+		if _, _, posts, _ := transport.snapshot(); posts >= want {
+			return true
+		}
+		uplink.access.Lock()
+		failed := uplink.err != nil
+		uplink.access.Unlock()
+		if failed {
+			return false
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("saw fewer than %d upload posts and the uplink has not failed", want)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
 // waitForGoroutines waits for the goroutine count to come back to the baseline,
 // which is how a leaked flusher or a leaked post shows up.
 func waitForGoroutines(t *testing.T, baseline int) {
@@ -402,67 +429,97 @@ func TestUplinkCloseAtEveryStage(t *testing.T) {
 // write path, and no later post may be sent — a sequence that continued past the
 // failure would leave the server waiting on a hole while the client reported
 // success.
+//
+// The two refusal delays cover both sides of one race. With an immediate refusal
+// the write path usually observes the error before the next write; with the
+// delayed one the next write provably reaches the queue first. The delayed case
+// used to hang the test ("saw 2 upload posts, want 3") because it waited for a
+// post that a failed queue will never send, and that is exactly the scheduler-
+// dependent shape it produced as a -race flake under a loaded package.
 func TestUplinkPostFailureSurfacesAndStopsAtTheFailure(t *testing.T) {
 	t.Parallel()
-	transport := newProbeTransport()
-	refused := errors.New("post refused by the transport")
-	transport.onPost = func(request *http.Request, body []byte) (*http.Response, error) {
-		if seqOf(t, request.URL.Path) == 1 {
-			return nil, refused
-		}
-		return okProbeResponse(), nil
+	cases := []struct {
+		name  string
+		delay time.Duration
+	}{
+		{"immediate_refusal", 0},
+		{"refusal_after_the_next_write", 50 * time.Millisecond},
 	}
+	for _, testCase := range cases {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			transport := newProbeTransport()
+			refused := errors.New("post refused by the transport")
+			transport.onPost = func(request *http.Request, body []byte) (*http.Response, error) {
+				if seqOf(t, request.URL.Path) == 1 {
+					time.Sleep(testCase.delay)
+					return nil, refused
+				}
+				return okProbeResponse(), nil
+			}
 
-	// One write per post, so the failing post is provably the second one.
-	client := batchClient(t, transport, metaOptions{ScMinPostsIntervalMs: "0", ScMaxEachPostBytes: "64-64"})
-	conn := dialBatchConn(t, client)
-	payloads := []string{"first", "second", "third"}
-	var surfaced error
-	for index, payload := range payloads {
-		if _, err := conn.Write([]byte(payload)); err != nil {
-			surfaced = err
-			break
-		}
-		transport.waitForPosts(t, index+1)
-	}
-	deadline := time.Now().Add(writeFreeBudget)
-	for surfaced == nil && time.Now().Before(deadline) {
-		if _, err := conn.Write([]byte("after")); err != nil {
-			surfaced = err
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if surfaced == nil {
-		t.Fatal("a refused post never surfaced on the write path")
-	}
-	if !strings.Contains(surfaced.Error(), "post refused") {
-		t.Fatalf("write path reported %v, want the transport's cause", surfaced)
-	}
-	_, paths, _, _ := transport.snapshot()
-	for _, requestPath := range paths {
-		if seqOf(t, requestPath) > 1 {
-			t.Fatalf("post %s was sent after the failed post: the server now waits on a hole", requestPath)
-		}
-	}
-	// The slot is NOT released by the failure itself: a failed post kills the
-	// upload half and leaves the session's teardown to the caller, which is what
-	// the reference does too (it interrupts the upload pipe and stops posting).
-	// What must hold is that the caller's Close releases it exactly once, and
-	// that a second Close cannot release it twice.
-	if usage := openUsageOf(client); usage != 1 {
-		t.Fatalf("openUsage = %d after a failed post but before Close, want 1 (the session is still open)", usage)
-	}
-	if err := conn.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-	if usage := openUsageOf(client); usage != 0 {
-		t.Fatalf("openUsage = %d after Close, want exactly 0 (leaked or double released)", usage)
-	}
-	if err := conn.Close(); err != nil {
-		t.Fatalf("second Close: %v", err)
-	}
-	if usage := openUsageOf(client); usage != 0 {
-		t.Fatalf("openUsage = %d after a second Close, want 0 — a negative count means a double release", usage)
+			// One write per post, so the failing post is provably the second one.
+			client := batchClient(t, transport, metaOptions{ScMinPostsIntervalMs: "0", ScMaxEachPostBytes: "64-64"})
+			conn := dialBatchConn(t, client)
+			packet, isPacket := conn.(*packetConn)
+			if !isPacket {
+				t.Fatalf("expected a *packetConn, got %T", conn)
+			}
+			payloads := []string{"first", "second", "third"}
+			var surfaced error
+			for index, payload := range payloads {
+				if _, err := conn.Write([]byte(payload)); err != nil {
+					surfaced = err
+					break
+				}
+				// Pace one write per post, but stop pacing once the post stream has
+				// failed: nothing follows a refused post, so waiting for the next
+				// one can only time out.
+				if !waitForPostOrUplinkFailure(t, transport, packet.uplink, index+1) {
+					break
+				}
+			}
+			deadline := time.Now().Add(writeFreeBudget)
+			for surfaced == nil && time.Now().Before(deadline) {
+				if _, err := conn.Write([]byte("after")); err != nil {
+					surfaced = err
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			if surfaced == nil {
+				t.Fatal("a refused post never surfaced on the write path")
+			}
+			if !strings.Contains(surfaced.Error(), "post refused") {
+				t.Fatalf("write path reported %v, want the transport's cause", surfaced)
+			}
+			_, paths, _, _ := transport.snapshot()
+			for _, requestPath := range paths {
+				if seqOf(t, requestPath) > 1 {
+					t.Fatalf("post %s was sent after the failed post: the server now waits on a hole", requestPath)
+				}
+			}
+			// The slot is NOT released by the failure itself: a failed post kills the
+			// upload half and leaves the session's teardown to the caller, which is what
+			// the reference does too (it interrupts the upload pipe and stops posting).
+			// What must hold is that the caller's Close releases it exactly once, and
+			// that a second Close cannot release it twice.
+			if usage := openUsageOf(client); usage != 1 {
+				t.Fatalf("openUsage = %d after a failed post but before Close, want 1 (the session is still open)", usage)
+			}
+			if err := conn.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+			if usage := openUsageOf(client); usage != 0 {
+				t.Fatalf("openUsage = %d after Close, want exactly 0 (leaked or double released)", usage)
+			}
+			if err := conn.Close(); err != nil {
+				t.Fatalf("second Close: %v", err)
+			}
+			if usage := openUsageOf(client); usage != 0 {
+				t.Fatalf("openUsage = %d after a second Close, want 0 — a negative count means a double release", usage)
+			}
+		})
 	}
 }
 
