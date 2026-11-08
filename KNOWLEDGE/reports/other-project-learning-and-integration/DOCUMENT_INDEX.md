@@ -17,7 +17,7 @@
 | `stages/01.md` | 阶段 01 改动、验证、终态 | 同上 | `SANITIZED` | 同上 | 见文末 |
 | `stages/02.md` | 阶段 02 改动（G02–G06）、验证、终态 | 11933a6 + 99fd6ee | `SANITIZED` | 收尾提交 | 见文末 |
 | `stages/03.md` | 阶段 03 改动（B01–B06）、验证、终态 | afdd3b3 + cd1d816 | `SANITIZED` | 收尾提交 | 见文末 |
-| `stages/04.md` | 阶段 04 批 1：residency owner 盘点、XHTTP XMUX 库存、有界关闭诊断 | 8022cdf + 6c10b42/f523e49/9a04cc1 | `SANITIZED` | `91c0c292db6` | 见文末 |
+| `stages/04.md` | 阶段 04 批 1–2：residency owner 盘点、XHTTP XMUX 库存、有界关闭诊断、v2rayquic 共享 offer、R02/R06 核实 | 2d9b848 + 64cfa9a | `SANITIZED` | 批 1 `91c0c292db6`；批 2 见下 | 见文末 |
 | `explorations/data-plane-byte-budgets-2026-11-08.md` | 字节预算：XHTTP 落地、其余积压点边界与重开条件 | afdd3b3 + cd1d816 | `SANITIZED` | 收尾提交 | 见文末 |
 | `explorations/quic-shared-offer-admission-2026-11-08.md` | QUIC 共享 offer 准入的跨仓 hook：不实施证据 | 11933a6 + pin 1ef2597 | `SANITIZED` | 收尾提交 | 见文末 |
 | `explorations/cronet-native-creation-coverage-2026-11-08.md` | Cronet 原生创建覆盖的边界与阻断 | 11933a6 + pin 362e63b | `SANITIZED` | 收尾提交 | 见文末 |
@@ -43,6 +43,7 @@
 | 04 批 1 | `f523e49ece3ba422a8ba6cd24c23cdfd27a491da` | `feat(xhttp): inventory the xmux pool's draining connections`（池内库存、真实 Close 完成计数、代次） |
 | 04 批 1 | `9a04cc1c1e829b9c1e77a5aaac7b360d7deeeabf` | `feat(adapter): bound the close diagnostic to one report per drain`（Scope 一次性 watchdog、4 KiB 栈、AddNamed、Box 阶段耗时） |
 | 04 批 1 | `205412ba498426696fea2473415e0f582ad1cae3` | `style(adapter): gofmt the close-watchdog test`（CRLF → LF；内容不变） |
+| 04 批 2 | `64cfa9a86304f0951313d845d94052294d6eefbf` | `feat(v2rayquic): share one QUIC creation between waiters`（pending offer、每 waiter ctx、迟到成功接纳/丢弃一次、keep_session 每 flow） |
 
 ## 脱敏检查
 

@@ -149,3 +149,24 @@
   但没关完”的谎报。`Close` 的完成边界是已测试契约，不能被诊断改义。
 - **代价**：all-goroutine 栈在超时瞬间有一次性开销；慢 cleanup 会多一条 debug 行。
 - **重开条件**：若 08 需要结构化关闭报告，可把同一记录导出为字段；不得因此让诊断成为调度输入。
+
+## D-04-04 v2rayquic 共享创建采用 pending offer + 每 waiter 上下文
+
+- **决定**：`offer(ctx)` 以首个需求创建 pending，后来者附着；每个 waiter 用自己的 ctx 等待；dial 用 client
+  生命周期上下文；`Close` 取消并标记 discarded，迟到成功由 owner 关闭一次。
+- **依据**：旧实现在互斥锁内同步 dial，等待者无法用自己的 deadline/cancel 退出，Close 也会被在途 dial
+  卡住；`sing-quic` 的同形实现（02 已审计）证明该形状能与现有生命周期共存，不需要新建 singleflight。
+- **代价**：多一个 pending 状态与一次 goroutine（dial 本身）；`Close` 不再等待 dial 结束，迟到资源由
+  completeOffer 收尾。
+- **重开条件**：若某 dialer 不响应 ctx 取消导致 goroutine 滞留，需要在该 dialer 层加硬超时，而不是让
+  Close 等待。
+
+## D-04-05 R02 不新增“探测资源”生命周期，用途由调用上下文携带
+
+- **决定**：保持 `adapter.IsBackgroundProbe` 的每次调用标记；不加持久 “probe purpose” 字段，也不为探测
+  单独建资源 owner。
+- **依据**：现有 URLTest/WG 测试已覆盖背景探测拒绝、业务唤醒、证据保留与新鲜度跳过；探测自身不持有跨阶段
+  资源，“探测结束就关”的失败形状在本架构不成立。新增持久用途状态反而会成为第二个身份源。
+- **代价**：无法在资源上查询“这是探测还是业务”，只能从调用上下文判断；对 SDK 内部探测（Mieru）不可见。
+- **重开条件**：若出现探测建立的长寿命资源（如 SDK 内部 session）需要跨调用复用，才在对应 owner 增加显式
+  用途与升级点，并复用同一 context 标记。

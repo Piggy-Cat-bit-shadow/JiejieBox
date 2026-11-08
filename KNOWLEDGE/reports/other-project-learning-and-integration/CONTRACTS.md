@@ -187,6 +187,19 @@
 - `Scope.AddNamed` 为 raw cleanup 命名，`Scope.Start` 自动命名 component close；`Box` 顶层阶段只写一条
   debug 耗时，不参与决策。
 
+## 3.4 共享创建与迟到成功（04 批 2 落地，v2rayquic）
+
+| 项 | 值 |
+|---|---|
+| 入口 | `transport/v2rayquic.Client.offer(ctx)`：首个需求创建 pending，后来者附着同一 pending |
+| 等待者 | 每个 waiter 用自己的 ctx select `pending.done` / `ctx.Done()`；取消/超时只结束该 waiter |
+| dial owner | client 生命周期上下文（`NewClient` 派生、`Close` 取消）；**不使用**首个 flow 的 ctx |
+| 发布 | `completeOffer` 在 `connAccess` 下发布：成功进 `c.conn`；失败置 `pending.err`；新 pending 替换前旧的已完成 |
+| 丢弃 | `Close` 标记 `discarded` 并取消；迟到成功由 owner 调 `closeConn` **一次**关闭，不发布 |
+| 关闭确认 | `clientConnection.closeConn` 用 `sync.Once`；确认来自真实结束点 |
+| 会话元数据 | `adapter.KeepSessionFromContext` 在 `DialContext` 内按 flow 读取，保存在该 flow 的 stream 闭包，不写入共享 conn |
+| 边界 | sing-quic HY2/TUIC 的 pending 是库内实现（02 源审计）；Mieru 在 SDK 内；两者不属于本仓合同 |
+
 ## 4. 后续阶段的接口草案
 
 ### 02（预算与真实高成本创建）—— 已完成

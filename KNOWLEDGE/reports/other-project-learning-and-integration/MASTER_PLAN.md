@@ -6,13 +6,15 @@
 
 | 项 | 值 |
 |---|---|
-| 阶段 | 04（R01–R08）——**IN_PROGRESS**（批 1 已落地：R01 owner 盘点 + XHTTP XMUX 首个真实 owner + R07 有界关闭诊断；批 2/3 待做，见 `stages/04.md`）；05 未开始 |
+| 阶段 | 04（R01–R08）——**IN_PROGRESS**（批 1：R01 owner 盘点 + XHTTP XMUX + R07 关闭诊断；批 2：R05 v2rayquic 共享 offer、R06 underlay 身份、R02 探测路径核实；批 3 待做，见 `stages/04.md`）；05 未开始 |
 | 02 结束 revision | `afdd3b3cf7c` |
 | 04 进入时 HEAD | `a6f1ca55f5455fdaf88d41b030579ac1b41119df`（= `origin/testing`，无需同步） |
 | 03 代码提交 | `cd1d8160e3c` |
 | 03 阶段结束 HEAD | 以 `git log -1` 与 `stages/03.md` 为准 |
 | 04 批 1 代码提交 | `6c10b42df37`（residency owner 盘点）、`f523e49ece3`（XMUX 池库存）、`9a04cc1c1e8`（有界关闭诊断） |
 | 04 批 1 HEAD | 以 `git log -1` 与 `stages/04.md` 为准（文档提交后回填 `DOCUMENT_INDEX`） |
+| 04 批 2 代码提交 | `64cfa9a8630`（v2rayquic 共享 offer + 测试） |
+| 04 批 2 HEAD | 以 `git log -1` 与 `stages/04.md` 为准 |
 | 知识库覆盖目标 | v0.1.44 专题目标 `3b6ec64f7145a2add99656d47caaa4f22a1cc478`；广泛基线 `0067b03e377fbfbe5ecc7ae01d0deaf9e1e10f28`（v0.1.34），本轮不移动 |
 | 03 触及区域的知识增量 | `transport/v2rayxhttp`（packet-up 预算）；其余 B 项见 `explorations/data-plane-byte-budgets-2026-11-08.md` |
 
@@ -34,11 +36,11 @@
 | B05 | reF1nd 缓存首包 read waiter/batch 适配及完整包装链 | 03 | I | `NOT_ADOPTED_WITH_EVIDENCE` | 跨 sing fork pin + 包装矩阵；保留 experiments 数据与重开条件 |
 | B06 | 传输抽象的半关闭、部分写、datagram 与所有权能力契约 | 03 | I | `IMPLEMENTED_VERIFIED` | 未新增 wrapper；XHTTP packetConn 能力矩阵逐项列于探索报告 |
 | R01 | 跨节点跨代 active/idle/draining 驻留计费与真实终结 | 04 | I | `PENDING` | **G01 的驻留计数部分由本项承接**：现有 `retireIdleResources` 只返回“访问到的 keeper 数”，不是真实终结。批 1 已落地：`residency` owner 盘点（`adapter.ResidencyReporter`，`measure=owner-reach`）+ XHTTP XMUX 首个真实 owner 的池库存/释放确认；其余 owner（H2/QUIC/AnyTLS/Cronet/Mieru/WG）与真实终结数未结案 |
-| R02 | 纯探测会话短驻留、业务升级与实际路径资源归属 | 04 | I | `PENDING` | — |
+| R02 | 纯探测会话短驻留、业务升级与实际路径资源归属 | 04 | I | `ALREADY_PRESENT_VERIFIED` | 探测用途由每次调用的 context 标记（`adapter.IsBackgroundProbe`），悬挂 endpoint 拒绝背景探测、业务 dial 通过 gate；证据保留与新鲜度跳过已测。见 `stages/04.md` 批 2、E22；真实 NE 未验 |
 | R03 | 稳定节点描述符、重型协议惰性 Runtime 与可回收目录 | 04 | I | `PENDING` | — |
 | R04 | WG 惰性设备、完整 teardown/重建与驻留库存预算 | 04 | I | `PENDING` | — |
-| R05 | 共享任务独立等待者、取消与晚到成功资源接纳/丢弃 | 04 | I | `PENDING` | — |
-| R06 | 共享隧道内部 underlay 身份与首个业务流上下文隔离 | 04 | I | `PENDING` | — |
+| R05 | 共享任务独立等待者、取消与晚到成功资源接纳/丢弃 | 04 | I | `PENDING` | 批 2：v2rayquic 共享 offer 已按 pending/waiter/owner 形状落地（独立 cancel/deadline、Close 丢弃迟到成功一次、失败可重试）；sing-quic HY2/TUIC 的 `completeOffer` 复用 02 源证据；Mieru SDK 未测 |
+| R06 | 共享隧道内部 underlay 身份与首个业务流上下文隔离 | 04 | I | `PENDING` | 批 2：XHTTP 每 flow 上下文/槽位由既有 dial-ctx/deadline 测试覆盖；v2rayquic `keep_session` 每 flow 已加测试；MASQUE endpoint ctx 源审计为生命周期、Mieru 在 SDK 内 |
 | R07 | 关闭 pending/阶段耗时/有预算堆栈 watchdog | 04 | I | `PENDING` | **G01 的“关闭完成”字段由本项承接**。批 1 已落地：`adapter.Scope` 的一次性有界关闭诊断（completed/pending/current、耗时、4 KiB 栈、defer 停表）+ Box 顶层阶段耗时 debug；协议级慢关闭/挂起注入与 08 交接待后续 |
 | R08 | 独立 endpoint 子 scope 有界并行关闭的收益与依赖验证 | 04 | E | `PENDING` | — |
 | P01 | 全 Box 有界探测生产/队列/worker 与交互公平调度 | 05 | I | `PENDING` | — |

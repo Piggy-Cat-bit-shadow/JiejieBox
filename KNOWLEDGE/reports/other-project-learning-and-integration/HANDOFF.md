@@ -1,4 +1,4 @@
-# HANDOFF —— 阶段交接（当前：04 批 1 → 批 2）
+# HANDOFF —— 阶段交接（当前：04 批 2 → 批 3）
 
 本文件给下一阶段可直接使用的 API/owner/调用点、阅读缓存与未确认事项。**新上下文先读本文件与 `stages/03.md`，再按 `KNOWLEDGE/INDEX.md` 的导航补本阶段源码增量。**
 
@@ -178,3 +178,15 @@ go test ./service/oomkiller ./common/resourceguard -count=1
 | 唯一下一动作 | 04 批 2：R05 共享任务的独立 waiter、迟到成功与预算归还；复用 02 对 `sing-quic` `completeOffer`/`discarded` 的核实，不新建共享任务框架 |
 
 03 的接口仍有效：`packetUplink.stats()` 是驻留观测输入，`Guard`/`RateStats` 不变；不要重做 04-A 的 owner 枚举。
+
+## 10. 04 批 2 → 批 3 交接
+
+| 事项 | 结果 |
+|---|---|
+| 已落地代码 | `64cfa9a8630`：`transport/v2rayquic` 共享 pending offer（每个 waiter 自己的 cancel/deadline、dial 用 client 生命周期、Close 丢弃迟到成功一次、失败可重试） |
+| 新行为 | `Client.offer(ctx)` 共享创建；`clientConnection.ctx`/`closeConn` 显式生命周期与一次关闭；`keep_session` 每 flow 读取，不写入共享 conn |
+| R02 | `ALREADY_PRESENT_VERIFIED`：背景探测拒绝、业务唤醒、证据保留、新鲜度跳过均已有测试并复跑；无新代码；真实 NE 未验 |
+| R06 | XHTTP 每 flow 上下文/槽位由既有 dial-ctx/deadline 测试覆盖；v2rayquic `keep_session` 已加测试；MASQUE 仅源审计；Mieru 在 SDK 内未测 |
+| 证据 | `EVIDENCE.md` E22；`go build -tags DEFAULT_BUILD_TAGS_OTHERS ./...`、`-tags with_quic` 测试与 `-race` 通过 |
+| 未完成 | R03/R04、R01 剩余 owner 与真实终结数、R08、R07 协议级注入；sing-quic/Mieru SDK 共享任务 |
+| 唯一下一动作 | 04 批 3：R03/R04（WG 冷启动、并发首用、teardown/重建）与 R01 剩余 owner 盘点，最后 R08 |

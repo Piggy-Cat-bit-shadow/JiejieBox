@@ -282,6 +282,28 @@ CGO_ENABLED=1 go test -race ./route -run 'TestResidencySnapshot|TestTheReleaseCa
 - 等级：`VERIFIED_UNIT`（主机 + race）+ `VERIFIED_CI`（限上述 SHA 的主机运行）。不证明 Darwin/NE
   设备行为；不证明 H2/QUIC/AnyTLS/Cronet/Mieru/WG 的驻留账；报告开销未在真实压力下测量。
 
+## E22 04 批 2：共享创建、共享 underlay 身份与探测路径
+
+```sh
+go build -tags "with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_ccm,with_ocm,with_cloudflared,with_usbip,with_openvpn,with_openconnect,with_xhttp,badlinkname" ./...
+# exit 0
+go test -tags with_quic ./transport/v2rayquic -count=1                          # ok
+CGO_ENABLED=1 go test -race -tags with_quic ./transport/v2rayquic -count=1     # ok
+go vet -tags "…" ./transport/v2rayquic                                          # exit 0
+```
+
+- 代码提交：`64cfa9a8630`（v2rayquic 共享 offer）。
+- R05：`transport/v2rayquic` 的共享创建改为 pending offer；每个 waiter 的 cancel/deadline 只结束自己；
+  dial 用 client 生命周期上下文；Close 标记 discarded 并取消，迟到成功由 owner 关闭一次；失败可重试。
+  测试覆盖并发单次 dial、取消隔离、deadline、Close 丢弃、失败发布、最后 waiter 离开后接纳。
+- R06：XHTTP 每 flow 的 ctx/slot 行为由既有 `packetup_dial_ctx_test.go`、`deadline_test.go` 覆盖；
+  v2rayquic 新增 `TestKeepSessionIsPerFlowNotPerUnderlay`；MASQUE 存储 ctx 的源审计结论为 endpoint 生命周期，
+  未做运行测试；Mieru 在 SDK 内。
+- R02：`ALREADY_PRESENT_VERIFIED`。既有 `protocol/group/urltest_background_probe_test.go` 与
+  `transport/wireguard/recovery_test.go` 的 4 个探测/业务 gate 测试复跑通过；本轮无新代码。
+- 等级：`VERIFIED_UNIT`（新路径 + race）+ `VERIFIED_SOURCE`（MASQUE/R02 源审计）。不证明 sing-quic 库内
+  pending 的运行行为、Mieru 或 Darwin/NE 设备行为。
+
 ## E13 未验证 / 边界
 
 | 项 | 状态 | 说明 |
