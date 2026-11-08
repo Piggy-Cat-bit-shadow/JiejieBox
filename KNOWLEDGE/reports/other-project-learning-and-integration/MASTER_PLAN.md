@@ -46,8 +46,8 @@
 | R07 | 关闭 pending/阶段耗时/有预算堆栈 watchdog | 04 | I | `IMPLEMENTED_VERIFIED` | `adapter.Scope` 一次性有界诊断（completed/pending/current、耗时、4 KiB 栈、defer 停表）+ Box 阶段耗时 + AddNamed；协议级慢关闭注入留 08 |
 | R08 | 独立 endpoint 子 scope 有界并行关闭的收益与依赖验证 | 04 | E | `NOT_ADOPTED_WITH_EVIDENCE` | 合成上界 8×10ms serial 84ms vs parallel 10ms；Scope 无独立性元数据、跨 endpoint 依赖不可推断。见 `explorations/endpoint-close-parallel-2026-11-08.md` |
 | P01 | 全 Box 有界探测生产/队列/worker 与交互公平调度 | 05 | I | `IMPLEMENTED_VERIFIED` | 交互优先 + 后台老化；每轮固定 10 worker、容量 20 交接队列，任务在被接受前受界。10,000 节点回放峰值 14 goroutines（旧 9,650）、全部测量、取消 0.1s 排空；入口均经 `Measure` |
-| P02 | 选中/故障候选优先、分轮全覆盖、精确去重与新鲜度 | 05 | I | `PENDING` | — |
-| P03 | 显式省电 failover/稳定槽位、退化确认与健康作用域 | 05 | I | `PENDING` | — |
+| P02 | 选中/故障候选优先、分轮全覆盖、精确去重与新鲜度 | 05 | I | `PENDING` | 新鲜证据跳过已存在并有测试；选中/故障优先、全覆盖、去重键未单独验证 |
+| P03 | 显式省电 failover/稳定槽位、退化确认与健康作用域 | 05 | I | `PENDING` | 自动/前台/真实流量省电门已有测试；稳定槽位/退化确认/健康作用域未验证 |
 | P04 | procfs 同 UID 合并、按需路径、多 owner 与缓存提交代次 | 05 | I | `PENDING` | — |
 | D01 | DNS 组请求预算、选举 token、输家取消与 survival 协调 | 05 | I | `PENDING` | — |
 | D02 | DNS 共享查询 key、响应条件、旧结果与解析所有权保护 | 05 | I | `PENDING` | — |
