@@ -61,6 +61,17 @@
 | 回收执行器 | `adaptiveTimer` 的 `reclaimWake/pendingReclaim/inFlightReclaim`；`finishIdleReclaim`、`runPressureReclaim`、`runCrisisReclaim` | 02 若在创建路径触发回收，只能 enqueue，不能自建执行器 |
 | 时钟/接缝 | `adaptiveTimer.now`、`sampleFunc`、`readUsage`、`trimCaches`、`trimMemory`、`freeOSMemory`、`releaseNetwork`、`runtimeReclaimable` | 测试专用赋值；生产默认真实实现 |
 
+### 2.1 02 的真实创建接点（现仓定位，2026-11-08）
+
+| 真实创建路径 | 现仓接点 | 02 需要注意 |
+|---|---|---|
+| 共享 TLS 握手 | `common/tls/client.go`：`defaultDialer.DialTLSContext` → `handshakeWithAdmission` | 已准入；许可在握手返回即释放；类别来自 `trafficclass` |
+| AnyTLS | `protocol/anytls/outbound.go`：`dialAdmitted` → `protocol/anytls/admission.go`：`dialWithAdmission` | 已准入；`HasHeldPermit` 防嵌套重复领取 |
+| Hysteria2 / TUIC | `protocol/hysteria2`、`protocol/tuic` 的客户端拨号；共享 offer/pending 在 pinned `sing-quic` 模块内 | **共享任务**的许可必须在共享工作开始前取得、由任务完成/退出归还；代码在依赖模块，按 `go.mod` replace 的 pin 读，不在本仓 |
+| Mieru | `protocol/mieru/dialer.go`；已有 `protocol/mieru/dial_observation.go`（每次 SDK dial 的类型化证据，无 goroutine/timer） | 复用现有 observation，不另建；沿 SDK Runtime→Mux→`newUnderlay` 接线 |
+| Cronet / Naive | `protocol/naive`、`transport/http`；`cronet-go` pin（29 个 native 模块 controlled） | 引擎初始化、引擎驻留、native 连接创建是三类事实；`Start` gate 不等于 native 覆盖 |
+| 类别绑定 | `route/conn.go` 的 `NewConnection` / `NewPacketConnection`，各一处 `trafficclass.WithClass` | 不要在每个协议里重新判断类别 |
+
 ## 3. 02 开工清单（建议顺序）
 
 先做一次启动自检，确认从干净状态开始：
