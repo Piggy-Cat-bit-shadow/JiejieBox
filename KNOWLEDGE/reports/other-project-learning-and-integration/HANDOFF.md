@@ -230,3 +230,11 @@ go test ./service/oomkiller ./common/resourceguard -count=1
 | 证据 | E27；分析/格式测试 + `-race` + `go build ./...` |
 | 边界 | 只有声明事实；C02 能力/默认/生效与原因、完整 CheckConfig 分层未做 |
 | 唯一下一动作 | 07 C01 余项+C02：能力事实与 declared/default/effective 报告；随后 07-B（C03 ApplyReport） |
+
+## 15. 06/07 收尾快照（上下文受限，2026-11-08）
+
+| 阶段 | 已有终态/证据 | 未闭环（明确不在本轮收尾） |
+|---|---|---|
+| 06 | F01 预置：编译匹配 + 阈值/越界回退，差分/bench/契约（E25，`26296c3`）；F02 `NOT_ADOPTED_WITH_EVIDENCE`（E26） | F01 真实 corpus 阈值、构建预算、并发更新、SRS/headless；F03 构建瞬时预算；F04 版本化产物；F05 应用预编译 → 未实施 |
+| 07 | C01 首批：parse-only `AnalyzeConfig` + 分层证明（E27，`b11cd19`，CI 绿） | C01 余项（ConfigDocument/检查层级）、C02 能力事实、C03 ApplyReport、C04 计划/epoch、C05 last-good、C06 Operations → 未实施 |
+| 判断 | 两阶段均为“部分落地”，不标 COMPLETED，也不做无证据的 NOT_ADOPTED | 进入 08 或恢复 06/07，入口 `stages/06.md`、`stages/07.md`、本文件 §13/§14 |
