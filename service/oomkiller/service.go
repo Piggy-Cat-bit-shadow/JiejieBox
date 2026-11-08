@@ -62,6 +62,13 @@ func NewService(ctx context.Context, logger log.ContextLogger, tag string, optio
 	if s.recorder != nil {
 		s.recorder.SetExtraMetadata("memoryReclaim", s.reclaimMetadata)
 	}
+	// The residency inventory is contributed the same way and for the same reason: an additive
+	// top-level key produced at write time from the owner that can actually answer. The producer is
+	// looked up lazily, because the reference manager registers itself while starting - after this
+	// service is constructed - and a build with no started box simply reports no key.
+	if s.recorder != nil {
+		s.recorder.SetExtraMetadata("residency", s.residencyMetadata)
+	}
 	// The admission guard is installed ONLY for a Network Extension with a process budget.
 	//
 	// That condition, and not "a memory limit was configured", is what makes this safe to
@@ -171,6 +178,49 @@ func (s *Service) reclaimMetadata() any {
 		return nil
 	}
 	return s.reclaim.metadata(time.Now())
+}
+
+// residencyMetadata renders the retirement walk's owner inventory for the OOM report's metadata
+// document.
+//
+// # What the numbers mean
+//
+// Per owner kind (outbound, endpoint, DNS transport, HTTP client manager) it reports two counts: how
+// many owners the walk can reach, and how many of those expose the release capability. Both are
+// OWNER-REACH counts. They are not connection, stream, session or byte counts, and they are not
+// termination counts - see adapter.ResidencyOwnerCount, which is the type that carries this contract.
+//
+// "measure": "owner-reach" is part of the document rather than a comment so a reader that finds the
+// key without this file cannot mistake the numbers for a resource ledger. The per-pool
+// active/idle/draining ledger is the pool's own and is not inferred here.
+//
+// It returns nil when no started reference manager has registered itself, so a build without a box -
+// or one that has not started yet - writes exactly the document it wrote before.
+func (s *Service) residencyMetadata() any {
+	if s == nil || s.ctx == nil {
+		return nil
+	}
+	reporter := service.FromContext[adapter.ResidencyReporter](s.ctx)
+	if reporter == nil {
+		return nil
+	}
+	snapshot := reporter.ResidencySnapshot()
+	return map[string]any{
+		"measure":       "owner-reach",
+		"outbounds":     residencyOwnerCount(snapshot.Outbounds),
+		"endpoints":     residencyOwnerCount(snapshot.Endpoints),
+		"dnsTransports": residencyOwnerCount(snapshot.DNSTransports),
+		"httpClients":   residencyOwnerCount(snapshot.HTTPClients),
+	}
+}
+
+// residencyOwnerCount renders one kind's counts. The field names repeat the semantics on purpose: a
+// reader of the document alone must not read "reachable" as a number of live resources.
+func residencyOwnerCount(count adapter.ResidencyOwnerCount) map[string]any {
+	return map[string]any{
+		"reachableOwners":  count.Reachable,
+		"releasableOwners": count.Releasable,
+	}
 }
 
 func MemoryPressure(ctx context.Context) func() tun.MemoryPressure {

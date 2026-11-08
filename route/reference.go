@@ -142,6 +142,16 @@ func (m *ReferenceManager) Start(stage adapter.StartStage, scope *adapter.Scope)
 	if m.powerGovernor != nil {
 		m.powerGovernor.AddReuseObserver(m.onReuseBoundary)
 	}
+	// The OOM report reads the owner inventory through this capability rather than through a second
+	// list of managers, so the report and the walks above cannot disagree about who is reachable. It
+	// is registered as the interface, not as *ReferenceManager, which is also what keeps
+	// service/oomkiller from importing the route package.
+	//
+	// A context without a service registry is a bare Scope or a unit test; there is no report for it
+	// to feed, so the registration is skipped instead of turning a missing registry into a panic.
+	if service.RegistryFromContext(m.ctx) != nil {
+		service.MustRegister[adapter.ResidencyReporter](m.ctx, m)
+	}
 	// Registered last so that it is the FIRST cleanup to run: the manager must be marked closed
 	// before the pools and managers it reaches are torn down, not after.
 	scope.Add(func() error {
@@ -417,6 +427,58 @@ func (m *ReferenceManager) CloseIdleConnections() {
 	m.retireIdleResources()
 }
 
+// reusableOwnerKind names one class of owner in the retirement walks. The kind is what the residency
+// snapshot reports per owner, and what a log line or a test can name without knowing the interface.
+type reusableOwnerKind uint8
+
+const (
+	reusableOwnerOutbound reusableOwnerKind = iota
+	reusableOwnerEndpoint
+	reusableOwnerDNSTransport
+	reusableOwnerHTTPClient
+)
+
+// eachReusableOwner is the ONE enumeration the two retirement walks and the residency snapshot read.
+//
+// # Why it is shared
+//
+// The walks had three hand-written manager lists and one HTTP client special case; adding an owner to
+// one list was silently not adding it to the others, which is the shape of the bug that left the HTTP
+// client pool unreachable through four reviews (see adapter.IdleConnectionReleaser). The shared walk
+// makes the owner set a fact of this one function: the trim, the reuse boundary and the report cannot
+// disagree about who can be asked.
+//
+// The HTTP client manager is visited as its own kind rather than as a fourth list entry because it is
+// a single service, not a manager of many. It owns the fourth set of reusable resources - the pooled
+// connections behind provider refresh, remote rule sets, the dashboard and the API - and its
+// CloseIdleConnections is the right idle-only action (see common/httpclient.Manager for why it is not
+// ResetNetwork).
+//
+// The callback receives `any` because the kind, not a common interface, is what the callers switch on:
+// the trim asks for IdleConnectionReleaser, the boundary additionally asks for ReuseSuspect, and the
+// snapshot only counts. Asserting a common interface here would be the same "assert the bundled
+// capability" mistake in a different place.
+func (m *ReferenceManager) eachReusableOwner(visit func(kind reusableOwnerKind, owner any)) {
+	if outboundManager := service.FromContext[adapter.OutboundManager](m.ctx); outboundManager != nil {
+		for _, outbound := range outboundManager.Outbounds() {
+			visit(reusableOwnerOutbound, outbound)
+		}
+	}
+	if endpointManager := service.FromContext[adapter.EndpointManager](m.ctx); endpointManager != nil {
+		for _, endpoint := range endpointManager.Endpoints() {
+			visit(reusableOwnerEndpoint, endpoint)
+		}
+	}
+	if transportManager := service.FromContext[adapter.DNSTransportManager](m.ctx); transportManager != nil {
+		for _, transport := range transportManager.Transports() {
+			visit(reusableOwnerDNSTransport, transport)
+		}
+	}
+	if httpClientManager := service.FromContext[adapter.HTTPClientManager](m.ctx); httpClientManager != nil {
+		visit(reusableOwnerHTTPClient, httpClientManager)
+	}
+}
+
 // retireIdleResources is the one walk over every reusable pool this core owns, and it reports how
 // many it reached.
 //
@@ -426,71 +488,68 @@ func (m *ReferenceManager) CloseIdleConnections() {
 // review of a new keeper has to establish - a keeper whose CloseIdleConnections can terminate a
 // stream carrying traffic does not belong in this list.
 //
+// The walk asks for adapter.IdleConnectionReleaser, NOT the bundled adapter.IdleConnectionKeeper: a
+// pool that can only drop what is idle is exactly what the trim needs, and demanding the eligibility
+// axis silently excludes it. See adapter.IdleConnectionReleaser for the full account.
+//
 // Endpoints are walked as well as outbounds and DNS transports, because the type assertion is the
 // only thing that decides: today none of the endpoint kinds implements CloseIdleConnections (they
 // implement SetKeepIdleConnections, which suspends the tunnel - a different and much larger action),
 // so the walk is inert for them, and a future endpoint that does implement it is covered without
 // another review of this file.
 //
-// The HTTP client manager is walked the same way and for the same reason. It owns the fourth set of
-// reusable resources - the pooled connections behind provider refresh, remote rule sets, the
-// dashboard and the API - and it was the one pool this walk could not reach; see the comment at the
-// step itself. It is not an endpoint or a transport, which is why it needs its own assertion rather
-// than a place in one of the three lists above.
+// The returned number is a count of OWNERS THE WALK COULD ASK, not of resources it closed. It never
+// was a resource count, and ResidencySnapshot exists so a report can say that without changing this
+// return value.
 func (m *ReferenceManager) retireIdleResources() int {
 	retired := 0
-	outboundManager := service.FromContext[adapter.OutboundManager](m.ctx)
-	if outboundManager != nil {
-		for _, outbound := range outboundManager.Outbounds() {
-			keeper, isKeeper := outbound.(adapter.IdleConnectionReleaser)
-			if isKeeper {
-				keeper.CloseIdleConnections()
-				retired++
-			}
-		}
-	}
-	endpointManager := service.FromContext[adapter.EndpointManager](m.ctx)
-	if endpointManager != nil {
-		for _, endpoint := range endpointManager.Endpoints() {
-			keeper, isKeeper := endpoint.(adapter.IdleConnectionReleaser)
-			if isKeeper {
-				keeper.CloseIdleConnections()
-				retired++
-			}
-		}
-	}
-	transportManager := service.FromContext[adapter.DNSTransportManager](m.ctx)
-	if transportManager != nil {
-		for _, transport := range transportManager.Transports() {
-			keeper, isKeeper := transport.(adapter.IdleConnectionReleaser)
-			if isKeeper {
-				keeper.CloseIdleConnections()
-				retired++
-			}
-		}
-	}
-	// The HTTP client service is the fourth owner of reusable state, and it is reached by an
-	// interface assertion rather than by an interface method because it is not an outbound, an
-	// endpoint or a DNS transport: it is the pool behind provider refresh, remote rule sets, the
-	// dashboard and the API. It was the one pool this walk could not reach, so a boundary retired
-	// everything except it - see Manager.CloseIdleConnections for why its idle-only pass is the
-	// right action and why it is not ResetNetwork.
-	//
-	// The assertion is adapter.IdleConnectionReleaser, NOT adapter.IdleConnectionKeeper, and the
-	// difference is the whole reason this step works. Manager implements CloseIdleConnections and
-	// deliberately not SetKeepIdleConnections - nothing has an eligibility answer to ask it, and its
-	// transports are shared and refcounted rather than owned - so asserting the BUNDLED interface
-	// failed here at run time on every walk. The walk only ever calls CloseIdleConnections, so it
-	// asks for only that. See adapter.IdleConnectionReleaser for the full account.
-	httpClientManager := service.FromContext[adapter.HTTPClientManager](m.ctx)
-	if httpClientManager != nil {
-		keeper, isKeeper := httpClientManager.(adapter.IdleConnectionReleaser)
-		if isKeeper {
-			keeper.CloseIdleConnections()
+	m.eachReusableOwner(func(_ reusableOwnerKind, owner any) {
+		releaser, isReleaser := owner.(adapter.IdleConnectionReleaser)
+		if isReleaser {
+			releaser.CloseIdleConnections()
 			retired++
 		}
-	}
+	})
 	return retired
+}
+
+// ResidencySnapshot inventories the owners the retirement walks can reach, by kind.
+//
+// It reads the SAME enumeration the walks act on, so a manager that is walked is counted and a
+// manager that is not walked cannot be counted. It performs no action and takes no lock of its own:
+// it only asserts the release capability, which is a pure type check.
+//
+// The counts are owner-reach counts - see adapter.ResidencyOwnerCount for what they are not. The
+// active/idle/draining ledger of a pool, and the proof that a teardown finished, belong to that pool
+// and are not inferred here.
+func (m *ReferenceManager) ResidencySnapshot() adapter.ResidencySnapshot {
+	var snapshot adapter.ResidencySnapshot
+	m.eachReusableOwner(func(kind reusableOwnerKind, owner any) {
+		count := residencyCountFor(&snapshot, kind)
+		count.Reachable++
+		if _, isReleaser := owner.(adapter.IdleConnectionReleaser); isReleaser {
+			count.Releasable++
+		}
+	})
+	return snapshot
+}
+
+// residencyCountFor returns the field of the snapshot that a kind contributes to. The panic is the
+// compile-time-like guard for a new kind: every owner class must be reported somewhere rather than
+// silently dropped from the inventory.
+func residencyCountFor(snapshot *adapter.ResidencySnapshot, kind reusableOwnerKind) *adapter.ResidencyOwnerCount {
+	switch kind {
+	case reusableOwnerOutbound:
+		return &snapshot.Outbounds
+	case reusableOwnerEndpoint:
+		return &snapshot.Endpoints
+	case reusableOwnerDNSTransport:
+		return &snapshot.DNSTransports
+	case reusableOwnerHTTPClient:
+		return &snapshot.HTTPClients
+	default:
+		panic("route: unknown reusable owner kind")
+	}
 }
 
 // retireSuspectResources is the reuse boundary's walk, and it differs from retireIdleResources in
@@ -511,28 +570,9 @@ func (m *ReferenceManager) retireIdleResources() int {
 // new work to it and let it drain. adapter.ReuseSuspect is that capability.
 func (m *ReferenceManager) retireSuspectResources() int {
 	retired := 0
-	outboundManager := service.FromContext[adapter.OutboundManager](m.ctx)
-	if outboundManager != nil {
-		for _, outbound := range outboundManager.Outbounds() {
-			retired = m.retireSuspectTarget(retired, outbound)
-		}
-	}
-	endpointManager := service.FromContext[adapter.EndpointManager](m.ctx)
-	if endpointManager != nil {
-		for _, endpoint := range endpointManager.Endpoints() {
-			retired = m.retireSuspectTarget(retired, endpoint)
-		}
-	}
-	transportManager := service.FromContext[adapter.DNSTransportManager](m.ctx)
-	if transportManager != nil {
-		for _, transport := range transportManager.Transports() {
-			retired = m.retireSuspectTarget(retired, transport)
-		}
-	}
-	httpClientManager := service.FromContext[adapter.HTTPClientManager](m.ctx)
-	if httpClientManager != nil {
-		retired = m.retireSuspectTarget(retired, httpClientManager)
-	}
+	m.eachReusableOwner(func(_ reusableOwnerKind, owner any) {
+		retired = m.retireSuspectTarget(retired, owner)
+	})
 	return retired
 }
 
