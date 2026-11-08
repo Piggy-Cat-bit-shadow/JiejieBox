@@ -319,6 +319,16 @@ func New(options Options) (*Box, error) {
 		ctx = context.Background()
 	}
 	ctx = service.ContextWithDefaultRegistry(ctx)
+	// The build reservation is created HERE, once per box, and injected before any provider is
+	// constructed: a provider captures its context at construction and takes the reservation
+	// per refresh, so an embedder that already installed one keeps it and every other build
+	// (a remote provider refresh, and later a rule-set compile) shares the same slots.
+	//
+	// The limits are deliberately conservative: a refresh is a build, not a connection, and two
+	// at once already double the peak a box pays for one (measured at ~2 MiB per 1 MiB
+	// document). Callers that do not fit wait; beyond the queue they receive a retryable
+	// deferral instead of an unbounded queue of blocked refreshes.
+	ctx = withBuildGate(ctx)
 
 	endpointRegistry := service.FromContext[adapter.EndpointRegistry](ctx)
 	inboundRegistry := service.FromContext[adapter.InboundRegistry](ctx)
