@@ -39,7 +39,7 @@ func (n *remoteTestNode) ListenPacket(context.Context, M.Socksaddr) (net.PacketC
 // newRemoteHarness builds the smallest real environment a remote provider needs: an outbound
 // manager with a test node type, a URL history storage, and a provider constructed through the
 // production constructor. fetch is called directly, which is also how the refresh loop calls it.
-func newRemoteHarness(t *testing.T, providerURL string) (*ProviderRemote, *outbound.Manager) {
+func newRemoteHarness(t testing.TB, providerURL string) (*ProviderRemote, *outbound.Manager) {
 	t.Helper()
 	ctx := service.ContextWithPtr(context.Background(), urltest.NewHistoryStorage())
 	registry := outbound.NewRegistry()
