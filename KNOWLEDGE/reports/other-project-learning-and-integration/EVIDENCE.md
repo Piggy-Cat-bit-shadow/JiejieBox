@@ -211,7 +211,14 @@ go build ./...                                              # exit 0
 
 ## E17 02 阶段：CI
 
-- 代码树提交后触发 `Verify`；结果与 run 号在 `DOCUMENT_INDEX.md` 记录（本地结果不冒称 CI）。
+```text
+workflow: Verify
+run:      42474314237
+head_sha: d14933eada21a958c36a4490fa8b34bd930af945
+result:   success；jobs: verify = success, race checks = success
+```
+
+- 等级：`VERIFIED_CI`（仅对该 SHA 的树）；其后的记录回填提交只改文档，不复用该结论证明代码变化。
 
 ## E13 未验证 / 边界
 

@@ -40,7 +40,7 @@
 
 - **范围**：上述新文档全文、被修改段落的 diff、命令块、表格与链接；不含原始日志附件、截图或配置全文。
 - **方法**：模式扫描 + 人工语义复核。扫描类别：凭据/token/API key/私钥/认证头/cookie、私有 IP 段与内部域名、设备/账号标识、用户名绝对路径。主机绝对路径统一改写为 `<workspace>`/`<toolchain>`；公开仓库 URL、公开提交 SHA、公开 Release 编号与主机性能数字保留（必要且有复现价值）。
-- **结果**：未发现需要移除的秘密值；未删除任何真实值（因此无可披露的删除项）。阶段收尾后父仓工作树不含未提交改动，`clients/apple`、`clients/android`、`clients/desktop` 均与父仓 gitlink 一致（android 的本地分支保留在子模块内，不在父仓提交中）。
+- **结果**：未发现需要移除的秘密值；未删除任何真实值（因此无可披露的删除项）。01 收尾后父仓工作树干净且子模块对齐 pin；02 施工期间检测到**外部进程**把 `clients/apple`、`release/source-lock.json`、`scripts/ci/check-libbox-abi.sh` 改到 Apple pin `97b35d1` 并暂存，本阶段未创作、未提交、未回滚这三处，02 的提交只含本阶段路径。
 - **限制**：模式扫描不等于取证审计；本轮没有对历史提交做泄露扫描，也没有把整个仓库重新认证。
 
 ## 远端核验记录
@@ -52,6 +52,10 @@
 | 推送结果 | `25f5c9a638b..dd6fd606bcf  testing -> testing`（`git push` exit 0） |
 | 远端 refs | `git ls-remote origin refs/heads/testing` → `dd6fd606bcf903c645377534a35dbc91d9eed7bd`（随后核验回填提交 `fbb339e6212f86f7f1a85998632826f1c76f949e` 亦已推送并回读本文件） |
 | 远端回读 | raw 文件 HTTP 200：`https://raw.githubusercontent.com/Piggy-Cat-bit-shadow/JiejieBox/dd6fd606bc…/KNOWLEDGE/reports/other-project-learning-and-integration/README.md`，内容与本地一致；GitHub API commit `503a18b5…` 存在（parent `25f5c9a6…`，stats +904/−22） |
-| CI 核验 | `Verify` run [42471833521](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42471833521)，head `37b666f7a6b`，`verify` 与 `race checks` 均 success（`VERIFIED_CI`，仅对该 SHA 的树） |
-| 工作树收尾 | `git status --porcelain` 为空；`git submodule status` 三个客户端均无 `+` 前缀；专题文档相对链接检查 0 处失效 |
+| CI 核验（01） | `Verify` run [42471833521](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42471833521)，head `37b666f7a6b`，`verify` 与 `race checks` 均 success（`VERIFIED_CI`，仅对该 SHA 的树） |
+| 02 推送结果 | `11933a68239..d14933eada2  testing -> testing`（`git push` exit 0；包含代码提交 `99fd6ee23d98` 与本文档提交 `d14933eada2`） |
+| 02 远端 refs | `git ls-remote origin refs/heads/testing` → `d14933eada21a958c36a4490fa8b34bd930af945` |
+| 02 远端回读 | raw 文件 HTTP 200：`.../d14933eada2…/KNOWLEDGE/reports/other-project-learning-and-integration/stages/02.md`，内容与本地一致 |
+| 02 CI 核验 | `Verify` run [42474314237](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42474314237)，head `d14933eada2`，`verify` 与 `race checks` 均 success（`VERIFIED_CI`，仅对该 SHA 的树；其后的记录回填提交只改文档） |
+| 工作树收尾（01） | `git status --porcelain` 为空；`git submodule status` 三个客户端均无 `+` 前缀；专题文档相对链接检查 0 处失效 |
 | 状态 | `REMOTE_VERIFIED`（`SANITIZED` / `LOCAL_COMMITTED` / `REMOTE_VERIFIED`） |
