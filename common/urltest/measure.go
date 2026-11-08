@@ -64,6 +64,11 @@ type MeasureOptions struct {
 	Link string
 	// ExpectedStatus is the accepted HTTP status set. Empty accepts any status.
 	ExpectedStatus ExpectedStatus
+	// Key, when set by the caller, is the full identity of this measurement (P02B): the node,
+	// the path, the network epoch and the TLS policy live with the caller that knows them, not
+	// with this engine. A measurement that arrives WITHOUT a key is never shared, because a
+	// partial key would let two different questions share one answer.
+	Key *MeasurementKey
 	// Debug, when set, receives the phase timings of this measurement.
 	//
 	// # Why a callback rather than a package-level logger
@@ -161,6 +166,25 @@ func withMeasurementTimeout(ctx context.Context, timeout time.Duration) (context
 }
 
 func Measure(ctx context.Context, options MeasureOptions, detour N.Dialer) (Measurement, error) {
+	// P02B: equivalent HEALTH measurements share one probe. The caller supplies the key because
+	// only it knows the node, path and epoch; without a key this engine cannot tell two
+	// questions apart, so it measures.
+	if options.Key != nil && options.Key.Purpose == PurposeHealth {
+		if share := MeasurementShareFromContext(ctx); share != nil {
+			key := *options.Key
+			wait, isLeader := share.JoinQuestion(key)
+			if isLeader {
+				measurement, err := measureWithTimeout(ctx, options, detour, C.TCPTimeout)
+				share.Publish(key, measurement, err)
+				return measurement, err
+			}
+			if !share.Wait(ctx, wait.Done()) {
+				return Measurement{}, ctx.Err()
+			}
+			// The leader publishes before closing, so this read is ordered after its writes.
+			return wait.Outcome()
+		}
+	}
 	return measureWithTimeout(ctx, options, detour, C.TCPTimeout)
 }
 
