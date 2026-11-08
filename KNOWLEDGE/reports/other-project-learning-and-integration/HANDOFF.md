@@ -280,4 +280,5 @@ go test ./service/oomkiller ./common/resourceguard -count=1
 | 11 | 仅计划；无测试 | stages/11 |
 | 12 | 本地微基准 + 四行 BLOCKED_EXTERNAL | stages/12 |
 | 唯一最便宜下一步 | 10-A：`transport/v2rayxhttp` 的 POST 失败/写入中 Close/大 Write 测试（先反例） | 不需 09 前置 |
+| 最终 CI | `41b7b1c87ee` 的 `Verify` run 42497492870：`verify` + `race checks` success（覆盖 01–08 代码树） |
 | 外部阻断 | 09 的 TrustTunnel/AWG 四角色实现、Linux、官方对端、真机；12 的四行验收依赖它们 | 未标通过 |

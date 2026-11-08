@@ -98,4 +98,5 @@
 | 06 F01 预置推送 | `b804292572e..40916bf4f7a  testing -> testing`（代码 `26296c328f3` + 文档 `40916bf4f7a`） |
 | 06 F01 CI | `Verify` run [42493390111](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42493390111)（head `40916bf4f7a`）被后续文档推送取消；最终 head `c6324ac2cb2` 的 run [42493478151](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42493478151) `verify`+`race checks` success |
 | 工作树收尾（01/02） | 01 收尾后干净；02 收尾把外部 Apple pin 改动恢复后再次干净：`git status --porcelain` 为空、三个子模块无 `+`、专题链接检查 0 处失效 |
+| 最终 head CI（01–08 代码树） | `Verify` run [42497492870](https://github.com/Piggy-Cat-bit-shadow/JiejieBox/actions/runs/42497492870)（head `41b7b1c87ee`）：`verify` 与 `race checks` 均 **success**；包含 08 O01/O06 代码与全部文档 |
 | 状态 | `REMOTE_VERIFIED`（`SANITIZED` / `LOCAL_COMMITTED` / `REMOTE_VERIFIED`） |
