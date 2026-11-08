@@ -1136,9 +1136,10 @@ func (s *Box) preStart() error {
 	}
 	// Registered before every component, so reverse-order cleanup stops the coordinator LAST: a
 	// resource must be unregistered by its own cleanup before the coordinator that would call it
-	// goes away.
-	s.scope.Add(s.runtimeCoordinator.Close)
-	s.scope.Add(s.logFactory.Close)
+	// goes away. Both are named for the bounded close diagnostic: if either Close is the one that
+	// wedges, the report says which owner, not just "cleanup".
+	s.scope.AddNamed("close runtime-coordinator", s.runtimeCoordinator.Close)
+	s.scope.AddNamed("close log-factory", s.logFactory.Close)
 	// Close the URL-test storage THIS Box created, and only that one.
 	//
 	// Putting it on the context does not make it part of the lifecycle: without a cleanup a
@@ -1148,7 +1149,7 @@ func (s *Box) preStart() error {
 	// because the Box does not own it and the daemon closes its own.
 	if s.ownedURLTestHistory != nil {
 		ownedURLTestHistory := s.ownedURLTestHistory
-		s.scope.Add(func() error {
+		s.scope.AddNamed("close url-test-history", func() error {
 			s.ownedURLTestHistory = nil
 			return ownedURLTestHistory.Close()
 		})
@@ -1159,7 +1160,7 @@ func (s *Box) preStart() error {
 		return err
 	}
 	if debugHTTPServer != nil {
-		s.scope.Add(debugHTTPServer.Close)
+		s.scope.AddNamed("close debug-http-server", debugHTTPServer.Close)
 	}
 	err = s.startInternalServices(adapter.StartStateInitialize) // cache-file clash-api v2ray-api
 	if err != nil {
@@ -1214,7 +1215,7 @@ func (s *Box) start() error {
 		if err != nil {
 			return E.Cause(err, "start ntp service")
 		}
-		s.scope.Add(s.ntpService.Close)
+		s.scope.AddNamed("close ntp-service", s.ntpService.Close)
 	}
 	err = s.startComponents(adapter.StartStateStart,
 		boxComponent{"endpoint", s.endpoint},
@@ -1305,6 +1306,11 @@ func (s *Box) Close() error {
 }
 
 func (s *Box) close() error {
+	// The top-level close phases are timed for the debug line at the end of this function. They are
+	// bounded and documented as non-blocking; the one phase that can wait without a bound is the
+	// scope drain, and that is where the bounded watchdog lives (adapter.Scope). Nothing below may
+	// use these timings to decide anything - they exist so a slow close can be attributed.
+	closeStarted := time.Now()
 	// The status view is detached FIRST - before the pause callback, before the governor, and
 	// before the scope walks a single component.
 	//
@@ -1329,20 +1335,37 @@ func (s *Box) close() error {
 	// is what keeps a Box assembled by a test - or one that never reached the status construction
 	// above - closing without a status surface at all.
 	s.statusView.Disconnect()
+	viewElapsed := time.Since(closeStarted)
+	pauseStarted := time.Now()
 	// The governor is closed first and its callback unregistered, so no lifecycle event can arrive
 	// while the scope is tearing down components that would have asked it what to do.
 	if s.pauseManager != nil && s.pauseCallback != nil {
 		s.pauseManager.UnregisterCallback(s.pauseCallback)
 		s.pauseCallback = nil
 	}
+	pauseElapsed := time.Since(pauseStarted)
+	governorStarted := time.Now()
 	if s.powerGovernor != nil {
 		s.powerGovernor.Close()
 		s.powerGovernor = nil
 	}
+	governorElapsed := time.Since(governorStarted)
 	// The scope owns teardown. Every component registered through scope.Start, and everything that
 	// added itself through scope.Add, is closed here in reverse registration order - which is the
 	// ordering the old hand-written close list was trying to express.
-	return s.scope.Close()
+	scopeStarted := time.Now()
+	closeErr := s.scope.Close()
+	// One debug line per close, with the phase that was slow. The scope drain's own worst stage is
+	// named by the bounded watchdog inside it when it wedges; when it merely takes a while, its
+	// slow-cleanup lines carry the detail.
+	if s.logger != nil {
+		s.logger.Debug("close: status-view ", viewElapsed.Round(time.Millisecond),
+			", pause-callback ", pauseElapsed.Round(time.Millisecond),
+			", power-governor ", governorElapsed.Round(time.Millisecond),
+			", scope ", time.Since(scopeStarted).Round(time.Millisecond),
+			" (total ", time.Since(closeStarted).Round(time.Millisecond), ")")
+	}
+	return closeErr
 }
 
 func (s *Box) Network() adapter.NetworkManager {

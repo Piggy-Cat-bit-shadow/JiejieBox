@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"context"
+	"runtime"
 	"slices"
 	"sync"
 	"time"
@@ -86,13 +87,61 @@ type Scope struct {
 
 	access   sync.Mutex
 	state    scopeState
-	cleanups []func() error
+	cleanups []scopeCleanup
 	// closeDone is closed when the drain the first Close started has finished. A later Close waits
 	// on it rather than returning before the result is known. It is a channel, not a goroutine: no
 	// goroutine is created to wait and none can be abandoned.
 	closeDone chan struct{}
 	closeErr  error
 	children  map[Lifecycle]*Scope
+	// closeDiag is the in-progress drain's bounded diagnostic record, or nil when no drain is running.
+	// It is created by the close that owns the drain and cleared before this Close returns; every read
+	// and write is under access.
+	closeDiag *closeDiagnostics
+}
+
+// scopeCleanup is one entry in the close queue: the action plus the name the bounded diagnostic
+// reports it by. Component cleanups are registered by Scope.Start with the component's name; a bare
+// Add is reported as "cleanup", which is honest about what the Scope knows.
+type scopeCleanup struct {
+	run  func() error
+	name string
+}
+
+// closeWatchdogTimeout is how long a close drain may run before the bounded diagnostic reports what it
+// is stuck on. It mirrors constant.StopTimeout (the same five-second scale the per-component close
+// monitor uses) and is a variable only so the tests can shrink it.
+var closeWatchdogTimeout = C.StopTimeout
+
+// closeDiagnosticsStackBudget bounds the stack dump the watchdog takes. The dump is all-goroutine,
+// which is the only way to see where a cleanup is blocked, and the buffer is what keeps it bounded:
+// runtime.Stack truncates to the buffer rather than growing to the process's real stack mass. It is a
+// few kilobytes, not the tens of megabytes a full dump can produce in a Network Extension under
+// memory pressure - the case the diagnostic exists for is exactly the case that cannot afford one.
+const closeDiagnosticsStackBudget = 4 * 1024
+
+// closeCleanupSlowThreshold is when one cleanup's own duration is worth a debug line. It is below the
+// watchdog's timeout so a slow-but-finite close still records which stage was slow.
+const closeCleanupSlowThreshold = time.Second
+
+// closeDiagnostics is the bounded record of one drain in progress.
+//
+// # What it records, and what it is not
+//
+// It records the drain's total and completed cleanup count, the name of the cleanup currently
+// running, and when the drain started. That is enough for the watchdog to name the owner/stage and
+// say how much is still pending. It is a DIAGNOSTIC, not a lifecycle state: it cannot cancel, skip or
+// reorder a cleanup, and nothing reads it to decide anything. The Scope's state machine remains the
+// only authority.
+type closeDiagnostics struct {
+	started   time.Time
+	total     int
+	completed int
+	current   string
+	timer     *time.Timer
+	// reported makes the watchdog one-shot: a drain that never finishes must not produce a warning
+	// per timeout interval.
+	reported bool
 }
 
 func NewScope(ctx context.Context, logger log.ContextLogger) *Scope {
@@ -124,9 +173,22 @@ func (s *Scope) Context() context.Context {
 // The cleanup is never run while the lock is held: it is an external Close and may take locks of its
 // own, which is a reentrancy the original code was careful to avoid as well.
 func (s *Scope) Add(cleanup func() error) {
+	s.add("cleanup", cleanup)
+}
+
+// AddNamed is Add with a name for the bounded close diagnostic, so a drain that is stuck reports the
+// owner it is stuck on instead of the generic "cleanup". The name has no lifecycle meaning: ordering
+// is still registration order, reversed on close, and the error and cancellation rules are Add's.
+func (s *Scope) AddNamed(name string, cleanup func() error) {
+	s.add(name, cleanup)
+}
+
+// add is Add with a name for the bounded close diagnostic. The public Add has no name because the
+// Scope cannot invent one; the component path below does know the component.
+func (s *Scope) add(name string, cleanup func() error) {
 	s.access.Lock()
 	if s.state == scopeOpen {
-		s.cleanups = append(s.cleanups, cleanup)
+		s.cleanups = append(s.cleanups, scopeCleanup{run: cleanup, name: name})
 		s.access.Unlock()
 		return
 	}
@@ -148,7 +210,7 @@ func (s *Scope) Start(name string, component Lifecycle, stage StartStage) error 
 	if !loaded {
 		child = NewScope(s.ctx, s.logger)
 		s.children[component] = child
-		s.cleanups = append(s.cleanups, func() error {
+		s.cleanups = append(s.cleanups, scopeCleanup{name: "close " + name, run: func() error {
 			done := LogElapsed(s.logger, "close ", name)
 			monitor := taskmonitor.New(s.logger, C.StopTimeout)
 			monitor.Start("close ", name)
@@ -159,7 +221,7 @@ func (s *Scope) Start(name string, component Lifecycle, stage StartStage) error 
 				return E.Cause(closeErr, "close ", name)
 			}
 			return nil
-		})
+		}})
 	}
 	s.access.Unlock()
 	done := LogElapsed(s.logger, stage, " ", name)
@@ -238,7 +300,12 @@ func (s *Scope) Close() error {
 	s.children = nil
 	s.closeDone = make(chan struct{})
 	done := s.closeDone
+	s.startCloseDiagnosticsLocked(len(cleanups))
 	s.access.Unlock()
+	// The watchdog is a diagnostic, never a second lifecycle: it cannot skip, cancel or reorder a
+	// cleanup, and the drain below is the same code it was before. The stop is deferred so a cleanup
+	// that panics cannot leave a timer behind, which is the leak this project refuses in any timer.
+	defer s.stopCloseDiagnostics()
 	// Expand each cleanup's result before judging it.
 	//
 	// A single cleanup can return an aggregate. Judging that aggregate as a unit would discard a
@@ -249,7 +316,11 @@ func (s *Scope) Close() error {
 		err           error
 	)
 	for _, cleanup := range slices.Backward(cleanups) {
-		cleanupErrors = append(cleanupErrors, E.Expand(cleanup())...)
+		s.setCloseStage(cleanup.name)
+		started := time.Now()
+		cleanupErr := cleanup.run()
+		s.finishCloseStage(cleanup.name, time.Since(started))
+		cleanupErrors = append(cleanupErrors, E.Expand(cleanupErr)...)
 	}
 	for _, cleanupErr := range cleanupErrors {
 		if cleanupErr == nil {
@@ -280,6 +351,94 @@ func (s *Scope) Close() error {
 	s.access.Unlock()
 	close(done)
 	return err
+}
+
+// startCloseDiagnosticsLocked arms the bounded slow-close report for a drain of total cleanups.
+// Caller must hold s.access. A drain with nothing to run, or a Scope with no logger, needs no timer.
+func (s *Scope) startCloseDiagnosticsLocked(total int) {
+	if total == 0 || s.logger == nil {
+		return
+	}
+	diagnostics := &closeDiagnostics{
+		started: time.Now(),
+		total:   total,
+		current: "starting",
+	}
+	s.closeDiag = diagnostics
+	diagnostics.timer = time.AfterFunc(closeWatchdogTimeout, s.reportSlowClose)
+}
+
+// setCloseStage records which cleanup the drain is running so the watchdog can name the owner/stage
+// it is blocked on. It never holds the lock across the cleanup.
+func (s *Scope) setCloseStage(name string) {
+	s.access.Lock()
+	if diagnostics := s.closeDiag; diagnostics != nil {
+		diagnostics.current = name
+	}
+	s.access.Unlock()
+}
+
+// finishCloseStage records one completed cleanup. A cleanup that took longer than the slow threshold
+// gets its own debug line even when the whole drain finished inside the watchdog window, which is
+// what makes a slow-but-finite stage visible without a timeout.
+func (s *Scope) finishCloseStage(name string, elapsed time.Duration) {
+	s.access.Lock()
+	if diagnostics := s.closeDiag; diagnostics != nil {
+		diagnostics.completed++
+		diagnostics.current = ""
+	}
+	s.access.Unlock()
+	if elapsed >= closeCleanupSlowThreshold && s.logger != nil {
+		s.logger.Debug("close ", name, " took ", elapsed.Round(time.Millisecond))
+	}
+}
+
+// reportSlowClose is the watchdog: it describes a drain that is still running after
+// closeWatchdogTimeout, then never speaks again for that drain.
+//
+// # Why a warning and not an action
+//
+// A cleanup that blocks blocks the drain by construction - Scope.Close runs the queue synchronously
+// and nothing bounds how long one cleanup may take. Abandoning the goroutine, cancelling the cleanup
+// or forcing the drain forward would all report a teardown that did not happen, which is the one
+// outcome the completion boundary forbids. The report is therefore the whole product: who, what
+// stage, how much is done and pending, and a bounded stack to show where it is stuck.
+//
+// The stack is all-goroutine because the blocked cleanup is not this goroutine - runtime.Stack from
+// here can only see its own. The buffer bounds it; runtime.Stack truncates into the provided slice
+// rather than growing to the process's real stack mass.
+func (s *Scope) reportSlowClose() {
+	s.access.Lock()
+	diagnostics := s.closeDiag
+	if diagnostics == nil || s.state != scopeClosing || diagnostics.reported {
+		s.access.Unlock()
+		return
+	}
+	diagnostics.reported = true
+	completed := diagnostics.completed
+	total := diagnostics.total
+	current := diagnostics.current
+	elapsed := time.Since(diagnostics.started)
+	s.access.Unlock()
+
+	s.logger.Warn("close is still running after ", elapsed.Round(time.Millisecond),
+		": ", completed, "/", total, " cleanups completed, ", total-completed, " pending, current: ", current)
+	buffer := make([]byte, closeDiagnosticsStackBudget)
+	written := runtime.Stack(buffer, true)
+	s.logger.Warn("close stack, bounded to ", closeDiagnosticsStackBudget, " bytes:\n", string(buffer[:written]))
+}
+
+// stopCloseDiagnostics disarms the watchdog and clears the record. It is deferred from Close so a
+// cleanup that panics cannot leave the timer behind; a callback that already started finds a nil
+// record and stays silent.
+func (s *Scope) stopCloseDiagnostics() {
+	s.access.Lock()
+	diagnostics := s.closeDiag
+	s.closeDiag = nil
+	s.access.Unlock()
+	if diagnostics != nil && diagnostics.timer != nil {
+		diagnostics.timer.Stop()
+	}
 }
 
 func LogElapsed(logger log.ContextLogger, description ...any) func() {
