@@ -6,7 +6,7 @@
 
 | 项 | 值 |
 |---|---|
-| 阶段 | 09（X01–X05、M01–M03）——**IN_PROGRESS**（X04 四角色评估已更新，无代码；X01–X03/X05/M01–M03 未开始，见 `stages/09.md`）。08 未完成项保留 |
+| 阶段 | 10（V01）——**IN_PROGRESS**（本窗口只完成 10-A 入口与攻击矩阵，见 `stages/10.md`；09 的 TrustTunnel/AWG 未实现，其攻击面标 `BLOCKED_EXTERNAL`） |
 | 02 结束 revision | `afdd3b3cf7c` |
 | 04 进入时 HEAD | `a6f1ca55f5455fdaf88d41b030579ac1b41119df`（= `origin/testing`，无需同步） |
 | 03 代码提交 | `cd1d8160e3c` |
@@ -76,7 +76,7 @@
 | M01 | 闲置维护 timer 合并、生命周期普查和回收反馈 | 09 | E | `PENDING` | 01 的回收反馈是 M01 的输入 |
 | M02 | hotfix 退役条件、上游同步、平台 tag/schema/依赖来源锁 | 09 | I | `PENDING` | 01 核实 `release/source-lock.json` 与 `dependencies.json` 的 intent/derived 分工 |
 | M03 | 必要客户端/桥接/配置入口实际接通及发行档位验证 | 09 | I | `PENDING` | — |
-| V01 | 账本边界、输入放大、失败注入与测试检出能力 | 10 | I | `PENDING` | 10 专项 |
+| V01 | 账本边界、输入放大、失败注入与测试检出能力 | 10 | I | `PENDING` | 10-A 入口选定 XHTTP packet-up 字节账（pending 上界/大 Write/POST 失败/写入中 Close/幂等关闭），先做反例证明检出力；09 的 TrustTunnel/AWG 攻击面因无实现 `BLOCKED_EXTERNAL` |
 | V02 | 跨机制状态交错、资源身份和整系统协调攻击 | 11 | I | `PENDING` | 11 专项 |
 | V03 | 协议互通、性能/内存价值、真机证据与最终全项闭环 | 12 | I | `PENDING` | 12 专项；真机/互通仍须独立证据 |
 
