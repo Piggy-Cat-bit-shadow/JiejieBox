@@ -194,6 +194,53 @@ func okHandler(writer http.ResponseWriter, request *http.Request) {
 	_, _ = io.WriteString(writer, "ok")
 }
 
+func withH3EstablishBudget(t *testing.T, budget time.Duration) {
+	t.Helper()
+	previous := h3EstablishBudget
+	h3EstablishBudget = budget
+	t.Cleanup(func() { h3EstablishBudget = previous })
+}
+
+// TestColdH3AttemptGivesUpWithinItsOwnBudget is A3 at the parent's level.
+//
+// A cold attempt can spend the CALLER's whole budget inside the HTTP/3 transport: the pool
+// serialises dials per host, so this request may be waiting for a dial that belongs to another
+// request, and the HTTP/2 fallback then has nothing left to spend. The establishment bound gives
+// the attempt a budget of its own, so the fallback keeps the rest of the caller's.
+//
+// The bound is deliberately NOT a failure verdict: giving up on a slow handshake says nothing
+// about whether the peer's HTTP/3 works, so the memory must stay unarmed and the next request is
+// free to try HTTP/3 again.
+func TestColdH3AttemptGivesUpWithinItsOwnBudget(t *testing.T) {
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	h2Server, h2Transport := startRetrySafetyH2Server(t, okHandler)
+	transport := newRetrySafetyTransport(h2Transport, func(ctx context.Context, _ *stdTLS.Config, _ *quic.Config) (*quic.Conn, error) {
+		select {
+		case <-release:
+			return nil, errors.New("released")
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}, 20*time.Millisecond)
+	withH3EstablishBudget(t, 50*time.Millisecond)
+
+	payload := "post-payload"
+	request, err := http.NewRequest(http.MethodPost, "https://stalled.example:443/submit", strings.NewReader(payload))
+	require.NoError(t, err)
+
+	start := time.Now()
+	response, err := transport.RoundTrip(request)
+	elapsed := time.Since(start)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	require.Less(t, elapsed, 3*time.Second,
+		"the cold HTTP/3 attempt must give up inside its own budget instead of spending the caller's")
+	require.Equal(t, []string{payload}, h2Server.receivedBodies())
+	require.False(t, transport.h3Broken("stalled.example:443"),
+		"our own establishment bound is not evidence that the peer's HTTP/3 is broken")
+}
+
 // TestNonIdempotentRequestIsNeverExecutedTwice is defect 1.
 //
 // The HTTP/3 leg is slower than the fallback delay but succeeds. A POST must be executed ONCE: the
