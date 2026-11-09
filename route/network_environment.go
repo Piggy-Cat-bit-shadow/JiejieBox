@@ -159,8 +159,7 @@ func (r *NetworkManager) EstablishInitialNetworkEnvironment() {
 		// interface). Both leave the manager in the state this call exists to guarantee.
 		return
 	}
-	r.resetNetworkLocked(r.startedContext(), false)
-	r.commitTransition(token)
+	r.performTransitionLocked(r.startedContext(), token, false)
 }
 
 // recomputeNetworkEnvironment refreshes the fingerprint and reports whether it changed.
@@ -380,8 +379,8 @@ func (r *NetworkManager) boundEnvironmentTransitionExported(token transitionToke
 	// contended, and one epoch per logical transition.
 	// `token` is the one THIS transition's claim produced, carried from recomputeNetworkEnvironment.
 	// Recovering it with Load() here would return whatever claimed last, letting a superseded
-	// transition commit ownership belonging to its successor.
-	defer r.commitTransition(token)
+	// transition commit ownership belonging to its successor. performTransitionLocked settles only
+	// this token, so a superseded transition's completion is ignored exactly as before.
 	if !r.transitionOwns(token) {
 		return
 	}
@@ -392,7 +391,7 @@ func (r *NetworkManager) boundEnvironmentTransitionExported(token transitionToke
 	if !r.transitionOwns(token) {
 		return
 	}
-	r.resetNetworkLocked(r.startedContext(), false)
+	r.performTransitionLocked(r.startedContext(), token, false)
 }
 
 // boundEnvironmentTransitionLocked is the inner form for a caller holding resetRunAccess.
@@ -406,11 +405,10 @@ func (r *NetworkManager) boundEnvironmentTransitionLocked(ctx context.Context, t
 	// The epoch was claimed by recomputeNetworkEnvironment, in the same step that published the new
 	// fingerprint - NOT here. Claiming again would advance the epoch twice for one logical
 	// transition, and a token recovered afterwards would be the wrong one.
-	defer r.commitTransition(token)
 	if !r.transitionOwns(token) {
 		return
 	}
-	r.resetNetworkLocked(ctx, false)
+	r.performTransitionLocked(ctx, token, false)
 }
 
 // environmentTransitionApplies reports whether a confirmed environment change should be bounded now.

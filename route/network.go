@@ -1166,8 +1166,7 @@ func (r *NetworkManager) ResetNetwork(ctx context.Context) {
 		// No environment change to carry a token: this reset IS the transition.
 		token = r.beginTransition()
 	}
-	defer r.commitTransition(token)
-	r.resetNetworkLocked(ctx, false)
+	r.performTransitionLocked(ctx, token, false)
 }
 
 // SetSleepEpisode records the platform sleep episode that a later resume closes.
@@ -1341,8 +1340,7 @@ func (r *NetworkManager) ResetNetworkHard(ctx context.Context) {
 	if token == noTransition {
 		token = r.beginTransition()
 	}
-	defer r.commitTransition(token)
-	r.resetNetworkLocked(ctx, true)
+	r.performTransitionLocked(ctx, token, true)
 }
 
 // beginTransition claims the epoch for a transition that is about to perform a reset.
@@ -1675,6 +1673,82 @@ func (r *NetworkManager) resetNetworkLocked(ctx context.Context, recoveredFromCo
 		}
 	}
 
+	// The DNS pin moves FIRST, for the generation this transition has already claimed.
+	//
+	// It used to move last, after every listener had been told. That made the pin - and with it the
+	// transition's own commit - wait for the slowest OLD-generation teardown: the V2Ray QUIC
+	// outbound validates a migration candidate synchronously, so with N active QUIC outbounds the
+	// pin was up to N x candidate-budget late, and so was every dial decision that reads the
+	// settled state. Nothing about validating the old generation's sockets can make the pin more
+	// correct: the claim above has already published this generation, and the pin describes the
+	// network the device is on now.
+	//
+	// router.ResetNetwork stays unconditional and deliberately so. It is where the DNS transports and
+	// their environment pins move TOGETHER, so gating it on the pause would let the pin and the socket
+	// disagree - the exact inconsistency the pin exists to prevent. See network_environment.go.
+	r.router.ResetNetwork()
+}
+
+// performTransitionLocked runs one network transition to completion: it publishes the new generation
+// (drain + DNS pin), SETTLES it, and only then tells the listeners about the old one.
+//
+// # Why the settle comes before the listener phase
+//
+// A production dial taken while the network is unsettled is refused at hand-over with
+// "network changed while dialling" (see common/dialer's captureEpoch) and retried by its caller. So
+// "the network is settled" is exactly the gate the new generation's traffic waits behind, and putting
+// the old generation's teardown in front of that gate made the new generation wait for it - one
+// candidate budget per active V2Ray QUIC outbound, plus whatever their slow closes cost. The body
+// above is what the new generation actually needs: the connections of the previous path are drained,
+// and DNS is pinned to the network the device is on now.
+//
+// Telling the listeners is a reaction to the change, not a precondition for it. Every implementation
+// in docs/fork/interface-update-lifecycle.md acts only on its OWN transports - close a pool, migrate a
+// socket, re-test a group - so the new generation is correct while that work is still running. The
+// phase is bounded and concurrent (notifyNetworkChangeListeners); the transition's commit is not.
+//
+// The transition's own token is settled here, so callers no longer commit after this returns; a
+// superseded transition's token is ignored by commitTransition exactly as it was when the commit was
+// deferred.
+func (r *NetworkManager) performTransitionLocked(ctx context.Context, token transitionToken, recoveredFromConfirmedOffline bool) {
+	r.resetNetworkLocked(ctx, recoveredFromConfirmedOffline)
+	r.commitTransition(token)
+	if !r.networkIsPaused() {
+		r.notifyNetworkChangeListeners(ctx)
+	}
+}
+
+// networkChangeListenerBudget bounds the whole listener phase of one network change.
+//
+// It is an outer watchdog, not the working budget: each listener owns its own bound (the V2Ray QUIC
+// migration is 2 s probe + 2 s retire), and a listener that honours its context stops when this
+// expires. It exists so a listener that ignores its context cannot hold the transition - and every
+// reset behind it - open forever.
+const networkChangeListenerBudget = 6 * time.Second
+
+// notifyNetworkChangeListeners tells every endpoint, inbound and outbound about the new network.
+//
+// # Why this is concurrent
+//
+// Each listener owns its own transport and the notifications do not interact: the inventory in
+// docs/fork/interface-update-lifecycle.md is per implementation, and none of them reads another
+// listener's state. Run serially, the phase cost the SUM of their budgets, and only one of them is
+// slow: the V2Ray QUIC outbound validates a migration candidate synchronously (up to
+// migrationProbeBudget + migrationRetireBudget). Two active QUIC outbounds on a black-holed network
+// therefore made one physical change take two candidate budgets before the phase finished. Run
+// together, the phase costs the SLOWEST listener instead, which is what puts the whole change under
+// one bound independent of the number of outbounds.
+//
+// # Why it is bounded
+//
+// The phase runs inside the transition, and the transition holds resetRunAccess: everything queued
+// behind it - the next interface event, a control-plane reset, ReleaseMemory - waits for it. A
+// listener that never returns would therefore block every later reset. The phase gets its own
+// deadline (networkChangeListenerBudget), derived with WithoutCancel so that a superseding event
+// does not abort a candidate that is still being validated for THIS one; each listener sees that
+// deadline and can stop at it. A listener that ignores its context is reported and left to its own
+// budget rather than being able to hold the network manager forever.
+func (r *NetworkManager) notifyNetworkChangeListeners(ctx context.Context) {
 	// The endpoints, inbounds and outbounds are told about the new network HERE, and not while the
 	// device is paused.
 	//
@@ -1689,34 +1763,48 @@ func (r *NetworkManager) resetNetworkLocked(ctx context.Context, recoveredFromCo
 	// lifted, so every listener is told once there is something to tell it about. A socket that is
 	// genuinely dead in the meantime fails on its own and reconnects, which is the behaviour this
 	// whole change set is built around.
-	//
-	// router.ResetNetwork stays unconditional and deliberately so. It is where the DNS transports and
-	// their environment pins move TOGETHER, so gating it on the pause would let the pin and the socket
-	// disagree - the exact inconsistency the pin exists to prevent. See network_environment.go.
-	if !r.networkIsPaused() {
-		for _, endpoint := range r.endpoint.Endpoints() {
-			listener, isListener := endpoint.(adapter.InterfaceUpdateListener)
-			if isListener {
-				listener.InterfaceUpdated(ctx)
-			}
-		}
-
-		for _, inbound := range r.inbound.Inbounds() {
-			listener, isListener := inbound.(adapter.InterfaceUpdateListener)
-			if isListener {
-				listener.InterfaceUpdated(ctx)
-			}
-		}
-
-		for _, outbound := range r.outbound.Outbounds() {
-			listener, isListener := outbound.(adapter.InterfaceUpdateListener)
-			if isListener {
-				listener.InterfaceUpdated(ctx)
-			}
+	listeners := make([]adapter.InterfaceUpdateListener, 0, 16)
+	for _, endpoint := range r.endpoint.Endpoints() {
+		if listener, isListener := endpoint.(adapter.InterfaceUpdateListener); isListener {
+			listeners = append(listeners, listener)
 		}
 	}
+	for _, inbound := range r.inbound.Inbounds() {
+		if listener, isListener := inbound.(adapter.InterfaceUpdateListener); isListener {
+			listeners = append(listeners, listener)
+		}
+	}
+	for _, outbound := range r.outbound.Outbounds() {
+		if listener, isListener := outbound.(adapter.InterfaceUpdateListener); isListener {
+			listeners = append(listeners, listener)
+		}
+	}
+	if len(listeners) == 0 {
+		return
+	}
 
-	r.router.ResetNetwork()
+	phaseContext, cancelPhase := context.WithTimeout(context.WithoutCancel(ctx), networkChangeListenerBudget)
+	defer cancelPhase()
+
+	var waitGroup sync.WaitGroup
+	waitGroup.Add(len(listeners))
+	for _, listener := range listeners {
+		go func() {
+			defer waitGroup.Done()
+			listener.InterfaceUpdated(phaseContext)
+		}()
+	}
+	finished := make(chan struct{})
+	go func() {
+		waitGroup.Wait()
+		close(finished)
+	}()
+	select {
+	case <-finished:
+	case <-phaseContext.Done():
+		r.logger.Error("network change listeners did not finish within ", networkChangeListenerBudget,
+			"; the new generation is published and the leftovers are bounded by each listener's own budget")
+	}
 }
 
 // TrimMemory is the progressive pool pass: release reusable pools, without a network reset.
@@ -2110,11 +2198,12 @@ func (r *NetworkManager) updateInterface(ctx context.Context, defaultInterface *
 			token = pendingToken
 		}
 		// A newer transition may own the network by now. Running the body anyway would mutate the
-		// successor's state, so the stale body is skipped and only its owner resets.
+		// successor's state, so the stale body is skipped and only its owner resets. A skipped body
+		// does not commit either: commitTransition would ignore a token that is no longer the owner,
+		// and this update has nothing left to settle.
 		if r.transitionOwns(token) {
-			r.resetNetworkLocked(ctx, pendingHard)
+			r.performTransitionLocked(ctx, token, pendingHard)
 		}
-		r.commitTransition(token)
 	}
 }
 
@@ -2162,8 +2251,7 @@ func (r *NetworkManager) notifyWindowsPowerEvent(event int) {
 			if token == noTransition {
 				token = r.beginTransition()
 			}
-			defer r.commitTransition(token)
-			r.resetNetworkLocked(updateContext, false)
+			r.performTransitionLocked(updateContext, token, false)
 		}()
 	}
 }
