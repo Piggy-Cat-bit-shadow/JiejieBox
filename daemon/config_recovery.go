@@ -57,17 +57,40 @@ func (s *StartedService) configStore() *configtx.Store {
 	return s.configRecovery
 }
 
-// storeConfigRevision commits one successfully started profile as the last-good document.
-func (s *StartedService) storeConfigRevision(profile string) {
+// Persistence outcomes for a started configuration.
+const (
+	persistenceSaved         = "saved"
+	persistenceDegraded      = "degraded"
+	persistenceNotConfigured = "not_configured"
+)
+
+// persistRunningConfig commits one successfully started profile as the last-good document and
+// reports what the disk did with it.
+//
+// A committed-but-unsaved configuration is still running: the Box was started from it and it is
+// what the user is using. What it cannot do is survive the next failed start, because a later
+// recovery returns to the stored last-good document. Reporting that distinction is the difference
+// between "committed" and "committed, persistence degraded" - and it used to be invisible here:
+// both a refused Stage and a Commit that wrote nothing were discarded.
+func (s *StartedService) persistRunningConfig(profile string) (status string, warning string) {
 	store := s.configStore()
 	if store == nil {
-		return
+		return persistenceNotConfigured, ""
 	}
 	staged, err := store.Stage([]byte(profile))
 	if err != nil {
-		return
+		return persistenceDegraded, err.Error()
 	}
-	_, _ = store.Commit(staged)
+	result, err := store.Commit(staged)
+	if err != nil {
+		return persistenceDegraded, err.Error()
+	}
+	if !result.Persisted {
+		return persistenceDegraded, result.Warning
+	}
+	// Persisted, but the store keeps a warning when it could not also keep the previous document
+	// as last-good. The new configuration is on disk and in force; the recovery target is not.
+	return persistenceSaved, result.Warning
 }
 
 // recoverLastGood returns the last-good profile when it is usable and different from the failed

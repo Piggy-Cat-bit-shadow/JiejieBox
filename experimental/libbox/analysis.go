@@ -19,8 +19,11 @@ import (
 // throwaway Box" semantics, and a client that only needs to classify/display a profile can call this
 // without paying for the runtime path.
 //
-// The values are DECLARED facts, not effective ones. Turning them into a declared/default/effective
-// report with per-field reasons is the next slice (C02); this type must not pretend to have it.
+// The values are DECLARED facts plus the two things that explain them without a Box: the defaults
+// the core applies (ConfigValue, source "default") and the platform facts a condition needs before
+// it can match (ConfigRequirement). What is NEVER claimed here is the runtime side: no component is
+// constructed, no DNS client is built, no provider is fetched, and Checks.RuntimeChecked stays
+// false.
 type ConfigAnalysis struct {
 	Parsed    bool   `json:"parsed"`
 	Platform  string `json:"platform"`
@@ -37,6 +40,12 @@ type ConfigAnalysis struct {
 	Checks ConfigChecks `json:"checks"`
 	// Findings are declaration problems (duplicate tags, dangling references).
 	Findings []ConfigFinding `json:"findings,omitempty"`
+	// Defaults are the values the core will use for fields the document left unset, with the
+	// declaration each one came from.
+	Defaults []ConfigValue `json:"defaults,omitempty"`
+	// Requirements are the platform facts the document's conditions need before they can match.
+	// They are pending on the PLATFORM side: this analysis cannot observe whether it supplies them.
+	Requirements []ConfigRequirement `json:"requirements,omitempty"`
 	// PendingProviders are remote providers whose nodes do not exist until they are fetched.
 	PendingProviders []ConfigPendingProvider `json:"pendingProviders,omitempty"`
 	Inbounds         int                     `json:"inbounds"`
@@ -87,6 +96,7 @@ func AnalyzeConfig(configContent string) (*StringBox, error) {
 		Providers:      len(options.Providers),
 	}
 	analysis.Findings, analysis.PendingProviders = analyseDeclarations(&options)
+	analysis.Defaults, analysis.Requirements = analyseEffective(&options)
 	analysis.Checks = ConfigChecks{Parsed: true, DeclarationsChecked: true}
 	if options.Route != nil {
 		analysis.RouteRules = len(options.Route.Rules)

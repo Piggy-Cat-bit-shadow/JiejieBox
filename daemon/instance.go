@@ -26,9 +26,14 @@ import (
 )
 
 type Instance struct {
-	ctx                   context.Context
-	cancel                context.CancelFunc
-	instance              *box.Box
+	ctx      context.Context
+	cancel   context.CancelFunc
+	instance *box.Box
+	// options is the document this Box was built from, and revision identifies the profile it was
+	// parsed out of. Together they are what a change plan compares against: the same document a
+	// start would build, not a second reading of the profile text.
+	options               option.Options
+	revision              string
 	connectionManager     adapter.ConnectionManager
 	clashMode             *clashmode.Manager
 	trafficManager        *trafficcontrol.Manager
@@ -159,16 +164,19 @@ func mergeLoopbackAddresses(existing badoption.Listable[netip.Addr], addition []
 	return merged
 }
 
-func (s *StartedService) newInstance(ctx context.Context, profileContent string, overrideOptions *OverrideOptions, reloading bool) (*Instance, error) {
+// parseEffectiveOptions turns a profile into the document the Box is actually built from: the
+// profile as parsed, plus the run-only overrides (the platform's TUN patch and the OOM killer
+// service). ConfigRecoveryDirectory aside, it is the ONE place a profile becomes options, so the
+// change plan compares exactly the documents a start would build rather than a second reading of
+// the same text.
+func (s *StartedService) parseEffectiveOptions(ctx context.Context, profileContent string, overrideOptions *OverrideOptions) (option.Options, error) {
 	selectedLocale := locale.FromContext(ctx)
 	ctx, _ = locale.ContextWithLocale(s.ctx, selectedLocale.Locale)
 	ctx = service.ExtendContext(ctx)
 	service.MustRegister[deprecated.Manager](ctx, new(deprecatedManager))
-	ctx, cancel := context.WithCancel(ctx)
 	options, err := parseConfig(ctx, profileContent)
 	if err != nil {
-		cancel()
-		return nil, err
+		return option.Options{}, err
 	}
 	if overrideOptions != nil {
 		applyTUNOverrides(&options, overrideOptions)
@@ -187,6 +195,15 @@ func (s *StartedService) newInstance(ctx context.Context, profileContent string,
 			})
 		}
 	}
+	return options, nil
+}
+
+func (s *StartedService) newInstance(ctx context.Context, options option.Options, revision string, reloading bool) (*Instance, error) {
+	selectedLocale := locale.FromContext(ctx)
+	ctx, _ = locale.ContextWithLocale(s.ctx, selectedLocale.Locale)
+	ctx = service.ExtendContext(ctx)
+	service.MustRegister[deprecated.Manager](ctx, new(deprecatedManager))
+	ctx, cancel := context.WithCancel(ctx)
 	urlTestHistoryStorage := urltest.NewHistoryStorage()
 	ctx = service.ContextWithPtr(ctx, urlTestHistoryStorage)
 	// ONE measurement budget for this Box.
@@ -197,6 +214,8 @@ func (s *StartedService) newInstance(ctx context.Context, profileContent string,
 	i := &Instance{
 		ctx:                   ctx,
 		cancel:                cancel,
+		options:               options,
+		revision:              revision,
 		urlTestHistoryStorage: urlTestHistoryStorage,
 	}
 	boxInstance, err := box.New(box.Options{
