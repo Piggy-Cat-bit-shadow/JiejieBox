@@ -275,7 +275,7 @@ func physicalPathDelivery(router adapter.Router, finalOutbound string) map[strin
 
 // ensureURLTestServices supplies the URL-test services a Box needs, if the caller has not.
 //
-// # The two decisions are INDEPENDENT
+// # The three decisions are INDEPENDENT
 //
 // They were previously nested: the coordinator was created only inside the branch that created a
 // missing HistoryStorage. That coupling failed in both directions.
@@ -300,6 +300,14 @@ func physicalPathDelivery(router adapter.Router, finalOutbound string) map[strin
 //
 // The caller's storage is deliberately not reported, so a Box never closes something it does not
 // own.
+//
+// # Why the measurement share is supplied here too
+//
+// Equivalent health probes in one Box must ask one question: two URLTest groups measuring the same
+// member against the same target on the same network generation should produce ONE dial, not one
+// each. That registry lives on the Box context, so two Boxes cannot share answers and a caller that
+// supplies its own keeps it. It owns no goroutine or timer of its own - probes run on their
+// callers' contexts - so there is nothing to close and no ownership is reported.
 func ensureURLTestServices(ctx context.Context) (context.Context, *urltest.HistoryStorage) {
 	var ownedHistory *urltest.HistoryStorage
 	if service.PtrFromContext[urltest.HistoryStorage](ctx) == nil {
@@ -308,6 +316,9 @@ func ensureURLTestServices(ctx context.Context) (context.Context, *urltest.Histo
 	}
 	if urltest.CoordinatorFromContext(ctx) == nil {
 		ctx = urltest.ContextWithCoordinator(ctx, urltest.NewCoordinator(C.URLTestConcurrencyLimit))
+	}
+	if urltest.MeasurementShareFromContext(ctx) == nil {
+		ctx = urltest.ContextWithMeasurementShare(ctx, urltest.NewMeasurementShare())
 	}
 	return ctx, ownedHistory
 }

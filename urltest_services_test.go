@@ -34,6 +34,10 @@ func TestURLTestServicesBothAbsent(t *testing.T) {
 	coordinator := urltest.CoordinatorFromContext(ctx)
 	require.NotNil(t, coordinator, "and a coordinator, or measurements run unbounded")
 	require.Equal(t, C.URLTestConcurrencyLimit, coordinator.Limit())
+
+	require.NotNil(t, urltest.MeasurementShareFromContext(ctx),
+		"and the in-flight registry: without it two URLTest groups in one Box ask the same "+
+			"question twice and dial twice")
 }
 
 // TestURLTestServicesHistoryOnly is §22.
@@ -79,15 +83,19 @@ func TestURLTestServicesCoordinatorOnly(t *testing.T) {
 func TestURLTestServicesBothPresent(t *testing.T) {
 	providedHistory := urltest.NewHistoryStorage()
 	providedCoordinator := urltest.NewCoordinator(7)
+	providedShare := urltest.NewMeasurementShare()
 
 	ctx := service.ContextWithPtr(context.Background(), providedHistory)
 	ctx = urltest.ContextWithCoordinator(ctx, providedCoordinator)
+	ctx = urltest.ContextWithMeasurementShare(ctx, providedShare)
 
 	ctx, _ = ensureURLTestServices(ctx)
 
 	require.Same(t, providedHistory, service.PtrFromContext[urltest.HistoryStorage](ctx))
 	require.Same(t, providedCoordinator, urltest.CoordinatorFromContext(ctx))
 	require.Equal(t, 7, urltest.CoordinatorFromContext(ctx).Limit())
+	require.Same(t, providedShare, urltest.MeasurementShareFromContext(ctx),
+		"a caller's in-flight registry must be kept, not replaced")
 }
 
 // TestURLTestServicesAreIndependentAcrossBoxes is §20.
@@ -107,6 +115,10 @@ func TestURLTestServicesAreIndependentAcrossBoxes(t *testing.T) {
 		service.PtrFromContext[urltest.HistoryStorage](ctxA),
 		service.PtrFromContext[urltest.HistoryStorage](ctxB),
 		"and its own history storage")
+	require.NotSame(t,
+		urltest.MeasurementShareFromContext(ctxA),
+		urltest.MeasurementShareFromContext(ctxB),
+		"and its own in-flight registry: two Boxes must never answer for each other")
 
 	// Exhausting one must not block the other.
 	releaseA, err := coordinatorA.Acquire(ctxA)
