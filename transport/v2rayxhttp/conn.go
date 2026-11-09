@@ -1210,11 +1210,11 @@ func (u *packetUplink) currentWake() <-chan struct{} {
 
 // takeBudget charges want bytes from the shared pool, or returns want unchanged
 // when the uplink has no pool (per-stream bound only).
-func (u *packetUplink) takeBudget(want int, small bool) int {
+func (u *packetUplink) takeBudget(want int, small bool, openLeft int) int {
 	if u.budget == nil {
 		return want
 	}
-	return u.budget.take(u, want, small)
+	return u.budget.take(u, want, small, openLeft)
 }
 
 // releaseBudgetLocked returns n charged bytes to the pools. Caller holds u.access;
@@ -1252,18 +1252,25 @@ func (u *packetUplink) finishBudget() {
 // maxPending: the bound was real for many small writes and fictional for one
 // large one.
 //
-// # Two bounds, one charge
+// # Three bounds, one charge
 //
 // A chunk is charged to the shared pool and appended in the same critical section
 // (takeBudget then append). Charging and keeping are therefore one step: a writer
 // that waits holds no unspent charge, so a closed or failed stream has nothing
 // outstanding to unwind. The pool is the transport-wide bound; maxPending stays the
 // per-stream one, and the stream still stops at whichever binds first.
+//
+// Which of the pool's three ledgers a chunk draws on is decided here, from the
+// flow's state at the grant: the main pool for bulk, the control pool while the
+// flow is still opening (the only writes that can make a server answer), and the
+// short-flow reserve for a small write body. The split matters because the control
+// headroom is a guarantee for the NEXT stream's first packet, so no single flow may
+// spend all of it — see uplink_budget.go.
 func (u *packetUplink) write(b []byte) (int, error) {
 	if len(b) == 0 {
 		return 0, nil
 	}
-	// Reserve eligibility is decided from the FLOW's state, not only the write size: a
+	// Opening eligibility is decided from the FLOW's state, not only the write size: a
 	// stream that has already written past its opening is a bulk flow even when the
 	// caller hands it 8 KiB at a time. See packetUpReserveOpeningBytes.
 	written := 0
@@ -1284,6 +1291,17 @@ func (u *packetUplink) write(b []byte) (int, error) {
 			return written, net.ErrClosed
 		}
 		small := len(b) <= packetUpSmallWrite && u.acceptedBytes < packetUpReserveOpeningBytes
+		// openLeft bounds what this grant may draw from the opening guarantee (the
+		// control pool). It is read from the flow's CURRENT accepted bytes, so a
+		// single oversized write and a run of chunks obey the opening budget alike:
+		// neither can draw more control than the opening it belongs to. See the
+		// P1-A note in uplink_budget.go.
+		openLeft := 0
+		if small {
+			if left := packetUpReserveOpeningBytes - int(u.acceptedBytes); left > 0 {
+				openLeft = left
+			}
+		}
 		available := u.maxPending - len(u.pending)
 		if available == 0 {
 			// The stream's OWN queue is the limit right now, not the pool. Leave
@@ -1302,7 +1320,7 @@ func (u *packetUplink) write(b []byte) (int, error) {
 		if want > available {
 			want = available
 		}
-		granted := u.takeBudget(want, small)
+		granted := u.takeBudget(want, small, openLeft)
 		if granted > 0 {
 			u.pending = append(u.pending, b[written:written+granted]...)
 			written += granted

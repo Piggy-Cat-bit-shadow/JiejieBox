@@ -153,9 +153,9 @@ func TestPacketUpSharedBudgetBoundsTheStreamSum(t *testing.T) {
 		return stats.Used == stats.Capacity && stats.Waiters > 0
 	})
 	held, retained := streamCharges(conns)
-	if held != saturated.Used+saturated.ReservedUsed {
+	if held != saturated.Total() {
 		t.Fatalf("streams hold %d shared bytes but the pool reports %d: one of them is not the sum of the other",
-			held, saturated.Used+saturated.ReservedUsed)
+			held, saturated.Total())
 	}
 	if retained != held {
 		t.Fatalf("pending+in-flight %d differs from the shared charge %d: the queue and its charge must be one thing",
@@ -164,14 +164,19 @@ func TestPacketUpSharedBudgetBoundsTheStreamSum(t *testing.T) {
 	if saturated.Used > saturated.Capacity {
 		t.Fatalf("main pool used %d exceeds its capacity %d", saturated.Used, saturated.Capacity)
 	}
-	if total := saturated.Used + saturated.ReservedUsed; total > saturated.Capacity+saturated.Reserve {
-		t.Fatalf("aggregate retained %d exceeds capacity+reserve %d", total, saturated.Capacity+saturated.Reserve)
+	if aggregate := saturated.Capacity + saturated.Control + saturated.Reserve; saturated.Total() > aggregate {
+		t.Fatalf("aggregate retained %d exceeds capacity+control+reserve %d", saturated.Total(), aggregate)
 	}
-	if saturated.Peak > saturated.Capacity+saturated.Reserve {
-		t.Fatalf("peak %d exceeds capacity+reserve %d", saturated.Peak, saturated.Capacity+saturated.Reserve)
+	if saturated.Peak > saturated.Capacity+saturated.Control+saturated.Reserve {
+		t.Fatalf("peak %d exceeds capacity+control+reserve %d",
+			saturated.Peak, saturated.Capacity+saturated.Control+saturated.Reserve)
 	}
 	if saturated.ReservedUsed != 0 {
-		t.Fatalf("bulk writes charged the reserve: %d bytes (the reserve is the control path)", saturated.ReservedUsed)
+		t.Fatalf("bulk writes charged the reserve: %d bytes (the reserve is short-flow data headroom)", saturated.ReservedUsed)
+	}
+	if saturated.ControlUsed != 0 {
+		t.Fatalf("bulk writes charged the control pool: %d bytes (only the short class may draw the opening guarantee)",
+			saturated.ControlUsed)
 	}
 	if saturated.Waiters == 0 {
 		t.Fatal("no stream is queued for capacity: the writes did not contend")
@@ -203,7 +208,7 @@ func TestPacketUpSharedBudgetBoundsTheStreamSum(t *testing.T) {
 		}
 	}
 	waitForPool(t, pool, "drained", func(stats uplinkBudgetStats) bool {
-		return stats.Used+stats.ReservedUsed == 0
+		return stats.Total() == 0
 	})
 	for _, conn := range conns {
 		if err := conn.Close(); err != nil {
@@ -260,19 +265,23 @@ func TestPacketUpSharedBudgetKeepsTheControlWriteMoving(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("the control write never returned with the main pool full: the reserve is not admitting it")
 	}
-	// Progress means a POST, not merely a queued byte: the reserve must have been
-	// charged and the flusher must have taken the payload.
+	// Progress means a POST, not merely a queued byte: the control pool must have
+	// been charged and the flusher must have taken the payload. The short-flow
+	// reserve is for short-flow DATA, so an opening must not have used it.
 	transport.waitForPosts(t, 2)
 	stats := pool.stats()
-	if stats.ReservedUsed != len(handshake) {
-		t.Fatalf("reserve holds %d bytes, want the %d-byte control write", stats.ReservedUsed, len(handshake))
+	if stats.ControlUsed != len(handshake) {
+		t.Fatalf("control pool holds %d bytes, want the %d-byte opening write", stats.ControlUsed, len(handshake))
+	}
+	if stats.ReservedUsed != 0 {
+		t.Fatalf("the opening write charged the short-flow reserve: %d bytes", stats.ReservedUsed)
 	}
 	if stats.Used != stats.Capacity {
 		t.Fatalf("main pool %d, want it still full at %d", stats.Used, stats.Capacity)
 	}
 	close(gate)
 	waitForPool(t, pool, "drained", func(stats uplinkBudgetStats) bool {
-		return stats.Used+stats.ReservedUsed == 0
+		return stats.Total() == 0
 	})
 }
 
@@ -351,7 +360,7 @@ func TestPacketUpSharedBudgetSettlesAFailedPostAgainstThePool(t *testing.T) {
 	final := waitForPool(t, pool, "no live streams", func(stats uplinkBudgetStats) bool {
 		return stats.Streams == 0
 	})
-	if final.Used != 0 || final.ReservedUsed != 0 {
+	if final.Total() != 0 {
 		t.Fatalf("pool not back at baseline: %+v", final)
 	}
 	if final.GrantedBytes != final.ReleasedBytes || final.ExcessReleases != 0 || final.LeftoverBytes != 0 {
@@ -390,8 +399,8 @@ func TestPacketUpSharedBudgetConservesChargesUnderConcurrency(t *testing.T) {
 				for chunk := 0; chunk < chunks; chunk++ {
 					size := 1 + (seed*31+chunk*17)%maxChunkBytes
 					if chunk%5 == 0 {
-						// Larger than the reserve's size class: it must be charged
-						// to the main pool, not the control path.
+						// Larger than the short class: it must be charged to the
+						// main pool, not to either headroom pool.
 						size += packetUpSmallWrite
 					}
 					if _, err := conn.Write(bytes.Repeat([]byte{'x'}, size)); err != nil {
@@ -420,8 +429,12 @@ func TestPacketUpSharedBudgetConservesChargesUnderConcurrency(t *testing.T) {
 			if stats.ReservedUsed > stats.Reserve {
 				t.Fatalf("reserve %d exceeds its bound %d under concurrency", stats.ReservedUsed, stats.Reserve)
 			}
-			if stats.Peak > stats.Capacity+stats.Reserve {
-				t.Fatalf("peak %d exceeds capacity+reserve %d under concurrency", stats.Peak, stats.Capacity+stats.Reserve)
+			if stats.ControlUsed > stats.Control {
+				t.Fatalf("control %d exceeds its bound %d under concurrency", stats.ControlUsed, stats.Control)
+			}
+			if stats.Peak > stats.Capacity+stats.Control+stats.Reserve {
+				t.Fatalf("peak %d exceeds capacity+control+reserve %d under concurrency",
+					stats.Peak, stats.Capacity+stats.Control+stats.Reserve)
 			}
 			for _, conn := range conns {
 				streamStats := conn.(*packetConn).uplink.stats()
@@ -435,7 +448,7 @@ func TestPacketUpSharedBudgetConservesChargesUnderConcurrency(t *testing.T) {
 		}
 	}
 	waitForPool(t, pool, "drained", func(stats uplinkBudgetStats) bool {
-		return stats.Used+stats.ReservedUsed == 0
+		return stats.Total() == 0
 	})
 	for _, conn := range conns {
 		if err := conn.Close(); err != nil {
@@ -499,6 +512,9 @@ func TestNewClientWiresTheSharedUploadBudget(t *testing.T) {
 	if stats.Reserve != packetUpSharedReserve {
 		t.Fatalf("pool reserve %d, want %d", stats.Reserve, packetUpSharedReserve)
 	}
+	if stats.Control != packetUpControlBytes {
+		t.Fatalf("pool control %d, want %d (the opening guarantee)", stats.Control, packetUpControlBytes)
+	}
 	if stats.Capacity < packetUpPendingBound(client.meta) {
 		t.Fatalf("pool capacity %d is below one stream's bound %d", stats.Capacity, packetUpPendingBound(client.meta))
 	}
@@ -549,29 +565,31 @@ func TestPacketUpReserveIsForTheOpeningNotForBulkChunkedWrites(t *testing.T) {
 		return stats.Used == stats.Capacity
 	})
 
-	// Past its opening, the same stream's next 8 KiB block must NOT touch the reserve:
-	// it queues for the main pool.
+	// Past its opening, the same stream's next 8 KiB block must NOT touch either
+	// headroom pool: it queues for the main pool.
 	blocked := writePayloadAsync(bulk, chunk)
 	waitForPool(t, pool, "the bulk chunk queued on the main pool", func(stats uplinkBudgetStats) bool {
 		return stats.Waiters == 1
 	})
-	if stats := pool.stats(); stats.ReservedUsed != 0 {
-		t.Fatalf("a bulk flow's chunked write drained the reserve: %+v", stats)
+	if stats := pool.stats(); stats.ReservedUsed != 0 || stats.ControlUsed != 0 {
+		t.Fatalf("a bulk flow's chunked write drained a headroom pool: %+v", stats)
 	}
 
-	// A new stream's opening write still gets through, to the transport.
+	// A new stream's opening write still gets through, to the transport. It is the
+	// control pool that admits it now (see packetup_control_headroom_test.go for the
+	// cases where short-flow data has already spent the reserve).
 	control := dialBatchConn(t, client)
 	opening := make([]byte, 1024)
 	if result := awaitPayloadWrite(t, writePayloadAsync(control, opening), len(opening)); result.err != nil || result.n != len(opening) {
 		t.Fatalf("opening write = (%d, %v), want (%d, nil)", result.n, result.err, len(opening))
 	}
-	waitForPool(t, pool, "the opening charged the reserve", func(stats uplinkBudgetStats) bool {
-		return stats.ReservedUsed == len(opening)
+	waitForPool(t, pool, "the opening charged the control pool", func(stats uplinkBudgetStats) bool {
+		return stats.ControlUsed == len(opening)
 	})
 
 	close(gate)
 	awaitPayloadWrite(t, blocked, len(chunk))
 	waitForPool(t, pool, "drained", func(stats uplinkBudgetStats) bool {
-		return stats.Used+stats.ReservedUsed == 0
+		return stats.Total() == 0
 	})
 }
