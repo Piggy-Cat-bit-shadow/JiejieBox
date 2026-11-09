@@ -364,6 +364,9 @@ func (c *CommandClient) dispatchCommands(client daemon.StartedServiceClient, ctx
 }
 
 func (c *CommandClient) Disconnect() error {
+	if c == nil {
+		return nil
+	}
 	c.clientAccess.Lock()
 	c.cancel()
 	connection := c.grpcConn
@@ -425,6 +428,12 @@ func (c *CommandClient) closeConnection() {
 }
 
 func callWithResult[T any](c *CommandClient, call func(ctx context.Context, client daemon.StartedServiceClient) (T, error)) (T, error) {
+	if c == nil {
+		// The bound type can reach the platform as a typed nil pointer. Every client call goes
+		// through here, so one guard keeps a nil client from dereferencing on the binding surface.
+		var zero T
+		return zero, E.New("command client is nil")
+	}
 	client, ctx, err := c.getClientForCall()
 	if err != nil {
 		var zero T
@@ -437,6 +446,10 @@ func callWithResult[T any](c *CommandClient, call func(ctx context.Context, clie
 }
 
 func callManagedWithResult[T any](c *CommandClient, call func(ctx context.Context, client daemon.ManagedServiceClient) (T, error)) (T, error) {
+	if c == nil {
+		var zero T
+		return zero, E.New("command client is nil")
+	}
 	_, ctx, err := c.getClientForCall()
 	if err != nil {
 		var zero T

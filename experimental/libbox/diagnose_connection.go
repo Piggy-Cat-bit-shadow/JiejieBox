@@ -29,6 +29,7 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/physicalpath"
@@ -91,6 +92,10 @@ type connectionTestReport struct {
 	//   - "rule": dial the outbound the ROUTE DECISION selects for the target (real routing).
 	Routing string                `json:"routing"`
 	Stages  []connectionTestStage `json:"stages"`
+	// Truncated reports that one or more fields were shortened to keep the encoded report within
+	// its ceiling. A reader must treat the affected stage detail as incomplete rather than as the
+	// whole fact.
+	Truncated bool `json:"truncated,omitempty"`
 	// Events is the bounded narrative of the test (begin, per-stage facts, final snapshot,
 	// end). It is the same stream a live subscriber receives, retained for a late reader.
 	Events  []string `json:"events,omitempty"`
@@ -662,12 +667,96 @@ func connectionTestAddress(target string) (M.Socksaddr, error) {
 // marshalConnectionTestReport encodes the report. An encoding failure cannot happen for
 // this shape (no maps, channels or functions), and a nil result would make the gomobile
 // caller dereference it, so an empty document is the safe fallback.
-func marshalConnectionTestReport(report connectionTestReport) string {
-	encoded, err := stdjson.Marshal(report)
-	if err != nil {
-		return "{}"
+// Connection-test report bounds.
+//
+// The report crosses the gRPC/FFI bridge as one string. Its user-controlled parts are the target
+// (a URL), the root tag and every stage detail/event line - and a stage detail contains the RULE
+// DESCRIPTION, which for a rule-set or a large domain list is unbounded. One pathological
+// configuration could therefore produce a multi-megabyte string at the binding surface. The helpers
+// below cap each field and, if the encoded form is still over the hard ceiling, drop the narrative
+// and then the stages rather than fail the call: a diagnostic that cannot be delivered is worse than
+// a diagnostic that says it was shortened.
+const (
+	connectionTestMaxFieldBytes  = 4096
+	connectionTestMaxReportBytes = 256 << 10
+)
+
+func boundedConnectionTestReport(report connectionTestReport, fieldBytes int, keepEvents bool) (connectionTestReport, bool) {
+	truncated := false
+	if bounded, cut := truncateConnectionTestStringTo(report.Root, fieldBytes); cut {
+		report.Root, truncated = bounded, true
+	} else {
+		report.Root = bounded
 	}
-	return string(encoded)
+	if bounded, cut := truncateConnectionTestStringTo(report.Target, fieldBytes); cut {
+		report.Target, truncated = bounded, true
+	} else {
+		report.Target = bounded
+	}
+	for index := range report.Stages {
+		if bounded, cut := truncateConnectionTestStringTo(report.Stages[index].Detail, fieldBytes); cut {
+			report.Stages[index].Detail, truncated = bounded, true
+		} else {
+			report.Stages[index].Detail = bounded
+		}
+	}
+	if !keepEvents {
+		if len(report.Events) > 0 {
+			report.Events = nil
+			truncated = true
+		}
+	} else {
+		for index := range report.Events {
+			if bounded, cut := truncateConnectionTestStringTo(report.Events[index], fieldBytes); cut {
+				report.Events[index], truncated = bounded, true
+			} else {
+				report.Events[index] = bounded
+			}
+		}
+	}
+	report.Truncated = report.Truncated || truncated
+	return report, truncated
+}
+
+func truncateConnectionTestStringTo(value string, limit int) (string, bool) {
+	if limit <= 0 || len(value) <= limit {
+		return value, false
+	}
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(value[cut]) {
+		cut--
+	}
+	return value[:cut] + "…(truncated)", true
+}
+
+func marshalConnectionTestReport(report connectionTestReport) string {
+	encode := func(candidate connectionTestReport) (string, int) {
+		encoded, err := stdjson.Marshal(candidate)
+		if err != nil {
+			return "{}", 0
+		}
+		return string(encoded), len(encoded)
+	}
+	candidate, _ := boundedConnectionTestReport(report, connectionTestMaxFieldBytes, true)
+	encoded, size := encode(candidate)
+	if size <= connectionTestMaxReportBytes {
+		return encoded
+	}
+	// Drop the narrative first, then shorten every remaining field, then keep only the verdict.
+	candidate, _ = boundedConnectionTestReport(report, connectionTestMaxFieldBytes, false)
+	encoded, size = encode(candidate)
+	if size <= connectionTestMaxReportBytes {
+		return encoded
+	}
+	candidate, _ = boundedConnectionTestReport(report, 512, false)
+	encoded, size = encode(candidate)
+	if size <= connectionTestMaxReportBytes {
+		return encoded
+	}
+	candidate.Stages = nil
+	candidate.Truncated = true
+	encoded, _ = encode(candidate)
+	return encoded
 }
 
 // outcomeForStage maps a settled stage status onto the emitter's vocabulary.
