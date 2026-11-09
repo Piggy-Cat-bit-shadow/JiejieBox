@@ -82,16 +82,50 @@ const (
 type pathSocket struct {
 	socket    net.Conn
 	transport *quic.Transport
+	// retired is closed by close, so anything waiting for THIS path to end wakes when it does
+	// instead of waiting for the connection. It is the path's own lifetime token.
+	retired   chan struct{}
 	closeOnce sync.Once
 }
 
-// close closes the socket exactly once. Several owners reach here - the failed attempt that
-// created it, the migration that replaced it, and the goroutine waiting for the connection to end
-// - and only the first of them is the close.
+func newPathSocket(socket net.Conn) *pathSocket {
+	return &pathSocket{socket: socket, retired: make(chan struct{})}
+}
+
+// close closes the socket exactly once and publishes the path's end. Several owners reach here -
+// the failed attempt that created it, the migration that replaced it, and the cleanup task watching
+// it - and only the first of them is the close.
 func (p *pathSocket) close() {
 	p.closeOnce.Do(func() {
 		_ = p.socket.Close()
+		close(p.retired)
 	})
+}
+
+// pathCleanupTasks counts the socket-cleanup tasks that are alive right now.
+//
+// It exists so that the ownership of a socket's cleanup is observable without sampling stacks: a
+// task belongs to exactly one PATH, so a connection that has one live path keeps exactly one task,
+// whatever number of migrations it went through. Only tests read it.
+var pathCleanupTasks atomic.Int64
+
+// watchPathCleanup is the one cleanup task of one path: it closes the path's socket when the path
+// ends and then exits. "Ends" means the path, not the connection - a candidate that failed and a
+// socket a later migration replaced are both finished long before the connection is, and a task
+// that outlives them is a goroutine held for the connection's whole lifetime.
+func watchPathCleanup(conn *clientConnection, path *pathSocket) {
+	pathCleanupTasks.Add(1)
+	go func() {
+		defer pathCleanupTasks.Add(-1)
+		select {
+		case <-conn.Context().Done():
+			// The connection ended: its path is over even if nobody closed it explicitly.
+		case <-path.retired:
+			// This path was retired before the connection (a replaced or abandoned one). Its
+			// socket is already closed; the task has nothing left to own.
+		}
+		path.close()
+	}()
 }
 
 // connectedPacketConn presents the connected socket a dialer returns for "udp" as the
@@ -369,11 +403,8 @@ func (c *Client) offerNew(ctx context.Context) (*clientConnection, error) {
 	}
 	// quic-go does not take ownership of the conn passed to Dial:
 	// when the connection ends it only stops reading.
-	socket := &pathSocket{socket: udpConn, transport: quicConn.HandshakeTransport()}
-	go func() {
-		<-quicConn.Context().Done()
-		socket.close()
-	}()
+	socket := newPathSocket(udpConn)
+	socket.transport = quicConn.HandshakeTransport()
 	conn := &clientConnection{
 		Conn:      quicConn,
 		ctx:       quicConn.Context(),
@@ -381,6 +412,7 @@ func (c *Client) offerNew(ctx context.Context) (*clientConnection, error) {
 		path:      socket,
 	}
 	conn.closeFn = func() { _ = quicConn.CloseWithError(0, "") }
+	watchPathCleanup(conn, socket)
 	return conn, nil
 }
 
@@ -582,14 +614,11 @@ func (c *Client) migrate(conn *clientConnection) migrationOutcome {
 		traceMigration("candidate dial failed: %v", err)
 		return migrationUnchanged
 	}
-	candidate := &pathSocket{socket: candidateSocket}
-	// From here the socket is owned by this attempt or by the connection, never by both: if the
-	// connection ends the socket is closed exactly once by this goroutine, and a failed attempt
-	// closes it directly. pathSocket.close is idempotent.
-	go func() {
-		<-conn.Context().Done()
-		candidate.close()
-	}()
+	candidate := newPathSocket(candidateSocket)
+	// From here the socket is owned by this attempt or by the connection, never by both: a failed
+	// attempt closes it directly, and the connection's path task closes it when the path ends.
+	// pathSocket.close is idempotent, which is what lets both reach it.
+	watchPathCleanup(conn, candidate)
 
 	candidateTransport := &quic.Transport{Conn: connectedPacketConn{Conn: candidateSocket}}
 	candidate.transport = candidateTransport
