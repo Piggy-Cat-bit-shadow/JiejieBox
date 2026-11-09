@@ -65,9 +65,9 @@
                        },
                        {
                            "module":  "github.com/sagernet/wireguard-go",
-                           "pinned":  "551470892848",
+                           "pinned":  "a765d957fd81",
                            "target":  "github.com/Piggy-Cat-bit-shadow/wireguard-go",
-                           "version":  "v0.0.0-20261109031455-551470892848"
+                           "version":  "v0.0.0-20261109042158-a765d957fd81"
                        }
                    ],
     "nested":  [

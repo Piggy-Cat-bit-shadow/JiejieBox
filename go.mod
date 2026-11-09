@@ -365,9 +365,12 @@ replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-qu
 // the unpinned revision), and between an IPv6-only stack and a TCP path that can never self-heal.
 // See docs/fork/lx-stability-audit-phase1.md (040) and FORK.md in the fork.
 // AmneziaWG 3.1: the AWG graft plus this repository's packet-injection API, published as a
-// fork (tag v0.8.0-awg.1). The fork keeps the upstream module path, so the import sites and the
-// source lock stay one truth; AWG01-AWG04 record what was grafted and how it was verified.
-replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261109031455-551470892848
+// fork (tag v0.8.0-awg.4, branch awg3-inject). The fork keeps the upstream module path, so the
+// import sites and the source lock stay one truth; AWG01-AWG04 record what was grafted and how it
+// was verified. v0.8.0-awg.3/.4 also carry device.NewPeerConfig.PresharedKey and
+// device.Peer.SetPresharedKey, which the pinned sagernet/tailscale wgengine/wgcfg requires; without
+// them the Android/Mobile libbox build does not compile.
+replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261109042158-a765d957fd81
 
 replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261105013414-8f65451175c0
 
