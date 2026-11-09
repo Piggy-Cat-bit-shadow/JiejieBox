@@ -116,9 +116,15 @@ func TestFamilyProbeEmptyAnswerIsNotAnError(t *testing.T) {
 	capture := &capturingLogger{}
 	router := quietTestRouter(t, transport, capture)
 
+	// The two families are published from two goroutines, so the collector must be safe under -race:
+	// an unguarded map write here turned the whole package's race run red, which hides real races
+	// behind a fixture bug.
+	var resultsAccess sync.Mutex
 	results := make(map[bool]adapter.DNSFamilyResult)
 	err := router.LookupFamilies(context.Background(), "only-a.example", adapter.DNSQueryOptions{}, func(result adapter.DNSFamilyResult) {
+		resultsAccess.Lock()
 		results[result.IPv6] = result
+		resultsAccess.Unlock()
 	})
 	require.NoError(t, err, "one family answering is a successful dual-stack lookup")
 
