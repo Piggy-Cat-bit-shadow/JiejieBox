@@ -1,6 +1,6 @@
 package daemon
 
-// C04 鈥?the real configuration entry: refuse, apply live, restart, and say which one happened.
+// C04 - the real configuration entry: refuse, apply live, restart, and say which one happened.
 //
 // These tests drive `StartOrReloadService`, the entry every embedder reaches (the libbox command
 // server, the daemon binary, the Apple/Android tunnels). Nothing here is a stand-in for it.

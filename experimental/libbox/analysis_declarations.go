@@ -1,6 +1,6 @@
 package libbox
 
-// C01C02 鈥?what AnalyzeConfig can declare without building a box.
+// C01C02 - what AnalyzeConfig can declare without building a box.
 //
 // AnalyzeConfig parses the document and checks DECLARATIONS: tags that must be unique, and
 // references that must resolve inside the document. It deliberately does not build a Box,

@@ -1,6 +1,6 @@
 package daemon
 
-// C05 鈥?the last-good transaction driven through the real start path.
+// C05 - the last-good transaction driven through the real start path.
 //
 // These tests use the same harness the device-axis reload test uses (a working directory, the
 // registries a Box needs, no pause manager), so they exercise StartOrReloadService rather than
@@ -24,6 +24,21 @@ import (
 // candidate before it closes the running Box (see service_change_test.go), so no recovery is
 // involved and none should run.
 const buildFailingConfig = `{"log":{"level":"error"},"route":{"rules":[{"rule_set":"missing","action":"reject"}]}}`
+
+// anotherBuildFailingConfig fails the same way with a different document, so a recovery attempt
+// from one to the other is not skipped as "the requested profile IS the stored one".
+const anotherBuildFailingConfig = `{"log":{"level":"error"},"route":{"rules":[{"rule_set":"other-missing","action":"reject"}]}}`
+
+// missingLocalRuleSetConfig names a local rule-set file that does not exist. The document parses -
+// a path is a string - and the start fails when the router reads it, which is the "referenced file
+// missing" failure a profile editor can produce and a reload has to survive.
+const missingLocalRuleSetConfig = `{
+  "log": {"level": "error"},
+  "route": {
+    "rule_set": [{"type": "local", "tag": "from-file", "format": "source", "path": "does-not-exist.json"}],
+    "rules": [{"rule_set": "from-file", "action": "reject"}]
+  }
+}`
 
 func recoveryService(t *testing.T, directory string, recoverToLastGood bool) *StartedService {
 	t.Helper()
@@ -95,4 +110,41 @@ func TestAStaticallyInvalidProfileNeverBecomesPending(t *testing.T) {
 	store, err := configtx.Open(directory, configtx.Options{})
 	require.NoError(t, err)
 	require.False(t, store.Pending(), "a rejected candidate must not survive as a pending file")
+}
+
+// TestARecoveryThatAlsoFailsLeavesNothingRunning covers the second failure: the requested profile
+// fails AND the stored last-good one fails too. The call must fail, nothing may be left running,
+// and a failed recovery must not be reported as a recovery.
+func TestARecoveryThatAlsoFailsLeavesNothingRunning(t *testing.T) {
+	directory := t.TempDir()
+	// Seed the store with a profile that cannot start, so recovery has nothing that works.
+	store, err := configtx.Open(directory, configtx.Options{})
+	require.NoError(t, err)
+	staged, err := store.Stage([]byte(buildFailingConfig))
+	require.NoError(t, err)
+	_, err = store.Commit(staged)
+	require.NoError(t, err)
+
+	service := recoveryService(t, directory, true)
+	err = service.StartOrReloadService(context.Background(), anotherBuildFailingConfig, nil)
+	require.Error(t, err, "both the candidate and the stored profile fail, so the call fails")
+	require.Nil(t, service.Instance(), "nothing may be left running")
+	require.Nil(t, service.LastConfigRecovery(), "a failed recovery is not a recovery")
+}
+
+// TestAMissingReferencedFileRecoversToTheLastGoodConfiguration covers the failure a profile edit
+// produces most often: the document is valid, the file it references is gone.
+func TestAMissingReferencedFileRecoversToTheLastGoodConfiguration(t *testing.T) {
+	directory := t.TempDir()
+	service := recoveryService(t, directory, true)
+	require.NoError(t, service.StartOrReloadService(context.Background(), minimalConfig, nil))
+
+	require.NoError(t, service.StartOrReloadService(context.Background(), missingLocalRuleSetConfig, nil),
+		"with recovery enabled the daemon is running again, so the call succeeds")
+	require.NotNil(t, service.Instance())
+	report := service.LastServiceChange()
+	require.NotNil(t, report)
+	require.Equal(t, ServiceChangeStatusRecovered, report.Status)
+	require.True(t, report.Retained, "the stored last-good configuration is what runs")
+	require.NotEmpty(t, report.Reason, "the failure that caused the recovery is kept")
 }

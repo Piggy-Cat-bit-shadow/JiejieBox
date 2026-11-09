@@ -1,6 +1,6 @@
 package daemon
 
-// C04 鈥?the real configuration entry consumes the change plan.
+// C04 - the real configuration entry consumes the change plan.
 //
 // `StartOrReloadService` is the one place a profile becomes the running configuration in this
 // process: the libbox command server, the daemon binary and the Apple/Android embedders all reach

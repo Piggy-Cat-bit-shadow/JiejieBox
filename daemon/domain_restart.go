@@ -1,6 +1,6 @@
 package daemon
 
-// C04 鈥?the domains without a live owner: DNS policy and routing rules.
+// C04 - the domains without a live owner: DNS policy and routing rules.
 //
 // Not every domain can be applied to a running Box. The Clash mode has an owner that can switch
 // it; a provider has an owner that can refresh it; but DNS servers, DNS rules and routing rules
