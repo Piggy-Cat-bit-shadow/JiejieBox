@@ -16,8 +16,8 @@ import "sync"
 // objecting. On a phone, where this transport actually runs, that is a memory
 // regression waiting for a slow path.
 //
-// The pool below is that missing bound. It is per Client — one XHTTP transport,
-// i.e. one outbound — because that is the ownership level at which the streams
+// The pool below is that missing bound. It is per Client 鈥?one XHTTP transport,
+// i.e. one outbound 鈥?because that is the ownership level at which the streams
 // exist: Client owns the xmux pool, the dials and the conns. A Box with several
 // XHTTP outbounds consequently has one pool per such outbound, not one pool for
 // the process. Aggregating across outbounds is a Box-level ledger question and
@@ -59,7 +59,7 @@ import "sync"
 //     at that one call, with the count taken from the bytes themselves rather than
 //     from a second bookkeeping field.
 //   - The pool's totals are the sum of per-stream charges by construction:
-//     Used = Σ charge.main and ReservedUsed = Σ charge.reserve. Tests assert that
+//     Used = 危 charge.main and ReservedUsed = 危 charge.reserve. Tests assert that
 //     identity against the per-stream snapshots, so a stream cannot retain bytes
 //     the pool has forgotten.
 //   - Lock order is uplink.access then budget.access. The reverse never happens:
@@ -117,7 +117,7 @@ type uplinkBudgetCharge struct {
 //
 // The identities a reader can rely on:
 //
-//	Used            == Σ stream.main        ReservedUsed == Σ stream.reserve
+//	Used            == 危 stream.main        ReservedUsed == 危 stream.reserve
 //	GrantedBytes - ReleasedBytes == Used + ReservedUsed
 //	Used <= Capacity
 //	Peak <= Capacity + Reserve
@@ -151,11 +151,19 @@ const (
 	// size; beyond this, more streams mean they queue, which is the intended
 	// backpressure rather than more retention.
 	packetUpSharedCeiling = 8 << 20
+	// packetUpReserveOpeningBytes is how much a stream may have written before it stops
+	// being eligible for the reserve at all. Reserve eligibility is a FLOW STATE, not a
+	// write size: a relay's read blocks can be small too, and the audit reproduced a long
+	// stream eating the control headroom with 8 KiB writes until a new stream's 1 KiB
+	// first write had to wait. A stream's opening (first packets, handshake) is the state
+	// the transport can recognise on the production path; beyond it, only the main pool
+	// applies and the flow queues like any bulk stream.
+	packetUpReserveOpeningBytes = 64 << 10
 	// packetUpSmallWrite is the largest write that may draw on the reserve. It is a
 	// SHORT FLOW's ceiling, not just a handshake's: at 16 KiB the reserve only saved
 	// the opening exchange, and a measured burst of long streams pushed 96-256 KiB
 	// flows from one round trip to about three (see
-	// _next/REPORT_01_跨流字节预算对照.md). A short flow writes its whole body in one
+	// _next/REPORT_01_璺ㄦ祦瀛楄妭棰勭畻瀵圭収.md). A short flow writes its whole body in one
 	// call, so the size class has to reach past it for the reserve to mean anything.
 	packetUpSmallWrite = 256 << 10
 	// packetUpSharedReserve is the reserve pool: a quarter of the main capacity at the

@@ -1263,10 +1263,9 @@ func (u *packetUplink) write(b []byte) (int, error) {
 	if len(b) == 0 {
 		return 0, nil
 	}
-	// The size class is decided once, from the caller's write, not per chunk: a
-	// small write is the control path and may use the reserve, while a bulk write
-	// stays in the main pool no matter how its chunks land.
-	small := len(b) <= packetUpSmallWrite
+	// Reserve eligibility is decided from the FLOW's state, not only the write size: a
+	// stream that has already written past its opening is a bulk flow even when the
+	// caller hands it 8 KiB at a time. See packetUpReserveOpeningBytes.
 	written := 0
 	for {
 		u.access.Lock()
@@ -1284,6 +1283,7 @@ func (u *packetUplink) write(b []byte) (int, error) {
 			u.budget.withdraw(u)
 			return written, net.ErrClosed
 		}
+		small := len(b) <= packetUpSmallWrite && u.acceptedBytes < packetUpReserveOpeningBytes
 		available := u.maxPending - len(u.pending)
 		if available == 0 {
 			// The stream's OWN queue is the limit right now, not the pool. Leave

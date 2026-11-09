@@ -506,3 +506,72 @@ func TestNewClientWiresTheSharedUploadBudget(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 }
+
+// TestPacketUpReserveIsForTheOpeningNotForBulkChunkedWrites is the audit's P1
+// reproduction: a long flow writing its data in 8 KiB blocks used to drain the
+// reserve because eligibility looked only at the size of one Write, so a new stream's
+// 1 KiB first write then had to wait. Eligibility is now the flow's opening state:
+// once a stream has written past packetUpReserveOpeningBytes, its chunks queue for the
+// main pool like any bulk traffic, and the reserve stays available for openings.
+func TestPacketUpReserveIsForTheOpeningNotForBulkChunkedWrites(t *testing.T) {
+	t.Parallel()
+
+	transport := newProbeTransport()
+	gate := make(chan struct{})
+	var entered sync.Once
+	posted := make(chan struct{})
+	transport.onPost = func(_ *http.Request, _ []byte) (*http.Response, error) {
+		entered.Do(func() { close(posted) })
+		<-gate
+		return okProbeResponse(), nil
+	}
+	const (
+		capacity = 64 * 1024
+		reserve  = 32 * 1024
+	)
+	client := budgetedBatchClientWith(t, transport, metaOptions{}, capacity, reserve)
+	pool := client.budget
+	bulk := dialBatchConn(t, client)
+
+	// Fill the main pool with 8 KiB blocks; every block fits, so Write returns.
+	chunk := make([]byte, 8*1024)
+	for index := 0; index < 8; index++ {
+		if result := awaitPayloadWrite(t, writePayloadAsync(bulk, chunk), len(chunk)); result.err != nil || result.n != len(chunk) {
+			t.Fatalf("main-pool fill write %d = (%d, %v)", index, result.n, result.err)
+		}
+	}
+	select {
+	case <-posted:
+	case <-time.After(writeFreeBudget):
+		t.Fatal("no post started")
+	}
+	waitForPool(t, pool, "main pool full", func(stats uplinkBudgetStats) bool {
+		return stats.Used == stats.Capacity
+	})
+
+	// Past its opening, the same stream's next 8 KiB block must NOT touch the reserve:
+	// it queues for the main pool.
+	blocked := writePayloadAsync(bulk, chunk)
+	waitForPool(t, pool, "the bulk chunk queued on the main pool", func(stats uplinkBudgetStats) bool {
+		return stats.Waiters == 1
+	})
+	if stats := pool.stats(); stats.ReservedUsed != 0 {
+		t.Fatalf("a bulk flow's chunked write drained the reserve: %+v", stats)
+	}
+
+	// A new stream's opening write still gets through, to the transport.
+	control := dialBatchConn(t, client)
+	opening := make([]byte, 1024)
+	if result := awaitPayloadWrite(t, writePayloadAsync(control, opening), len(opening)); result.err != nil || result.n != len(opening) {
+		t.Fatalf("opening write = (%d, %v), want (%d, nil)", result.n, result.err, len(opening))
+	}
+	waitForPool(t, pool, "the opening charged the reserve", func(stats uplinkBudgetStats) bool {
+		return stats.ReservedUsed == len(opening)
+	})
+
+	close(gate)
+	awaitPayloadWrite(t, blocked, len(chunk))
+	waitForPool(t, pool, "drained", func(stats uplinkBudgetStats) bool {
+		return stats.Used+stats.ReservedUsed == 0
+	})
+}
