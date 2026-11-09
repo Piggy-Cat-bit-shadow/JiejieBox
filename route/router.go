@@ -76,10 +76,15 @@ type Router struct {
 	ruleSetUpdater     *R.RuleSetUpdater
 	processSearcher    process.Searcher
 	processCache       *freelru.Cache[processCacheKey, processCacheEntry]
-	neighborResolver   adapter.NeighborResolver
-	pauseManager       pause.Manager
-	trackers           []adapter.ConnectionTracker
-	platformInterface  adapter.PlatformInterface
+	// processCacheEpoch is bumped by every cache reset. A lookup that was already running when the
+	// reset happened must not add its (pre-reset) answer afterwards: the reset exists because the
+	// network generation changed, and re-adding the old generation's fact would make the purge
+	// ineffective for exactly the lookup that raced it.
+	processCacheEpoch atomic.Uint64
+	neighborResolver  adapter.NeighborResolver
+	pauseManager      pause.Manager
+	trackers          []adapter.ConnectionTracker
+	platformInterface adapter.PlatformInterface
 
 	// trafficClassPolicies holds the per-outbound explicit traffic class from the configuration.
 	// It is set once during box setup and only read at flow setup.
@@ -431,6 +436,13 @@ func (r *Router) TrimExpiredCaches() int {
 func (r *Router) ResetNetwork() {
 	r.httpClientManager.ResetNetwork()
 	r.dns.ResetNetwork()
+	r.resetProcessCaches()
+}
+
+// resetProcessCaches is the process-cache half of a network reset, separate so the interleaving can
+// be exercised without a full manager set.
+func (r *Router) resetProcessCaches() {
+	r.processCacheEpoch.Add(1)
 	if r.processCache != nil {
 		r.processCache.Purge()
 	}

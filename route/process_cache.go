@@ -39,6 +39,9 @@ func (r *Router) findProcessInfoCached(ctx context.Context, network string, sour
 	if entry, ok := r.processCache.Get(key); ok {
 		return entry.result, entry.err
 	}
+	// The generation is read BEFORE the lookup: a reset that lands while it runs invalidates the
+	// answer, and caching it would preserve the pre-reset fact for the cache lifetime.
+	epoch := r.processCacheEpoch.Load()
 	var (
 		result *adapter.ConnectionOwner
 		err    error
@@ -50,7 +53,9 @@ func (r *Router) findProcessInfoCached(ctx context.Context, network string, sour
 		// socket diag table is enough; do not pay for a /proc walk.
 		result, err = process.FindProcessOwner(r.processSearcher, ctx, network, source, destination)
 	}
-	r.processCache.Add(key, processCacheEntry{result: result, err: err})
+	if r.processCacheEpoch.Load() == epoch {
+		r.processCache.Add(key, processCacheEntry{result: result, err: err})
+	}
 	return result, err
 }
 
