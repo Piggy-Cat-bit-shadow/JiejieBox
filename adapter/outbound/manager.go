@@ -879,6 +879,28 @@ func (m *Manager) AcquireOutbound(object adapter.Outbound) (release func(), ok b
 		return func() {}, false
 	}
 	tag := object.Tag()
+	// Endpoints live in their own namespace (Manager.Outbound falls back to it) and have no
+	// retirement lifecycle: the endpoint manager refuses a second object for an existing tag, so
+	// once Get returns this object it stays published for the life of the manager. A published
+	// endpoint therefore needs no user count, exactly like a published non-provider outbound.
+	//
+	// Without this check every flow routed into an endpoint was refused: the lease manager only
+	// knew outboundByTag, so the live endpoint came back as "replaced while the connection was
+	// being set up" - including on the router's retry, which re-read the same object by tag.
+	//
+	// The lookup runs outside m.access because the endpoint manager takes its own lock (its Start
+	// holds it while starting an endpoint) and identity under a tag never changes.
+	if endpointObject, isEndpoint := object.(adapter.Endpoint); isEndpoint {
+		m.access.RLock()
+		endpointManager := m.endpoint
+		m.access.RUnlock()
+		if endpointManager != nil {
+			publishedEndpoint, found := endpointManager.Get(tag)
+			if found && publishedEndpoint == endpointObject {
+				return func() {}, true
+			}
+		}
+	}
 	// Fast path for the overwhelmingly common case: a PUBLISHED non-provider object has no
 	// retirement lifecycle, so a read lock and two map lookups are enough and the hot dial path
 	// never takes the exclusive manager lock. A provider object (owned tag) never takes this path,
