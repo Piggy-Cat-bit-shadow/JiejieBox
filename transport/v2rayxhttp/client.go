@@ -85,6 +85,10 @@ type Client struct {
 	// Client, because the Client owns the dials, the conns and the xmux pool —
 	// the streams whose SUM has to be bounded. Non-packet-up modes ignore it.
 	budget *sharedUplinkBudget
+	// uploadBudget is the Box-level handle this client was bound to, if any (see
+	// packetup_upload_budget.go). budget is its pool; keeping the handle is what lets
+	// a Box prove two outbounds share ONE bound rather than two equal ones.
+	uploadBudget *UploadBudget
 }
 
 // NewClient builds an XHTTP client transport. The tlsConfig (possibly Reality)
@@ -235,7 +239,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		}
 	}
 
-	return &Client{
+	client := &Client{
 		ctx:            ctx,
 		dialer:         dialer,
 		serverAddr:     serverAddr,
@@ -257,7 +261,22 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		// deployment needs a different aggregate it is a policy change here, not a
 		// per-node setting).
 		budget: newSharedUplinkBudget(packetUpSharedCapacity(packetUpPendingBound(meta)), packetUpSharedReserve),
-	}, nil
+	}
+	// A Box that wants one bound across its XHTTP outbounds puts a provider in the
+	// construction context (WithUploadBudgetProvider); bind here, before any dial, so
+	// every stream this client ever opens is charged to the shared ledger. A provider
+	// that declines (nil) or a failed bind leaves the client on its own pool, which is
+	// the safe direction: two pools bound twice, they never bound less than the sum.
+	if provider := uploadBudgetFromContext(ctx); provider != nil {
+		if shared := provider.UploadBudgetFor(UploadBudgetSizingFromStats(client.budget.stats())); shared != nil {
+			if bindErr := shared.Bind(client); bindErr != nil {
+				if logger != nil {
+					logger.Warn("v2ray-xhttp: sharing the Box upload budget failed, keeping the per-client pool: ", bindErr)
+				}
+			}
+		}
+	}
+	return client, nil
 }
 
 func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {

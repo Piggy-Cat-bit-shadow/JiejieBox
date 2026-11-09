@@ -125,7 +125,10 @@ func (b *sharedUplinkBudget) yieldMainWaiter(u *packetUplink) {
 	moved := b.removeWaiterLocked(u)
 	b.access.Unlock()
 	if moved {
-		b.wakeWaiters()
+		// Wake the others, never this writer: it is about to park on allocation capacity,
+		// and closing its own captured wake channel would make the write path retry
+		// immediately (the audit's 150k-round spin).
+		b.wakeWaitersExcept(u)
 	}
 }
 
@@ -145,8 +148,15 @@ func (b *sharedUplinkBudget) maxArrayBytes() int {
 // waits. All-or-nothing keeps the ledger simple (no partially installed arrays) and
 // makes the wait/release cycle the only progress path.
 //
+// protected marks a reservation made for an OPENING (control) grant. Data may only use
+// allocDataLimit, which is AllocCapacity minus the control pool's worth; an opening may
+// use the whole bound. That split is what makes the opening guarantee survive a
+// genuinely data-saturated ledger: without it a Box whose bulk streams hold every
+// array could refuse a new stream's first packet the memory it needs even though the
+// control quota is free.
+//
 // Caller must hold u.access, which is the documented lock order: uplink then pool.
-func (b *sharedUplinkBudget) reserveAllocation(u *packetUplink, want int) int {
+func (b *sharedUplinkBudget) reserveAllocation(u *packetUplink, want int, protected bool) int {
 	if b == nil || want <= 0 {
 		return want
 	}
@@ -156,7 +166,11 @@ func (b *sharedUplinkBudget) reserveAllocation(u *packetUplink, want int) int {
 		charge = &uplinkBudgetCharge{}
 		b.charges[u] = charge
 	}
-	if available := b.allocCapacity - b.allocated; want > available {
+	limit := b.allocDataLimit
+	if protected {
+		limit = b.allocCapacity
+	}
+	if available := limit - b.allocated; want > available {
 		b.addAllocWaiterLocked(u)
 		b.access.Unlock()
 		return 0
@@ -164,24 +178,40 @@ func (b *sharedUplinkBudget) reserveAllocation(u *packetUplink, want int) int {
 	charge.alloc += want
 	b.allocated += want
 	b.allocGranted += uint64(want)
-	if b.allocated > b.allocPeak {
-		b.allocPeak = b.allocated
+	if total := b.allocated + b.allocOverlap; total > b.allocPeak {
+		b.allocPeak = total
 	}
 	b.removeAllocWaiterLocked(u)
 	b.access.Unlock()
 	return want
 }
 
-// noteAllocationOverlap records the array a replacement is still copying from, so
-// AllocPeak reports the transient two-array moment even though the live figure is
-// settled capacity. Called under u.access with the old array's charge.
-func (b *sharedUplinkBudget) noteAllocationOverlap(charge int) {
+// noteAllocationOverlapStart records that a replacement is now copying from an old
+// array whose charge already moved to the new one, so the physical footprint is
+// `Allocated + AllocOverlap`. Both start and end are called under u.access, and the
+// end is deferred before the copy so a panic cannot leave the peak accounting stuck.
+func (b *sharedUplinkBudget) noteAllocationOverlapStart(charge int) {
 	if b == nil || charge <= 0 {
 		return
 	}
 	b.access.Lock()
-	if total := b.allocated + charge; total > b.allocPeak {
+	b.allocOverlap += charge
+	if total := b.allocated + b.allocOverlap; total > b.allocPeak {
 		b.allocPeak = total
+	}
+	b.access.Unlock()
+}
+
+// noteAllocationOverlapEnd releases an overlap recorded by noteAllocationOverlapStart.
+func (b *sharedUplinkBudget) noteAllocationOverlapEnd(charge int) {
+	if b == nil || charge <= 0 {
+		return
+	}
+	b.access.Lock()
+	b.allocOverlap -= charge
+	if b.allocOverlap < 0 {
+		// Defensive: an unbalanced overlap is a bookkeeping defect, not a state.
+		b.allocOverlap = 0
 	}
 	b.access.Unlock()
 }
@@ -247,13 +277,13 @@ func (b *sharedUplinkBudget) removeAllocWaiterLocked(u *packetUplink) {
 
 // ensureQueueCapacityLocked makes room for want more bytes in the queue, growing the
 // array through the allocation ledger if needed. It reports false when the ledger has
-// no capacity right now; the caller then waits (holding no reservation) and retries.
+// no capacity right now; the caller then rolls back its logical grant (if any), waits,
+// and retries.
 //
-// Caller must hold u.access. The append that follows must not need a new allocation,
-// which is why this is checked before the logical pool is charged: a reservation
-// without data would be an unspent charge, and the write path's rule is that a
-// charge and the memory it pays for are created together.
-func (u *packetUplink) ensureQueueCapacityLocked(want int) bool {
+// Caller must hold u.access. protecting marks a grant that came from the opening pool:
+// its reservation may use the whole allocation bound, not only the data share (see
+// reserveAllocation). The append that follows must not need a new allocation.
+func (u *packetUplink) ensureQueueCapacityLocked(want int, protecting bool) bool {
 	if want <= 0 {
 		return true
 	}
@@ -273,20 +303,27 @@ func (u *packetUplink) ensureQueueCapacityLocked(want int) bool {
 	if reserve < 0 {
 		reserve = 0
 	}
-	if granted := u.budget.reserveAllocation(u, reserve); granted < reserve {
+	if granted := u.budget.reserveAllocation(u, reserve, protecting); granted < reserve {
 		return false
 	}
 	buffer := make([]byte, len(u.pending), target)
+	if transfer > 0 {
+		// Both arrays exist during the copy: record the overlap for its whole duration,
+		// including the copy itself, so AllocPeak is the physical peak rather than a
+		// post-copy approximation, and so concurrent replacements add up.
+		u.budget.noteAllocationOverlapStart(transfer)
+	}
 	copy(buffer, u.pending)
 	allocation := &packetUpAllocation{capacity: target, charged: target, refs: 1}
 	if old := u.pendingAlloc; old != nil {
 		if transfer > 0 {
-			// Both arrays exist during the copy; the peak records it and the old
-			// array's charge moves into the new one instead of being released.
-			u.budget.noteAllocationOverlap(old.charged)
+			// The old array's charge moves into the new one instead of being released.
 			old.charged = 0
 		}
 		u.dropAllocationRefLocked(old)
+	}
+	if transfer > 0 {
+		u.budget.noteAllocationOverlapEnd(transfer)
 	}
 	u.pending = buffer
 	u.pendingAlloc = allocation

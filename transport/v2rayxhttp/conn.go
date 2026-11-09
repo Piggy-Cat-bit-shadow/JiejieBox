@@ -1230,11 +1230,13 @@ func (u *packetUplink) currentWake() <-chan struct{} {
 	return u.wakeCh
 }
 
-// takeBudget charges want bytes from the shared pool, or returns want unchanged
-// when the uplink has no pool (per-stream bound only).
-func (u *packetUplink) takeBudget(want int, small bool, openLeft int) int {
+// takeBudget takes a logical admission from the shared pool, or admits the whole
+// request when the uplink has no pool (per-stream bound only). The grant says which
+// pool paid for it, so it can be handed back exactly (releaseGrant) if the matching
+// array capacity cannot be reserved.
+func (u *packetUplink) takeBudget(want int, small bool, openLeft int) uplinkGrant {
 	if u.budget == nil {
-		return want
+		return uplinkGrant{main: want}
 	}
 	return u.budget.take(u, want, small, openLeft)
 }
@@ -1274,20 +1276,26 @@ func (u *packetUplink) finishBudget() {
 // maxPending: the bound was real for many small writes and fictional for one
 // large one.
 //
-// # Three bounds, one charge
+// # Three bounds, one admission
 //
-// A chunk is charged to the shared pool and appended in the same critical section
-// (takeBudget then append). Charging and keeping are therefore one step: a writer
-// that waits holds no unspent charge, so a closed or failed stream has nothing
-// outstanding to unwind. The pool is the transport-wide bound; maxPending stays the
-// per-stream one, and the stream still stops at whichever binds first.
+// A chunk is admitted by the logical pool FIRST (takeBudget), then its array capacity is
+// reserved, then the bytes are appended - all in one critical section. If the capacity
+// reservation fails, the admission is handed back exactly (releaseGrant) before the
+// writer parks. That order is deliberate: the earlier shape reserved the array first,
+// so a writer waiting for the main pool could park on an empty 64 KiB array, and a dozen
+// of those filled the allocation ledger and starved a new stream's opening of the 4 KiB
+// it needed. A grant now never survives a wait, so a waiting writer holds no memory.
+//
+// The pool is the transport-wide bound; maxPending stays the per-stream one, and the
+// stream still stops at whichever binds first.
 //
 // Which of the pool's three ledgers a chunk draws on is decided here, from the
 // flow's state at the grant: the main pool for bulk, the control pool while the
 // flow is still opening (the only writes that can make a server answer), and the
 // short-flow reserve for a small write body. The split matters because the control
 // headroom is a guarantee for the NEXT stream's first packet, so no single flow may
-// spend all of it — see uplink_budget.go.
+// spend all of it — see uplink_budget.go. A control grant also lets its array use the
+// allocation reserve, so the guarantee survives a data-saturated capacity ledger.
 func (u *packetUplink) write(b []byte) (int, error) {
 	if len(b) == 0 {
 		return 0, nil
@@ -1349,21 +1357,30 @@ func (u *packetUplink) write(b []byte) (int, error) {
 		if maxArray := u.budget.maxArrayBytes(); maxArray > 0 && want > maxArray {
 			want = maxArray
 		}
-		// Reserve the queue array's capacity BEFORE the logical pools are charged and
-		// before append can allocate: see packetup_alloc.go. If the allocation ledger
-		// is full, leave without holding anything and wait for a release; nothing is
-		// charged, so there is nothing to unwind.
-		if !u.ensureQueueCapacityLocked(want) {
+		// Logical admission FIRST, capacity reservation second: see the note above the
+		// loop. A grant that cannot get its array is handed straight back (releaseGrant)
+		// before this writer parks, so a bulk writer waiting for the main pool holds no
+		// array at all - the dual-budget defect where 12 bulk waiters parked on 768 KiB
+		// of empty arrays and starved the next stream's opening.
+		grant := u.takeBudget(want, small, openLeft)
+		granted := grant.total()
+		// The array's capacity class comes from the WRITE's eligibility, not from which
+		// logical pool happened to grant the bytes: an opening write admitted by the main
+		// pool is still an opening and may use the control allocation reserve. Classifying
+		// it by `grant.control > 0` is what made a 1 KiB opening fail the last data
+		// granule while 126 KiB of control reserve sat unused.
+		if granted > 0 && !u.ensureQueueCapacityLocked(granted, small) {
+			u.budget.releaseGrant(u, grant)
 			// reserveAllocation registered this stream as an allocation waiter. It
 			// must STAY registered: that list is how a capacity release reaches this
-			// writer's wake channel. Withdrawing here would drop the only signal the
-			// wait depends on.
+			// writer's wake channel.
 			//
 			// It must, however, give up the MAIN pool's head: only the head may draw
-			// on the main pool, and this writer is not waiting for that. Holding the
-			// head while waiting for an array would stall the writers behind it, whose
-			// progress is what frees the arrays it is waiting for.
+			// on the main pool, and this writer has just returned what it drew.
+			// Holding the head while waiting for an array would stall the writers
+			// behind it, whose progress is what frees the arrays it waits for.
 			u.budget.yieldMainWaiter(u)
+			granted = 0
 			u.access.Unlock()
 			select {
 			case <-wake:
@@ -1371,7 +1388,6 @@ func (u *packetUplink) write(b []byte) (int, error) {
 			}
 			continue
 		}
-		granted := u.takeBudget(want, small, openLeft)
 		if granted > 0 {
 			u.pending = append(u.pending, b[written:written+granted]...)
 			written += granted
