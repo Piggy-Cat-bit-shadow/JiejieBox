@@ -20,6 +20,10 @@ package artifact
 //     version, so an mmap or a streaming reader that is still using the old artifact cannot
 //     be pulled out from under it. The newest valid version is kept even when unleased, so a
 //     crash recovery always has something to load.
+//   - The lease is taken BEFORE Load reads the manifest and verifies the bytes, and Collect
+//     checks and removes under the same lock. That closes the window in which a collector had
+//     already decided to remove a version a Load was about to return. A live temp directory is
+//     registered while Commit streams into it, so Collect removes only crash leftovers.
 //
 // Platform note: on Windows an open file cannot be removed, so a version that is still open
 // makes Collect's removal fail. That is not an error here: the lease is the authority, and a
@@ -99,6 +103,10 @@ func (v *Version) Release() {
 type Store struct {
 	dir   string
 	lease *leaseTable
+	// testHook, when non-nil, is called at named points in Commit and Collect. Tests in this
+	// package use it to place a reader or a collector exactly inside the window they are about to
+	// check; production leaves it nil.
+	testHook func(point string)
 }
 
 // leaseTable holds the leases for one store directory, shared by every Store value opened on that
@@ -117,6 +125,12 @@ type Store struct {
 type leaseTable struct {
 	access sync.Mutex
 	counts map[string]int
+	// writing holds the temp directories a Commit in this process is still streaming into.
+	// Collect removes temp leftovers from a crash, and a live temp directory looks exactly like
+	// one; the registration is what tells them apart. Creation and registration happen under
+	// access, so a collector that lists the directory cannot see a temp directory that is not
+	// registered yet.
+	writing map[string]bool
 }
 
 var (
@@ -130,7 +144,7 @@ func leaseTableFor(directory string) *leaseTable {
 	defer leaseTablesAccess.Unlock()
 	table, loaded := leaseTables[directory]
 	if !loaded {
-		table = &leaseTable{counts: make(map[string]int)}
+		table = &leaseTable{counts: make(map[string]int), writing: make(map[string]bool)}
 		leaseTables[directory] = table
 	}
 	return table
@@ -162,9 +176,20 @@ func (s *Store) Commit(key string, manifest Manifest, body io.Reader) (*Version,
 	if err := os.MkdirAll(keyDir, 0o755); err != nil {
 		return nil, E.Cause(err, "create artifact key directory")
 	}
+	// Creating and registering the temp directory is one step under the lease lock: Collect lists
+	// the key directory under the same lock, so it either does not see this directory (it did not
+	// exist yet) or sees it registered as a live write (and leaves it alone).
+	s.lease.access.Lock()
 	tempDir, err := os.MkdirTemp(keyDir, tempPrefix)
+	if err == nil {
+		s.lease.writing[tempDir] = true
+	}
+	s.lease.access.Unlock()
 	if err != nil {
 		return nil, E.Cause(err, "create artifact temp directory")
+	}
+	if s.testHook != nil {
+		s.testHook("commit-temp")
 	}
 	// A temp directory is never a version: on any error it is removed, and Collect also
 	// removes leftovers from an earlier crash.
@@ -173,6 +198,9 @@ func (s *Store) Commit(key string, manifest Manifest, body io.Reader) (*Version,
 		if cleanup {
 			_ = os.RemoveAll(tempDir)
 		}
+		s.lease.access.Lock()
+		delete(s.lease.writing, tempDir)
+		s.lease.access.Unlock()
 	}()
 
 	artifactPath := filepath.Join(tempDir, artifactName)
@@ -209,29 +237,49 @@ func (s *Store) Commit(key string, manifest Manifest, body io.Reader) (*Version,
 	// to one version instead of accumulating, and the name can never describe bytes it does
 	// not contain.
 	versionDir := filepath.Join(keyDir, "v-"+digest[:16])
-	if err := publishDirectory(tempDir, versionDir); err != nil {
+	// Publishing and taking the commit's own lease is one step under the lease lock. Otherwise a
+	// collector that listed the directory in between would see an unleased new version and remove
+	// it before this commit could return a handle to it.
+	if err := s.publishVersion(tempDir, versionDir); err != nil {
 		return nil, err
 	}
 	cleanup = false
-	// The returned handle is leased, exactly like a Load result: a commit that immediately
-	// reads its own artifact (to index it, or to validate the published bytes) must not have
-	// the next Collect remove it.
-	s.acquire(versionDir)
 	return &Version{manifest: manifest, dir: versionDir, store: s}, nil
 }
 
 // Load returns the newest valid version of key, leased to the caller.
+//
+// The lease is taken BEFORE the version is read, not after it was found loadable: a collector
+// that listed the directory before the lease existed can otherwise remove the version between
+// "the manifest and digest check out" and "the caller holds it", and a successful Load would
+// return a path that is already gone. A version removed in that window fails its check instead,
+// and the listing is retried so a version published concurrently is still found.
 func (s *Store) Load(key string) (*Version, error) {
 	if s == nil {
 		return nil, E.New("artifact: nil store")
 	}
+	for attempt := 0; attempt < 3; attempt++ {
+		version, vanished, err := s.loadOnce(key)
+		if err == nil {
+			return version, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) || !vanished {
+			return nil, err
+		}
+	}
+	return nil, os.ErrNotExist
+}
+
+// loadOnce is one listing pass. `vanished` reports that a version this pass had listed was
+// removed before its lease could be taken, which makes another pass worth doing.
+func (s *Store) loadOnce(key string) (version *Version, vanished bool, err error) {
 	keyDir := filepath.Join(s.dir, key)
 	entries, err := os.ReadDir(keyDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, os.ErrNotExist
+			return nil, false, os.ErrNotExist
 		}
-		return nil, err
+		return nil, false, err
 	}
 	type candidate struct {
 		dir      string
@@ -243,27 +291,41 @@ func (s *Store) Load(key string) (*Version, error) {
 			continue
 		}
 		full := filepath.Join(keyDir, entry.Name())
+		// The lease comes first. Everything below runs while this version cannot be collected.
+		s.acquire(full)
 		manifest, readErr := readManifest(full)
 		if readErr != nil {
+			if _, statErr := os.Stat(full); errors.Is(statErr, os.ErrNotExist) {
+				vanished = true
+			}
+			s.release(full)
 			continue
 		}
 		if !compatible(manifest) {
+			s.release(full)
 			continue
 		}
 		if err := verifyArtifact(full, manifest); err != nil {
+			if _, statErr := os.Stat(full); errors.Is(statErr, os.ErrNotExist) {
+				vanished = true
+			}
+			s.release(full)
 			continue
 		}
 		candidates = append(candidates, candidate{dir: full, manifest: manifest})
 	}
 	if len(candidates) == 0 {
-		return nil, os.ErrNotExist
+		return nil, vanished, os.ErrNotExist
 	}
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].manifest.Created > candidates[j].manifest.Created
 	})
 	chosen := candidates[0]
-	s.acquire(chosen.dir)
-	return &Version{manifest: chosen.manifest, dir: chosen.dir, store: s}, nil
+	// The rejected candidates were leased only for the duration of their check.
+	for _, rejected := range candidates[1:] {
+		s.release(rejected.dir)
+	}
+	return &Version{manifest: chosen.manifest, dir: chosen.dir, store: s}, false, nil
 }
 
 // Collect removes temp leftovers and unleased versions of key, keeping the newest version this
@@ -287,19 +349,15 @@ func (s *Store) Collect(key string) error {
 		}
 		return err
 	}
-	leased := make(map[string]bool, len(s.lease.counts))
-	s.lease.access.Lock()
-	for dir, count := range s.lease.counts {
-		if count > 0 {
-			leased[dir] = true
-		}
+	// The listing is the collector's view of the versions; the hook lets a test place a reader or
+	// a writer inside this pass.
+	if s.testHook != nil {
+		s.testHook("collect-listed")
 	}
-	s.lease.access.Unlock()
 
 	type candidate struct {
 		dir     string
 		created int64
-		leased  bool
 	}
 	var valid []candidate
 	for _, entry := range entries {
@@ -308,23 +366,26 @@ func (s *Store) Collect(key string) error {
 			continue
 		}
 		if strings.HasPrefix(entry.Name(), tempPrefix) {
-			// A temp directory is never a version, so no lease can name it.
-			_ = os.RemoveAll(full)
+			// A temp directory is garbage only when no commit is still writing it. A live one
+			// looks exactly like a crash leftover, and removing it failed the commit that was
+			// using it; the registration is what tells them apart.
+			s.lease.access.Lock()
+			writing := s.lease.writing[full]
+			s.lease.access.Unlock()
+			if !writing {
+				_ = os.RemoveAll(full)
+			}
 			continue
 		}
 		manifest, readErr := readManifest(full)
 		if readErr != nil {
-			if !leased[full] {
-				_ = os.RemoveAll(full)
-			}
+			s.removeIfUnleased(full)
 			continue
 		}
 		if verifyErr := verifyArtifact(full, manifest); verifyErr != nil {
 			// The bytes are not the ones the manifest names, so no build can load this version.
 			// Removing it is what makes the LAST valid version the one that is kept.
-			if !leased[full] {
-				_ = os.RemoveAll(full)
-			}
+			s.removeIfUnleased(full)
 			continue
 		}
 		if !compatible(manifest) {
@@ -334,16 +395,31 @@ func (s *Store) Collect(key string) error {
 		}
 		// A leased version still takes part in the ranking: "newest" is a property of the
 		// versions, not of who happens to be reading them. It is only protected from removal.
-		valid = append(valid, candidate{dir: full, created: manifest.Created, leased: leased[full]})
+		valid = append(valid, candidate{dir: full, created: manifest.Created})
 	}
 	sort.Slice(valid, func(i, j int) bool { return valid[i].created > valid[j].created })
 	for index, entry := range valid {
-		if index == 0 || entry.leased {
+		if index == 0 {
 			continue
 		}
-		_ = os.RemoveAll(entry.dir)
+		s.removeIfUnleased(entry.dir)
 	}
 	return nil
+}
+
+// removeIfUnleased deletes a version directory only when no reader holds it.
+//
+// The check and the removal happen under the lease lock together: a reader that acquires the
+// lease between them would otherwise be handed a version this collector is deleting. The cost is
+// that a Load blocks for the duration of one version's removal, which is a directory with two
+// small files - not a copy.
+func (s *Store) removeIfUnleased(dir string) {
+	s.lease.access.Lock()
+	defer s.lease.access.Unlock()
+	if s.lease.counts[dir] > 0 {
+		return
+	}
+	_ = os.RemoveAll(dir)
 }
 
 // acquire takes a lease on a version directory.
@@ -421,14 +497,27 @@ func compatible(manifest Manifest) bool {
 	return true
 }
 
-// publishDirectory renames a complete temp directory into its version name.
-func publishDirectory(tempDir string, versionDir string) error {
+// publishVersion renames a complete temp directory into its version name and takes the commit's
+// own lease on it, under the lease lock.
+//
+// The rename and the lease are one step because the commit returns a handle to the caller: a
+// collector that listed the key directory between the rename and the lease would see a new,
+// unleased version and remove it, and Commit would return a version that no longer exists.
+func (s *Store) publishVersion(tempDir string, versionDir string) error {
+	s.lease.access.Lock()
+	defer s.lease.access.Unlock()
 	if _, err := os.Stat(versionDir); err == nil {
-		// The identical artifact is already published: the temp copy is redundant.
-		return os.RemoveAll(tempDir)
+		// The identical artifact is already published: the temp copy is redundant, and the
+		// existing version is the one this commit leases.
+		if err := os.RemoveAll(tempDir); err != nil {
+			return err
+		}
+		s.lease.counts[versionDir]++
+		return nil
 	}
 	if err := os.Rename(tempDir, versionDir); err != nil {
 		return E.Cause(err, "publish artifact version")
 	}
+	s.lease.counts[versionDir]++
 	return nil
 }

@@ -94,12 +94,17 @@ type StartedService struct {
 	logObserver             *observable.Observer[*log.Entry]
 	instance                *Instance
 	startedAt               time.Time
-	urlTestSubscriber       *observable.Subscriber[struct{}]
-	urlTestObserver         *observable.Observer[struct{}]
-	clashModeSubscriber     *observable.Subscriber[struct{}]
-	clashModeObserver       *observable.Observer[struct{}]
-	notificationSubscriber  *observable.Subscriber[*NotificationEvent]
-	notificationObserver    *observable.Observer[*NotificationEvent]
+	// beforeInstanceStart is a test seam for the interruption window: the instance is published
+	// and the service is STARTING, but Start has not returned yet. A test uses it to call
+	// interruptStart at the exact instant the concurrent CloseService/SetError does. Nil in
+	// production.
+	beforeInstanceStart    func()
+	urlTestSubscriber      *observable.Subscriber[struct{}]
+	urlTestObserver        *observable.Observer[struct{}]
+	clashModeSubscriber    *observable.Subscriber[struct{}]
+	clashModeObserver      *observable.Observer[struct{}]
+	notificationSubscriber *observable.Subscriber[*NotificationEvent]
+	notificationObserver   *observable.Observer[*NotificationEvent]
 }
 
 type ServiceOptions struct {
@@ -418,17 +423,27 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 	instance, err := s.buildAndStart(ctx, targetOptions, targetRevision, oldInstance != nil)
 	if err == nil && instance == nil {
 		// The start was interrupted; buildAndStart has already cleaned up, and the original
-		// path returned nil without touching the status, which this preserves.
-		s.recordServiceChange(&ServiceChangeReport{Plan: plan, Status: ServiceChangeStatusInterrupted, ActiveRevision: plan.CurrentRevision})
+		// path returned nil without touching the status, which this preserves. Nothing is left
+		// running, so no revision may be named as active.
+		s.recordServiceChange(&ServiceChangeReport{
+			Plan: plan, Status: ServiceChangeStatusInterrupted,
+			RestartRequired: plan.RestartRequired,
+		})
 		return nil
 	}
 	if err != nil {
 		// C05: with a store configured, a failed start recovers to the last-good profile and
 		// reports it; without one, nothing about the failure changes.
 		if recoveredRevision, recovered := s.tryRecoverToLastGood(ctx, oldInstance != nil, profileContent, options, err); recovered {
+			// `Retained` is about the document that was RUNNING before the attempt, not about
+			// the one the store kept. When B ran but was never saved, the recovery starts the
+			// saved A: A is running now, B is not, and the previous configuration was not
+			// retained. Saying `retained` for every recovery hid exactly that difference.
+			retained := plan.Started && plan.CurrentRevision == recoveredRevision
 			s.recordServiceChange(&ServiceChangeReport{
-				Plan: plan, Status: ServiceChangeStatusRecovered, Retained: true,
-				ActiveRevision: recoveredRevision, Reason: err.Error(),
+				Plan: plan, Status: ServiceChangeStatusRecovered, Retained: retained,
+				RestartRequired: plan.RestartRequired,
+				ActiveRevision:  recoveredRevision, Reason: err.Error(),
 			})
 			return nil
 		}
@@ -436,9 +451,12 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 		s.serviceAccess.Lock()
 		s.updateStatusError(err)
 		s.serviceAccess.Unlock()
+		// The running Box was closed before the candidate was built and no recovery brought one
+		// back: nothing runs, so naming the previous revision as active would describe a service
+		// that does not exist.
 		s.recordServiceChange(&ServiceChangeReport{
 			Plan: plan, Status: ServiceChangeStatusFailed,
-			ActiveRevision: plan.CurrentRevision, Reason: err.Error(),
+			RestartRequired: plan.RestartRequired, Reason: err.Error(),
 		})
 		return err
 	}
@@ -479,6 +497,9 @@ func (s *StartedService) buildAndStart(ctx context.Context, targetOptions option
 	s.serviceAccess.Lock()
 	s.instance = instance
 	s.serviceAccess.Unlock()
+	if s.beforeInstanceStart != nil {
+		s.beforeInstanceStart()
+	}
 	err = instance.Start()
 	s.serviceAccess.Lock()
 	if s.startInterrupted {
