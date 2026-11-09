@@ -33,6 +33,11 @@ const (
 	defaultHistoryBytes   = 1 << 20
 	defaultHistoryTTL     = 5 * time.Minute
 	maxHistoryQueryLimit  = 128
+	// maxHistoryQueryBytes is the default OUTPUT budget of one read: the most record bytes a single
+	// Query call may copy. The record count alone is not a budget on a history whose records carry
+	// names and rendered answers, and a management read must not be able to multiply the scan cost by
+	// its own output.
+	maxHistoryQueryBytes  = 256 << 10
 	maxTopKBuckets        = 16
 	historyRecordOverhead = 64
 )
@@ -61,6 +66,11 @@ type HistoryQuery struct {
 	Limit     int
 	Transport string
 	Source    QuerySource
+	// MaxBytes bounds the total retained size of the records this call copies. A non-positive value
+	// takes the default (maxHistoryQueryBytes). A single record that is larger than the budget is
+	// returned on its own rather than hidden: a caller asking for one record must be able to read
+	// it, and the budget is about the SIZE of an output, not about refusing the truth.
+	MaxBytes int
 }
 
 // TopField names the dimension a top-K aggregates over.
@@ -86,6 +96,9 @@ type HistoryStats struct {
 	Rejected uint64
 	Expired  uint64
 	Queries  uint64
+	// Cleared counts explicit Clear calls. It is separate from Expired and eviction: a reader must
+	// be able to tell "the window moved on" from "a consumer emptied it".
+	Cleared uint64
 }
 
 // HistoryCapabilities says what this build can do, so a consumer can discover rather than
@@ -113,6 +126,7 @@ type History struct {
 	rejected uint64
 	expired  uint64
 	queries  uint64
+	cleared  uint64
 }
 
 // NewHistory returns a bounded history.
@@ -158,6 +172,10 @@ func (h *History) Record(event QueryEvent) {
 }
 
 // Query returns matching records after the caller's cursor, oldest first.
+//
+// The output is bounded twice: by the record count (Limit, capped at maxHistoryQueryLimit) and by
+// the total size of the records copied (MaxBytes). One lock serialises every reader and the writer,
+// so N concurrent readers cannot multiply the scan.
 func (h *History) Query(query HistoryQuery) ([]HistoryRecord, error) {
 	if h == nil {
 		return nil, nil
@@ -169,11 +187,16 @@ func (h *History) Query(query HistoryQuery) ([]HistoryRecord, error) {
 	if limit > maxHistoryQueryLimit {
 		return nil, ErrHistoryQueryTooLarge
 	}
+	budget := query.MaxBytes
+	if budget <= 0 {
+		budget = maxHistoryQueryBytes
+	}
 	h.access.Lock()
 	defer h.access.Unlock()
 	h.queries++
 	h.expireLocked(time.Now())
 	matched := make([]HistoryRecord, 0, limit)
+	used := 0
 	for _, record := range h.records {
 		if record.Sequence <= query.Since {
 			continue
@@ -184,12 +207,37 @@ func (h *History) Query(query HistoryQuery) ([]HistoryRecord, error) {
 		if query.Source != "" && record.Event.Source != query.Source {
 			continue
 		}
+		size := historyRecordSize(record.Event)
+		// The first matching record is always returned, even when it alone exceeds the budget: a
+		// budget that made a record unreadable would hide the very event being diagnosed.
+		if len(matched) > 0 && used+size > budget {
+			break
+		}
 		matched = append(matched, record)
+		used += size
 		if len(matched) == limit {
 			break
 		}
 	}
 	return matched, nil
+}
+
+// Clear empties the ring and reports how many records it dropped.
+//
+// It is the explicit "start a fresh window" entry for a management consumer. The SEQUENCE keeps
+// counting: a caller holding a cursor from before the clear must not be served records it has
+// already seen, and a restarted model of the history must not reuse an identity.
+func (h *History) Clear() int {
+	if h == nil {
+		return 0
+	}
+	h.access.Lock()
+	defer h.access.Unlock()
+	cleared := len(h.records)
+	h.records = nil
+	h.bytes = 0
+	h.cleared++
+	return cleared
 }
 
 // TopK aggregates the retained records into at most maxTopKBuckets buckets, with the
@@ -254,6 +302,7 @@ func (h *History) Stats() HistoryStats {
 		Rejected: h.rejected,
 		Expired:  h.expired,
 		Queries:  h.queries,
+		Cleared:  h.cleared,
 	}
 	if len(h.records) > 0 {
 		stats.Oldest = h.records[0].Event.Time
