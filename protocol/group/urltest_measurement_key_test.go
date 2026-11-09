@@ -50,7 +50,7 @@ func (m *epochOnlyManager) NetworkEnvironment() uint64 { return m.epoch }
 func TestTheProductionMeasurementKeyNamesEveryFactThatCanVary(t *testing.T) {
 	expected, err := urltest.ParseExpectedStatus("204")
 	require.NoError(t, err)
-	batch := &urlTestBatch{expected: expected}
+	batch := &urlTestBatch{expected: expected, mode: TestHistoryHealth}
 	outbound := &keyTestOutbound{tag: "node-a"}
 	link := "https://probe.example/generate_204"
 
@@ -68,6 +68,19 @@ func TestTheProductionMeasurementKeyNamesEveryFactThatCanVary(t *testing.T) {
 	require.Equal(t, expected.Key(), key.ExpectedStatus)
 	require.Equal(t, urltest.PurposeHealth, key.Purpose,
 		"a health round must never share evidence with a display or diagnostic probe")
+	require.NotEmpty(t, key.NodeIdentity,
+		"the tag is a name, not an identity: a provider refresh replaces the OBJECT under the same tag")
+
+	// The purpose follows the round's evidence layer, so a display round cannot claim health.
+	displayBatch := &urlTestBatch{expected: expected, mode: TestHistoryDisplayOnly}
+	displayKey := displayBatch.measurementKey(context.Background(), link, outbound)
+	require.Equal(t, urltest.PurposeDisplay, displayKey.Purpose)
+	require.False(t, key.SharesEvidenceWith(*displayKey),
+		"a manual/display measurement is never shared as health evidence")
+	require.False(t, key.SharesEvidenceWith(*displayKey))
+	require.NotEqual(t, key.NodeIdentity, (&urlTestBatch{expected: expected, mode: TestHistoryHealth}).measurementKey(
+		context.Background(), link, &keyTestOutbound{tag: "node-a"}).NodeIdentity,
+		"two objects with the same tag are two identities")
 
 	// The same target measured for DISPLAY asks a different question: the record goes to the
 	// display layer, so a display probe must neither answer nor be answered by a health round.
