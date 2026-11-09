@@ -377,6 +377,36 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 	targetRevision := configRevisionOf(profileContent)
 	plan := s.planServiceChange(&targetOptions, targetRevision)
 	var liveFallbackReason string
+	if plan.Started && plan.Unchanged && plan.Provider.LiveRefresh {
+		// The document is the running one and every input outside it is a remote provider. A
+		// caller reloading it wants the provider documents re-read; doing that in place keeps the
+		// Box, its connections and every published provider that did not change.
+		providerReport, providerErr := s.ApplyProviderDomain(plan.Provider, plan.CurrentRevision, providerLiveRefreshTimeout)
+		switch {
+		case providerErr != nil:
+			liveFallbackReason = "provider refresh failed: " + providerErr.Error()
+		case (providerReport.Status == DomainStatusCommitted ||
+			providerReport.Status == DomainStatusUnchanged ||
+			providerReport.Status == DomainStatusPartial) && providerRefreshDelivered(providerReport):
+			report := ServiceChangeReport{
+				Plan:           plan,
+				Status:         ServiceChangeStatusAppliedLive,
+				ActiveRevision: plan.CurrentRevision,
+				Provider:       providerReport,
+			}
+			if providerReport.Status == DomainStatusPartial {
+				report.Reason = providerReport.Reason
+			}
+			report.Persistence, report.PersistenceWarning = s.persistRunningConfig(profileContent)
+			s.recordServiceChange(&report)
+			return nil
+		default:
+			liveFallbackReason = "provider refresh: " + providerReport.Reason
+		}
+		// Nothing was delivered (or the refresh was refused). Report success for none of it:
+		// fall through to the restart path, which is the honest answer.
+		plan.RestartRequired = true
+	}
 	if plan.Started && plan.LiveOnly {
 		// Every difference between the running document and this one is owned by an object the
 		// running Box can change in place, so the Box and its connections stay.
