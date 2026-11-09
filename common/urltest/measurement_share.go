@@ -11,26 +11,46 @@ package urltest
 //
 //   - only HEALTH probes are shared. A display or diagnostic probe always becomes its own
 //     leader, because its answer belongs to its caller and must never become a health verdict.
-//   - a waiter never holds the registry: Join hands back a channel and the waiter selects on it
-//     together with its own context, so cancellation does not need a cleanup call and cannot
-//     strand a slot.
-//   - Finish is idempotent and removes the entry under one lock, so a late leader cannot close
-//     a channel a NEW leader is already serving.
+//
+//   - the probe outlives the caller that happened to arrive first. Its lifetime is the set of
+//     participants, not any one caller's context: the leader is only the goroutine that performs
+//     the dial, and it may stop waiting (its own request was cancelled, its deadline expired)
+//     while an equivalent caller is still waiting for the answer. Cancelling the probe when the
+//     first caller leaves would hand that caller the leader's cancellation instead of a result.
+//
+//   - when the LAST participant leaves there is no reason left to hold a socket, so the probe is
+//     cancelled and the question is forgotten. A later caller then starts a fresh question rather
+//     than joining work whose result nobody will store.
+//
+// Publication is by identity, not by key. A leader that was abandoned while dialling may finish
+// later, after a new leader has registered the same key; publishing by key would let it close the
+// NEW question with an older answer and delete the entry the new leader still owns.
 
 import (
-	"github.com/sagernet/sing/service"
-
 	"context"
 	"sync"
+
+	"github.com/sagernet/sing/service"
 )
 
-// SharedWait is one in-flight question. The leader publishes the outcome and closes done; a
-// waiter reads the outcome AFTER observing the close, which is the happens-before edge that
-// makes the read safe without a lock.
+// SharedWait is one in-flight question, owned by its participants.
+//
+// The leader publishes the outcome and closes done; a waiter reads the outcome AFTER observing the
+// close, which is the happens-before edge that makes the read safe without a lock.
 type SharedWait struct {
+	// key is the question this wait answers. It is fixed at creation, so a publication can find
+	// (and only find) the registry entry it belongs to.
+	key MeasurementKey
+
 	done        chan struct{}
 	measurement Measurement
 	err         error
+
+	// The fields below are guarded by the registry's access lock.
+	closed       bool
+	participants int
+	probeCtx     context.Context
+	cancelProbe  context.CancelFunc
 }
 
 // Done is closed when the leader published the outcome.
@@ -38,6 +58,11 @@ func (w *SharedWait) Done() <-chan struct{} { return w.done }
 
 // Outcome returns the leader's answer. It is valid only after Done is closed.
 func (w *SharedWait) Outcome() (Measurement, error) { return w.measurement, w.err }
+
+// Context is the lifetime of the probe itself: the caller's context VALUES without the caller's
+// cancellation. Only the leader of a shared wait has one; it is nil for a question that is never
+// shared, and no waiter may run work on it.
+func (w *SharedWait) Context() context.Context { return w.probeCtx }
 
 // MeasurementShare tracks equivalent in-flight measurements.
 type MeasurementShare struct {
@@ -50,32 +75,83 @@ func NewMeasurementShare() *MeasurementShare {
 	return &MeasurementShare{inflight: make(map[MeasurementKey]*SharedWait)}
 }
 
-// Join registers the caller for key and returns the channel the leader closes.
+// Join registers ctx as a participant of key's measurement and reports whether the caller leads.
 //
-// It returns (nil, true) when the caller must perform the measurement itself - either it is the
-// leader, or the key is not a health question and therefore never shared. Otherwise it returns
-// the channel the leader closes when the answer exists; use JoinQuestion to read the outcome.
-func (s *MeasurementShare) Join(key MeasurementKey) (<-chan struct{}, bool) {
-	wait, isLeader := s.JoinQuestion(key)
-	if isLeader {
-		return wait.Done(), true
-	}
-	return wait.Done(), false
-}
-
-// JoinQuestion is Join with the answer handle, for a caller that wants the leader's outcome.
-func (s *MeasurementShare) JoinQuestion(key MeasurementKey) (*SharedWait, bool) {
+// A leader must perform the measurement on the wait's own Context and then call Publish. Every
+// caller - leader and waiter alike - must finish by calling Await, which is what decides when the
+// last participant has left.
+//
+// A non-health key is never registered: the caller is told it leads and receives an already-closed
+// wait, because its answer belongs to it alone.
+func (s *MeasurementShare) Join(ctx context.Context, key MeasurementKey) (*SharedWait, bool) {
 	if s == nil || key.Purpose != PurposeHealth {
-		return &SharedWait{done: closedChannel()}, true
+		return &SharedWait{key: key, done: closedChannel()}, true
 	}
 	s.access.Lock()
 	defer s.access.Unlock()
 	if existing, loaded := s.inflight[key]; loaded {
+		existing.participants++
 		return existing, false
 	}
-	measurement := &SharedWait{done: make(chan struct{})}
-	s.inflight[key] = measurement
-	return measurement, true
+	// The probe keeps the context's VALUES - the Box, the outbound manager, the network epoch,
+	// the logger, the probe origin - and drops its cancellation. Anything derived from the
+	// leader's deadline would otherwise be inherited by every equivalent caller.
+	probeCtx, cancelProbe := context.WithCancel(context.WithoutCancel(ctx))
+	wait := &SharedWait{
+		key:          key,
+		done:         make(chan struct{}),
+		probeCtx:     probeCtx,
+		cancelProbe:  cancelProbe,
+		participants: 1,
+	}
+	s.inflight[key] = wait
+	return wait, true
+}
+
+// leave removes one participant and, when it was the last, stops the probe and forgets the
+// question. It is a no-op for a wait that was never shared.
+func (s *MeasurementShare) leave(wait *SharedWait) {
+	if s == nil || wait == nil {
+		return
+	}
+	s.access.Lock()
+	if wait.participants <= 0 {
+		s.access.Unlock()
+		return
+	}
+	wait.participants--
+	if wait.participants > 0 {
+		s.access.Unlock()
+		return
+	}
+	if s.inflight[wait.key] == wait {
+		delete(s.inflight, wait.key)
+	}
+	cancelProbe := wait.cancelProbe
+	wait.cancelProbe = nil
+	s.access.Unlock()
+	if cancelProbe != nil {
+		cancelProbe()
+	}
+}
+
+// Await waits for the answer as one participant.
+//
+// It stops on either the answer or the caller's own context, and either way it leaves the
+// question. The distinction matters: a caller that stops waiting never cancels a probe another
+// caller is still waiting for, and a probe is only stopped once nobody is waiting at all.
+func (s *MeasurementShare) Await(ctx context.Context, wait *SharedWait) (Measurement, error) {
+	if wait == nil {
+		return Measurement{}, context.Canceled
+	}
+	select {
+	case <-wait.Done():
+		s.leave(wait)
+		return wait.Outcome()
+	case <-ctx.Done():
+		s.leave(wait)
+		return Measurement{}, ctx.Err()
+	}
 }
 
 // closedChannel is already-closed, so a non-shared caller's Done never blocks.
@@ -85,41 +161,27 @@ func closedChannel() chan struct{} {
 	return done
 }
 
-// Wait blocks until the shared measurement finishes, returning true, or until ctx ends,
-// returning false. A waiter that leaves does not need to tell the registry: it holds no slot.
-func (s *MeasurementShare) Wait(ctx context.Context, done <-chan struct{}) bool {
-	if done == nil {
-		return false
-	}
-	select {
-	case <-done:
-		return true
-	case <-ctx.Done():
-		return false
-	}
-}
-
-// Publish stores the leader's outcome, removes the entry and closes the wait. It is idempotent:
-// a late leader cannot close a wait a new leader is already serving.
-func (s *MeasurementShare) Publish(key MeasurementKey, measurement Measurement, err error) {
-	if s == nil {
+// Publish stores the leader's outcome, forgets the question and closes the wait.
+//
+// It publishes to ONE wait, the one the leader was given by Join, never to "whatever currently
+// has this key": an abandoned leader must not answer a question it no longer owns. Calling it
+// twice for the same wait is a no-op.
+func (s *MeasurementShare) Publish(wait *SharedWait, measurement Measurement, err error) {
+	if s == nil || wait == nil {
 		return
 	}
 	s.access.Lock()
 	defer s.access.Unlock()
-	wait, loaded := s.inflight[key]
-	if !loaded {
+	if wait.closed {
 		return
 	}
-	delete(s.inflight, key)
+	wait.closed = true
 	wait.measurement = measurement
 	wait.err = err
+	if s.inflight[wait.key] == wait {
+		delete(s.inflight, wait.key)
+	}
 	close(wait.done)
-}
-
-// Finish publishes an empty outcome; it exists for callers that share the EVENT only.
-func (s *MeasurementShare) Finish(key MeasurementKey) {
-	s.Publish(key, Measurement{}, nil)
 }
 
 // InFlight reports how many questions are being measured right now.
@@ -130,6 +192,22 @@ func (s *MeasurementShare) InFlight() int {
 	s.access.Lock()
 	defer s.access.Unlock()
 	return len(s.inflight)
+}
+
+// Participants reports how many callers are currently waiting on a shared question, the leader
+// included. It exists for tests and diagnostics: it is how "the probe was cancelled because the
+// last participant left" is asserted as a fact rather than inferred from timing.
+func (s *MeasurementShare) Participants() int {
+	if s == nil {
+		return 0
+	}
+	s.access.Lock()
+	defer s.access.Unlock()
+	total := 0
+	for _, wait := range s.inflight {
+		total += wait.participants
+	}
+	return total
 }
 
 // ContextWithMeasurementShare attaches the Box's in-flight registry.

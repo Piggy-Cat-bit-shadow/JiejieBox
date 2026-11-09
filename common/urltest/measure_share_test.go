@@ -48,7 +48,7 @@ func TestACancelledFollowerReturnsItsOwnCancellation(t *testing.T) {
 	share := NewMeasurementShare()
 	key := sharedKey()
 	// Register the leader's in-flight entry directly, then cancel the follower's context.
-	_, isLeader := share.JoinQuestion(key)
+	_, isLeader := share.Join(context.Background(), key)
 	require.True(t, isLeader)
 	ctx, cancel := context.WithCancel(ContextWithMeasurementShare(context.Background(), share))
 	cancel()

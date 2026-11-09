@@ -169,22 +169,45 @@ func Measure(ctx context.Context, options MeasureOptions, detour N.Dialer) (Meas
 	// P02B: equivalent HEALTH measurements share one probe. The caller supplies the key because
 	// only it knows the node, path and epoch; without a key this engine cannot tell two
 	// questions apart, so it measures.
+	//
+	// Every caller - the leader included - finishes through Await, so the participant count is
+	// the probe's only lifetime. That is what lets the second caller keep waiting after the first
+	// one's request was cancelled or expired: the leader is only the goroutine that dials, it is
+	// not the owner of the answer.
 	if options.Key != nil && options.Key.Purpose == PurposeHealth {
 		if share := MeasurementShareFromContext(ctx); share != nil {
-			key := *options.Key
-			wait, isLeader := share.JoinQuestion(key)
+			wait, isLeader := share.Join(ctx, *options.Key)
 			if isLeader {
-				measurement, err := measureWithTimeout(ctx, options, detour, C.TCPTimeout)
-				share.Publish(key, measurement, err)
-				return measurement, err
+				// The probe runs on the wait's own context, NOT on this caller's, so a leader that
+				// stops waiting cannot cancel an answer another caller is still owed.
+				go runSharedMeasurement(share, wait, options, detour)
 			}
-			if !share.Wait(ctx, wait.Done()) {
-				return Measurement{}, ctx.Err()
-			}
-			// The leader publishes before closing, so this read is ordered after its writes.
-			return wait.Outcome()
+			return share.Await(ctx, wait)
 		}
 	}
+	return measureWithTimeout(ctx, options, detour, C.TCPTimeout)
+}
+
+// runSharedMeasurement performs the leader's probe on the shared lifetime and publishes it.
+//
+// # Why the panic recovery lives here
+//
+// The probe now runs on a goroutine the caller does not own, so a panic inside it would reach the
+// runtime and terminate the process - outside the per-member recovery the URLTest batch already
+// has around its own call. Converting it into a published error keeps the blast radius where it
+// was before sharing: one unusable member, reported as a failure to every caller waiting on it.
+func runSharedMeasurement(share *MeasurementShare, wait *SharedWait, options MeasureOptions, detour N.Dialer) {
+	measurement, err := measureSharedOutcome(wait.Context(), options, detour)
+	share.Publish(wait, measurement, err)
+}
+
+func measureSharedOutcome(ctx context.Context, options MeasureOptions, detour N.Dialer) (measurement Measurement, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			measurement = Measurement{}
+			err = E.New("shared measurement panicked: ", recovered)
+		}
+	}()
 	return measureWithTimeout(ctx, options, detour, C.TCPTimeout)
 }
 
