@@ -97,6 +97,41 @@ func BenchmarkPacketUpUplinkWrite(b *testing.B) {
 	}
 }
 
+// BenchmarkPacketUpUplinkWriteSharedPool is the same write path with the
+// transport-wide pool attached, which is what production builds: NewClient always
+// installs one. The unpooled benchmark above stays as the baseline-comparable
+// harness (it existed before the pool), and this one reports what the pool adds to
+// a per-chunk charge: two uncontended mutex acquisitions plus the per-stream
+// bookkeeping.
+func BenchmarkPacketUpUplinkWriteSharedPool(b *testing.B) {
+	for _, size := range []int{8 * 1024, 64 * 1024} {
+		name := "64KiB-writes"
+		if size == 8*1024 {
+			name = "8KiB-writes"
+		}
+		b.Run(name, func(b *testing.B) {
+			client := benchClient(b, metaOptions{})
+			client.budget = newSharedUplinkBudget(packetUpSharedCapacity(packetUpPendingBound(client.meta)), packetUpSharedReserve)
+			conn, err := client.DialContext(context.Background())
+			if err != nil {
+				b.Fatalf("DialContext: %v", err)
+			}
+			defer conn.Close()
+			payload := make([]byte, size)
+			b.SetBytes(int64(size))
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				if _, err = conn.Write(payload); err != nil {
+					b.Fatalf("Write: %v", err)
+				}
+			}
+			b.StopTimer()
+			_ = conn.Close()
+		})
+	}
+}
+
 // BenchmarkPacketUpPostConstruction reports the per-post cost that batching
 // amortises: building the request for one batch and attaching the payload. With
 // the default 1 MB post cap and the default 30 ms interval, a stream emits on

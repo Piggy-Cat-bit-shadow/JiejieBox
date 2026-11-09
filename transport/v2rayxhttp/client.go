@@ -80,6 +80,11 @@ type Client struct {
 	// noGRPCHeader suppresses the default "Content-Type: application/grpc" on
 	// streamed-body requests (stream-one, stream-up). See option.NoGRPCHeader.
 	noGRPCHeader bool
+	// budget is the shared upload-byte pool that every packet-up uplink of this
+	// transport draws from (see uplink_budget.go). It is created here, once per
+	// Client, because the Client owns the dials, the conns and the xmux pool —
+	// the streams whose SUM has to be bounded. Non-packet-up modes ignore it.
+	budget *sharedUplinkBudget
 }
 
 // NewClient builds an XHTTP client transport. The tlsConfig (possibly Reality)
@@ -245,6 +250,13 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		realityEnabled: realityEnabled,
 		httpVersion:    version,
 		noGRPCHeader:   options.NoGRPCHeader,
+		// The per-stream queue bound is the input, not a fixed number: the pool is
+		// "four streams' worth" of whatever sc_max_each_post_bytes allows one
+		// stream, capped for the aggregate. That keeps one knob meaningful instead
+		// of adding a second config surface (there is no option for this yet; if a
+		// deployment needs a different aggregate it is a policy change here, not a
+		// per-node setting).
+		budget: newSharedUplinkBudget(packetUpSharedCapacity(packetUpPendingBound(meta)), packetUpSharedReserve),
 	}, nil
 }
 
