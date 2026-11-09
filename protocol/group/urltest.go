@@ -1629,7 +1629,12 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval 
 				// network change describes the path that existed then, so it must not be stored as
 				// if it were a fresh look at the new one, and it must not replace a result that a
 				// later attempt already stored.
-				attemptStart := time.Now()
+				//
+				// The stamp comes from nextAttemptStart rather than time.Now directly: the store
+				// accepts equal timestamps (a coarse clock must not lose a measurement), so two
+				// attempts that began in the same clock tick would otherwise be unordered and the
+				// older, slower one could be the last writer. See attempt_start.go.
+				attemptStart := nextAttemptStart()
 				// NO per-member timeout here.
 				//
 				// Measure establishes the active probe budget itself, starting from the moment it
