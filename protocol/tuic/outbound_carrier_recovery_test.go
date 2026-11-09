@@ -46,15 +46,19 @@ const (
 )
 
 // carrierHandler answers every stream the TUIC service accepts with a loopback echo, which stands
-// in for the routing the inbound would do.
+// in for the routing the inbound would do. streamEnds is the release observation: it moves when the
+// server-side stream has actually finished, which is what "the old session was retired" means from
+// the peer's side.
 type carrierHandler struct {
-	target  string
-	streams atomic.Int32
+	target     string
+	streams    atomic.Int32
+	streamEnds atomic.Int32
 }
 
 func (h *carrierHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
 	h.streams.Add(1)
 	go func() {
+		defer h.streamEnds.Add(1)
 		defer conn.Close()
 		if onClose != nil {
 			defer onClose(nil)
@@ -204,6 +208,15 @@ func TestARealTUICFlowSurvivesANetworkChangeByReconnecting(t *testing.T) {
 	if _, err := before.Write([]byte("stale")); err == nil {
 		t.Fatal("the pre-change TUIC flow still accepted a write: the old session was not retired")
 	}
+
+	// The retirement is also visible where it happens: the server-side stream that carried the old
+	// path finishes, within a bound. That is the release observation and the time bound this matrix
+	// row was missing.
+	retiredAt := time.Now()
+	require.Eventually(t, func() bool { return handler.streamEnds.Load() >= 1 },
+		5*time.Second, 10*time.Millisecond,
+		"the server never saw the retired TUIC stream end: the old session's release has no bound")
+	t.Logf("MEASURED old TUIC stream released %s after the network change", time.Since(retiredAt).Round(time.Millisecond))
 
 	// New business bytes: the next dial establishes a new session and the server sees the flow.
 	after := roundTrip(t, outbound, "after-the-change")

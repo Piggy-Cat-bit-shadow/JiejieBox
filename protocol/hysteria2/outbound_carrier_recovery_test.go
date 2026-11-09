@@ -40,13 +40,15 @@ const (
 
 // hysteriaCarrierHandler answers every stream the Hysteria2 service accepts with a loopback echo.
 type hysteriaCarrierHandler struct {
-	target  string
-	streams atomic.Int32
+	target     string
+	streams    atomic.Int32
+	streamEnds atomic.Int32
 }
 
 func (h *hysteriaCarrierHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
 	h.streams.Add(1)
 	go func() {
+		defer h.streamEnds.Add(1)
 		defer conn.Close()
 		if onClose != nil {
 			defer onClose(nil)
@@ -196,6 +198,15 @@ func TestARealHysteria2FlowSurvivesANetworkChangeByReconnecting(t *testing.T) {
 	if _, err := before.Write([]byte("stale")); err == nil {
 		t.Fatal("the pre-change Hysteria2 flow still accepted a write: the old session was not retired")
 	}
+
+	// The retirement is also visible where it happens: the server-side stream that carried the old
+	// path finishes, within a bound. That is the release observation and the time bound this matrix
+	// row was missing.
+	retiredAt := time.Now()
+	require.Eventually(t, func() bool { return handler.streamEnds.Load() >= 1 },
+		5*time.Second, 10*time.Millisecond,
+		"the server never saw the retired Hysteria2 stream end: the old session's release has no bound")
+	t.Logf("MEASURED old Hysteria2 stream released %s after the network change", time.Since(retiredAt).Round(time.Millisecond))
 
 	after := hysteriaRoundTrip(t, outbound, "after-the-change")
 	_ = after.Close()
