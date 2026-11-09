@@ -64,6 +64,10 @@ type ServiceOptions struct {
 	Users   []auth.User
 	// QUIC configures the HTTP/3 transport; nil means BBR.
 	QUIC *QUICOptions
+	// UDPLimits bounds the _udp2 associations of the service; zero takes the
+	// defaults in UDPLimits. Tests lower the limits to reach the refusal paths
+	// without thousands of sockets.
+	UDPLimits UDPLimits
 }
 
 // Service is the server half: it serves CONNECT over HTTP/2 (ServeTCP) and
@@ -77,6 +81,8 @@ type Service struct {
 	congestion string
 	h2Server   *http2.Server
 	httpServer *http.Server
+
+	udp *udpBudget
 
 	access  sync.Mutex
 	closed  bool
@@ -108,6 +114,7 @@ func NewService(options ServiceOptions) (*Service, error) {
 		logger:     contextLogger,
 		handler:    options.Handler,
 		congestion: congestion,
+		udp:        newUDPBudget(options.UDPLimits),
 		h2Server: &http2.Server{
 			MaxConcurrentStreams: serverMaxConcurrentStreams,
 			IdleTimeout:          serverIdleTimeout,
@@ -125,6 +132,13 @@ func NewService(options ServiceOptions) (*Service, error) {
 // new requests are checked against the new table.
 func (s *Service) UpdateUsers(users []auth.User) {
 	s.users.update(users)
+}
+
+// UDPStats reports the service-wide _udp2 accounting: live associations, bytes
+// waiting in their queues and the refusals since start. The limits themselves
+// live in UDPLimits.
+func (s *Service) UDPStats() UDPStats {
+	return s.udp.stats()
 }
 
 // ServeTCP serves HTTP/2 over TLS on the listener until it fails or the service
