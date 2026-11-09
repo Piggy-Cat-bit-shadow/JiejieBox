@@ -183,7 +183,12 @@ func (s *StartedService) recoverLastGood(failedProfile string) (profile string, 
 	}
 	activeProfile := string(recovery.Active)
 	activeRevision := configRevisionOf(activeProfile)
-	references, _ = store.References(activeRevision)
+	references = recovery.References
+	if !recovery.Combined {
+		// A store written before the combined record keeps its sidecar lookup; this is the
+		// compatibility path, not the new transaction.
+		references, _ = store.References(activeRevision)
+	}
 	return activeProfile, activeRevision, references, true
 }
 

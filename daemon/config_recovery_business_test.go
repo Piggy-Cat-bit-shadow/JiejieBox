@@ -36,7 +36,9 @@ import (
 	protocoldirect "github.com/sagernet/sing-box/protocol/direct"
 	protocolgroup "github.com/sagernet/sing-box/protocol/group"
 	protocolhttp "github.com/sagernet/sing-box/protocol/http"
+	protocolsocks "github.com/sagernet/sing-box/protocol/socks"
 	providerlocal "github.com/sagernet/sing-box/provider/local"
+	providerremote "github.com/sagernet/sing-box/provider/remote"
 	"github.com/sagernet/sing/service/filemanager"
 
 	"github.com/stretchr/testify/require"
@@ -51,9 +53,12 @@ func recoveryBusinessContext(t *testing.T) context.Context {
 	outboundRegistry := outbound.NewRegistry()
 	protocoldirect.RegisterOutbound(outboundRegistry)
 	protocolblock.RegisterOutbound(outboundRegistry)
+	protocolsocks.RegisterOutbound(outboundRegistry)
 	protocolgroup.RegisterSelector(outboundRegistry)
 	providerRegistry := boxprovider.NewRegistry()
 	providerlocal.RegisterProviderInline(providerRegistry)
+	providerlocal.RegisterProviderLocal(providerRegistry)
+	providerremote.RegisterProvider(providerRegistry)
 	dnsRegistry := dns.NewTransportRegistry()
 	local.RegisterTransport(dnsRegistry)
 	ctx := box.Context(context.Background(),

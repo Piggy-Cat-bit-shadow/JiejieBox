@@ -2,16 +2,21 @@ package provider
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"io/fs"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/sagernet/fswatch"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/provider"
+	"github.com/sagernet/sing-box/common/artifact"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -46,6 +51,11 @@ type ProviderLocal struct {
 	lastUpdated time.Time
 	watcher     *fswatch.Watcher
 	closed      bool
+	// The exact file bytes the published nodes came from, so a recovery can pin them instead of
+	// reading whatever the path contains now.
+	artifactStore *artifact.Store
+	artifactKey   string
+	artifactLease *artifact.Version
 
 	overrideDialer *option.OverrideDialerOptions
 }
@@ -110,20 +120,170 @@ func NewProviderLocal(ctx context.Context, router adapter.Router, logFactory log
 	return provider, nil
 }
 
+func (s *ProviderLocal) referenceSet() *artifact.ReferenceSet {
+	return service.FromContext[*artifact.ReferenceSet](s.ctx)
+}
+
+func (s *ProviderLocal) openArtifactStore() {
+	// A context without a file base (a unit test, an embedder that keeps no state) has nowhere
+	// persistent to put snapshots; do not create one in the process working directory.
+	base := filemanager.BasePath(s.ctx, "")
+	if base == "" {
+		return
+	}
+	store, err := artifact.Open(filepath.Join(base, "provider-artifacts"))
+	if err != nil {
+		s.logger.Warn(E.Cause(err, "open provider artifact store"))
+		return
+	}
+	s.artifactStore = store
+	s.artifactKey = localProviderKey(s.Tag(), s.path)
+}
+
+func localProviderKey(tag string, path string) string {
+	name := strings.Map(func(character rune) rune {
+		switch {
+		case character >= 'a' && character <= 'z',
+			character >= 'A' && character <= 'Z',
+			character >= '0' && character <= '9',
+			character == '-', character == '_', character == '.':
+			return character
+		default:
+			return '_'
+		}
+	}, tag)
+	if name == "" {
+		name = "provider"
+	}
+	digest := sha256.Sum256([]byte(filepath.Clean(path)))
+	return name + "-" + hex.EncodeToString(digest[:8])
+}
+
+func (s *ProviderLocal) localManifest() artifact.Manifest {
+	return artifact.NewManifest("provider/local", C.Version, "tag="+s.Tag(), "path="+s.path)
+}
+
+func (s *ProviderLocal) adoptArtifact(version *artifact.Version) {
+	previous := s.artifactLease
+	s.artifactLease = version
+	if previous != nil && previous != version {
+		previous.Release()
+	}
+}
+
+// snapshotContent stores the file bytes the published nodes came from.
+func (s *ProviderLocal) snapshotContent(content []byte, updated time.Time) {
+	if s.artifactStore == nil {
+		return
+	}
+	manifest := s.localManifest()
+	if !updated.IsZero() {
+		manifest.Created = updated.UnixNano()
+	}
+	version, err := s.artifactStore.Commit(s.artifactKey, manifest, strings.NewReader(string(content)))
+	if err != nil {
+		s.logger.Warn(E.Cause(err, "store provider snapshot"))
+		return
+	}
+	s.adoptArtifact(version)
+	if references := s.referenceSet(); references != nil {
+		references.Record(s.artifactKey, version.ID())
+	}
+	var retained []string
+	if references := s.referenceSet(); references != nil {
+		if retainedID, ok := references.RetainedID(s.artifactKey); ok {
+			retained = append(retained, retainedID)
+		}
+	}
+	if collectErr := s.artifactStore.Collect(s.artifactKey, retained...); collectErr != nil {
+		s.logger.Warn(E.Cause(collectErr, "collect provider snapshots"))
+	}
+}
+
+// restorePinned loads the exact file bytes a recovered configuration names. A missing pinned
+// snapshot is repaired from the file only when the file still has exactly those bytes; otherwise
+// the start fails instead of silently serving the changed file.
+func (s *ProviderLocal) restorePinned() (bool, error) {
+	references := s.referenceSet()
+	if references == nil || s.artifactStore == nil {
+		return false, nil
+	}
+	pinnedID, pinned := references.Pinned(s.artifactKey)
+	if !pinned {
+		return false, nil
+	}
+	version, err := s.artifactStore.LoadExact(s.artifactKey, pinnedID)
+	if err != nil {
+		if s.path != "" {
+			content, readErr := os.ReadFile(s.path)
+			if readErr == nil {
+				sum := sha256.Sum256(content)
+				if hex.EncodeToString(sum[:]) == pinnedID {
+					_ = s.artifactStore.Discard(s.artifactKey, pinnedID)
+					manifest := s.localManifest()
+					repaired, commitErr := s.artifactStore.Commit(s.artifactKey, manifest, strings.NewReader(string(content)))
+					if commitErr == nil {
+						version = repaired
+					}
+				}
+			}
+		}
+		if version == nil {
+			return false, E.Cause(err, "pinned provider file version ", pinnedID, " is not loadable")
+		}
+	}
+	content, err := os.ReadFile(version.Path())
+	if err != nil {
+		version.Release()
+		return false, err
+	}
+	if err = s.applyContent(content, time.Unix(0, version.Manifest().Created)); err != nil {
+		version.Release()
+		return false, err
+	}
+	s.adoptArtifact(version)
+	references.Record(s.artifactKey, version.ID())
+	return true, nil
+}
+
+// applyContent parses and publishes one provider document, and records the update time only after
+// the nodes and groups accepted it.
+func (s *ProviderLocal) applyContent(content []byte, updated time.Time) error {
+	outboundOpts, err := parser.ParseSubscription(s.ctx, string(content), s.overrideDialer, s.Tag())
+	if err != nil {
+		return err
+	}
+	updateErr := s.UpdateNodes(outboundOpts)
+	groupErr := s.UpdateGroups()
+	if updateErr != nil {
+		return updateErr
+	}
+	if groupErr != nil {
+		return groupErr
+	}
+	s.lastUpdated = updated
+	s.lastOutOpts = outboundOpts
+	return nil
+}
+
 func (s *ProviderLocal) StartContext(ctx context.Context, startContext *adapter.HTTPStartContext) error {
 	if err := s.Adapter.Start(); err != nil {
 		return err
 	}
-	if s.path != "" {
+	s.openArtifactStore()
+	restored, err := s.restorePinned()
+	if err != nil {
+		return err
+	}
+	if !restored && s.path != "" {
 		err := s.reloadFile(s.path)
 		if err != nil {
 			return err
 		}
-		if s.watcher != nil {
-			err := s.watcher.Start()
-			if err != nil {
-				s.logger.Error(E.Cause(err, "watch provider file"))
-			}
+	}
+	if s.path != "" && s.watcher != nil {
+		if err := s.watcher.Start(); err != nil {
+			s.logger.Error(E.Cause(err, "watch provider file"))
 		}
 	}
 	// A membership the graph validator refused is a START failure for a synchronous provider: the
@@ -178,6 +338,7 @@ func (s *ProviderLocal) reloadFile(path string) error {
 	}
 	s.lastUpdated = fileInfo.ModTime()
 	s.lastOutOpts = outboundOpts
+	s.snapshotContent(content, fileInfo.ModTime())
 	return nil
 }
 
@@ -186,5 +347,9 @@ func (s *ProviderLocal) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
+	if s.artifactLease != nil {
+		s.artifactLease.Release()
+		s.artifactLease = nil
+	}
 	return E.Errors(err, s.Adapter.Close())
 }

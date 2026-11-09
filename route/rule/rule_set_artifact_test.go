@@ -1,6 +1,6 @@
 package rule
 
-// B — the remote rule set's production store.
+// B 鈥?the remote rule set's production store.
 //
 // A downloaded rule set is a versioned artifact, not a single-slot cache entry: it is validated and
 // stored before it is published, the rule set holds a read lease on the exact bytes it serves, and
@@ -209,7 +209,9 @@ func TestRemoteRuleSetMigratesTheLegacyCacheOnce(t *testing.T) {
 	// A second instance with the same source finds the version in the store and does not need the
 	// legacy cache at all.
 	restarted := newStoredRemoteRuleSet(t, ctx, "https://rules.example/legacy.srs", "legacy")
-	require.True(t, restarted.restoreStoredRuleSet())
+	restored, restoreErr := restarted.restoreStoredRuleSet()
+	require.NoError(t, restoreErr)
+	require.True(t, restored)
 	require.True(t, remoteRuleSetMatches(t, restarted, "10.1.2.3"))
 	require.Equal(t, ruleSetDigest(payload), restarted.artifactLease.ID())
 }

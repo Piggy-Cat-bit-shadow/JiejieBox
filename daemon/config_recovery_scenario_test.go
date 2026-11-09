@@ -18,6 +18,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -159,6 +161,34 @@ func TestAnInterruptedStartReportsThatNothingRuns(t *testing.T) {
 	require.Empty(t, report.ActiveRevision)
 	require.False(t, report.Retained)
 	require.Equal(t, report.Plan.RestartRequired, report.RestartRequired)
+}
+
+// TestAReferenceWriteFailureIsReportedDegraded covers the combined commit boundary: the new Box
+// runs, the configuration and its references did not reach the disk as one combination, and the
+// caller must see degraded rather than saved.
+func TestAReferenceWriteFailureIsReportedDegraded(t *testing.T) {
+	ctx := recoveryBusinessContext(t)
+	rulesPayload := binaryRuleSetForTest(t, "127.0.0.1/32")
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write(rulesPayload)
+	}))
+	t.Cleanup(server.Close)
+
+	directory := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(directory, "references.json"), 0o755))
+	service := NewStartedService(ServiceOptions{Context: ctx})
+	t.Cleanup(func() {
+		_ = service.CloseService()
+		service.Close()
+	})
+	service.ConfigureConfigRecovery(directory, true)
+	profile := recoveryReferenceConfig(freeLoopbackPort(t), server.URL, "error", "1h")
+	require.NoError(t, service.StartOrReloadService(context.Background(), profile, nil))
+	report := service.LastServiceChange()
+	require.NotNil(t, report)
+	require.Equal(t, persistenceDegraded, report.Persistence)
+	require.Contains(t, report.PersistenceWarning, "references were not saved")
+	require.NotNil(t, service.Instance(), "the configuration is running even though the combination did not commit")
 }
 
 // TestAFailedRecoveryReportsThatNothingRuns is the same state after recovery was attempted and

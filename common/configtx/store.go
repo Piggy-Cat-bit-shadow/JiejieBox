@@ -187,6 +187,14 @@ func (s *Store) commit(staged *Staged, references map[string]string) (*Result, e
 		// would write a document nobody checked.
 		return nil, ErrStaleCandidate
 	}
+	if len(references) > 0 {
+		// The document and its exact references move together; see commit.go.
+		result := s.commitCombined(staged, pending, references)
+		if result.Persisted {
+			_ = s.remove(pendingName)
+		}
+		return result, nil
+	}
 	result := &Result{Active: pending}
 	// Last-good is the document that was in force until now, and only when it is usable.
 	if current, readErr := os.ReadFile(s.path(activeName)); readErr == nil {
@@ -206,16 +214,6 @@ func (s *Store) commit(staged *Staged, references map[string]string) (*Result, e
 		return result, nil
 	}
 	result.Persisted = true
-	if len(references) > 0 {
-		if referenceErr := s.writeReferencesLocked(staged.Revision, references); referenceErr != nil {
-			// The configuration is in force; only exact dependency recovery is degraded.
-			if result.Warning == "" {
-				result.Warning = "references were not saved: " + referenceErr.Error()
-			} else {
-				result.Warning += "; references were not saved: " + referenceErr.Error()
-			}
-		}
-	}
 	_ = s.remove(pendingName)
 	return result, nil
 }
@@ -262,8 +260,13 @@ type Recovery struct {
 	RolledBack bool
 	// ActiveCleared reports that neither document was usable and active was removed.
 	ActiveCleared bool
+	// Combined reports that the recovered combination came from the combined commit record, so
+	// References describes exactly the dependencies that record names.
+	Combined bool
 	// Active is what the daemon should start with, empty when nothing usable remains.
 	Active []byte
+	// References are the exact artifact versions the recovered document used.
+	References map[string]string
 	// Warning carries a removal failure.
 	Warning string
 }
@@ -282,6 +285,43 @@ func (s *Store) Recover() (*Recovery, error) {
 		} else {
 			recovery.DiscardedPending = true
 		}
+	}
+	// The combined record is the authoritative commit point when it exists: it holds a complete
+	// document+references pair, so a restart can never select a half-written combination.
+	record, recordErr := s.readCommitRecord()
+	if recordErr != nil {
+		recovery.Warning = recordErr.Error()
+	} else if record != nil {
+		current := []byte(record.Current.Content)
+		if s.validator == nil || s.validator(current) == nil {
+			recovery.Active = current
+			recovery.References = copyReferenceMap(record.Current.References)
+			recovery.Combined = true
+			return recovery, nil
+		}
+		if record.LastGood != nil {
+			lastGood := []byte(record.LastGood.Content)
+			if s.validator == nil || s.validator(lastGood) == nil {
+				if err := s.write(activeName, lastGood); err != nil {
+					recovery.Warning = err.Error()
+				} else {
+					recovery.RolledBack = true
+					recovery.Active = lastGood
+					recovery.References = copyReferenceMap(record.LastGood.References)
+					recovery.Combined = true
+				}
+				return recovery, nil
+			}
+		}
+		// The record itself is unusable. Do not leave the legacy active pointing at it.
+		if _, activeErr := os.Stat(s.path(activeName)); activeErr == nil {
+			if err := s.remove(activeName); err != nil {
+				recovery.Warning = err.Error()
+			} else {
+				recovery.ActiveCleared = true
+			}
+		}
+		return recovery, nil
 	}
 	active, activeErr := os.ReadFile(s.path(activeName))
 	activeValid := activeErr == nil && (s.validator == nil || s.validator(active) == nil)

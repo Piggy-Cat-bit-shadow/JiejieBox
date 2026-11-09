@@ -40,7 +40,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	E "github.com/sagernet/sing/common/exceptions"
 )
@@ -188,82 +187,11 @@ func Open(dir string) (*Store, error) {
 
 // Commit streams body into a new version of key and publishes it atomically.
 func (s *Store) Commit(key string, manifest Manifest, body io.Reader) (*Version, error) {
-	if s == nil {
-		return nil, E.New("artifact: nil store")
-	}
-	keyDir := filepath.Join(s.dir, key)
-	if err := os.MkdirAll(keyDir, 0o755); err != nil {
-		return nil, E.Cause(err, "create artifact key directory")
-	}
-	// Creating and registering the temp directory is one step under the lease lock: Collect lists
-	// the key directory under the same lock, so it either does not see this directory (it did not
-	// exist yet) or sees it registered as a live write (and leaves it alone).
-	s.lease.access.Lock()
-	tempDir, err := os.MkdirTemp(keyDir, tempPrefix)
-	if err == nil {
-		s.lease.writing[tempDir] = true
-	}
-	s.lease.access.Unlock()
+	staged, err := s.Stage(key, manifest, body, 0)
 	if err != nil {
-		return nil, E.Cause(err, "create artifact temp directory")
-	}
-	if s.testHook != nil {
-		s.testHook("commit-temp")
-	}
-	// A temp directory is never a version: on any error it is removed, and Collect also
-	// removes leftovers from an earlier crash.
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = os.RemoveAll(tempDir)
-		}
-		s.lease.access.Lock()
-		delete(s.lease.writing, tempDir)
-		s.lease.access.Unlock()
-	}()
-
-	artifactPath := filepath.Join(tempDir, artifactName)
-	file, err := os.Create(artifactPath)
-	if err != nil {
-		return nil, E.Cause(err, "create artifact file")
-	}
-	hasher := sha256.New()
-	written, copyErr := io.Copy(io.MultiWriter(file, hasher), body)
-	closeErr := file.Close()
-	if copyErr != nil {
-		return nil, E.Cause(copyErr, "stream artifact")
-	}
-	if closeErr != nil {
-		return nil, E.Cause(closeErr, "close artifact")
-	}
-	if manifest.Size != 0 && written != manifest.Size {
-		return nil, E.New("artifact: body is ", written, " bytes, the manifest declares ", manifest.Size)
-	}
-	digest := hex.EncodeToString(hasher.Sum(nil))
-	if manifest.Digest != "" && manifest.Digest != digest {
-		return nil, E.Cause(ErrDigestMismatch, "artifact ", key)
-	}
-	manifest.Size = written
-	manifest.Digest = digest
-	if manifest.Created == 0 {
-		manifest.Created = time.Now().UnixNano()
-	}
-	if err := writeManifest(filepath.Join(tempDir, manifestName), manifest); err != nil {
 		return nil, err
 	}
-
-	// The version directory name is the digest prefix: two builds of the same bytes collapse
-	// to one version instead of accumulating, and the name can never describe bytes it does
-	// not contain.
-	versionDir := filepath.Join(keyDir, "v-"+digest[:16])
-	// Publishing and taking the commit's own lease is one step under the lease lock. Otherwise a
-	// collector that listed the directory in between would see an unleased new version and remove
-	// it before this commit could return a handle to it.
-	if err := s.publishVersion(tempDir, versionDir); err != nil {
-		return nil, err
-	}
-	cleanup = false
-	return &Version{manifest: manifest, dir: versionDir, store: s}, nil
+	return staged.Publish()
 }
 
 // Load returns the newest valid version of key, leased to the caller.

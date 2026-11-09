@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -22,6 +24,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/provider"
+	"github.com/sagernet/sing-box/common/artifact"
 	"github.com/sagernet/sing-box/common/buildgate"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
@@ -79,6 +82,11 @@ type ProviderRemote struct {
 	httpClientOptions *option.HTTPClientOptions
 	downloadDetour    string
 	url               string
+	// artifactStore keeps the exact node snapshot a configuration used, so a recovery can pin it
+	// instead of accepting whatever the subscription serves now.
+	artifactStore *artifact.Store
+	artifactKey   string
+	artifactLease *artifact.Version
 	// logURL is the subscription URL with its credentials, query and fragment removed, so a token
 	// in a query parameter never reaches the log. The raw s.url is used only for the request.
 	logURL         string
@@ -199,23 +207,147 @@ func NewProviderRemote(ctx context.Context, router adapter.Router, logFactory lo
 	}, nil
 }
 
+func (s *ProviderRemote) referenceSet() *artifact.ReferenceSet {
+	return service.FromContext[*artifact.ReferenceSet](s.ctx)
+}
+
+// openArtifactStore prepares the per-Box snapshot store for this provider.
+func (s *ProviderRemote) openArtifactStore() {
+	base := filemanager.BasePath(s.ctx, "")
+	if base == "" {
+		return
+	}
+	store, err := artifact.Open(filepath.Join(base, "provider-artifacts"))
+	if err != nil {
+		s.logger.Warn(E.Cause(err, "open provider artifact store"))
+		return
+	}
+	s.artifactStore = store
+	s.artifactKey = providerArtifactKey(s.Tag(), s.url)
+}
+
+func providerArtifactKey(tag string, source string) string {
+	name := strings.Map(func(character rune) rune {
+		switch {
+		case character >= 'a' && character <= 'z',
+			character >= 'A' && character <= 'Z',
+			character >= '0' && character <= '9',
+			character == '-', character == '_', character == '.':
+			return character
+		default:
+			return '_'
+		}
+	}, tag)
+	if name == "" {
+		name = "provider"
+	}
+	digest := sha256.Sum256([]byte(source))
+	return name + "-" + hex.EncodeToString(digest[:8])
+}
+
+func (s *ProviderRemote) providerManifest() artifact.Manifest {
+	return artifact.NewManifest(
+		"provider/remote",
+		C.Version,
+		"tag="+s.Tag(),
+		"url="+s.url,
+		"url-sha256="+hex.EncodeToString(s.urlHash[:]),
+	)
+}
+
+// restorePinned loads the exact node snapshot a recovered configuration names.
+//
+// A pinned snapshot that cannot be loaded fails the start instead of silently taking the current
+// subscription: a recovery report must not claim old nodes while serving new ones.
+func (s *ProviderRemote) restorePinned() (bool, error) {
+	references := s.referenceSet()
+	if references == nil || s.artifactStore == nil {
+		return false, nil
+	}
+	pinnedID, pinned := references.Pinned(s.artifactKey)
+	if !pinned {
+		return false, nil
+	}
+	version, err := s.artifactStore.LoadExact(s.artifactKey, pinnedID)
+	if err != nil {
+		return false, E.Cause(err, "pinned provider snapshot ", pinnedID, " is not loadable")
+	}
+	content, err := os.ReadFile(version.Path())
+	if err != nil {
+		version.Release()
+		return false, E.Cause(err, "read pinned provider snapshot")
+	}
+	if err = s.updateProviderFromContent(string(content)); err != nil {
+		version.Release()
+		return false, err
+	}
+	s.adoptArtifact(version)
+	references.Record(s.artifactKey, version.ID())
+	return true, nil
+}
+
+// snapshotPublishedNodes stores the normalized node document that this provider just published.
+func (s *ProviderRemote) snapshotPublishedNodes() {
+	if s.artifactStore == nil || s.lastOutOpts == nil {
+		return
+	}
+	content, err := json.Marshal(option.Options{Outbounds: s.lastOutOpts})
+	if err != nil {
+		return
+	}
+	version, err := s.artifactStore.Commit(s.artifactKey, s.providerManifest(), bytes.NewReader(content))
+	if err != nil {
+		s.logger.Warn(E.Cause(err, "store provider snapshot"))
+		return
+	}
+	s.adoptArtifact(version)
+	if references := s.referenceSet(); references != nil {
+		references.Record(s.artifactKey, version.ID())
+	}
+	var retained []string
+	if references := s.referenceSet(); references != nil {
+		if retainedID, ok := references.RetainedID(s.artifactKey); ok {
+			retained = append(retained, retainedID)
+		}
+	}
+	if collectErr := s.artifactStore.Collect(s.artifactKey, retained...); collectErr != nil {
+		s.logger.Warn(E.Cause(collectErr, "collect provider snapshots"))
+	}
+}
+
+// adoptArtifact installs the lease of the snapshot the published nodes came from.
+func (s *ProviderRemote) adoptArtifact(version *artifact.Version) {
+	previous := s.artifactLease
+	s.artifactLease = version
+	if previous != nil && previous != version {
+		previous.Release()
+	}
+}
+
 func (s *ProviderRemote) StartContext(ctx context.Context, startContext *adapter.HTTPStartContext) error {
 	s.cacheFile = service.FromContext[adapter.CacheFile](s.ctx)
-	restored := false
-	loadedFromCache, err := s.loadCacheFile()
-	if err != nil {
-		s.logger.Warn(E.Cause(err, "restore cached outbound provider, will refetch"))
+	s.openArtifactStore()
+	restored, pinErr := s.restorePinned()
+	if pinErr != nil {
+		return pinErr
 	}
-	if loadedFromCache {
-		restored = true
-	}
-	if !loadedFromCache && s.initialPath != "" {
-		err = s.loadInitialPath()
+	if !restored {
+		loadedFromCache, err := s.loadCacheFile()
 		if err != nil {
-			s.logger.Warn(E.Cause(err, "load initial outbound provider from ", s.initialPath))
-		} else {
+			s.logger.Warn(E.Cause(err, "restore cached outbound provider, will refetch"))
+		}
+		if loadedFromCache {
 			restored = true
 		}
+		if !loadedFromCache && s.initialPath != "" {
+			err = s.loadInitialPath()
+			if err != nil {
+				s.logger.Warn(E.Cause(err, "load initial outbound provider from ", s.initialPath))
+			} else {
+				restored = true
+			}
+		}
+		s.snapshotPublishedNodes()
 	}
 	// A download routed through a group this provider itself feeds can never complete its first
 	// fetch: the group has no member until the fetch publishes one. Refuse the configuration with a
@@ -228,7 +360,7 @@ func (s *ProviderRemote) StartContext(ctx context.Context, startContext *adapter
 	if !restored {
 		detour := s.downloadDetourTag()
 		followsDefaultOutbound := detour == "" && (s.httpClientOptions == nil || s.httpClientOptions.IsEmpty())
-		if err = s.Adapter.CheckDownloadPath(detour, followsDefaultOutbound); err != nil {
+		if err := s.Adapter.CheckDownloadPath(detour, followsDefaultOutbound); err != nil {
 			return err
 		}
 		// The HTTP client cannot dial before it resolved its own server name. When that resolution
@@ -236,7 +368,7 @@ func (s *ProviderRemote) StartContext(ctx context.Context, startContext *adapter
 		// chain is part of the download path too.
 		if s.hostIsDomain {
 			if resolverTag := s.downloadResolverTag(); resolverTag != "" {
-				if err = s.Adapter.CheckDownloadResolver(resolverTag); err != nil {
+				if err := s.Adapter.CheckDownloadResolver(resolverTag); err != nil {
 					return err
 				}
 			}
@@ -338,6 +470,10 @@ func (s *ProviderRemote) Close() error {
 	defer s.fetchAccess.Unlock()
 	if s.ticker != nil {
 		s.ticker.Stop()
+	}
+	if s.artifactLease != nil {
+		s.artifactLease.Release()
+		s.artifactLease = nil
 	}
 	return common.Close(&s.Adapter)
 }
@@ -519,6 +655,8 @@ func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 	if groupErr != nil {
 		return groupErr
 	}
+	// The nodes are published; snapshot the exact document a recovery would pin.
+	s.snapshotPublishedNodes()
 	// The ETag is evidence that the SERVER's document is in the cache. Advancing it before the
 	// cache write succeeds would make the next conditional request answer 304 for a document the
 	// cache never received, pinning the provider to stale nodes forever. When the cache write

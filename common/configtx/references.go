@@ -57,6 +57,32 @@ func (s *Store) References(revision string) (map[string]string, error) {
 	return copied, nil
 }
 
+// removeReferencesLocked drops one revision's sidecar entry after a failed commit, so a
+// configuration that never reached the disk does not leave references behind. The caller holds
+// s.access.
+func (s *Store) removeReferencesLocked(revision string) error {
+	encoded, err := os.ReadFile(s.path(referencesName))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	var stored map[string]map[string]string
+	if err := json.Unmarshal(encoded, &stored); err != nil {
+		return err
+	}
+	if _, loaded := stored[revision]; !loaded {
+		return nil
+	}
+	delete(stored, revision)
+	updated, err := json.Marshal(stored)
+	if err != nil {
+		return err
+	}
+	return s.writeFile(filepath.Join(s.dir, referencesName), updated)
+}
+
 // writeReferencesLocked merges one revision's references into the sidecar. The caller holds
 // s.access (Commit does).
 func (s *Store) writeReferencesLocked(revision string, references map[string]string) error {
