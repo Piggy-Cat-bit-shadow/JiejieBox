@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"math/rand"
 	"net"
-	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -88,37 +87,31 @@ func TestAllocationReserveKeepsTheOpeningShare(t *testing.T) {
 
 // TestPacketUpGrantRollsBackWhenTheArrayCannotBeReserved pins the pair semantics: a
 // writer that is admitted logically but cannot reserve its array returns the admission
-// exactly (same pools) before waiting, so the logical ledger shows no charge for bytes
-// that were never queued, and the write proceeds once the array is freed.
+// exactly before waiting, so the logical ledger shows no charge for bytes that were never
+// queued, the writer parks quietly, and a real release lets it proceed.
+//
+// The write must be DATA-class for the reservation to fail while the logical pools have
+// room: an opening write is allowed the control allocation reserve (that is the fix in
+// packetup_allocation_wait_test.go), so this uses a flow that is already past its opening
+// and a data share that is full.
 func TestPacketUpGrantRollsBackWhenTheArrayCannotBeReserved(t *testing.T) {
 	t.Parallel()
 
-	transport := newProbeTransport()
-	gate := make(chan struct{})
-	transport.onPost = func(_ *http.Request, _ []byte) (*http.Response, error) {
-		<-gate
-		return okProbeResponse(), nil
-	}
-	// capacity 16 KiB, reserve 8 KiB, no control: the second write is a data-class
-	// (reserve) grant, which is what makes the rollback path reachable.
-	client := budgetedBatchClientWithControl(t, transport, metaOptions{ScMaxEachPostBytes: "8192-8192"}, 16*1024, 8*1024, 0)
-	pool := client.budget
-	setAllocationLimits(pool, 24*1024, 8*1024) // data limit 16 KiB
-	first := dialBatchConn(t, client)
-	if result := awaitPayloadWrite(t, writePayloadAsync(first, make([]byte, 16*1024)), 16*1024); result.err != nil || result.n != 16*1024 {
-		t.Fatalf("first Write = (%d, %v)", result.n, result.err)
-	}
-	waitForPool(t, pool, "main pool full", func(stats uplinkBudgetStats) bool {
-		return stats.Used == stats.Capacity
-	})
-	before := pool.stats()
+	fixture := newAllocationWaitFixture(t)
+	fixture.fillDataShare(t)
 
-	second := dialBatchConn(t, client)
-	blocked := writePayloadAsync(second, bytes.Repeat([]byte{'s'}, 4*1024))
-	waitForPool(t, pool, "the second writer waiting for array capacity", func(stats uplinkBudgetStats) bool {
+	// Push one flow past its opening (64 KiB accepted) so its next write is data-class.
+	conn := dialBatchConn(t, fixture.client)
+	if result := awaitPayloadWrite(t, writePayloadAsync(conn, make([]byte, 64*1024)), 64*1024); result.err != nil || result.n != 64*1024 {
+		t.Fatalf("opening Write = (%d, %v)", result.n, result.err)
+	}
+	before := fixture.pool.stats()
+
+	blocked := writePayloadAsync(conn, bytes.Repeat([]byte{'s'}, 8*1024))
+	waitForPool(t, fixture.pool, "the data-class writer waiting for array capacity", func(stats uplinkBudgetStats) bool {
 		return stats.AllocWaiters == 1
 	})
-	after := pool.stats()
+	after := fixture.pool.stats()
 	if after.Total() != before.Total() {
 		t.Fatalf("a rolled-back admission is still charged: total %d -> %d (%+v)", before.Total(), after.Total(), after)
 	}
@@ -130,16 +123,20 @@ func TestPacketUpGrantRollsBackWhenTheArrayCannotBeReserved(t *testing.T) {
 		t.Fatalf("the write returned instead of waiting for its array: (%d, %v)", result.n, result.err)
 	default:
 	}
-
-	// Releasing the array lets the blocked write finish with its own admission.
-	close(gate)
-	if result := awaitPayloadWrite(t, blocked, 4*1024); result.err != nil || result.n != 4*1024 {
-		t.Fatalf("blocked Write = (%d, %v), want (4096, nil)", result.n, result.err)
+	// Quiet while nothing changes.
+	if churn := grantChurn(fixture.pool, 40*time.Millisecond); churn > 512*1024 {
+		t.Fatalf("a parked data writer churned %d granted bytes in 40 ms", churn)
 	}
-	waitForPool(t, pool, "drained", func(stats uplinkBudgetStats) bool {
+
+	// A real release lets the blocked write finish with its own admission.
+	close(fixture.gate)
+	if result := awaitPayloadWrite(t, blocked, 8*1024); result.err != nil || result.n != 8*1024 {
+		t.Fatalf("blocked Write = (%d, %v), want (8192, nil)", result.n, result.err)
+	}
+	waitForPool(t, fixture.pool, "drained", func(stats uplinkBudgetStats) bool {
 		return stats.Total() == 0 && stats.Allocated == 0
 	})
-	final := pool.stats()
+	final := fixture.pool.stats()
 	if final.AllocGrantedBytes != final.AllocReleasedBytes || final.GrantedBytes != final.ReleasedBytes {
 		t.Fatalf("ledgers do not close: %+v", final)
 	}

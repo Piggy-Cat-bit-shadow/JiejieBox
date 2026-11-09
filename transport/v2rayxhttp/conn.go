@@ -1364,7 +1364,12 @@ func (u *packetUplink) write(b []byte) (int, error) {
 		// of empty arrays and starved the next stream's opening.
 		grant := u.takeBudget(want, small, openLeft)
 		granted := grant.total()
-		if granted > 0 && !u.ensureQueueCapacityLocked(granted, grant.control > 0) {
+		// The array's capacity class comes from the WRITE's eligibility, not from which
+		// logical pool happened to grant the bytes: an opening write admitted by the main
+		// pool is still an opening and may use the control allocation reserve. Classifying
+		// it by `grant.control > 0` is what made a 1 KiB opening fail the last data
+		// granule while 126 KiB of control reserve sat unused.
+		if granted > 0 && !u.ensureQueueCapacityLocked(granted, small) {
 			u.budget.releaseGrant(u, grant)
 			// reserveAllocation registered this stream as an allocation waiter. It
 			// must STAY registered: that list is how a capacity release reaches this

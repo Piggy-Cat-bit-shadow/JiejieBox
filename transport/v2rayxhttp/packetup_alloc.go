@@ -125,7 +125,10 @@ func (b *sharedUplinkBudget) yieldMainWaiter(u *packetUplink) {
 	moved := b.removeWaiterLocked(u)
 	b.access.Unlock()
 	if moved {
-		b.wakeWaiters()
+		// Wake the others, never this writer: it is about to park on allocation capacity,
+		// and closing its own captured wake channel would make the write path retry
+		// immediately (the audit's 150k-round spin).
+		b.wakeWaitersExcept(u)
 	}
 }
 
