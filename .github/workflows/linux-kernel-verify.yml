@@ -21,6 +21,9 @@ on:
       - 'option/trusttunnel.go'
       - 'common/process/**'
       - 'protocol/tun/**'
+      - 'option/wireguard_awg.go'
+      - 'transport/wireguard/**'
+      - 'protocol/wireguard/**'
       - '.github/workflows/linux-kernel-verify.yml'
   pull_request:
     paths:
@@ -30,6 +33,9 @@ on:
       - 'option/trusttunnel.go'
       - 'common/process/**'
       - 'protocol/tun/**'
+      - 'option/wireguard_awg.go'
+      - 'transport/wireguard/**'
+      - 'protocol/wireguard/**'
       - '.github/workflows/linux-kernel-verify.yml'
 
 permissions:
@@ -61,8 +67,7 @@ jobs:
 
   linux-process:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
+    timeout-minutes: 15    steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v5
         with:
@@ -78,3 +83,29 @@ jobs:
         continue-on-error: true
         run: |
           sudo -E env PATH="$PATH" GOROOT="$GOROOT" GOPATH="$GOPATH" go test -count=1 -timeout 300s -v ./protocol/tun/...
+
+  awg:
+    # The AWG device layer lives behind with_awg, and the canonical tag sets do not carry it, so
+    # this is the only job that compiles the tag. The pin is a published fork; a plain replace
+    # would break the build because neither tree has both AWG and this repository's injection API.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - name: format
+        run: |
+          bad=$(gofmt -l option/wireguard_awg.go transport/wireguard/device_awg.go transport/wireguard/device_stub_awg.go | tr '\n' ' ')
+          if [ -n "${bad// /}" ]; then echo "gofmt needs running on: $bad"; exit 1; fi
+      - name: AWG option, transport and protocol tests
+        run: go test -tags with_awg -count=1 -v ./option/ ./transport/wireguard/ ./protocol/wireguard/
+      - name: AWG-tagged build of the tree
+        run: go build -tags with_awg ./...
+      - name: the untagged stub path still builds and tests
+        run: |
+          go build ./transport/wireguard/ ./protocol/wireguard/
+          go test -count=1 ./transport/wireguard/ ./protocol/wireguard/
