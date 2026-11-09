@@ -21,6 +21,7 @@ import (
 	"github.com/sagernet/sing/common/json/badoption"
 	M "github.com/sagernet/sing/common/metadata"
 	"github.com/sagernet/sing/service"
+	"github.com/sagernet/sing/service/filemanager"
 
 	"github.com/stretchr/testify/require"
 )
@@ -110,6 +111,13 @@ func newRuleSetRouterFixture(t *testing.T, rules []option.Rule) (*Router, *atomi
 
 	hits := &atomic.Int32{}
 	ctx := service.ContextWithDefaultRegistry(context.Background())
+	// The rule-set store now keeps versioned artifacts under the file manager's base path. This
+	// fixture has no Box, so without a manager of its own the store would resolve to the package
+	// directory and a later run would RESTORE an artifact left by an earlier test instead of
+	// fetching - the fetch count would be zero and the drained-Updater assertions would be
+	// measuring nothing. Each test therefore gets its own empty base.
+	directory := t.TempDir()
+	ctx = filemanager.WithDefault(ctx, directory, directory, -1, -1)
 	service.MustRegister[adapter.HTTPClientManager](ctx,
 		&ruleSetHTTPClientManager{transport: &ruleSetTransport{hits: hits, payload: payload.Bytes()}})
 	service.MustRegister[adapter.NetworkManager](ctx, &ruleSetNetworkManager{})
@@ -220,8 +228,12 @@ func TestTheRouterHandsItsRuleSetResourcesToTheScope(t *testing.T) {
 	require.False(t, inline.Match(&adapter.InboundContext{Domain: "inline.example"}),
 		"the local rule-set was not closed by the Scope either")
 
+	// An update that had already started when Close ran may still finish: Close stops the loop, it
+	// does not cancel a fetch that is in flight. What must not happen is a NEW refresh, so sample the
+	// counter only after any in-flight one has had time to land, then require it to stay put.
+	time.Sleep(200 * time.Millisecond)
 	stopped := hits.Load()
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 	require.Equal(t, stopped, hits.Load(),
 		"the refresh goroutine kept running after the Scope drained: `scope.Add(updater.Close)` is gone, and "+
 			"each reload would leave one behind holding the old rule-sets")
