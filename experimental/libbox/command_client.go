@@ -822,6 +822,52 @@ func (c *CommandClient) GetStartedAt() (int64, error) {
 	})
 }
 
+// configurationJSON returns the JSON document, and an EMPTY string (no error) when the daemon
+// predates the call: a caller must be able to tell "old kernel, feature unavailable" from
+// "new kernel, no recovery yet" (which is the JSON literal null).
+func (c *CommandClient) configurationJSON(call func(context.Context, daemon.StartedServiceClient) (*daemon.JSONDocument, error)) (string, error) {
+	return callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (string, error) {
+		document, err := call(ctx, client)
+		if err != nil {
+			if status.Code(err) == codes.Unimplemented {
+				return "", nil
+			}
+			return "", err
+		}
+		return document.Json, nil
+	})
+}
+
+func (c *CommandClient) PreviewServiceChange(configContent string) (string, error) {
+	document, err := c.configurationJSON(func(ctx context.Context, client daemon.StartedServiceClient) (*daemon.JSONDocument, error) {
+		return client.PreviewServiceChange(ctx, &daemon.PreviewServiceChangeRequest{ConfigContent: configContent})
+	})
+	if err != nil {
+		return "", E.Cause(err, "preview service change")
+	}
+	return document, nil
+}
+
+func (c *CommandClient) GetLastServiceChange() (string, error) {
+	document, err := c.configurationJSON(func(ctx context.Context, client daemon.StartedServiceClient) (*daemon.JSONDocument, error) {
+		return client.GetLastServiceChange(ctx, &emptypb.Empty{})
+	})
+	if err != nil {
+		return "", E.Cause(err, "get last service change")
+	}
+	return document, nil
+}
+
+func (c *CommandClient) GetLastConfigRecovery() (string, error) {
+	document, err := c.configurationJSON(func(ctx context.Context, client daemon.StartedServiceClient) (*daemon.JSONDocument, error) {
+		return client.GetLastConfigRecovery(ctx, &emptypb.Empty{})
+	})
+	if err != nil {
+		return "", E.Cause(err, "get last config recovery")
+	}
+	return document, nil
+}
+
 func (c *CommandClient) GetAPIVersion() (int32, error) {
 	return callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (int32, error) {
 		version, err := client.GetVersion(ctx, &emptypb.Empty{})
