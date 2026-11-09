@@ -41,9 +41,9 @@
                        },
                        {
                            "module":  "github.com/sagernet/quic-go",
-                           "pinned":  "2daa76f5bd52",
+                           "pinned":  "d981f089fd8a",
                            "target":  "github.com/Piggy-Cat-bit-shadow/quic-go",
-                           "version":  "v0.61.1-0.20261027185738-2daa76f5bd52"
+                           "version":  "v0.61.1-0.20261109111523-d981f089fd8a"
                        },
                        {
                            "module":  "github.com/metacubex/utls",
