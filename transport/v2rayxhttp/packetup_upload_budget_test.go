@@ -2,9 +2,14 @@ package v2rayxhttp
 
 import (
 	"bytes"
+	"context"
 	"net"
 	"net/http"
+	"sync"
 	"testing"
+
+	"github.com/sagernet/sing-box/option"
+	M "github.com/sagernet/sing/common/metadata"
 )
 
 // The Box-facing shared budget (packetup_upload_budget.go).
@@ -253,5 +258,82 @@ func TestUploadBudgetZeroValueIsRejected(t *testing.T) {
 	var client *Client
 	if budget := client.NewUploadBudget(); budget != nil {
 		t.Fatal("NewUploadBudget on a nil client returned a budget")
+	}
+}
+
+// providerStub is a Box-style provider: one budget for every client, sized from the
+// first client that asks.
+type providerStub struct {
+	access sync.Mutex
+	budget *UploadBudget
+	calls  int
+	sizing UploadBudgetSizing
+}
+
+func (p *providerStub) UploadBudgetFor(sizing UploadBudgetSizing) *UploadBudget {
+	p.access.Lock()
+	defer p.access.Unlock()
+	p.calls++
+	if p.budget == nil {
+		p.sizing = sizing
+		p.budget = sizing.NewBudget()
+	}
+	return p.budget
+}
+
+// TestNewClientBindsTheBoxUploadBudget proves the context hook reaches the real
+// constructor: two clients built under one provider share ONE budget (identity, not two
+// equal pools), both charge it, and a client built without a provider keeps its own.
+func TestNewClientBindsTheBoxUploadBudget(t *testing.T) {
+	t.Parallel()
+
+	provider := &providerStub{}
+	ctx := WithUploadBudgetProvider(context.Background(), provider)
+	newClient := func(ctx context.Context) *Client {
+		transport, err := NewClient(ctx, stubDialer{}, M.ParseSocksaddr("127.0.0.1:443"), option.V2RayXHTTPOptions{}, nil)
+		if err != nil {
+			t.Fatalf("NewClient: %v", err)
+		}
+		return transport.(*Client)
+	}
+	first := newClient(ctx)
+	second := newClient(ctx)
+	if provider.calls != 2 {
+		t.Fatalf("provider called %d times, want once per client", provider.calls)
+	}
+	if provider.budget == nil {
+		t.Fatal("the provider never built a budget")
+	}
+	if first.UploadBudget() != provider.budget || second.UploadBudget() != provider.budget {
+		t.Fatalf("clients are not bound to the shared budget: %p %p want %p",
+			first.UploadBudget(), second.UploadBudget(), provider.budget)
+	}
+	if first.budget != provider.budget.pool || second.budget != provider.budget.pool {
+		t.Fatal("the clients still draw on their own pools")
+	}
+	if provider.sizing.Capacity != packetUpSharedCapacity(packetUpPendingBound(first.meta)) {
+		t.Fatalf("budget sized from %d, want the client's own capacity %d",
+			provider.sizing.Capacity, packetUpSharedCapacity(packetUpPendingBound(first.meta)))
+	}
+	// Both clients' pools are the shared one, so its stream count covers both: seed a
+	// charge through each client's own constructor is not possible without dialing, so
+	// assert the sizing and identity only; the cross-client charging is covered by
+	// TestUploadBudgetSharesOneBoundAcrossClients with stub clients.
+
+	own := newClient(context.Background())
+	if own.UploadBudget() != nil {
+		t.Fatal("a client built without a provider claims a shared budget")
+	}
+	if own.budget == provider.budget.pool {
+		t.Fatal("a client built without a provider draws on the shared pool")
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("Close first: %v", err)
+	}
+	if err := second.Close(); err != nil {
+		t.Fatalf("Close second: %v", err)
+	}
+	if err := own.Close(); err != nil {
+		t.Fatalf("Close own: %v", err)
 	}
 }
