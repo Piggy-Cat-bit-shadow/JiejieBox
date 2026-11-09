@@ -272,13 +272,15 @@ func TestBothDirectionsResolveSeparately(t *testing.T) {
 		window = window[:next+1]
 	}
 
-	// The upload copy: destination is remoteConn (the outbound's writer).
-	require.Contains(t, window, "connectionIncreaseBufferAfter(this, conn, remoteConn)",
+	// The upload copy: destination is remoteConn (the outbound's writer). The threshold
+	// is resolved through the growth budget, which consults the same helper and may only
+	// refuse growth: the per-direction resolution must still be visible here.
+	require.Contains(t, window, "m.growthThreshold(metadata.TrafficClass, this, conn, remoteConn)",
 		"the upload direction must resolve its threshold from the OUTBOUND-side "+
 			"destination writer")
 
 	// The download copy: destination is conn (the inbound's writer).
-	require.Contains(t, window, "connectionIncreaseBufferAfter(this, remoteConn, conn)",
+	require.Contains(t, window, "m.growthThreshold(metadata.TrafficClass, this, remoteConn, conn)",
 		"the download direction must resolve its threshold from the INBOUND-side "+
 			"destination writer")
 

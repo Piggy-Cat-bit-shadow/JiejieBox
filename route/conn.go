@@ -16,6 +16,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/resourceguard"
 	"github.com/sagernet/sing-box/common/sniff"
 	"github.com/sagernet/sing-box/common/tlsfragment"
 	"github.com/sagernet/sing-box/common/tlsspoof"
@@ -108,6 +109,16 @@ type ConnectionManager struct {
 	// flow and what finalises it, so the scheduler's flow lifetime is exactly a connection's.
 	// See trafficsched.Scheduler for the ownership reasoning.
 	scheduler *trafficsched.Scheduler
+	// growth bounds how many flow directions may hold an enlarged copy buffer at
+	// once, and answers the per-direction threshold the copy engine uses.
+	//
+	// It is installed in Start, not here: the pressure source is the process guard
+	// (iOS Network Extension, registered by the oomkiller service) and it only exists
+	// in the start context. A manager that never started - every unit test built by
+	// NewConnectionManager - keeps the nil value, and nil means "the pre-existing
+	// per-flow thresholds, no sum", so the wiring cannot change behaviour for a
+	// caller that did not start a Box. See common/resourceguard/growth.go.
+	growth *resourceguard.GrowthBudget
 	// halfClose carries the liveness-observation timings for a stream that has half-closed.
 	//
 	// Zero means "use the constants", and it exists so a test can exercise the observation without
@@ -173,6 +184,17 @@ func (m *ConnectionManager) deleteURLTestHistory(chain []adapter.Outbound) {
 func (m *ConnectionManager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateInitialize {
 		return nil
+	}
+	// The relay copy-growth policy: one budget for this process's connections,
+	// pressured by the same guard the expensive-creation admission uses (on iOS the
+	// oomkiller service installs it in the start context). Without a guard the budget
+	// still bounds the sum, at LevelNormal.
+	if m.growth == nil {
+		var pressure func() resourceguard.Level
+		if guard := resourceguard.FromContext(scope.Context()); guard != nil {
+			pressure = guard.Level
+		}
+		m.growth = resourceguard.NewGrowthBudget(resourceguard.DefaultGrowthConfig(), pressure)
 	}
 	scope.Add(func() error {
 		m.CloseAll()
@@ -476,8 +498,14 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 	// copy (remoteConn -> conn) ends at the inbound's writer. Resolving once and reusing
 	// the value for both - which is what an inbound-type check did - applied the inbound
 	// writer's tuning to the outbound direction as well.
-	uploadIncreaseBufferAfter := connectionIncreaseBufferAfter(this, conn, remoteConn)
-	downloadIncreaseBufferAfter := connectionIncreaseBufferAfter(this, remoteConn, conn)
+	//
+	// The shared growth budget may only refuse growth, never widen it: a granted
+	// direction gets exactly the threshold above, and a refused one gets 0 (sing reads
+	// that as "never grow"). The permit lives as long as the direction's copy, which is
+	// released inside the goroutine below - see resourceguard.GrowthBudget for why the
+	// lifetime cannot be shorter.
+	uploadIncreaseBufferAfter, uploadGrowthPermit := m.growthThreshold(metadata.TrafficClass, this, conn, remoteConn)
+	downloadIncreaseBufferAfter, downloadGrowthPermit := m.growthThreshold(metadata.TrafficClass, this, remoteConn, conn)
 	uploadWriter, uploadFlow := m.uploadStreamGate(conn, remoteConn, metadata.TrafficClass)
 	// One teardown for this flow, shared by both copy directions and by the half-close observer.
 	//
@@ -485,8 +513,31 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 	// left the connection alone, the second got true and tore it down. That is correct for exactly
 	// two participants, and the observer is a third. See conn_halfclose.go.
 	teardown := newFlowTeardown(ctx, onClose, conn, remoteConn)
-	go m.connectionCopy(ctx, conn, remoteConn, false, uploadIncreaseBufferAfter, &done, onClose, uploadWriter, uploadFlow, teardown)
-	go m.connectionCopy(ctx, remoteConn, conn, true, downloadIncreaseBufferAfter, &done, onClose, nil, nil, teardown)
+	go func() {
+		defer uploadGrowthPermit.Release()
+		m.connectionCopy(ctx, conn, remoteConn, false, uploadIncreaseBufferAfter, &done, onClose, uploadWriter, uploadFlow, teardown)
+	}()
+	go func() {
+		defer downloadGrowthPermit.Release()
+		m.connectionCopy(ctx, remoteConn, conn, true, downloadIncreaseBufferAfter, &done, onClose, nil, nil, teardown)
+	}()
+}
+
+// growthThreshold resolves the copy-buffer threshold for one direction and returns the
+// growth-budget permit that must live as long as that direction's copy.
+//
+// The budget never chooses the base threshold: connectionIncreaseBufferAfter already
+// answers what the writer needs (1 for a direction whose framing requires the larger
+// buffer, bufio.DefaultIncreaseBufferAfter otherwise), and the budget only decides
+// whether the direction may grow at all under the shared cap and the current pressure
+// level. A nil budget, or a manager that never started, therefore keeps the exact
+// pre-existing thresholds and hands back no permit.
+func (m *ConnectionManager) growthThreshold(class trafficclass.Class, dialer N.Dialer, destination net.Conn, source net.Conn) (int64, *resourceguard.GrowthPermit) {
+	base := connectionIncreaseBufferAfter(dialer, destination, source)
+	if m.growth == nil {
+		return base, nil
+	}
+	return m.growth.Admit(class, base == earlyConnectionBufferIncreaseAfter)
 }
 
 // uploadStreamGate decides whether this upload flow is scheduled, and returns the writer the copy
