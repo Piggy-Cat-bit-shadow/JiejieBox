@@ -31,11 +31,30 @@ type URLTestOutboundOptions struct {
 	// Empty means no constraint, which is the historical behaviour: any response counts. A
 	// configuration that needs a strict 204 says so explicitly, so an existing config is never
 	// silently tightened.
-	ExpectedStatus            string             `json:"expected_status,omitempty"`
-	Interval                  badoption.Duration `json:"interval,omitempty"`
-	Tolerance                 uint16             `json:"tolerance,omitempty"`
-	IdleTimeout               badoption.Duration `json:"idle_timeout,omitempty"`
-	InterruptExistConnections bool               `json:"interrupt_exist_connections,omitempty"`
+	ExpectedStatus string `json:"expected_status,omitempty"`
+	// Failover, when present, selects the stable/failover probing policy. It is ABSENT by default
+	// and an absent field is the historical behaviour: every member is probed every round. A
+	// configuration opts in by naming the block, even with no fields, which means "use the
+	// defaults".
+	Failover                  *FailoverPolicyOptions `json:"failover,omitempty"`
+	Interval                  badoption.Duration     `json:"interval,omitempty"`
+	Tolerance                 uint16                 `json:"tolerance,omitempty"`
+	IdleTimeout               badoption.Duration     `json:"idle_timeout,omitempty"`
+	InterruptExistConnections bool                   `json:"interrupt_exist_connections,omitempty"`
+}
+
+// FailoverPolicyOptions configures the stable/failover probing policy of a URLTest group.
+//
+// The policy is a power and stability decision, not a selection override: a healthy stable member
+// is the only member probed in a periodic round, the probe set widens only after the member has
+// failed for `widen_after` consecutive rounds, and a challenger replaces it only after beating it by
+// more than `tolerance` for `settle_after` consecutive rounds. A non-positive threshold takes its
+// default, and the defaults are the conservative ones (see urltest.FailoverPolicy).
+type FailoverPolicyOptions struct {
+	WidenAfter   int    `json:"widen_after,omitempty"`
+	SettleAfter  int    `json:"settle_after,omitempty"`
+	RecoverAfter int    `json:"recover_after,omitempty"`
+	Tolerance    uint16 `json:"tolerance,omitempty"`
 }
 
 // LoadBalanceOutboundOptions configures the loadbalance outbound group.

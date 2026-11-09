@@ -133,14 +133,23 @@ func NewURLTest(ctx context.Context, router adapter.Router, logger log.ContextLo
 		tolerance:                    options.Tolerance,
 		idleTimeout:                  time.Duration(options.IdleTimeout),
 		interruptExternalConnections: options.InterruptExistConnections,
-
-		provider:        service.FromContext[adapter.ProviderManager](ctx),
-		providers:       make(map[string]adapter.Provider),
-		outboundsCache:  make(map[string][]adapter.Outbound),
-		providerTags:    options.Providers,
-		exclude:         (*regexp.Regexp)(options.Exclude),
-		include:         (*regexp.Regexp)(options.Include),
-		useAllProviders: options.UseAllProviders,
+		provider:                     service.FromContext[adapter.ProviderManager](ctx),
+		providers:                    make(map[string]adapter.Provider),
+		outboundsCache:               make(map[string][]adapter.Outbound),
+		providerTags:                 options.Providers,
+		exclude:                      (*regexp.Regexp)(options.Exclude),
+		include:                      (*regexp.Regexp)(options.Include),
+		useAllProviders:              options.UseAllProviders,
+	}
+	// The configuration surface maps onto the policy here, once. An absent block keeps the historical
+	// probing behaviour; a present one opts in, even when it names no field (the defaults).
+	if options.Failover != nil {
+		outbound.ApplyFailoverPolicy(urltest.FailoverPolicy{
+			WidenAfter:   options.Failover.WidenAfter,
+			SettleAfter:  options.Failover.SettleAfter,
+			RecoverAfter: options.Failover.RecoverAfter,
+			ToleranceMs:  options.Failover.Tolerance,
+		})
 	}
 	// See the matching comment in NewSelector: a repeated member is legal, and the group's member
 	// list keeps it while selection treats the tag as one member.
