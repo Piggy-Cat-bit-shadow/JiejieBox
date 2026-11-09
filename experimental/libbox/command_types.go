@@ -101,6 +101,11 @@ type ConnectionEvent struct {
 type ConnectionEvents struct {
 	Reset  bool
 	events []*ConnectionEvent
+	// subscription is the identity of the stream that produced this batch. It is set by the
+	// command client, never by the platform: the consumer uses it to ignore a batch that belongs to
+	// a subscription a newer one has already superseded (the reviewed failure: a paused old batch
+	// applied after the new snapshot and rolled the table back).
+	subscription uint64
 }
 
 func (c *ConnectionEvents) Iterator() ConnectionEventIterator {
@@ -143,6 +148,10 @@ type Connections struct {
 	filtered      []Connection
 	filterState   int32
 	filterApplied bool
+	// activeSubscription is the newest subscription that has delivered a batch. A batch from an
+	// OLDER subscription is ignored: it describes state that was replaced. Batches without an
+	// identity (subscription == 0, e.g. a test or an older caller) keep applying as before.
+	activeSubscription uint64
 }
 
 func NewConnections() *Connections {
@@ -159,6 +168,12 @@ func (c *Connections) ApplyEvents(events *ConnectionEvents) {
 	}
 	c.access.Lock()
 	defer c.access.Unlock()
+	if events.subscription != 0 {
+		if events.subscription < c.activeSubscription {
+			return
+		}
+		c.activeSubscription = events.subscription
+	}
 	c.applyEventsLocked(events)
 }
 

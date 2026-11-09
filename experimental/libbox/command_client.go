@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/sing-box/daemon"
@@ -35,7 +36,18 @@ type CommandClient struct {
 	clientAccess      sync.RWMutex
 	connectAccess     sync.Mutex
 	standalone        bool
+
+	// connectionGeneration identifies the client's CURRENT connection. A stream delivers events
+	// through a handler the platform may block in, so a cancellation alone cannot stop a batch that
+	// is already in flight: every delivery re-checks this generation, and a newer connect makes the
+	// older stream's remaining batches and its Disconnected callback stale.
+	connectionGeneration atomic.Uint64
 }
+
+// connectionSubscriptionID numbers connection subscriptions PROCESS-WIDE, so two clients (or one
+// client reconnecting) can never share an identity. The consumer uses it to reject a batch that
+// belongs to a subscription which has already been superseded.
+var connectionSubscriptionID atomic.Uint64
 
 type CommandClientOptions struct {
 	commands       []int32
@@ -287,6 +299,9 @@ func (c *CommandClient) ConnectWithFD(fd int32) error {
 
 func (c *CommandClient) connect(dial func(context.Context) (*grpc.ClientConn, daemon.StartedServiceClient, error)) error {
 	ctx, cancel := context.WithCancel(context.Background())
+	// A new connection attempt invalidates every stream of the previous one AT ONCE: a handler that
+	// is already running an old batch must not apply it after this point.
+	c.connectionGeneration.Add(1)
 	c.clientAccess.Lock()
 	c.cancel()
 	previousConnection := c.grpcConn
@@ -571,14 +586,29 @@ func (c *CommandClient) handleConnectionsStream(client daemon.StartedServiceClie
 	//   - a RECONNECT, where the platform may still hold rows from the stream that just died. Marking
 	//     the first batch as a reset tells the consumer to discard them before this stream's events
 	//     apply, so a stale row cannot be carried into the new session.
+	// The subscription's identity and the connection it belongs to. The consumer rejects batches
+	// from a subscription that a newer one has superseded, and this goroutine stops delivering at
+	// all once a newer connect has invalidated its generation.
+	generation := c.connectionGeneration.Load()
+	subscription := connectionSubscriptionID.Add(1)
+	stillCurrent := func() bool { return c.connectionGeneration.Load() == generation }
+
 	baselinePending := true
 	for {
 		events, err := stream.Recv()
 		if err != nil {
+			if !stillCurrent() {
+				// A reconnect already replaced this stream; its termination says nothing about the
+				// new state and must not clear it.
+				return
+			}
 			c.handler.Disconnected(E.Cause(err, "connections stream recv").Error())
 			return
 		}
-		libboxEvents, nextBaseline := connectionEventsForDelivery(events, baselinePending)
+		if !stillCurrent() {
+			return
+		}
+		libboxEvents, nextBaseline := connectionEventsForDelivery(events, baselinePending, subscription)
 		baselinePending = nextBaseline
 		c.handler.WriteConnectionEvents(libboxEvents)
 	}
@@ -589,12 +619,15 @@ func (c *CommandClient) handleConnectionsStream(client daemon.StartedServiceClie
 // It is a function rather than two inline statements so the rule can be pinned without a gRPC
 // stream: the batch a consumer receives first must ALWAYS be a reset, because the consumer's duty is
 // to discard whatever it held before this subscription.
-func connectionEventsForDelivery(events *daemon.ConnectionEvents, baselinePending bool) (*ConnectionEvents, bool) {
+func connectionEventsForDelivery(events *daemon.ConnectionEvents, baselinePending bool, subscriptions ...uint64) (*ConnectionEvents, bool) {
 	libboxEvents := connectionEventsFromGRPC(events)
+	if libboxEvents == nil {
+		libboxEvents = &ConnectionEvents{}
+	}
+	if len(subscriptions) > 0 {
+		libboxEvents.subscription = subscriptions[0]
+	}
 	if baselinePending {
-		if libboxEvents == nil {
-			libboxEvents = &ConnectionEvents{}
-		}
 		libboxEvents.Reset = true
 		return libboxEvents, false
 	}
