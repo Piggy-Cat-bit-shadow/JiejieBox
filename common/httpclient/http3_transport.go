@@ -180,17 +180,24 @@ func (t *http3FallbackTransport) roundTripHTTP3(request *http.Request) (*http.Re
 	attempt := t.beginH3Attempt()
 	// Ask the pool first and DO NOT dial. A miss returns ErrNoCachedConn before any connection,
 	// stream or body read exists, so nothing was sent and the request can continue unchanged.
-	response, err, _ := t.issueH3(request, true)
-	if err == nil {
+	probe := t.issueH3(request, true)
+	switch {
+	case probe.err == nil:
 		t.clearH3Broken(authority, attempt)
-		return response, nil
-	}
-	if !errors.Is(err, http3.ErrNoCachedConn) {
+		return probe.response, nil
+	case probe.cacheProbeTimedOut:
+		// The pool had an entry, but it was still DIALING and did not become usable inside this
+		// request's probe window. Waiting longer would spend this request's budget on another
+		// request's handshake. Nothing was sent by this one, so the fallback is safe and the
+		// still-running dial is left alone.
+		return t.h2FallbackRoundTrip(request)
+	case errors.Is(probe.err, http3.ErrNoCachedConn):
+		return t.roundTripHTTP3Cold(request, authority, attempt)
+	default:
 		// A cached connection existed and failed this request.
-		t.recordH3AttemptFailure(request, authority, attempt, err)
-		return t.retryOverH2AfterSentAttempt(request, err)
+		t.recordH3AttemptFailure(request, authority, attempt, probe.err)
+		return t.retryOverH2AfterSentAttempt(request, probe.err)
 	}
-	return t.roundTripHTTP3Cold(request, authority, attempt)
 }
 
 // roundTripHTTP3Cold continues an attempt that found an empty pool.
@@ -212,19 +219,19 @@ func (t *http3FallbackTransport) roundTripHTTP3Cold(request *http.Request, autho
 		// The body cannot be rebuilt. Fall through to a single attempt, which needs only the
 		// original body - still untouched, because nothing has read it.
 	}
-	response, err, sent := t.issueH3(request, false)
-	if err == nil {
+	cold := t.issueH3(request, false)
+	if cold.err == nil {
 		t.clearH3Broken(authority, attempt)
-		return response, nil
+		return cold.response, nil
 	}
-	t.recordH3AttemptFailure(request, authority, attempt, err)
-	if !sent {
+	t.recordH3AttemptFailure(request, authority, attempt, cold.err)
+	if !cold.sent {
 		// No connection was obtained, so no byte of this request could have reached the peer:
 		// safe to re-send over HTTP/2 whatever the method or body. issueH3 left the body
 		// untouched for exactly this case.
 		return t.h2FallbackRoundTrip(request)
 	}
-	return t.retryOverH2AfterSentAttempt(request, err)
+	return t.retryOverH2AfterSentAttempt(request, cold.err)
 }
 
 // retryOverH2AfterSentAttempt re-sends a request whose HTTP/3 leg obtained a connection and then
@@ -254,23 +261,71 @@ func (t *http3FallbackTransport) retryOverH2AfterSentAttempt(request *http.Reque
 // it, which turned "UDP is blocked, use HTTP/2" into a second failure on a closed body. The shield
 // makes this client the owner of the body's lifetime: it is closed here only when this attempt can
 // no longer be re-sent.
-func (t *http3FallbackTransport) issueH3(request *http.Request, onlyCached bool) (*http.Response, error, bool) {
+// h3Issue is the outcome of one HTTP/3 attempt.
+type h3Issue struct {
+	response *http.Response
+	err      error
+	// sent reports that the transport obtained a connection for THIS request, so request bytes
+	// may have reached the peer.
+	sent bool
+	// cacheProbeTimedOut reports that the pool entry this request joined was still DIALING when
+	// the probe window expired. Nothing was sent by this request; the entry was simply not
+	// usable yet.
+	cacheProbeTimedOut bool
+}
+
+// cacheProbeWindow is how long a request may wait for a pool entry that is still dialing before
+// it uses the fallback instead.
+//
+// It is the same window the race path uses to decide that HTTP/3 has had its chance, because it
+// answers the same question: how long may HTTP/3 spend before the fallback starts? A ready cached
+// connection answers immediately, so this window is only ever paid when the entry belongs to
+// another request's in-flight dial.
+func (t *http3FallbackTransport) cacheProbeWindow() time.Duration {
+	if t.fallbackDelay > 0 {
+		return t.fallbackDelay
+	}
+	return 300 * time.Millisecond
+}
+
+// errH3CacheProbeWindow marks a probe that was still waiting for another request's dial when its
+// window expired.
+var errH3CacheProbeWindow = E.New("HTTP/3 cache probe exceeded its window while the pool entry was still dialing")
+
+func (t *http3FallbackTransport) issueH3(request *http.Request, onlyCached bool) h3Issue {
 	hasBody := request.Body != nil && request.Body != http.NoBody
 	attemptRequest := request
 	if hasBody {
 		attemptRequest = request.Clone(request.Context())
 		attemptRequest.Body = &shieldedRequestBody{ReadCloser: request.Body}
 	}
-	var (
-		response *http.Response
-		err      error
-		sent     bool
-	)
+	var issue h3Issue
 	if onlyCached {
-		response, err = t.h3Transport.RoundTripOpt(attemptRequest, http3.RoundTripOpt{OnlyCachedConn: true})
+		var (
+			established atomic.Bool
+			timedOut    atomic.Bool
+		)
+		probeCtx, cancelProbe := context.WithCancel(attemptRequest.Context())
+		timer := time.AfterFunc(t.cacheProbeWindow(), func() {
+			if !established.Load() {
+				timedOut.Store(true)
+				cancelProbe()
+			}
+		})
+		defer timer.Stop()
+		attemptRequest = attemptRequest.WithContext(httptrace.WithClientTrace(probeCtx, &httptrace.ClientTrace{
+			GotConn: func(httptrace.GotConnInfo) { established.Store(true) },
+		}))
+		issue.response, issue.err = t.h3Transport.RoundTripOpt(attemptRequest, http3.RoundTripOpt{OnlyCachedConn: true})
 		// ErrNoCachedConn is decided before a connection or stream exists; every other outcome
 		// here had a cached connection to fail on.
-		sent = err == nil || !errors.Is(err, http3.ErrNoCachedConn)
+		issue.sent = issue.err == nil || !errors.Is(issue.err, http3.ErrNoCachedConn)
+		if timedOut.Load() && !established.Load() {
+			// The probe was a WAIT on somebody else's dial, not an attempt of this request.
+			issue.cacheProbeTimedOut = true
+			issue.sent = false
+			issue.err = E.Errors(errH3CacheProbeWindow, context.Canceled)
+		}
 	} else {
 		var established atomic.Bool
 		attemptCtx, cancelAttempt := context.WithCancel(attemptRequest.Context())
@@ -298,21 +353,21 @@ func (t *http3FallbackTransport) issueH3(request *http.Request, onlyCached bool)
 		attemptRequest = attemptRequest.WithContext(httptrace.WithClientTrace(attemptCtx, &httptrace.ClientTrace{
 			GotConn: func(httptrace.GotConnInfo) { established.Store(true) },
 		}))
-		response, err = t.h3Transport.RoundTrip(attemptRequest)
+		issue.response, issue.err = t.h3Transport.RoundTrip(attemptRequest)
 		// GotConn is reported after the connection (and its handshake) exists and before any
 		// stream does. A dial that failed never reaches it, which is the proof used above.
-		sent = established.Load()
-		if gaveUp.Load() && err != nil {
+		issue.sent = established.Load()
+		if gaveUp.Load() && issue.err != nil {
 			// Name the cause: the transport's own error is a context cancellation that this
 			// package produced, and the caller must not read it as its own deadline.
-			err = E.Cause(err, "HTTP/3 attempt exceeded ", h3EstablishBudget)
+			issue.err = E.Cause(issue.err, "HTTP/3 attempt exceeded ", h3EstablishBudget)
 		}
 	}
-	if hasBody && err != nil && sent {
+	if hasBody && issue.err != nil && issue.sent {
 		// The body may have been consumed by the failed attempt, so it cannot carry a retry.
 		request.Body.Close()
 	}
-	return response, err, sent
+	return issue
 }
 
 // shieldedRequestBody absorbs the HTTP/3 transport's error-path Close while an attempt still owns
