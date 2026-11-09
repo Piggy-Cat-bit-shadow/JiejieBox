@@ -72,6 +72,10 @@ type StartedService struct {
 	// the directory could not be opened" instead of "no store".
 	recoveryDirectory string
 	recoveryOpenError error
+	// persistedReferences are the exact artifact versions of the configuration the store would
+	// recover right now. They are retained during collection even with no lease, because the next
+	// recovery may be the one that needs them.
+	persistedReferences map[string]string
 	// lastServiceChange is what the last apply attempt planned and did; serviceChangeAccess
 	// guards it. It is the change plan's report surface on this side of the bridge.
 	lastServiceChange   *ServiceChangeReport
@@ -450,7 +454,7 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 		s.resetLogs()
 	}
 	s.serviceAccess.Unlock()
-	instance, err := s.buildAndStart(ctx, targetOptions, targetRevision, oldInstance != nil)
+	instance, err := s.buildAndStart(ctx, targetOptions, targetRevision, oldInstance != nil, nil, s.persistedReferenceSnapshot())
 	if err == nil && instance == nil {
 		// The start was interrupted; buildAndStart has already cleaned up, and the original
 		// path returned nil without touching the status, which this preserves. Nothing is left
@@ -515,8 +519,8 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 //
 // It returns (nil, nil) when the start was interrupted and (nil, err) when it failed, having
 // closed the failed Box and cleared s.instance in both cases. The caller owns the status.
-func (s *StartedService) buildAndStart(ctx context.Context, targetOptions option.Options, targetRevision string, reloading bool) (*Instance, error) {
-	instance, err := s.newInstance(ctx, targetOptions, targetRevision, reloading)
+func (s *StartedService) buildAndStart(ctx context.Context, targetOptions option.Options, targetRevision string, reloading bool, pinnedReferences map[string]string, retainedReferences map[string]string) (*Instance, error) {
+	instance, err := s.newInstance(ctx, targetOptions, targetRevision, reloading, pinnedReferences, retainedReferences)
 	if err != nil {
 		return nil, err
 	}
@@ -555,7 +559,7 @@ func (s *StartedService) buildAndStart(ctx context.Context, targetOptions option
 // It returns the revision that is actually running afterwards and whether a Box is running again,
 // so the caller's report names the recovered document instead of the one that failed.
 func (s *StartedService) tryRecoverToLastGood(ctx context.Context, reloading bool, failedProfile string, options *OverrideOptions, failure error) (string, bool) {
-	lastGood, usable := s.recoverLastGood(failedProfile)
+	lastGood, lastGoodRevision, pinnedReferences, usable := s.recoverLastGood(failedProfile)
 	if !usable {
 		return "", false
 	}
@@ -563,8 +567,7 @@ func (s *StartedService) tryRecoverToLastGood(ctx context.Context, reloading boo
 	if err != nil {
 		return "", false
 	}
-	lastGoodRevision := configRevisionOf(lastGood)
-	instance, err := s.buildAndStart(ctx, lastGoodOptions, lastGoodRevision, reloading)
+	instance, err := s.buildAndStart(ctx, lastGoodOptions, lastGoodRevision, reloading, pinnedReferences, s.persistedReferenceSnapshot())
 	if err != nil || instance == nil {
 		return "", false
 	}
