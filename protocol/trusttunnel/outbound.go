@@ -214,6 +214,19 @@ func (h *Outbound) InterfaceUpdated(ctx context.Context) {
 	h.client.Reset()
 }
 
+// CloseIdleConnections drops the session only when no stream is using it. It is
+// the TRIM action of the resource contract: it never dials.
+func (h *Outbound) CloseIdleConnections() {
+	h.client.CloseIdleConnections()
+}
+
+// RetireSuspect is the reuse boundary: new streams open a fresh session while
+// the streams already on the old one finish, and the old session closes when
+// the last of them returns.
+func (h *Outbound) RetireSuspect() {
+	h.client.RetireSuspect()
+}
+
 func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage == adapter.StartStateInitialize {
 		scope.Add(h.Close)
