@@ -1556,6 +1556,20 @@ func (b *urlTestBatch) measure(ctx context.Context, link string, detour adapter.
 // a key without the epoch would let a probe after a network change be served by one from before
 // it. A context without a network manager yields epoch zero, which simply means no sharing
 // across generations rather than a wrong share.
+//
+// # The dimensions left empty, and why each is empty rather than guessed
+//
+//   - Instance: the registry is the scope. The share lives on the Box's context, so two Boxes
+//     cannot reach one registry; a name here would only make two equivalent callers spell the key
+//     differently and lose the share.
+//   - Path: the outbound passed to Measure IS the leaf, and its tag names the route it dials. A
+//     nested group member is expanded to its leaves before it gets here (see test()).
+//   - Method / TLSFingerprint: this measurement implementation performs HEAD with one fixed TLS
+//     policy; MeasureOptions has no knob for either. They stay empty so there is one spelling.
+//
+// Any change that lets a caller vary one of those must fill the field in the same change: an empty
+// dimension would then let two different questions share one answer. TestTheProductionMeasurementKey
+// NamesEveryFactThatCanVary pins what is actually built here.
 func (b *urlTestBatch) measurementKey(ctx context.Context, link string, detour adapter.Outbound) *urltest.MeasurementKey {
 	var epoch uint64
 	if manager := service.FromContext[adapter.NetworkManager](ctx); manager != nil {
