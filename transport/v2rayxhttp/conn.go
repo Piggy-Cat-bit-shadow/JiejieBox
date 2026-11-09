@@ -1003,16 +1003,28 @@ func (c *packetConn) Write(b []byte) (int, error) {
 // that continues past the hole.
 type packetUplink struct {
 	conn *packetConn
+	// budget is the transport-wide shared pool this stream draws from (see
+	// uplink_budget.go). It is nil for a Client that was assembled without one,
+	// which keeps the per-stream bound as the only limit — the same convention
+	// the resource guard uses for "no guard, old path".
+	budget *sharedUplinkBudget
 
 	access   sync.Mutex
 	notEmpty *sync.Cond
-	notFull  *sync.Cond
+	// wakeCh is the write path's wait primitive: broadcastWake closes it and
+	// installs a fresh one, so every writer waiting on the previous channel wakes
+	// at once. It exists instead of a sync.Cond on access because the pool must be
+	// able to wake readers without taking access from a writer that already holds
+	// a different uplink's lock (see the lock-order note in uplink_budget.go).
+	wakeMu sync.Mutex
+	wakeCh chan struct{}
 	// pending holds the bytes accepted from Write and not yet handed to a POST.
 	// It is a byte queue rather than a list of write-sized slices so that a
 	// batch is a subslice of it: no copy is made on the way to the wire.
 	pending []byte
 	// maxPending bounds the queue. A writer that would exceed it waits, so a
 	// stalled path applies backpressure instead of growing memory without limit.
+	// The shared budget bounds the SUM across streams; this bounds one.
 	maxPending int
 	closed     bool
 	err        error
@@ -1069,6 +1081,11 @@ type packetUplinkStats struct {
 	AcceptedBytes     uint64
 	PostedBytes       uint64
 	AbandonedBytes    uint64
+	// SharedHeldBytes is what this stream holds in the transport-wide shared
+	// pool, and it must equal PendingBytes+InFlightBytes while a pool is in use:
+	// the two numbers are one charge seen from two owners. Zero means the uplink
+	// was built without a shared pool, so the per-stream bound is the only one.
+	SharedHeldBytes int
 }
 
 // stats reads the accounting under the queue lock.
@@ -1076,6 +1093,10 @@ func (u *packetUplink) stats() packetUplinkStats {
 	u.access.Lock()
 	defer u.access.Unlock()
 	retained := cap(u.pending)
+	// held() takes the pool's own lock, which is always ordered AFTER this one
+	// (see uplink_budget.go), so snapshotting both here is safe and gives one
+	// consistent pair.
+	held := u.budget.held(u)
 	return packetUplinkStats{
 		MaxPending:        u.maxPending,
 		PendingBytes:      len(u.pending),
@@ -1086,6 +1107,7 @@ func (u *packetUplink) stats() packetUplinkStats {
 		AcceptedBytes:     u.acceptedBytes,
 		PostedBytes:       u.postedBytes,
 		AbandonedBytes:    u.abandonedBytes,
+		SharedHeldBytes:   held,
 	}
 }
 
@@ -1130,81 +1152,193 @@ const (
 	packetUpPendingCeiling = 8 * 1024 * 1024
 )
 
-func newPacketUplink(conn *packetConn) *packetUplink {
-	uplink := &packetUplink{conn: conn, done: make(chan struct{})}
-	uplink.notEmpty = sync.NewCond(&uplink.access)
-	uplink.notFull = sync.NewCond(&uplink.access)
-	// Two posts' worth of bytes: one batch can be in flight while the next
-	// accumulates, and a producer faster than the path still blocks instead of
-	// buffering without bound.
-	bound := conn.client.meta.scMaxEachPostBytes.max * 2
+// packetUpPendingBound returns the per-stream queue bound for the configured
+// sc_max_each_post_bytes.
+//
+// Two posts' worth of bytes: one batch can be in flight while the next
+// accumulates, and a producer faster than the path still blocks instead of
+// buffering without bound. The floor and ceiling keep an unusually small or large
+// configured post size from turning the queue into a trickle or a reservoir.
+//
+// This is the PER-STREAM bound. The transport-wide bound is the shared pool in
+// uplink_budget.go, which charges the same logical bytes and keeps the sum across
+// streams bounded; both apply at once.
+func packetUpPendingBound(meta metaConfig) int {
+	bound := meta.scMaxEachPostBytes.max * 2
 	if bound < packetUpPendingFloor {
 		bound = packetUpPendingFloor
 	}
 	if bound > packetUpPendingCeiling {
 		bound = packetUpPendingCeiling
 	}
-	uplink.maxPending = bound
+	return bound
+}
+
+func newPacketUplink(conn *packetConn) *packetUplink {
+	uplink := &packetUplink{
+		conn:   conn,
+		budget: conn.client.budget,
+		done:   make(chan struct{}),
+		wakeCh: make(chan struct{}),
+	}
+	uplink.notEmpty = sync.NewCond(&uplink.access)
+	uplink.maxPending = packetUpPendingBound(conn.client.meta)
+	// Register before the flusher starts and before any writer can charge: the
+	// pool's per-stream totals are keyed by this pointer.
+	uplink.budget.register(uplink)
 	return uplink
 }
 
-// write appends b to the queue, waiting while the queue is full.
+// broadcastWake wakes every writer parked on this uplink. The channel is closed
+// and replaced, so all waiters wake together; a waiter that captured the previous
+// channel cannot miss an event that happened after it captured it.
+func (u *packetUplink) broadcastWake() {
+	u.wakeMu.Lock()
+	close(u.wakeCh)
+	u.wakeCh = make(chan struct{})
+	u.wakeMu.Unlock()
+}
+
+// currentWake returns the channel the next wait should park on. It must be called
+// BEFORE the state that would make the writer wait is read, so an event landing in
+// between closes the captured channel instead of being lost.
+func (u *packetUplink) currentWake() <-chan struct{} {
+	u.wakeMu.Lock()
+	defer u.wakeMu.Unlock()
+	return u.wakeCh
+}
+
+// takeBudget charges want bytes from the shared pool, or returns want unchanged
+// when the uplink has no pool (per-stream bound only).
+func (u *packetUplink) takeBudget(want int, small bool) int {
+	if u.budget == nil {
+		return want
+	}
+	return u.budget.take(u, want, small)
+}
+
+// releaseBudgetLocked returns n charged bytes to the pools. Caller holds u.access;
+// the pool's lock is always taken after it.
+func (u *packetUplink) releaseBudgetLocked(n int) {
+	if u.budget != nil && n > 0 {
+		u.budget.release(u, n)
+	}
+}
+
+// finishBudget detaches the stream from the pool: the flusher has exited, so
+// nothing it held can still be posted. Any charge still held is a defect and the
+// pool counts it as leftover rather than silently dropping it.
+func (u *packetUplink) finishBudget() {
+	if u.budget == nil {
+		return
+	}
+	u.budget.unregister(u)
+}
+
+// write appends b to the queue, waiting while the queue is full or while the
+// transport's shared byte pool has nothing left to charge.
 //
 // # Why the bound is inside ONE write, not only between writes
 //
 // The queue is a byte budget, not a slice of caller-sized writes. A Write larger
-// than the whole budget is appended IN CHUNKS: the loop accepts what fits,
-// signals the flusher, and waits for room before taking the next chunk. The
-// queue therefore never holds more than maxPending, and the call still returns
-// the full length once every byte has been accepted - so callers that treat a
-// short write as an error keep working.
+// than the whole budget is appended IN CHUNKS: the loop accepts what fits, signals
+// the flusher, and waits for room before taking the next chunk. The queue
+// therefore never holds more than maxPending, and the call still returns the full
+// length once every byte has been accepted - so callers that treat a short write
+// as an error keep working.
 //
-// The old shape accepted a whole oversized write whenever the queue happened to
-// be empty, which meant a single large Write could sit in memory regardless of
+// The old shape accepted a whole oversized write whenever the queue happened to be
+// empty, which meant a single large Write could sit in memory regardless of
 // maxPending: the bound was real for many small writes and fictional for one
 // large one.
+//
+// # Two bounds, one charge
+//
+// A chunk is charged to the shared pool and appended in the same critical section
+// (takeBudget then append). Charging and keeping are therefore one step: a writer
+// that waits holds no unspent charge, so a closed or failed stream has nothing
+// outstanding to unwind. The pool is the transport-wide bound; maxPending stays the
+// per-stream one, and the stream still stops at whichever binds first.
 func (u *packetUplink) write(b []byte) (int, error) {
 	if len(b) == 0 {
 		return 0, nil
 	}
-	u.access.Lock()
+	// The size class is decided once, from the caller's write, not per chunk: a
+	// small write is the control path and may use the reserve, while a bulk write
+	// stays in the main pool no matter how its chunks land.
+	small := len(b) <= packetUpSmallWrite
 	written := 0
 	for {
+		u.access.Lock()
+		wake := u.currentWake()
 		if u.err != nil {
 			err := u.err
 			u.access.Unlock()
+			// Leaving without a charge: do not keep a dead stream at the head of
+			// the pool's queue.
+			u.budget.withdraw(u)
 			return written, err
 		}
 		if u.closed {
 			u.access.Unlock()
+			u.budget.withdraw(u)
 			return written, net.ErrClosed
 		}
 		available := u.maxPending - len(u.pending)
-		if available > 0 {
-			accepted := len(b) - written
-			if accepted > available {
-				accepted = available
+		if available == 0 {
+			// The stream's OWN queue is the limit right now, not the pool. Leave
+			// the pool's line while parked: a stream whose POST is wedged must not
+			// hold the pool's head against streams that could use the capacity it
+			// is not asking for.
+			u.access.Unlock()
+			u.budget.withdraw(u)
+			select {
+			case <-wake:
+			case <-u.done:
 			}
-			u.pending = append(u.pending, b[written:written+accepted]...)
-			written += accepted
-			u.acceptedBytes += uint64(accepted)
+			continue
+		}
+		want := len(b) - written
+		if want > available {
+			want = available
+		}
+		granted := u.takeBudget(want, small)
+		if granted > 0 {
+			u.pending = append(u.pending, b[written:written+granted]...)
+			written += granted
+			u.acceptedBytes += uint64(granted)
 			if len(u.pending) > u.pendingHighWater {
 				u.pendingHighWater = len(u.pending)
 			}
 			u.lastAppend = timeNow()
 			u.notEmpty.Signal()
-			if written == len(b) {
-				u.access.Unlock()
-				return written, nil
-			}
-			// More to append than the queue can hold: give the flusher the chunk
-			// just accepted and wait for it to make room. Waiting under this lock
-			// is what the existing full-queue path already does; the flusher never
-			// needs u.access while it is posting.
-			u.notFull.Wait()
+		}
+		complete := written == len(b)
+		u.access.Unlock()
+		if granted > 0 {
+			// A grant may have moved the pool's head (the granted stream left the
+			// waiters list), so the next waiter has to be told to look again.
+			u.budget.wakeWaiters()
+		}
+		if complete {
+			return written, nil
+		}
+		if granted > 0 {
+			// Progress was made: look again before parking. A grant only takes
+			// what was available at that instant, and a partial grant leaves this
+			// writer OUT of the pool's waiters list — parking here would make the
+			// rest of this write depend on a wake-up addressed to the other
+			// waiters, which may never come.
 			continue
 		}
-		u.notFull.Wait()
+		// Wait for one of: a release/head change in the pool, room in this
+		// stream's queue, or this stream's flusher exiting. The channel was
+		// captured before any of those states was read, so an event that lands
+		// between the read and the wait closes the channel instead of being lost.
+		select {
+		case <-wake:
+		case <-u.done:
+		}
 	}
 }
 
@@ -1252,6 +1386,9 @@ func shouldGatherUpload(nextSeq uint64, pendingBytes int) bool {
 // run is the flusher: take a batch, post it, repeat until closed and drained.
 func (u *packetUplink) run() {
 	defer close(u.done)
+	// The flusher's exit is when this stream stops existing for the pool: every
+	// charge is now either settled (posted/abandoned) or a defect the pool counts.
+	defer u.finishBudget()
 	for {
 		u.access.Lock()
 		for len(u.pending) == 0 && !u.closed && u.err == nil {
@@ -1319,7 +1456,9 @@ func (u *packetUplink) run() {
 			u.inFlightHighWater = u.inFlightBytes
 		}
 		u.access.Unlock()
-		u.notFull.Broadcast()
+		// Queue room is available now: a writer that was parked on it (not on the
+		// pool) has to be told to look again.
+		u.broadcastWake()
 
 		postErr := u.sendPacket(payload)
 		u.access.Lock()
@@ -1333,7 +1472,13 @@ func (u *packetUplink) run() {
 			// (a post owned them) and must not be posted (a seq hole follows).
 			u.abandonedBytes += uint64(len(payload))
 		}
+		// Settlement: whether the post was delivered or lost, the bytes it owned
+		// stop being retained here, so they stop being charged here. Posted and
+		// abandoned are two outcomes of ONE ownership release, not two code paths
+		// that each have to remember the pool.
+		u.releaseBudgetLocked(len(payload))
 		u.access.Unlock()
+		u.budget.wakeWaiters()
 		if postErr != nil {
 			u.fail(postErr)
 			return
@@ -1461,7 +1606,7 @@ func (u *packetUplink) close(budget time.Duration) {
 	u.access.Lock()
 	u.closed = true
 	u.notEmpty.Broadcast()
-	u.notFull.Broadcast()
+	u.broadcastWake()
 	u.access.Unlock()
 	select {
 	case <-u.done:
@@ -1478,7 +1623,7 @@ func (u *packetUplink) abort(err error) {
 	u.closed = true
 	u.abandonPendingLocked()
 	u.notEmpty.Broadcast()
-	u.notFull.Broadcast()
+	u.broadcastWake()
 	u.access.Unlock()
 }
 
@@ -1492,7 +1637,7 @@ func (u *packetUplink) fail(err error) {
 	}
 	u.abandonPendingLocked()
 	u.notEmpty.Broadcast()
-	u.notFull.Broadcast()
+	u.broadcastWake()
 	u.access.Unlock()
 }
 
@@ -1505,14 +1650,17 @@ func (u *packetUplink) fail(err error) {
 // of memory for a queue nothing drains, AND report them as PendingBytes — a
 // snapshot claiming deliverable work that does not exist. Releasing the array
 // and counting the bytes is what makes the ledger's zeroing honest instead of
-// just tidy. Caller must hold u.access.
+// just tidy. The same step returns their charge to the shared pool, so the
+// transport-wide total drops when the memory does. Caller must hold u.access.
 func (u *packetUplink) abandonPendingLocked() {
 	if len(u.pending) == 0 {
 		u.pending = nil
 		return
 	}
-	u.abandonedBytes += uint64(len(u.pending))
+	abandoned := len(u.pending)
+	u.abandonedBytes += uint64(abandoned)
 	u.pending = nil
+	u.releaseBudgetLocked(abandoned)
 }
 
 func (c *packetConn) Close() error {
