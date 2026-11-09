@@ -825,16 +825,16 @@ func (c *CommandClient) GetStartedAt() (int64, error) {
 // configurationJSON returns the JSON document, and an EMPTY string (no error) when the daemon
 // predates the call: a caller must be able to tell "old kernel, feature unavailable" from
 // "new kernel, no recovery yet" (which is the JSON literal null).
-func (c *CommandClient) configurationJSON(call func(context.Context, daemon.StartedServiceClient) (*daemon.JSONDocument, error)) (string, error) {
-	return callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (string, error) {
+func (c *CommandClient) configurationJSON(call func(context.Context, daemon.StartedServiceClient) (*daemon.JSONDocument, error)) (*StringBox, error) {
+	return callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (*StringBox, error) {
 		document, err := call(ctx, client)
 		if err != nil {
 			if status.Code(err) == codes.Unimplemented {
-				return "", nil
+				return wrapString(""), nil
 			}
-			return "", err
+			return nil, err
 		}
-		return document.Json, nil
+		return wrapString(document.Json), nil
 	})
 }
 
