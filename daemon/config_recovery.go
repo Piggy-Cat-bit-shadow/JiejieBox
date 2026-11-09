@@ -72,10 +72,24 @@ const (
 // recovery returns to the stored last-good document. Reporting that distinction is the difference
 // between "committed" and "committed, persistence degraded" - and it used to be invisible here:
 // both a refused Stage and a Commit that wrote nothing were discarded.
+//
+// A configured directory that could not even be OPENED is a degradation too, not "no store": the
+// caller asked for recovery and did not get it, and the reason has to say so instead of reporting
+// the same state as a daemon that never asked for a store.
 func (s *StartedService) persistRunningConfig(profile string) (status string, warning string) {
-	store := s.configStore()
+	s.configRecoveryAccess.Lock()
+	store := s.configRecovery
+	directory := s.recoveryDirectory
+	openError := s.recoveryOpenError
+	s.configRecoveryAccess.Unlock()
 	if store == nil {
-		return persistenceNotConfigured, ""
+		if directory == "" {
+			return persistenceNotConfigured, ""
+		}
+		if openError != nil {
+			return persistenceDegraded, "the configured recovery directory could not be opened: " + openError.Error()
+		}
+		return persistenceDegraded, "the configured recovery directory is not open"
 	}
 	staged, err := store.Stage([]byte(profile))
 	if err != nil {
@@ -151,6 +165,10 @@ func validConfigDocument(content []byte) error {
 }
 
 // openConfigRecovery prepares the store when the caller configured a directory.
+//
+// A directory that cannot be opened is REMEMBERED, not swallowed: the caller asked for recovery, and
+// a report that says "no store configured" would hide a configuration mistake behind the same state
+// as a daemon that never asked for one.
 func (s *StartedService) openConfigRecovery(directory string) {
 	if directory == "" {
 		return
@@ -159,11 +177,12 @@ func (s *StartedService) openConfigRecovery(directory string) {
 		Validator: validConfigDocument,
 		Context:   s.ctx,
 	})
-	if err != nil {
-		return
-	}
 	s.configRecoveryAccess.Lock()
-	s.configRecovery = store
+	s.recoveryDirectory = directory
+	s.recoveryOpenError = err
+	if err == nil {
+		s.configRecovery = store
+	}
 	s.configRecoveryAccess.Unlock()
 }
 

@@ -94,6 +94,10 @@ type ServiceChangeReport struct {
 	// Retained is true when the configuration that was running before the attempt is still the one
 	// running: a rejected candidate, or a failure the last-good recovery brought back.
 	Retained bool `json:"retained"`
+	// ActiveRevision is the revision that is actually running after the attempt. It is the target
+	// when the target was applied or rebuilt, the stored last-good revision when a recovery ran,
+	// and the previous revision when the attempt left the old configuration in place.
+	ActiveRevision string `json:"activeRevision,omitempty"`
 	// Persistence is what the last-good store did with the configuration that now runs: "saved",
 	// "degraded" (running, but a later failed start cannot return to it) or "not_configured".
 	Persistence string `json:"persistence,omitempty"`

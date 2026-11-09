@@ -67,6 +67,11 @@ type StartedService struct {
 	configRecoveryAccess sync.Mutex
 	lastConfigRecovery   *ConfigRecoveryInfo
 	recoverToLastGood    bool
+	// recoveryDirectory is the directory the caller configured (empty when none was configured) and
+	// recoveryOpenError is why it is not open. Both are kept so a report can say "degraded, because
+	// the directory could not be opened" instead of "no store".
+	recoveryDirectory string
+	recoveryOpenError error
 	// lastServiceChange is what the last apply attempt planned and did; serviceChangeAccess
 	// guards it. It is the change plan's report surface on this side of the bridge.
 	lastServiceChange   *ServiceChangeReport
@@ -354,11 +359,13 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 	// never going to replace the running one, so it is refused here and the old Box keeps running.
 	targetOptions, err := s.parseEffectiveOptions(ctx, profileContent, options)
 	if err != nil {
+		_, runningRevision, running := s.runningDocumentSnapshot()
 		s.recordServiceChange(&ServiceChangeReport{
-			Plan:     ServiceChangePlan{TargetRevision: configRevisionOf(profileContent)},
-			Status:   ServiceChangeStatusFailed,
-			Retained: s.runningInstance() != nil,
-			Reason:   err.Error(),
+			Plan:           ServiceChangePlan{TargetRevision: configRevisionOf(profileContent)},
+			Status:         ServiceChangeStatusFailed,
+			Retained:       running,
+			ActiveRevision: runningRevision,
+			Reason:         err.Error(),
 		})
 		return err
 	}
@@ -370,6 +377,7 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 		// running Box can change in place, so the Box and its connections stay.
 		report, applied := s.tryLiveOnlyChange(plan, targetOptions)
 		if applied {
+			report.ActiveRevision = targetRevision
 			if report.Status == ServiceChangeStatusAppliedLive {
 				report.Persistence, report.PersistenceWarning = s.persistRunningConfig(profileContent)
 			}
@@ -411,21 +419,27 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 	if err == nil && instance == nil {
 		// The start was interrupted; buildAndStart has already cleaned up, and the original
 		// path returned nil without touching the status, which this preserves.
-		s.recordServiceChange(&ServiceChangeReport{Plan: plan, Status: ServiceChangeStatusInterrupted})
+		s.recordServiceChange(&ServiceChangeReport{Plan: plan, Status: ServiceChangeStatusInterrupted, ActiveRevision: plan.CurrentRevision})
 		return nil
 	}
 	if err != nil {
 		// C05: with a store configured, a failed start recovers to the last-good profile and
 		// reports it; without one, nothing about the failure changes.
-		if s.tryRecoverToLastGood(ctx, oldInstance != nil, profileContent, options, err) {
-			s.recordServiceChange(&ServiceChangeReport{Plan: plan, Status: ServiceChangeStatusRecovered, Retained: true, Reason: err.Error()})
+		if recoveredRevision, recovered := s.tryRecoverToLastGood(ctx, oldInstance != nil, profileContent, options, err); recovered {
+			s.recordServiceChange(&ServiceChangeReport{
+				Plan: plan, Status: ServiceChangeStatusRecovered, Retained: true,
+				ActiveRevision: recoveredRevision, Reason: err.Error(),
+			})
 			return nil
 		}
 		s.discardPendingCandidate()
 		s.serviceAccess.Lock()
 		s.updateStatusError(err)
 		s.serviceAccess.Unlock()
-		s.recordServiceChange(&ServiceChangeReport{Plan: plan, Status: ServiceChangeStatusFailed, Reason: err.Error()})
+		s.recordServiceChange(&ServiceChangeReport{
+			Plan: plan, Status: ServiceChangeStatusFailed,
+			ActiveRevision: plan.CurrentRevision, Reason: err.Error(),
+		})
 		return err
 	}
 	s.serviceAccess.Lock()
@@ -435,7 +449,7 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 	runtimeDebug.FreeOSMemory()
 	// What the caller asked for is now running; the plan says whether a rebuild was required to
 	// get there or whether the document change was one the running Box could have absorbed.
-	report := ServiceChangeReport{Plan: plan, Status: ServiceChangeStatusRestarted, RestartRequired: plan.RestartRequired}
+	report := ServiceChangeReport{Plan: plan, Status: ServiceChangeStatusRestarted, RestartRequired: plan.RestartRequired, ActiveRevision: targetRevision}
 	if !plan.Started {
 		report.Status = ServiceChangeStatusStarted
 	}
@@ -487,19 +501,21 @@ func (s *StartedService) buildAndStart(ctx context.Context, targetOptions option
 }
 
 // tryRecoverToLastGood starts the stored last-good profile after a failure and records it.
-// It returns true only when a Box is running again.
-func (s *StartedService) tryRecoverToLastGood(ctx context.Context, reloading bool, failedProfile string, options *OverrideOptions, failure error) bool {
+// It returns the revision that is actually running afterwards and whether a Box is running again,
+// so the caller's report names the recovered document instead of the one that failed.
+func (s *StartedService) tryRecoverToLastGood(ctx context.Context, reloading bool, failedProfile string, options *OverrideOptions, failure error) (string, bool) {
 	lastGood, usable := s.recoverLastGood(failedProfile)
 	if !usable {
-		return false
+		return "", false
 	}
 	lastGoodOptions, err := s.parseEffectiveOptions(ctx, lastGood, options)
 	if err != nil {
-		return false
+		return "", false
 	}
-	instance, err := s.buildAndStart(ctx, lastGoodOptions, configRevisionOf(lastGood), reloading)
+	lastGoodRevision := configRevisionOf(lastGood)
+	instance, err := s.buildAndStart(ctx, lastGoodOptions, lastGoodRevision, reloading)
 	if err != nil || instance == nil {
-		return false
+		return "", false
 	}
 	s.recordConfigRecovery(failedProfile, lastGood, failure)
 	s.serviceAccess.Lock()
@@ -507,7 +523,7 @@ func (s *StartedService) tryRecoverToLastGood(ctx context.Context, reloading boo
 	s.updateStatus(ServiceStatus_STARTED)
 	s.serviceAccess.Unlock()
 	runtimeDebug.FreeOSMemory()
-	return true
+	return lastGoodRevision, true
 }
 
 // Close releases the service's subscribers. It is idempotent and safe to call concurrently.
