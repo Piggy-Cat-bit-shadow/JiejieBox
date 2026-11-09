@@ -201,6 +201,73 @@ func withH3EstablishBudget(t *testing.T, budget time.Duration) {
 	t.Cleanup(func() { h3EstablishBudget = previous })
 }
 
+// TestRequestDoesNotWaitForAnotherRequestsDial is the pool half of A3.
+//
+// The HTTP/3 pool keys connections by host, and an entry whose dial is still running is still an
+// entry. A request that arrives during that dial could therefore wait for the whole handshake -
+// spending its own budget on another request's attempt - before its fallback even started. The
+// probe now has the same window the race uses, and a probe that expires while the entry is still
+// dialing sends THIS request to the fallback and leaves the dial alone.
+func TestRequestDoesNotWaitForAnotherRequestsDial(t *testing.T) {
+	dialEntered := make(chan struct{})
+	release := make(chan struct{})
+	var (
+		enteredOnce sync.Once
+		releaseOnce sync.Once
+	)
+	releaseDial := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(releaseDial)
+
+	h2Server, h2Transport := startRetrySafetyH2Server(t, okHandler)
+	transport := newRetrySafetyTransport(h2Transport, func(ctx context.Context, _ *stdTLS.Config, _ *quic.Config) (*quic.Conn, error) {
+		enteredOnce.Do(func() { close(dialEntered) })
+		select {
+		case <-release:
+			return nil, errors.New("dial released")
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}, 30*time.Millisecond)
+
+	// Request A opens the pool entry and holds its dial open.
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		request, err := http.NewRequest(http.MethodPost, "https://pool.example:443/first", strings.NewReader("first"))
+		if err != nil {
+			return
+		}
+		response, err := transport.RoundTrip(request)
+		if err == nil {
+			_ = response.Body.Close()
+		}
+	}()
+	<-dialEntered
+
+	// Request B arrives while A's dial is still running, with a caller budget far larger than
+	// either window: only the probe window can end its wait.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	payload := "second"
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://pool.example:443/second", strings.NewReader(payload))
+	require.NoError(t, err)
+
+	start := time.Now()
+	response, err := transport.RoundTrip(request)
+	elapsed := time.Since(start)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	require.Less(t, elapsed, time.Second,
+		"a request must not wait for another request's dial; it has to reach its own fallback")
+	require.Equal(t, []string{payload}, h2Server.receivedBodies(),
+		"and it must reach HTTP/2 exactly once, with its body intact")
+	require.False(t, transport.h3Broken("pool.example:443"),
+		"waiting for someone else's dial is not evidence about the peer's HTTP/3")
+
+	releaseDial()
+	<-firstDone
+}
+
 // TestColdH3AttemptGivesUpWithinItsOwnBudget is A3 at the parent's level.
 //
 // A cold attempt can spend the CALLER's whole budget inside the HTTP/3 transport: the pool
