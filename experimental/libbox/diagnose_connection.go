@@ -123,9 +123,17 @@ type dialOutcome struct {
 // runConnectionTest is the bounded runner, separated from the gomobile entry so it can be
 // driven with a fake path and a caller context.
 func runConnectionTest(ctx context.Context, path connectionTestPath, root string, network string, target string) connectionTestReport {
+	return runConnectionTestWithEmitter(ctx, path, root, network, target, nil)
+}
+
+// runConnectionTestWithEmitter runs the test against a caller-supplied emitter, so a live
+// subscriber and the final report describe the same run.
+func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, root string, network string, target string, emitter *connectionTestEmitter) (report connectionTestReport) {
 	started := time.Now()
-	report := connectionTestReport{Root: root, Network: network, Target: target}
-	emitter := newConnectionTestEmitter(defaultEmitterBounds(), started)
+	report = connectionTestReport{Root: root, Network: network, Target: target}
+	if emitter == nil {
+		emitter = newConnectionTestEmitter(defaultEmitterBounds(), started)
+	}
 	// Close finalises the stream on EVERY return path, and the snapshot is attached to the
 	// report: a caller that never subscribed still gets the narrative, and a subscriber that
 	// did is guaranteed an end.
@@ -329,4 +337,63 @@ func outcomeForStage(status string) connectionTestOutcome {
 	default:
 		return outcomeRunning
 	}
+}
+
+// ConnectionTestSink receives the narrative of a running connection test.
+//
+// A sink that blocks only delays ITS OWN delivery: the test publishes without waiting and the
+// queue drops what it cannot hold, so a slow platform cannot stall or extend the diagnostic.
+type ConnectionTestSink interface {
+	Emit(event string)
+}
+
+// ConnectionTestSubscribe runs one connection test and delivers its events to sink as they are
+// produced, returning the final report. The sink sees the begin first and the end last; a sink
+// that cannot keep up loses events, which the report records as a dropped finding.
+func (s *CommandServer) ConnectionTestSubscribe(root string, network string, target string, sink ConnectionTestSink) (*StringBox, error) {
+	if s == nil || s.StartedService == nil {
+		return nil, E.New("command server is not started")
+	}
+	instance := s.Instance()
+	if instance == nil {
+		return nil, E.New("service is not running")
+	}
+	boxInstance := instance.Box()
+	if boxInstance == nil {
+		return nil, E.New("box is not running")
+	}
+	started := time.Now()
+	emitter := newConnectionTestEmitter(defaultEmitterBounds(), started)
+	drained := make(chan struct{})
+	if sink != nil {
+		go func() {
+			defer close(drained)
+			for {
+				select {
+				case event := <-emitter.Events():
+					sink.Emit(renderEvent(event))
+				case <-emitter.Finished():
+					// Drain what is still queued, then stop: the stream is finished.
+					for {
+						select {
+						case event := <-emitter.Events():
+							sink.Emit(renderEvent(event))
+						default:
+							return
+						}
+					}
+				}
+			}
+		}()
+	} else {
+		close(drained)
+	}
+	report := runConnectionTestWithEmitter(context.Background(), boxInstance, root, network, target, emitter)
+	select {
+	case <-drained:
+	case <-time.After(connectionTestStageTimeout):
+		// A sink that never returns must not hold the result: the report is complete and the
+		// delivery is the platform's problem.
+	}
+	return wrapString(marshalConnectionTestReport(report)), nil
 }

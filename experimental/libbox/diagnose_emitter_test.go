@@ -5,9 +5,13 @@ package libbox
 // slow subscriber, a lost begin and a final snapshot.
 
 import (
+	"context"
+	"net"
 	"strings"
 	"testing"
 	"time"
+
+	M "github.com/sagernet/sing/common/metadata"
 
 	"github.com/stretchr/testify/require"
 )
@@ -95,4 +99,37 @@ func TestCloseFinalisesExactlyOnce(t *testing.T) {
 		}
 	}
 	require.Equal(t, 1, endCount, "the end is emitted once, so 'no more events' is a fact")
+}
+
+// recordingSink is a platform sink that keeps what it was delivered.
+type recordingSink struct {
+	events []string
+}
+
+func (s *recordingSink) Emit(event string) { s.events = append(s.events, event) }
+
+// TestTheSubscriberSeesTheSameNarrativeAsTheReport drives the streaming entry with a fake path
+// so the live delivery and the returned report can be compared.
+func TestTheSubscriberSeesTheSameNarrativeAsTheReport(t *testing.T) {
+	path := newConnectionTestPath("proxy-a", &fakeConnectionOutbound{tag: "proxy-a", behavior: func(context.Context, string, M.Socksaddr) (net.Conn, error) { return stubConn{}, nil }})
+	sink := &recordingSink{}
+	emitter := newConnectionTestEmitter(emitterBounds{Queue: 64, Retention: 128, MaxBytes: 1 << 16}, time.Now())
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		for {
+			select {
+			case event := <-emitter.Events():
+				sink.Emit(renderEvent(event))
+			case <-emitter.Finished():
+				return
+			}
+		}
+	}()
+	report := runConnectionTestWithEmitter(context.Background(), path, "proxy-a", "tcp", "https://example.com:443", emitter)
+	<-drained
+	require.NotEmpty(t, sink.events)
+	require.Contains(t, sink.events[0], "begin", "the subscriber sees the begin first")
+	require.NotEmpty(t, report.Events)
+	require.Contains(t, report.Events[0], "begin", "the report narrates the same run")
 }
