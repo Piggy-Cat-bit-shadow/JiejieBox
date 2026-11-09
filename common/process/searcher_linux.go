@@ -61,6 +61,14 @@ type linuxSearcher struct {
 	// barrier-controlled function in tests.
 	scanPaths func(uid uint32) (map[uint32][]string, error)
 
+	// querySocket is the PRECISE netlink query for one connection. It is a field
+	// for the same reason scanPaths is: the fallback to the socket table is a
+	// behaviour that cannot be reached on demand from a test - a real socket is
+	// always found by the precise query - so a test replaces this step with one
+	// that reports ErrNotFound and asserts the table finds the socket anyway.
+	// Production leaves it nil and uses the diag connection.
+	querySocket func(source netip.AddrPort, destination netip.AddrPort) (inode, uid uint32, err error)
+
 	// cacheAccess serialises cache publication against invalidation, so a scan
 	// that started before ResetCache cannot republish the snapshot it walked.
 	cacheAccess sync.Mutex
@@ -199,7 +207,11 @@ func (s *linuxSearcher) resolveSocketByNetlink(network string, source netip.Addr
 		return 0, 0, E.New("missing socket diag connection for family=", family, " protocol=", protocol)
 	}
 	if destination.IsValid() && source.Addr().BitLen() == destination.Addr().BitLen() {
-		inode, uid, err = conn.query(source, destination)
+		query := conn.query
+		if s.querySocket != nil {
+			query = s.querySocket
+		}
+		inode, uid, err = query(source, destination)
 		if err == nil {
 			return inode, uid, nil
 		}
@@ -207,6 +219,12 @@ func (s *linuxSearcher) resolveSocketByNetlink(network string, source netip.Addr
 			return 0, 0, err
 		}
 	}
+	// The precise query answers "is there a socket with exactly this tuple". A
+	// connection whose tuple it cannot describe - an atypical family/protocol
+	// mapping, a kernel that refuses the tight request - is not "no owner": the
+	// socket table lists every socket with its owner, and the same tuple can be
+	// matched there. Only a miss is a reason to fall back; a real error is
+	// reported, because a table dump would not explain it.
 	return dumpSocketDiag(family, protocol, source, destination)
 }
 

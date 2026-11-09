@@ -117,9 +117,13 @@ func TestConnectionTestReportsAStagedSuccess(t *testing.T) {
 
 	require.Equal(t, connectionTestOutcomeOK, report.Outcome)
 	stages := stagesByID(report)
-	require.Len(t, report.Stages, 3)
-	require.Equal(t, []string{connectionTestStagePath, connectionTestStageResolve, connectionTestStageDial}, []string{report.Stages[0].ID, report.Stages[1].ID, report.Stages[2].ID},
+	require.Len(t, report.Stages, 4)
+	require.Equal(t, []string{connectionTestStagePath, connectionTestStageRules, connectionTestStageResolve, connectionTestStageDial},
+		[]string{report.Stages[0].ID, report.Stages[1].ID, report.Stages[2].ID, report.Stages[3].ID},
 		"the stage ids are part of the diagnostic contract and must stay stable")
+	require.Equal(t, connectionTestStageSkipped, stages[connectionTestStageRules].Status,
+		"this path cannot explain the rule, so the stage is skipped with a reason instead of guessing")
+	require.NotEmpty(t, stages[connectionTestStageRules].Detail)
 	require.Equal(t, connectionTestStageOK, stages[connectionTestStagePath].Status)
 	require.Contains(t, stages[connectionTestStagePath].Detail, "node-a")
 	require.Equal(t, "example.com:443", stages[connectionTestStageResolve].Detail)
@@ -214,4 +218,78 @@ func TestConnectionTestIsBoundedByTheStageBudget(t *testing.T) {
 	require.Less(t, elapsed, time.Second,
 		"a wedged dial must be cut by the stage budget, took %s", elapsed)
 	require.Equal(t, connectionTestStageFailed, stagesByID(report)[connectionTestStageDial].Status)
+}
+
+// rulePreviewingPath is a fake path that can also explain which rule decides a request.
+type rulePreviewingPath struct {
+	*fakeConnectionTestPath
+	preview connectionTestRulePreview
+	ok      bool
+}
+
+func (p *rulePreviewingPath) PreviewRouteRule(network string, domain string, port uint16) (connectionTestRulePreview, bool) {
+	return p.preview, p.ok
+}
+
+// TestConnectionTestReportsTheDecidingRule pins the report when the box CAN explain the rule: the
+// stage names the rule, its action and its outbound, and it runs before the dial so the explanation
+// survives a failing dial.
+func TestConnectionTestReportsTheDecidingRule(t *testing.T) {
+	member := &fakeConnectionOutbound{
+		tag: "node-a",
+		behavior: func(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+			return stubConn{}, nil
+		},
+	}
+	path := &rulePreviewingPath{
+		fakeConnectionTestPath: newConnectionTestPath("node-a", member),
+		ok:                     true,
+		preview: connectionTestRulePreview{
+			Matched:    true,
+			RuleIndex:  2,
+			Rule:       "domain:blocked.example",
+			ActionType: "route",
+			Outbound:   "node-a",
+		},
+	}
+	report := runConnectionTest(context.Background(), path, "proxy", "tcp", "https://example.com/path")
+
+	stages := stagesByID(report)
+	rulesStage := stages[connectionTestStageRules]
+	require.Equal(t, connectionTestStageOK, rulesStage.Status)
+	require.Equal(t, connectionTestStagePath, rulesStage.Parent)
+	require.Contains(t, rulesStage.Detail, "rule[2]")
+	require.Contains(t, rulesStage.Detail, "domain:blocked.example")
+	require.Contains(t, rulesStage.Detail, "node-a")
+	require.Equal(t, connectionTestStageOK, stages[connectionTestStageDial].Status)
+}
+
+// TestConnectionTestReportsTheRuleOverriddenAsUnknown is the "unknown stays unknown" case: a rule
+// that needs a fact the preview does not have must not be reported as a decision.
+func TestConnectionTestReportsTheRuleOverriddenAsUnknown(t *testing.T) {
+	member := &fakeConnectionOutbound{tag: "node-a", behavior: func(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+		return stubConn{}, nil
+	}}
+	path := &rulePreviewingPath{
+		fakeConnectionTestPath: newConnectionTestPath("node-a", member),
+		ok:                     true,
+		preview: connectionTestRulePreview{
+			Unknown: "the decision depends on a process path this preview was not given",
+		},
+	}
+	report := runConnectionTest(context.Background(), path, "proxy", "tcp", "https://example.com/path")
+	stages := stagesByID(report)
+	require.Equal(t, connectionTestStageSkipped, stages[connectionTestStageRules].Status)
+	require.Contains(t, stages[connectionTestStageRules].Detail, "process path")
+}
+
+// TestConnectionTestSkipsTheOptionalRuleStage covers a path that cannot preview at all.
+func TestConnectionTestSkipsTheOptionalRuleStage(t *testing.T) {
+	member := &fakeConnectionOutbound{tag: "node-a", behavior: func(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+		return stubConn{}, nil
+	}}
+	report := runConnectionTest(context.Background(), newConnectionTestPath("node-a", member), "proxy", "tcp", "https://example.com/path")
+	stages := stagesByID(report)
+	require.Equal(t, connectionTestStageSkipped, stages[connectionTestStageRules].Status)
+	require.Contains(t, stages[connectionTestStageRules].Detail, "cannot explain")
 }

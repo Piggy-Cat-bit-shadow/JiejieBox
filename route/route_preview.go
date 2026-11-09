@@ -1,0 +1,166 @@
+package route
+
+// O01 — the ROUTE-rule half of the explanation: which rule decides this request, and why.
+//
+// ExplainPath (libbox) projects the box's published status model: control descent, hops, readiness.
+// It deliberately does not say which rule matched, because a rule match cannot be read off a status
+// value - it has to be evaluated against the request. This is that evaluation, and it is READ-ONLY
+// by construction:
+//
+//   - it never calls prepareMatchMetadata, so no process walk, no neighbor lookup, no FakeIP
+//     mapping, no reverse-mapping DNS lookup happens;
+//   - it never dials, resolves, sniffs, writes a cache or touches a selection;
+//   - the process facts it may use are the ones the CALLER supplied, which is why a path rule
+//     without them is reported as unknown instead of being guessed at or walked for.
+//
+// The loop mirrors matchRule's decision points, so "the model says" and "the production decision"
+// are comparable for the same request. A rule that would need a fact the request does not carry (a
+// process path, or a sniffed domain when the caller supplied none) ends the preview as UNKNOWN: a
+// confident wrong answer is worse than an honest "cannot tell here".
+
+import (
+	"context"
+	"net/netip"
+
+	"github.com/sagernet/sing-box/adapter"
+	C "github.com/sagernet/sing-box/constant"
+	R "github.com/sagernet/sing-box/route/rule"
+	M "github.com/sagernet/sing/common/metadata"
+)
+
+// RoutePreviewRequest is the request a preview explains.
+//
+// It is intentionally the facts a caller can state, not the box's live state: "where would this go"
+// is answerable without a connection, while "why did this connection go there" is a different
+// question answered from the metadata the real request already produced.
+type RoutePreviewRequest struct {
+	Inbound     string
+	Network     string
+	Source      netip.AddrPort
+	Destination M.Socksaddr
+	// Domain and Protocol are the sniffed facts when the caller already knows them. Supplying them
+	// is what lets a preview continue past a sniff rule; without them, a sniff rule makes every
+	// later decision unknown.
+	Domain   string
+	Protocol string
+	// UserId is the socket owner when the caller knows it (-1 means unknown).
+	UserId int32
+	// ProcessPaths and PackageNames are the process facts when the caller knows them. A preview
+	// never resolves them itself.
+	ProcessPaths []string
+	PackageNames []string
+}
+
+// RoutePreviewResult is the read-only answer.
+type RoutePreviewResult struct {
+	// Matched reports that a rule decided the request. False with an empty Unknown means the
+	// request fell through to the final outbound.
+	Matched    bool
+	RuleIndex  int
+	Rule       string
+	ActionType string
+	// ActionOutbound is the target of a route action (and of a bypass action that names one).
+	ActionOutbound string
+	// Unknown states, when non-empty, that the preview could not decide: the request would be
+	// decided by a rule that needs a fact this preview does not have.
+	Unknown          string
+	UnknownRuleIndex int
+	// Evaluated counts how many rules were matched against the request before the result was
+	// reached. It is the consumer-cost fact: a preview over a large rule set reports what it
+	// walked, and that walking is bounded by the rule list rather than by any I/O.
+	Evaluated int
+}
+
+// PreviewRoute explains which rule decides the request, without any of the work a real request does.
+func (r *Router) PreviewRoute(ctx context.Context, request RoutePreviewRequest) RoutePreviewResult {
+	_ = ctx // the preview performs no I/O, so it takes no cancellation and no deadline
+	result := RoutePreviewResult{RuleIndex: -1, UnknownRuleIndex: -1}
+	if r == nil || len(r.rules) == 0 {
+		return result
+	}
+	metadata := r.previewMetadata(request)
+	for index, rule := range r.rules {
+		metadata.ResetRuleCache()
+		result.Evaluated++
+		if r.previewNeedsUnknownFact(index, &metadata) {
+			result.RuleIndex = -1
+			result.Rule = rule.String()
+			result.UnknownRuleIndex = index
+			result.Unknown = "the decision depends on a process path this preview was not given"
+			return result
+		}
+		if !rule.Match(&metadata) {
+			continue
+		}
+		actionType := rule.Action().Type()
+		decided := actionType == C.RuleActionTypeRoute ||
+			actionType == C.RuleActionTypeReject ||
+			actionType == C.RuleActionTypeHijackDNS
+		if bypassAction, isBypass := rule.Action().(*R.RuleActionBypass); isBypass {
+			// Production keeps matching past a bypass that names no outbound; a preview that
+			// stopped there would report a decision the router never makes.
+			decided = bypassAction.Outbound != ""
+		}
+		if decided {
+			result.Matched = true
+			result.RuleIndex = index
+			result.Rule = rule.String()
+			result.ActionType = actionType
+			switch action := rule.Action().(type) {
+			case *R.RuleActionRoute:
+				result.ActionOutbound = action.Outbound
+			case *R.RuleActionBypass:
+				result.ActionOutbound = action.Outbound
+			}
+			return result
+		}
+		if actionType == C.RuleActionTypeSniff && request.Domain == "" {
+			// A sniff action is what would have produced the domain later rules may match on, and a
+			// preview does not sniff. Reporting the next rule as a decision would be a guess.
+			result.RuleIndex = -1
+			result.Rule = rule.String()
+			result.UnknownRuleIndex = index
+			result.Unknown = "the decision depends on a sniffed domain this preview was not given"
+			return result
+		}
+	}
+	return result
+}
+
+// previewMetadata builds the request metadata from the caller's facts only.
+func (r *Router) previewMetadata(request RoutePreviewRequest) adapter.InboundContext {
+	metadata := adapter.InboundContext{
+		Inbound:     request.Inbound,
+		Network:     request.Network,
+		Destination: request.Destination,
+		Domain:      request.Domain,
+		Protocol:    request.Protocol,
+	}
+	if request.Source.IsValid() {
+		metadata.Source = M.SocksaddrFrom(request.Source.Addr(), request.Source.Port())
+	}
+	if request.UserId >= 0 || len(request.ProcessPaths) > 0 || len(request.PackageNames) > 0 {
+		metadata.ProcessInfo = &adapter.ConnectionOwner{
+			UserId:       request.UserId,
+			ProcessPaths: append([]string(nil), request.ProcessPaths...),
+			PackageNames: append([]string(nil), request.PackageNames...),
+		}
+	}
+	return metadata
+}
+
+// previewNeedsUnknownFact reports whether evaluating rule index would need a process path the
+// request did not supply.
+//
+// The distinction that keeps this honest: a rule that reads a path is not "not matching" without
+// one, it is UNDECIDABLE. Production would have walked /proc before reaching it; a preview must
+// not, so it says so.
+func (r *Router) previewNeedsUnknownFact(index int, metadata *adapter.InboundContext) bool {
+	if index >= len(r.ruleNeedsPaths) || !r.ruleNeedsPaths[index] {
+		return false
+	}
+	if metadata.ProcessInfo == nil {
+		return true
+	}
+	return len(metadata.ProcessInfo.ProcessPaths) == 0 && len(metadata.ProcessInfo.PackageNames) == 0
+}

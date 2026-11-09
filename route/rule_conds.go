@@ -45,8 +45,21 @@ func isProcessDNSRule(rule option.DefaultDNSRule) bool {
 	return len(rule.ProcessName) > 0 || len(rule.ProcessPath) > 0 || len(rule.ProcessPathRegex) > 0 || len(rule.PackageName) > 0 || len(rule.PackageNameRegex) > 0 || len(rule.User) > 0 || len(rule.UserID) > 0
 }
 
+// isProcessPathRule reports whether a rule reads a field that only a /proc walk
+// provides: a process name, a process path or a package name. A user/user_id
+// rule does not, because the socket diag table already carries the uid.
 func isProcessPathRule(rule option.DefaultRule) bool {
 	return len(rule.ProcessName) > 0 || len(rule.ProcessPath) > 0 || len(rule.ProcessPathRegex) > 0 || len(rule.PackageName) > 0 || len(rule.PackageNameRegex) > 0
+}
+
+// usesRuleSet reports whether a rule references a rule-set document.
+//
+// It decides whether the fully up-front process lookup is still required: a
+// rule-set document is remote and mutable, so it can carry process conditions
+// this configuration never mentions, and the walk cannot be deferred past the
+// point where such a document is consulted.
+func usesRuleSet(rule option.DefaultRule) bool {
+	return len(rule.RuleSet) > 0
 }
 
 func isProcessPathDNSRule(rule option.DefaultDNSRule) bool {

@@ -16,6 +16,15 @@ package urltest
 //
 // Anything not in this key must be something that cannot change the result. That is the rule
 // that keeps a "shared" measurement from becoming a wrong one.
+//
+// # The scope is the registry, not a string in the key
+//
+// The instance dimension is structural: MeasurementShare travels on the Box's context, so an
+// equivalent question is only ever matched against answers produced by the SAME Box. The Instance
+// field exists for logs and for a caller that wants to record the scope explicitly; a caller that
+// cannot know the Box (the URLTest batch cannot) leaves it empty, because inventing a name would
+// make two equivalent callers spell the same question differently and lose the share. A second
+// Box reaches a second registry, not a shared answer.
 
 // MeasurementKey is the full identity of one measurement.
 type MeasurementKey struct {

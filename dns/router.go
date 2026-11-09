@@ -50,9 +50,16 @@ type Router struct {
 	// The network reset needs one internal operation on it - re-pinning each transport's environment
 	// - and widening adapter.DNSClient for a single caller inside this package would put a
 	// fork-specific method on a shared interface. Holding the concrete type keeps that seam local.
-	concreteClient        *Client
-	rawRules              []option.DNSRule
-	rules                 []adapter.DNSRule
+	concreteClient *Client
+	rawRules       []option.DNSRule
+	rules          []adapter.DNSRule
+	// ruleNeedsPaths is parallel to rules: it marks the rules whose evaluation reads a process path,
+	// so the walk can complete the owner-only answer exactly when it reaches one. rulesAccess guards
+	// it together with the rules themselves.
+	ruleNeedsPaths []bool
+	// processPathCompleter is injected by the route layer, which owns the lookup and its cache. Nil
+	// means "no deferral": the walk evaluates with the metadata it was given, as before.
+	processPathCompleter  func(ctx context.Context, metadata *adapter.InboundContext)
 	defaultDomainStrategy C.DomainStrategy
 	dnsReverseMapping     *freelru.Cache[netip.Addr, string]
 	// networkGeneration advances on every ResetNetwork so a DNS response can be attributed to the
@@ -150,6 +157,13 @@ type Router struct {
 	// a test drives the invalidation through the router's own entry points rather than through a
 	// reimplementation of them.
 	testReverseMappingRecordHook func(answers []reverseMappingAnswer, generation uint64)
+	// events is the query-event bus every DNS client of this router publishes to. It is always
+	// created: with no subscriber it costs one atomic check per query, and it is the only place a
+	// diagnostic consumer (the bounded history, see history_access.go) can attach.
+	events *EventBus
+	// historyState owns the OPTIONAL history subscription. Zero value means "history is off",
+	// which is the state a process that never asked for diagnostics stays in.
+	historyState historyState
 	// testReverseMappingComparisonHook, when set, runs inside commitReverseMappingAnswers immediately
 	// after the epoch comparison has been evaluated and while dnsEnvironmentAccess is still held.
 	//
@@ -189,8 +203,10 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.DNSOp
 			optimisticTimeout = 3 * 24 * time.Hour
 		}
 	}
+	router.events = NewEventBus(defaultEventQueue)
 	router.concreteClient = NewClient(ClientOptions{
 		Context:           ctx,
+		EventBus:          router.events,
 		Timeout:           time.Duration(options.DNSClientOptions.Timeout),
 		DisableCache:      options.DNSClientOptions.DisableCache,
 		DisableExpire:     options.DNSClientOptions.DisableExpire,
@@ -262,6 +278,9 @@ func (r *Router) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 			closeRules(runtimeRules)
 			return nil
 		})
+		// The history subscription belongs to this box: its goroutine must not outlive the box that
+		// started it, and a shutdown must stop consuming events even if the process keeps running.
+		scope.Add(r.closeHistory)
 		// Resolved here rather than in NewRouter because the manager is constructed AFTER this
 		// router (box.go builds the DNS router first and the network manager second), so it is not
 		// in the context yet at construction time. By Start it is, and it does not change for the
@@ -286,6 +305,7 @@ func (r *Router) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 			return nil
 		}
 		r.rules = newRules
+		r.ruleNeedsPaths = processPathRuleFlags(r.rawRules)
 		r.legacyDNSMode = legacyDNSMode
 		r.started = true
 		r.rulesAccess.Unlock()
@@ -413,10 +433,16 @@ func (r *Router) matchDNS(ctx context.Context, rules []adapter.DNSRule, allowFak
 	if ruleIndex != -1 {
 		currentRuleIndex = ruleIndex + 1
 	}
+	// The path fact is completed at most once per walk: the first rule that needs it triggers the
+	// lookup, and every later rule reads the result. A failed lookup is not retried per rule.
+	pathsAttempted := false
 	for ; currentRuleIndex < len(rules); currentRuleIndex++ {
 		currentRule := rules[currentRuleIndex]
 		if currentRule.WithAddressLimit() && !isAddressQuery {
 			continue
+		}
+		if !pathsAttempted {
+			pathsAttempted = r.completeProcessPathsForRule(ctx, metadata, currentRuleIndex)
 		}
 		metadata.ResetRuleCache()
 		metadata.DestinationAddressMatchFromResponse = false

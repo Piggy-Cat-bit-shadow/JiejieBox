@@ -14,6 +14,14 @@ type processCacheKey struct {
 	Network     string
 	Source      netip.AddrPort
 	Destination netip.AddrPort
+	// Paths separates the two answers one connection can have.
+	//
+	// The owner-only answer (uid, from the socket table) and the full answer (uid plus the /proc
+	// walk's paths and the package lookup) describe the same tuple, but they are different results.
+	// Sharing one key would let a connection that reaches a path rule receive the cached owner-only
+	// entry - the rule would then be evaluated against a record that was never asked for paths - or
+	// make a connection that needs only the uid pay for a walk it never used.
+	Paths bool
 }
 
 type processCacheEntry struct {
@@ -21,11 +29,12 @@ type processCacheEntry struct {
 	err    error
 }
 
-func (r *Router) findProcessInfoCached(ctx context.Context, network string, source netip.AddrPort, destination netip.AddrPort) (*adapter.ConnectionOwner, error) {
+func (r *Router) findProcessInfoCached(ctx context.Context, network string, source netip.AddrPort, destination netip.AddrPort, paths bool) (*adapter.ConnectionOwner, error) {
 	key := processCacheKey{
 		Network:     network,
 		Source:      source,
 		Destination: destination,
+		Paths:       paths,
 	}
 	if entry, ok := r.processCache.Get(key); ok {
 		return entry.result, entry.err
@@ -34,7 +43,7 @@ func (r *Router) findProcessInfoCached(ctx context.Context, network string, sour
 		result *adapter.ConnectionOwner
 		err    error
 	)
-	if r.needProcessPaths {
+	if paths {
 		result, err = process.FindProcessInfo(r.processSearcher, ctx, network, source, destination)
 	} else {
 		// Every process rule matches user/user_id alone, so the uid from the
@@ -69,21 +78,61 @@ func (r *Router) processMetadataIsProven(metadata *adapter.InboundContext) bool 
 	return !r.isLocalSource(metadata.Source.Addr)
 }
 
+// processCacheQuery derives the tuple both process lookups share.
+//
+// The ORIGIN destination is preferred: when a destination was rewritten (a FakeIP placeholder
+// mapped back to a domain, a sniffed name replacing the address), the socket the kernel knows is
+// still the one the client opened, so the lookup must name that tuple. Without it the walk and the
+// socket table are asked about a connection that never existed.
+func processCacheQuery(metadata *adapter.InboundContext) (network string, source netip.AddrPort, destination netip.AddrPort) {
+	if metadata.OriginDestination.IsValid() {
+		destination = metadata.OriginDestination.AddrPort()
+	} else if metadata.Destination.IsIP() {
+		destination = metadata.Destination.AddrPort()
+	}
+	return metadata.Network, metadata.Source.AddrPort(), destination
+}
+
 func (r *Router) searchProcessInfo(ctx context.Context, metadata *adapter.InboundContext) {
 	if r.processSearcher == nil || metadata.ProcessInfo != nil || !r.isLocalSource(metadata.Source.Addr) {
 		return
 	}
-	var originDestination netip.AddrPort
-	if metadata.OriginDestination.IsValid() {
-		originDestination = metadata.OriginDestination.AddrPort()
-	} else if metadata.Destination.IsIP() {
-		originDestination = metadata.Destination.AddrPort()
-	}
-	processInfo, err := r.findProcessInfoCached(ctx, metadata.Network, metadata.Source.AddrPort(), originDestination)
+	network, source, originDestination := processCacheQuery(metadata)
+	processInfo, err := r.findProcessInfoCached(ctx, network, source, originDestination, r.needProcessPaths)
 	if err != nil {
 		r.logger.InfoContext(ctx, "failed to search process: ", err)
 		return
 	}
+	r.recordProcessInfo(ctx, metadata, processInfo)
+}
+
+// ensureProcessPaths completes the owner-only answer of THIS connection into the full one, once.
+//
+// It is the on-demand half of the process lookup. The owner (the uid) comes from the socket table
+// and is enough for a user/user_id rule; the path and the package name need a /proc walk, which is
+// the expensive part. A configuration whose path rules sit behind ordinary domain or address rules
+// therefore pays for the walk only for the connections that actually reach one of them.
+//
+// A failed completion CLEARS the owner-only record rather than keeping it:
+// processMetadataIsProven treats a non-nil record as proof that the metadata was obtained, and a
+// path rule that could not be evaluated must not be read as "does not apply" by the bypass
+// decision that follows.
+func (r *Router) ensureProcessPaths(ctx context.Context, metadata *adapter.InboundContext) {
+	if r.processSearcher == nil || !r.isLocalSource(metadata.Source.Addr) {
+		return
+	}
+	network, source, destination := processCacheQuery(metadata)
+	processInfo, err := r.findProcessInfoCached(ctx, network, source, destination, true)
+	if err != nil {
+		r.logger.InfoContext(ctx, "failed to complete the process path: ", err)
+		metadata.ProcessInfo = nil
+		return
+	}
+	r.recordProcessInfo(ctx, metadata, processInfo)
+}
+
+// recordProcessInfo publishes a resolved owner on the metadata and reports what was found.
+func (r *Router) recordProcessInfo(ctx context.Context, metadata *adapter.InboundContext, processInfo *adapter.ConnectionOwner) {
 	metadata.ProcessInfo = processInfo
 	if len(processInfo.ProcessPaths) > 0 {
 		processPath := strings.Join(processInfo.ProcessPaths, ", ")

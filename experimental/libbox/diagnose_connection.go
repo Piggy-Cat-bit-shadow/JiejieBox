@@ -64,6 +64,7 @@ const (
 // translations or a support checklist on them, so they must not be renamed.
 const (
 	connectionTestStagePath    = "path"
+	connectionTestStageRules   = "rules"
 	connectionTestStageResolve = "resolve"
 	connectionTestStageDial    = "dial"
 )
@@ -95,6 +96,23 @@ type connectionTestPath interface {
 	Outbound() adapter.OutboundManager
 }
 
+// connectionTestRulePreviewer is the OPTIONAL extra a path may offer: which route rule decides a
+// request for this host. A path that cannot answer it gets a skipped stage with the reason, never a
+// guessed decision - "unknown" is a fact a diagnostic is allowed to report.
+type connectionTestRulePreviewer interface {
+	PreviewRouteRule(network string, domain string, port uint16) (connectionTestRulePreview, bool)
+}
+
+// connectionTestRulePreview is that answer, flattened for the report.
+type connectionTestRulePreview struct {
+	Matched    bool
+	RuleIndex  int
+	Rule       string
+	ActionType string
+	Outbound   string
+	Unknown    string
+}
+
 // ConnectionTest runs one bounded active test from root over network to target and returns
 // the report as JSON. A nil server, a stopped service or a stopped box is an error before
 // any dial starts.
@@ -110,7 +128,7 @@ func (s *CommandServer) ConnectionTest(root string, network string, target strin
 	if boxInstance == nil {
 		return nil, E.New("box is not running")
 	}
-	report := runConnectionTest(context.Background(), boxInstance, root, network, target)
+	report := runConnectionTest(context.Background(), newBoxConnectionTestPath(boxInstance), root, network, target)
 	return wrapString(marshalConnectionTestReport(report)), nil
 }
 
@@ -187,7 +205,45 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 	}
 	report.Stages = append(report.Stages, pathStage)
 
-	// Stage 2: resolve the target into the address the dial will use.
+	// Stage 2: which rule decides this request, from the same rule list production walks.
+	//
+	// The order matters: this is the step that explains WHY the exit above was chosen, and it has
+	// to run before the dial so the report answers "would this go there" even when the dial then
+	// fails.
+	stageStarted = time.Now()
+	rulesStage := connectionTestStage{ID: connectionTestStageRules, Parent: connectionTestStagePath}
+	previewer, canPreview := path.(connectionTestRulePreviewer)
+	host, port := connectionTestTargetHost(target)
+	switch {
+	case !canPreview:
+		rulesStage.Status = connectionTestStageSkipped
+		rulesStage.Detail = "this build cannot explain the route rule for a running box"
+	case host == "":
+		rulesStage.Status = connectionTestStageSkipped
+		rulesStage.Detail = "the target does not name a host"
+	default:
+		preview, previewed := previewer.PreviewRouteRule(network, host, port)
+		switch {
+		case !previewed:
+			rulesStage.Status = connectionTestStageSkipped
+			rulesStage.Detail = "the running box has no route rule preview"
+		case preview.Unknown != "":
+			// The preview is honest about what it could not decide; the stage reports that instead
+			// of inventing a rule.
+			rulesStage.Status = connectionTestStageSkipped
+			rulesStage.Detail = preview.Unknown
+		case preview.Matched:
+			rulesStage.Status = connectionTestStageOK
+			rulesStage.Detail = rulePreviewDetail(preview)
+		default:
+			rulesStage.Status = connectionTestStageOK
+			rulesStage.Detail = "no rule matched: the final outbound decides"
+		}
+	}
+	rulesStage.DurationMs = time.Since(stageStarted).Milliseconds()
+	report.Stages = append(report.Stages, rulesStage)
+
+	// Stage 3: resolve the target into the address the dial will use.
 	stageStarted = time.Now()
 	address, resolveErr := connectionTestAddress(target)
 	resolveStage := connectionTestStage{
@@ -207,7 +263,7 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 	resolveStage.Detail = address.String()
 	report.Stages = append(report.Stages, resolveStage)
 
-	// Stage 3: the dial, if there is an exit to dial through.
+	// Stage 4: the dial, if there is an exit to dial through.
 	dialStage := connectionTestStage{ID: connectionTestStageDial, Parent: connectionTestStagePath}
 	if pathStage.Status != connectionTestStageOK {
 		dialStage.Status = connectionTestStageSkipped
@@ -283,6 +339,47 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 // connectionTestAddress turns the configured target into the address a TCP dial uses. Only
 // http/https are accepted: this test measures the PROXY PATH, so it needs a plain
 // stream target, and accepting any scheme would silently measure something else.
+// connectionTestTargetHost extracts the host and port the rule preview needs. It is deliberately
+// separate from connectionTestAddress: the preview runs BEFORE resolution, so it must not depend on
+// a lookup succeeding, and a target without a port still names a host a rule can match.
+func connectionTestTargetHost(target string) (string, uint16) {
+	parsed, err := url.Parse(target)
+	if err != nil {
+		return "", 0
+	}
+	host := parsed.Hostname()
+	if host == "" {
+		return "", 0
+	}
+	if parsed.Port() != "" {
+		port, portErr := strconv.ParseUint(parsed.Port(), 10, 16)
+		if portErr != nil {
+			return host, 0
+		}
+		return host, uint16(port)
+	}
+	if parsed.Scheme == "https" {
+		return host, 443
+	}
+	return host, 80
+}
+
+// rulePreviewDetail renders the matched rule for the report without leaking anything the preview
+// did not decide.
+func rulePreviewDetail(preview connectionTestRulePreview) string {
+	detail := "rule[" + strconv.Itoa(preview.RuleIndex) + "]"
+	if preview.Rule != "" {
+		detail += " " + preview.Rule
+	}
+	if preview.ActionType != "" {
+		detail += " -> " + preview.ActionType
+	}
+	if preview.Outbound != "" {
+		detail += " " + preview.Outbound
+	}
+	return detail
+}
+
 func connectionTestAddress(target string) (M.Socksaddr, error) {
 	parsed, err := url.Parse(target)
 	if err != nil {
@@ -388,7 +485,7 @@ func (s *CommandServer) ConnectionTestSubscribe(root string, network string, tar
 	} else {
 		close(drained)
 	}
-	report := runConnectionTestWithEmitter(context.Background(), boxInstance, root, network, target, emitter)
+	report := runConnectionTestWithEmitter(context.Background(), newBoxConnectionTestPath(boxInstance), root, network, target, emitter)
 	select {
 	case <-drained:
 	case <-time.After(connectionTestStageTimeout):
