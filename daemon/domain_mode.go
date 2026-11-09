@@ -25,7 +25,6 @@ package daemon
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	stdjson "encoding/json"
 	"errors"
 
 	"github.com/sagernet/sing-box/option"
@@ -51,6 +50,10 @@ type DomainChange struct {
 	Kind string `json:"kind"`
 	From string `json:"from,omitempty"`
 	To   string `json:"to,omitempty"`
+	// Detail names where inside the value the documents first disagree: the rule index, or the
+	// tags that were added, removed or changed. A caller that has to explain a restart reads it;
+	// a caller that only needs the boolean ignores it.
+	Detail string `json:"detail,omitempty"`
 }
 
 // DomainPlan is what a domain commit would do to the running configuration.
@@ -89,12 +92,21 @@ type modeOwner interface {
 var ErrNoModeOwner = errors.New("clash mode is not available in the running configuration")
 
 // configRevision identifies a configuration document by content.
+//
+// The encoder is the context-aware one, and that is deliberate: plain encoding/json drops every
+// variant payload (a DNS server's address, an outbound's server) because those types expose them
+// through `json:"-"` fields and merge them in from MarshalJSONContext. A revision computed that
+// way calls two documents with different servers the same document, which is exactly the answer
+// a stale-plan check must not be given.
 func configRevision(options *option.Options) string {
 	if options == nil {
 		return ""
 	}
-	encoded, err := stdjson.Marshal(options)
+	encoded, err := encodeDocument(options)
 	if err != nil {
+		// The document cannot be canonicalised. Falling through to a partial encoding would
+		// produce a revision that two different documents can share, so the empty revision (which
+		// callers treat as "no revision") is the honest answer.
 		return ""
 	}
 	sum := sha256.Sum256(encoded)
