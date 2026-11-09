@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"net"
+	"net/http"
 	"testing"
 	"time"
 
@@ -198,4 +199,68 @@ func TestNonAvailabilityHTTP3ErrorIsReturned(t *testing.T) {
 	_, err := client.DialContext(context.Background(), "tcp", M.ParseSocksaddr("127.0.0.1:443"))
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.Zero(t, h1.calls, "a non-availability error is not a reason to fall back")
+}
+
+// answeredHTTP3Client delivers the proxy's ANSWER at the instant the establishment window expires,
+// which is the interleaving a timer cannot be trusted to distinguish: the request came back, and
+// our own clock also ran out.
+type answeredHTTP3Client struct {
+	response *http.Response
+	calls    int
+}
+
+func (c *answeredHTTP3Client) DialContext(ctx context.Context, destination M.Socksaddr) (net.Conn, error) {
+	c.calls++
+	<-ctx.Done()
+	return nil, statusError(c.response)
+}
+
+func (c *answeredHTTP3Client) OpenTunnel(ctx context.Context, request tunnelRequest) (DatagramStream, error) {
+	<-ctx.Done()
+	return nil, statusError(c.response)
+}
+
+func (c *answeredHTTP3Client) ResetConnection() {}
+func (c *answeredHTTP3Client) Close() error     { return nil }
+
+// TestProxyAnswerOutranksTheHTTP3WindowExpiry is the plain-CONNECT half of the interleaving.
+//
+// The proxy answered 407, and the local window expired in the same instant. The answer is the
+// stronger fact: it is returned as-is, no second CONNECT is sent over HTTP/2, and the transport is
+// not remembered as broken - an authentication rejection says nothing about QUIC.
+func TestProxyAnswerOutranksTheHTTP3WindowExpiry(t *testing.T) {
+	previous := http3EstablishTimeout
+	http3EstablishTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { http3EstablishTimeout = previous })
+
+	h3 := &answeredHTTP3Client{response: &http.Response{StatusCode: 407, Status: "407 Proxy Authentication Required"}}
+	h1 := &recordingDialer{err: errTestNoConn}
+	client := &Client{http3: h3, http1Dialer: h1}
+
+	_, err := client.DialContext(context.Background(), "tcp", M.ParseSocksaddr("127.0.0.1:443"))
+	require.ErrorContains(t, err, "authentication required")
+	require.Zero(t, h1.calls,
+		"a CONNECT the proxy already answered must not be duplicated over HTTP/2")
+	require.Zero(t, client.http3Broken.Load(),
+		"an application answer is not a transport verdict")
+}
+
+// TestTunnelProxyAnswerOutranksTheHTTP3WindowExpiry is the tunnel half.
+//
+// A CONNECT-IP setup may create server-side state; answering it with a second setup because our
+// own timer fired is exactly the duplicate the "was it answered?" distinction exists to prevent.
+func TestTunnelProxyAnswerOutranksTheHTTP3WindowExpiry(t *testing.T) {
+	previous := http3TunnelEstablishTimeout
+	http3TunnelEstablishTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { http3TunnelEstablishTimeout = previous })
+
+	h3 := &answeredHTTP3Client{response: &http.Response{StatusCode: 403, Status: "403 Forbidden"}}
+	h1 := &recordingDialer{err: errTestNoConn}
+	client := &Client{http3: h3, http1Dialer: h1, server: M.ParseSocksaddr("127.0.0.1:443")}
+
+	_, err := client.OpenTunnel(context.Background(), "connect-ip", "/")
+	require.ErrorContains(t, err, "unexpected status: 403")
+	require.Zero(t, h1.calls,
+		"a tunnel the server already answered must not be set up again over HTTP/1.1")
+	require.Zero(t, client.http3Broken.Load())
 }

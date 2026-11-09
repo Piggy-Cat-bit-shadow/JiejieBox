@@ -176,6 +176,11 @@ func (c *Client) openTunnel(ctx context.Context, request tunnelRequest) (net.Con
 			// to the failure ladder; falling back for this setup is still correct, because
 			// HTTP/2 extended CONNECT is a different capability.
 			c.observeHTTP3ExtendedConnectUnsupported(networkEpoch, http3Attempt)
+		case peerResponded(err):
+			// The server answered the CONNECT - a status, not a transport failure. A window
+			// that expired in the same instant does not change that answer, and a second tunnel
+			// over HTTP/2 would be a duplicate setup of one the peer already decided.
+			return nil, nil, TunnelTransportUnknown, err
 		case errors.Is(err, errHTTP3ResponsePending):
 			c.noteHTTP3AmbiguousOutcome(http3Attempt)
 		case errors.Is(err, ErrHTTP3Unavailable):

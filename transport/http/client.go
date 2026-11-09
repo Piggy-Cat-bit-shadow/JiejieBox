@@ -569,6 +569,11 @@ func (c *Client) DialContext(ctx context.Context, network string, destination M.
 			// is remembered as a capability (sticky, per network) instead of charging the
 			// failure ladder, and it still falls back so this dial can succeed.
 			c.observeHTTP3ExtendedConnectUnsupported(networkEpoch, http3Attempt)
+		} else if peerResponded(err) {
+			// The proxy answered this CONNECT. Our own window expiring in the same instant does
+			// not change the answer, and a second CONNECT over HTTP/2 would duplicate a request
+			// the peer already handled.
+			return nil, err
 		} else if !probeExpired && !errors.Is(err, ErrHTTP3Unavailable) {
 			return nil, err
 		} else {
@@ -761,14 +766,37 @@ var (
 	errHTTP3ExtendedConnectUnsupported = E.New("server does not support HTTP/3 extended CONNECT")
 )
 
+// peerRespondedError marks an error that IS an answer from the proxy: the CONNECT was received
+// and refused with a status, rather than lost on a broken transport.
+//
+// The distinction is the one requirement 4 of the H3 work is about: a server authentication or
+// application rejection, an expired probe window, a retired network and a transport failure have
+// different consequences, and only the last two justify trying another version. The wrapper keeps
+// the message of the status error unchanged (and unwraps to it), so every existing caller and
+// assertion keeps working.
+type peerRespondedError struct {
+	err error
+}
+
+func (e *peerRespondedError) Error() string { return e.err.Error() }
+
+func (e *peerRespondedError) Unwrap() error { return e.err }
+
+// peerResponded reports whether the error is an answer from the proxy rather than a transport
+// failure.
+func peerResponded(err error) bool {
+	var responded *peerRespondedError
+	return errors.As(err, &responded)
+}
+
 func statusError(response *http.Response) error {
 	switch response.StatusCode {
 	case http.StatusProxyAuthRequired:
-		return E.New("authentication required")
+		return &peerRespondedError{err: E.New("authentication required")}
 	case http.StatusMethodNotAllowed:
-		return E.New("method not allowed")
+		return &peerRespondedError{err: E.New("method not allowed")}
 	default:
-		return E.New("unexpected status: ", response.Status)
+		return &peerRespondedError{err: E.New("unexpected status: ", response.Status)}
 	}
 }
 
