@@ -90,10 +90,16 @@ type ServiceChangeReport struct {
 	RestartRequired bool `json:"restartRequired"`
 	// Retained is true when the configuration that was running before the attempt is still the one
 	// running: a rejected candidate, or a failure the last-good recovery brought back.
-	Retained bool           `json:"retained"`
-	Reason   string         `json:"reason,omitempty"`
-	Time     time.Time      `json:"time"`
-	Applied  []DomainChange `json:"applied,omitempty"`
+	Retained bool `json:"retained"`
+	// Persistence is what the last-good store did with the configuration that now runs: "saved",
+	// "degraded" (running, but a later failed start cannot return to it) or "not_configured".
+	Persistence string `json:"persistence,omitempty"`
+	// PersistenceWarning is the store's own message when Persistence is not "saved" without a
+	// cause, or when the document was saved but the previous one could not be kept.
+	PersistenceWarning string         `json:"persistenceWarning,omitempty"`
+	Reason             string         `json:"reason,omitempty"`
+	Time               time.Time      `json:"time"`
+	Applied            []DomainChange `json:"applied,omitempty"`
 }
 
 // recordServiceChange stores the outcome of the last apply attempt.

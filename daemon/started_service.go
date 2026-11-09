@@ -370,10 +370,10 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 		// running Box can change in place, so the Box and its connections stay.
 		report, applied := s.tryLiveOnlyChange(plan, targetOptions)
 		if applied {
-			s.recordServiceChange(&report)
 			if report.Status == ServiceChangeStatusAppliedLive {
-				s.storeConfigRevision(profileContent)
+				report.Persistence, report.PersistenceWarning = s.persistRunningConfig(profileContent)
 			}
+			s.recordServiceChange(&report)
 			return nil
 		}
 		// The live path could not be taken after all. Fall through to the restart path rather than
@@ -433,8 +433,6 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 	s.updateStatus(ServiceStatus_STARTED)
 	s.serviceAccess.Unlock()
 	runtimeDebug.FreeOSMemory()
-	// The profile is running: it becomes the document a later failed start can return to.
-	s.storeConfigRevision(profileContent)
 	// What the caller asked for is now running; the plan says whether a rebuild was required to
 	// get there or whether the document change was one the running Box could have absorbed.
 	report := ServiceChangeReport{Plan: plan, Status: ServiceChangeStatusRestarted, RestartRequired: plan.RestartRequired}
@@ -444,6 +442,9 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 	if liveFallbackReason != "" {
 		report.Reason = "the live path was not available (" + liveFallbackReason + "); rebuilt instead"
 	}
+	// The profile is running: it becomes the document a later failed start can return to - when the
+	// disk accepted it. A committed-but-unsaved configuration is reported as such.
+	report.Persistence, report.PersistenceWarning = s.persistRunningConfig(profileContent)
 	s.recordServiceChange(&report)
 	return nil
 }
