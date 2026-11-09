@@ -50,9 +50,16 @@ type Router struct {
 	// The network reset needs one internal operation on it - re-pinning each transport's environment
 	// - and widening adapter.DNSClient for a single caller inside this package would put a
 	// fork-specific method on a shared interface. Holding the concrete type keeps that seam local.
-	concreteClient        *Client
-	rawRules              []option.DNSRule
-	rules                 []adapter.DNSRule
+	concreteClient *Client
+	rawRules       []option.DNSRule
+	rules          []adapter.DNSRule
+	// ruleNeedsPaths is parallel to rules: it marks the rules whose evaluation reads a process path,
+	// so the walk can complete the owner-only answer exactly when it reaches one. rulesAccess guards
+	// it together with the rules themselves.
+	ruleNeedsPaths []bool
+	// processPathCompleter is injected by the route layer, which owns the lookup and its cache. Nil
+	// means "no deferral": the walk evaluates with the metadata it was given, as before.
+	processPathCompleter  func(ctx context.Context, metadata *adapter.InboundContext)
 	defaultDomainStrategy C.DomainStrategy
 	dnsReverseMapping     *freelru.Cache[netip.Addr, string]
 	// networkGeneration advances on every ResetNetwork so a DNS response can be attributed to the
@@ -298,6 +305,7 @@ func (r *Router) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 			return nil
 		}
 		r.rules = newRules
+		r.ruleNeedsPaths = processPathRuleFlags(r.rawRules)
 		r.legacyDNSMode = legacyDNSMode
 		r.started = true
 		r.rulesAccess.Unlock()
@@ -425,10 +433,16 @@ func (r *Router) matchDNS(ctx context.Context, rules []adapter.DNSRule, allowFak
 	if ruleIndex != -1 {
 		currentRuleIndex = ruleIndex + 1
 	}
+	// The path fact is completed at most once per walk: the first rule that needs it triggers the
+	// lookup, and every later rule reads the result. A failed lookup is not retried per rule.
+	pathsAttempted := false
 	for ; currentRuleIndex < len(rules); currentRuleIndex++ {
 		currentRule := rules[currentRuleIndex]
 		if currentRule.WithAddressLimit() && !isAddressQuery {
 			continue
+		}
+		if !pathsAttempted {
+			pathsAttempted = r.completeProcessPathsForRule(ctx, metadata, currentRuleIndex)
 		}
 		metadata.ResetRuleCache()
 		metadata.DestinationAddressMatchFromResponse = false
