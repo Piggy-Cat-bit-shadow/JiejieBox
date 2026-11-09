@@ -27,8 +27,18 @@ func holdDestination() M.Socksaddr {
 	return M.ParseSocksaddrHostPort(testHoldHost, 1)
 }
 
+// clientProtocols is the protocol matrix this test can actually run: HTTP/3 needs the
+// with_quic build tag, and the Linux trusttunnel CI job builds only with_trusttunnel.
+func clientProtocols() []string {
+	protocols := []string{ProtocolHTTP2}
+	if quicIncluded {
+		protocols = append(protocols, ProtocolHTTP3)
+	}
+	return protocols
+}
+
 func TestClientCloseReleasesActiveStreams(t *testing.T) {
-	for _, protocol := range []string{ProtocolHTTP2, ProtocolHTTP3} {
+	for _, protocol := range clientProtocols() {
 		protocol := protocol
 		t.Run(protocol, func(t *testing.T) {
 			server := startTestServer(t, protocol)
@@ -89,7 +99,7 @@ func TestClientCloseReleasesActiveStreams(t *testing.T) {
 }
 
 func TestClientCloseRacesWithConcurrentDials(t *testing.T) {
-	for _, protocol := range []string{ProtocolHTTP2, ProtocolHTTP3} {
+	for _, protocol := range clientProtocols() {
 		protocol := protocol
 		t.Run(protocol, func(t *testing.T) {
 			server := startTestServer(t, protocol)
