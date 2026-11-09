@@ -316,6 +316,10 @@ type udpFlow struct {
 
 	queueAccess sync.Mutex
 	queueClosed bool
+	// cleanup is held by the closer that set queueClosed until the queued
+	// bytes and the association slot are back. Every other Close waits on it,
+	// so a returned Close means the flow no longer holds budget.
+	cleanup sync.WaitGroup
 	// lastActivity is the UnixNano of the last datagram admitted by push or
 	// written by WritePacket; the idle sweeper reads it. Refusals and queue
 	// drops never update it.
@@ -404,11 +408,16 @@ func (f *udpFlow) closeIfIdle(deadline int64) bool {
 
 // closeFlow ends the flow once. queueClosed is the single owner of done and of
 // the final drain, so concurrent Close, expiry and handler calls cannot return
-// a queued byte or an association slot twice.
+// a queued byte or an association slot twice. A caller that loses the race
+// waits for the winner's cleanup instead of returning early, so "Close
+// returned" always means the flow's budget is back. It waits without holding
+// queueAccess because the winner needs the session lock for remove and for the
+// byte and slot returns.
 func (f *udpFlow) closeFlow(checkIdle bool, deadline int64) bool {
 	f.queueAccess.Lock()
 	if f.queueClosed {
 		f.queueAccess.Unlock()
+		f.cleanup.Wait()
 		return false
 	}
 	if checkIdle && f.lastActivity.Load() > deadline {
@@ -416,6 +425,10 @@ func (f *udpFlow) closeFlow(checkIdle bool, deadline int64) bool {
 		return false
 	}
 	f.queueClosed = true
+	// Announce the cleanup before queueClosed is visible to a loser; both
+	// happen under queueAccess, so a loser that sees queueClosed also sees
+	// this Add.
+	f.cleanup.Add(1)
 	close(f.done)
 	queued := 0
 	for {
@@ -428,6 +441,7 @@ func (f *udpFlow) closeFlow(checkIdle bool, deadline int64) bool {
 			f.session.remove(f)
 			f.session.releaseQueuedBytes(queued)
 			f.session.service.udp.releaseAssociation()
+			f.cleanup.Done()
 			return true
 		}
 	}
