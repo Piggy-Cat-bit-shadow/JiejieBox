@@ -354,6 +354,15 @@ func (c *http3ClientImpl) openConnectStream(ctx context.Context, request *http.R
 	case <-ctx.Done():
 		return fail(ctx.Err())
 	}
+	// The peer's SETTINGS are known now, and an Extended CONNECT request is only legal once the
+	// server advertised SETTINGS_ENABLE_CONNECT_PROTOCOL (RFC 9220 §3). A server can be perfectly
+	// healthy for ordinary HTTP/3 and still not enable CONNECT; sending the header anyway is a
+	// protocol violation, and its rejection looks like the peer refusing THIS tunnel. Checking
+	// before the header means the client can fall back to HTTP/2 - which may support extended
+	// CONNECT - without ever putting an illegal request on the wire.
+	if !clientConn.Settings().EnableExtendedConnect {
+		return fail(errHTTP3ExtendedConnectUnsupported)
+	}
 	if err = stream.SendRequestHeader(request); err != nil {
 		return fail(E.Cause(err, "send CONNECT request header"))
 	}

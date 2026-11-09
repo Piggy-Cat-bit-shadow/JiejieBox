@@ -125,6 +125,9 @@ func (c *Client) openTunnel(ctx context.Context, request tunnelRequest) (net.Con
 	if c.closed.Load() {
 		return nil, nil, TunnelTransportUnknown, net.ErrClosed
 	}
+	// The epoch this setup belongs to. Capability memories learned below are only stored while it
+	// is still the current network; see observeHTTP2ExtendedConnectUnsupported.
+	networkEpoch := c.networkEpoch.Load()
 	if c.http3Available() {
 		// Stamped before the attempt for the same reason as in DialContext: the verdict must be
 		// decided by the newest attempt STARTED, not by whichever one reports last.
@@ -167,6 +170,12 @@ func (c *Client) openTunnel(ctx context.Context, request tunnelRequest) (net.Con
 		// remembering the version as unavailable is not, because the next setup would skip a path
 		// that works.
 		switch {
+		case errors.Is(err, errHTTP3ExtendedConnectUnsupported):
+			// HTTP/3 answered, and the answer was "not for CONNECT": the server did not enable
+			// extended CONNECT. That is a capability, so it is remembered as one and NOT charged
+			// to the failure ladder; falling back for this setup is still correct, because
+			// HTTP/2 extended CONNECT is a different capability.
+			c.observeHTTP3ExtendedConnectUnsupported(networkEpoch, http3Attempt)
 		case errors.Is(err, errHTTP3ResponsePending):
 			c.noteHTTP3AmbiguousOutcome(http3Attempt)
 		case errors.Is(err, ErrHTTP3Unavailable):
@@ -197,7 +206,7 @@ func (c *Client) openTunnel(ctx context.Context, request tunnelRequest) (net.Con
 			if !errors.Is(connectErr, errExtendedConnectUnsupported) || c.disableVersionFallback {
 				return nil, nil, TunnelTransportUnknown, connectErr
 			}
-			c.http2ExtendedConnectUnsupported.Store(true)
+			c.observeHTTP2ExtendedConnectUnsupported(networkEpoch)
 		} else if c.disableVersionFallback {
 			conn.Close()
 			return nil, nil, TunnelTransportUnknown, ErrHTTP2Unsupported
