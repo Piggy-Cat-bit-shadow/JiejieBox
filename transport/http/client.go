@@ -172,6 +172,22 @@ type Client struct {
 	// for. Generic HTTP/3 requests are validated against it so an authenticated
 	// connection cannot be turned into a cross-origin tunnel.
 	http3Authority string
+	// http3ExtendedConnectUnsupported is a CAPABILITY answer, not a failure: HTTP/3 works at
+	// this authority, but the server did not enable extended CONNECT, so no HTTP/3 CONNECT can
+	// succeed here. It is sticky until the network changes.
+	//
+	// It is deliberately separate from the http3Broken ladder. A capability does not heal on a
+	// timer, and charging the failure ladder for it would both pay a fresh CONNECT-IP setup
+	// window on every reconnect and read as "the transport is broken" in diagnostics when the
+	// truth is "this server cannot carry CONNECT over HTTP/3".
+	http3ExtendedConnectUnsupported atomic.Bool
+	// networkEpoch increments on every ResetConnections. A capability observed by an attempt
+	// that STARTED before the reset belongs to the network being left; storing it afterwards
+	// would make the new network skip a version that works there.
+	networkEpoch atomic.Uint64
+	// capabilityAccess makes "is this observation still current?" and its store one
+	// transaction, so a reset cannot land between the two.
+	capabilityAccess sync.Mutex
 }
 
 func NewClientWithTLS(ctx context.Context, logger logger.ContextLogger, outboundDialer N.Dialer, serverOptions option.ServerOptions, tlsOptions option.OutboundTLSOptions, options ClientOptions) (*Client, error) {
@@ -296,8 +312,48 @@ func (c *Client) http3Available() bool {
 	if c.http3 == nil {
 		return false
 	}
+	if c.http3ExtendedConnectUnsupported.Load() {
+		return false
+	}
 	brokenUntil := c.http3Broken.Load()
 	return brokenUntil == 0 || time.Now().UnixNano() >= brokenUntil
+}
+
+// observeHTTP3ExtendedConnectUnsupported remembers that HTTP/3 cannot carry a CONNECT at this
+// authority, but only if the observation belongs to the network that is still current.
+func (c *Client) observeHTTP3ExtendedConnectUnsupported(networkEpoch uint64, attempt uint64) {
+	c.capabilityAccess.Lock()
+	if c.networkEpoch.Load() == networkEpoch {
+		c.http3ExtendedConnectUnsupported.Store(true)
+	}
+	c.capabilityAccess.Unlock()
+	// The attempt reached a conclusion, so it must consume its ordering slot even when the
+	// observation was superseded: a later outcome has to be newer than this one.
+	c.noteHTTP3CapabilityVerdict(attempt)
+}
+
+// observeHTTP2ExtendedConnectUnsupported is the HTTP/2 half of the same rule.
+//
+// The marker used to be written when the H2 CONNECT returned, with nothing tying it to the
+// network the attempt started on. A tunnel that spent the network change inside the H2
+// handshake could therefore land its "H2 cannot do extended CONNECT" verdict AFTER
+// ResetConnections had cleared it, and every later tunnel setup skipped a perfectly usable
+// HTTP/2 path in favour of HTTP/1.1.
+func (c *Client) observeHTTP2ExtendedConnectUnsupported(networkEpoch uint64) {
+	c.capabilityAccess.Lock()
+	defer c.capabilityAccess.Unlock()
+	if c.networkEpoch.Load() != networkEpoch {
+		return
+	}
+	c.http2ExtendedConnectUnsupported.Store(true)
+}
+
+// noteHTTP3CapabilityVerdict consumes this attempt's ordering slot without charging the failure
+// ladder: the transport answered, it just cannot do what the request needed.
+func (c *Client) noteHTTP3CapabilityVerdict(attempt uint64) {
+	c.http3VerdictMu.Lock()
+	defer c.http3VerdictMu.Unlock()
+	c.claimHTTP3Outcome(attempt)
 }
 
 // beginHTTP3Attempt issues the sequence number that stamps one HTTP/3 attempt.
@@ -452,6 +508,9 @@ func (c *Client) DialContext(ctx context.Context, network string, destination M.
 	if c.closed.Load() {
 		return nil, net.ErrClosed
 	}
+	// The epoch an observation belongs to. Anything learned by this dial is only stored if the
+	// network it started on is still the current one; see observeHTTP3ExtendedConnectUnsupported.
+	networkEpoch := c.networkEpoch.Load()
 	switch N.NetworkName(network) {
 	case N.NetworkTCP:
 	case N.NetworkUDP:
@@ -505,10 +564,16 @@ func (c *Client) DialContext(ctx context.Context, network string, destination M.
 		// An attempt that merely ran out of its window is still an attempt that did not work.
 		// Returning that error would hand a QUIC timeout to the caller and never try H2, which is
 		// the opposite of what the window is for.
-		if !probeExpired && !errors.Is(err, ErrHTTP3Unavailable) {
+		if errors.Is(err, errHTTP3ExtendedConnectUnsupported) {
+			// The transport answered, and the answer is "not this protocol for CONNECT". That
+			// is remembered as a capability (sticky, per network) instead of charging the
+			// failure ladder, and it still falls back so this dial can succeed.
+			c.observeHTTP3ExtendedConnectUnsupported(networkEpoch, http3Attempt)
+		} else if !probeExpired && !errors.Is(err, ErrHTTP3Unavailable) {
 			return nil, err
+		} else {
+			c.markHTTP3Broken(http3Attempt)
 		}
-		c.markHTTP3Broken(http3Attempt)
 	}
 	if c.tlsDialer != nil && !c.http2Unsupported.Load() {
 		clientConn, conn, err := c.acquireHTTP2(ctx)
@@ -539,11 +604,20 @@ func (c *Client) closeHTTP2Locked() {
 }
 
 func (c *Client) ResetConnections() {
+	// The epoch moves FIRST and the capability memories are cleared inside the same critical
+	// section, so an observation that started on the network being left cannot land after the
+	// clear. http2Unsupported is written under http2Access (acquireHTTP2 holds it for the whole
+	// attempt), but it is cleared here with the others because the epoch it belongs to also
+	// moved.
+	c.capabilityAccess.Lock()
+	c.networkEpoch.Add(1)
+	c.http2Unsupported.Store(false)
+	c.http2ExtendedConnectUnsupported.Store(false)
+	c.http3ExtendedConnectUnsupported.Store(false)
+	c.capabilityAccess.Unlock()
 	c.http2Access.Lock()
 	c.closeHTTP2Locked()
 	c.http2Access.Unlock()
-	c.http2Unsupported.Store(false)
-	c.http2ExtendedConnectUnsupported.Store(false)
 	if c.http3 != nil {
 		c.http3.ResetConnection()
 		// Anything already in flight belongs to the network being left, so it is superseded AND
@@ -681,6 +755,10 @@ var (
 	ErrHTTP3Unavailable           = E.New("HTTP/3 unavailable")
 	errExtendedConnectUnsupported = E.New("server does not support HTTP/2 extended CONNECT")
 	errExtendedConnectUnavailable = E.New("HTTP/2 extended CONNECT is unavailable in this build: Go 1.27+ requires the badlinkname build tag")
+	// errHTTP3ExtendedConnectUnsupported is a capability answer, not a transport failure: the
+	// server speaks HTTP/3 but did not advertise SETTINGS_ENABLE_CONNECT_PROTOCOL, so an HTTP/3
+	// CONNECT would be a protocol violation. See openConnectStream.
+	errHTTP3ExtendedConnectUnsupported = E.New("server does not support HTTP/3 extended CONNECT")
 )
 
 func statusError(response *http.Response) error {
