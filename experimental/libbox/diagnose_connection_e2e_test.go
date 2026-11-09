@@ -153,3 +153,22 @@ func TestTheActiveDiagnosticKeepsTheRootContract(t *testing.T) {
 	require.Eventually(t, func() bool { return listener.count.Load() == 1 }, 5*time.Second, time.Millisecond,
 		"root mode dials the target as written, by contract")
 }
+
+// TestTheRealDNSStageReportsThePendingDependency drives the REAL box path's DNS preview: a DNS rule
+// that reads a process path cannot be decided without one, and the stage must report that dependency
+// instead of naming the default server.
+func TestTheRealDNSStageReportsThePendingDependency(t *testing.T) {
+	config := `{"log":{"level":"error"},"dns":{"servers":[{"type":"local","tag":"local"}],"rules":[{"process_path":["/usr/bin/curl"],"action":"route","server":"local"}]},"outbounds":[{"type":"direct","tag":"direct"}],"route":{"final":"direct"}}`
+	server := startDiagnoseTestCommandServer(t, config)
+	instance := server.Instance()
+	require.NotNil(t, instance)
+	boxInstance := instance.Box()
+	require.NotNil(t, boxInstance)
+	path := newBoxConnectionTestPath(boxInstance)
+
+	preview, previewed := path.PreviewDNSRule("tcp", "race.example.org", 443)
+	require.True(t, previewed, "the real box path can explain a DNS decision")
+	require.NotEmpty(t, preview.Unknown, "a process-path rule is undecidable without a process fact")
+	require.Contains(t, preview.Unknown, "process_path")
+	require.Empty(t, preview.Server, "no server may be named for an undecided query")
+}

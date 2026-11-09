@@ -57,6 +57,9 @@ type Router struct {
 	// so the walk can complete the owner-only answer exactly when it reaches one. rulesAccess guards
 	// it together with the rules themselves.
 	ruleNeedsPaths []bool
+	// ruleProcessNeeds is parallel to rules too: it says WHICH process fields each rule reads, so a
+	// path-needing rule is not satisfied by a package list and vice versa.
+	ruleProcessNeeds []dnsProcessNeed
 	// processPathCompleter is injected by the route layer, which owns the lookup and its cache. Nil
 	// means "no deferral": the walk evaluates with the metadata it was given, as before.
 	processPathCompleter  func(ctx context.Context, metadata *adapter.InboundContext)
@@ -306,6 +309,7 @@ func (r *Router) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		}
 		r.rules = newRules
 		r.ruleNeedsPaths = processPathRuleFlags(r.rawRules)
+		r.ruleProcessNeeds = processNeedFlags(r.rawRules)
 		r.legacyDNSMode = legacyDNSMode
 		r.started = true
 		r.rulesAccess.Unlock()
@@ -428,7 +432,7 @@ func (r *Router) ValidateRuleSetMetadataUpdate(tag string, metadata adapter.Rule
 // process-path completer; the preview calls it with false because a read-only explanation must not
 // cause a /proc walk (see PreviewLookup). The last result reports that the walk stopped at a rule
 // whose verdict needs a fact the caller did not supply.
-func (r *Router) matchDNS(ctx context.Context, rules []adapter.DNSRule, allowFakeIP bool, ruleIndex int, isAddressQuery bool, options *adapter.DNSQueryOptions, completePaths bool) (adapter.DNSTransport, adapter.DNSRule, int, bool) {
+func (r *Router) matchDNS(ctx context.Context, rules []adapter.DNSRule, allowFakeIP bool, ruleIndex int, isAddressQuery bool, options *adapter.DNSQueryOptions, completePaths bool) (adapter.DNSTransport, adapter.DNSRule, int, string) {
 	metadata := adapter.ContextFrom(ctx)
 	if metadata == nil {
 		panic("no context")
@@ -448,8 +452,8 @@ func (r *Router) matchDNS(ctx context.Context, rules []adapter.DNSRule, allowFak
 		if !pathsAttempted {
 			if completePaths {
 				pathsAttempted = r.completeProcessPathsForRule(ctx, metadata, currentRuleIndex)
-			} else if r.ruleNeedsProcessPath(currentRuleIndex) && !metadataHasProcessPathFact(metadata) {
-				return nil, currentRule, currentRuleIndex, true
+			} else if need := r.processNeedAt(currentRuleIndex); need != dnsNeedNone && !metadataHasProcessNeed(metadata, need) {
+				return nil, currentRule, currentRuleIndex, processNeedDependency(need)
 			}
 		}
 		metadata.ResetRuleCache()
@@ -491,7 +495,7 @@ func (r *Router) matchDNS(ctx context.Context, rules []adapter.DNSRule, allowFak
 					options.ClientSubnet = netip.Prefix{}
 					options.RemoveClientSubnet = true
 				}
-				return transport, currentRule, currentRuleIndex, false
+				return transport, currentRule, currentRuleIndex, ""
 			case *R.RuleActionDNSRouteOptions:
 				if action.Strategy != C.DomainStrategyAsIS {
 					options.Strategy = action.Strategy
@@ -514,16 +518,16 @@ func (r *Router) matchDNS(ctx context.Context, rules []adapter.DNSRule, allowFak
 					options.RemoveClientSubnet = true
 				}
 			case *R.RuleActionReject:
-				return nil, currentRule, currentRuleIndex, false
+				return nil, currentRule, currentRuleIndex, ""
 			case *R.RuleActionPredefined:
-				return nil, currentRule, currentRuleIndex, false
+				return nil, currentRule, currentRuleIndex, ""
 			case *R.RuleActionAdblock:
-				return nil, currentRule, currentRuleIndex, false
+				return nil, currentRule, currentRuleIndex, ""
 			}
 		}
 	}
 	transport := r.transport.Default()
-	return transport, nil, -1, false
+	return transport, nil, -1, ""
 }
 
 func (r *Router) applyDNSRouteOptions(options *adapter.DNSQueryOptions, routeOptions R.RuleActionDNSRouteOptions) {
