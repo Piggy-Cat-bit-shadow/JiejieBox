@@ -41,6 +41,13 @@ type ClientBind struct {
 	isConnect   bool
 	connectAddr netip.AddrPort
 	reserved    [3]uint8
+	// awgTransparent disables the Reserved-byte rewrite in both directions. AmneziaWG uses the
+	// bytes after the message type for header protection, so writing `reserved` into a sent packet
+	// corrupts it and clearing the same bytes on a received packet corrupts the reply before
+	// wireguard-go can decrypt it. The endpoint sets this from its AWG options; the config layer
+	// refuses a non-empty `reserved` together with AWG, so the two features never meet in a valid
+	// configuration.
+	awgTransparent bool
 }
 
 func NewClientBind(ctx context.Context, logger logger.Logger, dialer N.Dialer, isConnect bool, connectAddr netip.AddrPort, reserved [3]uint8) *ClientBind {
@@ -234,7 +241,7 @@ func (c *ClientBind) receive(packets [][]byte, sizes []int, eps []conn.Endpoint)
 		return
 	}
 	sizes[0] = n
-	if n > 3 {
+	if n > 3 && !c.awgTransparent {
 		b := packets[0]
 		clear(b[1:4])
 	}
@@ -295,7 +302,7 @@ func (c *ClientBind) Send(bufs [][]byte, ep conn.Endpoint, offset int) error {
 		if offset > 0 {
 			buf = buf[offset:]
 		}
-		if len(buf) > 3 {
+		if len(buf) > 3 && !c.awgTransparent {
 			c.reservedAccess.RLock()
 			reserved, loaded := c.reservedForEndpoint[destination]
 			c.reservedAccess.RUnlock()
@@ -323,6 +330,13 @@ func (c *ClientBind) ParseEndpoint(s string) (conn.Endpoint, error) {
 
 func (c *ClientBind) BatchSize() int {
 	return 1
+}
+
+// SetAWGTransparent turns off the Reserved-byte rewrite in both directions, for an AmneziaWG
+// endpoint whose packet headers are protected rather than padded. It must be called before the
+// bind is opened; the endpoint does so right after construction.
+func (c *ClientBind) SetAWGTransparent(enabled bool) {
+	c.awgTransparent = enabled
 }
 
 func (c *ClientBind) SetReservedForEndpoint(destination netip.AddrPort, reserved [3]byte) {

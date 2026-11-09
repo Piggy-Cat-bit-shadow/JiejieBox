@@ -79,6 +79,13 @@ type ClientOptions struct {
 	// HealthCheck enables CONNECT _check before a dial on a session that has
 	// been silent for longer than 30 s. It is never sent on a timer.
 	HealthCheck bool
+	// AdmitCreation, when non-nil, bounds one shared session creation. It runs
+	// once before the dial and returns the context the dial runs with, plus a
+	// finish called with the dial result. The returned context carries the
+	// caller's values (including any acquisition marker of a nested seam); a
+	// nil hook admits everything and is the path of every process without a
+	// creation budget.
+	AdmitCreation func(ctx context.Context) (context.Context, func(error), error)
 	// IdleTimeout closes the session locally after this long without activity
 	// and without open streams; zero keeps it until the server or the network
 	// ends it.
@@ -122,6 +129,7 @@ type Client struct {
 	idleTimeout    time.Duration
 	staleWindow    time.Duration
 	quicDialHook   QUICDialHook
+	admitCreation  func(ctx context.Context) (context.Context, func(error), error)
 
 	access  sync.Mutex
 	session *clientSession
@@ -242,6 +250,7 @@ func NewClient(options ClientOptions) (*Client, error) {
 		healthCheck:    options.HealthCheck,
 		idleTimeout:    max(options.IdleTimeout, 0),
 		staleWindow:    staleWindow,
+		admitCreation:  options.AdmitCreation,
 	}
 	client.dialSession = client.connectSession
 	return client, nil
@@ -561,7 +570,13 @@ func (c *Client) getSession(ctx context.Context, trace *ClientTrace) (*clientSes
 			trace.sessionReused(ctx, c.protocol, c.server, session.opened)
 			return session, false, nil
 		}
-		offerCtx, cancel := context.WithCancelCause(c.ctx)
+		// The offer keeps the caller's context VALUES but not its cancellation:
+		// an acquisition marker (resourceguard.HeldPermit) or a traffic class
+		// set by an outer seam must reach the dial and its TLS handshake, while
+		// this caller stopping its wait must not cancel a creation that other
+		// waiters (or a later demand) can still use. Close and Reset cancel the
+		// offer explicitly.
+		offerCtx, cancel := context.WithCancelCause(context.WithoutCancel(ctx))
 		pending := &clientOffer{
 			done:     make(chan struct{}),
 			cancel:   cancel,
@@ -585,11 +600,38 @@ func (c *Client) getSession(ctx context.Context, trace *ClientTrace) (*clientSes
 // here, exactly once, instead of being published after the client ended.
 func (c *Client) completeOffer(pending *clientOffer, offerCtx context.Context) {
 	traceCtx := pending.traceCtx
-	dialCtx, done := pending.trace.sessionOpen(traceCtx, c.protocol, c.server)
+	dialCtx, done := pending.trace.sessionOpen(offerCtx, c.protocol, c.server)
 	c.logger.DebugContext(traceCtx, "trusttunnel: opening ", c.protocol, " session to ", c.server)
+	finish := func(error) {}
+	if c.admitCreation != nil {
+		admittedCtx, admittedFinish, admitErr := c.admitCreation(dialCtx)
+		if admitErr != nil {
+			done(admitErr)
+			pending.cancel(nil)
+			c.publishOffer(pending, nil, admitErr)
+			return
+		}
+		if admittedCtx != nil {
+			dialCtx = admittedCtx
+		}
+		if admittedFinish != nil {
+			finish = admittedFinish
+		}
+	}
 	conn, err := c.dialSession(dialCtx)
+	finish(err)
 	done(err)
 	pending.cancel(nil)
+	c.publishOffer(pending, conn, err)
+}
+
+// publishOffer publishes one creation result under the client lock. A result
+// that arrived after the offer was discarded is never published: the client
+// closes it here, exactly once.
+func (c *Client) publishOffer(pending *clientOffer, conn sessionConn, err error) {
+	if err == nil && conn == nil {
+		err = E.New("trusttunnel: session creation returned no connection")
+	}
 	var session *clientSession
 	if err == nil {
 		session = newClientSession(c.ctx, conn)
@@ -622,7 +664,7 @@ func (c *Client) completeOffer(pending *clientOffer, offerCtx context.Context) {
 	if session == nil {
 		return
 	}
-	c.logger.DebugContext(traceCtx, "trusttunnel: ", c.protocol, " session to ", c.server, " opened")
+	c.logger.DebugContext(pending.traceCtx, "trusttunnel: ", c.protocol, " session to ", c.server, " opened")
 	if c.idleTimeout > 0 {
 		go c.idleWatcher(session)
 	}

@@ -284,7 +284,13 @@ func (e *Endpoint) Start(postStart bool) error {
 				connectAddr = e.peers[0].endpoint
 			}
 		}
-		bind = NewClientBind(e.options.Context, e.options.Logger, e.options.Dialer, isConnect, connectAddr, reserved)
+		clientBind := NewClientBind(e.options.Context, e.options.Logger, e.options.Dialer, isConnect, connectAddr, reserved)
+		if e.options.AmneziaWG.IsSet() {
+			// AWG protects the bytes after the message type; the Reserved-byte rewrite this bind
+			// performs for WARP-style peers would corrupt every protected header.
+			clientBind.SetAWGTransparent(true)
+		}
+		bind = clientBind
 	}
 	if isUDPListener || len(e.peers) > 1 {
 		for _, peer := range e.peers {

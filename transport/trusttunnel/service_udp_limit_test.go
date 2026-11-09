@@ -3,6 +3,7 @@ package trusttunnel
 import (
 	"context"
 	"io"
+	"net"
 	"net/netip"
 	"sync"
 	"sync/atomic"
@@ -621,6 +622,91 @@ func TestUDPAssociationReturnedWhenHandlerCloses(t *testing.T) {
 	}
 	packetConn.Close()
 	waitForUDPStats(t, server.service, "the final release", func(stats UDPStats) bool {
+		return stats.Associations == 0 && stats.QueuedBytes == 0
+	})
+}
+
+// TestUDPLimitsOverHTTP3 runs the association and byte admission paths on a
+// real HTTP/3 listener: the same service code serves both protocols, and the
+// QUIC stream layer has its own stream limit, so the caps must hold there too.
+func TestUDPLimitsOverHTTP3(t *testing.T) {
+	if !quicIncluded {
+		t.Skip("HTTP/3 requires the with_quic build tag")
+	}
+	limits := UDPLimits{
+		SessionAssociations: 3,
+		ServiceAssociations: 32,
+		SessionQueuedBytes:  1 << 20,
+		ServiceQueuedBytes:  1 << 20,
+		IdleTimeout:         time.Minute,
+	}
+	handler := &testHandler{}
+	server := startTestService(t, ProtocolHTTP3, handler, limits)
+	client := server.newClient(t, ProtocolHTTP3, testPassword, &testDialer{}, nil)
+	packetConn, err := client.ListenPacket(testContext(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	destinations := udpDestinations(8)
+	for _, destination := range destinations {
+		writeDatagram(t, packetConn, []byte("probe"), destination)
+	}
+	stats := waitForUDPStats(t, server.service, "the HTTP/3 session association limit", func(stats UDPStats) bool {
+		return stats.Associations == limits.SessionAssociations && stats.RefusedAssociations >= 5
+	})
+	if stats.QueuedBytes > limits.SessionQueuedBytes {
+		t.Fatalf("%d queued bytes over the %d limit", stats.QueuedBytes, limits.SessionQueuedBytes)
+	}
+	waitFor(t, "the HTTP/3 handler associations", func() bool {
+		return len(handler.udpMetadata()) == limits.SessionAssociations
+	})
+	for index := 0; index < limits.SessionAssociations; index++ {
+		if reply := readDatagram(t, packetConn, 5*time.Second); reply.err != nil {
+			t.Fatal(reply.err)
+		}
+	}
+	packetConn.Close()
+	waitForUDPStats(t, server.service, "the HTTP/3 release", func(stats UDPStats) bool {
+		return stats.Associations == 0 && stats.QueuedBytes == 0
+	})
+}
+
+// TestUDPSlowHandshakesHoldNoUDPBudget opens TCP connections that never start
+// the TLS handshake: pre-authentication work must not allocate an association
+// or a queued byte, and an authenticated client keeps working beside them.
+func TestUDPSlowHandshakesHoldNoUDPBudget(t *testing.T) {
+	handler := &testHandler{}
+	server := startTestService(t, ProtocolHTTP2, handler, UDPLimits{IdleTimeout: time.Minute})
+	var handshakes []net.Conn
+	for index := 0; index < 8; index++ {
+		conn, err := net.Dial("tcp", server.address.String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		handshakes = append(handshakes, conn)
+	}
+	t.Cleanup(func() {
+		for _, conn := range handshakes {
+			conn.Close()
+		}
+	})
+	// Let the accept loop pick them up and park in the TLS handshake.
+	time.Sleep(50 * time.Millisecond)
+	if stats := server.service.UDPStats(); stats.Associations != 0 || stats.QueuedBytes != 0 {
+		t.Fatalf("a pending handshake held UDP budget: %+v", stats)
+	}
+	client := server.newClient(t, ProtocolHTTP2, testPassword, &testDialer{}, nil)
+	packetConn, err := client.ListenPacket(testContext(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination := udpDestinations(1)[0]
+	writeDatagram(t, packetConn, []byte("payload"), destination)
+	if reply := readDatagram(t, packetConn, 5*time.Second); reply.err != nil || reply.source != destination {
+		t.Fatalf("authenticated flow beside pending handshakes: %v %s", reply.err, reply.source)
+	}
+	packetConn.Close()
+	waitForUDPStats(t, server.service, "the release after the slow handshakes", func(stats UDPStats) bool {
 		return stats.Associations == 0 && stats.QueuedBytes == 0
 	})
 }
