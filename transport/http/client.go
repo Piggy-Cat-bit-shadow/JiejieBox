@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -188,6 +189,10 @@ type Client struct {
 	// capabilityAccess makes "is this observation still current?" and its store one
 	// transaction, so a reset cannot land between the two.
 	capabilityAccess sync.Mutex
+	// tcpFallbackDiagnostic explains why the TCP fallback CANNOT work for this client because the
+	// configuration itself makes it impossible. Empty means the configuration does not stand in
+	// the way. See tcpFallbackDiagnostic.
+	tcpFallbackDiagnostic string
 }
 
 func NewClientWithTLS(ctx context.Context, logger logger.ContextLogger, outboundDialer N.Dialer, serverOptions option.ServerOptions, tlsOptions option.OutboundTLSOptions, options ClientOptions) (*Client, error) {
@@ -227,7 +232,52 @@ func NewClientWithTLS(ctx context.Context, logger logger.ContextLogger, outbound
 	options.RawDialer = outboundDialer
 	options.Server = serverOptions.Build()
 	options.lifecycleLogger = logger
-	return NewClient(options)
+	client, err := NewClient(options)
+	if err != nil {
+		return nil, err
+	}
+	if client.version == 3 {
+		client.tcpFallbackDiagnostic = tcpFallbackDiagnostic(tlsOptions, alpnIsDefault)
+	}
+	return client, nil
+}
+
+// tcpFallbackDiagnostic explains a configuration that makes the H3 -> TCP fallback impossible.
+//
+// # What it is about
+//
+// `tls.alpn` is the list of protocols THIS CLIENT offers. An empty list means "derive per
+// version": NewClientWithTLS gives the TCP dialer h2 + http/1.1 and the QUIC configuration h3. A
+// non-empty list is a user constraint and is used on BOTH sides. So `alpn: ["h3"]` configures a
+// client that can only ever speak HTTP/3: when UDP is blocked there is no protocol left to
+// negotiate over TCP, and the server's no_application_protocol alert is the symptom rather than
+// the cause.
+//
+// # Why the client does not "fix" it by adding h2
+//
+// An explicit ALPN list exists to bound what this client offers on the wire. Adding h2 to it
+// would widen that bound silently, against the configuration, on every TCP attempt. The
+// constraint is therefore kept, and the fallback reports why it cannot exist instead of handing
+// the caller a TLS alert from a handshake that could never have succeeded.
+func tcpFallbackDiagnostic(tlsOptions option.OutboundTLSOptions, alpnIsDefault bool) string {
+	if !tlsOptions.Enabled || alpnIsDefault {
+		return ""
+	}
+	if slices.Contains(tlsOptions.ALPN, http2.NextProtoTLS) || slices.Contains(tlsOptions.ALPN, "http/1.1") {
+		return ""
+	}
+	return E.New("tls.alpn offers no HTTP/2 or HTTP/1.1 protocol for the TCP fallback (alpn: ",
+		strings.Join(tlsOptions.ALPN, ","), "); clear tls.alpn to let the client derive the list per HTTP version, "+
+			"or include \"h2\"").Error()
+}
+
+// fallbackUnavailableError names the configuration problem in front of the H3 error that made the
+// client reach for the TCP path.
+func fallbackUnavailableError(cause error, diagnostic string) error {
+	if cause != nil {
+		return E.Cause(cause, "HTTP/3 failed and the TCP fallback is unavailable: ", diagnostic)
+	}
+	return E.New("the TCP fallback is unavailable: ", diagnostic)
 }
 
 func NewClient(options ClientOptions) (*Client, error) {
@@ -518,6 +568,7 @@ func (c *Client) DialContext(ctx context.Context, network string, destination M.
 	default:
 		return nil, E.Extend(N.ErrUnknownNetwork, network)
 	}
+	var http3AttemptErr error
 	if c.http3Available() {
 		// The sequence number is taken BEFORE the attempt, so an outcome is judged against the
 		// newest attempt STARTED rather than the one that happened to report last. See
@@ -528,6 +579,7 @@ func (c *Client) DialContext(ctx context.Context, network string, destination M.
 		// the caller's deadline, so a caller with less time than the window is not delayed by it.
 		probeCtx, cancelProbe := context.WithTimeout(ctx, http3EstablishTimeout)
 		conn, err := c.http3.DialContext(probeCtx, destination)
+		http3AttemptErr = err
 		probeExpired := probeCtx.Err() != nil
 		cancelProbe()
 		if err == nil {
@@ -579,6 +631,12 @@ func (c *Client) DialContext(ctx context.Context, network string, destination M.
 		} else {
 			c.markHTTP3Broken(http3Attempt)
 		}
+	}
+	if c.tcpFallbackDiagnostic != "" {
+		// The configuration itself leaves no protocol for the TCP side, so the fallback cannot
+		// exist on this network. Say that instead of reporting a TLS alert from a handshake that
+		// could never have succeeded.
+		return nil, fallbackUnavailableError(http3AttemptErr, c.tcpFallbackDiagnostic)
 	}
 	if c.tlsDialer != nil && !c.http2Unsupported.Load() {
 		clientConn, conn, err := c.acquireHTTP2(ctx)
