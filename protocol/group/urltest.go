@@ -776,6 +776,11 @@ type URLTestGroup struct {
 	tolerance   uint16
 	idleTimeout time.Duration
 	history     *urltest.HistoryStorage
+	// failover is the stable/failover PROBE policy. Its zero value here (disabled) keeps the
+	// historical behaviour: every member is probed every round. The configuration window will map
+	// the policy fields onto it; until then the wiring is exercised by the in-package tests, which
+	// set it explicitly.
+	failover *urltest.FailoverState
 	// checking serialises health ROUNDS. It is what stops a periodic check and a forced recheck
 	// from measuring the same members at the same time.
 	checking atomic.Bool
@@ -918,6 +923,7 @@ func NewURLTestGroupWithExpected(ctx context.Context, outboundManager adapter.Ou
 		scope:                        scope,
 		interval:                     interval,
 		tolerance:                    tolerance,
+		failover:                     urltest.NewFailoverState(urltest.FailoverPolicy{Disabled: true}, ""),
 		idleTimeout:                  idleTimeout,
 		history:                      history,
 		close:                        make(chan struct{}),
@@ -1264,9 +1270,140 @@ func (g *URLTestGroup) runHealthRound(ctx context.Context, force bool) (result m
 	if nextCursorTag != "" {
 		g.probeCursorTag.Store(&nextCursorTag)
 	}
-	result = URLTestOutboundsWithTarget(ctx, g.outbound, g.history, g.logger, members, g.link, g.expected, g.interval, force, TestHistoryHealth)
+	probeMembers := g.healthProbeMembers(members, force)
+	result = URLTestOutboundsWithTarget(ctx, g.outbound, g.history, g.logger, probeMembers, g.link, g.expected, g.interval, force, TestHistoryHealth)
+	g.commitFailoverSelection(g.observeFailoverRound(members, probeMembers, result))
 	g.performUpdateCheck()
 	return result, nil
+}
+
+// healthProbeMembers applies the stable/failover policy's probe set to a PERIODIC round.
+//
+// A disabled policy (the default until the configuration maps it) and every forced/manual round
+// keep the historical behaviour: every member is measured. The power saving is exactly "a periodic
+// check of a healthy stable member measures that member and nothing else"; an explicit test must
+// never be narrowed.
+func (g *URLTestGroup) healthProbeMembers(members []adapter.Outbound, force bool) []adapter.Outbound {
+	if g.failover == nil || force || g.failover.Disabled() {
+		return members
+	}
+	g.failover.AdoptStable(g.currentSelectedTag())
+	tags := make([]string, len(members))
+	for index, member := range members {
+		tags[index] = member.Tag()
+	}
+	probes := g.failover.Probes(tags)
+	if len(probes) == len(members) {
+		return members
+	}
+	keep := make(map[string]bool, len(probes))
+	for _, tag := range probes {
+		keep[tag] = true
+	}
+	filtered := make([]adapter.Outbound, 0, len(probes))
+	for _, member := range members {
+		if keep[member.Tag()] {
+			filtered = append(filtered, member)
+		}
+	}
+	if len(filtered) == 0 {
+		return members
+	}
+	return filtered
+}
+
+// observeFailoverRound feeds the round's observations to the policy and returns the member it says
+// should carry traffic now (empty when the selection did not change).
+func (g *URLTestGroup) observeFailoverRound(members []adapter.Outbound, probeMembers []adapter.Outbound, result map[string]uint16) string {
+	if g.failover == nil || g.failover.Disabled() {
+		return ""
+	}
+	tags := make([]string, len(members))
+	for index, member := range members {
+		tags[index] = member.Tag()
+	}
+	observations := make(map[string]urltest.FailoverObservation, len(probeMembers))
+	for _, member := range probeMembers {
+		tag := member.Tag()
+		delay, measured := result[tag]
+		if measured {
+			observations[tag] = urltest.FailoverObservation{Measured: true, OK: true, DelayMs: delay}
+			continue
+		}
+		// Not in the result means either "skipped because the evidence is fresh" or "the probe
+		// failed". The failure path DELETES this target's health evidence, so a missing entry is the
+		// distinguishing fact: fresh evidence means not measured, no evidence means failed.
+		if g.history.LoadURLTestHistoryFor(tag, g.scope) == nil {
+			observations[tag] = urltest.FailoverObservation{Measured: true, OK: false}
+		}
+	}
+	decision := g.failover.Decide(tags, observations)
+	if decision.Changed && decision.Selected != "" {
+		return decision.Selected
+	}
+	return ""
+}
+
+// currentSelectedTag is the member traffic currently uses, which seeds the policy's stable slot.
+func (g *URLTestGroup) currentSelectedTag() string {
+	state := g.selected.Load()
+	if state == nil {
+		return ""
+	}
+	if state.tcp != nil {
+		return state.tcp.Tag()
+	}
+	if state.udp != nil {
+		return state.udp.Tag()
+	}
+	return ""
+}
+
+// commitFailoverSelection publishes the policy's choice through the SAME selection state every
+// other path uses, so readers see it and existing connections are interrupted only when the member
+// actually changed.
+func (g *URLTestGroup) commitFailoverSelection(tag string) {
+	if tag == "" || g.outbound == nil {
+		return
+	}
+	outbound, loaded := g.outbound.Outbound(tag)
+	if !loaded || outbound == nil {
+		return
+	}
+	g.updateAccess.Lock()
+	previous := g.selected.Load()
+	next := &selectedState{}
+	if previous != nil {
+		next.tcp = previous.tcp
+		next.udp = previous.udp
+	}
+	// "Changed" means the member traffic was already using was replaced. The FIRST selection is not
+	// an interruption (nothing was using the old member), which is the same distinction
+	// performUpdateCheck makes.
+	updated := false
+	selected := false
+	if common.Contains(outbound.Network(), N.NetworkTCP) && next.tcp != outbound {
+		if next.tcp != nil {
+			updated = true
+		}
+		next.tcp = outbound
+		selected = true
+	}
+	if common.Contains(outbound.Network(), N.NetworkUDP) && next.udp != outbound {
+		if next.udp != nil {
+			updated = true
+		}
+		next.udp = outbound
+		selected = true
+	}
+	g.selected.Store(next)
+	g.updateAccess.Unlock()
+	if updated && g.interruptGroup != nil {
+		g.interruptGroup.Interrupt(g.interruptExternalConnections)
+	}
+	if selected {
+		g.history.NotifyUpdated()
+	}
 }
 
 // orderHealthRoundMembers returns this round's member order and the cursor anchor for
