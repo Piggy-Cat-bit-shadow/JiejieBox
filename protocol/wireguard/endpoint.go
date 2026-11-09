@@ -73,6 +73,16 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 	if options.Detour != "" && options.ListenPort != 0 {
 		return nil, E.New("`listen_port` is conflict with `detour`")
 	}
+	if options.AmneziaWGOptions.IsSet() {
+		// AmneziaWG header protection owns the bytes `reserved` would rewrite, and the client bind
+		// stops rewriting them for AWG. Accepting both would silently mean one of the two
+		// features does not apply, so the combination is a configuration error.
+		for index, peer := range options.Peers {
+			if len(peer.Reserved) > 0 {
+				return nil, E.New("peers[", index, "]: `reserved` is not supported with AmneziaWG")
+			}
+		}
+	}
 	outboundDialer, err := dialer.NewWithOptions(dialer.Options{
 		Context: ctx,
 		Options: options.DialerOptions,
