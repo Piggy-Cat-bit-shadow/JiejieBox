@@ -237,9 +237,20 @@ func (b *GrowthBudget) Admit(class trafficclass.Class, geometryRequired bool) (i
 	b.access.Lock()
 	defer b.access.Unlock()
 	reserved := false
+	// A downgrade never grants above the CURRENT level's total. Permits that were
+	// handed out under a looser level stay in use and drain as their copies end, but
+	// while InUse is at or above flows+reserve every new direction is refused, including
+	// a high-priority one - otherwise arming the guard would still add occupancy on top
+	// of a cap it just lowered. Checking only reservedUsed missed exactly that case:
+	// Flows=4/InteractiveReserve=2 at Normal, four permits out, Armed is 2+1, and an
+	// interactive direction took the fifth.
+	if b.used >= plan.flows+plan.reserve {
+		b.refused++
+		return CopyGrowthNever, nil
+	}
 	if b.used >= plan.flows {
 		// The ordinary cap is reached. A high-priority flow may still draw on the
-		// reserve; anything else is refused, which means "keep the small buffer".
+		// reserve up to the current total; anything else keeps the small buffer.
 		if !highPriority || b.reservedUsed >= plan.reserve {
 			b.refused++
 			return CopyGrowthNever, nil

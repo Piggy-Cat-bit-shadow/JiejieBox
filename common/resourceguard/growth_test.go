@@ -244,8 +244,60 @@ func TestGrowthBudgetGeometryDirectionsAreAlwaysAdmitted(t *testing.T) {
 	require.Equal(t, uint64(0), stats.Refused)
 }
 
-// TestGrowthBudgetConservesUnderConcurrency is the -race target: admissions and
-// releases from many directions while the pressure level moves underneath them.
+// TestGrowthBudgetNeverGrantsAboveTheArmedTotal is the audit's P2 reproduction: four
+// ordinary permits held under Flows=4, then Armed lowers the plan to 2+1. The old
+// grants stay (their buffers are already grown and drain as their copies end), but a
+// new interactive direction must NOT be allowed to raise InUse from 4 to 5 - the check
+// has to be the current total, not only the reserve's own usage.
+func TestGrowthBudgetNeverGrantsAboveTheArmedTotal(t *testing.T) {
+	var level atomic.Uint32
+	budget := newTestGrowthBudget(4, 2, &level)
+
+	permits := make([]*GrowthPermit, 0, 4)
+	for index := 0; index < 4; index++ {
+		threshold, permit := budget.Admit(trafficclass.ClassBulk, false)
+		require.Equal(t, CopyGrowthDefault, threshold)
+		require.NotNil(t, permit)
+		permits = append(permits, permit)
+	}
+	require.Equal(t, 4, budget.Stats().InUse)
+
+	level.Store(uint32(LevelArmed))
+	stats := budget.Stats()
+	require.Equal(t, 2, stats.Flows)
+	require.Equal(t, 1, stats.Reserve)
+
+	threshold, permit := budget.Admit(trafficclass.ClassInteractive, false)
+	require.Equal(t, CopyGrowthNever, threshold, "Armed's total is 3; InUse is already 4, so no new direction")
+	require.Nil(t, permit)
+	require.Equal(t, 4, budget.Stats().InUse, "a downgrade must not add occupancy above the new total")
+
+	// Draining the old permits opens exactly the current plan, in the current order:
+	// two ordinary, then one reserve for a high-priority direction.
+	permits[0].Release()
+	permits[1].Release()
+	threshold, permit = budget.Admit(trafficclass.ClassInteractive, false)
+	require.Equal(t, CopyGrowthDefault, threshold, "InUse 2 == flows 2, so a high-priority direction takes the Armed reserve")
+	require.NotNil(t, permit)
+	require.Equal(t, 3, budget.Stats().InUse)
+	require.Equal(t, 1, budget.Stats().ReservedInUse)
+
+	threshold, refused := budget.Admit(trafficclass.ClassInteractive, false)
+	require.Equal(t, CopyGrowthNever, threshold, "the Armed total is reached")
+	require.Nil(t, refused)
+	permit.Release()
+	permits[2].Release()
+	permits[3].Release()
+	require.Equal(t, 0, budget.Stats().InUse)
+
+	// Recovery re-opens the Normal cap.
+	level.Store(uint32(LevelNormal))
+	threshold, permit = budget.Admit(trafficclass.ClassBulk, false)
+	require.Equal(t, CopyGrowthDefault, threshold)
+	require.NotNil(t, permit)
+	permit.Release()
+}
+
 func TestGrowthBudgetConservesUnderConcurrency(t *testing.T) {
 	var level atomic.Uint32
 	budget := newTestGrowthBudget(6, 2, &level)
