@@ -177,3 +177,92 @@ func (d *probeCountingDialer) ListenPacket(context.Context, M.Socksaddr) (net.Pa
 
 // keep the import set honest if the fixture above is edited later.
 var _ N.Dialer = (*probeCountingDialer)(nil)
+
+// TestCancellingHalfTheCallersLeavesTheOtherHalfAnswered is the cancel-drain half of the same
+// picture: under the same multi-group load, half the callers walk away early. The survivors must
+// still be answered, the abandoned work must stop, and every counter must come back to zero.
+func TestCancellingHalfTheCallersLeavesTheOtherHalfAnswered(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		time.Sleep(10 * time.Millisecond)
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+	link := server.URL + "/generate_204"
+
+	const (
+		nodeCount      = 5
+		callersPerNode = 4
+		coordinatorCap = 2
+	)
+	coordinator := NewCoordinator(coordinatorCap)
+	share := NewMeasurementShare()
+	boxCtx := ContextWithMeasurementShare(ContextWithCoordinator(context.Background(), coordinator), share)
+	snapshot := watchBox(t, context.Background(), coordinator, share)
+
+	runtime.GC()
+	time.Sleep(50 * time.Millisecond)
+	goroutinesBefore := runtime.NumGoroutine()
+
+	dialer := &probeCountingDialer{target: server.Listener.Addr().String()}
+
+	var waitGroup sync.WaitGroup
+	start := make(chan struct{})
+	var survivors atomic.Int32
+	var survivorFailures atomic.Int32
+	var cancelled atomic.Int32
+	for node := 0; node < nodeCount; node++ {
+		tag := providerTag(0, node)
+		for caller := 0; caller < callersPerNode; caller++ {
+			waitGroup.Add(1)
+			go func(tag string, caller int) {
+				defer waitGroup.Done()
+				<-start
+				key := MeasurementKey{Node: tag, Target: link, Purpose: PurposeHealth}
+				if caller%2 == 1 {
+					// This caller gives up quickly; the other callers of the same node do not.
+					ctx, cancel := context.WithTimeout(boxCtx, 3*time.Millisecond)
+					defer cancel()
+					_, err := Measure(ctx, MeasureOptions{Link: link, Key: &key}, dialer)
+					if err != nil {
+						cancelled.Add(1)
+					}
+					return
+				}
+				if _, err := Measure(boxCtx, MeasureOptions{Link: link, Key: &key}, dialer); err != nil {
+					survivorFailures.Add(1)
+					return
+				}
+				survivors.Add(1)
+			}(tag, caller)
+		}
+	}
+	close(start)
+	waitGroup.Wait()
+
+	require.Zero(t, survivorFailures.Load(),
+		"a caller that kept waiting must never be failed by another caller giving up")
+	require.EqualValues(t, nodeCount*callersPerNode/2, survivors.Load(),
+		"every caller that kept waiting is answered")
+	require.Greater(t, cancelled.Load(), int32(0), "the short deadlines really did fire")
+	require.EqualValues(t, nodeCount, dialer.dials.Load(),
+		"a caller leaving does not make its node dial again")
+
+	require.Zero(t, coordinator.InFlight())
+	require.Zero(t, coordinator.Queued())
+	require.Zero(t, share.InFlight())
+	require.Zero(t, share.Participants())
+	require.GreaterOrEqual(t, snapshot.peakParticipants.Load(), int32(2))
+	require.LessOrEqual(t, int(snapshot.peakInFlight.Load()), coordinatorCap)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		runtime.GC()
+		time.Sleep(20 * time.Millisecond)
+		if runtime.NumGoroutine() <= goroutinesBefore+4 || time.Now().After(deadline) {
+			break
+		}
+	}
+	require.LessOrEqual(t, runtime.NumGoroutine(), goroutinesBefore+4,
+		"abandoned probes must not leave goroutines behind; before=%d after=%d",
+		goroutinesBefore, runtime.NumGoroutine())
+}
