@@ -31,7 +31,10 @@ package daemon
 
 import (
 	"bytes"
+	"context"
 	"time"
+
+	singjson "github.com/sagernet/sing/common/json"
 
 	"github.com/sagernet/sing-box/option"
 )
@@ -78,6 +81,10 @@ type ServiceChangePlan struct {
 	// Stale is set on a report whose plan could not be committed because the running configuration
 	// was no longer the one the plan was computed against.
 	Stale bool `json:"stale,omitempty"`
+	// ChangedSections names the top-level document sections that differ outside the domains with a
+	// live owner. It is the reason a restart is required, in the caller's own vocabulary: "the
+	// providers changed" is actionable, "the document changed" is not.
+	ChangedSections []string `json:"changedSections,omitempty"`
 	// Domains are the per-domain answers. A caller that needs to explain a restart reads these;
 	// they are only meaningful when Started is true, since a fresh start has nothing to compare.
 	Mode DomainPlan `json:"mode"`
@@ -192,9 +199,73 @@ func (s *StartedService) planServiceChange(target *option.Options, targetRevisio
 	case liveOnly && !plan.Mode.RestartRequired && len(plan.DNS.Changes) == 0 && len(plan.Rule.Changes) == 0:
 		plan.LiveOnly = true
 	default:
+		plan.ChangedSections = changedDocumentSections(current, target)
 		plan.RestartRequired = plan.ChangedDocument || plan.Mode.RestartRequired || plan.DNS.RestartRequired || plan.Rule.RestartRequired
 	}
 	return plan
+}
+
+// documentSection is one top-level section of the configuration document, encoded as a value.
+type documentSection struct {
+	name  string
+	value any
+}
+
+// documentSections lists the sections in a fixed order, so a report's reason is stable.
+func documentSections(options *option.Options) []documentSection {
+	if options == nil {
+		return nil
+	}
+	return []documentSection{
+		{"schema", options.Schema},
+		{"log", options.Log},
+		{"dns", options.DNS},
+		{"ntp", options.NTP},
+		{"certificate", options.Certificate},
+		{"certificate_providers", options.CertificateProviders},
+		{"http_clients", options.HTTPClients},
+		{"network_namespaces", options.NetworkNamespaces},
+		{"endpoints", options.Endpoints},
+		{"inbounds", options.Inbounds},
+		{"outbounds", options.Outbounds},
+		{"providers", options.Providers},
+		{"route", options.Route},
+		{"services", options.Services},
+		{"experimental", options.Experimental},
+	}
+}
+
+// changedDocumentSections names the sections whose content differs.
+//
+// Each section is encoded with the context-aware encoder, so the comparison sees the same document
+// the rest of the plan sees - a provider declaration or an outbound's server is a difference here,
+// not an invisible one. A section that cannot be encoded is reported as changed: the caller must
+// never be told "this section is identical" on the strength of an encoder that failed.
+func changedDocumentSections(current *option.Options, target *option.Options) []string {
+	currentSections := documentSections(current)
+	targetSections := documentSections(target)
+	var changed []string
+	for index := range targetSections {
+		targetEncoded, targetOK := encodeValue(targetSections[index].value)
+		var currentEncoded string
+		currentOK := false
+		if index < len(currentSections) && currentSections[index].name == targetSections[index].name {
+			currentEncoded, currentOK = encodeValue(currentSections[index].value)
+		}
+		if !targetOK || !currentOK || currentEncoded != targetEncoded {
+			changed = append(changed, targetSections[index].name)
+		}
+	}
+	return changed
+}
+
+// encodeValue encodes one section with the context-aware encoder.
+func encodeValue(value any) (string, bool) {
+	encoded, err := singjson.MarshalContext(context.Background(), value)
+	if err != nil {
+		return "", false
+	}
+	return string(encoded), true
 }
 
 // tryLiveOnlyChange commits a live-only plan through the running Box's existing owners.
