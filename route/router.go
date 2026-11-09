@@ -100,18 +100,27 @@ func (r *Router) SetReferenceManager(manager *ReferenceManager) {
 	r.referenceManager = manager
 }
 
+// dnsProcessPathCompleter is the setter a DNS router exposes so the layer that owns the process
+// lookup can complete a DNS rule's path on demand. It is an interface here for the same reason the
+// rest of the seams are: route must not import dns, and dns must not import route.
+type dnsProcessPathCompleter interface {
+	SetProcessPathCompleter(complete func(ctx context.Context, metadata *adapter.InboundContext))
+}
+
 func NewRouter(ctx context.Context, logFactory log.Factory, options option.RouteOptions, dnsOptions option.DNSOptions) *Router {
 	// A rule-set document is remote and mutable, so it can carry process conditions this
-	// configuration never mentions; a DNS rule is evaluated before the connection's rule walk; and
-	// the explicit find_process option asks for the process of every flow. All three keep the
-	// up-front full lookup. Everything else - a plain process_name/process_path/package_name rule -
-	// is completed when that rule is actually reached, so a flow decided by an earlier domain or
+	// configuration never mentions; and the explicit find_process option asks for the process of
+	// every flow. Both keep the up-front full lookup. Everything else - a plain
+	// process_name/process_path/package_name rule, in the ROUTING list or in the DNS list - is
+	// completed when that rule is actually reached, so a flow decided by an earlier domain or
 	// address rule never pays for the /proc walk.
-	needProcessPaths := hasRule(options.Rules, usesRuleSet) ||
-		needsProcessPathDNSRules(dnsOptions.Rules) ||
-		options.FindProcess
+	//
+	// The DNS list no longer forces the up-front walk: its rules are completed inside the DNS router's
+	// own rule walk by the completer installed below. Folding it in here charged every CONNECTION for
+	// a fact only a DNS QUERY could need.
+	needProcessPaths := hasRule(options.Rules, usesRuleSet) || options.FindProcess
 	deferredProcessPaths := !needProcessPaths && hasRule(options.Rules, isProcessPathRule)
-	return &Router{
+	router := &Router{
 		ctx:               ctx,
 		logger:            logFactory.NewLogger("router"),
 		logFactory:        logFactory,
@@ -135,6 +144,21 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.Route
 		pauseManager:         service.FromContext[pause.Manager](ctx),
 		platformInterface:    service.FromContext[adapter.PlatformInterface](ctx),
 	}
+	// The DNS rule walk defers its path need to this layer, which owns the lookup and its cache.
+	// Installing the completer is what turns the deferral on; a DNS router without it keeps
+	// evaluating rules against the metadata it was given.
+	if completer, isCompleter := router.dns.(dnsProcessPathCompleter); isCompleter {
+		completer.SetProcessPathCompleter(router.completeDNSProcessPaths)
+	}
+	return router
+}
+
+// completeDNSProcessPaths fills a DNS rule's process path from the query's own tuple.
+//
+// The metadata is the DNS query's, not a connection's: a DNS query has its own source and
+// destination, and using a connection tuple here would describe a different socket.
+func (r *Router) completeDNSProcessPaths(ctx context.Context, metadata *adapter.InboundContext) {
+	r.ensureProcessPaths(ctx, metadata)
 }
 
 func (r *Router) Initialize(rules []option.Rule, ruleSets []option.RuleSet) error {

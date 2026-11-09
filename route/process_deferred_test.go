@@ -32,6 +32,7 @@ import (
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/contrab/freelru"
 	"github.com/sagernet/sing/contrab/maphash"
+	"github.com/sagernet/sing/service"
 
 	"github.com/stretchr/testify/require"
 )
@@ -243,11 +244,42 @@ func TestTheRouterOnlyDefersPlainPathRules(t *testing.T) {
 		"a rule-set document may carry process conditions, so the walk cannot be deferred past it")
 	require.False(t, ruleSetRouter.deferredProcessPaths)
 
-	dnsRouter := NewRouter(context.Background(), log.NewNOPFactory(),
+	// A DNS path rule no longer forces the up-front walk for connections: its own rule walk completes
+	// it inside the DNS router (see completeDNSProcessPaths and TestTheRouterInstallsTheDNSCompleter).
+	dnsOnlyRouter := NewRouter(context.Background(), log.NewNOPFactory(),
 		option.RouteOptions{Rules: []option.Rule{pathRule}},
 		option.DNSOptions{RawDNSOptions: option.RawDNSOptions{Rules: []option.DNSRule{defaultDNSRule(option.RawDefaultDNSRule{
 			ProcessPath: badoption.Listable[string]{"/usr/bin/curl"},
 		})}}})
-	require.True(t, dnsRouter.needProcessPaths, "a DNS rule is evaluated before the connection's rule walk")
-	require.False(t, dnsRouter.deferredProcessPaths)
+	require.False(t, dnsOnlyRouter.needProcessPaths,
+		"a DNS path rule must not charge every CONNECTION for a fact only a DNS QUERY needs")
+	require.True(t, dnsOnlyRouter.deferredProcessPaths)
+}
+
+// recordingDNSRouter is a DNS router that only records the completer route installs.
+type recordingDNSRouter struct {
+	adapter.DNSRouter
+	completer func(ctx context.Context, metadata *adapter.InboundContext)
+}
+
+func (r *recordingDNSRouter) SetProcessPathCompleter(complete func(ctx context.Context, metadata *adapter.InboundContext)) {
+	r.completer = complete
+}
+
+// TestTheRouterInstallsTheDNSCompleter pins the wiring the deferral depends on: the DNS router gets
+// a completer, and that completer is the route layer's own lookup (so the cache and the
+// owner-only/full split stay in one place).
+func TestTheRouterInstallsTheDNSCompleter(t *testing.T) {
+	dnsRouter := &recordingDNSRouter{}
+	ctx := service.ContextWith[adapter.DNSRouter](context.Background(), dnsRouter)
+
+	router := NewRouter(ctx, log.NewNOPFactory(), option.RouteOptions{}, option.DNSOptions{})
+	require.NotNil(t, dnsRouter.completer, "the DNS rule walk can only defer to a completer that exists")
+
+	// The installed completer is the route layer's: with no searcher it is a no-op, and it must not
+	// invent a process record.
+	metadata := &adapter.InboundContext{}
+	dnsRouter.completer(context.Background(), metadata)
+	require.Nil(t, metadata.ProcessInfo)
+	_ = router
 }
