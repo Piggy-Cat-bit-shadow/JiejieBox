@@ -30,6 +30,7 @@ const (
 	StartedService_GetClashModeStatus_FullMethodName             = "/daemon.StartedService/GetClashModeStatus"
 	StartedService_SubscribeClashMode_FullMethodName             = "/daemon.StartedService/SubscribeClashMode"
 	StartedService_SetClashMode_FullMethodName                   = "/daemon.StartedService/SetClashMode"
+	StartedService_RefreshRemoteProviders_FullMethodName         = "/daemon.StartedService/RefreshRemoteProviders"
 	StartedService_URLTest_FullMethodName                        = "/daemon.StartedService/URLTest"
 	StartedService_SelectOutbound_FullMethodName                 = "/daemon.StartedService/SelectOutbound"
 	StartedService_SetGroupExpand_FullMethodName                 = "/daemon.StartedService/SetGroupExpand"
@@ -78,6 +79,9 @@ type StartedServiceClient interface {
 	GetClashModeStatus(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ClashModeStatus, error)
 	SubscribeClashMode(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ClashMode], error)
 	SetClashMode(ctx context.Context, in *ClashMode, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// RefreshRemoteProviders runs a bounded manual refresh of the running box's remote
+	// providers. It is additive: an older client simply never calls it.
+	RefreshRemoteProviders(ctx context.Context, in *RefreshRemoteProvidersRequest, opts ...grpc.CallOption) (*RemoteProviderRefreshResponse, error)
 	URLTest(ctx context.Context, in *URLTestRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	SelectOutbound(ctx context.Context, in *SelectOutboundRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	SetGroupExpand(ctx context.Context, in *SetGroupExpandRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
@@ -259,6 +263,16 @@ func (c *startedServiceClient) SetClashMode(ctx context.Context, in *ClashMode, 
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
 	err := c.cc.Invoke(ctx, StartedService_SetClashMode_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *startedServiceClient) RefreshRemoteProviders(ctx context.Context, in *RefreshRemoteProvidersRequest, opts ...grpc.CallOption) (*RemoteProviderRefreshResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RemoteProviderRefreshResponse)
+	err := c.cc.Invoke(ctx, StartedService_RefreshRemoteProviders_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -716,6 +730,9 @@ type StartedServiceServer interface {
 	GetClashModeStatus(context.Context, *emptypb.Empty) (*ClashModeStatus, error)
 	SubscribeClashMode(*emptypb.Empty, grpc.ServerStreamingServer[ClashMode]) error
 	SetClashMode(context.Context, *ClashMode) (*emptypb.Empty, error)
+	// RefreshRemoteProviders runs a bounded manual refresh of the running box's remote
+	// providers. It is additive: an older client simply never calls it.
+	RefreshRemoteProviders(context.Context, *RefreshRemoteProvidersRequest) (*RemoteProviderRefreshResponse, error)
 	URLTest(context.Context, *URLTestRequest) (*emptypb.Empty, error)
 	SelectOutbound(context.Context, *SelectOutboundRequest) (*emptypb.Empty, error)
 	SetGroupExpand(context.Context, *SetGroupExpandRequest) (*emptypb.Empty, error)
@@ -787,6 +804,9 @@ func (UnimplementedStartedServiceServer) SubscribeClashMode(*emptypb.Empty, grpc
 }
 func (UnimplementedStartedServiceServer) SetClashMode(context.Context, *ClashMode) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetClashMode not implemented")
+}
+func (UnimplementedStartedServiceServer) RefreshRemoteProviders(context.Context, *RefreshRemoteProvidersRequest) (*RemoteProviderRefreshResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RefreshRemoteProviders not implemented")
 }
 func (UnimplementedStartedServiceServer) URLTest(context.Context, *URLTestRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method URLTest not implemented")
@@ -1046,6 +1066,24 @@ func _StartedService_SetClashMode_Handler(srv interface{}, ctx context.Context, 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(StartedServiceServer).SetClashMode(ctx, req.(*ClashMode))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StartedService_RefreshRemoteProviders_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RefreshRemoteProvidersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).RefreshRemoteProviders(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_RefreshRemoteProviders_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).RefreshRemoteProviders(ctx, req.(*RefreshRemoteProvidersRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1535,6 +1573,10 @@ var StartedService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetClashMode",
 			Handler:    _StartedService_SetClashMode_Handler,
+		},
+		{
+			MethodName: "RefreshRemoteProviders",
+			Handler:    _StartedService_RefreshRemoteProviders_Handler,
 		},
 		{
 			MethodName: "URLTest",

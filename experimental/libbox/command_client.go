@@ -2,10 +2,12 @@ package libbox
 
 import (
 	"context"
+	std_json "encoding/json"
 	"io"
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -626,6 +628,36 @@ func (c *CommandClient) SetClashMode(newMode string) error {
 	return nil
 }
 
+// RefreshRemoteProviders asks the daemon to refresh its remote providers and returns the
+// per-provider report as JSON. The selection is a comma-separated tag list; an empty string
+// refreshes every provider the running box serves, and timeoutMilliseconds bounds each one.
+//
+// This is the CLI/socket path (PP02's binding); the in-process platform path is
+// CommandServer.RefreshProviders.
+func (c *CommandClient) RefreshRemoteProviders(tags string, timeoutMilliseconds int64) (*StringBox, error) {
+	selection := make([]string, 0)
+	for _, tag := range strings.Split(tags, ",") {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			continue
+		}
+		selection = append(selection, tag)
+	}
+	result, err := callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (*daemon.RemoteProviderRefreshResponse, error) {
+		return client.RefreshRemoteProviders(ctx, &daemon.RefreshRemoteProvidersRequest{
+			Tags:      selection,
+			TimeoutMs: timeoutMilliseconds,
+		})
+	})
+	if err != nil {
+		return nil, E.Cause(err, "refresh remote providers")
+	}
+	encoded, err := std_json.Marshal(result)
+	if err != nil {
+		return nil, E.Cause(err, "encode provider refresh result")
+	}
+	return wrapString(string(encoded)), nil
+}
 func (c *CommandClient) CloseConnection(connId string) error {
 	_, err := callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (*emptypb.Empty, error) {
 		return client.CloseConnection(ctx, &daemon.CloseConnectionRequest{

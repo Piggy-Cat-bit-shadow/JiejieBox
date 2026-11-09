@@ -18,6 +18,10 @@ service StartedService {
   rpc SubscribeClashMode(google.protobuf.Empty) returns(stream ClashMode) {}
   rpc SetClashMode(ClashMode) returns(google.protobuf.Empty) {}
 
+  // RefreshRemoteProviders runs a bounded manual refresh of the running box's remote
+  // providers. It is additive: an older client simply never calls it.
+  rpc RefreshRemoteProviders(RefreshRemoteProvidersRequest) returns(RemoteProviderRefreshResponse) {}
+
   rpc URLTest(URLTestRequest) returns(google.protobuf.Empty) {}
   rpc SelectOutbound(SelectOutboundRequest) returns (google.protobuf.Empty) {}
   rpc SetGroupExpand(SetGroupExpandRequest) returns (google.protobuf.Empty) {}
@@ -807,4 +811,28 @@ message Notification {
 message NotificationCancel {
   string identifier = 1;
   int32 typeID = 2;
+}
+
+// RefreshRemoteProvidersRequest selects the providers to refresh. An empty tag list means every
+// provider the running box serves; timeout_ms bounds EACH provider.
+message RefreshRemoteProvidersRequest {
+  repeated string tags = 1;
+  int64 timeout_ms = 2;
+}
+
+// RemoteProviderRefreshResult is one provider's outcome, as the daemon proved it.
+message RemoteProviderRefreshResult {
+  string tag = 1;
+  string status = 2;
+  uint64 requested_revision = 3;
+  uint64 applied_revision = 4;
+  repeated string pending_tags = 5;
+  bool restart_required = 6;
+  string reason = 7;
+}
+
+message RemoteProviderRefreshResponse {
+  repeated RemoteProviderRefreshResult results = 1;
+  bool cancelled = 2;
+  bool box_changed = 3;
 }
