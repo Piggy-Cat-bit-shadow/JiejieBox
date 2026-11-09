@@ -128,6 +128,7 @@ func (c *Client) openTunnel(ctx context.Context, request tunnelRequest) (net.Con
 	// The epoch this setup belongs to. Capability memories learned below are only stored while it
 	// is still the current network; see observeHTTP2ExtendedConnectUnsupported.
 	networkEpoch := c.networkEpoch.Load()
+	var http3AttemptErr error
 	if c.http3Available() {
 		// Stamped before the attempt for the same reason as in DialContext: the verdict must be
 		// decided by the newest attempt STARTED, not by whichever one reports last.
@@ -138,6 +139,7 @@ func (c *Client) openTunnel(ctx context.Context, request tunnelRequest) (net.Con
 		// time is never delayed by it.
 		probeCtx, cancelProbe := context.WithTimeout(ctx, http3TunnelEstablishTimeout)
 		stream, err := c.http3.OpenTunnel(probeCtx, request)
+		http3AttemptErr = err
 		probeExpired := probeCtx.Err() != nil
 		cancelProbe()
 		if err == nil {
@@ -194,6 +196,11 @@ func (c *Client) openTunnel(ctx context.Context, request tunnelRequest) (net.Con
 			// it): still not a transport verdict.
 			c.noteHTTP3AmbiguousOutcome(http3Attempt)
 		}
+	}
+	if c.tcpFallbackDiagnostic != "" {
+		// The configuration leaves no protocol for the TCP side, so no tunnel can be established
+		// on this network. Name the configuration instead of the TLS alert it would produce.
+		return nil, nil, TunnelTransportUnknown, fallbackUnavailableError(http3AttemptErr, c.tcpFallbackDiagnostic)
 	}
 	if !extendedConnectAvailable && c.tlsDialer != nil && c.disableVersionFallback {
 		return nil, nil, TunnelTransportUnknown, errExtendedConnectUnavailable
