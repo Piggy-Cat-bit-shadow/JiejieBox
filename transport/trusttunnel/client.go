@@ -125,7 +125,45 @@ type Client struct {
 
 	access  sync.Mutex
 	session *clientSession
+	// pending is the shared session creation in flight, or nil. It is set and
+	// cleared under access; the offer goroutine owns the result and publishes it
+	// under the same lock, so the client is the one that accepts a late success
+	// or closes it exactly once.
+	pending *clientOffer
 	closed  bool
+	// dialSession is the constructor a pending offer runs. NewClient points it
+	// at connectSession; tests replace it to hold a dial open and decide its
+	// result without a real handshake. Production never reads it from outside
+	// this package.
+	dialSession func(ctx context.Context) (sessionConn, error)
+}
+
+// clientOffer is one shared session creation in flight. Every demand that
+// arrives while it runs waits on the same result instead of dialing a second
+// session; each waiter keeps its own cancellation, so a short deadline stops
+// this caller's wait without cancelling a dial that other callers (or a later
+// request) can still use.
+type clientOffer struct {
+	done      chan struct{}
+	session   *clientSession
+	err       error
+	discarded bool
+	cause     error
+	cancel    context.CancelCauseFunc
+	trace     *ClientTrace
+	traceCtx  context.Context
+}
+
+// wait waits for the shared result or for THIS waiter's own cancellation. Both
+// can be ready at once; either answer is truthful - a caller that cancelled
+// while the offer succeeded has no claim on the session, and the client keeps it.
+func (o *clientOffer) wait(ctx context.Context) (*clientSession, error) {
+	select {
+	case <-o.done:
+		return o.session, o.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func NewClient(options ClientOptions) (*Client, error) {
@@ -187,7 +225,7 @@ func NewClient(options ClientOptions) (*Client, error) {
 	if staleWindow <= 0 {
 		staleWindow = DefaultStaleWindow
 	}
-	return &Client{
+	client := &Client{
 		ctx:            ctx,
 		logger:         contextLogger,
 		dialer:         options.Dialer,
@@ -204,7 +242,20 @@ func NewClient(options ClientOptions) (*Client, error) {
 		healthCheck:    options.HealthCheck,
 		idleTimeout:    max(options.IdleTimeout, 0),
 		staleWindow:    staleWindow,
-	}, nil
+	}
+	client.dialSession = client.connectSession
+	return client, nil
+}
+
+// connectSession opens one session with the configured protocol. It is the
+// constructor a pending offer runs, under the offer's context.
+func (c *Client) connectSession(ctx context.Context) (sessionConn, error) {
+	switch c.protocol {
+	case ProtocolHTTP3:
+		return c.connectQUIC(ctx)
+	default:
+		return c.connectHTTP2(ctx)
+	}
 }
 
 // DialContext opens CONNECT host:port and returns after the server's answer: a
@@ -235,72 +286,165 @@ func (c *Client) ListenPacket(ctx context.Context) (*PacketConn, error) {
 // check tears the session down.
 func (c *Client) Check(ctx context.Context) error {
 	trace := ContextClientTrace(ctx)
-	session, _, err := c.getSession(ctx, trace)
-	if err != nil {
+	for attempt := 0; ; attempt++ {
+		session, _, err := c.getSession(ctx, trace)
+		if err != nil {
+			return err
+		}
+		err = c.check(ctx, trace, session)
+		if errors.Is(err, errSessionRetired) && attempt < 3 {
+			continue
+		}
 		return err
 	}
-	return c.check(ctx, trace, session)
 }
 
-// Reset tears the session down; the next request opens a new one. Meant for
-// network changes: QUIC migration is off on the official endpoint.
+// Reset aborts the current session and any creation in flight, but keeps the
+// client usable: the next request opens a fresh session. Meant for network
+// changes: QUIC migration is off on the official endpoint, and an HTTP/2
+// session on the old network is dead anyway.
 func (c *Client) Reset() {
 	c.access.Lock()
 	session := c.session
 	c.session = nil
+	pending := c.discardPendingLocked()
 	c.access.Unlock()
+	if pending != nil && pending.cancel != nil {
+		pending.cancel(net.ErrClosed)
+	}
 	if session != nil {
 		session.close()
 	}
 }
 
+// Close ends the client: the session and any creation in flight are discarded.
+// It does not wait for an in-flight dial; the offer goroutine closes a late
+// success exactly once (see completeOffer).
 func (c *Client) Close() error {
 	c.access.Lock()
+	if c.closed {
+		c.access.Unlock()
+		return nil
+	}
 	c.closed = true
 	session := c.session
 	c.session = nil
+	pending := c.discardPendingLocked()
 	c.access.Unlock()
+	if pending != nil && pending.cancel != nil {
+		pending.cancel(net.ErrClosed)
+	}
 	if session != nil {
 		session.close()
 	}
 	return nil
 }
 
-func (c *Client) openStream(ctx context.Context, trace *ClientTrace, authority string, userAgent string, withBody bool) (*clientSession, *rawStream, error) {
-	session, fresh, err := c.getSession(ctx, trace)
-	if err != nil {
-		return nil, nil, err
+// discardPendingLocked marks the creation in flight as discarded and hands it
+// back, so the caller can cancel its dial; the offer goroutine still owns the
+// result and closes a late success. The caller holds access.
+func (c *Client) discardPendingLocked() *clientOffer {
+	pending := c.pending
+	if pending == nil {
+		return nil
 	}
-	if !fresh && c.healthCheck && session.checkDue() {
-		err = c.check(ctx, trace, session)
+	pending.discarded = true
+	if pending.cause == nil {
+		pending.cause = net.ErrClosed
+	}
+	c.pending = nil
+	return pending
+}
+
+// CloseIdleConnections drops the session when no stream is using it. It is the
+// TRIM action of the resource contract: it never dials and it cannot terminate
+// a stream that is carrying traffic.
+func (c *Client) CloseIdleConnections() {
+	c.access.Lock()
+	session := c.session
+	if session == nil || session.streams.Load() > 0 {
+		c.access.Unlock()
+		return
+	}
+	c.session = nil
+	c.access.Unlock()
+	session.close()
+}
+
+// RetireSuspect is the reuse boundary: no new stream attaches to the session
+// held now, while streams already on it finish. A session with no stream is
+// closed here; one with streams closes itself when the last stream returns.
+func (c *Client) RetireSuspect() {
+	c.access.Lock()
+	session := c.session
+	if session != nil {
+		c.session = nil
+		session.retiring.Store(true)
+	}
+	c.access.Unlock()
+	if session != nil {
+		session.drainIfUnused()
+	}
+}
+
+func (c *Client) openStream(ctx context.Context, trace *ClientTrace, authority string, userAgent string, withBody bool) (*clientSession, *rawStream, error) {
+	for attempt := 0; ; attempt++ {
+		session, fresh, err := c.getSession(ctx, trace)
 		if err != nil {
-			if ctx.Err() != nil || !retryable(err) {
-				return nil, nil, err
+			return nil, nil, err
+		}
+		if session.retiring.Load() {
+			// RetireSuspect removed the session between getSession and here;
+			// the next demand must open a fresh one.
+			if attempt < 3 {
+				continue
 			}
-			c.logger.DebugContext(ctx, "trusttunnel: health check of session to ", c.server, " failed, reconnecting: ", err)
-			session, fresh, err = c.getSession(ctx, trace)
+			return nil, nil, errSessionRetired
+		}
+		if !fresh && c.healthCheck && session.checkDue() {
+			err = c.check(ctx, trace, session)
+			if err != nil && errors.Is(err, errSessionRetired) && attempt < 3 {
+				continue
+			}
 			if err != nil {
-				return nil, nil, err
+				if ctx.Err() != nil || !retryable(err) {
+					return nil, nil, err
+				}
+				c.logger.DebugContext(ctx, "trusttunnel: health check of session to ", c.server, " failed, reconnecting: ", err)
+				session, fresh, err = c.getSession(ctx, trace)
+				if err != nil {
+					return nil, nil, err
+				}
 			}
 		}
-	}
-	stream, err := c.roundTrip(ctx, trace, session, authority, userAgent, withBody, !fresh)
-	if err == nil || fresh || ctx.Err() != nil || !retryable(err) {
+		stream, err := c.roundTrip(ctx, trace, session, authority, userAgent, withBody, !fresh)
+		if errors.Is(err, errSessionRetired) && attempt < 3 {
+			continue
+		}
+		if err == nil || fresh || ctx.Err() != nil || !retryable(err) {
+			return session, stream, err
+		}
+		c.logger.DebugContext(ctx, "trusttunnel: CONNECT on session to ", c.server, " failed, reconnecting: ", err)
+		session, _, err = c.getSession(ctx, trace)
+		if err != nil {
+			return nil, nil, err
+		}
+		stream, err = c.roundTrip(ctx, trace, session, authority, userAgent, withBody, false)
 		return session, stream, err
 	}
-	c.logger.DebugContext(ctx, "trusttunnel: CONNECT on session to ", c.server, " failed, reconnecting: ", err)
-	session, _, err = c.getSession(ctx, trace)
-	if err != nil {
-		return nil, nil, err
-	}
-	stream, err = c.roundTrip(ctx, trace, session, authority, userAgent, withBody, false)
-	return session, stream, err
 }
+
+// errSessionRetired reports a CONNECT that lost the race with RetireSuspect: the
+// session is draining, so the caller opens a fresh one instead of attaching.
+var errSessionRetired = E.New("trusttunnel: session retired")
 
 // roundTrip sends one CONNECT on the session and checks the answer. A transport
 // failure or an authentication refusal tears the session down; a CONNECT that
 // may land on a stale session is bounded by staleConnectBudget.
 func (c *Client) roundTrip(ctx context.Context, trace *ClientTrace, session *clientSession, authority string, userAgent string, withBody bool, mayBeStale bool) (_ *rawStream, err error) {
+	if session.retiring.Load() {
+		return nil, errSessionRetired
+	}
 	var status int
 	done := trace.connect(ctx, authority)
 	defer func() { done(status, err) }()
@@ -338,6 +482,9 @@ func (c *Client) roundTrip(ctx context.Context, trace *ClientTrace, session *cli
 }
 
 func (c *Client) check(ctx context.Context, trace *ClientTrace, session *clientSession) (err error) {
+	if session.retiring.Load() {
+		return errSessionRetired
+	}
 	var status int
 	done := trace.connect(ctx, AuthorityCheck)
 	defer func() { done(status, err) }()
@@ -378,47 +525,107 @@ func retryable(err error) bool {
 	return !errors.As(err, &statusError) && !IsAuthenticationRequired(err)
 }
 
-// getSession returns the live session, opening one when there is none. fresh
-// reports that the session was opened by this call.
+// getSession returns the live session, joining the shared creation in flight or
+// starting one when there is none. fresh reports that this call started the
+// creation that produced the session.
+//
+// The waiter's ctx only ever bounds this caller's wait: it cannot cancel a dial
+// that other callers (or a later demand) can still use. The dial runs under the
+// client's lifetime, which also makes the client the owner of a late success.
 func (c *Client) getSession(ctx context.Context, trace *ClientTrace) (*clientSession, bool, error) {
-	c.access.Lock()
-	defer c.access.Unlock()
-	if c.closed {
-		return nil, false, net.ErrClosed
-	}
-	if session := c.session; session != nil {
-		if session.conn.alive() {
-			session.markActivity()
+	for {
+		c.access.Lock()
+		if c.closed {
+			c.access.Unlock()
+			return nil, false, net.ErrClosed
+		}
+		if session := c.session; session != nil {
+			if session.conn.alive() {
+				session.markActivity()
+				c.access.Unlock()
+				trace.sessionReused(ctx, c.protocol, c.server, session.opened)
+				return session, false, nil
+			}
+			c.session = nil
+			c.access.Unlock()
+			session.close()
+			c.logger.DebugContext(ctx, "trusttunnel: session to ", c.server, " is closed")
+			continue
+		}
+		if pending := c.pending; pending != nil {
+			c.access.Unlock()
+			session, err := pending.wait(ctx)
+			if err != nil {
+				return nil, false, err
+			}
 			trace.sessionReused(ctx, c.protocol, c.server, session.opened)
 			return session, false, nil
 		}
-		c.session = nil
-		session.close()
-		c.logger.DebugContext(ctx, "trusttunnel: session to ", c.server, " is closed")
+		offerCtx, cancel := context.WithCancelCause(c.ctx)
+		pending := &clientOffer{
+			done:     make(chan struct{}),
+			cancel:   cancel,
+			trace:    trace,
+			traceCtx: ctx,
+		}
+		c.pending = pending
+		c.access.Unlock()
+		go c.completeOffer(pending, offerCtx)
+		session, err := pending.wait(ctx)
+		if err != nil {
+			return nil, false, err
+		}
+		return session, true, nil
 	}
-	c.logger.DebugContext(ctx, "trusttunnel: opening ", c.protocol, " session to ", c.server)
-	var (
-		conn sessionConn
-		err  error
-	)
-	dialCtx, done := trace.sessionOpen(ctx, c.protocol, c.server)
-	switch c.protocol {
-	case ProtocolHTTP3:
-		conn, err = c.connectQUIC(dialCtx)
-	default:
-		conn, err = c.connectHTTP2(dialCtx)
-	}
+}
+
+// completeOffer runs one shared creation and publishes its result. The client
+// is the owner: a success is published unless the offer was discarded (Close
+// or Reset while the dial ran), in which case the late connection is closed
+// here, exactly once, instead of being published after the client ended.
+func (c *Client) completeOffer(pending *clientOffer, offerCtx context.Context) {
+	traceCtx := pending.traceCtx
+	dialCtx, done := pending.trace.sessionOpen(traceCtx, c.protocol, c.server)
+	c.logger.DebugContext(traceCtx, "trusttunnel: opening ", c.protocol, " session to ", c.server)
+	conn, err := c.dialSession(dialCtx)
 	done(err)
-	if err != nil {
-		return nil, false, E.Cause(err, "trusttunnel: open session to ", c.server)
+	pending.cancel(nil)
+	var session *clientSession
+	if err == nil {
+		session = newClientSession(c.ctx, conn)
 	}
-	session := newClientSession(c.ctx, conn)
-	c.session = session
+	c.access.Lock()
+	discard := pending.discarded
+	switch {
+	case discard:
+		pending.err = pending.cause
+		if pending.err == nil {
+			pending.err = net.ErrClosed
+		}
+	case err != nil:
+		pending.err = E.Cause(err, "trusttunnel: open session to ", c.server)
+	default:
+		pending.session = session
+		c.session = session
+	}
+	if c.pending == pending {
+		c.pending = nil
+	}
+	close(pending.done)
+	c.access.Unlock()
+	if discard {
+		if conn != nil {
+			conn.close()
+		}
+		return
+	}
+	if session == nil {
+		return
+	}
+	c.logger.DebugContext(traceCtx, "trusttunnel: ", c.protocol, " session to ", c.server, " opened")
 	if c.idleTimeout > 0 {
 		go c.idleWatcher(session)
 	}
-	c.logger.DebugContext(ctx, "trusttunnel: ", c.protocol, " session to ", c.server, " opened")
-	return session, true, nil
 }
 
 func (c *Client) teardown(session *clientSession) {
@@ -494,6 +701,21 @@ type clientSession struct {
 	streams   atomic.Int64
 	opened    time.Time
 	closeOnce sync.Once
+	// retiring marks a session removed by RetireSuspect: no new stream attaches
+	// to it, and it closes when its last stream returns.
+	retiring  atomic.Bool
+	drainOnce sync.Once
+}
+
+// drainIfUnused closes a retiring session once nothing is carried on it. The
+// caller that took the session off the client calls it at the boundary; every
+// stream close calls it too, and the once guard makes only the last of them the
+// close.
+func (s *clientSession) drainIfUnused() {
+	if !s.retiring.Load() || s.streams.Load() > 0 {
+		return
+	}
+	s.drainOnce.Do(func() { s.close() })
 }
 
 func newClientSession(ctx context.Context, conn sessionConn) *clientSession {
@@ -574,6 +796,7 @@ func (c *streamConn) Close() error {
 	c.closeOnce.Do(func() {
 		c.stream.close()
 		c.session.streams.Add(-1)
+		c.session.drainIfUnused()
 		c.session.markActivity()
 	})
 	return nil

@@ -6,10 +6,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/json/badoption"
+)
+
+// The resource contract's TRIM and reuse-boundary actions are served by the
+// outbound itself, through the client that owns the session.
+var (
+	_ adapter.IdleConnectionReleaser = (*Outbound)(nil)
+	_ adapter.ReuseSuspect           = (*Outbound)(nil)
 )
 
 func validOutboundOptions() option.TrustTunnelOutboundOptions {
