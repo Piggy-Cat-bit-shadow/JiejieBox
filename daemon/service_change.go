@@ -87,9 +87,10 @@ type ServiceChangePlan struct {
 	ChangedSections []string `json:"changedSections,omitempty"`
 	// Domains are the per-domain answers. A caller that needs to explain a restart reads these;
 	// they are only meaningful when Started is true, since a fresh start has nothing to compare.
-	Mode DomainPlan `json:"mode"`
-	DNS  DomainPlan `json:"dns"`
-	Rule DomainPlan `json:"rule"`
+	Mode     DomainPlan         `json:"mode"`
+	DNS      DomainPlan         `json:"dns"`
+	Rule     DomainPlan         `json:"rule"`
+	Provider ProviderDomainPlan `json:"provider"`
 }
 
 // ServiceChangeReport is what the last apply attempt planned and did.
@@ -116,6 +117,9 @@ type ServiceChangeReport struct {
 	Reason             string         `json:"reason,omitempty"`
 	Time               time.Time      `json:"time"`
 	Applied            []DomainChange `json:"applied,omitempty"`
+	// Provider is the provider-refresh report when an unchanged document was satisfied live by
+	// refreshing the running box's remote providers.
+	Provider *ProviderDomainReport `json:"provider,omitempty"`
 }
 
 // recordServiceChange stores the outcome of the last apply attempt.
@@ -185,6 +189,7 @@ func (s *StartedService) planServiceChange(target *option.Options, targetRevisio
 	}
 	snapshot, currentRevision, available := s.runningDocumentSnapshot()
 	if !available {
+		plan.Provider = PlanProviderRefreshDomain(nil, target, false, "", targetRevision)
 		return plan
 	}
 	current := &snapshot
@@ -194,6 +199,7 @@ func (s *StartedService) planServiceChange(target *option.Options, targetRevisio
 	plan.DNS = PlanDNSDomain(current, plan.CurrentRevision, target, targetRevision)
 	plan.Rule = PlanRuleDomain(current, plan.CurrentRevision, target, targetRevision)
 	sameDocument, liveOnly := compareDocuments(current, target)
+	plan.Provider = PlanProviderRefreshDomain(current, target, sameDocument, plan.CurrentRevision, targetRevision)
 	plan.ChangedDocument = !sameDocument
 	switch {
 	case sameDocument && len(plan.Mode.Changes) == 0:

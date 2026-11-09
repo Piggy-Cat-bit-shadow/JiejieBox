@@ -17,6 +17,9 @@ package daemon
 import (
 	"context"
 	"time"
+
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
 )
 
 // ProviderDomainPlan is what a provider-domain commit would refresh.
@@ -27,6 +30,13 @@ type ProviderDomainPlan struct {
 	UnsupportedReason string `json:"unsupportedReason,omitempty"`
 	// Tags is the selection; empty means every provider the box serves.
 	Tags []string `json:"tags,omitempty"`
+	// LiveRefresh says that an explicit reload of this document can be satisfied by refreshing the
+	// running box's remote providers instead of rebuilding it. It is only true when nothing in the
+	// document differs, every provider is remote, and the document references no other artifact
+	// (rule set, certificate provider) that a reload would be expected to re-read.
+	LiveRefresh bool `json:"liveRefresh,omitempty"`
+	// LiveRefreshReason explains the answer in a caller's words, especially when it is no.
+	LiveRefreshReason string `json:"liveRefreshReason,omitempty"`
 	// CurrentRevision and TargetRevision guard the plan against being applied to another base.
 	CurrentRevision string `json:"currentRevision,omitempty"`
 	TargetRevision  string `json:"targetRevision,omitempty"`
@@ -51,6 +61,82 @@ func PlanProviderDomain(tags []string, currentRevision string, targetRevision st
 		CurrentRevision: currentRevision,
 		TargetRevision:  targetRevision,
 	}
+}
+
+// PlanProviderRefreshDomain answers whether an explicit reload of `target` against `current` is a
+// provider-content refresh rather than a rebuild.
+//
+// The boundary is deliberately narrow, because getting it wrong costs a caller the local files it
+// wanted re-read:
+//
+//   - the documents must be identical (anything else is a document change, and a provider
+//     DECLARATION change needs a new Box);
+//   - every provider must be remote (an inline provider's nodes are in the document; a local
+//     provider reads a file a reload may need to pick up);
+//   - the document must declare no rule set and no certificate provider: those are separate
+//     artifacts whose files or sources a caller could expect a reload to re-read, and refreshing
+//     the providers would silently not do it.
+//
+// Under those conditions the only inputs outside the document are the remote provider documents,
+// and refreshing them is exactly what the caller asked for - without rebuilding the Box and
+// dropping unrelated connections.
+func PlanProviderRefreshDomain(current *option.Options, target *option.Options, unchanged bool, currentRevision string, targetRevision string) ProviderDomainPlan {
+	plan := ProviderDomainPlan{
+		Domain:          "provider",
+		Supported:       true,
+		CurrentRevision: currentRevision,
+		TargetRevision:  targetRevision,
+	}
+	if !unchanged {
+		plan.LiveRefreshReason = "the document changed; provider declarations are rebuilt with it"
+		return plan
+	}
+	if target == nil {
+		plan.LiveRefreshReason = "there is no target document"
+		return plan
+	}
+	if len(ruleSets(target)) > 0 {
+		plan.LiveRefreshReason = "the document declares rule sets, which a reload is expected to re-read"
+		return plan
+	}
+	if target.Certificate != nil || len(target.CertificateProviders) > 0 {
+		plan.LiveRefreshReason = "the document declares certificate inputs, which a reload is expected to re-read"
+		return plan
+	}
+	for _, provider := range target.Providers {
+		if provider.Type != C.ProviderTypeRemote {
+			plan.LiveRefreshReason = "the document declares a provider that is not remote: " + provider.Tag
+			return plan
+		}
+		plan.Tags = append(plan.Tags, provider.Tag)
+	}
+	if len(plan.Tags) == 0 {
+		plan.LiveRefreshReason = "the document declares no remote provider"
+		return plan
+	}
+	plan.LiveRefresh = true
+	plan.LiveRefreshReason = "the document is unchanged and every provider is remote: refreshing them needs no rebuild"
+	return plan
+}
+
+// providerLiveRefreshTimeout bounds one provider during a live refresh triggered by the
+// configuration entry.
+const providerLiveRefreshTimeout = 30 * time.Second
+
+// providerRefreshDelivered reports whether a live refresh left at least one provider serving a
+// document (published) or confirmed the document it already served (unchanged). A refresh where
+// every selected provider failed changed nothing, and the entry must not report success for it.
+func providerRefreshDelivered(report *ProviderDomainReport) bool {
+	if report == nil {
+		return false
+	}
+	for _, result := range report.Results {
+		switch result.Status {
+		case ProviderRefreshPublished, ProviderRefreshUnchanged:
+			return true
+		}
+	}
+	return false
 }
 
 // ApplyProviderDomain commits a provider-domain plan to the live box.
