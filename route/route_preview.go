@@ -26,6 +26,7 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/dns"
 	R "github.com/sagernet/sing-box/route/rule"
+	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 )
 
@@ -66,10 +67,31 @@ type RoutePreviewResult struct {
 	// decided by a rule that needs a fact this preview does not have.
 	Unknown          string
 	UnknownRuleIndex int
+	// FinalDestination is where production would actually DIAL: the request's destination after
+	// every matched action's pure metadata transformations (override_address, override_port, ...).
+	// A diagnostic that dials the request's original text instead cannot reproduce what the route
+	// decision chose - the reviewed failure was exactly that: the rule rewrote the port and the
+	// test dialled the old one.
+	FinalDestination M.Socksaddr
+	// OriginalDestination is the destination the request entered with.
+	OriginalDestination M.Socksaddr
 	// Evaluated counts how many rules were matched against the request before the result was
 	// reached. It is the consumer-cost fact: a preview over a large rule set reports what it
 	// walked, and that walking is bounded by the rule list rather than by any I/O.
 	Evaluated int
+}
+
+// LookupDomain resolves a name through this router's REAL DNS path.
+//
+// It is the active counterpart of PreviewDNSLookup: a diagnostic that must dial an address resolves
+// the same way production would (rules, strategy, cache and TTL included). Unlike the preview it is
+// allowed to query and to populate the cache - that is what "actual observation" means, and the
+// caller is responsible for bounding it with its own budget.
+func (r *Router) LookupDomain(ctx context.Context, domain string, options adapter.DNSQueryOptions) ([]netip.Addr, error) {
+	if r == nil || r.dns == nil {
+		return nil, E.New("this router has no DNS router")
+	}
+	return r.dns.Lookup(ctx, domain, options)
 }
 
 // PreviewDNSLookup explains which DNS rule and server would answer a query, by delegating to the
@@ -102,13 +124,16 @@ type dnsQueryPreviewer interface {
 }
 
 // PreviewRoute explains which rule decides the request, without any of the work a real request does.
-func (r *Router) PreviewRoute(ctx context.Context, request RoutePreviewRequest) RoutePreviewResult {
+func (r *Router) PreviewRoute(ctx context.Context, request RoutePreviewRequest) (result RoutePreviewResult) {
 	_ = ctx // the preview performs no I/O, so it takes no cancellation and no deadline
-	result := RoutePreviewResult{RuleIndex: -1, UnknownRuleIndex: -1}
+	result = RoutePreviewResult{RuleIndex: -1, UnknownRuleIndex: -1, FinalDestination: request.Destination, OriginalDestination: request.Destination}
 	if r == nil || len(r.rules) == 0 {
 		return result
 	}
 	metadata := r.previewMetadata(request)
+	// The destination a diagnostic must dial is the one production would see AFTER the matched
+	// actions' options were applied, which the loop below mutates on this private copy.
+	defer func() { result.FinalDestination = metadata.Destination }()
 	for index, rule := range r.rules {
 		metadata.ResetRuleCache()
 		result.Evaluated++

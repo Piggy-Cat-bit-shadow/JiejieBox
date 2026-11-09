@@ -14,12 +14,14 @@ package libbox
 
 import (
 	"context"
+	"net/netip"
 
 	box "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/physicalpath"
 	"github.com/sagernet/sing-box/dns"
 	"github.com/sagernet/sing-box/route"
+	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 
 	mDNS "github.com/miekg/dns"
@@ -55,13 +57,31 @@ func (p *boxConnectionTestPath) PreviewRouteRule(network string, domain string, 
 		UserId:      -1,
 	})
 	return connectionTestRulePreview{
-		Matched:    result.Matched,
-		RuleIndex:  result.RuleIndex,
-		Rule:       result.Rule,
-		ActionType: result.ActionType,
-		Outbound:   result.ActionOutbound,
-		Unknown:    result.Unknown,
+		Matched:          result.Matched,
+		RuleIndex:        result.RuleIndex,
+		Rule:             result.Rule,
+		ActionType:       result.ActionType,
+		Outbound:         result.ActionOutbound,
+		Unknown:          result.Unknown,
+		FinalDestination: result.FinalDestination,
 	}, true
+}
+
+// ResolveDomain resolves a name through the box's real DNS path, so the diagnostic dials the
+// address production would dial. It is the ACTIVE counterpart of the passive DNS stage.
+func (p *boxConnectionTestPath) ResolveDomain(ctx context.Context, domain string) (netip.Addr, error) {
+	routeRouter, isRouteRouter := p.box.Router().(*route.Router)
+	if !isRouteRouter || routeRouter == nil {
+		return netip.Addr{}, E.New("the running box has no route router")
+	}
+	addresses, err := routeRouter.LookupDomain(ctx, domain, adapter.DNSQueryOptions{})
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	if len(addresses) == 0 {
+		return netip.Addr{}, E.New("no address for ", domain)
+	}
+	return addresses[0], nil
 }
 
 // PreviewDNSRule explains which DNS rule and server would answer the target's address query.

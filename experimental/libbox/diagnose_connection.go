@@ -25,6 +25,7 @@ import (
 	"context"
 	stdjson "encoding/json"
 	"net"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"time"
@@ -127,6 +128,17 @@ type connectionTestRulePreview struct {
 	ActionType string
 	Outbound   string
 	Unknown    string
+	// FinalDestination is where the route decision would DIAL: the request's destination after the
+	// matched action's override_address/override_port were applied. A diagnostic that ignores it
+	// connects to the text the user typed instead of the endpoint the route chose.
+	FinalDestination M.Socksaddr
+}
+
+// connectionTestDomainResolver is the OPTIONAL capability that resolves a name through the box's
+// real DNS path (cache, strategy and rules included). The DNS STAGE above is a passive preview; a
+// diagnostic that must dial an address needs the active answer, and it says so in the report.
+type connectionTestDomainResolver interface {
+	ResolveDomain(ctx context.Context, domain string) (netip.Addr, error)
 }
 
 // connectionTestDNSPreviewer is the OPTIONAL capability that explains which DNS rule and server
@@ -187,6 +199,18 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 		// "No root" is not "the default root": it asks the route decision where this request would
 		// go. The report says which semantics ran so a reader cannot confuse the two.
 		report.Routing = connectionTestRoutingRule
+	}
+	// This diagnostic is a TCP connect through an outbound. A UDP/ICMP request cannot be expressed
+	// by it, and pretending otherwise would produce a green report for something it never did.
+	if network != "" && network != N.NetworkTCP {
+		report.Outcome = connectionTestOutcomeFailed
+		report.Stages = append(report.Stages, connectionTestStage{
+			ID:     connectionTestStagePath,
+			Status: connectionTestStageFailed,
+			Detail: "the connection test can only test TCP; requested " + network,
+		})
+		report.TotalMs = time.Since(started).Milliseconds()
+		return report
 	}
 	if emitter == nil {
 		emitter = newConnectionTestEmitter(defaultEmitterBounds(), started)
@@ -305,7 +329,18 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 	stageStarted = time.Now()
 	dnsStage := connectionTestStage{ID: connectionTestStageDNS, Parent: connectionTestStageRules}
 	dnsPreviewer, canPreviewDNS := path.(connectionTestDNSPreviewer)
+	literalTarget := connectionTestLiteralAddress(host)
+	rewrittenToLiteral := report.Routing == connectionTestRoutingRule && rulePreview.Matched &&
+		rulePreview.FinalDestination.IsValid() && rulePreview.FinalDestination.IsIP()
 	switch {
+	case literalTarget:
+		// A literal address never reaches a DNS rule. Reporting a default DNS server for it was
+		// one of the reviewed inaccuracies.
+		dnsStage.Status = connectionTestStageSkipped
+		dnsStage.Detail = "the target is a literal address: no DNS decision applies"
+	case rewrittenToLiteral:
+		dnsStage.Status = connectionTestStageSkipped
+		dnsStage.Detail = "the route decision rewrote the destination to " + rulePreview.FinalDestination.String() + ": no DNS decision applies"
 	case !canPreviewDNS:
 		dnsStage.Status = connectionTestStageSkipped
 		dnsStage.Detail = "this build cannot explain the DNS rule for a running box"
@@ -349,7 +384,46 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 		report.TotalMs = time.Since(started).Milliseconds()
 		return report
 	}
-	resolveStage.Detail = address.String()
+	// The concrete destination: in rule mode it is what the route decision would dial (override_port
+	// and override_address included), not the text the caller typed. A domain the decision produced
+	// is resolved through the box's real DNS path, bounded by the stage budget.
+	dialDestination := address
+	switch {
+	case report.Routing == connectionTestRoutingRule && rulePreview.FinalDestination.IsValid():
+		dialDestination = rulePreview.FinalDestination
+		if dialDestination.IsDomain() {
+			resolver, canResolve := path.(connectionTestDomainResolver)
+			if !canResolve {
+				resolveStage.Status = connectionTestStageFailed
+				resolveStage.Detail = "the route decision names " + dialDestination.String() + ", and this build cannot resolve it through the box"
+				report.Stages = append(report.Stages, resolveStage)
+				report.Outcome = connectionTestOutcomeFailed
+				report.TotalMs = time.Since(started).Milliseconds()
+				return report
+			}
+			resolveCtx, cancelResolve := context.WithTimeout(budgetCtx, connectionTestStageTimeout)
+			address, resolveAddressErr := resolver.ResolveDomain(resolveCtx, dialDestination.Fqdn)
+			cancelResolve()
+			if resolveAddressErr != nil || !address.IsValid() {
+				reason := "no address"
+				if resolveAddressErr != nil {
+					reason = resolveAddressErr.Error()
+				}
+				resolveStage.Status = connectionTestStageFailed
+				resolveStage.Detail = "resolve " + dialDestination.Fqdn + " through the box: " + reason
+				report.Stages = append(report.Stages, resolveStage)
+				report.Outcome = connectionTestOutcomeFailed
+				report.TotalMs = time.Since(started).Milliseconds()
+				return report
+			}
+			dialDestination = M.SocksaddrFrom(address, dialDestination.Port)
+			resolveStage.Detail = "'" + rulePreview.FinalDestination.Fqdn + "' -> " + dialDestination.String() + " (box DNS)"
+		} else {
+			resolveStage.Detail = "route destination " + dialDestination.String()
+		}
+	default:
+		resolveStage.Detail = address.String()
+	}
 	report.Stages = append(report.Stages, resolveStage)
 
 	// Stage 4: the dial, if there is an exit to dial through.
@@ -435,7 +509,7 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 	// gone is closed by the waiter below rather than leaked.
 	settled := make(chan dialOutcome, 1)
 	go func() {
-		conn, dialErr := outbound.DialContext(dialCtx, N.NetworkTCP, address)
+		conn, dialErr := outbound.DialContext(dialCtx, N.NetworkTCP, dialDestination)
 		settled <- dialOutcome{conn: conn, err: dialErr}
 	}()
 	var outcome dialOutcome
@@ -463,7 +537,7 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 		report.Outcome = connectionTestOutcomeFailed
 	case outcome.err == nil:
 		dialStage.Status = connectionTestStageOK
-		dialStage.Detail = "connected via " + outbound.Tag()
+		dialStage.Detail = "connected via " + outbound.Tag() + " to " + dialDestination.String()
 		if report.Routing == connectionTestRoutingRule {
 			dialStage.Detail += " (route decision)"
 		}
@@ -479,6 +553,17 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 	report.Stages = append(report.Stages, dialStage)
 	report.TotalMs = time.Since(started).Milliseconds()
 	return report
+}
+
+// connectionTestLiteralAddress reports whether the target host is a literal IP. A literal never
+// reaches a DNS rule, so the DNS stage must say "no decision applies" rather than name a default
+// server.
+func connectionTestLiteralAddress(host string) bool {
+	if host == "" {
+		return false
+	}
+	address, err := netip.ParseAddr(host)
+	return err == nil && address.IsValid()
 }
 
 // connectionTestAddress turns the configured target into the address a TCP dial uses. Only
