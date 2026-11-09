@@ -82,7 +82,10 @@ type connectionTestReport struct {
 	Target  string                `json:"target"`
 	Outcome string                `json:"outcome"`
 	Stages  []connectionTestStage `json:"stages"`
-	TotalMs int64                 `json:"totalMs"`
+	// Events is the bounded narrative of the test (begin, per-stage facts, final snapshot,
+	// end). It is the same stream a live subscriber receives, retained for a late reader.
+	Events  []string `json:"events,omitempty"`
+	TotalMs int64    `json:"totalMs"`
 }
 
 // connectionTestPath is the slice of the running Box the test needs: the passive status
@@ -122,6 +125,31 @@ type dialOutcome struct {
 func runConnectionTest(ctx context.Context, path connectionTestPath, root string, network string, target string) connectionTestReport {
 	started := time.Now()
 	report := connectionTestReport{Root: root, Network: network, Target: target}
+	emitter := newConnectionTestEmitter(defaultEmitterBounds(), started)
+	// Close finalises the stream on EVERY return path, and the snapshot is attached to the
+	// report: a caller that never subscribed still gets the narrative, and a subscriber that
+	// did is guaranteed an end.
+	defer func() {
+		// The stage facts are emitted from the settled report: every return path has already
+		// recorded what ran, what was skipped and why, so the narrative cannot disagree with the
+		// report the caller receives.
+		for _, stage := range report.Stages {
+			emitter.Publish(connectionTestEvent{
+				Kind:    eventStage,
+				Stage:   stage.ID,
+				Parent:  stage.Parent,
+				Outcome: outcomeForStage(stage.Status),
+				Detail:  stage.Detail,
+				Elapsed: stage.DurationMs,
+			})
+		}
+		emitter.Publish(connectionTestEvent{Kind: eventFinding, Outcome: outcomeReused, Detail: "passive status reused for the path stage", Elapsed: time.Since(started).Milliseconds()})
+		emitter.Close(time.Since(started))
+		for _, event := range emitter.Snapshot() {
+			report.Events = append(report.Events, renderEvent(event))
+		}
+	}()
+	emitter.Publish(connectionTestEvent{Kind: eventBegin, Name: "connection test", Detail: root + " " + network + " " + target, Outcome: outcomeRunning})
 
 	budgetCtx, cancelBudget := context.WithTimeout(ctx, connectionTestTotalTimeout)
 	defer cancelBudget()
@@ -287,4 +315,18 @@ func marshalConnectionTestReport(report connectionTestReport) string {
 		return "{}"
 	}
 	return string(encoded)
+}
+
+// outcomeForStage maps a settled stage status onto the emitter's vocabulary.
+func outcomeForStage(status string) connectionTestOutcome {
+	switch status {
+	case connectionTestStageOK:
+		return outcomeOK
+	case connectionTestStageSkipped:
+		return outcomeSkipped
+	case connectionTestStageFailed:
+		return outcomeFailed
+	default:
+		return outcomeRunning
+	}
 }
