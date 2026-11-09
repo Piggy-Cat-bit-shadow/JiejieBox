@@ -292,6 +292,10 @@ func (s *Store) Recover() (*Recovery, error) {
 	if recordErr != nil {
 		recovery.Warning = recordErr.Error()
 	} else if record != nil {
+		// The record is authoritative; any marker/temp from a completion that crashed before
+		// cleanup is stale.
+		_ = s.remove(commitTempName)
+		_ = s.remove(commitCandidateName)
 		current := []byte(record.Current.Content)
 		if s.validator == nil || s.validator(current) == nil {
 			// The legacy active may be from a commit that crashed after writing it but before the
@@ -330,6 +334,44 @@ func (s *Store) Recover() (*Recovery, error) {
 			}
 		}
 		return recovery, nil
+	}
+	// No authoritative record. A stale temp file is an unfinished commit and is never read.
+	_ = s.remove(commitTempName)
+	// A candidate marker means the legacy active may have been replaced by a transaction that never
+	// reached the commit point. Such a document must not be promoted by recovery.
+	candidate, candidateErr := s.readCommitCandidate()
+	if candidateErr != nil {
+		if recovery.Warning == "" {
+			recovery.Warning = candidateErr.Error()
+		}
+	} else if candidate != nil {
+		candidateActive, readErr := os.ReadFile(s.path(activeName))
+		if readErr == nil && digestOf(candidateActive)[:16] == candidate.Revision {
+			previous, previousErr := os.ReadFile(s.path(lastGoodName))
+			if previousErr == nil && (s.validator == nil || s.validator(previous) == nil) {
+				if writeErr := s.write(activeName, previous); writeErr != nil {
+					recovery.Warning = writeErr.Error()
+				} else {
+					recovery.RolledBack = true
+					recovery.Active = previous
+					previousRevision := digestOf(previous)[:16]
+					recovery.References, _ = s.References(previousRevision)
+				}
+			} else {
+				// First commit: there is no previous document, so an empty store is the truth.
+				if removeErr := s.remove(activeName); removeErr != nil {
+					recovery.Warning = removeErr.Error()
+				} else {
+					recovery.ActiveCleared = true
+				}
+			}
+			_ = s.removeReferencesLocked(candidate.Revision)
+			_ = s.remove(commitCandidateName)
+			return recovery, nil
+		}
+		// The candidate marker is stale (the active write never happened); drop it and read the
+		// legacy active normally.
+		_ = s.remove(commitCandidateName)
 	}
 	active, activeErr := os.ReadFile(s.path(activeName))
 	activeValid := activeErr == nil && (s.validator == nil || s.validator(active) == nil)

@@ -21,9 +21,42 @@ import (
 )
 
 const (
-	commitName     = "commit.json"
-	commitTempName = "commit.next"
+	commitName          = "commit.json"
+	commitTempName      = "commit.next"
+	commitCandidateName = "commit.candidate"
 )
+
+// commitCandidate marks that a legacy active document may have been overwritten by a transaction
+// that has NOT reached the commit point yet. Recovery uses it to avoid promoting that candidate.
+type commitCandidate struct {
+	Revision string `json:"revision"`
+}
+
+func (s *Store) readCommitCandidate() (*commitCandidate, error) {
+	encoded, err := os.ReadFile(s.path(commitCandidateName))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var candidate commitCandidate
+	if err := json.Unmarshal(encoded, &candidate); err != nil {
+		return nil, err
+	}
+	if candidate.Revision == "" {
+		return nil, E.New("commit candidate has no revision")
+	}
+	return &candidate, nil
+}
+
+func (s *Store) writeCommitCandidate(revision string) error {
+	encoded, err := json.Marshal(commitCandidate{Revision: revision})
+	if err != nil {
+		return err
+	}
+	return s.writeFile(filepath.Join(s.dir, commitCandidateName), encoded)
+}
 
 // committedGeneration is one complete, recoverable combination.
 type committedGeneration struct {
@@ -119,10 +152,21 @@ func (s *Store) commitCombined(staged *Staged, pending []byte, references map[st
 		result.Warning = "references were not saved: " + err.Error()
 		return result
 	}
+	// The marker is written BEFORE the legacy active is replaced: if the process dies between the
+	// two, recovery can tell that active.json is an uncommitted candidate and must not promote it.
+	if err := s.writeCommitCandidate(staged.Revision); err != nil {
+		removeTemp()
+		_ = s.removeReferencesLocked(staged.Revision)
+		result.Persisted = false
+		result.Warning = "commit candidate marker was not written: " + err.Error()
+		return result
+	}
+	cleanupCandidate := func() { _ = s.remove(commitCandidateName) }
 	// Legacy active: an older build keeps working, and the active-directory test still fails here
 	// before the new record becomes authoritative.
 	if err := s.write(activeName, pending); err != nil {
 		removeTemp()
+		cleanupCandidate()
 		result.Persisted = false
 		// The references must not describe a configuration that never reached the disk.
 		if removeErr := s.removeReferencesLocked(staged.Revision); removeErr != nil && result.Warning == "" {
@@ -138,10 +182,14 @@ func (s *Store) commitCombined(staged *Staged, pending []byte, references map[st
 	// The commit point.
 	if err := os.Rename(s.path(commitTempName), s.path(commitName)); err != nil {
 		removeTemp()
+		cleanupCandidate()
 		// Put the legacy active back so both the old and the new reader see the previous
-		// complete combination. Failure here is reported but cannot improve the situation.
+		// complete combination. For a first commit there is no previous document: removing the
+		// candidate leaves an empty, honest store.
 		if lastGood != nil {
 			_ = s.write(activeName, []byte(lastGood.Content))
+		} else {
+			_ = s.remove(activeName)
 		}
 		_ = s.removeReferencesLocked(staged.Revision)
 		result.Persisted = false
@@ -149,6 +197,7 @@ func (s *Store) commitCombined(staged *Staged, pending []byte, references map[st
 		return result
 	}
 	result.Persisted = true
+	cleanupCandidate()
 	return result
 }
 
