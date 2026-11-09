@@ -105,6 +105,9 @@ func TestTheBoxBudgetHoldsAtProviderScale(t *testing.T) {
 			if testing.Short() && nodeCount > 2000 {
 				t.Skip("the 10,000-node case is skipped under -short")
 			}
+			if raceEnabled && nodeCount > 2000 {
+				t.Skip("the 10,000-node case is skipped under -race: it measures the race runtime, not the budget")
+			}
 			nodes := make([]*scaleProbeOutbound, nodeCount)
 			nodesByTag := make(map[string]adapter.Outbound, nodeCount)
 			cast := make([]adapter.Outbound, nodeCount)
