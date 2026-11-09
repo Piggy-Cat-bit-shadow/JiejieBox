@@ -97,6 +97,7 @@ func TestH3FallbackTransportFailureMatrix(t *testing.T) {
 		{"connection refused", cronet.NetErrorConnectionRefused, true},
 		{"address unreachable", cronet.NetErrorAddressUnreachable, true},
 		{"timeout", cronet.NetErrorTimedOut, true},
+		{"chromium's own connection timer", cronet.NetErrorConnectionTimedOut, true},
 		{"connection closed", cronet.NetErrorConnectionClosed, true},
 		{"connection reset", cronet.NetErrorConnectionReset, true},
 		{"407 is the proxy answering", errors.New("unexpected response status: 407"), false},
@@ -384,6 +385,83 @@ func TestH3FallbackProbeExpiryIsAmbiguous(t *testing.T) {
 	require.True(t, fallback.available(time.Now()),
 		"a slow H3 attempt proves nothing and must not send later CONNECTs to H2")
 	require.True(t, client.h3Closed.Load(), "the abandoned H3 stream must be closed")
+}
+
+// TestH3FallbackRetriesOnChromiumConnectionTimeout is C2: Chromium's own
+// connection timer is a TRANSPORT failure, not a proxy answer.
+//
+// cronet-go maps context.DeadlineExceeded and net.Error timeouts to
+// NetErrorConnectionTimedOut, which the retry classification used to omit. A UDP
+// path that Chromium gave up on before this package's probe budget fired was
+// therefore returned to the caller with no HTTP/2 attempt - the one case the
+// retry exists for.
+func TestH3FallbackRetriesOnChromiumConnectionTimeout(t *testing.T) {
+	withFallbackWindow(t, time.Minute)
+	client := newScriptedClient()
+	client.hand[true] = cronet.NetErrorConnectionTimedOut
+	fallback := &h3Fallback{}
+
+	require.NoError(t, dialFallback(t, client, fallback, context.Background()))
+	require.Equal(t, []bool{true, false}, client.recorded(),
+		"a Chromium connect timeout must be retried over HTTP/2")
+	require.False(t, fallback.available(time.Now()),
+		"and it is evidence that the H3 transport did not come up")
+}
+
+// probeRacingNaiveConn delivers the proxy's answer at the instant the probe
+// budget expires: a 407 that races the local timer.
+type probeRacingNaiveConn struct {
+	fakeNaiveConn
+}
+
+func (c *probeRacingNaiveConn) HandshakeContext(ctx context.Context) error {
+	<-ctx.Done()
+	return errors.New("unexpected response status: 407")
+}
+
+type probeRacingDialClient struct {
+	access  sync.Mutex
+	choices []bool
+}
+
+func (c *probeRacingDialClient) DialEarly(ctx context.Context, destination M.Socksaddr) (cronet.NaiveConn, error) {
+	return c.DialEarlyWithQUIC(ctx, destination, true)
+}
+
+func (c *probeRacingDialClient) DialEarlyWithQUIC(_ context.Context, _ M.Socksaddr, forceQUIC bool) (cronet.NaiveConn, error) {
+	c.access.Lock()
+	c.choices = append(c.choices, forceQUIC)
+	c.access.Unlock()
+	if forceQUIC {
+		return &probeRacingNaiveConn{}, nil
+	}
+	return &fakeNaiveConn{}, nil
+}
+
+func (c *probeRacingDialClient) recorded() []bool {
+	c.access.Lock()
+	defer c.access.Unlock()
+	return append([]bool(nil), c.choices...)
+}
+
+// TestH3FallbackProxyAnswerOutranksProbeExpiry is the ordering rule.
+//
+// The peer answered 407, and the local probe window expired in the same instant.
+// The answer is the newer and stronger fact: it is returned as-is, no second
+// CONNECT is opened for a question the proxy already answered, and the window
+// stays unarmed because the transport did come up.
+func TestH3FallbackProxyAnswerOutranksProbeExpiry(t *testing.T) {
+	withProbeBudget(t, 20*time.Millisecond)
+	withFallbackWindow(t, time.Minute)
+	client := &probeRacingDialClient{}
+	fallback := &h3Fallback{}
+
+	err := dialFallback(t, client, fallback, context.Background())
+	require.ErrorContains(t, err, "407")
+	require.Equal(t, []bool{true}, client.recorded(),
+		"a 407 that raced the timer must not start a second CONNECT")
+	require.True(t, fallback.available(time.Now()),
+		"and it must not arm the window: the transport answered")
 }
 
 // TestH3FallbackCallerCancelDuringProbeDoesNotRetry is H8: the caller leaving is
