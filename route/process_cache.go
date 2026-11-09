@@ -53,9 +53,22 @@ func (r *Router) findProcessInfoCached(ctx context.Context, network string, sour
 		// socket diag table is enough; do not pay for a /proc walk.
 		result, err = process.FindProcessOwner(r.processSearcher, ctx, network, source, destination)
 	}
+	// The COMPARISON and the WRITE are one commit step.
+	//
+	// Re-reading the epoch and then calling Add leaves a window between the two: a reset that lands
+	// inside it advances the generation and purges the cache, and the write then restores exactly
+	// the pre-reset answer the purge removed. The commit lock is what makes "the generation is
+	// unchanged" and "the entry is in the cache" a single decision, and the reset takes the same
+	// lock, so the two cannot interleave. The lookup above is deliberately outside it: a blocked
+	// system call must not hold the boundary a reset needs.
+	if r.processCacheAboutToPublish != nil {
+		r.processCacheAboutToPublish()
+	}
+	r.processCacheCommit.Lock()
 	if r.processCacheEpoch.Load() == epoch {
 		r.processCache.Add(key, processCacheEntry{result: result, err: err})
 	}
+	r.processCacheCommit.Unlock()
 	return result, err
 }
 
