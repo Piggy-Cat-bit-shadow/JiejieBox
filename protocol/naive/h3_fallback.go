@@ -162,7 +162,13 @@ func h3TransportFailure(err error) bool {
 			cronet.NetErrorAddressUnreachable,
 			cronet.NetErrorConnectionClosed,
 			cronet.NetErrorConnectionReset,
-			cronet.NetErrorTimedOut:
+			cronet.NetErrorTimedOut,
+			// Chromium's own connection timer, and a Go context.DeadlineExceeded that reached the
+			// native layer, are mapped to THIS code rather than to NetErrorTimedOut (see
+			// cronet-go's toNetError). Leaving it out meant a UDP path that timed out INSIDE
+			// Chromium - before this package's probe budget fired - was returned to the caller
+			// without the HTTP/2 retry, which is the exact failure the retry exists for.
+			cronet.NetErrorConnectionTimedOut:
 			return true
 		}
 		return false
@@ -257,6 +263,14 @@ func dialNaiveWithH3Fallback(ctx context.Context, client naiveDialerClient, fall
 				return nil, err
 			}
 			if probeExpired {
+				// The proxy ANSWERED. Our own window expiring afterwards changes nothing about
+				// that answer, and a second CONNECT over HTTP/2 would be a duplicate attempt at a
+				// question the peer already answered - with the same credentials, and usually the
+				// same status. The classification is checked before the ambiguity of the expiry
+				// so a 407 that raced the timer is reported as the 407 it is.
+				if _, isProxyAnswer := naiveResponseStatus(err); isProxyAnswer {
+					return nil, err
+				}
 				// AMBIGUOUS: our own bound fired before Chromium reached a
 				// verdict. The path is neither proven broken nor proven working,
 				// so this flow retries over H2 but the window stays unarmed -
