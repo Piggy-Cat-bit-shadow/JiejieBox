@@ -330,6 +330,20 @@ func (c *Client) Close() error {
 	return nil
 }
 
+// Reset is the network-change action, under the name the V2Ray outbounds look for: a physical
+// change resets a transport, it does not close it (see protocol/vless's InterfaceUpdated and
+// transport/v2rayquic's Reset).
+//
+// It is the pool's reuse-boundary action: no pooled connection may carry a NEW stream, idle ones are
+// closed now, and one that still carries a stream is drained - it keeps its transport until that
+// stream finishes, which is what "healthy old flows drain" means here. Close empties the same pool,
+// but it is the lifecycle's final action and it does not start a new pool generation, so the
+// inventory could not tell pre-change connections from the ones opened after the change.
+func (c *Client) Reset() error {
+	c.xmux.RetireSuspect()
+	return nil
+}
+
 // CloseIdleConnections releases pooled connections that carry no live stream.
 //
 // It implements adapter.IdleConnectionKeeper, which is how this transport is reached by the runtime
