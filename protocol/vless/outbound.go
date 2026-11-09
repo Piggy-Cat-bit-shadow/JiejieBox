@@ -168,7 +168,13 @@ func (h *Outbound) InterfaceUpdated(ctx context.Context) {
 		// A physical network change is not the transport's final close: Close cancels the
 		// transport's lifetime context, so a later dial would fail forever. Reset aborts the
 		// current connection/pending creation and leaves the client able to create a new one.
-		if resetter, isResetter := h.transport.(interface{ Reset() error }); isResetter {
+		//
+		// ResetContext is preferred when the transport has it: the network manager runs its
+		// listener phase under one deadline, and a migration candidate that is still being
+		// validated when that expires must be abandoned rather than hold the transition open.
+		if resetter, isResetter := h.transport.(interface{ ResetContext(context.Context) error }); isResetter {
+			_ = resetter.ResetContext(ctx)
+		} else if resetter, isResetter := h.transport.(interface{ Reset() error }); isResetter {
 			_ = resetter.Reset()
 		} else {
 			h.transport.Close()
