@@ -548,7 +548,11 @@ func (b *sharedUplinkBudget) releaseGrant(u *packetUplink, grant uplinkGrant) {
 	}
 	b.released += uint64(granted)
 	b.access.Unlock()
-	b.wakeWaiters()
+	// Deliberately NO wake-up. take+releaseGrant is a net-zero pair: the logical totals
+	// are back where they were, so no waiter can gain from it - and broadcasting here
+	// closed the rolling-back writer's own captured wake channel, which made the write
+	// path spin at ~150k rollback rounds in 40 ms with no capacity change at all. A real
+	// release still broadcasts from release().
 }
 
 // release returns n charged bytes of u's charge to the pools they came from.
@@ -714,6 +718,32 @@ func (b *sharedUplinkBudget) wakeWaiters() {
 	waiters := make([]*packetUplink, 0, len(b.waiters)+len(b.allocWaiters))
 	waiters = append(waiters, b.waiters...)
 	waiters = append(waiters, b.allocWaiters...)
+	b.access.Unlock()
+	for _, waiter := range waiters {
+		waiter.broadcastWake()
+	}
+}
+
+// wakeWaitersExcept wakes every waiter except skip. It is the same broadcast as
+// wakeWaiters with the caller's own uplink removed, for the case where the caller is
+// about to park on a DIFFERENT condition: leaving itself in the fan-out would close the
+// wake channel it just captured and turn a legitimate wait into a retry loop.
+func (b *sharedUplinkBudget) wakeWaitersExcept(skip *packetUplink) {
+	if b == nil {
+		return
+	}
+	b.access.Lock()
+	waiters := make([]*packetUplink, 0, len(b.waiters)+len(b.allocWaiters))
+	for _, waiter := range b.waiters {
+		if waiter != skip {
+			waiters = append(waiters, waiter)
+		}
+	}
+	for _, waiter := range b.allocWaiters {
+		if waiter != skip {
+			waiters = append(waiters, waiter)
+		}
+	}
 	b.access.Unlock()
 	for _, waiter := range waiters {
 		waiter.broadcastWake()
