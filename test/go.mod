@@ -324,3 +324,5 @@ replace github.com/sagernet/cronet-go/lib/windows_amd64 => github.com/Piggy-Cat-
 replace github.com/sagernet/cronet-go/lib/windows_arm64 => github.com/Piggy-Cat-bit-shadow/cronet-go/lib/windows_arm64 v0.0.0-20261105062326-362e63b14ce2
 
 replace github.com/metacubex/utls => github.com/Piggy-Cat-bit-shadow/utls v1.8.8-0.20261028133436-b63a2e9a7b1e
+
+replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261109031455-551470892848

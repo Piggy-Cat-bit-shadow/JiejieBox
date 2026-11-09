@@ -211,7 +211,20 @@ func (r *Router) routeConnection(ctx context.Context, conn net.Conn, metadata ad
 	// setup authority ends: a connection that exists from then on no longer needs the object.
 	releaseOutbound, leased := r.acquireOutbound(outbound)
 	if !leased {
-		return E.New("outbound ", outbound.Tag(), " was replaced while the connection was being set up; refusing to dial a closed object")
+		// The tag was replaced between the chain resolution and this hand-off (an endpoint rebind
+		// or a provider refresh publishes a new object under the same tag). The object the chain
+		// named is closed, so it cannot be dialled, but the TAG still routes: resolve it once more
+		// and dial the live object. Refusing here turned a transient replacement into a failed
+		// connection, which is what an AWG endpoint rebind produced on every first attempt.
+		replacement, found := r.outbound.Outbound(outbound.Tag())
+		if !found {
+			return E.New("outbound ", outbound.Tag(), " was replaced while the connection was being set up; refusing to dial a closed object")
+		}
+		outbound = replacement
+		releaseOutbound, leased = r.acquireOutbound(outbound)
+		if !leased {
+			return E.New("outbound ", outbound.Tag(), " was replaced while the connection was being set up; refusing to dial a closed object")
+		}
 	}
 	defer releaseOutbound()
 	if outboundHandler, isHandler := outbound.(adapter.ConnectionHandler); isHandler {

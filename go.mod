@@ -367,7 +367,7 @@ replace github.com/sagernet/sing-quic => github.com/Piggy-Cat-bit-shadow/sing-qu
 // AmneziaWG 3.1: the AWG graft plus this repository's packet-injection API, published as a
 // fork (tag v0.8.0-awg.1). The fork keeps the upstream module path, so the import sites and the
 // source lock stay one truth; AWG01-AWG04 record what was grafted and how it was verified.
-replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wireguard-go v0.8.0-awg.2
+replace github.com/sagernet/wireguard-go => github.com/Piggy-Cat-bit-shadow/wireguard-go v0.0.0-20261109031455-551470892848
 
 replace github.com/sagernet/sing-tun => github.com/Piggy-Cat-bit-shadow/sing-tun v0.0.0-20261105013414-8f65451175c0
 
