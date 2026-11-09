@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	stdTLS "crypto/tls"
+	"errors"
 	"io"
 	"net"
 	"sync"
@@ -27,9 +28,10 @@ import (
 // both halves.
 
 type blockingTLSDialer struct {
-	entered chan struct{}
-	release chan struct{}
-	once    sync.Once
+	entered    chan struct{}
+	release    chan struct{}
+	once       sync.Once
+	releaseErr error
 }
 
 func newBlockingTLSDialer() *blockingTLSDialer {
@@ -40,6 +42,9 @@ func (d *blockingTLSDialer) DialTLSContext(ctx context.Context, _ M.Socksaddr) (
 	d.once.Do(func() { close(d.entered) })
 	select {
 	case <-d.release:
+		if d.releaseErr != nil {
+			return nil, d.releaseErr
+		}
 		return newStubTLSConn(), nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -104,6 +109,33 @@ func TestResetConnectionsDoesNotWaitForAnInFlightHTTP2Dial(t *testing.T) {
 	client.http2Access.Lock()
 	defer client.http2Access.Unlock()
 	require.Empty(t, client.http2Conns, "and it must not enter the new network's pool")
+}
+
+// TestHTTP2DialSlotRespectsTheWaitersDeadline is the wait-budget half of B5.
+//
+// A setup that waits for the dial slot must be able to give up on ITS OWN deadline. With a plain
+// mutex it could not: it would spend its tunnel window queued behind another setup's handshake and
+// return to a caller that had already left.
+func TestHTTP2DialSlotRespectsTheWaitersDeadline(t *testing.T) {
+	dialer := newBlockingTLSDialer()
+	dialer.releaseErr = errors.New("released")
+	client := &Client{tlsDialer: dialer}
+
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		_, _, _ = client.acquireHTTP2(context.Background())
+	}()
+	<-dialer.entered
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, _, err := client.acquireHTTP2(ctx)
+	require.ErrorIs(t, err, context.DeadlineExceeded,
+		"a setup must abandon the wait for the dial slot when its own context ends")
+
+	close(dialer.release)
+	<-firstDone
 }
 
 // TestPublishHTTP2ConnRejectsThePreviousNetwork is the install half: the check and the append are

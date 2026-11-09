@@ -126,10 +126,11 @@ type Client struct {
 	disableVersionFallback bool
 	http2Transport         *http2.Transport
 	http2Access            sync.Mutex
-	// http2DialAccess serialises HTTP/2 dials without holding http2Access. ResetConnections takes
-	// http2Access on every network change and must not queue behind a TLS handshake that belongs
-	// to the network being left; see acquireHTTP2.
-	http2DialAccess                 sync.Mutex
+	// http2GateAccess protects http2DialGate, the single flight that serialises HTTP/2 dials
+	// without holding http2Access. ResetConnections takes http2Access on every network change and
+	// must not queue behind a TLS handshake belonging to the network being left; see acquireHTTP2.
+	http2GateAccess                 sync.Mutex
+	http2DialGate                   *http2DialGate
 	http2Conns                      []*http2ClientConn
 	http2Unsupported                atomic.Bool
 	http2ExtendedConnectUnsupported atomic.Bool
