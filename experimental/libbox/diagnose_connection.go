@@ -78,16 +78,31 @@ type connectionTestStage struct {
 }
 
 type connectionTestReport struct {
-	Root    string                `json:"root"`
-	Network string                `json:"network"`
-	Target  string                `json:"target"`
-	Outcome string                `json:"outcome"`
+	Root    string `json:"root"`
+	Network string `json:"network"`
+	Target  string `json:"target"`
+	Outcome string `json:"outcome"`
+	// Routing states WHICH dial semantics this run used, because the two are not interchangeable
+	// and a report that mixed them silently could explain a rule it never dialled through:
+	//
+	//   - "root": dial the fixed root the caller named (the compatibility contract of this entry);
+	//   - "rule": dial the outbound the ROUTE DECISION selects for the target (real routing).
+	Routing string                `json:"routing"`
 	Stages  []connectionTestStage `json:"stages"`
 	// Events is the bounded narrative of the test (begin, per-stage facts, final snapshot,
 	// end). It is the same stream a live subscriber receives, retained for a late reader.
 	Events  []string `json:"events,omitempty"`
 	TotalMs int64    `json:"totalMs"`
 }
+
+const (
+	// connectionTestRoutingRoot dials the caller's fixed root. This is the original contract of
+	// ConnectionTest and is kept for every caller that names one.
+	connectionTestRoutingRoot = "root"
+	// connectionTestRoutingRule dials the outbound the route decision selects for the target. It is
+	// what an empty root asks for: "test the path this request would actually take".
+	connectionTestRoutingRule = "rule"
+)
 
 // connectionTestPath is the slice of the running Box the test needs: the passive status
 // model and the outbound namespace. *box.Box satisfies it; tests supply a fake.
@@ -148,7 +163,12 @@ func runConnectionTest(ctx context.Context, path connectionTestPath, root string
 // subscriber and the final report describe the same run.
 func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, root string, network string, target string, emitter *connectionTestEmitter) (report connectionTestReport) {
 	started := time.Now()
-	report = connectionTestReport{Root: root, Network: network, Target: target}
+	report = connectionTestReport{Root: root, Network: network, Target: target, Routing: connectionTestRoutingRoot}
+	if root == "" {
+		// "No root" is not "the default root": it asks the route decision where this request would
+		// go. The report says which semantics ran so a reader cannot confuse the two.
+		report.Routing = connectionTestRoutingRule
+	}
 	if emitter == nil {
 		emitter = newConnectionTestEmitter(defaultEmitterBounds(), started)
 	}
@@ -191,6 +211,11 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 		DurationMs: time.Since(stageStarted).Milliseconds(),
 	}
 	switch {
+	case report.Routing == connectionTestRoutingRule:
+		// Real-routing mode has no fixed root to validate. Skipping (not failing) the stage is what
+		// keeps the test describing the request's own path; the rule stage below supplies the exit.
+		pathStage.Status = connectionTestStageSkipped
+		pathStage.Detail = "real-routing mode: the dial uses the route decision for the target, not a fixed root"
 	case status.Exit != "":
 		pathStage.Detail = "exit " + status.Exit
 	case status.Failure != nil:
@@ -214,6 +239,10 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 	rulesStage := connectionTestStage{ID: connectionTestStageRules, Parent: connectionTestStagePath}
 	previewer, canPreview := path.(connectionTestRulePreviewer)
 	host, port := connectionTestTargetHost(target)
+	var (
+		rulePreview connectionTestRulePreview
+		previewed   bool
+	)
 	switch {
 	case !canPreview:
 		rulesStage.Status = connectionTestStageSkipped
@@ -222,19 +251,24 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 		rulesStage.Status = connectionTestStageSkipped
 		rulesStage.Detail = "the target does not name a host"
 	default:
-		preview, previewed := previewer.PreviewRouteRule(network, host, port)
+		rulePreview, previewed = previewer.PreviewRouteRule(network, host, port)
 		switch {
 		case !previewed:
 			rulesStage.Status = connectionTestStageSkipped
 			rulesStage.Detail = "the running box has no route rule preview"
-		case preview.Unknown != "":
+		case rulePreview.Unknown != "":
 			// The preview is honest about what it could not decide; the stage reports that instead
 			// of inventing a rule.
 			rulesStage.Status = connectionTestStageSkipped
-			rulesStage.Detail = preview.Unknown
-		case preview.Matched:
+			rulesStage.Detail = rulePreview.Unknown
+		case rulePreview.Matched:
 			rulesStage.Status = connectionTestStageOK
-			rulesStage.Detail = rulePreviewDetail(preview)
+			rulesStage.Detail = rulePreviewDetail(rulePreview)
+			if report.Routing == connectionTestRoutingRoot && rulePreview.Outbound != "" && rulePreview.Outbound != status.Exit {
+				// The two semantics disagree, and saying so is the point of reporting Routing: this
+				// run dialled the caller's root, while the request would be routed elsewhere.
+				rulesStage.Detail += "; this test dials root " + status.Exit + " instead"
+			}
 		default:
 			rulesStage.Status = connectionTestStageOK
 			rulesStage.Detail = "no rule matched: the final outbound decides"
@@ -265,22 +299,75 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 
 	// Stage 4: the dial, if there is an exit to dial through.
 	dialStage := connectionTestStage{ID: connectionTestStageDial, Parent: connectionTestStagePath}
-	if pathStage.Status != connectionTestStageOK {
-		dialStage.Status = connectionTestStageSkipped
-		dialStage.Detail = "no exit to dial through"
-		report.Stages = append(report.Stages, dialStage)
-		report.Outcome = connectionTestOutcomeFailed
-		report.TotalMs = time.Since(started).Milliseconds()
-		return report
-	}
-	outbound, loaded := path.Outbound().Outbound(status.Exit)
-	if !loaded || outbound == nil {
-		dialStage.Status = connectionTestStageSkipped
-		dialStage.Detail = "the exit is not an outbound: " + status.Exit
-		report.Stages = append(report.Stages, dialStage)
-		report.Outcome = connectionTestOutcomeFailed
-		report.TotalMs = time.Since(started).Milliseconds()
-		return report
+	var outbound adapter.Outbound
+	switch report.Routing {
+	case connectionTestRoutingRoot:
+		if pathStage.Status != connectionTestStageOK {
+			dialStage.Status = connectionTestStageSkipped
+			dialStage.Detail = "no exit to dial through"
+			report.Stages = append(report.Stages, dialStage)
+			report.Outcome = connectionTestOutcomeFailed
+			report.TotalMs = time.Since(started).Milliseconds()
+			return report
+		}
+		var loaded bool
+		outbound, loaded = path.Outbound().Outbound(status.Exit)
+		if !loaded || outbound == nil {
+			dialStage.Status = connectionTestStageSkipped
+			dialStage.Detail = "the exit is not an outbound: " + status.Exit
+			report.Stages = append(report.Stages, dialStage)
+			report.Outcome = connectionTestOutcomeFailed
+			report.TotalMs = time.Since(started).Milliseconds()
+			return report
+		}
+	default:
+		// Real routing: the preview is the only thing that can name a dialable outbound. A preview
+		// that could not decide, or a rule that does not route (reject/hijack), leaves nothing to
+		// dial - reporting that is more useful than dialling something else and calling it a test.
+		switch {
+		case !previewed:
+			dialStage.Status = connectionTestStageSkipped
+			dialStage.Detail = "real-routing mode needs the route decision, which this build cannot produce"
+			report.Stages = append(report.Stages, dialStage)
+			report.Outcome = connectionTestOutcomeFailed
+			report.TotalMs = time.Since(started).Milliseconds()
+			return report
+		case rulePreview.Unknown != "":
+			dialStage.Status = connectionTestStageSkipped
+			dialStage.Detail = "the route decision is unknown: " + rulePreview.Unknown
+			report.Stages = append(report.Stages, dialStage)
+			report.Outcome = connectionTestOutcomeFailed
+			report.TotalMs = time.Since(started).Milliseconds()
+			return report
+		case rulePreview.Matched && rulePreview.Outbound == "":
+			dialStage.Status = connectionTestStageSkipped
+			dialStage.Detail = "the route decision does not select a dialable outbound (" + rulePreview.ActionType + ")"
+			report.Stages = append(report.Stages, dialStage)
+			report.Outcome = connectionTestOutcomeFailed
+			report.TotalMs = time.Since(started).Milliseconds()
+			return report
+		case rulePreview.Matched:
+			var loaded bool
+			outbound, loaded = path.Outbound().Outbound(rulePreview.Outbound)
+			if !loaded || outbound == nil {
+				dialStage.Status = connectionTestStageSkipped
+				dialStage.Detail = "the rule's outbound is not loaded: " + rulePreview.Outbound
+				report.Stages = append(report.Stages, dialStage)
+				report.Outcome = connectionTestOutcomeFailed
+				report.TotalMs = time.Since(started).Milliseconds()
+				return report
+			}
+		default:
+			outbound = path.Outbound().Default()
+			if outbound == nil {
+				dialStage.Status = connectionTestStageSkipped
+				dialStage.Detail = "no rule matched and the box has no default outbound"
+				report.Stages = append(report.Stages, dialStage)
+				report.Outcome = connectionTestOutcomeFailed
+				report.TotalMs = time.Since(started).Milliseconds()
+				return report
+			}
+		}
 	}
 
 	stageStarted = time.Now()
@@ -321,7 +408,10 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 		report.Outcome = connectionTestOutcomeFailed
 	case outcome.err == nil:
 		dialStage.Status = connectionTestStageOK
-		dialStage.Detail = "connected via " + status.Exit
+		dialStage.Detail = "connected via " + outbound.Tag()
+		if report.Routing == connectionTestRoutingRule {
+			dialStage.Detail += " (route decision)"
+		}
 		if outcome.conn != nil {
 			_ = outcome.conn.Close()
 		}
