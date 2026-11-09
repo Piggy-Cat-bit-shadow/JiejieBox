@@ -78,20 +78,34 @@ type HistoryStorage struct {
 	// closed makes Close terminal. A measurement that finishes afterwards must not write.
 	closed bool
 
-	// evidenceEpoch counts the evidence DROPS this storage has performed (a retired node, a failed
-	// path, a group reset). A measurement captures it before it starts and may only store if it is
-	// unchanged: a probe that started before a reset describes a node/path the reset was meant to
-	// forget, so its late result must not recreate the entry - that would put stale evidence back
-	// into the layer selection reads, which is exactly what the reset was for.
-	evidenceEpoch uint64
+	// tagEpochs and scopeEpochs count the evidence DROPS this storage has performed, scoped to what
+	// the drop was actually about.
+	//
+	// A measurement captures the pair when its PROBE starts and may only store while both are
+	// unchanged. The scope matters in both directions: retiring node A must not discard a valid
+	// result for node B, and invalidating one target's health for a node must not invalidate another
+	// target's measurement of it.
+	//
+	// The maps are bounded (see maxEvidenceEpochEntries). Evicting an entry resets that entity's
+	// epoch to zero, which is SAFE: a stale probe holds a NON-ZERO stamp and therefore still fails
+	// the comparison, while a new probe captures zero and stores. Only the recovery of a tag after
+	// its epoch was forgotten could reuse a number, and by then the old probe (seconds long) is gone.
+	tagEpochs   map[string]uint64
+	scopeEpochs map[scopedHistoryKey]uint64
 
 	updateHooks []*observable.Subscriber[struct{}]
 }
+
+// maxEvidenceEpochEntries bounds the two epoch maps. A device that replaces thousands of provider
+// nodes must not grow them without limit; eviction is safe for the reason documented on the fields.
+const maxEvidenceEpochEntries = 4096
 
 func NewHistoryStorage() *HistoryStorage {
 	return &HistoryStorage{
 		displayHistory: make(map[string]displayRecord),
 		healthHistory:  make(map[scopedHistoryKey]adapter.URLTestHistory),
+		tagEpochs:      make(map[string]uint64),
+		scopeEpochs:    make(map[scopedHistoryKey]uint64),
 	}
 }
 
@@ -209,25 +223,26 @@ func (s *HistoryStorage) StoreHealthHistory(tag string, scope MeasurementScope, 
 	}
 }
 
-// Epoch reports how many evidence drops this storage has performed.
+// EvidenceStamp reports the current drop epochs for one (node, target) pair.
 //
-// A measurement captures it BEFORE it starts and passes it to StoreHealthHistoryIfUnchanged: a
-// result whose epoch is stale belongs to evidence that a reset already forgot.
-func (s *HistoryStorage) Epoch() uint64 {
+// A measurement captures this pair when its PROBE starts and passes it back to
+// StoreHealthHistoryIfUnchanged. A result whose stamps are stale belongs to evidence that a drop
+// had already forgotten, even when the caller joined the probe afterwards.
+func (s *HistoryStorage) EvidenceStamp(tag string, scope MeasurementScope) (tagEpoch uint64, scopeEpoch uint64) {
 	if s == nil {
-		return 0
+		return 0, 0
 	}
 	s.access.RLock()
 	defer s.access.RUnlock()
-	return s.evidenceEpoch
+	return s.tagEpochs[tag], s.scopeEpochs[scopedHistoryKey{Tag: tag, Scope: scope}]
 }
 
-// StoreHealthHistoryIfUnchanged stores a health measurement only when no evidence drop has happened
-// since the measurement started.
+// StoreHealthHistoryIfUnchanged stores a health measurement only when neither scoped epoch has
+// moved since the probe started.
 //
 // It reports whether the result was stored. The check and the write happen under one lock, so a
-// reset cannot land between them and be overwritten by the write it was meant to invalidate.
-func (s *HistoryStorage) StoreHealthHistoryIfUnchanged(tag string, scope MeasurementScope, history *adapter.URLTestHistory, epoch uint64) bool {
+// drop cannot land between them and be overwritten by the write it was meant to invalidate.
+func (s *HistoryStorage) StoreHealthHistoryIfUnchanged(tag string, scope MeasurementScope, history *adapter.URLTestHistory, tagEpoch, scopeEpoch uint64) bool {
 	if s == nil || history == nil {
 		return false
 	}
@@ -236,7 +251,7 @@ func (s *HistoryStorage) StoreHealthHistoryIfUnchanged(tag string, scope Measure
 		s.access.Unlock()
 		return false
 	}
-	if s.evidenceEpoch != epoch {
+	if s.tagEpochs[tag] != tagEpoch || s.scopeEpochs[scopedHistoryKey{Tag: tag, Scope: scope}] != scopeEpoch {
 		s.access.Unlock()
 		return false
 	}
@@ -263,7 +278,7 @@ func (s *HistoryStorage) storeHealthLocked(tag string, scope MeasurementScope, h
 
 // StoreDisplayHistoryIfUnchanged is the display-layer counterpart: a manual probe that started
 // before an evidence drop must not recreate the entry the drop removed.
-func (s *HistoryStorage) StoreDisplayHistoryIfUnchanged(tag string, scope MeasurementScope, history *adapter.URLTestHistory, epoch uint64) bool {
+func (s *HistoryStorage) StoreDisplayHistoryIfUnchanged(tag string, scope MeasurementScope, history *adapter.URLTestHistory, tagEpoch, scopeEpoch uint64) bool {
 	if s == nil || history == nil {
 		return false
 	}
@@ -272,7 +287,7 @@ func (s *HistoryStorage) StoreDisplayHistoryIfUnchanged(tag string, scope Measur
 		s.access.Unlock()
 		return false
 	}
-	if s.evidenceEpoch != epoch {
+	if s.tagEpochs[tag] != tagEpoch || s.scopeEpochs[scopedHistoryKey{Tag: tag, Scope: scope}] != scopeEpoch {
 		s.access.Unlock()
 		return false
 	}
@@ -280,6 +295,28 @@ func (s *HistoryStorage) StoreDisplayHistoryIfUnchanged(tag string, scope Measur
 	s.access.Unlock()
 	s.notifyUpdated()
 	return true
+}
+
+// bumpTagEpochLocked records a node-level evidence drop. Caller holds the write lock.
+func (s *HistoryStorage) bumpTagEpochLocked(tag string) {
+	if len(s.tagEpochs) >= maxEvidenceEpochEntries {
+		for existing := range s.tagEpochs {
+			delete(s.tagEpochs, existing)
+			break
+		}
+	}
+	s.tagEpochs[tag]++
+}
+
+// bumpScopeEpochLocked records a (node, target) evidence drop. Caller holds the write lock.
+func (s *HistoryStorage) bumpScopeEpochLocked(tag string, scope MeasurementScope) {
+	if len(s.scopeEpochs) >= maxEvidenceEpochEntries {
+		for existing := range s.scopeEpochs {
+			delete(s.scopeEpochs, existing)
+			break
+		}
+	}
+	s.scopeEpochs[scopedHistoryKey{Tag: tag, Scope: scope}]++
 }
 
 // isNewerEvidence reports whether a measurement is newer evidence than the one already stored.
@@ -308,9 +345,10 @@ func (s *HistoryStorage) DeleteHealthHistory(tag string, scope MeasurementScope)
 		return
 	}
 	delete(s.healthHistory, scopedHistoryKey{Tag: tag, Scope: scope})
-	// This is an evidence DROP, not the failure path of one attempt: an in-flight probe that
-	// started before it must not store its result afterwards.
-	s.evidenceEpoch++
+	// This is an evidence DROP for THIS node and target, not the failure path of one attempt: an
+	// in-flight probe for them that started before it must not store its result afterwards. Other
+	// targets of the same node are untouched on purpose.
+	s.bumpScopeEpochLocked(tag, scope)
 	s.access.Unlock()
 	s.notifyUpdated()
 }
@@ -362,9 +400,10 @@ func (s *HistoryStorage) DeleteURLTestHistory(tag string) {
 			delete(s.healthHistory, key)
 		}
 	}
-	// The node is gone or its evidence was dropped: any probe that started before this point
-	// describes a member the drop was meant to forget.
-	s.evidenceEpoch++
+	// The node is gone or its evidence was dropped: any probe for this node that started before
+	// this point describes a member the drop was meant to forget. A probe for a DIFFERENT node is
+	// unaffected - that is why the epoch is per node rather than per storage.
+	s.bumpTagEpochLocked(tag)
 	s.access.Unlock()
 	s.notifyUpdated()
 }

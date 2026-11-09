@@ -1576,14 +1576,30 @@ func (b *urlTestBatch) measurementKey(ctx context.Context, link string, detour a
 	if manager := service.FromContext[adapter.NetworkManager](ctx); manager != nil {
 		epoch = manager.NetworkEnvironment()
 	}
+	// The evidence-drop epochs at REQUEST time are part of the question. A round that begins after
+	// a drop asks a different question than the probe it would otherwise join, so it starts its
+	// own probe instead of attaching to invalidated work.
+	tagEpoch, scopeEpoch := b.history.EvidenceStamp(detour.Tag(), b.scope)
 	return &urltest.MeasurementKey{
-		NetworkEpoch:   epoch,
-		Node:           detour.Tag(),
-		NodeIdentity:   nodeIdentity(detour),
-		Target:         link,
-		ExpectedStatus: b.expected.Key(),
-		Purpose:        b.measurementPurpose(),
+		NetworkEpoch:       epoch,
+		Node:               detour.Tag(),
+		NodeIdentity:       nodeIdentity(detour),
+		Target:             link,
+		ExpectedStatus:     b.expected.Key(),
+		Purpose:            b.measurementPurpose(),
+		EvidenceEpochTag:   tagEpoch,
+		EvidenceEpochScope: scopeEpoch,
 	}
+}
+
+// evidenceTime prefers the PROBE's own start for evidence ordering. attemptStart is only a
+// fallback for a measurement that failed before a probe existed (and for callers that predate the
+// provenance field).
+func evidenceTime(attemptStart, probeStarted time.Time) time.Time {
+	if probeStarted.IsZero() {
+		return attemptStart
+	}
+	return probeStarted
 }
 
 // measurementPurpose maps the round's evidence layer onto the measurement question.
@@ -1659,10 +1675,6 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval 
 				// if it were a fresh look at the new one, and it must not replace a result that a
 				// later attempt already stored.
 				attemptStart := time.Now()
-				// The epoch of the evidence this attempt belongs to. A drop (a retired node, a
-				// failed path, a reset) bumps it, and a result from before the drop must not
-				// recreate the entry the drop removed.
-				attemptEpoch := b.history.Epoch()
 				// NO per-member timeout here.
 				//
 				// Measure establishes the active probe budget itself, starting from the moment it
@@ -1732,25 +1744,28 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval 
 						//
 						// The removal is scoped to THIS attempt: if a result that started after it
 						// is already stored, that result is newer evidence and survives.
-						b.history.DeleteHealthHistoryIfOlderThan(tag, b.scope, attemptStart)
+						b.history.DeleteHealthHistoryIfOlderThan(tag, b.scope, evidenceTime(attemptStart, measurement.ProbeStarted))
 					}
 				} else {
 					b.logger.Debug("outbound ", tag, " available: ", measurement.Delay, "ms")
 					// The scope comes from the measurement itself, so the key cannot disagree
 					// with what was actually requested.
 					//
-					// The stored time is the attempt's start, so "the last result" is the last
-					// attempt that BEGAN, not the last one that happened to finish. A probe that
-					// started before a network change therefore cannot look fresher than a result
-					// measured after it, and cannot overwrite one: see isNewerEvidence.
+					// The stored time is the PROBE's start, not this caller's attempt start: a
+					// caller that joined an in-flight probe is receiving an observation made from
+					// that probe's moment, and the drop stamps travel with the probe too. Storing
+					// this round's own stamps is exactly how a post-drop joiner used to resurrect
+					// evidence measured before the drop.
 					health := &adapter.URLTestHistory{
-						Time:  attemptStart,
+						Time:  evidenceTime(attemptStart, measurement.ProbeStarted),
 						Delay: measurement.Delay,
 					}
 					if b.mode == TestHistoryHealth {
-						b.history.StoreHealthHistoryIfUnchanged(tag, measurement.Scope, health, attemptEpoch)
+						b.history.StoreHealthHistoryIfUnchanged(tag, measurement.Scope, health,
+							measurement.EvidenceEpochTag, measurement.EvidenceEpochScope)
 					} else {
-						b.history.StoreDisplayHistoryIfUnchanged(tag, measurement.Scope, health, attemptEpoch)
+						b.history.StoreDisplayHistoryIfUnchanged(tag, measurement.Scope, health,
+							measurement.EvidenceEpochTag, measurement.EvidenceEpochScope)
 					}
 					b.access.Lock()
 					b.result[tag] = measurement.Delay

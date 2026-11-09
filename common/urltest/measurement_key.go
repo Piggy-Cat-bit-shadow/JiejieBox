@@ -55,6 +55,16 @@ type MeasurementKey struct {
 	// Purpose separates a formal health measurement from a manual display or a diagnostic:
 	// they may ask the same question, but their evidence is recorded under different owners.
 	Purpose MeasurementPurpose
+	// EvidenceEpochTag and EvidenceEpochScope are the evidence-drop epochs of the node and target
+	// at the moment this measurement was REQUESTED.
+	//
+	// They are part of the identity, not just of the storage: a probe that started before a drop
+	// carries the pre-drop stamps, so a round that begins after the drop asks a DIFFERENT question
+	// and starts its own probe instead of joining the invalidated one. Without them, a new round
+	// would attach to an in-flight probe and then store its result under the new epochs, which is
+	// exactly how stale evidence was resurrected.
+	EvidenceEpochTag   uint64
+	EvidenceEpochScope uint64
 }
 
 // MeasurementPurpose names who asked, because the answer is stored for a different owner.

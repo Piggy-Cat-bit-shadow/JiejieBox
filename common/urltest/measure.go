@@ -109,6 +109,19 @@ type Measurement struct {
 	// Scope identifies the target this measurement belongs to, so callers can store the result
 	// without re-deriving the key and risking a different normalisation.
 	Scope MeasurementScope
+	// ProbeStarted is when the probe that produced this result actually began.
+	//
+	// It is NOT the caller's attempt time: an equivalent caller may JOIN a probe that another
+	// caller started, and the evidence it receives was measured from that earlier moment. Evidence
+	// ordering (which result is the latest) must use the probe's time, or a late joiner would make
+	// an older observation look newer.
+	ProbeStarted time.Time
+	// EvidenceEpochTag / EvidenceEpochScope are the evidence-drop epochs the PROBE was requested
+	// under (from the measurement key). A waiter receives the LEADER's stamps, not its own: the
+	// result belongs to the probe, and a drop that happened after the probe started must invalidate
+	// it even when the caller joined afterwards.
+	EvidenceEpochTag   uint64
+	EvidenceEpochScope uint64
 }
 
 // URLTest measures a node's delay, preserving the historical signature.
@@ -216,7 +229,24 @@ func measureSharedOutcome(ctx context.Context, options MeasureOptions, detour N.
 // It exists so a test can exercise the queue-versus-probe boundary in milliseconds instead of
 // waiting out C.TCPTimeout. The budget applies only from the moment a coordinator slot is held;
 // the caller's own deadline bounds the whole operation including the wait.
-func measureWithTimeout(ctx context.Context, options MeasureOptions, detour N.Dialer, probeTimeout time.Duration) (Measurement, error) {
+// measureWithTimeout is measureCore plus the PROVENANCE of the probe it ran.
+//
+// The provenance is stamped here, when the probe actually starts, and not by the caller: an
+// equivalent caller may share this probe, and it must receive when the probe started and which
+// evidence epochs it was requested under.
+func measureWithTimeout(ctx context.Context, options MeasureOptions, detour N.Dialer, probeTimeout time.Duration) (measurement Measurement, err error) {
+	probeStarted := time.Now()
+	defer func() {
+		measurement.ProbeStarted = probeStarted
+		if options.Key != nil {
+			measurement.EvidenceEpochTag = options.Key.EvidenceEpochTag
+			measurement.EvidenceEpochScope = options.Key.EvidenceEpochScope
+		}
+	}()
+	return measureCore(ctx, options, detour, probeTimeout)
+}
+
+func measureCore(ctx context.Context, options MeasureOptions, detour N.Dialer, probeTimeout time.Duration) (Measurement, error) {
 	// ONE parse, three results, BEFORE any budget is spent.
 	//
 	// The request, the identity and the dial target are decided together and then used as decided.
