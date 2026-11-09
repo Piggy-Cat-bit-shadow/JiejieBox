@@ -60,6 +60,12 @@ type StartedService struct {
 	oomKillerEnabled  bool
 	oomKillerDisabled bool
 	oomMemoryLimit    uint64
+	// configRecovery is the last-good transaction store, or nil when the daemon was not given a
+	// directory to keep one in. configRecoveryAccess guards it and the recovery record.
+	configRecovery       *configtxStore
+	configRecoveryAccess sync.Mutex
+	lastConfigRecovery   *ConfigRecoveryInfo
+	recoverToLastGood    bool
 	// workingDirectory string
 	// tempDirectory    string
 	// userID           int
@@ -95,6 +101,14 @@ type ServiceOptions struct {
 	OOMKillerEnabled  bool
 	OOMKillerDisabled bool
 	OOMMemoryLimit    uint64
+	// ConfigRecoveryDirectory, when set, enables the last-good configuration transaction (C05):
+	// a successfully started profile is stored there, and a failed start can recover to it.
+	// Empty keeps the daemon stateless, which is what an iOS NetworkExtension needs.
+	ConfigRecoveryDirectory string
+	// RecoverToLastGood makes a failed start fall back to the stored last-good profile. The
+	// recovery is reported through LastConfigRecovery; without this flag a failed start keeps
+	// its error and changes nothing.
+	RecoverToLastGood bool
 	// WorkingDirectory   string
 	// TempDirectory      string
 	// UserID             int
@@ -177,6 +191,7 @@ func NewStartedService(options ServiceOptions) *StartedService {
 		oomKillerEnabled:  options.OOMKillerEnabled,
 		oomKillerDisabled: options.OOMKillerDisabled,
 		oomMemoryLimit:    options.OOMMemoryLimit,
+		recoverToLastGood: options.RecoverToLastGood,
 		// workingDirectory: options.WorkingDirectory,
 		// tempDirectory:    options.TempDirectory,
 		// userID:           options.UserID,
@@ -189,6 +204,7 @@ func NewStartedService(options ServiceOptions) *StartedService {
 		clashModeSubscriber:     observable.NewSubscriber[struct{}](1),
 		notificationSubscriber:  observable.NewSubscriber[*NotificationEvent](notificationQueueSize),
 	}
+	s.openConfigRecovery(options.ConfigRecoveryDirectory)
 	s.serviceStatusObserver = observable.NewObserver(s.serviceStatusSubscriber, 2)
 	s.logObserver = observable.NewObserver(s.logSubscriber, 64)
 	s.urlTestObserver = observable.NewObserver(s.urlTestSubscriber, 1)
@@ -350,12 +366,42 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 		s.resetLogs()
 	}
 	s.serviceAccess.Unlock()
-	instance, err := s.newInstance(ctx, profileContent, options, oldInstance != nil)
+	instance, err := s.buildAndStart(ctx, profileContent, options, oldInstance != nil)
+	if err == nil && instance == nil {
+		// The start was interrupted; buildAndStart has already cleaned up, and the original
+		// path returned nil without touching the status, which this preserves.
+		return nil
+	}
 	if err != nil {
+		// C05: with a store configured, a failed start recovers to the last-good profile and
+		// reports it; without one, nothing about the failure changes.
+		if s.tryRecoverToLastGood(ctx, oldInstance != nil, profileContent, options, err) {
+			return nil
+		}
+		s.discardPendingCandidate()
 		s.serviceAccess.Lock()
 		s.updateStatusError(err)
 		s.serviceAccess.Unlock()
 		return err
+	}
+	s.serviceAccess.Lock()
+	s.startedAt = time.Now()
+	s.updateStatus(ServiceStatus_STARTED)
+	s.serviceAccess.Unlock()
+	runtimeDebug.FreeOSMemory()
+	// The profile is running: it becomes the document a later failed start can return to.
+	s.storeConfigRevision(profileContent)
+	return nil
+}
+
+// buildAndStart builds one Box and starts it.
+//
+// It returns (nil, nil) when the start was interrupted and (nil, err) when it failed, having
+// closed the failed Box and cleared s.instance in both cases. The caller owns the status.
+func (s *StartedService) buildAndStart(ctx context.Context, profileContent string, options *OverrideOptions, reloading bool) (*Instance, error) {
+	instance, err := s.newInstance(ctx, profileContent, options, reloading)
+	if err != nil {
+		return nil, err
 	}
 	instance.urlTestHistoryStorage.AddUpdateHook(s.urlTestSubscriber)
 	if instance.clashMode != nil {
@@ -372,21 +418,37 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 		s.serviceAccess.Unlock()
 		_ = instance.Close()
 		runtimeDebug.FreeOSMemory()
-		return nil
+		return nil, nil
 	}
 	if err != nil {
 		s.instance = nil
-		s.updateStatusError(err)
 		s.serviceAccess.Unlock()
 		_ = instance.Close()
 		runtimeDebug.FreeOSMemory()
-		return err
+		return nil, err
 	}
+	s.serviceAccess.Unlock()
+	return instance, nil
+}
+
+// tryRecoverToLastGood starts the stored last-good profile after a failure and records it.
+// It returns true only when a Box is running again.
+func (s *StartedService) tryRecoverToLastGood(ctx context.Context, reloading bool, failedProfile string, options *OverrideOptions, failure error) bool {
+	lastGood, usable := s.recoverLastGood(failedProfile)
+	if !usable {
+		return false
+	}
+	instance, err := s.buildAndStart(ctx, lastGood, options, reloading)
+	if err != nil || instance == nil {
+		return false
+	}
+	s.recordConfigRecovery(failedProfile, lastGood, failure)
+	s.serviceAccess.Lock()
 	s.startedAt = time.Now()
 	s.updateStatus(ServiceStatus_STARTED)
 	s.serviceAccess.Unlock()
 	runtimeDebug.FreeOSMemory()
-	return nil
+	return true
 }
 
 // Close releases the service's subscribers. It is idempotent and safe to call concurrently.
