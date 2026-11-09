@@ -1276,6 +1276,7 @@ func (r *Router) lookupWithRules(ctx context.Context, rules []adapter.DNSRule, d
 }
 
 func (r *Router) lookupWithRulesType(ctx context.Context, rules []adapter.DNSRule, domain string, qType uint16, options adapter.DNSQueryOptions) ([]netip.Addr, error) {
+	started := time.Now()
 	request := &mDNS.Msg{
 		MsgHdr: mDNS.MsgHdr{
 			RecursionDesired: true,
@@ -1287,6 +1288,12 @@ func (r *Router) lookupWithRulesType(ctx context.Context, rules []adapter.DNSRul
 		}},
 	}
 	exchangeResult := r.exchangeWithRules(withLookupQueryMetadata(ctx, qType), rules, request, options, false)
+	if exchangeResult.transport == nil {
+		// The dialer's lookup is a second production entry, and a local verdict here is just as
+		// invisible to the client as one in Exchange: no client exchange runs, so this is its only
+		// event. The error/rcode below still tells the caller, unchanged.
+		r.emitFinalQueryEvent(started, request, localVerdictSource(exchangeResult), exchangeResult.rule, exchangeResult.response, exchangeResult.err)
+	}
 	if exchangeResult.rejectAction != nil {
 		return nil, exchangeResult.rejectAction.Error(ctx)
 	}
