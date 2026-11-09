@@ -202,12 +202,24 @@ type testServer struct {
 	client  *testTLSConfig
 }
 
+// startTestServer starts a service with the echoing testHandler and the default
+// UDP limits.
 func startTestServer(t *testing.T, protocol string) *testServer {
 	t.Helper()
 	handler := &testHandler{}
+	server := startTestService(t, protocol, handler, UDPLimits{})
+	server.handler = handler
+	return server
+}
+
+// startTestService starts a service with any handler and explicit UDP limits.
+// The returned server has no testHandler; its handler field stays nil.
+func startTestService(t *testing.T, protocol string, handler Handler, limits UDPLimits) *testServer {
+	t.Helper()
 	service, err := NewService(ServiceOptions{
-		Handler: handler,
-		Users:   []auth.User{{Username: testUsername, Password: testPassword}},
+		Handler:   handler,
+		Users:     []auth.User{{Username: testUsername, Password: testPassword}},
+		UDPLimits: limits,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -231,7 +243,7 @@ func startTestServer(t *testing.T, protocol string) *testServer {
 		go service.ServeTCP(listener, serverTLS)
 	}
 	t.Cleanup(func() { service.Close() })
-	return &testServer{service: service, handler: handler, address: address, client: clientTLS}
+	return &testServer{service: service, address: address, client: clientTLS}
 }
 
 func (s *testServer) newClient(t *testing.T, protocol string, password string, dialer N.Dialer, modify func(*ClientOptions)) *Client {

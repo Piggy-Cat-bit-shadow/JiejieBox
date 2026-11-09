@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/sing/common/buf"
@@ -34,12 +35,21 @@ type udpSession struct {
 	user    string
 	source  M.Socksaddr
 
-	access sync.Mutex
-	flows  map[udpFlowKey]*udpFlow
-	closed bool
+	access      sync.Mutex
+	flows       map[udpFlowKey]*udpFlow
+	queuedBytes int
+	closed      bool
 
 	writeAccess sync.Mutex
 	writeClosed bool
+
+	// refused and dropped count this stream's admission refusals for the
+	// close-time diagnostic line.
+	refused atomic.Int64
+	dropped atomic.Int64
+
+	// done ends the idle sweeper.
+	done chan struct{}
 }
 
 func (s *Service) serveUDP(ctx context.Context, writer http.ResponseWriter, request *http.Request, username string, source M.Socksaddr) {
@@ -56,9 +66,14 @@ func (s *Service) serveUDP(ctx context.Context, writer http.ResponseWriter, requ
 		user:    username,
 		source:  source,
 		flows:   make(map[udpFlowKey]*udpFlow),
+		done:    make(chan struct{}),
 	}
+	go session.expireIdle()
 	err = session.loop(request.Body)
 	session.close()
+	if refused, dropped := session.refused.Load(), session.dropped.Load(); refused > 0 || dropped > 0 {
+		s.logger.DebugContext(ctx, "trusttunnel: UDP stream from ", source, " ended with ", refused, " associations refused and ", dropped, " datagrams dropped")
+	}
 	switch {
 	case err == nil, err == io.EOF:
 	case isStreamClosed(err), E.IsClosedOrCanceled(err):
@@ -79,8 +94,14 @@ func (s *udpSession) loop(body io.Reader) error {
 	}
 }
 
+// dispatch admits one client datagram to its association. A new association is
+// refused when the stream or the service already holds its limit, and a
+// datagram is dropped when its queue would cross a byte limit or the per-flow
+// item queue is full. Both are admission refusals: the associations already
+// admitted keep working, and no flow is torn down to make room.
 func (s *udpSession) dispatch(source M.Socksaddr, destination M.Socksaddr, payload *buf.Buffer) {
 	key := udpFlowKey{source.AddrPort(), destination.AddrPort()}
+	length := payload.Len()
 	s.access.Lock()
 	if s.closed {
 		s.access.Unlock()
@@ -89,6 +110,26 @@ func (s *udpSession) dispatch(source M.Socksaddr, destination M.Socksaddr, paylo
 	}
 	flow, loaded := s.flows[key]
 	if !loaded {
+		limits := s.service.udp.limits
+		if len(s.flows) >= limits.SessionAssociations {
+			s.refused.Add(1)
+			s.service.udp.refuseAssociation()
+			s.access.Unlock()
+			payload.Release()
+			return
+		}
+		if !s.service.udp.acquireAssociation() {
+			s.refused.Add(1)
+			s.access.Unlock()
+			payload.Release()
+			return
+		}
+		if !s.reserveBytesLocked(length) {
+			s.service.udp.releaseAssociation()
+			s.access.Unlock()
+			payload.Release()
+			return
+		}
 		flow = &udpFlow{
 			session:     s,
 			key:         key,
@@ -97,9 +138,26 @@ func (s *udpSession) dispatch(source M.Socksaddr, destination M.Socksaddr, paylo
 			packets:     make(chan *buf.Buffer, udpFlowQueueSize),
 			done:        make(chan struct{}),
 		}
+		flow.touch()
 		s.flows[key] = flow
+	} else if !s.reserveBytesLocked(length) {
+		s.access.Unlock()
+		payload.Release()
+		return
 	}
 	s.access.Unlock()
+	if !flow.push(payload) {
+		// The flow closed between the admission and the queue, or the item
+		// queue was full: the reserved bytes go back, and a flow that never
+		// reached its handler returns its association slot too.
+		s.dropped.Add(1)
+		s.releaseQueuedBytes(length)
+		s.service.udp.dropDatagram()
+		if !loaded {
+			flow.Close()
+		}
+		return
+	}
 	if !loaded {
 		metadataSource := source
 		if !source.Addr.IsValid() || source.Addr.IsUnspecified() {
@@ -114,7 +172,73 @@ func (s *udpSession) dispatch(source M.Socksaddr, destination M.Socksaddr, paylo
 			Network:     N.NetworkUDP,
 		})
 	}
-	flow.push(payload)
+}
+
+// reserveBytesLocked takes n queued bytes for this stream and the service. The
+// session lock must be held; the service budget is taken second, which is the
+// fixed order. A zero-length datagram reserves nothing and is always admitted.
+func (s *udpSession) reserveBytesLocked(n int) bool {
+	if s.queuedBytes+n > s.service.udp.limits.SessionQueuedBytes {
+		s.dropped.Add(1)
+		s.service.udp.dropDatagram()
+		return false
+	}
+	if !s.service.udp.acquireBytes(n) {
+		s.dropped.Add(1)
+		return false
+	}
+	s.queuedBytes += n
+	return true
+}
+
+// releaseQueuedBytes returns n queued bytes to this stream and the service.
+func (s *udpSession) releaseQueuedBytes(n int) {
+	if n <= 0 {
+		return
+	}
+	s.access.Lock()
+	s.queuedBytes -= n
+	if s.queuedBytes < 0 {
+		s.queuedBytes = 0
+	}
+	s.access.Unlock()
+	s.service.udp.releaseBytes(n)
+}
+
+// expireIdle closes associations that carried no datagram in either direction
+// for UDPLimits.IdleTimeout. It is the only way an association slot comes back
+// without the stream ending, so a client that opens associations and stops
+// sending cannot hold them until the session closes.
+func (s *udpSession) expireIdle() {
+	timeout := s.service.udp.limits.IdleTimeout
+	interval := timeout / 4
+	if interval < 10*time.Millisecond {
+		interval = 10 * time.Millisecond
+	}
+	if interval > 15*time.Second {
+		interval = 15 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.done:
+			return
+		case now := <-ticker.C:
+			deadline := now.Add(-timeout).UnixNano()
+			s.access.Lock()
+			var expired []*udpFlow
+			for _, flow := range s.flows {
+				if flow.lastActivity.Load() <= deadline {
+					expired = append(expired, flow)
+				}
+			}
+			s.access.Unlock()
+			for _, flow := range expired {
+				flow.Close()
+			}
+		}
+	}
 }
 
 func (s *udpSession) remove(flow *udpFlow) {
@@ -131,7 +255,12 @@ func (s *udpSession) close() {
 	s.writeClosed = true
 	s.writeAccess.Unlock()
 	s.access.Lock()
+	if s.closed {
+		s.access.Unlock()
+		return
+	}
 	s.closed = true
+	close(s.done)
 	flows := s.flows
 	s.flows = nil
 	s.access.Unlock()
@@ -183,27 +312,45 @@ type udpFlow struct {
 	packets     chan *buf.Buffer
 	done        chan struct{}
 	closeOnce   sync.Once
+
+	queueAccess sync.Mutex
+	queueClosed bool
+	// lastActivity is the UnixNano of the last datagram in either direction;
+	// the idle sweeper reads it.
+	lastActivity atomic.Int64
 }
 
-func (f *udpFlow) push(payload *buf.Buffer) {
-	select {
-	case <-f.done:
+func (f *udpFlow) touch() {
+	f.lastActivity.Store(time.Now().UnixNano())
+}
+
+// push queues one datagram whose bytes were already reserved. It reports false
+// when the flow is closed or the item queue is full; the caller then returns the
+// reservation. The queue mutex serialises push against the final drain in Close,
+// so a datagram that arrives during the close cannot be left behind.
+func (f *udpFlow) push(payload *buf.Buffer) bool {
+	f.queueAccess.Lock()
+	defer f.queueAccess.Unlock()
+	if f.queueClosed {
 		payload.Release()
-		return
-	default:
+		return false
 	}
 	select {
 	case f.packets <- payload:
+		return true
 	default:
 		payload.Release()
+		return false
 	}
 }
 
 func (f *udpFlow) ReadPacket(buffer *buf.Buffer) (M.Socksaddr, error) {
 	select {
 	case packet := <-f.packets:
+		length := packet.Len()
 		_, err := buffer.Write(packet.Bytes())
 		packet.Release()
+		f.session.releaseQueuedBytes(length)
 		return f.destination, err
 	case <-f.done:
 		return M.Socksaddr{}, net.ErrClosed
@@ -219,6 +366,7 @@ func (f *udpFlow) WritePacket(buffer *buf.Buffer, destination M.Socksaddr) error
 		return net.ErrClosed
 	default:
 	}
+	f.touch()
 	sender := destination
 	if !sender.IsIP() {
 		sender = f.destination
@@ -230,15 +378,25 @@ func (f *udpFlow) FrontHeadroom() int {
 	return ServerFrameHeadroom
 }
 
+// Close detaches the flow, returns its queued bytes and its association slot,
+// and releases everything still queued. It is safe to call more than once and
+// from the sweeper, the handler and the session at the same time.
 func (f *udpFlow) Close() error {
 	f.closeOnce.Do(func() {
 		close(f.done)
 		f.session.remove(f)
+		f.queueAccess.Lock()
+		f.queueClosed = true
+		queued := 0
 		for {
 			select {
 			case packet := <-f.packets:
+				queued += packet.Len()
 				packet.Release()
 			default:
+				f.queueAccess.Unlock()
+				f.session.releaseQueuedBytes(queued)
+				f.session.service.udp.releaseAssociation()
 				return
 			}
 		}
