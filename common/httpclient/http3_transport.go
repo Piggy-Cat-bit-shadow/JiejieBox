@@ -34,6 +34,12 @@ type http3BrokenEntry struct {
 	backoff time.Duration
 }
 
+// h3EstablishBudget bounds how long ONE cold HTTP/3 attempt may spend becoming usable. It is the
+// same 3 s window transport/http gives a CONNECT-IP setup, for the same reason: a UDP dial plus a
+// handshake plus one round trip, bounded so the fallback keeps a usable share of the caller's
+// budget. A var rather than a const so a test can shrink it instead of sleeping for it.
+var h3EstablishBudget = 3 * time.Second
+
 type http3FallbackTransport struct {
 	h3Transport   *http3.Transport
 	h2Fallback    innerTransport
@@ -267,13 +273,40 @@ func (t *http3FallbackTransport) issueH3(request *http.Request, onlyCached bool)
 		sent = err == nil || !errors.Is(err, http3.ErrNoCachedConn)
 	} else {
 		var established atomic.Bool
-		attemptRequest = attemptRequest.WithContext(httptrace.WithClientTrace(attemptRequest.Context(), &httptrace.ClientTrace{
+		attemptCtx, cancelAttempt := context.WithCancel(attemptRequest.Context())
+		var gaveUp atomic.Bool
+		// The attempt gets its own establishment bound.
+		//
+		// # Why a bound of its own is ownership, not impatience
+		//
+		// A cold attempt can spend the CALLER's whole budget inside the HTTP/3 transport: the
+		// pool serialises dials per host, so this request can be waiting for a dial that belongs
+		// to another request, and the fallback then has nothing left to spend. Observed shape:
+		// request A opened a dial; request B joined it with a short budget; B timed out without
+		// ever starting its own HTTP/2 attempt, on a healthy HTTP/2 path.
+		//
+		// The bound covers ESTABLISHMENT only. Once the transport reports a connection
+		// (httptrace.GotConn) the timer does nothing, because from that point the request is
+		// running under the caller's own context and its own deadline.
+		timer := time.AfterFunc(h3EstablishBudget, func() {
+			if !established.Load() {
+				gaveUp.Store(true)
+				cancelAttempt()
+			}
+		})
+		defer timer.Stop()
+		attemptRequest = attemptRequest.WithContext(httptrace.WithClientTrace(attemptCtx, &httptrace.ClientTrace{
 			GotConn: func(httptrace.GotConnInfo) { established.Store(true) },
 		}))
 		response, err = t.h3Transport.RoundTrip(attemptRequest)
 		// GotConn is reported after the connection (and its handshake) exists and before any
 		// stream does. A dial that failed never reaches it, which is the proof used above.
 		sent = established.Load()
+		if gaveUp.Load() && err != nil {
+			// Name the cause: the transport's own error is a context cancellation that this
+			// package produced, and the caller must not read it as its own deadline.
+			err = E.Cause(err, "HTTP/3 attempt exceeded ", h3EstablishBudget)
+		}
 	}
 	if hasBody && err != nil && sent {
 		// The body may have been consumed by the failed attempt, so it cannot carry a retry.
