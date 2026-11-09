@@ -1,6 +1,6 @@
 package libbox
 
-// C01C02 — what AnalyzeConfig can declare without building a box.
+// C01C02 鈥?what AnalyzeConfig can declare without building a box.
 //
 // AnalyzeConfig parses the document and checks DECLARATIONS: tags that must be unique, and
 // references that must resolve inside the document. It deliberately does not build a Box,
@@ -22,6 +22,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"runtime"
+	"strconv"
 	"strings"
 
 	C "github.com/sagernet/sing-box/constant"
@@ -39,6 +40,9 @@ type ConfigChecks struct {
 type ConfigFinding struct {
 	Code   string `json:"code"`
 	Detail string `json:"detail"`
+	// Reason is the consequence the core would produce: the failure a client would otherwise only
+	// discover by starting a Box.
+	Reason string `json:"reason,omitempty"`
 }
 
 // ConfigPendingProvider is a provider whose members cannot exist until it is fetched.
@@ -147,9 +151,22 @@ func analyseDeclarations(options *option.Options) (findings []ConfigFinding, pen
 			findings = append(findings, checkGroupMembers(group.Outbounds, group.Providers, group.UseAllProviders, providerTags, known, providerRendered)...)
 		}
 	}
+	// A rule that names a rule-set the document never declares is not a reference the Box
+	// tolerates: the router refuses to start. Reporting it here is the difference between "this
+	// profile is fine" and a start that fails on the device. Routing and DNS rules share the same
+	// declaration list.
+	declaredRuleSets := make(map[string]bool)
 	if options.Route != nil {
 		if options.Route.Final != "" && !known(options.Route.Final) {
 			findings = append(findings, ConfigFinding{Code: findingDanglingReference, Detail: "route.final " + options.Route.Final})
+		}
+		for _, ruleSet := range options.Route.RuleSet {
+			for _, tag := range ruleSet.Tag {
+				declaredRuleSets[tag] = true
+			}
+		}
+		for index, rule := range options.Route.Rules {
+			findings = append(findings, checkRuleSetReferences(routeRuleSetReferences(rule), declaredRuleSets, "route.rules["+strconv.Itoa(index)+"]")...)
 		}
 	}
 	if options.DNS != nil {
@@ -160,8 +177,59 @@ func analyseDeclarations(options *option.Options) (findings []ConfigFinding, pen
 		if options.DNS.Final != "" && !dnsServerTags[options.DNS.Final] {
 			findings = append(findings, ConfigFinding{Code: findingDanglingReference, Detail: "dns.final " + options.DNS.Final})
 		}
+		for index, rule := range options.DNS.Rules {
+			findings = append(findings, checkRuleSetReferences(dnsRuleSetReferences(rule), declaredRuleSets, "dns.rules["+strconv.Itoa(index)+"]")...)
+		}
 	}
 	return findings, pending
+}
+
+// checkRuleSetReferences reports every rule-set tag a rule names that the document never declares.
+func checkRuleSetReferences(tags []string, declared map[string]bool, where string) []ConfigFinding {
+	var findings []ConfigFinding
+	for _, tag := range tags {
+		if declared[tag] {
+			continue
+		}
+		findings = append(findings, ConfigFinding{
+			Code:   findingDanglingReference,
+			Detail: where + " rule_set " + tag,
+			Reason: "the box fails to start with: rule-set not found: " + tag,
+		})
+	}
+	return findings
+}
+
+// routeRuleSetReferences flattens the rule-set tags one routing rule names, nested rules included.
+func routeRuleSetReferences(rule option.Rule) []string {
+	switch rule.Type {
+	case "", C.RuleTypeDefault:
+		return rule.DefaultOptions.RuleSet
+	case C.RuleTypeLogical:
+		var references []string
+		for _, child := range rule.LogicalOptions.Rules {
+			references = append(references, routeRuleSetReferences(child)...)
+		}
+		return references
+	default:
+		return nil
+	}
+}
+
+// dnsRuleSetReferences flattens the rule-set tags one DNS rule names, nested rules included.
+func dnsRuleSetReferences(rule option.DNSRule) []string {
+	switch rule.Type {
+	case "", C.RuleTypeDefault:
+		return rule.DefaultOptions.RuleSet
+	case C.RuleTypeLogical:
+		var references []string
+		for _, child := range rule.LogicalOptions.Rules {
+			references = append(references, dnsRuleSetReferences(child)...)
+		}
+		return references
+	default:
+		return nil
+	}
 }
 
 // checkGroupMembers validates one group's members and provider references.
