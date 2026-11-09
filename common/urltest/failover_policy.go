@@ -39,6 +39,10 @@ package urltest
 // A non-positive field takes its default, so a partially configured policy cannot disable widening
 // or settle instantly by accident.
 type FailoverPolicy struct {
+	// Disabled keeps the group's historical behaviour: every member is probed every round and the
+	// policy never selects. It is the zero-value-compatible default until the configuration window
+	// supplies the fields that select this policy.
+	Disabled bool
 	// WidenAfter is how many consecutive rounds the stable member may fail (or be missing) before
 	// the probe set widens to every member.
 	WidenAfter int
@@ -131,13 +135,43 @@ func (s *FailoverState) Stable() string {
 	return s.stable
 }
 
+// Disabled reports whether this state is the compatibility mode (probe everything, never select).
+func (s *FailoverState) Disabled() bool {
+	return s == nil || s.policy.Disabled
+}
+
+// Probes returns the members this policy wants measured in the CURRENT round. A disabled or
+// uninitialised policy probes everything, which is the historical behaviour.
+func (s *FailoverState) Probes(members []string) []string {
+	if s == nil || s.policy.Disabled || s.stable == "" || s.widened {
+		return append([]string(nil), members...)
+	}
+	for _, member := range members {
+		if member == s.stable {
+			return []string{s.stable}
+		}
+	}
+	return append([]string(nil), members...)
+}
+
+// AdoptStable seeds the stable member from the group's committed selection when the policy has none
+// yet. It never overrides a stable member the policy already holds.
+func (s *FailoverState) AdoptStable(tag string) {
+	if s == nil || s.policy.Disabled || tag == "" {
+		return
+	}
+	if s.stable == "" {
+		s.stable = tag
+	}
+}
+
 // Decide processes one round's observations and returns the next probe set and selection.
 //
 // members is the group's current member list in its own order. A tag that disappeared is dropped
 // from the state; a tag whose OBJECT was replaced keeps its slot, because the policy is keyed by
 // tag and a provider publication does not change a tag's meaning.
 func (s *FailoverState) Decide(members []string, observations map[string]FailoverObservation) FailoverDecision {
-	if s == nil {
+	if s == nil || s.policy.Disabled {
 		return FailoverDecision{ProbeSet: append([]string(nil), members...)}
 	}
 	if len(members) == 0 {
@@ -163,17 +197,18 @@ func (s *FailoverState) Decide(members []string, observations map[string]Failove
 	// No stable member yet: the only honest answer is to measure everything and take the best
 	// measurement as the first answer.
 	if s.stable == "" {
-		best, bestDelay, found := bestMeasured(members, observations, "")
-		decision := FailoverDecision{ProbeSet: append([]string(nil), members...), Widened: true}
+		best, _, found := bestMeasured(members, observations, "")
+		decision := FailoverDecision{ProbeSet: append([]string(nil), members...)}
 		if found {
 			decision.Selected = best
 			s.stable = best
 			s.stableFails = 0
-			s.widened = true
-			_ = bestDelay
+			// The initial selection is NOT a degradation episode: the next round should narrow to
+			// the member just chosen.
+			s.widened = false
+			s.answered = true
+			s.lastAnswer = best
 		}
-		decision.Changed = decision.Selected != s.lastAnswer
-		s.lastAnswer = decision.Selected
 		return decision
 	}
 
