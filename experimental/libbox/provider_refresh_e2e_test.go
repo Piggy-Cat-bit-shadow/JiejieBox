@@ -45,14 +45,18 @@ func TestRefreshProvidersEndToEnd(t *testing.T) {
 	t.Cleanup(documentServer.Close)
 
 	// The command server derives its working directory from package state; a test gets its own
-	// so the cache-file service does not wait for a directory it will never be given.-1 means
-	// "do not chown", which is what every non-root platform passes.
+	// so the cache-file service does not wait for a directory it will never be given. -1 means
+	// "do not chown", which is what every non-root platform passes. sBasePath is where the
+	// configuration snapshot is written, so it needs a directory too - otherwise the test leaves
+	// the snapshot in the package directory.
 	previousWorking, previousTemp := sWorkingPath, sTempPath
+	previousBase := sBasePath
 	previousUser, previousGroup := sUserID, sGroupID
-	sWorkingPath, sTempPath = t.TempDir(), t.TempDir()
+	sWorkingPath, sTempPath, sBasePath = t.TempDir(), t.TempDir(), t.TempDir()
 	sUserID, sGroupID = -1, -1
 	t.Cleanup(func() {
 		sWorkingPath, sTempPath = previousWorking, previousTemp
+		sBasePath = previousBase
 		sUserID, sGroupID = previousUser, previousGroup
 	})
 
