@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -129,4 +130,82 @@ func TestARecoveryPinsTheExactRuleSetVersion(t *testing.T) {
 	exact, err := opened.LoadExact(artifactKey, pinnedDigest)
 	require.NoError(t, err, "A's exact version was retained for the recovery")
 	exact.Release()
+}
+
+// TestARecoveryRepairsAMissingPinnedArtifactFromTheCache is the 1C entry-level case: the pinned
+// version's bytes are gone, but the legacy cache still holds exactly those bytes. Recovery may
+// use them, and must not fall back to the newer version that happens to be in the store.
+func TestARecoveryRepairsAMissingPinnedArtifactFromTheCache(t *testing.T) {
+	ctx := recoveryBusinessContext(t)
+	storeRoot := filemanager.BasePath(ctx, "rule-set-artifacts")
+
+	rejectLoopback := binaryRuleSetForTest(t, "127.0.0.1/32")
+	allowLoopback := binaryRuleSetForTest(t, "10.0.0.0/8")
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write(rejectLoopback)
+	}))
+	t.Cleanup(server.Close)
+	target := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte("ok"))
+	}))
+	t.Cleanup(target.Close)
+
+	directory := t.TempDir()
+	proxyPort := freeLoopbackPort(t)
+	configA := recoveryReferenceConfig(proxyPort, server.URL, "error", "1h")
+	configB := recoveryReferenceConfig(proxyPort, server.URL, "warn", "1h")
+	revisionA := configRevisionOf(configA)
+
+	store := recoveryStoreWithWriteFault(t, directory, []byte(configB))
+	service := NewStartedService(ServiceOptions{Context: ctx})
+	t.Cleanup(func() {
+		_ = service.CloseService()
+		service.Close()
+	})
+	service.ConfigureConfigRecovery(directory, true)
+	installStore(service, store)
+
+	require.NoError(t, service.StartOrReloadService(context.Background(), configA, nil))
+	client := newProxyClient(t, proxyPort)
+	defer client.CloseIdleConnections()
+	served := func() bool {
+		status, err := proxyStatus(t, client, target.URL)
+		return err == nil && status == http.StatusOK
+	}
+	require.False(t, served(), "A rejects the loopback target")
+
+	referencesA, err := store.References(revisionA)
+	require.NoError(t, err)
+	var artifactKey, pinnedDigest string
+	for key, digest := range referencesA {
+		artifactKey, pinnedDigest = key, digest
+	}
+	require.NotEmpty(t, pinnedDigest)
+
+	opened, err := artifact.Open(storeRoot)
+	require.NoError(t, err)
+	manifest := artifact.NewManifest("rule-set/binary", "test", "tag=gate")
+	manifest.Created = time.Now().Add(time.Minute).UnixNano()
+	newer, err := opened.Commit(artifactKey, manifest, bytes.NewReader(allowLoopback))
+	require.NoError(t, err)
+	newer.Release()
+
+	require.NoError(t, service.StartOrReloadService(context.Background(), configB, nil))
+	client.CloseIdleConnections()
+	require.True(t, served(), "B serves the newer version")
+	require.Equal(t, persistenceDegraded, service.LastServiceChange().Persistence)
+
+	// Damage the pinned version's bytes; the manifest stays, so this is the "cannot load" case.
+	pinnedVersion, err := opened.LoadExact(artifactKey, pinnedDigest)
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(pinnedVersion.Path()))
+	pinnedVersion.Release()
+
+	require.NoError(t, service.StartOrReloadService(context.Background(), buildFailingConfig, nil))
+	client.CloseIdleConnections()
+	require.Equal(t, ServiceChangeStatusRecovered, service.LastServiceChange().Status)
+	require.False(t, served(), "recovery must serve A's rules, not the newer B version")
+	repaired, err := opened.LoadExact(artifactKey, pinnedDigest)
+	require.NoError(t, err, "the cache bytes repaired the damaged pinned version")
+	repaired.Release()
 }

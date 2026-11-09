@@ -67,6 +67,7 @@ func encodeBinaryRuleSet(t *testing.T, ruleSet option.PlainRuleSet) []byte {
 type loadMeasurement struct {
 	duration   time.Duration
 	allocated  uint64
+	peakHeap   uint64
 	ruleCount  int
 	firstMatch bool
 }
@@ -76,6 +77,27 @@ func measureLoad(t *testing.T, parse func([]byte) (option.PlainRuleSetCompat, er
 	runtime.GC()
 	var before runtime.MemStats
 	runtime.ReadMemStats(&before)
+	baseline := before.HeapAlloc
+	peak := baseline
+	stopSampling := make(chan struct{})
+	samplingDone := make(chan struct{})
+	go func() {
+		defer close(samplingDone)
+		ticker := time.NewTicker(200 * time.Microsecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopSampling:
+				return
+			case <-ticker.C:
+				var current runtime.MemStats
+				runtime.ReadMemStats(&current)
+				if current.HeapAlloc > peak {
+					peak = current.HeapAlloc
+				}
+			}
+		}
+	}()
 	started := time.Now()
 	ruleSet, err := parse(content)
 	require.NoError(t, err)
@@ -86,6 +108,8 @@ func measureLoad(t *testing.T, parse func([]byte) (option.PlainRuleSetCompat, er
 		rules = append(rules, rule)
 	}
 	elapsed := time.Since(started)
+	close(stopSampling)
+	<-samplingDone
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
 	firstMatch := false
@@ -97,6 +121,7 @@ func measureLoad(t *testing.T, parse func([]byte) (option.PlainRuleSetCompat, er
 	return loadMeasurement{
 		duration:   elapsed,
 		allocated:  after.TotalAlloc - before.TotalAlloc,
+		peakHeap:   peak - baseline,
 		ruleCount:  len(rules),
 		firstMatch: firstMatch,
 	}
@@ -150,6 +175,7 @@ func TestPrecompiledRuleSetComparedWithSourceJSON(t *testing.T) {
 		len(source), len(binary), 100*float64(len(binary))/float64(len(source)))
 	t.Logf("load+compile median: source %s, binary %s", sourceMedian, binaryMedian)
 	t.Logf("allocated during load: source %d bytes, binary %d bytes", sourceRun.allocated, binaryRun.allocated)
+	t.Logf("peak heap delta during load: source %d bytes, binary %d bytes", sourceRun.peakHeap, binaryRun.peakHeap)
 	t.Logf("first rule matched by the compiled form: source=%v binary=%v", sourceRun.firstMatch, binaryRun.firstMatch)
 	t.Logf("compatibility: source is version-less, binary is gated by srs.Read at rule-set version %d", C.RuleSetVersionCurrent)
 	t.Logf("takeaway: the remote binary path already uses the smaller representation; no new precompiled artifact is added")

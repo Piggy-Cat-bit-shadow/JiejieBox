@@ -88,6 +88,7 @@ func TestBuildPressureSample(t *testing.T) {
 	defer cancel()
 
 	var completed atomic.Int32
+	var reserved atomic.Int32
 	var samplesAccess sync.Mutex
 	var samples []buildSample
 	var peakHeap, peakSys atomic.Uint64
@@ -132,8 +133,18 @@ func TestBuildPressureSample(t *testing.T) {
 			}
 			ruleSet.httpClient = server.Client()
 			defer ruleSet.Close()
-			for attempt := 0; completed.Load() < int32(target); attempt++ {
+			for attempt := 0; ; attempt++ {
 				if ctx.Err() != nil {
+					return
+				}
+				// Reserve one of the target SUCCESS slots. A failed/deferred attempt returns its
+				// reservation, so the run ends with exactly target successes (or fewer if the
+				// deadline cancels attempts that were in flight).
+				if completed.Load() >= int32(target) || reserved.Load() >= int32(target) {
+					return
+				}
+				if reserved.Add(1) > int32(target) {
+					reserved.Add(-1)
 					return
 				}
 				attemptStarted := time.Now()
@@ -151,13 +162,17 @@ func TestBuildPressureSample(t *testing.T) {
 					completed.Add(1)
 				case errors.Is(fetchErr, buildgate.ErrDeferred):
 					sample.Status = "deferred"
+					reserved.Add(-1)
 				case errors.Is(fetchErr, context.DeadlineExceeded):
 					sample.Status = "timeout"
+					reserved.Add(-1)
 				case errors.Is(fetchErr, context.Canceled):
 					sample.Status = "cancelled"
+					reserved.Add(-1)
 				default:
 					sample.Status = "failed"
 					sample.Error = fetchErr.Error()
+					reserved.Add(-1)
 				}
 				samplesAccess.Lock()
 				samples = append(samples, sample)
