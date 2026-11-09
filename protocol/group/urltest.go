@@ -2,6 +2,7 @@ package group
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/netip"
@@ -1578,10 +1579,38 @@ func (b *urlTestBatch) measurementKey(ctx context.Context, link string, detour a
 	return &urltest.MeasurementKey{
 		NetworkEpoch:   epoch,
 		Node:           detour.Tag(),
+		NodeIdentity:   nodeIdentity(detour),
 		Target:         link,
 		ExpectedStatus: b.expected.Key(),
-		Purpose:        urltest.PurposeHealth,
+		Purpose:        b.measurementPurpose(),
 	}
+}
+
+// measurementPurpose maps the round's evidence layer onto the measurement question.
+//
+// The two are the same mapping seen from opposite ends: a health round may move selection, so its
+// measurement is health evidence and may be shared with another health round; a display round
+// writes the display layer, so its measurement must never be shared AS health evidence - the share
+// only merges PurposeHealth, and a display probe that claimed to be health could answer a real
+// health round (or be answered by one) without the group ever measuring for itself.
+func (b *urlTestBatch) measurementPurpose() urltest.MeasurementPurpose {
+	if b.mode == TestHistoryHealth {
+		return urltest.PurposeHealth
+	}
+	return urltest.PurposeDisplay
+}
+
+// nodeIdentity names the live object, not just its tag.
+//
+// Outbounds are pointers in every implementation this tree registers, and the pointer is the only
+// per-object identity the outbound contract exposes: a provider publication replaces the object,
+// so a probe in flight against the retired one cannot answer for the new one. The tag is kept in
+// the key beside it for logs, but it is not the identity.
+func nodeIdentity(outbound adapter.Outbound) string {
+	if outbound == nil {
+		return ""
+	}
+	return fmt.Sprintf("%p", outbound)
 }
 
 func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval time.Duration, force bool) {
