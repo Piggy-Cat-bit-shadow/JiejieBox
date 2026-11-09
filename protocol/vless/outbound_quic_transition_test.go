@@ -19,16 +19,18 @@ package vless
 // contract, not a shared implementation file), and this test is the place that
 // keeps them identical.
 //
-// # What a transition must NOT do
+// # What a transition must do, and what it must NOT do
+//
+// With a flow open, Reset MOVES the shared connection to a socket of the new
+// network: the session and the already-open stream continue, and no second
+// handshake happens. The test therefore asserts that the flow opened before the
+// transition still carries bytes afterwards, that the endpoint never sees its
+// session close, and that a later dial reuses the moved session.
 //
 // Reset is not Close. Close cancels the transport's lifetime context, so a later
-// dial can never succeed; that is why the network hook must not use it. The test
-// therefore asserts two separate things that are easy to conflate:
-//
-//   - after InterfaceUpdated, the NEXT dial performs a NEW QUIC handshake (the
-//     session pinned to the old network is gone) and still carries payload;
-//   - after the final close (the lifecycle scope's transport cleanup), a dial
-//     fails and no handshake happens at all (nothing can be resurrected).
+// dial can never succeed; that is why the network hook must not use it. After the
+// final close (the lifecycle scope's transport cleanup), a dial fails and no
+// handshake happens at all - nothing can be resurrected.
 
 import (
 	"context"
@@ -326,7 +328,7 @@ func TestNetworkTransitionKeepsTheOutboundDialable(t *testing.T) {
 				return conn, index
 			}
 
-			connBefore, _ := dialAndSend()
+			connBefore, beforeIndex := dialAndSend()
 			require.Equal(t, int32(1), server.handshakes.Load(), "the first dial performs one QUIC handshake")
 
 			// Control: without a transition the SAME QUIC session is reused (a new
@@ -341,25 +343,31 @@ func TestNetworkTransitionKeepsTheOutboundDialable(t *testing.T) {
 			// walks every outbound and calls InterfaceUpdated.
 			target.InterfaceUpdated(context.Background())
 
-			// The session that carried the old network must actually be gone.
+			// The flows that were open across the change keep carrying bytes, on the same
+			// session and the same stream: the transition MOVED the connection instead of
+			// closing it. A transport that still closed the old generation here would fail
+			// the write or leave the endpoint's stream short.
+			afterPayload := []byte(testCase.name + "-after-the-change")
+			beforeBytes := len(server.streamBytes(beforeIndex))
+			_, writeErr := connBefore.Write(afterPayload)
+			require.NoError(t, writeErr, "the flow opened before the transition must still accept a write")
+			require.Eventually(t, func() bool {
+				return len(server.streamBytes(beforeIndex)) >= beforeBytes+len(afterPayload)
+			}, transitionSettle, 5*time.Millisecond,
+				"the endpoint never received the bytes written after the transition on the stream opened before it")
 			select {
 			case <-server.connectionGone:
-			case <-time.After(transitionSettle):
-				t.Fatal("InterfaceUpdated did not close the QUIC session: the endpoint still sees it")
-			}
-			// ...and so must the old streams: writing on a connection pinned to the
-			// old session must fail rather than silently continue.
-			_ = connBefore.SetWriteDeadline(time.Now().Add(2 * time.Second))
-			if _, err := connBefore.Write([]byte("stale")); err == nil {
-				t.Fatal("the connection from before the transition still accepted a write: the old session was not retired")
+				t.Fatal("InterfaceUpdated closed the session that carried an open flow instead of moving it")
+			case <-time.After(200 * time.Millisecond):
 			}
 			_ = connReused.Close()
 
-			// The next generation: a NEW handshake and payload again.
-			connAfter, _ := dialAndSend()
-			require.Equal(t, int32(2), server.handshakes.Load(),
-				"the dial after InterfaceUpdated must establish a new QUIC session instead of reusing the "+
-					"one the transition retired")
+			// The next generation reuses the moved session: one handshake total, a new stream on
+			// the same connection.
+			connAfter, afterIndex := dialAndSend()
+			require.Equal(t, int32(1), server.handshakes.Load(),
+				"the dial after InterfaceUpdated must reuse the moved session instead of redialing")
+			require.Equal(t, 2, afterIndex, "the dial after the transition opens the third stream of the session")
 			_ = connAfter.Close()
 
 			// The final close is final: the lifecycle scope owns the transport's
@@ -370,7 +378,7 @@ func TestNetworkTransitionKeepsTheOutboundDialable(t *testing.T) {
 			defer cancel()
 			_, err := target.DialContext(ctx, N.NetworkTCP, M.ParseSocksaddr("origin.test:443"))
 			require.Error(t, err, "a dial after the final close must fail instead of establishing a session")
-			require.Equal(t, int32(2), server.handshakes.Load(),
+			require.Equal(t, int32(1), server.handshakes.Load(),
 				"the failed dial after the final close must not perform a handshake")
 		})
 	}
