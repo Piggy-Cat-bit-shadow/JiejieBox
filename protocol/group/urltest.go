@@ -323,6 +323,19 @@ func (s *URLTest) HealthSnapshot() HealthSnapshot {
 	return group.HealthSnapshot()
 }
 
+// QueueSnapshot samples the current group's admission counters only. See URLTestGroup.QueueSnapshot:
+// this is the cheap form for a sampler.
+func (s *URLTest) QueueSnapshot() (inFlight int, queued int, limit int, sharedInFlight int, participants int) {
+	if s == nil {
+		return 0, 0, 0, 0, 0
+	}
+	group := s.group.Load()
+	if group == nil {
+		return 0, 0, 0, 0, 0
+	}
+	return group.QueueSnapshot()
+}
+
 // CheckOutboundsHealth runs one health round on the current group with explicit force semantics.
 //
 // force=false is the periodic semantics, where the stable/failover probing policy decides the probe
@@ -1231,21 +1244,36 @@ type HealthSnapshot struct {
 	NextProbes []string
 }
 
+// QueueSnapshot samples only the admission counters, without walking the member set.
+//
+// It exists for a SAMPLER: HealthSnapshot builds the next probe set, which is O(members), so a
+// per-millisecond sampler of ten thousand nodes would allocate ten thousand strings per tick and
+// distort the very round it is measuring (measured: a 4x slowdown in a real-Box run before this was
+// split out). A sampler that only needs the queue uses this.
+func (g *URLTestGroup) QueueSnapshot() (inFlight int, queued int, limit int, sharedInFlight int, participants int) {
+	if g == nil {
+		return 0, 0, 0, 0, 0
+	}
+	if coordinator := urltest.CoordinatorFromContext(g.ctx); coordinator != nil {
+		inFlight = coordinator.InFlight()
+		queued = coordinator.Queued()
+		limit = coordinator.Limit()
+	}
+	if share := urltest.MeasurementShareFromContext(g.ctx); share != nil {
+		sharedInFlight = share.InFlight()
+		participants = share.Participants()
+	}
+	return
+}
+
 // HealthSnapshot samples the group's current health state.
 func (g *URLTestGroup) HealthSnapshot() HealthSnapshot {
 	if g == nil {
 		return HealthSnapshot{}
 	}
 	snapshot := HealthSnapshot{Members: len(g.outbounds), Selected: g.currentSelectedTag()}
-	if coordinator := urltest.CoordinatorFromContext(g.ctx); coordinator != nil {
-		snapshot.CoordinatorInFlight = coordinator.InFlight()
-		snapshot.CoordinatorQueued = coordinator.Queued()
-		snapshot.CoordinatorLimit = coordinator.Limit()
-	}
-	if share := urltest.MeasurementShareFromContext(g.ctx); share != nil {
-		snapshot.SharedProbesInFlight = share.InFlight()
-		snapshot.Participants = share.Participants()
-	}
+	snapshot.CoordinatorInFlight, snapshot.CoordinatorQueued, snapshot.CoordinatorLimit,
+		snapshot.SharedProbesInFlight, snapshot.Participants = g.QueueSnapshot()
 	if g.failover == nil {
 		snapshot.Disabled = true
 		return snapshot
