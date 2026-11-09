@@ -1,0 +1,80 @@
+name: linux-kernel-verify
+
+# Tests that need a Linux kernel rather than the Windows development host:
+#
+#   - the TrustTunnel port (transport + protocol + include registration) with with_trusttunnel;
+#   - the procfs/netlink process search, which only compiles on Linux (common/process);
+#   - the TUN stack, which needs /dev/net/tun and root (best effort: the runner allows sudo,
+#     but a runner without the device must not fail the whole job's useful half).
+#
+# The Windows verify job cannot run any of these, which is why they live here.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - testing
+    paths:
+      - 'transport/trusttunnel/**'
+      - 'protocol/trusttunnel/**'
+      - 'include/**'
+      - 'option/trusttunnel.go'
+      - 'common/process/**'
+      - 'protocol/tun/**'
+      - '.github/workflows/linux-kernel-verify.yml'
+  pull_request:
+    paths:
+      - 'transport/trusttunnel/**'
+      - 'protocol/trusttunnel/**'
+      - 'include/**'
+      - 'option/trusttunnel.go'
+      - 'common/process/**'
+      - 'protocol/tun/**'
+      - '.github/workflows/linux-kernel-verify.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  trusttunnel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - name: format and vet with the tag
+        run: |
+          gofmt -l transport/trusttunnel protocol/trusttunnel include/trusttunnel.go include/trusttunnel_stub.go option/trusttunnel.go
+          bad=$(gofmt -l transport/trusttunnel protocol/trusttunnel include/trusttunnel.go include/trusttunnel_stub.go option/trusttunnel.go | tr '\n' ' ')
+          if [ -n "${bad// /}" ]; then echo "gofmt needs running on: $bad"; exit 1; fi
+          go vet -tags with_trusttunnel ./transport/trusttunnel/ ./protocol/trusttunnel/ ./include/
+      - name: transport and protocol tests (with_trusttunnel)
+        run: |
+          go test -tags with_trusttunnel -count=1 -v ./transport/trusttunnel/ ./protocol/trusttunnel/
+      - name: the tag set still builds without the feature
+        run: |
+          go build -tags with_quic,with_wireguard,with_utls,badlinkname ./include/ ./protocol/trusttunnel/ ./transport/trusttunnel/
+
+  linux-process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      # The netlink socket-diag tests and the procfs searcher only exist on Linux, so this is
+      # the only place they can run. They need root for the netlink dump on some kernels.
+      - name: netlink process search
+        run: |
+          go test -count=1 -v ./common/process/
+      - name: TUN stack (needs /dev/net/tun)
+        continue-on-error: true
+        run: |
+          sudo -E env PATH="$PATH" GOROOT="$GOROOT" GOPATH="$GOPATH" go test -count=1 -timeout 300s -v ./protocol/tun/...

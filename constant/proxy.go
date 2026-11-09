@@ -23,6 +23,7 @@ const (
 	TypeShadowTLS          = "shadowtls"
 	TypeAnyTLS             = "anytls"
 	TypeMieru              = "mieru"
+	TypeTrustTunnel        = "trusttunnel"
 	TypeShadowsocksR       = "shadowsocksr"
 	TypeVLESS              = "vless"
 	TypeTUIC               = "tuic"
@@ -117,6 +118,8 @@ func ProxyDisplayName(proxyType string) string {
 		return "AnyTLS"
 	case TypeMieru:
 		return "Mieru"
+	case TypeTrustTunnel:
+		return "TrustTunnel"
 	case TypeOpenConnect:
 		return "OpenConnect"
 	case TypeOpenVPNClient:

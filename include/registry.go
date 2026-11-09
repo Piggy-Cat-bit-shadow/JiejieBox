@@ -76,6 +76,7 @@ func InboundRegistry() *inbound.Registry {
 	vless.RegisterInbound(registry)
 	anytls.RegisterInbound(registry)
 	mieru.RegisterInbound(registry)
+	registerTrustTunnelInbound(registry)
 
 	registerQUICInbounds(registry)
 	registerCloudflaredInbound(registry)
@@ -110,6 +111,7 @@ func OutboundRegistry() *outbound.Registry {
 	vless.RegisterOutbound(registry)
 	anytls.RegisterOutbound(registry)
 	mieru.RegisterOutbound(registry)
+	registerTrustTunnelOutbound(registry)
 
 	registerQUICOutbounds(registry)
 	registerTailcatOutbound(registry)
