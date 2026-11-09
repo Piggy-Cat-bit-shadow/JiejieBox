@@ -208,7 +208,9 @@ func (s *udpSession) releaseQueuedBytes(n int) {
 // expireIdle closes associations that carried no datagram in either direction
 // for UDPLimits.IdleTimeout. It is the only way an association slot comes back
 // without the stream ending, so a client that opens associations and stops
-// sending cannot hold them until the session closes.
+// sending cannot hold them until the session closes. The snapshot below only
+// proposes candidates; closeIfIdle re-checks the timestamp under the queue lock,
+// so a datagram admitted after the snapshot keeps its association.
 func (s *udpSession) expireIdle() {
 	timeout := s.service.udp.limits.IdleTimeout
 	interval := timeout / 4
@@ -235,7 +237,7 @@ func (s *udpSession) expireIdle() {
 			}
 			s.access.Unlock()
 			for _, flow := range expired {
-				flow.Close()
+				flow.closeIfIdle(deadline)
 			}
 		}
 	}
@@ -311,15 +313,18 @@ type udpFlow struct {
 	destination M.Socksaddr
 	packets     chan *buf.Buffer
 	done        chan struct{}
-	closeOnce   sync.Once
 
 	queueAccess sync.Mutex
 	queueClosed bool
-	// lastActivity is the UnixNano of the last datagram in either direction;
-	// the idle sweeper reads it.
+	// lastActivity is the UnixNano of the last datagram admitted by push or
+	// written by WritePacket; the idle sweeper reads it. Refusals and queue
+	// drops never update it.
 	lastActivity atomic.Int64
 }
 
+// touch records a datagram accepted in either direction. The caller holds
+// queueAccess, except at construction before the flow is published, so the
+// idle sweep's re-check cannot race with the update.
 func (f *udpFlow) touch() {
 	f.lastActivity.Store(time.Now().UnixNano())
 }
@@ -337,6 +342,9 @@ func (f *udpFlow) push(payload *buf.Buffer) bool {
 	}
 	select {
 	case f.packets <- payload:
+		// Only an admitted datagram is activity: a full queue drops the
+		// datagram without extending the association's life.
+		f.touch()
 		return true
 	default:
 		payload.Release()
@@ -360,13 +368,14 @@ func (f *udpFlow) ReadPacket(buffer *buf.Buffer) (M.Socksaddr, error) {
 // WritePacket frames a reply: the sender becomes the frame source, the flow's
 // client address the frame destination.
 func (f *udpFlow) WritePacket(buffer *buf.Buffer, destination M.Socksaddr) error {
-	select {
-	case <-f.done:
+	f.queueAccess.Lock()
+	if f.queueClosed {
+		f.queueAccess.Unlock()
 		buffer.Release()
 		return net.ErrClosed
-	default:
 	}
 	f.touch()
+	f.queueAccess.Unlock()
 	sender := destination
 	if !sender.IsIP() {
 		sender = f.destination
@@ -382,26 +391,46 @@ func (f *udpFlow) FrontHeadroom() int {
 // and releases everything still queued. It is safe to call more than once and
 // from the sweeper, the handler and the session at the same time.
 func (f *udpFlow) Close() error {
-	f.closeOnce.Do(func() {
-		close(f.done)
-		f.session.remove(f)
-		f.queueAccess.Lock()
-		f.queueClosed = true
-		queued := 0
-		for {
-			select {
-			case packet := <-f.packets:
-				queued += packet.Len()
-				packet.Release()
-			default:
-				f.queueAccess.Unlock()
-				f.session.releaseQueuedBytes(queued)
-				f.session.service.udp.releaseAssociation()
-				return
-			}
-		}
-	})
+	f.closeFlow(false, 0)
 	return nil
+}
+
+// closeIfIdle closes the flow only when nothing was admitted since deadline,
+// re-reading the timestamp under the queue lock so a datagram that raced the
+// sweeper's snapshot wins. It reports whether it closed the flow.
+func (f *udpFlow) closeIfIdle(deadline int64) bool {
+	return f.closeFlow(true, deadline)
+}
+
+// closeFlow ends the flow once. queueClosed is the single owner of done and of
+// the final drain, so concurrent Close, expiry and handler calls cannot return
+// a queued byte or an association slot twice.
+func (f *udpFlow) closeFlow(checkIdle bool, deadline int64) bool {
+	f.queueAccess.Lock()
+	if f.queueClosed {
+		f.queueAccess.Unlock()
+		return false
+	}
+	if checkIdle && f.lastActivity.Load() > deadline {
+		f.queueAccess.Unlock()
+		return false
+	}
+	f.queueClosed = true
+	close(f.done)
+	queued := 0
+	for {
+		select {
+		case packet := <-f.packets:
+			queued += packet.Len()
+			packet.Release()
+		default:
+			f.queueAccess.Unlock()
+			f.session.remove(f)
+			f.session.releaseQueuedBytes(queued)
+			f.session.service.udp.releaseAssociation()
+			return true
+		}
+	}
 }
 
 func (f *udpFlow) LocalAddr() net.Addr {
