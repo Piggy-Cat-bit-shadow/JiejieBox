@@ -838,34 +838,34 @@ func (c *CommandClient) configurationJSON(call func(context.Context, daemon.Star
 	})
 }
 
-func (c *CommandClient) PreviewServiceChange(configContent string) (string, error) {
+func (c *CommandClient) PreviewServiceChange(configContent string) (*StringBox, error) {
 	document, err := c.configurationJSON(func(ctx context.Context, client daemon.StartedServiceClient) (*daemon.JSONDocument, error) {
 		return client.PreviewServiceChange(ctx, &daemon.PreviewServiceChangeRequest{ConfigContent: configContent})
 	})
 	if err != nil {
-		return "", E.Cause(err, "preview service change")
+		return nil, E.Cause(err, "preview service change")
 	}
-	return document, nil
+	return wrapString(document), nil
 }
 
-func (c *CommandClient) GetLastServiceChange() (string, error) {
+func (c *CommandClient) GetLastServiceChange() (*StringBox, error) {
 	document, err := c.configurationJSON(func(ctx context.Context, client daemon.StartedServiceClient) (*daemon.JSONDocument, error) {
 		return client.GetLastServiceChange(ctx, &emptypb.Empty{})
 	})
 	if err != nil {
-		return "", E.Cause(err, "get last service change")
+		return nil, E.Cause(err, "get last service change")
 	}
-	return document, nil
+	return wrapString(document), nil
 }
 
-func (c *CommandClient) GetLastConfigRecovery() (string, error) {
+func (c *CommandClient) GetLastConfigRecovery() (*StringBox, error) {
 	document, err := c.configurationJSON(func(ctx context.Context, client daemon.StartedServiceClient) (*daemon.JSONDocument, error) {
 		return client.GetLastConfigRecovery(ctx, &emptypb.Empty{})
 	})
 	if err != nil {
-		return "", E.Cause(err, "get last config recovery")
+		return nil, E.Cause(err, "get last config recovery")
 	}
-	return document, nil
+	return wrapString(document), nil
 }
 
 func (c *CommandClient) GetAPIVersion() (int32, error) {
