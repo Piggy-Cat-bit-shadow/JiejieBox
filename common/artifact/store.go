@@ -81,8 +81,27 @@ type Version struct {
 	released bool
 }
 
+// NewManifest builds a manifest for this build. The platform and ABI are filled from the running
+// process, so a version produced here is only considered loadable by the same platform/ABI; the
+// caller supplies what produced the bytes (schema, compiler, policy) and their provenance.
+func NewManifest(schema string, compiler string, policy string, dependencies ...string) Manifest {
+	return Manifest{
+		Schema:       schema,
+		Compiler:     compiler,
+		Policy:       policy,
+		ABI:          currentABI(),
+		Platform:     currentPlatform(),
+		Dependencies: append([]string(nil), dependencies...),
+	}
+}
+
 // Manifest returns the version's manifest.
 func (v *Version) Manifest() Manifest { return v.manifest }
+
+// ID is the exact version reference: the digest of the artifact bytes. It is stable across
+// processes and restarts, unlike the directory name (a prefix of it), and is what a caller stores
+// when it has to name the version it used.
+func (v *Version) ID() string { return v.manifest.Digest }
 
 // Path is the artifact file.
 func (v *Version) Path() string { return filepath.Join(v.dir, artifactName) }
@@ -266,6 +285,45 @@ func (s *Store) Load(key string) (*Version, error) {
 		if !errors.Is(err, os.ErrNotExist) || !vanished {
 			return nil, err
 		}
+	}
+	return nil, os.ErrNotExist
+}
+
+// LoadExact returns the version of key whose content digest is id, leased to the caller.
+//
+// This is the restart-after-pinning API: a recovery record names the digest it used, and a later
+// process must get that exact version back rather than whatever happens to be newest now.
+func (s *Store) LoadExact(key string, id string) (*Version, error) {
+	if s == nil {
+		return nil, E.New("artifact: nil store")
+	}
+	if id == "" {
+		return nil, E.New("artifact: empty version id")
+	}
+	keyDir := filepath.Join(s.dir, key)
+	entries, err := os.ReadDir(keyDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, os.ErrNotExist
+		}
+		return nil, err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), tempPrefix) {
+			continue
+		}
+		full := filepath.Join(keyDir, entry.Name())
+		s.acquire(full)
+		manifest, readErr := readManifest(full)
+		if readErr != nil || manifest.Digest != id || !compatible(manifest) {
+			s.release(full)
+			continue
+		}
+		if verifyErr := verifyArtifact(full, manifest); verifyErr != nil {
+			s.release(full)
+			continue
+		}
+		return &Version{manifest: manifest, dir: full, store: s}, nil
 	}
 	return nil, os.ErrNotExist
 }
