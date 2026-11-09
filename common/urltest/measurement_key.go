@@ -32,6 +32,19 @@ type MeasurementKey struct {
 	Instance string
 	// NetworkEpoch is the network generation the probe belongs to.
 	NetworkEpoch uint64
+	// NetworkResetGeneration is the network RESET generation the probe was requested in.
+	//
+	// # Why the fingerprint above is not enough for this
+	//
+	// NetworkEpoch names WHICH network the answer is about; it is a fingerprint, so A -> B -> A
+	// returns to the same value. A probe that started before that trip measured the OLD A - a
+	// different path, a different route, possibly a different carrier - and its answer must not be
+	// published for the new A. The reset generation is the monotonic counter that distinguishes the
+	// two, and it is also what the publication check compares against.
+	//
+	// It is part of the identity, not only of the storage: two callers that captured different
+	// generations are asking about different states, so they must not share one probe either.
+	NetworkResetGeneration uint64
 	// Node is the outbound tag whose delay is measured.
 	Node string
 	// NodeIdentity distinguishes two LIVE OBJECTS that carry the same tag.

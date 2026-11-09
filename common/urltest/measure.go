@@ -116,6 +116,11 @@ type Measurement struct {
 	// ordering (which result is the latest) must use the probe's time, or a late joiner would make
 	// an older observation look newer.
 	ProbeStarted time.Time
+	// NetworkResetGeneration is the reset generation the PROBE was requested in (from the
+	// measurement key). Publication compares it against the generation current when the result is
+	// written: an answer that began before a reset describes the previous network, even when the
+	// environment fingerprint has returned to its earlier value.
+	NetworkResetGeneration uint64
 	// EvidenceEpochTag / EvidenceEpochScope are the evidence-drop epochs the PROBE was requested
 	// under (from the measurement key). A waiter receives the LEADER's stamps, not its own: the
 	// result belongs to the probe, and a drop that happened after the probe started must invalidate
@@ -239,6 +244,7 @@ func measureWithTimeout(ctx context.Context, options MeasureOptions, detour N.Di
 	defer func() {
 		measurement.ProbeStarted = probeStarted
 		if options.Key != nil {
+			measurement.NetworkResetGeneration = options.Key.NetworkResetGeneration
 			measurement.EvidenceEpochTag = options.Key.EvidenceEpochTag
 			measurement.EvidenceEpochScope = options.Key.EvidenceEpochScope
 		}
