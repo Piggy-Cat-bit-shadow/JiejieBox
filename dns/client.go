@@ -765,23 +765,23 @@ func (o *exchangeOperation) release() {
 	}
 }
 
-func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTransport, message *dns.Msg, options adapter.DNSQueryOptions, responseChecker func(response *dns.Msg) bool, allowWait bool) (*exchangeOperation, *dns.Msg, exchangeStatus, QuerySource, error) {
+func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTransport, message *dns.Msg, options adapter.DNSQueryOptions, responseChecker func(response *dns.Msg) bool, allowWait bool) (*exchangeOperation, *dns.Msg, exchangeStatus, QuerySource, bool, error) {
 	err := ctx.Err()
 	if err != nil {
-		return nil, nil, exchangeDone, QuerySourceBlocked, err
+		return nil, nil, exchangeDone, QuerySourceBlocked, false, err
 	}
 	if len(message.Question) == 0 {
 		if c.logger != nil {
 			c.logger.WarnContext(ctx, "bad question size: ", len(message.Question))
 		}
-		return nil, FixedResponseStatus(message, dns.RcodeFormatError), exchangeDone, QuerySourceLocal, nil
+		return nil, FixedResponseStatus(message, dns.RcodeFormatError), exchangeDone, QuerySourceLocal, false, nil
 	}
 	question := message.Question[0]
 	if question.Qtype == dns.TypeA && options.Strategy == C.DomainStrategyIPv6Only || question.Qtype == dns.TypeAAAA && options.Strategy == C.DomainStrategyIPv4Only {
 		if c.logger != nil {
 			c.logger.DebugContext(ctx, "strategy rejected")
 		}
-		return nil, FixedResponseStatus(message, dns.RcodeSuccess), exchangeDone, QuerySourceLocal, nil
+		return nil, FixedResponseStatus(message, dns.RcodeSuccess), exchangeDone, QuerySourceLocal, false, nil
 	}
 	isSimpleRequest := len(message.Question) == 1 &&
 		len(message.Ns) == 0 &&
@@ -822,13 +822,18 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 	if !operation.startedStable {
 		// Returned before any cache read: the exact, NXDOMAIN and optimistic paths are all
 		// downstream of here.
-		return nil, nil, exchangeDone, QuerySourceBlocked, errNetworkTransitioning
+		return nil, nil, exchangeDone, QuerySourceBlocked, false, errNetworkTransitioning
 	}
 	if !disableCache {
 		cacheKey := c.newCacheKey(transport, question, message, options)
 		operation.cacheKey = cacheKey
 		c.captureGeneration(operation)
 		exchangeKey := dnsExchangeKey{dnsCacheKey: cacheKey, timeout: options.Timeout}
+		// waitedForShared reports that this caller did NOT ask upstream: it waited for whoever holds
+		// the exchange key, so an answer it then finds is that caller's, not its own. That is a
+		// different fact from a cache entry that was already there, and a diagnosis that conflates
+		// them cannot say how many queries actually left the process.
+		waitedForShared := false
 		for {
 			cond, loaded := c.cacheLock.LoadOrStore(exchangeKey, make(chan struct{}))
 			if !loaded {
@@ -845,7 +850,7 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 				}
 				if responseChecker != nil && !responseChecker(response) {
 					logRejectedResponse(c.logger, ctx, response)
-					return nil, nil, exchangeDone, QuerySourceBlocked, ErrResponseRejectedCached
+					return nil, nil, exchangeDone, QuerySourceBlocked, false, ErrResponseRejectedCached
 				}
 				if isStale {
 					logOptimisticResponse(c.logger, ctx, response)
@@ -862,7 +867,7 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 				if isStale {
 					cacheSource = QuerySourceCacheStale
 				}
-				return nil, response, exchangeDone, cacheSource, nil
+				return nil, response, exchangeDone, cacheSource, waitedForShared, nil
 			}
 			// The exact cache missed. Before any upstream work, check whether this NAME
 			// is already known not to exist: RFC 2308 makes NXDOMAIN a statement about
@@ -872,23 +877,24 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 			if negative, hit := c.loadNXDomain(cacheKey, question, message.Id); hit {
 				logCachedResponse(c.logger, ctx, negative, int(computeTimeToLive(negative)))
 				operation.release()
-				return nil, negative, exchangeDone, QuerySourceCacheNXDomain, nil
+				return nil, negative, exchangeDone, QuerySourceCacheNXDomain, waitedForShared, nil
 			}
 			if !loaded {
 				break
 			}
 			if !allowWait {
 				operation.release()
-				return nil, nil, exchangeWait, QuerySourceBlocked, nil
+				return nil, nil, exchangeWait, QuerySourceBlocked, false, nil
 			}
 			select {
 			case <-cond:
+				waitedForShared = true
 			case <-ctx.Done():
-				return nil, nil, exchangeDone, QuerySourceBlocked, ctx.Err()
+				return nil, nil, exchangeDone, QuerySourceBlocked, false, ctx.Err()
 			}
 			err = ctx.Err()
 			if err != nil {
-				return nil, nil, exchangeDone, QuerySourceBlocked, err
+				return nil, nil, exchangeDone, QuerySourceBlocked, false, err
 			}
 			cacheKey = c.newCacheKey(transport, question, message, options)
 			operation.cacheKey = cacheKey
@@ -900,7 +906,7 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 	contextTransport, transportTagLoaded := adapter.DNSTransportTagFromContext(ctx)
 	if transportTagLoaded && transport.Tag() == contextTransport {
 		operation.release()
-		return nil, nil, exchangeDone, QuerySourceBlocked, E.New("DNS query loopback in transport[", contextTransport, "]")
+		return nil, nil, exchangeDone, QuerySourceBlocked, false, E.New("DNS query loopback in transport[", contextTransport, "]")
 	}
 	operation.ctx = adapter.ContextWithDNSTransportTag(interrupt.ContextWithIsExternalConnection(ctx, false), transport.Tag())
 	if !disableCache && responseChecker != nil && c.rdrc != nil {
@@ -911,10 +917,10 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 			question.Name, question.Qtype)
 		if rejected {
 			operation.release()
-			return nil, nil, exchangeDone, QuerySourceBlocked, ErrResponseRejectedCached
+			return nil, nil, exchangeDone, QuerySourceBlocked, false, ErrResponseRejectedCached
 		}
 	}
-	return operation, nil, exchangeReady, QuerySourceUpstream, nil
+	return operation, nil, exchangeReady, QuerySourceUpstream, false, nil
 }
 
 func (c *Client) finishExchange(transport adapter.DNSTransport, operation *exchangeOperation, response *dns.Msg) (*dns.Msg, error) {
@@ -1061,19 +1067,19 @@ func (c *Client) Exchange(ctx context.Context, transport adapter.DNSTransport, m
 	}
 	ctx, cancel := context.WithTimeout(ctx, options.Timeout)
 	defer cancel()
-	operation, earlyResponse, status, source, err := c.beginExchange(ctx, transport, message, options, responseChecker, true)
+	operation, earlyResponse, status, source, shared, err := c.beginExchange(ctx, transport, message, options, responseChecker, true)
 	if status != exchangeReady {
-		c.emitQueryEvent(started, transport, message, source, earlyResponse, err)
+		c.emitQueryEvent(started, transport, message, source, shared, earlyResponse, err)
 		return earlyResponse, err
 	}
 	defer operation.release()
 	response, err := c.exchangeToTransport(operation.ctx, transport, operation.message)
 	if err != nil {
-		c.emitQueryEvent(started, transport, message, source, nil, err)
+		c.emitQueryEvent(started, transport, message, source, false, nil, err)
 		return nil, err
 	}
 	response, err = c.finishExchange(transport, operation, response)
-	c.emitQueryEvent(started, transport, message, source, response, err)
+	c.emitQueryEvent(started, transport, message, source, shared, response, err)
 	return response, err
 }
 
@@ -1083,11 +1089,11 @@ func (c *Client) ExchangeAsync(ctx context.Context, transport adapter.DNSTranspo
 		options.Timeout = c.timeout
 	}
 	ctx, cancel := context.WithTimeout(ctx, options.Timeout)
-	operation, earlyResponse, status, source, err := c.beginExchange(ctx, transport, message, options, responseChecker, false)
+	operation, earlyResponse, status, source, shared, err := c.beginExchange(ctx, transport, message, options, responseChecker, false)
 	switch status {
 	case exchangeDone:
 		cancel()
-		c.emitQueryEvent(started, transport, message, source, earlyResponse, err)
+		c.emitQueryEvent(started, transport, message, source, shared, earlyResponse, err)
 		callback(earlyResponse, err)
 		return
 	case exchangeWait:
@@ -1102,13 +1108,13 @@ func (c *Client) ExchangeAsync(ctx context.Context, transport adapter.DNSTranspo
 		cancel()
 		if exchangeErr != nil {
 			operation.release()
-			c.emitQueryEvent(started, transport, message, source, nil, exchangeErr)
+			c.emitQueryEvent(started, transport, message, source, false, nil, exchangeErr)
 			callback(nil, exchangeErr)
 			return
 		}
 		finishedResponse, finishErr := c.finishExchange(transport, operation, response)
 		operation.release()
-		c.emitQueryEvent(started, transport, message, source, finishedResponse, finishErr)
+		c.emitQueryEvent(started, transport, message, source, shared, finishedResponse, finishErr)
 		callback(finishedResponse, finishErr)
 	}
 	c.exchangeToTransportAsync(operation.ctx, transport, operation.message, finish)

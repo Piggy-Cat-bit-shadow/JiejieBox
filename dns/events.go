@@ -60,6 +60,14 @@ type QueryEvent struct {
 	Source       QuerySource `json:"source"`
 	// RCode is the response code, or -1 when no response was produced.
 	RCode int `json:"rcode"`
+	// Shared reports that this caller did not ask upstream itself: its answer came from an exchange
+	// another caller was already performing for the same question.
+	//
+	// It is separate from Source on purpose. A waiting caller usually reports Source=cache, because
+	// what it finally read is the entry the other caller stored - but "I joined a query that was
+	// already in flight" and "this answer was in the cache before I asked" are different facts, and
+	// only the second one means the resolver had already answered this question.
+	Shared bool `json:"shared,omitempty"`
 	// Err is the failure text when the query failed, and empty otherwise.
 	Err        string   `json:"err,omitempty"`
 	DurationMs int64    `json:"durationMs"`
@@ -196,7 +204,7 @@ func (b *EventBus) emit(event QueryEvent) {
 // emitQueryEvent assembles and delivers one event. It returns immediately when no
 // subscriber is registered, which is the gate that keeps the query path allocation-free for
 // a process nobody is diagnosing.
-func (c *Client) emitQueryEvent(started time.Time, transport adapter.DNSTransport, message *dns.Msg, source QuerySource, response *dns.Msg, err error) {
+func (c *Client) emitQueryEvent(started time.Time, transport adapter.DNSTransport, message *dns.Msg, source QuerySource, shared bool, response *dns.Msg, err error) {
 	bus := c.eventBus
 	if bus == nil || !bus.Active() {
 		return
@@ -204,6 +212,7 @@ func (c *Client) emitQueryEvent(started time.Time, transport adapter.DNSTranspor
 	event := QueryEvent{
 		Time:       started,
 		Source:     source,
+		Shared:     shared,
 		RCode:      -1,
 		DurationMs: time.Since(started).Milliseconds(),
 	}
