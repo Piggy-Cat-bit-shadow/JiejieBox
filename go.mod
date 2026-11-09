@@ -308,7 +308,7 @@ replace github.com/sagernet/cronet-go/lib/windows_arm64 => github.com/Piggy-Cat-
 // projects (connect-ip-go, jiejie-masque-unified). The two lines have different module paths
 // and a second, incompatible owned-DATAGRAM API; they must not be merged. The release line is
 // the only one that can satisfy this `github.com/sagernet/quic-go` require.
-replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261109135246-bca854425f4d
+replace github.com/sagernet/quic-go => github.com/Piggy-Cat-bit-shadow/quic-go v0.61.1-0.20261109144513-4b11a7be9bb6
 
 // Carries InitialPacketSizeCeiling through qtls.QUICOptions and ApplyQUICOptions, and the
 // owned-DATAGRAM send path for Hysteria2 and TUIC.
