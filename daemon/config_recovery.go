@@ -164,12 +164,20 @@ func validConfigDocument(content []byte) error {
 	return nil
 }
 
-// openConfigRecovery prepares the store when the caller configured a directory.
+// ConfigureConfigRecovery points the last-good transaction at a directory and says whether a failed
+// start may fall back to the stored document. It is the entry a product uses when the persistent
+// directory is only known after construction (the daemon resolves its per-user directory on the
+// first start), and the same thing NewStartedService does when the directory is in its options.
 //
-// A directory that cannot be opened is REMEMBERED, not swallowed: the caller asked for recovery, and
-// a report that says "no store configured" would hide a configuration mistake behind the same state
-// as a daemon that never asked for one.
-func (s *StartedService) openConfigRecovery(directory string) {
+// An empty directory disables recovery. A directory that cannot be opened is remembered, not
+// swallowed: a report must be able to say "configured but degraded" instead of "not configured".
+func (s *StartedService) ConfigureConfigRecovery(directory string, recoverToLastGood bool) {
+	s.configRecoveryAccess.Lock()
+	defer s.configRecoveryAccess.Unlock()
+	s.recoverToLastGood = recoverToLastGood
+	s.recoveryDirectory = directory
+	s.recoveryOpenError = nil
+	s.configRecovery = nil
 	if directory == "" {
 		return
 	}
@@ -177,13 +185,18 @@ func (s *StartedService) openConfigRecovery(directory string) {
 		Validator: validConfigDocument,
 		Context:   s.ctx,
 	})
-	s.configRecoveryAccess.Lock()
-	s.recoveryDirectory = directory
 	s.recoveryOpenError = err
 	if err == nil {
 		s.configRecovery = store
 	}
-	s.configRecoveryAccess.Unlock()
+}
+
+// openConfigRecovery prepares the store when the caller configured a directory in the constructor.
+func (s *StartedService) openConfigRecovery(directory string) {
+	if directory == "" {
+		return
+	}
+	s.ConfigureConfigRecovery(directory, s.recoverToLastGood)
 }
 
 // discardPendingCandidate removes a staged candidate that will never be committed, so a later
