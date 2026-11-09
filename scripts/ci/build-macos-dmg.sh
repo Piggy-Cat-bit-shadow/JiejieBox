@@ -195,7 +195,22 @@ else
   fi
 fi
 
-xcodebuild build "${build_settings[@]}" 2>&1 | tail -40
+# The full output is kept, not only tailed: see the same note in build-ios-ipa.sh. After a Swift
+# frontend failure the last forty lines are the failing invocation's `-index-unit-output-path`
+# list, and the file, line and error that would let anyone act on it are gone.
+build_log="$work/xcodebuild.log"
+if xcodebuild build "${build_settings[@]}" >"$build_log" 2>&1; then
+  tail -40 "$build_log"
+else
+  status=$?
+  echo "FAIL: xcodebuild failed (exit $status). Diagnostics:" >&2
+  echo "--- error and file:line lines ---" >&2
+  { grep -nE '(fatal )?error:|Failed frontend command|^[^ ]*\.swift:[0-9]+:[0-9]+:' "$build_log" | head -60 || true; } >&2
+  echo "--- last 40 lines ---" >&2
+  tail -40 "$build_log" >&2
+  echo "FAIL: the DMG was not produced; the diagnostics above are from $build_log" >&2
+  exit 1
+fi
 
 # A signed build that did not actually sign is a failure, not a warning. Xcode can
 # succeed while skipping signing if a setting is wrong, and the resulting app looks
