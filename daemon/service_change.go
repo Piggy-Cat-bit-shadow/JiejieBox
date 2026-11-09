@@ -75,6 +75,9 @@ type ServiceChangePlan struct {
 	// ChangedDocument is true when the two documents differ outside every domain that has an owner
 	// here. Such a change has no live apply path, whatever the domains say.
 	ChangedDocument bool `json:"changedDocument"`
+	// Stale is set on a report whose plan could not be committed because the running configuration
+	// was no longer the one the plan was computed against.
+	Stale bool `json:"stale,omitempty"`
 	// Domains are the per-domain answers. A caller that needs to explain a restart reads these;
 	// they are only meaningful when Started is true, since a fresh start has nothing to compare.
 	Mode DomainPlan `json:"mode"`
@@ -141,6 +144,22 @@ func (s *StartedService) runningInstance() *Instance {
 	return s.instance
 }
 
+// runningDocumentSnapshot returns the running document and its revision, copied under the lock.
+//
+// The copy is not defensive style: the live apply path REPLACES the instance's document and
+// revision under the same lock, so a planner that held a pointer into the instance would read two
+// different generations of one document - and would do it concurrently with the write, which is
+// the race a review reproduction found. Copying the struct value under the lock gives the planner
+// one generation: the document and the revision it came with.
+func (s *StartedService) runningDocumentSnapshot() (document option.Options, revision string, available bool) {
+	s.serviceAccess.RLock()
+	defer s.serviceAccess.RUnlock()
+	if s.instance == nil || s.serviceStatus.Status != ServiceStatus_STARTED {
+		return option.Options{}, "", false
+	}
+	return s.instance.options, s.instance.revision, true
+}
+
 // planServiceChange compares a target document with the running one.
 func (s *StartedService) planServiceChange(target *option.Options, targetRevision string) ServiceChangePlan {
 	plan := ServiceChangePlan{
@@ -151,13 +170,13 @@ func (s *StartedService) planServiceChange(target *option.Options, targetRevisio
 		DNS:  DomainPlan{Domain: "dns"},
 		Rule: DomainPlan{Domain: "rule"},
 	}
-	running := s.runningInstance()
-	if running == nil {
+	snapshot, currentRevision, available := s.runningDocumentSnapshot()
+	if !available {
 		return plan
 	}
+	current := &snapshot
 	plan.Started = true
-	plan.CurrentRevision = running.revision
-	current := &running.options
+	plan.CurrentRevision = currentRevision
 	plan.Mode = PlanModeDomain(current, plan.CurrentRevision, target, targetRevision)
 	plan.DNS = PlanDNSDomain(current, plan.CurrentRevision, target, targetRevision)
 	plan.Rule = PlanRuleDomain(current, plan.CurrentRevision, target, targetRevision)
@@ -183,13 +202,25 @@ func (s *StartedService) tryLiveOnlyChange(plan ServiceChangePlan, target option
 	report := ServiceChangeReport{Plan: plan, Status: ServiceChangeStatusAppliedLive}
 	s.serviceAccess.RLock()
 	status := s.serviceStatus.Status
+	instance := s.instance
+	s.serviceAccess.RUnlock()
+	// The plan names the generation it was computed against. A plan computed against another one
+	// must not be committed to this Box - the checks below would be about a different document -
+	// and the caller is told so instead of being handed a success.
+	if status == ServiceStatus_STARTED && instance != nil &&
+		plan.CurrentRevision != "" && instance.revision != plan.CurrentRevision {
+		report.Status = ServiceChangeStatusFailed
+		report.Retained = true
+		report.Reason = "the plan was computed against another configuration revision"
+		report.Plan.Stale = true
+		return report, false
+	}
 	var owner modeOwner
 	// The concrete pointer is checked before the assignment: a nil *clashmode.Manager stored in a
 	// non-nil interface passes an `owner == nil` test and then panics on the first method call.
-	if s.instance != nil && s.instance.clashMode != nil {
-		owner = s.instance.clashMode
+	if instance != nil && instance.clashMode != nil {
+		owner = instance.clashMode
 	}
-	s.serviceAccess.RUnlock()
 	if status != ServiceStatus_STARTED || owner == nil {
 		report.Status = ServiceChangeStatusFailed
 		report.Retained = true
@@ -209,9 +240,11 @@ func (s *StartedService) tryLiveOnlyChange(plan ServiceChangePlan, target option
 		return report, false
 	}
 	// Everything in the target is in force now - the mode included - so the target IS the running
-	// document. Recording it as such means the next plan compares against what actually runs.
+	// document. Recording it as such means the next plan compares against what actually runs. The
+	// write only happens when the instance is still the one the plan was computed against: a
+	// replaced Box has its own document and must not receive this one.
 	s.serviceAccess.Lock()
-	if s.instance != nil && s.serviceStatus.Status == ServiceStatus_STARTED {
+	if s.instance == instance && s.serviceStatus.Status == ServiceStatus_STARTED {
 		s.instance.options = target
 		s.instance.revision = plan.TargetRevision
 	}
