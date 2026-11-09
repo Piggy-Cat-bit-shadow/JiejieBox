@@ -39,6 +39,9 @@ const (
 	StartedService_CloseAllConnections_FullMethodName            = "/daemon.StartedService/CloseAllConnections"
 	StartedService_GetDeprecatedWarnings_FullMethodName          = "/daemon.StartedService/GetDeprecatedWarnings"
 	StartedService_GetStartedAt_FullMethodName                   = "/daemon.StartedService/GetStartedAt"
+	StartedService_PreviewServiceChange_FullMethodName           = "/daemon.StartedService/PreviewServiceChange"
+	StartedService_GetLastServiceChange_FullMethodName           = "/daemon.StartedService/GetLastServiceChange"
+	StartedService_GetLastConfigRecovery_FullMethodName          = "/daemon.StartedService/GetLastConfigRecovery"
 	StartedService_SubscribeOutbounds_FullMethodName             = "/daemon.StartedService/SubscribeOutbounds"
 	StartedService_StartNetworkQualityTest_FullMethodName        = "/daemon.StartedService/StartNetworkQualityTest"
 	StartedService_StartSTUNTest_FullMethodName                  = "/daemon.StartedService/StartSTUNTest"
@@ -90,6 +93,11 @@ type StartedServiceClient interface {
 	CloseAllConnections(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	GetDeprecatedWarnings(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*DeprecatedWarnings, error)
 	GetStartedAt(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*StartedAt, error)
+	// Additive configuration surface: JSON preserves the in-process contract without forcing every
+	// client to regenerate a full set of messages before it can display a plan or a recovery.
+	PreviewServiceChange(ctx context.Context, in *PreviewServiceChangeRequest, opts ...grpc.CallOption) (*JSONDocument, error)
+	GetLastServiceChange(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*JSONDocument, error)
+	GetLastConfigRecovery(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*JSONDocument, error)
 	SubscribeOutbounds(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (grpc.ServerStreamingClient[OutboundList], error)
 	StartNetworkQualityTest(ctx context.Context, in *NetworkQualityTestRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[NetworkQualityTestProgress], error)
 	StartSTUNTest(ctx context.Context, in *STUNTestRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[STUNTestProgress], error)
@@ -362,6 +370,36 @@ func (c *startedServiceClient) GetStartedAt(ctx context.Context, in *emptypb.Emp
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(StartedAt)
 	err := c.cc.Invoke(ctx, StartedService_GetStartedAt_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *startedServiceClient) PreviewServiceChange(ctx context.Context, in *PreviewServiceChangeRequest, opts ...grpc.CallOption) (*JSONDocument, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(JSONDocument)
+	err := c.cc.Invoke(ctx, StartedService_PreviewServiceChange_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *startedServiceClient) GetLastServiceChange(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*JSONDocument, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(JSONDocument)
+	err := c.cc.Invoke(ctx, StartedService_GetLastServiceChange_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *startedServiceClient) GetLastConfigRecovery(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*JSONDocument, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(JSONDocument)
+	err := c.cc.Invoke(ctx, StartedService_GetLastConfigRecovery_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -741,6 +779,11 @@ type StartedServiceServer interface {
 	CloseAllConnections(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	GetDeprecatedWarnings(context.Context, *emptypb.Empty) (*DeprecatedWarnings, error)
 	GetStartedAt(context.Context, *emptypb.Empty) (*StartedAt, error)
+	// Additive configuration surface: JSON preserves the in-process contract without forcing every
+	// client to regenerate a full set of messages before it can display a plan or a recovery.
+	PreviewServiceChange(context.Context, *PreviewServiceChangeRequest) (*JSONDocument, error)
+	GetLastServiceChange(context.Context, *emptypb.Empty) (*JSONDocument, error)
+	GetLastConfigRecovery(context.Context, *emptypb.Empty) (*JSONDocument, error)
 	SubscribeOutbounds(*emptypb.Empty, grpc.ServerStreamingServer[OutboundList]) error
 	StartNetworkQualityTest(*NetworkQualityTestRequest, grpc.ServerStreamingServer[NetworkQualityTestProgress]) error
 	StartSTUNTest(*STUNTestRequest, grpc.ServerStreamingServer[STUNTestProgress]) error
@@ -831,6 +874,15 @@ func (UnimplementedStartedServiceServer) GetDeprecatedWarnings(context.Context, 
 }
 func (UnimplementedStartedServiceServer) GetStartedAt(context.Context, *emptypb.Empty) (*StartedAt, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetStartedAt not implemented")
+}
+func (UnimplementedStartedServiceServer) PreviewServiceChange(context.Context, *PreviewServiceChangeRequest) (*JSONDocument, error) {
+	return nil, status.Error(codes.Unimplemented, "method PreviewServiceChange not implemented")
+}
+func (UnimplementedStartedServiceServer) GetLastServiceChange(context.Context, *emptypb.Empty) (*JSONDocument, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetLastServiceChange not implemented")
+}
+func (UnimplementedStartedServiceServer) GetLastConfigRecovery(context.Context, *emptypb.Empty) (*JSONDocument, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetLastConfigRecovery not implemented")
 }
 func (UnimplementedStartedServiceServer) SubscribeOutbounds(*emptypb.Empty, grpc.ServerStreamingServer[OutboundList]) error {
 	return status.Error(codes.Unimplemented, "method SubscribeOutbounds not implemented")
@@ -1225,6 +1277,60 @@ func _StartedService_GetStartedAt_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _StartedService_PreviewServiceChange_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PreviewServiceChangeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).PreviewServiceChange(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_PreviewServiceChange_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).PreviewServiceChange(ctx, req.(*PreviewServiceChangeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StartedService_GetLastServiceChange_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).GetLastServiceChange(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_GetLastServiceChange_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).GetLastServiceChange(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StartedService_GetLastConfigRecovery_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).GetLastConfigRecovery(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_GetLastConfigRecovery_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).GetLastConfigRecovery(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _StartedService_SubscribeOutbounds_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(emptypb.Empty)
 	if err := stream.RecvMsg(m); err != nil {
@@ -1605,6 +1711,18 @@ var StartedService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetStartedAt",
 			Handler:    _StartedService_GetStartedAt_Handler,
+		},
+		{
+			MethodName: "PreviewServiceChange",
+			Handler:    _StartedService_PreviewServiceChange_Handler,
+		},
+		{
+			MethodName: "GetLastServiceChange",
+			Handler:    _StartedService_GetLastServiceChange_Handler,
+		},
+		{
+			MethodName: "GetLastConfigRecovery",
+			Handler:    _StartedService_GetLastConfigRecovery_Handler,
 		},
 		{
 			MethodName: "SetTailscaleExitNode",

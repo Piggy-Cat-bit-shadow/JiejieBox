@@ -32,6 +32,12 @@ service StartedService {
   rpc GetDeprecatedWarnings(google.protobuf.Empty) returns(DeprecatedWarnings) {}
   rpc GetStartedAt(google.protobuf.Empty) returns(StartedAt) {}
 
+  // Additive configuration surface: JSON preserves the in-process contract without forcing every
+  // client to regenerate a full set of messages before it can display a plan or a recovery.
+  rpc PreviewServiceChange(PreviewServiceChangeRequest) returns(JSONDocument) {}
+  rpc GetLastServiceChange(google.protobuf.Empty) returns(JSONDocument) {}
+  rpc GetLastConfigRecovery(google.protobuf.Empty) returns(JSONDocument) {}
+
   rpc SubscribeOutbounds(google.protobuf.Empty) returns (stream OutboundList) {}
   rpc StartNetworkQualityTest(NetworkQualityTestRequest) returns (stream NetworkQualityTestProgress) {}
   rpc StartSTUNTest(STUNTestRequest) returns (stream STUNTestProgress) {}
@@ -62,6 +68,14 @@ service StartedService {
 message Version {
   string version = 1;
   int32 apiVersion = 2;
+}
+
+message JSONDocument {
+  string json = 1;
+}
+
+message PreviewServiceChangeRequest {
+  string config_content = 1;
 }
 
 message ServiceStatus {

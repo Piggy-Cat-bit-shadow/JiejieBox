@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"net/netip"
 	"os"
 	"runtime"
@@ -1509,6 +1510,36 @@ func (s *StartedService) GetStartedAt(ctx context.Context, empty *emptypb.Empty)
 	s.serviceAccess.RLock()
 	defer s.serviceAccess.RUnlock()
 	return &StartedAt{StartedAt: s.startedAt.UnixMilli()}, nil
+}
+
+func (s *StartedService) PreviewServiceChange(_ context.Context, request *PreviewServiceChangeRequest) (*JSONDocument, error) {
+	plan, err := s.PlanServiceChange(request.ConfigContent, nil)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(plan)
+	if err != nil {
+		return nil, err
+	}
+	return &JSONDocument{Json: string(encoded)}, nil
+}
+
+func (s *StartedService) GetLastServiceChange(_ context.Context, _ *emptypb.Empty) (*JSONDocument, error) {
+	report := s.LastServiceChange()
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		return nil, err
+	}
+	return &JSONDocument{Json: string(encoded)}, nil
+}
+
+func (s *StartedService) GetLastConfigRecovery(_ context.Context, _ *emptypb.Empty) (*JSONDocument, error) {
+	recovery := s.LastConfigRecovery()
+	encoded, err := json.Marshal(recovery)
+	if err != nil {
+		return nil, err
+	}
+	return &JSONDocument{Json: string(encoded)}, nil
 }
 
 func (s *StartedService) SubscribeOutbounds(_ *emptypb.Empty, server grpc.ServerStreamingServer[OutboundList]) error {
