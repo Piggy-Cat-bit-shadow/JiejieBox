@@ -24,6 +24,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/dns"
 	R "github.com/sagernet/sing-box/route/rule"
 	M "github.com/sagernet/sing/common/metadata"
 )
@@ -69,6 +70,35 @@ type RoutePreviewResult struct {
 	// reached. It is the consumer-cost fact: a preview over a large rule set reports what it
 	// walked, and that walking is bounded by the rule list rather than by any I/O.
 	Evaluated int
+}
+
+// PreviewDNSLookup explains which DNS rule and server would answer a query, by delegating to the
+// DNS router this route layer already drives.
+//
+// # Why the route layer is the way in
+//
+// A management caller holds the route router (Box.Router). It does not hold the DNS router, and
+// adding an accessor for it to the Box would be a shared-interface change for one explanation
+// stage. The route layer already has the DNS router, so it exposes the READ-ONLY preview through
+// the object the caller has.
+//
+// The second result reports whether this build can explain a DNS query at all: a router whose DNS
+// side is a fake, an older build, or a box with no DNS router answers false, and the caller reports
+// a skipped step instead of a guessed decision.
+func (r *Router) PreviewDNSLookup(ctx context.Context, query dns.PreviewQuery) (dns.PreviewResult, bool) {
+	if r == nil || r.dns == nil {
+		return dns.PreviewResult{}, false
+	}
+	previewer, isPreviewer := r.dns.(dnsQueryPreviewer)
+	if !isPreviewer {
+		return dns.PreviewResult{}, false
+	}
+	return previewer.PreviewLookup(ctx, query), true
+}
+
+// dnsQueryPreviewer is the optional capability a DNS router exposes for the read-only explanation.
+type dnsQueryPreviewer interface {
+	PreviewLookup(ctx context.Context, query dns.PreviewQuery) dns.PreviewResult
 }
 
 // PreviewRoute explains which rule decides the request, without any of the work a real request does.

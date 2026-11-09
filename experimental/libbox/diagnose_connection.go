@@ -65,6 +65,7 @@ const (
 const (
 	connectionTestStagePath    = "path"
 	connectionTestStageRules   = "rules"
+	connectionTestStageDNS     = "dns"
 	connectionTestStageResolve = "resolve"
 	connectionTestStageDial    = "dial"
 )
@@ -125,6 +126,24 @@ type connectionTestRulePreview struct {
 	Rule       string
 	ActionType string
 	Outbound   string
+	Unknown    string
+}
+
+// connectionTestDNSPreviewer is the OPTIONAL capability that explains which DNS rule and server
+// would answer the target's address query. A path that cannot answer gets a skipped stage with the
+// reason, never a guessed server.
+type connectionTestDNSPreviewer interface {
+	PreviewDNSRule(network string, domain string, port uint16) (connectionTestDNSPreview, bool)
+}
+
+// connectionTestDNSPreview is that answer, flattened for the report.
+type connectionTestDNSPreview struct {
+	Matched    bool
+	RuleIndex  int
+	Rule       string
+	ActionType string
+	Server     string
+	ServerType string
 	Unknown    string
 }
 
@@ -276,6 +295,42 @@ func runConnectionTestWithEmitter(ctx context.Context, path connectionTestPath, 
 	}
 	rulesStage.DurationMs = time.Since(stageStarted).Milliseconds()
 	report.Stages = append(report.Stages, rulesStage)
+
+	// Stage 2b: which DNS rule and server would answer the target's address query.
+	//
+	// This is a separate stage rather than part of "rules": the route rule decides whether the
+	// connection is dialled at all, while the DNS rule decides how the name is resolved before
+	// any dial. Reporting them together would have made one stage answer two questions, and the
+	// explanation of a failing resolution would have looked like a routing decision.
+	stageStarted = time.Now()
+	dnsStage := connectionTestStage{ID: connectionTestStageDNS, Parent: connectionTestStageRules}
+	dnsPreviewer, canPreviewDNS := path.(connectionTestDNSPreviewer)
+	switch {
+	case !canPreviewDNS:
+		dnsStage.Status = connectionTestStageSkipped
+		dnsStage.Detail = "this build cannot explain the DNS rule for a running box"
+	case host == "":
+		dnsStage.Status = connectionTestStageSkipped
+		dnsStage.Detail = "the target does not name a host"
+	default:
+		dnsPreview, dnsPreviewed := dnsPreviewer.PreviewDNSRule(network, host, port)
+		switch {
+		case !dnsPreviewed:
+			dnsStage.Status = connectionTestStageSkipped
+			dnsStage.Detail = "the running box has no DNS rule preview"
+		case dnsPreview.Unknown != "":
+			dnsStage.Status = connectionTestStageSkipped
+			dnsStage.Detail = dnsPreview.Unknown
+		case dnsPreview.Matched:
+			dnsStage.Status = connectionTestStageOK
+			dnsStage.Detail = dnsPreviewDetail(dnsPreview)
+		default:
+			dnsStage.Status = connectionTestStageOK
+			dnsStage.Detail = "no rule matched: the default DNS server answers"
+		}
+	}
+	dnsStage.DurationMs = time.Since(stageStarted).Milliseconds()
+	report.Stages = append(report.Stages, dnsStage)
 
 	// Stage 3: resolve the target into the address the dial will use.
 	stageStarted = time.Now()
@@ -468,6 +523,24 @@ func rulePreviewDetail(preview connectionTestRulePreview) string {
 		detail += " " + preview.Outbound
 	}
 	return detail
+}
+
+// dnsPreviewDetail renders the DNS decision for the report without inventing a server.
+func dnsPreviewDetail(preview connectionTestDNSPreview) string {
+	detail := "rule[" + strconv.Itoa(preview.RuleIndex) + "]"
+	if preview.Rule != "" {
+		detail += " " + preview.Rule
+	}
+	if preview.ActionType != "" {
+		detail += " -> " + preview.ActionType
+	}
+	if preview.Server != "" {
+		detail += " " + preview.Server
+		if preview.ServerType != "" {
+			detail += " (" + preview.ServerType + ")"
+		}
+	}
+	return detail + " [A]"
 }
 
 func connectionTestAddress(target string) (M.Socksaddr, error) {

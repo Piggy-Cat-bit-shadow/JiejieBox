@@ -121,13 +121,16 @@ func TestConnectionTestReportsAStagedSuccess(t *testing.T) {
 
 	require.Equal(t, connectionTestOutcomeOK, report.Outcome)
 	stages := stagesByID(report)
-	require.Len(t, report.Stages, 4)
-	require.Equal(t, []string{connectionTestStagePath, connectionTestStageRules, connectionTestStageResolve, connectionTestStageDial},
-		[]string{report.Stages[0].ID, report.Stages[1].ID, report.Stages[2].ID, report.Stages[3].ID},
+	require.Len(t, report.Stages, 5)
+	require.Equal(t, []string{connectionTestStagePath, connectionTestStageRules, connectionTestStageDNS, connectionTestStageResolve, connectionTestStageDial},
+		[]string{report.Stages[0].ID, report.Stages[1].ID, report.Stages[2].ID, report.Stages[3].ID, report.Stages[4].ID},
 		"the stage ids are part of the diagnostic contract and must stay stable")
 	require.Equal(t, connectionTestStageSkipped, stages[connectionTestStageRules].Status,
 		"this path cannot explain the rule, so the stage is skipped with a reason instead of guessing")
 	require.NotEmpty(t, stages[connectionTestStageRules].Detail)
+	require.Equal(t, connectionTestStageSkipped, stages[connectionTestStageDNS].Status,
+		"this path cannot explain the DNS decision either, so it is skipped with a reason")
+	require.NotEmpty(t, stages[connectionTestStageDNS].Detail)
 	require.Equal(t, connectionTestStageOK, stages[connectionTestStagePath].Status)
 	require.Contains(t, stages[connectionTestStagePath].Detail, "node-a")
 	require.Equal(t, "example.com:443", stages[connectionTestStageResolve].Detail)
@@ -412,4 +415,64 @@ func TestConnectionTestRefusesRealRoutingOnAnUnknownDecision(t *testing.T) {
 	require.Contains(t, stages[connectionTestStageDial].Detail, "unknown")
 	require.Equal(t, connectionTestOutcomeFailed, report.Outcome)
 	require.Zero(t, dials.Load(), "nothing may be dialled when the route decision is unknown")
+}
+
+// dnsPreviewingPath is a fake path that can also explain which DNS rule/server would answer.
+type dnsPreviewingPath struct {
+	*fakeConnectionTestPath
+	preview connectionTestDNSPreview
+	ok      bool
+}
+
+func (p *dnsPreviewingPath) PreviewDNSRule(network string, domain string, port uint16) (connectionTestDNSPreview, bool) {
+	return p.preview, p.ok
+}
+
+// TestConnectionTestReportsTheDecidingDNSRule is the DNS half of the explanation: the stage names
+// the rule and the server, and it cannot invent either.
+func TestConnectionTestReportsTheDecidingDNSRule(t *testing.T) {
+	member := &fakeConnectionOutbound{tag: "node-a", behavior: func(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+		return stubConn{}, nil
+	}}
+	path := &dnsPreviewingPath{
+		fakeConnectionTestPath: newConnectionTestPath("node-a", member),
+		ok:                     true,
+		preview: connectionTestDNSPreview{
+			Matched:    true,
+			RuleIndex:  3,
+			Rule:       "domain_suffix:example.com",
+			ActionType: "route",
+			Server:     "dns-main",
+			ServerType: "udp",
+		},
+	}
+	report := runConnectionTest(context.Background(), path, "proxy", "tcp", "https://example.com/path")
+
+	stages := stagesByID(report)
+	dnsStage := stages[connectionTestStageDNS]
+	require.Equal(t, connectionTestStageOK, dnsStage.Status)
+	require.Equal(t, connectionTestStageRules, dnsStage.Parent, "the DNS decision follows the route decision")
+	require.Contains(t, dnsStage.Detail, "rule[3]")
+	require.Contains(t, dnsStage.Detail, "dns-main")
+	require.Contains(t, dnsStage.Detail, "udp")
+	require.Equal(t, connectionTestStageOK, stages[connectionTestStageDial].Status,
+		"explaining the DNS decision does not affect the dial")
+}
+
+// TestConnectionTestKeepsAnUnknownDNSDecisionUnknown is the same honesty rule for the DNS stage.
+func TestConnectionTestKeepsAnUnknownDNSDecisionUnknown(t *testing.T) {
+	member := &fakeConnectionOutbound{tag: "node-a", behavior: func(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+		return stubConn{}, nil
+	}}
+	path := &dnsPreviewingPath{
+		fakeConnectionTestPath: newConnectionTestPath("node-a", member),
+		ok:                     true,
+		preview:                connectionTestDNSPreview{Unknown: "the decision depends on a process path this preview was not given"},
+	}
+	report := runConnectionTest(context.Background(), path, "proxy", "tcp", "https://example.com/path")
+
+	stages := stagesByID(report)
+	require.Equal(t, connectionTestStageSkipped, stages[connectionTestStageDNS].Status)
+	require.Contains(t, stages[connectionTestStageDNS].Detail, "process path")
+	require.Equal(t, connectionTestStageOK, stages[connectionTestStageDial].Status)
 }
