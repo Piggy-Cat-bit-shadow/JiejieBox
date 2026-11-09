@@ -1609,6 +1609,13 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval 
 			}
 			b.checked[tag] = true
 			b.batch.Go(tag, func() (any, error) {
+				// The ATTEMPT's start, not its completion.
+				//
+				// Evidence is ordered by when the probe began: a probe that started before a
+				// network change describes the path that existed then, so it must not be stored as
+				// if it were a fresh look at the new one, and it must not replace a result that a
+				// later attempt already stored.
+				attemptStart := time.Now()
 				// NO per-member timeout here.
 				//
 				// Measure establishes the active probe budget itself, starting from the moment it
@@ -1675,14 +1682,22 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval 
 						// Only this target's health result is removed. The display entry is left
 						// alone: a failed check against this group's target does not invalidate a
 						// previous success against another one.
-						b.history.DeleteHealthHistory(tag, b.scope)
+						//
+						// The removal is scoped to THIS attempt: if a result that started after it
+						// is already stored, that result is newer evidence and survives.
+						b.history.DeleteHealthHistoryIfOlderThan(tag, b.scope, attemptStart)
 					}
 				} else {
 					b.logger.Debug("outbound ", tag, " available: ", measurement.Delay, "ms")
 					// The scope comes from the measurement itself, so the key cannot disagree
 					// with what was actually requested.
+					//
+					// The stored time is the attempt's start, so "the last result" is the last
+					// attempt that BEGAN, not the last one that happened to finish. A probe that
+					// started before a network change therefore cannot look fresher than a result
+					// measured after it, and cannot overwrite one: see isNewerEvidence.
 					health := &adapter.URLTestHistory{
-						Time:  time.Now(),
+						Time:  attemptStart,
 						Delay: measurement.Delay,
 					}
 					if b.mode == TestHistoryHealth {

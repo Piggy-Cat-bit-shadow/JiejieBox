@@ -2,6 +2,7 @@ package urltest
 
 import (
 	"sync"
+	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing/common/observable"
@@ -159,6 +160,16 @@ func (s *HistoryStorage) StoreDisplayHistory(tag string, scope MeasurementScope,
 		s.access.Unlock()
 		return
 	}
+	if existing, loaded := s.displayHistory[tag]; loaded && existing.History.Time.After(history.Time) {
+		// Older evidence for the same node: the newer entry wins.
+		//
+		// An attempt is stamped with the moment it STARTED, so a probe that was already running
+		// while a newer one ran and finished cannot describe the node as it is now. Without this a
+		// slow probe - the one most likely to be measuring a path that has since changed - would
+		// be the last writer and would undo the newer measurement.
+		s.access.Unlock()
+		return
+	}
 	s.displayHistory[tag] = displayRecord{History: *history, Scope: scope}
 	s.access.Unlock()
 	s.notifyUpdated()
@@ -168,6 +179,9 @@ func (s *HistoryStorage) StoreDisplayHistory(tag string, scope MeasurementScope,
 //
 // The health layer is what the group selects from. The display layer is updated too, because the
 // node has just been measured and that is by definition the most recent thing known about it.
+//
+// Both layers reject a result that is older than what they already hold (see isNewerEvidence), so
+// an attempt cannot overwrite evidence produced by an attempt that started later.
 func (s *HistoryStorage) StoreHealthHistory(tag string, scope MeasurementScope, history *adapter.URLTestHistory) {
 	if s == nil || history == nil {
 		return
@@ -177,10 +191,31 @@ func (s *HistoryStorage) StoreHealthHistory(tag string, scope MeasurementScope, 
 		s.access.Unlock()
 		return
 	}
-	s.healthHistory[scopedHistoryKey{Tag: tag, Scope: scope}] = *history
-	s.displayHistory[tag] = displayRecord{History: *history, Scope: scope}
+	healthUpdated := false
+	if existing, loaded := s.healthHistory[scopedHistoryKey{Tag: tag, Scope: scope}]; !loaded || isNewerEvidence(history.Time, existing.Time) {
+		s.healthHistory[scopedHistoryKey{Tag: tag, Scope: scope}] = *history
+		healthUpdated = true
+	}
+	displayUpdated := false
+	if existing, loaded := s.displayHistory[tag]; !loaded || isNewerEvidence(history.Time, existing.History.Time) {
+		s.displayHistory[tag] = displayRecord{History: *history, Scope: scope}
+		displayUpdated = true
+	}
 	s.access.Unlock()
-	s.notifyUpdated()
+	if healthUpdated || displayUpdated {
+		s.notifyUpdated()
+	}
+}
+
+// isNewerEvidence reports whether a measurement is newer evidence than the one already stored.
+//
+// A result describes the path as it was while the probe ran, so the ordering fact is when the
+// attempt STARTED, not when it finished: a probe that started earlier cannot produce fresher
+// evidence than one that started later, however much later it completed. Equal timestamps are
+// accepted - a coarser platform clock can return the same instant for two attempts, and dropping
+// the second one would silently lose a real measurement - so "older" is strictly older.
+func isNewerEvidence(candidate, stored time.Time) bool {
+	return !stored.After(candidate)
 }
 
 // DeleteHealthHistory removes one target's health measurement for a tag.
@@ -198,6 +233,35 @@ func (s *HistoryStorage) DeleteHealthHistory(tag string, scope MeasurementScope)
 		return
 	}
 	delete(s.healthHistory, scopedHistoryKey{Tag: tag, Scope: scope})
+	s.access.Unlock()
+	s.notifyUpdated()
+}
+
+// DeleteHealthHistoryIfOlderThan removes one failed attempt's health entry, unless newer evidence
+// has been stored since that attempt started.
+//
+// # Why a failure needs an ordering too
+//
+// A failed probe is evidence that the node was unusable while the attempt ran. It is not evidence
+// about a LATER attempt: a probe that started before a network change and failed after it says
+// nothing about the new network, and deleting the entry the newer attempt just wrote would remove
+// correct evidence - and, because the group selects from this layer, could move the selection on
+// the strength of a path that no longer exists.
+func (s *HistoryStorage) DeleteHealthHistoryIfOlderThan(tag string, scope MeasurementScope, attemptStart time.Time) {
+	if s == nil {
+		return
+	}
+	s.access.Lock()
+	if s.closed {
+		s.access.Unlock()
+		return
+	}
+	key := scopedHistoryKey{Tag: tag, Scope: scope}
+	if existing, loaded := s.healthHistory[key]; loaded && existing.Time.After(attemptStart) {
+		s.access.Unlock()
+		return
+	}
+	delete(s.healthHistory, key)
 	s.access.Unlock()
 	s.notifyUpdated()
 }
