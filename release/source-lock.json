@@ -29,9 +29,9 @@
                        },
                        {
                            "module":  "github.com/sagernet/sing-tun",
-                           "pinned":  "c64755821f4c",
+                           "pinned":  "9c3dcb2b1edf",
                            "target":  "github.com/Piggy-Cat-bit-shadow/sing-tun",
-                           "version":  "v0.0.0-20261109140728-c64755821f4c"
+                           "version":  "v0.0.0-20261109155445-9c3dcb2b1edf"
                        },
                        {
                            "module":  "github.com/sagernet/sing-quic",
