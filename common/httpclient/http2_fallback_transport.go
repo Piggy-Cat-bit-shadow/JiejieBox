@@ -84,7 +84,20 @@ func (t *http2FallbackTransport) roundTrip(request *http.Request, allowHTTP1Fall
 		return nil, err
 	}
 	t.markH2Fallback(authority)
-	return t.h1Transport.RoundTrip(cloneRequestForRetry(request))
+	// errHTTP2Fallback is produced by this file's own dialer when the ALPN did not become h2, so
+	// the request was never written and the body is still intact. GetBody may still fail - it is
+	// caller code - and that must be an error rather than a panic.
+	cloned, cloneErr := cloneRequestForRetry(request)
+	if cloneErr != nil {
+		return nil, E.Errors(err, cloneErr)
+	}
+	if cloned.Body != request.Body {
+		// A fresh body was built, so the original one has no reader left. It was never read (the
+		// ALPN mismatch happens before the request is written), and closing it is the transport's
+		// normal duty.
+		closeRequestBody(request)
+	}
+	return t.h1Transport.RoundTrip(cloned)
 }
 
 func (t *http2FallbackTransport) CloseIdleConnections() {
