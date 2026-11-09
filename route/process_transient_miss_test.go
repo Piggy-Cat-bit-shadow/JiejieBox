@@ -129,13 +129,13 @@ func TestFailedProcessLookupIsDistinguishable(t *testing.T) {
 	}
 
 	router.searchProcessInfo(context.Background(), &metadata)
-	require.False(t, router.processMetadataIsProven(&metadata),
+	require.False(t, router.processMetadataIsProven(&metadata, processTruth{}),
 		"a failed lookup must leave the metadata UNPROVEN")
 
 	// With no searcher at all there is nothing to prove and nothing to lose: a configuration with
 	// no process rules cannot be affected by a missing lookup.
 	noSearcher := newProcessTestRouter(nil)
-	require.True(t, noSearcher.processMetadataIsProven(&metadata),
+	require.True(t, noSearcher.processMetadataIsProven(&metadata, processTruth{}),
 		"without a searcher no process rule can exist, so the bypass is not unproven")
 }
 

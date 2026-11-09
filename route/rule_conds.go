@@ -66,6 +66,54 @@ func isProcessPathDNSRule(rule option.DefaultDNSRule) bool {
 	return len(rule.ProcessName) > 0 || len(rule.ProcessPath) > 0 || len(rule.ProcessPathRegex) > 0 || len(rule.PackageName) > 0 || len(rule.PackageNameRegex) > 0
 }
 
+// processNeed names the process fields a rule can read that only the /proc walk provides.
+//
+// It is a BITMASK, not a bool, because the bypass decision has to know WHICH fact is missing. A
+// process_name rule is answered by the paths; a package_name rule is answered by the package list,
+// which on Android comes from the package manager and is absent from the path scan on every other
+// platform. Treating every process rule as needing both would refuse the native fast path for every
+// Linux configuration that names a process, because Linux never has a package list to show.
+type processNeed uint8
+
+const (
+	processNeedNone    processNeed = 0
+	processNeedPath    processNeed = 1 << 0 // process_name, process_path, process_path_regex
+	processNeedPackage processNeed = 1 << 1 // package_name, package_name_regex
+)
+
+// processNeedForRule reports which process facts evaluating this rule may read.
+//
+// A referenced rule_set is treated as needing the PATH, for the same reason needsProcessPaths treats
+// it that way: the document is remote and mutable, so it can carry process conditions this
+// configuration never mentions. The package bit is deliberately not implied - a rule-set that names
+// a package on a platform without a package manager could never match, and demanding a package list
+// there would disable the fast path for every rule-set configuration.
+func processNeedForRule(rule option.Rule) processNeed {
+	switch rule.Type {
+	case C.RuleTypeLogical:
+		var need processNeed
+		for _, nested := range rule.LogicalOptions.Rules {
+			need |= processNeedForRule(nested)
+		}
+		return need
+	case C.RuleTypeDefault:
+		return processNeedForDefaultRule(rule.DefaultOptions)
+	default:
+		return processNeedNone
+	}
+}
+
+func processNeedForDefaultRule(rule option.DefaultRule) processNeed {
+	var need processNeed
+	if len(rule.ProcessName) > 0 || len(rule.ProcessPath) > 0 || len(rule.ProcessPathRegex) > 0 || len(rule.RuleSet) > 0 {
+		need |= processNeedPath
+	}
+	if len(rule.PackageName) > 0 || len(rule.PackageNameRegex) > 0 {
+		need |= processNeedPackage
+	}
+	return need
+}
+
 // needsProcessPaths reports whether any rule can look at a field that only a
 // /proc walk provides (process name/path, package name). A user/user_id rule
 // does not need one: the socket diag table already carries the uid.
