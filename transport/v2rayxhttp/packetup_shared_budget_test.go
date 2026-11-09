@@ -297,7 +297,11 @@ func TestPacketUpSharedBudgetSettlesAFailedPostAgainstThePool(t *testing.T) {
 		return okProbeResponse(), nil
 	}
 	const (
-		capacity = 64 * 1024
+		// The workload has to be BULK sized: since the reserve covers short writes up
+		// to packetUpSmallWrite, a payload below that class would partly succeed from
+		// the reserve instead of queueing, and this test is about a post failure
+		// settling a charge the pool is full on.
+		capacity = 1 << 20
 		reserve  = 8 * 1024
 	)
 	client := budgetedBatchClientWith(t, transport, metaOptions{}, capacity, reserve)

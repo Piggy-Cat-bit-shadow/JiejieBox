@@ -151,17 +151,22 @@ const (
 	// size; beyond this, more streams mean they queue, which is the intended
 	// backpressure rather than more retention.
 	packetUpSharedCeiling = 8 << 20
-	// packetUpSmallWrite is the largest write that may draw on the reserve: one
-	// TLS record's worth. A stream's opening exchange (the VLESS header plus the
-	// first payload) is far smaller than this, and a bulk write is far larger.
-	packetUpSmallWrite = 16 << 10
-	// packetUpSharedReserve is the reserve pool: four opening writes' worth of
-	// headroom, so several new streams can start while the main pool is full.
-	packetUpSharedReserve = 64 << 10
-	// packetUpStreamReserve caps what one stream may hold in the reserve, so a
-	// stream with a steady trickle of small writes cannot own the whole control
-	// path and starve the others' handshakes.
-	packetUpStreamReserve = 32 << 10
+	// packetUpSmallWrite is the largest write that may draw on the reserve. It is a
+	// SHORT FLOW's ceiling, not just a handshake's: at 16 KiB the reserve only saved
+	// the opening exchange, and a measured burst of long streams pushed 96-256 KiB
+	// flows from one round trip to about three (see
+	// _next/REPORT_01_跨流字节预算对照.md). A short flow writes its whole body in one
+	// call, so the size class has to reach past it for the reserve to mean anything.
+	packetUpSmallWrite = 256 << 10
+	// packetUpSharedReserve is the reserve pool: a quarter of the main capacity at the
+	// default size, so several short flows can pass while the main pool is full. It is
+	// part of the aggregate bound (capacity+reserve), which is why it is not larger:
+	// the point is a bounded headroom for latency-sensitive flows, not a second pool.
+	packetUpSharedReserve = 2 << 20
+	// packetUpStreamReserve caps what one stream may hold in the reserve, so a stream
+	// with a steady trickle of small writes cannot own the whole headroom. Two short
+	// flows' worth at the default size.
+	packetUpStreamReserve = 512 << 10
 )
 
 // packetUpSharedCapacity returns the main pool's capacity for a per-stream bound.
@@ -183,15 +188,17 @@ func packetUpSharedCapacity(perStreamBound int) int {
 	return capacity
 }
 
-// newSharedUplinkBudget builds a pool. A reserve larger than the capacity is
-// clamped: the two pools are separate, but a reserve bigger than the main pool
-// would let the small-write path outgrow the bound it is meant to protect.
+// newSharedUplinkBudget builds a pool. The reserve is clamped to half the main
+// capacity: the two pools are separate, but a reserve that could exceed the main
+// pool would let the headroom path outgrow the bound it is meant to protect. At the
+// production size the configured reserve is a quarter of the capacity, so the clamp
+// only binds for unusually small sc_max_each_post_bytes.
 func newSharedUplinkBudget(capacity, reserve int) *sharedUplinkBudget {
 	if reserve < 0 {
 		reserve = 0
 	}
-	if reserve > capacity {
-		reserve = capacity
+	if limit := capacity / 2; reserve > limit {
+		reserve = limit
 	}
 	return &sharedUplinkBudget{
 		capacity: capacity,
