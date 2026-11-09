@@ -517,6 +517,19 @@ func (c *Client) Close() error {
 // A generation with no open flows is always retired the old way: moving an idle connection keeps
 // a socket alive for nothing.
 func (c *Client) Reset() error {
+	return c.ResetContext(c.ctx)
+}
+
+// ResetContext is Reset with a caller-supplied outer bound for the attempt.
+//
+// The network manager runs its listener phase under one deadline, and that deadline is what makes a
+// network change bounded as a whole rather than per outbound. Reset itself is the only listener here
+// that can take seconds (validate a candidate, retire the old transport), so it accepts that
+// deadline: the migration's own budgets stay as they are, but they are cut short if the phase's
+// deadline is earlier. A cancelled candidate is an abandoned path - its socket is closed and the
+// connection is left on the path it had - and a cancelled retirement retires the generation through
+// the same "unknown" branch as any other failed switch. Both are the already-pinned failure paths.
+func (c *Client) ResetContext(ctx context.Context) error {
 	// A creation that is still in flight belongs to the generation that just ended. It is
 	// discarded and its waiters are released, exactly as before the migration existed.
 	c.connAccess.Lock()
@@ -560,7 +573,7 @@ func (c *Client) Reset() error {
 		c.retireConnection(conn)
 		return nil
 	}
-	switch c.migrate(conn) {
+	switch c.migrate(ctx, conn) {
 	case migrationMigrated, migrationUnchanged:
 		// The connection is still the published generation, either on its new socket or on the
 		// one it had. Nothing to retire.
@@ -598,9 +611,13 @@ func traceMigration(format string, args ...any) {
 
 // migrate moves conn onto a candidate socket created through the production dialer. It owns the
 // candidate for the whole attempt: every failure closes the socket it created, and the one
-// success hands the socket to the connection.
-func (c *Client) migrate(conn *clientConnection) migrationOutcome {
-	ctx, cancel := context.WithTimeout(c.ctx, migrationProbeBudget+migrationRetireBudget)
+// success hands the socket to the connection. parent bounds the attempt from outside; the
+// migration's own probe and retire budgets bound it from inside.
+func (c *Client) migrate(parent context.Context, conn *clientConnection) migrationOutcome {
+	if parent == nil {
+		parent = c.ctx
+	}
+	ctx, cancel := context.WithTimeout(parent, migrationProbeBudget+migrationRetireBudget)
 	defer cancel()
 
 	// A network change is exactly when the old socket starts failing: the route is gone and a
