@@ -53,6 +53,7 @@ type Router struct {
 	httpClientManager adapter.HTTPClientManager
 	rules             []adapter.Rule
 	needFindProcess   bool
+	needProcessPaths  bool
 	needFindNeighbor  bool
 	leaseFiles        []string
 	ruleSets          []adapter.RuleSet
@@ -108,6 +109,7 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.Route
 		rules:             make([]adapter.Rule, 0, len(options.Rules)),
 		ruleSetMap:        make(map[string]adapter.RuleSet),
 		needFindProcess:   hasRule(options.Rules, isProcessRule) || hasDNSRule(dnsOptions.Rules, isProcessDNSRule) || options.FindProcess,
+		needProcessPaths:  needsProcessPaths(options.Rules) || needsProcessPathDNSRules(dnsOptions.Rules) || options.FindProcess,
 		needFindNeighbor:  hasRule(options.Rules, isNeighborRule) || hasDNSRule(dnsOptions.Rules, isNeighborDNSRule) || hasLocalNeighborDNSServer(dnsOptions.Servers) || options.FindNeighbor,
 		leaseFiles:        options.DHCPLeaseFiles,
 		pauseManager:      service.FromContext[pause.Manager](ctx),

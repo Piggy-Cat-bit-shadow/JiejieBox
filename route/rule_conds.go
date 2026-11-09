@@ -45,6 +45,54 @@ func isProcessDNSRule(rule option.DefaultDNSRule) bool {
 	return len(rule.ProcessName) > 0 || len(rule.ProcessPath) > 0 || len(rule.ProcessPathRegex) > 0 || len(rule.PackageName) > 0 || len(rule.PackageNameRegex) > 0 || len(rule.User) > 0 || len(rule.UserID) > 0
 }
 
+func isProcessPathRule(rule option.DefaultRule) bool {
+	return len(rule.ProcessName) > 0 || len(rule.ProcessPath) > 0 || len(rule.ProcessPathRegex) > 0 || len(rule.PackageName) > 0 || len(rule.PackageNameRegex) > 0
+}
+
+func isProcessPathDNSRule(rule option.DefaultDNSRule) bool {
+	return len(rule.ProcessName) > 0 || len(rule.ProcessPath) > 0 || len(rule.ProcessPathRegex) > 0 || len(rule.PackageName) > 0 || len(rule.PackageNameRegex) > 0
+}
+
+// needsProcessPaths reports whether any rule can look at a field that only a
+// /proc walk provides (process name/path, package name). A user/user_id rule
+// does not need one: the socket diag table already carries the uid.
+//
+// A referenced rule_set is treated as needing paths: a rule-set document can
+// carry process conditions, so the alternative would be to decide from a
+// remote, mutable document that the walk is unnecessary. Being conservative
+// here keeps the owner-only fast path safe.
+func needsProcessPaths(rules []option.Rule) bool {
+	for _, rule := range rules {
+		switch rule.Type {
+		case C.RuleTypeDefault:
+			if isProcessPathRule(rule.DefaultOptions) || len(rule.DefaultOptions.RuleSet) > 0 {
+				return true
+			}
+		case C.RuleTypeLogical:
+			if needsProcessPaths(rule.LogicalOptions.Rules) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func needsProcessPathDNSRules(rules []option.DNSRule) bool {
+	for _, rule := range rules {
+		switch rule.Type {
+		case C.RuleTypeDefault:
+			if isProcessPathDNSRule(rule.DefaultOptions) || len(rule.DefaultOptions.RuleSet) > 0 {
+				return true
+			}
+		case C.RuleTypeLogical:
+			if needsProcessPathDNSRules(rule.LogicalOptions.Rules) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func isNeighborRule(rule option.DefaultRule) bool {
 	return len(rule.SourceMACAddress) > 0 || len(rule.SourceHostname) > 0
 }

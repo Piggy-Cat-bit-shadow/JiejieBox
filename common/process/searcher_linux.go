@@ -176,6 +176,17 @@ func (s *linuxSearcher) FindProcessInfo(ctx context.Context, network string, sou
 	return processInfo, nil
 }
 
+// FindProcessOwner resolves the uid from the socket diag table only. It is the
+// owner-only fast path for rules that match user/user_id alone: no /proc walk,
+// no package lookup. FindProcessInfo stays the full path.
+func (s *linuxSearcher) FindProcessOwner(ctx context.Context, network string, source netip.AddrPort, destination netip.AddrPort) (*adapter.ConnectionOwner, error) {
+	_, uid, err := s.resolveSocketByNetlink(network, source, destination)
+	if err != nil {
+		return nil, err
+	}
+	return &adapter.ConnectionOwner{UserId: int32(uid)}, nil
+}
+
 func (s *linuxSearcher) resolveSocketByNetlink(network string, source netip.AddrPort, destination netip.AddrPort) (inode, uid uint32, err error) {
 	source = netip.AddrPortFrom(source.Addr().Unmap(), source.Port())
 	destination = netip.AddrPortFrom(destination.Addr().Unmap(), destination.Port())

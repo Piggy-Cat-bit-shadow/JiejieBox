@@ -30,7 +30,17 @@ func (r *Router) findProcessInfoCached(ctx context.Context, network string, sour
 	if entry, ok := r.processCache.Get(key); ok {
 		return entry.result, entry.err
 	}
-	result, err := process.FindProcessInfo(r.processSearcher, ctx, network, source, destination)
+	var (
+		result *adapter.ConnectionOwner
+		err    error
+	)
+	if r.needProcessPaths {
+		result, err = process.FindProcessInfo(r.processSearcher, ctx, network, source, destination)
+	} else {
+		// Every process rule matches user/user_id alone, so the uid from the
+		// socket diag table is enough; do not pay for a /proc walk.
+		result, err = process.FindProcessOwner(r.processSearcher, ctx, network, source, destination)
+	}
 	r.processCache.Add(key, processCacheEntry{result: result, err: err})
 	return result, err
 }
