@@ -212,11 +212,12 @@ func TestABusinessByteCrossesTheTunnelAndSurvivesANetworkChange(t *testing.T) {
 	// The physical network changes. The endpoint's action is a session restart.
 	clientEndpoint.InterfaceUpdated(context.Background())
 
-	// A write on the old flow is not evidence - the client-side stack buffers it - and how quickly the
-	// server's userspace stack tears the old inner flow down is not deterministic enough to assert
-	// here. What this row can assert is the part the tunnel is for: after the restart the session is
-	// ready again, and a NEW flow carries bytes all the way through. Old-session retirement is covered
-	// by the transport-level carrier tests (TUIC/Hysteria2/TrustTunnel/AnyTLS/SSH).
+	// A write on the old flow is not evidence - the client-side stack buffers it - and the server-side
+	// release of the old inner flow is not observable within a useful bound today: see
+	// carrier_connectip_release_gap_test.go, which pins that as a resource-release gap for the
+	// endpoint's owner instead of hiding it in this row. What this row asserts is the part the tunnel
+	// is for: after the restart the session is ready again, and a NEW flow carries bytes all the way
+	// through.
 	_ = before.Close()
 
 	require.Eventually(t, func() bool {
