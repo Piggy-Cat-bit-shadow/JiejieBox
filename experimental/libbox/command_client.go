@@ -845,7 +845,7 @@ func (c *CommandClient) PreviewServiceChange(configContent string) (*StringBox, 
 	if err != nil {
 		return nil, E.Cause(err, "preview service change")
 	}
-	return wrapString(document), nil
+	return document, nil
 }
 
 func (c *CommandClient) GetLastServiceChange() (*StringBox, error) {
@@ -855,7 +855,7 @@ func (c *CommandClient) GetLastServiceChange() (*StringBox, error) {
 	if err != nil {
 		return nil, E.Cause(err, "get last service change")
 	}
-	return wrapString(document), nil
+	return document, nil
 }
 
 func (c *CommandClient) GetLastConfigRecovery() (*StringBox, error) {
@@ -865,7 +865,7 @@ func (c *CommandClient) GetLastConfigRecovery() (*StringBox, error) {
 	if err != nil {
 		return nil, E.Cause(err, "get last config recovery")
 	}
-	return wrapString(document), nil
+	return document, nil
 }
 
 func (c *CommandClient) GetAPIVersion() (int32, error) {
