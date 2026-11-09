@@ -92,6 +92,12 @@ func (r *Router) PreviewRoute(ctx context.Context, request RoutePreviewRequest) 
 		if !rule.Match(&metadata) {
 			continue
 		}
+		// Apply the action's pure metadata transformations to the PRIVATE copy, through the same
+		// function the production walk uses. They are not decoration: an override_port or
+		// override_address decides what every LATER rule sees, so a rule that matches the rewritten
+		// destination is part of the real decision. Skipping them made the preview report "no rule
+		// matched" for a request production rejected one rule later.
+		applyActionRouteOptions(&metadata, rule.Action())
 		actionType := rule.Action().Type()
 		decided := actionType == C.RuleActionTypeRoute ||
 			actionType == C.RuleActionTypeReject ||
