@@ -8,7 +8,9 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/quic-go"
@@ -36,8 +38,16 @@ type http3FallbackTransport struct {
 	h3Transport   *http3.Transport
 	h2Fallback    innerTransport
 	fallbackDelay time.Duration
-	brokenAccess  sync.Mutex
+	// verdictAccess makes the attempt sequence number, the newest outcome and the per-authority
+	// memory one state, so a claim and its effect cannot interleave with each other.
+	verdictAccess sync.Mutex
 	broken        map[string]http3BrokenEntry
+	// attempt issues the sequence number that stamps one HTTP/3 attempt, and outcome is the
+	// highest sequence whose outcome has already been recorded. Together they make the memory a
+	// record of the NEWEST attempt rather than of whichever attempt happened to report last: an
+	// outcome is taken BEFORE the attempt, so "newer" means "started later".
+	attempt uint64
+	outcome uint64
 }
 
 func newHTTP3RoundTripper(
@@ -135,33 +145,154 @@ func (t *http3FallbackTransport) RoundTrip(request *http.Request) (*http.Respons
 	return t.roundTripHTTP3(request)
 }
 
+// roundTripHTTP3 is the decision point: what may this request do over HTTP/3, and what may be
+// re-sent when HTTP/3 does not deliver it?
+//
+// # The two facts that decide a retry
+//
+//	sent         an HTTP/3 connection was obtained for this attempt. Only then can a request
+//	             header, or any body byte, have reached the peer. A connection that was never
+//	             obtained is the ONLY proof this client can have that the peer saw nothing.
+//	repeatable   the operation may be performed twice without changing its effect: RFC 9110
+//	             §9.2.2's idempotent methods, or an explicit Idempotency-Key (see
+//	             requestIdempotent).
+//
+// Re-sending additionally requires a body that can be produced again (GetBody). The three are
+// independent questions and the old code answered only the last one: every request whose body had
+// a GetBody was cloned and raced, so a POST whose HTTP/3 leg was merely SLOWER than the fallback
+// delay was executed by both legs. "The body can be rebuilt" never implied "the operation may be
+// repeated".
+//
+// The proof of "not sent" is what keeps the fallback usable for non-idempotent requests: when the
+// UDP path is dead, the QUIC dial fails before a stream exists, so a POST still reaches HTTP/2
+// exactly once instead of failing on an unavailable version.
 func (t *http3FallbackTransport) roundTripHTTP3(request *http.Request) (*http.Response, error) {
 	authority := requestAuthority(request)
 	if t.h3Broken(authority) {
 		return t.h2FallbackRoundTrip(request)
 	}
-	response, err := t.h3Transport.RoundTripOpt(request, http3.RoundTripOpt{OnlyCachedConn: true})
+	attempt := t.beginH3Attempt()
+	// Ask the pool first and DO NOT dial. A miss returns ErrNoCachedConn before any connection,
+	// stream or body read exists, so nothing was sent and the request can continue unchanged.
+	response, err, _ := t.issueH3(request, true)
 	if err == nil {
-		t.clearH3Broken(authority)
+		t.clearH3Broken(authority, attempt)
 		return response, nil
 	}
 	if !errors.Is(err, http3.ErrNoCachedConn) {
-		t.recordH3AttemptFailure(request, authority, err)
-		return t.h2FallbackRoundTrip(cloneRequestForRetry(request))
+		// A cached connection existed and failed this request.
+		t.recordH3AttemptFailure(request, authority, attempt, err)
+		return t.retryOverH2AfterSentAttempt(request, err)
 	}
-	if !requestReplayable(request) {
-		response, err = t.h3Transport.RoundTrip(request)
-		if err == nil {
-			t.clearH3Broken(authority)
-			return response, nil
-		}
-		t.recordH3AttemptFailure(request, authority, err)
-		return nil, err
-	}
-	return t.roundTripHTTP3Race(request, authority)
+	return t.roundTripHTTP3Cold(request, authority, attempt)
 }
 
-func (t *http3FallbackTransport) roundTripHTTP3Race(request *http.Request, authority string) (*http.Response, error) {
+// roundTripHTTP3Cold continues an attempt that found an empty pool.
+func (t *http3FallbackTransport) roundTripHTTP3Cold(request *http.Request, authority string, attempt uint64) (*http.Response, error) {
+	// A request that may be repeated and whose body may be rebuilt keeps the historical
+	// behaviour: both versions are tried, so a dead UDP path does not cost the caller a full
+	// handshake timeout. The clones are built BEFORE either goroutine starts, so a GetBody
+	// failure is an ordinary error rather than a panic inside a race leg.
+	if requestIdempotent(request) && requestReplayable(request) {
+		h3Request, h2Request, cloneErr := cloneRequestForRace(request)
+		if cloneErr == nil {
+			if request.Body != nil && request.Body != http.NoBody {
+				// Both legs carry rebuilt bodies; the caller's original body is never read, and
+				// closing it is the transport's normal duty.
+				request.Body.Close()
+			}
+			return t.roundTripHTTP3Race(request, authority, attempt, h3Request, h2Request)
+		}
+		// The body cannot be rebuilt. Fall through to a single attempt, which needs only the
+		// original body - still untouched, because nothing has read it.
+	}
+	response, err, sent := t.issueH3(request, false)
+	if err == nil {
+		t.clearH3Broken(authority, attempt)
+		return response, nil
+	}
+	t.recordH3AttemptFailure(request, authority, attempt, err)
+	if !sent {
+		// No connection was obtained, so no byte of this request could have reached the peer:
+		// safe to re-send over HTTP/2 whatever the method or body. issueH3 left the body
+		// untouched for exactly this case.
+		return t.h2FallbackRoundTrip(request)
+	}
+	return t.retryOverH2AfterSentAttempt(request, err)
+}
+
+// retryOverH2AfterSentAttempt re-sends a request whose HTTP/3 leg obtained a connection and then
+// failed.
+//
+// Both facts are required: repeating the operation must be harmless AND the body must be
+// rebuildable. When either is missing the caller gets the HTTP/3 error, because a duplicated side
+// effect cannot be undone and a half-read body would be a different request.
+func (t *http3FallbackTransport) retryOverH2AfterSentAttempt(request *http.Request, h3Err error) (*http.Response, error) {
+	if !requestIdempotent(request) || !requestReplayable(request) {
+		return nil, h3Err
+	}
+	cloned, err := cloneRequestForRetry(request)
+	if err != nil {
+		return nil, E.Errors(h3Err, err)
+	}
+	return t.h2FallbackRoundTrip(cloned)
+}
+
+// issueH3 performs exactly one HTTP/3 attempt and reports whether a connection was obtained.
+//
+// # Why the body is shielded
+//
+// quic-go's RoundTripOpt closes req.Body on EVERY error, including the OnlyCachedConn miss where
+// no connection exists, no stream was opened, nothing was read and nothing was sent. Forwarding
+// that Close destroys a one-shot body (an io.Pipe, an upload reader) before the fallback can use
+// it, which turned "UDP is blocked, use HTTP/2" into a second failure on a closed body. The shield
+// makes this client the owner of the body's lifetime: it is closed here only when this attempt can
+// no longer be re-sent.
+func (t *http3FallbackTransport) issueH3(request *http.Request, onlyCached bool) (*http.Response, error, bool) {
+	hasBody := request.Body != nil && request.Body != http.NoBody
+	attemptRequest := request
+	if hasBody {
+		attemptRequest = request.Clone(request.Context())
+		attemptRequest.Body = &shieldedRequestBody{ReadCloser: request.Body}
+	}
+	var (
+		response *http.Response
+		err      error
+		sent     bool
+	)
+	if onlyCached {
+		response, err = t.h3Transport.RoundTripOpt(attemptRequest, http3.RoundTripOpt{OnlyCachedConn: true})
+		// ErrNoCachedConn is decided before a connection or stream exists; every other outcome
+		// here had a cached connection to fail on.
+		sent = err == nil || !errors.Is(err, http3.ErrNoCachedConn)
+	} else {
+		var established atomic.Bool
+		attemptRequest = attemptRequest.WithContext(httptrace.WithClientTrace(attemptRequest.Context(), &httptrace.ClientTrace{
+			GotConn: func(httptrace.GotConnInfo) { established.Store(true) },
+		}))
+		response, err = t.h3Transport.RoundTrip(attemptRequest)
+		// GotConn is reported after the connection (and its handshake) exists and before any
+		// stream does. A dial that failed never reaches it, which is the proof used above.
+		sent = established.Load()
+	}
+	if hasBody && err != nil && sent {
+		// The body may have been consumed by the failed attempt, so it cannot carry a retry.
+		request.Body.Close()
+	}
+	return response, err, sent
+}
+
+// shieldedRequestBody absorbs the HTTP/3 transport's error-path Close while an attempt still owns
+// the body. See issueH3.
+type shieldedRequestBody struct {
+	io.ReadCloser
+}
+
+func (b *shieldedRequestBody) Close() error {
+	return nil
+}
+
+func (t *http3FallbackTransport) roundTripHTTP3Race(request *http.Request, authority string, attempt uint64, h3Request *http.Request, h2Request *http.Request) (*http.Response, error) {
 	type result struct {
 		response *http.Response
 		err      error
@@ -172,10 +303,10 @@ func (t *http3FallbackTransport) roundTripHTTP3Race(request *http.Request, autho
 		cancels  []context.CancelFunc
 		received int
 	)
-	startRoundTrip := func(useH3 bool) {
+	startRoundTrip := func(useH3 bool, base *http.Request) {
 		ctx, cancel := context.WithCancel(request.Context())
 		cancels = append(cancels, cancel)
-		raceRequest := cloneRequestForRetry(request).WithContext(ctx)
+		raceRequest := base.WithContext(ctx)
 		go func() {
 			var (
 				response *http.Response
@@ -204,7 +335,7 @@ func (t *http3FallbackTransport) roundTripHTTP3Race(request *http.Request, autho
 			}()
 		}
 	}
-	startRoundTrip(true)
+	startRoundTrip(true, h3Request)
 	timer := time.NewTimer(t.fallbackDelay)
 	defer timer.Stop()
 	var (
@@ -215,7 +346,7 @@ func (t *http3FallbackTransport) roundTripHTTP3Race(request *http.Request, autho
 		select {
 		case <-timer.C:
 			if len(cancels) == 1 {
-				startRoundTrip(false)
+				startRoundTrip(false, h2Request)
 			}
 		case raceResult := <-results:
 			received++
@@ -223,14 +354,14 @@ func (t *http3FallbackTransport) roundTripHTTP3Race(request *http.Request, autho
 				winner := 1
 				if raceResult.h3 {
 					winner = 0
-					t.clearH3Broken(authority)
+					t.clearH3Broken(authority, attempt)
 				}
 				finish(winner)
 				raceResult.response.Body = &cancelOnCloseBody{ReadCloser: raceResult.response.Body, cancel: cancels[winner]}
 				return raceResult.response, nil
 			}
 			if raceResult.h3 {
-				t.recordH3AttemptFailure(request, authority, raceResult.err)
+				t.recordH3AttemptFailure(request, authority, attempt, raceResult.err)
 				h3Err = raceResult.err
 				if len(cancels) == 1 {
 					if !timer.Stop() {
@@ -239,7 +370,7 @@ func (t *http3FallbackTransport) roundTripHTTP3Race(request *http.Request, autho
 						default:
 						}
 					}
-					startRoundTrip(false)
+					startRoundTrip(false, h2Request)
 				}
 			} else {
 				fallbackErr = raceResult.err
@@ -292,26 +423,54 @@ func (t *http3FallbackTransport) h3Broken(authority string) bool {
 	if authority == "" {
 		return false
 	}
-	t.brokenAccess.Lock()
-	defer t.brokenAccess.Unlock()
+	t.verdictAccess.Lock()
+	defer t.verdictAccess.Unlock()
 	entry, found := t.broken[authority]
 	if !found {
 		return false
 	}
 	if entry.until.IsZero() || !time.Now().Before(entry.until) {
-		delete(t.broken, authority)
+		// The window is over, so HTTP/3 may be tried again. The entry is NOT deleted: its
+		// backoff is the memory of how often this authority failed, and deleting it here
+		// restarted the ladder at five minutes on every probe, so a permanently broken
+		// authority was retried at the first rung for the life of the transport.
 		return false
 	}
 	return true
 }
 
-func (t *http3FallbackTransport) clearH3Broken(authority string) {
+// beginH3Attempt issues the sequence number that stamps one HTTP/3 attempt. It is called BEFORE
+// the attempt, so "newer" means "started later" rather than "reported later".
+func (t *http3FallbackTransport) beginH3Attempt() uint64 {
+	t.verdictAccess.Lock()
+	defer t.verdictAccess.Unlock()
+	t.attempt++
+	return t.attempt
+}
+
+// claimH3OutcomeLocked reports whether this attempt is the newest observation and records it if
+// so. The caller must hold verdictAccess, which is what makes the claim and its effect one
+// transaction: an outcome that passes the ordering check and then stores its effect in a separate
+// critical section can still lose against a newer attempt (transport/http measured exactly that
+// interleaving, 1896/200000).
+func (t *http3FallbackTransport) claimH3OutcomeLocked(attempt uint64) bool {
+	if attempt <= t.outcome {
+		return false
+	}
+	t.outcome = attempt
+	return true
+}
+
+func (t *http3FallbackTransport) clearH3Broken(authority string, attempt uint64) {
+	t.verdictAccess.Lock()
+	defer t.verdictAccess.Unlock()
+	if !t.claimH3OutcomeLocked(attempt) {
+		return
+	}
 	if authority == "" {
 		return
 	}
-	t.brokenAccess.Lock()
 	delete(t.broken, authority)
-	t.brokenAccess.Unlock()
 }
 
 // recordH3AttemptFailure arms the per-authority verdict for an attempt that failed, and does
@@ -319,13 +478,13 @@ func (t *http3FallbackTransport) clearH3Broken(authority string) {
 //
 // # Why a failed attempt is not automatically evidence
 //
-// The verdict this arms is long-lived and expensive to be wrong about: while it is live every later
-// request for the authority goes straight to the H2 fallback, so a wrong entry costs an H3-capable
-// server its H3 for the length of the window. That makes "what does this attempt prove?" the whole
-// question, and the answer for a request the CALLER ended is: nothing. The caller's context is
-// cancelled by a closed client, an abandoned DNS query, a refresh that lost its consumer, a
-// shutdown or a caller-side deadline - none of which is a fact about the server, and all of which
-// used to reach `markH3Broken` and move the authority onto HTTP/2.
+// The verdict this arms is long-lived and expensive to be wrong about: while it is live every
+// later request for the authority goes straight to the H2 fallback, so a wrong entry costs an
+// H3-capable server its H3 for the length of the window. That makes "what does this attempt
+// prove?" the whole question, and the answer for a request the CALLER ended is: nothing. The
+// caller's context is cancelled by a closed client, an abandoned DNS query, a refresh that lost
+// its consumer, a shutdown or a caller-side deadline - none of which is a fact about the server,
+// and all of which used to reach `markH3Broken` and move the authority onto HTTP/2.
 //
 // # Why the rule is the request's context and not only the error
 //
@@ -343,8 +502,12 @@ func (t *http3FallbackTransport) clearH3Broken(authority string) {
 // negotiation failure. Those are the half-dead peers this fallback exists for, and the sibling
 // implementation (`transport/v2rayxhttp`, SPEC 094) takes the same position while keeping
 // `context.DeadlineExceeded` a failure on purpose.
-func (t *http3FallbackTransport) recordH3AttemptFailure(request *http.Request, authority string, err error) {
+func (t *http3FallbackTransport) recordH3AttemptFailure(request *http.Request, authority string, attempt uint64, err error) {
 	if err == nil {
+		return
+	}
+	if errors.Is(err, http3.ErrNoCachedConn) {
+		// Not an attempt at all: the cache was empty, so nothing was tried.
 		return
 	}
 	if request != nil && request.Context().Err() != nil {
@@ -353,26 +516,61 @@ func (t *http3FallbackTransport) recordH3AttemptFailure(request *http.Request, a
 	if errors.Is(err, context.Canceled) {
 		return
 	}
-	t.markH3Broken(authority)
+	t.markH3Broken(authority, attempt)
 }
 
-func (t *http3FallbackTransport) markH3Broken(authority string) {
+// markH3Broken records one failed HTTP/3 episode and advances the ladder by one rung.
+//
+// # One episode, one rung
+//
+// A failure that arrives while the window it opened is still live belongs to the SAME episode. A
+// burst of parallel requests on a dead path joins one dial inside the HTTP/3 transport, so they
+// all report the same failure; charging each of them multiplied the ladder by 2^N in one instant
+// (eleven results took 5 minutes to the 48-hour ceiling, which reads as "HTTP/3 has been down for
+// two days" after one blip). The open window already covers them, so the rung is only advanced
+// when the previous window has actually expired - which is also what makes the ladder mean
+// something: 5m, 10m, 20m ... is a record of episodes, not of goroutines.
+//
+// `attempt` orders the outcome against every other attempt: a failure that started before a newer
+// success cannot arm the memory after it, and a failure whose episode was already superseded by a
+// newer attempt is refused outright.
+func (t *http3FallbackTransport) markH3Broken(authority string, attempt uint64) {
+	t.verdictAccess.Lock()
+	defer t.verdictAccess.Unlock()
+	if !t.claimH3OutcomeLocked(attempt) {
+		return
+	}
 	if authority == "" {
 		return
 	}
-	t.brokenAccess.Lock()
-	defer t.brokenAccess.Unlock()
+	now := time.Now()
 	entry := t.broken[authority]
-	if entry.backoff == 0 {
-		entry.backoff = 5 * time.Minute
-	} else {
-		entry.backoff *= 2
-		if entry.backoff > 48*time.Hour {
-			entry.backoff = 48 * time.Hour
+	if !entry.until.IsZero() && now.Before(entry.until) {
+		return
+	}
+	next := 5 * time.Minute
+	if entry.backoff > 0 {
+		next = min(entry.backoff*2, 48*time.Hour)
+	}
+	entry.backoff = next
+	entry.until = now.Add(next)
+	t.broken[authority] = entry
+	if len(t.broken) > 64 {
+		t.pruneH3BrokenLocked(now)
+	}
+}
+
+// h3BrokenPruneAge is how long an expired entry is kept before it is forgotten. The entry has to
+// outlive its own window (that is the ladder memory), but not forever: an authority that has been
+// silent for a day starts again at the first rung.
+const h3BrokenPruneAge = 24 * time.Hour
+
+func (t *http3FallbackTransport) pruneH3BrokenLocked(now time.Time) {
+	for authority, entry := range t.broken {
+		if !entry.until.IsZero() && now.Sub(entry.until) > h3BrokenPruneAge {
+			delete(t.broken, authority)
 		}
 	}
-	entry.until = time.Now().Add(entry.backoff)
-	t.broken[authority] = entry
 }
 
 func NewQUICConfig(options option.QUICOptions) *quic.Config {
