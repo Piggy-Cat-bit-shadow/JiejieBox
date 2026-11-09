@@ -97,9 +97,43 @@ func (v *Version) Release() {
 
 // Store is a directory of versioned artifacts.
 type Store struct {
+	dir   string
+	lease *leaseTable
+}
+
+// leaseTable holds the leases for one store directory, shared by every Store value opened on that
+// directory IN THIS PROCESS. It is shared because a lease is a statement about a reader, not about
+// the handle it was taken through: two stores on one directory are two handles to the same
+// versions, and a collector in one used to remove a version the other was still reading.
+//
+// # The boundary, stated
+//
+// Leases are process-local. Two PROCESSES on one directory are not protected from each other: a
+// collector in one can remove a version the other holds. The contract for that case is ONE writer
+// per directory (single-writer isolation), which is why the production consumer opens its store
+// from the process that also collects. Cross-process leases would need a cooperative lock file and
+// stale-lease recovery, which is a larger contract than the readers need today - and pretending to
+// have it with magic files would be worse than stating the boundary.
+type leaseTable struct {
 	access sync.Mutex
-	dir    string
-	lease  map[string]int
+	counts map[string]int
+}
+
+var (
+	leaseTablesAccess sync.Mutex
+	leaseTables       = map[string]*leaseTable{}
+)
+
+// leaseTableFor returns the one lease table for a directory path.
+func leaseTableFor(directory string) *leaseTable {
+	leaseTablesAccess.Lock()
+	defer leaseTablesAccess.Unlock()
+	table, loaded := leaseTables[directory]
+	if !loaded {
+		table = &leaseTable{counts: make(map[string]int)}
+		leaseTables[directory] = table
+	}
+	return table
 }
 
 // Open prepares a store rooted at dir.
@@ -110,7 +144,13 @@ func Open(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, E.Cause(err, "create artifact store")
 	}
-	return &Store{dir: dir, lease: make(map[string]int)}, nil
+	// The lease table is keyed by the canonical path: two handles opened as "cache" and
+	// "C:\cache" are one directory, and their leases must be one table.
+	canonical, err := filepath.Abs(dir)
+	if err != nil {
+		canonical = filepath.Clean(dir)
+	}
+	return &Store{dir: canonical, lease: leaseTableFor(canonical)}, nil
 }
 
 // Commit streams body into a new version of key and publishes it atomically.
@@ -226,8 +266,15 @@ func (s *Store) Load(key string) (*Version, error) {
 	return &Version{manifest: chosen.manifest, dir: chosen.dir, store: s}, nil
 }
 
-// Collect removes temp leftovers and unleased versions of key, keeping the newest valid one.
-// It is best-effort: a version that cannot be removed on this platform is retried later.
+// Collect removes temp leftovers and unleased versions of key, keeping the newest version this
+// build can actually load.
+//
+// "Can actually load" is the predicate Load uses, not a weaker one: the manifest must read, the
+// artifact must match the size and digest the manifest declares, and the manifest must be
+// compatible with this build. A collector that measured validity with the manifest alone kept a
+// corrupted newest version and deleted the last one that loads - the corruption destroyed the
+// fallback instead of being removed - and it let another build's newer version evict the one this
+// build needs.
 func (s *Store) Collect(key string) error {
 	if s == nil {
 		return nil
@@ -240,18 +287,19 @@ func (s *Store) Collect(key string) error {
 		}
 		return err
 	}
-	s.access.Lock()
-	leased := make(map[string]bool, len(s.lease))
-	for dir, count := range s.lease {
+	leased := make(map[string]bool, len(s.lease.counts))
+	s.lease.access.Lock()
+	for dir, count := range s.lease.counts {
 		if count > 0 {
 			leased[dir] = true
 		}
 	}
-	s.access.Unlock()
+	s.lease.access.Unlock()
 
 	type candidate struct {
 		dir     string
 		created int64
+		leased  bool
 	}
 	var valid []candidate
 	for _, entry := range entries {
@@ -260,19 +308,37 @@ func (s *Store) Collect(key string) error {
 			continue
 		}
 		if strings.HasPrefix(entry.Name(), tempPrefix) {
+			// A temp directory is never a version, so no lease can name it.
 			_ = os.RemoveAll(full)
 			continue
 		}
 		manifest, readErr := readManifest(full)
 		if readErr != nil {
-			_ = os.RemoveAll(full)
+			if !leased[full] {
+				_ = os.RemoveAll(full)
+			}
 			continue
 		}
-		valid = append(valid, candidate{dir: full, created: manifest.Created})
+		if verifyErr := verifyArtifact(full, manifest); verifyErr != nil {
+			// The bytes are not the ones the manifest names, so no build can load this version.
+			// Removing it is what makes the LAST valid version the one that is kept.
+			if !leased[full] {
+				_ = os.RemoveAll(full)
+			}
+			continue
+		}
+		if !compatible(manifest) {
+			// Another build's version: it may be the one that build loads. It is neither a reason
+			// to evict ours nor this build's to delete.
+			continue
+		}
+		// A leased version still takes part in the ranking: "newest" is a property of the
+		// versions, not of who happens to be reading them. It is only protected from removal.
+		valid = append(valid, candidate{dir: full, created: manifest.Created, leased: leased[full]})
 	}
 	sort.Slice(valid, func(i, j int) bool { return valid[i].created > valid[j].created })
 	for index, entry := range valid {
-		if index == 0 || leased[entry.dir] {
+		if index == 0 || entry.leased {
 			continue
 		}
 		_ = os.RemoveAll(entry.dir)
@@ -282,20 +348,20 @@ func (s *Store) Collect(key string) error {
 
 // acquire takes a lease on a version directory.
 func (s *Store) acquire(dir string) {
-	s.access.Lock()
-	s.lease[dir]++
-	s.access.Unlock()
+	s.lease.access.Lock()
+	s.lease.counts[dir]++
+	s.lease.access.Unlock()
 }
 
 // release drops a lease on a version directory.
 func (s *Store) release(dir string) {
-	s.access.Lock()
-	if count := s.lease[dir]; count <= 1 {
-		delete(s.lease, dir)
+	s.lease.access.Lock()
+	if count := s.lease.counts[dir]; count <= 1 {
+		delete(s.lease.counts, dir)
 	} else {
-		s.lease[dir] = count - 1
+		s.lease.counts[dir] = count - 1
 	}
-	s.access.Unlock()
+	s.lease.access.Unlock()
 }
 
 // writeManifest writes the manifest beside the artifact.
