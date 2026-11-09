@@ -75,6 +75,28 @@ func processPathRuleFlags(rawRules []option.DNSRule) []bool {
 	return flags
 }
 
+// ruleNeedsProcessPath reports whether the rule at this index reads a process field. The flag is
+// indexed with the built rule list; an index past it (a router built without flags) answers false,
+// which keeps the old "evaluate against what the caller supplied" behaviour.
+func (r *Router) ruleNeedsProcessPath(ruleIndex int) bool {
+	if r == nil || ruleIndex < 0 {
+		return false
+	}
+	r.rulesAccess.RLock()
+	defer r.rulesAccess.RUnlock()
+	return ruleIndex < len(r.ruleNeedsPaths) && r.ruleNeedsPaths[ruleIndex]
+}
+
+// metadataHasProcessPathFact reports whether the metadata already carries a field a path-reading
+// rule can use. A supplied fact is authoritative: it is what the caller stated, and no walk is
+// attempted to replace it.
+func metadataHasProcessPathFact(metadata *adapter.InboundContext) bool {
+	if metadata == nil || metadata.ProcessInfo == nil {
+		return false
+	}
+	return len(metadata.ProcessInfo.ProcessPaths) > 0 || len(metadata.ProcessInfo.PackageNames) > 0
+}
+
 // completeProcessPathsForRule runs the injected completer once, when the walk reaches a rule that
 // reads a path and the metadata does not have one yet.
 //
@@ -92,7 +114,7 @@ func (r *Router) completeProcessPathsForRule(ctx context.Context, metadata *adap
 	if !needed || completer == nil {
 		return false
 	}
-	if metadata.ProcessInfo != nil && (len(metadata.ProcessInfo.ProcessPaths) > 0 || len(metadata.ProcessInfo.PackageNames) > 0) {
+	if metadataHasProcessPathFact(metadata) {
 		return false
 	}
 	completer(ctx, metadata)

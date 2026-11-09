@@ -424,7 +424,11 @@ func (r *Router) ValidateRuleSetMetadataUpdate(tag string, metadata adapter.Rule
 	return err
 }
 
-func (r *Router) matchDNS(ctx context.Context, rules []adapter.DNSRule, allowFakeIP bool, ruleIndex int, isAddressQuery bool, options *adapter.DNSQueryOptions) (adapter.DNSTransport, adapter.DNSRule, int) {
+// matchDNS walks the legacy rule list. completePaths says whether the walk may run the injected
+// process-path completer; the preview calls it with false because a read-only explanation must not
+// cause a /proc walk (see PreviewLookup). The last result reports that the walk stopped at a rule
+// whose verdict needs a fact the caller did not supply.
+func (r *Router) matchDNS(ctx context.Context, rules []adapter.DNSRule, allowFakeIP bool, ruleIndex int, isAddressQuery bool, options *adapter.DNSQueryOptions, completePaths bool) (adapter.DNSTransport, adapter.DNSRule, int, bool) {
 	metadata := adapter.ContextFrom(ctx)
 	if metadata == nil {
 		panic("no context")
@@ -442,7 +446,11 @@ func (r *Router) matchDNS(ctx context.Context, rules []adapter.DNSRule, allowFak
 			continue
 		}
 		if !pathsAttempted {
-			pathsAttempted = r.completeProcessPathsForRule(ctx, metadata, currentRuleIndex)
+			if completePaths {
+				pathsAttempted = r.completeProcessPathsForRule(ctx, metadata, currentRuleIndex)
+			} else if r.ruleNeedsProcessPath(currentRuleIndex) && !metadataHasProcessPathFact(metadata) {
+				return nil, currentRule, currentRuleIndex, true
+			}
 		}
 		metadata.ResetRuleCache()
 		metadata.DestinationAddressMatchFromResponse = false
@@ -483,7 +491,7 @@ func (r *Router) matchDNS(ctx context.Context, rules []adapter.DNSRule, allowFak
 					options.ClientSubnet = netip.Prefix{}
 					options.RemoveClientSubnet = true
 				}
-				return transport, currentRule, currentRuleIndex
+				return transport, currentRule, currentRuleIndex, false
 			case *R.RuleActionDNSRouteOptions:
 				if action.Strategy != C.DomainStrategyAsIS {
 					options.Strategy = action.Strategy
@@ -506,16 +514,16 @@ func (r *Router) matchDNS(ctx context.Context, rules []adapter.DNSRule, allowFak
 					options.RemoveClientSubnet = true
 				}
 			case *R.RuleActionReject:
-				return nil, currentRule, currentRuleIndex
+				return nil, currentRule, currentRuleIndex, false
 			case *R.RuleActionPredefined:
-				return nil, currentRule, currentRuleIndex
+				return nil, currentRule, currentRuleIndex, false
 			case *R.RuleActionAdblock:
-				return nil, currentRule, currentRuleIndex
+				return nil, currentRule, currentRuleIndex, false
 			}
 		}
 	}
 	transport := r.transport.Default()
-	return transport, nil, -1
+	return transport, nil, -1, false
 }
 
 func (r *Router) applyDNSRouteOptions(options *adapter.DNSQueryOptions, routeOptions R.RuleActionDNSRouteOptions) {
@@ -603,6 +611,11 @@ type dnsRuleWalkState struct {
 	terminalFuture   *dnsEvaluatedFuture
 	terminalIndex    int
 	wake             chan struct{}
+	// pathsAttempted records that the walk already tried to complete the process path. It lives on
+	// the state, not on a stack variable, so a suspended walk that resumes does not try again: the
+	// first rule that needs the fact triggers one lookup and every later rule - including the rules
+	// of the resumed branch - reads that one answer.
+	pathsAttempted bool
 }
 
 func (s *dnsRuleWalkState) anonymousResponse() *mDNS.Msg {
@@ -804,6 +817,13 @@ func (r *Router) walkDNSRules(ctx context.Context, rules []adapter.DNSRule, mess
 		metadata.DNSResponse = state.anonymousResponse()
 		metadata.NamedDNSResponses = state.namedResponses
 		metadata.DestinationAddressMatchFromResponse = false
+		// The modern walk is the production path for every configuration that is not in legacy
+		// mode, so this is where a process-path rule must get its fact. Without it the rule is
+		// evaluated against nil metadata and silently reads as "does not match", which is the
+		// regression that made the deferred completion unreachable for real queries.
+		if !state.pathsAttempted {
+			state.pathsAttempted = r.completeProcessPathsForRule(ctx, metadata, state.ruleIndex)
+		}
 		if !currentRule.Match(metadata) {
 			continue
 		}
@@ -1863,7 +1883,7 @@ func (r *Router) exchangeLegacy(ctx context.Context, exchangeCtx *dnsExchangeCon
 	for {
 		dnsCtx := adapter.OverrideContext(ctx)
 		dnsOptions := options
-		transport, rule, ruleIndex = r.matchDNS(ctx, exchangeCtx.rules, true, ruleIndex, isAddressQuery(message), &dnsOptions)
+		transport, rule, ruleIndex, _ = r.matchDNS(ctx, exchangeCtx.rules, true, ruleIndex, isAddressQuery(message), &dnsOptions, true)
 		if rule != nil {
 			switch action := rule.Action().(type) {
 			case *R.RuleActionReject:
@@ -2067,7 +2087,7 @@ func (r *Router) Lookup(ctx context.Context, domain string, options adapter.DNSQ
 		for {
 			dnsCtx := adapter.OverrideContext(ctx)
 			dnsOptions := options
-			transport, rule, ruleIndex = r.matchDNS(ctx, rules, false, ruleIndex, true, &dnsOptions)
+			transport, rule, ruleIndex, _ = r.matchDNS(ctx, rules, false, ruleIndex, true, &dnsOptions, true)
 			if rule != nil {
 				switch action := rule.Action().(type) {
 				case *R.RuleActionReject:
